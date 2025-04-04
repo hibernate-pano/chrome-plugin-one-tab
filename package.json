@@ -2,7 +2,7 @@
   "name": "chrome-plugin-one-tab",
   "version": "1.0.0",
   "description": "一个高效的Chrome标签页管理扩展",
-  "main": "dist/background.js",
+  "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
@@ -29,30 +29,22 @@
     "react-redux": "^9.1.0"
   },
   "devDependencies": {
-    "@crxjs/vite-plugin": "^1.0.14",
+    "@crxjs/vite-plugin": "^2.0.0-beta.21",
     "@types/chrome": "^0.0.262",
     "@types/react": "^18.2.64",
     "@types/react-dom": "^18.2.21",
     "@typescript-eslint/eslint-plugin": "^7.1.1",
     "@typescript-eslint/parser": "^7.1.1",
-    "@vitejs/plugin-react": "^4.3.4",
+    "@vitejs/plugin-react": "^4.2.1",
     "autoprefixer": "^10.4.18",
-    "copy-webpack-plugin": "^12.0.2",
-    "css-loader": "^6.10.0",
     "eslint": "^8.57.0",
     "eslint-config-prettier": "^9.1.0",
     "eslint-plugin-react": "^7.34.0",
     "eslint-plugin-react-hooks": "^4.6.0",
-    "html-webpack-plugin": "^5.6.0",
     "postcss": "^8.4.35",
-    "postcss-loader": "^8.1.1",
     "prettier": "^3.2.5",
-    "style-loader": "^3.3.4",
     "tailwindcss": "^3.4.1",
-    "ts-loader": "^9.5.1",
     "typescript": "^5.4.2",
-    "vite": "^6.2.5",
-    "webpack": "^5.90.3",
-    "webpack-cli": "^5.1.4"
+    "vite": "^4.5.2"
   }
 }
