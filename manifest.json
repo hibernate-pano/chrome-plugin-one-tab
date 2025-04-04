@@ -1,0 +1,23 @@
+{
+  "manifest_version": 3,
+  "name": "OneTab Plus",
+  "version": "1.0.0",
+  "description": "A better OneTab extension for Chrome",
+  "permissions": [
+    "tabs",
+    "storage",
+    "unlimitedStorage"
+  ],
+  "action": {
+    "default_popup": "popup.html",
+    "default_icon": "public/icon16.png"
+  },
+  "background": {
+    "service_worker": "src/background/index.ts",
+    "type": "module"
+  },
+  "icons": {
+    "16": "public/icon16.png",
+    "48": "public/icon48.png"
+  }
+} 
