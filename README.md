@@ -1,4 +1,4 @@
-# Chrome标签管理器 (OneTab Clone)
+# OneTab Plus - Chrome标签管理器
 
 这是一个Chrome浏览器扩展程序，用于高效管理和组织浏览器标签页。
 
@@ -11,6 +11,9 @@
 - 支持标签页的恢复和删除
 - 支持标签组的命名和重命名
 - 支持标签页的搜索功能
+- 自动过滤 Chrome 内部页面（chrome://）和扩展页面（chrome-extension://）
+- 可配置是否允许保存重复的标签页
+- 支持浅色/深色主题
 - 支持快捷键操作：
   - Alt+Shift+S: 保存所有标签页
   - Alt+S: 保存当前标签页
@@ -20,8 +23,9 @@
 
 - TypeScript
 - React
+- Redux
 - Chrome Extension API
-- Webpack
+- Vite
 - TailwindCSS
 
 ## 开发环境设置
@@ -64,6 +68,24 @@ npm run build
    - 删除不需要的标签或标签组
    - 搜索已保存的标签页
    - 导入/导出标签数据
+   - 访问设置页面进行个性化配置
+
+## 详细文档
+
+查看 [DOCUMENTATION.md](./DOCUMENTATION.md) 获取更详细的项目文档、架构说明和开发指南。
+
+## 最近更新
+
+### 新功能
+
+- **重复标签页处理**：
+  - 添加了“允许保存重复的标签页”设置选项
+  - 默认情况下，保存标签页时会过滤掉重复的 URL，只保留最新的一个
+
+### 问题修复
+
+- 修复了在弹出窗口中恢复标签页后，标签页没有从列表中删除的问题
+- 改进了标签页恢复和删除的错误处理
 
 ## 贡献指南
 
@@ -71,4 +93,4 @@ npm run build
 
 ## 许可证
 
-MIT License 
+MIT License
