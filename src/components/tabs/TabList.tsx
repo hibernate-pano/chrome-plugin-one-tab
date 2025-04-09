@@ -1,7 +1,8 @@
 import React, { useEffect, useState } from 'react';
 import { useAppDispatch, useAppSelector } from '@/store/hooks';
-import { loadGroups, deleteGroup } from '@/store/slices/tabSlice';
-import { TabGroup } from '@/components/tabs/TabGroup';
+import { loadGroups, deleteGroup, moveGroup } from '@/store/slices/tabSlice';
+
+import { DraggableTabGroup } from '@/components/dnd/DraggableTabGroup';
 import { TabGroup as TabGroupType } from '@/types/tab';
 
 interface TabListProps {
@@ -110,8 +111,15 @@ export const TabList: React.FC<TabListProps> = ({ searchQuery }) => {
   return (
     <div className="space-y-4">
       {/* 标签组列表 */}
-      {filteredGroups.map(group => (
-        <TabGroup key={group.id} group={group} />
+      {filteredGroups.map((group, index) => (
+        <DraggableTabGroup
+          key={group.id}
+          group={group}
+          index={index}
+          moveGroup={(dragIndex, hoverIndex) => {
+            dispatch(moveGroup({ dragIndex, hoverIndex }));
+          }}
+        />
       ))}
 
       {/* 恢复所有标签确认对话框 */}

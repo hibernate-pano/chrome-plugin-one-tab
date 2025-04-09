@@ -95,6 +95,51 @@ export const tabSlice = createSlice({
     setSearchQuery: (state, action) => {
       state.searchQuery = action.payload;
     },
+    moveGroup: (state, action) => {
+      const { dragIndex, hoverIndex } = action.payload;
+      const dragGroup = state.groups[dragIndex];
+      // 创建新的数组以避免直接修改原数组
+      const newGroups = [...state.groups];
+      // 删除拖拽的标签组
+      newGroups.splice(dragIndex, 1);
+      // 在新位置插入标签组
+      newGroups.splice(hoverIndex, 0, dragGroup);
+      // 更新状态
+      state.groups = newGroups;
+    },
+    moveTab: (state, action) => {
+      const { sourceGroupId, sourceIndex, targetGroupId, targetIndex } = action.payload;
+      // 找到源标签组和目标标签组
+      const sourceGroup = state.groups.find(g => g.id === sourceGroupId);
+      const targetGroup = state.groups.find(g => g.id === targetGroupId);
+
+      if (sourceGroup && targetGroup) {
+        // 获取要移动的标签页
+        const tab = sourceGroup.tabs[sourceIndex];
+        // 创建新的标签页数组以避免直接修改原数组
+        const newSourceTabs = [...sourceGroup.tabs];
+        const newTargetTabs = sourceGroupId === targetGroupId ? newSourceTabs : [...targetGroup.tabs];
+
+        // 从源标签组中删除标签页
+        newSourceTabs.splice(sourceIndex, 1);
+
+        // 如果是同一个标签组内移动，需要考虑删除后索引的变化
+        if (sourceGroupId === targetGroupId && sourceIndex < targetIndex) {
+          newTargetTabs.splice(targetIndex - 1, 0, tab);
+        } else {
+          newTargetTabs.splice(targetIndex, 0, tab);
+        }
+
+        // 更新源标签组和目标标签组
+        sourceGroup.tabs = newSourceTabs;
+        sourceGroup.updatedAt = new Date().toISOString();
+
+        if (sourceGroupId !== targetGroupId) {
+          targetGroup.tabs = newTargetTabs;
+          targetGroup.updatedAt = new Date().toISOString();
+        }
+      }
+    },
   },
   extraReducers: builder => {
     builder
@@ -148,12 +193,20 @@ export const selectFilteredGroups = (state: { tabs: TabState }) => {
   return groups.filter(group => {
     if (group.name.toLowerCase().includes(query)) return true;
 
-    return group.tabs.some(tab => 
-      tab.title.toLowerCase().includes(query) || 
+    return group.tabs.some(tab =>
+      tab.title.toLowerCase().includes(query) ||
       tab.url.toLowerCase().includes(query)
     );
   });
 };
 
-export const { setActiveGroup, updateGroupName, toggleGroupLock, setSearchQuery } = tabSlice.actions;
-export default tabSlice.reducer; 
+export const {
+  setActiveGroup,
+  updateGroupName,
+  toggleGroupLock,
+  setSearchQuery,
+  moveGroup,
+  moveTab
+} = tabSlice.actions;
+
+export default tabSlice.reducer;
