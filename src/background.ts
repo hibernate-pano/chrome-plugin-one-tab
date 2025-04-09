@@ -24,9 +24,9 @@ const createTabGroup = (tabs: chrome.tabs.Tab[]): TabGroup => {
 // 保存标签页的辅助函数
 const saveTabs = async (tabs: chrome.tabs.Tab[]) => {
   try {
-    // 过滤掉 chrome:// 和 edge:// 页面
+    // 过滤掉 chrome://、chrome-extension:// 和 edge:// 页面
     const validTabs = tabs.filter(tab =>
-      tab.url && !tab.url.startsWith('chrome://') && !tab.url.startsWith('edge://')
+      tab.url && !tab.url.startsWith('chrome://') && !tab.url.startsWith('chrome-extension://') && !tab.url.startsWith('edge://')
     );
 
     if (validTabs.length === 0) return;

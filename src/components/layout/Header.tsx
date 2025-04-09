@@ -18,9 +18,9 @@ export const Header: React.FC<HeaderProps> = ({ onSearch }) => {
 
   const handleSaveAllTabs = async () => {
     const tabs = await chrome.tabs.query({ currentWindow: true });
-    // 过滤掉 chrome:// 和 edge:// 页面
+    // 过滤掉 chrome://、chrome-extension:// 和 edge:// 页面
     const validTabs = tabs.filter(tab =>
-      tab.url && !tab.url.startsWith('chrome://') && !tab.url.startsWith('edge://')
+      tab.url && !tab.url.startsWith('chrome://') && !tab.url.startsWith('chrome-extension://') && !tab.url.startsWith('edge://')
     );
 
     if (validTabs.length === 0) return;
@@ -57,7 +57,7 @@ export const Header: React.FC<HeaderProps> = ({ onSearch }) => {
       currentWindow: true
     });
 
-    if (!activeTab || !activeTab.url || activeTab.url.startsWith('chrome://') || activeTab.url.startsWith('edge://')) {
+    if (!activeTab || !activeTab.url || activeTab.url.startsWith('chrome://') || activeTab.url.startsWith('chrome-extension://') || activeTab.url.startsWith('edge://')) {
       return;
     }
 

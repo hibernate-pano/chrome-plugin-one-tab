@@ -9,13 +9,23 @@ chrome.runtime.onMessage.addListener((message) => {
 
 // 保存所有标签页
 async function saveAllTabs(inputTabs: chrome.tabs.Tab[]) {
-  const tabs = inputTabs.length > 0 ? inputTabs : await chrome.tabs.query({ currentWindow: true });
-  const tabUrls = tabs.map(tab => tab.url).filter(Boolean);
+  const allTabs = inputTabs.length > 0 ? inputTabs : await chrome.tabs.query({ currentWindow: true });
+  // 过滤掉 Chrome 内部页面和扩展页面
+  const tabsToSave = allTabs.filter(tab =>
+    tab.url && !tab.url.startsWith('chrome://') && !tab.url.startsWith('chrome-extension://')
+  );
+
+  if (tabsToSave.length === 0) {
+    console.log("没有需要保存的有效标签页。");
+    return; // 如果没有有效标签页，则不执行后续操作
+  }
+
+  const tabUrls = tabsToSave.map(tab => tab.url).filter(Boolean);
 
   const tabGroup = {
     id: Date.now().toString(),
     name: `Group ${new Date().toLocaleString()}`,
-    tabs: tabs.map(tab => ({
+    tabs: tabsToSave.map(tab => ({
       id: tab.id?.toString() || '',
       title: tab.title || '',
       url: tab.url || '',
@@ -29,9 +39,11 @@ async function saveAllTabs(inputTabs: chrome.tabs.Tab[]) {
   const groups = existingGroups.groups || [];
   await chrome.storage.local.set({ groups: [...groups, tabGroup] });
 
-  // 关闭所有标签页并打开管理页面
-  const tabIds = tabs.map(tab => tab.id).filter((id): id is number => id !== undefined);
-  await chrome.tabs.remove(tabIds);
+  // 关闭已保存的标签页
+  const tabIdsToClose = tabsToSave.map((tab: chrome.tabs.Tab) => tab.id).filter((id: number | undefined): id is number => id !== undefined);
+  if (tabIdsToClose.length > 0) {
+    await chrome.tabs.remove(tabIdsToClose);
+  }
 
   // 打开管理页面展示保存的标签
   await chrome.tabs.create({
@@ -41,7 +53,7 @@ async function saveAllTabs(inputTabs: chrome.tabs.Tab[]) {
 
 // 保存当前标签页
 async function saveCurrentTab(tab: chrome.tabs.Tab) {
-  if (!tab.url || tab.url.startsWith('chrome://') || tab.url.startsWith('edge://')) {
+  if (!tab.url || tab.url.startsWith('chrome://') || tab.url.startsWith('chrome-extension://') || tab.url.startsWith('edge://')) {
     return;
   }
 
