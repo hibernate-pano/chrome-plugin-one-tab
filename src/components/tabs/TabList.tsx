@@ -37,10 +37,10 @@ export const TabList: React.FC<TabListProps> = ({ searchQuery }) => {
 
   // 先按创建时间倒序排序，然后过滤
   const sortedGroups = [...groups].sort((a, b) => {
-    // 如果有 updatedAt，优先使用 updatedAt，否则使用 createdAt
-    const dateA = new Date(a.updatedAt || a.createdAt);
-    const dateB = new Date(b.updatedAt || b.createdAt);
-    return dateB.getTime() - dateA.getTime(); // 倒序，最新的在前面
+    // 优先使用 createdAt 进行排序
+    const dateA = new Date(a.createdAt);
+    const dateB = new Date(b.createdAt);
+    return dateB.getTime() - dateA.getTime(); // 倒序，最新创建的在前面
   });
 
   const filteredGroups = searchQuery

@@ -12,11 +12,11 @@ interface DraggableTabProps {
   handleDeleteTab: (tabId: string) => void;
 }
 
-export const DraggableTab: React.FC<DraggableTabProps> = ({ 
-  tab, 
-  groupId, 
-  index, 
-  moveTab, 
+export const DraggableTab: React.FC<DraggableTabProps> = ({
+  tab,
+  groupId,
+  index,
+  moveTab,
   handleOpenTab,
   handleDeleteTab
 }) => {
@@ -67,7 +67,7 @@ export const DraggableTab: React.FC<DraggableTabProps> = ({
 
       // 执行移动
       moveTab(sourceGroupId, sourceIndex, targetGroupId, targetIndex);
-      
+
       // 更新拖拽项的索引和组ID
       item.index = targetIndex;
       item.groupId = targetGroupId;
@@ -78,12 +78,11 @@ export const DraggableTab: React.FC<DraggableTabProps> = ({
   drag(drop(ref));
 
   return (
-    <div 
-      ref={ref} 
-      className={`flex items-center justify-between p-2 hover:bg-gray-100 dark:hover:bg-gray-700 rounded ${
-        isDragging ? 'opacity-50' : 'opacity-100'
-      }`}
-      style={{ cursor: 'move' }}
+    <div
+      ref={ref}
+      className={`flex items-center justify-between p-2 hover:bg-gray-100 dark:hover:bg-gray-700 rounded ${isDragging ? 'opacity-50' : 'opacity-100'
+        }`}
+      style={{ cursor: 'default' }}
     >
       <div className="flex items-center space-x-2 flex-1 min-w-0" onClick={() => handleOpenTab(tab)}>
         {tab.favicon && (

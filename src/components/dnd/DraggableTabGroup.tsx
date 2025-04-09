@@ -56,7 +56,7 @@ export const DraggableTabGroup: React.FC<DraggableTabGroupProps> = ({ group, ind
 
       // 执行移动
       moveGroup(dragIndex, hoverIndex);
-      
+
       // 更新拖拽项的索引
       item.index = hoverIndex;
     },
@@ -66,11 +66,11 @@ export const DraggableTabGroup: React.FC<DraggableTabGroupProps> = ({ group, ind
   drag(drop(ref));
 
   return (
-    <div 
-      ref={ref} 
-      style={{ 
+    <div
+      ref={ref}
+      style={{
         opacity: isDragging ? 0.5 : 1,
-        cursor: 'move',
+        cursor: 'default',
       }}
     >
       <TabGroup group={group} />
