@@ -34,15 +34,23 @@ export const TabList: React.FC<TabListProps> = ({ searchQuery }) => {
     );
   }
 
+  // 先按创建时间倒序排序，然后过滤
+  const sortedGroups = [...groups].sort((a, b) => {
+    // 如果有 updatedAt，优先使用 updatedAt，否则使用 createdAt
+    const dateA = new Date(a.updatedAt || a.createdAt);
+    const dateB = new Date(b.updatedAt || b.createdAt);
+    return dateB.getTime() - dateA.getTime(); // 倒序，最新的在前面
+  });
+
   const filteredGroups = searchQuery
-    ? groups.filter(group =>
+    ? sortedGroups.filter(group =>
       group.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
       group.tabs.some(tab =>
         tab.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
         tab.url.toLowerCase().includes(searchQuery.toLowerCase())
       )
     )
-    : groups;
+    : sortedGroups;
 
   if (filteredGroups.length === 0) {
     return (
