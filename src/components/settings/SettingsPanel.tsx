@@ -4,6 +4,7 @@ import {
   toggleAutoSave,
   toggleShowFavicons,
   toggleConfirmBeforeDelete,
+  toggleAllowDuplicateTabs,
   setTheme,
   setAutoSaveInterval,
   setGroupNameTemplate,
@@ -104,6 +105,20 @@ export const SettingsPanel: React.FC = () => {
               支持的变量：%Y (年), %m (月), %d (日), %H (时), %M (分)
             </p>
           </div>
+          <label className="flex items-center space-x-2">
+            <input
+              type="checkbox"
+              checked={settings.allowDuplicateTabs}
+              onChange={() => dispatch(toggleAllowDuplicateTabs())}
+              className="
+                w-4 h-4 rounded
+                text-blue-600 dark:text-blue-500
+                border-gray-300 dark:border-gray-600
+                focus:ring-blue-500 dark:focus:ring-blue-400
+              "
+            />
+            <span>允许保存重复的标签页</span>
+          </label>
         </div>
       </div>
 
@@ -152,4 +167,4 @@ export const SettingsPanel: React.FC = () => {
   );
 };
 
-export default SettingsPanel; 
+export default SettingsPanel;

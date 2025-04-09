@@ -11,9 +11,25 @@ chrome.runtime.onMessage.addListener((message) => {
 async function saveAllTabs(inputTabs: chrome.tabs.Tab[]) {
   const allTabs = inputTabs.length > 0 ? inputTabs : await chrome.tabs.query({ currentWindow: true });
   // 过滤掉 Chrome 内部页面和扩展页面
-  const tabsToSave = allTabs.filter(tab =>
+  let tabsToSave = allTabs.filter(tab =>
     tab.url && !tab.url.startsWith('chrome://') && !tab.url.startsWith('chrome-extension://')
   );
+
+  // 获取设置
+  const settings = await chrome.storage.local.get('user_settings');
+  const userSettings = settings.user_settings || { allowDuplicateTabs: false };
+
+  // 如果不允许重复标签页，则过滤重复的URL
+  if (!userSettings.allowDuplicateTabs) {
+    const uniqueUrls = new Set<string>();
+    tabsToSave = tabsToSave.filter(tab => {
+      if (tab.url && !uniqueUrls.has(tab.url)) {
+        uniqueUrls.add(tab.url);
+        return true;
+      }
+      return false;
+    });
+  }
 
   if (tabsToSave.length === 0) {
     console.log("没有需要保存的有效标签页。");

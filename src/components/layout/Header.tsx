@@ -19,9 +19,21 @@ export const Header: React.FC<HeaderProps> = ({ onSearch }) => {
   const handleSaveAllTabs = async () => {
     const tabs = await chrome.tabs.query({ currentWindow: true });
     // 过滤掉 chrome://、chrome-extension:// 和 edge:// 页面
-    const validTabs = tabs.filter(tab =>
+    let validTabs = tabs.filter(tab =>
       tab.url && !tab.url.startsWith('chrome://') && !tab.url.startsWith('chrome-extension://') && !tab.url.startsWith('edge://')
     );
+
+    // 如果不允许重复标签页，则过滤重复的URL
+    if (!settings.allowDuplicateTabs) {
+      const uniqueUrls = new Set<string>();
+      validTabs = validTabs.filter(tab => {
+        if (tab.url && !uniqueUrls.has(tab.url)) {
+          uniqueUrls.add(tab.url);
+          return true;
+        }
+        return false;
+      });
+    }
 
     if (validTabs.length === 0) return;
 
@@ -228,8 +240,11 @@ export const Header: React.FC<HeaderProps> = ({ onSearch }) => {
                   </label>
                 </li>
                 <li>
-                  <a
-                    href="chrome://extensions/?options=YOUR_EXTENSION_ID"
+                  <button
+                    onClick={() => {
+                      chrome.runtime.openOptionsPage();
+                      setShowDropdown(false);
+                    }}
                     className="
                       block w-full text-left px-4 py-2
                       hover:bg-gray-100 dark:hover:bg-gray-700
@@ -237,7 +252,7 @@ export const Header: React.FC<HeaderProps> = ({ onSearch }) => {
                     "
                   >
                     设置
-                  </a>
+                  </button>
                 </li>
               </ul>
             </div>

@@ -15,6 +15,7 @@ export const DEFAULT_SETTINGS: UserSettings = {
   showTabCount: true,
   autoCloseTabsAfterSaving: true,
   confirmBeforeDelete: true,
+  allowDuplicateTabs: false, // 默认不允许重复标签页
 };
 
 // 导出数据的格式

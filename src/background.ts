@@ -25,18 +25,30 @@ const createTabGroup = (tabs: chrome.tabs.Tab[]): TabGroup => {
 const saveTabs = async (tabs: chrome.tabs.Tab[]) => {
   try {
     // 过滤掉 chrome://、chrome-extension:// 和 edge:// 页面
-    const validTabs = tabs.filter(tab =>
+    let validTabs = tabs.filter(tab =>
       tab.url && !tab.url.startsWith('chrome://') && !tab.url.startsWith('chrome-extension://') && !tab.url.startsWith('edge://')
     );
+
+    // 获取设置
+    const settings = await storage.getSettings();
+
+    // 如果不允许重复标签页，则过滤重复的URL
+    if (!settings.allowDuplicateTabs) {
+      const uniqueUrls = new Set<string>();
+      validTabs = validTabs.filter(tab => {
+        if (tab.url && !uniqueUrls.has(tab.url)) {
+          uniqueUrls.add(tab.url);
+          return true;
+        }
+        return false;
+      });
+    }
 
     if (validTabs.length === 0) return;
 
     const newGroup = createTabGroup(validTabs);
     const existingGroups = await storage.getGroups();
     await storage.setGroups([newGroup, ...existingGroups]);
-
-    // 获取设置
-    const settings = await storage.getSettings();
 
     // 如果设置为保存后关闭标签页
     if (settings.autoCloseTabsAfterSaving) {
@@ -115,6 +127,7 @@ chrome.runtime.onInstalled.addListener(async (details) => {
       showFavicons: true,
       showTabCount: true,
       confirmBeforeDelete: true,
+      allowDuplicateTabs: false,
     });
   }
 });

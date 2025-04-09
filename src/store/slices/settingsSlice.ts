@@ -47,6 +47,9 @@ const settingsSlice = createSlice({
     toggleConfirmBeforeDelete: (state) => {
       state.confirmBeforeDelete = !state.confirmBeforeDelete;
     },
+    toggleAllowDuplicateTabs: (state) => {
+      state.allowDuplicateTabs = !state.allowDuplicateTabs;
+    },
   },
   extraReducers: (builder) => {
     builder
@@ -69,6 +72,7 @@ export const {
   toggleAutoSave,
   toggleShowFavicons,
   toggleConfirmBeforeDelete,
+  toggleAllowDuplicateTabs,
 } = settingsSlice.actions;
 
-export default settingsSlice.reducer; 
+export default settingsSlice.reducer;

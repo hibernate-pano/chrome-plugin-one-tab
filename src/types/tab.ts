@@ -33,9 +33,10 @@ export interface UserSettings {
   showFavicons: boolean;
   showTabCount: boolean;
   confirmBeforeDelete: boolean;
+  allowDuplicateTabs: boolean;
 }
 
 export interface RootState {
   tabs: TabState;
   settings: UserSettings;
-} 
+}
