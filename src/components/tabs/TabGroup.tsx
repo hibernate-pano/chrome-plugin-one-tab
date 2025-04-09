@@ -48,36 +48,37 @@ export const TabGroup: React.FC<TabGroupProps> = ({ group }) => {
     // 收集所有标签页的 URL
     const urls = group.tabs.map(tab => tab.url);
 
-    // 发送消息给后台脚本打开标签页
-    chrome.runtime.sendMessage({
-      type: 'OPEN_TABS',
-      data: { urls }
-    });
-
-    // 如果标签组没有锁定，则删除标签组
+    // 如果标签组没有锁定，先删除标签组
     if (!group.isLocked) {
       try {
+        // 先更新 Redux 状态和 Chrome 存储
         await dispatch(deleteGroup(group.id)).unwrap();
         console.log(`删除标签组: ${group.id}`);
+
+        // 然后发送消息给后台脚本打开标签页
+        chrome.runtime.sendMessage({
+          type: 'OPEN_TABS',
+          data: { urls }
+        });
       } catch (error) {
         console.error('删除标签组失败:', error);
       }
+    } else {
+      // 如果标签组已锁定，直接打开标签页
+      chrome.runtime.sendMessage({
+        type: 'OPEN_TABS',
+        data: { urls }
+      });
     }
   };
 
   const handleOpenTab = async (tab: Tab) => {
-    // 发送消息给后台脚本打开标签页
-    chrome.runtime.sendMessage({
-      type: 'OPEN_TAB',
-      data: { url: tab.url }
-    });
-
     // 如果标签组没有锁定，则从标签组中移除该标签页
     if (!group.isLocked) {
       const updatedTabs = group.tabs.filter(t => t.id !== tab.id);
 
       try {
-        // 如果标签组中没有其他标签页，则删除整个标签组
+        // 先更新 Redux 状态和 Chrome 存储
         if (updatedTabs.length === 0) {
           await dispatch(deleteGroup(group.id)).unwrap();
           console.log(`删除标签组: ${group.id}`);
@@ -91,9 +92,21 @@ export const TabGroup: React.FC<TabGroupProps> = ({ group }) => {
           await dispatch(updateGroup(updatedGroup)).unwrap();
           console.log(`更新标签组: ${group.id}, 剩余标签页: ${updatedTabs.length}`);
         }
+
+        // 然后发送消息给后台脚本打开标签页
+        chrome.runtime.sendMessage({
+          type: 'OPEN_TAB',
+          data: { url: tab.url }
+        });
       } catch (error) {
         console.error('更新标签组失败:', error);
       }
+    } else {
+      // 如果标签组已锁定，直接打开标签页
+      chrome.runtime.sendMessage({
+        type: 'OPEN_TAB',
+        data: { url: tab.url }
+      });
     }
   };
 

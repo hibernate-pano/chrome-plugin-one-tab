@@ -4,8 +4,8 @@ chrome.runtime.onMessage.addListener((message) => {
     const { tabs } = message.data;
     saveAllTabs(tabs);
   } else if (message.type === 'SAVE_CURRENT_TAB') {
-    const { tab } = message.data;
-    saveCurrentTab(tab);
+    const { tab, settings } = message.data;
+    saveCurrentTab(tab, settings);
   } else if (message.type === 'OPEN_TAB') {
     openTabWithSingleInstance(message.data.url);
   } else if (message.type === 'OPEN_TABS') {
@@ -103,9 +103,9 @@ async function saveAllTabs(inputTabs: chrome.tabs.Tab[]) {
     isLocked: false,
   };
 
-  const existingGroups = await chrome.storage.local.get('groups');
-  const groups = existingGroups.groups || [];
-  await chrome.storage.local.set({ groups: [...groups, tabGroup] });
+  const existingGroups = await chrome.storage.local.get('tab_groups');
+  const groups = existingGroups.tab_groups || [];
+  await chrome.storage.local.set({ tab_groups: [...groups, tabGroup] });
 
   // 关闭已保存的标签页（包括重复的）
   const tabIdsToClose = allTabsToClose.map((tab: chrome.tabs.Tab) => tab.id).filter((id: number | undefined): id is number => id !== undefined);
@@ -133,7 +133,7 @@ async function saveAllTabs(inputTabs: chrome.tabs.Tab[]) {
 }
 
 // 保存当前标签页
-async function saveCurrentTab(tab: chrome.tabs.Tab) {
+async function saveCurrentTab(tab: chrome.tabs.Tab, userSettings?: any) {
   if (!tab.url || tab.url.startsWith('chrome://') || tab.url.startsWith('chrome-extension://') || tab.url.startsWith('edge://')) {
     return;
   }
@@ -151,10 +151,17 @@ async function saveCurrentTab(tab: chrome.tabs.Tab) {
     isLocked: false,
   };
 
-  const existingGroups = await chrome.storage.local.get('groups');
-  const groups = existingGroups.groups || [];
-  await chrome.storage.local.set({ groups: [...groups, tabGroup] });
-  await chrome.tabs.remove(tab.id!);
+  const existingGroups = await chrome.storage.local.get('tab_groups');
+  const groups = existingGroups.tab_groups || [];
+  await chrome.storage.local.set({ tab_groups: [...groups, tabGroup] });
+
+  // 获取设置
+  const settings = userSettings || (await chrome.storage.local.get('user_settings')).user_settings || { autoCloseTabsAfterSaving: true };
+
+  // 如果设置为保存后关闭标签页
+  if (settings.autoCloseTabsAfterSaving && tab.id) {
+    await chrome.tabs.remove(tab.id);
+  }
 
   // 检查是否已经有 OneTabPlus 标签页打开
   const extensionUrl = chrome.runtime.getURL('popup.html');
@@ -189,7 +196,12 @@ chrome.commands.onCommand.addListener(async (command, tab) => {
       await saveAllTabs(tabs);
       break;
     case 'save_current_tab':
-      if (tab) await saveCurrentTab(tab);
+      if (tab) {
+        // 获取用户设置
+        const settings = await chrome.storage.local.get('user_settings');
+        const userSettings = settings.user_settings || { autoCloseTabsAfterSaving: true };
+        await saveCurrentTab(tab, userSettings);
+      }
       break;
     case '_execute_action':
       // 默认行为，打开弹出窗口
