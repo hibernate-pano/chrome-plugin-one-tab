@@ -80,7 +80,7 @@ export const Header: React.FC<HeaderProps> = ({ onSearch }) => {
         <div className="relative">
           <input
             type="text"
-            placeholder="搜索标签组..."
+            placeholder="搜索标签..."
             className="input-material pl-8 pr-3 py-2 w-64"
             onChange={handleSearch}
           />

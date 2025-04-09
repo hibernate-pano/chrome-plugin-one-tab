@@ -3,6 +3,7 @@ import { useAppDispatch, useAppSelector } from '@/store/hooks';
 import { loadGroups, deleteGroup, moveGroup } from '@/store/slices/tabSlice';
 
 import { DraggableTabGroup } from '@/components/dnd/DraggableTabGroup';
+import { SearchResultList } from '@/components/search/SearchResultList';
 import { TabGroup as TabGroupType } from '@/types/tab';
 
 interface TabListProps {
@@ -35,7 +36,7 @@ export const TabList: React.FC<TabListProps> = ({ searchQuery }) => {
     );
   }
 
-  // 先按创建时间倒序排序，然后过滤
+  // 先按创建时间倒序排序
   const sortedGroups = [...groups].sort((a, b) => {
     // 优先使用 createdAt 进行排序
     const dateA = new Date(a.createdAt);
@@ -43,34 +44,17 @@ export const TabList: React.FC<TabListProps> = ({ searchQuery }) => {
     return dateB.getTime() - dateA.getTime(); // 倒序，最新创建的在前面
   });
 
-  const filteredGroups = searchQuery
-    ? sortedGroups.filter(group =>
-      group.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      group.tabs.some(tab =>
-        tab.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        tab.url.toLowerCase().includes(searchQuery.toLowerCase())
-      )
-    )
-    : sortedGroups;
+  // 当有搜索查询时，我们会使用 SearchResultList 组件显示匹配的标签
+  // 这里只需要处理没有搜索查询时的标签组列表
+  const filteredGroups = sortedGroups;
 
-  if (filteredGroups.length === 0) {
+  if (filteredGroups.length === 0 && !searchQuery) {
     return (
       <div className="flex flex-col items-center justify-center h-64 space-y-2 text-gray-500 dark:text-gray-400">
-        {searchQuery ? (
-          <>
-            <svg xmlns="http://www.w3.org/2000/svg" className="h-12 w-12" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-            </svg>
-            <p>没有找到匹配的标签组</p>
-          </>
-        ) : (
-          <>
-            <svg xmlns="http://www.w3.org/2000/svg" className="h-12 w-12" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
-            </svg>
-            <p>点击右上角按钮保存标签页</p>
-          </>
-        )}
+        <svg xmlns="http://www.w3.org/2000/svg" className="h-12 w-12" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
+        </svg>
+        <p>点击右上角按钮保存标签页</p>
       </div>
     );
   }
@@ -110,17 +94,21 @@ export const TabList: React.FC<TabListProps> = ({ searchQuery }) => {
 
   return (
     <div className="space-y-4">
-      {/* 标签组列表 */}
-      {filteredGroups.map((group, index) => (
-        <DraggableTabGroup
-          key={group.id}
-          group={group}
-          index={index}
-          moveGroup={(dragIndex, hoverIndex) => {
-            dispatch(moveGroup({ dragIndex, hoverIndex }));
-          }}
-        />
-      ))}
+      {/* 搜索结果或标签组列表 */}
+      {searchQuery ? (
+        <SearchResultList searchQuery={searchQuery} />
+      ) : (
+        filteredGroups.map((group, index) => (
+          <DraggableTabGroup
+            key={group.id}
+            group={group}
+            index={index}
+            moveGroup={(dragIndex, hoverIndex) => {
+              dispatch(moveGroup({ dragIndex, hoverIndex }));
+            }}
+          />
+        ))
+      )}
 
       {/* 恢复所有标签确认对话框 */}
       {isRestoreAllModalOpen && selectedGroup && (

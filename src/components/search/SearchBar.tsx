@@ -32,7 +32,7 @@ export const SearchBar: React.FC = () => {
         type="text"
         value={localQuery}
         onChange={handleSearch}
-        placeholder="搜索标签组或标签页..."
+        placeholder="搜索标签..."
         className="
           w-full px-4 py-2 pl-10
           rounded-lg
@@ -86,4 +86,4 @@ export const SearchBar: React.FC = () => {
   );
 };
 
-export default SearchBar; 
+export default SearchBar;
