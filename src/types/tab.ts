@@ -25,7 +25,6 @@ export interface TabState {
 }
 
 export interface UserSettings {
-  theme: 'light' | 'dark' | 'system';
   autoCloseTabsAfterSaving: boolean;
   autoSave: boolean;
   autoSaveInterval: number;

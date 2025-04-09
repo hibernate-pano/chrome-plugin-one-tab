@@ -71,39 +71,40 @@ export const Header: React.FC<HeaderProps> = ({ onSearch }) => {
   };
 
   return (
-    <header className="flex items-center justify-between p-4 border-b border-gray-200 dark:border-gray-700">
-      <h1 className="text-xl font-semibold">标签管理器</h1>
+    <header className="flex items-center justify-between p-4 border-b border-gray-200 shadow-sm bg-surface transition-material">
+      <h1 className="text-xl font-medium text-primary-700">
+        OneTabPlus
+      </h1>
 
       <div className="flex items-center space-x-4">
-        <input
-          type="text"
-          placeholder="搜索标签组..."
-          className="px-3 py-2 rounded-lg bg-gray-100 dark:bg-gray-700"
-          onChange={handleSearch}
-        />
+        <div className="relative">
+          <input
+            type="text"
+            placeholder="搜索标签组..."
+            className="input-material pl-8 pr-3 py-2 w-64"
+            onChange={handleSearch}
+          />
+          <svg
+            xmlns="http://www.w3.org/2000/svg"
+            className="h-4 w-4 absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400"
+            fill="none"
+            viewBox="0 0 24 24"
+            stroke="currentColor"
+          >
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+          </svg>
+        </div>
+
         <button
           onClick={handleSaveCurrentTab}
-          className="
-            px-3 py-2 rounded-lg
-            bg-gray-200 hover:bg-gray-300
-            dark:bg-gray-700 dark:hover:bg-gray-600
-            text-gray-800 dark:text-gray-200
-            transition duration-200
-            text-sm
-          "
+          className="btn-material"
         >
           保存当前标签
         </button>
 
         <button
           onClick={handleSaveAllTabs}
-          className="
-            px-4 py-2 rounded-lg
-            bg-blue-600 hover:bg-blue-700
-            dark:bg-blue-500 dark:hover:bg-blue-600
-            text-white
-            transition duration-200
-          "
+          className="btn-material btn-material-primary"
         >
           保存所有标签
         </button>
@@ -111,15 +112,10 @@ export const Header: React.FC<HeaderProps> = ({ onSearch }) => {
         <div className="relative">
           <button
             onClick={() => setShowDropdown(!showDropdown)}
-            className="
-              p-2 rounded-lg
-              bg-gray-200 hover:bg-gray-300
-              dark:bg-gray-700 dark:hover:bg-gray-600
-              text-gray-800 dark:text-gray-200
-              transition duration-200
-            "
+            className="p-2 rounded-full hover:bg-gray-100 transition-material"
+            aria-label="更多选项"
           >
-            <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+            <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 text-gray-600" viewBox="0 0 20 20" fill="currentColor">
               <path fillRule="evenodd" d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" clipRule="evenodd" />
             </svg>
           </button>
@@ -127,19 +123,21 @@ export const Header: React.FC<HeaderProps> = ({ onSearch }) => {
           {showDropdown && (
             <div className="
               absolute right-0 mt-2 w-48
-              bg-white dark:bg-gray-800
-              rounded-lg shadow-lg
-              border border-gray-200 dark:border-gray-700
-              z-10
+              bg-surface
+              rounded-md shadow-elevation-2
+              border border-gray-200
+              z-10 overflow-hidden
+              transition-material
             ">
-              <ul>
+              <ul className="py-1">
                 <li>
                   <button
                     onClick={handleExportData}
                     className="
                       w-full text-left px-4 py-2
-                      hover:bg-gray-100 dark:hover:bg-gray-700
-                      rounded-t-lg
+                      hover:bg-gray-100
+                      text-gray-800
+                      transition-material
                     "
                   >
                     导出数据
@@ -149,8 +147,10 @@ export const Header: React.FC<HeaderProps> = ({ onSearch }) => {
                   <label
                     className="
                       block w-full text-left px-4 py-2
-                      hover:bg-gray-100 dark:hover:bg-gray-700
+                      hover:bg-gray-100
+                      text-gray-800
                       cursor-pointer
+                      transition-material
                     "
                   >
                     导入数据
@@ -193,8 +193,9 @@ export const Header: React.FC<HeaderProps> = ({ onSearch }) => {
                     }}
                     className="
                       block w-full text-left px-4 py-2
-                      hover:bg-gray-100 dark:hover:bg-gray-700
-                      rounded-b-lg
+                      hover:bg-gray-100
+                      text-gray-800
+                      transition-material
                     "
                   >
                     设置

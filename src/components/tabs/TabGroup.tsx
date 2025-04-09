@@ -112,12 +112,12 @@ export const TabGroup: React.FC<TabGroupProps> = ({ group }) => {
   };
 
   return (
-    <div className="border border-gray-200 dark:border-gray-700 rounded-lg overflow-hidden">
-      <div className="flex items-center justify-between p-4 bg-gray-50 dark:bg-gray-800">
+    <div className="card-material overflow-hidden mb-4 transition-material">
+      <div className="flex items-center justify-between p-4 bg-surface border-b border-gray-200">
         <div className="flex items-center space-x-2">
           <button
             onClick={() => setIsExpanded(!isExpanded)}
-            className="text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300"
+            className="text-gray-500 hover:text-gray-700 transition-material"
           >
             <svg
               xmlns="http://www.w3.org/2000/svg"
@@ -135,25 +135,25 @@ export const TabGroup: React.FC<TabGroupProps> = ({ group }) => {
               onChange={handleNameChange}
               onBlur={handleNameSubmit}
               onKeyDown={handleKeyDown}
-              className="px-2 py-1 border border-gray-300 dark:border-gray-600 rounded bg-white dark:bg-gray-700"
+              className="input-material px-2 py-1 w-full"
               autoFocus
             />
           ) : (
             <h3
-              className="text-lg font-medium cursor-pointer"
+              className="text-lg font-medium cursor-pointer text-gray-900 transition-material"
               onDoubleClick={() => !group.isLocked && setIsEditing(true)}
             >
               {group.name}
             </h3>
           )}
-          <span className="text-sm text-gray-500 dark:text-gray-400">
+          <span className="text-sm text-gray-500 transition-material">
             ({group.tabs.length} 个标签页)
           </span>
         </div>
         <div className="flex items-center space-x-2">
           <button
             onClick={handleOpenAllTabs}
-            className="p-2 text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300"
+            className="p-2 text-gray-500 hover:text-gray-700 transition-material rounded-full hover:bg-gray-100"
             title="打开所有标签页"
           >
             <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
@@ -162,7 +162,7 @@ export const TabGroup: React.FC<TabGroupProps> = ({ group }) => {
           </button>
           <button
             onClick={handleToggleLock}
-            className={`p-2 ${group.isLocked ? 'text-yellow-500' : 'text-gray-500 dark:text-gray-400'} hover:text-yellow-600`}
+            className={`p-2 rounded-full hover:bg-gray-100 transition-material ${group.isLocked ? 'text-warning' : 'text-gray-500'} hover:text-warning`}
             title={group.isLocked ? '解锁标签组' : '锁定标签组'}
           >
             <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
@@ -172,7 +172,7 @@ export const TabGroup: React.FC<TabGroupProps> = ({ group }) => {
           {!group.isLocked && (
             <button
               onClick={handleDelete}
-              className="p-2 text-gray-500 dark:text-gray-400 hover:text-red-600 dark:hover:text-red-500"
+              className="p-2 rounded-full hover:bg-gray-100 transition-material text-gray-500 hover:text-error"
               title="删除标签组"
             >
               <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
@@ -183,7 +183,7 @@ export const TabGroup: React.FC<TabGroupProps> = ({ group }) => {
         </div>
       </div>
       {isExpanded && (
-        <div className="divide-y divide-gray-200 dark:divide-gray-700">
+        <div className="divide-y divide-gray-200">
           {group.tabs.map((tab, index) => (
             <DraggableTab
               key={tab.id}

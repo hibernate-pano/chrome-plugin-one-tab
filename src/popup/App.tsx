@@ -1,14 +1,22 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Header } from '@/components/layout/Header';
 import { TabList } from '@/components/tabs/TabList';
 import { DndProvider } from '@/components/dnd/DndProvider';
+import { useAppDispatch } from '@/store/hooks';
+import { loadSettings } from '@/store/slices/settingsSlice';
 
 const App: React.FC = () => {
+  const dispatch = useAppDispatch();
   const [searchQuery, setSearchQuery] = useState('');
+
+  useEffect(() => {
+    // 加载用户设置
+    dispatch(loadSettings());
+  }, [dispatch]);
 
   return (
     <DndProvider>
-      <div className="w-[800px] h-[600px] bg-white dark:bg-gray-900">
+      <div className="w-[800px] h-[600px] bg-background transition-material">
         <Header onSearch={setSearchQuery} />
         <main className="p-4">
           <TabList searchQuery={searchQuery} />

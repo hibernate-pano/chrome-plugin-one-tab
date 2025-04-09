@@ -122,7 +122,6 @@ chrome.runtime.onInstalled.addListener(async (details) => {
     // 初始化存储
     await storage.setGroups([]);
     await storage.setSettings({
-      theme: 'system',
       autoCloseTabsAfterSaving: true,
       autoSave: false,
       autoSaveInterval: 5,

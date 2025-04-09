@@ -5,7 +5,6 @@ import {
   toggleShowFavicons,
   toggleConfirmBeforeDelete,
   toggleAllowDuplicateTabs,
-  setTheme,
   setAutoSaveInterval,
   setGroupNameTemplate,
 } from '@/store/slices/settingsSlice';
@@ -16,31 +15,6 @@ export const SettingsPanel: React.FC = () => {
 
   return (
     <div className="space-y-6">
-      {/* 主题设置 */}
-      <div className="space-y-2">
-        <h3 className="text-lg font-medium">主题设置</h3>
-        <div className="flex items-center space-x-4">
-          {(['light', 'dark', 'system'] as const).map(theme => (
-            <button
-              key={theme}
-              onClick={() => dispatch(setTheme(theme as 'light' | 'dark' | 'system'))}
-              className={`
-                px-4 py-2 rounded-lg
-                ${settings.theme === theme
-                  ? 'bg-blue-600 text-white dark:bg-blue-500'
-                  : 'bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-300'
-                }
-                transition duration-200
-              `}
-            >
-              {theme === 'light' && '浅色'}
-              {theme === 'dark' && '深色'}
-              {theme === 'system' && '跟随系统'}
-            </button>
-          ))}
-        </div>
-      </div>
-
       {/* 自动保存设置 */}
       <div className="space-y-2">
         <h3 className="text-lg font-medium">自动保存设置</h3>
@@ -52,9 +26,9 @@ export const SettingsPanel: React.FC = () => {
               onChange={() => dispatch(toggleAutoSave())}
               className="
                 w-4 h-4 rounded
-                text-blue-600 dark:text-blue-500
-                border-gray-300 dark:border-gray-600
-                focus:ring-blue-500 dark:focus:ring-blue-400
+                text-primary-500
+                border-gray-300
+                focus:ring-primary-500
               "
             />
             <span>启用自动保存</span>
@@ -66,10 +40,10 @@ export const SettingsPanel: React.FC = () => {
                 value={settings.autoSaveInterval}
                 onChange={(e) => dispatch(setAutoSaveInterval(Number(e.target.value)))}
                 className="
-                  px-3 py-1 rounded
-                  bg-white dark:bg-gray-700
-                  border border-gray-300 dark:border-gray-600
-                  focus:outline-none focus:ring-2 focus:ring-blue-500
+                  px-3 py-1 rounded-md
+                  bg-surface
+                  border border-gray-300
+                  focus:outline-none focus:ring-2 focus:ring-primary-500
                 "
               >
                 <option value={5}>5分钟</option>

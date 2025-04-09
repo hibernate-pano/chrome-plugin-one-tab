@@ -2,26 +2,63 @@
 @tailwind components;
 @tailwind utilities;
 
-body {
-  @apply bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100;
+@layer base {
+  html {
+    font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+  }
+
+  body {
+    @apply bg-background text-on-background font-sans antialiased;
+  }
 }
 
-/* 滚动条样式 */
+@layer components {
+
+  /* Material Design 按钮 */
+  .btn-material {
+    @apply px-4 py-2 rounded-md font-medium transition-all duration-200 ease-out bg-surface text-on-surface shadow-elevation-1 hover:shadow-elevation-2 active:shadow-elevation-1 uppercase text-sm tracking-wider;
+  }
+
+  .btn-material-primary {
+    @apply bg-primary-500 text-on-primary hover:bg-primary-600 active:bg-primary-700;
+  }
+
+  .btn-material-secondary {
+    @apply bg-secondary-500 text-on-secondary hover:bg-secondary-600 active:bg-secondary-700;
+  }
+
+  /* Material Design 卡片 */
+  .card-material {
+    @apply bg-surface rounded-lg shadow-elevation-1 hover:shadow-elevation-2 transition-all duration-300 ease-out;
+  }
+
+  /* Material Design 输入框 */
+  .input-material {
+    @apply px-3 py-2 rounded-md border border-gray-300 bg-surface text-on-surface focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent transition-all duration-200;
+  }
+
+  /* Material Design 浮动操作按钮 (FAB) */
+  .fab {
+    @apply w-14 h-14 rounded-full bg-primary-500 text-on-primary flex items-center justify-center shadow-elevation-2 hover:shadow-elevation-3 active:shadow-elevation-1 transition-all duration-200 ease-out;
+  }
+
+  .fab-small {
+    @apply w-10 h-10;
+  }
+}
+
+/* 滚动条样式 - Material Design */
 ::-webkit-scrollbar {
   width: 8px;
   height: 8px;
 }
 
 ::-webkit-scrollbar-track {
-  @apply bg-gray-100 dark:bg-gray-800;
+  @apply bg-gray-100 rounded;
 }
 
 ::-webkit-scrollbar-thumb {
-  @apply bg-gray-300 dark:bg-gray-600 rounded-full;
-}
-
-::-webkit-scrollbar-thumb:hover {
-  @apply bg-gray-400 dark:bg-gray-500;
+  @apply bg-gray-300 rounded hover:bg-gray-400;
 }
 
 /* 过渡动画 */
@@ -31,7 +68,7 @@ body {
 
 .fade-enter-active {
   opacity: 1;
-  transition: opacity 200ms ease-in;
+  transition: opacity 200ms ease-out;
 }
 
 .fade-exit {
@@ -40,5 +77,10 @@ body {
 
 .fade-exit-active {
   opacity: 0;
-  transition: opacity 200ms ease-in;
+  transition: opacity 200ms ease-out;
+}
+
+/* Material Design 的平滑过渡 */
+.transition-material {
+  @apply transition-all duration-200 ease-out;
 }

@@ -20,9 +20,7 @@ const settingsSlice = createSlice({
   name: 'settings',
   initialState,
   reducers: {
-    setTheme: (state, action: PayloadAction<'light' | 'dark' | 'system'>) => {
-      state.theme = action.payload;
-    },
+
     setShowFavicons: (state, action: PayloadAction<boolean>) => {
       state.showFavicons = action.payload;
     },
@@ -63,7 +61,6 @@ const settingsSlice = createSlice({
 });
 
 export const {
-  setTheme,
   setShowFavicons,
   setShowTabCount,
   setAutoCloseTabsAfterSaving,

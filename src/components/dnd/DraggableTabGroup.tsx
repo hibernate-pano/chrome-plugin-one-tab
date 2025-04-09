@@ -72,6 +72,7 @@ export const DraggableTabGroup: React.FC<DraggableTabGroupProps> = ({ group, ind
         opacity: isDragging ? 0.5 : 1,
         cursor: 'default',
       }}
+      className="transition-material"
     >
       <TabGroup group={group} />
     </div>

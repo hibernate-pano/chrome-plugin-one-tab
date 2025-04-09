@@ -80,8 +80,7 @@ export const DraggableTab: React.FC<DraggableTabProps> = ({
   return (
     <div
       ref={ref}
-      className={`flex items-center justify-between p-2 hover:bg-gray-100 dark:hover:bg-gray-700 rounded ${isDragging ? 'opacity-50' : 'opacity-100'
-        }`}
+      className={`flex items-center justify-between p-3 hover:bg-gray-100 rounded-md transition-material ${isDragging ? 'opacity-50' : 'opacity-100'}`}
       style={{ cursor: 'default' }}
     >
       <div className="flex items-center space-x-2 flex-1 min-w-0" onClick={() => handleOpenTab(tab)}>
@@ -89,13 +88,13 @@ export const DraggableTab: React.FC<DraggableTabProps> = ({
           <img src={tab.favicon} alt="" className="w-4 h-4 flex-shrink-0" />
         )}
         <div className="truncate">
-          <span className="font-medium">{tab.title}</span>
-          <span className="text-xs text-gray-500 dark:text-gray-400 block truncate">{tab.url}</span>
+          <span className="font-medium text-gray-900 transition-material">{tab.title}</span>
+          <span className="text-xs text-gray-500 block truncate transition-material">{tab.url}</span>
         </div>
       </div>
       <button
         onClick={() => handleDeleteTab(tab.id)}
-        className="text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-300"
+        className="text-gray-500 hover:text-error p-1 rounded-full hover:bg-gray-100 transition-material"
       >
         <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
