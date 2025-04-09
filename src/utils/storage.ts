@@ -6,7 +6,7 @@ const STORAGE_KEYS = {
 };
 
 // 默认设置
-const DEFAULT_SETTINGS: UserSettings = {
+export const DEFAULT_SETTINGS: UserSettings = {
   theme: 'system',
   autoSave: false,
   autoSaveInterval: 5,
@@ -17,16 +17,15 @@ const DEFAULT_SETTINGS: UserSettings = {
   confirmBeforeDelete: true,
 };
 
-export const defaultSettings: UserSettings = {
-  theme: 'system',
-  autoCloseTabsAfterSaving: true,
-  autoSave: false,
-  autoSaveInterval: 5,
-  groupNameTemplate: 'Group %d',
-  showFavicons: true,
-  showTabCount: true,
-  confirmBeforeDelete: true,
-};
+// 导出数据的格式
+interface ExportData {
+  version: string;
+  timestamp: string;
+  data: {
+    groups: TabGroup[];
+    settings: UserSettings;
+  };
+}
 
 class ChromeStorage {
   async getGroups(): Promise<TabGroup[]> {
@@ -72,6 +71,46 @@ class ChromeStorage {
     }
   }
 
+  async exportData(): Promise<ExportData> {
+    const groups = await this.getGroups();
+    const settings = await this.getSettings();
+
+    return {
+      version: '1.0.0',
+      timestamp: new Date().toISOString(),
+      data: {
+        groups,
+        settings
+      }
+    };
+  }
+
+  async importData(data: ExportData): Promise<boolean> {
+    try {
+      if (!data || !data.data || !Array.isArray(data.data.groups)) {
+        throw new Error('无效的导入数据格式');
+      }
+
+      // 导入标签组
+      const existingGroups = await this.getGroups();
+      await this.setGroups([...data.data.groups, ...existingGroups]);
+
+      // 如果有设置数据，则合并设置
+      if (data.data.settings) {
+        const currentSettings = await this.getSettings();
+        await this.setSettings({
+          ...currentSettings,
+          ...data.data.settings
+        });
+      }
+
+      return true;
+    } catch (error) {
+      console.error('导入数据失败:', error);
+      return false;
+    }
+  }
+
   async clear(): Promise<void> {
     try {
       await chrome.storage.local.clear();
@@ -81,4 +120,4 @@ class ChromeStorage {
   }
 }
 
-export const storage = new ChromeStorage(); 
+export const storage = new ChromeStorage();

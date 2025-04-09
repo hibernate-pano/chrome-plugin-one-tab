@@ -1,6 +1,6 @@
 import { createSlice, createAsyncThunk, PayloadAction } from '@reduxjs/toolkit';
 import { UserSettings } from '@/types/tab';
-import { storage, defaultSettings } from '@/utils/storage';
+import { storage, DEFAULT_SETTINGS as defaultSettings } from '@/utils/storage';
 
 const initialState: UserSettings = defaultSettings;
 

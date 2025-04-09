@@ -1,18 +1,18 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { Header } from '@/components/layout/Header';
 import { TabList } from '@/components/tabs/TabList';
-import { SearchBar } from '@/components/search/SearchBar';
 
 const App: React.FC = () => {
+  const [searchQuery, setSearchQuery] = useState('');
+
   return (
     <div className="w-[800px] h-[600px] bg-white dark:bg-gray-900">
-      <Header />
+      <Header onSearch={setSearchQuery} />
       <main className="p-4">
-        <SearchBar />
-        <TabList />
+        <TabList searchQuery={searchQuery} />
       </main>
     </div>
   );
 };
 
-export default App; 
+export default App;

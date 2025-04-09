@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
-import { useAppDispatch } from '@/store/hooks';
-import { updateGroupName, toggleGroupLock, deleteGroup } from '@/store/slices/tabSlice';
-import { TabGroup as TabGroupType } from '@/types/tab';
+import { useAppDispatch, useAppSelector } from '@/store/hooks';
+import { updateGroupName, toggleGroupLock, deleteGroup, updateGroup } from '@/store/slices/tabSlice';
+import { TabGroup as TabGroupType, Tab } from '@/types/tab';
 
 interface TabGroupProps {
   group: TabGroupType;
@@ -9,6 +9,7 @@ interface TabGroupProps {
 
 export const TabGroup: React.FC<TabGroupProps> = ({ group }) => {
   const dispatch = useAppDispatch();
+  const settings = useAppSelector(state => state.settings);
   const [isEditing, setIsEditing] = useState(false);
   const [newName, setNewName] = useState(group.name);
   const [isExpanded, setIsExpanded] = useState(true);
@@ -44,9 +45,38 @@ export const TabGroup: React.FC<TabGroupProps> = ({ group }) => {
   };
 
   const handleOpenAllTabs = () => {
+    // 打开所有标签页
     group.tabs.forEach(tab => {
       chrome.tabs.create({ url: tab.url });
     });
+
+    // 如果标签组没有锁定，则删除标签组
+    if (!group.isLocked) {
+      dispatch(deleteGroup(group.id));
+    }
+  };
+
+  const handleOpenTab = (tab: Tab) => {
+    // 打开单个标签页
+    chrome.tabs.create({ url: tab.url });
+
+    // 如果标签组没有锁定，则从标签组中移除该标签页
+    if (!group.isLocked) {
+      const updatedTabs = group.tabs.filter(t => t.id !== tab.id);
+
+      // 如果标签组中没有其他标签页，则删除整个标签组
+      if (updatedTabs.length === 0) {
+        dispatch(deleteGroup(group.id));
+      } else {
+        // 否则更新标签组
+        const updatedGroup = {
+          ...group,
+          tabs: updatedTabs,
+          updatedAt: new Date().toISOString()
+        };
+        dispatch(updateGroup(updatedGroup));
+      }
+    }
   };
 
   return (
@@ -125,24 +155,48 @@ export const TabGroup: React.FC<TabGroupProps> = ({ group }) => {
           {group.tabs.map(tab => (
             <div
               key={tab.id}
-              className="flex items-center space-x-3 p-3 hover:bg-gray-50 dark:hover:bg-gray-800"
+              className="flex items-center justify-between p-3 hover:bg-gray-50 dark:hover:bg-gray-800"
             >
-              {tab.favicon && (
-                <img src={tab.favicon} alt="" className="w-4 h-4" />
+              <div className="flex items-center space-x-3 flex-1 min-w-0">
+                {settings.showFavicons && tab.favicon && (
+                  <img src={tab.favicon} alt="" className="w-4 h-4 flex-shrink-0" />
+                )}
+                <button
+                  onClick={() => handleOpenTab(tab)}
+                  className="flex-1 text-blue-600 dark:text-blue-500 hover:underline text-left truncate"
+                  title={tab.title}
+                >
+                  {tab.title}
+                </button>
+              </div>
+
+              {!group.isLocked && (
+                <button
+                  onClick={() => {
+                    const updatedTabs = group.tabs.filter(t => t.id !== tab.id);
+                    if (updatedTabs.length === 0) {
+                      dispatch(deleteGroup(group.id));
+                    } else {
+                      const updatedGroup = {
+                        ...group,
+                        tabs: updatedTabs,
+                        updatedAt: new Date().toISOString()
+                      };
+                      dispatch(updateGroup(updatedGroup));
+                    }
+                  }}
+                  className="ml-2 p-1 text-gray-400 hover:text-red-500 dark:text-gray-500 dark:hover:text-red-400"
+                  title="删除标签页"
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
+                    <path fillRule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clipRule="evenodd" />
+                  </svg>
+                </button>
               )}
-              <a
-                href={tab.url}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="flex-1 text-blue-600 dark:text-blue-500 hover:underline truncate"
-                title={tab.title}
-              >
-                {tab.title}
-              </a>
             </div>
           ))}
         </div>
       )}
     </div>
   );
-}; 
+};

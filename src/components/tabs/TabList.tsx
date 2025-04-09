@@ -1,11 +1,18 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useAppDispatch, useAppSelector } from '@/store/hooks';
-import { loadGroups } from '@/store/slices/tabSlice';
+import { loadGroups, deleteGroup } from '@/store/slices/tabSlice';
 import { TabGroup } from '@/components/tabs/TabGroup';
+import { TabGroup as TabGroupType } from '@/types/tab';
 
-export const TabList: React.FC = () => {
+interface TabListProps {
+  searchQuery: string;
+}
+
+export const TabList: React.FC<TabListProps> = ({ searchQuery }) => {
   const dispatch = useAppDispatch();
-  const { groups, isLoading, error, searchQuery } = useAppSelector(state => state.tabs);
+  const { groups, isLoading, error } = useAppSelector(state => state.tabs);
+  const [isRestoreAllModalOpen, setIsRestoreAllModalOpen] = useState(false);
+  const [selectedGroup, setSelectedGroup] = useState<TabGroupType | null>(null);
 
   useEffect(() => {
     dispatch(loadGroups());
@@ -28,13 +35,13 @@ export const TabList: React.FC = () => {
   }
 
   const filteredGroups = searchQuery
-    ? groups.filter(group => 
-        group.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        group.tabs.some(tab => 
-          tab.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-          tab.url.toLowerCase().includes(searchQuery.toLowerCase())
-        )
+    ? groups.filter(group =>
+      group.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      group.tabs.some(tab =>
+        tab.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        tab.url.toLowerCase().includes(searchQuery.toLowerCase())
       )
+    )
     : groups;
 
   if (filteredGroups.length === 0) {
@@ -59,13 +66,59 @@ export const TabList: React.FC = () => {
     );
   }
 
+  const handleRestoreAll = () => {
+    if (!selectedGroup) return;
+
+    // 打开所有标签页
+    selectedGroup.tabs.forEach(tab => {
+      chrome.tabs.create({ url: tab.url });
+    });
+
+    // 如果标签组没有锁定，则删除标签组
+    if (!selectedGroup.isLocked) {
+      dispatch(deleteGroup(selectedGroup.id));
+    }
+
+    setIsRestoreAllModalOpen(false);
+    setSelectedGroup(null);
+  };
+
   return (
     <div className="space-y-4">
+      {/* 标签组列表 */}
       {filteredGroups.map(group => (
         <TabGroup key={group.id} group={group} />
       ))}
+
+      {/* 恢复所有标签确认对话框 */}
+      {isRestoreAllModalOpen && selectedGroup && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white dark:bg-gray-800 rounded-lg p-6 max-w-md w-full">
+            <h3 className="text-lg font-medium mb-4">恢复所有标签页</h3>
+            <p className="mb-4">确定要恢复标签组 "{selectedGroup.name}" 中的所有 {selectedGroup.tabs.length} 个标签页吗？</p>
+
+            <div className="flex justify-end space-x-2">
+              <button
+                onClick={() => {
+                  setIsRestoreAllModalOpen(false);
+                  setSelectedGroup(null);
+                }}
+                className="px-4 py-2 rounded-lg bg-gray-200 hover:bg-gray-300 dark:bg-gray-700 dark:hover:bg-gray-600"
+              >
+                取消
+              </button>
+              <button
+                onClick={handleRestoreAll}
+                className="px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 dark:bg-blue-500 dark:hover:bg-blue-600 text-white"
+              >
+                确定
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
 
-export default TabList; 
+export default TabList;

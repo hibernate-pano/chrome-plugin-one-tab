@@ -1,8 +1,9 @@
 import { storage } from './utils/storage';
 import { nanoid } from '@reduxjs/toolkit';
+import { TabGroup } from './types/tab';
 
 // 创建新标签组的辅助函数
-const createTabGroup = (tabs: chrome.tabs.Tab[]) => {
+const createTabGroup = (tabs: chrome.tabs.Tab[]): TabGroup => {
   return {
     id: nanoid(),
     name: `标签组 ${new Date().toLocaleString()}`,
@@ -23,16 +24,42 @@ const createTabGroup = (tabs: chrome.tabs.Tab[]) => {
 // 保存标签页的辅助函数
 const saveTabs = async (tabs: chrome.tabs.Tab[]) => {
   try {
-    const newGroup = createTabGroup(tabs);
+    // 过滤掉 chrome:// 和 edge:// 页面
+    const validTabs = tabs.filter(tab =>
+      tab.url && !tab.url.startsWith('chrome://') && !tab.url.startsWith('edge://')
+    );
+
+    if (validTabs.length === 0) return;
+
+    const newGroup = createTabGroup(validTabs);
     const existingGroups = await storage.getGroups();
     await storage.setGroups([newGroup, ...existingGroups]);
+
+    // 获取设置
+    const settings = await storage.getSettings();
+
+    // 如果设置为保存后关闭标签页
+    if (settings.autoCloseTabsAfterSaving) {
+      // 获取要关闭的标签页ID
+      const tabIds = validTabs
+        .map(tab => tab.id)
+        .filter((id): id is number => id !== undefined);
+
+      if (tabIds.length > 0) {
+        // 创建一个新标签页
+        await chrome.tabs.create({ url: 'chrome://newtab' });
+
+        // 关闭已保存的标签页
+        await chrome.tabs.remove(tabIds);
+      }
+    }
 
     // 显示通知
     chrome.notifications.create({
       type: 'basic',
       iconUrl: '/icons/icon128.png',
       title: '标签已保存',
-      message: `已成功保存 ${tabs.length} 个标签页到新标签组`
+      message: `已成功保存 ${validTabs.length} 个标签页到新标签组`
     });
   } catch (error) {
     console.error('保存标签失败:', error);
@@ -45,6 +72,13 @@ const saveTabs = async (tabs: chrome.tabs.Tab[]) => {
   }
 };
 
+// 监听扩展图标点击事件
+chrome.action.onClicked.addListener(async () => {
+  // 获取当前窗口的所有标签页
+  const tabs = await chrome.tabs.query({ currentWindow: true });
+  await saveTabs(tabs);
+});
+
 // 监听快捷键命令
 chrome.commands.onCommand.addListener(async (command) => {
   switch (command) {
@@ -56,13 +90,31 @@ chrome.commands.onCommand.addListener(async (command) => {
 
     case 'save_current_tab':
       // 保存当前活动的标签页
-      const [activeTab] = await chrome.tabs.query({ 
-        active: true, 
-        currentWindow: true 
+      const [activeTab] = await chrome.tabs.query({
+        active: true,
+        currentWindow: true
       });
       if (activeTab) {
         await saveTabs([activeTab]);
       }
       break;
   }
-}); 
+});
+
+// 监听安装事件
+chrome.runtime.onInstalled.addListener(async (details) => {
+  if (details.reason === 'install') {
+    // 初始化存储
+    await storage.setGroups([]);
+    await storage.setSettings({
+      theme: 'system',
+      autoCloseTabsAfterSaving: true,
+      autoSave: false,
+      autoSaveInterval: 5,
+      groupNameTemplate: 'Group %d',
+      showFavicons: true,
+      showTabCount: true,
+      confirmBeforeDelete: true,
+    });
+  }
+});
