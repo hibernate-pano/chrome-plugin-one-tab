@@ -29,6 +29,9 @@ const saveTabs = async (tabs: chrome.tabs.Tab[]) => {
       tab.url && !tab.url.startsWith('chrome://') && !tab.url.startsWith('chrome-extension://') && !tab.url.startsWith('edge://')
     );
 
+    // 保存所有要关闭的标签页（包括重复的）
+    const allTabsToClose = [...validTabs];
+
     // 获取设置
     const settings = await storage.getSettings();
 
@@ -52,8 +55,8 @@ const saveTabs = async (tabs: chrome.tabs.Tab[]) => {
 
     // 如果设置为保存后关闭标签页
     if (settings.autoCloseTabsAfterSaving) {
-      // 获取要关闭的标签页ID
-      const tabIds = validTabs
+      // 获取要关闭的标签页ID（包括重复的）
+      const tabIds = allTabsToClose
         .map(tab => tab.id)
         .filter((id): id is number => id !== undefined);
 
@@ -61,7 +64,7 @@ const saveTabs = async (tabs: chrome.tabs.Tab[]) => {
         // 创建一个新标签页
         await chrome.tabs.create({ url: 'chrome://newtab' });
 
-        // 关闭已保存的标签页
+        // 关闭已保存的标签页（包括重复的）
         await chrome.tabs.remove(tabIds);
       }
     }

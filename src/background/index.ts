@@ -3,6 +3,9 @@ chrome.runtime.onMessage.addListener((message) => {
   if (message.type === 'SAVE_ALL_TABS') {
     const { tabs } = message.data;
     saveAllTabs(tabs);
+  } else if (message.type === 'SAVE_CURRENT_TAB') {
+    const { tab } = message.data;
+    saveCurrentTab(tab);
   } else if (message.type === 'OPEN_TAB') {
     openTabWithSingleInstance(message.data.url);
   } else if (message.type === 'OPEN_TABS') {
@@ -61,6 +64,9 @@ async function saveAllTabs(inputTabs: chrome.tabs.Tab[]) {
     tab.url && !tab.url.startsWith('chrome://') && !tab.url.startsWith('chrome-extension://')
   );
 
+  // 保存所有要关闭的标签页（包括重复的）
+  const allTabsToClose = [...tabsToSave];
+
   // 获取设置
   const settings = await chrome.storage.local.get('user_settings');
   const userSettings = settings.user_settings || { allowDuplicateTabs: false };
@@ -101,8 +107,8 @@ async function saveAllTabs(inputTabs: chrome.tabs.Tab[]) {
   const groups = existingGroups.groups || [];
   await chrome.storage.local.set({ groups: [...groups, tabGroup] });
 
-  // 关闭已保存的标签页
-  const tabIdsToClose = tabsToSave.map((tab: chrome.tabs.Tab) => tab.id).filter((id: number | undefined): id is number => id !== undefined);
+  // 关闭已保存的标签页（包括重复的）
+  const tabIdsToClose = allTabsToClose.map((tab: chrome.tabs.Tab) => tab.id).filter((id: number | undefined): id is number => id !== undefined);
   if (tabIdsToClose.length > 0) {
     await chrome.tabs.remove(tabIdsToClose);
   }

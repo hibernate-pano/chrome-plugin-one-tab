@@ -1,7 +1,5 @@
 import React, { useState } from 'react';
-import { useAppDispatch, useAppSelector } from '@/store/hooks';
-import { saveGroup } from '@/store/slices/tabSlice';
-import { nanoid } from '@reduxjs/toolkit';
+import { useAppSelector } from '@/store/hooks';
 import { storage } from '@/utils/storage';
 
 interface HeaderProps {
@@ -12,52 +10,18 @@ export const Header: React.FC<HeaderProps> = ({ onSearch }) => {
   const handleSearch = (e: React.ChangeEvent<HTMLInputElement>) => {
     onSearch(e.target.value);
   };
-  const dispatch = useAppDispatch();
+
   const settings = useAppSelector(state => state.settings);
   const [showDropdown, setShowDropdown] = useState(false);
 
   const handleSaveAllTabs = async () => {
     const tabs = await chrome.tabs.query({ currentWindow: true });
-    // 过滤掉 chrome://、chrome-extension:// 和 edge:// 页面
-    let validTabs = tabs.filter(tab =>
-      tab.url && !tab.url.startsWith('chrome://') && !tab.url.startsWith('chrome-extension://') && !tab.url.startsWith('edge://')
-    );
 
-    // 如果不允许重复标签页，则过滤重复的URL
-    if (!settings.allowDuplicateTabs) {
-      const uniqueUrls = new Set<string>();
-      validTabs = validTabs.filter(tab => {
-        if (tab.url && !uniqueUrls.has(tab.url)) {
-          uniqueUrls.add(tab.url);
-          return true;
-        }
-        return false;
-      });
-    }
-
-    if (validTabs.length === 0) return;
-
-    dispatch(saveGroup({
-      id: nanoid(),
-      name: `标签组 ${new Date().toLocaleString()}`,
-      tabs: validTabs.map(tab => ({
-        id: nanoid(),
-        url: tab.url || '',
-        title: tab.title || '',
-        favicon: tab.favIconUrl || '',
-        createdAt: new Date().toISOString(),
-        lastAccessed: new Date().toISOString()
-      })),
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-      isLocked: false
-    }));
-
-    // 通过background脚本保存标签页
+    // 只通过background脚本保存标签页，避免重复保存
     chrome.runtime.sendMessage({
       type: 'SAVE_ALL_TABS',
       data: {
-        tabs: validTabs,
+        tabs: tabs,
         settings
       }
     });
@@ -69,36 +33,18 @@ export const Header: React.FC<HeaderProps> = ({ onSearch }) => {
       currentWindow: true
     });
 
-    if (!activeTab || !activeTab.url || activeTab.url.startsWith('chrome://') || activeTab.url.startsWith('chrome-extension://') || activeTab.url.startsWith('edge://')) {
+    if (!activeTab) {
       return;
     }
 
-    const newGroup = {
-      id: nanoid(),
-      name: `当前标签 - ${new Date().toLocaleString()}`,
-      tabs: [{
-        id: nanoid(),
-        url: activeTab.url,
-        title: activeTab.title || '',
-        favicon: activeTab.favIconUrl || '',
-        createdAt: new Date().toISOString(),
-        lastAccessed: new Date().toISOString()
-      }],
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-      isLocked: false
-    };
-
-    dispatch(saveGroup(newGroup));
-
-    // 如果设置为保存后关闭标签页
-    if (settings.autoCloseTabsAfterSaving && activeTab.id) {
-      // 创建一个新标签页
-      await chrome.tabs.create({ url: 'chrome://newtab' });
-
-      // 关闭当前标签页
-      await chrome.tabs.remove(activeTab.id);
-    }
+    // 只通过background脚本保存标签页，避免重复保存
+    chrome.runtime.sendMessage({
+      type: 'SAVE_CURRENT_TAB',
+      data: {
+        tab: activeTab,
+        settings
+      }
+    });
   };
 
   const handleExportData = async () => {
