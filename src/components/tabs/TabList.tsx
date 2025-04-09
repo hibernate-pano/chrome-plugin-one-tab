@@ -66,17 +66,26 @@ export const TabList: React.FC<TabListProps> = ({ searchQuery }) => {
     );
   }
 
-  const handleRestoreAll = () => {
+  const handleRestoreAll = async () => {
     if (!selectedGroup) return;
 
-    // 打开所有标签页
-    selectedGroup.tabs.forEach(tab => {
-      chrome.tabs.create({ url: tab.url });
+    // 收集所有标签页的 URL
+    const urls = selectedGroup.tabs.map(tab => tab.url);
+
+    // 发送消息给后台脚本打开标签页
+    chrome.runtime.sendMessage({
+      type: 'OPEN_TABS',
+      data: { urls }
     });
 
     // 如果标签组没有锁定，则删除标签组
     if (!selectedGroup.isLocked) {
-      dispatch(deleteGroup(selectedGroup.id));
+      try {
+        await dispatch(deleteGroup(selectedGroup.id)).unwrap();
+        console.log(`删除标签组: ${selectedGroup.id}`);
+      } catch (error) {
+        console.error('删除标签组失败:', error);
+      }
     }
 
     setIsRestoreAllModalOpen(false);

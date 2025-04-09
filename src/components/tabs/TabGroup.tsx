@@ -44,37 +44,55 @@ export const TabGroup: React.FC<TabGroupProps> = ({ group }) => {
     dispatch(toggleGroupLock(group.id));
   };
 
-  const handleOpenAllTabs = () => {
-    // 打开所有标签页
-    group.tabs.forEach(tab => {
-      chrome.tabs.create({ url: tab.url });
+  const handleOpenAllTabs = async () => {
+    // 收集所有标签页的 URL
+    const urls = group.tabs.map(tab => tab.url);
+
+    // 发送消息给后台脚本打开标签页
+    chrome.runtime.sendMessage({
+      type: 'OPEN_TABS',
+      data: { urls }
     });
 
     // 如果标签组没有锁定，则删除标签组
     if (!group.isLocked) {
-      dispatch(deleteGroup(group.id));
+      try {
+        await dispatch(deleteGroup(group.id)).unwrap();
+        console.log(`删除标签组: ${group.id}`);
+      } catch (error) {
+        console.error('删除标签组失败:', error);
+      }
     }
   };
 
-  const handleOpenTab = (tab: Tab) => {
-    // 打开单个标签页
-    chrome.tabs.create({ url: tab.url });
+  const handleOpenTab = async (tab: Tab) => {
+    // 发送消息给后台脚本打开标签页
+    chrome.runtime.sendMessage({
+      type: 'OPEN_TAB',
+      data: { url: tab.url }
+    });
 
     // 如果标签组没有锁定，则从标签组中移除该标签页
     if (!group.isLocked) {
       const updatedTabs = group.tabs.filter(t => t.id !== tab.id);
 
-      // 如果标签组中没有其他标签页，则删除整个标签组
-      if (updatedTabs.length === 0) {
-        dispatch(deleteGroup(group.id));
-      } else {
-        // 否则更新标签组
-        const updatedGroup = {
-          ...group,
-          tabs: updatedTabs,
-          updatedAt: new Date().toISOString()
-        };
-        dispatch(updateGroup(updatedGroup));
+      try {
+        // 如果标签组中没有其他标签页，则删除整个标签组
+        if (updatedTabs.length === 0) {
+          await dispatch(deleteGroup(group.id)).unwrap();
+          console.log(`删除标签组: ${group.id}`);
+        } else {
+          // 否则更新标签组
+          const updatedGroup = {
+            ...group,
+            tabs: updatedTabs,
+            updatedAt: new Date().toISOString()
+          };
+          await dispatch(updateGroup(updatedGroup)).unwrap();
+          console.log(`更新标签组: ${group.id}, 剩余标签页: ${updatedTabs.length}`);
+        }
+      } catch (error) {
+        console.error('更新标签组失败:', error);
       }
     }
   };

@@ -3,9 +3,55 @@ chrome.runtime.onMessage.addListener((message) => {
   if (message.type === 'SAVE_ALL_TABS') {
     const { tabs } = message.data;
     saveAllTabs(tabs);
+  } else if (message.type === 'OPEN_TAB') {
+    openTabWithSingleInstance(message.data.url);
+  } else if (message.type === 'OPEN_TABS') {
+    openTabsWithSingleInstance(message.data.urls);
   }
   return true;
 });
+
+// 打开单个标签页，保持只有一个 OneTabPlus 标签页
+async function openTabWithSingleInstance(url: string) {
+  // 打开要恢复的标签页
+  await chrome.tabs.create({ url });
+
+  // 检查是否已经有 OneTabPlus 标签页打开
+  const extensionUrl = chrome.runtime.getURL('popup.html');
+  const existingTabs = await chrome.tabs.query({ url: extensionUrl + '*' });
+
+  if (existingTabs.length > 0) {
+    // 如果有多个标签页，只保留第一个，关闭其他的
+    if (existingTabs.length > 1) {
+      const tabsToClose = existingTabs.slice(1).map(tab => tab.id!).filter(id => id !== undefined);
+      if (tabsToClose.length > 0) {
+        await chrome.tabs.remove(tabsToClose);
+      }
+    }
+  }
+}
+
+// 打开多个标签页，保持只有一个 OneTabPlus 标签页
+async function openTabsWithSingleInstance(urls: string[]) {
+  // 打开要恢复的所有标签页
+  for (const url of urls) {
+    await chrome.tabs.create({ url });
+  }
+
+  // 检查是否已经有 OneTabPlus 标签页打开
+  const extensionUrl = chrome.runtime.getURL('popup.html');
+  const existingTabs = await chrome.tabs.query({ url: extensionUrl + '*' });
+
+  if (existingTabs.length > 0) {
+    // 如果有多个标签页，只保留第一个，关闭其他的
+    if (existingTabs.length > 1) {
+      const tabsToClose = existingTabs.slice(1).map(tab => tab.id!).filter(id => id !== undefined);
+      if (tabsToClose.length > 0) {
+        await chrome.tabs.remove(tabsToClose);
+      }
+    }
+  }
+}
 
 // 保存所有标签页
 async function saveAllTabs(inputTabs: chrome.tabs.Tab[]) {
@@ -61,10 +107,23 @@ async function saveAllTabs(inputTabs: chrome.tabs.Tab[]) {
     await chrome.tabs.remove(tabIdsToClose);
   }
 
-  // 打开管理页面展示保存的标签
-  await chrome.tabs.create({
-    url: chrome.runtime.getURL('popup.html') + `?saved=${encodeURIComponent(JSON.stringify(tabUrls))}`
-  });
+  // 检查是否已经有 OneTabPlus 标签页打开
+  const extensionUrl = chrome.runtime.getURL('popup.html');
+  const existingTabs = await chrome.tabs.query({ url: extensionUrl + '*' });
+
+  if (existingTabs.length > 0) {
+    // 如果已经有标签页打开，则更新并激活它
+    const existingTab = existingTabs[0];
+    await chrome.tabs.update(existingTab.id!, {
+      url: extensionUrl + `?saved=${encodeURIComponent(JSON.stringify(tabUrls))}`,
+      active: true
+    });
+  } else {
+    // 如果没有标签页打开，则创建一个新的
+    await chrome.tabs.create({
+      url: extensionUrl + `?saved=${encodeURIComponent(JSON.stringify(tabUrls))}`
+    });
+  }
 }
 
 // 保存当前标签页
@@ -90,6 +149,24 @@ async function saveCurrentTab(tab: chrome.tabs.Tab) {
   const groups = existingGroups.groups || [];
   await chrome.storage.local.set({ groups: [...groups, tabGroup] });
   await chrome.tabs.remove(tab.id!);
+
+  // 检查是否已经有 OneTabPlus 标签页打开
+  const extensionUrl = chrome.runtime.getURL('popup.html');
+  const existingTabs = await chrome.tabs.query({ url: extensionUrl + '*' });
+
+  if (existingTabs.length > 0) {
+    // 如果已经有标签页打开，则更新并激活它
+    const existingTab = existingTabs[0];
+    await chrome.tabs.update(existingTab.id!, {
+      url: extensionUrl + `?saved=${encodeURIComponent(JSON.stringify([tab.url]))}`,
+      active: true
+    });
+  } else {
+    // 如果没有标签页打开，则创建一个新的
+    await chrome.tabs.create({
+      url: extensionUrl + `?saved=${encodeURIComponent(JSON.stringify([tab.url]))}`
+    });
+  }
 }
 
 // 监听扩展图标点击事件
