@@ -1,6 +1,15 @@
+// 监听消息
+chrome.runtime.onMessage.addListener((message) => {
+  if (message.type === 'SAVE_ALL_TABS') {
+    const { tabs } = message.data;
+    saveAllTabs(tabs);
+  }
+  return true;
+});
+
 // 保存所有标签页
-async function saveAllTabs() {
-  const tabs = await chrome.tabs.query({ currentWindow: true });
+async function saveAllTabs(inputTabs: chrome.tabs.Tab[]) {
+  const tabs = inputTabs.length > 0 ? inputTabs : await chrome.tabs.query({ currentWindow: true });
   const tabUrls = tabs.map(tab => tab.url).filter(Boolean);
 
   const tabGroup = {
@@ -57,14 +66,16 @@ async function saveCurrentTab(tab: chrome.tabs.Tab) {
 
 // 监听扩展图标点击事件
 chrome.action.onClicked.addListener(async () => {
-  await saveAllTabs();
+  const tabs = await chrome.tabs.query({ currentWindow: true });
+  await saveAllTabs(tabs);
 });
 
 // 监听快捷键
 chrome.commands.onCommand.addListener(async (command, tab) => {
   switch (command) {
     case 'save_all_tabs':
-      await saveAllTabs();
+      const tabs = await chrome.tabs.query({ currentWindow: true });
+      await saveAllTabs(tabs);
       break;
     case 'save_current_tab':
       if (tab) await saveCurrentTab(tab);

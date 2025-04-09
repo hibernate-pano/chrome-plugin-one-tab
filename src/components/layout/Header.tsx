@@ -25,7 +25,7 @@ export const Header: React.FC<HeaderProps> = ({ onSearch }) => {
 
     if (validTabs.length === 0) return;
 
-    const newGroup = {
+    dispatch(saveGroup({
       id: nanoid(),
       name: `标签组 ${new Date().toLocaleString()}`,
       tabs: validTabs.map(tab => ({
@@ -39,27 +39,16 @@ export const Header: React.FC<HeaderProps> = ({ onSearch }) => {
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
       isLocked: false
-    };
+    }));
 
-    dispatch(saveGroup(newGroup));
-
-    // 如果设置为保存后关闭标签页
-    if (settings.autoCloseTabsAfterSaving) {
-      // 获取要关闭的标签页ID
-      const tabIds = validTabs
-        .map(tab => tab.id)
-        .filter((id): id is number => id !== undefined);
-
-      if (tabIds.length > 0) {
-        // 创建插件页面
-        await chrome.tabs.create({ url: chrome.runtime.getURL('popup.html') });
-
-        // 如果设置为保存后关闭标签页
-        if (settings.autoCloseTabsAfterSaving) {
-          await chrome.tabs.remove(tabIds);
-        }
+    // 通过background脚本保存标签页
+    chrome.runtime.sendMessage({
+      type: 'SAVE_ALL_TABS',
+      data: {
+        tabs: validTabs,
+        settings
       }
-    }
+    });
   };
 
   const handleSaveCurrentTab = async () => {
