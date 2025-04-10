@@ -7,7 +7,7 @@ import { SyncStatus } from '../sync/SyncStatus';
 export const UserProfile: React.FC = () => {
   const dispatch = useAppDispatch();
   const { user } = useAppSelector(state => state.auth);
-  const { syncStatus, lastSyncTime, compressionStats } = useAppSelector(state => state.tabs);
+  const { syncStatus, lastSyncTime } = useAppSelector(state => state.tabs);
 
   const handleSignOut = async () => {
     await dispatch(signOut());
@@ -52,7 +52,7 @@ export const UserProfile: React.FC = () => {
         </div>
       </div>
       <div className="mt-2">
-        <SyncStatus compressionStats={compressionStats} />
+        <SyncStatus />
       </div>
 
       {syncStatus === 'error' && (

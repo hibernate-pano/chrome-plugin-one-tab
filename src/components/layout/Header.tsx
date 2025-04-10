@@ -72,7 +72,7 @@ export const Header: React.FC<HeaderProps> = ({ onSearch }) => {
     }
   };
 
-  // 不再需要同步状态，因为我们使用了 SyncStatus 组件
+  // 不再需要获取 compressionStats
   const { isAuthenticated } = useAppSelector(state => state.auth);
 
   return (
@@ -84,7 +84,7 @@ export const Header: React.FC<HeaderProps> = ({ onSearch }) => {
           </h1>
           {isAuthenticated && (
             <div className="text-xs flex items-center">
-              <SyncStatus compressionStats={useAppSelector(state => state.tabs.compressionStats)} />
+              <SyncStatus />
             </div>
           )}
         </div>
