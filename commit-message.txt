@@ -1,9 +1,0 @@
-Release v1.0: Improve search functionality
-
-- Changed "搜索标签组" to "搜索标签" in the UI
-- Modified search results to only display matching tabs instead of entire tab groups
-- Added tab group information to search results
-- Updated documentation to reflect the changes
-- Set version to 1.0 in package.json and manifest.json
-
-This release marks the first stable version of OneTab Plus with improved search functionality.
