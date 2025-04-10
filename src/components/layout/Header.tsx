@@ -2,7 +2,6 @@ import React, { useState } from 'react';
 import { useAppSelector } from '@/store/hooks';
 import { storage } from '@/utils/storage';
 import { AuthContainer } from '../auth/AuthContainer';
-import { SyncStatus } from '../sync/SyncStatus';
 
 interface HeaderProps {
   onSearch: (query: string) => void;
@@ -72,8 +71,7 @@ export const Header: React.FC<HeaderProps> = ({ onSearch }) => {
     }
   };
 
-  // 不再需要获取 compressionStats
-  const { isAuthenticated } = useAppSelector(state => state.auth);
+  // 不再需要获取用户状态，因为 AuthContainer 会自己检查
 
   return (
     <header className="border-b border-gray-200 shadow-sm bg-surface transition-material">
@@ -82,11 +80,7 @@ export const Header: React.FC<HeaderProps> = ({ onSearch }) => {
           <h1 className="text-xl font-medium text-primary-700">
             OneTabPlus
           </h1>
-          {isAuthenticated && (
-            <div className="text-xs flex items-center">
-              <SyncStatus />
-            </div>
-          )}
+          {/* 移除标题下方的同步状态显示 */}
         </div>
 
         <div className="flex items-center space-x-4">

@@ -1,6 +1,7 @@
 import { storage } from './utils/storage';
 import { nanoid } from '@reduxjs/toolkit';
 import { TabGroup } from './types/tab';
+import { auth as supabaseAuth } from './utils/supabase';
 
 // 创建新标签组的辅助函数
 const createTabGroup = (tabs: chrome.tabs.Tab[]): TabGroup => {
@@ -135,5 +136,21 @@ chrome.runtime.onInstalled.addListener(async (details) => {
       syncStrategy: 'newest',
       deleteStrategy: 'everywhere',
     });
+  }
+});
+
+// 浏览器启动时检查用户会话
+chrome.runtime.onStartup.addListener(async () => {
+  try {
+    // 检查是否有有效的会话
+    const { data } = await supabaseAuth.getSession();
+
+    if (data.session) {
+      console.log('检测到有效会话，用户已自动登录');
+      // 会话有效，用户已自动登录
+      // 在这里不需要额外操作，因为 App.tsx 中会检查并加载用户信息
+    }
+  } catch (error) {
+    console.error('检查用户会话时出错:', error);
   }
 });
