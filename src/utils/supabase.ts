@@ -57,53 +57,101 @@ export const sync = {
     console.log('准备上传标签组，用户ID:', user.id);
     console.log(`要上传的数据: ${groups.length} 个标签组, ${deletedGroups.length} 个已删除标签组, ${deletedTabs.length} 个已删除标签页`);
 
+    // 获取当前的压缩数据
+    let currentCompressedData = null;
+    let currentTabGroups: TabGroup[] = [];
+
+    try {
+      // 获取包含压缩数据的标签组
+      const { data: compressedGroups, error: compressedError } = await supabase
+        .from('tab_groups')
+        .select('compressed_data')
+        .eq('user_id', user.id)
+        .not('compressed_data', 'is', null)
+        .order('last_sync', { ascending: false })
+        .limit(1);
+
+      // 如果找到压缩数据，则解压缩数据
+      if (!compressedError && compressedGroups && compressedGroups.length > 0 && compressedGroups[0].compressed_data) {
+        console.log('找到现有压缩数据，开始解压...');
+        currentCompressedData = compressedGroups[0].compressed_data;
+
+        try {
+          // 解压数据
+          currentTabGroups = decompressTabGroups(currentCompressedData);
+          console.log(`成功解压数据，当前云端有 ${currentTabGroups.length} 个标签组`);
+        } catch (decompressError) {
+          console.error('解压数据失败:', decompressError);
+          currentTabGroups = [];
+        }
+      } else {
+        console.log('未找到现有压缩数据，将创建新的压缩数据');
+      }
+    } catch (error) {
+      console.error('获取现有压缩数据失败:', error);
+    }
+
     // 处理已删除的标签组
     if (deletedGroups.length > 0) {
       console.log('开始处理已删除的标签组...');
-      const groupIds = deletedGroups.map(group => group.id);
 
-      // 从云端删除标签组
-      const { error: deleteGroupError } = await supabase
-        .from('tab_groups')
-        .delete()
-        .in('id', groupIds);
+      // 从当前标签组中移除已删除的标签组
+      const deletedGroupIds = new Set(deletedGroups.map(group => group.id));
+      currentTabGroups = currentTabGroups.filter(group => !deletedGroupIds.has(group.id));
 
-      if (deleteGroupError) {
-        console.error('删除标签组失败:', deleteGroupError);
-      } else {
-        console.log(`成功从云端删除 ${groupIds.length} 个标签组`);
-      }
+      console.log(`从压缩数据中移除了 ${deletedGroups.length} 个标签组`);
     }
 
     // 处理已删除的标签页
     if (deletedTabs.length > 0) {
       console.log('开始处理已删除的标签页...');
-      const tabIds = deletedTabs.map(tab => tab.id);
 
-      // 从云端删除标签页
-      const { error: deleteTabError } = await supabase
-        .from('tabs')
-        .delete()
-        .in('id', tabIds);
+      // 从当前标签组中移除已删除的标签页
+      const deletedTabIds = new Set(deletedTabs.map(tab => tab.id));
 
-      if (deleteTabError) {
-        console.error('删除标签页失败:', deleteTabError);
+      // 遍历每个标签组，移除已删除的标签页
+      currentTabGroups = currentTabGroups.map(group => ({
+        ...group,
+        tabs: group.tabs.filter(tab => !deletedTabIds.has(tab.id))
+      }));
+
+      // 移除空的标签组
+      currentTabGroups = currentTabGroups.filter(group => group.tabs.length > 0);
+
+      console.log(`从压缩数据中移除了 ${deletedTabs.length} 个标签页`);
+    }
+
+    // 合并本地标签组和云端标签组
+    // 将本地标签组添加到当前标签组中，如果有重复，则使用本地的版本
+    const mergedTabGroups = [...currentTabGroups];
+    const currentGroupIds = new Set(currentTabGroups.map(group => group.id));
+
+    // 添加本地标签组（如果不在云端存在）
+    for (const group of groups) {
+      if (!currentGroupIds.has(group.id)) {
+        mergedTabGroups.push(group);
       } else {
-        console.log(`成功从云端删除 ${tabIds.length} 个标签页`);
+        // 替换现有的标签组
+        const index = mergedTabGroups.findIndex(g => g.id === group.id);
+        if (index !== -1) {
+          mergedTabGroups[index] = group;
+        }
       }
     }
+
+    console.log(`合并后的标签组数量: ${mergedTabGroups.length}`);
 
     // 为每个标签组添加用户ID和设备ID
     const currentTime = new Date().toISOString();
 
-    // 压缩标签组数据
-    const { compressed, stats } = compressTabGroups(groups);
+    // 压缩合并后的标签组数据
+    const { compressed, stats } = compressTabGroups(mergedTabGroups);
     console.log('数据压缩统计:', formatCompressionStats(stats));
 
     // 保存压缩统计信息以便返回
     const compressionStats = stats;
 
-    const groupsWithUser = groups.map(group => {
+    const groupsWithUser = mergedTabGroups.map(group => {
       // 确保必要字段都有值
       const createdAt = group.createdAt || currentTime;
       const updatedAt = group.updatedAt || currentTime;

@@ -167,8 +167,23 @@ export const syncTabsToCloud = createAsyncThunk<
       const deletedTabs = await storage.getDeletedTabs();
       console.log(`找到 ${deletedTabs.length} 个已删除的标签页需要同步`);
 
+      // 打印已删除的标签组和标签页的详细信息，便于调试
+      if (deletedGroups.length > 0) {
+        console.log('已删除的标签组详情:');
+        deletedGroups.forEach(group => {
+          console.log(`- ID: ${group.id}, 名称: ${group.name}, 删除时间: ${group.updatedAt}`);
+        });
+      }
+
+      if (deletedTabs.length > 0) {
+        console.log('已删除的标签页详情:');
+        deletedTabs.forEach(tab => {
+          console.log(`- ID: ${tab.id}, 标题: ${tab.title}, URL: ${tab.url}`);
+        });
+      }
+
       // 合并正常标签组和已删除标签组
-      const allGroupsToSync = [...groupsToSync, ...deletedGroups];
+      const allGroupsToSync = [...groupsToSync];
 
       if (allGroupsToSync.length === 0) {
         console.log('没有需要同步的变更');
