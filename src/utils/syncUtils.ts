@@ -10,30 +10,49 @@ import { TabGroup, Tab, UserSettings } from '@/types/tab';
 export const mergeTabGroups = (
   localGroups: TabGroup[],
   cloudGroups: TabGroup[],
-  syncStrategy: UserSettings['syncStrategy'] = 'newest'
+  syncStrategy: UserSettings['syncStrategy'] = 'newest',
+  deletedGroups: TabGroup[] = []
 ): TabGroup[] => {
   // 创建一个映射，以标签组ID为键
   const mergedGroupsMap = new Map<string, TabGroup>();
   const currentTime = new Date().toISOString();
-  
+
+  // 处理已删除的标签组，创建删除标记映射
+  const deletedGroupIds = new Set<string>();
+  deletedGroups.forEach(group => {
+    if (group.isDeleted) {
+      deletedGroupIds.add(group.id);
+    }
+  });
+
   // 处理本地标签组
   localGroups.forEach(localGroup => {
+    // 如果标签组已被删除，则跳过
+    if (deletedGroupIds.has(localGroup.id)) {
+      return;
+    }
+
     // 标记本地独有的标签组
-    const group = { 
+    const group = {
       ...localGroup,
       syncStatus: 'local-only' as const,
       lastSyncedAt: null
     };
     mergedGroupsMap.set(localGroup.id, group);
   });
-  
+
   // 处理云端标签组
   cloudGroups.forEach(cloudGroup => {
+    // 如果标签组已被删除，则跳过
+    if (deletedGroupIds.has(cloudGroup.id) || cloudGroup.isDeleted) {
+      return;
+    }
+
     const localGroup = mergedGroupsMap.get(cloudGroup.id);
-    
+
     if (!localGroup) {
       // 云端独有的标签组
-      const group = { 
+      const group = {
         ...cloudGroup,
         syncStatus: 'remote-only' as const,
         lastSyncedAt: currentTime
@@ -45,11 +64,11 @@ export const mergeTabGroups = (
       mergedGroupsMap.set(cloudGroup.id, mergedGroup);
     }
   });
-  
+
   // 将映射转换回数组
   return Array.from(mergedGroupsMap.values())
-    // 过滤掉已删除的标签组（如果deleteStrategy为'everywhere'）
-    .filter(group => !group.isDeleted);
+    // 过滤掉已删除的标签组
+    .filter(group => !group.isDeleted && !deletedGroupIds.has(group.id));
 };
 
 /**
@@ -65,13 +84,13 @@ const mergeGroup = (
   syncStrategy: UserSettings['syncStrategy']
 ): TabGroup => {
   const currentTime = new Date().toISOString();
-  
+
   // 检查是否有冲突（两边都修改了）
   const localUpdatedAt = new Date(localGroup.updatedAt).getTime();
   const cloudUpdatedAt = new Date(cloudGroup.updatedAt).getTime();
-  const hasConflict = localUpdatedAt > 0 && cloudUpdatedAt > 0 && 
-                     localGroup.lastSyncedAt !== cloudGroup.updatedAt;
-  
+  const hasConflict = localUpdatedAt > 0 && cloudUpdatedAt > 0 &&
+    localGroup.lastSyncedAt !== cloudGroup.updatedAt;
+
   // 根据同步策略决定如何合并
   if (hasConflict) {
     switch (syncStrategy) {
@@ -90,7 +109,7 @@ const mergeGroup = (
             lastSyncedAt: currentTime
           };
         }
-      
+
       case 'local':
         // 总是使用本地版本
         return {
@@ -98,7 +117,7 @@ const mergeGroup = (
           syncStatus: 'synced',
           lastSyncedAt: currentTime
         };
-      
+
       case 'remote':
         // 总是使用云端版本
         return {
@@ -106,7 +125,7 @@ const mergeGroup = (
           syncStatus: 'synced',
           lastSyncedAt: currentTime
         };
-      
+
       case 'ask':
         // 标记为冲突，等待用户解决
         return {
@@ -117,7 +136,7 @@ const mergeGroup = (
           // 保存云端版本以供用户选择
           cloudVersion: cloudGroup
         } as TabGroup & { cloudVersion: TabGroup };
-      
+
       default:
         // 默认使用最新版本
         if (localUpdatedAt > cloudUpdatedAt) {
@@ -154,7 +173,7 @@ const mergeTabs = (
 ): TabGroup => {
   // 创建一个映射，以标签ID为键
   const mergedTabsMap = new Map<string, Tab>();
-  
+
   // 添加本地标签
   localGroup.tabs.forEach(localTab => {
     mergedTabsMap.set(localTab.id, {
@@ -163,11 +182,11 @@ const mergeTabs = (
       lastSyncedAt: currentTime
     });
   });
-  
+
   // 添加或更新云端标签
   cloudGroup.tabs.forEach(cloudTab => {
     const localTab = mergedTabsMap.get(cloudTab.id);
-    
+
     if (!localTab) {
       // 云端独有的标签
       mergedTabsMap.set(cloudTab.id, {
@@ -179,7 +198,7 @@ const mergeTabs = (
       // 本地和云端都有的标签，使用更新时间较新的版本
       const localAccessedAt = new Date(localTab.lastAccessed).getTime();
       const cloudAccessedAt = new Date(cloudTab.lastAccessed).getTime();
-      
+
       if (localAccessedAt > cloudAccessedAt) {
         mergedTabsMap.set(cloudTab.id, {
           ...localTab,
@@ -195,15 +214,15 @@ const mergeTabs = (
       }
     }
   });
-  
+
   // 过滤掉已删除的标签
   const mergedTabs = Array.from(mergedTabsMap.values())
     .filter(tab => !tab.isDeleted);
-  
+
   // 使用更新时间较新的标签组信息
   const localUpdatedAt = new Date(localGroup.updatedAt).getTime();
   const cloudUpdatedAt = new Date(cloudGroup.updatedAt).getTime();
-  
+
   if (localUpdatedAt > cloudUpdatedAt) {
     return {
       ...localGroup,
@@ -232,7 +251,7 @@ export const markGroupForDeletion = (
   deleteStrategy: UserSettings['deleteStrategy'] = 'everywhere'
 ): TabGroup => {
   const currentTime = new Date().toISOString();
-  
+
   if (deleteStrategy === 'everywhere') {
     // 标记为已删除，将在所有设备上删除
     return {
@@ -264,7 +283,7 @@ export const markTabForDeletion = (
   deleteStrategy: UserSettings['deleteStrategy'] = 'everywhere'
 ): Tab => {
   const currentTime = new Date().toISOString();
-  
+
   if (deleteStrategy === 'everywhere') {
     // 标记为已删除，将在所有设备上删除
     return {
@@ -296,12 +315,12 @@ export const getGroupsToSync = (groups: TabGroup[]): TabGroup[] => {
     // 1. 从未同步过 (lastSyncedAt === null)
     // 2. 上次同步后有更新 (updatedAt > lastSyncedAt)
     // 3. 标记为已删除但未同步 (isDeleted && lastSyncedAt === null)
-    
+
     if (!group.lastSyncedAt) return true;
-    
+
     const updatedAt = new Date(group.updatedAt).getTime();
     const lastSyncedAt = new Date(group.lastSyncedAt).getTime();
-    
+
     return updatedAt > lastSyncedAt || (group.isDeleted && !group.lastSyncedAt);
   });
 };

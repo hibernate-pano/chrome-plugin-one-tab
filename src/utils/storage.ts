@@ -2,7 +2,8 @@ import { TabGroup, UserSettings } from '@/types/tab';
 
 const STORAGE_KEYS = {
   GROUPS: 'tab_groups',
-  SETTINGS: 'user_settings'
+  SETTINGS: 'user_settings',
+  DELETED_GROUPS: 'deleted_tab_groups' // 新增：存储已删除的标签组
 };
 
 // 默认设置
@@ -72,6 +73,51 @@ class ChromeStorage {
       });
     } catch (error) {
       console.error('保存设置失败:', error);
+    }
+  }
+
+  // 新增：获取已删除的标签组
+  async getDeletedGroups(): Promise<TabGroup[]> {
+    try {
+      const result = await chrome.storage.local.get(STORAGE_KEYS.DELETED_GROUPS);
+      return result[STORAGE_KEYS.DELETED_GROUPS] || [];
+    } catch (error) {
+      console.error('获取已删除标签组失败:', error);
+      return [];
+    }
+  }
+
+  // 新增：设置已删除的标签组
+  async setDeletedGroups(groups: TabGroup[]): Promise<void> {
+    try {
+      await chrome.storage.local.set({
+        [STORAGE_KEYS.DELETED_GROUPS]: groups
+      });
+    } catch (error) {
+      console.error('设置已删除标签组失败:', error);
+    }
+  }
+
+  // 新增：清理过期的已删除标签组
+  async cleanupDeletedGroups(maxAgeInDays: number = 30): Promise<void> {
+    try {
+      const deletedGroups = await this.getDeletedGroups();
+      const now = new Date().getTime();
+      const maxAgeMs = maxAgeInDays * 24 * 60 * 60 * 1000;
+
+      // 过滤出未过期的已删除标签组
+      const validGroups = deletedGroups.filter(group => {
+        const updatedAt = new Date(group.updatedAt).getTime();
+        return (now - updatedAt) < maxAgeMs;
+      });
+
+      // 如果有过期的标签组，更新存储
+      if (validGroups.length !== deletedGroups.length) {
+        await this.setDeletedGroups(validGroups);
+        console.log(`清理了 ${deletedGroups.length - validGroups.length} 个过期的已删除标签组`);
+      }
+    } catch (error) {
+      console.error('清理已删除标签组失败:', error);
     }
   }
 
