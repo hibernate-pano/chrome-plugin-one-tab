@@ -70,12 +70,12 @@ export const SettingsPanel: React.FC = () => {
               placeholder="例如：标签组 %Y-%m-%d %H:%M"
               className="
                 w-full px-3 py-2 rounded
-                bg-white dark:bg-gray-700
-                border border-gray-300 dark:border-gray-600
+                bg-white
+                border border-gray-300
                 focus:outline-none focus:ring-2 focus:ring-blue-500
               "
             />
-            <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
+            <p className="mt-1 text-sm text-gray-500">
               支持的变量：%Y (年), %m (月), %d (日), %H (时), %M (分)
             </p>
           </div>
@@ -86,9 +86,9 @@ export const SettingsPanel: React.FC = () => {
               onChange={() => dispatch(toggleAllowDuplicateTabs())}
               className="
                 w-4 h-4 rounded
-                text-blue-600 dark:text-blue-500
-                border-gray-300 dark:border-gray-600
-                focus:ring-blue-500 dark:focus:ring-blue-400
+                text-blue-600
+                border-gray-300
+                focus:ring-blue-500
               "
             />
             <span>允许保存重复的标签页</span>
@@ -107,9 +107,9 @@ export const SettingsPanel: React.FC = () => {
               onChange={() => dispatch(toggleShowFavicons())}
               className="
                 w-4 h-4 rounded
-                text-blue-600 dark:text-blue-500
-                border-gray-300 dark:border-gray-600
-                focus:ring-blue-500 dark:focus:ring-blue-400
+                text-blue-600
+                border-gray-300
+                focus:ring-blue-500
               "
             />
             <span>显示网站图标</span>
@@ -128,9 +128,9 @@ export const SettingsPanel: React.FC = () => {
               onChange={() => dispatch(toggleConfirmBeforeDelete())}
               className="
                 w-4 h-4 rounded
-                text-blue-600 dark:text-blue-500
-                border-gray-300 dark:border-gray-600
-                focus:ring-blue-500 dark:focus:ring-blue-400
+                text-blue-600
+                border-gray-300
+                focus:ring-blue-500
               "
             />
             <span>删除前确认</span>

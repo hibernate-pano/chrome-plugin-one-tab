@@ -23,14 +23,14 @@ export const TabList: React.FC<TabListProps> = ({ searchQuery }) => {
   if (isLoading) {
     return (
       <div className="flex items-center justify-center h-64">
-        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 dark:border-blue-500"></div>
+        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
       </div>
     );
   }
 
   if (error) {
     return (
-      <div className="flex items-center justify-center h-64 text-red-600 dark:text-red-500">
+      <div className="flex items-center justify-center h-64 text-red-600">
         {error}
       </div>
     );
@@ -50,7 +50,7 @@ export const TabList: React.FC<TabListProps> = ({ searchQuery }) => {
 
   if (filteredGroups.length === 0 && !searchQuery) {
     return (
-      <div className="flex flex-col items-center justify-center h-64 space-y-2 text-gray-500 dark:text-gray-400">
+      <div className="flex flex-col items-center justify-center h-64 space-y-2 text-gray-500">
         <svg xmlns="http://www.w3.org/2000/svg" className="h-12 w-12" fill="none" viewBox="0 0 24 24" stroke="currentColor">
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
         </svg>
@@ -113,7 +113,7 @@ export const TabList: React.FC<TabListProps> = ({ searchQuery }) => {
       {/* 恢复所有标签确认对话框 */}
       {isRestoreAllModalOpen && selectedGroup && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-white dark:bg-gray-800 rounded-lg p-6 max-w-md w-full">
+          <div className="bg-white rounded-lg p-6 max-w-md w-full">
             <h3 className="text-lg font-medium mb-4">恢复所有标签页</h3>
             <p className="mb-4">确定要恢复标签组 "{selectedGroup.name}" 中的所有 {selectedGroup.tabs.length} 个标签页吗？</p>
 

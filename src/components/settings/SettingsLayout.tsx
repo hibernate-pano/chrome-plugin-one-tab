@@ -15,8 +15,8 @@ export const SettingsLayout: React.FC<SettingsLayoutProps> = ({ children }) => {
             href="popup.html"
             className="
               px-4 py-2 rounded-lg
-              text-gray-600 dark:text-gray-400
-              hover:bg-gray-100 dark:hover:bg-gray-800
+              text-gray-600
+              hover:bg-gray-100
               transition duration-200
             "
           >
@@ -29,4 +29,4 @@ export const SettingsLayout: React.FC<SettingsLayoutProps> = ({ children }) => {
   );
 };
 
-export default SettingsLayout; 
+export default SettingsLayout;

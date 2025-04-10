@@ -112,8 +112,8 @@ export const TabGroup: React.FC<TabGroupProps> = ({ group }) => {
   };
 
   return (
-    <div className="card-material overflow-hidden mb-4 transition-material">
-      <div className="flex items-center justify-between p-4 bg-surface border-b border-gray-200">
+    <div className="mb-6 transition-material">
+      <div className="flex items-center mb-2">
         <div className="flex items-center space-x-2">
           <button
             onClick={() => setIsExpanded(!isExpanded)}
@@ -121,7 +121,7 @@ export const TabGroup: React.FC<TabGroupProps> = ({ group }) => {
           >
             <svg
               xmlns="http://www.w3.org/2000/svg"
-              className={`h-5 w-5 transform transition-transform ${isExpanded ? 'rotate-0' : '-rotate-90'}`}
+              className={`h-4 w-4 transform transition-transform ${isExpanded ? 'rotate-0' : '-rotate-90'}`}
               viewBox="0 0 20 20"
               fill="currentColor"
             >
@@ -135,47 +135,45 @@ export const TabGroup: React.FC<TabGroupProps> = ({ group }) => {
               onChange={handleNameChange}
               onBlur={handleNameSubmit}
               onKeyDown={handleKeyDown}
-              className="input-material px-2 py-1 w-full"
+              className="px-2 py-1 border border-gray-300 rounded w-full"
               autoFocus
             />
           ) : (
             <h3
-              className="text-lg font-medium cursor-pointer text-gray-900 transition-material"
+              className="text-base font-medium cursor-pointer text-gray-900 transition-material"
               onDoubleClick={() => !group.isLocked && setIsEditing(true)}
             >
               {group.name}
             </h3>
           )}
           <span className="text-sm text-gray-500 transition-material">
-            ({group.tabs.length} 个标签页)
+            ({group.tabs.length})
           </span>
         </div>
-        <div className="flex items-center space-x-2">
+        <div className="flex items-center space-x-1 ml-auto">
           <button
             onClick={handleOpenAllTabs}
-            className="p-2 text-gray-500 hover:text-gray-700 transition-material rounded-full hover:bg-gray-100"
+            className="p-1 text-gray-500 hover:text-gray-700 transition-material rounded hover:bg-gray-100 text-xs"
             title="打开所有标签页"
           >
-            <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
-              <path fillRule="evenodd" d="M4 4a2 2 0 012-2h4.586A2 2 0 0112 2.586L15.414 6A2 2 0 0116 7.414V16a2 2 0 01-2 2H6a2 2 0 01-2-2V4zm2 6a1 1 0 011-1h6a1 1 0 110 2H7a1 1 0 01-1-1zm1 3a1 1 0 100 2h6a1 1 0 100-2H7z" clipRule="evenodd" />
-            </svg>
+            恢复全部
           </button>
           <button
             onClick={handleToggleLock}
-            className={`p-2 rounded-full hover:bg-gray-100 transition-material ${group.isLocked ? 'text-warning' : 'text-gray-500'} hover:text-warning`}
+            className={`p-1 rounded hover:bg-gray-100 transition-material ${group.isLocked ? 'text-warning' : 'text-gray-500'} hover:text-warning`}
             title={group.isLocked ? '解锁标签组' : '锁定标签组'}
           >
-            <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+            <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
               <path fillRule="evenodd" d="M5 9V7a5 5 0 0110 0v2a2 2 0 012 2v5a2 2 0 01-2 2H5a2 2 0 01-2-2v-5a2 2 0 012-2zm8-2v2H7V7a3 3 0 016 0z" clipRule="evenodd" />
             </svg>
           </button>
           {!group.isLocked && (
             <button
               onClick={handleDelete}
-              className="p-2 rounded-full hover:bg-gray-100 transition-material text-gray-500 hover:text-error"
+              className="p-1 rounded hover:bg-gray-100 transition-material text-gray-500 hover:text-error"
               title="删除标签组"
             >
-              <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+              <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
                 <path fillRule="evenodd" d="M9 2a1 1 0 00-.894.553L7.382 4H4a1 1 0 000 2v10a2 2 0 002 2h8a2 2 0 002-2V6a1 1 0 100-2h-3.382l-.724-1.447A1 1 0 0011 2H9zM7 8a1 1 0 012 0v6a1 1 0 11-2 0V8zm5-1a1 1 0 00-1 1v6a1 1 0 102 0V8a1 1 0 00-1-1z" clipRule="evenodd" />
               </svg>
             </button>
@@ -183,7 +181,7 @@ export const TabGroup: React.FC<TabGroupProps> = ({ group }) => {
         </div>
       </div>
       {isExpanded && (
-        <div className="divide-y divide-gray-200">
+        <div className="pl-6 space-y-1 group">
           {group.tabs.map((tab, index) => (
             <DraggableTab
               key={tab.id}
