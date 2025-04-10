@@ -2,6 +2,7 @@ import { storage } from './utils/storage';
 import { nanoid } from '@reduxjs/toolkit';
 import { TabGroup } from './types/tab';
 import { auth as supabaseAuth } from './utils/supabase';
+import { syncService } from './services/syncService';
 
 // 创建新标签组的辅助函数
 const createTabGroup = (tabs: chrome.tabs.Tab[]): TabGroup => {
@@ -53,6 +54,21 @@ const saveTabs = async (tabs: chrome.tabs.Tab[]) => {
     const newGroup = createTabGroup(validTabs);
     const existingGroups = await storage.getGroups();
     await storage.setGroups([newGroup, ...existingGroups]);
+
+    // 如果用户已登录，自动同步到云端
+    try {
+      const { data } = await supabaseAuth.getSession();
+      if (data.session) {
+        console.log('检测到用户已登录，保存后自动同步到云端');
+        // 异步执行同步，不阻塞保存操作
+        syncService.syncAll().catch(err => {
+          console.error('保存后同步失败:', err);
+        });
+      }
+    } catch (syncError) {
+      console.error('检查用户登录状态失败:', syncError);
+      // 继续执行保存操作，不影响用户体验
+    }
 
     // 如果设置为保存后关闭标签页
     if (settings.autoCloseTabsAfterSaving) {

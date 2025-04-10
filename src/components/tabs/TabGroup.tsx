@@ -1,8 +1,9 @@
 import React, { useState } from 'react';
-import { useAppDispatch } from '@/store/hooks';
+import { useAppDispatch, useAppSelector } from '@/store/hooks';
 import { updateGroupName, toggleGroupLock, deleteGroup, updateGroup, moveTab } from '@/store/slices/tabSlice';
 import { DraggableTab } from '@/components/dnd/DraggableTab';
 import { TabGroup as TabGroupType, Tab } from '@/types/tab';
+import { syncService } from '@/services/syncService';
 
 interface TabGroupProps {
   group: TabGroupType;
@@ -45,6 +46,8 @@ export const TabGroup: React.FC<TabGroupProps> = ({ group }) => {
     dispatch(toggleGroupLock(group.id));
   };
 
+  const { isAuthenticated } = useAppSelector(state => state.auth);
+
   const handleOpenAllTabs = async () => {
     // 收集所有标签页的 URL
     const urls = group.tabs.map(tab => tab.url);
@@ -55,6 +58,15 @@ export const TabGroup: React.FC<TabGroupProps> = ({ group }) => {
         // 先更新 Redux 状态和 Chrome 存储
         await dispatch(deleteGroup(group.id)).unwrap();
         console.log(`删除标签组: ${group.id}`);
+
+        // 如果用户已登录，同步删除云端数据
+        if (isAuthenticated) {
+          console.log('用户已登录，同步删除云端数据');
+          // 异步执行同步，不阻塞恢复操作
+          syncService.syncAll().catch(err => {
+            console.error('恢复标签组后同步失败:', err);
+          });
+        }
 
         // 然后发送消息给后台脚本打开标签页
         chrome.runtime.sendMessage({
@@ -83,6 +95,15 @@ export const TabGroup: React.FC<TabGroupProps> = ({ group }) => {
         if (updatedTabs.length === 0) {
           await dispatch(deleteGroup(group.id)).unwrap();
           console.log(`删除标签组: ${group.id}`);
+
+          // 如果用户已登录，同步删除云端数据
+          if (isAuthenticated) {
+            console.log('用户已登录，同步删除云端数据');
+            // 异步执行同步，不阻塞恢复操作
+            syncService.syncAll().catch(err => {
+              console.error('恢复标签组后同步失败:', err);
+            });
+          }
         } else {
           // 否则更新标签组
           const updatedGroup = {
@@ -92,6 +113,15 @@ export const TabGroup: React.FC<TabGroupProps> = ({ group }) => {
           };
           await dispatch(updateGroup(updatedGroup)).unwrap();
           console.log(`更新标签组: ${group.id}, 剩余标签页: ${updatedTabs.length}`);
+
+          // 如果用户已登录，同步更新到云端
+          if (isAuthenticated) {
+            console.log('用户已登录，同步更新到云端');
+            // 异步执行同步，不阻塞恢复操作
+            syncService.syncAll().catch(err => {
+              console.error('恢复标签页后同步失败:', err);
+            });
+          }
         }
 
         // 然后发送消息给后台脚本打开标签页

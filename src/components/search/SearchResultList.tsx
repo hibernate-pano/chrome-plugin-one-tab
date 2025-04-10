@@ -2,6 +2,7 @@ import React from 'react';
 import { useAppDispatch, useAppSelector } from '@/store/hooks';
 import { Tab, TabGroup } from '@/types/tab';
 import { updateGroup, deleteGroup } from '@/store/slices/tabSlice';
+import { syncService } from '@/services/syncService';
 
 interface SearchResultListProps {
   searchQuery: string;
@@ -40,6 +41,8 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({ searchQuery 
     );
   }
 
+  const { isAuthenticated } = useAppSelector(state => state.auth);
+
   const handleOpenTab = async (tab: Tab, group: TabGroup) => {
     // 如果标签组没有锁定，则从标签组中移除该标签页
     if (!group.isLocked) {
@@ -50,6 +53,15 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({ searchQuery 
         if (updatedTabs.length === 0) {
           await dispatch(deleteGroup(group.id)).unwrap();
           console.log(`删除标签组: ${group.id}`);
+
+          // 如果用户已登录，同步删除云端数据
+          if (isAuthenticated) {
+            console.log('用户已登录，同步删除云端数据');
+            // 异步执行同步，不阻塞恢复操作
+            syncService.syncAll().catch(err => {
+              console.error('恢复标签组后同步失败:', err);
+            });
+          }
         } else {
           // 否则更新标签组
           const updatedGroup = {
@@ -59,6 +71,15 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({ searchQuery 
           };
           await dispatch(updateGroup(updatedGroup)).unwrap();
           console.log(`更新标签组: ${group.id}, 剩余标签页: ${updatedTabs.length}`);
+
+          // 如果用户已登录，同步更新到云端
+          if (isAuthenticated) {
+            console.log('用户已登录，同步更新到云端');
+            // 异步执行同步，不阻塞恢复操作
+            syncService.syncAll().catch(err => {
+              console.error('恢复标签页后同步失败:', err);
+            });
+          }
         }
 
         // 然后发送消息给后台脚本打开标签页
