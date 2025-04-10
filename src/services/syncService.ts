@@ -44,18 +44,17 @@ class SyncService {
     try {
       console.log('开始同步数据...');
 
-      // 从云端同步设置
-      console.log('正在从云端同步设置...');
-      await store.dispatch(syncSettingsFromCloud());
-
-      // 从云端同步标签组
-      console.log('正在从云端同步标签组...');
-      await store.dispatch(syncTabsFromCloud());
-
-      // 将本地数据同步到云端
+      // 先将本地数据同步到云端
       console.log('正在将本地数据同步到云端...');
       await store.dispatch(syncTabsToCloud());
       await store.dispatch(syncSettingsToCloud());
+
+      // 然后从云端同步数据（合并而不是替换）
+      console.log('正在从云端同步设置...');
+      await store.dispatch(syncSettingsFromCloud());
+
+      console.log('正在从云端同步标签组...');
+      await store.dispatch(syncTabsFromCloud());
 
       console.log('数据同步完成！');
     } catch (error) {

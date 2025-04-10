@@ -40,7 +40,7 @@ export const UserProfile: React.FC = () => {
             className="px-3 py-1 bg-blue-500 text-white rounded hover:bg-blue-600"
             disabled={syncStatus === 'syncing'}
           >
-            {syncStatus === 'syncing' ? '同步中...' : '立即同步'}
+            {syncStatus === 'syncing' ? '同步中...' : '同步到云端'}
           </button>
           <button
             onClick={handleSignOut}
@@ -62,7 +62,7 @@ export const UserProfile: React.FC = () => {
       )}
       {!lastSyncTime && syncStatus !== 'syncing' && (
         <div className="mt-2 text-sm text-blue-500">
-          点击“立即同步”按钮将您的标签组同步到云端，以便在其他设备上访问。
+          点击“同步到云端”按钮将您的标签组备份到云端，以便在其他设备上访问。您的本地数据不会被删除。
         </div>
       )}
     </div>

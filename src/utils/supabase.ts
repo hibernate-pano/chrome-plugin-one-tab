@@ -53,36 +53,120 @@ export const sync = {
 
     if (!user) throw new Error('用户未登录');
 
+    console.log('准备上传标签组，用户ID:', user.id);
+    console.log('要上传的标签组数量:', groups.length);
+
     // 为每个标签组添加用户ID和设备ID
-    const groupsWithUser = groups.map(group => ({
-      ...group,
-      user_id: user.id,
-      device_id: deviceId,
-      last_sync: new Date().toISOString()
-    }));
+    const currentTime = new Date().toISOString();
+
+    const groupsWithUser = groups.map(group => {
+      // 确保必要字段都有值
+      const createdAt = group.createdAt || currentTime;
+      const updatedAt = group.updatedAt || currentTime;
+
+      return {
+        id: group.id,
+        name: group.name || 'Unnamed Group',
+        created_at: createdAt,
+        updated_at: updatedAt,
+        is_locked: group.isLocked || false,
+        user_id: user.id,
+        device_id: deviceId,
+        last_sync: currentTime
+      };
+    });
+
+    console.log('格式化后的标签组:', groupsWithUser);
 
     // 上传标签组
-    const { data, error } = await supabase
-      .from('tab_groups')
-      .upsert(groupsWithUser, { onConflict: 'id' });
+    let result;
+    try {
+      // 验证数据
+      for (const group of groupsWithUser) {
+        if (!group.id) {
+          console.error('标签组缺少ID:', group);
+          throw new Error('标签组缺少ID');
+        }
+        if (!group.created_at) {
+          console.error('标签组缺少created_at:', group);
+          throw new Error('标签组缺少created_at');
+        }
+        if (!group.updated_at) {
+          console.error('标签组缺少updated_at:', group);
+          throw new Error('标签组缺少updated_at');
+        }
+      }
 
-    if (error) throw error;
+      const { data, error } = await supabase
+        .from('tab_groups')
+        .upsert(groupsWithUser, { onConflict: 'id' });
+
+      result = data;
+
+      if (error) {
+        console.error('上传标签组失败:', error);
+        throw error;
+      }
+    } catch (e) {
+      console.error('上传标签组时发生异常:', e);
+      throw e;
+    }
+
+    console.log('标签组上传成功，开始上传标签');
 
     // 上传每个标签组中的标签
     for (const group of groups) {
+      const currentTime = new Date().toISOString();
+
       const tabsWithGroupId = group.tabs.map(tab => ({
-        ...tab,
+        id: tab.id,
+        url: tab.url || '',
+        title: tab.title || 'Unnamed Tab',
+        favicon: tab.favicon || '',
+        created_at: tab.createdAt || currentTime,
+        last_accessed: tab.lastAccessed || currentTime,
         group_id: group.id
       }));
 
-      const { error: tabError } = await supabase
-        .from('tabs')
-        .upsert(tabsWithGroupId, { onConflict: 'id' });
+      console.log(`为标签组 ${group.id} 上传 ${tabsWithGroupId.length} 个标签`);
 
-      if (tabError) throw tabError;
+      try {
+        // 验证标签数据
+        for (const tab of tabsWithGroupId) {
+          if (!tab.id) {
+            console.error('标签缺少ID:', tab);
+            throw new Error('标签缺少ID');
+          }
+          if (!tab.created_at) {
+            console.error('标签缺少created_at:', tab);
+            throw new Error('标签缺少created_at');
+          }
+          if (!tab.last_accessed) {
+            console.error('标签缺少last_accessed:', tab);
+            throw new Error('标签缺少last_accessed');
+          }
+          if (!tab.group_id) {
+            console.error('标签缺少group_id:', tab);
+            throw new Error('标签缺少group_id');
+          }
+        }
+
+        const { error: tabError } = await supabase
+          .from('tabs')
+          .upsert(tabsWithGroupId, { onConflict: 'id' });
+
+        if (tabError) {
+          console.error('上传标签失败:', tabError);
+          throw tabError;
+        }
+      } catch (e) {
+        console.error(`为标签组 ${group.id} 上传标签时发生异常:`, e);
+        throw e;
+      }
     }
 
-    return data;
+    console.log('所有数据上传成功');
+    return result;
   },
 
   // 下载标签组
@@ -91,13 +175,20 @@ export const sync = {
 
     if (!user) throw new Error('用户未登录');
 
+    console.log('开始下载标签组，用户ID:', user.id);
+
     // 获取用户的所有标签组
     const { data: groups, error } = await supabase
       .from('tab_groups')
       .select('*')
       .eq('user_id', user.id);
 
-    if (error) throw error;
+    if (error) {
+      console.error('获取标签组失败:', error);
+      throw error;
+    }
+
+    console.log(`从云端获取到 ${groups.length} 个标签组`);
 
     // 获取每个标签组的标签
     const tabGroups: TabGroup[] = [];
@@ -108,18 +199,34 @@ export const sync = {
         .select('*')
         .eq('group_id', group.id);
 
-      if (tabError) throw tabError;
+      if (tabError) {
+        console.error(`获取标签组 ${group.id} 的标签失败:`, tabError);
+        throw tabError;
+      }
+
+      console.log(`标签组 ${group.id} 有 ${tabs.length} 个标签`);
+
+      const formattedTabs = tabs.map(tab => ({
+        id: tab.id,
+        url: tab.url,
+        title: tab.title,
+        favicon: tab.favicon,
+        createdAt: tab.created_at,
+        lastAccessed: tab.last_accessed,
+        group_id: tab.group_id
+      }));
 
       tabGroups.push({
         id: group.id,
         name: group.name,
-        tabs: tabs,
+        tabs: formattedTabs,
         createdAt: group.created_at,
         updatedAt: group.updated_at,
         isLocked: group.is_locked
       });
     }
 
+    console.log('标签组下载完成');
     return tabGroups;
   },
 

@@ -132,6 +132,8 @@ chrome.runtime.onInstalled.addListener(async (details) => {
       allowDuplicateTabs: false,
       syncInterval: 1,
       syncEnabled: true,
+      syncStrategy: 'newest',
+      deleteStrategy: 'everywhere',
     });
   }
 });

@@ -1,8 +1,9 @@
 import { createSlice, createAsyncThunk } from '@reduxjs/toolkit';
-import { TabState, TabGroup } from '@/types/tab';
+import { TabState, TabGroup, UserSettings } from '@/types/tab';
 import { storage } from '@/utils/storage';
 import { sync as supabaseSync } from '@/utils/supabase';
 import { nanoid } from '@reduxjs/toolkit';
+import { getGroupsToSync, mergeTabGroups } from '@/utils/syncUtils';
 
 const initialState: TabState = {
   groups: [],
@@ -73,27 +74,114 @@ export const importGroups = createAsyncThunk(
   }
 );
 
+
+
 // 新增：同步标签组到云端
 export const syncTabsToCloud = createAsyncThunk(
   'tabs/syncTabsToCloud',
   async (_, { getState }) => {
-    const { tabs } = getState() as { tabs: TabState };
-    await supabaseSync.uploadTabGroups(tabs.groups);
-    return new Date().toISOString();
+    try {
+      const { tabs } = getState() as { tabs: TabState, settings: UserSettings };
+
+      // 检查是否有标签组需要同步
+      if (!tabs.groups || tabs.groups.length === 0) {
+        console.log('没有标签组需要同步');
+        return new Date().toISOString();
+      }
+
+      // 获取需要同步的标签组
+      const groupsToSync = getGroupsToSync(tabs.groups);
+
+      if (groupsToSync.length === 0) {
+        console.log('没有需要同步的变更');
+        return tabs.lastSyncTime || new Date().toISOString();
+      }
+
+      console.log(`将同步 ${groupsToSync.length} 个标签组到云端`);
+
+      // 确保所有标签组都有必要的字段
+      const currentTime = new Date().toISOString();
+      const validGroups = groupsToSync.map(group => ({
+        ...group,
+        createdAt: group.createdAt || currentTime,
+        updatedAt: group.updatedAt || currentTime,
+        isLocked: typeof group.isLocked === 'boolean' ? group.isLocked : false,
+        lastSyncedAt: currentTime, // 更新同步时间
+        tabs: group.tabs.map(tab => ({
+          ...tab,
+          createdAt: tab.createdAt || currentTime,
+          lastAccessed: tab.lastAccessed || currentTime,
+          lastSyncedAt: currentTime // 更新同步时间
+        }))
+      }));
+
+      await supabaseSync.uploadTabGroups(validGroups);
+
+      // 更新本地标签组的同步状态
+      const updatedGroups = tabs.groups.map(group => {
+        const syncedGroup = validGroups.find(g => g.id === group.id);
+        if (syncedGroup) {
+          return {
+            ...group,
+            lastSyncedAt: currentTime,
+            syncStatus: 'synced' as const
+          };
+        }
+        return group;
+      });
+
+      // 保存更新后的标签组
+      await storage.setGroups(updatedGroups as TabGroup[]);
+
+      return currentTime;
+    } catch (error) {
+      console.error('同步标签组到云端失败:', error);
+      throw error;
+    }
   }
 );
 
 // 新增：从云端同步标签组
 export const syncTabsFromCloud = createAsyncThunk(
   'tabs/syncTabsFromCloud',
-  async () => {
-    const groups = await supabaseSync.downloadTabGroups();
-    // 保存到本地存储
-    await storage.setGroups(groups);
-    return {
-      groups,
-      syncTime: new Date().toISOString(),
-    };
+  async (_, { getState }) => {
+    try {
+      // 获取云端数据
+      const cloudGroups = await supabaseSync.downloadTabGroups();
+
+      // 获取本地数据和设置
+      const { tabs, settings } = getState() as { tabs: TabState, settings: UserSettings };
+      const localGroups = tabs.groups;
+
+      console.log('云端标签组数量:', cloudGroups.length);
+      console.log('本地标签组数量:', localGroups.length);
+
+      // 使用智能合并策略
+      const mergedGroups = mergeTabGroups(localGroups, cloudGroups, settings.syncStrategy);
+
+      console.log('合并后的标签组数量:', mergedGroups.length);
+
+      // 保存到本地存储
+      await storage.setGroups(mergedGroups);
+
+      // 检查是否有冲突需要用户解决
+      const hasConflicts = mergedGroups.some(group => group.syncStatus === 'conflict');
+
+      if (hasConflicts && settings.syncStrategy === 'ask') {
+        console.log('检测到数据冲突，需要用户解决');
+        // 在这里可以触发一个通知或弹窗，提示用户解决冲突
+      }
+
+      const currentTime = new Date().toISOString();
+
+      return {
+        groups: mergedGroups,
+        syncTime: currentTime,
+      };
+    } catch (error) {
+      console.error('从云端同步标签组失败:', error);
+      throw error;
+    }
   }
 );
 

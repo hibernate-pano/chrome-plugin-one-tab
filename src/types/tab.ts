@@ -5,7 +5,12 @@ export interface Tab {
   favicon?: string;
   createdAt: string;
   lastAccessed: string;
-  group_id?: string; // 新增：关联标签组ID
+  group_id?: string; // 关联标签组ID
+
+  // 同步相关字段
+  syncStatus?: 'synced' | 'local-only' | 'remote-only' | 'conflict';
+  lastSyncedAt?: string | null;
+  isDeleted?: boolean; // 软删除标记
 }
 
 export interface TabGroup {
@@ -15,9 +20,14 @@ export interface TabGroup {
   createdAt: string;
   updatedAt: string;
   isLocked: boolean;
-  user_id?: string; // 新增：关联用户ID
-  device_id?: string; // 新增：创建设备ID
-  last_sync?: string; // 新增：最后同步时间
+  user_id?: string; // 关联用户ID
+  device_id?: string; // 创建设备ID
+  last_sync?: string; // 最后同步时间
+
+  // 同步相关字段
+  syncStatus?: 'synced' | 'local-only' | 'remote-only' | 'conflict';
+  lastSyncedAt?: string | null;
+  isDeleted?: boolean; // 软删除标记
 }
 
 export interface TabState {
@@ -39,8 +49,12 @@ export interface UserSettings {
   showTabCount: boolean;
   confirmBeforeDelete: boolean;
   allowDuplicateTabs: boolean;
-  syncInterval: number; // 新增：同步间隔（分钟）
-  syncEnabled: boolean; // 新增：是否启用同步
+  syncInterval: number; // 同步间隔（分钟）
+  syncEnabled: boolean; // 是否启用同步
+
+  // 新增同步策略设置
+  syncStrategy: 'newest' | 'local' | 'remote' | 'ask'; // 冲突解决策略
+  deleteStrategy: 'everywhere' | 'local-only'; // 删除策略
 }
 
 export interface User {

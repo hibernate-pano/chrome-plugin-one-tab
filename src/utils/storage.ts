@@ -17,6 +17,8 @@ export const DEFAULT_SETTINGS: UserSettings = {
   allowDuplicateTabs: false, // 默认不允许重复标签页
   syncInterval: 1, // 默认1分钟同步一次
   syncEnabled: true, // 默认启用同步
+  syncStrategy: 'newest', // 默认使用最新版本
+  deleteStrategy: 'everywhere', // 默认在所有设备上删除
 };
 
 // 导出数据的格式
