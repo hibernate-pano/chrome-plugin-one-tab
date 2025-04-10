@@ -1,13 +1,18 @@
 {
   "manifest_version": 3,
   "name": "OneTab Plus",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "A better OneTab extension for Chrome",
   "permissions": [
     "tabs",
     "storage",
     "unlimitedStorage",
-    "notifications"
+    "notifications",
+    "identity",
+    "alarms"
+  ],
+  "host_permissions": [
+    "https://*.supabase.co/*"
   ],
   "action": {
     "default_popup": "popup.html",

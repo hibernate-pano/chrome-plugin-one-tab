@@ -130,6 +130,8 @@ chrome.runtime.onInstalled.addListener(async (details) => {
       showTabCount: true,
       confirmBeforeDelete: true,
       allowDuplicateTabs: false,
+      syncInterval: 1,
+      syncEnabled: true,
     });
   }
 });

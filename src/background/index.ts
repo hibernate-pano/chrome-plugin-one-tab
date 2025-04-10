@@ -1,5 +1,17 @@
+import { syncService } from '@/services/syncService';
+
+// 初始化同步服务
+chrome.runtime.onStartup.addListener(() => {
+  syncService.initialize();
+});
+
+// 扩展安装或更新时初始化
+chrome.runtime.onInstalled.addListener(() => {
+  syncService.initialize();
+});
+
 // 监听消息
-chrome.runtime.onMessage.addListener((message) => {
+chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (message.type === 'SAVE_ALL_TABS') {
     const { tabs } = message.data;
     saveAllTabs(tabs);
@@ -10,8 +22,25 @@ chrome.runtime.onMessage.addListener((message) => {
     openTabWithSingleInstance(message.data.url);
   } else if (message.type === 'OPEN_TABS') {
     openTabsWithSingleInstance(message.data.urls);
+  } else if (message.action === 'sync') {
+    syncService.syncAll()
+      .then(() => sendResponse({ success: true }))
+      .catch(error => sendResponse({ success: false, error: error.message }));
+    return true; // 异步响应
+  } else if (message.action === 'updateSyncInterval') {
+    syncService.updateSyncInterval();
+    sendResponse({ success: true });
   }
   return true;
+});
+
+// 使用Chrome的alarms API进行定时同步
+chrome.alarms.create('syncAlarm', { periodInMinutes: 1 });
+
+chrome.alarms.onAlarm.addListener((alarm) => {
+  if (alarm.name === 'syncAlarm') {
+    syncService.syncAll();
+  }
 });
 
 // 打开单个标签页，保持只有一个 OneTabPlus 标签页

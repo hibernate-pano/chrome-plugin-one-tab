@@ -1,6 +1,7 @@
 import { createSlice, createAsyncThunk } from '@reduxjs/toolkit';
 import { TabState, TabGroup } from '@/types/tab';
 import { storage } from '@/utils/storage';
+import { sync as supabaseSync } from '@/utils/supabase';
 import { nanoid } from '@reduxjs/toolkit';
 
 const initialState: TabState = {
@@ -9,6 +10,8 @@ const initialState: TabState = {
   isLoading: false,
   error: null,
   searchQuery: '',
+  syncStatus: 'idle',
+  lastSyncTime: null,
 };
 
 export const loadGroups = createAsyncThunk(
@@ -70,6 +73,30 @@ export const importGroups = createAsyncThunk(
   }
 );
 
+// 新增：同步标签组到云端
+export const syncTabsToCloud = createAsyncThunk(
+  'tabs/syncTabsToCloud',
+  async (_, { getState }) => {
+    const { tabs } = getState() as { tabs: TabState };
+    await supabaseSync.uploadTabGroups(tabs.groups);
+    return new Date().toISOString();
+  }
+);
+
+// 新增：从云端同步标签组
+export const syncTabsFromCloud = createAsyncThunk(
+  'tabs/syncTabsFromCloud',
+  async () => {
+    const groups = await supabaseSync.downloadTabGroups();
+    // 保存到本地存储
+    await storage.setGroups(groups);
+    return {
+      groups,
+      syncTime: new Date().toISOString(),
+    };
+  }
+);
+
 export const tabSlice = createSlice({
   name: 'tabs',
   initialState,
@@ -94,6 +121,10 @@ export const tabSlice = createSlice({
     },
     setSearchQuery: (state, action) => {
       state.searchQuery = action.payload;
+    },
+    // 新增：设置同步状态
+    setSyncStatus: (state, action) => {
+      state.syncStatus = action.payload;
     },
     moveGroup: (state, action) => {
       const { dragIndex, hoverIndex } = action.payload;
@@ -181,6 +212,36 @@ export const tabSlice = createSlice({
       .addCase(importGroups.rejected, (state, action) => {
         state.isLoading = false;
         state.error = action.error.message || '导入失败';
+      })
+
+      // 同步到云端
+      .addCase(syncTabsToCloud.pending, (state) => {
+        state.syncStatus = 'syncing';
+      })
+      .addCase(syncTabsToCloud.fulfilled, (state, action) => {
+        state.syncStatus = 'success';
+        state.lastSyncTime = action.payload;
+      })
+      .addCase(syncTabsToCloud.rejected, (state, action) => {
+        state.syncStatus = 'error';
+        state.error = action.error.message || '同步到云端失败';
+      })
+
+      // 从云端同步
+      .addCase(syncTabsFromCloud.pending, (state) => {
+        state.syncStatus = 'syncing';
+        state.isLoading = true;
+      })
+      .addCase(syncTabsFromCloud.fulfilled, (state, action) => {
+        state.syncStatus = 'success';
+        state.isLoading = false;
+        state.groups = action.payload.groups;
+        state.lastSyncTime = action.payload.syncTime;
+      })
+      .addCase(syncTabsFromCloud.rejected, (state, action) => {
+        state.syncStatus = 'error';
+        state.isLoading = false;
+        state.error = action.error.message || '从云端同步失败';
       });
   },
 });
@@ -205,6 +266,7 @@ export const {
   updateGroupName,
   toggleGroupLock,
   setSearchQuery,
+  setSyncStatus,
   moveGroup,
   moveTab
 } = tabSlice.actions;

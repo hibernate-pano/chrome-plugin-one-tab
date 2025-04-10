@@ -15,6 +15,8 @@ export const DEFAULT_SETTINGS: UserSettings = {
   autoCloseTabsAfterSaving: true,
   confirmBeforeDelete: true,
   allowDuplicateTabs: false, // 默认不允许重复标签页
+  syncInterval: 1, // 默认1分钟同步一次
+  syncEnabled: true, // 默认启用同步
 };
 
 // 导出数据的格式

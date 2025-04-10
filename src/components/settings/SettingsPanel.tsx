@@ -8,13 +8,15 @@ import {
   setAutoSaveInterval,
   setGroupNameTemplate,
 } from '@/store/slices/settingsSlice';
+import { SyncSettings } from './SyncSettings';
 
 export const SettingsPanel: React.FC = () => {
   const dispatch = useAppDispatch();
   const settings = useAppSelector(state => state.settings);
 
   return (
-    <div className="space-y-6">
+    <div className="p-4 space-y-6">
+      <h2 className="text-xl font-bold mb-4">设置</h2>
       {/* 自动保存设置 */}
       <div className="space-y-2">
         <h3 className="text-lg font-medium">自动保存设置</h3>
@@ -136,6 +138,12 @@ export const SettingsPanel: React.FC = () => {
             <span>删除前确认</span>
           </label>
         </div>
+      </div>
+
+      {/* 新增：同步设置 */}
+      <div className="border-t pt-4">
+        <h3 className="text-lg font-semibold mb-2">数据同步</h3>
+        <SyncSettings />
       </div>
     </div>
   );
