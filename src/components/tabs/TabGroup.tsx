@@ -140,8 +140,7 @@ export const TabGroup: React.FC<TabGroupProps> = ({ group }) => {
             />
           ) : (
             <h3
-              className="text-base font-medium cursor-pointer text-gray-900 transition-material"
-              onDoubleClick={() => !group.isLocked && setIsEditing(true)}
+              className="text-base font-medium text-gray-900 transition-material"
             >
               {group.name}
             </h3>
@@ -157,6 +156,16 @@ export const TabGroup: React.FC<TabGroupProps> = ({ group }) => {
             title="打开所有标签页"
           >
             恢复全部
+          </button>
+          <button
+            onClick={() => !group.isLocked && setIsEditing(true)}
+            className={`p-1 rounded hover:bg-gray-100 transition-material ${group.isLocked ? 'text-gray-300 cursor-not-allowed' : 'text-gray-500 hover:text-primary-600'}`}
+            title={group.isLocked ? '锁定的标签组不能重命名' : '重命名标签组'}
+            disabled={group.isLocked}
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
+              <path d="M13.586 3.586a2 2 0 112.828 2.828l-.793.793-2.828-2.828.793-.793zM11.379 5.793L3 14.172V17h2.828l8.38-8.379-2.83-2.828z" />
+            </svg>
           </button>
           <button
             onClick={handleToggleLock}
