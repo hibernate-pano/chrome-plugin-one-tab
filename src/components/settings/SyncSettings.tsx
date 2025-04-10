@@ -50,9 +50,9 @@ export const SyncSettings: React.FC = () => {
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <div>
-          <h3 className="font-medium">启用数据同步</h3>
+          <h3 className="font-medium">启用数据自动同步</h3>
           <p className="text-sm text-gray-500">
-            在多台设备间同步您的标签组
+            在多台设备间自动同步您的标签组
           </p>
           <p className="text-xs text-blue-500 mt-1">
             开启后，您的标签组将自动同步到云端，并可在其他设备上访问
