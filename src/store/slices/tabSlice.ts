@@ -36,15 +36,43 @@ export const saveGroup = createAsyncThunk(
 
 export const updateGroup = createAsyncThunk(
   'tabs/updateGroup',
-  async (group: TabGroup) => {
+  async (group: TabGroup, { getState }) => {
+    const { settings } = getState() as { settings: UserSettings };
     const groups = await storage.getGroups();
+
+    // 找到原来的标签组
+    const originalGroup = groups.find(g => g.id === group.id);
+
+    if (originalGroup) {
+      // 找出被删除的标签页
+      const currentTabIds = new Set(group.tabs.map(tab => tab.id));
+
+      // 原来有但现在没有的标签页就是被删除的
+      const deletedTabs = originalGroup.tabs.filter(tab => !currentTabIds.has(tab.id));
+
+      // 如果有被删除的标签页，则将它们标记为已删除并保存到 deletedTabs 存储
+      if (deletedTabs.length > 0 && settings.deleteStrategy === 'everywhere') {
+        // 标记标签页为已删除
+        const markedTabs = deletedTabs.map(tab => markTabForDeletion(tab, settings.deleteStrategy));
+
+        // 获取已删除的标签页
+        const deletedTabsStorage = await storage.getDeletedTabs();
+
+        // 将新删除的标签页添加到存储中
+        await storage.setDeletedTabs([...deletedTabsStorage, ...markedTabs]);
+
+        console.log(`标记了 ${markedTabs.length} 个标签页为已删除`);
+      }
+    }
+
+    // 更新标签组
     const updatedGroups = groups.map(g => g.id === group.id ? group : g);
     await storage.setGroups(updatedGroups);
     return group;
   }
 );
 
-import { markGroupForDeletion } from '@/utils/syncUtils';
+import { markGroupForDeletion, markTabForDeletion } from '@/utils/syncUtils';
 
 export const deleteGroup = createAsyncThunk(
   'tabs/deleteGroup',
@@ -135,6 +163,10 @@ export const syncTabsToCloud = createAsyncThunk<
       const deletedGroups = await storage.getDeletedGroups();
       console.log(`找到 ${deletedGroups.length} 个已删除的标签组需要同步`);
 
+      // 获取已删除的标签页
+      const deletedTabs = await storage.getDeletedTabs();
+      console.log(`找到 ${deletedTabs.length} 个已删除的标签页需要同步`);
+
       // 合并正常标签组和已删除标签组
       const allGroupsToSync = [...groupsToSync, ...deletedGroups];
 
@@ -146,7 +178,7 @@ export const syncTabsToCloud = createAsyncThunk<
         };
       }
 
-      console.log(`将同步 ${allGroupsToSync.length} 个标签组到云端（包含 ${deletedGroups.length} 个已删除的标签组）`);
+      console.log(`将同步 ${allGroupsToSync.length} 个标签组到云端（包含 ${deletedGroups.length} 个已删除的标签组和 ${deletedTabs.length} 个已删除的标签页）`);
 
       // 确保所有标签组都有必要的字段
       const currentTime = new Date().toISOString();
@@ -183,19 +215,33 @@ export const syncTabsToCloud = createAsyncThunk<
       // 保存更新后的标签组
       await storage.setGroups(updatedGroups as TabGroup[]);
 
-      // 清理已同步的已删除标签组
-      if (deletedGroups.length > 0) {
+      // 清理已同步的已删除数据
+      if (deletedGroups.length > 0 || deletedTabs.length > 0) {
         // 将已删除的标签组标记为已同步
-        const updatedDeletedGroups = deletedGroups.map(group => ({
-          ...group,
-          lastSyncedAt: currentTime,
-          syncStatus: 'synced' as const
-        }));
+        if (deletedGroups.length > 0) {
+          const updatedDeletedGroups = deletedGroups.map(group => ({
+            ...group,
+            lastSyncedAt: currentTime,
+            syncStatus: 'synced' as const
+          }));
 
-        // 保存更新后的已删除标签组
-        await storage.setDeletedGroups(updatedDeletedGroups);
+          // 保存更新后的已删除标签组
+          await storage.setDeletedGroups(updatedDeletedGroups);
+        }
 
-        // 清理过期的已删除标签组
+        // 将已删除的标签页标记为已同步
+        if (deletedTabs.length > 0) {
+          const updatedDeletedTabs = deletedTabs.map(tab => ({
+            ...tab,
+            lastSyncedAt: currentTime,
+            syncStatus: 'synced' as const
+          }));
+
+          // 保存更新后的已删除标签页
+          await storage.setDeletedTabs(updatedDeletedTabs);
+        }
+
+        // 清理过期的已删除数据
         await storage.cleanupDeletedGroups();
       }
 

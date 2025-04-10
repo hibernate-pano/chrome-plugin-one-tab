@@ -2,7 +2,6 @@ import React from 'react';
 import { useAppDispatch, useAppSelector } from '@/store/hooks';
 import { Tab, TabGroup } from '@/types/tab';
 import { updateGroup, deleteGroup } from '@/store/slices/tabSlice';
-import { syncService } from '@/services/syncService';
 
 interface SearchResultListProps {
   searchQuery: string;
@@ -41,29 +40,19 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({ searchQuery 
     );
   }
 
-  const { isAuthenticated } = useAppSelector(state => state.auth);
+  // 不再需要获取用户状态和设置
 
   const handleOpenTab = async (tab: Tab, group: TabGroup) => {
     // 如果标签组没有锁定，则从标签组中移除该标签页
     if (!group.isLocked) {
-      const updatedTabs = group.tabs.filter(t => t.id !== tab.id);
-
       try {
-        // 先更新 Redux 状态和 Chrome 存储
-        if (updatedTabs.length === 0) {
+        // 如果标签组只有一个标签页，则删除整个标签组
+        if (group.tabs.length === 1) {
           await dispatch(deleteGroup(group.id)).unwrap();
           console.log(`删除标签组: ${group.id}`);
-
-          // 如果用户已登录，同步删除云端数据
-          if (isAuthenticated) {
-            console.log('用户已登录，同步删除云端数据');
-            // 异步执行同步，不阻塞恢复操作
-            syncService.syncAll().catch(err => {
-              console.error('恢复标签组后同步失败:', err);
-            });
-          }
         } else {
-          // 否则更新标签组
+          // 否则更新标签组，移除该标签页
+          const updatedTabs = group.tabs.filter(t => t.id !== tab.id);
           const updatedGroup = {
             ...group,
             tabs: updatedTabs,
@@ -71,15 +60,6 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({ searchQuery 
           };
           await dispatch(updateGroup(updatedGroup)).unwrap();
           console.log(`更新标签组: ${group.id}, 剩余标签页: ${updatedTabs.length}`);
-
-          // 如果用户已登录，同步更新到云端
-          if (isAuthenticated) {
-            console.log('用户已登录，同步更新到云端');
-            // 异步执行同步，不阻塞恢复操作
-            syncService.syncAll().catch(err => {
-              console.error('恢复标签页后同步失败:', err);
-            });
-          }
         }
 
         // 然后发送消息给后台脚本打开标签页
