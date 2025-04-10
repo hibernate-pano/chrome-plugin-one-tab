@@ -1,5 +1,5 @@
 import { createClient } from '@supabase/supabase-js';
-import { TabGroup, UserSettings } from '@/types/tab';
+import { TabGroup, UserSettings, Tab } from '@/types/tab';
 import { compressTabGroups, decompressTabGroups, formatCompressionStats } from './compressionUtils';
 
 const SUPABASE_URL = 'https://reccclnaxadbuccsrwmg.supabase.co';
@@ -48,14 +48,50 @@ export const auth = {
 // 数据同步相关方法
 export const sync = {
   // 上传标签组
-  async uploadTabGroups(groups: TabGroup[]) {
+  async uploadTabGroups(groups: TabGroup[], deletedGroups: TabGroup[] = [], deletedTabs: Tab[] = []) {
     const deviceId = await getDeviceId();
     const { data: { user } } = await supabase.auth.getUser();
 
     if (!user) throw new Error('用户未登录');
 
     console.log('准备上传标签组，用户ID:', user.id);
-    console.log('要上传的标签组数量:', groups.length);
+    console.log(`要上传的数据: ${groups.length} 个标签组, ${deletedGroups.length} 个已删除标签组, ${deletedTabs.length} 个已删除标签页`);
+
+    // 处理已删除的标签组
+    if (deletedGroups.length > 0) {
+      console.log('开始处理已删除的标签组...');
+      const groupIds = deletedGroups.map(group => group.id);
+
+      // 从云端删除标签组
+      const { error: deleteGroupError } = await supabase
+        .from('tab_groups')
+        .delete()
+        .in('id', groupIds);
+
+      if (deleteGroupError) {
+        console.error('删除标签组失败:', deleteGroupError);
+      } else {
+        console.log(`成功从云端删除 ${groupIds.length} 个标签组`);
+      }
+    }
+
+    // 处理已删除的标签页
+    if (deletedTabs.length > 0) {
+      console.log('开始处理已删除的标签页...');
+      const tabIds = deletedTabs.map(tab => tab.id);
+
+      // 从云端删除标签页
+      const { error: deleteTabError } = await supabase
+        .from('tabs')
+        .delete()
+        .in('id', tabIds);
+
+      if (deleteTabError) {
+        console.error('删除标签页失败:', deleteTabError);
+      } else {
+        console.log(`成功从云端删除 ${tabIds.length} 个标签页`);
+      }
+    }
 
     // 为每个标签组添加用户ID和设备ID
     const currentTime = new Date().toISOString();

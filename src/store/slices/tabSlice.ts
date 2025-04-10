@@ -197,7 +197,7 @@ export const syncTabsToCloud = createAsyncThunk<
       }));
 
       // 上传标签组并获取压缩统计信息
-      const result = await supabaseSync.uploadTabGroups(validGroups);
+      const result = await supabaseSync.uploadTabGroups(validGroups, deletedGroups, deletedTabs);
 
       // 更新本地标签组的同步状态
       const updatedGroups = tabs.groups.map(group => {
