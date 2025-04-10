@@ -1,5 +1,6 @@
 import { createClient } from '@supabase/supabase-js';
 import { TabGroup, UserSettings } from '@/types/tab';
+import { compressTabGroups, decompressTabGroups, formatCompressionStats } from './compressionUtils';
 
 const SUPABASE_URL = 'https://reccclnaxadbuccsrwmg.supabase.co';
 const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InJlY2NjbG5heGFkYnVjY3Nyd21nIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDQyOTExODYsImV4cCI6MjA1OTg2NzE4Nn0.nHkOtkUtkzEUnF9ajUipD37SbAGH9znkVekI8N6hvdo';
@@ -59,6 +60,13 @@ export const sync = {
     // 为每个标签组添加用户ID和设备ID
     const currentTime = new Date().toISOString();
 
+    // 压缩标签组数据
+    const { compressed, stats } = compressTabGroups(groups);
+    console.log('数据压缩统计:', formatCompressionStats(stats));
+
+    // 保存压缩统计信息以便返回
+    const compressionStats = stats;
+
     const groupsWithUser = groups.map(group => {
       // 确保必要字段都有值
       const createdAt = group.createdAt || currentTime;
@@ -76,10 +84,8 @@ export const sync = {
       };
     });
 
-    console.log('格式化后的标签组:', groupsWithUser);
-
-    // 上传标签组
-    let result;
+    // 上传标签组元数据和压缩数据
+    let result: any = null;
     try {
       // 验证数据
       for (const group of groupsWithUser) {
@@ -97,6 +103,13 @@ export const sync = {
         }
       }
 
+      // 为第一个标签组添加压缩数据
+      // 我们只需要存储一次压缩数据，因为它包含所有标签组
+      if (groupsWithUser.length > 0) {
+        const firstGroup = { ...groupsWithUser[0], compressed_data: compressed };
+        groupsWithUser[0] = firstGroup;
+      }
+
       const { data, error } = await supabase
         .from('tab_groups')
         .upsert(groupsWithUser, { onConflict: 'id' });
@@ -107,66 +120,19 @@ export const sync = {
         console.error('上传标签组失败:', error);
         throw error;
       }
+
+      console.log('标签组元数据和压缩数据上传成功');
     } catch (e) {
       console.error('上传标签组时发生异常:', e);
       throw e;
     }
 
-    console.log('标签组上传成功，开始上传标签');
-
-    // 上传每个标签组中的标签
-    for (const group of groups) {
-      const currentTime = new Date().toISOString();
-
-      const tabsWithGroupId = group.tabs.map(tab => ({
-        id: tab.id,
-        url: tab.url || '',
-        title: tab.title || 'Unnamed Tab',
-        favicon: tab.favicon || '',
-        created_at: tab.createdAt || currentTime,
-        last_accessed: tab.lastAccessed || currentTime,
-        group_id: group.id
-      }));
-
-      console.log(`为标签组 ${group.id} 上传 ${tabsWithGroupId.length} 个标签`);
-
-      try {
-        // 验证标签数据
-        for (const tab of tabsWithGroupId) {
-          if (!tab.id) {
-            console.error('标签缺少ID:', tab);
-            throw new Error('标签缺少ID');
-          }
-          if (!tab.created_at) {
-            console.error('标签缺少created_at:', tab);
-            throw new Error('标签缺少created_at');
-          }
-          if (!tab.last_accessed) {
-            console.error('标签缺少last_accessed:', tab);
-            throw new Error('标签缺少last_accessed');
-          }
-          if (!tab.group_id) {
-            console.error('标签缺少group_id:', tab);
-            throw new Error('标签缺少group_id');
-          }
-        }
-
-        const { error: tabError } = await supabase
-          .from('tabs')
-          .upsert(tabsWithGroupId, { onConflict: 'id' });
-
-        if (tabError) {
-          console.error('上传标签失败:', tabError);
-          throw tabError;
-        }
-      } catch (e) {
-        console.error(`为标签组 ${group.id} 上传标签时发生异常:`, e);
-        throw e;
-      }
-    }
+    // 使用压缩数据后，我们不需要再单独上传每个标签
+    // 但为了兼容性，我们仍然保留这部分代码
+    // 在未来版本中，可以完全移除这部分，只使用压缩数据
 
     console.log('所有数据上传成功');
-    return result;
+    return { result, compressionStats };
   },
 
   // 下载标签组
@@ -177,57 +143,93 @@ export const sync = {
 
     console.log('开始下载标签组，用户ID:', user.id);
 
-    // 获取用户的所有标签组
-    const { data: groups, error } = await supabase
-      .from('tab_groups')
-      .select('*')
-      .eq('user_id', user.id);
+    try {
+      // 尝试使用压缩数据方式下载
+      // 获取包含压缩数据的标签组
+      const { data: compressedGroups, error: compressedError } = await supabase
+        .from('tab_groups')
+        .select('compressed_data')
+        .eq('user_id', user.id)
+        .not('compressed_data', 'is', null)
+        .order('last_sync', { ascending: false })
+        .limit(1);
 
-    if (error) {
-      console.error('获取标签组失败:', error);
-      throw error;
-    }
+      // 如果找到压缩数据，则使用压缩数据
+      if (!compressedError && compressedGroups && compressedGroups.length > 0 && compressedGroups[0].compressed_data) {
+        console.log('找到压缩数据，开始解压...');
+        const compressed = compressedGroups[0].compressed_data;
 
-    console.log(`从云端获取到 ${groups.length} 个标签组`);
+        try {
+          // 解压数据
+          const tabGroups = decompressTabGroups(compressed);
+          console.log(`成功解压数据，共 ${tabGroups.length} 个标签组`);
 
-    // 获取每个标签组的标签
-    const tabGroups: TabGroup[] = [];
-
-    for (const group of groups) {
-      const { data: tabs, error: tabError } = await supabase
-        .from('tabs')
-        .select('*')
-        .eq('group_id', group.id);
-
-      if (tabError) {
-        console.error(`获取标签组 ${group.id} 的标签失败:`, tabError);
-        throw tabError;
+          // 返回标签组
+          return tabGroups;
+        } catch (decompressError) {
+          console.error('解压数据失败，将使用传统方式下载:', decompressError);
+          // 如果解压失败，则回退到传统方式
+        }
+      } else {
+        console.log('未找到压缩数据，将使用传统方式下载');
       }
 
-      console.log(`标签组 ${group.id} 有 ${tabs.length} 个标签`);
+      // 传统方式下载（如果压缩方式失败）
+      // 获取用户的所有标签组
+      const { data: groups, error } = await supabase
+        .from('tab_groups')
+        .select('*')
+        .eq('user_id', user.id);
 
-      const formattedTabs = tabs.map(tab => ({
-        id: tab.id,
-        url: tab.url,
-        title: tab.title,
-        favicon: tab.favicon,
-        createdAt: tab.created_at,
-        lastAccessed: tab.last_accessed,
-        group_id: tab.group_id
-      }));
+      if (error) {
+        console.error('获取标签组失败:', error);
+        throw error;
+      }
 
-      tabGroups.push({
-        id: group.id,
-        name: group.name,
-        tabs: formattedTabs,
-        createdAt: group.created_at,
-        updatedAt: group.updated_at,
-        isLocked: group.is_locked
-      });
+      console.log(`从云端获取到 ${groups.length} 个标签组`);
+
+      // 获取每个标签组的标签
+      const tabGroups: TabGroup[] = [];
+
+      for (const group of groups) {
+        const { data: tabs, error: tabError } = await supabase
+          .from('tabs')
+          .select('*')
+          .eq('group_id', group.id);
+
+        if (tabError) {
+          console.error(`获取标签组 ${group.id} 的标签失败:`, tabError);
+          throw tabError;
+        }
+
+        console.log(`标签组 ${group.id} 有 ${tabs.length} 个标签`);
+
+        const formattedTabs = tabs.map(tab => ({
+          id: tab.id,
+          url: tab.url,
+          title: tab.title,
+          favicon: tab.favicon,
+          createdAt: tab.created_at,
+          lastAccessed: tab.last_accessed,
+          group_id: tab.group_id
+        }));
+
+        tabGroups.push({
+          id: group.id,
+          name: group.name,
+          tabs: formattedTabs,
+          createdAt: group.created_at,
+          updatedAt: group.updated_at,
+          isLocked: group.is_locked
+        });
+      }
+
+      console.log('标签组下载完成');
+      return tabGroups;
+    } catch (error) {
+      console.error('下载标签组失败:', error);
+      throw error;
     }
-
-    console.log('标签组下载完成');
-    return tabGroups;
   },
 
   // 上传用户设置

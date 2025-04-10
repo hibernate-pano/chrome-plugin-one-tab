@@ -2,11 +2,12 @@ import React from 'react';
 import { useAppDispatch, useAppSelector } from '@/store/hooks';
 import { signOut } from '@/store/slices/authSlice';
 import { syncTabsToCloud, syncTabsFromCloud } from '@/store/slices/tabSlice';
+import { SyncStatus } from '../sync/SyncStatus';
 
 export const UserProfile: React.FC = () => {
   const dispatch = useAppDispatch();
   const { user } = useAppSelector(state => state.auth);
-  const { syncStatus, lastSyncTime } = useAppSelector(state => state.tabs);
+  const { syncStatus, lastSyncTime, compressionStats } = useAppSelector(state => state.tabs);
 
   const handleSignOut = async () => {
     await dispatch(signOut());
@@ -50,16 +51,16 @@ export const UserProfile: React.FC = () => {
           </button>
         </div>
       </div>
-      {syncStatus === 'success' && lastSyncTime && (
-        <div className="mt-2 text-sm text-green-500">
-          数据同步成功！您的标签组已在云端备份。
-        </div>
-      )}
+      <div className="mt-2">
+        <SyncStatus compressionStats={compressionStats} />
+      </div>
+
       {syncStatus === 'error' && (
         <div className="mt-2 text-sm text-red-500">
           同步失败，请重试
         </div>
       )}
+
       {!lastSyncTime && syncStatus !== 'syncing' && (
         <div className="mt-2 text-sm text-blue-500">
           点击“同步到云端”按钮将您的标签组备份到云端，以便在其他设备上访问。您的本地数据不会被删除。

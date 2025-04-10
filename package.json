@@ -25,6 +25,7 @@
     "@supabase/supabase-js": "^2.49.4",
     "@types/lodash": "^4.17.16",
     "lodash": "^4.17.21",
+    "lz-string": "^1.5.0",
     "react": "^18.2.0",
     "react-dnd": "^16.0.1",
     "react-dnd-html5-backend": "^16.0.1",
@@ -34,6 +35,7 @@
   "devDependencies": {
     "@crxjs/vite-plugin": "^2.0.0-beta.21",
     "@types/chrome": "^0.0.262",
+    "@types/lz-string": "^1.5.0",
     "@types/node": "^22.14.0",
     "@types/react": "^18.2.64",
     "@types/react-dom": "^18.2.21",

@@ -13,6 +13,7 @@ const initialState: TabState = {
   searchQuery: '',
   syncStatus: 'idle',
   lastSyncTime: null,
+  compressionStats: null,
 };
 
 export const loadGroups = createAsyncThunk(
@@ -77,7 +78,11 @@ export const importGroups = createAsyncThunk(
 
 
 // 新增：同步标签组到云端
-export const syncTabsToCloud = createAsyncThunk(
+export const syncTabsToCloud = createAsyncThunk<
+  { syncTime: string; stats: any | null },
+  void,
+  { state: { tabs: TabState; settings: UserSettings } }
+>(
   'tabs/syncTabsToCloud',
   async (_, { getState }) => {
     try {
@@ -86,7 +91,10 @@ export const syncTabsToCloud = createAsyncThunk(
       // 检查是否有标签组需要同步
       if (!tabs.groups || tabs.groups.length === 0) {
         console.log('没有标签组需要同步');
-        return new Date().toISOString();
+        return {
+          syncTime: new Date().toISOString(),
+          stats: null
+        };
       }
 
       // 获取需要同步的标签组
@@ -94,7 +102,10 @@ export const syncTabsToCloud = createAsyncThunk(
 
       if (groupsToSync.length === 0) {
         console.log('没有需要同步的变更');
-        return tabs.lastSyncTime || new Date().toISOString();
+        return {
+          syncTime: tabs.lastSyncTime || new Date().toISOString(),
+          stats: tabs.compressionStats
+        };
       }
 
       console.log(`将同步 ${groupsToSync.length} 个标签组到云端`);
@@ -115,7 +126,8 @@ export const syncTabsToCloud = createAsyncThunk(
         }))
       }));
 
-      await supabaseSync.uploadTabGroups(validGroups);
+      // 上传标签组并获取压缩统计信息
+      const result = await supabaseSync.uploadTabGroups(validGroups);
 
       // 更新本地标签组的同步状态
       const updatedGroups = tabs.groups.map(group => {
@@ -133,7 +145,10 @@ export const syncTabsToCloud = createAsyncThunk(
       // 保存更新后的标签组
       await storage.setGroups(updatedGroups as TabGroup[]);
 
-      return currentTime;
+      return {
+        syncTime: currentTime,
+        stats: result?.compressionStats || null
+      };
     } catch (error) {
       console.error('同步标签组到云端失败:', error);
       throw error;
@@ -147,7 +162,11 @@ export const syncTabsFromCloud = createAsyncThunk(
   async (_, { getState }) => {
     try {
       // 获取云端数据
-      const cloudGroups = await supabaseSync.downloadTabGroups();
+      const result = await supabaseSync.downloadTabGroups();
+
+      // 处理返回结果
+      const cloudGroups = result as TabGroup[];
+      const compressionStats = null; // 我们简化了返回结构，不再使用复杂的对象
 
       // 获取本地数据和设置
       const { tabs, settings } = getState() as { tabs: TabState, settings: UserSettings };
@@ -177,6 +196,7 @@ export const syncTabsFromCloud = createAsyncThunk(
       return {
         groups: mergedGroups,
         syncTime: currentTime,
+        stats: compressionStats
       };
     } catch (error) {
       console.error('从云端同步标签组失败:', error);
@@ -308,7 +328,8 @@ export const tabSlice = createSlice({
       })
       .addCase(syncTabsToCloud.fulfilled, (state, action) => {
         state.syncStatus = 'success';
-        state.lastSyncTime = action.payload;
+        state.lastSyncTime = action.payload.syncTime;
+        state.compressionStats = action.payload.stats || null;
       })
       .addCase(syncTabsToCloud.rejected, (state, action) => {
         state.syncStatus = 'error';
@@ -325,6 +346,7 @@ export const tabSlice = createSlice({
         state.isLoading = false;
         state.groups = action.payload.groups;
         state.lastSyncTime = action.payload.syncTime;
+        state.compressionStats = action.payload.stats || null;
       })
       .addCase(syncTabsFromCloud.rejected, (state, action) => {
         state.syncStatus = 'error';

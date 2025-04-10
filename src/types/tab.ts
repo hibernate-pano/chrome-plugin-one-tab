@@ -36,8 +36,9 @@ export interface TabState {
   isLoading: boolean;
   error: string | null;
   searchQuery: string;
-  syncStatus: 'idle' | 'syncing' | 'success' | 'error'; // 新增：同步状态
-  lastSyncTime: string | null; // 新增：最后同步时间
+  syncStatus: 'idle' | 'syncing' | 'success' | 'error'; // 同步状态
+  lastSyncTime: string | null; // 最后同步时间
+  compressionStats: any | null; // 压缩统计信息
 }
 
 export interface UserSettings {
