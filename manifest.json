@@ -12,7 +12,8 @@
     "alarms"
   ],
   "host_permissions": [
-    "https://*.supabase.co/*"
+    "https://*.supabase.co/*",
+    "https://cdn.jsdelivr.net/*"
   ],
   "action": {
     "default_popup": "popup.html",

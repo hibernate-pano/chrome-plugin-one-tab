@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>OneTabPlus - 邮箱确认</title>
+  <link rel="stylesheet" href="../styles/global.css">
+  <style>
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      margin: 0;
+      padding: 20px;
+      background-color: #f9f9f9;
+      color: #333;
+    }
+
+    .container {
+      max-width: 500px;
+      width: 100%;
+      background-color: white;
+      border-radius: 8px;
+      box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+      padding: 30px;
+      text-align: center;
+    }
+
+    h1 {
+      margin-top: 0;
+      color: #4a4a4a;
+    }
+
+    .success-icon {
+      width: 80px;
+      height: 80px;
+      margin: 20px auto;
+      border-radius: 50%;
+      background-color: #4caf50;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .success-icon svg {
+      width: 40px;
+      height: 40px;
+      fill: white;
+    }
+
+    .message {
+      margin: 20px 0;
+      line-height: 1.6;
+    }
+
+    .button {
+      display: inline-block;
+      background-color: #4285f4;
+      color: white;
+      padding: 10px 20px;
+      border-radius: 4px;
+      text-decoration: none;
+      font-weight: 500;
+      margin-top: 20px;
+      transition: background-color 0.2s;
+    }
+
+    .button:hover {
+      background-color: #3367d6;
+    }
+
+    .error {
+      color: #d32f2f;
+      margin: 20px 0;
+    }
+  </style>
+</head>
+
+<body>
+  <div class="container">
+    <h1>邮箱确认</h1>
+    <div id="loading">
+      <p>正在处理您的确认请求...</p>
+    </div>
+    <div id="success" style="display: none;">
+      <div class="success-icon">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+          <path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41L9 16.17z" />
+        </svg>
+      </div>
+      <p class="message">您的邮箱已成功验证！现在您可以使用 OneTabPlus 的所有功能了。</p>
+      <a href="#" class="button" id="openExtension">打开 OneTabPlus</a>
+    </div>
+    <div id="error" style="display: none;">
+      <p class="error">验证链接无效或已过期。请重新注册或请求新的验证链接。</p>
+      <a href="#" class="button" id="tryAgain">重新尝试</a>
+    </div>
+  </div>
+
+  <script>
+    document.addEventListener('DOMContentLoaded', async () => {
+      // 获取完整URL
+      const fullUrl = window.location.href;
+      const urlParams = new URLSearchParams(window.location.search);
+      const token = urlParams.get('token');
+      const type = urlParams.get('type');
+
+      if (token && type === 'signup') {
+        try {
+          // 直接将用户重定向到Supabase的验证端点
+          const verifyUrl = `https://reccclnaxadbuccsrwmg.supabase.co/auth/v1/verify?token=${token}&type=${type}&redirect_to=`;
+
+          // 显示成功信息
+          document.getElementById('loading').style.display = 'none';
+          document.getElementById('success').style.display = 'block';
+
+          // 设置打开扩展的按钮
+          document.getElementById('openExtension').addEventListener('click', (e) => {
+            e.preventDefault();
+            // 尝试关闭当前标签页并打开扩展
+            window.close();
+          });
+        } catch (error) {
+          console.error('验证失败:', error);
+
+          // 显示错误信息
+          document.getElementById('loading').style.display = 'none';
+          document.getElementById('error').style.display = 'block';
+
+          // 设置重试按钮
+          document.getElementById('tryAgain').addEventListener('click', (e) => {
+            e.preventDefault();
+            window.location.href = chrome.runtime.getURL('popup.html');
+          });
+        }
+      } else {
+        // 无效的参数
+        document.getElementById('loading').style.display = 'none';
+        document.getElementById('error').style.display = 'block';
+      }
+    });
+  </script>
+</body>
+
+</html>
