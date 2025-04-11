@@ -80,7 +80,7 @@ export const DraggableTab: React.FC<DraggableTabProps> = ({
   return (
     <div
       ref={ref}
-      className={`flex items-center py-1 px-2 hover:bg-gray-100 transition-colors ${isDragging ? 'opacity-50 border-dashed border-primary-400' : 'opacity-100'}`}
+      className={`flex items-center py-1 px-2 hover:bg-gray-100 transition-colors rounded ${isDragging ? 'opacity-50 border-dashed border-primary-400' : 'opacity-100'}`}
       style={{ cursor: 'move' }}
     >
       <div className="flex items-center space-x-2 flex-1 min-w-0">

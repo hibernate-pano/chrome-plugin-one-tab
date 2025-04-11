@@ -113,8 +113,8 @@ export const TabGroup: React.FC<TabGroupProps> = ({ group }) => {
   };
 
   return (
-    <div className="mb-3 transition-colors bg-white border-b border-gray-200 pb-2">
-      <div className="flex items-center mb-2">
+    <div className="mb-2 transition-colors bg-white border border-gray-200 rounded-md shadow-sm pb-2">
+      <div className="flex items-center p-2 bg-gray-50 border-b border-gray-200 rounded-t-md">
         <div className="flex items-center space-x-3 flex-grow">
           <button
             onClick={() => setIsExpanded(!isExpanded)}
@@ -191,7 +191,7 @@ export const TabGroup: React.FC<TabGroupProps> = ({ group }) => {
         </div>
       </div>
       {isExpanded && (
-        <div className="mt-1 space-y-1 group">
+        <div className="px-2 pt-2 space-y-1 group">
           {group.tabs.map((tab, index) => (
             <DraggableTab
               key={tab.id}

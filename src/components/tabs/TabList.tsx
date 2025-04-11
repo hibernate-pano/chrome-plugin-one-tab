@@ -112,16 +112,47 @@ export const TabList: React.FC<TabListProps> = ({ searchQuery }) => {
       {searchQuery ? (
         <SearchResultList searchQuery={searchQuery} />
       ) : (
-        filteredGroups.map((group, index) => (
-          <DraggableTabGroup
-            key={group.id}
-            group={group}
-            index={index}
-            moveGroup={(dragIndex, hoverIndex) => {
-              dispatch(moveGroup({ dragIndex, hoverIndex }));
-            }}
-          />
-        ))
+        <div className="grid grid-cols-1 sm:grid-cols-1 md:grid-cols-2 gap-3">
+          {/* 左栏 - 偶数索引的标签组 */}
+          <div className="space-y-2">
+            {filteredGroups
+              .filter((_, index) => index % 2 === 0)
+              .map((group) => {
+                // 计算在原始数组中的实际索引
+                const originalIndex = filteredGroups.findIndex(g => g.id === group.id);
+                return (
+                  <DraggableTabGroup
+                    key={group.id}
+                    group={group}
+                    index={originalIndex}
+                    moveGroup={(dragIndex, hoverIndex) => {
+                      dispatch(moveGroup({ dragIndex, hoverIndex }));
+                    }}
+                  />
+                );
+              })}
+          </div>
+
+          {/* 右栏 - 奇数索引的标签组 */}
+          <div className="space-y-2">
+            {filteredGroups
+              .filter((_, index) => index % 2 === 1)
+              .map((group) => {
+                // 计算在原始数组中的实际索引
+                const originalIndex = filteredGroups.findIndex(g => g.id === group.id);
+                return (
+                  <DraggableTabGroup
+                    key={group.id}
+                    group={group}
+                    index={originalIndex}
+                    moveGroup={(dragIndex, hoverIndex) => {
+                      dispatch(moveGroup({ dragIndex, hoverIndex }));
+                    }}
+                  />
+                );
+              })}
+          </div>
+        </div>
       )}
 
       {/* 恢复所有标签确认对话框 */}
