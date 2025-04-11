@@ -306,12 +306,28 @@ async function saveAllTabs(inputTabs: chrome.tabs.Tab[]) {
     await chrome.tabs.remove(tabIdsToClose);
   }
 
-  // 显示通知
-  chrome.notifications.create({
+  // 创建通知ID
+  const notificationId = `save-tabs-${Date.now()}`;
+
+  // 显示通知，并添加按钮
+  chrome.notifications.create(notificationId, {
     type: 'basic',
     iconUrl: '/icons/icon128.png',
     title: '标签已保存',
-    message: `已成功保存 ${tabsToSave.length} 个标签页`
+    message: `已成功保存 ${tabsToSave.length} 个标签页`,
+    buttons: [
+      { title: '打开标签管理器' }
+    ],
+    requireInteraction: true // 保持通知直到用户与其交互
+  });
+
+  // 监听通知按钮点击
+  chrome.notifications.onButtonClicked.addListener((clickedId, buttonIndex) => {
+    if (clickedId === notificationId && buttonIndex === 0) {
+      // 打开标签管理器
+      const extensionUrl = chrome.runtime.getURL('src/popup/index.html');
+      chrome.tabs.create({ url: extensionUrl });
+    }
   });
 }
 
@@ -364,12 +380,28 @@ async function saveCurrentTab(tab: chrome.tabs.Tab, userSettings?: any) {
     await chrome.tabs.remove(tab.id);
   }
 
-  // 显示通知
-  chrome.notifications.create({
+  // 创建通知ID
+  const notificationId = `save-tab-${Date.now()}`;
+
+  // 显示通知，并添加按钮
+  chrome.notifications.create(notificationId, {
     type: 'basic',
     iconUrl: '/icons/icon128.png',
     title: '标签已保存',
-    message: `已成功保存标签页: ${tab.title || tab.url}`
+    message: `已成功保存标签页: ${tab.title || tab.url}`,
+    buttons: [
+      { title: '打开标签管理器' }
+    ],
+    requireInteraction: true // 保持通知直到用户与其交互
+  });
+
+  // 监听通知按钮点击
+  chrome.notifications.onButtonClicked.addListener((clickedId, buttonIndex) => {
+    if (clickedId === notificationId && buttonIndex === 0) {
+      // 打开标签管理器
+      const extensionUrl = chrome.runtime.getURL('src/popup/index.html');
+      chrome.tabs.create({ url: extensionUrl });
+    }
   });
 }
 

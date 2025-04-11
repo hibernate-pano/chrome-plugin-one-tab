@@ -50,11 +50,25 @@ export const TabList: React.FC<TabListProps> = ({ searchQuery }) => {
 
   if (filteredGroups.length === 0 && !searchQuery) {
     return (
-      <div className="flex flex-col items-center justify-center h-64 space-y-2 text-gray-500">
-        <svg xmlns="http://www.w3.org/2000/svg" className="h-12 w-12" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
-        </svg>
-        <p>点击右上角按钮保存标签页</p>
+      <div className="flex flex-col items-center justify-center py-16 space-y-4 text-gray-500 bg-white rounded-lg shadow-sm border border-gray-200 p-8">
+        <div className="w-20 h-20 rounded-full bg-gray-100 flex items-center justify-center">
+          <svg xmlns="http://www.w3.org/2000/svg" className="h-10 w-10 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
+          </svg>
+        </div>
+        <h3 className="text-xl font-medium text-gray-700">没有保存的标签页</h3>
+        <p className="text-gray-500 max-w-md text-center">点击右上角的“保存所有标签”按钮开始保存您的标签页。保存后的标签页将显示在这里。</p>
+        <button
+          onClick={() => {
+            chrome.runtime.sendMessage({
+              type: 'SAVE_ALL_TABS',
+              data: { tabs: [] }
+            });
+          }}
+          className="mt-2 px-6 py-2 bg-primary-600 text-white rounded-lg hover:bg-primary-700 transition-colors font-medium shadow-sm"
+        >
+          保存所有标签
+        </button>
       </div>
     );
   }

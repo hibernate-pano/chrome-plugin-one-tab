@@ -59,11 +59,34 @@ const App: React.FC = () => {
 
   return (
     <DndProvider>
-      <div className="w-[800px] h-[600px] bg-background transition-material">
+      <div className="min-h-screen bg-gray-50 flex flex-col">
         <Header onSearch={setSearchQuery} />
-        <main className="p-4">
+        <main className="flex-1 container mx-auto py-8 px-6 max-w-6xl">
           <TabList searchQuery={searchQuery} />
         </main>
+        <footer className="py-4 px-6 bg-white border-t border-gray-200 text-sm text-gray-600">
+          <div className="container mx-auto max-w-6xl flex justify-between items-center">
+            <div className="flex items-center space-x-2">
+              <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 text-primary-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 17V7m0 10a2 2 0 01-2 2H5a2 2 0 01-2-2V7a2 2 0 012-2h2a2 2 0 012 2m0 10a2 2 0 002 2h2a2 2 0 002-2M9 7a2 2 0 012-2h2a2 2 0 012 2m0 10V7m0 10a2 2 0 002 2h2a2 2 0 002-2V7a2 2 0 00-2-2h-2a2 2 0 00-2 2" />
+              </svg>
+              <span className="font-medium">OneTabPlus v1.0</span>
+            </div>
+            <div>
+              {isAuthenticated ? (
+                <span className="flex items-center bg-green-50 text-green-700 px-3 py-1 rounded-full text-xs font-medium">
+                  <span className="inline-block w-2 h-2 rounded-full bg-green-500 mr-2"></span>
+                  已同步
+                </span>
+              ) : (
+                <span className="flex items-center bg-gray-100 text-gray-600 px-3 py-1 rounded-full text-xs font-medium">
+                  <span className="inline-block w-2 h-2 rounded-full bg-gray-400 mr-2"></span>
+                  未登录
+                </span>
+              )}
+            </div>
+          </div>
+        </footer>
       </div>
     </DndProvider>
   );
