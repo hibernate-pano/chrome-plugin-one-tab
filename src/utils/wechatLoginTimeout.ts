@@ -1,4 +1,5 @@
 // 微信登录超时处理工具
+import { showNotification } from './notification';
 
 // 微信登录超时时间（2分钟）
 const WECHAT_LOGIN_TIMEOUT = 2 * 60 * 1000;
@@ -29,7 +30,7 @@ export const setWechatLoginTimeout = (tabId: number): number => {
           console.log('微信登录超时，关闭标签页');
 
           // 显示登录超时通知
-          chrome.notifications.create({
+          await showNotification({
             type: 'basic',
             iconUrl: '/icons/icon128.png',
             title: '登录超时',

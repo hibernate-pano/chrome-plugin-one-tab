@@ -5,6 +5,7 @@ import { auth as supabaseAuth } from './utils/supabase';
 import { syncService } from './services/syncService';
 import { store } from './store';
 import { handleOAuthCallback, updateWechatLoginStatus } from './store/slices/authSlice';
+import { showNotification } from './utils/notification';
 
 // 创建新标签组的辅助函数
 const createTabGroup = (tabs: chrome.tabs.Tab[]): TabGroup => {
@@ -89,7 +90,7 @@ const saveTabs = async (tabs: chrome.tabs.Tab[]) => {
     }
 
     // 显示通知
-    chrome.notifications.create({
+    await showNotification({
       type: 'basic',
       iconUrl: '/icons/icon128.png',
       title: '标签已保存',
@@ -97,7 +98,7 @@ const saveTabs = async (tabs: chrome.tabs.Tab[]) => {
     });
   } catch (error) {
     console.error('保存标签失败:', error);
-    chrome.notifications.create({
+    await showNotification({
       type: 'basic',
       iconUrl: '/icons/icon128.png',
       title: '保存失败',
@@ -149,6 +150,7 @@ chrome.runtime.onInstalled.addListener(async (details) => {
       allowDuplicateTabs: false,
       syncEnabled: true,
       useDoubleColumnLayout: true,
+      showNotifications: false, // 默认关闭通知
       syncStrategy: 'newest',
       deleteStrategy: 'everywhere',
     });
@@ -194,7 +196,7 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo) => {
       await chrome.tabs.create({ url: chrome.runtime.getURL('index.html') });
 
       // 显示登录成功通知
-      chrome.notifications.create({
+      await showNotification({
         type: 'basic',
         iconUrl: '/icons/icon128.png',
         title: '登录成功',
@@ -210,7 +212,7 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo) => {
         console.error('关闭回调标签页失败:', e);
       }
 
-      chrome.notifications.create({
+      await showNotification({
         type: 'basic',
         iconUrl: '/icons/icon128.png',
         title: '登录失败',
@@ -235,7 +237,7 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo) => {
       await chrome.tabs.create({ url: chrome.runtime.getURL('index.html') });
 
       // 显示登录成功通知
-      chrome.notifications.create({
+      await showNotification({
         type: 'basic',
         iconUrl: '/icons/icon128.png',
         title: '登录成功',
@@ -251,7 +253,7 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo) => {
         console.error('关闭回调标签页失败:', e);
       }
 
-      chrome.notifications.create({
+      await showNotification({
         type: 'basic',
         iconUrl: '/icons/icon128.png',
         title: '登录失败',

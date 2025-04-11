@@ -2,6 +2,7 @@
 import { storage } from './utils/storage';
 import { auth as supabaseAuth } from './utils/supabase';
 import { sync as supabaseSync } from './utils/supabase';
+import { showNotification, showNotificationWithId } from './utils/notification';
 
 // 定义检查更新的间隔（分钟）
 const CHECK_INTERVAL_MINUTES = 15;
@@ -70,7 +71,7 @@ async function checkForUpdates() {
       await syncData();
 
       // 发送通知（可选）
-      chrome.notifications.create({
+      await showNotification({
         type: 'basic',
         iconUrl: '/icons/icon128.png',
         title: 'OneTabPlus 更新',
@@ -355,7 +356,7 @@ async function saveAllTabs(inputTabs: chrome.tabs.Tab[]) {
   const notificationId = `save-tabs-${Date.now()}`;
 
   // 显示通知，并添加按钮
-  chrome.notifications.create(notificationId, {
+  await showNotificationWithId(notificationId, {
     type: 'basic',
     iconUrl: '/icons/icon128.png',
     title: '标签已保存',
@@ -447,7 +448,7 @@ async function saveCurrentTab(tab: chrome.tabs.Tab, userSettings?: any) {
   const notificationId = `save-tab-${Date.now()}`;
 
   // 显示通知，并添加按钮
-  chrome.notifications.create(notificationId, {
+  await showNotificationWithId(notificationId, {
     type: 'basic',
     iconUrl: '/icons/icon128.png',
     title: '标签已保存',

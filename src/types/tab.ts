@@ -51,6 +51,7 @@ export interface UserSettings {
   allowDuplicateTabs: boolean;
   syncEnabled: boolean; // 是否启用同步
   useDoubleColumnLayout: boolean; // 是否使用双栏布局
+  showNotifications: boolean; // 是否显示通知
 
   // 新增同步策略设置
   syncStrategy: 'newest' | 'local' | 'remote' | 'ask'; // 冲突解决策略

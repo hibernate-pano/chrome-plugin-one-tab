@@ -60,6 +60,9 @@ const settingsSlice = createSlice({
     setAutoCloseTabsAfterSaving: (state, action: PayloadAction<boolean>) => {
       state.autoCloseTabsAfterSaving = action.payload;
     },
+    setShowNotifications: (state, action: PayloadAction<boolean>) => {
+      state.showNotifications = action.payload;
+    },
 
     setGroupNameTemplate: (state, action: PayloadAction<string>) => {
       state.groupNameTemplate = action.payload;
@@ -73,6 +76,10 @@ const settingsSlice = createSlice({
     },
     toggleAllowDuplicateTabs: (state) => {
       state.allowDuplicateTabs = !state.allowDuplicateTabs;
+    },
+    // 切换通知开关
+    toggleShowNotifications: (state) => {
+      state.showNotifications = !state.showNotifications;
     },
     // 新增：切换同步开关
     toggleSyncEnabled: (state) => {
@@ -114,11 +121,13 @@ export const {
   setShowFavicons,
   setShowTabCount,
   setAutoCloseTabsAfterSaving,
+  setShowNotifications,
   setGroupNameTemplate,
 
   toggleShowFavicons,
   toggleConfirmBeforeDelete,
   toggleAllowDuplicateTabs,
+  toggleShowNotifications,
   toggleSyncEnabled,
   toggleLayoutMode,
 } = settingsSlice.actions;

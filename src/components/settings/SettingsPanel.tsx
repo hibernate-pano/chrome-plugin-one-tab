@@ -4,6 +4,7 @@ import {
   toggleShowFavicons,
   toggleConfirmBeforeDelete,
   toggleAllowDuplicateTabs,
+  toggleShowNotifications,
   setGroupNameTemplate,
 } from '@/store/slices/settingsSlice';
 import { SyncSettings } from './SyncSettings';
@@ -94,6 +95,30 @@ export const SettingsPanel: React.FC = () => {
             />
             <span>删除前确认</span>
           </label>
+        </div>
+      </div>
+
+      {/* 通知设置 */}
+      <div className="space-y-2">
+        <h3 className="text-lg font-medium">通知设置</h3>
+        <div className="space-y-2">
+          <label className="flex items-center space-x-2">
+            <input
+              type="checkbox"
+              checked={settings.showNotifications}
+              onChange={() => dispatch(toggleShowNotifications())}
+              className="
+                w-4 h-4 rounded
+                text-blue-600
+                border-gray-300
+                focus:ring-blue-500
+              "
+            />
+            <span>显示通知</span>
+          </label>
+          <p className="text-sm text-gray-500 ml-6">
+            关闭后将不再显示标签保存、同步等通知，避免打扰用户
+          </p>
         </div>
       </div>
 
