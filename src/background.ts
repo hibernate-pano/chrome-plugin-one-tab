@@ -140,8 +140,6 @@ chrome.runtime.onInstalled.addListener(async (details) => {
     await storage.setGroups([]);
     await storage.setSettings({
       autoCloseTabsAfterSaving: true,
-      autoSave: false,
-      autoSaveInterval: 5,
       groupNameTemplate: 'Group %d',
       showFavicons: true,
       showTabCount: true,

@@ -1,11 +1,9 @@
 import React from 'react';
 import { useAppDispatch, useAppSelector } from '@/store/hooks';
 import {
-  toggleAutoSave,
   toggleShowFavicons,
   toggleConfirmBeforeDelete,
   toggleAllowDuplicateTabs,
-  setAutoSaveInterval,
   setGroupNameTemplate,
 } from '@/store/slices/settingsSlice';
 import { SyncSettings } from './SyncSettings';
@@ -17,47 +15,6 @@ export const SettingsPanel: React.FC = () => {
   return (
     <div className="p-4 space-y-6">
       <h2 className="text-xl font-bold mb-4">设置</h2>
-      {/* 自动保存设置 */}
-      <div className="space-y-2">
-        <h3 className="text-lg font-medium">自动保存设置</h3>
-        <div className="space-y-4">
-          <label className="flex items-center space-x-2">
-            <input
-              type="checkbox"
-              checked={settings.autoSave}
-              onChange={() => dispatch(toggleAutoSave())}
-              className="
-                w-4 h-4 rounded
-                text-primary-500
-                border-gray-300
-                focus:ring-primary-500
-              "
-            />
-            <span>启用自动保存</span>
-          </label>
-          {settings.autoSave && (
-            <div className="flex items-center space-x-4">
-              <span>保存间隔：</span>
-              <select
-                value={settings.autoSaveInterval}
-                onChange={(e) => dispatch(setAutoSaveInterval(Number(e.target.value)))}
-                className="
-                  px-3 py-1 rounded-md
-                  bg-surface
-                  border border-gray-300
-                  focus:outline-none focus:ring-2 focus:ring-primary-500
-                "
-              >
-                <option value={5}>5分钟</option>
-                <option value={10}>10分钟</option>
-                <option value={15}>15分钟</option>
-                <option value={30}>30分钟</option>
-                <option value={60}>1小时</option>
-              </select>
-            </div>
-          )}
-        </div>
-      </div>
 
       {/* 标签组设置 */}
       <div className="space-y-2">

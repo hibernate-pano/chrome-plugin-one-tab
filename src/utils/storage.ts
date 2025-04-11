@@ -10,8 +10,6 @@ const STORAGE_KEYS = {
 
 // 默认设置
 export const DEFAULT_SETTINGS: UserSettings = {
-  autoSave: false,
-  autoSaveInterval: 5,
   groupNameTemplate: 'Group %d',
   showFavicons: true,
   showTabCount: true,

@@ -58,7 +58,6 @@ OneTab Plus 是一个 Chrome 浏览器扩展，用于高效管理和组织浏览
 
 - **常规设置**：
   - 保存后自动关闭标签页
-  - 自动保存标签页（定时保存）
   - 自定义标签组命名模板
   - 显示/隐藏网站图标
   - 显示/隐藏标签计数
@@ -136,7 +135,7 @@ interface Tab {
   createdAt: string;
   lastAccessed: string;
   group_id?: string;
-  
+
   // 同步相关字段
   syncStatus?: 'synced' | 'local-only' | 'remote-only' | 'conflict';
   lastSyncedAt?: string | null;
@@ -157,7 +156,7 @@ interface TabGroup {
   user_id?: string;
   device_id?: string;
   last_sync?: string;
-  
+
   // 同步相关字段
   syncStatus?: 'synced' | 'local-only' | 'remote-only' | 'conflict';
   lastSyncedAt?: string | null;
@@ -170,16 +169,13 @@ interface TabGroup {
 ```typescript
 interface UserSettings {
   autoCloseTabsAfterSaving: boolean;
-  autoSave: boolean;
-  autoSaveInterval: number;
   groupNameTemplate: string;
   showFavicons: boolean;
   showTabCount: boolean;
   confirmBeforeDelete: boolean;
   allowDuplicateTabs: boolean;
-  syncInterval: number;
   syncEnabled: boolean;
-  
+
   // 同步策略设置
   syncStrategy: 'newest' | 'local' | 'remote' | 'ask';
   deleteStrategy: 'everywhere' | 'local-only';
@@ -196,13 +192,13 @@ interface UserSettings {
 // 保存当前窗口的所有标签页
 const saveAllTabs = async () => {
   const tabs = await chrome.tabs.query({ currentWindow: true });
-  
+
   // 过滤掉 Chrome 内部页面和扩展页面
   const filteredTabs = tabs.filter(tab => {
-    return !tab.url.startsWith('chrome://') && 
+    return !tab.url.startsWith('chrome://') &&
            !tab.url.startsWith('chrome-extension://');
   });
-  
+
   // 创建新的标签组
   const newGroup = {
     id: nanoid(),
@@ -219,10 +215,10 @@ const saveAllTabs = async () => {
     updatedAt: new Date().toISOString(),
     isLocked: false
   };
-  
+
   // 保存到 Redux 存储
   dispatch(addGroup(newGroup));
-  
+
   // 如果设置了保存后自动关闭标签页
   if (settings.autoCloseTabsAfterSaving) {
     await closeTabs(filteredTabs.map(tab => tab.id));
@@ -316,16 +312,16 @@ export const selectSearchResults = createSelector(
   [selectGroups, selectSearchQuery],
   (groups, searchQuery) => {
     if (!searchQuery) return [];
-    
+
     const results = [];
-    
+
     groups.forEach(group => {
       const matchingTabs = group.tabs.filter(tab => {
         const titleMatch = tab.title.toLowerCase().includes(searchQuery.toLowerCase());
         const urlMatch = tab.url.toLowerCase().includes(searchQuery.toLowerCase());
         return titleMatch || urlMatch;
       });
-      
+
       if (matchingTabs.length > 0) {
         results.push({
           groupId: group.id,
@@ -334,7 +330,7 @@ export const selectSearchResults = createSelector(
         });
       }
     });
-    
+
     return results;
   }
 );
@@ -349,12 +345,12 @@ export const selectSearchResults = createSelector(
 async uploadTabGroups(groups: TabGroup[]) {
   const deviceId = await getDeviceId();
   const { data: { user } } = await supabase.auth.getUser();
-  
+
   if (!user) throw new Error('用户未登录');
-  
+
   // 压缩标签组数据
   const { compressed, stats } = compressTabGroups(groups);
-  
+
   const groupsWithUser = groups.map(group => ({
     id: group.id,
     name: group.name,
@@ -365,21 +361,21 @@ async uploadTabGroups(groups: TabGroup[]) {
     device_id: deviceId,
     last_sync: new Date().toISOString()
   }));
-  
+
   // 为第一个标签组添加压缩数据
   if (groupsWithUser.length > 0) {
     groupsWithUser[0].compressed_data = compressed;
   }
-  
+
   // 上传到 Supabase
   const { data, error } = await supabase
     .from('tab_groups')
     .upsert(groupsWithUser, { onConflict: 'id' });
-    
+
   if (error) {
     throw error;
   }
-  
+
   return { result: data, compressionStats: stats };
 }
 ```

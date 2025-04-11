@@ -60,16 +60,11 @@ const settingsSlice = createSlice({
     setAutoCloseTabsAfterSaving: (state, action: PayloadAction<boolean>) => {
       state.autoCloseTabsAfterSaving = action.payload;
     },
-    setAutoSaveInterval: (state, action: PayloadAction<number>) => {
-      state.autoSaveInterval = action.payload;
-    },
+
     setGroupNameTemplate: (state, action: PayloadAction<string>) => {
       state.groupNameTemplate = action.payload;
     },
-    // 删除定时同步间隔设置
-    toggleAutoSave: (state) => {
-      state.autoSave = !state.autoSave;
-    },
+
     toggleShowFavicons: (state) => {
       state.showFavicons = !state.showFavicons;
     },
@@ -115,10 +110,8 @@ export const {
   setShowFavicons,
   setShowTabCount,
   setAutoCloseTabsAfterSaving,
-  setAutoSaveInterval,
   setGroupNameTemplate,
 
-  toggleAutoSave,
   toggleShowFavicons,
   toggleConfirmBeforeDelete,
   toggleAllowDuplicateTabs,

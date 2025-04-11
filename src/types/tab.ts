@@ -43,8 +43,6 @@ export interface TabState {
 
 export interface UserSettings {
   autoCloseTabsAfterSaving: boolean;
-  autoSave: boolean;
-  autoSaveInterval: number;
   groupNameTemplate: string;
   showFavicons: boolean;
   showTabCount: boolean;
