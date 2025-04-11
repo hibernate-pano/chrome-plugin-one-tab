@@ -25,15 +25,14 @@ async function checkForUpdates() {
 
     // 检查用户是否已登录
     try {
-      const { data, error } = await supabaseAuth.getSession();
-      if (error) {
-        console.log('Service Worker: 获取用户会话失败，跳过检查更新', error);
-        return;
-      }
-      if (!data.session) {
+      const { data } = await supabaseAuth.getSession();
+      // 如果没有会话或会话不存在，直接跳过检查更新
+      if (!data || !data.session) {
         console.log('Service Worker: 用户未登录，跳过检查更新');
         return;
       }
+      // 到这里说明用户已登录，继续检查更新
+      console.log('Service Worker: 用户已登录，开始检查更新');
     } catch (err) {
       console.error('Service Worker: 检查用户登录状态异常', err);
       return;
@@ -335,13 +334,18 @@ async function saveAllTabs(inputTabs: chrome.tabs.Tab[]) {
 
   // 如果用户已登录，自动同步到云端
   try {
+    // 首先检查是否有活跃会话，避免未登录用户触发错误
     const { data } = await supabaseAuth.getSession();
-    if (data.session) {
+
+    // 只有存在会话时才执行同步
+    if (data && data.session) {
       console.log('检测到用户已登录，保存后自动同步到云端');
       // 异步执行同步，不阻塞保存操作
       syncData().catch(err => {
         console.error('保存后同步失败:', err);
       });
+    } else {
+      console.log('用户未登录，跳过同步操作');
     }
   } catch (syncError) {
     console.error('检查用户登录状态失败:', syncError);
@@ -418,13 +422,18 @@ async function saveCurrentTab(tab: chrome.tabs.Tab, userSettings?: any) {
 
   // 如果用户已登录，自动同步到云端
   try {
+    // 首先检查是否有活跃会话，避免未登录用户触发错误
     const { data } = await supabaseAuth.getSession();
-    if (data.session) {
+
+    // 只有存在会话时才执行同步
+    if (data && data.session) {
       console.log('检测到用户已登录，保存后自动同步到云端');
       // 异步执行同步，不阻塞保存操作
       syncData().catch(err => {
         console.error('保存后同步失败:', err);
       });
+    } else {
+      console.log('用户未登录，跳过同步操作');
     }
   } catch (syncError) {
     console.error('检查用户登录状态失败:', syncError);

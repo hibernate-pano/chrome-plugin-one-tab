@@ -37,6 +37,18 @@ export const auth = {
   // 获取当前用户
   async getCurrentUser() {
     try {
+      // 首先检查是否有活跃会话
+      const { data: sessionData } = await supabase.auth.getSession();
+
+      // 如果没有会话，直接返回空用户，不触发错误
+      if (!sessionData || !sessionData.session) {
+        return {
+          data: { user: null },
+          error: null
+        };
+      }
+
+      // 如果有会话，才获取用户信息
       return await supabase.auth.getUser();
     } catch (error) {
       console.error('获取当前用户失败:', error);

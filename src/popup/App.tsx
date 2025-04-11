@@ -6,6 +6,7 @@ import { useAppDispatch, useAppSelector } from '@/store/hooks';
 import { loadSettings } from '@/store/slices/settingsSlice';
 import { getCurrentUser } from '@/store/slices/authSlice';
 import { syncService } from '@/services/syncService';
+import { auth as supabaseAuth } from '@/utils/supabase';
 
 const App: React.FC = () => {
   const dispatch = useAppDispatch();
@@ -45,19 +46,32 @@ const App: React.FC = () => {
     dispatch(loadSettings());
 
     // 检查是否有已登录的用户会话，实现自动登录
-    dispatch(getCurrentUser())
-      .unwrap()
-      .then(user => {
-        if (user) {
-          console.log('用户已自动登录:', user.email);
+    // 使用 supabase 直接检查会话，避免触发错误
+    const checkSession = async () => {
+      try {
+        // 使用 getSession 而不是 getCurrentUser 来避免未登录用户的错误
+        const { data } = await supabaseAuth.getSession();
+        if (data.session) {
+          // 只有确认有会话时才调用 getCurrentUser
+          dispatch(getCurrentUser())
+            .unwrap()
+            .then(user => {
+              if (user) {
+                console.log('用户已自动登录:', user.email);
+              }
+            })
+            .catch(() => {
+              console.log('获取用户信息失败，但会话存在');
+            });
         } else {
-          console.log('没有找到已登录的用户会话');
+          console.log('没有活跃会话，用户未登录');
         }
-      })
-      .catch(error => {
-        // 这里不再显示错误，因为未登录是正常情况
-        console.log('自动登录检查完成，用户未登录');
-      });
+      } catch (err) {
+        console.log('检查会话状态时出错，假定用户未登录');
+      }
+    };
+
+    checkSession();
   }, [dispatch]);
 
   return (

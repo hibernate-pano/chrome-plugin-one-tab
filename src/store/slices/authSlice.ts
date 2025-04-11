@@ -12,45 +12,84 @@ const initialState: AuthState = {
 export const signUp = createAsyncThunk(
   'auth/signUp',
   async ({ email, password }: { email: string; password: string }) => {
-    const { data, error } = await supabaseAuth.signUp(email, password);
-    if (error) throw new Error(error.message);
+    try {
+      const { data, error } = await supabaseAuth.signUp(email, password);
+      if (error) {
+        console.error('注册错误:', error);
+        throw new Error(typeof error === 'object' && error !== null && 'message' in error ?
+          (error as { message: string }).message : '注册失败');
+      }
 
-    if (data.user) {
-      return {
-        id: data.user.id,
-        email: data.user.email!,
-        lastLogin: new Date().toISOString(),
-      } as User;
+      if (data.user) {
+        return {
+          id: data.user.id,
+          email: data.user.email!,
+          lastLogin: new Date().toISOString(),
+        } as User;
+      }
+
+      throw new Error('注册失败');
+    } catch (err) {
+      console.error('注册异常:', err);
+      if (err instanceof Error) {
+        throw new Error(err.message);
+      } else {
+        throw new Error('注册失败');
+      }
     }
-
-    throw new Error('注册失败');
   }
 );
 
 export const signIn = createAsyncThunk(
   'auth/signIn',
   async ({ email, password }: { email: string; password: string }) => {
-    const { data, error } = await supabaseAuth.signIn(email, password);
-    if (error) throw new Error(error.message);
+    try {
+      const { data, error } = await supabaseAuth.signIn(email, password);
+      if (error) {
+        console.error('登录错误:', error);
+        throw new Error(typeof error === 'object' && error !== null && 'message' in error ?
+          (error as { message: string }).message : '登录失败');
+      }
 
-    if (data.user) {
-      return {
-        id: data.user.id,
-        email: data.user.email!,
-        lastLogin: new Date().toISOString(),
-      } as User;
+      if (data.user) {
+        return {
+          id: data.user.id,
+          email: data.user.email!,
+          lastLogin: new Date().toISOString(),
+        } as User;
+      }
+
+      throw new Error('登录失败');
+    } catch (err) {
+      console.error('登录异常:', err);
+      if (err instanceof Error) {
+        throw new Error(err.message);
+      } else {
+        throw new Error('登录失败');
+      }
     }
-
-    throw new Error('登录失败');
   }
 );
 
 export const signOut = createAsyncThunk(
   'auth/signOut',
   async () => {
-    const { error } = await supabaseAuth.signOut();
-    if (error) throw new Error(error.message);
-    return null;
+    try {
+      const { error } = await supabaseAuth.signOut();
+      if (error) {
+        console.error('退出登录错误:', error);
+        throw new Error(typeof error === 'object' && error !== null && 'message' in error ?
+          (error as { message: string }).message : '退出登录失败');
+      }
+      return null;
+    } catch (err) {
+      console.error('退出登录异常:', err);
+      if (err instanceof Error) {
+        throw new Error(err.message);
+      } else {
+        throw new Error('退出登录失败');
+      }
+    }
   }
 );
 
@@ -58,10 +97,21 @@ export const getCurrentUser = createAsyncThunk(
   'auth/getCurrentUser',
   async () => {
     try {
+      // 首先检查是否有活跃会话，避免未登录用户触发错误
+      const { data: sessionData } = await supabaseAuth.getSession();
+
+      // 如果没有会话，直接返回 null，不触发错误
+      if (!sessionData || !sessionData.session) {
+        console.log('没有活跃会话，用户未登录');
+        return null;
+      }
+
+      // 如果有会话，才获取用户信息
       const { data, error } = await supabaseAuth.getCurrentUser();
       if (error) {
         console.error('获取用户信息错误:', error);
-        throw new Error(error.message || '获取用户信息失败');
+        throw new Error(typeof error === 'object' && error !== null && 'message' in error ?
+          (error as { message: string }).message : '获取用户信息失败');
       }
 
       if (data.user) {
