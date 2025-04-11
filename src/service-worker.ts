@@ -163,9 +163,20 @@ chrome.action.onClicked.addListener(async () => {
   const tabs = await chrome.tabs.query({ currentWindow: true });
   await saveAllTabs(tabs);
 
-  // 保存标签后打开标签管理器
+  // 检查是否已经有标签管理页打开
   const extensionUrl = chrome.runtime.getURL('src/popup/index.html');
-  chrome.tabs.create({ url: extensionUrl });
+  const existingTabs = await chrome.tabs.query({ url: extensionUrl + '*' });
+
+  if (existingTabs.length > 0) {
+    // 如果已经有标签管理页打开，则激活它并刷新
+    console.log('已有标签管理页打开，激活并刷新');
+    await chrome.tabs.update(existingTabs[0].id!, { active: true });
+    await chrome.tabs.reload(existingTabs[0].id!);
+  } else {
+    // 如果没有标签管理页打开，则创建新的
+    console.log('没有标签管理页打开，创建新的');
+    await chrome.tabs.create({ url: extensionUrl });
+  }
 });
 
 // 监听快捷键
@@ -188,18 +199,41 @@ chrome.commands.onCommand.addListener(async (command, tab) => {
       console.log('快捷键打开标签管理器');
       // 打开标签管理器页面
       const extensionUrl = chrome.runtime.getURL('src/popup/index.html');
-      chrome.tabs.create({ url: extensionUrl });
+      // 检查是否已经有标签管理页打开
+      const existingTabs = await chrome.tabs.query({ url: extensionUrl + '*' });
+
+      if (existingTabs.length > 0) {
+        // 如果已经有标签管理页打开，则激活它
+        console.log('已有标签管理页打开，激活');
+        await chrome.tabs.update(existingTabs[0].id!, { active: true });
+      } else {
+        // 如果没有标签管理页打开，则创建新的
+        console.log('没有标签管理页打开，创建新的');
+        await chrome.tabs.create({ url: extensionUrl });
+      }
       break;
   }
 });
 
 // 监听右键菜单点击事件
-chrome.contextMenus.onClicked.addListener((info) => {
+chrome.contextMenus.onClicked.addListener(async (info) => {
   if (info.menuItemId === 'open-tab-manager') {
     console.log('点击右键菜单，打开标签管理器');
     // 打开标签管理器页面
     const extensionUrl = chrome.runtime.getURL('src/popup/index.html');
-    chrome.tabs.create({ url: extensionUrl });
+
+    // 检查是否已经有标签管理页打开
+    const existingTabs = await chrome.tabs.query({ url: extensionUrl + '*' });
+
+    if (existingTabs.length > 0) {
+      // 如果已经有标签管理页打开，则激活它
+      console.log('已有标签管理页打开，激活');
+      await chrome.tabs.update(existingTabs[0].id!, { active: true });
+    } else {
+      // 如果没有标签管理页打开，则创建新的
+      console.log('没有标签管理页打开，创建新的');
+      await chrome.tabs.create({ url: extensionUrl });
+    }
   }
 });
 
@@ -326,11 +360,22 @@ async function saveAllTabs(inputTabs: chrome.tabs.Tab[]) {
   });
 
   // 监听通知按钮点击
-  chrome.notifications.onButtonClicked.addListener((clickedId, buttonIndex) => {
+  chrome.notifications.onButtonClicked.addListener(async (clickedId, buttonIndex) => {
     if (clickedId === notificationId && buttonIndex === 0) {
       // 打开标签管理器
       const extensionUrl = chrome.runtime.getURL('src/popup/index.html');
-      chrome.tabs.create({ url: extensionUrl });
+
+      // 检查是否已经有标签管理页打开
+      const existingTabs = await chrome.tabs.query({ url: extensionUrl + '*' });
+
+      if (existingTabs.length > 0) {
+        // 如果已经有标签管理页打开，则激活它并刷新
+        await chrome.tabs.update(existingTabs[0].id!, { active: true });
+        await chrome.tabs.reload(existingTabs[0].id!);
+      } else {
+        // 如果没有标签管理页打开，则创建新的
+        await chrome.tabs.create({ url: extensionUrl });
+      }
     }
   });
 }
@@ -400,11 +445,22 @@ async function saveCurrentTab(tab: chrome.tabs.Tab, userSettings?: any) {
   });
 
   // 监听通知按钮点击
-  chrome.notifications.onButtonClicked.addListener((clickedId, buttonIndex) => {
+  chrome.notifications.onButtonClicked.addListener(async (clickedId, buttonIndex) => {
     if (clickedId === notificationId && buttonIndex === 0) {
       // 打开标签管理器
       const extensionUrl = chrome.runtime.getURL('src/popup/index.html');
-      chrome.tabs.create({ url: extensionUrl });
+
+      // 检查是否已经有标签管理页打开
+      const existingTabs = await chrome.tabs.query({ url: extensionUrl + '*' });
+
+      if (existingTabs.length > 0) {
+        // 如果已经有标签管理页打开，则激活它并刷新
+        await chrome.tabs.update(existingTabs[0].id!, { active: true });
+        await chrome.tabs.reload(existingTabs[0].id!);
+      } else {
+        // 如果没有标签管理页打开，则创建新的
+        await chrome.tabs.create({ url: extensionUrl });
+      }
     }
   });
 }
