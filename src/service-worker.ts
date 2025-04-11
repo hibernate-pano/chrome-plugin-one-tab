@@ -141,6 +141,13 @@ chrome.runtime.onInstalled.addListener(() => {
   console.log('Service Worker: 扩展已安装或更新');
   // 设置初始检查
   chrome.alarms.create('initialCheck', { delayInMinutes: 1 });
+
+  // 创建右键菜单
+  chrome.contextMenus.create({
+    id: 'open-tab-manager',
+    title: '打开标签管理器',
+    contexts: ['action']
+  });
 });
 
 // 浏览器启动时
@@ -148,6 +155,48 @@ chrome.runtime.onStartup.addListener(() => {
   console.log('Service Worker: 浏览器已启动');
   // 设置初始检查
   chrome.alarms.create('initialCheck', { delayInMinutes: 1 });
+});
+
+// 监听扩展图标点击事件
+chrome.action.onClicked.addListener(async () => {
+  console.log('点击扩展图标，保存所有标签页');
+  const tabs = await chrome.tabs.query({ currentWindow: true });
+  await saveAllTabs(tabs);
+});
+
+// 监听快捷键
+chrome.commands.onCommand.addListener(async (command, tab) => {
+  switch (command) {
+    case 'save_all_tabs':
+      console.log('快捷键保存所有标签页');
+      const tabs = await chrome.tabs.query({ currentWindow: true });
+      await saveAllTabs(tabs);
+      break;
+    case 'save_current_tab':
+      console.log('快捷键保存当前标签页');
+      if (tab) {
+        // 获取用户设置
+        const settings = await storage.getSettings();
+        await saveCurrentTab(tab, settings);
+      }
+      break;
+    case '_execute_action':
+      console.log('快捷键打开标签管理器');
+      // 打开标签管理器页面
+      const extensionUrl = chrome.runtime.getURL('src/popup/index.html');
+      chrome.tabs.create({ url: extensionUrl });
+      break;
+  }
+});
+
+// 监听右键菜单点击事件
+chrome.contextMenus.onClicked.addListener((info) => {
+  if (info.menuItemId === 'open-tab-manager') {
+    console.log('点击右键菜单，打开标签管理器');
+    // 打开标签管理器页面
+    const extensionUrl = chrome.runtime.getURL('src/popup/index.html');
+    chrome.tabs.create({ url: extensionUrl });
+  }
 });
 
 // 处理消息
@@ -216,8 +265,6 @@ async function saveAllTabs(inputTabs: chrome.tabs.Tab[]) {
     return; // 如果没有有效标签页，则不执行后续操作
   }
 
-  const tabUrls = tabsToSave.map(tab => tab.url).filter(Boolean);
-
   const tabGroup = {
     id: Date.now().toString(),
     name: `标签组 ${new Date().toLocaleString()}`,
@@ -259,23 +306,13 @@ async function saveAllTabs(inputTabs: chrome.tabs.Tab[]) {
     await chrome.tabs.remove(tabIdsToClose);
   }
 
-  // 检查是否已经有 OneTabPlus 标签页打开
-  const extensionUrl = chrome.runtime.getURL('popup.html');
-  const existingTabs = await chrome.tabs.query({ url: extensionUrl + '*' });
-
-  if (existingTabs.length > 0) {
-    // 如果已经有标签页打开，则更新并激活它
-    const existingTab = existingTabs[0];
-    await chrome.tabs.update(existingTab.id!, {
-      url: extensionUrl + `?saved=${encodeURIComponent(JSON.stringify(tabUrls))}`,
-      active: true
-    });
-  } else {
-    // 如果没有标签页打开，则创建一个新的
-    await chrome.tabs.create({
-      url: extensionUrl + `?saved=${encodeURIComponent(JSON.stringify(tabUrls))}`
-    });
-  }
+  // 显示通知
+  chrome.notifications.create({
+    type: 'basic',
+    iconUrl: '/icons/icon128.png',
+    title: '标签已保存',
+    message: `已成功保存 ${tabsToSave.length} 个标签页`
+  });
 }
 
 // 保存当前标签页
@@ -327,23 +364,13 @@ async function saveCurrentTab(tab: chrome.tabs.Tab, userSettings?: any) {
     await chrome.tabs.remove(tab.id);
   }
 
-  // 检查是否已经有 OneTabPlus 标签页打开
-  const extensionUrl = chrome.runtime.getURL('popup.html');
-  const existingTabs = await chrome.tabs.query({ url: extensionUrl + '*' });
-
-  if (existingTabs.length > 0) {
-    // 如果已经有标签页打开，则更新并激活它
-    const existingTab = existingTabs[0];
-    await chrome.tabs.update(existingTab.id!, {
-      url: extensionUrl + `?saved=${encodeURIComponent(JSON.stringify([tab.url]))}`,
-      active: true
-    });
-  } else {
-    // 如果没有标签页打开，则创建一个新的
-    await chrome.tabs.create({
-      url: extensionUrl + `?saved=${encodeURIComponent(JSON.stringify([tab.url]))}`
-    });
-  }
+  // 显示通知
+  chrome.notifications.create({
+    type: 'basic',
+    iconUrl: '/icons/icon128.png',
+    title: '标签已保存',
+    message: `已成功保存标签页: ${tab.title || tab.url}`
+  });
 }
 
 // 打开单个标签页，保持只有一个 OneTabPlus 标签页
@@ -354,7 +381,7 @@ async function openTabWithSingleInstance(url: string) {
   await chrome.tabs.create({ url });
 
   // 检查是否已经有 OneTabPlus 标签页打开
-  const extensionUrl = chrome.runtime.getURL('popup.html');
+  const extensionUrl = chrome.runtime.getURL('src/popup/index.html');
   const existingTabs = await chrome.tabs.query({ url: extensionUrl + '*' });
 
   if (existingTabs.length > 0) {
@@ -378,7 +405,7 @@ async function openTabsWithSingleInstance(urls: string[]) {
   }
 
   // 检查是否已经有 OneTabPlus 标签页打开
-  const extensionUrl = chrome.runtime.getURL('popup.html');
+  const extensionUrl = chrome.runtime.getURL('src/popup/index.html');
   const existingTabs = await chrome.tabs.query({ url: extensionUrl + '*' });
 
   if (existingTabs.length > 0) {

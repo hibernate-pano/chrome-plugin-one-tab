@@ -9,14 +9,14 @@
     "unlimitedStorage",
     "notifications",
     "identity",
-    "alarms"
+    "alarms",
+    "contextMenus"
   ],
   "host_permissions": [
     "https://*.supabase.co/*",
     "https://cdn.jsdelivr.net/*"
   ],
   "action": {
-    "default_popup": "popup.html",
     "default_icon": "icons/icon16.png"
   },
   "background": {
@@ -35,7 +35,7 @@
         "default": "Ctrl+Shift+S",
         "mac": "Command+Shift+S"
       },
-      "description": "Open extension popup"
+      "description": "Open tab manager"
     },
     "save_all_tabs": {
       "suggested_key": {
