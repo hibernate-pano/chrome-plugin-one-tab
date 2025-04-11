@@ -107,20 +107,17 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({ searchQuery 
         {tab.favicon && (
           <img src={tab.favicon} alt="" className="w-4 h-4 flex-shrink-0" />
         )}
-        <div className="flex-1 min-w-0">
-          <a
-            href="#"
-            className="truncate text-blue-600 hover:underline text-sm block"
-            onClick={(e) => {
-              e.preventDefault();
-              handleOpenTab(tab, group);
-            }}
-            title={tab.title}
-          >
-            {tab.title}
-          </a>
-          <div className="text-xs text-gray-500 truncate">来自: {group.name}</div>
-        </div>
+        <a
+          href="#"
+          className="truncate text-blue-600 hover:underline text-sm flex-1 min-w-0"
+          onClick={(e) => {
+            e.preventDefault();
+            handleOpenTab(tab, group);
+          }}
+          title={tab.title}
+        >
+          {tab.title}
+        </a>
       </div>
       <button
         onClick={() => handleDeleteTab(tab, group)}
