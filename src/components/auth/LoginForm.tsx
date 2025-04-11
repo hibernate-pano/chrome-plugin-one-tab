@@ -2,7 +2,11 @@ import React, { useState } from 'react';
 import { useAppDispatch, useAppSelector } from '@/store/hooks';
 import { signIn, clearError } from '@/store/slices/authSlice';
 
-export const LoginForm: React.FC = () => {
+interface LoginFormProps {
+  onSuccess?: () => void;
+}
+
+export const LoginForm: React.FC<LoginFormProps> = ({ onSuccess }) => {
   const dispatch = useAppDispatch();
   const { isLoading, error } = useAppSelector(state => state.auth);
   const [email, setEmail] = useState('');
@@ -11,7 +15,14 @@ export const LoginForm: React.FC = () => {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (email && password) {
-      await dispatch(signIn({ email, password }));
+      try {
+        await dispatch(signIn({ email, password })).unwrap();
+        if (onSuccess) {
+          onSuccess();
+        }
+      } catch (error) {
+        console.error('登录失败:', error);
+      }
     }
   };
 

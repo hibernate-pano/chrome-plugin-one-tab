@@ -159,9 +159,13 @@ chrome.runtime.onStartup.addListener(() => {
 
 // 监听扩展图标点击事件
 chrome.action.onClicked.addListener(async () => {
-  console.log('点击扩展图标，保存所有标签页');
+  console.log('点击扩展图标，保存所有标签页并打开标签管理器');
   const tabs = await chrome.tabs.query({ currentWindow: true });
   await saveAllTabs(tabs);
+
+  // 保存标签后打开标签管理器
+  const extensionUrl = chrome.runtime.getURL('src/popup/index.html');
+  chrome.tabs.create({ url: extensionUrl });
 });
 
 // 监听快捷键
