@@ -16,8 +16,8 @@ class SyncService {
 
       if (auth.isAuthenticated) {
         console.log('用户已登录，从云端获取最新数据...');
-        // 首次同步，从云端获取数据
-        await this.syncFromCloud();
+        // 首次同步，从云端获取数据，使用后台同步模式
+        await this.syncFromCloud(true);
       } else {
         console.log('用户未登录，跳过同步');
       }
@@ -26,8 +26,13 @@ class SyncService {
     }
   }
 
+  // 后台同步数据
+  async backgroundSync() {
+    return this.syncAll(true);
+  }
+
   // 同步所有数据
-  async syncAll() {
+  async syncAll(background = false) {
     const { auth } = store.getState();
 
     if (!auth.isAuthenticated) {
@@ -36,14 +41,14 @@ class SyncService {
     }
 
     try {
-      console.log('开始同步数据...');
+      console.log(`开始${background ? '后台' : ''}同步数据...`);
 
       // 修改同步顺序：先将本地删除操作同步到云端，然后再同步其他数据
       // 这样可以确保删除操作不会被覆盖
 
       // 先将本地数据同步到云端（包含删除操作）
       console.log('正在将本地数据同步到云端...');
-      await store.dispatch(syncTabsToCloud());
+      await store.dispatch(syncTabsToCloud({ background }));
       await store.dispatch(syncSettingsToCloud());
 
       // 然后从云端同步设置
@@ -52,7 +57,7 @@ class SyncService {
 
       // 最后从云端同步标签组
       console.log('正在从云端同步标签组...');
-      await store.dispatch(syncTabsFromCloud());
+      await store.dispatch(syncTabsFromCloud({ background }));
 
       console.log('数据同步完成！');
     } catch (error) {
@@ -67,7 +72,7 @@ class SyncService {
   }
 
   // 从云端同步数据
-  async syncFromCloud() {
+  async syncFromCloud(background = false) {
     const { auth } = store.getState();
 
     if (!auth.isAuthenticated) {
@@ -76,7 +81,7 @@ class SyncService {
     }
 
     try {
-      console.log('开始从云端同步数据...');
+      console.log(`开始${background ? '后台' : ''}从云端同步数据...`);
 
       // 从云端同步设置
       console.log('正在从云端同步设置...');
@@ -84,7 +89,7 @@ class SyncService {
 
       // 从云端同步标签组
       console.log('正在从云端同步标签组...');
-      await store.dispatch(syncTabsFromCloud());
+      await store.dispatch(syncTabsFromCloud({ background }));
 
       console.log('从云端同步数据完成！');
     } catch (error) {

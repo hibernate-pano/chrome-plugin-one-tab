@@ -14,6 +14,7 @@ const initialState: TabState = {
   syncStatus: 'idle',
   lastSyncTime: null,
   compressionStats: null,
+  backgroundSync: false,
 };
 
 export const loadGroups = createAsyncThunk(
@@ -139,13 +140,17 @@ export const importGroups = createAsyncThunk(
 // 新增：同步标签组到云端
 export const syncTabsToCloud = createAsyncThunk<
   { syncTime: string; stats: any | null },
-  void,
+  { background?: boolean } | void,
   { state: { tabs: TabState; settings: UserSettings } }
 >(
   'tabs/syncTabsToCloud',
-  async (_, { getState }) => {
+  async (options, { getState }) => {
+    const background = options?.background || false;
     try {
       const { tabs } = getState() as { tabs: TabState, settings: UserSettings };
+
+      // 记录同步模式
+      console.log(`开始${background ? '后台' : ''}同步标签组到云端...`);
 
       // 检查是否有标签组需要同步
       if (!tabs.groups || tabs.groups.length === 0) {
@@ -277,8 +282,12 @@ export const syncTabsToCloud = createAsyncThunk<
 // 新增：从云端同步标签组
 export const syncTabsFromCloud = createAsyncThunk(
   'tabs/syncTabsFromCloud',
-  async (_, { getState }) => {
+  async (options: { background?: boolean } | void, { getState }) => {
+    const background = options?.background || false;
     try {
+      // 记录同步模式
+      console.log(`开始${background ? '后台' : ''}从云端同步标签组...`);
+
       // 获取云端数据
       const result = await supabaseSync.downloadTabGroups();
 
@@ -449,8 +458,9 @@ export const tabSlice = createSlice({
       })
 
       // 同步到云端
-      .addCase(syncTabsToCloud.pending, (state) => {
+      .addCase(syncTabsToCloud.pending, (state, action) => {
         state.syncStatus = 'syncing';
+        state.backgroundSync = action.meta.arg?.background || false;
       })
       .addCase(syncTabsToCloud.fulfilled, (state, action) => {
         state.syncStatus = 'success';
@@ -463,13 +473,15 @@ export const tabSlice = createSlice({
       })
 
       // 从云端同步
-      .addCase(syncTabsFromCloud.pending, (state) => {
+      .addCase(syncTabsFromCloud.pending, (state, action) => {
         state.syncStatus = 'syncing';
-        state.isLoading = true;
+        state.backgroundSync = action.meta.arg?.background || false;
+        state.isLoading = !state.backgroundSync;
       })
       .addCase(syncTabsFromCloud.fulfilled, (state, action) => {
         state.syncStatus = 'success';
         state.isLoading = false;
+        state.backgroundSync = false;
         state.groups = action.payload.groups;
         state.lastSyncTime = action.payload.syncTime;
         state.compressionStats = action.payload.stats || null;
@@ -477,6 +489,7 @@ export const tabSlice = createSlice({
       .addCase(syncTabsFromCloud.rejected, (state, action) => {
         state.syncStatus = 'error';
         state.isLoading = false;
+        state.backgroundSync = false;
         state.error = action.error.message || '从云端同步失败';
       });
   },

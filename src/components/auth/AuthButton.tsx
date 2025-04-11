@@ -8,7 +8,7 @@ import { syncTabsToCloud, syncTabsFromCloud } from '@/store/slices/tabSlice';
 export const AuthButton: React.FC = () => {
   const dispatch = useAppDispatch();
   const { isAuthenticated, user } = useAppSelector(state => state.auth);
-  const { syncStatus, lastSyncTime } = useAppSelector(state => state.tabs);
+  const { syncStatus, lastSyncTime, backgroundSync } = useAppSelector(state => state.tabs);
   const [showDropdown, setShowDropdown] = useState(false);
   const [activeTab, setActiveTab] = useState<'login' | 'register'>('login');
   const [showAuthModal, setShowAuthModal] = useState(false);
@@ -21,9 +21,9 @@ export const AuthButton: React.FC = () => {
   const handleSync = async () => {
     if (syncStatus !== 'syncing') {
       // 先将本地数据同步到云端
-      await dispatch(syncTabsToCloud());
+      await dispatch(syncTabsToCloud({ background: false }));
       // 然后从云端同步数据
-      await dispatch(syncTabsFromCloud());
+      await dispatch(syncTabsFromCloud({ background: false }));
       setShowDropdown(false);
     }
   };
@@ -42,7 +42,7 @@ export const AuthButton: React.FC = () => {
             <div className="text-gray-700 font-medium">{user.email}</div>
             <div className="text-xs text-gray-500 flex items-center">
               <span className="inline-block w-2 h-2 rounded-full bg-green-500 mr-1"></span>
-              {syncStatus === 'syncing' ? '同步中...' : '已同步'}
+              {syncStatus === 'syncing' ? (backgroundSync ? '同步中...' : '正在同步数据...') : '已同步'}
             </div>
           </div>
           <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 text-gray-500" viewBox="0 0 20 20" fill="currentColor">
@@ -70,11 +70,11 @@ export const AuthButton: React.FC = () => {
               >
                 {syncStatus === 'syncing' ? (
                   <>
-                    <svg className="animate-spin h-4 w-4 mr-2 text-primary-600" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                    <svg className={`${backgroundSync ? '' : 'animate-spin'} h-4 w-4 mr-2 ${backgroundSync ? 'text-gray-400' : 'text-primary-600'}`} xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
                       <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
                       <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
                     </svg>
-                    <span>同步中...</span>
+                    <span>{backgroundSync ? '同步中...' : '正在同步数据...'}</span>
                   </>
                 ) : (
                   <>

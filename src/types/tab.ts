@@ -39,6 +39,7 @@ export interface TabState {
   syncStatus: 'idle' | 'syncing' | 'success' | 'error'; // 同步状态
   lastSyncTime: string | null; // 最后同步时间
   compressionStats: any | null; // 压缩统计信息
+  backgroundSync: boolean; // 是否在后台同步
 }
 
 export interface UserSettings {

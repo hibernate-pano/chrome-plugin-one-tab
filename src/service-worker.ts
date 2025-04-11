@@ -87,30 +87,11 @@ async function checkForUpdates() {
 // 执行数据同步
 async function syncData() {
   try {
-    // 从云端同步设置
-    const settings = await supabaseSync.downloadSettings();
-    if (settings) {
-      await storage.setSettings(settings);
-    }
+    // 导入同步服务
+    const { syncService } = await import('./services/syncService');
 
-    // 从云端同步标签组
-    const cloudGroups = await supabaseSync.downloadTabGroups();
-    if (cloudGroups && cloudGroups.length > 0) {
-      // 获取本地数据和已删除的标签组
-      const localGroups = await storage.getGroups();
-      const deletedGroups = await storage.getDeletedGroups();
-
-      // 合并数据（使用您现有的合并逻辑）
-      const { mergeTabGroups } = await import('./utils/syncUtils');
-      const settings = await storage.getSettings();
-      const mergedGroups = mergeTabGroups(localGroups, cloudGroups, settings.syncStrategy, deletedGroups);
-
-      // 保存合并后的数据
-      await storage.setGroups(mergedGroups);
-    }
-
-    // 更新最后同步时间
-    await storage.setLastSyncTime(new Date().toISOString());
+    // 使用后台同步模式
+    await syncService.backgroundSync();
 
     console.log('Service Worker: 数据同步完成');
   } catch (error) {
@@ -341,7 +322,9 @@ async function saveAllTabs(inputTabs: chrome.tabs.Tab[]) {
     if (data && data.session) {
       console.log('检测到用户已登录，保存后自动同步到云端');
       // 异步执行同步，不阻塞保存操作
-      syncData().catch(err => {
+      // 使用后台同步模式
+      const { syncService } = await import('./services/syncService');
+      syncService.backgroundSync().catch(err => {
         console.error('保存后同步失败:', err);
       });
     } else {
@@ -429,7 +412,9 @@ async function saveCurrentTab(tab: chrome.tabs.Tab, userSettings?: any) {
     if (data && data.session) {
       console.log('检测到用户已登录，保存后自动同步到云端');
       // 异步执行同步，不阻塞保存操作
-      syncData().catch(err => {
+      // 使用后台同步模式
+      const { syncService } = await import('./services/syncService');
+      syncService.backgroundSync().catch(err => {
         console.error('保存后同步失败:', err);
       });
     } else {

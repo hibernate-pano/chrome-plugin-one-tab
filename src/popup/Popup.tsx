@@ -1,11 +1,26 @@
 import React, { useEffect, useState } from 'react';
 import { Provider } from 'react-redux';
+import { useAppSelector } from '@/store/hooks';
 import { store } from '@/store';
 import { loadSettings } from '@/store/slices/settingsSlice';
 import { loadGroups } from '@/store/slices/tabSlice';
 import Layout from '@/components/layout/Layout';
 import Header from '@/components/layout/Header';
 import TabList from '@/components/tabs/TabList';
+import { LoadingOverlay } from '@/components/common/LoadingOverlay';
+
+const SyncLoadingOverlay: React.FC = () => {
+  const { syncStatus, backgroundSync } = useAppSelector(state => state.tabs);
+  const isSyncing = syncStatus === 'syncing';
+
+  return (
+    <LoadingOverlay
+      isVisible={isSyncing && !backgroundSync}
+      message="正在同步数据..."
+      transparent={true}
+    />
+  );
+};
 
 const PopupContent: React.FC = () => {
   const [searchQuery, setSearchQuery] = useState('');
@@ -36,6 +51,7 @@ const PopupContent: React.FC = () => {
 const Popup: React.FC = () => {
   return (
     <Provider store={store}>
+      <SyncLoadingOverlay />
       <PopupContent />
     </Provider>
   );
