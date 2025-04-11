@@ -1,6 +1,6 @@
 {
   "name": "chrome-plugin-one-tab",
-  "version": "1.1.0",
+  "version": "1.4.0",
   "description": "一个高效的Chrome标签页管理扩展",
   "type": "module",
   "scripts": {
