@@ -3,6 +3,8 @@ import { nanoid } from '@reduxjs/toolkit';
 import { TabGroup } from './types/tab';
 import { auth as supabaseAuth } from './utils/supabase';
 import { syncService } from './services/syncService';
+import { store } from './store';
+import { handleOAuthCallback } from './store/slices/authSlice';
 
 // 创建新标签组的辅助函数
 const createTabGroup = (tabs: chrome.tabs.Tab[]): TabGroup => {
@@ -150,6 +152,50 @@ chrome.runtime.onInstalled.addListener(async (details) => {
       syncStrategy: 'newest',
       deleteStrategy: 'everywhere',
     });
+  }
+});
+
+// 监听标签页更新事件，处理OAuth回调
+chrome.tabs.onUpdated.addListener(async (tabId, changeInfo) => {
+  if (changeInfo.url && changeInfo.url.startsWith(chrome.identity.getRedirectURL())) {
+    console.log('检测到OAuth回调URL:', changeInfo.url);
+    try {
+      // 将当前标签页更新为我们的回调页面
+      await chrome.tabs.update(tabId, { url: chrome.runtime.getURL('src/pages/oauth-callback.html') });
+
+      // 处理OAuth回调
+      await store.dispatch(handleOAuthCallback(changeInfo.url));
+
+      // 关闭回调标签页
+      await chrome.tabs.remove(tabId);
+
+      // 打开标签管理器页面
+      await chrome.tabs.create({ url: chrome.runtime.getURL('index.html') });
+
+      // 显示登录成功通知
+      chrome.notifications.create({
+        type: 'basic',
+        iconUrl: '/icons/icon128.png',
+        title: '登录成功',
+        message: '您已成功登录到OneTabPlus'
+      });
+    } catch (error) {
+      console.error('处理OAuth回调时出错:', error);
+
+      // 关闭回调标签页
+      try {
+        await chrome.tabs.remove(tabId);
+      } catch (e) {
+        console.error('关闭回调标签页失败:', e);
+      }
+
+      chrome.notifications.create({
+        type: 'basic',
+        iconUrl: '/icons/icon128.png',
+        title: '登录失败',
+        message: '第三方登录失败，请重试'
+      });
+    }
   }
 });
 

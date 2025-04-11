@@ -29,6 +29,38 @@ export const auth = {
     return await supabase.auth.signInWithPassword({ email, password });
   },
 
+  // 使用第三方登录
+  async signInWithOAuth(provider: 'google' | 'github') {
+    return await supabase.auth.signInWithOAuth({
+      provider,
+      options: {
+        redirectTo: chrome.identity.getRedirectURL(),
+        queryParams: provider === 'google' ? {
+          access_type: 'offline',
+          prompt: 'consent',
+        } : undefined
+      }
+    });
+  },
+
+  // 处理OAuth回调
+  async handleOAuthCallback(url: string) {
+    // 从URL中提取token
+    const hashParams = new URLSearchParams(url.split('#')[1]);
+    const accessToken = hashParams.get('access_token');
+    const refreshToken = hashParams.get('refresh_token');
+
+    if (!accessToken || !refreshToken) {
+      throw new Error('未能从回调URL中获取令牌');
+    }
+
+    // 设置会话
+    return await supabase.auth.setSession({
+      access_token: accessToken,
+      refresh_token: refreshToken
+    });
+  },
+
   // 退出登录
   async signOut() {
     return await supabase.auth.signOut();

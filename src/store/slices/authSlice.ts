@@ -72,6 +72,62 @@ export const signIn = createAsyncThunk(
   }
 );
 
+export const signInWithOAuth = createAsyncThunk(
+  'auth/signInWithOAuth',
+  async (provider: 'google' | 'github') => {
+    try {
+      const { data, error } = await supabaseAuth.signInWithOAuth(provider);
+      if (error) {
+        console.error('第三方登录错误:', error);
+        throw new Error(typeof error === 'object' && error !== null && 'message' in error ?
+          (error as { message: string }).message : '第三方登录失败');
+      }
+
+      // 第三方登录是重定向流程，这里不会直接返回用户信息
+      // 实际的用户信息会在回调处理中获取
+      return null;
+    } catch (err) {
+      console.error('第三方登录异常:', err);
+      if (err instanceof Error) {
+        throw new Error(err.message);
+      } else {
+        throw new Error('第三方登录失败');
+      }
+    }
+  }
+);
+
+export const handleOAuthCallback = createAsyncThunk(
+  'auth/handleOAuthCallback',
+  async (url: string) => {
+    try {
+      const { data, error } = await supabaseAuth.handleOAuthCallback(url);
+      if (error) {
+        console.error('处理OAuth回调错误:', error);
+        throw new Error(typeof error === 'object' && error !== null && 'message' in error ?
+          (error as { message: string }).message : '处理OAuth回调失败');
+      }
+
+      if (data.user) {
+        return {
+          id: data.user.id,
+          email: data.user.email!,
+          lastLogin: new Date().toISOString(),
+        } as User;
+      }
+
+      throw new Error('处理OAuth回调失败');
+    } catch (err) {
+      console.error('处理OAuth回调异常:', err);
+      if (err instanceof Error) {
+        throw new Error(err.message);
+      } else {
+        throw new Error('处理OAuth回调失败');
+      }
+    }
+  }
+);
+
 export const signOut = createAsyncThunk(
   'auth/signOut',
   async () => {
@@ -186,6 +242,40 @@ const authSlice = createSlice({
       .addCase(signIn.rejected, (state, action) => {
         state.isLoading = false;
         state.error = action.error.message || '登录失败';
+      })
+
+      // 第三方登录
+      .addCase(signInWithOAuth.pending, (state) => {
+        state.isLoading = true;
+        state.error = null;
+      })
+      .addCase(signInWithOAuth.fulfilled, (state) => {
+        state.isLoading = false;
+        // 不在这里设置用户信息，因为这只是重定向的开始
+      })
+      .addCase(signInWithOAuth.rejected, (state, action) => {
+        state.isLoading = false;
+        state.error = action.error.message || '第三方登录失败';
+      })
+
+      // 处理OAuth回调
+      .addCase(handleOAuthCallback.pending, (state) => {
+        state.isLoading = true;
+        state.error = null;
+      })
+      .addCase(handleOAuthCallback.fulfilled, (state, action) => {
+        state.isLoading = false;
+        state.user = action.payload;
+        state.isAuthenticated = !!action.payload;
+
+        // 登录成功后缓存认证状态
+        if (action.payload) {
+          authCache.saveAuthState(action.payload, true);
+        }
+      })
+      .addCase(handleOAuthCallback.rejected, (state, action) => {
+        state.isLoading = false;
+        state.error = action.error.message || '处理OAuth回调失败';
       })
 
       // 退出登录

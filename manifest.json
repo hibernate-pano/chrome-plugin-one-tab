@@ -14,7 +14,9 @@
   ],
   "host_permissions": [
     "https://*.supabase.co/*",
-    "https://cdn.jsdelivr.net/*"
+    "https://cdn.jsdelivr.net/*",
+    "https://accounts.google.com/*",
+    "https://github.com/*"
   ],
   "action": {
     "default_icon": "icons/icon16.png"
