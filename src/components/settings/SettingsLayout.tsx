@@ -11,17 +11,22 @@ export const SettingsLayout: React.FC<SettingsLayoutProps> = ({ children }) => {
       <div className="max-w-2xl mx-auto">
         <div className="flex items-center justify-between mb-6">
           <h1 className="text-2xl font-bold">设置</h1>
-          <a
-            href="popup.html"
+          <button
+            onClick={() => {
+              // 使用 chrome.runtime.getURL 获取正确的路径
+              const popupUrl = chrome.runtime.getURL('src/popup/index.html');
+              window.location.href = popupUrl;
+            }}
             className="
               px-4 py-2 rounded-lg
               text-gray-600
               hover:bg-gray-100
               transition duration-200
+              cursor-pointer
             "
           >
             返回
-          </a>
+          </button>
         </div>
         {children}
       </div>
