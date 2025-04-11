@@ -536,6 +536,21 @@ async function handleSaveCurrentTab(tab: chrome.tabs.Tab) {
     const settings = await storage.getSettings();
     // 调用保存当前标签页的函数
     await saveCurrentTab(tab, settings);
+
+    // 保存后打开标签管理器并刷新数据
+    const extensionUrl = chrome.runtime.getURL('src/popup/index.html');
+
+    // 检查是否已经有标签管理页打开
+    const existingTabs = await chrome.tabs.query({ url: extensionUrl + '*' });
+
+    if (existingTabs.length > 0) {
+      // 如果已经有标签管理页打开，则激活它并刷新
+      await chrome.tabs.update(existingTabs[0].id!, { active: true });
+      await chrome.tabs.reload(existingTabs[0].id!);
+    } else {
+      // 如果没有标签管理页打开，则创建新的
+      await chrome.tabs.create({ url: extensionUrl });
+    }
   }
 }
 
