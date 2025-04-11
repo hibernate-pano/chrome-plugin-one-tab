@@ -14,8 +14,9 @@ export const UserProfile: React.FC = () => {
 
   const handleSync = async () => {
     try {
-      await dispatch(syncTabsFromCloud());
-      await dispatch(syncTabsToCloud());
+      // 使用后台同步模式减少UI卡顿
+      await dispatch(syncTabsFromCloud({ background: true }));
+      await dispatch(syncTabsToCloud({ background: true }));
     } catch (error) {
       console.error('同步失败:', error);
     }

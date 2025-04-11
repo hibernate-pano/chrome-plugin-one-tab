@@ -147,6 +147,10 @@ export const syncTabsToCloud = createAsyncThunk<
   async (options, { getState }) => {
     const background = options?.background || false;
     try {
+      // 使用 setTimeout 延迟执行数据处理，避免阻塞主线程
+      // 这样可以让 UI 先更新，然后再处理数据
+      await new Promise(resolve => setTimeout(resolve, 10));
+
       const { tabs } = getState() as { tabs: TabState, settings: UserSettings };
 
       // 记录同步模式
@@ -285,6 +289,10 @@ export const syncTabsFromCloud = createAsyncThunk(
   async (options: { background?: boolean } | void, { getState }) => {
     const background = options?.background || false;
     try {
+      // 使用 setTimeout 延迟执行数据处理，避免阻塞主线程
+      // 这样可以让 UI 先更新，然后再处理数据
+      await new Promise(resolve => setTimeout(resolve, 10));
+
       // 记录同步模式
       console.log(`开始${background ? '后台' : ''}从云端同步标签组...`);
 
@@ -459,38 +467,72 @@ export const tabSlice = createSlice({
 
       // 同步到云端
       .addCase(syncTabsToCloud.pending, (state, action) => {
-        state.syncStatus = 'syncing';
-        state.backgroundSync = action.meta.arg?.background || false;
+        // 只有在非后台同步时才更新状态
+        const isBackground = action.meta.arg?.background || false;
+        state.backgroundSync = isBackground;
+
+        if (!isBackground) {
+          state.syncStatus = 'syncing';
+        }
       })
       .addCase(syncTabsToCloud.fulfilled, (state, action) => {
-        state.syncStatus = 'success';
+        // 更新同步时间和统计信息，但只有在非后台同步时才更新状态
         state.lastSyncTime = action.payload.syncTime;
         state.compressionStats = action.payload.stats || null;
+
+        if (!state.backgroundSync) {
+          state.syncStatus = 'success';
+        }
+
+        // 后台同步完成后重置标志
+        state.backgroundSync = false;
       })
       .addCase(syncTabsToCloud.rejected, (state, action) => {
-        state.syncStatus = 'error';
-        state.error = action.error.message || '同步到云端失败';
+        // 只有在非后台同步时才更新错误状态
+        if (!state.backgroundSync) {
+          state.syncStatus = 'error';
+          state.error = action.error.message || '同步到云端失败';
+        }
+
+        // 后台同步完成后重置标志
+        state.backgroundSync = false;
       })
 
       // 从云端同步
       .addCase(syncTabsFromCloud.pending, (state, action) => {
-        state.syncStatus = 'syncing';
-        state.backgroundSync = action.meta.arg?.background || false;
-        state.isLoading = !state.backgroundSync;
+        // 只有在非后台同步时才更新状态
+        const isBackground = action.meta.arg?.background || false;
+        state.backgroundSync = isBackground;
+
+        if (!isBackground) {
+          state.syncStatus = 'syncing';
+          state.isLoading = true;
+        }
       })
       .addCase(syncTabsFromCloud.fulfilled, (state, action) => {
-        state.syncStatus = 'success';
-        state.isLoading = false;
-        state.backgroundSync = false;
+        // 始终更新数据，但只有在非后台同步时才更新状态
         state.groups = action.payload.groups;
         state.lastSyncTime = action.payload.syncTime;
         state.compressionStats = action.payload.stats || null;
+
+        if (!state.backgroundSync) {
+          state.syncStatus = 'success';
+          state.isLoading = false;
+        }
+
+        // 后台同步完成后重置标志
+        state.backgroundSync = false;
       })
       .addCase(syncTabsFromCloud.rejected, (state, action) => {
-        state.syncStatus = 'error';
-        state.isLoading = false;
+        // 只有在非后台同步时才更新错误状态
+        if (!state.backgroundSync) {
+          state.syncStatus = 'error';
+          state.isLoading = false;
+          state.error = action.error.message || '从云端同步失败';
+        }
+
+        // 后台同步完成后重置标志
         state.backgroundSync = false;
-        state.error = action.error.message || '从云端同步失败';
       });
   },
 });

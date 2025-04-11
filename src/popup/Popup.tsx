@@ -17,7 +17,6 @@ const SyncLoadingOverlay: React.FC = () => {
     <LoadingOverlay
       isVisible={isSyncing && !backgroundSync}
       message="正在同步数据..."
-      transparent={true}
     />
   );
 };

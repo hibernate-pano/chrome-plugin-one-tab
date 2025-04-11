@@ -32,7 +32,7 @@ class SyncService {
   }
 
   // 同步所有数据
-  async syncAll(background = false) {
+  async syncAll(background = true) {
     const { auth } = store.getState();
 
     if (!auth.isAuthenticated) {
@@ -72,7 +72,7 @@ class SyncService {
   }
 
   // 从云端同步数据
-  async syncFromCloud(background = false) {
+  async syncFromCloud(background = true) {
     const { auth } = store.getState();
 
     if (!auth.isAuthenticated) {
