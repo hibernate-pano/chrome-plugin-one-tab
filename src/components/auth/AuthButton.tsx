@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useAppSelector, useAppDispatch } from '@/store/hooks';
 import { signOut } from '@/store/slices/authSlice';
 import { LoginForm } from './LoginForm';
@@ -12,6 +12,15 @@ export const AuthButton: React.FC = () => {
   const [showDropdown, setShowDropdown] = useState(false);
   const [activeTab, setActiveTab] = useState<'login' | 'register'>('login');
   const [showAuthModal, setShowAuthModal] = useState(false);
+  const [initialRender, setInitialRender] = useState(true);
+
+  // 首次渲染后标记为非初始渲染状态
+  useEffect(() => {
+    if (initialRender) {
+      // 使用微任务延迟标记，确保缓存数据已加载
+      setTimeout(() => setInitialRender(false), 0);
+    }
+  }, [initialRender]);
 
   const handleSignOut = async () => {
     await dispatch(signOut());
@@ -27,6 +36,11 @@ export const AuthButton: React.FC = () => {
       setShowDropdown(false);
     }
   };
+
+  // 在初始渲染时不显示任何内容，避免闪烁
+  if (initialRender) {
+    return null;
+  }
 
   if (isAuthenticated && user) {
     return (

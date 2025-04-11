@@ -7,10 +7,13 @@ import { loadSettings } from '@/store/slices/settingsSlice';
 import { getCurrentUser } from '@/store/slices/authSlice';
 import { syncService } from '@/services/syncService';
 import { auth as supabaseAuth } from '@/utils/supabase';
+import { authCache } from '@/utils/authCache';
+import { store } from '@/store';
 
 const App: React.FC = () => {
   const dispatch = useAppDispatch();
   const [searchQuery, setSearchQuery] = useState('');
+  const [initialAuthLoaded, setInitialAuthLoaded] = useState(false);
 
   const { isAuthenticated } = useAppSelector(state => state.auth);
 
@@ -41,7 +44,39 @@ const App: React.FC = () => {
     };
   }, [isAuthenticated]);
 
+  // 首先从缓存加载认证状态，避免闪烁
   useEffect(() => {
+    const loadCachedAuth = async () => {
+      try {
+        // 从缓存加载认证状态
+        const cachedAuth = await authCache.getAuthState();
+
+        if (cachedAuth && cachedAuth.isAuthenticated && cachedAuth.user) {
+          // 如果有缓存的认证状态，先将其设置到 Redux 状态
+          store.dispatch({
+            type: 'auth/setFromCache',
+            payload: {
+              user: cachedAuth.user,
+              isAuthenticated: true
+            }
+          });
+          console.log('从缓存加载用户认证状态:', cachedAuth.user.email);
+        }
+
+        setInitialAuthLoaded(true);
+      } catch (error) {
+        console.error('加载缓存认证状态失败:', error);
+        setInitialAuthLoaded(true);
+      }
+    };
+
+    loadCachedAuth();
+  }, []);
+
+  // 然后加载设置并检查实际的登录状态
+  useEffect(() => {
+    if (!initialAuthLoaded) return;
+
     // 加载用户设置
     dispatch(loadSettings());
 
@@ -72,7 +107,7 @@ const App: React.FC = () => {
     };
 
     checkSession();
-  }, [dispatch]);
+  }, [dispatch, initialAuthLoaded]);
 
   return (
     <DndProvider>

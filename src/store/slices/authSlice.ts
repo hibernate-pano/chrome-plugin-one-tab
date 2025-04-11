@@ -1,6 +1,7 @@
 import { createSlice, createAsyncThunk } from '@reduxjs/toolkit';
 import { AuthState, User } from '@/types/tab';
 import { auth as supabaseAuth } from '@/utils/supabase';
+import { authCache } from '@/utils/authCache';
 
 const initialState: AuthState = {
   user: null,
@@ -142,6 +143,13 @@ const authSlice = createSlice({
     clearError: (state) => {
       state.error = null;
     },
+    // 从缓存设置认证状态
+    setFromCache: (state, action) => {
+      state.user = action.payload.user;
+      state.isAuthenticated = action.payload.isAuthenticated;
+      state.isLoading = false;
+      state.error = null;
+    },
   },
   extraReducers: (builder) => {
     builder
@@ -169,6 +177,11 @@ const authSlice = createSlice({
         state.isLoading = false;
         state.user = action.payload;
         state.isAuthenticated = !!action.payload;
+
+        // 登录成功后缓存认证状态
+        if (action.payload) {
+          authCache.saveAuthState(action.payload, true);
+        }
       })
       .addCase(signIn.rejected, (state, action) => {
         state.isLoading = false;
@@ -183,6 +196,9 @@ const authSlice = createSlice({
         state.isLoading = false;
         state.user = null;
         state.isAuthenticated = false;
+
+        // 退出登录后清除认证缓存
+        authCache.clearAuthState();
       })
       .addCase(signOut.rejected, (state, action) => {
         state.isLoading = false;
@@ -197,6 +213,13 @@ const authSlice = createSlice({
         state.isLoading = false;
         state.user = action.payload;
         state.isAuthenticated = !!action.payload;
+
+        // 更新认证缓存
+        if (action.payload) {
+          authCache.saveAuthState(action.payload, true);
+        } else {
+          authCache.clearAuthState();
+        }
       })
       .addCase(getCurrentUser.rejected, (state, action) => {
         state.isLoading = false;
@@ -207,6 +230,6 @@ const authSlice = createSlice({
   },
 });
 
-export const { clearError } = authSlice.actions;
+export const { clearError, setFromCache } = authSlice.actions;
 
 export default authSlice.reducer;
