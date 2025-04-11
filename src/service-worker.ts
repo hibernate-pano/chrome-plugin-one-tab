@@ -111,7 +111,7 @@ async function syncData() {
 }
 
 // 检查两个对象是否有差异
-function checkForChanges(local: any, cloud: any): boolean {
+function checkForChanges(local: any, cloud: any) {
   if (!local || !cloud) return true;
 
   // 如果是数组，检查长度和内容

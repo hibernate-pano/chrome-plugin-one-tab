@@ -113,12 +113,12 @@ export const TabGroup: React.FC<TabGroupProps> = ({ group }) => {
   };
 
   return (
-    <div className="mb-6 transition-material bg-white shadow-md p-5 rounded-lg border border-gray-200 hover:shadow-lg">
-      <div className="flex items-center mb-4">
+    <div className="mb-3 transition-colors bg-white border-b border-gray-200 pb-2">
+      <div className="flex items-center mb-2">
         <div className="flex items-center space-x-3 flex-grow">
           <button
             onClick={() => setIsExpanded(!isExpanded)}
-            className="text-gray-500 hover:text-primary-600 transition-material p-1 rounded-full hover:bg-gray-100"
+            className="text-gray-500 hover:text-primary-600 transition-colors p-1 hover:bg-gray-100"
           >
             <svg
               xmlns="http://www.w3.org/2000/svg"
@@ -136,31 +136,31 @@ export const TabGroup: React.FC<TabGroupProps> = ({ group }) => {
               onChange={handleNameChange}
               onBlur={handleNameSubmit}
               onKeyDown={handleKeyDown}
-              className="input-material w-full"
+              className="border border-gray-300 rounded px-2 py-1 w-full text-sm"
               autoFocus
             />
           ) : (
             <h3
-              className="text-lg font-medium text-gray-900 transition-material"
+              className="text-base font-medium text-gray-900"
             >
               {group.name}
             </h3>
           )}
-          <span className="text-sm bg-gray-100 text-gray-600 px-2 py-1 rounded-full transition-material">
+          <span className="text-xs bg-gray-100 text-gray-600 px-1.5 py-0.5 rounded-full ml-1">
             {group.tabs.length}
           </span>
         </div>
         <div className="flex items-center space-x-2 ml-auto">
           <button
             onClick={handleOpenAllTabs}
-            className="btn-material text-primary-600 hover:bg-primary-50 text-sm"
+            className="text-blue-600 hover:text-blue-800 text-xs hover:underline"
             title="打开所有标签页"
           >
             恢复全部
           </button>
           <button
             onClick={() => !group.isLocked && setIsEditing(true)}
-            className={`p-2 rounded-full hover:bg-gray-100 transition-material ${group.isLocked ? 'text-gray-300 cursor-not-allowed' : 'text-gray-500 hover:text-primary-600'}`}
+            className={`p-1 hover:bg-gray-100 transition-colors ${group.isLocked ? 'text-gray-300 cursor-not-allowed' : 'text-gray-500 hover:text-primary-600'}`}
             title={group.isLocked ? '锁定的标签组不能重命名' : '重命名标签组'}
             disabled={group.isLocked}
           >
@@ -170,7 +170,7 @@ export const TabGroup: React.FC<TabGroupProps> = ({ group }) => {
           </button>
           <button
             onClick={handleToggleLock}
-            className={`p-2 rounded-full hover:bg-gray-100 transition-material ${group.isLocked ? 'text-warning' : 'text-gray-500'} hover:text-warning`}
+            className={`p-1 hover:bg-gray-100 transition-colors ${group.isLocked ? 'text-warning' : 'text-gray-500'} hover:text-warning`}
             title={group.isLocked ? '解锁标签组' : '锁定标签组'}
           >
             <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
@@ -180,7 +180,7 @@ export const TabGroup: React.FC<TabGroupProps> = ({ group }) => {
           {!group.isLocked && (
             <button
               onClick={handleDelete}
-              className="p-2 rounded-full hover:bg-gray-100 transition-material text-gray-500 hover:text-error"
+              className="p-1 hover:bg-gray-100 transition-colors text-gray-500 hover:text-red-500"
               title="删除标签组"
             >
               <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
@@ -191,7 +191,7 @@ export const TabGroup: React.FC<TabGroupProps> = ({ group }) => {
         </div>
       </div>
       {isExpanded && (
-        <div className="mt-4 space-y-2 group bg-gray-50 p-4 rounded-lg border border-gray-100">
+        <div className="mt-1 space-y-1 group">
           {group.tabs.map((tab, index) => (
             <DraggableTab
               key={tab.id}

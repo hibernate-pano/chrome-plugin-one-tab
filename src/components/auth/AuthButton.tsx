@@ -106,7 +106,7 @@ export const AuthButton: React.FC = () => {
     <>
       <button
         onClick={() => setShowAuthModal(true)}
-        className="px-4 py-2 bg-primary-600 text-white rounded-lg hover:bg-primary-700 transition-all font-medium"
+        className="px-4 py-1.5 rounded text-sm transition-colors bg-primary-600 text-white hover:bg-primary-700 border border-primary-600 min-w-[100px] text-center"
       >
         登录 / 注册
       </button>

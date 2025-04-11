@@ -59,18 +59,18 @@ const App: React.FC = () => {
 
   return (
     <DndProvider>
-      <div className="min-h-screen bg-gray-50 flex flex-col">
+      <div className="min-h-screen bg-white flex flex-col">
         <Header onSearch={setSearchQuery} />
-        <main className="flex-1 container mx-auto py-8 px-6 max-w-6xl">
+        <main className="flex-1 container mx-auto py-2 px-2 max-w-5xl">
           <TabList searchQuery={searchQuery} />
         </main>
-        <footer className="py-4 px-6 bg-white border-t border-gray-200 text-sm text-gray-600">
-          <div className="container mx-auto max-w-6xl flex justify-between items-center">
+        <footer className="py-2 px-2 bg-white border-t border-gray-200 text-xs text-gray-600">
+          <div className="container mx-auto max-w-5xl flex justify-between items-center">
             <div className="flex items-center space-x-2">
-              <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 text-primary-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 text-primary-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 17V7m0 10a2 2 0 01-2 2H5a2 2 0 01-2-2V7a2 2 0 012-2h2a2 2 0 012 2m0 10a2 2 0 002 2h2a2 2 0 002-2M9 7a2 2 0 012-2h2a2 2 0 012 2m0 10V7m0 10a2 2 0 002 2h2a2 2 0 002-2V7a2 2 0 00-2-2h-2a2 2 0 00-2 2" />
               </svg>
-              <span className="font-medium">OneTabPlus v1.0</span>
+              <span className="text-xs">OneTabPlus v1.0</span>
             </div>
             <div>
               {isAuthenticated ? (

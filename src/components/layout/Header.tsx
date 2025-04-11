@@ -74,14 +74,14 @@ export const Header: React.FC<HeaderProps> = ({ onSearch }) => {
   // 不再需要获取用户状态，因为 AuthContainer 会自己检查
 
   return (
-    <header className="bg-white border-b border-gray-200 shadow-sm transition-material">
-      <div className="container mx-auto max-w-6xl">
-        <div className="flex items-center justify-between p-4">
+    <header className="bg-white border-b border-gray-200 transition-colors">
+      <div className="container mx-auto max-w-5xl">
+        <div className="flex items-center justify-between py-2 px-2">
           <div className="flex items-center space-x-3">
-            <svg xmlns="http://www.w3.org/2000/svg" className="h-8 w-8 text-primary-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6 text-primary-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 17V7m0 10a2 2 0 01-2 2H5a2 2 0 01-2-2V7a2 2 0 012-2h2a2 2 0 012 2m0 10a2 2 0 002 2h2a2 2 0 002-2M9 7a2 2 0 012-2h2a2 2 0 012 2m0 10V7m0 10a2 2 0 002 2h2a2 2 0 002-2V7a2 2 0 00-2-2h-2a2 2 0 00-2 2" />
             </svg>
-            <h1 className="text-2xl font-bold text-gray-800">
+            <h1 className="text-lg font-bold text-gray-800">
               OneTabPlus
             </h1>
           </div>
@@ -91,12 +91,12 @@ export const Header: React.FC<HeaderProps> = ({ onSearch }) => {
               <input
                 type="text"
                 placeholder="搜索标签..."
-                className="pl-10 pr-4 py-2 w-72 border border-gray-300 rounded-lg text-gray-700 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent"
+                className="pl-8 pr-2 py-1.5 w-60 border border-gray-300 rounded text-gray-700 text-sm focus:outline-none focus:ring-1 focus:ring-primary-500 focus:border-transparent"
                 onChange={handleSearch}
               />
               <svg
                 xmlns="http://www.w3.org/2000/svg"
-                className="h-5 w-5 absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400"
+                className="h-4 w-4 absolute left-2 top-1/2 transform -translate-y-1/2 text-gray-400"
                 fill="none"
                 viewBox="0 0 24 24"
                 stroke="currentColor"
@@ -107,14 +107,14 @@ export const Header: React.FC<HeaderProps> = ({ onSearch }) => {
 
             <button
               onClick={handleSaveCurrentTab}
-              className="px-4 py-2 rounded-lg font-medium transition-all duration-200 ease-out bg-gray-100 text-gray-700 hover:bg-gray-200 border border-gray-300"
+              className="px-4 py-1.5 rounded text-sm transition-colors bg-gray-100 text-gray-700 hover:bg-gray-200 border border-gray-300 min-w-[100px] text-center"
             >
               保存当前标签
             </button>
 
             <button
               onClick={handleSaveAllTabs}
-              className="px-4 py-2 rounded-lg font-medium transition-all duration-200 ease-out bg-primary-600 text-white hover:bg-primary-700 shadow-sm"
+              className="px-4 py-1.5 rounded text-sm transition-colors bg-primary-600 text-white hover:bg-primary-700 border border-primary-600 min-w-[100px] text-center"
             >
               保存所有标签
             </button>

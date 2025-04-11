@@ -31,7 +31,7 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({ searchQuery 
 
   if (matchingTabs.length === 0) {
     return (
-      <div className="flex flex-col items-center justify-center h-64 space-y-2 text-gray-500">
+      <div className="flex flex-col items-center justify-center h-40 space-y-2 text-gray-500">
         <svg xmlns="http://www.w3.org/2000/svg" className="h-12 w-12" fill="none" viewBox="0 0 24 24" stroke="currentColor">
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
         </svg>
@@ -94,9 +94,9 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({ searchQuery 
   };
 
   return (
-    <div className="space-y-1">
-      <h3 className="text-lg font-medium mb-2">搜索结果</h3>
-      <div className="space-y-4">
+    <div>
+      <h3 className="text-base font-medium mb-1">搜索结果</h3>
+      <div className="space-y-2">
         {/* Group search results by tab group */}
         {Object.entries(
           matchingTabs.reduce((acc, { tab, group }) => {
@@ -107,24 +107,24 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({ searchQuery 
             return acc;
           }, {} as Record<string, { group: TabGroup; tabs: Tab[] }>)
         ).map(([groupId, { group, tabs }]) => (
-          <div key={groupId} className="space-y-1">
-            <div className="flex items-center space-x-2 mb-1">
-              <h4 className="text-sm font-medium text-gray-700">{group.name}</h4>
+          <div key={groupId}>
+            <div className="flex items-center space-x-1 mb-0.5">
+              <h4 className="text-xs font-medium text-gray-700">{group.name}</h4>
               <span className="text-xs text-gray-500">({tabs.length})</span>
             </div>
-            <div className="pl-4 space-y-1 group">
+            <div className="pl-2 space-y-0.5 group">
               {tabs.map(tab => (
                 <div
                   key={tab.id}
-                  className="flex items-center py-1 px-2 hover:bg-gray-100 rounded-md transition-material"
+                  className="flex items-center py-1 px-1 hover:bg-gray-100 transition-colors"
                 >
-                  <div className="flex items-center space-x-2 flex-1 min-w-0">
+                  <div className="flex items-center space-x-1 flex-1 min-w-0">
                     {tab.favicon && (
                       <img src={tab.favicon} alt="" className="w-4 h-4 flex-shrink-0" />
                     )}
                     <a
                       href="#"
-                      className="truncate text-primary-600 hover:underline"
+                      className="truncate text-blue-600 hover:underline text-sm"
                       onClick={(e) => {
                         e.preventDefault();
                         handleOpenTab(tab, group);
@@ -135,7 +135,7 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({ searchQuery 
                   </div>
                   <button
                     onClick={() => handleDeleteTab(tab, group)}
-                    className="text-gray-500 hover:text-error p-1 rounded-full hover:bg-gray-100 transition-material ml-1 opacity-0 group-hover:opacity-100"
+                    className="text-gray-400 hover:text-red-500 p-1 hover:bg-gray-100 transition-colors ml-1 opacity-0 group-hover:opacity-100"
                   >
                     <svg xmlns="http://www.w3.org/2000/svg" className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />

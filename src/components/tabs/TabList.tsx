@@ -50,13 +50,13 @@ export const TabList: React.FC<TabListProps> = ({ searchQuery }) => {
 
   if (filteredGroups.length === 0 && !searchQuery) {
     return (
-      <div className="flex flex-col items-center justify-center py-16 space-y-4 text-gray-500 bg-white rounded-lg shadow-sm border border-gray-200 p-8">
-        <div className="w-20 h-20 rounded-full bg-gray-100 flex items-center justify-center">
+      <div className="flex flex-col items-center justify-center py-8 space-y-3 text-gray-500 bg-white border border-gray-200 p-4">
+        <div className="w-16 h-16 rounded-full bg-gray-100 flex items-center justify-center">
           <svg xmlns="http://www.w3.org/2000/svg" className="h-10 w-10 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
           </svg>
         </div>
-        <h3 className="text-xl font-medium text-gray-700">没有保存的标签页</h3>
+        <h3 className="text-lg font-medium text-gray-700">没有保存的标签页</h3>
         <p className="text-gray-500 max-w-md text-center">点击右上角的“保存所有标签”按钮开始保存您的标签页。保存后的标签页将显示在这里。</p>
         <button
           onClick={() => {
@@ -65,7 +65,7 @@ export const TabList: React.FC<TabListProps> = ({ searchQuery }) => {
               data: { tabs: [] }
             });
           }}
-          className="mt-2 px-6 py-2 bg-primary-600 text-white rounded-lg hover:bg-primary-700 transition-colors font-medium shadow-sm"
+          className="mt-2 px-4 py-1.5 bg-primary-600 text-white rounded hover:bg-primary-700 transition-colors text-sm"
         >
           保存所有标签
         </button>
@@ -107,7 +107,7 @@ export const TabList: React.FC<TabListProps> = ({ searchQuery }) => {
   };
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-2">
       {/* 搜索结果或标签组列表 */}
       {searchQuery ? (
         <SearchResultList searchQuery={searchQuery} />
