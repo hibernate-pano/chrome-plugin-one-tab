@@ -36,12 +36,30 @@ export const auth = {
 
   // 获取当前用户
   async getCurrentUser() {
-    return await supabase.auth.getUser();
+    try {
+      return await supabase.auth.getUser();
+    } catch (error) {
+      console.error('获取当前用户失败:', error);
+      // 返回一个结构化的错误对象
+      return {
+        data: { user: null },
+        error: typeof error === 'string' ? { message: error } : error
+      };
+    }
   },
 
   // 获取会话
   async getSession() {
-    return await supabase.auth.getSession();
+    try {
+      return await supabase.auth.getSession();
+    } catch (error) {
+      console.error('获取会话失败:', error);
+      // 返回一个结构化的错误对象
+      return {
+        data: { session: null },
+        error: typeof error === 'string' ? { message: error } : error
+      };
+    }
   }
 };
 

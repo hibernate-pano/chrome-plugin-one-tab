@@ -50,10 +50,13 @@ const App: React.FC = () => {
       .then(user => {
         if (user) {
           console.log('用户已自动登录:', user.email);
+        } else {
+          console.log('没有找到已登录的用户会话');
         }
       })
       .catch(error => {
-        console.error('自动登录失败:', error);
+        // 这里不再显示错误，因为未登录是正常情况
+        console.log('自动登录检查完成，用户未登录');
       });
   }, [dispatch]);
 

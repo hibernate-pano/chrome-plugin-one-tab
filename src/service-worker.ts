@@ -24,9 +24,18 @@ async function checkForUpdates() {
     console.log('Service Worker: 检查云端更新...');
 
     // 检查用户是否已登录
-    const { data } = await supabaseAuth.getSession();
-    if (!data.session) {
-      console.log('Service Worker: 用户未登录，跳过检查更新');
+    try {
+      const { data, error } = await supabaseAuth.getSession();
+      if (error) {
+        console.log('Service Worker: 获取用户会话失败，跳过检查更新', error);
+        return;
+      }
+      if (!data.session) {
+        console.log('Service Worker: 用户未登录，跳过检查更新');
+        return;
+      }
+    } catch (err) {
+      console.error('Service Worker: 检查用户登录状态异常', err);
       return;
     }
 
