@@ -28,25 +28,6 @@ export const Header: React.FC<HeaderProps> = ({ onSearch }) => {
     });
   };
 
-  const handleSaveCurrentTab = async () => {
-    const [activeTab] = await chrome.tabs.query({
-      active: true,
-      currentWindow: true
-    });
-
-    if (!activeTab) {
-      return;
-    }
-
-    // 只通过background脚本保存标签页，避免重复保存
-    chrome.runtime.sendMessage({
-      type: 'SAVE_CURRENT_TAB',
-      data: {
-        tab: activeTab,
-        settings
-      }
-    });
-  };
 
   const handleExportData = async () => {
     try {
@@ -104,13 +85,6 @@ export const Header: React.FC<HeaderProps> = ({ onSearch }) => {
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
               </svg>
             </div>
-
-            <button
-              onClick={handleSaveCurrentTab}
-              className="px-4 py-1.5 rounded text-sm transition-colors bg-gray-100 text-gray-700 hover:bg-gray-200 border border-gray-300 min-w-[100px] text-center"
-            >
-              保存当前标签
-            </button>
 
             <button
               onClick={handleSaveAllTabs}

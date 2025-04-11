@@ -511,5 +511,33 @@ async function openTabsWithSingleInstance(urls: string[]) {
   }
 }
 
+// 创建右键菜单
+chrome.runtime.onInstalled.addListener(() => {
+  // 创建右键菜单项
+  chrome.contextMenus.create({
+    id: 'saveCurrentTab',
+    title: '保存当前标签',
+    contexts: ['action'] // 只在点击扩展图标时显示
+  });
+});
+
+// 监听右键菜单点击事件
+chrome.contextMenus.onClicked.addListener(async (info, tab) => {
+  if (info.menuItemId === 'saveCurrentTab' && tab) {
+    // 保存当前标签页
+    await handleSaveCurrentTab(tab);
+  }
+});
+
+// 监听右键菜单保存当前标签页
+async function handleSaveCurrentTab(tab: chrome.tabs.Tab) {
+  if (tab && tab.url) {
+    // 获取设置
+    const settings = await storage.getSettings();
+    // 调用保存当前标签页的函数
+    await saveCurrentTab(tab, settings);
+  }
+}
+
 // 导出一个空对象，确保这个文件被视为模块
 export { };
