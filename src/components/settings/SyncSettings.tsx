@@ -2,7 +2,6 @@ import React from 'react';
 import { useAppDispatch, useAppSelector } from '@/store/hooks';
 import { UserSettings } from '@/types/tab';
 import {
-  setSyncInterval,
   toggleSyncEnabled,
   saveSettings,
 } from '@/store/slices/settingsSlice';
@@ -12,11 +11,7 @@ export const SyncSettings: React.FC = () => {
   const settings = useAppSelector(state => state.settings);
   const { isAuthenticated } = useAppSelector(state => state.auth);
 
-  const handleSyncIntervalChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
-    const value = parseInt(e.target.value, 10);
-    dispatch(setSyncInterval(value));
-    dispatch(saveSettings({ ...settings, syncInterval: value }));
-  };
+  // 删除定时同步间隔设置
 
   const handleToggleSyncEnabled = () => {
     dispatch(toggleSyncEnabled());
@@ -71,26 +66,6 @@ export const SyncSettings: React.FC = () => {
 
       {settings.syncEnabled && (
         <>
-          <div className="flex items-center justify-between">
-            <div>
-              <h3 className="font-medium">同步间隔</h3>
-              <p className="text-sm text-gray-500">
-                设置自动同步的时间间隔
-              </p>
-            </div>
-            <select
-              className="border rounded p-2"
-              value={settings.syncInterval}
-              onChange={handleSyncIntervalChange}
-            >
-              <option value={1}>1分钟</option>
-              <option value={5}>5分钟</option>
-              <option value={10}>10分钟</option>
-              <option value={15}>15分钟</option>
-              <option value={30}>30分钟</option>
-              <option value={60}>1小时</option>
-            </select>
-          </div>
 
           <div className="flex items-center justify-between mt-4">
             <div>

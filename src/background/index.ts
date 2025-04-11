@@ -33,21 +33,11 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       .then(() => sendResponse({ success: true }))
       .catch(error => sendResponse({ success: false, error: error.message }));
     return true; // 异步响应
-  } else if (message.action === 'updateSyncInterval') {
-    syncService.updateSyncInterval();
-    sendResponse({ success: true });
   }
   return true;
 });
 
-// 使用Chrome的alarms API进行定时同步
-chrome.alarms.create('syncAlarm', { periodInMinutes: 1 });
-
-chrome.alarms.onAlarm.addListener((alarm) => {
-  if (alarm.name === 'syncAlarm') {
-    syncService.syncAll();
-  }
-});
+// 删除定时同步功能
 
 // 打开单个标签页，保持只有一个 OneTabPlus 标签页
 async function openTabWithSingleInstance(url: string) {

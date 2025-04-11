@@ -50,7 +50,6 @@ export interface UserSettings {
   showTabCount: boolean;
   confirmBeforeDelete: boolean;
   allowDuplicateTabs: boolean;
-  syncInterval: number; // 同步间隔（分钟）
   syncEnabled: boolean; // 是否启用同步
 
   // 新增同步策略设置

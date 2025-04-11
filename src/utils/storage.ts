@@ -4,7 +4,8 @@ const STORAGE_KEYS = {
   GROUPS: 'tab_groups',
   SETTINGS: 'user_settings',
   DELETED_GROUPS: 'deleted_tab_groups', // 存储已删除的标签组
-  DELETED_TABS: 'deleted_tabs' // 存储已删除的标签页
+  DELETED_TABS: 'deleted_tabs', // 存储已删除的标签页
+  LAST_SYNC_TIME: 'last_sync_time' // 存储最后同步时间
 };
 
 // 默认设置
@@ -17,7 +18,6 @@ export const DEFAULT_SETTINGS: UserSettings = {
   autoCloseTabsAfterSaving: true,
   confirmBeforeDelete: true,
   allowDuplicateTabs: false, // 默认不允许重复标签页
-  syncInterval: 1, // 默认1分钟同步一次
   syncEnabled: true, // 默认启用同步
   syncStrategy: 'newest', // 默认使用最新版本
   deleteStrategy: 'everywhere', // 默认在所有设备上删除
@@ -153,6 +153,28 @@ class ChromeStorage {
       }
     } catch (error) {
       console.error('清理已删除数据失败:', error);
+    }
+  }
+
+  // 获取最后同步时间
+  async getLastSyncTime(): Promise<string | null> {
+    try {
+      const result = await chrome.storage.local.get(STORAGE_KEYS.LAST_SYNC_TIME);
+      return result[STORAGE_KEYS.LAST_SYNC_TIME] || null;
+    } catch (error) {
+      console.error('获取最后同步时间失败:', error);
+      return null;
+    }
+  }
+
+  // 设置最后同步时间
+  async setLastSyncTime(time: string): Promise<void> {
+    try {
+      await chrome.storage.local.set({
+        [STORAGE_KEYS.LAST_SYNC_TIME]: time
+      });
+    } catch (error) {
+      console.error('设置最后同步时间失败:', error);
     }
   }
 

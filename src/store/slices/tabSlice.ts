@@ -230,6 +230,9 @@ export const syncTabsToCloud = createAsyncThunk<
       // 保存更新后的标签组
       await storage.setGroups(updatedGroups as TabGroup[]);
 
+      // 更新最后同步时间
+      await storage.setLastSyncTime(currentTime);
+
       // 清理已同步的已删除数据
       if (deletedGroups.length > 0 || deletedTabs.length > 0) {
         // 将已删除的标签组标记为已同步
@@ -299,8 +302,14 @@ export const syncTabsFromCloud = createAsyncThunk(
 
       console.log('合并后的标签组数量:', mergedGroups.length);
 
+      // 获取当前时间
+      const currentTime = new Date().toISOString();
+
       // 保存到本地存储
       await storage.setGroups(mergedGroups);
+
+      // 更新最后同步时间
+      await storage.setLastSyncTime(currentTime);
 
       // 检查是否有冲突需要用户解决
       const hasConflicts = mergedGroups.some(group => group.syncStatus === 'conflict');
@@ -310,11 +319,9 @@ export const syncTabsFromCloud = createAsyncThunk(
         // 在这里可以触发一个通知或弹窗，提示用户解决冲突
       }
 
-      const currentTime = new Date().toISOString();
-
       return {
         groups: mergedGroups,
-        syncTime: currentTime,
+        syncTime: new Date().toISOString(),
         stats: compressionStats
       };
     } catch (error) {

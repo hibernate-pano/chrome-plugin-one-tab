@@ -20,7 +20,7 @@
     "default_icon": "icons/icon16.png"
   },
   "background": {
-    "service_worker": "src/background/index.ts",
+    "service_worker": "src/service-worker.ts",
     "type": "module"
   },
   "icons": {

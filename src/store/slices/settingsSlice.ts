@@ -66,10 +66,7 @@ const settingsSlice = createSlice({
     setGroupNameTemplate: (state, action: PayloadAction<string>) => {
       state.groupNameTemplate = action.payload;
     },
-    // 新增：设置同步间隔
-    setSyncInterval: (state, action: PayloadAction<number>) => {
-      state.syncInterval = action.payload;
-    },
+    // 删除定时同步间隔设置
     toggleAutoSave: (state) => {
       state.autoSave = !state.autoSave;
     },
@@ -120,7 +117,7 @@ export const {
   setAutoCloseTabsAfterSaving,
   setAutoSaveInterval,
   setGroupNameTemplate,
-  setSyncInterval,
+
   toggleAutoSave,
   toggleShowFavicons,
   toggleConfirmBeforeDelete,
