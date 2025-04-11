@@ -8,6 +8,8 @@ const initialState: AuthState = {
   isAuthenticated: false,
   isLoading: false,
   error: null,
+  wechatLoginStatus: 'idle',
+  wechatLoginTabId: undefined,
 };
 
 export const signUp = createAsyncThunk(
@@ -74,9 +76,14 @@ export const signIn = createAsyncThunk(
 
 export const signInWithOAuth = createAsyncThunk(
   'auth/signInWithOAuth',
-  async (provider: 'google' | 'github') => {
+  async (provider: 'google' | 'github' | 'wechat') => {
     try {
-      const { data, error } = await supabaseAuth.signInWithOAuth(provider);
+      // 如果是微信登录，记录日志
+      if (provider === 'wechat') {
+        console.log('开始微信扫码登录流程');
+      }
+
+      const { error, data } = await supabaseAuth.signInWithOAuth(provider);
       if (error) {
         console.error('第三方登录错误:', error);
         throw new Error(typeof error === 'object' && error !== null && 'message' in error ?
@@ -85,6 +92,16 @@ export const signInWithOAuth = createAsyncThunk(
 
       // 第三方登录是重定向流程，这里不会直接返回用户信息
       // 实际的用户信息会在回调处理中获取
+
+      // 如果是微信登录，返回一些额外信息
+      if (provider === 'wechat' && data && 'tabId' in data) {
+        return {
+          provider: 'wechat',
+          tabId: data.tabId,
+          timestamp: Date.now()
+        };
+      }
+
       return null;
     } catch (err) {
       console.error('第三方登录异常:', err);
@@ -101,6 +118,15 @@ export const handleOAuthCallback = createAsyncThunk(
   'auth/handleOAuthCallback',
   async (url: string) => {
     try {
+      // 检查是否是微信登录回调
+      const isWechatCallback = url.includes('wechat-login.html');
+
+      if (isWechatCallback) {
+        console.log('处理微信登录回调');
+      } else {
+        console.log('处理标准OAuth回调');
+      }
+
       const { data, error } = await supabaseAuth.handleOAuthCallback(url);
       if (error) {
         console.error('处理OAuth回调错误:', error);
@@ -109,11 +135,35 @@ export const handleOAuthCallback = createAsyncThunk(
       }
 
       if (data.user) {
-        return {
+        // 构造用户对象
+        const user: User = {
           id: data.user.id,
           email: data.user.email!,
           lastLogin: new Date().toISOString(),
-        } as User;
+        };
+
+        // 如果是微信登录，添加微信用户信息
+        if (isWechatCallback) {
+          // 设置登录方式
+          user.loginProvider = 'wechat';
+
+          // 在实际应用中，这里应该从微信API获取用户信息
+          // 这里我们模拟一些微信用户信息
+          user.wechatInfo = {
+            nickname: `WeChatUser_${user.id.substring(0, 6)}`,
+            avatar: 'https://placeholder.com/150',
+            openid: `wx_openid_${Math.random().toString(36).substring(2, 10)}`,
+            unionid: `wx_unionid_${Math.random().toString(36).substring(2, 10)}`
+          };
+
+          console.log('微信登录成功，用户ID:', user.id, '昵称:', user.wechatInfo.nickname);
+        } else if (url.includes('accounts.google.com')) {
+          user.loginProvider = 'google';
+        } else if (url.includes('github.com')) {
+          user.loginProvider = 'github';
+        }
+
+        return user;
       }
 
       throw new Error('处理OAuth回调失败');
@@ -199,12 +249,35 @@ const authSlice = createSlice({
     clearError: (state) => {
       state.error = null;
     },
+    // 更新微信登录状态
+    updateWechatLoginStatus: (state, action) => {
+      state.wechatLoginStatus = action.payload.status;
+
+      // 如果提供了标签页ID，则更新标签页ID
+      if (action.payload.tabId !== undefined) {
+        state.wechatLoginTabId = action.payload.tabId;
+      }
+
+      // 如果状态是失败或过期，清除错误信息
+      if (action.payload.status === 'failed' || action.payload.status === 'expired') {
+        state.error = action.payload.error || '微信登录失败';
+      }
+    },
     // 从缓存设置认证状态
     setFromCache: (state, action) => {
       state.user = action.payload.user;
       state.isAuthenticated = action.payload.isAuthenticated;
       state.isLoading = false;
       state.error = null;
+
+      // 如果用户已登录且是微信登录，设置微信登录状态为成功
+      if (action.payload.user && action.payload.user.loginProvider === 'wechat') {
+        state.wechatLoginStatus = 'success';
+      } else {
+        // 否则重置微信登录状态
+        state.wechatLoginStatus = 'idle';
+        state.wechatLoginTabId = undefined;
+      }
     },
   },
   extraReducers: (builder) => {
@@ -249,13 +322,24 @@ const authSlice = createSlice({
         state.isLoading = true;
         state.error = null;
       })
-      .addCase(signInWithOAuth.fulfilled, (state) => {
+      .addCase(signInWithOAuth.fulfilled, (state, action) => {
         state.isLoading = false;
         // 不在这里设置用户信息，因为这只是重定向的开始
+
+        // 如果是微信登录，设置微信登录状态
+        if (action.payload && action.payload.provider === 'wechat') {
+          // 设置微信登录状态
+          state.wechatLoginStatus = 'pending';
+          state.wechatLoginTabId = action.payload.tabId;
+          console.log('微信登录流程已启动，等待用户扫码，标签页ID:', action.payload.tabId);
+        }
       })
       .addCase(signInWithOAuth.rejected, (state, action) => {
         state.isLoading = false;
         state.error = action.error.message || '第三方登录失败';
+
+        // 如果是微信登录失败，重置微信登录状态
+        state.wechatLoginStatus = 'failed';
       })
 
       // 处理OAuth回调
@@ -271,11 +355,23 @@ const authSlice = createSlice({
         // 登录成功后缓存认证状态
         if (action.payload) {
           authCache.saveAuthState(action.payload, true);
+
+          // 如果是微信登录成功，更新微信登录状态
+          if (action.payload.loginProvider === 'wechat') {
+            state.wechatLoginStatus = 'success';
+            // 清除微信登录标签页ID
+            state.wechatLoginTabId = undefined;
+          }
         }
       })
       .addCase(handleOAuthCallback.rejected, (state, action) => {
         state.isLoading = false;
         state.error = action.error.message || '处理OAuth回调失败';
+
+        // 如果当前有微信登录进行中，则设置微信登录状态为失败
+        if (state.wechatLoginStatus === 'pending' || state.wechatLoginStatus === 'scanning' || state.wechatLoginStatus === 'confirming') {
+          state.wechatLoginStatus = 'failed';
+        }
       })
 
       // 退出登录
@@ -286,6 +382,9 @@ const authSlice = createSlice({
         state.isLoading = false;
         state.user = null;
         state.isAuthenticated = false;
+        // 重置微信登录状态
+        state.wechatLoginStatus = 'idle';
+        state.wechatLoginTabId = undefined;
 
         // 退出登录后清除认证缓存
         authCache.clearAuthState();
@@ -320,6 +419,6 @@ const authSlice = createSlice({
   },
 });
 
-export const { clearError, setFromCache } = authSlice.actions;
+export const { clearError, setFromCache, updateWechatLoginStatus } = authSlice.actions;
 
 export default authSlice.reducer;

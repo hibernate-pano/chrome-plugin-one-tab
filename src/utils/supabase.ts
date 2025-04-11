@@ -1,6 +1,7 @@
 import { createClient } from '@supabase/supabase-js';
 import { TabGroup, UserSettings, Tab } from '@/types/tab';
 import { compressTabGroups, decompressTabGroups, formatCompressionStats } from './compressionUtils';
+import { setWechatLoginTimeout, clearWechatLoginTimeout } from './wechatLoginTimeout';
 
 const SUPABASE_URL = 'https://reccclnaxadbuccsrwmg.supabase.co';
 const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InJlY2NjbG5heGFkYnVjY3Nyd21nIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDQyOTExODYsImV4cCI6MjA1OTg2NzE4Nn0.nHkOtkUtkzEUnF9ajUipD37SbAGH9znkVekI8N6hvdo';
@@ -30,7 +31,13 @@ export const auth = {
   },
 
   // 使用第三方登录
-  async signInWithOAuth(provider: 'google' | 'github') {
+  async signInWithOAuth(provider: 'google' | 'github' | 'wechat') {
+    // 如果是微信登录，使用特殊处理
+    if (provider === 'wechat') {
+      return await this.signInWithWechat();
+    }
+
+    // 其他第三方登录
     return await supabase.auth.signInWithOAuth({
       provider,
       options: {
@@ -43,8 +50,123 @@ export const auth = {
     });
   },
 
+  // 微信扫码登录
+  async signInWithWechat() {
+    try {
+      // 创建一个新标签页显示微信二维码
+      const qrCodeUrl = await this.getWechatQrCodeUrl();
+      console.log('打开微信扫码登录页面:', qrCodeUrl);
+      const qrCodeTab = await chrome.tabs.create({ url: qrCodeUrl });
+
+      // 设置登录超时处理
+      if (qrCodeTab.id) {
+        // 将超时处理器ID存储到本地
+        const timeoutId = setWechatLoginTimeout(qrCodeTab.id);
+        await chrome.storage.local.set({ 'wechat_login_timeout_id': timeoutId });
+      }
+
+      // 返回一个空的成功结果，实际的登录处理会在回调中完成
+      return {
+        data: {
+          provider: 'wechat',
+          tabId: qrCodeTab.id
+        },
+        error: null
+      };
+    } catch (error) {
+      console.error('微信扫码登录错误:', error);
+      return {
+        data: null,
+        error: {
+          message: '创建微信扫码登录页面失败'
+        }
+      };
+    }
+  },
+
+  // 获取微信二维码URL
+  async getWechatQrCodeUrl() {
+    // 在实际应用中，这里应该调用你的后端API获取微信登录二维码URL
+    // 实际实现时，应该先在微信开放平台注册应用，获取AppID和AppSecret
+
+    // 生成随机状态码用于验证回调
+    const state = this.generateRandomState();
+
+    // 获取重定向URL
+    const redirectUrl = encodeURIComponent(chrome.identity.getRedirectURL());
+
+    // 保存state用于验证回调
+    await chrome.storage.local.set({ 'wechat_oauth_state': state });
+
+    // 记录开始登录时间，用于计算超时
+    await chrome.storage.local.set({ 'wechat_login_start_time': Date.now() });
+
+    // 返回微信登录页面URL
+    return chrome.runtime.getURL(`src/pages/wechat-login.html?redirect_uri=${redirectUrl}&state=${state}`);
+  },
+
+  // 处理微信登录回调
+  async handleWechatCallback(url: string) {
+    try {
+      // 清除登录超时处理
+      const { wechat_login_timeout_id } = await chrome.storage.local.get('wechat_login_timeout_id');
+      if (wechat_login_timeout_id) {
+        clearWechatLoginTimeout(wechat_login_timeout_id);
+        await chrome.storage.local.remove('wechat_login_timeout_id');
+      }
+
+      // 从回调URL中提取参数
+      const hashParams = new URLSearchParams(url.split('#')[1]);
+      const accessToken = hashParams.get('access_token');
+      const refreshToken = hashParams.get('refresh_token');
+      const state = hashParams.get('state');
+
+      // 获取存储的state进行验证
+      const { wechat_oauth_state } = await chrome.storage.local.get('wechat_oauth_state');
+
+      // 验证state是否匹配
+      if (state !== wechat_oauth_state) {
+        throw new Error('State验证失败，可能存在安全风险');
+      }
+
+      // 清除存储的state
+      await chrome.storage.local.remove('wechat_oauth_state');
+      await chrome.storage.local.remove('wechat_login_start_time');
+
+      // 在实际应用中，这里应该使用获取到的code来请求微信的access_token
+      // 然后使用access_token获取用户信息
+      // 这里我们模拟这个过程
+
+      if (!accessToken || !refreshToken) {
+        throw new Error('未能从回调URL中获取令牌');
+      }
+
+      // 模拟设置会话
+      // 在实际应用中，这里应该调用Supabase的API来设置会话
+      return await supabase.auth.setSession({
+        access_token: accessToken,
+        refresh_token: refreshToken
+      });
+    } catch (error) {
+      console.error('处理微信回调错误:', error);
+      throw error;
+    }
+  },
+
+  // 生成随机state用于防止CSRF攻击
+  generateRandomState() {
+    return Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
+  },
+
   // 处理OAuth回调
   async handleOAuthCallback(url: string) {
+    // 检查是否是微信登录回调
+    if (url.includes('wechat-login.html')) {
+      console.log('检测到微信登录回调');
+      return await this.handleWechatCallback(url);
+    }
+
+    // 处理其他OAuth回调
     // 从URL中提取token
     const hashParams = new URLSearchParams(url.split('#')[1]);
     const accessToken = hashParams.get('access_token');

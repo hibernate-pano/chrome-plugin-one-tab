@@ -61,6 +61,15 @@ export interface User {
   id: string;
   email: string;
   lastLogin: string;
+  // 微信用户相关字段
+  wechatInfo?: {
+    nickname?: string;
+    avatar?: string;
+    openid?: string;
+    unionid?: string;
+  };
+  // 登录方式
+  loginProvider?: 'email' | 'google' | 'github' | 'wechat';
 }
 
 export interface AuthState {
@@ -68,6 +77,9 @@ export interface AuthState {
   isAuthenticated: boolean;
   isLoading: boolean;
   error: string | null;
+  // 微信登录相关状态
+  wechatLoginStatus?: 'idle' | 'pending' | 'scanning' | 'confirming' | 'success' | 'failed' | 'expired';
+  wechatLoginTabId?: number; // 微信登录标签页ID
 }
 
 export interface RootState {
