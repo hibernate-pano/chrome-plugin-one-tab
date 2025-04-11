@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
-import { useAppSelector } from '@/store/hooks';
+import { useAppDispatch, useAppSelector } from '@/store/hooks';
+import { toggleLayoutMode, saveSettings } from '@/store/slices/settingsSlice';
 import { HeaderDropdown } from './HeaderDropdown';
 import { TabCounter } from './TabCounter';
 
@@ -8,12 +9,19 @@ interface HeaderProps {
 }
 
 export const Header: React.FC<HeaderProps> = ({ onSearch }) => {
+  const dispatch = useAppDispatch();
   const handleSearch = (e: React.ChangeEvent<HTMLInputElement>) => {
     onSearch(e.target.value);
   };
 
   const settings = useAppSelector(state => state.settings);
   const [showDropdown, setShowDropdown] = useState(false);
+
+  // 切换布局模式
+  const handleToggleLayout = () => {
+    dispatch(toggleLayoutMode());
+    dispatch(saveSettings({ ...settings, useDoubleColumnLayout: !settings.useDoubleColumnLayout }));
+  };
 
   const handleSaveAllTabs = async () => {
     const tabs = await chrome.tabs.query({ currentWindow: true });
@@ -63,12 +71,30 @@ export const Header: React.FC<HeaderProps> = ({ onSearch }) => {
               </svg>
             </div>
 
-            <button
-              onClick={handleSaveAllTabs}
-              className="px-4 py-1.5 rounded text-sm transition-colors bg-primary-600 text-white hover:bg-primary-700 border border-primary-600 min-w-[100px] text-center"
-            >
-              保存所有标签
-            </button>
+            <div className="flex items-center space-x-2">
+              <button
+                onClick={handleToggleLayout}
+                className="p-2 rounded hover:bg-gray-100 transition-colors text-gray-600 flex items-center justify-center"
+                title={settings.useDoubleColumnLayout ? '切换为单栏布局' : '切换为双栏布局'}
+              >
+                {settings.useDoubleColumnLayout ? (
+                  <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h7" />
+                  </svg>
+                ) : (
+                  <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h8m-8 6h16" />
+                  </svg>
+                )}
+              </button>
+
+              <button
+                onClick={handleSaveAllTabs}
+                className="px-4 py-1.5 rounded text-sm transition-colors bg-primary-600 text-white hover:bg-primary-700 border border-primary-600 min-w-[100px] text-center"
+              >
+                保存所有标签
+              </button>
+            </div>
 
             <div className="relative">
               <button

@@ -13,6 +13,7 @@ interface TabListProps {
 export const TabList: React.FC<TabListProps> = ({ searchQuery }) => {
   const dispatch = useAppDispatch();
   const { groups, isLoading, error } = useAppSelector(state => state.tabs);
+  const { useDoubleColumnLayout } = useAppSelector(state => state.settings);
   const [isRestoreAllModalOpen, setIsRestoreAllModalOpen] = useState(false);
   const [selectedGroup, setSelectedGroup] = useState<TabGroupType | null>(null);
 
@@ -111,7 +112,8 @@ export const TabList: React.FC<TabListProps> = ({ searchQuery }) => {
       {/* 搜索结果或标签组列表 */}
       {searchQuery ? (
         <SearchResultList searchQuery={searchQuery} />
-      ) : (
+      ) : useDoubleColumnLayout ? (
+        // 双栏布局
         <div className="grid grid-cols-1 sm:grid-cols-1 md:grid-cols-2 gap-3">
           {/* 左栏 - 偶数索引的标签组 */}
           <div className="space-y-2">
@@ -152,6 +154,20 @@ export const TabList: React.FC<TabListProps> = ({ searchQuery }) => {
                 );
               })}
           </div>
+        </div>
+      ) : (
+        // 单栏布局
+        <div className="space-y-2">
+          {filteredGroups.map((group, index) => (
+            <DraggableTabGroup
+              key={group.id}
+              group={group}
+              index={index}
+              moveGroup={(dragIndex, hoverIndex) => {
+                dispatch(moveGroup({ dragIndex, hoverIndex }));
+              }}
+            />
+          ))}
         </div>
       )}
 

@@ -78,6 +78,10 @@ const settingsSlice = createSlice({
     toggleSyncEnabled: (state) => {
       state.syncEnabled = !state.syncEnabled;
     },
+    // 切换布局模式
+    toggleLayoutMode: (state) => {
+      state.useDoubleColumnLayout = !state.useDoubleColumnLayout;
+    },
   },
   extraReducers: (builder) => {
     builder
@@ -116,6 +120,7 @@ export const {
   toggleConfirmBeforeDelete,
   toggleAllowDuplicateTabs,
   toggleSyncEnabled,
+  toggleLayoutMode,
 } = settingsSlice.actions;
 
 export default settingsSlice.reducer;

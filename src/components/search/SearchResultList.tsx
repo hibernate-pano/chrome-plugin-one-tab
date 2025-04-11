@@ -10,6 +10,7 @@ interface SearchResultListProps {
 export const SearchResultList: React.FC<SearchResultListProps> = ({ searchQuery }) => {
   const dispatch = useAppDispatch();
   const { groups } = useAppSelector(state => state.tabs);
+  const { useDoubleColumnLayout } = useAppSelector(state => state.settings);
 
   // 从所有标签组中提取匹配的标签
   const matchingTabs: Array<{ tab: Tab; group: TabGroup }> = [];
@@ -153,17 +154,25 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({ searchQuery 
   return (
     <div>
       <h3 className="text-base font-medium mb-2">搜索结果</h3>
-      <div className="grid grid-cols-1 sm:grid-cols-1 md:grid-cols-2 gap-3">
-        {/* 左栏搜索结果 */}
-        <div className="space-y-1">
-          {leftColumnGroups.map(renderGroupResults)}
-        </div>
+      {useDoubleColumnLayout ? (
+        // 双栏布局
+        <div className="grid grid-cols-1 sm:grid-cols-1 md:grid-cols-2 gap-3">
+          {/* 左栏搜索结果 */}
+          <div className="space-y-1">
+            {leftColumnGroups.map(renderGroupResults)}
+          </div>
 
-        {/* 右栏搜索结果 */}
-        <div className="space-y-1">
-          {rightColumnGroups.map(renderGroupResults)}
+          {/* 右栏搜索结果 */}
+          <div className="space-y-1">
+            {rightColumnGroups.map(renderGroupResults)}
+          </div>
         </div>
-      </div>
+      ) : (
+        // 单栏布局
+        <div className="space-y-2">
+          {groupedResults.map(renderGroupResults)}
+        </div>
+      )}
     </div>
   );
 };

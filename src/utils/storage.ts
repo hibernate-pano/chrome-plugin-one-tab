@@ -17,6 +17,7 @@ export const DEFAULT_SETTINGS: UserSettings = {
   confirmBeforeDelete: true,
   allowDuplicateTabs: false, // 默认不允许重复标签页
   syncEnabled: true, // 默认启用同步
+  useDoubleColumnLayout: true, // 默认使用双栏布局
   syncStrategy: 'newest', // 默认使用最新版本
   deleteStrategy: 'everywhere', // 默认在所有设备上删除
 };
