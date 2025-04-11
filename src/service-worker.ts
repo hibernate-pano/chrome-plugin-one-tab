@@ -239,25 +239,36 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 
   // 处理保存标签页的消息
   if (message.type === 'SAVE_ALL_TABS') {
-    saveAllTabs(message.data.tabs);
-    return true;
+    saveAllTabs(message.data.tabs)
+      .then(() => sendResponse({ success: true }))
+      .catch(error => sendResponse({ success: false, error: error.message }));
+    return true; // 异步响应
   }
 
   if (message.type === 'SAVE_CURRENT_TAB') {
-    saveCurrentTab(message.data.tab, message.data.settings);
-    return true;
+    saveCurrentTab(message.data.tab, message.data.settings)
+      .then(() => sendResponse({ success: true }))
+      .catch(error => sendResponse({ success: false, error: error.message }));
+    return true; // 异步响应
   }
 
   // 处理打开标签页的消息
   if (message.type === 'OPEN_TAB') {
-    openTabWithSingleInstance(message.data.url);
-    return true;
+    openTabWithSingleInstance(message.data.url)
+      .then(() => sendResponse({ success: true }))
+      .catch(error => sendResponse({ success: false, error: error.message }));
+    return true; // 异步响应
   }
 
   if (message.type === 'OPEN_TABS') {
-    openTabsWithSingleInstance(message.data.urls);
-    return true;
+    openTabsWithSingleInstance(message.data.urls)
+      .then(() => sendResponse({ success: true }))
+      .catch(error => sendResponse({ success: false, error: error.message }));
+    return true; // 异步响应
   }
+
+  // 如果没有处理消息，返回 false
+  return false;
 });
 
 // 保存所有标签页

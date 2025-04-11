@@ -20,21 +20,35 @@ syncService.initialize();
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (message.type === 'SAVE_ALL_TABS') {
     const { tabs } = message.data;
-    saveAllTabs(tabs);
+    saveAllTabs(tabs)
+      .then(() => sendResponse({ success: true }))
+      .catch(error => sendResponse({ success: false, error: error.message }));
+    return true; // 异步响应
   } else if (message.type === 'SAVE_CURRENT_TAB') {
     const { tab, settings } = message.data;
-    saveCurrentTab(tab, settings);
+    saveCurrentTab(tab, settings)
+      .then(() => sendResponse({ success: true }))
+      .catch(error => sendResponse({ success: false, error: error.message }));
+    return true; // 异步响应
   } else if (message.type === 'OPEN_TAB') {
-    openTabWithSingleInstance(message.data.url);
+    openTabWithSingleInstance(message.data.url)
+      .then(() => sendResponse({ success: true }))
+      .catch(error => sendResponse({ success: false, error: error.message }));
+    return true; // 异步响应
   } else if (message.type === 'OPEN_TABS') {
-    openTabsWithSingleInstance(message.data.urls);
+    openTabsWithSingleInstance(message.data.urls)
+      .then(() => sendResponse({ success: true }))
+      .catch(error => sendResponse({ success: false, error: error.message }));
+    return true; // 异步响应
   } else if (message.action === 'sync') {
     syncService.syncAll()
       .then(() => sendResponse({ success: true }))
       .catch(error => sendResponse({ success: false, error: error.message }));
     return true; // 异步响应
   }
-  return true;
+
+  // 如果没有处理消息，返回 false
+  return false;
 });
 
 // 删除定时同步功能
