@@ -114,6 +114,34 @@ export const deleteGroup = createAsyncThunk(
   }
 );
 
+export const deleteAllGroups = createAsyncThunk(
+  'tabs/deleteAllGroups',
+  async (_, { getState }) => {
+    const { settings } = getState() as { settings: UserSettings };
+    const groups = await storage.getGroups();
+
+    if (groups.length === 0) {
+      return { count: 0 }; // 没有标签组可删除
+    }
+
+    // 如果删除策略是 'everywhere'，则标记所有标签组为已删除
+    if (settings.deleteStrategy === 'everywhere') {
+      const markedGroups = groups.map(group => markGroupForDeletion(group, settings.deleteStrategy));
+
+      // 获取现有的已删除标签组
+      const deletedGroups = await storage.getDeletedGroups();
+
+      // 将所有标记为删除的标签组添加到已删除标签组列表中
+      await storage.setDeletedGroups([...deletedGroups, ...markedGroups]);
+    }
+
+    // 清空本地标签组
+    await storage.setGroups([]);
+
+    return { count: groups.length };
+  }
+);
+
 export const importGroups = createAsyncThunk(
   'tabs/importGroups',
   async (groups: TabGroup[]) => {
@@ -474,6 +502,20 @@ export const tabSlice = createSlice({
           state.activeGroupId = null;
         }
       })
+      .addCase(deleteAllGroups.pending, state => {
+        state.isLoading = true;
+        state.error = null;
+      })
+      .addCase(deleteAllGroups.fulfilled, state => {
+        state.isLoading = false;
+        state.groups = [];
+        state.activeGroupId = null;
+      })
+      .addCase(deleteAllGroups.rejected, (state, action) => {
+        state.isLoading = false;
+        state.error = action.error.message || '删除所有标签组失败';
+      })
+
       .addCase(importGroups.pending, state => {
         state.isLoading = true;
         state.error = null;

@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { useAppSelector, useAppDispatch } from '@/store/hooks';
 import { signOut } from '@/store/slices/authSlice';
-import { syncTabsToCloud, syncTabsFromCloud } from '@/store/slices/tabSlice';
+import { syncTabsToCloud, syncTabsFromCloud, deleteAllGroups } from '@/store/slices/tabSlice';
 import { storage } from '@/utils/storage';
 import { LoginForm } from '../auth/LoginForm';
 import { RegisterForm } from '../auth/RegisterForm';
@@ -44,6 +44,30 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({ onClose }) => {
       // 然后从云端同步数据
       await dispatch(syncTabsFromCloud({ background: true }));
       onClose();
+    }
+  };
+
+  const handleDeleteAllGroups = async () => {
+    // 显示确认对话框
+    if (window.confirm('确定要删除所有标签组吗？此操作无法撤销。')) {
+      try {
+        const result = await dispatch(deleteAllGroups()).unwrap();
+
+        // 删除成功后，自动同步到云端
+        if (isAuthenticated) {
+          console.log('正在将删除操作同步到云端...');
+          await dispatch(syncTabsToCloud({ background: true }));
+          console.log('删除操作已同步到云端');
+        } else {
+          console.log('用户未登录，跳过同步到云端');
+        }
+
+        alert(`成功删除了 ${result.count} 个标签组${isAuthenticated ? '，并已同步到云端' : ''}`);
+        onClose();
+      } catch (error) {
+        console.error('删除所有标签组失败:', error);
+        alert('删除所有标签组失败');
+      }
     }
   };
 
@@ -171,6 +195,16 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({ onClose }) => {
             }}
           />
         </label>
+
+        <button
+          onClick={handleDeleteAllGroups}
+          className="w-full text-left px-4 py-2 text-sm text-red-600 hover:bg-red-50 flex items-center"
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 mr-2 text-red-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+          </svg>
+          删除所有标签
+        </button>
 
         <div className="border-t border-gray-100 my-1"></div>
 
