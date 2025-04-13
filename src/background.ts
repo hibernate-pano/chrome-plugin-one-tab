@@ -76,20 +76,8 @@ const saveTabs = async (tabs: chrome.tabs.Tab[]) => {
     const existingGroups = await storage.getGroups();
     await storage.setGroups([newGroup, ...existingGroups]);
 
-    // 如果用户已登录，自动同步到云端
-    try {
-      const { data } = await supabaseAuth.getSession();
-      if (data.session) {
-        console.log('检测到用户已登录，保存后自动同步到云端');
-        // 异步执行同步，不阻塞保存操作
-        syncService.syncAll().catch(err => {
-          console.error('保存后同步失败:', err);
-        });
-      }
-    } catch (syncError) {
-      console.error('检查用户登录状态失败:', syncError);
-      // 继续执行保存操作，不影响用户体验
-    }
+    // 不再自动同步到云端，保证本地操作优先，避免卡顿
+    console.log('标签页已保存到本地，跳过自动同步，保证操作丰满顺畅');
 
     // 如果设置为保存后关闭标签页
     if (settings.autoCloseTabsAfterSaving) {
@@ -281,18 +269,7 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo) => {
   }
 });
 
-// 浏览器启动时检查用户会话
-chrome.runtime.onStartup.addListener(async () => {
-  try {
-    // 检查是否有有效的会话
-    const { data } = await supabaseAuth.getSession();
-
-    if (data.session) {
-      console.log('检测到有效会话，用户已自动登录');
-      // 会话有效，用户已自动登录
-      // 在这里不需要额外操作，因为 App.tsx 中会检查并加载用户信息
-    }
-  } catch (error) {
-    console.error('检查用户会话时出错:', error);
-  }
+// 浏览器启动时不再自动检查用户会话，避免自动同步
+chrome.runtime.onStartup.addListener(() => {
+  console.log('浏览器启动，不再自动检查用户会话，避免自动同步');
 });

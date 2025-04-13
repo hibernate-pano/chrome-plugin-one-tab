@@ -74,44 +74,12 @@ export async function syncToCloud<T>(
         const { auth } = getState();
         const now = Date.now();
 
-        // 如果用户已登录，自动同步到云端
-        if (auth.isAuthenticated) {
-          // 检查距离上次同步的时间是否足够
-          if (now - lastSyncTime > SYNC_DEBOUNCE_DELAY) {
-            try {
-              // 更新最后同步时间
-              lastSyncTime = now;
-
-              // 使用 background: true 确保同步在后台运行
-              await dispatch(syncTabsToCloud({ background: true }));
-
-              // 仅在调试模式下输出日志
-              if (process.env.NODE_ENV === 'development') {
-                console.log(`${operationType}已自动同步到云端`);
-              }
-              resolve(true);
-            } catch (error) {
-              // 仅在调试模式下输出错误
-              if (process.env.NODE_ENV === 'development') {
-                console.error(`${operationType}同步到云端失败:`, error);
-              }
-              resolve(false);
-            } finally {
-              // 清除当前同步操作信息
-              currentSyncOperation = null;
-            }
-          } else {
-            // 距离上次同步时间太短，跳过本次同步
-            if (process.env.NODE_ENV === 'development') {
-              console.log(`距离上次同步时间太短，跳过 ${operationType} 的同步`);
-            }
-            currentSyncOperation = null;
-            resolve(true); // 返回成功，不影响用户体验
-          }
-        } else {
-          currentSyncOperation = null;
-          resolve(false);
+        // 不再自动同步到云端，保证本地操作优先，避免卡顿
+        if (process.env.NODE_ENV === 'development') {
+          console.log(`本地操作完成: ${operationType}，跳过自动同步，保证操作丰满顺畅`);
         }
+        currentSyncOperation = null;
+        resolve(true); // 返回成功，不影响用户体验
       } catch (e) {
         // 捕获所有异常，确保不会影响用户体验
         if (process.env.NODE_ENV === 'development') {

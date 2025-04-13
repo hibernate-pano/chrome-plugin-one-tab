@@ -5,39 +5,10 @@ import { getCurrentUser } from '@/store/slices/authSlice';
 import { sync as supabaseSync } from '@/utils/supabase';
 
 class SyncService {
-  // 初始化同步服务
+  // 初始化同步服务 - 已禁用自动同步
   async initialize() {
-    try {
-      console.log('正在初始化同步服务...');
-      // 检查用户是否已登录
-      await store.dispatch(getCurrentUser());
-      const { auth } = store.getState();
-
-      console.log('用户登录状态:', auth.isAuthenticated);
-
-      if (auth.isAuthenticated) {
-        console.log('用户已登录，先迁移数据到 JSONB 格式...');
-
-        // 迁移数据到 JSONB 格式
-        try {
-          const migrationResult = await supabaseSync.migrateToJsonb();
-          console.log('数据迁移结果:', migrationResult);
-        } catch (migrationError) {
-          console.error('数据迁移失败，继续同步过程:', migrationError);
-        }
-
-        console.log('从云端获取最新数据...');
-        // 首次同步，从云端获取数据，使用后台同步模式
-        await this.syncFromCloud(true);
-
-        // 移除实时同步功能，简化逻辑
-        console.log('已简化同步逻辑，只保留手动同步功能');
-      } else {
-        console.log('用户未登录，跳过同步');
-      }
-    } catch (error) {
-      console.error('初始化同步服务失败:', error);
-    }
+    console.log('同步服务初始化：已禁用自动同步功能，仅保留手动同步');
+    // 不再自动同步，保证本地操作优先，避免卡顿
   }
 
   // 后台同步数据

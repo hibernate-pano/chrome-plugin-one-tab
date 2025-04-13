@@ -464,31 +464,17 @@ export const syncTabsFromCloud = createAsyncThunk(
   }
 );
 
-// 新增：同步本地更改到云端
+// 新增：同步本地更改到云端 - 已禁用自动同步
 export const syncLocalChangesToCloud = createAsyncThunk(
   'tabs/syncLocalChangesToCloud',
-  async (_, { getState, dispatch }) => {
+  async (_, { getState }) => {
     const { auth } = getState() as { auth: { isAuthenticated: boolean } };
 
-    // 如果用户已登录，自动同步到云端
-    if (auth.isAuthenticated) {
-      // 使用 setTimeout 将同步操作推迟到下一个事件循环
-      setTimeout(() => {
-        dispatch(syncTabsToCloud({ background: true }))
-          .then(() => {
-            if (process.env.NODE_ENV === 'development') {
-              console.log('本地更改已自动同步到云端');
-            }
-          })
-          .catch(error => {
-            if (process.env.NODE_ENV === 'development') {
-              console.error('自动同步到云端失败:', error);
-            }
-          });
-      }, 0);
-      return true; // 直接返回成功，不等待同步完成
+    // 不再自动同步到云端，保证本地操作优先，避免卡顿
+    if (process.env.NODE_ENV === 'development') {
+      console.log('本地更改完成，跳过自动同步，保证操作丰满顺畅');
     }
-    return false;
+    return auth.isAuthenticated; // 返回登录状态，但不执行同步
   }
 );
 

@@ -1,20 +1,5 @@
-import { syncService } from '@/services/syncService';
-
-// 初始化同步服务
-chrome.runtime.onStartup.addListener(() => {
-  console.log('浏览器启动，初始化同步服务');
-  syncService.initialize();
-});
-
-// 扩展安装或更新时初始化
-chrome.runtime.onInstalled.addListener(() => {
-  console.log('扩展安装或更新，初始化同步服务');
-  syncService.initialize();
-});
-
-// 立即初始化同步服务
-console.log('后台脚本加载，初始化同步服务');
-syncService.initialize();
+// 移除自动初始化同步服务，改为手动同步模式
+console.log('后台脚本加载，已禁用自动同步功能，仅保留手动同步');
 
 // 监听消息
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
