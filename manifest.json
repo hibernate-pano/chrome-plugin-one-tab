@@ -3,6 +3,9 @@
   "name": "OneTab Plus",
   "version": "1.4.7",
   "description": "A better OneTab extension for Chrome",
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'; object-src 'self'"
+  },
   "permissions": [
     "tabs",
     "storage",
@@ -14,7 +17,6 @@
   ],
   "host_permissions": [
     "https://*.supabase.co/*",
-    "https://cdn.jsdelivr.net/*",
     "https://accounts.google.com/*",
     "https://github.com/*",
     "https://open.weixin.qq.com/*",
