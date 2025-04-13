@@ -32,42 +32,71 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({ onClose }) => {
     };
   }, [onClose]);
 
-  const handleSignOut = async () => {
-    await dispatch(signOut());
+  const handleSignOut = () => {
+    // 先关闭下拉菜单，提高用户体验
     onClose();
+
+    // 异步登出，不阻塞用户界面
+    dispatch(signOut())
+      .then(() => {
+        console.log('登出成功');
+      })
+      .catch(error => {
+        console.error('登出失败:', error);
+      });
   };
 
-  const handleSync = async () => {
+  const handleSync = () => {
     if (syncStatus !== 'syncing') {
-      // 先将本地数据同步到云端，使用后台同步模式减少UI卡顿
-      await dispatch(syncTabsToCloud({ background: true }));
-      // 然后从云端同步数据
-      await dispatch(syncTabsFromCloud({ background: true }));
+      // 先关闭下拉菜单，提高用户体验
       onClose();
+
+      // 先将本地数据同步到云端，使用后台同步模式减少UI卡顿
+      dispatch(syncTabsToCloud({ background: true }))
+        .then(() => {
+          // 然后从云端同步数据
+          return dispatch(syncTabsFromCloud({ background: true }));
+        })
+        .then(() => {
+          console.log('同步完成');
+        })
+        .catch(error => {
+          console.error('同步失败:', error);
+        });
     }
   };
 
-  const handleDeleteAllGroups = async () => {
+  const handleDeleteAllGroups = () => {
     // 显示确认对话框
     if (window.confirm('确定要删除所有标签组吗？此操作无法撤销。')) {
-      try {
-        const result = await dispatch(deleteAllGroups()).unwrap();
+      // 先关闭下拉菜单，提高用户体验
+      onClose();
 
-        // 删除成功后，自动同步到云端
-        if (isAuthenticated) {
-          console.log('正在将删除操作同步到云端...');
-          await dispatch(syncTabsToCloud({ background: true }));
-          console.log('删除操作已同步到云端');
-        } else {
-          console.log('用户未登录，跳过同步到云端');
-        }
+      // 异步删除所有标签组，不阻塞用户界面
+      dispatch(deleteAllGroups())
+        .then((result: any) => {
+          const count = result.payload?.count || 0;
 
-        alert(`成功删除了 ${result.count} 个标签组${isAuthenticated ? '，并已同步到云端' : ''}`);
-        onClose();
-      } catch (error) {
-        console.error('删除所有标签组失败:', error);
-        alert('删除所有标签组失败');
-      }
+          // 删除成功后，异步同步到云端
+          if (isAuthenticated) {
+            console.log('正在将删除操作同步到云端...');
+            dispatch(syncTabsToCloud({ background: true }))
+              .then(() => {
+                console.log('删除操作已同步到云端');
+              })
+              .catch(error => {
+                console.error('同步到云端失败:', error);
+              });
+          } else {
+            console.log('用户未登录，跳过同步到云端');
+          }
+
+          alert(`成功删除了 ${count} 个标签组`);
+        })
+        .catch(error => {
+          console.error('删除所有标签组失败:', error);
+          alert('删除所有标签组失败');
+        });
     }
   };
 

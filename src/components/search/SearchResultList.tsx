@@ -44,17 +44,14 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({ searchQuery 
   // 不再需要获取用户状态和设置
 
   const handleOpenTab = (tab: Tab, group: TabGroup) => {
-    // 先发送消息给后台脚本打开标签页，确保用户体验流畅
-    chrome.runtime.sendMessage({
-      type: 'OPEN_TAB',
-      data: { url: tab.url }
-    });
-
-    // 如果标签组没有锁定，则从标签组中移除该标签页
+    // 如果标签组没有锁定，先从标签组中移除该标签页
     if (!group.isLocked) {
       // 如果标签组只有一个标签页，则删除整个标签组
       if (group.tabs.length === 1) {
-        // 使用非阻塞方式删除标签组，不等待完成
+        // 先在Redux中删除标签组，立即更新UI
+        dispatch({ type: 'tabs/deleteGroup/fulfilled', payload: group.id });
+
+        // 然后异步完成存储操作
         dispatch(deleteGroup(group.id))
           .then(() => {
             console.log(`删除标签组: ${group.id}`);
@@ -70,7 +67,11 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({ searchQuery 
           tabs: updatedTabs,
           updatedAt: new Date().toISOString()
         };
-        // 使用非阻塞方式更新标签组，不等待完成
+
+        // 先在Redux中更新标签组，立即更新UI
+        dispatch({ type: 'tabs/updateGroup/fulfilled', payload: updatedGroup });
+
+        // 然后异步完成存储操作
         dispatch(updateGroup(updatedGroup))
           .then(() => {
             console.log(`更新标签组: ${group.id}, 剩余标签页: ${updatedTabs.length}`);
@@ -80,6 +81,14 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({ searchQuery 
           });
       }
     }
+
+    // 最后发送消息给后台脚本打开标签页
+    setTimeout(() => {
+      chrome.runtime.sendMessage({
+        type: 'OPEN_TAB',
+        data: { url: tab.url }
+      });
+    }, 50); // 小延迟确保 UI 先更新
   };
 
   const handleDeleteTab = (tab: Tab, group: TabGroup) => {
@@ -139,12 +148,6 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({ searchQuery 
     // 收集所有标签页的URL
     const urls = matchingTabs.map(({ tab }) => tab.url);
 
-    // 先发送消息给后台脚本打开标签页，确保用户体验流畅
-    chrome.runtime.sendMessage({
-      type: 'OPEN_TABS',
-      data: { urls }
-    });
-
     // 处理标签组更新
     // 我们需要按标签组分组处理，因为每个标签组的锁定状态可能不同
     const groupsToUpdate = matchingTabs.reduce((acc, { tab, group }) => {
@@ -157,7 +160,26 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({ searchQuery 
       return acc;
     }, {} as Record<string, { group: TabGroup; tabsToRemove: string[] }>);
 
-    // 异步处理每个需要更新的标签组，不阻塞用户界面
+    // 先在UI中更新标签组，立即更新界面
+    Object.values(groupsToUpdate).forEach(({ group, tabsToRemove }) => {
+      // 如果要删除的标签页数量等于标签组中的所有标签页，则删除整个标签组
+      if (tabsToRemove.length === group.tabs.length) {
+        // 先在Redux中删除标签组，立即更新UI
+        dispatch({ type: 'tabs/deleteGroup/fulfilled', payload: group.id });
+      } else {
+        // 否则更新标签组，移除这些标签页
+        const updatedTabs = group.tabs.filter(t => !tabsToRemove.includes(t.id));
+        const updatedGroup = {
+          ...group,
+          tabs: updatedTabs,
+          updatedAt: new Date().toISOString()
+        };
+        // 先在Redux中更新标签组，立即更新UI
+        dispatch({ type: 'tabs/updateGroup/fulfilled', payload: updatedGroup });
+      }
+    });
+
+    // 异步完成存储操作
     setTimeout(() => {
       Object.values(groupsToUpdate).forEach(({ group, tabsToRemove }) => {
         // 如果要删除的标签页数量等于标签组中的所有标签页，则删除整个标签组
@@ -186,7 +208,13 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({ searchQuery 
             });
         }
       });
-    }, 0); // 使用 0 毫秒的延迟，将操作推到下一个事件循环
+
+      // 最后发送消息给后台脚本打开标签页
+      chrome.runtime.sendMessage({
+        type: 'OPEN_TABS',
+        data: { urls }
+      });
+    }, 100); // 使用 100 毫秒的延迟，确保 UI 先更新
   };
 
   return (

@@ -51,15 +51,12 @@ export const TabGroup: React.FC<TabGroupProps> = ({ group }) => {
     // 收集所有标签页的 URL
     const urls = group.tabs.map(tab => tab.url);
 
-    // 先发送消息给后台脚本打开标签页，确保用户体验流畅
-    chrome.runtime.sendMessage({
-      type: 'OPEN_TABS',
-      data: { urls }
-    });
-
-    // 如果标签组没有锁定，异步删除标签组
+    // 如果标签组没有锁定，先在UI中删除标签组
     if (!group.isLocked) {
-      // 使用非阻塞方式删除标签组，不等待完成
+      // 先在Redux中删除标签组，立即更新UI
+      dispatch({ type: 'tabs/deleteGroup/fulfilled', payload: group.id });
+
+      // 然后异步完成存储操作
       dispatch(deleteGroup(group.id))
         .then(() => {
           console.log(`删除标签组: ${group.id}`);
@@ -68,20 +65,25 @@ export const TabGroup: React.FC<TabGroupProps> = ({ group }) => {
           console.error('删除标签组失败:', error);
         });
     }
+
+    // 最后发送消息给后台脚本打开标签页
+    setTimeout(() => {
+      chrome.runtime.sendMessage({
+        type: 'OPEN_TABS',
+        data: { urls }
+      });
+    }, 50); // 小延迟确保 UI 先更新
   };
 
   const handleOpenTab = (tab: Tab) => {
-    // 先发送消息给后台脚本打开标签页，确保用户体验流畅
-    chrome.runtime.sendMessage({
-      type: 'OPEN_TAB',
-      data: { url: tab.url }
-    });
-
-    // 如果标签组没有锁定，则从标签组中移除该标签页
+    // 如果标签组没有锁定，先从标签组中移除该标签页
     if (!group.isLocked) {
       // 如果标签组只有一个标签页，则删除整个标签组
       if (group.tabs.length === 1) {
-        // 使用非阻塞方式删除标签组，不等待完成
+        // 先在Redux中删除标签组，立即更新UI
+        dispatch({ type: 'tabs/deleteGroup/fulfilled', payload: group.id });
+
+        // 然后异步完成存储操作
         dispatch(deleteGroup(group.id))
           .then(() => {
             console.log(`删除标签组: ${group.id}`);
@@ -97,7 +99,11 @@ export const TabGroup: React.FC<TabGroupProps> = ({ group }) => {
           tabs: updatedTabs,
           updatedAt: new Date().toISOString()
         };
-        // 使用非阻塞方式更新标签组，不等待完成
+
+        // 先在Redux中更新标签组，立即更新UI
+        dispatch({ type: 'tabs/updateGroup/fulfilled', payload: updatedGroup });
+
+        // 然后异步完成存储操作
         dispatch(updateGroup(updatedGroup))
           .then(() => {
             console.log(`更新标签组: ${group.id}, 剩余标签页: ${updatedTabs.length}`);
@@ -107,6 +113,14 @@ export const TabGroup: React.FC<TabGroupProps> = ({ group }) => {
           });
       }
     }
+
+    // 最后发送消息给后台脚本打开标签页
+    setTimeout(() => {
+      chrome.runtime.sendMessage({
+        type: 'OPEN_TAB',
+        data: { url: tab.url }
+      });
+    }, 50); // 小延迟确保 UI 先更新
   };
 
   return (

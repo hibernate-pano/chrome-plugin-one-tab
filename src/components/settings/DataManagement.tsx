@@ -58,15 +58,24 @@ export const DataManagement: React.FC = () => {
             throw new Error('无效的数据格式');
           }
 
-          // 导入标签组
-          await dispatch(importGroups(importData.data.groups)).unwrap();
+          // 先显示成功提示，然后异步导入数据
+          alert('数据导入已开始，请稍候...');
 
-          // 导入设置
-          if (importData.data.settings) {
-            await storage.setSettings(importData.data.settings);
-          }
-
-          alert('数据导入成功');
+          // 异步导入标签组，不阻塞用户界面
+          dispatch(importGroups(importData.data.groups))
+            .then(() => {
+              // 导入设置
+              if (importData.data.settings) {
+                return storage.setSettings(importData.data.settings);
+              }
+            })
+            .then(() => {
+              console.log('数据导入完成');
+            })
+            .catch(error => {
+              console.error('导入数据失败:', error);
+              alert('导入过程中发生错误，请检查控制台');
+            });
         } catch (error) {
           console.error('导入数据失败:', error);
           alert('导入数据失败，请确保文件格式正确');
@@ -134,4 +143,4 @@ export const DataManagement: React.FC = () => {
   );
 };
 
-export default DataManagement; 
+export default DataManagement;
