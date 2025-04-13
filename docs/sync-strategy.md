@@ -1,6 +1,6 @@
-# OneTabPlus 同步策略
+# OneTabPlus 同步策略 (v1.4.6)
 
-本文档详细介绍了 OneTabPlus 扩展中的数据同步策略，该策略旨在提供最佳的多设备体验，同时确保数据安全和一致性。
+本文档详细介绍了 OneTabPlus 扩展中的数据同步策略，该策略旨在提供最佳的多设备体验，同时确保数据安全和一致性。在 v1.4.6 版本中，我们实现了实时双向同步功能，进一步提升了用户体验。
 
 ## 同步策略概述
 
@@ -13,6 +13,30 @@ OneTabPlus 采用**智能增量合并**策略进行数据同步，这是增量�
 3. **透明性**：清晰显示同步状态和冲突
 4. **效率**：只同步必要的数据，减少网络使用
 
+## 实时双向同步
+
+从 v1.4.6 版本开始，OneTabPlus 实现了实时双向同步功能，使用 Supabase Realtime 技术。这意味着：
+
+1. **即时更新**：当用户在一个设备上进行更改时，这些更改会立即同步到云端，并实时推送到用户的其他设备。
+
+2. **拖拽操作同步**：标签拖拽操作（移动标签组或重新排序）也会自动同步到云端。
+
+3. **数据一致性**：实时双向同步确保了所有设备上的数据一致性，减少了数据冲突的可能性。
+
+4. **无缝体验**：用户可以在多个设备之间无缝切换，而不必担心数据同步问题。
+
+### 实现原理
+
+实时双向同步基于以下技术实现：
+
+1. **Supabase Realtime**：使用 Supabase 的 Realtime 功能监听数据库变化。
+
+2. **事件驱动**：当数据库中的数据发生变化时，会触发事件，客户端收到这些事件并更新本地数据。
+
+3. **通用同步函数**：我们实现了一个通用的同步函数，用于处理所有类型的数据变更，减少了代码重复。
+
+4. **JSONB 格式存储**：使用 PostgreSQL 的 JSONB 格式存储标签数据，提高了性能和灵活性。
+
 ## 数据模型扩展
 
 为了支持高级同步功能，我们扩展了数据模型，添加了以下字段：
@@ -22,7 +46,7 @@ OneTabPlus 采用**智能增量合并**策略进行数据同步，这是增量�
 ```typescript
 interface Tab {
   // 现有字段...
-  
+
   // 同步相关字段
   syncStatus?: 'synced' | 'local-only' | 'remote-only' | 'conflict';
   lastSyncedAt?: string | null;
@@ -35,7 +59,7 @@ interface Tab {
 ```typescript
 interface TabGroup {
   // 现有字段...
-  
+
   // 同步相关字段
   syncStatus?: 'synced' | 'local-only' | 'remote-only' | 'conflict';
   lastSyncedAt?: string | null;
@@ -48,7 +72,7 @@ interface TabGroup {
 ```typescript
 interface UserSettings {
   // 现有字段...
-  
+
   // 同步策略设置
   syncStrategy: 'newest' | 'local' | 'remote' | 'ask';
   deleteStrategy: 'everywhere' | 'local-only';
@@ -91,7 +115,7 @@ const groupsToSync = getGroupsToSync(tabs.groups);
 if (groupsToSync.length > 0) {
   // 上传标签组
   await supabaseSync.uploadTabGroups(groupsToSync);
-  
+
   // 更新本地标签组的同步状态
   const updatedGroups = tabs.groups.map(group => {
     const syncedGroup = groupsToSync.find(g => g.id === group.id);
@@ -104,7 +128,7 @@ if (groupsToSync.length > 0) {
     }
     return group;
   });
-  
+
   // 保存更新后的标签组
   await storage.setGroups(updatedGroups);
 }
@@ -236,25 +260,25 @@ const mergeTabGroups = (
   // 创建一个映射，以标签组ID为键
   const mergedGroupsMap = new Map<string, TabGroup>();
   const currentTime = new Date().toISOString();
-  
+
   // 处理本地标签组
   localGroups.forEach(localGroup => {
     // 标记本地独有的标签组
-    const group = { 
+    const group = {
       ...localGroup,
       syncStatus: 'local-only' as const,
       lastSyncedAt: null
     };
     mergedGroupsMap.set(localGroup.id, group);
   });
-  
+
   // 处理云端标签组
   cloudGroups.forEach(cloudGroup => {
     const localGroup = mergedGroupsMap.get(cloudGroup.id);
-    
+
     if (!localGroup) {
       // 云端独有的标签组
-      const group = { 
+      const group = {
         ...cloudGroup,
         syncStatus: 'remote-only' as const,
         lastSyncedAt: currentTime
@@ -266,7 +290,7 @@ const mergeTabGroups = (
       mergedGroupsMap.set(cloudGroup.id, mergedGroup);
     }
   });
-  
+
   // 将映射转换回数组
   return Array.from(mergedGroupsMap.values())
     // 过滤掉已删除的标签组（如果deleteStrategy为'everywhere'）
@@ -284,7 +308,7 @@ const mergeTabs = (
 ): TabGroup => {
   // 创建一个映射，以标签ID为键
   const mergedTabsMap = new Map<string, Tab>();
-  
+
   // 添加本地标签
   localGroup.tabs.forEach(localTab => {
     mergedTabsMap.set(localTab.id, {
@@ -293,11 +317,11 @@ const mergeTabs = (
       lastSyncedAt: currentTime
     });
   });
-  
+
   // 添加或更新云端标签
   cloudGroup.tabs.forEach(cloudTab => {
     const localTab = mergedTabsMap.get(cloudTab.id);
-    
+
     if (!localTab) {
       // 云端独有的标签
       mergedTabsMap.set(cloudTab.id, {
@@ -309,7 +333,7 @@ const mergeTabs = (
       // 本地和云端都有的标签，使用更新时间较新的版本
       const localAccessedAt = new Date(localTab.lastAccessed).getTime();
       const cloudAccessedAt = new Date(cloudTab.lastAccessed).getTime();
-      
+
       if (localAccessedAt > cloudAccessedAt) {
         mergedTabsMap.set(cloudTab.id, {
           ...localTab,
@@ -325,15 +349,15 @@ const mergeTabs = (
       }
     }
   });
-  
+
   // 过滤掉已删除的标签
   const mergedTabs = Array.from(mergedTabsMap.values())
     .filter(tab => !tab.isDeleted);
-  
+
   // 使用更新时间较新的标签组信息
   const localUpdatedAt = new Date(localGroup.updatedAt).getTime();
   const cloudUpdatedAt = new Date(cloudGroup.updatedAt).getTime();
-  
+
   if (localUpdatedAt > cloudUpdatedAt) {
     return {
       ...localGroup,

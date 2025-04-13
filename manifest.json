@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "OneTab Plus",
-  "version": "1.4.3",
+  "version": "1.4.6",
   "description": "A better OneTab extension for Chrome",
   "permissions": [
     "tabs",

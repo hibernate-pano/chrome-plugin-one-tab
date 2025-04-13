@@ -3,7 +3,8 @@ import { TabState, TabGroup, UserSettings } from '@/types/tab';
 import { storage } from '@/utils/storage';
 import { sync as supabaseSync } from '@/utils/supabase';
 import { nanoid } from '@reduxjs/toolkit';
-import { getGroupsToSync, mergeTabGroups } from '@/utils/syncUtils';
+import { getGroupsToSync, mergeTabGroups, markGroupForDeletion, markTabForDeletion } from '@/utils/syncUtils';
+import { syncToCloud } from '@/utils/syncHelpers';
 
 const initialState: TabState = {
   groups: [],
@@ -28,22 +29,13 @@ export const loadGroups = createAsyncThunk(
 export const saveGroup = createAsyncThunk(
   'tabs/saveGroup',
   async (group: TabGroup, { dispatch, getState }) => {
-    const { auth } = getState() as { auth: { isAuthenticated: boolean } };
-
     // 保存到本地
     const groups = await storage.getGroups();
     const updatedGroups = [group, ...groups];
     await storage.setGroups(updatedGroups);
 
-    // 如果用户已登录，自动同步到云端
-    if (auth.isAuthenticated) {
-      try {
-        await dispatch(syncTabsToCloud({ background: true }));
-        console.log('新标签组已自动同步到云端');
-      } catch (error) {
-        console.error('自动同步到云端失败:', error);
-      }
-    }
+    // 使用通用同步函数同步到云端
+    await syncToCloud(dispatch, getState, '新标签组');
 
     return group;
   }
@@ -53,7 +45,6 @@ export const updateGroup = createAsyncThunk(
   'tabs/updateGroup',
   async (group: TabGroup, { getState, dispatch }) => {
     const { settings } = getState() as { settings: UserSettings };
-    const { auth } = getState() as { auth: { isAuthenticated: boolean } };
     const groups = await storage.getGroups();
 
     // 找到原来的标签组
@@ -85,27 +76,19 @@ export const updateGroup = createAsyncThunk(
     const updatedGroups = groups.map(g => g.id === group.id ? group : g);
     await storage.setGroups(updatedGroups);
 
-    // 如果用户已登录，自动同步到云端
-    if (auth.isAuthenticated) {
-      try {
-        await dispatch(syncTabsToCloud({ background: true }));
-        console.log('更新的标签组已自动同步到云端');
-      } catch (error) {
-        console.error('自动同步到云端失败:', error);
-      }
-    }
+    // 使用通用同步函数同步到云端
+    await syncToCloud(dispatch, getState, '更新标签组');
 
     return group;
   }
 );
 
-import { markGroupForDeletion, markTabForDeletion } from '@/utils/syncUtils';
+
 
 export const deleteGroup = createAsyncThunk(
   'tabs/deleteGroup',
   async (groupId: string, { getState, dispatch }) => {
     const { settings } = getState() as { settings: UserSettings };
-    const { auth } = getState() as { auth: { isAuthenticated: boolean } };
     const groups = await storage.getGroups();
 
     // 找到要删除的标签组
@@ -137,15 +120,8 @@ export const deleteGroup = createAsyncThunk(
       await storage.setGroups(updatedGroups);
     }
 
-    // 如果用户已登录，自动同步到云端
-    if (auth.isAuthenticated) {
-      try {
-        await dispatch(syncTabsToCloud({ background: true }));
-        console.log('删除的标签组已自动同步到云端');
-      } catch (error) {
-        console.error('自动同步到云端失败:', error);
-      }
-    }
+    // 使用通用同步函数同步到云端
+    await syncToCloud(dispatch, getState, '删除标签组');
 
     return groupId;
   }
@@ -155,7 +131,6 @@ export const deleteAllGroups = createAsyncThunk(
   'tabs/deleteAllGroups',
   async (_, { getState, dispatch }) => {
     const { settings } = getState() as { settings: UserSettings };
-    const { auth } = getState() as { auth: { isAuthenticated: boolean } };
     const groups = await storage.getGroups();
 
     if (groups.length === 0) {
@@ -176,15 +151,8 @@ export const deleteAllGroups = createAsyncThunk(
     // 清空本地标签组
     await storage.setGroups([]);
 
-    // 如果用户已登录，自动同步到云端
-    if (auth.isAuthenticated) {
-      try {
-        await dispatch(syncTabsToCloud({ background: true }));
-        console.log('删除所有标签组已自动同步到云端');
-      } catch (error) {
-        console.error('自动同步到云端失败:', error);
-      }
-    }
+    // 使用通用同步函数同步到云端
+    await syncToCloud(dispatch, getState, '删除所有标签组');
 
     return { count: groups.length };
   }
@@ -193,8 +161,6 @@ export const deleteAllGroups = createAsyncThunk(
 export const importGroups = createAsyncThunk(
   'tabs/importGroups',
   async (groups: TabGroup[], { getState, dispatch }) => {
-    const { auth } = getState() as { auth: { isAuthenticated: boolean } };
-
     // 为导入的标签组和标签页生成新的ID
     const processedGroups = groups.map(group => ({
       ...group,
@@ -210,15 +176,8 @@ export const importGroups = createAsyncThunk(
     const updatedGroups = [...processedGroups, ...existingGroups];
     await storage.setGroups(updatedGroups);
 
-    // 如果用户已登录，自动同步到云端
-    if (auth.isAuthenticated) {
-      try {
-        await dispatch(syncTabsToCloud({ background: true }));
-        console.log('导入的标签组已自动同步到云端');
-      } catch (error) {
-        console.error('自动同步到云端失败:', error);
-      }
-    }
+    // 使用通用同步函数同步到云端
+    await syncToCloud(dispatch, getState, '导入标签组');
 
     return processedGroups;
   }
@@ -484,8 +443,6 @@ export const syncLocalChangesToCloud = createAsyncThunk(
 export const updateGroupNameAndSync = createAsyncThunk(
   'tabs/updateGroupNameAndSync',
   async ({ groupId, name }: { groupId: string, name: string }, { getState, dispatch }) => {
-    const { auth } = getState() as { auth: { isAuthenticated: boolean } };
-
     // 在 Redux 中更新标签组名称
     dispatch(updateGroupName({ groupId, name }));
 
@@ -499,15 +456,8 @@ export const updateGroupNameAndSync = createAsyncThunk(
     });
     await storage.setGroups(updatedGroups);
 
-    // 如果用户已登录，自动同步到云端
-    if (auth.isAuthenticated) {
-      try {
-        await dispatch(syncTabsToCloud({ background: true }));
-        console.log('标签组名称更新已自动同步到云端');
-      } catch (error) {
-        console.error('自动同步到云端失败:', error);
-      }
-    }
+    // 使用通用同步函数同步到云端
+    await syncToCloud(dispatch, getState, '标签组名称更新');
 
     return { groupId, name };
   }
@@ -517,8 +467,6 @@ export const updateGroupNameAndSync = createAsyncThunk(
 export const toggleGroupLockAndSync = createAsyncThunk(
   'tabs/toggleGroupLockAndSync',
   async (groupId: string, { getState, dispatch }) => {
-    const { auth } = getState() as { auth: { isAuthenticated: boolean } };
-
     // 在 Redux 中切换标签组锁定状态
     dispatch(toggleGroupLock(groupId));
 
@@ -536,15 +484,8 @@ export const toggleGroupLockAndSync = createAsyncThunk(
       const updatedGroups = groups.map(g => g.id === groupId ? updatedGroup : g);
       await storage.setGroups(updatedGroups);
 
-      // 如果用户已登录，自动同步到云端
-      if (auth.isAuthenticated) {
-        try {
-          await dispatch(syncTabsToCloud({ background: true }));
-          console.log('标签组锁定状态更新已自动同步到云端');
-        } catch (error) {
-          console.error('自动同步到云端失败:', error);
-        }
-      }
+      // 使用通用同步函数同步到云端
+      await syncToCloud(dispatch, getState, '标签组锁定状态更新');
 
       return { groupId, isLocked: updatedGroup.isLocked };
     }
@@ -557,8 +498,6 @@ export const toggleGroupLockAndSync = createAsyncThunk(
 export const moveGroupAndSync = createAsyncThunk(
   'tabs/moveGroupAndSync',
   async ({ dragIndex, hoverIndex }: { dragIndex: number, hoverIndex: number }, { getState, dispatch }) => {
-    const { auth } = getState() as { auth: { isAuthenticated: boolean } };
-
     // 在 Redux 中移动标签组
     dispatch(moveGroup({ dragIndex, hoverIndex }));
 
@@ -576,15 +515,8 @@ export const moveGroupAndSync = createAsyncThunk(
     // 更新本地存储
     await storage.setGroups(newGroups);
 
-    // 如果用户已登录，自动同步到云端
-    if (auth.isAuthenticated) {
-      try {
-        await dispatch(syncTabsToCloud({ background: true }));
-        console.log('标签组顺序更新已自动同步到云端');
-      } catch (error) {
-        console.error('自动同步到云端失败:', error);
-      }
-    }
+    // 使用通用同步函数同步到云端
+    await syncToCloud(dispatch, getState, '标签组顺序更新');
 
     return { dragIndex, hoverIndex };
   }
@@ -599,8 +531,6 @@ export const moveTabAndSync = createAsyncThunk(
     targetGroupId: string,
     targetIndex: number
   }, { getState, dispatch }) => {
-    const { auth } = getState() as { auth: { isAuthenticated: boolean } };
-
     // 在 Redux 中移动标签页
     dispatch(moveTab({ sourceGroupId, sourceIndex, targetGroupId, targetIndex }));
 
@@ -645,15 +575,8 @@ export const moveTabAndSync = createAsyncThunk(
 
       await storage.setGroups(updatedGroups);
 
-      // 如果用户已登录，自动同步到云端
-      if (auth.isAuthenticated) {
-        try {
-          await dispatch(syncTabsToCloud({ background: true }));
-          console.log('标签页移动已自动同步到云端');
-        } catch (error) {
-          console.error('自动同步到云端失败:', error);
-        }
-      }
+      // 使用通用同步函数同步到云端
+      await syncToCloud(dispatch, getState, '标签页移动');
     }
 
     return { sourceGroupId, sourceIndex, targetGroupId, targetIndex };
