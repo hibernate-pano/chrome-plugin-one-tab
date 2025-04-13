@@ -6,7 +6,7 @@ let syncDebounceTimer: NodeJS.Timeout | null = null;
 // 最后一次同步的时间
 let lastSyncTime = 0;
 // 防抖延迟时间
-const SYNC_DEBOUNCE_DELAY = 500; // 0.5秒，减少延迟但仍能有效防抖
+const SYNC_DEBOUNCE_DELAY = 300; // 减少到0.3秒，使同步更及时
 
 /**
  * 通用的同步辅助函数，用于将本地数据变更同步到云端

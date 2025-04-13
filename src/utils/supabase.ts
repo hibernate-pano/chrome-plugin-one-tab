@@ -315,8 +315,29 @@ export const sync = {
 
     if (!user) throw new Error('用户未登录');
 
-    console.log('准备上传标签组，用户ID:', user.id);
+    console.log('准备上传标签组，用户ID:', user.id, '设备ID:', deviceId);
     console.log(`要上传的数据: ${groups.length} 个标签组, ${deletedGroups.length} 个已删除标签组, ${deletedTabs.length} 个已删除标签页`);
+
+    // 详细记录每个要上传的标签组
+    groups.forEach((group, index) => {
+      console.log(`要上传的标签组 ${index+1}/${groups.length}:`, {
+        id: group.id,
+        name: group.name,
+        tabCount: group.tabs.length,
+        updatedAt: group.updatedAt,
+        lastSyncedAt: group.lastSyncedAt
+      });
+
+      // 记录每个标签组中的标签数量和类型
+      const urlTypes = group.tabs.reduce((acc, tab) => {
+        const urlType = tab.url.startsWith('http') ? 'http' :
+                      tab.url.startsWith('loading://') ? 'loading' : 'other';
+        acc[urlType] = (acc[urlType] || 0) + 1;
+        return acc;
+      }, {} as Record<string, number>);
+
+      console.log(`  - 标签类型统计: ${JSON.stringify(urlTypes)}`);
+    });
 
     // 为每个标签组添加用户ID和设备ID
     const currentTime = new Date().toISOString();
@@ -418,11 +439,12 @@ export const sync = {
 
   // 下载标签组
   async downloadTabGroups() {
+    const deviceId = await getDeviceId();
     const { data: { user } } = await supabase.auth.getUser();
 
     if (!user) throw new Error('用户未登录');
 
-    console.log('开始下载标签组，用户ID:', user.id);
+    console.log('开始下载标签组，用户ID:', user.id, '设备ID:', deviceId);
 
     try {
       console.log('使用 JSONB 方式下载所有标签组');
@@ -440,13 +462,36 @@ export const sync = {
 
       console.log(`从云端获取到 ${groups.length} 个标签组`);
 
+      // 记录每个云端标签组的基本信息
+      groups.forEach((group, index) => {
+        const tabsData = group.tabs_data || [];
+        console.log(`云端标签组 ${index+1}/${groups.length}:`, {
+          id: group.id,
+          name: group.name,
+          tabCount: tabsData.length,
+          deviceId: group.device_id,
+          updatedAt: group.updated_at,
+          lastSync: group.last_sync
+        });
+      });
+
       // 将数据转换为应用格式
       const tabGroups: TabGroup[] = [];
 
       for (const group of groups) {
         // 从 JSONB 字段获取标签数据
         const tabsData = group.tabs_data || [];
-        console.log(`标签组 ${group.id} 有 ${tabsData.length} 个标签`);
+        console.log(`处理标签组 ${group.id} (名称: "${group.name}"), 有 ${tabsData.length} 个标签`);
+
+        // 记录标签类型统计
+        const urlTypes = tabsData.reduce((acc: Record<string, number>, tab: TabData) => {
+          const urlType = tab.url.startsWith('http') ? 'http' :
+                        tab.url.startsWith('loading://') ? 'loading' : 'other';
+          acc[urlType] = (acc[urlType] || 0) + 1;
+          return acc;
+        }, {});
+
+        console.log(`  - 标签类型统计: ${JSON.stringify(urlTypes)}`);
 
         // 将 TabData 转换为 Tab 格式
         const formattedTabs = tabsData.map((tab: TabData) => ({
@@ -507,14 +552,19 @@ export const sync = {
 
   // 上传用户设置
   async uploadSettings(settings: UserSettings) {
+    const deviceId = await getDeviceId();
     const { data: { user } } = await supabase.auth.getUser();
 
     if (!user) throw new Error('用户未登录');
+
+    console.log('上传用户设置，用户ID:', user.id, '设备ID:', deviceId);
 
     const { data, error } = await supabase
       .from('user_settings')
       .upsert({
         user_id: user.id,
+        device_id: deviceId, // 添加设备ID，用于过滤自己设备的更新
+        last_sync: new Date().toISOString(),
         ...settings
       }, { onConflict: 'user_id' });
 

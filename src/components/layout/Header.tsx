@@ -3,6 +3,7 @@ import { useAppDispatch, useAppSelector } from '@/store/hooks';
 import { toggleLayoutMode, saveSettings } from '@/store/slices/settingsSlice';
 import { HeaderDropdown } from './HeaderDropdown';
 import { TabCounter } from './TabCounter';
+import SyncButton from '@/components/sync/SyncButton';
 
 interface HeaderProps {
   onSearch: (query: string) => void;
@@ -87,6 +88,8 @@ export const Header: React.FC<HeaderProps> = ({ onSearch }) => {
                   </svg>
                 )}
               </button>
+
+              <SyncButton />
 
               <button
                 onClick={handleSaveAllTabs}

@@ -384,8 +384,23 @@ export const syncTabsFromCloud = createAsyncThunk(
         const tabCount = group.tabs.length;
         totalCloudTabs += tabCount;
         console.log(`[${index+1}/${cloudGroups.length}] ID: ${group.id}, 名称: "${group.name}", 标签数: ${tabCount}, 更新时间: ${group.updatedAt}`);
+
+        // 详细记录每个云端标签组中的标签
+        group.tabs.forEach((tab, tabIndex) => {
+          console.log(`  - 云端标签 [${tabIndex+1}/${tabCount}]: ID=${tab.id}, 标题="${tab.title}", URL=${tab.url}`);
+        });
       });
       console.log(`云端总标签数: ${totalCloudTabs}`);
+
+      // 详细记录每个本地标签组的信息
+      console.log('本地标签组详情:');
+      let totalLocalTabs = 0;
+      localGroups.forEach((group, index) => {
+        const tabCount = group.tabs.length;
+        totalLocalTabs += tabCount;
+        console.log(`[${index+1}/${localGroups.length}] ID: ${group.id}, 名称: "${group.name}", 标签数: ${tabCount}, 更新时间: ${group.updatedAt}`);
+      });
+      console.log(`本地总标签数: ${totalLocalTabs}`);
 
       // 获取已删除的标签组
       const deletedGroups = await storage.getDeletedGroups();
@@ -396,6 +411,18 @@ export const syncTabsFromCloud = createAsyncThunk(
 
       console.log('合并后的标签组数量:', mergedGroups.length);
 
+      // 详细记录合并后的每个标签组
+      mergedGroups.forEach((group, index) => {
+        console.log(`合并后标签组 [${index+1}/${mergedGroups.length}]:`, {
+          id: group.id,
+          name: group.name,
+          tabCount: group.tabs.length,
+          syncStatus: group.syncStatus,
+          updatedAt: group.updatedAt,
+          lastSyncedAt: group.lastSyncedAt
+        });
+      });
+
       // 验证合并后标签组数据的完整性
       let totalMergedTabs = 0;
       mergedGroups.forEach((group) => {
@@ -404,8 +431,8 @@ export const syncTabsFromCloud = createAsyncThunk(
       console.log(`合并后总标签数: ${totalMergedTabs}`);
 
       // 检查是否有标签丢失
-      if (totalMergedTabs < totalCloudTabs && settings.syncStrategy !== 'local') {
-        console.warn(`警告: 合并后的标签总数(${totalMergedTabs})小于云端标签总数(${totalCloudTabs})，可能有数据丢失!`);
+      if (totalMergedTabs < Math.max(totalCloudTabs, totalLocalTabs)) {
+        console.warn(`警告: 合并后的标签总数(${totalMergedTabs})小于原始标签总数(本地:${totalLocalTabs}, 云端:${totalCloudTabs})，可能有数据丢失!`);
       }
 
       // 获取当前时间
@@ -427,7 +454,7 @@ export const syncTabsFromCloud = createAsyncThunk(
 
       return {
         groups: mergedGroups,
-        syncTime: new Date().toISOString(),
+        syncTime: currentTime,
         stats: null
       };
     } catch (error) {
