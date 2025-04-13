@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useAppDispatch } from '@/store/hooks';
-import { updateGroupName, toggleGroupLock, deleteGroup, updateGroup, moveTab } from '@/store/slices/tabSlice';
+import { updateGroupNameAndSync, toggleGroupLockAndSync, deleteGroup, updateGroup, moveTabAndSync } from '@/store/slices/tabSlice';
 import { DraggableTab } from '@/components/dnd/DraggableTab';
 import { TabGroup as TabGroupType, Tab } from '@/types/tab';
 
@@ -21,7 +21,7 @@ export const TabGroup: React.FC<TabGroupProps> = ({ group }) => {
 
   const handleNameSubmit = () => {
     if (newName.trim() !== '') {
-      dispatch(updateGroupName({ groupId: group.id, name: newName.trim() }));
+      dispatch(updateGroupNameAndSync({ groupId: group.id, name: newName.trim() }));
       setIsEditing(false);
     }
   };
@@ -42,7 +42,7 @@ export const TabGroup: React.FC<TabGroupProps> = ({ group }) => {
   };
 
   const handleToggleLock = () => {
-    dispatch(toggleGroupLock(group.id));
+    dispatch(toggleGroupLockAndSync(group.id));
   };
 
   // 不再需要获取用户状态和设置
@@ -199,7 +199,7 @@ export const TabGroup: React.FC<TabGroupProps> = ({ group }) => {
               groupId={group.id}
               index={index}
               moveTab={(sourceGroupId, sourceIndex, targetGroupId, targetIndex) => {
-                dispatch(moveTab({ sourceGroupId, sourceIndex, targetGroupId, targetIndex }));
+                dispatch(moveTabAndSync({ sourceGroupId, sourceIndex, targetGroupId, targetIndex }));
               }}
               handleOpenTab={handleOpenTab}
               handleDeleteTab={(tabId) => {

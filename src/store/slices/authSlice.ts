@@ -2,6 +2,7 @@ import { createSlice, createAsyncThunk } from '@reduxjs/toolkit';
 import { AuthState, User } from '@/types/tab';
 import { auth as supabaseAuth } from '@/utils/supabase';
 import { authCache } from '@/utils/authCache';
+import { realtimeService } from '@/services/realtimeService';
 
 const initialState: AuthState = {
   user: null,
@@ -182,12 +183,19 @@ export const signOut = createAsyncThunk(
   'auth/signOut',
   async () => {
     try {
+      // 清除 Realtime 订阅
+      console.log('清除 Realtime 订阅...');
+      realtimeService.clearRealtimeSubscription();
+
+      // 退出登录
       const { error } = await supabaseAuth.signOut();
       if (error) {
         console.error('退出登录错误:', error);
         throw new Error(typeof error === 'object' && error !== null && 'message' in error ?
           (error as { message: string }).message : '退出登录失败');
       }
+
+      console.log('退出登录成功');
       return null;
     } catch (err) {
       console.error('退出登录异常:', err);
@@ -310,6 +318,21 @@ const authSlice = createSlice({
         // 登录成功后缓存认证状态
         if (action.payload) {
           authCache.saveAuthState(action.payload, true);
+
+          // 设置 Realtime 订阅
+          setTimeout(() => {
+            realtimeService.setupRealtimeSubscription()
+              .then(subscription => {
+                if (subscription) {
+                  console.log('登录后设置 Realtime 订阅成功');
+                } else {
+                  console.warn('登录后设置 Realtime 订阅失败');
+                }
+              })
+              .catch(error => {
+                console.error('登录后设置 Realtime 订阅异常:', error);
+              });
+          }, 1000); // 延迟1秒设置，确保登录已完成
         }
       })
       .addCase(signIn.rejected, (state, action) => {
@@ -362,6 +385,21 @@ const authSlice = createSlice({
             // 清除微信登录标签页ID
             state.wechatLoginTabId = undefined;
           }
+
+          // 设置 Realtime 订阅
+          setTimeout(() => {
+            realtimeService.setupRealtimeSubscription()
+              .then(subscription => {
+                if (subscription) {
+                  console.log('第三方登录后设置 Realtime 订阅成功');
+                } else {
+                  console.warn('第三方登录后设置 Realtime 订阅失败');
+                }
+              })
+              .catch(error => {
+                console.error('第三方登录后设置 Realtime 订阅异常:', error);
+              });
+          }, 1000); // 延迟1秒设置，确保登录已完成
         }
       })
       .addCase(handleOAuthCallback.rejected, (state, action) => {
@@ -406,6 +444,21 @@ const authSlice = createSlice({
         // 更新认证缓存
         if (action.payload) {
           authCache.saveAuthState(action.payload, true);
+
+          // 设置 Realtime 订阅
+          setTimeout(() => {
+            realtimeService.setupRealtimeSubscription()
+              .then(subscription => {
+                if (subscription) {
+                  console.log('自动登录后设置 Realtime 订阅成功');
+                } else {
+                  console.warn('自动登录后设置 Realtime 订阅失败');
+                }
+              })
+              .catch(error => {
+                console.error('自动登录后设置 Realtime 订阅异常:', error);
+              });
+          }, 1000); // 延迟1秒设置，确保登录已完成
         } else {
           authCache.clearAuthState();
         }

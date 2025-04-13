@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { useAppDispatch, useAppSelector } from '@/store/hooks';
-import { loadGroups, deleteGroup, moveGroup } from '@/store/slices/tabSlice';
+import { loadGroups, deleteGroup, moveGroupAndSync } from '@/store/slices/tabSlice';
 
 import { DraggableTabGroup } from '@/components/dnd/DraggableTabGroup';
 import { SearchResultList } from '@/components/search/SearchResultList';
@@ -128,7 +128,7 @@ export const TabList: React.FC<TabListProps> = ({ searchQuery }) => {
                     group={group}
                     index={originalIndex}
                     moveGroup={(dragIndex, hoverIndex) => {
-                      dispatch(moveGroup({ dragIndex, hoverIndex }));
+                      dispatch(moveGroupAndSync({ dragIndex, hoverIndex }));
                     }}
                   />
                 );
@@ -148,7 +148,7 @@ export const TabList: React.FC<TabListProps> = ({ searchQuery }) => {
                     group={group}
                     index={originalIndex}
                     moveGroup={(dragIndex, hoverIndex) => {
-                      dispatch(moveGroup({ dragIndex, hoverIndex }));
+                      dispatch(moveGroupAndSync({ dragIndex, hoverIndex }));
                     }}
                   />
                 );
@@ -164,7 +164,7 @@ export const TabList: React.FC<TabListProps> = ({ searchQuery }) => {
               group={group}
               index={index}
               moveGroup={(dragIndex, hoverIndex) => {
-                dispatch(moveGroup({ dragIndex, hoverIndex }));
+                dispatch(moveGroupAndSync({ dragIndex, hoverIndex }));
               }}
             />
           ))}

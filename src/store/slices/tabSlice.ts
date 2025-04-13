@@ -27,18 +27,33 @@ export const loadGroups = createAsyncThunk(
 
 export const saveGroup = createAsyncThunk(
   'tabs/saveGroup',
-  async (group: TabGroup) => {
+  async (group: TabGroup, { dispatch, getState }) => {
+    const { auth } = getState() as { auth: { isAuthenticated: boolean } };
+
+    // 保存到本地
     const groups = await storage.getGroups();
     const updatedGroups = [group, ...groups];
     await storage.setGroups(updatedGroups);
+
+    // 如果用户已登录，自动同步到云端
+    if (auth.isAuthenticated) {
+      try {
+        await dispatch(syncTabsToCloud({ background: true }));
+        console.log('新标签组已自动同步到云端');
+      } catch (error) {
+        console.error('自动同步到云端失败:', error);
+      }
+    }
+
     return group;
   }
 );
 
 export const updateGroup = createAsyncThunk(
   'tabs/updateGroup',
-  async (group: TabGroup, { getState }) => {
+  async (group: TabGroup, { getState, dispatch }) => {
     const { settings } = getState() as { settings: UserSettings };
+    const { auth } = getState() as { auth: { isAuthenticated: boolean } };
     const groups = await storage.getGroups();
 
     // 找到原来的标签组
@@ -69,6 +84,17 @@ export const updateGroup = createAsyncThunk(
     // 更新标签组
     const updatedGroups = groups.map(g => g.id === group.id ? group : g);
     await storage.setGroups(updatedGroups);
+
+    // 如果用户已登录，自动同步到云端
+    if (auth.isAuthenticated) {
+      try {
+        await dispatch(syncTabsToCloud({ background: true }));
+        console.log('更新的标签组已自动同步到云端');
+      } catch (error) {
+        console.error('自动同步到云端失败:', error);
+      }
+    }
+
     return group;
   }
 );
@@ -77,8 +103,9 @@ import { markGroupForDeletion, markTabForDeletion } from '@/utils/syncUtils';
 
 export const deleteGroup = createAsyncThunk(
   'tabs/deleteGroup',
-  async (groupId: string, { getState }) => {
+  async (groupId: string, { getState, dispatch }) => {
     const { settings } = getState() as { settings: UserSettings };
+    const { auth } = getState() as { auth: { isAuthenticated: boolean } };
     const groups = await storage.getGroups();
 
     // 找到要删除的标签组
@@ -110,14 +137,25 @@ export const deleteGroup = createAsyncThunk(
       await storage.setGroups(updatedGroups);
     }
 
+    // 如果用户已登录，自动同步到云端
+    if (auth.isAuthenticated) {
+      try {
+        await dispatch(syncTabsToCloud({ background: true }));
+        console.log('删除的标签组已自动同步到云端');
+      } catch (error) {
+        console.error('自动同步到云端失败:', error);
+      }
+    }
+
     return groupId;
   }
 );
 
 export const deleteAllGroups = createAsyncThunk(
   'tabs/deleteAllGroups',
-  async (_, { getState }) => {
+  async (_, { getState, dispatch }) => {
     const { settings } = getState() as { settings: UserSettings };
+    const { auth } = getState() as { auth: { isAuthenticated: boolean } };
     const groups = await storage.getGroups();
 
     if (groups.length === 0) {
@@ -138,13 +176,25 @@ export const deleteAllGroups = createAsyncThunk(
     // 清空本地标签组
     await storage.setGroups([]);
 
+    // 如果用户已登录，自动同步到云端
+    if (auth.isAuthenticated) {
+      try {
+        await dispatch(syncTabsToCloud({ background: true }));
+        console.log('删除所有标签组已自动同步到云端');
+      } catch (error) {
+        console.error('自动同步到云端失败:', error);
+      }
+    }
+
     return { count: groups.length };
   }
 );
 
 export const importGroups = createAsyncThunk(
   'tabs/importGroups',
-  async (groups: TabGroup[]) => {
+  async (groups: TabGroup[], { getState, dispatch }) => {
+    const { auth } = getState() as { auth: { isAuthenticated: boolean } };
+
     // 为导入的标签组和标签页生成新的ID
     const processedGroups = groups.map(group => ({
       ...group,
@@ -159,6 +209,17 @@ export const importGroups = createAsyncThunk(
     const existingGroups = await storage.getGroups();
     const updatedGroups = [...processedGroups, ...existingGroups];
     await storage.setGroups(updatedGroups);
+
+    // 如果用户已登录，自动同步到云端
+    if (auth.isAuthenticated) {
+      try {
+        await dispatch(syncTabsToCloud({ background: true }));
+        console.log('导入的标签组已自动同步到云端');
+      } catch (error) {
+        console.error('自动同步到云端失败:', error);
+      }
+    }
+
     return processedGroups;
   }
 );
@@ -169,7 +230,7 @@ export const importGroups = createAsyncThunk(
 export const syncTabsToCloud = createAsyncThunk<
   { syncTime: string; stats: any | null },
   { background?: boolean } | void,
-  { state: { tabs: TabState; settings: UserSettings } }
+  { state: any }
 >(
   'tabs/syncTabsToCloud',
   async (options, { getState }) => {
@@ -398,6 +459,207 @@ export const syncTabsFromCloud = createAsyncThunk(
   }
 );
 
+// 新增：同步本地更改到云端
+export const syncLocalChangesToCloud = createAsyncThunk(
+  'tabs/syncLocalChangesToCloud',
+  async (_, { getState, dispatch }) => {
+    const { auth } = getState() as { auth: { isAuthenticated: boolean } };
+
+    // 如果用户已登录，自动同步到云端
+    if (auth.isAuthenticated) {
+      try {
+        await dispatch(syncTabsToCloud({ background: true }));
+        console.log('本地更改已自动同步到云端');
+        return true;
+      } catch (error) {
+        console.error('自动同步到云端失败:', error);
+        return false;
+      }
+    }
+    return false;
+  }
+);
+
+// 更新标签组名称并同步到云端
+export const updateGroupNameAndSync = createAsyncThunk(
+  'tabs/updateGroupNameAndSync',
+  async ({ groupId, name }: { groupId: string, name: string }, { getState, dispatch }) => {
+    const { auth } = getState() as { auth: { isAuthenticated: boolean } };
+
+    // 在 Redux 中更新标签组名称
+    dispatch(updateGroupName({ groupId, name }));
+
+    // 在本地存储中更新标签组
+    const groups = await storage.getGroups();
+    const updatedGroups = groups.map(g => {
+      if (g.id === groupId) {
+        return { ...g, name, updatedAt: new Date().toISOString() };
+      }
+      return g;
+    });
+    await storage.setGroups(updatedGroups);
+
+    // 如果用户已登录，自动同步到云端
+    if (auth.isAuthenticated) {
+      try {
+        await dispatch(syncTabsToCloud({ background: true }));
+        console.log('标签组名称更新已自动同步到云端');
+      } catch (error) {
+        console.error('自动同步到云端失败:', error);
+      }
+    }
+
+    return { groupId, name };
+  }
+);
+
+// 切换标签组锁定状态并同步到云端
+export const toggleGroupLockAndSync = createAsyncThunk(
+  'tabs/toggleGroupLockAndSync',
+  async (groupId: string, { getState, dispatch }) => {
+    const { auth } = getState() as { auth: { isAuthenticated: boolean } };
+
+    // 在 Redux 中切换标签组锁定状态
+    dispatch(toggleGroupLock(groupId));
+
+    // 在本地存储中更新标签组
+    const groups = await storage.getGroups();
+    const group = groups.find(g => g.id === groupId);
+
+    if (group) {
+      const updatedGroup = {
+        ...group,
+        isLocked: !group.isLocked,
+        updatedAt: new Date().toISOString()
+      };
+
+      const updatedGroups = groups.map(g => g.id === groupId ? updatedGroup : g);
+      await storage.setGroups(updatedGroups);
+
+      // 如果用户已登录，自动同步到云端
+      if (auth.isAuthenticated) {
+        try {
+          await dispatch(syncTabsToCloud({ background: true }));
+          console.log('标签组锁定状态更新已自动同步到云端');
+        } catch (error) {
+          console.error('自动同步到云端失败:', error);
+        }
+      }
+
+      return { groupId, isLocked: updatedGroup.isLocked };
+    }
+
+    return { groupId, isLocked: false };
+  }
+);
+
+// 移动标签组并同步到云端
+export const moveGroupAndSync = createAsyncThunk(
+  'tabs/moveGroupAndSync',
+  async ({ dragIndex, hoverIndex }: { dragIndex: number, hoverIndex: number }, { getState, dispatch }) => {
+    const { auth } = getState() as { auth: { isAuthenticated: boolean } };
+
+    // 在 Redux 中移动标签组
+    dispatch(moveGroup({ dragIndex, hoverIndex }));
+
+    // 在本地存储中更新标签组顺序
+    const groups = await storage.getGroups();
+    const dragGroup = groups[dragIndex];
+
+    // 创建新的数组以避免直接修改原数组
+    const newGroups = [...groups];
+    // 删除拖拽的标签组
+    newGroups.splice(dragIndex, 1);
+    // 在新位置插入标签组
+    newGroups.splice(hoverIndex, 0, dragGroup);
+
+    // 更新本地存储
+    await storage.setGroups(newGroups);
+
+    // 如果用户已登录，自动同步到云端
+    if (auth.isAuthenticated) {
+      try {
+        await dispatch(syncTabsToCloud({ background: true }));
+        console.log('标签组顺序更新已自动同步到云端');
+      } catch (error) {
+        console.error('自动同步到云端失败:', error);
+      }
+    }
+
+    return { dragIndex, hoverIndex };
+  }
+);
+
+// 移动标签页并同步到云端
+export const moveTabAndSync = createAsyncThunk(
+  'tabs/moveTabAndSync',
+  async ({ sourceGroupId, sourceIndex, targetGroupId, targetIndex }: {
+    sourceGroupId: string,
+    sourceIndex: number,
+    targetGroupId: string,
+    targetIndex: number
+  }, { getState, dispatch }) => {
+    const { auth } = getState() as { auth: { isAuthenticated: boolean } };
+
+    // 在 Redux 中移动标签页
+    dispatch(moveTab({ sourceGroupId, sourceIndex, targetGroupId, targetIndex }));
+
+    // 在本地存储中更新标签页位置
+    const groups = await storage.getGroups();
+    const sourceGroup = groups.find(g => g.id === sourceGroupId);
+    const targetGroup = groups.find(g => g.id === targetGroupId);
+
+    if (sourceGroup && targetGroup) {
+      // 获取要移动的标签页
+      const tab = sourceGroup.tabs[sourceIndex];
+
+      // 创建新的标签页数组以避免直接修改原数组
+      const newSourceTabs = [...sourceGroup.tabs];
+      const newTargetTabs = sourceGroupId === targetGroupId ? newSourceTabs : [...targetGroup.tabs];
+
+      // 从源标签组中删除标签页
+      newSourceTabs.splice(sourceIndex, 1);
+
+      // 如果是同一个标签组内移动，需要考虑删除后索引的变化
+      if (sourceGroupId === targetGroupId && sourceIndex < targetIndex) {
+        newTargetTabs.splice(targetIndex - 1, 0, tab);
+      } else {
+        newTargetTabs.splice(targetIndex, 0, tab);
+      }
+
+      // 更新源标签组和目标标签组
+      sourceGroup.tabs = newSourceTabs;
+      sourceGroup.updatedAt = new Date().toISOString();
+
+      if (sourceGroupId !== targetGroupId) {
+        targetGroup.tabs = newTargetTabs;
+        targetGroup.updatedAt = new Date().toISOString();
+      }
+
+      // 更新本地存储
+      const updatedGroups = groups.map(g => {
+        if (g.id === sourceGroupId) return sourceGroup;
+        if (g.id === targetGroupId) return targetGroup;
+        return g;
+      });
+
+      await storage.setGroups(updatedGroups);
+
+      // 如果用户已登录，自动同步到云端
+      if (auth.isAuthenticated) {
+        try {
+          await dispatch(syncTabsToCloud({ background: true }));
+          console.log('标签页移动已自动同步到云端');
+        } catch (error) {
+          console.error('自动同步到云端失败:', error);
+        }
+      }
+    }
+
+    return { sourceGroupId, sourceIndex, targetGroupId, targetIndex };
+  }
+);
+
 export const tabSlice = createSlice({
   name: 'tabs',
   initialState,
@@ -597,6 +859,61 @@ export const tabSlice = createSlice({
 
         // 后台同步完成后重置标志
         state.backgroundSync = false;
+      })
+
+      // 同步本地更改到云端
+      .addCase(syncLocalChangesToCloud.pending, () => {
+        // 不更新UI状态，因为这是后台操作
+      })
+      .addCase(syncLocalChangesToCloud.fulfilled, () => {
+        // 不更新UI状态，因为这是后台操作
+      })
+      .addCase(syncLocalChangesToCloud.rejected, () => {
+        // 不更新UI状态，因为这是后台操作
+      })
+
+      // 更新标签组名称并同步到云端
+      .addCase(updateGroupNameAndSync.pending, () => {
+        // 不更新UI状态，因为已经在 reducer 中更新了
+      })
+      .addCase(updateGroupNameAndSync.fulfilled, () => {
+        // 不更新UI状态，因为已经在 reducer 中更新了
+      })
+      .addCase(updateGroupNameAndSync.rejected, () => {
+        // 不更新UI状态，因为已经在 reducer 中更新了
+      })
+
+      // 切换标签组锁定状态并同步到云端
+      .addCase(toggleGroupLockAndSync.pending, () => {
+        // 不更新UI状态，因为已经在 reducer 中更新了
+      })
+      .addCase(toggleGroupLockAndSync.fulfilled, () => {
+        // 不更新UI状态，因为已经在 reducer 中更新了
+      })
+      .addCase(toggleGroupLockAndSync.rejected, () => {
+        // 不更新UI状态，因为已经在 reducer 中更新了
+      })
+
+      // 移动标签组并同步到云端
+      .addCase(moveGroupAndSync.pending, () => {
+        // 不更新UI状态，因为已经在 reducer 中更新了
+      })
+      .addCase(moveGroupAndSync.fulfilled, () => {
+        // 不更新UI状态，因为已经在 reducer 中更新了
+      })
+      .addCase(moveGroupAndSync.rejected, () => {
+        // 不更新UI状态，因为已经在 reducer 中更新了
+      })
+
+      // 移动标签页并同步到云端
+      .addCase(moveTabAndSync.pending, () => {
+        // 不更新UI状态，因为已经在 reducer 中更新了
+      })
+      .addCase(moveTabAndSync.fulfilled, () => {
+        // 不更新UI状态，因为已经在 reducer 中更新了
+      })
+      .addCase(moveTabAndSync.rejected, () => {
+        // 不更新UI状态，因为已经在 reducer 中更新了
       });
   },
 });
