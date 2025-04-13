@@ -307,9 +307,20 @@ export const syncTabsFromCloud = createAsyncThunk(
       const { tabs, settings } = getState() as { tabs: TabState, settings: UserSettings };
       const localGroups = tabs.groups;
 
+      // 增强日志输出，显示更详细的信息
       console.log('云端标签组数量:', cloudGroups.length);
       console.log('本地标签组数量:', localGroups.length);
-
+      
+      // 详细记录每个云端标签组的信息
+      console.log('云端标签组详情:');
+      let totalCloudTabs = 0;
+      cloudGroups.forEach((group, index) => {
+        const tabCount = group.tabs.length;
+        totalCloudTabs += tabCount;
+        console.log(`[${index+1}/${cloudGroups.length}] ID: ${group.id}, 名称: "${group.name}", 标签数: ${tabCount}, 更新时间: ${group.updatedAt}`);
+      });
+      console.log(`云端总标签数: ${totalCloudTabs}`);
+      
       // 获取已删除的标签组
       const deletedGroups = await storage.getDeletedGroups();
       console.log(`本地已删除标签组数量: ${deletedGroups.length}`);
@@ -318,6 +329,18 @@ export const syncTabsFromCloud = createAsyncThunk(
       const mergedGroups = mergeTabGroups(localGroups, cloudGroups, settings.syncStrategy, deletedGroups);
 
       console.log('合并后的标签组数量:', mergedGroups.length);
+      
+      // 验证合并后标签组数据的完整性
+      let totalMergedTabs = 0;
+      mergedGroups.forEach((group) => {
+        totalMergedTabs += group.tabs.length;
+      });
+      console.log(`合并后总标签数: ${totalMergedTabs}`);
+      
+      // 检查是否有标签丢失
+      if (totalMergedTabs < totalCloudTabs && settings.syncStrategy !== 'local') {
+        console.warn(`警告: 合并后的标签总数(${totalMergedTabs})小于云端标签总数(${totalCloudTabs})，可能有数据丢失!`);
+      }
 
       // 获取当前时间
       const currentTime = new Date().toISOString();

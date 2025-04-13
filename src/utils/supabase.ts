@@ -412,8 +412,9 @@ export const sync = {
     console.log('开始下载标签组，用户ID:', user.id);
 
     try {
-      // 尝试使用压缩数据方式下载
+      // 注释掉压缩数据方式下载，直接使用传统方式
       // 获取包含压缩数据的标签组
+      /*
       const { data: compressedGroups, error: compressedError } = await supabase
         .from('tab_groups')
         .select('compressed_data')
@@ -441,6 +442,9 @@ export const sync = {
       } else {
         console.log('未找到压缩数据，将使用传统方式下载');
       }
+      */
+      
+      console.log('跳过压缩数据方式，直接使用传统方式下载所有标签组');
 
       // 传统方式下载（如果压缩方式失败）
       // 获取用户的所有标签组

@@ -173,71 +173,68 @@ const mergeTabs = (
 ): TabGroup => {
   // 创建一个映射，以标签ID为键
   const mergedTabsMap = new Map<string, Tab>();
+  
+  // 添加本地标签前先记录数量
+  console.log(`合并标签组 "${localGroup.name}"，本地标签: ${localGroup.tabs.length}, 云端标签: ${cloudGroup.tabs.length}`);
 
-  // 添加本地标签
-  localGroup.tabs.forEach(localTab => {
-    mergedTabsMap.set(localTab.id, {
-      ...localTab,
+  // 先添加云端标签，确保所有云端标签都会被包含
+  cloudGroup.tabs.forEach(cloudTab => {
+    mergedTabsMap.set(cloudTab.id, {
+      ...cloudTab,
       syncStatus: 'synced',
       lastSyncedAt: currentTime
     });
   });
 
-  // 添加或更新云端标签
-  cloudGroup.tabs.forEach(cloudTab => {
-    const localTab = mergedTabsMap.get(cloudTab.id);
+  // 再添加或更新本地标签
+  localGroup.tabs.forEach(localTab => {
+    const cloudTab = mergedTabsMap.get(localTab.id);
 
-    if (!localTab) {
-      // 云端独有的标签
-      mergedTabsMap.set(cloudTab.id, {
-        ...cloudTab,
+    if (!cloudTab) {
+      // 本地独有的标签，直接添加
+      mergedTabsMap.set(localTab.id, {
+        ...localTab,
         syncStatus: 'synced',
         lastSyncedAt: currentTime
       });
     } else {
-      // 本地和云端都有的标签，使用更新时间较新的版本
-      const localAccessedAt = new Date(localTab.lastAccessed).getTime();
-      const cloudAccessedAt = new Date(cloudTab.lastAccessed).getTime();
+      // 本地和云端都有的标签，比较更新时间
+      const localAccessedAt = new Date(localTab.lastAccessed || 0).getTime();
+      const cloudAccessedAt = new Date(cloudTab.lastAccessed || 0).getTime();
 
+      // 使用更新时间较新的版本
       if (localAccessedAt > cloudAccessedAt) {
-        mergedTabsMap.set(cloudTab.id, {
+        mergedTabsMap.set(localTab.id, {
           ...localTab,
           syncStatus: 'synced',
           lastSyncedAt: currentTime
         });
-      } else {
-        mergedTabsMap.set(cloudTab.id, {
-          ...cloudTab,
-          syncStatus: 'synced',
-          lastSyncedAt: currentTime
-        });
       }
+      // 如果云端更新时间较新，则保留云端版本（已经在Map中）
     }
   });
 
-  // 过滤掉已删除的标签
-  const mergedTabs = Array.from(mergedTabsMap.values())
-    .filter(tab => !tab.isDeleted);
+  // 将标签映射转换回数组
+  const mergedTabs = Array.from(mergedTabsMap.values());
 
-  // 使用更新时间较新的标签组信息
-  const localUpdatedAt = new Date(localGroup.updatedAt).getTime();
-  const cloudUpdatedAt = new Date(cloudGroup.updatedAt).getTime();
-
-  if (localUpdatedAt > cloudUpdatedAt) {
-    return {
-      ...localGroup,
-      tabs: mergedTabs,
-      syncStatus: 'synced',
-      lastSyncedAt: currentTime
-    };
-  } else {
-    return {
-      ...cloudGroup,
-      tabs: mergedTabs,
-      syncStatus: 'synced',
-      lastSyncedAt: currentTime
-    };
+  // 记录合并结果
+  console.log(`标签组 "${localGroup.name}" 合并结果: ${mergedTabs.length} 个标签`);
+  
+  // 如果合并后的标签数小于云端标签数，输出警告
+  if (mergedTabs.length < cloudGroup.tabs.length) {
+    console.warn(`警告: 标签组 "${localGroup.name}" 合并后的标签数(${mergedTabs.length})小于云端标签数(${cloudGroup.tabs.length})`);
   }
+
+  // 构建并返回合并后的标签组
+  return {
+    ...localGroup,
+    tabs: mergedTabs,
+    name: cloudGroup.name || localGroup.name, // 优先使用云端名称
+    isLocked: cloudGroup.isLocked || localGroup.isLocked, // 优先使用云端锁定状态
+    updatedAt: currentTime,
+    syncStatus: 'synced',
+    lastSyncedAt: currentTime
+  };
 };
 
 /**
