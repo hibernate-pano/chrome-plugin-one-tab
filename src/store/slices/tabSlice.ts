@@ -238,8 +238,9 @@ export const syncTabsToCloud = createAsyncThunk<
 // 新增：从云端同步标签组
 export const syncTabsFromCloud = createAsyncThunk(
   'tabs/syncTabsFromCloud',
-  async (options: { background?: boolean } | void, { getState }) => {
+  async (options: { background?: boolean; forceRemoteStrategy?: boolean } | void, { getState }) => {
     const background = options?.background || false;
+    const forceRemoteStrategy = options?.forceRemoteStrategy || false;
     try {
       // 使用 setTimeout 延迟执行数据处理，避免阻塞主线程
       // 这样可以让 UI 先更新，然后再处理数据
@@ -288,7 +289,9 @@ export const syncTabsFromCloud = createAsyncThunk(
       console.log(`本地总标签数: ${totalLocalTabs}`);
 
       // 使用智能合并策略，不再考虑已删除的标签组
-      const mergedGroups = mergeTabGroups(localGroups, cloudGroups, settings.syncStrategy);
+      // 如果强制使用云端策略，则使用 'remote' 策略
+      const syncStrategy = forceRemoteStrategy ? 'remote' : settings.syncStrategy;
+      const mergedGroups = mergeTabGroups(localGroups, cloudGroups, syncStrategy);
 
       console.log('合并后的标签组数量:', mergedGroups.length);
 

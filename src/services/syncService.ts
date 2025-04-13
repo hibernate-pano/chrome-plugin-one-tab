@@ -17,7 +17,7 @@ class SyncService {
 
   // 同步所有数据
   async syncAll(background = true) {
-    const { auth, settings } = store.getState();
+    const { auth } = store.getState();
 
     if (!auth.isAuthenticated) {
       console.warn('用户未登录，无法同步数据');
@@ -32,8 +32,7 @@ class SyncService {
       // 2. 然后从云端同步数据，以云端数据为准
       // 3. 使用智能合并算法合并数据，去除重复项
 
-      // 临时修改同步策略为'remote'，使云端数据优先
-      const originalSyncStrategy = settings.syncStrategy;
+      // 使用云端优先策略，使云端数据优先
 
       // 先将本地数据同步到云端
       console.log('正在将本地数据同步到云端...');
@@ -46,11 +45,8 @@ class SyncService {
 
       // 使用云端优先策略从云端同步标签组
       console.log('正在从云端同步标签组，以云端数据为准...');
-      // 在同步前临时修改同步策略
-      store.getState().settings.syncStrategy = 'remote';
-      await store.dispatch(syncTabsFromCloud({ background }));
-      // 恢复原始同步策略
-      store.getState().settings.syncStrategy = originalSyncStrategy;
+      // 不再尝试修改 Redux 状态，而是在调用时传递参数
+      await store.dispatch(syncTabsFromCloud({ background, forceRemoteStrategy: true }));
 
       console.log('数据同步完成！云端数据已成功同步并与本地数据智能合并去重');
     } catch (error) {
