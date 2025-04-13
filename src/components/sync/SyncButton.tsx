@@ -1,11 +1,10 @@
 import React, { useState, useEffect } from 'react';
-import { useAppDispatch, useAppSelector } from '@/store/hooks';
-import { syncTabsFromCloud, syncTabsToCloud } from '@/store/slices/tabSlice';
+import { useAppSelector } from '@/store/hooks';
+import { syncService } from '@/services/syncService';
 
 interface SyncButtonProps {}
 
 export const SyncButton: React.FC<SyncButtonProps> = () => {
-  const dispatch = useAppDispatch();
   const { syncStatus, lastSyncTime } = useAppSelector(state => state.tabs);
   const { isAuthenticated } = useAppSelector(state => state.auth);
   const [lastSyncTimeText, setLastSyncTimeText] = useState<string>('');
@@ -30,10 +29,13 @@ export const SyncButton: React.FC<SyncButtonProps> = () => {
   const handleSync = async () => {
     if (syncStatus !== 'syncing' && isAuthenticated) {
       try {
-        // 先将本地数据同步到云端
-        await dispatch(syncTabsToCloud());
-        // 然后从云端同步数据
-        await dispatch(syncTabsFromCloud());
+        console.log('开始手动同步，以云端数据为准，智能合并去重...');
+
+        // 使用syncService的syncAll方法进行同步
+        // 这个方法会先将本地数据同步到云端，然后从云端同步数据
+        // 并使用智能合并算法合并数据
+        await syncService.syncAll(false);
+
         console.log('手动同步完成');
       } catch (error) {
         console.error('手动同步失败:', error);

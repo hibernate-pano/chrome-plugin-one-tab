@@ -3,7 +3,7 @@ import { TabState, TabGroup, UserSettings } from '@/types/tab';
 import { storage } from '@/utils/storage';
 import { sync as supabaseSync } from '@/utils/supabase';
 import { nanoid } from '@reduxjs/toolkit';
-import { getGroupsToSync, mergeTabGroups, markGroupForDeletion, markTabForDeletion } from '@/utils/syncUtils';
+import { mergeTabGroups } from '@/utils/syncUtils';
 import { syncToCloud } from '@/utils/syncHelpers';
 
 const initialState: TabState = {
@@ -44,33 +44,9 @@ export const saveGroup = createAsyncThunk(
 export const updateGroup = createAsyncThunk(
   'tabs/updateGroup',
   async (group: TabGroup, { getState, dispatch }) => {
-    const { settings } = getState() as { settings: UserSettings };
     const groups = await storage.getGroups();
 
-    // 找到原来的标签组
-    const originalGroup = groups.find(g => g.id === group.id);
-
-    if (originalGroup) {
-      // 找出被删除的标签页
-      const currentTabIds = new Set(group.tabs.map(tab => tab.id));
-
-      // 原来有但现在没有的标签页就是被删除的
-      const deletedTabs = originalGroup.tabs.filter(tab => !currentTabIds.has(tab.id));
-
-      // 如果有被删除的标签页，则将它们标记为已删除并保存到 deletedTabs 存储
-      if (deletedTabs.length > 0 && settings.deleteStrategy === 'everywhere') {
-        // 标记标签页为已删除
-        const markedTabs = deletedTabs.map(tab => markTabForDeletion(tab, settings.deleteStrategy));
-
-        // 获取已删除的标签页
-        const deletedTabsStorage = await storage.getDeletedTabs();
-
-        // 将新删除的标签页添加到存储中
-        await storage.setDeletedTabs([...deletedTabsStorage, ...markedTabs]);
-
-        console.log(`标记了 ${markedTabs.length} 个标签页为已删除`);
-      }
-    }
+    // 不再需要记录删除的标签页
 
     // 更新标签组
     const updatedGroups = groups.map(g => g.id === group.id ? group : g);
@@ -88,37 +64,11 @@ export const updateGroup = createAsyncThunk(
 export const deleteGroup = createAsyncThunk(
   'tabs/deleteGroup',
   async (groupId: string, { getState, dispatch }) => {
-    const { settings } = getState() as { settings: UserSettings };
     const groups = await storage.getGroups();
 
-    // 找到要删除的标签组
-    const groupToDelete = groups.find(g => g.id === groupId);
-
-    if (groupToDelete) {
-      // 标记为删除而不是直接从数组中移除
-      // 这样可以在同步时正确处理删除操作
-      const markedGroup = markGroupForDeletion(groupToDelete, settings.deleteStrategy);
-
-      // 如果删除策略是 'everywhere'，则从本地存储中移除
-      // 但保留在 deletedGroups 数组中以便同步
-      if (settings.deleteStrategy === 'everywhere') {
-        // 更新本地存储，移除该标签组
-        const updatedGroups = groups.filter(g => g.id !== groupId);
-        await storage.setGroups(updatedGroups);
-
-        // 同时在 deletedGroups 中保存标记为删除的标签组
-        const deletedGroups = await storage.getDeletedGroups();
-        await storage.setDeletedGroups([...deletedGroups, markedGroup]);
-      } else {
-        // 如果删除策略是 'local-only'，则只在本地移除
-        const updatedGroups = groups.filter(g => g.id !== groupId);
-        await storage.setGroups(updatedGroups);
-      }
-    } else {
-      // 如果找不到标签组，只从本地存储中移除
-      const updatedGroups = groups.filter(g => g.id !== groupId);
-      await storage.setGroups(updatedGroups);
-    }
+    // 直接从本地存储中移除标签组
+    const updatedGroups = groups.filter(g => g.id !== groupId);
+    await storage.setGroups(updatedGroups);
 
     // 使用通用同步函数同步到云端
     // 不等待同步完成，直接返回结果
@@ -137,25 +87,13 @@ export const deleteGroup = createAsyncThunk(
 export const deleteAllGroups = createAsyncThunk(
   'tabs/deleteAllGroups',
   async (_, { getState, dispatch }) => {
-    const { settings } = getState() as { settings: UserSettings };
     const groups = await storage.getGroups();
 
     if (groups.length === 0) {
       return { count: 0 }; // 没有标签组可删除
     }
 
-    // 如果删除策略是 'everywhere'，则标记所有标签组为已删除
-    if (settings.deleteStrategy === 'everywhere') {
-      const markedGroups = groups.map(group => markGroupForDeletion(group, settings.deleteStrategy));
-
-      // 获取现有的已删除标签组
-      const deletedGroups = await storage.getDeletedGroups();
-
-      // 将所有标记为删除的标签组添加到已删除标签组列表中
-      await storage.setDeletedGroups([...deletedGroups, ...markedGroups]);
-    }
-
-    // 清空本地标签组
+    // 直接清空本地标签组
     await storage.setGroups([]);
 
     // 使用通用同步函数同步到云端
@@ -233,47 +171,22 @@ export const syncTabsToCloud = createAsyncThunk<
       }
 
       // 获取需要同步的标签组
-      const groupsToSync = getGroupsToSync(tabs.groups);
+      // 直接同步所有标签组，不再考虑已删除的标签组
+      const groupsToSync = tabs.groups;
 
-      // 获取已删除的标签组
-      const deletedGroups = await storage.getDeletedGroups();
-      console.log(`找到 ${deletedGroups.length} 个已删除的标签组需要同步`);
-
-      // 获取已删除的标签页
-      const deletedTabs = await storage.getDeletedTabs();
-      console.log(`找到 ${deletedTabs.length} 个已删除的标签页需要同步`);
-
-      // 打印已删除的标签组和标签页的详细信息，便于调试
-      if (deletedGroups.length > 0) {
-        console.log('已删除的标签组详情:');
-        deletedGroups.forEach(group => {
-          console.log(`- ID: ${group.id}, 名称: ${group.name}, 删除时间: ${group.updatedAt}`);
-        });
-      }
-
-      if (deletedTabs.length > 0) {
-        console.log('已删除的标签页详情:');
-        deletedTabs.forEach(tab => {
-          console.log(`- ID: ${tab.id}, 标题: ${tab.title}, URL: ${tab.url}`);
-        });
-      }
-
-      // 合并正常标签组和已删除标签组
-      const allGroupsToSync = [...groupsToSync];
-
-      if (allGroupsToSync.length === 0) {
-        console.log('没有需要同步的变更');
+      if (groupsToSync.length === 0) {
+        console.log('没有需要同步的标签组');
         return {
           syncTime: tabs.lastSyncTime || new Date().toISOString(),
           stats: tabs.compressionStats
         };
       }
 
-      console.log(`将同步 ${allGroupsToSync.length} 个标签组到云端（包含 ${deletedGroups.length} 个已删除的标签组和 ${deletedTabs.length} 个已删除的标签页）`);
+      console.log(`将同步 ${groupsToSync.length} 个标签组到云端`);
 
       // 确保所有标签组都有必要的字段
       const currentTime = new Date().toISOString();
-      const validGroups = allGroupsToSync.map(group => ({
+      const validGroups = groupsToSync.map(group => ({
         ...group,
         createdAt: group.createdAt || currentTime,
         updatedAt: group.updatedAt || currentTime,
@@ -288,7 +201,7 @@ export const syncTabsToCloud = createAsyncThunk<
       }));
 
       // 上传标签组
-      await supabaseSync.uploadTabGroups(validGroups, deletedGroups, deletedTabs);
+      await supabaseSync.uploadTabGroups(validGroups);
 
       // 更新本地标签组的同步状态
       const updatedGroups = tabs.groups.map(group => {
@@ -309,35 +222,7 @@ export const syncTabsToCloud = createAsyncThunk<
       // 更新最后同步时间
       await storage.setLastSyncTime(currentTime);
 
-      // 清理已同步的已删除数据
-      if (deletedGroups.length > 0 || deletedTabs.length > 0) {
-        // 将已删除的标签组标记为已同步
-        if (deletedGroups.length > 0) {
-          const updatedDeletedGroups = deletedGroups.map(group => ({
-            ...group,
-            lastSyncedAt: currentTime,
-            syncStatus: 'synced' as const
-          }));
-
-          // 保存更新后的已删除标签组
-          await storage.setDeletedGroups(updatedDeletedGroups);
-        }
-
-        // 将已删除的标签页标记为已同步
-        if (deletedTabs.length > 0) {
-          const updatedDeletedTabs = deletedTabs.map(tab => ({
-            ...tab,
-            lastSyncedAt: currentTime,
-            syncStatus: 'synced' as const
-          }));
-
-          // 保存更新后的已删除标签页
-          await storage.setDeletedTabs(updatedDeletedTabs);
-        }
-
-        // 清理过期的已删除数据
-        await storage.cleanupDeletedGroups();
-      }
+      // 不再需要处理已删除的数据
 
       return {
         syncTime: currentTime,
@@ -402,12 +287,8 @@ export const syncTabsFromCloud = createAsyncThunk(
       });
       console.log(`本地总标签数: ${totalLocalTabs}`);
 
-      // 获取已删除的标签组
-      const deletedGroups = await storage.getDeletedGroups();
-      console.log(`本地已删除标签组数量: ${deletedGroups.length}`);
-
-      // 使用智能合并策略，包含已删除的标签组
-      const mergedGroups = mergeTabGroups(localGroups, cloudGroups, settings.syncStrategy, deletedGroups);
+      // 使用智能合并策略，不再考虑已删除的标签组
+      const mergedGroups = mergeTabGroups(localGroups, cloudGroups, settings.syncStrategy);
 
       console.log('合并后的标签组数量:', mergedGroups.length);
 
