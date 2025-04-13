@@ -13,19 +13,40 @@ export async function syncToCloud<T>(
   getState: () => any,
   operationType: string
 ): Promise<boolean> {
-  const { auth } = getState();
+  // 使用 setTimeout 将同步操作推迟到下一个事件循环
+  // 这样可以确保用户界面操作不会被阻塞
+  return new Promise((resolve) => {
+    setTimeout(async () => {
+      try {
+        const { auth } = getState();
 
-  // 如果用户已登录，自动同步到云端
-  if (auth.isAuthenticated) {
-    try {
-      await dispatch(syncTabsToCloud({ background: true }));
-      console.log(`${operationType}已自动同步到云端`);
-      return true;
-    } catch (error) {
-      console.error(`${operationType}同步到云端失败:`, error);
-      return false;
-    }
-  }
-
-  return false;
+        // 如果用户已登录，自动同步到云端
+        if (auth.isAuthenticated) {
+          try {
+            // 使用 background: true 确保同步在后台运行
+            await dispatch(syncTabsToCloud({ background: true }));
+            // 仅在调试模式下输出日志
+            if (process.env.NODE_ENV === 'development') {
+              console.log(`${operationType}已自动同步到云端`);
+            }
+            resolve(true);
+          } catch (error) {
+            // 仅在调试模式下输出错误
+            if (process.env.NODE_ENV === 'development') {
+              console.error(`${operationType}同步到云端失败:`, error);
+            }
+            resolve(false);
+          }
+        } else {
+          resolve(false);
+        }
+      } catch (e) {
+        // 捕获所有异常，确保不会影响用户体验
+        if (process.env.NODE_ENV === 'development') {
+          console.error('同步过程中发生异常:', e);
+        }
+        resolve(false);
+      }
+    }, 0); // 使用 0 毫秒的延迟，将操作推到下一个事件循环
+  });
 }

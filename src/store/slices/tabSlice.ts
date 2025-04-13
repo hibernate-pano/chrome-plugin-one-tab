@@ -121,7 +121,14 @@ export const deleteGroup = createAsyncThunk(
     }
 
     // 使用通用同步函数同步到云端
-    await syncToCloud(dispatch, getState, '删除标签组');
+    // 不等待同步完成，直接返回结果
+    // 这样可以确保用户界面不会被阻塞
+    syncToCloud(dispatch, getState, '删除标签组')
+      .catch(err => {
+        if (process.env.NODE_ENV === 'development') {
+          console.error('同步删除标签组操作失败:', err);
+        }
+      });
 
     return groupId;
   }
@@ -152,7 +159,13 @@ export const deleteAllGroups = createAsyncThunk(
     await storage.setGroups([]);
 
     // 使用通用同步函数同步到云端
-    await syncToCloud(dispatch, getState, '删除所有标签组');
+    // 不等待同步完成，直接返回结果
+    syncToCloud(dispatch, getState, '删除所有标签组')
+      .catch(err => {
+        if (process.env.NODE_ENV === 'development') {
+          console.error('同步删除所有标签组操作失败:', err);
+        }
+      });
 
     return { count: groups.length };
   }
@@ -177,7 +190,13 @@ export const importGroups = createAsyncThunk(
     await storage.setGroups(updatedGroups);
 
     // 使用通用同步函数同步到云端
-    await syncToCloud(dispatch, getState, '导入标签组');
+    // 不等待同步完成，直接返回结果
+    syncToCloud(dispatch, getState, '导入标签组')
+      .catch(err => {
+        if (process.env.NODE_ENV === 'development') {
+          console.error('同步导入标签组操作失败:', err);
+        }
+      });
 
     return processedGroups;
   }
@@ -426,14 +445,21 @@ export const syncLocalChangesToCloud = createAsyncThunk(
 
     // 如果用户已登录，自动同步到云端
     if (auth.isAuthenticated) {
-      try {
-        await dispatch(syncTabsToCloud({ background: true }));
-        console.log('本地更改已自动同步到云端');
-        return true;
-      } catch (error) {
-        console.error('自动同步到云端失败:', error);
-        return false;
-      }
+      // 使用 setTimeout 将同步操作推迟到下一个事件循环
+      setTimeout(() => {
+        dispatch(syncTabsToCloud({ background: true }))
+          .then(() => {
+            if (process.env.NODE_ENV === 'development') {
+              console.log('本地更改已自动同步到云端');
+            }
+          })
+          .catch(error => {
+            if (process.env.NODE_ENV === 'development') {
+              console.error('自动同步到云端失败:', error);
+            }
+          });
+      }, 0);
+      return true; // 直接返回成功，不等待同步完成
     }
     return false;
   }
@@ -457,7 +483,13 @@ export const updateGroupNameAndSync = createAsyncThunk(
     await storage.setGroups(updatedGroups);
 
     // 使用通用同步函数同步到云端
-    await syncToCloud(dispatch, getState, '标签组名称更新');
+    // 不等待同步完成，直接返回结果
+    syncToCloud(dispatch, getState, '标签组名称更新')
+      .catch(err => {
+        if (process.env.NODE_ENV === 'development') {
+          console.error('同步标签组名称更新操作失败:', err);
+        }
+      });
 
     return { groupId, name };
   }
@@ -485,7 +517,13 @@ export const toggleGroupLockAndSync = createAsyncThunk(
       await storage.setGroups(updatedGroups);
 
       // 使用通用同步函数同步到云端
-      await syncToCloud(dispatch, getState, '标签组锁定状态更新');
+      // 不等待同步完成，直接返回结果
+      syncToCloud(dispatch, getState, '标签组锁定状态更新')
+        .catch(err => {
+          if (process.env.NODE_ENV === 'development') {
+            console.error('同步标签组锁定状态更新操作失败:', err);
+          }
+        });
 
       return { groupId, isLocked: updatedGroup.isLocked };
     }
@@ -516,7 +554,13 @@ export const moveGroupAndSync = createAsyncThunk(
     await storage.setGroups(newGroups);
 
     // 使用通用同步函数同步到云端
-    await syncToCloud(dispatch, getState, '标签组顺序更新');
+    // 不等待同步完成，直接返回结果
+    syncToCloud(dispatch, getState, '标签组顺序更新')
+      .catch(err => {
+        if (process.env.NODE_ENV === 'development') {
+          console.error('同步标签组顺序更新操作失败:', err);
+        }
+      });
 
     return { dragIndex, hoverIndex };
   }
@@ -576,7 +620,13 @@ export const moveTabAndSync = createAsyncThunk(
       await storage.setGroups(updatedGroups);
 
       // 使用通用同步函数同步到云端
-      await syncToCloud(dispatch, getState, '标签页移动');
+      // 不等待同步完成，直接返回结果
+      syncToCloud(dispatch, getState, '标签页移动')
+        .catch(err => {
+          if (process.env.NODE_ENV === 'development') {
+            console.error('同步标签页移动操作失败:', err);
+          }
+        });
     }
 
     return { sourceGroupId, sourceIndex, targetGroupId, targetIndex };
