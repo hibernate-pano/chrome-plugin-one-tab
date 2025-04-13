@@ -237,9 +237,9 @@ const mergeTabs = (
     console.log(`合并后标签 ${index+1}/${mergedTabs.length}: ID=${tab.id}, 标题="${tab.title}", URL=${tab.url}`);
   });
 
-  // 如果合并后的标签数小于云端标签数或本地标签数，输出警告
+  // 如果合并后的标签数小于云端标签数或本地标签数，输出信息性日志
   if (mergedTabs.length < Math.max(cloudGroup.tabs.length, localGroup.tabs.length)) {
-    console.warn(`警告: 标签组 "${localGroup.name}" 合并后的标签数(${mergedTabs.length})小于原始标签数(本地:${localGroup.tabs.length}, 云端:${cloudGroup.tabs.length})`);
+    console.log(`信息: 标签组 "${localGroup.name}" 合并后的标签数(${mergedTabs.length})小于原始标签数(本地:${localGroup.tabs.length}, 云端:${cloudGroup.tabs.length})，这可能是因为有重复标签或已删除标签`);
   }
 
   // 构建并返回合并后的标签组

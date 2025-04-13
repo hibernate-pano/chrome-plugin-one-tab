@@ -430,9 +430,9 @@ export const syncTabsFromCloud = createAsyncThunk(
       });
       console.log(`合并后总标签数: ${totalMergedTabs}`);
 
-      // 检查是否有标签丢失
+      // 检查标签总数差异，输出信息性日志
       if (totalMergedTabs < Math.max(totalCloudTabs, totalLocalTabs)) {
-        console.warn(`警告: 合并后的标签总数(${totalMergedTabs})小于原始标签总数(本地:${totalLocalTabs}, 云端:${totalCloudTabs})，可能有数据丢失!`);
+        console.log(`信息: 合并后的标签总数(${totalMergedTabs})小于原始标签总数(本地:${totalLocalTabs}, 云端:${totalCloudTabs})，这通常是因为有重复标签或已删除标签，不影响正常使用`);
       }
 
       // 获取当前时间
