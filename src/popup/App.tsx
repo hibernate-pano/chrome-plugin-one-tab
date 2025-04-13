@@ -5,20 +5,61 @@ import { DndProvider } from '@/components/dnd/DndProvider';
 import { useAppDispatch, useAppSelector } from '@/store/hooks';
 import { loadSettings } from '@/store/slices/settingsSlice';
 import { getCurrentUser } from '@/store/slices/authSlice';
-// 移除实时同步相关导入
 import { auth as supabaseAuth } from '@/utils/supabase';
 import { authCache } from '@/utils/authCache';
 import { store } from '@/store';
+import { hasSyncPromptShown, markSyncPromptShown } from '@/utils/syncPromptUtils';
+import { checkCloudData } from '@/utils/cloudDataUtils';
+import SyncPromptModal from '@/components/sync/SyncPromptModal';
 
 const App: React.FC = () => {
   const dispatch = useAppDispatch();
   const [searchQuery, setSearchQuery] = useState('');
   const [initialAuthLoaded, setInitialAuthLoaded] = useState(false);
+  const [showSyncPrompt, setShowSyncPrompt] = useState(false);
+  const [hasCloudData, setHasCloudData] = useState(false);
 
-  const { isAuthenticated } = useAppSelector(state => state.auth);
+  const { isAuthenticated, user } = useAppSelector(state => state.auth);
 
-  // 移除实时同步功能，简化逻辑
-  // 只保留手动同步功能
+  // 检查是否需要显示同步提示
+  useEffect(() => {
+    const checkSyncPrompt = async () => {
+      // 只有在用户登录时才检查
+      if (isAuthenticated && user && initialAuthLoaded) {
+        // 检查是否已经显示过同步提示
+        if (!hasSyncPromptShown(user.id)) {
+          // 检查云端是否有数据
+          const cloudHasData = await checkCloudData();
+
+          // 设置云端数据状态
+          setHasCloudData(cloudHasData);
+
+          // 如果云端有数据，显示同步提示
+          if (cloudHasData) {
+            console.log('检测到云端有数据，显示同步提示');
+            setShowSyncPrompt(true);
+          } else {
+            console.log('云端没有数据，不显示同步提示');
+            // 标记已经显示过同步提示，避免再次检查
+            markSyncPromptShown(user.id);
+          }
+        } else {
+          console.log('已经显示过同步提示，不再显示');
+        }
+      }
+    };
+
+    checkSyncPrompt();
+  }, [isAuthenticated, user, initialAuthLoaded]);
+
+  // 处理关闭同步提示
+  const handleCloseSyncPrompt = () => {
+    if (user) {
+      // 标记已经显示过同步提示
+      markSyncPromptShown(user.id);
+    }
+    setShowSyncPrompt(false);
+  };
 
   // 首先从缓存加载认证状态，避免闪烁
   useEffect(() => {
@@ -98,7 +139,7 @@ const App: React.FC = () => {
               <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 text-primary-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 17V7m0 10a2 2 0 01-2 2H5a2 2 0 01-2-2V7a2 2 0 012-2h2a2 2 0 012 2m0 10a2 2 0 002 2h2a2 2 0 002-2M9 7a2 2 0 012-2h2a2 2 0 012 2m0 10V7m0 10a2 2 0 002 2h2a2 2 0 002-2V7a2 2 0 00-2-2h-2a2 2 0 00-2 2" />
               </svg>
-              <span className="text-xs">OneTabPlus v1.4.3</span>
+              <span className="text-xs">OneTabPlus v1.4.7</span>
             </div>
             <div>
               {isAuthenticated ? (
@@ -115,6 +156,14 @@ const App: React.FC = () => {
             </div>
           </div>
         </footer>
+
+        {/* 同步提示对话框 */}
+        {showSyncPrompt && (
+          <SyncPromptModal
+            onClose={handleCloseSyncPrompt}
+            hasCloudData={hasCloudData}
+          />
+        )}
       </div>
     </DndProvider>
   );
