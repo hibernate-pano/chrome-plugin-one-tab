@@ -2,7 +2,6 @@ import { store } from '@/store';
 import { syncTabsToCloud, syncTabsFromCloud } from '@/store/slices/tabSlice';
 import { syncSettingsToCloud, syncSettingsFromCloud } from '@/store/slices/settingsSlice';
 import { getCurrentUser } from '@/store/slices/authSlice';
-import { sync as supabaseSync } from '@/utils/supabase';
 
 class SyncService {
   // 初始化同步服务 - 已禁用自动同步

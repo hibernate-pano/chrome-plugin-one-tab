@@ -1,12 +1,9 @@
-import { syncTabsToCloud } from '@/store/slices/tabSlice';
 import { ThunkDispatch, UnknownAction } from '@reduxjs/toolkit';
 
 // 防抖计时器
 let syncDebounceTimer: NodeJS.Timeout | null = null;
-// 最后一次同步的时间
-let lastSyncTime = 0;
 // 防抖延迟时间
-const SYNC_DEBOUNCE_DELAY = 300; // 减少到0.3秒，使同步更及时
+const SYNC_DEBOUNCE_DELAY = 300; // 减少到0.3秒，使操作更及时
 
 /**
  * 通用的同步辅助函数，用于将本地数据变更同步到云端
@@ -33,8 +30,8 @@ const OPERATION_PRIORITIES: Record<string, number> = {
 let currentSyncOperation: { type: string; priority: number } | null = null;
 
 export async function syncToCloud<T>(
-  dispatch: ThunkDispatch<T, any, UnknownAction>,
-  getState: () => any,
+  _dispatch: ThunkDispatch<T, any, UnknownAction>,
+  _getState: () => any,
   operationType: string
 ): Promise<boolean> {
   // 获取当前操作的优先级
@@ -71,9 +68,7 @@ export async function syncToCloud<T>(
     // 设置新的定时器
     syncDebounceTimer = setTimeout(async () => {
       try {
-        const { auth } = getState();
-        const now = Date.now();
-
+        // 不再获取用户状态和时间，直接跳过同步
         // 不再自动同步到云端，保证本地操作优先，避免卡顿
         if (process.env.NODE_ENV === 'development') {
           console.log(`本地操作完成: ${operationType}，跳过自动同步，保证操作丰满顺畅`);

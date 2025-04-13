@@ -26,9 +26,9 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       .catch(error => sendResponse({ success: false, error: error.message }));
     return true; // 异步响应
   } else if (message.action === 'sync') {
-    syncService.syncAll()
-      .then(() => sendResponse({ success: true }))
-      .catch(error => sendResponse({ success: false, error: error.message }));
+    // 移除自动同步功能，改为手动同步模式
+    console.log('收到同步请求，请使用界面上的同步按钮手动同步');
+    sendResponse({ success: true });
     return true; // 异步响应
   }
 

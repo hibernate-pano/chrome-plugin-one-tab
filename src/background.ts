@@ -1,8 +1,6 @@
 import { storage } from './utils/storage';
 import { nanoid } from '@reduxjs/toolkit';
 import { TabGroup } from './types/tab';
-import { auth as supabaseAuth } from './utils/supabase';
-import { syncService } from './services/syncService';
 import { store } from './store';
 import { handleOAuthCallback, updateWechatLoginStatus } from './store/slices/authSlice';
 import { showNotification } from './utils/notification';
