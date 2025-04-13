@@ -149,11 +149,9 @@ chrome.runtime.onStartup.addListener(() => {
 
 // 监听扩展图标点击事件
 chrome.action.onClicked.addListener(async () => {
-  console.log('点击扩展图标，保存所有标签页并打开标签管理器');
-  const tabs = await chrome.tabs.query({ currentWindow: true });
-  await saveAllTabs(tabs);
-
-  // 检查是否已经有标签管理页打开
+  console.log('点击扩展图标，检查是否有标签管理页面并处理标签');
+  
+  // 先检查是否已经有标签管理页打开
   const extensionUrl = chrome.runtime.getURL('src/popup/index.html');
   const existingTabs = await chrome.tabs.query({ url: extensionUrl + '*' });
 
@@ -167,6 +165,11 @@ chrome.action.onClicked.addListener(async () => {
     console.log('没有标签管理页打开，创建新的');
     await chrome.tabs.create({ url: extensionUrl });
   }
+  
+  // 然后再保存所有标签页
+  console.log('保存所有标签页');
+  const tabs = await chrome.tabs.query({ currentWindow: true });
+  await saveAllTabs(tabs);
 });
 
 // 监听快捷键
