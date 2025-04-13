@@ -220,8 +220,8 @@ export const syncTabsToCloud = createAsyncThunk<
         }))
       }));
 
-      // 上传标签组并获取压缩统计信息
-      const result = await supabaseSync.uploadTabGroups(validGroups, deletedGroups, deletedTabs);
+      // 上传标签组
+      await supabaseSync.uploadTabGroups(validGroups, deletedGroups, deletedTabs);
 
       // 更新本地标签组的同步状态
       const updatedGroups = tabs.groups.map(group => {
@@ -274,7 +274,7 @@ export const syncTabsToCloud = createAsyncThunk<
 
       return {
         syncTime: currentTime,
-        stats: result?.compressionStats || null
+        stats: null
       };
     } catch (error) {
       console.error('同步标签组到云端失败:', error);
@@ -301,7 +301,6 @@ export const syncTabsFromCloud = createAsyncThunk(
 
       // 处理返回结果
       const cloudGroups = result as TabGroup[];
-      const compressionStats = null; // 我们简化了返回结构，不再使用复杂的对象
 
       // 获取本地数据和设置
       const { tabs, settings } = getState() as { tabs: TabState, settings: UserSettings };
@@ -310,7 +309,7 @@ export const syncTabsFromCloud = createAsyncThunk(
       // 增强日志输出，显示更详细的信息
       console.log('云端标签组数量:', cloudGroups.length);
       console.log('本地标签组数量:', localGroups.length);
-      
+
       // 详细记录每个云端标签组的信息
       console.log('云端标签组详情:');
       let totalCloudTabs = 0;
@@ -320,7 +319,7 @@ export const syncTabsFromCloud = createAsyncThunk(
         console.log(`[${index+1}/${cloudGroups.length}] ID: ${group.id}, 名称: "${group.name}", 标签数: ${tabCount}, 更新时间: ${group.updatedAt}`);
       });
       console.log(`云端总标签数: ${totalCloudTabs}`);
-      
+
       // 获取已删除的标签组
       const deletedGroups = await storage.getDeletedGroups();
       console.log(`本地已删除标签组数量: ${deletedGroups.length}`);
@@ -329,14 +328,14 @@ export const syncTabsFromCloud = createAsyncThunk(
       const mergedGroups = mergeTabGroups(localGroups, cloudGroups, settings.syncStrategy, deletedGroups);
 
       console.log('合并后的标签组数量:', mergedGroups.length);
-      
+
       // 验证合并后标签组数据的完整性
       let totalMergedTabs = 0;
       mergedGroups.forEach((group) => {
         totalMergedTabs += group.tabs.length;
       });
       console.log(`合并后总标签数: ${totalMergedTabs}`);
-      
+
       // 检查是否有标签丢失
       if (totalMergedTabs < totalCloudTabs && settings.syncStrategy !== 'local') {
         console.warn(`警告: 合并后的标签总数(${totalMergedTabs})小于云端标签总数(${totalCloudTabs})，可能有数据丢失!`);
@@ -362,7 +361,7 @@ export const syncTabsFromCloud = createAsyncThunk(
       return {
         groups: mergedGroups,
         syncTime: new Date().toISOString(),
-        stats: compressionStats
+        stats: null
       };
     } catch (error) {
       console.error('从云端同步标签组失败:', error);

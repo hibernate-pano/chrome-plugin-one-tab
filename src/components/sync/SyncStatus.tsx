@@ -1,10 +1,7 @@
 import React from 'react';
 import { useAppSelector } from '@/store/hooks';
-import { CompressionStats } from '@/utils/compressionUtils';
 
-interface SyncStatusProps {
-  compressionStats?: CompressionStats | null;
-}
+interface SyncStatusProps {}
 
 export const SyncStatus: React.FC<SyncStatusProps> = () => {
   const { syncStatus, lastSyncTime, backgroundSync } = useAppSelector(state => state.tabs);

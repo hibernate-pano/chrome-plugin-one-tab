@@ -13,6 +13,29 @@ export interface Tab {
   isDeleted?: boolean; // 软删除标记
 }
 
+// 用于存储到 Supabase 的标签数据格式
+export interface TabData {
+  id: string;
+  url: string;
+  title: string;
+  favicon?: string;
+  created_at: string;
+  last_accessed: string;
+}
+
+// 用于 Supabase 中的 tab_groups 表结构
+export interface SupabaseTabGroup {
+  id: string;
+  name: string;
+  created_at: string;
+  updated_at: string;
+  is_locked: boolean;
+  user_id: string;
+  device_id: string;
+  last_sync: string;
+  tabs_data?: TabData[];
+}
+
 export interface TabGroup {
   id: string;
   name: string;
@@ -38,7 +61,7 @@ export interface TabState {
   searchQuery: string;
   syncStatus: 'idle' | 'syncing' | 'success' | 'error'; // 同步状态
   lastSyncTime: string | null; // 最后同步时间
-  compressionStats: any | null; // 压缩统计信息
+  compressionStats?: any | null; // 压缩统计信息（已废弃）
   backgroundSync: boolean; // 是否在后台同步
 }
 

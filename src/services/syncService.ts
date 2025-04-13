@@ -2,6 +2,7 @@ import { store } from '@/store';
 import { syncTabsToCloud, syncTabsFromCloud } from '@/store/slices/tabSlice';
 import { syncSettingsToCloud, syncSettingsFromCloud } from '@/store/slices/settingsSlice';
 import { getCurrentUser } from '@/store/slices/authSlice';
+import { sync as supabaseSync } from '@/utils/supabase';
 
 class SyncService {
   // 初始化同步服务
@@ -15,7 +16,17 @@ class SyncService {
       console.log('用户登录状态:', auth.isAuthenticated);
 
       if (auth.isAuthenticated) {
-        console.log('用户已登录，从云端获取最新数据...');
+        console.log('用户已登录，先迁移数据到 JSONB 格式...');
+
+        // 迁移数据到 JSONB 格式
+        try {
+          const migrationResult = await supabaseSync.migrateToJsonb();
+          console.log('数据迁移结果:', migrationResult);
+        } catch (migrationError) {
+          console.error('数据迁移失败，继续同步过程:', migrationError);
+        }
+
+        console.log('从云端获取最新数据...');
         // 首次同步，从云端获取数据，使用后台同步模式
         await this.syncFromCloud(true);
       } else {
