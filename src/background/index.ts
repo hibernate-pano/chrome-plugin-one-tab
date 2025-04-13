@@ -98,10 +98,25 @@ async function openTabsWithSingleInstance(urls: string[]) {
 // 保存所有标签页
 async function saveAllTabs(inputTabs: chrome.tabs.Tab[]) {
   const allTabs = inputTabs.length > 0 ? inputTabs : await chrome.tabs.query({ currentWindow: true });
+
+  // 记录所有标签页的状态，用于调试
+  console.log('所有标签页状态:', allTabs.map(tab => ({
+    id: tab.id,
+    url: tab.url,
+    status: tab.status,
+    title: tab.title
+  })));
+
   // 过滤掉 Chrome 内部页面和扩展页面
-  let tabsToSave = allTabs.filter(tab =>
-    tab.url && !tab.url.startsWith('chrome://') && !tab.url.startsWith('chrome-extension://')
-  );
+  // 注意：不再检查标签页的加载状态，允许所有有效URL的标签页被保存
+  let tabsToSave = allTabs.filter(tab => {
+    // 如果标签页有URL，则检查URL是否为内部页面
+    if (tab.url) {
+      return !tab.url.startsWith('chrome://') && !tab.url.startsWith('chrome-extension://');
+    }
+    // 如果URL为空，但标题不为空，则保存该标签页（可能是正在加载的页面）
+    return tab.title && tab.title.trim() !== '';
+  });
 
   // 保存所有要关闭的标签页（包括重复的）
   const allTabsToClose = [...tabsToSave];
@@ -132,12 +147,16 @@ async function saveAllTabs(inputTabs: chrome.tabs.Tab[]) {
   const tabGroup = {
     id: Date.now().toString(),
     name: `Group ${new Date().toLocaleString()}`,
-    tabs: tabsToSave.map(tab => ({
-      id: tab.id?.toString() || '',
-      title: tab.title || '',
-      url: tab.url || '',
-      favicon: tab.favIconUrl || '',
-    })),
+    tabs: tabsToSave.map(tab => {
+      // 如果标签页没有URL但有标题，使用一个特殊的URL标记
+      const url = tab.url || (tab.title ? `loading://${encodeURIComponent(tab.title)}` : '');
+      return {
+        id: tab.id?.toString() || '',
+        title: tab.title || '',
+        url: url,
+        favicon: tab.favIconUrl || '',
+      };
+    }),
     createdAt: new Date().toISOString(),
     isLocked: false,
   };
@@ -173,9 +192,18 @@ async function saveAllTabs(inputTabs: chrome.tabs.Tab[]) {
 
 // 保存当前标签页
 async function saveCurrentTab(tab: chrome.tabs.Tab, userSettings?: any) {
-  if (!tab.url || tab.url.startsWith('chrome://') || tab.url.startsWith('chrome-extension://') || tab.url.startsWith('edge://')) {
+  // 如果有URL，检查是否为内部页面
+  if (tab.url && (tab.url.startsWith('chrome://') || tab.url.startsWith('chrome-extension://') || tab.url.startsWith('edge://'))) {
     return;
   }
+
+  // 如果URL为空且标题为空，则不保存
+  if (!tab.url && (!tab.title || tab.title.trim() === '')) {
+    return;
+  }
+
+  // 如果标签页没有URL但有标题，使用一个特殊的URL标记
+  const url = tab.url || (tab.title ? `loading://${encodeURIComponent(tab.title)}` : '');
 
   const tabGroup = {
     id: Date.now().toString(),
@@ -183,7 +211,7 @@ async function saveCurrentTab(tab: chrome.tabs.Tab, userSettings?: any) {
     tabs: [{
       id: tab.id?.toString() || '',
       title: tab.title || '',
-      url: tab.url || '',
+      url: url,
       favicon: tab.favIconUrl || '',
     }],
     createdAt: new Date().toISOString(),
