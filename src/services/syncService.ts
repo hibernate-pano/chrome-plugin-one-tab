@@ -3,7 +3,6 @@ import { syncTabsToCloud, syncTabsFromCloud } from '@/store/slices/tabSlice';
 import { syncSettingsToCloud, syncSettingsFromCloud } from '@/store/slices/settingsSlice';
 import { getCurrentUser } from '@/store/slices/authSlice';
 import { sync as supabaseSync } from '@/utils/supabase';
-import { realtimeService } from './realtimeService';
 
 class SyncService {
   // 初始化同步服务
@@ -31,18 +30,8 @@ class SyncService {
         // 首次同步，从云端获取数据，使用后台同步模式
         await this.syncFromCloud(true);
 
-        // 设置 Realtime 订阅，实现实时双向同步
-        console.log('设置 Realtime 订阅，实现实时双向同步...');
-        try {
-          const subscription = await realtimeService.setupRealtimeSubscription();
-          if (subscription) {
-            console.log('Realtime 订阅设置成功');
-          } else {
-            console.warn('Realtime 订阅设置失败');
-          }
-        } catch (realtimeError) {
-          console.error('Realtime 订阅设置失败:', realtimeError);
-        }
+        // 移除实时同步功能，简化逻辑
+        console.log('已简化同步逻辑，只保留手动同步功能');
       } else {
         console.log('用户未登录，跳过同步');
       }

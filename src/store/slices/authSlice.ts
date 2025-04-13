@@ -2,7 +2,6 @@ import { createSlice, createAsyncThunk } from '@reduxjs/toolkit';
 import { AuthState, User } from '@/types/tab';
 import { auth as supabaseAuth } from '@/utils/supabase';
 import { authCache } from '@/utils/authCache';
-import { realtimeService } from '@/services/realtimeService';
 
 const initialState: AuthState = {
   user: null,
@@ -183,9 +182,8 @@ export const signOut = createAsyncThunk(
   'auth/signOut',
   async () => {
     try {
-      // 清除 Realtime 订阅
-      console.log('清除 Realtime 订阅...');
-      realtimeService.clearRealtimeSubscription();
+      // 移除实时同步功能，简化逻辑
+      console.log('已简化同步逻辑，只保留手动同步功能');
 
       // 退出登录
       const { error } = await supabaseAuth.signOut();
@@ -319,20 +317,7 @@ const authSlice = createSlice({
         if (action.payload) {
           authCache.saveAuthState(action.payload, true);
 
-          // 设置 Realtime 订阅
-          setTimeout(() => {
-            realtimeService.setupRealtimeSubscription()
-              .then(subscription => {
-                if (subscription) {
-                  console.log('登录后设置 Realtime 订阅成功');
-                } else {
-                  console.warn('登录后设置 Realtime 订阅失败');
-                }
-              })
-              .catch(error => {
-                console.error('登录后设置 Realtime 订阅异常:', error);
-              });
-          }, 1000); // 延迟1秒设置，确保登录已完成
+          // 移除实时同步功能，简化逻辑
         }
       })
       .addCase(signIn.rejected, (state, action) => {
@@ -386,20 +371,7 @@ const authSlice = createSlice({
             state.wechatLoginTabId = undefined;
           }
 
-          // 设置 Realtime 订阅
-          setTimeout(() => {
-            realtimeService.setupRealtimeSubscription()
-              .then(subscription => {
-                if (subscription) {
-                  console.log('第三方登录后设置 Realtime 订阅成功');
-                } else {
-                  console.warn('第三方登录后设置 Realtime 订阅失败');
-                }
-              })
-              .catch(error => {
-                console.error('第三方登录后设置 Realtime 订阅异常:', error);
-              });
-          }, 1000); // 延迟1秒设置，确保登录已完成
+          // 移除实时同步功能，简化逻辑
         }
       })
       .addCase(handleOAuthCallback.rejected, (state, action) => {
@@ -445,20 +417,7 @@ const authSlice = createSlice({
         if (action.payload) {
           authCache.saveAuthState(action.payload, true);
 
-          // 设置 Realtime 订阅
-          setTimeout(() => {
-            realtimeService.setupRealtimeSubscription()
-              .then(subscription => {
-                if (subscription) {
-                  console.log('自动登录后设置 Realtime 订阅成功');
-                } else {
-                  console.warn('自动登录后设置 Realtime 订阅失败');
-                }
-              })
-              .catch(error => {
-                console.error('自动登录后设置 Realtime 订阅异常:', error);
-              });
-          }, 1000); // 延迟1秒设置，确保登录已完成
+          // 移除实时同步功能，简化逻辑
         } else {
           authCache.clearAuthState();
         }
