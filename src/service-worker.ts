@@ -150,7 +150,7 @@ chrome.runtime.onStartup.addListener(() => {
 // 监听扩展图标点击事件
 chrome.action.onClicked.addListener(async () => {
   console.log('点击扩展图标，检查是否有标签管理页面并处理标签');
-  
+
   // 先检查是否已经有标签管理页打开
   const extensionUrl = chrome.runtime.getURL('src/popup/index.html');
   const existingTabs = await chrome.tabs.query({ url: extensionUrl + '*' });
@@ -165,7 +165,7 @@ chrome.action.onClicked.addListener(async () => {
     console.log('没有标签管理页打开，创建新的');
     await chrome.tabs.create({ url: extensionUrl });
   }
-  
+
   // 然后再保存所有标签页
   console.log('保存所有标签页');
   const tabs = await chrome.tabs.query({ currentWindow: true });
@@ -483,48 +483,60 @@ async function saveCurrentTab(tab: chrome.tabs.Tab, userSettings?: any) {
   });
 }
 
-// 打开单个标签页，保持只有一个 OneTabPlus 标签页
+// 打开单个标签页，保留标签管理器页面
 async function openTabWithSingleInstance(url: string) {
   console.log('打开标签页:', url);
-
-  // 打开要恢复的标签页
-  await chrome.tabs.create({ url });
 
   // 检查是否已经有 OneTabPlus 标签页打开
   const extensionUrl = chrome.runtime.getURL('src/popup/index.html');
   const existingTabs = await chrome.tabs.query({ url: extensionUrl + '*' });
 
-  if (existingTabs.length > 0) {
-    // 如果有多个标签页，只保留第一个，关闭其他的
-    if (existingTabs.length > 1) {
-      const tabsToClose = existingTabs.slice(1).map(tab => tab.id!).filter(id => id !== undefined);
-      if (tabsToClose.length > 0) {
-        await chrome.tabs.remove(tabsToClose);
-      }
+  // 记录标签管理器页面的ID，以便后续激活
+  let tabManagerId = existingTabs.length > 0 ? existingTabs[0].id : null;
+
+  // 打开要恢复的标签页，但不激活它
+  await chrome.tabs.create({ url, active: false });
+
+  // 如果有标签管理器页面，则激活它
+  if (tabManagerId) {
+    await chrome.tabs.update(tabManagerId, { active: true });
+  }
+
+  // 如果有多个标签管理器页面，只保留第一个，关闭其他的
+  if (existingTabs.length > 1) {
+    const tabsToClose = existingTabs.slice(1).map(tab => tab.id!).filter(id => id !== undefined);
+    if (tabsToClose.length > 0) {
+      await chrome.tabs.remove(tabsToClose);
     }
   }
 }
 
-// 打开多个标签页，保持只有一个 OneTabPlus 标签页
+// 打开多个标签页，保留标签管理器页面
 async function openTabsWithSingleInstance(urls: string[]) {
   console.log('打开多个标签页:', urls);
-
-  // 打开要恢复的所有标签页
-  for (const url of urls) {
-    await chrome.tabs.create({ url });
-  }
 
   // 检查是否已经有 OneTabPlus 标签页打开
   const extensionUrl = chrome.runtime.getURL('src/popup/index.html');
   const existingTabs = await chrome.tabs.query({ url: extensionUrl + '*' });
 
-  if (existingTabs.length > 0) {
-    // 如果有多个标签页，只保留第一个，关闭其他的
-    if (existingTabs.length > 1) {
-      const tabsToClose = existingTabs.slice(1).map(tab => tab.id!).filter(id => id !== undefined);
-      if (tabsToClose.length > 0) {
-        await chrome.tabs.remove(tabsToClose);
-      }
+  // 记录标签管理器页面的ID，以便后续激活
+  let tabManagerId = existingTabs.length > 0 ? existingTabs[0].id : null;
+
+  // 打开要恢复的所有标签页，但不激活它们
+  for (const url of urls) {
+    await chrome.tabs.create({ url, active: false });
+  }
+
+  // 如果有标签管理器页面，则激活它
+  if (tabManagerId) {
+    await chrome.tabs.update(tabManagerId, { active: true });
+  }
+
+  // 如果有多个标签管理器页面，只保留第一个，关闭其他的
+  if (existingTabs.length > 1) {
+    const tabsToClose = existingTabs.slice(1).map(tab => tab.id!).filter(id => id !== undefined);
+    if (tabsToClose.length > 0) {
+      await chrome.tabs.remove(tabsToClose);
     }
   }
 }
