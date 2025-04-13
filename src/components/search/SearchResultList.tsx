@@ -43,40 +43,42 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({ searchQuery 
 
   // 不再需要获取用户状态和设置
 
-  const handleOpenTab = async (tab: Tab, group: TabGroup) => {
+  const handleOpenTab = (tab: Tab, group: TabGroup) => {
+    // 先发送消息给后台脚本打开标签页，确保用户体验流畅
+    chrome.runtime.sendMessage({
+      type: 'OPEN_TAB',
+      data: { url: tab.url }
+    });
+
     // 如果标签组没有锁定，则从标签组中移除该标签页
     if (!group.isLocked) {
-      try {
-        // 如果标签组只有一个标签页，则删除整个标签组
-        if (group.tabs.length === 1) {
-          await dispatch(deleteGroup(group.id)).unwrap();
-          console.log(`删除标签组: ${group.id}`);
-        } else {
-          // 否则更新标签组，移除该标签页
-          const updatedTabs = group.tabs.filter(t => t.id !== tab.id);
-          const updatedGroup = {
-            ...group,
-            tabs: updatedTabs,
-            updatedAt: new Date().toISOString()
-          };
-          await dispatch(updateGroup(updatedGroup)).unwrap();
-          console.log(`更新标签组: ${group.id}, 剩余标签页: ${updatedTabs.length}`);
-        }
-
-        // 然后发送消息给后台脚本打开标签页
-        chrome.runtime.sendMessage({
-          type: 'OPEN_TAB',
-          data: { url: tab.url }
-        });
-      } catch (error) {
-        console.error('更新标签组失败:', error);
+      // 如果标签组只有一个标签页，则删除整个标签组
+      if (group.tabs.length === 1) {
+        // 使用非阻塞方式删除标签组，不等待完成
+        dispatch(deleteGroup(group.id))
+          .then(() => {
+            console.log(`删除标签组: ${group.id}`);
+          })
+          .catch(error => {
+            console.error('删除标签组失败:', error);
+          });
+      } else {
+        // 否则更新标签组，移除该标签页
+        const updatedTabs = group.tabs.filter(t => t.id !== tab.id);
+        const updatedGroup = {
+          ...group,
+          tabs: updatedTabs,
+          updatedAt: new Date().toISOString()
+        };
+        // 使用非阻塞方式更新标签组，不等待完成
+        dispatch(updateGroup(updatedGroup))
+          .then(() => {
+            console.log(`更新标签组: ${group.id}, 剩余标签页: ${updatedTabs.length}`);
+          })
+          .catch(error => {
+            console.error('更新标签组失败:', error);
+          });
       }
-    } else {
-      // 如果标签组已锁定，直接打开标签页
-      chrome.runtime.sendMessage({
-        type: 'OPEN_TAB',
-        data: { url: tab.url }
-      });
     }
   };
 
@@ -131,11 +133,17 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({ searchQuery 
   );
 
   // 恢复所有搜索到的标签页
-  const handleRestoreAllSearchResults = async () => {
+  const handleRestoreAllSearchResults = () => {
     if (matchingTabs.length === 0) return;
 
     // 收集所有标签页的URL
     const urls = matchingTabs.map(({ tab }) => tab.url);
+
+    // 先发送消息给后台脚本打开标签页，确保用户体验流畅
+    chrome.runtime.sendMessage({
+      type: 'OPEN_TABS',
+      data: { urls }
+    });
 
     // 处理标签组更新
     // 我们需要按标签组分组处理，因为每个标签组的锁定状态可能不同
@@ -149,13 +157,18 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({ searchQuery 
       return acc;
     }, {} as Record<string, { group: TabGroup; tabsToRemove: string[] }>);
 
-    // 处理每个需要更新的标签组
-    for (const { group, tabsToRemove } of Object.values(groupsToUpdate)) {
-      try {
+    // 异步处理每个需要更新的标签组，不阻塞用户界面
+    setTimeout(() => {
+      Object.values(groupsToUpdate).forEach(({ group, tabsToRemove }) => {
         // 如果要删除的标签页数量等于标签组中的所有标签页，则删除整个标签组
         if (tabsToRemove.length === group.tabs.length) {
-          await dispatch(deleteGroup(group.id)).unwrap();
-          console.log(`删除标签组: ${group.id}`);
+          dispatch(deleteGroup(group.id))
+            .then(() => {
+              console.log(`删除标签组: ${group.id}`);
+            })
+            .catch(error => {
+              console.error('删除标签组失败:', error);
+            });
         } else {
           // 否则更新标签组，移除这些标签页
           const updatedTabs = group.tabs.filter(t => !tabsToRemove.includes(t.id));
@@ -164,19 +177,16 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({ searchQuery 
             tabs: updatedTabs,
             updatedAt: new Date().toISOString()
           };
-          await dispatch(updateGroup(updatedGroup)).unwrap();
-          console.log(`更新标签组: ${group.id}, 剩余标签页: ${updatedTabs.length}`);
+          dispatch(updateGroup(updatedGroup))
+            .then(() => {
+              console.log(`更新标签组: ${group.id}, 剩余标签页: ${updatedTabs.length}`);
+            })
+            .catch(error => {
+              console.error('更新标签组失败:', error);
+            });
         }
-      } catch (error) {
-        console.error('更新标签组失败:', error);
-      }
-    }
-
-    // 打开所有标签页
-    chrome.runtime.sendMessage({
-      type: 'OPEN_TABS',
-      data: { urls }
-    });
+      });
+    }, 0); // 使用 0 毫秒的延迟，将操作推到下一个事件循环
   };
 
   return (

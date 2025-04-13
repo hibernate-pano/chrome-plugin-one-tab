@@ -74,33 +74,28 @@ export const TabList: React.FC<TabListProps> = ({ searchQuery }) => {
     );
   }
 
-  const handleRestoreAll = async () => {
+  const handleRestoreAll = () => {
     if (!selectedGroup) return;
 
     // 收集所有标签页的 URL
     const urls = selectedGroup.tabs.map(tab => tab.url);
 
-    // 如果标签组没有锁定，先删除标签组
-    if (!selectedGroup.isLocked) {
-      try {
-        // 先更新 Redux 状态和 Chrome 存储
-        await dispatch(deleteGroup(selectedGroup.id)).unwrap();
-        console.log(`删除标签组: ${selectedGroup.id}`);
+    // 先发送消息给后台脚本打开标签页，确保用户体验流畅
+    chrome.runtime.sendMessage({
+      type: 'OPEN_TABS',
+      data: { urls }
+    });
 
-        // 然后发送消息给后台脚本打开标签页
-        chrome.runtime.sendMessage({
-          type: 'OPEN_TABS',
-          data: { urls }
+    // 如果标签组没有锁定，异步删除标签组
+    if (!selectedGroup.isLocked) {
+      // 使用非阻塞方式删除标签组，不等待完成
+      dispatch(deleteGroup(selectedGroup.id))
+        .then(() => {
+          console.log(`删除标签组: ${selectedGroup.id}`);
+        })
+        .catch(error => {
+          console.error('删除标签组失败:', error);
         });
-      } catch (error) {
-        console.error('删除标签组失败:', error);
-      }
-    } else {
-      // 如果标签组已锁定，直接打开标签页
-      chrome.runtime.sendMessage({
-        type: 'OPEN_TABS',
-        data: { urls }
-      });
     }
 
     setIsRestoreAllModalOpen(false);
