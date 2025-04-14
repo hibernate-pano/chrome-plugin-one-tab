@@ -48,7 +48,7 @@ class SyncService {
   }
 
   // 从云端下载数据
-  async downloadFromCloud(background = false) {
+  async downloadFromCloud(background = false, overwriteLocal = false) {
     const { auth } = store.getState();
 
     if (!auth.isAuthenticated) {
@@ -57,7 +57,7 @@ class SyncService {
     }
 
     try {
-      console.log(`开始${background ? '后台' : ''}从云端下载数据...`);
+      console.log(`开始${background ? '后台' : ''}从云端下载数据${overwriteLocal ? '（覆盖模式）' : '（合并模式）'}...`);
 
       // 从云端同步设置
       console.log('正在从云端下载设置...');
@@ -65,9 +65,9 @@ class SyncService {
 
       // 从云端同步标签组
       console.log('正在从云端下载标签组...');
-      await store.dispatch(syncTabsFromCloud({ background }));
+      await store.dispatch(syncTabsFromCloud({ background, forceRemoteStrategy: overwriteLocal }));
 
-      console.log('从云端下载数据完成！');
+      console.log(`从云端下载数据完成！${overwriteLocal ? '本地数据已被云端数据覆盖' : '云端数据已与本地数据合并'}`);
     } catch (error) {
       console.error('从云端下载数据失败:', error);
       // 尝试重新获取用户信息，可能是会话过期

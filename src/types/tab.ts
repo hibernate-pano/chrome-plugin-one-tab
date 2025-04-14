@@ -63,6 +63,8 @@ export interface TabState {
   lastSyncTime: string | null; // 最后同步时间
   compressionStats?: any | null; // 压缩统计信息（已废弃）
   backgroundSync: boolean; // 是否在后台同步
+  syncProgress: number; // 同步进度（0-100）
+  syncOperation: 'none' | 'upload' | 'download'; // 当前同步操作类型
 }
 
 export interface UserSettings {

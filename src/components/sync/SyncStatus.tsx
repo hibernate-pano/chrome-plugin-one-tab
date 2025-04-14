@@ -1,10 +1,10 @@
 import React from 'react';
 import { useAppSelector } from '@/store/hooks';
 
-interface SyncStatusProps {}
+interface SyncStatusProps { }
 
 export const SyncStatus: React.FC<SyncStatusProps> = () => {
-  const { syncStatus, lastSyncTime, backgroundSync } = useAppSelector(state => state.tabs);
+  const { syncStatus, backgroundSync } = useAppSelector(state => state.tabs);
 
   return (
     <div className="text-xs">
@@ -19,14 +19,10 @@ export const SyncStatus: React.FC<SyncStatusProps> = () => {
             </span>
             正在同步数据...
           </div>
-        ) : lastSyncTime ? (
+        ) : (
           <div className="text-green-500 flex items-center">
             <span className="mr-1">✓</span>
-            上次同步: {new Date(lastSyncTime).toLocaleString()}
-          </div>
-        ) : (
-          <div className="text-gray-500">
-            尚未同步数据
+            数据已同步
           </div>
         )}
       </div>

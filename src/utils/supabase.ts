@@ -803,13 +803,23 @@ export const sync = {
 
     console.log('上传用户设置，用户ID:', user.id, '设备ID:', deviceId);
 
+    // 将驼峰命名法转换为下划线命名法
+    const convertedSettings: Record<string, any> = {};
+    for (const [key, value] of Object.entries(settings)) {
+      // 将驼峰命名转换为下划线命名
+      const snakeKey = key.replace(/([A-Z])/g, '_$1').toLowerCase();
+      convertedSettings[snakeKey] = value;
+    }
+
+    console.log('转换后的设置:', convertedSettings);
+
     const { data, error } = await supabase
       .from('user_settings')
       .upsert({
         user_id: user.id,
         device_id: deviceId, // 添加设备ID，用于过滤自己设备的更新
         last_sync: new Date().toISOString(),
-        ...settings
+        ...convertedSettings // 使用转换后的设置
       }, { onConflict: 'user_id' });
 
     if (error) {
@@ -882,6 +892,24 @@ export const sync = {
         hint: error.hint
       });
       throw error;
+    }
+
+    // 如果有数据，将下划线命名法转换为驼峰命名法
+    if (data) {
+      const convertedSettings: Record<string, any> = {};
+      for (const [key, value] of Object.entries(data)) {
+        // 跳过非设置字段
+        if (['user_id', 'device_id', 'last_sync'].includes(key)) {
+          continue;
+        }
+
+        // 将下划线命名转换为驼峰命名
+        const camelKey = key.replace(/_([a-z])/g, (_, letter) => letter.toUpperCase());
+        convertedSettings[camelKey] = value;
+      }
+
+      console.log('转换后的设置:', convertedSettings);
+      return convertedSettings;
     }
 
     return data;

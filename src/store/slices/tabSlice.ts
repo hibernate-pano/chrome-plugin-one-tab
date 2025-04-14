@@ -16,6 +16,8 @@ const initialState: TabState = {
   lastSyncTime: null,
   compressionStats: null,
   backgroundSync: false,
+  syncProgress: 0,
+  syncOperation: 'none',
 };
 
 export const loadGroups = createAsyncThunk(
@@ -149,7 +151,7 @@ export const syncTabsToCloud = createAsyncThunk<
   { state: any }
 >(
   'tabs/syncTabsToCloud',
-  async (options, { getState }) => {
+  async (options, { getState, dispatch }) => {
     const background = options?.background || false;
     const overwriteCloud = options?.overwriteCloud || false;
     try {
@@ -171,9 +173,17 @@ export const syncTabsToCloud = createAsyncThunk<
       // 记录同步模式和覆盖模式
       console.log(`开始${background ? '后台' : ''}同步标签组到云端${overwriteCloud ? '（覆盖模式）' : '（合并模式）'}...`);
 
+      // 设置初始进度和操作类型
+      if (!background) {
+        dispatch(updateSyncProgress({ progress: 0, operation: 'upload' }));
+      }
+
       // 检查是否有标签组需要同步
       if (!tabs.groups || tabs.groups.length === 0) {
         console.log('没有标签组需要同步');
+        if (!background) {
+          dispatch(updateSyncProgress({ progress: 100, operation: 'none' }));
+        }
         return {
           syncTime: new Date().toISOString(),
           stats: null
@@ -186,6 +196,9 @@ export const syncTabsToCloud = createAsyncThunk<
 
       if (groupsToSync.length === 0) {
         console.log('没有需要同步的标签组');
+        if (!background) {
+          dispatch(updateSyncProgress({ progress: 100, operation: 'none' }));
+        }
         return {
           syncTime: tabs.lastSyncTime || new Date().toISOString(),
           stats: tabs.compressionStats
@@ -193,6 +206,11 @@ export const syncTabsToCloud = createAsyncThunk<
       }
 
       console.log(`将同步 ${groupsToSync.length} 个标签组到云端`);
+
+      // 更新进度到 20%
+      if (!background) {
+        dispatch(updateSyncProgress({ progress: 20, operation: 'upload' }));
+      }
 
       // 确保所有标签组都有必要的字段
       const currentTime = new Date().toISOString();
@@ -210,8 +228,18 @@ export const syncTabsToCloud = createAsyncThunk<
         }))
       }));
 
+      // 更新进度到 50%
+      if (!background) {
+        dispatch(updateSyncProgress({ progress: 50, operation: 'upload' }));
+      }
+
       // 上传标签组，传递覆盖模式参数
       await supabaseSync.uploadTabGroups(validGroups, overwriteCloud);
+
+      // 更新进度到 70%
+      if (!background) {
+        dispatch(updateSyncProgress({ progress: 70, operation: 'upload' }));
+      }
 
       // 更新本地标签组的同步状态
       const updatedGroups = tabs.groups.map(group => {
@@ -232,6 +260,11 @@ export const syncTabsToCloud = createAsyncThunk<
       // 更新最后同步时间
       await storage.setLastSyncTime(currentTime);
 
+      // 更新进度到 100%
+      if (!background) {
+        dispatch(updateSyncProgress({ progress: 100, operation: 'none' }));
+      }
+
       // 不再需要处理已删除的数据
 
       return {
@@ -248,7 +281,7 @@ export const syncTabsToCloud = createAsyncThunk<
 // 新增：从云端同步标签组
 export const syncTabsFromCloud = createAsyncThunk(
   'tabs/syncTabsFromCloud',
-  async (options: { background?: boolean; forceRemoteStrategy?: boolean } | void, { getState }) => {
+  async (options: { background?: boolean; forceRemoteStrategy?: boolean } | void, { getState, dispatch }) => {
     const background = options?.background || false;
     const forceRemoteStrategy = options?.forceRemoteStrategy || false;
     try {
@@ -271,8 +304,18 @@ export const syncTabsFromCloud = createAsyncThunk(
       // 记录同步模式
       console.log(`开始${background ? '后台' : ''}从云端同步标签组...`);
 
+      // 设置初始进度和操作类型
+      if (!background) {
+        dispatch(updateSyncProgress({ progress: 0, operation: 'download' }));
+      }
+
       // 获取云端数据
       const result = await supabaseSync.downloadTabGroups();
+
+      // 更新进度到 30%
+      if (!background) {
+        dispatch(updateSyncProgress({ progress: 30, operation: 'download' }));
+      }
 
       // 处理返回结果
       const cloudGroups = result as TabGroup[];
@@ -309,12 +352,22 @@ export const syncTabsFromCloud = createAsyncThunk(
       });
       console.log(`本地总标签数: ${totalLocalTabs}`);
 
+      // 更新进度到 50%
+      if (!background) {
+        dispatch(updateSyncProgress({ progress: 50, operation: 'download' }));
+      }
+
       // 使用智能合并策略，不再考虑已删除的标签组
       // 如果强制使用云端策略，则使用 'remote' 策略
       const syncStrategy = forceRemoteStrategy ? 'remote' : settings.syncStrategy;
       const mergedGroups = mergeTabGroups(localGroups, cloudGroups, syncStrategy);
 
       console.log('合并后的标签组数量:', mergedGroups.length);
+
+      // 更新进度到 70%
+      if (!background) {
+        dispatch(updateSyncProgress({ progress: 70, operation: 'download' }));
+      }
 
       // 详细记录合并后的每个标签组
       mergedGroups.forEach((group, index) => {
@@ -346,6 +399,11 @@ export const syncTabsFromCloud = createAsyncThunk(
       // 保存到本地存储
       await storage.setGroups(mergedGroups);
 
+      // 更新进度到 90%
+      if (!background) {
+        dispatch(updateSyncProgress({ progress: 90, operation: 'download' }));
+      }
+
       // 更新最后同步时间
       await storage.setLastSyncTime(currentTime);
 
@@ -355,6 +413,11 @@ export const syncTabsFromCloud = createAsyncThunk(
       if (hasConflicts && settings.syncStrategy === 'ask') {
         console.log('检测到数据冲突，需要用户解决');
         // 在这里可以触发一个通知或弹窗，提示用户解决冲突
+      }
+
+      // 更新进度到 100%
+      if (!background) {
+        dispatch(updateSyncProgress({ progress: 100, operation: 'none' }));
       }
 
       return {
@@ -625,6 +688,13 @@ export const tabSlice = createSlice({
         }
       }
     },
+
+    // 更新同步进度
+    updateSyncProgress: (state, action) => {
+      const { progress, operation } = action.payload;
+      state.syncProgress = progress;
+      state.syncOperation = operation;
+    },
   },
   extraReducers: builder => {
     builder
@@ -831,7 +901,8 @@ export const {
   setSearchQuery,
   setSyncStatus,
   moveGroup,
-  moveTab
+  moveTab,
+  updateSyncProgress
 } = tabSlice.actions;
 
 export default tabSlice.reducer;

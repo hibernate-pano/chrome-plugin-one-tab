@@ -6,7 +6,7 @@ import { syncService } from '@/services/syncService';
 export const UserProfile: React.FC = () => {
   const dispatch = useAppDispatch();
   const { user } = useAppSelector(state => state.auth);
-  const { syncStatus, lastSyncTime } = useAppSelector(state => state.tabs);
+  const { syncStatus } = useAppSelector(state => state.tabs);
 
   const handleSignOut = async () => {
     await dispatch(signOut());
@@ -79,9 +79,7 @@ export const UserProfile: React.FC = () => {
               <div>
                 <h3 className="font-medium text-gray-800">{userInfo.email}</h3>
                 <p className="text-sm text-gray-500">
-                  {lastSyncTime
-                    ? `上次同步: ${new Date(lastSyncTime).toLocaleString()}`
-                    : '尚未同步'}
+                  已登录云端账户
                 </p>
               </div>
             </div>
@@ -129,16 +127,7 @@ export const UserProfile: React.FC = () => {
           </div>
         )}
 
-        {!lastSyncTime && syncStatus !== 'syncing' && (
-          <div className="mt-4 bg-blue-50 border-l-4 border-blue-500 text-blue-700 p-4 rounded-lg">
-            <div className="flex items-center">
-              <svg className="h-5 w-5 mr-2 text-blue-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-              </svg>
-              <span>点击“同步数据”按钮将您的标签组备份到云端，以便在其他设备上访问。</span>
-            </div>
-          </div>
-        )}
+
       </div>
     </div>
   );
