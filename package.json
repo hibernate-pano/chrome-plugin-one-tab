@@ -19,7 +19,7 @@
   ],
   "author": "",
   "license": "MIT",
-  "packageManager": "pnpm@10.5.2",
+  "packageManager": "pnpm@10.8.0",
   "dependencies": {
     "@reduxjs/toolkit": "^2.2.1",
     "@supabase/supabase-js": "^2.49.4",
