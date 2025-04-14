@@ -128,6 +128,44 @@ class SyncService {
   async syncFromCloud(background = true) {
     return this.downloadFromCloud(background);
   }
+
+  // 下载数据并刷新页面
+  async downloadAndRefresh(overwriteLocal = false) {
+    const { auth } = store.getState();
+
+    if (!auth.isAuthenticated) {
+      console.warn('用户未登录，无法从云端下载数据');
+      return;
+    }
+
+    try {
+      console.log(`开始下载数据${overwriteLocal ? '（覆盖模式）' : '（合并模式）'}...`);
+
+      // 从云端同步设置
+      console.log('正在下载设置...');
+      await store.dispatch(syncSettingsFromCloud());
+
+      // 从云端同步标签组，使用 background: false 显示进度条
+      console.log('正在下载标签组...');
+      await store.dispatch(syncTabsFromCloud({ background: false, forceRemoteStrategy: overwriteLocal }));
+
+      console.log(`下载数据完成！即将刷新页面...`);
+
+      // 等待短暂后刷新页面
+      setTimeout(() => {
+        window.location.reload();
+      }, 500);
+
+    } catch (error) {
+      console.error('下载数据失败:', error);
+      // 尝试重新获取用户信息，可能是会话过期
+      try {
+        await store.dispatch(getCurrentUser());
+      } catch (e) {
+        console.error('重新获取用户信息失败:', e);
+      }
+    }
+  }
 }
 
 export const syncService = new SyncService();

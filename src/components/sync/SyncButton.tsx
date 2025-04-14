@@ -73,14 +73,9 @@ export const SyncButton: React.FC<SyncButtonProps> = () => {
       try {
         // 先关闭模态框，然后开始下载
         closeModals();
-        console.log('开始从云端下载数据（覆盖模式）...');
-        await syncService.downloadFromCloud(false, true); // background=false, overwriteLocal=true
-        console.log('下载完成（覆盖模式）');
-
-        // 下载完成后刷新页面显示最新数据
-        setTimeout(() => {
-          window.location.reload();
-        }, 500); // 等待500毫秒后刷新，确保数据已完全处理
+        console.log('开始下载数据（覆盖模式）...');
+        // 使用下载并刷新方法，显示进度条，下载完成后自动刷新页面
+        await syncService.downloadAndRefresh(true); // overwriteLocal=true
       } catch (error) {
         console.error('从云端下载数据失败:', error);
       }
@@ -93,14 +88,9 @@ export const SyncButton: React.FC<SyncButtonProps> = () => {
       try {
         // 先关闭模态框，然后开始下载
         closeModals();
-        console.log('开始从云端下载数据（合并模式）...');
-        await syncService.downloadFromCloud(false, false); // background=false, overwriteLocal=false
-        console.log('下载完成（合并模式）');
-
-        // 下载完成后刷新页面显示最新数据
-        setTimeout(() => {
-          window.location.reload();
-        }, 500); // 等待500毫秒后刷新，确保数据已完全处理
+        console.log('开始下载数据（合并模式）...');
+        // 使用下载并刷新方法，显示进度条，下载完成后自动刷新页面
+        await syncService.downloadAndRefresh(false); // overwriteLocal=false
       } catch (error) {
         console.error('从云端下载数据失败:', error);
       }
