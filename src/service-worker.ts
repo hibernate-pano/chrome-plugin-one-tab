@@ -225,6 +225,15 @@ async function saveAllTabs(inputTabs: chrome.tabs.Tab[]) {
   // 用户可以通过点击同步按钮手动同步
   console.log('标签页已保存到本地，跳过自动同步，保证操作丰满顺畅');
 
+  // 通知所有标签管理器页面刷新数据
+  chrome.runtime.sendMessage({
+    type: 'REFRESH_TAB_LIST',
+    data: { timestamp: Date.now() }
+  }).catch(error => {
+    // 如果没有接收者，会抛出错误，可以忽略
+    console.log('没有找到标签管理器页面，或者发送消息失败', error);
+  });
+
   // 关闭已保存的标签页（包括重复的）
   const tabIdsToClose = allTabsToClose.map((tab: chrome.tabs.Tab) => tab.id).filter((id: number | undefined): id is number => id !== undefined);
   if (tabIdsToClose.length > 0) {
@@ -314,6 +323,15 @@ async function saveCurrentTab(tab: chrome.tabs.Tab) {
   // 不再自动同步到云端，保证本地操作优先，避免卡顿
   // 用户可以通过点击同步按钮手动同步
   console.log('标签页已保存到本地，跳过自动同步，保证操作丰满顺畅');
+
+  // 通知所有标签管理器页面刷新数据
+  chrome.runtime.sendMessage({
+    type: 'REFRESH_TAB_LIST',
+    data: { timestamp: Date.now() }
+  }).catch(error => {
+    // 如果没有接收者，会抛出错误，可以忽略
+    console.log('没有找到标签管理器页面，或者发送消息失败', error);
+  });
 
   // 保存后自动关闭标签页
   if (tab.id) {

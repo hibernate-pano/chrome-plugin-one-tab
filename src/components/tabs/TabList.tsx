@@ -19,6 +19,23 @@ export const TabList: React.FC<TabListProps> = ({ searchQuery }) => {
 
   useEffect(() => {
     dispatch(loadGroups());
+
+    // 添加消息监听器，监听数据刷新消息
+    const messageListener = (message: any) => {
+      if (message.type === 'REFRESH_TAB_LIST') {
+        console.log('收到刷新标签列表消息，重新加载数据');
+        dispatch(loadGroups());
+      }
+      return true; // 异步响应
+    };
+
+    // 注册消息监听器
+    chrome.runtime.onMessage.addListener(messageListener);
+
+    // 组件卸载时移除消息监听器
+    return () => {
+      chrome.runtime.onMessage.removeListener(messageListener);
+    };
   }, [dispatch]);
 
   if (isLoading) {
