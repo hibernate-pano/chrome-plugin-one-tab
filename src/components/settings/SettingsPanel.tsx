@@ -8,6 +8,7 @@ import {
   setGroupNameTemplate,
 } from '@/store/slices/settingsSlice';
 import { SyncSettings } from './SyncSettings';
+import { SyncStatusChecker } from '../sync/SyncStatusChecker';
 
 export const SettingsPanel: React.FC = () => {
   const dispatch = useAppDispatch();
@@ -126,6 +127,15 @@ export const SettingsPanel: React.FC = () => {
       <div className="border-t pt-4">
         <h3 className="text-lg font-semibold mb-2">数据同步</h3>
         <SyncSettings />
+      </div>
+
+      {/* 新增：同步状态检查 */}
+      <div className="border-t pt-4">
+        <h3 className="text-lg font-semibold mb-2">同步状态检查</h3>
+        <div className="text-sm text-gray-500 mb-2">
+          检查本地和云端数据是否一致，并提供修复选项
+        </div>
+        <SyncStatusChecker />
       </div>
     </div>
   );

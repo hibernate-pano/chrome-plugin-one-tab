@@ -305,7 +305,7 @@ export const sync = {
       throw error;
     }
   },
-  // 上传标签组 - 优化版本
+  // 上传标签组 - 优化版本（支持分批上传）
   async uploadTabGroups(groups: TabGroup[], deletedGroups: TabGroup[] = []) {
     const { data: { user } } = await supabase.auth.getUser();
 
@@ -359,18 +359,46 @@ export const sync = {
       // 使用 JSONB 存储标签数据
       console.log('将标签数据作为 JSONB 存储到 tab_groups 表中');
 
-      const { data, error } = await supabase
-        .from('tab_groups')
-        .upsert(groupsWithUser, { onConflict: 'id' });
+      // 分批上传，每批10个标签组
+      const batchSize = 10;
+      let successCount = 0;
+      let failureCount = 0;
 
-      result = data;
+      for (let i = 0; i < groupsWithUser.length; i += batchSize) {
+        const batch = groupsWithUser.slice(i, i + batchSize);
+        const batchNumber = Math.floor(i / batchSize) + 1;
+        const totalBatches = Math.ceil(groupsWithUser.length / batchSize);
 
-      if (error) {
-        console.error('上传标签组失败:', error);
-        throw error;
+        console.log(`上传批次 ${batchNumber}/${totalBatches}, ${batch.length} 个标签组`);
+
+        try {
+          const { data, error } = await supabase
+            .from('tab_groups')
+            .upsert(batch, { onConflict: 'id' });
+
+          if (error) {
+            console.error(`批次 ${batchNumber} 上传失败:`, error);
+            failureCount += batch.length;
+          } else {
+            console.log(`批次 ${batchNumber} 上传成功`);
+            successCount += batch.length;
+            // 保存最后一批的结果
+            if (i + batchSize >= groupsWithUser.length) {
+              result = data;
+            }
+          }
+        } catch (batchError) {
+          console.error(`批次 ${batchNumber} 上传异常:`, batchError);
+          failureCount += batch.length;
+        }
+
+        // 等待一小段时间，避免请求过于频繁
+        if (i + batchSize < groupsWithUser.length) {
+          await new Promise(resolve => setTimeout(resolve, 300));
+        }
       }
 
-      console.log('标签组元数据和标签数据上传成功');
+      console.log(`标签组上传完成: ${successCount} 成功, ${failureCount} 失败`);
 
       // 处理已删除的标签组 - 直接从数据库中删除
       if (deletedGroups.length > 0) {
@@ -379,19 +407,33 @@ export const sync = {
         // 获取已删除标签组的ID列表
         const deletedGroupIds = deletedGroups.map(group => group.id);
 
-        // 从云端删除这些标签组
-        if (deletedGroupIds.length > 0) {
-          console.log(`从云端删除标签组: ${deletedGroupIds.join(', ')}`);
-          const { error: deleteError } = await supabase
-            .from('tab_groups')
-            .delete()
-            .in('id', deletedGroupIds);
+        // 分批删除标签组
+        const deleteBatchSize = 20;
+        for (let i = 0; i < deletedGroupIds.length; i += deleteBatchSize) {
+          const batch = deletedGroupIds.slice(i, i + deleteBatchSize);
+          const batchNumber = Math.floor(i / deleteBatchSize) + 1;
+          const totalBatches = Math.ceil(deletedGroupIds.length / deleteBatchSize);
 
-          if (deleteError) {
-            console.error('删除标签组失败:', deleteError);
-            // 不抛出异常，继续处理
-          } else {
-            console.log(`成功从云端删除 ${deletedGroupIds.length} 个标签组`);
+          console.log(`删除批次 ${batchNumber}/${totalBatches}, ${batch.length} 个标签组`);
+
+          try {
+            const { error: deleteError } = await supabase
+              .from('tab_groups')
+              .delete()
+              .in('id', batch);
+
+            if (deleteError) {
+              console.error(`删除批次 ${batchNumber} 失败:`, deleteError);
+            } else {
+              console.log(`删除批次 ${batchNumber} 成功`);
+            }
+          } catch (deleteError) {
+            console.error(`删除批次 ${batchNumber} 异常:`, deleteError);
+          }
+
+          // 等待一小段时间，避免请求过于频繁
+          if (i + deleteBatchSize < deletedGroupIds.length) {
+            await new Promise(resolve => setTimeout(resolve, 300));
           }
         }
       }
