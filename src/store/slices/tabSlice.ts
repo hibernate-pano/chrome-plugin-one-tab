@@ -321,11 +321,17 @@ export const syncTabsFromCloud = createAsyncThunk(
       const cloudGroups = result as TabGroup[];
 
       // 获取本地数据
-      const localGroups = tabs.groups;
+      let localGroups = tabs.groups;
 
       // 增强日志输出，显示更详细的信息
       console.log('云端标签组数量:', cloudGroups.length);
       console.log('本地标签组数量:', localGroups.length);
+
+      // 如果是覆盖模式，则清空本地数据
+      if (forceRemoteStrategy) {
+        console.log('覆盖模式: 清空本地数据，只使用云端数据');
+        localGroups = [];
+      }
 
       // 详细记录每个云端标签组的信息
       console.log('云端标签组详情:');
@@ -357,10 +363,23 @@ export const syncTabsFromCloud = createAsyncThunk(
         dispatch(updateSyncProgress({ progress: 50, operation: 'download' }));
       }
 
-      // 使用智能合并策略，不再考虑已删除的标签组
-      // 如果强制使用云端策略，则使用 'remote' 策略
-      const syncStrategy = forceRemoteStrategy ? 'remote' : settings.syncStrategy;
-      const mergedGroups = mergeTabGroups(localGroups, cloudGroups, syncStrategy);
+      let mergedGroups;
+
+      // 如果是覆盖模式，直接使用云端数据，不进行合并
+      if (forceRemoteStrategy) {
+        console.log('使用覆盖模式：直接使用云端数据，不进行合并');
+        // 直接使用云端数据，但需要确保格式正确
+        mergedGroups = cloudGroups.map(group => ({
+          ...group,
+          syncStatus: 'synced' as const,
+          lastSyncedAt: currentTime
+        }));
+      } else {
+        // 使用智能合并策略
+        console.log('使用合并模式：智能合并本地和云端数据');
+        const syncStrategy = settings.syncStrategy;
+        mergedGroups = mergeTabGroups(localGroups, cloudGroups, syncStrategy);
+      }
 
       console.log('合并后的标签组数量:', mergedGroups.length);
 
@@ -628,6 +647,11 @@ export const tabSlice = createSlice({
         group.name = name;
         group.updatedAt = new Date().toISOString();
       }
+    },
+    setGroups: (state, action) => {
+      state.groups = action.payload;
+      state.isLoading = false;
+      state.error = null;
     },
     toggleGroupLock: (state, action) => {
       const group = state.groups.find(g => g.id === action.payload);

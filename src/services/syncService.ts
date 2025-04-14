@@ -2,6 +2,8 @@ import { store } from '@/store';
 import { syncTabsToCloud, syncTabsFromCloud } from '@/store/slices/tabSlice';
 import { syncSettingsToCloud, syncSettingsFromCloud } from '@/store/slices/settingsSlice';
 import { getCurrentUser } from '@/store/slices/authSlice';
+import { sync as supabaseSync } from '@/utils/supabase';
+import { storage } from '@/utils/storage';
 
 class SyncService {
   // 初始化同步服务 - 已禁用自动同步
@@ -147,7 +149,29 @@ class SyncService {
 
       // 从云端同步标签组，使用 background: false 显示进度条
       console.log('正在下载标签组...');
-      await store.dispatch(syncTabsFromCloud({ background: false, forceRemoteStrategy: overwriteLocal }));
+
+      // 如果是覆盖模式，先从云端获取数据，然后再清除本地数据并应用云端数据
+      if (overwriteLocal) {
+        console.log('覆盖模式: 先从云端获取数据，然后再清除本地数据');
+
+        // 先从云端获取数据，但不应用到本地
+        const cloudData = await supabaseSync.downloadTabGroups();
+        console.log(`从云端获取到 ${cloudData.length} 个标签组`);
+
+        // 清除本地数据
+        console.log('清除本地数据...');
+        await storage.setGroups([]);
+
+        // 将云端数据应用到本地
+        console.log('将云端数据应用到本地...');
+        await storage.setGroups(cloudData);
+
+        // 更新 Redux 状态
+        store.dispatch({ type: 'tabs/setGroups', payload: cloudData });
+      } else {
+        // 合并模式，使用原来的逻辑
+        await store.dispatch(syncTabsFromCloud({ background: false, forceRemoteStrategy: false }));
+      }
 
       console.log(`下载数据完成！即将刷新页面...`);
 
