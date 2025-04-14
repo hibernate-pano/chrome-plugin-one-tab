@@ -1,6 +1,6 @@
 import { supabase } from '@/utils/supabase';
 import { store } from '@/store';
-import { syncTabsFromCloud, setGroups } from '@/store/slices/tabSlice';
+import { setGroups } from '@/store/slices/tabSlice';
 import { syncSettingsFromCloud } from '@/store/slices/settingsSlice';
 import { storage } from '@/utils/storage';
 import { TabGroup, TabData } from '@/types/tab';
@@ -153,7 +153,7 @@ export const setupRealtimeSubscription = async () => {
           }
 
           // 获取变更项的ID
-          const changedId = payload.new?.id || payload.old?.id;
+          const changedId = payload.new ? (payload.new as any).id : (payload.old as any)?.id;
 
           if (!changedId) {
             console.warn('无法获取变更项ID，跳过处理');

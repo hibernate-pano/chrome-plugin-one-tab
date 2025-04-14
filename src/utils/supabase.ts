@@ -1,5 +1,5 @@
 import { createClient } from '@supabase/supabase-js';
-import { TabGroup, UserSettings, Tab, TabData, SupabaseTabGroup } from '@/types/tab';
+import { TabGroup, UserSettings, TabData, SupabaseTabGroup } from '@/types/tab';
 import { setWechatLoginTimeout, clearWechatLoginTimeout } from './wechatLoginTimeout';
 
 // 新的Supabase项目配置（优化版本）

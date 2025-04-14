@@ -287,8 +287,8 @@ export const syncTabsToCloud = createAsyncThunk<
         }))
       }));
 
-      // 上传标签组
-      await supabaseSync.uploadTabGroups(validGroups, deletedGroups, deletedTabs);
+      // 上传标签组 - 使用优化版本的函数
+      await supabaseSync.uploadTabGroups(validGroups, deletedGroups);
 
       // 更新本地标签组的同步状态
       const updatedGroups = tabs.groups.map(group => {
@@ -695,6 +695,9 @@ export const tabSlice = createSlice({
       // 更新状态
       state.groups = newGroups;
     },
+    setGroups: (state, action) => {
+      state.groups = action.payload;
+    },
     moveTab: (state, action) => {
       const { sourceGroupId, sourceIndex, targetGroupId, targetIndex } = action.payload;
       // 找到源标签组和目标标签组
@@ -934,7 +937,8 @@ export const {
   setSearchQuery,
   setSyncStatus,
   moveGroup,
-  moveTab
+  moveTab,
+  setGroups // 添加 setGroups 到导出的 actions 中
 } = tabSlice.actions;
 
 export default tabSlice.reducer;

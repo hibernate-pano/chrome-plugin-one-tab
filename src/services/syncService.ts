@@ -1,6 +1,5 @@
 import { store } from '@/store';
-import { syncTabsToCloud, syncTabsFromCloud, setGroups } from '@/store/slices/tabSlice';
-import { syncSettingsToCloud, syncSettingsFromCloud } from '@/store/slices/settingsSlice';
+import { setGroups } from '@/store/slices/tabSlice';
 import { getCurrentUser } from '@/store/slices/authSlice';
 import { sync as supabaseSync } from '@/utils/supabase';
 import { realtimeService } from './realtimeService';
