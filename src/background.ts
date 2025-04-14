@@ -77,20 +77,18 @@ const saveTabs = async (tabs: chrome.tabs.Tab[]) => {
     // 不再自动同步到云端，保证本地操作优先，避免卡顿
     console.log('标签页已保存到本地，跳过自动同步，保证操作丰满顺畅');
 
-    // 如果设置为保存后关闭标签页
-    if (settings.autoCloseTabsAfterSaving) {
-      // 获取要关闭的标签页ID（包括重复的）
-      const tabIds = allTabsToClose
-        .map(tab => tab.id)
-        .filter((id): id is number => id !== undefined);
+    // 保存后自动关闭标签页
+    // 获取要关闭的标签页ID（包括重复的）
+    const tabIds = allTabsToClose
+      .map(tab => tab.id)
+      .filter((id): id is number => id !== undefined);
 
-      if (tabIds.length > 0) {
-        // 创建一个新标签页
-        await chrome.tabs.create({ url: 'chrome://newtab' });
+    if (tabIds.length > 0) {
+      // 创建一个新标签页
+      await chrome.tabs.create({ url: 'chrome://newtab' });
 
-        // 关闭已保存的标签页（包括重复的）
-        await chrome.tabs.remove(tabIds);
-      }
+      // 关闭已保存的标签页（包括重复的）
+      await chrome.tabs.remove(tabIds);
     }
 
     // 显示通知
@@ -146,7 +144,6 @@ chrome.runtime.onInstalled.addListener(async (details) => {
     // 初始化存储
     await storage.setGroups([]);
     await storage.setSettings({
-      autoCloseTabsAfterSaving: true,
       groupNameTemplate: 'Group %d',
       showFavicons: true,
       showTabCount: true,

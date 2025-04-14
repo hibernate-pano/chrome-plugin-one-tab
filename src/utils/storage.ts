@@ -13,7 +13,6 @@ export const DEFAULT_SETTINGS: UserSettings = {
   groupNameTemplate: 'Group %d',
   showFavicons: true,
   showTabCount: true,
-  autoCloseTabsAfterSaving: true,
   confirmBeforeDelete: true,
   allowDuplicateTabs: false, // 默认不允许重复标签页
   syncEnabled: true, // 默认启用同步

@@ -10,8 +10,8 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       .catch(error => sendResponse({ success: false, error: error.message }));
     return true; // 异步响应
   } else if (message.type === 'SAVE_CURRENT_TAB') {
-    const { tab, settings } = message.data;
-    saveCurrentTab(tab, settings)
+    const { tab } = message.data;
+    saveCurrentTab(tab)
       .then(() => sendResponse({ success: true }))
       .catch(error => sendResponse({ success: false, error: error.message }));
     return true; // 异步响应
@@ -176,7 +176,7 @@ async function saveAllTabs(inputTabs: chrome.tabs.Tab[]) {
 }
 
 // 保存当前标签页
-async function saveCurrentTab(tab: chrome.tabs.Tab, userSettings?: any) {
+async function saveCurrentTab(tab: chrome.tabs.Tab) {
   // 如果有URL，检查是否为内部页面
   if (tab.url && (tab.url.startsWith('chrome://') || tab.url.startsWith('chrome-extension://') || tab.url.startsWith('edge://'))) {
     return;
@@ -207,11 +207,8 @@ async function saveCurrentTab(tab: chrome.tabs.Tab, userSettings?: any) {
   const groups = existingGroups.tab_groups || [];
   await chrome.storage.local.set({ tab_groups: [...groups, tabGroup] });
 
-  // 获取设置
-  const settings = userSettings || (await chrome.storage.local.get('user_settings')).user_settings || { autoCloseTabsAfterSaving: true };
-
-  // 如果设置为保存后关闭标签页
-  if (settings.autoCloseTabsAfterSaving && tab.id) {
+  // 保存后自动关闭标签页
+  if (tab.id) {
     await chrome.tabs.remove(tab.id);
   }
 
@@ -249,10 +246,7 @@ chrome.commands.onCommand.addListener(async (command, tab) => {
       break;
     case 'save_current_tab':
       if (tab) {
-        // 获取用户设置
-        const settings = await chrome.storage.local.get('user_settings');
-        const userSettings = settings.user_settings || { autoCloseTabsAfterSaving: true };
-        await saveCurrentTab(tab, userSettings);
+        await saveCurrentTab(tab);
       }
       break;
     case '_execute_action':

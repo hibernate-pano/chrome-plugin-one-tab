@@ -72,9 +72,6 @@ const settingsSlice = createSlice({
     setShowTabCount: (state, action: PayloadAction<boolean>) => {
       state.showTabCount = action.payload;
     },
-    setAutoCloseTabsAfterSaving: (state, action: PayloadAction<boolean>) => {
-      state.autoCloseTabsAfterSaving = action.payload;
-    },
     setShowNotifications: (state, action: PayloadAction<boolean>) => {
       state.showNotifications = action.payload;
     },
@@ -135,7 +132,6 @@ const settingsSlice = createSlice({
 export const {
   setShowFavicons,
   setShowTabCount,
-  setAutoCloseTabsAfterSaving,
   setShowNotifications,
   setGroupNameTemplate,
 

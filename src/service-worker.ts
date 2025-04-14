@@ -62,9 +62,7 @@ chrome.commands.onCommand.addListener(async (command, tab) => {
     case 'save_current_tab':
       console.log('快捷键保存当前标签页');
       if (tab) {
-        // 获取用户设置
-        const settings = await storage.getSettings();
-        await saveCurrentTab(tab, settings);
+        await saveCurrentTab(tab);
       }
       break;
     case '_execute_action':
@@ -126,7 +124,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   }
 
   if (message.type === 'SAVE_CURRENT_TAB') {
-    saveCurrentTab(message.data.tab, message.data.settings)
+    saveCurrentTab(message.data.tab)
       .then(() => sendResponse({ success: true }))
       .catch(error => sendResponse({ success: false, error: error.message }));
     return true; // 异步响应
@@ -270,7 +268,7 @@ async function saveAllTabs(inputTabs: chrome.tabs.Tab[]) {
 }
 
 // 保存当前标签页
-async function saveCurrentTab(tab: chrome.tabs.Tab, userSettings?: any) {
+async function saveCurrentTab(tab: chrome.tabs.Tab) {
   // 如果有URL，检查是否为内部页面
   if (tab.url && (tab.url.startsWith('chrome://') || tab.url.startsWith('chrome-extension://') || tab.url.startsWith('edge://'))) {
     return;
@@ -317,11 +315,8 @@ async function saveCurrentTab(tab: chrome.tabs.Tab, userSettings?: any) {
   // 用户可以通过点击同步按钮手动同步
   console.log('标签页已保存到本地，跳过自动同步，保证操作丰满顺畅');
 
-  // 获取设置
-  const settings = userSettings || await storage.getSettings() || { autoCloseTabsAfterSaving: true };
-
-  // 如果设置为保存后关闭标签页
-  if (settings.autoCloseTabsAfterSaving && tab.id) {
+  // 保存后自动关闭标签页
+  if (tab.id) {
     await chrome.tabs.remove(tab.id);
   }
 
@@ -440,10 +435,8 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
 // 监听右键菜单保存当前标签页
 async function handleSaveCurrentTab(tab: chrome.tabs.Tab) {
   if (tab && tab.url) {
-    // 获取设置
-    const settings = await storage.getSettings();
     // 调用保存当前标签页的函数
-    await saveCurrentTab(tab, settings);
+    await saveCurrentTab(tab);
 
     // 保存后打开标签管理器并刷新数据
     const extensionUrl = chrome.runtime.getURL('src/popup/index.html');
