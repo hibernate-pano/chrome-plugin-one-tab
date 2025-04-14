@@ -156,7 +156,16 @@ export const syncTabsToCloud = createAsyncThunk<
       // 这样可以让 UI 先更新，然后再处理数据
       await new Promise(resolve => setTimeout(resolve, 10));
 
-      const { tabs } = getState() as { tabs: TabState, settings: UserSettings };
+      // 检查用户是否已登录
+      const { auth, tabs } = getState() as { auth: { isAuthenticated: boolean }, tabs: TabState, settings: UserSettings };
+
+      if (!auth.isAuthenticated) {
+        console.log('用户未登录，无法同步数据到云端');
+        return {
+          syncTime: new Date().toISOString(),
+          stats: null
+        };
+      }
 
       // 记录同步模式
       console.log(`开始${background ? '后台' : ''}同步标签组到云端...`);
@@ -246,6 +255,18 @@ export const syncTabsFromCloud = createAsyncThunk(
       // 这样可以让 UI 先更新，然后再处理数据
       await new Promise(resolve => setTimeout(resolve, 10));
 
+      // 检查用户是否已登录
+      const { auth, tabs, settings } = getState() as { auth: { isAuthenticated: boolean }, tabs: TabState, settings: UserSettings };
+
+      if (!auth.isAuthenticated) {
+        console.log('用户未登录，无法从云端同步数据');
+        return {
+          groups: tabs.groups,
+          syncTime: new Date().toISOString(),
+          stats: null
+        };
+      }
+
       // 记录同步模式
       console.log(`开始${background ? '后台' : ''}从云端同步标签组...`);
 
@@ -255,8 +276,7 @@ export const syncTabsFromCloud = createAsyncThunk(
       // 处理返回结果
       const cloudGroups = result as TabGroup[];
 
-      // 获取本地数据和设置
-      const { tabs, settings } = getState() as { tabs: TabState, settings: UserSettings };
+      // 获取本地数据
       const localGroups = tabs.groups;
 
       // 增强日志输出，显示更详细的信息
@@ -269,11 +289,11 @@ export const syncTabsFromCloud = createAsyncThunk(
       cloudGroups.forEach((group, index) => {
         const tabCount = group.tabs.length;
         totalCloudTabs += tabCount;
-        console.log(`[${index+1}/${cloudGroups.length}] ID: ${group.id}, 名称: "${group.name}", 标签数: ${tabCount}, 更新时间: ${group.updatedAt}`);
+        console.log(`[${index + 1}/${cloudGroups.length}] ID: ${group.id}, 名称: "${group.name}", 标签数: ${tabCount}, 更新时间: ${group.updatedAt}`);
 
         // 详细记录每个云端标签组中的标签
         group.tabs.forEach((tab, tabIndex) => {
-          console.log(`  - 云端标签 [${tabIndex+1}/${tabCount}]: ID=${tab.id}, 标题="${tab.title}", URL=${tab.url}`);
+          console.log(`  - 云端标签 [${tabIndex + 1}/${tabCount}]: ID=${tab.id}, 标题="${tab.title}", URL=${tab.url}`);
         });
       });
       console.log(`云端总标签数: ${totalCloudTabs}`);
@@ -284,7 +304,7 @@ export const syncTabsFromCloud = createAsyncThunk(
       localGroups.forEach((group, index) => {
         const tabCount = group.tabs.length;
         totalLocalTabs += tabCount;
-        console.log(`[${index+1}/${localGroups.length}] ID: ${group.id}, 名称: "${group.name}", 标签数: ${tabCount}, 更新时间: ${group.updatedAt}`);
+        console.log(`[${index + 1}/${localGroups.length}] ID: ${group.id}, 名称: "${group.name}", 标签数: ${tabCount}, 更新时间: ${group.updatedAt}`);
       });
       console.log(`本地总标签数: ${totalLocalTabs}`);
 
@@ -297,7 +317,7 @@ export const syncTabsFromCloud = createAsyncThunk(
 
       // 详细记录合并后的每个标签组
       mergedGroups.forEach((group, index) => {
-        console.log(`合并后标签组 [${index+1}/${mergedGroups.length}]:`, {
+        console.log(`合并后标签组 [${index + 1}/${mergedGroups.length}]:`, {
           id: group.id,
           name: group.name,
           tabCount: group.tabs.length,

@@ -35,8 +35,10 @@ chrome.action.onClicked.addListener(async () => {
   if (existingTabs.length > 0) {
     // 如果已经有标签管理页打开，则激活它并刷新
     console.log('已有标签管理页打开，激活并刷新');
-    await chrome.tabs.update(existingTabs[0].id!, { active: true });
-    await chrome.tabs.reload(existingTabs[0].id!);
+    if (existingTabs[0].id) {
+      await chrome.tabs.update(existingTabs[0].id, { active: true });
+      await chrome.tabs.reload(existingTabs[0].id);
+    }
   } else {
     // 如果没有标签管理页打开，则创建新的
     console.log('没有标签管理页打开，创建新的');
@@ -75,7 +77,9 @@ chrome.commands.onCommand.addListener(async (command, tab) => {
       if (existingTabs.length > 0) {
         // 如果已经有标签管理页打开，则激活它
         console.log('已有标签管理页打开，激活');
-        await chrome.tabs.update(existingTabs[0].id!, { active: true });
+        if (existingTabs[0].id) {
+          await chrome.tabs.update(existingTabs[0].id, { active: true });
+        }
       } else {
         // 如果没有标签管理页打开，则创建新的
         console.log('没有标签管理页打开，创建新的');

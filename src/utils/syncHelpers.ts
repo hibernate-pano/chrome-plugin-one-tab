@@ -68,8 +68,21 @@ export async function syncToCloud<T>(
     // 设置新的定时器
     syncDebounceTimer = setTimeout(async () => {
       try {
-        // 不再获取用户状态和时间，直接跳过同步
-        // 不再自动同步到云端，保证本地操作优先，避免卡顿
+        // 检查用户是否已登录
+        const { auth } = _getState();
+        const isAuthenticated = auth?.isAuthenticated || false;
+
+        if (!isAuthenticated) {
+          // 用户未登录，跳过云端同步
+          if (process.env.NODE_ENV === 'development') {
+            console.log(`用户未登录，跳过云端同步操作: ${operationType}`);
+          }
+          currentSyncOperation = null;
+          resolve(true); // 返回成功，不影响用户体验
+          return;
+        }
+
+        // 本地操作完成，但不自动同步到云端，保证本地操作优先，避免卡顿
         if (process.env.NODE_ENV === 'development') {
           console.log(`本地操作完成: ${operationType}，跳过自动同步，保证操作丰满顺畅`);
         }

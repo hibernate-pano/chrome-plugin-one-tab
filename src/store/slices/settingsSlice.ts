@@ -23,24 +23,39 @@ export const saveSettings = createAsyncThunk(
 );
 
 // 新增：同步设置到云端
-export const syncSettingsToCloud = createAsyncThunk<UserSettings, void, { state: { settings: UserSettings } }>(
+export const syncSettingsToCloud = createAsyncThunk<UserSettings, void, { state: { settings: UserSettings, auth: { isAuthenticated: boolean } } }>(
   'settings/syncSettingsToCloud',
   async (_, { getState }) => {
-    const settings = getState().settings;
+    const { settings, auth } = getState();
+
+    // 检查用户是否已登录
+    if (!auth.isAuthenticated) {
+      console.log('用户未登录，无法同步设置到云端');
+      return settings;
+    }
+
     await supabaseSync.uploadSettings(settings);
     return settings;
   }
 );
 
 // 新增：从云端同步设置
-export const syncSettingsFromCloud = createAsyncThunk(
+export const syncSettingsFromCloud = createAsyncThunk<UserSettings | null, void, { state: { auth: { isAuthenticated: boolean }, settings: UserSettings } }>(
   'settings/syncSettingsFromCloud',
-  async () => {
-    const settings = await supabaseSync.downloadSettings();
-    if (settings) {
-      // 保存到本地存储
-      await storage.setSettings(settings);
+  async (_, { getState }) => {
+    const { auth, settings } = getState();
+
+    // 检查用户是否已登录
+    if (!auth.isAuthenticated) {
+      console.log('用户未登录，无法从云端同步设置');
       return settings;
+    }
+
+    const cloudSettings = await supabaseSync.downloadSettings();
+    if (cloudSettings) {
+      // 保存到本地存储
+      await storage.setSettings(cloudSettings);
+      return cloudSettings;
     }
     return null;
   }

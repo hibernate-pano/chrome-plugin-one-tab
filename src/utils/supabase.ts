@@ -320,7 +320,7 @@ export const sync = {
 
     // 详细记录每个要上传的标签组
     groups.forEach((group, index) => {
-      console.log(`要上传的标签组 ${index+1}/${groups.length}:`, {
+      console.log(`要上传的标签组 ${index + 1}/${groups.length}:`, {
         id: group.id,
         name: group.name,
         tabCount: group.tabs.length,
@@ -331,7 +331,7 @@ export const sync = {
       // 记录每个标签组中的标签数量和类型
       const urlTypes = group.tabs.reduce((acc, tab) => {
         const urlType = tab.url.startsWith('http') ? 'http' :
-                      tab.url.startsWith('loading://') ? 'loading' : 'other';
+          tab.url.startsWith('loading://') ? 'loading' : 'other';
         acc[urlType] = (acc[urlType] || 0) + 1;
         return acc;
       }, {} as Record<string, number>);
@@ -441,7 +441,7 @@ export const sync = {
       // 记录每个云端标签组的基本信息
       groups.forEach((group, index) => {
         const tabsData = group.tabs_data || [];
-        console.log(`云端标签组 ${index+1}/${groups.length}:`, {
+        console.log(`云端标签组 ${index + 1}/${groups.length}:`, {
           id: group.id,
           name: group.name,
           tabCount: tabsData.length,
@@ -462,7 +462,7 @@ export const sync = {
         // 记录标签类型统计
         const urlTypes = tabsData.reduce((acc: Record<string, number>, tab: TabData) => {
           const urlType = tab.url.startsWith('http') ? 'http' :
-                        tab.url.startsWith('loading://') ? 'loading' : 'other';
+            tab.url.startsWith('loading://') ? 'loading' : 'other';
           acc[urlType] = (acc[urlType] || 0) + 1;
           return acc;
         }, {});
