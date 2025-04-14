@@ -383,7 +383,7 @@ export const syncTabsFromCloud = createAsyncThunk(
       cloudGroups.forEach((group, index) => {
         const tabCount = group.tabs.length;
         totalCloudTabs += tabCount;
-        console.log(`[${index+1}/${cloudGroups.length}] ID: ${group.id}, 名称: "${group.name}", 标签数: ${tabCount}, 更新时间: ${group.updatedAt}`);
+        console.log(`[${index + 1}/${cloudGroups.length}] ID: ${group.id}, 名称: "${group.name}", 标签数: ${tabCount}, 更新时间: ${group.updatedAt}`);
       });
       console.log(`云端总标签数: ${totalCloudTabs}`);
 
@@ -437,29 +437,50 @@ export const syncTabsFromCloud = createAsyncThunk(
   }
 );
 
-// 新增：同步本地更改到云端
+// 新增：同步本地更改到云端 - 优化版本
 export const syncLocalChangesToCloud = createAsyncThunk(
   'tabs/syncLocalChangesToCloud',
-  async (_, { getState, dispatch }) => {
+  async (changedGroup: TabGroup | null, { getState, dispatch }) => {
     const { auth } = getState() as { auth: { isAuthenticated: boolean } };
 
     // 如果用户已登录，自动同步到云端
     if (auth.isAuthenticated) {
-      // 使用 setTimeout 将同步操作推迟到下一个事件循环
-      setTimeout(() => {
-        dispatch(syncTabsToCloud({ background: true }))
-          .then(() => {
-            if (process.env.NODE_ENV === 'development') {
-              console.log('本地更改已自动同步到云端');
-            }
-          })
-          .catch(error => {
-            if (process.env.NODE_ENV === 'development') {
-              console.error('自动同步到云端失败:', error);
-            }
-          });
-      }, 0);
-      return true; // 直接返回成功，不等待同步完成
+      // 如果提供了特定的标签组，只同步该标签组
+      if (changedGroup) {
+        try {
+          // 使用 syncService 同步单个标签组
+          const { syncService } = await import('@/services/syncService');
+          const result = await syncService.syncGroupToCloud(changedGroup);
+
+          if (process.env.NODE_ENV === 'development') {
+            console.log(`标签组 ${changedGroup.id} 已同步到云端`);
+          }
+
+          return result;
+        } catch (error) {
+          if (process.env.NODE_ENV === 'development') {
+            console.error(`同步标签组 ${changedGroup.id} 失败:`, error);
+          }
+          return false;
+        }
+      } else {
+        // 如果没有提供特定标签组，同步所有数据
+        // 使用 setTimeout 将同步操作推迟到下一个事件循环
+        setTimeout(() => {
+          dispatch(syncTabsToCloud({ background: true }))
+            .then(() => {
+              if (process.env.NODE_ENV === 'development') {
+                console.log('本地更改已自动同步到云端');
+              }
+            })
+            .catch(error => {
+              if (process.env.NODE_ENV === 'development') {
+                console.error('自动同步到云端失败:', error);
+              }
+            });
+        }, 0);
+        return true; // 直接返回成功，不等待同步完成
+      }
     }
     return false;
   }

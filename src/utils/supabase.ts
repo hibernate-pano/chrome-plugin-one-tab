@@ -2,19 +2,16 @@ import { createClient } from '@supabase/supabase-js';
 import { TabGroup, UserSettings, Tab, TabData, SupabaseTabGroup } from '@/types/tab';
 import { setWechatLoginTimeout, clearWechatLoginTimeout } from './wechatLoginTimeout';
 
-const SUPABASE_URL = 'https://reccclnaxadbuccsrwmg.supabase.co';
-const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InJlY2NjbG5heGFkYnVjY3Nyd21nIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDQyOTExODYsImV4cCI6MjA1OTg2NzE4Nn0.nHkOtkUtkzEUnF9ajUipD37SbAGH9znkVekI8N6hvdo';
+// 新的Supabase项目配置（优化版本）
+const SUPABASE_URL = 'https://osmvvkxwjoiagdqzhrjl.supabase.co';
+const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9zbXZ2a3h3am9pYWdkcXpocmpsIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDQ1OTQzMjgsImV4cCI6MjA2MDE3MDMyOH0.6XCcIkGOukX8LFVyq3CEeMBeJh6lqGI3pkNzgBbvQ_E';
 
 export const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
-// 获取设备ID
+// 注意：我们不再使用设备ID，因为这可能导致性能问题
+// 保留这个函数仅为了兼容性，但实际上不再使用它
 export const getDeviceId = async (): Promise<string> => {
-  const { deviceId } = await chrome.storage.local.get('deviceId');
-  if (deviceId) return deviceId;
-
-  const newDeviceId = crypto.randomUUID();
-  await chrome.storage.local.set({ deviceId: newDeviceId });
-  return newDeviceId;
+  return 'optimized-sync'; // 返回固定值，不再使用随机生成的设备ID
 };
 
 // 用户认证相关方法
@@ -308,17 +305,16 @@ export const sync = {
       throw error;
     }
   },
-  // 上传标签组
-  async uploadTabGroups(groups: TabGroup[], deletedGroups: TabGroup[] = [], deletedTabs: Tab[] = []) {
-    const deviceId = await getDeviceId();
+  // 上传标签组 - 优化版本
+  async uploadTabGroups(groups: TabGroup[], deletedGroups: TabGroup[] = []) {
     const { data: { user } } = await supabase.auth.getUser();
 
     if (!user) throw new Error('用户未登录');
 
     console.log('准备上传标签组，用户ID:', user.id);
-    console.log(`要上传的数据: ${groups.length} 个标签组, ${deletedGroups.length} 个已删除标签组, ${deletedTabs.length} 个已删除标签页`);
+    console.log(`要上传的数据: ${groups.length} 个标签组, ${deletedGroups.length} 个已删除标签组`);
 
-    // 为每个标签组添加用户ID和设备ID
+    // 为每个标签组添加用户ID
     const currentTime = new Date().toISOString();
 
     const groupsWithUser = groups.map(group => {
@@ -343,7 +339,7 @@ export const sync = {
         updated_at: updatedAt,
         is_locked: group.isLocked || false,
         user_id: user.id,
-        device_id: deviceId,
+        // 移除 device_id 字段
         last_sync: currentTime,
         tabs_data: tabsData // 将标签数据作为 JSONB 存储
       } as SupabaseTabGroup;
@@ -357,14 +353,6 @@ export const sync = {
         if (!group.id) {
           console.error('标签组缺少ID:', group);
           throw new Error('标签组缺少ID');
-        }
-        if (!group.created_at) {
-          console.error('标签组缺少created_at:', group);
-          throw new Error('标签组缺少created_at');
-        }
-        if (!group.updated_at) {
-          console.error('标签组缺少updated_at:', group);
-          throw new Error('标签组缺少updated_at');
         }
       }
 
@@ -384,7 +372,7 @@ export const sync = {
 
       console.log('标签组元数据和标签数据上传成功');
 
-      // 处理已删除的标签组
+      // 处理已删除的标签组 - 直接从数据库中删除
       if (deletedGroups.length > 0) {
         console.log(`处理 ${deletedGroups.length} 个已删除的标签组...`);
 
@@ -416,7 +404,7 @@ export const sync = {
     return { result };
   },
 
-  // 下载标签组
+  // 下载标签组 - 优化版本
   async downloadTabGroups() {
     const { data: { user } } = await supabase.auth.getUser();
 
@@ -425,13 +413,14 @@ export const sync = {
     console.log('开始下载标签组，用户ID:', user.id);
 
     try {
-      console.log('使用 JSONB 方式下载所有标签组');
+      console.log('使用优化的方式下载标签组');
 
-      // 获取用户的所有标签组，包含 tabs_data JSONB 字段
+      // 获取用户的所有标签组，按更新时间排序
       const { data: groups, error } = await supabase
         .from('tab_groups')
         .select('*')
-        .eq('user_id', user.id);
+        .eq('user_id', user.id)
+        .order('updated_at', { ascending: false });
 
       if (error) {
         console.error('获取标签组失败:', error);
@@ -465,36 +454,11 @@ export const sync = {
           tabs: formattedTabs,
           createdAt: group.created_at,
           updatedAt: group.updated_at,
-          isLocked: group.is_locked
+          isLocked: group.is_locked,
+          // 添加同步状态信息
+          syncStatus: 'synced',
+          lastSyncedAt: new Date().toISOString()
         });
-      }
-
-      // 兼容性处理：如果标签组没有 tabs_data，尝试从 tabs 表获取
-      for (const group of tabGroups) {
-        if (group.tabs.length === 0) {
-          console.log(`标签组 ${group.id} 没有 JSONB 标签数据，尝试从 tabs 表获取`);
-          try {
-            const { data: tabs, error: tabError } = await supabase
-              .from('tabs')
-              .select('*')
-              .eq('group_id', group.id);
-
-            if (!tabError && tabs && tabs.length > 0) {
-              group.tabs = tabs.map(tab => ({
-                id: tab.id,
-                url: tab.url,
-                title: tab.title,
-                favicon: tab.favicon,
-                createdAt: tab.created_at,
-                lastAccessed: tab.last_accessed,
-                group_id: tab.group_id
-              }));
-              console.log(`从 tabs 表获取到 ${group.tabs.length} 个标签`);
-            }
-          } catch (e) {
-            console.warn(`从 tabs 表获取标签失败，忽略错误:`, e);
-          }
-        }
       }
 
       console.log('标签组下载完成');

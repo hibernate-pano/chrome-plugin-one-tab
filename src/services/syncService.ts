@@ -1,12 +1,67 @@
 import { store } from '@/store';
-import { syncTabsToCloud, syncTabsFromCloud } from '@/store/slices/tabSlice';
+import { syncTabsToCloud, syncTabsFromCloud, setGroups } from '@/store/slices/tabSlice';
 import { syncSettingsToCloud, syncSettingsFromCloud } from '@/store/slices/settingsSlice';
 import { getCurrentUser } from '@/store/slices/authSlice';
 import { sync as supabaseSync } from '@/utils/supabase';
 import { realtimeService } from './realtimeService';
+import { storage } from '@/utils/storage';
+import { TabGroup } from '@/types/tab';
+
+/**
+ * 智能合并数据
+ * @param localData 本地数据
+ * @param cloudData 云端数据
+ * @returns 合并后的数据
+ */
+function mergeData(localData: TabGroup[], cloudData: TabGroup[]): TabGroup[] {
+  const mergedMap = new Map<string, TabGroup>();
+  const currentTime = new Date().toISOString();
+
+  // 添加所有本地项到映射
+  localData.forEach(item => {
+    // 标记本地项的同步状态
+    const localItem = {
+      ...item,
+      syncStatus: 'synced' as const,
+      lastSyncedAt: currentTime
+    };
+    mergedMap.set(item.id, localItem);
+  });
+
+  // 合并云端项，冲突时使用更新版本
+  cloudData.forEach(cloudItem => {
+    const localItem = mergedMap.get(cloudItem.id);
+
+    if (!localItem) {
+      // 云端独有项，添加它
+      const newItem = {
+        ...cloudItem,
+        syncStatus: 'synced' as const,
+        lastSyncedAt: currentTime
+      };
+      mergedMap.set(cloudItem.id, newItem);
+    } else {
+      // 项存在于本地，使用更新版本
+      const localTime = new Date(localItem.updatedAt).getTime();
+      const cloudTime = new Date(cloudItem.updatedAt).getTime();
+
+      if (cloudTime > localTime) {
+        // 云端版本更新，使用云端版本
+        const updatedItem = {
+          ...cloudItem,
+          syncStatus: 'synced' as const,
+          lastSyncedAt: currentTime
+        };
+        mergedMap.set(cloudItem.id, updatedItem);
+      }
+    }
+  });
+
+  return Array.from(mergedMap.values());
+}
 
 class SyncService {
-  // 初始化同步服务
+  // 初始化同步服务 - 优化版本
   async initialize() {
     try {
       console.log('正在初始化同步服务...');
@@ -17,22 +72,13 @@ class SyncService {
       console.log('用户登录状态:', auth.isAuthenticated);
 
       if (auth.isAuthenticated) {
-        console.log('用户已登录，先迁移数据到 JSONB 格式...');
+        console.log('用户已登录，执行初始同步...');
 
-        // 迁移数据到 JSONB 格式
-        try {
-          const migrationResult = await supabaseSync.migrateToJsonb();
-          console.log('数据迁移结果:', migrationResult);
-        } catch (migrationError) {
-          console.error('数据迁移失败，继续同步过程:', migrationError);
-        }
+        // 执行初始同步 - 合并本地和云端数据
+        await this.performInitialSync();
 
-        console.log('从云端获取最新数据...');
-        // 首次同步，从云端获取数据，使用后台同步模式
-        await this.syncFromCloud(true);
-
-        // 设置 Realtime 订阅，实现实时双向同步
-        console.log('设置 Realtime 订阅，实现实时双向同步...');
+        // 设置优化的 Realtime 订阅
+        console.log('设置优化的 Realtime 订阅...');
         try {
           const subscription = await realtimeService.setupRealtimeSubscription();
           if (subscription) {
@@ -51,12 +97,54 @@ class SyncService {
     }
   }
 
-  // 后台同步数据
+  // 执行初始同步 - 合并本地和云端数据
+  async performInitialSync() {
+    try {
+      console.log('执行初始同步...');
+
+      // 1. 获取本地数据
+      const localGroups = await storage.getGroups();
+      const localSettings = await storage.getSettings();
+
+      console.log(`本地数据: ${localGroups.length} 个标签组`);
+
+      // 2. 获取云端数据
+      const cloudGroups = await supabaseSync.downloadTabGroups();
+      const cloudSettings = await supabaseSync.downloadSettings();
+
+      console.log(`云端数据: ${cloudGroups.length} 个标签组`);
+
+      // 3. 合并数据（保留所有唯一项）
+      const mergedGroups = mergeData(localGroups, cloudGroups);
+      const mergedSettings = { ...localSettings, ...cloudSettings };
+
+      console.log(`合并后的数据: ${mergedGroups.length} 个标签组`);
+
+      // 4. 保存合并后的数据到本地
+      await storage.setGroups(mergedGroups);
+      await storage.setSettings(mergedSettings);
+
+      // 更新 Redux 存储
+      store.dispatch(setGroups(mergedGroups));
+
+      // 5. 将合并后的数据推送到云端
+      console.log('将合并后的数据推送到云端...');
+      await supabaseSync.uploadTabGroups(mergedGroups);
+      await supabaseSync.uploadSettings(mergedSettings);
+
+      console.log('初始同步完成');
+    } catch (error) {
+      console.error('执行初始同步失败:', error);
+      throw error;
+    }
+  }
+
+  // 后台同步数据 - 优化版本
   async backgroundSync() {
     return this.syncAll(true);
   }
 
-  // 同步所有数据
+  // 同步所有数据 - 优化版本
   async syncAll(background = true) {
     const { auth } = store.getState();
 
@@ -68,21 +156,28 @@ class SyncService {
     try {
       console.log(`开始${background ? '后台' : ''}同步数据...`);
 
-      // 修改同步顺序：先将本地删除操作同步到云端，然后再同步其他数据
-      // 这样可以确保删除操作不会被覆盖
+      // 1. 获取本地数据
+      const localGroups = await storage.getGroups();
+      const localSettings = await storage.getSettings();
 
-      // 先将本地数据同步到云端（包含删除操作）
-      console.log('正在将本地数据同步到云端...');
-      await store.dispatch(syncTabsToCloud({ background }));
-      await store.dispatch(syncSettingsToCloud());
+      // 2. 获取云端数据
+      const cloudGroups = await supabaseSync.downloadTabGroups();
+      const cloudSettings = await supabaseSync.downloadSettings();
 
-      // 然后从云端同步设置
-      console.log('正在从云端同步设置...');
-      await store.dispatch(syncSettingsFromCloud());
+      // 3. 合并数据
+      const mergedGroups = mergeData(localGroups, cloudGroups);
+      const mergedSettings = { ...localSettings, ...cloudSettings };
 
-      // 最后从云端同步标签组
-      console.log('正在从云端同步标签组...');
-      await store.dispatch(syncTabsFromCloud({ background }));
+      // 4. 保存合并后的数据到本地
+      await storage.setGroups(mergedGroups);
+      await storage.setSettings(mergedSettings);
+
+      // 更新 Redux 存储
+      store.dispatch(setGroups(mergedGroups));
+
+      // 5. 将合并后的数据推送到云端
+      await supabaseSync.uploadTabGroups(mergedGroups);
+      await supabaseSync.uploadSettings(mergedSettings);
 
       console.log('数据同步完成！');
     } catch (error) {
@@ -96,7 +191,7 @@ class SyncService {
     }
   }
 
-  // 从云端同步数据
+  // 从云端同步数据 - 优化版本
   async syncFromCloud(background = true) {
     const { auth } = store.getState();
 
@@ -108,13 +203,24 @@ class SyncService {
     try {
       console.log(`开始${background ? '后台' : ''}从云端同步数据...`);
 
-      // 从云端同步设置
-      console.log('正在从云端同步设置...');
-      await store.dispatch(syncSettingsFromCloud());
+      // 1. 获取云端数据
+      const cloudGroups = await supabaseSync.downloadTabGroups();
+      const cloudSettings = await supabaseSync.downloadSettings();
 
-      // 从云端同步标签组
-      console.log('正在从云端同步标签组...');
-      await store.dispatch(syncTabsFromCloud({ background }));
+      // 2. 获取本地数据
+      const localGroups = await storage.getGroups();
+      const localSettings = await storage.getSettings();
+
+      // 3. 合并数据，优先使用云端数据
+      const mergedGroups = mergeData(localGroups, cloudGroups);
+      const mergedSettings = { ...localSettings, ...cloudSettings };
+
+      // 4. 保存合并后的数据到本地
+      await storage.setGroups(mergedGroups);
+      await storage.setSettings(mergedSettings);
+
+      // 更新 Redux 存储
+      store.dispatch(setGroups(mergedGroups));
 
       console.log('从云端同步数据完成！');
     } catch (error) {
@@ -125,6 +231,29 @@ class SyncService {
       } catch (e) {
         console.error('重新获取用户信息失败:', e);
       }
+    }
+  }
+
+  // 同步单个标签组到云端
+  async syncGroupToCloud(group: TabGroup) {
+    const { auth } = store.getState();
+
+    if (!auth.isAuthenticated) {
+      console.warn('用户未登录，无法同步数据');
+      return false;
+    }
+
+    try {
+      console.log(`同步标签组 ${group.id} 到云端...`);
+
+      // 上传单个标签组
+      await supabaseSync.uploadTabGroups([group]);
+
+      console.log(`标签组 ${group.id} 同步完成`);
+      return true;
+    } catch (error) {
+      console.error(`同步标签组 ${group.id} 失败:`, error);
+      return false;
     }
   }
 }

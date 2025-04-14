@@ -1,12 +1,114 @@
 import { supabase } from '@/utils/supabase';
 import { store } from '@/store';
-import { syncTabsFromCloud } from '@/store/slices/tabSlice';
+import { syncTabsFromCloud, setGroups } from '@/store/slices/tabSlice';
 import { syncSettingsFromCloud } from '@/store/slices/settingsSlice';
+import { storage } from '@/utils/storage';
+import { TabGroup, TabData } from '@/types/tab';
 
 let subscription: any = null;
 
 /**
- * 设置 Realtime 订阅
+ * 将 Supabase 标签组转换为应用格式
+ */
+const convertSupabaseGroupToAppFormat = (group: any): TabGroup => {
+  // 从 JSONB 字段获取标签数据
+  const tabsData = group.tabs_data || [];
+
+  // 将 TabData 转换为 Tab 格式
+  const formattedTabs = tabsData.map((tab: TabData) => ({
+    id: tab.id,
+    url: tab.url,
+    title: tab.title,
+    favicon: tab.favicon,
+    createdAt: tab.created_at,
+    lastAccessed: tab.last_accessed,
+    group_id: group.id
+  }));
+
+  return {
+    id: group.id,
+    name: group.name,
+    tabs: formattedTabs,
+    createdAt: group.created_at,
+    updatedAt: group.updated_at,
+    isLocked: group.is_locked,
+    syncStatus: 'synced',
+    lastSyncedAt: new Date().toISOString()
+  };
+};
+
+/**
+ * 处理远程删除
+ */
+async function handleRemoteDelete(groupId: string) {
+  try {
+    // 获取当前标签组
+    const groups = await storage.getGroups();
+
+    // 移除已删除的标签组
+    const updatedGroups = groups.filter(group => group.id !== groupId);
+
+    // 保存更新后的标签组
+    await storage.setGroups(updatedGroups);
+
+    // 更新 Redux 存储
+    store.dispatch(setGroups(updatedGroups));
+
+    console.log(`成功处理远程删除标签组: ${groupId}`);
+  } catch (error) {
+    console.error('处理远程删除失败:', error);
+  }
+}
+
+/**
+ * 处理远程变更（插入或更新）
+ */
+async function handleRemoteChange(groupId: string) {
+  try {
+    // 获取特定变更的标签组
+    const { data: changedGroup, error } = await supabase
+      .from('tab_groups')
+      .select('*')
+      .eq('id', groupId)
+      .single();
+
+    if (error || !changedGroup) {
+      console.error('获取变更的标签组失败:', error);
+      return;
+    }
+
+    // 转换为应用格式
+    const formattedGroup = convertSupabaseGroupToAppFormat(changedGroup);
+
+    // 获取当前标签组
+    const groups = await storage.getGroups();
+
+    // 查找并替换或添加变更的标签组
+    const updatedGroups = [...groups];
+    const existingIndex = updatedGroups.findIndex(g => g.id === groupId);
+
+    if (existingIndex >= 0) {
+      // 更新现有标签组
+      updatedGroups[existingIndex] = formattedGroup;
+    } else {
+      // 添加新标签组
+      updatedGroups.push(formattedGroup);
+    }
+
+    // 保存更新后的标签组
+    await storage.setGroups(updatedGroups);
+
+    // 更新 Redux 存储
+    store.dispatch(setGroups(updatedGroups));
+
+    console.log(`成功处理远程${existingIndex >= 0 ? '更新' : '新增'}标签组: ${groupId}`);
+  } catch (error) {
+    console.error('处理远程变更失败:', error);
+  }
+}
+
+/**
+ * 设置 Realtime 订阅 - 优化版本
  */
 export const setupRealtimeSubscription = async () => {
   // 如果已经有订阅，先清除
@@ -24,11 +126,11 @@ export const setupRealtimeSubscription = async () => {
       return null;
     }
 
-    console.log('设置 Realtime 订阅，用户ID:', user.id);
+    console.log('设置优化的 Realtime 订阅，用户ID:', user.id);
 
-    // 创建 Realtime 订阅
+    // 创建单一用户通道
     subscription = supabase
-      .channel('table-changes')
+      .channel(`user-${user.id}-changes`)
       .on(
         'postgres_changes',
         {
@@ -50,13 +152,20 @@ export const setupRealtimeSubscription = async () => {
             return;
           }
 
-          // 根据变化类型执行不同操作
-          if (payload.eventType === 'INSERT' || payload.eventType === 'UPDATE' || payload.eventType === 'DELETE') {
-            console.log(`检测到远程 ${payload.eventType} 操作，开始从云端同步数据...`);
+          // 获取变更项的ID
+          const changedId = payload.new?.id || payload.old?.id;
 
-            // 从云端同步最新数据
-            await store.dispatch(syncTabsFromCloud({ background: true }));
-            console.log('从云端同步数据完成');
+          if (!changedId) {
+            console.warn('无法获取变更项ID，跳过处理');
+            return;
+          }
+
+          if (payload.eventType === 'DELETE') {
+            // 处理删除 - 从本地存储中移除
+            await handleRemoteDelete(changedId);
+          } else {
+            // 处理插入/更新 - 获取并合并特定项
+            await handleRemoteChange(changedId);
           }
         }
       )

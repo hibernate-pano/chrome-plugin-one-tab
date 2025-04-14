@@ -23,7 +23,7 @@ export interface TabData {
   last_accessed: string;
 }
 
-// 用于 Supabase 中的 tab_groups 表结构
+// 用于 Supabase 中的 tab_groups 表结构 - 优化版本
 export interface SupabaseTabGroup {
   id: string;
   name: string;
@@ -31,7 +31,7 @@ export interface SupabaseTabGroup {
   updated_at: string;
   is_locked: boolean;
   user_id: string;
-  device_id: string;
+  // 移除 device_id 字段
   last_sync: string;
   tabs_data?: TabData[];
 }
@@ -44,7 +44,7 @@ export interface TabGroup {
   updatedAt: string;
   isLocked: boolean;
   user_id?: string; // 关联用户ID
-  device_id?: string; // 创建设备ID
+  // 移除 device_id 字段
   last_sync?: string; // 最后同步时间
 
   // 同步相关字段

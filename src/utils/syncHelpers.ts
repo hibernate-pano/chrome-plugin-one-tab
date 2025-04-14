@@ -1,4 +1,4 @@
-import { syncTabsToCloud } from '@/store/slices/tabSlice';
+import { syncLocalChangesToCloud } from '@/store/slices/tabSlice';
 import { ThunkDispatch, UnknownAction } from '@reduxjs/toolkit';
 
 // 防抖计时器
@@ -82,8 +82,8 @@ export async function syncToCloud<T>(
               // 更新最后同步时间
               lastSyncTime = now;
 
-              // 使用 background: true 确保同步在后台运行
-              await dispatch(syncTabsToCloud({ background: true }));
+              // 使用优化的同步方法，传入 null 表示同步所有数据
+              await dispatch(syncLocalChangesToCloud(null));
 
               // 仅在调试模式下输出日志
               if (process.env.NODE_ENV === 'development') {
