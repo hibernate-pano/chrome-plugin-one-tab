@@ -232,13 +232,53 @@ export const auth = {
 export const sync = {
   // 迁移数据到 JSONB 格式
   async migrateToJsonb() {
-    const { data: { user } } = await supabase.auth.getUser();
+    // 先检查会话是否有效
+    const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
 
-    if (!user) throw new Error('用户未登录');
+    if (sessionError) {
+      console.error('获取会话失败:', sessionError);
+      throw new Error(`获取会话失败: ${sessionError.message}`);
+    }
+
+    if (!sessionData.session) {
+      console.error('用户未登录或会话已过期');
+      throw new Error('用户未登录或会话已过期，请重新登录');
+    }
+
+    // 获取用户信息
+    const { data: { user }, error: userError } = await supabase.auth.getUser();
+
+    if (userError) {
+      console.error('获取用户信息失败:', userError);
+      throw new Error(`获取用户信息失败: ${userError.message}`);
+    }
+
+    if (!user) {
+      console.error('用户未登录');
+      throw new Error('用户未登录');
+    }
+
+    if (!user.id) {
+      console.error('用户ID无效');
+      throw new Error('用户ID无效');
+    }
+
+    // 确保用户ID匹配会话用户ID
+    if (user.id !== sessionData.session.user.id) {
+      console.warn('用户ID与会话用户ID不匹配，使用会话用户ID');
+      user.id = sessionData.session.user.id;
+    }
 
     console.log('开始迁移数据到 JSONB 格式，用户ID:', user.id);
 
     try {
+      // 确保用户已登录并且会话有效
+      const { data: sessionCheck } = await supabase.auth.getSession();
+      if (!sessionCheck.session) {
+        console.error('会话已过期，无法迁移数据');
+        throw new Error('会话已过期，请重新登录');
+      }
+
       // 获取用户的所有标签组
       const { data: groups, error } = await supabase
         .from('tab_groups')
@@ -247,6 +287,12 @@ export const sync = {
 
       if (error) {
         console.error('获取标签组失败:', error);
+        console.error('错误详情:', {
+          code: error.code,
+          message: error.message,
+          details: error.details,
+          hint: error.hint
+        });
         throw error;
       }
 
@@ -296,6 +342,38 @@ export const sync = {
 
         if (updateError) {
           console.error(`更新标签组 ${group.id} 的 JSONB 数据失败:`, updateError);
+          console.error('错误详情:', {
+            code: updateError.code,
+            message: updateError.message,
+            details: updateError.details,
+            hint: updateError.hint
+          });
+
+          // 检查是否是行级安全策略错误
+          if (updateError.message && updateError.message.includes('row-level security policy')) {
+            console.error('行级安全策略错误，可能是用户ID不匹配或会话已过期');
+
+            // 重新检查会话和用户信息
+            const { data: recheckSession } = await supabase.auth.getSession();
+            if (!recheckSession.session) {
+              throw new Error('会话已过期，请重新登录');
+            }
+
+            console.log('尝试使用会话用户ID重新更新标签组');
+            const { error: retryError } = await supabase
+              .from('tab_groups')
+              .update({
+                tabs_data: tabsData,
+                user_id: recheckSession.session.user.id // 确保用户ID与会话用户ID匹配
+              })
+              .eq('id', group.id);
+
+            if (retryError) {
+              console.error(`重试更新标签组 ${group.id} 仍然失败:`, retryError);
+            } else {
+              console.log(`重试成功，标签组 ${group.id} 的数据已成功迁移到 JSONB 格式`);
+            }
+          }
         } else {
           console.log(`标签组 ${group.id} 的数据已成功迁移到 JSONB 格式`);
         }
@@ -311,9 +389,37 @@ export const sync = {
   // 上传标签组
   async uploadTabGroups(groups: TabGroup[]) {
     const deviceId = await getDeviceId();
-    const { data: { user } } = await supabase.auth.getUser();
 
-    if (!user) throw new Error('用户未登录');
+    // 先检查会话是否有效
+    const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
+
+    if (sessionError) {
+      console.error('获取会话失败:', sessionError);
+      throw new Error(`获取会话失败: ${sessionError.message}`);
+    }
+
+    if (!sessionData.session) {
+      console.error('用户未登录或会话已过期');
+      throw new Error('用户未登录或会话已过期，请重新登录');
+    }
+
+    // 获取用户信息
+    const { data: { user }, error: userError } = await supabase.auth.getUser();
+
+    if (userError) {
+      console.error('获取用户信息失败:', userError);
+      throw new Error(`获取用户信息失败: ${userError.message}`);
+    }
+
+    if (!user) {
+      console.error('用户未登录');
+      throw new Error('用户未登录');
+    }
+
+    if (!user.id) {
+      console.error('用户ID无效');
+      throw new Error('用户ID无效');
+    }
 
     console.log('准备上传标签组，用户ID:', user.id, '设备ID:', deviceId);
     console.log(`要上传的数据: ${groups.length} 个标签组`);
@@ -392,6 +498,35 @@ export const sync = {
       // 使用 JSONB 存储标签数据
       console.log('将标签数据作为 JSONB 存储到 tab_groups 表中');
 
+      // 确保用户已登录并且会话有效
+      const { data: sessionCheck } = await supabase.auth.getSession();
+      if (!sessionCheck.session) {
+        console.error('会话已过期，无法上传数据');
+        throw new Error('会话已过期，请重新登录');
+      }
+
+      // 记录详细的上传信息
+      console.log('上传数据详情:', {
+        groupCount: groupsWithUser.length,
+        userID: groupsWithUser[0]?.user_id,
+        sessionUserID: sessionCheck.session.user.id
+      });
+
+      // 确保用户ID匹配会话用户ID
+      if (groupsWithUser.length > 0 && groupsWithUser[0].user_id !== sessionCheck.session.user.id) {
+        console.error('用户ID不匹配:', {
+          dataUserID: groupsWithUser[0].user_id,
+          sessionUserID: sessionCheck.session.user.id
+        });
+
+        // 更新所有组的用户ID为会话用户ID
+        groupsWithUser.forEach(group => {
+          group.user_id = sessionCheck.session.user.id;
+        });
+
+        console.log('已更新所有组的用户ID为会话用户ID');
+      }
+
       const { data, error } = await supabase
         .from('tab_groups')
         .upsert(groupsWithUser, { onConflict: 'id' });
@@ -400,6 +535,12 @@ export const sync = {
 
       if (error) {
         console.error('上传标签组失败:', error);
+        console.error('错误详情:', {
+          code: error.code,
+          message: error.message,
+          details: error.details,
+          hint: error.hint
+        });
         throw error;
       }
 
@@ -416,14 +557,62 @@ export const sync = {
   // 下载标签组
   async downloadTabGroups() {
     const deviceId = await getDeviceId();
-    const { data: { user } } = await supabase.auth.getUser();
 
-    if (!user) throw new Error('用户未登录');
+    // 先检查会话是否有效
+    const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
+
+    if (sessionError) {
+      console.error('获取会话失败:', sessionError);
+      throw new Error(`获取会话失败: ${sessionError.message}`);
+    }
+
+    if (!sessionData.session) {
+      console.error('用户未登录或会话已过期');
+      throw new Error('用户未登录或会话已过期，请重新登录');
+    }
+
+    // 获取用户信息
+    const { data: { user }, error: userError } = await supabase.auth.getUser();
+
+    if (userError) {
+      console.error('获取用户信息失败:', userError);
+      throw new Error(`获取用户信息失败: ${userError.message}`);
+    }
+
+    if (!user) {
+      console.error('用户未登录');
+      throw new Error('用户未登录');
+    }
+
+    if (!user.id) {
+      console.error('用户ID无效');
+      throw new Error('用户ID无效');
+    }
 
     console.log('开始下载标签组，用户ID:', user.id, '设备ID:', deviceId);
 
     try {
       console.log('使用 JSONB 方式下载所有标签组');
+
+      // 确保用户已登录并且会话有效
+      const { data: sessionCheck } = await supabase.auth.getSession();
+      if (!sessionCheck.session) {
+        console.error('会话已过期，无法下载数据');
+        throw new Error('会话已过期，请重新登录');
+      }
+
+      // 记录详细的会话信息
+      console.log('会话信息:', {
+        userID: user.id,
+        sessionUserID: sessionCheck.session.user.id,
+        isSessionValid: !!sessionCheck.session
+      });
+
+      // 确保用户ID匹配会话用户ID
+      if (user.id !== sessionCheck.session.user.id) {
+        console.warn('用户ID与会话用户ID不匹配，使用会话用户ID');
+        user.id = sessionCheck.session.user.id;
+      }
 
       // 获取用户的所有标签组，包含 tabs_data JSONB 字段
       const { data: groups, error } = await supabase
@@ -433,6 +622,12 @@ export const sync = {
 
       if (error) {
         console.error('获取标签组失败:', error);
+        console.error('错误详情:', {
+          code: error.code,
+          message: error.message,
+          details: error.details,
+          hint: error.hint
+        });
         throw error;
       }
 
@@ -529,9 +724,43 @@ export const sync = {
   // 上传用户设置
   async uploadSettings(settings: UserSettings) {
     const deviceId = await getDeviceId();
-    const { data: { user } } = await supabase.auth.getUser();
 
-    if (!user) throw new Error('用户未登录');
+    // 先检查会话是否有效
+    const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
+
+    if (sessionError) {
+      console.error('获取会话失败:', sessionError);
+      throw new Error(`获取会话失败: ${sessionError.message}`);
+    }
+
+    if (!sessionData.session) {
+      console.error('用户未登录或会话已过期');
+      throw new Error('用户未登录或会话已过期，请重新登录');
+    }
+
+    // 获取用户信息
+    const { data: { user }, error: userError } = await supabase.auth.getUser();
+
+    if (userError) {
+      console.error('获取用户信息失败:', userError);
+      throw new Error(`获取用户信息失败: ${userError.message}`);
+    }
+
+    if (!user) {
+      console.error('用户未登录');
+      throw new Error('用户未登录');
+    }
+
+    if (!user.id) {
+      console.error('用户ID无效');
+      throw new Error('用户ID无效');
+    }
+
+    // 确保用户ID匹配会话用户ID
+    if (user.id !== sessionData.session.user.id) {
+      console.warn('用户ID与会话用户ID不匹配，使用会话用户ID');
+      user.id = sessionData.session.user.id;
+    }
 
     console.log('上传用户设置，用户ID:', user.id, '设备ID:', deviceId);
 
@@ -544,16 +773,60 @@ export const sync = {
         ...settings
       }, { onConflict: 'user_id' });
 
-    if (error) throw error;
+    if (error) {
+      console.error('上传用户设置失败:', error);
+      console.error('错误详情:', {
+        code: error.code,
+        message: error.message,
+        details: error.details,
+        hint: error.hint
+      });
+      throw error;
+    }
 
     return data;
   },
 
   // 下载用户设置
   async downloadSettings() {
-    const { data: { user } } = await supabase.auth.getUser();
+    // 先检查会话是否有效
+    const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
 
-    if (!user) throw new Error('用户未登录');
+    if (sessionError) {
+      console.error('获取会话失败:', sessionError);
+      throw new Error(`获取会话失败: ${sessionError.message}`);
+    }
+
+    if (!sessionData.session) {
+      console.error('用户未登录或会话已过期');
+      throw new Error('用户未登录或会话已过期，请重新登录');
+    }
+
+    // 获取用户信息
+    const { data: { user }, error: userError } = await supabase.auth.getUser();
+
+    if (userError) {
+      console.error('获取用户信息失败:', userError);
+      throw new Error(`获取用户信息失败: ${userError.message}`);
+    }
+
+    if (!user) {
+      console.error('用户未登录');
+      throw new Error('用户未登录');
+    }
+
+    if (!user.id) {
+      console.error('用户ID无效');
+      throw new Error('用户ID无效');
+    }
+
+    // 确保用户ID匹配会话用户ID
+    if (user.id !== sessionData.session.user.id) {
+      console.warn('用户ID与会话用户ID不匹配，使用会话用户ID');
+      user.id = sessionData.session.user.id;
+    }
+
+    console.log('下载用户设置，用户ID:', user.id);
 
     const { data, error } = await supabase
       .from('user_settings')
@@ -561,7 +834,16 @@ export const sync = {
       .eq('user_id', user.id)
       .single();
 
-    if (error && error.code !== 'PGRST116') throw error;
+    if (error && error.code !== 'PGRST116') {
+      console.error('下载用户设置失败:', error);
+      console.error('错误详情:', {
+        code: error.code,
+        message: error.message,
+        details: error.details,
+        hint: error.hint
+      });
+      throw error;
+    }
 
     return data;
   }
