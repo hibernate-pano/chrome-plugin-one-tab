@@ -12,18 +12,53 @@ export const SyncButton: React.FC<SyncButtonProps> = () => {
   const [modalAnimation, setModalAnimation] = useState('');
 
   // 处理上传按钮点击
-  const handleUpload = () => {
+  const handleUpload = async () => {
     if (syncStatus !== 'syncing' && isAuthenticated) {
-      setModalAnimation('animate-fadeIn');
-      setShowUploadModal(true);
+      try {
+        // 检查云端是否有数据
+        const hasCloudData = await syncService.hasCloudData();
+
+        if (!hasCloudData) {
+          // 云端没有数据，直接上传（相当于覆盖模式）
+          console.log('云端没有数据，直接上传...');
+          await syncService.uploadToCloud(false, true); // background=false, overwriteCloud=true
+          console.log('上传完成');
+        } else {
+          // 云端有数据，显示选择对话框
+          setModalAnimation('animate-fadeIn');
+          setShowUploadModal(true);
+        }
+      } catch (error) {
+        console.error('检查云端数据状态失败:', error);
+        // 出错时显示选择对话框，以确保用户可以选择
+        setModalAnimation('animate-fadeIn');
+        setShowUploadModal(true);
+      }
     }
   };
 
   // 处理下载按钮点击
-  const handleDownload = () => {
+  const handleDownload = async () => {
     if (syncStatus !== 'syncing' && isAuthenticated) {
-      setModalAnimation('animate-fadeIn');
-      setShowDownloadModal(true);
+      try {
+        // 检查本地是否有数据
+        const hasLocalData = await syncService.hasLocalData();
+
+        if (!hasLocalData) {
+          // 本地没有数据，直接下载（相当于覆盖模式）
+          console.log('本地没有数据，直接下载...');
+          await syncService.downloadAndRefresh(true); // overwriteLocal=true
+        } else {
+          // 本地有数据，显示选择对话框
+          setModalAnimation('animate-fadeIn');
+          setShowDownloadModal(true);
+        }
+      } catch (error) {
+        console.error('检查本地数据状态失败:', error);
+        // 出错时显示选择对话框，以确保用户可以选择
+        setModalAnimation('animate-fadeIn');
+        setShowDownloadModal(true);
+      }
     }
   };
 

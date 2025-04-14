@@ -12,6 +12,28 @@ class SyncService {
     // 不再自动同步，保证本地操作优先，避免卡顿
   }
 
+  // 检查云端是否有数据
+  async hasCloudData() {
+    try {
+      const cloudGroups = await supabaseSync.downloadTabGroups();
+      return cloudGroups.length > 0;
+    } catch (error) {
+      console.error('检查云端数据失败:', error);
+      return false;
+    }
+  }
+
+  // 检查本地是否有数据
+  async hasLocalData() {
+    try {
+      const localGroups = await storage.getGroups();
+      return localGroups.length > 0;
+    } catch (error) {
+      console.error('检查本地数据失败:', error);
+      return false;
+    }
+  }
+
   // 后台同步数据
   async backgroundSync() {
     return this.syncAll(true);

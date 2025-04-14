@@ -11,8 +11,17 @@ interface HeaderProps {
 
 export const Header: React.FC<HeaderProps> = ({ onSearch }) => {
   const dispatch = useAppDispatch();
+  const [searchValue, setSearchValue] = useState('');
+
   const handleSearch = (e: React.ChangeEvent<HTMLInputElement>) => {
-    onSearch(e.target.value);
+    const value = e.target.value;
+    setSearchValue(value);
+    onSearch(value);
+  };
+
+  const handleClearSearch = () => {
+    setSearchValue('');
+    onSearch('');
   };
 
   const settings = useAppSelector(state => state.settings);
@@ -58,8 +67,9 @@ export const Header: React.FC<HeaderProps> = ({ onSearch }) => {
               <input
                 type="text"
                 placeholder="搜索标签..."
-                className="pl-8 pr-2 py-1.5 w-60 border border-gray-300 rounded text-gray-700 text-sm focus:outline-none focus:ring-1 focus:ring-primary-500 focus:border-transparent"
+                className="pl-8 pr-8 py-1.5 w-60 border border-gray-300 rounded text-gray-700 text-sm focus:outline-none focus:ring-1 focus:ring-primary-500 focus:border-transparent"
                 onChange={handleSearch}
+                value={searchValue}
               />
               <svg
                 xmlns="http://www.w3.org/2000/svg"
@@ -70,6 +80,23 @@ export const Header: React.FC<HeaderProps> = ({ onSearch }) => {
               >
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
               </svg>
+              {searchValue && (
+                <button
+                  onClick={handleClearSearch}
+                  className="absolute right-2 top-1/2 transform -translate-y-1/2 text-gray-400 hover:text-gray-600 transition-colors"
+                  title="清空搜索"
+                >
+                  <svg
+                    xmlns="http://www.w3.org/2000/svg"
+                    className="h-4 w-4"
+                    fill="none"
+                    viewBox="0 0 24 24"
+                    stroke="currentColor"
+                  >
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
+              )}
             </div>
 
             <div className="flex items-center space-x-2">
