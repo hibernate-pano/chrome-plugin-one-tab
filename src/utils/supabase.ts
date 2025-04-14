@@ -387,7 +387,7 @@ export const sync = {
     }
   },
   // 上传标签组
-  async uploadTabGroups(groups: TabGroup[]) {
+  async uploadTabGroups(groups: TabGroup[], overwriteCloud: boolean = false) {
     const deviceId = await getDeviceId();
 
     // 先检查会话是否有效
@@ -527,9 +527,48 @@ export const sync = {
         console.log('已更新所有组的用户ID为会话用户ID');
       }
 
-      const { data, error } = await supabase
-        .from('tab_groups')
-        .upsert(groupsWithUser, { onConflict: 'id' });
+      let data, error;
+
+      // 如果是覆盖模式，先删除用户的所有标签组，然后插入新的标签组
+      if (overwriteCloud) {
+        console.log('使用覆盖模式，先删除用户的所有标签组');
+
+        // 先删除用户的所有标签组
+        const { error: deleteError } = await supabase
+          .from('tab_groups')
+          .delete()
+          .eq('user_id', sessionCheck.session.user.id);
+
+        if (deleteError) {
+          console.error('删除用户标签组失败:', deleteError);
+          console.error('错误详情:', {
+            code: deleteError.code,
+            message: deleteError.message,
+            details: deleteError.details,
+            hint: deleteError.hint
+          });
+          throw deleteError;
+        }
+
+        console.log('用户标签组已删除，准备插入新数据');
+
+        // 然后插入新的标签组
+        const result = await supabase
+          .from('tab_groups')
+          .insert(groupsWithUser);
+
+        data = result.data;
+        error = result.error;
+      } else {
+        // 合并模式，使用 upsert
+        console.log('使用合并模式，更新现有标签组');
+        const result = await supabase
+          .from('tab_groups')
+          .upsert(groupsWithUser, { onConflict: 'id' });
+
+        data = result.data;
+        error = result.error;
+      }
 
       result = data;
 

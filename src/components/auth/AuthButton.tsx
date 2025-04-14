@@ -3,7 +3,7 @@ import { useAppSelector, useAppDispatch } from '@/store/hooks';
 import { signOut } from '@/store/slices/authSlice';
 import { LoginForm } from './LoginForm';
 import { RegisterForm } from './RegisterForm';
-import { syncTabsToCloud, syncTabsFromCloud } from '@/store/slices/tabSlice';
+import { syncService } from '@/services/syncService';
 
 export const AuthButton: React.FC = () => {
   const dispatch = useAppDispatch();
@@ -29,10 +29,8 @@ export const AuthButton: React.FC = () => {
 
   const handleSync = async () => {
     if (syncStatus !== 'syncing') {
-      // 先将本地数据同步到云端，使用后台同步模式减少UI卡顿
-      await dispatch(syncTabsToCloud({ background: true }));
-      // 然后从云端同步数据
-      await dispatch(syncTabsFromCloud({ background: true }));
+      // 使用同步服务进行同步
+      await syncService.syncAll(true); // 使用后台同步模式减少UI卡顿
       setShowDropdown(false);
     }
   };

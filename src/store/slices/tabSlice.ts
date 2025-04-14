@@ -142,15 +142,16 @@ export const importGroups = createAsyncThunk(
 
 
 
-// 新增：同步标签组到云端
+// 同步标签组到云端
 export const syncTabsToCloud = createAsyncThunk<
   { syncTime: string; stats: any | null },
-  { background?: boolean } | void,
+  { background?: boolean; overwriteCloud?: boolean } | void,
   { state: any }
 >(
   'tabs/syncTabsToCloud',
   async (options, { getState }) => {
     const background = options?.background || false;
+    const overwriteCloud = options?.overwriteCloud || false;
     try {
       // 使用 setTimeout 延迟执行数据处理，避免阻塞主线程
       // 这样可以让 UI 先更新，然后再处理数据
@@ -167,8 +168,8 @@ export const syncTabsToCloud = createAsyncThunk<
         };
       }
 
-      // 记录同步模式
-      console.log(`开始${background ? '后台' : ''}同步标签组到云端...`);
+      // 记录同步模式和覆盖模式
+      console.log(`开始${background ? '后台' : ''}同步标签组到云端${overwriteCloud ? '（覆盖模式）' : '（合并模式）'}...`);
 
       // 检查是否有标签组需要同步
       if (!tabs.groups || tabs.groups.length === 0) {
@@ -209,8 +210,8 @@ export const syncTabsToCloud = createAsyncThunk<
         }))
       }));
 
-      // 上传标签组
-      await supabaseSync.uploadTabGroups(validGroups);
+      // 上传标签组，传递覆盖模式参数
+      await supabaseSync.uploadTabGroups(validGroups, overwriteCloud);
 
       // 更新本地标签组的同步状态
       const updatedGroups = tabs.groups.map(group => {

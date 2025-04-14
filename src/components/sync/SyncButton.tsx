@@ -2,12 +2,13 @@ import React, { useState, useEffect } from 'react';
 import { useAppSelector } from '@/store/hooks';
 import { syncService } from '@/services/syncService';
 
-interface SyncButtonProps {}
+interface SyncButtonProps { }
 
 export const SyncButton: React.FC<SyncButtonProps> = () => {
   const { syncStatus, lastSyncTime } = useAppSelector(state => state.tabs);
   const { isAuthenticated } = useAppSelector(state => state.auth);
   const [lastSyncTimeText, setLastSyncTimeText] = useState<string>('');
+  const [showUploadModal, setShowUploadModal] = useState(false);
 
   // 更新上次同步时间的显示文本
   useEffect(() => {
@@ -26,19 +27,52 @@ export const SyncButton: React.FC<SyncButtonProps> = () => {
     }
   }, [lastSyncTime]);
 
-  const handleSync = async () => {
+  // 处理上传按钮点击
+  const handleUpload = () => {
+    if (syncStatus !== 'syncing' && isAuthenticated) {
+      setShowUploadModal(true);
+    }
+  };
+
+  // 处理下载按钮点击
+  const handleDownload = async () => {
     if (syncStatus !== 'syncing' && isAuthenticated) {
       try {
-        console.log('开始手动同步，以云端数据为准，智能合并去重...');
-
-        // 使用syncService的syncAll方法进行同步
-        // 这个方法会先将本地数据同步到云端，然后从云端同步数据
-        // 并使用智能合并算法合并数据
-        await syncService.syncAll(false);
-
-        console.log('手动同步完成');
+        console.log('开始从云端下载数据并与本地合并...');
+        await syncService.downloadFromCloud(false);
+        console.log('下载并合并完成');
       } catch (error) {
-        console.error('手动同步失败:', error);
+        console.error('从云端下载数据失败:', error);
+      }
+    }
+  };
+
+  // 处理上传确认 - 覆盖模式
+  const handleUploadOverwrite = async () => {
+    if (syncStatus !== 'syncing' && isAuthenticated) {
+      try {
+        console.log('开始上传本地数据到云端（覆盖模式）...');
+        await syncService.uploadToCloud(false, true); // background=false, overwriteCloud=true
+        console.log('上传完成（覆盖模式）');
+        setShowUploadModal(false);
+      } catch (error) {
+        console.error('上传数据到云端失败:', error);
+        setShowUploadModal(false);
+      }
+    }
+  };
+
+  // 处理上传确认 - 合并模式
+  const handleUploadMerge = async () => {
+    if (syncStatus !== 'syncing' && isAuthenticated) {
+      try {
+        console.log('开始上传本地数据到云端（合并模式）...');
+        await syncService.uploadToCloud(false, false); // background=false, overwriteCloud=false
+        console.log('上传完成（合并模式）');
+        setShowUploadModal(false);
+      } catch (error) {
+        console.error('上传数据到云端失败:', error);
+        setShowUploadModal(false);
       }
     }
   };
@@ -48,40 +82,103 @@ export const SyncButton: React.FC<SyncButtonProps> = () => {
   }
 
   return (
-    <div className="flex items-center">
-      {lastSyncTimeText && (
-        <span className="text-xs text-gray-500 mr-2">
-          上次同步: {lastSyncTimeText}
-        </span>
-      )}
-      <button
-        onClick={handleSync}
-        disabled={syncStatus === 'syncing'}
-        className={`flex items-center px-3 py-1 rounded-md text-sm ${
-          syncStatus === 'syncing'
+    <>
+      <div className="flex items-center space-x-2">
+        {lastSyncTimeText && (
+          <span className="text-xs text-gray-500 mr-2">
+            上次同步: {lastSyncTimeText}
+          </span>
+        )}
+        <button
+          onClick={handleUpload}
+          disabled={syncStatus === 'syncing'}
+          className={`flex items-center px-3 py-1 rounded-md text-sm ${syncStatus === 'syncing'
             ? 'bg-blue-100 text-blue-600'
             : 'bg-green-100 text-green-600 hover:bg-green-200'
-        } transition-colors`}
-        title="手动同步数据"
-      >
-        {syncStatus === 'syncing' ? (
-          <>
-            <svg className="animate-spin h-4 w-4 mr-1" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-            </svg>
-            同步中...
-          </>
-        ) : (
-          <>
-            <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-            </svg>
-            同步
-          </>
-        )}
-      </button>
-    </div>
+            } transition-colors`}
+          title="上传本地数据到云端"
+        >
+          {syncStatus === 'syncing' ? (
+            <>
+              <svg className="animate-spin h-4 w-4 mr-1" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+              </svg>
+              处理中...
+            </>
+          ) : (
+            <>
+              <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
+              </svg>
+              上传
+            </>
+          )}
+        </button>
+
+        <button
+          onClick={handleDownload}
+          disabled={syncStatus === 'syncing'}
+          className={`flex items-center px-3 py-1 rounded-md text-sm ${syncStatus === 'syncing'
+            ? 'bg-blue-100 text-blue-600'
+            : 'bg-blue-100 text-blue-600 hover:bg-blue-200'
+            } transition-colors`}
+          title="从云端下载数据并与本地合并"
+        >
+          {syncStatus === 'syncing' ? (
+            <>
+              <svg className="animate-spin h-4 w-4 mr-1" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+              </svg>
+              处理中...
+            </>
+          ) : (
+            <>
+              <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+              </svg>
+              下载
+            </>
+          )}
+        </button>
+      </div>
+
+      {/* 上传确认模态框 */}
+      {showUploadModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg p-6 max-w-md w-full">
+            <h3 className="text-lg font-medium text-gray-900 mb-4">选择上传模式</h3>
+            <p className="text-gray-600 mb-6">请选择如何处理云端数据：</p>
+
+            <div className="flex flex-col space-y-3">
+              <button
+                onClick={handleUploadOverwrite}
+                className="w-full px-4 py-2 bg-red-600 text-white rounded-md hover:bg-red-700 transition-colors"
+              >
+                覆盖云端数据
+                <span className="block text-xs mt-1 text-red-200">将使用本地数据完全替换云端数据</span>
+              </button>
+
+              <button
+                onClick={handleUploadMerge}
+                className="w-full px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 transition-colors"
+              >
+                合并到云端数据
+                <span className="block text-xs mt-1 text-green-200">将本地数据与云端数据智能合并</span>
+              </button>
+
+              <button
+                onClick={() => setShowUploadModal(false)}
+                className="w-full px-4 py-2 bg-gray-200 text-gray-800 rounded-md hover:bg-gray-300 transition-colors"
+              >
+                取消
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </>
   );
 };
 

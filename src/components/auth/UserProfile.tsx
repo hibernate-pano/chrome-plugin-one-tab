@@ -1,7 +1,7 @@
 import React, { useMemo } from 'react';
 import { useAppDispatch, useAppSelector } from '@/store/hooks';
 import { signOut } from '@/store/slices/authSlice';
-import { syncTabsToCloud, syncTabsFromCloud } from '@/store/slices/tabSlice';
+import { syncService } from '@/services/syncService';
 
 export const UserProfile: React.FC = () => {
   const dispatch = useAppDispatch();
@@ -15,8 +15,7 @@ export const UserProfile: React.FC = () => {
   const handleSync = async () => {
     try {
       // 使用后台同步模式减少UI卡顿
-      await dispatch(syncTabsFromCloud({ background: true }));
-      await dispatch(syncTabsToCloud({ background: true }));
+      await syncService.syncAll(true);
     } catch (error) {
       console.error('同步失败:', error);
     }
