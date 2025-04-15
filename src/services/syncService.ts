@@ -159,8 +159,8 @@ class SyncService {
     return this.downloadFromCloud(background);
   }
 
-  // 下载数据并刷新页面
-  async downloadAndRefresh(overwriteLocal = false, refreshDelay = 2000) {
+  // 下载数据
+  async downloadAndRefresh(overwriteLocal = false) {
     const { auth } = store.getState();
 
     if (!auth.isAuthenticated) {
@@ -182,17 +182,11 @@ class SyncService {
       // 通过 forceRemoteStrategy 参数来控制是覆盖还是合并模式
       await store.dispatch(syncTabsFromCloud({ background: false, forceRemoteStrategy: overwriteLocal }));
 
-      console.log(`下载数据完成！延迟 ${refreshDelay}ms 后刷新页面...`);
+      console.log('下载数据完成！');
 
-      // 返回成功结果，并在回调中刷新页面
-      // 这样可以在调用方显示成功提示后再刷新页面
+      // 返回成功结果，不再刷新页面
       return {
-        success: true,
-        refreshCallback: () => {
-          setTimeout(() => {
-            window.location.reload();
-          }, refreshDelay);
-        }
+        success: true
       };
 
     } catch (error) {

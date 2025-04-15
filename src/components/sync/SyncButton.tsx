@@ -112,16 +112,12 @@ export const SyncButton: React.FC<SyncButtonProps> = () => {
         // 先关闭模态框，然后开始下载
         closeModals();
         console.log('开始下载数据（覆盖模式）...');
-        // 使用下载并刷新方法，显示进度条，下载完成后延迟刷新页面
+        // 使用下载方法，显示进度条
         const result = await syncService.downloadAndRefresh(true); // overwriteLocal=true
 
         if (result.success) {
           // 显示成功提示
           showToast('数据下载成功', 'success');
-          // 执行刷新回调，延迟刷新页面，给提示显示的时间
-          if (result.refreshCallback) {
-            result.refreshCallback();
-          }
         } else {
           // 显示错误提示
           showToast(result.error || '下载失败，请重试', 'error');
@@ -141,16 +137,12 @@ export const SyncButton: React.FC<SyncButtonProps> = () => {
         // 先关闭模态框，然后开始下载
         closeModals();
         console.log('开始下载数据（合并模式）...');
-        // 使用下载并刷新方法，显示进度条，下载完成后延迟刷新页面
+        // 使用下载方法，显示进度条
         const result = await syncService.downloadAndRefresh(false); // overwriteLocal=false
 
         if (result.success) {
           // 显示成功提示
           showToast('数据下载成功', 'success');
-          // 执行刷新回调，延迟刷新页面，给提示显示的时间
-          if (result.refreshCallback) {
-            result.refreshCallback();
-          }
         } else {
           // 显示错误提示
           showToast(result.error || '下载失败，请重试', 'error');
