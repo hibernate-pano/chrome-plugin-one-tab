@@ -4,6 +4,7 @@ import { signOut } from '@/store/slices/authSlice';
 import { LoginForm } from './LoginForm';
 import { RegisterForm } from './RegisterForm';
 import { syncService } from '@/services/syncService';
+import { useToast } from '@/contexts/ToastContext';
 
 export const AuthButton: React.FC = () => {
   const dispatch = useAppDispatch();
@@ -13,6 +14,7 @@ export const AuthButton: React.FC = () => {
   const [activeTab, setActiveTab] = useState<'login' | 'register'>('login');
   const [showAuthModal, setShowAuthModal] = useState(false);
   const [initialRender, setInitialRender] = useState(true);
+  const { showToast } = useToast();
 
   // 首次渲染后标记为非初始渲染状态
   useEffect(() => {
@@ -30,8 +32,15 @@ export const AuthButton: React.FC = () => {
   const handleSync = async () => {
     if (syncStatus !== 'syncing') {
       // 使用同步服务进行同步
-      await syncService.syncAll(true); // 使用后台同步模式减少UI卡顿
+      const result = await syncService.syncAll(true); // 使用后台同步模式减少UI卡顿
       setShowDropdown(false);
+
+      // 显示同步结果提示
+      if (result && result.success) {
+        showToast('数据同步成功', 'success');
+      } else if (result && !result.success) {
+        showToast(result.error || '同步失败，请重试', 'error');
+      }
     }
   };
 

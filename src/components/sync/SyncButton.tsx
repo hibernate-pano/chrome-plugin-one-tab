@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { useAppSelector } from '@/store/hooks';
 import { syncService } from '@/services/syncService';
+import { useToast } from '@/contexts/ToastContext';
 
 interface SyncButtonProps { }
 
@@ -10,30 +11,14 @@ export const SyncButton: React.FC<SyncButtonProps> = () => {
   const [showUploadModal, setShowUploadModal] = useState(false);
   const [showDownloadModal, setShowDownloadModal] = useState(false);
   const [modalAnimation, setModalAnimation] = useState('');
+  const { showToast } = useToast();
 
   // 处理上传按钮点击
   const handleUpload = async () => {
     if (syncStatus !== 'syncing' && isAuthenticated) {
-      try {
-        // 检查云端是否有数据
-        const hasCloudData = await syncService.hasCloudData();
-
-        if (!hasCloudData) {
-          // 云端没有数据，直接上传（相当于覆盖模式）
-          console.log('云端没有数据，直接上传...');
-          await syncService.uploadToCloud(false, true); // background=false, overwriteCloud=true
-          console.log('上传完成');
-        } else {
-          // 云端有数据，显示选择对话框
-          setModalAnimation('animate-fadeIn');
-          setShowUploadModal(true);
-        }
-      } catch (error) {
-        console.error('检查云端数据状态失败:', error);
-        // 出错时显示选择对话框，以确保用户可以选择
-        setModalAnimation('animate-fadeIn');
-        setShowUploadModal(true);
-      }
+      // 直接显示选择对话框，不再检查云端是否有数据
+      setModalAnimation('animate-fadeIn');
+      setShowUploadModal(true);
     }
   };
 
@@ -79,10 +64,19 @@ export const SyncButton: React.FC<SyncButtonProps> = () => {
         // 先关闭模态框，然后开始上传
         closeModals();
         console.log('开始上传本地数据到云端（覆盖模式）...');
-        await syncService.uploadToCloud(false, true); // background=false, overwriteCloud=true
+        const result = await syncService.uploadToCloud(false, true); // background=false, overwriteCloud=true
         console.log('上传完成（覆盖模式）');
+
+        // 根据结果显示提示
+        if (result.success) {
+          showToast('数据上传成功', 'success');
+        } else {
+          showToast(result.error || '上传失败，请重试', 'error');
+        }
       } catch (error) {
         console.error('上传数据到云端失败:', error);
+        // 显示错误提示
+        showToast('上传失败，请重试', 'error');
       }
     }
   };
@@ -94,10 +88,19 @@ export const SyncButton: React.FC<SyncButtonProps> = () => {
         // 先关闭模态框，然后开始上传
         closeModals();
         console.log('开始上传本地数据到云端（合并模式）...');
-        await syncService.uploadToCloud(false, false); // background=false, overwriteCloud=false
+        const result = await syncService.uploadToCloud(false, false); // background=false, overwriteCloud=false
         console.log('上传完成（合并模式）');
+
+        // 根据结果显示提示
+        if (result.success) {
+          showToast('数据上传成功', 'success');
+        } else {
+          showToast(result.error || '上传失败，请重试', 'error');
+        }
       } catch (error) {
         console.error('上传数据到云端失败:', error);
+        // 显示错误提示
+        showToast('上传失败，请重试', 'error');
       }
     }
   };
@@ -109,10 +112,24 @@ export const SyncButton: React.FC<SyncButtonProps> = () => {
         // 先关闭模态框，然后开始下载
         closeModals();
         console.log('开始下载数据（覆盖模式）...');
-        // 使用下载并刷新方法，显示进度条，下载完成后自动刷新页面
-        await syncService.downloadAndRefresh(true); // overwriteLocal=true
+        // 使用下载并刷新方法，显示进度条，下载完成后延迟刷新页面
+        const result = await syncService.downloadAndRefresh(true); // overwriteLocal=true
+
+        if (result.success) {
+          // 显示成功提示
+          showToast('数据下载成功', 'success');
+          // 执行刷新回调，延迟刷新页面，给提示显示的时间
+          if (result.refreshCallback) {
+            result.refreshCallback();
+          }
+        } else {
+          // 显示错误提示
+          showToast(result.error || '下载失败，请重试', 'error');
+        }
       } catch (error) {
         console.error('从云端下载数据失败:', error);
+        // 显示错误提示
+        showToast('下载失败，请重试', 'error');
       }
     }
   };
@@ -124,10 +141,24 @@ export const SyncButton: React.FC<SyncButtonProps> = () => {
         // 先关闭模态框，然后开始下载
         closeModals();
         console.log('开始下载数据（合并模式）...');
-        // 使用下载并刷新方法，显示进度条，下载完成后自动刷新页面
-        await syncService.downloadAndRefresh(false); // overwriteLocal=false
+        // 使用下载并刷新方法，显示进度条，下载完成后延迟刷新页面
+        const result = await syncService.downloadAndRefresh(false); // overwriteLocal=false
+
+        if (result.success) {
+          // 显示成功提示
+          showToast('数据下载成功', 'success');
+          // 执行刷新回调，延迟刷新页面，给提示显示的时间
+          if (result.refreshCallback) {
+            result.refreshCallback();
+          }
+        } else {
+          // 显示错误提示
+          showToast(result.error || '下载失败，请重试', 'error');
+        }
       } catch (error) {
         console.error('从云端下载数据失败:', error);
+        // 显示错误提示
+        showToast('下载失败，请重试', 'error');
       }
     }
   };

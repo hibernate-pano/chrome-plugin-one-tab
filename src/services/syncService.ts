@@ -45,7 +45,7 @@ class SyncService {
 
     if (!auth.isAuthenticated) {
       console.warn('用户未登录，无法上传数据到云端');
-      return;
+      return { success: false, error: '用户未登录' };
     }
 
     try {
@@ -60,6 +60,7 @@ class SyncService {
       await store.dispatch(syncSettingsToCloud());
 
       console.log(`数据上传完成！${overwriteCloud ? '云端数据已被本地数据覆盖' : '本地数据已与云端数据合并'}`);
+      return { success: true };
     } catch (error) {
       console.error('数据上传失败:', error);
       // 尝试重新获取用户信息，可能是会话过期
@@ -68,6 +69,7 @@ class SyncService {
       } catch (e) {
         console.error('重新获取用户信息失败:', e);
       }
+      return { success: false, error: error instanceof Error ? error.message : '上传失败' };
     }
   }
 
@@ -77,7 +79,7 @@ class SyncService {
 
     if (!auth.isAuthenticated) {
       console.warn('用户未登录，无法从云端下载数据');
-      return;
+      return { success: false, error: '用户未登录' };
     }
 
     try {
@@ -92,6 +94,7 @@ class SyncService {
       await store.dispatch(syncTabsFromCloud({ background, forceRemoteStrategy: overwriteLocal }));
 
       console.log(`从云端下载数据完成！${overwriteLocal ? '本地数据已被云端数据覆盖' : '云端数据已与本地数据合并'}`);
+      return { success: true };
     } catch (error) {
       console.error('从云端下载数据失败:', error);
       // 尝试重新获取用户信息，可能是会话过期
@@ -100,6 +103,7 @@ class SyncService {
       } catch (e) {
         console.error('重新获取用户信息失败:', e);
       }
+      return { success: false, error: error instanceof Error ? error.message : '下载失败' };
     }
   }
 
@@ -109,7 +113,7 @@ class SyncService {
 
     if (!auth.isAuthenticated) {
       console.warn('用户未登录，无法同步数据');
-      return;
+      return { success: false, error: '用户未登录' };
     }
 
     try {
@@ -137,6 +141,7 @@ class SyncService {
       await store.dispatch(syncTabsFromCloud({ background, forceRemoteStrategy: true }));
 
       console.log('数据同步完成！云端数据已成功同步并与本地数据智能合并去重');
+      return { success: true };
     } catch (error) {
       console.error('数据同步失败:', error);
       // 尝试重新获取用户信息，可能是会话过期
@@ -145,6 +150,7 @@ class SyncService {
       } catch (e) {
         console.error('重新获取用户信息失败:', e);
       }
+      return { success: false, error: error instanceof Error ? error.message : '同步失败' };
     }
   }
 
@@ -154,12 +160,12 @@ class SyncService {
   }
 
   // 下载数据并刷新页面
-  async downloadAndRefresh(overwriteLocal = false) {
+  async downloadAndRefresh(overwriteLocal = false, refreshDelay = 2000) {
     const { auth } = store.getState();
 
     if (!auth.isAuthenticated) {
       console.warn('用户未登录，无法从云端下载数据');
-      return;
+      return { success: false, error: '用户未登录' };
     }
 
     try {
@@ -195,12 +201,18 @@ class SyncService {
         await store.dispatch(syncTabsFromCloud({ background: false, forceRemoteStrategy: false }));
       }
 
-      console.log(`下载数据完成！即将刷新页面...`);
+      console.log(`下载数据完成！延迟 ${refreshDelay}ms 后刷新页面...`);
 
-      // 等待短暂后刷新页面
-      setTimeout(() => {
-        window.location.reload();
-      }, 500);
+      // 返回成功结果，并在回调中刷新页面
+      // 这样可以在调用方显示成功提示后再刷新页面
+      return {
+        success: true,
+        refreshCallback: () => {
+          setTimeout(() => {
+            window.location.reload();
+          }, refreshDelay);
+        }
+      };
 
     } catch (error) {
       console.error('下载数据失败:', error);
@@ -210,6 +222,7 @@ class SyncService {
       } catch (e) {
         console.error('重新获取用户信息失败:', e);
       }
+      return { success: false, error: error instanceof Error ? error.message : '下载失败' };
     }
   }
 }
