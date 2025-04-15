@@ -363,6 +363,9 @@ export const syncTabsFromCloud = createAsyncThunk(
         dispatch(updateSyncProgress({ progress: 50, operation: 'download' }));
       }
 
+      // 获取当前时间，移动到这里以避免引用错误
+      const currentTime = new Date().toISOString();
+
       let mergedGroups;
 
       // 如果是覆盖模式，直接使用云端数据，不进行合并
@@ -411,9 +414,6 @@ export const syncTabsFromCloud = createAsyncThunk(
       if (totalMergedTabs < Math.max(totalCloudTabs, totalLocalTabs)) {
         console.log(`信息: 合并后的标签总数(${totalMergedTabs})小于原始标签总数(本地:${totalLocalTabs}, 云端:${totalCloudTabs})，这通常是因为有重复标签或已删除标签，不影响正常使用`);
       }
-
-      // 获取当前时间
-      const currentTime = new Date().toISOString();
 
       // 保存到本地存储
       await storage.setGroups(mergedGroups);
