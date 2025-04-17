@@ -42,8 +42,9 @@ export const SortableTab: React.FC<SortableTabProps> = ({
     opacity: isDragging ? 0.5 : 1,
     position: 'relative' as const,
     zIndex: isDragging ? 999 : 'auto',
-    backgroundColor: isDragging ? '#f9fafb' : undefined,
-    boxShadow: isDragging ? '0 4px 8px rgba(0, 0, 0, 0.1)' : undefined,
+    // 移除可能干扰拖动的动画效果
+    // backgroundColor: isDragging ? '#f9fafb' : undefined,
+    // boxShadow: isDragging ? '0 4px 8px rgba(0, 0, 0, 0.1)' : undefined,
     cursor: 'move',
   };
 

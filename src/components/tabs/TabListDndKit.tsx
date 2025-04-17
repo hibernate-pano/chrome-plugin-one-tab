@@ -19,7 +19,7 @@ import {
 import {
   SortableContext,
   sortableKeyboardCoordinates,
-  verticalListSortingStrategy
+  rectSortingStrategy // 使用矩形排序策略，更适合复杂布局
 } from '@dnd-kit/sortable';
 
 interface TabListProps {
@@ -47,7 +47,7 @@ export const TabListDndKit: React.FC<TabListProps> = ({ searchQuery }) => {
   const sensors = useSensors(
     useSensor(PointerSensor, {
       activationConstraint: {
-        distance: 5, // Minimum distance required before activating
+        distance: 1, // 减少激活距离，使拖动更容易触发
       },
     }),
     useSensor(KeyboardSensor, {
@@ -195,7 +195,7 @@ export const TabListDndKit: React.FC<TabListProps> = ({ searchQuery }) => {
         >
           {useDoubleColumnLayout ? (
             // 双栏布局
-            <SortableContext items={groupIds} strategy={verticalListSortingStrategy}>
+            <SortableContext items={groupIds} strategy={rectSortingStrategy}>
               <div className="grid grid-cols-1 sm:grid-cols-1 md:grid-cols-2 gap-3">
                 {/* 左栏 - 偶数索引的标签组 */}
                 <div className="space-y-2 transition-all">
@@ -226,7 +226,7 @@ export const TabListDndKit: React.FC<TabListProps> = ({ searchQuery }) => {
             </SortableContext>
           ) : (
             // 单栏布局
-            <SortableContext items={groupIds} strategy={verticalListSortingStrategy}>
+            <SortableContext items={groupIds} strategy={rectSortingStrategy}>
               <div className="space-y-2 transition-all">
                 {filteredGroups.map((group, index) => (
                   <SortableTabGroup

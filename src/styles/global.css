@@ -91,10 +91,12 @@
   position: relative;
 }
 
-/* 拖拽时的效果 */
+/* 拖拽时的效果 - 简化动画效果 */
 .dragging {
-  @apply shadow-lg z-10 scale-[1.02] bg-white border border-blue-200;
-  animation: pulse 1.5s infinite ease-in-out;
+  @apply shadow-lg z-10 bg-white border border-blue-200;
+  /* 移除可能干扰拖动的动画效果 */
+  /* scale-[1.02] */
+  /* animation: pulse 1.5s infinite ease-in-out; */
 }
 
 /* 拖拽目标的效果 */

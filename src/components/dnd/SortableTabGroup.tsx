@@ -5,7 +5,7 @@ import { TabGroup as TabGroupType } from '@/types/tab';
 import { useAppDispatch } from '@/store/hooks';
 import { updateGroupNameAndSync, deleteGroup, updateGroup } from '@/store/slices/tabSlice';
 import { SortableTab } from './SortableTab';
-import { SortableContext, verticalListSortingStrategy } from '@dnd-kit/sortable';
+import { SortableContext, rectSortingStrategy } from '@dnd-kit/sortable';
 
 interface SortableTabGroupProps {
   group: TabGroupType;
@@ -168,7 +168,7 @@ export const SortableTabGroup: React.FC<SortableTabGroupProps> = ({ group, index
       </div>
       {isExpanded && (
         <div className="px-2 pt-2 space-y-1 group tabs-container" style={{ overflow: 'hidden' }}>
-          <SortableContext items={tabIds} strategy={verticalListSortingStrategy}>
+          <SortableContext items={tabIds} strategy={rectSortingStrategy}>
             {group.tabs.map((tab, index) => (
               <SortableTab
                 key={tab.id}
