@@ -413,9 +413,25 @@ async function openTabsWithSingleInstance(urls: string[]) {
   // 记录标签管理器页面的ID，以便后续激活
   let tabManagerId = existingTabs.length > 0 ? existingTabs[0].id : null;
 
+  // 获取当前窗口信息，用于确定新标签页的位置
+  const currentWindow = await chrome.windows.getCurrent();
+  const allTabs = await chrome.tabs.query({ windowId: currentWindow.id });
+  let startPosition = allTabs.length; // 默认在窗口末尾添加新标签
+
+  // 创建一个数组来存储所有创建的标签页ID，以便后续可以按顺序排列
+  const createdTabIds: number[] = [];
+
   // 打开要恢复的所有标签页，但不激活它们
-  for (const url of urls) {
-    await chrome.tabs.create({ url, active: false });
+  // 使用 index 参数确保标签页按照原始顺序打开
+  for (let i = 0; i < urls.length; i++) {
+    const newTab = await chrome.tabs.create({
+      url: urls[i],
+      active: false,
+      index: startPosition + i // 确保按顺序创建
+    });
+    if (newTab.id) {
+      createdTabIds.push(newTab.id);
+    }
   }
 
   // 如果有标签管理器页面，则激活它
@@ -430,6 +446,8 @@ async function openTabsWithSingleInstance(urls: string[]) {
       await chrome.tabs.remove(tabsToClose);
     }
   }
+
+  console.log('已按原始顺序恢复标签页，创建的标签ID:', createdTabIds);
 }
 
 // 创建右键菜单

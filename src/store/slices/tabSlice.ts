@@ -536,33 +536,55 @@ export const toggleGroupLockAndSync = createAsyncThunk(
 export const moveGroupAndSync = createAsyncThunk(
   'tabs/moveGroupAndSync',
   async ({ dragIndex, hoverIndex }: { dragIndex: number, hoverIndex: number }, { getState, dispatch }) => {
-    // 在 Redux 中移动标签组
-    dispatch(moveGroup({ dragIndex, hoverIndex }));
+    try {
+      // 在 Redux 中移动标签组
+      dispatch(moveGroup({ dragIndex, hoverIndex }));
 
-    // 在本地存储中更新标签组顺序
-    const groups = await storage.getGroups();
-    const dragGroup = groups[dragIndex];
+      // 使用 setTimeout 延迟执行存储操作，避免阻塞 UI
+      setTimeout(async () => {
+        try {
+          // 在本地存储中更新标签组顺序
+          const groups = await storage.getGroups();
 
-    // 创建新的数组以避免直接修改原数组
-    const newGroups = [...groups];
-    // 删除拖拽的标签组
-    newGroups.splice(dragIndex, 1);
-    // 在新位置插入标签组
-    newGroups.splice(hoverIndex, 0, dragGroup);
+          // 检查索引是否有效
+          if (dragIndex < 0 || dragIndex >= groups.length || hoverIndex < 0 || hoverIndex >= groups.length) {
+            console.error('无效的标签组索引:', { dragIndex, hoverIndex, groupsLength: groups.length });
+            return;
+          }
 
-    // 更新本地存储
-    await storage.setGroups(newGroups);
+          const dragGroup = groups[dragIndex];
 
-    // 使用通用同步函数同步到云端
-    // 不等待同步完成，直接返回结果
-    syncToCloud(dispatch, getState, '标签组顺序更新')
-      .catch(err => {
-        if (process.env.NODE_ENV === 'development') {
-          console.error('同步标签组顺序更新操作失败:', err);
+          // 创建新的数组以避免直接修改原数组
+          const newGroups = [...groups];
+          // 删除拖拽的标签组
+          newGroups.splice(dragIndex, 1);
+          // 在新位置插入标签组
+          newGroups.splice(hoverIndex, 0, dragGroup);
+
+          // 更新本地存储
+          await storage.setGroups(newGroups);
+
+          // 使用通用同步函数同步到云端
+          // 不等待同步完成，直接返回结果
+          // 使用延迟同步，避免频繁的拖拽操作导致过多的同步请求
+          setTimeout(() => {
+            syncToCloud(dispatch, getState, '标签组顺序更新')
+              .catch(err => {
+                if (process.env.NODE_ENV === 'development') {
+                  console.error('同步标签组顺序更新操作失败:', err);
+                }
+              });
+          }, 1000); // 延迟1秒后同步，避免频繁请求
+        } catch (error) {
+          console.error('存储标签组移动操作失败:', error);
         }
-      });
+      }, 100); // 延迟100ms执行存储操作
 
-    return { dragIndex, hoverIndex };
+      return { dragIndex, hoverIndex };
+    } catch (error) {
+      console.error('移动标签组操作失败:', error);
+      throw error;
+    }
   }
 );
 
@@ -575,61 +597,76 @@ export const moveTabAndSync = createAsyncThunk(
     targetGroupId: string,
     targetIndex: number
   }, { getState, dispatch }) => {
-    // 在 Redux 中移动标签页
-    dispatch(moveTab({ sourceGroupId, sourceIndex, targetGroupId, targetIndex }));
+    try {
+      // 在 Redux 中移动标签页
+      dispatch(moveTab({ sourceGroupId, sourceIndex, targetGroupId, targetIndex }));
 
-    // 在本地存储中更新标签页位置
-    const groups = await storage.getGroups();
-    const sourceGroup = groups.find(g => g.id === sourceGroupId);
-    const targetGroup = groups.find(g => g.id === targetGroupId);
+      // 使用 setTimeout 延迟执行存储操作，避免阻塞 UI
+      setTimeout(async () => {
+        try {
+          // 在本地存储中更新标签页位置
+          const groups = await storage.getGroups();
+          const sourceGroup = groups.find(g => g.id === sourceGroupId);
+          const targetGroup = groups.find(g => g.id === targetGroupId);
 
-    if (sourceGroup && targetGroup) {
-      // 获取要移动的标签页
-      const tab = sourceGroup.tabs[sourceIndex];
+          if (sourceGroup && targetGroup) {
+            // 获取要移动的标签页
+            const tab = sourceGroup.tabs[sourceIndex];
 
-      // 创建新的标签页数组以避免直接修改原数组
-      const newSourceTabs = [...sourceGroup.tabs];
-      const newTargetTabs = sourceGroupId === targetGroupId ? newSourceTabs : [...targetGroup.tabs];
+            // 创建新的标签页数组以避免直接修改原数组
+            const newSourceTabs = [...sourceGroup.tabs];
+            const newTargetTabs = sourceGroupId === targetGroupId ? newSourceTabs : [...targetGroup.tabs];
 
-      // 从源标签组中删除标签页
-      newSourceTabs.splice(sourceIndex, 1);
+            // 从源标签组中删除标签页
+            newSourceTabs.splice(sourceIndex, 1);
 
-      // 如果是同一个标签组内移动，需要考虑删除后索引的变化
-      if (sourceGroupId === targetGroupId && sourceIndex < targetIndex) {
-        newTargetTabs.splice(targetIndex - 1, 0, tab);
-      } else {
-        newTargetTabs.splice(targetIndex, 0, tab);
-      }
+            // 如果是同一个标签组内移动，需要考虑删除后索引的变化
+            if (sourceGroupId === targetGroupId && sourceIndex < targetIndex) {
+              newTargetTabs.splice(targetIndex - 1, 0, tab);
+            } else {
+              newTargetTabs.splice(targetIndex, 0, tab);
+            }
 
-      // 更新源标签组和目标标签组
-      sourceGroup.tabs = newSourceTabs;
-      sourceGroup.updatedAt = new Date().toISOString();
+            // 更新源标签组和目标标签组
+            sourceGroup.tabs = newSourceTabs;
+            sourceGroup.updatedAt = new Date().toISOString();
 
-      if (sourceGroupId !== targetGroupId) {
-        targetGroup.tabs = newTargetTabs;
-        targetGroup.updatedAt = new Date().toISOString();
-      }
+            if (sourceGroupId !== targetGroupId) {
+              targetGroup.tabs = newTargetTabs;
+              targetGroup.updatedAt = new Date().toISOString();
+            }
 
-      // 更新本地存储
-      const updatedGroups = groups.map(g => {
-        if (g.id === sourceGroupId) return sourceGroup;
-        if (g.id === targetGroupId) return targetGroup;
-        return g;
-      });
+            // 更新本地存储
+            const updatedGroups = groups.map(g => {
+              if (g.id === sourceGroupId) return sourceGroup;
+              if (g.id === targetGroupId) return targetGroup;
+              return g;
+            });
 
-      await storage.setGroups(updatedGroups);
+            await storage.setGroups(updatedGroups);
 
-      // 使用通用同步函数同步到云端
-      // 不等待同步完成，直接返回结果
-      syncToCloud(dispatch, getState, '标签页移动')
-        .catch(err => {
-          if (process.env.NODE_ENV === 'development') {
-            console.error('同步标签页移动操作失败:', err);
+            // 使用通用同步函数同步到云端
+            // 不等待同步完成，直接返回结果
+            // 使用延迟同步，避免频繁的拖拽操作导致过多的同步请求
+            setTimeout(() => {
+              syncToCloud(dispatch, getState, '标签页移动')
+                .catch(err => {
+                  if (process.env.NODE_ENV === 'development') {
+                    console.error('同步标签页移动操作失败:', err);
+                  }
+                });
+            }, 1000); // 延迟1秒后同步，避免频繁请求
           }
-        });
-    }
+        } catch (error) {
+          console.error('存储标签页移动操作失败:', error);
+        }
+      }, 100); // 延迟100ms执行存储操作
 
-    return { sourceGroupId, sourceIndex, targetGroupId, targetIndex };
+      return { sourceGroupId, sourceIndex, targetGroupId, targetIndex };
+    } catch (error) {
+      console.error('移动标签页操作失败:', error);
+      throw error;
+    }
   }
 );
 
