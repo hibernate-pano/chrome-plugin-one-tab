@@ -24,11 +24,11 @@ export const DraggableTab: React.FC<DraggableTabProps> = ({
   const ref = useRef<HTMLDivElement>(null);
   const [isHovering, setIsHovering] = useState(false);
 
-  // 创建一个防抖动的移动函数，避免频繁更新
+  // 防抖的移动函数，减少过频繁的状态更新
   const debouncedMoveTab = useRef(
     debounce((sourceGroupId, sourceIndex, targetGroupId, targetIndex) => {
       moveTab(sourceGroupId, sourceIndex, targetGroupId, targetIndex);
-    }, 50) // 50ms 的防抖时间
+    }, 50)
   ).current;
 
   // 清理防抖函数
@@ -83,8 +83,6 @@ export const DraggableTab: React.FC<DraggableTabProps> = ({
       const hoverClientY = clientOffset.y - hoverBoundingRect.top;
 
       // 判断拖拽方向和鼠标位置
-      // 简化逻辑，不再区分上下拖动，只判断鼠标是否越过中线
-      // 这样可以确保无论从上向下还是从下向上拖动都能正常工作
       if (hoverClientY < hoverMiddleY - thresholdSize) {
         // 鼠标在上半部分，目标位置应该在当前项之前
         if (sourceIndex > targetIndex || (sourceIndex === targetIndex - 1 && sourceGroupId === targetGroupId)) {
@@ -123,19 +121,13 @@ export const DraggableTab: React.FC<DraggableTabProps> = ({
   return (
     <div
       ref={ref}
-      className={`flex items-center py-1 px-2 hover:bg-gray-100 rounded draggable-item tab-item
-        ${isDragging ? 'dragging' : 'opacity-100'}
-        ${isOver && isHovering ? 'drag-over' : ''}
+      className={`flex items-center py-1 px-2 hover:bg-gray-100 rounded cursor-move
+        ${isDragging ? 'bg-gray-50 border border-gray-300' : ''}
+        ${isOver && isHovering ? 'border-t-2 border-blue-300' : ''}
       `}
       style={{
-        cursor: 'move',
-        transform: isOver && isHovering ? 'scale(1.02) translateX(3px)' : 'none',
-        boxShadow: isOver && isHovering ? '0 1px 3px rgba(0,0,0,0.1)' : 'none',
-        transition: 'transform 0.2s ease, background-color 0.2s ease, border 0.2s ease, box-shadow 0.2s ease, margin 0.2s ease',
+        opacity: isDragging ? 0.6 : 1,
         position: 'relative',
-        zIndex: isOver && isHovering ? 10 : 'auto',
-        marginTop: isOver && isHovering ? '8px' : '0px',
-        marginBottom: isOver && isHovering ? '8px' : '0px'
       }}
     >
       <div className="flex items-center space-x-2 flex-1 min-w-0">
@@ -162,7 +154,7 @@ export const DraggableTab: React.FC<DraggableTabProps> = ({
       </div>
       <button
         onClick={() => handleDeleteTab(tab.id)}
-        className="text-gray-400 hover:text-red-500 p-1 rounded hover:bg-gray-200 transition-colors ml-1 opacity-0 group-hover:opacity-100"
+        className="text-gray-400 hover:text-red-500 p-1 rounded hover:bg-gray-200 ml-1 opacity-0 group-hover:opacity-100"
         title="删除标签页"
       >
         <svg xmlns="http://www.w3.org/2000/svg" className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">

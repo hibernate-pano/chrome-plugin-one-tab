@@ -123,6 +123,16 @@ export const TabGroup: React.FC<TabGroupProps> = ({ group }) => {
     }, 50); // 小延迟确保 UI 先更新
   };
 
+  const handleMoveTab = (sourceGroupId: string, sourceIndex: number, targetGroupId: string, targetIndex: number) => {
+    dispatch(moveTabAndSync({
+      sourceGroupId,
+      sourceIndex,
+      targetGroupId,
+      targetIndex,
+      updateSourceInDrag: true
+    }));
+  };
+
   return (
     <div className="mb-2 transition-all duration-200 ease-in-out bg-white border border-gray-200 rounded-md shadow-sm pb-2 hover:shadow-md">
       <div className="flex items-center p-2 bg-gray-50 border-b border-gray-200 rounded-t-md">
@@ -209,9 +219,7 @@ export const TabGroup: React.FC<TabGroupProps> = ({ group }) => {
               tab={tab}
               groupId={group.id}
               index={index}
-              moveTab={(sourceGroupId, sourceIndex, targetGroupId, targetIndex) => {
-                dispatch(moveTabAndSync({ sourceGroupId, sourceIndex, targetGroupId, targetIndex }));
-              }}
+              moveTab={handleMoveTab}
               handleOpenTab={handleOpenTab}
               handleDeleteTab={(tabId) => {
                 const updatedTabs = group.tabs.filter(t => t.id !== tabId);

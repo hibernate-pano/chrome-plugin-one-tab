@@ -185,8 +185,8 @@ export const syncTabsToCloud = createAsyncThunk<
           dispatch(updateSyncProgress({ progress: 100, operation: 'none' }));
         }
         return {
-          syncTime: new Date().toISOString(),
-          stats: null
+          syncTime: tabs.lastSyncTime || new Date().toISOString(),
+          stats: tabs.compressionStats
         };
       }
 
@@ -591,15 +591,21 @@ export const moveGroupAndSync = createAsyncThunk(
 // 移动标签页并同步到云端
 export const moveTabAndSync = createAsyncThunk(
   'tabs/moveTabAndSync',
-  async ({ sourceGroupId, sourceIndex, targetGroupId, targetIndex }: {
+  async ({ sourceGroupId, sourceIndex, targetGroupId, targetIndex, updateSourceInDrag = true }: {
     sourceGroupId: string,
     sourceIndex: number,
     targetGroupId: string,
-    targetIndex: number
+    targetIndex: number,
+    updateSourceInDrag?: boolean
   }, { getState, dispatch }) => {
     try {
-      // 在 Redux 中移动标签页
-      dispatch(moveTab({ sourceGroupId, sourceIndex, targetGroupId, targetIndex }));
+      // 在 Redux 中移动标签页，传递updateSourceInDrag参数
+      dispatch(moveTab({ sourceGroupId, sourceIndex, targetGroupId, targetIndex, updateSourceInDrag }));
+
+      // 如果是在拖动过程中且不需要更新源，跳过存储操作
+      if (!updateSourceInDrag) {
+        return { sourceGroupId, sourceIndex, targetGroupId, targetIndex };
+      }
 
       // 使用 setTimeout 延迟执行存储操作，避免阻塞 UI
       setTimeout(async () => {
@@ -717,26 +723,101 @@ export const tabSlice = createSlice({
       state.groups = newGroups;
     },
     moveTab: (state, action) => {
-      const { sourceGroupId, sourceIndex, targetGroupId, targetIndex } = action.payload;
+      const { sourceGroupId, sourceIndex, targetGroupId, targetIndex, updateSourceInDrag = true } = action.payload;
       // 找到源标签组和目标标签组
       const sourceGroup = state.groups.find(g => g.id === sourceGroupId);
       const targetGroup = state.groups.find(g => g.id === targetGroupId);
 
       if (sourceGroup && targetGroup) {
         // 获取要移动的标签页
-        const tab = sourceGroup.tabs[sourceIndex];
+        const tab = { ...sourceGroup.tabs[sourceIndex] }; // 创建副本避免引用问题
+
+        // 在拖动过程中，如果不需要更新源，只处理目标位置的变化
+        if (!updateSourceInDrag) {
+          // 检查目标位置是否已经有相同的标签（可能是之前拖动的结果）
+          const existingTabIndex = targetGroup.tabs.findIndex(t => t.id === tab.id);
+
+          // 创建新的目标标签数组
+          const newTargetTabs = [...targetGroup.tabs];
+
+          // 如果标签已经存在于目标组中，先移除它
+          if (existingTabIndex !== -1 && existingTabIndex !== targetIndex) {
+            newTargetTabs.splice(existingTabIndex, 1);
+          }
+
+          // 在目标位置插入标签
+          // 如果移除了现有标签，需要调整目标索引
+          let adjustedTargetIndex = targetIndex;
+
+          if (existingTabIndex !== -1) {
+            if (existingTabIndex < targetIndex) {
+              // 如果当前标签在目标位置之前，目标索引需要减1
+              adjustedTargetIndex = targetIndex - 1;
+            }
+            // 如果当前标签在目标位置之后，目标索引不变
+          }
+
+          // 确保目标索引在有效范围内
+          adjustedTargetIndex = Math.max(0, Math.min(adjustedTargetIndex, newTargetTabs.length));
+
+          // 在调整后的目标位置插入标签
+          newTargetTabs.splice(adjustedTargetIndex, 0, tab);
+
+          // 如果标签组为空，确保至少有一个标签
+          if (newTargetTabs.length === 0) {
+            newTargetTabs.push(tab);
+          }
+
+          targetGroup.tabs = newTargetTabs;
+          targetGroup.updatedAt = new Date().toISOString();
+
+          // 输出日志，帮助调试
+          if (process.env.NODE_ENV === 'development') {
+            console.log('moveTab (in drag):', {
+              sourceGroupId,
+              sourceIndex,
+              targetGroupId,
+              targetIndex,
+              adjustedTargetIndex,
+              existingTabIndex,
+              tabId: tab.id,
+              resultLength: newTargetTabs.length
+            });
+          }
+
+          return;
+        }
+
+        // 正常的移动逻辑（拖动结束时）
         // 创建新的标签页数组以避免直接修改原数组
         const newSourceTabs = [...sourceGroup.tabs];
         const newTargetTabs = sourceGroupId === targetGroupId ? newSourceTabs : [...targetGroup.tabs];
+
+        // 在拖动结束时，需要检查目标组中是否已经有相同的标签
+        // 这可能是由于连续拖动过程中添加的
+        let adjustedTargetIndex = targetIndex; // 创建一个可修改的目标索引副本
+
+        if (sourceGroupId !== targetGroupId) {
+          const existingTabIndex = targetGroup.tabs.findIndex(t => t.id === tab.id);
+          if (existingTabIndex !== -1) {
+            // 如果目标组中已经有这个标签，先移除它
+            newTargetTabs.splice(existingTabIndex, 1);
+
+            // 调整目标索引，如果必要
+            if (existingTabIndex < adjustedTargetIndex) {
+              adjustedTargetIndex--;
+            }
+          }
+        }
 
         // 从源标签组中删除标签页
         newSourceTabs.splice(sourceIndex, 1);
 
         // 如果是同一个标签组内移动，需要考虑删除后索引的变化
-        if (sourceGroupId === targetGroupId && sourceIndex < targetIndex) {
-          newTargetTabs.splice(targetIndex - 1, 0, tab);
+        if (sourceGroupId === targetGroupId && sourceIndex < adjustedTargetIndex) {
+          newTargetTabs.splice(adjustedTargetIndex - 1, 0, tab);
         } else {
-          newTargetTabs.splice(targetIndex, 0, tab);
+          newTargetTabs.splice(adjustedTargetIndex, 0, tab);
         }
 
         // 更新目标标签组

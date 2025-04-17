@@ -23,7 +23,6 @@ export const SortableTab: React.FC<SortableTabProps> = ({
     listeners,
     setNodeRef,
     transform,
-    // 移除未使用的 transition
     isDragging,
     over,
   } = useSortable({
@@ -36,23 +35,34 @@ export const SortableTab: React.FC<SortableTabProps> = ({
     }
   });
 
-  // 极简样式，完全模拟 OneTab 原版
+  // 简化样式，提供清晰的拖拽反馈
   const style = {
     transform: CSS.Transform.toString(transform),
+    opacity: isDragging ? 0.6 : 1,
     position: 'relative' as const,
-    cursor: isDragging ? 'grabbing' : 'grab', // 拖拽时使用拿取光标，更直观
-    touchAction: 'none', // 防止触摸屏幕上的滑动手势干扰拖拽
   };
 
+  // 检测是否有其他元素悬停在上面
   const isOver = over && over.id !== `${groupId}-tab-${tab.id}`;
+
+  // 获取悬停元素的数据和位置
+  const overData = over?.data.current;
+  const overIndex = overData?.index;
+
+  // 获取鼠标在元素上的相对位置，用于决定是在上半部还是下半部
+  const clientOffset = transform?.y || 0;
+  const isMouseInUpperHalf = clientOffset < 0; // 如果变换值为负，说明鼠标在元素上半部
+
+  // 结合鼠标位置和索引关系决定视觉反馈
+  const isOverAbove = isOver && (isMouseInUpperHalf || (overIndex !== undefined && overIndex < index));
 
   return (
     <div
       ref={setNodeRef}
       style={style}
-      className={`flex items-center py-1 px-2 hover:bg-gray-100 rounded select-none
-        ${isDragging ? 'dragging' : ''}
-        ${isOver ? 'drag-over' : ''}
+      className={`flex items-center py-1 px-2 hover:bg-gray-100 rounded select-none cursor-move
+        ${isDragging ? 'bg-gray-50 border border-gray-300' : ''}
+        ${isOver ? isOverAbove ? 'border-t-2 border-blue-300 bg-blue-50' : 'border-b-2 border-blue-300 bg-blue-50' : ''}
       `}
       {...attributes}
       {...listeners}
@@ -81,7 +91,7 @@ export const SortableTab: React.FC<SortableTabProps> = ({
       </div>
       <button
         onClick={() => handleDeleteTab(tab.id)}
-        className="text-gray-400 hover:text-red-500 p-1 rounded hover:bg-gray-200 transition-colors ml-1 opacity-0 group-hover:opacity-100"
+        className="text-gray-400 hover:text-red-500 p-1 rounded hover:bg-gray-200 ml-1 opacity-0 group-hover:opacity-100"
         title="删除标签页"
       >
         <svg xmlns="http://www.w3.org/2000/svg" className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">

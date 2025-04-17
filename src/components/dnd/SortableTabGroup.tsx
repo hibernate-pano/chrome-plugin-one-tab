@@ -23,7 +23,6 @@ export const SortableTabGroup: React.FC<SortableTabGroupProps> = ({ group, index
     listeners,
     setNodeRef,
     transform,
-    // 移除未使用的 transition
     isDragging,
   } = useSortable({
     id: `group-${group.id}`,
@@ -34,12 +33,11 @@ export const SortableTabGroup: React.FC<SortableTabGroupProps> = ({ group, index
     }
   });
 
-  // 极简样式，完全模拟 OneTab 原版
+  // 简化的样式，专注于基本功能
   const style = {
     transform: CSS.Transform.toString(transform),
+    opacity: isDragging ? 0.6 : 1,
     position: 'relative' as const,
-    cursor: isDragging ? 'grabbing' : 'grab', // 拖拽时使用拿取光标，更直观
-    touchAction: 'none', // 防止触摸屏幕上的滑动手势干扰拖拽
   };
 
   const handleToggleExpand = () => {
@@ -112,18 +110,22 @@ export const SortableTabGroup: React.FC<SortableTabGroupProps> = ({ group, index
     <div
       ref={setNodeRef}
       style={style}
-      className={`bg-white rounded-lg border border-gray-200 overflow-hidden select-none ${isDragging ? 'dragging' : ''}`}
+      className={`bg-white rounded-lg border border-gray-200 overflow-hidden select-none ${isDragging ? 'border-gray-400' : ''}`}
     >
-      <div className="flex items-center justify-between p-2 bg-gray-50 border-b border-gray-200" {...attributes} {...listeners}>
+      <div 
+        className="flex items-center justify-between p-2 bg-gray-50 border-b border-gray-200 cursor-move" 
+        {...attributes} 
+        {...listeners}
+      >
         <div className="flex items-center space-x-2 flex-1 min-w-0">
           <button
             onClick={handleToggleExpand}
-            className="text-gray-500 hover:text-gray-700 p-1 rounded-full hover:bg-gray-200 transition-colors"
+            className="text-gray-500 hover:text-gray-700 p-1 rounded-full hover:bg-gray-200"
             title={isExpanded ? "折叠标签组" : "展开标签组"}
           >
             <svg
               xmlns="http://www.w3.org/2000/svg"
-              className={`h-4 w-4 transition-transform ${isExpanded ? 'rotate-0' : '-rotate-90'}`}
+              className={`h-4 w-4 ${isExpanded ? 'rotate-0' : '-rotate-90'}`}
               fill="none"
               viewBox="0 0 24 24"
               stroke="currentColor"
@@ -157,7 +159,7 @@ export const SortableTabGroup: React.FC<SortableTabGroupProps> = ({ group, index
         <div className="flex items-center space-x-1">
           <button
             onClick={handleDeleteGroup}
-            className="text-gray-400 hover:text-red-500 p-1 rounded hover:bg-gray-200 transition-colors"
+            className="text-gray-400 hover:text-red-500 p-1 rounded hover:bg-gray-200"
             title="删除标签组"
           >
             <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
