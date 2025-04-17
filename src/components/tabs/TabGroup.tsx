@@ -202,7 +202,7 @@ export const TabGroup: React.FC<TabGroupProps> = ({ group }) => {
         </div>
       </div>
       {isExpanded && (
-        <div className="px-2 pt-2 space-y-1 group transition-all duration-300 ease-in-out" style={{ overflow: 'hidden' }}>
+        <div className="px-2 pt-2 space-y-1 group tabs-container" style={{ overflow: 'hidden' }}>
           {group.tabs.map((tab, index) => (
             <DraggableTab
               key={tab.id}

@@ -27,7 +27,12 @@ export const DataManagement: React.FC = () => {
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = `onetab-plus-backup-${new Date().toISOString().split('T')[0]}.json`;
+      // 安全地处理日期格式化
+      const date = new Date();
+      const year = date.getFullYear();
+      const month = String(date.getMonth() + 1).padStart(2, '0');
+      const day = String(date.getDate()).padStart(2, '0');
+      a.download = `onetab-plus-backup-${year}-${month}-${day}.json`;
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);

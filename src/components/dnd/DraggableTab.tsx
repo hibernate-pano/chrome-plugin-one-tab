@@ -83,15 +83,22 @@ export const DraggableTab: React.FC<DraggableTabProps> = ({
       const hoverClientY = clientOffset.y - hoverBoundingRect.top;
 
       // 判断拖拽方向和鼠标位置
-      // 向上拖动时（即从下到上），鼠标应该在目标元素的上半部分
-      if (sourceIndex > targetIndex && hoverClientY > hoverMiddleY + thresholdSize) {
-        // 如果鼠标还在下半部分，不触发移动
-        return;
-      }
-
-      // 向下拖动时（即从上到下），鼠标应该在目标元素的下半部分
-      if (sourceIndex < targetIndex && hoverClientY < hoverMiddleY - thresholdSize) {
-        // 如果鼠标还在上半部分，不触发移动
+      // 简化逻辑，不再区分上下拖动，只判断鼠标是否越过中线
+      // 这样可以确保无论从上向下还是从下向上拖动都能正常工作
+      if (hoverClientY < hoverMiddleY - thresholdSize) {
+        // 鼠标在上半部分，目标位置应该在当前项之前
+        if (sourceIndex > targetIndex || (sourceIndex === targetIndex - 1 && sourceGroupId === targetGroupId)) {
+          // 如果已经在正确位置或者是相邻项，不触发移动
+          return;
+        }
+      } else if (hoverClientY > hoverMiddleY + thresholdSize) {
+        // 鼠标在下半部分，目标位置应该在当前项之后
+        if (sourceIndex < targetIndex || (sourceIndex === targetIndex + 1 && sourceGroupId === targetGroupId)) {
+          // 如果已经在正确位置或者是相邻项，不触发移动
+          return;
+        }
+      } else {
+        // 鼠标在中间区域，不触发移动
         return;
       }
 
@@ -116,7 +123,7 @@ export const DraggableTab: React.FC<DraggableTabProps> = ({
   return (
     <div
       ref={ref}
-      className={`flex items-center py-1 px-2 hover:bg-gray-100 rounded draggable-item
+      className={`flex items-center py-1 px-2 hover:bg-gray-100 rounded draggable-item tab-item
         ${isDragging ? 'dragging' : 'opacity-100'}
         ${isOver && isHovering ? 'drag-over' : ''}
       `}
@@ -124,9 +131,11 @@ export const DraggableTab: React.FC<DraggableTabProps> = ({
         cursor: 'move',
         transform: isOver && isHovering ? 'scale(1.02) translateX(3px)' : 'none',
         boxShadow: isOver && isHovering ? '0 1px 3px rgba(0,0,0,0.1)' : 'none',
-        transition: 'transform 0.2s ease, background-color 0.2s ease, border 0.2s ease, box-shadow 0.2s ease',
+        transition: 'transform 0.2s ease, background-color 0.2s ease, border 0.2s ease, box-shadow 0.2s ease, margin 0.2s ease',
         position: 'relative',
-        zIndex: isOver && isHovering ? 10 : 'auto'
+        zIndex: isOver && isHovering ? 10 : 'auto',
+        marginTop: isOver && isHovering ? '8px' : '0px',
+        marginBottom: isOver && isHovering ? '8px' : '0px'
       }}
     >
       <div className="flex items-center space-x-2 flex-1 min-w-0">

@@ -739,13 +739,25 @@ export const tabSlice = createSlice({
           newTargetTabs.splice(targetIndex, 0, tab);
         }
 
-        // 更新源标签组和目标标签组
-        sourceGroup.tabs = newSourceTabs;
-        sourceGroup.updatedAt = new Date().toISOString();
-
+        // 更新目标标签组
         if (sourceGroupId !== targetGroupId) {
           targetGroup.tabs = newTargetTabs;
           targetGroup.updatedAt = new Date().toISOString();
+        }
+
+        // 检查源标签组是否为空
+        if (newSourceTabs.length === 0) {
+          // 如果源标签组为空，则删除该标签组
+          state.groups = state.groups.filter(g => g.id !== sourceGroupId);
+
+          // 如果当前活动标签组是被删除的标签组，则重置活动标签组
+          if (state.activeGroupId === sourceGroupId) {
+            state.activeGroupId = null;
+          }
+        } else {
+          // 如果源标签组不为空，则更新源标签组
+          sourceGroup.tabs = newSourceTabs;
+          sourceGroup.updatedAt = new Date().toISOString();
         }
       }
     },

@@ -72,15 +72,22 @@ export const DraggableTabGroup: React.FC<DraggableTabGroupProps> = ({ group, ind
       const hoverClientY = clientOffset.y - hoverBoundingRect.top;
 
       // 判断拖拽方向和鼠标位置
-      // 向上拖动时（即从下到上），鼠标应该在目标元素的上半部分
-      if (dragIndex > hoverIndex && hoverClientY > hoverMiddleY + thresholdSize) {
-        // 如果鼠标还在下半部分，不触发移动
-        return;
-      }
-
-      // 向下拖动时（即从上到下），鼠标应该在目标元素的下半部分
-      if (dragIndex < hoverIndex && hoverClientY < hoverMiddleY - thresholdSize) {
-        // 如果鼠标还在上半部分，不触发移动
+      // 简化逻辑，不再区分上下拖动，只判断鼠标是否越过中线
+      // 这样可以确保无论从上向下还是从下向上拖动都能正常工作
+      if (hoverClientY < hoverMiddleY - thresholdSize) {
+        // 鼠标在上半部分，目标位置应该在当前项之前
+        if (dragIndex > hoverIndex || dragIndex === hoverIndex - 1) {
+          // 如果已经在正确位置或者是相邻项，不触发移动
+          return;
+        }
+      } else if (hoverClientY > hoverMiddleY + thresholdSize) {
+        // 鼠标在下半部分，目标位置应该在当前项之后
+        if (dragIndex < hoverIndex || dragIndex === hoverIndex + 1) {
+          // 如果已经在正确位置或者是相邻项，不触发移动
+          return;
+        }
+      } else {
+        // 鼠标在中间区域，不触发移动
         return;
       }
 
@@ -108,11 +115,13 @@ export const DraggableTabGroup: React.FC<DraggableTabGroupProps> = ({ group, ind
         opacity: isDragging ? 0.5 : 1,
         cursor: 'move',
         transform: isOver && isHovering ? 'scale(1.01) translateY(3px)' : 'none',
-        transition: 'transform 0.2s ease, opacity 0.2s ease, box-shadow 0.2s ease, background-color 0.2s ease',
+        transition: 'transform 0.2s ease, opacity 0.2s ease, box-shadow 0.2s ease, background-color 0.2s ease, margin 0.2s ease',
         boxShadow: isOver && isHovering ? '0 3px 10px rgba(0, 0, 0, 0.15)' : 'none',
         backgroundColor: isOver && isHovering ? 'rgba(243, 244, 246, 0.5)' : 'transparent',
         position: 'relative',
-        zIndex: isOver && isHovering ? 10 : 'auto'
+        zIndex: isOver && isHovering ? 10 : 'auto',
+        marginTop: isOver && isHovering ? '12px' : '0px',
+        marginBottom: isOver && isHovering ? '12px' : '0px'
       }}
       className={`draggable-item ${isDragging ? 'dragging' : ''} ${isOver && isHovering ? 'drag-over rounded-md' : ''}`}
     >

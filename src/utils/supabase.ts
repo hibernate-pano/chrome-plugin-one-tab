@@ -115,7 +115,9 @@ export const auth = {
       }
 
       // 从回调URL中提取参数
-      const hashParams = new URLSearchParams(url.split('#')[1]);
+      // 安全地处理URL分割
+      const hashPart = url.includes('#') ? url.split('#')[1] : '';
+      const hashParams = new URLSearchParams(hashPart);
       const accessToken = hashParams.get('access_token');
       const refreshToken = hashParams.get('refresh_token');
       const state = hashParams.get('state');
@@ -154,7 +156,11 @@ export const auth = {
 
   // 生成随机state用于防止CSRF攻击
   generateRandomState() {
-    return Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
+    // 使用更安全的方式生成随机字符串，避免使用 substring
+    const randomPart1 = Math.random().toString(36).replace(/[^a-z0-9]+/g, '').slice(0, 6);
+    const randomPart2 = Math.random().toString(36).replace(/[^a-z0-9]+/g, '').slice(0, 6);
+    const timestamp = Date.now().toString(36);
+    return `${randomPart1}${timestamp}${randomPart2}`;
   },
 
   // 处理OAuth回调
@@ -167,7 +173,9 @@ export const auth = {
 
     // 处理其他OAuth回调
     // 从URL中提取token
-    const hashParams = new URLSearchParams(url.split('#')[1]);
+    // 安全地处理URL分割
+    const hashPart = url.includes('#') ? url.split('#')[1] : '';
+    const hashParams = new URLSearchParams(hashPart);
     const accessToken = hashParams.get('access_token');
     const refreshToken = hashParams.get('refresh_token');
 
