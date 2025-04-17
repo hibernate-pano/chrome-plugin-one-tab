@@ -36,11 +36,12 @@ export const SortableTab: React.FC<SortableTabProps> = ({
     }
   });
 
-  // 极简样式，完全移除过渡效果
+  // 极简样式，完全模拟 OneTab 原版
   const style = {
     transform: CSS.Transform.toString(transform),
     position: 'relative' as const,
-    cursor: 'move',
+    cursor: isDragging ? 'grabbing' : 'grab', // 拖拽时使用拿取光标，更直观
+    touchAction: 'none', // 防止触摸屏幕上的滑动手势干扰拖拽
   };
 
   const isOver = over && over.id !== `${groupId}-tab-${tab.id}`;
@@ -49,7 +50,7 @@ export const SortableTab: React.FC<SortableTabProps> = ({
     <div
       ref={setNodeRef}
       style={style}
-      className={`flex items-center py-1 px-2 hover:bg-gray-100 rounded
+      className={`flex items-center py-1 px-2 hover:bg-gray-100 rounded select-none
         ${isDragging ? 'dragging' : ''}
         ${isOver ? 'drag-over' : ''}
       `}

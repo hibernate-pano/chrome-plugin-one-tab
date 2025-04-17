@@ -34,10 +34,12 @@ export const SortableTabGroup: React.FC<SortableTabGroupProps> = ({ group, index
     }
   });
 
-  // 极简样式，完全移除过渡效果
+  // 极简样式，完全模拟 OneTab 原版
   const style = {
     transform: CSS.Transform.toString(transform),
     position: 'relative' as const,
+    cursor: isDragging ? 'grabbing' : 'grab', // 拖拽时使用拿取光标，更直观
+    touchAction: 'none', // 防止触摸屏幕上的滑动手势干扰拖拽
   };
 
   const handleToggleExpand = () => {
@@ -110,9 +112,9 @@ export const SortableTabGroup: React.FC<SortableTabGroupProps> = ({ group, index
     <div
       ref={setNodeRef}
       style={style}
-      className={`bg-white rounded-lg border border-gray-200 overflow-hidden ${isDragging ? 'dragging' : ''}`}
+      className={`bg-white rounded-lg border border-gray-200 overflow-hidden select-none ${isDragging ? 'dragging' : ''}`}
     >
-      <div className="flex items-center justify-between p-2 bg-gray-50 border-b border-gray-200 cursor-move" {...attributes} {...listeners}>
+      <div className="flex items-center justify-between p-2 bg-gray-50 border-b border-gray-200" {...attributes} {...listeners}>
         <div className="flex items-center space-x-2 flex-1 min-w-0">
           <button
             onClick={handleToggleExpand}

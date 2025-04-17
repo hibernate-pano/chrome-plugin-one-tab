@@ -90,45 +90,31 @@
   position: relative;
 }
 
-/* 拖拽时的效果 - 类似 OneTab 原版的极简效果 */
+/* 拖拽时的效果 - 完全模拟 OneTab 原版 */
 .dragging {
   z-index: 10;
-  outline: 1px dashed #4299e1;
-  /* 更细的蓝色虚线边框 */
-  outline-offset: 1px;
+  opacity: 0.7;
+  /* 拖拽时的透明度 */
+  background-color: #f0f9ff !important;
+  /* 浅蓝色背景，更稳定的视觉反馈 */
+  outline: 1px dashed #3b82f6;
+  /* 蓝色虚线边框 */
+  outline-offset: 0;
 }
 
-/* 拖拽目标的效果 - 极简化 */
+/* 拖拽目标的效果 - 模拟 OneTab 原版 */
 .drag-over {
-  border-top: 1px solid #4299e1;
-  /* 更细的蓝色实线 */
+  border-top: 2px solid #3b82f6;
+  /* 更突出的蓝色指示线 */
+  margin-top: 1px;
+  /* 补偿边框宽度，避免元素跳动 */
 }
 
 /* 标签容器和标签项 - 移除所有过渡效果 */
 
 /* 移除不再需要的脉冲动画 */
 
-/* DnD Kit 特定样式 */
-.sortable-tab-active {
-  opacity: 0.5;
-  background-color: #f9fafb;
-  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
-  z-index: 999;
-}
-
-.sortable-tab-over {
-  transform: translateY(8px);
-}
-
-.sortable-group-active {
-  opacity: 0.7;
-  z-index: 999;
-  box-shadow: 0 8px 16px rgba(0, 0, 0, 0.1);
-}
-
-.sortable-transition {
-  transition: transform 300ms ease, opacity 300ms ease, box-shadow 300ms ease, margin 300ms ease;
-}
+/* 移除未使用的 DnD Kit 特定样式 */
 
 /* 模态框动画 */
 @keyframes fadeIn {
