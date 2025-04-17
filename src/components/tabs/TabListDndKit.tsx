@@ -8,9 +8,7 @@ import { DndKitProvider } from '@/components/dnd/DndKitProvider';
 import '@/styles/drag-drop.css';
 import {
   DragOverlay,
-  closestCorners,
   pointerWithin,
-  rectIntersection,
   KeyboardSensor,
   PointerSensor,
   useSensor,
@@ -39,12 +37,18 @@ export const TabListDndKit: React.FC<TabListProps> = ({ searchQuery }) => {
 
   // 使用引用跟踪拖动状态
   const dragStateRef = useRef<{
-    lastSourceGroupId?: string;
-    lastSourceIndex?: number;
-    lastTargetGroupId?: string;
-    lastTargetIndex?: number;
+    // 原始位置（拖动开始时）
     originalGroupId?: string;
     originalIndex?: number;
+    // 当前目标位置（最后一次拖动过程中）
+    currentGroupId?: string;
+    currentIndex?: number;
+    // 上一次拖动的目标位置（用于检测重复）
+    lastOverGroupId?: string;
+    lastOverIndex?: number;
+    // 拖动方向
+    direction?: 'up' | 'down' | 'none';
+    // 拖动状态
     isDragging: boolean;
   }>({ isDragging: false });
 
@@ -83,14 +87,19 @@ export const TabListDndKit: React.FC<TabListProps> = ({ searchQuery }) => {
         dragStateRef.current = {
           originalGroupId: activeData.groupId,
           originalIndex: activeData.index,
+          currentGroupId: activeData.groupId,
+          currentIndex: activeData.index,
+          direction: 'none',
           isDragging: true
         };
 
-        console.log('Drag Start:', {
-          originalGroupId: dragStateRef.current.originalGroupId,
-          originalIndex: dragStateRef.current.originalIndex,
-          id: active.id
-        });
+        if (process.env.NODE_ENV === 'development') {
+          console.log('Drag Start:', {
+            originalGroupId: dragStateRef.current.originalGroupId,
+            originalIndex: dragStateRef.current.originalIndex,
+            id: active.id
+          });
+        }
       } else {
         dragStateRef.current = { isDragging: true };
       }
@@ -101,7 +110,7 @@ export const TabListDndKit: React.FC<TabListProps> = ({ searchQuery }) => {
   };
 
   const handleDragOver = (event: DragOverEvent) => {
-    const { active, over } = event;
+    const { active, over, delta } = event;
 
     if (!over) return;
 
@@ -126,25 +135,39 @@ export const TabListDndKit: React.FC<TabListProps> = ({ searchQuery }) => {
 
       // 如果目标位置与上次相同，不重复处理
       if (
-        dragState.lastTargetGroupId === overGroupId &&
-        dragState.lastTargetIndex === overIndex
+        dragState.lastOverGroupId === overGroupId &&
+        dragState.lastOverIndex === overIndex
       ) {
         return;
       }
 
-      // 更新最后的目标位置
-      dragState.lastTargetGroupId = overGroupId;
-      dragState.lastTargetIndex = overIndex;
+      // 更新上一次的目标位置（用于检测重复）
+      dragState.lastOverGroupId = overGroupId;
+      dragState.lastOverIndex = overIndex;
 
-      // 获取源位置（使用上一次的目标位置作为新的源位置）
-      const sourceGroupId = dragState.lastSourceGroupId || dragState.originalGroupId || '';
-      const sourceIndex = dragState.lastSourceIndex !== undefined ?
-        dragState.lastSourceIndex :
+      // 获取当前源位置（使用当前位置作为源）
+      const sourceGroupId = dragState.currentGroupId || dragState.originalGroupId || '';
+      const sourceIndex = dragState.currentIndex !== undefined ?
+        dragState.currentIndex :
         (dragState.originalIndex !== undefined ? dragState.originalIndex : 0);
 
-      // 更新源位置为当前位置（为下一次移动做准备）
-      dragState.lastSourceGroupId = overGroupId;
-      dragState.lastSourceIndex = overIndex;
+      // 计算拖动方向
+      if (sourceGroupId === overGroupId) {
+        if (sourceIndex < overIndex) {
+          dragState.direction = 'down';
+        } else if (sourceIndex > overIndex) {
+          dragState.direction = 'up';
+        } else {
+          dragState.direction = 'none';
+        }
+      } else {
+        // 跨组拖动时使用鼠标移动方向
+        dragState.direction = delta.y > 0 ? 'down' : 'up';
+      }
+
+      // 更新当前位置
+      dragState.currentGroupId = overGroupId;
+      dragState.currentIndex = overIndex;
 
       // 在拖动过程中只更新UI，不更新源数据
       if (sourceGroupId) { // 确保有有效的源组ID
@@ -153,7 +176,8 @@ export const TabListDndKit: React.FC<TabListProps> = ({ searchQuery }) => {
           sourceIndex,
           targetGroupId: overGroupId,
           targetIndex: overIndex,
-          updateSourceInDrag: false
+          updateSourceInDrag: false,
+          direction: dragState.direction // 传递拖动方向
         }));
       }
 
@@ -163,8 +187,8 @@ export const TabListDndKit: React.FC<TabListProps> = ({ searchQuery }) => {
           sourceIndex,
           targetGroupId: overGroupId,
           targetIndex: overIndex,
-          originalGroupId: dragState.originalGroupId,
-          originalIndex: dragState.originalIndex
+          direction: dragState.direction,
+          delta: delta
         });
       }
     }
@@ -219,6 +243,7 @@ export const TabListDndKit: React.FC<TabListProps> = ({ searchQuery }) => {
       const finalSourceIndex = dragState.originalIndex;
       const finalTargetGroupId = overData.groupId;
       const finalTargetIndex = overData.index;
+      const direction = dragState.direction || 'none';
 
       if (process.env.NODE_ENV === 'development') {
         console.log('Drag End:', {
@@ -239,7 +264,8 @@ export const TabListDndKit: React.FC<TabListProps> = ({ searchQuery }) => {
           sourceIndex: finalSourceIndex,
           targetGroupId: finalTargetGroupId,
           targetIndex: finalTargetIndex,
-          updateSourceInDrag: true // 拖动完成，需要更新源位置
+          updateSourceInDrag: true, // 拖动完成，需要更新源位置
+          direction // 传递拖动方向
         }));
       }
     }
@@ -300,21 +326,9 @@ export const TabListDndKit: React.FC<TabListProps> = ({ searchQuery }) => {
         <DndKitProvider
           sensors={sensors}
           collisionDetection={(args) => {
-            // 使用更精确的碰撞检测算法组合
-            // 首先使用 pointerWithin 检测鼠标指针所在的元素
-            const pointerCollisions = pointerWithin(args);
-            if (pointerCollisions.length > 0) {
-              return pointerCollisions;
-            }
-
-            // 如果没有直接的指针碰撞，使用矩形交叉检测
-            const rectCollisions = rectIntersection(args);
-            if (rectCollisions.length > 0) {
-              return rectCollisions;
-            }
-
-            // 最后使用最接近角点的算法
-            return closestCorners(args);
+            // 使用鼠标指针位置作为主要碰撞检测方式
+            // 这样可以确保拖动时能够准确地检测到鼠标下方的元素
+            return pointerWithin(args);
           }}
           measuring={{ droppable: { strategy: MeasuringStrategy.Always } }}
           onDragStart={handleDragStart}
