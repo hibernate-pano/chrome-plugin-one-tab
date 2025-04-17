@@ -128,8 +128,7 @@ export const TabGroup: React.FC<TabGroupProps> = ({ group }) => {
       sourceGroupId,
       sourceIndex,
       targetGroupId,
-      targetIndex,
-      updateSourceInDrag: true
+      targetIndex
     }));
   };
 

@@ -61,8 +61,6 @@ export const updateGroup = createAsyncThunk(
   }
 );
 
-
-
 export const deleteGroup = createAsyncThunk(
   'tabs/deleteGroup',
   async (groupId: string, { getState, dispatch }) => {
@@ -141,8 +139,6 @@ export const importGroups = createAsyncThunk(
     return processedGroups;
   }
 );
-
-
 
 // 同步标签组到云端
 export const syncTabsToCloud = createAsyncThunk<
@@ -591,27 +587,16 @@ export const moveGroupAndSync = createAsyncThunk(
 // 移动标签页并同步到云端
 export const moveTabAndSync = createAsyncThunk(
   'tabs/moveTabAndSync',
-  async ({ sourceGroupId, sourceIndex, targetGroupId, targetIndex, updateSourceInDrag = true, direction = 'none' }: {
+  async ({ sourceGroupId, sourceIndex, targetGroupId, targetIndex, updateSourceInDrag = true }: {
     sourceGroupId: string,
     sourceIndex: number,
     targetGroupId: string,
     targetIndex: number,
-    updateSourceInDrag?: boolean,
-    direction?: 'up' | 'down' | 'none'
+    updateSourceInDrag?: boolean
   }, { getState, dispatch }) => {
     try {
-      // 在 Redux 中移动标签页，传递参数
-      dispatch(moveTab({ sourceGroupId, sourceIndex, targetGroupId, targetIndex, updateSourceInDrag, direction }));
-
-      // 输出日志
-      console.log('[DEBUG] moveTabAndSync:', {
-        sourceGroupId,
-        sourceIndex,
-        targetGroupId,
-        targetIndex,
-        updateSourceInDrag,
-        direction
-      });
+      // 在 Redux 中移动标签页
+      dispatch(moveTab({ sourceGroupId, sourceIndex, targetGroupId, targetIndex }));
 
       // 如果是在拖动过程中且不需要更新源，跳过存储操作
       if (!updateSourceInDrag) {
@@ -637,12 +622,17 @@ export const moveTabAndSync = createAsyncThunk(
             // 从源标签组中删除标签页
             newSourceTabs.splice(sourceIndex, 1);
 
-            // 如果是同一个标签组内移动，需要考虑删除后索引的变化
+            // 计算调整后的目标索引
+            let adjustedIndex = targetIndex;
             if (sourceGroupId === targetGroupId && sourceIndex < targetIndex) {
-              newTargetTabs.splice(targetIndex - 1, 0, tab);
-            } else {
-              newTargetTabs.splice(targetIndex, 0, tab);
+              adjustedIndex = targetIndex - 1;
             }
+
+            // 确保索引在有效范围内
+            adjustedIndex = Math.max(0, Math.min(adjustedIndex, newTargetTabs.length));
+
+            // 插入标签到目标位置
+            newTargetTabs.splice(adjustedIndex, 0, tab);
 
             // 更新源标签组和目标标签组
             sourceGroup.tabs = newSourceTabs;
@@ -734,17 +724,8 @@ export const tabSlice = createSlice({
       state.groups = newGroups;
     },
     moveTab: (state, action) => {
-      const { sourceGroupId, sourceIndex, targetGroupId, targetIndex, updateSourceInDrag = true, direction = 'none' } = action.payload;
+      const { sourceGroupId, sourceIndex, targetGroupId, targetIndex } = action.payload;
 
-      // 输出日志
-      console.log('[DEBUG] moveTab reducer:', {
-        sourceGroupId,
-        sourceIndex,
-        targetGroupId,
-        targetIndex,
-        updateSourceInDrag,
-        direction
-      });
       // 找到源标签组和目标标签组
       const sourceGroup = state.groups.find(g => g.id === sourceGroupId);
       const targetGroup = state.groups.find(g => g.id === targetGroupId);
@@ -754,82 +735,28 @@ export const tabSlice = createSlice({
       // 获取要移动的标签页
       const tab = { ...sourceGroup.tabs[sourceIndex] }; // 创建副本避免引用问题
 
-      // 如果是拖动过程中的预览更新，只更新目标位置
-      if (!updateSourceInDrag) {
-        // 创建新的目标标签数组
-        const newTargetTabs = [...targetGroup.tabs];
-
-        // 如果标签已经存在于目标组中，先移除它
-        const existingIndex = newTargetTabs.findIndex(t => t.id === tab.id);
-        if (existingIndex !== -1 && existingIndex !== targetIndex) {
-          newTargetTabs.splice(existingIndex, 1);
-        }
-
-        // 计算调整后的目标索引
-        let adjustedIndex = targetIndex;
-
-        // 根据拖动方向调整索引
-        if (existingIndex !== -1) {
-          if (existingIndex < targetIndex) {
-            adjustedIndex--;
-            console.log('[DEBUG] moveTab: 已存在的标签在目标之前，调整索引', { existingIndex, targetIndex, adjustedIndex });
-          }
-
-          // 向下拖动的特殊处理
-          if (direction === 'down' && sourceGroupId === targetGroupId) {
-            console.log('[DEBUG] moveTab: 向下拖动特殊处理', { sourceIndex, targetIndex, adjustedIndex, direction });
-          }
-        }
-
-        // 确保索引在有效范围内
-        adjustedIndex = Math.max(0, Math.min(adjustedIndex, newTargetTabs.length));
-
-
-
-        // 插入标签到目标位置
-        newTargetTabs.splice(adjustedIndex, 0, tab);
-        targetGroup.tabs = newTargetTabs;
-        targetGroup.updatedAt = new Date().toISOString();
-        return;
-      }
-
-      // 拖动结束时的完整更新
-
       // 处理同一组内移动
       if (sourceGroupId === targetGroupId) {
+        // 创建新的标签数组，避免直接修改原数组
         const newTabs = [...sourceGroup.tabs];
+        
         // 先移除源标签
         newTabs.splice(sourceIndex, 1);
-
+        
         // 计算调整后的目标索引
-        let adjustedIndex = targetIndex;
-
-        // 简化索引计算逻辑 - 不再依赖拖动方向
-        // 当源索引小于目标索引时，目标索引需要减1
-        // 这是因为在移除源标签后，目标位置会向前移动1
-        if (sourceIndex < targetIndex) {
-          adjustedIndex = targetIndex - 1;
-        } else {
-          adjustedIndex = targetIndex;
-        }
-
-        console.log('[DEBUG] moveTab (final): 索引计算', {
-          sourceIndex,
-          targetIndex,
-          adjustedIndex,
-          direction,
-          updateSourceInDrag
-        });
-
+        // 如果目标位置在源位置之后，由于已经移除了源元素，目标位置需要减1
+        let adjustedIndex = sourceIndex < targetIndex ? targetIndex - 1 : targetIndex;
+        
         // 确保索引在有效范围内
         adjustedIndex = Math.max(0, Math.min(adjustedIndex, newTabs.length));
-
+        
         // 插入到目标位置
         newTabs.splice(adjustedIndex, 0, tab);
+        
         // 更新标签组
         sourceGroup.tabs = newTabs;
         sourceGroup.updatedAt = new Date().toISOString();
-      }
+      } 
       // 处理跨组移动
       else {
         // 从源组移除标签
@@ -840,13 +767,16 @@ export const tabSlice = createSlice({
 
         // 添加到目标组
         const newTargetTabs = [...targetGroup.tabs];
+        
         // 检查目标组中是否已经有这个标签
         const existingIndex = newTargetTabs.findIndex(t => t.id === tab.id);
         if (existingIndex !== -1) {
           newTargetTabs.splice(existingIndex, 1);
         }
-        // 插入到目标位置
-        newTargetTabs.splice(targetIndex, 0, tab);
+        
+        // 插入到目标位置，确保索引不超出范围
+        const safeTargetIndex = Math.min(targetIndex, newTargetTabs.length);
+        newTargetTabs.splice(safeTargetIndex, 0, tab);
         targetGroup.tabs = newTargetTabs;
         targetGroup.updatedAt = new Date().toISOString();
 

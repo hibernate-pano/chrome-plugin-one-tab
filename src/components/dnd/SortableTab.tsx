@@ -25,54 +25,23 @@ export const SortableTab: React.FC<SortableTabProps> = ({
     setNodeRef,
     transform,
     isDragging,
-    over,
   } = useSortable({
     id: `${groupId}-tab-${tab.id}`,
     data: {
       type: 'tab',
       tab,
       groupId,
-      index,
-      originalGroupId: groupId,
-      originalIndex: index
+      index
     }
   });
 
   // 提供清晰的拖拽反馈
   const style = {
     transform: CSS.Transform.toString(transform),
-    opacity: isDragging ? 0.7 : 1,
-    position: 'relative' as const,
+    opacity: isDragging ? 0.5 : 1,
     zIndex: isDragging ? 999 : 'auto',
-    transition: isDragging ? undefined : 'all 0.2s ease',
+    transition: isDragging ? undefined : 'transform 0.15s ease, opacity 0.15s ease',
   };
-
-  // 检测是否有其他元素悬停在上面
-  const isOver = over && over.id !== `${groupId}-tab-${tab.id}`;
-
-  // 获取鼠标在元素上的相对位置
-  const clientOffset = transform?.y || 0;
-
-  // 判断鼠标是否在元素上半部
-  const isMouseInUpperHalf = clientOffset < 0;
-
-  // 插入指示器位置
-  const isOverAbove = isOver && isMouseInUpperHalf;
-
-  // 输出日志
-  if (isOver) {
-    console.log('[DEBUG] SortableTab:', {
-      tabId: tab.id,
-      groupId,
-      index,
-      isOver,
-      clientOffset,
-      isMouseInUpperHalf,
-      isOverAbove,
-      overId: over?.id,
-      overData: over?.data.current
-    });
-  }
 
   return (
     <div
@@ -80,15 +49,10 @@ export const SortableTab: React.FC<SortableTabProps> = ({
       style={style}
       className={`flex items-center py-1 px-2 hover:bg-gray-100 rounded select-none cursor-move tab-item
         ${isDragging ? 'bg-blue-50 border border-blue-300 dragging shadow-md' : ''}
-        ${isOver ? 'drop-target' : ''}
       `}
       {...attributes}
       {...listeners}
     >
-      {/* 添加插入指示器 */}
-      {isOver && (
-        <div className={`insert-indicator ${isOverAbove ? 'insert-indicator-top' : 'insert-indicator-bottom'}`} />
-      )}
       <div className="flex items-center space-x-2 flex-1 min-w-0">
         {tab.favicon ? (
           <img src={tab.favicon} alt="" className="w-4 h-4 flex-shrink-0" />

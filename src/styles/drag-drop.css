@@ -1,4 +1,4 @@
-/* 拖曳相关样式 - 极简版 */
+/* 拖曳相关样式 - 优化版 */
 
 /* 标签样式 */
 .tab-item {
@@ -11,7 +11,7 @@
   margin-bottom: 4px;
   cursor: move;
   position: relative;
-  transition: all 0.2s ease;
+  transition: transform 0.15s ease, opacity 0.15s ease;
 }
 
 .tab-item:hover {
@@ -19,29 +19,11 @@
 }
 
 .tab-item.dragging {
-  opacity: 0.7;
+  opacity: 0.5;
   border-color: #3b82f6;
   box-shadow: 0 4px 8px rgba(59, 130, 246, 0.2);
   z-index: 999;
   background-color: #f0f7ff;
-}
-
-/* 插入指示器 */
-.insert-indicator {
-  position: absolute;
-  left: 0;
-  right: 0;
-  height: 2px;
-  background-color: #3b82f6;
-  z-index: 1000;
-}
-
-.insert-indicator-top {
-  top: -2px;
-}
-
-.insert-indicator-bottom {
-  bottom: -2px;
 }
 
 /* 拖曳覆盖层 */
@@ -59,12 +41,11 @@
   text-overflow: ellipsis;
 }
 
-.drop-target {
-  background-color: #f0f7ff;
-  border-color: #bfdbfe;
+/* 标签组拖曳样式 */
+.group-item {
+  transition: transform 0.15s ease, opacity 0.15s ease;
 }
 
-/* 标签组拖曳样式 */
 .group-item.dragging {
   opacity: 0.5;
   border-color: #ccc;
@@ -77,4 +58,11 @@
   border-radius: 4px;
   border: 1px solid #ccc;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+}
+
+/* 标签页拖动时的高亮效果 */
+.tab-overlay {
+  background-color: #f0f7ff;
+  border-color: #3b82f6;
+  box-shadow: 0 4px 8px rgba(59, 130, 246, 0.2);
 }

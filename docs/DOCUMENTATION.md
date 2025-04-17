@@ -9,12 +9,14 @@ OneTab Plus 是一个 Chrome 浏览器扩展，用于高效管理和组织浏览
 ### 核心功能
 
 - **保存标签页**：
+
   - 保存当前窗口的所有标签页
   - 保存当前活动的标签页
   - 自动过滤 Chrome 内部页面（chrome://）和扩展页面（chrome-extension://）
   - 可配置是否允许保存重复的标签页
 
 - **标签组管理**：
+
   - 创建标签组
   - 重命名标签组（点击重命名按钮或双击标签组名称）
   - 锁定/解锁标签组（锁定后的标签组在恢复标签页时不会被删除，也不能重命名）
@@ -22,12 +24,14 @@ OneTab Plus 是一个 Chrome 浏览器扩展，用于高效管理和组织浏览
   - 恢复标签组中的所有标签页
 
 - **标签页管理**：
+
   - 恢复单个标签页
   - 删除单个标签页
   - 拖放重新排序标签页
   - 在标签组之间移动标签页
 
 - **搜索功能**：
+
   - 搜索标签页标题和 URL
   - 实时搜索结果显示
   - 只显示匹配的标签，而不是整个标签组
@@ -39,11 +43,13 @@ OneTab Plus 是一个 Chrome 浏览器扩展，用于高效管理和组织浏览
 ### 云端同步功能
 
 - **用户认证**：
+
   - 用户注册和登录
   - 邮箱/密码认证
   - 会话管理
 
 - **数据同步**：
+
   - 自动同步标签组和设置到云端
   - 多设备间数据同步
   - 实时双向同步，使用 Supabase Realtime 技术
@@ -60,6 +66,7 @@ OneTab Plus 是一个 Chrome 浏览器扩展，用于高效管理和组织浏览
 ### 设置选项
 
 - **常规设置**：
+
   - 保存后自动关闭标签页
   - 自定义标签组命名模板
   - 显示/隐藏网站图标
@@ -198,8 +205,7 @@ const saveAllTabs = async () => {
 
   // 过滤掉 Chrome 内部页面和扩展页面
   const filteredTabs = tabs.filter(tab => {
-    return !tab.url.startsWith('chrome://') &&
-           !tab.url.startsWith('chrome-extension://');
+    return !tab.url.startsWith('chrome://') && !tab.url.startsWith('chrome-extension://');
   });
 
   // 创建新的标签组
@@ -212,11 +218,11 @@ const saveAllTabs = async () => {
       title: tab.title,
       favicon: tab.favIconUrl,
       createdAt: new Date().toISOString(),
-      lastAccessed: new Date().toISOString()
+      lastAccessed: new Date().toISOString(),
     })),
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
-    isLocked: false
+    isLocked: false,
   };
 
   // 保存到 Redux 存储
@@ -258,8 +264,8 @@ const tabSlice = createSlice({
         group.isLocked = !group.isLocked;
         group.updatedAt = new Date().toISOString();
       }
-    }
-  }
+    },
+  },
 });
 ```
 
@@ -272,24 +278,26 @@ const tabSlice = createSlice({
 const [{ isDragging }, drag] = useDrag({
   type: 'TAB',
   item: { id: tab.id, groupId: groupId },
-  collect: (monitor) => ({
+  collect: monitor => ({
     isDragging: monitor.isDragging(),
   }),
 });
 
 const [{ isOver }, drop] = useDrop({
   accept: 'TAB',
-  drop: (item) => {
+  drop: item => {
     if (item.id !== tab.id) {
-      dispatch(moveTab({
-        tabId: item.id,
-        sourceGroupId: item.groupId,
-        targetGroupId: groupId,
-        targetIndex: index
-      }));
+      dispatch(
+        moveTabAndSync({
+          sourceGroupId: item.groupId,
+          sourceIndex: item.index,
+          targetGroupId: groupId,
+          targetIndex: index,
+        })
+      );
     }
   },
-  collect: (monitor) => ({
+  collect: monitor => ({
     isOver: monitor.isOver(),
   }),
 });
@@ -306,8 +314,8 @@ const tabSlice = createSlice({
   reducers: {
     setSearchQuery: (state, action) => {
       state.searchQuery = action.payload;
-    }
-  }
+    },
+  },
 });
 
 // 搜索结果选择器
@@ -329,7 +337,7 @@ export const selectSearchResults = createSelector(
         results.push({
           groupId: group.id,
           groupName: group.name,
-          tabs: matchingTabs
+          tabs: matchingTabs,
         });
       }
     });
@@ -388,16 +396,19 @@ async uploadTabGroups(groups: TabGroup[]) {
 ### 环境设置
 
 1. 克隆仓库：
+
    ```
    git clone https://github.com/hibernate-pano/chrome-plugin-one-tab.git
    ```
 
 2. 安装依赖：
+
    ```
    pnpm install
    ```
 
 3. 启动开发服务器：
+
    ```
    pnpm dev
    ```
@@ -417,10 +428,12 @@ async uploadTabGroups(groups: TabGroup[]) {
 ### 调试扩展
 
 1. 后台脚本调试：
+
    - 在扩展管理页面点击"背景页"链接
    - 使用 Chrome DevTools 调试
 
 2. 弹出窗口调试：
+
    - 右键点击扩展图标，选择"检查弹出内容"
    - 使用 Chrome DevTools 调试
 
