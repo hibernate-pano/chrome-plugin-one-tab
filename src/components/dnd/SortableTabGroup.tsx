@@ -23,7 +23,7 @@ export const SortableTabGroup: React.FC<SortableTabGroupProps> = ({ group, index
     listeners,
     setNodeRef,
     transform,
-    transition,
+    // 移除未使用的 transition
     isDragging,
   } = useSortable({
     id: `group-${group.id}`,
@@ -34,12 +34,10 @@ export const SortableTabGroup: React.FC<SortableTabGroupProps> = ({ group, index
     }
   });
 
+  // 极简样式，完全移除过渡效果
   const style = {
     transform: CSS.Transform.toString(transform),
-    transition,
-    opacity: isDragging ? 0.5 : 1,
     position: 'relative' as const,
-    zIndex: isDragging ? 999 : 'auto',
   };
 
   const handleToggleExpand = () => {
@@ -112,9 +110,9 @@ export const SortableTabGroup: React.FC<SortableTabGroupProps> = ({ group, index
     <div
       ref={setNodeRef}
       style={style}
-      className={`bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden ${isDragging ? 'dragging' : ''}`}
+      className={`bg-white rounded-lg border border-gray-200 overflow-hidden ${isDragging ? 'dragging' : ''}`}
     >
-      <div className="flex items-center justify-between p-3 bg-gray-50 border-b border-gray-200 cursor-move" {...attributes} {...listeners}>
+      <div className="flex items-center justify-between p-2 bg-gray-50 border-b border-gray-200 cursor-move" {...attributes} {...listeners}>
         <div className="flex items-center space-x-2 flex-1 min-w-0">
           <button
             onClick={handleToggleExpand}
@@ -167,7 +165,7 @@ export const SortableTabGroup: React.FC<SortableTabGroupProps> = ({ group, index
         </div>
       </div>
       {isExpanded && (
-        <div className="px-2 pt-2 space-y-1 group tabs-container" style={{ overflow: 'hidden' }}>
+        <div className="px-2 pt-1 space-y-1 group" style={{ overflow: 'hidden' }}>
           <SortableContext items={tabIds} strategy={rectSortingStrategy}>
             {group.tabs.map((tab, index) => (
               <SortableTab

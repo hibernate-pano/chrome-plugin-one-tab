@@ -14,7 +14,8 @@ import {
   useSensors,
   DragStartEvent,
   DragEndEvent,
-  DragOverEvent
+  DragOverEvent,
+  MeasuringStrategy
 } from '@dnd-kit/core';
 import {
   SortableContext,
@@ -44,10 +45,13 @@ export const TabListDndKit: React.FC<TabListProps> = ({ searchQuery }) => {
   const groupIds = filteredGroups.map(group => `group-${group.id}`);
 
   // Set up sensors for drag and drop
+  // 进一步优化传感器配置，使拖拽更加灵敏
   const sensors = useSensors(
     useSensor(PointerSensor, {
+      // 减少激活约束，使拖动更容易触发
       activationConstraint: {
-        distance: 1, // 减少激活距离，使拖动更容易触发
+        distance: 1, // 最小激活距离
+        tolerance: 5, // 增加容差
       },
     }),
     useSensor(KeyboardSensor, {
@@ -146,7 +150,7 @@ export const TabListDndKit: React.FC<TabListProps> = ({ searchQuery }) => {
     if (activeData.type === 'tab') {
       const { tab } = activeData;
       return (
-        <div className="flex items-center py-1 px-2 bg-white rounded shadow-lg border border-gray-200 max-w-md">
+        <div className="flex items-center py-1 px-2 bg-white rounded border border-dashed border-blue-400 max-w-md">
           <div className="flex items-center space-x-2 flex-1 min-w-0">
             {tab.favicon ? (
               <img src={tab.favicon} alt="" className="w-4 h-4 flex-shrink-0" />
@@ -164,7 +168,7 @@ export const TabListDndKit: React.FC<TabListProps> = ({ searchQuery }) => {
     if (activeData.type === 'group') {
       const { group } = activeData;
       return (
-        <div className="bg-white rounded-lg shadow-lg border border-gray-200 p-3 max-w-md">
+        <div className="bg-white rounded-lg border border-dashed border-blue-400 p-3 max-w-md">
           <div className="flex items-center space-x-2">
             <div className="truncate font-medium text-gray-700">
               {group.name}
@@ -189,6 +193,7 @@ export const TabListDndKit: React.FC<TabListProps> = ({ searchQuery }) => {
         <DndKitProvider
           sensors={sensors}
           collisionDetection={closestCenter}
+          measuring={{ droppable: { strategy: MeasuringStrategy.Always } }}
           onDragStart={handleDragStart}
           onDragOver={handleDragOver}
           onDragEnd={handleDragEnd}
@@ -240,7 +245,7 @@ export const TabListDndKit: React.FC<TabListProps> = ({ searchQuery }) => {
           )}
 
           {/* Drag Overlay */}
-          <DragOverlay adjustScale={true} zIndex={999}>
+          <DragOverlay zIndex={999}>
             {renderDragOverlay()}
           </DragOverlay>
         </DndKitProvider>

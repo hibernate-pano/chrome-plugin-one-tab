@@ -85,52 +85,28 @@
   @apply transition-all duration-200 ease-out;
 }
 
-/* 拖拽项目的平滑过渡 */
+/* 拖拽项目 - 完全移除过渡效果 */
 .draggable-item {
-  @apply transition-all duration-300 ease-out;
   position: relative;
 }
 
-/* 拖拽时的效果 - 简化动画效果 */
+/* 拖拽时的效果 - 类似 OneTab 原版的极简效果 */
 .dragging {
-  @apply shadow-lg z-10 bg-white border border-blue-200;
-  /* 移除可能干扰拖动的动画效果 */
-  /* scale-[1.02] */
-  /* animation: pulse 1.5s infinite ease-in-out; */
+  z-index: 10;
+  outline: 1px dashed #4299e1;
+  /* 更细的蓝色虚线边框 */
+  outline-offset: 1px;
 }
 
-/* 拖拽目标的效果 */
+/* 拖拽目标的效果 - 极简化 */
 .drag-over {
-  @apply border border-blue-300 bg-blue-50;
-  margin-top: 8px;
-  margin-bottom: 8px;
+  border-top: 1px solid #4299e1;
+  /* 更细的蓝色实线 */
 }
 
-/* 标签容器 */
-.tabs-container {
-  @apply transition-all duration-300 ease-in-out;
-}
+/* 标签容器和标签项 - 移除所有过渡效果 */
 
-/* 标签项 */
-.tab-item {
-  @apply transition-all duration-300 ease-in-out;
-  transform-origin: center center;
-}
-
-/* 拖拽动画 */
-@keyframes pulse {
-  0% {
-    box-shadow: 0 0 0 0 rgba(59, 130, 246, 0.2);
-  }
-
-  70% {
-    box-shadow: 0 0 0 6px rgba(59, 130, 246, 0);
-  }
-
-  100% {
-    box-shadow: 0 0 0 0 rgba(59, 130, 246, 0);
-  }
-}
+/* 移除不再需要的脉冲动画 */
 
 /* DnD Kit 特定样式 */
 .sortable-tab-active {

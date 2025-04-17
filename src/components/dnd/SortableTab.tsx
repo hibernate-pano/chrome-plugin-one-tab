@@ -23,7 +23,7 @@ export const SortableTab: React.FC<SortableTabProps> = ({
     listeners,
     setNodeRef,
     transform,
-    transition,
+    // 移除未使用的 transition
     isDragging,
     over,
   } = useSortable({
@@ -36,15 +36,10 @@ export const SortableTab: React.FC<SortableTabProps> = ({
     }
   });
 
+  // 极简样式，完全移除过渡效果
   const style = {
     transform: CSS.Transform.toString(transform),
-    transition,
-    opacity: isDragging ? 0.5 : 1,
     position: 'relative' as const,
-    zIndex: isDragging ? 999 : 'auto',
-    // 移除可能干扰拖动的动画效果
-    // backgroundColor: isDragging ? '#f9fafb' : undefined,
-    // boxShadow: isDragging ? '0 4px 8px rgba(0, 0, 0, 0.1)' : undefined,
     cursor: 'move',
   };
 
@@ -54,8 +49,8 @@ export const SortableTab: React.FC<SortableTabProps> = ({
     <div
       ref={setNodeRef}
       style={style}
-      className={`flex items-center py-1 px-2 hover:bg-gray-100 rounded draggable-item tab-item
-        ${isDragging ? 'dragging' : 'opacity-100'}
+      className={`flex items-center py-1 px-2 hover:bg-gray-100 rounded
+        ${isDragging ? 'dragging' : ''}
         ${isOver ? 'drag-over' : ''}
       `}
       {...attributes}
