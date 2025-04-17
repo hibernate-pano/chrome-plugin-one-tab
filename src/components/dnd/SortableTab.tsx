@@ -41,55 +41,53 @@ export const SortableTab: React.FC<SortableTabProps> = ({
   // 提供清晰的拖拽反馈
   const style = {
     transform: CSS.Transform.toString(transform),
-    opacity: isDragging ? 0.6 : 1,
+    opacity: isDragging ? 0.7 : 1,
     position: 'relative' as const,
     zIndex: isDragging ? 999 : 'auto',
-    transition: isDragging ? undefined : 'transform 0.15s ease, opacity 0.15s ease',
+    transition: isDragging ? undefined : 'all 0.2s ease',
   };
 
   // 检测是否有其他元素悬停在上面
   const isOver = over && over.id !== `${groupId}-tab-${tab.id}`;
 
-  // 获取悬停元素的数据和位置
-  const overData = over?.data.current;
-  const overIndex = overData?.index;
-
   // 获取鼠标在元素上的相对位置
   const clientOffset = transform?.y || 0;
 
-  // 使用更精确的方式判断鼠标位置
-  // 如果变换值为负，说明鼠标在元素上半部
+  // 判断鼠标是否在元素上半部
   const isMouseInUpperHalf = clientOffset < 0;
 
-  // 结合鼠标位置和索引关系决定视觉反馈
-  // 当鼠标在上半部或者目标索引小于当前索引时，显示上方插入指示器
-  const isOverAbove = isOver && (isMouseInUpperHalf || (overIndex !== undefined && overIndex < index));
+  // 插入指示器位置
+  const isOverAbove = isOver && isMouseInUpperHalf;
+
+  // 输出日志
+  if (isOver) {
+    console.log('[DEBUG] SortableTab:', {
+      tabId: tab.id,
+      groupId,
+      index,
+      isOver,
+      clientOffset,
+      isMouseInUpperHalf,
+      isOverAbove,
+      overId: over?.id,
+      overData: over?.data.current
+    });
+  }
 
   return (
     <div
       ref={setNodeRef}
       style={style}
       className={`flex items-center py-1 px-2 hover:bg-gray-100 rounded select-none cursor-move tab-item
-        ${isDragging ? 'bg-gray-50 border border-gray-300 dragging shadow-md' : ''}
+        ${isDragging ? 'bg-blue-50 border border-blue-300 dragging shadow-md' : ''}
         ${isOver ? 'drop-target' : ''}
       `}
       {...attributes}
       {...listeners}
     >
-      {/* 添加插入指示器 - 使用更明显的视觉效果 */}
+      {/* 添加插入指示器 */}
       {isOver && (
-        <div
-          className={`insert-indicator ${isOverAbove ? 'insert-indicator-top' : 'insert-indicator-bottom'}`}
-          style={{
-            position: 'absolute',
-            left: 0,
-            right: 0,
-            height: '2px',
-            backgroundColor: '#3b82f6', // 蓝色
-            zIndex: 1000,
-            ...(isOverAbove ? { top: 0 } : { bottom: 0 }),
-          }}
-        />
+        <div className={`insert-indicator ${isOverAbove ? 'insert-indicator-top' : 'insert-indicator-bottom'}`} />
       )}
       <div className="flex items-center space-x-2 flex-1 min-w-0">
         {tab.favicon ? (

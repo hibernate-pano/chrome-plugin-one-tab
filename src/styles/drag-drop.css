@@ -1,4 +1,4 @@
-/* 拖曳相关样式 */
+/* 拖曳相关样式 - 极简版 */
 
 /* 标签样式 */
 .tab-item {
@@ -11,11 +11,7 @@
   margin-bottom: 4px;
   cursor: move;
   position: relative;
-  transition: transform 0.15s cubic-bezier(0.2, 0, 0, 1),
-    box-shadow 0.15s cubic-bezier(0.2, 0, 0, 1),
-    border-color 0.15s cubic-bezier(0.2, 0, 0, 1),
-    background-color 0.15s cubic-bezier(0.2, 0, 0, 1);
-  will-change: transform, box-shadow, border-color;
+  transition: all 0.2s ease;
 }
 
 .tab-item:hover {
@@ -25,7 +21,7 @@
 .tab-item.dragging {
   opacity: 0.7;
   border-color: #3b82f6;
-  box-shadow: 0 4px 12px rgba(59, 130, 246, 0.2);
+  box-shadow: 0 4px 8px rgba(59, 130, 246, 0.2);
   z-index: 999;
   background-color: #f0f7ff;
 }
@@ -35,24 +31,9 @@
   position: absolute;
   left: 0;
   right: 0;
-  height: 3px;
+  height: 2px;
   background-color: #3b82f6;
   z-index: 1000;
-  animation: pulse 1.5s infinite;
-}
-
-@keyframes pulse {
-  0% {
-    opacity: 0.6;
-  }
-
-  50% {
-    opacity: 1;
-  }
-
-  100% {
-    opacity: 0.6;
-  }
 }
 
 .insert-indicator-top {
@@ -81,7 +62,6 @@
 .drop-target {
   background-color: #f0f7ff;
   border-color: #bfdbfe;
-  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.1);
 }
 
 /* 标签组拖曳样式 */

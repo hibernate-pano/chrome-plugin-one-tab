@@ -600,8 +600,18 @@ export const moveTabAndSync = createAsyncThunk(
     direction?: 'up' | 'down' | 'none'
   }, { getState, dispatch }) => {
     try {
-      // 在 Redux 中移动标签页，传递updateSourceInDrag和direction参数
+      // 在 Redux 中移动标签页，传递参数
       dispatch(moveTab({ sourceGroupId, sourceIndex, targetGroupId, targetIndex, updateSourceInDrag, direction }));
+
+      // 输出日志
+      console.log('[DEBUG] moveTabAndSync:', {
+        sourceGroupId,
+        sourceIndex,
+        targetGroupId,
+        targetIndex,
+        updateSourceInDrag,
+        direction
+      });
 
       // 如果是在拖动过程中且不需要更新源，跳过存储操作
       if (!updateSourceInDrag) {
@@ -725,6 +735,16 @@ export const tabSlice = createSlice({
     },
     moveTab: (state, action) => {
       const { sourceGroupId, sourceIndex, targetGroupId, targetIndex, updateSourceInDrag = true, direction = 'none' } = action.payload;
+
+      // 输出日志
+      console.log('[DEBUG] moveTab reducer:', {
+        sourceGroupId,
+        sourceIndex,
+        targetGroupId,
+        targetIndex,
+        updateSourceInDrag,
+        direction
+      });
       // 找到源标签组和目标标签组
       const sourceGroup = state.groups.find(g => g.id === sourceGroupId);
       const targetGroup = state.groups.find(g => g.id === targetGroupId);
@@ -750,32 +770,21 @@ export const tabSlice = createSlice({
 
         // 根据拖动方向调整索引
         if (existingIndex !== -1) {
-          // 如果已存在的标签在目标之前，需要减1
           if (existingIndex < targetIndex) {
             adjustedIndex--;
+            console.log('[DEBUG] moveTab: 已存在的标签在目标之前，调整索引', { existingIndex, targetIndex, adjustedIndex });
           }
 
-          // 向下拖动时的额外处理
+          // 向下拖动的特殊处理
           if (direction === 'down' && sourceGroupId === targetGroupId) {
-            // 当在同一组内向下拖动时，确保目标索引正确
-            if (sourceIndex < targetIndex) {
-              // 不需要额外调整，因为已经在上面的代码中处理了
-            }
+            console.log('[DEBUG] moveTab: 向下拖动特殊处理', { sourceIndex, targetIndex, adjustedIndex, direction });
           }
         }
 
         // 确保索引在有效范围内
         adjustedIndex = Math.max(0, Math.min(adjustedIndex, newTargetTabs.length));
 
-        if (process.env.NODE_ENV === 'development') {
-          console.log('moveTab (in drag):', {
-            existingIndex,
-            targetIndex,
-            adjustedIndex,
-            direction,
-            tabId: tab.id
-          });
-        }
+
 
         // 插入标签到目标位置
         newTargetTabs.splice(adjustedIndex, 0, tab);
@@ -795,29 +804,25 @@ export const tabSlice = createSlice({
         // 计算调整后的目标索引
         let adjustedIndex = targetIndex;
 
-        // 根据拖动方向调整目标索引
-        if (direction === 'down') {
-          // 向下拖动时，如果源索引小于目标索引，需要减1
-          if (sourceIndex < targetIndex) {
-            adjustedIndex = targetIndex - 1;
-          }
+        // 简化索引计算逻辑 - 不再依赖拖动方向
+        // 当源索引小于目标索引时，目标索引需要减1
+        // 这是因为在移除源标签后，目标位置会向前移动1
+        if (sourceIndex < targetIndex) {
+          adjustedIndex = targetIndex - 1;
         } else {
-          // 向上拖动或其他情况，使用标准计算
-          adjustedIndex = sourceIndex < targetIndex ? targetIndex - 1 : targetIndex;
+          adjustedIndex = targetIndex;
         }
+
+        console.log('[DEBUG] moveTab (final): 索引计算', {
+          sourceIndex,
+          targetIndex,
+          adjustedIndex,
+          direction,
+          updateSourceInDrag
+        });
 
         // 确保索引在有效范围内
         adjustedIndex = Math.max(0, Math.min(adjustedIndex, newTabs.length));
-
-        if (process.env.NODE_ENV === 'development') {
-          console.log('moveTab (final):', {
-            sourceIndex,
-            targetIndex,
-            adjustedIndex,
-            direction,
-            tabId: tab.id
-          });
-        }
 
         // 插入到目标位置
         newTabs.splice(adjustedIndex, 0, tab);
