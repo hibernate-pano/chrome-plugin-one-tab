@@ -116,15 +116,17 @@ export const DraggableTab: React.FC<DraggableTabProps> = ({
   return (
     <div
       ref={ref}
-      className={`flex items-center py-1 px-2 hover:bg-gray-100 transition-colors rounded
-        ${isDragging ? 'opacity-50 border-dashed border-primary-400' : 'opacity-100'}
-        ${isOver && isHovering ? 'bg-blue-50 border border-blue-200' : ''}
+      className={`flex items-center py-1 px-2 hover:bg-gray-100 rounded draggable-item
+        ${isDragging ? 'dragging' : 'opacity-100'}
+        ${isOver && isHovering ? 'drag-over' : ''}
       `}
       style={{
         cursor: 'move',
         transform: isOver && isHovering ? 'scale(1.02) translateX(3px)' : 'none',
         boxShadow: isOver && isHovering ? '0 1px 3px rgba(0,0,0,0.1)' : 'none',
-        transition: 'transform 0.2s ease, background-color 0.2s ease, border 0.2s ease, box-shadow 0.2s ease'
+        transition: 'transform 0.2s ease, background-color 0.2s ease, border 0.2s ease, box-shadow 0.2s ease',
+        position: 'relative',
+        zIndex: isOver && isHovering ? 10 : 'auto'
       }}
     >
       <div className="flex items-center space-x-2 flex-1 min-w-0">

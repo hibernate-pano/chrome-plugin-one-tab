@@ -124,7 +124,7 @@ export const TabGroup: React.FC<TabGroupProps> = ({ group }) => {
   };
 
   return (
-    <div className="mb-2 transition-colors bg-white border border-gray-200 rounded-md shadow-sm pb-2">
+    <div className="mb-2 transition-all duration-200 ease-in-out bg-white border border-gray-200 rounded-md shadow-sm pb-2 hover:shadow-md">
       <div className="flex items-center p-2 bg-gray-50 border-b border-gray-200 rounded-t-md">
         <div className="flex items-center space-x-3 flex-grow">
           <button
@@ -202,7 +202,7 @@ export const TabGroup: React.FC<TabGroupProps> = ({ group }) => {
         </div>
       </div>
       {isExpanded && (
-        <div className="px-2 pt-2 space-y-1 group">
+        <div className="px-2 pt-2 space-y-1 group transition-all duration-300 ease-in-out" style={{ overflow: 'hidden' }}>
           {group.tabs.map((tab, index) => (
             <DraggableTab
               key={tab.id}

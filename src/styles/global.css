@@ -85,6 +85,21 @@
   @apply transition-all duration-200 ease-out;
 }
 
+/* 拖拽项目的平滑过渡 */
+.draggable-item {
+  @apply transition-all duration-200 ease-out;
+}
+
+/* 拖拽时的效果 */
+.dragging {
+  @apply shadow-lg z-10 scale-[1.02] bg-white border border-blue-200;
+}
+
+/* 拖拽目标的效果 */
+.drag-over {
+  @apply border border-blue-300 bg-blue-50;
+}
+
 /* 模态框动画 */
 @keyframes fadeIn {
   from {

@@ -111,8 +111,10 @@ export const DraggableTabGroup: React.FC<DraggableTabGroupProps> = ({ group, ind
         transition: 'transform 0.2s ease, opacity 0.2s ease, box-shadow 0.2s ease, background-color 0.2s ease',
         boxShadow: isOver && isHovering ? '0 3px 10px rgba(0, 0, 0, 0.15)' : 'none',
         backgroundColor: isOver && isHovering ? 'rgba(243, 244, 246, 0.5)' : 'transparent',
+        position: 'relative',
+        zIndex: isOver && isHovering ? 10 : 'auto'
       }}
-      className={`transition-material ${isOver && isHovering ? 'border border-blue-200 rounded-md' : ''}`}
+      className={`draggable-item ${isDragging ? 'dragging' : ''} ${isOver && isHovering ? 'drag-over rounded-md' : ''}`}
     >
       <TabGroup group={group} />
     </div>
