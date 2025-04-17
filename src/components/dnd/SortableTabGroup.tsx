@@ -6,6 +6,7 @@ import { useAppDispatch } from '@/store/hooks';
 import { updateGroupNameAndSync, deleteGroup, updateGroup } from '@/store/slices/tabSlice';
 import { SortableTab } from './SortableTab';
 import { SortableContext, rectSortingStrategy } from '@dnd-kit/sortable';
+import '@/styles/drag-drop.css';
 
 interface SortableTabGroupProps {
   group: TabGroupType;
@@ -33,11 +34,13 @@ export const SortableTabGroup: React.FC<SortableTabGroupProps> = ({ group, index
     }
   });
 
-  // 简化的样式，专注于基本功能
+  // 提供更好的拖拽视觉反馈
   const style = {
     transform: CSS.Transform.toString(transform),
     opacity: isDragging ? 0.6 : 1,
     position: 'relative' as const,
+    zIndex: isDragging ? 999 : 'auto',
+    transition: 'transform 0.15s ease, opacity 0.15s ease',
   };
 
   const handleToggleExpand = () => {
@@ -110,11 +113,11 @@ export const SortableTabGroup: React.FC<SortableTabGroupProps> = ({ group, index
     <div
       ref={setNodeRef}
       style={style}
-      className={`bg-white rounded-lg border border-gray-200 overflow-hidden select-none ${isDragging ? 'border-gray-400' : ''}`}
+      className={`bg-white rounded-lg border border-gray-200 overflow-hidden select-none group-item ${isDragging ? 'border-gray-400 dragging' : ''}`}
     >
-      <div 
-        className="flex items-center justify-between p-2 bg-gray-50 border-b border-gray-200 cursor-move" 
-        {...attributes} 
+      <div
+        className="flex items-center justify-between p-2 bg-gray-50 border-b border-gray-200 cursor-move"
+        {...attributes}
         {...listeners}
       >
         <div className="flex items-center space-x-2 flex-1 min-w-0">

@@ -728,117 +728,79 @@ export const tabSlice = createSlice({
       const sourceGroup = state.groups.find(g => g.id === sourceGroupId);
       const targetGroup = state.groups.find(g => g.id === targetGroupId);
 
-      if (sourceGroup && targetGroup) {
-        // 获取要移动的标签页
-        const tab = { ...sourceGroup.tabs[sourceIndex] }; // 创建副本避免引用问题
+      if (!sourceGroup || !targetGroup) return;
 
-        // 在拖动过程中，如果不需要更新源，只处理目标位置的变化
-        if (!updateSourceInDrag) {
-          // 检查目标位置是否已经有相同的标签（可能是之前拖动的结果）
-          const existingTabIndex = targetGroup.tabs.findIndex(t => t.id === tab.id);
+      // 获取要移动的标签页
+      const tab = { ...sourceGroup.tabs[sourceIndex] }; // 创建副本避免引用问题
 
-          // 创建新的目标标签数组
-          const newTargetTabs = [...targetGroup.tabs];
+      // 如果是拖动过程中的预览更新，只更新目标位置
+      if (!updateSourceInDrag) {
+        // 创建新的目标标签数组
+        const newTargetTabs = [...targetGroup.tabs];
 
-          // 如果标签已经存在于目标组中，先移除它
-          if (existingTabIndex !== -1 && existingTabIndex !== targetIndex) {
-            newTargetTabs.splice(existingTabIndex, 1);
-          }
-
-          // 在目标位置插入标签
-          // 如果移除了现有标签，需要调整目标索引
-          let adjustedTargetIndex = targetIndex;
-
-          if (existingTabIndex !== -1) {
-            if (existingTabIndex < targetIndex) {
-              // 如果当前标签在目标位置之前，目标索引需要减1
-              adjustedTargetIndex = targetIndex - 1;
-            }
-            // 如果当前标签在目标位置之后，目标索引不变
-          }
-
-          // 确保目标索引在有效范围内
-          adjustedTargetIndex = Math.max(0, Math.min(adjustedTargetIndex, newTargetTabs.length));
-
-          // 在调整后的目标位置插入标签
-          newTargetTabs.splice(adjustedTargetIndex, 0, tab);
-
-          // 如果标签组为空，确保至少有一个标签
-          if (newTargetTabs.length === 0) {
-            newTargetTabs.push(tab);
-          }
-
-          targetGroup.tabs = newTargetTabs;
-          targetGroup.updatedAt = new Date().toISOString();
-
-          // 输出日志，帮助调试
-          if (process.env.NODE_ENV === 'development') {
-            console.log('moveTab (in drag):', {
-              sourceGroupId,
-              sourceIndex,
-              targetGroupId,
-              targetIndex,
-              adjustedTargetIndex,
-              existingTabIndex,
-              tabId: tab.id,
-              resultLength: newTargetTabs.length
-            });
-          }
-
-          return;
+        // 如果标签已经存在于目标组中，先移除它
+        const existingIndex = newTargetTabs.findIndex(t => t.id === tab.id);
+        if (existingIndex !== -1 && existingIndex !== targetIndex) {
+          newTargetTabs.splice(existingIndex, 1);
         }
 
-        // 正常的移动逻辑（拖动结束时）
-        // 创建新的标签页数组以避免直接修改原数组
+        // 计算调整后的目标索引
+        let adjustedIndex = targetIndex;
+        if (existingIndex !== -1 && existingIndex < targetIndex) {
+          adjustedIndex--;
+        }
+
+        // 确保索引在有效范围内
+        adjustedIndex = Math.max(0, Math.min(adjustedIndex, newTargetTabs.length));
+
+        // 插入标签到目标位置
+        newTargetTabs.splice(adjustedIndex, 0, tab);
+        targetGroup.tabs = newTargetTabs;
+        targetGroup.updatedAt = new Date().toISOString();
+        return;
+      }
+
+      // 拖动结束时的完整更新
+
+      // 处理同一组内移动
+      if (sourceGroupId === targetGroupId) {
+        const newTabs = [...sourceGroup.tabs];
+        // 先移除源标签
+        newTabs.splice(sourceIndex, 1);
+        // 计算调整后的目标索引
+        const adjustedIndex = sourceIndex < targetIndex ? targetIndex - 1 : targetIndex;
+        // 插入到目标位置
+        newTabs.splice(adjustedIndex, 0, tab);
+        // 更新标签组
+        sourceGroup.tabs = newTabs;
+        sourceGroup.updatedAt = new Date().toISOString();
+      }
+      // 处理跨组移动
+      else {
+        // 从源组移除标签
         const newSourceTabs = [...sourceGroup.tabs];
-        const newTargetTabs = sourceGroupId === targetGroupId ? newSourceTabs : [...targetGroup.tabs];
-
-        // 在拖动结束时，需要检查目标组中是否已经有相同的标签
-        // 这可能是由于连续拖动过程中添加的
-        let adjustedTargetIndex = targetIndex; // 创建一个可修改的目标索引副本
-
-        if (sourceGroupId !== targetGroupId) {
-          const existingTabIndex = targetGroup.tabs.findIndex(t => t.id === tab.id);
-          if (existingTabIndex !== -1) {
-            // 如果目标组中已经有这个标签，先移除它
-            newTargetTabs.splice(existingTabIndex, 1);
-
-            // 调整目标索引，如果必要
-            if (existingTabIndex < adjustedTargetIndex) {
-              adjustedTargetIndex--;
-            }
-          }
-        }
-
-        // 从源标签组中删除标签页
         newSourceTabs.splice(sourceIndex, 1);
+        sourceGroup.tabs = newSourceTabs;
+        sourceGroup.updatedAt = new Date().toISOString();
 
-        // 如果是同一个标签组内移动，需要考虑删除后索引的变化
-        if (sourceGroupId === targetGroupId && sourceIndex < adjustedTargetIndex) {
-          newTargetTabs.splice(adjustedTargetIndex - 1, 0, tab);
-        } else {
-          newTargetTabs.splice(adjustedTargetIndex, 0, tab);
+        // 添加到目标组
+        const newTargetTabs = [...targetGroup.tabs];
+        // 检查目标组中是否已经有这个标签
+        const existingIndex = newTargetTabs.findIndex(t => t.id === tab.id);
+        if (existingIndex !== -1) {
+          newTargetTabs.splice(existingIndex, 1);
         }
+        // 插入到目标位置
+        newTargetTabs.splice(targetIndex, 0, tab);
+        targetGroup.tabs = newTargetTabs;
+        targetGroup.updatedAt = new Date().toISOString();
 
-        // 更新目标标签组
-        if (sourceGroupId !== targetGroupId) {
-          targetGroup.tabs = newTargetTabs;
-          targetGroup.updatedAt = new Date().toISOString();
-        }
-
-        // 检查源标签组是否为空
+        // 如果源组变空，删除源组
         if (newSourceTabs.length === 0) {
-          // 如果源标签组为空，则删除该标签组
           state.groups = state.groups.filter(g => g.id !== sourceGroupId);
-
-          // 如果当前活动标签组是被删除的标签组，则重置活动标签组
           if (state.activeGroupId === sourceGroupId) {
             state.activeGroupId = null;
           }
-        } else {
-          // 如果源标签组不为空，则更新源标签组
-          sourceGroup.tabs = newSourceTabs;
-          sourceGroup.updatedAt = new Date().toISOString();
         }
       }
     },

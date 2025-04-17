@@ -2,6 +2,7 @@ import React from 'react';
 import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { Tab } from '@/types/tab';
+import '@/styles/drag-drop.css';
 
 interface SortableTabProps {
   tab: Tab;
@@ -31,15 +32,18 @@ export const SortableTab: React.FC<SortableTabProps> = ({
       type: 'tab',
       tab,
       groupId,
-      index
+      index,
+      originalGroupId: groupId,
+      originalIndex: index
     }
   });
 
-  // 简化样式，提供清晰的拖拽反馈
+  // 提供清晰的拖拽反馈
   const style = {
     transform: CSS.Transform.toString(transform),
     opacity: isDragging ? 0.6 : 1,
     position: 'relative' as const,
+    zIndex: isDragging ? 999 : 'auto',
   };
 
   // 检测是否有其他元素悬停在上面
@@ -60,13 +64,17 @@ export const SortableTab: React.FC<SortableTabProps> = ({
     <div
       ref={setNodeRef}
       style={style}
-      className={`flex items-center py-1 px-2 hover:bg-gray-100 rounded select-none cursor-move
-        ${isDragging ? 'bg-gray-50 border border-gray-300' : ''}
-        ${isOver ? isOverAbove ? 'border-t-2 border-blue-300 bg-blue-50' : 'border-b-2 border-blue-300 bg-blue-50' : ''}
+      className={`flex items-center py-1 px-2 hover:bg-gray-100 rounded select-none cursor-move tab-item
+        ${isDragging ? 'bg-gray-50 border border-gray-300 dragging' : ''}
+        ${isOver ? 'drop-target' : ''}
       `}
       {...attributes}
       {...listeners}
     >
+      {/* 添加插入指示器 */}
+      {isOver && (
+        <div className={`insert-indicator ${isOverAbove ? 'insert-indicator-top' : 'insert-indicator-bottom'}`} />
+      )}
       <div className="flex items-center space-x-2 flex-1 min-w-0">
         {tab.favicon ? (
           <img src={tab.favicon} alt="" className="w-4 h-4 flex-shrink-0" />
