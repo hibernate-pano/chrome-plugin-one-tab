@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>DnD Kit Test</title>
+  <style>
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif;
+      padding: 20px;
+      max-width: 800px;
+      margin: 0 auto;
+    }
+    .container {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+    .item {
+      padding: 10px;
+      background-color: #f5f5f5;
+      border: 1px solid #ddd;
+      border-radius: 4px;
+      cursor: move;
+      transition: transform 0.2s, box-shadow 0.2s;
+    }
+    .item.dragging {
+      background-color: #e0f7fa;
+      box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+      transform: scale(1.02);
+      z-index: 10;
+    }
+    .item.over {
+      border-color: #2196f3;
+      background-color: #e3f2fd;
+      margin-top: 10px;
+      margin-bottom: 10px;
+    }
+  </style>
+</head>
+<body>
+  <h1>DnD Kit Test</h1>
+  <p>This is a simple test page for the DnD Kit implementation. Open the popup.html page to see the actual implementation.</p>
+  
+  <div class="container" id="container">
+    <div class="item" draggable="true">Item 1</div>
+    <div class="item" draggable="true">Item 2</div>
+    <div class="item" draggable="true">Item 3</div>
+    <div class="item" draggable="true">Item 4</div>
+    <div class="item" draggable="true">Item 5</div>
+  </div>
+
+  <script>
+    // Simple native drag and drop implementation for testing
+    const container = document.getElementById('container');
+    const items = container.querySelectorAll('.item');
+    
+    let draggedItem = null;
+    
+    items.forEach(item => {
+      item.addEventListener('dragstart', function() {
+        draggedItem = this;
+        setTimeout(() => {
+          this.classList.add('dragging');
+        }, 0);
+      });
+      
+      item.addEventListener('dragend', function() {
+        this.classList.remove('dragging');
+        draggedItem = null;
+        
+        // Remove all over classes
+        items.forEach(item => {
+          item.classList.remove('over');
+        });
+      });
+      
+      item.addEventListener('dragover', function(e) {
+        e.preventDefault();
+        if (this !== draggedItem) {
+          this.classList.add('over');
+        }
+      });
+      
+      item.addEventListener('dragleave', function() {
+        this.classList.remove('over');
+      });
+      
+      item.addEventListener('drop', function(e) {
+        e.preventDefault();
+        if (this !== draggedItem) {
+          const allItems = Array.from(container.querySelectorAll('.item'));
+          const draggedIndex = allItems.indexOf(draggedItem);
+          const targetIndex = allItems.indexOf(this);
+          
+          if (draggedIndex < targetIndex) {
+            container.insertBefore(draggedItem, this.nextSibling);
+          } else {
+            container.insertBefore(draggedItem, this);
+          }
+          
+          this.classList.remove('over');
+        }
+      });
+    });
+  </script>
+</body>
+</html>

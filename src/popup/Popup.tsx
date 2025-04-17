@@ -7,7 +7,9 @@ import { loadGroups } from '@/store/slices/tabSlice';
 import Layout from '@/components/layout/Layout';
 import Header from '@/components/layout/Header';
 import TabList from '@/components/tabs/TabList';
+import { TabListDndKit } from '@/components/tabs/TabListDndKit';
 import { LoadingOverlay } from '@/components/common/LoadingOverlay';
+// DndProvider is handled internally by TabListDndKit
 
 const SyncLoadingOverlay: React.FC = () => {
   const { syncStatus, backgroundSync } = useAppSelector(state => state.tabs);
@@ -39,10 +41,17 @@ const PopupContent: React.FC = () => {
     }
   }, []);
 
+  // 使用新的 dnd-kit 实现
+  const useDndKit = true;
+
   return (
     <Layout>
       <Header onSearch={setSearchQuery} />
-      <TabList searchQuery={searchQuery} />
+      {useDndKit ? (
+        <TabListDndKit searchQuery={searchQuery} />
+      ) : (
+        <TabList searchQuery={searchQuery} />
+      )}
     </Layout>
   );
 };

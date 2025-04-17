@@ -87,18 +87,21 @@
 
 /* 拖拽项目的平滑过渡 */
 .draggable-item {
-  @apply transition-all duration-200 ease-out;
+  @apply transition-all duration-300 ease-out;
   position: relative;
 }
 
 /* 拖拽时的效果 */
 .dragging {
   @apply shadow-lg z-10 scale-[1.02] bg-white border border-blue-200;
+  animation: pulse 1.5s infinite ease-in-out;
 }
 
 /* 拖拽目标的效果 */
 .drag-over {
   @apply border border-blue-300 bg-blue-50;
+  margin-top: 8px;
+  margin-bottom: 8px;
 }
 
 /* 标签容器 */
@@ -108,8 +111,45 @@
 
 /* 标签项 */
 .tab-item {
-  @apply transition-all duration-200 ease-in-out;
+  @apply transition-all duration-300 ease-in-out;
   transform-origin: center center;
+}
+
+/* 拖拽动画 */
+@keyframes pulse {
+  0% {
+    box-shadow: 0 0 0 0 rgba(59, 130, 246, 0.2);
+  }
+
+  70% {
+    box-shadow: 0 0 0 6px rgba(59, 130, 246, 0);
+  }
+
+  100% {
+    box-shadow: 0 0 0 0 rgba(59, 130, 246, 0);
+  }
+}
+
+/* DnD Kit 特定样式 */
+.sortable-tab-active {
+  opacity: 0.5;
+  background-color: #f9fafb;
+  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+  z-index: 999;
+}
+
+.sortable-tab-over {
+  transform: translateY(8px);
+}
+
+.sortable-group-active {
+  opacity: 0.7;
+  z-index: 999;
+  box-shadow: 0 8px 16px rgba(0, 0, 0, 0.1);
+}
+
+.sortable-transition {
+  transition: transform 300ms ease, opacity 300ms ease, box-shadow 300ms ease, margin 300ms ease;
 }
 
 /* 模态框动画 */
