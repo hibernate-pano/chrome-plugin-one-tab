@@ -41,17 +41,23 @@ git clone https://github.com/yourusername/chrome-plugin-one-tab.git
 cd chrome-plugin-one-tab
 ```
 
-2. 安装依赖
+2. 复制环境变量文件并配置
+```bash
+cp .env.example .env
+# 编辑 .env 文件，填入您的 Supabase URL 和 API Key
+```
+
+3. 安装依赖
 ```bash
 npm install
 ```
 
-3. 开发模式运行
+4. 开发模式运行
 ```bash
 npm run dev
 ```
 
-4. 构建生产版本
+5. 构建生产版本
 ```bash
 npm run build
 ```
