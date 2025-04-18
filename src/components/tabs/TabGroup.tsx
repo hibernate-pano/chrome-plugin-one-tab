@@ -133,8 +133,8 @@ export const TabGroup: React.FC<TabGroupProps> = ({ group }) => {
   };
 
   return (
-    <div className="mb-2 transition-all duration-200 ease-in-out bg-white border border-gray-200 rounded-md shadow-sm pb-2 hover:shadow-md">
-      <div className="flex items-center p-2 bg-gray-50 border-b border-gray-200 rounded-t-md">
+    <div className="mb-2 transition-all duration-200 ease-in-out bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-md shadow-sm pb-2 hover:shadow-md">
+      <div className="flex items-center p-2 bg-gray-50 dark:bg-gray-900 border-b border-gray-200 dark:border-gray-700 rounded-t-md">
         <div className="flex items-center space-x-3 flex-grow">
           <button
             onClick={() => setIsExpanded(!isExpanded)}
@@ -161,12 +161,12 @@ export const TabGroup: React.FC<TabGroupProps> = ({ group }) => {
             />
           ) : (
             <h3
-              className="text-base font-medium text-gray-900"
+              className="text-base font-medium text-gray-900 dark:text-gray-100"
             >
               {group.name}
             </h3>
           )}
-          <span className="text-xs bg-gray-100 text-gray-600 px-1.5 py-0.5 rounded-full ml-1">
+          <span className="text-xs bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 px-1.5 py-0.5 rounded-full ml-1">
             {group.tabs.length}
           </span>
         </div>

@@ -18,8 +18,17 @@
   position: relative;
 }
 
+.dark .tab-item {
+  background-color: #1f2937;
+  color: #e5e7eb;
+}
+
 .tab-item:hover {
   background-color: #f9fafb;
+}
+
+.dark .tab-item:hover {
+  background-color: #374151;
 }
 
 /* 标签页拖拽中状态 */
@@ -38,6 +47,12 @@
   border: 1px solid #e5e7eb;
   overflow: hidden;
   margin-bottom: 12px;
+}
+
+.dark .group-item {
+  background-color: #1f2937;
+  border-color: #374151;
+  color: #e5e7eb;
 }
 
 /* 标签组拖拽中状态 */
@@ -62,6 +77,12 @@
   text-overflow: ellipsis;
 }
 
+.dark .tab-drag-overlay {
+  background-color: #1f2937;
+  color: #e5e7eb;
+  border-color: #3b82f6;
+}
+
 /* 拖拽覆盖层 - 标签组 */
 .group-drag-overlay {
   background-color: white;
@@ -73,10 +94,21 @@
   max-width: 600px;
 }
 
+.dark .group-drag-overlay {
+  background-color: #1f2937;
+  border-color: #374151;
+  color: #e5e7eb;
+}
+
 /* 拖拽目标样式 - 当鼠标悬停在可放置区域时 */
 .drop-target {
   background-color: #f0f7ff;
   border-color: #bfdbfe;
+}
+
+.dark .drop-target {
+  background-color: #1e3a8a;
+  border-color: #3b82f6;
 }
 
 /* 拖拽指示器 - 显示当前拖拽位置 */
@@ -112,6 +144,12 @@
   cursor: move;
 }
 
+.dark .group-header {
+  background-color: #111827;
+  border-color: #374151;
+  color: #e5e7eb;
+}
+
 /* 兼容旧样式 */
 .tab-item {
   display: flex;
@@ -126,8 +164,17 @@
   transition: transform 0.15s ease, opacity 0.15s ease;
 }
 
+.dark .tab-item {
+  background-color: #1f2937;
+  color: #e5e7eb;
+}
+
 .tab-item:hover {
   background-color: #f5f5f5;
+}
+
+.dark .tab-item:hover {
+  background-color: #374151;
 }
 
 .tab-item.dragging {
@@ -136,6 +183,11 @@
   box-shadow: 0 4px 8px rgba(59, 130, 246, 0.2);
   z-index: 999;
   background-color: #f0f7ff;
+}
+
+.dark .tab-item.dragging {
+  background-color: #1e40af;
+  border-color: #3b82f6;
 }
 
 .drag-overlay {
@@ -150,6 +202,12 @@
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.dark .drag-overlay {
+  background-color: #1f2937;
+  border-color: #374151;
+  color: #e5e7eb;
 }
 
 .group-item {
@@ -170,10 +228,21 @@
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
 }
 
+.dark .group-overlay {
+  background-color: #1f2937;
+  border-color: #374151;
+  color: #e5e7eb;
+}
+
 .tab-overlay {
   background-color: #f0f7ff;
   border-color: #3b82f6;
   box-shadow: 0 4px 8px rgba(59, 130, 246, 0.2);
+}
+
+.dark .tab-overlay {
+  background-color: #1e40af;
+  border-color: #3b82f6;
 }
 
 .insert-indicator {

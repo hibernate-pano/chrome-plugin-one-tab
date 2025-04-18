@@ -142,17 +142,17 @@ export const SimpleDraggableTabGroup: React.FC<SimpleDraggableTabGroupProps> = (
     <div
       ref={setNodeRef}
       style={style}
-      className={`bg-white rounded-lg border border-gray-200 overflow-hidden select-none group-item ${isDragging ? 'border-gray-400 dragging' : ''}`}
+      className={`bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 overflow-hidden select-none group-item ${isDragging ? 'border-gray-400 dark:border-gray-500 dragging' : ''}`}
     >
       <div
-        className="flex items-center justify-between p-2 bg-gray-50 border-b border-gray-200 cursor-move"
+        className="flex items-center justify-between p-2 bg-gray-50 dark:bg-gray-900 border-b border-gray-200 dark:border-gray-700 cursor-move"
         {...attributes}
         {...listeners}
       >
         <div className="flex items-center space-x-2 flex-1 min-w-0">
           <button
             onClick={handleToggleExpand}
-            className="text-gray-500 hover:text-gray-700 p-1 rounded-full hover:bg-gray-200"
+            className="text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300 p-1 rounded-full hover:bg-gray-200 dark:hover:bg-gray-700"
             title={isExpanded ? "折叠标签组" : "展开标签组"}
           >
             <svg
@@ -169,7 +169,7 @@ export const SimpleDraggableTabGroup: React.FC<SimpleDraggableTabGroupProps> = (
           {isEditing ? (
             <input
               type="text"
-              className="flex-1 min-w-0 px-2 py-1 border border-gray-300 rounded text-sm"
+              className="flex-1 min-w-0 px-2 py-1 border border-gray-300 dark:border-gray-600 rounded text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100"
               value={groupName}
               onChange={(e) => setGroupName(e.target.value)}
               onBlur={handleSaveName}
@@ -178,7 +178,7 @@ export const SimpleDraggableTabGroup: React.FC<SimpleDraggableTabGroupProps> = (
             />
           ) : (
             <div
-              className="flex-1 min-w-0 truncate text-sm font-medium"
+              className="flex-1 min-w-0 truncate text-sm font-medium text-gray-900 dark:text-gray-100"
               onDoubleClick={handleEditName}
               title={group.name}
             >
@@ -186,7 +186,7 @@ export const SimpleDraggableTabGroup: React.FC<SimpleDraggableTabGroupProps> = (
             </div>
           )}
 
-          <div className="text-xs text-gray-500 whitespace-nowrap">
+          <div className="text-xs text-gray-500 dark:text-gray-400 whitespace-nowrap">
             {group.tabs.length} 个标签页
           </div>
         </div>
@@ -194,14 +194,14 @@ export const SimpleDraggableTabGroup: React.FC<SimpleDraggableTabGroupProps> = (
         <div className="flex items-center space-x-1">
           <button
             onClick={handleOpenAllTabs}
-            className="text-blue-600 hover:text-blue-800 text-xs hover:underline"
+            className="text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300 text-xs hover:underline"
             title="打开所有标签页"
           >
             恢复全部
           </button>
           <button
             onClick={handleEditName}
-            className="text-gray-400 hover:text-gray-600 p-1 rounded hover:bg-gray-200"
+            className="text-gray-400 hover:text-gray-600 dark:text-gray-500 dark:hover:text-gray-300 p-1 rounded hover:bg-gray-200 dark:hover:bg-gray-700"
             title="重命名标签组"
           >
             <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -211,7 +211,7 @@ export const SimpleDraggableTabGroup: React.FC<SimpleDraggableTabGroupProps> = (
 
           <button
             onClick={handleDeleteGroup}
-            className="text-gray-400 hover:text-red-500 p-1 rounded hover:bg-gray-200"
+            className="text-gray-400 hover:text-red-500 dark:text-gray-500 dark:hover:text-red-400 p-1 rounded hover:bg-gray-200 dark:hover:bg-gray-700"
             title="删除标签组"
           >
             <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">

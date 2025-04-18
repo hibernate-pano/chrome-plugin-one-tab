@@ -32,7 +32,7 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({ searchQuery 
 
   if (matchingTabs.length === 0) {
     return (
-      <div className="flex flex-col items-center justify-center h-40 space-y-2 text-gray-500">
+      <div className="flex flex-col items-center justify-center h-40 space-y-2 text-gray-500 dark:text-gray-400">
         <svg xmlns="http://www.w3.org/2000/svg" className="h-12 w-12" fill="none" viewBox="0 0 24 24" stroke="currentColor">
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
         </svg>
@@ -112,15 +112,21 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({ searchQuery 
   // 渲染单个标签项
   const renderTabItem = ({ tab, group }: { tab: Tab; group: TabGroup }) => (
     <div
-      className="flex items-center py-1 px-2 hover:bg-gray-100 transition-colors rounded mb-1"
+      className="flex items-center py-1 px-2 bg-white dark:bg-gray-800 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors rounded mb-1"
     >
       <div className="flex items-center space-x-2 flex-1 min-w-0">
-        {tab.favicon && (
+        {tab.favicon ? (
           <img src={tab.favicon} alt="" className="w-4 h-4 flex-shrink-0" />
+        ) : (
+          <div className="w-4 h-4 bg-gray-200 dark:bg-gray-600 flex-shrink-0 flex items-center justify-center">
+            <svg xmlns="http://www.w3.org/2000/svg" className="h-3 w-3 text-gray-500 dark:text-gray-300" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3.055 11H5a2 2 0 012 2v1a2 2 0 002 2 2 2 0 012 2v2.945M8 3.935V5.5A2.5 2.5 0 0010.5 8h.5a2 2 0 012 2 2 2 0 104 0 2 2 0 012-2h1.064M15 20.488V18a2 2 0 012-2h3.064M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+          </div>
         )}
         <a
           href="#"
-          className="truncate text-blue-600 hover:underline text-sm flex-1 min-w-0"
+          className="truncate text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300 hover:underline text-sm flex-1 min-w-0"
           onClick={(e) => {
             e.preventDefault();
             handleOpenTab(tab, group);
@@ -132,7 +138,7 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({ searchQuery 
       </div>
       <button
         onClick={() => handleDeleteTab(tab, group)}
-        className="text-gray-400 hover:text-red-500 p-1 hover:bg-gray-100 transition-colors ml-1 opacity-0 group-hover:opacity-100"
+        className="text-gray-400 hover:text-red-500 dark:text-gray-500 dark:hover:text-red-400 p-1 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors ml-1 opacity-0 group-hover:opacity-100"
       >
         <svg xmlns="http://www.w3.org/2000/svg" className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
@@ -220,11 +226,11 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({ searchQuery 
   return (
     <div>
       <div className="flex items-center justify-between mb-2">
-        <h3 className="text-base font-medium">搜索结果 ({matchingTabs.length})</h3>
+        <h3 className="text-base font-medium text-gray-900 dark:text-gray-100">搜索结果 ({matchingTabs.length})</h3>
         {matchingTabs.length > 0 && (
           <button
             onClick={handleRestoreAllSearchResults}
-            className="text-blue-600 hover:text-blue-800 text-xs hover:underline flex items-center"
+            className="text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300 text-xs hover:underline flex items-center"
             title="恢复所有搜索到的标签页"
           >
             <svg xmlns="http://www.w3.org/2000/svg" className="h-3.5 w-3.5 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
