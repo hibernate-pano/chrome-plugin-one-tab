@@ -116,7 +116,7 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({ onClose }) => {
       <div className="py-2">
         {isAuthenticated && user && (
           <>
-            <div className="px-4 py-2 border-b border-gray-100 dark:border-gray-700">
+            <div className="px-4 py-2">
               <p className="text-sm font-medium text-gray-900 dark:text-gray-100">{user.email}</p>
               <p className="text-xs text-gray-500 dark:text-gray-400 flex items-center">
                 <span className="inline-block w-2 h-2 rounded-full bg-green-500 mr-1"></span>
@@ -142,7 +142,7 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({ onClose }) => {
           </button>
         )}
 
-        <div className="border-t border-gray-100 dark:border-gray-700 my-1"></div>
+        <div className="border-t border-gray-200 dark:border-gray-700 my-1"></div>
 
         <button
           onClick={handleExportData}
@@ -206,7 +206,7 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({ onClose }) => {
 
         {isAuthenticated && (
           <>
-            <div className="border-t border-gray-100 my-1"></div>
+            <div className="border-t border-gray-200 dark:border-gray-700 my-1"></div>
             <button
               onClick={handleSignOut}
               className="w-full text-left px-4 py-2 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 flex items-center"
@@ -223,7 +223,7 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({ onClose }) => {
       {showAuthModal && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
           <div className="bg-white dark:bg-gray-800 rounded-lg shadow-xl w-full max-w-md mx-4">
-            <div className="flex border-b border-gray-200 dark:border-gray-700">
+            <div className="flex border-b border-gray-300 dark:border-gray-700">
               <button
                 className={`flex-1 py-3 transition-all font-medium ${activeTab === 'login' ? 'text-primary-600 border-b-2 border-primary-600' : 'text-gray-600 dark:text-gray-300 hover:text-primary-600 dark:hover:text-primary-400'}`}
                 onClick={() => setActiveTab('login')}
