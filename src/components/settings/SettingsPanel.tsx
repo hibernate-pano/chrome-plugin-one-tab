@@ -4,11 +4,8 @@ import {
   toggleShowFavicons,
   toggleConfirmBeforeDelete,
   toggleAllowDuplicateTabs,
-  toggleShowNotifications,
   setGroupNameTemplate,
 } from '@/store/slices/settingsSlice';
-import { SyncSettings } from './SyncSettings';
-import { ThemeToggle } from './ThemeToggle';
 
 export const SettingsPanel: React.FC = () => {
   const dispatch = useAppDispatch();
@@ -59,15 +56,6 @@ export const SettingsPanel: React.FC = () => {
         </div>
       </div>
 
-      {/* 主题设置 */}
-      <div className="space-y-2">
-        <h3 className="text-lg font-medium">主题设置</h3>
-        <div className="mt-2">
-          <p className="text-sm text-gray-500 mb-2">选择主题模式：</p>
-          <ThemeToggle />
-        </div>
-      </div>
-
       {/* 显示设置 */}
       <div className="space-y-2">
         <h3 className="text-lg font-medium">显示设置</h3>
@@ -110,37 +98,6 @@ export const SettingsPanel: React.FC = () => {
             <span>删除前确认</span>
           </label>
         </div>
-      </div>
-
-      {/* 通知设置 */}
-      <div className="space-y-2">
-        <h3 className="text-lg font-medium">通知设置</h3>
-        <div className="space-y-2">
-          <label className="flex items-center space-x-2">
-            <input
-              type="checkbox"
-              checked={settings.showNotifications}
-              onChange={() => dispatch(toggleShowNotifications())}
-              className="
-                w-4 h-4 rounded
-                text-blue-600
-                border-gray-300
-                focus:ring-blue-500
-                dark:bg-gray-700 dark:border-gray-600
-              "
-            />
-            <span>显示通知</span>
-          </label>
-          <p className="text-sm text-gray-500 ml-6">
-            关闭后将不再显示标签保存、同步等通知，避免打扰用户
-          </p>
-        </div>
-      </div>
-
-      {/* 新增：同步设置 */}
-      <div className="border-t pt-4">
-        <h3 className="text-lg font-semibold mb-2">数据同步</h3>
-        <SyncSettings />
       </div>
     </div>
   );
