@@ -72,6 +72,34 @@ export const SimpleDraggableTabGroup: React.FC<SimpleDraggableTabGroupProps> = (
     dispatch(deleteGroup(group.id));
   };
 
+  const handleOpenAllTabs = () => {
+    // 收集所有标签页的 URL
+    const urls = group.tabs.map(tab => tab.url);
+
+    // 如果标签组没有锁定，先在UI中删除标签组
+    if (!group.isLocked) {
+      // 先在Redux中删除标签组，立即更新UI
+      dispatch({ type: 'tabs/deleteGroup/fulfilled', payload: group.id });
+
+      // 然后异步完成存储操作
+      dispatch(deleteGroup(group.id))
+        .then(() => {
+          console.log(`删除标签组: ${group.id}`);
+        })
+        .catch(error => {
+          console.error('删除标签组失败:', error);
+        });
+    }
+
+    // 最后发送消息给后台脚本打开标签页
+    setTimeout(() => {
+      chrome.runtime.sendMessage({
+        type: 'OPEN_TABS',
+        data: { urls }
+      });
+    }, 50); // 小延迟确保 UI 先更新
+  };
+
   const handleOpenTab = (tab: any) => {
     // 打开标签页
     chrome.tabs.create({ url: tab.url });
@@ -164,6 +192,13 @@ export const SimpleDraggableTabGroup: React.FC<SimpleDraggableTabGroupProps> = (
         </div>
 
         <div className="flex items-center space-x-1">
+          <button
+            onClick={handleOpenAllTabs}
+            className="text-blue-600 hover:text-blue-800 text-xs hover:underline"
+            title="打开所有标签页"
+          >
+            恢复全部
+          </button>
           <button
             onClick={handleEditName}
             className="text-gray-400 hover:text-gray-600 p-1 rounded hover:bg-gray-200"
