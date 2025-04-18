@@ -1,6 +1,118 @@
-/* 拖曳相关样式 - 优化版 */
+/* 拖曳相关样式 - 全新重构版 */
 
-/* 标签样式 */
+/* 基本过渡效果 */
+.dnd-transition {
+  transition: transform 0.2s ease, opacity 0.2s ease, margin 0.2s ease, box-shadow 0.2s ease;
+}
+
+/* 标签页样式 */
+.tab-item {
+  display: flex;
+  align-items: center;
+  padding: 8px 12px;
+  border-radius: 4px;
+  background-color: white;
+  border: 1px solid transparent;
+  margin-bottom: 4px;
+  cursor: move;
+  position: relative;
+}
+
+.tab-item:hover {
+  background-color: #f9fafb;
+}
+
+/* 标签页拖拽中状态 */
+.tab-item.dragging {
+  opacity: 0.5;
+  border-color: #3b82f6;
+  box-shadow: 0 2px 6px rgba(59, 130, 246, 0.2);
+  z-index: 999;
+  background-color: #f0f7ff;
+}
+
+/* 标签组样式 */
+.group-item {
+  background-color: white;
+  border-radius: 8px;
+  border: 1px solid #e5e7eb;
+  overflow: hidden;
+  margin-bottom: 12px;
+}
+
+/* 标签组拖拽中状态 */
+.group-item.dragging {
+  opacity: 0.7;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+  z-index: 999;
+}
+
+/* 拖拽覆盖层 - 标签页 */
+.tab-drag-overlay {
+  background-color: white;
+  border-radius: 4px;
+  border: 1px solid #3b82f6;
+  box-shadow: 0 4px 12px rgba(59, 130, 246, 0.2);
+  padding: 8px 12px;
+  display: flex;
+  align-items: center;
+  max-width: 300px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* 拖拽覆盖层 - 标签组 */
+.group-drag-overlay {
+  background-color: white;
+  border-radius: 8px;
+  border: 1px solid #e5e7eb;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.1);
+  padding: 12px;
+  width: 100%;
+  max-width: 600px;
+}
+
+/* 拖拽目标样式 - 当鼠标悬停在可放置区域时 */
+.drop-target {
+  background-color: #f0f7ff;
+  border-color: #bfdbfe;
+}
+
+/* 拖拽指示器 - 显示当前拖拽位置 */
+.drag-indicator {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background-color: #3b82f6;
+  z-index: 1000;
+}
+
+.drag-indicator-top {
+  top: -1px;
+}
+
+.drag-indicator-bottom {
+  bottom: -1px;
+}
+
+/* 标签组内容区域 */
+.tabs-container {
+  transition: height 0.2s ease;
+}
+
+/* 标签组头部 */
+.group-header {
+  display: flex;
+  align-items: center;
+  padding: 8px 12px;
+  background-color: #f9fafb;
+  border-bottom: 1px solid #e5e7eb;
+  cursor: move;
+}
+
+/* 兼容旧样式 */
 .tab-item {
   display: flex;
   align-items: center;
@@ -26,7 +138,6 @@
   background-color: #f0f7ff;
 }
 
-/* 拖曳覆盖层 */
 .drag-overlay {
   display: flex;
   align-items: center;
@@ -41,7 +152,6 @@
   text-overflow: ellipsis;
 }
 
-/* 标签组拖曳样式 */
 .group-item {
   transition: transform 0.15s ease, opacity 0.15s ease;
 }
@@ -60,9 +170,52 @@
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
 }
 
-/* 标签页拖动时的高亮效果 */
 .tab-overlay {
   background-color: #f0f7ff;
   border-color: #3b82f6;
   box-shadow: 0 4px 8px rgba(59, 130, 246, 0.2);
+}
+
+.insert-indicator {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 3px;
+  background-color: #3b82f6;
+  z-index: 1000;
+  animation: pulse 1.5s infinite;
+  border-radius: 1.5px;
+  box-shadow: 0 0 4px rgba(59, 130, 246, 0.5);
+}
+
+@keyframes pulse {
+  0% {
+    opacity: 0.7;
+    transform: scaleY(1);
+  }
+
+  50% {
+    opacity: 1;
+    transform: scaleY(1.3);
+  }
+
+  100% {
+    opacity: 0.7;
+    transform: scaleY(1);
+  }
+}
+
+.insert-indicator-top {
+  top: -2px;
+}
+
+.insert-indicator-bottom {
+  bottom: -2px;
+}
+
+.drop-target {
+  background-color: #f0f7ff;
+  border-color: #bfdbfe;
+  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.15);
+  transition: all 0.2s cubic-bezier(0.2, 0, 0, 1);
 }

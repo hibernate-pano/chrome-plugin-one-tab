@@ -1,10 +1,35 @@
 // 拖拽项类型
+export const DragTypes = {
+  GROUP: 'group',
+  TAB: 'tab'
+};
+
+// 拖拽项数据接口
+export interface DragData {
+  type: string;
+  id: string;
+  index: number;
+}
+
+// 标签组拖拽数据
+export interface GroupDragData extends DragData {
+  type: 'group';
+  group: any; // 标签组数据
+}
+
+// 标签页拖拽数据
+export interface TabDragData extends DragData {
+  type: 'tab';
+  tab: any; // 标签页数据
+  groupId: string;
+}
+
+// 为了兼容旧代码，保留旧的类型定义
 export const ItemTypes = {
   TAB_GROUP: 'tabGroup',
   TAB: 'tab'
 };
 
-// 拖拽项接口
 export interface DragItem {
   type: string;
   id: string;
@@ -12,12 +37,10 @@ export interface DragItem {
   index: number;
 }
 
-// 标签组拖拽项
 export interface TabGroupDragItem extends DragItem {
   type: typeof ItemTypes.TAB_GROUP;
 }
 
-// 标签页拖拽项
 export interface TabDragItem extends DragItem {
   type: typeof ItemTypes.TAB;
   groupId: string;

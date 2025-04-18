@@ -1,8 +1,7 @@
-import React, { useRef, useEffect, useState } from 'react';
+import React, { useRef } from 'react';
 import { useDrag, useDrop } from 'react-dnd';
 import { Tab } from '@/types/tab';
 import { ItemTypes, TabDragItem } from './DndTypes';
-import { debounce } from 'lodash';
 
 interface DraggableTabProps {
   tab: Tab;
@@ -22,21 +21,6 @@ export const DraggableTab: React.FC<DraggableTabProps> = ({
   handleDeleteTab
 }) => {
   const ref = useRef<HTMLDivElement>(null);
-  const [isHovering, setIsHovering] = useState(false);
-
-  // 防抖的移动函数，减少过频繁的状态更新
-  const debouncedMoveTab = useRef(
-    debounce((sourceGroupId, sourceIndex, targetGroupId, targetIndex) => {
-      moveTab(sourceGroupId, sourceIndex, targetGroupId, targetIndex);
-    }, 50)
-  ).current;
-
-  // 清理防抖函数
-  useEffect(() => {
-    return () => {
-      debouncedMoveTab.cancel();
-    };
-  }, [debouncedMoveTab]);
 
   // 拖拽源
   const [{ isDragging }, drag] = useDrag({
@@ -45,14 +29,10 @@ export const DraggableTab: React.FC<DraggableTabProps> = ({
     collect: (monitor) => ({
       isDragging: monitor.isDragging(),
     }),
-    end: () => {
-      // 拖拽结束时重置悬停状态
-      setIsHovering(false);
-    }
   });
 
   // 放置目标
-  const [{ isOver }, drop] = useDrop({
+  const [, drop] = useDrop({
     accept: ItemTypes.TAB,
     hover: (item: TabDragItem, monitor) => {
       if (!ref.current) {
@@ -71,48 +51,27 @@ export const DraggableTab: React.FC<DraggableTabProps> = ({
 
       // 确定鼠标位置
       const hoverBoundingRect = ref.current.getBoundingClientRect();
-      const hoverHeight = hoverBoundingRect.bottom - hoverBoundingRect.top;
-      const hoverMiddleY = hoverHeight / 2;
-
-      // 添加一个阈值区域，避免在中间区域频繁触发
-      const thresholdSize = Math.min(hoverHeight * 0.3, 10); // 阈值区域为高度的30%，最多10像素
-
+      const hoverMiddleY = (hoverBoundingRect.bottom - hoverBoundingRect.top) / 2;
       const clientOffset = monitor.getClientOffset();
-      if (!clientOffset) return;
+      const hoverClientY = clientOffset!.y - hoverBoundingRect.top;
 
-      const hoverClientY = clientOffset.y - hoverBoundingRect.top;
-
-      // 判断拖拽方向和鼠标位置
-      if (hoverClientY < hoverMiddleY - thresholdSize) {
-        // 鼠标在上半部分，目标位置应该在当前项之前
-        if (sourceIndex > targetIndex || (sourceIndex === targetIndex - 1 && sourceGroupId === targetGroupId)) {
-          // 如果已经在正确位置或者是相邻项，不触发移动
-          return;
-        }
-      } else if (hoverClientY > hoverMiddleY + thresholdSize) {
-        // 鼠标在下半部分，目标位置应该在当前项之后
-        if (sourceIndex < targetIndex || (sourceIndex === targetIndex + 1 && sourceGroupId === targetGroupId)) {
-          // 如果已经在正确位置或者是相邻项，不触发移动
-          return;
-        }
-      } else {
-        // 鼠标在中间区域，不触发移动
+      // 向上拖动时，只有当鼠标超过目标的一半高度时才移动
+      if (sourceGroupId === targetGroupId && sourceIndex < targetIndex && hoverClientY < hoverMiddleY) {
         return;
       }
 
-      // 设置悬停状态
-      setIsHovering(true);
+      // 向下拖动时，只有当鼠标超过目标的一半高度时才移动
+      if (sourceGroupId === targetGroupId && sourceIndex > targetIndex && hoverClientY > hoverMiddleY) {
+        return;
+      }
 
-      // 使用防抖函数执行移动
-      debouncedMoveTab(sourceGroupId, sourceIndex, targetGroupId, targetIndex);
+      // 执行移动
+      moveTab(sourceGroupId, sourceIndex, targetGroupId, targetIndex);
 
       // 更新拖拽项的索引和组ID
       item.index = targetIndex;
       item.groupId = targetGroupId;
     },
-    collect: (monitor) => ({
-      isOver: monitor.isOver(),
-    }),
   });
 
   // 将拖拽源和放置目标应用到同一个元素
@@ -121,14 +80,8 @@ export const DraggableTab: React.FC<DraggableTabProps> = ({
   return (
     <div
       ref={ref}
-      className={`flex items-center py-1 px-2 hover:bg-gray-100 rounded cursor-move
-        ${isDragging ? 'bg-gray-50 border border-gray-300' : ''}
-        ${isOver && isHovering ? 'border-t-2 border-blue-300' : ''}
-      `}
-      style={{
-        opacity: isDragging ? 0.6 : 1,
-        position: 'relative',
-      }}
+      className={`flex items-center py-1 px-2 hover:bg-gray-100 transition-colors rounded ${isDragging ? 'opacity-50 border-dashed border-primary-400' : 'opacity-100'}`}
+      style={{ cursor: 'move' }}
     >
       <div className="flex items-center space-x-2 flex-1 min-w-0">
         {tab.favicon ? (
@@ -154,7 +107,7 @@ export const DraggableTab: React.FC<DraggableTabProps> = ({
       </div>
       <button
         onClick={() => handleDeleteTab(tab.id)}
-        className="text-gray-400 hover:text-red-500 p-1 rounded hover:bg-gray-200 ml-1 opacity-0 group-hover:opacity-100"
+        className="text-gray-400 hover:text-red-500 p-1 rounded hover:bg-gray-200 transition-colors ml-1 opacity-0 group-hover:opacity-100"
         title="删除标签页"
       >
         <svg xmlns="http://www.w3.org/2000/svg" className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">

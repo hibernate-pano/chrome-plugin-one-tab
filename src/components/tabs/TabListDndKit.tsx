@@ -34,7 +34,7 @@ export const TabListDndKit: React.FC<TabListProps> = ({ searchQuery }) => {
   const useDoubleColumnLayout = useAppSelector((state) => state.settings.useDoubleColumnLayout);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [activeData, setActiveData] = useState<any | null>(null);
-  
+
   // 保存拖拽初始状态的引用
   const initialDragState = useRef<{
     sourceGroupId: string | null;
@@ -68,7 +68,7 @@ export const TabListDndKit: React.FC<TabListProps> = ({ searchQuery }) => {
   const handleDragStart = (event: DragStartEvent) => {
     const { active } = event;
     const activeData = active.data.current;
-    
+
     // 记录初始拖拽状态
     if (activeData?.type === 'tab') {
       initialDragState.current = {
@@ -76,7 +76,7 @@ export const TabListDndKit: React.FC<TabListProps> = ({ searchQuery }) => {
         sourceIndex: activeData.index
       };
     }
-    
+
     // 记录开始拖拽的元素信息
     console.log('[DEBUG] Drag Start:', {
       id: active.id,
@@ -90,7 +90,7 @@ export const TabListDndKit: React.FC<TabListProps> = ({ searchQuery }) => {
   };
 
   const handleDragOver = (event: DragOverEvent) => {
-    const { active, over } = event;
+    const { active, over, delta } = event;
 
     if (!over) return;
 
@@ -107,46 +107,52 @@ export const TabListDndKit: React.FC<TabListProps> = ({ searchQuery }) => {
 
     // 处理标签拖拽
     if (activeData.type === 'tab' && overData.type === 'tab') {
-      // 使用初始拖拽状态，而不是当前可能已经改变的activeData
+      // 始终使用初始拖拽状态，而不是当前可能已经改变的activeData
       const sourceGroupId = initialDragState.current.sourceGroupId || activeData.groupId;
-      const sourceIndex = initialDragState.current.sourceIndex !== null ? 
+      const sourceIndex = initialDragState.current.sourceIndex !== null ?
         initialDragState.current.sourceIndex : activeData.index;
-      
+
       const targetGroupId = overData.groupId;
       const targetIndex = overData.index;
 
       // 判断是否是同一标签组内的移动
       const isSameGroup = sourceGroupId === targetGroupId;
-      
+
       // 不重复处理拖拽到自己的情况
       if (isSameGroup && sourceIndex === targetIndex) {
         return;
       }
+
+      // 计算拖动方向
+      const direction = delta.y > 0 ? 'down' : (delta.y < 0 ? 'up' : 'none');
 
       console.log('[DEBUG] Drag Over:', {
         sourceGroupId,
         sourceIndex,
         targetGroupId,
         targetIndex,
-        isSameGroup
+        isSameGroup,
+        direction,
+        delta
       });
 
-      // 实时更新UI
+      // 实时更新UI - 使用原始源索引
       dispatch(moveTabAndSync({
         sourceGroupId,
         sourceIndex,
         targetGroupId,
-        targetIndex
+        targetIndex,
+        updateSourceInDrag: false
       }));
 
-      // 更新activeData中的信息，以便显示正确的拖拽预览
-      // 但不更新索引，保持原始索引不变
+      // 不更新activeData中的索引，保持原始索引不变
+      // 只更新组ID，以便显示正确的拖拽预览
       activeData.groupId = targetGroupId;
     }
   };
 
   const handleDragEnd = (event: DragEndEvent) => {
-    const { active, over } = event;
+    const { active, over, delta } = event;
 
     if (!over) {
       setActiveId(null);
@@ -176,8 +182,39 @@ export const TabListDndKit: React.FC<TabListProps> = ({ searchQuery }) => {
       return;
     }
 
+    // 处理标签拖拽
+    if (activeData.type === 'tab' && overData.type === 'tab') {
+      // 使用初始拖拽状态，而不是当前可能已经改变的activeData
+      const sourceGroupId = initialDragState.current.sourceGroupId || activeData.groupId;
+      const sourceIndex = initialDragState.current.sourceIndex !== null ?
+        initialDragState.current.sourceIndex : activeData.index;
+
+      const targetGroupId = overData.groupId;
+      const targetIndex = overData.index;
+
+      // 计算拖动方向
+      const direction = delta?.y > 0 ? 'down' : (delta?.y < 0 ? 'up' : 'none');
+
+      console.log('[DEBUG] Drag End:', {
+        sourceGroupId,
+        sourceIndex,
+        targetGroupId,
+        targetIndex,
+        direction,
+        delta
+      });
+
+      // 在拖动结束时执行最终更新
+      dispatch(moveTabAndSync({
+        sourceGroupId,
+        sourceIndex,
+        targetGroupId,
+        targetIndex,
+        updateSourceInDrag: true
+      }));
+    }
     // 处理组拖拽
-    if (activeData.type === 'group' && overData.type === 'group') {
+    else if (activeData.type === 'group' && overData.type === 'group') {
       const activeIndex = filteredGroups.findIndex(g => `group-${g.id}` === activeId);
       const overIndex = filteredGroups.findIndex(g => `group-${g.id}` === overId);
 
@@ -186,7 +223,6 @@ export const TabListDndKit: React.FC<TabListProps> = ({ searchQuery }) => {
       }
     }
 
-    // 最终的拖拽结果已经在handleDragOver中处理
     // 清理所有状态
     setActiveId(null);
     setActiveData(null);

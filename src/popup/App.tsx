@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Header } from '@/components/layout/Header';
-import { TabList } from '@/components/tabs/TabList';
+import { SimpleTabList } from '@/components/tabs/SimpleTabList';
 import { DndProvider } from '@/components/dnd/DndProvider';
 import { useAppDispatch, useAppSelector } from '@/store/hooks';
 import { loadSettings } from '@/store/slices/settingsSlice';
@@ -133,7 +133,7 @@ const App: React.FC = () => {
         <div className="min-h-screen bg-white flex flex-col">
           <Header onSearch={setSearchQuery} />
           <main className="flex-1 container mx-auto py-2 px-2 max-w-6xl">
-            <TabList searchQuery={searchQuery} />
+            <SimpleTabList searchQuery={searchQuery} />
           </main>
           <footer className="py-2 px-2 bg-white border-t border-gray-200 text-xs text-gray-600">
             <div className="container mx-auto max-w-6xl flex justify-between items-center">

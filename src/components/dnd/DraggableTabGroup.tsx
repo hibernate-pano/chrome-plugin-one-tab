@@ -1,9 +1,8 @@
-import React, { useRef, useState, useEffect } from 'react';
+import React, { useRef } from 'react';
 import { useDrag, useDrop } from 'react-dnd';
 import { TabGroup as TabGroupType } from '@/types/tab';
 import { TabGroup } from '@/components/tabs/TabGroup';
 import { ItemTypes, TabGroupDragItem } from './DndTypes';
-import { debounce } from 'lodash';
 
 interface DraggableTabGroupProps {
   group: TabGroupType;
@@ -13,21 +12,6 @@ interface DraggableTabGroupProps {
 
 export const DraggableTabGroup: React.FC<DraggableTabGroupProps> = ({ group, index, moveGroup }) => {
   const ref = useRef<HTMLDivElement>(null);
-  const [isHovering, setIsHovering] = useState(false);
-
-  // 创建一个防抖动的移动函数，避免频繁更新
-  const debouncedMoveGroup = useRef(
-    debounce((dragIndex, hoverIndex) => {
-      moveGroup(dragIndex, hoverIndex);
-    }, 50) // 50ms 的防抖时间
-  ).current;
-
-  // 清理防抖函数
-  useEffect(() => {
-    return () => {
-      debouncedMoveGroup.cancel();
-    };
-  }, [debouncedMoveGroup]);
 
   // 拖拽源
   const [{ isDragging }, drag] = useDrag({
@@ -36,14 +20,10 @@ export const DraggableTabGroup: React.FC<DraggableTabGroupProps> = ({ group, ind
     collect: (monitor) => ({
       isDragging: monitor.isDragging(),
     }),
-    end: () => {
-      // 拖拽结束时重置悬停状态
-      setIsHovering(false);
-    }
   });
 
   // 放置目标
-  const [{ isOver }, drop] = useDrop({
+  const [, drop] = useDrop({
     accept: ItemTypes.TAB_GROUP,
     hover: (item: TabGroupDragItem, monitor) => {
       if (!ref.current) {
@@ -60,49 +40,26 @@ export const DraggableTabGroup: React.FC<DraggableTabGroupProps> = ({ group, ind
 
       // 确定鼠标位置
       const hoverBoundingRect = ref.current.getBoundingClientRect();
-      const hoverHeight = hoverBoundingRect.bottom - hoverBoundingRect.top;
-      const hoverMiddleY = hoverHeight / 2;
-
-      // 添加一个阈值区域，避免在中间区域频繁触发
-      const thresholdSize = Math.min(hoverHeight * 0.2, 20); // 阈值区域为高度的20%，最多20像素
-
+      const hoverMiddleY = (hoverBoundingRect.bottom - hoverBoundingRect.top) / 2;
       const clientOffset = monitor.getClientOffset();
-      if (!clientOffset) return;
+      const hoverClientY = clientOffset!.y - hoverBoundingRect.top;
 
-      const hoverClientY = clientOffset.y - hoverBoundingRect.top;
-
-      // 判断拖拽方向和鼠标位置
-      // 简化逻辑，不再区分上下拖动，只判断鼠标是否越过中线
-      // 这样可以确保无论从上向下还是从下向上拖动都能正常工作
-      if (hoverClientY < hoverMiddleY - thresholdSize) {
-        // 鼠标在上半部分，目标位置应该在当前项之前
-        if (dragIndex > hoverIndex || dragIndex === hoverIndex - 1) {
-          // 如果已经在正确位置或者是相邻项，不触发移动
-          return;
-        }
-      } else if (hoverClientY > hoverMiddleY + thresholdSize) {
-        // 鼠标在下半部分，目标位置应该在当前项之后
-        if (dragIndex < hoverIndex || dragIndex === hoverIndex + 1) {
-          // 如果已经在正确位置或者是相邻项，不触发移动
-          return;
-        }
-      } else {
-        // 鼠标在中间区域，不触发移动
+      // 向上拖动时，只有当鼠标超过目标的一半高度时才移动
+      if (dragIndex < hoverIndex && hoverClientY < hoverMiddleY) {
         return;
       }
 
-      // 设置悬停状态
-      setIsHovering(true);
+      // 向下拖动时，只有当鼠标超过目标的一半高度时才移动
+      if (dragIndex > hoverIndex && hoverClientY > hoverMiddleY) {
+        return;
+      }
 
-      // 使用防抖函数执行移动
-      debouncedMoveGroup(dragIndex, hoverIndex);
+      // 执行移动
+      moveGroup(dragIndex, hoverIndex);
 
       // 更新拖拽项的索引
       item.index = hoverIndex;
     },
-    collect: (monitor) => ({
-      isOver: monitor.isOver(),
-    }),
   });
 
   // 将拖拽源和放置目标应用到同一个元素
@@ -113,17 +70,9 @@ export const DraggableTabGroup: React.FC<DraggableTabGroupProps> = ({ group, ind
       ref={ref}
       style={{
         opacity: isDragging ? 0.5 : 1,
-        cursor: 'move',
-        transform: isOver && isHovering ? 'scale(1.01) translateY(3px)' : 'none',
-        transition: 'transform 0.2s ease, opacity 0.2s ease, box-shadow 0.2s ease, background-color 0.2s ease, margin 0.2s ease',
-        boxShadow: isOver && isHovering ? '0 3px 10px rgba(0, 0, 0, 0.15)' : 'none',
-        backgroundColor: isOver && isHovering ? 'rgba(243, 244, 246, 0.5)' : 'transparent',
-        position: 'relative',
-        zIndex: isOver && isHovering ? 10 : 'auto',
-        marginTop: isOver && isHovering ? '12px' : '0px',
-        marginBottom: isOver && isHovering ? '12px' : '0px'
+        cursor: 'default',
       }}
-      className={`draggable-item ${isDragging ? 'dragging' : ''} ${isOver && isHovering ? 'drag-over rounded-md' : ''}`}
+      className="transition-material"
     >
       <TabGroup group={group} />
     </div>

@@ -648,7 +648,7 @@ export const moveTabAndSync = createAsyncThunk(
               if (g.id === sourceGroupId) return sourceGroup;
               if (g.id === targetGroupId) return targetGroup;
               return g;
-            });
+            }).filter(g => g.tabs.length > 0); // 移除空标签组
 
             await storage.setGroups(updatedGroups);
 
@@ -739,24 +739,29 @@ export const tabSlice = createSlice({
       if (sourceGroupId === targetGroupId) {
         // 创建新的标签数组，避免直接修改原数组
         const newTabs = [...sourceGroup.tabs];
-        
+
         // 先移除源标签
         newTabs.splice(sourceIndex, 1);
-        
-        // 计算调整后的目标索引
-        // 如果目标位置在源位置之后，由于已经移除了源元素，目标位置需要减1
-        let adjustedIndex = sourceIndex < targetIndex ? targetIndex - 1 : targetIndex;
-        
+
+        // 计算目标索引 - 采用更直观的方法
+        let adjustedIndex = targetIndex;
+
+        // 如果源索引小于目标索引，说明我们是向下拖动
+        // 在移除源元素后，目标位置会向前移动1
+        if (sourceIndex < targetIndex) {
+          adjustedIndex = targetIndex - 1;
+        }
+
         // 确保索引在有效范围内
         adjustedIndex = Math.max(0, Math.min(adjustedIndex, newTabs.length));
-        
+
         // 插入到目标位置
         newTabs.splice(adjustedIndex, 0, tab);
-        
+
         // 更新标签组
         sourceGroup.tabs = newTabs;
         sourceGroup.updatedAt = new Date().toISOString();
-      } 
+      }
       // 处理跨组移动
       else {
         // 从源组移除标签
@@ -767,13 +772,13 @@ export const tabSlice = createSlice({
 
         // 添加到目标组
         const newTargetTabs = [...targetGroup.tabs];
-        
+
         // 检查目标组中是否已经有这个标签
         const existingIndex = newTargetTabs.findIndex(t => t.id === tab.id);
         if (existingIndex !== -1) {
           newTargetTabs.splice(existingIndex, 1);
         }
-        
+
         // 插入到目标位置，确保索引不超出范围
         const safeTargetIndex = Math.min(targetIndex, newTargetTabs.length);
         newTargetTabs.splice(safeTargetIndex, 0, tab);
