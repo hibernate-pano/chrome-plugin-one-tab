@@ -8,6 +8,7 @@ import {
   setGroupNameTemplate,
 } from '@/store/slices/settingsSlice';
 import { SyncSettings } from './SyncSettings';
+import { ThemeToggle } from './ThemeToggle';
 
 export const SettingsPanel: React.FC = () => {
   const dispatch = useAppDispatch();
@@ -30,8 +31,9 @@ export const SettingsPanel: React.FC = () => {
               placeholder="例如：标签组 %Y-%m-%d %H:%M"
               className="
                 w-full px-3 py-2 rounded
-                bg-white
-                border border-gray-300
+                bg-white dark:bg-gray-700
+                border border-gray-300 dark:border-gray-600
+                text-gray-900 dark:text-gray-100
                 focus:outline-none focus:ring-2 focus:ring-blue-500
               "
             />
@@ -49,10 +51,20 @@ export const SettingsPanel: React.FC = () => {
                 text-blue-600
                 border-gray-300
                 focus:ring-blue-500
+                dark:bg-gray-700 dark:border-gray-600
               "
             />
             <span>允许保存重复的标签页</span>
           </label>
+        </div>
+      </div>
+
+      {/* 主题设置 */}
+      <div className="space-y-2">
+        <h3 className="text-lg font-medium">主题设置</h3>
+        <div className="mt-2">
+          <p className="text-sm text-gray-500 mb-2">选择主题模式：</p>
+          <ThemeToggle />
         </div>
       </div>
 
@@ -70,6 +82,7 @@ export const SettingsPanel: React.FC = () => {
                 text-blue-600
                 border-gray-300
                 focus:ring-blue-500
+                dark:bg-gray-700 dark:border-gray-600
               "
             />
             <span>显示网站图标</span>
@@ -91,6 +104,7 @@ export const SettingsPanel: React.FC = () => {
                 text-blue-600
                 border-gray-300
                 focus:ring-blue-500
+                dark:bg-gray-700 dark:border-gray-600
               "
             />
             <span>删除前确认</span>
@@ -112,6 +126,7 @@ export const SettingsPanel: React.FC = () => {
                 text-blue-600
                 border-gray-300
                 focus:ring-blue-500
+                dark:bg-gray-700 dark:border-gray-600
               "
             />
             <span>显示通知</span>

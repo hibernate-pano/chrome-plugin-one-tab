@@ -47,7 +47,7 @@ export const Header: React.FC<HeaderProps> = ({ onSearch }) => {
   };
 
   return (
-    <header className="bg-white border-b border-gray-200 transition-colors">
+    <header className="bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700 transition-colors">
       <div className="container mx-auto max-w-6xl">
         <div className="flex items-center justify-between py-2 px-2">
           <div className="flex items-center space-x-3">
@@ -55,7 +55,7 @@ export const Header: React.FC<HeaderProps> = ({ onSearch }) => {
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 17V7m0 10a2 2 0 01-2 2H5a2 2 0 01-2-2V7a2 2 0 012-2h2a2 2 0 012 2m0 10a2 2 0 002 2h2a2 2 0 002-2M9 7a2 2 0 012-2h2a2 2 0 012 2m0 10V7m0 10a2 2 0 002 2h2a2 2 0 002-2V7a2 2 0 00-2-2h-2a2 2 0 00-2 2" />
             </svg>
             <div className="flex items-center">
-              <h1 className="text-lg font-bold text-gray-800">
+              <h1 className="text-lg font-bold text-gray-800 dark:text-gray-100">
                 OneTabPlus
               </h1>
               <TabCounter />
@@ -67,7 +67,7 @@ export const Header: React.FC<HeaderProps> = ({ onSearch }) => {
               <input
                 type="text"
                 placeholder="搜索标签..."
-                className="pl-8 pr-8 py-1.5 w-60 border border-gray-300 rounded text-gray-700 text-sm focus:outline-none focus:ring-1 focus:ring-primary-500 focus:border-transparent"
+                className="pl-8 pr-8 py-1.5 w-60 border border-gray-300 dark:border-gray-600 rounded text-gray-700 dark:text-gray-200 dark:bg-gray-700 text-sm focus:outline-none focus:ring-1 focus:ring-primary-500 focus:border-transparent"
                 onChange={handleSearch}
                 value={searchValue}
               />
@@ -102,7 +102,7 @@ export const Header: React.FC<HeaderProps> = ({ onSearch }) => {
             <div className="flex items-center space-x-2">
               <button
                 onClick={handleToggleLayout}
-                className="p-2 rounded hover:bg-gray-100 transition-colors text-gray-600 flex items-center justify-center"
+                className="p-2 rounded hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors text-gray-600 dark:text-gray-300 flex items-center justify-center"
                 title={settings.useDoubleColumnLayout ? '切换为单栏布局' : '切换为双栏布局'}
               >
                 {settings.useDoubleColumnLayout ? (
@@ -129,7 +129,7 @@ export const Header: React.FC<HeaderProps> = ({ onSearch }) => {
             <div className="relative">
               <button
                 onClick={() => setShowDropdown(!showDropdown)}
-                className="p-2 rounded-full hover:bg-gray-100 transition-material text-gray-600"
+                className="p-2 rounded-full hover:bg-gray-100 dark:hover:bg-gray-700 transition-material text-gray-600 dark:text-gray-300"
                 aria-label="菜单"
               >
                 <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">

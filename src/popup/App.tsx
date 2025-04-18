@@ -12,6 +12,7 @@ import { hasSyncPromptShown, markSyncPromptShown } from '@/utils/syncPromptUtils
 import { checkCloudData } from '@/utils/cloudDataUtils';
 import SyncPromptModal from '@/components/sync/SyncPromptModal';
 import { ToastProvider } from '@/contexts/ToastContext';
+import { ThemeProvider } from '@/contexts/ThemeContext';
 
 const App: React.FC = () => {
   const dispatch = useAppDispatch();
@@ -129,45 +130,47 @@ const App: React.FC = () => {
 
   return (
     <ToastProvider>
-      <DndProvider>
-        <div className="min-h-screen bg-white flex flex-col">
-          <Header onSearch={setSearchQuery} />
-          <main className="flex-1 container mx-auto py-2 px-2 max-w-6xl">
-            <SimpleTabList searchQuery={searchQuery} />
-          </main>
-          <footer className="py-2 px-2 bg-white border-t border-gray-200 text-xs text-gray-600">
-            <div className="container mx-auto max-w-6xl flex justify-between items-center">
-              <div className="flex items-center space-x-2">
-                <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 text-primary-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 17V7m0 10a2 2 0 01-2 2H5a2 2 0 01-2-2V7a2 2 0 012-2h2a2 2 0 012 2m0 10a2 2 0 002 2h2a2 2 0 002-2M9 7a2 2 0 012-2h2a2 2 0 012 2m0 10V7m0 10a2 2 0 002 2h2a2 2 0 002-2V7a2 2 0 00-2-2h-2a2 2 0 00-2 2" />
-                </svg>
-                <span className="text-xs">OneTabPlus v1.5.7</span>
+      <ThemeProvider>
+        <DndProvider>
+          <div className="min-h-screen bg-white dark:bg-gray-900 dark:text-gray-100 flex flex-col">
+            <Header onSearch={setSearchQuery} />
+            <main className="flex-1 container mx-auto py-2 px-2 max-w-6xl">
+              <SimpleTabList searchQuery={searchQuery} />
+            </main>
+            <footer className="py-2 px-2 bg-white dark:bg-gray-900 border-t border-gray-200 dark:border-gray-700 text-xs text-gray-600 dark:text-gray-400">
+              <div className="container mx-auto max-w-6xl flex justify-between items-center">
+                <div className="flex items-center space-x-2">
+                  <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 text-primary-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 17V7m0 10a2 2 0 01-2 2H5a2 2 0 01-2-2V7a2 2 0 012-2h2a2 2 0 012 2m0 10a2 2 0 002 2h2a2 2 0 002-2M9 7a2 2 0 012-2h2a2 2 0 012 2m0 10V7m0 10a2 2 0 002 2h2a2 2 0 002-2V7a2 2 0 00-2-2h-2a2 2 0 00-2 2" />
+                  </svg>
+                  <span className="text-xs">OneTabPlus v1.5.8</span>
+                </div>
+                <div>
+                  {isAuthenticated ? (
+                    <span className="flex items-center bg-green-50 text-green-700 px-3 py-1 rounded-full text-xs font-medium">
+                      <span className="inline-block w-2 h-2 rounded-full bg-green-500 mr-2"></span>
+                      已同步
+                    </span>
+                  ) : (
+                    <span className="flex items-center bg-gray-100 text-gray-600 px-3 py-1 rounded-full text-xs font-medium">
+                      <span className="inline-block w-2 h-2 rounded-full bg-gray-400 mr-2"></span>
+                      未登录
+                    </span>
+                  )}
+                </div>
               </div>
-              <div>
-                {isAuthenticated ? (
-                  <span className="flex items-center bg-green-50 text-green-700 px-3 py-1 rounded-full text-xs font-medium">
-                    <span className="inline-block w-2 h-2 rounded-full bg-green-500 mr-2"></span>
-                    已同步
-                  </span>
-                ) : (
-                  <span className="flex items-center bg-gray-100 text-gray-600 px-3 py-1 rounded-full text-xs font-medium">
-                    <span className="inline-block w-2 h-2 rounded-full bg-gray-400 mr-2"></span>
-                    未登录
-                  </span>
-                )}
-              </div>
-            </div>
-          </footer>
+            </footer>
 
-          {/* 同步提示对话框 */}
-          {showSyncPrompt && (
-            <SyncPromptModal
-              onClose={handleCloseSyncPrompt}
-              hasCloudData={hasCloudData}
-            />
-          )}
-        </div>
-      </DndProvider>
+            {/* 同步提示对话框 */}
+            {showSyncPrompt && (
+              <SyncPromptModal
+                onClose={handleCloseSyncPrompt}
+                hasCloudData={hasCloudData}
+              />
+            )}
+          </div>
+        </DndProvider>
+      </ThemeProvider>
     </ToastProvider>
   );
 };

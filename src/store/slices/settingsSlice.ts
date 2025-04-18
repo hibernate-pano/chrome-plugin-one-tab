@@ -65,6 +65,15 @@ const settingsSlice = createSlice({
   name: 'settings',
   initialState,
   reducers: {
+    // 更新设置（可以更新多个设置项）
+    updateSettings: (state, action: PayloadAction<Partial<UserSettings>>) => {
+      return { ...state, ...action.payload };
+    },
+
+    // 设置主题模式
+    setThemeMode: (state, action: PayloadAction<'light' | 'dark' | 'auto'>) => {
+      state.themeMode = action.payload;
+    },
 
     setShowFavicons: (state, action: PayloadAction<boolean>) => {
       state.showFavicons = action.payload;
@@ -130,6 +139,8 @@ const settingsSlice = createSlice({
 });
 
 export const {
+  updateSettings,
+  setThemeMode,
   setShowFavicons,
   setShowTabCount,
   setShowNotifications,

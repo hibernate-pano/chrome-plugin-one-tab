@@ -1,4 +1,4 @@
-# OneTab Plus - 标签管理器文档 (v1.5.7)
+# OneTab Plus - 标签管理器文档 (v1.5.8)
 
 ## 项目概述
 
@@ -73,6 +73,12 @@ OneTab Plus 是一个 Chrome 浏览器扩展，用于高效管理和组织浏览
   - 显示/隐藏标签计数
   - 删除前确认
   - 允许/禁止重复标签页
+
+- **主题设置**：
+
+  - 浅色模式：始终使用浅色主题
+  - 深色模式：始终使用深色主题
+  - 自动模式：根据系统设置自动切换深色/浅色主题
 
 - **同步设置**：
   - 启用/禁用同步
@@ -189,6 +195,9 @@ interface UserSettings {
   // 同步策略设置
   syncStrategy: 'newest' | 'local' | 'remote' | 'ask';
   deleteStrategy: 'everywhere' | 'local-only';
+
+  // 主题设置
+  themeMode: 'light' | 'dark' | 'auto';
 }
 ```
 

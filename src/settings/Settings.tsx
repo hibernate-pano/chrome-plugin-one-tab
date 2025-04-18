@@ -5,6 +5,7 @@ import { loadSettings } from '@/store/slices/settingsSlice';
 import { getCurrentUser } from '@/store/slices/authSlice';
 import SettingsLayout from '@/components/settings/SettingsLayout';
 import SettingsPanel from '@/components/settings/SettingsPanel';
+import { ThemeProvider } from '@/contexts/ThemeContext';
 
 const SettingsContent: React.FC = () => {
   useEffect(() => {
@@ -24,7 +25,9 @@ const SettingsContent: React.FC = () => {
 const Settings: React.FC = () => {
   return (
     <Provider store={store}>
-      <SettingsContent />
+      <ThemeProvider>
+        <SettingsContent />
+      </ThemeProvider>
     </Provider>
   );
 };

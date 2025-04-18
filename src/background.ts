@@ -154,6 +154,7 @@ chrome.runtime.onInstalled.addListener(async (details) => {
       showNotifications: false, // 默认关闭通知
       syncStrategy: 'newest',
       deleteStrategy: 'everywhere',
+      themeMode: 'auto', // 默认使用自动模式（跟随系统）
     });
   }
 });

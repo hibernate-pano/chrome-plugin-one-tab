@@ -80,6 +80,9 @@ export interface UserSettings {
   // 新增同步策略设置
   syncStrategy: 'newest' | 'local' | 'remote' | 'ask'; // 冲突解决策略
   deleteStrategy: 'everywhere' | 'local-only'; // 删除策略
+
+  // 新增主题设置
+  themeMode: 'light' | 'dark' | 'auto'; // 主题模式
 }
 
 export interface User {

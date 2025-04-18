@@ -19,8 +19,8 @@ export const SettingsLayout: React.FC<SettingsLayoutProps> = ({ children }) => {
             }}
             className="
               px-4 py-2 rounded-lg
-              text-gray-600
-              hover:bg-gray-100
+              text-gray-600 dark:text-gray-300
+              hover:bg-gray-100 dark:hover:bg-gray-700
               transition duration-200
               cursor-pointer
             "

@@ -20,6 +20,7 @@ export const DEFAULT_SETTINGS: UserSettings = {
   showNotifications: false, // 默认关闭通知
   syncStrategy: 'newest', // 默认使用最新版本
   deleteStrategy: 'everywhere', // 默认在所有设备上删除
+  themeMode: 'auto', // 默认使用自动模式（跟随系统）
 };
 
 // 导出数据的格式
