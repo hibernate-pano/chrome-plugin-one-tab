@@ -4,7 +4,7 @@ import { toggleLayoutMode, saveSettings } from '@/store/slices/settingsSlice';
 import { HeaderDropdown } from './HeaderDropdown';
 import { TabCounter } from './TabCounter';
 import SyncButton from '@/components/sync/SyncButton';
-import { ThemeToggleButton } from './ThemeToggleButton';
+import { SimpleThemeToggle } from './SimpleThemeToggle';
 
 interface HeaderProps {
   onSearch: (query: string) => void;
@@ -117,7 +117,7 @@ export const Header: React.FC<HeaderProps> = ({ onSearch }) => {
                 )}
               </button>
 
-              <ThemeToggleButton />
+              <SimpleThemeToggle />
 
               <SyncButton />
 

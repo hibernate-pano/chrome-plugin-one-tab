@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
 import { useAppSelector, useAppDispatch } from '@/store/hooks';
-import { updateSettings } from '@/store/slices/settingsSlice';
+import { updateSettings, saveSettings } from '@/store/slices/settingsSlice';
 
 type ThemeMode = 'light' | 'dark' | 'auto';
 type Theme = 'light' | 'dark';
@@ -52,9 +52,16 @@ export const ThemeProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     }
   }, [currentTheme]);
 
+  // 获取当前设置
+  const settings = useAppSelector((state) => state.settings);
+
   // 更新主题模式
   const setThemeMode = (mode: ThemeMode) => {
+    // 更新Redux状态
     dispatch(updateSettings({ themeMode: mode }));
+
+    // 同时保存到存储
+    dispatch(saveSettings({ ...settings, themeMode: mode }));
   };
 
   return (

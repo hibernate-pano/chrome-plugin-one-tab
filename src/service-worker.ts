@@ -100,7 +100,9 @@ chrome.contextMenus.onClicked.addListener(async (info) => {
     if (existingTabs.length > 0) {
       // 如果已经有标签管理页打开，则激活它
       console.log('已有标签管理页打开，激活');
-      await chrome.tabs.update(existingTabs[0].id!, { active: true });
+      if (existingTabs[0].id) {
+        await chrome.tabs.update(existingTabs[0].id, { active: true });
+      }
     } else {
       // 如果没有标签管理页打开，则创建新的
       console.log('没有标签管理页打开，创建新的');
@@ -266,8 +268,12 @@ async function saveAllTabs(inputTabs: chrome.tabs.Tab[]) {
 
       if (existingTabs.length > 0) {
         // 如果已经有标签管理页打开，则激活它并刷新
-        await chrome.tabs.update(existingTabs[0].id!, { active: true });
-        await chrome.tabs.reload(existingTabs[0].id!);
+        if (existingTabs[0].id) {
+          await chrome.tabs.update(existingTabs[0].id, { active: true });
+        }
+        if (existingTabs[0].id) {
+          await chrome.tabs.reload(existingTabs[0].id);
+        }
       } else {
         // 如果没有标签管理页打开，则创建新的
         await chrome.tabs.create({ url: extensionUrl });
@@ -364,8 +370,12 @@ async function saveCurrentTab(tab: chrome.tabs.Tab) {
 
       if (existingTabs.length > 0) {
         // 如果已经有标签管理页打开，则激活它并刷新
-        await chrome.tabs.update(existingTabs[0].id!, { active: true });
-        await chrome.tabs.reload(existingTabs[0].id!);
+        if (existingTabs[0].id) {
+          await chrome.tabs.update(existingTabs[0].id, { active: true });
+        }
+        if (existingTabs[0].id) {
+          await chrome.tabs.reload(existingTabs[0].id);
+        }
       } else {
         // 如果没有标签管理页打开，则创建新的
         await chrome.tabs.create({ url: extensionUrl });
@@ -395,7 +405,7 @@ async function openTabWithSingleInstance(url: string) {
 
   // 如果有多个标签管理器页面，只保留第一个，关闭其他的
   if (existingTabs.length > 1) {
-    const tabsToClose = existingTabs.slice(1).map(tab => tab.id!).filter(id => id !== undefined);
+    const tabsToClose = existingTabs.slice(1).map(tab => tab.id).filter((id): id is number => id !== undefined);
     if (tabsToClose.length > 0) {
       await chrome.tabs.remove(tabsToClose);
     }
@@ -441,7 +451,7 @@ async function openTabsWithSingleInstance(urls: string[]) {
 
   // 如果有多个标签管理器页面，只保留第一个，关闭其他的
   if (existingTabs.length > 1) {
-    const tabsToClose = existingTabs.slice(1).map(tab => tab.id!).filter(id => id !== undefined);
+    const tabsToClose = existingTabs.slice(1).map(tab => tab.id).filter((id): id is number => id !== undefined);
     if (tabsToClose.length > 0) {
       await chrome.tabs.remove(tabsToClose);
     }
@@ -482,8 +492,12 @@ async function handleSaveCurrentTab(tab: chrome.tabs.Tab) {
 
     if (existingTabs.length > 0) {
       // 如果已经有标签管理页打开，则激活它并刷新
-      await chrome.tabs.update(existingTabs[0].id!, { active: true });
-      await chrome.tabs.reload(existingTabs[0].id!);
+      if (existingTabs[0].id) {
+        await chrome.tabs.update(existingTabs[0].id, { active: true });
+      }
+      if (existingTabs[0].id) {
+        await chrome.tabs.reload(existingTabs[0].id);
+      }
     } else {
       // 如果没有标签管理页打开，则创建新的
       await chrome.tabs.create({ url: extensionUrl });
