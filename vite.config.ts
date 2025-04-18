@@ -22,7 +22,6 @@ export default defineConfig({
         'service-worker': resolve(__dirname, 'src/service-worker.ts'),
         'src/popup/index': resolve(__dirname, 'src/popup/index.html'),
         'popup': resolve(__dirname, 'popup.html'),
-        'settings': resolve(__dirname, 'src/settings/index.html'),
         'confirm': resolve(__dirname, 'src/auth/confirm.html'),
         'wechat-login': resolve(__dirname, 'src/pages/wechat-login.html')
       }
