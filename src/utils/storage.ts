@@ -1,4 +1,5 @@
 import { TabGroup, UserSettings, Tab } from '@/types/tab';
+import { parseOneTabFormat, formatToOneTabFormat } from './oneTabFormatParser';
 
 const STORAGE_KEYS = {
   GROUPS: 'tab_groups',
@@ -192,6 +193,15 @@ class ChromeStorage {
     };
   }
 
+  /**
+   * 导出为 OneTab 格式
+   * @returns OneTab 格式的导出文本
+   */
+  async exportToOneTabFormat(): Promise<string> {
+    const groups = await this.getGroups();
+    return formatToOneTabFormat(groups);
+  }
+
   async importData(data: ExportData): Promise<boolean> {
     try {
       if (!data || !data.data || !Array.isArray(data.data.groups)) {
@@ -214,6 +224,35 @@ class ChromeStorage {
       return true;
     } catch (error) {
       console.error('导入数据失败:', error);
+      return false;
+    }
+  }
+
+  /**
+   * 从 OneTab 格式导入数据
+   * @param text OneTab 格式的文本
+   * @returns 是否导入成功
+   */
+  async importFromOneTabFormat(text: string): Promise<boolean> {
+    try {
+      if (!text || typeof text !== 'string') {
+        throw new Error('无效的 OneTab 导入数据');
+      }
+
+      // 解析 OneTab 格式的文本
+      const parsedGroups = parseOneTabFormat(text);
+
+      if (parsedGroups.length === 0) {
+        throw new Error('解析失败或没有有效的标签组');
+      }
+
+      // 导入标签组
+      const existingGroups = await this.getGroups();
+      await this.setGroups([...parsedGroups, ...existingGroups]);
+
+      return true;
+    } catch (error) {
+      console.error('从 OneTab 格式导入数据失败:', error);
       return false;
     }
   }
