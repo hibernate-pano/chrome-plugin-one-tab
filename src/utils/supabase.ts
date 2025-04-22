@@ -1,6 +1,7 @@
 import { createClient } from '@supabase/supabase-js';
 import { TabGroup, UserSettings, TabData, SupabaseTabGroup } from '@/types/tab';
 import { setWechatLoginTimeout, clearWechatLoginTimeout } from './wechatLoginTimeout';
+import { encryptData, decryptData, isEncrypted } from './encryptionUtils';
 
 // 从环境变量中获取 Supabase 配置
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL as string;
@@ -477,7 +478,8 @@ export const sync = {
         last_accessed: tab.lastAccessed
       }));
 
-      return {
+      // 准备返回对象
+      const returnObj = {
         id: group.id,
         name: group.name || 'Unnamed Group',
         created_at: createdAt,
@@ -486,13 +488,32 @@ export const sync = {
         user_id: user.id,
         device_id: deviceId,
         last_sync: currentTime,
-        tabs_data: tabsData // 将标签数据作为 JSONB 存储
-      } as SupabaseTabGroup;
+        tabs_data: tabsData // 临时存储，稍后会被加密
+      };
+
+      return returnObj as SupabaseTabGroup;
     });
 
     // 上传标签组元数据和标签数据
     let result: any = null;
     try {
+      // 对每个标签组的数据进行加密
+      for (let i = 0; i < groupsWithUser.length; i++) {
+        const group = groupsWithUser[i];
+        if (group.tabs_data && Array.isArray(group.tabs_data)) {
+          try {
+            // 加密标签数据
+            const encryptedData = await encryptData(group.tabs_data, user.id);
+            // 替换原始数据为加密数据
+            groupsWithUser[i].tabs_data = encryptedData as any;
+            console.log(`标签组 ${group.id} 的数据已加密`);
+          } catch (error) {
+            console.error(`加密标签组 ${group.id} 的数据失败:`, error);
+            // 如果加密失败，保留原始数据
+          }
+        }
+      }
+
       // 验证数据
       for (const group of groupsWithUser) {
         if (!group.id) {
@@ -704,7 +725,33 @@ export const sync = {
 
       for (const group of groups) {
         // 从 JSONB 字段获取标签数据
-        const tabsData = group.tabs_data || [];
+        let tabsData: TabData[] = [];
+
+        // 检查是否是加密数据
+        if (typeof group.tabs_data === 'string') {
+          try {
+            // 尝试解密数据
+            tabsData = await decryptData<TabData[]>(group.tabs_data as string, user.id);
+            console.log(`标签组 ${group.id} 的数据已成功解密`);
+          } catch (error) {
+            console.error(`解密标签组 ${group.id} 的数据失败:`, error);
+            // 如果解密失败，尝试直接解析（可能是旧的未加密数据）
+            try {
+              if (typeof group.tabs_data === 'string' && !isEncrypted(group.tabs_data)) {
+                tabsData = JSON.parse(group.tabs_data);
+                console.log(`标签组 ${group.id} 的数据是旧的未加密格式，已成功解析`);
+              }
+            } catch (jsonError) {
+              console.error(`解析标签组 ${group.id} 的JSON数据失败:`, jsonError);
+              // 保持空数组
+            }
+          }
+        } else if (Array.isArray(group.tabs_data)) {
+          // 如果已经是数组，直接使用
+          tabsData = group.tabs_data;
+          console.log(`标签组 ${group.id} 的数据已经是解析后的数组格式`);
+        }
+
         console.log(`处理标签组 ${group.id} (名称: "${group.name}"), 有 ${tabsData.length} 个标签`);
 
         // 记录标签类型统计
