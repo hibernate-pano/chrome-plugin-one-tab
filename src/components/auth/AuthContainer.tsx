@@ -13,17 +13,17 @@ export const AuthContainer: React.FC = () => {
   }
 
   return (
-    <div className="bg-gray-50 border-t border-gray-200">
+    <div className="bg-gray-50 dark:bg-gray-800 border-t border-gray-200 dark:border-gray-700">
       <div className="container mx-auto max-w-6xl">
-        <div className="flex border-b border-gray-200">
+        <div className="flex border-b border-gray-200 dark:border-gray-700">
           <button
-            className={`px-6 py-3 transition-all font-medium ${activeTab === 'login' ? 'text-primary-600 border-b-2 border-primary-600' : 'text-gray-600 hover:text-primary-600'}`}
+            className={`px-6 py-3 transition-all font-medium ${activeTab === 'login' ? 'text-primary-600 dark:text-primary-400 border-b-2 border-primary-600 dark:border-primary-400' : 'text-gray-600 dark:text-gray-300 hover:text-primary-600 dark:hover:text-primary-400'}`}
             onClick={() => setActiveTab('login')}
           >
             登录
           </button>
           <button
-            className={`px-6 py-3 transition-all font-medium ${activeTab === 'register' ? 'text-primary-600 border-b-2 border-primary-600' : 'text-gray-600 hover:text-primary-600'}`}
+            className={`px-6 py-3 transition-all font-medium ${activeTab === 'register' ? 'text-primary-600 dark:text-primary-400 border-b-2 border-primary-600 dark:border-primary-400' : 'text-gray-600 dark:text-gray-300 hover:text-primary-600 dark:hover:text-primary-400'}`}
             onClick={() => setActiveTab('register')}
           >
             注册

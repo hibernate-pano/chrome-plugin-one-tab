@@ -56,12 +56,12 @@ export const LoginForm: React.FC<LoginFormProps> = ({ onSuccess }) => {
           </button>
         </div>
       )}
-      <form onSubmit={handleSubmit} className="bg-white shadow-md rounded-lg p-6 border border-gray-200">
+      <form onSubmit={handleSubmit} className="bg-white dark:bg-gray-900 shadow-md rounded-lg p-6 border border-gray-200 dark:border-gray-700">
         <div className="mb-5">
-          <label className="block text-gray-700 text-sm font-medium mb-2">邮箱</label>
+          <label className="block text-gray-700 dark:text-gray-300 text-sm font-medium mb-2">邮箱</label>
           <input
             type="email"
-            className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent"
+            className="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100"
             value={email}
             onChange={(e) => setEmail(e.target.value)}
             placeholder="请输入您的邮箱"
@@ -69,10 +69,10 @@ export const LoginForm: React.FC<LoginFormProps> = ({ onSuccess }) => {
           />
         </div>
         <div className="mb-6">
-          <label className="block text-gray-700 text-sm font-medium mb-2">密码</label>
+          <label className="block text-gray-700 dark:text-gray-300 text-sm font-medium mb-2">密码</label>
           <input
             type="password"
-            className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent"
+            className="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
             placeholder="请输入您的密码"
@@ -101,7 +101,7 @@ export const LoginForm: React.FC<LoginFormProps> = ({ onSuccess }) => {
               <div className="w-full border-t border-gray-300"></div>
             </div>
             <div className="relative flex justify-center text-sm">
-              <span className="px-2 bg-white text-gray-500">或者使用第三方账号登录</span>
+              <span className="px-2 bg-white dark:bg-gray-900 text-gray-500 dark:text-gray-400">或者使用第三方账号登录</span>
             </div>
           </div>
 
@@ -109,7 +109,7 @@ export const LoginForm: React.FC<LoginFormProps> = ({ onSuccess }) => {
             <button
               type="button"
               onClick={() => handleOAuthLogin('google')}
-              className="w-full inline-flex justify-center py-2 px-4 border border-gray-300 rounded-md shadow-sm bg-white text-sm font-medium text-gray-400 cursor-not-allowed opacity-60"
+              className="w-full inline-flex justify-center py-2 px-4 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm bg-white dark:bg-gray-800 text-sm font-medium text-gray-400 dark:text-gray-500 cursor-not-allowed opacity-60"
               disabled={true}
             >
               <svg className="h-5 w-5 mr-2" viewBox="0 0 24 24" width="24" height="24" xmlns="http://www.w3.org/2000/svg">
@@ -126,7 +126,7 @@ export const LoginForm: React.FC<LoginFormProps> = ({ onSuccess }) => {
             <button
               type="button"
               onClick={() => handleOAuthLogin('github')}
-              className="w-full inline-flex justify-center py-2 px-4 border border-gray-300 rounded-md shadow-sm bg-white text-sm font-medium text-gray-400 cursor-not-allowed opacity-60"
+              className="w-full inline-flex justify-center py-2 px-4 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm bg-white dark:bg-gray-800 text-sm font-medium text-gray-400 dark:text-gray-500 cursor-not-allowed opacity-60"
               disabled={true}
             >
               <svg className="h-5 w-5 mr-2" fill="currentColor" viewBox="0 0 24 24" aria-hidden="true">
@@ -138,12 +138,12 @@ export const LoginForm: React.FC<LoginFormProps> = ({ onSuccess }) => {
             <button
               type="button"
               onClick={() => handleOAuthLogin('wechat')}
-              className="w-full inline-flex justify-center py-2 px-4 border border-gray-300 rounded-md shadow-sm bg-white text-sm font-medium text-gray-400 cursor-not-allowed opacity-60"
+              className="w-full inline-flex justify-center py-2 px-4 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm bg-white dark:bg-gray-800 text-sm font-medium text-gray-400 dark:text-gray-500 cursor-not-allowed opacity-60"
               disabled={true}
             >
               <svg className="h-5 w-5 mr-2" viewBox="0 0 24 24" fill="#07C160">
-                <path d="M8.691 2C4.493 2 1 4.762 1 8.129c0 1.938 1.057 3.624 2.647 4.802l-0.561 1.82c-0.036 0.121-0.003 0.252 0.085 0.339 0.056 0.055 0.129 0.083 0.203 0.083 0.047 0 0.094-0.01 0.138-0.029l2.357-1.231c0.921 0.302 1.884 0.453 2.822 0.453 0.203 0 0.406-0.008 0.609-0.022 -0.225-0.624-0.336-1.269-0.336-1.913 0-3.366 3.493-6.129 7.691-6.129 0.203 0 0.406 0.008 0.609 0.022C16.72 3.876 13.059 2 8.691 2zM5.897 6.07c0.633 0 1.146 0.513 1.146 1.146S6.53 8.362 5.897 8.362 4.751 7.849 4.751 7.216 5.264 6.07 5.897 6.07zM11.485 6.07c0.633 0 1.146 0.513 1.146 1.146s-0.513 1.146-1.146 1.146S10.339 7.849 10.339 7.216 10.852 6.07 11.485 6.07z"/>
-                <path d="M22.952 16.318c1.311-0.95 2.094-2.279 2.094-3.703 0-2.667-2.738-4.83-6.109-4.83s-6.109 2.163-6.109 4.83 2.738 4.83 6.109 4.83c0.742 0 1.465-0.119 2.137-0.344l1.737 0.906c0.035 0.019 0.074 0.027 0.112 0.027 0.059 0 0.118-0.021 0.165-0.065 0.071-0.068 0.098-0.171 0.069-0.264l-0.412-1.342C22.952 16.343 22.952 16.331 22.952 16.318zM15.561 14.464c-0.503 0-0.91-0.407-0.91-0.91s0.407-0.91 0.91-0.91 0.91 0.407 0.91 0.91S16.064 14.464 15.561 14.464zM19.976 14.464c-0.503 0-0.91-0.407-0.91-0.91s0.407-0.91 0.91-0.91 0.91 0.407 0.91 0.91S20.479 14.464 19.976 14.464z"/>
+                <path d="M8.691 2C4.493 2 1 4.762 1 8.129c0 1.938 1.057 3.624 2.647 4.802l-0.561 1.82c-0.036 0.121-0.003 0.252 0.085 0.339 0.056 0.055 0.129 0.083 0.203 0.083 0.047 0 0.094-0.01 0.138-0.029l2.357-1.231c0.921 0.302 1.884 0.453 2.822 0.453 0.203 0 0.406-0.008 0.609-0.022 -0.225-0.624-0.336-1.269-0.336-1.913 0-3.366 3.493-6.129 7.691-6.129 0.203 0 0.406 0.008 0.609 0.022C16.72 3.876 13.059 2 8.691 2zM5.897 6.07c0.633 0 1.146 0.513 1.146 1.146S6.53 8.362 5.897 8.362 4.751 7.849 4.751 7.216 5.264 6.07 5.897 6.07zM11.485 6.07c0.633 0 1.146 0.513 1.146 1.146s-0.513 1.146-1.146 1.146S10.339 7.849 10.339 7.216 10.852 6.07 11.485 6.07z" />
+                <path d="M22.952 16.318c1.311-0.95 2.094-2.279 2.094-3.703 0-2.667-2.738-4.83-6.109-4.83s-6.109 2.163-6.109 4.83 2.738 4.83 6.109 4.83c0.742 0 1.465-0.119 2.137-0.344l1.737 0.906c0.035 0.019 0.074 0.027 0.112 0.027 0.059 0 0.118-0.021 0.165-0.065 0.071-0.068 0.098-0.171 0.069-0.264l-0.412-1.342C22.952 16.343 22.952 16.331 22.952 16.318zM15.561 14.464c-0.503 0-0.91-0.407-0.91-0.91s0.407-0.91 0.91-0.91 0.91 0.407 0.91 0.91S16.064 14.464 15.561 14.464zM19.976 14.464c-0.503 0-0.91-0.407-0.91-0.91s0.407-0.91 0.91-0.91 0.91 0.407 0.91 0.91S20.479 14.464 19.976 14.464z" />
               </svg>
               <span>微信 (未启用)</span>
             </button>
