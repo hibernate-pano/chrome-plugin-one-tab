@@ -3,7 +3,7 @@ import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { TabGroup as TabGroupType } from '@/types/tab';
 import { useAppDispatch } from '@/store/hooks';
-import { updateGroupNameAndSync, deleteGroup, updateGroup } from '@/store/slices/tabSlice';
+import { updateGroupNameAndSync, deleteGroup, updateGroup, toggleGroupLockAndSync } from '@/store/slices/tabSlice';
 import { SimpleDraggableTab } from './SimpleDraggableTab';
 import { SortableContext, verticalListSortingStrategy } from '@dnd-kit/sortable';
 
@@ -49,6 +49,10 @@ export const SimpleDraggableTabGroup: React.FC<SimpleDraggableTabGroupProps> = (
   };
 
   const handleEditName = () => {
+    // 如果标签组已锁定，不允许编辑
+    if (group.isLocked) {
+      return;
+    }
     setIsEditing(true);
   };
 
@@ -69,7 +73,16 @@ export const SimpleDraggableTabGroup: React.FC<SimpleDraggableTabGroupProps> = (
   };
 
   const handleDeleteGroup = () => {
+    // 如果标签组已锁定，不允许删除
+    if (group.isLocked) {
+      return;
+    }
     dispatch(deleteGroup(group.id));
+  };
+
+  // 处理锁定/解锁标签组
+  const handleToggleLock = () => {
+    dispatch(toggleGroupLockAndSync(group.id));
   };
 
   const handleOpenAllTabs = () => {
@@ -201,8 +214,9 @@ export const SimpleDraggableTabGroup: React.FC<SimpleDraggableTabGroupProps> = (
           </button>
           <button
             onClick={handleEditName}
-            className="text-gray-400 hover:text-gray-600 dark:text-gray-500 dark:hover:text-gray-300 p-1 rounded hover:bg-gray-200 dark:hover:bg-gray-700"
-            title="重命名标签组"
+            className={`p-1 rounded hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors ${group.isLocked ? 'text-gray-300 dark:text-gray-600 cursor-not-allowed' : 'text-gray-400 hover:text-gray-600 dark:text-gray-500 dark:hover:text-gray-300'}`}
+            title={group.isLocked ? '锁定的标签组不能重命名' : '重命名标签组'}
+            disabled={group.isLocked}
           >
             <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
@@ -210,9 +224,20 @@ export const SimpleDraggableTabGroup: React.FC<SimpleDraggableTabGroupProps> = (
           </button>
 
           <button
+            onClick={handleToggleLock}
+            className={`p-1 rounded hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors ${group.isLocked ? 'text-yellow-500 dark:text-yellow-400' : 'text-gray-400 hover:text-yellow-500 dark:text-gray-500 dark:hover:text-yellow-400'}`}
+            title={group.isLocked ? '解锁标签组' : '锁定标签组'}
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
+              <path fillRule="evenodd" d="M5 9V7a5 5 0 0110 0v2a2 2 0 012 2v5a2 2 0 01-2 2H5a2 2 0 01-2-2v-5a2 2 0 012-2zm8-2v2H7V7a3 3 0 016 0z" clipRule="evenodd" />
+            </svg>
+          </button>
+
+          <button
             onClick={handleDeleteGroup}
-            className="text-gray-400 hover:text-red-500 dark:text-gray-500 dark:hover:text-red-400 p-1 rounded hover:bg-gray-200 dark:hover:bg-gray-700"
-            title="删除标签组"
+            className={`p-1 rounded hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors ${group.isLocked ? 'text-gray-300 dark:text-gray-600 cursor-not-allowed' : 'text-gray-400 hover:text-red-500 dark:text-gray-500 dark:hover:text-red-400'}`}
+            title={group.isLocked ? '锁定的标签组不能删除' : '删除标签组'}
+            disabled={group.isLocked}
           >
             <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
