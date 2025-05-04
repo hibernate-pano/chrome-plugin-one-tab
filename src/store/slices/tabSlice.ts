@@ -585,6 +585,79 @@ export const moveGroupAndSync = createAsyncThunk(
 );
 
 // 移动标签页并同步到云端
+// 清理重复标签功能
+export const cleanDuplicateTabs = createAsyncThunk(
+  'tabs/cleanDuplicateTabs',
+  async (_, { getState, dispatch }) => {
+    try {
+      // 获取所有标签组
+      const groups = await storage.getGroups();
+
+      // 创建URL映射，记录每个URL对应的标签页
+      const urlMap = new Map<string, { tab: any, groupId: string }[]>();
+
+      // 扫描所有标签页，按URL分组
+      groups.forEach(group => {
+        group.tabs.forEach(tab => {
+          if (tab.url) {
+            // 对于loading://开头的URL，需要特殊处理
+            const urlKey = tab.url.startsWith('loading://') ? `${tab.url}|${tab.title}` : tab.url;
+
+            if (!urlMap.has(urlKey)) {
+              urlMap.set(urlKey, []);
+            }
+            urlMap.get(urlKey)?.push({ tab, groupId: group.id });
+          }
+        });
+      });
+
+      // 处理重复标签页
+      let removedCount = 0;
+      const updatedGroups = [...groups];
+
+      urlMap.forEach((tabsWithSameUrl) => {
+        if (tabsWithSameUrl.length > 1) {
+          // 按lastAccessed时间排序，保留最新的标签页
+          tabsWithSameUrl.sort((a, b) =>
+            new Date(b.tab.lastAccessed).getTime() - new Date(a.tab.lastAccessed).getTime()
+          );
+
+          // 保留第一个（最新的），删除其余的
+          for (let i = 1; i < tabsWithSameUrl.length; i++) {
+            const { groupId, tab } = tabsWithSameUrl[i];
+            const groupIndex = updatedGroups.findIndex(g => g.id === groupId);
+
+            if (groupIndex !== -1) {
+              // 从标签组中删除该标签页
+              updatedGroups[groupIndex].tabs = updatedGroups[groupIndex].tabs.filter(t => t.id !== tab.id);
+              removedCount++;
+
+              // 更新标签组的updatedAt时间
+              updatedGroups[groupIndex].updatedAt = new Date().toISOString();
+
+              // 如果标签组变为空且不是锁定状态，删除该标签组
+              if (updatedGroups[groupIndex].tabs.length === 0 && !updatedGroups[groupIndex].isLocked) {
+                updatedGroups.splice(groupIndex, 1);
+              }
+            }
+          }
+        }
+      });
+
+      // 保存更新后的标签组
+      await storage.setGroups(updatedGroups);
+
+      // 使用通用同步函数同步到云端
+      await syncToCloud(dispatch, getState, '清理重复标签');
+
+      return { removedCount, updatedGroups };
+    } catch (error) {
+      console.error('清理重复标签失败:', error);
+      throw error;
+    }
+  }
+);
+
 export const moveTabAndSync = createAsyncThunk(
   'tabs/moveTabAndSync',
   async ({ sourceGroupId, sourceIndex, targetGroupId, targetIndex, updateSourceInDrag = true }: {
@@ -981,6 +1054,20 @@ export const tabSlice = createSlice({
       })
       .addCase(moveTabAndSync.rejected, () => {
         // 不更新UI状态，因为已经在 reducer 中更新了
+      })
+
+      // 清理重复标签
+      .addCase(cleanDuplicateTabs.pending, (state) => {
+        state.isLoading = true;
+        state.error = null;
+      })
+      .addCase(cleanDuplicateTabs.fulfilled, (state, action) => {
+        state.isLoading = false;
+        state.groups = action.payload.updatedGroups;
+      })
+      .addCase(cleanDuplicateTabs.rejected, (state, action) => {
+        state.isLoading = false;
+        state.error = action.error.message || '清理重复标签失败';
       });
   },
 });

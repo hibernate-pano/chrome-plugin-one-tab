@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { useAppDispatch, useAppSelector } from '@/store/hooks';
 import { toggleLayoutMode, saveSettings } from '@/store/slices/settingsSlice';
+import { cleanDuplicateTabs } from '@/store/slices/tabSlice';
 import { HeaderDropdown } from './HeaderDropdown';
 import { TabCounter } from './TabCounter';
 import SyncButton from '@/components/sync/SyncButton';
@@ -13,6 +14,8 @@ interface HeaderProps {
 export const Header: React.FC<HeaderProps> = ({ onSearch }) => {
   const dispatch = useAppDispatch();
   const [searchValue, setSearchValue] = useState('');
+  const [showCleanupConfirm, setShowCleanupConfirm] = useState(false);
+  const [cleanupResult, setCleanupResult] = useState<{ removedCount: number } | null>(null);
 
   const handleSearch = (e: React.ChangeEvent<HTMLInputElement>) => {
     const value = e.target.value;
@@ -27,6 +30,32 @@ export const Header: React.FC<HeaderProps> = ({ onSearch }) => {
 
   const settings = useAppSelector(state => state.settings);
   const [showDropdown, setShowDropdown] = useState(false);
+
+  // 处理清理重复标签
+  const handleCleanDuplicateTabs = () => {
+    setShowCleanupConfirm(true);
+  };
+
+  // 确认清理
+  const confirmCleanup = async () => {
+    setShowCleanupConfirm(false);
+    try {
+      const result = await dispatch(cleanDuplicateTabs()).unwrap();
+      setCleanupResult(result);
+
+      // 3秒后自动关闭结果提示
+      setTimeout(() => {
+        setCleanupResult(null);
+      }, 3000);
+    } catch (error) {
+      console.error('清理重复标签失败:', error);
+    }
+  };
+
+  // 取消清理
+  const cancelCleanup = () => {
+    setShowCleanupConfirm(false);
+  };
 
   // 切换布局模式
   const handleToggleLayout = () => {
@@ -117,6 +146,16 @@ export const Header: React.FC<HeaderProps> = ({ onSearch }) => {
                 )}
               </button>
 
+              <button
+                onClick={handleCleanDuplicateTabs}
+                className="p-2 rounded hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors text-gray-600 dark:text-gray-300 flex items-center justify-center"
+                title="清理所有标签组中的重复标签页"
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                </svg>
+              </button>
+
               <SimpleThemeToggle />
 
               <SyncButton />
@@ -145,6 +184,47 @@ export const Header: React.FC<HeaderProps> = ({ onSearch }) => {
           </div>
         </div>
       </div>
+
+      {/* 确认对话框 */}
+      {showCleanupConfirm && (
+        <div className="fixed inset-0 bg-black bg-opacity-30 flex items-center justify-center z-50">
+          <div className="bg-white dark:bg-gray-800 p-6 rounded-lg shadow-xl max-w-md">
+            <h3 className="text-lg font-medium mb-4 text-gray-900 dark:text-gray-100">确认清理重复标签</h3>
+            <p className="mb-4 text-gray-700 dark:text-gray-300">此操作将清理所有标签组中URL相同的重复标签页，只保留每个URL最新的一个标签页。此操作不可撤销。</p>
+            <div className="flex justify-end space-x-3">
+              <button
+                onClick={cancelCleanup}
+                className="px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-md text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700"
+              >
+                取消
+              </button>
+              <button
+                onClick={confirmCleanup}
+                className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700"
+              >
+                确认清理
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 结果提示 */}
+      {cleanupResult && (
+        <div className="fixed bottom-4 right-4 bg-green-100 dark:bg-green-900 border-l-4 border-green-500 text-green-700 dark:text-green-200 p-4 rounded shadow-md z-50">
+          <div className="flex">
+            <div className="py-1">
+              <svg className="h-6 w-6 text-green-500 mr-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 13l4 4L19 7" />
+              </svg>
+            </div>
+            <div>
+              <p className="font-bold">清理完成</p>
+              <p className="text-sm">已清理 {cleanupResult.removedCount} 个重复标签页</p>
+            </div>
+          </div>
+        </div>
+      )}
     </header>
   );
 };
