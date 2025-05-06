@@ -1,7 +1,8 @@
-import React, { useRef } from 'react';
+import React, { useRef, useCallback } from 'react';
 import { useDrag, useDrop } from 'react-dnd';
 import { Tab } from '@/types/tab';
 import { ItemTypes, TabDragItem } from './DndTypes';
+import { throttle } from 'lodash';
 
 interface DraggableTabProps {
   tab: Tab;
@@ -12,7 +13,8 @@ interface DraggableTabProps {
   handleDeleteTab: (tabId: string) => void;
 }
 
-export const DraggableTab: React.FC<DraggableTabProps> = ({
+// 使用React.memo包装组件，避免不必要的重渲染
+export const DraggableTab: React.FC<DraggableTabProps> = React.memo(({
   tab,
   groupId,
   index,
@@ -21,6 +23,14 @@ export const DraggableTab: React.FC<DraggableTabProps> = ({
   handleDeleteTab
 }) => {
   const ref = useRef<HTMLDivElement>(null);
+
+  // 使用throttle包装moveTab函数，减少拖拽过程中的频繁更新
+  const throttledMoveTab = useCallback(
+    throttle((sourceGroupId, sourceIndex, targetGroupId, targetIndex) => {
+      moveTab(sourceGroupId, sourceIndex, targetGroupId, targetIndex);
+    }, 50), // 50ms的节流时间
+    [moveTab]
+  );
 
   // 拖拽源
   const [{ isDragging }, drag] = useDrag({
@@ -32,7 +42,7 @@ export const DraggableTab: React.FC<DraggableTabProps> = ({
   });
 
   // 放置目标
-  const [, drop] = useDrop({
+  const [{ isOver, canDrop }, drop] = useDrop({
     accept: ItemTypes.TAB,
     hover: (item: TabDragItem, monitor) => {
       if (!ref.current) {
@@ -65,22 +75,43 @@ export const DraggableTab: React.FC<DraggableTabProps> = ({
         return;
       }
 
-      // 执行移动
-      moveTab(sourceGroupId, sourceIndex, targetGroupId, targetIndex);
+      // 使用节流版本的移动函数，减少频繁更新
+      throttledMoveTab(sourceGroupId, sourceIndex, targetGroupId, targetIndex);
 
       // 更新拖拽项的索引和组ID
       item.index = targetIndex;
       item.groupId = targetGroupId;
     },
+    collect: (monitor) => ({
+      isOver: monitor.isOver(),
+      canDrop: monitor.canDrop(),
+    }),
   });
 
   // 将拖拽源和放置目标应用到同一个元素
   drag(drop(ref));
 
+  // 使用useMemo记忆化标签页标题，避免不必要的重新渲染
+  const tabTitle = React.useMemo(() => tab.title, [tab.title]);
+
+  // 使用useCallback记忆化点击处理函数
+  const handleTabClick = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    handleOpenTab(tab);
+  }, [handleOpenTab, tab]);
+
+  const handleDelete = useCallback(() => {
+    handleDeleteTab(tab.id);
+  }, [handleDeleteTab, tab.id]);
+
+  // 根据拖拽状态应用不同的样式类
+  const dragClass = isDragging ? 'opacity-50 scale-105 border-dashed border-primary-400' : '';
+  const dropClass = isOver && canDrop ? 'bg-primary-50 dark:bg-primary-900/20' : '';
+
   return (
     <div
       ref={ref}
-      className={`flex items-center py-1 px-2 bg-white dark:bg-gray-800 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors rounded ${isDragging ? 'opacity-50 border-dashed border-primary-400' : 'opacity-100'}`}
+      className={`flex items-center py-1 px-2 bg-white dark:bg-gray-800 hover:bg-gray-100 dark:hover:bg-gray-700 transition-all duration-200 rounded ${dragClass} ${dropClass}`}
       style={{ cursor: 'move' }}
     >
       <div className="flex items-center space-x-2 flex-1 min-w-0">
@@ -96,17 +127,14 @@ export const DraggableTab: React.FC<DraggableTabProps> = ({
         <a
           href="#"
           className="truncate text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300 hover:underline text-sm"
-          onClick={(e) => {
-            e.preventDefault();
-            handleOpenTab(tab);
-          }}
-          title={tab.title}
+          onClick={handleTabClick}
+          title={tabTitle}
         >
-          {tab.title}
+          {tabTitle}
         </a>
       </div>
       <button
-        onClick={() => handleDeleteTab(tab.id)}
+        onClick={handleDelete}
         className="text-gray-400 hover:text-red-500 p-1 rounded hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors ml-1 opacity-0 group-hover:opacity-100"
         title="删除标签页"
       >
@@ -116,4 +144,20 @@ export const DraggableTab: React.FC<DraggableTabProps> = ({
       </button>
     </div>
   );
-};
+}, (prevProps, nextProps) => {
+  // 优化重渲染逻辑，只有在以下情况下才重新渲染：
+  // 1. 标签ID变化
+  // 2. 标签标题变化
+  // 3. 标签URL变化
+  // 4. 标签图标变化
+  // 5. 标签组ID变化
+  // 6. 标签索引变化
+  return (
+    prevProps.tab.id === nextProps.tab.id &&
+    prevProps.tab.title === nextProps.tab.title &&
+    prevProps.tab.url === nextProps.tab.url &&
+    prevProps.tab.favicon === nextProps.tab.favicon &&
+    prevProps.groupId === nextProps.groupId &&
+    prevProps.index === nextProps.index
+  );
+});

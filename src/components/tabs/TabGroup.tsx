@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useCallback, useMemo, useEffect } from 'react';
 import { useAppDispatch } from '@/store/hooks';
 import { updateGroupNameAndSync, toggleGroupLockAndSync, deleteGroup, updateGroup, moveTabAndSync } from '@/store/slices/tabSlice';
 import { DraggableTab } from '@/components/dnd/DraggableTab';
@@ -8,48 +8,72 @@ interface TabGroupProps {
   group: TabGroupType;
 }
 
-export const TabGroup: React.FC<TabGroupProps> = ({ group }) => {
+// 使用React.memo包装组件，避免不必要的重渲染
+export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
   const dispatch = useAppDispatch();
 
   const [isEditing, setIsEditing] = useState(false);
   const [newName, setNewName] = useState(group.name);
-  const [isExpanded, setIsExpanded] = useState(true);
 
-  const handleNameChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    setNewName(e.target.value);
+  // 从localStorage获取折叠状态，如果没有则默认展开
+  const getInitialExpandedState = () => {
+    const savedState = localStorage.getItem(`tabGroup_${group.id}_expanded`);
+    return savedState !== null ? JSON.parse(savedState) : true;
   };
 
-  const handleNameSubmit = () => {
+  const [isExpanded, setIsExpanded] = useState(getInitialExpandedState);
+
+  // 当组ID变化时，更新折叠状态
+  useEffect(() => {
+    // 从localStorage获取该组的折叠状态
+    const savedState = localStorage.getItem(`tabGroup_${group.id}_expanded`);
+    if (savedState !== null) {
+      setIsExpanded(JSON.parse(savedState));
+    }
+  }, [group.id]);
+
+  // 使用useCallback记忆化回调函数，避免不必要的重新创建
+  const handleNameChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    setNewName(e.target.value);
+  }, []);
+
+  const handleNameSubmit = useCallback(() => {
     if (newName.trim() !== '') {
       dispatch(updateGroupNameAndSync({ groupId: group.id, name: newName.trim() }));
       setIsEditing(false);
     }
-  };
+  }, [dispatch, group.id, newName]);
 
-  const handleKeyDown = (e: React.KeyboardEvent) => {
+  const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
     if (e.key === 'Enter') {
       handleNameSubmit();
     } else if (e.key === 'Escape') {
       setNewName(group.name);
       setIsEditing(false);
     }
-  };
+  }, [handleNameSubmit, group.name]);
 
-  const handleDelete = () => {
+  const handleDelete = useCallback(() => {
     if (window.confirm('确定要删除这个标签组吗？')) {
       dispatch(deleteGroup(group.id));
     }
-  };
+  }, [dispatch, group.id]);
 
-  const handleToggleLock = () => {
+  const handleToggleLock = useCallback(() => {
     dispatch(toggleGroupLockAndSync(group.id));
-  };
+  }, [dispatch, group.id]);
 
-  // 不再需要获取用户状态和设置
+  // 保存折叠状态到localStorage
+  const handleToggleExpand = useCallback(() => {
+    const newExpandedState = !isExpanded;
+    setIsExpanded(newExpandedState);
+    localStorage.setItem(`tabGroup_${group.id}_expanded`, JSON.stringify(newExpandedState));
+  }, [isExpanded, group.id]);
 
-  const handleOpenAllTabs = () => {
-    // 收集所有标签页的 URL
-    const urls = group.tabs.map(tab => tab.url);
+  // 使用useCallback记忆化handleOpenAllTabs函数
+  const handleOpenAllTabs = useCallback(() => {
+    // 使用useMemo记忆化标签页URL列表
+    const urls = useMemo(() => group.tabs.map(tab => tab.url), [group.tabs]);
 
     // 如果标签组没有锁定，先在UI中删除标签组
     if (!group.isLocked) {
@@ -73,9 +97,10 @@ export const TabGroup: React.FC<TabGroupProps> = ({ group }) => {
         data: { urls }
       });
     }, 50); // 小延迟确保 UI 先更新
-  };
+  }, [dispatch, group.id, group.isLocked, group.tabs]);
 
-  const handleOpenTab = (tab: Tab) => {
+  // 使用useCallback记忆化handleOpenTab函数
+  const handleOpenTab = useCallback((tab: Tab) => {
     // 如果标签组没有锁定，先从标签组中移除该标签页
     if (!group.isLocked) {
       // 如果标签组只有一个标签页，则删除整个标签组
@@ -121,23 +146,24 @@ export const TabGroup: React.FC<TabGroupProps> = ({ group }) => {
         data: { url: tab.url }
       });
     }, 50); // 小延迟确保 UI 先更新
-  };
+  }, [dispatch, group]);
 
-  const handleMoveTab = (sourceGroupId: string, sourceIndex: number, targetGroupId: string, targetIndex: number) => {
+  // 使用useCallback记忆化handleMoveTab函数
+  const handleMoveTab = useCallback((sourceGroupId: string, sourceIndex: number, targetGroupId: string, targetIndex: number) => {
     dispatch(moveTabAndSync({
       sourceGroupId,
       sourceIndex,
       targetGroupId,
       targetIndex
     }));
-  };
+  }, [dispatch]);
 
   return (
     <div className="mb-2 transition-all duration-200 ease-in-out bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-md shadow-sm pb-2 hover:shadow-md">
       <div className="flex items-center p-2 bg-gray-50 dark:bg-gray-900 border-b border-gray-200 dark:border-gray-700 rounded-t-md">
         <div className="flex items-center space-x-3 flex-grow">
           <button
-            onClick={() => setIsExpanded(!isExpanded)}
+            onClick={handleToggleExpand}
             className="text-gray-500 hover:text-primary-600 transition-colors p-1 hover:bg-gray-100"
           >
             <svg
@@ -220,7 +246,7 @@ export const TabGroup: React.FC<TabGroupProps> = ({ group }) => {
               index={index}
               moveTab={handleMoveTab}
               handleOpenTab={handleOpenTab}
-              handleDeleteTab={(tabId) => {
+              handleDeleteTab={useCallback((tabId) => {
                 const updatedTabs = group.tabs.filter(t => t.id !== tabId);
                 if (updatedTabs.length === 0) {
                   dispatch(deleteGroup(group.id));
@@ -232,11 +258,25 @@ export const TabGroup: React.FC<TabGroupProps> = ({ group }) => {
                   };
                   dispatch(updateGroup(updatedGroup));
                 }
-              }}
+              }, [dispatch, group])}
             />
           ))}
         </div>
       )}
     </div>
   );
-};
+}, (prevProps, nextProps) => {
+  // 优化重渲染逻辑，只有在以下情况下才重新渲染：
+  // 1. 标签组ID变化
+  // 2. 标签组名称变化
+  // 3. 标签组锁定状态变化
+  // 4. 标签组内的标签数量变化
+  // 5. 标签组内的标签内容变化（通过简单比较最后更新时间）
+  return (
+    prevProps.group.id === nextProps.group.id &&
+    prevProps.group.name === nextProps.group.name &&
+    prevProps.group.isLocked === nextProps.group.isLocked &&
+    prevProps.group.tabs.length === nextProps.group.tabs.length &&
+    prevProps.group.updatedAt === nextProps.group.updatedAt
+  );
+});

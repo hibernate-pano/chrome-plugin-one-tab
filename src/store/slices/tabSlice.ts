@@ -1,10 +1,11 @@
-import { createSlice, createAsyncThunk } from '@reduxjs/toolkit';
+import { createSlice, createAsyncThunk, createSelector } from '@reduxjs/toolkit';
 import { TabState, TabGroup, UserSettings } from '@/types/tab';
 import { storage } from '@/utils/storage';
 import { sync as supabaseSync } from '@/utils/supabase';
 import { nanoid } from '@reduxjs/toolkit';
 import { mergeTabGroups } from '@/utils/syncUtils';
 import { syncToCloud } from '@/utils/syncHelpers';
+import { throttle } from 'lodash';
 
 const initialState: TabState = {
   groups: [],
@@ -536,8 +537,8 @@ export const moveGroupAndSync = createAsyncThunk(
       // 在 Redux 中移动标签组
       dispatch(moveGroup({ dragIndex, hoverIndex }));
 
-      // 使用 setTimeout 延迟执行存储操作，避免阻塞 UI
-      setTimeout(async () => {
+      // 使用 requestAnimationFrame 在下一帧执行存储操作，优化性能
+      requestAnimationFrame(async () => {
         try {
           // 在本地存储中更新标签组顺序
           const groups = await storage.getGroups();
@@ -560,21 +561,12 @@ export const moveGroupAndSync = createAsyncThunk(
           // 更新本地存储
           await storage.setGroups(newGroups);
 
-          // 使用通用同步函数同步到云端
-          // 不等待同步完成，直接返回结果
-          // 使用延迟同步，避免频繁的拖拽操作导致过多的同步请求
-          setTimeout(() => {
-            syncToCloud(dispatch, getState, '标签组顺序更新')
-              .catch(err => {
-                if (process.env.NODE_ENV === 'development') {
-                  console.error('同步标签组顺序更新操作失败:', err);
-                }
-              });
-          }, 1000); // 延迟1秒后同步，避免频繁请求
+          // 使用节流版本的同步函数，减少频繁同步
+          throttledSyncToCloud(dispatch, getState, '标签组顺序更新');
         } catch (error) {
           console.error('存储标签组移动操作失败:', error);
         }
-      }, 100); // 延迟100ms执行存储操作
+      });
 
       return { dragIndex, hoverIndex };
     } catch (error) {
@@ -658,6 +650,16 @@ export const cleanDuplicateTabs = createAsyncThunk(
   }
 );
 
+// 创建一个节流版本的同步函数，减少频繁的状态更新和避免频繁同步
+const throttledSyncToCloud = throttle((dispatch, getState, operation) => {
+  syncToCloud(dispatch, getState, operation)
+    .catch(err => {
+      if (process.env.NODE_ENV === 'development') {
+        console.error(`同步${operation}操作失败:`, err);
+      }
+    });
+}, 2000, { leading: false, trailing: true }); // 2秒内只执行一次，并且是在最后一次调用后执行
+
 export const moveTabAndSync = createAsyncThunk(
   'tabs/moveTabAndSync',
   async ({ sourceGroupId, sourceIndex, targetGroupId, targetIndex, updateSourceInDrag = true }: {
@@ -676,8 +678,8 @@ export const moveTabAndSync = createAsyncThunk(
         return { sourceGroupId, sourceIndex, targetGroupId, targetIndex };
       }
 
-      // 使用 setTimeout 延迟执行存储操作，避免阻塞 UI
-      setTimeout(async () => {
+      // 使用 requestAnimationFrame 在下一帧执行存储操作，优化性能
+      requestAnimationFrame(async () => {
         try {
           // 在本地存储中更新标签页位置
           const groups = await storage.getGroups();
@@ -716,7 +718,7 @@ export const moveTabAndSync = createAsyncThunk(
               targetGroup.updatedAt = new Date().toISOString();
             }
 
-            // 更新本地存储
+            // 批量更新本地存储
             const updatedGroups = groups.map(g => {
               if (g.id === sourceGroupId) return sourceGroup;
               if (g.id === targetGroupId) return targetGroup;
@@ -725,22 +727,13 @@ export const moveTabAndSync = createAsyncThunk(
 
             await storage.setGroups(updatedGroups);
 
-            // 使用通用同步函数同步到云端
-            // 不等待同步完成，直接返回结果
-            // 使用延迟同步，避免频繁的拖拽操作导致过多的同步请求
-            setTimeout(() => {
-              syncToCloud(dispatch, getState, '标签页移动')
-                .catch(err => {
-                  if (process.env.NODE_ENV === 'development') {
-                    console.error('同步标签页移动操作失败:', err);
-                  }
-                });
-            }, 1000); // 延迟1秒后同步，避免频繁请求
+            // 使用节流版本的同步函数，减少频繁同步
+            throttledSyncToCloud(dispatch, getState, '标签页移动');
           }
         } catch (error) {
           console.error('存储标签页移动操作失败:', error);
         }
-      }, 100); // 延迟100ms执行存储操作
+      });
 
       return { sourceGroupId, sourceIndex, targetGroupId, targetIndex };
     } catch (error) {
@@ -1072,20 +1065,27 @@ export const tabSlice = createSlice({
   },
 });
 
-export const selectFilteredGroups = (state: { tabs: TabState }) => {
-  const { groups, searchQuery } = state.tabs;
-  if (!searchQuery) return groups;
 
-  const query = searchQuery.toLowerCase();
-  return groups.filter(group => {
-    if (group.name.toLowerCase().includes(query)) return true;
 
-    return group.tabs.some(tab =>
-      tab.title.toLowerCase().includes(query) ||
-      tab.url.toLowerCase().includes(query)
-    );
-  });
-};
+// 使用createSelector创建记忆化选择器，避免不必要的重新计算
+export const selectFilteredGroups = createSelector(
+  [(state: { tabs: TabState }) => state.tabs.groups, (state: { tabs: TabState }) => state.tabs.searchQuery],
+  (groups, searchQuery) => {
+    if (!searchQuery) return groups;
+
+    const query = searchQuery.toLowerCase();
+    return groups.filter(group => {
+      // 先检查组名，这是一个快速检查
+      if (group.name.toLowerCase().includes(query)) return true;
+
+      // 然后检查标签，这可能更耗时
+      return group.tabs.some(tab =>
+        tab.title.toLowerCase().includes(query) ||
+        tab.url.toLowerCase().includes(query)
+      );
+    });
+  }
+);
 
 export const {
   setActiveGroup,
@@ -1095,7 +1095,8 @@ export const {
   setSyncStatus,
   moveGroup,
   moveTab,
-  updateSyncProgress
+  updateSyncProgress,
+  setGroups
 } = tabSlice.actions;
 
 export default tabSlice.reducer;
