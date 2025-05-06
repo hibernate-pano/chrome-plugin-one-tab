@@ -1,8 +1,9 @@
-import React, { useRef, useCallback, useMemo } from 'react';
+import React, { useRef, useCallback, useMemo, useState } from 'react';
 import { useDrag, useDrop } from 'react-dnd';
 import { Tab } from '@/types/tab';
 import { ItemTypes, TabDragItem } from './DndTypes';
 import { throttle } from 'lodash';
+import TabPreview from '@/components/tabs/TabPreview';
 
 interface DraggableTabProps {
   tab: Tab;
@@ -27,6 +28,10 @@ export const DraggableTab: React.FC<DraggableTabProps> = React.memo(({
   handleDeleteTab
 }) => {
   const ref = useRef<HTMLDivElement>(null);
+
+  // 标签预览状态
+  const [showPreview, setShowPreview] = useState(false);
+  const [previewPosition, setPreviewPosition] = useState({ x: 0, y: 0 });
 
   // 使用throttle包装moveTab函数，减少拖拽过程中的频繁更新
   // 增加节流时间到100ms，进一步减少更新频率
@@ -153,43 +158,72 @@ export const DraggableTab: React.FC<DraggableTabProps> = React.memo(({
     return `${baseClasses} ${transitionClasses} ${dragClasses} ${dropClasses}`;
   }, [isDragging, isOver, canDrop]);
 
+  // 处理鼠标悬停事件，显示预览
+  const handleMouseEnter = useCallback(() => {
+    if (isDragging) return; // 拖拽过程中不显示预览
+    setShowPreview(true);
+  }, [isDragging]);
+
+  // 处理鼠标移动事件，更新预览位置
+  const handleMouseMove = useCallback((e: React.MouseEvent) => {
+    if (isDragging) return; // 拖拽过程中不更新预览位置
+    setPreviewPosition({ x: e.clientX, y: e.clientY });
+  }, [isDragging]);
+
+  // 处理鼠标离开事件，隐藏预览
+  const handleMouseLeave = useCallback(() => {
+    setShowPreview(false);
+  }, []);
+
   return (
-    <div
-      ref={ref}
-      className={`${tabClasses} tab-drag-animation ${isDragging ? 'dragging' : ''} ${isOver && canDrop ? 'drop-target-animation active' : ''}`}
-      style={{
-        cursor: 'move'
-      }}
-    >
-      <div className="flex items-center space-x-2 flex-1 min-w-0">
-        {tab.favicon ? (
-          <img src={tab.favicon} alt="" className="w-4 h-4 flex-shrink-0" />
-        ) : (
-          <div className="w-4 h-4 bg-gray-200 dark:bg-gray-600 flex-shrink-0 flex items-center justify-center">
-            <svg xmlns="http://www.w3.org/2000/svg" className="h-3 w-3 text-gray-500 dark:text-gray-300" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3.055 11H5a2 2 0 012 2v1a2 2 0 002 2 2 2 0 012 2v2.945M8 3.935V5.5A2.5 2.5 0 0010.5 8h.5a2 2 0 012 2 2 2 0 104 0 2 2 0 012-2h1.064M15 20.488V18a2 2 0 012-2h3.064M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-            </svg>
-          </div>
-        )}
-        <a
-          href="#"
-          className="truncate text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300 hover:underline text-sm"
-          onClick={handleTabClick}
-          title={tabTitle}
-        >
-          {tabTitle}
-        </a>
-      </div>
-      <button
-        onClick={handleDelete}
-        className="text-gray-400 hover:text-red-500 p-1 rounded hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors ml-1 tab-action-button"
-        title="删除标签页"
+    <>
+      <div
+        ref={ref}
+        className={`${tabClasses} tab-drag-animation ${isDragging ? 'dragging' : ''} ${isOver && canDrop ? 'drop-target-animation active' : ''}`}
+        style={{
+          cursor: 'move'
+        }}
+        onMouseEnter={handleMouseEnter}
+        onMouseMove={handleMouseMove}
+        onMouseLeave={handleMouseLeave}
       >
-        <svg xmlns="http://www.w3.org/2000/svg" className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-        </svg>
-      </button>
-    </div>
+        <div className="flex items-center space-x-2 flex-1 min-w-0">
+          {tab.favicon ? (
+            <img src={tab.favicon} alt="" className="w-4 h-4 flex-shrink-0" />
+          ) : (
+            <div className="w-4 h-4 bg-gray-200 dark:bg-gray-600 flex-shrink-0 flex items-center justify-center">
+              <svg xmlns="http://www.w3.org/2000/svg" className="h-3 w-3 text-gray-500 dark:text-gray-300" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3.055 11H5a2 2 0 012 2v1a2 2 0 002 2 2 2 0 012 2v2.945M8 3.935V5.5A2.5 2.5 0 0010.5 8h.5a2 2 0 012 2 2 2 0 104 0 2 2 0 012-2h1.064M15 20.488V18a2 2 0 012-2h3.064M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+            </div>
+          )}
+          <a
+            href="#"
+            className="truncate text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300 hover:underline text-sm"
+            onClick={handleTabClick}
+            title={tabTitle}
+          >
+            {tabTitle}
+          </a>
+        </div>
+        <button
+          onClick={handleDelete}
+          className="text-gray-400 hover:text-red-500 p-1 rounded hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors ml-1 tab-action-button"
+          title="删除标签页"
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+          </svg>
+        </button>
+      </div>
+
+      {/* 标签预览 */}
+      <TabPreview
+        tab={tab}
+        visible={showPreview && !isDragging}
+        position={previewPosition}
+      />
+    </>
   );
 }, (prevProps, nextProps) => {
   // 优化重渲染逻辑，只有在以下情况下才重新渲染：

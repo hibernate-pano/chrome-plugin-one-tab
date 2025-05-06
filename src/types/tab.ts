@@ -61,7 +61,14 @@ export interface TabState {
   searchQuery: string;
   syncStatus: 'idle' | 'syncing' | 'success' | 'error'; // 同步状态
   lastSyncTime: string | null; // 最后同步时间
-  compressionStats?: any | null; // 压缩统计信息（已废弃）
+
+  // 定义压缩统计信息类型（虽然已废弃，但保留类型定义以保持向后兼容）
+  compressionStats?: {
+    originalSize?: number;
+    compressedSize?: number;
+    ratio?: number;
+    savedBytes?: number;
+  } | null;
   backgroundSync: boolean; // 是否在后台同步
   syncProgress: number; // 同步进度（0-100）
   syncOperation: 'none' | 'upload' | 'download'; // 当前同步操作类型
