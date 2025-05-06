@@ -65,11 +65,14 @@ export const SearchBar: React.FC = () => {
             absolute inset-y-0 right-0 pr-3
             text-gray-400 hover:text-gray-500
             dark:text-gray-500 dark:hover:text-gray-400
-            transition duration-200
+            transition-all duration-200 ease-in-out
+            hover:scale-110
+            focus:outline-none
           "
+          title="清除搜索"
         >
           <svg
-            className="h-5 w-5"
+            className="h-5 w-5 transform transition-transform hover:rotate-90"
             xmlns="http://www.w3.org/2000/svg"
             viewBox="0 0 20 20"
             fill="currentColor"

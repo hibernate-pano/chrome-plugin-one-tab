@@ -17,6 +17,10 @@ const SyncPromptModal = lazy(() => import('@/components/sync/SyncPromptModal'));
 import { ToastProvider } from '@/contexts/ToastContext';
 import { ThemeProvider } from '@/contexts/ThemeContext';
 
+// 导入样式文件
+import '@/styles/drag-drop.css';
+import '@/styles/animations.css';
+
 // 使用动态导入懒加载性能测试组件
 const PerformanceTest = lazy(() => import('@/components/performance/PerformanceTest'));
 

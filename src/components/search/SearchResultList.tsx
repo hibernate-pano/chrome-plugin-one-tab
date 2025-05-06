@@ -2,6 +2,7 @@ import React from 'react';
 import { useAppDispatch, useAppSelector } from '@/store/hooks';
 import { Tab, TabGroup } from '@/types/tab';
 import { updateGroup, deleteGroup } from '@/store/slices/tabSlice';
+import HighlightText from './HighlightText';
 
 interface SearchResultListProps {
   searchQuery: string;
@@ -133,7 +134,7 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({ searchQuery 
           }}
           title={tab.title}
         >
-          {tab.title}
+          <HighlightText text={tab.title} highlight={searchQuery} />
         </a>
       </div>
       <button

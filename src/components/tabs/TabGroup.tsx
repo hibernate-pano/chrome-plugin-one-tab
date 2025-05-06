@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useMemo, useEffect } from 'react';
+import React, { useState, useCallback, useEffect } from 'react';
 import { useAppDispatch } from '@/store/hooks';
 import { updateGroupNameAndSync, toggleGroupLockAndSync, deleteGroup, updateGroup, moveTabAndSync } from '@/store/slices/tabSlice';
 import { DraggableTab } from '@/components/dnd/DraggableTab';
@@ -8,18 +8,21 @@ interface TabGroupProps {
   group: TabGroupType;
 }
 
-// 使用React.memo包装组件，避免不必要的重渲染
+/**
+ * 标签组组件
+ * 使用React.memo优化渲染性能，只有在必要时才重新渲染
+ */
 export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
   const dispatch = useAppDispatch();
 
   const [isEditing, setIsEditing] = useState(false);
   const [newName, setNewName] = useState(group.name);
 
-  // 从localStorage获取折叠状态，如果没有则默认展开
-  const getInitialExpandedState = () => {
+  // 从localStorage获取折叠状态的函数，使用useCallback记忆化
+  const getInitialExpandedState = useCallback(() => {
     const savedState = localStorage.getItem(`tabGroup_${group.id}_expanded`);
     return savedState !== null ? JSON.parse(savedState) : true;
-  };
+  }, [group.id]);
 
   const [isExpanded, setIsExpanded] = useState(getInitialExpandedState);
 
@@ -70,10 +73,13 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
     localStorage.setItem(`tabGroup_${group.id}_expanded`, JSON.stringify(newExpandedState));
   }, [isExpanded, group.id]);
 
-  // 使用useCallback记忆化handleOpenAllTabs函数
+  /**
+   * 打开标签组中的所有标签页
+   * 如果标签组未锁定，则在打开后删除该标签组
+   */
   const handleOpenAllTabs = useCallback(() => {
-    // 使用useMemo记忆化标签页URL列表
-    const urls = useMemo(() => group.tabs.map(tab => tab.url), [group.tabs]);
+    // 直接从group.tabs中提取URL列表，不需要嵌套useMemo
+    const urls = group.tabs.map(tab => tab.url);
 
     // 如果标签组没有锁定，先在UI中删除标签组
     if (!group.isLocked) {
@@ -164,11 +170,12 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
         <div className="flex items-center space-x-3 flex-grow">
           <button
             onClick={handleToggleExpand}
-            className="text-gray-500 hover:text-primary-600 transition-colors p-1 hover:bg-gray-100"
+            className="text-gray-500 hover:text-primary-600 transition-colors p-1 hover:bg-gray-100 group-action-button"
+            title={isExpanded ? '折叠标签组' : '展开标签组'}
           >
             <svg
               xmlns="http://www.w3.org/2000/svg"
-              className={`h-5 w-5 transform transition-transform ${isExpanded ? 'rotate-0' : '-rotate-90'}`}
+              className={`h-5 w-5 expand-icon ${isExpanded ? 'expanded' : 'collapsed'}`}
               viewBox="0 0 20 20"
               fill="currentColor"
             >
@@ -236,8 +243,8 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
           )}
         </div>
       </div>
-      {isExpanded && (
-        <div className="px-2 pt-2 space-y-1 group tabs-container" style={{ overflow: 'hidden' }}>
+      <div className={`tab-group-content ${isExpanded ? 'expanded' : 'collapsed'}`}>
+        <div className="px-2 pt-2 space-y-1 group tabs-container">
           {group.tabs.map((tab, index) => (
             <DraggableTab
               key={tab.id}
@@ -262,7 +269,7 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
             />
           ))}
         </div>
-      )}
+      </div>
     </div>
   );
 }, (prevProps, nextProps) => {
@@ -271,12 +278,30 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
   // 2. 标签组名称变化
   // 3. 标签组锁定状态变化
   // 4. 标签组内的标签数量变化
-  // 5. 标签组内的标签内容变化（通过简单比较最后更新时间）
-  return (
+  // 5. 标签组内的标签内容变化（通过比较最后更新时间和标签ID列表）
+
+  // 基本属性比较
+  const basicPropsEqual =
     prevProps.group.id === nextProps.group.id &&
     prevProps.group.name === nextProps.group.name &&
     prevProps.group.isLocked === nextProps.group.isLocked &&
     prevProps.group.tabs.length === nextProps.group.tabs.length &&
-    prevProps.group.updatedAt === nextProps.group.updatedAt
-  );
+    prevProps.group.updatedAt === nextProps.group.updatedAt;
+
+  // 如果基本属性不相等，则需要重新渲染
+  if (!basicPropsEqual) return false;
+
+  // 如果标签数量变化，则需要重新渲染（这已经在上面检查过了）
+  // 如果标签ID列表变化，则需要重新渲染（更精确的检查）
+  if (prevProps.group.tabs.length === nextProps.group.tabs.length) {
+    // 只有当标签数量相同时才比较标签ID列表
+    for (let i = 0; i < prevProps.group.tabs.length; i++) {
+      if (prevProps.group.tabs[i].id !== nextProps.group.tabs[i].id) {
+        return false; // 标签ID不同，需要重新渲染
+      }
+    }
+  }
+
+  // 所有检查都通过，不需要重新渲染
+  return true;
 });
