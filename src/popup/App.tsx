@@ -2,8 +2,6 @@ import React, { useState, useEffect, lazy, Suspense } from 'react';
 import { Header } from '@/components/layout/Header';
 // 使用动态导入懒加载标签列表
 const SimpleTabList = lazy(() => import('@/components/tabs/SimpleTabList').then(module => ({ default: module.SimpleTabList })));
-// 使用动态导入懒加载虚拟列表版本的标签列表
-const VirtualTabList = lazy(() => import('@/components/tabs/VirtualTabList').then(module => ({ default: module.VirtualTabList })));
 // 使用动态导入懒加载拖放功能
 const DndProvider = lazy(() => import('@/components/dnd/DndProvider').then(module => ({ default: module.DndProvider })));
 import { useAppDispatch, useAppSelector } from '@/store/hooks';
@@ -33,7 +31,6 @@ const App: React.FC = () => {
   const [showSyncPrompt, setShowSyncPrompt] = useState(false);
   const [hasCloudData, setHasCloudData] = useState(false);
   const [showPerformanceTest, setShowPerformanceTest] = useState(false);
-  const [useVirtualList, setUseVirtualList] = useState(true); // 默认使用虚拟列表
 
   const { isAuthenticated, user } = useAppSelector(state => state.auth);
 
@@ -176,24 +173,8 @@ const App: React.FC = () => {
                 <>
                   <Header onSearch={setSearchQuery} />
                   <main className="flex-1 container mx-auto py-2 px-2 max-w-6xl">
-                    <div className="flex justify-end mb-2">
-                      <button
-                        onClick={() => setUseVirtualList(!useVirtualList)}
-                        className={`px-3 py-1 rounded text-xs font-medium transition-colors ${useVirtualList
-                            ? 'bg-primary-100 text-primary-700 hover:bg-primary-200'
-                            : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-                          }`}
-                        title={useVirtualList ? '当前使用虚拟列表（适合大量标签）' : '当前使用标准列表'}
-                      >
-                        {useVirtualList ? '虚拟列表模式' : '标准列表模式'}
-                      </button>
-                    </div>
                     <Suspense fallback={<div className="p-4 text-center">加载标签列表...</div>}>
-                      {useVirtualList ? (
-                        <VirtualTabList searchQuery={searchQuery} />
-                      ) : (
-                        <SimpleTabList searchQuery={searchQuery} />
-                      )}
+                      <SimpleTabList searchQuery={searchQuery} />
                     </Suspense>
                   </main>
                   <footer className="py-2 px-2 bg-white dark:bg-gray-900 border-t border-gray-200 dark:border-gray-700 text-xs text-gray-600 dark:text-gray-400">
