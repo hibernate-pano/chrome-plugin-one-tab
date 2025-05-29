@@ -1,9 +1,10 @@
-import React, { useRef, useCallback, useMemo, useState } from 'react';
+import React, { useRef, useCallback, useMemo } from 'react'; // Removed useState
 import { useDrag, useDrop } from 'react-dnd';
 import { Tab } from '@/types/tab';
 import { ItemTypes, TabDragItem } from './DndTypes';
 import { throttle } from 'lodash';
-import TabPreview from '@/components/tabs/TabPreview';
+// Removed TabPreview import
+// import TabPreview from '@/components/tabs/TabPreview';
 
 interface DraggableTabProps {
   tab: Tab;
@@ -29,9 +30,9 @@ export const DraggableTab: React.FC<DraggableTabProps> = React.memo(({
 }) => {
   const ref = useRef<HTMLDivElement>(null);
 
-  // 标签预览状态
-  const [showPreview, setShowPreview] = useState(false);
-  const [previewPosition, setPreviewPosition] = useState({ x: 0, y: 0 });
+  // Removed TabPreview state
+  // const [showPreview, setShowPreview] = useState(false);
+  // const [previewPosition, setPreviewPosition] = useState({ x: 0, y: 0 });
 
   // 使用throttle包装moveTab函数，减少拖拽过程中的频繁更新
   // 增加节流时间到100ms，进一步减少更新频率
@@ -158,22 +159,20 @@ export const DraggableTab: React.FC<DraggableTabProps> = React.memo(({
     return `${baseClasses} ${transitionClasses} ${dragClasses} ${dropClasses}`;
   }, [isDragging, isOver, canDrop]);
 
-  // 处理鼠标悬停事件，显示预览
-  const handleMouseEnter = useCallback(() => {
-    if (isDragging) return; // 拖拽过程中不显示预览
-    setShowPreview(true);
-  }, [isDragging]);
+  // Removed mouse event handlers for preview
+  // const handleMouseEnter = useCallback(() => {
+  //   if (isDragging) return; // 拖拽过程中不显示预览
+  //   setShowPreview(true);
+  // }, [isDragging]);
 
-  // 处理鼠标移动事件，更新预览位置
-  const handleMouseMove = useCallback((e: React.MouseEvent) => {
-    if (isDragging) return; // 拖拽过程中不更新预览位置
-    setPreviewPosition({ x: e.clientX, y: e.clientY });
-  }, [isDragging]);
+  // const handleMouseMove = useCallback((e: React.MouseEvent) => {
+  //   if (isDragging) return; // 拖拽过程中不更新预览位置
+  //   setPreviewPosition({ x: e.clientX, y: e.clientY });
+  // }, [isDragging]);
 
-  // 处理鼠标离开事件，隐藏预览
-  const handleMouseLeave = useCallback(() => {
-    setShowPreview(false);
-  }, []);
+  // const handleMouseLeave = useCallback(() => {
+  //   setShowPreview(false);
+  // }, []);
 
   return (
     <>
@@ -183,9 +182,10 @@ export const DraggableTab: React.FC<DraggableTabProps> = React.memo(({
         style={{
           cursor: 'move'
         }}
-        onMouseEnter={handleMouseEnter}
-        onMouseMove={handleMouseMove}
-        onMouseLeave={handleMouseLeave}
+        // Removed mouse event handlers for preview
+        // onMouseEnter={handleMouseEnter}
+        // onMouseMove={handleMouseMove}
+        // onMouseLeave={handleMouseLeave}
       >
         <div className="flex items-center space-x-2 flex-1 min-w-0">
           {tab.favicon ? (
@@ -208,21 +208,22 @@ export const DraggableTab: React.FC<DraggableTabProps> = React.memo(({
         </div>
         <button
           onClick={handleDelete}
-          className="text-gray-400 hover:text-red-500 p-1 rounded hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors ml-1 tab-action-button"
+          className="ml-2 p-1 rounded hover:bg-gray-200 dark:hover:bg-gray-600 text-gray-500 dark:text-gray-400 hover:text-red-500 dark:hover:text-red-400 transition-colors duration-150 flex-shrink-0"
           title="删除标签页"
         >
-          <svg xmlns="http://www.w3.org/2000/svg" className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
           </svg>
         </button>
       </div>
-
-      {/* 标签预览 */}
-      <TabPreview
-        tab={tab}
-        visible={showPreview && !isDragging}
-        position={previewPosition}
-      />
+      {/* Removed TabPreview component */}
+      {/* {showPreview && (
+        <TabPreview 
+          tab={tab} 
+          visible={showPreview} 
+          position={previewPosition} 
+        />
+      )} */}
     </>
   );
 }, (prevProps, nextProps) => {
