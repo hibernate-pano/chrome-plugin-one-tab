@@ -8,7 +8,10 @@ const updatedDefaultSettings = {
   ...defaultSettings,
 };
 
-const initialState: UserSettings = updatedDefaultSettings;
+const initialState: UserSettings = {
+  ...updatedDefaultSettings,
+  reorderMode: false, // 新增：全局重新排序模式
+};
 
 export const loadSettings = createAsyncThunk('settings/loadSettings', async () => {
   return await storage.getSettings();
@@ -110,6 +113,9 @@ const settingsSlice = createSlice({
     toggleLayoutMode: (state) => {
       state.useDoubleColumnLayout = !state.useDoubleColumnLayout;
     },
+    setReorderMode(state, action) {
+      state.reorderMode = action.payload;
+    },
   },
   extraReducers: (builder) => {
     builder
@@ -152,6 +158,7 @@ export const {
   toggleShowNotifications,
   toggleSyncEnabled,
   toggleLayoutMode,
+  setReorderMode,
 } = settingsSlice.actions;
 
 export default settingsSlice.reducer;

@@ -1,9 +1,10 @@
 import React, { useState, useEffect, lazy, Suspense } from 'react';
 import { Header } from '@/components/layout/Header';
-// 使用动态导入懒加载标签列表
-const SimpleTabList = lazy(() => import('@/components/tabs/SimpleTabList').then(module => ({ default: module.SimpleTabList })));
+import { TabList } from '@/components/tabs/TabList';
 // 使用动态导入懒加载拖放功能
-const DndProvider = lazy(() => import('@/components/dnd/DndProvider').then(module => ({ default: module.DndProvider })));
+const DndProvider = lazy(() =>
+  import('@/components/dnd/DndProvider').then(module => ({ default: module.DndProvider }))
+);
 import { useAppDispatch, useAppSelector } from '@/store/hooks';
 import { loadSettings } from '@/store/slices/settingsSlice';
 import { getCurrentUser } from '@/store/slices/authSlice';
@@ -87,8 +88,8 @@ const App: React.FC = () => {
             type: 'auth/setFromCache',
             payload: {
               user: cachedAuth.user,
-              isAuthenticated: true
-            }
+              isAuthenticated: true,
+            },
           });
           console.log('从缓存加载用户认证状态:', cachedAuth.user.email);
         }
@@ -147,7 +148,13 @@ const App: React.FC = () => {
   return (
     <ToastProvider>
       <ThemeProvider>
-        <Suspense fallback={<div className="min-h-screen bg-white dark:bg-gray-900 dark:text-gray-100 flex flex-col items-center justify-center">加载拖放功能...</div>}>
+        <Suspense
+          fallback={
+            <div className="min-h-screen bg-white dark:bg-gray-900 dark:text-gray-100 flex flex-col items-center justify-center">
+              加载拖放功能...
+            </div>
+          }
+        >
           <DndProvider>
             <div className="min-h-screen bg-white dark:bg-gray-900 dark:text-gray-100 flex flex-col">
               {showPerformanceTest ? (
@@ -174,14 +181,25 @@ const App: React.FC = () => {
                   <Header onSearch={setSearchQuery} />
                   <main className="flex-1 container mx-auto py-2 px-2 max-w-6xl">
                     <Suspense fallback={<div className="p-4 text-center">加载标签列表...</div>}>
-                      <SimpleTabList searchQuery={searchQuery} />
+                      <TabList searchQuery={searchQuery} />
                     </Suspense>
                   </main>
                   <footer className="py-2 px-2 bg-white dark:bg-gray-900 border-t border-gray-200 dark:border-gray-700 text-xs text-gray-600 dark:text-gray-400">
                     <div className="container mx-auto max-w-6xl flex justify-between items-center">
                       <div className="flex items-center space-x-2">
-                        <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 text-primary-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 17V7m0 10a2 2 0 01-2 2H5a2 2 0 01-2-2V7a2 2 0 012-2h2a2 2 0 012 2m0 10a2 2 0 002 2h2a2 2 0 002-2M9 7a2 2 0 012-2h2a2 2 0 012 2m0 10V7m0 10a2 2 0 002 2h2a2 2 0 002-2V7a2 2 0 00-2-2h-2a2 2 0 00-2 2" />
+                        <svg
+                          xmlns="http://www.w3.org/2000/svg"
+                          className="h-4 w-4 text-primary-600"
+                          fill="none"
+                          viewBox="0 0 24 24"
+                          stroke="currentColor"
+                        >
+                          <path
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            strokeWidth={2}
+                            d="M9 17V7m0 10a2 2 0 01-2 2H5a2 2 0 01-2-2V7a2 2 0 012-2h2a2 2 0 012 2m0 10a2 2 0 002 2h2a2 2 0 002-2M9 7a2 2 0 012-2h2a2 2 0 012 2m0 10V7m0 10a2 2 0 002 2h2a2 2 0 002-2V7a2 2 0 00-2-2h-2a2 2 0 00-2 2"
+                          />
                         </svg>
                         <span className="text-xs">OneTabPlus v1.5.8</span>
                       </div>
@@ -214,11 +232,14 @@ const App: React.FC = () => {
 
               {/* 同步提示对话框 */}
               {showSyncPrompt && (
-                <Suspense fallback={<div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center">加载中...</div>}>
-                  <SyncPromptModal
-                    onClose={handleCloseSyncPrompt}
-                    hasCloudData={hasCloudData}
-                  />
+                <Suspense
+                  fallback={
+                    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center">
+                      加载中...
+                    </div>
+                  }
+                >
+                  <SyncPromptModal onClose={handleCloseSyncPrompt} hasCloudData={hasCloudData} />
                 </Suspense>
               )}
             </div>

@@ -1,6 +1,7 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, lazy } from 'react';
 import { useAppDispatch, useAppSelector } from '@/store/hooks';
 import { loadGroups, deleteGroup, moveGroupAndSync } from '@/store/slices/tabSlice';
+import { setReorderMode } from '@/store/slices/settingsSlice';
 
 import { DraggableTabGroup } from '@/components/dnd/DraggableTabGroup';
 import { SearchResultList } from '@/components/search/SearchResultList';
@@ -10,10 +11,13 @@ interface TabListProps {
   searchQuery: string;
 }
 
+// 新增：全局排序视图组件（后续实现）
+const ReorderView = lazy(() => import('@/components/tabs/ReorderView'));
+
 export const TabList: React.FC<TabListProps> = ({ searchQuery }) => {
   const dispatch = useAppDispatch();
   const { groups, isLoading, error } = useAppSelector(state => state.tabs);
-  const { useDoubleColumnLayout } = useAppSelector(state => state.settings);
+  const { useDoubleColumnLayout, reorderMode } = useAppSelector(state => state.settings);
   const [isRestoreAllModalOpen, setIsRestoreAllModalOpen] = useState(false);
   const [selectedGroup, setSelectedGroup] = useState<TabGroupType | null>(null);
 
@@ -75,7 +79,7 @@ export const TabList: React.FC<TabListProps> = ({ searchQuery }) => {
           </svg>
         </div>
         <h3 className="text-lg font-medium text-gray-700">没有保存的标签页</h3>
-        <p className="text-gray-500 max-w-md text-center">点击右上角的“保存所有标签”按钮开始保存您的标签页。保存后的标签页将显示在这里。</p>
+        <p className="text-gray-500 max-w-md text-center">点击右上角的"保存所有标签"按钮开始保存您的标签页。保存后的标签页将显示在这里。</p>
         <button
           onClick={() => {
             chrome.runtime.sendMessage({
@@ -124,6 +128,15 @@ export const TabList: React.FC<TabListProps> = ({ searchQuery }) => {
       });
     }, 100); // 小延迟确保 UI 先更新
   };
+
+  // 新增：全局排序模式入口
+  if (reorderMode) {
+    return (
+      <React.Suspense fallback={<div>加载中...</div>}>
+        <ReorderView onClose={() => dispatch(setReorderMode(false))} />
+      </React.Suspense>
+    );
+  }
 
   return (
     <div className="space-y-2">
