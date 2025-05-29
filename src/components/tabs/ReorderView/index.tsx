@@ -23,11 +23,17 @@ function getDomain(url: string) {
   }
 }
 
-function flattenTabs(groups: TabGroup[]): (Tab & { groupName: string })[] {
-  return groups.flatMap(group => group.tabs.map(tab => ({ ...tab, groupName: group.name })));
+function flattenTabs(groups: TabGroup[]): (Tab & { groupName: string; groupId: string })[] {
+  return groups.flatMap(group =>
+    group.tabs.map(tab => ({
+      ...tab,
+      groupName: group.name,
+      groupId: group.id,
+    }))
+  );
 }
 
-function sortTabs(tabs: (Tab & { groupName: string })[], sortType: SortType) {
+function sortTabs(tabs: (Tab & { groupName: string; groupId: string })[], sortType: SortType) {
   switch (sortType) {
     case 'time-desc':
       return [...tabs].sort(
@@ -55,54 +61,160 @@ const sortOptions = [
 
 const ReorderView: React.FC<ReorderViewProps> = ({ onClose }) => {
   const groups = useAppSelector(state => state.tabs.groups);
+  const settings = useAppSelector(state => state.settings);
   const [sortType, setSortType] = useState<SortType>('time-desc');
 
   const flatTabs = useMemo(() => sortTabs(flattenTabs(groups), sortType), [groups, sortType]);
 
+  const handleOpenTab = (tab: Tab) => {
+    chrome.runtime.sendMessage({
+      type: 'OPEN_TABS',
+      data: { urls: [tab.url] },
+    });
+  };
+
   return (
-    <div className="p-4 bg-white dark:bg-gray-800 min-h-[60vh] rounded shadow">
-      <div className="flex items-center justify-between mb-4">
-        <div className="flex items-center space-x-2">
-          <label htmlFor="sortType" className="text-sm text-gray-700 dark:text-gray-200">
-            排序方式：
-          </label>
-          <select
-            id="sortType"
-            value={sortType}
-            onChange={e => setSortType(e.target.value as SortType)}
-            className="border rounded px-2 py-1 text-sm dark:bg-gray-700 dark:text-gray-100"
-          >
-            {sortOptions.map(opt => (
-              <option key={opt.value} value={opt.value}>
-                {opt.label}
-              </option>
-            ))}
-          </select>
+    <div className="container mx-auto max-w-6xl">
+      <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg shadow-sm">
+        <div className="p-4 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between">
+          <div className="flex items-center">
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              className="h-5 w-5 text-gray-600 dark:text-gray-300 mr-2"
+              fill="none"
+              viewBox="0 0 24 24"
+              stroke="currentColor"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M4 6h16M4 12h16M4 18h16"
+              />
+            </svg>
+            <h2 className="text-lg font-medium text-gray-800 dark:text-gray-100">标签重新排序</h2>
+            <span className="ml-2 text-sm text-gray-500 dark:text-gray-400">
+              共 {flatTabs.length} 个标签
+            </span>
+          </div>
+
+          <div className="flex items-center space-x-3">
+            <div className="flex items-center space-x-2">
+              <label htmlFor="sortType" className="text-sm text-gray-700 dark:text-gray-200">
+                排序方式：
+              </label>
+              <select
+                id="sortType"
+                value={sortType}
+                onChange={e => setSortType(e.target.value as SortType)}
+                className="border border-gray-300 dark:border-gray-600 rounded px-3 py-1.5 text-sm dark:bg-gray-700 dark:text-gray-100 focus:outline-none focus:ring-1 focus:ring-primary-500"
+              >
+                {sortOptions.map(opt => (
+                  <option key={opt.value} value={opt.value}>
+                    {opt.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <button
+              onClick={onClose}
+              className="px-4 py-1.5 rounded text-sm transition-colors bg-primary-600 text-white hover:bg-primary-700 border border-primary-600"
+            >
+              返回分组视图
+            </button>
+          </div>
         </div>
-        <button
-          onClick={onClose}
-          className="px-3 py-1 rounded bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-200 hover:bg-gray-300 dark:hover:bg-gray-600"
-        >
-          返回分组视图
-        </button>
+
+        <div className="overflow-y-auto max-h-[calc(100vh-200px)]">
+          {flatTabs.length > 0 ? (
+            <ul className="divide-y divide-gray-200 dark:divide-gray-700">
+              {flatTabs.map(tab => (
+                <li
+                  key={tab.id}
+                  className="flex items-center py-3 px-4 hover:bg-gray-50 dark:hover:bg-gray-750 transition-colors cursor-pointer"
+                  onClick={() => handleOpenTab(tab)}
+                >
+                  {settings.showFavicons && (
+                    <div className="mr-3 flex-shrink-0">
+                      {tab.favicon ? (
+                        <img src={tab.favicon} alt="" className="w-4 h-4 flex-shrink-0" />
+                      ) : (
+                        <div className="w-4 h-4 bg-gray-200 dark:bg-gray-600 flex-shrink-0 flex items-center justify-center">
+                          <svg
+                            xmlns="http://www.w3.org/2000/svg"
+                            className="h-3 w-3 text-gray-500 dark:text-gray-300"
+                            fill="none"
+                            viewBox="0 0 24 24"
+                            stroke="currentColor"
+                          >
+                            <path
+                              strokeLinecap="round"
+                              strokeLinejoin="round"
+                              strokeWidth={2}
+                              d="M3.055 11H5a2 2 0 012 2v1a2 2 0 002 2 2 2 0 012 2v2.945M8 3.935V5.5A2.5 2.5 0 0010.5 8h.5a2 2 0 012 2 2 2 0 104 0 2 2 0 012-2h1.064M15 20.488V18a2 2 0 012-2h3.064M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
+                            />
+                          </svg>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center">
+                      <p
+                        className="text-sm font-medium text-gray-800 dark:text-gray-200 truncate"
+                        title={tab.title}
+                      >
+                        {tab.title}
+                      </p>
+                    </div>
+                    <div className="flex items-center text-xs text-gray-500 dark:text-gray-400 mt-1">
+                      <span className="truncate" title={tab.url}>
+                        {tab.url}
+                      </span>
+                    </div>
+                  </div>
+                  <div className="ml-4 flex-shrink-0 flex items-center space-x-3">
+                    <span className="text-xs text-gray-500 dark:text-gray-400 whitespace-nowrap">
+                      {new Date(tab.createdAt).toLocaleString()}
+                    </span>
+                    <span
+                      className="px-2 py-0.5 text-xs rounded-full bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 whitespace-nowrap"
+                      title={`原分组：${tab.groupName}`}
+                    >
+                      {tab.groupName}
+                    </span>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <div className="flex flex-col items-center justify-center py-12 space-y-3 text-gray-500">
+              <div className="w-16 h-16 rounded-full bg-gray-100 dark:bg-gray-700 flex items-center justify-center">
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  className="h-10 w-10 text-gray-400"
+                  fill="none"
+                  viewBox="0 0 24 24"
+                  stroke="currentColor"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M12 6v6m0 0v6m0-6h6m-6 0H6"
+                  />
+                </svg>
+              </div>
+              <h3 className="text-lg font-medium text-gray-700 dark:text-gray-200">
+                没有保存的标签页
+              </h3>
+              <p className="text-gray-500 dark:text-gray-400 max-w-md text-center">
+                点击右上角的"保存所有标签"按钮开始保存您的标签页
+              </p>
+            </div>
+          )}
+        </div>
       </div>
-      <ul className="divide-y divide-gray-200 dark:divide-gray-700">
-        {flatTabs.map(tab => (
-          <li key={tab.id} className="flex items-center py-2">
-            <span className="truncate flex-1" title={tab.title}>
-              {tab.title}
-            </span>
-            <span className="ml-2 text-xs text-gray-400">{getDomain(tab.url)}</span>
-            <span className="ml-2 text-xs text-gray-400">
-              {new Date(tab.createdAt).toLocaleString()}
-            </span>
-            <span className="ml-2 text-xs text-gray-400" title={`原分组：${tab.groupName}`}>
-              [{tab.groupName}]
-            </span>
-          </li>
-        ))}
-      </ul>
-      {flatTabs.length === 0 && <div className="text-center text-gray-400 py-8">暂无标签</div>}
     </div>
   );
 };
