@@ -63,14 +63,16 @@ export const Header: React.FC<HeaderProps> = ({ onSearch }) => {
     if (settings.reorderMode) {
       dispatch(setReorderMode(false));
     }
-    
+
     // 然后切换布局模式
     dispatch(toggleLayoutMode());
-    dispatch(saveSettings({ 
-      ...settings, 
-      useDoubleColumnLayout: !settings.useDoubleColumnLayout,
-      reorderMode: false // 确保在切换布局时退出重排序模式
-    }));
+    dispatch(
+      saveSettings({
+        ...settings,
+        useDoubleColumnLayout: !settings.useDoubleColumnLayout,
+        reorderMode: false, // 确保在切换布局时退出重排序模式
+      })
+    );
   };
 
   // 切换重排序模式
@@ -203,27 +205,6 @@ export const Header: React.FC<HeaderProps> = ({ onSearch }) => {
               </button>
 
               <button
-                onClick={handleCleanDuplicateTabs}
-                className="p-2 rounded hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors text-gray-600 dark:text-gray-300 flex items-center justify-center"
-                title="清理所有标签组中的重复标签页"
-              >
-                <svg
-                  xmlns="http://www.w3.org/2000/svg"
-                  className="h-5 w-5"
-                  fill="none"
-                  viewBox="0 0 24 24"
-                  stroke="currentColor"
-                >
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth={2}
-                    d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
-                  />
-                </svg>
-              </button>
-
-              <button
                 onClick={handleToggleReorderMode}
                 className={`p-2 rounded hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors ${settings.reorderMode ? 'bg-primary-100 dark:bg-primary-900 text-primary-600 dark:text-primary-400' : 'text-gray-600 dark:text-gray-300'} flex items-center justify-center`}
                 title={settings.reorderMode ? '返回分组视图' : '重新排序所有标签'}
@@ -240,6 +221,27 @@ export const Header: React.FC<HeaderProps> = ({ onSearch }) => {
                     strokeLinejoin="round"
                     strokeWidth={2}
                     d="M4 6h16M4 12h16M4 18h16"
+                  />
+                </svg>
+              </button>
+
+              <button
+                onClick={handleCleanDuplicateTabs}
+                className="p-2 rounded hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors text-gray-600 dark:text-gray-300 flex items-center justify-center"
+                title="清理所有标签组中的重复标签页"
+              >
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  className="h-5 w-5"
+                  fill="none"
+                  viewBox="0 0 24 24"
+                  stroke="currentColor"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
                   />
                 </svg>
               </button>
