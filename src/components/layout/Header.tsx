@@ -59,8 +59,18 @@ export const Header: React.FC<HeaderProps> = ({ onSearch }) => {
 
   // 切换布局模式
   const handleToggleLayout = () => {
+    // 如果当前在重排序模式，先退出重排序模式
+    if (settings.reorderMode) {
+      dispatch(setReorderMode(false));
+    }
+    
+    // 然后切换布局模式
     dispatch(toggleLayoutMode());
-    dispatch(saveSettings({ ...settings, useDoubleColumnLayout: !settings.useDoubleColumnLayout }));
+    dispatch(saveSettings({ 
+      ...settings, 
+      useDoubleColumnLayout: !settings.useDoubleColumnLayout,
+      reorderMode: false // 确保在切换布局时退出重排序模式
+    }));
   };
 
   // 切换重排序模式
