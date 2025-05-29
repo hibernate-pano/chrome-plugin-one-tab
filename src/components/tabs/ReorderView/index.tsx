@@ -1,10 +1,7 @@
 import React, { useMemo, useState } from 'react';
-import { useAppSelector } from '@/store/hooks';
+import { useAppSelector, useAppDispatch } from '@/store/hooks';
 import { Tab, TabGroup } from '@/types/tab';
-
-interface ReorderViewProps {
-  onClose: () => void;
-}
+import { updateGroup, deleteGroup } from '@/store/slices/tabSlice';
 
 type SortType = 'time-desc' | 'time-asc' | 'domain-asc' | 'domain-desc';
 
@@ -59,18 +56,48 @@ const sortOptions = [
   { value: 'domain-desc', label: '按域名（Z→A）' },
 ];
 
-const ReorderView: React.FC<ReorderViewProps> = ({ onClose }) => {
+const ReorderView: React.FC = () => {
+  const dispatch = useAppDispatch();
   const groups = useAppSelector(state => state.tabs.groups);
   const settings = useAppSelector(state => state.settings);
   const [sortType, setSortType] = useState<SortType>('time-desc');
 
   const flatTabs = useMemo(() => sortTabs(flattenTabs(groups), sortType), [groups, sortType]);
 
-  const handleOpenTab = (tab: Tab) => {
+  const handleOpenTab = (tab: Tab & { groupId: string }) => {
+    // 打开标签页并删除原标签
     chrome.runtime.sendMessage({
       type: 'OPEN_TABS',
       data: { urls: [tab.url] },
     });
+
+    // 删除标签
+    handleDeleteTab(tab);
+  };
+
+  const handleDeleteTab = (tab: Tab & { groupId: string }) => {
+    // 找到对应的标签组
+    const group = groups.find(g => g.id === tab.groupId);
+    if (!group) return;
+
+    // 如果标签组被锁定，不允许删除
+    if (group.isLocked) return;
+
+    // 更新标签组，移除该标签页
+    const updatedTabs = group.tabs.filter(t => t.id !== tab.id);
+
+    // 如果标签组没有剩余标签，则删除整个标签组
+    if (updatedTabs.length === 0) {
+      dispatch(deleteGroup(group.id));
+    } else {
+      // 否则更新标签组
+      const updatedGroup = {
+        ...group,
+        tabs: updatedTabs,
+        updatedAt: new Date().toISOString(),
+      };
+      dispatch(updateGroup(updatedGroup));
+    }
   };
 
   return (
@@ -116,22 +143,16 @@ const ReorderView: React.FC<ReorderViewProps> = ({ onClose }) => {
                 ))}
               </select>
             </div>
-            <button
-              onClick={onClose}
-              className="px-4 py-1.5 rounded text-sm transition-colors bg-primary-600 text-white hover:bg-primary-700 border border-primary-600"
-            >
-              返回分组视图
-            </button>
           </div>
         </div>
 
-        <div className="overflow-y-auto max-h-[calc(100vh-200px)]">
+        <div className="overflow-hidden">
           {flatTabs.length > 0 ? (
             <ul className="divide-y divide-gray-200 dark:divide-gray-700">
               {flatTabs.map(tab => (
                 <li
                   key={tab.id}
-                  className="flex items-center py-3 px-4 hover:bg-gray-50 dark:hover:bg-gray-750 transition-colors cursor-pointer"
+                  className="flex items-center py-3 px-4 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors cursor-pointer"
                   onClick={() => handleOpenTab(tab)}
                 >
                   {settings.showFavicons && (
@@ -183,6 +204,29 @@ const ReorderView: React.FC<ReorderViewProps> = ({ onClose }) => {
                     >
                       {tab.groupName}
                     </span>
+                    <button
+                      onClick={e => {
+                        e.stopPropagation(); // 阻止事件冒泡
+                        handleDeleteTab(tab);
+                      }}
+                      className="ml-2 p-1 rounded hover:bg-gray-200 dark:hover:bg-gray-600 text-gray-500 dark:text-gray-400 hover:text-red-500 dark:hover:text-red-400 transition-colors duration-150 flex-shrink-0"
+                      title="删除标签页"
+                    >
+                      <svg
+                        xmlns="http://www.w3.org/2000/svg"
+                        className="h-4 w-4"
+                        fill="none"
+                        viewBox="0 0 24 24"
+                        stroke="currentColor"
+                      >
+                        <path
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          strokeWidth={2}
+                          d="M6 18L18 6M6 6l12 12"
+                        />
+                      </svg>
+                    </button>
                   </div>
                 </li>
               ))}

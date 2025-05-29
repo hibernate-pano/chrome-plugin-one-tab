@@ -1,7 +1,6 @@
 import React, { useEffect, useState, lazy } from 'react';
 import { useAppDispatch, useAppSelector } from '@/store/hooks';
 import { loadGroups, deleteGroup, moveGroupAndSync } from '@/store/slices/tabSlice';
-import { setReorderMode } from '@/store/slices/settingsSlice';
 
 import { DraggableTabGroup } from '@/components/dnd/DraggableTabGroup';
 import { SearchResultList } from '@/components/search/SearchResultList';
@@ -51,11 +50,7 @@ export const TabList: React.FC<TabListProps> = ({ searchQuery }) => {
   }
 
   if (error) {
-    return (
-      <div className="flex items-center justify-center h-64 text-red-600">
-        {error}
-      </div>
-    );
+    return <div className="flex items-center justify-center h-64 text-red-600">{error}</div>;
   }
 
   // 先按创建时间倒序排序
@@ -74,17 +69,30 @@ export const TabList: React.FC<TabListProps> = ({ searchQuery }) => {
     return (
       <div className="flex flex-col items-center justify-center py-8 space-y-3 text-gray-500 bg-white border border-gray-200 p-4">
         <div className="w-16 h-16 rounded-full bg-gray-100 flex items-center justify-center">
-          <svg xmlns="http://www.w3.org/2000/svg" className="h-10 w-10 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
+          <svg
+            xmlns="http://www.w3.org/2000/svg"
+            className="h-10 w-10 text-gray-400"
+            fill="none"
+            viewBox="0 0 24 24"
+            stroke="currentColor"
+          >
+            <path
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              strokeWidth={2}
+              d="M12 6v6m0 0v6m0-6h6m-6 0H6"
+            />
           </svg>
         </div>
         <h3 className="text-lg font-medium text-gray-700">没有保存的标签页</h3>
-        <p className="text-gray-500 max-w-md text-center">点击右上角的"保存所有标签"按钮开始保存您的标签页。保存后的标签页将显示在这里。</p>
+        <p className="text-gray-500 max-w-md text-center">
+          点击右上角的"保存所有标签"按钮开始保存您的标签页。保存后的标签页将显示在这里。
+        </p>
         <button
           onClick={() => {
             chrome.runtime.sendMessage({
               type: 'SAVE_ALL_TABS',
-              data: { tabs: [] }
+              data: { tabs: [] },
             });
           }}
           className="mt-2 px-4 py-1.5 bg-primary-600 text-white rounded hover:bg-primary-700 transition-colors text-sm"
@@ -124,7 +132,7 @@ export const TabList: React.FC<TabListProps> = ({ searchQuery }) => {
     setTimeout(() => {
       chrome.runtime.sendMessage({
         type: 'OPEN_TABS',
-        data: { urls }
+        data: { urls },
       });
     }, 100); // 小延迟确保 UI 先更新
   };
@@ -133,7 +141,7 @@ export const TabList: React.FC<TabListProps> = ({ searchQuery }) => {
   if (reorderMode) {
     return (
       <React.Suspense fallback={<div>加载中...</div>}>
-        <ReorderView onClose={() => dispatch(setReorderMode(false))} />
+        <ReorderView />
       </React.Suspense>
     );
   }
@@ -150,7 +158,7 @@ export const TabList: React.FC<TabListProps> = ({ searchQuery }) => {
           <div className="space-y-2 transition-all">
             {filteredGroups
               .filter((_, index) => index % 2 === 0)
-              .map((group) => {
+              .map(group => {
                 // 计算在原始数组中的实际索引
                 const originalIndex = filteredGroups.findIndex(g => g.id === group.id);
                 return (
@@ -170,7 +178,7 @@ export const TabList: React.FC<TabListProps> = ({ searchQuery }) => {
           <div className="space-y-2 transition-all">
             {filteredGroups
               .filter((_, index) => index % 2 === 1)
-              .map((group) => {
+              .map(group => {
                 // 计算在原始数组中的实际索引
                 const originalIndex = filteredGroups.findIndex(g => g.id === group.id);
                 return (
@@ -207,7 +215,10 @@ export const TabList: React.FC<TabListProps> = ({ searchQuery }) => {
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
           <div className="bg-white rounded-lg p-6 max-w-md w-full">
             <h3 className="text-lg font-medium mb-4">恢复所有标签页</h3>
-            <p className="mb-4">确定要恢复标签组 "{selectedGroup.name}" 中的所有 {selectedGroup.tabs.length} 个标签页吗？</p>
+            <p className="mb-4">
+              确定要恢复标签组 "{selectedGroup.name}" 中的所有 {selectedGroup.tabs.length}{' '}
+              个标签页吗？
+            </p>
 
             <div className="flex justify-end space-x-2">
               <button

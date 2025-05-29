@@ -63,6 +63,11 @@ export const Header: React.FC<HeaderProps> = ({ onSearch }) => {
     dispatch(saveSettings({ ...settings, useDoubleColumnLayout: !settings.useDoubleColumnLayout }));
   };
 
+  // 切换重排序模式
+  const handleToggleReorderMode = () => {
+    dispatch(setReorderMode(!settings.reorderMode));
+  };
+
   const handleSaveAllTabs = async () => {
     const tabs = await chrome.tabs.query({ currentWindow: true });
 
@@ -209,9 +214,9 @@ export const Header: React.FC<HeaderProps> = ({ onSearch }) => {
               </button>
 
               <button
-                onClick={() => dispatch(setReorderMode(true))}
-                className="p-2 rounded hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors text-gray-600 dark:text-gray-300 flex items-center justify-center"
-                title="重新排序所有标签"
+                onClick={handleToggleReorderMode}
+                className={`p-2 rounded hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors ${settings.reorderMode ? 'bg-primary-100 dark:bg-primary-900 text-primary-600 dark:text-primary-400' : 'text-gray-600 dark:text-gray-300'} flex items-center justify-center`}
+                title={settings.reorderMode ? '返回分组视图' : '重新排序所有标签'}
               >
                 <svg
                   xmlns="http://www.w3.org/2000/svg"
@@ -227,7 +232,6 @@ export const Header: React.FC<HeaderProps> = ({ onSearch }) => {
                     d="M4 6h16M4 12h16M4 18h16"
                   />
                 </svg>
-                {/* <span className="ml-1">重新排序</span> */}
               </button>
 
               <SimpleThemeToggle />
