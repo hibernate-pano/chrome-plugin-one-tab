@@ -21,13 +21,10 @@ const initialState: TabState = {
   syncOperation: 'none',
 };
 
-export const loadGroups = createAsyncThunk(
-  'tabs/loadGroups',
-  async () => {
-    const groups = await storage.getGroups();
-    return groups;
-  }
-);
+export const loadGroups = createAsyncThunk('tabs/loadGroups', async () => {
+  const groups = await storage.getGroups();
+  return groups;
+});
 
 export const saveGroup = createAsyncThunk(
   'tabs/saveGroup',
@@ -52,7 +49,7 @@ export const updateGroup = createAsyncThunk(
     // 不再需要记录删除的标签页
 
     // 更新标签组
-    const updatedGroups = groups.map(g => g.id === group.id ? group : g);
+    const updatedGroups = groups.map(g => (g.id === group.id ? group : g));
     await storage.setGroups(updatedGroups);
 
     // 使用通用同步函数同步到云端
@@ -74,12 +71,11 @@ export const deleteGroup = createAsyncThunk(
     // 使用通用同步函数同步到云端
     // 不等待同步完成，直接返回结果
     // 这样可以确保用户界面不会被阻塞
-    syncToCloud(dispatch, getState, '删除标签组')
-      .catch(err => {
-        if (process.env.NODE_ENV === 'development') {
-          console.error('同步删除标签组操作失败:', err);
-        }
-      });
+    syncToCloud(dispatch, getState, '删除标签组').catch(err => {
+      if (process.env.NODE_ENV === 'development') {
+        console.error('同步删除标签组操作失败:', err);
+      }
+    });
 
     return groupId;
   }
@@ -99,12 +95,11 @@ export const deleteAllGroups = createAsyncThunk(
 
     // 使用通用同步函数同步到云端
     // 不等待同步完成，直接返回结果
-    syncToCloud(dispatch, getState, '删除所有标签组')
-      .catch(err => {
-        if (process.env.NODE_ENV === 'development') {
-          console.error('同步删除所有标签组操作失败:', err);
-        }
-      });
+    syncToCloud(dispatch, getState, '删除所有标签组').catch(err => {
+      if (process.env.NODE_ENV === 'development') {
+        console.error('同步删除所有标签组操作失败:', err);
+      }
+    });
 
     return { count: groups.length };
   }
@@ -130,12 +125,11 @@ export const importGroups = createAsyncThunk(
 
     // 使用通用同步函数同步到云端
     // 不等待同步完成，直接返回结果
-    syncToCloud(dispatch, getState, '导入标签组')
-      .catch(err => {
-        if (process.env.NODE_ENV === 'development') {
-          console.error('同步导入标签组操作失败:', err);
-        }
-      });
+    syncToCloud(dispatch, getState, '导入标签组').catch(err => {
+      if (process.env.NODE_ENV === 'development') {
+        console.error('同步导入标签组操作失败:', err);
+      }
+    });
 
     return processedGroups;
   }
@@ -146,139 +140,145 @@ export const syncTabsToCloud = createAsyncThunk<
   { syncTime: string; stats: any | null },
   { background?: boolean; overwriteCloud?: boolean } | void,
   { state: any }
->(
-  'tabs/syncTabsToCloud',
-  async (options, { getState, dispatch }) => {
-    const background = options?.background || false;
-    const overwriteCloud = options?.overwriteCloud || false;
-    try {
-      // 使用 setTimeout 延迟执行数据处理，避免阻塞主线程
-      // 这样可以让 UI 先更新，然后再处理数据
-      await new Promise(resolve => setTimeout(resolve, 10));
+>('tabs/syncTabsToCloud', async (options, { getState, dispatch }) => {
+  const background = options?.background || false;
+  const overwriteCloud = options?.overwriteCloud || false;
+  try {
+    // 使用 setTimeout 延迟执行数据处理，避免阻塞主线程
+    // 这样可以让 UI 先更新，然后再处理数据
+    await new Promise(resolve => setTimeout(resolve, 10));
 
-      // 检查用户是否已登录
-      const { auth, tabs } = getState() as { auth: { isAuthenticated: boolean }, tabs: TabState, settings: UserSettings };
+    // 检查用户是否已登录
+    const { auth, tabs } = getState() as {
+      auth: { isAuthenticated: boolean };
+      tabs: TabState;
+      settings: UserSettings;
+    };
 
-      if (!auth.isAuthenticated) {
-        console.log('用户未登录，无法同步数据到云端');
-        return {
-          syncTime: new Date().toISOString(),
-          stats: null
-        };
-      }
+    if (!auth.isAuthenticated) {
+      console.log('用户未登录，无法同步数据到云端');
+      return {
+        syncTime: new Date().toISOString(),
+        stats: null,
+      };
+    }
 
-      // 记录同步模式和覆盖模式
-      console.log(`开始${background ? '后台' : ''}同步标签组到云端${overwriteCloud ? '（覆盖模式）' : '（合并模式）'}...`);
+    // 记录同步模式和覆盖模式
+    console.log(
+      `开始${background ? '后台' : ''}同步标签组到云端${overwriteCloud ? '（覆盖模式）' : '（合并模式）'}...`
+    );
 
-      // 设置初始进度和操作类型
-      if (!background) {
-        dispatch(updateSyncProgress({ progress: 0, operation: 'upload' }));
-      }
+    // 设置初始进度和操作类型
+    if (!background) {
+      dispatch(updateSyncProgress({ progress: 0, operation: 'upload' }));
+    }
 
-      // 检查是否有标签组需要同步
-      if (!tabs.groups || tabs.groups.length === 0) {
-        console.log('没有标签组需要同步');
-        if (!background) {
-          dispatch(updateSyncProgress({ progress: 100, operation: 'none' }));
-        }
-        return {
-          syncTime: tabs.lastSyncTime || new Date().toISOString(),
-          stats: tabs.compressionStats
-        };
-      }
-
-      // 获取需要同步的标签组
-      // 直接同步所有标签组，不再考虑已删除的标签组
-      const groupsToSync = tabs.groups;
-
-      if (groupsToSync.length === 0) {
-        console.log('没有需要同步的标签组');
-        if (!background) {
-          dispatch(updateSyncProgress({ progress: 100, operation: 'none' }));
-        }
-        return {
-          syncTime: tabs.lastSyncTime || new Date().toISOString(),
-          stats: tabs.compressionStats
-        };
-      }
-
-      console.log(`将同步 ${groupsToSync.length} 个标签组到云端`);
-
-      // 更新进度到 20%
-      if (!background) {
-        dispatch(updateSyncProgress({ progress: 20, operation: 'upload' }));
-      }
-
-      // 确保所有标签组都有必要的字段
-      const currentTime = new Date().toISOString();
-      const validGroups = groupsToSync.map(group => ({
-        ...group,
-        createdAt: group.createdAt || currentTime,
-        updatedAt: group.updatedAt || currentTime,
-        isLocked: typeof group.isLocked === 'boolean' ? group.isLocked : false,
-        lastSyncedAt: currentTime, // 更新同步时间
-        tabs: group.tabs.map(tab => ({
-          ...tab,
-          createdAt: tab.createdAt || currentTime,
-          lastAccessed: tab.lastAccessed || currentTime,
-          lastSyncedAt: currentTime // 更新同步时间
-        }))
-      }));
-
-      // 更新进度到 50%
-      if (!background) {
-        dispatch(updateSyncProgress({ progress: 50, operation: 'upload' }));
-      }
-
-      // 上传标签组，传递覆盖模式参数
-      await supabaseSync.uploadTabGroups(validGroups, overwriteCloud);
-
-      // 更新进度到 70%
-      if (!background) {
-        dispatch(updateSyncProgress({ progress: 70, operation: 'upload' }));
-      }
-
-      // 更新本地标签组的同步状态
-      const updatedGroups = tabs.groups.map(group => {
-        const syncedGroup = validGroups.find(g => g.id === group.id && !g.isDeleted);
-        if (syncedGroup) {
-          return {
-            ...group,
-            lastSyncedAt: currentTime,
-            syncStatus: 'synced' as const
-          };
-        }
-        return group;
-      });
-
-      // 保存更新后的标签组
-      await storage.setGroups(updatedGroups as TabGroup[]);
-
-      // 更新最后同步时间
-      await storage.setLastSyncTime(currentTime);
-
-      // 更新进度到 100%
+    // 检查是否有标签组需要同步
+    if (!tabs.groups || tabs.groups.length === 0) {
+      console.log('没有标签组需要同步');
       if (!background) {
         dispatch(updateSyncProgress({ progress: 100, operation: 'none' }));
       }
-
-      // 不再需要处理已删除的数据
-
       return {
-        syncTime: currentTime,
-        stats: null
+        syncTime: tabs.lastSyncTime || new Date().toISOString(),
+        stats: tabs.compressionStats,
       };
-    } catch (error) {
-      console.error('同步标签组到云端失败:', error);
-      throw error;
     }
+
+    // 获取需要同步的标签组
+    // 直接同步所有标签组，不再考虑已删除的标签组
+    const groupsToSync = tabs.groups;
+
+    if (groupsToSync.length === 0) {
+      console.log('没有需要同步的标签组');
+      if (!background) {
+        dispatch(updateSyncProgress({ progress: 100, operation: 'none' }));
+      }
+      return {
+        syncTime: tabs.lastSyncTime || new Date().toISOString(),
+        stats: tabs.compressionStats,
+      };
+    }
+
+    console.log(`将同步 ${groupsToSync.length} 个标签组到云端`);
+
+    // 更新进度到 20%
+    if (!background) {
+      dispatch(updateSyncProgress({ progress: 20, operation: 'upload' }));
+    }
+
+    // 确保所有标签组都有必要的字段
+    const currentTime = new Date().toISOString();
+    const validGroups = groupsToSync.map(group => ({
+      ...group,
+      createdAt: group.createdAt || currentTime,
+      updatedAt: group.updatedAt || currentTime,
+      isLocked: typeof group.isLocked === 'boolean' ? group.isLocked : false,
+      lastSyncedAt: currentTime, // 更新同步时间
+      tabs: group.tabs.map(tab => ({
+        ...tab,
+        createdAt: tab.createdAt || currentTime,
+        lastAccessed: tab.lastAccessed || currentTime,
+        lastSyncedAt: currentTime, // 更新同步时间
+      })),
+    }));
+
+    // 更新进度到 50%
+    if (!background) {
+      dispatch(updateSyncProgress({ progress: 50, operation: 'upload' }));
+    }
+
+    // 上传标签组，传递覆盖模式参数
+    await supabaseSync.uploadTabGroups(validGroups, overwriteCloud);
+
+    // 更新进度到 70%
+    if (!background) {
+      dispatch(updateSyncProgress({ progress: 70, operation: 'upload' }));
+    }
+
+    // 更新本地标签组的同步状态
+    const updatedGroups = tabs.groups.map(group => {
+      const syncedGroup = validGroups.find(g => g.id === group.id && !g.isDeleted);
+      if (syncedGroup) {
+        return {
+          ...group,
+          lastSyncedAt: currentTime,
+          syncStatus: 'synced' as const,
+        };
+      }
+      return group;
+    });
+
+    // 保存更新后的标签组
+    await storage.setGroups(updatedGroups as TabGroup[]);
+
+    // 更新最后同步时间
+    await storage.setLastSyncTime(currentTime);
+
+    // 更新进度到 100%
+    if (!background) {
+      dispatch(updateSyncProgress({ progress: 100, operation: 'none' }));
+    }
+
+    // 不再需要处理已删除的数据
+
+    return {
+      syncTime: currentTime,
+      stats: null,
+    };
+  } catch (error) {
+    console.error('同步标签组到云端失败:', error);
+    throw error;
   }
-);
+});
 
 // 新增：从云端同步标签组
 export const syncTabsFromCloud = createAsyncThunk(
   'tabs/syncTabsFromCloud',
-  async (options: { background?: boolean; forceRemoteStrategy?: boolean } | void, { getState, dispatch }) => {
+  async (
+    options: { background?: boolean; forceRemoteStrategy?: boolean } | void,
+    { getState, dispatch }
+  ) => {
     const background = options?.background || false;
     const forceRemoteStrategy = options?.forceRemoteStrategy || false;
     try {
@@ -287,14 +287,18 @@ export const syncTabsFromCloud = createAsyncThunk(
       await new Promise(resolve => setTimeout(resolve, 10));
 
       // 检查用户是否已登录
-      const { auth, tabs, settings } = getState() as { auth: { isAuthenticated: boolean }, tabs: TabState, settings: UserSettings };
+      const { auth, tabs, settings } = getState() as {
+        auth: { isAuthenticated: boolean };
+        tabs: TabState;
+        settings: UserSettings;
+      };
 
       if (!auth.isAuthenticated) {
         console.log('用户未登录，无法从云端同步数据');
         return {
           groups: tabs.groups,
           syncTime: new Date().toISOString(),
-          stats: null
+          stats: null,
         };
       }
 
@@ -336,11 +340,15 @@ export const syncTabsFromCloud = createAsyncThunk(
       cloudGroups.forEach((group, index) => {
         const tabCount = group.tabs.length;
         totalCloudTabs += tabCount;
-        console.log(`[${index + 1}/${cloudGroups.length}] ID: ${group.id}, 名称: "${group.name}", 标签数: ${tabCount}, 更新时间: ${group.updatedAt}`);
+        console.log(
+          `[${index + 1}/${cloudGroups.length}] ID: ${group.id}, 名称: "${group.name}", 标签数: ${tabCount}, 更新时间: ${group.updatedAt}`
+        );
 
         // 详细记录每个云端标签组中的标签
         group.tabs.forEach((tab, tabIndex) => {
-          console.log(`  - 云端标签 [${tabIndex + 1}/${tabCount}]: ID=${tab.id}, 标题="${tab.title}", URL=${tab.url}`);
+          console.log(
+            `  - 云端标签 [${tabIndex + 1}/${tabCount}]: ID=${tab.id}, 标题="${tab.title}", URL=${tab.url}`
+          );
         });
       });
       console.log(`云端总标签数: ${totalCloudTabs}`);
@@ -351,7 +359,9 @@ export const syncTabsFromCloud = createAsyncThunk(
       localGroups.forEach((group, index) => {
         const tabCount = group.tabs.length;
         totalLocalTabs += tabCount;
-        console.log(`[${index + 1}/${localGroups.length}] ID: ${group.id}, 名称: "${group.name}", 标签数: ${tabCount}, 更新时间: ${group.updatedAt}`);
+        console.log(
+          `[${index + 1}/${localGroups.length}] ID: ${group.id}, 名称: "${group.name}", 标签数: ${tabCount}, 更新时间: ${group.updatedAt}`
+        );
       });
       console.log(`本地总标签数: ${totalLocalTabs}`);
 
@@ -372,7 +382,7 @@ export const syncTabsFromCloud = createAsyncThunk(
         mergedGroups = cloudGroups.map(group => ({
           ...group,
           syncStatus: 'synced' as const,
-          lastSyncedAt: currentTime
+          lastSyncedAt: currentTime,
         }));
       } else {
         // 使用智能合并策略
@@ -396,20 +406,22 @@ export const syncTabsFromCloud = createAsyncThunk(
           tabCount: group.tabs.length,
           syncStatus: group.syncStatus,
           updatedAt: group.updatedAt,
-          lastSyncedAt: group.lastSyncedAt
+          lastSyncedAt: group.lastSyncedAt,
         });
       });
 
       // 验证合并后标签组数据的完整性
       let totalMergedTabs = 0;
-      mergedGroups.forEach((group) => {
+      mergedGroups.forEach(group => {
         totalMergedTabs += group.tabs.length;
       });
       console.log(`合并后总标签数: ${totalMergedTabs}`);
 
       // 检查标签总数差异，输出信息性日志
       if (totalMergedTabs < Math.max(totalCloudTabs, totalLocalTabs)) {
-        console.log(`信息: 合并后的标签总数(${totalMergedTabs})小于原始标签总数(本地:${totalLocalTabs}, 云端:${totalCloudTabs})，这通常是因为有重复标签或已删除标签，不影响正常使用`);
+        console.log(
+          `信息: 合并后的标签总数(${totalMergedTabs})小于原始标签总数(本地:${totalLocalTabs}, 云端:${totalCloudTabs})，这通常是因为有重复标签或已删除标签，不影响正常使用`
+        );
       }
 
       // 保存到本地存储
@@ -439,7 +451,7 @@ export const syncTabsFromCloud = createAsyncThunk(
       return {
         groups: mergedGroups,
         syncTime: currentTime,
-        stats: null
+        stats: null,
       };
     } catch (error) {
       console.error('从云端同步标签组失败:', error);
@@ -465,7 +477,7 @@ export const syncLocalChangesToCloud = createAsyncThunk(
 // 更新标签组名称并同步到云端
 export const updateGroupNameAndSync = createAsyncThunk(
   'tabs/updateGroupNameAndSync',
-  async ({ groupId, name }: { groupId: string, name: string }, { getState, dispatch }) => {
+  async ({ groupId, name }: { groupId: string; name: string }, { getState, dispatch }) => {
     // 在 Redux 中更新标签组名称
     dispatch(updateGroupName({ groupId, name }));
 
@@ -481,12 +493,11 @@ export const updateGroupNameAndSync = createAsyncThunk(
 
     // 使用通用同步函数同步到云端
     // 不等待同步完成，直接返回结果
-    syncToCloud(dispatch, getState, '标签组名称更新')
-      .catch(err => {
-        if (process.env.NODE_ENV === 'development') {
-          console.error('同步标签组名称更新操作失败:', err);
-        }
-      });
+    syncToCloud(dispatch, getState, '标签组名称更新').catch(err => {
+      if (process.env.NODE_ENV === 'development') {
+        console.error('同步标签组名称更新操作失败:', err);
+      }
+    });
 
     return { groupId, name };
   }
@@ -507,20 +518,19 @@ export const toggleGroupLockAndSync = createAsyncThunk(
       const updatedGroup = {
         ...group,
         isLocked: !group.isLocked,
-        updatedAt: new Date().toISOString()
+        updatedAt: new Date().toISOString(),
       };
 
-      const updatedGroups = groups.map(g => g.id === groupId ? updatedGroup : g);
+      const updatedGroups = groups.map(g => (g.id === groupId ? updatedGroup : g));
       await storage.setGroups(updatedGroups);
 
       // 使用通用同步函数同步到云端
       // 不等待同步完成，直接返回结果
-      syncToCloud(dispatch, getState, '标签组锁定状态更新')
-        .catch(err => {
-          if (process.env.NODE_ENV === 'development') {
-            console.error('同步标签组锁定状态更新操作失败:', err);
-          }
-        });
+      syncToCloud(dispatch, getState, '标签组锁定状态更新').catch(err => {
+        if (process.env.NODE_ENV === 'development') {
+          console.error('同步标签组锁定状态更新操作失败:', err);
+        }
+      });
 
       return { groupId, isLocked: updatedGroup.isLocked };
     }
@@ -538,7 +548,10 @@ export const toggleGroupLockAndSync = createAsyncThunk(
  */
 export const moveGroupAndSync = createAsyncThunk(
   'tabs/moveGroupAndSync',
-  async ({ dragIndex, hoverIndex }: { dragIndex: number, hoverIndex: number }, { getState, dispatch }) => {
+  async (
+    { dragIndex, hoverIndex }: { dragIndex: number; hoverIndex: number },
+    { getState, dispatch }
+  ) => {
     try {
       // 在 Redux 中移动标签组 - 立即更新UI
       dispatch(moveGroup({ dragIndex, hoverIndex }));
@@ -551,8 +564,17 @@ export const moveGroupAndSync = createAsyncThunk(
           const groups = await storage.getGroups();
 
           // 检查索引是否有效
-          if (dragIndex < 0 || dragIndex >= groups.length || hoverIndex < 0 || hoverIndex >= groups.length) {
-            console.error('无效的标签组索引:', { dragIndex, hoverIndex, groupsLength: groups.length });
+          if (
+            dragIndex < 0 ||
+            dragIndex >= groups.length ||
+            hoverIndex < 0 ||
+            hoverIndex >= groups.length
+          ) {
+            console.error('无效的标签组索引:', {
+              dragIndex,
+              hoverIndex,
+              groupsLength: groups.length,
+            });
             return;
           }
 
@@ -594,7 +616,7 @@ export const cleanDuplicateTabs = createAsyncThunk(
       const groups = await storage.getGroups();
 
       // 创建URL映射，记录每个URL对应的标签页
-      const urlMap = new Map<string, { tab: any, groupId: string }[]>();
+      const urlMap = new Map<string, { tab: any; groupId: string }[]>();
 
       // 扫描所有标签页，按URL分组
       groups.forEach(group => {
@@ -615,11 +637,12 @@ export const cleanDuplicateTabs = createAsyncThunk(
       let removedCount = 0;
       const updatedGroups = [...groups];
 
-      urlMap.forEach((tabsWithSameUrl) => {
+      urlMap.forEach(tabsWithSameUrl => {
         if (tabsWithSameUrl.length > 1) {
           // 按lastAccessed时间排序，保留最新的标签页
-          tabsWithSameUrl.sort((a, b) =>
-            new Date(b.tab.lastAccessed).getTime() - new Date(a.tab.lastAccessed).getTime()
+          tabsWithSameUrl.sort(
+            (a, b) =>
+              new Date(b.tab.lastAccessed).getTime() - new Date(a.tab.lastAccessed).getTime()
           );
 
           // 保留第一个（最新的），删除其余的
@@ -629,14 +652,19 @@ export const cleanDuplicateTabs = createAsyncThunk(
 
             if (groupIndex !== -1) {
               // 从标签组中删除该标签页
-              updatedGroups[groupIndex].tabs = updatedGroups[groupIndex].tabs.filter(t => t.id !== tab.id);
+              updatedGroups[groupIndex].tabs = updatedGroups[groupIndex].tabs.filter(
+                t => t.id !== tab.id
+              );
               removedCount++;
 
               // 更新标签组的updatedAt时间
               updatedGroups[groupIndex].updatedAt = new Date().toISOString();
 
               // 如果标签组变为空且不是锁定状态，删除该标签组
-              if (updatedGroups[groupIndex].tabs.length === 0 && !updatedGroups[groupIndex].isLocked) {
+              if (
+                updatedGroups[groupIndex].tabs.length === 0 &&
+                !updatedGroups[groupIndex].isLocked
+              ) {
                 updatedGroups.splice(groupIndex, 1);
               }
             }
@@ -674,14 +702,17 @@ export const cleanDuplicateTabs = createAsyncThunk(
  * @param {Function} getState - Redux getState 函数，用于获取当前状态
  * @param {string} operation - 当前执行的操作名称，用于日志记录
  */
-const throttledSyncToCloud = throttle((dispatch, getState, operation) => {
-  syncToCloud(dispatch, getState, operation)
-    .catch(err => {
+const throttledSyncToCloud = throttle(
+  (dispatch, getState, operation) => {
+    syncToCloud(dispatch, getState, operation).catch(err => {
       if (process.env.NODE_ENV === 'development') {
         console.error(`同步${operation}操作失败:`, err);
       }
     });
-}, 2000, { leading: false, trailing: true }); // 2秒内只执行一次，并且是在最后一次调用后执行
+  },
+  2000,
+  { leading: false, trailing: true }
+); // 2秒内只执行一次，并且是在最后一次调用后执行
 
 /**
  * 移动标签页并同步到云端
@@ -693,13 +724,22 @@ const throttledSyncToCloud = throttle((dispatch, getState, operation) => {
  */
 export const moveTabAndSync = createAsyncThunk(
   'tabs/moveTabAndSync',
-  async ({ sourceGroupId, sourceIndex, targetGroupId, targetIndex, updateSourceInDrag = true }: {
-    sourceGroupId: string,
-    sourceIndex: number,
-    targetGroupId: string,
-    targetIndex: number,
-    updateSourceInDrag?: boolean
-  }, { getState, dispatch }) => {
+  async (
+    {
+      sourceGroupId,
+      sourceIndex,
+      targetGroupId,
+      targetIndex,
+      updateSourceInDrag = true,
+    }: {
+      sourceGroupId: string;
+      sourceIndex: number;
+      targetGroupId: string;
+      targetIndex: number;
+      updateSourceInDrag?: boolean;
+    },
+    { getState, dispatch }
+  ) => {
     try {
       // 在 Redux 中移动标签页 - 立即更新UI
       dispatch(moveTab({ sourceGroupId, sourceIndex, targetGroupId, targetIndex }));
@@ -730,7 +770,8 @@ export const moveTabAndSync = createAsyncThunk(
 
             // 创建新的标签页数组以避免直接修改原数组
             const newSourceTabs = [...sourceGroup.tabs];
-            const newTargetTabs = sourceGroupId === targetGroupId ? newSourceTabs : [...targetGroup.tabs];
+            const newTargetTabs =
+              sourceGroupId === targetGroupId ? newSourceTabs : [...targetGroup.tabs];
 
             // 从源标签组中删除标签页
             newSourceTabs.splice(sourceIndex, 1);
@@ -747,21 +788,30 @@ export const moveTabAndSync = createAsyncThunk(
             // 插入标签到目标位置
             newTargetTabs.splice(adjustedIndex, 0, tab);
 
-            // 更新源标签组和目标标签组
-            sourceGroup.tabs = newSourceTabs;
-            sourceGroup.updatedAt = new Date().toISOString();
+            // 更新源标签组和目标标签组 - 使用不可变更新
+            const updatedSourceGroup = {
+              ...sourceGroup,
+              tabs: newSourceTabs,
+              updatedAt: new Date().toISOString(),
+            };
 
+            let updatedTargetGroup = targetGroup;
             if (sourceGroupId !== targetGroupId) {
-              targetGroup.tabs = newTargetTabs;
-              targetGroup.updatedAt = new Date().toISOString();
+              updatedTargetGroup = {
+                ...targetGroup,
+                tabs: newTargetTabs,
+                updatedAt: new Date().toISOString(),
+              };
             }
 
             // 批量更新本地存储 - 一次性更新所有变更
-            const updatedGroups = groups.map(g => {
-              if (g.id === sourceGroupId) return sourceGroup;
-              if (g.id === targetGroupId) return targetGroup;
-              return g;
-            }).filter(g => g.tabs.length > 0 || g.isLocked); // 移除空标签组，但保留锁定的空组
+            const updatedGroups = groups
+              .map(g => {
+                if (g.id === sourceGroupId) return updatedSourceGroup;
+                if (g.id === targetGroupId) return updatedTargetGroup;
+                return g;
+              })
+              .filter(g => g.tabs.length > 0 || g.isLocked); // 移除空标签组，但保留锁定的空组
 
             await storage.setGroups(updatedGroups);
 
@@ -867,22 +917,35 @@ export const tabSlice = createSlice({
 
         // 计算调整后的目标索引
         // 如果源索引小于目标索引，目标位置需要减1（因为已经移除了源元素）
-        const adjustedIndex = sourceIndex < targetIndex
-          ? Math.max(0, Math.min(targetIndex - 1, newTabs.length))
-          : Math.max(0, Math.min(targetIndex, newTabs.length));
+        const adjustedIndex =
+          sourceIndex < targetIndex
+            ? Math.max(0, Math.min(targetIndex - 1, newTabs.length))
+            : Math.max(0, Math.min(targetIndex, newTabs.length));
 
         // 插入到目标位置
         newTabs.splice(adjustedIndex, 0, tab);
 
-        // 更新标签组
-        sourceGroup.tabs = newTabs;
-        sourceGroup.updatedAt = now;
+        // 更新标签组 - 使用不可变更新
+        const updatedSourceGroup = {
+          ...sourceGroup,
+          tabs: newTabs,
+          updatedAt: now,
+        };
+
+        // 更新state中的标签组
+        state.groups = state.groups.map(g => (g.id === sourceGroupId ? updatedSourceGroup : g));
       }
       // 处理跨组移动
       else {
-        // 从源组移除标签
-        sourceGroup.tabs = sourceGroup.tabs.filter((_, i) => i !== sourceIndex);
-        sourceGroup.updatedAt = now;
+        // 从源组移除标签 - 创建新的标签数组
+        const newSourceTabs = sourceGroup.tabs.filter((_, i) => i !== sourceIndex);
+
+        // 更新源标签组 - 使用不可变更新
+        const updatedSourceGroup = {
+          ...sourceGroup,
+          tabs: newSourceTabs,
+          updatedAt: now,
+        };
 
         // 准备目标组的新标签数组
         const newTargetTabs = [...targetGroup.tabs];
@@ -898,17 +961,30 @@ export const tabSlice = createSlice({
 
         // 插入到目标位置
         newTargetTabs.splice(safeTargetIndex, 0, tab);
-        targetGroup.tabs = newTargetTabs;
-        targetGroup.updatedAt = now;
 
-        // 如果源组变空且未锁定，删除源组
-        if (sourceGroup.tabs.length === 0 && !sourceGroup.isLocked) {
-          state.groups = state.groups.filter(g => g.id !== sourceGroupId);
+        // 更新目标标签组 - 使用不可变更新
+        const updatedTargetGroup = {
+          ...targetGroup,
+          tabs: newTargetTabs,
+          updatedAt: now,
+        };
 
-          // 如果当前活动组是被删除的组，重置活动组
-          if (state.activeGroupId === sourceGroupId) {
-            state.activeGroupId = null;
-          }
+        // 更新state中的标签组
+        state.groups = state.groups
+          .map(g => {
+            if (g.id === sourceGroupId) return updatedSourceGroup;
+            if (g.id === targetGroupId) return updatedTargetGroup;
+            return g;
+          })
+          .filter(g => g.tabs.length > 0 || g.isLocked); // 移除空标签组，但保留锁定的空组
+
+        // 如果当前活动组是被删除的组，重置活动组
+        if (
+          state.activeGroupId === sourceGroupId &&
+          updatedSourceGroup.tabs.length === 0 &&
+          !updatedSourceGroup.isLocked
+        ) {
+          state.activeGroupId = null;
         }
       }
     },
@@ -922,7 +998,7 @@ export const tabSlice = createSlice({
   },
   extraReducers: builder => {
     builder
-      .addCase(loadGroups.pending, (state) => {
+      .addCase(loadGroups.pending, state => {
         state.isLoading = true;
         state.error = null;
       })
@@ -1102,7 +1178,7 @@ export const tabSlice = createSlice({
       })
 
       // 清理重复标签
-      .addCase(cleanDuplicateTabs.pending, (state) => {
+      .addCase(cleanDuplicateTabs.pending, state => {
         state.isLoading = true;
         state.error = null;
       })
@@ -1117,11 +1193,12 @@ export const tabSlice = createSlice({
   },
 });
 
-
-
 // 使用createSelector创建记忆化选择器，避免不必要的重新计算
 export const selectFilteredGroups = createSelector(
-  [(state: { tabs: TabState }) => state.tabs.groups, (state: { tabs: TabState }) => state.tabs.searchQuery],
+  [
+    (state: { tabs: TabState }) => state.tabs.groups,
+    (state: { tabs: TabState }) => state.tabs.searchQuery,
+  ],
   (groups, searchQuery) => {
     if (!searchQuery) return groups;
 
@@ -1131,9 +1208,8 @@ export const selectFilteredGroups = createSelector(
       if (group.name.toLowerCase().includes(query)) return true;
 
       // 然后检查标签，这可能更耗时
-      return group.tabs.some(tab =>
-        tab.title.toLowerCase().includes(query) ||
-        tab.url.toLowerCase().includes(query)
+      return group.tabs.some(
+        tab => tab.title.toLowerCase().includes(query) || tab.url.toLowerCase().includes(query)
       );
     });
   }
@@ -1148,7 +1224,7 @@ export const {
   moveGroup,
   moveTab,
   updateSyncProgress,
-  setGroups
+  setGroups,
 } = tabSlice.actions;
 
 export default tabSlice.reducer;

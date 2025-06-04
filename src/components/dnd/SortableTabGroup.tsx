@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { TabGroup as TabGroupType } from '@/types/tab';
@@ -19,19 +19,26 @@ export const SortableTabGroup: React.FC<SortableTabGroupProps> = ({ group, index
   const [isEditing, setIsEditing] = useState(false);
   const [groupName, setGroupName] = useState(group.name);
 
-  const {
-    attributes,
-    listeners,
-    setNodeRef,
-    transform,
-    isDragging,
-  } = useSortable({
+  // 使用ref跟踪组件是否已卸载
+  const isMounted = useRef(true);
+
+  useEffect(() => {
+    // 组件挂载时设置为true
+    isMounted.current = true;
+
+    // 组件卸载时设置为false
+    return () => {
+      isMounted.current = false;
+    };
+  }, []);
+
+  const { attributes, listeners, setNodeRef, transform, isDragging } = useSortable({
     id: `group-${group.id}`,
     data: {
       type: 'group',
       group,
-      index
-    }
+      index,
+    },
   });
 
   // 提供更好的拖拽视觉反馈
@@ -44,21 +51,33 @@ export const SortableTabGroup: React.FC<SortableTabGroupProps> = ({ group, index
   };
 
   const handleToggleExpand = () => {
-    setIsExpanded(!isExpanded);
+    if (isMounted.current) {
+      setIsExpanded(!isExpanded);
+    }
   };
 
   const handleEditName = () => {
-    setIsEditing(true);
+    if (isMounted.current) {
+      setIsEditing(true);
+    }
   };
 
   const handleSaveName = () => {
+    if (!isMounted.current) return;
+
     if (groupName.trim() !== group.name) {
-      dispatch(updateGroupNameAndSync({ groupId: group.id, name: groupName.trim() }));
+      try {
+        dispatch(updateGroupNameAndSync({ groupId: group.id, name: groupName.trim() }));
+      } catch (error) {
+        console.error('更新标签组名称失败:', error);
+      }
     }
     setIsEditing(false);
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (!isMounted.current) return;
+
     if (e.key === 'Enter') {
       handleSaveName();
     } else if (e.key === 'Escape') {
@@ -68,41 +87,59 @@ export const SortableTabGroup: React.FC<SortableTabGroupProps> = ({ group, index
   };
 
   const handleDeleteGroup = () => {
-    dispatch(deleteGroup(group.id));
+    if (!isMounted.current) return;
+
+    try {
+      dispatch(deleteGroup(group.id));
+    } catch (error) {
+      console.error('删除标签组失败:', error);
+    }
   };
 
   const handleOpenTab = (tab: any) => {
-    // 打开标签页
-    chrome.tabs.create({ url: tab.url });
+    if (!isMounted.current) return;
 
-    // 从标签组中删除该标签页
-    const updatedTabs = group.tabs.filter(t => t.id !== tab.id);
+    try {
+      // 打开标签页
+      chrome.tabs.create({ url: tab.url });
 
-    if (updatedTabs.length === 0) {
-      // 如果标签组中没有剩余标签页，删除整个标签组
-      dispatch(deleteGroup(group.id));
-    } else {
-      // 否则更新标签组
-      const updatedGroup = {
-        ...group,
-        tabs: updatedTabs,
-        updatedAt: new Date().toISOString()
-      };
-      dispatch(updateGroup(updatedGroup));
+      // 从标签组中删除该标签页
+      const updatedTabs = group.tabs.filter(t => t.id !== tab.id);
+
+      if (updatedTabs.length === 0) {
+        // 如果标签组中没有剩余标签页，删除整个标签组
+        dispatch(deleteGroup(group.id));
+      } else {
+        // 否则更新标签组
+        const updatedGroup = {
+          ...group,
+          tabs: updatedTabs,
+          updatedAt: new Date().toISOString(),
+        };
+        dispatch(updateGroup(updatedGroup));
+      }
+    } catch (error) {
+      console.error('打开标签页失败:', error);
     }
   };
 
   const handleDeleteTab = (tabId: string) => {
-    const updatedTabs = group.tabs.filter(t => t.id !== tabId);
-    if (updatedTabs.length === 0) {
-      dispatch(deleteGroup(group.id));
-    } else {
-      const updatedGroup = {
-        ...group,
-        tabs: updatedTabs,
-        updatedAt: new Date().toISOString()
-      };
-      dispatch(updateGroup(updatedGroup));
+    if (!isMounted.current) return;
+
+    try {
+      const updatedTabs = group.tabs.filter(t => t.id !== tabId);
+      if (updatedTabs.length === 0) {
+        dispatch(deleteGroup(group.id));
+      } else {
+        const updatedGroup = {
+          ...group,
+          tabs: updatedTabs,
+          updatedAt: new Date().toISOString(),
+        };
+        dispatch(updateGroup(updatedGroup));
+      }
+    } catch (error) {
+      console.error('删除标签页失败:', error);
     }
   };
 
@@ -124,7 +161,7 @@ export const SortableTabGroup: React.FC<SortableTabGroupProps> = ({ group, index
           <button
             onClick={handleToggleExpand}
             className="text-gray-500 hover:text-gray-700 p-1 rounded-full hover:bg-gray-200"
-            title={isExpanded ? "折叠标签组" : "展开标签组"}
+            title={isExpanded ? '折叠标签组' : '展开标签组'}
           >
             <svg
               xmlns="http://www.w3.org/2000/svg"
@@ -133,14 +170,19 @@ export const SortableTabGroup: React.FC<SortableTabGroupProps> = ({ group, index
               viewBox="0 0 24 24"
               stroke="currentColor"
             >
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M19 9l-7 7-7-7"
+              />
             </svg>
           </button>
           {isEditing ? (
             <input
               type="text"
               value={groupName}
-              onChange={(e) => setGroupName(e.target.value)}
+              onChange={e => isMounted.current && setGroupName(e.target.value)}
               onBlur={handleSaveName}
               onKeyDown={handleKeyDown}
               className="flex-1 px-2 py-1 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
@@ -165,8 +207,19 @@ export const SortableTabGroup: React.FC<SortableTabGroupProps> = ({ group, index
             className="text-gray-400 hover:text-red-500 p-1 rounded hover:bg-gray-200"
             title="删除标签组"
           >
-            <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              className="h-4 w-4"
+              fill="none"
+              viewBox="0 0 24 24"
+              stroke="currentColor"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
+              />
             </svg>
           </button>
         </div>
