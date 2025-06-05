@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { TabGroup as TabGroupType } from '@/types/tab';
@@ -18,6 +18,7 @@ export const SortableTabGroup: React.FC<SortableTabGroupProps> = ({ group, index
   const [isExpanded, setIsExpanded] = useState(true);
   const [isEditing, setIsEditing] = useState(false);
   const [groupName, setGroupName] = useState(group.name);
+  const [isMarkedForDeletion, setIsMarkedForDeletion] = useState(false);
 
   // 使用ref跟踪组件是否已卸载
   const isMounted = useRef(true);
@@ -63,7 +64,7 @@ export const SortableTabGroup: React.FC<SortableTabGroupProps> = ({ group, index
   };
 
   const handleSaveName = () => {
-    if (!isMounted.current) return;
+    if (!isMounted.current || isMarkedForDeletion) return;
 
     if (groupName.trim() !== group.name) {
       try {
@@ -76,7 +77,7 @@ export const SortableTabGroup: React.FC<SortableTabGroupProps> = ({ group, index
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (!isMounted.current) return;
+    if (!isMounted.current || isMarkedForDeletion) return;
 
     if (e.key === 'Enter') {
       handleSaveName();
@@ -86,50 +87,15 @@ export const SortableTabGroup: React.FC<SortableTabGroupProps> = ({ group, index
     }
   };
 
-  const handleDeleteGroup = () => {
-    if (!isMounted.current) return;
 
-    try {
-      dispatch(deleteGroup(group.id));
-    } catch (error) {
-      console.error('删除标签组失败:', error);
-    }
-  };
-
-  const handleOpenTab = (tab: any) => {
-    if (!isMounted.current) return;
-
-    try {
-      // 打开标签页
-      chrome.tabs.create({ url: tab.url });
-
-      // 从标签组中删除该标签页
-      const updatedTabs = group.tabs.filter(t => t.id !== tab.id);
-
-      if (updatedTabs.length === 0) {
-        // 如果标签组中没有剩余标签页，删除整个标签组
-        dispatch(deleteGroup(group.id));
-      } else {
-        // 否则更新标签组
-        const updatedGroup = {
-          ...group,
-          tabs: updatedTabs,
-          updatedAt: new Date().toISOString(),
-        };
-        dispatch(updateGroup(updatedGroup));
-      }
-    } catch (error) {
-      console.error('打开标签页失败:', error);
-    }
-  };
-
-  const handleDeleteTab = (tabId: string) => {
-    if (!isMounted.current) return;
+  const handleDeleteTab = useCallback((tabId: string) => {
+    if (!isMounted.current || isMarkedForDeletion) return;
 
     try {
       const updatedTabs = group.tabs.filter(t => t.id !== tabId);
       if (updatedTabs.length === 0) {
-        dispatch(deleteGroup(group.id));
+        // Mark for deletion instead of dispatching immediately
+        setIsMarkedForDeletion(true);
       } else {
         const updatedGroup = {
           ...group,
@@ -141,10 +107,57 @@ export const SortableTabGroup: React.FC<SortableTabGroupProps> = ({ group, index
     } catch (error) {
       console.error('删除标签页失败:', error);
     }
-  };
+  }, [dispatch, group, isMounted, isMarkedForDeletion]);
+
+  useEffect(() => {
+    if (isMarkedForDeletion && isMounted.current) {
+      const timer = setTimeout(() => {
+        if (isMounted.current) { // Double check mount status before dispatch
+          dispatch(deleteGroup(group.id));
+        }
+      }, 0); // Use a minimal delay
+      return () => clearTimeout(timer);
+    }
+  }, [isMarkedForDeletion, dispatch, group.id, isMounted]);
+
+  // If marked for deletion, render nothing to allow graceful unmount
+  if (isMarkedForDeletion) {
+    return null;
+  }
 
   // Create a list of sortable tab IDs
   const tabIds = group.tabs.map(tab => `${group.id}-tab-${tab.id}`);
+  
+  // Ensure other handlers also check isMarkedForDeletion if they could conflict
+  const safeHandleOpenTab = useCallback((tab: any) => {
+    if (!isMounted.current || isMarkedForDeletion) return;
+    // Original handleOpenTab logic
+    try {
+      chrome.tabs.create({ url: tab.url });
+      const updatedTabs = group.tabs.filter(t => t.id !== tab.id);
+      if (updatedTabs.length === 0) {
+        setIsMarkedForDeletion(true); // Also mark for deletion here
+      } else {
+        const updatedGroup = {
+          ...group,
+          tabs: updatedTabs,
+          updatedAt: new Date().toISOString(),
+        };
+        dispatch(updateGroup(updatedGroup));
+      }
+    } catch (error) {
+      console.error('打开标签页失败:', error);
+    }
+  }, [dispatch, group, isMounted, isMarkedForDeletion]);
+
+  const safeHandleDeleteGroup = useCallback(() => {
+    if (!isMounted.current || isMarkedForDeletion) return;
+    setIsMarkedForDeletion(true); // Mark for deletion
+  }, [isMounted, isMarkedForDeletion]);
+
+  // Update props for SortableTab to use the new safe handlers if necessary
+  // For now, assuming SortableTab's internal isMounted check is sufficient for its direct actions
+  // The main change is how SortableTabGroup handles its own deletion trigger.
 
   return (
     <div
@@ -203,7 +216,7 @@ export const SortableTabGroup: React.FC<SortableTabGroupProps> = ({ group, index
         </div>
         <div className="flex items-center space-x-1">
           <button
-            onClick={handleDeleteGroup}
+            onClick={safeHandleDeleteGroup}
             className="text-gray-400 hover:text-red-500 p-1 rounded hover:bg-gray-200"
             title="删除标签组"
           >
@@ -233,7 +246,7 @@ export const SortableTabGroup: React.FC<SortableTabGroupProps> = ({ group, index
                 tab={tab}
                 groupId={group.id}
                 index={index}
-                handleOpenTab={handleOpenTab}
+                handleOpenTab={safeHandleOpenTab}
                 handleDeleteTab={handleDeleteTab}
               />
             ))}

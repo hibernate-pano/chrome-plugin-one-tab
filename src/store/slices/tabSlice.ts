@@ -811,7 +811,7 @@ export const moveTabAndSync = createAsyncThunk(
                 if (g.id === targetGroupId) return updatedTargetGroup;
                 return g;
               })
-              .filter(g => g.tabs.length > 0 || g.isLocked); // 移除空标签组，但保留锁定的空组
+              ; // 不在此处移除空标签组，交由 SortableTabGroup 组件通过 isMarkedForDeletion 处理
 
             await storage.setGroups(updatedGroups);
 
@@ -976,16 +976,17 @@ export const tabSlice = createSlice({
             if (g.id === targetGroupId) return updatedTargetGroup;
             return g;
           })
-          .filter(g => g.tabs.length > 0 || g.isLocked); // 移除空标签组，但保留锁定的空组
+          // 不在此处移除空标签组，交由 SortableTabGroup 组件通过 isMarkedForDeletion 处理
+          // .filter(g => g.tabs.length > 0 || g.isLocked);
 
-        // 如果当前活动组是被删除的组，重置活动组
-        if (
-          state.activeGroupId === sourceGroupId &&
-          updatedSourceGroup.tabs.length === 0 &&
-          !updatedSourceGroup.isLocked
-        ) {
-          state.activeGroupId = null;
-        }
+        // 不再立即重置活动组，让SortableTabGroup组件处理
+        // if (
+        //   state.activeGroupId === sourceGroupId &&
+        //   updatedSourceGroup.tabs.length === 0 &&
+        //   !updatedSourceGroup.isLocked
+        // ) {
+        //   state.activeGroupId = null;
+        // }
       }
     },
 
