@@ -7,6 +7,19 @@ import { mergeTabGroups } from '@/utils/syncUtils';
 import { syncToCloud } from '@/utils/syncHelpers';
 import { throttle } from 'lodash';
 
+// 为了解决“参数隐式具有“any”类型”的问题，添加明确的类型定义
+interface DeleteTabAction {
+  groupId: string;
+  tabId: string;
+}
+
+interface DeleteTabFulfilledAction {
+  group: TabGroup | null;
+}
+
+// 解决“速记属性...的范围内不存在任何值”的问题，显式声明actions
+const { setActiveGroup, updateGroupName, toggleGroupLock, setSearchQuery, setSyncStatus, moveGroup, moveTab, updateSyncProgress, setGroups } = tabSlice.actions;
+
 const initialState: TabState = {
   groups: [],
   activeGroupId: null,
@@ -847,11 +860,6 @@ export const tabSlice = createSlice({
         group.updatedAt = new Date().toISOString();
       }
     },
-    setGroups: (state, action) => {
-      state.groups = action.payload;
-      state.isLoading = false;
-      state.error = null;
-    },
     toggleGroupLock: (state, action) => {
       const group = state.groups.find(g => g.id === action.payload);
       if (group) {
@@ -1040,19 +1048,6 @@ export const tabSlice = createSlice({
         state.error = action.error.message || '删除所有标签组失败';
       })
 
-      .addCase(importGroups.pending, state => {
-        state.isLoading = true;
-        state.error = null;
-      })
-      .addCase(importGroups.fulfilled, (state, action) => {
-        state.isLoading = false;
-        state.groups = [...action.payload, ...state.groups];
-      })
-      .addCase(importGroups.rejected, (state, action) => {
-        state.isLoading = false;
-        state.error = action.error.message || '导入失败';
-      })
-
       // 同步到云端
       .addCase(syncTabsToCloud.pending, (state, action) => {
         // 只有在非后台同步时才更新状态
@@ -1194,6 +1189,69 @@ export const tabSlice = createSlice({
   },
 });
 
+// 将 actions 单独导出，避免循环依赖
+export const {
+  setActiveGroup,
+  updateGroupName,
+  toggleGroupLock,
+  setSearchQuery,
+  setSyncStatus,
+  moveGroup,
+  moveTab,
+  updateSyncProgress,
+} = tabSlice.actions;
+
+// 新增：删除单个标签页
+export const deleteTabAndSync = createAsyncThunk<
+  { group: TabGroup | null },
+  { groupId: string; tabId: string },
+  { state: any }
+>('tabs/deleteTabAndSync', async ({ groupId, tabId }: { groupId: string; tabId: string }, { getState, dispatch }) => {
+  try {
+    // 在本地存储中删除标签
+    const groups = await storage.getGroups();
+    const groupIndex = groups.findIndex(g => g.id === groupId);
+
+    if (groupIndex !== -1) {
+      // 创建新的标签数组，移除指定的标签
+      const updatedTabs = groups[groupIndex].tabs.filter(tab => tab.id !== tabId);
+      
+      // 如果标签组不为空且不是锁定状态，则更新标签组
+      if (updatedTabs.length > 0 || groups[groupIndex].isLocked) {
+        const updatedGroup = {
+          ...groups[groupIndex],
+          tabs: updatedTabs,
+          updatedAt: new Date().toISOString(),
+        };
+
+        // 更新本地存储
+        const updatedGroups = [...groups];
+        updatedGroups[groupIndex] = updatedGroup;
+        await storage.setGroups(updatedGroups);
+
+        // 使用节流版本的同步函数，减少频繁同步
+        throttledSyncToCloud(dispatch, getState, '标签页删除');
+
+        return { group: updatedGroup };
+      } else {
+        // 如果标签组为空且不是锁定状态，则删除整个标签组
+        const updatedGroups = groups.filter(g => g.id !== groupId);
+        await storage.setGroups(updatedGroups);
+        
+        // 使用节流版本的同步函数，减少频繁同步
+        throttledSyncToCloud(dispatch, getState, '空标签组删除');
+        
+        return { group: null };
+      }
+    }
+    
+    return { group: null };
+  } catch (error) {
+    console.error('删除标签页操作失败:', error);
+    throw error;
+  }
+});
+
 // 使用createSelector创建记忆化选择器，避免不必要的重新计算
 export const selectFilteredGroups = createSelector(
   [
@@ -1215,17 +1273,5 @@ export const selectFilteredGroups = createSelector(
     });
   }
 );
-
-export const {
-  setActiveGroup,
-  updateGroupName,
-  toggleGroupLock,
-  setSearchQuery,
-  setSyncStatus,
-  moveGroup,
-  moveTab,
-  updateSyncProgress,
-  setGroups,
-} = tabSlice.actions;
 
 export default tabSlice.reducer;

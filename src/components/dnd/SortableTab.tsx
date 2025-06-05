@@ -63,16 +63,49 @@ export const SortableTab: React.FC<SortableTabProps> = ({
     }
   };
 
+  // 自定义删除按钮样式 - 简化实现
+  const deleteButtonStyle = {
+    position: 'absolute' as const,
+    right: '4px',
+    top: '4px',
+    width: '16px',
+    height: '16px',
+    borderRadius: '50%',
+    backgroundColor: 'rgba(255, 255, 255, 0.8)',
+    color: '#999',
+    fontSize: '12px',
+    lineHeight: '1',
+    textAlign: 'center' as const,
+    opacity: isDragging ? 1 : 0,
+    transition: 'opacity 0.2s ease',
+    zIndex: 2,
+    border: 'none',
+    padding: 0,
+    cursor: 'pointer',
+  };
+
   return (
     <div
       ref={setNodeRef}
       style={style}
       className={`flex items-center py-1 px-2 hover:bg-gray-100 rounded select-none cursor-move tab-item
         ${isDragging ? 'bg-blue-50 border border-blue-300 dragging shadow-md' : ''}
-      `}
+      `} 
       {...attributes}
       {...listeners}
     >
+      {/* 删除按钮 */}
+      <button 
+        style={deleteButtonStyle}
+        onClick={(e) => {
+          e.stopPropagation(); // 防止触发标签点击事件
+          safeHandleDeleteTab(tab.id);
+        }}
+        title="删除标签页"
+        type="button"
+      >
+        ×
+      </button>
       <div className="flex items-center space-x-2 flex-1 min-w-0">
         {tab.favicon ? (
           <img src={tab.favicon} alt="" className="w-4 h-4 flex-shrink-0" />
@@ -89,7 +122,7 @@ export const SortableTab: React.FC<SortableTabProps> = ({
                 strokeLinecap="round"
                 strokeLinejoin="round"
                 strokeWidth={2}
-                d="M3.055 11H5a2 2 0 012 2v1a2 2 0 002 2 2 2 0 012 2v2.945M8 3.935V5.5A2.5 2.5 0 0010.5 8h.5a2 2 0 012 2 2 2 0 104 0 2 2 0 012-2h1.064M15 20.488V18a2 2 0 012-2h3.064M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
+                d="M3.055 11H5a2 2 0 012 2v1a2 2 0 002 2 2 2 0 012 2v2.945M8 3.935V5.5A2.5 2 0 0010.5 8h.5a2 2 0 012 2 2 2 0 104 0 2 2 0 012-2h1.064M15 20.488V18a2 2 0 012-2h3.064M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
               />
             </svg>
           </div>
@@ -129,3 +162,5 @@ export const SortableTab: React.FC<SortableTabProps> = ({
     </div>
   );
 };
+
+export default React.memo(SortableTab);
