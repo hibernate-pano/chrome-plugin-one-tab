@@ -54,18 +54,20 @@ chrome.action.onClicked.addListener(async () => {
 // 监听快捷键
 chrome.commands.onCommand.addListener(async (command, tab) => {
   switch (command) {
-    case 'save_all_tabs':
+    case 'save_all_tabs': {
       console.log('快捷键保存所有标签页');
       const tabs = await chrome.tabs.query({ currentWindow: true });
       await saveAllTabs(tabs);
       break;
-    case 'save_current_tab':
+    }
+    case 'save_current_tab': {
       console.log('快捷键保存当前标签页');
       if (tab) {
         await saveCurrentTab(tab);
       }
       break;
-    case '_execute_action':
+    }
+    case '_execute_action': {
       console.log('快捷键打开标签管理器');
       // 打开标签管理器页面
       const extensionUrl = chrome.runtime.getURL('src/popup/index.html');
@@ -84,6 +86,7 @@ chrome.commands.onCommand.addListener(async (command, tab) => {
         await chrome.tabs.create({ url: extensionUrl });
       }
       break;
+    }
   }
 });
 
@@ -393,7 +396,7 @@ async function openTabWithSingleInstance(url: string) {
   const existingTabs = await chrome.tabs.query({ url: extensionUrl + '*' });
 
   // 记录标签管理器页面的ID，以便后续激活
-  let tabManagerId = existingTabs.length > 0 ? existingTabs[0].id : null;
+  const tabManagerId = existingTabs.length > 0 ? existingTabs[0].id : null;
 
   // 打开要恢复的标签页，但不激活它
   await chrome.tabs.create({ url, active: false });
@@ -421,12 +424,12 @@ async function openTabsWithSingleInstance(urls: string[]) {
   const existingTabs = await chrome.tabs.query({ url: extensionUrl + '*' });
 
   // 记录标签管理器页面的ID，以便后续激活
-  let tabManagerId = existingTabs.length > 0 ? existingTabs[0].id : null;
+  const tabManagerId = existingTabs.length > 0 ? existingTabs[0].id : null;
 
   // 获取当前窗口信息，用于确定新标签页的位置
   const currentWindow = await chrome.windows.getCurrent();
   const allTabs = await chrome.tabs.query({ windowId: currentWindow.id });
-  let startPosition = allTabs.length; // 默认在窗口末尾添加新标签
+  const startPosition = allTabs.length; // 默认在窗口末尾添加新标签
 
   // 创建一个数组来存储所有创建的标签页ID，以便后续可以按顺序排列
   const createdTabIds: number[] = [];

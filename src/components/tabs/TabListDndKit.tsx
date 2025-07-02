@@ -2,7 +2,7 @@ import React, { useEffect, useState, useRef } from 'react';
 import { useAppDispatch, useAppSelector } from '@/store/hooks';
 import { loadGroups, moveGroupAndSync, moveTabAndSync } from '@/store/slices/tabSlice';
 import { SearchResultList } from '@/components/search/SearchResultList';
-// No need to import TabGroup type as we're not using it directly
+import { TabGroup as TabGroupType, Tab } from '@/types/tab';
 import { SortableTabGroup } from '@/components/dnd/SortableTabGroup';
 import { DndKitProvider } from '@/components/dnd/DndKitProvider';
 import '@/styles/drag-drop.css';
@@ -33,7 +33,7 @@ export const TabListDndKit: React.FC<TabListProps> = ({ searchQuery }) => {
   const groups = useAppSelector((state) => state.tabs.groups);
   const useDoubleColumnLayout = useAppSelector((state) => state.settings.useDoubleColumnLayout);
   const [activeId, setActiveId] = useState<string | null>(null);
-  const [activeData, setActiveData] = useState<any | null>(null);
+  const [activeData, setActiveData] = useState<({ type: 'tab'; tab: Tab; groupId: string; index: number; } | { type: 'group'; group: TabGroupType; index: number; }) | null>(null);
 
   // 保存拖拽初始状态的引用
   const initialDragState = useRef<{
@@ -86,7 +86,8 @@ export const TabListDndKit: React.FC<TabListProps> = ({ searchQuery }) => {
     });
 
     setActiveId(active.id as string);
-    setActiveData(activeData);
+    const typedActiveData = activeData as any;
+    setActiveData(typedActiveData);
   };
 
   const handleDragOver = (event: DragOverEvent) => {

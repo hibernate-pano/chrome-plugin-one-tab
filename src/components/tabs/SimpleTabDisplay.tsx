@@ -1,6 +1,6 @@
 import React from 'react';
 import { useAppSelector } from '@/store/hooks';
-import { TabGroup } from '@/types/tab';
+import { TabGroup, Tab } from '@/types/tab';
 
 /**
  * 简单标签列表组件
@@ -122,7 +122,7 @@ const GroupCard: React.FC<GroupCardProps> = ({ group }) => {
 };
 
 interface TabItemProps {
-  tab: any; // 简化类型
+  tab: Tab;
 }
 
 const TabItem: React.FC<TabItemProps> = ({ tab }) => {

@@ -119,13 +119,14 @@ chrome.action.onClicked.addListener(async () => {
 // 监听快捷键命令
 chrome.commands.onCommand.addListener(async (command) => {
   switch (command) {
-    case 'save_all_tabs':
+    case 'save_all_tabs': {
       // 保存当前窗口的所有标签页
       const allTabs = await chrome.tabs.query({ currentWindow: true });
       await saveTabs(allTabs);
       break;
+    }
 
-    case 'save_current_tab':
+    case 'save_current_tab': {
       // 保存当前活动的标签页
       const [activeTab] = await chrome.tabs.query({
         active: true,
@@ -135,6 +136,7 @@ chrome.commands.onCommand.addListener(async (command) => {
         await saveTabs([activeTab]);
       }
       break;
+    }
   }
 });
 

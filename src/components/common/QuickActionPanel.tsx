@@ -1,12 +1,12 @@
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { useAppDispatch, useAppSelector } from '@/store/hooks';
+import { saveGroup, loadGroups, deleteGroup } from '@/store/slices/tabSlice';
+import { TabGroup } from '@/types/tab';
+
 /**
  * 快捷操作面板组件
  * 提供类似VS Code的命令面板功能，支持快捷键操作
  */
-
-import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
-import { useAppDispatch, useAppSelector } from '@/store/hooks';
-import { saveGroup, loadGroups, deleteGroup } from '@/store/slices/tabSlice';
-import { TabGroup } from '@/types/tab';
 
 interface QuickAction {
   id: string;
@@ -45,37 +45,39 @@ export const QuickActionPanel: React.FC<QuickActionPanelProps> = ({ isOpen, onCl
       shortcut: 'Alt+Shift+S',
       category: 'tab',
       action: async () => {
-        const tabs = await chrome.tabs.query({ currentWindow: true });
-        const validTabs = tabs.filter(tab => 
-          tab.url && 
-          !tab.url.startsWith('chrome://') && 
-          !tab.url.startsWith('chrome-extension://')
-        );
-        
-        if (validTabs.length > 0) {
-          const groupName = `标签组 ${new Date().toLocaleString()}`;
-          const newGroup: TabGroup = {
-            id: crypto.randomUUID(),
-            name: groupName,
-            tabs: validTabs.map(tab => ({
+        if (typeof chrome !== 'undefined' && chrome.tabs) {
+          const tabs = await chrome.tabs.query({ currentWindow: true });
+          const validTabs = tabs.filter(tab => 
+            tab.url && 
+            !tab.url.startsWith('chrome://') && 
+            !tab.url.startsWith('chrome-extension://')
+          );
+          
+          if (validTabs.length > 0) {
+            const groupName = `标签组 ${new Date().toLocaleString()}`;
+            const newGroup: TabGroup = {
               id: crypto.randomUUID(),
-              url: tab.url!,
-              title: tab.title || tab.url!,
-              favicon: tab.favIconUrl,
+              name: groupName,
+              tabs: validTabs.map(tab => ({
+                id: crypto.randomUUID(),
+                url: tab.url!,
+                title: tab.title || tab.url!,
+                favicon: tab.favIconUrl,
+                createdAt: new Date().toISOString(),
+                lastAccessed: new Date().toISOString()
+              })),
               createdAt: new Date().toISOString(),
-              lastAccessed: new Date().toISOString()
-            })),
-            createdAt: new Date().toISOString(),
-            updatedAt: new Date().toISOString(),
-            isLocked: false
-          };
-          
-          await dispatch(saveGroup(newGroup));
-          
-          // 关闭保存的标签页
-          const tabIds = validTabs.map(tab => tab.id!).filter(id => id !== undefined);
-          if (tabIds.length > 0) {
-            await chrome.tabs.remove(tabIds);
+              updatedAt: new Date().toISOString(),
+              isLocked: false
+            };
+            
+            await dispatch(saveGroup(newGroup));
+            
+            // 关闭保存的标签页
+            const tabIds = validTabs.map(tab => tab.id!).filter(id => id !== undefined);
+            if (tabIds.length > 0) {
+              await chrome.tabs.remove(tabIds);
+            }
           }
         }
       }
@@ -88,31 +90,35 @@ export const QuickActionPanel: React.FC<QuickActionPanelProps> = ({ isOpen, onCl
       shortcut: 'Alt+S',
       category: 'tab',
       action: async () => {
-        const [activeTab] = await chrome.tabs.query({ active: true, currentWindow: true });
-        
-        if (activeTab && activeTab.url && 
-            !activeTab.url.startsWith('chrome://') && 
-            !activeTab.url.startsWith('chrome-extension://')) {
+        if (typeof chrome !== 'undefined' && chrome.tabs) {
+          const [activeTab] = await chrome.tabs.query({ active: true, currentWindow: true });
           
-          const groupName = `单个标签 ${new Date().toLocaleString()}`;
-          const newGroup: TabGroup = {
-            id: crypto.randomUUID(),
-            name: groupName,
-            tabs: [{
+          if (activeTab && activeTab.url && 
+              !activeTab.url.startsWith('chrome://') && 
+              !activeTab.url.startsWith('chrome-extension://')) {
+            
+            const groupName = `单个标签 ${new Date().toLocaleString()}`;
+            const newGroup: TabGroup = {
               id: crypto.randomUUID(),
-              url: activeTab.url,
-              title: activeTab.title || activeTab.url,
-              favicon: activeTab.favIconUrl,
+              name: groupName,
+              tabs: [{
+                id: crypto.randomUUID(),
+                url: activeTab.url,
+                title: activeTab.title || activeTab.url,
+                favicon: activeTab.favIconUrl,
+                createdAt: new Date().toISOString(),
+                lastAccessed: new Date().toISOString()
+              }],
               createdAt: new Date().toISOString(),
-              lastAccessed: new Date().toISOString()
-            }],
-            createdAt: new Date().toISOString(),
-            updatedAt: new Date().toISOString(),
-            isLocked: false
-          };
-          
-          await dispatch(saveGroup(newGroup));
-          await chrome.tabs.remove(activeTab.id!);
+              updatedAt: new Date().toISOString(),
+              isLocked: false
+            };
+            
+            await dispatch(saveGroup(newGroup));
+            if (activeTab.id) {
+              await chrome.tabs.remove(activeTab.id);
+            }
+          }
         }
       }
     },
@@ -144,10 +150,12 @@ export const QuickActionPanel: React.FC<QuickActionPanelProps> = ({ isOpen, onCl
       icon: '🔄',
       category: 'group',
       action: async () => {
-        for (const group of groups) {
-          if (group.tabs.length > 0) {
-            for (const tab of group.tabs) {
-              await chrome.tabs.create({ url: tab.url, active: false });
+        if (typeof chrome !== 'undefined' && chrome.tabs) {
+          for (const group of groups) {
+            if (group.tabs.length > 0) {
+              for (const tab of group.tabs) {
+                await chrome.tabs.create({ url: tab.url, active: false });
+              }
             }
           }
         }
@@ -344,6 +352,17 @@ export const QuickActionPanel: React.FC<QuickActionPanelProps> = ({ isOpen, onCl
   };
 
   // 处理键盘事件
+  const executeAction = useCallback(async (action: QuickAction) => {
+    try {
+      await action.action();
+      onClose();
+    } catch (error) {
+      console.error('执行操作失败:', error);
+      alert('操作执行失败，请重试');
+    }
+  }, [onClose]);
+
+  // 处理键盘事件
   const handleKeyDown = useCallback((e: KeyboardEvent) => {
     if (!isOpen) return;
     
@@ -371,7 +390,7 @@ export const QuickActionPanel: React.FC<QuickActionPanelProps> = ({ isOpen, onCl
         }
         break;
     }
-  }, [isOpen, filteredActions, selectedIndex, onClose]);
+  }, [isOpen, filteredActions, selectedIndex, onClose, executeAction]);
 
   useEffect(() => {
     document.addEventListener('keydown', handleKeyDown);
@@ -396,16 +415,6 @@ export const QuickActionPanel: React.FC<QuickActionPanelProps> = ({ isOpen, onCl
       }
     }
   }, [selectedIndex, filteredActions.length]);
-
-  const executeAction = async (action: QuickAction) => {
-    try {
-      await action.action();
-      onClose();
-    } catch (error) {
-      console.error('执行操作失败:', error);
-      alert('操作执行失败，请重试');
-    }
-  };
 
   if (!isOpen) return null;
 

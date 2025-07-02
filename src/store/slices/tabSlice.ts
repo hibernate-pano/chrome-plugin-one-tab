@@ -1,4 +1,4 @@
-import { createSlice, createAsyncThunk } from '@reduxjs/toolkit';
+import { createSlice, createAsyncThunk, PayloadAction } from '@reduxjs/toolkit';
 import { TabState, TabGroup, UserSettings } from '@/types/tab';
 import { storage } from '@/utils/storage';
 import { sync as supabaseSync } from '@/utils/supabase';
@@ -849,7 +849,7 @@ export const tabSlice = createSlice({
         state.isLoading = true;
         state.error = null;
       })
-      .addCase(importGroups.fulfilled, (state, action) => {
+      .addCase(importGroups.fulfilled, (state, action: PayloadAction<TabGroup[]>) => {
         state.isLoading = false;
         state.groups = [...action.payload, ...state.groups];
       })

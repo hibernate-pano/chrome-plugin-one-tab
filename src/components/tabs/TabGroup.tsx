@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { useAppDispatch } from '@/store/hooks';
-import { updateGroupNameAndSync, toggleGroupLockAndSync, deleteGroup, updateGroup, moveTabAndSync } from '@/store/slices/tabSlice';
-import { DraggableTab } from '@/components/dnd/DraggableTab';
+import { updateGroupNameAndSync, toggleGroupLockAndSync, deleteGroup, updateGroup } from '@/store/slices/tabSlice';
+import { DraggableTabKit } from '@/components/dnd/DraggableTabKit';
 import { TabGroup as TabGroupType, Tab } from '@/types/tab';
 
 interface TabGroupProps {
@@ -123,15 +123,6 @@ export const TabGroup: React.FC<TabGroupProps> = ({ group }) => {
     }, 50); // 小延迟确保 UI 先更新
   };
 
-  const handleMoveTab = (sourceGroupId: string, sourceIndex: number, targetGroupId: string, targetIndex: number) => {
-    dispatch(moveTabAndSync({
-      sourceGroupId,
-      sourceIndex,
-      targetGroupId,
-      targetIndex
-    }));
-  };
-
   return (
     <div className="mb-2 transition-all duration-200 ease-in-out bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-md shadow-sm pb-2 hover:shadow-md">
       <div className="flex items-center p-2 bg-gray-50 dark:bg-gray-900 border-b border-gray-200 dark:border-gray-700 rounded-t-md">
@@ -212,13 +203,10 @@ export const TabGroup: React.FC<TabGroupProps> = ({ group }) => {
       </div>
       {isExpanded && (
         <div className="px-2 pt-2 space-y-1 group tabs-container" style={{ overflow: 'hidden' }}>
-          {group.tabs.map((tab, index) => (
-            <DraggableTab
+          {group.tabs.map((tab) => (
+            <DraggableTabKit
               key={tab.id}
               tab={tab}
-              groupId={group.id}
-              index={index}
-              moveTab={handleMoveTab}
               handleOpenTab={handleOpenTab}
               handleDeleteTab={(tabId) => {
                 const updatedTabs = group.tabs.filter(t => t.id !== tabId);

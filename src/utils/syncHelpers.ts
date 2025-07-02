@@ -1,4 +1,4 @@
-import { ThunkDispatch, UnknownAction } from '@reduxjs/toolkit';
+import { ThunkDispatch, AnyAction } from '@reduxjs/toolkit';
 
 // 防抖计时器
 let syncDebounceTimer: NodeJS.Timeout | null = null;
@@ -29,8 +29,8 @@ const OPERATION_PRIORITIES: Record<string, number> = {
 // 当前正在进行的同步操作信息
 let currentSyncOperation: { type: string; priority: number } | null = null;
 
-export async function syncToCloud<T>(
-  _dispatch: ThunkDispatch<T, any, UnknownAction>,
+export async function syncToCloud(
+  _dispatch: ThunkDispatch<any, any, AnyAction>,
   _getState: () => any,
   operationType: string
 ): Promise<boolean> {

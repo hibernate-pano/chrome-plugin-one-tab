@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
-import { TabGroup as TabGroupType } from '@/types/tab';
+import { TabGroup as TabGroupType, Tab } from '@/types/tab';
 import { useAppDispatch } from '@/store/hooks';
 import { updateGroupNameAndSync, deleteGroup, updateGroup } from '@/store/slices/tabSlice';
 import { SortableTab } from './SortableTab';
@@ -71,7 +71,35 @@ export const SortableTabGroup: React.FC<SortableTabGroupProps> = ({ group, index
     dispatch(deleteGroup(group.id));
   };
 
-  const handleOpenTab = (tab: any) => {
+  const handleOpenAllTabs = () => {
+    // 收集所有标签页的 URL
+    const urls = group.tabs.map(tab => tab.url);
+
+    // 如果标签组没有锁定，先在UI中删除标签组
+    if (!group.isLocked) {
+      // 先在Redux中删除标签组，立即更新UI
+      dispatch({ type: 'tabs/deleteGroup/fulfilled', payload: group.id });
+
+      // 然后异步完成存储操作
+      dispatch(deleteGroup(group.id))
+        .then(() => {
+          console.log(`删除标签组: ${group.id}`);
+        })
+        .catch(error => {
+          console.error('删除标签组失败:', error);
+        });
+    }
+
+    // 最后发送消息给后台脚本打开标签页
+    setTimeout(() => {
+      chrome.runtime.sendMessage({
+        type: 'OPEN_TABS',
+        data: { urls }
+      });
+    }, 50); // 小延迟确保 UI 先更新
+  };
+
+  const handleOpenTab = (tab: Tab) => {
     // 打开标签页
     chrome.tabs.create({ url: tab.url });
 
@@ -123,7 +151,7 @@ export const SortableTabGroup: React.FC<SortableTabGroupProps> = ({ group, index
         <div className="flex items-center space-x-2 flex-1 min-w-0">
           <button
             onClick={handleToggleExpand}
-            className="text-gray-500 hover:text-gray-700 p-1 rounded-full hover:bg-gray-200"
+            className="text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300 p-1 rounded-full hover:bg-gray-200 dark:hover:bg-gray-700"
             title={isExpanded ? "折叠标签组" : "展开标签组"}
           >
             <svg
@@ -136,33 +164,53 @@ export const SortableTabGroup: React.FC<SortableTabGroupProps> = ({ group, index
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
             </svg>
           </button>
+
           {isEditing ? (
             <input
               type="text"
+              className="flex-1 min-w-0 px-2 py-1 border border-gray-300 dark:border-gray-600 rounded text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100"
               value={groupName}
               onChange={(e) => setGroupName(e.target.value)}
               onBlur={handleSaveName}
               onKeyDown={handleKeyDown}
-              className="flex-1 px-2 py-1 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
               autoFocus
             />
           ) : (
             <div
-              className="flex-1 truncate font-medium text-gray-700 hover:text-gray-900"
-              onClick={handleEditName}
+              className="flex-1 min-w-0 truncate text-sm font-medium text-gray-900 dark:text-gray-100"
+              onDoubleClick={handleEditName}
               title={group.name}
             >
               {group.name}
             </div>
           )}
-          <div className="text-xs text-gray-500 whitespace-nowrap">
+
+          <div className="text-xs text-gray-500 dark:text-gray-400 whitespace-nowrap">
             {group.tabs.length} 个标签页
           </div>
         </div>
+
         <div className="flex items-center space-x-1">
           <button
+            onClick={handleOpenAllTabs}
+            className="text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300 text-xs hover:underline"
+            title="打开所有标签页"
+          >
+            恢复全部
+          </button>
+          <button
+            onClick={handleEditName}
+            className="text-gray-400 hover:text-gray-600 dark:text-gray-500 dark:hover:text-gray-300 p-1 rounded hover:bg-gray-200 dark:hover:bg-gray-700"
+            title="重命名标签组"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+            </svg>
+          </button>
+
+          <button
             onClick={handleDeleteGroup}
-            className="text-gray-400 hover:text-red-500 p-1 rounded hover:bg-gray-200"
+            className="text-gray-400 hover:text-red-500 dark:text-gray-500 dark:hover:text-red-400 p-1 rounded hover:bg-gray-200 dark:hover:bg-gray-700"
             title="删除标签组"
           >
             <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -171,15 +219,16 @@ export const SortableTabGroup: React.FC<SortableTabGroupProps> = ({ group, index
           </button>
         </div>
       </div>
+
       {isExpanded && (
         <div className="px-2 pt-1 space-y-1 group" style={{ overflow: 'hidden' }}>
           <SortableContext items={tabIds} strategy={rectSortingStrategy}>
-            {group.tabs.map((tab, index) => (
+            {group.tabs.map((tab, tabIndex) => (
               <SortableTab
                 key={tab.id}
                 tab={tab}
                 groupId={group.id}
-                index={index}
+                index={tabIndex}
                 handleOpenTab={handleOpenTab}
                 handleDeleteTab={handleDeleteTab}
               />

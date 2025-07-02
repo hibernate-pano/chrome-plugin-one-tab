@@ -240,17 +240,20 @@ chrome.action.onClicked.addListener(async () => {
 // 监听快捷键
 chrome.commands.onCommand.addListener(async (command, tab) => {
   switch (command) {
-    case 'save_all_tabs':
+    case 'save_all_tabs': {
       const tabs = await chrome.tabs.query({ currentWindow: true });
       await saveAllTabs(tabs);
       break;
-    case 'save_current_tab':
+    }
+    case 'save_current_tab': {
       if (tab) {
         await saveCurrentTab(tab);
       }
       break;
-    case '_execute_action':
+    }
+    case '_execute_action': {
       // 默认行为，打开弹出窗口
       break;
+    }
   }
 });

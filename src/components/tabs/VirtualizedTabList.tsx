@@ -6,6 +6,7 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { FixedSizeList as List, ListChildComponentProps } from 'react-window';
 import { Tab, TabGroup } from '@/types/tab';
+import { useAppSelector } from '@/store/hooks'; // 引入 useAppSelector
 
 interface VirtualizedTabListProps {
   tabs: Tab[];
@@ -154,7 +155,7 @@ interface GroupHeaderProps {
 const GroupHeader: React.FC<GroupHeaderProps> = ({ group, isExpanded, onToggle }) => {
   return (
     <div 
-      className="group-header flex items-center p-3 bg-gray-50 border-b cursor-pointer hover:bg-gray-100"
+      className="group-header flex items-center p-3 bg-gray-50 border-b cursor-pointer hover:bg-gray-100 h-full" // Added h-full
       onClick={onToggle}
     >
       <div className="flex items-center flex-1">
@@ -166,7 +167,7 @@ const GroupHeader: React.FC<GroupHeaderProps> = ({ group, isExpanded, onToggle }
           <path fillRule="evenodd" d="M7.293 14.707a1 1 0 010-1.414L10.586 10 7.293 6.707a1 1 0 011.414-1.414l4 4a1 1 0 010 1.414l-4 4a1 1 0 01-1.414 0z" clipRule="evenodd" />
         </svg>
         
-        <h3 className="font-medium text-gray-900">
+        <h3 className="font-medium text-gray-900 truncate"> {/* Added truncate */}
           {group.name}
         </h3>
         
@@ -208,6 +209,7 @@ const TabItem: React.FC<TabItemProps> = ({
 }) => {
   const [isHovered, setIsHovered] = useState(false);
   const [showMoveMenu, setShowMoveMenu] = useState(false);
+  const { groups } = useAppSelector(state => state.tabs); // Get groups from Redux
 
   // 高亮搜索关键词
   const highlightText = useCallback((text: string, query: string) => {
@@ -227,7 +229,7 @@ const TabItem: React.FC<TabItemProps> = ({
 
   return (
     <div 
-      className="tab-item flex items-center p-3 border-b hover:bg-gray-50 transition-colors"
+      className="tab-item flex items-center p-3 border-b hover:bg-gray-50 transition-colors h-full" // Added h-full
       onMouseEnter={() => setIsHovered(true)}
       onMouseLeave={() => setIsHovered(false)}
     >
@@ -275,6 +277,7 @@ const TabItem: React.FC<TabItemProps> = ({
             {showMoveMenu && (
               <MoveMenu
                 currentGroupId={groupId}
+                groups={groups} // Pass groups to MoveMenu
                 onMove={onMove}
                 onClose={() => setShowMoveMenu(false)}
               />
@@ -300,15 +303,26 @@ const TabItem: React.FC<TabItemProps> = ({
 // 移动菜单组件
 interface MoveMenuProps {
   currentGroupId?: string;
+  groups: TabGroup[]; // Added groups prop
   onMove: (targetGroupId: string) => void;
   onClose: () => void;
 }
 
-const MoveMenu: React.FC<MoveMenuProps> = ({ currentGroupId, onMove, onClose }) => {
-  const groups: TabGroup[] = []; // 这里应该从 Redux 或 Context 获取分组列表
-  
+const MoveMenu: React.FC<MoveMenuProps> = ({ currentGroupId, groups, onMove, onClose }) => {
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      const target = event.target as HTMLElement;
+      if (!target.closest('.move-menu')) {
+        onClose();
+      }
+    };
+
+    document.addEventListener('click', handleClickOutside);
+    return () => document.removeEventListener('click', handleClickOutside);
+  }, [onClose]);
+
   return (
-    <div className="absolute right-0 top-full mt-1 w-48 bg-white border rounded-md shadow-lg z-10">
+    <div className="move-menu absolute right-0 top-full mt-1 w-48 bg-white border rounded-md shadow-lg z-10"> {/* Added move-menu class */}
       <div className="py-1">
         {groups.map((group: TabGroup) => (
           <button
@@ -332,30 +346,4 @@ const MoveMenu: React.FC<MoveMenuProps> = ({ currentGroupId, onMove, onClose }) 
   );
 };
 
-// 性能优化的 Hook
-export const useVirtualizedList = (items: any[], containerRef: React.RefObject<HTMLElement>) => {
-  const [visibleRange, setVisibleRange] = useState({ start: 0, end: 50 });
-  
-  useEffect(() => {
-    const container = containerRef.current;
-    if (!container) return;
-    
-    const handleScroll = () => {
-      const scrollTop = container.scrollTop;
-      const containerHeight = container.clientHeight;
-      const itemHeight = 60; // 假设每个项目高度为 60px
-      
-      const start = Math.floor(scrollTop / itemHeight);
-      const end = Math.min(start + Math.ceil(containerHeight / itemHeight) + 5, items.length);
-      
-      setVisibleRange({ start, end });
-    };
-    
-    container.addEventListener('scroll', handleScroll);
-    handleScroll(); // 初始化
-    
-    return () => container.removeEventListener('scroll', handleScroll);
-  }, [items.length, containerRef]);
-  
-  return visibleRange;
-};
+// Removed useVirtualizedList hook as it's not used with react-window

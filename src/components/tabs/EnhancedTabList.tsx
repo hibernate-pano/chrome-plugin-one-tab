@@ -1,10 +1,22 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { useAppDispatch, useAppSelector } from '@/store/hooks';
 import { updateGroup } from '@/store/slices/tabSlice';
 import { TabGroup, Tab } from '@/types/tab';
-import { VirtualizedTabList } from './VirtualizedTabListFixed';
-import { QuickActionPanel, useQuickActionPanel } from '../common/QuickActionPanelFixed';
-import { enhancedSearchService, smartTabAnalyzer } from '@/services/smartTabAnalyzerFixed';
+import { TabList } from './TabList';
+import { QuickActionPanel } from '../common/QuickActionPanel';
+import { smartTabAnalyzer } from '@/services/smartTabAnalyzer';
+
+// 实现一个简单的搜索服务来替代删除的service
+const enhancedSearchService = {
+  search: async (tabs: Tab[], query: string) => {
+    const normalizedQuery = query.toLowerCase();
+    const matchedTabs = tabs.filter(tab => 
+      tab.title?.toLowerCase().includes(normalizedQuery) || 
+      tab.url.toLowerCase().includes(normalizedQuery)
+    );
+    return matchedTabs.map(tab => ({ tab, score: 1 }));
+  }
+};
 
 /**
  * 增强型标签列表组件
@@ -22,7 +34,9 @@ export const EnhancedTabList: React.FC<EnhancedTabListProps> = ({ className = ''
   const [showSuggestions, setShowSuggestions] = useState(false);
   const [groupSuggestions, setGroupSuggestions] = useState<any[]>([]);
   
-  const { isOpen: isQuickActionOpen, openPanel, closePanel } = useQuickActionPanel();
+  const [isQuickActionOpen, setIsQuickActionOpen] = useState(false);
+  const openPanel = useCallback(() => setIsQuickActionOpen(true), []);
+  const closePanel = useCallback(() => setIsQuickActionOpen(false), []);
 
   // 合并所有标签页
   const allTabs = useMemo(() => {
@@ -87,37 +101,7 @@ export const EnhancedTabList: React.FC<EnhancedTabListProps> = ({ className = ''
     }
   };
 
-  // 处理标签移动
-  const handleTabMove = async (tabId: string, targetGroupId: string) => {
-    // 找到源分组和目标分组
-    const sourceGroup = groups.find(g => g.tabs.some(t => t.id === tabId));
-    const targetGroup = groups.find(g => g.id === targetGroupId);
-    
-    if (sourceGroup && targetGroup && sourceGroup.id !== targetGroupId) {
-      const tabToMove = sourceGroup.tabs.find(t => t.id === tabId);
-      if (tabToMove) {
-        // 从源分组移除
-        const updatedSourceGroup = {
-          ...sourceGroup,
-          tabs: sourceGroup.tabs.filter(t => t.id !== tabId),
-          updatedAt: new Date().toISOString()
-        };
-        
-        // 添加到目标分组
-        const updatedTargetGroup = {
-          ...targetGroup,
-          tabs: [...targetGroup.tabs, tabToMove],
-          updatedAt: new Date().toISOString()
-        };
-        
-        // 更新两个分组
-        await Promise.all([
-          dispatch(updateGroup(updatedSourceGroup)),
-          dispatch(updateGroup(updatedTargetGroup))
-        ]);
-      }
-    }
-  };
+  // 处理标签移动功能已移至其他组件
 
   // 应用智能分组建议
   const applySuggestion = async (suggestion: any) => {
@@ -163,7 +147,7 @@ export const EnhancedTabList: React.FC<EnhancedTabListProps> = ({ className = ''
 
     document.addEventListener('keydown', handleKeyDown);
     return () => document.removeEventListener('keydown', handleKeyDown);
-  }, [openPanel, showSuggestions]);
+  }, [openPanel, showSuggestions, setShowSuggestions]);
 
   return (
     <div className={`enhanced-tab-list ${className}`}>
@@ -248,49 +232,81 @@ export const EnhancedTabList: React.FC<EnhancedTabListProps> = ({ className = ''
               onClick={() => setShowSuggestions(!showSuggestions)}
               className={`px-3 py-1 text-sm rounded ${
                 showSuggestions 
-                  ? 'bg-blue-600 text-white' 
+                  ? 'bg-blue-100 text-blue-700' 
                   : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
               }`}
             >
-              智能建议 ({groupSuggestions.length})
+              分组建议 ({groupSuggestions.length})
             </button>
           )}
         </div>
         
-        <div className="flex items-center space-x-2">
-          <button
-            onClick={openPanel}
-            className="px-3 py-1 text-sm bg-gray-200 text-gray-700 rounded hover:bg-gray-300"
-            title="快捷操作 (Ctrl+K)"
-          >
-            ⌘K
-          </button>
-        </div>
+        <button
+          onClick={openPanel}
+          className="flex items-center space-x-1 text-sm text-gray-600 hover:text-gray-900"
+        >
+          <span>快捷操作</span>
+          <kbd className="px-1.5 py-0.5 bg-gray-200 rounded text-xs">⌘K</kbd>
+        </button>
       </div>
 
-      {/* 标签列表 */}
-      <div className="flex-1">
-        <VirtualizedTabList
-          tabs={searchQuery ? searchResults : allTabs}
-          groups={groups}
-          searchQuery={searchQuery}
-          onTabClick={handleTabClick}
-          onTabDelete={handleTabDelete}
-          onTabMove={handleTabMove}
-          containerHeight={600}
-        />
+      {/* 标签列表 - 使用搜索结果或所有分组 */}
+      <div className="p-4">
+        {searchQuery ? (
+          searchResults.length > 0 ? (
+            <div className="bg-white rounded-lg border divide-y">
+              {searchResults.map(tab => (
+                <div 
+                  key={tab.id}
+                  className="flex items-center p-3 hover:bg-gray-50"
+                >
+                  {tab.favicon ? (
+                    <img src={tab.favicon} alt="" className="w-4 h-4 mr-3" />
+                  ) : (
+                    <div className="w-4 h-4 bg-gray-200 rounded mr-3"></div>
+                  )}
+                  <a 
+                    href="#"
+                    className="flex-1 text-blue-600 hover:underline truncate"
+                    onClick={(e) => {
+                      e.preventDefault();
+                      handleTabClick(tab);
+                    }}
+                  >
+                    {tab.title}
+                  </a>
+                  <button
+                    onClick={() => handleTabDelete(tab)}
+                    className="text-gray-400 hover:text-red-500"
+                  >
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                  </button>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="text-center py-8 text-gray-500">
+              未找到匹配的标签页
+            </div>
+          )
+        ) : (
+          <TabList searchQuery="" />
+        )}
       </div>
 
       {/* 快捷操作面板 */}
-      <QuickActionPanel
-        isOpen={isQuickActionOpen}
-        onClose={closePanel}
-      />
-
-      {/* 键盘快捷键提示 */}
-      <div className="p-2 bg-gray-100 border-t text-xs text-gray-500">
-        快捷键: / 搜索 • Ctrl+K 操作面板 • Ctrl+G 切换建议
-      </div>
+      {isQuickActionOpen && (
+        <div className="fixed inset-0 bg-black bg-opacity-30 flex items-center justify-center z-50">
+          <div className="w-full max-w-xl">
+            <QuickActionPanel 
+              isOpen={isQuickActionOpen} 
+              onClose={closePanel}
+            />
+          </div>
+        </div>
+      )}
     </div>
   );
 };

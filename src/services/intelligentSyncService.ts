@@ -1,4 +1,6 @@
-import { TabGroup, Tab } from '@/types/tab';
+import { TabGroup, Tab, UserSettings } from '@/types/tab';
+import { storage, DEFAULT_SETTINGS } from '@/utils/storage';
+import { supabase } from '@/utils/supabase';
 import { store } from '@/store';
 
 /**
@@ -37,6 +39,25 @@ export interface SyncConfig {
     deltaSync: boolean;         // 增量同步
     compression: boolean;       // 数据压缩
     maxRetries: number;         // 最大重试次数
+  };
+}
+
+interface SyncData {
+  groups: TabGroup[];
+  settings: UserSettings;
+  lastUpdated: string;
+}
+
+// 工具函数
+function debounce<T extends (...args: any[]) => any>(func: T, wait: number) {
+  let timeout: NodeJS.Timeout;
+  return function executedFunction(...args: any[]) {
+    const later = () => {
+      clearTimeout(timeout);
+      func(...args);
+    };
+    clearTimeout(timeout);
+    timeout = setTimeout(later, wait);
   };
 }
 
@@ -80,15 +101,8 @@ export class IntelligentSyncService {
   }
 
   private setupDataChangeListener() {
-    // 监听 Chrome storage 变化
-    if (chrome.storage?.onChanged) {
-      chrome.storage.onChanged.addListener(() => {
-        this.debounceSync('data-change');
-      });
-    }
-
-    // 监听 Redux store 变化
-    store.subscribe(() => {
+    // 监听存储变化
+    chrome.storage?.onChanged?.addListener(() => {
       this.debounceSync('data-change');
     });
   }
@@ -150,7 +164,57 @@ export class IntelligentSyncService {
     console.log('同步完成');
   }
 
-  private async smartMerge(localData: any, remoteData: any): Promise<any> {
+  private async getLocalData(): Promise<SyncData> {
+    const groups = await storage.getGroups();
+    const settings = await storage.getSettings();
+    
+    return {
+      groups,
+      settings,
+      lastUpdated: new Date().toISOString()
+    };
+  }
+
+  private async getRemoteData(): Promise<SyncData> {
+    try {
+      const { data: user } = await supabase.auth.getUser();
+      if (!user.user) {
+        throw new Error('用户未登录');
+      }
+
+      const { data, error } = await supabase
+        .from('tab_groups')
+        .select('*')
+        .eq('user_id', user.user.id);
+
+      if (error) throw error;
+
+      return {
+        groups: data || [],
+        settings: DEFAULT_SETTINGS,
+        lastUpdated: new Date().toISOString()
+      };
+    } catch (error) {
+      console.error('获取远程数据失败:', error);
+      return {
+        groups: [],
+        settings: DEFAULT_SETTINGS,
+        lastUpdated: new Date().toISOString()
+      };
+    }
+  }
+
+  private async applyMergedData(mergedData: SyncData): Promise<void> {
+    await storage.setGroups(mergedData.groups);
+    await storage.setSettings(mergedData.settings);
+    
+    // 触发 Redux store 更新
+    store.dispatch({ type: 'tabs/syncDataUpdated', payload: mergedData });
+      
+    console.log('应用合并数据成功');
+  }
+
+  private async smartMerge(localData: SyncData, remoteData: SyncData): Promise<SyncData> {
     if (this.config.conflictResolution.strategy === 'auto') {
       return this.autoMerge(localData, remoteData);
     } else {
@@ -158,24 +222,25 @@ export class IntelligentSyncService {
     }
   }
 
-  private autoMerge(localData: any, remoteData: any): any {
+  private autoMerge(localData: SyncData, remoteData: SyncData): SyncData {
     const rules = this.config.conflictResolution.autoMergeRules;
     
     // 实现智能合并逻辑
     const merged = {
       groups: this.mergeGroups(localData.groups, remoteData.groups, rules),
-      settings: this.mergeSettings(localData.settings, remoteData.settings, rules)
+      settings: this.mergeSettings(localData.settings, remoteData.settings, rules),
+      lastUpdated: new Date().toISOString()
     };
 
     return merged;
   }
 
-  private mergeGroups(localGroups: TabGroup[], remoteGroups: TabGroup[], rules: any): TabGroup[] {
-    const groupMap = new Map<string, TabGroup & { source?: string }>();
+  private mergeGroups(localGroups: TabGroup[], remoteGroups: TabGroup[], rules: { preferNewer: boolean; preserveLocal: boolean; preserveRemote: boolean; }): TabGroup[] {
+    const groupMap = new Map<string, TabGroup>();
 
     // 添加本地分组
     localGroups.forEach(group => {
-      groupMap.set(group.id, { ...group, source: 'local' });
+      groupMap.set(group.id, group);
     });
 
     // 处理远程分组
@@ -185,7 +250,7 @@ export class IntelligentSyncService {
       if (!localGroup) {
         // 远程独有的分组
         if (rules.preserveRemote) {
-          groupMap.set(remoteGroup.id, { ...remoteGroup, source: 'remote' });
+          groupMap.set(remoteGroup.id, remoteGroup);
         }
       } else {
         // 存在冲突，应用合并规则
@@ -194,11 +259,18 @@ export class IntelligentSyncService {
       }
     });
 
-    // 移除 source 属性，返回标准的 TabGroup[]
-    return Array.from(groupMap.values()).map(({ source, ...group }) => group as TabGroup);
+    return Array.from(groupMap.values());
   }
 
-  private mergeConflictedGroup(localGroup: TabGroup, remoteGroup: TabGroup, rules: any): TabGroup {
+  private mergeSettings(localSettings: UserSettings, remoteSettings: UserSettings, rules: { preferNewer: boolean; preserveLocal: boolean; preserveRemote: boolean; }): UserSettings {
+    // 简单的设置合并逻辑
+    if (rules.preferNewer) {
+      return { ...localSettings, ...remoteSettings };
+    }
+    return localSettings;
+  }
+
+  private mergeConflictedGroup(localGroup: TabGroup, remoteGroup: TabGroup, rules: { preferNewer: boolean; preserveLocal: boolean; preserveRemote: boolean; }): TabGroup {
     if (rules.preferNewer) {
       const localTime = new Date(localGroup.updatedAt).getTime();
       const remoteTime = new Date(remoteGroup.updatedAt).getTime();
@@ -241,20 +313,15 @@ export class IntelligentSyncService {
     return Array.from(tabMap.values());
   }
 
-  private async manualMerge(localData: any, remoteData: any): Promise<any> {
+  private async manualMerge(localData: SyncData, _remoteData: SyncData): Promise<SyncData> {
     // 显示冲突解决对话框
     return new Promise((resolve) => {
-      const conflictDialog = new ConflictResolutionDialog({
-        localData,
-        remoteData,
-        onResolve: resolve
-      });
-      
-      conflictDialog.show();
+      // 简化版本：优先使用本地数据
+      resolve(localData);
     });
   }
 
-  private isDataIdentical(localData: any, remoteData: any): boolean {
+  private isDataIdentical(localData: SyncData, remoteData: SyncData): boolean {
     // 比较数据指纹或哈希值
     const localHash = this.generateDataHash(localData);
     const remoteHash = this.generateDataHash(remoteData);
@@ -262,12 +329,17 @@ export class IntelligentSyncService {
     return localHash === remoteHash;
   }
 
-  private generateDataHash(data: any): string {
+  private generateDataHash(data: SyncData): string {
     // 生成数据的哈希值用于快速比较
-    return btoa(JSON.stringify(data)).slice(0, 16);
+    try {
+      return btoa(JSON.stringify(data)).slice(0, 16);
+    } catch (e) {
+      // Fallback for large data that might fail stringify or btoa
+      return `${Date.now()}`;
+    }
   }
 
-  private async handleSyncError(error: any, trigger: string) {
+  private async handleSyncError(error: unknown, trigger: string) {
     console.error(`同步失败 (${trigger}):`, error);
     
     // 添加到重试队列
@@ -298,62 +370,6 @@ export class IntelligentSyncService {
     } else {
       console.error('同步重试次数已达上限，放弃同步');
     }
-  }
-
-  private async getLocalData(): Promise<any> {
-    try {
-      const groups = await chrome.storage.local.get('groups');
-      const settings = await chrome.storage.local.get('settings');
-      return {
-        groups: groups.groups || [],
-        settings: settings.settings || {},
-        lastUpdated: new Date().toISOString()
-      };
-    } catch (error) {
-      console.error('获取本地数据失败:', error);
-      return { groups: [], settings: {}, lastUpdated: new Date().toISOString() };
-    }
-  }
-
-  private async getRemoteData(): Promise<any> {
-    try {
-      // 这里应该调用 Supabase 或其他云存储服务
-      // 暂时返回空数据
-      return { groups: [], settings: {}, lastUpdated: new Date().toISOString() };
-    } catch (error) {
-      console.error('获取远程数据失败:', error);
-      return { groups: [], settings: {}, lastUpdated: new Date().toISOString() };
-    }
-  }
-
-  private async applyMergedData(mergedData: any): Promise<void> {
-    try {
-      await chrome.storage.local.set({
-        groups: mergedData.groups,
-        settings: mergedData.settings,
-        lastSyncTime: new Date().toISOString()
-      });
-      
-      // 触发 Redux store 更新
-      store.dispatch({ type: 'tabs/syncDataUpdated', payload: mergedData });
-      
-      console.log('应用合并数据成功');
-    } catch (error) {
-      console.error('应用合并数据失败:', error);
-      throw error;
-    }
-  }
-
-  private mergeSettings(localSettings: any, remoteSettings: any, rules: any): any {
-    if (rules.preferNewer) {
-      const localTime = localSettings.lastUpdated ? new Date(localSettings.lastUpdated).getTime() : 0;
-      const remoteTime = remoteSettings.lastUpdated ? new Date(remoteSettings.lastUpdated).getTime() : 0;
-      
-      return remoteTime > localTime ? remoteSettings : localSettings;
-    }
-    
-    // 默认合并策略：本地设置优先
-    return { ...remoteSettings, ...localSettings };
   }
 
   // 清理资源
@@ -389,41 +405,3 @@ const syncConfig: SyncConfig = {
 };
 
 export const intelligentSync = new IntelligentSyncService(syncConfig);
-
-// 工具函数
-function debounce(func: Function, wait: number) {
-  let timeout: NodeJS.Timeout;
-  return function executedFunction(...args: any[]) {
-    const later = () => {
-      clearTimeout(timeout);
-      func(...args);
-    };
-    clearTimeout(timeout);
-    timeout = setTimeout(later, wait);
-  };
-}
-
-interface SyncOperation {
-  trigger: string;
-  timestamp: number;
-  retries: number;
-}
-
-class ConflictResolutionDialog {
-  constructor(private options: {
-    localData: any;
-    remoteData: any;
-    onResolve: (data: any) => void;
-  }) {}
-
-  show() {
-    // 实现冲突解决UI
-    // 这里可以集成到现有的模态框系统中
-    console.log('显示冲突解决对话框', this.options);
-    
-    // 临时实现：自动选择本地数据
-    setTimeout(() => {
-      this.options.onResolve(this.options.localData);
-    }, 1000);
-  }
-}

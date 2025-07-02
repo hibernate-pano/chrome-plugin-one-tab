@@ -2,6 +2,7 @@ import React, { useState, useRef, useEffect } from 'react';
 import { useAppSelector, useAppDispatch } from '@/store/hooks';
 import { signOut } from '@/store/slices/authSlice';
 import { deleteAllGroups } from '@/store/slices/tabSlice';
+
 import { syncService } from '@/services/syncService';
 import { storage } from '@/utils/storage';
 import { LoginForm } from '../auth/LoginForm';
@@ -57,8 +58,8 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({ onClose }) => {
 
       // 异步删除所有标签组，不阻塞用户界面
       dispatch(deleteAllGroups())
-        .then((result: any) => {
-          const count = result.payload?.count || 0;
+        .then((result) => {
+          const count = typeof result.payload === 'number' ? result.payload : 0;
 
           // 删除成功后，异步同步到云端
           if (isAuthenticated) {

@@ -1,7 +1,7 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, Suspense, lazy } from 'react';
 import { Header } from '@/components/layout/Header';
 import { SimpleTabList } from '@/components/tabs/SimpleTabList';
-import { DndProvider } from '@/components/dnd/DndProvider';
+import { DndKitProvider } from '@/components/dnd/DndKitProvider';
 import { useAppDispatch, useAppSelector } from '@/store/hooks';
 import { loadSettings } from '@/store/slices/settingsSlice';
 import { getCurrentUser } from '@/store/slices/authSlice';
@@ -10,9 +10,13 @@ import { authCache } from '@/utils/authCache';
 import { store } from '@/store';
 import { hasSyncPromptShown, markSyncPromptShown } from '@/utils/syncPromptUtils';
 import { checkCloudData } from '@/utils/cloudDataUtils';
-import SyncPromptModal from '@/components/sync/SyncPromptModal';
+// import SyncPromptModal from '@/components/sync/SyncPromptModal'; // Original import
 import { ToastProvider } from '@/contexts/ToastContext';
 import { ThemeProvider } from '@/contexts/ThemeContext';
+
+// 直接导入QuickActionPanel，而不是使用lazy加载
+import { QuickActionPanel } from '@/components/common/QuickActionPanel';
+const LazySyncPromptModal = lazy(() => import('@/components/sync/SyncPromptModal')); // Lazy load SyncPromptModal
 
 const App: React.FC = () => {
   const dispatch = useAppDispatch();
@@ -20,6 +24,7 @@ const App: React.FC = () => {
   const [initialAuthLoaded, setInitialAuthLoaded] = useState(false);
   const [showSyncPrompt, setShowSyncPrompt] = useState(false);
   const [hasCloudData, setHasCloudData] = useState(false);
+  const [isQuickActionPanelOpen, setIsQuickActionPanelOpen] = useState(false); // New state for QuickActionPanel
 
   const { isAuthenticated, user } = useAppSelector(state => state.auth);
 
@@ -128,12 +133,14 @@ const App: React.FC = () => {
     checkSession();
   }, [dispatch, initialAuthLoaded]);
 
+  // 快捷操作面板现在通过isOpen和onClose属性控制
+
   return (
     <ToastProvider>
       <ThemeProvider>
-        <DndProvider>
+        <DndKitProvider>
           <div className="min-h-screen bg-white dark:bg-gray-900 dark:text-gray-100 flex flex-col">
-            <Header onSearch={setSearchQuery} />
+            <Header onSearch={setSearchQuery} /> {/* 移除不支持的属性 */}
             <main className="flex-1 container mx-auto py-2 px-2 max-w-6xl">
               <SimpleTabList searchQuery={searchQuery} />
             </main>
@@ -162,14 +169,24 @@ const App: React.FC = () => {
             </footer>
 
             {/* 同步提示对话框 */}
-            {showSyncPrompt && (
-              <SyncPromptModal
-                onClose={handleCloseSyncPrompt}
-                hasCloudData={hasCloudData}
+            <Suspense fallback={<div>Loading Sync Prompt...</div>}>
+              {showSyncPrompt && (
+                <LazySyncPromptModal
+                  onClose={handleCloseSyncPrompt}
+                  hasCloudData={hasCloudData}
+                />
+              )}
+            </Suspense>
+
+            {/* QuickActionPanel */}
+            {isQuickActionPanelOpen && (
+              <QuickActionPanel
+                isOpen={isQuickActionPanelOpen}
+                onClose={() => setIsQuickActionPanelOpen(false)}
               />
             )}
           </div>
-        </DndProvider>
+        </DndKitProvider>
       </ThemeProvider>
     </ToastProvider>
   );

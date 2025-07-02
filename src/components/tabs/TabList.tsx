@@ -1,8 +1,8 @@
 import React, { useEffect, useState } from 'react';
 import { useAppDispatch, useAppSelector } from '@/store/hooks';
-import { loadGroups, deleteGroup, moveGroupAndSync } from '@/store/slices/tabSlice';
+import { loadGroups, deleteGroup } from '@/store/slices/tabSlice';
 
-import { DraggableTabGroup } from '@/components/dnd/DraggableTabGroup';
+import { DraggableTabGroupKit } from '@/components/dnd/DraggableTabGroupKit';
 import { SearchResultList } from '@/components/search/SearchResultList';
 import { TabGroup as TabGroupType } from '@/types/tab';
 
@@ -75,7 +75,7 @@ export const TabList: React.FC<TabListProps> = ({ searchQuery }) => {
           </svg>
         </div>
         <h3 className="text-lg font-medium text-gray-700">没有保存的标签页</h3>
-        <p className="text-gray-500 max-w-md text-center">点击右上角的“保存所有标签”按钮开始保存您的标签页。保存后的标签页将显示在这里。</p>
+        <p className="text-gray-500 max-w-md text-center">点击右上角的&quot;保存所有标签&quot;按钮开始保存您的标签页。保存后的标签页将显示在这里。</p>
         <button
           onClick={() => {
             chrome.runtime.sendMessage({
@@ -138,16 +138,10 @@ export const TabList: React.FC<TabListProps> = ({ searchQuery }) => {
             {filteredGroups
               .filter((_, index) => index % 2 === 0)
               .map((group) => {
-                // 计算在原始数组中的实际索引
-                const originalIndex = filteredGroups.findIndex(g => g.id === group.id);
                 return (
-                  <DraggableTabGroup
+                  <DraggableTabGroupKit
                     key={group.id}
                     group={group}
-                    index={originalIndex}
-                    moveGroup={(dragIndex, hoverIndex) => {
-                      dispatch(moveGroupAndSync({ dragIndex, hoverIndex }));
-                    }}
                   />
                 );
               })}
@@ -158,16 +152,10 @@ export const TabList: React.FC<TabListProps> = ({ searchQuery }) => {
             {filteredGroups
               .filter((_, index) => index % 2 === 1)
               .map((group) => {
-                // 计算在原始数组中的实际索引
-                const originalIndex = filteredGroups.findIndex(g => g.id === group.id);
                 return (
-                  <DraggableTabGroup
+                  <DraggableTabGroupKit
                     key={group.id}
                     group={group}
-                    index={originalIndex}
-                    moveGroup={(dragIndex, hoverIndex) => {
-                      dispatch(moveGroupAndSync({ dragIndex, hoverIndex }));
-                    }}
                   />
                 );
               })}
@@ -176,14 +164,10 @@ export const TabList: React.FC<TabListProps> = ({ searchQuery }) => {
       ) : (
         // 单栏布局
         <div className="space-y-2 transition-all">
-          {filteredGroups.map((group, index) => (
-            <DraggableTabGroup
+          {filteredGroups.map((group) => (
+            <DraggableTabGroupKit
               key={group.id}
               group={group}
-              index={index}
-              moveGroup={(dragIndex, hoverIndex) => {
-                dispatch(moveGroupAndSync({ dragIndex, hoverIndex }));
-              }}
             />
           ))}
         </div>
@@ -194,7 +178,7 @@ export const TabList: React.FC<TabListProps> = ({ searchQuery }) => {
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
           <div className="bg-white rounded-lg p-6 max-w-md w-full">
             <h3 className="text-lg font-medium mb-4">恢复所有标签页</h3>
-            <p className="mb-4">确定要恢复标签组 "{selectedGroup.name}" 中的所有 {selectedGroup.tabs.length} 个标签页吗？</p>
+            <p className="mb-4">确定要恢复标签组 &quot;{selectedGroup.name}&quot; 中的所有 {selectedGroup.tabs.length} 个标签页吗？</p>
 
             <div className="flex justify-end space-x-2">
               <button

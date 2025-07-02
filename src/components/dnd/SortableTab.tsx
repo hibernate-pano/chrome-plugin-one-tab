@@ -40,6 +40,7 @@ export const SortableTab: React.FC<SortableTabProps> = ({
     transform: CSS.Transform.toString(transform),
     opacity: isDragging ? 0.5 : 1,
     zIndex: isDragging ? 999 : 'auto',
+    position: 'relative' as const,
     transition: isDragging ? undefined : 'transform 0.15s ease, opacity 0.15s ease',
   };
 

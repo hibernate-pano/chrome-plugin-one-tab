@@ -1,58 +1,36 @@
 import React from 'react';
-import { useSortable } from '@dnd-kit/sortable';
+import { useDraggable } from '@dnd-kit/core';
 import { CSS } from '@dnd-kit/utilities';
 import { Tab } from '@/types/tab';
 
-interface SimpleDraggableTabProps {
+interface DraggableTabKitProps {
   tab: Tab;
-  groupId: string;
-  index: number;
   handleOpenTab: (tab: Tab) => void;
   handleDeleteTab: (tabId: string) => void;
 }
 
-export const SimpleDraggableTab: React.FC<SimpleDraggableTabProps> = ({
+export const DraggableTabKit: React.FC<DraggableTabKitProps> = ({
   tab,
-  groupId,
-  index,
   handleOpenTab,
   handleDeleteTab
 }) => {
-  // 使用dnd-kit的useSortable钩子
-  const {
-    attributes,
-    listeners,
-    setNodeRef,
-    transform,
-    transition,
-    isDragging,
-  } = useSortable({
-    id: `${groupId}-tab-${tab.id}`,
-    data: {
-      type: 'tab',
-      tab,
-      groupId,
-      index
-    }
+  const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({
+    id: tab.id,
+    data: { tab, type: 'Tab' },
   });
 
-  // 设置样式，提供清晰的拖拽反馈
   const style = {
     transform: CSS.Transform.toString(transform),
-    transition,
-    opacity: isDragging ? 0.5 : 1,
-    zIndex: isDragging ? 999 : 'auto',
-    position: 'relative' as const,
   };
 
   return (
     <div
       ref={setNodeRef}
       style={style}
-      className={`flex items-center py-1 px-2 bg-white dark:bg-gray-800 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors rounded ${isDragging ? 'opacity-50 border-dashed border-primary-400' : 'opacity-100'
-        }`}
-      {...attributes}
       {...listeners}
+      {...attributes}
+      className={`flex items-center py-1 px-2 bg-white dark:bg-gray-800 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors rounded ${isDragging ? 'opacity-50 border-dashed border-primary-400' : 'opacity-100'}`}
+      // Removed cursor: 'move' here, as it's handled by listeners
     >
       <div className="flex items-center space-x-2 flex-1 min-w-0">
         {tab.favicon ? (

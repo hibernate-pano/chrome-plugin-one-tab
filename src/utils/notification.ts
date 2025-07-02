@@ -27,7 +27,12 @@ export async function showNotification(
 
   // 创建通知并返回通知ID
   return new Promise((resolve) => {
-    chrome.notifications.create(notificationOptions as any, (notificationId) => {
+    chrome.notifications.create({
+      type: notificationOptions.type as any,
+      iconUrl: notificationOptions.iconUrl || '',
+      title: notificationOptions.title || '',
+      message: notificationOptions.message || '',
+    }, (notificationId) => {
       resolve(notificationId);
     });
   });
@@ -62,7 +67,12 @@ export async function showNotificationWithId(
 
   // 创建通知并返回通知ID
   return new Promise((resolve) => {
-    chrome.notifications.create(id, notificationOptions as any, (notificationId) => {
+    chrome.notifications.create(id, {
+      type: notificationOptions.type as any,
+      iconUrl: notificationOptions.iconUrl || '',
+      title: notificationOptions.title || '',
+      message: notificationOptions.message || '',
+    }, (notificationId) => {
       resolve(notificationId);
     });
   });

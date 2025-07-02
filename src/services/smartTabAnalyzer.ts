@@ -1,9 +1,9 @@
+import { Tab } from '@/types/tab';
+
 /**
  * 智能标签分析和搜索增强服务
  * 提供智能分组建议、增强搜索功能和标签元数据分析
  */
-
-import { Tab } from '@/types/tab';
 
 export interface TabMetadata {
   keywords: string[];
@@ -65,24 +65,36 @@ export class SmartTabAnalyzer {
    * 分析单个标签页的元数据
    */
   async analyzeTab(tab: Tab): Promise<TabMetadata> {
-    const url = new URL(tab.url);
-    const domain = url.hostname;
-    
-    const [keywords, category, readingTime, importance] = await Promise.all([
-      this.extractKeywords(tab.title, tab.url),
-      this.categorizeContent(domain, tab.title),
-      this.estimateReadingTime(tab.title, tab.url),
-      this.calculateImportance(tab, domain)
-    ]);
+    try {
+      const url = new URL(tab.url);
+      const domain = url.hostname;
+      
+      const [keywords, category, readingTime, importance] = await Promise.all([
+        this.extractKeywords(tab.title, tab.url),
+        this.categorizeContent(domain, tab.title),
+        this.estimateReadingTime(tab.title, tab.url),
+        this.calculateImportance(tab, domain)
+      ]);
 
-    return {
-      keywords,
-      category,
-      readingTime,
-      importance,
-      domain,
-      contentType: this.detectContentType(tab.url, tab.title)
-    };
+      return {
+        keywords,
+        category,
+        readingTime,
+        importance,
+        domain,
+        contentType: this.detectContentType(tab.url, tab.title)
+      };
+    } catch (error) {
+      console.error('分析标签页失败:', error);
+      return {
+        keywords: [],
+        category: '其他',
+        readingTime: 1,
+        importance: 5,
+        domain: 'unknown',
+        contentType: '网页'
+      };
+    }
   }
 
   /**
@@ -178,7 +190,7 @@ export class SmartTabAnalyzer {
     let score = 5; // 基础分数
 
     // 基于访问频率（如果有数据）
-    const visitCount = (tab as any).visitCount || 0;
+    const visitCount = 0; // tab.visitCount 属性不存在，暂时设为0
     score += Math.min(visitCount / 10, 3);
 
     // 基于域名权重
@@ -460,7 +472,7 @@ export class EnhancedSearchService {
     const textLower = text.toLowerCase();
     let startIndex = 0;
     
-    while (true) {
+    while (startIndex < textLower.length) {
       const index = textLower.indexOf(query, startIndex);
       if (index === -1) break;
       
@@ -476,7 +488,7 @@ export class EnhancedSearchService {
   }
 
   private async searchByTag(_tabs: Tab[], _tag: string): Promise<SearchResult[]> {
-    // 这里需要标签系统的支持
+    // 这里需要标签系统的支持，暂时返回空数组
     return [];
   }
 

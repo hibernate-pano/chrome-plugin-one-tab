@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useRef } from 'react';
 import { useAppDispatch } from '@/store/hooks';
 import { setSearchQuery } from '@/store/slices/tabSlice';
 import { debounce } from 'lodash';
@@ -7,13 +7,10 @@ export const SearchBar: React.FC = () => {
   const dispatch = useAppDispatch();
   const [localQuery, setLocalQuery] = useState('');
 
-  // 使用debounce来优化搜索性能
-  const debouncedSearch = useCallback(
-    debounce((query: string) => {
-      dispatch(setSearchQuery(query));
-    }, 300),
-    [dispatch]
-  );
+  // 使用useRef来存储debounce函数，确保它只创建一次
+  const debouncedSearch = useRef(debounce((query: string) => {
+    dispatch(setSearchQuery(query));
+  }, 300)).current;
 
   const handleSearch = (e: React.ChangeEvent<HTMLInputElement>) => {
     const query = e.target.value;

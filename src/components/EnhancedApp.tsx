@@ -1,12 +1,12 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
 import { useAppDispatch, useAppSelector } from '@/store/hooks';
 import { loadGroups } from '@/store/slices/tabSlice';
 import { loadSettings } from '@/store/slices/settingsSlice';
 import { getCurrentUser } from '@/store/slices/authSlice';
 import { EnhancedTabList } from '@/components/tabs/EnhancedTabList';
 import { LoadingOverlay } from '@/components/common/LoadingOverlay';
-import { Toast } from '@/components/common/Toast';
-import { intelligentSync } from '@/services/intelligentSyncServiceFixed';
+import { Toast } from '@/design-system/components/Toast/Toast';
+import { intelligentSync } from '@/services/intelligentSyncService';
 
 /**
  * 增强版主应用组件
@@ -89,28 +89,14 @@ export const EnhancedApp: React.FC = () => {
     };
   }, []);
 
-  // 键盘快捷键全局处理
-  useEffect(() => {
-    const handleGlobalKeyDown = (e: KeyboardEvent) => {
-      // Alt+Shift+S: 保存所有标签页
-      if (e.altKey && e.shiftKey && e.key === 'S') {
-        e.preventDefault();
-        saveAllTabs();
-      }
-      
-      // Alt+S: 保存当前标签页
-      if (e.altKey && !e.shiftKey && e.key === 's') {
-        e.preventDefault();
-        saveCurrentTab();
-      }
-    };
-
-    document.addEventListener('keydown', handleGlobalKeyDown);
-    return () => document.removeEventListener('keydown', handleGlobalKeyDown);
+  // 显示提示消息
+  const showToast = useCallback((message: string, type: 'success' | 'error' | 'warning' = 'success') => {
+    // 这里应该使用Toast组件或通知系统
+    console.log(`[${type.toUpperCase()}] ${message}`);
   }, []);
 
   // 保存所有标签页
-  const saveAllTabs = async () => {
+  const saveAllTabs = useCallback(async () => {
     if (typeof chrome !== 'undefined' && chrome.tabs) {
       try {
         const tabs = await chrome.tabs.query({ currentWindow: true });
@@ -132,10 +118,10 @@ export const EnhancedApp: React.FC = () => {
         showToast('保存标签页失败', 'error');
       }
     }
-  };
+  }, [showToast]);
 
   // 保存当前标签页
-  const saveCurrentTab = async () => {
+  const saveCurrentTab = useCallback(async () => {
     if (typeof chrome !== 'undefined' && chrome.tabs) {
       try {
         const [activeTab] = await chrome.tabs.query({ active: true, currentWindow: true });
@@ -154,13 +140,27 @@ export const EnhancedApp: React.FC = () => {
         showToast('保存标签页失败', 'error');
       }
     }
-  };
+  }, [showToast]);
 
-  // 显示提示消息
-  const showToast = (message: string, type: 'success' | 'error' | 'warning' = 'success') => {
-    // 这里应该使用Toast组件或通知系统
-    console.log(`[${type.toUpperCase()}] ${message}`);
-  };
+  // 键盘快捷键全局处理
+  useEffect(() => {
+    const handleGlobalKeyDown = (e: KeyboardEvent) => {
+      // Alt+Shift+S: 保存所有标签页
+      if (e.altKey && e.shiftKey && e.key === 'S') {
+        e.preventDefault();
+        saveAllTabs();
+      }
+      
+      // Alt+S: 保存当前标签页
+      if (e.altKey && !e.shiftKey && e.key === 's') {
+        e.preventDefault();
+        saveCurrentTab();
+      }
+    };
+
+    document.addEventListener('keydown', handleGlobalKeyDown);
+    return () => document.removeEventListener('keydown', handleGlobalKeyDown);
+  }, [saveAllTabs, saveCurrentTab]);
 
   // 重试初始化
   const retryInitialization = () => {

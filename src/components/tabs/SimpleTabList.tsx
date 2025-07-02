@@ -2,7 +2,8 @@ import React, { useEffect, useState } from 'react';
 import { useAppDispatch, useAppSelector } from '@/store/hooks';
 import { loadGroups, moveGroupAndSync, moveTabAndSync } from '@/store/slices/tabSlice';
 import { SearchResultList } from '@/components/search/SearchResultList';
-import { SimpleDraggableTabGroup } from '@/components/dnd/SimpleDraggableTabGroup';
+import { SortableTabGroup } from '@/components/dnd/SortableTabGroup';
+import { Tab, TabGroup } from '@/types/tab';
 import '@/styles/drag-drop.css';
 import {
   DndContext,
@@ -32,7 +33,7 @@ export const SimpleTabList: React.FC<SimpleTabListProps> = ({ searchQuery }) => 
   const groups = useAppSelector((state) => state.tabs.groups);
   const useDoubleColumnLayout = useAppSelector((state) => state.settings.useDoubleColumnLayout);
   const [activeId, setActiveId] = useState<UniqueIdentifier | null>(null);
-  const [activeData, setActiveData] = useState<any | null>(null);
+  const [activeData, setActiveData] = useState<({ type: 'tab'; tab: Tab; groupId: string; index: number; } | { type: 'group'; group: TabGroup; index: number; }) | null>(null);
 
   useEffect(() => {
     dispatch(loadGroups());
@@ -61,7 +62,8 @@ export const SimpleTabList: React.FC<SimpleTabListProps> = ({ searchQuery }) => 
   const handleDragStart = (event: DragStartEvent) => {
     const { active } = event;
     setActiveId(active.id);
-    setActiveData(active.data.current);
+    const currentData = active.data.current as any;
+    setActiveData(currentData);
   };
 
   // 处理拖拽结束
@@ -158,7 +160,7 @@ export const SimpleTabList: React.FC<SimpleTabListProps> = ({ searchQuery }) => 
                   {filteredGroups
                     .filter((_, index) => index % 2 === 0)
                     .map((group) => (
-                      <SimpleDraggableTabGroup
+                      <SortableTabGroup
                         key={group.id}
                         group={group}
                         index={filteredGroups.findIndex(g => g.id === group.id)}
@@ -171,7 +173,7 @@ export const SimpleTabList: React.FC<SimpleTabListProps> = ({ searchQuery }) => 
                   {filteredGroups
                     .filter((_, index) => index % 2 === 1)
                     .map((group) => (
-                      <SimpleDraggableTabGroup
+                      <SortableTabGroup
                         key={group.id}
                         group={group}
                         index={filteredGroups.findIndex(g => g.id === group.id)}
@@ -185,7 +187,7 @@ export const SimpleTabList: React.FC<SimpleTabListProps> = ({ searchQuery }) => 
             <SortableContext items={groupIds} strategy={verticalListSortingStrategy}>
               <div className="space-y-2">
                 {filteredGroups.map((group, index) => (
-                  <SimpleDraggableTabGroup
+                  <SortableTabGroup
                     key={group.id}
                     group={group}
                     index={index}

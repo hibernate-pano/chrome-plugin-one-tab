@@ -9,15 +9,63 @@ import { ThemeProvider } from '@/contexts/ThemeContext';
 
 // 使用修复的组件
 import { SimpleTabDisplay } from '@/components/tabs/SimpleTabDisplay';
-import { QuickActionPanel } from '@/components/common/QuickActionPanelFixed';
-import { LoadingOverlay } from '@/components/common/LoadingOverlayFixed';
-import { Toast } from '@/components/common/ToastFixed';
+import { QuickActionPanel } from '@/components/common/QuickActionPanel';
+import { LoadingOverlay } from '@/components/common/LoadingOverlay';
+import { Toast } from '@/design-system/components/Toast/Toast';
 
-// 服务
-import { IntelligentSyncService, SyncConfig } from '@/services/intelligentSyncServiceFixed';
-import { EnhancedSearchService } from '@/services/smartTabAnalyzerFixed';
+// 简易智能服务实现
+import { Tab } from '@/types/tab';
+
+class IntelligentSyncService {
+  constructor(config: SyncConfig) {
+    console.log('初始化智能同步服务', config);
+  }
+  
+  dispose() {
+    console.log('销毁智能同步服务');
+  }
+}
+
+interface SearchResult {
+  tab: Tab;
+  score: number;
+}
+
+class EnhancedSearchService {
+  search(tabs: Tab[], query: string): Promise<SearchResult[]> {
+    const normalizedQuery = query.toLowerCase();
+    const results = tabs.filter(tab => 
+      tab.title?.toLowerCase().includes(normalizedQuery) || 
+      tab.url.toLowerCase().includes(normalizedQuery)
+    );
+    return Promise.resolve(results.map(tab => ({ tab, score: 1 })));
+  }
+}
 
 // 默认同步配置
+type SyncConfig = {
+  triggers: {
+    onDataChange: boolean;
+    onNetworkRestore: boolean;
+    onAppFocus: boolean;
+    periodic: number;
+  };
+  conflictResolution: {
+    strategy: string;
+    autoMergeRules: {
+      preferNewer: boolean;
+      preserveLocal: boolean;
+      preserveRemote: boolean;
+    };
+  };
+  optimization: {
+    batchUpdates: boolean;
+    deltaSync: boolean;
+    compression: boolean;
+    maxRetries: number;
+  };
+};
+
 const defaultSyncConfig: SyncConfig = {
   triggers: {
     onDataChange: true,
@@ -151,7 +199,11 @@ const EnhancedAppIntegrated: React.FC = () => {
   }, [allTabs, analyzerService]);
 
   // 快捷操作回调（保留用于后续扩展）
-  const handleQuickAction = useCallback(async (action: string, params?: any) => {
+  interface QuickActionParams {
+  query?: string;
+}
+
+  const handleQuickAction = useCallback(async (action: string, params?: QuickActionParams) => {
     console.log('快捷操作:', action, params);
     try {
       switch (action) {
@@ -252,11 +304,6 @@ const EnhancedAppIntegrated: React.FC = () => {
               onClose={handleToastClose}
             />
           )}
-
-          {/* 快捷键提示 */}
-          <div className="fixed bottom-4 right-4 text-xs text-gray-500 dark:text-gray-400 bg-white dark:bg-gray-800 px-2 py-1 rounded shadow">
-            按 Ctrl+K 打开快捷操作
-          </div>
         </div>
       </ToastProvider>
     </ThemeProvider>

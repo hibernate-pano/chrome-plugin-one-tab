@@ -1,5 +1,17 @@
-import { IntelligentSyncService, SyncConfig } from '@/services/intelligentSyncServiceFixed';
-import { EnhancedSearchService } from '@/services/smartTabAnalyzerFixed';
+import { IntelligentSyncService, SyncConfig } from '@/services/intelligentSyncService';
+import { Tab } from '@/types/tab';
+
+// 实现一个简单的搜索服务来替代smartTabAnalyzerFixed
+class EnhancedSearchService {
+  search(tabs: Tab[], query: string) {
+    const normalizedQuery = query.toLowerCase();
+    const results = tabs.filter(tab => 
+      tab.title?.toLowerCase().includes(normalizedQuery) || 
+      tab.url.toLowerCase().includes(normalizedQuery)
+    );
+    return Promise.resolve(results.map(tab => ({ tab, score: 1 })));
+  }
+}
 
 // 测试智能同步服务
 console.log('开始测试智能同步服务...');

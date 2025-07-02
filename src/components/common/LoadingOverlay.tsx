@@ -1,30 +1,22 @@
-import React, { memo } from 'react';
+import React from 'react';
 
 interface LoadingOverlayProps {
-  isVisible: boolean;
   message?: string;
+  isVisible?: boolean;
 }
 
-// 使用 React.memo 减少不必要的重新渲染
-// 只有当 props 变化时才会重新渲染
-export const LoadingOverlay: React.FC<LoadingOverlayProps> = memo(({
-  isVisible,
-  message = '正在加载数据...'
+export const LoadingOverlay: React.FC<LoadingOverlayProps> = ({ 
+  message = '加载中...', 
+  isVisible = true 
 }) => {
   if (!isVisible) return null;
 
-  // 使用更轻量级的样式，减少渲染负担
   return (
-    <div
-      className={`fixed top-0 right-0 mt-4 mr-4 z-50 transition-opacity duration-300`}
-      style={{ pointerEvents: 'none' }}
-    >
-      <div className="flex items-center bg-white bg-opacity-90 px-4 py-2 rounded-lg shadow-sm border border-gray-200">
-        <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-primary-600 mr-2"></div>
-        {message && (
-          <div className="text-xs text-primary-600 font-medium">{message}</div>
-        )}
+    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+      <div className="bg-white rounded-lg p-6 flex items-center space-x-4">
+        <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-blue-600"></div>
+        <span className="text-gray-700">{message}</span>
       </div>
     </div>
   );
-});
+};
