@@ -1,6 +1,7 @@
 import { store } from '@/store';
 import { syncService } from '@/services/syncService';
 import { storage } from '@/utils/storage';
+import { supabase } from '@/utils/supabase';
 
 export interface AutoSyncOptions {
   enabled: boolean;
@@ -40,14 +41,23 @@ class AutoSyncManager {
    * 监听设置变化
    */
   private watchSettingsChanges() {
+    let previousSettings = store.getState().settings;
+    
     store.subscribe(() => {
-      const state = store.getState();
-      const { autoSyncEnabled, syncInterval } = state.settings;
+      const currentSettings = store.getState().settings;
+      const { autoSyncEnabled, syncInterval } = currentSettings;
       
-      if (autoSyncEnabled) {
-        this.updateSyncInterval(syncInterval);
-      } else {
-        this.stopPeriodicSync();
+      // 只有在相关设置发生变化时才更新
+      if (previousSettings.autoSyncEnabled !== autoSyncEnabled || 
+          previousSettings.syncInterval !== syncInterval) {
+        
+        if (autoSyncEnabled) {
+          this.updateSyncInterval(syncInterval);
+        } else {
+          this.stopPeriodicSync();
+        }
+        
+        previousSettings = currentSettings;
       }
     });
   }
@@ -143,7 +153,7 @@ class AutoSyncManager {
   }
 
   /**
-   * 执行自动同步
+   * 执行自动同步（双向：上传 + 下载检查）
    */
   private async performAutoSync(trigger: string) {
     const currentTime = Date.now();
@@ -173,27 +183,51 @@ class AutoSyncManager {
       this.pendingSync = true;
       this.lastSyncTime = currentTime;
       
-      console.log(`🔄 开始自动同步 (触发：${trigger})`);
+      console.log(`🔄 开始智能双向同步 (触发：${trigger})`);
       
-      // 使用智能上传（合并模式，静默进行）
-      const result = await syncService.uploadToCloud(true, false); // background=true, overwrite=false
+      // 1. 先检查云端数据是否有更新
+      const needDownload = await this.checkCloudDataUpdate();
       
-      if (result.success) {
-        console.log('✅ 自动同步完成');
-        // 可选：显示简单通知
-        if (state.settings.showNotifications) {
-          this.showSyncNotification('success', '数据已自动同步');
+      if (needDownload) {
+        console.log('🔄 检测到云端数据更新，开始下载');
+        await this.performSmartDownload();
+      }
+      
+      // 2. 再上传本地数据（如果是用户操作触发的）
+      if (trigger === 'user_action') {
+        console.log('🔄 用户操作触发，上传本地数据');
+        const result = await syncService.uploadToCloud(true, false); // background=true, overwrite=false
+        
+        if (result.success) {
+          console.log('✅ 本地数据上传完成');
+        } else {
+          console.error('❌ 本地数据上传失败:', result.error);
         }
-      } else {
-        console.error('❌ 自动同步失败:', result.error);
-        // 只在关键错误时通知用户
-        if (!result.error?.includes('网络') && state.settings.showNotifications) {
-          this.showSyncNotification('error', '自动同步失败');
+      }
+      
+      // 3. 定期同步时，根据情况决定是否上传
+      if (trigger === 'periodic') {
+        // 检查本地是否有未同步的数据
+        const hasLocalChanges = await this.checkLocalChanges();
+        if (hasLocalChanges) {
+          console.log('🔄 检测到本地有未同步数据，开始上传');
+          await syncService.uploadToCloud(true, false);
         }
+      }
+      
+      console.log('✅ 智能双向同步完成');
+      
+      // 显示通知
+      if (state.settings.showNotifications) {
+        this.showSyncNotification('success', '数据已自动同步');
       }
       
     } catch (error) {
       console.error('❌ 自动同步异常:', error);
+      const state = store.getState();
+      if (state.settings.showNotifications) {
+        this.showSyncNotification('error', '自动同步失败');
+      }
     } finally {
       this.pendingSync = false;
     }
@@ -243,6 +277,12 @@ class AutoSyncManager {
    */
   private async startPeriodicSync() {
     const settings = await storage.getSettings();
+    console.log('📊 加载的设置：', {
+      autoSyncEnabled: settings.autoSyncEnabled,
+      syncInterval: settings.syncInterval,
+      syncEnabled: settings.syncEnabled
+    });
+    
     if (settings.autoSyncEnabled) {
       this.updateSyncInterval(settings.syncInterval);
     }
@@ -272,6 +312,153 @@ class AutoSyncManager {
       clearInterval(this.intervalId);
       this.intervalId = null;
       console.log('🔄 停止定期同步');
+    }
+  }
+
+  /**
+   * 检查云端数据是否有更新
+   */
+  private async checkCloudDataUpdate(): Promise<boolean> {
+    try {
+      const state = store.getState();
+      const { isAuthenticated } = state.auth;
+      
+      if (!isAuthenticated) {
+        return false;
+      }
+
+      // 获取云端数据时间戳
+      const cloudTimestamp = await this.getCloudDataTimestamp();
+      if (!cloudTimestamp) {
+        return false;
+      }
+
+      // 获取本地数据时间戳
+      const localTimestamp = await this.getLocalDataTimestamp();
+      if (!localTimestamp) {
+        // 本地没有数据，需要下载
+        return true;
+      }
+
+      // 比较时间戳，云端数据更新时间比本地更新时间新
+      const cloudTime = new Date(cloudTimestamp).getTime();
+      const localTime = new Date(localTimestamp).getTime();
+      
+      const needUpdate = cloudTime > localTime;
+      
+      if (needUpdate) {
+        console.log('🔄 云端数据更新时间:', cloudTimestamp, '本地数据更新时间:', localTimestamp);
+      }
+      
+      return needUpdate;
+    } catch (error) {
+      console.error('检查云端数据更新失败:', error);
+      return false;
+    }
+  }
+
+  /**
+   * 获取云端数据最后更新时间
+   */
+  private async getCloudDataTimestamp(): Promise<string | null> {
+    try {
+      const { auth } = store.getState();
+      if (!auth.isAuthenticated) {
+        return null;
+      }
+
+      // 直接查询云端数据的最新更新时间
+      const { data: groups } = await supabase
+        .from('tab_groups')
+        .select('updated_at')
+        .eq('user_id', auth.user?.id)
+        .order('updated_at', { ascending: false })
+        .limit(1);
+
+      if (groups && groups.length > 0) {
+        return groups[0].updated_at;
+      }
+
+      return null;
+    } catch (error) {
+      console.error('获取云端数据时间戳失败:', error);
+      return null;
+    }
+  }
+
+  /**
+   * 获取本地数据最后更新时间
+   */
+  private async getLocalDataTimestamp(): Promise<string | null> {
+    try {
+      const localGroups = await storage.getGroups();
+      if (localGroups.length === 0) {
+        return null;
+      }
+
+      // 找到最新的本地数据更新时间
+      const latestGroup = localGroups.reduce((latest, group) => {
+        const latestTime = new Date(latest.updatedAt).getTime();
+        const groupTime = new Date(group.updatedAt).getTime();
+        return groupTime > latestTime ? group : latest;
+      });
+
+      return latestGroup.updatedAt;
+    } catch (error) {
+      console.error('获取本地数据时间戳失败:', error);
+      return null;
+    }
+  }
+
+  /**
+   * 执行智能下载
+   */
+  private async performSmartDownload() {
+    try {
+      // 检查本地是否有数据
+      const hasLocal = await syncService.hasLocalData();
+      
+      if (hasLocal) {
+        // 本地有数据，使用合并模式
+        await syncService.downloadFromCloud(true, false); // background=true, overwrite=false
+        console.log('✅ 智能下载完成（合并模式）');
+      } else {
+        // 本地没有数据，使用覆盖模式
+        await syncService.downloadFromCloud(true, true); // background=true, overwrite=true
+        console.log('✅ 智能下载完成（覆盖模式）');
+      }
+    } catch (error) {
+      console.error('智能下载失败:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * 检查本地是否有未同步的数据
+   */
+  private async checkLocalChanges(): Promise<boolean> {
+    try {
+      const state = store.getState();
+      const { lastSyncTime } = state.tabs;
+      
+      if (!lastSyncTime) {
+        // 没有同步记录，认为有未同步的数据
+        return true;
+      }
+
+      // 检查本地数据是否在最后同步时间之后有更新
+      const localTimestamp = await this.getLocalDataTimestamp();
+      if (!localTimestamp) {
+        return false;
+      }
+
+      const localTime = new Date(localTimestamp).getTime();
+      const syncTime = new Date(lastSyncTime).getTime();
+      
+      return localTime > syncTime;
+    } catch (error) {
+      console.error('检查本地变更失败:', error);
+      return false;
     }
   }
 

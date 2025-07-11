@@ -29,6 +29,7 @@ export const SyncSettings: React.FC = () => {
   };
 
   const handleSyncIntervalChange = async (interval: number) => {
+    console.log('🔄 更改同步间隔：', interval);
     dispatch(setSyncInterval(interval));
     await dispatch(saveSettings({
       ...settings,
@@ -52,6 +53,12 @@ export const SyncSettings: React.FC = () => {
         <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100 mb-4">
           📱 同步设置
         </h3>
+        
+        {/* 调试信息 */}
+        <div className="mb-4 p-2 bg-gray-50 dark:bg-gray-900 rounded text-xs">
+          <div>当前设置：syncInterval = {settings.syncInterval}</div>
+          <div>autoSyncEnabled = {settings.autoSyncEnabled ? 'true' : 'false'}</div>
+        </div>
 
         {/* 基础同步开关 */}
         <div className="flex items-center justify-between py-2">
@@ -126,10 +133,11 @@ export const SyncSettings: React.FC = () => {
         {/* 同步状态说明 */}
         <div className="mt-4 p-3 bg-blue-50 dark:bg-blue-900/20 rounded-lg">
           <div className="text-sm text-blue-800 dark:text-blue-200">
-            <div className="font-medium mb-1">💡 智能同步说明：</div>
+            <div className="font-medium mb-1">💡 智能双向同步说明：</div>
             <ul className="space-y-1 text-xs">
-              <li>• 登录后自动下载云端数据</li>
-              <li>• 保存/删除/拖拽后自动上传</li>
+              <li>• 登录后自动检查并下载云端数据</li>
+              <li>• 操作后3秒内自动上传到云端</li>
+              <li>• 定期检查云端数据更新并自动下载</li>
               <li>• 智能合并，避免数据冲突</li>
               <li>• 防抖处理，避免频繁同步</li>
             </ul>

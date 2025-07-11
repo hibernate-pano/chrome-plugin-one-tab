@@ -2,6 +2,7 @@ import { createClient } from '@supabase/supabase-js';
 import { TabGroup, UserSettings, TabData, SupabaseTabGroup } from '@/types/tab';
 import { setWechatLoginTimeout, clearWechatLoginTimeout } from './wechatLoginTimeout';
 import { encryptData, decryptData, isEncrypted } from './encryptionUtils';
+import { logError, createErrorMessage } from './errorUtils';
 
 // 从环境变量中获取 Supabase 配置
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL as string;
@@ -614,20 +615,14 @@ export const sync = {
       result = data;
 
       if (error) {
-        console.error('上传标签组失败:', error);
-        console.error('错误详情:', {
-          code: error.code,
-          message: error.message,
-          details: error.details,
-          hint: error.hint
-        });
-        throw error;
+        logError('上传标签组失败', error);
+        throw new Error(createErrorMessage('上传标签组失败', error));
       }
 
       console.log('标签组元数据和标签数据上传成功');
     } catch (e) {
-      console.error('上传标签组时发生异常:', e);
-      throw e;
+      logError('上传标签组时发生异常', e);
+      throw new Error(createErrorMessage('上传标签组时发生异常', e));
     }
 
     console.log('所有数据上传成功');
@@ -872,13 +867,37 @@ export const sync = {
 
     // 将驼峰命名法转换为下划线命名法
     const convertedSettings: Record<string, any> = {};
+    
+    // 定义允许同步的设置字段白名单（仅基础字段）
+    const allowedSettingsFields = [
+      'syncEnabled',
+      'autoSyncEnabled',
+      'syncInterval',
+      'themeMode'
+    ];
+    
+    // 暂时只同步核心字段，排除可能有问题的字段
+    
     for (const [key, value] of Object.entries(settings)) {
-      // 将驼峰命名转换为下划线命名
-      const snakeKey = key.replace(/([A-Z])/g, '_$1').toLowerCase();
-      convertedSettings[snakeKey] = value;
+      // 只处理白名单中的字段
+      if (allowedSettingsFields.includes(key)) {
+        // 将驼峰命名转换为下划线命名
+        const snakeKey = key.replace(/([A-Z])/g, '_$1').toLowerCase();
+        
+        // 数据验证：确保值不是 undefined 或 null
+        if (value !== undefined && value !== null) {
+          convertedSettings[snakeKey] = value;
+        }
+      }
     }
 
     console.log('转换后的设置:', convertedSettings);
+    console.log('准备上传的数据:', JSON.stringify({
+      user_id: user.id,
+      device_id: deviceId,
+      last_sync: new Date().toISOString(),
+      ...convertedSettings
+    }, null, 2));
 
     const { data, error } = await supabase
       .from('user_settings')
@@ -890,14 +909,8 @@ export const sync = {
       }, { onConflict: 'user_id' });
 
     if (error) {
-      console.error('上传用户设置失败:', error);
-      console.error('错误详情:', {
-        code: error.code,
-        message: error.message,
-        details: error.details,
-        hint: error.hint
-      });
-      throw error;
+      logError('上传用户设置失败', error);
+      throw new Error(createErrorMessage('上传用户设置失败', error));
     }
 
     return data;
@@ -951,14 +964,8 @@ export const sync = {
       .single();
 
     if (error && error.code !== 'PGRST116') {
-      console.error('下载用户设置失败:', error);
-      console.error('错误详情:', {
-        code: error.code,
-        message: error.message,
-        details: error.details,
-        hint: error.hint
-      });
-      throw error;
+      logError('下载用户设置失败', error);
+      throw new Error(createErrorMessage('下载用户设置失败', error));
     }
 
     // 如果有数据，将下划线命名法转换为驼峰命名法
