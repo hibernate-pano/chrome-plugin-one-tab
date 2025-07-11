@@ -4,22 +4,43 @@ import { TabGroup, TabData, SupabaseTabGroup } from '@/types/tab';
 const ENCRYPTION_PREFIX = 'ENCRYPTED_V1:';
 
 /**
- * 从用户ID生成加密密钥
+ * 从用户ID生成加密密钥（使用安全的密钥派生）
  * @param userId 用户ID
+ * @param salt 可选的盐值
  * @returns 生成的加密密钥
  */
-async function generateKeyFromUserId(userId: string): Promise<CryptoKey> {
-  // 使用用户ID作为种子生成密钥
+async function generateKeyFromUserId(userId: string, salt?: string): Promise<CryptoKey> {
+  // 使用用户ID和盐值作为种子生成密钥
   const encoder = new TextEncoder();
-  const data = encoder.encode(userId);
   
-  // 使用SHA-256哈希用户ID
-  const hashBuffer = await crypto.subtle.digest('SHA-256', data);
+  // 使用固定盐值或提供的盐值
+  const defaultSalt = 'onetab-plus-encryption-salt-2024';
+  const actualSalt = salt || defaultSalt;
   
-  // 从哈希生成AES-GCM密钥
-  return crypto.subtle.importKey(
+  // 合并用户ID和盐值
+  const combinedData = encoder.encode(userId + actualSalt);
+  
+  // 使用PBKDF2派生密钥，这比简单的SHA-256更安全
+  const keyMaterial = await crypto.subtle.importKey(
     'raw',
-    hashBuffer,
+    combinedData,
+    { name: 'PBKDF2' },
+    false,
+    ['deriveBits', 'deriveKey']
+  );
+  
+  // 生成盐值用于PBKDF2
+  const pbkdf2Salt = encoder.encode(actualSalt);
+  
+  // 使用PBKDF2派生最终密钥
+  return crypto.subtle.deriveKey(
+    {
+      name: 'PBKDF2',
+      salt: pbkdf2Salt,
+      iterations: 100000, // 100k iterations for security
+      hash: 'SHA-256'
+    },
+    keyMaterial,
     { name: 'AES-GCM', length: 256 },
     false,
     ['encrypt', 'decrypt']

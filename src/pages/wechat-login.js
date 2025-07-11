@@ -47,8 +47,16 @@ document.addEventListener('DOMContentLoaded', async () => {
   updateLoginStatus('pending');
 
   const checkScanStatus = () => {
+    // 在生产环境中禁用模拟登录
+    if (import.meta.env.PROD) {
+      clearInterval(pollingId);
+      document.getElementById('status-text').textContent = '微信登录功能暂时不可用';
+      updateLoginStatus('error', '生产环境不支持模拟登录');
+      return;
+    }
+    
     // 实际应用中，这里应该调用微信API检查扫码状态
-    // 这里我们模拟不同的状态变化
+    // 这里我们模拟不同的状态变化（仅在开发环境）
 
     if (scanStatus === 'waiting') {
       // 模拟用户扫码

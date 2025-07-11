@@ -1,7 +1,7 @@
 import React, { useState, useCallback } from 'react';
 import { useAppDispatch } from '@/store/hooks';
 import { setSearchQuery } from '@/store/slices/tabSlice';
-import { debounce } from 'lodash';
+import debounce from 'lodash.debounce';
 
 export const SearchBar: React.FC = () => {
   const dispatch = useAppDispatch();

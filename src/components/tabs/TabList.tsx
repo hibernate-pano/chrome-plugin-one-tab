@@ -1,8 +1,8 @@
 import React, { useEffect, useState, lazy } from 'react';
 import { useAppDispatch, useAppSelector } from '@/store/hooks';
-import { loadGroups, deleteGroup, moveGroupAndSync } from '@/store/slices/tabSlice';
+import { loadGroups, deleteGroup } from '@/store/slices/tabSlice';
 
-import { DraggableTabGroup } from '@/components/dnd/DraggableTabGroup';
+import { TabGroup } from './TabGroup';
 import { SearchResultList } from '@/components/search/SearchResultList';
 import { TabGroup as TabGroupType } from '@/types/tab';
 
@@ -159,16 +159,10 @@ export const TabList: React.FC<TabListProps> = ({ searchQuery }) => {
             {filteredGroups
               .filter((_, index) => index % 2 === 0)
               .map(group => {
-                // 计算在原始数组中的实际索引
-                const originalIndex = filteredGroups.findIndex(g => g.id === group.id);
                 return (
-                  <DraggableTabGroup
+                  <TabGroup
                     key={group.id}
                     group={group}
-                    index={originalIndex}
-                    moveGroup={(dragIndex, hoverIndex) => {
-                      dispatch(moveGroupAndSync({ dragIndex, hoverIndex }));
-                    }}
                   />
                 );
               })}
@@ -179,16 +173,10 @@ export const TabList: React.FC<TabListProps> = ({ searchQuery }) => {
             {filteredGroups
               .filter((_, index) => index % 2 === 1)
               .map(group => {
-                // 计算在原始数组中的实际索引
-                const originalIndex = filteredGroups.findIndex(g => g.id === group.id);
                 return (
-                  <DraggableTabGroup
+                  <TabGroup
                     key={group.id}
                     group={group}
-                    index={originalIndex}
-                    moveGroup={(dragIndex, hoverIndex) => {
-                      dispatch(moveGroupAndSync({ dragIndex, hoverIndex }));
-                    }}
                   />
                 );
               })}
@@ -197,14 +185,10 @@ export const TabList: React.FC<TabListProps> = ({ searchQuery }) => {
       ) : (
         // 单栏布局
         <div className="space-y-2 transition-all">
-          {filteredGroups.map((group, index) => (
-            <DraggableTabGroup
+          {filteredGroups.map((group) => (
+            <TabGroup
               key={group.id}
               group={group}
-              index={index}
-              moveGroup={(dragIndex, hoverIndex) => {
-                dispatch(moveGroupAndSync({ dragIndex, hoverIndex }));
-              }}
             />
           ))}
         </div>

@@ -163,11 +163,17 @@ export const auth = {
 
   // 生成随机state用于防止CSRF攻击
   generateRandomState() {
-    // 使用更安全的方式生成随机字符串，避免使用 substring
-    const randomPart1 = Math.random().toString(36).replace(/[^a-z0-9]+/g, '').slice(0, 6);
-    const randomPart2 = Math.random().toString(36).replace(/[^a-z0-9]+/g, '').slice(0, 6);
+    // 使用加密安全的随机数生成
+    const array = new Uint8Array(16);
+    crypto.getRandomValues(array);
+    
+    // 转换为十六进制字符串
+    const randomHex = Array.from(array, byte => byte.toString(16).padStart(2, '0')).join('');
+    
+    // 添加时间戳
     const timestamp = Date.now().toString(36);
-    return `${randomPart1}${timestamp}${randomPart2}`;
+    
+    return `${randomHex}${timestamp}`;
   },
 
   // 处理OAuth回调

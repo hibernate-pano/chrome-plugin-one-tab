@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useMemo, useCallback } from 'react';
 import { useAppDispatch, useAppSelector } from '@/store/hooks';
 import { Tab, TabGroup } from '@/types/tab';
 import { updateGroup, deleteGroup } from '@/store/slices/tabSlice';
@@ -8,28 +8,32 @@ interface SearchResultListProps {
   searchQuery: string;
 }
 
-export const SearchResultList: React.FC<SearchResultListProps> = ({ searchQuery }) => {
+export const SearchResultList: React.FC<SearchResultListProps> = React.memo(({ searchQuery }) => {
   const dispatch = useAppDispatch();
   const { groups } = useAppSelector(state => state.tabs);
   const { useDoubleColumnLayout } = useAppSelector(state => state.settings);
 
-  // 从所有标签组中提取匹配的标签
-  const matchingTabs: Array<{ tab: Tab; group: TabGroup }> = [];
-
-  if (searchQuery) {
-    const query = searchQuery.toLowerCase();
-
-    groups.forEach(group => {
-      group.tabs.forEach(tab => {
-        if (
-          tab.title.toLowerCase().includes(query) ||
-          tab.url.toLowerCase().includes(query)
-        ) {
-          matchingTabs.push({ tab, group });
-        }
+  // 使用useMemo缓存搜索结果，避免每次渲染都重新计算
+  const matchingTabs = useMemo(() => {
+    const results: Array<{ tab: Tab; group: TabGroup }> = [];
+    
+    if (searchQuery) {
+      const query = searchQuery.toLowerCase();
+      
+      groups.forEach(group => {
+        group.tabs.forEach(tab => {
+          if (
+            tab.title.toLowerCase().includes(query) ||
+            tab.url.toLowerCase().includes(query)
+          ) {
+            results.push({ tab, group });
+          }
+        });
       });
-    });
-  }
+    }
+    
+    return results;
+  }, [searchQuery, groups]);
 
   if (matchingTabs.length === 0) {
     return (
@@ -44,7 +48,7 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({ searchQuery 
 
   // 不再需要获取用户状态和设置
 
-  const handleOpenTab = (tab: Tab, group: TabGroup) => {
+  const handleOpenTab = useCallback((tab: Tab, group: TabGroup) => {
     // 如果标签组没有锁定，先从标签组中移除该标签页
     if (!group.isLocked) {
       // 如果标签组只有一个标签页，则删除整个标签组
@@ -90,9 +94,9 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({ searchQuery 
         data: { url: tab.url }
       });
     }, 50); // 小延迟确保 UI 先更新
-  };
+  }, [dispatch]);
 
-  const handleDeleteTab = (tab: Tab, group: TabGroup) => {
+  const handleDeleteTab = useCallback((tab: Tab, group: TabGroup) => {
     const updatedTabs = group.tabs.filter(t => t.id !== tab.id);
     if (updatedTabs.length === 0) {
       dispatch(deleteGroup(group.id));
@@ -104,14 +108,14 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({ searchQuery 
       };
       dispatch(updateGroup(updatedGroup));
     }
-  };
+  }, [dispatch]);
 
   // 将搜索结果分为左右两栏（双栏布局时使用）
-  const leftColumnTabs = matchingTabs.filter((_, index) => index % 2 === 0);
-  const rightColumnTabs = matchingTabs.filter((_, index) => index % 2 === 1);
+  const leftColumnTabs = useMemo(() => matchingTabs.filter((_, index) => index % 2 === 0), [matchingTabs]);
+  const rightColumnTabs = useMemo(() => matchingTabs.filter((_, index) => index % 2 === 1), [matchingTabs]);
 
   // 渲染单个标签项
-  const renderTabItem = ({ tab, group }: { tab: Tab; group: TabGroup }) => (
+  const renderTabItem = useCallback(({ tab, group }: { tab: Tab; group: TabGroup }) => (
     <div
       className="flex items-center py-1 px-2 bg-white dark:bg-gray-800 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors rounded mb-1"
     >
@@ -146,10 +150,10 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({ searchQuery 
         </svg>
       </button>
     </div>
-  );
+  ), [handleOpenTab, handleDeleteTab, searchQuery]);
 
   // 恢复所有搜索到的标签页
-  const handleRestoreAllSearchResults = () => {
+  const handleRestoreAllSearchResults = useCallback(() => {
     if (matchingTabs.length === 0) return;
 
     // 收集所有标签页的URL
@@ -222,7 +226,7 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({ searchQuery 
         data: { urls }
       });
     }, 100); // 使用 100 毫秒的延迟，确保 UI 先更新
-  };
+  }, [matchingTabs, dispatch]);
 
   return (
     <div>
@@ -274,6 +278,8 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({ searchQuery 
       )}
     </div>
   );
-};
+});
+
+SearchResultList.displayName = 'SearchResultList';
 
 export default SearchResultList;

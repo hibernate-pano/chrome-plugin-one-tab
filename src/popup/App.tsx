@@ -1,10 +1,6 @@
 import React, { useState, useEffect, lazy, Suspense } from 'react';
 import { Header } from '@/components/layout/Header';
 import { TabList } from '@/components/tabs/TabList';
-// 使用动态导入懒加载拖放功能
-const DndProvider = lazy(() =>
-  import('@/components/dnd/DndProvider').then(module => ({ default: module.DndProvider }))
-);
 import { useAppDispatch, useAppSelector } from '@/store/hooks';
 import { loadSettings } from '@/store/slices/settingsSlice';
 import { getCurrentUser } from '@/store/slices/authSlice';
@@ -155,8 +151,7 @@ const App: React.FC = () => {
             </div>
           }
         >
-          <DndProvider>
-            <div className="min-h-screen bg-white dark:bg-gray-900 dark:text-gray-100 flex flex-col">
+          <div className="min-h-screen bg-white dark:bg-gray-900 dark:text-gray-100 flex flex-col">
               {showPerformanceTest ? (
                 <>
                   <div className="bg-primary-600 text-white p-2">
@@ -243,7 +238,6 @@ const App: React.FC = () => {
                 </Suspense>
               )}
             </div>
-          </DndProvider>
         </Suspense>
       </ThemeProvider>
     </ToastProvider>

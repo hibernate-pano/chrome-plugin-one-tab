@@ -1,7 +1,6 @@
 import React, { useState, useCallback, useEffect } from 'react';
 import { useAppDispatch } from '@/store/hooks';
-import { updateGroupNameAndSync, toggleGroupLockAndSync, deleteGroup, updateGroup, moveTabAndSync } from '@/store/slices/tabSlice';
-import { DraggableTab } from '@/components/dnd/DraggableTab';
+import { updateGroupNameAndSync, toggleGroupLockAndSync, deleteGroup, updateGroup } from '@/store/slices/tabSlice';
 import { TabGroup as TabGroupType, Tab } from '@/types/tab';
 
 interface TabGroupProps {
@@ -105,6 +104,21 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
     }, 50); // 小延迟确保 UI 先更新
   }, [dispatch, group.id, group.isLocked, group.tabs]);
 
+  // 处理删除单个标签
+  const handleDeleteTab = useCallback((tabId: string) => {
+    const updatedTabs = group.tabs.filter(t => t.id !== tabId);
+    if (updatedTabs.length === 0) {
+      dispatch(deleteGroup(group.id));
+    } else {
+      const updatedGroup = {
+        ...group,
+        tabs: updatedTabs,
+        updatedAt: new Date().toISOString()
+      };
+      dispatch(updateGroup(updatedGroup));
+    }
+  }, [dispatch, group]);
+
   // 使用useCallback记忆化handleOpenTab函数
   const handleOpenTab = useCallback((tab: Tab) => {
     // 如果标签组没有锁定，先从标签组中移除该标签页
@@ -153,16 +167,6 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
       });
     }, 50); // 小延迟确保 UI 先更新
   }, [dispatch, group]);
-
-  // 使用useCallback记忆化handleMoveTab函数
-  const handleMoveTab = useCallback((sourceGroupId: string, sourceIndex: number, targetGroupId: string, targetIndex: number) => {
-    dispatch(moveTabAndSync({
-      sourceGroupId,
-      sourceIndex,
-      targetGroupId,
-      targetIndex
-    }));
-  }, [dispatch]);
 
   return (
     <div className="mb-2 transition-all duration-200 ease-in-out bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-md shadow-sm pb-2 hover:shadow-md">
@@ -245,28 +249,41 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
       </div>
       <div className={`tab-group-content ${isExpanded ? 'expanded' : 'collapsed'}`}>
         <div className="px-2 pt-2 space-y-1 group tabs-container">
-          {group.tabs.map((tab, index) => (
-            <DraggableTab
+          {group.tabs.map((tab) => (
+            <div
               key={tab.id}
-              tab={tab}
-              groupId={group.id}
-              index={index}
-              moveTab={handleMoveTab}
-              handleOpenTab={handleOpenTab}
-              handleDeleteTab={useCallback((tabId) => {
-                const updatedTabs = group.tabs.filter(t => t.id !== tabId);
-                if (updatedTabs.length === 0) {
-                  dispatch(deleteGroup(group.id));
-                } else {
-                  const updatedGroup = {
-                    ...group,
-                    tabs: updatedTabs,
-                    updatedAt: new Date().toISOString()
-                  };
-                  dispatch(updateGroup(updatedGroup));
-                }
-              }, [dispatch, group])}
-            />
+              className="group tab-item flex items-center gap-2 p-2 rounded-md hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors"
+            >
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-2 cursor-pointer" onClick={() => handleOpenTab(tab)}>
+                  <img
+                    src={tab.favicon || '/icon16.png'}
+                    alt=""
+                    className="w-4 h-4 flex-shrink-0"
+                    onError={(e) => {
+                      e.currentTarget.src = '/icon16.png';
+                    }}
+                  />
+                  <div className="min-w-0 flex-1">
+                    <div className="text-sm font-medium text-gray-900 dark:text-gray-100 truncate">
+                      {tab.title || 'Untitled'}
+                    </div>
+                    <div className="text-xs text-gray-500 dark:text-gray-400 truncate">
+                      {tab.url}
+                    </div>
+                  </div>
+                </div>
+              </div>
+              <button
+                onClick={() => handleDeleteTab(tab.id)}
+                className="opacity-0 group-hover:opacity-100 p-1 rounded text-gray-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 transition-all"
+                title="删除标签"
+              >
+                <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
           ))}
         </div>
       </div>

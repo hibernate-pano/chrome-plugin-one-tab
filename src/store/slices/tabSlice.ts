@@ -5,20 +5,11 @@ import { sync as supabaseSync } from '@/utils/supabase';
 import { nanoid } from '@reduxjs/toolkit';
 import { mergeTabGroups } from '@/utils/syncUtils';
 import { syncToCloud } from '@/utils/syncHelpers';
-import { throttle } from 'lodash';
+import throttle from 'lodash.throttle';
 
-// 为了解决“参数隐式具有“any”类型”的问题，添加明确的类型定义
-interface DeleteTabAction {
-  groupId: string;
-  tabId: string;
-}
+// TypeScript 类型定义
 
-interface DeleteTabFulfilledAction {
-  group: TabGroup | null;
-}
-
-// 解决“速记属性...的范围内不存在任何值”的问题，显式声明actions
-const { setActiveGroup, updateGroupName, toggleGroupLock, setSearchQuery, setSyncStatus, moveGroup, moveTab, updateSyncProgress, setGroups } = tabSlice.actions;
+// 移除了重复的actions解构，actions将在文件末尾统一导出
 
 const initialState: TabState = {
   groups: [],
@@ -1004,6 +995,11 @@ export const tabSlice = createSlice({
       state.syncProgress = progress;
       state.syncOperation = operation;
     },
+
+    // 设置标签组（主要用于测试和初始化）
+    setGroups: (state, action) => {
+      state.groups = action.payload;
+    },
   },
   extraReducers: builder => {
     builder
@@ -1199,6 +1195,7 @@ export const {
   moveGroup,
   moveTab,
   updateSyncProgress,
+  setGroups,
 } = tabSlice.actions;
 
 // 新增：删除单个标签页
