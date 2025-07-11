@@ -66,18 +66,34 @@ export const updateGroup = createAsyncThunk(
 export const deleteGroup = createAsyncThunk(
   'tabs/deleteGroup',
   async (groupId: string, { getState, dispatch }) => {
+    console.log('🗑️ 开始删除标签组:', groupId);
+    
     const groups = await storage.getGroups();
+    const groupToDelete = groups.find(g => g.id === groupId);
+    
+    if (groupToDelete) {
+      console.log('🗑️ 找到要删除的标签组:', {
+        id: groupToDelete.id,
+        name: groupToDelete.name,
+        tabCount: groupToDelete.tabs.length
+      });
+    } else {
+      console.warn('⚠️ 未找到要删除的标签组:', groupId);
+    }
 
     // 直接从本地存储中移除标签组
     const updatedGroups = groups.filter(g => g.id !== groupId);
     await storage.setGroups(updatedGroups);
+    
+    console.log('✅ 本地删除完成，剩余标签组数量:', updatedGroups.length);
 
     // 使用通用同步函数同步到云端
     // 不等待同步完成，直接返回结果
     // 这样可以确保用户界面不会被阻塞
+    console.log('🔄 开始同步删除操作到云端...');
     syncToCloud(dispatch, getState, '删除标签组').catch(err => {
       if (process.env.NODE_ENV === 'development') {
-        console.error('同步删除标签组操作失败:', err);
+        console.error('❌ 同步删除标签组操作失败:', err);
       }
     });
 

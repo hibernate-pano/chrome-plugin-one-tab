@@ -595,16 +595,26 @@ export const sync = {
 
         // 删除不再存在的标签组
         if (groupsToDelete.length > 0) {
-          console.log(`删除 ${groupsToDelete.length} 个已不存在的标签组`);
-          const { error: deleteError } = await supabase
-            .from('tab_groups')
-            .delete()
-            .in('id', groupsToDelete);
+          console.log(`删除 ${groupsToDelete.length} 个已不存在的标签组:`, groupsToDelete);
+          
+          try {
+            const { error: deleteError } = await supabase
+              .from('tab_groups')
+              .delete()
+              .in('id', groupsToDelete);
 
-          if (deleteError) {
-            console.error('删除标签组失败:', deleteError);
-            throw deleteError;
+            if (deleteError) {
+              console.error('删除标签组失败:', deleteError);
+              throw deleteError;
+            }
+            
+            console.log('✅ 标签组删除成功，应该触发实时通知给其他设备');
+          } catch (error) {
+            console.error('❌ 删除标签组时发生异常:', error);
+            throw error;
           }
+        } else {
+          console.log('ℹ️ 没有需要删除的标签组');
         }
 
         // 使用 upsert 更新/插入标签组

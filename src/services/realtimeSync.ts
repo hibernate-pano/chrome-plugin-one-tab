@@ -83,17 +83,30 @@ class RealtimeSync {
     try {
       const { eventType, new: newRecord, old: oldRecord } = payload;
       
+      console.log('🔄 收到实时数据变化:', {
+        eventType,
+        newRecord: newRecord ? { id: newRecord.id, device_id: newRecord.device_id } : null,
+        oldRecord: oldRecord ? { id: oldRecord.id, device_id: oldRecord.device_id } : null
+      });
+      
       // 避免处理自己设备的变化（防止循环）
       const currentDeviceId = await this.getCurrentDeviceId();
-      if (newRecord?.device_id === currentDeviceId) {
-        console.log('🔄 跳过自己设备的变化');
+      
+      // 对于删除事件，应该检查oldRecord；对于其他事件检查newRecord
+      const recordDeviceId = eventType === 'DELETE' 
+        ? oldRecord?.device_id 
+        : newRecord?.device_id;
+        
+      if (recordDeviceId === currentDeviceId) {
+        console.log('🔄 跳过自己设备的变化，设备ID:', recordDeviceId);
         return;
       }
 
       console.log('🔄 处理其他设备的数据变化:', {
         eventType,
         recordId: newRecord?.id || oldRecord?.id,
-        deviceId: newRecord?.device_id || oldRecord?.device_id
+        deviceId: recordDeviceId,
+        currentDeviceId
       });
 
       // 延迟处理，避免频繁同步
