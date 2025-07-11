@@ -90,8 +90,6 @@ export interface UserSettings {
 
   // 新增主题设置
   themeMode: 'light' | 'dark' | 'auto'; // 主题模式
-
-  reorderMode?: boolean; // 新增：全局重新排序模式
 }
 
 export interface User {

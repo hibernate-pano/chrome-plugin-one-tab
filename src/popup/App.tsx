@@ -1,6 +1,6 @@
 import React, { useState, useEffect, lazy, Suspense } from 'react';
 import { Header } from '@/components/layout/Header';
-import { TabList } from '@/components/tabs/TabList';
+import { ImprovedTabList } from '@/components/tabs/ImprovedTabList';
 import { useAppDispatch, useAppSelector } from '@/store/hooks';
 import { loadSettings } from '@/store/slices/settingsSlice';
 import { getCurrentUser } from '@/store/slices/authSlice';
@@ -176,7 +176,7 @@ const App: React.FC = () => {
                   <Header onSearch={setSearchQuery} />
                   <main className="flex-1 container mx-auto py-2 px-2 max-w-6xl">
                     <Suspense fallback={<div className="p-4 text-center">加载标签列表...</div>}>
-                      <TabList searchQuery={searchQuery} />
+                      <ImprovedTabList searchQuery={searchQuery} />
                     </Suspense>
                   </main>
                   <footer className="py-2 px-2 bg-white dark:bg-gray-900 border-t border-gray-200 dark:border-gray-700 text-xs text-gray-600 dark:text-gray-400">

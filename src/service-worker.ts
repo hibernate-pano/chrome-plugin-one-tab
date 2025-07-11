@@ -260,23 +260,32 @@ async function saveAllTabs(inputTabs: chrome.tabs.Tab[]) {
   // 监听通知按钮点击
   chrome.notifications.onButtonClicked.addListener(async (clickedId, buttonIndex) => {
     if (clickedId === notificationId && buttonIndex === 0) {
-      // 打开标签管理器
-      const extensionUrl = chrome.runtime.getURL('src/popup/index.html');
+      // 打开扩展弹窗而不是新标签页
+      try {
+        // 尝试打开弹窗
+        await chrome.action.openPopup();
+      } catch (error) {
+        // 如果无法打开弹窗（可能是因为当前没有活动标签页），则尝试创建新的标签页
+        console.log('无法打开弹窗，尝试创建新标签页:', error);
+        
+        // 使用正确的路径打开扩展页面
+        const extensionUrl = chrome.runtime.getURL('popup.html');
+        
+        // 检查是否已经有标签管理页打开
+        const existingTabs = await chrome.tabs.query({ url: extensionUrl + '*' });
 
-      // 检查是否已经有标签管理页打开
-      const existingTabs = await chrome.tabs.query({ url: extensionUrl + '*' });
-
-      if (existingTabs.length > 0) {
-        // 如果已经有标签管理页打开，则激活它并刷新
-        if (existingTabs[0].id) {
-          await chrome.tabs.update(existingTabs[0].id, { active: true });
+        if (existingTabs.length > 0) {
+          // 如果已经有标签管理页打开，则激活它并刷新
+          if (existingTabs[0].id) {
+            await chrome.tabs.update(existingTabs[0].id, { active: true });
+          }
+          if (existingTabs[0].id) {
+            await chrome.tabs.reload(existingTabs[0].id);
+          }
+        } else {
+          // 如果没有标签管理页打开，则创建新的
+          await chrome.tabs.create({ url: extensionUrl });
         }
-        if (existingTabs[0].id) {
-          await chrome.tabs.reload(existingTabs[0].id);
-        }
-      } else {
-        // 如果没有标签管理页打开，则创建新的
-        await chrome.tabs.create({ url: extensionUrl });
       }
     }
   });
@@ -362,23 +371,32 @@ async function saveCurrentTab(tab: chrome.tabs.Tab) {
   // 监听通知按钮点击
   chrome.notifications.onButtonClicked.addListener(async (clickedId, buttonIndex) => {
     if (clickedId === notificationId && buttonIndex === 0) {
-      // 打开标签管理器
-      const extensionUrl = chrome.runtime.getURL('src/popup/index.html');
+      // 打开扩展弹窗而不是新标签页
+      try {
+        // 尝试打开弹窗
+        await chrome.action.openPopup();
+      } catch (error) {
+        // 如果无法打开弹窗（可能是因为当前没有活动标签页），则尝试创建新的标签页
+        console.log('无法打开弹窗，尝试创建新标签页:', error);
+        
+        // 使用正确的路径打开扩展页面
+        const extensionUrl = chrome.runtime.getURL('popup.html');
+        
+        // 检查是否已经有标签管理页打开
+        const existingTabs = await chrome.tabs.query({ url: extensionUrl + '*' });
 
-      // 检查是否已经有标签管理页打开
-      const existingTabs = await chrome.tabs.query({ url: extensionUrl + '*' });
-
-      if (existingTabs.length > 0) {
-        // 如果已经有标签管理页打开，则激活它并刷新
-        if (existingTabs[0].id) {
-          await chrome.tabs.update(existingTabs[0].id, { active: true });
+        if (existingTabs.length > 0) {
+          // 如果已经有标签管理页打开，则激活它并刷新
+          if (existingTabs[0].id) {
+            await chrome.tabs.update(existingTabs[0].id, { active: true });
+          }
+          if (existingTabs[0].id) {
+            await chrome.tabs.reload(existingTabs[0].id);
+          }
+        } else {
+          // 如果没有标签管理页打开，则创建新的
+          await chrome.tabs.create({ url: extensionUrl });
         }
-        if (existingTabs[0].id) {
-          await chrome.tabs.reload(existingTabs[0].id);
-        }
-      } else {
-        // 如果没有标签管理页打开，则创建新的
-        await chrome.tabs.create({ url: extensionUrl });
       }
     }
   });

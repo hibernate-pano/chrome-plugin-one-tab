@@ -1,87 +1,88 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+本文件为Claude Code（claude.ai/code）在此代码库工作时提供指导。
 
-## Project Overview
+## 项目概述
 
-OneTab Plus is a Chrome extension for tab management built with React, TypeScript, and Redux Toolkit. It allows users to save, organize, and sync tabs across devices with cloud storage via Supabase.
+OneTab Plus是一个基于React、TypeScript和Redux Toolkit构建的Chrome标签页管理扩展。它允许用户通过Supabase云存储实现跨设备标签页的保存、组织和同步。
 
-## Development Commands
+## 开发命令
 
-**Package Manager**: Use `pnpm` (required by packageManager setting)
+**包管理器**：使用`pnpm`（由packageManager设置要求）
 
 ```bash
-# Development
-pnpm dev              # Start development server with hot reload
-pnpm build            # Build for production (runs TypeScript check + Vite build)
-pnpm preview          # Preview production build
+# 开发
+pnpm dev              # 启动开发服务器（支持热重载）
+pnpm build            # 生产环境构建（运行TypeScript检查 + Vite构建）
+pnpm preview          # 预览生产环境构建
 
-# Code Quality
-pnpm lint             # ESLint check (--max-warnings 0)
-pnpm format           # Format code with Prettier
-pnpm type-check       # TypeScript type checking without emission
+# 代码质量
+pnpm lint             # ESLint检查（--max-warnings 0）
+pnpm format           # 使用Prettier格式化代码
+pnpm type-check       # TypeScript类型检查（不生成输出）
 ```
 
-## Architecture
+## 架构设计
 
-### Chrome Extension Structure
-- **Manifest V3**: Uses service worker (`src/background.ts`) instead of background pages
-- **Entry Points**: 
-  - `src/popup/index.html` - Main popup interface
-  - `src/background.ts` - Service worker for tab management and commands
-  - `src/pages/` - OAuth callback and auth pages
+### Chrome扩展结构
+- **Manifest V3**：使用service worker（`src/background.ts`）替代后台页面
+- **入口点**：
+  - `src/popup/index.html` - 主弹窗界面
+  - `src/background.ts` - 标签页管理和命令的service worker
+  - `src/pages/` - OAuth回调和认证页面
 
-### State Management
-- **Redux Toolkit** with three main slices:
-  - `tabSlice` - Tab groups and tab data management
-  - `settingsSlice` - User preferences and configuration
-  - `authSlice` - Authentication state with Supabase
+### 状态管理
+- **Redux Toolkit**包含三个主要slice：
+  - `tabSlice` - 标签组和标签数据管理
+  - `settingsSlice` - 用户偏好和配置
+  - `authSlice` - 与Supabase的认证状态
 
-### Key Features Implementation
-- **Drag & Drop**: Uses `@dnd-kit` library with custom sortable components
-- **Cloud Sync**: Supabase backend with real-time sync and encryption
-- **Theme System**: Context-based dark/light/auto mode switching
-- **Performance**: Lazy loading with React.Suspense, virtualization for large lists
+### 核心功能实现
+- **拖拽排序**：使用`@dnd-kit`库搭配自定义可排序组件
+- **云端同步**：基于Supabase后端实现实时同步和加密
+- **主题系统**：支持暗色/亮色/自动切换的上下文模式
+- **性能优化**：React.Suspense懒加载，大数据列表虚拟化
 
-### File Organization
+### 文件结构
 ```
 src/
-├── components/        # Reusable UI components
-│   ├── business/     # Feature-specific components (Header, TabGroup, etc.)
-│   ├── dnd/          # Drag & drop related components  
-│   └── auth/         # Authentication components
-├── store/            # Redux store and slices
-├── utils/            # Utility functions (storage, sync, encryption)
-├── types/            # TypeScript type definitions
-└── contexts/         # React contexts (Theme, Toast)
+├── components/        # 可复用UI组件
+│   ├── business/     # 业务相关组件（Header, TabGroup等）
+│   ├── dnd/          # 拖拽相关组件  
+│   └── auth/         # 认证组件
+├── store/            # Redux store和slices
+├── utils/            # 工具函数（存储、同步、加密）
+├── types/            # TypeScript类型定义
+└── contexts/         # React上下文（主题、Toast通知）
 ```
 
-### Storage Strategy
-- **Local Storage**: Chrome extension storage API for offline data
-- **Cloud Storage**: Supabase with JSONB format and optional encryption
-- **Caching**: Auth state cached for 30 days to reduce re-login frequency
+### 存储策略
+- **本地存储**：使用Chrome扩展存储API实现离线数据
+- **云端存储**：Supabase支持JSONB格式和可选加密
+- **缓存机制**：认证状态缓存30天以减少重复登录
 
-### Build Configuration
-- **Vite** with `@crxjs/vite-plugin` for Chrome extension development
-- **Code Splitting**: Manual chunks for React, Redux, Supabase, and utils
-- **Path Alias**: `@/*` maps to `src/*`
+### 构建配置
+- **Vite**搭配`@crxjs/vite-plugin`进行扩展开发
+- **代码分割**：手动切分React、Redux、Supabase和工具模块
+- **路径别名**：`@/*`映射到`src/*`
 
-## Testing
+## 测试
 
-No automated test framework is currently configured. Manual testing is done through:
-- Chrome extension developer mode loading
-- Development server (`pnpm dev`) for UI components
+当前未配置自动化测试框架。手动测试通过以下方式进行：
+- Chrome扩展开发者模式加载
+- 开发服务器（`pnpm dev`）测试UI组件
 
-## Chrome Extension Deployment
+## Chrome扩展部署
 
-1. Build: `pnpm build`
-2. Load `dist/` folder in Chrome Extensions (Developer Mode)
-3. Test keyboard shortcuts: Alt+Shift+S (save all), Alt+S (save current), Ctrl+Shift+S (open popup)
+1. 构建：`pnpm build`
+2. 在Chrome扩展程序（开发者模式）中加载`dist/`目录
+3. 测试快捷键：Alt+Shift+S（保存全部）、Alt+S（保存当前）、Ctrl+Shift+S（打开弹窗）
 
-## Important Implementation Notes
+## 重要实现说明
 
-- Service worker handles tab saving/restoring and OAuth callbacks
-- DnD operations sync to cloud in real-time when authenticated  
-- Tab groups auto-delete when empty after drag operations
-- Chrome internal pages (chrome://, chrome-extension://) are filtered out
-- Supports OneTab format import/export for compatibility
+- Service worker处理标签页保存/恢复和OAuth回调
+- 认证状态下拖拽操作实时同步至云端  
+- 拖拽操作后空标签组自动删除
+- 过滤Chrome内部页面（chrome://, chrome-extension://）
+- 兼容OneTab格式的导入/导出功能
+- 必须使用中文回复

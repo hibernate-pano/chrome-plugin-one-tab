@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useAppDispatch, useAppSelector } from '@/store/hooks';
-import { toggleLayoutMode, saveSettings, setReorderMode } from '@/store/slices/settingsSlice';
+import { toggleLayoutMode, saveSettings } from '@/store/slices/settingsSlice';
 import { cleanDuplicateTabs } from '@/store/slices/tabSlice';
 import { HeaderDropdown } from './HeaderDropdown';
 import { TabCounter } from './TabCounter';
@@ -59,25 +59,14 @@ export const Header: React.FC<HeaderProps> = ({ onSearch }) => {
 
   // 切换布局模式
   const handleToggleLayout = () => {
-    // 如果当前在重排序模式，先退出重排序模式
-    if (settings.reorderMode) {
-      dispatch(setReorderMode(false));
-    }
-
-    // 然后切换布局模式
+    // 切换布局模式
     dispatch(toggleLayoutMode());
     dispatch(
       saveSettings({
         ...settings,
         useDoubleColumnLayout: !settings.useDoubleColumnLayout,
-        reorderMode: false, // 确保在切换布局时退出重排序模式
       })
     );
-  };
-
-  // 切换重排序模式
-  const handleToggleReorderMode = () => {
-    dispatch(setReorderMode(!settings.reorderMode));
   };
 
   const handleSaveAllTabs = async () => {
@@ -202,27 +191,6 @@ export const Header: React.FC<HeaderProps> = ({ onSearch }) => {
                     />
                   </svg>
                 )}
-              </button>
-
-              <button
-                onClick={handleToggleReorderMode}
-                className={`p-2 rounded hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors ${settings.reorderMode ? 'bg-primary-100 dark:bg-primary-900 text-primary-600 dark:text-primary-400' : 'text-gray-600 dark:text-gray-300'} flex items-center justify-center`}
-                title={settings.reorderMode ? '返回分组视图' : '重新排序所有标签'}
-              >
-                <svg
-                  xmlns="http://www.w3.org/2000/svg"
-                  className="h-5 w-5"
-                  fill="none"
-                  viewBox="0 0 24 24"
-                  stroke="currentColor"
-                >
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth={2}
-                    d="M4 6h16M4 12h16M4 18h16"
-                  />
-                </svg>
               </button>
 
               <button

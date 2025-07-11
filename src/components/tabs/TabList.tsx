@@ -1,4 +1,4 @@
-import React, { useEffect, useState, lazy } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useAppDispatch, useAppSelector } from '@/store/hooks';
 import { loadGroups, deleteGroup } from '@/store/slices/tabSlice';
 
@@ -10,13 +10,10 @@ interface TabListProps {
   searchQuery: string;
 }
 
-// 新增：全局排序视图组件（后续实现）
-const ReorderView = lazy(() => import('@/components/tabs/ReorderView'));
-
 export const TabList: React.FC<TabListProps> = ({ searchQuery }) => {
   const dispatch = useAppDispatch();
   const { groups, isLoading, error } = useAppSelector(state => state.tabs);
-  const { useDoubleColumnLayout, reorderMode } = useAppSelector(state => state.settings);
+  const { useDoubleColumnLayout } = useAppSelector(state => state.settings);
   const [isRestoreAllModalOpen, setIsRestoreAllModalOpen] = useState(false);
   const [selectedGroup, setSelectedGroup] = useState<TabGroupType | null>(null);
 
@@ -136,15 +133,6 @@ export const TabList: React.FC<TabListProps> = ({ searchQuery }) => {
       });
     }, 100); // 小延迟确保 UI 先更新
   };
-
-  // 新增：全局排序模式入口
-  if (reorderMode) {
-    return (
-      <React.Suspense fallback={<div>加载中...</div>}>
-        <ReorderView />
-      </React.Suspense>
-    );
-  }
 
   return (
     <div className="space-y-2">
