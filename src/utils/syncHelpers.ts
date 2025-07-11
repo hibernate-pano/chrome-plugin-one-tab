@@ -96,12 +96,30 @@ export async function syncToCloud<T>(
           return;
         }
 
-        // 本地操作完成，但不自动同步到云端，保证本地操作优先，避免卡顿
+        // 执行实际的云端同步
         if (process.env.NODE_ENV === 'development') {
-          console.log(`本地操作完成: ${operationType}，跳过自动同步，保证操作丰满顺畅`);
+          console.log(`开始同步到云端: ${operationType}`);
         }
-        currentSyncOperation = null;
-        resolve(true); // 返回成功，不影响用户体验
+
+        // 导入 syncService 来执行实际同步
+        const { syncService } = await import('@/services/syncService');
+        
+        // 执行后台同步，不显示进度条
+        const result = await syncService.uploadToCloud(true, false);
+        
+        if (result.success) {
+          if (process.env.NODE_ENV === 'development') {
+            console.log(`云端同步完成: ${operationType}`);
+          }
+          currentSyncOperation = null;
+          resolve(true);
+        } else {
+          if (process.env.NODE_ENV === 'development') {
+            console.error(`云端同步失败: ${operationType}`, result.error);
+          }
+          currentSyncOperation = null;
+          resolve(false);
+        }
       } catch (e) {
         // 捕获所有异常，确保不会影响用户体验
         if (process.env.NODE_ENV === 'development') {
