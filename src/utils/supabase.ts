@@ -868,15 +868,14 @@ export const sync = {
     // 将驼峰命名法转换为下划线命名法
     const convertedSettings: Record<string, any> = {};
     
-    // 定义允许同步的设置字段白名单（仅基础字段）
+    // 定义允许同步的设置字段白名单（仅确认存在的字段）
     const allowedSettingsFields = [
       'syncEnabled',
-      'autoSyncEnabled',
       'syncInterval',
       'themeMode'
     ];
     
-    // 暂时只同步核心字段，排除可能有问题的字段
+    // 暂时移除 autoSyncEnabled，因为数据库中不存在该字段
     
     for (const [key, value] of Object.entries(settings)) {
       // 只处理白名单中的字段

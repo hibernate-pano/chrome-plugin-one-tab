@@ -57,7 +57,12 @@ class SyncService {
 
       // 上传设置数据
       console.log('正在上传设置数据...');
-      await store.dispatch(syncSettingsToCloud());
+      try {
+        await store.dispatch(syncSettingsToCloud());
+      } catch (settingsError) {
+        console.warn('设置上传失败，但继续完成其他同步:', settingsError);
+        // 设置上传失败不影响整体同步成功
+      }
 
       console.log(`数据上传完成！${overwriteCloud ? '云端数据已被本地数据覆盖' : '本地数据已与云端数据合并'}`);
       return { success: true };

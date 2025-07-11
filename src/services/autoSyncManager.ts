@@ -2,6 +2,7 @@ import { store } from '@/store';
 import { syncService } from '@/services/syncService';
 import { storage } from '@/utils/storage';
 import { supabase } from '@/utils/supabase';
+import { realtimeSync } from '@/services/realtimeSync';
 
 export interface AutoSyncOptions {
   enabled: boolean;
@@ -35,6 +36,27 @@ class AutoSyncManager {
     
     // 监听用户登录状态
     this.watchAuthState();
+    
+    // 🔥 初始化实时同步
+    await this.initializeRealtimeSync();
+  }
+
+  /**
+   * 初始化实时同步
+   */
+  private async initializeRealtimeSync() {
+    try {
+      const state = store.getState();
+      
+      if (state.auth.isAuthenticated && state.settings.syncEnabled) {
+        console.log('🔄 启用实时同步');
+        await realtimeSync.initialize();
+      } else {
+        console.log('🔄 实时同步条件不满足，跳过');
+      }
+    } catch (error) {
+      console.error('❌ 实时同步初始化失败:', error);
+    }
   }
 
   /**
@@ -109,6 +131,17 @@ class AutoSyncManager {
         setTimeout(() => {
           this.performAutoDownload();
         }, 2000); // 登录后延迟2秒同步，确保UI稳定
+        
+        // 🔥 用户登录后启用实时同步
+        setTimeout(() => {
+          this.initializeRealtimeSync();
+        }, 3000);
+      }
+      
+      // 用户登出时禁用实时同步
+      if (previousAuthState && !currentAuthState) {
+        console.log('🔄 用户登出，禁用实时同步');
+        realtimeSync.disable();
       }
       
       previousAuthState = currentAuthState;
@@ -492,6 +525,10 @@ class AutoSyncManager {
     if (this.debounceTimer) {
       clearTimeout(this.debounceTimer);
     }
+    
+    // 🔥 清理实时同步
+    realtimeSync.destroy();
+    
     console.log('🔄 自动同步管理器已销毁');
   }
 }
