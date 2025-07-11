@@ -9,6 +9,7 @@ import { authCache } from '@/utils/authCache';
 import { store } from '@/store';
 import { hasSyncPromptShown, markSyncPromptShown } from '@/utils/syncPromptUtils';
 import { checkCloudData } from '@/utils/cloudDataUtils';
+import { autoSyncManager } from '@/services/autoSyncManager';
 // 使用动态导入懒加载同步提示对话框
 const SyncPromptModal = lazy(() => import('@/components/sync/SyncPromptModal'));
 import { ToastProvider } from '@/contexts/ToastContext';
@@ -135,6 +136,20 @@ const App: React.FC = () => {
 
     checkSession();
   }, [dispatch, initialAuthLoaded]);
+
+  // 初始化自动同步管理器
+  useEffect(() => {
+    if (initialAuthLoaded) {
+      autoSyncManager.initialize().catch(error => {
+        console.error('自动同步管理器初始化失败:', error);
+      });
+      
+      // 组件卸载时清理
+      return () => {
+        autoSyncManager.destroy();
+      };
+    }
+  }, [initialAuthLoaded]);
 
   // 切换性能测试页面
   const togglePerformanceTest = () => {

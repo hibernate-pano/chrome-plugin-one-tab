@@ -150,6 +150,8 @@ chrome.runtime.onInstalled.addListener(async (details) => {
       confirmBeforeDelete: true,
       allowDuplicateTabs: false,
       syncEnabled: true,
+      autoSyncEnabled: true,
+      syncInterval: 30,
       useDoubleColumnLayout: true,
       showNotifications: false, // 默认关闭通知
       syncStrategy: 'newest',

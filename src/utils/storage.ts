@@ -17,6 +17,8 @@ export const DEFAULT_SETTINGS: UserSettings = {
   confirmBeforeDelete: true,
   allowDuplicateTabs: false, // 默认不允许重复标签页
   syncEnabled: true, // 默认启用同步
+  autoSyncEnabled: true, // 默认启用自动同步
+  syncInterval: 30, // 默认30分钟自动同步一次
   useDoubleColumnLayout: true, // 默认使用双栏布局
   showNotifications: false, // 默认关闭通知
   syncStrategy: 'newest', // 默认使用最新版本

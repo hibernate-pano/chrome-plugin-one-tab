@@ -81,6 +81,8 @@ export interface UserSettings {
   confirmBeforeDelete: boolean;
   allowDuplicateTabs: boolean;
   syncEnabled: boolean; // 是否启用同步
+  autoSyncEnabled: boolean; // 是否启用自动同步
+  syncInterval: number; // 自动同步间隔（分钟），默认为30分钟
   useDoubleColumnLayout: boolean; // 是否使用双栏布局
   showNotifications: boolean; // 是否显示通知
 

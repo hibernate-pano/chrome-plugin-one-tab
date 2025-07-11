@@ -108,6 +108,14 @@ const settingsSlice = createSlice({
     toggleSyncEnabled: (state) => {
       state.syncEnabled = !state.syncEnabled;
     },
+    // 新增：切换自动同步开关
+    toggleAutoSyncEnabled: (state) => {
+      state.autoSyncEnabled = !state.autoSyncEnabled;
+    },
+    // 设置自动同步间隔
+    setSyncInterval: (state, action: PayloadAction<number>) => {
+      state.syncInterval = action.payload;
+    },
     // 切换布局模式
     toggleLayoutMode: (state) => {
       state.useDoubleColumnLayout = !state.useDoubleColumnLayout;
@@ -153,6 +161,8 @@ export const {
   toggleAllowDuplicateTabs,
   toggleShowNotifications,
   toggleSyncEnabled,
+  toggleAutoSyncEnabled,
+  setSyncInterval,
   toggleLayoutMode,
 } = settingsSlice.actions;
 

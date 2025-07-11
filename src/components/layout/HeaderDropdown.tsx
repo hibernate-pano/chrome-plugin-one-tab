@@ -6,6 +6,7 @@ import { syncService } from '@/services/syncService';
 import { storage } from '@/utils/storage';
 import { LoginForm } from '../auth/LoginForm';
 import { RegisterForm } from '../auth/RegisterForm';
+import { SyncSettings } from '../sync/SyncSettings';
 
 interface HeaderDropdownProps {
   onClose: () => void;
@@ -17,6 +18,7 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({ onClose }) => {
   const { lastSyncTime } = useAppSelector(state => state.tabs);
   const [activeTab, setActiveTab] = useState<'login' | 'register'>('login');
   const [showAuthModal, setShowAuthModal] = useState(false);
+  const [showSyncSettings, setShowSyncSettings] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
 
   // 处理点击外部关闭下拉菜单
@@ -156,6 +158,18 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({ onClose }) => {
                 )}
               </p>
             </div>
+            
+            {/* 添加同步设置按钮 */}
+            <button
+              onClick={() => setShowSyncSettings(!showSyncSettings)}
+              className="w-full text-left px-4 py-2 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 flex items-center"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 mr-2 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+              </svg>
+              同步设置
+            </button>
+            
             {/* 移除同步按钮，简化逻辑 */}
           </>
         )}
@@ -367,6 +381,35 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({ onClose }) => {
                   onClose();
                 }} />
               )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 同步设置弹窗 */}
+      {showSyncSettings && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="relative max-w-lg w-full mx-4">
+            <div className="bg-white dark:bg-gray-900 rounded-lg shadow-xl">
+              {/* 头部 */}
+              <div className="flex items-center justify-between p-4 border-b border-gray-200 dark:border-gray-700">
+                <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100">
+                  同步设置
+                </h3>
+                <button
+                  onClick={() => setShowSyncSettings(false)}
+                  className="p-2 text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 rounded-md hover:bg-gray-100 dark:hover:bg-gray-800"
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
+              </div>
+              
+              {/* 内容 */}
+              <div className="p-4">
+                <SyncSettings />
+              </div>
             </div>
           </div>
         </div>
