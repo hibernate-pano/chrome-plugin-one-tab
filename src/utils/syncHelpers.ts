@@ -42,6 +42,8 @@ const OPERATION_PRIORITIES: Record<string, number> = {
 
 // 当前正在进行的同步操作信息
 let currentSyncOperation: { type: string; priority: number } | null = null;
+// 全局同步锁，防止并发同步
+let syncLock = false;
 
 export async function syncToCloud<T>(
   _dispatch: ThunkDispatch<T, any, UnknownAction>,
@@ -53,6 +55,15 @@ export async function syncToCloud<T>(
 
   // 使用防抖机制，确保在快速连续操作时只执行最后一次同步
   return new Promise((resolve) => {
+    // 检查同步锁，防止并发同步
+    if (syncLock) {
+      if (process.env.NODE_ENV === 'development') {
+        console.log(`同步锁已启用，跳过操作: ${operationType}`);
+      }
+      resolve(true);
+      return;
+    }
+
     // 如果当前有正在进行的同步操作，判断是否需要取消
     if (currentSyncOperation && syncDebounceTimer) {
       // 如果新操作的优先级高于当前操作，取消当前操作
@@ -82,6 +93,9 @@ export async function syncToCloud<T>(
     // 设置新的定时器
     syncDebounceTimer = setTimeout(async () => {
       try {
+        // 启用同步锁
+        syncLock = true;
+        
         // 检查用户是否已登录
         const { auth } = _getState();
         const isAuthenticated = auth?.isAuthenticated || false;
@@ -92,6 +106,7 @@ export async function syncToCloud<T>(
             console.log(`用户未登录，跳过云端同步操作: ${operationType}`);
           }
           currentSyncOperation = null;
+          syncLock = false;
           resolve(true); // 返回成功，不影响用户体验
           return;
         }
@@ -112,12 +127,14 @@ export async function syncToCloud<T>(
             console.log(`云端同步完成: ${operationType}`);
           }
           currentSyncOperation = null;
+          syncLock = false;
           resolve(true);
         } else {
           if (process.env.NODE_ENV === 'development') {
             console.error(`云端同步失败: ${operationType}`, result.error);
           }
           currentSyncOperation = null;
+          syncLock = false;
           resolve(false);
         }
       } catch (e) {
@@ -126,6 +143,7 @@ export async function syncToCloud<T>(
           console.error('同步过程中发生异常:', e);
         }
         currentSyncOperation = null;
+        syncLock = false;
         resolve(false);
       }
     }, priority >= 10 ? 100 : SYNC_DEBOUNCE_DELAY); // 高优先级操作使用更短的延迟

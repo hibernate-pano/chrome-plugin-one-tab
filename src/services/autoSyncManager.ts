@@ -94,13 +94,21 @@ class AutoSyncManager {
       const currentState = store.getState();
       const { autoSyncEnabled, syncEnabled } = currentState.settings;
       const { isAuthenticated } = currentState.auth;
+      const { syncStatus } = currentState.tabs;
       
       // 只有在启用自动同步且用户已登录时才触发
       if (!autoSyncEnabled || !syncEnabled || !isAuthenticated) {
+        previousState = currentState;
         return;
       }
       
-      // 检查标签组是否发生变化
+      // 如果正在同步中，跳过检查避免循环触发
+      if (syncStatus === 'syncing') {
+        previousState = currentState;
+        return;
+      }
+      
+      // 检查标签组是否发生变化（排除同步导致的变化）
       const groupsChanged = this.hasGroupsChanged(
         previousState.tabs.groups,
         currentState.tabs.groups

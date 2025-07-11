@@ -571,33 +571,46 @@ export const sync = {
 
       let data, error;
 
-      // 如果是覆盖模式，先删除用户的所有标签组，然后插入新的标签组
+      // 覆盖模式：使用 upsert 和 delete 的组合，避免并发问题
       if (overwriteCloud) {
-        console.log('使用覆盖模式，先删除用户的所有标签组');
+        console.log('使用覆盖模式，同步删除和更新标签组');
 
-        // 先删除用户的所有标签组
-        const { error: deleteError } = await supabase
+        // 获取当前云端所有标签组ID
+        const { data: existingGroups, error: fetchError } = await supabase
           .from('tab_groups')
-          .delete()
+          .select('id')
           .eq('user_id', sessionCheck.session.user.id);
 
-        if (deleteError) {
-          console.error('删除用户标签组失败:', deleteError);
-          console.error('错误详情:', {
-            code: deleteError.code,
-            message: deleteError.message,
-            details: deleteError.details,
-            hint: deleteError.hint
-          });
-          throw deleteError;
+        if (fetchError) {
+          console.error('获取现有标签组失败:', fetchError);
+          throw fetchError;
         }
 
-        console.log('用户标签组已删除，准备插入新数据');
+        // 当前要同步的标签组ID
+        const newGroupIds = groupsWithUser.map(g => g.id);
+        
+        // 找到需要删除的标签组（云端有但本地没有的）
+        const existingGroupIds = existingGroups?.map(g => g.id) || [];
+        const groupsToDelete = existingGroupIds.filter(id => !newGroupIds.includes(id));
 
-        // 然后插入新的标签组
+        // 删除不再存在的标签组
+        if (groupsToDelete.length > 0) {
+          console.log(`删除 ${groupsToDelete.length} 个已不存在的标签组`);
+          const { error: deleteError } = await supabase
+            .from('tab_groups')
+            .delete()
+            .in('id', groupsToDelete);
+
+          if (deleteError) {
+            console.error('删除标签组失败:', deleteError);
+            throw deleteError;
+          }
+        }
+
+        // 使用 upsert 更新/插入标签组
         const result = await supabase
           .from('tab_groups')
-          .insert(groupsWithUser);
+          .upsert(groupsWithUser, { onConflict: 'id' });
 
         data = result.data;
         error = result.error;
