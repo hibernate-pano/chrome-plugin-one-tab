@@ -144,8 +144,8 @@ class RealtimeSync {
 
       console.log('🔄 开始实时同步数据');
       
-      // 使用合并模式下载最新数据
-      const result = await syncService.downloadFromCloud(true, false);
+      // 使用覆盖模式下载最新数据，确保数据一致性
+      const result = await syncService.downloadFromCloud(true, true);
       
       if (result.success) {
         console.log('✅ 实时同步完成');

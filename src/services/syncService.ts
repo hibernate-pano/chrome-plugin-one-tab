@@ -79,7 +79,7 @@ class SyncService {
   }
 
   // 从云端下载数据
-  async downloadFromCloud(background = false, overwriteLocal = false) {
+  async downloadFromCloud(background = false, overwriteLocal = true) {
     const { auth } = store.getState();
 
     if (!auth.isAuthenticated) {
@@ -145,7 +145,7 @@ class SyncService {
       // 不再尝试修改 Redux 状态，而是在调用时传递参数
       await store.dispatch(syncTabsFromCloud({ background, forceRemoteStrategy: true }));
 
-      console.log('数据同步完成！云端数据已成功同步并与本地数据智能合并去重');
+      console.log('数据同步完成！云端数据已成功同步并覆盖本地数据，确保数据一致性');
       return { success: true };
     } catch (error) {
       console.error('数据同步失败:', error);
@@ -165,7 +165,7 @@ class SyncService {
   }
 
   // 下载数据
-  async downloadAndRefresh(overwriteLocal = false) {
+  async downloadAndRefresh(overwriteLocal = true) {
     const { auth } = store.getState();
 
     if (!auth.isAuthenticated) {

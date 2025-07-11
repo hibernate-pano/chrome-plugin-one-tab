@@ -104,8 +104,8 @@ export async function syncToCloud<T>(
         // 导入 syncService 来执行实际同步
         const { syncService } = await import('@/services/syncService');
         
-        // 执行后台同步，不显示进度条
-        const result = await syncService.uploadToCloud(true, false);
+        // 执行后台同步，使用覆盖模式确保数据一致性
+        const result = await syncService.uploadToCloud(true, true);
         
         if (result.success) {
           if (process.env.NODE_ENV === 'development') {

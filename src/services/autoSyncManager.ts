@@ -229,7 +229,7 @@ class AutoSyncManager {
       // 2. 再上传本地数据（如果是用户操作触发的）
       if (trigger === 'user_action') {
         console.log('🔄 用户操作触发，上传本地数据');
-        const result = await syncService.uploadToCloud(true, false); // background=true, overwrite=false
+        const result = await syncService.uploadToCloud(true, true); // background=true, overwrite=true
         
         if (result.success) {
           console.log('✅ 本地数据上传完成');
@@ -244,7 +244,7 @@ class AutoSyncManager {
         const hasLocalChanges = await this.checkLocalChanges();
         if (hasLocalChanges) {
           console.log('🔄 检测到本地有未同步数据，开始上传');
-          await syncService.uploadToCloud(true, false);
+          await syncService.uploadToCloud(true, true);
         }
       }
       
@@ -291,9 +291,9 @@ class AutoSyncManager {
         await syncService.downloadAndRefresh(true);
         console.log('✅ 登录后自动下载完成（覆盖模式）');
       } else if (hasCloud && hasLocal) {
-        // 都有数据，使用合并模式
-        await syncService.downloadAndRefresh(false);
-        console.log('✅ 登录后自动下载完成（合并模式）');
+        // 都有数据，使用覆盖模式确保数据一致性
+        await syncService.downloadAndRefresh(true);
+        console.log('✅ 登录后自动下载完成（覆盖模式）');
       }
       
       if (state.settings.showNotifications && hasCloud) {
@@ -452,9 +452,9 @@ class AutoSyncManager {
       const hasLocal = await syncService.hasLocalData();
       
       if (hasLocal) {
-        // 本地有数据，使用合并模式
-        await syncService.downloadFromCloud(true, false); // background=true, overwrite=false
-        console.log('✅ 智能下载完成（合并模式）');
+        // 本地有数据，使用覆盖模式确保数据一致性
+        await syncService.downloadFromCloud(true, true); // background=true, overwrite=true
+        console.log('✅ 智能下载完成（覆盖模式）');
       } else {
         // 本地没有数据，使用覆盖模式
         await syncService.downloadFromCloud(true, true); // background=true, overwrite=true
