@@ -26,11 +26,12 @@ export default defineConfig(({ mode }) => {
       chunkSizeWarningLimit: 1000,
       rollupOptions: {
         input: {
-          'service-worker': resolve(__dirname, 'src/service-worker.ts'),
+          'background': resolve(__dirname, 'src/background.ts'),
           'src/popup/index': resolve(__dirname, 'src/popup/index.html'),
           'popup': resolve(__dirname, 'popup.html'),
           'confirm': resolve(__dirname, 'src/auth/confirm.html'),
-          'wechat-login': resolve(__dirname, 'src/pages/wechat-login.html')
+          'wechat-login': resolve(__dirname, 'src/pages/wechat-login.html'),
+          'oauth-callback': resolve(__dirname, 'src/pages/oauth-callback.html')
         },
         output: {
           // 手动配置代码分块策略
@@ -43,11 +44,11 @@ export default defineConfig(({ mode }) => {
             'supabase-vendor': ['@supabase/supabase-js'],
             // 工具函数打包到一起
             'utils': [
-              './src/utils/storage.ts',
-              './src/utils/supabase.ts',
-              './src/utils/syncUtils.ts',
-              './src/utils/syncHelpers.ts',
-              './src/utils/encryptionUtils.ts'
+              './src/shared/utils/storage.ts',
+              './src/shared/utils/supabase.ts',
+              './src/shared/utils/syncUtils.ts',
+              './src/shared/utils/syncHelpers.ts',
+              './src/shared/utils/encryptionUtils.ts'
             ]
           }
         }

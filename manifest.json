@@ -25,7 +25,7 @@
     "default_icon": "icons/icon16.png"
   },
   "background": {
-    "service_worker": "src/service-worker.ts",
+    "service_worker": "src/background.ts",
     "type": "module"
   },
   "icons": {

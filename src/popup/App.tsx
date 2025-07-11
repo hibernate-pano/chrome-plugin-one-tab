@@ -1,12 +1,12 @@
 import React, { useState, useEffect, lazy, Suspense } from 'react';
 import { Header } from '@/components/layout/Header';
 import { ImprovedTabList } from '@/components/tabs/ImprovedTabList';
-import { useAppDispatch, useAppSelector } from '@/store/hooks';
+import { useAppDispatch, useAppSelector } from '@/app/store/hooks';
 import { loadSettings } from '@/store/slices/settingsSlice';
 import { getCurrentUser } from '@/store/slices/authSlice';
 import { auth as supabaseAuth } from '@/utils/supabase';
 import { authCache } from '@/utils/authCache';
-import { store } from '@/store';
+import { store } from '@/app/store';
 import { hasSyncPromptShown, markSyncPromptShown } from '@/utils/syncPromptUtils';
 import { checkCloudData } from '@/utils/cloudDataUtils';
 import { autoSyncManager } from '@/services/autoSyncManager';
@@ -30,7 +30,8 @@ const App: React.FC = () => {
   const [hasCloudData, setHasCloudData] = useState(false);
   const [showPerformanceTest, setShowPerformanceTest] = useState(false);
 
-  const { isAuthenticated, user } = useAppSelector(state => state.auth);
+  const { status, user } = useAppSelector(state => state.auth);
+  const isAuthenticated = status === 'authenticated';
 
   // 检查是否需要显示同步提示
   useEffect(() => {
@@ -82,10 +83,10 @@ const App: React.FC = () => {
         if (cachedAuth && cachedAuth.isAuthenticated && cachedAuth.user) {
           // 如果有缓存的认证状态，先将其设置到 Redux 状态
           store.dispatch({
-            type: 'auth/setFromCache',
+            type: 'auth/setAuthState',
             payload: {
               user: cachedAuth.user,
-              isAuthenticated: true,
+              status: 'authenticated',
             },
           });
           console.log('从缓存加载用户认证状态:', cachedAuth.user.email);
@@ -118,7 +119,7 @@ const App: React.FC = () => {
           // 只有确认有会话时才调用 getCurrentUser
           dispatch(getCurrentUser())
             .unwrap()
-            .then(user => {
+            .then((user: any) => {
               if (user) {
                 console.log('用户已自动登录:', user.email);
               }
