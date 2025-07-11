@@ -85,6 +85,7 @@ export interface UserSettings {
   syncInterval: number; // 自动同步间隔（分钟），默认为30分钟
   useDoubleColumnLayout: boolean; // 是否使用双栏布局
   showNotifications: boolean; // 是否显示通知
+  showManualSyncButtons: boolean; // 是否显示手动同步按钮
 
   // 新增同步策略设置
   syncStrategy: 'newest' | 'local' | 'remote' | 'ask'; // 冲突解决策略

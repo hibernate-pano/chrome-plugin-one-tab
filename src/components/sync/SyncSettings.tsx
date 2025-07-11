@@ -3,6 +3,7 @@ import { useAppDispatch, useAppSelector } from '@/store/hooks';
 import { 
   toggleSyncEnabled, 
   toggleAutoSyncEnabled, 
+  toggleShowManualSyncButtons,
   setSyncInterval,
   saveSettings 
 } from '@/store/slices/settingsSlice';
@@ -25,6 +26,14 @@ export const SyncSettings: React.FC = () => {
     await dispatch(saveSettings({
       ...settings,
       autoSyncEnabled: !settings.autoSyncEnabled
+    }));
+  };
+  
+  const handleShowManualSyncButtonsChange = async () => {
+    dispatch(toggleShowManualSyncButtons());
+    await dispatch(saveSettings({
+      ...settings,
+      showManualSyncButtons: !settings.showManualSyncButtons
     }));
   };
 
@@ -103,14 +112,14 @@ export const SyncSettings: React.FC = () => {
           </label>
         </div>
 
-        {/* 同步间隔设置 */}
+                  {/* 同步间隔设置 */}
         {settings.syncEnabled && settings.autoSyncEnabled && (
           <div className="py-2 border-t border-gray-100 dark:border-gray-700 mt-3 pt-3">
             <div className="font-medium text-gray-900 dark:text-gray-100 mb-2">
               ⏱️ 定期同步间隔
             </div>
             <div className="grid grid-cols-3 gap-2">
-              {[15, 30, 60].map(interval => (
+              {[5, 10, 30].map(interval => (
                 <button
                   key={interval}
                   onClick={() => handleSyncIntervalChange(interval)}
@@ -129,6 +138,28 @@ export const SyncSettings: React.FC = () => {
             </div>
           </div>
         )}
+
+        {/* 手动同步按钮显示设置 */}
+        <div className="flex items-center justify-between py-2 border-t border-gray-100 dark:border-gray-700 mt-3 pt-3">
+          <div>
+            <div className="font-medium text-gray-900 dark:text-gray-100">
+              👋 显示手动同步按钮
+            </div>
+            <div className="text-sm text-gray-500 dark:text-gray-400">
+              在界面中显示手动上传/下载按钮
+            </div>
+          </div>
+          <label className="relative inline-flex items-center cursor-pointer">
+            <input
+              type="checkbox"
+              checked={settings.showManualSyncButtons && settings.syncEnabled}
+              onChange={handleShowManualSyncButtonsChange}
+              disabled={!settings.syncEnabled}
+              className="sr-only peer"
+            />
+            <div className={`w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-blue-300 dark:peer-focus:ring-blue-800 rounded-full peer dark:bg-gray-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all dark:border-gray-600 peer-checked:bg-blue-600 ${!settings.syncEnabled ? 'opacity-50 cursor-not-allowed' : ''}`}></div>
+          </label>
+        </div>
 
         {/* 同步状态说明 */}
         <div className="mt-4 p-3 bg-blue-50 dark:bg-blue-900/20 rounded-lg">

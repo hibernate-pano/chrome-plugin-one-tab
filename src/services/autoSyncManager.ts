@@ -18,6 +18,10 @@ class AutoSyncManager {
   private debounceTimer: NodeJS.Timeout | null = null;
   private readonly DEBOUNCE_DELAY = 3000; // 3秒防抖
   private readonly MIN_SYNC_INTERVAL = 60000; // 最小同步间隔1分钟
+  private failedSyncAttempts = 0; // 失败同步尝试次数
+  private readonly MAX_RETRY_ATTEMPTS = 3; // 最大重试次数
+  private readonly RETRY_DELAY = 60000; // 重试延迟（1分钟）
+  private retryTimer: NodeJS.Timeout | null = null;
 
   /**
    * 初始化自动同步管理器
@@ -199,8 +203,8 @@ class AutoSyncManager {
   private async performAutoSync(trigger: string) {
     const currentTime = Date.now();
     
-    // 检查最小同步间隔
-    if (currentTime - this.lastSyncTime < this.MIN_SYNC_INTERVAL) {
+    // 检查最小同步间隔（但允许重试和手动触发忽略此限制）
+    if (trigger !== 'retry' && trigger !== 'manual' && currentTime - this.lastSyncTime < this.MIN_SYNC_INTERVAL) {
       console.log('🔄 同步间隔过短，跳过此次自动同步');
       return;
     }
@@ -225,6 +229,13 @@ class AutoSyncManager {
       this.lastSyncTime = currentTime;
       
       console.log(`🔄 开始智能双向同步 (触发：${trigger})`);
+      
+      // 同步成功时重置失败计数
+      this.failedSyncAttempts = 0;
+      if (this.retryTimer) {
+        clearTimeout(this.retryTimer);
+        this.retryTimer = null;
+      }
       
       // 1. 先检查云端数据是否有更新
       const needDownload = await this.checkCloudDataUpdate();
@@ -266,8 +277,52 @@ class AutoSyncManager {
     } catch (error) {
       console.error('❌ 自动同步异常:', error);
       const state = store.getState();
-      if (state.settings.showNotifications) {
-        this.showSyncNotification('error', '自动同步失败');
+      
+      // 增加失败计数并设置重试
+      this.failedSyncAttempts++;
+      console.log(`同步失败，当前失败次数: ${this.failedSyncAttempts}/${this.MAX_RETRY_ATTEMPTS}`);
+      
+      // 如果失败次数超过阈值，建议用户使用手动同步
+      if (this.failedSyncAttempts >= this.MAX_RETRY_ATTEMPTS) {
+        console.log('连续多次同步失败，建议使用手动同步');
+        
+        // 自动启用手动同步按钮（仅当之前禁用时）
+        if (!state.settings.showManualSyncButtons && state.settings.syncEnabled) {
+          console.log('自动启用手动同步按钮');
+          store.dispatch({
+            type: 'settings/updateSettings',
+            payload: { showManualSyncButtons: true }
+          });
+          
+          // 保存设置
+          store.dispatch({
+            type: 'settings/saveSettings',
+            payload: {
+              ...state.settings,
+              showManualSyncButtons: true
+            }
+          });
+        }
+        
+        // 显示错误通知，建议用户使用手动同步
+        if (state.settings.showNotifications) {
+          this.showSyncNotification('error', '自动同步多次失败，已启用手动同步按钮');
+        }
+      } else {
+        // 未超过阈值，显示普通错误并设置重试
+        if (state.settings.showNotifications) {
+          this.showSyncNotification('error', `自动同步失败，将在1分钟后重试 (${this.failedSyncAttempts}/${this.MAX_RETRY_ATTEMPTS})`);
+        }
+        
+        // 设置重试定时器
+        if (this.retryTimer) {
+          clearTimeout(this.retryTimer);
+        }
+        
+        this.retryTimer = setTimeout(() => {
+          console.log('重试自动同步...');
+          this.performAutoSync('retry');
+        }, this.RETRY_DELAY);
       }
     } finally {
       this.pendingSync = false;
@@ -336,8 +391,15 @@ class AutoSyncManager {
     this.stopPeriodicSync();
     
     if (intervalMinutes > 0) {
-      const intervalMs = intervalMinutes * 60 * 1000;
-      console.log(`🔄 设置定期同步间隔: ${intervalMinutes} 分钟`);
+      // 确保同步间隔在有效范围内（5, 10, 30分钟）
+      let validInterval = intervalMinutes;
+      if (![5, 10, 30].includes(validInterval)) {
+        // 如果不是预设值，选择最接近的预设值
+        validInterval = 5; // 默认为10分钟
+      }
+      
+      const intervalMs = validInterval * 60 * 1000;
+      console.log(`🔄 设置定期同步间隔: ${validInterval} 分钟`);
       
       this.intervalId = setInterval(() => {
         this.debouncedSync('periodic');

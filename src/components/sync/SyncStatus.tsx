@@ -1,31 +1,58 @@
 import React from 'react';
 import { useAppSelector } from '@/store/hooks';
 
-interface SyncStatusProps { }
+export const SyncStatus: React.FC = () => {
+  const { lastSyncTime, syncStatus } = useAppSelector(state => state.tabs);
+  const { isAuthenticated } = useAppSelector(state => state.auth);
+  const { syncEnabled, autoSyncEnabled } = useAppSelector(state => state.settings);
 
-export const SyncStatus: React.FC<SyncStatusProps> = () => {
-  const { syncStatus, backgroundSync } = useAppSelector(state => state.tabs);
+  // 格式化最后同步时间 - 这个函数已经通过getStatusIndicator内部实现了
+
+  // 获取状态指示器的颜色和图标
+  const getStatusIndicator = () => {
+    if (syncStatus === 'syncing') {
+      return { color: 'text-blue-500', icon: '🔄', label: '同步中...' };
+    }
+    
+    if (!lastSyncTime) {
+      return { color: 'text-gray-500', icon: '⚠️', label: '从未同步' };
+    }
+    
+    try {
+      const syncTime = new Date(lastSyncTime);
+      const now = new Date();
+      const diffMs = now.getTime() - syncTime.getTime();
+      const diffHours = diffMs / (1000 * 60 * 60);
+      
+      if (diffHours < 1) {
+        return { color: 'text-green-500', icon: '✅', label: '最近已同步' };
+      } else if (diffHours < 24) {
+        return { color: 'text-green-400', icon: '✓', label: `${Math.floor(diffHours)}小时前同步` };
+      } else if (diffHours < 72) {
+        return { color: 'text-yellow-500', icon: '⚠️', label: `${Math.floor(diffHours / 24)}天前同步` };
+      } else {
+        return { color: 'text-red-500', icon: '⚠️', label: '长时间未同步' };
+      }
+    } catch (e) {
+      return { color: 'text-gray-500', icon: '❓', label: '同步状态未知' };
+    }
+  };
+
+  if (!isAuthenticated || !syncEnabled) {
+    return null;
+  }
+
+  const statusIndicator = getStatusIndicator();
 
   return (
-    <div className="text-xs">
-      <div className="flex items-center">
-        {syncStatus === 'syncing' && !backgroundSync ? (
-          <div className="text-blue-500 flex items-center">
-            <span className="mr-1">
-              <svg className="animate-spin h-3 w-3" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-              </svg>
-            </span>
-            正在同步数据...
-          </div>
-        ) : (
-          <div className="text-green-500 flex items-center">
-            <span className="mr-1">✓</span>
-            数据已同步
-          </div>
+    <div className="text-xs flex items-center justify-center mt-1 mb-2">
+      <span className={`inline-flex items-center ${statusIndicator.color}`}>
+        <span className="mr-1">{statusIndicator.icon}</span>
+        <span>{statusIndicator.label}</span>
+        {autoSyncEnabled && (
+          <span className="ml-1 text-gray-400">(自动同步已开启)</span>
         )}
-      </div>
+      </span>
     </div>
   );
 };

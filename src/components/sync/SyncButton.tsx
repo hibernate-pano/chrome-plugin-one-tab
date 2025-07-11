@@ -8,6 +8,7 @@ interface SyncButtonProps { }
 export const SyncButton: React.FC<SyncButtonProps> = () => {
   const { syncStatus, syncProgress, syncOperation } = useAppSelector(state => state.tabs);
   const { isAuthenticated } = useAppSelector(state => state.auth);
+  const { showManualSyncButtons } = useAppSelector(state => state.settings);
   const [showUploadModal, setShowUploadModal] = useState(false);
   const [showDownloadModal, setShowDownloadModal] = useState(false);
   const [modalAnimation, setModalAnimation] = useState('');
@@ -155,8 +156,9 @@ export const SyncButton: React.FC<SyncButtonProps> = () => {
     }
   };
 
-  if (!isAuthenticated) {
-    return null; // 未登录时不显示同步按钮
+  // 如果未登录或者设置为不显示手动同步按钮，则不显示
+  if (!isAuthenticated || !showManualSyncButtons) {
+    return null;
   }
 
   return (

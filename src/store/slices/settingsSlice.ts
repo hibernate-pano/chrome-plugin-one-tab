@@ -104,6 +104,10 @@ const settingsSlice = createSlice({
     toggleShowNotifications: (state) => {
       state.showNotifications = !state.showNotifications;
     },
+    // 切换手动同步按钮显示
+    toggleShowManualSyncButtons: (state) => {
+      state.showManualSyncButtons = !state.showManualSyncButtons;
+    },
     // 新增：切换同步开关
     toggleSyncEnabled: (state) => {
       state.syncEnabled = !state.syncEnabled;
@@ -160,6 +164,7 @@ export const {
   toggleConfirmBeforeDelete,
   toggleAllowDuplicateTabs,
   toggleShowNotifications,
+  toggleShowManualSyncButtons,
   toggleSyncEnabled,
   toggleAutoSyncEnabled,
   setSyncInterval,

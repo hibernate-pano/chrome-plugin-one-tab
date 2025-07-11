@@ -151,9 +151,10 @@ chrome.runtime.onInstalled.addListener(async (details) => {
       allowDuplicateTabs: false,
       syncEnabled: true,
       autoSyncEnabled: true,
-      syncInterval: 30,
+      syncInterval: 5, // 默认10分钟自动同步一次
       useDoubleColumnLayout: true,
       showNotifications: false, // 默认关闭通知
+      showManualSyncButtons: false, // 默认隐藏手动同步按钮
       syncStrategy: 'newest',
       deleteStrategy: 'everywhere',
       themeMode: 'auto', // 默认使用自动模式（跟随系统）
