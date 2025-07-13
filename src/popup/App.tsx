@@ -129,9 +129,28 @@ const App: React.FC = () => {
             });
         } else {
           console.log('没有活跃会话，用户未登录');
+          // 重要：如果没有有效会话，清除认证状态和缓存
+          console.log('清除无效的认证缓存');
+          authCache.clearAuthState();
+          store.dispatch({
+            type: 'auth/setAuthState',
+            payload: {
+              user: null,
+              status: 'unauthenticated',
+            },
+          });
         }
       } catch (err) {
         console.log('检查会话状态时出错，假定用户未登录');
+        // 同样清除认证状态和缓存
+        authCache.clearAuthState();
+        store.dispatch({
+          type: 'auth/setAuthState',
+          payload: {
+            user: null,
+            status: 'unauthenticated',
+          },
+        });
       }
     };
 

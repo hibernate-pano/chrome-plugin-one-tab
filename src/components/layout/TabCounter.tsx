@@ -4,11 +4,14 @@ import { useAppSelector } from '@/store/hooks';
 export const TabCounter: React.FC = () => {
   const { groups } = useAppSelector(state => state.tabs);
   
+  // 安全检查：确保groups不为undefined
+  const safeGroups = groups || [];
+  
   // 计算标签组数量
-  const groupCount = groups.length;
+  const groupCount = safeGroups.length;
   
   // 计算标签页总数
-  const tabCount = groups.reduce((total, group) => total + group.tabs.length, 0);
+  const tabCount = safeGroups.reduce((total, group) => total + (group.tabs?.length || 0), 0);
   
   return (
     <div className="ml-2 flex items-center">

@@ -75,8 +75,37 @@ const saveTabs = async (tabs: chrome.tabs.Tab[]) => {
     const existingGroups = await storage.getGroups();
     await storage.setGroups([newGroup, ...existingGroups]);
 
+    // 添加详细的调试信息
+    logger.info('标签页保存详情', {
+      newGroupId: newGroup.id,
+      newGroupName: newGroup.name,
+      newTabCount: newGroup.tabs.length,
+      existingGroupCount: existingGroups.length,
+      totalGroupsAfterSave: existingGroups.length + 1
+    });
+
+    // 验证保存是否成功
+    const verifyGroups = await storage.getGroups();
+    logger.info('保存验证', {
+      savedGroupCount: verifyGroups.length,
+      firstGroupId: verifyGroups[0]?.id,
+      firstGroupTabCount: verifyGroups[0]?.tabs?.length
+    });
+
     // 不再自动同步到云端，保证本地操作优先，避免卡顿
     logger.info('标签页已保存到本地，跳过自动同步');
+
+    // 发送消息通知前端刷新标签列表
+    // 延迟发送消息，确保popup页面已经加载完成
+    setTimeout(async () => {
+      try {
+        await chrome.runtime.sendMessage({ type: 'REFRESH_TAB_LIST' });
+        logger.debug('已发送刷新标签列表消息');
+      } catch (error) {
+        // 如果发送失败，说明popup页面还没准备好，这是正常的
+        logger.debug('发送刷新消息失败（popup可能还未加载）', { error: (error as Error).message });
+      }
+    }, 1000); // 延迟1秒发送
 
     // 保存后自动关闭标签页
     // 获取要关闭的标签页ID（包括重复的）
@@ -85,8 +114,8 @@ const saveTabs = async (tabs: chrome.tabs.Tab[]) => {
       .filter((id): id is number => id !== undefined);
 
     if (tabIds.length > 0) {
-      // 创建一个新标签页
-      await chrome.tabs.create({ url: 'chrome://newtab' });
+      // 创建OneTab标签管理页面
+      await chrome.tabs.create({ url: chrome.runtime.getURL('popup.html') });
 
       // 关闭已保存的标签页（包括重复的）
       await chrome.tabs.remove(tabIds);
@@ -189,8 +218,15 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     saveTabs(tabs)
       .then(() => {
         logger.debug('标签页保存成功');
-        // 发送消息通知前端刷新标签列表
-        chrome.runtime.sendMessage({ type: 'REFRESH_TAB_LIST' });
+        // 延迟发送消息通知前端刷新标签列表
+        setTimeout(async () => {
+          try {
+            await chrome.runtime.sendMessage({ type: 'REFRESH_TAB_LIST' });
+            logger.debug('已发送刷新标签列表消息');
+          } catch (error) {
+            logger.debug('发送刷新消息失败（popup可能还未加载）', { error: (error as Error).message });
+          }
+        }, 500);
       })
       .catch(error => {
         logger.error('保存标签页失败', error);
@@ -245,7 +281,7 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo) => {
       await chrome.tabs.remove(tabId);
 
       // 打开标签管理器页面
-      await chrome.tabs.create({ url: chrome.runtime.getURL('index.html') });
+      await chrome.tabs.create({ url: chrome.runtime.getURL('popup.html') });
 
       // 显示登录成功通知
       await showNotification({
@@ -286,7 +322,7 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo) => {
       await chrome.tabs.remove(tabId);
 
       // 打开标签管理器页面
-      await chrome.tabs.create({ url: chrome.runtime.getURL('index.html') });
+      await chrome.tabs.create({ url: chrome.runtime.getURL('popup.html') });
 
       // 显示登录成功通知
       await showNotification({

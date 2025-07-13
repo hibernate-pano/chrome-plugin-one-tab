@@ -40,10 +40,22 @@ interface ExportData {
 class ChromeStorage {
   async getGroups(): Promise<TabGroup[]> {
     try {
+      console.log('🔍 storage.getGroups 开始执行');
       const result = await chrome.storage.local.get(STORAGE_KEYS.GROUPS);
-      return result[STORAGE_KEYS.GROUPS] || [];
+      console.log('🔍 Chrome存储原始结果:', JSON.stringify(result, null, 2));
+      console.log('🔍 STORAGE_KEYS.GROUPS:', STORAGE_KEYS.GROUPS);
+      
+      const groups = result[STORAGE_KEYS.GROUPS] || [];
+      console.log('🔍 最终返回的groups:', JSON.stringify(groups, null, 2));
+      console.log('🔍 groups类型检查:', {
+        isArray: Array.isArray(groups),
+        length: groups.length,
+        firstItemKeys: groups[0] ? Object.keys(groups[0]) : 'no items'
+      });
+      
+      return groups;
     } catch (error) {
-      console.error('获取标签组失败:', error);
+      console.error('🔍 获取标签组失败:', error);
       return [];
     }
   }

@@ -11,11 +11,7 @@ export const store = configureStore({
   },
   middleware: getDefaultMiddleware =>
     getDefaultMiddleware({
-      serializableCheck: {
-        // 忽略 chrome.tabs.Tab 类型的序列化检查
-        ignoredActionPaths: ['payload.tab', 'payload.tabs'],
-        ignoredPaths: ['tabs.currentTab'],
-      },
+      serializableCheck: false, // 暂时完全禁用序列化检查来排查问题
     }),
 });
 

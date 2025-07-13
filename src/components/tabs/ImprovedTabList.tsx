@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { useAppDispatch, useAppSelector } from '@/store/hooks';
-import { loadGroups, moveGroupAndSync, moveTabAndSync } from '@/store/slices/tabSlice';
+import { loadGroups, moveGroupAndSync, moveTabAndSync, testAction } from '@/store/slices/tabSlice';
 import { SearchResultList } from '@/components/search/SearchResultList';
 import { SimpleDraggableTabGroup } from '@/components/dnd/SimpleDraggableTabGroup';
 import '@/styles/drag-drop.css';
@@ -29,17 +29,88 @@ interface ImprovedTabListProps {
 
 export const ImprovedTabList: React.FC<ImprovedTabListProps> = ({ searchQuery }) => {
   const dispatch = useAppDispatch();
-  const groups = useAppSelector((state) => state.tabs.groups);
+  const groups = useAppSelector((state) => state.tabs.groups) || [];
   const useDoubleColumnLayout = useAppSelector((state) => state.settings.useDoubleColumnLayout);
   const [activeId, setActiveId] = useState<UniqueIdentifier | null>(null);
   const [activeData, setActiveData] = useState<any | null>(null);
 
   useEffect(() => {
-    dispatch(loadGroups());
+    console.log('🔍 ImprovedTabList useEffect - 准备dispatch loadGroups');
+    
+    // 先测试一个简单的Redux action
+    console.log('🔍 测试Redux - 准备dispatch testAction');
+    dispatch(testAction());
+    
+    const result = dispatch(loadGroups());
+    console.log('🔍 dispatch返回的Promise:', result);
+    
+    // 添加Promise状态跟踪
+    result
+      .then((actionResult) => {
+        console.log('🔍 loadGroups Promise resolved:', actionResult);
+      })
+      .catch((error) => {
+        console.error('🔍 loadGroups Promise rejected:', error);
+      });
+    
+    // 直接测试Chrome存储
+    chrome.storage.local.get('tab_groups').then(result => {
+      console.log('🔍 直接查询Chrome存储结果:', JSON.stringify(result, null, 2));
+    });
+    
+    // 添加调试日志
+    console.log('ImprovedTabList 挂载，开始加载标签组数据');
+    
+    // 监听来自 background 的刷新消息
+    const handleMessage = (message: any) => {
+      if (message.type === 'REFRESH_TAB_LIST') {
+        console.log('收到刷新标签列表的消息，重新加载数据');
+        console.log('🔍 收到刷新消息 - 准备dispatch loadGroups');
+        dispatch(loadGroups());
+      }
+    };
+
+    chrome.runtime.onMessage.addListener(handleMessage);
+    
+    // 添加页面可见性变化监听，当页面重新变为可见时刷新数据
+    const handleVisibilityChange = () => {
+      if (!document.hidden) {
+        console.log('页面变为可见，重新加载标签组数据');
+        console.log('🔍 页面可见性变化 - 准备dispatch loadGroups');
+        dispatch(loadGroups());
+      }
+    };
+    
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    
+    // 添加定期刷新机制，每10秒检查一次数据更新
+    const refreshInterval = setInterval(() => {
+      console.log('🔍 定期刷新 - 准备dispatch loadGroups');
+      dispatch(loadGroups());
+    }, 10000);
+    
+    return () => {
+      chrome.runtime.onMessage.removeListener(handleMessage);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      clearInterval(refreshInterval);
+    };
   }, [dispatch]);
 
   // 过滤标签组
-  const filteredGroups = searchQuery ? [] : groups;
+  const filteredGroups = searchQuery ? [] : (groups || []);
+
+  // 添加调试日志
+  useEffect(() => {
+    console.log('=== ImprovedTabList 状态更新 ===');
+    console.log('Redux groups状态:', {
+      groupsIsArray: Array.isArray(groups),
+      groupsLength: groups?.length || 0,
+      groups: groups,
+      filteredGroupsLength: filteredGroups.length,
+      searchQuery: searchQuery
+    });
+    console.log('========================');
+  }, [groups, filteredGroups, searchQuery]);
 
   // 创建标签组ID列表
   const groupIds = filteredGroups.map(group => `group-${group.id}`);
@@ -171,6 +242,35 @@ export const ImprovedTabList: React.FC<ImprovedTabListProps> = ({ searchQuery })
       {/* 搜索结果或标签组列表 */}
       {searchQuery ? (
         <SearchResultList searchQuery={searchQuery} />
+      ) : filteredGroups.length === 0 ? (
+        /* 空状态显示 */
+        <div className="flex flex-col items-center justify-center py-12 space-y-4 text-gray-500 dark:text-gray-400">
+          <svg
+            xmlns="http://www.w3.org/2000/svg"
+            className="h-16 w-16"
+            fill="none"
+            viewBox="0 0 24 24"
+            stroke="currentColor"
+          >
+            <path
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              strokeWidth={1}
+              d="M9 17V7m0 10a2 2 0 01-2 2H5a2 2 0 01-2-2V7a2 2 0 012-2h2a2 2 0 012 2m0 10a2 2 0 002 2h2a2 2 0 002-2M9 7a2 2 0 012-2h2a2 2 0 012 2m0 10V7m0 10a2 2 0 002 2h2a2 2 0 002-2V7a2 2 0 00-2-2h-2a2 2 0 00-2 2"
+            />
+          </svg>
+          <div className="text-center">
+            <h3 className="text-lg font-medium mb-2">还没有保存的标签页</h3>
+            <p className="text-sm mb-4">
+              点击右上角的"保存所有标签"按钮开始使用，或者使用快捷键：
+            </p>
+            <div className="space-y-1 text-xs bg-gray-100 dark:bg-gray-800 rounded-lg p-3">
+              <div><kbd className="px-2 py-1 bg-gray-200 dark:bg-gray-700 rounded">Alt+Shift+S</kbd> 保存所有标签页</div>
+              <div><kbd className="px-2 py-1 bg-gray-200 dark:bg-gray-700 rounded">Alt+S</kbd> 保存当前标签页</div>
+              <div><kbd className="px-2 py-1 bg-gray-200 dark:bg-gray-700 rounded">Ctrl+Shift+S</kbd> 打开标签管理器</div>
+            </div>
+          </div>
+        </div>
       ) : (
         <DndContext
           sensors={sensors}

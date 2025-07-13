@@ -26,8 +26,29 @@ const initialState: TabState = {
 };
 
 export const loadGroups = createAsyncThunk('tabs/loadGroups', async () => {
-  const groups = await storage.getGroups();
-  return groups;
+  console.log('🔍 loadGroups 开始执行');
+  try {
+    const groups = await storage.getGroups();
+    console.log('🔍 storage.getGroups 返回结果:', JSON.stringify(groups, null, 2));
+    console.log('🔍 loadGroups 即将返回数据，类型检查:', {
+      isArray: Array.isArray(groups),
+      length: groups?.length || 0,
+      serializable: JSON.stringify(groups) !== undefined
+    });
+    
+    // 确保返回的数据是可序列化的
+    const cleanGroups = groups.map(group => ({
+      ...group,
+      // 确保所有字段都是可序列化的
+      tabs: group.tabs || []
+    }));
+    
+    console.log('🔍 loadGroups 返回清理后的数据');
+    return cleanGroups;
+  } catch (error) {
+    console.error('🔍 loadGroups 执行失败:', error);
+    throw error;
+  }
 });
 
 export const saveGroup = createAsyncThunk(
@@ -856,6 +877,12 @@ export const tabSlice = createSlice({
   name: 'tabs',
   initialState,
   reducers: {
+    // 添加一个测试action来验证Redux是否正常工作
+    testAction: (state) => {
+      console.log('🔍 testAction reducer 被调用');
+      state.error = 'test action executed at ' + new Date().toISOString();
+    },
+    
     setActiveGroup: (state, action) => {
       state.activeGroupId = action.payload;
     },
@@ -1020,14 +1047,31 @@ export const tabSlice = createSlice({
   extraReducers: builder => {
     builder
       .addCase(loadGroups.pending, state => {
+        console.log('🔍 loadGroups.pending - 开始加载');
         state.isLoading = true;
         state.error = null;
       })
       .addCase(loadGroups.fulfilled, (state, action) => {
+        console.log('🔍 loadGroups.fulfilled - 加载成功');
         state.isLoading = false;
         state.groups = action.payload;
+        
+        // 添加详细的调试日志
+        console.log('=== loadGroups.fulfilled Redux更新 ===');
+        console.log('从存储加载的数据:', {
+          isArray: Array.isArray(action.payload),
+          length: action.payload?.length || 0,
+          data: action.payload
+        });
+        console.log('Redux state更新后:', {
+          groupsLength: state.groups?.length || 0,
+          isLoading: state.isLoading,
+          error: state.error
+        });
+        console.log('================================');
       })
       .addCase(loadGroups.rejected, (state, action) => {
+        console.log('🔍 loadGroups.rejected - 加载失败:', action.error);
         state.isLoading = false;
         state.error = action.error.message || '加载标签组失败';
       })
@@ -1203,6 +1247,7 @@ export const tabSlice = createSlice({
 
 // 将 actions 单独导出，避免循环依赖
 export const {
+  testAction,
   setActiveGroup,
   updateGroupName,
   toggleGroupLock,

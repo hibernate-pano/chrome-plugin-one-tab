@@ -13,6 +13,9 @@ export const SearchResultList: React.FC<SearchResultListProps> = React.memo(({ s
   const { groups } = useAppSelector(state => state.tabs);
   const { useDoubleColumnLayout } = useAppSelector(state => state.settings);
 
+  // 安全检查：确保groups不为undefined
+  const safeGroups = groups || [];
+
   // 使用useMemo缓存搜索结果，避免每次渲染都重新计算
   const matchingTabs = useMemo(() => {
     const results: Array<{ tab: Tab; group: TabGroup }> = [];
@@ -20,11 +23,12 @@ export const SearchResultList: React.FC<SearchResultListProps> = React.memo(({ s
     if (searchQuery) {
       const query = searchQuery.toLowerCase();
       
-      groups.forEach(group => {
-        group.tabs.forEach(tab => {
+      safeGroups.forEach(group => {
+        const safeTabs = group.tabs || [];
+        safeTabs.forEach(tab => {
           if (
-            tab.title.toLowerCase().includes(query) ||
-            tab.url.toLowerCase().includes(query)
+            tab.title?.toLowerCase().includes(query) ||
+            tab.url?.toLowerCase().includes(query)
           ) {
             results.push({ tab, group });
           }
@@ -33,7 +37,7 @@ export const SearchResultList: React.FC<SearchResultListProps> = React.memo(({ s
     }
     
     return results;
-  }, [searchQuery, groups]);
+  }, [searchQuery, safeGroups]);
 
   if (matchingTabs.length === 0) {
     return (
@@ -52,7 +56,8 @@ export const SearchResultList: React.FC<SearchResultListProps> = React.memo(({ s
     // 如果标签组没有锁定，先从标签组中移除该标签页
     if (!group.isLocked) {
       // 如果标签组只有一个标签页，则删除整个标签组
-      if (group.tabs.length === 1) {
+      const groupTabs = group.tabs || [];
+      if (groupTabs.length === 1) {
         // 先在Redux中删除标签组，立即更新UI
         dispatch({ type: 'tabs/deleteGroup/fulfilled', payload: group.id });
 
@@ -66,7 +71,7 @@ export const SearchResultList: React.FC<SearchResultListProps> = React.memo(({ s
           });
       } else {
         // 否则更新标签组，移除该标签页
-        const updatedTabs = group.tabs.filter(t => t.id !== tab.id);
+        const updatedTabs = groupTabs.filter(t => t.id !== tab.id);
         const updatedGroup = {
           ...group,
           tabs: updatedTabs,
@@ -97,7 +102,8 @@ export const SearchResultList: React.FC<SearchResultListProps> = React.memo(({ s
   }, [dispatch]);
 
   const handleDeleteTab = useCallback((tab: Tab, group: TabGroup) => {
-    const updatedTabs = group.tabs.filter(t => t.id !== tab.id);
+    const groupTabs = group.tabs || [];
+    const updatedTabs = groupTabs.filter(t => t.id !== tab.id);
     if (updatedTabs.length === 0) {
       dispatch(deleteGroup(group.id));
     } else {
@@ -174,12 +180,13 @@ export const SearchResultList: React.FC<SearchResultListProps> = React.memo(({ s
     // 先在UI中更新标签组，立即更新界面
     Object.values(groupsToUpdate).forEach(({ group, tabsToRemove }) => {
       // 如果要删除的标签页数量等于标签组中的所有标签页，则删除整个标签组
-      if (tabsToRemove.length === group.tabs.length) {
+      const groupTabs = group.tabs || [];
+      if (tabsToRemove.length === groupTabs.length) {
         // 先在Redux中删除标签组，立即更新UI
         dispatch({ type: 'tabs/deleteGroup/fulfilled', payload: group.id });
       } else {
         // 否则更新标签组，移除这些标签页
-        const updatedTabs = group.tabs.filter(t => !tabsToRemove.includes(t.id));
+        const updatedTabs = groupTabs.filter(t => !tabsToRemove.includes(t.id));
         const updatedGroup = {
           ...group,
           tabs: updatedTabs,
@@ -194,7 +201,8 @@ export const SearchResultList: React.FC<SearchResultListProps> = React.memo(({ s
     setTimeout(() => {
       Object.values(groupsToUpdate).forEach(({ group, tabsToRemove }) => {
         // 如果要删除的标签页数量等于标签组中的所有标签页，则删除整个标签组
-        if (tabsToRemove.length === group.tabs.length) {
+        const groupTabs = group.tabs || [];
+        if (tabsToRemove.length === groupTabs.length) {
           dispatch(deleteGroup(group.id))
             .then(() => {
               console.log(`删除标签组: ${group.id}`);
@@ -204,7 +212,7 @@ export const SearchResultList: React.FC<SearchResultListProps> = React.memo(({ s
             });
         } else {
           // 否则更新标签组，移除这些标签页
-          const updatedTabs = group.tabs.filter(t => !tabsToRemove.includes(t.id));
+          const updatedTabs = groupTabs.filter(t => !tabsToRemove.includes(t.id));
           const updatedGroup = {
             ...group,
             tabs: updatedTabs,
