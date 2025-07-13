@@ -177,6 +177,52 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
     // 返回成功响应
     sendResponse({ success: true });
+  } 
+  // 处理保存所有标签页的消息
+  else if (message.type === 'SAVE_ALL_TABS') {
+    logger.debug('收到保存所有标签页消息');
+    
+    // 使用消息中的标签数据或重新获取当前窗口的所有标签页
+    const tabs = message.data?.tabs || [];
+    
+    // 异步处理，不阻塞消息响应
+    saveTabs(tabs)
+      .then(() => {
+        logger.debug('标签页保存成功');
+        // 发送消息通知前端刷新标签列表
+        chrome.runtime.sendMessage({ type: 'REFRESH_TAB_LIST' });
+      })
+      .catch(error => {
+        logger.error('保存标签页失败', error);
+      });
+    
+    // 立即返回响应
+    sendResponse({ success: true });
+  }
+  // 处理打开多个标签页的消息
+  else if (message.type === 'OPEN_TABS') {
+    logger.debug('收到打开多个标签页消息');
+    
+    const urls = message.data?.urls || [];
+    if (urls.length > 0) {
+      // 打开多个标签页
+      urls.forEach((url: string) => {
+        chrome.tabs.create({ url });
+      });
+    }
+    
+    sendResponse({ success: true });
+  }
+  // 处理打开单个标签页的消息
+  else if (message.type === 'OPEN_TAB') {
+    logger.debug('收到打开单个标签页消息');
+    
+    const url = message.data?.url;
+    if (url) {
+      chrome.tabs.create({ url });
+    }
+    
+    sendResponse({ success: true });
   }
 
   // 返回true表示异步响应
