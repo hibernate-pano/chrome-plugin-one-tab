@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
-import { useAppDispatch, useAppSelector } from '@/store/hooks';
+import { useAppDispatch, useAppSelector } from '@/app/store/hooks';
+// 从原有路径引入，因为新版store中没有对应的实现
 import { toggleLayoutMode, saveSettings } from '@/store/slices/settingsSlice';
 import { cleanDuplicateTabs } from '@/store/slices/tabSlice';
 import { HeaderDropdown } from './HeaderDropdown';

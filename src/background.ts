@@ -1,8 +1,8 @@
 import { storage } from './utils/storage';
 import { nanoid } from '@reduxjs/toolkit';
 import { TabGroup } from './types/tab';
-import { store } from './store';
-import { handleOAuthCallback, updateWechatLoginStatus } from './store/slices/authSlice';
+import { store } from './app/store';
+import { updateWechatLoginStatus, handleOAuthCallback } from './features/auth';
 import { showNotification } from './utils/notification';
 import { logger } from './shared/utils/logger';
 
@@ -51,11 +51,42 @@ const saveTabs = async (tabs: chrome.tabs.Tab[]) => {
       return tab.title && tab.title.trim() !== '';
     });
 
+    logger.debug('过滤后的有效标签页', {
+      originalCount: tabs.length,
+      filteredCount: validTabs.length,
+      validTabs: validTabs.map((tab: chrome.tabs.Tab) => ({
+        id: tab.id,
+        url: tab.url,
+        title: tab.title
+      }))
+    });
+
+    // 验证保存后的标签组数据
+    storage.getGroups().then(groups => {
+      logger.debug('保存后的标签组数据', {
+        groupCount: groups.length,
+        firstGroup: groups[0] ? {
+          id: groups[0].id,
+          name: groups[0].name,
+          tabCount: groups[0].tabs.length,
+          tabs: groups[0].tabs.map((tab: any) => ({
+            id: tab.id,
+            url: tab.url,
+            title: tab.title
+          }))
+        } : 'no groups'
+      });
+    });
+
     // 保存所有要关闭的标签页（包括重复的）
     const allTabsToClose = [...validTabs];
 
     // 获取设置
     const settings = await storage.getSettings();
+    logger.debug('当前设置', {
+      allowDuplicateTabs: settings.allowDuplicateTabs,
+      useDoubleColumnLayout: settings.useDoubleColumnLayout
+    });
 
     // 如果不允许重复标签页，则过滤重复的URL
     if (!settings.allowDuplicateTabs) {
@@ -67,12 +98,41 @@ const saveTabs = async (tabs: chrome.tabs.Tab[]) => {
         }
         return false;
       });
+      
+      logger.debug('去重后的标签页', {
+        beforeCount: allTabsToClose.length,
+        afterCount: validTabs.length,
+        duplicatesRemoved: allTabsToClose.length - validTabs.length
+      });
     }
 
-    if (validTabs.length === 0) return;
+    if (validTabs.length === 0) {
+      logger.debug('没有有效的标签页需要保存');
+      return;
+    }
 
     const newGroup = createTabGroup(validTabs);
+    logger.debug('创建的新标签组', {
+      id: newGroup.id,
+      name: newGroup.name,
+      tabCount: newGroup.tabs.length,
+      tabs: newGroup.tabs.map((tab: any) => ({
+        id: tab.id,
+        url: tab.url,
+        title: tab.title
+      }))
+    });
+    
     const existingGroups = await storage.getGroups();
+    logger.debug('现有标签组', {
+      count: existingGroups.length,
+      groups: existingGroups.map((group: TabGroup) => ({
+        id: group.id,
+        name: group.name,
+        tabCount: group.tabs.length
+      }))
+    });
+    
     await storage.setGroups([newGroup, ...existingGroups]);
 
     // 添加详细的调试信息
@@ -209,15 +269,44 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   } 
   // 处理保存所有标签页的消息
   else if (message.type === 'SAVE_ALL_TABS') {
-    logger.debug('收到保存所有标签页消息');
+    logger.debug('收到保存所有标签页消息', {
+      tabsCount: message.data?.tabs?.length || 0,
+      hasSettings: !!message.data?.settings
+    });
     
     // 使用消息中的标签数据或重新获取当前窗口的所有标签页
     const tabs = message.data?.tabs || [];
+    
+    // 记录详细的标签页信息
+    logger.debug('要保存的标签页详情', tabs.map((tab: chrome.tabs.Tab) => ({
+      id: tab.id,
+      url: tab.url,
+      title: tab.title,
+      status: tab.status
+    })));
     
     // 异步处理，不阻塞消息响应
     saveTabs(tabs)
       .then(() => {
         logger.debug('标签页保存成功');
+        
+        // 验证保存后的标签组数据
+        storage.getGroups().then(groups => {
+          logger.debug('保存后的标签组数据', {
+            groupCount: groups.length,
+            firstGroup: groups[0] ? {
+              id: groups[0].id,
+              name: groups[0].name,
+              tabCount: groups[0].tabs.length,
+              tabs: groups[0].tabs.map(tab => ({
+                id: tab.id,
+                url: tab.url,
+                title: tab.title
+              }))
+            } : 'no groups'
+          });
+        });
+        
         // 延迟发送消息通知前端刷新标签列表
         setTimeout(async () => {
           try {
@@ -275,7 +364,7 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo) => {
       await chrome.tabs.update(tabId, { url: chrome.runtime.getURL('src/pages/oauth-callback.html') });
 
       // 处理微信登录回调
-      await store.dispatch(handleOAuthCallback(changeInfo.url));
+      await store.dispatch(handleOAuthCallback({ url: changeInfo.url }));
 
       // 关闭回调标签页
       await chrome.tabs.remove(tabId);
@@ -316,7 +405,7 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo) => {
       await chrome.tabs.update(tabId, { url: chrome.runtime.getURL('src/pages/oauth-callback.html') });
 
       // 处理OAuth回调
-      await store.dispatch(handleOAuthCallback(changeInfo.url));
+      await store.dispatch(handleOAuthCallback({ url: changeInfo.url }));
 
       // 关闭回调标签页
       await chrome.tabs.remove(tabId);

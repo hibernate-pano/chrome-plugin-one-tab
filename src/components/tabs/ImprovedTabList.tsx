@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
-import { useAppDispatch, useAppSelector } from '@/store/hooks';
-import { loadGroups, moveGroupAndSync, moveTabAndSync, testAction } from '@/store/slices/tabSlice';
+import { useAppDispatch, useAppSelector } from '@/app/store/hooks';
+import { loadGroups } from '@/features/tabs/store/tabGroupsSlice';
+import { moveTab, moveGroup } from '@/features/tabs/store/dragOperationsSlice';
 import { SearchResultList } from '@/components/search/SearchResultList';
 import { SimpleDraggableTabGroup } from '@/components/dnd/SimpleDraggableTabGroup';
 import '@/styles/drag-drop.css';
@@ -22,6 +23,7 @@ import {
   sortableKeyboardCoordinates,
   verticalListSortingStrategy
 } from '@dnd-kit/sortable';
+import { TabGroup } from '@/shared/types/tab';
 
 interface ImprovedTabListProps {
   searchQuery: string;
@@ -29,7 +31,7 @@ interface ImprovedTabListProps {
 
 export const ImprovedTabList: React.FC<ImprovedTabListProps> = ({ searchQuery }) => {
   const dispatch = useAppDispatch();
-  const groups = useAppSelector((state) => state.tabs.groups) || [];
+  const groups = useAppSelector((state) => state.tabGroups.groups) || [];
   const useDoubleColumnLayout = useAppSelector((state) => state.settings.useDoubleColumnLayout);
   const [activeId, setActiveId] = useState<UniqueIdentifier | null>(null);
   const [activeData, setActiveData] = useState<any | null>(null);
@@ -37,17 +39,29 @@ export const ImprovedTabList: React.FC<ImprovedTabListProps> = ({ searchQuery })
   useEffect(() => {
     console.log('🔍 ImprovedTabList useEffect - 准备dispatch loadGroups');
     
-    // 先测试一个简单的Redux action
-    console.log('🔍 测试Redux - 准备dispatch testAction');
-    dispatch(testAction());
+    // 不再需要测试action
     
     const result = dispatch(loadGroups());
     console.log('🔍 dispatch返回的Promise:', result);
     
     // 添加Promise状态跟踪
     result
-      .then((actionResult) => {
+      .then((actionResult: any) => {
         console.log('🔍 loadGroups Promise resolved:', actionResult);
+        
+        // 检查加载的标签组
+        if (actionResult.payload && Array.isArray(actionResult.payload)) {
+          console.log('🔍 加载的标签组数量:', actionResult.payload.length);
+          actionResult.payload.forEach((group: TabGroup, index: number) => {
+            console.log(`🔍 标签组 ${index + 1}/${actionResult.payload.length}:`, {
+              id: group.id,
+              name: group.name,
+              tabCount: group.tabs?.length || 0
+            });
+          });
+        } else {
+          console.log('🔍 加载的标签组无效或为空');
+        }
       })
       .catch((error) => {
         console.error('🔍 loadGroups Promise rejected:', error);
@@ -56,6 +70,21 @@ export const ImprovedTabList: React.FC<ImprovedTabListProps> = ({ searchQuery })
     // 直接测试Chrome存储
     chrome.storage.local.get('tab_groups').then(result => {
       console.log('🔍 直接查询Chrome存储结果:', JSON.stringify(result, null, 2));
+      
+      // 检查Chrome存储中的标签组
+      const storedGroups = result.tab_groups;
+      if (storedGroups && Array.isArray(storedGroups)) {
+        console.log('🔍 Chrome存储中的标签组数量:', storedGroups.length);
+        storedGroups.forEach((group: any, index: number) => {
+          console.log(`🔍 Chrome存储中的标签组 ${index + 1}/${storedGroups.length}:`, {
+            id: group.id,
+            name: group.name,
+            tabCount: group.tabs?.length || 0
+          });
+        });
+      } else {
+        console.log('🔍 Chrome存储中没有标签组或格式无效');
+      }
     });
     
     // 添加调试日志
@@ -153,12 +182,11 @@ export const ImprovedTabList: React.FC<ImprovedTabListProps> = ({ searchQuery })
         const sourceIndex = activeData.index;
         const targetIndex = overData.index;
         
-        dispatch(moveTabAndSync({
+        dispatch(moveTab({
           sourceGroupId,
           sourceIndex,
           targetGroupId,
-          targetIndex,
-          updateSourceInDrag: false // 不更新源数据，避免状态混乱
+          targetIndex
         }));
       }
     }
@@ -180,12 +208,11 @@ export const ImprovedTabList: React.FC<ImprovedTabListProps> = ({ searchQuery })
         const targetIndex = overData.index;
 
         // 执行最终的标签页移动
-        dispatch(moveTabAndSync({
+        dispatch(moveTab({
           sourceGroupId,
           sourceIndex,
           targetGroupId,
-          targetIndex,
-          updateSourceInDrag: true
+          targetIndex
         }));
       }
       // 处理标签组拖拽
@@ -195,7 +222,7 @@ export const ImprovedTabList: React.FC<ImprovedTabListProps> = ({ searchQuery })
 
         if (activeIndex !== -1 && overIndex !== -1) {
           // 执行标签组移动
-          dispatch(moveGroupAndSync({ dragIndex: activeIndex, hoverIndex: overIndex }));
+          dispatch(moveGroup({ dragIndex: activeIndex, hoverIndex: overIndex }));
         }
       }
     }
@@ -286,12 +313,12 @@ export const ImprovedTabList: React.FC<ImprovedTabListProps> = ({ searchQuery })
                 {/* 左栏 - 偶数索引的标签组 */}
                 <div className="space-y-2">
                   {filteredGroups
-                    .filter((_, index) => index % 2 === 0)
-                    .map((group) => (
+                    .filter((_: TabGroup, index: number) => index % 2 === 0)
+                    .map((group: TabGroup) => (
                       <SimpleDraggableTabGroup
                         key={group.id}
                         group={group}
-                        index={filteredGroups.findIndex(g => g.id === group.id)}
+                        index={filteredGroups.findIndex((g: TabGroup) => g.id === group.id)}
                       />
                     ))}
                 </div>
@@ -299,12 +326,12 @@ export const ImprovedTabList: React.FC<ImprovedTabListProps> = ({ searchQuery })
                 {/* 右栏 - 奇数索引的标签组 */}
                 <div className="space-y-2">
                   {filteredGroups
-                    .filter((_, index) => index % 2 === 1)
-                    .map((group) => (
+                    .filter((_: TabGroup, index: number) => index % 2 === 1)
+                    .map((group: TabGroup) => (
                       <SimpleDraggableTabGroup
                         key={group.id}
                         group={group}
-                        index={filteredGroups.findIndex(g => g.id === group.id)}
+                        index={filteredGroups.findIndex((g: TabGroup) => g.id === group.id)}
                       />
                     ))}
                 </div>
@@ -314,7 +341,7 @@ export const ImprovedTabList: React.FC<ImprovedTabListProps> = ({ searchQuery })
             // 单栏布局
             <SortableContext items={groupIds} strategy={verticalListSortingStrategy}>
               <div className="space-y-2">
-                {filteredGroups.map((group, index) => (
+                {filteredGroups.map((group: TabGroup, index: number) => (
                   <SimpleDraggableTabGroup
                     key={group.id}
                     group={group}

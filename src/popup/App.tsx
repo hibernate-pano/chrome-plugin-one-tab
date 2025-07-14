@@ -2,10 +2,13 @@ import React, { useState, useEffect, lazy, Suspense } from 'react';
 import { Header } from '@/components/layout/Header';
 import { ImprovedTabList } from '@/components/tabs/ImprovedTabList';
 import { useAppDispatch, useAppSelector } from '@/app/store/hooks';
+// 继续使用旧版settingsSlice，因为新版store中仍然使用它
 import { loadSettings } from '@/store/slices/settingsSlice';
-import { getCurrentUser } from '@/store/slices/authSlice';
+// 使用新版auth功能
+import { restoreSession } from '@/features/auth/store/authSlice';
 import { auth as supabaseAuth } from '@/utils/supabase';
-import { authCache } from '@/utils/authCache';
+// 由于新版AuthCache接口与旧版不同，继续使用旧版authCache
+import { authCache } from '@/shared/utils/authCache';
 import { store } from '@/app/store';
 import { hasSyncPromptShown, markSyncPromptShown } from '@/utils/syncPromptUtils';
 import { checkCloudData } from '@/utils/cloudDataUtils';
@@ -83,10 +86,9 @@ const App: React.FC = () => {
         if (cachedAuth && cachedAuth.isAuthenticated && cachedAuth.user) {
           // 如果有缓存的认证状态，先将其设置到 Redux 状态
           store.dispatch({
-            type: 'auth/setAuthState',
+            type: 'auth/setFromCache',
             payload: {
               user: cachedAuth.user,
-              status: 'authenticated',
             },
           });
           console.log('从缓存加载用户认证状态:', cachedAuth.user.email);
@@ -117,7 +119,7 @@ const App: React.FC = () => {
         const { data } = await supabaseAuth.getSession();
         if (data.session) {
           // 只有确认有会话时才调用 getCurrentUser
-          dispatch(getCurrentUser())
+          dispatch(restoreSession())
             .unwrap()
             .then((user: any) => {
               if (user) {
@@ -133,11 +135,7 @@ const App: React.FC = () => {
           console.log('清除无效的认证缓存');
           authCache.clearAuthState();
           store.dispatch({
-            type: 'auth/setAuthState',
-            payload: {
-              user: null,
-              status: 'unauthenticated',
-            },
+            type: 'auth/resetAuthState',
           });
         }
       } catch (err) {
@@ -145,11 +143,7 @@ const App: React.FC = () => {
         // 同样清除认证状态和缓存
         authCache.clearAuthState();
         store.dispatch({
-          type: 'auth/setAuthState',
-          payload: {
-            user: null,
-            status: 'unauthenticated',
-          },
+          type: 'auth/resetAuthState',
         });
       }
     };
