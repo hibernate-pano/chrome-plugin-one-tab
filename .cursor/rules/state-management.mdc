@@ -1,0 +1,50 @@
+---
+description: 
+globs: 
+alwaysApply: true
+---
+# Redux状态管理
+
+Chrome插件OneTab使用Redux Toolkit进行状态管理，包含以下核心模块：
+
+## 状态切片
+
+- [src/store/slices/authSlice.ts](mdc:src/store/slices/authSlice.ts) - 认证状态管理
+- [src/store/slices/tabSlice.ts](mdc:src/store/slices/tabSlice.ts) - 标签页管理
+- [src/store/slices/settingsSlice.ts](mdc:src/store/slices/settingsSlice.ts) - 用户设置管理
+
+## Store配置
+
+- [src/store/index.ts](mdc:src/store/index.ts) - Redux Store配置和初始化
+- [src/store/hooks.ts](mdc:src/store/hooks.ts) - 自定义Redux Hooks
+
+## 异步Action
+
+项目使用`createAsyncThunk`创建异步操作，主要包括：
+
+1. 认证操作：
+   - 登录/注册
+   - OAuth认证
+   - 获取用户信息
+
+2. 标签页操作：
+   - 加载标签组
+   - 创建新标签组
+   - 同步标签数据
+
+3. 设置操作：
+   - 加载用户设置
+   - 保存用户设置
+   - 同步设置数据
+
+## 状态访问模式
+
+全局状态通过自定义hooks访问：
+
+```typescript
+import { useAppSelector, useAppDispatch } from '@/store/hooks';
+
+// 在组件中使用
+const { isLoading, error } = useAppSelector(state => state.auth);
+const dispatch = useAppDispatch();
+```

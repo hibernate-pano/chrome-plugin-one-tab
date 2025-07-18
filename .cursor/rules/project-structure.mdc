@@ -1,0 +1,10 @@
+---
+description: 
+globs: 
+alwaysApply: true
+---
+# 项目结构
+
+Chrome插件OneTab是一个用于管理浏览器标签页的Chrome扩展，项目使用React、TypeScript和TailwindCSS构建。
+
+## 核心目录结构
