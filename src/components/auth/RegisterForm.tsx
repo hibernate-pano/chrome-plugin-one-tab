@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
-import { useAppDispatch, useAppSelector } from '@/store/hooks';
-import { signUp, signIn, signInWithOAuth, clearError } from '@/store/slices/authSlice';
+import { useAppDispatch, useAppSelector } from '@/app/store/hooks';
+import { signUpWithEmail, signInWithEmail, signInWithOAuth, clearError } from '@/features/auth/store/authSlice';
 
 interface RegisterFormProps {
   onSuccess?: () => void;
@@ -31,12 +31,12 @@ export const RegisterForm: React.FC<RegisterFormProps> = ({ onSuccess }) => {
     try {
       if (email && password) {
         // 注册用户
-        const result = await dispatch(signUp({ email, password })).unwrap();
+        const result = await dispatch(signUpWithEmail({ email, _password: password })).unwrap();
 
         if (result) {
           setRegistrationSuccess(true);
           // 自动登录
-          await dispatch(signIn({ email, password }));
+          await dispatch(signInWithEmail({ email, password }));
 
           if (onSuccess) {
             onSuccess();

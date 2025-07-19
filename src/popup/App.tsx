@@ -2,12 +2,12 @@ import React, { useState, useEffect, lazy, Suspense } from 'react';
 import { Header } from '@/components/layout/Header';
 import { ImprovedTabList } from '@/components/tabs/ImprovedTabList';
 import { useAppDispatch, useAppSelector } from '@/app/store/hooks';
-// 继续使用旧版settingsSlice，因为新版store中仍然使用它
+// 使用新版store中的settingsSlice
 import { loadSettings } from '@/store/slices/settingsSlice';
 // 使用新版auth功能
 import { restoreSession } from '@/features/auth/store/authSlice';
 import { auth as supabaseAuth } from '@/utils/supabase';
-// 由于新版AuthCache接口与旧版不同，继续使用旧版authCache
+// 使用新版AuthCache
 import { authCache } from '@/shared/utils/authCache';
 import { store } from '@/app/store';
 import { hasSyncPromptShown, markSyncPromptShown } from '@/utils/syncPromptUtils';

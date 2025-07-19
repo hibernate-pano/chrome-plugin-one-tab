@@ -1,7 +1,7 @@
 import React, { useMemo, useCallback } from 'react';
-import { useAppDispatch, useAppSelector } from '@/store/hooks';
+import { useAppDispatch, useAppSelector } from '@/app/store/hooks';
 import { Tab, TabGroup } from '@/types/tab';
-import { updateGroup, deleteGroup } from '@/store/slices/tabSlice';
+import { updateGroup, deleteGroup } from '@/features/tabs/store/tabGroupsSlice';
 import HighlightText from './HighlightText';
 
 interface SearchResultListProps {
@@ -10,7 +10,7 @@ interface SearchResultListProps {
 
 export const SearchResultList: React.FC<SearchResultListProps> = React.memo(({ searchQuery }) => {
   const dispatch = useAppDispatch();
-  const { groups } = useAppSelector(state => state.tabs);
+  const { groups } = useAppSelector(state => state.tabGroups);
   const { useDoubleColumnLayout } = useAppSelector(state => state.settings);
 
   // 安全检查：确保groups不为undefined

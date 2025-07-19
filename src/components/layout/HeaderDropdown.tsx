@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { useAppSelector, useAppDispatch } from '@/store/hooks';
-import { signOut } from '@/store/slices/authSlice';
-import { deleteAllGroups } from '@/store/slices/tabSlice';
+import { useAppSelector, useAppDispatch } from '@/app/store/hooks';
+import { signOut } from '@/features/auth/store/authSlice';
+import { deleteAllGroups } from '@/features/tabs/store/tabGroupsSlice';
 import { syncService } from '@/services/syncService';
 import { storage } from '@/utils/storage';
 import { LoginForm } from '../auth/LoginForm';
@@ -14,8 +14,9 @@ interface HeaderDropdownProps {
 
 export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({ onClose }) => {
   const dispatch = useAppDispatch();
-  const { isAuthenticated, user } = useAppSelector(state => state.auth);
-  const { lastSyncTime } = useAppSelector(state => state.tabs);
+  const { status, user } = useAppSelector(state => state.auth);
+  const isAuthenticated = status === 'authenticated';
+  const { lastSyncTime } = useAppSelector(state => state.sync);
   const [activeTab, setActiveTab] = useState<'login' | 'register'>('login');
   const [showAuthModal, setShowAuthModal] = useState(false);
   const [showSyncSettings, setShowSyncSettings] = useState(false);

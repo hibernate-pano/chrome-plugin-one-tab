@@ -1,17 +1,18 @@
 import React from 'react';
-import { useAppDispatch, useAppSelector } from '@/store/hooks';
-import { 
-  toggleSyncEnabled, 
-  toggleAutoSyncEnabled, 
+import { useAppDispatch, useAppSelector } from '@/app/store/hooks';
+import {
+  toggleSyncEnabled,
+  toggleAutoSyncEnabled,
   toggleShowManualSyncButtons,
   setSyncInterval,
-  saveSettings 
+  saveSettings
 } from '@/store/slices/settingsSlice';
 
 export const SyncSettings: React.FC = () => {
   const dispatch = useAppDispatch();
   const settings = useAppSelector(state => state.settings);
-  const { isAuthenticated } = useAppSelector(state => state.auth);
+  const { status } = useAppSelector(state => state.auth);
+  const isAuthenticated = status === 'authenticated';
 
   const handleSyncEnabledChange = async () => {
     dispatch(toggleSyncEnabled());

@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
-import { useAppDispatch, useAppSelector } from '@/store/hooks';
-import { signIn, signInWithOAuth, clearError } from '@/store/slices/authSlice';
+import { useAppDispatch, useAppSelector } from '@/app/store/hooks';
+import { signInWithEmail, signInWithOAuth, clearError } from '@/features/auth/store/authSlice';
 
 interface LoginFormProps {
   onSuccess?: () => void;
@@ -16,7 +16,7 @@ export const LoginForm: React.FC<LoginFormProps> = ({ onSuccess }) => {
     e.preventDefault();
     if (email && password) {
       try {
-        await dispatch(signIn({ email, password })).unwrap();
+        await dispatch(signInWithEmail({ email, password })).unwrap();
         if (onSuccess) {
           onSuccess();
         }

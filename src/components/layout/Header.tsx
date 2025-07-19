@@ -1,8 +1,9 @@
 import React, { useState } from 'react';
 import { useAppDispatch, useAppSelector } from '@/app/store/hooks';
-// 从原有路径引入，因为新版store中没有对应的实现
+// 使用新版store中的settingsSlice
 import { toggleLayoutMode, saveSettings } from '@/store/slices/settingsSlice';
-import { cleanDuplicateTabs } from '@/store/slices/tabSlice';
+// 使用新版的cleanDuplicateTabs
+import { cleanDuplicateTabs } from '@/features/tabs/store/tabGroupsSlice';
 import { HeaderDropdown } from './HeaderDropdown';
 import { TabCounter } from './TabCounter';
 import SyncButton from '@/components/sync/SyncButton';

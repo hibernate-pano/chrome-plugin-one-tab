@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
-import { useAppDispatch, useAppSelector } from '@/store/hooks';
-import { loadGroups, deleteGroup } from '@/store/slices/tabSlice';
+import { useAppDispatch, useAppSelector } from '@/app/store/hooks';
+import { loadGroups, deleteGroup } from '@/features/tabs/store/tabGroupsSlice';
 
 import { TabGroup } from './TabGroup';
 import { SearchResultList } from '@/components/search/SearchResultList';
@@ -12,7 +12,7 @@ interface TabListProps {
 
 export const TabList: React.FC<TabListProps> = ({ searchQuery }) => {
   const dispatch = useAppDispatch();
-  const { groups, isLoading, error } = useAppSelector(state => state.tabs);
+  const { groups, isLoading, error } = useAppSelector(state => state.tabGroups);
   const { useDoubleColumnLayout } = useAppSelector(state => state.settings);
   const [isRestoreAllModalOpen, setIsRestoreAllModalOpen] = useState(false);
   const [selectedGroup, setSelectedGroup] = useState<TabGroupType | null>(null);
