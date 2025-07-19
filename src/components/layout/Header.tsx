@@ -8,6 +8,7 @@ import { HeaderDropdown } from './HeaderDropdown';
 import { TabCounter } from './TabCounter';
 import SyncButton from '@/components/sync/SyncButton';
 import { SimpleThemeToggle } from './SimpleThemeToggle';
+import { useOnboarding } from '@/features/onboarding/components/OnboardingProvider';
 
 interface HeaderProps {
   onSearch: (query: string) => void;
@@ -18,6 +19,9 @@ export const Header: React.FC<HeaderProps> = ({ onSearch }) => {
   const [searchValue, setSearchValue] = useState('');
   const [showCleanupConfirm, setShowCleanupConfirm] = useState(false);
   const [cleanupResult, setCleanupResult] = useState<{ removedCount: number } | null>(null);
+
+  // 引导系统
+  const { start: startOnboarding } = useOnboarding();
 
   const handleSearch = (e: React.ChangeEvent<HTMLInputElement>) => {
     const value = e.target.value;
@@ -117,6 +121,7 @@ export const Header: React.FC<HeaderProps> = ({ onSearch }) => {
                 className="pl-8 pr-8 py-1.5 w-60 border border-gray-300 dark:border-gray-600 rounded text-gray-700 dark:text-gray-200 dark:bg-gray-700 text-sm focus:outline-none focus:ring-1 focus:ring-primary-500 focus:border-transparent"
                 onChange={handleSearch}
                 value={searchValue}
+                data-onboarding="search-input"
               />
               <svg
                 xmlns="http://www.w3.org/2000/svg"
@@ -223,6 +228,7 @@ export const Header: React.FC<HeaderProps> = ({ onSearch }) => {
               <button
                 onClick={handleSaveAllTabs}
                 className="px-4 py-1.5 rounded text-sm transition-colors bg-primary-600 text-white hover:bg-primary-700 border border-primary-600 min-w-[100px] text-center"
+                data-onboarding="save-tabs-button"
               >
                 保存所有标签
               </button>
@@ -233,6 +239,7 @@ export const Header: React.FC<HeaderProps> = ({ onSearch }) => {
                 onClick={() => setShowDropdown(!showDropdown)}
                 className="p-2 rounded-full hover:bg-gray-100 dark:hover:bg-gray-700 transition-material text-gray-600 dark:text-gray-300"
                 aria-label="菜单"
+                data-onboarding="settings-button"
               >
                 <svg
                   xmlns="http://www.w3.org/2000/svg"

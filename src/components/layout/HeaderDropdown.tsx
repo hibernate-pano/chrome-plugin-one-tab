@@ -7,6 +7,7 @@ import { storage } from '@/utils/storage';
 import { LoginForm } from '../auth/LoginForm';
 import { RegisterForm } from '../auth/RegisterForm';
 import { SyncSettings } from '../sync/SyncSettings';
+import { useOnboarding } from '@/features/onboarding/components/OnboardingProvider';
 
 interface HeaderDropdownProps {
   onClose: () => void;
@@ -21,6 +22,9 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({ onClose }) => {
   const [showAuthModal, setShowAuthModal] = useState(false);
   const [showSyncSettings, setShowSyncSettings] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
+
+  // 引导系统
+  const { start: startOnboarding } = useOnboarding();
 
   // 处理点击外部关闭下拉菜单
   useEffect(() => {
@@ -84,6 +88,12 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({ onClose }) => {
           alert('删除所有标签组失败');
         });
     }
+  };
+
+  // 处理开始引导
+  const handleStartOnboarding = () => {
+    startOnboarding(true); // 强制开始引导
+    onClose();
   };
 
   // 导出数据为 JSON 格式
@@ -316,6 +326,19 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({ onClose }) => {
             </label>
           </div>
         </div>
+
+        {/* 开发环境下的引导选项 */}
+        {process.env.NODE_ENV === 'development' && (
+          <button
+            onClick={handleStartOnboarding}
+            className="w-full text-left px-4 py-2 text-sm text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900 dark:hover:bg-opacity-20 flex items-center"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 mr-2 text-blue-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.746 0 3.332.477 4.5 1.253v13C19.832 18.477 18.246 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" />
+            </svg>
+            重新开始引导
+          </button>
+        )}
 
         <button
           onClick={handleDeleteAllGroups}

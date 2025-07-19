@@ -1,8 +1,8 @@
 import { store } from '@/app/store';
 import { syncTabsToCloud, syncTabsFromCloud } from '@/store/slices/tabSlice';
 import { syncSettingsToCloud, syncSettingsFromCloud } from '@/store/slices/settingsSlice';
-// 注意：getCurrentUser需要从新版authSlice导入
-import { getCurrentUser } from '@/features/auth/store/authSlice';
+// 暂时注释掉getCurrentUser导入，直接从store获取用户信息
+// import { getCurrentUser } from '@/features/auth/store/authSlice';
 import { retryWithBackoff } from '@/shared/utils/syncHelpers';
 import { conflictResolver } from '@/shared/utils/conflictResolver';
 import { errorHandler } from '@/shared/utils/errorHandler';
@@ -88,7 +88,9 @@ class SyncService {
       // 尝试重新获取用户信息，可能是会话过期
       if (friendlyError.title === '认证失败') {
         try {
-          await store.dispatch(getCurrentUser());
+          // 暂时注释掉，直接从store获取用户状态
+          // await store.dispatch(getCurrentUser());
+          console.log('需要重新认证用户');
         } catch (e) {
           console.error('重新获取用户信息失败:', e);
         }
@@ -142,7 +144,9 @@ class SyncService {
       // 尝试重新获取用户信息，可能是会话过期
       if (friendlyError.title === '认证失败') {
         try {
-          await store.dispatch(getCurrentUser());
+          // 暂时注释掉，直接从store获取用户状态
+          // await store.dispatch(getCurrentUser());
+          console.log('需要重新认证用户');
         } catch (e) {
           console.error('重新获取用户信息失败:', e);
         }
@@ -195,7 +199,9 @@ class SyncService {
       console.error('数据同步失败:', error);
       // 尝试重新获取用户信息，可能是会话过期
       try {
-        await store.dispatch(getCurrentUser());
+        // 暂时注释掉，直接从store获取用户状态
+        // await store.dispatch(getCurrentUser());
+        console.log('需要重新认证用户');
       } catch (e) {
         console.error('重新获取用户信息失败:', e);
       }
@@ -242,7 +248,9 @@ class SyncService {
       console.error('下载数据失败:', error);
       // 尝试重新获取用户信息，可能是会话过期
       try {
-        await store.dispatch(getCurrentUser());
+        // 暂时注释掉，直接从store获取用户状态
+        // await store.dispatch(getCurrentUser());
+        console.log('需要重新认证用户');
       } catch (e) {
         console.error('重新获取用户信息失败:', e);
       }

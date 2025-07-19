@@ -1,10 +1,12 @@
-import React, { useEffect, useState, useRef } from 'react';
+import React, { useEffect, useState, useRef, useCallback, useMemo } from 'react';
 import { useAppDispatch, useAppSelector } from '@/store/hooks';
 import { loadGroups, moveGroupAndSync, moveTabAndSync } from '@/store/slices/tabSlice';
 import { SearchResultList } from '@/components/search/SearchResultList';
 // No need to import TabGroup type as we're not using it directly
 import { SortableTabGroup } from '@/components/dnd/SortableTabGroup';
 import { DndKitProvider } from '@/components/dnd/DndKitProvider';
+import { DragPerformanceTest } from '@/components/dnd/DragPerformanceTest';
+import { dragPerformanceMonitor } from '@/shared/utils/dragPerformance';
 import '@/styles/drag-drop.css';
 import {
   DragOverlay,
@@ -61,26 +63,34 @@ export const TabListDndKit: React.FC<TabListProps> = ({ searchQuery }) => {
   // Filter groups based on search query
   const filteredGroups = searchQuery ? [] : groups;
 
-  // Create a list of sortable group IDs
-  const groupIds = filteredGroups.map(group => `group-${group.id}`);
+  // Create a list of sortable group IDs - 使用useMemo优化性能
+  const groupIds = useMemo(() =>
+    filteredGroups.map(group => `group-${group.id}`),
+    [filteredGroups]
+  );
 
-  // 配置拖拽传感器
-  const sensors = useSensors(
+  // 配置拖拽传感器 - 优化性能和灵敏度
+  const sensors = useMemo(() => useSensors(
     useSensor(PointerSensor, {
-      // 只需要很小的移动距离就可以触发拖拽，提高灵敏度
+      // 适中的移动距离，避免意外触发同时保持响应性
       activationConstraint: {
-        distance: 3,
-        tolerance: 5,
+        distance: 5,
+        tolerance: 3,
       },
     }),
     useSensor(KeyboardSensor, {
       coordinateGetter: sortableKeyboardCoordinates,
     })
-  );
+  ), []);
 
-  const handleDragStart = (event: DragStartEvent) => {
+  const handleDragStart = useCallback((event: DragStartEvent) => {
     const { active } = event;
     const activeData = active.data.current;
+
+    // 开始性能监控
+    if (process.env.NODE_ENV === 'development') {
+      dragPerformanceMonitor.startMonitoring();
+    }
 
     // 记录初始拖拽状态
     if (activeData?.type === 'tab') {
@@ -90,22 +100,22 @@ export const TabListDndKit: React.FC<TabListProps> = ({ searchQuery }) => {
       };
     }
 
-    // 记录开始拖拽的元素信息
-    console.log('[DEBUG] Drag Start:', {
-      id: active.id,
-      type: activeData?.type,
-      groupId: activeData?.groupId,
-      index: activeData?.index,
-    });
-
     if (isMounted.current) {
       setActiveId(active.id as string);
       setActiveData(activeData);
     }
-  };
+  }, []);
 
-  const handleDragOver = (event: DragOverEvent) => {
-    const { active, over, delta } = event;
+  // 使用ref来跟踪上次的拖拽位置，避免频繁更新
+  const lastDragPosition = useRef<{
+    sourceGroupId: string;
+    sourceIndex: number;
+    targetGroupId: string;
+    targetIndex: number;
+  } | null>(null);
+
+  const handleDragOver = useCallback((event: DragOverEvent) => {
+    const { active, over } = event;
 
     if (!over || !isMounted.current) return;
 
@@ -120,9 +130,8 @@ export const TabListDndKit: React.FC<TabListProps> = ({ searchQuery }) => {
     // 如果没有数据，直接返回
     if (!activeData || !overData) return;
 
-    // 处理标签拖拽
+    // 处理标签拖拽 - 只进行视觉反馈，不实际移动数据
     if (activeData.type === 'tab' && overData.type === 'tab') {
-      // 始终使用初始拖拽状态，而不是当前可能已经改变的activeData
       const sourceGroupId = initialDragState.current.sourceGroupId || activeData.groupId;
       const sourceIndex =
         initialDragState.current.sourceIndex !== null
@@ -140,54 +149,45 @@ export const TabListDndKit: React.FC<TabListProps> = ({ searchQuery }) => {
         return;
       }
 
-      // 计算拖动方向
-      const direction = delta.y > 0 ? 'down' : delta.y < 0 ? 'up' : 'none';
+      // 检查是否与上次位置相同，避免重复处理
+      const currentPosition = { sourceGroupId, sourceIndex, targetGroupId, targetIndex };
+      if (lastDragPosition.current &&
+          lastDragPosition.current.sourceGroupId === sourceGroupId &&
+          lastDragPosition.current.sourceIndex === sourceIndex &&
+          lastDragPosition.current.targetGroupId === targetGroupId &&
+          lastDragPosition.current.targetIndex === targetIndex) {
+        return;
+      }
 
-      console.log('[DEBUG] Drag Over:', {
-        sourceGroupId,
-        sourceIndex,
-        targetGroupId,
-        targetIndex,
-        isSameGroup,
-        direction,
-        delta,
-      });
+      lastDragPosition.current = currentPosition;
 
-      try {
-        // 实时更新UI - 使用原始源索引
-        dispatch(
-          moveTabAndSync({
-            sourceGroupId,
-            sourceIndex,
-            targetGroupId,
-            targetIndex,
-            updateSourceInDrag: false,
-          })
-        );
-
-        // 不直接修改activeData对象，而是使用setActiveData更新状态
-        // 创建新的对象而不是直接修改原对象
-        if (isMounted.current) {
-          setActiveData({
-            ...activeData,
-            groupId: targetGroupId,
-          });
-        }
-      } catch (error) {
-        console.error('拖拽过程中更新标签位置失败:', error);
+      // 只更新视觉状态，不触发实际的数据移动
+      if (isMounted.current) {
+        setActiveData({
+          ...activeData,
+          groupId: targetGroupId,
+        });
       }
     }
-  };
+  }, []);
 
-  const handleDragEnd = (event: DragEndEvent) => {
-    const { active, over, delta } = event;
+  const handleDragEnd = useCallback((event: DragEndEvent) => {
+    // 清理拖拽位置缓存
+    lastDragPosition.current = null;
 
-    if (!over || !isMounted.current) {
+    const { active, over } = event;
+
+    // 清理状态的通用函数
+    const cleanupState = () => {
       if (isMounted.current) {
         setActiveId(null);
         setActiveData(null);
       }
       initialDragState.current = { sourceGroupId: null, sourceIndex: null };
+    };
+
+    if (!over || !isMounted.current) {
+      cleanupState();
       return;
     }
 
@@ -195,11 +195,7 @@ export const TabListDndKit: React.FC<TabListProps> = ({ searchQuery }) => {
     const overId = over.id as string;
 
     if (activeId === overId) {
-      if (isMounted.current) {
-        setActiveId(null);
-        setActiveData(null);
-      }
-      initialDragState.current = { sourceGroupId: null, sourceIndex: null };
+      cleanupState();
       return;
     }
 
@@ -208,11 +204,7 @@ export const TabListDndKit: React.FC<TabListProps> = ({ searchQuery }) => {
 
     // 如果没有数据，直接返回
     if (!activeData || !overData) {
-      if (isMounted.current) {
-        setActiveId(null);
-        setActiveData(null);
-      }
-      initialDragState.current = { sourceGroupId: null, sourceIndex: null };
+      cleanupState();
       return;
     }
 
@@ -228,31 +220,22 @@ export const TabListDndKit: React.FC<TabListProps> = ({ searchQuery }) => {
       const targetGroupId = overData.groupId;
       const targetIndex = overData.index;
 
-      // 计算拖动方向
-      const direction = delta?.y > 0 ? 'down' : delta?.y < 0 ? 'up' : 'none';
-
-      console.log('[DEBUG] Drag End:', {
-        sourceGroupId,
-        sourceIndex,
-        targetGroupId,
-        targetIndex,
-        direction,
-        delta,
-      });
-
-      try {
-        // 在拖动结束时执行最终更新
-        dispatch(
-          moveTabAndSync({
-            sourceGroupId,
-            sourceIndex,
-            targetGroupId,
-            targetIndex,
-            updateSourceInDrag: true,
-          })
-        );
-      } catch (error) {
-        console.error('拖拽结束时更新标签位置失败:', error);
+      // 只有当位置真正发生变化时才执行移动
+      if (sourceGroupId !== targetGroupId || sourceIndex !== targetIndex) {
+        try {
+          // 在拖动结束时执行最终更新
+          dispatch(
+            moveTabAndSync({
+              sourceGroupId,
+              sourceIndex,
+              targetGroupId,
+              targetIndex,
+              updateSourceInDrag: true,
+            })
+          );
+        } catch (error) {
+          console.error('拖拽结束时更新标签位置失败:', error);
+        }
       }
     }
     // 处理组拖拽
@@ -260,7 +243,7 @@ export const TabListDndKit: React.FC<TabListProps> = ({ searchQuery }) => {
       const activeIndex = filteredGroups.findIndex(g => `group-${g.id}` === activeId);
       const overIndex = filteredGroups.findIndex(g => `group-${g.id}` === overId);
 
-      if (activeIndex !== -1 && overIndex !== -1) {
+      if (activeIndex !== -1 && overIndex !== -1 && activeIndex !== overIndex) {
         try {
           dispatch(moveGroupAndSync({ dragIndex: activeIndex, hoverIndex: overIndex }));
         } catch (error) {
@@ -269,16 +252,17 @@ export const TabListDndKit: React.FC<TabListProps> = ({ searchQuery }) => {
       }
     }
 
-    // 清理所有状态
-    if (isMounted.current) {
-      setActiveId(null);
-      setActiveData(null);
+    // 停止性能监控
+    if (process.env.NODE_ENV === 'development') {
+      dragPerformanceMonitor.stopMonitoring();
     }
-    initialDragState.current = { sourceGroupId: null, sourceIndex: null };
-  };
 
-  // 渲染拖拽覆盖层
-  const renderDragOverlay = () => {
+    // 清理所有状态
+    cleanupState();
+  }, [dispatch, filteredGroups]);
+
+  // 渲染拖拽覆盖层 - 使用useCallback优化性能
+  const renderDragOverlay = useCallback(() => {
     if (!activeId || !activeData) return null;
 
     if (activeData.type === 'tab') {
@@ -312,7 +296,7 @@ export const TabListDndKit: React.FC<TabListProps> = ({ searchQuery }) => {
     }
 
     return null;
-  };
+  }, [activeId, activeData]);
 
   return (
     <div className="space-y-2">
@@ -381,6 +365,9 @@ export const TabListDndKit: React.FC<TabListProps> = ({ searchQuery }) => {
           </DragOverlay>
         </DndKitProvider>
       )}
+
+      {/* 开发环境下的性能监控 */}
+      <DragPerformanceTest />
     </div>
   );
 };

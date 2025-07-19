@@ -17,6 +17,7 @@ import { autoSyncManager } from '@/services/autoSyncManager';
 const SyncPromptModal = lazy(() => import('@/components/sync/SyncPromptModal'));
 import { ToastProvider } from '@/contexts/ToastContext';
 import { ThemeProvider } from '@/contexts/ThemeContext';
+import { OnboardingSystem } from '@/features/onboarding/components/OnboardingSystem';
 
 // 导入样式文件
 import '@/styles/drag-drop.css';
@@ -173,14 +174,15 @@ const App: React.FC = () => {
   return (
     <ToastProvider>
       <ThemeProvider>
-        <Suspense
-          fallback={
-            <div className="min-h-screen bg-white dark:bg-gray-900 dark:text-gray-100 flex flex-col items-center justify-center">
-              加载拖放功能...
-            </div>
-          }
-        >
-          <div className="min-h-screen bg-white dark:bg-gray-900 dark:text-gray-100 flex flex-col">
+        <OnboardingSystem autoStart={true} storageKey="onetab-onboarding-state">
+          <Suspense
+            fallback={
+              <div className="min-h-screen bg-white dark:bg-gray-900 dark:text-gray-100 flex flex-col items-center justify-center">
+                加载拖放功能...
+              </div>
+            }
+          >
+            <div className="min-h-screen bg-white dark:bg-gray-900 dark:text-gray-100 flex flex-col">
               {showPerformanceTest ? (
                 <>
                   <div className="bg-primary-600 text-white p-2">
@@ -267,7 +269,8 @@ const App: React.FC = () => {
                 </Suspense>
               )}
             </div>
-        </Suspense>
+          </Suspense>
+        </OnboardingSystem>
       </ThemeProvider>
     </ToastProvider>
   );

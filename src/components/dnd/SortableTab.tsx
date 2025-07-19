@@ -1,7 +1,8 @@
-import React, { useRef, useEffect } from 'react';
+import React, { useRef, useEffect, useCallback, memo } from 'react';
 import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { Tab } from '@/types/tab';
+import { dragPerformanceMonitor } from '@/shared/utils/dragPerformance';
 import '@/styles/drag-drop.css';
 
 interface SortableTabProps {
@@ -12,7 +13,7 @@ interface SortableTabProps {
   handleDeleteTab: (tabId: string) => void;
 }
 
-export const SortableTab: React.FC<SortableTabProps> = ({
+const SortableTabComponent: React.FC<SortableTabProps> = ({
   tab,
   groupId,
   index,
@@ -42,6 +43,13 @@ export const SortableTab: React.FC<SortableTabProps> = ({
     },
   });
 
+  // 性能监控 - 仅在开发环境
+  useEffect(() => {
+    if (isDragging && process.env.NODE_ENV === 'development') {
+      dragPerformanceMonitor.recordFrame();
+    }
+  }, [isDragging, transform]);
+
   // 提供清晰的拖拽反馈
   const style = {
     transform: CSS.Transform.toString(transform),
@@ -50,18 +58,18 @@ export const SortableTab: React.FC<SortableTabProps> = ({
     transition: isDragging ? undefined : 'transform 0.15s ease, opacity 0.15s ease',
   };
 
-  // 安全的处理函数，确保组件未卸载时才调用原始函数
-  const safeHandleOpenTab = (tab: Tab) => {
+  // 安全的处理函数，确保组件未卸载时才调用原始函数 - 使用useCallback优化性能
+  const safeHandleOpenTab = useCallback((tab: Tab) => {
     if (isMounted.current) {
       handleOpenTab(tab);
     }
-  };
+  }, [handleOpenTab]);
 
-  const safeHandleDeleteTab = (tabId: string) => {
+  const safeHandleDeleteTab = useCallback((tabId: string) => {
     if (isMounted.current) {
       handleDeleteTab(tabId);
     }
-  };
+  }, [handleDeleteTab]);
 
   // 自定义删除按钮样式 - 简化实现
   const deleteButtonStyle = {
@@ -90,9 +98,10 @@ export const SortableTab: React.FC<SortableTabProps> = ({
       style={style}
       className={`flex items-center py-1 px-2 hover:bg-gray-100 rounded select-none cursor-move tab-item
         ${isDragging ? 'bg-blue-50 border border-blue-300 dragging shadow-md' : ''}
-      `} 
+      `}
       {...attributes}
       {...listeners}
+      data-onboarding="tab-item"
     >
       {/* 删除按钮 */}
       <button 
@@ -163,4 +172,6 @@ export const SortableTab: React.FC<SortableTabProps> = ({
   );
 };
 
-export default React.memo(SortableTab);
+// 使用memo优化性能，避免不必要的重新渲染
+export const SortableTab = memo(SortableTabComponent);
+export default SortableTab;

@@ -34,23 +34,23 @@ export default defineConfig(({ mode }) => {
           'oauth-callback': resolve(__dirname, 'src/pages/oauth-callback.html')
         },
         output: {
-          // 手动配置代码分块策略
-          manualChunks: {
-            // React 相关库打包到一起
-            'react-vendor': ['react', 'react-dom', 'react-redux'],
-            // Redux 相关库打包到一起
-            'redux-vendor': ['@reduxjs/toolkit'],
-            // Supabase 相关库打包到一起
-            'supabase-vendor': ['@supabase/supabase-js'],
-            // 工具函数打包到一起
-            'utils': [
-              './src/shared/utils/storage.ts',
-              './src/shared/utils/supabase.ts',
-              './src/shared/utils/syncUtils.ts',
-              './src/shared/utils/syncHelpers.ts',
-              './src/shared/utils/encryptionUtils.ts'
-            ]
-          }
+          // 暂时禁用手动分块以解决依赖解析问题
+          // manualChunks: {
+          //   // React 相关库打包到一起
+          //   'react-vendor': ['react', 'react-dom', 'react-redux'],
+          //   // Redux 相关库打包到一起
+          //   'redux-vendor': ['@reduxjs/toolkit'],
+          //   // Supabase 相关库打包到一起
+          //   'supabase-vendor': ['@supabase/supabase-js'],
+          //   // 工具函数打包到一起
+          //   'utils': [
+          //     './src/shared/utils/storage.ts',
+          //     './src/shared/utils/supabase.ts',
+          //     './src/shared/utils/syncUtils.ts',
+          //     './src/shared/utils/syncHelpers.ts',
+          //     './src/shared/utils/encryptionUtils.ts'
+          //   ]
+          // }
         }
       }
     }

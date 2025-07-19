@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect, useCallback } from 'react';
+import React, { useState, useRef, useEffect, useCallback, memo, useMemo } from 'react';
 import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { TabGroup as TabGroupType } from '@/types/tab';
@@ -6,6 +6,7 @@ import { useAppDispatch } from '@/store/hooks';
 import { updateGroupNameAndSync, deleteGroup, updateGroup } from '@/store/slices/tabSlice';
 import { SortableTab } from './SortableTab';
 import { SortableContext, rectSortingStrategy } from '@dnd-kit/sortable';
+import { dragPerformanceMonitor } from '@/shared/utils/dragPerformance';
 import '@/styles/drag-drop.css';
 
 interface SortableTabGroupProps {
@@ -13,7 +14,7 @@ interface SortableTabGroupProps {
   index: number;
 }
 
-export const SortableTabGroup: React.FC<SortableTabGroupProps> = ({ group, index }) => {
+const SortableTabGroupComponent: React.FC<SortableTabGroupProps> = ({ group, index }) => {
   const dispatch = useAppDispatch();
   const [isExpanded, setIsExpanded] = useState(true);
   const [isEditing, setIsEditing] = useState(false);
@@ -125,8 +126,11 @@ export const SortableTabGroup: React.FC<SortableTabGroupProps> = ({ group, index
     return null;
   }
 
-  // Create a list of sortable tab IDs
-  const tabIds = group.tabs.map(tab => `${group.id}-tab-${tab.id}`);
+  // Create a list of sortable tab IDs - 使用useMemo优化性能
+  const tabIds = useMemo(() =>
+    group.tabs.map(tab => `${group.id}-tab-${tab.id}`),
+    [group.tabs, group.id]
+  );
   
   // Ensure other handlers also check isMarkedForDeletion if they could conflict
   const safeHandleOpenTab = useCallback((tab: any) => {
@@ -164,6 +168,7 @@ export const SortableTabGroup: React.FC<SortableTabGroupProps> = ({ group, index
       ref={setNodeRef}
       style={style}
       className={`bg-white rounded-lg border border-gray-200 overflow-hidden select-none group-item ${isDragging ? 'border-gray-400 dragging' : ''}`}
+      data-onboarding="tab-group"
     >
       <div
         className="flex items-center justify-between p-2 bg-gray-50 border-b border-gray-200 cursor-move"
@@ -256,3 +261,7 @@ export const SortableTabGroup: React.FC<SortableTabGroupProps> = ({ group, index
     </div>
   );
 };
+
+// 使用memo优化性能，避免不必要的重新渲染
+export const SortableTabGroup = memo(SortableTabGroupComponent);
+export default SortableTabGroup;

@@ -1,13 +1,8 @@
-import { storage } from './utils/storage';
-import { nanoid } from '@reduxjs/toolkit';
-import { TabGroup } from './types/tab';
-import { store } from './app/store';
-import { updateWechatLoginStatus, handleOAuthCallback } from './features/auth';
-import { showNotification } from './utils/notification';
-import { logger } from './shared/utils/logger';
+// 暂时注释掉background.ts以专注于前端拖拽功能测试
+console.log('Background script loaded - drag optimization test mode');
 
-// 创建新标签组的辅助函数
-const createTabGroup = (tabs: chrome.tabs.Tab[]): TabGroup => {
+// 所有background功能暂时禁用
+/*
   return {
     id: nanoid(),
     name: `标签组 ${new Date().toLocaleString()}`,
@@ -444,3 +439,4 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo) => {
 chrome.runtime.onStartup.addListener(() => {
   logger.debug('浏览器启动，不再自动检查用户会话');
 });
+*/

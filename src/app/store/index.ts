@@ -9,6 +9,7 @@ import { logger } from '@/shared/utils/logger';
 import { tabsReducer, tabGroupsReducer, dragOperationsReducer } from '@/features/tabs/store';
 import { syncReducer } from '@/features/sync';
 import { authReducer } from '@/features/auth';
+import onboardingReducer from '@/features/onboarding/store/onboardingSlice';
 
 // 原有的reducers（暂时保留，逐步迁移）
 import settingsReducer from '@/store/slices/settingsSlice';
@@ -25,7 +26,8 @@ const rootReducer = {
   dragOperations: dragOperationsReducer,
   sync: syncReducer,
   auth: authReducer,
-  
+  onboarding: onboardingReducer,
+
   // 原有的reducers（逐步迁移）
   settings: settingsReducer,
 };
