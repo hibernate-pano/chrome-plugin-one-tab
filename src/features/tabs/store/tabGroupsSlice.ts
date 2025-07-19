@@ -7,6 +7,8 @@ import { storage } from '@/shared/utils/storage';
 import { logger } from '@/shared/utils/logger';
 import { TabGroup } from '@/shared/types/tab';
 import { nanoid } from '@reduxjs/toolkit';
+// 导入拖拽操作，用于监听拖拽完成事件
+import { moveTab, moveGroup } from './dragOperationsSlice';
 
 interface TabGroupsState {
   groups: TabGroup[];
@@ -349,6 +351,39 @@ const tabGroupsSlice = createSlice({
       .addCase(cleanDuplicateTabs.rejected, (state, action) => {
         state.isLoading = false;
         state.error = action.error.message || '清理重复标签失败';
+      })
+
+      // 监听拖拽操作 - 实现立即UI更新
+      .addCase(moveTab.fulfilled, (state, action) => {
+        // 立即更新本地状态，确保UI同步
+        if (action.payload.updatedGroups) {
+          state.groups = action.payload.updatedGroups;
+          logger.debug('标签拖拽完成，UI已更新', {
+            sourceGroupId: action.payload.sourceGroupId,
+            targetGroupId: action.payload.targetGroupId,
+            targetIndex: action.payload.targetIndex
+          });
+        }
+      })
+      .addCase(moveTab.rejected, (state, action) => {
+        // 拖拽失败时的错误处理
+        state.error = action.error.message || '移动标签失败';
+        logger.error('标签拖拽失败', action.error);
+
+        // 如果异步操作失败，重新加载数据以确保状态一致性
+        // 这里可以添加更精确的回滚逻辑
+        logger.warn('拖拽操作失败，建议重新加载数据以确保状态一致性');
+      })
+
+      .addCase(moveGroup.fulfilled, (state, action) => {
+        // 标签组拖拽完成后重新加载数据
+        // 这里可以添加更精确的状态更新逻辑
+        logger.debug('标签组拖拽完成', action.payload);
+      })
+      .addCase(moveGroup.rejected, (state, action) => {
+        // 标签组拖拽失败时的错误处理
+        state.error = action.error.message || '移动标签组失败';
+        logger.error('标签组拖拽失败', action.error);
       });
   },
 });

@@ -95,13 +95,15 @@ export const moveTab = createAsyncThunk(
     });
     
     await storage.setGroups(updatedGroups);
-    
+
     return {
       sourceGroupId,
       sourceIndex,
       targetGroupId,
       targetIndex,
       shouldDeleteSourceGroup: newSourceTabs.length === 0 && !sourceGroup.isLocked,
+      updatedGroups, // 添加完整的更新后标签组数据用于UI立即更新
+      movedTab: tab, // 添加被移动的标签页信息
     };
   }
 );

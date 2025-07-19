@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useRef, useCallback, useMemo } from 'react';
 import { useAppDispatch, useAppSelector } from '@/app/store/hooks';
-import { loadGroups } from '@/features/tabs/store/tabGroupsSlice';
+import { loadGroups, setGroups } from '@/features/tabs/store/tabGroupsSlice';
 import { moveGroup, moveTab } from '@/features/tabs/store/dragOperationsSlice';
 import { SearchResultList } from '@/components/search/SearchResultList';
 // No need to import TabGroup type as we're not using it directly
@@ -224,7 +224,44 @@ export const TabListDndKit: React.FC<TabListProps> = ({ searchQuery }) => {
       // 只有当位置真正发生变化时才执行移动
       if (sourceGroupId !== targetGroupId || sourceIndex !== targetIndex) {
         try {
-          // 在拖动结束时执行最终更新
+          // 乐观更新：立即更新本地状态以提供即时的视觉反馈
+          const currentGroups = [...filteredGroups];
+          const sourceGroup = currentGroups.find(g => g.id === sourceGroupId);
+          const targetGroup = currentGroups.find(g => g.id === targetGroupId);
+
+          if (sourceGroup && targetGroup) {
+            // 执行本地状态更新
+            const newSourceTabs = [...sourceGroup.tabs];
+            const newTargetTabs = sourceGroupId === targetGroupId ? newSourceTabs : [...targetGroup.tabs];
+
+            // 从源位置移除标签
+            const movedTab = newSourceTabs.splice(sourceIndex, 1)[0];
+
+            // 计算调整后的目标索引
+            let adjustedIndex = targetIndex;
+            if (sourceGroupId === targetGroupId && sourceIndex < targetIndex) {
+              adjustedIndex = targetIndex - 1;
+            }
+
+            // 插入到目标位置
+            newTargetTabs.splice(adjustedIndex, 0, movedTab);
+
+            // 更新标签组
+            const updatedGroups = currentGroups.map(group => {
+              if (group.id === sourceGroupId) {
+                return { ...group, tabs: newSourceTabs, updatedAt: new Date().toISOString() };
+              }
+              if (group.id === targetGroupId && sourceGroupId !== targetGroupId) {
+                return { ...group, tabs: newTargetTabs, updatedAt: new Date().toISOString() };
+              }
+              return group;
+            });
+
+            // 立即更新UI状态
+            dispatch(setGroups(updatedGroups));
+          }
+
+          // 然后执行异步操作以同步到存储
           dispatch(
             moveTab({
               sourceGroupId,
