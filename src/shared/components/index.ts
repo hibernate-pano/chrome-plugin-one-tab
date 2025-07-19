@@ -31,3 +31,8 @@ export type { BadgeProps } from './Badge/Badge';
 
 export { Divider } from './Divider/Divider';
 export type { DividerProps } from './Divider/Divider';
+
+export { VirtualizedList, VirtualizedGrid } from './VirtualizedList';
+export type { VirtualizedListProps, VirtualizedGridProps, VirtualizedListItem } from './VirtualizedList';
+
+export { RenderPerformanceMonitor, PerformanceIndicator } from './RenderPerformanceMonitor';

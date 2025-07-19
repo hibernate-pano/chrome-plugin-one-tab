@@ -14,6 +14,9 @@ export { AdvancedSearch } from './search/AdvancedSearch';
 export { AdvancedSearchPanel } from './search/AdvancedSearchPanel';
 export { SearchHistoryPanel } from './search/SearchHistoryPanel';
 
+// 虚拟化组件
+export { VirtualizedTabGroupList, VirtualizedTabGroupGrid } from './VirtualizedTabGroupList';
+
 // 拖拽组件
 export { DraggableTabGroup } from './dnd/DraggableTabGroup';
 export { SimpleDraggableTabGroup } from './dnd/SimpleDraggableTabGroup';

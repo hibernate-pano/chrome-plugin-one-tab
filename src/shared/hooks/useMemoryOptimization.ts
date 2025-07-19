@@ -4,6 +4,7 @@
 
 import { useRef, useCallback, useMemo, useEffect, useState } from 'react';
 import { logger } from '@/shared/utils/logger';
+import { memoryManager, MemoryStats } from '@/shared/utils/memoryManager';
 
 /**
  * 防抖Hook，减少频繁的函数调用
@@ -323,4 +324,187 @@ export function useSmartCache<K, V>(
   }, [ttl]);
 
   return { get, set, clear, size };
+}
+
+/**
+ * 内存监控Hook
+ * 监控应用的内存使用情况
+ */
+export function useMemoryMonitor(enabled: boolean = true) {
+  const [memoryStats, setMemoryStats] = useState<MemoryStats | null>(null);
+  const [isHighMemoryUsage, setIsHighMemoryUsage] = useState(false);
+
+  useEffect(() => {
+    if (!enabled) return;
+
+    const updateMemoryStats = () => {
+      const stats = memoryManager.getCurrentMemoryStats();
+      if (stats) {
+        setMemoryStats(stats);
+        setIsHighMemoryUsage(stats.usagePercentage > 70);
+      }
+    };
+
+    // 立即更新一次
+    updateMemoryStats();
+
+    // 定期更新
+    const interval = setInterval(updateMemoryStats, 5000);
+
+    return () => clearInterval(interval);
+  }, [enabled]);
+
+  const forceGarbageCollection = useCallback(() => {
+    if ('gc' in window && typeof (window as any).gc === 'function') {
+      (window as any).gc();
+      logger.debug('手动触发垃圾回收');
+    } else {
+      logger.warn('垃圾回收不可用');
+    }
+  }, []);
+
+  return {
+    memoryStats,
+    isHighMemoryUsage,
+    forceGarbageCollection,
+    memoryHistory: memoryManager.getMemoryHistory()
+  };
+}
+
+/**
+ * 智能缓存Hook
+ * 提供带有内存管理的缓存功能
+ */
+export function useSmartCache<T>(
+  cacheName: string,
+  maxSize: number = 100,
+  ttl: number = 30 * 60 * 1000 // 30分钟
+) {
+  const [cacheStats, setCacheStats] = useState<any>(null);
+
+  useEffect(() => {
+    // 创建缓存
+    memoryManager.createCache(cacheName, {
+      maxSize,
+      ttl,
+      maxMemory: 10 * 1024 * 1024, // 10MB
+      cleanupInterval: 5 * 60 * 1000 // 5分钟
+    });
+
+    // 定期更新缓存统计
+    const updateStats = () => {
+      const stats = memoryManager.getCacheStats(cacheName);
+      setCacheStats(stats);
+    };
+
+    updateStats();
+    const interval = setInterval(updateStats, 10000);
+
+    return () => {
+      clearInterval(interval);
+    };
+  }, [cacheName, maxSize, ttl]);
+
+  const set = useCallback((key: string, value: T, size?: number) => {
+    memoryManager.setCacheItem(cacheName, key, value, size);
+  }, [cacheName]);
+
+  const get = useCallback((key: string): T | null => {
+    return memoryManager.getCacheItem<T>(cacheName, key);
+  }, [cacheName]);
+
+  const remove = useCallback((key: string) => {
+    return memoryManager.deleteCacheItem(cacheName, key);
+  }, [cacheName]);
+
+  const clear = useCallback(() => {
+    memoryManager.clearCache(cacheName);
+  }, [cacheName]);
+
+  return {
+    set,
+    get,
+    remove,
+    clear,
+    stats: cacheStats
+  };
+}
+
+/**
+ * 内存优化Hook
+ * 综合的内存优化解决方案
+ */
+export function useMemoryOptimization(options: {
+  enableMonitoring?: boolean;
+  enableAutoCleanup?: boolean;
+  warningThreshold?: number;
+  criticalThreshold?: number;
+} = {}) {
+  const {
+    enableMonitoring = true,
+    enableAutoCleanup = true,
+    warningThreshold = 70,
+    criticalThreshold = 90
+  } = options;
+
+  const { memoryStats, isHighMemoryUsage, forceGarbageCollection } = useMemoryMonitor(enableMonitoring);
+  const [optimizationActions, setOptimizationActions] = useState<string[]>([]);
+
+  // 配置内存管理器
+  useEffect(() => {
+    memoryManager.configure({
+      enabled: enableMonitoring,
+      warningThreshold,
+      criticalThreshold,
+      monitorInterval: 5000,
+      maxHistorySize: 100
+    });
+  }, [enableMonitoring, warningThreshold, criticalThreshold]);
+
+  // 自动清理
+  useEffect(() => {
+    if (!enableAutoCleanup || !memoryStats) return;
+
+    if (memoryStats.usagePercentage > criticalThreshold) {
+      const actions = ['强制垃圾回收', '清理过期缓存'];
+      setOptimizationActions(actions);
+
+      // 执行优化操作
+      forceGarbageCollection();
+
+      // 清理所有缓存的过期项目
+      setTimeout(() => {
+        setOptimizationActions([]);
+      }, 3000);
+    }
+  }, [memoryStats, enableAutoCleanup, criticalThreshold, forceGarbageCollection]);
+
+  const getMemoryUsageLevel = useCallback(() => {
+    if (!memoryStats) return 'unknown';
+
+    if (memoryStats.usagePercentage < 50) return 'low';
+    if (memoryStats.usagePercentage < 70) return 'medium';
+    if (memoryStats.usagePercentage < 90) return 'high';
+    return 'critical';
+  }, [memoryStats]);
+
+  const formatMemorySize = useCallback((bytes: number) => {
+    if (bytes === 0) return '0 B';
+
+    const k = 1024;
+    const sizes = ['B', 'KB', 'MB', 'GB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+  }, []);
+
+  return {
+    memoryStats,
+    isHighMemoryUsage,
+    optimizationActions,
+    getMemoryUsageLevel,
+    formatMemorySize,
+    forceGarbageCollection,
+    memoryHistory: memoryManager.getMemoryHistory()
+  };
 }
