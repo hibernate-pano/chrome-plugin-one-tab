@@ -3,6 +3,9 @@ import { syncTabsToCloud, syncTabsFromCloud } from '@/store/slices/tabSlice';
 import { syncSettingsToCloud, syncSettingsFromCloud } from '@/store/slices/settingsSlice';
 // 注意：getCurrentUser需要从新版authSlice导入
 import { getCurrentUser } from '@/features/auth/store/authSlice';
+import { retryWithBackoff } from '@/shared/utils/syncHelpers';
+import { conflictResolver } from '@/shared/utils/conflictResolver';
+import { errorHandler } from '@/shared/utils/errorHandler';
 import { sync as supabaseSync } from '@/utils/supabase';
 import { storage } from '@/utils/storage';
 
@@ -44,7 +47,7 @@ class SyncService {
   async uploadToCloud(background = false, overwriteCloud = true) {
     const { auth } = store.getState();
 
-    if (!auth.isAuthenticated) {
+    if (auth.status !== 'authenticated') {
       console.warn('用户未登录，无法上传数据到云端');
       return { success: false, error: '用户未登录' };
     }
@@ -52,14 +55,20 @@ class SyncService {
     try {
       console.log(`开始${background ? '后台' : ''}上传数据到云端${overwriteCloud ? '（覆盖模式）' : '（合并模式）'}...`);
 
-      // 上传标签组数据
+      // 使用重试机制上传标签组数据
       console.log('正在上传标签组数据...');
-      await store.dispatch(syncTabsToCloud({ background, overwriteCloud }));
+      await retryWithBackoff(
+        () => store.dispatch(syncTabsToCloud({ background, overwriteCloud })).unwrap(),
+        '上传标签组数据'
+      );
 
-      // 上传设置数据
+      // 使用重试机制上传设置数据
       console.log('正在上传设置数据...');
       try {
-        await store.dispatch(syncSettingsToCloud());
+        await retryWithBackoff(
+          () => store.dispatch(syncSettingsToCloud()).unwrap(),
+          '上传设置数据'
+        );
       } catch (settingsError) {
         console.warn('设置上传失败，但继续完成其他同步:', settingsError);
         // 设置上传失败不影响整体同步成功
@@ -69,13 +78,27 @@ class SyncService {
       return { success: true };
     } catch (error) {
       console.error('数据上传失败:', error);
+
+      // 使用改进的错误处理
+      const friendlyError = errorHandler.handleSyncError(error as Error, {
+        component: 'syncService',
+        operation: 'uploadToCloud',
+      });
+
       // 尝试重新获取用户信息，可能是会话过期
-      try {
-        await store.dispatch(getCurrentUser());
-      } catch (e) {
-        console.error('重新获取用户信息失败:', e);
+      if (friendlyError.title === '认证失败') {
+        try {
+          await store.dispatch(getCurrentUser());
+        } catch (e) {
+          console.error('重新获取用户信息失败:', e);
+        }
       }
-      return { success: false, error: error instanceof Error ? error.message : '上传失败' };
+
+      return {
+        success: false,
+        error: friendlyError.message,
+        friendlyError
+      };
     }
   }
 
@@ -83,7 +106,7 @@ class SyncService {
   async downloadFromCloud(background = false, overwriteLocal = true) {
     const { auth } = store.getState();
 
-    if (!auth.isAuthenticated) {
+    if (auth.status !== 'authenticated') {
       console.warn('用户未登录，无法从云端下载数据');
       return { success: false, error: '用户未登录' };
     }
@@ -91,25 +114,45 @@ class SyncService {
     try {
       console.log(`开始${background ? '后台' : ''}从云端下载数据${overwriteLocal ? '（覆盖模式）' : '（合并模式）'}...`);
 
-      // 从云端同步设置
+      // 使用重试机制从云端同步设置
       console.log('正在从云端下载设置...');
-      await store.dispatch(syncSettingsFromCloud());
+      await retryWithBackoff(
+        () => store.dispatch(syncSettingsFromCloud()).unwrap(),
+        '下载设置数据'
+      );
 
-      // 从云端同步标签组
+      // 使用重试机制从云端同步标签组
       console.log('正在从云端下载标签组...');
-      await store.dispatch(syncTabsFromCloud({ background, forceRemoteStrategy: overwriteLocal }));
+      await retryWithBackoff(
+        () => store.dispatch(syncTabsFromCloud({ background, forceRemoteStrategy: overwriteLocal })).unwrap(),
+        '下载标签组数据'
+      );
 
       console.log(`从云端下载数据完成！${overwriteLocal ? '本地数据已被云端数据覆盖' : '云端数据已与本地数据合并'}`);
       return { success: true };
     } catch (error) {
       console.error('从云端下载数据失败:', error);
+
+      // 使用改进的错误处理
+      const friendlyError = errorHandler.handleSyncError(error as Error, {
+        component: 'syncService',
+        operation: 'downloadFromCloud',
+      });
+
       // 尝试重新获取用户信息，可能是会话过期
-      try {
-        await store.dispatch(getCurrentUser());
-      } catch (e) {
-        console.error('重新获取用户信息失败:', e);
+      if (friendlyError.title === '认证失败') {
+        try {
+          await store.dispatch(getCurrentUser());
+        } catch (e) {
+          console.error('重新获取用户信息失败:', e);
+        }
       }
-      return { success: false, error: error instanceof Error ? error.message : '下载失败' };
+
+      return {
+        success: false,
+        error: friendlyError.message,
+        friendlyError
+      };
     }
   }
 
@@ -117,7 +160,7 @@ class SyncService {
   async syncAll(background = true) {
     const { auth } = store.getState();
 
-    if (!auth.isAuthenticated) {
+    if (auth.status !== 'authenticated') {
       console.warn('用户未登录，无法同步数据');
       return { success: false, error: '用户未登录' };
     }
@@ -169,7 +212,7 @@ class SyncService {
   async downloadAndRefresh(overwriteLocal = true) {
     const { auth } = store.getState();
 
-    if (!auth.isAuthenticated) {
+    if (auth.status !== 'authenticated') {
       console.warn('用户未登录，无法从云端下载数据');
       return { success: false, error: '用户未登录' };
     }

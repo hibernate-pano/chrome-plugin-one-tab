@@ -76,7 +76,7 @@ class ErrorHandler {
   handleSyncError(error: Error, context: ErrorContext): UserFriendlyError {
     const errorType = this.categorizeError(error);
     let friendlyError = this.errorMappings.get(errorType);
-    
+
     // 同步错误的特殊处理
     if (errorType === 'NETWORK_ERROR') {
       friendlyError = {
@@ -85,12 +85,33 @@ class ErrorHandler {
         action: '稍后重试',
         recoverable: true,
       };
+    } else if (errorType === 'AUTH_ERROR') {
+      friendlyError = {
+        title: '认证失败',
+        message: '登录状态已过期，请重新登录',
+        action: '重新登录',
+        recoverable: true,
+      };
+    } else if (error.message.includes('conflict') || error.message.includes('冲突')) {
+      friendlyError = {
+        title: '数据冲突',
+        message: '检测到数据冲突，需要手动解决',
+        action: '查看冲突',
+        recoverable: true,
+      };
+    } else if (error.message.includes('quota') || error.message.includes('限制')) {
+      friendlyError = {
+        title: '存储空间不足',
+        message: '云端存储空间已满，请清理数据或升级账户',
+        action: '管理存储',
+        recoverable: true,
+      };
     }
-    
+
     friendlyError = friendlyError || this.errorMappings.get('UNKNOWN_ERROR')!;
-    
+
     logger.error(`同步错误 [${context.component || 'Unknown'}]`, error, context);
-    
+
     return friendlyError;
   }
 

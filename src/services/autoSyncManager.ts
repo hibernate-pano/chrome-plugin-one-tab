@@ -52,7 +52,7 @@ class AutoSyncManager {
     try {
       const state = store.getState();
       
-      if (state.auth.isAuthenticated && state.settings.syncEnabled) {
+      if (state.auth.status === 'authenticated' && state.settings.syncEnabled) {
         console.log('🔄 启用实时同步');
         await realtimeSync.initialize();
       } else {
@@ -131,10 +131,10 @@ class AutoSyncManager {
    * 监听认证状态变化
    */
   private watchAuthState() {
-    let previousAuthState = store.getState().auth.isAuthenticated;
-    
+    let previousAuthState = store.getState().auth.status === 'authenticated';
+
     store.subscribe(() => {
-      const currentAuthState = store.getState().auth.isAuthenticated;
+      const currentAuthState = store.getState().auth.status === 'authenticated';
       const { autoSyncEnabled, syncEnabled } = store.getState().settings;
       
       // 用户刚登录且启用自动同步
@@ -466,7 +466,7 @@ class AutoSyncManager {
   private async getCloudDataTimestamp(): Promise<string | null> {
     try {
       const { auth } = store.getState();
-      if (!auth.isAuthenticated) {
+      if (auth.status !== 'authenticated') {
         return null;
       }
 

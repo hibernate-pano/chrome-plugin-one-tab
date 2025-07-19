@@ -41,9 +41,16 @@ const OPERATION_PRIORITIES: Record<string, number> = {
 };
 
 // 当前正在进行的同步操作信息
-let currentSyncOperation: { type: string; priority: number } | null = null;
+let currentSyncOperation: { type: string; priority: number; retryCount: number } | null = null;
 // 全局同步锁，防止并发同步
 let syncLock = false;
+// 重试配置
+const RETRY_CONFIG = {
+  maxRetries: 3,
+  baseDelay: 1000, // 1秒
+  maxDelay: 10000, // 10秒
+  backoffMultiplier: 2,
+};
 
 export async function syncToCloud<T>(
   _dispatch: ThunkDispatch<T, any, UnknownAction>,
@@ -148,4 +155,90 @@ export async function syncToCloud<T>(
       }
     }, priority >= 10 ? 100 : SYNC_DEBOUNCE_DELAY); // 高优先级操作使用更短的延迟
   });
+}
+
+/**
+ * 智能重试函数
+ */
+export async function retryWithBackoff<T>(
+  operation: () => Promise<T>,
+  operationType: string,
+  maxRetries: number = RETRY_CONFIG.maxRetries
+): Promise<T> {
+  let lastError: Error;
+
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      if (attempt > 0) {
+        const delay = Math.min(
+          RETRY_CONFIG.baseDelay * Math.pow(RETRY_CONFIG.backoffMultiplier, attempt - 1),
+          RETRY_CONFIG.maxDelay
+        );
+        logger.debug(`重试 ${operationType}，第 ${attempt} 次，延迟 ${delay}ms`);
+        await new Promise(resolve => setTimeout(resolve, delay));
+      }
+
+      const result = await operation();
+
+      if (attempt > 0) {
+        logger.info(`${operationType} 重试成功，尝试次数: ${attempt}`);
+      }
+
+      return result;
+    } catch (error) {
+      lastError = error as Error;
+
+      // 检查是否应该停止重试
+      if (shouldStopRetrying(error as Error)) {
+        logger.warn(`${operationType} 遇到不可重试错误，停止重试:`, error);
+        throw error;
+      }
+
+      if (attempt === maxRetries) {
+        logger.error(`${operationType} 重试失败，已达到最大重试次数 ${maxRetries}:`, error);
+        throw error;
+      }
+
+      logger.warn(`${operationType} 第 ${attempt + 1} 次尝试失败:`, error);
+    }
+  }
+
+  throw lastError!;
+}
+
+/**
+ * 判断是否应该停止重试
+ */
+function shouldStopRetrying(error: Error): boolean {
+  const errorMessage = error.message.toLowerCase();
+
+  // 认证错误不重试
+  if (errorMessage.includes('unauthorized') || errorMessage.includes('forbidden')) {
+    return true;
+  }
+
+  // 数据格式错误不重试
+  if (errorMessage.includes('invalid') || errorMessage.includes('malformed')) {
+    return true;
+  }
+
+  // 配额超限不重试
+  if (errorMessage.includes('quota') || errorMessage.includes('limit')) {
+    return true;
+  }
+
+  return false;
+}
+
+/**
+ * 检查是否应该跳过同步
+ */
+export function shouldSkipSync(operationType: string, priority: number): boolean {
+  // 如果有更高优先级的操作正在进行，跳过当前操作
+  if (currentSyncOperation && currentSyncOperation.priority > priority) {
+    logger.debug(`跳过同步操作 ${operationType}，有更高优先级操作正在进行`);
+    return true;
+  }
+
+  return false;
 }
