@@ -227,7 +227,7 @@ export class AsyncOperationWrapper {
    * 隐藏加载状态
    */
   private static hideLoading(id: string): void {
-    logger.debug('隐藏加载状态:', id);
+    logger.debug('隐藏加载状态:', { id });
   }
 
   /**
@@ -240,7 +240,7 @@ export class AsyncOperationWrapper {
 
     if (config.showToast) {
       // 这里应该调用实际的Toast显示逻辑
-      logger.debug('显示错误Toast:', error.message);
+      logger.debug('显示错误Toast:', { message: error.message });
     }
 
     if (config.reportToService) {
@@ -556,7 +556,7 @@ export class CommonUtils {
    */
   static unique<T>(array: T[], keyFn?: (item: T) => any): T[] {
     if (!keyFn) {
-      return [...new Set(array)];
+      return Array.from(new Set(array));
     }
     
     const seen = new Set();

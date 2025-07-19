@@ -90,7 +90,7 @@ export const networkErrorMapping: Record<string, ErrorInfo> = {
         description: '确认网络连接速度是否正常',
         action: {
           label: '测速',
-          handler: () => window.open('https://fast.com', '_blank'),
+          handler: () => { window.open('https://fast.com', '_blank'); },
         },
       },
     ],

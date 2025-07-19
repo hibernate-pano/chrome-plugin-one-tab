@@ -3,7 +3,13 @@
  * 提供全局的toast通知功能，支持多种类型和配置选项
  */
 
-import { ToastType, ToastAction } from '@/components/common/Toast';
+// 定义Toast类型，避免循环依赖
+export type ToastType = 'success' | 'error' | 'info' | 'warning' | 'loading';
+
+export interface ToastAction {
+  label: string;
+  onClick: () => void;
+}
 
 export interface ToastOptions {
   type?: ToastType;

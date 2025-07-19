@@ -41,8 +41,8 @@ export class NetworkErrorHandler {
   }
 
   static handleServerError(status: number, retryFn?: () => void) {
-    let message = FEEDBACK_MESSAGES.NETWORK.SERVER_ERROR;
-    
+    let message: string = FEEDBACK_MESSAGES.NETWORK.SERVER_ERROR;
+
     switch (status) {
       case 500:
         message = '服务器内部错误，请稍后重试';

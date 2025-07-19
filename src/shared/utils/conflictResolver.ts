@@ -2,8 +2,8 @@
  * 数据冲突检测和解决工具
  */
 
-import { TabGroup } from '@/types/tab';
-import { logger } from '@/shared/utils/logger';
+import { TabGroup } from '@/shared/types/tab';
+import { logger } from './logger';
 
 export interface ConflictInfo {
   type: 'group_conflict' | 'tab_conflict' | 'settings_conflict';

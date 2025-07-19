@@ -13,6 +13,6 @@ export * from './api';
 
 // 现有的类型定义
 export * from './tab';
-export * from './user';
-export * from './sync';
-export * from './auth';
+// export * from './user';
+// export * from './sync';
+// export * from './auth';

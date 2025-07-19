@@ -1,8 +1,8 @@
 import React, { useState, useEffect, useCallback, memo } from 'react';
 import { useAppSelector, useAppDispatch } from '@/app/store/hooks';
 import { signOut } from '../store/authSlice';
-import { LoginForm } from './LoginForm';
-import { RegisterForm } from './RegisterForm';
+// import { LoginForm } from './LoginForm';
+// import { RegisterForm } from './RegisterForm';
 import { syncService } from '@/services/syncService';
 
 import { FEEDBACK_MESSAGES } from '@/shared/constants/feedbackMessages';
@@ -167,9 +167,25 @@ const AuthButtonComponent: React.FC = () => {
             </div>
             <div className="p-6">
               {activeTab === 'login' ? (
-                <LoginForm onSuccess={() => setShowAuthModal(false)} />
+                <div className="text-center p-4">
+                  <p>登录功能开发中...</p>
+                  <button
+                    onClick={() => setShowAuthModal(false)}
+                    className="mt-2 px-4 py-2 bg-blue-500 text-white rounded"
+                  >
+                    关闭
+                  </button>
+                </div>
               ) : (
-                <RegisterForm onSuccess={() => setShowAuthModal(false)} />
+                <div className="text-center p-4">
+                  <p>注册功能开发中...</p>
+                  <button
+                    onClick={() => setShowAuthModal(false)}
+                    className="mt-2 px-4 py-2 bg-blue-500 text-white rounded"
+                  >
+                    关闭
+                  </button>
+                </div>
               )}
             </div>
           </div>

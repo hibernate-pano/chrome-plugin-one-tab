@@ -549,7 +549,6 @@ ${group.tabs.map(tab => `      <tab id="${tab.id}" title="${this.escapeXml(tab.t
           createdAt: new Date().toISOString(),
           updatedAt: new Date().toISOString(),
           isLocked: false,
-          color: 'blue',
           order: index
         });
       }
@@ -563,7 +562,7 @@ ${group.tabs.map(tab => `      <tab id="${tab.id}" title="${this.escapeXml(tab.t
    */
   private async parseCSV(content: string): Promise<TabGroup[]> {
     const lines = content.split('\n').filter(line => line.trim());
-    const headers = lines[0].split(',').map(h => h.replace(/"/g, ''));
+    // const headers = lines[0].split(',').map(h => h.replace(/"/g, ''));
     
     const groupsMap = new Map<string, TabGroup>();
     
@@ -580,7 +579,6 @@ ${group.tabs.map(tab => `      <tab id="${tab.id}" title="${this.escapeXml(tab.t
             createdAt: new Date().toISOString(),
             updatedAt: new Date().toISOString(),
             isLocked: false,
-            color: 'blue',
             order: groupsMap.size
           });
         }
@@ -589,7 +587,9 @@ ${group.tabs.map(tab => `      <tab id="${tab.id}" title="${this.escapeXml(tab.t
         group.tabs.push({
           id: `imported-tab-${Date.now()}-${Math.random()}`,
           title: tabTitle,
-          url: url
+          url: url,
+          createdAt: new Date().toISOString(),
+          lastAccessed: new Date().toISOString()
         });
       }
     }
@@ -618,7 +618,6 @@ ${group.tabs.map(tab => `      <tab id="${tab.id}" title="${this.escapeXml(tab.t
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
         isLocked: false,
-        color: 'blue',
         order: currentGroupIndex
       };
       
@@ -632,7 +631,9 @@ ${group.tabs.map(tab => `      <tab id="${tab.id}" title="${this.escapeXml(tab.t
         group.tabs.push({
           id: `imported-tab-${Date.now()}-${Math.random()}`,
           url: url,
-          title: title
+          title: title,
+          createdAt: new Date().toISOString(),
+          lastAccessed: new Date().toISOString()
         });
       }
       
@@ -670,7 +671,6 @@ ${group.tabs.map(tab => `      <tab id="${tab.id}" title="${this.escapeXml(tab.t
           createdAt: new Date().toISOString(),
           updatedAt: new Date().toISOString(),
           isLocked: false,
-          color: 'blue',
           order: groupIndex
         };
         groupIndex++;
@@ -684,7 +684,9 @@ ${group.tabs.map(tab => `      <tab id="${tab.id}" title="${this.escapeXml(tab.t
           currentGroup.tabs.push({
             id: `imported-tab-${Date.now()}-${Math.random()}`,
             title: title,
-            url: url
+            url: url,
+            createdAt: new Date().toISOString(),
+            lastAccessed: new Date().toISOString()
           });
         }
       }
@@ -719,7 +721,6 @@ ${group.tabs.map(tab => `      <tab id="${tab.id}" title="${this.escapeXml(tab.t
         createdAt: groupEl.getAttribute('created') || new Date().toISOString(),
         updatedAt: new Date().toISOString(),
         isLocked: groupEl.getAttribute('locked') === 'true',
-        color: 'blue',
         order: index
       };
       
@@ -728,7 +729,9 @@ ${group.tabs.map(tab => `      <tab id="${tab.id}" title="${this.escapeXml(tab.t
         group.tabs.push({
           id: tabEl.getAttribute('id') || `imported-tab-${Date.now()}-${Math.random()}`,
           title: tabEl.getAttribute('title') || '',
-          url: tabEl.getAttribute('url') || ''
+          url: tabEl.getAttribute('url') || '',
+          createdAt: new Date().toISOString(),
+          lastAccessed: new Date().toISOString()
         });
       });
       
@@ -742,7 +745,7 @@ ${group.tabs.map(tab => `      <tab id="${tab.id}" title="${this.escapeXml(tab.t
       try {
         settings = JSON.parse(settingsEl.textContent);
       } catch (error) {
-        logger.warn('解析XML设置失败', error);
+        logger.warn('解析XML设置失败', error as any);
       }
     }
     

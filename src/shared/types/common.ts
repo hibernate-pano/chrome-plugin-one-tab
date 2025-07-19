@@ -269,13 +269,28 @@ export type MakeOptional<T, K extends keyof T> = Omit<T, K> & Partial<Pick<T, K>
 export type MakeRequired<T, K extends keyof T> = Omit<T, K> & Required<Pick<T, K>>;
 
 /**
- * 递归键路径类型
+ * 递归键路径类型（限制深度避免无限递归）
  */
-export type KeyPath<T> = {
-  [K in keyof T]: T[K] extends object
-    ? K | `${K & string}.${KeyPath<T[K]> & string}`
-    : K;
-}[keyof T];
+export type KeyPath<T, Depth extends number = 3> = Depth extends 0
+  ? never
+  : {
+      [K in keyof T]: T[K] extends object
+        ? K | `${K & string}.${KeyPath<T[K], Prev<Depth>> & string}`
+        : K;
+    }[keyof T];
+
+// 辅助类型：递减数字
+type Prev<T extends number> = T extends 0
+  ? never
+  : T extends 1
+  ? 0
+  : T extends 2
+  ? 1
+  : T extends 3
+  ? 2
+  : T extends 4
+  ? 3
+  : never;
 
 /**
  * 根据键路径获取值类型

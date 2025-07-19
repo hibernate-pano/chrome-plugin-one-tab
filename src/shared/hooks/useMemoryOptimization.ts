@@ -330,7 +330,7 @@ export function useSmartCache<K, V>(
  * 内存监控Hook
  * 监控应用的内存使用情况
  */
-export function useMemoryMonitor(enabled: boolean = true) {
+export function useMemoryMonitorAdvanced(enabled: boolean = true) {
   const [memoryStats, setMemoryStats] = useState<MemoryStats | null>(null);
   const [isHighMemoryUsage, setIsHighMemoryUsage] = useState(false);
 
@@ -375,7 +375,7 @@ export function useMemoryMonitor(enabled: boolean = true) {
  * 智能缓存Hook
  * 提供带有内存管理的缓存功能
  */
-export function useSmartCache<T>(
+export function useSmartCacheAdvanced<T>(
   cacheName: string,
   maxSize: number = 100,
   ttl: number = 30 * 60 * 1000 // 30分钟
