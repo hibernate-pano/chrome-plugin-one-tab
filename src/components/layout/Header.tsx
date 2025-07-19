@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useCallback, memo } from 'react';
 import { useAppDispatch, useAppSelector } from '@/app/store/hooks';
 // 使用新版store中的settingsSlice
 import { saveSettings, toggleUseDoubleColumnLayout } from '@/features/settings/store/settingsSlice';
@@ -9,12 +9,13 @@ import { TabCounter } from './TabCounter';
 import SyncButton from '@/components/sync/SyncButton';
 import { SimpleThemeToggle } from './SimpleThemeToggle';
 import { useOnboarding } from '@/features/onboarding/components/OnboardingProvider';
+import { createMemoComparison } from '@/shared/utils/performanceOptimizer';
 
 interface HeaderProps {
   onSearch: (query: string) => void;
 }
 
-export const Header: React.FC<HeaderProps> = ({ onSearch }) => {
+const HeaderComponent: React.FC<HeaderProps> = ({ onSearch }) => {
   const dispatch = useAppDispatch();
   const [searchValue, setSearchValue] = useState('');
   const [showCleanupConfirm, setShowCleanupConfirm] = useState(false);
@@ -23,16 +24,17 @@ export const Header: React.FC<HeaderProps> = ({ onSearch }) => {
   // 引导系统
   const { start: startOnboarding } = useOnboarding();
 
-  const handleSearch = (e: React.ChangeEvent<HTMLInputElement>) => {
+  // 使用useCallback优化事件处理函数
+  const handleSearch = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     const value = e.target.value;
     setSearchValue(value);
     onSearch(value);
-  };
+  }, [onSearch]);
 
-  const handleClearSearch = () => {
+  const handleClearSearch = useCallback(() => {
     setSearchValue('');
     onSearch('');
-  };
+  }, [onSearch]);
 
   const settings = useAppSelector(state => state.settings);
   const [showDropdown, setShowDropdown] = useState(false);
@@ -320,5 +322,8 @@ export const Header: React.FC<HeaderProps> = ({ onSearch }) => {
     </header>
   );
 };
+
+// 使用memo优化Header组件，只有在onSearch prop变化时才重新渲染
+export const Header = memo(HeaderComponent, createMemoComparison(['onSearch']));
 
 export default Header;
