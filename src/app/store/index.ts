@@ -11,6 +11,7 @@ import { syncReducer } from '@/features/sync';
 import { authReducer } from '@/features/auth';
 import { settingsReducer } from '@/features/settings';
 import { batchOperationsReducer } from '@/features/batch-operations';
+import { advancedSearchReducer } from '@/features/advanced-search';
 import onboardingReducer from '@/features/onboarding/store/onboardingSlice';
 
 // 中间件
@@ -27,6 +28,7 @@ const rootReducer = {
   auth: authReducer,
   settings: settingsReducer,
   batchOperations: batchOperationsReducer,
+  advancedSearch: advancedSearchReducer,
   onboarding: onboardingReducer,
 };
 

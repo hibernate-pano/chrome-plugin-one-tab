@@ -107,15 +107,44 @@ export const batchToggleGroupLock = createAsyncThunk(
   }
 );
 
+export const batchMoveGroups = createAsyncThunk(
+  'batchOperations/batchMoveGroups',
+  async ({ groupIds, targetIndex }: { groupIds: string[]; targetIndex: number }, { rejectWithValue }) => {
+    try {
+      logger.debug('批量移动标签组', { count: groupIds.length, targetIndex });
+
+      const groups = await storage.getGroups();
+      const selectedGroups = groups.filter(group => groupIds.includes(group.id));
+      const remainingGroups = groups.filter(group => !groupIds.includes(group.id));
+
+      // 在目标位置插入选中的标签组
+      const newGroups = [...remainingGroups];
+      const insertIndex = Math.max(0, Math.min(targetIndex, newGroups.length));
+      newGroups.splice(insertIndex, 0, ...selectedGroups);
+
+      await storage.setGroups(newGroups);
+
+      return {
+        movedCount: selectedGroups.length,
+        operationId: `batch-move-${Date.now()}`,
+      };
+    } catch (error) {
+      const message = errorHandler.getErrorMessage(error);
+      logger.error('批量移动失败', error);
+      return rejectWithValue(message);
+    }
+  }
+);
+
 export const batchExportGroups = createAsyncThunk(
   'batchOperations/batchExportGroups',
   async (groupIds: string[], { rejectWithValue }) => {
     try {
       logger.debug('批量导出标签组', { count: groupIds.length });
-      
+
       const groups = await storage.getGroups();
       const selectedGroups = groups.filter(group => groupIds.includes(group.id));
-      
+
       const exportData = {
         version: '1.0',
         exportTime: new Date().toISOString(),
@@ -125,13 +154,13 @@ export const batchExportGroups = createAsyncThunk(
           totalTabs: selectedGroups.reduce((sum, group) => sum + group.tabs.length, 0),
         },
       };
-      
+
       // 创建下载链接
       const blob = new Blob([JSON.stringify(exportData, null, 2)], {
         type: 'application/json',
       });
       const url = URL.createObjectURL(blob);
-      
+
       // 触发下载
       const link = document.createElement('a');
       link.href = url;
@@ -140,7 +169,7 @@ export const batchExportGroups = createAsyncThunk(
       link.click();
       document.body.removeChild(link);
       URL.revokeObjectURL(url);
-      
+
       return {
         exportedCount: selectedGroups.length,
         operationId: `batch-export-${Date.now()}`,
@@ -305,6 +334,34 @@ const batchOperationsSlice = createSlice({
         });
       })
       .addCase(batchToggleGroupLock.rejected, (state, action) => {
+        state.isProcessing = false;
+        state.currentOperation = null;
+        state.error = action.payload as string;
+      })
+
+      // 批量移动
+      .addCase(batchMoveGroups.pending, (state) => {
+        state.isProcessing = true;
+        state.currentOperation = 'move';
+        state.progress = 0;
+        state.error = null;
+      })
+      .addCase(batchMoveGroups.fulfilled, (state) => {
+        state.isProcessing = false;
+        state.currentOperation = null;
+        state.progress = 100;
+
+        // 添加操作历史
+        batchOperationsSlice.caseReducers.addOperationHistory(state, {
+          type: 'addOperationHistory',
+          payload: {
+            type: 'move',
+            affectedItems: state.selectedGroupIds,
+            canUndo: true,
+          },
+        });
+      })
+      .addCase(batchMoveGroups.rejected, (state, action) => {
         state.isProcessing = false;
         state.currentOperation = null;
         state.error = action.payload as string;
