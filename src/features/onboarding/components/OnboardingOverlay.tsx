@@ -133,7 +133,7 @@ export const OnboardingOverlay: React.FC<OnboardingOverlayProps> = ({
   // 生成聚光灯路径
   const generateSpotlightPath = () => {
     if (!targetPosition) {
-      return 'M0,0 L100vw,0 L100vw,100vh L0,100vh Z';
+      return 'M0,0 L100%,0 L100%,100% L0,100% Z';
     }
     
     const { top, left, width, height } = targetPosition;
@@ -147,11 +147,15 @@ export const OnboardingOverlay: React.FC<OnboardingOverlayProps> = ({
     // 创建带圆角的聚光灯区域
     const borderRadius = 8;
     
+    // 获取视口尺寸
+    const viewportWidth = window.innerWidth;
+    const viewportHeight = window.innerHeight;
+
     return `
-      M0,0 
-      L100vw,0 
-      L100vw,100vh 
-      L0,100vh 
+      M0,0
+      L${viewportWidth},0
+      L${viewportWidth},${viewportHeight}
+      L0,${viewportHeight}
       Z
       M${spotlightLeft + borderRadius},${spotlightTop}
       L${spotlightLeft + spotlightWidth - borderRadius},${spotlightTop}

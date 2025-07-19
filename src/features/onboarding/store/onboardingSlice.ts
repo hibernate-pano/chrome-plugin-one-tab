@@ -150,8 +150,8 @@ const onboardingSlice = createSlice({
   initialState,
   reducers: {
     // 开始引导
-    startOnboarding: (state, action: PayloadAction<{ force?: boolean }> = { payload: {} }) => {
-      const { force = false } = action.payload;
+    startOnboarding: (state, action: PayloadAction<{ force?: boolean } | undefined>) => {
+      const { force = false } = action.payload || {};
       
       if (!force && state.hasShownBefore && state.isCompleted) {
         logger.debug('引导已完成，跳过自动启动');
@@ -176,10 +176,14 @@ const onboardingSlice = createSlice({
       state.isActive = false;
       state.isWaitingForAction = false;
       state.highlightedElement = null;
-      
-      logger.debug('停止新手引导', { 
+
+      // 标记为已显示过，避免再次自动启动
+      state.hasShownBefore = true;
+
+      logger.debug('停止新手引导', {
         currentStep: state.currentStepIndex,
-        completed: state.isCompleted 
+        completed: state.isCompleted,
+        hasShownBefore: state.hasShownBefore
       });
     },
     
@@ -247,8 +251,8 @@ const onboardingSlice = createSlice({
     },
     
     // 完成当前步骤
-    completeStep: (state, action: PayloadAction<{ stepId?: string }> = { payload: {} }) => {
-      const { stepId } = action.payload;
+    completeStep: (state, action: PayloadAction<{ stepId?: string } | undefined>) => {
+      const { stepId } = action.payload || {};
       const currentStep = state.steps[state.currentStepIndex];
       const targetStepId = stepId || currentStep.id;
       
@@ -307,10 +311,13 @@ const onboardingSlice = createSlice({
     // 从本地存储恢复状态
     restoreFromStorage: (state, action: PayloadAction<Partial<OnboardingState>>) => {
       const savedState = action.payload;
-      
+
       // 只恢复特定字段，避免覆盖默认配置
       if (savedState.hasShownBefore !== undefined) {
         state.hasShownBefore = savedState.hasShownBefore;
+      }
+      if (savedState.isCompleted !== undefined) {
+        state.isCompleted = savedState.isCompleted;
       }
       if (savedState.lastCompletedAt) {
         state.lastCompletedAt = savedState.lastCompletedAt;
@@ -318,7 +325,7 @@ const onboardingSlice = createSlice({
       if (savedState.userProgress) {
         state.userProgress = { ...state.userProgress, ...savedState.userProgress };
       }
-      
+
       logger.debug('从本地存储恢复引导状态', savedState);
     },
   },

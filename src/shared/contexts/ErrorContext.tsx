@@ -145,10 +145,18 @@ export const ErrorProvider: React.FC<ErrorProviderProps> = ({ children }) => {
 
 // 全局错误通知组件
 const GlobalErrorNotification: React.FC = () => {
-  const { dismissGlobalError, retryLastOperation, errorReports } = useError();
-  
+  // 安全地获取错误上下文
+  const context = useContext(ErrorContext);
+
+  // 如果上下文不可用，直接返回null
+  if (!context) {
+    return null;
+  }
+
+  const { dismissGlobalError, retryLastOperation, errorReports } = context;
+
   const latestError = errorReports[0];
-  
+
   if (!latestError) {
     return null;
   }

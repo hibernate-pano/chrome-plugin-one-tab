@@ -1,5 +1,5 @@
 import { supabase } from '@/utils/supabase';
-import { store } from '@/store';
+import { store } from '@/app/store';
 import { syncService } from '@/services/syncService';
 import { RealtimeChannel } from '@supabase/supabase-js';
 

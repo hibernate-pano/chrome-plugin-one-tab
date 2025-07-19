@@ -1,4 +1,4 @@
-import { store } from '@/store';
+import { store } from '@/app/store';
 import { syncService } from '@/services/syncService';
 import { storage } from '@/utils/storage';
 import { supabase } from '@/utils/supabase';

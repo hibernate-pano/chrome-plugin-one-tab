@@ -115,12 +115,26 @@ export const OnboardingProvider: React.FC<OnboardingProviderProps> = ({
   
   // 自动开始引导（仅首次用户）
   useEffect(() => {
+    // 只有在满足以下条件时才自动启动：
+    // 1. 启用了自动启动
+    // 2. 之前没有显示过引导
+    // 3. 引导没有完成
+    // 4. 引导当前不活跃
+    // 5. 本地存储状态已经恢复（避免在状态恢复前启动）
     if (autoStart && !hasShownBefore && !isCompleted && !isActive) {
-      // 延迟启动，确保页面完全加载
+      // 延迟启动，确保页面完全加载和状态恢复完成
       const timer = setTimeout(() => {
-        dispatch(startOnboarding());
-      }, 1000);
-      
+        // 再次检查状态，确保在延迟期间状态没有改变
+        if (!hasShownBefore && !isCompleted && !isActive) {
+          logger.debug('自动启动新手引导', {
+            hasShownBefore,
+            isCompleted,
+            isActive
+          });
+          dispatch(startOnboarding());
+        }
+      }, 2000); // 增加延迟时间，确保状态恢复完成
+
       return () => clearTimeout(timer);
     }
   }, [autoStart, hasShownBefore, isCompleted, isActive, dispatch]);

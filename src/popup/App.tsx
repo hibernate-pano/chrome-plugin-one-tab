@@ -17,6 +17,7 @@ import { autoSyncManager } from '@/services/autoSyncManager';
 const SyncPromptModal = lazy(() => import('@/components/sync/SyncPromptModal'));
 import { ToastProvider } from '@/contexts/ToastContext';
 import { ThemeProvider } from '@/contexts/ThemeContext';
+import { ErrorProvider } from '@/shared/contexts/ErrorContext';
 import { OnboardingSystem } from '@/features/onboarding/components/OnboardingSystem';
 
 // 导入样式文件
@@ -172,9 +173,10 @@ const App: React.FC = () => {
   };
 
   return (
-    <ToastProvider>
-      <ThemeProvider>
-        <OnboardingSystem autoStart={true} storageKey="onetab-onboarding-state">
+    <ErrorProvider>
+      <ToastProvider>
+        <ThemeProvider>
+          <OnboardingSystem autoStart={true} storageKey="onetab-onboarding-state">
           <Suspense
             fallback={
               <div className="min-h-screen bg-white dark:bg-gray-900 dark:text-gray-100 flex flex-col items-center justify-center">
@@ -273,6 +275,7 @@ const App: React.FC = () => {
         </OnboardingSystem>
       </ThemeProvider>
     </ToastProvider>
+    </ErrorProvider>
   );
 };
 
