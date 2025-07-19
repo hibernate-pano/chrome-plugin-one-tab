@@ -36,3 +36,6 @@ export { VirtualizedList, VirtualizedGrid } from './VirtualizedList';
 export type { VirtualizedListProps, VirtualizedGridProps, VirtualizedListItem } from './VirtualizedList';
 
 export { RenderPerformanceMonitor, PerformanceIndicator } from './RenderPerformanceMonitor';
+
+export { ConfirmDialog, useConfirmDialog, quickConfirm, ConfirmDialogPresets } from './ConfirmDialog/ConfirmDialog';
+export { LoadingState, useLoadingState, LoadingPresets, LoadingType, LoadingSize } from './LoadingState/LoadingState';

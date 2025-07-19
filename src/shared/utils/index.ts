@@ -8,8 +8,22 @@ export { performanceOptimizer, createMemoComparison } from './performanceOptimiz
 export { memoryManager, MemoryManager } from './memoryManager';
 export { renderStatsManager, generateRenderOptimizationReport } from './renderOptimizer';
 export { SmartCache, CacheStrategy } from './smartCache';
+export {
+  AsyncOperationWrapper,
+  CommonStateManager,
+  CommonValidator,
+  CommonFormatter,
+  CommonUtils
+} from './codeDeduplication';
 
 // 导出类型
 export type { MemoryStats, MemoryMonitorConfig, CacheItem, CacheConfig } from './memoryManager';
 export type { RenderStats, RenderMonitorConfig } from './renderOptimizer';
 export type { SmartCacheItem, SmartCacheConfig, CacheMetrics } from './smartCache';
+export type {
+  ConfirmDialogConfig,
+  ErrorHandlingConfig,
+  LoadingStateConfig,
+  AsyncOperationResult,
+  RetryConfig
+} from './codeDeduplication';

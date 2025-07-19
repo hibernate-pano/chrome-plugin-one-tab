@@ -214,6 +214,148 @@ export const SHORTCUTS = {
   OPEN_EXTENSION_MAC: 'Command+Shift+S',
 } as const;
 
+// 性能常量
+export const PERFORMANCE = {
+  // 渲染性能阈值
+  RENDER_WARNING_THRESHOLD: 16, // 60fps
+  RENDER_ERROR_THRESHOLD: 33, // 30fps
+  SLOW_OPERATION_THRESHOLD: 100, // 毫秒
+
+  // 内存使用阈值
+  MEMORY_WARNING_THRESHOLD: 70, // 百分比
+  MEMORY_CRITICAL_THRESHOLD: 90, // 百分比
+
+  // 缓存配置
+  DEFAULT_CACHE_SIZE: 100,
+  MAX_CACHE_SIZE: 1000,
+  CACHE_CLEANUP_INTERVAL: 5 * 60 * 1000, // 5分钟
+
+  // 虚拟化配置
+  VIRTUAL_LIST_OVERSCAN: 5,
+  VIRTUAL_LIST_ITEM_HEIGHT: 50,
+  VIRTUAL_GRID_ITEM_WIDTH: 320,
+  VIRTUAL_GRID_ITEM_HEIGHT: 240,
+
+  // 监控配置
+  PERFORMANCE_HISTORY_SIZE: 100,
+  RENDER_STATS_SAMPLE_SIZE: 50,
+} as const;
+
+// 搜索常量
+export const SEARCH = {
+  // 搜索配置
+  MIN_SEARCH_LENGTH: 2,
+  MAX_SEARCH_RESULTS: 50,
+  SEARCH_DEBOUNCE_DELAY: 300,
+
+  // 相似度阈值
+  FUZZY_MATCH_THRESHOLD: 0.5,
+  SIMILARITY_THRESHOLD: 0.3,
+
+  // 高亮样式
+  HIGHLIGHT_CLASS: 'search-highlight',
+
+  // 搜索历史
+  MAX_SEARCH_HISTORY: 20,
+  SEARCH_HISTORY_STORAGE_KEY: 'search_history',
+} as const;
+
+// UI常量
+export const UI = {
+  // 动画时长
+  ANIMATION_FAST: 150,
+  ANIMATION_NORMAL: 200,
+  ANIMATION_SLOW: 300,
+
+  // 延迟时间
+  TOOLTIP_DELAY: 500,
+  HOVER_DELAY: 100,
+  DEBOUNCE_DELAY: 300,
+  THROTTLE_DELAY: 1000,
+
+  // 尺寸
+  SIDEBAR_WIDTH: 280,
+  HEADER_HEIGHT: 60,
+  FOOTER_HEIGHT: 40,
+
+  // 间距
+  SPACING_XS: 4,
+  SPACING_SM: 8,
+  SPACING_MD: 16,
+  SPACING_LG: 24,
+  SPACING_XL: 32,
+
+  // 圆角
+  BORDER_RADIUS_SM: 4,
+  BORDER_RADIUS_MD: 8,
+  BORDER_RADIUS_LG: 12,
+
+  // 阴影层级
+  Z_INDEX_DROPDOWN: 1000,
+  Z_INDEX_MODAL: 1050,
+  Z_INDEX_TOOLTIP: 1100,
+  Z_INDEX_NOTIFICATION: 1200,
+} as const;
+
+// 验证常量
+export const VALIDATION = {
+  // URL验证
+  URL_PATTERN: /^https?:\/\/.+/,
+
+  // 邮箱验证
+  EMAIL_PATTERN: /^[^\s@]+@[^\s@]+\.[^\s@]+$/,
+
+  // 长度限制
+  MIN_PASSWORD_LENGTH: 8,
+  MAX_PASSWORD_LENGTH: 128,
+  MIN_USERNAME_LENGTH: 3,
+  MAX_USERNAME_LENGTH: 30,
+
+  // 特殊字符
+  SPECIAL_CHARS_PATTERN: /[!@#$%^&*(),.?":{}|<>]/,
+
+  // 文件类型
+  ALLOWED_IMAGE_TYPES: ['image/jpeg', 'image/png', 'image/gif', 'image/webp'],
+  ALLOWED_EXPORT_FORMATS: ['json', 'csv', 'html', 'txt'],
+  ALLOWED_IMPORT_FORMATS: ['json', 'html', 'csv'],
+} as const;
+
+// 网络常量
+export const NETWORK = {
+  // HTTP状态码
+  STATUS_OK: 200,
+  STATUS_CREATED: 201,
+  STATUS_NO_CONTENT: 204,
+  STATUS_BAD_REQUEST: 400,
+  STATUS_UNAUTHORIZED: 401,
+  STATUS_FORBIDDEN: 403,
+  STATUS_NOT_FOUND: 404,
+  STATUS_CONFLICT: 409,
+  STATUS_INTERNAL_ERROR: 500,
+  STATUS_SERVICE_UNAVAILABLE: 503,
+
+  // 请求头
+  CONTENT_TYPE_JSON: 'application/json',
+  CONTENT_TYPE_FORM: 'application/x-www-form-urlencoded',
+  CONTENT_TYPE_MULTIPART: 'multipart/form-data',
+
+  // 超时配置
+  DEFAULT_TIMEOUT: 30000, // 30秒
+  UPLOAD_TIMEOUT: 120000, // 2分钟
+  DOWNLOAD_TIMEOUT: 300000, // 5分钟
+
+  // 重试配置
+  MAX_RETRIES: 3,
+  RETRY_DELAY: 1000,
+  RETRY_BACKOFF_FACTOR: 2,
+} as const;
+
+// 导出CSS类名常量
+export * from './cssClasses';
+
+// 导出反馈消息常量
+export * from './feedbackMessages';
+
 // 导出类型
 export type ThemeMode = typeof THEME.MODES[number];
 export type SyncStrategy = typeof SYNC.STRATEGIES[number];

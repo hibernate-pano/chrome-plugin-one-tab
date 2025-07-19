@@ -22,8 +22,10 @@ export {
 } from './useRenderOptimization';
 export { useLazyLoading, useLazyImage, useInfiniteScroll } from './useLazyLoading';
 export { useDataPrefetch, useRoutePrefetch, PrefetchStrategy } from './useDataPrefetch';
+export { useErrorHandling, useErrorBoundary, ErrorType } from './useErrorHandling';
 
 // 导出类型
 export type { VirtualizationMetrics, PerformanceMonitorConfig } from './useVirtualizationPerformance';
 export type { LazyLoadingConfig, LazyLoadingState } from './useLazyLoading';
 export type { PrefetchConfig, PrefetchState } from './useDataPrefetch';
+export type { ErrorHandlingState, UseErrorHandlingConfig } from './useErrorHandling';
