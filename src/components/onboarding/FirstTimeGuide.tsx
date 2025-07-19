@@ -109,7 +109,7 @@ const FirstTimeGuide: React.FC<FirstTimeGuideProps> = ({
               onLogin?.();
             }
           },
-          variant: isAuthenticated ? 'success' : 'primary' as const,
+          variant: (isAuthenticated ? 'success' : 'primary') as 'success' | 'primary',
           disabled: isAuthenticated,
         },
         {

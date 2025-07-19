@@ -101,7 +101,7 @@ export function generateTestData(groupCount: number, tabsPerGroup: number) {
       updatedAt: new Date().toISOString(),
       lastSyncedAt: new Date().toISOString(),
       isLocked: i % 5 === 0, // 每5个标签组有1个锁定
-      syncStatus: 'synced'
+      syncStatus: 'synced' as const
     });
   }
   

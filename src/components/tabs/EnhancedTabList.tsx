@@ -71,7 +71,11 @@ export const EnhancedTabList: React.FC<EnhancedTabListProps> = ({
   };
 
   const handleDeleteTab = (tabId: string) => {
-    dispatch(deleteTab(tabId));
+    // 找到包含该标签的标签组
+    const group = groups.find(g => g.tabs.some(t => t.id === tabId));
+    if (group) {
+      dispatch(deleteTab({ groupId: group.id, tabId }));
+    }
   };
 
   // 处理保存所有标签页
@@ -167,9 +171,8 @@ export const EnhancedTabList: React.FC<EnhancedTabListProps> = ({
   if (searchQuery) {
     return (
       <div className={className}>
-        <SearchResultList 
+        <SearchResultList
           searchQuery={searchQuery}
-          groups={filteredGroups}
         />
       </div>
     );

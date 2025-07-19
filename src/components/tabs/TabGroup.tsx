@@ -1,6 +1,6 @@
 import React, { useState, useCallback, useEffect, memo } from 'react';
 import { useAppDispatch } from '@/app/store/hooks';
-import { updateGroupNameAndSync, toggleGroupLockAndSync, deleteGroup, updateGroup } from '@/features/tabs/store/tabGroupsSlice';
+import { updateGroupName, toggleGroupLock, deleteGroup, updateGroup } from '@/features/tabs/store/tabGroupsSlice';
 import { TabGroup as TabGroupType, Tab } from '@/types/tab';
 import { useDebounce, useSmartCache } from '@/shared/hooks/useMemoryOptimization';
 import { useComponentCleanup } from '@/shared/hooks/useComponentCleanup';
@@ -11,15 +11,27 @@ interface TabGroupProps {
   group: TabGroupType;
   onDelete?: () => void;
   onSelect?: () => void;
+  onOpenAllTabs?: () => void;
+  onDeleteGroup?: (groupId: string) => void;
+  onUpdateGroup?: (group: TabGroupType) => void;
+  onDeleteTab?: (tabId: string) => void;
 }
 
 /**
  * 标签组组件
  * 使用React.memo优化渲染性能，只有在必要时才重新渲染
  */
-export const TabGroup: React.FC<TabGroupProps> = memo(({ group, onDelete, onSelect }) => {
+export const TabGroup: React.FC<TabGroupProps> = memo(({
+  group,
+  onDelete,
+  onSelect,
+  onOpenAllTabs,
+  onDeleteGroup,
+  onUpdateGroup,
+  onDeleteTab
+}) => {
   const dispatch = useAppDispatch();
-  const { addCleanupTask } = useComponentCleanup(`TabGroup-${group.id}`);
+  const { } = useComponentCleanup(`TabGroup-${group.id}`);
 
   // 使用智能缓存存储组件状态
   const { get: getCachedState, set: setCachedState } = useSmartCache<string, any>(50, 10 * 60 * 1000);
@@ -42,7 +54,7 @@ export const TabGroup: React.FC<TabGroupProps> = memo(({ group, onDelete, onSele
   const [isExpanded, setIsExpanded] = useState(getInitialExpandedState);
 
   // 防抖的名称更新函数
-  const debouncedUpdateName = useDebounce(
+  const _debouncedUpdateName = useDebounce(
     useCallback((name: string) => {
       dispatch(updateGroupNameAndSync({ groupId: group.id, newName: name }));
     }, [dispatch, group.id]),
@@ -86,7 +98,7 @@ export const TabGroup: React.FC<TabGroupProps> = memo(({ group, onDelete, onSele
   }, [dispatch, group.id]);
 
   const handleToggleLock = useCallback(() => {
-    dispatch(toggleGroupLockAndSync(group.id));
+    dispatch(toggleGroupLock(group.id));
   }, [dispatch, group.id]);
 
   // 保存折叠状态到localStorage
@@ -130,18 +142,24 @@ export const TabGroup: React.FC<TabGroupProps> = memo(({ group, onDelete, onSele
 
   // 处理删除单个标签
   const handleDeleteTab = useCallback((tabId: string) => {
-    const updatedTabs = group.tabs.filter(t => t.id !== tabId);
-    if (updatedTabs.length === 0) {
-      dispatch(deleteGroup(group.id));
+    if (onDeleteTab) {
+      // 如果有外部的删除函数，使用它
+      onDeleteTab(tabId);
     } else {
-      const updatedGroup = {
-        ...group,
-        tabs: updatedTabs,
-        updatedAt: new Date().toISOString()
-      };
-      dispatch(updateGroup(updatedGroup));
+      // 否则使用内部逻辑
+      const updatedTabs = group.tabs.filter(t => t.id !== tabId);
+      if (updatedTabs.length === 0) {
+        dispatch(deleteGroup(group.id));
+      } else {
+        const updatedGroup = {
+          ...group,
+          tabs: updatedTabs,
+          updatedAt: new Date().toISOString()
+        };
+        dispatch(updateGroup(updatedGroup));
+      }
     }
-  }, [dispatch, group]);
+  }, [dispatch, group, onDeleteTab]);
 
   // 使用useCallback记忆化handleOpenTab函数
   const handleOpenTab = useCallback((tab: Tab) => {
@@ -212,7 +230,7 @@ export const TabGroup: React.FC<TabGroupProps> = memo(({ group, onDelete, onSele
             ? "bg-gradient-to-r from-yellow-400 to-orange-400"
             : group.syncStatus === 'synced'
             ? "bg-gradient-to-r from-green-400 to-emerald-400"
-            : group.syncStatus === 'pending'
+            : group.syncStatus === 'conflict'
             ? "bg-gradient-to-r from-blue-400 to-indigo-400"
             : "bg-gradient-to-r from-gray-300 to-gray-400"
         )}></div>
@@ -314,7 +332,7 @@ export const TabGroup: React.FC<TabGroupProps> = memo(({ group, onDelete, onSele
                         </span>
                       )}
 
-                      {group.syncStatus === 'pending' && (
+                      {group.syncStatus === 'conflict' && (
                         <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-blue-100 dark:bg-blue-900/30 text-blue-800 dark:text-blue-200">
                           <svg className="w-3 h-3 mr-1 animate-spin" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />

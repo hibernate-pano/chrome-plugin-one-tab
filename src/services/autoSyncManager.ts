@@ -351,11 +351,11 @@ class AutoSyncManager {
       
       if (hasCloud && !hasLocal) {
         // 云端有数据，本地无数据，直接下载
-        await syncService.downloadAndRefresh(true);
+        await syncService.downloadFromCloud(true, true);
         console.log('✅ 登录后自动下载完成（覆盖模式）');
       } else if (hasCloud && hasLocal) {
         // 都有数据，使用覆盖模式确保数据一致性
-        await syncService.downloadAndRefresh(true);
+        await syncService.downloadFromCloud(true, true);
         console.log('✅ 登录后自动下载完成（覆盖模式）');
       }
       

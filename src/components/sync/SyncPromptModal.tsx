@@ -1,7 +1,7 @@
 import React from 'react';
 import { useAppDispatch } from '@/app/store/hooks';
 // 使用新版同步服务
-import { downloadFromCloud } from '@/features/sync/store/syncSlice';
+
 import { syncService } from '@/services/syncService';
 
 interface SyncPromptModalProps {
@@ -10,7 +10,7 @@ interface SyncPromptModalProps {
 }
 
 const SyncPromptModal: React.FC<SyncPromptModalProps> = ({ onClose, hasCloudData }) => {
-  const dispatch = useAppDispatch();
+
 
   const handleSync = async () => {
     try {

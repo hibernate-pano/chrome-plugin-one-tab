@@ -41,7 +41,7 @@ export const SyncButton: React.FC<SyncButtonProps> = () => {
         if (!hasLocalData) {
           // 本地没有数据，直接下载（相当于覆盖模式）
           console.log('本地没有数据，直接下载...');
-          await syncService.downloadAndRefresh(true); // overwriteLocal=true
+          await syncService.downloadFromCloud(false, true); // background=false, forceRemoteStrategy=true
         } else {
           // 本地有数据，显示选择对话框
           setModalAnimation('animate-fadeIn');
@@ -109,7 +109,7 @@ export const SyncButton: React.FC<SyncButtonProps> = () => {
       closeModals();
 
       await downloadOperation.execute(
-        () => syncService.downloadAndRefresh(true), // overwriteLocal=true
+        () => syncService.downloadFromCloud(false, true), // background=false, forceRemoteStrategy=true
         {
           loadingMessage: '正在下载数据（覆盖模式）...',
           successMessage: '数据下载成功',
@@ -125,7 +125,7 @@ export const SyncButton: React.FC<SyncButtonProps> = () => {
       closeModals();
 
       await downloadOperation.execute(
-        () => syncService.downloadAndRefresh(false), // overwriteLocal=false
+        () => syncService.downloadFromCloud(false, false), // background=false, forceRemoteStrategy=false
         {
           loadingMessage: '正在下载数据（合并模式）...',
           successMessage: '数据下载成功',
