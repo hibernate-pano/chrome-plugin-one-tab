@@ -2,8 +2,8 @@ import React, { useState, useEffect, lazy, Suspense } from 'react';
 import { Header } from '@/components/layout/Header';
 import { ImprovedTabList } from '@/components/tabs/ImprovedTabList';
 import { useAppDispatch, useAppSelector } from '@/app/store/hooks';
-// 使用新版store中的settingsSlice
-import { loadSettings } from '@/store/slices/settingsSlice';
+// 使用新版settings功能
+import { loadSettings } from '@/features/settings/store/settingsSlice';
 // 使用新版auth功能
 import { restoreSession } from '@/features/auth/store/authSlice';
 import { auth as supabaseAuth } from '@/utils/supabase';

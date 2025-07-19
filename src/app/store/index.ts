@@ -9,10 +9,9 @@ import { logger } from '@/shared/utils/logger';
 import { tabsReducer, tabGroupsReducer, dragOperationsReducer } from '@/features/tabs/store';
 import { syncReducer } from '@/features/sync';
 import { authReducer } from '@/features/auth';
+import { settingsReducer } from '@/features/settings';
+import { batchOperationsReducer } from '@/features/batch-operations';
 import onboardingReducer from '@/features/onboarding/store/onboardingSlice';
-
-// 原有的reducers（暂时保留，逐步迁移）
-import settingsReducer from '@/store/slices/settingsSlice';
 
 // 中间件
 import { errorReportingMiddleware } from './middleware/errorReporting';
@@ -20,16 +19,15 @@ import { performanceMiddleware } from './middleware/performance';
 
 // 创建根reducer
 const rootReducer = {
-  // 新的功能模块
+  // 功能模块
   tabs: tabsReducer,
   tabGroups: tabGroupsReducer,
   dragOperations: dragOperationsReducer,
   sync: syncReducer,
   auth: authReducer,
-  onboarding: onboardingReducer,
-
-  // 原有的reducers（逐步迁移）
   settings: settingsReducer,
+  batchOperations: batchOperationsReducer,
+  onboarding: onboardingReducer,
 };
 
 // 配置store

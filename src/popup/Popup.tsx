@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { Provider } from 'react-redux';
 import { useAppSelector } from '@/app/store/hooks';
 import { store } from '@/app/store';
-import { loadSettings } from '@/store/slices/settingsSlice';
+import { loadSettings } from '@/features/settings/store/settingsSlice';
 import { loadGroups } from '@/features/tabs/store/tabGroupsSlice';
 import Layout from '@/components/layout/Layout';
 import Header from '@/components/layout/Header';

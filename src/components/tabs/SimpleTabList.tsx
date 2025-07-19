@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
-import { useAppDispatch, useAppSelector } from '@/store/hooks';
-import { loadGroups, moveGroupAndSync, moveTabAndSync } from '@/store/slices/tabSlice';
+import { useAppDispatch, useAppSelector } from '@/app/store/hooks';
+import { loadGroups } from '@/features/tabs/store/tabGroupsSlice';
+import { moveGroupAndSync, moveTabAndSync } from '@/features/tabs/store/dragOperationsSlice';
 import { SearchResultList } from '@/components/search/SearchResultList';
 import { SimpleDraggableTabGroup } from '@/components/dnd/SimpleDraggableTabGroup';
 import '@/styles/drag-drop.css';
@@ -29,7 +30,7 @@ interface SimpleTabListProps {
 
 export const SimpleTabList: React.FC<SimpleTabListProps> = ({ searchQuery }) => {
   const dispatch = useAppDispatch();
-  const groups = useAppSelector((state) => state.tabs.groups);
+  const groups = useAppSelector((state) => state.tabGroups.groups);
   const useDoubleColumnLayout = useAppSelector((state) => state.settings.useDoubleColumnLayout);
   const [activeId, setActiveId] = useState<UniqueIdentifier | null>(null);
   const [activeData, setActiveData] = useState<any | null>(null);

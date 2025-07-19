@@ -1,6 +1,7 @@
 import React, { useEffect, useState, useRef, useCallback, useMemo } from 'react';
-import { useAppDispatch, useAppSelector } from '@/store/hooks';
-import { loadGroups, moveGroupAndSync, moveTabAndSync } from '@/store/slices/tabSlice';
+import { useAppDispatch, useAppSelector } from '@/app/store/hooks';
+import { loadGroups } from '@/features/tabs/store/tabGroupsSlice';
+import { moveGroupAndSync, moveTabAndSync } from '@/features/tabs/store/dragOperationsSlice';
 import { SearchResultList } from '@/components/search/SearchResultList';
 // No need to import TabGroup type as we're not using it directly
 import { SortableTabGroup } from '@/components/dnd/SortableTabGroup';
@@ -32,7 +33,7 @@ interface TabListProps {
 
 export const TabListDndKit: React.FC<TabListProps> = ({ searchQuery }) => {
   const dispatch = useAppDispatch();
-  const groups = useAppSelector(state => state.tabs.groups);
+  const groups = useAppSelector(state => state.tabGroups.groups);
   const useDoubleColumnLayout = useAppSelector(state => state.settings.useDoubleColumnLayout);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [activeData, setActiveData] = useState<any | null>(null);

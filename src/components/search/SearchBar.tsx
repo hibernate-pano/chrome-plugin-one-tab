@@ -1,6 +1,6 @@
 import React, { useState, useCallback } from 'react';
-import { useAppDispatch } from '@/store/hooks';
-import { setSearchQuery } from '@/store/slices/tabSlice';
+import { useAppDispatch } from '@/app/store/hooks';
+import { setSearchQuery } from '@/features/tabs/store/tabGroupsSlice';
 import debounce from 'lodash.debounce';
 
 export const SearchBar: React.FC = () => {
