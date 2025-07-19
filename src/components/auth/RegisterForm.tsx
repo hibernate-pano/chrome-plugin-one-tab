@@ -1,6 +1,8 @@
 import React, { useState } from 'react';
 import { useAppDispatch, useAppSelector } from '@/app/store/hooks';
 import { signUpWithEmail, signInWithEmail, signInWithOAuth, clearError } from '@/features/auth/store/authSlice';
+import { useAuthOperation } from '@/shared/hooks/useAsyncOperation';
+import { LoadingButton } from '@/shared/components/LoadingButton/LoadingButton';
 
 interface RegisterFormProps {
   onSuccess?: () => void;
@@ -16,6 +18,7 @@ export const RegisterForm: React.FC<RegisterFormProps> = ({ onSuccess }) => {
 
   const [isRegistering, setIsRegistering] = useState(false);
   const [registrationSuccess, setRegistrationSuccess] = useState(false);
+  const authOperation = useAuthOperation();
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -26,27 +29,30 @@ export const RegisterForm: React.FC<RegisterFormProps> = ({ onSuccess }) => {
     }
 
     setPasswordError('');
-    setIsRegistering(true);
 
-    try {
-      if (email && password) {
-        // 注册用户
-        const result = await dispatch(signUpWithEmail({ email, _password: password })).unwrap();
+    if (email && password) {
+      await authOperation.execute(
+        async () => {
+          // 注册用户
+          const result = await dispatch(signUpWithEmail({ email, _password: password })).unwrap();
 
-        if (result) {
-          setRegistrationSuccess(true);
-          // 自动登录
-          await dispatch(signInWithEmail({ email, password }));
-
-          if (onSuccess) {
-            onSuccess();
+          if (result) {
+            setRegistrationSuccess(true);
+            // 自动登录
+            await dispatch(signInWithEmail({ email, password }));
           }
+          return result;
+        },
+        {
+          loadingMessage: '正在注册...',
+          showSuccessToast: false,
+          onSuccess: () => {
+            if (onSuccess) {
+              onSuccess();
+            }
+          },
         }
-      }
-    } catch (error) {
-      console.error('注册失败:', error);
-    } finally {
-      setIsRegistering(false);
+      );
     }
   };
 
@@ -142,21 +148,16 @@ export const RegisterForm: React.FC<RegisterFormProps> = ({ onSuccess }) => {
             required
           />
         </div>
-        <button
+        <LoadingButton
           type="submit"
-          className="w-full bg-primary-600 text-white py-3 rounded-lg hover:bg-primary-700 transition-colors font-medium shadow-sm"
-          disabled={isLoading || isRegistering}
+          className="w-full py-3 font-medium shadow-sm"
+          variant="primary"
+          size="lg"
+          loading={isLoading || isRegistering || authOperation.isLoading}
+          loadingText="注册中..."
         >
-          {isLoading || isRegistering ? (
-            <span className="flex items-center justify-center">
-              <svg className="animate-spin -ml-1 mr-2 h-4 w-4 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-              </svg>
-              注册中...
-            </span>
-          ) : '注册'}
-        </button>
+          注册
+        </LoadingButton>
 
         <div className="mt-6">
           <div className="relative">

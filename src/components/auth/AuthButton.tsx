@@ -4,7 +4,12 @@ import { signOut } from '@/features/auth/store/authSlice';
 import { LoginForm } from './LoginForm';
 import { RegisterForm } from './RegisterForm';
 import { syncService } from '@/services/syncService';
-import { useToast } from '@/contexts/ToastContext';
+import { feedback } from '@/shared/utils/feedback';
+import { FEEDBACK_MESSAGES } from '@/shared/constants/feedbackMessages';
+import { useSyncOperation } from '@/shared/hooks/useAsyncOperation';
+import { LoadingButton } from '@/shared/components/LoadingButton/LoadingButton';
+import { handleSyncError } from '@/shared/utils/errorHandlers';
+import { useErrorHandler } from '@/shared/contexts/ErrorContext';
 
 export const AuthButton: React.FC = () => {
   const dispatch = useAppDispatch();
@@ -14,7 +19,8 @@ export const AuthButton: React.FC = () => {
   const [activeTab, setActiveTab] = useState<'login' | 'register'>('login');
   const [showAuthModal, setShowAuthModal] = useState(false);
   const [initialRender, setInitialRender] = useState(true);
-  const { showToast } = useToast();
+  const syncOperation = useSyncOperation();
+  const { setRetryHandler } = useErrorHandler();
 
   // 首次渲染后标记为非初始渲染状态
   useEffect(() => {
@@ -31,16 +37,22 @@ export const AuthButton: React.FC = () => {
 
   const handleSync = async () => {
     if (syncStatus !== 'syncing') {
-      // 使用同步服务进行同步
-      const result = await syncService.syncAll(true); // 使用后台同步模式减少UI卡顿
       setShowDropdown(false);
 
-      // 显示同步结果提示
-      if (result && result.success) {
-        showToast('数据同步成功', 'success');
-      } else if (result && !result.success) {
-        showToast(result.error || '同步失败，请重试', 'error');
-      }
+      // 设置重试处理器
+      setRetryHandler(() => handleSync());
+
+      await syncOperation.execute(
+        () => syncService.syncAll(true), // 使用后台同步模式减少UI卡顿
+        {
+          loadingMessage: FEEDBACK_MESSAGES.SYNC.START,
+          successMessage: FEEDBACK_MESSAGES.SYNC.SUCCESS,
+          useSmartError: true, // 使用智能错误处理
+          onError: (error) => {
+            handleSyncError(error, () => handleSync());
+          },
+        }
+      );
     }
   };
 
@@ -84,28 +96,21 @@ export const AuthButton: React.FC = () => {
                   )}
                 </p>
               </div>
-              <button
+              <LoadingButton
                 onClick={handleSync}
-                className="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 flex items-center"
-                disabled={syncStatus === 'syncing'}
+                className="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 flex items-center justify-start"
+                variant="ghost"
+                size="sm"
+                loading={syncStatus === 'syncing' || syncOperation.isLoading}
+                loadingText="正在同步数据..."
+                icon={
+                  <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 text-primary-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                  </svg>
+                }
               >
-                {syncStatus === 'syncing' && !backgroundSync ? (
-                  <>
-                    <svg className="animate-spin h-4 w-4 mr-2 text-primary-600" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                    </svg>
-                    <span>正在同步数据...</span>
-                  </>
-                ) : (
-                  <>
-                    <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 mr-2 text-primary-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-                    </svg>
-                    同步数据
-                  </>
-                )}
-              </button>
+                同步数据
+              </LoadingButton>
               <div className="border-t border-gray-100 my-1"></div>
               <button
                 onClick={handleSignOut}

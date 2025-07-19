@@ -1,6 +1,10 @@
 import React, { useState } from 'react';
 import { useAppDispatch, useAppSelector } from '@/app/store/hooks';
 import { signInWithEmail, signInWithOAuth, clearError } from '@/features/auth/store/authSlice';
+import { useAuthOperation } from '@/shared/hooks/useAsyncOperation';
+import { LoadingButton } from '@/shared/components/LoadingButton/LoadingButton';
+import { handleAuthError } from '@/shared/utils/errorHandlers';
+import { useErrorHandler } from '@/shared/contexts/ErrorContext';
 
 interface LoginFormProps {
   onSuccess?: () => void;
@@ -11,18 +15,30 @@ export const LoginForm: React.FC<LoginFormProps> = ({ onSuccess }) => {
   const { isLoading, error } = useAppSelector(state => state.auth);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const authOperation = useAuthOperation();
+  const { setRetryHandler } = useErrorHandler();
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (email && password) {
-      try {
-        await dispatch(signInWithEmail({ email, password })).unwrap();
-        if (onSuccess) {
-          onSuccess();
+      setRetryHandler(() => handleSubmit(e));
+
+      await authOperation.execute(
+        () => dispatch(signInWithEmail({ email, password })).unwrap(),
+        {
+          loadingMessage: '正在登录...',
+          showSuccessToast: false,
+          useSmartError: true,
+          onSuccess: () => {
+            if (onSuccess) {
+              onSuccess();
+            }
+          },
+          onError: (error) => {
+            handleAuthError(error);
+          },
         }
-      } catch (error) {
-        console.error('登录失败:', error);
-      }
+      );
     }
   };
 
@@ -79,21 +95,16 @@ export const LoginForm: React.FC<LoginFormProps> = ({ onSuccess }) => {
             required
           />
         </div>
-        <button
+        <LoadingButton
           type="submit"
-          className="w-full bg-primary-600 text-white py-3 rounded-lg hover:bg-primary-700 transition-colors font-medium shadow-sm"
-          disabled={isLoading}
+          className="w-full py-3 font-medium shadow-sm"
+          variant="primary"
+          size="lg"
+          loading={isLoading || authOperation.isLoading}
+          loadingText="登录中..."
         >
-          {isLoading ? (
-            <span className="flex items-center justify-center">
-              <svg className="animate-spin -ml-1 mr-2 h-4 w-4 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-              </svg>
-              登录中...
-            </span>
-          ) : '登录'}
-        </button>
+          登录
+        </LoadingButton>
 
         <div className="mt-6">
           <div className="relative">

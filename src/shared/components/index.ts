@@ -5,6 +5,15 @@
 export { Button } from './Button/Button';
 export type { ButtonProps } from './Button/Button';
 
+export { IconButton } from './IconButton/IconButton';
+export type { IconButtonProps } from './IconButton/IconButton';
+
+export { FloatingActionButton } from './FloatingActionButton/FloatingActionButton';
+export type { FloatingActionButtonProps } from './FloatingActionButton/FloatingActionButton';
+
+export { ButtonGroup } from './ButtonGroup/ButtonGroup';
+export type { ButtonGroupProps } from './ButtonGroup/ButtonGroup';
+
 export { Input } from './Input/Input';
 export type { InputProps } from './Input/Input';
 

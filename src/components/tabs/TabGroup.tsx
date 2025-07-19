@@ -4,6 +4,8 @@ import { updateGroupNameAndSync, toggleGroupLockAndSync, deleteGroup, updateGrou
 import { TabGroup as TabGroupType, Tab } from '@/types/tab';
 import { useDebounce, useSmartCache } from '@/shared/hooks/useMemoryOptimization';
 import { useComponentCleanup } from '@/shared/hooks/useComponentCleanup';
+import { componentHoverStyles, getInteractionStyles } from '@/shared/utils/hoverEffects';
+import { cn } from '@/shared/utils/cn';
 
 interface TabGroupProps {
   group: TabGroupType;
@@ -191,12 +193,21 @@ export const TabGroup: React.FC<TabGroupProps> = memo(({ group, onDelete, onSele
   }, [dispatch, group]);
 
   return (
-    <div className="mb-2 transition-all duration-200 ease-in-out bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-md shadow-sm pb-2 hover:shadow-md">
+    <div className={cn(
+      "mb-2 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-md shadow-sm pb-2",
+      componentHoverStyles.tabGroup
+    )}>
       <div className="flex items-center p-2 bg-gray-50 dark:bg-gray-900 border-b border-gray-200 dark:border-gray-700 rounded-t-md">
         <div className="flex items-center space-x-3 flex-grow">
           <button
             onClick={handleToggleExpand}
-            className="text-gray-500 hover:text-primary-600 transition-colors p-1 hover:bg-gray-100 group-action-button"
+            className={cn(
+              "text-gray-500 p-1 group-action-button",
+              getInteractionStyles({
+                hover: "hover:text-primary-600 hover:bg-gray-100 dark:hover:bg-gray-700",
+                focus: true
+              })
+            )}
             title={isExpanded ? '折叠标签组' : '展开标签组'}
           >
             <svg
@@ -232,14 +243,28 @@ export const TabGroup: React.FC<TabGroupProps> = memo(({ group, onDelete, onSele
         <div className="flex items-center space-x-2 ml-auto">
           <button
             onClick={handleOpenAllTabs}
-            className="text-blue-600 hover:text-blue-800 text-xs hover:underline"
+            className={cn(
+              "text-blue-600 text-xs",
+              getInteractionStyles({
+                hover: "hover:text-blue-800 hover:underline",
+                focus: true
+              })
+            )}
             title="打开所有标签页"
           >
             恢复全部
           </button>
           <button
             onClick={() => !group.isLocked && setIsEditing(true)}
-            className={`p-1 hover:bg-gray-100 transition-colors ${group.isLocked ? 'text-gray-300 cursor-not-allowed' : 'text-gray-500 hover:text-primary-600'}`}
+            className={cn(
+              "p-1",
+              getInteractionStyles({
+                hover: group.isLocked ? "" : "hover:bg-gray-100 dark:hover:bg-gray-700 hover:text-primary-600",
+                disabled: group.isLocked,
+                focus: true
+              }),
+              group.isLocked ? 'text-gray-300 cursor-not-allowed' : 'text-gray-500'
+            )}
             title={group.isLocked ? '锁定的标签组不能重命名' : '重命名标签组'}
             disabled={group.isLocked}
           >
@@ -249,7 +274,14 @@ export const TabGroup: React.FC<TabGroupProps> = memo(({ group, onDelete, onSele
           </button>
           <button
             onClick={handleToggleLock}
-            className={`p-1 hover:bg-gray-100 transition-colors ${group.isLocked ? 'text-warning' : 'text-gray-500'} hover:text-warning`}
+            className={cn(
+              "p-1",
+              getInteractionStyles({
+                hover: "hover:bg-gray-100 dark:hover:bg-gray-700 hover:text-yellow-600",
+                focus: true
+              }),
+              group.isLocked ? 'text-yellow-600' : 'text-gray-500'
+            )}
             title={group.isLocked ? '解锁标签组' : '锁定标签组'}
           >
             <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
@@ -259,7 +291,13 @@ export const TabGroup: React.FC<TabGroupProps> = memo(({ group, onDelete, onSele
           {!group.isLocked && (
             <button
               onClick={handleDelete}
-              className="p-1 hover:bg-gray-100 transition-colors text-gray-500 hover:text-red-500"
+              className={cn(
+                "p-1 text-gray-500",
+                getInteractionStyles({
+                  hover: "hover:bg-red-50 dark:hover:bg-red-900/20 hover:text-red-500",
+                  focus: true
+                })
+              )}
               title="删除标签组"
             >
               <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
@@ -274,7 +312,10 @@ export const TabGroup: React.FC<TabGroupProps> = memo(({ group, onDelete, onSele
           {group.tabs.map((tab) => (
             <div
               key={tab.id}
-              className="group tab-item flex items-center gap-2 p-2 rounded-md hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors"
+              className={cn(
+                "group tab-item flex items-center gap-2 p-2 rounded-md",
+                componentHoverStyles.tabItem
+              )}
             >
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2 cursor-pointer" onClick={() => handleOpenTab(tab)}>
@@ -298,7 +339,13 @@ export const TabGroup: React.FC<TabGroupProps> = memo(({ group, onDelete, onSele
               </div>
               <button
                 onClick={() => handleDeleteTab(tab.id)}
-                className="opacity-0 group-hover:opacity-100 p-1 rounded text-gray-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 transition-all"
+                className={cn(
+                  "opacity-0 group-hover:opacity-100 p-1 rounded text-gray-400",
+                  getInteractionStyles({
+                    hover: "hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20",
+                    focus: true
+                  })
+                )}
                 title="删除标签"
               >
                 <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">

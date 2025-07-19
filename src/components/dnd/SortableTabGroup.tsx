@@ -7,6 +7,8 @@ import { updateGroupNameAndSync, deleteGroup, updateGroup } from '@/store/slices
 import { SortableTab } from './SortableTab';
 import { SortableContext, rectSortingStrategy } from '@dnd-kit/sortable';
 import { dragPerformanceMonitor } from '@/shared/utils/dragPerformance';
+import { getDragStyles, getDragClassName, dragPresets } from '@/shared/utils/dragVisualFeedback';
+import { cn } from '@/shared/utils/cn';
 import '@/styles/drag-drop.css';
 
 interface SortableTabGroupProps {
@@ -43,14 +45,22 @@ const SortableTabGroupComponent: React.FC<SortableTabGroupProps> = ({ group, ind
     },
   });
 
-  // 提供更好的拖拽视觉反馈
+  // 使用统一的拖拽视觉反馈
+  const dragState = isDragging ? 'dragging' : 'idle';
+  const dragStyles = getDragStyles({
+    ...dragPresets.group,
+    state: dragState,
+  });
+
   const style = {
     transform: CSS.Transform.toString(transform),
-    opacity: isDragging ? 0.6 : 1,
-    position: 'relative' as const,
-    zIndex: isDragging ? 999 : 'auto',
-    transition: 'transform 0.15s ease, opacity 0.15s ease',
+    ...dragStyles,
   };
+
+  const dragClassName = getDragClassName({
+    ...dragPresets.group,
+    state: dragState,
+  });
 
   const handleToggleExpand = () => {
     if (isMounted.current) {
@@ -167,7 +177,10 @@ const SortableTabGroupComponent: React.FC<SortableTabGroupProps> = ({ group, ind
     <div
       ref={setNodeRef}
       style={style}
-      className={`bg-white rounded-lg border border-gray-200 overflow-hidden select-none group-item ${isDragging ? 'border-gray-400 dragging' : ''}`}
+      className={cn(
+        "bg-white rounded-lg border border-gray-200 overflow-hidden select-none group-item",
+        dragClassName
+      )}
       data-onboarding="tab-group"
     >
       <div

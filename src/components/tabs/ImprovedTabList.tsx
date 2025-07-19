@@ -4,6 +4,7 @@ import { loadGroups } from '@/features/tabs/store/tabGroupsSlice';
 import { moveTab, moveGroup } from '@/features/tabs/store/dragOperationsSlice';
 import { SearchResultList } from '@/components/search/SearchResultList';
 import { SimpleDraggableTabGroup } from '@/components/dnd/SimpleDraggableTabGroup';
+import { TabsEmptyState } from './TabsEmptyState';
 import '@/styles/drag-drop.css';
 import {
   DndContext,
@@ -271,33 +272,20 @@ export const ImprovedTabList: React.FC<ImprovedTabListProps> = ({ searchQuery })
         <SearchResultList searchQuery={searchQuery} />
       ) : filteredGroups.length === 0 ? (
         /* 空状态显示 */
-        <div className="flex flex-col items-center justify-center py-12 space-y-4 text-gray-500 dark:text-gray-400">
-          <svg
-            xmlns="http://www.w3.org/2000/svg"
-            className="h-16 w-16"
-            fill="none"
-            viewBox="0 0 24 24"
-            stroke="currentColor"
-          >
-            <path
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              strokeWidth={1}
-              d="M9 17V7m0 10a2 2 0 01-2 2H5a2 2 0 01-2-2V7a2 2 0 012-2h2a2 2 0 012 2m0 10a2 2 0 002 2h2a2 2 0 002-2M9 7a2 2 0 012-2h2a2 2 0 012 2m0 10V7m0 10a2 2 0 002 2h2a2 2 0 002-2V7a2 2 0 00-2-2h-2a2 2 0 00-2 2"
-            />
-          </svg>
-          <div className="text-center">
-            <h3 className="text-lg font-medium mb-2">还没有保存的标签页</h3>
-            <p className="text-sm mb-4">
-              点击右上角的"保存所有标签"按钮开始使用，或者使用快捷键：
-            </p>
-            <div className="space-y-1 text-xs bg-gray-100 dark:bg-gray-800 rounded-lg p-3">
-              <div><kbd className="px-2 py-1 bg-gray-200 dark:bg-gray-700 rounded">Alt+Shift+S</kbd> 保存所有标签页</div>
-              <div><kbd className="px-2 py-1 bg-gray-200 dark:bg-gray-700 rounded">Alt+S</kbd> 保存当前标签页</div>
-              <div><kbd className="px-2 py-1 bg-gray-200 dark:bg-gray-700 rounded">Ctrl+Shift+S</kbd> 打开标签管理器</div>
-            </div>
-          </div>
-        </div>
+        <TabsEmptyState
+          onSaveAllTabs={() => {
+            // 这里可以触发保存所有标签的操作
+            console.log('Save all tabs triggered from empty state');
+          }}
+          onImportData={() => {
+            // 这里可以触发导入数据的操作
+            console.log('Import data triggered from empty state');
+          }}
+          onShowTutorial={() => {
+            // 这里可以触发显示教程的操作
+            console.log('Show tutorial triggered from empty state');
+          }}
+        />
       ) : (
         <DndContext
           sensors={sensors}

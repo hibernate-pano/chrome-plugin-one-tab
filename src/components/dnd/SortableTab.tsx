@@ -3,6 +3,8 @@ import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { Tab } from '@/types/tab';
 import { dragPerformanceMonitor } from '@/shared/utils/dragPerformance';
+import { getDragStyles, getDragClassName, dragPresets } from '@/shared/utils/dragVisualFeedback';
+import { cn } from '@/shared/utils/cn';
 import '@/styles/drag-drop.css';
 
 interface SortableTabProps {
@@ -50,13 +52,22 @@ const SortableTabComponent: React.FC<SortableTabProps> = ({
     }
   }, [isDragging, transform]);
 
-  // 提供清晰的拖拽反馈
+  // 使用统一的拖拽视觉反馈
+  const dragState = isDragging ? 'dragging' : 'idle';
+  const dragStyles = getDragStyles({
+    ...dragPresets.tab,
+    state: dragState,
+  });
+
   const style = {
     transform: CSS.Transform.toString(transform),
-    opacity: isDragging ? 0.5 : 1,
-    zIndex: isDragging ? 999 : 'auto',
-    transition: isDragging ? undefined : 'transform 0.15s ease, opacity 0.15s ease',
+    ...dragStyles,
   };
+
+  const dragClassName = getDragClassName({
+    ...dragPresets.tab,
+    state: dragState,
+  });
 
   // 安全的处理函数，确保组件未卸载时才调用原始函数 - 使用useCallback优化性能
   const safeHandleOpenTab = useCallback((tab: Tab) => {
@@ -96,9 +107,10 @@ const SortableTabComponent: React.FC<SortableTabProps> = ({
     <div
       ref={setNodeRef}
       style={style}
-      className={`flex items-center py-1 px-2 hover:bg-gray-100 rounded select-none cursor-move tab-item
-        ${isDragging ? 'bg-blue-50 border border-blue-300 dragging shadow-md' : ''}
-      `}
+      className={cn(
+        "flex items-center py-1 px-2 hover:bg-gray-100 rounded select-none cursor-move tab-item",
+        dragClassName
+      )}
       {...attributes}
       {...listeners}
       data-onboarding="tab-item"
