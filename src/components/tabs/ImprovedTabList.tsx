@@ -68,25 +68,7 @@ export const ImprovedTabList: React.FC<ImprovedTabListProps> = ({ searchQuery })
         console.error('🔍 loadGroups Promise rejected:', error);
       });
     
-    // 直接测试Chrome存储
-    chrome.storage.local.get('tab_groups').then(result => {
-      console.log('🔍 直接查询Chrome存储结果:', JSON.stringify(result, null, 2));
-      
-      // 检查Chrome存储中的标签组
-      const storedGroups = result.tab_groups;
-      if (storedGroups && Array.isArray(storedGroups)) {
-        console.log('🔍 Chrome存储中的标签组数量:', storedGroups.length);
-        storedGroups.forEach((group: any, index: number) => {
-          console.log(`🔍 Chrome存储中的标签组 ${index + 1}/${storedGroups.length}:`, {
-            id: group.id,
-            name: group.name,
-            tabCount: group.tabs?.length || 0
-          });
-        });
-      } else {
-        console.log('🔍 Chrome存储中没有标签组或格式无效');
-      }
-    });
+    // 移除了详细的标签数据日志输出
     
     // 添加调试日志
     console.log('ImprovedTabList 挂载，开始加载标签组数据');
@@ -129,18 +111,7 @@ export const ImprovedTabList: React.FC<ImprovedTabListProps> = ({ searchQuery })
   // 过滤标签组
   const filteredGroups = searchQuery ? [] : (groups || []);
 
-  // 添加调试日志
-  useEffect(() => {
-    console.log('=== ImprovedTabList 状态更新 ===');
-    console.log('Redux groups状态:', {
-      groupsIsArray: Array.isArray(groups),
-      groupsLength: groups?.length || 0,
-      groups: groups,
-      filteredGroupsLength: filteredGroups.length,
-      searchQuery: searchQuery
-    });
-    console.log('========================');
-  }, [groups, filteredGroups, searchQuery]);
+  // 移除了详细的状态调试日志
 
   // 创建标签组ID列表
   const groupIds = filteredGroups.map(group => `group-${group.id}`);

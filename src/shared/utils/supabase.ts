@@ -446,27 +446,6 @@ export const sync = {
     console.log('准备上传标签组，用户ID:', user.id, '设备ID:', deviceId);
     console.log(`要上传的数据: ${groups.length} 个标签组`);
 
-    // 详细记录每个要上传的标签组
-    groups.forEach((group, index) => {
-      console.log(`要上传的标签组 ${index + 1}/${groups.length}:`, {
-        id: group.id,
-        name: group.name,
-        tabCount: group.tabs.length,
-        updatedAt: group.updatedAt,
-        lastSyncedAt: group.lastSyncedAt
-      });
-
-      // 记录每个标签组中的标签数量和类型
-      const urlTypes = group.tabs.reduce((acc, tab) => {
-        const urlType = tab.url.startsWith('http') ? 'http' :
-          tab.url.startsWith('loading://') ? 'loading' : 'other';
-        acc[urlType] = (acc[urlType] || 0) + 1;
-        return acc;
-      }, {} as Record<string, number>);
-
-      console.log(`  - 标签类型统计: ${JSON.stringify(urlTypes)}`);
-    });
-
     // 为每个标签组添加用户ID和设备ID
     const currentTime = new Date().toISOString();
 
@@ -731,19 +710,6 @@ export const sync = {
 
       console.log(`从云端获取到 ${groups.length} 个标签组`);
 
-      // 记录每个云端标签组的基本信息
-      groups.forEach((group, index) => {
-        const tabsData = group.tabs_data || [];
-        console.log(`云端标签组 ${index + 1}/${groups.length}:`, {
-          id: group.id,
-          name: group.name,
-          tabCount: tabsData.length,
-          deviceId: group.device_id,
-          updatedAt: group.updated_at,
-          lastSync: group.last_sync
-        });
-      });
-
       // 将数据转换为应用格式
       const tabGroups: TabGroup[] = [];
 
@@ -776,17 +742,7 @@ export const sync = {
           console.log(`标签组 ${group.id} 的数据已经是解析后的数组格式`);
         }
 
-        console.log(`处理标签组 ${group.id} (名称: "${group.name}"), 有 ${tabsData.length} 个标签`);
-
-        // 记录标签类型统计
-        const urlTypes = tabsData.reduce((acc: Record<string, number>, tab: TabData) => {
-          const urlType = tab.url.startsWith('http') ? 'http' :
-            tab.url.startsWith('loading://') ? 'loading' : 'other';
-          acc[urlType] = (acc[urlType] || 0) + 1;
-          return acc;
-        }, {});
-
-        console.log(`  - 标签类型统计: ${JSON.stringify(urlTypes)}`);
+        // 移除了详细的标签数据日志
 
         // 将 TabData 转换为 Tab 格式
         const formattedTabs = tabsData.map((tab: TabData) => ({

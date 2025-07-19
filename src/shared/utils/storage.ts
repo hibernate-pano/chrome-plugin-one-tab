@@ -40,20 +40,8 @@ interface ExportData {
 class ChromeStorage {
   async getGroups(): Promise<TabGroup[]> {
     try {
-      console.log('🔍 storage.getGroups 开始执行');
       const result = await chrome.storage.local.get(STORAGE_KEYS.GROUPS);
-      console.log('🔍 Chrome存储原始结果:', JSON.stringify(result, null, 2));
-      console.log('🔍 STORAGE_KEYS.GROUPS:', STORAGE_KEYS.GROUPS);
-      
-      const groups = result[STORAGE_KEYS.GROUPS] || [];
-      console.log('🔍 最终返回的groups:', JSON.stringify(groups, null, 2));
-      console.log('🔍 groups类型检查:', {
-        isArray: Array.isArray(groups),
-        length: groups.length,
-        firstItemKeys: groups[0] ? Object.keys(groups[0]) : 'no items'
-      });
-      
-      return groups;
+      return result[STORAGE_KEYS.GROUPS] || [];
     } catch (error) {
       console.error('🔍 获取标签组失败:', error);
       return [];
@@ -153,7 +141,7 @@ class ChromeStorage {
       // 如果有过期的标签组，更新存储
       if (validGroups.length !== deletedGroups.length) {
         await this.setDeletedGroups(validGroups);
-        console.log(`清理了 ${deletedGroups.length - validGroups.length} 个过期的已删除标签组`);
+        // 清理了过期的已删除标签组
       }
 
       // 同时清理过期的已删除标签页
@@ -165,7 +153,7 @@ class ChromeStorage {
 
       if (validTabs.length !== deletedTabs.length) {
         await this.setDeletedTabs(validTabs);
-        console.log(`清理了 ${deletedTabs.length - validTabs.length} 个过期的已删除标签页`);
+        // 清理了过期的已删除标签页
       }
     } catch (error) {
       console.error('清理已删除数据失败:', error);

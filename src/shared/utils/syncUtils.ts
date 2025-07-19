@@ -155,18 +155,8 @@ const mergeTabs = (
   // 将标签映射转换回数组
   const mergedTabs = Array.from(mergedTabsMap.values());
 
-  // 记录合并结果
+  // 记录合并结果（简化日志）
   console.log(`标签组 "${localGroup.name}" 合并结果: ${mergedTabs.length} 个标签`);
-
-  // 记录每个合并后的标签信息
-  mergedTabs.forEach((tab, index) => {
-    console.log(`合并后标签 ${index+1}/${mergedTabs.length}: ID=${tab.id}, 标题="${tab.title}", URL=${tab.url}`);
-  });
-
-  // 如果合并后的标签数小于云端标签数或本地标签数，输出信息性日志
-  if (mergedTabs.length < Math.max(cloudGroup.tabs.length, localGroup.tabs.length)) {
-    console.log(`信息: 标签组 "${localGroup.name}" 合并后的标签数(${mergedTabs.length})小于原始标签数(本地:${localGroup.tabs.length}, 云端:${cloudGroup.tabs.length})，这是因为智能去除了重复标签`);
-  }
 
   // 构建并返回合并后的标签组
   return {
