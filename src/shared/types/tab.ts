@@ -43,6 +43,7 @@ export interface TabGroup {
   createdAt: string;
   updatedAt: string;
   isLocked: boolean;
+  order?: number; // 排序顺序
   user_id?: string; // 关联用户ID
   device_id?: string; // 创建设备ID
   last_sync?: string; // 最后同步时间

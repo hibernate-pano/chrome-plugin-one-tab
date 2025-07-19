@@ -6,7 +6,7 @@ import React, { useState } from 'react';
 import { useAppDispatch, useAppSelector } from '@/app/store/hooks';
 import { batchMoveGroups } from '../store/batchOperationsSlice';
 import { cn } from '@/shared/utils/cn';
-import { showToast } from '@/shared/components/Toast/Toast';
+import { toast } from '@/shared/utils/toast';
 
 interface BatchMoveDialogProps {
   isOpen: boolean;
@@ -46,7 +46,7 @@ export const BatchMoveDialog: React.FC<BatchMoveDialogProps> = ({
     }
 
     dispatch(batchMoveGroups({ groupIds: selectedGroupIds, targetIndex }));
-    showToast(`正在移动 ${selectedCount} 个标签组...`, 'info');
+    toast.info(`正在移动 ${selectedCount} 个标签组...`);
     onClose();
   };
 

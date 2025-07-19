@@ -119,7 +119,8 @@ export class ImportExportService {
       return result;
       
     } catch (error) {
-      const message = errorHandler.getErrorMessage(error);
+      const friendlyError = errorHandler.handleAsyncError(error as Error, { component: 'ImportExportService' });
+      const message = friendlyError.message;
       logger.error('数据导出失败', error);
       return {
         success: false,
@@ -196,7 +197,8 @@ export class ImportExportService {
       return result;
       
     } catch (error) {
-      const message = errorHandler.getErrorMessage(error);
+      const friendlyError = errorHandler.handleAsyncError(error as Error, { component: 'ImportExportService' });
+      const message = friendlyError.message;
       logger.error('数据导入失败', error);
       return {
         success: false,
@@ -532,7 +534,9 @@ ${group.tabs.map(tab => `      <tab id="${tab.id}" title="${this.escapeXml(tab.t
           tabs.push({
             id: `imported-tab-${Date.now()}-${Math.random()}`,
             url: url.trim(),
-            title: title.trim()
+            title: title.trim(),
+            createdAt: new Date().toISOString(),
+            lastAccessed: new Date().toISOString()
           });
         }
       });

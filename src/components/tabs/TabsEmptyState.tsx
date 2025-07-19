@@ -8,7 +8,7 @@ import { useAppSelector } from '@/app/store/hooks';
 import { EmptyState, EmptyStateAction } from '@/shared/components/EmptyState/EmptyState';
 import { GuidedActions, GuidedAction } from '@/shared/components/GuidedActions/GuidedActions';
 import { cn } from '@/shared/utils/cn';
-import { showToast } from '@/shared/components/Toast/Toast';
+import { toast } from '@/shared/utils/toast';
 
 export interface TabsEmptyStateProps {
   onSaveAllTabs?: () => void;
@@ -27,7 +27,8 @@ const TabsEmptyState: React.FC<TabsEmptyStateProps> = ({
   showGuidedActions = true,
   className,
 }) => {
-  const { isAuthenticated } = useAppSelector(state => state.auth);
+  const { user } = useAppSelector(state => state.auth);
+  const isAuthenticated = !!user;
   const { groups } = useAppSelector(state => state.tabGroups);
   const [currentTip, setCurrentTip] = useState(0);
   const [showStats, setShowStats] = useState(false);
@@ -105,7 +106,7 @@ const TabsEmptyState: React.FC<TabsEmptyStateProps> = ({
       });
 
       if (validTabs.length === 0) {
-        showToast('没有找到可保存的标签页', 'warning');
+        toast.warning('没有找到可保存的标签页');
         return;
       }
 
@@ -115,7 +116,7 @@ const TabsEmptyState: React.FC<TabsEmptyStateProps> = ({
         data: { tabs: validTabs }
       });
 
-      showToast(`正在保存 ${validTabs.length} 个标签页...`, 'info');
+      toast.info(`正在保存 ${validTabs.length} 个标签页...`);
 
       // 如果有回调函数，也调用它
       if (onSaveAllTabs) {
@@ -123,7 +124,7 @@ const TabsEmptyState: React.FC<TabsEmptyStateProps> = ({
       }
     } catch (error) {
       console.error('快速开始失败:', error);
-      showToast('保存标签页失败，请重试', 'error');
+      toast.error('保存标签页失败，请重试');
     } finally {
       setIsQuickStarting(false);
     }

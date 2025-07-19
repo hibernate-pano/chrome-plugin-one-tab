@@ -1,5 +1,5 @@
 import React from 'react';
-import { useAppDispatch } from '@/app/store/hooks';
+
 // 使用新版同步服务
 
 import { syncService } from '@/services/syncService';

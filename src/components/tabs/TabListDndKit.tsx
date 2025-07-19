@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useRef, useCallback, useMemo } from 'react';
 import { useAppDispatch, useAppSelector } from '@/app/store/hooks';
 import { loadGroups } from '@/features/tabs/store/tabGroupsSlice';
-import { moveGroupAndSync, moveTabAndSync } from '@/features/tabs/store/dragOperationsSlice';
+import { moveGroup, moveTab } from '@/features/tabs/store/dragOperationsSlice';
 import { SearchResultList } from '@/components/search/SearchResultList';
 // No need to import TabGroup type as we're not using it directly
 import { SortableTabGroup } from '@/components/dnd/SortableTabGroup';
@@ -226,12 +226,11 @@ export const TabListDndKit: React.FC<TabListProps> = ({ searchQuery }) => {
         try {
           // 在拖动结束时执行最终更新
           dispatch(
-            moveTabAndSync({
+            moveTab({
               sourceGroupId,
               sourceIndex,
               targetGroupId,
-              targetIndex,
-              updateSourceInDrag: true,
+              targetIndex
             })
           );
         } catch (error) {
@@ -246,7 +245,7 @@ export const TabListDndKit: React.FC<TabListProps> = ({ searchQuery }) => {
 
       if (activeIndex !== -1 && overIndex !== -1 && activeIndex !== overIndex) {
         try {
-          dispatch(moveGroupAndSync({ dragIndex: activeIndex, hoverIndex: overIndex }));
+          dispatch(moveGroup({ dragIndex: activeIndex, hoverIndex: overIndex }));
         } catch (error) {
           console.error('拖拽结束时更新标签组位置失败:', error);
         }

@@ -4,7 +4,7 @@
  */
 import { createSlice, createAsyncThunk, PayloadAction } from '@reduxjs/toolkit';
 import { logger } from '@/shared/utils/logger';
-import { TabGroup, Tab } from '@/shared/types/tab';
+import { TabGroup } from '@/shared/types/tab';
 
 export type SearchMode = 'simple' | 'advanced';
 export type SortBy = 'name' | 'date' | 'tabCount' | 'domain';

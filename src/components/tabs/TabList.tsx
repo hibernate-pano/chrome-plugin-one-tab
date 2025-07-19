@@ -68,7 +68,7 @@ export const TabList: React.FC<TabListProps> = ({ searchQuery }) => {
   } = usePagination(sortedGroups, 20); // 每页20个标签组
 
   // 渲染单个标签组的回调
-  const renderTabGroup = useCallback((group: TabGroupType, index: number) => {
+  const renderTabGroup = useCallback((group: TabGroupType, _index: number) => {
     return (
       <TabGroup
         key={group.id}
@@ -80,7 +80,7 @@ export const TabList: React.FC<TabListProps> = ({ searchQuery }) => {
   }, [dispatch]);
 
   // 键提取器
-  const keyExtractor = useCallback((group: TabGroupType, index: number) => group.id, []);
+  const keyExtractor = useCallback((group: TabGroupType, _index: number) => group.id, []);
 
   if (isLoading) {
     return (

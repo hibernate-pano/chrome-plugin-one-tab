@@ -13,7 +13,7 @@ import {
   batchExportGroups,
 } from '../store/batchOperationsSlice';
 import { BatchMoveDialog } from './BatchMoveDialog';
-import { BatchOperationConfirmDialog } from './BatchOperationConfirmDialog';
+// import { BatchOperationConfirmDialog } from './BatchOperationConfirmDialog';
 import { cn } from '@/shared/utils/cn';
 
 interface BatchOperationToolbarProps {

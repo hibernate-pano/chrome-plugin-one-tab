@@ -6,7 +6,7 @@ import { createSlice, createAsyncThunk, PayloadAction } from '@reduxjs/toolkit';
 import { logger } from '@/shared/utils/logger';
 import { errorHandler } from '@/shared/utils/errorHandler';
 import { storage } from '@/shared/utils/storage';
-import { TabGroup } from '@/shared/types/tab';
+// import { TabGroup } from '@/shared/types/tab';
 
 export type BatchOperationType = 'delete' | 'move' | 'export' | 'lock' | 'unlock';
 export type SelectionMode = 'none' | 'groups' | 'tabs';
@@ -67,7 +67,8 @@ export const batchDeleteGroups = createAsyncThunk(
         operationId: `batch-delete-${Date.now()}`,
       };
     } catch (error) {
-      const message = errorHandler.getErrorMessage(error);
+      const friendlyError = errorHandler.handleAsyncError(error as Error, { component: 'batchOperationsSlice' });
+      const message = friendlyError.message;
       logger.error('批量删除标签组失败', error);
       return rejectWithValue(message);
     }
@@ -100,7 +101,8 @@ export const batchToggleGroupLock = createAsyncThunk(
         lock,
       };
     } catch (error) {
-      const message = errorHandler.getErrorMessage(error);
+      const friendlyError = errorHandler.handleAsyncError(error as Error, { component: 'batchOperationsSlice' });
+      const message = friendlyError.message;
       logger.error('批量切换锁定状态失败', error);
       return rejectWithValue(message);
     }
@@ -129,7 +131,8 @@ export const batchMoveGroups = createAsyncThunk(
         operationId: `batch-move-${Date.now()}`,
       };
     } catch (error) {
-      const message = errorHandler.getErrorMessage(error);
+      const friendlyError = errorHandler.handleAsyncError(error as Error, { component: 'batchOperationsSlice' });
+      const message = friendlyError.message;
       logger.error('批量移动失败', error);
       return rejectWithValue(message);
     }
@@ -175,7 +178,8 @@ export const batchExportGroups = createAsyncThunk(
         operationId: `batch-export-${Date.now()}`,
       };
     } catch (error) {
-      const message = errorHandler.getErrorMessage(error);
+      const friendlyError = errorHandler.handleAsyncError(error as Error, { component: 'batchOperationsSlice' });
+      const message = friendlyError.message;
       logger.error('批量导出失败', error);
       return rejectWithValue(message);
     }
@@ -289,7 +293,7 @@ const batchOperationsSlice = createSlice({
         state.progress = 0;
         state.error = null;
       })
-      .addCase(batchDeleteGroups.fulfilled, (state, action) => {
+      .addCase(batchDeleteGroups.fulfilled, (state, _action) => {
         state.isProcessing = false;
         state.currentOperation = null;
         state.progress = 100;

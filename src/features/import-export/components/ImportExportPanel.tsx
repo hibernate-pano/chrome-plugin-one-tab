@@ -1,7 +1,7 @@
 import React, { useState, useCallback, useRef, memo } from 'react';
 import { useAppSelector } from '@/app/store/hooks';
 import { 
-  ImportExportService, 
+  // ImportExportService,
   ExportFormat, 
   ExportOptions, 
   ImportOptions,
@@ -140,14 +140,14 @@ const ImportExportPanelComponent: React.FC<ImportExportPanelProps> = ({
     }
   }, [selectedGroupIds.length, groups]);
 
-  // 格式化文件大小
-  const formatFileSize = (bytes: number): string => {
-    if (bytes === 0) return '0 B';
-    const k = 1024;
-    const sizes = ['B', 'KB', 'MB', 'GB'];
-    const i = Math.floor(Math.log(bytes) / Math.log(k));
-    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
-  };
+  // 格式化文件大小（暂时未使用）
+  // const formatFileSize = (bytes: number): string => {
+  //   if (bytes === 0) return '0 B';
+  //   const k = 1024;
+  //   const sizes = ['B', 'KB', 'MB', 'GB'];
+  //   const i = Math.floor(Math.log(bytes) / Math.log(k));
+  //   return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+  // };
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">

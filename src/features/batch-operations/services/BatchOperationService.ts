@@ -116,7 +116,8 @@ export class BatchOperationService {
         warnings
       };
     } catch (error) {
-      const message = errorHandler.getErrorMessage(error);
+      const friendlyError = errorHandler.handleAsyncError(error as Error, { component: 'BatchOperationService' });
+      const message = friendlyError.message;
       logger.error('批量删除标签组失败', error);
       
       return {
@@ -142,7 +143,7 @@ export class BatchOperationService {
       logger.debug('开始批量切换标签组锁定状态', { count: groupIds.length, locked });
       
       const groups = await storage.getGroups();
-      const groupMap = new Map(groups.map(g => [g.id, g]));
+      // const groupMap = new Map(groups.map(g => [g.id, g])); // 暂时未使用
       
       let processedCount = 0;
       let failedCount = 0;
@@ -202,7 +203,8 @@ export class BatchOperationService {
         warnings
       };
     } catch (error) {
-      const message = errorHandler.getErrorMessage(error);
+      const friendlyError = errorHandler.handleAsyncError(error as Error, { component: 'BatchOperationService' });
+      const message = friendlyError.message;
       logger.error('批量切换锁定状态失败', error);
       
       return {
@@ -283,7 +285,8 @@ export class BatchOperationService {
         warnings: finalTargetIndex !== targetIndex ? [`目标位置已调整为 ${finalTargetIndex}`] : []
       };
     } catch (error) {
-      const message = errorHandler.getErrorMessage(error);
+      const friendlyError = errorHandler.handleAsyncError(error as Error, { component: 'BatchOperationService' });
+      const message = friendlyError.message;
       logger.error('批量移动标签组失败', error);
       
       return {
@@ -434,7 +437,8 @@ ${group.tabs.map(tab => `        <DT><A HREF="${tab.url}">${this.escapeHtml(tab.
         }
       };
     } catch (error) {
-      const message = errorHandler.getErrorMessage(error);
+      const friendlyError = errorHandler.handleAsyncError(error as Error, { component: 'BatchOperationService' });
+      const message = friendlyError.message;
       logger.error('批量导出标签组失败', error);
       
       return {
@@ -543,7 +547,8 @@ ${group.tabs.map(tab => `        <DT><A HREF="${tab.url}">${this.escapeHtml(tab.
         warnings
       };
     } catch (error) {
-      const message = errorHandler.getErrorMessage(error);
+      const friendlyError = errorHandler.handleAsyncError(error as Error, { component: 'BatchOperationService' });
+      const message = friendlyError.message;
       logger.error('批量合并标签组失败', error);
       
       return {

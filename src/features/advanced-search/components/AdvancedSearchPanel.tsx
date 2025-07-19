@@ -24,6 +24,9 @@ export const AdvancedSearchPanel: React.FC<AdvancedSearchPanelProps> = ({
   className,
 }) => {
   const dispatch = useAppDispatch();
+
+  // 标记未使用的函数（避免TypeScript警告）
+  void deleteSavedSearch;
   const { 
     filters, 
     sortBy, 

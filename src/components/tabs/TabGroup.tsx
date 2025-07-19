@@ -2,7 +2,7 @@ import React, { useState, useCallback, useEffect, memo } from 'react';
 import { useAppDispatch } from '@/app/store/hooks';
 import { updateGroupName, toggleGroupLock, deleteGroup, updateGroup } from '@/features/tabs/store/tabGroupsSlice';
 import { TabGroup as TabGroupType, Tab } from '@/types/tab';
-import { useDebounce, useSmartCache } from '@/shared/hooks/useMemoryOptimization';
+import { useSmartCache } from '@/shared/hooks/useMemoryOptimization';
 import { useComponentCleanup } from '@/shared/hooks/useComponentCleanup';
 import { componentHoverStyles, getInteractionStyles } from '@/shared/utils/hoverEffects';
 import { cn } from '@/shared/utils/cn';
@@ -23,11 +23,11 @@ interface TabGroupProps {
  */
 export const TabGroup: React.FC<TabGroupProps> = memo(({
   group,
-  onDelete,
-  onSelect,
-  onOpenAllTabs,
-  onDeleteGroup,
-  onUpdateGroup,
+  onDelete: _onDelete,
+  onSelect: _onSelect,
+  onOpenAllTabs: _onOpenAllTabs,
+  onDeleteGroup: _onDeleteGroup,
+  onUpdateGroup: _onUpdateGroup,
   onDeleteTab
 }) => {
   const dispatch = useAppDispatch();
@@ -53,13 +53,13 @@ export const TabGroup: React.FC<TabGroupProps> = memo(({
 
   const [isExpanded, setIsExpanded] = useState(getInitialExpandedState);
 
-  // 防抖的名称更新函数
-  const _debouncedUpdateName = useDebounce(
-    useCallback((name: string) => {
-      dispatch(updateGroupNameAndSync({ groupId: group.id, newName: name }));
-    }, [dispatch, group.id]),
-    500
-  );
+  // 防抖的名称更新函数（暂时未使用）
+  // const _debouncedUpdateName = useDebounce(
+  //   useCallback((name: string) => {
+  //     dispatch(updateGroupName({ groupId: group.id, name }));
+  //   }, [dispatch, group.id]),
+  //   500
+  // );
 
   // 当组ID变化时，更新折叠状态
   useEffect(() => {
@@ -77,7 +77,7 @@ export const TabGroup: React.FC<TabGroupProps> = memo(({
 
   const handleNameSubmit = useCallback(() => {
     if (newName.trim() !== '') {
-      dispatch(updateGroupNameAndSync({ groupId: group.id, name: newName.trim() }));
+      dispatch(updateGroupName({ groupId: group.id, name: newName.trim() }));
       setIsEditing(false);
     }
   }, [dispatch, group.id, newName]);
@@ -341,7 +341,7 @@ export const TabGroup: React.FC<TabGroupProps> = memo(({
                         </span>
                       )}
 
-                      {group.syncStatus === 'error' && (
+                      {group.syncStatus === 'local-only' && (
                         <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-red-100 dark:bg-red-900/30 text-red-800 dark:text-red-200">
                           <svg className="w-3 h-3 mr-1" fill="currentColor" viewBox="0 0 20 20">
                             <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7 4a1 1 0 11-2 0 1 1 0 012 0zm-1-9a1 1 0 00-1 1v4a1 1 0 102 0V6a1 1 0 00-1-1z" clipRule="evenodd" />

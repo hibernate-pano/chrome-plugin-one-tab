@@ -81,12 +81,11 @@ export const SimpleTabList: React.FC<SimpleTabListProps> = ({ searchQuery }) => 
         const targetIndex = overData.index;
 
         // 执行标签页移动
-        dispatch(moveTabAndSync({
+        dispatch(moveTab({
           sourceGroupId,
           sourceIndex,
           targetGroupId,
-          targetIndex,
-          updateSourceInDrag: true
+          targetIndex
         }));
       }
       // 处理标签组拖拽
@@ -96,7 +95,7 @@ export const SimpleTabList: React.FC<SimpleTabListProps> = ({ searchQuery }) => 
 
         if (activeIndex !== -1 && overIndex !== -1) {
           // 执行标签组移动
-          dispatch(moveGroupAndSync({ dragIndex: activeIndex, hoverIndex: overIndex }));
+          dispatch(moveGroup({ dragIndex: activeIndex, hoverIndex: overIndex }));
         }
       }
     }
