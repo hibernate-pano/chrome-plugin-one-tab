@@ -3,7 +3,7 @@ import { useAppSelector, useAppDispatch } from '@/app/store/hooks';
 import { signOut } from '@/features/auth/store/authSlice';
 import { deleteAllGroups } from '@/features/tabs/store/tabGroupsSlice';
 import { syncService } from '@/services/syncService';
-import { storage } from '@/utils/storage';
+
 import { LoginForm } from '../auth/LoginForm';
 import { RegisterForm } from '../auth/RegisterForm';
 import { SyncSettings } from '../sync/SyncSettings';

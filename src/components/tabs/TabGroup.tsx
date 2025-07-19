@@ -431,7 +431,7 @@ export const TabGroup: React.FC<TabGroupProps> = memo(({ group, onDelete, onSele
           </div>
         </div>
       </div>
-      </div>
+
       {/* 标签页内容区域 - 重新设计 */}
       <div
         id={`group-content-${group.id}`}

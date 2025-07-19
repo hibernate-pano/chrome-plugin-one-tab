@@ -259,6 +259,11 @@ const tabGroupsSlice = createSlice({
         group.isLocked = !group.isLocked;
       }
     },
+
+    // 设置标签组列表（用于测试和批量操作）
+    setGroups: (state, action: PayloadAction<TabGroup[]>) => {
+      state.groups = action.payload;
+    },
   },
   extraReducers: (builder) => {
     builder
@@ -354,6 +359,7 @@ export const {
   setError,
   updateGroupNameLocal,
   toggleGroupLockLocal,
+  setGroups,
 } = tabGroupsSlice.actions;
 
 export default tabGroupsSlice.reducer;

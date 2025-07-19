@@ -22,7 +22,7 @@ const HeaderComponent: React.FC<HeaderProps> = ({ onSearch }) => {
   const [cleanupResult, setCleanupResult] = useState<{ removedCount: number } | null>(null);
 
   // 引导系统
-  const { start: startOnboarding } = useOnboarding();
+  const { } = useOnboarding();
 
   // 使用useCallback优化事件处理函数
   const handleSearch = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {

@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { useAppSelector } from '@/app/store/hooks';
 import { syncService } from '@/services/syncService';
-import { feedback } from '@/shared/utils/feedback';
+
 import { FEEDBACK_MESSAGES } from '@/shared/constants/feedbackMessages';
 import { useSyncOperation } from '@/shared/hooks/useAsyncOperation';
 import { LoadingButton } from '@/shared/components/LoadingButton/LoadingButton';
@@ -11,8 +11,9 @@ import { useErrorHandler } from '@/shared/contexts/ErrorContext';
 interface SyncButtonProps { }
 
 export const SyncButton: React.FC<SyncButtonProps> = () => {
-  const { syncStatus, syncProgress, syncOperation } = useAppSelector(state => state.tabs);
-  const { isAuthenticated } = useAppSelector(state => state.auth);
+  const { status: syncStatus, progress: syncProgress, operation: syncOperation } = useAppSelector(state => state.sync);
+  const { user } = useAppSelector(state => state.auth);
+  const isAuthenticated = !!user;
   const { showManualSyncButtons } = useAppSelector(state => state.settings);
   const [showUploadModal, setShowUploadModal] = useState(false);
   const [showDownloadModal, setShowDownloadModal] = useState(false);

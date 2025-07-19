@@ -16,7 +16,7 @@ export const RegisterForm: React.FC<RegisterFormProps> = ({ onSuccess }) => {
   const [confirmPassword, setConfirmPassword] = useState('');
   const [passwordError, setPasswordError] = useState('');
 
-  const [isRegistering, setIsRegistering] = useState(false);
+  const [isRegistering] = useState(false);
   const [registrationSuccess, setRegistrationSuccess] = useState(false);
   const authOperation = useAuthOperation();
 
@@ -58,7 +58,7 @@ export const RegisterForm: React.FC<RegisterFormProps> = ({ onSuccess }) => {
 
   const handleOAuthLogin = async (provider: 'google' | 'github' | 'wechat') => {
     try {
-      await dispatch(signInWithOAuth(provider));
+      await dispatch(signInWithOAuth({ provider }));
       // 注意：由于这是重定向流程，我们不会在这里调用 onSuccess
       // 成功的回调处理将在后台脚本中完成
     } catch (error) {

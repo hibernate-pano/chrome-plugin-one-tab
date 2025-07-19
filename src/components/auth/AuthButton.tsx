@@ -4,7 +4,7 @@ import { signOut } from '@/features/auth/store/authSlice';
 import { LoginForm } from './LoginForm';
 import { RegisterForm } from './RegisterForm';
 import { syncService } from '@/services/syncService';
-import { feedback } from '@/shared/utils/feedback';
+
 import { FEEDBACK_MESSAGES } from '@/shared/constants/feedbackMessages';
 import { useSyncOperation } from '@/shared/hooks/useAsyncOperation';
 import { LoadingButton } from '@/shared/components/LoadingButton/LoadingButton';
@@ -13,8 +13,9 @@ import { useErrorHandler } from '@/shared/contexts/ErrorContext';
 
 export const AuthButton: React.FC = () => {
   const dispatch = useAppDispatch();
-  const { isAuthenticated, user } = useAppSelector(state => state.auth);
-  const { syncStatus, lastSyncTime, backgroundSync } = useAppSelector(state => state.tabs);
+  const { user } = useAppSelector(state => state.auth);
+  const isAuthenticated = !!user;
+  const { status: syncStatus, lastSyncTime, backgroundSync } = useAppSelector(state => state.sync);
   const [showDropdown, setShowDropdown] = useState(false);
   const [activeTab, setActiveTab] = useState<'login' | 'register'>('login');
   const [showAuthModal, setShowAuthModal] = useState(false);

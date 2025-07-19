@@ -5,7 +5,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { useAppSelector } from '@/app/store/hooks';
-import { GuidedActions, GuidedAction } from '@/shared/components/GuidedActions/GuidedActions';
+import { GuidedActions } from '@/shared/components/GuidedActions/GuidedActions';
 import { cn } from '@/shared/utils/cn';
 
 export interface FirstTimeGuideProps {
@@ -27,7 +27,8 @@ const FirstTimeGuide: React.FC<FirstTimeGuideProps> = ({
   onDismiss,
   className,
 }) => {
-  const { isAuthenticated } = useAppSelector(state => state.auth);
+  const { user } = useAppSelector(state => state.auth);
+  const isAuthenticated = !!user;
   const [currentStep, setCurrentStep] = useState(0);
   const [showProgress, setShowProgress] = useState(false);
 

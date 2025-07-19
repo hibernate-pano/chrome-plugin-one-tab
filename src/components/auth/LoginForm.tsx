@@ -44,7 +44,7 @@ export const LoginForm: React.FC<LoginFormProps> = ({ onSuccess }) => {
 
   const handleOAuthLogin = async (provider: 'google' | 'github' | 'wechat') => {
     try {
-      await dispatch(signInWithOAuth(provider));
+      await dispatch(signInWithOAuth({ provider }));
       // 注意：由于这是重定向流程，我们不会在这里调用 onSuccess
       // 成功的回调处理将在后台脚本中完成
     } catch (error) {

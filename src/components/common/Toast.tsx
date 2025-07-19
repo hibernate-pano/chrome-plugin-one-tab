@@ -25,7 +25,6 @@ export const Toast: React.FC<ToastProps> = ({
   onClose,
   visible,
   action,
-  id,
   closable = true
 }) => {
   const [isVisible, setIsVisible] = useState(visible);

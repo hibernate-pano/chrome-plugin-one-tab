@@ -6,7 +6,7 @@ import { useAppDispatch } from '@/app/store/hooks';
 import { updateGroupName, deleteGroup, updateGroup } from '@/features/tabs/store/tabGroupsSlice';
 import { SortableTab } from './SortableTab';
 import { SortableContext, rectSortingStrategy } from '@dnd-kit/sortable';
-import { dragPerformanceMonitor } from '@/shared/utils/dragPerformance';
+
 import { getDragStyles, getDragClassName, dragPresets } from '@/shared/utils/dragVisualFeedback';
 import { cn } from '@/shared/utils/cn';
 import '@/styles/drag-drop.css';

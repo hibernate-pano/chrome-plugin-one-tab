@@ -1,8 +1,8 @@
 import React from 'react';
-import { useAppSelector } from '@/store/hooks';
+import { useAppSelector } from '@/app/store/hooks';
 
 export const TabCounter: React.FC = () => {
-  const { groups } = useAppSelector(state => state.tabs);
+  const { groups } = useAppSelector(state => state.tabGroups);
   
   // 安全检查：确保groups不为undefined
   const safeGroups = groups || [];
