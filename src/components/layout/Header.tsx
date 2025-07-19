@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { useAppDispatch, useAppSelector } from '@/app/store/hooks';
 // 使用新版store中的settingsSlice
-import { toggleLayoutMode, saveSettings } from '@/store/slices/settingsSlice';
+import { saveSettings, toggleUseDoubleColumnLayout } from '@/features/settings/store/settingsSlice';
 // 使用新版的cleanDuplicateTabs
 import { cleanDuplicateTabs } from '@/features/tabs/store/tabGroupsSlice';
 import { HeaderDropdown } from './HeaderDropdown';
@@ -66,10 +66,9 @@ export const Header: React.FC<HeaderProps> = ({ onSearch }) => {
   // 切换布局模式
   const handleToggleLayout = () => {
     // 切换布局模式
-    dispatch(toggleLayoutMode());
+    dispatch(toggleUseDoubleColumnLayout());
     dispatch(
       saveSettings({
-        ...settings,
         useDoubleColumnLayout: !settings.useDoubleColumnLayout,
       })
     );

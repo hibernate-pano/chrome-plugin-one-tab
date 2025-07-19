@@ -1,7 +1,8 @@
 import React from 'react';
 import { useAppDispatch } from '@/app/store/hooks';
-// 注意：syncTabsFromCloud需要迁移到新版架构
-import { syncTabsFromCloud } from '@/store/slices/tabSlice';
+// 使用新版同步服务
+import { downloadFromCloud } from '@/features/sync/store/syncSlice';
+import { syncService } from '@/services/syncService';
 
 interface SyncPromptModalProps {
   onClose: () => void;
@@ -13,8 +14,13 @@ const SyncPromptModal: React.FC<SyncPromptModalProps> = ({ onClose, hasCloudData
 
   const handleSync = async () => {
     try {
-      await dispatch(syncTabsFromCloud());
-      console.log('从云端同步数据成功');
+      // 使用新版同步服务从云端下载数据
+      const result = await syncService.downloadFromCloud(false, true);
+      if (result.success) {
+        console.log('从云端同步数据成功');
+      } else {
+        console.error('从云端同步数据失败:', result.error);
+      }
       onClose();
     } catch (error) {
       console.error('从云端同步数据失败:', error);

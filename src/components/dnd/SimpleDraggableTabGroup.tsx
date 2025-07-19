@@ -2,8 +2,8 @@ import React, { useState } from 'react';
 import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { TabGroup as TabGroupType } from '@/types/tab';
-import { useAppDispatch } from '@/store/hooks';
-import { updateGroupNameAndSync, deleteGroup, updateGroup, toggleGroupLockAndSync } from '@/store/slices/tabSlice';
+import { useAppDispatch } from '@/app/store/hooks';
+import { updateGroupNameAndSync, deleteGroup, updateGroup, toggleGroupLockAndSync } from '@/features/tabs/store/tabGroupsSlice';
 import { SimpleDraggableTab } from './SimpleDraggableTab';
 import { SortableContext, verticalListSortingStrategy } from '@dnd-kit/sortable';
 

@@ -42,7 +42,7 @@ Chrome插件OneTab使用Redux Toolkit进行状态管理，包含以下核心模�
 全局状态通过自定义hooks访问：
 
 ```typescript
-import { useAppSelector, useAppDispatch } from '@/store/hooks';
+import { useAppSelector, useAppDispatch } from '@/app/store/hooks';
 
 // 在组件中使用
 const { isLoading, error } = useAppSelector(state => state.auth);

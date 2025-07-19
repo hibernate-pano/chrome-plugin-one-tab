@@ -7,6 +7,7 @@ import { UserSettings } from '@/shared/types/tab';
 import { storage } from '@/shared/utils/storage';
 import { logger } from '@/shared/utils/logger';
 import { errorHandler } from '@/shared/utils/errorHandler';
+import { sync as supabaseSync } from '@/shared/utils/supabase';
 
 // 默认设置
 const DEFAULT_SETTINGS: UserSettings = {
@@ -84,6 +85,53 @@ export const resetSettings = createAsyncThunk(
     } catch (error) {
       const message = errorHandler.getErrorMessage(error);
       logger.error('重置设置失败', error);
+      return rejectWithValue(message);
+    }
+  }
+);
+
+export const syncSettingsToCloud = createAsyncThunk(
+  'settings/syncSettingsToCloud',
+  async (_, { getState, rejectWithValue }) => {
+    try {
+      logger.debug('上传设置到云端');
+      const currentState = getState() as { settings: SettingsState };
+      const { isLoading, error, lastSyncTime, ...settingsToSync } = currentState.settings;
+
+      await supabaseSync.uploadSettings(settingsToSync);
+
+      const syncTime = new Date().toISOString();
+      logger.success('设置上传完成', { syncTime });
+
+      return { syncTime };
+    } catch (error) {
+      const message = errorHandler.getErrorMessage(error);
+      logger.error('上传设置失败', error);
+      return rejectWithValue(message);
+    }
+  }
+);
+
+export const syncSettingsFromCloud = createAsyncThunk(
+  'settings/syncSettingsFromCloud',
+  async (_, { rejectWithValue }) => {
+    try {
+      logger.debug('从云端下载设置');
+      const cloudSettings = await supabaseSync.downloadSettings();
+
+      if (cloudSettings) {
+        await storage.setSettings(cloudSettings);
+        const syncTime = new Date().toISOString();
+        logger.success('设置下载完成', { syncTime });
+
+        return { settings: cloudSettings, syncTime };
+      } else {
+        logger.debug('云端没有设置数据');
+        return { settings: null, syncTime: null };
+      }
+    } catch (error) {
+      const message = errorHandler.getErrorMessage(error);
+      logger.error('下载设置失败', error);
       return rejectWithValue(message);
     }
   }
@@ -236,6 +284,39 @@ const settingsSlice = createSlice({
         state.lastSyncTime = new Date().toISOString();
       })
       .addCase(resetSettings.rejected, (state, action) => {
+        state.isLoading = false;
+        state.error = action.payload as string;
+      })
+
+      // 同步设置到云端
+      .addCase(syncSettingsToCloud.pending, (state) => {
+        state.isLoading = true;
+        state.error = null;
+      })
+      .addCase(syncSettingsToCloud.fulfilled, (state, action) => {
+        state.isLoading = false;
+        state.lastSyncTime = action.payload.syncTime;
+      })
+      .addCase(syncSettingsToCloud.rejected, (state, action) => {
+        state.isLoading = false;
+        state.error = action.payload as string;
+      })
+
+      // 从云端同步设置
+      .addCase(syncSettingsFromCloud.pending, (state) => {
+        state.isLoading = true;
+        state.error = null;
+      })
+      .addCase(syncSettingsFromCloud.fulfilled, (state, action) => {
+        state.isLoading = false;
+        if (action.payload.settings) {
+          Object.assign(state, action.payload.settings);
+        }
+        if (action.payload.syncTime) {
+          state.lastSyncTime = action.payload.syncTime;
+        }
+      })
+      .addCase(syncSettingsFromCloud.rejected, (state, action) => {
         state.isLoading = false;
         state.error = action.payload as string;
       });

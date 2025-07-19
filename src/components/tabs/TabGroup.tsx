@@ -1,6 +1,6 @@
 import React, { useState, useCallback, useEffect, memo } from 'react';
 import { useAppDispatch } from '@/app/store/hooks';
-import { updateGroupNameAndSync, toggleGroupLockAndSync, deleteGroup, updateGroup } from '@/store/slices/tabSlice';
+import { updateGroupNameAndSync, toggleGroupLockAndSync, deleteGroup, updateGroup } from '@/features/tabs/store/tabGroupsSlice';
 import { TabGroup as TabGroupType, Tab } from '@/types/tab';
 import { useDebounce, useSmartCache } from '@/shared/hooks/useMemoryOptimization';
 import { useComponentCleanup } from '@/shared/hooks/useComponentCleanup';

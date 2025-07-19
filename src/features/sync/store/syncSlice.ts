@@ -5,6 +5,8 @@
 import { createSlice, createAsyncThunk, PayloadAction } from '@reduxjs/toolkit';
 import { logger } from '@/shared/utils/logger';
 import { errorHandler } from '@/shared/utils/errorHandler';
+import { storage } from '@/shared/utils/storage';
+import { sync as supabaseSync } from '@/shared/utils/supabase';
 
 export type SyncStatus = 'idle' | 'syncing' | 'success' | 'error';
 export type SyncOperation = 'none' | 'upload' | 'download' | 'merge';
@@ -38,7 +40,129 @@ const initialState: SyncState = {
   backgroundSync: false,
 };
 
-// 异步操作
+// 异步操作 - 标签组同步
+export const syncTabsToCloud = createAsyncThunk(
+  'sync/syncTabsToCloud',
+  async (
+    { background = false, overwriteCloud = false }: { background?: boolean; overwriteCloud?: boolean } = {},
+    { dispatch, getState, rejectWithValue }
+  ) => {
+    try {
+      logger.sync('开始上传标签组到云端', { background, overwriteCloud });
+
+      if (!background) {
+        dispatch(setSyncStatus('syncing'));
+        dispatch(setSyncOperation('upload'));
+        dispatch(setSyncProgress(0));
+      }
+
+      // 获取本地标签组
+      const localGroups = await storage.getGroups();
+
+      if (!background) {
+        dispatch(setSyncProgress(25));
+      }
+
+      // 上传到云端
+      await supabaseSync.uploadTabGroups(localGroups);
+
+      if (!background) {
+        dispatch(setSyncProgress(100));
+        dispatch(setSyncStatus('success'));
+        dispatch(setSyncOperation('none'));
+      }
+
+      const syncTime = new Date().toISOString();
+      dispatch(setLastSyncTime(syncTime));
+
+      logger.success('标签组上传完成', { syncTime, groupCount: localGroups.length });
+
+      return { syncTime, background, groupCount: localGroups.length };
+
+    } catch (error) {
+      const friendlyError = errorHandler.handleSyncError(error as Error, {
+        component: 'SyncSlice',
+        action: 'syncTabsToCloud',
+      });
+
+      if (!background) {
+        dispatch(setSyncStatus('error'));
+        dispatch(setSyncOperation('none'));
+        dispatch(setError(friendlyError.message));
+      }
+
+      return rejectWithValue(friendlyError.message);
+    }
+  }
+);
+
+export const syncTabsFromCloud = createAsyncThunk(
+  'sync/syncTabsFromCloud',
+  async (
+    { background = false, forceRemoteStrategy = false }: { background?: boolean; forceRemoteStrategy?: boolean } = {},
+    { dispatch, getState, rejectWithValue }
+  ) => {
+    try {
+      logger.sync('开始从云端下载标签组', { background, forceRemoteStrategy });
+
+      if (!background) {
+        dispatch(setSyncStatus('syncing'));
+        dispatch(setSyncOperation('download'));
+        dispatch(setSyncProgress(0));
+      }
+
+      // 从云端下载标签组
+      const cloudGroups = await supabaseSync.downloadTabGroups();
+
+      if (!background) {
+        dispatch(setSyncProgress(50));
+      }
+
+      // 根据策略处理数据
+      if (forceRemoteStrategy) {
+        // 直接使用云端数据覆盖本地
+        await storage.setGroups(cloudGroups);
+      } else {
+        // 合并本地和云端数据
+        const localGroups = await storage.getGroups();
+        // 这里可以实现更复杂的合并逻辑
+        const mergedGroups = [...cloudGroups, ...localGroups.filter(local =>
+          !cloudGroups.some(cloud => cloud.id === local.id)
+        )];
+        await storage.setGroups(mergedGroups);
+      }
+
+      if (!background) {
+        dispatch(setSyncProgress(100));
+        dispatch(setSyncStatus('success'));
+        dispatch(setSyncOperation('none'));
+      }
+
+      const syncTime = new Date().toISOString();
+      dispatch(setLastSyncTime(syncTime));
+
+      logger.success('标签组下载完成', { syncTime, groupCount: cloudGroups.length });
+
+      return { syncTime, background, groupCount: cloudGroups.length };
+
+    } catch (error) {
+      const friendlyError = errorHandler.handleSyncError(error as Error, {
+        component: 'SyncSlice',
+        action: 'syncTabsFromCloud',
+      });
+
+      if (!background) {
+        dispatch(setSyncStatus('error'));
+        dispatch(setSyncOperation('none'));
+        dispatch(setError(friendlyError.message));
+      }
+
+      return rejectWithValue(friendlyError.message);
+    }
+  }
+);
+
+// 通用同步操作
 export const uploadToCloud = createAsyncThunk(
   'sync/uploadToCloud',
   async (
@@ -302,6 +426,78 @@ const syncSlice = createSlice({
   },
   extraReducers: (builder) => {
     builder
+      // syncTabsToCloud
+      .addCase(syncTabsToCloud.pending, (state, action) => {
+        const background = action.meta.arg?.background || false;
+        state.backgroundSync = background;
+
+        if (!background) {
+          state.status = 'syncing';
+          state.operation = 'upload';
+          state.progress = 0;
+          state.error = null;
+        }
+      })
+      .addCase(syncTabsToCloud.fulfilled, (state, action) => {
+        const { syncTime, background } = action.payload;
+        state.lastSyncTime = syncTime;
+
+        if (!background) {
+          state.status = 'success';
+          state.operation = 'none';
+          state.progress = 100;
+        }
+
+        state.backgroundSync = false;
+      })
+      .addCase(syncTabsToCloud.rejected, (state, action) => {
+        const background = state.backgroundSync;
+
+        if (!background) {
+          state.status = 'error';
+          state.operation = 'none';
+          state.error = action.payload as string;
+        }
+
+        state.backgroundSync = false;
+      })
+
+      // syncTabsFromCloud
+      .addCase(syncTabsFromCloud.pending, (state, action) => {
+        const background = action.meta.arg?.background || false;
+        state.backgroundSync = background;
+
+        if (!background) {
+          state.status = 'syncing';
+          state.operation = 'download';
+          state.progress = 0;
+          state.error = null;
+        }
+      })
+      .addCase(syncTabsFromCloud.fulfilled, (state, action) => {
+        const { syncTime, background } = action.payload;
+        state.lastSyncTime = syncTime;
+
+        if (!background) {
+          state.status = 'success';
+          state.operation = 'none';
+          state.progress = 100;
+        }
+
+        state.backgroundSync = false;
+      })
+      .addCase(syncTabsFromCloud.rejected, (state, action) => {
+        const background = state.backgroundSync;
+
+        if (!background) {
+          state.status = 'error';
+          state.operation = 'none';
+          state.error = action.payload as string;
+        }
+
+        state.backgroundSync = false;
+      })
+
       // uploadToCloud
       .addCase(uploadToCloud.pending, (state, action) => {
         const background = action.meta.arg?.background || false;

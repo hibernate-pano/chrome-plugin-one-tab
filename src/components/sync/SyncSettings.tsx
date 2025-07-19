@@ -6,7 +6,7 @@ import {
   toggleShowManualSyncButtons,
   setSyncInterval,
   saveSettings
-} from '@/store/slices/settingsSlice';
+} from '@/features/settings/store/settingsSlice';
 
 export const SyncSettings: React.FC = () => {
   const dispatch = useAppDispatch();

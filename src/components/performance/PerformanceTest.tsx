@@ -3,8 +3,8 @@ import { Profiler } from 'react';
 import { useAppDispatch, useAppSelector } from '@/app/store/hooks';
 import { TabGroup } from '@/components/tabs/TabGroup';
 import { generateTestData, monitorRenderPerformance, measurePerformance } from '@/utils/performanceTest';
-// 注意：setGroups功能需要迁移到新版tabGroupsSlice
-import { setGroups } from '@/store/slices/tabSlice';
+// 使用新版tabGroupsSlice中的setGroups功能
+import { setGroups } from '@/features/tabs/store/tabGroupsSlice';
 
 /**
  * 性能测试组件

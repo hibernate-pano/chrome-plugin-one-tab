@@ -1,6 +1,7 @@
 import { store } from '@/app/store';
-import { syncTabsToCloud, syncTabsFromCloud } from '@/store/slices/tabSlice';
-import { syncSettingsToCloud, syncSettingsFromCloud } from '@/store/slices/settingsSlice';
+// 使用新版同步架构
+import { syncTabsToCloud, syncTabsFromCloud, uploadToCloud, downloadFromCloud } from '@/features/sync/store/syncSlice';
+import { syncSettingsToCloud, syncSettingsFromCloud } from '@/features/settings/store/settingsSlice';
 // 暂时注释掉getCurrentUser导入，直接从store获取用户信息
 // import { getCurrentUser } from '@/features/auth/store/authSlice';
 import { retryWithBackoff } from '@/shared/utils/syncHelpers';
