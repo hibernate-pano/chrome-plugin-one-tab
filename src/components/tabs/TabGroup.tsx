@@ -193,167 +193,379 @@ export const TabGroup: React.FC<TabGroupProps> = memo(({ group, onDelete, onSele
   }, [dispatch, group]);
 
   return (
-    <div className={cn(
-      "mb-2 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-md shadow-sm pb-2",
-      componentHoverStyles.tabGroup
-    )}>
-      <div className="flex items-center p-2 bg-gray-50 dark:bg-gray-900 border-b border-gray-200 dark:border-gray-700 rounded-t-md">
-        <div className="flex items-center space-x-3 flex-grow">
-          <button
-            onClick={handleToggleExpand}
-            className={cn(
-              "text-gray-500 p-1 group-action-button",
-              getInteractionStyles({
-                hover: "hover:text-primary-600 hover:bg-gray-100 dark:hover:bg-gray-700",
-                focus: true
-              })
-            )}
-            title={isExpanded ? '折叠标签组' : '展开标签组'}
-          >
-            <svg
-              xmlns="http://www.w3.org/2000/svg"
-              className={`h-5 w-5 expand-icon ${isExpanded ? 'expanded' : 'collapsed'}`}
-              viewBox="0 0 20 20"
-              fill="currentColor"
-            >
-              <path fillRule="evenodd" d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" clipRule="evenodd" />
-            </svg>
-          </button>
-          {isEditing ? (
-            <input
-              type="text"
-              value={newName}
-              onChange={handleNameChange}
-              onBlur={handleNameSubmit}
-              onKeyDown={handleKeyDown}
-              className="border border-gray-300 rounded px-2 py-1 w-full text-sm"
-              autoFocus
-            />
-          ) : (
-            <h3
-              className="text-base font-medium text-gray-900 dark:text-gray-100"
-            >
-              {group.name}
-            </h3>
-          )}
-          <span className="text-xs bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 px-1.5 py-0.5 rounded-full ml-1">
-            {group.tabs.length}
-          </span>
-        </div>
-        <div className="flex items-center space-x-2 ml-auto">
-          <button
-            onClick={handleOpenAllTabs}
-            className={cn(
-              "text-blue-600 text-xs",
-              getInteractionStyles({
-                hover: "hover:text-blue-800 hover:underline",
-                focus: true
-              })
-            )}
-            title="打开所有标签页"
-          >
-            恢复全部
-          </button>
-          <button
-            onClick={() => !group.isLocked && setIsEditing(true)}
-            className={cn(
-              "p-1",
-              getInteractionStyles({
-                hover: group.isLocked ? "" : "hover:bg-gray-100 dark:hover:bg-gray-700 hover:text-primary-600",
-                disabled: group.isLocked,
-                focus: true
-              }),
-              group.isLocked ? 'text-gray-300 cursor-not-allowed' : 'text-gray-500'
-            )}
-            title={group.isLocked ? '锁定的标签组不能重命名' : '重命名标签组'}
-            disabled={group.isLocked}
-          >
-            <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
-              <path d="M13.586 3.586a2 2 0 112.828 2.828l-.793.793-2.828-2.828.793-.793zM11.379 5.793L3 14.172V17h2.828l8.38-8.379-2.83-2.828z" />
-            </svg>
-          </button>
-          <button
-            onClick={handleToggleLock}
-            className={cn(
-              "p-1",
-              getInteractionStyles({
-                hover: "hover:bg-gray-100 dark:hover:bg-gray-700 hover:text-yellow-600",
-                focus: true
-              }),
-              group.isLocked ? 'text-yellow-600' : 'text-gray-500'
-            )}
-            title={group.isLocked ? '解锁标签组' : '锁定标签组'}
-          >
-            <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
-              <path fillRule="evenodd" d="M5 9V7a5 5 0 0110 0v2a2 2 0 012 2v5a2 2 0 01-2 2H5a2 2 0 01-2-2v-5a2 2 0 012-2zm8-2v2H7V7a3 3 0 016 0z" clipRule="evenodd" />
-            </svg>
-          </button>
-          {!group.isLocked && (
+    <div
+      className={cn(
+        "mb-4 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-xl shadow-sm hover:shadow-md transition-all duration-200",
+        "overflow-hidden focus-within:ring-2 focus-within:ring-blue-500 focus-within:ring-offset-2",
+        componentHoverStyles.tabGroup
+      )}
+      role="region"
+      aria-labelledby={`group-title-${group.id}`}
+      aria-describedby={`group-description-${group.id}`}
+    >
+      {/* 卡片头部 - 重新设计 */}
+      <div className="relative">
+        {/* 状态指示条 */}
+        <div className={cn(
+          "absolute top-0 left-0 right-0 h-1",
+          group.isLocked
+            ? "bg-gradient-to-r from-yellow-400 to-orange-400"
+            : group.syncStatus === 'synced'
+            ? "bg-gradient-to-r from-green-400 to-emerald-400"
+            : group.syncStatus === 'pending'
+            ? "bg-gradient-to-r from-blue-400 to-indigo-400"
+            : "bg-gradient-to-r from-gray-300 to-gray-400"
+        )}></div>
+
+        {/* 背景渐变 */}
+        <div className={cn(
+          "absolute inset-0",
+          group.isLocked
+            ? "bg-gradient-to-r from-yellow-50 to-orange-50 dark:from-yellow-900/20 dark:to-orange-900/20"
+            : "bg-gradient-to-r from-blue-50 to-indigo-50 dark:from-blue-900/20 dark:to-indigo-900/20"
+        )}></div>
+
+        {/* 头部内容 */}
+        <div className="relative flex items-center p-4">
+          {/* 左侧：展开按钮和标签组信息 */}
+          <div className="flex items-center space-x-3 flex-grow min-w-0">
             <button
-              onClick={handleDelete}
+              onClick={handleToggleExpand}
               className={cn(
-                "p-1 text-gray-500",
-                getInteractionStyles({
-                  hover: "hover:bg-red-50 dark:hover:bg-red-900/20 hover:text-red-500",
-                  focus: true
-                })
+                "flex-shrink-0 w-8 h-8 rounded-lg bg-white dark:bg-gray-700 shadow-sm border border-gray-200 dark:border-gray-600",
+                "flex items-center justify-center text-gray-500 dark:text-gray-400",
+                "hover:bg-gray-50 dark:hover:bg-gray-600 hover:text-blue-600 dark:hover:text-blue-400",
+                "transition-all duration-200",
+                getInteractionStyles({ focus: true })
               )}
-              title="删除标签组"
+              title={isExpanded ? '折叠标签组' : '展开标签组'}
+              aria-label={isExpanded ? '折叠标签组' : '展开标签组'}
+              aria-expanded={isExpanded}
+              aria-controls={`group-content-${group.id}`}
             >
-              <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
-                <path fillRule="evenodd" d="M9 2a1 1 0 00-.894.553L7.382 4H4a1 1 0 000 2v10a2 2 0 002 2h8a2 2 0 002-2V6a1 1 0 100-2h-3.382l-.724-1.447A1 1 0 0011 2H9zM7 8a1 1 0 012 0v6a1 1 0 11-2 0V8zm5-1a1 1 0 00-1 1v6a1 1 0 102 0V8a1 1 0 00-1-1z" clipRule="evenodd" />
+              <svg
+                className={cn(
+                  "w-4 h-4 transition-transform duration-200",
+                  isExpanded ? 'rotate-180' : ''
+                )}
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
               </svg>
             </button>
-          )}
-        </div>
-      </div>
-      <div className={`tab-group-content ${isExpanded ? 'expanded' : 'collapsed'}`}>
-        <div className="px-2 pt-2 space-y-1 group tabs-container">
-          {group.tabs.map((tab) => (
-            <div
-              key={tab.id}
-              className={cn(
-                "group tab-item flex items-center gap-2 p-2 rounded-md",
-                componentHoverStyles.tabItem
-              )}
-            >
-              <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-2 cursor-pointer" onClick={() => handleOpenTab(tab)}>
-                  <img
-                    src={tab.favicon || '/icon16.png'}
-                    alt=""
-                    className="w-4 h-4 flex-shrink-0"
-                    onError={(e) => {
-                      e.currentTarget.src = '/icon16.png';
-                    }}
-                  />
-                  <div className="min-w-0 flex-1">
-                    <div className="text-sm font-medium text-gray-900 dark:text-gray-100 truncate">
-                      {tab.title || 'Untitled'}
-                    </div>
-                    <div className="text-xs text-gray-500 dark:text-gray-400 truncate">
-                      {tab.url}
+            {/* 标签组信息 */}
+            <div className="flex-grow min-w-0">
+              {isEditing ? (
+                <input
+                  type="text"
+                  value={newName}
+                  onChange={handleNameChange}
+                  onBlur={handleNameSubmit}
+                  onKeyDown={handleKeyDown}
+                  className="w-full px-3 py-2 text-lg font-semibold bg-white dark:bg-gray-700 border border-blue-300 dark:border-blue-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  autoFocus
+                />
+              ) : (
+                <div>
+                  <h3
+                    id={`group-title-${group.id}`}
+                    className="text-lg font-semibold text-gray-900 dark:text-gray-100 truncate"
+                  >
+                    {group.name}
+                  </h3>
+                  <div
+                    id={`group-description-${group.id}`}
+                    className="flex items-center space-x-3 mt-1 flex-wrap gap-y-1"
+                  >
+                    <span className="inline-flex items-center text-sm text-gray-600 dark:text-gray-400">
+                      <svg className="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z" />
+                      </svg>
+                      {group.tabs.length} 个标签页
+                    </span>
+
+                    <span className="inline-flex items-center text-sm text-gray-500 dark:text-gray-500">
+                      <svg className="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                      </svg>
+                      {new Date(group.createdAt).toLocaleDateString()}
+                    </span>
+
+                    {/* 状态指示器 */}
+                    <div className="flex items-center space-x-2">
+                      {group.isLocked && (
+                        <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-yellow-100 dark:bg-yellow-900/30 text-yellow-800 dark:text-yellow-200">
+                          <svg className="w-3 h-3 mr-1" fill="currentColor" viewBox="0 0 20 20">
+                            <path fillRule="evenodd" d="M5 9V7a5 5 0 0110 0v2a2 2 0 012 2v5a2 2 0 01-2 2H5a2 2 0 01-2-2v-5a2 2 0 012-2zm8-2v2H7V7a3 3 0 016 0z" clipRule="evenodd" />
+                          </svg>
+                          已锁定
+                        </span>
+                      )}
+
+                      {/* 同步状态指示器 */}
+                      {group.syncStatus === 'synced' && (
+                        <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-green-100 dark:bg-green-900/30 text-green-800 dark:text-green-200">
+                          <svg className="w-3 h-3 mr-1" fill="currentColor" viewBox="0 0 20 20">
+                            <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
+                          </svg>
+                          已同步
+                        </span>
+                      )}
+
+                      {group.syncStatus === 'pending' && (
+                        <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-blue-100 dark:bg-blue-900/30 text-blue-800 dark:text-blue-200">
+                          <svg className="w-3 h-3 mr-1 animate-spin" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                          </svg>
+                          同步中
+                        </span>
+                      )}
+
+                      {group.syncStatus === 'error' && (
+                        <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-red-100 dark:bg-red-900/30 text-red-800 dark:text-red-200">
+                          <svg className="w-3 h-3 mr-1" fill="currentColor" viewBox="0 0 20 20">
+                            <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7 4a1 1 0 11-2 0 1 1 0 012 0zm-1-9a1 1 0 00-1 1v4a1 1 0 102 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
+                          </svg>
+                          同步失败
+                        </span>
+                      )}
+
+                      {/* 本地标签组指示器 */}
+                      {!group.syncStatus && (
+                        <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300">
+                          <svg className="w-3 h-3 mr-1" fill="currentColor" viewBox="0 0 20 20">
+                            <path fillRule="evenodd" d="M3 4a1 1 0 011-1h12a1 1 0 011 1v2a1 1 0 01-1 1H4a1 1 0 01-1-1V4zM3 10a1 1 0 011-1h6a1 1 0 011 1v6a1 1 0 01-1 1H4a1 1 0 01-1-1v-6zM14 9a1 1 0 00-1 1v6a1 1 0 001 1h2a1 1 0 001-1v-6a1 1 0 00-1-1h-2z" clipRule="evenodd" />
+                          </svg>
+                          本地
+                        </span>
+                      )}
                     </div>
                   </div>
                 </div>
-              </div>
+              )}
+            </div>
+          </div>
+          {/* 右侧：操作按钮 */}
+          <div className="flex items-center space-x-2">
+            {/* 打开全部按钮 */}
+            <button
+              onClick={handleOpenAllTabs}
+              className={cn(
+                "px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium rounded-lg",
+                "transition-all duration-200 shadow-sm hover:shadow-md",
+                "flex items-center space-x-2",
+                getInteractionStyles({ focus: true })
+              )}
+              title="打开所有标签页"
+              aria-label={`打开 ${group.name} 中的所有 ${group.tabs.length} 个标签页`}
+            >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+              </svg>
+              <span>恢复全部</span>
+            </button>
+
+            {/* 更多操作按钮 */}
+            <div className="flex items-center space-x-1">
               <button
-                onClick={() => handleDeleteTab(tab.id)}
+                onClick={() => !group.isLocked && setIsEditing(true)}
                 className={cn(
-                  "opacity-0 group-hover:opacity-100 p-1 rounded text-gray-400",
-                  getInteractionStyles({
-                    hover: "hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20",
-                    focus: true
-                  })
+                  "w-8 h-8 rounded-lg bg-white dark:bg-gray-700 shadow-sm border border-gray-200 dark:border-gray-600",
+                  "flex items-center justify-center text-gray-500 dark:text-gray-400",
+                  "hover:bg-gray-50 dark:hover:bg-gray-600 hover:text-blue-600 dark:hover:text-blue-400",
+                  "transition-all duration-200",
+                  getInteractionStyles({ focus: true }),
+                  group.isLocked && "opacity-50 cursor-not-allowed"
                 )}
-                title="删除标签"
+                title={group.isLocked ? '锁定的标签组不能重命名' : '重命名标签组'}
+                disabled={group.isLocked}
               >
-                <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
                 </svg>
               </button>
+
+              <button
+                onClick={handleToggleLock}
+                className={cn(
+                  "w-8 h-8 rounded-lg bg-white dark:bg-gray-700 shadow-sm border border-gray-200 dark:border-gray-600",
+                  "flex items-center justify-center",
+                  "hover:bg-gray-50 dark:hover:bg-gray-600",
+                  "transition-all duration-200",
+                  getInteractionStyles({ focus: true }),
+                  group.isLocked
+                    ? "text-yellow-600 dark:text-yellow-400 hover:text-yellow-700 dark:hover:text-yellow-300"
+                    : "text-gray-500 dark:text-gray-400 hover:text-yellow-600 dark:hover:text-yellow-400"
+                )}
+                title={group.isLocked ? '解锁标签组' : '锁定标签组'}
+              >
+                <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
+                  {group.isLocked ? (
+                    <path fillRule="evenodd" d="M5 9V7a5 5 0 0110 0v2a2 2 0 012 2v5a2 2 0 01-2 2H5a2 2 0 01-2-2v-5a2 2 0 012-2zm8-2v2H7V7a3 3 0 016 0z" clipRule="evenodd" />
+                  ) : (
+                    <path fillRule="evenodd" d="M3 7a2 2 0 012-2h10a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V7zm2 0v8h10V7H5z" clipRule="evenodd" />
+                  )}
+                </svg>
+              </button>
+
+              {!group.isLocked && (
+                <button
+                  onClick={handleDelete}
+                  className={cn(
+                    "w-8 h-8 rounded-lg bg-white dark:bg-gray-700 shadow-sm border border-gray-200 dark:border-gray-600",
+                    "flex items-center justify-center text-gray-500 dark:text-gray-400",
+                    "hover:bg-red-50 dark:hover:bg-red-900/20 hover:text-red-500 dark:hover:text-red-400",
+                    "transition-all duration-200",
+                    getInteractionStyles({ focus: true })
+                  )}
+                  title="删除标签组"
+                >
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                  </svg>
+                </button>
+              )}
             </div>
-          ))}
+          </div>
+        </div>
+      </div>
+      </div>
+      {/* 标签页内容区域 - 重新设计 */}
+      <div
+        id={`group-content-${group.id}`}
+        className={cn(
+          "transition-all duration-300 ease-in-out overflow-hidden",
+          isExpanded ? "max-h-96 opacity-100" : "max-h-0 opacity-0"
+        )}
+        aria-hidden={!isExpanded}
+      >
+        <div className="p-4 bg-gray-50 dark:bg-gray-900/50">
+          <div
+            className="space-y-2"
+            role="list"
+            aria-label={`${group.name} 中的标签页`}
+          >
+            {group.tabs.map((tab, index) => (
+              <div
+                key={tab.id}
+                className={cn(
+                  "group relative bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700",
+                  "hover:border-blue-300 dark:hover:border-blue-600 hover:shadow-sm",
+                  "transition-all duration-200 focus-within:ring-2 focus-within:ring-blue-500 focus-within:ring-offset-1",
+                  componentHoverStyles.tabItem
+                )}
+                role="listitem"
+                aria-label={`标签页 ${index + 1}: ${tab.title || 'Untitled'}`}
+              >
+                <div
+                  className="flex items-center p-3 cursor-pointer focus:outline-none"
+                  onClick={() => handleOpenTab(tab)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                      e.preventDefault();
+                      handleOpenTab(tab);
+                    }
+                  }}
+                  tabIndex={0}
+                  role="button"
+                  aria-label={`打开标签页: ${tab.title || 'Untitled'}`}
+                >
+                  {/* 左侧：序号和图标 */}
+                  <div className="flex items-center space-x-3 flex-shrink-0">
+                    <div className="w-6 h-6 rounded-full bg-gray-100 dark:bg-gray-700 flex items-center justify-center text-xs font-medium text-gray-600 dark:text-gray-400">
+                      {index + 1}
+                    </div>
+                    <div className="relative">
+                      <img
+                        src={tab.favicon || '/icon16.png'}
+                        alt=""
+                        className="w-5 h-5 rounded"
+                        onError={(e) => {
+                          e.currentTarget.src = '/icon16.png';
+                        }}
+                      />
+                      {/* 网站类型指示器 */}
+                      {tab.url.includes('github.com') && (
+                        <div className="absolute -top-1 -right-1 w-3 h-3 bg-gray-900 rounded-full"></div>
+                      )}
+                      {tab.url.includes('stackoverflow.com') && (
+                        <div className="absolute -top-1 -right-1 w-3 h-3 bg-orange-500 rounded-full"></div>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* 中间：标签信息 */}
+                  <div className="flex-1 min-w-0 mx-3">
+                    <div className="flex items-center space-x-2">
+                      <h4 className="text-sm font-medium text-gray-900 dark:text-gray-100 truncate">
+                        {tab.title || 'Untitled'}
+                      </h4>
+                      {/* 标签页状态指示器 */}
+                      {tab.url.startsWith('https://') && (
+                        <svg className="w-3 h-3 text-green-500 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
+                          <path fillRule="evenodd" d="M2.166 4.999A11.954 11.954 0 0010 1.944 11.954 11.954 0 0017.834 5c.11.65.166 1.32.166 2.001 0 5.225-3.34 9.67-8 11.317C5.34 16.67 2 12.225 2 7c0-.682.057-1.35.166-2.001zm11.541 3.708a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
+                        </svg>
+                      )}
+                    </div>
+                    <div className="flex items-center space-x-2 mt-1">
+                      <p className="text-xs text-gray-500 dark:text-gray-400 truncate flex-1">
+                        {tab.url}
+                      </p>
+                      {/* 域名标签 */}
+                      <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 flex-shrink-0">
+                        {new URL(tab.url).hostname.replace('www.', '')}
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* 右侧：操作按钮 */}
+                  <div className="flex items-center space-x-1 opacity-0 group-hover:opacity-100 transition-opacity duration-200">
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleOpenTab(tab);
+                      }}
+                      className={cn(
+                        "w-7 h-7 rounded-md bg-blue-50 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400",
+                        "hover:bg-blue-100 dark:hover:bg-blue-900/50 flex items-center justify-center",
+                        "transition-colors duration-200",
+                        getInteractionStyles({ focus: true })
+                      )}
+                      title="打开标签页"
+                      aria-label={`打开标签页: ${tab.title || 'Untitled'}`}
+                    >
+                      <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+                      </svg>
+                    </button>
+
+                    {!group.isLocked && (
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleDeleteTab(tab.id);
+                        }}
+                        className={cn(
+                          "w-7 h-7 rounded-md bg-red-50 dark:bg-red-900/30 text-red-600 dark:text-red-400",
+                          "hover:bg-red-100 dark:hover:bg-red-900/50 flex items-center justify-center",
+                          "transition-colors duration-200",
+                          getInteractionStyles({ focus: true })
+                        )}
+                        title="删除标签页"
+                        aria-label={`删除标签页: ${tab.title || 'Untitled'}`}
+                      >
+                        <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                        </svg>
+                      </button>
+                    )}
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
         </div>
       </div>
     </div>

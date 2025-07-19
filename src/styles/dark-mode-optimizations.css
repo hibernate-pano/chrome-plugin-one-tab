@@ -1,0 +1,323 @@
+/**
+ * 深色模式优化样式
+ * 专门针对深色模式下的色彩对比和视觉效果进行优化
+ */
+
+@layer components {
+  /* 深色模式下的文本对比度优化 */
+  .dark .text-gray-500 {
+    @apply text-gray-400;
+  }
+  
+  .dark .text-gray-600 {
+    @apply text-gray-300;
+  }
+  
+  .dark .text-gray-700 {
+    @apply text-gray-200;
+  }
+
+  /* 深色模式下的边框优化 */
+  .dark .border-gray-200 {
+    @apply border-gray-700;
+  }
+  
+  .dark .border-gray-300 {
+    @apply border-gray-600;
+  }
+
+  /* 深色模式下的背景优化 */
+  .dark .bg-gray-50 {
+    @apply bg-gray-900;
+  }
+  
+  .dark .bg-gray-100 {
+    @apply bg-gray-800;
+  }
+  
+  .dark .bg-gray-200 {
+    @apply bg-gray-700;
+  }
+
+  /* 深色模式下的阴影优化 */
+  .dark .shadow-sm {
+    box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.3);
+  }
+  
+  .dark .shadow-md {
+    box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.3), 0 2px 4px -1px rgba(0, 0, 0, 0.2);
+  }
+  
+  .dark .shadow-lg {
+    box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.3), 0 4px 6px -2px rgba(0, 0, 0, 0.2);
+  }
+
+  /* 深色模式下的状态指示器优化 */
+  .dark .bg-blue-50 {
+    @apply bg-blue-900/30;
+  }
+  
+  .dark .bg-green-50 {
+    @apply bg-green-900/30;
+  }
+  
+  .dark .bg-yellow-50 {
+    @apply bg-yellow-900/30;
+  }
+  
+  .dark .bg-red-50 {
+    @apply bg-red-900/30;
+  }
+
+  /* 深色模式下的按钮优化 */
+  .dark .btn-secondary {
+    @apply bg-gray-700 text-gray-100 hover:bg-gray-600 border-gray-600;
+  }
+
+  /* 深色模式下的输入框优化 */
+  .dark input[type="text"],
+  .dark input[type="email"],
+  .dark input[type="password"],
+  .dark textarea {
+    @apply bg-gray-800 border-gray-600 text-gray-100 placeholder-gray-400;
+  }
+  
+  .dark input[type="text"]:focus,
+  .dark input[type="email"]:focus,
+  .dark input[type="password"]:focus,
+  .dark textarea:focus {
+    @apply border-blue-500 ring-blue-500/20;
+  }
+
+  /* 深色模式下的卡片优化 */
+  .dark .card-material {
+    @apply bg-gray-800 border-gray-700;
+  }
+
+  /* 深色模式下的下拉菜单优化 */
+  .dark .dropdown-menu {
+    @apply bg-gray-800 border-gray-700 shadow-xl;
+  }
+  
+  .dark .dropdown-item {
+    @apply text-gray-200 hover:bg-gray-700 hover:text-white;
+  }
+
+  /* 深色模式下的模态框优化 */
+  .dark .modal-overlay {
+    @apply bg-black/60;
+  }
+  
+  .dark .modal-content {
+    @apply bg-gray-800 border-gray-700;
+  }
+
+  /* 深色模式下的通知优化 */
+  .dark .toast-success {
+    @apply bg-green-800 border-green-700 text-green-100;
+  }
+  
+  .dark .toast-error {
+    @apply bg-red-800 border-red-700 text-red-100;
+  }
+  
+  .dark .toast-warning {
+    @apply bg-yellow-800 border-yellow-700 text-yellow-100;
+  }
+  
+  .dark .toast-info {
+    @apply bg-blue-800 border-blue-700 text-blue-100;
+  }
+
+  /* 深色模式下的滚动条优化 */
+  .dark ::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+  
+  .dark ::-webkit-scrollbar-track {
+    @apply bg-gray-800;
+  }
+  
+  .dark ::-webkit-scrollbar-thumb {
+    @apply bg-gray-600 hover:bg-gray-500;
+    border-radius: 4px;
+  }
+
+  /* 深色模式下的选择状态优化 */
+  .dark ::selection {
+    @apply bg-blue-600/30 text-blue-100;
+  }
+
+  /* 深色模式下的焦点环优化 */
+  .dark .focus\:ring-blue-500:focus {
+    @apply ring-blue-400;
+  }
+  
+  .dark .focus\:ring-green-500:focus {
+    @apply ring-green-400;
+  }
+  
+  .dark .focus\:ring-red-500:focus {
+    @apply ring-red-400;
+  }
+  
+  .dark .focus\:ring-yellow-500:focus {
+    @apply ring-yellow-400;
+  }
+
+  /* 深色模式下的链接优化 */
+  .dark a {
+    @apply text-blue-400 hover:text-blue-300;
+  }
+
+  /* 深色模式下的代码块优化 */
+  .dark code {
+    @apply bg-gray-800 text-gray-200 border-gray-700;
+  }
+  
+  .dark pre {
+    @apply bg-gray-900 border-gray-700;
+  }
+
+  /* 深色模式下的表格优化 */
+  .dark table {
+    @apply border-gray-700;
+  }
+  
+  .dark th {
+    @apply bg-gray-800 text-gray-200 border-gray-700;
+  }
+  
+  .dark td {
+    @apply border-gray-700 text-gray-300;
+  }
+  
+  .dark tr:nth-child(even) {
+    @apply bg-gray-800/50;
+  }
+
+  /* 深色模式下的分隔线优化 */
+  .dark hr {
+    @apply border-gray-700;
+  }
+
+  /* 深色模式下的标签组特殊优化 */
+  .dark .tab-group-header {
+    @apply bg-gray-800/80 border-gray-700;
+  }
+  
+  .dark .tab-item {
+    @apply hover:bg-gray-700/50 border-gray-700;
+  }
+  
+  .dark .tab-item:hover {
+    @apply border-gray-600;
+  }
+
+  /* 深色模式下的空状态优化 */
+  .dark .empty-state {
+    @apply text-gray-300;
+  }
+  
+  .dark .empty-state-icon {
+    @apply text-gray-500;
+  }
+
+  /* 深色模式下的加载状态优化 */
+  .dark .loading-spinner {
+    @apply text-gray-400;
+  }
+  
+  .dark .skeleton {
+    @apply bg-gray-700;
+  }
+
+  /* 深色模式下的工具提示优化 */
+  .dark .tooltip {
+    @apply bg-gray-700 text-gray-100 border-gray-600;
+  }
+  
+  .dark .tooltip-arrow {
+    @apply border-gray-700;
+  }
+
+  /* 深色模式下的进度条优化 */
+  .dark .progress-bar {
+    @apply bg-gray-700;
+  }
+  
+  .dark .progress-fill {
+    @apply bg-blue-500;
+  }
+
+  /* 深色模式下的切换开关优化 */
+  .dark .toggle-switch {
+    @apply bg-gray-700 border-gray-600;
+  }
+  
+  .dark .toggle-switch:checked {
+    @apply bg-blue-600 border-blue-600;
+  }
+
+  /* 深色模式下的标签优化 */
+  .dark .tag {
+    @apply bg-gray-700 text-gray-200 border-gray-600;
+  }
+  
+  .dark .tag-primary {
+    @apply bg-blue-900/50 text-blue-300 border-blue-700;
+  }
+  
+  .dark .tag-success {
+    @apply bg-green-900/50 text-green-300 border-green-700;
+  }
+  
+  .dark .tag-warning {
+    @apply bg-yellow-900/50 text-yellow-300 border-yellow-700;
+  }
+  
+  .dark .tag-error {
+    @apply bg-red-900/50 text-red-300 border-red-700;
+  }
+}
+
+/* 深色模式下的动画优化 */
+@media (prefers-color-scheme: dark) {
+  .dark .animate-pulse {
+    animation: pulse-dark 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+  }
+}
+
+@keyframes pulse-dark {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.3;
+  }
+}
+
+/* 深色模式下的高对比度支持 */
+@media (prefers-contrast: high) {
+  .dark {
+    --tw-bg-opacity: 1;
+    --tw-text-opacity: 1;
+  }
+  
+  .dark .text-gray-500 {
+    @apply text-gray-300;
+  }
+  
+  .dark .text-gray-400 {
+    @apply text-gray-200;
+  }
+  
+  .dark .border-gray-700 {
+    @apply border-gray-500;
+  }
+  
+  .dark .border-gray-600 {
+    @apply border-gray-400;
+  }
+}

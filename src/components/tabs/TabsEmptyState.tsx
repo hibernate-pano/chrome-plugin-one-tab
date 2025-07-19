@@ -8,6 +8,7 @@ import { useAppSelector } from '@/app/store/hooks';
 import { EmptyState, EmptyStateAction } from '@/shared/components/EmptyState/EmptyState';
 import { GuidedActions, GuidedAction } from '@/shared/components/GuidedActions/GuidedActions';
 import { cn } from '@/shared/utils/cn';
+import { showToast } from '@/shared/components/Toast/Toast';
 
 export interface TabsEmptyStateProps {
   onSaveAllTabs?: () => void;
@@ -27,8 +28,106 @@ const TabsEmptyState: React.FC<TabsEmptyStateProps> = ({
   className,
 }) => {
   const { isAuthenticated } = useAppSelector(state => state.auth);
+  const { groups } = useAppSelector(state => state.tabGroups);
   const [currentTip, setCurrentTip] = useState(0);
   const [showStats, setShowStats] = useState(false);
+  const [isQuickStarting, setIsQuickStarting] = useState(false);
+  const [currentTabCount, setCurrentTabCount] = useState(0);
+
+  // 计算统计数据
+  const stats = React.useMemo(() => {
+    const totalGroups = groups.length;
+    const totalTabs = groups.reduce((sum, group) => sum + group.tabs.length, 0);
+
+    // 估算节省的内存（每个标签页大约占用50-100MB内存）
+    const averageMemoryPerTab = 75; // MB
+    const savedMemoryMB = totalTabs * averageMemoryPerTab;
+
+    // 格式化内存显示
+    let memoryDisplay = '';
+    if (savedMemoryMB >= 1024) {
+      memoryDisplay = `${(savedMemoryMB / 1024).toFixed(1)}GB`;
+    } else {
+      memoryDisplay = `${savedMemoryMB}MB`;
+    }
+
+    return {
+      totalGroups,
+      totalTabs,
+      savedMemory: memoryDisplay
+    };
+  }, [groups]);
+
+  // 获取当前浏览器标签页数量
+  useEffect(() => {
+    const getCurrentTabCount = async () => {
+      try {
+        const tabs = await chrome.tabs.query({ currentWindow: true });
+        const validTabs = tabs.filter(tab => {
+          if (tab.url) {
+            return !tab.url.startsWith('chrome://') &&
+                   !tab.url.startsWith('chrome-extension://') &&
+                   !tab.url.startsWith('edge://');
+          }
+          return tab.title && tab.title.trim() !== '';
+        });
+        setCurrentTabCount(validTabs.length);
+      } catch (error) {
+        console.error('获取当前标签页数量失败:', error);
+        setCurrentTabCount(0);
+      }
+    };
+
+    getCurrentTabCount();
+
+    // 定期更新当前标签页数量
+    const interval = setInterval(getCurrentTabCount, 5000);
+    return () => clearInterval(interval);
+  }, []);
+
+  // 快速开始：一键保存当前标签页
+  const handleQuickStart = async () => {
+    if (isQuickStarting) return;
+
+    setIsQuickStarting(true);
+    try {
+      // 获取当前窗口的所有标签页
+      const tabs = await chrome.tabs.query({ currentWindow: true });
+
+      // 过滤掉扩展页面和无效标签页
+      const validTabs = tabs.filter(tab => {
+        if (tab.url) {
+          return !tab.url.startsWith('chrome://') &&
+                 !tab.url.startsWith('chrome-extension://') &&
+                 !tab.url.startsWith('edge://');
+        }
+        return tab.title && tab.title.trim() !== '';
+      });
+
+      if (validTabs.length === 0) {
+        showToast('没有找到可保存的标签页', 'warning');
+        return;
+      }
+
+      // 发送消息给后台脚本保存标签页
+      chrome.runtime.sendMessage({
+        type: 'SAVE_ALL_TABS',
+        data: { tabs: validTabs }
+      });
+
+      showToast(`正在保存 ${validTabs.length} 个标签页...`, 'info');
+
+      // 如果有回调函数，也调用它
+      if (onSaveAllTabs) {
+        onSaveAllTabs();
+      }
+    } catch (error) {
+      console.error('快速开始失败:', error);
+      showToast('保存标签页失败，请重试', 'error');
+    } finally {
+      setIsQuickStarting(false);
+    }
+  };
 
   // 轮播提示
   const tips = [
@@ -264,23 +363,106 @@ const TabsEmptyState: React.FC<TabsEmptyStateProps> = ({
       {/* 使用统计预览 */}
       {showStats && (
         <div className={cn(
-          'mt-8 grid grid-cols-3 gap-4 max-w-sm mx-auto transition-all duration-700 ease-out',
+          'mt-8 transition-all duration-700 ease-out',
           showStats ? 'translate-y-0 opacity-100' : 'translate-y-4 opacity-0'
         )}>
-          <div className="text-center">
-            <div className="text-2xl font-bold text-blue-600 dark:text-blue-400">0</div>
-            <div className="text-xs text-gray-500 dark:text-gray-400">已保存标签组</div>
+          {/* 主要统计数据 */}
+          <div className="grid grid-cols-3 gap-4 max-w-sm mx-auto mb-6">
+            <div className="text-center">
+              <div className="text-2xl font-bold text-blue-600 dark:text-blue-400">
+                {stats.totalGroups}
+              </div>
+              <div className="text-xs text-gray-500 dark:text-gray-400">已保存标签组</div>
+            </div>
+            <div className="text-center">
+              <div className="text-2xl font-bold text-green-600 dark:text-green-400">
+                {stats.totalTabs}
+              </div>
+              <div className="text-xs text-gray-500 dark:text-gray-400">已保存标签</div>
+            </div>
+            <div className="text-center">
+              <div className="text-2xl font-bold text-purple-600 dark:text-purple-400">
+                {stats.savedMemory}
+              </div>
+              <div className="text-xs text-gray-500 dark:text-gray-400">节省内存</div>
+            </div>
           </div>
-          <div className="text-center">
-            <div className="text-2xl font-bold text-green-600 dark:text-green-400">0</div>
-            <div className="text-xs text-gray-500 dark:text-gray-400">已保存标签</div>
-          </div>
-          <div className="text-center">
-            <div className="text-2xl font-bold text-purple-600 dark:text-purple-400">0</div>
-            <div className="text-xs text-gray-500 dark:text-gray-400">节省内存</div>
-          </div>
+
+          {/* 当前状态信息 */}
+          {currentTabCount > 0 && (
+            <div className="max-w-md mx-auto">
+              <div className="bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-lg p-4">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center">
+                    <svg className="w-5 h-5 text-amber-600 dark:text-amber-400 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L4.082 15.5c-.77.833.192 2.5 1.732 2.5z" />
+                    </svg>
+                    <div>
+                      <div className="text-sm font-medium text-amber-800 dark:text-amber-200">
+                        当前有 {currentTabCount} 个标签页
+                      </div>
+                      <div className="text-xs text-amber-700 dark:text-amber-300">
+                        预计占用 {Math.round(currentTabCount * 75)}MB 内存
+                      </div>
+                    </div>
+                  </div>
+                  <div className="text-2xl font-bold text-amber-600 dark:text-amber-400">
+                    {currentTabCount}
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
       )}
+
+      {/* 快速开始区域 */}
+      <div className="mt-8 max-w-md mx-auto">
+        <div className="bg-gradient-to-r from-green-50 to-blue-50 dark:from-green-900/20 dark:to-blue-900/20 border border-green-200 dark:border-green-800 rounded-lg p-6">
+          <div className="text-center">
+            <div className="w-12 h-12 bg-green-500 rounded-full flex items-center justify-center mx-auto mb-4">
+              <svg className="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
+              </svg>
+            </div>
+            <h4 className="text-lg font-semibold text-gray-900 dark:text-gray-100 mb-2">
+              立即开始使用
+            </h4>
+            <p className="text-sm text-gray-600 dark:text-gray-400 mb-4">
+              一键保存当前浏览器中的所有标签页，体验 OneTab Plus 的强大功能
+            </p>
+            <button
+              onClick={handleQuickStart}
+              disabled={isQuickStarting}
+              className={cn(
+                'inline-flex items-center px-6 py-3 rounded-lg font-medium transition-all duration-200',
+                'bg-green-600 hover:bg-green-700 text-white shadow-lg hover:shadow-xl',
+                'disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-green-600',
+                'transform hover:scale-105 active:scale-95'
+              )}
+            >
+              {isQuickStarting ? (
+                <>
+                  <svg className="w-4 h-4 mr-2 animate-spin" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                  </svg>
+                  正在保存...
+                </>
+              ) : (
+                <>
+                  <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
+                  </svg>
+                  快速开始
+                </>
+              )}
+            </button>
+            <p className="text-xs text-gray-500 dark:text-gray-400 mt-3">
+              将自动保存并关闭当前窗口的所有标签页
+            </p>
+          </div>
+        </div>
+      </div>
 
       {/* 同步状态提示 */}
       {!isAuthenticated && (
