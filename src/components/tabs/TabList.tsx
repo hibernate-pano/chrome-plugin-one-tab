@@ -1,10 +1,13 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useMemo, useCallback } from 'react';
 import { useAppDispatch, useAppSelector } from '@/app/store/hooks';
 import { loadGroups, deleteGroup } from '@/features/tabs/store/tabGroupsSlice';
 
 import { TabGroup } from './TabGroup';
 import { SearchResultList } from '@/components/search/SearchResultList';
 import { TabGroup as TabGroupType } from '@/types/tab';
+import { VirtualList } from '@/shared/components/VirtualList/VirtualList';
+import { useMemoryMonitor, usePagination } from '@/shared/hooks/useMemoryOptimization';
+import { useComponentCleanup } from '@/shared/hooks/useComponentCleanup';
 
 interface TabListProps {
   searchQuery: string;
@@ -16,6 +19,10 @@ export const TabList: React.FC<TabListProps> = ({ searchQuery }) => {
   const { useDoubleColumnLayout } = useAppSelector(state => state.settings);
   const [isRestoreAllModalOpen, setIsRestoreAllModalOpen] = useState(false);
   const [selectedGroup, setSelectedGroup] = useState<TabGroupType | null>(null);
+
+  // 内存监控和清理
+  const memoryInfo = useMemoryMonitor('TabList');
+  const { addCleanupTask } = useComponentCleanup('TabList');
 
   useEffect(() => {
     dispatch(loadGroups());
@@ -32,11 +39,48 @@ export const TabList: React.FC<TabListProps> = ({ searchQuery }) => {
     // 注册消息监听器
     chrome.runtime.onMessage.addListener(messageListener);
 
-    // 组件卸载时移除消息监听器
-    return () => {
-      chrome.runtime.onMessage.removeListener(messageListener);
-    };
+    // 使用清理任务管理器
+    addCleanupTask(
+      () => chrome.runtime.onMessage.removeListener(messageListener),
+      'message-listener',
+      10
+    );
+  }, [dispatch, addCleanupTask]);
+
+  // 优化的数据处理，使用useMemo避免重复计算
+  const sortedGroups = useMemo(() => {
+    return [...groups].sort((a, b) => {
+      const dateA = new Date(a.createdAt);
+      const dateB = new Date(b.createdAt);
+      return dateB.getTime() - dateA.getTime();
+    });
+  }, [groups]);
+
+  // 分页处理大量数据
+  const {
+    currentData: paginatedGroups,
+    currentPage,
+    totalPages,
+    hasNext,
+    hasPrev,
+    nextPage,
+    prevPage,
+  } = usePagination(sortedGroups, 20); // 每页20个标签组
+
+  // 渲染单个标签组的回调
+  const renderTabGroup = useCallback((group: TabGroupType, index: number) => {
+    return (
+      <TabGroup
+        key={group.id}
+        group={group}
+        onDelete={() => dispatch(deleteGroup(group.id))}
+        onSelect={() => setSelectedGroup(group)}
+      />
+    );
   }, [dispatch]);
+
+  // 键提取器
+  const keyExtractor = useCallback((group: TabGroupType, index: number) => group.id, []);
 
   if (isLoading) {
     return (
@@ -50,19 +94,7 @@ export const TabList: React.FC<TabListProps> = ({ searchQuery }) => {
     return <div className="flex items-center justify-center h-64 text-red-600">{error}</div>;
   }
 
-  // 先按创建时间倒序排序
-  const sortedGroups = [...groups].sort((a, b) => {
-    // 优先使用 createdAt 进行排序
-    const dateA = new Date(a.createdAt);
-    const dateB = new Date(b.createdAt);
-    return dateB.getTime() - dateA.getTime(); // 倒序，最新创建的在前面
-  });
-
-  // 当有搜索查询时，我们会使用 SearchResultList 组件显示匹配的标签
-  // 这里只需要处理没有搜索查询时的标签组列表
-  const filteredGroups = sortedGroups;
-
-  if (filteredGroups.length === 0 && !searchQuery) {
+  if (sortedGroups.length === 0 && !searchQuery) {
     return (
       <div className="flex flex-col items-center justify-center py-8 space-y-3 text-gray-500 bg-white border border-gray-200 p-4">
         <div className="w-16 h-16 rounded-full bg-gray-100 flex items-center justify-center">
@@ -136,50 +168,84 @@ export const TabList: React.FC<TabListProps> = ({ searchQuery }) => {
 
   return (
     <div className="space-y-2">
+      {/* 内存使用信息（仅开发环境） */}
+      {process.env.NODE_ENV === 'development' && memoryInfo && (
+        <div className="text-xs text-gray-500 p-2 bg-gray-50 rounded">
+          内存使用: {(memoryInfo.usedJSHeapSize / 1024 / 1024).toFixed(2)}MB /
+          {(memoryInfo.totalJSHeapSize / 1024 / 1024).toFixed(2)}MB
+        </div>
+      )}
+
       {/* 搜索结果或标签组列表 */}
       {searchQuery ? (
         <SearchResultList searchQuery={searchQuery} />
-      ) : useDoubleColumnLayout ? (
-        // 双栏布局
-        <div className="grid grid-cols-1 sm:grid-cols-1 md:grid-cols-2 gap-3">
-          {/* 左栏 - 偶数索引的标签组 */}
-          <div className="space-y-2 transition-all">
-            {filteredGroups
-              .filter((_, index) => index % 2 === 0)
-              .map(group => {
-                return (
-                  <TabGroup
-                    key={group.id}
-                    group={group}
-                  />
-                );
-              })}
-          </div>
-
-          {/* 右栏 - 奇数索引的标签组 */}
-          <div className="space-y-2 transition-all">
-            {filteredGroups
-              .filter((_, index) => index % 2 === 1)
-              .map(group => {
-                return (
-                  <TabGroup
-                    key={group.id}
-                    group={group}
-                  />
-                );
-              })}
-          </div>
-        </div>
       ) : (
-        // 单栏布局
-        <div className="space-y-2 transition-all">
-          {filteredGroups.map((group) => (
-            <TabGroup
-              key={group.id}
-              group={group}
+        <>
+          {/* 分页信息 */}
+          {totalPages > 1 && (
+            <div className="flex items-center justify-between p-2 bg-gray-50 rounded text-sm">
+              <span className="text-gray-600">
+                第 {currentPage + 1} 页，共 {totalPages} 页 ({sortedGroups.length} 个标签组)
+              </span>
+              <div className="flex space-x-2">
+                <button
+                  onClick={prevPage}
+                  disabled={!hasPrev}
+                  className="px-2 py-1 bg-white border rounded disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  上一页
+                </button>
+                <button
+                  onClick={nextPage}
+                  disabled={!hasNext}
+                  className="px-2 py-1 bg-white border rounded disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  下一页
+                </button>
+              </div>
+            </div>
+          )}
+
+          {useDoubleColumnLayout ? (
+            // 双栏布局 - 使用虚拟化
+            <div className="grid grid-cols-1 sm:grid-cols-1 md:grid-cols-2 gap-3">
+              {/* 左栏 */}
+              <div className="space-y-2">
+                <VirtualList
+                  items={paginatedGroups.filter((_, index) => index % 2 === 0)}
+                  itemHeight={120} // 估计的标签组高度
+                  containerHeight={600} // 容器高度
+                  renderItem={renderTabGroup}
+                  keyExtractor={keyExtractor}
+                  overscan={3}
+                />
+              </div>
+
+              {/* 右栏 */}
+              <div className="space-y-2">
+                <VirtualList
+                  items={paginatedGroups.filter((_, index) => index % 2 === 1)}
+                  itemHeight={120}
+                  containerHeight={600}
+                  renderItem={renderTabGroup}
+                  keyExtractor={keyExtractor}
+                  overscan={3}
+                />
+              </div>
+            </div>
+          ) : (
+            // 单栏布局 - 使用虚拟化
+            <VirtualList
+              items={paginatedGroups}
+              itemHeight={120}
+              containerHeight={600}
+              renderItem={renderTabGroup}
+              keyExtractor={keyExtractor}
+              overscan={5}
+              className="space-y-2"
             />
-          ))}
-        </div>
+          )}
+        </>
       )}
 
       {/* 恢复所有标签确认对话框 */}

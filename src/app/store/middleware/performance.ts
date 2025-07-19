@@ -18,6 +18,8 @@ class PerformanceMonitor {
   private performanceHistory: ActionPerformance[] = [];
   private readonly MAX_HISTORY = 100;
   private readonly SLOW_ACTION_THRESHOLD = 100; // 100ms
+  private readonly CLEANUP_INTERVAL = 60000; // 1分钟
+  private cleanupTimer: NodeJS.Timeout | null = null;
 
   recordActionStart(_actionType: string, actionId: string): void {
     this.actionTimes.set(actionId, performance.now());
@@ -90,7 +92,7 @@ class PerformanceMonitor {
 
     // 按类型分组统计
     const typeStats = new Map<string, { count: number; totalDuration: number; avgDuration: number }>();
-    
+
     this.performanceHistory.forEach(perf => {
       const existing = typeStats.get(perf.type) || { count: 0, totalDuration: 0, avgDuration: 0 };
       existing.count++;
@@ -109,6 +111,74 @@ class PerformanceMonitor {
     };
   }
 
+  /**
+   * 启动内存清理定时器
+   */
+  startCleanup(): void {
+    if (this.cleanupTimer) return;
+
+    this.cleanupTimer = setInterval(() => {
+      this.cleanupMemory();
+    }, this.CLEANUP_INTERVAL);
+
+    logger.debug('性能监控内存清理定时器已启动');
+  }
+
+  /**
+   * 停止内存清理定时器
+   */
+  stopCleanup(): void {
+    if (this.cleanupTimer) {
+      clearInterval(this.cleanupTimer);
+      this.cleanupTimer = null;
+      logger.debug('性能监控内存清理定时器已停止');
+    }
+  }
+
+  /**
+   * 清理过期的性能数据和内存
+   */
+  private cleanupMemory(): void {
+    const now = performance.now();
+    const maxAge = 5 * 60 * 1000; // 5分钟
+
+    // 清理过期的action时间记录
+    const expiredActionIds: string[] = [];
+    this.actionTimes.forEach((startTime, actionId) => {
+      if (now - startTime > maxAge) {
+        expiredActionIds.push(actionId);
+      }
+    });
+
+    expiredActionIds.forEach(id => {
+      this.actionTimes.delete(id);
+    });
+
+    // 如果历史记录过多，保留最新的记录
+    if (this.performanceHistory.length > this.MAX_HISTORY) {
+      const keepCount = Math.floor(this.MAX_HISTORY * 0.8); // 保留80%
+      this.performanceHistory = this.performanceHistory.slice(-keepCount);
+    }
+
+    if (expiredActionIds.length > 0 || this.performanceHistory.length > this.MAX_HISTORY) {
+      logger.debug('性能监控内存清理完成', {
+        expiredActions: expiredActionIds.length,
+        historySize: this.performanceHistory.length,
+        activeActions: this.actionTimes.size,
+      });
+    }
+  }
+
+  /**
+   * 销毁监控器，清理所有资源
+   */
+  destroy(): void {
+    this.stopCleanup();
+    this.actionTimes.clear();
+    this.performanceHistory = [];
+    logger.debug('性能监控器已销毁');
+  }
+
   clearHistory(): void {
     this.performanceHistory = [];
     this.actionTimes.clear();
@@ -117,6 +187,11 @@ class PerformanceMonitor {
 }
 
 const perfMonitor = new PerformanceMonitor();
+
+// 启动内存清理
+if (process.env.NODE_ENV === 'development') {
+  perfMonitor.startCleanup();
+}
 
 export const performanceMiddleware: Middleware = () => (next) => (action: unknown) => {
   const typedAction = action as AnyAction;
@@ -143,8 +218,10 @@ export const performanceMiddleware: Middleware = () => (next) => (action: unknow
 export { perfMonitor };
 
 // 开发环境下每30秒输出一次性能统计
+let performanceStatsInterval: NodeJS.Timeout | null = null;
+
 if (process.env.NODE_ENV === 'development') {
-  setInterval(() => {
+  performanceStatsInterval = setInterval(() => {
     const stats = perfMonitor.getPerformanceStats();
     if (stats && stats.totalActions > 0) {
       logger.perf('Redux性能统计', {
@@ -154,3 +231,12 @@ if (process.env.NODE_ENV === 'development') {
     }
   }, 30000);
 }
+
+// 清理函数，供外部调用
+export const cleanupPerformanceMonitoring = () => {
+  if (performanceStatsInterval) {
+    clearInterval(performanceStatsInterval);
+    performanceStatsInterval = null;
+    logger.debug('性能监控定时器已清理');
+  }
+};

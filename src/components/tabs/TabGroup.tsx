@@ -1,29 +1,51 @@
-import React, { useState, useCallback, useEffect } from 'react';
-import { useAppDispatch } from '@/store/hooks';
+import React, { useState, useCallback, useEffect, memo } from 'react';
+import { useAppDispatch } from '@/app/store/hooks';
 import { updateGroupNameAndSync, toggleGroupLockAndSync, deleteGroup, updateGroup } from '@/store/slices/tabSlice';
 import { TabGroup as TabGroupType, Tab } from '@/types/tab';
+import { useDebounce, useSmartCache } from '@/shared/hooks/useMemoryOptimization';
+import { useComponentCleanup } from '@/shared/hooks/useComponentCleanup';
 
 interface TabGroupProps {
   group: TabGroupType;
+  onDelete?: () => void;
+  onSelect?: () => void;
 }
 
 /**
  * 标签组组件
  * 使用React.memo优化渲染性能，只有在必要时才重新渲染
  */
-export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
+export const TabGroup: React.FC<TabGroupProps> = memo(({ group, onDelete, onSelect }) => {
   const dispatch = useAppDispatch();
+  const { addCleanupTask } = useComponentCleanup(`TabGroup-${group.id}`);
+
+  // 使用智能缓存存储组件状态
+  const { get: getCachedState, set: setCachedState } = useSmartCache<string, any>(50, 10 * 60 * 1000);
 
   const [isEditing, setIsEditing] = useState(false);
   const [newName, setNewName] = useState(group.name);
 
-  // 从localStorage获取折叠状态的函数，使用useCallback记忆化
+  // 从缓存或localStorage获取折叠状态
   const getInitialExpandedState = useCallback(() => {
+    const cacheKey = `expanded_${group.id}`;
+    const cached = getCachedState(cacheKey);
+    if (cached !== undefined) return cached;
+
     const savedState = localStorage.getItem(`tabGroup_${group.id}_expanded`);
-    return savedState !== null ? JSON.parse(savedState) : true;
-  }, [group.id]);
+    const state = savedState !== null ? JSON.parse(savedState) : true;
+    setCachedState(cacheKey, state);
+    return state;
+  }, [group.id, getCachedState, setCachedState]);
 
   const [isExpanded, setIsExpanded] = useState(getInitialExpandedState);
+
+  // 防抖的名称更新函数
+  const debouncedUpdateName = useDebounce(
+    useCallback((name: string) => {
+      dispatch(updateGroupNameAndSync({ groupId: group.id, newName: name }));
+    }, [dispatch, group.id]),
+    500
+  );
 
   // 当组ID变化时，更新折叠状态
   useEffect(() => {
