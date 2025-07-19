@@ -11,9 +11,61 @@ const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY as string;
 // 检查环境变量是否存在
 if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
   console.error('错误: Supabase 配置缺失。请确保在 .env 文件中设置了 VITE_SUPABASE_URL 和 VITE_SUPABASE_ANON_KEY。');
+} else {
+  console.log('✅ Supabase 配置已加载:', {
+    url: SUPABASE_URL,
+    keyLength: SUPABASE_ANON_KEY?.length
+  });
 }
 
 export const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+// 网络诊断工具
+export const networkDiagnostics = {
+  async testSupabaseConnection(): Promise<{
+    success: boolean;
+    error?: string;
+    details: any;
+  }> {
+    try {
+      console.log('🔍 开始Supabase网络诊断...');
+
+      // 测试基本连接
+      const response = await fetch(`${SUPABASE_URL}/rest/v1/`, {
+        method: 'GET',
+        headers: {
+          'apikey': SUPABASE_ANON_KEY,
+          'Authorization': `Bearer ${SUPABASE_ANON_KEY}`
+        }
+      });
+
+      const details = {
+        url: SUPABASE_URL,
+        status: response.status,
+        statusText: response.statusText,
+        headers: Object.fromEntries(response.headers.entries())
+      };
+
+      console.log('🔍 Supabase连接测试结果:', details);
+
+      return {
+        success: response.ok,
+        details
+      };
+
+    } catch (error: any) {
+      console.error('🔍 Supabase连接测试失败:', error);
+      return {
+        success: false,
+        error: error.message,
+        details: {
+          errorType: error.constructor.name,
+          message: error.message
+        }
+      };
+    }
+  }
+};
 
 // 获取设备ID
 export const getDeviceId = async (): Promise<string> => {
@@ -34,7 +86,20 @@ export const auth = {
 
   // 使用邮箱登录
   async signIn(email: string, password: string) {
-    return await supabase.auth.signInWithPassword({ email, password });
+    console.log('🔐 开始Supabase登录:', { email, supabaseUrl: SUPABASE_URL });
+    try {
+      const result = await supabase.auth.signInWithPassword({ email, password });
+      console.log('🔐 Supabase登录结果:', {
+        success: !result.error,
+        error: result.error?.message,
+        hasUser: !!result.data?.user,
+        hasSession: !!result.data?.session
+      });
+      return result;
+    } catch (error) {
+      console.error('🔐 Supabase登录异常:', error);
+      throw error;
+    }
   },
 
   // 使用第三方登录

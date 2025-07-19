@@ -12,10 +12,12 @@
     "unlimitedStorage",
     "notifications",
     "identity",
-    "contextMenus"
+    "contextMenus",
+    "activeTab"
   ],
   "host_permissions": [
     "https://*.supabase.co/*",
+    "https://osmvvkxwjoiagdqzhrjl.supabase.co/*",
     "https://accounts.google.com/*",
     "https://github.com/*",
     "https://open.weixin.qq.com/*",

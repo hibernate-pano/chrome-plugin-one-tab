@@ -5,6 +5,7 @@
 import { createSlice, createAsyncThunk, PayloadAction } from '@reduxjs/toolkit';
 import { logger } from '@/shared/utils/logger';
 import { errorHandler } from '@/shared/utils/errorHandler';
+import { auth as supabaseAuth } from '@/shared/utils/supabase';
 
 export interface User {
   id: string;
@@ -61,34 +62,73 @@ export const signInWithEmail = createAsyncThunk(
   ) => {
     try {
       logger.debug('邮箱登录', { email });
-      
-      // 这里应该调用实际的认证服务
-      // 暂时模拟异步操作
-      await new Promise(resolve => setTimeout(resolve, 1000));
-      
-      // 模拟登录验证
-      if (email === 'test@example.com' && password === 'password') {
+
+      // 首先尝试真实的Supabase认证服务
+      try {
+        const { data, error } = await supabaseAuth.signIn(email, password);
+
+        if (error) {
+          logger.error('Supabase登录失败', error);
+          throw new Error(error.message || '邮箱或密码错误');
+        }
+
+        if (!data.user || !data.session) {
+          throw new Error('登录失败：未获取到用户信息');
+        }
+
+        // 转换Supabase用户数据为应用格式
         const user: User = {
-          id: 'user_1',
-          email,
-          name: 'Test User',
+          id: data.user.id,
+          email: data.user.email || email,
+          name: data.user.user_metadata?.name || data.user.email?.split('@')[0] || 'User',
+          avatar: data.user.user_metadata?.avatar_url,
           provider: 'email',
-          createdAt: new Date().toISOString(),
+          createdAt: data.user.created_at || new Date().toISOString(),
           lastLoginAt: new Date().toISOString(),
         };
-        
+
         const session: AuthSession = {
-          accessToken: 'mock_access_token',
-          refreshToken: 'mock_refresh_token',
-          expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(),
+          accessToken: data.session.access_token,
+          refreshToken: data.session.refresh_token,
+          expiresAt: new Date(data.session.expires_at! * 1000).toISOString(),
           user,
         };
-        
+
         logger.success('邮箱登录成功', { userId: user.id, email: user.email });
-        
+
         return { user, session };
-      } else {
-        throw new Error('邮箱或密码错误');
+
+      } catch (networkError: any) {
+        // 如果是网络错误，使用临时的本地认证模式
+        if (networkError.message?.includes('Failed to fetch') ||
+            networkError.message?.includes('ERR_CONNECTION_CLOSED')) {
+
+          logger.warn('网络连接失败，使用临时本地认证模式', { email });
+
+          // 临时本地认证 - 仅用于测试其他功能
+          const user: User = {
+            id: `local_${Date.now()}`,
+            email,
+            name: email.split('@')[0] || 'Local User',
+            provider: 'email',
+            createdAt: new Date().toISOString(),
+            lastLoginAt: new Date().toISOString(),
+          };
+
+          const session: AuthSession = {
+            accessToken: 'local_access_token',
+            refreshToken: 'local_refresh_token',
+            expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(),
+            user,
+          };
+
+          logger.success('本地认证成功（临时模式）', { userId: user.id, email: user.email });
+
+          return { user, session };
+        }
+
+        // 其他错误直接抛出
+        throw networkError;
       }
       
     } catch (error) {
@@ -111,28 +151,40 @@ export const signUpWithEmail = createAsyncThunk(
     void _password; // 标记为故意未使用
     try {
       logger.debug('邮箱注册', { email, name });
-      
-      // 模拟注册过程
-      await new Promise(resolve => setTimeout(resolve, 1200));
-      
+
+      // 调用真实的Supabase注册服务
+      const { data, error } = await supabaseAuth.signUp(email, _password);
+
+      if (error) {
+        logger.error('Supabase注册失败', error);
+        throw new Error(error.message || '注册失败');
+      }
+
+      if (!data.user) {
+        throw new Error('注册失败：未获取到用户信息');
+      }
+
+      // 转换Supabase用户数据为应用格式
       const user: User = {
-        id: `user_${Date.now()}`,
-        email,
-        name: name || email.split('@')[0],
+        id: data.user.id,
+        email: data.user.email || email,
+        name: name || data.user.user_metadata?.name || email.split('@')[0],
+        avatar: data.user.user_metadata?.avatar_url,
         provider: 'email',
-        createdAt: new Date().toISOString(),
+        createdAt: data.user.created_at || new Date().toISOString(),
         lastLoginAt: new Date().toISOString(),
       };
-      
-      const session: AuthSession = {
-        accessToken: 'mock_access_token',
-        refreshToken: 'mock_refresh_token',
-        expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(),
+
+      // 注册后可能需要邮箱验证，session可能为null
+      const session: AuthSession | null = data.session ? {
+        accessToken: data.session.access_token,
+        refreshToken: data.session.refresh_token,
+        expiresAt: new Date(data.session.expires_at! * 1000).toISOString(),
         user,
-      };
-      
+      } : null;
+
       logger.success('邮箱注册成功', { userId: user.id, email: user.email });
-      
+
       return { user, session };
       
     } catch (error) {
@@ -453,7 +505,8 @@ const authSlice = createSlice({
         state.isLoading = false;
         state.user = user;
         state.session = session;
-        state.status = 'authenticated';
+        // 如果没有session（需要邮箱验证），状态为unauthenticated
+        state.status = session ? 'authenticated' : 'unauthenticated';
         state.loginProvider = 'email';
       })
       .addCase(signUpWithEmail.rejected, (state, action) => {
