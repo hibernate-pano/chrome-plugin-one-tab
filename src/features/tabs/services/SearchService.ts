@@ -486,7 +486,7 @@ export class SearchService {
   /**
    * 获取搜索建议
    */
-  async getSearchSuggestions(groups: TabGroup[], keyword: string): Promise<string[]> {
+  async getSearchSuggestions(groups: TabGroup[], keyword: string, mode: SearchMode = SearchMode.SIMPLE): Promise<string[]> {
     if (!keyword || keyword.length < 2) {
       return [];
     }
@@ -496,25 +496,206 @@ export class SearchService {
 
     // 从标签组名称中提取建议
     groups.forEach(group => {
-      if (group.name.toLowerCase().includes(lowerKeyword)) {
-        suggestions.add(group.name);
+      if (mode === SearchMode.FUZZY) {
+        // 模糊匹配建议
+        if (this.calculateSimilarity(group.name.toLowerCase(), lowerKeyword) > 0.5) {
+          suggestions.add(group.name);
+        }
+      } else {
+        // 简单匹配建议
+        if (group.name.toLowerCase().includes(lowerKeyword)) {
+          suggestions.add(group.name);
+        }
       }
 
       // 从标签标题中提取建议
       group.tabs.forEach(tab => {
-        if (tab.title.toLowerCase().includes(lowerKeyword)) {
-          // 提取包含关键词的词语
-          const words = tab.title.split(/\s+/);
-          words.forEach(word => {
-            if (word.toLowerCase().includes(lowerKeyword) && word.length > 2) {
-              suggestions.add(word);
-            }
-          });
+        if (mode === SearchMode.FUZZY) {
+          if (this.calculateSimilarity(tab.title.toLowerCase(), lowerKeyword) > 0.6) {
+            suggestions.add(tab.title);
+          }
+        } else {
+          if (tab.title.toLowerCase().includes(lowerKeyword)) {
+            // 提取包含关键词的词语
+            const words = tab.title.split(/\s+/);
+            words.forEach(word => {
+              if (word.toLowerCase().includes(lowerKeyword) && word.length > 2) {
+                suggestions.add(word);
+              }
+            });
+          }
+        }
+
+        // 从域名中提取建议
+        try {
+          const url = new URL(tab.url);
+          const domain = url.hostname;
+          if (domain.includes(lowerKeyword)) {
+            suggestions.add(domain);
+          }
+        } catch {
+          // 忽略无效URL
         }
       });
     });
 
     return Array.from(suggestions).slice(0, 10);
+  }
+
+  /**
+   * 高级搜索：支持多个关键词和操作符
+   */
+  async advancedSearch(groups: TabGroup[], searchExpression: string): Promise<SearchResult> {
+    const startTime = performance.now();
+
+    try {
+      // 解析搜索表达式
+      const parsedQuery = this.parseSearchExpression(searchExpression);
+
+      // 执行搜索
+      const result = await this.search(groups, parsedQuery);
+
+      logger.debug('高级搜索完成', {
+        expression: searchExpression,
+        totalCount: result.totalCount,
+        searchTime: `${result.searchTime.toFixed(2)}ms`
+      });
+
+      return result;
+    } catch (error) {
+      logger.error('高级搜索失败', error);
+      throw error;
+    }
+  }
+
+  /**
+   * 解析搜索表达式
+   * 支持格式：
+   * - "keyword" 或 keyword: 简单搜索
+   * - title:keyword: 在标题中搜索
+   * - url:keyword: 在URL中搜索
+   * - domain:example.com: 按域名搜索
+   * - group:name: 按标签组名搜索
+   * - locked:true/false: 按锁定状态搜索
+   * - tabs:>10: 标签数量大于10
+   * - date:2024-01-01..2024-12-31: 日期范围搜索
+   */
+  private parseSearchExpression(expression: string): SearchQuery {
+    const query: SearchQuery = {
+      keyword: '',
+      mode: SearchMode.SIMPLE,
+      filters: {},
+      sortBy: 'relevance',
+      sortOrder: 'desc'
+    };
+
+    // 分割搜索表达式
+    const parts = expression.split(/\s+/);
+    const keywords: string[] = [];
+
+    parts.forEach(part => {
+      if (part.includes(':')) {
+        const [field, value] = part.split(':', 2);
+
+        switch (field.toLowerCase()) {
+          case 'title':
+          case 'name':
+            keywords.push(value);
+            break;
+          case 'url':
+            keywords.push(value);
+            break;
+          case 'domain':
+            query.filters.domain = value;
+            break;
+          case 'group':
+            query.filters.groupName = value;
+            break;
+          case 'locked':
+            query.filters.isLocked = value.toLowerCase() === 'true';
+            break;
+          case 'tabs':
+            this.parseTabCountFilter(value, query);
+            break;
+          case 'date':
+            this.parseDateRangeFilter(value, query);
+            break;
+          case 'mode':
+            query.mode = this.parseSearchMode(value);
+            break;
+          case 'fuzzy':
+            query.mode = SearchMode.FUZZY;
+            query.fuzzyThreshold = parseFloat(value) || 0.6;
+            break;
+          case 'regex':
+            query.mode = SearchMode.REGEX;
+            keywords.push(value);
+            break;
+        }
+      } else {
+        keywords.push(part);
+      }
+    });
+
+    query.keyword = keywords.join(' ');
+    return query;
+  }
+
+  /**
+   * 解析标签数量过滤器
+   */
+  private parseTabCountFilter(value: string, query: SearchQuery): void {
+    if (value.startsWith('>')) {
+      query.filters.tabCount = { min: parseInt(value.substring(1)) };
+    } else if (value.startsWith('<')) {
+      query.filters.tabCount = { max: parseInt(value.substring(1)) };
+    } else if (value.includes('..')) {
+      const [min, max] = value.split('..').map(v => parseInt(v));
+      query.filters.tabCount = { min, max };
+    } else {
+      const count = parseInt(value);
+      query.filters.tabCount = { min: count, max: count };
+    }
+  }
+
+  /**
+   * 解析日期范围过滤器
+   */
+  private parseDateRangeFilter(value: string, query: SearchQuery): void {
+    if (value.includes('..')) {
+      const [startStr, endStr] = value.split('..');
+      const start = new Date(startStr);
+      const end = new Date(endStr);
+
+      if (!isNaN(start.getTime()) && !isNaN(end.getTime())) {
+        query.filters.dateRange = { start, end };
+      }
+    } else {
+      const date = new Date(value);
+      if (!isNaN(date.getTime())) {
+        const start = new Date(date);
+        start.setHours(0, 0, 0, 0);
+        const end = new Date(date);
+        end.setHours(23, 59, 59, 999);
+        query.filters.dateRange = { start, end };
+      }
+    }
+  }
+
+  /**
+   * 解析搜索模式
+   */
+  private parseSearchMode(value: string): SearchMode {
+    switch (value.toLowerCase()) {
+      case 'fuzzy':
+        return SearchMode.FUZZY;
+      case 'regex':
+        return SearchMode.REGEX;
+      case 'advanced':
+        return SearchMode.ADVANCED;
+      default:
+        return SearchMode.SIMPLE;
+    }
   }
 }
 

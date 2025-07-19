@@ -3,4 +3,8 @@
  */
 export { TabGroupService, tabGroupService } from './TabGroupService';
 export { SearchService, searchService } from './SearchService';
-export type { SearchQuery, SearchResult } from './SearchService';
+export { SearchHistoryService, searchHistoryService } from './SearchHistoryService';
+
+// 导出类型
+export type { SearchQuery, SearchResult, SearchMode } from './SearchService';
+export type { SearchHistoryItem, SearchStatistics } from './SearchHistoryService';

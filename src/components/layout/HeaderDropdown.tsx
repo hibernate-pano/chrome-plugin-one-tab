@@ -8,6 +8,7 @@ import { LoginForm } from '../auth/LoginForm';
 import { RegisterForm } from '../auth/RegisterForm';
 import { SyncSettings } from '../sync/SyncSettings';
 import { useOnboarding } from '@/features/onboarding/components/OnboardingProvider';
+import { ImportExportPanel } from '@/features/import-export';
 
 interface HeaderDropdownProps {
   onClose: () => void;
@@ -21,6 +22,7 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({ onClose }) => {
   const [activeTab, setActiveTab] = useState<'login' | 'register'>('login');
   const [showAuthModal, setShowAuthModal] = useState(false);
   const [showSyncSettings, setShowSyncSettings] = useState(false);
+  const [showImportExport, setShowImportExport] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
 
   // 引导系统
@@ -96,62 +98,10 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({ onClose }) => {
     onClose();
   };
 
-  // 导出数据为 JSON 格式
-  const handleExportData = async () => {
-    try {
-      const exportData = await storage.exportData();
-      const blob = new Blob([JSON.stringify(exportData, null, 2)], {
-        type: 'application/json'
-      });
-
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      // 安全地处理日期格式化
-      const date = new Date();
-      const year = date.getFullYear();
-      const month = String(date.getMonth() + 1).padStart(2, '0');
-      const day = String(date.getDate()).padStart(2, '0');
-      a.download = `onetab-backup-${year}-${month}-${day}.json`;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(url);
-
-      onClose();
-    } catch (error) {
-      console.error('导出数据失败:', error);
-      alert('导出数据失败，请重试');
-    }
-  };
-
-  // 导出数据为 OneTab 格式
-  const handleExportOneTabFormat = async () => {
-    try {
-      const oneTabText = await storage.exportToOneTabFormat();
-      const blob = new Blob([oneTabText], {
-        type: 'text/plain'
-      });
-
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      // 安全地处理日期格式化
-      const date = new Date();
-      const year = date.getFullYear();
-      const month = String(date.getMonth() + 1).padStart(2, '0');
-      const day = String(date.getDate()).padStart(2, '0');
-      a.download = `onetab-export-${year}-${month}-${day}.txt`;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(url);
-
-      onClose();
-    } catch (error) {
-      console.error('导出 OneTab 格式数据失败:', error);
-      alert('导出 OneTab 格式数据失败，请重试');
-    }
+  // 打开导入导出面板
+  const handleOpenImportExport = () => {
+    setShowImportExport(true);
+    onClose();
   };
 
   return (

@@ -11,6 +11,8 @@ export { TabList } from './TabList';
 export { SearchBar } from './search/SearchBar';
 export { FilterPanel } from './search/FilterPanel';
 export { AdvancedSearch } from './search/AdvancedSearch';
+export { AdvancedSearchPanel } from './search/AdvancedSearchPanel';
+export { SearchHistoryPanel } from './search/SearchHistoryPanel';
 
 // 拖拽组件
 export { DraggableTabGroup } from './dnd/DraggableTabGroup';
