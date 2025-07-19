@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
-import { useAppSelector, useAppDispatch } from '@/store/hooks';
+import { useAppSelector, useAppDispatch } from '@/app/store/hooks';
 import { updateSettings, saveSettings } from '@/store/slices/settingsSlice';
 
 type ThemeMode = 'light' | 'dark' | 'auto';

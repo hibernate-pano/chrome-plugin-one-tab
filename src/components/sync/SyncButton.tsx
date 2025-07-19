@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { useAppSelector } from '@/store/hooks';
+import { useAppSelector } from '@/app/store/hooks';
 import { syncService } from '@/services/syncService';
 import { useToast } from '@/contexts/ToastContext';
 

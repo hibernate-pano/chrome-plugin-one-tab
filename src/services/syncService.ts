@@ -1,7 +1,8 @@
-import { store } from '@/store';
+import { store } from '@/app/store';
 import { syncTabsToCloud, syncTabsFromCloud } from '@/store/slices/tabSlice';
 import { syncSettingsToCloud, syncSettingsFromCloud } from '@/store/slices/settingsSlice';
-import { getCurrentUser } from '@/store/slices/authSlice';
+// 注意：getCurrentUser需要从新版authSlice导入
+import { getCurrentUser } from '@/features/auth/store/authSlice';
 import { sync as supabaseSync } from '@/utils/supabase';
 import { storage } from '@/utils/storage';
 

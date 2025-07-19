@@ -1,9 +1,9 @@
 import React, { useEffect, useState } from 'react';
 import { Provider } from 'react-redux';
-import { useAppSelector } from '@/store/hooks';
-import { store } from '@/store';
+import { useAppSelector } from '@/app/store/hooks';
+import { store } from '@/app/store';
 import { loadSettings } from '@/store/slices/settingsSlice';
-import { loadGroups } from '@/store/slices/tabSlice';
+import { loadGroups } from '@/features/tabs/store/tabGroupsSlice';
 import Layout from '@/components/layout/Layout';
 import Header from '@/components/layout/Header';
 import TabList from '@/components/tabs/TabList';
@@ -12,7 +12,7 @@ import { LoadingOverlay } from '@/components/common/LoadingOverlay';
 // DndProvider is handled internally by TabListDndKit
 
 const SyncLoadingOverlay: React.FC = () => {
-  const { syncStatus, backgroundSync } = useAppSelector(state => state.tabs);
+  const { status: syncStatus, backgroundSync } = useAppSelector(state => state.sync);
   const isSyncing = syncStatus === 'syncing';
 
   return (

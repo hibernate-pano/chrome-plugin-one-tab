@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { useAppSelector, useAppDispatch } from '@/store/hooks';
-import { signOut } from '@/store/slices/authSlice';
+import { useAppSelector, useAppDispatch } from '@/app/store/hooks';
+import { signOut } from '@/features/auth/store/authSlice';
 import { LoginForm } from './LoginForm';
 import { RegisterForm } from './RegisterForm';
 import { syncService } from '@/services/syncService';

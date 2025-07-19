@@ -1,9 +1,10 @@
 import React from 'react';
-import { useAppSelector } from '@/store/hooks';
+import { useAppSelector } from '@/app/store/hooks';
 
 export const SyncStatus: React.FC = () => {
-  const { lastSyncTime, syncStatus } = useAppSelector(state => state.tabs);
-  const { isAuthenticated } = useAppSelector(state => state.auth);
+  const { lastSyncTime, status: syncStatus } = useAppSelector(state => state.sync);
+  const { status } = useAppSelector(state => state.auth);
+  const isAuthenticated = status === 'authenticated';
   const { syncEnabled, autoSyncEnabled } = useAppSelector(state => state.settings);
 
   // 格式化最后同步时间 - 这个函数已经通过getStatusIndicator内部实现了

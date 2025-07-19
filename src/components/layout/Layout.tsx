@@ -1,6 +1,6 @@
 import React from 'react';
 import { SyncStatus } from '../sync/SyncStatus';
-import { useAppSelector } from '@/store/hooks';
+import { useAppSelector } from '@/app/store/hooks';
 
 interface LayoutProps {
   children: React.ReactNode;

@@ -1,5 +1,6 @@
 import React from 'react';
-import { useAppDispatch } from '@/store/hooks';
+import { useAppDispatch } from '@/app/store/hooks';
+// 注意：syncTabsFromCloud需要迁移到新版架构
 import { syncTabsFromCloud } from '@/store/slices/tabSlice';
 
 interface SyncPromptModalProps {
