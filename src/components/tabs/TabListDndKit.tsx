@@ -230,35 +230,67 @@ export const TabListDndKit: React.FC<TabListProps> = ({ searchQuery }) => {
           const targetGroup = currentGroups.find(g => g.id === targetGroupId);
 
           if (sourceGroup && targetGroup) {
-            // 执行本地状态更新
+            // 执行本地状态更新 - 修复跨组拖拽逻辑
+            const isInterGroupDrag = sourceGroupId !== targetGroupId;
+
+            // 创建源组和目标组的标签数组副本
             const newSourceTabs = [...sourceGroup.tabs];
-            const newTargetTabs = sourceGroupId === targetGroupId ? newSourceTabs : [...targetGroup.tabs];
+            const newTargetTabs = isInterGroupDrag ? [...targetGroup.tabs] : newSourceTabs;
 
             // 从源位置移除标签
             const movedTab = newSourceTabs.splice(sourceIndex, 1)[0];
 
+            if (!movedTab) {
+              console.error('拖拽的标签页未找到', { sourceGroupId, sourceIndex });
+              return;
+            }
+
             // 计算调整后的目标索引
             let adjustedIndex = targetIndex;
-            if (sourceGroupId === targetGroupId && sourceIndex < targetIndex) {
+            if (!isInterGroupDrag && sourceIndex < targetIndex) {
+              // 同组内向后移动时，需要调整索引
               adjustedIndex = targetIndex - 1;
             }
+
+            // 确保索引在有效范围内
+            adjustedIndex = Math.max(0, Math.min(adjustedIndex, newTargetTabs.length));
 
             // 插入到目标位置
             newTargetTabs.splice(adjustedIndex, 0, movedTab);
 
-            // 更新标签组
+            // 更新标签组 - 简化逻辑，确保正确处理跨组拖拽
             const updatedGroups = currentGroups.map(group => {
               if (group.id === sourceGroupId) {
-                return { ...group, tabs: newSourceTabs, updatedAt: new Date().toISOString() };
+                return {
+                  ...group,
+                  tabs: isInterGroupDrag ? newSourceTabs : newTargetTabs,
+                  updatedAt: new Date().toISOString()
+                };
               }
-              if (group.id === targetGroupId && sourceGroupId !== targetGroupId) {
-                return { ...group, tabs: newTargetTabs, updatedAt: new Date().toISOString() };
+              if (isInterGroupDrag && group.id === targetGroupId) {
+                return {
+                  ...group,
+                  tabs: newTargetTabs,
+                  updatedAt: new Date().toISOString()
+                };
               }
               return group;
             });
 
             // 立即更新UI状态
             dispatch(setGroups(updatedGroups));
+
+            // 添加调试日志
+            console.log('乐观更新完成', {
+              isInterGroupDrag,
+              sourceGroupId,
+              targetGroupId,
+              sourceIndex,
+              targetIndex: adjustedIndex,
+              movedTabTitle: movedTab.title,
+              sourceTabsCount: newSourceTabs.length,
+              targetTabsCount: newTargetTabs.length
+            });
           }
 
           // 然后执行异步操作以同步到存储

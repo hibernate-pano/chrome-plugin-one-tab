@@ -54,38 +54,57 @@ export const moveTab = createAsyncThunk(
       throw new Error('标签页未找到');
     }
     
-    // 创建新的标签数组
+    // 创建新的标签数组 - 修复跨组拖拽逻辑
+    const isInterGroupDrag = sourceGroupId !== targetGroupId;
     const newSourceTabs = [...sourceGroup.tabs];
-    const newTargetTabs = sourceGroupId === targetGroupId ? newSourceTabs : [...targetGroup.tabs];
-    
-    // 从源位置移除
-    newSourceTabs.splice(sourceIndex, 1);
-    
+    const newTargetTabs = isInterGroupDrag ? [...targetGroup.tabs] : newSourceTabs;
+
+    // 从源位置移除标签
+    const movedTab = newSourceTabs.splice(sourceIndex, 1)[0];
+
+    if (!movedTab) {
+      throw new Error(`标签页在索引 ${sourceIndex} 处未找到`);
+    }
+
     // 计算调整后的目标索引
     let adjustedIndex = targetIndex;
-    if (sourceGroupId === targetGroupId && sourceIndex < targetIndex) {
+    if (!isInterGroupDrag && sourceIndex < targetIndex) {
+      // 同组内向后移动时，需要调整索引
       adjustedIndex = targetIndex - 1;
     }
-    
+
     // 确保索引在有效范围内
     adjustedIndex = Math.max(0, Math.min(adjustedIndex, newTargetTabs.length));
-    
+
     // 插入到目标位置
-    newTargetTabs.splice(adjustedIndex, 0, tab);
+    newTargetTabs.splice(adjustedIndex, 0, movedTab);
+
+    // 添加调试日志
+    logger.dnd('标签移动详情', {
+      isInterGroupDrag,
+      sourceGroupId,
+      targetGroupId,
+      originalSourceIndex: sourceIndex,
+      originalTargetIndex: targetIndex,
+      adjustedTargetIndex: adjustedIndex,
+      movedTabTitle: movedTab.title,
+      sourceTabsAfter: newSourceTabs.length,
+      targetTabsAfter: newTargetTabs.length
+    });
     
-    // 更新标签组
+    // 更新标签组 - 修复跨组拖拽的状态更新
     const currentTime = new Date().toISOString();
     const updatedSourceGroup = {
       ...sourceGroup,
-      tabs: newSourceTabs,
+      tabs: isInterGroupDrag ? newSourceTabs : newTargetTabs, // 同组内拖拽时使用更新后的标签数组
       updatedAt: currentTime,
     };
-    
-    const updatedTargetGroup = sourceGroupId === targetGroupId ? updatedSourceGroup : {
+
+    const updatedTargetGroup = isInterGroupDrag ? {
       ...targetGroup,
       tabs: newTargetTabs,
       updatedAt: currentTime,
-    };
+    } : updatedSourceGroup;
     
     // 更新存储
     const updatedGroups = groups.map(g => {
@@ -100,10 +119,11 @@ export const moveTab = createAsyncThunk(
       sourceGroupId,
       sourceIndex,
       targetGroupId,
-      targetIndex,
+      targetIndex: adjustedIndex, // 返回调整后的目标索引
       shouldDeleteSourceGroup: newSourceTabs.length === 0 && !sourceGroup.isLocked,
       updatedGroups, // 添加完整的更新后标签组数据用于UI立即更新
-      movedTab: tab, // 添加被移动的标签页信息
+      movedTab, // 使用正确的变量名
+      isInterGroupDrag, // 添加跨组拖拽标识
     };
   }
 );

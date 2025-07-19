@@ -33,8 +33,8 @@ export const DragDropDebugPanel: React.FC = () => {
       return;
     }
 
-    addTestResult('🚀 开始测试拖拽功能...');
-    
+    addTestResult('🚀 开始测试跨组拖拽功能...');
+
     try {
       // 记录拖拽前的状态
       const beforeState = {
@@ -42,47 +42,126 @@ export const DragDropDebugPanel: React.FC = () => {
         targetTabsCount: targetGroup.tabs.length,
         movedTabTitle: sourceGroup.tabs[0].title,
       };
-      
-      addTestResult(`📊 拖拽前状态: 源组${beforeState.sourceTabsCount}个标签, 目标组${beforeState.targetTabsCount}个标签`);
-      
-      // 执行拖拽操作
+
+      addTestResult(`📊 拖拽前状态: 源组"${sourceGroup.name}"${beforeState.sourceTabsCount}个标签, 目标组"${targetGroup.name}"${beforeState.targetTabsCount}个标签`);
+      addTestResult(`🎯 将要移动标签: "${beforeState.movedTabTitle}"`);
+
+      // 执行跨组拖拽操作
       const startTime = performance.now();
-      
-      await dispatch(moveTab({
+
+      const result = await dispatch(moveTab({
         sourceGroupId: sourceGroup.id,
         sourceIndex: 0,
         targetGroupId: targetGroup.id,
-        targetIndex: 0,
+        targetIndex: 0, // 拖拽到目标组的开头
       }));
-      
+
       const endTime = performance.now();
       const duration = endTime - startTime;
-      
+
+      // 等待状态更新
+      await new Promise(resolve => setTimeout(resolve, 100));
+
       // 检查拖拽后的状态
       const updatedGroups = groups;
       const updatedSourceGroup = updatedGroups.find(g => g.id === sourceGroup.id);
       const updatedTargetGroup = updatedGroups.find(g => g.id === targetGroup.id);
-      
+
       if (updatedSourceGroup && updatedTargetGroup) {
         const afterState = {
           sourceTabsCount: updatedSourceGroup.tabs.length,
           targetTabsCount: updatedTargetGroup.tabs.length,
+          firstTargetTabTitle: updatedTargetGroup.tabs[0]?.title || '无标签',
         };
-        
+
         addTestResult(`📊 拖拽后状态: 源组${afterState.sourceTabsCount}个标签, 目标组${afterState.targetTabsCount}个标签`);
+        addTestResult(`📍 目标组第一个标签: "${afterState.firstTargetTabTitle}"`);
         addTestResult(`⏱️ 拖拽操作耗时: ${duration.toFixed(2)}ms`);
-        
-        // 验证拖拽结果
-        if (afterState.sourceTabsCount === beforeState.sourceTabsCount - 1 &&
-            afterState.targetTabsCount === beforeState.targetTabsCount + 1) {
-          addTestResult('✅ 拖拽功能正常工作！');
+
+        // 验证跨组拖拽结果
+        const isCountCorrect = afterState.sourceTabsCount === beforeState.sourceTabsCount - 1 &&
+                              afterState.targetTabsCount === beforeState.targetTabsCount + 1;
+        const isTabMoved = afterState.firstTargetTabTitle === beforeState.movedTabTitle;
+
+        if (isCountCorrect && isTabMoved) {
+          addTestResult('✅ 跨组拖拽功能正常工作！');
         } else {
-          addTestResult('❌ 拖拽结果不正确');
+          addTestResult('❌ 跨组拖拽结果不正确');
+          if (!isCountCorrect) {
+            addTestResult('  - 标签数量变化不正确');
+          }
+          if (!isTabMoved) {
+            addTestResult('  - 标签位置不正确');
+          }
         }
       }
-      
+
     } catch (error) {
-      addTestResult(`❌ 拖拽操作失败: ${error}`);
+      addTestResult(`❌ 跨组拖拽操作失败: ${error}`);
+    }
+  };
+
+  const testSameGroupDrag = async () => {
+    const groupWithMultipleTabs = groups.find(g => g.tabs.length >= 2);
+
+    if (!groupWithMultipleTabs) {
+      addTestResult('❌ 需要至少一个包含2个或更多标签的组来测试同组内拖拽');
+      return;
+    }
+
+    addTestResult('🚀 开始测试同组内拖拽功能...');
+
+    try {
+      const beforeState = {
+        tabsCount: groupWithMultipleTabs.tabs.length,
+        firstTabTitle: groupWithMultipleTabs.tabs[0].title,
+        secondTabTitle: groupWithMultipleTabs.tabs[1].title,
+      };
+
+      addTestResult(`📊 拖拽前状态: "${beforeState.firstTabTitle}" -> "${beforeState.secondTabTitle}"`);
+
+      // 执行同组内拖拽（将第一个标签移动到第二个位置）
+      const startTime = performance.now();
+
+      await dispatch(moveTab({
+        sourceGroupId: groupWithMultipleTabs.id,
+        sourceIndex: 0,
+        targetGroupId: groupWithMultipleTabs.id,
+        targetIndex: 1,
+      }));
+
+      const endTime = performance.now();
+      const duration = endTime - startTime;
+
+      // 等待状态更新
+      await new Promise(resolve => setTimeout(resolve, 100));
+
+      const updatedGroup = groups.find(g => g.id === groupWithMultipleTabs.id);
+
+      if (updatedGroup) {
+        const afterState = {
+          tabsCount: updatedGroup.tabs.length,
+          firstTabTitle: updatedGroup.tabs[0]?.title || '无标签',
+          secondTabTitle: updatedGroup.tabs[1]?.title || '无标签',
+        };
+
+        addTestResult(`📊 拖拽后状态: "${afterState.firstTabTitle}" -> "${afterState.secondTabTitle}"`);
+        addTestResult(`⏱️ 拖拽操作耗时: ${duration.toFixed(2)}ms`);
+
+        // 验证同组内拖拽结果
+        const isCountSame = afterState.tabsCount === beforeState.tabsCount;
+        const isOrderChanged = afterState.firstTabTitle === beforeState.secondTabTitle &&
+                              afterState.secondTabTitle === beforeState.firstTabTitle;
+
+        if (isCountSame && isOrderChanged) {
+          addTestResult('✅ 同组内拖拽功能正常工作！');
+        } else {
+          addTestResult('❌ 同组内拖拽结果不正确');
+        }
+      }
+
+    } catch (error) {
+      addTestResult(`❌ 同组内拖拽操作失败: ${error}`);
     }
   };
 
@@ -121,9 +200,17 @@ export const DragDropDebugPanel: React.FC = () => {
           disabled={isLoading || isProcessing}
           className="w-full px-3 py-2 bg-blue-500 text-white rounded hover:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed"
         >
-          测试拖拽功能
+          测试跨组拖拽
         </button>
-        
+
+        <button
+          onClick={testSameGroupDrag}
+          disabled={isLoading || isProcessing}
+          className="w-full px-3 py-2 bg-green-500 text-white rounded hover:bg-green-600 disabled:opacity-50 disabled:cursor-not-allowed"
+        >
+          测试同组内拖拽
+        </button>
+
         <div className="flex space-x-2">
           <button
             onClick={refreshGroups}
@@ -132,7 +219,7 @@ export const DragDropDebugPanel: React.FC = () => {
           >
             刷新数据
           </button>
-          
+
           <button
             onClick={clearResults}
             className="flex-1 px-3 py-1 bg-red-500 text-white rounded hover:bg-red-600"

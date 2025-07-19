@@ -353,15 +353,17 @@ const tabGroupsSlice = createSlice({
         state.error = action.error.message || '清理重复标签失败';
       })
 
-      // 监听拖拽操作 - 实现立即UI更新
+      // 监听拖拽操作 - 确保异步操作结果的权威性
       .addCase(moveTab.fulfilled, (state, action) => {
-        // 立即更新本地状态，确保UI同步
+        // 使用异步操作的结果作为最终状态，确保数据一致性
         if (action.payload.updatedGroups) {
           state.groups = action.payload.updatedGroups;
-          logger.debug('标签拖拽完成，UI已更新', {
+          logger.debug('标签拖拽异步操作完成，状态已同步', {
             sourceGroupId: action.payload.sourceGroupId,
             targetGroupId: action.payload.targetGroupId,
-            targetIndex: action.payload.targetIndex
+            targetIndex: action.payload.targetIndex,
+            isInterGroupDrag: action.payload.isInterGroupDrag,
+            movedTabTitle: action.payload.movedTab?.title
           });
         }
       })
