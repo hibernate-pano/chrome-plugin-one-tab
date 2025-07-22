@@ -99,44 +99,17 @@ export const signInWithEmail = createAsyncThunk(
         return { user, session };
 
       } catch (networkError: any) {
-        // 如果是网络错误，使用临时的本地认证模式
-        if (networkError.message?.includes('Failed to fetch') ||
-            networkError.message?.includes('ERR_CONNECTION_CLOSED')) {
-
-          logger.warn('网络连接失败，使用临时本地认证模式', { email });
-
-          // 临时本地认证 - 仅用于测试其他功能
-          const user: User = {
-            id: `local_${Date.now()}`,
-            email,
-            name: email.split('@')[0] || 'Local User',
-            provider: 'email',
-            createdAt: new Date().toISOString(),
-            lastLoginAt: new Date().toISOString(),
-          };
-
-          const session: AuthSession = {
-            accessToken: 'local_access_token',
-            refreshToken: 'local_refresh_token',
-            expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(),
-            user,
-          };
-
-          logger.success('本地认证成功（临时模式）', { userId: user.id, email: user.email });
-
-          return { user, session };
-        }
-
-        // 其他错误直接抛出
+        // 移除临时本地认证模式，所有登录都必须通过真实的Supabase认证
+        logger.error('Supabase登录失败', networkError);
         throw networkError;
       }
-      
+
     } catch (error) {
       const friendlyError = errorHandler.handleAsyncError(error as Error, {
         component: 'AuthSlice',
         action: 'signInWithEmail',
       });
-      
+
       return rejectWithValue(friendlyError.message);
     }
   }
@@ -186,13 +159,13 @@ export const signUpWithEmail = createAsyncThunk(
       logger.success('邮箱注册成功', { userId: user.id, email: user.email });
 
       return { user, session };
-      
+
     } catch (error) {
       const friendlyError = errorHandler.handleAsyncError(error as Error, {
         component: 'AuthSlice',
         action: 'signUpWithEmail',
       });
-      
+
       return rejectWithValue(friendlyError.message);
     }
   }
@@ -206,43 +179,27 @@ export const signInWithOAuth = createAsyncThunk(
   ) => {
     try {
       logger.debug('OAuth登录', { provider });
-      
-      // 特殊处理微信登录
-      if (provider === 'wechat') {
-        // 微信登录会打开新标签页，这里返回特殊状态
-        return { provider, requiresTab: true };
-      }
-      
-      // 其他OAuth登录
-      await new Promise(resolve => setTimeout(resolve, 800));
-      
-      const user: User = {
-        id: `${provider}_user_${Date.now()}`,
-        email: `user@${provider}.com`,
-        name: `${provider.charAt(0).toUpperCase() + provider.slice(1)} User`,
-        provider,
-        createdAt: new Date().toISOString(),
-        lastLoginAt: new Date().toISOString(),
-      };
-      
-      const session: AuthSession = {
-        accessToken: 'mock_oauth_access_token',
-        refreshToken: 'mock_oauth_refresh_token',
-        expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(),
-        user,
-      };
-      
-      logger.success('OAuth登录成功', { provider, userId: user.id });
-      
-      return { user, session, provider };
-      
+
+      // 暂时禁用OAuth登录，直到正确配置Supabase OAuth提供商
+      throw new Error(`${provider} 登录功能暂未开放，请使用邮箱登录`);
+
+      // TODO: 启用真实的OAuth登录需要：
+      // 1. 在Supabase项目中配置OAuth提供商
+      // 2. 获取正确的客户端ID和密钥
+      // 3. 配置重定向URL
+
+      // 真实的OAuth登录实现（需要配置后启用）：
+      // const { data, error } = await supabaseAuth.signInWithOAuth(provider);
+      // if (error) throw new Error(error.message);
+      // return convertSupabaseUserToAppUser(data);
+
     } catch (error) {
       const friendlyError = errorHandler.handleAsyncError(error as Error, {
         component: 'AuthSlice',
         action: 'signInWithOAuth',
         extra: { provider },
       });
-      
+
       return rejectWithValue(friendlyError.message);
     }
   }
@@ -256,52 +213,50 @@ export const handleOAuthCallback = createAsyncThunk(
   ) => {
     try {
       logger.debug('处理OAuth回调', { url });
-      
-      // 解析回调URL
-      const urlObj = new URL(url);
-      const fragment = urlObj.hash.substring(1);
-      const params = new URLSearchParams(fragment);
-      
-      const accessToken = params.get('access_token');
-      const refreshToken = params.get('refresh_token');
-      const _state = params.get('state');
-      
-      void _state; // OAuth状态验证将在后续版本实现
-      
-      if (!accessToken || !refreshToken) {
-        throw new Error('OAuth回调参数不完整');
+
+      // 调用真实的Supabase OAuth回调处理
+      const { data, error } = await supabaseAuth.handleOAuthCallback(url);
+
+      if (error) {
+        logger.error('OAuth回调处理失败', error);
+        throw new Error(error.message || 'OAuth回调处理失败');
       }
-      
-      // 验证state参数
-      // 这里应该验证state与之前存储的值是否匹配
-      
-      // 模拟用户信息获取
+
+      if (!data.user || !data.session) {
+        throw new Error('OAuth回调处理失败：未获取到用户信息');
+      }
+
+      // 转换Supabase用户数据为应用格式
       const user: User = {
-        id: `oauth_user_${Date.now()}`,
-        email: 'oauth@example.com',
-        name: 'OAuth User',
-        provider: url.includes('wechat') ? 'wechat' : 'google',
-        createdAt: new Date().toISOString(),
+        id: data.user.id,
+        email: data.user.email || 'oauth@unknown.com',
+        name: data.user.user_metadata?.name ||
+          data.user.user_metadata?.full_name ||
+          data.user.email?.split('@')[0] ||
+          'OAuth User',
+        avatar: data.user.user_metadata?.avatar_url,
+        provider: (data.user.app_metadata?.provider as AuthProvider) || 'email',
+        createdAt: data.user.created_at || new Date().toISOString(),
         lastLoginAt: new Date().toISOString(),
       };
-      
+
       const session: AuthSession = {
-        accessToken,
-        refreshToken,
-        expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(),
+        accessToken: data.session.access_token,
+        refreshToken: data.session.refresh_token,
+        expiresAt: new Date(data.session.expires_at! * 1000).toISOString(),
         user,
       };
-      
+
       logger.success('OAuth回调处理成功', { userId: user.id, provider: user.provider });
-      
+
       return { user, session };
-      
+
     } catch (error) {
       const friendlyError = errorHandler.handleAsyncError(error as Error, {
         component: 'AuthSlice',
         action: 'handleOAuthCallback',
       });
-      
+
       return rejectWithValue(friendlyError.message);
     }
   }
@@ -313,22 +268,22 @@ export const signOut = createAsyncThunk(
     try {
       const state = getState() as { auth: AuthState };
       const userId = state.auth.user?.id;
-      
+
       logger.debug('用户登出', { userId });
-      
+
       // 这里应该调用实际的登出服务
       await new Promise(resolve => setTimeout(resolve, 300));
-      
+
       logger.success('用户登出成功', { userId });
-      
+
       return true;
-      
+
     } catch (error) {
       const friendlyError = errorHandler.handleAsyncError(error as Error, {
         component: 'AuthSlice',
         action: 'signOut',
       });
-      
+
       return rejectWithValue(friendlyError.message);
     }
   }
@@ -339,20 +294,20 @@ export const restoreSession = createAsyncThunk(
   async (_, { rejectWithValue }) => {
     try {
       logger.debug('恢复用户会话');
-      
+
       // 这里应该从缓存或服务器恢复会话
       // 暂时模拟
       await new Promise(resolve => setTimeout(resolve, 500));
-      
+
       // 模拟没有缓存的会话
       return null;
-      
+
     } catch (error) {
       const friendlyError = errorHandler.handleAsyncError(error as Error, {
         component: 'AuthSlice',
         action: 'restoreSession',
       });
-      
+
       return rejectWithValue(friendlyError.message);
     }
   }
@@ -364,32 +319,32 @@ export const refreshSession = createAsyncThunk(
     try {
       const state = getState() as { auth: AuthState };
       const refreshToken = state.auth.session?.refreshToken;
-      
+
       if (!refreshToken) {
         throw new Error('没有可用的刷新令牌');
       }
-      
+
       logger.debug('刷新用户会话');
-      
+
       // 这里应该调用实际的刷新服务
       await new Promise(resolve => setTimeout(resolve, 400));
-      
+
       const newSession: AuthSession = {
         ...state.auth.session!,
         accessToken: 'new_access_token',
         expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(),
       };
-      
+
       logger.success('会话刷新成功');
-      
+
       return newSession;
-      
+
     } catch (error) {
       const friendlyError = errorHandler.handleAsyncError(error as Error, {
         component: 'AuthSlice',
         action: 'refreshSession',
       });
-      
+
       return rejectWithValue(friendlyError.message);
     }
   }
@@ -406,21 +361,21 @@ const authSlice = createSlice({
         state.error = null;
       }
     },
-    
+
     setError: (state, action: PayloadAction<string | null>) => {
       state.error = action.payload;
       if (action.payload) {
         state.status = 'error';
       }
     },
-    
+
     clearError: (state) => {
       state.error = null;
       if (state.status === 'error') {
         state.status = state.user ? 'authenticated' : 'unauthenticated';
       }
     },
-    
+
     updateWechatLoginStatus: (state, action: PayloadAction<{
       status: AuthState['wechatLoginStatus'];
       error?: string;
@@ -429,37 +384,37 @@ const authSlice = createSlice({
       const { status, error, tabId } = action.payload;
       state.wechatLoginStatus = status;
       state.wechatLoginError = error || null;
-      
+
       if (tabId !== undefined) {
         state.wechatLoginTabId = tabId;
       }
-      
+
       logger.debug('微信登录状态更新', { status, error, tabId });
     },
-    
+
     resetWechatLogin: (state) => {
       state.wechatLoginStatus = 'idle';
       state.wechatLoginError = null;
       state.wechatLoginTabId = null;
     },
-    
+
     setFromCache: (state, action: PayloadAction<{ user: User; session?: AuthSession }>) => {
       const { user, session } = action.payload;
       state.user = user;
       state.session = session || null;
       state.status = 'authenticated';
       state.isSessionRestored = true;
-      
+
       logger.debug('从缓存恢复认证状态', { userId: user.id });
     },
-    
+
     updateUser: (state, action: PayloadAction<Partial<User>>) => {
       if (state.user) {
         state.user = { ...state.user, ...action.payload };
         logger.debug('用户信息已更新', action.payload);
       }
     },
-    
+
     resetAuthState: (state) => {
       state.status = 'unauthenticated';
       state.user = null;
@@ -493,7 +448,7 @@ const authSlice = createSlice({
         state.error = action.payload as string;
         state.status = 'error';
       })
-      
+
       // signUpWithEmail
       .addCase(signUpWithEmail.pending, (state) => {
         state.isLoading = true;
@@ -514,7 +469,7 @@ const authSlice = createSlice({
         state.error = action.payload as string;
         state.status = 'error';
       })
-      
+
       // signInWithOAuth
       .addCase(signInWithOAuth.pending, (state) => {
         state.isLoading = true;
@@ -523,7 +478,7 @@ const authSlice = createSlice({
       })
       .addCase(signInWithOAuth.fulfilled, (state, action) => {
         const payload = action.payload;
-        
+
         // 微信登录需要打开新标签页
         if ('requiresTab' in payload) {
           state.isLoading = false;
@@ -531,7 +486,7 @@ const authSlice = createSlice({
           state.status = 'idle';
           return;
         }
-        
+
         const { user, session, provider } = payload;
         state.isLoading = false;
         state.user = user;
@@ -544,7 +499,7 @@ const authSlice = createSlice({
         state.error = action.payload as string;
         state.status = 'error';
       })
-      
+
       // handleOAuthCallback
       .addCase(handleOAuthCallback.fulfilled, (state, action) => {
         const { user, session } = action.payload;
@@ -552,7 +507,7 @@ const authSlice = createSlice({
         state.session = session;
         state.status = 'authenticated';
         state.loginProvider = user.provider;
-        
+
         // 重置微信登录状态
         if (user.provider === 'wechat') {
           state.wechatLoginStatus = 'confirmed';
@@ -564,7 +519,7 @@ const authSlice = createSlice({
         state.wechatLoginStatus = 'error';
         state.wechatLoginError = action.payload as string;
       })
-      
+
       // signOut
       .addCase(signOut.fulfilled, (state) => {
         state.user = null;
@@ -576,7 +531,7 @@ const authSlice = createSlice({
         state.wechatLoginError = null;
         state.wechatLoginTabId = null;
       })
-      
+
       // restoreSession
       .addCase(restoreSession.fulfilled, (state, action) => {
         state.isSessionRestored = true;
@@ -591,7 +546,7 @@ const authSlice = createSlice({
           state.status = 'unauthenticated';
         }
       })
-      
+
       // refreshSession
       .addCase(refreshSession.fulfilled, (state, action) => {
         state.session = action.payload;

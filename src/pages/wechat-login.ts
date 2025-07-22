@@ -70,14 +70,12 @@ document.addEventListener('DOMContentLoaded', async () => {
   updateLoginStatus('pending');
 
   const checkScanStatus = () => {
-    // 在生产环境中禁用模拟登录
-    if (process.env.NODE_ENV === 'production') {
-      if (statusTextElement) {
-        statusTextElement.textContent = '微信登录功能暂未开放，请使用其他登录方式';
-      }
-      updateLoginStatus('error', '微信登录功能暂未开放');
-      return;
+    // 完全禁用模拟微信登录
+    if (statusTextElement) {
+      statusTextElement.textContent = '微信登录功能暂未开放，请使用邮箱登录';
     }
+    updateLoginStatus('error', '微信登录功能暂未开放');
+    return;
 
     // 开发环境模拟扫码流程
     const now = Date.now();
@@ -104,13 +102,13 @@ document.addEventListener('DOMContentLoaded', async () => {
         statusTextElement.textContent = '登录成功，正在跳转...';
       }
       updateLoginStatus('confirmed');
-      
+
       // 模拟登录成功，构造回调URL
       setTimeout(() => {
         const callbackUrl = `${window.location.origin}/oauth-callback.html#access_token=mock_access_token&refresh_token=mock_refresh_token&state=${state}&expires_in=3600`;
         window.location.href = callbackUrl;
       }, 1000);
-      
+
       if (pollingId) {
         clearInterval(pollingId);
       }
@@ -146,4 +144,4 @@ document.addEventListener('DOMContentLoaded', async () => {
 });
 
 // 导出空对象以确保这是一个模块
-export {};
+export { };

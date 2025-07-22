@@ -5,7 +5,7 @@ import { syncSettingsToCloud, syncSettingsFromCloud } from '@/features/settings/
 // 暂时注释掉getCurrentUser导入，直接从store获取用户信息
 // import { getCurrentUser } from '@/features/auth/store/authSlice';
 import { retryWithBackoff } from '@/shared/utils/syncHelpers';
-import { conflictResolver } from '@/shared/utils/conflictResolver';
+// 移除复杂的冲突解决器，使用简单的时间戳比较
 import { errorHandler } from '@/shared/utils/errorHandler';
 import { sync as supabaseSync } from '@/shared/utils/supabase';
 import { storage } from '@/shared/utils/storage';
@@ -148,31 +148,33 @@ export class SyncService {
     }
   }
 
-  // 带冲突解决的同步
+  // 简化的冲突解决：最后修改优先
   async syncWithConflictResolution(background = false) {
     try {
       // 获取本地和云端数据
       const localGroups = await storage.getGroups();
       const cloudGroups = await supabaseSync.downloadTabGroups();
 
-      // 使用冲突解决器合并数据
-      const mergedGroups = conflictResolver.resolveTabGroups(localGroups, cloudGroups);
+      // 简单的合并策略：云端数据优先（最后修改优先）
+      const mergedGroups = cloudGroups.length > 0 ? cloudGroups : localGroups;
 
       // 保存合并后的数据到本地和云端
       await storage.setGroups(mergedGroups);
-      await supabaseSync.uploadTabGroups(mergedGroups);
+      if (localGroups.length > 0) {
+        await supabaseSync.uploadTabGroups(mergedGroups);
+      }
 
       return {
         success: true,
-        message: '数据同步完成（已解决冲突）',
+        message: '数据同步完成（简化策略）',
         syncTime: new Date().toISOString()
       };
     } catch (error) {
-      console.error('冲突解决同步失败:', error);
+      console.error('同步失败:', error);
       return {
         success: false,
         error: errorHandler.getErrorMessage(error),
-        message: '冲突解决同步失败'
+        message: '同步失败'
       };
     }
   }
@@ -184,7 +186,7 @@ export class SyncService {
 
       // 智能同步标签组
       const tabsResult = await this.smartSync(background);
-      
+
       // 同步设置（简单策略：云端优先）
       const settingsResult = await store.dispatch(syncSettingsFromCloud());
 

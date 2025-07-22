@@ -6,7 +6,8 @@ import { saveSettings, toggleUseDoubleColumnLayout } from '@/features/settings/s
 import { cleanDuplicateTabs } from '@/features/tabs/store/tabGroupsSlice';
 import { HeaderDropdown } from './HeaderDropdown';
 import { TabCounter } from './TabCounter';
-import SyncButton from '@/components/sync/SyncButton';
+// 移除复杂的手动同步按钮，使用简化的自动同步
+// import SyncButton from '@/components/sync/SyncButton';
 import { SimpleThemeToggle } from './SimpleThemeToggle';
 import { useOnboarding } from '@/features/onboarding/components/OnboardingProvider';
 import { createMemoComparison } from '@/shared/utils/performanceOptimizer';
@@ -224,7 +225,7 @@ const HeaderComponent: React.FC<HeaderProps> = ({ onSearch }) => {
 
               <SimpleThemeToggle />
 
-              <SyncButton />
+              {/* 移除复杂的手动同步按钮，使用简化的自动同步 */}
 
               <button
                 onClick={handleSaveAllTabs}

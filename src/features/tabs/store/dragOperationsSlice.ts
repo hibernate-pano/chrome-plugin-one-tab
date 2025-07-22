@@ -5,6 +5,7 @@
 import { createSlice, createAsyncThunk, PayloadAction } from '@reduxjs/toolkit';
 import { storage } from '@/shared/utils/storage';
 import { logger } from '@/shared/utils/logger';
+import { simpleSyncService } from '@/services/simpleSyncService';
 
 interface DragOperationsState {
   isDragging: boolean;
@@ -39,21 +40,21 @@ export const moveTab = createAsyncThunk(
     targetIndex: number;
   }) => {
     logger.dnd('移动标签页', { sourceGroupId, sourceIndex, targetGroupId, targetIndex });
-    
+
     const groups = await storage.getGroups();
     const sourceGroup = groups.find(g => g.id === sourceGroupId);
     const targetGroup = groups.find(g => g.id === targetGroupId);
-    
+
     if (!sourceGroup || !targetGroup) {
       throw new Error('标签组未找到');
     }
-    
+
     // 获取要移动的标签页
     const tab = sourceGroup.tabs[sourceIndex];
     if (!tab) {
       throw new Error('标签页未找到');
     }
-    
+
     // 创建新的标签数组 - 修复跨组拖拽逻辑
     const isInterGroupDrag = sourceGroupId !== targetGroupId;
     const newSourceTabs = [...sourceGroup.tabs];
@@ -91,7 +92,7 @@ export const moveTab = createAsyncThunk(
       sourceTabsAfter: newSourceTabs.length,
       targetTabsAfter: newTargetTabs.length
     });
-    
+
     // 更新标签组 - 修复跨组拖拽的状态更新
     const currentTime = new Date().toISOString();
     const updatedSourceGroup = {
@@ -105,14 +106,14 @@ export const moveTab = createAsyncThunk(
       tabs: newTargetTabs,
       updatedAt: currentTime,
     } : updatedSourceGroup;
-    
+
     // 更新存储
     const updatedGroups = groups.map(g => {
       if (g.id === sourceGroupId) return updatedSourceGroup;
       if (g.id === targetGroupId) return updatedTargetGroup;
       return g;
     });
-    
+
     await storage.setGroups(updatedGroups);
 
     return {
@@ -132,24 +133,27 @@ export const moveGroup = createAsyncThunk(
   'dragOps/moveGroup',
   async ({ dragIndex, hoverIndex }: { dragIndex: number; hoverIndex: number }) => {
     logger.dnd('移动标签组', { dragIndex, hoverIndex });
-    
+
     const groups = await storage.getGroups();
-    
+
     // 验证索引
     if (dragIndex < 0 || dragIndex >= groups.length || hoverIndex < 0 || hoverIndex >= groups.length) {
       throw new Error('无效的标签组索引');
     }
-    
+
     const dragGroup = groups[dragIndex];
     const newGroups = [...groups];
-    
+
     // 删除拖拽的标签组
     newGroups.splice(dragIndex, 1);
     // 在新位置插入标签组
     newGroups.splice(hoverIndex, 0, dragGroup);
-    
+
     await storage.setGroups(newGroups);
-    
+
+    // 触发简化同步
+    simpleSyncService.scheduleUpload();
+
     return { dragIndex, hoverIndex };
   }
 );
@@ -179,32 +183,32 @@ const dragOperationsSlice = createSlice({
       state.dragItemId = itemId;
       logger.dnd('开始拖拽', { type, itemId });
     },
-    
+
     updateDropTarget: (state, action: PayloadAction<string | null>) => {
       state.dropTargetId = action.payload;
     },
-    
+
     endDrag: (state) => {
-      logger.dnd('结束拖拽', { 
-        type: state.dragType, 
+      logger.dnd('结束拖拽', {
+        type: state.dragType,
         itemId: state.dragItemId,
         targetId: state.dropTargetId
       });
-      
+
       state.isDragging = false;
       state.dragType = null;
       state.dragItemId = null;
       state.dropTargetId = null;
     },
-    
+
     setProcessing: (state, action: PayloadAction<boolean>) => {
       state.isProcessing = action.payload;
     },
-    
+
     setError: (state, action: PayloadAction<string | null>) => {
       state.error = action.payload;
     },
-    
+
     // 临时更新拖拽位置（用于视觉反馈）
     updateDragPreview: (_state, action: PayloadAction<{ sourceIndex: number; targetIndex: number }>) => {
       // 这里可以添加拖拽预览的状态更新逻辑
@@ -227,7 +231,7 @@ const dragOperationsSlice = createSlice({
         state.error = action.error.message || '移动标签页失败';
         logger.error('移动标签页失败', action.error);
       })
-      
+
       // moveGroup
       .addCase(moveGroup.pending, (state) => {
         state.isProcessing = true;

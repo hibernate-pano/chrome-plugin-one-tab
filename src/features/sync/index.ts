@@ -6,6 +6,4 @@
 export { default as syncReducer } from './store/syncSlice';
 export * from './store/syncSlice';
 
-// Services
-export { syncCoordinator, SyncCoordinator } from './services/SyncCoordinator';
-export type { SyncOperation, SyncResult } from './services/SyncCoordinator';
+// Services - 移除复杂的SyncCoordinator，使用简化的同步服务

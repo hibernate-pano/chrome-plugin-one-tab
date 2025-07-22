@@ -98,7 +98,7 @@ export const MemoryMonitorPanel: React.FC = () => {
   }
 
   const latestMemory = memoryHistory[memoryHistory.length - 1];
-  const usagePercentage = latestMemory 
+  const usagePercentage = latestMemory
     ? getMemoryUsagePercentage(latestMemory.usedJSHeapSize, latestMemory.totalJSHeapSize)
     : 0;
 
@@ -157,10 +157,9 @@ export const MemoryMonitorPanel: React.FC = () => {
               <div className="mt-2">
                 <div className="w-full bg-gray-200 rounded-full h-2">
                   <div
-                    className={`h-2 rounded-full transition-all duration-300 ${
-                      usagePercentage < 50 ? 'bg-green-500' :
-                      usagePercentage < 80 ? 'bg-yellow-500' : 'bg-red-500'
-                    }`}
+                    className={`h-2 rounded-full transition-all duration-300 ${usagePercentage < 50 ? 'bg-green-500' :
+                        usagePercentage < 80 ? 'bg-yellow-500' : 'bg-red-500'
+                      }`}
                     style={{ width: `${Math.min(usagePercentage, 100)}%` }}
                   />
                 </div>
@@ -202,18 +201,17 @@ export const MemoryMonitorPanel: React.FC = () => {
             <div className="mb-4">
               <h4 className="font-medium text-sm mb-2">内存使用趋势</h4>
               <div className="h-16 bg-gray-100 rounded relative overflow-hidden">
-                <svg className="w-full h-full">
+                <svg className="w-full h-full" viewBox="0 0 100 100" preserveAspectRatio="none">
                   <polyline
                     fill="none"
                     stroke="#3b82f6"
-                    strokeWidth="2"
+                    strokeWidth="1"
                     points={memoryHistory.map((stat, index) => {
                       const x = (index / (memoryHistory.length - 1)) * 100;
                       const y = 100 - (stat.usedJSHeapSize / stat.jsHeapSizeLimit) * 100;
                       return `${x},${y}`;
                     }).join(' ')}
                     vectorEffect="non-scaling-stroke"
-                    style={{ transform: 'scale(1, 0.8) translateY(10%)' }}
                   />
                 </svg>
               </div>

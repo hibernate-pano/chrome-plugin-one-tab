@@ -21,7 +21,7 @@ export const DEFAULT_SETTINGS: UserSettings = {
   syncInterval: 5, // 默认10分钟自动同步一次
   useDoubleColumnLayout: true, // 默认使用双栏布局
   showNotifications: false, // 默认关闭通知
-  showManualSyncButtons: false, // 默认隐藏手动同步按钮
+  showManualSyncButtons: false, // 默认隐藏手动同步按钮（简化UI）
   syncStrategy: 'newest', // 默认使用最新版本
   deleteStrategy: 'everywhere', // 默认在所有设备上删除
   themeMode: 'auto', // 默认使用自动模式（跟随系统）
