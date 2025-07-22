@@ -1,6 +1,5 @@
 import { supabase } from '@/utils/supabase';
 import { store } from '@/app/store';
-import { simpleSyncService } from '@/services/simpleSyncService';
 import { storage } from '@/shared/utils/storage';
 import { RealtimeChannel } from '@supabase/supabase-js';
 import { selectIsAuthenticated, selectAuthUser } from '@/features/auth/store/authSlice';
@@ -319,14 +318,14 @@ class RealtimeSync {
             console.log(`🔄 实时同步中解决了 ${pullResult.conflicts.length} 个版本冲突`);
           }
         } else {
-          console.warn('⚠️ 实时同步失败，降级到简化同步:', pullResult.message);
-          // 降级到简化同步
-          await simpleSyncService.downloadFromCloud();
+          console.error('❌ 实时同步失败:', pullResult.message);
+          // 记录错误但不降级，避免功能不完整的同步
+          console.error('实时同步服务不可用，请检查网络连接');
         }
       } catch (error) {
-        console.error('❌ 乐观锁同步失败，降级到简化同步:', error);
-        // 降级到简化同步
-        await simpleSyncService.downloadFromCloud();
+        console.error('❌ 乐观锁同步失败:', error);
+        // 记录错误但不降级，避免功能不完整的同步
+        console.error('同步服务不可用，请检查网络连接');
       }
 
       // 显示通知（如果启用）

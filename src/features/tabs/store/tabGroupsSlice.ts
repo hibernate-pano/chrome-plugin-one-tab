@@ -9,8 +9,6 @@ import { TabGroup } from '@/shared/types/tab';
 import { nanoid } from '@reduxjs/toolkit';
 // 导入拖拽操作，用于监听拖拽完成事件
 import { moveTab, moveGroup } from './dragOperationsSlice';
-// 导入简化同步服务
-import { simpleSyncService } from '@/services/simpleSyncService';
 
 interface TabGroupsState {
   groups: TabGroup[];
@@ -208,10 +206,11 @@ export const updateGroupName = createAsyncThunk(
     try {
       const { optimisticSyncService } = await import('@/services/optimisticSyncService');
       optimisticSyncService.schedulePushOnly();
+      console.log('✅ 删除后同步服务启动成功');
     } catch (error) {
-      console.error('触发删除后同步失败:', error);
-      // 降级到简化同步
-      simpleSyncService.scheduleUpload();
+      console.error('❌ 删除后同步服务启动失败:', error);
+      // 不再降级，记录错误
+      console.error('同步服务不可用，请检查网络连接');
     }
 
     return { groupId, name };

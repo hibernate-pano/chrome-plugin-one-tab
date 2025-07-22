@@ -5,7 +5,6 @@
 import { createSlice, createAsyncThunk, PayloadAction } from '@reduxjs/toolkit';
 import { storage } from '@/shared/utils/storage';
 import { logger } from '@/shared/utils/logger';
-import { simpleSyncService } from '@/services/simpleSyncService';
 
 interface DragOperationsState {
   isDragging: boolean;
@@ -151,8 +150,14 @@ export const moveGroup = createAsyncThunk(
 
     await storage.setGroups(newGroups);
 
-    // 触发简化同步
-    simpleSyncService.scheduleUpload();
+    // 触发同步
+    try {
+      const { optimisticSyncService } = await import('@/services/optimisticSyncService');
+      optimisticSyncService.schedulePushOnly();
+      logger.debug('拖拽操作后同步服务启动成功');
+    } catch (error) {
+      logger.error('拖拽操作后同步服务启动失败:', error);
+    }
 
     return { dragIndex, hoverIndex };
   }

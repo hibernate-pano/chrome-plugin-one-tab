@@ -6,8 +6,7 @@ import { nanoid } from '@reduxjs/toolkit';
 import { logger } from '@/shared/utils/logger';
 import { storage } from '@/shared/utils/storage';
 import { showNotification } from '@/shared/utils/notification';
-import { TabGroup, Tab } from '@/shared/types/tab';
-import { simpleSyncService } from '@/services/simpleSyncService';
+import { TabGroup } from '@/shared/types/tab';
 
 console.log('Background script loaded - OneTab Plus');
 
@@ -225,10 +224,16 @@ const saveTabs = async (tabs: chrome.tabs.Tab[]) => {
     try {
       const { optimisticSyncService } = await import('./services/optimisticSyncService');
       optimisticSyncService.scheduleSync();
+      console.log('✅ 乐观锁同步服务启动成功');
     } catch (error) {
-      console.error('导入乐观锁同步服务失败:', error);
-      // 降级到简化同步
-      simpleSyncService.scheduleUpload();
+      console.error('❌ 乐观锁同步服务启动失败:', error);
+      // 显示错误通知而不是静默降级
+      await showNotification({
+        type: 'basic',
+        iconUrl: '/icons/icon128.png',
+        title: '同步服务启动失败',
+        message: '数据同步功能暂时不可用，请检查网络连接后重试'
+      });
     }
 
     logger.info('标签页保存详情', {

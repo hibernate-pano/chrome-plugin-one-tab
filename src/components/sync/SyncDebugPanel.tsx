@@ -1,7 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useAppSelector } from '@/app/store/hooks';
 import { realtimeSync } from '@/services/realtimeSync';
-import { simpleSyncService } from '@/services/simpleSyncService';
 
 interface SyncDebugPanelProps {
   isOpen: boolean;
@@ -55,16 +54,22 @@ export const SyncDebugPanel: React.FC<SyncDebugPanelProps> = ({ isOpen, onClose 
     }
   };
 
-  const handleTestUpload = () => {
+  const handleTestUpload = async () => {
     addLog('用户触发测试上传');
-    simpleSyncService.scheduleUpload();
-    addLog('测试上传已安排');
+    try {
+      const { optimisticSyncService } = await import('@/services/optimisticSyncService');
+      optimisticSyncService.schedulePushOnly();
+      addLog('测试上传已安排');
+    } catch (error) {
+      addLog(`测试上传失败: ${error}`);
+    }
   };
 
   const handleTestDownload = async () => {
     addLog('用户触发测试下载');
     try {
-      await simpleSyncService.downloadFromCloud();
+      const { optimisticSyncService } = await import('@/services/optimisticSyncService');
+      await optimisticSyncService.pullLatestData();
       addLog('测试下载完成');
     } catch (error) {
       addLog(`测试下载失败: ${error}`);

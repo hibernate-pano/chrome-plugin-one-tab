@@ -1,6 +1,5 @@
 import { store } from '@/app/store';
 import { syncService } from '@/services/syncService';
-import { simpleSyncService } from '@/services/simpleSyncService';
 import { storage } from '@/utils/storage';
 import { supabase } from '@/utils/supabase';
 import { realtimeSync } from '@/services/realtimeSync';
@@ -315,7 +314,7 @@ class AutoSyncManager {
   }
 
   /**
-   * 简化的定期同步
+   * 定期同步（使用完整的同步服务）
    */
   private async performSimplePeriodicSync() {
     const state = store.getState();
@@ -326,9 +325,14 @@ class AutoSyncManager {
       return;
     }
 
-    console.log('🔄 执行定期备份同步');
-    // 简单地触发上传，作为备份机制
-    simpleSyncService.scheduleUpload();
+    console.log('🔄 执行定期同步');
+    try {
+      // 使用完整的同步服务而不是简化版本
+      const { optimisticSyncService } = await import('./optimisticSyncService');
+      optimisticSyncService.scheduleSync();
+    } catch (error) {
+      console.error('❌ 定期同步失败:', error);
+    }
   }
 
   /**

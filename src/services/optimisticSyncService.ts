@@ -30,6 +30,8 @@ export class OptimisticSyncService {
   private isPushing = false; // 专门的推送锁
   private syncQueue: Array<() => Promise<void>> = [];
   private isProcessingQueue = false;
+  private readonly MAX_RETRIES = 3;
+  private retryCount = 0;
 
   /**
    * 主要同步方法：严格按照pull-first流程

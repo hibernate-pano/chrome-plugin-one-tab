@@ -13,7 +13,6 @@ import { store } from '@/app/store';
 import { hasSyncPromptShown, markSyncPromptShown } from '@/utils/syncPromptUtils';
 import { checkCloudData } from '@/utils/cloudDataUtils';
 import { autoSyncManager } from '@/services/autoSyncManager';
-import { simpleSyncService } from '@/services/simpleSyncService';
 import { storage } from '@/shared/utils/storage';
 // 使用动态导入懒加载同步提示对话框
 const SyncPromptModal = lazy(() => import('@/components/sync/SyncPromptModal'));
@@ -197,10 +196,11 @@ const App: React.FC = () => {
               try {
                 const { optimisticSyncService } = await import('@/services/optimisticSyncService');
                 optimisticSyncService.scheduleSync();
+                console.log('✅ 乐观锁同步服务启动成功');
               } catch (error) {
-                console.error('触发乐观锁同步失败:', error);
-                // 降级到简化同步
-                simpleSyncService.scheduleUpload();
+                console.error('❌ 乐观锁同步服务启动失败:', error);
+                // 不再降级，而是记录错误
+                console.error('同步服务不可用，请检查网络连接');
               }
             }, 1000);
           } else {
@@ -258,10 +258,11 @@ const App: React.FC = () => {
     try {
       const { optimisticSyncService } = await import('@/services/optimisticSyncService');
       optimisticSyncService.scheduleSync();
+      console.log('✅ 迁移后同步服务启动成功');
     } catch (error) {
-      console.error('迁移后触发同步失败:', error);
-      // 降级到简化同步
-      simpleSyncService.scheduleUpload();
+      console.error('❌ 迁移后同步服务启动失败:', error);
+      // 不再降级，记录错误
+      console.error('同步服务不可用，请检查网络连接');
     }
   };
 
