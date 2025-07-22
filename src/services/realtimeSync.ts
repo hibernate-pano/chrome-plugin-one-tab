@@ -1,7 +1,7 @@
 import { supabase } from '@/utils/supabase';
 import { store } from '@/app/store';
-import { syncService } from '@/services/syncService';
 import { simpleSyncService } from '@/services/simpleSyncService';
+import { storage } from '@/shared/utils/storage';
 import { RealtimeChannel } from '@supabase/supabase-js';
 import { selectIsAuthenticated, selectAuthUser } from '@/features/auth/store/authSlice';
 
@@ -12,6 +12,7 @@ class RealtimeSync {
   private connectionStatus: 'disconnected' | 'connecting' | 'connected' | 'error' = 'disconnected';
   private reconnectTimer: NodeJS.Timeout | null = null;
   private heartbeatTimer: NodeJS.Timeout | null = null;
+  private syncTimeout: NodeJS.Timeout | null = null;
   private reconnectAttempts = 0;
   private readonly MAX_RECONNECT_ATTEMPTS = 5;
   private readonly RECONNECT_DELAY = 5000; // 5秒
@@ -239,10 +240,15 @@ class RealtimeSync {
         currentDeviceId
       });
 
-      // 延迟处理，避免频繁同步
-      setTimeout(async () => {
+      // 延迟处理，避免频繁同步（缩短延迟提高响应速度）
+      if (this.syncTimeout) {
+        clearTimeout(this.syncTimeout);
+      }
+
+      this.syncTimeout = setTimeout(async () => {
+        console.log('🔄 开始执行实时同步响应');
         await this.performRealtimeSync();
-      }, 1000);
+      }, 500); // 缩短到500ms，提高响应速度
 
     } catch (error) {
       console.error('❌ 处理实时变化失败:', error);
@@ -276,7 +282,7 @@ class RealtimeSync {
   }
 
   /**
-   * 执行实时同步
+   * 执行实时同步 - 使用乐观锁机制避免数据覆盖
    */
   private async performRealtimeSync() {
     try {
@@ -285,12 +291,43 @@ class RealtimeSync {
         return;
       }
 
-      console.log('🔄 开始实时同步数据');
+      console.log('🔄 开始实时同步数据（使用乐观锁机制 + 冲突检测）');
 
-      // 使用简化的同步服务立即下载
-      await simpleSyncService.downloadFromCloud();
+      // 检查是否有待处理的用户操作，避免覆盖
+      try {
+        const { syncCoordinator } = await import('./syncCoordinator');
+        const localGroups = await storage.getGroups();
+        const localGroupIds = localGroups.map(g => g.id);
 
-      console.log('✅ 实时同步完成');
+        if (syncCoordinator.shouldBlockRealtimeSync(localGroupIds)) {
+          console.log('⚠️ 检测到待处理的用户操作，暂停实时同步');
+          return;
+        }
+      } catch (error) {
+        console.warn('⚠️ 同步协调器检查失败，继续执行同步:', error);
+      }
+
+      // 使用乐观锁的pullLatestData方法，包含版本冲突检测
+      try {
+        const { optimisticSyncService } = await import('./optimisticSyncService');
+        const pullResult = await optimisticSyncService.pullLatestData();
+
+        if (pullResult.success) {
+          console.log('✅ 实时同步完成（乐观锁 + 冲突检测）');
+
+          if (pullResult.conflicts && pullResult.conflicts.length > 0) {
+            console.log(`🔄 实时同步中解决了 ${pullResult.conflicts.length} 个版本冲突`);
+          }
+        } else {
+          console.warn('⚠️ 实时同步失败，降级到简化同步:', pullResult.message);
+          // 降级到简化同步
+          await simpleSyncService.downloadFromCloud();
+        }
+      } catch (error) {
+        console.error('❌ 乐观锁同步失败，降级到简化同步:', error);
+        // 降级到简化同步
+        await simpleSyncService.downloadFromCloud();
+      }
 
       // 显示通知（如果启用）
       if (state.settings.showNotifications) {

@@ -161,7 +161,8 @@ export class SyncService {
       // 保存合并后的数据到本地和云端
       await storage.setGroups(mergedGroups);
       if (localGroups.length > 0) {
-        await supabaseSync.uploadTabGroups(mergedGroups);
+        // 在冲突解决后使用覆盖模式确保数据一致性
+        await supabaseSync.uploadTabGroups(mergedGroups, true);
       }
 
       return {

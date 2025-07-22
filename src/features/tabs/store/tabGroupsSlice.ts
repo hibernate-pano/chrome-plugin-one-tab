@@ -52,9 +52,9 @@ export const saveGroup = createAsyncThunk(
     const updatedGroups = [newGroup, ...groups];
     await storage.setGroups(updatedGroups);
 
-    // 触发乐观锁同步
+    // 触发用户操作后的push-only同步
     const { optimisticSyncService } = await import('@/services/optimisticSyncService');
-    optimisticSyncService.scheduleSync();
+    optimisticSyncService.schedulePushOnly();
 
     return newGroup;
   }
@@ -75,9 +75,9 @@ export const updateGroup = createAsyncThunk(
     const updatedGroups = groups.map(g => g.id === group.id ? updatedGroup : g);
     await storage.setGroups(updatedGroups);
 
-    // 触发乐观锁同步
+    // 触发用户操作后的push-only同步
     const { optimisticSyncService } = await import('@/services/optimisticSyncService');
-    optimisticSyncService.scheduleSync();
+    optimisticSyncService.schedulePushOnly();
 
     return updatedGroup;
   }
@@ -92,85 +92,45 @@ export const deleteGroup = createAsyncThunk(
     const updatedGroups = groups.filter(g => g.id !== groupId);
     await storage.setGroups(updatedGroups);
 
-    // 触发简化同步
-    simpleSyncService.scheduleUpload();
+    // 触发用户操作后的push-only同步
+    try {
+      const { optimisticSyncService } = await import('@/services/optimisticSyncService');
+      optimisticSyncService.schedulePushOnly();
+    } catch (error) {
+      console.error('触发删除后同步失败:', error);
+      // 降级到简化同步
+      simpleSyncService.scheduleUpload();
+    }
 
     return groupId;
   }
 );
 
-// 清理重复标签功能
+// 清理重复标签功能 - 使用同步协调器确保数据一致性
 export const cleanDuplicateTabs = createAsyncThunk(
   'tabGroups/cleanDuplicateTabs',
   async () => {
-    logger.debug('开始清理重复标签');
+    logger.debug('开始清理重复标签 - 使用同步协调器');
 
     try {
-      // 获取所有标签组
-      const groups = await storage.getGroups();
+      // 使用同步协调器执行受保护的去重操作
+      const { syncCoordinator } = await import('@/services/syncCoordinator');
+      const result = await syncCoordinator.executeProtectedDeduplication();
 
-      // 创建URL映射，记录每个URL对应的标签页
-      const urlMap = new Map<string, { tab: any; groupId: string }[]>();
+      if (!result.success) {
+        throw new Error('去重操作失败');
+      }
 
-      // 扫描所有标签页，按URL分组
-      groups.forEach(group => {
-        group.tabs.forEach(tab => {
-          if (tab.url) {
-            // 对于loading://开头的URL，需要特殊处理
-            const urlKey = tab.url.startsWith('loading://') ? `${tab.url}|${tab.title}` : tab.url;
+      // 获取更新后的标签组
+      const updatedGroups = await storage.getGroups();
 
-            if (!urlMap.has(urlKey)) {
-              urlMap.set(urlKey, []);
-            }
-            urlMap.get(urlKey)?.push({ tab, groupId: group.id });
-          }
-        });
+      logger.debug('清理重复标签完成 - 同步协调器', {
+        removedCount: result.removedCount,
+        remainingGroups: updatedGroups.length,
+        operationId: result.operationId
       });
 
-      // 处理重复标签页
-      let removedCount = 0;
-      const updatedGroups = [...groups];
-
-      urlMap.forEach(tabsWithSameUrl => {
-        if (tabsWithSameUrl.length > 1) {
-          // 按创建时间排序，保留最新的
-          tabsWithSameUrl.sort((a, b) =>
-            new Date(b.tab.createdAt || 0).getTime() - new Date(a.tab.createdAt || 0).getTime()
-          );
-
-          // 保留第一个（最新的），删除其余的
-          for (let i = 1; i < tabsWithSameUrl.length; i++) {
-            const { groupId, tab } = tabsWithSameUrl[i];
-            const groupIndex = updatedGroups.findIndex(g => g.id === groupId);
-
-            if (groupIndex !== -1) {
-              // 从标签组中删除该标签页
-              updatedGroups[groupIndex].tabs = updatedGroups[groupIndex].tabs.filter(
-                t => t.id !== tab.id
-              );
-              removedCount++;
-
-              // 更新标签组的updatedAt时间
-              updatedGroups[groupIndex].updatedAt = new Date().toISOString();
-
-              // 如果标签组变为空且不是锁定状态，删除该标签组
-              if (
-                updatedGroups[groupIndex].tabs.length === 0 &&
-                !updatedGroups[groupIndex].isLocked
-              ) {
-                updatedGroups.splice(groupIndex, 1);
-              }
-            }
-          }
-        }
-      });
-
-      // 保存更新后的标签组
-      await storage.setGroups(updatedGroups);
-
-      logger.debug('清理重复标签完成', { removedCount, remainingGroups: updatedGroups.length });
-
-      return { removedCount, updatedGroups };
+      return { removedCount: result.removedCount, updatedGroups };
     } catch (error) {
       logger.error('清理重复标签失败', error);
       throw error;
@@ -199,8 +159,15 @@ export const updateGroupName = createAsyncThunk(
     const updatedGroups = groups.map(g => g.id === groupId ? updatedGroup : g);
     await storage.setGroups(updatedGroups);
 
-    // 触发简化同步
-    simpleSyncService.scheduleUpload();
+    // 触发用户删除操作后的push-only同步
+    try {
+      const { optimisticSyncService } = await import('@/services/optimisticSyncService');
+      optimisticSyncService.schedulePushOnly();
+    } catch (error) {
+      console.error('触发删除后同步失败:', error);
+      // 降级到简化同步
+      simpleSyncService.scheduleUpload();
+    }
 
     return { groupId, name };
   }

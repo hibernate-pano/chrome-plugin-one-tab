@@ -130,8 +130,8 @@ export class SimpleSyncService {
         updatedAt: new Date().toISOString()
       }));
 
-      // 上传到云端
-      await supabaseSync.uploadTabGroups(groupsWithTimestamp);
+      // 上传到云端 - 简化同步使用合并模式（保持向后兼容）
+      await supabaseSync.uploadTabGroups(groupsWithTimestamp, false);
 
       console.log('✅ 数据上传成功');
 
