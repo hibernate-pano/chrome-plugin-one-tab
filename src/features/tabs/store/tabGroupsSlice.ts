@@ -37,12 +37,13 @@ export const loadGroups = createAsyncThunk('tabGroups/loadGroups', async () => {
 
 export const saveGroup = createAsyncThunk(
   'tabGroups/saveGroup',
-  async (group: Omit<TabGroup, 'id' | 'createdAt' | 'updatedAt'>) => {
+  async (group: Omit<TabGroup, 'id' | 'createdAt' | 'updatedAt' | 'version'>) => {
     logger.debug('保存新标签组', { name: group.name, tabCount: group.tabs.length });
 
     const newGroup: TabGroup = {
       ...group,
       id: nanoid(),
+      version: 1, // 新标签组版本号从1开始
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     };
@@ -51,8 +52,9 @@ export const saveGroup = createAsyncThunk(
     const updatedGroups = [newGroup, ...groups];
     await storage.setGroups(updatedGroups);
 
-    // 触发简化同步
-    simpleSyncService.scheduleUpload();
+    // 触发乐观锁同步
+    const { optimisticSyncService } = await import('@/services/optimisticSyncService');
+    optimisticSyncService.scheduleSync();
 
     return newGroup;
   }
@@ -66,14 +68,16 @@ export const updateGroup = createAsyncThunk(
     const groups = await storage.getGroups();
     const updatedGroup = {
       ...group,
+      version: (group.version || 1) + 1, // 更新时版本号递增
       updatedAt: new Date().toISOString(),
     };
 
     const updatedGroups = groups.map(g => g.id === group.id ? updatedGroup : g);
     await storage.setGroups(updatedGroups);
 
-    // 触发简化同步
-    simpleSyncService.scheduleUpload();
+    // 触发乐观锁同步
+    const { optimisticSyncService } = await import('@/services/optimisticSyncService');
+    optimisticSyncService.scheduleSync();
 
     return updatedGroup;
   }

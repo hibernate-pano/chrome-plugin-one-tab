@@ -15,7 +15,12 @@ export class SimpleSyncService {
   private isDownloading = false;
   private readonly UPLOAD_DELAY = 3000; // 减少到3秒防抖
   private readonly MAX_RETRIES = 3;
-  private syncQueue: Array<() => Promise<void>> = [];
+  private syncQueue: Array<{
+    task: () => Promise<void>;
+    priority: 'high' | 'normal' | 'low';
+    timestamp: number;
+    type: 'upload' | 'download';
+  }> = [];
   private isProcessingQueue = false;
 
   /**
@@ -34,15 +39,30 @@ export class SimpleSyncService {
     console.log('🔄 SimpleSyncService: 设置3秒后上传定时器');
     this.uploadTimer = setTimeout(() => {
       console.log('🔄 SimpleSyncService: 定时器触发，开始上传');
-      this.addToQueue(() => this.uploadToCloud());
+      this.addToQueue(() => this.uploadToCloud(), 'upload', 'normal');
     }, this.UPLOAD_DELAY);
   }
 
   /**
    * 添加任务到同步队列
    */
-  private addToQueue(task: () => Promise<void>) {
-    this.syncQueue.push(task);
+  private addToQueue(task: () => Promise<void>, type: 'upload' | 'download' = 'upload', priority: 'high' | 'normal' | 'low' = 'normal') {
+    this.syncQueue.push({
+      task,
+      priority,
+      timestamp: Date.now(),
+      type
+    });
+
+    // 按优先级和时间戳排序
+    this.syncQueue.sort((a, b) => {
+      const priorityOrder = { high: 3, normal: 2, low: 1 };
+      if (priorityOrder[a.priority] !== priorityOrder[b.priority]) {
+        return priorityOrder[b.priority] - priorityOrder[a.priority];
+      }
+      return a.timestamp - b.timestamp;
+    });
+
     this.processQueue();
   }
 
@@ -58,10 +78,11 @@ export class SimpleSyncService {
     console.log(`🔄 开始处理同步队列，队列长度: ${this.syncQueue.length}`);
 
     while (this.syncQueue.length > 0) {
-      const task = this.syncQueue.shift();
-      if (task) {
+      const queueItem = this.syncQueue.shift();
+      if (queueItem) {
         try {
-          await task();
+          console.log(`🔄 执行${queueItem.type}任务，优先级: ${queueItem.priority}`);
+          await queueItem.task();
         } catch (error) {
           console.error('❌ 队列任务执行失败:', error);
         }

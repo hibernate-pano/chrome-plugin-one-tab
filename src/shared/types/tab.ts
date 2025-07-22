@@ -29,6 +29,7 @@ export interface SupabaseTabGroup {
   name: string;
   created_at: string;
   updated_at: string;
+  version: number; // 乐观锁版本号
   is_locked: boolean;
   user_id: string;
   device_id: string;
@@ -42,6 +43,7 @@ export interface TabGroup {
   tabs: Tab[];
   createdAt: string;
   updatedAt: string;
+  version: number; // 乐观锁版本号
   isLocked: boolean;
   order?: number; // 排序顺序
   user_id?: string; // 关联用户ID

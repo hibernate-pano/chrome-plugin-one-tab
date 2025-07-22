@@ -18,6 +18,7 @@ const createTabGroup = (tabs: chrome.tabs.Tab[]): TabGroup => {
   return {
     id: nanoid(),
     name: `标签组 ${new Date().toLocaleString()}`,
+    version: 1, // 新标签组版本号从1开始
     tabs: tabs.map(tab => {
       // 如果标签页没有URL但有标题，使用一个特殊的URL标记
       const url = tab.url || (tab.title ? `loading://${encodeURIComponent(tab.title)}` : '');
@@ -164,9 +165,16 @@ const saveTabs = async (tabs: chrome.tabs.Tab[]) => {
     const existingGroups = await storage.getGroups();
     await storage.setGroups([newGroup, ...existingGroups]);
 
-    // 触发简化同步
-    console.log('🔄 Background: 触发简化同步');
-    simpleSyncService.scheduleUpload();
+    // 触发乐观锁同步
+    console.log('🔄 Background: 触发乐观锁同步');
+    try {
+      const { optimisticSyncService } = await import('./services/optimisticSyncService');
+      optimisticSyncService.scheduleSync();
+    } catch (error) {
+      console.error('导入乐观锁同步服务失败:', error);
+      // 降级到简化同步
+      simpleSyncService.scheduleUpload();
+    }
 
     logger.info('标签页保存详情', {
       newGroupId: newGroup.id,
@@ -274,21 +282,56 @@ async function generateDeviceId(): Promise<string> {
 // 确保设备ID存在
 async function ensureDeviceId(): Promise<string> {
   try {
-    const { deviceId } = await chrome.storage.local.get('deviceId');
+    const { deviceId, deviceIdBackup } = await chrome.storage.local.get(['deviceId', 'deviceIdBackup']);
 
     if (deviceId) {
+      // 如果主设备ID存在，同时创建备份
+      if (!deviceIdBackup) {
+        await chrome.storage.local.set({ deviceIdBackup: deviceId });
+      }
       logger.debug('使用现有设备ID:', deviceId);
       return deviceId;
     }
 
+    // 如果主设备ID丢失，尝试从备份恢复
+    if (deviceIdBackup) {
+      await chrome.storage.local.set({ deviceId: deviceIdBackup });
+      logger.debug('从备份恢复设备ID:', deviceIdBackup);
+      return deviceIdBackup;
+    }
+
+    // 生成新的设备ID
     const newDeviceId = await generateDeviceId();
-    await chrome.storage.local.set({ deviceId: newDeviceId });
+    await chrome.storage.local.set({
+      deviceId: newDeviceId,
+      deviceIdBackup: newDeviceId,
+      deviceIdCreatedAt: new Date().toISOString()
+    });
     logger.debug('生成新设备ID:', newDeviceId);
     return newDeviceId;
   } catch (error) {
     logger.error('设备ID管理失败:', error);
-    // 返回一个临时ID
-    return `temp_${Date.now()}`;
+    // 返回一个基于浏览器指纹的临时ID
+    const fingerprint = await generateBrowserFingerprint();
+    return `temp_${fingerprint}_${Date.now()}`;
+  }
+}
+
+// 生成浏览器指纹作为备用标识
+async function generateBrowserFingerprint(): Promise<string> {
+  try {
+    const userAgent = navigator.userAgent;
+    const language = navigator.language;
+    const platform = navigator.platform;
+    const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+
+    const fingerprint = btoa(`${userAgent}-${language}-${platform}-${timezone}`)
+      .replace(/[+/=]/g, '')
+      .substring(0, 16);
+
+    return fingerprint;
+  } catch (error) {
+    return Math.random().toString(36).substring(2, 18);
   }
 }
 

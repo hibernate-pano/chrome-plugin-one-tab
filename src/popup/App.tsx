@@ -19,6 +19,8 @@ import { storage } from '@/shared/utils/storage';
 const SyncPromptModal = lazy(() => import('@/components/sync/SyncPromptModal'));
 // 使用动态导入懒加载调试面板
 const SyncDebugPanel = lazy(() => import('@/components/sync/SyncDebugPanel'));
+// 使用动态导入懒加载数据库迁移提示
+const DatabaseMigrationPrompt = lazy(() => import('@/components/sync/DatabaseMigrationPrompt'));
 import { ToastProvider } from '@/contexts/ToastContext';
 import { ThemeProvider } from '@/contexts/ThemeContext';
 import { ErrorProvider } from '@/shared/contexts/ErrorContext';
@@ -39,6 +41,7 @@ const App: React.FC = () => {
   const [hasCloudData, setHasCloudData] = useState(false);
   const [showPerformanceTest, setShowPerformanceTest] = useState(false);
   const [showDebugPanel, setShowDebugPanel] = useState(false);
+  const [showMigrationPrompt, setShowMigrationPrompt] = useState(false);
 
   const { status, user } = useAppSelector(state => state.auth);
   const isAuthenticated = status === 'authenticated';
@@ -144,6 +147,23 @@ const App: React.FC = () => {
     // 使用 supabase 直接检查会话，避免触发错误
     const checkSession = async () => {
       try {
+        // 首先执行数据迁移
+        try {
+          const { dataMigration } = await import('@/services/dataMigration');
+          await dataMigration.createBackup(); // 创建备份
+          await dataMigration.checkAndMigrate(); // 执行迁移
+          const isValid = await dataMigration.validateMigration(); // 验证迁移
+
+          if (!isValid) {
+            console.warn('数据迁移验证失败，但继续启动应用');
+          } else {
+            console.log('✅ 数据迁移完成');
+          }
+        } catch (error) {
+          console.error('数据迁移失败:', error);
+          // 不阻止应用启动，但记录错误
+        }
+
         // 使用 getSession 而不是 getCurrentUser 来避免未登录用户的错误
         const { data } = await supabaseAuth.getSession();
         if (data.session) {
@@ -154,10 +174,34 @@ const App: React.FC = () => {
             // 更新认证缓存
             await authCache.saveAuthState(result.user, true);
 
-            // 认证恢复完成后，检查是否有待同步的数据
-            setTimeout(() => {
-              console.log('🔄 认证恢复完成，触发待同步数据上传');
-              simpleSyncService.scheduleUpload();
+            // 认证恢复完成后，检查数据库迁移和触发同步
+            setTimeout(async () => {
+              console.log('🔄 认证恢复完成，检查数据库迁移状态');
+
+              // 检查是否需要数据库迁移
+              try {
+                const { databaseSchemaManager } = await import('@/services/databaseSchemaManager');
+                const needsMigration = await databaseSchemaManager.shouldShowMigrationPrompt();
+
+                if (needsMigration) {
+                  console.log('⚠️ 需要数据库迁移，显示迁移提示');
+                  setShowMigrationPrompt(true);
+                  return; // 暂停同步，等待迁移完成
+                }
+              } catch (error) {
+                console.warn('检查数据库迁移状态失败:', error);
+              }
+
+              // 触发乐观锁同步
+              console.log('🔄 触发乐观锁同步');
+              try {
+                const { optimisticSyncService } = await import('@/services/optimisticSyncService');
+                optimisticSyncService.scheduleSync();
+              } catch (error) {
+                console.error('触发乐观锁同步失败:', error);
+                // 降级到简化同步
+                simpleSyncService.scheduleUpload();
+              }
             }, 1000);
           } else {
             console.log('会话恢复失败，清除认证状态');
@@ -204,6 +248,21 @@ const App: React.FC = () => {
   // 切换调试面板
   const toggleDebugPanel = () => {
     setShowDebugPanel(!showDebugPanel);
+  };
+
+  // 处理数据库迁移完成
+  const handleMigrationComplete = async () => {
+    console.log('✅ 数据库迁移完成，重新启动同步');
+
+    // 触发乐观锁同步
+    try {
+      const { optimisticSyncService } = await import('@/services/optimisticSyncService');
+      optimisticSyncService.scheduleSync();
+    } catch (error) {
+      console.error('迁移后触发同步失败:', error);
+      // 降级到简化同步
+      simpleSyncService.scheduleUpload();
+    }
   };
 
   return (
@@ -324,6 +383,23 @@ const App: React.FC = () => {
                     }
                   >
                     <SyncDebugPanel isOpen={showDebugPanel} onClose={() => setShowDebugPanel(false)} />
+                  </Suspense>
+                )}
+
+                {/* 数据库迁移提示 */}
+                {showMigrationPrompt && (
+                  <Suspense
+                    fallback={
+                      <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center">
+                        加载迁移提示...
+                      </div>
+                    }
+                  >
+                    <DatabaseMigrationPrompt
+                      isOpen={showMigrationPrompt}
+                      onClose={() => setShowMigrationPrompt(false)}
+                      onMigrationComplete={handleMigrationComplete}
+                    />
                   </Suspense>
                 )}
               </div>

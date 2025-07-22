@@ -232,13 +232,13 @@ export const auth = {
     // 使用加密安全的随机数生成
     const array = new Uint8Array(16);
     crypto.getRandomValues(array);
-    
+
     // 转换为十六进制字符串
     const randomHex = Array.from(array, byte => byte.toString(16).padStart(2, '0')).join('');
-    
+
     // 添加时间戳
     const timestamp = Date.now().toString(36);
-    
+
     return `${randomHex}${timestamp}`;
   },
 
@@ -477,6 +477,20 @@ export const sync = {
   async uploadTabGroups(groups: TabGroup[], overwriteCloud: boolean = false) {
     const deviceId = await getDeviceId();
 
+    // 检查数据库schema兼容性
+    let schemaInfo;
+    try {
+      const { databaseSchemaManager } = await import('@/services/databaseSchemaManager');
+      schemaInfo = await databaseSchemaManager.checkTabGroupsSchema();
+
+      if (!schemaInfo.hasVersionColumn) {
+        console.warn('⚠️ 数据库缺少version列，使用兼容模式上传');
+      }
+    } catch (error) {
+      console.warn('Schema检查失败，使用兼容模式:', error);
+      schemaInfo = { hasVersionColumn: false, tableExists: true, columns: [] };
+    }
+
     // 先检查会话是否有效
     const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
 
@@ -529,8 +543,8 @@ export const sync = {
         last_accessed: tab.lastAccessed
       }));
 
-      // 准备返回对象
-      const returnObj = {
+      // 准备返回对象 - 临时兼容性处理
+      const returnObj: any = {
         id: group.id,
         name: group.name || 'Unnamed Group',
         created_at: createdAt,
@@ -541,6 +555,11 @@ export const sync = {
         last_sync: currentTime,
         tabs_data: tabsData // 临时存储，稍后会被加密
       };
+
+      // 只有在数据库支持version列时才添加
+      if (schemaInfo.hasVersionColumn && group.version !== undefined) {
+        returnObj.version = group.version || 1;
+      }
 
       return returnObj as SupabaseTabGroup;
     });
@@ -632,7 +651,7 @@ export const sync = {
 
         // 当前要同步的标签组ID
         const newGroupIds = groupsWithUser.map(g => g.id);
-        
+
         // 找到需要删除的标签组（云端有但本地没有的）
         const existingGroupIds = existingGroups?.map(g => g.id) || [];
         const groupsToDelete = existingGroupIds.filter(id => !newGroupIds.includes(id));
@@ -640,7 +659,7 @@ export const sync = {
         // 删除不再存在的标签组
         if (groupsToDelete.length > 0) {
           console.log(`删除 ${groupsToDelete.length} 个已不存在的标签组:`, groupsToDelete);
-          
+
           try {
             const { error: deleteError } = await supabase
               .from('tab_groups')
@@ -651,7 +670,7 @@ export const sync = {
               console.error('删除标签组失败:', deleteError);
               throw deleteError;
             }
-            
+
             console.log('✅ 标签组删除成功，应该触发实时通知给其他设备');
           } catch (error) {
             console.error('❌ 删除标签组时发生异常:', error);
@@ -826,6 +845,7 @@ export const sync = {
           tabs: formattedTabs,
           createdAt: group.created_at,
           updatedAt: group.updated_at,
+          version: group.version || 1, // 添加版本号支持，默认为1
           isLocked: group.is_locked
         });
       }
@@ -911,22 +931,22 @@ export const sync = {
 
     // 将驼峰命名法转换为下划线命名法
     const convertedSettings: Record<string, any> = {};
-    
+
     // 定义允许同步的设置字段白名单（仅确认存在的字段）
     const allowedSettingsFields = [
       'syncEnabled',
       'syncInterval',
       'themeMode'
     ];
-    
+
     // 暂时移除 autoSyncEnabled，因为数据库中不存在该字段
-    
+
     for (const [key, value] of Object.entries(settings)) {
       // 只处理白名单中的字段
       if (allowedSettingsFields.includes(key)) {
         // 将驼峰命名转换为下划线命名
         const snakeKey = key.replace(/([A-Z])/g, '_$1').toLowerCase();
-        
+
         // 数据验证：确保值不是 undefined 或 null
         if (value !== undefined && value !== null) {
           convertedSettings[snakeKey] = value;
