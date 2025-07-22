@@ -29,11 +29,11 @@ export class SyncCoordinator {
     operationId?: string
   ): Promise<string> {
     const id = operationId || this.generateOperationId();
-    
+
     // 获取当前版本号
     const groups = await storage.getGroups();
     const expectedVersions = new Map<string, number>();
-    
+
     groupIds.forEach(groupId => {
       const group = groups.find(g => g.id === groupId);
       if (group) {
@@ -50,7 +50,7 @@ export class SyncCoordinator {
     };
 
     this.pendingOperations.set(id, operation);
-    
+
     // 设置超时清理
     setTimeout(() => {
       this.pendingOperations.delete(id);
@@ -76,7 +76,7 @@ export class SyncCoordinator {
       // 检查是否有重叠的标签组
       const hasOverlap = operation.groupIds.some(id => groupIds.includes(id));
       if (hasOverlap) {
-        logger.warn(`⚠️ 检测到冲突操作: ${operation.type}`, { 
+        logger.warn(`⚠️ 检测到冲突操作: ${operation.type}`, {
           operationId: operation.id,
           conflictingGroups: groupIds.filter(id => operation.groupIds.includes(id))
         });
@@ -87,58 +87,195 @@ export class SyncCoordinator {
   }
 
   /**
-   * 执行受保护的去重操作
+   * 执行原子操作的通用框架
+   * 确保 Pull → 操作 → Push(覆盖) 的原子性
    */
-  async executeProtectedDeduplication(): Promise<{ success: boolean; removedCount: number; operationId: string }> {
+  async executeAtomicOperation<T>(
+    operationType: PendingOperation['type'],
+    operation: (groups: TabGroup[]) => Promise<{ success: boolean; updatedGroups: TabGroup[]; result: T }>,
+    operationName: string
+  ): Promise<{ success: boolean; result: T; operationId: string }> {
     try {
-      // Step 1: 拉取最新数据
-      logger.info('🔄 开始受保护的去重操作 - 拉取最新数据');
+      logger.info(`🔄 开始原子操作: ${operationName}`);
+
+      // Step 1: Pull - 拉取最新数据
+      logger.info('📥 Step 1: 拉取最新数据');
       const pullResult = await optimisticSyncService.pullLatestData();
-      
+
       if (!pullResult.success) {
         logger.error('❌ 拉取最新数据失败:', pullResult.message);
-        return { success: false, removedCount: 0, operationId: '' };
+        return { success: false, result: {} as T, operationId: '' };
       }
 
       const groups = pullResult.syncedGroups || await storage.getGroups();
       const groupIds = groups.map(g => g.id);
 
       // Step 2: 注册操作保护
-      const operationId = await this.registerOperation('deduplication', groupIds);
+      logger.info('🔒 Step 2: 注册操作保护');
+      const operationId = await this.registerOperation(operationType, groupIds);
 
-      // Step 3: 执行去重逻辑
-      const deduplicationResult = await this.performDeduplication(groups);
+      // Step 3: 执行用户操作
+      logger.info(`⚙️ Step 3: 执行${operationName}`);
+      const operationResult = await operation(groups);
 
-      if (!deduplicationResult.success) {
+      if (!operationResult.success) {
         this.completeOperation(operationId);
-        return { success: false, removedCount: 0, operationId };
+        return { success: false, result: {} as T, operationId };
       }
 
-      // Step 4: 保存结果并推送
-      await storage.setGroups(deduplicationResult.updatedGroups);
-      
-      // Step 5: 立即推送到云端
-      const pushResult = await optimisticSyncService.pushOnlySync();
-      
+      // Step 4: 保存结果到本地
+      logger.info('💾 Step 4: 保存结果到本地');
+      await storage.setGroups(operationResult.updatedGroups);
+
+      // Step 5: 立即推送到云端（覆盖模式）- 带重试机制
+      logger.info('🚀 Step 5: 立即推送到云端（覆盖模式）');
+      let pushResult = await optimisticSyncService.pushOnlySync();
+
+      // 如果推送失败，重试一次
+      if (!pushResult.success && pushResult.message?.includes('正在进行中')) {
+        logger.info('🔄 推送冲突，等待后重试');
+        await new Promise(resolve => setTimeout(resolve, 2000));
+        pushResult = await optimisticSyncService.pushOnlySync();
+      }
+
       if (pushResult.success) {
-        logger.info('✅ 去重结果已推送到云端');
+        logger.info(`✅ ${operationName}结果已推送到云端（覆盖模式）`);
       } else {
-        logger.warn('⚠️ 去重结果推送失败:', pushResult.message);
+        logger.warn(`⚠️ ${operationName}结果推送失败:`, pushResult.message);
+        // 即使推送失败，本地操作已完成，不回滚
+        // 但记录失败信息，便于后续重试
       }
 
-      // Step 6: 完成操作
+      // Step 6: 完成操作保护
       this.completeOperation(operationId);
 
-      return { 
-        success: true, 
-        removedCount: deduplicationResult.removedCount,
-        operationId 
+      logger.info(`✅ 原子操作完成: ${operationName}`);
+      return {
+        success: true,
+        result: operationResult.result,
+        operationId
       };
 
     } catch (error) {
-      logger.error('❌ 受保护的去重操作失败:', error);
-      return { success: false, removedCount: 0, operationId: '' };
+      logger.error(`❌ 原子操作失败: ${operationName}`, error);
+      return { success: false, result: {} as T, operationId: '' };
     }
+  }
+
+  /**
+   * 执行受保护的去重操作（使用原子操作框架）
+   */
+  async executeProtectedDeduplication(): Promise<{ success: boolean; removedCount: number; operationId: string }> {
+    const result = await this.executeAtomicOperation<{ removedCount: number }>(
+      'deduplication',
+      async (groups: TabGroup[]) => {
+        const deduplicationResult = await this.performDeduplication(groups);
+        return {
+          success: deduplicationResult.success,
+          updatedGroups: deduplicationResult.updatedGroups,
+          result: { removedCount: deduplicationResult.removedCount }
+        };
+      },
+      '去重操作'
+    );
+
+    return {
+      success: result.success,
+      removedCount: result.result.removedCount || 0,
+      operationId: result.operationId
+    };
+  }
+
+  /**
+   * 执行受保护的删除操作（使用原子操作框架）
+   */
+  async executeProtectedDeletion(groupId: string): Promise<{ success: boolean; deletedGroupId: string; operationId: string }> {
+    const result = await this.executeAtomicOperation<{ deletedGroupId: string }>(
+      'delete',
+      async (groups: TabGroup[]) => {
+        // 检查标签组是否存在
+        const groupExists = groups.some(g => g.id === groupId);
+        if (!groupExists) {
+          logger.warn(`标签组 ${groupId} 不存在，跳过删除`);
+          return {
+            success: false,
+            updatedGroups: groups,
+            result: { deletedGroupId: '' }
+          };
+        }
+
+        // 执行删除操作
+        const updatedGroups = groups.filter(g => g.id !== groupId);
+
+        logger.info(`删除标签组: ${groupId}`);
+        return {
+          success: true,
+          updatedGroups,
+          result: { deletedGroupId: groupId }
+        };
+      },
+      '删除操作'
+    );
+
+    return {
+      success: result.success,
+      deletedGroupId: result.result.deletedGroupId || '',
+      operationId: result.operationId
+    };
+  }
+
+  /**
+   * 执行受保护的更新操作（使用原子操作框架）
+   */
+  async executeProtectedUpdate(
+    groupId: string,
+    updateFn: (group: TabGroup) => TabGroup,
+    operationName: string = '更新操作'
+  ): Promise<{ success: boolean; updatedGroup: TabGroup | null; operationId: string }> {
+    const result = await this.executeAtomicOperation<{ updatedGroup: TabGroup | null }>(
+      'update',
+      async (groups: TabGroup[]) => {
+        // 查找要更新的标签组
+        const groupIndex = groups.findIndex(g => g.id === groupId);
+        if (groupIndex === -1) {
+          logger.warn(`标签组 ${groupId} 不存在，跳过更新`);
+          return {
+            success: false,
+            updatedGroups: groups,
+            result: { updatedGroup: null }
+          };
+        }
+
+        // 执行更新操作
+        const originalGroup = groups[groupIndex];
+        const updatedGroup = updateFn(originalGroup);
+
+        // 更新版本号和时间戳
+        const finalUpdatedGroup = {
+          ...updatedGroup,
+          version: (originalGroup.version || 1) + 1,
+          updatedAt: new Date().toISOString()
+        };
+
+        // 创建新的标签组数组
+        const updatedGroups = [...groups];
+        updatedGroups[groupIndex] = finalUpdatedGroup;
+
+        logger.info(`${operationName}: ${groupId}`);
+        return {
+          success: true,
+          updatedGroups,
+          result: { updatedGroup: finalUpdatedGroup }
+        };
+      },
+      operationName
+    );
+
+    return {
+      success: result.success,
+      updatedGroup: result.result.updatedGroup,
+      operationId: result.operationId
+    };
   }
 
   /**

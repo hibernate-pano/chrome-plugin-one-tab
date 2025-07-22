@@ -27,6 +27,7 @@ export interface SyncResult {
 
 export class OptimisticSyncService {
   private isSyncing = false;
+  private isPushing = false; // 专门的推送锁
   private syncQueue: Array<() => Promise<void>> = [];
   private isProcessingQueue = false;
 
@@ -347,9 +348,22 @@ export class OptimisticSyncService {
    * Push-only同步：仅推送本地数据到云端，不拉取
    */
   async pushOnlySync(): Promise<SyncResult> {
+    // 使用专门的推送锁，避免与pull操作冲突
+    if (this.isPushing) {
+      logger.info('推送正在进行中，跳过push-only请求');
+      return { success: false, message: '推送正在进行中' };
+    }
+
+    // 如果正在进行完整同步，等待一小段时间后重试
     if (this.isSyncing) {
-      logger.info('同步正在进行中，跳过push-only请求');
-      return { success: false, message: '同步正在进行中' };
+      logger.info('完整同步正在进行中，等待后重试push-only');
+      await new Promise(resolve => setTimeout(resolve, 1000));
+
+      // 重试一次
+      if (this.isSyncing) {
+        logger.warn('完整同步仍在进行中，跳过push-only请求');
+        return { success: false, message: '完整同步正在进行中' };
+      }
     }
 
     const state = store.getState();
@@ -359,7 +373,7 @@ export class OptimisticSyncService {
     }
 
     try {
-      this.isSyncing = true;
+      this.isPushing = true;
       logger.info('🔼 开始push-only同步流程');
 
       // 直接推送本地数据到云端，不进行pull操作
@@ -378,7 +392,7 @@ export class OptimisticSyncService {
         message: `push-only同步失败: ${error instanceof Error ? error.message : '未知错误'}`
       };
     } finally {
-      this.isSyncing = false;
+      this.isPushing = false;
     }
   }
 

@@ -38,71 +38,116 @@ export const loadGroups = createAsyncThunk('tabGroups/loadGroups', async () => {
 export const saveGroup = createAsyncThunk(
   'tabGroups/saveGroup',
   async (group: Omit<TabGroup, 'id' | 'createdAt' | 'updatedAt' | 'version'>) => {
-    logger.debug('保存新标签组', { name: group.name, tabCount: group.tabs.length });
+    logger.debug('开始原子保存新标签组', { name: group.name, tabCount: group.tabs.length });
 
-    const newGroup: TabGroup = {
-      ...group,
-      id: nanoid(),
-      version: 1, // 新标签组版本号从1开始
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    };
+    try {
+      // 使用同步协调器执行原子创建操作
+      const { syncCoordinator } = await import('@/services/syncCoordinator');
 
-    const groups = await storage.getGroups();
-    const updatedGroups = [newGroup, ...groups];
-    await storage.setGroups(updatedGroups);
+      const result = await syncCoordinator.executeAtomicOperation<TabGroup>(
+        'create',
+        async (groups: TabGroup[]) => {
+          const newGroup: TabGroup = {
+            ...group,
+            id: nanoid(),
+            version: 1, // 新标签组版本号从1开始
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
+          };
 
-    // 触发用户操作后的push-only同步
-    const { optimisticSyncService } = await import('@/services/optimisticSyncService');
-    optimisticSyncService.schedulePushOnly();
+          const updatedGroups = [newGroup, ...groups];
 
-    return newGroup;
+          return {
+            success: true,
+            updatedGroups,
+            result: newGroup
+          };
+        },
+        '创建标签组'
+      );
+
+      if (!result.success) {
+        throw new Error('创建标签组失败');
+      }
+
+      logger.debug('原子保存标签组完成', {
+        id: result.result.id,
+        operationId: result.operationId
+      });
+
+      return result.result;
+
+    } catch (error) {
+      logger.error('保存标签组失败', error);
+      throw error;
+    }
   }
 );
 
 export const updateGroup = createAsyncThunk(
   'tabGroups/updateGroup',
   async (group: TabGroup) => {
-    logger.debug('更新标签组', { id: group.id, name: group.name });
+    logger.debug('开始原子更新标签组', { id: group.id, name: group.name });
 
-    const groups = await storage.getGroups();
-    const updatedGroup = {
-      ...group,
-      version: (group.version || 1) + 1, // 更新时版本号递增
-      updatedAt: new Date().toISOString(),
-    };
+    try {
+      // 使用同步协调器执行原子更新操作
+      const { syncCoordinator } = await import('@/services/syncCoordinator');
 
-    const updatedGroups = groups.map(g => g.id === group.id ? updatedGroup : g);
-    await storage.setGroups(updatedGroups);
+      const result = await syncCoordinator.executeProtectedUpdate(
+        group.id,
+        (existingGroup) => ({
+          ...existingGroup,
+          ...group,
+          // 保持原有的创建时间和ID
+          id: existingGroup.id,
+          createdAt: existingGroup.createdAt
+        }),
+        '更新标签组'
+      );
 
-    // 触发用户操作后的push-only同步
-    const { optimisticSyncService } = await import('@/services/optimisticSyncService');
-    optimisticSyncService.schedulePushOnly();
+      if (!result.success || !result.updatedGroup) {
+        throw new Error(`更新标签组失败: ${group.id}`);
+      }
 
-    return updatedGroup;
+      logger.debug('原子更新标签组完成', {
+        id: result.updatedGroup.id,
+        operationId: result.operationId
+      });
+
+      return result.updatedGroup;
+
+    } catch (error) {
+      logger.error('更新标签组失败', error);
+      throw error;
+    }
   }
 );
 
 export const deleteGroup = createAsyncThunk(
   'tabGroups/deleteGroup',
   async (groupId: string) => {
-    logger.debug('删除标签组', { groupId });
+    logger.debug('开始原子删除操作', { groupId });
 
-    const groups = await storage.getGroups();
-    const updatedGroups = groups.filter(g => g.id !== groupId);
-    await storage.setGroups(updatedGroups);
-
-    // 触发用户操作后的push-only同步
     try {
-      const { optimisticSyncService } = await import('@/services/optimisticSyncService');
-      optimisticSyncService.schedulePushOnly();
-    } catch (error) {
-      console.error('触发删除后同步失败:', error);
-      // 降级到简化同步
-      simpleSyncService.scheduleUpload();
-    }
+      // 使用同步协调器执行原子删除操作
+      const { syncCoordinator } = await import('@/services/syncCoordinator');
+      const result = await syncCoordinator.executeProtectedDeletion(groupId);
 
-    return groupId;
+      if (!result.success) {
+        throw new Error(`删除标签组失败: ${groupId}`);
+      }
+
+      logger.debug('原子删除操作完成', {
+        deletedGroupId: result.deletedGroupId,
+        operationId: result.operationId
+      });
+
+      return result.deletedGroupId;
+
+    } catch (error) {
+      logger.error('删除标签组失败', error);
+      throw error;
+    }
   }
 );
 
