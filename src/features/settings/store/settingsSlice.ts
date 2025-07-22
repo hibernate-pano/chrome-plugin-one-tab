@@ -17,6 +17,7 @@ const DEFAULT_SETTINGS: UserSettings = {
   showNotifications: true,
   confirmBeforeDelete: true,
   allowDuplicateTabs: false,
+  autoCloseTabsAfterSaving: true,
   groupNameTemplate: '标签组 {date}',
   syncEnabled: false,
   autoSyncEnabled: false,
@@ -60,10 +61,10 @@ export const saveSettings = createAsyncThunk(
     try {
       const currentState = getState() as { settings: SettingsState };
       const newSettings = { ...currentState.settings, ...settings };
-      
+
       // 移除非设置字段
       const { isLoading, error, lastSyncTime, ...settingsToSave } = newSettings;
-      
+
       logger.debug('保存用户设置', settingsToSave);
       await storage.setSettings(settingsToSave);
       return settingsToSave;
@@ -219,6 +220,10 @@ const settingsSlice = createSlice({
 
     toggleAllowDuplicateTabs: (state) => {
       state.allowDuplicateTabs = !state.allowDuplicateTabs;
+    },
+
+    toggleAutoCloseTabsAfterSaving: (state) => {
+      state.autoCloseTabsAfterSaving = !state.autoCloseTabsAfterSaving;
     },
 
     toggleSyncEnabled: (state) => {

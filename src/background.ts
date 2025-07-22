@@ -47,21 +47,33 @@ const isPluginManagementPage = (tab: chrome.tabs.Tab): boolean => {
 };
 
 /**
- * 打开或跳转到插件管理页面
+ * 打开或跳转到插件管理页面（确保单实例）
  */
 const openOrFocusManagementPage = async (): Promise<void> => {
   try {
     const pluginUrl = chrome.runtime.getURL('popup.html');
 
-    // 查找是否已经有插件管理页面打开
+    // 查找所有插件管理页面
     const tabs = await chrome.tabs.query({});
-    const existingTab = tabs.find(tab => tab.url === pluginUrl);
+    const existingTabs = tabs.filter(tab => tab.url === pluginUrl);
 
-    if (existingTab && existingTab.id) {
-      // 如果已存在，则切换到该标签页
-      await chrome.tabs.update(existingTab.id, { active: true });
-      await chrome.windows.update(existingTab.windowId!, { focused: true });
-      logger.debug('切换到已存在的插件管理页面', { tabId: existingTab.id });
+    if (existingTabs.length > 0) {
+      // 如果有多个管理页面，关闭除第一个外的所有页面
+      if (existingTabs.length > 1) {
+        const tabsToClose = existingTabs.slice(1).map(tab => tab.id).filter((id): id is number => id !== undefined);
+        if (tabsToClose.length > 0) {
+          await chrome.tabs.remove(tabsToClose);
+          logger.debug('关闭多余的插件管理页面', { count: tabsToClose.length });
+        }
+      }
+
+      // 切换到第一个管理页面
+      const targetTab = existingTabs[0];
+      if (targetTab.id) {
+        await chrome.tabs.update(targetTab.id, { active: true });
+        await chrome.windows.update(targetTab.windowId!, { focused: true });
+        logger.debug('切换到已存在的插件管理页面', { tabId: targetTab.id });
+      }
     } else {
       // 如果不存在，则创建新的标签页
       await chrome.tabs.create({ url: pluginUrl });
@@ -72,6 +84,31 @@ const openOrFocusManagementPage = async (): Promise<void> => {
     // 如果出错，尝试简单创建新标签页
     await chrome.tabs.create({ url: chrome.runtime.getURL('popup.html') });
   }
+};
+
+/**
+ * 检查是否有可收集的标签页
+ */
+const hasCollectableTabs = (tabs: chrome.tabs.Tab[]): boolean => {
+  return tabs.some(tab => {
+    // 排除插件管理页面
+    if (isPluginManagementPage(tab)) {
+      return false;
+    }
+
+    // 排除Chrome内部页面，但允许chrome-extension://页面
+    if (tab.url) {
+      const isInternalPage = tab.url.startsWith('chrome://') ||
+        tab.url.startsWith('edge://');
+      if (isInternalPage) {
+        return false;
+      }
+      return true;
+    }
+
+    // 如果URL为空但标题不为空，则认为是可收集的（可能是正在加载的页面）
+    return tab.title && tab.title.trim() !== '';
+  });
 };
 
 /**
@@ -89,10 +126,9 @@ const saveTabs = async (tabs: chrome.tabs.Tab[]) => {
         return false;
       }
 
-      // 排除Chrome内部页面
+      // 排除Chrome内部页面，但允许chrome-extension://页面
       if (tab.url) {
         const isInternalPage = tab.url.startsWith('chrome://') ||
-          tab.url.startsWith('chrome-extension://') ||
           tab.url.startsWith('edge://');
         if (isInternalPage) {
           logger.debug('排除内部页面', { url: tab.url, title: tab.title });
@@ -104,6 +140,24 @@ const saveTabs = async (tabs: chrome.tabs.Tab[]) => {
       // 如果URL为空但标题不为空，则保存该标签页（可能是正在加载的页面）
       return tab.title && tab.title.trim() !== '';
     });
+
+    // 处理chrome-extension://页面：如果有多个，只保留一个
+    const chromeExtensionTabs = validTabs.filter(tab =>
+      tab.url && tab.url.startsWith('chrome-extension://')
+    );
+
+    if (chromeExtensionTabs.length > 1) {
+      // 保留第一个chrome-extension://标签页，移除其他的
+      const firstExtensionTab = chromeExtensionTabs[0];
+      validTabs = validTabs.filter(tab =>
+        !tab.url?.startsWith('chrome-extension://') || tab.id === firstExtensionTab.id
+      );
+      logger.debug('处理chrome-extension://页面', {
+        total: chromeExtensionTabs.length,
+        kept: 1,
+        removed: chromeExtensionTabs.length - 1
+      });
+    }
 
     logger.debug('过滤后的有效标签页', {
       originalCount: tabs.length,
@@ -118,7 +172,8 @@ const saveTabs = async (tabs: chrome.tabs.Tab[]) => {
     // 获取设置
     const settings = await storage.getSettings();
     logger.debug('当前设置', {
-      allowDuplicateTabs: settings.allowDuplicateTabs
+      allowDuplicateTabs: settings.allowDuplicateTabs,
+      autoCloseTabsAfterSaving: settings.autoCloseTabsAfterSaving
     });
 
     // 保存所有要关闭的标签页（包括重复的）
@@ -192,10 +247,12 @@ const saveTabs = async (tabs: chrome.tabs.Tab[]) => {
     // 先打开或跳转到插件管理页面
     await openOrFocusManagementPage();
 
-    // 关闭已保存的标签页
-    if (tabIds.length > 0) {
+    // 根据用户设置决定是否关闭已保存的标签页
+    if (settings.autoCloseTabsAfterSaving && tabIds.length > 0) {
       await chrome.tabs.remove(tabIds);
       logger.debug('已关闭标签页', { count: tabIds.length });
+    } else if (!settings.autoCloseTabsAfterSaving) {
+      logger.debug('根据用户设置，不自动关闭标签页');
     }
 
     // 发送消息通知前端刷新标签列表
@@ -234,7 +291,17 @@ chrome.action.onClicked.addListener(async () => {
 
     // 获取当前窗口的所有标签页
     const tabs = await chrome.tabs.query({ currentWindow: true });
-    await saveTabs(tabs);
+
+    // 检查是否有可收集的标签页
+    if (hasCollectableTabs(tabs)) {
+      // 如果有可收集的标签页，执行收集操作
+      logger.debug('检测到可收集的标签页，开始收集');
+      await saveTabs(tabs);
+    } else {
+      // 如果没有可收集的标签页，直接打开管理页面
+      logger.debug('没有可收集的标签页，直接打开管理页面');
+      await openOrFocusManagementPage();
+    }
   } catch (error) {
     logger.error('处理插件图标点击失败', error);
     await showNotification({
@@ -352,6 +419,7 @@ chrome.runtime.onInstalled.addListener(async (details) => {
         showTabCount: true,
         confirmBeforeDelete: true,
         allowDuplicateTabs: false,
+        autoCloseTabsAfterSaving: true,
         syncEnabled: true,
         autoSyncEnabled: true,
         syncInterval: 5,

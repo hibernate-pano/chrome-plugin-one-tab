@@ -83,6 +83,7 @@ export interface UserSettings {
   showTabCount: boolean;
   confirmBeforeDelete: boolean;
   allowDuplicateTabs: boolean;
+  autoCloseTabsAfterSaving: boolean; // 是否在保存标签页后自动关闭
   syncEnabled: boolean; // 是否启用同步
   autoSyncEnabled: boolean; // 是否启用自动同步
   syncInterval: number; // 自动同步间隔（分钟），默认为30分钟

@@ -16,6 +16,7 @@ export const DEFAULT_SETTINGS: UserSettings = {
   showTabCount: true,
   confirmBeforeDelete: true,
   allowDuplicateTabs: false, // 默认不允许重复标签页
+  autoCloseTabsAfterSaving: true, // 默认在保存标签页后自动关闭
   syncEnabled: true, // 默认启用同步
   autoSyncEnabled: true, // 默认启用自动同步
   syncInterval: 5, // 默认10分钟自动同步一次
