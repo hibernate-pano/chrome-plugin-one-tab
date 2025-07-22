@@ -127,12 +127,12 @@ class AutoSyncManager {
         console.log('🔄 用户登录，触发自动下载同步');
         setTimeout(() => {
           this.performAutoDownload();
-        }, 2000); // 登录后延迟2秒同步，确保UI稳定
+        }, 1000); // 减少延迟到1秒
 
-        // 🔥 用户登录后启用实时同步
+        // 🔥 用户登录后启用实时同步 - 减少延迟
         setTimeout(() => {
           this.initializeRealtimeSync();
-        }, 3000);
+        }, 1500); // 减少延迟到1.5秒
       }
 
       // 用户登出时禁用实时同步

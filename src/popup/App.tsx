@@ -17,6 +17,8 @@ import { simpleSyncService } from '@/services/simpleSyncService';
 import { storage } from '@/shared/utils/storage';
 // 使用动态导入懒加载同步提示对话框
 const SyncPromptModal = lazy(() => import('@/components/sync/SyncPromptModal'));
+// 使用动态导入懒加载调试面板
+const SyncDebugPanel = lazy(() => import('@/components/sync/SyncDebugPanel'));
 import { ToastProvider } from '@/contexts/ToastContext';
 import { ThemeProvider } from '@/contexts/ThemeContext';
 import { ErrorProvider } from '@/shared/contexts/ErrorContext';
@@ -36,6 +38,7 @@ const App: React.FC = () => {
   const [showSyncPrompt, setShowSyncPrompt] = useState(false);
   const [hasCloudData, setHasCloudData] = useState(false);
   const [showPerformanceTest, setShowPerformanceTest] = useState(false);
+  const [showDebugPanel, setShowDebugPanel] = useState(false);
 
   const { status, user } = useAppSelector(state => state.auth);
   const isAuthenticated = status === 'authenticated';
@@ -198,6 +201,11 @@ const App: React.FC = () => {
     setShowPerformanceTest(!showPerformanceTest);
   };
 
+  // 切换调试面板
+  const toggleDebugPanel = () => {
+    setShowDebugPanel(!showDebugPanel);
+  };
+
   return (
     <ErrorProvider>
       <ToastProvider>
@@ -270,13 +278,22 @@ const App: React.FC = () => {
                             </span>
                           )}
                           {process.env.NODE_ENV === 'development' && (
-                            <button
-                              onClick={togglePerformanceTest}
-                              className="ml-2 px-2 py-1 bg-purple-500 text-white text-xs rounded hover:bg-purple-600"
-                              title="仅在开发环境可见"
-                            >
-                              性能测试
-                            </button>
+                            <>
+                              <button
+                                onClick={togglePerformanceTest}
+                                className="ml-2 px-2 py-1 bg-purple-500 text-white text-xs rounded hover:bg-purple-600"
+                                title="仅在开发环境可见"
+                              >
+                                性能测试
+                              </button>
+                              <button
+                                onClick={toggleDebugPanel}
+                                className="ml-2 px-2 py-1 bg-orange-500 text-white text-xs rounded hover:bg-orange-600"
+                                title="同步调试面板"
+                              >
+                                调试
+                              </button>
+                            </>
                           )}
                         </div>
                       </div>
@@ -294,6 +311,19 @@ const App: React.FC = () => {
                     }
                   >
                     <SyncPromptModal onClose={handleCloseSyncPrompt} hasCloudData={hasCloudData} />
+                  </Suspense>
+                )}
+
+                {/* 调试面板 */}
+                {showDebugPanel && (
+                  <Suspense
+                    fallback={
+                      <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center">
+                        加载调试面板...
+                      </div>
+                    }
+                  >
+                    <SyncDebugPanel isOpen={showDebugPanel} onClose={() => setShowDebugPanel(false)} />
                   </Suspense>
                 )}
               </div>

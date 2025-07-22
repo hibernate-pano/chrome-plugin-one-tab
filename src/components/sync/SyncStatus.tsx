@@ -1,30 +1,66 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { useAppSelector } from '@/app/store/hooks';
+import { realtimeSync } from '@/services/realtimeSync';
 
 export const SyncStatus: React.FC = () => {
   const { lastSyncTime, status: syncStatus } = useAppSelector(state => state.sync);
   const { status } = useAppSelector(state => state.auth);
   const isAuthenticated = status === 'authenticated';
   const { syncEnabled, autoSyncEnabled } = useAppSelector(state => state.settings);
+  const [realtimeStatus, setRealtimeStatus] = useState<string>('disconnected');
 
-  // 格式化最后同步时间 - 这个函数已经通过getStatusIndicator内部实现了
+  // 监控实时同步状态
+  useEffect(() => {
+    if (!isAuthenticated || !syncEnabled || !autoSyncEnabled) {
+      setRealtimeStatus('disconnected');
+      return;
+    }
+
+    const checkRealtimeStatus = () => {
+      const status = realtimeSync.getConnectionStatus();
+      setRealtimeStatus(status);
+    };
+
+    // 立即检查一次
+    checkRealtimeStatus();
+
+    // 定期检查状态
+    const interval = setInterval(checkRealtimeStatus, 5000);
+
+    return () => clearInterval(interval);
+  }, [isAuthenticated, syncEnabled, autoSyncEnabled]);
 
   // 获取状态指示器的颜色和图标
   const getStatusIndicator = () => {
     if (syncStatus === 'syncing') {
       return { color: 'text-blue-500', icon: '🔄', label: '同步中...' };
     }
-    
+
+    // 检查实时同步状态
+    if (autoSyncEnabled && syncEnabled) {
+      switch (realtimeStatus) {
+        case 'connected':
+          return { color: 'text-green-500', icon: '🟢', label: '实时同步已连接' };
+        case 'connecting':
+          return { color: 'text-yellow-500', icon: '🟡', label: '实时同步连接中...' };
+        case 'error':
+          return { color: 'text-red-500', icon: '🔴', label: '实时同步连接失败' };
+        case 'disconnected':
+        default:
+          return { color: 'text-gray-500', icon: '⚪', label: '实时同步未连接' };
+      }
+    }
+
     if (!lastSyncTime) {
       return { color: 'text-gray-500', icon: '⚠️', label: '从未同步' };
     }
-    
+
     try {
       const syncTime = new Date(lastSyncTime);
       const now = new Date();
       const diffMs = now.getTime() - syncTime.getTime();
       const diffHours = diffMs / (1000 * 60 * 60);
-      
+
       if (diffHours < 1) {
         return { color: 'text-green-500', icon: '✅', label: '最近已同步' };
       } else if (diffHours < 24) {

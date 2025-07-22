@@ -9,6 +9,13 @@ class RealtimeSync {
   private channel: RealtimeChannel | null = null;
   private currentUserId: string | null = null;
   private isEnabled = false;
+  private connectionStatus: 'disconnected' | 'connecting' | 'connected' | 'error' = 'disconnected';
+  private reconnectTimer: NodeJS.Timeout | null = null;
+  private heartbeatTimer: NodeJS.Timeout | null = null;
+  private reconnectAttempts = 0;
+  private readonly MAX_RECONNECT_ATTEMPTS = 5;
+  private readonly RECONNECT_DELAY = 5000; // 5秒
+  private readonly HEARTBEAT_INTERVAL = 30000; // 30秒心跳检测
 
   /**
    * 初始化实时同步
@@ -19,6 +26,7 @@ class RealtimeSync {
 
     if (!selectIsAuthenticated(state) || !user) {
       console.log('🔄 用户未登录，跳过实时同步初始化');
+      this.connectionStatus = 'disconnected';
       return;
     }
 
@@ -27,10 +35,38 @@ class RealtimeSync {
 
     if (!this.isEnabled) {
       console.log('🔄 实时同步已禁用');
+      this.connectionStatus = 'disconnected';
       return;
     }
 
+    // 清理之前的连接
+    await this.cleanup();
+
+    // 重置重连计数
+    this.reconnectAttempts = 0;
+
     await this.setupRealtimeSubscription();
+  }
+
+  /**
+   * 清理连接和定时器
+   */
+  private async cleanup() {
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
+
+    if (this.heartbeatTimer) {
+      clearTimeout(this.heartbeatTimer);
+      this.heartbeatTimer = null;
+    }
+
+    if (this.channel) {
+      console.log('🔄 清理现有实时连接');
+      supabase.removeChannel(this.channel);
+      this.channel = null;
+    }
   }
 
   /**
@@ -40,6 +76,7 @@ class RealtimeSync {
     if (!this.currentUserId) return;
 
     console.log('🔄 设置实时同步订阅，用户ID:', this.currentUserId);
+    this.connectionStatus = 'connecting';
 
     // 创建频道监听 tab_groups 表变化
     this.channel = supabase
@@ -72,12 +109,101 @@ class RealtimeSync {
       )
       .subscribe((status) => {
         console.log('🔄 实时订阅状态:', status);
-        if (status === 'SUBSCRIBED') {
-          console.log('✅ 实时同步已启用');
-        } else if (status === 'CHANNEL_ERROR') {
-          console.error('❌ 实时同步连接失败');
-        }
+        this.handleConnectionStatus(status);
       });
+  }
+
+  /**
+   * 处理连接状态变化
+   */
+  private handleConnectionStatus(status: string) {
+    switch (status) {
+      case 'SUBSCRIBED':
+        console.log('✅ 实时同步已启用');
+        this.connectionStatus = 'connected';
+        this.reconnectAttempts = 0;
+        this.startHeartbeat();
+        break;
+
+      case 'CHANNEL_ERROR':
+        console.error('❌ 实时同步连接失败');
+        this.connectionStatus = 'error';
+        this.scheduleReconnect();
+        break;
+
+      case 'CLOSED':
+        console.log('🔄 实时同步连接已关闭');
+        this.connectionStatus = 'disconnected';
+        if (this.isEnabled) {
+          this.scheduleReconnect();
+        }
+        break;
+
+      default:
+        console.log('🔄 实时同步状态:', status);
+    }
+  }
+
+  /**
+   * 启动心跳检测
+   */
+  private startHeartbeat() {
+    if (this.heartbeatTimer) {
+      clearTimeout(this.heartbeatTimer);
+    }
+
+    this.heartbeatTimer = setTimeout(() => {
+      this.checkConnection();
+    }, this.HEARTBEAT_INTERVAL);
+  }
+
+  /**
+   * 检查连接状态
+   */
+  private async checkConnection() {
+    if (!this.isEnabled || !this.channel) {
+      return;
+    }
+
+    try {
+      // 通过发送一个简单的查询来检查连接
+      const state = store.getState();
+      if (selectIsAuthenticated(state)) {
+        // 连接正常，继续心跳
+        this.startHeartbeat();
+      } else {
+        // 用户已登出，停止心跳
+        this.connectionStatus = 'disconnected';
+      }
+    } catch (error) {
+      console.error('❌ 心跳检测失败:', error);
+      this.connectionStatus = 'error';
+      this.scheduleReconnect();
+    }
+  }
+
+  /**
+   * 安排重连
+   */
+  private scheduleReconnect() {
+    if (this.reconnectAttempts >= this.MAX_RECONNECT_ATTEMPTS) {
+      console.error('❌ 达到最大重连次数，停止重连');
+      this.connectionStatus = 'error';
+      return;
+    }
+
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+    }
+
+    this.reconnectAttempts++;
+    const delay = this.RECONNECT_DELAY * this.reconnectAttempts; // 递增延迟
+
+    console.log(`🔄 安排第${this.reconnectAttempts}次重连，${delay}ms后执行`);
+
+    this.reconnectTimer = setTimeout(() => {
+      this.reconnect();
+    }, delay);
   }
 
   /**
@@ -201,8 +327,23 @@ class RealtimeSync {
    * 获取当前设备ID
    */
   private async getCurrentDeviceId(): Promise<string> {
-    const { deviceId } = await chrome.storage.local.get('deviceId');
-    return deviceId || '';
+    try {
+      const { deviceId } = await chrome.storage.local.get('deviceId');
+
+      if (!deviceId) {
+        console.warn('⚠️ 设备ID不存在，生成临时ID');
+        // 生成临时设备ID
+        const tempId = `temp_${Date.now()}_${Math.random().toString(36).substring(2, 15)}`;
+        await chrome.storage.local.set({ deviceId: tempId });
+        return tempId;
+      }
+
+      return deviceId;
+    } catch (error) {
+      console.error('❌ 获取设备ID失败:', error);
+      // 返回一个基于时间戳的临时ID
+      return `fallback_${Date.now()}`;
+    }
   }
 
   /**
@@ -245,16 +386,45 @@ class RealtimeSync {
    * 重新连接实时同步
    */
   async reconnect() {
-    await this.disable();
+    console.log('🔄 开始重新连接实时同步');
+    await this.cleanup();
+
+    // 检查用户是否仍然登录
+    const state = store.getState();
+    if (!selectIsAuthenticated(state)) {
+      console.log('🔄 用户已登出，取消重连');
+      this.connectionStatus = 'disconnected';
+      return;
+    }
+
     await this.initialize();
+  }
+
+  /**
+   * 获取连接状态
+   */
+  getConnectionStatus(): string {
+    return this.connectionStatus;
+  }
+
+  /**
+   * 强制重连
+   */
+  async forceReconnect() {
+    console.log('🔄 强制重连实时同步');
+    this.reconnectAttempts = 0;
+    await this.reconnect();
   }
 
   /**
    * 销毁实时同步
    */
-  destroy() {
-    this.disable();
+  async destroy() {
+    console.log('🔄 销毁实时同步服务');
+    this.isEnabled = false;
+    await this.cleanup();
     this.currentUserId = null;
+    this.connectionStatus = 'disconnected';
   }
 }
 

@@ -264,11 +264,42 @@ chrome.commands.onCommand.addListener(async (command) => {
   }
 });
 
+// 生成唯一设备ID
+async function generateDeviceId(): Promise<string> {
+  const timestamp = Date.now();
+  const random = Math.random().toString(36).substring(2, 15);
+  return `device_${timestamp}_${random}`;
+}
+
+// 确保设备ID存在
+async function ensureDeviceId(): Promise<string> {
+  try {
+    const { deviceId } = await chrome.storage.local.get('deviceId');
+
+    if (deviceId) {
+      logger.debug('使用现有设备ID:', deviceId);
+      return deviceId;
+    }
+
+    const newDeviceId = await generateDeviceId();
+    await chrome.storage.local.set({ deviceId: newDeviceId });
+    logger.debug('生成新设备ID:', newDeviceId);
+    return newDeviceId;
+  } catch (error) {
+    logger.error('设备ID管理失败:', error);
+    // 返回一个临时ID
+    return `temp_${Date.now()}`;
+  }
+}
+
 // 监听安装事件
 chrome.runtime.onInstalled.addListener(async (details) => {
   try {
     if (details.reason === 'install') {
       logger.debug('插件首次安装，初始化存储');
+
+      // 生成设备ID
+      await ensureDeviceId();
 
       // 初始化存储
       await storage.setGroups([]);
@@ -290,6 +321,10 @@ chrome.runtime.onInstalled.addListener(async (details) => {
       });
 
       logger.debug('插件初始化完成');
+    } else if (details.reason === 'update') {
+      // 更新时也确保设备ID存在
+      await ensureDeviceId();
+      logger.debug('插件更新，设备ID检查完成');
     }
   } catch (error) {
     logger.error('插件安装初始化失败', error);

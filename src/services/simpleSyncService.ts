@@ -12,8 +12,11 @@ import { selectIsAuthenticated } from '@/features/auth/store/authSlice';
 export class SimpleSyncService {
   private uploadTimer: NodeJS.Timeout | null = null;
   private isUploading = false;
-  private readonly UPLOAD_DELAY = 5000; // 5秒防抖，确保认证状态恢复完成
+  private isDownloading = false;
+  private readonly UPLOAD_DELAY = 3000; // 减少到3秒防抖
   private readonly MAX_RETRIES = 3;
+  private syncQueue: Array<() => Promise<void>> = [];
+  private isProcessingQueue = false;
 
   /**
    * 用户操作后调用，安排上传
@@ -27,12 +30,46 @@ export class SimpleSyncService {
       console.log('🔄 SimpleSyncService: 清除之前的定时器');
     }
 
-    // 5秒后上传，确保认证状态恢复完成
-    console.log('🔄 SimpleSyncService: 设置5秒后上传定时器');
+    // 3秒后上传，减少延迟
+    console.log('🔄 SimpleSyncService: 设置3秒后上传定时器');
     this.uploadTimer = setTimeout(() => {
       console.log('🔄 SimpleSyncService: 定时器触发，开始上传');
-      this.uploadToCloud();
+      this.addToQueue(() => this.uploadToCloud());
     }, this.UPLOAD_DELAY);
+  }
+
+  /**
+   * 添加任务到同步队列
+   */
+  private addToQueue(task: () => Promise<void>) {
+    this.syncQueue.push(task);
+    this.processQueue();
+  }
+
+  /**
+   * 处理同步队列
+   */
+  private async processQueue() {
+    if (this.isProcessingQueue || this.syncQueue.length === 0) {
+      return;
+    }
+
+    this.isProcessingQueue = true;
+    console.log(`🔄 开始处理同步队列，队列长度: ${this.syncQueue.length}`);
+
+    while (this.syncQueue.length > 0) {
+      const task = this.syncQueue.shift();
+      if (task) {
+        try {
+          await task();
+        } catch (error) {
+          console.error('❌ 队列任务执行失败:', error);
+        }
+      }
+    }
+
+    this.isProcessingQueue = false;
+    console.log('✅ 同步队列处理完成');
   }
 
   /**
@@ -96,6 +133,11 @@ export class SimpleSyncService {
    * 从云端下载数据（实时同步触发）
    */
   async downloadFromCloud(): Promise<void> {
+    if (this.isDownloading) {
+      console.log('🔄 正在下载中，跳过此次请求');
+      return;
+    }
+
     const state = store.getState();
     if (!selectIsAuthenticated(state)) {
       console.log('🔄 用户未登录，跳过下载');
@@ -103,6 +145,7 @@ export class SimpleSyncService {
     }
 
     try {
+      this.isDownloading = true;
       console.log('🔄 开始从云端下载数据');
 
       // 获取云端数据
@@ -124,6 +167,8 @@ export class SimpleSyncService {
 
     } catch (error) {
       console.error('❌ 数据下载失败:', error);
+    } finally {
+      this.isDownloading = false;
     }
   }
 
