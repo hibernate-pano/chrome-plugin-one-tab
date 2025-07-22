@@ -2,8 +2,8 @@ import { store } from '@/app/store';
 // 使用新版同步架构
 import { syncTabsToCloud, syncTabsFromCloud, uploadToCloud, downloadFromCloud } from '../store/syncSlice';
 import { syncSettingsToCloud, syncSettingsFromCloud } from '@/features/settings/store/settingsSlice';
-// 暂时注释掉getCurrentUser导入，直接从store获取用户信息
-// import { getCurrentUser } from '@/features/auth/store/authSlice';
+// 使用统一的认证状态检查
+import { selectIsAuthenticated } from '@/features/auth/store/authSlice';
 import { retryWithBackoff } from '@/shared/utils/syncHelpers';
 // 移除复杂的冲突解决器，使用简单的时间戳比较
 import { errorHandler } from '@/shared/utils/errorHandler';
@@ -50,9 +50,9 @@ export class SyncService {
 
   // 上传数据到云端（覆盖模式）
   async uploadToCloud(background = false, overwriteCloud = true) {
-    const { auth } = store.getState();
+    const state = store.getState();
 
-    if (!auth.isAuthenticated) {
+    if (!selectIsAuthenticated(state)) {
       throw new Error('用户未登录，无法上传数据');
     }
 
@@ -84,9 +84,9 @@ export class SyncService {
 
   // 从云端下载数据
   async downloadFromCloud(background = false, forceRemoteStrategy = false) {
-    const { auth } = store.getState();
+    const state = store.getState();
 
-    if (!auth.isAuthenticated) {
+    if (!selectIsAuthenticated(state)) {
       throw new Error('用户未登录，无法下载数据');
     }
 

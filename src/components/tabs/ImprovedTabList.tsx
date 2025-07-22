@@ -38,41 +38,24 @@ export const ImprovedTabList: React.FC<ImprovedTabListProps> = ({ searchQuery })
   const [activeData, setActiveData] = useState<any | null>(null);
 
   useEffect(() => {
-    console.log('🔍 ImprovedTabList useEffect - 准备dispatch loadGroups');
-    
-    // 不再需要测试action
-    
+    // 初始加载标签组数据
     const result = dispatch(loadGroups());
-    console.log('🔍 dispatch返回的Promise:', result);
-    
-    // 添加Promise状态跟踪
-    result
-      .then((actionResult: any) => {
-        console.log('🔍 loadGroups Promise resolved:', actionResult);
-        
-        // 检查加载的标签组
-        if (actionResult.payload && Array.isArray(actionResult.payload)) {
-          console.log('🔍 加载的标签组数量:', actionResult.payload.length);
-          actionResult.payload.forEach((group: TabGroup, index: number) => {
-            console.log(`🔍 标签组 ${index + 1}/${actionResult.payload.length}:`, {
-              id: group.id,
-              name: group.name,
-              tabCount: group.tabs?.length || 0
-            });
-          });
-        } else {
-          console.log('🔍 加载的标签组无效或为空');
-        }
-      })
-      .catch((error) => {
-        console.error('🔍 loadGroups Promise rejected:', error);
-      });
-    
-    // 移除了详细的标签数据日志输出
-    
-    // 添加调试日志
-    console.log('ImprovedTabList 挂载，开始加载标签组数据');
-    
+
+    // 只在开发环境显示详细日志
+    if (process.env.NODE_ENV === 'development') {
+      console.log('🔍 ImprovedTabList 初始化，加载标签组数据');
+
+      result
+        .then((actionResult: any) => {
+          if (actionResult.payload && Array.isArray(actionResult.payload)) {
+            console.log('🔍 加载的标签组数量:', actionResult.payload.length);
+          }
+        })
+        .catch((error) => {
+          console.error('🔍 loadGroups 加载失败:', error);
+        });
+    }
+
     // 监听来自 background 的刷新消息
     const handleMessage = (message: any) => {
       if (message.type === 'REFRESH_TAB_LIST') {
@@ -83,28 +66,34 @@ export const ImprovedTabList: React.FC<ImprovedTabListProps> = ({ searchQuery })
     };
 
     chrome.runtime.onMessage.addListener(handleMessage);
-    
-    // 添加页面可见性变化监听，当页面重新变为可见时刷新数据
+
+    // 优化页面可见性监听，减少不必要的刷新
+    let lastVisibilityChange = 0;
     const handleVisibilityChange = () => {
       if (!document.hidden) {
-        console.log('页面变为可见，重新加载标签组数据');
-        console.log('🔍 页面可见性变化 - 准备dispatch loadGroups');
-        dispatch(loadGroups());
+        const now = Date.now();
+        // 防抖：5秒内只允许一次可见性刷新
+        if (now - lastVisibilityChange > 5000) {
+          console.log('页面变为可见，重新加载标签组数据');
+          dispatch(loadGroups());
+          lastVisibilityChange = now;
+        }
       }
     };
-    
+
     document.addEventListener('visibilitychange', handleVisibilityChange);
-    
-    // 添加定期刷新机制，每10秒检查一次数据更新
-    const refreshInterval = setInterval(() => {
-      console.log('🔍 定期刷新 - 准备dispatch loadGroups');
-      dispatch(loadGroups());
-    }, 10000);
-    
+
+    // 移除定期刷新机制，避免不必要的性能开销
+    // 实时同步已经通过WebSocket处理数据更新
+    // const refreshInterval = setInterval(() => {
+    //   console.log('🔍 定期刷新 - 准备dispatch loadGroups');
+    //   dispatch(loadGroups());
+    // }, 10000);
+
     return () => {
       chrome.runtime.onMessage.removeListener(handleMessage);
       document.removeEventListener('visibilitychange', handleVisibilityChange);
-      clearInterval(refreshInterval);
+      // clearInterval(refreshInterval); // 已移除定期刷新
     };
   }, [dispatch]);
 
@@ -138,22 +127,22 @@ export const ImprovedTabList: React.FC<ImprovedTabListProps> = ({ searchQuery })
   // 处理拖拽悬停 - 简化逻辑，只处理跨组拖拽
   const handleDragOver = (event: DragOverEvent) => {
     const { active, over } = event;
-    
+
     if (!over) return;
-    
+
     const activeData = active.data.current;
     const overData = over.data.current;
-    
+
     // 只处理标签页拖拽到不同组的情况
     if (activeData?.type === 'tab' && overData?.type === 'tab') {
       const sourceGroupId = activeData.groupId;
       const targetGroupId = overData.groupId;
-      
+
       // 如果是跨组拖拽，才进行预处理
       if (sourceGroupId !== targetGroupId) {
         const sourceIndex = activeData.index;
         const targetIndex = overData.index;
-        
+
         dispatch(moveTab({
           sourceGroupId,
           sourceIndex,

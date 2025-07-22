@@ -6,6 +6,7 @@ import { createSlice, createAsyncThunk, PayloadAction } from '@reduxjs/toolkit';
 import { logger } from '@/shared/utils/logger';
 import { errorHandler } from '@/shared/utils/errorHandler';
 import { auth as supabaseAuth } from '@/shared/utils/supabase';
+import { authCache } from '@/shared/utils/authCache';
 
 export interface User {
   id: string;
@@ -271,10 +272,22 @@ export const signOut = createAsyncThunk(
 
       logger.debug('用户登出', { userId });
 
-      // 这里应该调用实际的登出服务
-      await new Promise(resolve => setTimeout(resolve, 300));
+      try {
+        // 尝试调用Supabase登出API
+        const { error } = await supabaseAuth.signOut();
 
-      logger.success('用户登出成功', { userId });
+        if (error) {
+          logger.warn('Supabase登出失败，但继续本地登出', error);
+        } else {
+          logger.success('Supabase登出成功', { userId });
+        }
+      } catch (networkError) {
+        // 网络错误时，仍然执行本地登出
+        logger.warn('网络错误，执行本地登出', { error: networkError });
+      }
+
+      // 无论Supabase登出是否成功，都执行本地登出
+      logger.success('用户登出成功（本地）', { userId });
 
       return true;
 
@@ -289,18 +302,71 @@ export const signOut = createAsyncThunk(
   }
 );
 
+// 添加一个新的action用于强制本地登出
+export const forceLocalSignOut = createAsyncThunk(
+  'auth/forceLocalSignOut',
+  async (_, { getState }) => {
+    const state = getState() as { auth: AuthState };
+    const userId = state.auth.user?.id;
+
+    logger.debug('强制本地登出', { userId });
+
+    // 清除认证缓存
+    try {
+      await authCache.clearAuthState();
+      logger.debug('认证缓存已清除');
+    } catch (error) {
+      logger.error('清除认证缓存失败', error);
+    }
+
+    logger.success('强制本地登出成功', { userId });
+    return true;
+  }
+);
+
 export const restoreSession = createAsyncThunk(
   'auth/restoreSession',
   async (_, { rejectWithValue }) => {
     try {
       logger.debug('恢复用户会话');
 
-      // 这里应该从缓存或服务器恢复会话
-      // 暂时模拟
-      await new Promise(resolve => setTimeout(resolve, 500));
+      // 从Supabase获取当前会话
+      const { data, error } = await supabaseAuth.getSession();
 
-      // 模拟没有缓存的会话
-      return null;
+      if (error) {
+        logger.error('获取Supabase会话失败', error);
+        throw new Error((error as any).message || '获取会话失败');
+      }
+
+      if (!data.session || !data.session.user) {
+        logger.debug('没有有效的Supabase会话');
+        return null;
+      }
+
+      // 转换Supabase用户数据为应用格式
+      const user: User = {
+        id: data.session.user.id,
+        email: data.session.user.email || 'unknown@example.com',
+        name: data.session.user.user_metadata?.name ||
+          data.session.user.user_metadata?.full_name ||
+          data.session.user.email?.split('@')[0] ||
+          'User',
+        avatar: data.session.user.user_metadata?.avatar_url,
+        provider: (data.session.user.app_metadata?.provider as AuthProvider) || 'email',
+        createdAt: data.session.user.created_at || new Date().toISOString(),
+        lastLoginAt: new Date().toISOString(),
+      };
+
+      const session: AuthSession = {
+        accessToken: data.session.access_token,
+        refreshToken: data.session.refresh_token,
+        expiresAt: new Date(data.session.expires_at! * 1000).toISOString(),
+        user,
+      };
+
+      logger.success('会话恢复成功', { userId: user.id, email: user.email });
+
+      return { user, session };
 
     } catch (error) {
       const friendlyError = errorHandler.handleAsyncError(error as Error, {
@@ -530,6 +596,26 @@ const authSlice = createSlice({
         state.wechatLoginStatus = 'idle';
         state.wechatLoginError = null;
         state.wechatLoginTabId = null;
+
+        // 清除认证缓存
+        authCache.clearAuthState().catch(error => {
+          logger.error('清除认证缓存失败', error);
+        });
+      })
+      .addCase(signOut.rejected, (state, action) => {
+        state.isLoading = false;
+        state.error = action.payload as string;
+      })
+      // forceLocalSignOut
+      .addCase(forceLocalSignOut.fulfilled, (state) => {
+        state.user = null;
+        state.session = null;
+        state.status = 'unauthenticated';
+        state.loginProvider = null;
+        state.error = null;
+        state.wechatLoginStatus = 'idle';
+        state.wechatLoginError = null;
+        state.wechatLoginTabId = null;
       })
 
       // restoreSession
@@ -571,5 +657,18 @@ export const {
   updateUser,
   resetAuthState,
 } = authSlice.actions;
+
+// 选择器：确保认证状态检查的一致性
+export const selectIsAuthenticated = (state: { auth: AuthState }) => {
+  return state.auth.status === 'authenticated' && state.auth.user !== null;
+};
+
+export const selectAuthUser = (state: { auth: AuthState }) => {
+  return state.auth.user;
+};
+
+export const selectAuthStatus = (state: { auth: AuthState }) => {
+  return state.auth.status;
+};
 
 export default authSlice.reducer;

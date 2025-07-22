@@ -3,6 +3,7 @@ import { store } from '@/app/store';
 import { syncService } from '@/services/syncService';
 import { simpleSyncService } from '@/services/simpleSyncService';
 import { RealtimeChannel } from '@supabase/supabase-js';
+import { selectIsAuthenticated, selectAuthUser } from '@/features/auth/store/authSlice';
 
 class RealtimeSync {
   private channel: RealtimeChannel | null = null;
@@ -14,12 +15,14 @@ class RealtimeSync {
    */
   async initialize() {
     const state = store.getState();
-    if (!state.auth.isAuthenticated || !state.auth.user) {
+    const user = selectAuthUser(state);
+
+    if (!selectIsAuthenticated(state) || !user) {
       console.log('🔄 用户未登录，跳过实时同步初始化');
       return;
     }
 
-    this.currentUserId = state.auth.user.id;
+    this.currentUserId = user.id;
     this.isEnabled = state.settings.syncEnabled && state.settings.autoSyncEnabled;
 
     if (!this.isEnabled) {
@@ -152,7 +155,7 @@ class RealtimeSync {
   private async performRealtimeSync() {
     try {
       const state = store.getState();
-      if (!state.auth.isAuthenticated || !state.settings.syncEnabled) {
+      if (!selectIsAuthenticated(state) || !state.settings.syncEnabled) {
         return;
       }
 
@@ -179,7 +182,7 @@ class RealtimeSync {
   private async performSettingsSync() {
     try {
       const state = store.getState();
-      if (!state.auth.isAuthenticated) {
+      if (!selectIsAuthenticated(state)) {
         return;
       }
 

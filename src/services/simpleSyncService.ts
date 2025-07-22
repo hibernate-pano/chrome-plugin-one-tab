@@ -3,6 +3,7 @@ import { sync as supabaseSync } from '@/shared/utils/supabase';
 import { store } from '@/app/store';
 import { TabGroup } from '@/shared/types/tab';
 import { setGroups } from '@/features/tabs/store/tabGroupsSlice';
+import { selectIsAuthenticated } from '@/features/auth/store/authSlice';
 
 /**
  * 简化的同步服务
@@ -11,20 +12,25 @@ import { setGroups } from '@/features/tabs/store/tabGroupsSlice';
 export class SimpleSyncService {
   private uploadTimer: NodeJS.Timeout | null = null;
   private isUploading = false;
-  private readonly UPLOAD_DELAY = 2000; // 2秒防抖
+  private readonly UPLOAD_DELAY = 5000; // 5秒防抖，确保认证状态恢复完成
   private readonly MAX_RETRIES = 3;
 
   /**
    * 用户操作后调用，安排上传
    */
   scheduleUpload() {
+    console.log('🔄 SimpleSyncService: scheduleUpload 被调用');
+
     // 清除之前的定时器
     if (this.uploadTimer) {
       clearTimeout(this.uploadTimer);
+      console.log('🔄 SimpleSyncService: 清除之前的定时器');
     }
 
-    // 2秒后上传，简单有效的防抖
+    // 5秒后上传，确保认证状态恢复完成
+    console.log('🔄 SimpleSyncService: 设置5秒后上传定时器');
     this.uploadTimer = setTimeout(() => {
+      console.log('🔄 SimpleSyncService: 定时器触发，开始上传');
       this.uploadToCloud();
     }, this.UPLOAD_DELAY);
   }
@@ -39,9 +45,18 @@ export class SimpleSyncService {
     }
 
     const state = store.getState();
-    if (!state.auth.isAuthenticated) {
-      console.log('🔄 用户未登录，跳过上传');
-      return;
+    if (!selectIsAuthenticated(state)) {
+      // 如果用户未登录，但这是第一次检查，等待2秒后重试一次
+      if (retryCount === 0) {
+        console.log('🔄 用户未登录，2秒后重试检查认证状态');
+        setTimeout(() => {
+          this.uploadToCloud(1); // 重试一次
+        }, 2000);
+        return;
+      } else {
+        console.log('🔄 用户未登录，跳过上传');
+        return;
+      }
     }
 
     try {
@@ -82,7 +97,7 @@ export class SimpleSyncService {
    */
   async downloadFromCloud(): Promise<void> {
     const state = store.getState();
-    if (!state.auth.isAuthenticated) {
+    if (!selectIsAuthenticated(state)) {
       console.log('🔄 用户未登录，跳过下载');
       return;
     }

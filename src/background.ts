@@ -7,6 +7,7 @@ import { logger } from '@/shared/utils/logger';
 import { storage } from '@/shared/utils/storage';
 import { showNotification } from '@/shared/utils/notification';
 import { TabGroup, Tab } from '@/shared/types/tab';
+import { simpleSyncService } from '@/services/simpleSyncService';
 
 console.log('Background script loaded - OneTab Plus');
 
@@ -50,11 +51,11 @@ const isPluginManagementPage = (tab: chrome.tabs.Tab): boolean => {
 const openOrFocusManagementPage = async (): Promise<void> => {
   try {
     const pluginUrl = chrome.runtime.getURL('popup.html');
-    
+
     // 查找是否已经有插件管理页面打开
     const tabs = await chrome.tabs.query({});
     const existingTab = tabs.find(tab => tab.url === pluginUrl);
-    
+
     if (existingTab && existingTab.id) {
       // 如果已存在，则切换到该标签页
       await chrome.tabs.update(existingTab.id, { active: true });
@@ -86,19 +87,19 @@ const saveTabs = async (tabs: chrome.tabs.Tab[]) => {
         logger.debug('排除插件管理页面', { url: tab.url, title: tab.title });
         return false;
       }
-      
+
       // 排除Chrome内部页面
       if (tab.url) {
-        const isInternalPage = tab.url.startsWith('chrome://') || 
-                              tab.url.startsWith('chrome-extension://') || 
-                              tab.url.startsWith('edge://');
+        const isInternalPage = tab.url.startsWith('chrome://') ||
+          tab.url.startsWith('chrome-extension://') ||
+          tab.url.startsWith('edge://');
         if (isInternalPage) {
           logger.debug('排除内部页面', { url: tab.url, title: tab.title });
           return false;
         }
         return true;
       }
-      
+
       // 如果URL为空但标题不为空，则保存该标签页（可能是正在加载的页面）
       return tab.title && tab.title.trim() !== '';
     });
@@ -132,7 +133,7 @@ const saveTabs = async (tabs: chrome.tabs.Tab[]) => {
         }
         return false;
       });
-      
+
       logger.debug('去重后的标签页', {
         beforeCount: allTabsToClose.length,
         afterCount: validTabs.length,
@@ -158,10 +159,14 @@ const saveTabs = async (tabs: chrome.tabs.Tab[]) => {
       name: newGroup.name,
       tabCount: newGroup.tabs.length
     });
-    
+
     // 保存到存储
     const existingGroups = await storage.getGroups();
     await storage.setGroups([newGroup, ...existingGroups]);
+
+    // 触发简化同步
+    console.log('🔄 Background: 触发简化同步');
+    simpleSyncService.scheduleUpload();
 
     logger.info('标签页保存详情', {
       newGroupId: newGroup.id,
