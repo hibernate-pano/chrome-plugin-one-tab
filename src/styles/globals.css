@@ -5,6 +5,14 @@
 /* 导入深色模式优化样式 */
 @import './dark-mode-optimizations.css';
 
+/* 导入重新设计的交互样式 */
+@import './redesigned-interactions.css';
+
+/* 导入现代化设计系统 */
+@import './modern-color-system.css';
+@import './modern-design-system.css';
+@import './modern-animations.css';
+
 @layer base {
   body {
     @apply bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100;

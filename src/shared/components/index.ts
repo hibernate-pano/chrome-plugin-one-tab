@@ -39,3 +39,40 @@ export { RenderPerformanceMonitor, PerformanceIndicator } from './RenderPerforma
 
 export { ConfirmDialog, useConfirmDialog, quickConfirm, ConfirmDialogPresets } from './ConfirmDialog/ConfirmDialog';
 export { LoadingState, useLoadingState, LoadingPresets, LoadingType, LoadingSize } from './LoadingState/LoadingState';
+
+// 新增统一设计系统组件
+export { Card, CardHeader, CardContent, CardFooter } from './Card/Card';
+export type { CardProps } from './Card/Card';
+
+export { Icon } from './Icon/Icon';
+export type { IconProps } from './Icon/Icon';
+
+export { StatusCard } from './StatusCard/StatusCard';
+export type { StatusCardProps } from './StatusCard/StatusCard';
+
+export { StatsCard, StatsGrid } from './StatsCard/StatsCard';
+export type { StatsCardProps } from './StatsCard/StatsCard';
+
+export { AnimatedContainer, StaggeredContainer } from './AnimatedContainer/AnimatedContainer';
+export type { AnimatedContainerProps } from './AnimatedContainer/AnimatedContainer';
+
+// 布局组件
+export { ResponsiveContainer, ResponsiveGrid } from './ResponsiveContainer/ResponsiveContainer';
+export type { ResponsiveContainerProps, ResponsiveGridProps } from './ResponsiveContainer/ResponsiveContainer';
+
+// 现有空状态组件
+export { EmptyState } from './EmptyState/EmptyState';
+export type { EmptyStateProps } from './EmptyState/EmptyState';
+
+export { GuidedActions } from './GuidedActions/GuidedActions';
+export type { GuidedActionsProps } from './GuidedActions/GuidedActions';
+
+// 现代化设计系统组件
+export { ModernCard, ModernCardHeader, ModernCardContent, ModernCardFooter, ModernCardSpotlight, ModernCardHolographic, ModernCardFloating } from './ModernCard/ModernCard';
+export type { ModernCardProps } from './ModernCard/ModernCard';
+
+export { ModernIcon } from './ModernIcon/ModernIcon';
+export type { ModernIconProps } from './ModernIcon/ModernIcon';
+
+export { ModernIllustration, DecorativeElement } from './ModernIllustration/ModernIllustration';
+export type { ModernIllustrationProps, DecorativeElementProps } from './ModernIllustration/ModernIllustration';
