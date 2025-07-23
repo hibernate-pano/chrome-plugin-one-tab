@@ -128,40 +128,7 @@ export const moveTab = createAsyncThunk(
   }
 );
 
-export const moveGroup = createAsyncThunk(
-  'dragOps/moveGroup',
-  async ({ dragIndex, hoverIndex }: { dragIndex: number; hoverIndex: number }) => {
-    logger.dnd('移动标签组', { dragIndex, hoverIndex });
-
-    const groups = await storage.getGroups();
-
-    // 验证索引
-    if (dragIndex < 0 || dragIndex >= groups.length || hoverIndex < 0 || hoverIndex >= groups.length) {
-      throw new Error('无效的标签组索引');
-    }
-
-    const dragGroup = groups[dragIndex];
-    const newGroups = [...groups];
-
-    // 删除拖拽的标签组
-    newGroups.splice(dragIndex, 1);
-    // 在新位置插入标签组
-    newGroups.splice(hoverIndex, 0, dragGroup);
-
-    await storage.setGroups(newGroups);
-
-    // 触发同步
-    try {
-      const { optimisticSyncService } = await import('@/services/optimisticSyncService');
-      optimisticSyncService.schedulePushOnly();
-      logger.debug('拖拽操作后同步服务启动成功');
-    } catch (error) {
-      logger.error('拖拽操作后同步服务启动失败:', error);
-    }
-
-    return { dragIndex, hoverIndex };
-  }
-);
+// moveGroup 功能已移除 - 不再支持标签组拖拽
 
 // 使用节流的批量操作（暂时未使用，保留供将来使用）
 // const _throttledBatchOperation = throttle(async (operations: Array<() => Promise<void>>) => {
@@ -237,20 +204,7 @@ const dragOperationsSlice = createSlice({
         logger.error('移动标签页失败', action.error);
       })
 
-      // moveGroup
-      .addCase(moveGroup.pending, (state) => {
-        state.isProcessing = true;
-        state.error = null;
-      })
-      .addCase(moveGroup.fulfilled, (state, action) => {
-        state.isProcessing = false;
-        logger.success('标签组移动完成', action.payload);
-      })
-      .addCase(moveGroup.rejected, (state, action) => {
-        state.isProcessing = false;
-        state.error = action.error.message || '移动标签组失败';
-        logger.error('移动标签组失败', action.error);
-      });
+    // moveGroup 功能已移除
   },
 });
 

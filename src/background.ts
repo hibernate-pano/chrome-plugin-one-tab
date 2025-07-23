@@ -219,14 +219,18 @@ const saveTabs = async (tabs: chrome.tabs.Tab[]) => {
     const existingGroups = await storage.getGroups();
     await storage.setGroups([newGroup, ...existingGroups]);
 
-    // 触发乐观锁同步
-    console.log('🔄 Background: 触发乐观锁同步');
+    // 触发 pull-first 同步
+    console.log('🔄 Background: 触发 pull-first 同步');
     try {
-      const { optimisticSyncService } = await import('./services/optimisticSyncService');
-      optimisticSyncService.scheduleSync();
-      console.log('✅ 乐观锁同步服务启动成功');
+      const { pullFirstSyncService } = await import('./services/PullFirstSyncService');
+      await pullFirstSyncService.syncUserOperation({
+        type: 'create',
+        data: newGroup,
+        description: '保存新标签组'
+      });
+      console.log('✅ Pull-first 同步服务启动成功');
     } catch (error) {
-      console.error('❌ 乐观锁同步服务启动失败:', error);
+      console.error('❌ Pull-first 同步服务启动失败:', error);
       // 显示错误通知而不是静默降级
       await showNotification({
         type: 'basic',

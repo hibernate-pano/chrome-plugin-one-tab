@@ -191,14 +191,14 @@ const App: React.FC = () => {
                 console.warn('检查数据库迁移状态失败:', error);
               }
 
-              // 触发乐观锁同步
-              console.log('🔄 触发乐观锁同步');
+              // 触发 pull-first 同步
+              console.log('🔄 触发 pull-first 同步');
               try {
-                const { optimisticSyncService } = await import('@/services/optimisticSyncService');
-                optimisticSyncService.scheduleSync();
-                console.log('✅ 乐观锁同步服务启动成功');
+                const { pullFirstSyncService } = await import('@/services/PullFirstSyncService');
+                await pullFirstSyncService.performPeriodicSync();
+                console.log('✅ Pull-first 同步服务启动成功');
               } catch (error) {
-                console.error('❌ 乐观锁同步服务启动失败:', error);
+                console.error('❌ Pull-first 同步服务启动失败:', error);
                 // 不再降级，而是记录错误
                 console.error('同步服务不可用，请检查网络连接');
               }
@@ -235,7 +235,7 @@ const App: React.FC = () => {
 
       // 组件卸载时清理
       return () => {
-        autoSyncManager.destroy();
+        autoSyncManager.shutdown();
       };
     }
   }, [initialAuthLoaded]);

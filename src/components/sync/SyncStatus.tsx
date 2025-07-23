@@ -1,54 +1,16 @@
-import React, { useEffect, useState } from 'react';
+import React from 'react';
 import { useAppSelector } from '@/app/store/hooks';
-import { realtimeSync } from '@/services/realtimeSync';
 
 export const SyncStatus: React.FC = () => {
   const { lastSyncTime, status: syncStatus } = useAppSelector(state => state.sync);
   const { status } = useAppSelector(state => state.auth);
   const isAuthenticated = status === 'authenticated';
   const { syncEnabled, autoSyncEnabled } = useAppSelector(state => state.settings);
-  const [realtimeStatus, setRealtimeStatus] = useState<string>('disconnected');
-
-  // 监控实时同步状态
-  useEffect(() => {
-    if (!isAuthenticated || !syncEnabled || !autoSyncEnabled) {
-      setRealtimeStatus('disconnected');
-      return;
-    }
-
-    const checkRealtimeStatus = () => {
-      const status = realtimeSync.getConnectionStatus();
-      setRealtimeStatus(status);
-    };
-
-    // 立即检查一次
-    checkRealtimeStatus();
-
-    // 定期检查状态
-    const interval = setInterval(checkRealtimeStatus, 5000);
-
-    return () => clearInterval(interval);
-  }, [isAuthenticated, syncEnabled, autoSyncEnabled]);
 
   // 获取状态指示器的颜色和图标
   const getStatusIndicator = () => {
     if (syncStatus === 'syncing') {
       return { color: 'text-blue-500', icon: '🔄', label: '同步中...' };
-    }
-
-    // 检查实时同步状态
-    if (autoSyncEnabled && syncEnabled) {
-      switch (realtimeStatus) {
-        case 'connected':
-          return { color: 'text-green-500', icon: '🟢', label: '实时同步已连接' };
-        case 'connecting':
-          return { color: 'text-yellow-500', icon: '🟡', label: '实时同步连接中...' };
-        case 'error':
-          return { color: 'text-red-500', icon: '🔴', label: '实时同步连接失败' };
-        case 'disconnected':
-        default:
-          return { color: 'text-gray-500', icon: '⚪', label: '实时同步未连接' };
-      }
     }
 
     if (!lastSyncTime) {
@@ -87,7 +49,7 @@ export const SyncStatus: React.FC = () => {
         <span className="mr-1">{statusIndicator.icon}</span>
         <span>{statusIndicator.label}</span>
         {autoSyncEnabled && (
-          <span className="ml-1 text-gray-400">(自动同步已开启)</span>
+          <span className="ml-1 text-gray-400">(定时同步已开启)</span>
         )}
       </span>
     </div>

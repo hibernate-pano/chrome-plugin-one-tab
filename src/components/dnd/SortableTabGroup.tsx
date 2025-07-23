@@ -36,13 +36,15 @@ const SortableTabGroupComponent: React.FC<SortableTabGroupProps> = ({ group, ind
     };
   }, []);
 
-  const { attributes, listeners, setNodeRef, transform, isDragging } = useSortable({
+  // 标签组拖拽功能已禁用
+  const { setNodeRef, transform, isDragging } = useSortable({
     id: `group-${group.id}`,
     data: {
       type: 'group',
       group,
       index,
     },
+    disabled: true, // 禁用标签组拖拽
   });
 
   // 使用统一的拖拽视觉反馈
@@ -141,7 +143,7 @@ const SortableTabGroupComponent: React.FC<SortableTabGroupProps> = ({ group, ind
     group.tabs.map(tab => `${group.id}-tab-${tab.id}`),
     [group.tabs, group.id]
   );
-  
+
   // Ensure other handlers also check isMarkedForDeletion if they could conflict
   const safeHandleOpenTab = useCallback((tab: any) => {
     if (!isMounted.current || isMarkedForDeletion) return;
@@ -184,9 +186,7 @@ const SortableTabGroupComponent: React.FC<SortableTabGroupProps> = ({ group, ind
       data-onboarding="tab-group"
     >
       <div
-        className="flex items-center justify-between p-2 bg-gray-50 border-b border-gray-200 cursor-move"
-        {...attributes}
-        {...listeners}
+        className="flex items-center justify-between p-2 bg-gray-50 border-b border-gray-200"
       >
         <div className="flex items-center space-x-2 flex-1 min-w-0">
           <button

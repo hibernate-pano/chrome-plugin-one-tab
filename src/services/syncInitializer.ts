@@ -49,10 +49,10 @@ export class SyncInitializer {
 
       // 2. 运行诊断检查
       const diagnostics = await this.runPreInitializationDiagnostics();
-      
+
       // 3. 根据诊断结果选择同步策略
       const strategy = this.selectSyncStrategy(diagnostics);
-      
+
       // 4. 初始化选定的同步服务
       const initResult = await this.initializeSelectedService(strategy);
 
@@ -85,7 +85,7 @@ export class SyncInitializer {
     try {
       const { quickDiagnostic } = await import('@/utils/syncDiagnostics');
       const diagnosticResult = await quickDiagnostic();
-      
+
       logger.info('🔍 初始化前诊断完成', {
         issuesCount: diagnosticResult.issues.length,
         hasErrors: diagnosticResult.issues.some(i => i.type === 'error'),
@@ -119,7 +119,7 @@ export class SyncInitializer {
     try {
       const { getSyncConfig } = require('@/shared/config/syncConfig');
       const config = getSyncConfig();
-      
+
       if (config.mechanism === 'simplified') {
         logger.info('🔧 配置指定使用简化机制，选择统一同步服务');
         return 'unified';
@@ -140,10 +140,10 @@ export class SyncInitializer {
     switch (strategy) {
       case 'unified':
         return await this.initializeUnifiedService();
-      
+
       case 'legacy':
         return await this.initializeLegacyServices();
-      
+
       default:
         return {
           success: false,
@@ -153,58 +153,25 @@ export class SyncInitializer {
   }
 
   /**
-   * 初始化统一同步服务
+   * 初始化统一同步服务 (已移除)
    */
   private async initializeUnifiedService(): Promise<{ success: boolean; message: string }> {
-    try {
-      logger.info('🔄 初始化统一同步服务');
-
-      // 1. 停用其他可能冲突的服务
-      await this.disableConflictingServices();
-
-      // 2. 初始化统一同步服务
-      const { unifiedSyncService } = await import('@/services/UnifiedSyncService');
-      await unifiedSyncService.initialize();
-
-      logger.info('✅ 统一同步服务初始化成功');
-      return {
-        success: true,
-        message: '统一同步服务已启动'
-      };
-
-    } catch (error) {
-      logger.error('❌ 统一同步服务初始化失败:', error);
-      return {
-        success: false,
-        message: `统一同步服务初始化失败: ${error instanceof Error ? error.message : '未知错误'}`
-      };
-    }
+    logger.info('⚠️ 统一同步服务已移除，使用乐观锁同步服务');
+    return {
+      success: false,
+      message: '统一同步服务已移除'
+    };
   }
 
   /**
-   * 初始化传统同步服务（保持向后兼容）
+   * 初始化传统同步服务（已移除）
    */
   private async initializeLegacyServices(): Promise<{ success: boolean; message: string }> {
-    try {
-      logger.info('🔄 初始化传统同步服务');
-
-      // 初始化实时同步
-      const { realtimeSync } = await import('@/services/realtimeSync');
-      await realtimeSync.initialize();
-
-      logger.info('✅ 传统同步服务初始化成功');
-      return {
-        success: true,
-        message: '传统同步服务已启动'
-      };
-
-    } catch (error) {
-      logger.error('❌ 传统同步服务初始化失败:', error);
-      
-      // 降级到统一同步服务
-      logger.info('🔄 降级到统一同步服务');
-      return await this.initializeUnifiedService();
-    }
+    logger.info('⚠️ 传统同步服务已移除，使用 pull-first 同步');
+    return {
+      success: false,
+      message: '传统同步服务已移除'
+    };
   }
 
   /**
@@ -219,7 +186,7 @@ export class SyncInitializer {
     for (const servicePath of servicesToDisable) {
       try {
         const service = await import(servicePath);
-        
+
         // 尝试停用服务
         if (service.default?.disconnect) {
           await service.default.disconnect();
@@ -243,7 +210,7 @@ export class SyncInitializer {
    */
   async reinitialize(): Promise<SyncInitializationResult> {
     logger.info('🔄 重新初始化同步服务');
-    
+
     // 重置状态
     this.isInitialized = false;
     this.activeService = null;
@@ -263,13 +230,7 @@ export class SyncInitializer {
 
     await this.disableConflictingServices();
 
-    // 停用统一同步服务
-    try {
-      const { unifiedSyncService } = await import('@/services/UnifiedSyncService');
-      await unifiedSyncService.disconnect();
-    } catch (error) {
-      // 忽略错误
-    }
+    // 统一同步服务已移除
 
     this.isInitialized = false;
     this.activeService = null;
@@ -302,12 +263,12 @@ export class SyncInitializer {
       // 1. 运行诊断
       const { autoFixSyncIssues } = await import('@/utils/syncDiagnostics');
       const fixResult = await autoFixSyncIssues();
-      
+
       actions.push(...fixResult.actions);
 
       // 2. 重新初始化服务
       const initResult = await this.reinitialize();
-      
+
       if (initResult.success) {
         actions.push(`重新初始化为: ${initResult.activeService}`);
       }

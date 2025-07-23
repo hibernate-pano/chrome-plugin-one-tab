@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { useAppSelector } from '@/app/store/hooks';
 import { syncService } from '@/services/syncService';
+import { pullFirstSyncService } from '@/services/PullFirstSyncService';
 
 import { FEEDBACK_MESSAGES } from '@/shared/constants/feedbackMessages';
 import { useSyncOperation } from '@/shared/hooks/useAsyncOperation';
@@ -20,6 +21,7 @@ export const SyncButton: React.FC<SyncButtonProps> = () => {
   const [modalAnimation, setModalAnimation] = useState('');
   const uploadOperation = useSyncOperation();
   const downloadOperation = useSyncOperation();
+  const manualSyncOperation = useSyncOperation();
   const { setRetryHandler } = useErrorHandler();
 
   // 处理上传按钮点击
@@ -53,6 +55,25 @@ export const SyncButton: React.FC<SyncButtonProps> = () => {
         setModalAnimation('animate-fadeIn');
         setShowDownloadModal(true);
       }
+    }
+  };
+
+  // 处理手动同步按钮点击
+  const handleManualSync = async () => {
+    if (syncStatus !== 'syncing' && isAuthenticated) {
+      setRetryHandler(() => handleManualSync());
+
+      await manualSyncOperation.execute(
+        () => pullFirstSyncService.performManualSync(),
+        {
+          loadingMessage: '正在执行手动同步...',
+          successMessage: '手动同步完成',
+          useSmartError: true,
+          onError: (error) => {
+            console.error('手动同步失败:', error);
+          },
+        }
+      );
     }
   };
 
@@ -135,8 +156,8 @@ export const SyncButton: React.FC<SyncButtonProps> = () => {
     }
   };
 
-  // 如果未登录或者设置为不显示手动同步按钮，则不显示
-  if (!isAuthenticated || !showManualSyncButtons) {
+  // 如果未登录，则不显示
+  if (!isAuthenticated) {
     return null;
   }
 
@@ -154,39 +175,62 @@ export const SyncButton: React.FC<SyncButtonProps> = () => {
         )}
 
         <div className="flex items-center space-x-2 w-full">
+          {/* 手动同步按钮 - 总是显示 */}
           <LoadingButton
-            onClick={handleUpload}
-            loading={syncStatus === 'syncing' && syncOperation === 'upload' || uploadOperation.isLoading}
-            loadingText="上传中..."
-            className="bg-green-100 text-green-600 hover:bg-green-200"
+            onClick={handleManualSync}
+            loading={manualSyncOperation.isLoading}
+            loadingText="同步中..."
+            className="bg-purple-100 text-purple-600 hover:bg-purple-200"
             variant="ghost"
             size="sm"
-            title="上传本地数据到云端"
+            title="手动同步：先拉取云端数据，再推送本地变更"
             icon={
               <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
               </svg>
             }
           >
-            上传
+            同步
           </LoadingButton>
 
-          <LoadingButton
-            onClick={handleDownload}
-            loading={syncStatus === 'syncing' && syncOperation === 'download' || downloadOperation.isLoading}
-            loadingText="下载中..."
-            className="bg-blue-100 text-blue-600 hover:bg-blue-200"
-            variant="ghost"
-            size="sm"
-            title="从云端下载数据并与本地合并"
-            icon={
-              <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
-              </svg>
-            }
-          >
-            下载
-          </LoadingButton>
+          {/* 上传/下载按钮 - 受设置控制 */}
+          {showManualSyncButtons && (
+            <>
+              <LoadingButton
+                onClick={handleUpload}
+                loading={syncStatus === 'syncing' && syncOperation === 'upload' || uploadOperation.isLoading}
+                loadingText="上传中..."
+                className="bg-green-100 text-green-600 hover:bg-green-200"
+                variant="ghost"
+                size="sm"
+                title="上传本地数据到云端"
+                icon={
+                  <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
+                  </svg>
+                }
+              >
+                上传
+              </LoadingButton>
+
+              <LoadingButton
+                onClick={handleDownload}
+                loading={syncStatus === 'syncing' && syncOperation === 'download' || downloadOperation.isLoading}
+                loadingText="下载中..."
+                className="bg-blue-100 text-blue-600 hover:bg-blue-200"
+                variant="ghost"
+                size="sm"
+                title="从云端下载数据并与本地合并"
+                icon={
+                  <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                  </svg>
+                }
+              >
+                下载
+              </LoadingButton>
+            </>
+          )}
         </div>
       </div>
 

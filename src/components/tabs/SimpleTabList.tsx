@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { useAppDispatch, useAppSelector } from '@/app/store/hooks';
 import { loadGroups } from '@/features/tabs/store/tabGroupsSlice';
-import { moveGroup, moveTab } from '@/features/tabs/store/dragOperationsSlice';
+import { moveTab } from '@/features/tabs/store/dragOperationsSlice';
 import { SearchResultList } from '@/components/search/SearchResultList';
 import { SimpleDraggableTabGroup } from '@/components/dnd/SimpleDraggableTabGroup';
 import '@/styles/drag-drop.css';
@@ -88,16 +88,7 @@ export const SimpleTabList: React.FC<SimpleTabListProps> = ({ searchQuery }) => 
           targetIndex
         }));
       }
-      // 处理标签组拖拽
-      else if (activeData?.type === 'group' && overData?.type === 'group') {
-        const activeIndex = filteredGroups.findIndex(g => `group-${g.id}` === active.id);
-        const overIndex = filteredGroups.findIndex(g => `group-${g.id}` === over.id);
-
-        if (activeIndex !== -1 && overIndex !== -1) {
-          // 执行标签组移动
-          dispatch(moveGroup({ dragIndex: activeIndex, hoverIndex: overIndex }));
-        }
-      }
+      // 标签组拖拽功能已禁用
     }
 
     // 清理状态

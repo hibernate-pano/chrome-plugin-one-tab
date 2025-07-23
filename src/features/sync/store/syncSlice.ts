@@ -17,9 +17,8 @@ interface SyncState {
   operation: SyncOperation;
   progress: number;
   lastSyncTime: string | null;
-  isRealtimeEnabled: boolean;
   isAutoSyncEnabled: boolean;
-  syncInterval: number; // 分钟
+  syncInterval: number; // 秒（已改为10秒间隔）
   syncStrategy: SyncStrategy;
   error: string | null;
   pendingOperations: string[];
@@ -31,9 +30,8 @@ const initialState: SyncState = {
   operation: 'none',
   progress: 0,
   lastSyncTime: null,
-  isRealtimeEnabled: false,
   isAutoSyncEnabled: false,
-  syncInterval: 10,
+  syncInterval: 10, // 10秒间隔
   syncStrategy: 'newest',
   error: null,
   pendingOperations: [],
@@ -318,33 +316,7 @@ export const performBidirectionalSync = createAsyncThunk(
   }
 );
 
-export const initializeRealtimeSync = createAsyncThunk(
-  'sync/initializeRealtimeSync',
-  async (_, { dispatch, getState: _getState, rejectWithValue }) => {
-    try {
-      logger.sync('初始化实时同步');
-
-      // 这里应该初始化实时同步连接
-      // 比如WebSocket或者Supabase实时订阅
-
-      dispatch(setRealtimeEnabled(true));
-
-      logger.success('实时同步已启用');
-
-      return true;
-
-    } catch (error) {
-      const friendlyError = errorHandler.handleSyncError(error as Error, {
-        component: 'SyncSlice',
-        action: 'initializeRealtimeSync',
-      });
-
-      dispatch(setError(friendlyError.message));
-
-      return rejectWithValue(friendlyError.message);
-    }
-  }
-);
+// initializeRealtimeSync 已移除 - 不再支持实时同步
 
 // Slice定义
 const syncSlice = createSlice({
@@ -370,19 +342,14 @@ const syncSlice = createSlice({
       state.lastSyncTime = action.payload;
     },
 
-    setRealtimeEnabled: (state, action: PayloadAction<boolean>) => {
-      state.isRealtimeEnabled = action.payload;
-      logger.sync(`实时同步${action.payload ? '已启用' : '已禁用'}`);
-    },
-
     setAutoSyncEnabled: (state, action: PayloadAction<boolean>) => {
       state.isAutoSyncEnabled = action.payload;
       logger.sync(`自动同步${action.payload ? '已启用' : '已禁用'}`);
     },
 
     setSyncInterval: (state, action: PayloadAction<number>) => {
-      state.syncInterval = Math.max(1, action.payload);
-      logger.sync('同步间隔已更新', { interval: action.payload });
+      state.syncInterval = Math.max(10, action.payload); // 最小10秒
+      logger.sync('同步间隔已更新', { interval: action.payload, unit: '秒' });
     },
 
     setSyncStrategy: (state, action: PayloadAction<SyncStrategy>) => {
@@ -586,14 +553,7 @@ const syncSlice = createSlice({
         state.error = action.payload as string;
       })
 
-      // initializeRealtimeSync
-      .addCase(initializeRealtimeSync.fulfilled, (state) => {
-        state.isRealtimeEnabled = true;
-      })
-      .addCase(initializeRealtimeSync.rejected, (state, action) => {
-        state.isRealtimeEnabled = false;
-        state.error = action.payload as string;
-      });
+    // initializeRealtimeSync 已移除
   },
 });
 
@@ -602,7 +562,6 @@ export const {
   setSyncOperation,
   setSyncProgress,
   setLastSyncTime,
-  setRealtimeEnabled,
   setAutoSyncEnabled,
   setSyncInterval,
   setSyncStrategy,

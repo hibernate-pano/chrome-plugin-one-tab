@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useRef, useCallback, useMemo } from 'react';
 import { useAppDispatch, useAppSelector } from '@/app/store/hooks';
 import { loadGroups, setGroups } from '@/features/tabs/store/tabGroupsSlice';
-import { moveGroup, moveTab } from '@/features/tabs/store/dragOperationsSlice';
+import { moveTab } from '@/features/tabs/store/dragOperationsSlice';
 import { SearchResultList } from '@/components/search/SearchResultList';
 // No need to import TabGroup type as we're not using it directly
 import { SortableTabGroup } from '@/components/dnd/SortableTabGroup';
@@ -153,10 +153,10 @@ export const TabListDndKit: React.FC<TabListProps> = ({ searchQuery }) => {
       // 检查是否与上次位置相同，避免重复处理
       const currentPosition = { sourceGroupId, sourceIndex, targetGroupId, targetIndex };
       if (lastDragPosition.current &&
-          lastDragPosition.current.sourceGroupId === sourceGroupId &&
-          lastDragPosition.current.sourceIndex === sourceIndex &&
-          lastDragPosition.current.targetGroupId === targetGroupId &&
-          lastDragPosition.current.targetIndex === targetIndex) {
+        lastDragPosition.current.sourceGroupId === sourceGroupId &&
+        lastDragPosition.current.sourceIndex === sourceIndex &&
+        lastDragPosition.current.targetGroupId === targetGroupId &&
+        lastDragPosition.current.targetIndex === targetIndex) {
         return;
       }
 
@@ -307,19 +307,7 @@ export const TabListDndKit: React.FC<TabListProps> = ({ searchQuery }) => {
         }
       }
     }
-    // 处理组拖拽
-    else if (activeData.type === 'group' && overData.type === 'group') {
-      const activeIndex = filteredGroups.findIndex(g => `group-${g.id}` === activeId);
-      const overIndex = filteredGroups.findIndex(g => `group-${g.id}` === overId);
-
-      if (activeIndex !== -1 && overIndex !== -1 && activeIndex !== overIndex) {
-        try {
-          dispatch(moveGroup({ dragIndex: activeIndex, hoverIndex: overIndex }));
-        } catch (error) {
-          console.error('拖拽结束时更新标签组位置失败:', error);
-        }
-      }
-    }
+    // 标签组拖拽功能已禁用
 
     // 停止性能监控
     if (process.env.NODE_ENV === 'development') {

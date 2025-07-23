@@ -1,9 +1,10 @@
 import React, { useEffect, useState } from 'react';
 import { useAppDispatch, useAppSelector } from '@/app/store/hooks';
 import { loadGroups } from '@/features/tabs/store/tabGroupsSlice';
-import { moveTab, moveGroup } from '@/features/tabs/store/dragOperationsSlice';
+import { moveTab } from '@/features/tabs/store/dragOperationsSlice';
 import { SearchResultList } from '@/components/search/SearchResultList';
 import { SimpleDraggableTabGroup } from '@/components/dnd/SimpleDraggableTabGroup';
+import { SyncWarningBanner } from '@/components/sync/SyncWarningBanner';
 import { TabsEmptyState } from './TabsEmptyState';
 import '@/styles/drag-drop.css';
 import {
@@ -176,16 +177,7 @@ export const ImprovedTabList: React.FC<ImprovedTabListProps> = ({ searchQuery })
           targetIndex
         }));
       }
-      // 处理标签组拖拽
-      else if (activeData?.type === 'group' && overData?.type === 'group') {
-        const activeIndex = filteredGroups.findIndex(g => `group-${g.id}` === active.id);
-        const overIndex = filteredGroups.findIndex(g => `group-${g.id}` === over.id);
-
-        if (activeIndex !== -1 && overIndex !== -1) {
-          // 执行标签组移动
-          dispatch(moveGroup({ dragIndex: activeIndex, hoverIndex: overIndex }));
-        }
-      }
+      // 标签组拖拽功能已禁用
     }
 
     // 清理状态
@@ -227,6 +219,9 @@ export const ImprovedTabList: React.FC<ImprovedTabListProps> = ({ searchQuery })
 
   return (
     <div className="space-y-2">
+      {/* 同步警告横幅 */}
+      <SyncWarningBanner />
+
       {/* 搜索结果或标签组列表 */}
       {searchQuery ? (
         <SearchResultList searchQuery={searchQuery} />

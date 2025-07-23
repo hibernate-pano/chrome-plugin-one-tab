@@ -46,7 +46,7 @@ export class SyncDiagnostics {
    */
   async runFullDiagnostic(): Promise<SyncDiagnosticResult> {
     logger.info('🔍 开始同步问题诊断');
-    
+
     this.issues = [];
     this.recommendations = [];
 
@@ -307,12 +307,7 @@ export class SyncDiagnostics {
       // 服务不可用
     }
 
-    try {
-      const { realtimeSync } = await import('@/services/realtimeSync');
-      activeServices.push('RealtimeSync');
-    } catch (error) {
-      // 服务不可用
-    }
+    // RealtimeSync 服务已移除
 
     if (activeServices.length > 2) {
       this.addIssue({
@@ -338,7 +333,7 @@ export class SyncDiagnostics {
   private async gatherSystemInfo(): Promise<SystemInfo> {
     const state = store.getState();
     const isAuthenticated = selectIsAuthenticated(state);
-    
+
     let localGroupsCount = 0;
     let cloudGroupsCount = 0;
 
@@ -408,7 +403,7 @@ export class SyncDiagnostics {
    */
   private addIssue(issue: SyncIssue): void {
     this.issues.push(issue);
-    
+
     const emoji = issue.type === 'error' ? '❌' : issue.type === 'warning' ? '⚠️' : 'ℹ️';
     logger.info(`${emoji} [${issue.category}] ${issue.message}`, issue.details);
   }
@@ -422,26 +417,19 @@ export class SyncDiagnostics {
     try {
       // 1. 切换到仅使用实时订阅的简化策略
       const { updateSyncConfig, SyncMechanism } = await import('@/shared/config/syncConfig');
-      
+
       updateSyncConfig({
         mechanism: SyncMechanism.SIMPLIFIED,
         enableGradualMigration: false
       });
       actions.push('切换到简化同步机制');
 
-      // 2. 停用可能冲突的服务
-      try {
-        const { realtimeSync } = await import('@/services/realtimeSync');
-        // 这里可以添加停用逻辑
-        actions.push('优化实时同步配置');
-      } catch (error) {
-        // 服务不存在，忽略
-      }
+      // 2. RealtimeSync 服务已移除，无需停用
 
       // 3. 执行一次完整同步以确保数据一致性
       const { optimisticSyncService } = await import('@/services/optimisticSyncService');
       const syncResult = await optimisticSyncService.syncWithPullFirst();
-      
+
       if (syncResult.success) {
         actions.push('执行完整数据同步');
       } else {

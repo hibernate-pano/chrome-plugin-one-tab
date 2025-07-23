@@ -1,6 +1,5 @@
 import React, { useState, useEffect } from 'react';
 import { useAppSelector } from '@/app/store/hooks';
-import { realtimeSync } from '@/services/realtimeSync';
 
 interface SyncDebugPanelProps {
   isOpen: boolean;
@@ -11,17 +10,12 @@ export const SyncDebugPanel: React.FC<SyncDebugPanelProps> = ({ isOpen, onClose 
   const { status: authStatus } = useAppSelector(state => state.auth);
   const { syncEnabled, autoSyncEnabled } = useAppSelector(state => state.settings);
   const { lastSyncTime, status: syncStatus } = useAppSelector(state => state.sync);
-  
-  const [realtimeStatus, setRealtimeStatus] = useState<string>('disconnected');
+
   const [deviceId, setDeviceId] = useState<string>('');
   const [debugLogs, setDebugLogs] = useState<string[]>([]);
 
   useEffect(() => {
     if (!isOpen) return;
-
-    const updateStatus = () => {
-      setRealtimeStatus(realtimeSync.getConnectionStatus());
-    };
 
     const getDeviceId = async () => {
       try {
@@ -32,11 +26,7 @@ export const SyncDebugPanel: React.FC<SyncDebugPanelProps> = ({ isOpen, onClose 
       }
     };
 
-    updateStatus();
     getDeviceId();
-
-    const interval = setInterval(updateStatus, 2000);
-    return () => clearInterval(interval);
   }, [isOpen]);
 
   const addLog = (message: string) => {
@@ -45,13 +35,7 @@ export const SyncDebugPanel: React.FC<SyncDebugPanelProps> = ({ isOpen, onClose 
   };
 
   const handleForceReconnect = async () => {
-    addLog('用户触发强制重连');
-    try {
-      await realtimeSync.forceReconnect();
-      addLog('强制重连完成');
-    } catch (error) {
-      addLog(`强制重连失败: ${error}`);
-    }
+    addLog('实时同步已移除，无需重连');
   };
 
   const handleTestUpload = async () => {
@@ -138,14 +122,10 @@ export const SyncDebugPanel: React.FC<SyncDebugPanelProps> = ({ isOpen, onClose 
           </div>
 
           <div className="space-y-2">
-            <h3 className="font-semibold text-gray-900 dark:text-gray-100">实时同步</h3>
+            <h3 className="font-semibold text-gray-900 dark:text-gray-100">定时同步</h3>
             <p className="text-sm text-gray-600 dark:text-gray-400">
-              连接状态: <span className={`font-mono ${
-                realtimeStatus === 'connected' ? 'text-green-600' :
-                realtimeStatus === 'connecting' ? 'text-yellow-600' :
-                realtimeStatus === 'error' ? 'text-red-600' : 'text-gray-600'
-              }`}>
-                {realtimeStatus}
+              状态: <span className="font-mono text-blue-600">
+                {autoSyncEnabled ? '已启用 (10秒间隔)' : '已禁用'}
               </span>
             </p>
           </div>

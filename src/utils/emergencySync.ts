@@ -58,7 +58,7 @@ export class EmergencySync {
       // 2. 获取当前本地数据
       const localGroups = await storage.getGroups();
       const beforeCount = this.getTotalTabCount(localGroups);
-      
+
       console.log('📊 修复前状态:', {
         本地组数: localGroups.length,
         本地标签数: beforeCount
@@ -137,7 +137,6 @@ export class EmergencySync {
     console.log('🔌 停用所有同步服务');
 
     const servicesToDisable = [
-      '@/services/realtimeSync',
       '@/services/autoSyncManager',
       '@/services/optimisticSyncService'
     ];
@@ -145,15 +144,13 @@ export class EmergencySync {
     for (const servicePath of servicesToDisable) {
       try {
         const service = await import(servicePath);
-        
+
         if (service.default?.disconnect) {
           await service.default.disconnect();
-        } else if (service.realtimeSync?.disconnect) {
-          await service.realtimeSync.disconnect();
         } else if (service.autoSyncManager?.stop) {
           await service.autoSyncManager.stop();
         }
-        
+
         console.log(`✅ 已停用: ${servicePath}`);
       } catch (error) {
         console.log(`⚠️ 服务不存在或已停用: ${servicePath}`);
@@ -190,9 +187,9 @@ export class EmergencySync {
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
       try {
         console.log(`🔄 尝试第 ${attempt} 次云端同步`);
-        
+
         const cloudGroups = await supabaseSync.downloadTabGroups();
-        
+
         console.log(`✅ 云端同步成功 (尝试 ${attempt}/${maxRetries})`, {
           云端组数: cloudGroups.length,
           云端标签数: this.getTotalTabCount(cloudGroups)
@@ -303,10 +300,10 @@ export class EmergencySync {
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
       try {
         console.log(`🔄 尝试第 ${attempt} 次上传`);
-        
+
         // 使用覆盖模式确保数据一致性
         await supabaseSync.uploadTabGroups(groups, true);
-        
+
         console.log(`✅ 数据上传成功 (尝试 ${attempt}/${maxRetries})`);
         return;
 

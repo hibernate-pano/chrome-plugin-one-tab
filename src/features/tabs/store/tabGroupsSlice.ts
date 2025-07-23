@@ -8,7 +8,7 @@ import { logger } from '@/shared/utils/logger';
 import { TabGroup } from '@/shared/types/tab';
 import { nanoid } from '@reduxjs/toolkit';
 // 导入拖拽操作，用于监听拖拽完成事件
-import { moveTab, moveGroup } from './dragOperationsSlice';
+import { moveTab } from './dragOperationsSlice';
 
 interface TabGroupsState {
   groups: TabGroup[];
@@ -30,7 +30,13 @@ const initialState: TabGroupsState = {
 export const loadGroups = createAsyncThunk('tabGroups/loadGroups', async () => {
   logger.debug('加载标签组');
   const groups = await storage.getGroups();
-  return groups;
+
+  // 确保标签组按时间倒序排列（最新的在前面）
+  const sortedGroups = groups.sort((a, b) =>
+    new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+  );
+
+  return sortedGroups;
 });
 
 export const saveGroup = createAsyncThunk(
@@ -149,73 +155,121 @@ export const deleteGroup = createAsyncThunk(
   }
 );
 
-// 清理重复标签功能 - 使用统一同步服务（带异常分析）
-export const cleanDuplicateTabs = createAsyncThunk(
+// 清理重复标签功能 - 简化版实现，确保云端同步
+export const cleanDuplicateTabs = createAsyncThunk<
+  { removedCount: number; updatedGroups: TabGroup[]; syncSuccess: boolean },
+  void
+>(
   'tabGroups/cleanDuplicateTabs',
-  async () => {
-    logger.debug('开始清理重复标签 - 使用统一同步服务');
+  async (_, { dispatch }) => {
+    logger.debug('开始清理重复标签 - 使用简化版去重逻辑');
 
     try {
-      // 创建初始数据快照
-      const { createDataSnapshot } = await import('@/utils/deduplicationAnalyzer');
-      const initialGroups = await storage.getGroups();
-      createDataSnapshot(initialGroups, '去重前原始数据');
+      const groups = await storage.getGroups();
+      const urlMap = new Map<string, { groupId: string; tabIndex: number }>();
+      let removedCount = 0;
 
-      // 使用统一同步服务执行去重操作
-      const { unifiedSyncService } = await import('@/services/UnifiedSyncService');
-      const result = await unifiedSyncService.performDeduplication();
+      // 创建深拷贝避免修改原数据
+      const updatedGroups = groups.map(group => ({
+        ...group,
+        tabs: [...group.tabs]
+      }));
 
-      if (!result.success) {
-        throw new Error(result.error || '去重操作失败');
-      }
+      // 执行去重逻辑
+      updatedGroups.forEach((group) => {
+        const originalTabCount = group.tabs.length;
 
-      // 创建结果数据快照
-      const finalGroups = result.syncedGroups || [];
-      createDataSnapshot(finalGroups, '去重后最终数据');
+        group.tabs = group.tabs.filter((tab) => {
+          if (!tab.url) return true; // 保留没有URL的标签
 
-      // 如果结果异常，进行详细分析
-      const initialTabCount = initialGroups.reduce((sum, g) => sum + g.tabs.length, 0);
-      const finalTabCount = finalGroups.reduce((sum, g) => sum + g.tabs.length, 0);
+          const key = tab.url;
+          if (urlMap.has(key)) {
+            removedCount++;
+            return false; // 重复，过滤掉
+          }
 
-      // 从结果消息中提取移除数量
-      const removedCountMatch = result.message.match(/移除了 (\d+) 个/);
-      const removedCount = removedCountMatch ? parseInt(removedCountMatch[1]) : 0;
-      const expectedFinalCount = initialTabCount - removedCount;
-
-      // 如果实际结果与期望不符，进行异常分析
-      if (finalTabCount !== expectedFinalCount) {
-        console.warn('🚨 检测到去重结果异常！');
-
-        // 模拟期望的去重结果用于分析
-        const { analyzeDeduplicationAnomaly } = await import('@/utils/deduplicationAnalyzer');
-
-        // 这里我们需要重新计算期望的去重结果
-        const expectedGroups = await simulateDeduplication(initialGroups);
-
-        const analysis = analyzeDeduplicationAnomaly(initialGroups, expectedGroups, finalGroups);
-
-        console.error('去重异常分析结果:', analysis);
-
-        // 可以选择是否抛出错误或继续
-        logger.warn('去重结果与期望不符', {
-          初始标签数: initialTabCount,
-          期望最终数: expectedFinalCount,
-          实际最终数: finalTabCount,
-          差异: finalTabCount - expectedFinalCount
+          urlMap.set(key, { groupId: group.id, tabIndex: 0 });
+          return true;
         });
+
+        // 如果标签数量发生变化，更新时间戳
+        if (group.tabs.length !== originalTabCount) {
+          group.updatedAt = new Date().toISOString();
+        }
+      });
+
+      // 过滤空的标签组
+      const finalGroups = updatedGroups.filter(group => group.tabs.length > 0);
+
+      // 保存到存储
+      await storage.setGroups(finalGroups);
+
+      // 强制同步到云端 - 确保去重结果不被覆盖
+      try {
+        const { pullFirstSyncService } = await import('@/services/PullFirstSyncService');
+
+        // 使用强制推送模式，确保去重结果同步到云端
+        const syncResult = await pullFirstSyncService.syncUserOperation({
+          type: 'update',
+          description: `清理重复标签 (移除了 ${removedCount} 个重复标签)`
+        });
+
+        if (!syncResult.success) {
+          logger.error('去重操作后同步失败，尝试直接上传:', syncResult.error);
+
+          // 如果 pull-first 同步失败，直接上传到云端
+          const supabaseModule = await import('@/shared/utils/supabase');
+          await supabaseModule.sync.uploadTabGroups(finalGroups, true); // 使用覆盖模式
+
+          logger.debug('去重结果已强制上传到云端');
+        } else {
+          logger.debug('去重操作后同步成功');
+        }
+      } catch (error) {
+        logger.error('去重操作后同步完全失败:', error);
+
+        // 同步失败时，仍然返回去重结果，但标记同步失败
+        logger.warn('去重操作完成，但同步到云端失败，请手动同步确保数据一致性');
+
+        // 即使同步失败，也要强制重新加载数据以确保UI一致性
+        setTimeout(() => {
+          dispatch(loadGroups());
+          logger.debug('去重后（同步失败）强制重新加载数据');
+        }, 100);
+
+        return {
+          removedCount,
+          updatedGroups: finalGroups,
+          syncSuccess: false
+        };
       }
 
-      logger.debug('清理重复标签完成 - 统一同步服务', {
-        message: result.message,
+      // 强制清理所有可能的缓存
+      try {
+        const { cacheManager } = await import('@/shared/utils/cacheManager');
+        await cacheManager.clearAll();
+        logger.debug('缓存清理完成');
+      } catch (error) {
+        logger.warn('清理缓存时出现警告', error instanceof Error ? error : new Error(String(error)));
+      }
+
+      logger.debug('清理重复标签完成', {
+        removedCount,
         remainingGroups: finalGroups.length,
-        initialTabCount,
-        finalTabCount,
-        removedCount
+        originalGroups: groups.length,
+        finalGroupsIds: finalGroups.map(g => g.id)
       });
+
+      // 强制重新加载数据以确保状态一致性
+      setTimeout(() => {
+        dispatch(loadGroups());
+        logger.debug('去重后强制重新加载数据');
+      }, 100);
 
       return {
         removedCount,
-        updatedGroups: finalGroups
+        updatedGroups: finalGroups,
+        syncSuccess: true
       };
     } catch (error) {
       logger.error('清理重复标签失败', error);
@@ -224,41 +278,7 @@ export const cleanDuplicateTabs = createAsyncThunk(
   }
 );
 
-/**
- * 模拟去重操作，用于分析对比
- */
-async function simulateDeduplication(groups: TabGroup[]): Promise<TabGroup[]> {
-  const urlMap = new Map<string, { groupId: string; tabIndex: number }>();
-
-  // 创建深拷贝避免修改原数据
-  const simulatedGroups = groups.map(group => ({
-    ...group,
-    tabs: [...group.tabs]
-  }));
-
-  // 执行去重逻辑
-  simulatedGroups.forEach((group) => {
-    group.tabs = group.tabs.filter((tab) => {
-      if (!tab.url) return true;
-
-      const key = tab.url;
-      if (urlMap.has(key)) {
-        return false; // 重复，过滤掉
-      }
-
-      urlMap.set(key, { groupId: group.id, tabIndex: 0 });
-      return true;
-    });
-
-    // 更新时间戳
-    if (group.tabs.length !== groups.find(g => g.id === group.id)?.tabs.length) {
-      group.updatedAt = new Date().toISOString();
-    }
-  });
-
-  // 过滤空的标签组
-  return simulatedGroups.filter(group => group.tabs.length > 0);
-}
+// simulateDeduplication 函数已移除，因为去重功能已禁用
 
 export const updateGroupName = createAsyncThunk(
   'tabGroups/updateGroupName',
@@ -372,7 +392,11 @@ const tabGroupsSlice = createSlice({
 
     // 设置标签组列表（用于测试和批量操作）
     setGroups: (state, action: PayloadAction<TabGroup[]>) => {
-      state.groups = action.payload;
+      // 确保标签组按时间倒序排列（最新的在前面）
+      const sortedGroups = action.payload.sort((a, b) =>
+        new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+      );
+      state.groups = sortedGroups;
     },
   },
   extraReducers: (builder) => {
@@ -454,7 +478,24 @@ const tabGroupsSlice = createSlice({
       })
       .addCase(cleanDuplicateTabs.fulfilled, (state, action) => {
         state.isLoading = false;
-        state.groups = action.payload.updatedGroups;
+
+        // 强制更新 Redux 状态，确保组件重新渲染
+        state.groups = [...action.payload.updatedGroups];
+
+        // 清除之前的错误信息
+        state.error = null;
+
+        // 如果同步失败，设置警告信息
+        if (!action.payload.syncSuccess) {
+          state.error = '去重完成，但同步失败。请手动点击同步按钮确保数据一致性。';
+        }
+
+        logger.debug('去重操作完成，Redux状态已更新', {
+          removedCount: action.payload.removedCount,
+          remainingGroups: action.payload.updatedGroups.length,
+          syncSuccess: action.payload.syncSuccess,
+          newStateLength: state.groups.length
+        });
       })
       .addCase(cleanDuplicateTabs.rejected, (state, action) => {
         state.isLoading = false;
@@ -485,16 +526,7 @@ const tabGroupsSlice = createSlice({
         logger.warn('拖拽操作失败，建议重新加载数据以确保状态一致性');
       })
 
-      .addCase(moveGroup.fulfilled, (state, action) => {
-        // 标签组拖拽完成后重新加载数据
-        // 这里可以添加更精确的状态更新逻辑
-        logger.debug('标签组拖拽完成', action.payload);
-      })
-      .addCase(moveGroup.rejected, (state, action) => {
-        // 标签组拖拽失败时的错误处理
-        state.error = action.error.message || '移动标签组失败';
-        logger.error('标签组拖拽失败', action.error);
-      });
+    // moveGroup 功能已移除
   },
 });
 
