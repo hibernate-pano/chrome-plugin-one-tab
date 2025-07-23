@@ -1,5 +1,6 @@
 import { store } from '@/app/store';
 import { pullFirstSyncService } from '@/services/PullFirstSyncService';
+import { distributedLockManager, LockType } from '@/services/DistributedLockManager';
 
 export interface AutoSyncOptions {
   enabled: boolean;
@@ -10,7 +11,6 @@ export interface AutoSyncOptions {
 
 class AutoSyncManager {
   private intervalId: NodeJS.Timeout | null = null;
-  private pendingSync = false;
   private lastSyncTime = 0;
   private readonly MIN_SYNC_INTERVAL = 10000; // 最小同步间隔10秒
   private readonly DEFAULT_SYNC_INTERVAL = 10000; // 默认10秒间隔
@@ -140,11 +140,18 @@ class AutoSyncManager {
   }
 
   /**
-   * 执行定期同步
+   * 执行定期同步 - 使用分布式锁确保原子性
    */
   private async performPeriodicSync() {
-    if (this.pendingSync) {
-      console.log('🔄 同步正在进行中，跳过本次定期同步');
+    // 检查是否有活跃的高优先级锁
+    const currentLock = distributedLockManager.getLockStatus();
+    if (currentLock &&
+      (currentLock.type === LockType.USER_OPERATION ||
+        currentLock.type === LockType.MANUAL_SYNC)) {
+      console.log('🔄 检测到高优先级操作正在进行，跳过本次定期同步', {
+        lockType: currentLock.type,
+        operationId: currentLock.operationId
+      });
       return;
     }
 
@@ -154,25 +161,38 @@ class AutoSyncManager {
       return;
     }
 
-    try {
-      this.pendingSync = true;
-      this.lastSyncTime = currentTime;
+    // 尝试获取锁，但不重试（低优先级）
+    const operationId = `periodic_sync_${Date.now()}`;
+    const lockResult = await distributedLockManager.acquireLock(
+      LockType.PERIODIC_SYNC,
+      operationId,
+      '定期同步',
+      10000 // 10秒超时
+    );
 
-      console.log('🔄 开始定期同步 (pull-first)');
+    if (!lockResult.success) {
+      console.log('🔄 无法获取同步锁，跳过本次定期同步:', lockResult.error);
+      return;
+    }
+
+    try {
+      this.lastSyncTime = currentTime;
+      console.log('🔄 开始定期同步 (pull-first)', { operationId });
 
       // 使用新的 pull-first 定时同步
       const result = await pullFirstSyncService.performPeriodicSync();
 
       if (result.success) {
-        console.log('✅ 定期同步完成');
+        console.log('✅ 定期同步完成', { operationId });
       } else {
-        console.error('❌ 定期同步失败:', result.error);
+        console.error('❌ 定期同步失败:', result.error, { operationId });
       }
 
     } catch (error) {
-      console.error('❌ 定期同步异常:', error);
+      console.error('❌ 定期同步异常:', error, { operationId });
     } finally {
-      this.pendingSync = false;
+      // 释放锁
+      distributedLockManager.releaseLock(lockResult.lockId!);
     }
   }
 
@@ -195,16 +215,11 @@ class AutoSyncManager {
   }
 
   /**
-   * 手动触发同步（用户操作后）
+   * 手动触发同步（用户操作后）- 使用分布式锁确保原子性
    */
   async triggerUserActionSync() {
-    if (this.pendingSync) {
-      console.log('🔄 同步正在进行中，跳过用户操作同步');
-      return;
-    }
-
+    // 直接调用手动同步，锁机制已在PullFirstSyncService中处理
     try {
-      this.pendingSync = true;
       console.log('🔄 开始用户操作同步 (pull-first)');
 
       // 使用新的手动同步
@@ -218,8 +233,6 @@ class AutoSyncManager {
 
     } catch (error) {
       console.error('❌ 用户操作同步异常:', error);
-    } finally {
-      this.pendingSync = false;
     }
   }
 
@@ -229,16 +242,17 @@ class AutoSyncManager {
   async shutdown() {
     console.log('🔌 停止自动同步管理器');
     this.stopPeriodicSync();
-    this.pendingSync = false;
   }
 
   /**
    * 获取同步状态
    */
   getStatus() {
+    const lockStatus = distributedLockManager.getLockStatus();
     return {
       isRunning: this.intervalId !== null,
-      isPending: this.pendingSync,
+      isPending: lockStatus !== null,
+      currentLock: lockStatus,
       lastSyncTime: this.lastSyncTime,
       interval: this.DEFAULT_SYNC_INTERVAL
     };

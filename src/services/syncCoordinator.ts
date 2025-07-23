@@ -7,6 +7,8 @@ import { TabGroup } from '@/shared/types/tab';
 import { storage } from '@/shared/utils/storage';
 import { logger } from '@/shared/utils/logger';
 import { optimisticSyncService } from './optimisticSyncService';
+import { atomicOperationWrapper } from './AtomicOperationWrapper';
+import { LockType } from './DistributedLockManager';
 
 interface PendingOperation {
   id: string;
@@ -88,77 +90,98 @@ export class SyncCoordinator {
 
   /**
    * 执行原子操作的通用框架
-   * 确保 Pull → 操作 → Push(覆盖) 的原子性
+   * 使用分布式锁确保 Pull → 操作 → Push(覆盖) 的原子性
    */
   async executeAtomicOperation<T>(
     operationType: PendingOperation['type'],
     operation: (groups: TabGroup[]) => Promise<{ success: boolean; updatedGroups: TabGroup[]; result: T }>,
     operationName: string
   ): Promise<{ success: boolean; result: T; operationId: string }> {
-    try {
-      logger.info(`🔄 开始原子操作: ${operationName}`);
+    const operationId = atomicOperationWrapper.generateOperationId(operationType);
 
-      // Step 1: Pull - 拉取最新数据
-      logger.info('📥 Step 1: 拉取最新数据');
-      const pullResult = await optimisticSyncService.pullLatestData();
+    // 根据操作类型确定锁类型
+    const lockType = this.getLockTypeForOperation(operationType);
 
-      if (!pullResult.success) {
-        logger.error('❌ 拉取最新数据失败:', pullResult.message);
-        return { success: false, result: {} as T, operationId: '' };
+    const result = await atomicOperationWrapper.executeAtomicDataOperation(
+      // Pull操作
+      async () => {
+        const pullResult = await optimisticSyncService.pullLatestData();
+        return pullResult.syncedGroups || await storage.getGroups();
+      },
+
+      // Process操作
+      async (groups: TabGroup[]) => {
+        const operationResult = await operation(groups);
+        return {
+          success: operationResult.success,
+          updatedData: operationResult.updatedGroups,
+          result: operationResult.result
+        };
+      },
+
+      // Push操作
+      async (groups: TabGroup[]) => {
+        // 立即推送到云端（覆盖模式）- 带重试机制
+        let pushResult = await optimisticSyncService.pushOnlySync();
+
+        // 如果推送失败，重试一次
+        if (!pushResult.success && pushResult.message?.includes('正在进行中')) {
+          logger.info('🔄 推送冲突，等待后重试');
+          await new Promise(resolve => setTimeout(resolve, 2000));
+          pushResult = await optimisticSyncService.pushOnlySync();
+        }
+
+        if (pushResult.success) {
+          logger.info(`✅ ${operationName}结果已推送到云端（覆盖模式）`);
+        } else {
+          logger.warn(`⚠️ ${operationName}结果推送失败:`, { message: pushResult.message });
+          // 即使推送失败，本地操作已完成，不回滚
+        }
+
+        // 保存到本地存储
+        await storage.setGroups(groups);
+      },
+
+      // 配置
+      {
+        type: lockType,
+        operationId,
+        description: operationName,
+        timeout: 30000,
+        retryOnLockFailure: true,
+        maxRetries: 3
       }
+    );
 
-      const groups = pullResult.syncedGroups || await storage.getGroups();
-      const groupIds = groups.map(g => g.id);
-
-      // Step 2: 注册操作保护
-      logger.info('🔒 Step 2: 注册操作保护');
-      const operationId = await this.registerOperation(operationType, groupIds);
-
-      // Step 3: 执行用户操作
-      logger.info(`⚙️ Step 3: 执行${operationName}`);
-      const operationResult = await operation(groups);
-
-      if (!operationResult.success) {
-        this.completeOperation(operationId);
-        return { success: false, result: {} as T, operationId };
-      }
-
-      // Step 4: 保存结果到本地
-      logger.info('💾 Step 4: 保存结果到本地');
-      await storage.setGroups(operationResult.updatedGroups);
-
-      // Step 5: 立即推送到云端（覆盖模式）- 带重试机制
-      logger.info('🚀 Step 5: 立即推送到云端（覆盖模式）');
-      let pushResult = await optimisticSyncService.pushOnlySync();
-
-      // 如果推送失败，重试一次
-      if (!pushResult.success && pushResult.message?.includes('正在进行中')) {
-        logger.info('🔄 推送冲突，等待后重试');
-        await new Promise(resolve => setTimeout(resolve, 2000));
-        pushResult = await optimisticSyncService.pushOnlySync();
-      }
-
-      if (pushResult.success) {
-        logger.info(`✅ ${operationName}结果已推送到云端（覆盖模式）`);
-      } else {
-        logger.warn(`⚠️ ${operationName}结果推送失败:`, pushResult.message);
-        // 即使推送失败，本地操作已完成，不回滚
-        // 但记录失败信息，便于后续重试
-      }
-
-      // Step 6: 完成操作保护
-      this.completeOperation(operationId);
-
-      logger.info(`✅ 原子操作完成: ${operationName}`);
+    if (result.success) {
+      logger.info(`✅ 原子操作完成: ${operationName}`, { operationId, duration: result.duration });
       return {
         success: true,
-        result: operationResult.result,
-        operationId
+        result: result.result as T,
+        operationId: result.operationId
       };
+    } else {
+      logger.error(`❌ 原子操作失败: ${operationName}`, result.error, { operationId });
+      return {
+        success: false,
+        result: {} as T,
+        operationId: result.operationId
+      };
+    }
+  }
 
-    } catch (error) {
-      logger.error(`❌ 原子操作失败: ${operationName}`, error);
-      return { success: false, result: {} as T, operationId: '' };
+  /**
+   * 根据操作类型确定锁类型
+   */
+  private getLockTypeForOperation(operationType: PendingOperation['type']): LockType {
+    switch (operationType) {
+      case 'create':
+      case 'update':
+      case 'delete':
+      case 'deduplication':
+        return LockType.USER_OPERATION;
+      default:
+        return LockType.USER_OPERATION;
     }
   }
 
@@ -350,7 +373,7 @@ export class SyncCoordinator {
    * 生成操作ID
    */
   private generateOperationId(): string {
-    return `op_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    return `op_${Date.now()}_${Math.random().toString(36).substring(2, 11)}`;
   }
 
   /**

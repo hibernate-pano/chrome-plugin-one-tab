@@ -223,12 +223,20 @@ const saveTabs = async (tabs: chrome.tabs.Tab[]) => {
     console.log('🔄 Background: 触发 pull-first 同步');
     try {
       const { pullFirstSyncService } = await import('./services/PullFirstSyncService');
-      await pullFirstSyncService.syncUserOperation({
+
+      // 使用performUserActionSync而不是syncUserOperation，避免重复的pull-process-push
+      // 因为我们已经在本地保存了数据，只需要推送到云端
+      const result = await pullFirstSyncService.performUserActionSync({
         type: 'create',
-        data: newGroup,
+        groupId: newGroup.id,
         description: '保存新标签组'
       });
-      console.log('✅ Pull-first 同步服务启动成功');
+
+      if (result.success) {
+        console.log('✅ Pull-first 同步服务启动成功');
+      } else {
+        console.warn('⚠️ Pull-first 同步失败，但本地数据已保存:', result.error);
+      }
     } catch (error) {
       console.error('❌ Pull-first 同步服务启动失败:', error);
       // 显示错误通知而不是静默降级
@@ -236,7 +244,7 @@ const saveTabs = async (tabs: chrome.tabs.Tab[]) => {
         type: 'basic',
         iconUrl: '/icons/icon128.png',
         title: '同步服务启动失败',
-        message: '数据同步功能暂时不可用，请检查网络连接后重试'
+        message: '数据已保存到本地，但云端同步失败。请检查网络连接。'
       });
     }
 

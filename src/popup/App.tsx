@@ -194,9 +194,20 @@ const App: React.FC = () => {
               // 触发 pull-first 同步
               console.log('🔄 触发 pull-first 同步');
               try {
+                // 导入测试工具（开发环境）
+                if (process.env.NODE_ENV === 'development') {
+                  await import('@/services/__tests__/quickLockTest');
+                  await import('@/services/__tests__/dataOverwriteTest');
+                }
+
                 const { pullFirstSyncService } = await import('@/services/PullFirstSyncService');
-                await pullFirstSyncService.performPeriodicSync();
-                console.log('✅ Pull-first 同步服务启动成功');
+                const result = await pullFirstSyncService.performPeriodicSync();
+
+                if (result.success) {
+                  console.log('✅ Pull-first 同步服务启动成功');
+                } else {
+                  console.warn('⚠️ Pull-first 同步失败:', result.error);
+                }
               } catch (error) {
                 console.error('❌ Pull-first 同步服务启动失败:', error);
                 // 不再降级，而是记录错误
