@@ -3,6 +3,25 @@ import { store } from '@/app/store';
 import { storage } from '@/shared/utils/storage';
 import { RealtimeChannel } from '@supabase/supabase-js';
 import { selectIsAuthenticated, selectAuthUser } from '@/features/auth/store/authSlice';
+import { deviceFilter, shouldProcessRealtimeEvent, type RealtimePayload } from '@/shared/utils/deviceFilter';
+import { createRealtimeSyncDebouncer, type SmartDebouncer } from '@/shared/utils/smartDebouncer';
+import {
+  smartSyncJudge,
+  shouldPerformRealtimeSync,
+  type ChangeInfo,
+  type SystemState,
+  ChangeType
+} from '@/shared/utils/smartSyncJudge';
+import {
+  networkManager,
+  isNetworkOnline,
+  getNetworkQuality,
+  addNetworkListener,
+  removeNetworkListener,
+  type NetworkInfo,
+  NetworkStatus,
+  NetworkQuality
+} from '@/shared/utils/networkManager';
 
 class RealtimeSync {
   private channel: RealtimeChannel | null = null;
@@ -12,10 +31,19 @@ class RealtimeSync {
   private reconnectTimer: NodeJS.Timeout | null = null;
   private heartbeatTimer: NodeJS.Timeout | null = null;
   private syncTimeout: NodeJS.Timeout | null = null;
+  private debouncer: SmartDebouncer;
   private reconnectAttempts = 0;
   private readonly MAX_RECONNECT_ATTEMPTS = 5;
   private readonly RECONNECT_DELAY = 5000; // 5秒
   private readonly HEARTBEAT_INTERVAL = 30000; // 30秒心跳检测
+
+  constructor() {
+    // 初始化智能防抖器
+    this.debouncer = createRealtimeSyncDebouncer();
+
+    // 添加网络状态监听
+    this.setupNetworkListener();
+  }
 
   /**
    * 初始化实时同步
@@ -207,7 +235,7 @@ class RealtimeSync {
   }
 
   /**
-   * 处理实时数据变化
+   * 处理实时数据变化（使用增强的设备过滤器）
    */
   private async handleRealtimeChange(payload: any) {
     try {
@@ -219,35 +247,21 @@ class RealtimeSync {
         oldRecord: oldRecord ? { id: oldRecord.id, device_id: oldRecord.device_id } : null
       });
 
-      // 避免处理自己设备的变化（防止循环）
-      const currentDeviceId = await this.getCurrentDeviceId();
+      // 使用增强的设备过滤器
+      const shouldProcess = await shouldProcessRealtimeEvent(payload as RealtimePayload);
 
-      // 对于删除事件，应该检查oldRecord；对于其他事件检查newRecord
-      const recordDeviceId = eventType === 'DELETE'
-        ? oldRecord?.device_id
-        : newRecord?.device_id;
-
-      if (recordDeviceId === currentDeviceId) {
-        console.log('🔄 跳过自己设备的变化，设备ID:', recordDeviceId);
+      if (!shouldProcess) {
+        console.log('⏭️ 实时事件被设备过滤器拦截');
         return;
       }
 
-      console.log('🔄 处理其他设备的数据变化:', {
+      console.log('✅ 实时事件通过设备过滤，开始智能判断:', {
         eventType,
-        recordId: newRecord?.id || oldRecord?.id,
-        deviceId: recordDeviceId,
-        currentDeviceId
+        recordId: newRecord?.id || oldRecord?.id
       });
 
-      // 延迟处理，避免频繁同步（缩短延迟提高响应速度）
-      if (this.syncTimeout) {
-        clearTimeout(this.syncTimeout);
-      }
-
-      this.syncTimeout = setTimeout(async () => {
-        console.log('🔄 开始执行实时同步响应');
-        await this.performRealtimeSync();
-      }, 500); // 缩短到500ms，提高响应速度
+      // 使用智能同步判断器
+      await this.performIntelligentSync(payload);
 
     } catch (error) {
       console.error('❌ 处理实时变化失败:', error);
@@ -255,25 +269,98 @@ class RealtimeSync {
   }
 
   /**
-   * 处理用户设置变化
+   * 智能同步处理
+   */
+  private async performIntelligentSync(payload: any): Promise<void> {
+    try {
+      const { eventType, new: newRecord, old: oldRecord } = payload;
+
+      // 构建变化信息
+      const changeInfo: ChangeInfo = {
+        type: this.mapEventTypeToChangeType(eventType),
+        affectedGroups: 1, // 单个事件通常影响一个组
+        affectedTabs: newRecord?.tabs?.length || oldRecord?.tabs?.length || 0,
+        timestamp: new Date().toISOString(),
+        source: 'remote',
+        metadata: {
+          groupIds: [newRecord?.id || oldRecord?.id],
+          operationType: eventType
+        }
+      };
+
+      // 构建系统状态
+      const systemState: SystemState = await this.getSystemState();
+
+      // 获取本地数据用于判断
+      const localData = await storage.getGroups();
+
+      // 智能判断是否需要同步
+      const judgment = shouldPerformRealtimeSync(changeInfo, systemState, localData);
+
+      console.log('🧠 智能同步判断结果:', {
+        shouldSync: judgment.shouldSync,
+        reason: judgment.reason,
+        priority: judgment.priority,
+        estimatedImpact: judgment.estimatedImpact,
+        recommendedDelay: judgment.recommendedDelay
+      });
+
+      if (!judgment.shouldSync) {
+        console.log('⏭️ 智能判断跳过同步:', judgment.reason);
+        return;
+      }
+
+      // 根据判断结果执行同步
+      const delay = judgment.recommendedDelay || 500;
+
+      this.debouncer.debounce(
+        'realtime_sync',
+        () => this.performRealtimeSync(),
+        'realtime_change',
+        delay
+      );
+
+    } catch (error) {
+      console.error('❌ 智能同步处理失败:', error);
+
+      // 降级到普通防抖处理
+      this.debouncer.debounce(
+        'realtime_sync',
+        () => this.performRealtimeSync(),
+        'realtime_change'
+      );
+    }
+  }
+
+  /**
+   * 处理用户设置变化（使用增强的设备过滤器）
    */
   private async handleSettingsChange(payload: any) {
     try {
       const { eventType, new: newRecord } = payload;
 
-      // 避免处理自己设备的变化
-      const currentDeviceId = await this.getCurrentDeviceId();
-      if (newRecord?.device_id === currentDeviceId) {
-        console.log('🔄 跳过自己设备的设置变化');
+      // 使用增强的设备过滤器检查设置变化
+      const settingsPayload: RealtimePayload = {
+        eventType: eventType as 'INSERT' | 'UPDATE' | 'DELETE',
+        new: newRecord,
+        old: payload.old
+      };
+
+      const shouldProcess = await shouldProcessRealtimeEvent(settingsPayload);
+
+      if (!shouldProcess) {
+        console.log('⏭️ 设置变化被设备过滤器拦截');
         return;
       }
 
-      console.log('🔄 处理其他设备的设置变化:', eventType);
+      console.log('✅ 处理其他设备的设置变化:', eventType);
 
-      // 延迟处理设置同步
-      setTimeout(async () => {
-        await this.performSettingsSync();
-      }, 500);
+      // 使用智能防抖器处理设置同步
+      this.debouncer.debounce(
+        'settings_sync',
+        () => this.performSettingsSync(),
+        'settings_change'
+      );
 
     } catch (error) {
       console.error('❌ 处理设置变化失败:', error);
@@ -359,27 +446,290 @@ class RealtimeSync {
     }
   }
 
+  // getCurrentDeviceId 方法已被 deviceFilter.getCurrentDeviceId() 替代
+
   /**
-   * 获取当前设备ID
+   * 获取防抖器状态
    */
-  private async getCurrentDeviceId(): Promise<string> {
-    try {
-      const { deviceId } = await chrome.storage.local.get('deviceId');
+  getDebounceStatus(): {
+    hasPendingSync: boolean;
+    hasPendingSettings: boolean;
+    debugInfo: any;
+  } {
+    return {
+      hasPendingSync: this.debouncer.hasPendingTask('realtime_sync'),
+      hasPendingSettings: this.debouncer.hasPendingTask('settings_sync'),
+      debugInfo: this.debouncer.getDebugInfo()
+    };
+  }
 
-      if (!deviceId) {
-        console.warn('⚠️ 设备ID不存在，生成临时ID');
-        // 生成临时设备ID
-        const tempId = `temp_${Date.now()}_${Math.random().toString(36).substring(2, 15)}`;
-        await chrome.storage.local.set({ deviceId: tempId });
-        return tempId;
-      }
+  /**
+   * 立即执行待处理的同步任务
+   */
+  async flushPendingSync(): Promise<void> {
+    await this.debouncer.flush('realtime_sync');
+  }
 
-      return deviceId;
-    } catch (error) {
-      console.error('❌ 获取设备ID失败:', error);
-      // 返回一个基于时间戳的临时ID
-      return `fallback_${Date.now()}`;
+  /**
+   * 立即执行待处理的设置同步任务
+   */
+  async flushPendingSettings(): Promise<void> {
+    await this.debouncer.flush('settings_sync');
+  }
+
+  /**
+   * 取消所有待处理的任务
+   */
+  cancelAllPendingTasks(): void {
+    this.debouncer.cancelAll();
+  }
+
+  /**
+   * 映射事件类型到变化类型
+   */
+  private mapEventTypeToChangeType(eventType: string): ChangeType {
+    switch (eventType) {
+      case 'INSERT':
+        return ChangeType.CREATE;
+      case 'UPDATE':
+        return ChangeType.UPDATE;
+      case 'DELETE':
+        return ChangeType.DELETE;
+      default:
+        return ChangeType.UPDATE;
     }
+  }
+
+  /**
+   * 获取系统状态（使用网络管理器）
+   */
+  private async getSystemState(): Promise<SystemState> {
+    const state = store.getState();
+
+    // 检查用户活跃状态
+    const isUserActive = document.hasFocus() && !document.hidden;
+
+    // 使用网络管理器获取网络质量
+    const networkInfo = networkManager.getNetworkInfo();
+    let networkQuality: SystemState['networkQuality'];
+
+    switch (networkInfo.quality) {
+      case NetworkQuality.EXCELLENT:
+        networkQuality = 'excellent';
+        break;
+      case NetworkQuality.GOOD:
+        networkQuality = 'good';
+        break;
+      case NetworkQuality.FAIR:
+        networkQuality = 'fair';
+        break;
+      case NetworkQuality.POOR:
+        networkQuality = 'poor';
+        break;
+      default:
+        networkQuality = 'good';
+    }
+
+    // 检查待处理操作数量
+    const pendingOperations = this.debouncer.getPendingTaskCount();
+
+    return {
+      isUserActive,
+      networkQuality,
+      pendingOperations,
+      lastSyncTime: this.getLastSyncTime(),
+      // 添加额外的网络信息
+      batteryLevel: this.getBatteryLevel(),
+      memoryUsage: this.getMemoryUsage()
+    };
+  }
+
+  /**
+   * 获取最后同步时间
+   */
+  private getLastSyncTime(): string | undefined {
+    // 这里可以从存储中获取最后同步时间
+    // 暂时返回undefined
+    return undefined;
+  }
+
+  /**
+   * 获取电池电量
+   */
+  private getBatteryLevel(): number | undefined {
+    // 电池API在某些浏览器中可用
+    if ('getBattery' in navigator) {
+      // 这是一个异步API，这里简化处理
+      return undefined;
+    }
+    return undefined;
+  }
+
+  /**
+   * 获取内存使用情况
+   */
+  private getMemoryUsage(): number | undefined {
+    // 内存API在某些浏览器中可用
+    if ('memory' in performance) {
+      const memory = (performance as any).memory;
+      if (memory.usedJSHeapSize && memory.totalJSHeapSize) {
+        return (memory.usedJSHeapSize / memory.totalJSHeapSize) * 100;
+      }
+    }
+    return undefined;
+  }
+
+  /**
+   * 获取智能同步统计信息
+   */
+  getIntelligentSyncStats(): any {
+    return smartSyncJudge.getStats();
+  }
+
+  /**
+   * 设置网络状态监听器
+   */
+  private setupNetworkListener(): void {
+    const networkListener = (networkInfo: NetworkInfo) => {
+      console.log('🌐 网络状态变化:', {
+        status: networkInfo.status,
+        quality: networkInfo.quality,
+        effectiveType: networkInfo.effectiveType
+      });
+
+      this.handleNetworkStatusChange(networkInfo);
+    };
+
+    addNetworkListener(networkListener);
+  }
+
+  /**
+   * 处理网络状态变化
+   */
+  private handleNetworkStatusChange(networkInfo: NetworkInfo): void {
+    const { status, quality } = networkInfo;
+
+    switch (status) {
+      case NetworkStatus.ONLINE:
+        this.handleNetworkOnline(quality);
+        break;
+
+      case NetworkStatus.OFFLINE:
+        this.handleNetworkOffline();
+        break;
+
+      case NetworkStatus.UNSTABLE:
+        this.handleNetworkUnstable();
+        break;
+
+      case NetworkStatus.SLOW:
+        this.handleNetworkSlow();
+        break;
+    }
+  }
+
+  /**
+   * 处理网络上线
+   */
+  private handleNetworkOnline(quality: NetworkQuality): void {
+    console.log('✅ 网络已连接，质量:', quality);
+
+    // 重置重连计数
+    this.reconnectAttempts = 0;
+
+    // 更新连接状态
+    this.connectionStatus = 'connected';
+
+    // 如果之前断开，尝试重新初始化
+    if (!this.isEnabled) {
+      console.log('🔄 网络恢复，重新初始化实时同步');
+      this.initialize();
+    }
+
+    // 根据网络质量调整同步策略
+    this.adjustSyncStrategyByQuality(quality);
+  }
+
+  /**
+   * 处理网络离线
+   */
+  private handleNetworkOffline(): void {
+    console.warn('❌ 网络已断开');
+
+    // 更新连接状态
+    this.connectionStatus = 'disconnected';
+
+    // 取消所有待处理的同步任务
+    this.debouncer.cancelAll();
+
+    // 断开实时连接
+    this.disconnect();
+  }
+
+  /**
+   * 处理网络不稳定
+   */
+  private handleNetworkUnstable(): void {
+    console.warn('⚠️ 网络连接不稳定');
+
+    // 更新连接状态
+    this.connectionStatus = 'error';
+
+    // 增加同步延迟
+    this.debouncer.updateConfig({
+      defaultDelay: 2000,
+      highFrequencyMultiplier: 2.5
+    });
+  }
+
+  /**
+   * 处理网络缓慢
+   */
+  private handleNetworkSlow(): void {
+    console.warn('🐌 网络连接缓慢');
+
+    // 增加同步延迟，减少频率
+    this.debouncer.updateConfig({
+      defaultDelay: 3000,
+      highFrequencyMultiplier: 3.0
+    });
+  }
+
+  /**
+   * 根据网络质量调整同步策略
+   */
+  private adjustSyncStrategyByQuality(quality: NetworkQuality): void {
+    switch (quality) {
+      case NetworkQuality.EXCELLENT:
+        this.debouncer.updateConfig({
+          defaultDelay: 300,
+          highFrequencyMultiplier: 1.2
+        });
+        break;
+
+      case NetworkQuality.GOOD:
+        this.debouncer.updateConfig({
+          defaultDelay: 500,
+          highFrequencyMultiplier: 1.5
+        });
+        break;
+
+      case NetworkQuality.FAIR:
+        this.debouncer.updateConfig({
+          defaultDelay: 1000,
+          highFrequencyMultiplier: 2.0
+        });
+        break;
+
+      case NetworkQuality.POOR:
+        this.debouncer.updateConfig({
+          defaultDelay: 2000,
+          highFrequencyMultiplier: 3.0
+        });
+        break;
+    }
+
+    console.log('🔧 已根据网络质量调整同步策略:', quality);
   }
 
   /**

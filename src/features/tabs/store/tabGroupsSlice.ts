@@ -149,37 +149,116 @@ export const deleteGroup = createAsyncThunk(
   }
 );
 
-// 清理重复标签功能 - 使用同步协调器确保数据一致性
+// 清理重复标签功能 - 使用统一同步服务（带异常分析）
 export const cleanDuplicateTabs = createAsyncThunk(
   'tabGroups/cleanDuplicateTabs',
   async () => {
-    logger.debug('开始清理重复标签 - 使用同步协调器');
+    logger.debug('开始清理重复标签 - 使用统一同步服务');
 
     try {
-      // 使用同步协调器执行受保护的去重操作
-      const { syncCoordinator } = await import('@/services/syncCoordinator');
-      const result = await syncCoordinator.executeProtectedDeduplication();
+      // 创建初始数据快照
+      const { createDataSnapshot } = await import('@/utils/deduplicationAnalyzer');
+      const initialGroups = await storage.getGroups();
+      createDataSnapshot(initialGroups, '去重前原始数据');
+
+      // 使用统一同步服务执行去重操作
+      const { unifiedSyncService } = await import('@/services/UnifiedSyncService');
+      const result = await unifiedSyncService.performDeduplication();
 
       if (!result.success) {
-        throw new Error('去重操作失败');
+        throw new Error(result.error || '去重操作失败');
       }
 
-      // 获取更新后的标签组
-      const updatedGroups = await storage.getGroups();
+      // 创建结果数据快照
+      const finalGroups = result.syncedGroups || [];
+      createDataSnapshot(finalGroups, '去重后最终数据');
 
-      logger.debug('清理重复标签完成 - 同步协调器', {
-        removedCount: result.removedCount,
-        remainingGroups: updatedGroups.length,
-        operationId: result.operationId
+      // 如果结果异常，进行详细分析
+      const initialTabCount = initialGroups.reduce((sum, g) => sum + g.tabs.length, 0);
+      const finalTabCount = finalGroups.reduce((sum, g) => sum + g.tabs.length, 0);
+
+      // 从结果消息中提取移除数量
+      const removedCountMatch = result.message.match(/移除了 (\d+) 个/);
+      const removedCount = removedCountMatch ? parseInt(removedCountMatch[1]) : 0;
+      const expectedFinalCount = initialTabCount - removedCount;
+
+      // 如果实际结果与期望不符，进行异常分析
+      if (finalTabCount !== expectedFinalCount) {
+        console.warn('🚨 检测到去重结果异常！');
+
+        // 模拟期望的去重结果用于分析
+        const { analyzeDeduplicationAnomaly } = await import('@/utils/deduplicationAnalyzer');
+
+        // 这里我们需要重新计算期望的去重结果
+        const expectedGroups = await simulateDeduplication(initialGroups);
+
+        const analysis = analyzeDeduplicationAnomaly(initialGroups, expectedGroups, finalGroups);
+
+        console.error('去重异常分析结果:', analysis);
+
+        // 可以选择是否抛出错误或继续
+        logger.warn('去重结果与期望不符', {
+          初始标签数: initialTabCount,
+          期望最终数: expectedFinalCount,
+          实际最终数: finalTabCount,
+          差异: finalTabCount - expectedFinalCount
+        });
+      }
+
+      logger.debug('清理重复标签完成 - 统一同步服务', {
+        message: result.message,
+        remainingGroups: finalGroups.length,
+        initialTabCount,
+        finalTabCount,
+        removedCount
       });
 
-      return { removedCount: result.removedCount, updatedGroups };
+      return {
+        removedCount,
+        updatedGroups: finalGroups
+      };
     } catch (error) {
       logger.error('清理重复标签失败', error);
       throw error;
     }
   }
 );
+
+/**
+ * 模拟去重操作，用于分析对比
+ */
+async function simulateDeduplication(groups: TabGroup[]): Promise<TabGroup[]> {
+  const urlMap = new Map<string, { groupId: string; tabIndex: number }>();
+
+  // 创建深拷贝避免修改原数据
+  const simulatedGroups = groups.map(group => ({
+    ...group,
+    tabs: [...group.tabs]
+  }));
+
+  // 执行去重逻辑
+  simulatedGroups.forEach((group) => {
+    group.tabs = group.tabs.filter((tab) => {
+      if (!tab.url) return true;
+
+      const key = tab.url;
+      if (urlMap.has(key)) {
+        return false; // 重复，过滤掉
+      }
+
+      urlMap.set(key, { groupId: group.id, tabIndex: 0 });
+      return true;
+    });
+
+    // 更新时间戳
+    if (group.tabs.length !== groups.find(g => g.id === group.id)?.tabs.length) {
+      group.updatedAt = new Date().toISOString();
+    }
+  });
+
+  // 过滤空的标签组
+  return simulatedGroups.filter(group => group.tabs.length > 0);
+}
 
 export const updateGroupName = createAsyncThunk(
   'tabGroups/updateGroupName',
