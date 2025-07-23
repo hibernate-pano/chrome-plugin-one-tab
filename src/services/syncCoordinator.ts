@@ -279,61 +279,49 @@ export class SyncCoordinator {
   }
 
   /**
-   * 执行去重逻辑
+   * 执行去重逻辑 - 简化版本，与删除逻辑保持一致
    */
   private async performDeduplication(groups: TabGroup[]): Promise<{ success: boolean; updatedGroups: TabGroup[]; removedCount: number }> {
     try {
-      // 创建URL到标签的映射
-      const urlMap = new Map<string, Array<{ groupId: string; tab: any }>>();
+      logger.info('🔄 开始执行去重逻辑');
 
-      // 收集所有标签页
-      groups.forEach(group => {
-        group.tabs.forEach(tab => {
-          if (!urlMap.has(tab.url)) {
-            urlMap.set(tab.url, []);
-          }
-          urlMap.get(tab.url)!.push({ groupId: group.id, tab });
-        });
-      });
-
-      // 处理重复标签页 - 创建深拷贝避免只读属性错误
+      const urlMap = new Map<string, boolean>();
       let removedCount = 0;
+
+      // 创建深拷贝避免修改原数据
       const updatedGroups = groups.map(group => ({
         ...group,
-        tabs: [...group.tabs] // 创建tabs数组的拷贝，避免只读属性错误
+        tabs: [...group.tabs]
       }));
 
-      urlMap.forEach(tabsWithSameUrl => {
-        if (tabsWithSameUrl.length > 1) {
-          // 按创建时间排序，保留最新的
-          tabsWithSameUrl.sort((a, b) =>
-            new Date(b.tab.createdAt || 0).getTime() - new Date(a.tab.createdAt || 0).getTime()
-          );
+      // 执行去重逻辑
+      updatedGroups.forEach((group) => {
+        const originalTabCount = group.tabs.length;
 
-          // 保留第一个（最新的），删除其余的
-          for (let i = 1; i < tabsWithSameUrl.length; i++) {
-            const { groupId, tab } = tabsWithSameUrl[i];
-            const groupIndex = updatedGroups.findIndex(g => g.id === groupId);
+        group.tabs = group.tabs.filter((tab) => {
+          if (!tab.url) return true; // 保留没有URL的标签
 
-            if (groupIndex !== -1) {
-              // 从标签组中删除该标签页（现在可以安全修改，因为是深拷贝）
-              updatedGroups[groupIndex].tabs = updatedGroups[groupIndex].tabs.filter(
-                t => t.id !== tab.id
-              );
-              removedCount++;
-
-              // 更新标签组的updatedAt时间和版本号
-              updatedGroups[groupIndex].updatedAt = new Date().toISOString();
-              updatedGroups[groupIndex].version = (updatedGroups[groupIndex].version || 1) + 1;
-            }
+          const key = tab.url;
+          if (urlMap.has(key)) {
+            removedCount++;
+            return false; // 重复，过滤掉
           }
+
+          urlMap.set(key, true);
+          return true;
+        });
+
+        // 如果标签数量发生变化，更新时间戳和版本号
+        if (group.tabs.length !== originalTabCount) {
+          group.updatedAt = new Date().toISOString();
+          group.version = (group.version || 1) + 1;
         }
       });
 
-      // 过滤掉空的标签组
+      // 过滤空的标签组
       const filteredGroups = updatedGroups.filter(group => group.tabs.length > 0);
 
-      logger.info(`✅ 去重完成: 移除 ${removedCount} 个重复标签`);
+      logger.info(`✅ 去重完成: 移除 ${removedCount} 个重复标签，剩余 ${filteredGroups.length} 个标签组`);
 
       return {
         success: true,

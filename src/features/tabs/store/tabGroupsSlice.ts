@@ -155,122 +155,39 @@ export const deleteGroup = createAsyncThunk(
   }
 );
 
-// 清理重复标签功能 - 简化版实现，确保云端同步
+// 清理重复标签功能 - 使用原子操作框架确保数据一致性
 export const cleanDuplicateTabs = createAsyncThunk<
   { removedCount: number; updatedGroups: TabGroup[]; syncSuccess: boolean },
   void
 >(
   'tabGroups/cleanDuplicateTabs',
-  async (_, { dispatch }) => {
-    logger.debug('开始清理重复标签 - 使用简化版去重逻辑');
+  async () => {
+    logger.debug('开始清理重复标签 - 使用原子操作框架');
 
     try {
-      const groups = await storage.getGroups();
-      const urlMap = new Map<string, { groupId: string; tabIndex: number }>();
-      let removedCount = 0;
+      // 使用与删除功能相同的原子操作框架
+      const { syncCoordinator } = await import('@/services/syncCoordinator');
 
-      // 创建深拷贝避免修改原数据
-      const updatedGroups = groups.map(group => ({
-        ...group,
-        tabs: [...group.tabs]
-      }));
+      const result = await syncCoordinator.executeProtectedDeduplication();
 
-      // 执行去重逻辑
-      updatedGroups.forEach((group) => {
-        const originalTabCount = group.tabs.length;
-
-        group.tabs = group.tabs.filter((tab) => {
-          if (!tab.url) return true; // 保留没有URL的标签
-
-          const key = tab.url;
-          if (urlMap.has(key)) {
-            removedCount++;
-            return false; // 重复，过滤掉
-          }
-
-          urlMap.set(key, { groupId: group.id, tabIndex: 0 });
-          return true;
-        });
-
-        // 如果标签数量发生变化，更新时间戳
-        if (group.tabs.length !== originalTabCount) {
-          group.updatedAt = new Date().toISOString();
-        }
-      });
-
-      // 过滤空的标签组
-      const finalGroups = updatedGroups.filter(group => group.tabs.length > 0);
-
-      // 保存到存储
-      await storage.setGroups(finalGroups);
-
-      // 强制同步到云端 - 确保去重结果不被覆盖
-      try {
-        const { pullFirstSyncService } = await import('@/services/PullFirstSyncService');
-
-        // 使用强制推送模式，确保去重结果同步到云端
-        const syncResult = await pullFirstSyncService.syncUserOperation({
-          type: 'update',
-          description: `清理重复标签 (移除了 ${removedCount} 个重复标签)`
-        });
-
-        if (!syncResult.success) {
-          logger.error('去重操作后同步失败，尝试直接上传:', syncResult.error);
-
-          // 如果 pull-first 同步失败，直接上传到云端
-          const supabaseModule = await import('@/shared/utils/supabase');
-          await supabaseModule.sync.uploadTabGroups(finalGroups, true); // 使用覆盖模式
-
-          logger.debug('去重结果已强制上传到云端');
-        } else {
-          logger.debug('去重操作后同步成功');
-        }
-      } catch (error) {
-        logger.error('去重操作后同步完全失败:', error);
-
-        // 同步失败时，仍然返回去重结果，但标记同步失败
-        logger.warn('去重操作完成，但同步到云端失败，请手动同步确保数据一致性');
-
-        // 即使同步失败，也要强制重新加载数据以确保UI一致性
-        setTimeout(() => {
-          dispatch(loadGroups());
-          logger.debug('去重后（同步失败）强制重新加载数据');
-        }, 100);
-
-        return {
-          removedCount,
-          updatedGroups: finalGroups,
-          syncSuccess: false
-        };
+      if (!result.success) {
+        throw new Error('去重操作失败');
       }
 
-      // 强制清理所有可能的缓存
-      try {
-        const { cacheManager } = await import('@/shared/utils/cacheManager');
-        await cacheManager.clearAll();
-        logger.debug('缓存清理完成');
-      } catch (error) {
-        logger.warn('清理缓存时出现警告', error instanceof Error ? error : new Error(String(error)));
-      }
-
-      logger.debug('清理重复标签完成', {
-        removedCount,
-        remainingGroups: finalGroups.length,
-        originalGroups: groups.length,
-        finalGroupsIds: finalGroups.map(g => g.id)
+      logger.debug('原子去重操作完成', {
+        removedCount: result.removedCount,
+        operationId: result.operationId
       });
 
-      // 强制重新加载数据以确保状态一致性
-      setTimeout(() => {
-        dispatch(loadGroups());
-        logger.debug('去重后强制重新加载数据');
-      }, 100);
+      // 获取最新的数据状态
+      const updatedGroups = await storage.getGroups();
 
       return {
-        removedCount,
-        updatedGroups: finalGroups,
+        removedCount: result.removedCount,
+        updatedGroups,
         syncSuccess: true
       };
+
     } catch (error) {
       logger.error('清理重复标签失败', error);
       throw error;
@@ -479,8 +396,8 @@ const tabGroupsSlice = createSlice({
       .addCase(cleanDuplicateTabs.fulfilled, (state, action) => {
         state.isLoading = false;
 
-        // 强制更新 Redux 状态，确保组件重新渲染
-        state.groups = [...action.payload.updatedGroups];
+        // 使用原子操作框架的结果更新状态
+        state.groups = action.payload.updatedGroups;
 
         // 清除之前的错误信息
         state.error = null;
@@ -490,11 +407,10 @@ const tabGroupsSlice = createSlice({
           state.error = '去重完成，但同步失败。请手动点击同步按钮确保数据一致性。';
         }
 
-        logger.debug('去重操作完成，Redux状态已更新', {
+        logger.debug('原子去重操作完成，Redux状态已更新', {
           removedCount: action.payload.removedCount,
           remainingGroups: action.payload.updatedGroups.length,
-          syncSuccess: action.payload.syncSuccess,
-          newStateLength: state.groups.length
+          syncSuccess: action.payload.syncSuccess
         });
       })
       .addCase(cleanDuplicateTabs.rejected, (state, action) => {
