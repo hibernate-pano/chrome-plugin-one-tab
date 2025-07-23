@@ -1,5 +1,6 @@
 import React, { useEffect, useState, useRef, useCallback, useMemo } from 'react';
 import { useAppDispatch, useAppSelector } from '@/app/store/hooks';
+import { store } from '@/app/store';
 import { loadGroups, setGroups } from '@/features/tabs/store/tabGroupsSlice';
 import { moveTab } from '@/features/tabs/store/dragOperationsSlice';
 import { SearchResultList } from '@/components/search/SearchResultList';
@@ -8,6 +9,7 @@ import { SortableTabGroup } from '@/components/dnd/SortableTabGroup';
 import { DndKitProvider } from '@/components/dnd/DndKitProvider';
 import { DragPerformanceTest } from '@/components/dnd/DragPerformanceTest';
 import { dragPerformanceMonitor } from '@/shared/utils/dragPerformance';
+import { pullFirstSyncService } from '@/services/PullFirstSyncService';
 import '@/styles/drag-drop.css';
 import {
   DragOverlay,
@@ -301,7 +303,32 @@ export const TabListDndKit: React.FC<TabListProps> = ({ searchQuery }) => {
               targetGroupId,
               targetIndex
             })
-          );
+          ).then((result) => {
+            // 检查是否需要删除空的源标签组
+            if (result.payload?.shouldDeleteSourceGroup) {
+              console.log('检测到空标签组，自动删除:', sourceGroupId);
+              import('@/features/tabs/store/tabGroupsSlice').then(({ deleteGroup }) => {
+                dispatch(deleteGroup(sourceGroupId)).catch(error => {
+                  console.error('删除空标签组失败:', error);
+                });
+              });
+            }
+
+            // 标签拖拽完成后立即触发云端同步
+            const { status } = store.getState().auth;
+            if (status === 'authenticated') {
+              console.log('标签拖拽完成，触发云端同步...');
+              pullFirstSyncService.performUserActionSync({
+                type: 'tab-move',
+                groupId: targetGroupId,
+                description: `移动标签从组 ${sourceGroupId} 到组 ${targetGroupId}`
+              }).catch(error => {
+                console.error('标签拖拽后云端同步失败:', error);
+              });
+            }
+          }).catch(error => {
+            console.error('标签拖拽操作失败:', error);
+          });
         } catch (error) {
           console.error('拖拽结束时更新标签位置失败:', error);
         }
@@ -370,45 +397,41 @@ export const TabListDndKit: React.FC<TabListProps> = ({ searchQuery }) => {
           onDragEnd={handleDragEnd}
         >
           {useDoubleColumnLayout ? (
-            // 双栏布局
-            <SortableContext items={groupIds} strategy={rectSortingStrategy}>
-              <div className="grid grid-cols-1 sm:grid-cols-1 md:grid-cols-2 gap-3">
-                {/* 左栏 - 偶数索引的标签组 */}
-                <div className="space-y-2">
-                  {filteredGroups
-                    .filter((_, index) => index % 2 === 0)
-                    .map(group => (
-                      <SortableTabGroup
-                        key={group.id}
-                        group={group}
-                        index={filteredGroups.findIndex(g => g.id === group.id)}
-                      />
-                    ))}
-                </div>
-
-                {/* 右栏 - 奇数索引的标签组 */}
-                <div className="space-y-2">
-                  {filteredGroups
-                    .filter((_, index) => index % 2 === 1)
-                    .map(group => (
-                      <SortableTabGroup
-                        key={group.id}
-                        group={group}
-                        index={filteredGroups.findIndex(g => g.id === group.id)}
-                      />
-                    ))}
-                </div>
-              </div>
-            </SortableContext>
-          ) : (
-            // 单栏布局
-            <SortableContext items={groupIds} strategy={rectSortingStrategy}>
+            // 双栏布局 - 标签组不参与拖拽排序，按时间倒序显示
+            <div className="grid grid-cols-1 sm:grid-cols-1 md:grid-cols-2 gap-3">
+              {/* 左栏 - 偶数索引的标签组 */}
               <div className="space-y-2">
-                {filteredGroups.map((group, index) => (
-                  <SortableTabGroup key={group.id} group={group} index={index} />
-                ))}
+                {filteredGroups
+                  .filter((_, index) => index % 2 === 0)
+                  .map(group => (
+                    <SortableTabGroup
+                      key={group.id}
+                      group={group}
+                      index={filteredGroups.findIndex(g => g.id === group.id)}
+                    />
+                  ))}
               </div>
-            </SortableContext>
+
+              {/* 右栏 - 奇数索引的标签组 */}
+              <div className="space-y-2">
+                {filteredGroups
+                  .filter((_, index) => index % 2 === 1)
+                  .map(group => (
+                    <SortableTabGroup
+                      key={group.id}
+                      group={group}
+                      index={filteredGroups.findIndex(g => g.id === group.id)}
+                    />
+                  ))}
+              </div>
+            </div>
+          ) : (
+            // 单栏布局 - 标签组不参与拖拽排序，按时间倒序显示
+            <div className="space-y-2">
+              {filteredGroups.map((group, index) => (
+                <SortableTabGroup key={group.id} group={group} index={index} />
+              ))}
+            </div>
           )}
 
           {/* Drag Overlay - 添加平滑动画 */}

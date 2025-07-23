@@ -3,6 +3,7 @@ import { useAppSelector, useAppDispatch } from '@/app/store/hooks';
 import { signOut } from '@/features/auth/store/authSlice';
 import { deleteAllGroups } from '@/features/tabs/store/tabGroupsSlice';
 import { syncService } from '@/services/syncService';
+import { pullFirstSyncService } from '@/services/PullFirstSyncService';
 
 import { LoginForm } from '../auth/LoginForm';
 import { RegisterForm } from '../auth/RegisterForm';
@@ -104,6 +105,29 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({ onClose }) => {
     onClose();
   };
 
+  // 手动同步
+  const handleManualSync = async () => {
+    if (!isAuthenticated) return;
+
+    onClose(); // 先关闭菜单
+
+    try {
+      console.log('开始手动同步...');
+      const result = await pullFirstSyncService.performManualSync();
+
+      if (result.success) {
+        console.log('手动同步完成');
+        // 可以添加成功提示
+      } else {
+        console.error('手动同步失败:', result.error);
+        alert('手动同步失败，请重试');
+      }
+    } catch (error) {
+      console.error('手动同步异常:', error);
+      alert('手动同步异常，请重试');
+    }
+  };
+
   return (
     <div ref={dropdownRef} className="absolute right-0 mt-2 w-64 bg-white dark:bg-gray-800 rounded-lg shadow-lg border border-gray-200 dark:border-gray-700 z-20">
       <div className="py-2">
@@ -119,19 +143,29 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({ onClose }) => {
                 )}
               </p>
             </div>
-            
+
+            {/* 手动同步按钮 */}
+            <button
+              onClick={handleManualSync}
+              className="w-full text-left px-4 py-2 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 flex items-center"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 mr-2 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+              </svg>
+              手动同步
+            </button>
+
             {/* 添加同步设置按钮 */}
             <button
               onClick={() => setShowSyncSettings(!showSyncSettings)}
               className="w-full text-left px-4 py-2 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 flex items-center"
             >
               <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 mr-2 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
               </svg>
               同步设置
             </button>
-            
-            {/* 移除同步按钮，简化逻辑 */}
           </>
         )}
 
@@ -264,7 +298,7 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({ onClose }) => {
                   </svg>
                 </button>
               </div>
-              
+
               {/* 内容 */}
               <div className="p-4">
                 <SyncSettings />
