@@ -494,6 +494,21 @@ export const sync = {
       return returnObj as SupabaseTabGroup;
     });
 
+    // 检查并去除重复的 ID
+    const seenIds = new Set<string>();
+    const uniqueGroups = groupsWithUser.filter(group => {
+      if (seenIds.has(group.id)) {
+        console.warn(`发现重复的标签组 ID: ${group.id}，已跳过`);
+        return false;
+      }
+      seenIds.add(group.id);
+      return true;
+    });
+
+    if (uniqueGroups.length !== groupsWithUser.length) {
+      console.log(`去重后标签组数量: ${uniqueGroups.length}/${groupsWithUser.length}`);
+    }
+
     // 上传标签组元数据和标签数据
     let result: any = null;
     try {
@@ -544,14 +559,14 @@ export const sync = {
 
       // 强制确保所有组的用户ID都是会话用户ID
       console.log('强制更新所有组的用户ID为会话用户ID');
-      groupsWithUser.forEach((group, index) => {
+      uniqueGroups.forEach((group, index) => {
         const oldUserId = group.user_id;
         group.user_id = sessionData.session.user.id;
         console.log(`标签组 ${index + 1}: ${group.id} 用户ID从 ${oldUserId} 更新为 ${group.user_id}`);
       });
 
       // 验证所有组的用户ID是否正确
-      const invalidGroups = groupsWithUser.filter(group => group.user_id !== sessionData.session.user.id);
+      const invalidGroups = uniqueGroups.filter(group => group.user_id !== sessionData.session.user.id);
       if (invalidGroups.length > 0) {
         console.error('仍有标签组的用户ID不正确:', invalidGroups.map(g => ({ id: g.id, user_id: g.user_id })));
         throw new Error('用户ID验证失败，无法上传数据');
@@ -590,16 +605,16 @@ export const sync = {
         // 然后插入新的标签组，使用 upsert 而不是 insert 来避免主键冲突
         console.log('准备插入标签组数据，用户ID:', sessionData.session.user.id);
         console.log('要插入的第一个标签组数据样本:', {
-          id: groupsWithUser[0]?.id,
-          name: groupsWithUser[0]?.name,
-          user_id: groupsWithUser[0]?.user_id,
-          device_id: groupsWithUser[0]?.device_id,
-          tabsDataLength: groupsWithUser[0]?.tabs_data?.length
+          id: uniqueGroups[0]?.id,
+          name: uniqueGroups[0]?.name,
+          user_id: uniqueGroups[0]?.user_id,
+          device_id: uniqueGroups[0]?.device_id,
+          tabsDataLength: uniqueGroups[0]?.tabs_data?.length
         });
 
         const result = await supabase
           .from('tab_groups')
-          .upsert(groupsWithUser, { onConflict: 'id' });
+          .upsert(uniqueGroups, { onConflict: 'id' });
 
         data = result.data;
         error = result.error;
@@ -608,7 +623,7 @@ export const sync = {
         console.log('使用合并模式，更新现有标签组');
         const result = await supabase
           .from('tab_groups')
-          .upsert(groupsWithUser, { onConflict: 'id' });
+          .upsert(uniqueGroups, { onConflict: 'id' });
 
         data = result.data;
         error = result.error;
@@ -640,9 +655,9 @@ export const sync = {
 
           // 记录要上传的数据信息
           console.error('要上传的数据信息:', {
-            groupCount: groupsWithUser.length,
-            firstGroupUserId: groupsWithUser[0]?.user_id,
-            allUserIds: [...new Set(groupsWithUser.map(g => g.user_id))]
+            groupCount: uniqueGroups.length,
+            firstGroupUserId: uniqueGroups[0]?.user_id,
+            allUserIds: [...new Set(uniqueGroups.map(g => g.user_id))]
           });
 
           // 尝试刷新会话并重试一次
@@ -658,14 +673,14 @@ export const sync = {
               console.log('会话刷新成功，重新验证用户ID并重试上传');
 
               // 重新设置用户ID
-              groupsWithUser.forEach(group => {
+              uniqueGroups.forEach(group => {
                 group.user_id = refreshedSession.session!.user.id;
               });
 
               // 重试上传
               const retryResult = await supabase
                 .from('tab_groups')
-                .upsert(groupsWithUser, { onConflict: 'id' });
+                .upsert(uniqueGroups, { onConflict: 'id' });
 
               if (retryResult.error) {
                 console.error('重试上传仍然失败:', retryResult.error);
@@ -935,19 +950,22 @@ export const sync = {
     console.log('上传用户设置，用户ID:', user.id, '设备ID:', deviceId);
 
     // 定义允许的设置字段，避免上传不存在的字段
+    // 这些字段名对应数据库中的实际列名（驼峰命名，稍后会转换为下划线命名）
     const allowedFields = [
-      'groupNameTemplate',
-      'showFavicons',
-      'showTabCount',
-      'confirmBeforeDelete',
-      'allowDuplicateTabs',
-      'syncEnabled',
-      'useDoubleColumnLayout',
-      'showNotifications',
-      'syncStrategy',
-      'deleteStrategy',
-      'themeMode',
-      'reorderMode'
+      'autoSave',              // -> auto_save
+      'autoSaveInterval',      // -> auto_save_interval
+      'groupNameTemplate',     // -> group_name_template
+      'showFavicons',          // -> show_favicons
+      'showTabCount',          // -> show_tab_count
+      'autoCloseTabs',         // -> auto_close_tabs
+      'confirmBeforeDelete',   // -> confirm_before_delete
+      'allowDuplicateTabs',    // -> allow_duplicate_tabs
+      'syncInterval',          // -> sync_interval
+      'syncEnabled',           // -> sync_enabled
+      'useDoubleColumnLayout', // -> use_double_column_layout
+      'showNotifications',     // -> show_notifications
+      'syncStrategy',          // -> sync_strategy
+      'deleteStrategy'         // -> delete_strategy
     ];
 
     // 将驼峰命名法转换为下划线命名法，并过滤掉不允许的字段
