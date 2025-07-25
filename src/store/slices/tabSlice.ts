@@ -5,6 +5,7 @@ import { sync as supabaseSync } from '@/utils/supabase';
 import { nanoid } from '@reduxjs/toolkit';
 import { mergeTabGroups } from '@/utils/syncUtils';
 import { syncToCloud } from '@/utils/syncHelpers';
+import { shouldAutoDeleteAfterTabRemoval } from '@/utils/tabGroupUtils';
 import { throttle } from 'lodash';
 
 // 为了解决“参数隐式具有“any”类型”的问题，添加明确的类型定义
@@ -1217,13 +1218,24 @@ export const deleteTabAndSync = createAsyncThunk<
     const groupIndex = groups.findIndex(g => g.id === groupId);
 
     if (groupIndex !== -1) {
-      // 创建新的标签数组，移除指定的标签
-      const updatedTabs = groups[groupIndex].tabs.filter(tab => tab.id !== tabId);
+      const currentGroup = groups[groupIndex];
 
-      // 如果标签组不为空且不是锁定状态，则更新标签组
-      if (updatedTabs.length > 0 || groups[groupIndex].isLocked) {
+      // 使用工具函数检查删除标签页后是否应该自动删除标签组
+      if (shouldAutoDeleteAfterTabRemoval(currentGroup, tabId)) {
+        // 自动删除空的未锁定标签组
+        const updatedGroups = groups.filter(g => g.id !== groupId);
+        await storage.setGroups(updatedGroups);
+
+        // 使用节流版本的同步函数，减少频繁同步
+        throttledSyncToCloud(dispatch, getState, '空标签组自动删除');
+
+        console.log(`自动删除空标签组: ${currentGroup.name} (ID: ${groupId})`);
+        return { group: null };
+      } else {
+        // 更新标签组，移除指定的标签页
+        const updatedTabs = currentGroup.tabs.filter(tab => tab.id !== tabId);
         const updatedGroup = {
-          ...groups[groupIndex],
+          ...currentGroup,
           tabs: updatedTabs,
           updatedAt: new Date().toISOString(),
         };
@@ -1236,16 +1248,8 @@ export const deleteTabAndSync = createAsyncThunk<
         // 使用节流版本的同步函数，减少频繁同步
         throttledSyncToCloud(dispatch, getState, '标签页删除');
 
+        console.log(`从标签组删除标签页: ${currentGroup.name}, 剩余标签页: ${updatedTabs.length}`);
         return { group: updatedGroup };
-      } else {
-        // 如果标签组为空且不是锁定状态，则删除整个标签组
-        const updatedGroups = groups.filter(g => g.id !== groupId);
-        await storage.setGroups(updatedGroups);
-
-        // 使用节流版本的同步函数，减少频繁同步
-        throttledSyncToCloud(dispatch, getState, '空标签组删除');
-
-        return { group: null };
       }
     }
 

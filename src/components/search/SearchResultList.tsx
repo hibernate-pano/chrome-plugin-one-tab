@@ -2,6 +2,7 @@ import React from 'react';
 import { useAppDispatch, useAppSelector } from '@/store/hooks';
 import { Tab, TabGroup } from '@/types/tab';
 import { updateGroup, deleteGroup } from '@/store/slices/tabSlice';
+import { shouldAutoDeleteAfterTabRemoval } from '@/utils/tabGroupUtils';
 import HighlightText from './HighlightText';
 
 interface SearchResultListProps {
@@ -47,15 +48,15 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({ searchQuery 
   const handleOpenTab = (tab: Tab, group: TabGroup) => {
     // 如果标签组没有锁定，先从标签组中移除该标签页
     if (!group.isLocked) {
-      // 如果标签组只有一个标签页，则删除整个标签组
-      if (group.tabs.length === 1) {
+      // 使用工具函数检查是否应该自动删除标签组
+      if (shouldAutoDeleteAfterTabRemoval(group, tab.id)) {
         // 先在Redux中删除标签组，立即更新UI
         dispatch({ type: 'tabs/deleteGroup/fulfilled', payload: group.id });
 
         // 然后异步完成存储操作
         dispatch(deleteGroup(group.id))
           .then(() => {
-            console.log(`删除标签组: ${group.id}`);
+            console.log(`自动删除空标签组: ${group.name} (ID: ${group.id})`);
           })
           .catch(error => {
             console.error('删除标签组失败:', error);
@@ -75,7 +76,7 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({ searchQuery 
         // 然后异步完成存储操作
         dispatch(updateGroup(updatedGroup))
           .then(() => {
-            console.log(`更新标签组: ${group.id}, 剩余标签页: ${updatedTabs.length}`);
+            console.log(`更新标签组: ${group.name}, 剩余标签页: ${updatedTabs.length}`);
           })
           .catch(error => {
             console.error('更新标签组失败:', error);
@@ -93,16 +94,19 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({ searchQuery 
   };
 
   const handleDeleteTab = (tab: Tab, group: TabGroup) => {
-    const updatedTabs = group.tabs.filter(t => t.id !== tab.id);
-    if (updatedTabs.length === 0) {
+    // 使用工具函数检查是否应该自动删除标签组
+    if (shouldAutoDeleteAfterTabRemoval(group, tab.id)) {
       dispatch(deleteGroup(group.id));
+      console.log(`自动删除空标签组: ${group.name} (ID: ${group.id})`);
     } else {
+      const updatedTabs = group.tabs.filter(t => t.id !== tab.id);
       const updatedGroup = {
         ...group,
         tabs: updatedTabs,
         updatedAt: new Date().toISOString()
       };
       dispatch(updateGroup(updatedGroup));
+      console.log(`从标签组删除标签页: ${group.name}, 剩余标签页: ${updatedTabs.length}`);
     }
   };
 

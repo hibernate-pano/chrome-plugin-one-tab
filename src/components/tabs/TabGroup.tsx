@@ -3,6 +3,7 @@ import { useAppDispatch } from '@/store/hooks';
 import { updateGroupNameAndSync, toggleGroupLockAndSync, deleteGroup, updateGroup, moveTabAndSync } from '@/store/slices/tabSlice';
 import { DraggableTab } from '@/components/dnd/DraggableTab';
 import { TabGroup as TabGroupType, Tab } from '@/types/tab';
+import { shouldAutoDeleteAfterTabRemoval } from '@/utils/tabGroupUtils';
 
 interface TabGroupProps {
   group: TabGroupType;
@@ -109,15 +110,15 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
   const handleOpenTab = useCallback((tab: Tab) => {
     // 如果标签组没有锁定，先从标签组中移除该标签页
     if (!group.isLocked) {
-      // 如果标签组只有一个标签页，则删除整个标签组
-      if (group.tabs.length === 1) {
+      // 使用工具函数检查是否应该自动删除标签组
+      if (shouldAutoDeleteAfterTabRemoval(group, tab.id)) {
         // 先在Redux中删除标签组，立即更新UI
         dispatch({ type: 'tabs/deleteGroup/fulfilled', payload: group.id });
 
         // 然后异步完成存储操作
         dispatch(deleteGroup(group.id))
           .then(() => {
-            console.log(`删除标签组: ${group.id}`);
+            console.log(`自动删除空标签组: ${group.name} (ID: ${group.id})`);
           })
           .catch(error => {
             console.error('删除标签组失败:', error);
@@ -137,7 +138,7 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
         // 然后异步完成存储操作
         dispatch(updateGroup(updatedGroup))
           .then(() => {
-            console.log(`更新标签组: ${group.id}, 剩余标签页: ${updatedTabs.length}`);
+            console.log(`更新标签组: ${group.name}, 剩余标签页: ${updatedTabs.length}`);
           })
           .catch(error => {
             console.error('更新标签组失败:', error);
@@ -254,16 +255,19 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
               moveTab={handleMoveTab}
               handleOpenTab={handleOpenTab}
               handleDeleteTab={useCallback((tabId) => {
-                const updatedTabs = group.tabs.filter(t => t.id !== tabId);
-                if (updatedTabs.length === 0) {
+                // 使用工具函数检查是否应该自动删除标签组
+                if (shouldAutoDeleteAfterTabRemoval(group, tabId)) {
                   dispatch(deleteGroup(group.id));
+                  console.log(`自动删除空标签组: ${group.name} (ID: ${group.id})`);
                 } else {
+                  const updatedTabs = group.tabs.filter(t => t.id !== tabId);
                   const updatedGroup = {
                     ...group,
                     tabs: updatedTabs,
                     updatedAt: new Date().toISOString()
                   };
                   dispatch(updateGroup(updatedGroup));
+                  console.log(`从标签组删除标签页: ${group.name}, 剩余标签页: ${updatedTabs.length}`);
                 }
               }, [dispatch, group])}
             />

@@ -5,6 +5,7 @@ import { TabGroup as TabGroupType } from '@/types/tab';
 import { useAppDispatch } from '@/store/hooks';
 import { updateGroupNameAndSync, deleteGroup, updateGroup } from '@/store/slices/tabSlice';
 import { SortableTab } from './SortableTab';
+import { shouldAutoDeleteAfterTabRemoval } from '@/utils/tabGroupUtils';
 import { SortableContext, rectSortingStrategy } from '@dnd-kit/sortable';
 import '@/styles/drag-drop.css';
 
@@ -92,17 +93,20 @@ export const SortableTabGroup: React.FC<SortableTabGroupProps> = ({ group, index
     if (!isMounted.current || isMarkedForDeletion) return;
 
     try {
-      const updatedTabs = group.tabs.filter(t => t.id !== tabId);
-      if (updatedTabs.length === 0) {
+      // 使用工具函数检查是否应该自动删除标签组
+      if (shouldAutoDeleteAfterTabRemoval(group, tabId)) {
         // Mark for deletion instead of dispatching immediately
         setIsMarkedForDeletion(true);
+        console.log(`标记空标签组待删除: ${group.name} (ID: ${group.id})`);
       } else {
+        const updatedTabs = group.tabs.filter(t => t.id !== tabId);
         const updatedGroup = {
           ...group,
           tabs: updatedTabs,
           updatedAt: new Date().toISOString(),
         };
         dispatch(updateGroup(updatedGroup));
+        console.log(`从标签组删除标签页: ${group.name}, 剩余标签页: ${updatedTabs.length}`);
       }
     } catch (error) {
       console.error('删除标签页失败:', error);
@@ -127,23 +131,26 @@ export const SortableTabGroup: React.FC<SortableTabGroupProps> = ({ group, index
 
   // Create a list of sortable tab IDs
   const tabIds = group.tabs.map(tab => `${group.id}-tab-${tab.id}`);
-  
+
   // Ensure other handlers also check isMarkedForDeletion if they could conflict
   const safeHandleOpenTab = useCallback((tab: any) => {
     if (!isMounted.current || isMarkedForDeletion) return;
     // Original handleOpenTab logic
     try {
       chrome.tabs.create({ url: tab.url });
-      const updatedTabs = group.tabs.filter(t => t.id !== tab.id);
-      if (updatedTabs.length === 0) {
+      // 使用工具函数检查是否应该自动删除标签组
+      if (shouldAutoDeleteAfterTabRemoval(group, tab.id)) {
         setIsMarkedForDeletion(true); // Also mark for deletion here
+        console.log(`打开标签页后标记空标签组待删除: ${group.name} (ID: ${group.id})`);
       } else {
+        const updatedTabs = group.tabs.filter(t => t.id !== tab.id);
         const updatedGroup = {
           ...group,
           tabs: updatedTabs,
           updatedAt: new Date().toISOString(),
         };
         dispatch(updateGroup(updatedGroup));
+        console.log(`打开标签页后更新标签组: ${group.name}, 剩余标签页: ${updatedTabs.length}`);
       }
     } catch (error) {
       console.error('打开标签页失败:', error);

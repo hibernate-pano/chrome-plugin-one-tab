@@ -2,6 +2,7 @@ import React, { useMemo, useState } from 'react';
 import { useAppSelector, useAppDispatch } from '@/store/hooks';
 import { Tab, TabGroup } from '@/types/tab';
 import { updateGroup, deleteGroup } from '@/store/slices/tabSlice';
+import { shouldAutoDeleteAfterTabRemoval } from '@/utils/tabGroupUtils';
 
 type SortType = 'time-desc' | 'time-asc' | 'domain-asc' | 'domain-desc';
 
@@ -83,20 +84,20 @@ const ReorderView: React.FC = () => {
     // 如果标签组被锁定，不允许删除
     if (group.isLocked) return;
 
-    // 更新标签组，移除该标签页
-    const updatedTabs = group.tabs.filter(t => t.id !== tab.id);
-
-    // 如果标签组没有剩余标签，则删除整个标签组
-    if (updatedTabs.length === 0) {
+    // 使用工具函数检查是否应该自动删除标签组
+    if (shouldAutoDeleteAfterTabRemoval(group, tab.id)) {
       dispatch(deleteGroup(group.id));
+      console.log(`自动删除空标签组: ${group.name} (ID: ${group.id})`);
     } else {
-      // 否则更新标签组
+      // 更新标签组，移除该标签页
+      const updatedTabs = group.tabs.filter(t => t.id !== tab.id);
       const updatedGroup = {
         ...group,
         tabs: updatedTabs,
         updatedAt: new Date().toISOString(),
       };
       dispatch(updateGroup(updatedGroup));
+      console.log(`从标签组删除标签页: ${group.name}, 剩余标签页: ${updatedTabs.length}`);
     }
   };
 
