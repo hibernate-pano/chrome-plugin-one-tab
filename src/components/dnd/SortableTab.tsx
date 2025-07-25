@@ -45,9 +45,12 @@ export const SortableTab: React.FC<SortableTabProps> = ({
   // 提供清晰的拖拽反馈
   const style = {
     transform: CSS.Transform.toString(transform),
-    opacity: isDragging ? 0.5 : 1,
+    opacity: isDragging ? 0.7 : 1,
     zIndex: isDragging ? 999 : 'auto',
     transition: isDragging ? undefined : 'transform 0.15s ease, opacity 0.15s ease',
+    boxShadow: isDragging ? '0 4px 12px rgba(59, 130, 246, 0.3)' : undefined,
+    border: isDragging ? '1px solid #3b82f6' : undefined,
+    backgroundColor: isDragging ? '#f0f7ff' : undefined,
   };
 
   // 安全的处理函数，确保组件未卸载时才调用原始函数
@@ -90,12 +93,12 @@ export const SortableTab: React.FC<SortableTabProps> = ({
       style={style}
       className={`flex items-center py-1 px-2 hover:bg-gray-100 rounded select-none cursor-move tab-item
         ${isDragging ? 'bg-blue-50 border border-blue-300 dragging shadow-md' : ''}
-      `} 
+      `}
       {...attributes}
       {...listeners}
     >
       {/* 删除按钮 */}
-      <button 
+      <button
         style={deleteButtonStyle}
         onClick={(e) => {
           e.stopPropagation(); // 防止触发标签点击事件

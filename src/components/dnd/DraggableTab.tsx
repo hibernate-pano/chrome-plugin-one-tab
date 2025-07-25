@@ -36,8 +36,8 @@ export const DraggableTab: React.FC<DraggableTabProps> = React.memo(({
 
   // 使用throttle包装moveTab函数，减少拖拽过程中的频繁更新
   // 增加节流时间到100ms，进一步减少更新频率
-  const throttledMoveTab = useCallback(
-    throttle((sourceGroupId, sourceIndex, targetGroupId, targetIndex) => {
+  const throttledMoveTab = useMemo(
+    () => throttle((sourceGroupId, sourceIndex, targetGroupId, targetIndex) => {
       moveTab(sourceGroupId, sourceIndex, targetGroupId, targetIndex);
     }, 100), // 100ms的节流时间，减少状态更新频率
     [moveTab]
@@ -182,10 +182,10 @@ export const DraggableTab: React.FC<DraggableTabProps> = React.memo(({
         style={{
           cursor: 'move'
         }}
-        // Removed mouse event handlers for preview
-        // onMouseEnter={handleMouseEnter}
-        // onMouseMove={handleMouseMove}
-        // onMouseLeave={handleMouseLeave}
+      // Removed mouse event handlers for preview
+      // onMouseEnter={handleMouseEnter}
+      // onMouseMove={handleMouseMove}
+      // onMouseLeave={handleMouseLeave}
       >
         <div className="flex items-center space-x-2 flex-1 min-w-0">
           {tab.favicon ? (

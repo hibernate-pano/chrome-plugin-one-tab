@@ -30,7 +30,13 @@ const initialState: TabState = {
 
 export const loadGroups = createAsyncThunk('tabs/loadGroups', async () => {
   const groups = await storage.getGroups();
-  return groups;
+  // 确保标签组始终按创建时间倒序排列（最新创建的在前面）
+  const sortedGroups = groups.sort((a, b) => {
+    const dateA = new Date(a.createdAt);
+    const dateB = new Date(b.createdAt);
+    return dateB.getTime() - dateA.getTime();
+  });
+  return sortedGroups;
 });
 
 export const saveGroup = createAsyncThunk(
@@ -39,7 +45,13 @@ export const saveGroup = createAsyncThunk(
     // 保存到本地
     const groups = await storage.getGroups();
     const updatedGroups = [group, ...groups];
-    await storage.setGroups(updatedGroups);
+    // 确保按创建时间倒序排列（最新创建的在前面）
+    const sortedGroups = updatedGroups.sort((a, b) => {
+      const dateA = new Date(a.createdAt);
+      const dateB = new Date(b.createdAt);
+      return dateB.getTime() - dateA.getTime();
+    });
+    await storage.setGroups(sortedGroups);
 
     // 使用通用同步函数同步到云端
     await syncToCloud(dispatch, getState, '新标签组');
@@ -900,8 +912,18 @@ export const tabSlice = createSlice({
       const sourceGroup = state.groups.find(g => g.id === sourceGroupId);
       const targetGroup = state.groups.find(g => g.id === targetGroupId);
 
-      // 验证源组和目标组存在
-      if (!sourceGroup || !targetGroup) return;
+      // 验证源组和目标组存在，以及它们的 tabs 数组
+      if (!sourceGroup || !targetGroup ||
+        !sourceGroup.tabs || !Array.isArray(sourceGroup.tabs) ||
+        !targetGroup.tabs || !Array.isArray(targetGroup.tabs)) {
+        console.error('无效的标签组数据:', {
+          sourceGroup: sourceGroup?.id,
+          targetGroup: targetGroup?.id,
+          sourceTabsValid: Array.isArray(sourceGroup?.tabs),
+          targetTabsValid: Array.isArray(targetGroup?.tabs)
+        });
+        return;
+      }
 
       // 验证源索引有效
       if (sourceIndex < 0 || sourceIndex >= sourceGroup.tabs.length) {
@@ -1024,7 +1046,13 @@ export const tabSlice = createSlice({
         state.error = action.error.message || '加载标签组失败';
       })
       .addCase(saveGroup.fulfilled, (state, action) => {
+        // 添加新标签组并按创建时间倒序排列
         state.groups.unshift(action.payload);
+        state.groups.sort((a, b) => {
+          const dateA = new Date(a.createdAt);
+          const dateB = new Date(b.createdAt);
+          return dateB.getTime() - dateA.getTime();
+        });
       })
       .addCase(updateGroup.fulfilled, (state, action) => {
         const index = state.groups.findIndex(g => g.id === action.payload.id);

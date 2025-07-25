@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { useAppDispatch, useAppSelector } from '@/store/hooks';
-import { loadGroups, moveGroupAndSync, moveTabAndSync } from '@/store/slices/tabSlice';
+import { loadGroups, moveTabAndSync } from '@/store/slices/tabSlice';
 import { SearchResultList } from '@/components/search/SearchResultList';
 // No need to import TabGroup type as we're not using it directly
 import { SortableTabGroup } from '@/components/dnd/SortableTabGroup';
@@ -154,16 +154,20 @@ export const TabListDndKit: React.FC<TabListProps> = ({ searchQuery }) => {
       });
 
       try {
-        // 实时更新UI - 使用原始源索引
-        dispatch(
-          moveTabAndSync({
-            sourceGroupId,
-            sourceIndex,
-            targetGroupId,
-            targetIndex,
-            updateSourceInDrag: false,
-          })
-        );
+        // 跨组拖拽时，减少频繁的状态更新以避免渲染问题
+        // 只在拖拽结束时进行最终更新
+        if (isSameGroup) {
+          // 同组内移动可以实时更新
+          dispatch(
+            moveTabAndSync({
+              sourceGroupId,
+              sourceIndex,
+              targetGroupId,
+              targetIndex,
+              updateSourceInDrag: false,
+            })
+          );
+        }
 
         // 不直接修改activeData对象，而是使用setActiveData更新状态
         // 创建新的对象而不是直接修改原对象
@@ -255,19 +259,7 @@ export const TabListDndKit: React.FC<TabListProps> = ({ searchQuery }) => {
         console.error('拖拽结束时更新标签位置失败:', error);
       }
     }
-    // 处理组拖拽
-    else if (activeData.type === 'group' && overData.type === 'group') {
-      const activeIndex = filteredGroups.findIndex(g => `group-${g.id}` === activeId);
-      const overIndex = filteredGroups.findIndex(g => `group-${g.id}` === overId);
-
-      if (activeIndex !== -1 && overIndex !== -1) {
-        try {
-          dispatch(moveGroupAndSync({ dragIndex: activeIndex, hoverIndex: overIndex }));
-        } catch (error) {
-          console.error('拖拽结束时更新标签组位置失败:', error);
-        }
-      }
-    }
+    // 标签组拖拽已被禁用，不再处理组拖拽逻辑
 
     // 清理所有状态
     if (isMounted.current) {
@@ -297,19 +289,7 @@ export const TabListDndKit: React.FC<TabListProps> = ({ searchQuery }) => {
       );
     }
 
-    if (activeData.type === 'group') {
-      const { group } = activeData;
-      return (
-        <div className="drag-overlay group-overlay">
-          <div className="flex items-center space-x-2">
-            <div className="truncate font-medium text-gray-700">{group.name}</div>
-            <div className="text-xs text-gray-500 whitespace-nowrap">
-              {group.tabs.length} 个标签页
-            </div>
-          </div>
-        </div>
-      );
-    }
+    // 标签组拖拽已被禁用，不再显示标签组拖拽覆盖层
 
     return null;
   };

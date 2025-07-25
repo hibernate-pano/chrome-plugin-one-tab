@@ -165,6 +165,24 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
     }));
   }, [dispatch]);
 
+  // 处理标签页删除
+  const handleDeleteTab = useCallback((tabId: string) => {
+    // 使用工具函数检查是否应该自动删除标签组
+    if (shouldAutoDeleteAfterTabRemoval(group, tabId)) {
+      dispatch(deleteGroup(group.id));
+      console.log(`自动删除空标签组: ${group.name} (ID: ${group.id})`);
+    } else {
+      const updatedTabs = group.tabs.filter(t => t.id !== tabId);
+      const updatedGroup = {
+        ...group,
+        tabs: updatedTabs,
+        updatedAt: new Date().toISOString()
+      };
+      dispatch(updateGroup(updatedGroup));
+      console.log(`从标签组删除标签页: ${group.name}, 剩余标签页: ${updatedTabs.length}`);
+    }
+  }, [dispatch, group]);
+
   return (
     <div className="mb-2 transition-all duration-200 ease-in-out bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-md shadow-sm pb-2 hover:shadow-md">
       <div className="flex items-center p-2 bg-gray-50 dark:bg-gray-900 border-b border-gray-200 dark:border-gray-700 rounded-t-md">
@@ -254,22 +272,7 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
               index={index}
               moveTab={handleMoveTab}
               handleOpenTab={handleOpenTab}
-              handleDeleteTab={useCallback((tabId) => {
-                // 使用工具函数检查是否应该自动删除标签组
-                if (shouldAutoDeleteAfterTabRemoval(group, tabId)) {
-                  dispatch(deleteGroup(group.id));
-                  console.log(`自动删除空标签组: ${group.name} (ID: ${group.id})`);
-                } else {
-                  const updatedTabs = group.tabs.filter(t => t.id !== tabId);
-                  const updatedGroup = {
-                    ...group,
-                    tabs: updatedTabs,
-                    updatedAt: new Date().toISOString()
-                  };
-                  dispatch(updateGroup(updatedGroup));
-                  console.log(`从标签组删除标签页: ${group.name}, 剩余标签页: ${updatedTabs.length}`);
-                }
-              }, [dispatch, group])}
+              handleDeleteTab={handleDeleteTab}
             />
           ))}
         </div>

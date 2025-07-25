@@ -34,14 +34,22 @@ export const SortableTabGroup: React.FC<SortableTabGroupProps> = ({ group, index
     };
   }, []);
 
-  const { attributes, listeners, setNodeRef, transform, isDragging } = useSortable({
+  // 禁用标签组拖拽功能 - 标签组应该保持固定位置
+  const { setNodeRef } = useSortable({
     id: `group-${group.id}`,
     data: {
       type: 'group',
       group,
       index,
     },
+    disabled: true, // 禁用拖拽
   });
+
+  // 由于禁用了拖拽，这些属性不再需要
+  const attributes = {};
+  const listeners = {};
+  const transform = null;
+  const isDragging = false;
 
   // 提供更好的拖拽视觉反馈
   const style = {
@@ -92,6 +100,12 @@ export const SortableTabGroup: React.FC<SortableTabGroupProps> = ({ group, index
   const handleDeleteTab = useCallback((tabId: string) => {
     if (!isMounted.current || isMarkedForDeletion) return;
 
+    // 跨组拖拽时的安全检查
+    if (!group || !group.tabs || !Array.isArray(group.tabs)) {
+      console.warn('Cannot delete tab: invalid group data', { groupId: group?.id, tabId });
+      return;
+    }
+
     try {
       // 使用工具函数检查是否应该自动删除标签组
       if (shouldAutoDeleteAfterTabRemoval(group, tabId)) {
@@ -111,7 +125,7 @@ export const SortableTabGroup: React.FC<SortableTabGroupProps> = ({ group, index
     } catch (error) {
       console.error('删除标签页失败:', error);
     }
-  }, [dispatch, group, isMounted, isMarkedForDeletion]);
+  }, [dispatch, group, isMarkedForDeletion]);
 
   useEffect(() => {
     if (isMarkedForDeletion && isMounted.current) {
@@ -122,10 +136,21 @@ export const SortableTabGroup: React.FC<SortableTabGroupProps> = ({ group, index
       }, 0); // Use a minimal delay
       return () => clearTimeout(timer);
     }
-  }, [isMarkedForDeletion, dispatch, group.id, isMounted]);
+  }, [isMarkedForDeletion, dispatch, group.id]);
 
   // If marked for deletion, render nothing to allow graceful unmount
   if (isMarkedForDeletion) {
+    return null;
+  }
+
+  // Safety check for group.tabs - 特别重要在跨组拖拽时
+  if (!group || !group.tabs || !Array.isArray(group.tabs)) {
+    console.warn('Invalid group or tabs data during render:', {
+      groupId: group?.id,
+      groupName: group?.name,
+      tabs: group?.tabs,
+      isMarkedForDeletion
+    });
     return null;
   }
 
@@ -135,6 +160,13 @@ export const SortableTabGroup: React.FC<SortableTabGroupProps> = ({ group, index
   // Ensure other handlers also check isMarkedForDeletion if they could conflict
   const safeHandleOpenTab = useCallback((tab: any) => {
     if (!isMounted.current || isMarkedForDeletion) return;
+
+    // 跨组拖拽时的安全检查
+    if (!group || !group.tabs || !Array.isArray(group.tabs)) {
+      console.warn('Cannot open tab: invalid group data', { groupId: group?.id, tabId: tab?.id });
+      return;
+    }
+
     // Original handleOpenTab logic
     try {
       chrome.tabs.create({ url: tab.url });
@@ -155,12 +187,12 @@ export const SortableTabGroup: React.FC<SortableTabGroupProps> = ({ group, index
     } catch (error) {
       console.error('打开标签页失败:', error);
     }
-  }, [dispatch, group, isMounted, isMarkedForDeletion]);
+  }, [dispatch, group, isMarkedForDeletion]);
 
   const safeHandleDeleteGroup = useCallback(() => {
     if (!isMounted.current || isMarkedForDeletion) return;
     setIsMarkedForDeletion(true); // Mark for deletion
-  }, [isMounted, isMarkedForDeletion]);
+  }, [isMarkedForDeletion]);
 
   // Update props for SortableTab to use the new safe handlers if necessary
   // For now, assuming SortableTab's internal isMounted check is sufficient for its direct actions
@@ -244,7 +276,7 @@ export const SortableTabGroup: React.FC<SortableTabGroupProps> = ({ group, index
           </button>
         </div>
       </div>
-      {isExpanded && (
+      {isExpanded && group.tabs && Array.isArray(group.tabs) && (
         <div className="px-2 pt-1 space-y-1 group" style={{ overflow: 'hidden' }}>
           <SortableContext items={tabIds} strategy={rectSortingStrategy}>
             {group.tabs.map((tab, index) => (

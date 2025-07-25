@@ -18,22 +18,23 @@ export const SimpleDraggableTabGroup: React.FC<SimpleDraggableTabGroupProps> = (
   const [isEditing, setIsEditing] = useState(false);
   const [groupName, setGroupName] = useState(group.name);
 
-  // 使用dnd-kit的useSortable钩子
-  const {
-    attributes,
-    listeners,
-    setNodeRef,
-    transform,
-    transition,
-    isDragging,
-  } = useSortable({
+  // 禁用标签组拖拽功能 - 标签组应该保持固定位置
+  const { setNodeRef } = useSortable({
     id: `group-${group.id}`,
     data: {
       type: 'group',
       group,
       index
-    }
+    },
+    disabled: true, // 禁用拖拽
   });
+
+  // 由于禁用了拖拽，这些属性不再需要
+  const attributes = {};
+  const listeners = {};
+  const transform = null;
+  const transition = undefined;
+  const isDragging = false;
 
   // 设置样式，提供清晰的拖拽反馈
   const style = {
@@ -86,6 +87,11 @@ export const SimpleDraggableTabGroup: React.FC<SimpleDraggableTabGroupProps> = (
   };
 
   const handleOpenAllTabs = () => {
+    // 安全检查
+    if (!group.tabs || !Array.isArray(group.tabs)) {
+      console.warn('Invalid group.tabs data:', group.tabs);
+      return;
+    }
     // 收集所有标签页的 URL
     const urls = group.tabs.map(tab => tab.url);
 
@@ -148,7 +154,11 @@ export const SimpleDraggableTabGroup: React.FC<SimpleDraggableTabGroupProps> = (
     }
   };
 
-  // 创建标签页ID列表，用于SortableContext
+  // 安全检查并创建标签页ID列表，用于SortableContext
+  if (!group.tabs || !Array.isArray(group.tabs)) {
+    console.warn('Invalid group.tabs data in SimpleDraggableTabGroup:', group);
+    return null;
+  }
   const tabIds = group.tabs.map(tab => `${group.id}-tab-${tab.id}`);
 
   return (
@@ -246,7 +256,7 @@ export const SimpleDraggableTabGroup: React.FC<SimpleDraggableTabGroupProps> = (
         </div>
       </div>
 
-      {isExpanded && (
+      {isExpanded && group.tabs && Array.isArray(group.tabs) && (
         <div className="px-2 pt-2 pb-2 space-y-1 group tabs-container">
           <SortableContext items={tabIds} strategy={verticalListSortingStrategy}>
             {group.tabs.map((tab, index) => (
