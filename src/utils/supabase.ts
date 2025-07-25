@@ -533,34 +533,31 @@ export const sync = {
       // 使用 JSONB 存储标签数据
       console.log('将标签数据作为 JSONB 存储到 tab_groups 表中');
 
-      // 确保用户已登录并且会话有效
-      const { data: sessionCheck } = await supabase.auth.getSession();
-      if (!sessionCheck.session) {
-        console.error('会话已过期，无法上传数据');
-        throw new Error('会话已过期，请重新登录');
-      }
-
       // 记录详细的上传信息
       console.log('上传数据详情:', {
         groupCount: groupsWithUser.length,
         userID: groupsWithUser[0]?.user_id,
-        sessionUserID: sessionCheck.session.user.id
+        sessionUserID: sessionData.session.user.id,
+        sessionValid: !!sessionData.session,
+        userValid: !!user
       });
 
-      // 确保用户ID匹配会话用户ID
-      if (groupsWithUser.length > 0 && groupsWithUser[0].user_id !== sessionCheck.session.user.id) {
-        console.error('用户ID不匹配:', {
-          dataUserID: groupsWithUser[0].user_id,
-          sessionUserID: sessionCheck.session.user.id
-        });
+      // 强制确保所有组的用户ID都是会话用户ID
+      console.log('强制更新所有组的用户ID为会话用户ID');
+      groupsWithUser.forEach((group, index) => {
+        const oldUserId = group.user_id;
+        group.user_id = sessionData.session.user.id;
+        console.log(`标签组 ${index + 1}: ${group.id} 用户ID从 ${oldUserId} 更新为 ${group.user_id}`);
+      });
 
-        // 更新所有组的用户ID为会话用户ID
-        groupsWithUser.forEach(group => {
-          group.user_id = sessionCheck.session.user.id;
-        });
-
-        console.log('已更新所有组的用户ID为会话用户ID');
+      // 验证所有组的用户ID是否正确
+      const invalidGroups = groupsWithUser.filter(group => group.user_id !== sessionData.session.user.id);
+      if (invalidGroups.length > 0) {
+        console.error('仍有标签组的用户ID不正确:', invalidGroups.map(g => ({ id: g.id, user_id: g.user_id })));
+        throw new Error('用户ID验证失败，无法上传数据');
       }
+
+      console.log('所有标签组的用户ID验证通过');
 
       let data, error;
 
@@ -572,7 +569,7 @@ export const sync = {
         const { error: deleteError } = await supabase
           .from('tab_groups')
           .delete()
-          .eq('user_id', sessionCheck.session.user.id);
+          .eq('user_id', sessionData.session.user.id);
 
         if (deleteError) {
           console.error('删除用户标签组失败:', deleteError);
@@ -587,10 +584,22 @@ export const sync = {
 
         console.log('用户标签组已删除，准备插入新数据');
 
-        // 然后插入新的标签组
+        // 等待一小段时间确保删除操作完全完成
+        await new Promise(resolve => setTimeout(resolve, 100));
+
+        // 然后插入新的标签组，使用 upsert 而不是 insert 来避免主键冲突
+        console.log('准备插入标签组数据，用户ID:', sessionData.session.user.id);
+        console.log('要插入的第一个标签组数据样本:', {
+          id: groupsWithUser[0]?.id,
+          name: groupsWithUser[0]?.name,
+          user_id: groupsWithUser[0]?.user_id,
+          device_id: groupsWithUser[0]?.device_id,
+          tabsDataLength: groupsWithUser[0]?.tabs_data?.length
+        });
+
         const result = await supabase
           .from('tab_groups')
-          .insert(groupsWithUser);
+          .upsert(groupsWithUser, { onConflict: 'id' });
 
         data = result.data;
         error = result.error;
@@ -615,6 +624,66 @@ export const sync = {
           details: error.details,
           hint: error.hint
         });
+
+        // 特别处理 RLS 策略错误
+        if (error.message && error.message.includes('row-level security policy')) {
+          console.error('RLS 策略违规错误，尝试诊断和重试...');
+
+          // 记录当前会话信息
+          const currentSession = await supabase.auth.getSession();
+          console.error('当前会话状态:', {
+            hasSession: !!currentSession.data.session,
+            userId: currentSession.data.session?.user?.id,
+            userEmail: currentSession.data.session?.user?.email,
+            sessionExpiry: currentSession.data.session?.expires_at
+          });
+
+          // 记录要上传的数据信息
+          console.error('要上传的数据信息:', {
+            groupCount: groupsWithUser.length,
+            firstGroupUserId: groupsWithUser[0]?.user_id,
+            allUserIds: [...new Set(groupsWithUser.map(g => g.user_id))]
+          });
+
+          // 尝试刷新会话并重试一次
+          console.log('尝试刷新会话并重试...');
+          try {
+            const { data: refreshedSession, error: refreshError } = await supabase.auth.refreshSession();
+            if (refreshError) {
+              console.error('刷新会话失败:', refreshError);
+              throw new Error('会话已过期，请重新登录');
+            }
+
+            if (refreshedSession.session && refreshedSession.session.user) {
+              console.log('会话刷新成功，重新验证用户ID并重试上传');
+
+              // 重新设置用户ID
+              groupsWithUser.forEach(group => {
+                group.user_id = refreshedSession.session!.user.id;
+              });
+
+              // 重试上传
+              const retryResult = await supabase
+                .from('tab_groups')
+                .upsert(groupsWithUser, { onConflict: 'id' });
+
+              if (retryResult.error) {
+                console.error('重试上传仍然失败:', retryResult.error);
+                throw new Error('数据库行级安全策略阻止了数据插入。请联系管理员检查权限配置。');
+              }
+
+              console.log('重试上传成功');
+              data = retryResult.data;
+              error = null; // 清除错误
+            } else {
+              throw new Error('无法获取有效会话，请重新登录');
+            }
+          } catch (retryError) {
+            console.error('重试失败:', retryError);
+            throw new Error('数据库行级安全策略阻止了数据插入。请重新登录或联系管理员。');
+          }
+        }
+
         throw error;
       }
 
@@ -865,12 +934,33 @@ export const sync = {
 
     console.log('上传用户设置，用户ID:', user.id, '设备ID:', deviceId);
 
-    // 将驼峰命名法转换为下划线命名法
+    // 定义允许的设置字段，避免上传不存在的字段
+    const allowedFields = [
+      'groupNameTemplate',
+      'showFavicons',
+      'showTabCount',
+      'confirmBeforeDelete',
+      'allowDuplicateTabs',
+      'syncEnabled',
+      'useDoubleColumnLayout',
+      'showNotifications',
+      'syncStrategy',
+      'deleteStrategy',
+      'themeMode',
+      'reorderMode'
+    ];
+
+    // 将驼峰命名法转换为下划线命名法，并过滤掉不允许的字段
     const convertedSettings: Record<string, any> = {};
     for (const [key, value] of Object.entries(settings)) {
-      // 将驼峰命名转换为下划线命名
-      const snakeKey = key.replace(/([A-Z])/g, '_$1').toLowerCase();
-      convertedSettings[snakeKey] = value;
+      // 只处理允许的字段
+      if (allowedFields.includes(key)) {
+        // 将驼峰命名转换为下划线命名
+        const snakeKey = key.replace(/([A-Z])/g, '_$1').toLowerCase();
+        convertedSettings[snakeKey] = value;
+      } else {
+        console.warn(`跳过未知的设置字段: ${key}`);
+      }
     }
 
     console.log('转换后的设置:', convertedSettings);
@@ -958,6 +1048,22 @@ export const sync = {
 
     // 如果有数据，将下划线命名法转换为驼峰命名法
     if (data) {
+      // 定义允许的数据库字段到设置字段的映射
+      const fieldMapping: Record<string, string> = {
+        'group_name_template': 'groupNameTemplate',
+        'show_favicons': 'showFavicons',
+        'show_tab_count': 'showTabCount',
+        'confirm_before_delete': 'confirmBeforeDelete',
+        'allow_duplicate_tabs': 'allowDuplicateTabs',
+        'sync_enabled': 'syncEnabled',
+        'use_double_column_layout': 'useDoubleColumnLayout',
+        'show_notifications': 'showNotifications',
+        'sync_strategy': 'syncStrategy',
+        'delete_strategy': 'deleteStrategy',
+        'theme_mode': 'themeMode',
+        'reorder_mode': 'reorderMode'
+      };
+
       const convertedSettings: Record<string, any> = {};
       for (const [key, value] of Object.entries(data)) {
         // 跳过非设置字段
@@ -965,9 +1071,12 @@ export const sync = {
           continue;
         }
 
-        // 将下划线命名转换为驼峰命名
-        const camelKey = key.replace(/_([a-z])/g, (_, letter) => letter.toUpperCase());
-        convertedSettings[camelKey] = value;
+        // 使用映射表转换字段名
+        if (fieldMapping[key]) {
+          convertedSettings[fieldMapping[key]] = value;
+        } else {
+          console.warn(`跳过未知的数据库字段: ${key}`);
+        }
       }
 
       console.log('转换后的设置:', convertedSettings);
