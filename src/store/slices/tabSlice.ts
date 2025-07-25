@@ -636,9 +636,13 @@ export const moveGroupAndSync = createAsyncThunk(
 export const cleanDuplicateTabs = createAsyncThunk(
   'tabs/cleanDuplicateTabs',
   async (_, { getState, dispatch }) => {
+    // 保存原始数据，用于错误回滚
+    let originalGroups: TabGroup[] = [];
+
     try {
-      // 获取所有标签组
-      const groups = await storage.getGroups();
+      // 获取所有标签组并保存原始状态
+      originalGroups = await storage.getGroups();
+      const groups = [...originalGroups]; // 创建副本进行操作
 
       // 创建URL映射，记录每个URL对应的标签页
       const urlMap = new Map<string, { tab: any; groupId: string }[]>();
@@ -659,7 +663,7 @@ export const cleanDuplicateTabs = createAsyncThunk(
       });
 
       // 处理重复标签页
-      let removedCount = 0;
+      let removedTabsCount = 0;
       const updatedGroups = [...groups];
 
       urlMap.forEach(tabsWithSameUrl => {
@@ -680,32 +684,61 @@ export const cleanDuplicateTabs = createAsyncThunk(
               updatedGroups[groupIndex].tabs = updatedGroups[groupIndex].tabs.filter(
                 t => t.id !== tab.id
               );
-              removedCount++;
+              removedTabsCount++;
 
               // 更新标签组的updatedAt时间
               updatedGroups[groupIndex].updatedAt = new Date().toISOString();
-
-              // 如果标签组变为空且不是锁定状态，删除该标签组
-              if (
-                updatedGroups[groupIndex].tabs.length === 0 &&
-                !updatedGroups[groupIndex].isLocked
-              ) {
-                updatedGroups.splice(groupIndex, 1);
-              }
             }
           }
         }
       });
 
-      // 保存更新后的标签组
-      await storage.setGroups(updatedGroups);
+      // 清理空标签组（在重复标签清理后进行）
+      let removedGroupsCount = 0;
+      const finalGroups = updatedGroups.filter(group => {
+        // 如果标签组为空且不是锁定状态，则删除
+        if (group.tabs.length === 0 && !group.isLocked) {
+          removedGroupsCount++;
+          return false; // 从数组中移除
+        }
+        return true; // 保留
+      });
 
-      // 使用通用同步函数同步到云端
-      await syncToCloud(dispatch, getState, '清理重复标签');
+      // 原子性操作：先保存到本地存储
+      try {
+        await storage.setGroups(finalGroups);
+      } catch (storageError) {
+        console.error('保存到本地存储失败，操作回滚:', storageError);
+        // 如果保存失败，不进行任何更改
+        throw new Error('保存失败，操作已取消');
+      }
 
-      return { removedCount, updatedGroups };
+      // 尝试同步到云端（失败不影响本地操作）
+      try {
+        await syncToCloud(dispatch, getState, '清理重复标签和空标签组');
+      } catch (syncError) {
+        console.warn('同步到云端失败，但本地操作已完成:', syncError);
+        // 同步失败不影响本地操作的成功
+      }
+
+      return {
+        removedTabsCount,
+        removedGroupsCount,
+        updatedGroups: finalGroups
+      };
     } catch (error) {
-      console.error('清理重复标签失败:', error);
+      console.error('清理重复标签和空标签组失败:', error);
+
+      // 如果操作过程中出现错误，尝试恢复原始状态
+      try {
+        if (originalGroups.length > 0) {
+          await storage.setGroups(originalGroups);
+          console.log('已回滚到原始状态');
+        }
+      } catch (rollbackError) {
+        console.error('回滚失败:', rollbackError);
+      }
+
       throw error;
     }
   }
@@ -1209,7 +1242,7 @@ export const tabSlice = createSlice({
         // 不更新UI状态，因为已经在 reducer 中更新了
       })
 
-      // 清理重复标签
+      // 清理重复标签和空标签组
       .addCase(cleanDuplicateTabs.pending, state => {
         state.isLoading = true;
         state.error = null;
@@ -1220,7 +1253,7 @@ export const tabSlice = createSlice({
       })
       .addCase(cleanDuplicateTabs.rejected, (state, action) => {
         state.isLoading = false;
-        state.error = action.error.message || '清理重复标签失败';
+        state.error = action.error.message || '清理重复标签和空标签组失败';
       });
   },
 });

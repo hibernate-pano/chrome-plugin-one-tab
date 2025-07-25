@@ -15,7 +15,10 @@ export const Header: React.FC<HeaderProps> = ({ onSearch }) => {
   const dispatch = useAppDispatch();
   const [searchValue, setSearchValue] = useState('');
   const [showCleanupConfirm, setShowCleanupConfirm] = useState(false);
-  const [cleanupResult, setCleanupResult] = useState<{ removedCount: number } | null>(null);
+  const [cleanupResult, setCleanupResult] = useState<{
+    removedTabsCount: number;
+    removedGroupsCount: number;
+  } | null>(null);
 
   const handleSearch = (e: React.ChangeEvent<HTMLInputElement>) => {
     const value = e.target.value;
@@ -228,7 +231,7 @@ export const Header: React.FC<HeaderProps> = ({ onSearch }) => {
               <button
                 onClick={handleCleanDuplicateTabs}
                 className="p-2 rounded hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors text-gray-600 dark:text-gray-300 flex items-center justify-center"
-                title="清理所有标签组中的重复标签页"
+                title="清理所有标签组中的重复标签页并删除空标签组"
               >
                 <svg
                   xmlns="http://www.w3.org/2000/svg"
@@ -291,10 +294,13 @@ export const Header: React.FC<HeaderProps> = ({ onSearch }) => {
         <div className="fixed inset-0 bg-black bg-opacity-30 flex items-center justify-center z-50">
           <div className="bg-white dark:bg-gray-800 p-6 rounded-lg shadow-xl max-w-md">
             <h3 className="text-lg font-medium mb-4 text-gray-900 dark:text-gray-100">
-              确认清理重复标签
+              确认清理重复标签和空标签组
             </h3>
             <p className="mb-4 text-gray-700 dark:text-gray-300">
-              此操作将清理所有标签组中URL相同的重复标签页，只保留每个URL最新的一个标签页。此操作不可撤销。
+              此操作将：
+              <br />• 清理所有标签组中URL相同的重复标签页，只保留每个URL最新的一个标签页
+              <br />• 自动删除不包含任何标签页的空标签组（锁定的标签组除外）
+              <br />此操作不可撤销。
             </p>
             <div className="flex justify-end space-x-3">
               <button
@@ -336,7 +342,17 @@ export const Header: React.FC<HeaderProps> = ({ onSearch }) => {
             </div>
             <div>
               <p className="font-bold">清理完成</p>
-              <p className="text-sm">已清理 {cleanupResult.removedCount} 个重复标签页</p>
+              <div className="text-sm space-y-1">
+                {cleanupResult.removedTabsCount > 0 && (
+                  <p>已清理 {cleanupResult.removedTabsCount} 个重复标签页</p>
+                )}
+                {cleanupResult.removedGroupsCount > 0 && (
+                  <p>已删除 {cleanupResult.removedGroupsCount} 个空标签组</p>
+                )}
+                {cleanupResult.removedTabsCount === 0 && cleanupResult.removedGroupsCount === 0 && (
+                  <p>未发现需要清理的重复标签页或空标签组</p>
+                )}
+              </div>
             </div>
           </div>
         </div>
