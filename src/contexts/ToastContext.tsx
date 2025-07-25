@@ -1,7 +1,8 @@
-import React, { createContext, useContext, useState, ReactNode } from 'react';
+import React, { createContext, useContext, useState, ReactNode, useEffect } from 'react';
 import Toast, { ToastType } from '../components/common/Toast';
 import ConfirmDialog, { ConfirmDialogProps } from '../components/common/ConfirmDialog';
 import AlertDialog, { AlertDialogProps } from '../components/common/AlertDialog';
+import { errorHandler } from '@/utils/errorHandler';
 
 interface ToastContextType {
   showToast: (message: string, type?: ToastType, duration?: number) => void;
@@ -80,6 +81,13 @@ export const ToastProvider: React.FC<ToastProviderProps> = ({ children }) => {
   const handleAlertClose = () => {
     setAlertDialog(prev => ({ ...prev, visible: false }));
   };
+
+  // 集成错误处理器
+  useEffect(() => {
+    errorHandler.setToastCallback((message: string, type: 'error' | 'warning') => {
+      showToast(message, type);
+    });
+  }, []);
 
   return (
     <ToastContext.Provider value={{ showToast, showConfirm, showAlert }}>

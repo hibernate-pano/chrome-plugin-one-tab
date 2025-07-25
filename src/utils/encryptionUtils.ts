@@ -12,10 +12,10 @@ async function generateKeyFromUserId(userId: string): Promise<CryptoKey> {
   // 使用用户ID作为种子生成密钥
   const encoder = new TextEncoder();
   const data = encoder.encode(userId);
-  
+
   // 使用SHA-256哈希用户ID
   const hashBuffer = await crypto.subtle.digest('SHA-256', data);
-  
+
   // 从哈希生成AES-GCM密钥
   return crypto.subtle.importKey(
     'raw',
@@ -32,19 +32,19 @@ async function generateKeyFromUserId(userId: string): Promise<CryptoKey> {
  * @param userId 用户ID，用于生成密钥
  * @returns 加密后的字符串
  */
-export async function encryptData(data: any, userId: string): Promise<string> {
+export async function encryptData<T>(data: T, userId: string): Promise<string> {
   try {
     // 将数据转换为JSON字符串
     const jsonString = JSON.stringify(data);
     const encoder = new TextEncoder();
     const plaintext = encoder.encode(jsonString);
-    
+
     // 生成密钥
     const key = await generateKeyFromUserId(userId);
-    
+
     // 生成随机IV（初始化向量）
     const iv = crypto.getRandomValues(new Uint8Array(12));
-    
+
     // 加密数据
     const ciphertext = await crypto.subtle.encrypt(
       {
@@ -54,12 +54,12 @@ export async function encryptData(data: any, userId: string): Promise<string> {
       key,
       plaintext
     );
-    
+
     // 将IV和密文合并
     const result = new Uint8Array(iv.length + ciphertext.byteLength);
     result.set(iv, 0);
     result.set(new Uint8Array(ciphertext), iv.length);
-    
+
     // 转换为Base64字符串并添加前缀
     return ENCRYPTION_PREFIX + btoa(String.fromCharCode(...result));
   } catch (error) {
@@ -81,24 +81,24 @@ export async function decryptData<T>(encryptedData: string, userId: string): Pro
       // 如果不是加密数据，尝试直接解析JSON
       return JSON.parse(encryptedData) as T;
     }
-    
+
     // 移除前缀
     const encryptedString = encryptedData.substring(ENCRYPTION_PREFIX.length);
-    
+
     // 将Base64字符串转换回二进制数据
     const binaryString = atob(encryptedString);
     const bytes = new Uint8Array(binaryString.length);
     for (let i = 0; i < binaryString.length; i++) {
       bytes[i] = binaryString.charCodeAt(i);
     }
-    
+
     // 提取IV和密文
     const iv = bytes.slice(0, 12);
     const ciphertext = bytes.slice(12);
-    
+
     // 生成密钥
     const key = await generateKeyFromUserId(userId);
-    
+
     // 解密数据
     const decrypted = await crypto.subtle.decrypt(
       {
@@ -108,11 +108,11 @@ export async function decryptData<T>(encryptedData: string, userId: string): Pro
       key,
       ciphertext
     );
-    
+
     // 将解密后的数据转换为字符串
     const decoder = new TextDecoder();
     const jsonString = decoder.decode(decrypted);
-    
+
     // 解析JSON
     return JSON.parse(jsonString) as T;
   } catch (error) {
@@ -152,7 +152,7 @@ export async function decryptTabGroups(encryptedData: string, userId: string): P
     return await decryptData<TabGroup[]>(encryptedData, userId);
   } catch (error) {
     console.error('解密标签组数据失败:', error);
-    
+
     // 如果解密失败，尝试直接解析JSON（可能是旧的未加密数据）
     try {
       return JSON.parse(encryptedData) as TabGroup[];
@@ -174,14 +174,14 @@ export async function encryptSupabaseTabGroup(group: SupabaseTabGroup, userId: s
   if (!group.tabs_data || group.tabs_data.length === 0) {
     return group;
   }
-  
+
   // 加密标签数据
   const encryptedTabsData = await encryptData(group.tabs_data, userId);
-  
+
   // 返回带有加密标签数据的组
   return {
     ...group,
-    tabs_data: encryptedTabsData as any // 类型转换，实际存储的是加密字符串
+    tabs_data: encryptedTabsData as unknown as TabData[] // 类型转换，实际存储的是加密字符串
   };
 }
 
@@ -196,13 +196,13 @@ export async function decryptSupabaseTabGroup(group: SupabaseTabGroup, userId: s
   if (!group.tabs_data) {
     return group;
   }
-  
+
   // 检查标签数据是否是字符串（加密数据）
   if (typeof group.tabs_data === 'string') {
     try {
       // 解密标签数据
       const decryptedTabsData = await decryptData<TabData[]>(group.tabs_data, userId);
-      
+
       // 返回带有解密标签数据的组
       return {
         ...group,
@@ -217,7 +217,7 @@ export async function decryptSupabaseTabGroup(group: SupabaseTabGroup, userId: s
       };
     }
   }
-  
+
   // 如果标签数据不是字符串，假设它已经是解密的数据（旧格式）
   return group;
 }

@@ -191,6 +191,8 @@ export const Header: React.FC<HeaderProps> = ({ onSearch }) => {
                 onClick={handleToggleLayout}
                 className="p-2 rounded hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors text-gray-600 dark:text-gray-300 flex items-center justify-center"
                 title={settings.useDoubleColumnLayout ? '切换为单栏布局' : '切换为双栏布局'}
+                aria-label={settings.useDoubleColumnLayout ? '切换为单栏布局' : '切换为双栏布局'}
+                aria-pressed={settings.useDoubleColumnLayout}
               >
                 {settings.useDoubleColumnLayout ? (
                   <svg
