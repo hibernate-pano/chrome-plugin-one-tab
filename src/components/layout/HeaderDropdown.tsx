@@ -6,6 +6,7 @@ import { syncService } from '@/services/syncService';
 import { storage } from '@/utils/storage';
 import { LoginForm } from '../auth/LoginForm';
 import { RegisterForm } from '../auth/RegisterForm';
+import { useToast } from '@/contexts/ToastContext';
 
 interface HeaderDropdownProps {
   onClose: () => void;
@@ -18,6 +19,7 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({ onClose }) => {
   const [activeTab, setActiveTab] = useState<'login' | 'register'>('login');
   const [showAuthModal, setShowAuthModal] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
+  const { showConfirm, showAlert } = useToast();
 
   // 处理点击外部关闭下拉菜单
   useEffect(() => {
@@ -51,36 +53,54 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({ onClose }) => {
 
   const handleDeleteAllGroups = () => {
     // 显示确认对话框
-    if (window.confirm('确定要删除所有标签组吗？此操作无法撤销。')) {
-      // 先关闭下拉菜单，提高用户体验
-      onClose();
+    showConfirm({
+      title: '删除确认',
+      message: '确定要删除所有标签组吗？此操作无法撤销。',
+      type: 'danger',
+      confirmText: '删除',
+      cancelText: '取消',
+      onConfirm: () => {
+        // 先关闭下拉菜单，提高用户体验
+        onClose();
 
-      // 异步删除所有标签组，不阻塞用户界面
-      dispatch(deleteAllGroups())
-        .then((result: any) => {
-          const count = result.payload?.count || 0;
+        // 异步删除所有标签组，不阻塞用户界面
+        dispatch(deleteAllGroups())
+          .then((result: any) => {
+            const count = result.payload?.count || 0;
 
-          // 删除成功后，异步同步到云端
-          if (isAuthenticated) {
-            console.log('正在将删除操作同步到云端...');
-            syncService.uploadToCloud(true, true) // background=true, overwriteCloud=true
-              .then(() => {
-                console.log('删除操作已同步到云端');
-              })
-              .catch(error => {
-                console.error('同步到云端失败:', error);
-              });
-          } else {
-            console.log('用户未登录，跳过同步到云端');
-          }
+            // 删除成功后，异步同步到云端
+            if (isAuthenticated) {
+              console.log('正在将删除操作同步到云端...');
+              syncService.uploadToCloud(true, true) // background=true, overwriteCloud=true
+                .then(() => {
+                  console.log('删除操作已同步到云端');
+                })
+                .catch(error => {
+                  console.error('同步到云端失败:', error);
+                });
+            } else {
+              console.log('用户未登录，跳过同步到云端');
+            }
 
-          alert(`成功删除了 ${count} 个标签组`);
-        })
-        .catch(error => {
-          console.error('删除所有标签组失败:', error);
-          alert('删除所有标签组失败');
-        });
-    }
+            showAlert({
+              title: '删除成功',
+              message: `成功删除了 ${count} 个标签组`,
+              type: 'success',
+              onClose: () => { }
+            });
+          })
+          .catch(error => {
+            console.error('删除所有标签组失败:', error);
+            showAlert({
+              title: '删除失败',
+              message: '删除所有标签组失败',
+              type: 'error',
+              onClose: () => { }
+            });
+          });
+      },
+      onCancel: () => { }
+    });
   };
 
   // 导出数据为 JSON 格式
@@ -108,7 +128,12 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({ onClose }) => {
       onClose();
     } catch (error) {
       console.error('导出数据失败:', error);
-      alert('导出数据失败，请重试');
+      showAlert({
+        title: '导出失败',
+        message: '导出数据失败，请重试',
+        type: 'error',
+        onClose: () => { }
+      });
     }
   };
 
@@ -137,7 +162,12 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({ onClose }) => {
       onClose();
     } catch (error) {
       console.error('导出 OneTab 格式数据失败:', error);
-      alert('导出 OneTab 格式数据失败，请重试');
+      showAlert({
+        title: '导出失败',
+        message: '导出 OneTab 格式数据失败，请重试',
+        type: 'error',
+        onClose: () => { }
+      });
     }
   };
 
@@ -245,15 +275,31 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({ onClose }) => {
                         const data = JSON.parse(event.target?.result as string);
                         const success = await storage.importData(data);
                         if (success) {
-                          alert('数据导入成功');
-                          // 刷新页面
-                          window.location.reload();
+                          showAlert({
+                            title: '导入成功',
+                            message: '数据导入成功',
+                            type: 'success',
+                            onClose: () => {
+                              // 刷新页面
+                              window.location.reload();
+                            }
+                          });
                         } else {
-                          alert('数据导入失败');
+                          showAlert({
+                            title: '导入失败',
+                            message: '数据导入失败',
+                            type: 'error',
+                            onClose: () => { }
+                          });
                         }
                       } catch (error) {
                         console.error('解析导入文件失败:', error);
-                        alert('解析导入文件失败，请确保文件格式正确');
+                        showAlert({
+                          title: '导入失败',
+                          message: '解析导入文件失败，请确保文件格式正确',
+                          type: 'error',
+                          onClose: () => { }
+                        });
                       }
                       onClose();
                     };
@@ -282,15 +328,31 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({ onClose }) => {
                         const text = event.target?.result as string;
                         const success = await storage.importFromOneTabFormat(text);
                         if (success) {
-                          alert('OneTab 数据导入成功');
-                          // 刷新页面
-                          window.location.reload();
+                          showAlert({
+                            title: '导入成功',
+                            message: 'OneTab 数据导入成功',
+                            type: 'success',
+                            onClose: () => {
+                              // 刷新页面
+                              window.location.reload();
+                            }
+                          });
                         } else {
-                          alert('OneTab 数据导入失败');
+                          showAlert({
+                            title: '导入失败',
+                            message: 'OneTab 数据导入失败',
+                            type: 'error',
+                            onClose: () => { }
+                          });
                         }
                       } catch (error) {
                         console.error('解析 OneTab 导入文件失败:', error);
-                        alert('解析 OneTab 导入文件失败，请确保文件格式正确');
+                        showAlert({
+                          title: '导入失败',
+                          message: '解析 OneTab 导入文件失败，请确保文件格式正确',
+                          type: 'error',
+                          onClose: () => { }
+                        });
                       }
                       onClose();
                     };

@@ -4,6 +4,7 @@ import { updateGroupNameAndSync, toggleGroupLockAndSync, deleteGroup, updateGrou
 import { DraggableTab } from '@/components/dnd/DraggableTab';
 import { TabGroup as TabGroupType, Tab } from '@/types/tab';
 import { shouldAutoDeleteAfterTabRemoval } from '@/utils/tabGroupUtils';
+import { useToast } from '@/contexts/ToastContext';
 
 interface TabGroupProps {
   group: TabGroupType;
@@ -15,6 +16,7 @@ interface TabGroupProps {
  */
 export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
   const dispatch = useAppDispatch();
+  const { showConfirm } = useToast();
 
   const [isEditing, setIsEditing] = useState(false);
   const [newName, setNewName] = useState(group.name);
@@ -58,10 +60,18 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
   }, [handleNameSubmit, group.name]);
 
   const handleDelete = useCallback(() => {
-    if (window.confirm('确定要删除这个标签组吗？')) {
-      dispatch(deleteGroup(group.id));
-    }
-  }, [dispatch, group.id]);
+    showConfirm({
+      title: '删除确认',
+      message: '确定要删除这个标签组吗？',
+      type: 'danger',
+      confirmText: '删除',
+      cancelText: '取消',
+      onConfirm: () => {
+        dispatch(deleteGroup(group.id));
+      },
+      onCancel: () => { }
+    });
+  }, [dispatch, group.id, showConfirm]);
 
   const handleToggleLock = useCallback(() => {
     dispatch(toggleGroupLockAndSync(group.id));
