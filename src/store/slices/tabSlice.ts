@@ -8,17 +8,10 @@ import { syncToCloud } from '@/utils/syncHelpers';
 import { throttle } from 'lodash';
 
 // 为了解决“参数隐式具有“any”类型”的问题，添加明确的类型定义
-interface DeleteTabAction {
-  groupId: string;
-  tabId: string;
-}
-
-interface DeleteTabFulfilledAction {
-  group: TabGroup | null;
-}
+// 注意：这些接口暂时保留，可能在未来的功能中使用
 
 // 解决“速记属性...的范围内不存在任何值”的问题，显式声明actions
-const { setActiveGroup, updateGroupName, toggleGroupLock, setSearchQuery, setSyncStatus, moveGroup, moveTab, updateSyncProgress, setGroups } = tabSlice.actions;
+
 
 const initialState: TabState = {
   groups: [],
@@ -131,10 +124,16 @@ export const importGroups = createAsyncThunk(
       })),
     }));
 
-    // 合并现有标签组和导入的标签组
+    // 合并现有标签组和导入的标签组，并按创建时间倒序排列
     const existingGroups = await storage.getGroups();
     const updatedGroups = [...processedGroups, ...existingGroups];
-    await storage.setGroups(updatedGroups);
+    // 按创建时间倒序排列，确保最新创建的标签组在前面
+    const sortedGroups = updatedGroups.sort((a, b) => {
+      const dateA = new Date(a.createdAt);
+      const dateB = new Date(b.createdAt);
+      return dateB.getTime() - dateA.getTime();
+    });
+    await storage.setGroups(sortedGroups);
 
     // 使用通用同步函数同步到云端
     // 不等待同步完成，直接返回结果
@@ -984,8 +983,8 @@ export const tabSlice = createSlice({
             if (g.id === targetGroupId) return updatedTargetGroup;
             return g;
           })
-          // 不在此处移除空标签组，交由 SortableTabGroup 组件通过 isMarkedForDeletion 处理
-          // .filter(g => g.tabs.length > 0 || g.isLocked);
+        // 不在此处移除空标签组，交由 SortableTabGroup 组件通过 isMarkedForDeletion 处理
+        // .filter(g => g.tabs.length > 0 || g.isLocked);
 
         // 不再立即重置活动组，让SortableTabGroup组件处理
         // if (
@@ -1003,6 +1002,10 @@ export const tabSlice = createSlice({
       const { progress, operation } = action.payload;
       state.syncProgress = progress;
       state.syncOperation = operation;
+    },
+    // 设置标签组数据（用于性能测试等场景）
+    setGroups: (state, action) => {
+      state.groups = action.payload;
     },
   },
   extraReducers: builder => {
@@ -1199,6 +1202,7 @@ export const {
   moveGroup,
   moveTab,
   updateSyncProgress,
+  setGroups,
 } = tabSlice.actions;
 
 // 新增：删除单个标签页
@@ -1215,7 +1219,7 @@ export const deleteTabAndSync = createAsyncThunk<
     if (groupIndex !== -1) {
       // 创建新的标签数组，移除指定的标签
       const updatedTabs = groups[groupIndex].tabs.filter(tab => tab.id !== tabId);
-      
+
       // 如果标签组不为空且不是锁定状态，则更新标签组
       if (updatedTabs.length > 0 || groups[groupIndex].isLocked) {
         const updatedGroup = {
@@ -1237,14 +1241,14 @@ export const deleteTabAndSync = createAsyncThunk<
         // 如果标签组为空且不是锁定状态，则删除整个标签组
         const updatedGroups = groups.filter(g => g.id !== groupId);
         await storage.setGroups(updatedGroups);
-        
+
         // 使用节流版本的同步函数，减少频繁同步
         throttledSyncToCloud(dispatch, getState, '空标签组删除');
-        
+
         return { group: null };
       }
     }
-    
+
     return { group: null };
   } catch (error) {
     console.error('删除标签页操作失败:', error);

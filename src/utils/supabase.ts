@@ -688,11 +688,12 @@ export const sync = {
         user.id = sessionCheck.session.user.id;
       }
 
-      // 获取用户的所有标签组，包含 tabs_data JSONB 字段
+      // 获取用户的所有标签组，包含 tabs_data JSONB 字段，按创建时间倒序排列
       const { data: groups, error } = await supabase
         .from('tab_groups')
         .select('*')
-        .eq('user_id', user.id);
+        .eq('user_id', user.id)
+        .order('created_at', { ascending: false });
 
       if (error) {
         console.error('获取标签组失败:', error);

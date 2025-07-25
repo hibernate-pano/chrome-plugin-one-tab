@@ -208,9 +208,16 @@ class ChromeStorage {
         throw new Error('无效的导入数据格式');
       }
 
-      // 导入标签组
+      // 导入标签组，并按创建时间倒序排列
       const existingGroups = await this.getGroups();
-      await this.setGroups([...data.data.groups, ...existingGroups]);
+      const allGroups = [...data.data.groups, ...existingGroups];
+      // 按创建时间倒序排列，确保最新创建的标签组在前面
+      const sortedGroups = allGroups.sort((a, b) => {
+        const dateA = new Date(a.createdAt);
+        const dateB = new Date(b.createdAt);
+        return dateB.getTime() - dateA.getTime();
+      });
+      await this.setGroups(sortedGroups);
 
       // 如果有设置数据，则合并设置
       if (data.data.settings) {
@@ -246,9 +253,16 @@ class ChromeStorage {
         throw new Error('解析失败或没有有效的标签组');
       }
 
-      // 导入标签组
+      // 导入标签组，并按创建时间倒序排列
       const existingGroups = await this.getGroups();
-      await this.setGroups([...parsedGroups, ...existingGroups]);
+      const allGroups = [...parsedGroups, ...existingGroups];
+      // 按创建时间倒序排列，确保最新创建的标签组在前面
+      const sortedGroups = allGroups.sort((a, b) => {
+        const dateA = new Date(a.createdAt);
+        const dateB = new Date(b.createdAt);
+        return dateB.getTime() - dateA.getTime();
+      });
+      await this.setGroups(sortedGroups);
 
       return true;
     } catch (error) {
