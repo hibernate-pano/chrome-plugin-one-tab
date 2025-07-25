@@ -801,11 +801,10 @@ export const moveTabAndSync = createAsyncThunk(
             // 从源标签组中删除标签页
             newSourceTabs.splice(sourceIndex, 1);
 
-            // 计算调整后的目标索引
+            // 修复：计算调整后的目标索引
+            // 对于同组内移动，无论拖动方向如何，都直接使用 targetIndex
+            // 这与 Redux reducer 中的逻辑保持一致
             let adjustedIndex = targetIndex;
-            if (sourceGroupId === targetGroupId && sourceIndex < targetIndex) {
-              adjustedIndex = targetIndex - 1;
-            }
 
             // 确保索引在有效范围内
             adjustedIndex = Math.max(0, Math.min(adjustedIndex, newTargetTabs.length));
@@ -945,12 +944,17 @@ export const tabSlice = createSlice({
         // 先移除源标签
         newTabs.splice(sourceIndex, 1);
 
-        // 计算调整后的目标索引
-        // 如果源索引小于目标索引，目标位置需要减1（因为已经移除了源元素）
-        const adjustedIndex =
-          sourceIndex < targetIndex
-            ? Math.max(0, Math.min(targetIndex - 1, newTabs.length))
-            : Math.max(0, Math.min(targetIndex, newTabs.length));
+        // 修复：计算调整后的目标索引
+        // 无论拖动方向如何，都直接使用 targetIndex 作为插入位置
+        // 这样可以确保标签页准确移动到用户指示的目标位置
+        //
+        // 原来的逻辑问题：
+        // - 从上向下拖动时，targetIndex - 1 会导致插入位置偏前一位
+        // - 从下向上拖动时，直接使用 targetIndex 是正确的
+        //
+        // 修正后的逻辑：
+        // - 无论方向，都使用 targetIndex，因为用户期望插入到目标位置
+        const adjustedIndex = Math.max(0, Math.min(targetIndex, newTabs.length));
 
         // 插入到目标位置
         newTabs.splice(adjustedIndex, 0, tab);

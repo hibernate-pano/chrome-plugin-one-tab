@@ -152,8 +152,8 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 });
 
 // 保存所有标签页
-async function saveAllTabs(inputTabs: chrome.tabs.Tab[]) {
-  const allTabs = inputTabs.length > 0 ? inputTabs : await chrome.tabs.query({ currentWindow: true });
+async function saveAllTabs(inputTabs?: chrome.tabs.Tab[]) {
+  const allTabs = inputTabs && inputTabs.length > 0 ? inputTabs : await chrome.tabs.query({ currentWindow: true });
 
   // 记录所有标签页的状态，用于调试
   console.log('所有标签页状态:', allTabs.map(tab => ({

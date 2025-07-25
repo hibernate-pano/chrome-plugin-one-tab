@@ -154,21 +154,14 @@ export const TabListDndKit: React.FC<TabListProps> = ({ searchQuery }) => {
       });
 
       try {
-        // 跨组拖拽时，减少频繁的状态更新以避免渲染问题
-        // 只在拖拽结束时进行最终更新
-        if (isSameGroup) {
-          // 同组内移动可以实时更新
-          dispatch(
-            moveTabAndSync({
-              sourceGroupId,
-              sourceIndex,
-              targetGroupId,
-              targetIndex,
-              updateSourceInDrag: false,
-            })
-          );
-        }
+        // 修复：移除拖拽过程中的实时更新，避免状态不一致导致的位置计算错误
+        // 同组内移动和跨组移动都只在拖拽结束时进行最终更新
+        // 这样可以确保：
+        // 1. 拖拽过程中标签页位置保持稳定
+        // 2. 避免频繁的状态更新和重渲染
+        // 3. 防止中间状态导致的索引计算错误
 
+        // 保留视觉反馈：更新activeData以提供拖拽反馈
         // 不直接修改activeData对象，而是使用setActiveData更新状态
         // 创建新的对象而不是直接修改原对象
         if (isMounted.current) {
@@ -178,7 +171,7 @@ export const TabListDndKit: React.FC<TabListProps> = ({ searchQuery }) => {
           });
         }
       } catch (error) {
-        console.error('拖拽过程中更新标签位置失败:', error);
+        console.error('拖拽过程中更新视觉反馈失败:', error);
       }
     }
   };

@@ -6,11 +6,11 @@ import { syncToCloud } from '@/utils/syncHelpers';
 // 简化版的移动标签页并同步到云端函数
 export const simpleMoveTabAndSync = createAsyncThunk(
   'tabs/simpleMoveTabAndSync',
-  async ({ 
-    sourceGroupId, 
-    sourceIndex, 
-    targetGroupId, 
-    targetIndex 
+  async ({
+    sourceGroupId,
+    sourceIndex,
+    targetGroupId,
+    targetIndex
   }: {
     sourceGroupId: string,
     sourceIndex: number,
@@ -40,11 +40,10 @@ export const simpleMoveTabAndSync = createAsyncThunk(
             // 从源标签组中删除标签页
             newSourceTabs.splice(sourceIndex, 1);
 
-            // 计算调整后的目标索引
+            // 修复：计算调整后的目标索引
+            // 对于同组内移动，无论拖动方向如何，都直接使用 targetIndex
+            // 这与主要的 Redux reducer 逻辑保持一致
             let adjustedIndex = targetIndex;
-            if (sourceGroupId === targetGroupId && sourceIndex < targetIndex) {
-              adjustedIndex = targetIndex - 1;
-            }
 
             // 确保索引在有效范围内
             adjustedIndex = Math.max(0, Math.min(adjustedIndex, newTargetTabs.length));
