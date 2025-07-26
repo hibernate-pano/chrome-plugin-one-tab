@@ -1,6 +1,7 @@
 import React, { useEffect, useState, lazy } from 'react';
 import { useAppDispatch, useAppSelector } from '@/store/hooks';
 import { loadGroups, deleteGroup, moveGroupAndSync } from '@/store/slices/tabSlice';
+import { runMigrations } from '@/utils/migrationUtils';
 
 import { DraggableTabGroup } from '@/components/dnd/DraggableTabGroup';
 import { SearchResultList } from '@/components/search/SearchResultList';
@@ -21,7 +22,22 @@ export const TabList: React.FC<TabListProps> = ({ searchQuery }) => {
   const [selectedGroup, setSelectedGroup] = useState<TabGroupType | null>(null);
 
   useEffect(() => {
-    dispatch(loadGroups());
+    // 先运行数据迁移，然后加载数据
+    const initializeData = async () => {
+      try {
+        // 运行必要的数据迁移
+        await runMigrations();
+
+        // 加载标签组数据
+        dispatch(loadGroups());
+      } catch (error) {
+        console.error('初始化数据失败:', error);
+        // 即使迁移失败，也要尝试加载数据
+        dispatch(loadGroups());
+      }
+    };
+
+    initializeData();
 
     // 添加消息监听器，监听数据刷新消息
     const messageListener = (message: any) => {

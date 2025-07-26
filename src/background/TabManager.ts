@@ -1,6 +1,7 @@
 import { storage } from '@/utils/storage';
 import { TabGroup, Tab } from '@/types/tab';
 import { nanoid } from '@reduxjs/toolkit';
+import { sanitizeFaviconUrl } from '@/utils/faviconUtils';
 
 /**
  * 统一的标签页管理器
@@ -89,7 +90,7 @@ export class TabManager {
       id: nanoid(),
       url: tab.url || 'about:blank',
       title: tab.title || '未命名标签页',
-      favicon: tab.favIconUrl,
+      favicon: sanitizeFaviconUrl(tab.favIconUrl),
       createdAt: now,
       lastAccessed: now,
     }));

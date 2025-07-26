@@ -4,6 +4,7 @@ import { Tab, TabGroup } from '@/types/tab';
 import { updateGroup, deleteGroup } from '@/store/slices/tabSlice';
 import { shouldAutoDeleteAfterTabRemoval } from '@/utils/tabGroupUtils';
 import HighlightText from './HighlightText';
+import { SafeFavicon } from '@/components/common/SafeFavicon';
 
 interface SearchResultListProps {
   searchQuery: string;
@@ -120,15 +121,7 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({ searchQuery 
       className="flex items-center py-1 px-2 bg-white dark:bg-gray-800 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors rounded mb-1"
     >
       <div className="flex items-center space-x-2 flex-1 min-w-0">
-        {tab.favicon ? (
-          <img src={tab.favicon} alt="" className="w-4 h-4 flex-shrink-0" />
-        ) : (
-          <div className="w-4 h-4 bg-gray-200 dark:bg-gray-600 flex-shrink-0 flex items-center justify-center">
-            <svg xmlns="http://www.w3.org/2000/svg" className="h-3 w-3 text-gray-500 dark:text-gray-300" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3.055 11H5a2 2 0 012 2v1a2 2 0 002 2 2 2 0 012 2v2.945M8 3.935V5.5A2.5 2.5 0 0010.5 8h.5a2 2 0 012 2 2 2 0 104 0 2 2 0 012-2h1.064M15 20.488V18a2 2 0 012-2h3.064M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-            </svg>
-          </div>
-        )}
+        <SafeFavicon src={tab.favicon} alt="" />
         <a
           href="#"
           className="truncate text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300 hover:underline text-sm flex-1 min-w-0"

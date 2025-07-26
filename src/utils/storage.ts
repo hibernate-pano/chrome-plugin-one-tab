@@ -6,7 +6,8 @@ const STORAGE_KEYS = {
   SETTINGS: 'user_settings',
   DELETED_GROUPS: 'deleted_tab_groups', // 存储已删除的标签组
   DELETED_TABS: 'deleted_tabs', // 存储已删除的标签页
-  LAST_SYNC_TIME: 'last_sync_time' // 存储最后同步时间
+  LAST_SYNC_TIME: 'last_sync_time', // 存储最后同步时间
+  MIGRATION_FLAGS: 'migration_flags' // 存储迁移标志
 };
 
 // 默认设置
@@ -276,6 +277,29 @@ class ChromeStorage {
       await chrome.storage.local.clear();
     } catch (error) {
       console.error('清除存储失败:', error);
+    }
+  }
+
+  // 迁移标志相关方法
+  async getMigrationFlags(): Promise<Record<string, boolean>> {
+    try {
+      const result = await chrome.storage.local.get(STORAGE_KEYS.MIGRATION_FLAGS);
+      return result[STORAGE_KEYS.MIGRATION_FLAGS] || {};
+    } catch (error) {
+      console.error('获取迁移标志失败:', error);
+      return {};
+    }
+  }
+
+  async setMigrationFlag(key: string, value: boolean): Promise<void> {
+    try {
+      const flags = await this.getMigrationFlags();
+      flags[key] = value;
+      await chrome.storage.local.set({
+        [STORAGE_KEYS.MIGRATION_FLAGS]: flags
+      });
+    } catch (error) {
+      console.error('设置迁移标志失败:', error);
     }
   }
 }

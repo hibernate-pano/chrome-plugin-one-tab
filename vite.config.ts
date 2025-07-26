@@ -29,8 +29,7 @@ export default defineConfig(({ mode }) => {
           'service-worker': resolve(__dirname, 'src/service-worker.ts'),
           'src/popup/index': resolve(__dirname, 'src/popup/index.html'),
           'popup': resolve(__dirname, 'popup.html'),
-          'confirm': resolve(__dirname, 'src/auth/confirm.html'),
-          'wechat-login': resolve(__dirname, 'src/pages/wechat-login.html')
+          'confirm': resolve(__dirname, 'src/auth/confirm.html')
         },
         output: {
           // 手动配置代码分块策略

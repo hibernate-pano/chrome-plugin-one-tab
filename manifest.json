@@ -4,7 +4,7 @@
   "version": "1.5.12",
   "description": "A better OneTab extension for Chrome",
   "content_security_policy": {
-    "extension_pages": "script-src 'self'; object-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self' data:; connect-src 'self' https://*.supabase.co https://accounts.google.com https://github.com https://open.weixin.qq.com https://api.weixin.qq.com;"
+    "extension_pages": "script-src 'self'; object-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self' data:; connect-src 'self' https://*.supabase.co;"
   },
   "permissions": [
     "tabs",
@@ -15,11 +15,7 @@
     "contextMenus"
   ],
   "host_permissions": [
-    "https://*.supabase.co/*",
-    "https://accounts.google.com/*",
-    "https://github.com/*",
-    "https://open.weixin.qq.com/*",
-    "https://api.weixin.qq.com/*"
+    "https://*.supabase.co/*"
   ],
   "action": {
     "default_icon": "icons/icon16.png",

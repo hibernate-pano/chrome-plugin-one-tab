@@ -1,8 +1,8 @@
 import { storage } from './utils/storage';
 import { nanoid } from '@reduxjs/toolkit';
 import { TabGroup } from './types/tab';
-import { store } from './store';
-import { handleOAuthCallback, updateWechatLoginStatus } from './store/slices/authSlice';
+import { sanitizeFaviconUrl } from './utils/faviconUtils';
+
 import { showNotification } from './utils/notification';
 
 // 创建新标签组的辅助函数
@@ -17,7 +17,7 @@ const createTabGroup = (tabs: chrome.tabs.Tab[]): TabGroup => {
         id: nanoid(),
         url: url,
         title: tab.title || '',
-        favicon: tab.favIconUrl || '',
+        favicon: sanitizeFaviconUrl(tab.favIconUrl),
         createdAt: new Date().toISOString(),
         lastAccessed: new Date().toISOString()
       };
@@ -159,111 +159,7 @@ chrome.runtime.onInstalled.addListener(async (details) => {
   }
 });
 
-// 监听来自微信登录页面的消息
-chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  if (message.type === 'WECHAT_LOGIN_STATUS_UPDATE') {
-    console.log('收到微信登录状态更新:', message.payload);
 
-    // 更新微信登录状态
-    store.dispatch(updateWechatLoginStatus({
-      status: message.payload.status,
-      error: message.payload.error,
-      tabId: sender.tab?.id
-    }));
-
-    // 返回成功响应
-    sendResponse({ success: true });
-  }
-
-  // 返回true表示异步响应
-  return true;
-});
-
-// 监听标签页更新事件，处理OAuth回调
-chrome.tabs.onUpdated.addListener(async (tabId, changeInfo) => {
-  // 处理微信登录回调
-  if (changeInfo.url && changeInfo.url.includes('wechat-login.html') && changeInfo.url.includes('access_token')) {
-    console.log('检测到微信登录回调:', changeInfo.url);
-    try {
-      // 将当前标签页更新为我们的回调页面
-      await chrome.tabs.update(tabId, { url: chrome.runtime.getURL('src/pages/oauth-callback.html') });
-
-      // 处理微信登录回调
-      await store.dispatch(handleOAuthCallback(changeInfo.url));
-
-      // 关闭回调标签页
-      await chrome.tabs.remove(tabId);
-
-      // 打开标签管理器页面
-      await chrome.tabs.create({ url: chrome.runtime.getURL('index.html') });
-
-      // 显示登录成功通知
-      await showNotification({
-        type: 'basic',
-        iconUrl: '/icons/icon128.png',
-        title: '登录成功',
-        message: '您已成功使用微信登录到OneTabPlus'
-      });
-    } catch (error) {
-      console.error('处理微信登录回调时出错:', error);
-
-      // 关闭回调标签页
-      try {
-        await chrome.tabs.remove(tabId);
-      } catch (e) {
-        console.error('关闭回调标签页失败:', e);
-      }
-
-      await showNotification({
-        type: 'basic',
-        iconUrl: '/icons/icon128.png',
-        title: '登录失败',
-        message: '微信登录失败，请重试'
-      });
-    }
-  }
-  // 处理其他OAuth回调（Google、GitHub等）
-  else if (changeInfo.url && changeInfo.url.startsWith(chrome.identity.getRedirectURL())) {
-    console.log('检测到OAuth回调URL:', changeInfo.url);
-    try {
-      // 将当前标签页更新为我们的回调页面
-      await chrome.tabs.update(tabId, { url: chrome.runtime.getURL('src/pages/oauth-callback.html') });
-
-      // 处理OAuth回调
-      await store.dispatch(handleOAuthCallback(changeInfo.url));
-
-      // 关闭回调标签页
-      await chrome.tabs.remove(tabId);
-
-      // 打开标签管理器页面
-      await chrome.tabs.create({ url: chrome.runtime.getURL('index.html') });
-
-      // 显示登录成功通知
-      await showNotification({
-        type: 'basic',
-        iconUrl: '/icons/icon128.png',
-        title: '登录成功',
-        message: '您已成功登录到OneTabPlus'
-      });
-    } catch (error) {
-      console.error('处理OAuth回调时出错:', error);
-
-      // 关闭回调标签页
-      try {
-        await chrome.tabs.remove(tabId);
-      } catch (e) {
-        console.error('关闭回调标签页失败:', e);
-      }
-
-      await showNotification({
-        type: 'basic',
-        iconUrl: '/icons/icon128.png',
-        title: '登录失败',
-        message: '第三方登录失败，请重试'
-      });
-    }
-  }
-});
 
 // 浏览器启动时不再自动检查用户会话，避免自动同步
 chrome.runtime.onStartup.addListener(() => {

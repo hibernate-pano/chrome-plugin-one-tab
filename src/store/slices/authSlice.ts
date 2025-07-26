@@ -153,35 +153,13 @@ const authSlice = createSlice({
     clearError: (state) => {
       state.error = null;
     },
-    // 更新微信登录状态
-    updateWechatLoginStatus: (state, action) => {
-      state.wechatLoginStatus = action.payload.status;
 
-      // 如果提供了标签页ID，则更新标签页ID
-      if (action.payload.tabId !== undefined) {
-        state.wechatLoginTabId = action.payload.tabId;
-      }
-
-      // 如果状态是失败或过期，清除错误信息
-      if (action.payload.status === 'failed' || action.payload.status === 'expired') {
-        state.error = action.payload.error || '微信登录失败';
-      }
-    },
     // 从缓存设置认证状态
     setFromCache: (state, action) => {
       state.user = action.payload.user;
       state.isAuthenticated = action.payload.isAuthenticated;
       state.isLoading = false;
       state.error = null;
-
-      // 如果用户已登录且是微信登录，设置微信登录状态为成功
-      if (action.payload.user && action.payload.user.loginProvider === 'wechat') {
-        state.wechatLoginStatus = 'success';
-      } else {
-        // 否则重置微信登录状态
-        state.wechatLoginStatus = 'idle';
-        state.wechatLoginTabId = undefined;
-      }
     },
   },
   extraReducers: (builder) => {
@@ -233,9 +211,6 @@ const authSlice = createSlice({
         state.isLoading = false;
         state.user = null;
         state.isAuthenticated = false;
-        // 重置微信登录状态
-        state.wechatLoginStatus = 'idle';
-        state.wechatLoginTabId = undefined;
 
         // 退出登录后清除认证缓存
         authCache.clearAuthState();
@@ -272,6 +247,6 @@ const authSlice = createSlice({
   },
 });
 
-export const { clearError, setFromCache, updateWechatLoginStatus } = authSlice.actions;
+export const { clearError, setFromCache } = authSlice.actions;
 
 export default authSlice.reducer;
