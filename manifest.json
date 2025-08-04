@@ -4,7 +4,7 @@
   "version": "1.6.3",
   "description": "A better OneTab extension for Chrome",
   "content_security_policy": {
-    "extension_pages": "script-src 'self'; object-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self' data:; connect-src 'self' https://*.supabase.co;"
+    "extension_pages": "script-src 'self'; object-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https://*.supabase.co https://*.gravatar.com https://*.githubusercontent.com; font-src 'self' data:; connect-src 'self' https://*.supabase.co; frame-src 'none'; base-uri 'self'; form-action 'self';"
   },
   "permissions": [
     "tabs",
@@ -24,12 +24,18 @@
   "web_accessible_resources": [
     {
       "resources": [
-        "icons/*.png",
-        "src/pages/*.html",
+        "icons/*.png"
+      ],
+      "matches": [
+        "chrome-extension://*/*"
+      ]
+    },
+    {
+      "resources": [
         "src/auth/*.html"
       ],
       "matches": [
-        "<all_urls>"
+        "https://*.supabase.co/*"
       ]
     }
   ],

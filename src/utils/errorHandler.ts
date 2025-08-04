@@ -28,28 +28,28 @@ export const ErrorCodes = {
   // 网络错误
   NETWORK_ERROR: 'NETWORK_ERROR',
   TIMEOUT_ERROR: 'TIMEOUT_ERROR',
-  
+
   // 认证错误
   AUTH_ERROR: 'AUTH_ERROR',
   PERMISSION_DENIED: 'PERMISSION_DENIED',
-  
+
   // 数据错误
   DATA_VALIDATION_ERROR: 'DATA_VALIDATION_ERROR',
   DATA_NOT_FOUND: 'DATA_NOT_FOUND',
   DATA_CORRUPTION: 'DATA_CORRUPTION',
-  
+
   // 存储错误
   STORAGE_ERROR: 'STORAGE_ERROR',
   STORAGE_QUOTA_EXCEEDED: 'STORAGE_QUOTA_EXCEEDED',
-  
+
   // 同步错误
   SYNC_ERROR: 'SYNC_ERROR',
   SYNC_CONFLICT: 'SYNC_CONFLICT',
-  
+
   // 加密错误
   ENCRYPTION_ERROR: 'ENCRYPTION_ERROR',
   DECRYPTION_ERROR: 'DECRYPTION_ERROR',
-  
+
   // 通用错误
   UNKNOWN_ERROR: 'UNKNOWN_ERROR',
   OPERATION_FAILED: 'OPERATION_FAILED'
@@ -100,7 +100,7 @@ export class ErrorHandler {
   private static instance: ErrorHandler;
   private toastCallback?: (message: string, type: 'error' | 'warning') => void;
 
-  private constructor() {}
+  private constructor() { }
 
   static getInstance(): ErrorHandler {
     if (!ErrorHandler.instance) {
@@ -133,7 +133,7 @@ export class ErrorHandler {
 
     // 标准化错误对象
     let appError: AppError;
-    
+
     if (typeof error === 'string') {
       appError = createAppError(ErrorCodes.UNKNOWN_ERROR, error);
     } else if (error instanceof Error) {
@@ -167,17 +167,86 @@ export class ErrorHandler {
   }
 
   /**
-   * 记录错误日志
+   * 过滤敏感信息
+   */
+  private sanitizeErrorData(data: any): any {
+    if (typeof data === 'string') {
+      return this.sanitizeString(data);
+    }
+
+    if (Array.isArray(data)) {
+      return data.map(item => this.sanitizeErrorData(item));
+    }
+
+    if (data && typeof data === 'object') {
+      const sanitized: any = {};
+      for (const [key, value] of Object.entries(data)) {
+        // 过滤敏感字段
+        if (this.isSensitiveField(key)) {
+          sanitized[key] = '[REDACTED]';
+        } else {
+          sanitized[key] = this.sanitizeErrorData(value);
+        }
+      }
+      return sanitized;
+    }
+
+    return data;
+  }
+
+  /**
+   * 检查是否为敏感字段
+   */
+  private isSensitiveField(fieldName: string): boolean {
+    const sensitiveFields = [
+      'password', 'token', 'key', 'secret', 'auth', 'credential',
+      'email', 'phone', 'address', 'ssn', 'credit', 'card',
+      'api_key', 'access_token', 'refresh_token', 'session_id',
+      'user_id', 'device_id', 'supabase', 'anon_key'
+    ];
+
+    const lowerFieldName = fieldName.toLowerCase();
+    return sensitiveFields.some(sensitive =>
+      lowerFieldName.includes(sensitive)
+    );
+  }
+
+  /**
+   * 清理字符串中的敏感信息
+   */
+  private sanitizeString(str: string): string {
+    // 移除可能的JWT token
+    str = str.replace(/eyJ[A-Za-z0-9-_]+\.[A-Za-z0-9-_]+\.[A-Za-z0-9-_]*/g, '[JWT_TOKEN]');
+
+    // 移除可能的API密钥
+    str = str.replace(/[a-zA-Z0-9]{32,}/g, '[API_KEY]');
+
+    // 移除chrome-extension:// URLs
+    str = str.replace(/chrome-extension:\/\/[a-z]+/g, '[EXTENSION_URL]');
+
+    // 移除邮箱地址
+    str = str.replace(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g, '[EMAIL]');
+
+    return str;
+  }
+
+  /**
+   * 记录错误日志（安全版本）
    */
   private logError(error: AppError, severity: ErrorSeverity) {
     const logMethod = severity === 'critical' || severity === 'high' ? 'error' : 'warn';
-    
-    console[logMethod](`[${severity.toUpperCase()}] ${error.code}:`, {
-      message: error.message,
+
+    // 在生产环境中过滤敏感信息
+    const isProduction = !import.meta.env.DEV;
+
+    const logData = {
+      message: isProduction ? this.sanitizeString(error.message) : error.message,
       timestamp: error.timestamp,
-      details: error.details,
-      stack: error.stack
-    });
+      details: isProduction ? this.sanitizeErrorData(error.details) : error.details,
+      stack: isProduction ? '[STACK_TRACE_REDACTED]' : error.stack
+    };
+
+    console[logMethod](`[${severity.toUpperCase()}] ${error.code}:`, logData);
   }
 
   /**
@@ -214,7 +283,7 @@ export class ErrorHandler {
     return ((...args: Parameters<T>) => {
       try {
         const result = fn(...args);
-        
+
         // 如果返回Promise，处理异步错误
         if (result instanceof Promise) {
           return result.catch(error => {
@@ -222,7 +291,7 @@ export class ErrorHandler {
             throw error;
           });
         }
-        
+
         return result;
       } catch (error) {
         this.handle(error as Error, options);

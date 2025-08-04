@@ -1,5 +1,6 @@
 import { TabGroup, UserSettings, Tab, LayoutMode } from '@/types/tab';
 import { parseOneTabFormat, formatToOneTabFormat } from './oneTabFormatParser';
+import { secureStorage } from './secureStorage';
 
 const STORAGE_KEYS = {
   GROUPS: 'tab_groups',
@@ -294,6 +295,11 @@ class ChromeStorage {
   // 迁移标志相关方法
   async getMigrationFlags(): Promise<Record<string, boolean>> {
     try {
+      // 优先使用加密存储
+      const flags = await secureStorage.get<Record<string, boolean>>(STORAGE_KEYS.MIGRATION_FLAGS);
+      if (flags) return flags;
+
+      // 降级到普通存储（向后兼容）
       const result = await chrome.storage.local.get(STORAGE_KEYS.MIGRATION_FLAGS);
       return result[STORAGE_KEYS.MIGRATION_FLAGS] || {};
     } catch (error) {
@@ -306,11 +312,21 @@ class ChromeStorage {
     try {
       const flags = await this.getMigrationFlags();
       flags[key] = value;
-      await chrome.storage.local.set({
-        [STORAGE_KEYS.MIGRATION_FLAGS]: flags
-      });
+
+      // 使用加密存储
+      await secureStorage.set(STORAGE_KEYS.MIGRATION_FLAGS, flags);
     } catch (error) {
       console.error('设置迁移标志失败:', error);
+      // 降级到普通存储
+      try {
+        const flags = await this.getMigrationFlags();
+        flags[key] = value;
+        await chrome.storage.local.set({
+          [STORAGE_KEYS.MIGRATION_FLAGS]: flags
+        });
+      } catch (fallbackError) {
+        console.error('降级存储也失败:', fallbackError);
+      }
     }
   }
 }

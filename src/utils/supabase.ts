@@ -3,25 +3,75 @@ import { TabGroup, UserSettings, TabData, SupabaseTabGroup } from '@/types/tab';
 
 import { encryptData, decryptData, isEncrypted } from './encryptionUtils';
 
-// 从环境变量中获取 Supabase 配置
-const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL as string;
-const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY as string;
+// 安全的配置管理
+function getSecureConfig() {
+  // 从环境变量中获取 Supabase 配置
+  const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL as string;
+  const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY as string;
 
-// 检查环境变量是否存在
-if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
-  console.error('错误: Supabase 配置缺失。请确保在 .env 文件中设置了 VITE_SUPABASE_URL 和 VITE_SUPABASE_ANON_KEY。');
+  // 验证环境变量格式
+  if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
+    console.error('错误: Supabase 配置缺失。请确保在 .env 文件中设置了 VITE_SUPABASE_URL 和 VITE_SUPABASE_ANON_KEY。');
+    throw new Error('Supabase 配置缺失');
+  }
+
+  // 验证URL格式
+  try {
+    const url = new URL(SUPABASE_URL);
+    if (!url.hostname.includes('supabase.co')) {
+      throw new Error('无效的 Supabase URL');
+    }
+  } catch (error) {
+    console.error('错误: 无效的 SUPABASE_URL 格式');
+    throw new Error('无效的 Supabase URL 格式');
+  }
+
+  // 验证匿名密钥格式（JWT格式）
+  if (!SUPABASE_ANON_KEY.startsWith('eyJ')) {
+    console.error('错误: 无效的 SUPABASE_ANON_KEY 格式');
+    throw new Error('无效的 Supabase 匿名密钥格式');
+  }
+
+  // 在生产环境中，不要在控制台输出完整的配置信息
+  if (import.meta.env.DEV) {
+    console.log('Supabase 配置已加载:', {
+      url: SUPABASE_URL,
+      keyPrefix: SUPABASE_ANON_KEY.substring(0, 10) + '...'
+    });
+  }
+
+  return {
+    url: SUPABASE_URL,
+    anonKey: SUPABASE_ANON_KEY
+  };
 }
 
-export const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+// 获取安全配置
+const config = getSecureConfig();
 
-// 获取设备ID
+export const supabase = createClient(config.url, config.anonKey);
+
+import { secureStorage } from './secureStorage';
+
+// 获取设备ID（使用加密存储）
 export const getDeviceId = async (): Promise<string> => {
-  const { deviceId } = await chrome.storage.local.get('deviceId');
-  if (deviceId) return deviceId;
+  try {
+    const deviceId = await secureStorage.get<string>('deviceId');
+    if (deviceId) return deviceId;
 
-  const newDeviceId = crypto.randomUUID();
-  await chrome.storage.local.set({ deviceId: newDeviceId });
-  return newDeviceId;
+    const newDeviceId = crypto.randomUUID();
+    await secureStorage.set('deviceId', newDeviceId);
+    return newDeviceId;
+  } catch (error) {
+    console.error('获取设备ID失败:', error);
+    // 降级到普通存储
+    const { deviceId } = await chrome.storage.local.get('deviceId');
+    if (deviceId) return deviceId;
+
+    const newDeviceId = crypto.randomUUID();
+    await chrome.storage.local.set({ deviceId: newDeviceId });
+    return newDeviceId;
+  }
 };
 
 // 用户认证相关方法

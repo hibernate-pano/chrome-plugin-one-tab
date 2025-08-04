@@ -1,6 +1,8 @@
 import React, { useState } from 'react';
 import { useAppDispatch, useAppSelector } from '@/store/hooks';
 import { signUp, signIn, clearError } from '@/store/slices/authSlice';
+// TODO: 集成输入验证功能
+// import { validateEmail, validatePassword, validateForm, checkPasswordStrength, PasswordStrength } from '@/utils/inputValidation';
 
 interface RegisterFormProps {
   onSuccess?: () => void;

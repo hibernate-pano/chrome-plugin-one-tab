@@ -96,41 +96,167 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
   }
 });
 
+// 定义允许的消息类型
+const ALLOWED_MESSAGE_TYPES = [
+  'SAVE_ALL_TABS',
+  'SAVE_CURRENT_TAB',
+  'OPEN_TAB',
+  'OPEN_TABS',
+  'REFRESH_TAB_LIST'
+] as const;
+
+// type AllowedMessageType = typeof ALLOWED_MESSAGE_TYPES[number];
+
+// 消息验证函数
+function validateMessage(message: any, sender: chrome.runtime.MessageSender): boolean {
+  // 检查消息结构
+  if (!message || typeof message !== 'object') {
+    console.warn('Service Worker: 收到无效消息结构:', message);
+    return false;
+  }
+
+  // 检查消息类型
+  if (!message.type || !ALLOWED_MESSAGE_TYPES.includes(message.type)) {
+    console.warn('Service Worker: 收到未知消息类型:', message.type);
+    return false;
+  }
+
+  // 验证发送者来源
+  if (!sender.id || sender.id !== chrome.runtime.id) {
+    console.warn('Service Worker: 消息来源验证失败:', sender);
+    return false;
+  }
+
+  // 验证消息数据结构
+  if (message.type !== 'REFRESH_TAB_LIST' && (!message.data || typeof message.data !== 'object')) {
+    console.warn('Service Worker: 消息缺少有效数据:', message);
+    return false;
+  }
+
+  return true;
+}
+
+// 安全的错误响应函数
+function sendSecureErrorResponse(sendResponse: (response: any) => void, error: Error | string) {
+  const errorMessage = error instanceof Error ? error.message : String(error);
+  // 过滤敏感信息，只返回安全的错误信息
+  const safeErrorMessage = errorMessage.includes('chrome-extension://')
+    ? '操作失败，请重试'
+    : errorMessage;
+
+  sendResponse({
+    success: false,
+    error: safeErrorMessage,
+    timestamp: Date.now()
+  });
+}
+
 // 处理消息
-chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
-  console.log('Service Worker 收到消息:', message);
-
-  // 处理保存标签页的消息
-  if (message.type === 'SAVE_ALL_TABS') {
-    tabManager.saveAllTabs(message.data.tabs)
-      .then(() => sendResponse({ success: true }))
-      .catch(error => sendResponse({ success: false, error: error.message }));
-    return true; // 异步响应
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  // 验证消息
+  if (!validateMessage(message, sender)) {
+    sendSecureErrorResponse(sendResponse, '无效的消息格式或来源');
+    return false;
   }
 
-  if (message.type === 'SAVE_CURRENT_TAB') {
-    tabManager.saveCurrentTab(message.data.tab)
-      .then(() => sendResponse({ success: true }))
-      .catch(error => sendResponse({ success: false, error: error.message }));
-    return true; // 异步响应
-  }
+  console.log('Service Worker 收到验证通过的消息:', message.type);
 
-  if (message.type === 'OPEN_TAB') {
-    tabManager.openTab(message.data.url)
-      .then(() => sendResponse({ success: true }))
-      .catch(error => sendResponse({ success: false, error: error.message }));
-    return true; // 异步响应
-  }
+  try {
+    // 处理保存标签页的消息
+    if (message.type === 'SAVE_ALL_TABS') {
+      if (!Array.isArray(message.data.tabs)) {
+        sendSecureErrorResponse(sendResponse, '标签页数据格式无效');
+        return false;
+      }
 
-  if (message.type === 'OPEN_TABS') {
-    tabManager.openTabs(message.data.urls)
-      .then(() => sendResponse({ success: true }))
-      .catch(error => sendResponse({ success: false, error: error.message }));
-    return true; // 异步响应
-  }
+      tabManager.saveAllTabs(message.data.tabs)
+        .then(() => sendResponse({ success: true, timestamp: Date.now() }))
+        .catch(error => sendSecureErrorResponse(sendResponse, error));
+      return true; // 异步响应
+    }
 
-  // 如果没有处理消息，返回 false
-  return false;
+    if (message.type === 'SAVE_CURRENT_TAB') {
+      if (!message.data.tab || typeof message.data.tab !== 'object') {
+        sendSecureErrorResponse(sendResponse, '标签页数据格式无效');
+        return false;
+      }
+
+      tabManager.saveCurrentTab(message.data.tab)
+        .then(() => sendResponse({ success: true, timestamp: Date.now() }))
+        .catch(error => sendSecureErrorResponse(sendResponse, error));
+      return true; // 异步响应
+    }
+
+    if (message.type === 'OPEN_TAB') {
+      if (!message.data.url || typeof message.data.url !== 'string') {
+        sendSecureErrorResponse(sendResponse, 'URL格式无效');
+        return false;
+      }
+
+      // 验证URL安全性
+      try {
+        const url = new URL(message.data.url);
+        if (!['http:', 'https:'].includes(url.protocol)) {
+          sendSecureErrorResponse(sendResponse, '不支持的URL协议');
+          return false;
+        }
+      } catch {
+        sendSecureErrorResponse(sendResponse, 'URL格式无效');
+        return false;
+      }
+
+      tabManager.openTab(message.data.url)
+        .then(() => sendResponse({ success: true, timestamp: Date.now() }))
+        .catch(error => sendSecureErrorResponse(sendResponse, error));
+      return true; // 异步响应
+    }
+
+    if (message.type === 'OPEN_TABS') {
+      if (!Array.isArray(message.data.urls)) {
+        sendSecureErrorResponse(sendResponse, 'URL列表格式无效');
+        return false;
+      }
+
+      // 验证所有URL的安全性
+      for (const url of message.data.urls) {
+        if (typeof url !== 'string') {
+          sendSecureErrorResponse(sendResponse, 'URL格式无效');
+          return false;
+        }
+
+        try {
+          const urlObj = new URL(url);
+          if (!['http:', 'https:'].includes(urlObj.protocol)) {
+            sendSecureErrorResponse(sendResponse, '不支持的URL协议');
+            return false;
+          }
+        } catch {
+          sendSecureErrorResponse(sendResponse, 'URL格式无效');
+          return false;
+        }
+      }
+
+      tabManager.openTabs(message.data.urls)
+        .then(() => sendResponse({ success: true, timestamp: Date.now() }))
+        .catch(error => sendSecureErrorResponse(sendResponse, error));
+      return true; // 异步响应
+    }
+
+    if (message.type === 'REFRESH_TAB_LIST') {
+      // 这个消息类型不需要响应，只是通知
+      sendResponse({ success: true, timestamp: Date.now() });
+      return false;
+    }
+
+    // 如果没有处理消息，返回错误
+    sendSecureErrorResponse(sendResponse, '未知的消息类型');
+    return false;
+
+  } catch (error) {
+    console.error('Service Worker: 处理消息时发生错误:', error);
+    sendSecureErrorResponse(sendResponse, '处理消息时发生内部错误');
+    return false;
+  }
 });
 
 // 导出一个空对象，确保这个文件被视为模块
