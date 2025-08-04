@@ -1,15 +1,12 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { useAppSelector, useAppDispatch } from '@/app/store/hooks';
-import { signOut } from '@/features/auth/store/authSlice';
-import { deleteAllGroups } from '@/features/tabs/store/tabGroupsSlice';
+import { useAppSelector, useAppDispatch } from '@/store/hooks';
+import { signOut } from '@/store/slices/authSlice';
+import { deleteAllGroups } from '@/store/slices/tabSlice';
 import { syncService } from '@/services/syncService';
-import { pullFirstSyncService } from '@/services/PullFirstSyncService';
-
+import { storage } from '@/utils/storage';
 import { LoginForm } from '../auth/LoginForm';
 import { RegisterForm } from '../auth/RegisterForm';
-import { SyncSettings } from '../sync/SyncSettings';
-import { useOnboarding } from '@/features/onboarding/components/OnboardingProvider';
-import { ImportExportPanel } from '@/features/import-export';
+import { useToast } from '@/contexts/ToastContext';
 
 interface HeaderDropdownProps {
   onClose: () => void;
@@ -17,17 +14,12 @@ interface HeaderDropdownProps {
 
 export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({ onClose }) => {
   const dispatch = useAppDispatch();
-  const { status, user } = useAppSelector(state => state.auth);
-  const isAuthenticated = status === 'authenticated';
-  const { lastSyncTime } = useAppSelector(state => state.sync);
+  const { isAuthenticated, user } = useAppSelector(state => state.auth);
+  const { lastSyncTime } = useAppSelector(state => state.tabs);
   const [activeTab, setActiveTab] = useState<'login' | 'register'>('login');
   const [showAuthModal, setShowAuthModal] = useState(false);
-  const [showSyncSettings, setShowSyncSettings] = useState(false);
-  const [showImportExport, setShowImportExport] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
-
-  // 引导系统
-  const { start: startOnboarding } = useOnboarding();
+  const { showConfirm, showAlert } = useToast();
 
   // 处理点击外部关闭下拉菜单
   useEffect(() => {
@@ -61,70 +53,121 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({ onClose }) => {
 
   const handleDeleteAllGroups = () => {
     // 显示确认对话框
-    if (window.confirm('确定要删除所有标签组吗？此操作无法撤销。')) {
-      // 先关闭下拉菜单，提高用户体验
+    showConfirm({
+      title: '删除确认',
+      message: '确定要删除所有标签组吗？此操作无法撤销。',
+      type: 'danger',
+      confirmText: '删除',
+      cancelText: '取消',
+      onConfirm: () => {
+        // 先关闭下拉菜单，提高用户体验
+        onClose();
+
+        // 异步删除所有标签组，不阻塞用户界面
+        dispatch(deleteAllGroups())
+          .then((result: any) => {
+            const count = result.payload?.count || 0;
+
+            // 删除成功后，异步同步到云端
+            if (isAuthenticated) {
+              console.log('正在将删除操作同步到云端...');
+              syncService.uploadToCloud(true, true) // background=true, overwriteCloud=true
+                .then(() => {
+                  console.log('删除操作已同步到云端');
+                })
+                .catch(error => {
+                  console.error('同步到云端失败:', error);
+                });
+            } else {
+              console.log('用户未登录，跳过同步到云端');
+            }
+
+            showAlert({
+              title: '删除成功',
+              message: `成功删除了 ${count} 个标签组`,
+              type: 'success',
+              onClose: () => { }
+            });
+          })
+          .catch(error => {
+            console.error('删除所有标签组失败:', error);
+            showAlert({
+              title: '删除失败',
+              message: '删除所有标签组失败',
+              type: 'error',
+              onClose: () => { }
+            });
+          });
+      },
+      onCancel: () => { }
+    });
+  };
+
+  // 导出数据为 JSON 格式
+  const handleExportData = async () => {
+    try {
+      const exportData = await storage.exportData();
+      const blob = new Blob([JSON.stringify(exportData, null, 2)], {
+        type: 'application/json'
+      });
+
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      // 安全地处理日期格式化
+      const date = new Date();
+      const year = date.getFullYear();
+      const month = String(date.getMonth() + 1).padStart(2, '0');
+      const day = String(date.getDate()).padStart(2, '0');
+      a.download = `onetab-backup-${year}-${month}-${day}.json`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+
       onClose();
-
-      // 异步删除所有标签组，不阻塞用户界面
-      dispatch(deleteAllGroups())
-        .then((result: any) => {
-          const count = result.payload?.count || 0;
-
-          // 删除成功后，异步同步到云端
-          if (isAuthenticated) {
-            console.log('正在将删除操作同步到云端...');
-            syncService.uploadToCloud(true, true) // background=true, overwriteCloud=true
-              .then(() => {
-                console.log('删除操作已同步到云端');
-              })
-              .catch(error => {
-                console.error('同步到云端失败:', error);
-              });
-          } else {
-            console.log('用户未登录，跳过同步到云端');
-          }
-
-          alert(`成功删除了 ${count} 个标签组`);
-        })
-        .catch(error => {
-          console.error('删除所有标签组失败:', error);
-          alert('删除所有标签组失败');
-        });
+    } catch (error) {
+      console.error('导出数据失败:', error);
+      showAlert({
+        title: '导出失败',
+        message: '导出数据失败，请重试',
+        type: 'error',
+        onClose: () => { }
+      });
     }
   };
 
-  // 处理开始引导
-  const handleStartOnboarding = () => {
-    startOnboarding(true); // 强制开始引导
-    onClose();
-  };
-
-  // 打开导入导出面板
-  const handleOpenImportExport = () => {
-    setShowImportExport(true);
-    onClose();
-  };
-
-  // 手动同步
-  const handleManualSync = async () => {
-    if (!isAuthenticated) return;
-
-    onClose(); // 先关闭菜单
-
+  // 导出数据为 OneTab 格式
+  const handleExportOneTabFormat = async () => {
     try {
-      console.log('开始手动同步...');
-      const result = await pullFirstSyncService.performManualSync();
+      const oneTabText = await storage.exportToOneTabFormat();
+      const blob = new Blob([oneTabText], {
+        type: 'text/plain'
+      });
 
-      if (result.success) {
-        console.log('手动同步完成');
-        // 可以添加成功提示
-      } else {
-        console.error('手动同步失败:', result.error);
-        alert('手动同步失败，请重试');
-      }
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      // 安全地处理日期格式化
+      const date = new Date();
+      const year = date.getFullYear();
+      const month = String(date.getMonth() + 1).padStart(2, '0');
+      const day = String(date.getDate()).padStart(2, '0');
+      a.download = `onetab-export-${year}-${month}-${day}.txt`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+
+      onClose();
     } catch (error) {
-      console.error('手动同步异常:', error);
-      alert('手动同步异常，请重试');
+      console.error('导出 OneTab 格式数据失败:', error);
+      showAlert({
+        title: '导出失败',
+        message: '导出 OneTab 格式数据失败，请重试',
+        type: 'error',
+        onClose: () => { }
+      });
     }
   };
 
@@ -143,29 +186,7 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({ onClose }) => {
                 )}
               </p>
             </div>
-
-            {/* 手动同步按钮 */}
-            <button
-              onClick={handleManualSync}
-              className="w-full text-left px-4 py-2 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 flex items-center"
-            >
-              <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 mr-2 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-              </svg>
-              手动同步
-            </button>
-
-            {/* 添加同步设置按钮 */}
-            <button
-              onClick={() => setShowSyncSettings(!showSyncSettings)}
-              className="w-full text-left px-4 py-2 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 flex items-center"
-            >
-              <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 mr-2 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-              </svg>
-              同步设置
-            </button>
+            {/* 移除同步按钮，简化逻辑 */}
           </>
         )}
 
@@ -183,31 +204,165 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({ onClose }) => {
 
         <div className="border-t border-gray-200 dark:border-gray-700 my-1"></div>
 
-        {/* 导入导出数据 */}
-        <button
-          onClick={handleOpenImportExport}
-          className="w-full text-left px-4 py-2 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 flex items-center"
-        >
-          <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 mr-2 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-3m-1 4l-3-3m0 0l-3 3m3-3v12" />
-          </svg>
-          导入导出数据
-        </button>
-
-
-
-        {/* 开发环境下的引导选项 */}
-        {process.env.NODE_ENV === 'development' && (
+        <div className="relative group">
           <button
-            onClick={handleStartOnboarding}
-            className="w-full text-left px-4 py-2 text-sm text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900 dark:hover:bg-opacity-20 flex items-center"
+            className="w-full text-left px-4 py-2 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 flex items-center justify-between"
           >
-            <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 mr-2 text-blue-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.746 0 3.332.477 4.5 1.253v13C19.832 18.477 18.246 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" />
+            <div className="flex items-center">
+              <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 mr-2 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+              </svg>
+              导出数据
+            </div>
+            <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
             </svg>
-            重新开始引导
           </button>
-        )}
+          <div className="absolute left-full top-0 ml-1 bg-white dark:bg-gray-800 rounded-lg shadow-lg border border-gray-200 dark:border-gray-700 w-48 hidden group-hover:block">
+            <button
+              onClick={handleExportData}
+              className="w-full text-left px-4 py-2 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 flex items-center"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 mr-2 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+              </svg>
+              JSON 格式
+            </button>
+            <button
+              onClick={handleExportOneTabFormat}
+              className="w-full text-left px-4 py-2 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 flex items-center"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 mr-2 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+              </svg>
+              OneTab 格式
+            </button>
+          </div>
+        </div>
+
+        <div className="relative group">
+          <button
+            className="w-full text-left px-4 py-2 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 flex items-center justify-between"
+          >
+            <div className="flex items-center">
+              <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 mr-2 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
+              </svg>
+              导入数据
+            </div>
+            <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+            </svg>
+          </button>
+          <div className="absolute left-full top-0 ml-1 bg-white dark:bg-gray-800 rounded-lg shadow-lg border border-gray-200 dark:border-gray-700 w-48 hidden group-hover:block">
+            <label
+              className="w-full text-left px-4 py-2 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 flex items-center cursor-pointer"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 mr-2 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+              </svg>
+              JSON 格式
+              <input
+                type="file"
+                accept=".json"
+                className="hidden"
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  if (file) {
+                    const reader = new FileReader();
+                    reader.onload = async (event) => {
+                      try {
+                        const data = JSON.parse(event.target?.result as string);
+                        const success = await storage.importData(data);
+                        if (success) {
+                          showAlert({
+                            title: '导入成功',
+                            message: '数据导入成功',
+                            type: 'success',
+                            onClose: () => {
+                              // 刷新页面
+                              window.location.reload();
+                            }
+                          });
+                        } else {
+                          showAlert({
+                            title: '导入失败',
+                            message: '数据导入失败',
+                            type: 'error',
+                            onClose: () => { }
+                          });
+                        }
+                      } catch (error) {
+                        console.error('解析导入文件失败:', error);
+                        showAlert({
+                          title: '导入失败',
+                          message: '解析导入文件失败，请确保文件格式正确',
+                          type: 'error',
+                          onClose: () => { }
+                        });
+                      }
+                      onClose();
+                    };
+                    reader.readAsText(file);
+                  }
+                }}
+              />
+            </label>
+            <label
+              className="w-full text-left px-4 py-2 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 flex items-center cursor-pointer"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 mr-2 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+              </svg>
+              OneTab 格式
+              <input
+                type="file"
+                accept=".txt"
+                className="hidden"
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  if (file) {
+                    const reader = new FileReader();
+                    reader.onload = async (event) => {
+                      try {
+                        const text = event.target?.result as string;
+                        const success = await storage.importFromOneTabFormat(text);
+                        if (success) {
+                          showAlert({
+                            title: '导入成功',
+                            message: 'OneTab 数据导入成功',
+                            type: 'success',
+                            onClose: () => {
+                              // 刷新页面
+                              window.location.reload();
+                            }
+                          });
+                        } else {
+                          showAlert({
+                            title: '导入失败',
+                            message: 'OneTab 数据导入失败',
+                            type: 'error',
+                            onClose: () => { }
+                          });
+                        }
+                      } catch (error) {
+                        console.error('解析 OneTab 导入文件失败:', error);
+                        showAlert({
+                          title: '导入失败',
+                          message: '解析 OneTab 导入文件失败，请确保文件格式正确',
+                          type: 'error',
+                          onClose: () => { }
+                        });
+                      }
+                      onClose();
+                    };
+                    reader.readAsText(file);
+                  }
+                }}
+              />
+            </label>
+          </div>
+        </div>
 
         <button
           onClick={handleDeleteAllGroups}
@@ -277,46 +432,6 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({ onClose }) => {
             </div>
           </div>
         </div>
-      )}
-
-      {/* 同步设置弹窗 */}
-      {showSyncSettings && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="relative max-w-lg w-full mx-4">
-            <div className="bg-white dark:bg-gray-900 rounded-lg shadow-xl">
-              {/* 头部 */}
-              <div className="flex items-center justify-between p-4 border-b border-gray-200 dark:border-gray-700">
-                <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100">
-                  同步设置
-                </h3>
-                <button
-                  onClick={() => setShowSyncSettings(false)}
-                  className="p-2 text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 rounded-md hover:bg-gray-100 dark:hover:bg-gray-800"
-                >
-                  <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                  </svg>
-                </button>
-              </div>
-
-              {/* 内容 */}
-              <div className="p-4">
-                <SyncSettings />
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* 导入导出面板 */}
-      {showImportExport && (
-        <ImportExportPanel
-          onClose={() => setShowImportExport(false)}
-          onImportComplete={() => {
-            // 刷新页面以显示导入的数据
-            window.location.reload();
-          }}
-        />
       )}
     </div>
   );

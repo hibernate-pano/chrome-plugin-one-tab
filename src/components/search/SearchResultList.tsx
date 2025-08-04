@@ -1,87 +1,71 @@
-import React, { useMemo, useCallback } from 'react';
-import { useAppDispatch, useAppSelector } from '@/app/store/hooks';
+import React from 'react';
+import { useAppDispatch, useAppSelector } from '@/store/hooks';
 import { Tab, TabGroup } from '@/types/tab';
-import { updateGroup, deleteGroup } from '@/features/tabs/store/tabGroupsSlice';
+import { updateGroup, deleteGroup } from '@/store/slices/tabSlice';
+import { shouldAutoDeleteAfterTabRemoval } from '@/utils/tabGroupUtils';
 import HighlightText from './HighlightText';
-import { SearchEmptyState } from './SearchEmptyState';
+import { SafeFavicon } from '@/components/common/SafeFavicon';
 
 interface SearchResultListProps {
   searchQuery: string;
 }
 
-export const SearchResultList: React.FC<SearchResultListProps> = React.memo(({ searchQuery }) => {
+export const SearchResultList: React.FC<SearchResultListProps> = ({ searchQuery }) => {
   const dispatch = useAppDispatch();
-  const { groups } = useAppSelector(state => state.tabGroups);
-  const { useDoubleColumnLayout } = useAppSelector(state => state.settings);
+  const { groups } = useAppSelector(state => state.tabs);
+  // 搜索结果强制使用单栏显示，不再依赖用户的布局设置
+  // const { layoutMode } = useAppSelector(state => state.settings);
 
-  // 安全检查：确保groups不为undefined
-  const safeGroups = groups || [];
+  // 从所有标签组中提取匹配的标签
+  const matchingTabs: Array<{ tab: Tab; group: TabGroup }> = [];
 
-  // 使用useMemo缓存搜索结果，避免每次渲染都重新计算
-  const matchingTabs = useMemo(() => {
-    const results: Array<{ tab: Tab; group: TabGroup }> = [];
-    
-    if (searchQuery) {
-      const query = searchQuery.toLowerCase();
-      
-      safeGroups.forEach(group => {
-        const safeTabs = group.tabs || [];
-        safeTabs.forEach(tab => {
-          if (
-            tab.title?.toLowerCase().includes(query) ||
-            tab.url?.toLowerCase().includes(query)
-          ) {
-            results.push({ tab, group });
-          }
-        });
+  if (searchQuery) {
+    const query = searchQuery.toLowerCase();
+
+    groups.forEach(group => {
+      group.tabs.forEach(tab => {
+        if (
+          tab.title.toLowerCase().includes(query) ||
+          tab.url.toLowerCase().includes(query)
+        ) {
+          matchingTabs.push({ tab, group });
+        }
       });
-    }
-    
-    return results;
-  }, [searchQuery, safeGroups]);
+    });
+  }
 
   if (matchingTabs.length === 0) {
     return (
-      <SearchEmptyState
-        searchQuery={searchQuery}
-        onClearSearch={() => {
-          // 这里可以触发清除搜索的操作
-          console.log('Clear search triggered from empty state');
-        }}
-        onShowAllTabs={() => {
-          // 这里可以触发显示所有标签的操作
-          console.log('Show all tabs triggered from empty state');
-        }}
-        onImportData={() => {
-          // 这里可以触发导入数据的操作
-          console.log('Import data triggered from empty state');
-        }}
-      />
+      <div className="flex flex-col items-center justify-center h-40 space-y-2 text-gray-500 dark:text-gray-400">
+        <svg xmlns="http://www.w3.org/2000/svg" className="h-12 w-12" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+        </svg>
+        <p>没有找到匹配的标签</p>
+      </div>
     );
   }
 
   // 不再需要获取用户状态和设置
 
-  const handleOpenTab = useCallback((tab: Tab, group: TabGroup) => {
+  const handleOpenTab = (tab: Tab, group: TabGroup) => {
     // 如果标签组没有锁定，先从标签组中移除该标签页
     if (!group.isLocked) {
-      // 如果标签组只有一个标签页，则删除整个标签组
-      const groupTabs = group.tabs || [];
-      if (groupTabs.length === 1) {
+      // 使用工具函数检查是否应该自动删除标签组
+      if (shouldAutoDeleteAfterTabRemoval(group, tab.id)) {
         // 先在Redux中删除标签组，立即更新UI
         dispatch({ type: 'tabs/deleteGroup/fulfilled', payload: group.id });
 
         // 然后异步完成存储操作
         dispatch(deleteGroup(group.id))
           .then(() => {
-            console.log(`删除标签组: ${group.id}`);
+            console.log(`自动删除空标签组: ${group.name} (ID: ${group.id})`);
           })
           .catch(error => {
             console.error('删除标签组失败:', error);
           });
       } else {
         // 否则更新标签组，移除该标签页
-        const updatedTabs = groupTabs.filter(t => t.id !== tab.id);
+        const updatedTabs = group.tabs.filter(t => t.id !== tab.id);
         const updatedGroup = {
           ...group,
           tabs: updatedTabs,
@@ -94,7 +78,7 @@ export const SearchResultList: React.FC<SearchResultListProps> = React.memo(({ s
         // 然后异步完成存储操作
         dispatch(updateGroup(updatedGroup))
           .then(() => {
-            console.log(`更新标签组: ${group.id}, 剩余标签页: ${updatedTabs.length}`);
+            console.log(`更新标签组: ${group.name}, 剩余标签页: ${updatedTabs.length}`);
           })
           .catch(error => {
             console.error('更新标签组失败:', error);
@@ -109,42 +93,36 @@ export const SearchResultList: React.FC<SearchResultListProps> = React.memo(({ s
         data: { url: tab.url }
       });
     }, 50); // 小延迟确保 UI 先更新
-  }, [dispatch]);
+  };
 
-  const handleDeleteTab = useCallback((tab: Tab, group: TabGroup) => {
-    const groupTabs = group.tabs || [];
-    const updatedTabs = groupTabs.filter(t => t.id !== tab.id);
-    if (updatedTabs.length === 0) {
+  const handleDeleteTab = (tab: Tab, group: TabGroup) => {
+    // 使用工具函数检查是否应该自动删除标签组
+    if (shouldAutoDeleteAfterTabRemoval(group, tab.id)) {
       dispatch(deleteGroup(group.id));
+      console.log(`自动删除空标签组: ${group.name} (ID: ${group.id})`);
     } else {
+      const updatedTabs = group.tabs.filter(t => t.id !== tab.id);
       const updatedGroup = {
         ...group,
         tabs: updatedTabs,
         updatedAt: new Date().toISOString()
       };
       dispatch(updateGroup(updatedGroup));
+      console.log(`从标签组删除标签页: ${group.name}, 剩余标签页: ${updatedTabs.length}`);
     }
-  }, [dispatch]);
+  };
 
-  // 将搜索结果分为左右两栏（双栏布局时使用）
-  const leftColumnTabs = useMemo(() => matchingTabs.filter((_, index) => index % 2 === 0), [matchingTabs]);
-  const rightColumnTabs = useMemo(() => matchingTabs.filter((_, index) => index % 2 === 1), [matchingTabs]);
+  // 搜索结果强制使用单栏显示，不再需要分栏逻辑
+  // const leftColumnTabs = matchingTabs.filter((_, index) => index % 2 === 0);
+  // const rightColumnTabs = matchingTabs.filter((_, index) => index % 2 === 1);
 
   // 渲染单个标签项
-  const renderTabItem = useCallback(({ tab, group }: { tab: Tab; group: TabGroup }) => (
+  const renderTabItem = ({ tab, group }: { tab: Tab; group: TabGroup }) => (
     <div
       className="flex items-center py-1 px-2 bg-white dark:bg-gray-800 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors rounded mb-1"
     >
       <div className="flex items-center space-x-2 flex-1 min-w-0">
-        {tab.favicon ? (
-          <img src={tab.favicon} alt="" className="w-4 h-4 flex-shrink-0" />
-        ) : (
-          <div className="w-4 h-4 bg-gray-200 dark:bg-gray-600 flex-shrink-0 flex items-center justify-center">
-            <svg xmlns="http://www.w3.org/2000/svg" className="h-3 w-3 text-gray-500 dark:text-gray-300" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3.055 11H5a2 2 0 012 2v1a2 2 0 002 2 2 2 0 012 2v2.945M8 3.935V5.5A2.5 2.5 0 0010.5 8h.5a2 2 0 012 2 2 2 0 104 0 2 2 0 012-2h1.064M15 20.488V18a2 2 0 012-2h3.064M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-            </svg>
-          </div>
-        )}
+        <SafeFavicon src={tab.favicon} alt="" />
         <a
           href="#"
           className="truncate text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300 hover:underline text-sm flex-1 min-w-0"
@@ -166,10 +144,10 @@ export const SearchResultList: React.FC<SearchResultListProps> = React.memo(({ s
         </svg>
       </button>
     </div>
-  ), [handleOpenTab, handleDeleteTab, searchQuery]);
+  );
 
   // 恢复所有搜索到的标签页
-  const handleRestoreAllSearchResults = useCallback(() => {
+  const handleRestoreAllSearchResults = () => {
     if (matchingTabs.length === 0) return;
 
     // 收集所有标签页的URL
@@ -190,13 +168,12 @@ export const SearchResultList: React.FC<SearchResultListProps> = React.memo(({ s
     // 先在UI中更新标签组，立即更新界面
     Object.values(groupsToUpdate).forEach(({ group, tabsToRemove }) => {
       // 如果要删除的标签页数量等于标签组中的所有标签页，则删除整个标签组
-      const groupTabs = group.tabs || [];
-      if (tabsToRemove.length === groupTabs.length) {
+      if (tabsToRemove.length === group.tabs.length) {
         // 先在Redux中删除标签组，立即更新UI
         dispatch({ type: 'tabs/deleteGroup/fulfilled', payload: group.id });
       } else {
         // 否则更新标签组，移除这些标签页
-        const updatedTabs = groupTabs.filter(t => !tabsToRemove.includes(t.id));
+        const updatedTabs = group.tabs.filter(t => !tabsToRemove.includes(t.id));
         const updatedGroup = {
           ...group,
           tabs: updatedTabs,
@@ -211,8 +188,7 @@ export const SearchResultList: React.FC<SearchResultListProps> = React.memo(({ s
     setTimeout(() => {
       Object.values(groupsToUpdate).forEach(({ group, tabsToRemove }) => {
         // 如果要删除的标签页数量等于标签组中的所有标签页，则删除整个标签组
-        const groupTabs = group.tabs || [];
-        if (tabsToRemove.length === groupTabs.length) {
+        if (tabsToRemove.length === group.tabs.length) {
           dispatch(deleteGroup(group.id))
             .then(() => {
               console.log(`删除标签组: ${group.id}`);
@@ -222,7 +198,7 @@ export const SearchResultList: React.FC<SearchResultListProps> = React.memo(({ s
             });
         } else {
           // 否则更新标签组，移除这些标签页
-          const updatedTabs = groupTabs.filter(t => !tabsToRemove.includes(t.id));
+          const updatedTabs = group.tabs.filter(t => !tabsToRemove.includes(t.id));
           const updatedGroup = {
             ...group,
             tabs: updatedTabs,
@@ -244,7 +220,7 @@ export const SearchResultList: React.FC<SearchResultListProps> = React.memo(({ s
         data: { urls }
       });
     }, 100); // 使用 100 毫秒的延迟，确保 UI 先更新
-  }, [matchingTabs, dispatch]);
+  };
 
   return (
     <div>
@@ -263,41 +239,16 @@ export const SearchResultList: React.FC<SearchResultListProps> = React.memo(({ s
           </button>
         )}
       </div>
-      {useDoubleColumnLayout ? (
-        // 双栏布局
-        <div className="grid grid-cols-1 sm:grid-cols-1 md:grid-cols-2 gap-3">
-          {/* 左栏搜索结果 */}
-          <div className="space-y-1 group">
-            {leftColumnTabs.map(tabInfo => (
-              <React.Fragment key={tabInfo.tab.id}>
-                {renderTabItem(tabInfo)}
-              </React.Fragment>
-            ))}
-          </div>
-
-          {/* 右栏搜索结果 */}
-          <div className="space-y-1 group">
-            {rightColumnTabs.map(tabInfo => (
-              <React.Fragment key={tabInfo.tab.id}>
-                {renderTabItem(tabInfo)}
-              </React.Fragment>
-            ))}
-          </div>
-        </div>
-      ) : (
-        // 单栏布局
-        <div className="space-y-1 group">
-          {matchingTabs.map(tabInfo => (
-            <React.Fragment key={tabInfo.tab.id}>
-              {renderTabItem(tabInfo)}
-            </React.Fragment>
-          ))}
-        </div>
-      )}
+      {/* 搜索结果强制使用单栏布局显示 */}
+      <div className="space-y-1 group">
+        {matchingTabs.map(tabInfo => (
+          <React.Fragment key={tabInfo.tab.id}>
+            {renderTabItem(tabInfo)}
+          </React.Fragment>
+        ))}
+      </div>
     </div>
   );
-});
-
-SearchResultList.displayName = 'SearchResultList';
+};
 
 export default SearchResultList;

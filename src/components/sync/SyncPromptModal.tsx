@@ -1,8 +1,7 @@
 import React from 'react';
-
-// 使用新版同步服务
-
-import { syncService } from '@/services/syncService';
+import { useAppDispatch } from '@/store/hooks';
+import { syncTabsFromCloud } from '@/store/slices/tabSlice';
+import { useToast } from '@/contexts/ToastContext';
 
 interface SyncPromptModalProps {
   onClose: () => void;
@@ -10,20 +9,18 @@ interface SyncPromptModalProps {
 }
 
 const SyncPromptModal: React.FC<SyncPromptModalProps> = ({ onClose, hasCloudData }) => {
-
+  const dispatch = useAppDispatch();
+  const { showToast } = useToast();
 
   const handleSync = async () => {
     try {
-      // 使用新版同步服务从云端下载数据
-      const result = await syncService.downloadFromCloud(false, true);
-      if (result.success) {
-        console.log('从云端同步数据成功');
-      } else {
-        console.error('从云端同步数据失败:', result.error);
-      }
+      await dispatch(syncTabsFromCloud());
+      console.log('从云端同步数据成功');
+      showToast('数据同步成功', 'success');
       onClose();
     } catch (error) {
       console.error('从云端同步数据失败:', error);
+      showToast('同步失败，请重试', 'error');
       onClose();
     }
   };
@@ -37,7 +34,7 @@ const SyncPromptModal: React.FC<SyncPromptModalProps> = ({ onClose, hasCloudData
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
       <div className="bg-white rounded-lg shadow-xl p-6 max-w-md w-full mx-4">
         <h2 className="text-xl font-semibold text-gray-800 mb-4">同步云端数据</h2>
-        
+
         <div className="mb-6">
           {hasCloudData ? (
             <p className="text-gray-600">
@@ -49,7 +46,7 @@ const SyncPromptModal: React.FC<SyncPromptModalProps> = ({ onClose, hasCloudData
             </p>
           )}
         </div>
-        
+
         <div className="flex justify-end space-x-3">
           <button
             onClick={handleSkip}

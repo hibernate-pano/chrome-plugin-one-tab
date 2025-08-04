@@ -1,7 +1,6 @@
 import React, { useEffect, useState } from 'react';
-import { useAppDispatch, useAppSelector } from '@/app/store/hooks';
-import { loadGroups } from '@/features/tabs/store/tabGroupsSlice';
-import { moveTab } from '@/features/tabs/store/dragOperationsSlice';
+import { useAppDispatch, useAppSelector } from '@/store/hooks';
+import { loadGroups, moveTabAndSync } from '@/store/slices/tabSlice';
 import { SearchResultList } from '@/components/search/SearchResultList';
 import { SimpleDraggableTabGroup } from '@/components/dnd/SimpleDraggableTabGroup';
 import '@/styles/drag-drop.css';
@@ -30,7 +29,7 @@ interface SimpleTabListProps {
 
 export const SimpleTabList: React.FC<SimpleTabListProps> = ({ searchQuery }) => {
   const dispatch = useAppDispatch();
-  const groups = useAppSelector((state) => state.tabGroups.groups);
+  const groups = useAppSelector((state) => state.tabs.groups);
   const useDoubleColumnLayout = useAppSelector((state) => state.settings.useDoubleColumnLayout);
   const [activeId, setActiveId] = useState<UniqueIdentifier | null>(null);
   const [activeData, setActiveData] = useState<any | null>(null);
@@ -81,14 +80,15 @@ export const SimpleTabList: React.FC<SimpleTabListProps> = ({ searchQuery }) => 
         const targetIndex = overData.index;
 
         // 执行标签页移动
-        dispatch(moveTab({
+        dispatch(moveTabAndSync({
           sourceGroupId,
           sourceIndex,
           targetGroupId,
-          targetIndex
+          targetIndex,
+          updateSourceInDrag: true
         }));
       }
-      // 标签组拖拽功能已禁用
+      // 标签组拖拽已被禁用，不再处理组拖拽逻辑
     }
 
     // 清理状态

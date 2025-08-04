@@ -1,10 +1,10 @@
 {
   "manifest_version": 3,
   "name": "OneTab Plus",
-  "version": "1.5.12",
+  "version": "1.7.3",
   "description": "A better OneTab extension for Chrome",
   "content_security_policy": {
-    "extension_pages": "script-src 'self'; object-src 'self'"
+    "extension_pages": "script-src 'self'; object-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https: http:; font-src 'self' data:; connect-src 'self' https://*.supabase.co; frame-src 'none'; base-uri 'self'; form-action 'self';"
   },
   "permissions": [
     "tabs",
@@ -12,22 +12,35 @@
     "unlimitedStorage",
     "notifications",
     "identity",
-    "contextMenus",
-    "activeTab"
+    "contextMenus"
   ],
   "host_permissions": [
-    "https://*.supabase.co/*",
-    "https://osmvvkxwjoiagdqzhrjl.supabase.co/*",
-    "https://accounts.google.com/*",
-    "https://github.com/*",
-    "https://open.weixin.qq.com/*",
-    "https://api.weixin.qq.com/*"
+    "https://*.supabase.co/*"
   ],
   "action": {
-    "default_icon": "icons/icon16.png"
+    "default_icon": "icons/icon16.png",
+    "default_title": "OneTab Plus - 标签页管理器"
   },
+  "web_accessible_resources": [
+    {
+      "resources": [
+        "icons/*.png"
+      ],
+      "matches": [
+        "chrome-extension://*/*"
+      ]
+    },
+    {
+      "resources": [
+        "src/auth/*.html"
+      ],
+      "matches": [
+        "https://*.supabase.co/*"
+      ]
+    }
+  ],
   "background": {
-    "service_worker": "src/background.ts",
+    "service_worker": "src/service-worker.ts",
     "type": "module"
   },
   "icons": {

@@ -1,15 +1,10 @@
-import React, { useEffect, useState, useRef, useCallback, useMemo } from 'react';
-import { useAppDispatch, useAppSelector } from '@/app/store/hooks';
-import { store } from '@/app/store';
-import { loadGroups, setGroups } from '@/features/tabs/store/tabGroupsSlice';
-import { moveTab } from '@/features/tabs/store/dragOperationsSlice';
+import React, { useEffect, useState, useRef } from 'react';
+import { useAppDispatch, useAppSelector } from '@/store/hooks';
+import { loadGroups, moveTabAndSync } from '@/store/slices/tabSlice';
 import { SearchResultList } from '@/components/search/SearchResultList';
 // No need to import TabGroup type as we're not using it directly
 import { SortableTabGroup } from '@/components/dnd/SortableTabGroup';
 import { DndKitProvider } from '@/components/dnd/DndKitProvider';
-import { DragPerformanceTest } from '@/components/dnd/DragPerformanceTest';
-import { dragPerformanceMonitor } from '@/shared/utils/dragPerformance';
-import { pullFirstSyncService } from '@/services/PullFirstSyncService';
 import '@/styles/drag-drop.css';
 import {
   DragOverlay,
@@ -35,8 +30,8 @@ interface TabListProps {
 
 export const TabListDndKit: React.FC<TabListProps> = ({ searchQuery }) => {
   const dispatch = useAppDispatch();
-  const groups = useAppSelector(state => state.tabGroups.groups);
-  const useDoubleColumnLayout = useAppSelector(state => state.settings.useDoubleColumnLayout);
+  const groups = useAppSelector(state => state.tabs.groups);
+  const layoutMode = useAppSelector(state => state.settings.layoutMode);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [activeData, setActiveData] = useState<any | null>(null);
 
@@ -66,34 +61,26 @@ export const TabListDndKit: React.FC<TabListProps> = ({ searchQuery }) => {
   // Filter groups based on search query
   const filteredGroups = searchQuery ? [] : groups;
 
-  // Create a list of sortable group IDs - 使用useMemo优化性能
-  const groupIds = useMemo(() =>
-    filteredGroups.map(group => `group-${group.id}`),
-    [filteredGroups]
-  );
+  // Create a list of sortable group IDs
+  const groupIds = filteredGroups.map(group => `group-${group.id}`);
 
-  // 配置拖拽传感器 - 优化性能和灵敏度
-  const sensors = useMemo(() => useSensors(
+  // 配置拖拽传感器
+  const sensors = useSensors(
     useSensor(PointerSensor, {
-      // 适中的移动距离，避免意外触发同时保持响应性
+      // 只需要很小的移动距离就可以触发拖拽，提高灵敏度
       activationConstraint: {
-        distance: 5,
-        tolerance: 3,
+        distance: 3,
+        tolerance: 5,
       },
     }),
     useSensor(KeyboardSensor, {
       coordinateGetter: sortableKeyboardCoordinates,
     })
-  ), []);
+  );
 
-  const handleDragStart = useCallback((event: DragStartEvent) => {
+  const handleDragStart = (event: DragStartEvent) => {
     const { active } = event;
     const activeData = active.data.current;
-
-    // 开始性能监控
-    if (process.env.NODE_ENV === 'development') {
-      dragPerformanceMonitor.startMonitoring();
-    }
 
     // 记录初始拖拽状态
     if (activeData?.type === 'tab') {
@@ -103,22 +90,22 @@ export const TabListDndKit: React.FC<TabListProps> = ({ searchQuery }) => {
       };
     }
 
+    // 记录开始拖拽的元素信息
+    console.log('[DEBUG] Drag Start:', {
+      id: active.id,
+      type: activeData?.type,
+      groupId: activeData?.groupId,
+      index: activeData?.index,
+    });
+
     if (isMounted.current) {
       setActiveId(active.id as string);
       setActiveData(activeData);
     }
-  }, []);
+  };
 
-  // 使用ref来跟踪上次的拖拽位置，避免频繁更新
-  const lastDragPosition = useRef<{
-    sourceGroupId: string;
-    sourceIndex: number;
-    targetGroupId: string;
-    targetIndex: number;
-  } | null>(null);
-
-  const handleDragOver = useCallback((event: DragOverEvent) => {
-    const { active, over } = event;
+  const handleDragOver = (event: DragOverEvent) => {
+    const { active, over, delta } = event;
 
     if (!over || !isMounted.current) return;
 
@@ -133,8 +120,9 @@ export const TabListDndKit: React.FC<TabListProps> = ({ searchQuery }) => {
     // 如果没有数据，直接返回
     if (!activeData || !overData) return;
 
-    // 处理标签拖拽 - 只进行视觉反馈，不实际移动数据
+    // 处理标签拖拽
     if (activeData.type === 'tab' && overData.type === 'tab') {
+      // 始终使用初始拖拽状态，而不是当前可能已经改变的activeData
       const sourceGroupId = initialDragState.current.sourceGroupId || activeData.groupId;
       const sourceIndex =
         initialDragState.current.sourceIndex !== null
@@ -152,45 +140,51 @@ export const TabListDndKit: React.FC<TabListProps> = ({ searchQuery }) => {
         return;
       }
 
-      // 检查是否与上次位置相同，避免重复处理
-      const currentPosition = { sourceGroupId, sourceIndex, targetGroupId, targetIndex };
-      if (lastDragPosition.current &&
-        lastDragPosition.current.sourceGroupId === sourceGroupId &&
-        lastDragPosition.current.sourceIndex === sourceIndex &&
-        lastDragPosition.current.targetGroupId === targetGroupId &&
-        lastDragPosition.current.targetIndex === targetIndex) {
-        return;
-      }
+      // 计算拖动方向
+      const direction = delta.y > 0 ? 'down' : delta.y < 0 ? 'up' : 'none';
 
-      lastDragPosition.current = currentPosition;
+      console.log('[DEBUG] Drag Over:', {
+        sourceGroupId,
+        sourceIndex,
+        targetGroupId,
+        targetIndex,
+        isSameGroup,
+        direction,
+        delta,
+      });
 
-      // 只更新视觉状态，不触发实际的数据移动
-      if (isMounted.current) {
-        setActiveData({
-          ...activeData,
-          groupId: targetGroupId,
-        });
+      try {
+        // 修复：移除拖拽过程中的实时更新，避免状态不一致导致的位置计算错误
+        // 同组内移动和跨组移动都只在拖拽结束时进行最终更新
+        // 这样可以确保：
+        // 1. 拖拽过程中标签页位置保持稳定
+        // 2. 避免频繁的状态更新和重渲染
+        // 3. 防止中间状态导致的索引计算错误
+
+        // 保留视觉反馈：更新activeData以提供拖拽反馈
+        // 不直接修改activeData对象，而是使用setActiveData更新状态
+        // 创建新的对象而不是直接修改原对象
+        if (isMounted.current) {
+          setActiveData({
+            ...activeData,
+            groupId: targetGroupId,
+          });
+        }
+      } catch (error) {
+        console.error('拖拽过程中更新视觉反馈失败:', error);
       }
     }
-  }, []);
+  };
 
-  const handleDragEnd = useCallback((event: DragEndEvent) => {
-    // 清理拖拽位置缓存
-    lastDragPosition.current = null;
+  const handleDragEnd = (event: DragEndEvent) => {
+    const { active, over, delta } = event;
 
-    const { active, over } = event;
-
-    // 清理状态的通用函数
-    const cleanupState = () => {
+    if (!over || !isMounted.current) {
       if (isMounted.current) {
         setActiveId(null);
         setActiveData(null);
       }
       initialDragState.current = { sourceGroupId: null, sourceIndex: null };
-    };
-
-    if (!over || !isMounted.current) {
-      cleanupState();
       return;
     }
 
@@ -198,7 +192,11 @@ export const TabListDndKit: React.FC<TabListProps> = ({ searchQuery }) => {
     const overId = over.id as string;
 
     if (activeId === overId) {
-      cleanupState();
+      if (isMounted.current) {
+        setActiveId(null);
+        setActiveData(null);
+      }
+      initialDragState.current = { sourceGroupId: null, sourceIndex: null };
       return;
     }
 
@@ -207,7 +205,11 @@ export const TabListDndKit: React.FC<TabListProps> = ({ searchQuery }) => {
 
     // 如果没有数据，直接返回
     if (!activeData || !overData) {
-      cleanupState();
+      if (isMounted.current) {
+        setActiveId(null);
+        setActiveData(null);
+      }
+      initialDragState.current = { sourceGroupId: null, sourceIndex: null };
       return;
     }
 
@@ -223,130 +225,45 @@ export const TabListDndKit: React.FC<TabListProps> = ({ searchQuery }) => {
       const targetGroupId = overData.groupId;
       const targetIndex = overData.index;
 
-      // 只有当位置真正发生变化时才执行移动
-      if (sourceGroupId !== targetGroupId || sourceIndex !== targetIndex) {
-        try {
-          // 乐观更新：立即更新本地状态以提供即时的视觉反馈
-          const currentGroups = [...filteredGroups];
-          const sourceGroup = currentGroups.find(g => g.id === sourceGroupId);
-          const targetGroup = currentGroups.find(g => g.id === targetGroupId);
+      // 计算拖动方向
+      const direction = delta?.y > 0 ? 'down' : delta?.y < 0 ? 'up' : 'none';
 
-          if (sourceGroup && targetGroup) {
-            // 执行本地状态更新 - 修复跨组拖拽逻辑
-            const isInterGroupDrag = sourceGroupId !== targetGroupId;
+      console.log('[DEBUG] Drag End:', {
+        sourceGroupId,
+        sourceIndex,
+        targetGroupId,
+        targetIndex,
+        direction,
+        delta,
+      });
 
-            // 创建源组和目标组的标签数组副本
-            const newSourceTabs = [...sourceGroup.tabs];
-            const newTargetTabs = isInterGroupDrag ? [...targetGroup.tabs] : newSourceTabs;
-
-            // 从源位置移除标签
-            const movedTab = newSourceTabs.splice(sourceIndex, 1)[0];
-
-            if (!movedTab) {
-              console.error('拖拽的标签页未找到', { sourceGroupId, sourceIndex });
-              return;
-            }
-
-            // 计算调整后的目标索引
-            let adjustedIndex = targetIndex;
-            if (!isInterGroupDrag && sourceIndex < targetIndex) {
-              // 同组内向后移动时，需要调整索引
-              adjustedIndex = targetIndex - 1;
-            }
-
-            // 确保索引在有效范围内
-            adjustedIndex = Math.max(0, Math.min(adjustedIndex, newTargetTabs.length));
-
-            // 插入到目标位置
-            newTargetTabs.splice(adjustedIndex, 0, movedTab);
-
-            // 更新标签组 - 简化逻辑，确保正确处理跨组拖拽
-            const updatedGroups = currentGroups.map(group => {
-              if (group.id === sourceGroupId) {
-                return {
-                  ...group,
-                  tabs: isInterGroupDrag ? newSourceTabs : newTargetTabs,
-                  updatedAt: new Date().toISOString()
-                };
-              }
-              if (isInterGroupDrag && group.id === targetGroupId) {
-                return {
-                  ...group,
-                  tabs: newTargetTabs,
-                  updatedAt: new Date().toISOString()
-                };
-              }
-              return group;
-            });
-
-            // 立即更新UI状态
-            dispatch(setGroups(updatedGroups));
-
-            // 添加调试日志
-            console.log('乐观更新完成', {
-              isInterGroupDrag,
-              sourceGroupId,
-              targetGroupId,
-              sourceIndex,
-              targetIndex: adjustedIndex,
-              movedTabTitle: movedTab.title,
-              sourceTabsCount: newSourceTabs.length,
-              targetTabsCount: newTargetTabs.length
-            });
-          }
-
-          // 然后执行异步操作以同步到存储
-          dispatch(
-            moveTab({
-              sourceGroupId,
-              sourceIndex,
-              targetGroupId,
-              targetIndex
-            })
-          ).then((result) => {
-            // 检查是否需要删除空的源标签组
-            if (result.payload?.shouldDeleteSourceGroup) {
-              console.log('检测到空标签组，自动删除:', sourceGroupId);
-              import('@/features/tabs/store/tabGroupsSlice').then(({ deleteGroup }) => {
-                dispatch(deleteGroup(sourceGroupId)).catch(error => {
-                  console.error('删除空标签组失败:', error);
-                });
-              });
-            }
-
-            // 标签拖拽完成后立即触发云端同步
-            const { status } = store.getState().auth;
-            if (status === 'authenticated') {
-              console.log('标签拖拽完成，触发云端同步...');
-              pullFirstSyncService.performUserActionSync({
-                type: 'tab-move',
-                groupId: targetGroupId,
-                description: `移动标签从组 ${sourceGroupId} 到组 ${targetGroupId}`
-              }).catch(error => {
-                console.error('标签拖拽后云端同步失败:', error);
-              });
-            }
-          }).catch(error => {
-            console.error('标签拖拽操作失败:', error);
-          });
-        } catch (error) {
-          console.error('拖拽结束时更新标签位置失败:', error);
-        }
+      try {
+        // 在拖动结束时执行最终更新
+        dispatch(
+          moveTabAndSync({
+            sourceGroupId,
+            sourceIndex,
+            targetGroupId,
+            targetIndex,
+            updateSourceInDrag: true,
+          })
+        );
+      } catch (error) {
+        console.error('拖拽结束时更新标签位置失败:', error);
       }
     }
-    // 标签组拖拽功能已禁用
-
-    // 停止性能监控
-    if (process.env.NODE_ENV === 'development') {
-      dragPerformanceMonitor.stopMonitoring();
-    }
+    // 标签组拖拽已被禁用，不再处理组拖拽逻辑
 
     // 清理所有状态
-    cleanupState();
-  }, [dispatch, filteredGroups]);
+    if (isMounted.current) {
+      setActiveId(null);
+      setActiveData(null);
+    }
+    initialDragState.current = { sourceGroupId: null, sourceIndex: null };
+  };
 
-  // 渲染拖拽覆盖层 - 使用useCallback优化性能
-  const renderDragOverlay = useCallback(() => {
+  // 渲染拖拽覆盖层
+  const renderDragOverlay = () => {
     if (!activeId || !activeData) return null;
 
     if (activeData.type === 'tab') {
@@ -365,22 +282,10 @@ export const TabListDndKit: React.FC<TabListProps> = ({ searchQuery }) => {
       );
     }
 
-    if (activeData.type === 'group') {
-      const { group } = activeData;
-      return (
-        <div className="drag-overlay group-overlay">
-          <div className="flex items-center space-x-2">
-            <div className="truncate font-medium text-gray-700">{group.name}</div>
-            <div className="text-xs text-gray-500 whitespace-nowrap">
-              {group.tabs.length} 个标签页
-            </div>
-          </div>
-        </div>
-      );
-    }
+    // 标签组拖拽已被禁用，不再显示标签组拖拽覆盖层
 
     return null;
-  }, [activeId, activeData]);
+  };
 
   return (
     <div className="space-y-2">
@@ -396,42 +301,90 @@ export const TabListDndKit: React.FC<TabListProps> = ({ searchQuery }) => {
           onDragOver={handleDragOver}
           onDragEnd={handleDragEnd}
         >
-          {useDoubleColumnLayout ? (
-            // 双栏布局 - 标签组不参与拖拽排序，按时间倒序显示
-            <div className="grid grid-cols-1 sm:grid-cols-1 md:grid-cols-2 gap-3">
-              {/* 左栏 - 偶数索引的标签组 */}
-              <div className="space-y-2">
-                {filteredGroups
-                  .filter((_, index) => index % 2 === 0)
-                  .map(group => (
-                    <SortableTabGroup
-                      key={group.id}
-                      group={group}
-                      index={filteredGroups.findIndex(g => g.id === group.id)}
-                    />
-                  ))}
-              </div>
+          {layoutMode === 'triple' ? (
+            // 三栏布局
+            <SortableContext items={groupIds} strategy={rectSortingStrategy}>
+              <div className="grid grid-cols-1 sm:grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4 md:gap-5 lg:gap-6">
+                {/* 第一栏 - 索引 % 3 === 0 的标签组 */}
+                <div className="space-y-2">
+                  {filteredGroups
+                    .filter((_, index) => index % 3 === 0)
+                    .map(group => (
+                      <SortableTabGroup
+                        key={group.id}
+                        group={group}
+                        index={filteredGroups.findIndex(g => g.id === group.id)}
+                      />
+                    ))}
+                </div>
 
-              {/* 右栏 - 奇数索引的标签组 */}
-              <div className="space-y-2">
-                {filteredGroups
-                  .filter((_, index) => index % 2 === 1)
-                  .map(group => (
-                    <SortableTabGroup
-                      key={group.id}
-                      group={group}
-                      index={filteredGroups.findIndex(g => g.id === group.id)}
-                    />
-                  ))}
+                {/* 第二栏 - 索引 % 3 === 1 的标签组 */}
+                <div className="space-y-2">
+                  {filteredGroups
+                    .filter((_, index) => index % 3 === 1)
+                    .map(group => (
+                      <SortableTabGroup
+                        key={group.id}
+                        group={group}
+                        index={filteredGroups.findIndex(g => g.id === group.id)}
+                      />
+                    ))}
+                </div>
+
+                {/* 第三栏 - 索引 % 3 === 2 的标签组 */}
+                <div className="space-y-2">
+                  {filteredGroups
+                    .filter((_, index) => index % 3 === 2)
+                    .map(group => (
+                      <SortableTabGroup
+                        key={group.id}
+                        group={group}
+                        index={filteredGroups.findIndex(g => g.id === group.id)}
+                      />
+                    ))}
+                </div>
               </div>
-            </div>
+            </SortableContext>
+          ) : layoutMode === 'double' ? (
+            // 双栏布局
+            <SortableContext items={groupIds} strategy={rectSortingStrategy}>
+              <div className="grid grid-cols-1 sm:grid-cols-1 md:grid-cols-2 gap-3 sm:gap-4 md:gap-5">
+                {/* 左栏 - 偶数索引的标签组 */}
+                <div className="space-y-2">
+                  {filteredGroups
+                    .filter((_, index) => index % 2 === 0)
+                    .map(group => (
+                      <SortableTabGroup
+                        key={group.id}
+                        group={group}
+                        index={filteredGroups.findIndex(g => g.id === group.id)}
+                      />
+                    ))}
+                </div>
+
+                {/* 右栏 - 奇数索引的标签组 */}
+                <div className="space-y-2">
+                  {filteredGroups
+                    .filter((_, index) => index % 2 === 1)
+                    .map(group => (
+                      <SortableTabGroup
+                        key={group.id}
+                        group={group}
+                        index={filteredGroups.findIndex(g => g.id === group.id)}
+                      />
+                    ))}
+                </div>
+              </div>
+            </SortableContext>
           ) : (
-            // 单栏布局 - 标签组不参与拖拽排序，按时间倒序显示
-            <div className="space-y-2">
-              {filteredGroups.map((group, index) => (
-                <SortableTabGroup key={group.id} group={group} index={index} />
-              ))}
-            </div>
+            // 单栏布局
+            <SortableContext items={groupIds} strategy={rectSortingStrategy}>
+              <div className="space-y-2">
+                {filteredGroups.map((group, index) => (
+                  <SortableTabGroup key={group.id} group={group} index={index} />
+                ))}
+              </div>
+            </SortableContext>
           )}
 
           {/* Drag Overlay - 添加平滑动画 */}
@@ -445,9 +398,6 @@ export const TabListDndKit: React.FC<TabListProps> = ({ searchQuery }) => {
           </DragOverlay>
         </DndKitProvider>
       )}
-
-      {/* 开发环境下的性能监控 */}
-      <DragPerformanceTest />
     </div>
   );
 };

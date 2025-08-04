@@ -1,10 +1,8 @@
-import React, { useRef, useEffect, useCallback, memo } from 'react';
+import React, { useRef, useEffect } from 'react';
 import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { Tab } from '@/types/tab';
-import { dragPerformanceMonitor } from '@/shared/utils/dragPerformance';
-import { getDragStyles, getDragClassName, dragPresets } from '@/shared/utils/dragVisualFeedback';
-import { cn } from '@/shared/utils/cn';
+import { SafeFavicon } from '@/components/common/SafeFavicon';
 import '@/styles/drag-drop.css';
 
 interface SortableTabProps {
@@ -15,7 +13,7 @@ interface SortableTabProps {
   handleDeleteTab: (tabId: string) => void;
 }
 
-const SortableTabComponent: React.FC<SortableTabProps> = ({
+export const SortableTab: React.FC<SortableTabProps> = ({
   tab,
   groupId,
   index,
@@ -45,42 +43,29 @@ const SortableTabComponent: React.FC<SortableTabProps> = ({
     },
   });
 
-  // 性能监控 - 仅在开发环境
-  useEffect(() => {
-    if (isDragging && process.env.NODE_ENV === 'development') {
-      dragPerformanceMonitor.recordFrame();
-    }
-  }, [isDragging, transform]);
-
-  // 使用统一的拖拽视觉反馈
-  const dragState = isDragging ? 'dragging' : 'idle';
-  const dragStyles = getDragStyles({
-    ...dragPresets.tab,
-    state: dragState,
-  });
-
+  // 提供清晰的拖拽反馈
   const style = {
     transform: CSS.Transform.toString(transform),
-    ...dragStyles,
+    opacity: isDragging ? 0.7 : 1,
+    zIndex: isDragging ? 999 : 'auto',
+    transition: isDragging ? undefined : 'transform 0.15s ease, opacity 0.15s ease',
+    boxShadow: isDragging ? '0 4px 12px rgba(59, 130, 246, 0.3)' : undefined,
+    border: isDragging ? '1px solid #3b82f6' : undefined,
+    backgroundColor: isDragging ? '#f0f7ff' : undefined,
   };
 
-  const dragClassName = getDragClassName({
-    ...dragPresets.tab,
-    state: dragState,
-  });
-
-  // 安全的处理函数，确保组件未卸载时才调用原始函数 - 使用useCallback优化性能
-  const safeHandleOpenTab = useCallback((tab: Tab) => {
+  // 安全的处理函数，确保组件未卸载时才调用原始函数
+  const safeHandleOpenTab = (tab: Tab) => {
     if (isMounted.current) {
       handleOpenTab(tab);
     }
-  }, [handleOpenTab]);
+  };
 
-  const safeHandleDeleteTab = useCallback((tabId: string) => {
+  const safeHandleDeleteTab = (tabId: string) => {
     if (isMounted.current) {
       handleDeleteTab(tabId);
     }
-  }, [handleDeleteTab]);
+  };
 
   // 自定义删除按钮样式 - 简化实现
   const deleteButtonStyle = {
@@ -107,16 +92,14 @@ const SortableTabComponent: React.FC<SortableTabProps> = ({
     <div
       ref={setNodeRef}
       style={style}
-      className={cn(
-        "flex items-center py-1 px-2 hover:bg-gray-100 rounded select-none cursor-move tab-item",
-        dragClassName
-      )}
+      className={`flex items-center py-1 px-2 hover:bg-gray-100 rounded select-none cursor-move tab-item
+        ${isDragging ? 'bg-blue-50 border border-blue-300 dragging shadow-md' : ''}
+      `}
       {...attributes}
       {...listeners}
-      data-onboarding="tab-item"
     >
       {/* 删除按钮 */}
-      <button 
+      <button
         style={deleteButtonStyle}
         onClick={(e) => {
           e.stopPropagation(); // 防止触发标签点击事件
@@ -128,26 +111,7 @@ const SortableTabComponent: React.FC<SortableTabProps> = ({
         ×
       </button>
       <div className="flex items-center space-x-2 flex-1 min-w-0">
-        {tab.favicon ? (
-          <img src={tab.favicon} alt="" className="w-4 h-4 flex-shrink-0" />
-        ) : (
-          <div className="w-4 h-4 bg-gray-200 flex-shrink-0 flex items-center justify-center">
-            <svg
-              xmlns="http://www.w3.org/2000/svg"
-              className="h-3 w-3 text-gray-500"
-              fill="none"
-              viewBox="0 0 24 24"
-              stroke="currentColor"
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2}
-                d="M3.055 11H5a2 2 0 012 2v1a2 2 0 002 2 2 2 0 012 2v2.945M8 3.935V5.5A2.5 2 0 0010.5 8h.5a2 2 0 012 2 2 2 0 104 0 2 2 0 012-2h1.064M15 20.488V18a2 2 0 012-2h3.064M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
-              />
-            </svg>
-          </div>
-        )}
+        <SafeFavicon src={tab.favicon} alt="" />
         <a
           href="#"
           className="truncate text-blue-600 hover:text-blue-800 hover:underline text-sm"
@@ -184,6 +148,4 @@ const SortableTabComponent: React.FC<SortableTabProps> = ({
   );
 };
 
-// 使用memo优化性能，避免不必要的重新渲染
-export const SortableTab = memo(SortableTabComponent);
-export default SortableTab;
+export default React.memo(SortableTab);

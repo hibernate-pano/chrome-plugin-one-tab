@@ -1,5 +1,1005 @@
-/**
- * Supabase客户端
- * 兼容旧版本路径，重新导出shared/utils中的Supabase功能
- */
-export * from '@/shared/utils/supabase';
+import { createClient } from '@supabase/supabase-js';
+import { TabGroup, UserSettings, TabData, SupabaseTabGroup } from '@/types/tab';
+
+import { encryptData, decryptData, isEncrypted } from './encryptionUtils';
+
+// 安全的配置管理
+function getSecureConfig() {
+  // 从环境变量中获取 Supabase 配置
+  const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL as string;
+  const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY as string;
+
+  // 验证环境变量格式
+  if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
+    console.error('错误: Supabase 配置缺失。请确保在 .env 文件中设置了 VITE_SUPABASE_URL 和 VITE_SUPABASE_ANON_KEY。');
+    throw new Error('Supabase 配置缺失');
+  }
+
+  // 验证URL格式
+  try {
+    const url = new URL(SUPABASE_URL);
+    if (!url.hostname.includes('supabase.co')) {
+      throw new Error('无效的 Supabase URL');
+    }
+  } catch (error) {
+    console.error('错误: 无效的 SUPABASE_URL 格式');
+    throw new Error('无效的 Supabase URL 格式');
+  }
+
+  // 验证匿名密钥格式（JWT格式）
+  if (!SUPABASE_ANON_KEY.startsWith('eyJ')) {
+    console.error('错误: 无效的 SUPABASE_ANON_KEY 格式');
+    throw new Error('无效的 Supabase 匿名密钥格式');
+  }
+
+  // 在生产环境中，不要在控制台输出完整的配置信息
+  if (import.meta.env.DEV) {
+    console.log('Supabase 配置已加载:', {
+      url: SUPABASE_URL,
+      keyPrefix: SUPABASE_ANON_KEY.substring(0, 10) + '...'
+    });
+  }
+
+  return {
+    url: SUPABASE_URL,
+    anonKey: SUPABASE_ANON_KEY
+  };
+}
+
+// 获取安全配置
+const config = getSecureConfig();
+
+export const supabase = createClient(config.url, config.anonKey);
+
+import { secureStorage } from './secureStorage';
+
+// 获取设备ID（使用加密存储）
+export const getDeviceId = async (): Promise<string> => {
+  try {
+    const deviceId = await secureStorage.get<string>('deviceId');
+    if (deviceId) return deviceId;
+
+    const newDeviceId = crypto.randomUUID();
+    await secureStorage.set('deviceId', newDeviceId);
+    return newDeviceId;
+  } catch (error) {
+    console.error('获取设备ID失败:', error);
+    // 降级到普通存储
+    const { deviceId } = await chrome.storage.local.get('deviceId');
+    if (deviceId) return deviceId;
+
+    const newDeviceId = crypto.randomUUID();
+    await chrome.storage.local.set({ deviceId: newDeviceId });
+    return newDeviceId;
+  }
+};
+
+// 用户认证相关方法
+export const auth = {
+  // 使用邮箱注册
+  async signUp(email: string, password: string) {
+    return await supabase.auth.signUp({ email, password });
+  },
+
+  // 使用邮箱登录
+  async signIn(email: string, password: string) {
+    return await supabase.auth.signInWithPassword({ email, password });
+  },
+
+
+
+
+
+
+
+  // 退出登录
+  async signOut() {
+    return await supabase.auth.signOut();
+  },
+
+  // 获取当前用户
+  async getCurrentUser() {
+    try {
+      // 首先检查是否有活跃会话
+      const { data: sessionData } = await supabase.auth.getSession();
+
+      // 如果没有会话，直接返回空用户，不触发错误
+      if (!sessionData || !sessionData.session) {
+        return {
+          data: { user: null },
+          error: null
+        };
+      }
+
+      // 如果有会话，才获取用户信息
+      return await supabase.auth.getUser();
+    } catch (error) {
+      console.error('获取当前用户失败:', error);
+      // 返回一个结构化的错误对象
+      return {
+        data: { user: null },
+        error: typeof error === 'string' ? { message: error } : error
+      };
+    }
+  },
+
+  // 获取会话
+  async getSession() {
+    try {
+      return await supabase.auth.getSession();
+    } catch (error) {
+      console.error('获取会话失败:', error);
+      // 返回一个结构化的错误对象
+      return {
+        data: { session: null },
+        error: typeof error === 'string' ? { message: error } : error
+      };
+    }
+  }
+};
+
+// 数据同步相关方法
+export const sync = {
+  // 迁移数据到 JSONB 格式
+  async migrateToJsonb() {
+    // 先检查会话是否有效
+    const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
+
+    if (sessionError) {
+      console.error('获取会话失败:', sessionError);
+      throw new Error(`获取会话失败: ${sessionError.message}`);
+    }
+
+    if (!sessionData.session) {
+      console.error('用户未登录或会话已过期');
+      throw new Error('用户未登录或会话已过期，请重新登录');
+    }
+
+    // 获取用户信息
+    const { data: { user }, error: userError } = await supabase.auth.getUser();
+
+    if (userError) {
+      console.error('获取用户信息失败:', userError);
+      throw new Error(`获取用户信息失败: ${userError.message}`);
+    }
+
+    if (!user) {
+      console.error('用户未登录');
+      throw new Error('用户未登录');
+    }
+
+    if (!user.id) {
+      console.error('用户ID无效');
+      throw new Error('用户ID无效');
+    }
+
+    // 确保用户ID匹配会话用户ID
+    if (user.id !== sessionData.session.user.id) {
+      console.warn('用户ID与会话用户ID不匹配，使用会话用户ID');
+      user.id = sessionData.session.user.id;
+    }
+
+    console.log('开始迁移数据到 JSONB 格式，用户ID:', user.id);
+
+    try {
+      // 确保用户已登录并且会话有效
+      const { data: sessionCheck } = await supabase.auth.getSession();
+      if (!sessionCheck.session) {
+        console.error('会话已过期，无法迁移数据');
+        throw new Error('会话已过期，请重新登录');
+      }
+
+      // 获取用户的所有标签组
+      const { data: groups, error } = await supabase
+        .from('tab_groups')
+        .select('*')
+        .eq('user_id', user.id);
+
+      if (error) {
+        console.error('获取标签组失败:', error);
+        console.error('错误详情:', {
+          code: error.code,
+          message: error.message,
+          details: error.details,
+          hint: error.hint
+        });
+        throw error;
+      }
+
+      console.log(`找到 ${groups.length} 个标签组需要迁移`);
+
+      // 对每个标签组进行迁移
+      for (const group of groups) {
+        // 检查是否已经有 JSONB 数据
+        if (group.tabs_data && Array.isArray(group.tabs_data) && group.tabs_data.length > 0) {
+          console.log(`标签组 ${group.id} 已经有 JSONB 数据，跳过`);
+          continue;
+        }
+
+        // 从 tabs 表获取标签
+        const { data: tabs, error: tabError } = await supabase
+          .from('tabs')
+          .select('*')
+          .eq('group_id', group.id);
+
+        if (tabError) {
+          console.error(`获取标签组 ${group.id} 的标签失败:`, tabError);
+          continue; // 跳过这个标签组，继续处理下一个
+        }
+
+        if (!tabs || tabs.length === 0) {
+          console.log(`标签组 ${group.id} 没有标签，跳过`);
+          continue;
+        }
+
+        console.log(`标签组 ${group.id} 有 ${tabs.length} 个标签需要迁移`);
+
+        // 将标签转换为 TabData 格式
+        const tabsData: TabData[] = tabs.map(tab => ({
+          id: tab.id,
+          url: tab.url,
+          title: tab.title,
+          favicon: tab.favicon,
+          created_at: tab.created_at,
+          last_accessed: tab.last_accessed
+        }));
+
+        // 更新标签组，添加 tabs_data 字段
+        const { error: updateError } = await supabase
+          .from('tab_groups')
+          .update({ tabs_data: tabsData })
+          .eq('id', group.id);
+
+        if (updateError) {
+          console.error(`更新标签组 ${group.id} 的 JSONB 数据失败:`, updateError);
+          console.error('错误详情:', {
+            code: updateError.code,
+            message: updateError.message,
+            details: updateError.details,
+            hint: updateError.hint
+          });
+
+          // 检查是否是行级安全策略错误
+          if (updateError.message && updateError.message.includes('row-level security policy')) {
+            console.error('行级安全策略错误，可能是用户ID不匹配或会话已过期');
+
+            // 重新检查会话和用户信息
+            const { data: recheckSession } = await supabase.auth.getSession();
+            if (!recheckSession.session) {
+              throw new Error('会话已过期，请重新登录');
+            }
+
+            console.log('尝试使用会话用户ID重新更新标签组');
+            const { error: retryError } = await supabase
+              .from('tab_groups')
+              .update({
+                tabs_data: tabsData,
+                user_id: recheckSession.session.user.id // 确保用户ID与会话用户ID匹配
+              })
+              .eq('id', group.id);
+
+            if (retryError) {
+              console.error(`重试更新标签组 ${group.id} 仍然失败:`, retryError);
+            } else {
+              console.log(`重试成功，标签组 ${group.id} 的数据已成功迁移到 JSONB 格式`);
+            }
+          }
+        } else {
+          console.log(`标签组 ${group.id} 的数据已成功迁移到 JSONB 格式`);
+        }
+      }
+
+      console.log('数据迁移完成');
+      return { success: true, migratedGroups: groups.length };
+    } catch (error) {
+      console.error('数据迁移失败:', error);
+      throw error;
+    }
+  },
+  // 上传标签组
+  async uploadTabGroups(groups: TabGroup[], overwriteCloud: boolean = false) {
+    const deviceId = await getDeviceId();
+
+    // 先检查会话是否有效
+    const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
+
+    if (sessionError) {
+      console.error('获取会话失败:', sessionError);
+      throw new Error(`获取会话失败: ${sessionError.message}`);
+    }
+
+    if (!sessionData.session) {
+      console.error('用户未登录或会话已过期');
+      throw new Error('用户未登录或会话已过期，请重新登录');
+    }
+
+    // 获取用户信息
+    const { data: { user }, error: userError } = await supabase.auth.getUser();
+
+    if (userError) {
+      console.error('获取用户信息失败:', userError);
+      throw new Error(`获取用户信息失败: ${userError.message}`);
+    }
+
+    if (!user) {
+      console.error('用户未登录');
+      throw new Error('用户未登录');
+    }
+
+    if (!user.id) {
+      console.error('用户ID无效');
+      throw new Error('用户ID无效');
+    }
+
+    console.log('准备上传标签组，用户ID:', user.id, '设备ID:', deviceId);
+    console.log(`要上传的数据: ${groups.length} 个标签组`);
+
+    // 详细记录每个要上传的标签组
+    groups.forEach((group, index) => {
+      console.log(`要上传的标签组 ${index + 1}/${groups.length}:`, {
+        id: group.id,
+        name: group.name,
+        tabCount: group.tabs.length,
+        updatedAt: group.updatedAt,
+        lastSyncedAt: group.lastSyncedAt
+      });
+
+      // 记录每个标签组中的标签数量和类型
+      const urlTypes = group.tabs.reduce((acc, tab) => {
+        const urlType = tab.url.startsWith('http') ? 'http' :
+          tab.url.startsWith('loading://') ? 'loading' : 'other';
+        acc[urlType] = (acc[urlType] || 0) + 1;
+        return acc;
+      }, {} as Record<string, number>);
+
+      console.log(`  - 标签类型统计: ${JSON.stringify(urlTypes)}`);
+    });
+
+    // 为每个标签组添加用户ID和设备ID
+    const currentTime = new Date().toISOString();
+
+    const groupsWithUser = groups.map(group => {
+      // 确保必要字段都有值
+      const createdAt = group.createdAt || currentTime;
+      const updatedAt = group.updatedAt || currentTime;
+
+      // 将标签转换为 TabData 格式
+      const tabsData: TabData[] = group.tabs.map(tab => ({
+        id: tab.id,
+        url: tab.url,
+        title: tab.title,
+        favicon: tab.favicon,
+        created_at: tab.createdAt,
+        last_accessed: tab.lastAccessed
+      }));
+
+      // 准备返回对象
+      const returnObj = {
+        id: group.id,
+        name: group.name || 'Unnamed Group',
+        created_at: createdAt,
+        updated_at: updatedAt,
+        is_locked: group.isLocked || false,
+        user_id: user.id,
+        device_id: deviceId,
+        last_sync: currentTime,
+        tabs_data: tabsData // 临时存储，稍后会被加密
+      };
+
+      return returnObj as SupabaseTabGroup;
+    });
+
+    // 检查并去除重复的 ID
+    const seenIds = new Set<string>();
+    const uniqueGroups = groupsWithUser.filter(group => {
+      if (seenIds.has(group.id)) {
+        console.warn(`发现重复的标签组 ID: ${group.id}，已跳过`);
+        return false;
+      }
+      seenIds.add(group.id);
+      return true;
+    });
+
+    if (uniqueGroups.length !== groupsWithUser.length) {
+      console.log(`去重后标签组数量: ${uniqueGroups.length}/${groupsWithUser.length}`);
+    }
+
+    // 上传标签组元数据和标签数据
+    let result: any = null;
+    try {
+      // 对每个标签组的数据进行加密
+      for (let i = 0; i < groupsWithUser.length; i++) {
+        const group = groupsWithUser[i];
+        if (group.tabs_data && Array.isArray(group.tabs_data)) {
+          try {
+            // 加密标签数据
+            const encryptedData = await encryptData(group.tabs_data, user.id);
+            // 替换原始数据为加密数据
+            groupsWithUser[i].tabs_data = encryptedData as any;
+            console.log(`标签组 ${group.id} 的数据已加密`);
+          } catch (error) {
+            console.error(`加密标签组 ${group.id} 的数据失败:`, error);
+            // 如果加密失败，保留原始数据
+          }
+        }
+      }
+
+      // 验证数据
+      for (const group of groupsWithUser) {
+        if (!group.id) {
+          console.error('标签组缺少ID:', group);
+          throw new Error('标签组缺少ID');
+        }
+        if (!group.created_at) {
+          console.error('标签组缺少created_at:', group);
+          throw new Error('标签组缺少created_at');
+        }
+        if (!group.updated_at) {
+          console.error('标签组缺少updated_at:', group);
+          throw new Error('标签组缺少updated_at');
+        }
+      }
+
+      // 使用 JSONB 存储标签数据
+      console.log('将标签数据作为 JSONB 存储到 tab_groups 表中');
+
+      // 记录详细的上传信息
+      console.log('上传数据详情:', {
+        groupCount: groupsWithUser.length,
+        userID: groupsWithUser[0]?.user_id,
+        sessionUserID: sessionData.session.user.id,
+        sessionValid: !!sessionData.session,
+        userValid: !!user
+      });
+
+      // 强制确保所有组的用户ID都是会话用户ID
+      console.log('强制更新所有组的用户ID为会话用户ID');
+      uniqueGroups.forEach((group, index) => {
+        const oldUserId = group.user_id;
+        group.user_id = sessionData.session.user.id;
+        console.log(`标签组 ${index + 1}: ${group.id} 用户ID从 ${oldUserId} 更新为 ${group.user_id}`);
+      });
+
+      // 验证所有组的用户ID是否正确
+      const invalidGroups = uniqueGroups.filter(group => group.user_id !== sessionData.session.user.id);
+      if (invalidGroups.length > 0) {
+        console.error('仍有标签组的用户ID不正确:', invalidGroups.map(g => ({ id: g.id, user_id: g.user_id })));
+        throw new Error('用户ID验证失败，无法上传数据');
+      }
+
+      console.log('所有标签组的用户ID验证通过');
+
+      let data, error;
+
+      // 如果是覆盖模式，先删除用户的所有标签组，然后插入新的标签组
+      if (overwriteCloud) {
+        console.log('使用覆盖模式，先删除用户的所有标签组');
+
+        // 先删除用户的所有标签组
+        const { error: deleteError } = await supabase
+          .from('tab_groups')
+          .delete()
+          .eq('user_id', sessionData.session.user.id);
+
+        if (deleteError) {
+          console.error('删除用户标签组失败:', deleteError);
+          console.error('错误详情:', {
+            code: deleteError.code,
+            message: deleteError.message,
+            details: deleteError.details,
+            hint: deleteError.hint
+          });
+          throw deleteError;
+        }
+
+        console.log('用户标签组已删除，准备插入新数据');
+
+        // 等待一小段时间确保删除操作完全完成
+        await new Promise(resolve => setTimeout(resolve, 100));
+
+        // 然后插入新的标签组，使用 upsert 而不是 insert 来避免主键冲突
+        console.log('准备插入标签组数据，用户ID:', sessionData.session.user.id);
+        console.log('要插入的第一个标签组数据样本:', {
+          id: uniqueGroups[0]?.id,
+          name: uniqueGroups[0]?.name,
+          user_id: uniqueGroups[0]?.user_id,
+          device_id: uniqueGroups[0]?.device_id,
+          tabsDataLength: uniqueGroups[0]?.tabs_data?.length
+        });
+
+        const result = await supabase
+          .from('tab_groups')
+          .upsert(uniqueGroups, { onConflict: 'id' });
+
+        data = result.data;
+        error = result.error;
+      } else {
+        // 合并模式，使用 upsert
+        console.log('使用合并模式，更新现有标签组');
+        const result = await supabase
+          .from('tab_groups')
+          .upsert(uniqueGroups, { onConflict: 'id' });
+
+        data = result.data;
+        error = result.error;
+      }
+
+      result = data;
+
+      if (error) {
+        console.error('上传标签组失败:', error);
+        console.error('错误详情:', {
+          code: error.code,
+          message: error.message,
+          details: error.details,
+          hint: error.hint
+        });
+
+        // 特别处理 RLS 策略错误
+        if (error.message && error.message.includes('row-level security policy')) {
+          console.error('RLS 策略违规错误，尝试诊断和重试...');
+
+          // 记录当前会话信息
+          const currentSession = await supabase.auth.getSession();
+          console.error('当前会话状态:', {
+            hasSession: !!currentSession.data.session,
+            userId: currentSession.data.session?.user?.id,
+            userEmail: currentSession.data.session?.user?.email,
+            sessionExpiry: currentSession.data.session?.expires_at
+          });
+
+          // 记录要上传的数据信息
+          console.error('要上传的数据信息:', {
+            groupCount: uniqueGroups.length,
+            firstGroupUserId: uniqueGroups[0]?.user_id,
+            allUserIds: [...new Set(uniqueGroups.map(g => g.user_id))]
+          });
+
+          // 尝试刷新会话并重试一次
+          console.log('尝试刷新会话并重试...');
+          try {
+            const { data: refreshedSession, error: refreshError } = await supabase.auth.refreshSession();
+            if (refreshError) {
+              console.error('刷新会话失败:', refreshError);
+              throw new Error('会话已过期，请重新登录');
+            }
+
+            if (refreshedSession.session && refreshedSession.session.user) {
+              console.log('会话刷新成功，重新验证用户ID并重试上传');
+
+              // 重新设置用户ID
+              uniqueGroups.forEach(group => {
+                group.user_id = refreshedSession.session!.user.id;
+              });
+
+              // 重试上传
+              const retryResult = await supabase
+                .from('tab_groups')
+                .upsert(uniqueGroups, { onConflict: 'id' });
+
+              if (retryResult.error) {
+                console.error('重试上传仍然失败:', retryResult.error);
+                throw new Error('数据库行级安全策略阻止了数据插入。请联系管理员检查权限配置。');
+              }
+
+              console.log('重试上传成功');
+              data = retryResult.data;
+              error = null; // 清除错误
+            } else {
+              throw new Error('无法获取有效会话，请重新登录');
+            }
+          } catch (retryError) {
+            console.error('重试失败:', retryError);
+            throw new Error('数据库行级安全策略阻止了数据插入。请重新登录或联系管理员。');
+          }
+        }
+
+        throw error;
+      }
+
+      console.log('标签组元数据和标签数据上传成功');
+    } catch (e) {
+      console.error('上传标签组时发生异常:', e);
+      throw e;
+    }
+
+    console.log('所有数据上传成功');
+    return { result };
+  },
+
+  // 下载标签组
+  async downloadTabGroups() {
+    const deviceId = await getDeviceId();
+
+    // 先检查会话是否有效
+    const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
+
+    if (sessionError) {
+      console.error('获取会话失败:', sessionError);
+      throw new Error(`获取会话失败: ${sessionError.message}`);
+    }
+
+    if (!sessionData.session) {
+      console.error('用户未登录或会话已过期');
+      throw new Error('用户未登录或会话已过期，请重新登录');
+    }
+
+    // 获取用户信息
+    const { data: { user }, error: userError } = await supabase.auth.getUser();
+
+    if (userError) {
+      console.error('获取用户信息失败:', userError);
+      throw new Error(`获取用户信息失败: ${userError.message}`);
+    }
+
+    if (!user) {
+      console.error('用户未登录');
+      throw new Error('用户未登录');
+    }
+
+    if (!user.id) {
+      console.error('用户ID无效');
+      throw new Error('用户ID无效');
+    }
+
+    console.log('开始下载标签组，用户ID:', user.id, '设备ID:', deviceId);
+
+    try {
+      console.log('使用 JSONB 方式下载所有标签组');
+
+      // 确保用户已登录并且会话有效
+      const { data: sessionCheck } = await supabase.auth.getSession();
+      if (!sessionCheck.session) {
+        console.error('会话已过期，无法下载数据');
+        throw new Error('会话已过期，请重新登录');
+      }
+
+      // 记录详细的会话信息
+      console.log('会话信息:', {
+        userID: user.id,
+        sessionUserID: sessionCheck.session.user.id,
+        isSessionValid: !!sessionCheck.session
+      });
+
+      // 确保用户ID匹配会话用户ID
+      if (user.id !== sessionCheck.session.user.id) {
+        console.warn('用户ID与会话用户ID不匹配，使用会话用户ID');
+        user.id = sessionCheck.session.user.id;
+      }
+
+      // 获取用户的所有标签组，包含 tabs_data JSONB 字段，按创建时间倒序排列
+      const { data: groups, error } = await supabase
+        .from('tab_groups')
+        .select('*')
+        .eq('user_id', user.id)
+        .order('created_at', { ascending: false });
+
+      if (error) {
+        console.error('获取标签组失败:', error);
+        console.error('错误详情:', {
+          code: error.code,
+          message: error.message,
+          details: error.details,
+          hint: error.hint
+        });
+        throw error;
+      }
+
+      console.log(`从云端获取到 ${groups.length} 个标签组`);
+
+      // 记录每个云端标签组的基本信息
+      groups.forEach((group, index) => {
+        const tabsData = group.tabs_data || [];
+        console.log(`云端标签组 ${index + 1}/${groups.length}:`, {
+          id: group.id,
+          name: group.name,
+          tabCount: tabsData.length,
+          deviceId: group.device_id,
+          updatedAt: group.updated_at,
+          lastSync: group.last_sync
+        });
+      });
+
+      // 将数据转换为应用格式
+      const tabGroups: TabGroup[] = [];
+
+      for (const group of groups) {
+        // 从 JSONB 字段获取标签数据
+        let tabsData: TabData[] = [];
+
+        // 检查是否是加密数据
+        if (typeof group.tabs_data === 'string') {
+          try {
+            // 尝试解密数据
+            tabsData = await decryptData<TabData[]>(group.tabs_data as string, user.id);
+            console.log(`标签组 ${group.id} 的数据已成功解密`);
+          } catch (error) {
+            console.error(`解密标签组 ${group.id} 的数据失败:`, error);
+            // 如果解密失败，尝试直接解析（可能是旧的未加密数据）
+            try {
+              if (typeof group.tabs_data === 'string' && !isEncrypted(group.tabs_data)) {
+                tabsData = JSON.parse(group.tabs_data);
+                console.log(`标签组 ${group.id} 的数据是旧的未加密格式，已成功解析`);
+              }
+            } catch (jsonError) {
+              console.error(`解析标签组 ${group.id} 的JSON数据失败:`, jsonError);
+              // 保持空数组
+            }
+          }
+        } else if (Array.isArray(group.tabs_data)) {
+          // 如果已经是数组，直接使用
+          tabsData = group.tabs_data;
+          console.log(`标签组 ${group.id} 的数据已经是解析后的数组格式`);
+        }
+
+        console.log(`处理标签组 ${group.id} (名称: "${group.name}"), 有 ${tabsData.length} 个标签`);
+
+        // 记录标签类型统计
+        const urlTypes = tabsData.reduce((acc: Record<string, number>, tab: TabData) => {
+          const urlType = tab.url.startsWith('http') ? 'http' :
+            tab.url.startsWith('loading://') ? 'loading' : 'other';
+          acc[urlType] = (acc[urlType] || 0) + 1;
+          return acc;
+        }, {});
+
+        console.log(`  - 标签类型统计: ${JSON.stringify(urlTypes)}`);
+
+        // 将 TabData 转换为 Tab 格式
+        const formattedTabs = tabsData.map((tab: TabData) => ({
+          id: tab.id,
+          url: tab.url,
+          title: tab.title,
+          favicon: tab.favicon,
+          createdAt: tab.created_at,
+          lastAccessed: tab.last_accessed,
+          group_id: group.id
+        }));
+
+        tabGroups.push({
+          id: group.id,
+          name: group.name,
+          tabs: formattedTabs,
+          createdAt: group.created_at,
+          updatedAt: group.updated_at,
+          isLocked: group.is_locked
+        });
+      }
+
+      // 兼容性处理：如果标签组没有 tabs_data，尝试从 tabs 表获取
+      for (const group of tabGroups) {
+        if (group.tabs.length === 0) {
+          console.log(`标签组 ${group.id} 没有 JSONB 标签数据，尝试从 tabs 表获取`);
+          try {
+            const { data: tabs, error: tabError } = await supabase
+              .from('tabs')
+              .select('*')
+              .eq('group_id', group.id);
+
+            if (!tabError && tabs && tabs.length > 0) {
+              group.tabs = tabs.map(tab => ({
+                id: tab.id,
+                url: tab.url,
+                title: tab.title,
+                favicon: tab.favicon,
+                createdAt: tab.created_at,
+                lastAccessed: tab.last_accessed,
+                group_id: tab.group_id
+              }));
+              console.log(`从 tabs 表获取到 ${group.tabs.length} 个标签`);
+            }
+          } catch (e) {
+            console.warn(`从 tabs 表获取标签失败，忽略错误:`, e);
+          }
+        }
+      }
+
+      console.log('标签组下载完成');
+      return tabGroups;
+    } catch (error) {
+      console.error('下载标签组失败:', error);
+      throw error;
+    }
+  },
+
+  // 上传用户设置
+  async uploadSettings(settings: UserSettings) {
+    const deviceId = await getDeviceId();
+
+    // 先检查会话是否有效
+    const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
+
+    if (sessionError) {
+      console.error('获取会话失败:', sessionError);
+      throw new Error(`获取会话失败: ${sessionError.message}`);
+    }
+
+    if (!sessionData.session) {
+      console.error('用户未登录或会话已过期');
+      throw new Error('用户未登录或会话已过期，请重新登录');
+    }
+
+    // 获取用户信息
+    const { data: { user }, error: userError } = await supabase.auth.getUser();
+
+    if (userError) {
+      console.error('获取用户信息失败:', userError);
+      throw new Error(`获取用户信息失败: ${userError.message}`);
+    }
+
+    if (!user) {
+      console.error('用户未登录');
+      throw new Error('用户未登录');
+    }
+
+    if (!user.id) {
+      console.error('用户ID无效');
+      throw new Error('用户ID无效');
+    }
+
+    // 确保用户ID匹配会话用户ID
+    if (user.id !== sessionData.session.user.id) {
+      console.warn('用户ID与会话用户ID不匹配，使用会话用户ID');
+      user.id = sessionData.session.user.id;
+    }
+
+    console.log('上传用户设置，用户ID:', user.id, '设备ID:', deviceId);
+
+    // 定义允许的设置字段，避免上传不存在的字段
+    // 这些字段名对应数据库中的实际列名（驼峰命名，稍后会转换为下划线命名）
+    const allowedFields = [
+      // 'autoSave',              // -> auto_save (UserSettings中不存在，已注释)
+      // 'autoSaveInterval',      // -> auto_save_interval (UserSettings中不存在，已注释)
+      'groupNameTemplate',     // -> group_name_template
+      'showFavicons',          // -> show_favicons
+      'showTabCount',          // -> show_tab_count
+      // 'autoCloseTabs',         // -> auto_close_tabs (UserSettings中不存在，已注释)
+      'confirmBeforeDelete',   // -> confirm_before_delete
+      'allowDuplicateTabs',    // -> allow_duplicate_tabs
+      // 'syncInterval',          // -> sync_interval (UserSettings中不存在，已注释)
+      'syncEnabled',           // -> sync_enabled
+      'layoutMode',            // -> layout_mode (新的布局模式字段)
+      'showNotifications',     // -> show_notifications
+      'syncStrategy',          // -> sync_strategy
+      'deleteStrategy',        // -> delete_strategy
+      'themeMode',             // -> theme_mode
+      'reorderMode'            // -> reorder_mode (新增：全局重新排序模式)
+    ];
+
+    // 将驼峰命名法转换为下划线命名法，并过滤掉不允许的字段
+    const convertedSettings: Record<string, any> = {};
+    for (const [key, value] of Object.entries(settings)) {
+      // 只处理允许的字段
+      if (allowedFields.includes(key)) {
+        // 将驼峰命名转换为下划线命名
+        const snakeKey = key.replace(/([A-Z])/g, '_$1').toLowerCase();
+        convertedSettings[snakeKey] = value;
+      } else {
+        console.warn(`跳过未知的设置字段: ${key}`);
+      }
+    }
+
+    console.log('转换后的设置:', convertedSettings);
+
+    const { data, error } = await supabase
+      .from('user_settings')
+      .upsert({
+        user_id: user.id,
+        device_id: deviceId, // 添加设备ID，用于过滤自己设备的更新
+        last_sync: new Date().toISOString(),
+        ...convertedSettings // 使用转换后的设置
+      }, { onConflict: 'user_id' });
+
+    if (error) {
+      console.error('上传用户设置失败:', error);
+      console.error('错误详情:', {
+        code: error.code,
+        message: error.message,
+        details: error.details,
+        hint: error.hint
+      });
+      throw error;
+    }
+
+    return data;
+  },
+
+  // 下载用户设置
+  async downloadSettings() {
+    // 先检查会话是否有效
+    const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
+
+    if (sessionError) {
+      console.error('获取会话失败:', sessionError);
+      throw new Error(`获取会话失败: ${sessionError.message}`);
+    }
+
+    if (!sessionData.session) {
+      console.error('用户未登录或会话已过期');
+      throw new Error('用户未登录或会话已过期，请重新登录');
+    }
+
+    // 获取用户信息
+    const { data: { user }, error: userError } = await supabase.auth.getUser();
+
+    if (userError) {
+      console.error('获取用户信息失败:', userError);
+      throw new Error(`获取用户信息失败: ${userError.message}`);
+    }
+
+    if (!user) {
+      console.error('用户未登录');
+      throw new Error('用户未登录');
+    }
+
+    if (!user.id) {
+      console.error('用户ID无效');
+      throw new Error('用户ID无效');
+    }
+
+    // 确保用户ID匹配会话用户ID
+    if (user.id !== sessionData.session.user.id) {
+      console.warn('用户ID与会话用户ID不匹配，使用会话用户ID');
+      user.id = sessionData.session.user.id;
+    }
+
+    console.log('下载用户设置，用户ID:', user.id);
+
+    const { data, error } = await supabase
+      .from('user_settings')
+      .select('*')
+      .eq('user_id', user.id)
+      .single();
+
+    if (error && error.code !== 'PGRST116') {
+      console.error('下载用户设置失败:', error);
+      console.error('错误详情:', {
+        code: error.code,
+        message: error.message,
+        details: error.details,
+        hint: error.hint
+      });
+      throw error;
+    }
+
+    // 如果有数据，将下划线命名法转换为驼峰命名法
+    if (data) {
+      // 定义允许的数据库字段到设置字段的映射
+      const fieldMapping: Record<string, string> = {
+        'group_name_template': 'groupNameTemplate',
+        'show_favicons': 'showFavicons',
+        'show_tab_count': 'showTabCount',
+        'confirm_before_delete': 'confirmBeforeDelete',
+        'allow_duplicate_tabs': 'allowDuplicateTabs',
+        'sync_enabled': 'syncEnabled',
+        'layout_mode': 'layoutMode',
+        'show_notifications': 'showNotifications',
+        'sync_strategy': 'syncStrategy',
+        'delete_strategy': 'deleteStrategy',
+        'theme_mode': 'themeMode',
+        'reorder_mode': 'reorderMode',
+        // 向后兼容性：如果云端还有旧的字段，也要处理
+        'use_double_column_layout': 'useDoubleColumnLayout'
+      };
+
+      const convertedSettings: Record<string, any> = {};
+      for (const [key, value] of Object.entries(data)) {
+        // 跳过非设置字段
+        if (['user_id', 'device_id', 'last_sync'].includes(key)) {
+          continue;
+        }
+
+        // 使用映射表转换字段名
+        if (fieldMapping[key]) {
+          convertedSettings[fieldMapping[key]] = value;
+        } else {
+          console.warn(`跳过未知的数据库字段: ${key}`);
+        }
+      }
+
+      console.log('转换后的设置:', convertedSettings);
+      return convertedSettings;
+    }
+
+    return data;
+  }
+};

@@ -1,14 +1,12 @@
-import React, { useState, useRef, useEffect, useCallback, memo, useMemo } from 'react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { TabGroup as TabGroupType } from '@/types/tab';
-import { useAppDispatch } from '@/app/store/hooks';
-import { updateGroupName, deleteGroup, updateGroup } from '@/features/tabs/store/tabGroupsSlice';
+import { useAppDispatch } from '@/store/hooks';
+import { updateGroupNameAndSync, deleteGroup, updateGroup } from '@/store/slices/tabSlice';
 import { SortableTab } from './SortableTab';
+import { shouldAutoDeleteAfterTabRemoval } from '@/utils/tabGroupUtils';
 import { SortableContext, rectSortingStrategy } from '@dnd-kit/sortable';
-
-import { getDragStyles, getDragClassName, dragPresets } from '@/shared/utils/dragVisualFeedback';
-import { cn } from '@/shared/utils/cn';
 import '@/styles/drag-drop.css';
 
 interface SortableTabGroupProps {
@@ -16,7 +14,7 @@ interface SortableTabGroupProps {
   index: number;
 }
 
-const SortableTabGroupComponent: React.FC<SortableTabGroupProps> = ({ group, index }) => {
+export const SortableTabGroup: React.FC<SortableTabGroupProps> = ({ group, index }) => {
   const dispatch = useAppDispatch();
   const [isExpanded, setIsExpanded] = useState(true);
   const [isEditing, setIsEditing] = useState(false);
@@ -36,33 +34,31 @@ const SortableTabGroupComponent: React.FC<SortableTabGroupProps> = ({ group, ind
     };
   }, []);
 
-  // 标签组拖拽功能已禁用
-  const { setNodeRef, transform, isDragging } = useSortable({
+  // 禁用标签组拖拽功能 - 标签组应该保持固定位置
+  const { setNodeRef } = useSortable({
     id: `group-${group.id}`,
     data: {
       type: 'group',
       group,
       index,
     },
-    disabled: true, // 禁用标签组拖拽
+    disabled: true, // 禁用拖拽
   });
 
-  // 使用统一的拖拽视觉反馈
-  const dragState = isDragging ? 'dragging' : 'idle';
-  const dragStyles = getDragStyles({
-    ...dragPresets.group,
-    state: dragState,
-  });
+  // 由于禁用了拖拽，这些属性不再需要
+  const attributes = {};
+  const listeners = {};
+  const transform = null;
+  const isDragging = false;
 
+  // 提供更好的拖拽视觉反馈
   const style = {
     transform: CSS.Transform.toString(transform),
-    ...dragStyles,
+    opacity: isDragging ? 0.6 : 1,
+    position: 'relative' as const,
+    zIndex: isDragging ? 999 : 'auto',
+    transition: 'transform 0.15s ease, opacity 0.15s ease',
   };
-
-  const dragClassName = getDragClassName({
-    ...dragPresets.group,
-    state: dragState,
-  });
 
   const handleToggleExpand = () => {
     if (isMounted.current) {
@@ -81,7 +77,7 @@ const SortableTabGroupComponent: React.FC<SortableTabGroupProps> = ({ group, ind
 
     if (groupName.trim() !== group.name) {
       try {
-        dispatch(updateGroupName({ groupId: group.id, name: groupName.trim() }));
+        dispatch(updateGroupNameAndSync({ groupId: group.id, name: groupName.trim() }));
       } catch (error) {
         console.error('更新标签组名称失败:', error);
       }
@@ -104,23 +100,32 @@ const SortableTabGroupComponent: React.FC<SortableTabGroupProps> = ({ group, ind
   const handleDeleteTab = useCallback((tabId: string) => {
     if (!isMounted.current || isMarkedForDeletion) return;
 
+    // 跨组拖拽时的安全检查
+    if (!group || !group.tabs || !Array.isArray(group.tabs)) {
+      console.warn('Cannot delete tab: invalid group data', { groupId: group?.id, tabId });
+      return;
+    }
+
     try {
-      const updatedTabs = group.tabs.filter(t => t.id !== tabId);
-      if (updatedTabs.length === 0) {
+      // 使用工具函数检查是否应该自动删除标签组
+      if (shouldAutoDeleteAfterTabRemoval(group, tabId)) {
         // Mark for deletion instead of dispatching immediately
         setIsMarkedForDeletion(true);
+        console.log(`标记空标签组待删除: ${group.name} (ID: ${group.id})`);
       } else {
+        const updatedTabs = group.tabs.filter(t => t.id !== tabId);
         const updatedGroup = {
           ...group,
           tabs: updatedTabs,
           updatedAt: new Date().toISOString(),
         };
         dispatch(updateGroup(updatedGroup));
+        console.log(`从标签组删除标签页: ${group.name}, 剩余标签页: ${updatedTabs.length}`);
       }
     } catch (error) {
       console.error('删除标签页失败:', error);
     }
-  }, [dispatch, group, isMounted, isMarkedForDeletion]);
+  }, [dispatch, group, isMarkedForDeletion]);
 
   useEffect(() => {
     if (isMarkedForDeletion && isMounted.current) {
@@ -131,45 +136,63 @@ const SortableTabGroupComponent: React.FC<SortableTabGroupProps> = ({ group, ind
       }, 0); // Use a minimal delay
       return () => clearTimeout(timer);
     }
-  }, [isMarkedForDeletion, dispatch, group.id, isMounted]);
+  }, [isMarkedForDeletion, dispatch, group.id]);
 
   // If marked for deletion, render nothing to allow graceful unmount
   if (isMarkedForDeletion) {
     return null;
   }
 
-  // Create a list of sortable tab IDs - 使用useMemo优化性能
-  const tabIds = useMemo(() =>
-    group.tabs.map(tab => `${group.id}-tab-${tab.id}`),
-    [group.tabs, group.id]
-  );
+  // Safety check for group.tabs - 特别重要在跨组拖拽时
+  if (!group || !group.tabs || !Array.isArray(group.tabs)) {
+    console.warn('Invalid group or tabs data during render:', {
+      groupId: group?.id,
+      groupName: group?.name,
+      tabs: group?.tabs,
+      isMarkedForDeletion
+    });
+    return null;
+  }
+
+  // Create a list of sortable tab IDs
+  const tabIds = group.tabs.map(tab => `${group.id}-tab-${tab.id}`);
 
   // Ensure other handlers also check isMarkedForDeletion if they could conflict
   const safeHandleOpenTab = useCallback((tab: any) => {
     if (!isMounted.current || isMarkedForDeletion) return;
+
+    // 跨组拖拽时的安全检查
+    if (!group || !group.tabs || !Array.isArray(group.tabs)) {
+      console.warn('Cannot open tab: invalid group data', { groupId: group?.id, tabId: tab?.id });
+      return;
+    }
+
     // Original handleOpenTab logic
     try {
       chrome.tabs.create({ url: tab.url });
-      const updatedTabs = group.tabs.filter(t => t.id !== tab.id);
-      if (updatedTabs.length === 0) {
+      // 使用工具函数检查是否应该自动删除标签组
+      if (shouldAutoDeleteAfterTabRemoval(group, tab.id)) {
         setIsMarkedForDeletion(true); // Also mark for deletion here
+        console.log(`打开标签页后标记空标签组待删除: ${group.name} (ID: ${group.id})`);
       } else {
+        const updatedTabs = group.tabs.filter(t => t.id !== tab.id);
         const updatedGroup = {
           ...group,
           tabs: updatedTabs,
           updatedAt: new Date().toISOString(),
         };
         dispatch(updateGroup(updatedGroup));
+        console.log(`打开标签页后更新标签组: ${group.name}, 剩余标签页: ${updatedTabs.length}`);
       }
     } catch (error) {
       console.error('打开标签页失败:', error);
     }
-  }, [dispatch, group, isMounted, isMarkedForDeletion]);
+  }, [dispatch, group, isMarkedForDeletion]);
 
   const safeHandleDeleteGroup = useCallback(() => {
     if (!isMounted.current || isMarkedForDeletion) return;
     setIsMarkedForDeletion(true); // Mark for deletion
-  }, [isMounted, isMarkedForDeletion]);
+  }, [isMarkedForDeletion]);
 
   // Update props for SortableTab to use the new safe handlers if necessary
   // For now, assuming SortableTab's internal isMounted check is sufficient for its direct actions
@@ -179,14 +202,12 @@ const SortableTabGroupComponent: React.FC<SortableTabGroupProps> = ({ group, ind
     <div
       ref={setNodeRef}
       style={style}
-      className={cn(
-        "bg-white rounded-lg border border-gray-200 overflow-hidden select-none group-item",
-        dragClassName
-      )}
-      data-onboarding="tab-group"
+      className={`bg-white rounded-lg border border-gray-200 overflow-hidden select-none group-item ${isDragging ? 'border-gray-400 dragging' : ''}`}
     >
       <div
-        className="flex items-center justify-between p-2 bg-gray-50 border-b border-gray-200"
+        className="flex items-center justify-between p-2 bg-gray-50 border-b border-gray-200 cursor-move"
+        {...attributes}
+        {...listeners}
       >
         <div className="flex items-center space-x-2 flex-1 min-w-0">
           <button
@@ -255,7 +276,7 @@ const SortableTabGroupComponent: React.FC<SortableTabGroupProps> = ({ group, ind
           </button>
         </div>
       </div>
-      {isExpanded && (
+      {isExpanded && group.tabs && Array.isArray(group.tabs) && (
         <div className="px-2 pt-1 space-y-1 group" style={{ overflow: 'hidden' }}>
           <SortableContext items={tabIds} strategy={rectSortingStrategy}>
             {group.tabs.map((tab, index) => (
@@ -274,7 +295,3 @@ const SortableTabGroupComponent: React.FC<SortableTabGroupProps> = ({ group, ind
     </div>
   );
 };
-
-// 使用memo优化性能，避免不必要的重新渲染
-export const SortableTabGroup = memo(SortableTabGroupComponent);
-export default SortableTabGroup;

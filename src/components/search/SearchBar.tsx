@@ -1,17 +1,18 @@
-import React, { useState, useCallback } from 'react';
-import { useAppDispatch } from '@/app/store/hooks';
-import { setSearchQuery } from '@/features/tabs/store/tabGroupsSlice';
-import debounce from 'lodash.debounce';
+import React, { useState } from 'react';
+import { useAppDispatch } from '@/store/hooks';
+import { setSearchQuery } from '@/store/slices/tabSlice';
+import { useDebouncedCallback } from '@/hooks/useDebounce';
 
 export const SearchBar: React.FC = () => {
   const dispatch = useAppDispatch();
   const [localQuery, setLocalQuery] = useState('');
 
-  // 使用debounce来优化搜索性能
-  const debouncedSearch = useCallback(
-    debounce((query: string) => {
+  // 使用防抖来优化搜索性能
+  const debouncedSearch = useDebouncedCallback(
+    (query: string) => {
       dispatch(setSearchQuery(query));
-    }, 300),
+    },
+    300,
     [dispatch]
   );
 
@@ -33,6 +34,8 @@ export const SearchBar: React.FC = () => {
         value={localQuery}
         onChange={handleSearch}
         placeholder="搜索标签..."
+        aria-label="搜索标签页"
+        aria-describedby="search-description"
         className="
           w-full px-4 py-2 pl-10
           rounded-lg
@@ -44,6 +47,9 @@ export const SearchBar: React.FC = () => {
           transition duration-200
         "
       />
+      <div id="search-description" className="sr-only">
+        输入关键词搜索已保存的标签页
+      </div>
       <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
         <svg
           className="h-5 w-5 text-gray-400"

@@ -1,81 +1,123 @@
-import React, { useState, useCallback, memo } from 'react';
-import { useAppDispatch, useAppSelector } from '@/app/store/hooks';
-// 使用新版store中的settingsSlice
-import { saveSettings, toggleUseDoubleColumnLayout } from '@/features/settings/store/settingsSlice';
-// 使用新版的cleanDuplicateTabs
-import { cleanDuplicateTabs } from '@/features/tabs/store/tabGroupsSlice';
+import React, { useState } from 'react';
+import { useAppDispatch, useAppSelector } from '@/store/hooks';
+import { toggleLayoutMode, saveSettings, setReorderMode } from '@/store/slices/settingsSlice';
+import { cleanDuplicateTabs } from '@/store/slices/tabSlice';
 import { HeaderDropdown } from './HeaderDropdown';
+import { useToast } from '@/contexts/ToastContext';
 import { TabCounter } from './TabCounter';
-// 移除复杂的手动同步按钮，使用简化的自动同步
-// import SyncButton from '@/components/sync/SyncButton';
+import SyncButton from '@/components/sync/SyncButton';
 import { SimpleThemeToggle } from './SimpleThemeToggle';
-import { useOnboarding } from '@/features/onboarding/components/OnboardingProvider';
-import { createMemoComparison } from '@/shared/utils/performanceOptimizer';
+import { LayoutMode } from '@/types/tab';
 
 interface HeaderProps {
   onSearch: (query: string) => void;
 }
 
-const HeaderComponent: React.FC<HeaderProps> = ({ onSearch }) => {
+export const Header: React.FC<HeaderProps> = ({ onSearch }) => {
   const dispatch = useAppDispatch();
   const [searchValue, setSearchValue] = useState('');
-  const [showCleanupConfirm, setShowCleanupConfirm] = useState(false);
-  const [cleanupResult, setCleanupResult] = useState<{ removedCount: number } | null>(null);
+  const { showConfirm, showAlert } = useToast();
 
-  // 引导系统
-  const { } = useOnboarding();
-
-  // 使用useCallback优化事件处理函数
-  const handleSearch = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleSearch = (e: React.ChangeEvent<HTMLInputElement>) => {
     const value = e.target.value;
     setSearchValue(value);
     onSearch(value);
-  }, [onSearch]);
+  };
 
-  const handleClearSearch = useCallback(() => {
+  const handleClearSearch = () => {
     setSearchValue('');
     onSearch('');
-  }, [onSearch]);
+  };
 
   const settings = useAppSelector(state => state.settings);
   const [showDropdown, setShowDropdown] = useState(false);
 
   // 处理清理重复标签
   const handleCleanDuplicateTabs = () => {
-    setShowCleanupConfirm(true);
-  };
+    showConfirm({
+      title: '确认清理重复标签和空标签组',
+      message: '此操作将：\n• 清理所有标签组中URL相同的重复标签页，只保留每个URL最新的一个标签页\n• 自动删除不包含任何标签页的空标签组（锁定的标签组除外）\n此操作不可撤销。',
+      type: 'warning',
+      confirmText: '确认清理',
+      cancelText: '取消',
+      onConfirm: async () => {
+        try {
+          const result = await dispatch(cleanDuplicateTabs()).unwrap();
 
-  // 确认清理
-  const confirmCleanup = async () => {
-    setShowCleanupConfirm(false);
-    try {
-      const result = await dispatch(cleanDuplicateTabs()).unwrap();
-      setCleanupResult(result);
+          // 构建结果消息
+          let message = '清理完成';
+          if (result.removedTabsCount > 0 || result.removedGroupsCount > 0) {
+            const details = [];
+            if (result.removedTabsCount > 0) {
+              details.push(`已清理 ${result.removedTabsCount} 个重复标签页`);
+            }
+            if (result.removedGroupsCount > 0) {
+              details.push(`已删除 ${result.removedGroupsCount} 个空标签组`);
+            }
+            message = `清理完成\n${details.join('\n')}`;
+          } else {
+            message = '清理完成，未发现重复标签页或空标签组';
+          }
 
-      // 3秒后自动关闭结果提示
-      setTimeout(() => {
-        setCleanupResult(null);
-      }, 3000);
-    } catch (error) {
-      console.error('清理重复标签失败:', error);
-    }
-  };
-
-  // 取消清理
-  const cancelCleanup = () => {
-    setShowCleanupConfirm(false);
+          showAlert({
+            title: '清理完成',
+            message,
+            type: 'success',
+            onClose: () => { }
+          });
+        } catch (error) {
+          console.error('清理重复标签失败:', error);
+          showAlert({
+            title: '清理失败',
+            message: '清理重复标签失败，请重试',
+            type: 'error',
+            onClose: () => { }
+          });
+        }
+      },
+      onCancel: () => { }
+    });
   };
 
   // 切换布局模式
   const handleToggleLayout = () => {
-    // 切换布局模式
-    dispatch(toggleUseDoubleColumnLayout());
+    // 如果当前在重排序模式，先退出重排序模式
+    if (settings.reorderMode) {
+      dispatch(setReorderMode(false));
+    }
+
+    // 然后切换布局模式
+    dispatch(toggleLayoutMode());
+
+    // 获取下一个布局模式
+    let nextLayoutMode: LayoutMode;
+    switch (settings.layoutMode) {
+      case 'single':
+        nextLayoutMode = 'double';
+        break;
+      case 'double':
+        nextLayoutMode = 'triple';
+        break;
+      case 'triple':
+        nextLayoutMode = 'single';
+        break;
+      default:
+        nextLayoutMode = 'single';
+    }
+
     dispatch(
       saveSettings({
-        useDoubleColumnLayout: !settings.useDoubleColumnLayout,
+        ...settings,
+        layoutMode: nextLayoutMode,
+        reorderMode: false, // 确保在切换布局时退出重排序模式
       })
     );
   };
+
+  // // 切换重排序模式
+  // const handleToggleReorderMode = () => {
+  //   dispatch(setReorderMode(!settings.reorderMode));
+  // };
 
   const handleSaveAllTabs = async () => {
     const tabs = await chrome.tabs.query({ currentWindow: true });
@@ -92,8 +134,8 @@ const HeaderComponent: React.FC<HeaderProps> = ({ onSearch }) => {
 
   return (
     <header className="bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700 transition-colors">
-      <div className="container mx-auto max-w-6xl">
-        <div className="flex items-center justify-between py-2 px-2">
+      <div className="w-full px-3 py-2 sm:px-4 md:px-6 lg:px-8">
+        <div className="flex items-center justify-between">
           <div className="flex items-center space-x-3">
             <svg
               xmlns="http://www.w3.org/2000/svg"
@@ -123,7 +165,6 @@ const HeaderComponent: React.FC<HeaderProps> = ({ onSearch }) => {
                 className="pl-8 pr-8 py-1.5 w-60 border border-gray-300 dark:border-gray-600 rounded text-gray-700 dark:text-gray-200 dark:bg-gray-700 text-sm focus:outline-none focus:ring-1 focus:ring-primary-500 focus:border-transparent"
                 onChange={handleSearch}
                 value={searchValue}
-                data-onboarding="search-input"
               />
               <svg
                 xmlns="http://www.w3.org/2000/svg"
@@ -167,9 +208,20 @@ const HeaderComponent: React.FC<HeaderProps> = ({ onSearch }) => {
               <button
                 onClick={handleToggleLayout}
                 className="p-2 rounded hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors text-gray-600 dark:text-gray-300 flex items-center justify-center"
-                title={settings.useDoubleColumnLayout ? '切换为单栏布局' : '切换为双栏布局'}
+                title={
+                  settings.layoutMode === 'single' ? '切换为双栏布局' :
+                    settings.layoutMode === 'double' ? '切换为三栏布局' :
+                      '切换为单栏布局'
+                }
+                aria-label={
+                  settings.layoutMode === 'single' ? '切换为双栏布局' :
+                    settings.layoutMode === 'double' ? '切换为三栏布局' :
+                      '切换为单栏布局'
+                }
+                aria-pressed={settings.layoutMode !== 'single'}
               >
-                {settings.useDoubleColumnLayout ? (
+                {settings.layoutMode === 'single' ? (
+                  // 单栏布局图标
                   <svg
                     xmlns="http://www.w3.org/2000/svg"
                     className="h-5 w-5"
@@ -181,10 +233,27 @@ const HeaderComponent: React.FC<HeaderProps> = ({ onSearch }) => {
                       strokeLinecap="round"
                       strokeLinejoin="round"
                       strokeWidth={2}
-                      d="M4 6h16M4 12h16M4 18h7"
+                      d="M4 6h16M4 12h16M4 18h16"
+                    />
+                  </svg>
+                ) : settings.layoutMode === 'double' ? (
+                  // 双栏布局图标
+                  <svg
+                    xmlns="http://www.w3.org/2000/svg"
+                    className="h-5 w-5"
+                    fill="none"
+                    viewBox="0 0 24 24"
+                    stroke="currentColor"
+                  >
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth={2}
+                      d="M4 6h7M4 12h7M4 18h7M13 6h7M13 12h7M13 18h7"
                     />
                   </svg>
                 ) : (
+                  // 三栏布局图标
                   <svg
                     xmlns="http://www.w3.org/2000/svg"
                     className="h-5 w-5"
@@ -196,16 +265,37 @@ const HeaderComponent: React.FC<HeaderProps> = ({ onSearch }) => {
                       strokeLinecap="round"
                       strokeLinejoin="round"
                       strokeWidth={2}
-                      d="M4 6h16M4 12h8m-8 6h16"
+                      d="M4 6h4M4 12h4M4 18h4M10 6h4M10 12h4M10 18h4M16 6h4M16 12h4M16 18h4"
                     />
                   </svg>
                 )}
               </button>
 
+              {/* <button
+                onClick={handleToggleReorderMode}
+                className={`p-2 rounded hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors ${settings.reorderMode ? 'bg-primary-100 dark:bg-primary-900 text-primary-600 dark:text-primary-400' : 'text-gray-600 dark:text-gray-300'} flex items-center justify-center`}
+                title={settings.reorderMode ? '返回分组视图' : '重新排序所有标签'}
+              >
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  className="h-5 w-5"
+                  fill="none"
+                  viewBox="0 0 24 24"
+                  stroke="currentColor"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M4 6h16M4 12h16M4 18h16"
+                  />
+                </svg>
+              </button> */}
+
               <button
                 onClick={handleCleanDuplicateTabs}
                 className="p-2 rounded hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors text-gray-600 dark:text-gray-300 flex items-center justify-center"
-                title="清理所有标签组中的重复标签页"
+                title="清理所有标签组中的重复标签页并删除空标签组"
               >
                 <svg
                   xmlns="http://www.w3.org/2000/svg"
@@ -225,12 +315,11 @@ const HeaderComponent: React.FC<HeaderProps> = ({ onSearch }) => {
 
               <SimpleThemeToggle />
 
-              {/* 移除复杂的手动同步按钮，使用简化的自动同步 */}
+              <SyncButton />
 
               <button
                 onClick={handleSaveAllTabs}
                 className="px-4 py-1.5 rounded text-sm transition-colors bg-primary-600 text-white hover:bg-primary-700 border border-primary-600 min-w-[100px] text-center"
-                data-onboarding="save-tabs-button"
               >
                 保存所有标签
               </button>
@@ -241,7 +330,6 @@ const HeaderComponent: React.FC<HeaderProps> = ({ onSearch }) => {
                 onClick={() => setShowDropdown(!showDropdown)}
                 className="p-2 rounded-full hover:bg-gray-100 dark:hover:bg-gray-700 transition-material text-gray-600 dark:text-gray-300"
                 aria-label="菜单"
-                data-onboarding="settings-button"
               >
                 <svg
                   xmlns="http://www.w3.org/2000/svg"
@@ -265,66 +353,9 @@ const HeaderComponent: React.FC<HeaderProps> = ({ onSearch }) => {
         </div>
       </div>
 
-      {/* 确认对话框 */}
-      {showCleanupConfirm && (
-        <div className="fixed inset-0 bg-black bg-opacity-30 flex items-center justify-center z-50">
-          <div className="bg-white dark:bg-gray-800 p-6 rounded-lg shadow-xl max-w-md">
-            <h3 className="text-lg font-medium mb-4 text-gray-900 dark:text-gray-100">
-              确认清理重复标签
-            </h3>
-            <p className="mb-4 text-gray-700 dark:text-gray-300">
-              此操作将清理所有标签组中URL相同的重复标签页，只保留每个URL最新的一个标签页。此操作不可撤销。
-            </p>
-            <div className="flex justify-end space-x-3">
-              <button
-                onClick={cancelCleanup}
-                className="px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-md text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700"
-              >
-                取消
-              </button>
-              <button
-                onClick={confirmCleanup}
-                className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700"
-              >
-                确认清理
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
 
-      {/* 结果提示 */}
-      {cleanupResult && (
-        <div className="fixed bottom-4 right-4 bg-green-100 dark:bg-green-900 border-l-4 border-green-500 text-green-700 dark:text-green-200 p-4 rounded shadow-md z-50">
-          <div className="flex">
-            <div className="py-1">
-              <svg
-                className="h-6 w-6 text-green-500 mr-4"
-                xmlns="http://www.w3.org/2000/svg"
-                fill="none"
-                viewBox="0 0 24 24"
-                stroke="currentColor"
-              >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth="2"
-                  d="M5 13l4 4L19 7"
-                />
-              </svg>
-            </div>
-            <div>
-              <p className="font-bold">清理完成</p>
-              <p className="text-sm">已清理 {cleanupResult.removedCount} 个重复标签页</p>
-            </div>
-          </div>
-        </div>
-      )}
     </header>
   );
 };
-
-// 使用memo优化Header组件，只有在onSearch prop变化时才重新渲染
-export const Header = memo(HeaderComponent, createMemoComparison(['onSearch']));
 
 export default Header;

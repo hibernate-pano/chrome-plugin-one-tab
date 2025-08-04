@@ -45,6 +45,48 @@
   .fab-small {
     @apply w-10 h-10;
   }
+
+  /* 全宽布局容器 */
+  .full-width-container {
+    @apply w-full px-3 sm:px-4 md:px-6 lg:px-8;
+  }
+
+  /* 三栏布局优化 */
+  .triple-column-layout {
+    @apply grid grid-cols-1 sm:grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3;
+  }
+
+  /* 双栏布局优化 */
+  .double-column-layout {
+    @apply grid grid-cols-1 sm:grid-cols-1 md:grid-cols-2 gap-3;
+  }
+
+  /* 单栏布局优化 */
+  .single-column-layout {
+    @apply space-y-2 transition-all duration-200 ease-out;
+  }
+
+  /* 确保三栏布局在小屏幕上的可读性 */
+  @media (max-width: 1024px) {
+    .triple-column-layout {
+      @apply grid-cols-1 md:grid-cols-2;
+    }
+  }
+
+  /* 三栏布局的栏目容器 */
+  .layout-column {
+    @apply space-y-2 transition-all duration-200 ease-out;
+  }
+
+  /* 响应式间距优化 */
+  .responsive-spacing {
+    @apply space-y-2 sm:space-y-3 md:space-y-4;
+  }
+
+  /* 响应式网格间距 */
+  .responsive-grid-gap {
+    @apply gap-2 sm:gap-3 md:gap-4 lg:gap-5;
+  }
 }
 
 /* 滚动条样式 - Material Design */
