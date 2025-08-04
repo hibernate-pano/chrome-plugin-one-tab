@@ -847,21 +847,22 @@ export const sync = {
     // 定义允许的设置字段，避免上传不存在的字段
     // 这些字段名对应数据库中的实际列名（驼峰命名，稍后会转换为下划线命名）
     const allowedFields = [
-      'autoSave',              // -> auto_save
-      'autoSaveInterval',      // -> auto_save_interval
+      // 'autoSave',              // -> auto_save (UserSettings中不存在，已注释)
+      // 'autoSaveInterval',      // -> auto_save_interval (UserSettings中不存在，已注释)
       'groupNameTemplate',     // -> group_name_template
       'showFavicons',          // -> show_favicons
       'showTabCount',          // -> show_tab_count
-      'autoCloseTabs',         // -> auto_close_tabs
+      // 'autoCloseTabs',         // -> auto_close_tabs (UserSettings中不存在，已注释)
       'confirmBeforeDelete',   // -> confirm_before_delete
       'allowDuplicateTabs',    // -> allow_duplicate_tabs
-      'syncInterval',          // -> sync_interval
+      // 'syncInterval',          // -> sync_interval (UserSettings中不存在，已注释)
       'syncEnabled',           // -> sync_enabled
       'layoutMode',            // -> layout_mode (新的布局模式字段)
       'showNotifications',     // -> show_notifications
       'syncStrategy',          // -> sync_strategy
       'deleteStrategy',        // -> delete_strategy
-      'themeMode'              // -> theme_mode
+      'themeMode',             // -> theme_mode
+      'reorderMode'            // -> reorder_mode (新增：全局重新排序模式)
     ];
 
     // 将驼峰命名法转换为下划线命名法，并过滤掉不允许的字段
