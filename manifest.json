@@ -4,7 +4,7 @@
   "version": "1.7.1",
   "description": "A better OneTab extension for Chrome",
   "content_security_policy": {
-    "extension_pages": "script-src 'self'; object-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https://*.supabase.co https://*.gravatar.com https://*.githubusercontent.com; font-src 'self' data:; connect-src 'self' https://*.supabase.co; frame-src 'none'; base-uri 'self'; form-action 'self';"
+    "extension_pages": "script-src 'self'; object-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https: http:; font-src 'self' data:; connect-src 'self' https://*.supabase.co; frame-src 'none'; base-uri 'self'; form-action 'self';"
   },
   "permissions": [
     "tabs",

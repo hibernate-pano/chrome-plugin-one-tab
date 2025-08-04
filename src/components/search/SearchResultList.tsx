@@ -13,7 +13,8 @@ interface SearchResultListProps {
 export const SearchResultList: React.FC<SearchResultListProps> = ({ searchQuery }) => {
   const dispatch = useAppDispatch();
   const { groups } = useAppSelector(state => state.tabs);
-  const { useDoubleColumnLayout } = useAppSelector(state => state.settings);
+  // 搜索结果强制使用单栏显示，不再依赖用户的布局设置
+  // const { layoutMode } = useAppSelector(state => state.settings);
 
   // 从所有标签组中提取匹配的标签
   const matchingTabs: Array<{ tab: Tab; group: TabGroup }> = [];
@@ -111,9 +112,9 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({ searchQuery 
     }
   };
 
-  // 将搜索结果分为左右两栏（双栏布局时使用）
-  const leftColumnTabs = matchingTabs.filter((_, index) => index % 2 === 0);
-  const rightColumnTabs = matchingTabs.filter((_, index) => index % 2 === 1);
+  // 搜索结果强制使用单栏显示，不再需要分栏逻辑
+  // const leftColumnTabs = matchingTabs.filter((_, index) => index % 2 === 0);
+  // const rightColumnTabs = matchingTabs.filter((_, index) => index % 2 === 1);
 
   // 渲染单个标签项
   const renderTabItem = ({ tab, group }: { tab: Tab; group: TabGroup }) => (
@@ -238,37 +239,14 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({ searchQuery 
           </button>
         )}
       </div>
-      {useDoubleColumnLayout ? (
-        // 双栏布局
-        <div className="grid grid-cols-1 sm:grid-cols-1 md:grid-cols-2 gap-3">
-          {/* 左栏搜索结果 */}
-          <div className="space-y-1 group">
-            {leftColumnTabs.map(tabInfo => (
-              <React.Fragment key={tabInfo.tab.id}>
-                {renderTabItem(tabInfo)}
-              </React.Fragment>
-            ))}
-          </div>
-
-          {/* 右栏搜索结果 */}
-          <div className="space-y-1 group">
-            {rightColumnTabs.map(tabInfo => (
-              <React.Fragment key={tabInfo.tab.id}>
-                {renderTabItem(tabInfo)}
-              </React.Fragment>
-            ))}
-          </div>
-        </div>
-      ) : (
-        // 单栏布局
-        <div className="space-y-1 group">
-          {matchingTabs.map(tabInfo => (
-            <React.Fragment key={tabInfo.tab.id}>
-              {renderTabItem(tabInfo)}
-            </React.Fragment>
-          ))}
-        </div>
-      )}
+      {/* 搜索结果强制使用单栏布局显示 */}
+      <div className="space-y-1 group">
+        {matchingTabs.map(tabInfo => (
+          <React.Fragment key={tabInfo.tab.id}>
+            {renderTabItem(tabInfo)}
+          </React.Fragment>
+        ))}
+      </div>
     </div>
   );
 };
