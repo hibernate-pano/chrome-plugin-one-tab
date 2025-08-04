@@ -1,4 +1,4 @@
-import { TabGroup, UserSettings, Tab } from '@/types/tab';
+import { TabGroup, UserSettings, Tab, LayoutMode } from '@/types/tab';
 import { parseOneTabFormat, formatToOneTabFormat } from './oneTabFormatParser';
 
 const STORAGE_KEYS = {
@@ -18,7 +18,7 @@ export const DEFAULT_SETTINGS: UserSettings = {
   confirmBeforeDelete: true,
   allowDuplicateTabs: false, // 默认不允许重复标签页
   syncEnabled: true, // 默认启用同步
-  useDoubleColumnLayout: true, // 默认使用双栏布局
+  layoutMode: 'double' as LayoutMode, // 默认使用双栏布局
   showNotifications: false, // 默认关闭通知
   syncStrategy: 'newest', // 默认使用最新版本
   deleteStrategy: 'everywhere', // 默认在所有设备上删除
@@ -59,9 +59,20 @@ class ChromeStorage {
   async getSettings(): Promise<UserSettings> {
     try {
       const result = await chrome.storage.local.get(STORAGE_KEYS.SETTINGS);
+      const savedSettings = result[STORAGE_KEYS.SETTINGS] || {};
+
+      // 向后兼容性处理：将旧的useDoubleColumnLayout转换为新的layoutMode
+      if (savedSettings.useDoubleColumnLayout !== undefined && savedSettings.layoutMode === undefined) {
+        savedSettings.layoutMode = savedSettings.useDoubleColumnLayout ? 'double' : 'single';
+        // 删除旧字段
+        delete savedSettings.useDoubleColumnLayout;
+        // 保存更新后的设置
+        await this.setSettings({ ...DEFAULT_SETTINGS, ...savedSettings });
+      }
+
       return {
         ...DEFAULT_SETTINGS,
-        ...result[STORAGE_KEYS.SETTINGS]
+        ...savedSettings
       };
     } catch (error) {
       console.error('获取设置失败:', error);

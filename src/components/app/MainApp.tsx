@@ -48,7 +48,7 @@ export const MainApp: React.FC = () => {
           {showPerformanceTest ? (
             <>
               <div className="bg-primary-600 text-white p-2">
-                <div className="container mx-auto flex items-center justify-between max-w-6xl">
+                <div className="w-full px-3 sm:px-4 md:px-6 lg:px-8 flex items-center justify-between">
                   <h1 className="text-lg font-bold">性能测试</h1>
                   <button
                     onClick={togglePerformanceTest}
@@ -58,7 +58,7 @@ export const MainApp: React.FC = () => {
                   </button>
                 </div>
               </div>
-              <main className="flex-1 container mx-auto py-2 px-2 max-w-6xl">
+              <main className="flex-1 w-full py-2 px-3 sm:px-4 md:px-6 lg:px-8">
                 <Suspense fallback={<div className="p-4 text-center">加载性能测试组件...</div>}>
                   <PerformanceTest />
                 </Suspense>
@@ -67,13 +67,13 @@ export const MainApp: React.FC = () => {
           ) : (
             <>
               <Header onSearch={setSearchQuery} />
-              <main className="flex-1 container mx-auto py-2 px-2 max-w-6xl">
+              <main className="flex-1 w-full py-2 px-3 sm:px-4 md:px-6 lg:px-8">
                 <Suspense fallback={<div className="p-4 text-center">加载标签列表...</div>}>
                   <TabList searchQuery={searchQuery} />
                 </Suspense>
               </main>
-              <footer className="py-2 px-2 bg-white dark:bg-gray-900 border-t border-gray-200 dark:border-gray-700 text-xs text-gray-600 dark:text-gray-400">
-                <div className="container mx-auto max-w-6xl flex justify-between items-center">
+              <footer className="bg-white dark:bg-gray-900 border-t border-gray-200 dark:border-gray-700 text-xs text-gray-600 dark:text-gray-400">
+                <div className="w-full px-3 py-2 sm:px-4 md:px-6 lg:px-8 flex justify-between items-center">
                   <div className="flex items-center space-x-2">
                     <svg
                       xmlns="http://www.w3.org/2000/svg"

@@ -31,7 +31,7 @@ interface TabListProps {
 export const TabListDndKit: React.FC<TabListProps> = ({ searchQuery }) => {
   const dispatch = useAppDispatch();
   const groups = useAppSelector(state => state.tabs.groups);
-  const useDoubleColumnLayout = useAppSelector(state => state.settings.useDoubleColumnLayout);
+  const layoutMode = useAppSelector(state => state.settings.layoutMode);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [activeData, setActiveData] = useState<any | null>(null);
 
@@ -301,10 +301,54 @@ export const TabListDndKit: React.FC<TabListProps> = ({ searchQuery }) => {
           onDragOver={handleDragOver}
           onDragEnd={handleDragEnd}
         >
-          {useDoubleColumnLayout ? (
+          {layoutMode === 'triple' ? (
+            // 三栏布局
+            <SortableContext items={groupIds} strategy={rectSortingStrategy}>
+              <div className="grid grid-cols-1 sm:grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4 md:gap-5 lg:gap-6">
+                {/* 第一栏 - 索引 % 3 === 0 的标签组 */}
+                <div className="space-y-2">
+                  {filteredGroups
+                    .filter((_, index) => index % 3 === 0)
+                    .map(group => (
+                      <SortableTabGroup
+                        key={group.id}
+                        group={group}
+                        index={filteredGroups.findIndex(g => g.id === group.id)}
+                      />
+                    ))}
+                </div>
+
+                {/* 第二栏 - 索引 % 3 === 1 的标签组 */}
+                <div className="space-y-2">
+                  {filteredGroups
+                    .filter((_, index) => index % 3 === 1)
+                    .map(group => (
+                      <SortableTabGroup
+                        key={group.id}
+                        group={group}
+                        index={filteredGroups.findIndex(g => g.id === group.id)}
+                      />
+                    ))}
+                </div>
+
+                {/* 第三栏 - 索引 % 3 === 2 的标签组 */}
+                <div className="space-y-2">
+                  {filteredGroups
+                    .filter((_, index) => index % 3 === 2)
+                    .map(group => (
+                      <SortableTabGroup
+                        key={group.id}
+                        group={group}
+                        index={filteredGroups.findIndex(g => g.id === group.id)}
+                      />
+                    ))}
+                </div>
+              </div>
+            </SortableContext>
+          ) : layoutMode === 'double' ? (
             // 双栏布局
             <SortableContext items={groupIds} strategy={rectSortingStrategy}>
-              <div className="grid grid-cols-1 sm:grid-cols-1 md:grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-1 md:grid-cols-2 gap-3 sm:gap-4 md:gap-5">
                 {/* 左栏 - 偶数索引的标签组 */}
                 <div className="space-y-2">
                   {filteredGroups

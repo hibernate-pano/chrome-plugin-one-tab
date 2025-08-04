@@ -807,10 +807,11 @@ export const sync = {
       'allowDuplicateTabs',    // -> allow_duplicate_tabs
       'syncInterval',          // -> sync_interval
       'syncEnabled',           // -> sync_enabled
-      'useDoubleColumnLayout', // -> use_double_column_layout
+      'layoutMode',            // -> layout_mode (新的布局模式字段)
       'showNotifications',     // -> show_notifications
       'syncStrategy',          // -> sync_strategy
-      'deleteStrategy'         // -> delete_strategy
+      'deleteStrategy',        // -> delete_strategy
+      'themeMode'              // -> theme_mode
     ];
 
     // 将驼峰命名法转换为下划线命名法，并过滤掉不允许的字段
@@ -919,12 +920,14 @@ export const sync = {
         'confirm_before_delete': 'confirmBeforeDelete',
         'allow_duplicate_tabs': 'allowDuplicateTabs',
         'sync_enabled': 'syncEnabled',
-        'use_double_column_layout': 'useDoubleColumnLayout',
+        'layout_mode': 'layoutMode',
         'show_notifications': 'showNotifications',
         'sync_strategy': 'syncStrategy',
         'delete_strategy': 'deleteStrategy',
         'theme_mode': 'themeMode',
-        'reorder_mode': 'reorderMode'
+        'reorder_mode': 'reorderMode',
+        // 向后兼容性：如果云端还有旧的字段，也要处理
+        'use_double_column_layout': 'useDoubleColumnLayout'
       };
 
       const convertedSettings: Record<string, any> = {};

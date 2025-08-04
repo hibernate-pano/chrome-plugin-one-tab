@@ -74,6 +74,9 @@ export interface TabState {
   syncOperation: 'none' | 'upload' | 'download'; // 当前同步操作类型
 }
 
+// 布局模式枚举
+export type LayoutMode = 'single' | 'double' | 'triple';
+
 export interface UserSettings {
   groupNameTemplate: string;
   showFavicons: boolean;
@@ -81,7 +84,7 @@ export interface UserSettings {
   confirmBeforeDelete: boolean;
   allowDuplicateTabs: boolean;
   syncEnabled: boolean; // 是否启用同步
-  useDoubleColumnLayout: boolean; // 是否使用双栏布局
+  layoutMode: LayoutMode; // 布局模式：单栏、双栏、三栏
   showNotifications: boolean; // 是否显示通知
 
   // 新增同步策略设置
@@ -92,6 +95,9 @@ export interface UserSettings {
   themeMode: 'light' | 'dark' | 'auto'; // 主题模式
 
   reorderMode?: boolean; // 新增：全局重新排序模式
+
+  // 保持向后兼容性的字段（已废弃，但保留以支持旧版本）
+  useDoubleColumnLayout?: boolean;
 }
 
 export interface User {

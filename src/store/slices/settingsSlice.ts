@@ -1,5 +1,5 @@
 import { createSlice, createAsyncThunk, PayloadAction } from '@reduxjs/toolkit';
-import { UserSettings } from '@/types/tab';
+import { UserSettings, LayoutMode } from '@/types/tab';
 import { storage, DEFAULT_SETTINGS as defaultSettings } from '@/utils/storage';
 import { sync as supabaseSync } from '@/utils/supabase';
 
@@ -109,9 +109,26 @@ const settingsSlice = createSlice({
     toggleSyncEnabled: (state) => {
       state.syncEnabled = !state.syncEnabled;
     },
-    // 切换布局模式
+    // 设置布局模式
+    setLayoutMode: (state, action: PayloadAction<LayoutMode>) => {
+      state.layoutMode = action.payload;
+    },
+
+    // 切换布局模式（循环切换：单栏 -> 双栏 -> 三栏 -> 单栏）
     toggleLayoutMode: (state) => {
-      state.useDoubleColumnLayout = !state.useDoubleColumnLayout;
+      switch (state.layoutMode) {
+        case 'single':
+          state.layoutMode = 'double';
+          break;
+        case 'double':
+          state.layoutMode = 'triple';
+          break;
+        case 'triple':
+          state.layoutMode = 'single';
+          break;
+        default:
+          state.layoutMode = 'single';
+      }
     },
     setReorderMode(state, action) {
       state.reorderMode = action.payload;
@@ -157,6 +174,7 @@ export const {
   toggleAllowDuplicateTabs,
   toggleShowNotifications,
   toggleSyncEnabled,
+  setLayoutMode,
   toggleLayoutMode,
   setReorderMode,
 } = settingsSlice.actions;

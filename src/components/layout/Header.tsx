@@ -7,6 +7,7 @@ import { useToast } from '@/contexts/ToastContext';
 import { TabCounter } from './TabCounter';
 import SyncButton from '@/components/sync/SyncButton';
 import { SimpleThemeToggle } from './SimpleThemeToggle';
+import { LayoutMode } from '@/types/tab';
 
 interface HeaderProps {
   onSearch: (query: string) => void;
@@ -87,10 +88,27 @@ export const Header: React.FC<HeaderProps> = ({ onSearch }) => {
 
     // 然后切换布局模式
     dispatch(toggleLayoutMode());
+
+    // 获取下一个布局模式
+    let nextLayoutMode: LayoutMode;
+    switch (settings.layoutMode) {
+      case 'single':
+        nextLayoutMode = 'double';
+        break;
+      case 'double':
+        nextLayoutMode = 'triple';
+        break;
+      case 'triple':
+        nextLayoutMode = 'single';
+        break;
+      default:
+        nextLayoutMode = 'single';
+    }
+
     dispatch(
       saveSettings({
         ...settings,
-        useDoubleColumnLayout: !settings.useDoubleColumnLayout,
+        layoutMode: nextLayoutMode,
         reorderMode: false, // 确保在切换布局时退出重排序模式
       })
     );
@@ -116,8 +134,8 @@ export const Header: React.FC<HeaderProps> = ({ onSearch }) => {
 
   return (
     <header className="bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700 transition-colors">
-      <div className="container mx-auto max-w-6xl">
-        <div className="flex items-center justify-between py-2 px-2">
+      <div className="w-full px-3 py-2 sm:px-4 md:px-6 lg:px-8">
+        <div className="flex items-center justify-between">
           <div className="flex items-center space-x-3">
             <svg
               xmlns="http://www.w3.org/2000/svg"
@@ -190,11 +208,20 @@ export const Header: React.FC<HeaderProps> = ({ onSearch }) => {
               <button
                 onClick={handleToggleLayout}
                 className="p-2 rounded hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors text-gray-600 dark:text-gray-300 flex items-center justify-center"
-                title={settings.useDoubleColumnLayout ? '切换为单栏布局' : '切换为双栏布局'}
-                aria-label={settings.useDoubleColumnLayout ? '切换为单栏布局' : '切换为双栏布局'}
-                aria-pressed={settings.useDoubleColumnLayout}
+                title={
+                  settings.layoutMode === 'single' ? '切换为双栏布局' :
+                    settings.layoutMode === 'double' ? '切换为三栏布局' :
+                      '切换为单栏布局'
+                }
+                aria-label={
+                  settings.layoutMode === 'single' ? '切换为双栏布局' :
+                    settings.layoutMode === 'double' ? '切换为三栏布局' :
+                      '切换为单栏布局'
+                }
+                aria-pressed={settings.layoutMode !== 'single'}
               >
-                {settings.useDoubleColumnLayout ? (
+                {settings.layoutMode === 'single' ? (
+                  // 单栏布局图标
                   <svg
                     xmlns="http://www.w3.org/2000/svg"
                     className="h-5 w-5"
@@ -206,10 +233,27 @@ export const Header: React.FC<HeaderProps> = ({ onSearch }) => {
                       strokeLinecap="round"
                       strokeLinejoin="round"
                       strokeWidth={2}
-                      d="M4 6h16M4 12h16M4 18h7"
+                      d="M4 6h16M4 12h16M4 18h16"
+                    />
+                  </svg>
+                ) : settings.layoutMode === 'double' ? (
+                  // 双栏布局图标
+                  <svg
+                    xmlns="http://www.w3.org/2000/svg"
+                    className="h-5 w-5"
+                    fill="none"
+                    viewBox="0 0 24 24"
+                    stroke="currentColor"
+                  >
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth={2}
+                      d="M4 6h7M4 12h7M4 18h7M13 6h7M13 12h7M13 18h7"
                     />
                   </svg>
                 ) : (
+                  // 三栏布局图标
                   <svg
                     xmlns="http://www.w3.org/2000/svg"
                     className="h-5 w-5"
@@ -221,7 +265,7 @@ export const Header: React.FC<HeaderProps> = ({ onSearch }) => {
                       strokeLinecap="round"
                       strokeLinejoin="round"
                       strokeWidth={2}
-                      d="M4 6h16M4 12h8m-8 6h16"
+                      d="M4 6h4M4 12h4M4 18h4M10 6h4M10 12h4M10 18h4M16 6h4M16 12h4M16 18h4"
                     />
                   </svg>
                 )}

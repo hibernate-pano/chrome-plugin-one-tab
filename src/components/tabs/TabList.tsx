@@ -17,7 +17,7 @@ const ReorderView = lazy(() => import('@/components/tabs/ReorderView'));
 export const TabList: React.FC<TabListProps> = ({ searchQuery }) => {
   const dispatch = useAppDispatch();
   const { groups, isLoading, error } = useAppSelector(state => state.tabs);
-  const { useDoubleColumnLayout, reorderMode } = useAppSelector(state => state.settings);
+  const { layoutMode, reorderMode } = useAppSelector(state => state.settings);
   const [isRestoreAllModalOpen, setIsRestoreAllModalOpen] = useState(false);
   const [selectedGroup, setSelectedGroup] = useState<TabGroupType | null>(null);
 
@@ -167,9 +167,72 @@ export const TabList: React.FC<TabListProps> = ({ searchQuery }) => {
       {/* 搜索结果或标签组列表 */}
       {searchQuery ? (
         <SearchResultList searchQuery={searchQuery} />
-      ) : useDoubleColumnLayout ? (
+      ) : layoutMode === 'triple' ? (
+        // 三栏布局
+        <div className="grid grid-cols-1 sm:grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4 md:gap-5 lg:gap-6">
+          {/* 第一栏 - 索引 % 3 === 0 的标签组 */}
+          <div className="space-y-2 transition-all">
+            {filteredGroups
+              .filter((_, index) => index % 3 === 0)
+              .map(group => {
+                // 计算在原始数组中的实际索引
+                const originalIndex = filteredGroups.findIndex(g => g.id === group.id);
+                return (
+                  <DraggableTabGroup
+                    key={group.id}
+                    group={group}
+                    index={originalIndex}
+                    moveGroup={(dragIndex, hoverIndex) => {
+                      dispatch(moveGroupAndSync({ dragIndex, hoverIndex }));
+                    }}
+                  />
+                );
+              })}
+          </div>
+
+          {/* 第二栏 - 索引 % 3 === 1 的标签组 */}
+          <div className="space-y-2 transition-all">
+            {filteredGroups
+              .filter((_, index) => index % 3 === 1)
+              .map(group => {
+                // 计算在原始数组中的实际索引
+                const originalIndex = filteredGroups.findIndex(g => g.id === group.id);
+                return (
+                  <DraggableTabGroup
+                    key={group.id}
+                    group={group}
+                    index={originalIndex}
+                    moveGroup={(dragIndex, hoverIndex) => {
+                      dispatch(moveGroupAndSync({ dragIndex, hoverIndex }));
+                    }}
+                  />
+                );
+              })}
+          </div>
+
+          {/* 第三栏 - 索引 % 3 === 2 的标签组 */}
+          <div className="space-y-2 transition-all">
+            {filteredGroups
+              .filter((_, index) => index % 3 === 2)
+              .map(group => {
+                // 计算在原始数组中的实际索引
+                const originalIndex = filteredGroups.findIndex(g => g.id === group.id);
+                return (
+                  <DraggableTabGroup
+                    key={group.id}
+                    group={group}
+                    index={originalIndex}
+                    moveGroup={(dragIndex, hoverIndex) => {
+                      dispatch(moveGroupAndSync({ dragIndex, hoverIndex }));
+                    }}
+                  />
+                );
+              })}
+          </div>
+        </div>
+      ) : layoutMode === 'double' ? (
         // 双栏布局
-        <div className="grid grid-cols-1 sm:grid-cols-1 md:grid-cols-2 gap-3">
+        <div className="grid grid-cols-1 sm:grid-cols-1 md:grid-cols-2 gap-3 sm:gap-4 md:gap-5">
           {/* 左栏 - 偶数索引的标签组 */}
           <div className="space-y-2 transition-all">
             {filteredGroups
