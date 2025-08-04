@@ -7,10 +7,24 @@ const SYNC_DEBOUNCE_DELAY = 300; // 减少到0.3秒，使操作更及时
 
 /**
  * 通用的同步辅助函数，用于将本地数据变更同步到云端
- * @param dispatch Redux dispatch 函数
- * @param getState Redux getState 函数
- * @param operationType 操作类型，用于日志记录
- * @returns 同步是否成功
+ *
+ * 该函数实现了智能同步策略，包括：
+ * 1. 操作优先级管理 - 高优先级操作（如删除）会中断低优先级操作
+ * 2. 防抖控制 - 在短时间内多次调用只执行最后一次，减少网络请求
+ * 3. 自适应延迟 - 根据操作优先级调整延迟时间，重要操作更快执行
+ * 4. 错误隔离 - 同步错误不会影响用户体验，只在开发环境记录日志
+ * 5. 登录状态检查 - 自动跳过未登录用户的同步请求
+ *
+ * 性能优化：
+ * - 使用防抖机制减少频繁网络请求
+ * - 优先级系统确保重要操作不被延迟
+ * - 异步执行避免阻塞UI线程
+ * - 错误处理确保同步失败不影响用户体验
+ *
+ * @param dispatch Redux dispatch 函数，用于触发状态更新
+ * @param getState Redux getState 函数，用于获取当前应用状态
+ * @param operationType 操作类型，用于日志记录和确定优先级
+ * @returns Promise<boolean> 同步是否成功的Promise
  */
 // 操作优先级定义
 const OPERATION_PRIORITIES: Record<string, number> = {

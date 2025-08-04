@@ -1,12 +1,14 @@
-import { TabGroup, UserSettings, Tab } from '@/types/tab';
+import { TabGroup, UserSettings, Tab, LayoutMode } from '@/types/tab';
 import { parseOneTabFormat, formatToOneTabFormat } from './oneTabFormatParser';
+import { secureStorage } from './secureStorage';
 
 const STORAGE_KEYS = {
   GROUPS: 'tab_groups',
   SETTINGS: 'user_settings',
   DELETED_GROUPS: 'deleted_tab_groups', // 存储已删除的标签组
   DELETED_TABS: 'deleted_tabs', // 存储已删除的标签页
-  LAST_SYNC_TIME: 'last_sync_time' // 存储最后同步时间
+  LAST_SYNC_TIME: 'last_sync_time', // 存储最后同步时间
+  MIGRATION_FLAGS: 'migration_flags' // 存储迁移标志
 };
 
 // 默认设置
@@ -17,7 +19,7 @@ export const DEFAULT_SETTINGS: UserSettings = {
   confirmBeforeDelete: true,
   allowDuplicateTabs: false, // 默认不允许重复标签页
   syncEnabled: true, // 默认启用同步
-  useDoubleColumnLayout: true, // 默认使用双栏布局
+  layoutMode: 'double' as LayoutMode, // 默认使用双栏布局
   showNotifications: false, // 默认关闭通知
   syncStrategy: 'newest', // 默认使用最新版本
   deleteStrategy: 'everywhere', // 默认在所有设备上删除
@@ -58,9 +60,20 @@ class ChromeStorage {
   async getSettings(): Promise<UserSettings> {
     try {
       const result = await chrome.storage.local.get(STORAGE_KEYS.SETTINGS);
+      const savedSettings = result[STORAGE_KEYS.SETTINGS] || {};
+
+      // 向后兼容性处理：将旧的useDoubleColumnLayout转换为新的layoutMode
+      if (savedSettings.useDoubleColumnLayout !== undefined && savedSettings.layoutMode === undefined) {
+        savedSettings.layoutMode = savedSettings.useDoubleColumnLayout ? 'double' : 'single';
+        // 删除旧字段
+        delete savedSettings.useDoubleColumnLayout;
+        // 保存更新后的设置
+        await this.setSettings({ ...DEFAULT_SETTINGS, ...savedSettings });
+      }
+
       return {
         ...DEFAULT_SETTINGS,
-        ...result[STORAGE_KEYS.SETTINGS]
+        ...savedSettings
       };
     } catch (error) {
       console.error('获取设置失败:', error);
@@ -208,9 +221,16 @@ class ChromeStorage {
         throw new Error('无效的导入数据格式');
       }
 
-      // 导入标签组
+      // 导入标签组，并按创建时间倒序排列
       const existingGroups = await this.getGroups();
-      await this.setGroups([...data.data.groups, ...existingGroups]);
+      const allGroups = [...data.data.groups, ...existingGroups];
+      // 按创建时间倒序排列，确保最新创建的标签组在前面
+      const sortedGroups = allGroups.sort((a, b) => {
+        const dateA = new Date(a.createdAt);
+        const dateB = new Date(b.createdAt);
+        return dateB.getTime() - dateA.getTime();
+      });
+      await this.setGroups(sortedGroups);
 
       // 如果有设置数据，则合并设置
       if (data.data.settings) {
@@ -246,9 +266,16 @@ class ChromeStorage {
         throw new Error('解析失败或没有有效的标签组');
       }
 
-      // 导入标签组
+      // 导入标签组，并按创建时间倒序排列
       const existingGroups = await this.getGroups();
-      await this.setGroups([...parsedGroups, ...existingGroups]);
+      const allGroups = [...parsedGroups, ...existingGroups];
+      // 按创建时间倒序排列，确保最新创建的标签组在前面
+      const sortedGroups = allGroups.sort((a, b) => {
+        const dateA = new Date(a.createdAt);
+        const dateB = new Date(b.createdAt);
+        return dateB.getTime() - dateA.getTime();
+      });
+      await this.setGroups(sortedGroups);
 
       return true;
     } catch (error) {
@@ -262,6 +289,44 @@ class ChromeStorage {
       await chrome.storage.local.clear();
     } catch (error) {
       console.error('清除存储失败:', error);
+    }
+  }
+
+  // 迁移标志相关方法
+  async getMigrationFlags(): Promise<Record<string, boolean>> {
+    try {
+      // 优先使用加密存储
+      const flags = await secureStorage.get<Record<string, boolean>>(STORAGE_KEYS.MIGRATION_FLAGS);
+      if (flags) return flags;
+
+      // 降级到普通存储（向后兼容）
+      const result = await chrome.storage.local.get(STORAGE_KEYS.MIGRATION_FLAGS);
+      return result[STORAGE_KEYS.MIGRATION_FLAGS] || {};
+    } catch (error) {
+      console.error('获取迁移标志失败:', error);
+      return {};
+    }
+  }
+
+  async setMigrationFlag(key: string, value: boolean): Promise<void> {
+    try {
+      const flags = await this.getMigrationFlags();
+      flags[key] = value;
+
+      // 使用加密存储
+      await secureStorage.set(STORAGE_KEYS.MIGRATION_FLAGS, flags);
+    } catch (error) {
+      console.error('设置迁移标志失败:', error);
+      // 降级到普通存储
+      try {
+        const flags = await this.getMigrationFlags();
+        flags[key] = value;
+        await chrome.storage.local.set({
+          [STORAGE_KEYS.MIGRATION_FLAGS]: flags
+        });
+      } catch (fallbackError) {
+        console.error('降级存储也失败:', fallbackError);
+      }
     }
   }
 }

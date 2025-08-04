@@ -2,6 +2,9 @@ import React from 'react';
 import { useAppDispatch, useAppSelector } from '@/store/hooks';
 import { Tab, TabGroup } from '@/types/tab';
 import { updateGroup, deleteGroup } from '@/store/slices/tabSlice';
+import { shouldAutoDeleteAfterTabRemoval } from '@/utils/tabGroupUtils';
+import HighlightText from './HighlightText';
+import { SafeFavicon } from '@/components/common/SafeFavicon';
 
 interface SearchResultListProps {
   searchQuery: string;
@@ -10,7 +13,8 @@ interface SearchResultListProps {
 export const SearchResultList: React.FC<SearchResultListProps> = ({ searchQuery }) => {
   const dispatch = useAppDispatch();
   const { groups } = useAppSelector(state => state.tabs);
-  const { useDoubleColumnLayout } = useAppSelector(state => state.settings);
+  // 搜索结果强制使用单栏显示，不再依赖用户的布局设置
+  // const { layoutMode } = useAppSelector(state => state.settings);
 
   // 从所有标签组中提取匹配的标签
   const matchingTabs: Array<{ tab: Tab; group: TabGroup }> = [];
@@ -46,15 +50,15 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({ searchQuery 
   const handleOpenTab = (tab: Tab, group: TabGroup) => {
     // 如果标签组没有锁定，先从标签组中移除该标签页
     if (!group.isLocked) {
-      // 如果标签组只有一个标签页，则删除整个标签组
-      if (group.tabs.length === 1) {
+      // 使用工具函数检查是否应该自动删除标签组
+      if (shouldAutoDeleteAfterTabRemoval(group, tab.id)) {
         // 先在Redux中删除标签组，立即更新UI
         dispatch({ type: 'tabs/deleteGroup/fulfilled', payload: group.id });
 
         // 然后异步完成存储操作
         dispatch(deleteGroup(group.id))
           .then(() => {
-            console.log(`删除标签组: ${group.id}`);
+            console.log(`自动删除空标签组: ${group.name} (ID: ${group.id})`);
           })
           .catch(error => {
             console.error('删除标签组失败:', error);
@@ -74,7 +78,7 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({ searchQuery 
         // 然后异步完成存储操作
         dispatch(updateGroup(updatedGroup))
           .then(() => {
-            console.log(`更新标签组: ${group.id}, 剩余标签页: ${updatedTabs.length}`);
+            console.log(`更新标签组: ${group.name}, 剩余标签页: ${updatedTabs.length}`);
           })
           .catch(error => {
             console.error('更新标签组失败:', error);
@@ -92,22 +96,25 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({ searchQuery 
   };
 
   const handleDeleteTab = (tab: Tab, group: TabGroup) => {
-    const updatedTabs = group.tabs.filter(t => t.id !== tab.id);
-    if (updatedTabs.length === 0) {
+    // 使用工具函数检查是否应该自动删除标签组
+    if (shouldAutoDeleteAfterTabRemoval(group, tab.id)) {
       dispatch(deleteGroup(group.id));
+      console.log(`自动删除空标签组: ${group.name} (ID: ${group.id})`);
     } else {
+      const updatedTabs = group.tabs.filter(t => t.id !== tab.id);
       const updatedGroup = {
         ...group,
         tabs: updatedTabs,
         updatedAt: new Date().toISOString()
       };
       dispatch(updateGroup(updatedGroup));
+      console.log(`从标签组删除标签页: ${group.name}, 剩余标签页: ${updatedTabs.length}`);
     }
   };
 
-  // 将搜索结果分为左右两栏（双栏布局时使用）
-  const leftColumnTabs = matchingTabs.filter((_, index) => index % 2 === 0);
-  const rightColumnTabs = matchingTabs.filter((_, index) => index % 2 === 1);
+  // 搜索结果强制使用单栏显示，不再需要分栏逻辑
+  // const leftColumnTabs = matchingTabs.filter((_, index) => index % 2 === 0);
+  // const rightColumnTabs = matchingTabs.filter((_, index) => index % 2 === 1);
 
   // 渲染单个标签项
   const renderTabItem = ({ tab, group }: { tab: Tab; group: TabGroup }) => (
@@ -115,15 +122,7 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({ searchQuery 
       className="flex items-center py-1 px-2 bg-white dark:bg-gray-800 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors rounded mb-1"
     >
       <div className="flex items-center space-x-2 flex-1 min-w-0">
-        {tab.favicon ? (
-          <img src={tab.favicon} alt="" className="w-4 h-4 flex-shrink-0" />
-        ) : (
-          <div className="w-4 h-4 bg-gray-200 dark:bg-gray-600 flex-shrink-0 flex items-center justify-center">
-            <svg xmlns="http://www.w3.org/2000/svg" className="h-3 w-3 text-gray-500 dark:text-gray-300" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3.055 11H5a2 2 0 012 2v1a2 2 0 002 2 2 2 0 012 2v2.945M8 3.935V5.5A2.5 2.5 0 0010.5 8h.5a2 2 0 012 2 2 2 0 104 0 2 2 0 012-2h1.064M15 20.488V18a2 2 0 012-2h3.064M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-            </svg>
-          </div>
-        )}
+        <SafeFavicon src={tab.favicon} alt="" />
         <a
           href="#"
           className="truncate text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300 hover:underline text-sm flex-1 min-w-0"
@@ -133,7 +132,7 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({ searchQuery 
           }}
           title={tab.title}
         >
-          {tab.title}
+          <HighlightText text={tab.title} highlight={searchQuery} />
         </a>
       </div>
       <button
@@ -240,37 +239,14 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({ searchQuery 
           </button>
         )}
       </div>
-      {useDoubleColumnLayout ? (
-        // 双栏布局
-        <div className="grid grid-cols-1 sm:grid-cols-1 md:grid-cols-2 gap-3">
-          {/* 左栏搜索结果 */}
-          <div className="space-y-1 group">
-            {leftColumnTabs.map(tabInfo => (
-              <React.Fragment key={tabInfo.tab.id}>
-                {renderTabItem(tabInfo)}
-              </React.Fragment>
-            ))}
-          </div>
-
-          {/* 右栏搜索结果 */}
-          <div className="space-y-1 group">
-            {rightColumnTabs.map(tabInfo => (
-              <React.Fragment key={tabInfo.tab.id}>
-                {renderTabItem(tabInfo)}
-              </React.Fragment>
-            ))}
-          </div>
-        </div>
-      ) : (
-        // 单栏布局
-        <div className="space-y-1 group">
-          {matchingTabs.map(tabInfo => (
-            <React.Fragment key={tabInfo.tab.id}>
-              {renderTabItem(tabInfo)}
-            </React.Fragment>
-          ))}
-        </div>
-      )}
+      {/* 搜索结果强制使用单栏布局显示 */}
+      <div className="space-y-1 group">
+        {matchingTabs.map(tabInfo => (
+          <React.Fragment key={tabInfo.tab.id}>
+            {renderTabItem(tabInfo)}
+          </React.Fragment>
+        ))}
+      </div>
     </div>
   );
 };

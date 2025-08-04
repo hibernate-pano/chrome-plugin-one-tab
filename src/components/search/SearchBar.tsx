@@ -1,16 +1,20 @@
-import React, { useState, useRef } from 'react';
+import React, { useState } from 'react';
 import { useAppDispatch } from '@/store/hooks';
 import { setSearchQuery } from '@/store/slices/tabSlice';
-import { debounce } from 'lodash';
+import { useDebouncedCallback } from '@/hooks/useDebounce';
 
 export const SearchBar: React.FC = () => {
   const dispatch = useAppDispatch();
   const [localQuery, setLocalQuery] = useState('');
 
-  // 使用useRef来存储debounce函数，确保它只创建一次
-  const debouncedSearch = useRef(debounce((query: string) => {
-    dispatch(setSearchQuery(query));
-  }, 300)).current;
+  // 使用防抖来优化搜索性能
+  const debouncedSearch = useDebouncedCallback(
+    (query: string) => {
+      dispatch(setSearchQuery(query));
+    },
+    300,
+    [dispatch]
+  );
 
   const handleSearch = (e: React.ChangeEvent<HTMLInputElement>) => {
     const query = e.target.value;
@@ -30,6 +34,8 @@ export const SearchBar: React.FC = () => {
         value={localQuery}
         onChange={handleSearch}
         placeholder="搜索标签..."
+        aria-label="搜索标签页"
+        aria-describedby="search-description"
         className="
           w-full px-4 py-2 pl-10
           rounded-lg
@@ -41,6 +47,9 @@ export const SearchBar: React.FC = () => {
           transition duration-200
         "
       />
+      <div id="search-description" className="sr-only">
+        输入关键词搜索已保存的标签页
+      </div>
       <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
         <svg
           className="h-5 w-5 text-gray-400"
@@ -62,11 +71,14 @@ export const SearchBar: React.FC = () => {
             absolute inset-y-0 right-0 pr-3
             text-gray-400 hover:text-gray-500
             dark:text-gray-500 dark:hover:text-gray-400
-            transition duration-200
+            transition-all duration-200 ease-in-out
+            hover:scale-110
+            focus:outline-none
           "
+          title="清除搜索"
         >
           <svg
-            className="h-5 w-5"
+            className="h-5 w-5 transform transition-transform hover:rotate-90"
             xmlns="http://www.w3.org/2000/svg"
             viewBox="0 0 20 20"
             fill="currentColor"

@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { useAppDispatch, useAppSelector } from '@/store/hooks';
-import { loadGroups, moveGroupAndSync, moveTabAndSync } from '@/store/slices/tabSlice';
+import { loadGroups, moveTabAndSync } from '@/store/slices/tabSlice';
 import { SearchResultList } from '@/components/search/SearchResultList';
 import { SortableTabGroup } from '@/components/dnd/SortableTabGroup';
 import { Tab, TabGroup } from '@/types/tab';
@@ -90,16 +90,7 @@ export const SimpleTabList: React.FC<SimpleTabListProps> = ({ searchQuery }) => 
           updateSourceInDrag: true
         }));
       }
-      // 处理标签组拖拽
-      else if (activeData?.type === 'group' && overData?.type === 'group') {
-        const activeIndex = filteredGroups.findIndex(g => `group-${g.id}` === active.id);
-        const overIndex = filteredGroups.findIndex(g => `group-${g.id}` === over.id);
-
-        if (activeIndex !== -1 && overIndex !== -1) {
-          // 执行标签组移动
-          dispatch(moveGroupAndSync({ dragIndex: activeIndex, hoverIndex: overIndex }));
-        }
-      }
+      // 标签组拖拽已被禁用，不再处理组拖拽逻辑
     }
 
     // 清理状态

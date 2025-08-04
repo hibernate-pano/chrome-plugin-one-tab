@@ -22,13 +22,33 @@ export default defineConfig(({ mode }) => {
     build: {
       outDir: 'dist',
       emptyOutDir: true,
+      // 增加警告阈值到 1000KB，减少不必要的警告
+      chunkSizeWarningLimit: 1000,
       rollupOptions: {
         input: {
           'service-worker': resolve(__dirname, 'src/service-worker.ts'),
           'src/popup/index': resolve(__dirname, 'src/popup/index.html'),
           'popup': resolve(__dirname, 'popup.html'),
-          'confirm': resolve(__dirname, 'src/auth/confirm.html'),
-          'wechat-login': resolve(__dirname, 'src/pages/wechat-login.html')
+          'confirm': resolve(__dirname, 'src/auth/confirm.html')
+        },
+        output: {
+          // 手动配置代码分块策略
+          manualChunks: {
+            // React 相关库打包到一起
+            'react-vendor': ['react', 'react-dom', 'react-redux'],
+            // Redux 相关库打包到一起
+            'redux-vendor': ['@reduxjs/toolkit'],
+            // Supabase 相关库打包到一起
+            'supabase-vendor': ['@supabase/supabase-js'],
+            // 工具函数打包到一起
+            'utils': [
+              './src/utils/storage.ts',
+              './src/utils/supabase.ts',
+              './src/utils/syncUtils.ts',
+              './src/utils/syncHelpers.ts',
+              './src/utils/encryptionUtils.ts'
+            ]
+          }
         }
       }
     }

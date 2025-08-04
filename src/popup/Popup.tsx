@@ -9,6 +9,7 @@ import Header from '@/components/layout/Header';
 import TabList from '@/components/tabs/TabList';
 import { TabListDndKit } from '@/components/tabs/TabListDndKit';
 import { LoadingOverlay } from '@/components/common/LoadingOverlay';
+import { useToast } from '@/contexts/ToastContext';
 // DndProvider is handled internally by TabListDndKit
 
 const SyncLoadingOverlay: React.FC = () => {
@@ -25,6 +26,8 @@ const SyncLoadingOverlay: React.FC = () => {
 
 const PopupContent: React.FC = () => {
   const [searchQuery, setSearchQuery] = useState('');
+  const { showToast } = useToast();
+
   useEffect(() => {
     store.dispatch(loadSettings());
     store.dispatch(loadGroups());
@@ -37,9 +40,9 @@ const PopupContent: React.FC = () => {
       // 显示保存成功的提示
       const message = `已保存 ${tabs.length} 个标签页`;
       console.log(message);
-      // TODO: 添加UI提示和高亮效果
+      showToast(message, 'success');
     }
-  }, []);
+  }, [showToast]);
 
   // 使用新的 dnd-kit 实现
   const useDndKit = true;

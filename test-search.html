@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>OneTab Plus 搜索功能测试</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            line-height: 1.6;
+        }
+        .test-section {
+            margin: 20px 0;
+            padding: 20px;
+            border: 1px solid #ddd;
+            border-radius: 8px;
+        }
+        .test-title {
+            font-size: 18px;
+            font-weight: bold;
+            margin-bottom: 10px;
+            color: #333;
+        }
+        .test-description {
+            color: #666;
+            margin-bottom: 15px;
+        }
+        .test-steps {
+            background: #f5f5f5;
+            padding: 15px;
+            border-radius: 4px;
+            margin: 10px 0;
+        }
+        .test-steps ol {
+            margin: 0;
+            padding-left: 20px;
+        }
+        .expected-result {
+            background: #e8f5e8;
+            padding: 10px;
+            border-radius: 4px;
+            border-left: 4px solid #4caf50;
+        }
+        .note {
+            background: #fff3cd;
+            padding: 10px;
+            border-radius: 4px;
+            border-left: 4px solid #ffc107;
+            margin: 10px 0;
+        }
+    </style>
+</head>
+<body>
+    <h1>OneTab Plus 搜索功能测试指南</h1>
+    
+    <div class="note">
+        <strong>注意：</strong>本测试需要在Chrome浏览器中安装OneTab Plus插件后进行。
+    </div>
+
+    <div class="test-section">
+        <div class="test-title">测试1：单栏模式下的搜索</div>
+        <div class="test-description">验证在单栏显示模式下，搜索结果是否正确显示为单栏格式</div>
+        <div class="test-steps">
+            <strong>测试步骤：</strong>
+            <ol>
+                <li>打开OneTab Plus插件弹窗</li>
+                <li>确保当前显示模式为单栏（点击布局切换按钮直到显示单栏图标）</li>
+                <li>在搜索框中输入关键词（如"test"、"google"等）</li>
+                <li>观察搜索结果的显示格式</li>
+            </ol>
+        </div>
+        <div class="expected-result">
+            <strong>预期结果：</strong>搜索结果应该以单栏格式显示，每个匹配的标签页垂直排列
+        </div>
+    </div>
+
+    <div class="test-section">
+        <div class="test-title">测试2：双栏模式下的搜索</div>
+        <div class="test-description">验证在双栏显示模式下，搜索结果是否强制显示为单栏格式</div>
+        <div class="test-steps">
+            <strong>测试步骤：</strong>
+            <ol>
+                <li>打开OneTab Plus插件弹窗</li>
+                <li>切换到双栏显示模式（点击布局切换按钮直到显示双栏图标）</li>
+                <li>确认标签组以双栏格式显示</li>
+                <li>在搜索框中输入关键词</li>
+                <li>观察搜索结果的显示格式</li>
+                <li>清空搜索框，观察是否恢复双栏显示</li>
+            </ol>
+        </div>
+        <div class="expected-result">
+            <strong>预期结果：</strong>
+            <ul>
+                <li>搜索时：搜索结果强制显示为单栏格式</li>
+                <li>清空搜索后：恢复双栏显示模式</li>
+            </ul>
+        </div>
+    </div>
+
+    <div class="test-section">
+        <div class="test-title">测试3：三栏模式下的搜索</div>
+        <div class="test-description">验证在三栏显示模式下，搜索结果是否强制显示为单栏格式</div>
+        <div class="test-steps">
+            <strong>测试步骤：</strong>
+            <ol>
+                <li>打开OneTab Plus插件弹窗</li>
+                <li>切换到三栏显示模式（点击布局切换按钮直到显示三栏图标）</li>
+                <li>确认标签组以三栏格式显示</li>
+                <li>在搜索框中输入关键词</li>
+                <li>观察搜索结果的显示格式</li>
+                <li>清空搜索框，观察是否恢复三栏显示</li>
+            </ol>
+        </div>
+        <div class="expected-result">
+            <strong>预期结果：</strong>
+            <ul>
+                <li>搜索时：搜索结果强制显示为单栏格式</li>
+                <li>清空搜索后：恢复三栏显示模式</li>
+            </ul>
+        </div>
+    </div>
+
+    <div class="test-section">
+        <div class="test-title">测试4：搜索功能验证</div>
+        <div class="test-description">验证搜索功能的基本操作是否正常</div>
+        <div class="test-steps">
+            <strong>测试步骤：</strong>
+            <ol>
+                <li>在搜索框中输入存在的标签页标题关键词</li>
+                <li>验证匹配的标签页是否正确显示</li>
+                <li>点击搜索结果中的标签页链接</li>
+                <li>验证标签页是否正确打开</li>
+                <li>测试搜索结果中的删除按钮</li>
+                <li>测试"恢复全部"按钮</li>
+            </ol>
+        </div>
+        <div class="expected-result">
+            <strong>预期结果：</strong>
+            <ul>
+                <li>搜索结果准确匹配</li>
+                <li>点击链接正确打开标签页</li>
+                <li>删除和恢复功能正常工作</li>
+                <li>所有操作都在单栏格式下进行</li>
+            </ul>
+        </div>
+    </div>
+
+    <div class="test-section">
+        <div class="test-title">修改总结</div>
+        <div class="test-description">本次修改的主要内容</div>
+        <div class="test-steps">
+            <strong>修改内容：</strong>
+            <ul>
+                <li>移除了SearchResultList组件对废弃的useDoubleColumnLayout字段的依赖</li>
+                <li>强制搜索结果以单栏格式显示，不受用户当前布局模式影响</li>
+                <li>保持非搜索状态下的正常多栏显示功能</li>
+                <li>确保搜索功能的所有操作（打开、删除、恢复）正常工作</li>
+            </ul>
+        </div>
+    </div>
+
+    <div class="note">
+        <strong>测试完成后：</strong>如果所有测试都通过，说明搜索结果强制单栏显示功能已成功实现。
+    </div>
+</body>
+</html>

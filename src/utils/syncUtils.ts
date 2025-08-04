@@ -51,10 +51,16 @@ export const mergeTabGroups = (
     }
   });
 
-  // 将映射转换回数组
+  // 将映射转换回数组，并按创建时间倒序排列
   return Array.from(mergedGroupsMap.values())
     // 过滤掉已删除的标签组
-    .filter(group => !group.isDeleted);
+    .filter(group => !group.isDeleted)
+    // 按创建时间倒序排列，确保最新创建的标签组在前面
+    .sort((a, b) => {
+      const dateA = new Date(a.createdAt);
+      const dateB = new Date(b.createdAt);
+      return dateB.getTime() - dateA.getTime();
+    });
 };
 
 /**
@@ -160,7 +166,7 @@ const mergeTabs = (
 
   // 记录每个合并后的标签信息
   mergedTabs.forEach((tab, index) => {
-    console.log(`合并后标签 ${index+1}/${mergedTabs.length}: ID=${tab.id}, 标题="${tab.title}", URL=${tab.url}`);
+    console.log(`合并后标签 ${index + 1}/${mergedTabs.length}: ID=${tab.id}, 标题="${tab.title}", URL=${tab.url}`);
   });
 
   // 如果合并后的标签数小于云端标签数或本地标签数，输出信息性日志

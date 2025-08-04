@@ -1,10 +1,11 @@
-import React, { useState } from 'react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
-import { TabGroup as TabGroupType, Tab } from '@/types/tab';
+import { TabGroup as TabGroupType } from '@/types/tab';
 import { useAppDispatch } from '@/store/hooks';
 import { updateGroupNameAndSync, deleteGroup, updateGroup } from '@/store/slices/tabSlice';
 import { SortableTab } from './SortableTab';
+import { shouldAutoDeleteAfterTabRemoval } from '@/utils/tabGroupUtils';
 import { SortableContext, rectSortingStrategy } from '@dnd-kit/sortable';
 import '@/styles/drag-drop.css';
 
@@ -18,21 +19,37 @@ export const SortableTabGroup: React.FC<SortableTabGroupProps> = ({ group, index
   const [isExpanded, setIsExpanded] = useState(true);
   const [isEditing, setIsEditing] = useState(false);
   const [groupName, setGroupName] = useState(group.name);
+  const [isMarkedForDeletion, setIsMarkedForDeletion] = useState(false);
 
-  const {
-    attributes,
-    listeners,
-    setNodeRef,
-    transform,
-    isDragging,
-  } = useSortable({
+  // 使用ref跟踪组件是否已卸载
+  const isMounted = useRef(true);
+
+  useEffect(() => {
+    // 组件挂载时设置为true
+    isMounted.current = true;
+
+    // 组件卸载时设置为false
+    return () => {
+      isMounted.current = false;
+    };
+  }, []);
+
+  // 禁用标签组拖拽功能 - 标签组应该保持固定位置
+  const { setNodeRef } = useSortable({
     id: `group-${group.id}`,
     data: {
       type: 'group',
       group,
-      index
-    }
+      index,
+    },
+    disabled: true, // 禁用拖拽
   });
+
+  // 由于禁用了拖拽，这些属性不再需要
+  const attributes = {};
+  const listeners = {};
+  const transform = null;
+  const isDragging = false;
 
   // 提供更好的拖拽视觉反馈
   const style = {
@@ -44,21 +61,33 @@ export const SortableTabGroup: React.FC<SortableTabGroupProps> = ({ group, index
   };
 
   const handleToggleExpand = () => {
-    setIsExpanded(!isExpanded);
+    if (isMounted.current) {
+      setIsExpanded(!isExpanded);
+    }
   };
 
   const handleEditName = () => {
-    setIsEditing(true);
+    if (isMounted.current) {
+      setIsEditing(true);
+    }
   };
 
   const handleSaveName = () => {
+    if (!isMounted.current || isMarkedForDeletion) return;
+
     if (groupName.trim() !== group.name) {
-      dispatch(updateGroupNameAndSync({ groupId: group.id, name: groupName.trim() }));
+      try {
+        dispatch(updateGroupNameAndSync({ groupId: group.id, name: groupName.trim() }));
+      } catch (error) {
+        console.error('更新标签组名称失败:', error);
+      }
     }
     setIsEditing(false);
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (!isMounted.current || isMarkedForDeletion) return;
+
     if (e.key === 'Enter') {
       handleSaveName();
     } else if (e.key === 'Escape') {
@@ -67,75 +96,107 @@ export const SortableTabGroup: React.FC<SortableTabGroupProps> = ({ group, index
     }
   };
 
-  const handleDeleteGroup = () => {
-    dispatch(deleteGroup(group.id));
-  };
 
-  const handleOpenAllTabs = () => {
-    // 收集所有标签页的 URL
-    const urls = group.tabs.map(tab => tab.url);
+  const handleDeleteTab = useCallback((tabId: string) => {
+    if (!isMounted.current || isMarkedForDeletion) return;
 
-    // 如果标签组没有锁定，先在UI中删除标签组
-    if (!group.isLocked) {
-      // 先在Redux中删除标签组，立即更新UI
-      dispatch({ type: 'tabs/deleteGroup/fulfilled', payload: group.id });
-
-      // 然后异步完成存储操作
-      dispatch(deleteGroup(group.id))
-        .then(() => {
-          console.log(`删除标签组: ${group.id}`);
-        })
-        .catch(error => {
-          console.error('删除标签组失败:', error);
-        });
+    // 跨组拖拽时的安全检查
+    if (!group || !group.tabs || !Array.isArray(group.tabs)) {
+      console.warn('Cannot delete tab: invalid group data', { groupId: group?.id, tabId });
+      return;
     }
 
-    // 最后发送消息给后台脚本打开标签页
-    setTimeout(() => {
-      chrome.runtime.sendMessage({
-        type: 'OPEN_TABS',
-        data: { urls }
-      });
-    }, 50); // 小延迟确保 UI 先更新
-  };
-
-  const handleOpenTab = (tab: Tab) => {
-    // 打开标签页
-    chrome.tabs.create({ url: tab.url });
-
-    // 从标签组中删除该标签页
-    const updatedTabs = group.tabs.filter(t => t.id !== tab.id);
-
-    if (updatedTabs.length === 0) {
-      // 如果标签组中没有剩余标签页，删除整个标签组
-      dispatch(deleteGroup(group.id));
-    } else {
-      // 否则更新标签组
-      const updatedGroup = {
-        ...group,
-        tabs: updatedTabs,
-        updatedAt: new Date().toISOString()
-      };
-      dispatch(updateGroup(updatedGroup));
+    try {
+      // 使用工具函数检查是否应该自动删除标签组
+      if (shouldAutoDeleteAfterTabRemoval(group, tabId)) {
+        // Mark for deletion instead of dispatching immediately
+        setIsMarkedForDeletion(true);
+        console.log(`标记空标签组待删除: ${group.name} (ID: ${group.id})`);
+      } else {
+        const updatedTabs = group.tabs.filter(t => t.id !== tabId);
+        const updatedGroup = {
+          ...group,
+          tabs: updatedTabs,
+          updatedAt: new Date().toISOString(),
+        };
+        dispatch(updateGroup(updatedGroup));
+        console.log(`从标签组删除标签页: ${group.name}, 剩余标签页: ${updatedTabs.length}`);
+      }
+    } catch (error) {
+      console.error('删除标签页失败:', error);
     }
-  };
+  }, [dispatch, group, isMarkedForDeletion]);
 
-  const handleDeleteTab = (tabId: string) => {
-    const updatedTabs = group.tabs.filter(t => t.id !== tabId);
-    if (updatedTabs.length === 0) {
-      dispatch(deleteGroup(group.id));
-    } else {
-      const updatedGroup = {
-        ...group,
-        tabs: updatedTabs,
-        updatedAt: new Date().toISOString()
-      };
-      dispatch(updateGroup(updatedGroup));
+  useEffect(() => {
+    if (isMarkedForDeletion && isMounted.current) {
+      const timer = setTimeout(() => {
+        if (isMounted.current) { // Double check mount status before dispatch
+          dispatch(deleteGroup(group.id));
+        }
+      }, 0); // Use a minimal delay
+      return () => clearTimeout(timer);
     }
-  };
+  }, [isMarkedForDeletion, dispatch, group.id]);
+
+  // If marked for deletion, render nothing to allow graceful unmount
+  if (isMarkedForDeletion) {
+    return null;
+  }
+
+  // Safety check for group.tabs - 特别重要在跨组拖拽时
+  if (!group || !group.tabs || !Array.isArray(group.tabs)) {
+    console.warn('Invalid group or tabs data during render:', {
+      groupId: group?.id,
+      groupName: group?.name,
+      tabs: group?.tabs,
+      isMarkedForDeletion
+    });
+    return null;
+  }
 
   // Create a list of sortable tab IDs
   const tabIds = group.tabs.map(tab => `${group.id}-tab-${tab.id}`);
+
+  // Ensure other handlers also check isMarkedForDeletion if they could conflict
+  const safeHandleOpenTab = useCallback((tab: any) => {
+    if (!isMounted.current || isMarkedForDeletion) return;
+
+    // 跨组拖拽时的安全检查
+    if (!group || !group.tabs || !Array.isArray(group.tabs)) {
+      console.warn('Cannot open tab: invalid group data', { groupId: group?.id, tabId: tab?.id });
+      return;
+    }
+
+    // Original handleOpenTab logic
+    try {
+      chrome.tabs.create({ url: tab.url });
+      // 使用工具函数检查是否应该自动删除标签组
+      if (shouldAutoDeleteAfterTabRemoval(group, tab.id)) {
+        setIsMarkedForDeletion(true); // Also mark for deletion here
+        console.log(`打开标签页后标记空标签组待删除: ${group.name} (ID: ${group.id})`);
+      } else {
+        const updatedTabs = group.tabs.filter(t => t.id !== tab.id);
+        const updatedGroup = {
+          ...group,
+          tabs: updatedTabs,
+          updatedAt: new Date().toISOString(),
+        };
+        dispatch(updateGroup(updatedGroup));
+        console.log(`打开标签页后更新标签组: ${group.name}, 剩余标签页: ${updatedTabs.length}`);
+      }
+    } catch (error) {
+      console.error('打开标签页失败:', error);
+    }
+  }, [dispatch, group, isMarkedForDeletion]);
+
+  const safeHandleDeleteGroup = useCallback(() => {
+    if (!isMounted.current || isMarkedForDeletion) return;
+    setIsMarkedForDeletion(true); // Mark for deletion
+  }, [isMarkedForDeletion]);
+
+  // Update props for SortableTab to use the new safe handlers if necessary
+  // For now, assuming SortableTab's internal isMounted check is sufficient for its direct actions
+  // The main change is how SortableTabGroup handles its own deletion trigger.
 
   return (
     <div
@@ -151,8 +212,8 @@ export const SortableTabGroup: React.FC<SortableTabGroupProps> = ({ group, index
         <div className="flex items-center space-x-2 flex-1 min-w-0">
           <button
             onClick={handleToggleExpand}
-            className="text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300 p-1 rounded-full hover:bg-gray-200 dark:hover:bg-gray-700"
-            title={isExpanded ? "折叠标签组" : "展开标签组"}
+            className="text-gray-500 hover:text-gray-700 p-1 rounded-full hover:bg-gray-200"
+            title={isExpanded ? '折叠标签组' : '展开标签组'}
           >
             <svg
               xmlns="http://www.w3.org/2000/svg"
@@ -161,75 +222,70 @@ export const SortableTabGroup: React.FC<SortableTabGroupProps> = ({ group, index
               viewBox="0 0 24 24"
               stroke="currentColor"
             >
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M19 9l-7 7-7-7"
+              />
             </svg>
           </button>
-
           {isEditing ? (
             <input
               type="text"
-              className="flex-1 min-w-0 px-2 py-1 border border-gray-300 dark:border-gray-600 rounded text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100"
               value={groupName}
-              onChange={(e) => setGroupName(e.target.value)}
+              onChange={e => isMounted.current && setGroupName(e.target.value)}
               onBlur={handleSaveName}
               onKeyDown={handleKeyDown}
+              className="flex-1 px-2 py-1 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
               autoFocus
             />
           ) : (
             <div
-              className="flex-1 min-w-0 truncate text-sm font-medium text-gray-900 dark:text-gray-100"
-              onDoubleClick={handleEditName}
+              className="flex-1 truncate font-medium text-gray-700 hover:text-gray-900"
+              onClick={handleEditName}
               title={group.name}
             >
               {group.name}
             </div>
           )}
-
-          <div className="text-xs text-gray-500 dark:text-gray-400 whitespace-nowrap">
+          <div className="text-xs text-gray-500 whitespace-nowrap">
             {group.tabs.length} 个标签页
           </div>
         </div>
-
         <div className="flex items-center space-x-1">
           <button
-            onClick={handleOpenAllTabs}
-            className="text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300 text-xs hover:underline"
-            title="打开所有标签页"
-          >
-            恢复全部
-          </button>
-          <button
-            onClick={handleEditName}
-            className="text-gray-400 hover:text-gray-600 dark:text-gray-500 dark:hover:text-gray-300 p-1 rounded hover:bg-gray-200 dark:hover:bg-gray-700"
-            title="重命名标签组"
-          >
-            <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
-            </svg>
-          </button>
-
-          <button
-            onClick={handleDeleteGroup}
-            className="text-gray-400 hover:text-red-500 dark:text-gray-500 dark:hover:text-red-400 p-1 rounded hover:bg-gray-200 dark:hover:bg-gray-700"
+            onClick={safeHandleDeleteGroup}
+            className="text-gray-400 hover:text-red-500 p-1 rounded hover:bg-gray-200"
             title="删除标签组"
           >
-            <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              className="h-4 w-4"
+              fill="none"
+              viewBox="0 0 24 24"
+              stroke="currentColor"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
+              />
             </svg>
           </button>
         </div>
       </div>
-
-      {isExpanded && (
+      {isExpanded && group.tabs && Array.isArray(group.tabs) && (
         <div className="px-2 pt-1 space-y-1 group" style={{ overflow: 'hidden' }}>
           <SortableContext items={tabIds} strategy={rectSortingStrategy}>
-            {group.tabs.map((tab, tabIndex) => (
+            {group.tabs.map((tab, index) => (
               <SortableTab
                 key={tab.id}
                 tab={tab}
                 groupId={group.id}
-                index={tabIndex}
-                handleOpenTab={handleOpenTab}
+                index={index}
+                handleOpenTab={safeHandleOpenTab}
                 handleDeleteTab={handleDeleteTab}
               />
             ))}

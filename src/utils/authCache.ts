@@ -13,6 +13,7 @@ interface AuthCache {
 /**
  * 认证状态缓存工具
  * 用于在本地存储中缓存用户登录状态，避免页面刷新时的闪烁
+ * 缓存有效期为30天，确保用户不需要频繁登录
  */
 export const authCache = {
   /**
@@ -27,7 +28,7 @@ export const authCache = {
         isAuthenticated,
         timestamp: Date.now()
       };
-      
+
       await chrome.storage.local.set({ [AUTH_CACHE_KEY]: cacheData });
       console.log('认证状态已缓存');
     } catch (error) {
@@ -43,22 +44,22 @@ export const authCache = {
     try {
       const result = await chrome.storage.local.get(AUTH_CACHE_KEY);
       const cacheData = result[AUTH_CACHE_KEY] as AuthCache | undefined;
-      
+
       if (!cacheData) {
         return null;
       }
-      
-      // 检查缓存是否过期（24小时）
+
+      // 检查缓存是否过期（30天）
       const now = Date.now();
       const cacheAge = now - cacheData.timestamp;
-      const cacheExpired = cacheAge > 24 * 60 * 60 * 1000;
-      
+      const cacheExpired = cacheAge > 30 * 24 * 60 * 60 * 1000;
+
       if (cacheExpired) {
         console.log('认证缓存已过期');
         await this.clearAuthState();
         return null;
       }
-      
+
       return {
         user: cacheData.user,
         isAuthenticated: cacheData.isAuthenticated

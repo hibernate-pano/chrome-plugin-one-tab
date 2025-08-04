@@ -1,5 +1,3 @@
-import { CompressionStats } from '@/utils/compressionUtils';
-
 export interface Tab {
   id: string;
   url: string;
@@ -63,11 +61,21 @@ export interface TabState {
   searchQuery: string;
   syncStatus: 'idle' | 'syncing' | 'success' | 'error'; // 同步状态
   lastSyncTime: string | null; // 最后同步时间
-  compressionStats: CompressionStats | null; // 压缩统计信息
+
+  // 定义压缩统计信息类型（虽然已废弃，但保留类型定义以保持向后兼容）
+  compressionStats?: {
+    originalSize?: number;
+    compressedSize?: number;
+    ratio?: number;
+    savedBytes?: number;
+  } | null;
   backgroundSync: boolean; // 是否在后台同步
   syncProgress: number; // 同步进度（0-100）
   syncOperation: 'none' | 'upload' | 'download'; // 当前同步操作类型
 }
+
+// 布局模式枚举
+export type LayoutMode = 'single' | 'double' | 'triple';
 
 export interface UserSettings {
   groupNameTemplate: string;
@@ -76,7 +84,7 @@ export interface UserSettings {
   confirmBeforeDelete: boolean;
   allowDuplicateTabs: boolean;
   syncEnabled: boolean; // 是否启用同步
-  useDoubleColumnLayout: boolean; // 是否使用双栏布局
+  layoutMode: LayoutMode; // 布局模式：单栏、双栏、三栏
   showNotifications: boolean; // 是否显示通知
 
   // 新增同步策略设置
@@ -85,21 +93,17 @@ export interface UserSettings {
 
   // 新增主题设置
   themeMode: 'light' | 'dark' | 'auto'; // 主题模式
+
+  reorderMode?: boolean; // 新增：全局重新排序模式
+
+  // 保持向后兼容性的字段（已废弃，但保留以支持旧版本）
+  useDoubleColumnLayout?: boolean;
 }
 
 export interface User {
   id: string;
   email: string;
   lastLogin: string;
-  // 微信用户相关字段
-  wechatInfo?: {
-    nickname?: string;
-    avatar?: string;
-    openid?: string;
-    unionid?: string;
-  };
-  // 登录方式
-  loginProvider?: 'email' | 'google' | 'github' | 'wechat';
 }
 
 export interface AuthState {
@@ -107,9 +111,6 @@ export interface AuthState {
   isAuthenticated: boolean;
   isLoading: boolean;
   error: string | null;
-  // 微信登录相关状态
-  wechatLoginStatus?: 'idle' | 'pending' | 'scanning' | 'confirming' | 'success' | 'failed' | 'expired';
-  wechatLoginTabId?: number; // 微信登录标签页ID
 }
 
 export interface RootState {

@@ -1,8 +1,9 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, lazy } from 'react';
 import { useAppDispatch, useAppSelector } from '@/store/hooks';
-import { loadGroups, deleteGroup } from '@/store/slices/tabSlice';
+import { loadGroups, deleteGroup, moveGroupAndSync } from '@/store/slices/tabSlice';
+import { runMigrations } from '@/utils/migrationUtils';
 
-import { DraggableTabGroupKit } from '@/components/dnd/DraggableTabGroupKit';
+import { DraggableTabGroup } from '@/components/dnd/DraggableTabGroup';
 import { SearchResultList } from '@/components/search/SearchResultList';
 import { TabGroup as TabGroupType } from '@/types/tab';
 
@@ -10,15 +11,33 @@ interface TabListProps {
   searchQuery: string;
 }
 
+// 新增：全局排序视图组件（后续实现）
+const ReorderView = lazy(() => import('@/components/tabs/ReorderView'));
+
 export const TabList: React.FC<TabListProps> = ({ searchQuery }) => {
   const dispatch = useAppDispatch();
   const { groups, isLoading, error } = useAppSelector(state => state.tabs);
-  const { useDoubleColumnLayout } = useAppSelector(state => state.settings);
+  const { layoutMode, reorderMode } = useAppSelector(state => state.settings);
   const [isRestoreAllModalOpen, setIsRestoreAllModalOpen] = useState(false);
   const [selectedGroup, setSelectedGroup] = useState<TabGroupType | null>(null);
 
   useEffect(() => {
-    dispatch(loadGroups());
+    // 先运行数据迁移，然后加载数据
+    const initializeData = async () => {
+      try {
+        // 运行必要的数据迁移
+        await runMigrations();
+
+        // 加载标签组数据
+        dispatch(loadGroups());
+      } catch (error) {
+        console.error('初始化数据失败:', error);
+        // 即使迁移失败，也要尝试加载数据
+        dispatch(loadGroups());
+      }
+    };
+
+    initializeData();
 
     // 添加消息监听器，监听数据刷新消息
     const messageListener = (message: any) => {
@@ -47,11 +66,7 @@ export const TabList: React.FC<TabListProps> = ({ searchQuery }) => {
   }
 
   if (error) {
-    return (
-      <div className="flex items-center justify-center h-64 text-red-600">
-        {error}
-      </div>
-    );
+    return <div className="flex items-center justify-center h-64 text-red-600">{error}</div>;
   }
 
   // 先按创建时间倒序排序
@@ -70,17 +85,30 @@ export const TabList: React.FC<TabListProps> = ({ searchQuery }) => {
     return (
       <div className="flex flex-col items-center justify-center py-8 space-y-3 text-gray-500 bg-white border border-gray-200 p-4">
         <div className="w-16 h-16 rounded-full bg-gray-100 flex items-center justify-center">
-          <svg xmlns="http://www.w3.org/2000/svg" className="h-10 w-10 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
+          <svg
+            xmlns="http://www.w3.org/2000/svg"
+            className="h-10 w-10 text-gray-400"
+            fill="none"
+            viewBox="0 0 24 24"
+            stroke="currentColor"
+          >
+            <path
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              strokeWidth={2}
+              d="M12 6v6m0 0v6m0-6h6m-6 0H6"
+            />
           </svg>
         </div>
         <h3 className="text-lg font-medium text-gray-700">没有保存的标签页</h3>
-        <p className="text-gray-500 max-w-md text-center">点击右上角的&quot;保存所有标签&quot;按钮开始保存您的标签页。保存后的标签页将显示在这里。</p>
+        <p className="text-gray-500 max-w-md text-center">
+          点击右上角的"保存所有标签"按钮开始保存您的标签页。保存后的标签页将显示在这里。
+        </p>
         <button
           onClick={() => {
             chrome.runtime.sendMessage({
               type: 'SAVE_ALL_TABS',
-              data: { tabs: [] }
+              data: { tabs: [] },
             });
           }}
           className="mt-2 px-4 py-1.5 bg-primary-600 text-white rounded hover:bg-primary-700 transition-colors text-sm"
@@ -120,28 +148,106 @@ export const TabList: React.FC<TabListProps> = ({ searchQuery }) => {
     setTimeout(() => {
       chrome.runtime.sendMessage({
         type: 'OPEN_TABS',
-        data: { urls }
+        data: { urls },
       });
     }, 100); // 小延迟确保 UI 先更新
   };
+
+  // 新增：全局排序模式入口
+  if (reorderMode) {
+    return (
+      <React.Suspense fallback={<div>加载中...</div>}>
+        <ReorderView />
+      </React.Suspense>
+    );
+  }
 
   return (
     <div className="space-y-2">
       {/* 搜索结果或标签组列表 */}
       {searchQuery ? (
         <SearchResultList searchQuery={searchQuery} />
-      ) : useDoubleColumnLayout ? (
+      ) : layoutMode === 'triple' ? (
+        // 三栏布局
+        <div className="grid grid-cols-1 sm:grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4 md:gap-5 lg:gap-6">
+          {/* 第一栏 - 索引 % 3 === 0 的标签组 */}
+          <div className="space-y-2 transition-all">
+            {filteredGroups
+              .filter((_, index) => index % 3 === 0)
+              .map(group => {
+                // 计算在原始数组中的实际索引
+                const originalIndex = filteredGroups.findIndex(g => g.id === group.id);
+                return (
+                  <DraggableTabGroup
+                    key={group.id}
+                    group={group}
+                    index={originalIndex}
+                    moveGroup={(dragIndex, hoverIndex) => {
+                      dispatch(moveGroupAndSync({ dragIndex, hoverIndex }));
+                    }}
+                  />
+                );
+              })}
+          </div>
+
+          {/* 第二栏 - 索引 % 3 === 1 的标签组 */}
+          <div className="space-y-2 transition-all">
+            {filteredGroups
+              .filter((_, index) => index % 3 === 1)
+              .map(group => {
+                // 计算在原始数组中的实际索引
+                const originalIndex = filteredGroups.findIndex(g => g.id === group.id);
+                return (
+                  <DraggableTabGroup
+                    key={group.id}
+                    group={group}
+                    index={originalIndex}
+                    moveGroup={(dragIndex, hoverIndex) => {
+                      dispatch(moveGroupAndSync({ dragIndex, hoverIndex }));
+                    }}
+                  />
+                );
+              })}
+          </div>
+
+          {/* 第三栏 - 索引 % 3 === 2 的标签组 */}
+          <div className="space-y-2 transition-all">
+            {filteredGroups
+              .filter((_, index) => index % 3 === 2)
+              .map(group => {
+                // 计算在原始数组中的实际索引
+                const originalIndex = filteredGroups.findIndex(g => g.id === group.id);
+                return (
+                  <DraggableTabGroup
+                    key={group.id}
+                    group={group}
+                    index={originalIndex}
+                    moveGroup={(dragIndex, hoverIndex) => {
+                      dispatch(moveGroupAndSync({ dragIndex, hoverIndex }));
+                    }}
+                  />
+                );
+              })}
+          </div>
+        </div>
+      ) : layoutMode === 'double' ? (
         // 双栏布局
-        <div className="grid grid-cols-1 sm:grid-cols-1 md:grid-cols-2 gap-3">
+        <div className="grid grid-cols-1 sm:grid-cols-1 md:grid-cols-2 gap-3 sm:gap-4 md:gap-5">
           {/* 左栏 - 偶数索引的标签组 */}
           <div className="space-y-2 transition-all">
             {filteredGroups
               .filter((_, index) => index % 2 === 0)
-              .map((group) => {
+              .map(group => {
+                // 计算在原始数组中的实际索引
+                const originalIndex = filteredGroups.findIndex(g => g.id === group.id);
                 return (
-                  <DraggableTabGroupKit
+                  <DraggableTabGroup
                     key={group.id}
                     group={group}
+                    index={originalIndex}
+                    moveGroup={(dragIndex, hoverIndex) => {
+                      dispatch(moveGroupAndSync({ dragIndex, hoverIndex }));
+                    }}
                   />
                 );
               })}
@@ -151,11 +257,17 @@ export const TabList: React.FC<TabListProps> = ({ searchQuery }) => {
           <div className="space-y-2 transition-all">
             {filteredGroups
               .filter((_, index) => index % 2 === 1)
-              .map((group) => {
+              .map(group => {
+                // 计算在原始数组中的实际索引
+                const originalIndex = filteredGroups.findIndex(g => g.id === group.id);
                 return (
-                  <DraggableTabGroupKit
+                  <DraggableTabGroup
                     key={group.id}
                     group={group}
+                    index={originalIndex}
+                    moveGroup={(dragIndex, hoverIndex) => {
+                      dispatch(moveGroupAndSync({ dragIndex, hoverIndex }));
+                    }}
                   />
                 );
               })}
@@ -164,10 +276,14 @@ export const TabList: React.FC<TabListProps> = ({ searchQuery }) => {
       ) : (
         // 单栏布局
         <div className="space-y-2 transition-all">
-          {filteredGroups.map((group) => (
-            <DraggableTabGroupKit
+          {filteredGroups.map((group, index) => (
+            <DraggableTabGroup
               key={group.id}
               group={group}
+              index={index}
+              moveGroup={(dragIndex, hoverIndex) => {
+                dispatch(moveGroupAndSync({ dragIndex, hoverIndex }));
+              }}
             />
           ))}
         </div>
@@ -178,7 +294,10 @@ export const TabList: React.FC<TabListProps> = ({ searchQuery }) => {
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
           <div className="bg-white rounded-lg p-6 max-w-md w-full">
             <h3 className="text-lg font-medium mb-4">恢复所有标签页</h3>
-            <p className="mb-4">确定要恢复标签组 &quot;{selectedGroup.name}&quot; 中的所有 {selectedGroup.tabs.length} 个标签页吗？</p>
+            <p className="mb-4">
+              确定要恢复标签组 "{selectedGroup.name}" 中的所有 {selectedGroup.tabs.length}{' '}
+              个标签页吗？
+            </p>
 
             <div className="flex justify-end space-x-2">
               <button

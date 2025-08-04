@@ -1,26 +1,77 @@
 import { createClient } from '@supabase/supabase-js';
 import { TabGroup, UserSettings, TabData, SupabaseTabGroup } from '@/types/tab';
-import { setWechatLoginTimeout, clearWechatLoginTimeout } from './wechatLoginTimeout';
 
-// 从环境变量中获取 Supabase 配置
-const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL as string;
-const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY as string;
+import { encryptData, decryptData, isEncrypted } from './encryptionUtils';
 
-// 检查环境变量是否存在
-if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
-  console.error('错误: Supabase 配置缺失。请确保在 .env 文件中设置了 VITE_SUPABASE_URL 和 VITE_SUPABASE_ANON_KEY。');
+// 安全的配置管理
+function getSecureConfig() {
+  // 从环境变量中获取 Supabase 配置
+  const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL as string;
+  const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY as string;
+
+  // 验证环境变量格式
+  if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
+    console.error('错误: Supabase 配置缺失。请确保在 .env 文件中设置了 VITE_SUPABASE_URL 和 VITE_SUPABASE_ANON_KEY。');
+    throw new Error('Supabase 配置缺失');
+  }
+
+  // 验证URL格式
+  try {
+    const url = new URL(SUPABASE_URL);
+    if (!url.hostname.includes('supabase.co')) {
+      throw new Error('无效的 Supabase URL');
+    }
+  } catch (error) {
+    console.error('错误: 无效的 SUPABASE_URL 格式');
+    throw new Error('无效的 Supabase URL 格式');
+  }
+
+  // 验证匿名密钥格式（JWT格式）
+  if (!SUPABASE_ANON_KEY.startsWith('eyJ')) {
+    console.error('错误: 无效的 SUPABASE_ANON_KEY 格式');
+    throw new Error('无效的 Supabase 匿名密钥格式');
+  }
+
+  // 在生产环境中，不要在控制台输出完整的配置信息
+  if (import.meta.env.DEV) {
+    console.log('Supabase 配置已加载:', {
+      url: SUPABASE_URL,
+      keyPrefix: SUPABASE_ANON_KEY.substring(0, 10) + '...'
+    });
+  }
+
+  return {
+    url: SUPABASE_URL,
+    anonKey: SUPABASE_ANON_KEY
+  };
 }
 
-export const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+// 获取安全配置
+const config = getSecureConfig();
 
-// 获取设备ID
+export const supabase = createClient(config.url, config.anonKey);
+
+import { secureStorage } from './secureStorage';
+
+// 获取设备ID（使用加密存储）
 export const getDeviceId = async (): Promise<string> => {
-  const { deviceId } = await chrome.storage.local.get('deviceId');
-  if (deviceId) return deviceId;
+  try {
+    const deviceId = await secureStorage.get<string>('deviceId');
+    if (deviceId) return deviceId;
 
-  const newDeviceId = crypto.randomUUID();
-  await chrome.storage.local.set({ deviceId: newDeviceId });
-  return newDeviceId;
+    const newDeviceId = crypto.randomUUID();
+    await secureStorage.set('deviceId', newDeviceId);
+    return newDeviceId;
+  } catch (error) {
+    console.error('获取设备ID失败:', error);
+    // 降级到普通存储
+    const { deviceId } = await chrome.storage.local.get('deviceId');
+    if (deviceId) return deviceId;
+
+    const newDeviceId = crypto.randomUUID();
+    await chrome.storage.local.set({ deviceId: newDeviceId });
+    return newDeviceId;
+  }
 };
 
 // 用户认证相关方法
@@ -35,166 +86,11 @@ export const auth = {
     return await supabase.auth.signInWithPassword({ email, password });
   },
 
-  // 使用第三方登录
-  async signInWithOAuth(provider: 'google' | 'github' | 'wechat') {
-    // 如果是微信登录，使用特殊处理
-    if (provider === 'wechat') {
-      return await this.signInWithWechat();
-    }
 
-    // 其他第三方登录
-    return await supabase.auth.signInWithOAuth({
-      provider,
-      options: {
-        redirectTo: chrome.identity.getRedirectURL(),
-        queryParams: provider === 'google' ? {
-          access_type: 'offline',
-          prompt: 'consent',
-        } : undefined
-      }
-    });
-  },
 
-  // 微信扫码登录
-  async signInWithWechat() {
-    try {
-      // 创建一个新标签页显示微信二维码
-      const qrCodeUrl = await this.getWechatQrCodeUrl();
-      console.log('打开微信扫码登录页面:', qrCodeUrl);
-      const qrCodeTab = await chrome.tabs.create({ url: qrCodeUrl });
 
-      // 设置登录超时处理
-      if (qrCodeTab.id) {
-        // 将超时处理器ID存储到本地
-        const timeoutId = setWechatLoginTimeout(qrCodeTab.id);
-        await chrome.storage.local.set({ 'wechat_login_timeout_id': timeoutId });
-      }
 
-      // 返回一个空的成功结果，实际的登录处理会在回调中完成
-      return {
-        data: {
-          provider: 'wechat',
-          tabId: qrCodeTab.id
-        },
-        error: null
-      };
-    } catch (error) {
-      console.error('微信扫码登录错误:', error);
-      return {
-        data: null,
-        error: {
-          message: '创建微信扫码登录页面失败'
-        }
-      };
-    }
-  },
 
-  // 获取微信二维码URL
-  async getWechatQrCodeUrl() {
-    // 在实际应用中，这里应该调用你的后端API获取微信登录二维码URL
-    // 实际实现时，应该先在微信开放平台注册应用，获取AppID和AppSecret
-
-    // 生成随机状态码用于验证回调
-    const state = this.generateRandomState();
-
-    // 获取重定向URL
-    const redirectUrl = encodeURIComponent(chrome.identity.getRedirectURL());
-
-    // 保存state用于验证回调
-    await chrome.storage.local.set({ 'wechat_oauth_state': state });
-
-    // 记录开始登录时间，用于计算超时
-    await chrome.storage.local.set({ 'wechat_login_start_time': Date.now() });
-
-    // 返回微信登录页面URL
-    return chrome.runtime.getURL(`src/pages/wechat-login.html?redirect_uri=${redirectUrl}&state=${state}`);
-  },
-
-  // 处理微信登录回调
-  async handleWechatCallback(url: string) {
-    try {
-      // 清除登录超时处理
-      const { wechat_login_timeout_id } = await chrome.storage.local.get('wechat_login_timeout_id');
-      if (wechat_login_timeout_id) {
-        clearWechatLoginTimeout(wechat_login_timeout_id);
-        await chrome.storage.local.remove('wechat_login_timeout_id');
-      }
-
-      // 从回调URL中提取参数
-      // 安全地处理URL分割
-      const hashPart = url.includes('#') ? url.split('#')[1] : '';
-      const hashParams = new URLSearchParams(hashPart);
-      const accessToken = hashParams.get('access_token');
-      const refreshToken = hashParams.get('refresh_token');
-      const state = hashParams.get('state');
-
-      // 获取存储的state进行验证
-      const { wechat_oauth_state } = await chrome.storage.local.get('wechat_oauth_state');
-
-      // 验证state是否匹配
-      if (state !== wechat_oauth_state) {
-        throw new Error('State验证失败，可能存在安全风险');
-      }
-
-      // 清除存储的state
-      await chrome.storage.local.remove('wechat_oauth_state');
-      await chrome.storage.local.remove('wechat_login_start_time');
-
-      // 在实际应用中，这里应该使用获取到的code来请求微信的access_token
-      // 然后使用access_token获取用户信息
-      // 这里我们模拟这个过程
-
-      if (!accessToken || !refreshToken) {
-        throw new Error('未能从回调URL中获取令牌');
-      }
-
-      // 模拟设置会话
-      // 在实际应用中，这里应该调用Supabase的API来设置会话
-      return await supabase.auth.setSession({
-        access_token: accessToken,
-        refresh_token: refreshToken
-      });
-    } catch (error) {
-      console.error('处理微信回调错误:', error);
-      throw error;
-    }
-  },
-
-  // 生成随机state用于防止CSRF攻击
-  generateRandomState() {
-    // 使用更安全的方式生成随机字符串，避免使用 substring
-    const randomPart1 = Math.random().toString(36).replace(/[^a-z0-9]+/g, '').slice(0, 6);
-    const randomPart2 = Math.random().toString(36).replace(/[^a-z0-9]+/g, '').slice(0, 6);
-    const timestamp = Date.now().toString(36);
-    return `${randomPart1}${timestamp}${randomPart2}`;
-  },
-
-  // 处理OAuth回调
-  async handleOAuthCallback(url: string) {
-    // 检查是否是微信登录回调
-    if (url.includes('wechat-login.html')) {
-      console.log('检测到微信登录回调');
-      return await this.handleWechatCallback(url);
-    }
-
-    // 处理其他OAuth回调
-    // 从URL中提取token
-    // 安全地处理URL分割
-    const hashPart = url.includes('#') ? url.split('#')[1] : '';
-    const hashParams = new URLSearchParams(hashPart);
-    const accessToken = hashParams.get('access_token');
-    const refreshToken = hashParams.get('refresh_token');
-
-    if (!accessToken || !refreshToken) {
-      throw new Error('未能从回调URL中获取令牌');
-    }
-
-    // 设置会话
-    return await supabase.auth.setSession({
-      access_token: accessToken,
-      refresh_token: refreshToken
-    });
-  },
 
   // 退出登录
   async signOut() {
@@ -477,7 +373,8 @@ export const sync = {
         last_accessed: tab.lastAccessed
       }));
 
-      return {
+      // 准备返回对象
+      const returnObj = {
         id: group.id,
         name: group.name || 'Unnamed Group',
         created_at: createdAt,
@@ -486,13 +383,47 @@ export const sync = {
         user_id: user.id,
         device_id: deviceId,
         last_sync: currentTime,
-        tabs_data: tabsData // 将标签数据作为 JSONB 存储
-      } as SupabaseTabGroup;
+        tabs_data: tabsData // 临时存储，稍后会被加密
+      };
+
+      return returnObj as SupabaseTabGroup;
     });
+
+    // 检查并去除重复的 ID
+    const seenIds = new Set<string>();
+    const uniqueGroups = groupsWithUser.filter(group => {
+      if (seenIds.has(group.id)) {
+        console.warn(`发现重复的标签组 ID: ${group.id}，已跳过`);
+        return false;
+      }
+      seenIds.add(group.id);
+      return true;
+    });
+
+    if (uniqueGroups.length !== groupsWithUser.length) {
+      console.log(`去重后标签组数量: ${uniqueGroups.length}/${groupsWithUser.length}`);
+    }
 
     // 上传标签组元数据和标签数据
     let result: any = null;
     try {
+      // 对每个标签组的数据进行加密
+      for (let i = 0; i < groupsWithUser.length; i++) {
+        const group = groupsWithUser[i];
+        if (group.tabs_data && Array.isArray(group.tabs_data)) {
+          try {
+            // 加密标签数据
+            const encryptedData = await encryptData(group.tabs_data, user.id);
+            // 替换原始数据为加密数据
+            groupsWithUser[i].tabs_data = encryptedData as any;
+            console.log(`标签组 ${group.id} 的数据已加密`);
+          } catch (error) {
+            console.error(`加密标签组 ${group.id} 的数据失败:`, error);
+            // 如果加密失败，保留原始数据
+          }
+        }
+      }
+
       // 验证数据
       for (const group of groupsWithUser) {
         if (!group.id) {
@@ -512,34 +443,31 @@ export const sync = {
       // 使用 JSONB 存储标签数据
       console.log('将标签数据作为 JSONB 存储到 tab_groups 表中');
 
-      // 确保用户已登录并且会话有效
-      const { data: sessionCheck } = await supabase.auth.getSession();
-      if (!sessionCheck.session) {
-        console.error('会话已过期，无法上传数据');
-        throw new Error('会话已过期，请重新登录');
-      }
-
       // 记录详细的上传信息
       console.log('上传数据详情:', {
         groupCount: groupsWithUser.length,
         userID: groupsWithUser[0]?.user_id,
-        sessionUserID: sessionCheck.session.user.id
+        sessionUserID: sessionData.session.user.id,
+        sessionValid: !!sessionData.session,
+        userValid: !!user
       });
 
-      // 确保用户ID匹配会话用户ID
-      if (groupsWithUser.length > 0 && groupsWithUser[0].user_id !== sessionCheck.session.user.id) {
-        console.error('用户ID不匹配:', {
-          dataUserID: groupsWithUser[0].user_id,
-          sessionUserID: sessionCheck.session.user.id
-        });
+      // 强制确保所有组的用户ID都是会话用户ID
+      console.log('强制更新所有组的用户ID为会话用户ID');
+      uniqueGroups.forEach((group, index) => {
+        const oldUserId = group.user_id;
+        group.user_id = sessionData.session.user.id;
+        console.log(`标签组 ${index + 1}: ${group.id} 用户ID从 ${oldUserId} 更新为 ${group.user_id}`);
+      });
 
-        // 更新所有组的用户ID为会话用户ID
-        groupsWithUser.forEach(group => {
-          group.user_id = sessionCheck.session.user.id;
-        });
-
-        console.log('已更新所有组的用户ID为会话用户ID');
+      // 验证所有组的用户ID是否正确
+      const invalidGroups = uniqueGroups.filter(group => group.user_id !== sessionData.session.user.id);
+      if (invalidGroups.length > 0) {
+        console.error('仍有标签组的用户ID不正确:', invalidGroups.map(g => ({ id: g.id, user_id: g.user_id })));
+        throw new Error('用户ID验证失败，无法上传数据');
       }
+
+      console.log('所有标签组的用户ID验证通过');
 
       let data, error;
 
@@ -551,7 +479,7 @@ export const sync = {
         const { error: deleteError } = await supabase
           .from('tab_groups')
           .delete()
-          .eq('user_id', sessionCheck.session.user.id);
+          .eq('user_id', sessionData.session.user.id);
 
         if (deleteError) {
           console.error('删除用户标签组失败:', deleteError);
@@ -566,10 +494,22 @@ export const sync = {
 
         console.log('用户标签组已删除，准备插入新数据');
 
-        // 然后插入新的标签组
+        // 等待一小段时间确保删除操作完全完成
+        await new Promise(resolve => setTimeout(resolve, 100));
+
+        // 然后插入新的标签组，使用 upsert 而不是 insert 来避免主键冲突
+        console.log('准备插入标签组数据，用户ID:', sessionData.session.user.id);
+        console.log('要插入的第一个标签组数据样本:', {
+          id: uniqueGroups[0]?.id,
+          name: uniqueGroups[0]?.name,
+          user_id: uniqueGroups[0]?.user_id,
+          device_id: uniqueGroups[0]?.device_id,
+          tabsDataLength: uniqueGroups[0]?.tabs_data?.length
+        });
+
         const result = await supabase
           .from('tab_groups')
-          .insert(groupsWithUser);
+          .upsert(uniqueGroups, { onConflict: 'id' });
 
         data = result.data;
         error = result.error;
@@ -578,7 +518,7 @@ export const sync = {
         console.log('使用合并模式，更新现有标签组');
         const result = await supabase
           .from('tab_groups')
-          .upsert(groupsWithUser, { onConflict: 'id' });
+          .upsert(uniqueGroups, { onConflict: 'id' });
 
         data = result.data;
         error = result.error;
@@ -594,6 +534,66 @@ export const sync = {
           details: error.details,
           hint: error.hint
         });
+
+        // 特别处理 RLS 策略错误
+        if (error.message && error.message.includes('row-level security policy')) {
+          console.error('RLS 策略违规错误，尝试诊断和重试...');
+
+          // 记录当前会话信息
+          const currentSession = await supabase.auth.getSession();
+          console.error('当前会话状态:', {
+            hasSession: !!currentSession.data.session,
+            userId: currentSession.data.session?.user?.id,
+            userEmail: currentSession.data.session?.user?.email,
+            sessionExpiry: currentSession.data.session?.expires_at
+          });
+
+          // 记录要上传的数据信息
+          console.error('要上传的数据信息:', {
+            groupCount: uniqueGroups.length,
+            firstGroupUserId: uniqueGroups[0]?.user_id,
+            allUserIds: [...new Set(uniqueGroups.map(g => g.user_id))]
+          });
+
+          // 尝试刷新会话并重试一次
+          console.log('尝试刷新会话并重试...');
+          try {
+            const { data: refreshedSession, error: refreshError } = await supabase.auth.refreshSession();
+            if (refreshError) {
+              console.error('刷新会话失败:', refreshError);
+              throw new Error('会话已过期，请重新登录');
+            }
+
+            if (refreshedSession.session && refreshedSession.session.user) {
+              console.log('会话刷新成功，重新验证用户ID并重试上传');
+
+              // 重新设置用户ID
+              uniqueGroups.forEach(group => {
+                group.user_id = refreshedSession.session!.user.id;
+              });
+
+              // 重试上传
+              const retryResult = await supabase
+                .from('tab_groups')
+                .upsert(uniqueGroups, { onConflict: 'id' });
+
+              if (retryResult.error) {
+                console.error('重试上传仍然失败:', retryResult.error);
+                throw new Error('数据库行级安全策略阻止了数据插入。请联系管理员检查权限配置。');
+              }
+
+              console.log('重试上传成功');
+              data = retryResult.data;
+              error = null; // 清除错误
+            } else {
+              throw new Error('无法获取有效会话，请重新登录');
+            }
+          } catch (retryError) {
+            console.error('重试失败:', retryError);
+            throw new Error('数据库行级安全策略阻止了数据插入。请重新登录或联系管理员。');
+          }
+        }
+
         throw error;
       }
 
@@ -667,11 +667,12 @@ export const sync = {
         user.id = sessionCheck.session.user.id;
       }
 
-      // 获取用户的所有标签组，包含 tabs_data JSONB 字段
+      // 获取用户的所有标签组，包含 tabs_data JSONB 字段，按创建时间倒序排列
       const { data: groups, error } = await supabase
         .from('tab_groups')
         .select('*')
-        .eq('user_id', user.id);
+        .eq('user_id', user.id)
+        .order('created_at', { ascending: false });
 
       if (error) {
         console.error('获取标签组失败:', error);
@@ -704,7 +705,33 @@ export const sync = {
 
       for (const group of groups) {
         // 从 JSONB 字段获取标签数据
-        const tabsData = group.tabs_data || [];
+        let tabsData: TabData[] = [];
+
+        // 检查是否是加密数据
+        if (typeof group.tabs_data === 'string') {
+          try {
+            // 尝试解密数据
+            tabsData = await decryptData<TabData[]>(group.tabs_data as string, user.id);
+            console.log(`标签组 ${group.id} 的数据已成功解密`);
+          } catch (error) {
+            console.error(`解密标签组 ${group.id} 的数据失败:`, error);
+            // 如果解密失败，尝试直接解析（可能是旧的未加密数据）
+            try {
+              if (typeof group.tabs_data === 'string' && !isEncrypted(group.tabs_data)) {
+                tabsData = JSON.parse(group.tabs_data);
+                console.log(`标签组 ${group.id} 的数据是旧的未加密格式，已成功解析`);
+              }
+            } catch (jsonError) {
+              console.error(`解析标签组 ${group.id} 的JSON数据失败:`, jsonError);
+              // 保持空数组
+            }
+          }
+        } else if (Array.isArray(group.tabs_data)) {
+          // 如果已经是数组，直接使用
+          tabsData = group.tabs_data;
+          console.log(`标签组 ${group.id} 的数据已经是解析后的数组格式`);
+        }
+
         console.log(`处理标签组 ${group.id} (名称: "${group.name}"), 有 ${tabsData.length} 个标签`);
 
         // 记录标签类型统计
@@ -817,12 +844,38 @@ export const sync = {
 
     console.log('上传用户设置，用户ID:', user.id, '设备ID:', deviceId);
 
-    // 将驼峰命名法转换为下划线命名法
+    // 定义允许的设置字段，避免上传不存在的字段
+    // 这些字段名对应数据库中的实际列名（驼峰命名，稍后会转换为下划线命名）
+    const allowedFields = [
+      // 'autoSave',              // -> auto_save (UserSettings中不存在，已注释)
+      // 'autoSaveInterval',      // -> auto_save_interval (UserSettings中不存在，已注释)
+      'groupNameTemplate',     // -> group_name_template
+      'showFavicons',          // -> show_favicons
+      'showTabCount',          // -> show_tab_count
+      // 'autoCloseTabs',         // -> auto_close_tabs (UserSettings中不存在，已注释)
+      'confirmBeforeDelete',   // -> confirm_before_delete
+      'allowDuplicateTabs',    // -> allow_duplicate_tabs
+      // 'syncInterval',          // -> sync_interval (UserSettings中不存在，已注释)
+      'syncEnabled',           // -> sync_enabled
+      'layoutMode',            // -> layout_mode (新的布局模式字段)
+      'showNotifications',     // -> show_notifications
+      'syncStrategy',          // -> sync_strategy
+      'deleteStrategy',        // -> delete_strategy
+      'themeMode',             // -> theme_mode
+      'reorderMode'            // -> reorder_mode (新增：全局重新排序模式)
+    ];
+
+    // 将驼峰命名法转换为下划线命名法，并过滤掉不允许的字段
     const convertedSettings: Record<string, any> = {};
     for (const [key, value] of Object.entries(settings)) {
-      // 将驼峰命名转换为下划线命名
-      const snakeKey = key.replace(/([A-Z])/g, '_$1').toLowerCase();
-      convertedSettings[snakeKey] = value;
+      // 只处理允许的字段
+      if (allowedFields.includes(key)) {
+        // 将驼峰命名转换为下划线命名
+        const snakeKey = key.replace(/([A-Z])/g, '_$1').toLowerCase();
+        convertedSettings[snakeKey] = value;
+      } else {
+        console.warn(`跳过未知的设置字段: ${key}`);
+      }
     }
 
     console.log('转换后的设置:', convertedSettings);
@@ -910,6 +963,24 @@ export const sync = {
 
     // 如果有数据，将下划线命名法转换为驼峰命名法
     if (data) {
+      // 定义允许的数据库字段到设置字段的映射
+      const fieldMapping: Record<string, string> = {
+        'group_name_template': 'groupNameTemplate',
+        'show_favicons': 'showFavicons',
+        'show_tab_count': 'showTabCount',
+        'confirm_before_delete': 'confirmBeforeDelete',
+        'allow_duplicate_tabs': 'allowDuplicateTabs',
+        'sync_enabled': 'syncEnabled',
+        'layout_mode': 'layoutMode',
+        'show_notifications': 'showNotifications',
+        'sync_strategy': 'syncStrategy',
+        'delete_strategy': 'deleteStrategy',
+        'theme_mode': 'themeMode',
+        'reorder_mode': 'reorderMode',
+        // 向后兼容性：如果云端还有旧的字段，也要处理
+        'use_double_column_layout': 'useDoubleColumnLayout'
+      };
+
       const convertedSettings: Record<string, any> = {};
       for (const [key, value] of Object.entries(data)) {
         // 跳过非设置字段
@@ -917,9 +988,12 @@ export const sync = {
           continue;
         }
 
-        // 将下划线命名转换为驼峰命名
-        const camelKey = key.replace(/_([a-z])/g, (_, letter) => letter.toUpperCase());
-        convertedSettings[camelKey] = value;
+        // 使用映射表转换字段名
+        if (fieldMapping[key]) {
+          convertedSettings[fieldMapping[key]] = value;
+        } else {
+          console.warn(`跳过未知的数据库字段: ${key}`);
+        }
       }
 
       console.log('转换后的设置:', convertedSettings);
