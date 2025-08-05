@@ -2,7 +2,8 @@ import React from 'react';
 import { useAppDispatch, useAppSelector } from '@/store/hooks';
 import { Tab, TabGroup } from '@/types/tab';
 import { updateGroup, deleteGroup } from '@/store/slices/tabSlice';
-import { shouldAutoDeleteAfterTabRemoval } from '@/utils/tabGroupUtils';
+import { shouldAutoDeleteAfterTabRemoval, shouldAutoDeleteAfterMultipleTabRemoval } from '@/utils/tabGroupUtils';
+import { useToast } from '@/contexts/ToastContext';
 import HighlightText from './HighlightText';
 import { SafeFavicon } from '@/components/common/SafeFavicon';
 
@@ -13,6 +14,7 @@ interface SearchResultListProps {
 export const SearchResultList: React.FC<SearchResultListProps> = ({ searchQuery }) => {
   const dispatch = useAppDispatch();
   const { groups } = useAppSelector(state => state.tabs);
+  const { showConfirm, showToast } = useToast();
   // 搜索结果强制使用单栏显示，不再依赖用户的布局设置
   // const { layoutMode } = useAppSelector(state => state.settings);
 
@@ -222,21 +224,151 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({ searchQuery 
     }, 100); // 使用 100 毫秒的延迟，确保 UI 先更新
   };
 
+  // 删除所有搜索到的标签页
+  const handleDeleteAllSearchResults = async () => {
+    if (matchingTabs.length === 0) return;
+
+    console.log(`🚀 开始批量删除 ${matchingTabs.length} 个标签页`);
+    console.log('匹配的标签页:', matchingTabs.map(m => `${m.tab.title} (来自 ${m.group.name})`));
+
+    // 处理标签组更新
+    // 我们需要按标签组分组处理，因为每个标签组的锁定状态可能不同
+    const groupsToUpdate = matchingTabs.reduce((acc, { tab, group }) => {
+      if (group.isLocked) {
+        console.log(`⚠️  跳过锁定标签组: ${group.name}`);
+        return acc; // 如果标签组已锁定，不删除标签页
+      }
+
+      if (!acc[group.id]) {
+        acc[group.id] = { group, tabsToRemove: [] };
+      }
+      acc[group.id].tabsToRemove.push(tab.id);
+      return acc;
+    }, {} as Record<string, { group: TabGroup; tabsToRemove: string[] }>);
+
+    console.log(`📋 需要处理 ${Object.keys(groupsToUpdate).length} 个标签组`);
+
+    // 先在UI中更新标签组，立即更新界面
+    Object.values(groupsToUpdate).forEach(({ group, tabsToRemove }) => {
+      // 使用工具函数检查是否应该自动删除标签组
+      if (shouldAutoDeleteAfterMultipleTabRemoval(group, tabsToRemove)) {
+        console.log(`🔄 UI更新: 标记删除标签组 ${group.name}`);
+        // 先在Redux中删除标签组，立即更新UI
+        dispatch({ type: 'tabs/deleteGroup/fulfilled', payload: group.id });
+      } else {
+        // 否则更新标签组，移除这些标签页
+        const updatedTabs = group.tabs.filter(t => !tabsToRemove.includes(t.id));
+        const updatedGroup = {
+          ...group,
+          tabs: updatedTabs,
+          updatedAt: new Date().toISOString()
+        };
+        console.log(`🔄 UI更新: 标记更新标签组 ${group.name}, 剩余 ${updatedTabs.length} 个标签页`);
+        // 先在Redux中更新标签组，立即更新UI
+        dispatch({ type: 'tabs/updateGroup/fulfilled', payload: updatedGroup });
+      }
+    });
+
+    // 关键修复：使用Promise包装setTimeout，确保等待存储操作完成
+    return new Promise<void>((resolve, reject) => {
+      setTimeout(async () => {
+        try {
+          console.log('开始执行批量删除的存储操作...');
+
+          // 关键修复：串行执行存储操作，避免竞态条件
+          const results = [];
+          console.log('⏳ 开始串行执行存储操作...');
+
+          for (const { group, tabsToRemove } of Object.values(groupsToUpdate)) {
+            // 使用工具函数检查是否应该自动删除标签组
+            if (shouldAutoDeleteAfterMultipleTabRemoval(group, tabsToRemove)) {
+              console.log(`🗑️  准备删除空标签组: ${group.name} (${group.id})`);
+              await dispatch(deleteGroup(group.id)).unwrap();
+              console.log(`✅ 删除空标签组完成: ${group.id}`);
+              results.push({ action: 'delete', groupId: group.id });
+            } else {
+              // 否则更新标签组，移除这些标签页
+              const updatedTabs = group.tabs.filter(t => !tabsToRemove.includes(t.id));
+              const updatedGroup = {
+                ...group,
+                tabs: updatedTabs,
+                updatedAt: new Date().toISOString()
+              };
+              console.log(`📝 准备更新标签组: ${group.name} (${group.id}), 剩余标签页: ${updatedTabs.length}`);
+              await dispatch(updateGroup(updatedGroup)).unwrap();
+              console.log(`✅ 更新标签组完成: ${group.id}, 剩余标签页: ${updatedTabs.length}`);
+              results.push({ action: 'update', groupId: group.id, remainingTabs: updatedTabs.length });
+            }
+          }
+
+          console.log('✅ 所有存储操作串行执行完成');
+
+          // 显示详细的操作结果
+          console.log('📊 批量删除操作结果:');
+          results.forEach((result, index) => {
+            if (result.action === 'delete') {
+              console.log(`  ${index + 1}. 删除标签组: ${result.groupId}`);
+            } else {
+              console.log(`  ${index + 1}. 更新标签组: ${result.groupId}, 剩余: ${result.remainingTabs} 个标签页`);
+            }
+          });
+
+          // 显示成功提示
+          showToast(`成功删除 ${matchingTabs.length} 个标签页`, 'success');
+          console.log(`🎉 所有批量删除操作已完成并保存到存储 (处理了 ${results.length} 个标签组)`);
+
+          resolve();
+        } catch (error) {
+          console.error('❌ 批量删除存储操作失败:', error);
+          showToast('删除操作失败，请重试', 'error');
+
+          // 详细的错误信息
+          if (error instanceof Error) {
+            console.error('错误详情:', error.message);
+            console.error('错误堆栈:', error.stack);
+          }
+
+          reject(error);
+        }
+      }, 50); // 小延迟确保 UI 先更新
+    });
+  };
+
   return (
     <div>
       <div className="flex items-center justify-between mb-2">
         <h3 className="text-base font-medium text-gray-900 dark:text-gray-100">搜索结果 ({matchingTabs.length})</h3>
         {matchingTabs.length > 0 && (
-          <button
-            onClick={handleRestoreAllSearchResults}
-            className="text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300 text-xs hover:underline flex items-center"
-            title="恢复所有搜索到的标签页"
-          >
-            <svg xmlns="http://www.w3.org/2000/svg" className="h-3.5 w-3.5 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-            </svg>
-            恢复全部
-          </button>
+          <div className="flex items-center space-x-2">
+            <button
+              onClick={handleRestoreAllSearchResults}
+              className="text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300 text-xs hover:underline flex items-center"
+              title="恢复所有搜索到的标签页"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" className="h-3.5 w-3.5 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+              </svg>
+              恢复全部
+            </button>
+            <button
+              onClick={() => showConfirm({
+                title: '删除确认',
+                message: `确定要删除所有搜索结果中的 ${matchingTabs.length} 个标签页吗？此操作不可撤销。`,
+                type: 'danger',
+                confirmText: '删除',
+                cancelText: '取消',
+                onConfirm: handleDeleteAllSearchResults,
+                onCancel: () => { }
+              })}
+              className="text-red-600 hover:text-red-800 dark:text-red-400 dark:hover:text-red-300 text-xs hover:underline flex items-center"
+              title="删除所有搜索到的标签页"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" className="h-3.5 w-3.5 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+              </svg>
+              删除全部
+            </button>
+          </div>
         )}
       </div>
       {/* 搜索结果强制使用单栏布局显示 */}

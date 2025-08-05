@@ -4,9 +4,7 @@ import { storage } from '@/utils/storage';
 import { sync as supabaseSync } from '@/utils/supabase';
 import { nanoid } from '@reduxjs/toolkit';
 import { mergeTabGroups } from '@/utils/syncUtils';
-import { syncToCloud } from '@/utils/syncHelpers';
 import { shouldAutoDeleteAfterTabRemoval } from '@/utils/tabGroupUtils';
-import { throttle } from 'lodash';
 
 // 为了解决“参数隐式具有“any”类型”的问题，添加明确的类型定义
 // 注意：这些接口暂时保留，可能在未来的功能中使用
@@ -41,7 +39,7 @@ export const loadGroups = createAsyncThunk('tabs/loadGroups', async () => {
 
 export const saveGroup = createAsyncThunk(
   'tabs/saveGroup',
-  async (group: TabGroup, { dispatch, getState }) => {
+  async (group: TabGroup) => {
     // 保存到本地
     const groups = await storage.getGroups();
     const updatedGroups = [group, ...groups];
@@ -53,8 +51,7 @@ export const saveGroup = createAsyncThunk(
     });
     await storage.setGroups(sortedGroups);
 
-    // 使用通用同步函数同步到云端
-    await syncToCloud(dispatch, getState, '新标签组');
+    // 移除自动同步功能，只保留本地存储操作
 
     return group;
   }
@@ -62,7 +59,7 @@ export const saveGroup = createAsyncThunk(
 
 export const updateGroup = createAsyncThunk(
   'tabs/updateGroup',
-  async (group: TabGroup, { getState, dispatch }) => {
+  async (group: TabGroup) => {
     const groups = await storage.getGroups();
 
     // 不再需要记录删除的标签页
@@ -71,8 +68,7 @@ export const updateGroup = createAsyncThunk(
     const updatedGroups = groups.map(g => (g.id === group.id ? group : g));
     await storage.setGroups(updatedGroups);
 
-    // 使用通用同步函数同步到云端
-    await syncToCloud(dispatch, getState, '更新标签组');
+    // 移除自动同步功能，只保留本地存储操作
 
     return group;
   }
@@ -80,21 +76,14 @@ export const updateGroup = createAsyncThunk(
 
 export const deleteGroup = createAsyncThunk(
   'tabs/deleteGroup',
-  async (groupId: string, { getState, dispatch }) => {
+  async (groupId: string) => {
     const groups = await storage.getGroups();
 
     // 直接从本地存储中移除标签组
     const updatedGroups = groups.filter(g => g.id !== groupId);
     await storage.setGroups(updatedGroups);
 
-    // 使用通用同步函数同步到云端
-    // 不等待同步完成，直接返回结果
-    // 这样可以确保用户界面不会被阻塞
-    syncToCloud(dispatch, getState, '删除标签组').catch(err => {
-      if (process.env.NODE_ENV === 'development') {
-        console.error('同步删除标签组操作失败:', err);
-      }
-    });
+    // 移除自动同步功能，只保留本地存储操作
 
     return groupId;
   }
@@ -102,7 +91,7 @@ export const deleteGroup = createAsyncThunk(
 
 export const deleteAllGroups = createAsyncThunk(
   'tabs/deleteAllGroups',
-  async (_, { getState, dispatch }) => {
+  async () => {
     const groups = await storage.getGroups();
 
     if (groups.length === 0) {
@@ -112,13 +101,7 @@ export const deleteAllGroups = createAsyncThunk(
     // 直接清空本地标签组
     await storage.setGroups([]);
 
-    // 使用通用同步函数同步到云端
-    // 不等待同步完成，直接返回结果
-    syncToCloud(dispatch, getState, '删除所有标签组').catch(err => {
-      if (process.env.NODE_ENV === 'development') {
-        console.error('同步删除所有标签组操作失败:', err);
-      }
-    });
+    // 移除自动同步功能，只保留本地存储操作
 
     return { count: groups.length };
   }
@@ -126,7 +109,7 @@ export const deleteAllGroups = createAsyncThunk(
 
 export const importGroups = createAsyncThunk(
   'tabs/importGroups',
-  async (groups: TabGroup[], { getState, dispatch }) => {
+  async (groups: TabGroup[]) => {
     // 为导入的标签组和标签页生成新的ID
     const processedGroups = groups.map(group => ({
       ...group,
@@ -148,13 +131,7 @@ export const importGroups = createAsyncThunk(
     });
     await storage.setGroups(sortedGroups);
 
-    // 使用通用同步函数同步到云端
-    // 不等待同步完成，直接返回结果
-    syncToCloud(dispatch, getState, '导入标签组').catch(err => {
-      if (process.env.NODE_ENV === 'development') {
-        console.error('同步导入标签组操作失败:', err);
-      }
-    });
+    // 移除自动同步功能，只保留本地存储操作
 
     return processedGroups;
   }
@@ -502,7 +479,7 @@ export const syncLocalChangesToCloud = createAsyncThunk(
 // 更新标签组名称并同步到云端
 export const updateGroupNameAndSync = createAsyncThunk(
   'tabs/updateGroupNameAndSync',
-  async ({ groupId, name }: { groupId: string; name: string }, { getState, dispatch }) => {
+  async ({ groupId, name }: { groupId: string; name: string }, { dispatch }) => {
     // 在 Redux 中更新标签组名称
     dispatch(updateGroupName({ groupId, name }));
 
@@ -516,13 +493,7 @@ export const updateGroupNameAndSync = createAsyncThunk(
     });
     await storage.setGroups(updatedGroups);
 
-    // 使用通用同步函数同步到云端
-    // 不等待同步完成，直接返回结果
-    syncToCloud(dispatch, getState, '标签组名称更新').catch(err => {
-      if (process.env.NODE_ENV === 'development') {
-        console.error('同步标签组名称更新操作失败:', err);
-      }
-    });
+    // 移除自动同步功能，只保留本地存储操作
 
     return { groupId, name };
   }
@@ -531,7 +502,7 @@ export const updateGroupNameAndSync = createAsyncThunk(
 // 切换标签组锁定状态并同步到云端
 export const toggleGroupLockAndSync = createAsyncThunk(
   'tabs/toggleGroupLockAndSync',
-  async (groupId: string, { getState, dispatch }) => {
+  async (groupId: string, { dispatch }) => {
     // 在 Redux 中切换标签组锁定状态
     dispatch(toggleGroupLock(groupId));
 
@@ -549,13 +520,7 @@ export const toggleGroupLockAndSync = createAsyncThunk(
       const updatedGroups = groups.map(g => (g.id === groupId ? updatedGroup : g));
       await storage.setGroups(updatedGroups);
 
-      // 使用通用同步函数同步到云端
-      // 不等待同步完成，直接返回结果
-      syncToCloud(dispatch, getState, '标签组锁定状态更新').catch(err => {
-        if (process.env.NODE_ENV === 'development') {
-          console.error('同步标签组锁定状态更新操作失败:', err);
-        }
-      });
+      // 移除自动同步功能，只保留本地存储操作
 
       return { groupId, isLocked: updatedGroup.isLocked };
     }
@@ -575,7 +540,7 @@ export const moveGroupAndSync = createAsyncThunk(
   'tabs/moveGroupAndSync',
   async (
     { dragIndex, hoverIndex }: { dragIndex: number; hoverIndex: number },
-    { getState, dispatch }
+    { dispatch }
   ) => {
     try {
       // 在 Redux 中移动标签组 - 立即更新UI
@@ -615,9 +580,7 @@ export const moveGroupAndSync = createAsyncThunk(
           // 更新本地存储 - 批量操作
           await storage.setGroups(newGroups);
 
-          // 使用节流版本的同步函数，减少频繁同步
-          // 2秒内只执行一次同步，减少网络请求和状态更新
-          throttledSyncToCloud(dispatch, getState, '标签组顺序更新');
+          // 移除自动同步功能，只保留本地存储操作
         } catch (error) {
           console.error('存储标签组移动操作失败:', error);
         }
@@ -635,7 +598,7 @@ export const moveGroupAndSync = createAsyncThunk(
 // 清理重复标签功能
 export const cleanDuplicateTabs = createAsyncThunk(
   'tabs/cleanDuplicateTabs',
-  async (_, { getState, dispatch }) => {
+  async () => {
     // 保存原始数据，用于错误回滚
     let originalGroups: TabGroup[] = [];
 
@@ -713,13 +676,7 @@ export const cleanDuplicateTabs = createAsyncThunk(
         throw new Error('保存失败，操作已取消');
       }
 
-      // 尝试同步到云端（失败不影响本地操作）
-      try {
-        await syncToCloud(dispatch, getState, '清理重复标签和空标签组');
-      } catch (syncError) {
-        console.warn('同步到云端失败，但本地操作已完成:', syncError);
-        // 同步失败不影响本地操作的成功
-      }
+      // 移除自动同步功能，只保留本地存储操作
 
       return {
         removedTabsCount,
@@ -744,33 +701,7 @@ export const cleanDuplicateTabs = createAsyncThunk(
   }
 );
 
-/**
- * 节流版本的云端同步函数
- *
- * 该函数使用 lodash 的 throttle 实现节流控制，在指定时间内多次调用只会执行一次，
- * 有效减少频繁的网络请求和状态更新，提高应用性能和响应速度。
- *
- * 性能优化点：
- * 1. 使用 trailing 模式，确保在一系列快速操作后只执行最后一次同步
- * 2. 不执行第一次调用 (leading: false)，避免在拖拽开始时就触发同步
- * 3. 2秒的节流时间是经过测试的最佳平衡点，既能保证数据及时同步，又不会频繁触发网络请求
- * 4. 错误处理只在开发环境输出日志，避免在生产环境泄露敏感信息
- *
- * @param {Function} dispatch - Redux dispatch 函数
- * @param {Function} getState - Redux getState 函数，用于获取当前状态
- * @param {string} operation - 当前执行的操作名称，用于日志记录
- */
-const throttledSyncToCloud = throttle(
-  (dispatch, getState, operation) => {
-    syncToCloud(dispatch, getState, operation).catch(err => {
-      if (process.env.NODE_ENV === 'development') {
-        console.error(`同步${operation}操作失败:`, err);
-      }
-    });
-  },
-  2000,
-  { leading: false, trailing: true }
-); // 2秒内只执行一次，并且是在最后一次调用后执行
+// 移除节流版本的云端同步函数，不再需要自动同步
 
 /**
  * 移动标签页并同步到云端
@@ -796,7 +727,7 @@ export const moveTabAndSync = createAsyncThunk(
       targetIndex: number;
       updateSourceInDrag?: boolean;
     },
-    { getState, dispatch }
+    { dispatch }
   ) => {
     try {
       // 在 Redux 中移动标签页 - 立即更新UI
@@ -872,9 +803,7 @@ export const moveTabAndSync = createAsyncThunk(
 
             await storage.setGroups(updatedGroups);
 
-            // 使用节流版本的同步函数，减少频繁同步
-            // 2秒内只执行一次同步，减少网络请求和状态更新
-            throttledSyncToCloud(dispatch, getState, '标签页移动');
+            // 移除自动同步功能，只保留本地存储操作
           }
         } catch (error) {
           console.error('存储标签页移动操作失败:', error);
@@ -1276,7 +1205,7 @@ export const deleteTabAndSync = createAsyncThunk<
   { group: TabGroup | null },
   { groupId: string; tabId: string },
   { state: any }
->('tabs/deleteTabAndSync', async ({ groupId, tabId }: { groupId: string; tabId: string }, { getState, dispatch }) => {
+>('tabs/deleteTabAndSync', async ({ groupId, tabId }: { groupId: string; tabId: string }) => {
   try {
     // 在本地存储中删除标签
     const groups = await storage.getGroups();
@@ -1291,8 +1220,7 @@ export const deleteTabAndSync = createAsyncThunk<
         const updatedGroups = groups.filter(g => g.id !== groupId);
         await storage.setGroups(updatedGroups);
 
-        // 使用节流版本的同步函数，减少频繁同步
-        throttledSyncToCloud(dispatch, getState, '空标签组自动删除');
+        // 移除自动同步功能，只保留本地存储操作
 
         console.log(`自动删除空标签组: ${currentGroup.name} (ID: ${groupId})`);
         return { group: null };
@@ -1310,8 +1238,7 @@ export const deleteTabAndSync = createAsyncThunk<
         updatedGroups[groupIndex] = updatedGroup;
         await storage.setGroups(updatedGroups);
 
-        // 使用节流版本的同步函数，减少频繁同步
-        throttledSyncToCloud(dispatch, getState, '标签页删除');
+        // 移除自动同步功能，只保留本地存储操作
 
         console.log(`从标签组删除标签页: ${currentGroup.name}, 剩余标签页: ${updatedTabs.length}`);
         return { group: updatedGroup };

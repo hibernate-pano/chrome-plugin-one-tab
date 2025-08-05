@@ -101,9 +101,15 @@ export const ToastProvider: React.FC<ToastProviderProps> = ({ children }) => {
       />
       <ConfirmDialog
         {...confirmDialog}
-        onConfirm={() => {
-          confirmDialog.onConfirm();
-          handleConfirmClose();
+        onConfirm={async () => {
+          try {
+            // 支持异步的onConfirm回调
+            await confirmDialog.onConfirm();
+          } catch (error) {
+            console.error('确认操作失败:', error);
+          } finally {
+            handleConfirmClose();
+          }
         }}
         onCancel={() => {
           confirmDialog.onCancel();
