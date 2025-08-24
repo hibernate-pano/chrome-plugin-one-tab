@@ -143,7 +143,7 @@ export const SimpleTabList: React.FC<SimpleTabListProps> = ({ searchQuery }) => 
           {useDoubleColumnLayout ? (
             // 双栏布局
             <SortableContext items={groupIds} strategy={verticalListSortingStrategy}>
-              <div className="grid grid-cols-1 sm:grid-cols-1 md:grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-1 md:grid-cols-2 gap-2 sm:gap-3">
                 {/* 左栏 - 偶数索引的标签组 */}
                 <div className="space-y-2">
                   {filteredGroups

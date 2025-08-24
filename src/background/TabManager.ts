@@ -115,14 +115,38 @@ export class TabManager {
     console.log('开始保存所有标签页');
 
     try {
-      // 获取标签页列表
-      const tabs = inputTabs || await chrome.tabs.query({ currentWindow: true });
+      // 获取标签页列表，添加重试机制
+      let tabs: chrome.tabs.Tab[];
+      if (inputTabs) {
+        tabs = inputTabs;
+      } else {
+        // 重试查询标签页
+        for (let i = 0; i < 3; i++) {
+          try {
+            tabs = await chrome.tabs.query({ currentWindow: true });
+            break;
+          } catch (error) {
+            console.warn(`查询标签页失败，重试 ${i + 1}/3:`, error);
+            if (i === 2) throw error;
+            await new Promise(resolve => setTimeout(resolve, 200));
+          }
+        }
+      }
+
+      console.log(`查询到 ${tabs!.length} 个标签页`);
 
       // 创建标签组
-      const tabGroup = await this.createTabGroup(tabs);
+      const tabGroup = await this.createTabGroup(tabs!);
 
       if (tabGroup.tabs.length === 0) {
         console.log('没有有效的标签页需要保存');
+        // 显示通知
+        await this.showNotification({
+          type: 'basic',
+          iconUrl: '/icons/icon128.png',
+          title: 'OneTab Plus',
+          message: '没有找到可保存的标签页'
+        });
         return;
       }
 
@@ -132,24 +156,47 @@ export class TabManager {
 
       console.log(`成功保存 ${tabGroup.tabs.length} 个标签页到新标签组`);
 
+      // 显示成功通知
+      await this.showNotification({
+        type: 'basic',
+        iconUrl: '/icons/icon128.png',
+        title: 'OneTab Plus',
+        message: `已成功保存 ${tabGroup.tabs.length} 个标签页`
+      });
+
       // 通知标签管理器页面刷新数据
       this.notifyTabManagerRefresh();
 
       // 关闭已保存的标签页（排除扩展页面）
-      const tabsToClose = this.filterValidTabs(tabs);
+      const tabsToClose = this.filterValidTabs(tabs!);
       const tabIdsToClose = tabsToClose
         .map(tab => tab.id)
         .filter((id): id is number => id !== undefined);
 
       if (tabIdsToClose.length > 0) {
-        // 创建一个新标签页
-        await chrome.tabs.create({ url: 'chrome://newtab' });
-        // 关闭已保存的标签页
-        await chrome.tabs.remove(tabIdsToClose);
+        try {
+          // 创建一个新标签页
+          await chrome.tabs.create({ url: 'chrome://newtab' });
+          // 关闭已保存的标签页
+          await chrome.tabs.remove(tabIdsToClose);
+          console.log(`已关闭 ${tabIdsToClose.length} 个标签页`);
+        } catch (error) {
+          console.warn('关闭标签页时出错:', error);
+          // 即使关闭失败，也不影响保存功能
+        }
       }
 
     } catch (error) {
       console.error('保存标签页失败:', error);
+
+      // 显示错误通知
+      await this.showNotification({
+        type: 'basic',
+        iconUrl: '/icons/icon128.png',
+        title: 'OneTab Plus - 保存失败',
+        message: '保存标签页时发生错误，请重试'
+      });
+
       throw error;
     }
   }

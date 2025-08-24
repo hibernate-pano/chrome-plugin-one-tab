@@ -1,6 +1,11 @@
 import React, { useState } from 'react';
 import { useAppDispatch, useAppSelector } from '@/store/hooks';
-import { toggleLayoutMode, saveSettings, setReorderMode } from '@/store/slices/settingsSlice';
+import {
+  toggleLayoutMode,
+  saveSettings,
+  setReorderMode,
+  setLayoutMode,
+} from '@/store/slices/settingsSlice';
 import { cleanDuplicateTabs } from '@/store/slices/tabSlice';
 import { HeaderDropdown } from './HeaderDropdown';
 import { useToast } from '@/contexts/ToastContext';
@@ -29,6 +34,30 @@ export const Header: React.FC<HeaderProps> = ({ onSearch }) => {
     onSearch('');
   };
 
+  // 回到默认视图
+  const handleResetToDefaultView = () => {
+    // 清空搜索
+    setSearchValue('');
+    onSearch('');
+
+    // 退出重排序模式
+    if (settings.reorderMode) {
+      dispatch(setReorderMode(false));
+    }
+
+    // 重置为默认布局模式（单栏）
+    if (settings.layoutMode !== 'single') {
+      dispatch(setLayoutMode('single'));
+      dispatch(
+        saveSettings({
+          ...settings,
+          layoutMode: 'single',
+          reorderMode: false,
+        })
+      );
+    }
+  };
+
   const settings = useAppSelector(state => state.settings);
   const [showDropdown, setShowDropdown] = useState(false);
 
@@ -36,7 +65,8 @@ export const Header: React.FC<HeaderProps> = ({ onSearch }) => {
   const handleCleanDuplicateTabs = () => {
     showConfirm({
       title: '确认清理重复标签和空标签组',
-      message: '此操作将：\n• 清理所有标签组中URL相同的重复标签页，只保留每个URL最新的一个标签页\n• 自动删除不包含任何标签页的空标签组（锁定的标签组除外）\n此操作不可撤销。',
+      message:
+        '此操作将：\n• 清理所有标签组中URL相同的重复标签页，只保留每个URL最新的一个标签页\n• 自动删除不包含任何标签页的空标签组（锁定的标签组除外）\n此操作不可撤销。',
       type: 'warning',
       confirmText: '确认清理',
       cancelText: '取消',
@@ -63,7 +93,7 @@ export const Header: React.FC<HeaderProps> = ({ onSearch }) => {
             title: '清理完成',
             message,
             type: 'success',
-            onClose: () => { }
+            onClose: () => {},
           });
         } catch (error) {
           console.error('清理重复标签失败:', error);
@@ -71,11 +101,11 @@ export const Header: React.FC<HeaderProps> = ({ onSearch }) => {
             title: '清理失败',
             message: '清理重复标签失败，请重试',
             type: 'error',
-            onClose: () => { }
+            onClose: () => {},
           });
         }
       },
-      onCancel: () => { }
+      onCancel: () => {},
     });
   };
 
@@ -134,28 +164,35 @@ export const Header: React.FC<HeaderProps> = ({ onSearch }) => {
 
   return (
     <header className="bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700 transition-colors">
-      <div className="w-full px-3 py-2 sm:px-4 md:px-6 lg:px-8">
+      <div className="w-full px-2 py-2 sm:px-3 md:px-4 lg:px-6">
         <div className="flex items-center justify-between">
-          <div className="flex items-center space-x-3">
-            <svg
-              xmlns="http://www.w3.org/2000/svg"
-              className="h-6 w-6 text-primary-600"
-              fill="none"
-              viewBox="0 0 24 24"
-              stroke="currentColor"
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2}
-                d="M9 17V7m0 10a2 2 0 01-2 2H5a2 2 0 01-2-2V7a2 2 0 012-2h2a2 2 0 012 2m0 10a2 2 0 002 2h2a2 2 0 002-2M9 7a2 2 0 012-2h2a2 2 0 012 2m0 10V7m0 10a2 2 0 002 2h2a2 2 0 002-2V7a2 2 0 00-2-2h-2a2 2 0 00-2 2"
-              />
-            </svg>
-            <div className="flex items-center">
-              <h1 className="text-lg font-bold text-gray-800 dark:text-gray-100">OneTabPlus</h1>
-              <TabCounter />
+          <button
+            onClick={handleResetToDefaultView}
+            className="p-1 rounded hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
+            title="回到默认视图"
+            aria-label="回到默认视图"
+          >
+            <div className="flex items-center space-x-3">
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                className="h-6 w-6 text-primary-600"
+                fill="none"
+                viewBox="0 0 24 24"
+                stroke="currentColor"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M9 17V7m0 10a2 2 0 01-2 2H5a2 2 0 01-2-2V7a2 2 0 012-2h2a2 2 0 012 2m0 10a2 2 0 002 2h2a2 2 0 002-2M9 7a2 2 0 012-2h2a2 2 0 012 2m0 10V7m0 10a2 2 0 002 2h2a2 2 0 002-2V7a2 2 0 00-2-2h-2a2 2 0 00-2 2"
+                />
+              </svg>
+              <div className="flex items-center">
+                <h1 className="text-lg font-bold text-gray-800 dark:text-gray-100">OneTabPlus</h1>
+                <TabCounter />
+              </div>
             </div>
-          </div>
+          </button>
 
           <div className="flex items-center space-x-4">
             <div className="relative">
@@ -209,14 +246,18 @@ export const Header: React.FC<HeaderProps> = ({ onSearch }) => {
                 onClick={handleToggleLayout}
                 className="p-2 rounded hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors text-gray-600 dark:text-gray-300 flex items-center justify-center"
                 title={
-                  settings.layoutMode === 'single' ? '切换为双栏布局' :
-                    settings.layoutMode === 'double' ? '切换为三栏布局' :
-                      '切换为单栏布局'
+                  settings.layoutMode === 'single'
+                    ? '切换为双栏布局'
+                    : settings.layoutMode === 'double'
+                      ? '切换为三栏布局'
+                      : '切换为单栏布局'
                 }
                 aria-label={
-                  settings.layoutMode === 'single' ? '切换为双栏布局' :
-                    settings.layoutMode === 'double' ? '切换为三栏布局' :
-                      '切换为单栏布局'
+                  settings.layoutMode === 'single'
+                    ? '切换为双栏布局'
+                    : settings.layoutMode === 'double'
+                      ? '切换为三栏布局'
+                      : '切换为单栏布局'
                 }
                 aria-pressed={settings.layoutMode !== 'single'}
               >
@@ -352,8 +393,6 @@ export const Header: React.FC<HeaderProps> = ({ onSearch }) => {
           </div>
         </div>
       </div>
-
-
     </header>
   );
 };

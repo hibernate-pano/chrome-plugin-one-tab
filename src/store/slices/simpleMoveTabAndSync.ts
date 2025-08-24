@@ -1,7 +1,6 @@
 import { createAsyncThunk } from '@reduxjs/toolkit';
 import { moveTab } from './tabSlice';
 import { storage } from '@/utils/storage';
-import { syncToCloud } from '@/utils/syncHelpers';
 
 // 简化版的移动标签页并同步到云端函数
 export const simpleMoveTabAndSync = createAsyncThunk(
@@ -16,7 +15,7 @@ export const simpleMoveTabAndSync = createAsyncThunk(
     sourceIndex: number,
     targetGroupId: string,
     targetIndex: number
-  }, { getState, dispatch }) => {
+  }, { dispatch }) => {
     try {
       // 在 Redux 中移动标签页
       dispatch(moveTab({ sourceGroupId, sourceIndex, targetGroupId, targetIndex }));
@@ -69,17 +68,7 @@ export const simpleMoveTabAndSync = createAsyncThunk(
 
             await storage.setGroups(updatedGroups);
 
-            // 使用通用同步函数同步到云端
-            // 不等待同步完成，直接返回结果
-            // 使用延迟同步，避免频繁的拖拽操作导致过多的同步请求
-            setTimeout(() => {
-              syncToCloud(dispatch, getState, '标签页移动')
-                .catch(err => {
-                  if (process.env.NODE_ENV === 'development') {
-                    console.error('同步标签页移动操作失败:', err);
-                  }
-                });
-            }, 1000); // 延迟1秒后同步，避免频繁请求
+            // 移除自动同步功能，只保留本地存储操作
           }
         } catch (error) {
           console.error('存储标签页移动操作失败:', error);
