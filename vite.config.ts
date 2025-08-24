@@ -12,7 +12,13 @@ export default defineConfig(({ mode }) => {
   return {
     plugins: [
       react(),
-      crx({ manifest }),
+      crx({
+        manifest,
+        // 配置选项以解决Service Worker问题
+        contentScripts: {
+          injectCss: true,
+        },
+      }),
     ],
     resolve: {
       alias: {
@@ -34,6 +40,13 @@ export default defineConfig(({ mode }) => {
           'confirm': resolve(__dirname, 'src/auth/confirm.html')
         },
         output: {
+          // 确保Service Worker作为独立文件输出
+          entryFileNames: (chunkInfo) => {
+            if (chunkInfo.name === 'service-worker') {
+              return 'service-worker.js';
+            }
+            return 'assets/[name]-[hash].js';
+          },
           // 简化代码分块策略，避免Service Worker模块导入问题
           manualChunks: (id) => {
             // Service Worker相关的代码不进行分块
