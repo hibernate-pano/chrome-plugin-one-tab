@@ -51,10 +51,7 @@
     @apply w-full px-3 sm:px-4 md:px-6 lg:px-8;
   }
 
-  /* 三栏布局优化 */
-  .triple-column-layout {
-    @apply grid grid-cols-1 sm:grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2 sm:gap-3 md:gap-4 lg:gap-5;
-  }
+
 
   /* 双栏布局优化 */
   .double-column-layout {
@@ -66,17 +63,7 @@
     @apply space-y-2 transition-all duration-200 ease-out;
   }
 
-  /* 确保三栏布局在小屏幕上的可读性 */
-  @media (max-width: 1024px) {
-    .triple-column-layout {
-      @apply grid-cols-1 md:grid-cols-2;
-    }
-  }
 
-  /* 三栏布局的栏目容器 */
-  .layout-column {
-    @apply space-y-2 transition-all duration-200 ease-out;
-  }
 
   /* 响应式间距优化 */
   .responsive-spacing {
@@ -86,6 +73,59 @@
   /* 响应式网格间距 */
   .responsive-grid-gap {
     @apply gap-2 sm:gap-3 md:gap-4 lg:gap-5;
+  }
+
+  /* 布局宽度控制 */
+  .layout-single-width {
+    @apply w-full max-w-none px-4 mx-auto;
+  }
+
+  .layout-double-width {
+    @apply w-full max-w-none px-4 mx-auto;
+  }
+
+  /* 小屏幕优化 - 640px以上开始使用限制宽度 */
+  @media (min-width: 640px) {
+    .layout-single-width {
+      @apply max-w-[80%] px-6;
+    }
+
+    .layout-double-width {
+      @apply max-w-[90%] px-6;
+    }
+  }
+
+  /* 中等屏幕 - 768px以上使用目标宽度 */
+  @media (min-width: 768px) {
+    .layout-single-width {
+      @apply max-w-[50%] px-6;
+    }
+
+    .layout-double-width {
+      @apply max-w-[66.67%] px-6;
+    }
+  }
+
+  /* 大屏幕优化 - 1024px以上增加内边距 */
+  @media (min-width: 1024px) {
+    .layout-single-width {
+      @apply px-8;
+    }
+
+    .layout-double-width {
+      @apply px-8;
+    }
+  }
+
+  /* 超大屏幕优化 - 1280px以上进一步增加内边距 */
+  @media (min-width: 1280px) {
+    .layout-single-width {
+      @apply px-12;
+    }
+
+    .layout-double-width {
+      @apply px-12;
+    }
   }
 }
 

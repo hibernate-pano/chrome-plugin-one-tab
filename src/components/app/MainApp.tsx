@@ -1,7 +1,7 @@
 import React, { useState, useEffect, lazy, Suspense } from 'react';
 import { Header } from '@/components/layout/Header';
 import { TabList } from '@/components/tabs/TabList';
-import { useAppDispatch } from '@/store/hooks';
+import { useAppDispatch, useAppSelector } from '@/store/hooks';
 import { loadSettings } from '@/store/slices/settingsSlice';
 
 // 使用动态导入懒加载拖放功能
@@ -24,6 +24,7 @@ export const MainApp: React.FC = () => {
   const dispatch = useAppDispatch();
   const [searchQuery, setSearchQuery] = useState('');
   const [showPerformanceTest, setShowPerformanceTest] = useState(false);
+  const layoutMode = useAppSelector(state => state.settings.layoutMode);
 
   // 加载用户设置
   useEffect(() => {
@@ -33,6 +34,16 @@ export const MainApp: React.FC = () => {
   // 切换性能测试页面
   const togglePerformanceTest = () => {
     setShowPerformanceTest(!showPerformanceTest);
+  };
+
+  // 根据布局模式和搜索状态确定容器宽度类
+  const getContainerWidthClass = () => {
+    // 搜索模式下使用单栏宽度
+    if (searchQuery) {
+      return 'layout-single-width';
+    }
+    // 根据布局模式选择宽度
+    return layoutMode === 'double' ? 'layout-double-width' : 'layout-single-width';
   };
 
   return (
@@ -66,14 +77,14 @@ export const MainApp: React.FC = () => {
             </>
           ) : (
             <>
-              <Header onSearch={setSearchQuery} />
-              <main className="flex-1 w-full py-2 px-2 sm:px-3 md:px-4 lg:px-6">
+              <Header onSearch={setSearchQuery} searchQuery={searchQuery} />
+              <main className={`flex-1 w-full py-2 ${getContainerWidthClass()}`}>
                 <Suspense fallback={<div className="p-4 text-center">加载标签列表...</div>}>
                   <TabList searchQuery={searchQuery} />
                 </Suspense>
               </main>
               <footer className="bg-white dark:bg-gray-900 border-t border-gray-200 dark:border-gray-700 text-xs text-gray-600 dark:text-gray-400">
-                <div className="w-full px-2 py-2 sm:px-3 md:px-4 lg:px-6 flex justify-between items-center">
+                <div className={`w-full py-2 ${getContainerWidthClass()} flex justify-between items-center`}>
                   <div className="flex items-center space-x-2">
                     <svg
                       xmlns="http://www.w3.org/2000/svg"

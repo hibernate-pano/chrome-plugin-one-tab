@@ -114,16 +114,13 @@ const settingsSlice = createSlice({
       state.layoutMode = action.payload;
     },
 
-    // 切换布局模式（循环切换：单栏 -> 双栏 -> 三栏 -> 单栏）
+    // 切换布局模式（循环切换：单栏 -> 双栏 -> 单栏）
     toggleLayoutMode: (state) => {
       switch (state.layoutMode) {
         case 'single':
           state.layoutMode = 'double';
           break;
         case 'double':
-          state.layoutMode = 'triple';
-          break;
-        case 'triple':
           state.layoutMode = 'single';
           break;
         default:
