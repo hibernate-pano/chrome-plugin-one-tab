@@ -41,7 +41,7 @@ const DEFAULT_SETTINGS = {
   confirmBeforeDelete: true,
   allowDuplicateTabs: false,
   syncEnabled: true,
-  layoutMode: 'double',
+  layoutMode: 'single',
   showNotifications: false,
   syncStrategy: 'newest',
   deleteStrategy: 'everywhere',
@@ -60,8 +60,8 @@ function testDefaultSettings() {
   }
 
   // 检查默认值是否正确
-  if (DEFAULT_SETTINGS.layoutMode !== 'double') {
-    throw new Error(`默认layoutMode应该是'double'，实际是'${DEFAULT_SETTINGS.layoutMode}'`);
+  if (DEFAULT_SETTINGS.layoutMode !== 'single') {
+    throw new Error(`默认layoutMode应该是'single'，实际是'${DEFAULT_SETTINGS.layoutMode}'`);
   }
 
   console.log('✅ 默认设置测试通过');

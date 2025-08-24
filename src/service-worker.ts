@@ -1,12 +1,211 @@
 // Chrome 扩展的 Service Worker
-import { tabManager } from './background/TabManager';
+// 为了避免模块导入问题，直接在Service Worker中实现核心功能
 
-// 移除定时同步功能，简化逻辑
+// Service Worker启动日志
+console.log('=== OneTab Plus Service Worker 启动 ===');
+console.log('版本:', chrome.runtime.getManifest().version);
+console.log('启动时间:', new Date().toISOString());
+console.log('Chrome APIs 可用性检查:');
+console.log('- chrome.tabs:', !!chrome.tabs);
+console.log('- chrome.runtime:', !!chrome.runtime);
+console.log('- chrome.action:', !!chrome.action);
+console.log('- chrome.storage:', !!chrome.storage);
+console.log('=====================================');
+
+// 迁移旧的存储键到新的统一键名
+async function migrateStorageKeys() {
+  try {
+    const { tabGroups } = await chrome.storage.local.get(['tabGroups']);
+    const { tab_groups } = await chrome.storage.local.get(['tab_groups']);
+
+    // 如果存在旧键且新键不存在或为空，则迁移
+    if (Array.isArray(tabGroups) && (!Array.isArray(tab_groups) || tab_groups.length === 0)) {
+      await chrome.storage.local.set({ tab_groups: tabGroups });
+      // 迁移完成后可选择清理旧键（可选）
+      await chrome.storage.local.remove('tabGroups');
+      console.log('已将旧键 tabGroups 迁移为 tab_groups');
+    }
+  } catch (error) {
+    console.warn('迁移存储键失败（可忽略）:', error);
+  }
+}
+
+// 简化的存储工具函数
+const storage = {
+  async getGroups() {
+    try {
+      const result = await chrome.storage.local.get(['tab_groups']);
+      return result.tab_groups || [];
+    } catch (error) {
+      console.error('获取标签组失败:', error);
+      return [];
+    }
+  },
+
+  async setGroups(groups: any[]) {
+    try {
+      await chrome.storage.local.set({ tab_groups: groups });
+    } catch (error) {
+      console.error('保存标签组失败:', error);
+      throw error;
+    }
+  }
+};
+
+// 生成简单的ID
+function generateId(): string {
+  return Date.now().toString(36) + Math.random().toString(36).substr(2);
+}
+
+// 清理favicon URL
+function sanitizeFaviconUrl(url?: string): string {
+  if (!url) return '';
+  if (url.startsWith('chrome://')) return '';
+  if (url.startsWith('chrome-extension://')) return '';
+  return url;
+}
+
+// 简化的标签管理功能
+const tabManager = {
+  // 获取扩展页面URL
+  getExtensionUrl(): string {
+    return chrome.runtime.getURL('src/popup/index.html');
+  },
+
+  // 检查是否已有标签管理页面打开
+  async getExistingTabManagerTabs(): Promise<chrome.tabs.Tab[]> {
+    const extensionUrl = this.getExtensionUrl();
+    return await chrome.tabs.query({ url: extensionUrl + '*' });
+  },
+
+  // 打开或激活标签管理器页面
+  async openTabManager(shouldRefresh: boolean = false): Promise<void> {
+    console.log('打开标签管理器页面');
+    const existingTabs = await this.getExistingTabManagerTabs();
+
+    if (existingTabs.length > 0) {
+      console.log('已有标签管理页打开，激活');
+      const tab = existingTabs[0];
+      if (tab.id) {
+        await chrome.tabs.update(tab.id, { active: true });
+        if (shouldRefresh) {
+          await chrome.tabs.reload(tab.id);
+        }
+      }
+    } else {
+      console.log('没有标签管理页打开，创建新的');
+      await chrome.tabs.create({ url: this.getExtensionUrl() });
+    }
+  },
+
+  // 过滤有效的标签页
+  filterValidTabs(tabs: chrome.tabs.Tab[]): chrome.tabs.Tab[] {
+    return tabs.filter(tab => {
+      if (tab.url) {
+        return !tab.url.startsWith('chrome://') &&
+          !tab.url.startsWith('chrome-extension://') &&
+          !tab.url.startsWith('edge://') &&
+          !tab.url.startsWith('about:');
+      }
+      return tab.title && tab.title.trim() !== '';
+    });
+  },
+
+  // 创建标签组
+  async createTabGroup(tabs: chrome.tabs.Tab[]): Promise<any> {
+    const validTabs = this.filterValidTabs(tabs);
+    const now = new Date().toISOString();
+
+    const formattedTabs = validTabs.map(tab => ({
+      id: generateId(),
+      url: tab.url || 'about:blank',
+      title: tab.title || '未命名标签页',
+      favicon: sanitizeFaviconUrl(tab.favIconUrl),
+      createdAt: now,
+      lastAccessed: now,
+    }));
+
+    return {
+      id: generateId(),
+      name: `标签组 ${new Date().toLocaleString()}`,
+      tabs: formattedTabs,
+      createdAt: now,
+      updatedAt: now,
+      isLocked: false,
+    };
+  },
+
+  // 保存所有标签页
+  async saveAllTabs(inputTabs?: chrome.tabs.Tab[]): Promise<void> {
+    console.log('开始保存所有标签页');
+
+    try {
+      // 获取标签页列表
+      const tabs = inputTabs || await chrome.tabs.query({ currentWindow: true });
+      console.log(`查询到 ${tabs.length} 个标签页`);
+
+      // 创建标签组
+      const tabGroup = await this.createTabGroup(tabs);
+
+      if (tabGroup.tabs.length === 0) {
+        console.log('没有有效的标签页需要保存');
+        await this.showNotification('没有找到可保存的标签页');
+        return;
+      }
+
+      // 保存到存储
+      const existingGroups = await storage.getGroups();
+      await storage.setGroups([tabGroup, ...existingGroups]);
+
+      console.log(`成功保存 ${tabGroup.tabs.length} 个标签页到新标签组`);
+      await this.showNotification(`已成功保存 ${tabGroup.tabs.length} 个标签页`);
+
+      // 关闭已保存的标签页
+      const tabsToClose = this.filterValidTabs(tabs);
+      const tabIdsToClose = tabsToClose
+        .map(tab => tab.id)
+        .filter((id): id is number => id !== undefined);
+
+      if (tabIdsToClose.length > 0) {
+        try {
+          await chrome.tabs.create({ url: 'chrome://newtab' });
+          await chrome.tabs.remove(tabIdsToClose);
+          console.log(`已关闭 ${tabIdsToClose.length} 个标签页`);
+        } catch (error) {
+          console.warn('关闭标签页时出错:', error);
+        }
+      }
+
+    } catch (error) {
+      console.error('保存标签页失败:', error);
+      await this.showNotification('保存标签页时发生错误，请重试');
+      throw error;
+    }
+  },
+
+  // 显示通知
+  async showNotification(message: string): Promise<void> {
+    try {
+      await chrome.notifications.create({
+        type: 'basic',
+        iconUrl: '/icons/icon128.png',
+        title: 'OneTab Plus',
+        message: message
+      });
+    } catch (error) {
+      console.error('显示通知失败:', error);
+    }
+  }
+};
+
 console.log('Service Worker: 已简化同步逻辑，只保留手动同步功能');
 
 // 初始安装或更新时
-chrome.runtime.onInstalled.addListener(() => {
+chrome.runtime.onInstalled.addListener(async () => {
   console.log('Service Worker: 扩展已安装或更新');
+
+  // 迁移旧的存储键
+  await migrateStorageKeys();
 
   // 创建右键菜单
   chrome.contextMenus.create({
@@ -23,24 +222,39 @@ chrome.runtime.onInstalled.addListener(() => {
 });
 
 // 浏览器启动时
-chrome.runtime.onStartup.addListener(() => {
+chrome.runtime.onStartup.addListener(async () => {
   console.log('Service Worker: 浏览器已启动');
+  // 尝试进行一次迁移，确保老用户数据可见
+  await migrateStorageKeys();
 });
 
 // 监听扩展图标点击事件
 chrome.action.onClicked.addListener(async () => {
-  console.log('点击扩展图标，检查是否有标签管理页面并处理标签');
+  console.log('Service Worker版本:', chrome.runtime.getManifest().version);
+  console.log('点击扩展图标，开始处理标签收集');
 
   try {
-    // 先打开标签管理器页面
-    await tabManager.openTabManager(true);
+    // 显示处理中的通知
+    await tabManager.showNotification('正在收集标签页...');
 
-    // 然后保存所有标签页
-    console.log('保存所有标签页');
+    // 查询当前窗口的所有标签页
+    console.log('开始查询标签页...');
     const tabs = await chrome.tabs.query({ currentWindow: true });
+    console.log(`成功查询到 ${tabs.length} 个标签页`);
+
+    // 保存标签页
+    console.log('开始保存标签页...');
     await tabManager.saveAllTabs(tabs);
+    console.log('标签页保存完成');
+
+    // 打开标签管理器
+    console.log('打开标签管理器...');
+    await tabManager.openTabManager(true);
+    console.log('标签管理器已打开');
+
   } catch (error) {
     console.error('处理扩展图标点击失败:', error);
+    await tabManager.showNotification('无法收集标签页，请重试。如果问题持续，请重启浏览器。');
   }
 });
 
@@ -63,7 +277,18 @@ chrome.commands.onCommand.addListener(async (command) => {
           currentWindow: true
         });
         if (activeTab) {
-          await tabManager.saveCurrentTab(activeTab);
+          // 简化的保存当前标签页逻辑
+          const tabGroup = await tabManager.createTabGroup([activeTab]);
+          if (tabGroup.tabs.length > 0) {
+            const existingGroups = await storage.getGroups();
+            await storage.setGroups([tabGroup, ...existingGroups]);
+            await tabManager.showNotification('当前标签页已保存');
+            if (activeTab.id) {
+              await chrome.tabs.remove(activeTab.id);
+            }
+          }
+        } else {
+          console.warn('未找到活跃标签页');
         }
         break;
 
@@ -74,6 +299,7 @@ chrome.commands.onCommand.addListener(async (command) => {
     }
   } catch (error) {
     console.error('处理快捷键命令失败:', error);
+    await tabManager.showNotification('快捷键操作失败，请重试');
   }
 });
 
@@ -87,7 +313,16 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
       await tabManager.openTabManager();
     } else if (info.menuItemId === 'saveCurrentTab' && tab) {
       console.log('点击右键菜单，保存当前标签页');
-      await tabManager.saveCurrentTab(tab);
+      // 简化的保存当前标签页逻辑
+      const tabGroup = await tabManager.createTabGroup([tab]);
+      if (tabGroup.tabs.length > 0) {
+        const existingGroups = await storage.getGroups();
+        await storage.setGroups([tabGroup, ...existingGroups]);
+        await tabManager.showNotification('当前标签页已保存');
+        if (tab.id) {
+          await chrome.tabs.remove(tab.id);
+        }
+      }
       // 保存后打开标签管理器
       await tabManager.openTabManager(true);
     }
@@ -96,168 +331,64 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
   }
 });
 
-// 定义允许的消息类型
-const ALLOWED_MESSAGE_TYPES = [
-  'SAVE_ALL_TABS',
-  'SAVE_CURRENT_TAB',
-  'OPEN_TAB',
-  'OPEN_TABS',
-  'REFRESH_TAB_LIST'
-] as const;
+// 简化的消息处理
+chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+  console.log('Service Worker 收到消息:', message.type);
 
-// type AllowedMessageType = typeof ALLOWED_MESSAGE_TYPES[number];
-
-// 消息验证函数
-function validateMessage(message: any, sender: chrome.runtime.MessageSender): boolean {
-  // 检查消息结构
-  if (!message || typeof message !== 'object') {
-    console.warn('Service Worker: 收到无效消息结构:', message);
+  // 基本验证
+  if (!message || !message.type) {
+    sendResponse({ success: false, error: '无效消息' });
     return false;
   }
-
-  // 检查消息类型
-  if (!message.type || !ALLOWED_MESSAGE_TYPES.includes(message.type)) {
-    console.warn('Service Worker: 收到未知消息类型:', message.type);
-    return false;
-  }
-
-  // 验证发送者来源
-  if (!sender.id || sender.id !== chrome.runtime.id) {
-    console.warn('Service Worker: 消息来源验证失败:', sender);
-    return false;
-  }
-
-  // 验证消息数据结构
-  if (message.type !== 'REFRESH_TAB_LIST' && (!message.data || typeof message.data !== 'object')) {
-    console.warn('Service Worker: 消息缺少有效数据:', message);
-    return false;
-  }
-
-  return true;
-}
-
-// 安全的错误响应函数
-function sendSecureErrorResponse(sendResponse: (response: any) => void, error: Error | string) {
-  const errorMessage = error instanceof Error ? error.message : String(error);
-  // 过滤敏感信息，只返回安全的错误信息
-  const safeErrorMessage = errorMessage.includes('chrome-extension://')
-    ? '操作失败，请重试'
-    : errorMessage;
-
-  sendResponse({
-    success: false,
-    error: safeErrorMessage,
-    timestamp: Date.now()
-  });
-}
-
-// 处理消息
-chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  // 验证消息
-  if (!validateMessage(message, sender)) {
-    sendSecureErrorResponse(sendResponse, '无效的消息格式或来源');
-    return false;
-  }
-
-  console.log('Service Worker 收到验证通过的消息:', message.type);
 
   try {
-    // 处理保存标签页的消息
-    if (message.type === 'SAVE_ALL_TABS') {
-      if (!Array.isArray(message.data.tabs)) {
-        sendSecureErrorResponse(sendResponse, '标签页数据格式无效');
-        return false;
-      }
-
-      tabManager.saveAllTabs(message.data.tabs)
-        .then(() => sendResponse({ success: true, timestamp: Date.now() }))
-        .catch(error => sendSecureErrorResponse(sendResponse, error));
-      return true; // 异步响应
-    }
-
-    if (message.type === 'SAVE_CURRENT_TAB') {
-      if (!message.data.tab || typeof message.data.tab !== 'object') {
-        sendSecureErrorResponse(sendResponse, '标签页数据格式无效');
-        return false;
-      }
-
-      tabManager.saveCurrentTab(message.data.tab)
-        .then(() => sendResponse({ success: true, timestamp: Date.now() }))
-        .catch(error => sendSecureErrorResponse(sendResponse, error));
-      return true; // 异步响应
-    }
-
-    if (message.type === 'OPEN_TAB') {
-      if (!message.data.url || typeof message.data.url !== 'string') {
-        sendSecureErrorResponse(sendResponse, 'URL格式无效');
-        return false;
-      }
-
-      // 验证URL安全性
-      try {
-        const url = new URL(message.data.url);
-        if (!['http:', 'https:'].includes(url.protocol)) {
-          sendSecureErrorResponse(sendResponse, '不支持的URL协议');
-          return false;
+    switch (message.type) {
+      case 'OPEN_TAB':
+        if (message.data?.url) {
+          chrome.tabs.create({ url: message.data.url, active: false })
+            .then(() => sendResponse({ success: true }))
+            .catch(error => sendResponse({ success: false, error: error.message }));
+          return true;
         }
-      } catch {
-        sendSecureErrorResponse(sendResponse, 'URL格式无效');
-        return false;
-      }
+        break;
 
-      tabManager.openTab(message.data.url)
-        .then(() => sendResponse({ success: true, timestamp: Date.now() }))
-        .catch(error => sendSecureErrorResponse(sendResponse, error));
-      return true; // 异步响应
-    }
-
-    if (message.type === 'OPEN_TABS') {
-      if (!Array.isArray(message.data.urls)) {
-        sendSecureErrorResponse(sendResponse, 'URL列表格式无效');
-        return false;
-      }
-
-      // 验证所有URL的安全性
-      for (const url of message.data.urls) {
-        if (typeof url !== 'string') {
-          sendSecureErrorResponse(sendResponse, 'URL格式无效');
-          return false;
+      case 'OPEN_TABS':
+        if (Array.isArray(message.data?.urls)) {
+          Promise.all(
+            message.data.urls.map((url: string) =>
+              chrome.tabs.create({ url, active: false })
+            )
+          )
+            .then(() => sendResponse({ success: true }))
+            .catch(error => sendResponse({ success: false, error: error.message }));
+          return true;
         }
+        break;
 
-        try {
-          const urlObj = new URL(url);
-          if (!['http:', 'https:'].includes(urlObj.protocol)) {
-            sendSecureErrorResponse(sendResponse, '不支持的URL协议');
-            return false;
+      case 'SAVE_ALL_TABS':
+        // 允许前端通过消息触发保存
+        (async () => {
+          try {
+            const tabs = await chrome.tabs.query({ currentWindow: true });
+            await tabManager.saveAllTabs(tabs);
+            sendResponse({ success: true });
+          } catch (e: any) {
+            sendResponse({ success: false, error: e?.message || '保存失败' });
           }
-        } catch {
-          sendSecureErrorResponse(sendResponse, 'URL格式无效');
-          return false;
-        }
-      }
+        })();
+        return true; // 异步响应
 
-      tabManager.openTabs(message.data.urls)
-        .then(() => sendResponse({ success: true, timestamp: Date.now() }))
-        .catch(error => sendSecureErrorResponse(sendResponse, error));
-      return true; // 异步响应
+      case 'REFRESH_TAB_LIST':
+        sendResponse({ success: true });
+        return false;
+
+      default:
+        sendResponse({ success: false, error: '未知消息类型' });
+        return false;
     }
-
-    if (message.type === 'REFRESH_TAB_LIST') {
-      // 这个消息类型不需要响应，只是通知
-      sendResponse({ success: true, timestamp: Date.now() });
-      return false;
-    }
-
-    // 如果没有处理消息，返回错误
-    sendSecureErrorResponse(sendResponse, '未知的消息类型');
-    return false;
-
   } catch (error) {
-    console.error('Service Worker: 处理消息时发生错误:', error);
-    sendSecureErrorResponse(sendResponse, '处理消息时发生内部错误');
+    console.error('处理消息失败:', error);
+    sendResponse({ success: false, error: '处理消息失败' });
     return false;
   }
 });
-
-// 导出一个空对象，确保这个文件被视为模块
-export { };

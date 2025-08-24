@@ -169,7 +169,7 @@ export const TabList: React.FC<TabListProps> = ({ searchQuery }) => {
         <SearchResultList searchQuery={searchQuery} />
       ) : layoutMode === 'triple' ? (
         // 三栏布局
-        <div className="grid grid-cols-1 sm:grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4 md:gap-5 lg:gap-6">
+        <div className="grid grid-cols-1 sm:grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2 sm:gap-3 md:gap-4 lg:gap-5">
           {/* 第一栏 - 索引 % 3 === 0 的标签组 */}
           <div className="space-y-2 transition-all">
             {filteredGroups
@@ -232,7 +232,7 @@ export const TabList: React.FC<TabListProps> = ({ searchQuery }) => {
         </div>
       ) : layoutMode === 'double' ? (
         // 双栏布局
-        <div className="grid grid-cols-1 sm:grid-cols-1 md:grid-cols-2 gap-3 sm:gap-4 md:gap-5">
+        <div className="grid grid-cols-1 sm:grid-cols-1 md:grid-cols-2 gap-2 sm:gap-3 md:gap-4">
           {/* 左栏 - 偶数索引的标签组 */}
           <div className="space-y-2 transition-all">
             {filteredGroups

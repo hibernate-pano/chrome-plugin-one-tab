@@ -67,13 +67,13 @@ export const MainApp: React.FC = () => {
           ) : (
             <>
               <Header onSearch={setSearchQuery} />
-              <main className="flex-1 w-full py-2 px-3 sm:px-4 md:px-6 lg:px-8">
+              <main className="flex-1 w-full py-2 px-2 sm:px-3 md:px-4 lg:px-6">
                 <Suspense fallback={<div className="p-4 text-center">加载标签列表...</div>}>
                   <TabList searchQuery={searchQuery} />
                 </Suspense>
               </main>
               <footer className="bg-white dark:bg-gray-900 border-t border-gray-200 dark:border-gray-700 text-xs text-gray-600 dark:text-gray-400">
-                <div className="w-full px-3 py-2 sm:px-4 md:px-6 lg:px-8 flex justify-between items-center">
+                <div className="w-full px-2 py-2 sm:px-3 md:px-4 lg:px-6 flex justify-between items-center">
                   <div className="flex items-center space-x-2">
                     <svg
                       xmlns="http://www.w3.org/2000/svg"

@@ -69,7 +69,7 @@
         <ul>
             <li><strong>清空搜索查询</strong>：点击图标后会清空当前的搜索内容</li>
             <li><strong>退出重排序模式</strong>：如果当前处于重排序模式，会自动退出</li>
-            <li><strong>重置布局模式</strong>：将布局模式重置为默认的双栏布局</li>
+            <li><strong>重置布局模式</strong>：将布局模式重置为默认的单栏布局</li>
             <li><strong>保存设置</strong>：将重置后的设置保存到存储中</li>
         </ul>
     </div>
@@ -90,12 +90,12 @@ const handleResetToDefaultView = () => {
     dispatch(setReorderMode(false));
   }
   
-  // 重置为默认布局模式（双栏）
-  if (settings.layoutMode !== 'double') {
-    dispatch(setLayoutMode('double'));
+  // 重置为默认布局模式（单栏）
+  if (currentLayoutMode !== 'single') {
+    dispatch(setLayoutMode('single'));
     dispatch(saveSettings({
       ...settings,
-      layoutMode: 'double',
+      layoutMode: 'single',
       reorderMode: false,
     }));
   }
@@ -162,7 +162,7 @@ const handleResetToDefaultView = () => {
     <script>
         // 简单的交互演示
         function simulateReset() {
-            alert('模拟重置到默认视图：\n✓ 清空搜索\n✓ 退出重排序模式\n✓ 重置为双栏布局');
+            alert('模拟重置到默认视图：\n✓ 清空搜索\n✓ 退出重排序模式\n✓ 重置为单栏布局');
         }
     </script>
 
