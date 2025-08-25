@@ -5,14 +5,14 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc && vite build && node fix-service-worker.js",
+    "build": "tsc && vite build",
     "build:dev": "tsc && vite build",
     "package": "pnpm build && node package-extension.js",
     "preview": "vite preview",
     "lint": "eslint src --ext ts,tsx --report-unused-disable-directives --max-warnings 0",
     "format": "prettier --write \"src/**/*.{ts,tsx}\"",
     "type-check": "tsc --noEmit",
-    "fix-sw": "node fix-service-worker.js"
+    "validate": "node validate-extension.js"
   },
   "keywords": [
     "chrome-extension",

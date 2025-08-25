@@ -63,8 +63,10 @@ try {
 
   // 6. 更新manifest.json中的service worker路径
   manifest.background.service_worker = 'service-worker.js';
+  // 移除type: "module"，提高兼容性
+  delete manifest.background.type;
   fs.writeFileSync(MANIFEST_PATH, JSON.stringify(manifest, null, 2));
-  console.log('📝 更新manifest.json中的Service Worker路径');
+  console.log('📝 更新manifest.json中的Service Worker路径，移除module类型');
 
   // 7. 删除不需要的service-worker-loader.js
   fs.unlinkSync(SERVICE_WORKER_LOADER_PATH);
