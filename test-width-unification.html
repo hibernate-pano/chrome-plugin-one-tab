@@ -1,0 +1,300 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>宽度统一测试 - OneTab Plus</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        /* 复制项目中的宽度样式 */
+        .layout-single-width {
+            width: 100%;
+            max-width: none;
+            padding-left: 1rem;
+            padding-right: 1rem;
+            margin-left: auto;
+            margin-right: auto;
+        }
+
+        .layout-double-width {
+            width: 100%;
+            max-width: none;
+            padding-left: 1rem;
+            padding-right: 1rem;
+            margin-left: auto;
+            margin-right: auto;
+        }
+
+        /* 小屏幕优化 - 640px以上开始使用限制宽度 */
+        @media (min-width: 640px) {
+            .layout-single-width {
+                max-width: 90%;
+                padding-left: 1.5rem;
+                padding-right: 1.5rem;
+            }
+
+            .layout-double-width {
+                max-width: 90%;
+                padding-left: 1.5rem;
+                padding-right: 1.5rem;
+            }
+        }
+
+        /* 中等屏幕 - 768px以上使用目标宽度 */
+        @media (min-width: 768px) {
+            .layout-single-width {
+                max-width: 66.67%;
+                padding-left: 1.5rem;
+                padding-right: 1.5rem;
+            }
+
+            .layout-double-width {
+                max-width: 66.67%;
+                padding-left: 1.5rem;
+                padding-right: 1.5rem;
+            }
+        }
+
+        /* 大屏幕优化 - 1024px以上增加内边距 */
+        @media (min-width: 1024px) {
+            .layout-single-width {
+                padding-left: 2rem;
+                padding-right: 2rem;
+            }
+
+            .layout-double-width {
+                padding-left: 2rem;
+                padding-right: 2rem;
+            }
+        }
+
+        /* 超大屏幕优化 - 1280px以上进一步增加内边距 */
+        @media (min-width: 1280px) {
+            .layout-single-width {
+                padding-left: 3rem;
+                padding-right: 3rem;
+            }
+
+            .layout-double-width {
+                padding-left: 3rem;
+                padding-right: 3rem;
+            }
+        }
+
+        .test-container {
+            border: 2px solid #3b82f6;
+            background-color: rgba(59, 130, 246, 0.1);
+            min-height: 200px;
+        }
+
+        .screen-indicator {
+            position: fixed;
+            top: 10px;
+            right: 10px;
+            background: #1f2937;
+            color: white;
+            padding: 8px 12px;
+            border-radius: 6px;
+            font-size: 14px;
+            z-index: 1000;
+        }
+    </style>
+</head>
+<body class="bg-gray-50">
+    <div class="screen-indicator" id="screenIndicator">
+        屏幕宽度: <span id="screenWidth"></span>px
+    </div>
+
+    <div class="min-h-screen py-8">
+        <div class="max-w-7xl mx-auto px-4">
+            <h1 class="text-3xl font-bold text-center mb-8 text-gray-900">
+                OneTab Plus 宽度统一测试
+            </h1>
+            
+            <div class="mb-8 text-center">
+                <p class="text-gray-600 mb-4">
+                    此页面用于测试单栏和双栏模式的宽度统一效果
+                </p>
+                <div class="flex justify-center space-x-4">
+                    <button id="toggleMode" class="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 transition-colors">
+                        切换到双栏模式
+                    </button>
+                    <button id="toggleTheme" class="px-4 py-2 bg-gray-600 text-white rounded hover:bg-gray-700 transition-colors">
+                        切换主题
+                    </button>
+                </div>
+            </div>
+
+            <!-- 单栏模式测试 -->
+            <div id="singleMode" class="mb-12">
+                <h2 class="text-2xl font-semibold mb-4 text-gray-800">单栏模式</h2>
+                <div class="layout-single-width">
+                    <div class="test-container rounded-lg p-6">
+                        <h3 class="text-xl font-medium mb-4">单栏布局容器</h3>
+                        <p class="text-gray-600 mb-4">
+                            这是单栏模式的容器，现在使用与双栏模式相同的宽度设置。
+                        </p>
+                        <div class="grid grid-cols-1 gap-4">
+                            <div class="bg-white p-4 rounded shadow">
+                                <h4 class="font-medium mb-2">标签组 1</h4>
+                                <p class="text-sm text-gray-600">这里显示标签页内容...</p>
+                            </div>
+                            <div class="bg-white p-4 rounded shadow">
+                                <h4 class="font-medium mb-2">标签组 2</h4>
+                                <p class="text-sm text-gray-600">这里显示标签页内容...</p>
+                            </div>
+                            <div class="bg-white p-4 rounded shadow">
+                                <h4 class="font-medium mb-2">标签组 3</h4>
+                                <p class="text-sm text-gray-600">这里显示标签页内容...</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 双栏模式测试 -->
+            <div id="doubleMode" class="mb-12" style="display: none;">
+                <h2 class="text-2xl font-semibold mb-4 text-gray-800">双栏模式</h2>
+                <div class="layout-double-width">
+                    <div class="test-container rounded-lg p-6">
+                        <h3 class="text-xl font-medium mb-4">双栏布局容器</h3>
+                        <p class="text-gray-600 mb-4">
+                            这是双栏模式的容器，与单栏模式使用相同的宽度设置。
+                        </p>
+                        <div class="grid grid-cols-1 sm:grid-cols-1 md:grid-cols-2 gap-2 sm:gap-3 md:gap-4">
+                            <!-- 左栏 -->
+                            <div class="space-y-4">
+                                <div class="bg-white p-4 rounded shadow">
+                                    <h4 class="font-medium mb-2">标签组 1</h4>
+                                    <p class="text-sm text-gray-600">这里显示标签页内容...</p>
+                                </div>
+                                <div class="bg-white p-4 rounded shadow">
+                                    <h4 class="font-medium mb-2">标签组 3</h4>
+                                    <p class="text-sm text-gray-600">这里显示标签页内容...</p>
+                                </div>
+                            </div>
+                            <!-- 右栏 -->
+                            <div class="space-y-4">
+                                <div class="bg-white p-4 rounded shadow">
+                                    <h4 class="font-medium mb-2">标签组 2</h4>
+                                    <p class="text-sm text-gray-600">这里显示标签页内容...</p>
+                                </div>
+                                <div class="bg-white p-4 rounded shadow">
+                                    <h4 class="font-medium mb-2">标签组 4</h4>
+                                    <p class="text-sm text-gray-600">这里显示标签页内容...</p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 宽度对比 -->
+            <div class="mb-12">
+                <h2 class="text-2xl font-semibold mb-4 text-gray-800">宽度对比</h2>
+                <div class="space-y-6">
+                    <div>
+                        <h3 class="text-lg font-medium mb-2">单栏宽度</h3>
+                        <div class="layout-single-width">
+                            <div class="bg-green-100 border-2 border-green-500 p-4 rounded">
+                                单栏模式容器宽度
+                            </div>
+                        </div>
+                    </div>
+                    <div>
+                        <h3 class="text-lg font-medium mb-2">双栏宽度</h3>
+                        <div class="layout-double-width">
+                            <div class="bg-blue-100 border-2 border-blue-500 p-4 rounded">
+                                双栏模式容器宽度
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 响应式断点信息 -->
+            <div class="mb-12">
+                <h2 class="text-2xl font-semibold mb-4 text-gray-800">响应式断点</h2>
+                <div class="bg-white p-6 rounded-lg shadow">
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                        <div>
+                            <h3 class="font-medium mb-3">断点说明</h3>
+                            <ul class="space-y-2 text-sm">
+                                <li><strong>&lt; 640px:</strong> 全宽，px-4</li>
+                                <li><strong>≥ 640px:</strong> 90% 宽度，px-6</li>
+                                <li><strong>≥ 768px:</strong> 66.67% 宽度，px-6</li>
+                                <li><strong>≥ 1024px:</strong> 66.67% 宽度，px-8</li>
+                                <li><strong>≥ 1280px:</strong> 66.67% 宽度，px-12</li>
+                            </ul>
+                        </div>
+                        <div>
+                            <h3 class="font-medium mb-3">统一效果</h3>
+                            <ul class="space-y-2 text-sm">
+                                <li>✅ 单栏和双栏使用相同宽度</li>
+                                <li>✅ 提高单栏模式空间利用率</li>
+                                <li>✅ 保持视觉一致性</li>
+                                <li>✅ 减少模式切换时的视觉差异</li>
+                            </ul>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let currentMode = 'single';
+        let isDark = false;
+
+        // 更新屏幕宽度显示
+        function updateScreenWidth() {
+            document.getElementById('screenWidth').textContent = window.innerWidth;
+        }
+
+        // 切换模式
+        function toggleMode() {
+            const singleMode = document.getElementById('singleMode');
+            const doubleMode = document.getElementById('doubleMode');
+            const toggleBtn = document.getElementById('toggleMode');
+
+            if (currentMode === 'single') {
+                singleMode.style.display = 'none';
+                doubleMode.style.display = 'block';
+                toggleBtn.textContent = '切换到单栏模式';
+                currentMode = 'double';
+            } else {
+                singleMode.style.display = 'block';
+                doubleMode.style.display = 'none';
+                toggleBtn.textContent = '切换到双栏模式';
+                currentMode = 'single';
+            }
+        }
+
+        // 切换主题
+        function toggleTheme() {
+            const body = document.body;
+            const toggleBtn = document.getElementById('toggleTheme');
+
+            if (isDark) {
+                body.classList.remove('dark', 'bg-gray-900', 'text-white');
+                body.classList.add('bg-gray-50');
+                toggleBtn.textContent = '切换到深色主题';
+                isDark = false;
+            } else {
+                body.classList.remove('bg-gray-50');
+                body.classList.add('dark', 'bg-gray-900', 'text-white');
+                toggleBtn.textContent = '切换到浅色主题';
+                isDark = true;
+            }
+        }
+
+        // 事件监听
+        document.getElementById('toggleMode').addEventListener('click', toggleMode);
+        document.getElementById('toggleTheme').addEventListener('click', toggleTheme);
+        window.addEventListener('resize', updateScreenWidth);
+
+        // 初始化
+        updateScreenWidth();
+    </script>
+</body>
+</html>

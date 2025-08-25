@@ -301,51 +301,7 @@ export const TabListDndKit: React.FC<TabListProps> = ({ searchQuery }) => {
           onDragOver={handleDragOver}
           onDragEnd={handleDragEnd}
         >
-          {layoutMode === 'triple' ? (
-            // 三栏布局
-            <SortableContext items={groupIds} strategy={rectSortingStrategy}>
-              <div className="grid grid-cols-1 sm:grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2 sm:gap-3 md:gap-4 lg:gap-5">
-                {/* 第一栏 - 索引 % 3 === 0 的标签组 */}
-                <div className="space-y-2">
-                  {filteredGroups
-                    .filter((_, index) => index % 3 === 0)
-                    .map(group => (
-                      <SortableTabGroup
-                        key={group.id}
-                        group={group}
-                        index={filteredGroups.findIndex(g => g.id === group.id)}
-                      />
-                    ))}
-                </div>
-
-                {/* 第二栏 - 索引 % 3 === 1 的标签组 */}
-                <div className="space-y-2">
-                  {filteredGroups
-                    .filter((_, index) => index % 3 === 1)
-                    .map(group => (
-                      <SortableTabGroup
-                        key={group.id}
-                        group={group}
-                        index={filteredGroups.findIndex(g => g.id === group.id)}
-                      />
-                    ))}
-                </div>
-
-                {/* 第三栏 - 索引 % 3 === 2 的标签组 */}
-                <div className="space-y-2">
-                  {filteredGroups
-                    .filter((_, index) => index % 3 === 2)
-                    .map(group => (
-                      <SortableTabGroup
-                        key={group.id}
-                        group={group}
-                        index={filteredGroups.findIndex(g => g.id === group.id)}
-                      />
-                    ))}
-                </div>
-              </div>
-            </SortableContext>
-          ) : layoutMode === 'double' ? (
+          {layoutMode === 'double' ? (
             // 双栏布局
             <SortableContext items={groupIds} strategy={rectSortingStrategy}>
               <div className="grid grid-cols-1 sm:grid-cols-1 md:grid-cols-2 gap-2 sm:gap-3 md:gap-4">

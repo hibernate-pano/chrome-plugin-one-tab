@@ -16,12 +16,24 @@ import { LayoutMode } from '@/types/tab';
 
 interface HeaderProps {
   onSearch: (query: string) => void;
+  searchQuery?: string;
 }
 
-export const Header: React.FC<HeaderProps> = ({ onSearch }) => {
+export const Header: React.FC<HeaderProps> = ({ onSearch, searchQuery = '' }) => {
   const dispatch = useAppDispatch();
   const [searchValue, setSearchValue] = useState('');
   const { showConfirm, showAlert } = useToast();
+  const settings = useAppSelector(state => state.settings);
+
+  // 根据布局模式和搜索状态确定容器宽度类
+  const getContainerWidthClass = () => {
+    // 搜索模式下使用单栏宽度
+    if (searchQuery) {
+      return 'layout-single-width';
+    }
+    // 根据布局模式选择宽度
+    return settings.layoutMode === 'double' ? 'layout-double-width' : 'layout-single-width';
+  };
 
   const handleSearch = (e: React.ChangeEvent<HTMLInputElement>) => {
     const value = e.target.value;
@@ -58,7 +70,6 @@ export const Header: React.FC<HeaderProps> = ({ onSearch }) => {
     }
   };
 
-  const settings = useAppSelector(state => state.settings);
   const [showDropdown, setShowDropdown] = useState(false);
 
   // 处理清理重复标签
@@ -93,7 +104,7 @@ export const Header: React.FC<HeaderProps> = ({ onSearch }) => {
             title: '清理完成',
             message,
             type: 'success',
-            onClose: () => {},
+            onClose: () => { },
           });
         } catch (error) {
           console.error('清理重复标签失败:', error);
@@ -101,11 +112,11 @@ export const Header: React.FC<HeaderProps> = ({ onSearch }) => {
             title: '清理失败',
             message: '清理重复标签失败，请重试',
             type: 'error',
-            onClose: () => {},
+            onClose: () => { },
           });
         }
       },
-      onCancel: () => {},
+      onCancel: () => { },
     });
   };
 
@@ -126,9 +137,6 @@ export const Header: React.FC<HeaderProps> = ({ onSearch }) => {
         nextLayoutMode = 'double';
         break;
       case 'double':
-        nextLayoutMode = 'triple';
-        break;
-      case 'triple':
         nextLayoutMode = 'single';
         break;
       default:
@@ -164,7 +172,7 @@ export const Header: React.FC<HeaderProps> = ({ onSearch }) => {
 
   return (
     <header className="bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700 transition-colors">
-      <div className="w-full px-2 py-2 sm:px-3 md:px-4 lg:px-6">
+      <div className={`w-full py-2 ${getContainerWidthClass()}`}>
         <div className="flex items-center justify-between">
           <button
             onClick={handleResetToDefaultView}
@@ -277,7 +285,7 @@ export const Header: React.FC<HeaderProps> = ({ onSearch }) => {
                       d="M4 6h16M4 12h16M4 18h16"
                     />
                   </svg>
-                ) : settings.layoutMode === 'double' ? (
+                ) : (
                   // 双栏布局图标
                   <svg
                     xmlns="http://www.w3.org/2000/svg"
@@ -291,22 +299,6 @@ export const Header: React.FC<HeaderProps> = ({ onSearch }) => {
                       strokeLinejoin="round"
                       strokeWidth={2}
                       d="M4 6h7M4 12h7M4 18h7M13 6h7M13 12h7M13 18h7"
-                    />
-                  </svg>
-                ) : (
-                  // 三栏布局图标
-                  <svg
-                    xmlns="http://www.w3.org/2000/svg"
-                    className="h-5 w-5"
-                    fill="none"
-                    viewBox="0 0 24 24"
-                    stroke="currentColor"
-                  >
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      strokeWidth={2}
-                      d="M4 6h4M4 12h4M4 18h4M10 6h4M10 12h4M10 18h4M16 6h4M16 12h4M16 18h4"
                     />
                   </svg>
                 )}

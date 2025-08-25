@@ -710,6 +710,7 @@ export const cleanDuplicateTabs = createAsyncThunk(
  * 2. 使用节流函数减少云端同步频率
  * 3. 批量处理本地存储操作
  * 4. 优化拖拽过程中的状态更新
+ * 5. 自动清理拖拽后的空标签组
  */
 export const moveTabAndSync = createAsyncThunk(
   'tabs/moveTabAndSync',
@@ -793,13 +794,41 @@ export const moveTabAndSync = createAsyncThunk(
             }
 
             // 批量更新本地存储 - 一次性更新所有变更
-            const updatedGroups = groups
+            let updatedGroups = groups
               .map(g => {
                 if (g.id === sourceGroupId) return updatedSourceGroup;
                 if (g.id === targetGroupId) return updatedTargetGroup;
                 return g;
-              })
-              ; // 不在此处移除空标签组，交由 SortableTabGroup 组件通过 isMarkedForDeletion 处理
+              });
+
+            // 自动清理空标签组（仅在跨组移动时检查源标签组）
+            if (sourceGroupId !== targetGroupId && updatedSourceGroup && updatedSourceGroup.tabs.length === 0) {
+              try {
+                // 使用工具函数检查是否应该被自动删除（考虑锁定状态等）
+                if (shouldAutoDeleteAfterTabRemoval(updatedSourceGroup, '')) {
+                  console.log(`[拖拽自动清理] 检测到空标签组: ${updatedSourceGroup.name} (ID: ${sourceGroupId})`);
+
+                  // 从存储数组中移除空标签组
+                  updatedGroups = updatedGroups.filter(g => g.id !== sourceGroupId);
+
+                  // 延迟删除Redux状态中的标签组，避免与UI组件的删除逻辑冲突
+                  setTimeout(() => {
+                    try {
+                      dispatch(deleteGroup(sourceGroupId));
+                    } catch (deleteError) {
+                      console.error(`[拖拽自动清理] 删除Redux状态失败:`, deleteError);
+                    }
+                  }, 100);
+
+                  console.log(`[拖拽自动清理] 已从存储中移除空标签组: ${updatedSourceGroup.name} (ID: ${sourceGroupId})`);
+                } else {
+                  console.log(`[拖拽自动清理] 跳过不符合删除条件的空标签组: ${updatedSourceGroup.name} (ID: ${sourceGroupId})`);
+                }
+              } catch (cleanupError) {
+                console.error(`[拖拽自动清理] 清理空标签组时发生错误:`, cleanupError);
+                // 清理失败时不影响主要的存储操作
+              }
+            }
 
             await storage.setGroups(updatedGroups);
 

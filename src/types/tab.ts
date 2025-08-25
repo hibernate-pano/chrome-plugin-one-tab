@@ -75,7 +75,7 @@ export interface TabState {
 }
 
 // 布局模式枚举
-export type LayoutMode = 'single' | 'double' | 'triple';
+export type LayoutMode = 'single' | 'double';
 
 export interface UserSettings {
   groupNameTemplate: string;
