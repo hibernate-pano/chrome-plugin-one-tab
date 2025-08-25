@@ -87,7 +87,7 @@
   /* 小屏幕优化 - 640px以上开始使用限制宽度 */
   @media (min-width: 640px) {
     .layout-single-width {
-      @apply max-w-[80%] px-6;
+      @apply max-w-[90%] px-6;
     }
 
     .layout-double-width {
@@ -98,7 +98,7 @@
   /* 中等屏幕 - 768px以上使用目标宽度 */
   @media (min-width: 768px) {
     .layout-single-width {
-      @apply max-w-[50%] px-6;
+      @apply max-w-[66.67%] px-6;
     }
 
     .layout-double-width {
