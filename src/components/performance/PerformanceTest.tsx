@@ -1,9 +1,10 @@
 import React, { useState } from 'react';
 import { Profiler } from 'react';
-import { useAppDispatch, useAppSelector } from '@/store/hooks';
+import { useAppDispatch, useAppSelector } from '@/app/store/hooks';
 import { TabGroup } from '@/components/tabs/TabGroup';
 import { generateTestData, monitorRenderPerformance, measurePerformance } from '@/utils/performanceTest';
-import { setGroups } from '@/store/slices/tabSlice';
+// 使用新版tabGroupsSlice中的setGroups功能
+import { setGroups } from '@/features/tabs/store/tabGroupsSlice';
 
 /**
  * 性能测试组件
@@ -11,7 +12,7 @@ import { setGroups } from '@/store/slices/tabSlice';
  */
 const PerformanceTest: React.FC = () => {
   const dispatch = useAppDispatch();
-  const groups = useAppSelector(state => state.tabs.groups);
+  const groups = useAppSelector(state => state.tabGroups.groups);
 
   const [testResults, setTestResults] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState(false);

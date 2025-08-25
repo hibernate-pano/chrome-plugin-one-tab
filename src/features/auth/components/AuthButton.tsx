@@ -1,0 +1,199 @@
+import React, { useState, useEffect, useCallback, memo } from 'react';
+import { useAppSelector, useAppDispatch } from '@/app/store/hooks';
+import { signOut } from '../store/authSlice';
+// import { LoginForm } from './LoginForm';
+// import { RegisterForm } from './RegisterForm';
+import { syncService } from '@/services/syncService';
+
+import { FEEDBACK_MESSAGES } from '@/shared/constants/feedbackMessages';
+import { useSyncOperation } from '@/shared/hooks/useAsyncOperation';
+import { LoadingButton } from '@/shared/components/LoadingButton/LoadingButton';
+import { handleSyncError } from '@/shared/utils/errorHandlers';
+import { useErrorHandler } from '@/shared/contexts/ErrorContext';
+import { createMemoComparison } from '@/shared/utils/performanceOptimizer';
+
+const AuthButtonComponent: React.FC = () => {
+  const dispatch = useAppDispatch();
+  const { user } = useAppSelector(state => state.auth);
+  const isAuthenticated = !!user;
+  const { status: syncStatus, lastSyncTime, backgroundSync } = useAppSelector(state => state.sync);
+  const [showDropdown, setShowDropdown] = useState(false);
+  const [activeTab, setActiveTab] = useState<'login' | 'register'>('login');
+  const [showAuthModal, setShowAuthModal] = useState(false);
+  const [initialRender, setInitialRender] = useState(true);
+  const syncOperation = useSyncOperation();
+  const { setRetryHandler } = useErrorHandler();
+
+  // 首次渲染后标记为非初始渲染状态
+  useEffect(() => {
+    if (initialRender) {
+      // 使用微任务延迟标记，确保缓存数据已加载
+      setTimeout(() => setInitialRender(false), 0);
+    }
+  }, [initialRender]);
+
+  // 使用useCallback优化事件处理函数
+  const handleSignOut = useCallback(async () => {
+    await dispatch(signOut());
+    setShowDropdown(false);
+  }, [dispatch]);
+
+  const handleSync = useCallback(async () => {
+    if (syncStatus !== 'syncing') {
+      setShowDropdown(false);
+
+      // 设置重试处理器
+      setRetryHandler(() => handleSync());
+
+      await syncOperation.execute(
+        () => syncService.syncAll(true), // 使用后台同步模式减少UI卡顿
+        {
+          loadingMessage: FEEDBACK_MESSAGES.SYNC.START,
+          successMessage: FEEDBACK_MESSAGES.SYNC.SUCCESS,
+          useSmartError: true, // 使用智能错误处理
+          onError: (error) => {
+            handleSyncError(error, () => handleSync());
+          },
+        }
+      );
+    }
+  }, [syncStatus, setRetryHandler, syncOperation]);
+
+  // 在初始渲染时不显示任何内容，避免闪烁
+  if (initialRender) {
+    return null;
+  }
+
+  if (isAuthenticated && user) {
+    return (
+      <div className="relative">
+        <button
+          onClick={() => setShowDropdown(!showDropdown)}
+          className="flex items-center space-x-2 px-3 py-2 rounded-lg hover:bg-gray-100 transition-all"
+        >
+          <div className="w-8 h-8 rounded-full bg-primary-100 text-primary-600 flex items-center justify-center">
+            <span className="text-sm font-bold">{user.email.charAt(0).toUpperCase()}</span>
+          </div>
+          <div className="hidden sm:block">
+            <div className="text-gray-700 font-medium">{user.email}</div>
+            <div className="text-xs text-gray-500 flex items-center">
+              <span className="inline-block w-2 h-2 rounded-full bg-green-500 mr-1"></span>
+              {syncStatus === 'syncing' && !backgroundSync ? '正在同步数据...' : '已同步'}
+            </div>
+          </div>
+          <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 text-gray-500" viewBox="0 0 20 20" fill="currentColor">
+            <path fillRule="evenodd" d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" clipRule="evenodd" />
+          </svg>
+        </button>
+
+        {showDropdown && (
+          <div className="absolute right-0 mt-2 w-64 bg-white rounded-lg shadow-lg border border-gray-200 z-20">
+            <div className="py-2">
+              <div className="px-4 py-2 border-b border-gray-100">
+                <p className="text-sm font-medium text-gray-900">{user.email}</p>
+                <p className="text-xs text-gray-500 flex items-center">
+                  <span className="inline-block w-2 h-2 rounded-full bg-green-500 mr-1"></span>
+                  已登录
+                  {lastSyncTime && (
+                    <span className="ml-2 text-gray-400">· 上次同步: {new Date(lastSyncTime).toLocaleString()}</span>
+                  )}
+                </p>
+              </div>
+              <LoadingButton
+                onClick={handleSync}
+                className="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 flex items-center justify-start"
+                variant="ghost"
+                size="sm"
+                loading={syncStatus === 'syncing' || syncOperation.isLoading}
+                loadingText="正在同步数据..."
+                icon={
+                  <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 text-primary-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                  </svg>
+                }
+              >
+                同步数据
+              </LoadingButton>
+              <div className="border-t border-gray-100 my-1"></div>
+              <button
+                onClick={handleSignOut}
+                className="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 flex items-center"
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 mr-2 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013 3v1" />
+                </svg>
+                退出登录
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  return (
+    <>
+      <button
+        onClick={() => setShowAuthModal(true)}
+        className="px-4 py-1.5 rounded text-sm transition-colors bg-primary-600 text-white hover:bg-primary-700 border border-primary-600 min-w-[100px] text-center"
+      >
+        登录 / 注册
+      </button>
+
+      {showAuthModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg shadow-xl w-full max-w-md mx-4">
+            <div className="flex border-b border-gray-200">
+              <button
+                className={`flex-1 py-3 transition-all font-medium ${activeTab === 'login' ? 'text-primary-600 border-b-2 border-primary-600' : 'text-gray-600 hover:text-primary-600'}`}
+                onClick={() => setActiveTab('login')}
+              >
+                登录
+              </button>
+              <button
+                className={`flex-1 py-3 transition-all font-medium ${activeTab === 'register' ? 'text-primary-600 border-b-2 border-primary-600' : 'text-gray-600 hover:text-primary-600'}`}
+                onClick={() => setActiveTab('register')}
+              >
+                注册
+              </button>
+              <button
+                className="p-3 text-gray-500 hover:text-gray-700"
+                onClick={() => setShowAuthModal(false)}
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+            <div className="p-6">
+              {activeTab === 'login' ? (
+                <div className="text-center p-4">
+                  <p>登录功能开发中...</p>
+                  <button
+                    onClick={() => setShowAuthModal(false)}
+                    className="mt-2 px-4 py-2 bg-blue-500 text-white rounded"
+                  >
+                    关闭
+                  </button>
+                </div>
+              ) : (
+                <div className="text-center p-4">
+                  <p>注册功能开发中...</p>
+                  <button
+                    onClick={() => setShowAuthModal(false)}
+                    className="mt-2 px-4 py-2 bg-blue-500 text-white rounded"
+                  >
+                    关闭
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+    </>
+  );
+};
+
+// 使用memo优化AuthButton组件，避免不必要的重新渲染
+export const AuthButton = memo(AuthButtonComponent, createMemoComparison());

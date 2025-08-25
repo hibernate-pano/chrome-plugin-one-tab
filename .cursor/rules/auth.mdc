@@ -1,0 +1,51 @@
+---
+description: 
+globs: 
+alwaysApply: true
+---
+# 认证系统架构
+
+## 认证流程
+
+Chrome插件OneTab的认证系统基于Supabase Auth服务构建，支持以下认证方式：
+
+- 邮箱密码登录
+- 第三方OAuth登录（支持Google、GitHub、微信，但当前未启用）
+
+认证流程由以下关键文件管理：
+
+- [src/components/auth/LoginForm.tsx](mdc:src/components/auth/LoginForm.tsx) - 登录表单组件
+- [src/store/slices/authSlice.ts](mdc:src/store/slices/authSlice.ts) - 认证状态管理
+- [src/utils/supabase.ts](mdc:src/utils/supabase.ts) - Supabase服务封装
+
+## 状态管理
+
+认证状态使用Redux Toolkit管理，主要包含以下状态：
+
+```typescript
+interface AuthState {
+  user: User | null;
+  isAuthenticated: boolean;
+  isLoading: boolean;
+  error: string | null;
+  wechatLoginStatus?: 'idle' | 'pending' | 'scanning' | 'confirming' | 'success' | 'failed' | 'expired';
+  wechatLoginTabId?: number;
+}
+```
+
+## 主要认证操作
+
+- `signUp` - 用户注册
+- `signIn` - 邮箱密码登录
+- `signInWithOAuth` - 第三方OAuth登录
+- `signOut` - 用户退出
+- `getCurrentUser` - 获取当前登录用户
+- `handleOAuthCallback` - 处理OAuth回调
+
+## 本地存储
+
+认证状态使用`authCache`服务在本地缓存，确保页面刷新后保持登录状态。
+
+## 错误处理
+
+登录表单中包含错误展示和处理机制，使用红色提示框显示错误信息。

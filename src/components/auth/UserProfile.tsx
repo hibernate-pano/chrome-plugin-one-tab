@@ -1,12 +1,12 @@
 import React, { useMemo } from 'react';
-import { useAppDispatch, useAppSelector } from '@/store/hooks';
-import { signOut } from '@/store/slices/authSlice';
+import { useAppDispatch, useAppSelector } from '@/app/store/hooks';
+import { signOut } from '@/features/auth/store/authSlice';
 import { syncService } from '@/services/syncService';
 
 export const UserProfile: React.FC = () => {
   const dispatch = useAppDispatch();
   const { user } = useAppSelector(state => state.auth);
-  const { syncStatus } = useAppSelector(state => state.tabs);
+  const { status: syncStatus } = useAppSelector(state => state.sync);
 
   const handleSignOut = async () => {
     await dispatch(signOut());

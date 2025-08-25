@@ -1,0 +1,35 @@
+---
+description:
+globs:
+alwaysApply: false
+---
+# Chrome插件OneTab项目概览
+
+## 项目简介
+OneTab是一个Chrome浏览器扩展，用于高效管理和组织浏览器标签页。主要功能包括：
+- 一键保存所有标签页
+- 标签页分组管理
+- 云端同步
+- 标签页搜索
+- 标签页导入/导出
+
+## 核心文件
+- [manifest.json](mdc:manifest.json) - 插件配置文件
+- [vite.config.ts](mdc:vite.config.ts) - 构建配置
+- [src/background/index.ts](mdc:src/background/index.ts) - 后台服务
+- [src/popup/index.tsx](mdc:src/popup/index.tsx) - 弹出窗口入口
+- [src/store/index.ts](mdc:src/store/index.ts) - 状态管理中心
+
+## 技术栈
+- React + TypeScript
+- Redux Toolkit
+- TailwindCSS
+- Vite
+- Supabase
+
+## 开发规范
+1. 使用TypeScript严格模式
+2. 遵循React函数组件和Hooks规范
+3. 使用TailwindCSS管理样式
+4. 统一的错误处理机制
+5. 完整的状态管理方案

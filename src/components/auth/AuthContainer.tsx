@@ -1,11 +1,12 @@
 import React, { useState } from 'react';
-import { useAppSelector } from '@/store/hooks';
+import { useAppSelector } from '@/app/store/hooks';
 import { LoginForm } from './LoginForm';
 import { RegisterForm } from './RegisterForm';
 import { UserProfile } from './UserProfile';
 
 export const AuthContainer: React.FC = () => {
-  const { isAuthenticated } = useAppSelector(state => state.auth);
+  const { status } = useAppSelector(state => state.auth);
+  const isAuthenticated = status === 'authenticated';
   const [activeTab, setActiveTab] = useState<'login' | 'register'>('login');
 
   if (isAuthenticated) {

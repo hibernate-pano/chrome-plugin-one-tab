@@ -1,0 +1,62 @@
+---
+description:
+globs:
+alwaysApply: false
+---
+# React组件开发规范
+
+## 组件目录结构
+```
+src/components/
+├── auth/       # 认证相关组件
+├── common/     # 通用组件
+├── dnd/        # 拖拽相关组件
+├── layout/     # 布局组件
+├── search/     # 搜索相关组件
+├── sync/       # 同步相关组件
+├── tab/        # 标签页组件
+└── tabs/       # 标签组组件
+```
+
+## 组件命名规范
+- 组件文件使用PascalCase命名
+- 组件名称与文件名保持一致
+- 类型定义文件使用.types.ts后缀
+
+## 组件实现规范
+1. 使用函数组件和TypeScript
+```typescript
+import React from 'react';
+import type { ComponentProps } from './Component.types';
+
+export const Component: React.FC<ComponentProps> = ({ prop1, prop2 }) => {
+  return (
+    // JSX
+  );
+};
+```
+
+2. 使用自定义hooks抽取逻辑
+```typescript
+import { useCustomHook } from '@/hooks/useCustomHook';
+
+export const Component = () => {
+  const { data, loading } = useCustomHook();
+  // ...
+};
+```
+
+## 核心组件示例
+- [src/components/tab/TabCard.tsx](mdc:src/components/tab/TabCard.tsx) - 标签页卡片
+- [src/components/tabs/TabGroup.tsx](mdc:src/components/tabs/TabGroup.tsx) - 标签页组
+- [src/components/search/SearchBar.tsx](mdc:src/components/search/SearchBar.tsx) - 搜索栏
+
+## 状态管理
+- 组件内部状态使用useState/useReducer
+- 全局状态使用Redux
+- 使用useCallback和useMemo优化性能
+
+## 样式规范
+- 使用TailwindCSS类名
+- 遵循移动优先的响应式设计
+- 保持样式的一致性和可复用性

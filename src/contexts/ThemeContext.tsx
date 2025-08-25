@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
-import { useAppSelector, useAppDispatch } from '@/store/hooks';
-import { updateSettings, saveSettings } from '@/store/slices/settingsSlice';
+import { useAppSelector, useAppDispatch } from '@/app/store/hooks';
+import { updateSettings, saveSettings } from '@/features/settings/store/settingsSlice';
 
 type ThemeMode = 'light' | 'dark' | 'auto';
 type Theme = 'light' | 'dark';

@@ -1,0 +1,60 @@
+---
+description:
+globs:
+alwaysApply: false
+---
+# 构建和部署规范
+
+## 项目构建
+项目使用Vite作为构建工具，主要配置文件：
+- [vite.config.ts](mdc:vite.config.ts) - Vite主配置
+- [tsconfig.json](mdc:tsconfig.json) - TypeScript配置
+- [tailwind.config.js](mdc:tailwind.config.js) - TailwindCSS配置
+
+## 构建命令
+```bash
+# 开发构建
+pnpm dev
+
+# 生产构建
+pnpm build
+
+# 类型检查
+pnpm type-check
+
+# 代码格式化
+pnpm format
+```
+
+## 构建输出
+构建产物位于`dist`目录：
+```
+dist/
+├── assets/     # 静态资源
+├── icons/      # 图标文件
+└── manifest.json
+```
+
+## 环境变量
+- [.env.example](mdc:.env.example) - 环境变量模板
+- 开发环境：.env.development
+- 生产环境：.env.production
+
+## 发布流程
+1. 更新版本号
+2. 执行生产构建
+3. 打包dist目录
+4. 提交Chrome商店审核
+
+## 发布检查清单
+- [ ] 版本号更新
+- [ ] 环境变量配置
+- [ ] 构建成功
+- [ ] 测试通过
+- [ ] 文档更新
+
+## 注意事项
+1. 确保manifest.json版本号与package.json一致
+2. 生产环境必须配置正确的API密钥
+3. 压缩包大小不超过Chrome商店限制
+4. 保留构建日志以便追踪问题

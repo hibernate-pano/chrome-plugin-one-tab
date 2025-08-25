@@ -1,7 +1,7 @@
 import React from 'react';
 import { useTheme } from '@/contexts/ThemeContext';
-import { useAppDispatch, useAppSelector } from '@/store/hooks';
-import { saveSettings } from '@/store/slices/settingsSlice';
+import { useAppDispatch, useAppSelector } from '@/app/store/hooks';
+import { saveSettings } from '@/features/settings/store/settingsSlice';
 
 export const SimpleThemeToggle: React.FC = () => {
   const dispatch = useAppDispatch();

@@ -1,8 +1,9 @@
-/* 拖曳相关样式 - 全新重构版 */
+/* 拖曳相关样式 - 性能优化版 */
 
-/* 基本过渡效果 */
+/* 基本过渡效果 - 使用transform和opacity优化性能 */
 .dnd-transition {
-  transition: transform 0.2s ease, opacity 0.2s ease, margin 0.2s ease, box-shadow 0.2s ease;
+  transition: transform 0.15s ease, opacity 0.15s ease;
+  will-change: transform, opacity;
 }
 
 /* 拖拽返回动画 - 当拖拽结束但未放置到有效目标时 */
@@ -27,7 +28,7 @@
   }
 }
 
-/* 标签页样式 */
+/* 标签页样式 - 性能优化 */
 .tab-item {
   display: flex;
   align-items: center;
@@ -38,6 +39,8 @@
   margin-bottom: 4px;
   cursor: move;
   position: relative;
+  will-change: transform, opacity;
+  contain: layout style paint;
 }
 
 .dark .tab-item {
@@ -47,6 +50,7 @@
 
 .tab-item:hover {
   background-color: #f9fafb;
+  transform: translateZ(0); /* 启用硬件加速 */
 }
 
 .dark .tab-item:hover {

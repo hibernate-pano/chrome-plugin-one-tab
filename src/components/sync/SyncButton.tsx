@@ -1,17 +1,28 @@
 import React, { useState } from 'react';
-import { useAppSelector } from '@/store/hooks';
+import { useAppSelector } from '@/app/store/hooks';
 import { syncService } from '@/services/syncService';
-import { useToast } from '@/contexts/ToastContext';
+import { pullFirstSyncService } from '@/services/PullFirstSyncService';
+
+import { FEEDBACK_MESSAGES } from '@/shared/constants/feedbackMessages';
+import { useSyncOperation } from '@/shared/hooks/useAsyncOperation';
+import { LoadingButton } from '@/shared/components/LoadingButton/LoadingButton';
+import { handleSyncError } from '@/shared/utils/errorHandlers';
+import { useErrorHandler } from '@/shared/contexts/ErrorContext';
 
 interface SyncButtonProps { }
 
 export const SyncButton: React.FC<SyncButtonProps> = () => {
-  const { syncStatus, syncProgress, syncOperation } = useAppSelector(state => state.tabs);
-  const { isAuthenticated } = useAppSelector(state => state.auth);
+  const { status: syncStatus, progress: syncProgress, operation: syncOperation } = useAppSelector(state => state.sync);
+  const { user } = useAppSelector(state => state.auth);
+  const isAuthenticated = !!user;
+  const { showManualSyncButtons } = useAppSelector(state => state.settings);
   const [showUploadModal, setShowUploadModal] = useState(false);
   const [showDownloadModal, setShowDownloadModal] = useState(false);
   const [modalAnimation, setModalAnimation] = useState('');
-  const { showToast } = useToast();
+  const uploadOperation = useSyncOperation();
+  const downloadOperation = useSyncOperation();
+  const manualSyncOperation = useSyncOperation();
+  const { setRetryHandler } = useErrorHandler();
 
   // 处理上传按钮点击
   const handleUpload = async () => {
@@ -32,7 +43,7 @@ export const SyncButton: React.FC<SyncButtonProps> = () => {
         if (!hasLocalData) {
           // 本地没有数据，直接下载（相当于覆盖模式）
           console.log('本地没有数据，直接下载...');
-          await syncService.downloadAndRefresh(true); // overwriteLocal=true
+          await syncService.downloadFromCloud(false, true); // background=false, forceRemoteStrategy=true
         } else {
           // 本地有数据，显示选择对话框
           setModalAnimation('animate-fadeIn');
@@ -44,6 +55,25 @@ export const SyncButton: React.FC<SyncButtonProps> = () => {
         setModalAnimation('animate-fadeIn');
         setShowDownloadModal(true);
       }
+    }
+  };
+
+  // 处理手动同步按钮点击
+  const handleManualSync = async () => {
+    if (syncStatus !== 'syncing' && isAuthenticated) {
+      setRetryHandler(() => handleManualSync());
+
+      await manualSyncOperation.execute(
+        () => pullFirstSyncService.performManualSync(),
+        {
+          loadingMessage: '正在执行手动同步...',
+          successMessage: '手动同步完成',
+          useSmartError: true,
+          onError: (error) => {
+            console.error('手动同步失败:', error);
+          },
+        }
+      );
     }
   };
 
@@ -60,103 +90,75 @@ export const SyncButton: React.FC<SyncButtonProps> = () => {
   // 处理上传确认 - 覆盖模式
   const handleUploadOverwrite = async () => {
     if (syncStatus !== 'syncing' && isAuthenticated) {
-      try {
-        // 先关闭模态框，然后开始上传
-        closeModals();
-        console.log('开始上传本地数据到云端（覆盖模式）...');
-        const result = await syncService.uploadToCloud(false, true); // background=false, overwriteCloud=true
-        console.log('上传完成（覆盖模式）');
+      closeModals();
 
-        // 根据结果显示提示
-        if (result.success) {
-          showToast('数据上传成功', 'success');
-        } else {
-          showToast(result.error || '上传失败，请重试', 'error');
+      setRetryHandler(() => handleUploadOverwrite());
+
+      await uploadOperation.execute(
+        () => syncService.uploadToCloud(false, true), // background=false, overwriteCloud=true
+        {
+          loadingMessage: FEEDBACK_MESSAGES.SYNC.UPLOAD_LOADING,
+          successMessage: FEEDBACK_MESSAGES.SYNC.UPLOAD_SUCCESS,
+          useSmartError: true,
+          onError: (error) => {
+            handleSyncError(error, () => handleUploadOverwrite());
+          },
         }
-      } catch (error) {
-        console.error('上传数据到云端失败:', error);
-        // 显示错误提示
-        showToast('上传失败，请重试', 'error');
-      }
+      );
     }
   };
 
   // 处理上传确认 - 合并模式
   const handleUploadMerge = async () => {
     if (syncStatus !== 'syncing' && isAuthenticated) {
-      try {
-        // 先关闭模态框，然后开始上传
-        closeModals();
-        console.log('开始上传本地数据到云端（合并模式）...');
-        const result = await syncService.uploadToCloud(false, false); // background=false, overwriteCloud=false
-        console.log('上传完成（合并模式）');
+      closeModals();
 
-        // 根据结果显示提示
-        if (result.success) {
-          showToast('数据上传成功', 'success');
-        } else {
-          showToast(result.error || '上传失败，请重试', 'error');
+      await uploadOperation.execute(
+        () => syncService.uploadToCloud(false, false), // background=false, overwriteCloud=false
+        {
+          loadingMessage: '正在上传数据到云端（合并模式）...',
+          successMessage: '数据上传成功',
+          errorMessage: '上传失败，请重试',
         }
-      } catch (error) {
-        console.error('上传数据到云端失败:', error);
-        // 显示错误提示
-        showToast('上传失败，请重试', 'error');
-      }
+      );
     }
   };
 
   // 处理下载确认 - 覆盖模式
   const handleDownloadOverwrite = async () => {
     if (syncStatus !== 'syncing' && isAuthenticated) {
-      try {
-        // 先关闭模态框，然后开始下载
-        closeModals();
-        console.log('开始下载数据（覆盖模式）...');
-        // 使用下载方法，显示进度条
-        const result = await syncService.downloadAndRefresh(true); // overwriteLocal=true
+      closeModals();
 
-        if (result.success) {
-          // 显示成功提示
-          showToast('数据下载成功', 'success');
-        } else {
-          // 显示错误提示
-          showToast(result.error || '下载失败，请重试', 'error');
+      await downloadOperation.execute(
+        () => syncService.downloadFromCloud(false, true), // background=false, forceRemoteStrategy=true
+        {
+          loadingMessage: '正在下载数据（覆盖模式）...',
+          successMessage: '数据下载成功',
+          errorMessage: '下载失败，请重试',
         }
-      } catch (error) {
-        console.error('从云端下载数据失败:', error);
-        // 显示错误提示
-        showToast('下载失败，请重试', 'error');
-      }
+      );
     }
   };
 
   // 处理下载确认 - 合并模式
   const handleDownloadMerge = async () => {
     if (syncStatus !== 'syncing' && isAuthenticated) {
-      try {
-        // 先关闭模态框，然后开始下载
-        closeModals();
-        console.log('开始下载数据（合并模式）...');
-        // 使用下载方法，显示进度条
-        const result = await syncService.downloadAndRefresh(false); // overwriteLocal=false
+      closeModals();
 
-        if (result.success) {
-          // 显示成功提示
-          showToast('数据下载成功', 'success');
-        } else {
-          // 显示错误提示
-          showToast(result.error || '下载失败，请重试', 'error');
+      await downloadOperation.execute(
+        () => syncService.downloadFromCloud(false, false), // background=false, forceRemoteStrategy=false
+        {
+          loadingMessage: '正在下载数据（合并模式）...',
+          successMessage: '数据下载成功',
+          errorMessage: '下载失败，请重试',
         }
-      } catch (error) {
-        console.error('从云端下载数据失败:', error);
-        // 显示错误提示
-        showToast('下载失败，请重试', 'error');
-      }
+      );
     }
   };
 
+  // 如果未登录，则不显示
   if (!isAuthenticated) {
-    return null; // 未登录时不显示同步按钮
+    return null;
   }
 
   return (
@@ -173,63 +175,62 @@ export const SyncButton: React.FC<SyncButtonProps> = () => {
         )}
 
         <div className="flex items-center space-x-2 w-full">
-          <button
-            onClick={handleUpload}
-            disabled={syncStatus === 'syncing'}
-            className={`flex items-center px-3 py-1 rounded-md text-sm ${
-              // 上传按钮始终保持绿色，只是在同步中禁用悬停效果
-              syncStatus === 'syncing'
-                ? 'bg-green-100 text-green-600'
-                : 'bg-green-100 text-green-600 hover:bg-green-200'
-              } transition-colors`}
-            title="上传本地数据到云端"
+          {/* 手动同步按钮 - 总是显示 */}
+          <LoadingButton
+            onClick={handleManualSync}
+            loading={manualSyncOperation.isLoading}
+            loadingText="同步中..."
+            className="bg-purple-100 text-purple-600 hover:bg-purple-200"
+            variant="ghost"
+            size="sm"
+            title="手动同步：先拉取云端数据，再推送本地变更"
+            icon={
+              <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+              </svg>
+            }
           >
-            {syncStatus === 'syncing' && syncOperation === 'upload' ? (
-              <>
-                <svg className="animate-spin h-4 w-4 mr-1" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                </svg>
-                上传中...
-              </>
-            ) : (
-              <>
-                <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
-                </svg>
-                上传
-              </>
-            )}
-          </button>
+            同步
+          </LoadingButton>
 
-          <button
-            onClick={handleDownload}
-            disabled={syncStatus === 'syncing'}
-            className={`flex items-center px-3 py-1 rounded-md text-sm ${
-              // 下载按钮始终保持蓝色，只是在同步中禁用悬停效果
-              syncStatus === 'syncing'
-                ? 'bg-blue-100 text-blue-600'
-                : 'bg-blue-100 text-blue-600 hover:bg-blue-200'
-              } transition-colors`}
-            title="从云端下载数据并与本地合并"
-          >
-            {syncStatus === 'syncing' && syncOperation === 'download' ? (
-              <>
-                <svg className="animate-spin h-4 w-4 mr-1" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                </svg>
-                下载中...
-              </>
-            ) : (
-              <>
-                <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
-                </svg>
+          {/* 上传/下载按钮 - 受设置控制 */}
+          {showManualSyncButtons && (
+            <>
+              <LoadingButton
+                onClick={handleUpload}
+                loading={syncStatus === 'syncing' && syncOperation === 'upload' || uploadOperation.isLoading}
+                loadingText="上传中..."
+                className="bg-green-100 text-green-600 hover:bg-green-200"
+                variant="ghost"
+                size="sm"
+                title="上传本地数据到云端"
+                icon={
+                  <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
+                  </svg>
+                }
+              >
+                上传
+              </LoadingButton>
+
+              <LoadingButton
+                onClick={handleDownload}
+                loading={syncStatus === 'syncing' && syncOperation === 'download' || downloadOperation.isLoading}
+                loadingText="下载中..."
+                className="bg-blue-100 text-blue-600 hover:bg-blue-200"
+                variant="ghost"
+                size="sm"
+                title="从云端下载数据并与本地合并"
+                icon={
+                  <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                  </svg>
+                }
+              >
                 下载
-              </>
-            )}
-          </button>
+              </LoadingButton>
+            </>
+          )}
         </div>
       </div>
 

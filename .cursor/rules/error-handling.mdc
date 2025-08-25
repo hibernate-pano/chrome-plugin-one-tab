@@ -1,0 +1,77 @@
+---
+description: 
+globs: 
+alwaysApply: true
+---
+# 错误处理规范
+
+Chrome插件OneTab项目采用统一的错误处理方式，确保用户体验一致性和便于问题诊断。
+
+## 错误处理模式
+
+### 1. Redux状态中的错误
+
+每个Redux状态切片包含`error`字段，用于存储错误信息：
+
+```typescript
+interface SomeState {
+  // ...其他字段
+  error: string | null;
+}
+```
+
+异步操作中统一捕获并处理错误：
+
+```typescript
+.addCase(someAsyncAction.rejected, (state, action) => {
+  state.isLoading = false;
+  state.error = action.error.message || '操作失败';
+})
+```
+
+### 2. UI错误展示
+
+错误提示采用统一的红色边框提示框样式：
+
+```tsx
+{error && (
+  <div className="bg-red-50 border-l-4 border-red-500 text-red-700 p-4 rounded-lg mb-6">
+    <div className="flex items-center">
+      <svg className="h-5 w-5 mr-2 text-red-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+      </svg>
+      <span>{error}</span>
+    </div>
+  </div>
+)}
+```
+
+### 3. 日志记录
+
+使用统一的日志模式记录错误，便于调试：
+
+```typescript
+try {
+  // 操作
+} catch (err) {
+  console.error('操作类型 错误:', err);
+  // 错误处理
+}
+```
+
+## 错误类型
+
+项目主要处理以下几类错误：
+
+1. **认证错误** - 登录、注册、身份验证等相关错误
+2. **网络错误** - API调用、数据同步等网络操作错误
+3. **存储错误** - 本地存储、缓存等存储操作错误
+4. **业务逻辑错误** - 特定业务规则违反导致的错误
+
+## 错误恢复机制
+
+对于关键操作，提供错误恢复机制：
+
+1. 自动重试 - 网络错误时自动尝试重新连接
+2. 手动重试 - 提供用户手动重试选项
+3. 降级服务 - 在线服务不可用时使用离线功能
