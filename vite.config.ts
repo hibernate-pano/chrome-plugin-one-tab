@@ -26,29 +26,56 @@ export default defineConfig(({ mode }) => {
       chunkSizeWarningLimit: 1000,
       rollupOptions: {
         input: {
-          'service-worker': resolve(__dirname, 'src/service-worker.ts'),
+          'service-worker': resolve(__dirname, 'src/service-worker.js'),
           'src/popup/index': resolve(__dirname, 'src/popup/index.html'),
           'popup': resolve(__dirname, 'popup.html'),
           'confirm': resolve(__dirname, 'src/auth/confirm.html')
         },
         output: {
+          // 确保 Service Worker 输出为独立文件，不使用哈希
+          entryFileNames: (chunkInfo) => {
+            if (chunkInfo.name === 'service-worker') {
+              return 'service-worker.js';
+            }
+            return '[name]-[hash].js';
+          },
+          // Service Worker 不分块，避免动态导入
+          chunkFileNames: (chunkInfo) => {
+            if (chunkInfo.name && chunkInfo.name.includes('service-worker')) {
+              return 'service-worker.js';
+            }
+            return '[name]-[hash].js';
+          },
           // 手动配置代码分块策略
-          manualChunks: {
+          manualChunks: (id) => {
+            // Service Worker 不分块，保持独立
+            if (id.includes('service-worker.js')) {
+              return undefined;
+            }
             // React 相关库打包到一起
-            'react-vendor': ['react', 'react-dom', 'react-redux'],
+            if (id.includes('node_modules/react') || id.includes('node_modules/react-dom') || id.includes('node_modules/react-redux')) {
+              return 'react-vendor';
+            }
             // Redux 相关库打包到一起
-            'redux-vendor': ['@reduxjs/toolkit'],
+            if (id.includes('node_modules/@reduxjs/toolkit')) {
+              return 'redux-vendor';
+            }
             // Supabase 相关库打包到一起
-            'supabase-vendor': ['@supabase/supabase-js'],
+            if (id.includes('node_modules/@supabase/supabase-js')) {
+              return 'supabase-vendor';
+            }
             // 工具函数打包到一起
-            'utils': [
-              './src/utils/storage.ts',
-              './src/utils/supabase.ts',
-              './src/utils/syncUtils.ts',
-              './src/utils/syncHelpers.ts',
-              './src/utils/encryptionUtils.ts'
-            ]
+            if (id.includes('src/utils/')) {
+              return 'utils';
+            }
           }
+        },
+        external: (id) => {
+          // Service Worker 不应该引用外部模块
+          if (id.includes('service-worker.js')) {
+            return false;
+          }
+          return false;
         }
       }
     }
