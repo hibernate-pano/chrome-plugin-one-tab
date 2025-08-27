@@ -188,7 +188,7 @@ const tabManager = {
     try {
       await chrome.notifications.create({
         type: 'basic',
-        iconUrl: '/icons/icon128.png',
+        iconUrl: chrome.runtime.getURL('icons/icon128.png'),
         title: 'OneTab Plus',
         message: message
       });

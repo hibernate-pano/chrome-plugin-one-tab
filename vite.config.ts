@@ -10,6 +10,8 @@ export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd());
 
   return {
+    // 设置相对路径基础路径，避免Chrome扩展中的绝对路径问题
+    base: './',
     plugins: [
       react(),
       crx({ manifest }),
@@ -24,6 +26,8 @@ export default defineConfig(({ mode }) => {
       emptyOutDir: true,
       // 增加警告阈值到 1000KB，减少不必要的警告
       chunkSizeWarningLimit: 1000,
+      // 为Chrome扩展设置相对路径
+      assetsDir: '',
       rollupOptions: {
         input: {
           'service-worker': resolve(__dirname, 'src/service-worker.js'),

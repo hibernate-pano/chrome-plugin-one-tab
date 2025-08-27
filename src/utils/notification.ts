@@ -19,7 +19,7 @@ export async function showNotification(
   // 确保必要的字段存在
   const notificationOptions: chrome.notifications.NotificationOptions = {
     type: options.type || 'basic',
-    iconUrl: options.iconUrl || '/icons/icon128.png',
+    iconUrl: options.iconUrl || chrome.runtime.getURL('icons/icon128.png'),
     title: options.title || '',
     message: options.message || '',
     ...options
@@ -54,7 +54,7 @@ export async function showNotificationWithId(
   // 确保必要的字段存在
   const notificationOptions: chrome.notifications.NotificationOptions = {
     type: options.type || 'basic',
-    iconUrl: options.iconUrl || '/icons/icon128.png',
+    iconUrl: options.iconUrl || chrome.runtime.getURL('icons/icon128.png'),
     title: options.title || '',
     message: options.message || '',
     ...options

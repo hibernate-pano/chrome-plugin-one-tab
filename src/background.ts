@@ -94,7 +94,7 @@ const saveTabs = async (tabs: chrome.tabs.Tab[]) => {
     // 显示通知
     await showNotification({
       type: 'basic',
-      iconUrl: '/icons/icon128.png',
+      iconUrl: chrome.runtime.getURL('icons/icon128.png'),
       title: '标签已保存',
       message: `已成功保存 ${validTabs.length} 个标签页到新标签组`
     });
@@ -102,7 +102,7 @@ const saveTabs = async (tabs: chrome.tabs.Tab[]) => {
     console.error('保存标签失败:', error);
     await showNotification({
       type: 'basic',
-      iconUrl: '/icons/icon128.png',
+      iconUrl: chrome.runtime.getURL('icons/icon128.png'),
       title: '保存失败',
       message: '保存标签时发生错误，请重试'
     });
