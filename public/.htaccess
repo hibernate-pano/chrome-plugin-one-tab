@@ -1,0 +1,14 @@
+# 避免favicon请求错误
+RewriteEngine On
+RewriteCond %{REQUEST_FILENAME} !-f
+RewriteRule ^favicon\.ico$ /favicon.ico [L]
+
+# 设置正确的MIME类型
+<Files "favicon.ico">
+    Header set Content-Type "image/x-icon"
+</Files>
+
+# 缓存控制
+<Files "favicon.ico">
+    Header set Cache-Control "public, max-age=31536000"
+</Files>
