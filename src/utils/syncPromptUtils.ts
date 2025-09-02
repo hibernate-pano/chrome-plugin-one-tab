@@ -4,7 +4,7 @@
  */
 
 // 本地存储键
-const SYNC_PROMPT_SHOWN_KEY = 'onetabplus_sync_prompt_shown';
+const SYNC_PROMPT_SHOWN_KEY = 'tabvaultpro_sync_prompt_shown';
 
 /**
  * 检查是否已经显示过同步提示

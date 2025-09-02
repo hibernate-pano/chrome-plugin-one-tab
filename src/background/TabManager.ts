@@ -144,7 +144,7 @@ export class TabManager {
         await this.showNotification({
           type: 'basic',
           iconUrl: chrome.runtime.getURL('icons/icon128.png'),
-          title: 'OneTab Plus',
+          title: 'TabVault Pro',
           message: '没有找到可保存的标签页'
         });
         return;
@@ -160,7 +160,7 @@ export class TabManager {
       await this.showNotification({
         type: 'basic',
         iconUrl: chrome.runtime.getURL('icons/icon128.png'),
-        title: 'OneTab Plus',
+        title: 'TabVault Pro',
         message: `已成功保存 ${tabGroup.tabs.length} 个标签页`
       });
 
@@ -192,10 +192,10 @@ export class TabManager {
       // 显示错误通知
       await this.showNotification({
         type: 'basic',
-        iconUrl: chrome.runtime.getURL('icons/icon128.png'),
-        title: 'OneTab Plus - 保存失败',
-        message: '保存标签页时发生错误，请重试'
-      });
+          iconUrl: chrome.runtime.getURL('icons/icon128.png'),
+          title: 'TabVault Pro - 保存失败',
+          message: '保存标签页时发生错误，请重试'
+        });
 
       throw error;
     }

@@ -2,7 +2,7 @@
 // 为了避免模块导入问题，直接在Service Worker中实现核心功能
 
 // Service Worker启动日志
-console.log('=== OneTab Plus Service Worker 启动 ===');
+console.log('=== TabVault Pro Service Worker 启动 ===');
 console.log('版本:', chrome.runtime.getManifest().version);
 console.log('启动时间:', new Date().toISOString());
 console.log('Chrome APIs 可用性检查:');
@@ -189,7 +189,7 @@ const tabManager = {
       await chrome.notifications.create({
         type: 'basic',
         iconUrl: chrome.runtime.getURL('icons/icon128.png'),
-        title: 'OneTab Plus',
+        title: 'TabVault Pro',
         message: message
       });
     } catch (error) {

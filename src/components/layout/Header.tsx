@@ -196,7 +196,7 @@ export const Header: React.FC<HeaderProps> = ({ onSearch, searchQuery = '' }) =>
                 />
               </svg>
               <div className="flex items-center">
-                <h1 className="text-lg font-bold text-gray-800 dark:text-gray-100">OneTabPlus</h1>
+                <h1 className="text-lg font-bold text-gray-800 dark:text-gray-100">TabVault Pro</h1>
                 <TabCounter />
               </div>
             </div>

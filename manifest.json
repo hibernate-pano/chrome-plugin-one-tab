@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
-  "name": "OneTab Plus",
+  "name": "TabVault Pro",
   "version": "1.7.69",
-  "description": "A better OneTab extension for Chrome",
+  "description": "A powerful tab management extension for Chrome",
   "content_security_policy": {
     "extension_pages": "script-src 'self'; object-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https: http:; font-src 'self' data:; connect-src 'self' https://*.supabase.co; frame-src 'none'; base-uri 'self'; form-action 'self';"
   },
@@ -19,7 +19,7 @@
   ],
   "action": {
     "default_icon": "icons/icon16.png",
-    "default_title": "OneTab Plus - 标签页管理器"
+    "default_title": "TabVault Pro - 标签页管理器"
   },
   "web_accessible_resources": [
     {

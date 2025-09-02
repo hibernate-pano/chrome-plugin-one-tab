@@ -165,7 +165,7 @@ function testUserExperienceImprovements() {
  * 运行所有测试
  */
 function runAllTests() {
-  console.log('🚀 OneTab Plus 宽度统一测试套件\n');
+  console.log('🚀 TabVault Pro 宽度统一测试套件\n');
   console.log('=' .repeat(50));
 
   try {

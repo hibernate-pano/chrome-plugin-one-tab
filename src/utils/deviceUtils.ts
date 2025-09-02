@@ -4,7 +4,7 @@
  */
 
 // 设备ID存储键
-const DEVICE_ID_KEY = 'onetabplus_device_id';
+const DEVICE_ID_KEY = 'tabvaultpro_device_id';
 
 /**
  * 生成随机设备ID

@@ -100,7 +100,7 @@ export const MainApp: React.FC = () => {
                         d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"
                       />
                     </svg>
-                    <span>OneTab Plus v1.5.12</span>
+                    <span>TabVault Pro v1.5.12</span>
                   </div>
                   <div className="flex items-center space-x-2">
                     <span>高效的标签页管理工具</span>
