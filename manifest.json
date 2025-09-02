@@ -40,7 +40,7 @@
     }
   ],
   "background": {
-    "service_worker": "src/service-worker.js"
+    "service_worker": "service-worker.js"
   },
   "icons": {
     "16": "icons/icon16.png",

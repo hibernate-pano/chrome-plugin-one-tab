@@ -3,6 +3,13 @@ import react from '@vitejs/plugin-react';
 import { crx } from '@crxjs/vite-plugin';
 import manifest from './manifest.json';
 import { resolve } from 'path';
+import { writeFileSync, readFileSync } from 'fs';
+
+// 创建临时 manifest，不包含 service worker
+const tempManifest = {
+  ...manifest,
+  background: undefined
+};
 
 // https://vitejs.dev/config/
 export default defineConfig(({ mode }) => {
@@ -14,7 +21,32 @@ export default defineConfig(({ mode }) => {
     base: './',
     plugins: [
       react(),
-      crx({ manifest }),
+      crx({ 
+        manifest: tempManifest,
+        contentScripts: {
+          preambleCode: false,
+        },
+      }),
+      // 自定义插件：在构建后恢复 manifest.json
+      {
+        name: 'restore-manifest',
+        closeBundle() {
+          try {
+            const manifestPath = resolve(__dirname, 'dist/manifest.json');
+            const manifestContent = JSON.parse(readFileSync(manifestPath, 'utf-8'));
+            
+            // 恢复 background 配置
+            manifestContent.background = {
+              service_worker: 'service-worker.js'
+            };
+            
+            writeFileSync(manifestPath, JSON.stringify(manifestContent, null, 2));
+            console.log('✅ 已恢复 manifest.json 中的 background 配置');
+          } catch (error) {
+            console.error('❌ 恢复 manifest.json 失败:', error);
+          }
+        }
+      }
     ],
     resolve: {
       alias: {
@@ -30,32 +62,13 @@ export default defineConfig(({ mode }) => {
       assetsDir: '',
       rollupOptions: {
         input: {
-          'service-worker': resolve(__dirname, 'src/service-worker.js'),
           'src/popup/index': resolve(__dirname, 'src/popup/index.html'),
           'popup': resolve(__dirname, 'popup.html'),
           'confirm': resolve(__dirname, 'src/auth/confirm.html')
         },
         output: {
-          // 确保 Service Worker 输出为独立文件，不使用哈希
-          entryFileNames: (chunkInfo) => {
-            if (chunkInfo.name === 'service-worker') {
-              return 'service-worker.js';
-            }
-            return '[name]-[hash].js';
-          },
-          // Service Worker 不分块，避免动态导入
-          chunkFileNames: (chunkInfo) => {
-            if (chunkInfo.name && chunkInfo.name.includes('service-worker')) {
-              return 'service-worker.js';
-            }
-            return '[name]-[hash].js';
-          },
           // 手动配置代码分块策略
           manualChunks: (id) => {
-            // Service Worker 不分块，保持独立
-            if (id.includes('service-worker.js')) {
-              return undefined;
-            }
             // React 相关库打包到一起
             if (id.includes('node_modules/react') || id.includes('node_modules/react-dom') || id.includes('node_modules/react-redux')) {
               return 'react-vendor';
@@ -73,13 +86,6 @@ export default defineConfig(({ mode }) => {
               return 'utils';
             }
           }
-        },
-        external: (id) => {
-          // Service Worker 不应该引用外部模块
-          if (id.includes('service-worker.js')) {
-            return false;
-          }
-          return false;
         }
       }
     }
