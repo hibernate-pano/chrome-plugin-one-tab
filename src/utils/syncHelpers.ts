@@ -98,7 +98,7 @@ export async function syncToCloud<T>(
 
         // 本地操作完成，但不自动同步到云端，保证本地操作优先，避免卡顿
         if (process.env.NODE_ENV === 'development') {
-          console.log(`本地操作完成: ${operationType}，跳过自动同步，保证操作丰满顺畅`);
+          // 跳过自动同步
         }
         currentSyncOperation = null;
         resolve(true); // 返回成功，不影响用户体验

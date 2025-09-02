@@ -305,7 +305,7 @@ export const syncTabsFromCloud = createAsyncThunk(
       }
 
       // 记录同步模式
-      console.log(`开始${background ? '后台' : ''}从云端同步标签组...`);
+      // 开始同步
 
       // 设置初始进度和操作类型
       if (!background) {
@@ -379,7 +379,7 @@ export const syncTabsFromCloud = createAsyncThunk(
 
       // 如果是覆盖模式，直接使用云端数据，不进行合并
       if (forceRemoteStrategy) {
-        console.log('使用覆盖模式：直接使用云端数据，不进行合并');
+        // 使用覆盖模式
         // 直接使用云端数据，但需要确保格式正确
         mergedGroups = cloudGroups.map(group => ({
           ...group,
@@ -388,43 +388,19 @@ export const syncTabsFromCloud = createAsyncThunk(
         }));
       } else {
         // 使用智能合并策略
-        console.log('使用合并模式：智能合并本地和云端数据');
+        // 使用合并模式
         const syncStrategy = settings.syncStrategy;
         mergedGroups = mergeTabGroups(localGroups, cloudGroups, syncStrategy);
       }
 
-      console.log('合并后的标签组数量:', mergedGroups.length);
+      // 合并完成
 
       // 更新进度到 70%
       if (!background) {
         dispatch(updateSyncProgress({ progress: 70, operation: 'download' }));
       }
 
-      // 详细记录合并后的每个标签组
-      mergedGroups.forEach((group, index) => {
-        console.log(`合并后标签组 [${index + 1}/${mergedGroups.length}]:`, {
-          id: group.id,
-          name: group.name,
-          tabCount: group.tabs.length,
-          syncStatus: group.syncStatus,
-          updatedAt: group.updatedAt,
-          lastSyncedAt: group.lastSyncedAt,
-        });
-      });
-
-      // 验证合并后标签组数据的完整性
-      let totalMergedTabs = 0;
-      mergedGroups.forEach(group => {
-        totalMergedTabs += group.tabs.length;
-      });
-      console.log(`合并后总标签数: ${totalMergedTabs}`);
-
-      // 检查标签总数差异，输出信息性日志
-      if (totalMergedTabs < Math.max(totalCloudTabs, totalLocalTabs)) {
-        console.log(
-          `信息: 合并后的标签总数(${totalMergedTabs})小于原始标签总数(本地:${totalLocalTabs}, 云端:${totalCloudTabs})，这通常是因为有重复标签或已删除标签，不影响正常使用`
-        );
-      }
+      // 合并完成，继续处理
 
       // 保存到本地存储
       await storage.setGroups(mergedGroups);
@@ -470,7 +446,7 @@ export const syncLocalChangesToCloud = createAsyncThunk(
 
     // 不再自动同步到云端，保证本地操作优先，避免卡顿
     if (process.env.NODE_ENV === 'development') {
-      console.log('本地更改完成，跳过自动同步，保证操作丰满顺畅');
+      // 跳过自动同步
     }
     return auth.isAuthenticated; // 返回登录状态，但不执行同步
   }

@@ -212,7 +212,6 @@ export const sync = {
       for (const group of groups) {
         // 检查是否已经有 JSONB 数据
         if (group.tabs_data && Array.isArray(group.tabs_data) && group.tabs_data.length > 0) {
-          console.log(`标签组 ${group.id} 已经有 JSONB 数据，跳过`);
           continue;
         }
 
@@ -228,11 +227,8 @@ export const sync = {
         }
 
         if (!tabs || tabs.length === 0) {
-          console.log(`标签组 ${group.id} 没有标签，跳过`);
           continue;
         }
-
-        console.log(`标签组 ${group.id} 有 ${tabs.length} 个标签需要迁移`);
 
         // 将标签转换为 TabData 格式
         const tabsData: TabData[] = tabs.map(tab => ({
@@ -269,7 +265,6 @@ export const sync = {
               throw new Error('会话已过期，请重新登录');
             }
 
-            console.log('尝试使用会话用户ID重新更新标签组');
             const { error: retryError } = await supabase
               .from('tab_groups')
               .update({
@@ -280,16 +275,10 @@ export const sync = {
 
             if (retryError) {
               console.error(`重试更新标签组 ${group.id} 仍然失败:`, retryError);
-            } else {
-              console.log(`重试成功，标签组 ${group.id} 的数据已成功迁移到 JSONB 格式`);
             }
           }
-        } else {
-          console.log(`标签组 ${group.id} 的数据已成功迁移到 JSONB 格式`);
         }
       }
-
-      console.log('数据迁移完成');
       return { success: true, migratedGroups: groups.length };
     } catch (error) {
       console.error('数据迁移失败:', error);
@@ -473,7 +462,7 @@ export const sync = {
 
       // 如果是覆盖模式，先删除用户的所有标签组，然后插入新的标签组
       if (overwriteCloud) {
-        console.log('使用覆盖模式，先删除用户的所有标签组');
+        // 使用覆盖模式
 
         // 先删除用户的所有标签组
         const { error: deleteError } = await supabase
@@ -515,7 +504,7 @@ export const sync = {
         error = result.error;
       } else {
         // 合并模式，使用 upsert
-        console.log('使用合并模式，更新现有标签组');
+        // 使用合并模式
         const result = await supabase
           .from('tab_groups')
           .upsert(uniqueGroups, { onConflict: 'id' });
@@ -539,24 +528,6 @@ export const sync = {
         if (error.message && error.message.includes('row-level security policy')) {
           console.error('RLS 策略违规错误，尝试诊断和重试...');
 
-          // 记录当前会话信息
-          const currentSession = await supabase.auth.getSession();
-          console.error('当前会话状态:', {
-            hasSession: !!currentSession.data.session,
-            userId: currentSession.data.session?.user?.id,
-            userEmail: currentSession.data.session?.user?.email,
-            sessionExpiry: currentSession.data.session?.expires_at
-          });
-
-          // 记录要上传的数据信息
-          console.error('要上传的数据信息:', {
-            groupCount: uniqueGroups.length,
-            firstGroupUserId: uniqueGroups[0]?.user_id,
-            allUserIds: [...new Set(uniqueGroups.map(g => g.user_id))]
-          });
-
-          // 尝试刷新会话并重试一次
-          console.log('尝试刷新会话并重试...');
           try {
             const { data: refreshedSession, error: refreshError } = await supabase.auth.refreshSession();
             if (refreshError) {
@@ -565,8 +536,6 @@ export const sync = {
             }
 
             if (refreshedSession.session && refreshedSession.session.user) {
-              console.log('会话刷新成功，重新验证用户ID并重试上传');
-
               // 重新设置用户ID
               uniqueGroups.forEach(group => {
                 group.user_id = refreshedSession.session!.user.id;
@@ -582,7 +551,6 @@ export const sync = {
                 throw new Error('数据库行级安全策略阻止了数据插入。请联系管理员检查权限配置。');
               }
 
-              console.log('重试上传成功');
               data = retryResult.data;
               error = null; // 清除错误
             } else {
@@ -597,19 +565,15 @@ export const sync = {
         throw error;
       }
 
-      console.log('标签组元数据和标签数据上传成功');
     } catch (e) {
       console.error('上传标签组时发生异常:', e);
       throw e;
     }
-
-    console.log('所有数据上传成功');
     return { result };
   },
 
   // 下载标签组
   async downloadTabGroups() {
-    const deviceId = await getDeviceId();
 
     // 先检查会话是否有效
     const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
@@ -642,10 +606,7 @@ export const sync = {
       throw new Error('用户ID无效');
     }
 
-    console.log('开始下载标签组，用户ID:', user.id, '设备ID:', deviceId);
-
     try {
-      console.log('使用 JSONB 方式下载所有标签组');
 
       // 确保用户已登录并且会话有效
       const { data: sessionCheck } = await supabase.auth.getSession();
@@ -729,20 +690,10 @@ export const sync = {
         } else if (Array.isArray(group.tabs_data)) {
           // 如果已经是数组，直接使用
           tabsData = group.tabs_data;
-          console.log(`标签组 ${group.id} 的数据已经是解析后的数组格式`);
+          // 数据已是数组格式
         }
 
-        console.log(`处理标签组 ${group.id} (名称: "${group.name}"), 有 ${tabsData.length} 个标签`);
-
-        // 记录标签类型统计
-        const urlTypes = tabsData.reduce((acc: Record<string, number>, tab: TabData) => {
-          const urlType = tab.url.startsWith('http') ? 'http' :
-            tab.url.startsWith('loading://') ? 'loading' : 'other';
-          acc[urlType] = (acc[urlType] || 0) + 1;
-          return acc;
-        }, {});
-
-        console.log(`  - 标签类型统计: ${JSON.stringify(urlTypes)}`);
+        // 处理标签组数据
 
         // 将 TabData 转换为 Tab 格式
         const formattedTabs = tabsData.map((tab: TabData) => ({
@@ -768,7 +719,6 @@ export const sync = {
       // 兼容性处理：如果标签组没有 tabs_data，尝试从 tabs 表获取
       for (const group of tabGroups) {
         if (group.tabs.length === 0) {
-          console.log(`标签组 ${group.id} 没有 JSONB 标签数据，尝试从 tabs 表获取`);
           try {
             const { data: tabs, error: tabError } = await supabase
               .from('tabs')
@@ -785,7 +735,6 @@ export const sync = {
                 lastAccessed: tab.last_accessed,
                 group_id: tab.group_id
               }));
-              console.log(`从 tabs 表获取到 ${group.tabs.length} 个标签`);
             }
           } catch (e) {
             console.warn(`从 tabs 表获取标签失败，忽略错误:`, e);
@@ -793,7 +742,6 @@ export const sync = {
         }
       }
 
-      console.log('标签组下载完成');
       return tabGroups;
     } catch (error) {
       console.error('下载标签组失败:', error);
@@ -842,7 +790,7 @@ export const sync = {
       user.id = sessionData.session.user.id;
     }
 
-    console.log('上传用户设置，用户ID:', user.id, '设备ID:', deviceId);
+    // 上传用户设置
 
     // 定义允许的设置字段，避免上传不存在的字段
     // 这些字段名对应数据库中的实际列名（驼峰命名，稍后会转换为下划线命名）
@@ -942,7 +890,7 @@ export const sync = {
       user.id = sessionData.session.user.id;
     }
 
-    console.log('下载用户设置，用户ID:', user.id);
+    // 下载用户设置
 
     const { data, error } = await supabase
       .from('user_settings')
@@ -996,7 +944,6 @@ export const sync = {
         }
       }
 
-      console.log('转换后的设置:', convertedSettings);
       return convertedSettings;
     }
 

@@ -100,14 +100,8 @@ const mergeTabs = (
   // 创建 URL 映射，用于去除重复标签
   const urlMap = new Map<string, Set<string>>();
 
-  // 添加本地标签前先记录数量
-  console.log(`合并标签组 "${localGroup.name}"，本地标签: ${localGroup.tabs.length}, 云端标签: ${cloudGroup.tabs.length}`);
-
   // 先处理云端标签，因为云端数据优先
   cloudGroup.tabs.forEach(cloudTab => {
-    // 记录每个云端标签的信息
-    console.log(`处理云端标签: ID=${cloudTab.id}, 标题="${cloudTab.title}", URL=${cloudTab.url}`);
-
     // 添加到标签映射
     mergedTabsMap.set(cloudTab.id, {
       ...cloudTab,
@@ -128,19 +122,14 @@ const mergeTabs = (
   localGroup.tabs.forEach(localTab => {
     // 如果标签ID已存在，跳过
     if (mergedTabsMap.has(localTab.id)) {
-      console.log(`跳过重复标签ID: ${localTab.id}`);
       return;
     }
 
     // 检查URL是否重复
     if (localTab.url && urlMap.has(localTab.url)) {
-      console.log(`发现URL重复标签: ${localTab.url}`);
       // 已经有相同URL的标签，跳过
       return;
     }
-
-    // 记录每个本地标签的信息
-    console.log(`添加本地标签: ID=${localTab.id}, 标题="${localTab.title}", URL=${localTab.url}`);
 
     // 添加到标签映射
     mergedTabsMap.set(localTab.id, {
@@ -161,18 +150,7 @@ const mergeTabs = (
   // 将标签映射转换回数组
   const mergedTabs = Array.from(mergedTabsMap.values());
 
-  // 记录合并结果
-  console.log(`标签组 "${localGroup.name}" 合并结果: ${mergedTabs.length} 个标签`);
-
-  // 记录每个合并后的标签信息
-  mergedTabs.forEach((tab, index) => {
-    console.log(`合并后标签 ${index + 1}/${mergedTabs.length}: ID=${tab.id}, 标题="${tab.title}", URL=${tab.url}`);
-  });
-
-  // 如果合并后的标签数小于云端标签数或本地标签数，输出信息性日志
-  if (mergedTabs.length < Math.max(cloudGroup.tabs.length, localGroup.tabs.length)) {
-    console.log(`信息: 标签组 "${localGroup.name}" 合并后的标签数(${mergedTabs.length})小于原始标签数(本地:${localGroup.tabs.length}, 云端:${cloudGroup.tabs.length})，这是因为智能去除了重复标签`);
-  }
+  // 合并完成，继续处理
 
   // 构建并返回合并后的标签组
   return {

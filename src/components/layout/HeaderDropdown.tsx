@@ -70,7 +70,7 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({ onClose }) => {
 
             // 删除成功后，异步同步到云端
             if (isAuthenticated) {
-              console.log('正在将删除操作同步到云端...');
+              // 同步删除操作
               syncService.uploadToCloud(true, true) // background=true, overwriteCloud=true
                 .then(() => {
                   console.log('删除操作已同步到云端');

@@ -65,7 +65,7 @@ export const SyncButton: React.FC<SyncButtonProps> = () => {
         closeModals();
         console.log('开始上传本地数据到云端（覆盖模式）...');
         const result = await syncService.uploadToCloud(false, true); // background=false, overwriteCloud=true
-        console.log('上传完成（覆盖模式）');
+        // 上传完成
 
         // 根据结果显示提示
         if (result.success) {
@@ -87,9 +87,7 @@ export const SyncButton: React.FC<SyncButtonProps> = () => {
       try {
         // 先关闭模态框，然后开始上传
         closeModals();
-        console.log('开始上传本地数据到云端（合并模式）...');
         const result = await syncService.uploadToCloud(false, false); // background=false, overwriteCloud=false
-        console.log('上传完成（合并模式）');
 
         // 根据结果显示提示
         if (result.success) {
@@ -111,7 +109,6 @@ export const SyncButton: React.FC<SyncButtonProps> = () => {
       try {
         // 先关闭模态框，然后开始下载
         closeModals();
-        console.log('开始下载数据（覆盖模式）...');
         // 使用下载方法，显示进度条
         const result = await syncService.downloadAndRefresh(true); // overwriteLocal=true
 
@@ -136,7 +133,6 @@ export const SyncButton: React.FC<SyncButtonProps> = () => {
       try {
         // 先关闭模态框，然后开始下载
         closeModals();
-        console.log('开始下载数据（合并模式）...');
         // 使用下载方法，显示进度条
         const result = await syncService.downloadAndRefresh(false); // overwriteLocal=false
 

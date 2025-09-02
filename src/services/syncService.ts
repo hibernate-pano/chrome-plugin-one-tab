@@ -49,17 +49,9 @@ class SyncService {
     }
 
     try {
-      console.log(`开始${background ? '后台' : ''}上传数据到云端${overwriteCloud ? '（覆盖模式）' : '（合并模式）'}...`);
-
-      // 上传标签组数据
-      console.log('正在上传标签组数据...');
+      // 上传数据到云端
       await store.dispatch(syncTabsToCloud({ background, overwriteCloud }));
-
-      // 上传设置数据
-      console.log('正在上传设置数据...');
       await store.dispatch(syncSettingsToCloud());
-
-      console.log(`数据上传完成！${overwriteCloud ? '云端数据已被本地数据覆盖' : '本地数据已与云端数据合并'}`);
       return { success: true };
     } catch (error) {
       console.error('数据上传失败:', error);
@@ -83,17 +75,9 @@ class SyncService {
     }
 
     try {
-      console.log(`开始${background ? '后台' : ''}从云端下载数据${overwriteLocal ? '（覆盖模式）' : '（合并模式）'}...`);
-
-      // 从云端同步设置
-      console.log('正在从云端下载设置...');
+      // 从云端下载数据
       await store.dispatch(syncSettingsFromCloud());
-
-      // 从云端同步标签组
-      console.log('正在从云端下载标签组...');
       await store.dispatch(syncTabsFromCloud({ background, forceRemoteStrategy: overwriteLocal }));
-
-      console.log(`从云端下载数据完成！${overwriteLocal ? '本地数据已被云端数据覆盖' : '云端数据已与本地数据合并'}`);
       return { success: true };
     } catch (error) {
       console.error('从云端下载数据失败:', error);
@@ -117,30 +101,11 @@ class SyncService {
     }
 
     try {
-      console.log(`开始${background ? '后台' : ''}同步数据...`);
-
-      // 修改同步策略：以云端数据为准，同时智能合并本地数据
-      // 1. 先将本地删除操作同步到云端，确保删除操作不会被覆盖
-      // 2. 然后从云端同步数据，以云端数据为准
-      // 3. 使用智能合并算法合并数据，去除重复项
-
-      // 使用云端优先策略，使云端数据优先
-
-      // 先将本地数据同步到云端
-      console.log('正在将本地数据同步到云端...');
+      // 同步数据
       await store.dispatch(syncTabsToCloud({ background }));
       await store.dispatch(syncSettingsToCloud());
-
-      // 然后从云端同步设置
-      console.log('正在从云端同步设置...');
       await store.dispatch(syncSettingsFromCloud());
-
-      // 使用云端优先策略从云端同步标签组
-      console.log('正在从云端同步标签组，以云端数据为准...');
-      // 不再尝试修改 Redux 状态，而是在调用时传递参数
       await store.dispatch(syncTabsFromCloud({ background, forceRemoteStrategy: true }));
-
-      console.log('数据同步完成！云端数据已成功同步并与本地数据智能合并去重');
       return { success: true };
     } catch (error) {
       console.error('数据同步失败:', error);
@@ -169,20 +134,9 @@ class SyncService {
     }
 
     try {
-      console.log(`开始下载数据${overwriteLocal ? '（覆盖模式）' : '（合并模式）'}...`);
-
-      // 从云端同步设置
-      console.log('正在下载设置...');
+      // 下载数据
       await store.dispatch(syncSettingsFromCloud());
-
-      // 从云端同步标签组，使用 background: false 显示进度条
-      console.log('正在下载标签组...');
-
-      // 统一使用 syncTabsFromCloud action，确保两种模式都有进度条
-      // 通过 forceRemoteStrategy 参数来控制是覆盖还是合并模式
       await store.dispatch(syncTabsFromCloud({ background: false, forceRemoteStrategy: overwriteLocal }));
-
-      console.log('下载数据完成！');
 
       // 返回成功结果，不再刷新页面
       return {
