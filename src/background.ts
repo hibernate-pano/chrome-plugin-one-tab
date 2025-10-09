@@ -2,8 +2,10 @@ import { storage } from './utils/storage';
 import { nanoid } from '@reduxjs/toolkit';
 import { TabGroup } from './types/tab';
 import { sanitizeFaviconUrl } from './utils/faviconUtils';
-
 import { showNotification } from './utils/notification';
+import { syncService } from './services/syncService';
+import { authCache } from './utils/authCache';
+import { errorHandler } from './utils/errorHandler';
 
 // 创建新标签组的辅助函数
 const createTabGroup = (tabs: chrome.tabs.Tab[]): TabGroup => {
@@ -74,8 +76,9 @@ const saveTabs = async (tabs: chrome.tabs.Tab[]) => {
     const existingGroups = await storage.getGroups();
     await storage.setGroups([newGroup, ...existingGroups]);
 
-    // 不再自动同步到云端，保证本地操作优先，避免卡顿
-    console.log('标签页已保存到本地，跳过自动同步，保证操作丰满顺畅');
+    // 注意：本地保存操作完成后，云端同步由 smartSyncService 在后台异步处理
+    // 这样可以保证本地操作响应快速，避免界面卡顿
+    console.log('标签页已保存到本地，云端同步将由智能同步服务在后台自动处理');
 
     // 保存后自动关闭标签页
     // 获取要关闭的标签页ID（包括重复的）
@@ -99,7 +102,14 @@ const saveTabs = async (tabs: chrome.tabs.Tab[]) => {
       message: `已成功保存 ${validTabs.length} 个标签页到新标签组`
     });
   } catch (error) {
-    console.error('保存标签失败:', error);
+    // 使用 errorHandler 统一处理错误
+    errorHandler.handle(error as Error, {
+      showToast: false,
+      logToConsole: true,
+      severity: 'high',
+      fallbackMessage: '保存标签失败'
+    });
+    
     await showNotification({
       type: 'basic',
       iconUrl: chrome.runtime.getURL('icons/icon128.png'),
@@ -161,7 +171,26 @@ chrome.runtime.onInstalled.addListener(async (details) => {
 
 
 
-// 浏览器启动时不再自动检查用户会话，避免自动同步
-chrome.runtime.onStartup.addListener(() => {
-  console.log('浏览器启动，不再自动检查用户会话，避免自动同步');
+// 浏览器启动时初始化同步服务
+chrome.runtime.onStartup.addListener(async () => {
+  console.log('浏览器启动，初始化智能同步服务');
+  
+  try {
+    // 检查用户登录状态
+    const authState = await authCache.getAuthState();
+    if (authState && authState.isAuthenticated) {
+      // 用户已登录，初始化同步服务
+      await syncService.initialize();
+      console.log('用户已登录，同步服务初始化完成');
+    } else {
+      console.log('用户未登录，跳过同步服务初始化');
+    }
+  } catch (error) {
+    errorHandler.handle(error as Error, {
+      showToast: false,
+      logToConsole: true,
+      severity: 'medium',
+      fallbackMessage: '初始化同步服务失败'
+    });
+  }
 });

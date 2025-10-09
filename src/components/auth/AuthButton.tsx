@@ -3,7 +3,7 @@ import { useAppSelector, useAppDispatch } from '@/store/hooks';
 import { signOut } from '@/store/slices/authSlice';
 import { LoginForm } from './LoginForm';
 import { RegisterForm } from './RegisterForm';
-import { syncService } from '@/services/syncService';
+import { smartSyncService } from '@/services/smartSyncService';
 import { useToast } from '@/contexts/ToastContext';
 
 export const AuthButton: React.FC = () => {
@@ -31,13 +31,13 @@ export const AuthButton: React.FC = () => {
 
   const handleSync = async () => {
     if (syncStatus !== 'syncing') {
-      // 使用同步服务进行同步
-      const result = await syncService.syncAll(true); // 使用后台同步模式减少UI卡顿
+      // 使用智能同步服务进行手动同步
+      const result = await smartSyncService.manualSync();
       setShowDropdown(false);
 
       // 显示同步结果提示
       if (result && result.success) {
-        showToast('数据同步成功', 'success');
+        showToast('数据同步已触发', 'success');
       } else if (result && !result.success) {
         showToast(result.error || '同步失败，请重试', 'error');
       }

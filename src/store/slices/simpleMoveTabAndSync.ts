@@ -68,7 +68,7 @@ export const simpleMoveTabAndSync = createAsyncThunk(
 
             await storage.setGroups(updatedGroups);
 
-            // 移除自动同步功能，只保留本地存储操作
+            // 注意：云端同步由 smartSyncService 统一管理（后台监听存储变化自动触发）
           }
         } catch (error) {
           console.error('存储标签页移动操作失败:', error);
