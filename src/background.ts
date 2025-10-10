@@ -6,6 +6,7 @@ import { showNotification } from './utils/notification';
 import { syncService } from './services/syncService';
 import { authCache } from './utils/authCache';
 import { errorHandler } from './utils/errorHandler';
+import { migrateToV2 } from './utils/migrationHelper';
 
 // 创建新标签组的辅助函数
 const createTabGroup = (tabs: chrome.tabs.Tab[]): TabGroup => {
@@ -166,6 +167,22 @@ chrome.runtime.onInstalled.addListener(async (details) => {
       deleteStrategy: 'everywhere',
       themeMode: 'auto', // 默认使用自动模式（跟随系统）
     });
+  }
+
+  // 在安装或更新时执行数据迁移（v2.0）
+  if (details.reason === 'install' || details.reason === 'update') {
+    try {
+      console.log('[Background] 检查数据迁移...');
+      await migrateToV2();
+      console.log('[Background] 数据迁移完成');
+    } catch (error) {
+      errorHandler.handle(error as Error, {
+        showToast: false,
+        logToConsole: true,
+        severity: 'high',
+        fallbackMessage: '数据迁移失败'
+      });
+    }
   }
 });
 

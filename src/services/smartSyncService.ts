@@ -229,14 +229,24 @@ class SmartSyncService {
   private setupChangeListener() {
     // 监听存储变化事件
     chrome.storage.onChanged.addListener((changes, areaName) => {
-      if (areaName === 'local' && changes.tab_groups) {
-        this.handleDataChange();
+      if (areaName !== 'local') return;
+      
+      // 监听标签组变化
+      if (changes.tab_groups) {
+        console.log('[SmartSync] 检测到标签组变化');
+        this.handleDataChange('tab_groups');
+      }
+      
+      // 监听设置变化
+      if (changes.user_settings) {
+        console.log('[SmartSync] 检测到设置变化');
+        this.handleDataChange('user_settings');
       }
     });
   }
   
   // 处理数据变化（带防抖）
-  private handleDataChange() {
+  private handleDataChange(dataType: 'tab_groups' | 'user_settings' = 'tab_groups') {
     // 如果正在同步，跳过（防止云端下载触发上传）
     if (this.isSyncing) {
       console.log('[SmartSync] 正在同步中，跳过本次变化监听');
@@ -256,11 +266,11 @@ class SmartSyncService {
     this.changeDebounceTimer = setTimeout(() => {
       const { auth } = store.getState();
       if (auth.isAuthenticated) {
-        console.log('[SmartSync] 检测到数据变化，触发同步...');
+        console.log(`[SmartSync] ${dataType === 'tab_groups' ? '标签组' : '设置'}变化，触发同步...`);
         this.syncQueue.addTask({
-          id: `change-sync-${Date.now()}`,
+          id: `change-sync-${dataType}-${Date.now()}`,
           type: 'upload',
-          priority: 4,
+          priority: dataType === 'tab_groups' ? 4 : 3, // 标签组优先级更高
           retryCount: 0,
           maxRetries: 2
         });

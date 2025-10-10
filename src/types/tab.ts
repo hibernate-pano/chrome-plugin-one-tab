@@ -47,6 +47,10 @@ export interface TabGroup {
   device_id?: string; // 创建设备ID
   last_sync?: string; // 最后同步时间
 
+  // 版本控制和排序
+  version?: number; // 版本号，每次修改时递增，用于检测冲突
+  displayOrder?: number; // 显示顺序，用户手动拖动时更新
+
   // 同步相关字段
   syncStatus?: 'synced' | 'local-only' | 'remote-only' | 'conflict';
   lastSyncedAt?: string | null;

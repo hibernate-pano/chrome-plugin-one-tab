@@ -5,11 +5,12 @@ import { sync as supabaseSync } from '@/utils/supabase';
 import { nanoid } from '@reduxjs/toolkit';
 import { mergeTabGroups } from '@/utils/syncUtils';
 import { shouldAutoDeleteAfterTabRemoval } from '@/utils/tabGroupUtils';
+import { updateGroupWithVersion, updateDisplayOrder } from '@/utils/versionHelper';
 
-// 为了解决“参数隐式具有“any”类型”的问题，添加明确的类型定义
+// 为了解决"参数隐式具有"any"类型"的问题，添加明确的类型定义
 // 注意：这些接口暂时保留，可能在未来的功能中使用
 
-// 解决“速记属性...的范围内不存在任何值”的问题，显式声明actions
+// 解决"速记属性...的范围内不存在任何值"的问题，显式声明actions
 
 
 const initialState: TabState = {
@@ -28,12 +29,19 @@ const initialState: TabState = {
 
 export const loadGroups = createAsyncThunk('tabs/loadGroups', async () => {
   const groups = await storage.getGroups();
+
+  // 过滤掉已软删除的标签组，避免UI显示
+  const activeGroups = groups.filter(g => !g.isDeleted);
+
   // 确保标签组始终按创建时间倒序排列（最新创建的在前面）
-  const sortedGroups = groups.sort((a, b) => {
+  const sortedGroups = activeGroups.sort((a, b) => {
     const dateA = new Date(a.createdAt);
     const dateB = new Date(b.createdAt);
     return dateB.getTime() - dateA.getTime();
   });
+
+  console.log(`[LoadGroups] 加载 ${sortedGroups.length} 个活跃标签组（已过滤 ${groups.length - activeGroups.length} 个已删除）`);
+
   return sortedGroups;
 });
 
@@ -62,15 +70,16 @@ export const updateGroup = createAsyncThunk(
   async (group: TabGroup) => {
     const groups = await storage.getGroups();
 
-    // 不再需要记录删除的标签页
+    // 使用辅助函数增加版本号
+    const updatedGroups = groups.map(g =>
+      g.id === group.id ? updateGroupWithVersion(g, group) : g
+    );
 
-    // 更新标签组
-    const updatedGroups = groups.map(g => (g.id === group.id ? group : g));
     await storage.setGroups(updatedGroups);
 
     // 注意：云端同步由 smartSyncService 统一管理（后台监听存储变化自动触发）
 
-    return group;
+    return updatedGroups.find(g => g.id === group.id)!;
   }
 );
 
@@ -79,11 +88,25 @@ export const deleteGroup = createAsyncThunk(
   async (groupId: string) => {
     const groups = await storage.getGroups();
 
-    // 直接从本地存储中移除标签组
-    const updatedGroups = groups.filter(g => g.id !== groupId);
+    // 使用软删除：标记为已删除而非直接移除
+    // 这样可以在同步时正确处理删除操作
+    const updatedGroups = groups.map(g => {
+      if (g.id === groupId) {
+        const currentVersion = g.version || 1;
+        return {
+          ...g,
+          isDeleted: true,
+          version: currentVersion + 1, // 增加版本号
+          updatedAt: new Date().toISOString()
+        };
+      }
+      return g;
+    });
+
     await storage.setGroups(updatedGroups);
 
     // 注意：云端同步由 smartSyncService 统一管理（后台监听存储变化自动触发）
+    console.log(`[DeleteGroup] 软删除标签组: ${groupId}, 新版本: ${(groups.find(g => g.id === groupId)?.version || 1) + 1}`);
 
     return groupId;
   }
@@ -464,11 +487,13 @@ export const updateGroupNameAndSync = createAsyncThunk(
     const groups = await storage.getGroups();
     const updatedGroups = groups.map(g => {
       if (g.id === groupId) {
-        return { ...g, name, updatedAt: new Date().toISOString() };
+        return updateGroupWithVersion(g, { name });
       }
       return g;
     });
     await storage.setGroups(updatedGroups);
+
+    console.log(`[UpdateGroupName] 更新标签组 ${groupId}, 新版本: ${(groups.find(g => g.id === groupId)?.version || 1) + 1}`);
 
     // 注意：云端同步由 smartSyncService 统一管理（后台监听存储变化自动触发）
 
@@ -488,14 +513,14 @@ export const toggleGroupLockAndSync = createAsyncThunk(
     const group = groups.find(g => g.id === groupId);
 
     if (group) {
-      const updatedGroup = {
-        ...group,
-        isLocked: !group.isLocked,
-        updatedAt: new Date().toISOString(),
-      };
+      const updatedGroup = updateGroupWithVersion(group, {
+        isLocked: !group.isLocked
+      });
 
       const updatedGroups = groups.map(g => (g.id === groupId ? updatedGroup : g));
       await storage.setGroups(updatedGroups);
+
+      console.log(`[ToggleLock] 切换锁定状态 ${groupId}, 新版本: ${updatedGroup.version}`);
 
       // 注意：云端同步由 smartSyncService 统一管理（后台监听存储变化自动触发）
 
@@ -554,8 +579,13 @@ export const moveGroupAndSync = createAsyncThunk(
           // 在新位置插入标签组
           newGroups.splice(hoverIndex, 0, dragGroup);
 
+          // ⭐ 关键：更新所有标签组的 displayOrder 和 version
+          const updatedGroups = updateDisplayOrder(newGroups);
+
           // 更新本地存储 - 批量操作
-          await storage.setGroups(newGroups);
+          await storage.setGroups(updatedGroups);
+
+          console.log(`[MoveGroup] 已更新所有标签组的 displayOrder`);
 
           // 注意：云端同步由 smartSyncService 统一管理（后台监听存储变化自动触发）
         } catch (error) {
@@ -626,8 +656,10 @@ export const cleanDuplicateTabs = createAsyncThunk(
               );
               removedTabsCount++;
 
-              // 更新标签组的updatedAt时间
+              // 更新标签组的updatedAt时间和版本号
+              const currentVersion = updatedGroups[groupIndex].version || 1;
               updatedGroups[groupIndex].updatedAt = new Date().toISOString();
+              updatedGroups[groupIndex].version = currentVersion + 1;
             }
           }
         }
@@ -755,18 +787,22 @@ export const moveTabAndSync = createAsyncThunk(
             newTargetTabs.splice(adjustedIndex, 0, tab);
 
             // 更新源标签组和目标标签组 - 使用不可变更新
+            const sourceVersion = sourceGroup.version || 1;
             const updatedSourceGroup = {
               ...sourceGroup,
               tabs: newSourceTabs,
               updatedAt: new Date().toISOString(),
+              version: sourceVersion + 1,
             };
 
             let updatedTargetGroup = targetGroup;
             if (sourceGroupId !== targetGroupId) {
+              const targetVersion = targetGroup.version || 1;
               updatedTargetGroup = {
                 ...targetGroup,
                 tabs: newTargetTabs,
                 updatedAt: new Date().toISOString(),
+                version: targetVersion + 1,
               };
             }
 
@@ -836,6 +872,7 @@ export const tabSlice = createSlice({
       const group = state.groups.find(g => g.id === groupId);
       if (group) {
         group.name = name;
+        group.version = (group.version || 1) + 1; // 添加版本号
         group.updatedAt = new Date().toISOString();
       }
     },
@@ -843,6 +880,7 @@ export const tabSlice = createSlice({
       const group = state.groups.find(g => g.id === action.payload);
       if (group) {
         group.isLocked = !group.isLocked;
+        group.version = (group.version || 1) + 1; // 添加版本号
         group.updatedAt = new Date().toISOString();
       }
     },
@@ -1098,9 +1136,13 @@ export const tabSlice = createSlice({
       })
       .addCase(syncTabsFromCloud.fulfilled, (state, action) => {
         // 始终更新数据，但只有在非后台同步时才更新状态
-        state.groups = action.payload.groups;
+        // 过滤掉已软删除的标签组，避免UI显示
+        const activeGroups = action.payload.groups.filter(g => !g.isDeleted);
+        state.groups = activeGroups;
         state.lastSyncTime = action.payload.syncTime;
         state.compressionStats = action.payload.stats || null;
+
+        console.log(`[SyncFromCloud] 已同步 ${activeGroups.length} 个活跃标签组（已过滤 ${action.payload.groups.length - activeGroups.length} 个已删除）`);
 
         if (!state.backgroundSync) {
           state.syncStatus = 'success';
@@ -1233,10 +1275,12 @@ export const deleteTabAndSync = createAsyncThunk<
       } else {
         // 更新标签组，移除指定的标签页
         const updatedTabs = currentGroup.tabs.filter(tab => tab.id !== tabId);
+        const currentVersion = currentGroup.version || 1;
         const updatedGroup = {
           ...currentGroup,
           tabs: updatedTabs,
           updatedAt: new Date().toISOString(),
+          version: currentVersion + 1,
         };
 
         // 更新本地存储
