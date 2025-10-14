@@ -30,6 +30,45 @@ module.exports = {
           800: '#ad1457',
           900: '#880e4f',
         },
+        // 扁平化色彩系统
+        flat: {
+          // 主色调 - 现代蓝色
+          primary: '#2563eb',
+          'primary-light': '#3b82f6',
+          'primary-dark': '#1d4ed8',
+          
+          // 次要色调 - 中性灰
+          secondary: '#64748b',
+          'secondary-light': '#94a3b8',
+          'secondary-dark': '#475569',
+          
+          // 成功色 - 现代绿色
+          success: '#059669',
+          'success-light': '#10b981',
+          'success-dark': '#047857',
+          
+          // 警告色 - 现代橙色
+          warning: '#ea580c',
+          'warning-light': '#f97316',
+          'warning-dark': '#c2410c',
+          
+          // 错误色 - 现代红色
+          error: '#dc2626',
+          'error-light': '#ef4444',
+          'error-dark': '#b91c1c',
+          
+          // 信息色 - 现代青色
+          info: '#0891b2',
+          'info-light': '#06b6d4',
+          'info-dark': '#0e7490',
+        },
+        // 新增：状态色彩
+        status: {
+          success: '#4caf50',
+          warning: '#ff9800',
+          error: '#f44336',
+          info: '#2196f3',
+        },
         error: '#f44336',    // Material Red
         warning: '#ff9800',  // Material Orange
         info: '#2196f3',     // Material Blue

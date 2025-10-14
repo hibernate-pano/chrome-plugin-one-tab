@@ -6,6 +6,9 @@ import { runMigrations } from '@/utils/migrationUtils';
 import { DraggableTabGroup } from '@/components/dnd/DraggableTabGroup';
 import { SearchResultList } from '@/components/search/SearchResultList';
 import { TabGroup as TabGroupType } from '@/types/tab';
+import { EmptyState } from '@/components/common/EmptyState';
+import { LoadingSpinner } from '@/components/common/LoadingSpinner';
+import { PersonalizedWelcome, QuickActionTips } from '@/components/common/PersonalizedWelcome';
 
 interface TabListProps {
   searchQuery: string;
@@ -60,7 +63,7 @@ export const TabList: React.FC<TabListProps> = ({ searchQuery }) => {
   if (isLoading) {
     return (
       <div className="flex items-center justify-center h-64">
-        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
+        <LoadingSpinner size="lg" />
       </div>
     );
   }
@@ -83,38 +86,31 @@ export const TabList: React.FC<TabListProps> = ({ searchQuery }) => {
 
   if (filteredGroups.length === 0 && !searchQuery) {
     return (
-      <div className="flex flex-col items-center justify-center py-8 space-y-3 text-gray-500 bg-white border border-gray-200 p-4">
-        <div className="w-16 h-16 rounded-full bg-gray-100 flex items-center justify-center">
-          <svg
-            xmlns="http://www.w3.org/2000/svg"
-            className="h-10 w-10 text-gray-400"
-            fill="none"
-            viewBox="0 0 24 24"
-            stroke="currentColor"
-          >
-            <path
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              strokeWidth={2}
-              d="M12 6v6m0 0v6m0-6h6m-6 0H6"
-            />
-          </svg>
+      <div className="space-y-4">
+        <PersonalizedWelcome 
+          tabCount={filteredGroups.length}
+          className="flat-card p-6"
+        />
+        <div className="flat-card p-6">
+          <EmptyState
+            title="开始您的标签页管理之旅"
+            description="点击右上角的「保存所有标签」按钮开始保存您的标签页。保存后的标签页将显示在这里。"
+            action={
+              <button
+                onClick={() => {
+                  chrome.runtime.sendMessage({
+                    type: 'SAVE_ALL_TABS',
+                    data: { tabs: [] },
+                  });
+                }}
+                className="px-6 py-2 text-sm font-medium flat-button-primary flat-interaction"
+              >
+                保存所有标签
+              </button>
+            }
+          />
         </div>
-        <h3 className="text-lg font-medium text-gray-700">没有保存的标签页</h3>
-        <p className="text-gray-500 max-w-md text-center">
-          点击右上角的"保存所有标签"按钮开始保存您的标签页。保存后的标签页将显示在这里。
-        </p>
-        <button
-          onClick={() => {
-            chrome.runtime.sendMessage({
-              type: 'SAVE_ALL_TABS',
-              data: { tabs: [] },
-            });
-          }}
-          className="mt-2 px-4 py-1.5 bg-primary-600 text-white rounded hover:bg-primary-700 transition-colors text-sm"
-        >
-          保存所有标签
-        </button>
+        <QuickActionTips className="flat-card p-4" />
       </div>
     );
   }

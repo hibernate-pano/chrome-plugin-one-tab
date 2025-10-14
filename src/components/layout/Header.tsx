@@ -13,6 +13,10 @@ import { TabCounter } from './TabCounter';
 import SyncButton from '@/components/sync/SyncButton';
 import { SimpleThemeToggle } from './SimpleThemeToggle';
 import { LayoutMode } from '@/types/tab';
+import { useDebouncedSearch } from '@/hooks/useDebouncedSearch';
+import { useKeyboardShortcuts, COMMON_SHORTCUTS } from '@/hooks/useKeyboardShortcuts';
+import { Tooltip } from '@/components/common/Tooltip';
+import { TabVaultLogo } from '@/components/common/TabVaultIcon';
 
 interface HeaderProps {
   onSearch: (query: string) => void;
@@ -21,57 +25,15 @@ interface HeaderProps {
 
 export const Header: React.FC<HeaderProps> = ({ onSearch, searchQuery = '' }) => {
   const dispatch = useAppDispatch();
-  const [searchValue, setSearchValue] = useState('');
   const { showConfirm, showAlert } = useToast();
   const settings = useAppSelector(state => state.settings);
-
-  // 根据布局模式和搜索状态确定容器宽度类
-  const getContainerWidthClass = () => {
-    // 搜索模式下使用单栏宽度
-    if (searchQuery) {
-      return 'layout-single-width';
-    }
-    // 根据布局模式选择宽度
-    return settings.layoutMode === 'double' ? 'layout-double-width' : 'layout-single-width';
-  };
-
-  const handleSearch = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const value = e.target.value;
-    setSearchValue(value);
-    onSearch(value);
-  };
-
-  const handleClearSearch = () => {
-    setSearchValue('');
-    onSearch('');
-  };
-
-  // 回到默认视图
-  const handleResetToDefaultView = () => {
-    // 清空搜索
-    setSearchValue('');
-    onSearch('');
-
-    // 退出重排序模式
-    if (settings.reorderMode) {
-      dispatch(setReorderMode(false));
-    }
-
-    // 重置为默认布局模式（单栏）
-    if (settings.layoutMode !== 'single') {
-      dispatch(setLayoutMode('single'));
-      dispatch(
-        saveSettings({
-          ...settings,
-          layoutMode: 'single',
-          reorderMode: false,
-        })
-      );
-    }
-  };
-
-  const [showDropdown, setShowDropdown] = useState(false);
-
+  
+  // 使用防抖搜索Hook
+  const { searchValue, debouncedValue, handleSearchChange, clearSearch, isSearching } = useDebouncedSearch();
+  
+  // 搜索框引用
+  const searchInputRef = React.useRef<HTMLInputElement>(null);
+  
   // 处理清理重复标签
   const handleCleanDuplicateTabs = () => {
     showConfirm({
@@ -152,11 +114,6 @@ export const Header: React.FC<HeaderProps> = ({ onSearch, searchQuery = '' }) =>
     );
   };
 
-  // // 切换重排序模式
-  // const handleToggleReorderMode = () => {
-  //   dispatch(setReorderMode(!settings.reorderMode));
-  // };
-
   const handleSaveAllTabs = async () => {
     const tabs = await chrome.tabs.query({ currentWindow: true });
 
@@ -169,6 +126,83 @@ export const Header: React.FC<HeaderProps> = ({ onSearch, searchQuery = '' }) =>
       },
     });
   };
+
+  // 键盘快捷键
+  useKeyboardShortcuts([
+    {
+      ...COMMON_SHORTCUTS.SAVE_TABS,
+      action: handleSaveAllTabs
+    },
+    {
+      ...COMMON_SHORTCUTS.SEARCH,
+      action: () => searchInputRef.current?.focus()
+    },
+    {
+      ...COMMON_SHORTCUTS.CLEAR_SEARCH,
+      action: () => {
+        if (searchValue) {
+          clearSearch();
+        }
+      }
+    },
+    {
+      ...COMMON_SHORTCUTS.TOGGLE_LAYOUT,
+      action: handleToggleLayout
+    },
+    {
+      ...COMMON_SHORTCUTS.CLEAN_DUPLICATES,
+      action: handleCleanDuplicateTabs
+    }
+  ]);
+
+  // 根据布局模式和搜索状态确定容器宽度类
+  const getContainerWidthClass = () => {
+    // 搜索模式下使用单栏宽度
+    if (searchQuery) {
+      return 'layout-single-width';
+    }
+    // 根据布局模式选择宽度
+    return settings.layoutMode === 'double' ? 'layout-double-width' : 'layout-single-width';
+  };
+
+  // 当防抖值变化时，触发搜索
+  React.useEffect(() => {
+    onSearch(debouncedValue);
+  }, [debouncedValue, onSearch]);
+
+  const handleSearch = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const value = e.target.value;
+    handleSearchChange(value);
+  };
+
+  const handleClearSearch = () => {
+    clearSearch();
+  };
+
+  // 回到默认视图
+  const handleResetToDefaultView = () => {
+    // 清空搜索
+    clearSearch();
+
+    // 退出重排序模式
+    if (settings.reorderMode) {
+      dispatch(setReorderMode(false));
+    }
+
+    // 重置为默认布局模式（单栏）
+    if (settings.layoutMode !== 'single') {
+      dispatch(setLayoutMode('single'));
+      dispatch(
+        saveSettings({
+          ...settings,
+          layoutMode: 'single',
+          reorderMode: false,
+        })
+      );
+    }
+  };
+
+  const [showDropdown, setShowDropdown] = useState(false);
 
   return (
     <header className="bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700 transition-colors">
@@ -196,35 +230,52 @@ export const Header: React.FC<HeaderProps> = ({ onSearch, searchQuery = '' }) =>
                 />
               </svg>
               <div className="flex items-center">
-                <h1 className="text-lg font-bold text-gray-800 dark:text-gray-100">TabVault Pro</h1>
+                <TabVaultLogo size="sm" showIcon={true} />
                 <TabCounter />
               </div>
             </div>
           </button>
 
-          <div className="flex items-center space-x-4">
+          <div className="flex items-center space-x-2 sm:space-x-4">
             <div className="relative">
               <input
+                ref={searchInputRef}
                 type="text"
-                placeholder="搜索标签..."
-                className="pl-8 pr-8 py-1.5 w-60 border border-gray-300 dark:border-gray-600 rounded text-gray-700 dark:text-gray-200 dark:bg-gray-700 text-sm focus:outline-none focus:ring-1 focus:ring-primary-500 focus:border-transparent"
+                placeholder="搜索标签... (Ctrl+F)"
+                className="pl-8 pr-8 py-1.5 w-40 sm:w-48 md:w-60 border border-gray-300 dark:border-gray-600 rounded text-gray-700 dark:text-gray-200 dark:bg-gray-700 text-sm focus:outline-none focus:ring-1 focus:ring-primary-500 focus:border-transparent"
                 onChange={handleSearch}
                 value={searchValue}
+                aria-label="搜索标签页"
+                aria-describedby="search-help"
+                role="searchbox"
+                autoComplete="off"
               />
-              <svg
-                xmlns="http://www.w3.org/2000/svg"
-                className="h-4 w-4 absolute left-2 top-1/2 transform -translate-y-1/2 text-gray-400"
-                fill="none"
-                viewBox="0 0 24 24"
-                stroke="currentColor"
-              >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={2}
-                  d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"
-                />
-              </svg>
+              {isSearching ? (
+                <svg
+                  className="h-4 w-4 absolute left-2 top-1/2 transform -translate-y-1/2 text-gray-400 animate-spin"
+                  xmlns="http://www.w3.org/2000/svg"
+                  fill="none"
+                  viewBox="0 0 24 24"
+                >
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                </svg>
+              ) : (
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  className="h-4 w-4 absolute left-2 top-1/2 transform -translate-y-1/2 text-gray-400"
+                  fill="none"
+                  viewBox="0 0 24 24"
+                  stroke="currentColor"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"
+                  />
+                </svg>
+              )}
               {searchValue && (
                 <button
                   onClick={handleClearSearch}
@@ -249,26 +300,31 @@ export const Header: React.FC<HeaderProps> = ({ onSearch, searchQuery = '' }) =>
               )}
             </div>
 
-            <div className="flex items-center space-x-2">
-              <button
-                onClick={handleToggleLayout}
-                className="p-2 rounded hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors text-gray-600 dark:text-gray-300 flex items-center justify-center"
-                title={
+            <div className="flex items-center space-x-1 sm:space-x-2">
+              <Tooltip
+                content={
                   settings.layoutMode === 'single'
-                    ? '切换为双栏布局'
+                    ? '切换为双栏布局 (Ctrl+L)'
                     : settings.layoutMode === 'double'
-                      ? '切换为三栏布局'
-                      : '切换为单栏布局'
+                      ? '切换为三栏布局 (Ctrl+L)'
+                      : '切换为单栏布局 (Ctrl+L)'
                 }
-                aria-label={
-                  settings.layoutMode === 'single'
-                    ? '切换为双栏布局'
-                    : settings.layoutMode === 'double'
-                      ? '切换为三栏布局'
-                      : '切换为单栏布局'
-                }
-                aria-pressed={settings.layoutMode !== 'single'}
+                position="bottom"
               >
+                <button
+                  onClick={handleToggleLayout}
+                  className="p-1.5 sm:p-2 rounded hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors text-gray-600 dark:text-gray-300 flex items-center justify-center"
+                  aria-label={
+                    settings.layoutMode === 'single'
+                      ? '切换为双栏布局'
+                      : settings.layoutMode === 'double'
+                        ? '切换为三栏布局'
+                        : '切换为单栏布局'
+                  }
+                  aria-pressed={settings.layoutMode !== 'single'}
+                  role="button"
+                  tabIndex={0}
+                >
                 {settings.layoutMode === 'single' ? (
                   // 单栏布局图标
                   <svg
@@ -302,7 +358,8 @@ export const Header: React.FC<HeaderProps> = ({ onSearch, searchQuery = '' }) =>
                     />
                   </svg>
                 )}
-              </button>
+                </button>
+              </Tooltip>
 
               {/* <button
                 onClick={handleToggleReorderMode}
@@ -325,11 +382,17 @@ export const Header: React.FC<HeaderProps> = ({ onSearch, searchQuery = '' }) =>
                 </svg>
               </button> */}
 
-              <button
-                onClick={handleCleanDuplicateTabs}
-                className="p-2 rounded hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors text-gray-600 dark:text-gray-300 flex items-center justify-center"
-                title="清理所有标签组中的重复标签页并删除空标签组"
+              <Tooltip
+                content="清理重复标签页 (Ctrl+D)"
+                position="bottom"
               >
+                <button
+                  onClick={handleCleanDuplicateTabs}
+                  className="p-1.5 sm:p-2 rounded hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors text-gray-600 dark:text-gray-300 flex items-center justify-center"
+                  aria-label="清理重复标签页"
+                  role="button"
+                  tabIndex={0}
+                >
                 <svg
                   xmlns="http://www.w3.org/2000/svg"
                   className="h-5 w-5"
@@ -344,18 +407,28 @@ export const Header: React.FC<HeaderProps> = ({ onSearch, searchQuery = '' }) =>
                     d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
                   />
                 </svg>
-              </button>
+                </button>
+              </Tooltip>
 
               <SimpleThemeToggle />
 
               <SyncButton />
 
-              <button
-                onClick={handleSaveAllTabs}
-                className="px-4 py-1.5 rounded text-sm transition-colors bg-primary-600 text-white hover:bg-primary-700 border border-primary-600 min-w-[100px] text-center"
+              <Tooltip
+                content="保存所有标签页 (Ctrl+S)"
+                position="bottom"
               >
-                保存所有标签
-              </button>
+                <button
+                  onClick={handleSaveAllTabs}
+                  className="px-2 sm:px-4 py-1.5 text-xs sm:text-sm min-w-[80px] sm:min-w-[100px] text-center flat-button-primary flat-interaction"
+                  aria-label="保存当前窗口中的所有标签页"
+                  role="button"
+                  tabIndex={0}
+                >
+                  <span className="hidden sm:inline">保存所有标签</span>
+                  <span className="sm:hidden">保存</span>
+                </button>
+              </Tooltip>
             </div>
 
             <div className="relative">

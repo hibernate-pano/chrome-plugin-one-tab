@@ -194,8 +194,8 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
   }, [dispatch, group]);
 
   return (
-    <div className="mb-2 transition-all duration-200 ease-in-out bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-md shadow-sm pb-2 hover:shadow-md">
-      <div className="flex items-center p-2 bg-gray-50 dark:bg-gray-900 border-b border-gray-200 dark:border-gray-700 rounded-t-md">
+    <div className="mb-2 flat-card p-0 flat-interaction">
+      <div className="flex items-center p-2 bg-gray-50 dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700">
         <div className="flex items-center space-x-3 flex-grow">
           <button
             onClick={handleToggleExpand}
@@ -223,19 +223,19 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
             />
           ) : (
             <h3
-              className="text-base font-medium text-gray-900 dark:text-gray-100"
+              className="text-base font-semibold flat-text-primary"
             >
               {group.name}
             </h3>
           )}
-          <span className="text-xs bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 px-1.5 py-0.5 rounded-full ml-1">
+          <span className="text-xs bg-blue-100 dark:bg-blue-900 text-blue-700 dark:text-blue-300 px-2 py-1 rounded ml-1 font-medium">
             {group.tabs.length}
           </span>
         </div>
         <div className="flex items-center space-x-2 ml-auto">
           <button
             onClick={handleOpenAllTabs}
-            className="text-blue-600 hover:text-blue-800 text-xs hover:underline"
+            className="text-blue-600 hover:text-blue-800 text-xs hover:underline px-2 py-1 rounded hover:bg-blue-50 dark:hover:bg-blue-900/20 flat-interaction"
             title="打开所有标签页"
           >
             恢复全部
@@ -273,7 +273,7 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
         </div>
       </div>
       <div className={`tab-group-content ${isExpanded ? 'expanded' : 'collapsed'}`}>
-        <div className="px-2 pt-2 space-y-1 group tabs-container">
+        <div className="px-2 pt-1 pb-1 space-y-0.5 group tabs-container">
           {group.tabs.map((tab, index) => (
             <DraggableTab
               key={tab.id}
@@ -303,7 +303,8 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
     prevProps.group.name === nextProps.group.name &&
     prevProps.group.isLocked === nextProps.group.isLocked &&
     prevProps.group.tabs.length === nextProps.group.tabs.length &&
-    prevProps.group.updatedAt === nextProps.group.updatedAt;
+    prevProps.group.updatedAt === nextProps.group.updatedAt &&
+    prevProps.group.createdAt === nextProps.group.createdAt;
 
   // 如果基本属性不相等，则需要重新渲染
   if (!basicPropsEqual) return false;
@@ -313,8 +314,17 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
   if (prevProps.group.tabs.length === nextProps.group.tabs.length) {
     // 只有当标签数量相同时才比较标签ID列表
     for (let i = 0; i < prevProps.group.tabs.length; i++) {
-      if (prevProps.group.tabs[i].id !== nextProps.group.tabs[i].id) {
-        return false; // 标签ID不同，需要重新渲染
+      const prevTab = prevProps.group.tabs[i];
+      const nextTab = nextProps.group.tabs[i];
+      
+      // 比较标签的关键属性
+      if (
+        prevTab.id !== nextTab.id ||
+        prevTab.title !== nextTab.title ||
+        prevTab.url !== nextTab.url ||
+        prevTab.favicon !== nextTab.favicon
+      ) {
+        return false; // 标签内容不同，需要重新渲染
       }
     }
   }

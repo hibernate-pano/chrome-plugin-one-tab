@@ -142,7 +142,7 @@ export const DraggableTab: React.FC<DraggableTabProps> = React.memo(({
   // 使用useMemo记忆化样式类，避免不必要的字符串拼接操作
   const tabClasses = useMemo(() => {
     // 基础样式类
-    const baseClasses = 'flex items-center py-1 px-2 bg-white dark:bg-gray-800 hover:bg-gray-100 dark:hover:bg-gray-700 rounded';
+    const baseClasses = 'flex items-center py-0.5 px-2 bg-white dark:bg-gray-800 hover:bg-gray-100 dark:hover:bg-gray-700 rounded';
 
     // 过渡效果，增强动画流畅度
     const transitionClasses = 'transition-all duration-200 ease-in-out';

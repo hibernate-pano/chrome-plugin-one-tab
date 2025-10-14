@@ -6,6 +6,7 @@ import { shouldAutoDeleteAfterTabRemoval, shouldAutoDeleteAfterMultipleTabRemova
 import { useToast } from '@/contexts/ToastContext';
 import HighlightText from './HighlightText';
 import { SafeFavicon } from '@/components/common/SafeFavicon';
+import { EmptyState } from '@/components/common/EmptyState';
 
 interface SearchResultListProps {
   searchQuery: string;
@@ -38,12 +39,16 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({ searchQuery 
 
   if (matchingTabs.length === 0) {
     return (
-      <div className="flex flex-col items-center justify-center h-40 space-y-2 text-gray-500 dark:text-gray-400">
-        <svg xmlns="http://www.w3.org/2000/svg" className="h-12 w-12" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-        </svg>
-        <p>没有找到匹配的标签</p>
-      </div>
+      <EmptyState
+        icon={
+          <svg xmlns="http://www.w3.org/2000/svg" className="h-12 w-12 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+          </svg>
+        }
+        title="没有找到匹配的标签"
+        description={`没有找到包含"${searchQuery}"的标签页，请尝试其他关键词。`}
+        className="h-40"
+      />
     );
   }
 
@@ -121,7 +126,7 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({ searchQuery 
   // 渲染单个标签项
   const renderTabItem = ({ tab, group }: { tab: Tab; group: TabGroup }) => (
     <div
-      className="flex items-center py-1 px-2 bg-white dark:bg-gray-800 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors rounded mb-1"
+      className="flex items-center py-0.5 px-2 bg-white dark:bg-gray-800 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors rounded"
     >
       <div className="flex items-center space-x-2 flex-1 min-w-0">
         <SafeFavicon src={tab.favicon} alt="" />
@@ -372,7 +377,7 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({ searchQuery 
         )}
       </div>
       {/* 搜索结果强制使用单栏布局显示 */}
-      <div className="space-y-1 group">
+      <div className="space-y-0.5 group">
         {matchingTabs.map(tabInfo => (
           <React.Fragment key={tabInfo.tab.id}>
             {renderTabItem(tabInfo)}
