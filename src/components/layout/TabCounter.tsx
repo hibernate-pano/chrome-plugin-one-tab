@@ -12,8 +12,8 @@ export const TabCounter: React.FC = () => {
   
   return (
     <div className="ml-2 flex items-center">
-      <span className="text-xs text-gray-500 bg-gray-100 rounded-full px-2 py-0.5 ml-2">
-        {groupCount} 组 · {tabCount} 标签
+      <span className="text-xs text-gray-500 bg-gray-100 dark:bg-gray-700 rounded-full px-2 py-0.5 ml-2 whitespace-nowrap">
+        {groupCount}组 · {tabCount}标签
       </span>
     </div>
   );

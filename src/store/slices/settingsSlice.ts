@@ -105,10 +105,6 @@ const settingsSlice = createSlice({
     toggleShowNotifications: (state) => {
       state.showNotifications = !state.showNotifications;
     },
-    // 新增：切换同步开关
-    toggleSyncEnabled: (state) => {
-      state.syncEnabled = !state.syncEnabled;
-    },
     // 设置布局模式
     setLayoutMode: (state, action: PayloadAction<LayoutMode>) => {
       state.layoutMode = action.payload;
@@ -170,7 +166,6 @@ export const {
   toggleConfirmBeforeDelete,
   toggleAllowDuplicateTabs,
   toggleShowNotifications,
-  toggleSyncEnabled,
   setLayoutMode,
   toggleLayoutMode,
   setReorderMode,

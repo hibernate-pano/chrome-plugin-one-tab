@@ -3,11 +3,8 @@ import { smartSyncService } from '@/services/smartSyncService';
 import { useAppSelector } from '@/store/hooks';
 
 interface SyncStatus {
-  isAutoSyncEnabled: boolean;
-  syncInterval: number;
   lastSyncTime: string | null;
-  pendingTasks: any[];
-  currentTask: any | null;
+  isSyncing: boolean;
 }
 
 interface SyncStatusIndicatorProps {
@@ -24,8 +21,8 @@ interface SyncStatusIndicatorProps {
 }
 
 /**
- * 同步状态指示器组件
- * 显示当前同步状态和最后同步时间
+ * 同步状态指示器组件 - 手动同步模式
+ * 仅显示最后同步时间
  * 
  * 用法：
  * ```tsx
@@ -89,12 +86,9 @@ export const SyncStatusIndicator: React.FC<SyncStatusIndicatorProps> = ({
   }
 
   // 构建工具提示内容
-  const tooltipContent = showTooltip ? [
-    syncStatus.lastSyncTime ? `最后同步: ${new Date(syncStatus.lastSyncTime).toLocaleString()}` : '从未同步',
-    syncStatus.isAutoSyncEnabled ? `自动同步: 每${syncStatus.syncInterval / 60000}分钟` : '自动同步已禁用',
-    syncStatus.currentTask ? '正在同步...' : '',
-    syncStatus.pendingTasks.length > 0 ? `待同步任务: ${syncStatus.pendingTasks.length}个` : ''
-  ].filter(Boolean).join('\n') : '';
+  const tooltipContent = showTooltip ? 
+    syncStatus.lastSyncTime ? `最后同步: ${new Date(syncStatus.lastSyncTime).toLocaleString()}` : '从未同步'
+    : '';
 
   // 紧凑模式
   if (mode === 'compact') {
@@ -104,14 +98,10 @@ export const SyncStatusIndicator: React.FC<SyncStatusIndicatorProps> = ({
         title={tooltipContent}
       >
         {/* 状态指示点 */}
-        {syncStatus.currentTask ? (
+        {syncStatus.isSyncing ? (
           <div className="w-2 h-2 bg-blue-500 rounded-full animate-pulse" title="正在同步"></div>
-        ) : syncStatus.pendingTasks.length > 0 ? (
-          <div className="w-2 h-2 bg-yellow-500 rounded-full" title={`待同步 ${syncStatus.pendingTasks.length} 个任务`}></div>
-        ) : syncStatus.isAutoSyncEnabled ? (
-          <div className="w-2 h-2 bg-green-500 rounded-full" title="自动同步已启用"></div>
         ) : (
-          <div className="w-2 h-2 bg-gray-400 rounded-full" title="自动同步已禁用"></div>
+          <div className="w-2 h-2 bg-green-500 rounded-full" title="手动同步模式"></div>
         )}
       </div>
     );
@@ -125,30 +115,16 @@ export const SyncStatusIndicator: React.FC<SyncStatusIndicatorProps> = ({
     >
       {/* 同步状态图标和文字 */}
       <div className="flex items-center space-x-1">
-        {syncStatus.currentTask ? (
+        {syncStatus.isSyncing ? (
           <>
             <div className="w-2 h-2 bg-blue-500 rounded-full animate-pulse"></div>
             <span className="text-blue-600 dark:text-blue-400">同步中...</span>
           </>
-        ) : syncStatus.pendingTasks.length > 0 ? (
-          <>
-            <div className="w-2 h-2 bg-yellow-500 rounded-full"></div>
-            <span className="text-yellow-600 dark:text-yellow-400">
-              待同步 ({syncStatus.pendingTasks.length})
-            </span>
-          </>
-        ) : syncStatus.isAutoSyncEnabled ? (
+        ) : (
           <>
             <div className="w-2 h-2 bg-green-500 rounded-full"></div>
             <span className="text-gray-500 dark:text-gray-400">
-              自动同步
-            </span>
-          </>
-        ) : (
-          <>
-            <div className="w-2 h-2 bg-gray-400 rounded-full"></div>
-            <span className="text-gray-400 dark:text-gray-500">
-              已禁用
+              手动同步
             </span>
           </>
         )}

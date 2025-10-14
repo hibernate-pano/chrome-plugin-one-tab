@@ -59,8 +59,6 @@ export const saveGroup = createAsyncThunk(
     });
     await storage.setGroups(sortedGroups);
 
-    // 注意：云端同步由 smartSyncService 统一管理（后台监听存储变化自动触发）
-
     return group;
   }
 );
@@ -76,8 +74,6 @@ export const updateGroup = createAsyncThunk(
     );
 
     await storage.setGroups(updatedGroups);
-
-    // 注意：云端同步由 smartSyncService 统一管理（后台监听存储变化自动触发）
 
     return updatedGroups.find(g => g.id === group.id)!;
   }
@@ -105,7 +101,6 @@ export const deleteGroup = createAsyncThunk(
 
     await storage.setGroups(updatedGroups);
 
-    // 注意：云端同步由 smartSyncService 统一管理（后台监听存储变化自动触发）
     console.log(`[DeleteGroup] 软删除标签组: ${groupId}, 新版本: ${(groups.find(g => g.id === groupId)?.version || 1) + 1}`);
 
     return groupId;
@@ -123,8 +118,6 @@ export const deleteAllGroups = createAsyncThunk(
 
     // 直接清空本地标签组
     await storage.setGroups([]);
-
-    // 注意：云端同步由 smartSyncService 统一管理（后台监听存储变化自动触发）
 
     return { count: groups.length };
   }
@@ -153,8 +146,6 @@ export const importGroups = createAsyncThunk(
       return dateB.getTime() - dateA.getTime();
     });
     await storage.setGroups(sortedGroups);
-
-    // 注意：云端同步由 smartSyncService 统一管理（后台监听存储变化自动触发）
 
     return processedGroups;
   }
@@ -461,18 +452,12 @@ export const syncTabsFromCloud = createAsyncThunk(
   }
 );
 
-// 新增：同步本地更改到云端 - 已禁用自动同步
+// 已禁用自动同步 - 此函数仅用于检查登录状态
 export const syncLocalChangesToCloud = createAsyncThunk(
   'tabs/syncLocalChangesToCloud',
   async (_, { getState }) => {
     const { auth } = getState() as { auth: { isAuthenticated: boolean } };
-
-    // 注意：本地操作优先，云端同步由 smartSyncService 在后台异步处理
-    // 这样可以保证本地操作响应快速，避免界面卡顿
-    if (process.env.NODE_ENV === 'development') {
-      // 开发环境：仅返回登录状态，同步由 smartSyncService 处理
-    }
-    return auth.isAuthenticated; // 返回登录状态，同步由 smartSyncService 管理
+    return auth.isAuthenticated;
   }
 );
 
@@ -494,8 +479,6 @@ export const updateGroupNameAndSync = createAsyncThunk(
     await storage.setGroups(updatedGroups);
 
     console.log(`[UpdateGroupName] 更新标签组 ${groupId}, 新版本: ${(groups.find(g => g.id === groupId)?.version || 1) + 1}`);
-
-    // 注意：云端同步由 smartSyncService 统一管理（后台监听存储变化自动触发）
 
     return { groupId, name };
   }
@@ -521,8 +504,6 @@ export const toggleGroupLockAndSync = createAsyncThunk(
       await storage.setGroups(updatedGroups);
 
       console.log(`[ToggleLock] 切换锁定状态 ${groupId}, 新版本: ${updatedGroup.version}`);
-
-      // 注意：云端同步由 smartSyncService 统一管理（后台监听存储变化自动触发）
 
       return { groupId, isLocked: updatedGroup.isLocked };
     }
@@ -587,7 +568,6 @@ export const moveGroupAndSync = createAsyncThunk(
 
           console.log(`[MoveGroup] 已更新所有标签组的 displayOrder`);
 
-          // 注意：云端同步由 smartSyncService 统一管理（后台监听存储变化自动触发）
         } catch (error) {
           console.error('存储标签组移动操作失败:', error);
         }
@@ -685,8 +665,6 @@ export const cleanDuplicateTabs = createAsyncThunk(
         throw new Error('保存失败，操作已取消');
       }
 
-      // 注意：云端同步由 smartSyncService 统一管理（后台监听存储变化自动触发）
-
       return {
         removedTabsCount,
         removedGroupsCount,
@@ -709,8 +687,6 @@ export const cleanDuplicateTabs = createAsyncThunk(
     }
   }
 );
-
-// 注意：云端同步由 smartSyncService 统一管理，此处不再需要单独的同步函数
 
 /**
  * 移动标签页并同步到云端
@@ -845,7 +821,6 @@ export const moveTabAndSync = createAsyncThunk(
 
             await storage.setGroups(updatedGroups);
 
-            // 注意：云端同步由 smartSyncService 统一管理（后台监听存储变化自动触发）
           }
         } catch (error) {
           console.error('存储标签页移动操作失败:', error);
@@ -1268,8 +1243,6 @@ export const deleteTabAndSync = createAsyncThunk<
         const updatedGroups = groups.filter(g => g.id !== groupId);
         await storage.setGroups(updatedGroups);
 
-        // 注意：云端同步由 smartSyncService 统一管理（后台监听存储变化自动触发）
-
         console.log(`自动删除空标签组: ${currentGroup.name} (ID: ${groupId})`);
         return { group: null };
       } else {
@@ -1287,8 +1260,6 @@ export const deleteTabAndSync = createAsyncThunk<
         const updatedGroups = [...groups];
         updatedGroups[groupIndex] = updatedGroup;
         await storage.setGroups(updatedGroups);
-
-        // 注意：云端同步由 smartSyncService 统一管理（后台监听存储变化自动触发）
 
         console.log(`从标签组删除标签页: ${currentGroup.name}, 剩余标签页: ${updatedTabs.length}`);
         return { group: updatedGroup };

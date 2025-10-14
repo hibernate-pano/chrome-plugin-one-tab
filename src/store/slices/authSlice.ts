@@ -2,7 +2,6 @@ import { createSlice, createAsyncThunk } from '@reduxjs/toolkit';
 import { AuthState, User } from '@/types/tab';
 import { auth as supabaseAuth } from '@/utils/supabase';
 import { authCache } from '@/utils/authCache';
-import { syncService } from '@/services/syncService';
 
 const initialState: AuthState = {
   user: null,
@@ -193,13 +192,7 @@ const authSlice = createSlice({
         // 登录成功后缓存认证状态
         if (action.payload) {
           authCache.saveAuthState(action.payload, true);
-
-          // 初始化智能同步服务
-          syncService.initialize().then(() => {
-            console.log('登录成功，同步服务已初始化');
-          }).catch(error => {
-            console.error('初始化同步服务失败:', error);
-          });
+          console.log('登录成功 - 手动同步模式');
         }
       })
       .addCase(signIn.rejected, (state, action) => {
@@ -218,14 +211,8 @@ const authSlice = createSlice({
         state.user = null;
         state.isAuthenticated = false;
 
-          // 退出登录后清除认证缓存
+        // 退出登录后清除认证缓存
         authCache.clearAuthState();
-        
-        // 清理同步服务
-        import('@/services/smartSyncService').then(({ smartSyncService }) => {
-          smartSyncService.cleanup();
-          console.log('退出登录，同步服务已清理');
-        });
       })
       .addCase(signOut.rejected, (state, action) => {
         state.isLoading = false;

@@ -8,12 +8,10 @@ import { LoginForm } from '../auth/LoginForm';
 import { RegisterForm } from '../auth/RegisterForm';
 import { useToast } from '@/contexts/ToastContext';
 import { 
-  toggleSyncEnabled, 
   toggleShowNotifications, 
   toggleConfirmBeforeDelete,
   saveSettings 
 } from '@/store/slices/settingsSlice';
-import { smartSyncService } from '@/services/smartSyncService';
 
 interface HeaderDropdownProps {
   onClose: () => void;
@@ -28,45 +26,6 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({ onClose }) => {
   const [showAuthModal, setShowAuthModal] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
   const { showConfirm, showAlert } = useToast();
-
-  // 处理自动同步开关
-  const handleToggleSyncEnabled = async () => {
-    dispatch(toggleSyncEnabled());
-    const newSyncEnabled = !settings.syncEnabled;
-    
-    // 保存设置到本地存储
-    await dispatch(saveSettings({
-      ...settings,
-      syncEnabled: newSyncEnabled
-    }));
-
-    // 重新初始化同步服务
-    if (isAuthenticated) {
-      if (newSyncEnabled) {
-        await smartSyncService.initialize({
-          autoSync: true,
-          syncInterval: 1 * 60 * 1000,
-          syncOnStartup: true,
-          syncOnChange: true,
-          conflictStrategy: 'newest'
-        });
-        showAlert({
-          title: '已启用自动同步',
-          message: '数据将自动同步到云端',
-          type: 'success',
-          onClose: () => {}
-        });
-      } else {
-        await smartSyncService.stopAutoSync();
-        showAlert({
-          title: '已关闭自动同步',
-          message: '您可以手动点击同步按钮进行同步',
-          type: 'info',
-          onClose: () => {}
-        });
-      }
-    }
-  };
 
   // 处理通知开关
   const handleToggleNotifications = async () => {
@@ -341,30 +300,6 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({ onClose }) => {
         <div className="px-4 py-2">
           <p className="text-xs font-semibold text-gray-500 dark:text-gray-400 mb-2">设置</p>
           
-          {/* 自动同步开关 */}
-          {isAuthenticated && (
-            <div className="flex items-center justify-between py-2">
-              <div className="flex items-center">
-                <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 mr-2 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-                </svg>
-                <span className="text-sm text-gray-700 dark:text-gray-300">自动同步</span>
-              </div>
-              <button
-                onClick={handleToggleSyncEnabled}
-                className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
-                  settings.syncEnabled ? 'bg-primary-600' : 'bg-gray-200 dark:bg-gray-600'
-                }`}
-              >
-                <span
-                  className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
-                    settings.syncEnabled ? 'translate-x-6' : 'translate-x-1'
-                  }`}
-                />
-              </button>
-            </div>
-          )}
-
           {/* 通知开关 */}
           <div className="flex items-center justify-between py-2">
             <div className="flex items-center">

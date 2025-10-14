@@ -3,8 +3,6 @@ import { nanoid } from '@reduxjs/toolkit';
 import { TabGroup } from './types/tab';
 import { sanitizeFaviconUrl } from './utils/faviconUtils';
 import { showNotification } from './utils/notification';
-import { syncService } from './services/syncService';
-import { authCache } from './utils/authCache';
 import { errorHandler } from './utils/errorHandler';
 import { migrateToV2 } from './utils/migrationHelper';
 
@@ -76,10 +74,6 @@ const saveTabs = async (tabs: chrome.tabs.Tab[]) => {
     const newGroup = createTabGroup(validTabs);
     const existingGroups = await storage.getGroups();
     await storage.setGroups([newGroup, ...existingGroups]);
-
-    // 注意：本地保存操作完成后，云端同步由 smartSyncService 在后台异步处理
-    // 这样可以保证本地操作响应快速，避免界面卡顿
-    console.log('标签页已保存到本地，云端同步将由智能同步服务在后台自动处理');
 
     // 保存后自动关闭标签页
     // 获取要关闭的标签页ID（包括重复的）
@@ -188,26 +182,7 @@ chrome.runtime.onInstalled.addListener(async (details) => {
 
 
 
-// 浏览器启动时初始化同步服务
+// 浏览器启动时的处理（已移除自动同步初始化）
 chrome.runtime.onStartup.addListener(async () => {
-  console.log('浏览器启动，初始化智能同步服务');
-  
-  try {
-    // 检查用户登录状态
-    const authState = await authCache.getAuthState();
-    if (authState && authState.isAuthenticated) {
-      // 用户已登录，初始化同步服务
-      await syncService.initialize();
-      console.log('用户已登录，同步服务初始化完成');
-    } else {
-      console.log('用户未登录，跳过同步服务初始化');
-    }
-  } catch (error) {
-    errorHandler.handle(error as Error, {
-      showToast: false,
-      logToConsole: true,
-      severity: 'medium',
-      fallbackMessage: '初始化同步服务失败'
-    });
-  }
+  console.log('浏览器启动 - 手动同步模式，无需初始化自动同步服务');
 });

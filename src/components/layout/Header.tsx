@@ -214,10 +214,10 @@ export const Header: React.FC<HeaderProps> = ({ onSearch, searchQuery = '' }) =>
             title="回到默认视图"
             aria-label="回到默认视图"
           >
-            <div className="flex items-center space-x-3">
+            <div className="flex items-center space-x-2">
               <svg
                 xmlns="http://www.w3.org/2000/svg"
-                className="h-6 w-6 text-primary-600"
+                className="h-5 w-5 text-primary-600 flex-shrink-0"
                 fill="none"
                 viewBox="0 0 24 24"
                 stroke="currentColor"
@@ -229,7 +229,7 @@ export const Header: React.FC<HeaderProps> = ({ onSearch, searchQuery = '' }) =>
                   d="M9 17V7m0 10a2 2 0 01-2 2H5a2 2 0 01-2-2V7a2 2 0 012-2h2a2 2 0 012 2m0 10a2 2 0 002 2h2a2 2 0 002-2M9 7a2 2 0 012-2h2a2 2 0 012 2m0 10V7m0 10a2 2 0 002 2h2a2 2 0 002-2V7a2 2 0 00-2-2h-2a2 2 0 00-2 2"
                 />
               </svg>
-              <div className="flex items-center">
+              <div className="flex items-center space-x-2 min-w-0">
                 <TabVaultLogo size="sm" showIcon={true} />
                 <TabCounter />
               </div>
@@ -242,7 +242,7 @@ export const Header: React.FC<HeaderProps> = ({ onSearch, searchQuery = '' }) =>
                 ref={searchInputRef}
                 type="text"
                 placeholder="搜索标签... (Ctrl+F)"
-                className="pl-8 pr-8 py-1.5 w-40 sm:w-48 md:w-60 border border-gray-300 dark:border-gray-600 rounded text-gray-700 dark:text-gray-200 dark:bg-gray-700 text-sm focus:outline-none focus:ring-1 focus:ring-primary-500 focus:border-transparent"
+                className="pl-8 pr-8 py-1.5 w-32 sm:w-40 md:w-48 lg:w-56 border border-gray-300 dark:border-gray-600 rounded text-gray-700 dark:text-gray-200 dark:bg-gray-700 text-sm focus:outline-none focus:ring-1 focus:ring-primary-500 focus:border-transparent"
                 onChange={handleSearch}
                 value={searchValue}
                 aria-label="搜索标签页"

@@ -96,10 +96,7 @@ export async function syncToCloud<T>(
           return;
         }
 
-        // 本地操作完成，但不自动同步到云端，保证本地操作优先，避免卡顿
-        if (process.env.NODE_ENV === 'development') {
-          // 跳过自动同步
-        }
+        // 本地操作完成，手动同步模式
         currentSyncOperation = null;
         resolve(true); // 返回成功，不影响用户体验
       } catch (e) {

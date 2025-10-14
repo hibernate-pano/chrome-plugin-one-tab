@@ -277,11 +277,11 @@
   /* 中等屏幕 - 768px以上使用目标宽度 */
   @media (min-width: 768px) {
     .layout-single-width {
-      @apply max-w-[66.67%] px-6;
+      @apply max-w-[75%] px-6;
     }
 
     .layout-double-width {
-      @apply max-w-[66.67%] px-6;
+      @apply max-w-[75%] px-6;
     }
   }
 

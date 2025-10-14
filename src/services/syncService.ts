@@ -1,20 +1,16 @@
 import { smartSyncService } from './smartSyncService';
 import { errorHandler } from '@/utils/errorHandler';
 
-// 旧版同步服务，保留以维护向后兼容性
-// 新功能请使用 smartSyncService
+/**
+ * 同步服务包装器 - 仅支持手动同步
+ * 已移除所有自动同步功能
+ */
 class SyncService {
-  // 初始化同步服务 - 使用新的智能同步服务
+  // 初始化同步服务 - 简化版
   async initialize() {
-    console.log('同步服务初始化：使用智能同步服务');
-    // 初始化智能同步服务
-    await smartSyncService.initialize({
-      autoSync: true,
-      syncInterval: 1 * 60 * 1000, // 1分钟（测试用）
-      syncOnStartup: true,
-      syncOnChange: true,
-      conflictStrategy: 'newest'
-    });
+    console.log('同步服务初始化：仅支持手动同步');
+    // 初始化智能同步服务（仅加载最后同步时间）
+    await smartSyncService.initialize();
   }
 
   // 检查云端是否有数据
@@ -27,29 +23,14 @@ class SyncService {
     return smartSyncService.hasLocalData();
   }
 
-  // 后台同步数据
-  async backgroundSync() {
-    return smartSyncService.syncAll(true);
-  }
-
-  // 上传数据到云端（覆盖模式）
+  // 手动上传数据到云端
   async uploadToCloud(background = false, overwriteCloud = true) {
     return smartSyncService.uploadToCloud(background, overwriteCloud);
   }
 
-  // 从云端下载数据
+  // 手动从云端下载数据
   async downloadFromCloud(background = false, overwriteLocal = false) {
     return smartSyncService.downloadFromCloud(background, overwriteLocal);
-  }
-
-  // 同步所有数据
-  async syncAll(background = true) {
-    return smartSyncService.syncAll(background);
-  }
-
-  // 从云端同步数据
-  async syncFromCloud(background = true) {
-    return this.downloadFromCloud(background);
   }
 
   // 下载数据（使用智能同步服务）
