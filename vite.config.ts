@@ -17,6 +17,10 @@ export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd());
 
   return {
+    // 生产环境移除 console 与 debugger
+    esbuild: {
+      drop: mode === 'production' ? ['console', 'debugger'] : []
+    },
     // 设置相对路径基础路径，避免Chrome扩展中的绝对路径问题
     base: './',
     plugins: [
