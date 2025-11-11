@@ -200,14 +200,14 @@ const tabManager = {
 
 console.log('Service Worker: 已简化同步逻辑，只保留手动同步功能');
 
-// 初始安装或更新时
-chrome.runtime.onInstalled.addListener(async () => {
-  console.log('Service Worker: 扩展已安装或更新');
+// 初始化右键菜单
+async function setupContextMenus() {
+  try {
+    await chrome.contextMenus.removeAll();
+  } catch (error) {
+    console.warn('清理旧的右键菜单失败，可忽略:', error);
+  }
 
-  // 迁移旧的存储键
-  await migrateStorageKeys();
-
-  // 创建右键菜单
   chrome.contextMenus.create({
     id: 'open-tab-manager',
     title: '打开标签管理器',
@@ -219,6 +219,23 @@ chrome.runtime.onInstalled.addListener(async () => {
     title: '保存当前标签',
     contexts: ['action']
   });
+
+  chrome.contextMenus.create({
+    id: 'saveOtherTabs',
+    title: '保存除当前标签以外的所有标签',
+    contexts: ['action']
+  });
+}
+
+// 初始安装或更新时
+chrome.runtime.onInstalled.addListener(async () => {
+  console.log('Service Worker: 扩展已安装或更新');
+
+  // 迁移旧的存储键
+  await migrateStorageKeys();
+
+  // 创建右键菜单
+  await setupContextMenus();
 });
 
 // 浏览器启动时
@@ -226,6 +243,14 @@ chrome.runtime.onStartup.addListener(async () => {
   console.log('Service Worker: 浏览器已启动');
   // 尝试进行一次迁移，确保老用户数据可见
   await migrateStorageKeys();
+
+  // 确保右键菜单存在
+  await setupContextMenus();
+});
+
+// Service Worker 激活时也初始化一次，防止遗漏
+setupContextMenus().catch(error => {
+  console.error('初始化右键菜单失败:', error);
 });
 
 // 监听扩展图标点击事件
@@ -321,6 +346,52 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
         await tabManager.showNotification('当前标签页已保存');
         if (tab.id) {
           await chrome.tabs.remove(tab.id);
+        }
+      }
+      // 保存后打开标签管理器
+      await tabManager.openTabManager(true);
+    } else if (info.menuItemId === 'saveOtherTabs') {
+      console.log('点击右键菜单，保存除当前标签以外的所有标签');
+      // 获取当前窗口的所有标签页和当前活动的标签页
+      const [allTabs, activeTabs] = await Promise.all([
+        chrome.tabs.query({ currentWindow: true }),
+        chrome.tabs.query({ active: true, currentWindow: true })
+      ]);
+      
+      // 获取当前活动的标签页ID
+      const activeTabId = activeTabs.length > 0 ? activeTabs[0].id : null;
+      
+      // 过滤掉当前活动的标签页
+      const otherTabs = activeTabId 
+        ? allTabs.filter(t => t.id !== activeTabId)
+        : allTabs;
+      
+      if (otherTabs.length === 0) {
+        await tabManager.showNotification('没有其他标签页需要保存');
+        return;
+      }
+
+      // 保存除当前标签以外的所有标签
+      const tabGroup = await tabManager.createTabGroup(otherTabs);
+      if (tabGroup.tabs.length > 0) {
+        const existingGroups = await storage.getGroups();
+        await storage.setGroups([tabGroup, ...existingGroups]);
+        await tabManager.showNotification(`已保存 ${tabGroup.tabs.length} 个标签页`);
+        
+        // 关闭已保存的标签页（排除当前标签）
+        const tabsToClose = tabManager.filterValidTabs(otherTabs);
+        const tabIdsToClose = tabsToClose
+          .map(t => t.id)
+          .filter((id): id is number => id !== undefined);
+        
+        if (tabIdsToClose.length > 0) {
+          try {
+            await chrome.tabs.create({ url: 'chrome://newtab' });
+            await chrome.tabs.remove(tabIdsToClose);
+            console.log(`已关闭 ${tabIdsToClose.length} 个标签页`);
+          } catch (error) {
+            console.warn('关闭标签页时出错:', error);
+          }
         }
       }
       // 保存后打开标签管理器
