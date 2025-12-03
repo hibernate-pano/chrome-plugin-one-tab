@@ -171,12 +171,14 @@ style.textContent = `
             opacity: 0;
             visibility: hidden;
             transition: all var(--transition-base);
+            display: flex;
         }
         
         .nav-links.active {
             transform: translateY(0);
             opacity: 1;
             visibility: visible;
+            display: flex;
         }
         
         .nav-toggle.active span:nth-child(1) {
@@ -195,17 +197,13 @@ style.textContent = `
 document.head.appendChild(style);
 
 // Lazy load images if needed
-if ('loading' in HTMLImageElement.prototype) {
-    const images = document.querySelectorAll('img[loading="lazy"]');
-    images.forEach(img => {
-        img.src = img.dataset.src;
-    });
-} else {
-    // Fallback for browsers that don't support lazy loading
+if (!('loading' in HTMLImageElement.prototype)) {
+    // Fallback for browsers that don't support native lazy loading
     const script = document.createElement('script');
     script.src = 'https://cdnjs.cloudflare.com/ajax/libs/lazysizes/5.3.2/lazysizes.min.js';
     document.body.appendChild(script);
 }
+// If native lazy loading is supported, the browser handles it automatically via the loading="lazy" attribute
 
 // Performance: Debounce scroll events
 function debounce(func, wait) {
@@ -230,4 +228,3 @@ window.addEventListener('scroll', debouncedScroll);
 // Console message for developers
 console.log('%cTabVault Pro', 'font-size: 24px; font-weight: bold; color: #6366f1;');
 console.log('%c感谢使用 TabVault Pro！', 'font-size: 14px; color: #6b7280;');
-
