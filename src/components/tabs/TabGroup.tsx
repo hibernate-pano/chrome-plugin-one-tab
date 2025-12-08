@@ -5,6 +5,7 @@ import { DraggableTab } from '@/components/dnd/DraggableTab';
 import { TabGroup as TabGroupType, Tab } from '@/types/tab';
 import { shouldAutoDeleteAfterTabRemoval } from '@/utils/tabGroupUtils';
 import { useToast } from '@/contexts/ToastContext';
+import { kvGet, kvSet } from '@/storage/storageAdapter';
 
 interface TabGroupProps {
   group: TabGroupType;
@@ -21,21 +22,22 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
   const [isEditing, setIsEditing] = useState(false);
   const [newName, setNewName] = useState(group.name);
 
-  // 从localStorage获取折叠状态的函数，使用useCallback记忆化
-  const getInitialExpandedState = useCallback(() => {
-    const savedState = localStorage.getItem(`tabGroup_${group.id}_expanded`);
-    return savedState !== null ? JSON.parse(savedState) : true;
-  }, [group.id]);
-
-  const [isExpanded, setIsExpanded] = useState(getInitialExpandedState);
+  const [isExpanded, setIsExpanded] = useState(true);
 
   // 当组ID变化时，更新折叠状态
   useEffect(() => {
-    // 从localStorage获取该组的折叠状态
-    const savedState = localStorage.getItem(`tabGroup_${group.id}_expanded`);
-    if (savedState !== null) {
-      setIsExpanded(JSON.parse(savedState));
-    }
+    let cancelled = false;
+    const loadState = async () => {
+      const savedState = await kvGet<boolean>(`tabGroup_${group.id}_expanded`);
+      if (cancelled) return;
+      if (savedState !== null) {
+        setIsExpanded(savedState);
+      }
+    };
+    loadState();
+    return () => {
+      cancelled = true;
+    };
   }, [group.id]);
 
   // 使用useCallback记忆化回调函数，避免不必要的重新创建
@@ -77,11 +79,13 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
     dispatch(toggleGroupLockAndSync(group.id));
   }, [dispatch, group.id]);
 
-  // 保存折叠状态到localStorage
+  // 保存折叠状态
   const handleToggleExpand = useCallback(() => {
     const newExpandedState = !isExpanded;
     setIsExpanded(newExpandedState);
-    localStorage.setItem(`tabGroup_${group.id}_expanded`, JSON.stringify(newExpandedState));
+    kvSet(`tabGroup_${group.id}_expanded`, newExpandedState).catch(() => {
+      // 保底失败时忽略，状态仍保留在内存
+    });
   }, [isExpanded, group.id]);
 
   /**

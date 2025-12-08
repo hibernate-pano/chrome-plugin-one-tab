@@ -3,7 +3,9 @@
  * 用于获取和管理设备标识
  */
 
-// 设备ID存储键
+import { kvGet, kvSet } from '@/storage/storageAdapter';
+
+// 设备ID存储键（迁移时会同步到 IndexedDB）
 const DEVICE_ID_KEY = 'tabvaultpro_device_id';
 
 /**
@@ -23,16 +25,15 @@ function generateDeviceId(): string {
  * @returns 设备ID
  */
 export async function getDeviceId(): Promise<string> {
-  // 尝试从本地存储获取设备ID
-  let deviceId = localStorage.getItem(DEVICE_ID_KEY);
-  
+  let deviceId = await kvGet<string>(DEVICE_ID_KEY);
+
   // 如果没有设备ID，生成一个新的并保存
   if (!deviceId) {
     deviceId = generateDeviceId();
-    localStorage.setItem(DEVICE_ID_KEY, deviceId);
+    await kvSet(DEVICE_ID_KEY, deviceId);
     console.log('生成新的设备ID:', deviceId);
   }
-  
+
   return deviceId;
 }
 
@@ -43,7 +44,7 @@ export async function getDeviceId(): Promise<string> {
  */
 export async function resetDeviceId(): Promise<string> {
   const newDeviceId = generateDeviceId();
-  localStorage.setItem(DEVICE_ID_KEY, newDeviceId);
+  await kvSet(DEVICE_ID_KEY, newDeviceId);
   console.log('重置设备ID:', newDeviceId);
   return newDeviceId;
 }
