@@ -1,15 +1,19 @@
 import { TabGroup, UserSettings, Tab, LayoutMode } from '@/types/tab';
 import { parseOneTabFormat, formatToOneTabFormat } from './oneTabFormatParser';
 import { secureStorage } from './secureStorage';
+import { kvGet, kvSet, kvRemove } from '@/storage/storageAdapter';
 
 const STORAGE_KEYS = {
+  VERSION: 'storage_version',
   GROUPS: 'tab_groups',
   SETTINGS: 'user_settings',
-  DELETED_GROUPS: 'deleted_tab_groups', // 存储已删除的标签组
-  DELETED_TABS: 'deleted_tabs', // 存储已删除的标签页
-  LAST_SYNC_TIME: 'last_sync_time', // 存储最后同步时间
-  MIGRATION_FLAGS: 'migration_flags' // 存储迁移标志
+  DELETED_GROUPS: 'deleted_tab_groups',
+  DELETED_TABS: 'deleted_tabs',
+  LAST_SYNC_TIME: 'last_sync_time',
+  MIGRATION_FLAGS: 'migration_flags'
 };
+
+const STORAGE_VERSION = 2;
 
 // 默认设置
 export const DEFAULT_SETTINGS: UserSettings = {
@@ -26,6 +30,11 @@ export const DEFAULT_SETTINGS: UserSettings = {
   themeMode: 'auto', // 默认使用自动模式（跟随系统）
 };
 
+// 兼容历史字段
+type LegacySettings = Partial<UserSettings> & {
+  useDoubleColumnLayout?: boolean;
+};
+
 // 导出数据的格式
 interface ExportData {
   version: string;
@@ -37,10 +46,17 @@ interface ExportData {
 }
 
 class ChromeStorage {
+  private async ensureVersion() {
+    const version = await kvGet<number>(STORAGE_KEYS.VERSION);
+    if (version === STORAGE_VERSION) return;
+    await kvSet(STORAGE_KEYS.VERSION, STORAGE_VERSION);
+  }
+
   async getGroups(): Promise<TabGroup[]> {
     try {
-      const result = await chrome.storage.local.get(STORAGE_KEYS.GROUPS);
-      return result[STORAGE_KEYS.GROUPS] || [];
+      await this.ensureVersion();
+      const groups = await kvGet<unknown>(STORAGE_KEYS.GROUPS);
+      return Array.isArray(groups) ? (groups as TabGroup[]) : [];
     } catch (error) {
       console.error('获取标签组失败:', error);
       return [];
@@ -49,9 +65,8 @@ class ChromeStorage {
 
   async setGroups(groups: TabGroup[]): Promise<void> {
     try {
-      await chrome.storage.local.set({
-        [STORAGE_KEYS.GROUPS]: groups
-      });
+      await this.ensureVersion();
+      await kvSet(STORAGE_KEYS.GROUPS, groups);
     } catch (error) {
       console.error('保存标签组失败:', error);
     }
@@ -59,21 +74,25 @@ class ChromeStorage {
 
   async getSettings(): Promise<UserSettings> {
     try {
-      const result = await chrome.storage.local.get(STORAGE_KEYS.SETTINGS);
-      const savedSettings = result[STORAGE_KEYS.SETTINGS] || {};
+      await this.ensureVersion();
+      const rawSettings = (await kvGet<LegacySettings | unknown>(STORAGE_KEYS.SETTINGS)) || {};
+      const normalizedSettings =
+        rawSettings && typeof rawSettings === 'object' ? (rawSettings as LegacySettings) : {};
 
       // 向后兼容性处理：将旧的useDoubleColumnLayout转换为新的layoutMode
-      if (savedSettings.useDoubleColumnLayout !== undefined && savedSettings.layoutMode === undefined) {
-        savedSettings.layoutMode = savedSettings.useDoubleColumnLayout ? 'double' : 'single';
-        // 删除旧字段
-        delete savedSettings.useDoubleColumnLayout;
-        // 保存更新后的设置
-        await this.setSettings({ ...DEFAULT_SETTINGS, ...savedSettings });
+      if (
+        'useDoubleColumnLayout' in normalizedSettings &&
+        normalizedSettings.useDoubleColumnLayout !== undefined &&
+        normalizedSettings.layoutMode === undefined
+      ) {
+        normalizedSettings.layoutMode = normalizedSettings.useDoubleColumnLayout ? 'double' : 'single';
+        delete normalizedSettings.useDoubleColumnLayout;
+        await this.setSettings({ ...DEFAULT_SETTINGS, ...normalizedSettings });
       }
 
       return {
         ...DEFAULT_SETTINGS,
-        ...savedSettings
+        ...normalizedSettings
       };
     } catch (error) {
       console.error('获取设置失败:', error);
@@ -83,9 +102,8 @@ class ChromeStorage {
 
   async setSettings(settings: UserSettings): Promise<void> {
     try {
-      await chrome.storage.local.set({
-        [STORAGE_KEYS.SETTINGS]: settings
-      });
+      await this.ensureVersion();
+      await kvSet(STORAGE_KEYS.SETTINGS, settings);
     } catch (error) {
       console.error('保存设置失败:', error);
     }
@@ -94,8 +112,9 @@ class ChromeStorage {
   // 新增：获取已删除的标签组
   async getDeletedGroups(): Promise<TabGroup[]> {
     try {
-      const result = await chrome.storage.local.get(STORAGE_KEYS.DELETED_GROUPS);
-      return result[STORAGE_KEYS.DELETED_GROUPS] || [];
+      await this.ensureVersion();
+      const groups = await kvGet<unknown>(STORAGE_KEYS.DELETED_GROUPS);
+      return Array.isArray(groups) ? (groups as TabGroup[]) : [];
     } catch (error) {
       console.error('获取已删除标签组失败:', error);
       return [];
@@ -105,9 +124,8 @@ class ChromeStorage {
   // 新增：设置已删除的标签组
   async setDeletedGroups(groups: TabGroup[]): Promise<void> {
     try {
-      await chrome.storage.local.set({
-        [STORAGE_KEYS.DELETED_GROUPS]: groups
-      });
+      await this.ensureVersion();
+      await kvSet(STORAGE_KEYS.DELETED_GROUPS, groups);
     } catch (error) {
       console.error('设置已删除标签组失败:', error);
     }
@@ -116,8 +134,9 @@ class ChromeStorage {
   // 新增：获取已删除的标签页
   async getDeletedTabs(): Promise<Tab[]> {
     try {
-      const result = await chrome.storage.local.get(STORAGE_KEYS.DELETED_TABS);
-      return result[STORAGE_KEYS.DELETED_TABS] || [];
+      await this.ensureVersion();
+      const tabs = await kvGet<unknown>(STORAGE_KEYS.DELETED_TABS);
+      return Array.isArray(tabs) ? (tabs as Tab[]) : [];
     } catch (error) {
       console.error('获取已删除标签页失败:', error);
       return [];
@@ -127,9 +146,8 @@ class ChromeStorage {
   // 新增：设置已删除的标签页
   async setDeletedTabs(tabs: Tab[]): Promise<void> {
     try {
-      await chrome.storage.local.set({
-        [STORAGE_KEYS.DELETED_TABS]: tabs
-      });
+      await this.ensureVersion();
+      await kvSet(STORAGE_KEYS.DELETED_TABS, tabs);
     } catch (error) {
       console.error('设置已删除标签页失败:', error);
     }
@@ -173,8 +191,8 @@ class ChromeStorage {
   // 获取最后同步时间
   async getLastSyncTime(): Promise<string | null> {
     try {
-      const result = await chrome.storage.local.get(STORAGE_KEYS.LAST_SYNC_TIME);
-      return result[STORAGE_KEYS.LAST_SYNC_TIME] || null;
+      await this.ensureVersion();
+      return (await kvGet<string>(STORAGE_KEYS.LAST_SYNC_TIME)) || null;
     } catch (error) {
       console.error('获取最后同步时间失败:', error);
       return null;
@@ -184,9 +202,8 @@ class ChromeStorage {
   // 设置最后同步时间
   async setLastSyncTime(time: string): Promise<void> {
     try {
-      await chrome.storage.local.set({
-        [STORAGE_KEYS.LAST_SYNC_TIME]: time
-      });
+      await this.ensureVersion();
+      await kvSet(STORAGE_KEYS.LAST_SYNC_TIME, time);
     } catch (error) {
       console.error('设置最后同步时间失败:', error);
     }
@@ -286,7 +303,16 @@ class ChromeStorage {
 
   async clear(): Promise<void> {
     try {
-      await chrome.storage.local.clear();
+      const keys = [
+        STORAGE_KEYS.VERSION,
+        STORAGE_KEYS.GROUPS,
+        STORAGE_KEYS.SETTINGS,
+        STORAGE_KEYS.DELETED_GROUPS,
+        STORAGE_KEYS.DELETED_TABS,
+        STORAGE_KEYS.LAST_SYNC_TIME,
+        STORAGE_KEYS.MIGRATION_FLAGS
+      ];
+      await Promise.all(keys.map(key => kvRemove(key)));
     } catch (error) {
       console.error('清除存储失败:', error);
     }
@@ -300,8 +326,8 @@ class ChromeStorage {
       if (flags) return flags;
 
       // 降级到普通存储（向后兼容）
-      const result = await chrome.storage.local.get(STORAGE_KEYS.MIGRATION_FLAGS);
-      return result[STORAGE_KEYS.MIGRATION_FLAGS] || {};
+      const result = await kvGet<Record<string, boolean>>(STORAGE_KEYS.MIGRATION_FLAGS);
+      return result || {};
     } catch (error) {
       console.error('获取迁移标志失败:', error);
       return {};
@@ -321,9 +347,7 @@ class ChromeStorage {
       try {
         const flags = await this.getMigrationFlags();
         flags[key] = value;
-        await chrome.storage.local.set({
-          [STORAGE_KEYS.MIGRATION_FLAGS]: flags
-        });
+        await kvSet(STORAGE_KEYS.MIGRATION_FLAGS, flags);
       } catch (fallbackError) {
         console.error('降级存储也失败:', fallbackError);
       }

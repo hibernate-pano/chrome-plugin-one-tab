@@ -5,7 +5,13 @@ import type { StorageBackend, StorageDriver } from './types';
 const MIGRATION_KEYS = {
   deviceId: 'tabvaultpro_device_id',
   syncPrompt: 'tabvaultpro_sync_prompt_shown',
-  tabGroupPrefix: 'tabGroup_'
+  tabGroupPrefix: 'tabGroup_',
+  tabGroups: 'tab_groups',
+  userSettings: 'user_settings',
+  deletedGroups: 'deleted_tab_groups',
+  deletedTabs: 'deleted_tabs',
+  lastSyncTime: 'last_sync_time',
+  migrationFlags: 'migration_flags'
 };
 
 let backend: StorageBackend | null = null;
@@ -25,11 +31,18 @@ async function migrateFromLocalStorage(target: StorageDriver) {
   for (let i = 0; i < ls.length; i += 1) {
     const key = ls.key(i);
     if (!key) continue;
-    if (
+    const interested =
       key === MIGRATION_KEYS.deviceId ||
       key === MIGRATION_KEYS.syncPrompt ||
-      key.startsWith(MIGRATION_KEYS.tabGroupPrefix)
-    ) {
+      key === MIGRATION_KEYS.tabGroups ||
+      key === MIGRATION_KEYS.userSettings ||
+      key === MIGRATION_KEYS.deletedGroups ||
+      key === MIGRATION_KEYS.deletedTabs ||
+      key === MIGRATION_KEYS.lastSyncTime ||
+      key === MIGRATION_KEYS.migrationFlags ||
+      key.startsWith(MIGRATION_KEYS.tabGroupPrefix);
+
+    if (interested) {
       const raw = ls.getItem(key);
       if (raw !== null) {
         try {
@@ -58,6 +71,12 @@ async function ensureInitialized() {
   }
 
   initialized = true;
+}
+
+// 显式初始化，供入口处预热与日志上报
+export async function initStorage(): Promise<StorageBackend | null> {
+  await ensureInitialized();
+  return backend;
 }
 
 export async function kvGet<T = unknown>(key: string): Promise<T | null> {
