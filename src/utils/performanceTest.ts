@@ -1,3 +1,6 @@
+import { storage } from './storage';
+import type { TabGroup, Tab } from '@/types/tab';
+
 /**
  * 性能测试工具函数
  * 用于测量函数执行时间和性能指标
@@ -76,10 +79,10 @@ export function monitorRenderPerformance() {
  * @returns 生成的标签组数据
  */
 export function generateTestData(groupCount: number, tabsPerGroup: number) {
-  const groups = [];
+  const groups: TabGroup[] = [];
   
   for (let i = 0; i < groupCount; i++) {
-    const tabs = [];
+    const tabs: Tab[] = [];
     
     for (let j = 0; j < tabsPerGroup; j++) {
       tabs.push({
@@ -106,6 +109,55 @@ export function generateTestData(groupCount: number, tabsPerGroup: number) {
   }
   
   return groups;
+}
+
+/**
+ * 存储读写基准：在扩展环境调用
+ * @returns 读写时延统计
+ */
+export async function benchmarkStorageRoundtrip(options?: {
+  groupCount?: number;
+  tabsPerGroup?: number;
+  iterations?: number;
+}) {
+  const { groupCount = 50, tabsPerGroup = 20, iterations = 3 } = options || {};
+  const dataset = generateTestData(groupCount, tabsPerGroup);
+
+  const writeTimes: number[] = [];
+  const readTimes: number[] = [];
+
+  for (let i = 0; i < iterations; i++) {
+    const writeStart = performance.now();
+    await storage.setGroups(dataset);
+    const writeEnd = performance.now();
+    writeTimes.push(writeEnd - writeStart);
+
+    const readStart = performance.now();
+    const result = await storage.getGroups();
+    const readEnd = performance.now();
+    readTimes.push(readEnd - readStart);
+
+    console.log(`[benchmark] iter ${i + 1}: write ${writeTimes[i].toFixed(2)}ms, read ${readTimes[i].toFixed(2)}ms, count=${result.length}`);
+  }
+
+  const avg = (arr: number[]) => arr.reduce((s, v) => s + v, 0) / arr.length;
+  return {
+    groupCount,
+    tabsPerGroup,
+    iterations,
+    write: { avg: avg(writeTimes), min: Math.min(...writeTimes), max: Math.max(...writeTimes) },
+    read: { avg: avg(readTimes), min: Math.min(...readTimes), max: Math.max(...readTimes) }
+  };
+}
+
+/**
+ * 写入一批测试数据到存储，便于人工或自动基准测试
+ */
+export async function seedLargeDataset(options?: { groupCount?: number; tabsPerGroup?: number }) {
+  const { groupCount = 100, tabsPerGroup = 20 } = options || {};
+  const dataset = generateTestData(groupCount, tabsPerGroup);
+  await storage.setGroups(dataset);
+  return { groupCount, tabsPerGroup, totalTabs: groupCount * tabsPerGroup };
 }
 
 /**

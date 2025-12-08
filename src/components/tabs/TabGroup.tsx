@@ -1,11 +1,10 @@
-import React, { useState, useCallback, useEffect } from 'react';
+import React, { useState, useCallback } from 'react';
 import { useAppDispatch } from '@/store/hooks';
 import { updateGroupNameAndSync, toggleGroupLockAndSync, deleteGroup, updateGroup, moveTabAndSync } from '@/store/slices/tabSlice';
 import { DraggableTab } from '@/components/dnd/DraggableTab';
 import { TabGroup as TabGroupType, Tab } from '@/types/tab';
 import { shouldAutoDeleteAfterTabRemoval } from '@/utils/tabGroupUtils';
 import { useToast } from '@/contexts/ToastContext';
-import { kvGet, kvSet } from '@/storage/storageAdapter';
 
 interface TabGroupProps {
   group: TabGroupType;
@@ -21,24 +20,6 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
 
   const [isEditing, setIsEditing] = useState(false);
   const [newName, setNewName] = useState(group.name);
-
-  const [isExpanded, setIsExpanded] = useState(true);
-
-  // 当组ID变化时，更新折叠状态
-  useEffect(() => {
-    let cancelled = false;
-    const loadState = async () => {
-      const savedState = await kvGet<boolean>(`tabGroup_${group.id}_expanded`);
-      if (cancelled) return;
-      if (savedState !== null) {
-        setIsExpanded(savedState);
-      }
-    };
-    loadState();
-    return () => {
-      cancelled = true;
-    };
-  }, [group.id]);
 
   // 使用useCallback记忆化回调函数，避免不必要的重新创建
   const handleNameChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
@@ -78,15 +59,6 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
   const handleToggleLock = useCallback(() => {
     dispatch(toggleGroupLockAndSync(group.id));
   }, [dispatch, group.id]);
-
-  // 保存折叠状态
-  const handleToggleExpand = useCallback(() => {
-    const newExpandedState = !isExpanded;
-    setIsExpanded(newExpandedState);
-    kvSet(`tabGroup_${group.id}_expanded`, newExpandedState).catch(() => {
-      // 保底失败时忽略，状态仍保留在内存
-    });
-  }, [isExpanded, group.id]);
 
   /**
    * 打开标签组中的所有标签页
@@ -201,20 +173,6 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
     <div className="mb-2 flat-card p-0 flat-interaction">
       <div className="flex items-center p-2 bg-gray-50 dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700">
         <div className="flex items-center space-x-3 flex-grow">
-          <button
-            onClick={handleToggleExpand}
-            className="text-gray-500 hover:text-primary-600 transition-colors p-1 hover:bg-gray-100 group-action-button"
-            title={isExpanded ? '折叠标签组' : '展开标签组'}
-          >
-            <svg
-              xmlns="http://www.w3.org/2000/svg"
-              className={`h-5 w-5 expand-icon ${isExpanded ? 'expanded' : 'collapsed'}`}
-              viewBox="0 0 20 20"
-              fill="currentColor"
-            >
-              <path fillRule="evenodd" d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" clipRule="evenodd" />
-            </svg>
-          </button>
           {isEditing ? (
             <input
               type="text"
@@ -276,7 +234,7 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
           )}
         </div>
       </div>
-      <div className={`tab-group-content ${isExpanded ? 'expanded' : 'collapsed'}`}>
+      <div className="tab-group-content expanded">
         <div className="px-2 pt-1 pb-1 space-y-0.5 group tabs-container">
           {group.tabs.map((tab, index) => (
             <DraggableTab

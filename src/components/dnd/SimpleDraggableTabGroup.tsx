@@ -14,7 +14,6 @@ interface SimpleDraggableTabGroupProps {
 
 export const SimpleDraggableTabGroup: React.FC<SimpleDraggableTabGroupProps> = ({ group, index }) => {
   const dispatch = useAppDispatch();
-  const [isExpanded, setIsExpanded] = useState(true);
   const [isEditing, setIsEditing] = useState(false);
   const [groupName, setGroupName] = useState(group.name);
 
@@ -43,10 +42,6 @@ export const SimpleDraggableTabGroup: React.FC<SimpleDraggableTabGroupProps> = (
     opacity: isDragging ? 0.7 : 1,
     zIndex: isDragging ? 999 : 'auto',
     position: 'relative' as const,
-  };
-
-  const handleToggleExpand = () => {
-    setIsExpanded(!isExpanded);
   };
 
   const handleEditName = () => {
@@ -173,22 +168,6 @@ export const SimpleDraggableTabGroup: React.FC<SimpleDraggableTabGroupProps> = (
         {...listeners}
       >
         <div className="flex items-center space-x-2 flex-1 min-w-0">
-          <button
-            onClick={handleToggleExpand}
-            className="text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300 p-1 rounded-full hover:bg-gray-200 dark:hover:bg-gray-700"
-            title={isExpanded ? "折叠标签组" : "展开标签组"}
-          >
-            <svg
-              xmlns="http://www.w3.org/2000/svg"
-              className={`h-4 w-4 ${isExpanded ? 'rotate-0' : '-rotate-90'}`}
-              fill="none"
-              viewBox="0 0 24 24"
-              stroke="currentColor"
-            >
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-            </svg>
-          </button>
-
           {isEditing ? (
             <input
               type="text"
@@ -256,7 +235,7 @@ export const SimpleDraggableTabGroup: React.FC<SimpleDraggableTabGroupProps> = (
         </div>
       </div>
 
-      {isExpanded && group.tabs && Array.isArray(group.tabs) && (
+      {group.tabs && Array.isArray(group.tabs) && (
         <div className="px-2 pt-2 pb-2 space-y-1 group tabs-container">
           <SortableContext items={tabIds} strategy={verticalListSortingStrategy}>
             {group.tabs.map((tab, index) => (

@@ -1,5 +1,7 @@
+import { storage } from '@/utils/storage';
+
 // Chrome 扩展的 Service Worker
-// 为了避免模块导入问题，直接在Service Worker中实现核心功能
+// 为了避免模块导入问题，早期版本内联了存储逻辑；现统一使用 utils/storage 以与前端页面共享同一数据源（IndexedDB）
 
 // Service Worker启动日志
 console.log('=== TabVault Pro Service Worker 启动 ===');
@@ -29,28 +31,6 @@ async function migrateStorageKeys() {
     console.warn('迁移存储键失败（可忽略）:', error);
   }
 }
-
-// 简化的存储工具函数
-const storage = {
-  async getGroups() {
-    try {
-      const result = await chrome.storage.local.get(['tab_groups']);
-      return result.tab_groups || [];
-    } catch (error) {
-      console.error('获取标签组失败:', error);
-      return [];
-    }
-  },
-
-  async setGroups(groups: any[]) {
-    try {
-      await chrome.storage.local.set({ tab_groups: groups });
-    } catch (error) {
-      console.error('保存标签组失败:', error);
-      throw error;
-    }
-  }
-};
 
 // 生成简单的ID
 function generateId(): string {

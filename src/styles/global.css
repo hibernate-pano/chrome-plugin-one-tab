@@ -10,6 +10,44 @@
   body {
     @apply bg-background text-on-background font-sans antialiased;
   }
+
+  /* 可访问性：减少动画/闪烁 */
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+      animation-duration: 0.001ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.001ms !important;
+      scroll-behavior: auto !important;
+    }
+  }
+
+  /* 可访问性：统一 focus 可见样式 */
+  :focus-visible {
+    outline: 2px solid #2563eb;
+    outline-offset: 2px;
+  }
+  .dark :focus-visible {
+    outline-color: #93c5fd;
+  }
+
+  /* 高对比度开关（基于 prefers-contrast）*/
+  @media (prefers-contrast: more) {
+    :root {
+      --hc-border: #facc15;
+      --hc-bg: #0b1727;
+      --hc-text: #fef3c7;
+    }
+    * {
+      border-color: var(--hc-border) !important;
+    }
+    body {
+      background-color: var(--hc-bg);
+      color: var(--hc-text);
+    }
+    a, button {
+      color: var(--hc-text);
+    }
+  }
 }
 
 @layer components {

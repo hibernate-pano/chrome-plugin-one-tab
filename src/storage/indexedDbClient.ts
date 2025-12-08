@@ -60,7 +60,15 @@ async function runTransaction<T>(
 export const indexedDbDriver: StorageDriver = {
   async getItem<T>(key: string): Promise<T | null> {
     try {
-      return await runTransaction<T | null>('readonly', store => store.get(key));
+      const result = await runTransaction<any>('readonly', store => store.get(key));
+
+      // 数据以 { key, value } 形式存入，读取时需要取出 value
+      if (result && typeof result === 'object' && 'value' in result) {
+        return (result as { value: T }).value;
+      }
+
+      // 兼容直接存储原始值的情况
+      return result as T | null;
     } catch {
       return null;
     }

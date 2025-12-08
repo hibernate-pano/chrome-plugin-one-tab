@@ -12,30 +12,97 @@ console.log('- chrome.action:', !!chrome.action);
 console.log('- chrome.storage:', !!chrome.storage);
 console.log('=====================================');
 
-// 迁移旧的存储键到新的统一键名
+// 最小 IndexedDB KV 存储，保证与前端一致
+const DB_NAME = 'tabvaultpro';
+const DB_VERSION = 1;
+const KV_STORE = 'kv';
+const MIGRATION_KEYS = {
+  tabGroups: 'tab_groups',
+  legacyTabGroups: 'tabGroups',
+  migrationFlags: 'migration_flags'
+};
+
+let cachedDb = null;
+
+function openDatabase() {
+  return new Promise((resolve, reject) => {
+    const request = indexedDB.open(DB_NAME, DB_VERSION);
+    request.onupgradeneeded = () => {
+      const db = request.result;
+      if (!db.objectStoreNames.contains(KV_STORE)) {
+        db.createObjectStore(KV_STORE, { keyPath: 'key' });
+      }
+    };
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error || new Error('IndexedDB open failed'));
+  });
+}
+
+async function getDb() {
+  if (cachedDb) return cachedDb;
+  cachedDb = await openDatabase();
+  cachedDb.onversionchange = () => {
+    cachedDb && cachedDb.close();
+    cachedDb = null;
+  };
+  return cachedDb;
+}
+
+async function runTransaction(mode, action) {
+  const db = await getDb();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(KV_STORE, mode);
+    const store = tx.objectStore(KV_STORE);
+    const request = action(store);
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error || new Error('IndexedDB request failed'));
+    tx.onabort = () => reject(tx.error || new Error('IndexedDB transaction aborted'));
+  });
+}
+
+const kv = {
+  async get(key) {
+    const result = await runTransaction('readonly', store => store.get(key));
+    if (result && typeof result === 'object' && 'value' in result) return result.value;
+    return result ?? null;
+  },
+  async set(key, value) {
+    await runTransaction('readwrite', store => store.put({ key, value }));
+  },
+  async remove(key) {
+    await runTransaction('readwrite', store => store.delete(key));
+  }
+};
+
+// 迁移 chrome.storage.local -> IndexedDB（只执行一次）
 async function migrateStorageKeys() {
   try {
-    const { tabGroups } = await chrome.storage.local.get(['tabGroups']);
-    const { tab_groups } = await chrome.storage.local.get(['tab_groups']);
+    const flags = (await kv.get(MIGRATION_KEYS.migrationFlags)) || {};
+    if (flags.chromeStorageMigrated) return;
 
-    // 如果存在旧键且新键不存在或为空，则迁移
-    if (Array.isArray(tabGroups) && (!Array.isArray(tab_groups) || tab_groups.length === 0)) {
-      await chrome.storage.local.set({ tab_groups: tabGroups });
-      // 迁移完成后可选择清理旧键（可选）
-      await chrome.storage.local.remove('tabGroups');
-      console.log('已将旧键 tabGroups 迁移为 tab_groups');
+    const { tabGroups } = await chrome.storage.local.get([MIGRATION_KEYS.legacyTabGroups]);
+    const { tab_groups } = await chrome.storage.local.get([MIGRATION_KEYS.tabGroups]);
+
+    const payload = tab_groups && Array.isArray(tab_groups) ? tab_groups : tabGroups;
+    if (Array.isArray(payload) && payload.length) {
+      await kv.set(MIGRATION_KEYS.tabGroups, payload);
     }
+
+    flags.chromeStorageMigrated = true;
+    await kv.set(MIGRATION_KEYS.migrationFlags, flags);
+    await chrome.storage.local.remove([MIGRATION_KEYS.tabGroups, MIGRATION_KEYS.legacyTabGroups]);
+    console.log('[SW] 已迁移并清理旧存储键');
   } catch (error) {
     console.warn('迁移存储键失败（可忽略）:', error);
   }
 }
 
-// 简化的存储工具函数
+// 与前端统一的存储接口
 const storage = {
   async getGroups() {
     try {
-      const result = await chrome.storage.local.get(['tab_groups']);
-      return result.tab_groups || [];
+      const groups = await kv.get(MIGRATION_KEYS.tabGroups);
+      return Array.isArray(groups) ? groups : [];
     } catch (error) {
       console.error('获取标签组失败:', error);
       return [];
@@ -44,7 +111,7 @@ const storage = {
 
   async setGroups(groups) {
     try {
-      await chrome.storage.local.set({ tab_groups: groups });
+      await kv.set(MIGRATION_KEYS.tabGroups, groups);
     } catch (error) {
       console.error('保存标签组失败:', error);
       throw error;

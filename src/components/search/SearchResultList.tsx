@@ -47,6 +47,16 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({ searchQuery 
         }
         title="没有找到匹配的标签"
         description={`没有找到包含"${searchQuery}"的标签页，请尝试其他关键词。`}
+        action={
+          <div className="text-xs text-gray-500 dark:text-gray-400 space-y-1">
+            <div>小提示：</div>
+            <ul className="list-disc list-inside space-y-0.5 text-left">
+              <li>支持搜索标题或 URL 关键词</li>
+              <li>尝试更短的关键词或检查大小写</li>
+              <li>可在设置里导入/同步以获取更多结果</li>
+            </ul>
+          </div>
+        }
         className="h-40"
       />
     );
