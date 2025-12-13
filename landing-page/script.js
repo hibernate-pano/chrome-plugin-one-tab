@@ -196,14 +196,9 @@ style.textContent = `
 `;
 document.head.appendChild(style);
 
-// Lazy load images if needed
-if (!('loading' in HTMLImageElement.prototype)) {
-    // Fallback for browsers that don't support native lazy loading
-    const script = document.createElement('script');
-    script.src = 'https://cdnjs.cloudflare.com/ajax/libs/lazysizes/5.3.2/lazysizes.min.js';
-    document.body.appendChild(script);
-}
-// If native lazy loading is supported, the browser handles it automatically via the loading="lazy" attribute
+// Lazy load images - using native browser support
+// Modern Chrome browsers (76+) support native lazy loading via the loading="lazy" attribute
+// Since Chrome extensions run in Chrome, we don't need a fallback library
 
 // Performance: Debounce scroll events
 function debounce(func, wait) {
