@@ -56,9 +56,14 @@ export const syncSettingsFromCloud = createAsyncThunk<UserSettings | null, void,
 
     const cloudSettings = await supabaseSync.downloadSettings();
     if (cloudSettings) {
+      // 将 Record<string, any> 转换为 UserSettings
+      const convertedSettings: UserSettings = {
+        ...updatedDefaultSettings,
+        ...cloudSettings,
+      } as UserSettings;
       // 保存到本地存储
-      await storage.setSettings(cloudSettings);
-      return cloudSettings;
+      await storage.setSettings(convertedSettings);
+      return convertedSettings;
     }
     return null;
   }

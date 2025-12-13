@@ -11,25 +11,22 @@ function getSecureConfig() {
 
   // 验证环境变量格式
   if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
-    console.error('错误: Supabase 配置缺失。请确保在 .env 文件中设置了 VITE_SUPABASE_URL 和 VITE_SUPABASE_ANON_KEY。');
-    throw new Error('Supabase 配置缺失');
+    return null;
   }
 
   // 验证URL格式
   try {
     const url = new URL(SUPABASE_URL);
     if (!url.hostname.includes('supabase.co')) {
-      throw new Error('无效的 Supabase URL');
+      return null;
     }
   } catch (error) {
-    console.error('错误: 无效的 SUPABASE_URL 格式');
-    throw new Error('无效的 Supabase URL 格式');
+    return null;
   }
 
   // 验证匿名密钥格式（JWT格式）
   if (!SUPABASE_ANON_KEY.startsWith('eyJ')) {
-    console.error('错误: 无效的 SUPABASE_ANON_KEY 格式');
-    throw new Error('无效的 Supabase 匿名密钥格式');
+    return null;
   }
 
   // 在生产环境中，不要在控制台输出完整的配置信息
@@ -46,10 +43,42 @@ function getSecureConfig() {
   };
 }
 
-// 获取安全配置
-const config = getSecureConfig();
+// 延迟初始化 Supabase 客户端
+let supabaseClient: ReturnType<typeof createClient> | null = null;
 
-export const supabase = createClient(config.url, config.anonKey);
+function initSupabaseClient() {
+  if (supabaseClient) {
+    return supabaseClient;
+  }
+
+  const config = getSecureConfig();
+  if (!config) {
+    // 配置缺失时，创建一个占位符客户端
+    // 使用占位符 URL 和 key，避免后续调用时出错
+    console.warn('Supabase 配置缺失。同步功能将不可用。如需使用同步功能，请在 .env 文件中设置 VITE_SUPABASE_URL 和 VITE_SUPABASE_ANON_KEY。');
+    supabaseClient = createClient('https://placeholder.supabase.co', 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InBsYWNlaG9sZGVyIiwicm9sZSI6ImFub24iLCJpYXQiOjE2NDUxOTIwMDAsImV4cCI6MTk2MDc2ODAwMH0.placeholder');
+    return supabaseClient;
+  }
+
+  supabaseClient = createClient(config.url, config.anonKey);
+  return supabaseClient;
+}
+
+// 检查 Supabase 是否已配置
+export function isSupabaseConfigured(): boolean {
+  const config = getSecureConfig();
+  return config !== null;
+}
+
+// 检查 Supabase 配置的辅助函数
+function checkSupabaseConfig() {
+  if (!isSupabaseConfigured()) {
+    throw new Error('Supabase 配置缺失。请确保在 .env 文件中设置了 VITE_SUPABASE_URL 和 VITE_SUPABASE_ANON_KEY。');
+  }
+}
+
+// 导出 supabase 客户端，延迟初始化
+export const supabase = initSupabaseClient();
 
 import { secureStorage } from './secureStorage';
 
@@ -78,11 +107,13 @@ export const getDeviceId = async (): Promise<string> => {
 export const auth = {
   // 使用邮箱注册
   async signUp(email: string, password: string) {
+    checkSupabaseConfig();
     return await supabase.auth.signUp({ email, password });
   },
 
   // 使用邮箱登录
   async signIn(email: string, password: string) {
+    checkSupabaseConfig();
     return await supabase.auth.signInWithPassword({ email, password });
   },
 
@@ -94,12 +125,20 @@ export const auth = {
 
   // 退出登录
   async signOut() {
+    checkSupabaseConfig();
     return await supabase.auth.signOut();
   },
 
   // 获取当前用户
   async getCurrentUser() {
     try {
+      // 如果配置缺失，直接返回空用户
+      if (!isSupabaseConfigured()) {
+        return {
+          data: { user: null },
+          error: null
+        };
+      }
       // 首先检查是否有活跃会话
       const { data: sessionData } = await supabase.auth.getSession();
 
@@ -126,6 +165,13 @@ export const auth = {
   // 获取会话
   async getSession() {
     try {
+      // 如果配置缺失，直接返回空会话
+      if (!isSupabaseConfigured()) {
+        return {
+          data: { session: null },
+          error: null
+        };
+      }
       return await supabase.auth.getSession();
     } catch (error) {
       console.error('获取会话失败:', error);
@@ -142,6 +188,7 @@ export const auth = {
 export const sync = {
   // 迁移数据到 JSONB 格式
   async migrateToJsonb() {
+    checkSupabaseConfig();
     // 先检查会话是否有效
     const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
 
@@ -219,7 +266,7 @@ export const sync = {
         const { data: tabs, error: tabError } = await supabase
           .from('tabs')
           .select('*')
-          .eq('group_id', group.id);
+          .eq('group_id', group.id as string);
 
         if (tabError) {
           console.error(`获取标签组 ${group.id} 的标签失败:`, tabError);
@@ -231,20 +278,20 @@ export const sync = {
         }
 
         // 将标签转换为 TabData 格式
-        const tabsData: TabData[] = tabs.map(tab => ({
-          id: tab.id,
-          url: tab.url,
-          title: tab.title,
-          favicon: tab.favicon,
-          created_at: tab.created_at,
-          last_accessed: tab.last_accessed
+        const tabsData: TabData[] = tabs.map((tab: any) => ({
+          id: String(tab.id),
+          url: String(tab.url),
+          title: String(tab.title),
+          favicon: tab.favicon ? String(tab.favicon) : undefined,
+          created_at: String(tab.created_at),
+          last_accessed: String(tab.last_accessed)
         }));
 
         // 更新标签组，添加 tabs_data 字段
         const { error: updateError } = await supabase
           .from('tab_groups')
           .update({ tabs_data: tabsData })
-          .eq('id', group.id);
+          .eq('id', group.id as string);
 
         if (updateError) {
           console.error(`更新标签组 ${group.id} 的 JSONB 数据失败:`, updateError);
@@ -271,7 +318,7 @@ export const sync = {
                 tabs_data: tabsData,
                 user_id: recheckSession.session.user.id // 确保用户ID与会话用户ID匹配
               })
-              .eq('id', group.id);
+              .eq('id', group.id as string);
 
             if (retryError) {
               console.error(`重试更新标签组 ${group.id} 仍然失败:`, retryError);
@@ -287,6 +334,7 @@ export const sync = {
   },
   // 上传标签组
   async uploadTabGroups(groups: TabGroup[], overwriteCloud: boolean = false) {
+    checkSupabaseConfig();
     const deviceId = await getDeviceId();
 
     // 先检查会话是否有效
@@ -498,7 +546,7 @@ export const sync = {
 
         const result = await supabase
           .from('tab_groups')
-          .upsert(uniqueGroups, { onConflict: 'id' });
+          .upsert(uniqueGroups as any, { onConflict: 'id' });
 
         data = result.data;
         error = result.error;
@@ -507,7 +555,7 @@ export const sync = {
         // 使用合并模式
         const result = await supabase
           .from('tab_groups')
-          .upsert(uniqueGroups, { onConflict: 'id' });
+          .upsert(uniqueGroups as any, { onConflict: 'id' });
 
         data = result.data;
         error = result.error;
@@ -544,7 +592,7 @@ export const sync = {
               // 重试上传
               const retryResult = await supabase
                 .from('tab_groups')
-                .upsert(uniqueGroups, { onConflict: 'id' });
+                .upsert(uniqueGroups as any, { onConflict: 'id' });
 
               if (retryResult.error) {
                 console.error('重试上传仍然失败:', retryResult.error);
@@ -574,7 +622,7 @@ export const sync = {
 
   // 下载标签组
   async downloadTabGroups() {
-
+    checkSupabaseConfig();
     // 先检查会话是否有效
     const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
 
@@ -649,8 +697,8 @@ export const sync = {
       console.log(`从云端获取到 ${groups.length} 个标签组`);
 
       // 记录每个云端标签组的基本信息
-      groups.forEach((group, index) => {
-        const tabsData = group.tabs_data || [];
+      groups.forEach((group: any, index) => {
+        const tabsData = (group.tabs_data || []) as TabData[];
         console.log(`云端标签组 ${index + 1}/${groups.length}:`, {
           id: group.id,
           name: group.name,
@@ -667,29 +715,30 @@ export const sync = {
       for (const group of groups) {
         // 从 JSONB 字段获取标签数据
         let tabsData: TabData[] = [];
+        const groupAny = group as any;
 
         // 检查是否是加密数据
-        if (typeof group.tabs_data === 'string') {
+        if (typeof groupAny.tabs_data === 'string') {
           try {
             // 尝试解密数据
-            tabsData = await decryptData<TabData[]>(group.tabs_data as string, user.id);
-            console.log(`标签组 ${group.id} 的数据已成功解密`);
+            tabsData = await decryptData<TabData[]>(groupAny.tabs_data as string, user.id);
+            console.log(`标签组 ${groupAny.id} 的数据已成功解密`);
           } catch (error) {
-            console.error(`解密标签组 ${group.id} 的数据失败:`, error);
+            console.error(`解密标签组 ${groupAny.id} 的数据失败:`, error);
             // 如果解密失败，尝试直接解析（可能是旧的未加密数据）
             try {
-              if (typeof group.tabs_data === 'string' && !isEncrypted(group.tabs_data)) {
-                tabsData = JSON.parse(group.tabs_data);
-                console.log(`标签组 ${group.id} 的数据是旧的未加密格式，已成功解析`);
+              if (typeof groupAny.tabs_data === 'string' && !isEncrypted(groupAny.tabs_data)) {
+                tabsData = JSON.parse(groupAny.tabs_data);
+                console.log(`标签组 ${groupAny.id} 的数据是旧的未加密格式，已成功解析`);
               }
             } catch (jsonError) {
-              console.error(`解析标签组 ${group.id} 的JSON数据失败:`, jsonError);
+              console.error(`解析标签组 ${groupAny.id} 的JSON数据失败:`, jsonError);
               // 保持空数组
             }
           }
-        } else if (Array.isArray(group.tabs_data)) {
+        } else if (Array.isArray(groupAny.tabs_data)) {
           // 如果已经是数组，直接使用
-          tabsData = group.tabs_data;
+          tabsData = groupAny.tabs_data as TabData[];
           // 数据已是数组格式
         }
 
@@ -703,16 +752,16 @@ export const sync = {
           favicon: tab.favicon,
           createdAt: tab.created_at,
           lastAccessed: tab.last_accessed,
-          group_id: group.id
+          group_id: String(groupAny.id)
         }));
 
         tabGroups.push({
-          id: group.id,
-          name: group.name,
+          id: String(groupAny.id),
+          name: String(groupAny.name),
           tabs: formattedTabs,
-          createdAt: group.created_at,
-          updatedAt: group.updated_at,
-          isLocked: group.is_locked
+          createdAt: String(groupAny.created_at),
+          updatedAt: String(groupAny.updated_at),
+          isLocked: Boolean(groupAny.is_locked)
         });
       }
 
@@ -723,17 +772,17 @@ export const sync = {
             const { data: tabs, error: tabError } = await supabase
               .from('tabs')
               .select('*')
-              .eq('group_id', group.id);
+              .eq('group_id', group.id as string);
 
             if (!tabError && tabs && tabs.length > 0) {
-              group.tabs = tabs.map(tab => ({
-                id: tab.id,
-                url: tab.url,
-                title: tab.title,
-                favicon: tab.favicon,
-                createdAt: tab.created_at,
-                lastAccessed: tab.last_accessed,
-                group_id: tab.group_id
+              group.tabs = tabs.map((tab: any) => ({
+                id: String(tab.id),
+                url: String(tab.url),
+                title: String(tab.title),
+                favicon: tab.favicon ? String(tab.favicon) : undefined,
+                createdAt: String(tab.created_at),
+                lastAccessed: String(tab.last_accessed),
+                group_id: tab.group_id ? String(tab.group_id) : undefined
               }));
             }
           } catch (e) {
@@ -751,6 +800,7 @@ export const sync = {
 
   // 上传用户设置
   async uploadSettings(settings: UserSettings) {
+    checkSupabaseConfig();
     const deviceId = await getDeviceId();
 
     // 先检查会话是否有效
@@ -853,6 +903,7 @@ export const sync = {
 
   // 下载用户设置
   async downloadSettings() {
+    checkSupabaseConfig();
     // 先检查会话是否有效
     const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
 
