@@ -4,7 +4,6 @@ import {
   toggleLayoutMode,
   saveSettings,
   setReorderMode,
-  setLayoutMode,
 } from '@/store/slices/settingsSlice';
 import { cleanDuplicateTabs } from '@/store/slices/tabSlice';
 import { HeaderDropdown } from './HeaderDropdown';
@@ -191,13 +190,9 @@ export const Header: React.FC<HeaderProps> = ({ onSearch }) => {
     clearSearch();
     if (settings.reorderMode) {
       dispatch(setReorderMode(false));
-    }
-    if (settings.layoutMode !== 'single') {
-      dispatch(setLayoutMode('single'));
       dispatch(
         saveSettings({
           ...settings,
-          layoutMode: 'single',
           reorderMode: false,
         })
       );
