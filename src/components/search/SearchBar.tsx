@@ -36,23 +36,14 @@ export const SearchBar: React.FC = () => {
         placeholder="搜索标签..."
         aria-label="搜索标签页"
         aria-describedby="search-description"
-        className="
-          w-full px-4 py-2 pl-10
-          rounded-lg
-          bg-white dark:bg-gray-800
-          border border-gray-300 dark:border-gray-700
-          text-gray-900 dark:text-gray-100
-          placeholder-gray-500 dark:placeholder-gray-400
-          focus:outline-none focus:ring-2 focus:ring-blue-500
-          transition duration-200
-        "
+        className="search-bar-input"
       />
       <div id="search-description" className="sr-only">
         输入关键词搜索已保存的标签页
       </div>
       <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
         <svg
-          className="h-5 w-5 text-gray-400"
+          className="h-5 w-5 search-icon"
           xmlns="http://www.w3.org/2000/svg"
           viewBox="0 0 20 20"
           fill="currentColor"
@@ -67,14 +58,7 @@ export const SearchBar: React.FC = () => {
       {localQuery && (
         <button
           onClick={handleClear}
-          className="
-            absolute inset-y-0 right-0 pr-3
-            text-gray-400 hover:text-gray-500
-            dark:text-gray-500 dark:hover:text-gray-400
-            transition-all duration-200 ease-in-out
-            hover:scale-110
-            focus:outline-none
-          "
+          className="search-clear-btn"
           title="清除搜索"
         >
           <svg

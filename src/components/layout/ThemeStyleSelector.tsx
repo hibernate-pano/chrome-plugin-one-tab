@@ -24,6 +24,19 @@ const RefinedIcon = () => (
   </svg>
 );
 
+// 极光主题图标 - 北极光/雪花风格
+const AuroraIcon = () => (
+  <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5}>
+    {/* 极光波浪 */}
+    <path d="M3 12c2-3 4-4 6-2s4 1 6-2 4-1 6 2" strokeLinecap="round" strokeLinejoin="round" />
+    <path d="M3 16c2-3 4-4 6-2s4 1 6-2 4-1 6 2" strokeLinecap="round" strokeLinejoin="round" opacity="0.6" />
+    <path d="M3 8c2-3 4-4 6-2s4 1 6-2 4-1 6 2" strokeLinecap="round" strokeLinejoin="round" opacity="0.3" />
+    {/* 星星 */}
+    <circle cx="18" cy="6" r="1" fill="currentColor" />
+    <circle cx="6" cy="18" r="0.5" fill="currentColor" />
+  </svg>
+);
+
 // 选中标记图标
 const CheckIcon = () => (
   <svg className="w-4 h-4 text-green-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
@@ -50,6 +63,12 @@ const themeOptions: ThemeOption[] = [
     label: '经典',
     description: 'Material Design 风格',
     icon: <ClassicIcon />,
+  },
+  {
+    value: 'aurora',
+    label: '极光',
+    description: '北欧冷色调风格',
+    icon: <AuroraIcon />,
   },
 ];
 

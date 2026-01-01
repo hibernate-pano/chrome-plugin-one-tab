@@ -20,7 +20,6 @@ import { TabVaultLogo } from '@/components/common/TabVaultIcon';
 
 interface HeaderProps {
   onSearch: (query: string) => void;
-  searchQuery?: string;
 }
 
 // 图标组件
@@ -73,7 +72,7 @@ const SaveIcon = () => (
   </svg>
 );
 
-export const Header: React.FC<HeaderProps> = ({ onSearch, searchQuery = '' }) => {
+export const Header: React.FC<HeaderProps> = ({ onSearch }) => {
   const dispatch = useAppDispatch();
   const { showConfirm, showAlert } = useToast();
   const settings = useAppSelector(state => state.settings);
@@ -172,7 +171,7 @@ export const Header: React.FC<HeaderProps> = ({ onSearch, searchQuery = '' }) =>
   ]);
 
   const getContainerWidthClass = () => {
-    if (searchQuery) return 'layout-single-width';
+    // 搜索模式也跟随当前布局模式
     return settings.layoutMode === 'double' ? 'layout-double-width' : 'layout-single-width';
   };
 

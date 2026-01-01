@@ -1,0 +1,533 @@
+/* ==========================================
+   🌌 Aurora Theme - Nordic Polar Light Style
+   ========================================== */
+
+/* 
+ * 设计理念：
+ * 灵感来源于北极光、北欧设计和冰川
+ * 核心特征：冷色调、柔和渐变、宁静舒适
+ * 视觉亮点：极光渐变效果、冰霜质感
+ * 
+ * 字体说明：
+ * Chrome 扩展 CSP 不允许从外部 CDN 加载字体
+ * 使用系统字体栈作为 Inter 的替代方案
+ */
+
+/* ==========================================
+   极光主题 - 浅色模式
+   使用 html[data-theme] 选择器确保优先级
+   ========================================== */
+html[data-theme="aurora"] {
+  /* 颜色 - 冰雪冷色调 (Slate 色系) */
+  --color-bg-primary: #f8fafc;
+  --color-bg-secondary: #ffffff;
+  --color-bg-tertiary: #f1f5f9;
+  --color-bg-elevated: #ffffff;
+  --color-bg-overlay: rgba(248, 250, 252, 0.85);
+
+  --color-text-primary: #0f172a;
+  --color-text-secondary: #475569;
+  --color-text-tertiary: #64748b;
+  --color-text-muted: #94a3b8;
+
+  --color-border-default: #e2e8f0;
+  --color-border-subtle: #f1f5f9;
+  --color-border-strong: #cbd5e1;
+
+  /* 极光青色强调色 */
+  --color-accent: #06b6d4;
+  --color-accent-hover: #0891b2;
+  --color-accent-subtle: #ecfeff;
+
+  /* 状态颜色 */
+  --color-warning: #f59e0b;
+  --color-danger: #ef4444;
+  --color-success: #10b981;
+
+  /* 排版 - 现代几何感字体 */
+  --font-family-sans: 'Inter', 'SF Pro Display', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+  --font-family-mono: 'JetBrains Mono', 'SF Mono', Menlo, Monaco, 'Cascadia Code', monospace;
+
+  /* 阴影 - 冰霜柔和 */
+  --shadow-card: 0 1px 3px 0 rgb(15 23 42 / 0.04), 0 1px 2px -1px rgb(15 23 42 / 0.03);
+  --shadow-card-hover: 0 4px 6px -1px rgb(15 23 42 / 0.07), 0 2px 4px -2px rgb(15 23 42 / 0.05);
+  --shadow-elevation-1: 0 1px 2px 0 rgb(15 23 42 / 0.04);
+  --shadow-elevation-2: 0 4px 6px -1px rgb(15 23 42 / 0.06), 0 2px 4px -2px rgb(15 23 42 / 0.04);
+  --shadow-elevation-3: 0 10px 15px -3px rgb(15 23 42 / 0.08), 0 4px 6px -4px rgb(15 23 42 / 0.05);
+
+  /* 圆角 - 更圆润柔和 */
+  --radius-sm: 0.375rem;
+  --radius-md: 0.5rem;
+  --radius-lg: 0.75rem;
+  --radius-xl: 1rem;
+  --radius-full: 9999px;
+
+  /* 间距 */
+  --spacing-xs: 0.25rem;
+  --spacing-sm: 0.5rem;
+  --spacing-md: 1rem;
+  --spacing-lg: 1.5rem;
+  --spacing-xl: 2rem;
+
+  /* 极光特效变量 */
+  --aurora-gradient: linear-gradient(135deg, #06b6d4 0%, #8b5cf6 50%, #ec4899 100%);
+  --aurora-gradient-subtle: linear-gradient(135deg, rgba(6, 182, 212, 0.1) 0%, rgba(139, 92, 246, 0.1) 50%, rgba(236, 72, 153, 0.1) 100%);
+}
+
+/* ==========================================
+   极光主题 - 深色模式
+   ========================================== */
+html[data-theme="aurora"].dark {
+  /* 颜色 - 极夜深蓝 */
+  --color-bg-primary: #0f172a;
+  --color-bg-secondary: #1e293b;
+  --color-bg-tertiary: #334155;
+  --color-bg-elevated: #1e293b;
+  --color-bg-overlay: rgba(15, 23, 42, 0.9);
+
+  --color-text-primary: #f8fafc;
+  --color-text-secondary: #cbd5e1;
+  --color-text-tertiary: #94a3b8;
+  --color-text-muted: #64748b;
+
+  --color-border-default: #334155;
+  --color-border-subtle: #1e293b;
+  --color-border-strong: #475569;
+
+  /* 明亮极光青色 */
+  --color-accent: #22d3ee;
+  --color-accent-hover: #67e8f9;
+  --color-accent-subtle: rgba(34, 211, 238, 0.15);
+
+  /* 状态颜色 */
+  --color-warning: #fbbf24;
+  --color-danger: #f87171;
+  --color-success: #34d399;
+
+  /* 深色模式阴影 */
+  --shadow-card: 0 1px 3px 0 rgb(0 0 0 / 0.3), 0 1px 2px -1px rgb(0 0 0 / 0.2);
+  --shadow-card-hover: 0 4px 6px -1px rgb(0 0 0 / 0.4), 0 2px 4px -2px rgb(0 0 0 / 0.3);
+  --shadow-elevation-1: 0 1px 2px 0 rgb(0 0 0 / 0.25);
+  --shadow-elevation-2: 0 4px 6px -1px rgb(0 0 0 / 0.35), 0 2px 4px -2px rgb(0 0 0 / 0.25);
+  --shadow-elevation-3: 0 10px 15px -3px rgb(0 0 0 / 0.45), 0 4px 6px -4px rgb(0 0 0 / 0.3);
+
+  /* 深色模式极光渐变 */
+  --aurora-gradient: linear-gradient(135deg, #22d3ee 0%, #a78bfa 50%, #f472b6 100%);
+  --aurora-gradient-subtle: linear-gradient(135deg, rgba(34, 211, 238, 0.15) 0%, rgba(167, 139, 250, 0.15) 50%, rgba(244, 114, 182, 0.15) 100%);
+}
+
+/* ==========================================
+   极光主题特定样式
+   ========================================== */
+html[data-theme="aurora"] body {
+  font-family: var(--font-family-sans);
+  font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+}
+
+/* 极光主题按钮样式 - 冰霜质感 */
+html[data-theme="aurora"] .btn {
+  font-weight: 500;
+  letter-spacing: -0.01em;
+}
+
+html[data-theme="aurora"] .btn-primary {
+  background-color: var(--color-accent);
+  box-shadow: 0 1px 2px 0 rgb(6 182 212 / 0.2);
+}
+
+html[data-theme="aurora"] .btn-primary:hover {
+  background-color: var(--color-accent-hover);
+  box-shadow: 0 4px 12px -2px rgb(6 182 212 / 0.3);
+}
+
+/* 极光主题卡片样式 - 冰霜玻璃效果 */
+html[data-theme="aurora"] .card {
+  border-radius: var(--radius-xl);
+  box-shadow: var(--shadow-card);
+  border: 1px solid var(--color-border-subtle);
+  background: var(--color-bg-secondary);
+}
+
+html[data-theme="aurora"] .card:hover {
+  box-shadow: var(--shadow-card-hover);
+  border-color: var(--color-border-default);
+}
+
+/* 极光主题输入框样式 */
+html[data-theme="aurora"] .input {
+  border: 1px solid var(--color-border-default);
+  border-radius: var(--radius-lg);
+  background: var(--color-bg-secondary);
+}
+
+html[data-theme="aurora"] .input:hover {
+  border-color: var(--color-border-strong);
+}
+
+html[data-theme="aurora"] .input:focus {
+  border-color: var(--color-accent);
+  background: var(--color-bg-secondary);
+  box-shadow: 0 0 0 3px var(--color-accent-subtle);
+}
+
+/* 极光主题标签组样式 */
+html[data-theme="aurora"] .tab-group-card {
+  border-radius: var(--radius-xl);
+  border: 1px solid var(--color-border-subtle);
+  box-shadow: var(--shadow-card);
+  overflow: hidden;
+}
+
+html[data-theme="aurora"] .tab-group-card:hover {
+  border-color: var(--color-border-default);
+  box-shadow: var(--shadow-card-hover);
+}
+
+html[data-theme="aurora"] .tab-group-header {
+  background: var(--color-bg-tertiary);
+  border-bottom: 1px solid var(--color-border-subtle);
+}
+
+/* 极光主题徽章样式 - 带极光渐变 */
+html[data-theme="aurora"] .badge-accent {
+  background: var(--color-accent-subtle);
+  color: var(--color-accent);
+}
+
+html[data-theme="aurora"].dark .badge-accent {
+  background: rgba(34, 211, 238, 0.15);
+  color: #67e8f9;
+}
+
+/* 极光主题空状态样式 - 极光渐变背景 */
+html[data-theme="aurora"] .empty-state-icon {
+  background: var(--aurora-gradient-subtle);
+  border: 1px solid var(--color-border-default);
+  border-radius: var(--radius-xl);
+}
+
+/* 极光主题头部样式 - 冰霜毛玻璃 */
+html[data-theme="aurora"] .header {
+  background: var(--color-bg-overlay);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border-bottom: 1px solid var(--color-border-subtle);
+}
+
+/* ==========================================
+   极光主题 - 下拉菜单和弹出层样式
+   ========================================== */
+html[data-theme="aurora"] .dropdown-menu,
+html[data-theme="aurora"] .popup-menu {
+  background: var(--color-bg-secondary);
+  border: 1px solid var(--color-border-default);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-elevation-2);
+}
+
+html[data-theme="aurora"] .dropdown-item {
+  color: var(--color-text-primary);
+  border-radius: var(--radius-md);
+}
+
+html[data-theme="aurora"] .dropdown-item:hover {
+  background: var(--color-bg-tertiary);
+}
+
+/* 极光主题 - 模态框样式 */
+html[data-theme="aurora"] .modal-content {
+  background: var(--color-bg-secondary);
+  border: 1px solid var(--color-border-default);
+  border-radius: var(--radius-xl);
+  box-shadow: var(--shadow-elevation-3);
+}
+
+/* 极光主题 - 工具提示样式 */
+html[data-theme="aurora"] .tooltip {
+  background: var(--color-bg-elevated);
+  color: var(--color-text-primary);
+  border: 1px solid var(--color-border-default);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-card-hover);
+}
+
+/* 极光主题 - 搜索框样式 */
+html[data-theme="aurora"] .search-input {
+  background: var(--color-bg-secondary);
+  border: 1px solid var(--color-border-default);
+  border-radius: var(--radius-full);
+}
+
+html[data-theme="aurora"] .search-input:hover {
+  border-color: var(--color-border-strong);
+}
+
+html[data-theme="aurora"] .search-input:focus {
+  border-color: var(--color-accent);
+  box-shadow: 0 0 0 3px var(--color-accent-subtle);
+}
+
+/* 极光主题 - 标签项样式 */
+html[data-theme="aurora"] .tab-item {
+  border-bottom: 1px solid var(--color-border-subtle);
+}
+
+html[data-theme="aurora"] .tab-item:hover {
+  background: var(--color-bg-tertiary);
+}
+
+/* 极光主题 - 开关按钮样式 */
+html[data-theme="aurora"] .toggle-switch-active {
+  background-color: var(--color-accent);
+}
+
+html[data-theme="aurora"] .toggle-switch-inactive {
+  background-color: var(--color-border-strong);
+}
+
+/* ==========================================
+   极光主题 - 特殊效果
+   ========================================== */
+
+/* 极光渐变边框效果 - 用于特殊强调 */
+html[data-theme="aurora"] .aurora-border {
+  position: relative;
+  background: var(--color-bg-secondary);
+  border-radius: var(--radius-xl);
+}
+
+html[data-theme="aurora"] .aurora-border::before {
+  content: '';
+  position: absolute;
+  inset: -1px;
+  border-radius: inherit;
+  background: var(--aurora-gradient);
+  z-index: -1;
+  opacity: 0.5;
+}
+
+/* 极光渐变文字效果 */
+html[data-theme="aurora"] .aurora-text {
+  background: var(--aurora-gradient);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+/* 极光主题 Logo 特效 */
+html[data-theme="aurora"] .logo-aurora-effect {
+  position: relative;
+}
+
+html[data-theme="aurora"] .logo-aurora-effect::after {
+  content: '';
+  position: absolute;
+  inset: -4px;
+  background: var(--aurora-gradient);
+  border-radius: inherit;
+  opacity: 0;
+  filter: blur(8px);
+  transition: opacity 0.3s ease;
+  z-index: -1;
+}
+
+html[data-theme="aurora"] .logo-aurora-effect:hover::after {
+  opacity: 0.4;
+}
+
+/* 极光主题 - 滚动条样式 */
+html[data-theme="aurora"] ::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+html[data-theme="aurora"] ::-webkit-scrollbar-track {
+  background: var(--color-bg-tertiary);
+  border-radius: 4px;
+}
+
+html[data-theme="aurora"] ::-webkit-scrollbar-thumb {
+  background: var(--color-border-strong);
+  border-radius: 4px;
+}
+
+html[data-theme="aurora"] ::-webkit-scrollbar-thumb:hover {
+  background: var(--color-accent);
+}
+
+/* 极光主题 - 选中文本 */
+html[data-theme="aurora"] ::selection {
+  background-color: var(--color-accent-subtle);
+  color: var(--color-text-primary);
+}
+
+/* 极光主题 - Focus 样式 */
+html[data-theme="aurora"] :focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
+}
+
+/* ==========================================
+   极光主题 - 动画效果
+   ========================================== */
+
+/* 极光呼吸动画 - 用于加载状态等 */
+@keyframes aurora-pulse {
+  0%, 100% {
+    opacity: 0.6;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+html[data-theme="aurora"] .aurora-pulse {
+  animation: aurora-pulse 2s ease-in-out infinite;
+}
+
+/* 极光流动动画 - 用于特殊强调 */
+@keyframes aurora-flow {
+  0% {
+    background-position: 0% 50%;
+  }
+  50% {
+    background-position: 100% 50%;
+  }
+  100% {
+    background-position: 0% 50%;
+  }
+}
+
+html[data-theme="aurora"] .aurora-flow {
+  background: var(--aurora-gradient);
+  background-size: 200% 200%;
+  animation: aurora-flow 3s ease infinite;
+}
+
+/* ==========================================
+   极光主题 - 同步按钮特殊样式
+   ========================================== */
+html[data-theme="aurora"] .sync-button-syncing {
+  background: var(--aurora-gradient);
+  background-size: 200% 200%;
+  animation: aurora-flow 2s ease infinite;
+}
+
+/* ==========================================
+   极光主题 - 标签组计数徽章
+   ========================================== */
+html[data-theme="aurora"] .tab-group-count {
+  background: var(--color-accent-subtle);
+  color: var(--color-accent);
+  font-weight: 600;
+}
+
+html[data-theme="aurora"].dark .tab-group-count {
+  background: rgba(34, 211, 238, 0.15);
+  color: #67e8f9;
+}
+
+/* ==========================================
+   极光主题 - 锁定图标
+   ========================================== */
+html[data-theme="aurora"] .tab-group-lock-icon {
+  color: var(--color-warning);
+}
+
+/* ==========================================
+   极光主题 - 操作按钮
+   ========================================== */
+html[data-theme="aurora"] .tab-group-action-accent {
+  color: var(--color-accent);
+}
+
+html[data-theme="aurora"] .tab-group-action-accent:hover {
+  color: var(--color-accent-hover);
+}
+
+html[data-theme="aurora"] .tab-group-action-danger:hover {
+  color: var(--color-danger);
+}
+
+html[data-theme="aurora"] .tab-item-delete-btn:hover {
+  color: var(--color-danger);
+}
+
+html[data-theme="aurora"] .tab-item-title-hover:hover {
+  color: var(--color-accent);
+}
+
+html[data-theme="aurora"] .tab-group-title-hover:hover {
+  color: var(--color-accent);
+}
+
+/* ==========================================
+   极光主题 - 搜索组件样式
+   ========================================== */
+html[data-theme="aurora"] .search-bar-input {
+  border-radius: var(--radius-full);
+  background: var(--color-bg-secondary);
+  border: 1px solid var(--color-border-default);
+}
+
+html[data-theme="aurora"] .search-bar-input:hover {
+  border-color: var(--color-border-strong);
+}
+
+html[data-theme="aurora"] .search-bar-input:focus {
+  border-color: var(--color-accent);
+  box-shadow: 0 0 0 3px var(--color-accent-subtle);
+}
+
+html[data-theme="aurora"] .search-result-item {
+  border-radius: var(--radius-md);
+}
+
+html[data-theme="aurora"] .search-result-item:hover {
+  background: var(--color-bg-tertiary);
+}
+
+html[data-theme="aurora"] .search-highlight {
+  background-color: #ecfeff;
+  color: #0891b2;
+}
+
+html[data-theme="aurora"].dark .search-highlight {
+  background-color: rgba(34, 211, 238, 0.15);
+  color: #67e8f9;
+}
+
+/* 极光主题搜索结果链接 - 使用极光青色 */
+html[data-theme="aurora"] .search-result-link {
+  color: var(--color-accent);
+}
+
+html[data-theme="aurora"] .search-result-link:hover {
+  color: var(--color-accent-hover);
+}
+
+/* 极光主题搜索操作按钮 */
+html[data-theme="aurora"] .search-action-btn-accent {
+  color: var(--color-accent);
+}
+
+html[data-theme="aurora"] .search-action-btn-accent:hover {
+  color: var(--color-accent-hover);
+}
+
+/* ==========================================
+   极光主题 - 时间显示
+   ========================================== */
+html[data-theme="aurora"] .tab-group-time {
+  font-size: 0.75rem;
+  color: var(--color-text-muted);
+}
+
+/* ==========================================
+   极光主题 - 空状态默认图标
+   ========================================== */
+html[data-theme="aurora"] .empty-state-default-icon {
+  color: var(--color-text-muted);
+}
+

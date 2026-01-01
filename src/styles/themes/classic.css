@@ -248,3 +248,51 @@ html[data-theme="classic"] .toggle-switch-active {
 html[data-theme="classic"] .toggle-switch-inactive {
   background-color: var(--color-border-default);
 }
+
+/* ==========================================
+   经典主题 - 搜索组件样式
+   ========================================== */
+html[data-theme="classic"] .search-bar-input {
+  border-radius: var(--radius-full);
+  box-shadow: var(--shadow-elevation-1);
+}
+
+html[data-theme="classic"] .search-bar-input:focus {
+  box-shadow: 0 0 0 2px var(--color-accent);
+}
+
+html[data-theme="classic"] .search-result-item {
+  border-radius: var(--radius-sm);
+}
+
+html[data-theme="classic"] .search-result-item:hover {
+  box-shadow: var(--shadow-elevation-1);
+}
+
+html[data-theme="classic"] .search-highlight {
+  background-color: #e3f2fd;
+  color: #1976d2;
+}
+
+html[data-theme="classic"].dark .search-highlight {
+  background-color: #1e3a5f;
+  color: #90caf9;
+}
+
+/* 经典主题搜索结果链接 - 使用蓝色 */
+html[data-theme="classic"] .search-result-link {
+  color: var(--color-accent);
+}
+
+html[data-theme="classic"] .search-result-link:hover {
+  color: var(--color-accent-hover);
+}
+
+/* 经典主题搜索操作按钮 */
+html[data-theme="classic"] .search-action-btn-accent {
+  color: var(--color-accent);
+}
+
+html[data-theme="classic"] .search-action-btn-accent:hover {
+  color: var(--color-accent-hover);
+}

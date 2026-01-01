@@ -50,13 +50,8 @@ export const MainApp: React.FC = () => {
     setShowPerformanceTest(!showPerformanceTest);
   };
 
-  // 根据布局模式和搜索状态确定容器宽度类
+  // 根据布局模式确定容器宽度类（搜索模式也跟随当前布局）
   const getContainerWidthClass = () => {
-    // 搜索模式下使用单栏宽度
-    if (searchQuery) {
-      return 'layout-single-width';
-    }
-    // 根据布局模式选择宽度
     return layoutMode === 'double' ? 'layout-double-width' : 'layout-single-width';
   };
 
@@ -91,7 +86,7 @@ export const MainApp: React.FC = () => {
             </>
           ) : (
             <>
-              <Header onSearch={setSearchQuery} searchQuery={searchQuery} />
+              <Header onSearch={setSearchQuery} />
               <main className={`flex-1 w-full py-2 ${getContainerWidthClass()}`}>
                 <Suspense fallback={<div className="p-4 text-center">加载标签列表...</div>}>
                   <TabList searchQuery={searchQuery} />

@@ -1,5 +1,6 @@
 @import './themes/classic.css';
 @import './themes/refined.css';
+@import './themes/aurora.css';
 
 @tailwind base;
 @tailwind components;
@@ -419,6 +420,108 @@ html:not([data-theme]).dark {
   }
 
   /* ==========================================
+     搜索栏组件 - 主题感知样式
+     ========================================== */
+  .search-bar-input {
+    @apply w-full px-4 py-2 pl-10 rounded-lg;
+    @apply transition duration-200;
+    @apply focus:outline-none;
+    background-color: var(--color-bg-secondary);
+    border: 1px solid var(--color-border-default);
+    color: var(--color-text-primary);
+  }
+
+  .search-bar-input::placeholder {
+    color: var(--color-text-muted);
+  }
+
+  .search-bar-input:hover {
+    border-color: var(--color-border-strong);
+  }
+
+  .search-bar-input:focus {
+    border-color: var(--color-accent);
+    box-shadow: 0 0 0 2px var(--color-accent-subtle);
+  }
+
+  /* 搜索清除按钮 - 增强样式 */
+  .search-clear-btn {
+    @apply absolute inset-y-0 right-0 pr-3;
+    @apply transition-all duration-200 ease-in-out;
+    @apply hover:scale-110;
+    @apply focus:outline-none;
+    @apply flex items-center;
+    color: var(--color-text-muted);
+  }
+
+  .search-clear-btn:hover {
+    color: var(--color-text-secondary);
+  }
+
+  /* ==========================================
+     搜索结果列表 - 主题感知样式
+     ========================================== */
+  .search-result-item {
+    @apply flex items-center py-1.5 px-3 rounded transition-colors;
+    background-color: var(--color-bg-secondary);
+  }
+
+  .search-result-item:hover {
+    background-color: var(--color-bg-tertiary);
+  }
+
+  .search-result-link {
+    @apply truncate text-sm flex-1 min-w-0;
+    @apply hover:underline transition-colors;
+    color: var(--color-accent);
+  }
+
+  .search-result-link:hover {
+    color: var(--color-accent-hover);
+  }
+
+  .search-result-delete-btn {
+    @apply p-1 rounded transition-colors ml-1;
+    @apply opacity-0 group-hover:opacity-100;
+    color: var(--color-text-muted);
+  }
+
+  .search-result-delete-btn:hover {
+    color: var(--color-danger);
+    background-color: var(--color-bg-tertiary);
+  }
+
+  /* 搜索操作按钮 */
+  .search-action-btn {
+    @apply text-xs hover:underline flex items-center transition-colors;
+  }
+
+  .search-action-btn-accent {
+    color: var(--color-accent);
+  }
+
+  .search-action-btn-accent:hover {
+    color: var(--color-accent-hover);
+  }
+
+  .search-action-btn-danger {
+    color: var(--color-danger);
+  }
+
+  .search-action-btn-danger:hover {
+    opacity: 0.8;
+  }
+
+  /* 搜索高亮样式 */
+  .search-highlight {
+    background-color: var(--color-accent-subtle);
+    color: var(--color-accent);
+    padding: 0 2px;
+    border-radius: 2px;
+    font-weight: 500;
+  }
+
+  /* ==========================================
      标签组组件
      ========================================== */
   .tab-group-card {
@@ -622,11 +725,11 @@ html:not([data-theme]).dark {
   }
 
   .layout-single-width {
-    @apply max-w-3xl mx-auto;
+    @apply max-w-4xl mx-auto px-4;
   }
 
   .layout-double-width {
-    @apply max-w-6xl mx-auto;
+    @apply max-w-6xl mx-auto px-4;
   }
 
   /* 双栏网格 */

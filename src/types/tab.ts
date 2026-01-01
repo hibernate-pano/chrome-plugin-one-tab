@@ -82,7 +82,7 @@ export interface TabState {
 export type LayoutMode = 'single' | 'double';
 
 // 主题风格类型
-export type ThemeStyle = 'classic' | 'refined';
+export type ThemeStyle = 'classic' | 'refined' | 'aurora';
 
 export interface UserSettings {
   groupNameTemplate: string;
