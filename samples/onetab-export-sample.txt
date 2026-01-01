@@ -1,6 +1,0 @@
-https://www.example.com/page1 | Example Page 1
-https://www.example.com/page2 | Example Page 2
-https://www.example.com/page3 | Example Page 3
-
-https://www.anotherexample.com/page1 | Another Example Page 1
-https://www.anotherexample.com/page2 | Another Example Page 2
