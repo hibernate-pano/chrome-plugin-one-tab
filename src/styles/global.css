@@ -1,93 +1,126 @@
+@import './themes/classic.css';
+@import './themes/refined.css';
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
 /* ==========================================
+   🎨 Theme System - Theme Files Imported Above
+   ========================================== */
+
+/* ==========================================
+   🎨 Theme Style Isolation
+   确保主题特定样式不会泄漏
+   ========================================== */
+
+/* 
+ * 主题隔离原则：
+ * 1. 所有主题特定样式都使用 [data-theme="xxx"] 选择器
+ * 2. 通用样式使用 CSS 变量，变量值由主题文件定义
+ * 3. 深色模式通过 .dark 类与主题选择器组合使用
+ * 4. 确保 data-theme 属性始终存在于 html 元素上
+ */
+
+/* 默认主题回退 - 当 data-theme 未设置时使用 refined 主题的值 */
+html:not([data-theme]) {
+  --color-bg-primary: #fafaf9;
+  --color-bg-secondary: #ffffff;
+  --color-bg-tertiary: #f5f5f4;
+  --color-bg-elevated: #ffffff;
+  --color-bg-overlay: rgba(255, 255, 255, 0.8);
+  --color-text-primary: #1c1917;
+  --color-text-secondary: #57534e;
+  --color-text-tertiary: #78716c;
+  --color-text-muted: #a8a29e;
+  --color-border-default: #e7e5e4;
+  --color-border-subtle: #f5f5f4;
+  --color-border-strong: #d6d3d1;
+  --color-accent: #6366f1;
+  --color-accent-hover: #4f46e5;
+  --color-accent-subtle: #f0f4ff;
+  --color-warning: #f59e0b;
+  --color-danger: #ef4444;
+  --color-success: #22c55e;
+  --shadow-card: 0 1px 3px 0 rgb(0 0 0 / 0.04), 0 1px 2px -1px rgb(0 0 0 / 0.03);
+  --shadow-card-hover: 0 4px 6px -1px rgb(0 0 0 / 0.06), 0 2px 4px -2px rgb(0 0 0 / 0.04);
+  --font-family-sans: 'SF Pro Display', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+}
+
+html:not([data-theme]).dark {
+  --color-bg-primary: #0c0a09;
+  --color-bg-secondary: #1c1917;
+  --color-bg-tertiary: #292524;
+  --color-bg-elevated: #292524;
+  --color-bg-overlay: rgba(28, 25, 23, 0.9);
+  --color-text-primary: #fafaf9;
+  --color-text-secondary: #d6d3d1;
+  --color-text-tertiary: #a8a29e;
+  --color-text-muted: #78716c;
+  --color-border-default: #292524;
+  --color-border-subtle: #1c1917;
+  --color-border-strong: #44403c;
+  --color-accent: #818cf8;
+  --color-accent-hover: #a5b4fc;
+  --color-accent-subtle: #312e81;
+  --color-warning: #fbbf24;
+  --color-danger: #f87171;
+  --color-success: #4ade80;
+  --shadow-card: 0 1px 3px 0 rgb(0 0 0 / 0.2), 0 1px 2px -1px rgb(0 0 0 / 0.15);
+  --shadow-card-hover: 0 4px 6px -1px rgb(0 0 0 / 0.3), 0 2px 4px -2px rgb(0 0 0 / 0.2);
+}
+
+/* ==========================================
    🎨 Refined Minimal Design System
    ========================================== */
 
-/* Geist 字体引入 */
-@font-face {
-  font-family: 'Geist';
-  src: url('https://cdn.jsdelivr.net/npm/geist@1.2.0/dist/fonts/geist-sans/Geist-Regular.woff2') format('woff2');
-  font-weight: 400;
-  font-style: normal;
-  font-display: swap;
-}
-
-@font-face {
-  font-family: 'Geist';
-  src: url('https://cdn.jsdelivr.net/npm/geist@1.2.0/dist/fonts/geist-sans/Geist-Medium.woff2') format('woff2');
-  font-weight: 500;
-  font-style: normal;
-  font-display: swap;
-}
-
-@font-face {
-  font-family: 'Geist';
-  src: url('https://cdn.jsdelivr.net/npm/geist@1.2.0/dist/fonts/geist-sans/Geist-SemiBold.woff2') format('woff2');
-  font-weight: 600;
-  font-style: normal;
-  font-display: swap;
-}
-
-@font-face {
-  font-family: 'Geist Mono';
-  src: url('https://cdn.jsdelivr.net/npm/geist@1.2.0/dist/fonts/geist-mono/GeistMono-Regular.woff2') format('woff2');
-  font-weight: 400;
-  font-style: normal;
-  font-display: swap;
-}
+/* 
+ * 字体说明：
+ * Chrome 扩展 CSP 不允许从外部 CDN 加载字体
+ * 使用系统字体栈作为替代方案
+ * - Refined 主题: SF Pro Display / system-ui (现代简约)
+ * - Classic 主题: Roboto / Arial (Material Design 风格)
+ */
 
 @layer base {
+  /* 
+   * 默认 CSS 变量 - 仅作为回退值
+   * 当 data-theme 属性设置时，主题文件中的变量会覆盖这些值
+   */
   :root {
-    /* 浅色主题 CSS 变量 */
-    --color-bg-primary: #fafaf9;
-    --color-bg-secondary: #ffffff;
-    --color-bg-tertiary: #f5f5f4;
-    --color-bg-elevated: #ffffff;
-    --color-bg-overlay: rgba(255, 255, 255, 0.8);
+    /* 排版 - 使用系统字体栈 (Chrome 扩展 CSP 兼容) */
+    --font-family-sans: 'SF Pro Display', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+    --font-family-mono: 'SF Mono', Menlo, Monaco, 'Cascadia Code', monospace;
 
-    --color-text-primary: #1c1917;
-    --color-text-secondary: #57534e;
-    --color-text-tertiary: #78716c;
-    --color-text-muted: #a8a29e;
+    /* 圆角 - 默认值，主题可覆盖 */
+    --radius-sm: 0.25rem;
+    --radius-md: 0.375rem;
+    --radius-lg: 0.5rem;
+    --radius-xl: 0.75rem;
+    --radius-full: 9999px;
 
-    --color-border-default: #e7e5e4;
-    --color-border-subtle: #f5f5f4;
-    --color-border-strong: #d6d3d1;
-
-    --color-accent: #6366f1;
-    --color-accent-hover: #4f46e5;
-    --color-accent-subtle: #f0f4ff;
-
-    --shadow-card: 0 1px 3px 0 rgb(0 0 0 / 0.04), 0 1px 2px -1px rgb(0 0 0 / 0.03);
-    --shadow-card-hover: 0 4px 6px -1px rgb(0 0 0 / 0.06), 0 2px 4px -2px rgb(0 0 0 / 0.04);
+    /* 间距 - 默认值 */
+    --spacing-xs: 0.25rem;
+    --spacing-sm: 0.5rem;
+    --spacing-md: 1rem;
+    --spacing-lg: 1.5rem;
+    --spacing-xl: 2rem;
   }
 
-  .dark {
-    /* 深色主题 CSS 变量 */
-    --color-bg-primary: #0c0a09;
-    --color-bg-secondary: #1c1917;
-    --color-bg-tertiary: #292524;
-    --color-bg-elevated: #292524;
-    --color-bg-overlay: rgba(28, 25, 23, 0.9);
+  /* 
+   * 颜色变量由主题文件定义
+   * 这里不再定义颜色变量，避免与主题文件冲突
+   */
 
-    --color-text-primary: #fafaf9;
-    --color-text-secondary: #d6d3d1;
-    --color-text-tertiary: #a8a29e;
-    --color-text-muted: #78716c;
-
-    --color-border-default: #292524;
-    --color-border-subtle: #1c1917;
-    --color-border-strong: #44403c;
-
-    --color-accent: #818cf8;
-    --color-accent-hover: #a5b4fc;
-    --color-accent-subtle: #312e81;
-
-    --shadow-card: 0 1px 3px 0 rgb(0 0 0 / 0.2), 0 1px 2px -1px rgb(0 0 0 / 0.15);
-    --shadow-card-hover: 0 4px 6px -1px rgb(0 0 0 / 0.3), 0 2px 4px -2px rgb(0 0 0 / 0.2);
+  /* ==========================================
+     主题切换过渡动画
+     需求: 8.1, 8.2 - 平滑过渡效果 (200-300ms)
+     ========================================== */
+  
+  /* 定义主题过渡时间变量，便于统一管理 */
+  :root {
+    --theme-transition-duration: 250ms;
+    --theme-transition-timing: cubic-bezier(0.4, 0, 0.2, 1);
   }
 
   html {
@@ -97,24 +130,133 @@
     text-rendering: optimizeLegibility;
   }
 
+  /* 
+   * 主题过渡效果 - 应用于所有主题相关属性
+   * 过渡时间: 250ms (在 200-300ms 范围内)
+   * 过渡曲线: cubic-bezier(0.4, 0, 0.2, 1) - Material Design 标准缓动
+   * 
+   * 覆盖的属性:
+   * - background-color: 背景色变化
+   * - border-color: 边框色变化
+   * - color: 文本色变化
+   * - box-shadow: 阴影变化
+   * - fill: SVG 填充色变化
+   * - stroke: SVG 描边色变化
+   */
+  body,
+  .card,
+  .card-glass,
+  .btn,
+  .btn-primary,
+  .btn-secondary,
+  .btn-ghost,
+  .btn-icon,
+  .input,
+  .search-input,
+  .tab-group-card,
+  .tab-group-header,
+  .tab-group-title,
+  .tab-group-count,
+  .tab-item,
+  .tab-item-title,
+  .tab-item-url,
+  .header,
+  .badge,
+  .badge-accent,
+  .empty-state,
+  .empty-state-icon,
+  .empty-state-title,
+  .empty-state-description,
+  .tooltip,
+  .dropdown-menu,
+  .dropdown-item,
+  .popup-menu,
+  .modal-content {
+    transition: 
+      background-color var(--theme-transition-duration) var(--theme-transition-timing),
+      border-color var(--theme-transition-duration) var(--theme-transition-timing),
+      color var(--theme-transition-duration) var(--theme-transition-timing),
+      box-shadow var(--theme-transition-duration) var(--theme-transition-timing),
+      fill var(--theme-transition-duration) var(--theme-transition-timing),
+      stroke var(--theme-transition-duration) var(--theme-transition-timing);
+  }
+
+  /* SVG 图标也需要过渡效果 */
+  svg,
+  svg path,
+  svg circle,
+  svg rect {
+    transition: 
+      fill var(--theme-transition-duration) var(--theme-transition-timing),
+      stroke var(--theme-transition-duration) var(--theme-transition-timing);
+  }
+
   body {
-    @apply bg-neutral-50 text-neutral-900 font-sans antialiased;
+    @apply font-sans antialiased;
     background-color: var(--color-bg-primary);
     color: var(--color-text-primary);
-    transition: background-color 0.2s ease, color 0.2s ease;
+    font-family: var(--font-family-sans);
+    /* 主题过渡已在上方统一定义 */
   }
 
   .dark body {
-    @apply bg-neutral-950 text-neutral-50;
+    background-color: var(--color-bg-primary);
+    color: var(--color-text-primary);
   }
 
-  /* 可访问性：减少动画 */
+  /* ==========================================
+     可访问性：减少动画偏好支持
+     需求: 8.3 - 如果用户偏好减少动画，跳过过渡动画
+     ========================================== */
   @media (prefers-reduced-motion: reduce) {
+    /* 将过渡时间设置为接近 0，满足 Property 8 的要求 */
+    :root {
+      --theme-transition-duration: 0.001ms;
+    }
+
+    /* 全局禁用动画和过渡 */
     *, *::before, *::after {
       animation-duration: 0.001ms !important;
       animation-iteration-count: 1 !important;
       transition-duration: 0.001ms !important;
       scroll-behavior: auto !important;
+    }
+
+    /* 主题切换时也禁用过渡 - 使用 !important 确保覆盖 */
+    body,
+    .card,
+    .card-glass,
+    .btn,
+    .btn-primary,
+    .btn-secondary,
+    .btn-ghost,
+    .btn-icon,
+    .input,
+    .search-input,
+    .tab-group-card,
+    .tab-group-header,
+    .tab-group-title,
+    .tab-group-count,
+    .tab-item,
+    .tab-item-title,
+    .tab-item-url,
+    .header,
+    .badge,
+    .badge-accent,
+    .empty-state,
+    .empty-state-icon,
+    .empty-state-title,
+    .empty-state-description,
+    .tooltip,
+    .dropdown-menu,
+    .dropdown-item,
+    .popup-menu,
+    .modal-content,
+    svg,
+    svg path,
+    svg circle,
+    svg rect {
+      transition: none !important;
     }
   }
 
@@ -164,17 +306,26 @@
     @apply inline-flex items-center justify-center gap-2;
     @apply px-4 py-2 rounded-lg font-medium text-sm;
     @apply transition-all duration-150 ease-smooth;
-    @apply focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-500 focus-visible:ring-offset-2;
+    @apply focus-visible:outline-none focus-visible:ring-offset-2;
+  }
+
+  .btn:focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 2px var(--color-accent);
   }
 
   .btn-primary {
-    @apply bg-accent-600 text-white;
-    @apply hover:bg-accent-700 active:bg-accent-800;
+    background-color: var(--color-accent);
+    color: white;
     @apply shadow-soft hover:shadow-medium;
   }
 
-  .dark .btn-primary {
-    @apply bg-accent-500 hover:bg-accent-400;
+  .btn-primary:hover {
+    background-color: var(--color-accent-hover);
+  }
+
+  .btn-primary:active {
+    filter: brightness(0.9);
   }
 
   .btn-secondary {
@@ -189,16 +340,23 @@
   }
 
   .btn-ghost {
-    @apply bg-transparent text-neutral-600 dark:text-neutral-400;
-    @apply hover:bg-neutral-100 dark:hover:bg-neutral-800;
+    background: transparent;
+    color: var(--color-text-secondary);
+  }
+
+  .btn-ghost:hover {
+    background: var(--color-bg-tertiary);
   }
 
   .btn-icon {
     @apply p-2 rounded-lg;
-    @apply text-neutral-500 dark:text-neutral-400;
-    @apply hover:bg-neutral-100 dark:hover:bg-neutral-800;
-    @apply hover:text-neutral-700 dark:hover:text-neutral-200;
     @apply transition-all duration-150;
+    color: var(--color-text-tertiary);
+  }
+
+  .btn-icon:hover {
+    background: var(--color-bg-tertiary);
+    color: var(--color-text-primary);
   }
 
   .btn-icon:active {
@@ -227,7 +385,8 @@
   }
 
   .input:focus {
-    @apply outline-none ring-2 ring-accent-500/20;
+    @apply outline-none;
+    box-shadow: 0 0 0 3px var(--color-accent-subtle);
     background: var(--color-bg-secondary);
     border-color: var(--color-accent);
   }
@@ -240,9 +399,23 @@
   }
 
   .search-input:focus {
-    @apply ring-2 ring-accent-500/20;
+    box-shadow: 0 0 0 3px var(--color-accent-subtle);
     background: var(--color-bg-secondary);
     border-color: var(--color-accent);
+  }
+
+  /* 搜索图标 */
+  .search-icon {
+    color: var(--color-text-muted);
+  }
+
+  /* 搜索清除按钮 */
+  .search-clear-btn {
+    color: var(--color-text-muted);
+  }
+
+  .search-clear-btn:hover {
+    color: var(--color-text-secondary);
   }
 
   /* ==========================================
@@ -282,6 +455,41 @@
     color: #a5b4fc;
   }
 
+  /* 标签组锁定图标 */
+  .tab-group-lock-icon {
+    color: var(--color-warning, #f59e0b);
+  }
+
+  /* 标签组时间显示 */
+  .tab-group-time {
+    font-size: 0.75rem;
+    color: var(--color-text-muted);
+  }
+
+  /* 标签组标题悬停效果 */
+  .tab-group-title-hover:hover {
+    color: var(--color-accent);
+  }
+
+  /* 标签组操作按钮 - 强调色 */
+  .tab-group-action-accent {
+    color: var(--color-accent);
+  }
+
+  /* 标签组操作按钮 - 危险色 */
+  .tab-group-action-danger:hover {
+    color: var(--color-danger, #ef4444);
+  }
+
+  /* 标签组标签容器 */
+  .tab-group-tabs-container {
+    border-color: var(--color-border-subtle);
+  }
+
+  .tab-group-tabs-container > * + * {
+    border-top: 1px solid var(--color-border-subtle);
+  }
+
   /* ==========================================
      标签项组件
      ========================================== */
@@ -305,7 +513,7 @@
 
   .tab-item-favicon {
     @apply w-4 h-4 rounded flex-shrink-0;
-    @apply bg-neutral-200 dark:bg-neutral-700;
+    background: var(--color-bg-tertiary);
   }
 
   .tab-item-title {
@@ -316,6 +524,16 @@
   .tab-item-url {
     @apply text-xs truncate max-w-[200px];
     color: var(--color-text-muted);
+  }
+
+  /* 标签项标题悬停效果 */
+  .tab-item-title-hover:hover {
+    color: var(--color-accent);
+  }
+
+  /* 标签项删除按钮 */
+  .tab-item-delete-btn:hover {
+    color: var(--color-danger, #ef4444);
   }
 
   .tab-item-actions {
@@ -375,6 +593,11 @@
     color: var(--color-text-secondary);
   }
 
+  /* 空状态默认图标 */
+  .empty-state-default-icon {
+    color: var(--color-text-muted);
+  }
+
   /* ==========================================
      头部布局
      ========================================== */
@@ -421,19 +644,20 @@
      ========================================== */
   .dragging {
     @apply opacity-50 scale-[1.02];
-    @apply ring-2 ring-accent-500/30;
     @apply shadow-elevated;
     border-radius: 0.5rem;
+    box-shadow: 0 0 0 2px var(--color-accent);
   }
 
   .drag-over {
-    @apply ring-2 ring-accent-500;
+    box-shadow: 0 0 0 2px var(--color-accent);
     background: var(--color-accent-subtle) !important;
   }
 
   .drop-indicator {
-    @apply h-0.5 bg-accent-500 rounded-full;
+    @apply h-0.5 rounded-full;
     @apply animate-pulse-soft;
+    background: var(--color-accent);
   }
 
   /* ==========================================
@@ -564,4 +788,96 @@
 
 .animate-scaleIn {
   animation: scaleIn 0.2s ease-out forwards;
+}
+
+/* ==========================================
+   主题感知工具类
+   用于确保组件使用正确的主题变量
+   ========================================== */
+
+/* 背景色工具类 */
+.theme-bg-primary {
+  background-color: var(--color-bg-primary);
+}
+
+.theme-bg-secondary {
+  background-color: var(--color-bg-secondary);
+}
+
+.theme-bg-tertiary {
+  background-color: var(--color-bg-tertiary);
+}
+
+.theme-bg-elevated {
+  background-color: var(--color-bg-elevated);
+}
+
+/* 文本色工具类 */
+.theme-text-primary {
+  color: var(--color-text-primary);
+}
+
+.theme-text-secondary {
+  color: var(--color-text-secondary);
+}
+
+.theme-text-tertiary {
+  color: var(--color-text-tertiary);
+}
+
+.theme-text-muted {
+  color: var(--color-text-muted);
+}
+
+/* 边框色工具类 */
+.theme-border-default {
+  border-color: var(--color-border-default);
+}
+
+.theme-border-subtle {
+  border-color: var(--color-border-subtle);
+}
+
+.theme-border-strong {
+  border-color: var(--color-border-strong);
+}
+
+/* 强调色工具类 */
+.theme-accent {
+  color: var(--color-accent);
+}
+
+.theme-accent-bg {
+  background-color: var(--color-accent);
+}
+
+.theme-accent-subtle-bg {
+  background-color: var(--color-accent-subtle);
+}
+
+/* 阴影工具类 */
+.theme-shadow-card {
+  box-shadow: var(--shadow-card);
+}
+
+.theme-shadow-card-hover {
+  box-shadow: var(--shadow-card-hover);
+}
+
+/* 圆角工具类 */
+.theme-radius-sm {
+  border-radius: var(--radius-sm);
+}
+
+.theme-radius-md {
+  border-radius: var(--radius-md);
+}
+
+.theme-radius-lg {
+  border-radius: var(--radius-lg);
+}
+
+/* 字体工具类 */
+.theme-font-sans {
+  font-family: var(--font-family-sans);
 }

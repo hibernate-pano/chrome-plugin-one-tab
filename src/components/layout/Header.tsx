@@ -227,7 +227,7 @@ export const Header: React.FC<HeaderProps> = ({ onSearch, searchQuery = '' }) =>
           {/* 搜索框 */}
           <div className="flex-1 max-w-md mx-4">
             <div className="relative">
-              <div className="absolute left-3 top-1/2 -translate-y-1/2 text-neutral-400">
+              <div className="absolute left-3 top-1/2 -translate-y-1/2 search-icon">
                 {isSearching ? <LoadingIcon /> : <SearchIcon />}
               </div>
               <input
@@ -244,7 +244,7 @@ export const Header: React.FC<HeaderProps> = ({ onSearch, searchQuery = '' }) =>
               {searchValue && (
                 <button
                   onClick={handleClearSearch}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-neutral-400 hover:text-neutral-600 dark:hover:text-neutral-300 transition-colors"
+                  className="absolute right-3 top-1/2 -translate-y-1/2 search-clear-btn transition-colors"
                   title="清空搜索"
                 >
                   <CloseIcon />
@@ -254,7 +254,7 @@ export const Header: React.FC<HeaderProps> = ({ onSearch, searchQuery = '' }) =>
           </div>
 
           {/* 操作按钮组 */}
-          <div className="flex items-center gap-1 sm:gap-2">
+          <div className="flex items-center gap-1 sm:gap-2 flex-shrink-0">
             {/* 布局切换 */}
             <Tooltip
               content={settings.layoutMode === 'single' ? '切换双栏布局' : '切换单栏布局'}
@@ -290,7 +290,7 @@ export const Header: React.FC<HeaderProps> = ({ onSearch, searchQuery = '' }) =>
             <Tooltip content="保存所有标签页" position="bottom">
               <button
                 onClick={handleSaveAllTabs}
-                className="btn btn-primary hidden sm:flex"
+                className="btn btn-primary hidden sm:flex whitespace-nowrap"
                 aria-label="保存当前窗口中的所有标签页"
               >
                 <SaveIcon />

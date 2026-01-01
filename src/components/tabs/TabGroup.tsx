@@ -206,7 +206,7 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
             />
           ) : (
             <h3
-              className="tab-group-title truncate cursor-pointer hover:text-accent-600 dark:hover:text-accent-400 transition-colors"
+              className="tab-group-title truncate cursor-pointer tab-group-title-hover transition-colors"
               onClick={() => !group.isLocked && setIsEditing(true)}
               title={group.isLocked ? group.name : '点击编辑名称'}
             >
@@ -221,13 +221,13 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
 
           {/* 锁定图标 */}
           {group.isLocked && (
-            <span className="text-warning-500 flex-shrink-0" title="已锁定">
+            <span className="tab-group-lock-icon flex-shrink-0" title="已锁定">
               <LockIcon locked={true} />
             </span>
           )}
 
           {/* 时间 */}
-          <span className="text-xs text-neutral-400 hidden sm:block flex-shrink-0">
+          <span className="tab-group-time hidden sm:block flex-shrink-0">
             {formatTime(group.createdAt)}
           </span>
         </div>
@@ -237,7 +237,7 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
           {/* 恢复全部 */}
           <button
             onClick={handleOpenAllTabs}
-            className="btn-icon p-1.5 text-accent-600 dark:text-accent-400"
+            className="btn-icon p-1.5 tab-group-action-accent"
             title="恢复全部标签页"
           >
             <OpenAllIcon />
@@ -257,7 +257,7 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
           {/* 锁定/解锁 */}
           <button
             onClick={handleToggleLock}
-            className={`btn-icon p-1.5 ${group.isLocked ? 'text-warning-500' : ''}`}
+            className={`btn-icon p-1.5 ${group.isLocked ? 'tab-group-lock-icon' : ''}`}
             title={group.isLocked ? '解锁' : '锁定'}
           >
             <LockIcon locked={group.isLocked} />
@@ -267,7 +267,7 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
           {!group.isLocked && (
             <button
               onClick={handleDelete}
-              className="btn-icon p-1.5 hover:text-danger-500"
+              className="btn-icon p-1.5 tab-group-action-danger"
               title="删除标签组"
             >
               <DeleteIcon />
@@ -282,7 +282,7 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
           isCollapsed ? 'max-h-0' : 'max-h-[2000px]'
         }`}
       >
-        <div className="divide-y divide-neutral-100 dark:divide-neutral-800">
+        <div className="tab-group-tabs-container">
           {group.tabs.map((tab, index) => (
             <DraggableTab
               key={tab.id}

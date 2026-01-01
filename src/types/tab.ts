@@ -81,6 +81,9 @@ export interface TabState {
 // 布局模式枚举
 export type LayoutMode = 'single' | 'double';
 
+// 主题风格类型
+export type ThemeStyle = 'classic' | 'refined';
+
 export interface UserSettings {
   groupNameTemplate: string;
   showFavicons: boolean;
@@ -97,6 +100,7 @@ export interface UserSettings {
 
   // 新增主题设置
   themeMode: 'light' | 'dark' | 'auto'; // 主题模式
+  themeStyle?: ThemeStyle; // 主题风格
 
   reorderMode?: boolean; // 新增：全局重新排序模式
 

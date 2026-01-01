@@ -1,0 +1,250 @@
+/* ==========================================
+   🎨 Classic Theme - Material Design Style
+   ========================================== */
+
+/* 
+ * 字体说明：
+ * Chrome 扩展 CSP 不允许从外部 CDN 加载字体
+ * 使用系统字体栈作为 Roboto 的替代方案
+ * Arial 和 Segoe UI 在视觉上与 Roboto 相似
+ */
+
+/* ==========================================
+   经典主题 - 浅色模式
+   使用 html[data-theme] 选择器确保优先级
+   ========================================== */
+html[data-theme="classic"] {
+  /* 颜色 - Material Design 风格 */
+  --color-bg-primary: #fafafa;
+  --color-bg-secondary: #ffffff;
+  --color-bg-tertiary: #f5f5f5;
+  --color-bg-elevated: #ffffff;
+  --color-bg-overlay: rgba(255, 255, 255, 0.9);
+
+  --color-text-primary: #212121;
+  --color-text-secondary: #424242;
+  --color-text-tertiary: #757575;
+  --color-text-muted: #9e9e9e;
+
+  --color-border-default: #e0e0e0;
+  --color-border-subtle: #eeeeee;
+  --color-border-strong: #bdbdbd;
+
+  --color-accent: #2196f3;
+  --color-accent-hover: #1976d2;
+  --color-accent-subtle: #e3f2fd;
+
+  /* 状态颜色 */
+  --color-warning: #ff9800;
+  --color-danger: #f44336;
+  --color-success: #4caf50;
+
+  /* 排版 - 使用系统字体栈 (Chrome 扩展 CSP 兼容) */
+  --font-family-sans: 'Segoe UI', Arial, 'Helvetica Neue', sans-serif;
+  --font-family-mono: 'Cascadia Code', 'Consolas', monospace;
+
+  /* 阴影 - Material Design elevation */
+  --shadow-card: 0 1px 3px rgba(0, 0, 0, 0.12), 0 1px 2px rgba(0, 0, 0, 0.24);
+  --shadow-card-hover: 0 3px 6px rgba(0, 0, 0, 0.16), 0 3px 6px rgba(0, 0, 0, 0.23);
+  --shadow-elevation-1: 0 1px 3px rgba(0, 0, 0, 0.12), 0 1px 2px rgba(0, 0, 0, 0.24);
+  --shadow-elevation-2: 0 3px 6px rgba(0, 0, 0, 0.16), 0 3px 6px rgba(0, 0, 0, 0.23);
+  --shadow-elevation-3: 0 10px 20px rgba(0, 0, 0, 0.19), 0 6px 6px rgba(0, 0, 0, 0.23);
+
+  /* 圆角 */
+  --radius-sm: 4px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-full: 9999px;
+
+  /* 间距 */
+  --spacing-xs: 4px;
+  --spacing-sm: 8px;
+  --spacing-md: 16px;
+  --spacing-lg: 24px;
+  --spacing-xl: 32px;
+}
+
+/* ==========================================
+   经典主题 - 深色模式
+   ========================================== */
+html[data-theme="classic"].dark {
+  --color-bg-primary: #121212;
+  --color-bg-secondary: #1e1e1e;
+  --color-bg-tertiary: #2d2d2d;
+  --color-bg-elevated: #2d2d2d;
+  --color-bg-overlay: rgba(30, 30, 30, 0.95);
+
+  --color-text-primary: #ffffff;
+  --color-text-secondary: #b0b0b0;
+  --color-text-tertiary: #808080;
+  --color-text-muted: #606060;
+
+  --color-border-default: #424242;
+  --color-border-subtle: #2d2d2d;
+  --color-border-strong: #616161;
+
+  --color-accent: #90caf9;
+  --color-accent-hover: #64b5f6;
+  --color-accent-subtle: #1e3a5f;
+
+  /* 状态颜色 */
+  --color-warning: #ffb74d;
+  --color-danger: #ef5350;
+  --color-success: #66bb6a;
+
+  /* 深色模式阴影 */
+  --shadow-card: 0 1px 3px rgba(0, 0, 0, 0.3), 0 1px 2px rgba(0, 0, 0, 0.4);
+  --shadow-card-hover: 0 3px 6px rgba(0, 0, 0, 0.35), 0 3px 6px rgba(0, 0, 0, 0.45);
+  --shadow-elevation-1: 0 1px 3px rgba(0, 0, 0, 0.3), 0 1px 2px rgba(0, 0, 0, 0.4);
+  --shadow-elevation-2: 0 3px 6px rgba(0, 0, 0, 0.35), 0 3px 6px rgba(0, 0, 0, 0.45);
+  --shadow-elevation-3: 0 10px 20px rgba(0, 0, 0, 0.4), 0 6px 6px rgba(0, 0, 0, 0.45);
+}
+
+/* ==========================================
+   经典主题特定样式
+   ========================================== */
+html[data-theme="classic"] body {
+  font-family: var(--font-family-sans);
+}
+
+/* 经典主题按钮样式 - Material Design ripple 效果 */
+html[data-theme="classic"] .btn {
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  font-weight: 500;
+}
+
+html[data-theme="classic"] .btn-primary {
+  background-color: var(--color-accent);
+  box-shadow: var(--shadow-elevation-1);
+}
+
+html[data-theme="classic"] .btn-primary:hover {
+  background-color: var(--color-accent-hover);
+  box-shadow: var(--shadow-elevation-2);
+}
+
+/* 经典主题卡片样式 */
+html[data-theme="classic"] .card {
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-card);
+  border: none;
+}
+
+html[data-theme="classic"] .card:hover {
+  box-shadow: var(--shadow-card-hover);
+}
+
+/* 经典主题输入框样式 */
+html[data-theme="classic"] .input {
+  border: 1px solid var(--color-border-default);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg-secondary);
+}
+
+html[data-theme="classic"] .input:focus {
+  border-color: var(--color-accent);
+  box-shadow: 0 0 0 2px var(--color-accent-subtle);
+}
+
+/* 经典主题标签组样式 */
+html[data-theme="classic"] .tab-group-card {
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-card);
+  border: none;
+}
+
+html[data-theme="classic"] .tab-group-header {
+  background: var(--color-bg-tertiary);
+  border-bottom: 1px solid var(--color-border-default);
+}
+
+/* 经典主题徽章样式 */
+html[data-theme="classic"] .badge-accent {
+  background: var(--color-accent);
+  color: #ffffff;
+}
+
+html[data-theme="classic"].dark .badge-accent {
+  background: var(--color-accent-subtle);
+  color: var(--color-accent);
+}
+
+/* ==========================================
+   经典主题 - 下拉菜单和弹出层样式
+   ========================================== */
+html[data-theme="classic"] .dropdown-menu,
+html[data-theme="classic"] .popup-menu {
+  background: var(--color-bg-secondary);
+  border: 1px solid var(--color-border-default);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-elevation-2);
+}
+
+html[data-theme="classic"] .dropdown-item {
+  color: var(--color-text-primary);
+}
+
+html[data-theme="classic"] .dropdown-item:hover {
+  background: var(--color-bg-tertiary);
+}
+
+/* 经典主题 - 模态框样式 */
+html[data-theme="classic"] .modal-content {
+  background: var(--color-bg-secondary);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-elevation-3);
+}
+
+/* 经典主题 - 工具提示样式 */
+html[data-theme="classic"] .tooltip {
+  background: var(--color-bg-elevated);
+  color: var(--color-text-primary);
+  border: 1px solid var(--color-border-default);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-elevation-1);
+}
+
+/* 经典主题 - 搜索框样式 */
+html[data-theme="classic"] .search-input {
+  background: var(--color-bg-secondary);
+  border: 1px solid var(--color-border-default);
+  border-radius: var(--radius-full);
+}
+
+html[data-theme="classic"] .search-input:focus {
+  border-color: var(--color-accent);
+  box-shadow: 0 0 0 2px var(--color-accent-subtle);
+}
+
+/* 经典主题 - 头部样式 */
+html[data-theme="classic"] .header {
+  background: var(--color-bg-overlay);
+  border-bottom: 1px solid var(--color-border-default);
+  box-shadow: var(--shadow-elevation-1);
+}
+
+/* 经典主题 - 空状态样式 */
+html[data-theme="classic"] .empty-state-icon {
+  background: var(--color-bg-tertiary);
+  border: 1px solid var(--color-border-default);
+  border-radius: var(--radius-md);
+}
+
+/* 经典主题 - 标签项样式 */
+html[data-theme="classic"] .tab-item {
+  border-bottom: 1px solid var(--color-border-subtle);
+}
+
+html[data-theme="classic"] .tab-item:hover {
+  background: var(--color-bg-tertiary);
+}
+
+/* 经典主题 - 开关按钮样式 */
+html[data-theme="classic"] .toggle-switch-active {
+  background-color: var(--color-accent);
+}
+
+html[data-theme="classic"] .toggle-switch-inactive {
+  background-color: var(--color-border-default);
+}

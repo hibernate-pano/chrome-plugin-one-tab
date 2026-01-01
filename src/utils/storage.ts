@@ -1,4 +1,4 @@
-import { TabGroup, UserSettings, Tab, LayoutMode } from '@/types/tab';
+import { TabGroup, UserSettings, Tab, LayoutMode, ThemeStyle } from '@/types/tab';
 import { parseOneTabFormat, formatToOneTabFormat } from './oneTabFormatParser';
 import { secureStorage } from './secureStorage';
 import { kvGet, kvSet, kvRemove } from '@/storage/storageAdapter';
@@ -15,6 +15,38 @@ const STORAGE_KEYS = {
 
 const STORAGE_VERSION = 2;
 
+// 有效的主题风格值
+const VALID_THEME_STYLES: ThemeStyle[] = ['classic', 'refined'];
+
+// 有效的主题模式值
+const VALID_THEME_MODES: Array<'light' | 'dark' | 'auto'> = ['light', 'dark', 'auto'];
+
+/**
+ * 验证主题风格值
+ * @param value 待验证的值
+ * @returns 有效的主题风格值，无效时返回默认值 'refined'
+ */
+export function validateThemeStyle(value: unknown): ThemeStyle {
+  if (typeof value === 'string' && VALID_THEME_STYLES.includes(value as ThemeStyle)) {
+    return value as ThemeStyle;
+  }
+  console.warn('无效的主题风格值，使用默认值:', value);
+  return 'refined';
+}
+
+/**
+ * 验证主题模式值
+ * @param value 待验证的值
+ * @returns 有效的主题模式值，无效时返回默认值 'auto'
+ */
+export function validateThemeMode(value: unknown): 'light' | 'dark' | 'auto' {
+  if (typeof value === 'string' && VALID_THEME_MODES.includes(value as 'light' | 'dark' | 'auto')) {
+    return value as 'light' | 'dark' | 'auto';
+  }
+  console.warn('无效的明暗模式值，使用默认值:', value);
+  return 'auto';
+}
+
 // 默认设置
 export const DEFAULT_SETTINGS: UserSettings = {
   groupNameTemplate: 'Group %d',
@@ -28,6 +60,7 @@ export const DEFAULT_SETTINGS: UserSettings = {
   syncStrategy: 'newest', // 默认使用最新版本
   deleteStrategy: 'everywhere', // 默认在所有设备上删除
   themeMode: 'auto', // 默认使用自动模式（跟随系统）
+  themeStyle: 'refined', // 默认使用精致主题
 };
 
 // 兼容历史字段
@@ -90,10 +123,28 @@ class ChromeStorage {
         await this.setSettings({ ...DEFAULT_SETTINGS, ...normalizedSettings });
       }
 
-      return {
+      // 验证并修正主题相关设置
+      const validatedThemeStyle = validateThemeStyle(normalizedSettings.themeStyle);
+      const validatedThemeMode = validateThemeMode(normalizedSettings.themeMode);
+
+      // 如果验证后的值与原值不同，说明存储中有无效值，需要更新
+      const needsUpdate = 
+        normalizedSettings.themeStyle !== validatedThemeStyle ||
+        normalizedSettings.themeMode !== validatedThemeMode;
+
+      const mergedSettings: UserSettings = {
         ...DEFAULT_SETTINGS,
-        ...normalizedSettings
+        ...normalizedSettings,
+        themeStyle: validatedThemeStyle,
+        themeMode: validatedThemeMode,
       };
+
+      // 如果有无效值被修正，保存修正后的设置
+      if (needsUpdate) {
+        await this.setSettings(mergedSettings);
+      }
+
+      return mergedSettings;
     } catch (error) {
       console.error('获取设置失败:', error);
       return DEFAULT_SETTINGS;
@@ -103,7 +154,15 @@ class ChromeStorage {
   async setSettings(settings: UserSettings): Promise<void> {
     try {
       await this.ensureVersion();
-      await kvSet(STORAGE_KEYS.SETTINGS, settings);
+      
+      // 验证主题相关设置，确保保存的值是有效的
+      const validatedSettings: UserSettings = {
+        ...settings,
+        themeStyle: validateThemeStyle(settings.themeStyle),
+        themeMode: validateThemeMode(settings.themeMode),
+      };
+      
+      await kvSet(STORAGE_KEYS.SETTINGS, validatedSettings);
     } catch (error) {
       console.error('保存设置失败:', error);
     }

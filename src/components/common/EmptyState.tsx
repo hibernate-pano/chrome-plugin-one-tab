@@ -11,7 +11,7 @@ interface EmptyStateProps {
 // 默认图标 - 更精致的设计
 const DefaultIcon = () => (
   <svg
-    className="w-8 h-8 text-neutral-400"
+    className="w-8 h-8 empty-state-default-icon"
     fill="none"
     viewBox="0 0 24 24"
     stroke="currentColor"

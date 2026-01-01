@@ -130,7 +130,7 @@ export const DraggableTab: React.FC<DraggableTabProps> = React.memo(({
       <div className="flex-1 min-w-0 flex items-center gap-3">
         <a
           href="#"
-          className="tab-item-title hover:text-accent-600 dark:hover:text-accent-400 transition-colors"
+          className="tab-item-title tab-item-title-hover transition-colors"
           onClick={handleTabClick}
           title={tabTitle}
         >
@@ -145,7 +145,7 @@ export const DraggableTab: React.FC<DraggableTabProps> = React.memo(({
       <div className="tab-item-actions">
         <button
           onClick={handleDelete}
-          className="btn-icon p-1 hover:text-danger-500"
+          className="btn-icon p-1 tab-item-delete-btn"
           title="删除标签页"
         >
           <CloseIcon />

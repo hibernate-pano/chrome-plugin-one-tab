@@ -1,0 +1,269 @@
+/* ==========================================
+   🎨 Refined Theme - Minimal Modern Style
+   ========================================== */
+
+/* 
+ * 字体说明：
+ * Chrome 扩展 CSP 不允许从外部 CDN 加载字体
+ * 使用系统字体栈作为 Geist 的替代方案
+ * SF Pro Display 和 system-ui 提供现代简约的视觉效果
+ */
+
+/* ==========================================
+   精致主题 - 浅色模式
+   使用 html[data-theme] 选择器确保优先级
+   ========================================== */
+html[data-theme="refined"] {
+  /* 颜色 - 温暖中性色 */
+  --color-bg-primary: #fafaf9;
+  --color-bg-secondary: #ffffff;
+  --color-bg-tertiary: #f5f5f4;
+  --color-bg-elevated: #ffffff;
+  --color-bg-overlay: rgba(255, 255, 255, 0.8);
+
+  --color-text-primary: #1c1917;
+  --color-text-secondary: #57534e;
+  --color-text-tertiary: #78716c;
+  --color-text-muted: #a8a29e;
+
+  --color-border-default: #e7e5e4;
+  --color-border-subtle: #f5f5f4;
+  --color-border-strong: #d6d3d1;
+
+  --color-accent: #6366f1;
+  --color-accent-hover: #4f46e5;
+  --color-accent-subtle: #f0f4ff;
+
+  /* 状态颜色 */
+  --color-warning: #f59e0b;
+  --color-danger: #ef4444;
+  --color-success: #22c55e;
+
+  /* 排版 - 使用系统字体栈 (Chrome 扩展 CSP 兼容) */
+  --font-family-sans: 'SF Pro Display', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+  --font-family-mono: 'SF Mono', Menlo, Monaco, 'Cascadia Code', monospace;
+
+  /* 阴影 - 柔和精致 */
+  --shadow-card: 0 1px 3px 0 rgb(0 0 0 / 0.04), 0 1px 2px -1px rgb(0 0 0 / 0.03);
+  --shadow-card-hover: 0 4px 6px -1px rgb(0 0 0 / 0.06), 0 2px 4px -2px rgb(0 0 0 / 0.04);
+  --shadow-elevation-1: 0 1px 2px 0 rgb(0 0 0 / 0.03);
+  --shadow-elevation-2: 0 4px 6px -1px rgb(0 0 0 / 0.05), 0 2px 4px -2px rgb(0 0 0 / 0.03);
+  --shadow-elevation-3: 0 10px 15px -3px rgb(0 0 0 / 0.08), 0 4px 6px -4px rgb(0 0 0 / 0.04);
+
+  /* 圆角 */
+  --radius-sm: 0.25rem;
+  --radius-md: 0.375rem;
+  --radius-lg: 0.5rem;
+  --radius-xl: 0.75rem;
+  --radius-full: 9999px;
+
+  /* 间距 */
+  --spacing-xs: 0.25rem;
+  --spacing-sm: 0.5rem;
+  --spacing-md: 1rem;
+  --spacing-lg: 1.5rem;
+  --spacing-xl: 2rem;
+}
+
+/* ==========================================
+   精致主题 - 深色模式
+   ========================================== */
+html[data-theme="refined"].dark {
+  --color-bg-primary: #0c0a09;
+  --color-bg-secondary: #1c1917;
+  --color-bg-tertiary: #292524;
+  --color-bg-elevated: #292524;
+  --color-bg-overlay: rgba(28, 25, 23, 0.9);
+
+  --color-text-primary: #fafaf9;
+  --color-text-secondary: #d6d3d1;
+  --color-text-tertiary: #a8a29e;
+  --color-text-muted: #78716c;
+
+  --color-border-default: #292524;
+  --color-border-subtle: #1c1917;
+  --color-border-strong: #44403c;
+
+  --color-accent: #818cf8;
+  --color-accent-hover: #a5b4fc;
+  --color-accent-subtle: #312e81;
+
+  /* 状态颜色 */
+  --color-warning: #fbbf24;
+  --color-danger: #f87171;
+  --color-success: #4ade80;
+
+  /* 深色模式阴影 */
+  --shadow-card: 0 1px 3px 0 rgb(0 0 0 / 0.2), 0 1px 2px -1px rgb(0 0 0 / 0.15);
+  --shadow-card-hover: 0 4px 6px -1px rgb(0 0 0 / 0.3), 0 2px 4px -2px rgb(0 0 0 / 0.2);
+  --shadow-elevation-1: 0 1px 2px 0 rgb(0 0 0 / 0.15);
+  --shadow-elevation-2: 0 4px 6px -1px rgb(0 0 0 / 0.25), 0 2px 4px -2px rgb(0 0 0 / 0.15);
+  --shadow-elevation-3: 0 10px 15px -3px rgb(0 0 0 / 0.35), 0 4px 6px -4px rgb(0 0 0 / 0.2);
+}
+
+/* ==========================================
+   精致主题特定样式
+   ========================================== */
+html[data-theme="refined"] body {
+  font-family: var(--font-family-sans);
+  font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+}
+
+/* 精致主题按钮样式 - 极简风格 */
+html[data-theme="refined"] .btn {
+  font-weight: 500;
+  letter-spacing: -0.01em;
+}
+
+html[data-theme="refined"] .btn-primary {
+  background-color: var(--color-accent);
+  box-shadow: none;
+}
+
+html[data-theme="refined"] .btn-primary:hover {
+  background-color: var(--color-accent-hover);
+  box-shadow: var(--shadow-elevation-1);
+}
+
+/* 精致主题卡片样式 */
+html[data-theme="refined"] .card {
+  border-radius: var(--radius-xl);
+  box-shadow: var(--shadow-card);
+  border: 1px solid var(--color-border-default);
+}
+
+html[data-theme="refined"] .card:hover {
+  box-shadow: var(--shadow-card-hover);
+  border-color: var(--color-border-strong);
+}
+
+/* 精致主题输入框样式 */
+html[data-theme="refined"] .input {
+  border: 1px solid transparent;
+  border-radius: var(--radius-lg);
+  background: var(--color-bg-tertiary);
+}
+
+html[data-theme="refined"] .input:hover {
+  background: var(--color-bg-secondary);
+  border-color: var(--color-border-default);
+}
+
+html[data-theme="refined"] .input:focus {
+  border-color: var(--color-accent);
+  background: var(--color-bg-secondary);
+  box-shadow: 0 0 0 3px var(--color-accent-subtle);
+}
+
+/* 精致主题标签组样式 */
+html[data-theme="refined"] .tab-group-card {
+  border-radius: var(--radius-xl);
+  border: 1px solid var(--color-border-subtle);
+  box-shadow: none;
+}
+
+html[data-theme="refined"] .tab-group-card:hover {
+  border-color: var(--color-border-default);
+  box-shadow: var(--shadow-card-hover);
+}
+
+html[data-theme="refined"] .tab-group-header {
+  background: var(--color-bg-tertiary);
+  border-bottom: 1px solid var(--color-border-subtle);
+}
+
+/* 精致主题徽章样式 */
+html[data-theme="refined"] .badge-accent {
+  background: var(--color-accent-subtle);
+  color: var(--color-accent);
+}
+
+html[data-theme="refined"].dark .badge-accent {
+  background: rgba(99, 102, 241, 0.15);
+  color: #a5b4fc;
+}
+
+/* 精致主题空状态样式 */
+html[data-theme="refined"] .empty-state-icon {
+  background: linear-gradient(135deg, var(--color-bg-tertiary) 0%, var(--color-bg-secondary) 100%);
+  border: 1px solid var(--color-border-default);
+}
+
+/* 精致主题头部样式 */
+html[data-theme="refined"] .header {
+  background: var(--color-bg-overlay);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}
+
+/* ==========================================
+   精致主题 - 下拉菜单和弹出层样式
+   ========================================== */
+html[data-theme="refined"] .dropdown-menu,
+html[data-theme="refined"] .popup-menu {
+  background: var(--color-bg-secondary);
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-elevation-2);
+}
+
+html[data-theme="refined"] .dropdown-item {
+  color: var(--color-text-primary);
+}
+
+html[data-theme="refined"] .dropdown-item:hover {
+  background: var(--color-bg-tertiary);
+}
+
+/* 精致主题 - 模态框样式 */
+html[data-theme="refined"] .modal-content {
+  background: var(--color-bg-secondary);
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-xl);
+  box-shadow: var(--shadow-elevation-3);
+}
+
+/* 精致主题 - 工具提示样式 */
+html[data-theme="refined"] .tooltip {
+  background: var(--color-bg-elevated);
+  color: var(--color-text-primary);
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-card-hover);
+}
+
+/* 精致主题 - 搜索框样式 */
+html[data-theme="refined"] .search-input {
+  background: var(--color-bg-tertiary);
+  border: 1px solid transparent;
+  border-radius: var(--radius-full);
+}
+
+html[data-theme="refined"] .search-input:hover {
+  background: var(--color-bg-secondary);
+  border-color: var(--color-border-default);
+}
+
+html[data-theme="refined"] .search-input:focus {
+  background: var(--color-bg-secondary);
+  border-color: var(--color-accent);
+  box-shadow: 0 0 0 3px var(--color-accent-subtle);
+}
+
+/* 精致主题 - 标签项样式 */
+html[data-theme="refined"] .tab-item {
+  border-bottom: 1px solid var(--color-border-subtle);
+}
+
+html[data-theme="refined"] .tab-item:hover {
+  background: var(--color-bg-tertiary);
+}
+
+/* 精致主题 - 开关按钮样式 */
+html[data-theme="refined"] .toggle-switch-active {
+  background-color: var(--color-accent);
+}
+
+html[data-theme="refined"] .toggle-switch-inactive {
+  background-color: var(--color-border-strong);
+}

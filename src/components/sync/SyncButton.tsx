@@ -157,22 +157,22 @@ export const SyncButton: React.FC<SyncButtonProps> = () => {
 
   return (
     <>
-      <div className="flex flex-col items-center space-y-2">
-        {/* 进度条 */}
+      <div className="flex items-center gap-2">
+        {/* 进度条 - 同步时显示在按钮旁边 */}
         {syncOperation !== 'none' && syncStatus === 'syncing' && (
-          <div className="w-full bg-gray-200 rounded-full h-2.5 mb-2">
+          <div className="w-16 bg-gray-200 rounded-full h-1.5">
             <div
-              className={`h-2.5 rounded-full ${syncOperation === 'upload' ? 'bg-green-600' : 'bg-blue-600'}`}
+              className={`h-1.5 rounded-full ${syncOperation === 'upload' ? 'bg-green-600' : 'bg-blue-600'}`}
               style={{ width: `${syncProgress}%` }}
             ></div>
           </div>
         )}
 
-        <div className="flex items-center space-x-2 w-full">
+        <div className="flex items-center gap-2">
           <button
             onClick={handleUpload}
             disabled={syncStatus === 'syncing'}
-            className={`flex items-center px-3 py-1 rounded-md text-sm ${
+            className={`flex items-center whitespace-nowrap px-3 py-1.5 rounded-md text-sm ${
               // 上传按钮始终保持绿色，只是在同步中禁用悬停效果
               syncStatus === 'syncing'
                 ? 'bg-green-100 text-green-600'
@@ -201,7 +201,7 @@ export const SyncButton: React.FC<SyncButtonProps> = () => {
           <button
             onClick={handleDownload}
             disabled={syncStatus === 'syncing'}
-            className={`flex items-center px-3 py-1 rounded-md text-sm ${
+            className={`flex items-center whitespace-nowrap px-3 py-1.5 rounded-md text-sm ${
               // 下载按钮始终保持蓝色，只是在同步中禁用悬停效果
               syncStatus === 'syncing'
                 ? 'bg-blue-100 text-blue-600'

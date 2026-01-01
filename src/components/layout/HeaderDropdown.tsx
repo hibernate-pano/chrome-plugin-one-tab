@@ -12,6 +12,7 @@ import {
   toggleConfirmBeforeDelete,
   saveSettings 
 } from '@/store/slices/settingsSlice';
+import { ThemeStyleSelector } from './ThemeStyleSelector';
 
 interface HeaderDropdownProps {
   onClose: () => void;
@@ -344,6 +345,11 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({ onClose }) => {
             </button>
           </div>
         </div>
+
+        <div className="border-t border-gray-200 dark:border-gray-700 my-1"></div>
+
+        {/* 主题风格选择 */}
+        <ThemeStyleSelector />
 
         <div className="border-t border-gray-200 dark:border-gray-700 my-1"></div>
 

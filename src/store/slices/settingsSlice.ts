@@ -1,6 +1,6 @@
 import { createSlice, createAsyncThunk, PayloadAction } from '@reduxjs/toolkit';
-import { UserSettings, LayoutMode } from '@/types/tab';
-import { storage, DEFAULT_SETTINGS as defaultSettings } from '@/utils/storage';
+import { UserSettings, LayoutMode, ThemeStyle } from '@/types/tab';
+import { storage, DEFAULT_SETTINGS as defaultSettings, validateThemeStyle, validateThemeMode } from '@/utils/storage';
 import { sync as supabaseSync } from '@/utils/supabase';
 
 // 更新默认设置
@@ -56,10 +56,13 @@ export const syncSettingsFromCloud = createAsyncThunk<UserSettings | null, void,
 
     const cloudSettings = await supabaseSync.downloadSettings();
     if (cloudSettings) {
-      // 将 Record<string, any> 转换为 UserSettings
+      // 将 Record<string, any> 转换为 UserSettings，并验证主题相关设置
       const convertedSettings: UserSettings = {
         ...updatedDefaultSettings,
         ...cloudSettings,
+        // 验证主题相关设置，确保从云端同步的值是有效的
+        themeStyle: validateThemeStyle(cloudSettings.themeStyle),
+        themeMode: validateThemeMode(cloudSettings.themeMode),
       } as UserSettings;
       // 保存到本地存储
       await storage.setSettings(convertedSettings);
@@ -81,6 +84,11 @@ const settingsSlice = createSlice({
     // 设置主题模式
     setThemeMode: (state, action: PayloadAction<'light' | 'dark' | 'auto'>) => {
       state.themeMode = action.payload;
+    },
+
+    // 设置主题风格
+    setThemeStyle: (state, action: PayloadAction<ThemeStyle>) => {
+      state.themeStyle = action.payload;
     },
 
     setShowFavicons: (state, action: PayloadAction<boolean>) => {
@@ -162,6 +170,7 @@ const settingsSlice = createSlice({
 export const {
   updateSettings,
   setThemeMode,
+  setThemeStyle,
   setShowFavicons,
   setShowTabCount,
   setShowNotifications,

@@ -2,6 +2,10 @@
 node_modules/
 .vscode/
 .idea/
+.cursor/
+.kiro/
+.conductor/
+.claude/
 dist/
 **.zip
 
