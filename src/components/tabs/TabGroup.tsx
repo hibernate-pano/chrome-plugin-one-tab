@@ -10,18 +10,43 @@ interface TabGroupProps {
   group: TabGroupType;
 }
 
-/**
- * 标签组组件
- * 使用React.memo优化渲染性能，只有在必要时才重新渲染
- */
+// 图标组件
+const EditIcon = () => (
+  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+    <path strokeLinecap="round" strokeLinejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L10.582 16.07a4.5 4.5 0 01-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 011.13-1.897l8.932-8.931zm0 0L19.5 7.125M18 14v4.75A2.25 2.25 0 0115.75 21H5.25A2.25 2.25 0 013 18.75V8.25A2.25 2.25 0 015.25 6H10" />
+  </svg>
+);
+
+const LockIcon = ({ locked }: { locked: boolean }) => (
+  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+    {locked ? (
+      <path strokeLinecap="round" strokeLinejoin="round" d="M16.5 10.5V6.75a4.5 4.5 0 10-9 0v3.75m-.75 11.25h10.5a2.25 2.25 0 002.25-2.25v-6.75a2.25 2.25 0 00-2.25-2.25H6.75a2.25 2.25 0 00-2.25 2.25v6.75a2.25 2.25 0 002.25 2.25z" />
+    ) : (
+      <path strokeLinecap="round" strokeLinejoin="round" d="M13.5 10.5V6.75a4.5 4.5 0 119 0v3.75M3.75 21.75h10.5a2.25 2.25 0 002.25-2.25v-6.75a2.25 2.25 0 00-2.25-2.25H3.75a2.25 2.25 0 00-2.25 2.25v6.75a2.25 2.25 0 002.25 2.25z" />
+    )}
+  </svg>
+);
+
+const DeleteIcon = () => (
+  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+    <path strokeLinecap="round" strokeLinejoin="round" d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0" />
+  </svg>
+);
+
+const OpenAllIcon = () => (
+  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+    <path strokeLinecap="round" strokeLinejoin="round" d="M13.5 6H5.25A2.25 2.25 0 003 8.25v10.5A2.25 2.25 0 005.25 21h10.5A2.25 2.25 0 0018 18.75V10.5m-10.5 6L21 3m0 0h-5.25M21 3v5.25" />
+  </svg>
+);
+
 export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
   const dispatch = useAppDispatch();
   const { showConfirm } = useToast();
 
   const [isEditing, setIsEditing] = useState(false);
   const [newName, setNewName] = useState(group.name);
+  const [isCollapsed, setIsCollapsed] = useState(false);
 
-  // 使用useCallback记忆化回调函数，避免不必要的重新创建
   const handleNameChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     setNewName(e.target.value);
   }, []);
@@ -60,88 +85,53 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
     dispatch(toggleGroupLockAndSync(group.id));
   }, [dispatch, group.id]);
 
-  /**
-   * 打开标签组中的所有标签页
-   * 如果标签组未锁定，则在打开后删除该标签组
-   */
   const handleOpenAllTabs = useCallback(() => {
-    // 直接从group.tabs中提取URL列表，不需要嵌套useMemo
     const urls = group.tabs.map(tab => tab.url);
 
-    // 如果标签组没有锁定，先在UI中删除标签组
     if (!group.isLocked) {
-      // 先在Redux中删除标签组，立即更新UI
       dispatch({ type: 'tabs/deleteGroup/fulfilled', payload: group.id });
-
-      // 然后异步完成存储操作
       dispatch(deleteGroup(group.id))
-        .then(() => {
-          console.log(`删除标签组: ${group.id}`);
-        })
-        .catch(error => {
-          console.error('删除标签组失败:', error);
-        });
+        .then(() => console.log(`删除标签组: ${group.id}`))
+        .catch(error => console.error('删除标签组失败:', error));
     }
 
-    // 最后发送消息给后台脚本打开标签页
     setTimeout(() => {
       chrome.runtime.sendMessage({
         type: 'OPEN_TABS',
         data: { urls }
       });
-    }, 50); // 小延迟确保 UI 先更新
+    }, 50);
   }, [dispatch, group.id, group.isLocked, group.tabs]);
 
-  // 使用useCallback记忆化handleOpenTab函数
   const handleOpenTab = useCallback((tab: Tab) => {
-    // 如果标签组没有锁定，先从标签组中移除该标签页
     if (!group.isLocked) {
-      // 使用工具函数检查是否应该自动删除标签组
       if (shouldAutoDeleteAfterTabRemoval(group, tab.id)) {
-        // 先在Redux中删除标签组，立即更新UI
         dispatch({ type: 'tabs/deleteGroup/fulfilled', payload: group.id });
-
-        // 然后异步完成存储操作
         dispatch(deleteGroup(group.id))
-          .then(() => {
-            console.log(`自动删除空标签组: ${group.name} (ID: ${group.id})`);
-          })
-          .catch(error => {
-            console.error('删除标签组失败:', error);
-          });
+          .then(() => console.log(`自动删除空标签组: ${group.name} (ID: ${group.id})`))
+          .catch(error => console.error('删除标签组失败:', error));
       } else {
-        // 否则更新标签组，移除该标签页
         const updatedTabs = group.tabs.filter(t => t.id !== tab.id);
         const updatedGroup = {
           ...group,
           tabs: updatedTabs,
           updatedAt: new Date().toISOString()
         };
-
-        // 先在Redux中更新标签组，立即更新UI
         dispatch({ type: 'tabs/updateGroup/fulfilled', payload: updatedGroup });
-
-        // 然后异步完成存储操作
         dispatch(updateGroup(updatedGroup))
-          .then(() => {
-            console.log(`更新标签组: ${group.name}, 剩余标签页: ${updatedTabs.length}`);
-          })
-          .catch(error => {
-            console.error('更新标签组失败:', error);
-          });
+          .then(() => console.log(`更新标签组: ${group.name}, 剩余标签页: ${updatedTabs.length}`))
+          .catch(error => console.error('更新标签组失败:', error));
       }
     }
 
-    // 最后发送消息给后台脚本打开标签页
     setTimeout(() => {
       chrome.runtime.sendMessage({
         type: 'OPEN_TAB',
         data: { url: tab.url }
       });
-    }, 50); // 小延迟确保 UI 先更新
+    }, 50);
   }, [dispatch, group]);
 
-  // 使用useCallback记忆化handleMoveTab函数
   const handleMoveTab = useCallback((sourceGroupId: string, sourceIndex: number, targetGroupId: string, targetIndex: number) => {
     dispatch(moveTabAndSync({
       sourceGroupId,
@@ -151,9 +141,7 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
     }));
   }, [dispatch]);
 
-  // 处理标签页删除
   const handleDeleteTab = useCallback((tabId: string) => {
-    // 使用工具函数检查是否应该自动删除标签组
     if (shouldAutoDeleteAfterTabRemoval(group, tabId)) {
       dispatch(deleteGroup(group.id));
       console.log(`自动删除空标签组: ${group.name} (ID: ${group.id})`);
@@ -169,10 +157,43 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
     }
   }, [dispatch, group]);
 
+  // 格式化时间
+  const formatTime = (dateString: string) => {
+    const date = new Date(dateString);
+    const now = new Date();
+    const diff = now.getTime() - date.getTime();
+    const days = Math.floor(diff / (1000 * 60 * 60 * 24));
+
+    if (days === 0) return '今天';
+    if (days === 1) return '昨天';
+    if (days < 7) return `${days} 天前`;
+    if (days < 30) return `${Math.floor(days / 7)} 周前`;
+    return date.toLocaleDateString('zh-CN', { month: 'short', day: 'numeric' });
+  };
+
   return (
-    <div className="mb-2 flat-card p-0 flat-interaction">
-      <div className="flex items-center p-2 bg-gray-50 dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700">
-        <div className="flex items-center space-x-3 flex-grow">
+    <div className="tab-group-card animate-in group/card">
+      {/* 标签组头部 */}
+      <div className="tab-group-header">
+        <div className="flex items-center gap-3 flex-1 min-w-0">
+          {/* 折叠按钮 */}
+          <button
+            onClick={() => setIsCollapsed(!isCollapsed)}
+            className="btn-icon p-1 -ml-1"
+            aria-label={isCollapsed ? '展开标签组' : '折叠标签组'}
+          >
+            <svg
+              className={`w-4 h-4 transition-transform duration-200 ${isCollapsed ? '-rotate-90' : ''}`}
+              fill="none"
+              viewBox="0 0 24 24"
+              stroke="currentColor"
+              strokeWidth={2}
+            >
+              <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+            </svg>
+          </button>
+
+          {/* 标题 */}
           {isEditing ? (
             <input
               type="text"
@@ -180,62 +201,88 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
               onChange={handleNameChange}
               onBlur={handleNameSubmit}
               onKeyDown={handleKeyDown}
-              className="border border-gray-300 rounded px-2 py-1 w-full text-sm"
+              className="input py-1 px-2 text-sm font-medium flex-1"
               autoFocus
             />
           ) : (
             <h3
-              className="text-base font-semibold flat-text-primary"
+              className="tab-group-title truncate cursor-pointer hover:text-accent-600 dark:hover:text-accent-400 transition-colors"
+              onClick={() => !group.isLocked && setIsEditing(true)}
+              title={group.isLocked ? group.name : '点击编辑名称'}
             >
               {group.name}
             </h3>
           )}
-          <span className="text-xs bg-blue-100 dark:bg-blue-900 text-blue-700 dark:text-blue-300 px-2 py-1 rounded ml-1 font-medium">
+
+          {/* 数量徽章 */}
+          <span className="tab-group-count flex-shrink-0">
             {group.tabs.length}
           </span>
+
+          {/* 锁定图标 */}
+          {group.isLocked && (
+            <span className="text-warning-500 flex-shrink-0" title="已锁定">
+              <LockIcon locked={true} />
+            </span>
+          )}
+
+          {/* 时间 */}
+          <span className="text-xs text-neutral-400 hidden sm:block flex-shrink-0">
+            {formatTime(group.createdAt)}
+          </span>
         </div>
-        <div className="flex items-center space-x-2 ml-auto">
+
+        {/* 操作按钮 */}
+        <div className="flex items-center gap-1 opacity-0 group-hover/card:opacity-100 transition-opacity duration-150">
+          {/* 恢复全部 */}
           <button
             onClick={handleOpenAllTabs}
-            className="text-blue-600 hover:text-blue-800 text-xs hover:underline px-2 py-1 rounded hover:bg-blue-50 dark:hover:bg-blue-900/20 flat-interaction"
-            title="打开所有标签页"
+            className="btn-icon p-1.5 text-accent-600 dark:text-accent-400"
+            title="恢复全部标签页"
           >
-            恢复全部
+            <OpenAllIcon />
           </button>
-          <button
-            onClick={() => !group.isLocked && setIsEditing(true)}
-            className={`p-1 hover:bg-gray-100 transition-colors ${group.isLocked ? 'text-gray-300 cursor-not-allowed' : 'text-gray-500 hover:text-primary-600'}`}
-            title={group.isLocked ? '锁定的标签组不能重命名' : '重命名标签组'}
-            disabled={group.isLocked}
-          >
-            <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
-              <path d="M13.586 3.586a2 2 0 112.828 2.828l-.793.793-2.828-2.828.793-.793zM11.379 5.793L3 14.172V17h2.828l8.38-8.379-2.83-2.828z" />
-            </svg>
-          </button>
+
+          {/* 编辑 */}
+          {!group.isLocked && (
+            <button
+              onClick={() => setIsEditing(true)}
+              className="btn-icon p-1.5"
+              title="重命名"
+            >
+              <EditIcon />
+            </button>
+          )}
+
+          {/* 锁定/解锁 */}
           <button
             onClick={handleToggleLock}
-            className={`p-1 hover:bg-gray-100 transition-colors ${group.isLocked ? 'text-warning' : 'text-gray-500'} hover:text-warning`}
-            title={group.isLocked ? '解锁标签组' : '锁定标签组'}
+            className={`btn-icon p-1.5 ${group.isLocked ? 'text-warning-500' : ''}`}
+            title={group.isLocked ? '解锁' : '锁定'}
           >
-            <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
-              <path fillRule="evenodd" d="M5 9V7a5 5 0 0110 0v2a2 2 0 012 2v5a2 2 0 01-2 2H5a2 2 0 01-2-2v-5a2 2 0 012-2zm8-2v2H7V7a3 3 0 016 0z" clipRule="evenodd" />
-            </svg>
+            <LockIcon locked={group.isLocked} />
           </button>
+
+          {/* 删除 */}
           {!group.isLocked && (
             <button
               onClick={handleDelete}
-              className="p-1 hover:bg-gray-100 transition-colors text-gray-500 hover:text-red-500"
+              className="btn-icon p-1.5 hover:text-danger-500"
               title="删除标签组"
             >
-              <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
-                <path fillRule="evenodd" d="M9 2a1 1 0 00-.894.553L7.382 4H4a1 1 0 000 2v10a2 2 0 002 2h8a2 2 0 002-2V6a1 1 0 100-2h-3.382l-.724-1.447A1 1 0 0011 2H9zM7 8a1 1 0 012 0v6a1 1 0 11-2 0V8zm5-1a1 1 0 00-1 1v6a1 1 0 102 0V8a1 1 0 00-1-1z" clipRule="evenodd" />
-              </svg>
+              <DeleteIcon />
             </button>
           )}
         </div>
       </div>
-      <div className="tab-group-content expanded">
-        <div className="px-2 pt-1 pb-1 space-y-0.5 group tabs-container">
+
+      {/* 标签列表 */}
+      <div
+        className={`transition-all duration-200 ease-out overflow-hidden ${
+          isCollapsed ? 'max-h-0' : 'max-h-[2000px]'
+        }`}
+      >
+        <div className="divide-y divide-neutral-100 dark:divide-neutral-800">
           {group.tabs.map((tab, index) => (
             <DraggableTab
               key={tab.id}
@@ -252,14 +299,6 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
     </div>
   );
 }, (prevProps, nextProps) => {
-  // 优化重渲染逻辑，只有在以下情况下才重新渲染：
-  // 1. 标签组ID变化
-  // 2. 标签组名称变化
-  // 3. 标签组锁定状态变化
-  // 4. 标签组内的标签数量变化
-  // 5. 标签组内的标签内容变化（通过比较最后更新时间和标签ID列表）
-
-  // 基本属性比较
   const basicPropsEqual =
     prevProps.group.id === nextProps.group.id &&
     prevProps.group.name === nextProps.group.name &&
@@ -268,29 +307,23 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
     prevProps.group.updatedAt === nextProps.group.updatedAt &&
     prevProps.group.createdAt === nextProps.group.createdAt;
 
-  // 如果基本属性不相等，则需要重新渲染
   if (!basicPropsEqual) return false;
 
-  // 如果标签数量变化，则需要重新渲染（这已经在上面检查过了）
-  // 如果标签ID列表变化，则需要重新渲染（更精确的检查）
   if (prevProps.group.tabs.length === nextProps.group.tabs.length) {
-    // 只有当标签数量相同时才比较标签ID列表
     for (let i = 0; i < prevProps.group.tabs.length; i++) {
       const prevTab = prevProps.group.tabs[i];
       const nextTab = nextProps.group.tabs[i];
-      
-      // 比较标签的关键属性
+
       if (
         prevTab.id !== nextTab.id ||
         prevTab.title !== nextTab.title ||
         prevTab.url !== nextTab.url ||
         prevTab.favicon !== nextTab.favicon
       ) {
-        return false; // 标签内容不同，需要重新渲染
+        return false;
       }
     }
   }
 
-  // 所有检查都通过，不需要重新渲染
   return true;
 });

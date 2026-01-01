@@ -8,92 +8,74 @@ interface TabVaultIconProps {
 
 /**
  * TabVault Pro 品牌图标组件
- * 提供独特的视觉识别
+ * 现代简约风格
  */
-export const TabVaultIcon: React.FC<TabVaultIconProps> = ({ 
-  size = 24, 
+export const TabVaultIcon: React.FC<TabVaultIconProps> = ({
+  size = 24,
   className = '',
   variant = 'default'
 }) => {
-  const baseClasses = className;
-  
   const getVariantClasses = () => {
     switch (variant) {
       case 'gradient':
-        return 'text-blue-600 dark:text-blue-400';
+        return 'text-accent-600 dark:text-accent-400';
       case 'outline':
-        return 'text-gray-600 dark:text-gray-300';
+        return 'text-neutral-600 dark:text-neutral-300';
       default:
-        return 'text-blue-600 dark:text-blue-400';
+        return 'text-accent-600 dark:text-accent-400';
     }
   };
 
   return (
-    <svg 
-      width={size} 
-      height={size} 
-      viewBox="0 0 24 24" 
-      className={`${baseClasses} ${getVariantClasses()}`}
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      className={`${className} ${getVariantClasses()}`}
       fill="none"
       xmlns="http://www.w3.org/2000/svg"
     >
-      {/* 主容器 */}
-      <rect 
-        x="3" 
-        y="3" 
-        width="18" 
-        height="18" 
-        rx="4" 
-        stroke="currentColor" 
-        strokeWidth="2"
+      {/* 圆角矩形容器 */}
+      <rect
+        x="3"
+        y="3"
+        width="18"
+        height="18"
+        rx="5"
+        stroke="currentColor"
+        strokeWidth="1.5"
         fill="none"
       />
-      
-      {/* 标签页线条 */}
-      <path 
-        d="M7 8h10M7 12h10M7 16h10" 
-        stroke="currentColor" 
-        strokeWidth="1.5" 
-        strokeLinecap="round"
-      />
-      
-      {/* 标签页指示器 */}
-      <circle cx="9" cy="8" r="1.5" fill="currentColor" />
-      <circle cx="9" cy="12" r="1.5" fill="currentColor" />
-      <circle cx="9" cy="16" r="1.5" fill="currentColor" />
-      
-      {/* 装饰性元素 */}
-      <path 
-        d="M15 8l2 2-2 2M15 12l2 2-2 2" 
-        stroke="currentColor" 
-        strokeWidth="1" 
-        strokeLinecap="round"
-        opacity="0.6"
-      />
+
+      {/* 简洁的标签页指示器 */}
+      <rect x="7" y="7" width="10" height="2" rx="1" fill="currentColor" />
+      <rect x="7" y="11" width="7" height="2" rx="1" fill="currentColor" opacity="0.6" />
+      <rect x="7" y="15" width="5" height="2" rx="1" fill="currentColor" opacity="0.3" />
     </svg>
   );
 };
 
 /**
  * TabVault Pro 文字Logo组件
+ * 精致简约风格
  */
-export const TabVaultLogo: React.FC<{ 
+export const TabVaultLogo: React.FC<{
   size?: 'sm' | 'md' | 'lg';
   className?: string;
   showIcon?: boolean;
-}> = ({ 
-  size = 'md', 
+}> = ({
+  size = 'md',
   className = '',
-  showIcon = true 
+  showIcon = true
 }) => {
   const getSizeClasses = () => {
     switch (size) {
       case 'sm':
-        return 'text-lg';
+        return 'text-base';
       case 'lg':
-        return 'text-2xl';
-      default:
         return 'text-xl';
+      default:
+        return 'text-lg';
     }
   };
 
@@ -109,19 +91,28 @@ export const TabVaultLogo: React.FC<{
   };
 
   return (
-    <div className={`flex items-center space-x-2 ${className}`}>
+    <div className={`flex items-center gap-2 ${className}`}>
       {showIcon && (
-        <TabVaultIcon 
-          size={getIconSize()} 
+        <TabVaultIcon
+          size={getIconSize()}
           variant="gradient"
           className="flex-shrink-0"
         />
       )}
-      <div className="flex items-center space-x-1">
-        <span className={`font-bold text-blue-600 dark:text-blue-400 ${getSizeClasses()}`}>
+      <div className="flex items-baseline gap-0.5">
+        <span
+          className={`font-semibold tracking-tight ${getSizeClasses()}`}
+          style={{ color: 'var(--color-text-primary)' }}
+        >
           TabVault
         </span>
-        <span className="text-xs text-gray-500 dark:text-gray-400 font-medium">
+        <span
+          className="text-xs font-medium px-1.5 py-0.5 rounded-md"
+          style={{
+            background: 'var(--color-accent-subtle)',
+            color: 'var(--color-accent)'
+          }}
+        >
           Pro
         </span>
       </div>

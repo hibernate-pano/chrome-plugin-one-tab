@@ -23,18 +23,64 @@ interface HeaderProps {
   searchQuery?: string;
 }
 
+// 图标组件
+const SearchIcon = () => (
+  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+    <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+  </svg>
+);
+
+const LoadingIcon = () => (
+  <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
+    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+  </svg>
+);
+
+const CloseIcon = () => (
+  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+    <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+  </svg>
+);
+
+const LayoutSingleIcon = () => (
+  <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+    <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 6.75h16.5M3.75 12h16.5m-16.5 5.25h16.5" />
+  </svg>
+);
+
+const LayoutDoubleIcon = () => (
+  <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+    <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 6.75h7.5M3.75 12h7.5m-7.5 5.25h7.5m4.5-10.5h4.5m-4.5 5.25h4.5m-4.5 5.25h4.5" />
+  </svg>
+);
+
+const CleanIcon = () => (
+  <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+    <path strokeLinecap="round" strokeLinejoin="round" d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0" />
+  </svg>
+);
+
+const MenuIcon = () => (
+  <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+    <path strokeLinecap="round" strokeLinejoin="round" d="M12 6.75a.75.75 0 110-1.5.75.75 0 010 1.5zM12 12.75a.75.75 0 110-1.5.75.75 0 010 1.5zM12 18.75a.75.75 0 110-1.5.75.75 0 010 1.5z" />
+  </svg>
+);
+
+const SaveIcon = () => (
+  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+    <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
+  </svg>
+);
+
 export const Header: React.FC<HeaderProps> = ({ onSearch, searchQuery = '' }) => {
   const dispatch = useAppDispatch();
   const { showConfirm, showAlert } = useToast();
   const settings = useAppSelector(state => state.settings);
-  
-  // 使用防抖搜索Hook
+
   const { searchValue, debouncedValue, handleSearchChange, clearSearch, isSearching } = useDebouncedSearch();
-  
-  // 搜索框引用
   const searchInputRef = React.useRef<HTMLInputElement>(null);
-  
-  // 处理清理重复标签
+
   const handleCleanDuplicateTabs = () => {
     showConfirm({
       title: '确认清理重复标签和空标签组',
@@ -46,8 +92,6 @@ export const Header: React.FC<HeaderProps> = ({ onSearch, searchQuery = '' }) =>
       onConfirm: async () => {
         try {
           const result = await dispatch(cleanDuplicateTabs()).unwrap();
-
-          // 构建结果消息
           let message = '清理完成';
           if (result.removedTabsCount > 0 || result.removedGroupsCount > 0) {
             const details = [];
@@ -61,7 +105,6 @@ export const Header: React.FC<HeaderProps> = ({ onSearch, searchQuery = '' }) =>
           } else {
             message = '清理完成，未发现重复标签页或空标签组';
           }
-
           showAlert({
             title: '清理完成',
             message,
@@ -82,17 +125,12 @@ export const Header: React.FC<HeaderProps> = ({ onSearch, searchQuery = '' }) =>
     });
   };
 
-  // 切换布局模式
   const handleToggleLayout = () => {
-    // 如果当前在重排序模式，先退出重排序模式
     if (settings.reorderMode) {
       dispatch(setReorderMode(false));
     }
-
-    // 然后切换布局模式
     dispatch(toggleLayoutMode());
 
-    // 获取下一个布局模式
     let nextLayoutMode: LayoutMode;
     switch (settings.layoutMode) {
       case 'single':
@@ -109,15 +147,13 @@ export const Header: React.FC<HeaderProps> = ({ onSearch, searchQuery = '' }) =>
       saveSettings({
         ...settings,
         layoutMode: nextLayoutMode,
-        reorderMode: false, // 确保在切换布局时退出重排序模式
+        reorderMode: false,
       })
     );
   };
 
   const handleSaveAllTabs = async () => {
     const tabs = await chrome.tabs.query({ currentWindow: true });
-
-    // 只通过background脚本保存标签页，避免重复保存
     chrome.runtime.sendMessage({
       type: 'SAVE_ALL_TABS',
       data: {
@@ -127,69 +163,36 @@ export const Header: React.FC<HeaderProps> = ({ onSearch, searchQuery = '' }) =>
     });
   };
 
-  // 键盘快捷键
   useKeyboardShortcuts([
-    {
-      ...COMMON_SHORTCUTS.SAVE_TABS,
-      action: handleSaveAllTabs
-    },
-    {
-      ...COMMON_SHORTCUTS.SEARCH,
-      action: () => searchInputRef.current?.focus()
-    },
-    {
-      ...COMMON_SHORTCUTS.CLEAR_SEARCH,
-      action: () => {
-        if (searchValue) {
-          clearSearch();
-        }
-      }
-    },
-    {
-      ...COMMON_SHORTCUTS.TOGGLE_LAYOUT,
-      action: handleToggleLayout
-    },
-    {
-      ...COMMON_SHORTCUTS.CLEAN_DUPLICATES,
-      action: handleCleanDuplicateTabs
-    }
+    { ...COMMON_SHORTCUTS.SAVE_TABS, action: handleSaveAllTabs },
+    { ...COMMON_SHORTCUTS.SEARCH, action: () => searchInputRef.current?.focus() },
+    { ...COMMON_SHORTCUTS.CLEAR_SEARCH, action: () => { if (searchValue) clearSearch(); } },
+    { ...COMMON_SHORTCUTS.TOGGLE_LAYOUT, action: handleToggleLayout },
+    { ...COMMON_SHORTCUTS.CLEAN_DUPLICATES, action: handleCleanDuplicateTabs }
   ]);
 
-  // 根据布局模式和搜索状态确定容器宽度类
   const getContainerWidthClass = () => {
-    // 搜索模式下使用单栏宽度
-    if (searchQuery) {
-      return 'layout-single-width';
-    }
-    // 根据布局模式选择宽度
+    if (searchQuery) return 'layout-single-width';
     return settings.layoutMode === 'double' ? 'layout-double-width' : 'layout-single-width';
   };
 
-  // 当防抖值变化时，触发搜索
   React.useEffect(() => {
     onSearch(debouncedValue);
   }, [debouncedValue, onSearch]);
 
   const handleSearch = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const value = e.target.value;
-    handleSearchChange(value);
+    handleSearchChange(e.target.value);
   };
 
   const handleClearSearch = () => {
     clearSearch();
   };
 
-  // 回到默认视图
   const handleResetToDefaultView = () => {
-    // 清空搜索
     clearSearch();
-
-    // 退出重排序模式
     if (settings.reorderMode) {
       dispatch(setReorderMode(false));
     }
-
-    // 重置为默认布局模式（单栏）
     if (settings.layoutMode !== 'single') {
       dispatch(setLayoutMode('single'));
       dispatch(
@@ -205,238 +208,112 @@ export const Header: React.FC<HeaderProps> = ({ onSearch, searchQuery = '' }) =>
   const [showDropdown, setShowDropdown] = useState(false);
 
   return (
-    <header className="bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700 transition-colors">
-      <div className={`w-full py-2 ${getContainerWidthClass()}`}>
-        <div className="flex items-center justify-between">
+    <header className="header">
+      <div className={`w-full py-3 px-4 sm:px-6 ${getContainerWidthClass()}`}>
+        <div className="flex items-center justify-between gap-4">
+          {/* Logo 区域 */}
           <button
             onClick={handleResetToDefaultView}
-            className="p-1 rounded hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
+            className="flex items-center gap-3 group"
             title="回到默认视图"
             aria-label="回到默认视图"
           >
-            <div className="flex items-center space-x-2">
-              <TabVaultLogo size="sm" showIcon={true} />
+            <TabVaultLogo size="sm" showIcon={true} />
+            <div className="hidden sm:block">
               <TabCounter />
             </div>
           </button>
 
-          <div className="flex items-center space-x-2 sm:space-x-4">
+          {/* 搜索框 */}
+          <div className="flex-1 max-w-md mx-4">
             <div className="relative">
+              <div className="absolute left-3 top-1/2 -translate-y-1/2 text-neutral-400">
+                {isSearching ? <LoadingIcon /> : <SearchIcon />}
+              </div>
               <input
                 ref={searchInputRef}
                 type="text"
-                placeholder="搜索标签... (Ctrl+F)"
-                className="pl-8 pr-8 py-1.5 w-32 sm:w-40 md:w-48 lg:w-56 border border-gray-300 dark:border-gray-600 rounded text-gray-700 dark:text-gray-200 dark:bg-gray-700 text-sm focus:outline-none focus:ring-1 focus:ring-primary-500 focus:border-transparent"
+                placeholder="搜索标签..."
+                className="input search-input w-full py-2 text-sm"
                 onChange={handleSearch}
                 value={searchValue}
                 aria-label="搜索标签页"
-                aria-describedby="search-help"
                 role="searchbox"
                 autoComplete="off"
               />
-              {isSearching ? (
-                <svg
-                  className="h-4 w-4 absolute left-2 top-1/2 transform -translate-y-1/2 text-gray-400 animate-spin"
-                  xmlns="http://www.w3.org/2000/svg"
-                  fill="none"
-                  viewBox="0 0 24 24"
-                >
-                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                </svg>
-              ) : (
-                <svg
-                  xmlns="http://www.w3.org/2000/svg"
-                  className="h-4 w-4 absolute left-2 top-1/2 transform -translate-y-1/2 text-gray-400"
-                  fill="none"
-                  viewBox="0 0 24 24"
-                  stroke="currentColor"
-                >
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth={2}
-                    d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"
-                  />
-                </svg>
-              )}
               {searchValue && (
                 <button
                   onClick={handleClearSearch}
-                  className="absolute right-2 top-1/2 transform -translate-y-1/2 text-gray-400 hover:text-gray-600 transition-colors"
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-neutral-400 hover:text-neutral-600 dark:hover:text-neutral-300 transition-colors"
                   title="清空搜索"
                 >
-                  <svg
-                    xmlns="http://www.w3.org/2000/svg"
-                    className="h-4 w-4"
-                    fill="none"
-                    viewBox="0 0 24 24"
-                    stroke="currentColor"
-                  >
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      strokeWidth={2}
-                      d="M6 18L18 6M6 6l12 12"
-                    />
-                  </svg>
+                  <CloseIcon />
                 </button>
               )}
             </div>
+          </div>
 
-            <div className="flex items-center space-x-1 sm:space-x-2">
-              <Tooltip
-                content={
-                  settings.layoutMode === 'single'
-                    ? '切换为双栏布局 (Ctrl+L)'
-                    : settings.layoutMode === 'double'
-                      ? '切换为三栏布局 (Ctrl+L)'
-                      : '切换为单栏布局 (Ctrl+L)'
-                }
-                position="bottom"
+          {/* 操作按钮组 */}
+          <div className="flex items-center gap-1 sm:gap-2">
+            {/* 布局切换 */}
+            <Tooltip
+              content={settings.layoutMode === 'single' ? '切换双栏布局' : '切换单栏布局'}
+              position="bottom"
+            >
+              <button
+                onClick={handleToggleLayout}
+                className="btn-icon"
+                aria-label={settings.layoutMode === 'single' ? '切换为双栏布局' : '切换为单栏布局'}
               >
-                <button
-                  onClick={handleToggleLayout}
-                  className="p-1.5 sm:p-2 rounded hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors text-gray-600 dark:text-gray-300 flex items-center justify-center"
-                  aria-label={
-                    settings.layoutMode === 'single'
-                      ? '切换为双栏布局'
-                      : settings.layoutMode === 'double'
-                        ? '切换为三栏布局'
-                        : '切换为单栏布局'
-                  }
-                  aria-pressed={settings.layoutMode !== 'single'}
-                  role="button"
-                  tabIndex={0}
-                >
-                {settings.layoutMode === 'single' ? (
-                  // 单栏布局图标
-                  <svg
-                    xmlns="http://www.w3.org/2000/svg"
-                    className="h-5 w-5"
-                    fill="none"
-                    viewBox="0 0 24 24"
-                    stroke="currentColor"
-                  >
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      strokeWidth={2}
-                      d="M4 6h16M4 12h16M4 18h16"
-                    />
-                  </svg>
-                ) : (
-                  // 双栏布局图标
-                  <svg
-                    xmlns="http://www.w3.org/2000/svg"
-                    className="h-5 w-5"
-                    fill="none"
-                    viewBox="0 0 24 24"
-                    stroke="currentColor"
-                  >
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      strokeWidth={2}
-                      d="M4 6h7M4 12h7M4 18h7M13 6h7M13 12h7M13 18h7"
-                    />
-                  </svg>
-                )}
-                </button>
-              </Tooltip>
+                {settings.layoutMode === 'single' ? <LayoutSingleIcon /> : <LayoutDoubleIcon />}
+              </button>
+            </Tooltip>
 
-              {/* <button
-                onClick={handleToggleReorderMode}
-                className={`p-2 rounded hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors ${settings.reorderMode ? 'bg-primary-100 dark:bg-primary-900 text-primary-600 dark:text-primary-400' : 'text-gray-600 dark:text-gray-300'} flex items-center justify-center`}
-                title={settings.reorderMode ? '返回分组视图' : '重新排序所有标签'}
+            {/* 清理重复 */}
+            <Tooltip content="清理重复标签" position="bottom">
+              <button
+                onClick={handleCleanDuplicateTabs}
+                className="btn-icon"
+                aria-label="清理重复标签页"
               >
-                <svg
-                  xmlns="http://www.w3.org/2000/svg"
-                  className="h-5 w-5"
-                  fill="none"
-                  viewBox="0 0 24 24"
-                  stroke="currentColor"
-                >
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth={2}
-                    d="M4 6h16M4 12h16M4 18h16"
-                  />
-                </svg>
-              </button> */}
+                <CleanIcon />
+              </button>
+            </Tooltip>
 
-              <Tooltip
-                content="清理重复标签页 (Ctrl+D)"
-                position="bottom"
+            {/* 主题切换 */}
+            <SimpleThemeToggle />
+
+            {/* 同步按钮 */}
+            <SyncButton />
+
+            {/* 保存按钮 */}
+            <Tooltip content="保存所有标签页" position="bottom">
+              <button
+                onClick={handleSaveAllTabs}
+                className="btn btn-primary hidden sm:flex"
+                aria-label="保存当前窗口中的所有标签页"
               >
-                <button
-                  onClick={handleCleanDuplicateTabs}
-                  className="p-1.5 sm:p-2 rounded hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors text-gray-600 dark:text-gray-300 flex items-center justify-center"
-                  aria-label="清理重复标签页"
-                  role="button"
-                  tabIndex={0}
-                >
-                <svg
-                  xmlns="http://www.w3.org/2000/svg"
-                  className="h-5 w-5"
-                  fill="none"
-                  viewBox="0 0 24 24"
-                  stroke="currentColor"
-                >
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth={2}
-                    d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
-                  />
-                </svg>
-                </button>
-              </Tooltip>
-
-              <SimpleThemeToggle />
-
-              <SyncButton />
-
-              <Tooltip
-                content="保存所有标签页 (Ctrl+S)"
-                position="bottom"
+                <SaveIcon />
+                <span>保存全部</span>
+              </button>
+              <button
+                onClick={handleSaveAllTabs}
+                className="btn btn-primary sm:hidden p-2"
+                aria-label="保存当前窗口中的所有标签页"
               >
-                <button
-                  onClick={handleSaveAllTabs}
-                  className="px-2 sm:px-4 py-1.5 text-xs sm:text-sm min-w-[80px] sm:min-w-[100px] text-center flat-button-primary flat-interaction"
-                  aria-label="保存当前窗口中的所有标签页"
-                  role="button"
-                  tabIndex={0}
-                >
-                  <span className="hidden sm:inline">保存所有标签</span>
-                  <span className="sm:hidden">保存</span>
-                </button>
-              </Tooltip>
-            </div>
+                <SaveIcon />
+              </button>
+            </Tooltip>
 
+            {/* 更多菜单 */}
             <div className="relative">
               <button
                 onClick={() => setShowDropdown(!showDropdown)}
-                className="p-2 rounded-full hover:bg-gray-100 dark:hover:bg-gray-700 transition-material text-gray-600 dark:text-gray-300"
+                className="btn-icon"
                 aria-label="菜单"
               >
-                <svg
-                  xmlns="http://www.w3.org/2000/svg"
-                  className="h-6 w-6"
-                  fill="none"
-                  viewBox="0 0 24 24"
-                  stroke="currentColor"
-                >
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth={2}
-                    d="M12 5v.01M12 12v.01M12 19v.01M12 6a1 1 0 110-2 1 1 0 010 2zm0 7a1 1 0 110-2 1 1 0 010 2zm0 7a1 1 0 110-2 1 1 0 010 2z"
-                  />
-                </svg>
+                <MenuIcon />
               </button>
-
               {showDropdown && <HeaderDropdown onClose={() => setShowDropdown(false)} />}
             </div>
           </div>

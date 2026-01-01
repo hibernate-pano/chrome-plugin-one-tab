@@ -8,6 +8,23 @@ interface EmptyStateProps {
   className?: string;
 }
 
+// 默认图标 - 更精致的设计
+const DefaultIcon = () => (
+  <svg
+    className="w-8 h-8 text-neutral-400"
+    fill="none"
+    viewBox="0 0 24 24"
+    stroke="currentColor"
+    strokeWidth={1.5}
+  >
+    <path
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      d="M2.25 12.75V12A2.25 2.25 0 014.5 9.75h15A2.25 2.25 0 0121.75 12v.75m-8.69-6.44l-2.12-2.12a1.5 1.5 0 00-1.061-.44H4.5A2.25 2.25 0 002.25 6v12a2.25 2.25 0 002.25 2.25h15A2.25 2.25 0 0021.75 18V9a2.25 2.25 0 00-2.25-2.25h-5.379a1.5 1.5 0 01-1.06-.44z"
+    />
+  </svg>
+);
+
 /**
  * 空状态组件
  * 用于显示没有数据时的状态
@@ -19,36 +36,26 @@ export const EmptyState: React.FC<EmptyStateProps> = ({
   action,
   className = ''
 }) => {
-  const defaultIcon = (
-    <div className="w-16 h-16 rounded-full bg-gray-100 dark:bg-gray-700 flex items-center justify-center">
-      <svg
-        xmlns="http://www.w3.org/2000/svg"
-        className="h-10 w-10 text-gray-400 dark:text-gray-500"
-        fill="none"
-        viewBox="0 0 24 24"
-        stroke="currentColor"
-      >
-        <path
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          strokeWidth={2}
-          d="M12 6v6m0 0v6m0-6h6m-6 0H6"
-        />
-      </svg>
-    </div>
-  );
-
   return (
-    <div className={`flex flex-col items-center justify-center py-8 space-y-3 text-gray-500 dark:text-gray-400 ${className}`}>
-      {icon || defaultIcon}
-      <h3 className="text-lg font-medium text-gray-700 dark:text-gray-300">{title}</h3>
+    <div className={`empty-state animate-in ${className}`}>
+      {/* 图标容器 */}
+      <div className="empty-state-icon">
+        {icon || <DefaultIcon />}
+      </div>
+
+      {/* 标题 */}
+      <h3 className="empty-state-title">{title}</h3>
+
+      {/* 描述 */}
       {description && (
-        <p className="text-gray-500 dark:text-gray-400 max-w-md text-center text-sm">
+        <p className="empty-state-description">
           {description}
         </p>
       )}
+
+      {/* 操作按钮 */}
       {action && (
-        <div className="mt-4">
+        <div className="mt-6">
           {action}
         </div>
       )}
