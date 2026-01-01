@@ -1,0 +1,433 @@
+/* ==========================================
+   🎨 Legacy Theme - Original TabVault Style
+   复现 main 分支的原始 UI 样式
+   ========================================== */
+
+/* ==========================================
+   Legacy 主题 - 浅色模式
+   使用 html[data-theme] 选择器确保优先级
+   ========================================== */
+html[data-theme="legacy"] {
+  /* 颜色 - 原始 Tailwind 灰色系 */
+  --color-bg-primary: #f9fafb;      /* gray-50 */
+  --color-bg-secondary: #ffffff;     /* white */
+  --color-bg-tertiary: #f3f4f6;      /* gray-100 */
+  --color-bg-elevated: #ffffff;
+  --color-bg-overlay: rgba(255, 255, 255, 0.95);
+
+  --color-text-primary: #111827;     /* gray-900 */
+  --color-text-secondary: #374151;   /* gray-700 */
+  --color-text-tertiary: #6b7280;    /* gray-500 */
+  --color-text-muted: #9ca3af;       /* gray-400 */
+
+  --color-border-default: #e5e7eb;   /* gray-200 */
+  --color-border-subtle: #f3f4f6;    /* gray-100 */
+  --color-border-strong: #d1d5db;    /* gray-300 */
+
+  /* 原始蓝色强调色 */
+  --color-accent: #2563eb;           /* blue-600 */
+  --color-accent-hover: #1d4ed8;     /* blue-700 */
+  --color-accent-subtle: #dbeafe;    /* blue-100 */
+
+  /* 状态颜色 */
+  --color-warning: #f59e0b;          /* amber-500 */
+  --color-danger: #ef4444;           /* red-500 */
+  --color-success: #22c55e;          /* green-500 */
+
+  /* 排版 - 系统字体 */
+  --font-family-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  --font-family-mono: 'SF Mono', Monaco, 'Cascadia Code', monospace;
+
+  /* 阴影 - 原始简单阴影 */
+  --shadow-card: 0 1px 3px rgba(0, 0, 0, 0.1);
+  --shadow-card-hover: 0 4px 6px rgba(0, 0, 0, 0.1);
+  --shadow-elevation-1: 0 1px 2px rgba(0, 0, 0, 0.05);
+  --shadow-elevation-2: 0 4px 6px rgba(0, 0, 0, 0.1);
+  --shadow-elevation-3: 0 10px 15px rgba(0, 0, 0, 0.1);
+
+  /* 圆角 - 原始较小圆角 */
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 8px;
+  --radius-xl: 8px;
+  --radius-full: 9999px;
+
+  /* 间距 */
+  --spacing-xs: 4px;
+  --spacing-sm: 8px;
+  --spacing-md: 16px;
+  --spacing-lg: 24px;
+  --spacing-xl: 32px;
+}
+
+/* ==========================================
+   Legacy 主题 - 深色模式
+   ========================================== */
+html[data-theme="legacy"].dark {
+  --color-bg-primary: #111827;       /* gray-900 */
+  --color-bg-secondary: #1f2937;     /* gray-800 */
+  --color-bg-tertiary: #374151;      /* gray-700 */
+  --color-bg-elevated: #1f2937;
+  --color-bg-overlay: rgba(31, 41, 55, 0.95);
+
+  --color-text-primary: #f9fafb;     /* gray-50 */
+  --color-text-secondary: #e5e7eb;   /* gray-200 */
+  --color-text-tertiary: #9ca3af;    /* gray-400 */
+  --color-text-muted: #6b7280;       /* gray-500 */
+
+  --color-border-default: #374151;   /* gray-700 */
+  --color-border-subtle: #1f2937;    /* gray-800 */
+  --color-border-strong: #4b5563;    /* gray-600 */
+
+  --color-accent: #3b82f6;           /* blue-500 */
+  --color-accent-hover: #60a5fa;     /* blue-400 */
+  --color-accent-subtle: #1e3a8a;    /* blue-900 */
+
+  /* 状态颜色 */
+  --color-warning: #fbbf24;
+  --color-danger: #f87171;
+  --color-success: #4ade80;
+
+  /* 深色模式阴影 */
+  --shadow-card: 0 1px 3px rgba(0, 0, 0, 0.3);
+  --shadow-card-hover: 0 4px 6px rgba(0, 0, 0, 0.4);
+  --shadow-elevation-1: 0 1px 2px rgba(0, 0, 0, 0.2);
+  --shadow-elevation-2: 0 4px 6px rgba(0, 0, 0, 0.3);
+  --shadow-elevation-3: 0 10px 15px rgba(0, 0, 0, 0.4);
+}
+
+/* ==========================================
+   Legacy 主题特定样式 - 复现原始 UI
+   ========================================== */
+html[data-theme="legacy"] body {
+  font-family: var(--font-family-sans);
+}
+
+/* Legacy 主题按钮样式 - 原始扁平风格 */
+html[data-theme="legacy"] .btn {
+  font-weight: 500;
+  border-radius: var(--radius-md);
+  padding: 6px 16px;
+}
+
+html[data-theme="legacy"] .btn-primary {
+  background-color: var(--color-accent);
+  box-shadow: none;
+  border: none;
+}
+
+html[data-theme="legacy"] .btn-primary:hover {
+  background-color: var(--color-accent-hover);
+  box-shadow: 0 2px 4px rgba(37, 99, 235, 0.3);
+}
+
+html[data-theme="legacy"] .btn-primary:active {
+  transform: translateY(1px);
+}
+
+/* Legacy 主题卡片样式 - 原始 flat-card */
+html[data-theme="legacy"] .card,
+html[data-theme="legacy"] .tab-group-card {
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-card);
+  border: 1px solid var(--color-border-default);
+  background: var(--color-bg-secondary);
+}
+
+html[data-theme="legacy"] .card:hover,
+html[data-theme="legacy"] .tab-group-card:hover {
+  box-shadow: var(--shadow-card-hover);
+  border-color: var(--color-border-strong);
+}
+
+/* Legacy 主题输入框样式 */
+html[data-theme="legacy"] .input {
+  border: 1px solid var(--color-border-default);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-secondary);
+  padding: 6px 12px;
+}
+
+html[data-theme="legacy"] .input:hover {
+  border-color: var(--color-border-strong);
+}
+
+html[data-theme="legacy"] .input:focus {
+  border-color: var(--color-accent);
+  box-shadow: 0 0 0 1px var(--color-accent);
+  outline: none;
+}
+
+/* Legacy 主题搜索框 - 原始矩形样式 */
+html[data-theme="legacy"] .search-input {
+  border-radius: var(--radius-md);
+  background: var(--color-bg-secondary);
+  border: 1px solid var(--color-border-default);
+}
+
+html[data-theme="legacy"] .search-input:focus {
+  border-color: var(--color-accent);
+  box-shadow: 0 0 0 1px var(--color-accent);
+}
+
+/* Legacy 主题标签组样式 */
+html[data-theme="legacy"] .tab-group-header {
+  background: #f9fafb;
+  border-bottom: 1px solid var(--color-border-default);
+  padding: 8px 12px;
+}
+
+html[data-theme="legacy"].dark .tab-group-header {
+  background: #1f2937;
+}
+
+/* Legacy 主题徽章样式 - 原始蓝色徽章 */
+html[data-theme="legacy"] .badge-accent,
+html[data-theme="legacy"] .tab-group-count {
+  background: #dbeafe;
+  color: #1d4ed8;
+  font-weight: 500;
+  padding: 2px 8px;
+  border-radius: 4px;
+}
+
+html[data-theme="legacy"].dark .badge-accent,
+html[data-theme="legacy"].dark .tab-group-count {
+  background: #1e3a8a;
+  color: #93c5fd;
+}
+
+/* Legacy 主题头部样式 - 原始简单边框 */
+html[data-theme="legacy"] .header {
+  background: var(--color-bg-secondary);
+  border-bottom: 1px solid var(--color-border-default);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+/* Legacy 主题空状态样式 */
+html[data-theme="legacy"] .empty-state-icon {
+  background: var(--color-bg-tertiary);
+  border: none;
+  border-radius: 50%;
+  width: 64px;
+  height: 64px;
+}
+
+/* Legacy 主题标签项样式 */
+html[data-theme="legacy"] .tab-item {
+  border-bottom: 1px solid var(--color-border-subtle);
+  padding: 8px 12px;
+}
+
+html[data-theme="legacy"] .tab-item:hover {
+  background: var(--color-bg-tertiary);
+}
+
+/* Legacy 主题下拉菜单样式 */
+html[data-theme="legacy"] .dropdown-menu,
+html[data-theme="legacy"] .popup-menu {
+  background: var(--color-bg-secondary);
+  border: 1px solid var(--color-border-default);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-elevation-2);
+}
+
+html[data-theme="legacy"] .dropdown-item {
+  color: var(--color-text-primary);
+  padding: 8px 12px;
+}
+
+html[data-theme="legacy"] .dropdown-item:hover {
+  background: var(--color-bg-tertiary);
+}
+
+/* Legacy 主题模态框样式 */
+html[data-theme="legacy"] .modal-content {
+  background: var(--color-bg-secondary);
+  border: 1px solid var(--color-border-default);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-elevation-3);
+}
+
+/* Legacy 主题工具提示样式 */
+html[data-theme="legacy"] .tooltip {
+  background: var(--color-bg-elevated);
+  color: var(--color-text-primary);
+  border: 1px solid var(--color-border-default);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-card);
+}
+
+/* Legacy 主题开关按钮样式 */
+html[data-theme="legacy"] .toggle-switch-active {
+  background-color: var(--color-accent);
+}
+
+html[data-theme="legacy"] .toggle-switch-inactive {
+  background-color: var(--color-border-default);
+}
+
+/* ==========================================
+   Legacy 主题 - 搜索组件样式
+   ========================================== */
+html[data-theme="legacy"] .search-bar-input {
+  border-radius: var(--radius-md);
+  border: 1px solid var(--color-border-default);
+  background: var(--color-bg-secondary);
+}
+
+html[data-theme="legacy"] .search-bar-input:hover {
+  border-color: var(--color-border-strong);
+}
+
+html[data-theme="legacy"] .search-bar-input:focus {
+  border-color: var(--color-accent);
+  box-shadow: 0 0 0 1px var(--color-accent);
+}
+
+html[data-theme="legacy"] .search-result-item {
+  border-radius: var(--radius-sm);
+}
+
+html[data-theme="legacy"] .search-result-item:hover {
+  background: var(--color-bg-tertiary);
+}
+
+html[data-theme="legacy"] .search-highlight {
+  background-color: #fef3c7;
+  color: #92400e;
+}
+
+html[data-theme="legacy"].dark .search-highlight {
+  background-color: #78350f;
+  color: #fef3c7;
+}
+
+/* Legacy 主题搜索结果链接 */
+html[data-theme="legacy"] .search-result-link {
+  color: var(--color-accent);
+}
+
+html[data-theme="legacy"] .search-result-link:hover {
+  color: var(--color-accent-hover);
+}
+
+/* Legacy 主题搜索操作按钮 */
+html[data-theme="legacy"] .search-action-btn-accent {
+  color: var(--color-accent);
+}
+
+html[data-theme="legacy"] .search-action-btn-accent:hover {
+  color: var(--color-accent-hover);
+}
+
+/* ==========================================
+   Legacy 主题 - 拖拽样式 (原始 OneTab 风格)
+   ========================================== */
+html[data-theme="legacy"] .dragging {
+  opacity: 0.7;
+  background-color: #f0f9ff !important;
+  outline: 1px dashed #3b82f6;
+  outline-offset: 0;
+  box-shadow: none;
+}
+
+html[data-theme="legacy"] .drag-over {
+  border-top: 2px solid #3b82f6;
+  margin-top: 1px;
+  box-shadow: none;
+  background: transparent !important;
+}
+
+/* ==========================================
+   Legacy 主题 - 滚动条样式
+   ========================================== */
+html[data-theme="legacy"] ::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+html[data-theme="legacy"] ::-webkit-scrollbar-track {
+  background: var(--color-bg-tertiary);
+  border-radius: 4px;
+}
+
+html[data-theme="legacy"] ::-webkit-scrollbar-thumb {
+  background: var(--color-border-strong);
+  border-radius: 4px;
+}
+
+html[data-theme="legacy"] ::-webkit-scrollbar-thumb:hover {
+  background: var(--color-text-muted);
+}
+
+/* ==========================================
+   Legacy 主题 - Focus 样式 (原始蓝色)
+   ========================================== */
+html[data-theme="legacy"] :focus-visible {
+  outline: 2px solid #2563eb;
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+
+html[data-theme="legacy"].dark :focus-visible {
+  outline-color: #93c5fd;
+}
+
+/* ==========================================
+   Legacy 主题 - 选中文本
+   ========================================== */
+html[data-theme="legacy"] ::selection {
+  background-color: var(--color-accent-subtle);
+  color: var(--color-text-primary);
+}
+
+/* ==========================================
+   Legacy 主题 - 操作按钮颜色
+   ========================================== */
+html[data-theme="legacy"] .tab-group-action-accent {
+  color: var(--color-accent);
+}
+
+html[data-theme="legacy"] .tab-group-action-accent:hover {
+  color: var(--color-accent-hover);
+}
+
+html[data-theme="legacy"] .tab-group-action-danger:hover {
+  color: var(--color-danger);
+}
+
+html[data-theme="legacy"] .tab-item-delete-btn:hover {
+  color: var(--color-danger);
+}
+
+html[data-theme="legacy"] .tab-item-title-hover:hover {
+  color: var(--color-accent);
+}
+
+html[data-theme="legacy"] .tab-group-title-hover:hover {
+  color: var(--color-accent);
+}
+
+/* ==========================================
+   Legacy 主题 - 锁定图标
+   ========================================== */
+html[data-theme="legacy"] .tab-group-lock-icon {
+  color: var(--color-warning);
+}
+
+/* ==========================================
+   Legacy 主题 - 时间显示
+   ========================================== */
+html[data-theme="legacy"] .tab-group-time {
+  font-size: 0.75rem;
+  color: var(--color-text-muted);
+}
+
+/* ==========================================
+   Legacy 主题 - 空状态默认图标
+   ========================================== */
+html[data-theme="legacy"] .empty-state-default-icon {
+  color: var(--color-text-muted);
+}

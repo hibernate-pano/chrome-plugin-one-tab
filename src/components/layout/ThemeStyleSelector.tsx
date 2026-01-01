@@ -37,6 +37,16 @@ const AuroraIcon = () => (
   </svg>
 );
 
+// Legacy 主题图标 - 原始简约风格
+const LegacyIcon = () => (
+  <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5}>
+    {/* 简单的标签页图标 */}
+    <rect x="4" y="4" width="16" height="16" rx="1" strokeLinecap="round" strokeLinejoin="round" />
+    <path d="M4 8h16" strokeLinecap="round" strokeLinejoin="round" />
+    <path d="M8 4v4" strokeLinecap="round" strokeLinejoin="round" />
+  </svg>
+);
+
 // 选中标记图标
 const CheckIcon = () => (
   <svg className="w-4 h-4 text-green-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
@@ -69,6 +79,12 @@ const themeOptions: ThemeOption[] = [
     label: '极光',
     description: '北欧冷色调风格',
     icon: <AuroraIcon />,
+  },
+  {
+    value: 'legacy',
+    label: '原始',
+    description: '经典 TabVault 风格',
+    icon: <LegacyIcon />,
   },
 ];
 

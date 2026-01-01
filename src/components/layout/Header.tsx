@@ -22,12 +22,6 @@ interface HeaderProps {
 }
 
 // 图标组件
-const SearchIcon = () => (
-  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-    <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-  </svg>
-);
-
 const LoadingIcon = () => (
   <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
     <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
@@ -221,14 +215,16 @@ export const Header: React.FC<HeaderProps> = ({ onSearch }) => {
           {/* 搜索框 */}
           <div className="flex-1 max-w-md mx-4">
             <div className="relative">
-              <div className="absolute left-3 top-1/2 -translate-y-1/2 search-icon">
-                {isSearching ? <LoadingIcon /> : <SearchIcon />}
-              </div>
+              {isSearching && (
+                <div className="absolute left-3 top-1/2 -translate-y-1/2 search-icon">
+                  <LoadingIcon />
+                </div>
+              )}
               <input
                 ref={searchInputRef}
                 type="text"
                 placeholder="搜索标签..."
-                className="input search-input w-full py-2 text-sm"
+                className={`input search-input w-full py-2 text-sm ${isSearching ? 'pl-10' : 'pl-3'}`}
                 onChange={handleSearch}
                 value={searchValue}
                 aria-label="搜索标签页"

@@ -23,8 +23,8 @@ export const ThemeProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const themeStyleFromStore = useAppSelector((state) => state.settings.themeStyle);
   const [currentTheme, setCurrentTheme] = useState<Theme>('light');
   
-  // 主题风格状态，默认为 'refined'
-  const themeStyle: ThemeStyle = themeStyleFromStore || 'refined';
+  // 主题风格状态，默认为 'legacy'
+  const themeStyle: ThemeStyle = themeStyleFromStore || 'legacy';
 
   // 检测系统主题并设置当前主题
   useEffect(() => {

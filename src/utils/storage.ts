@@ -16,7 +16,7 @@ const STORAGE_KEYS = {
 const STORAGE_VERSION = 2;
 
 // 有效的主题风格值
-const VALID_THEME_STYLES: ThemeStyle[] = ['classic', 'refined'];
+const VALID_THEME_STYLES: ThemeStyle[] = ['classic', 'refined', 'aurora', 'legacy'];
 
 // 有效的主题模式值
 const VALID_THEME_MODES: Array<'light' | 'dark' | 'auto'> = ['light', 'dark', 'auto'];
@@ -31,7 +31,7 @@ export function validateThemeStyle(value: unknown): ThemeStyle {
     return value as ThemeStyle;
   }
   console.warn('无效的主题风格值，使用默认值:', value);
-  return 'refined';
+  return 'legacy';
 }
 
 /**
@@ -60,7 +60,7 @@ export const DEFAULT_SETTINGS: UserSettings = {
   syncStrategy: 'newest', // 默认使用最新版本
   deleteStrategy: 'everywhere', // 默认在所有设备上删除
   themeMode: 'auto', // 默认使用自动模式（跟随系统）
-  themeStyle: 'refined', // 默认使用精致主题
+  themeStyle: 'legacy', // 默认使用原始主题
 };
 
 // 兼容历史字段
