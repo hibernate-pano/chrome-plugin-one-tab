@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { createPortal } from 'react-dom';
 import { useAppSelector } from '@/store/hooks';
 import { syncService } from '@/services/syncService';
 import { useToast } from '@/contexts/ToastContext';
@@ -229,63 +230,117 @@ export const SyncButton: React.FC<SyncButtonProps> = () => {
         </div>
       </div>
 
-      {/* 模态框背景遮罩 */}
-      {(showUploadModal || showDownloadModal) && (
+      {/* 模态框 - 使用 Portal 渲染到 body，避免主题样式影响 */}
+      {(showUploadModal || showDownloadModal) && createPortal(
         <div
-          className={`fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 ${modalAnimation}`}
+          className={modalAnimation}
+          style={{
+            position: 'fixed',
+            top: 0,
+            left: 0,
+            width: '100vw',
+            height: '100vh',
+            backgroundColor: 'rgba(0, 0, 0, 0.5)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 99999,
+            margin: 0,
+            padding: 0
+          }}
           onClick={closeModals}
         >
           {/* 上传模态框 */}
           {showUploadModal && (
             <div
-              className={`relative max-w-md w-full mx-auto ${modalAnimation}`}
+              className={modalAnimation}
+              style={{
+                maxWidth: '28rem',
+                width: '90%',
+                backgroundColor: 'transparent'
+              }}
               onClick={(e) => e.stopPropagation()}
             >
-              <div className="text-center mb-4">
-                <h3 className="text-xl font-bold text-white">选择上传模式</h3>
-                <p className="text-gray-300">请选择如何处理云端数据</p>
+              <div style={{ textAlign: 'center', marginBottom: '16px' }}>
+                <h3 style={{ fontSize: '1.25rem', fontWeight: 'bold', color: '#ffffff', margin: 0 }}>选择上传模式</h3>
+                <p style={{ color: '#d1d5db', margin: '8px 0 0 0' }}>请选择如何处理云端数据</p>
               </div>
 
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div style={{ display: 'flex', gap: '16px', justifyContent: 'center' }}>
                 {/* 覆盖模式卡片 */}
                 <div
                   onClick={handleUploadOverwrite}
-                  className="bg-white rounded-xl overflow-hidden shadow-lg transform transition-all hover:scale-105 cursor-pointer"
+                  style={{
+                    backgroundColor: '#ffffff',
+                    borderRadius: '12px',
+                    overflow: 'hidden',
+                    boxShadow: '0 10px 25px rgba(0, 0, 0, 0.2)',
+                    cursor: 'pointer',
+                    transition: 'transform 0.2s',
+                    width: '200px',
+                    flexShrink: 0
+                  }}
+                  onMouseEnter={(e) => e.currentTarget.style.transform = 'scale(1.05)'}
+                  onMouseLeave={(e) => e.currentTarget.style.transform = 'scale(1)'}
                 >
-                  <div className="bg-red-600 p-4 flex justify-center">
-                    <svg xmlns="http://www.w3.org/2000/svg" className="h-16 w-16 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <div style={{ backgroundColor: '#dc2626', padding: '16px', display: 'flex', justifyContent: 'center' }}>
+                    <svg xmlns="http://www.w3.org/2000/svg" style={{ height: '48px', width: '48px' }} fill="none" viewBox="0 0 24 24" stroke="#ffffff">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
                     </svg>
                   </div>
-                  <div className="p-4">
-                    <h4 className="text-lg font-semibold text-gray-800 mb-2">覆盖模式</h4>
-                    <p className="text-gray-600 text-sm mb-4">将使用本地数据完全替换云端数据，云端现有数据将被删除</p>
+                  <div style={{ padding: '12px' }}>
+                    <h4 style={{ fontSize: '1rem', fontWeight: '600', color: '#1f2937', marginBottom: '6px', margin: '0 0 6px 0' }}>覆盖模式</h4>
+                    <p style={{ color: '#4b5563', fontSize: '0.8rem', margin: 0, lineHeight: '1.4' }}>将使用本地数据完全替换云端数据，云端现有数据将被删除</p>
                   </div>
                 </div>
 
                 {/* 合并模式卡片 */}
                 <div
                   onClick={handleUploadMerge}
-                  className="bg-white rounded-xl overflow-hidden shadow-lg transform transition-all hover:scale-105 cursor-pointer"
+                  style={{
+                    backgroundColor: '#ffffff',
+                    borderRadius: '12px',
+                    overflow: 'hidden',
+                    boxShadow: '0 10px 25px rgba(0, 0, 0, 0.2)',
+                    cursor: 'pointer',
+                    transition: 'transform 0.2s',
+                    width: '200px',
+                    flexShrink: 0
+                  }}
+                  onMouseEnter={(e) => e.currentTarget.style.transform = 'scale(1.05)'}
+                  onMouseLeave={(e) => e.currentTarget.style.transform = 'scale(1)'}
                 >
-                  <div className="bg-green-600 p-4 flex justify-center">
-                    <svg xmlns="http://www.w3.org/2000/svg" className="h-16 w-16 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <div style={{ backgroundColor: '#16a34a', padding: '16px', display: 'flex', justifyContent: 'center' }}>
+                    <svg xmlns="http://www.w3.org/2000/svg" style={{ height: '48px', width: '48px' }} fill="none" viewBox="0 0 24 24" stroke="#ffffff">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4" />
                     </svg>
                   </div>
-                  <div className="p-4">
-                    <h4 className="text-lg font-semibold text-gray-800 mb-2">合并模式</h4>
-                    <p className="text-gray-600 text-sm mb-4">将本地数据与云端数据智能合并，保留两者的状态</p>
+                  <div style={{ padding: '12px' }}>
+                    <h4 style={{ fontSize: '1rem', fontWeight: '600', color: '#1f2937', marginBottom: '6px', margin: '0 0 6px 0' }}>合并模式</h4>
+                    <p style={{ color: '#4b5563', fontSize: '0.8rem', margin: 0, lineHeight: '1.4' }}>将本地数据与云端数据智能合并，保留两者的状态</p>
                   </div>
                 </div>
               </div>
 
-              <div className="text-center mt-4">
+              <div style={{ textAlign: 'center', marginTop: '16px' }}>
                 <button
                   onClick={closeModals}
-                  className="px-4 py-2 bg-gray-200 text-gray-800 rounded-md hover:bg-gray-300 transition-colors inline-flex items-center"
+                  style={{
+                    padding: '8px 16px',
+                    backgroundColor: '#ffffff',
+                    color: '#1f2937',
+                    borderRadius: '6px',
+                    border: 'none',
+                    cursor: 'pointer',
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    fontSize: '0.875rem',
+                    fontWeight: '500'
+                  }}
+                  onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#f3f4f6'}
+                  onMouseLeave={(e) => e.currentTarget.style.backgroundColor = '#ffffff'}
                 >
-                  <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <svg xmlns="http://www.w3.org/2000/svg" style={{ height: '16px', width: '16px', marginRight: '4px' }} fill="none" viewBox="0 0 24 24" stroke="currentColor">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
                   </svg>
                   取消
@@ -297,54 +352,94 @@ export const SyncButton: React.FC<SyncButtonProps> = () => {
           {/* 下载模态框 */}
           {showDownloadModal && (
             <div
-              className={`relative max-w-md w-full mx-auto ${modalAnimation}`}
+              className={modalAnimation}
+              style={{
+                maxWidth: '28rem',
+                width: '90%',
+                backgroundColor: 'transparent'
+              }}
               onClick={(e) => e.stopPropagation()}
             >
-              <div className="text-center mb-4">
-                <h3 className="text-xl font-bold text-white">选择下载模式</h3>
-                <p className="text-gray-300">请选择如何处理本地数据</p>
+              <div style={{ textAlign: 'center', marginBottom: '16px' }}>
+                <h3 style={{ fontSize: '1.25rem', fontWeight: 'bold', color: '#ffffff', margin: 0 }}>选择下载模式</h3>
+                <p style={{ color: '#d1d5db', margin: '8px 0 0 0' }}>请选择如何处理本地数据</p>
               </div>
 
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div style={{ display: 'flex', gap: '16px', justifyContent: 'center' }}>
                 {/* 覆盖模式卡片 */}
                 <div
                   onClick={handleDownloadOverwrite}
-                  className="bg-white rounded-xl overflow-hidden shadow-lg transform transition-all hover:scale-105 cursor-pointer"
+                  style={{
+                    backgroundColor: '#ffffff',
+                    borderRadius: '12px',
+                    overflow: 'hidden',
+                    boxShadow: '0 10px 25px rgba(0, 0, 0, 0.2)',
+                    cursor: 'pointer',
+                    transition: 'transform 0.2s',
+                    width: '200px',
+                    flexShrink: 0
+                  }}
+                  onMouseEnter={(e) => e.currentTarget.style.transform = 'scale(1.05)'}
+                  onMouseLeave={(e) => e.currentTarget.style.transform = 'scale(1)'}
                 >
-                  <div className="bg-red-600 p-4 flex justify-center">
-                    <svg xmlns="http://www.w3.org/2000/svg" className="h-16 w-16 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <div style={{ backgroundColor: '#dc2626', padding: '16px', display: 'flex', justifyContent: 'center' }}>
+                    <svg xmlns="http://www.w3.org/2000/svg" style={{ height: '48px', width: '48px' }} fill="none" viewBox="0 0 24 24" stroke="#ffffff">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
                     </svg>
                   </div>
-                  <div className="p-4">
-                    <h4 className="text-lg font-semibold text-gray-800 mb-2">覆盖模式</h4>
-                    <p className="text-gray-600 text-sm mb-4">将使用云端数据完全替换本地数据，本地状态将被覆盖</p>
+                  <div style={{ padding: '12px' }}>
+                    <h4 style={{ fontSize: '1rem', fontWeight: '600', color: '#1f2937', marginBottom: '6px', margin: '0 0 6px 0' }}>覆盖模式</h4>
+                    <p style={{ color: '#4b5563', fontSize: '0.8rem', margin: 0, lineHeight: '1.4' }}>将使用云端数据完全替换本地数据，本地状态将被覆盖</p>
                   </div>
                 </div>
 
                 {/* 合并模式卡片 */}
                 <div
                   onClick={handleDownloadMerge}
-                  className="bg-white rounded-xl overflow-hidden shadow-lg transform transition-all hover:scale-105 cursor-pointer"
+                  style={{
+                    backgroundColor: '#ffffff',
+                    borderRadius: '12px',
+                    overflow: 'hidden',
+                    boxShadow: '0 10px 25px rgba(0, 0, 0, 0.2)',
+                    cursor: 'pointer',
+                    transition: 'transform 0.2s',
+                    width: '200px',
+                    flexShrink: 0
+                  }}
+                  onMouseEnter={(e) => e.currentTarget.style.transform = 'scale(1.05)'}
+                  onMouseLeave={(e) => e.currentTarget.style.transform = 'scale(1)'}
                 >
-                  <div className="bg-blue-600 p-4 flex justify-center">
-                    <svg xmlns="http://www.w3.org/2000/svg" className="h-16 w-16 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <div style={{ backgroundColor: '#2563eb', padding: '16px', display: 'flex', justifyContent: 'center' }}>
+                    <svg xmlns="http://www.w3.org/2000/svg" style={{ height: '48px', width: '48px' }} fill="none" viewBox="0 0 24 24" stroke="#ffffff">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4" />
                     </svg>
                   </div>
-                  <div className="p-4">
-                    <h4 className="text-lg font-semibold text-gray-800 mb-2">合并模式</h4>
-                    <p className="text-gray-600 text-sm mb-4">将云端数据与本地数据智能合并，保留两者的状态</p>
+                  <div style={{ padding: '12px' }}>
+                    <h4 style={{ fontSize: '1rem', fontWeight: '600', color: '#1f2937', marginBottom: '6px', margin: '0 0 6px 0' }}>合并模式</h4>
+                    <p style={{ color: '#4b5563', fontSize: '0.8rem', margin: 0, lineHeight: '1.4' }}>将云端数据与本地数据智能合并，保留两者的状态</p>
                   </div>
                 </div>
               </div>
 
-              <div className="text-center mt-4">
+              <div style={{ textAlign: 'center', marginTop: '16px' }}>
                 <button
                   onClick={closeModals}
-                  className="px-4 py-2 bg-gray-200 text-gray-800 rounded-md hover:bg-gray-300 transition-colors inline-flex items-center"
+                  style={{
+                    padding: '8px 16px',
+                    backgroundColor: '#ffffff',
+                    color: '#1f2937',
+                    borderRadius: '6px',
+                    border: 'none',
+                    cursor: 'pointer',
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    fontSize: '0.875rem',
+                    fontWeight: '500'
+                  }}
+                  onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#f3f4f6'}
+                  onMouseLeave={(e) => e.currentTarget.style.backgroundColor = '#ffffff'}
                 >
-                  <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <svg xmlns="http://www.w3.org/2000/svg" style={{ height: '16px', width: '16px', marginRight: '4px' }} fill="none" viewBox="0 0 24 24" stroke="currentColor">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
                   </svg>
                   取消
@@ -352,7 +447,8 @@ export const SyncButton: React.FC<SyncButtonProps> = () => {
               </div>
             </div>
           )}
-        </div>
+        </div>,
+        document.body
       )}
     </>
   );

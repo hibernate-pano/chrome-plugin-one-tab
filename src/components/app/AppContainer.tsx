@@ -3,7 +3,6 @@ import { ToastProvider } from '@/contexts/ToastContext';
 import { ThemeProvider } from '@/contexts/ThemeContext';
 import ErrorBoundary from '@/components/common/ErrorBoundary';
 import { AuthProvider } from './AuthProvider';
-import { SyncPromptManager } from './SyncPromptManager';
 import { MainApp } from './MainApp';
 import { initStorage, getActiveBackend } from '@/storage/storageAdapter';
 
@@ -31,9 +30,7 @@ export const AppContainer: React.FC = () => {
       <ToastProvider>
         <ThemeProvider>
           <AuthProvider>
-            <SyncPromptManager>
-              <MainApp />
-            </SyncPromptManager>
+            <MainApp />
           </AuthProvider>
         </ThemeProvider>
       </ToastProvider>

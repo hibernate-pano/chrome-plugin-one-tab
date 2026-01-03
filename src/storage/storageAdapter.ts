@@ -5,7 +5,6 @@ import type { StorageBackend, StorageDriver } from './types';
 const MIGRATION_KEYS = {
   deviceId: 'tabvaultpro_device_id',
   legacyDeviceId: 'deviceId', // 早期版本存放在 chrome.storage.local 的键
-  syncPrompt: 'tabvaultpro_sync_prompt_shown',
   tabGroupPrefix: 'tabGroup_',
   tabGroups: 'tab_groups',
   legacyTabGroups: 'tabGroups', // 早期 service worker 使用的键
@@ -37,7 +36,6 @@ async function migrateFromLocalStorage(target: StorageDriver) {
     if (!key) continue;
     const interested =
       key === MIGRATION_KEYS.deviceId ||
-      key === MIGRATION_KEYS.syncPrompt ||
       key === MIGRATION_KEYS.tabGroups ||
       key === MIGRATION_KEYS.legacyTabGroups ||
       key === MIGRATION_KEYS.userSettings ||
@@ -76,7 +74,6 @@ async function migrateFromChromeStorage(target: StorageDriver) {
   const keys = [
     MIGRATION_KEYS.deviceId,
     MIGRATION_KEYS.legacyDeviceId,
-    MIGRATION_KEYS.syncPrompt,
     MIGRATION_KEYS.tabGroups,
     MIGRATION_KEYS.legacyTabGroups,
     MIGRATION_KEYS.userSettings,
