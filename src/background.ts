@@ -160,6 +160,7 @@ chrome.runtime.onInstalled.addListener(async (details) => {
       syncStrategy: 'newest',
       deleteStrategy: 'everywhere',
       themeMode: 'auto', // 默认使用自动模式（跟随系统）
+      collectPinnedTabs: false, // 默认不收集固定标签页
     });
   }
 

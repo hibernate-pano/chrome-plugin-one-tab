@@ -273,8 +273,7 @@ class PerformanceMonitor {
         avgInteractionTime: Math.round(avgInteractionTime * 100) / 100,
         memoryUsage,
         slowOperations,
-      },
-      recommendations,
+      },      recommendations,
     };
   }
 

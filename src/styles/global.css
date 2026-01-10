@@ -2,6 +2,9 @@
 @import './themes/refined.css';
 @import './themes/aurora.css';
 @import './themes/legacy.css';
+@import './themes/creamy.css';
+@import './themes/pink.css';
+@import './themes/mint.css';
 
 @tailwind base;
 @tailwind components;
@@ -46,7 +49,8 @@ html:not([data-theme]) {
   --color-success: #22c55e;
   --shadow-card: 0 1px 3px rgba(0, 0, 0, 0.1);
   --shadow-card-hover: 0 4px 6px rgba(0, 0, 0, 0.1);
-  --font-family-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  --font-family-sans:
+    -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
 }
 
 html:not([data-theme]).dark {
@@ -91,7 +95,8 @@ html:not([data-theme]).dark {
    */
   :root {
     /* 排版 - 使用系统字体栈 (Chrome 扩展 CSP 兼容) */
-    --font-family-sans: 'SF Pro Display', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+    --font-family-sans:
+      'SF Pro Display', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
     --font-family-mono: 'SF Mono', Menlo, Monaco, 'Cascadia Code', monospace;
 
     /* 圆角 - 默认值，主题可覆盖 */
@@ -118,7 +123,7 @@ html:not([data-theme]).dark {
      主题切换过渡动画
      需求: 8.1, 8.2 - 平滑过渡效果 (200-300ms)
      ========================================== */
-  
+
   /* 定义主题过渡时间变量，便于统一管理 */
   :root {
     --theme-transition-duration: 250ms;
@@ -126,7 +131,7 @@ html:not([data-theme]).dark {
   }
 
   html {
-    font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+    font-feature-settings: 'cv02', 'cv03', 'cv04', 'cv11';
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
     text-rendering: optimizeLegibility;
@@ -174,7 +179,7 @@ html:not([data-theme]).dark {
   .dropdown-item,
   .popup-menu,
   .modal-content {
-    transition: 
+    transition:
       background-color var(--theme-transition-duration) var(--theme-transition-timing),
       border-color var(--theme-transition-duration) var(--theme-transition-timing),
       color var(--theme-transition-duration) var(--theme-transition-timing),
@@ -188,7 +193,7 @@ html:not([data-theme]).dark {
   svg path,
   svg circle,
   svg rect {
-    transition: 
+    transition:
       fill var(--theme-transition-duration) var(--theme-transition-timing),
       stroke var(--theme-transition-duration) var(--theme-transition-timing);
   }
@@ -217,7 +222,9 @@ html:not([data-theme]).dark {
     }
 
     /* 全局禁用动画和过渡 */
-    *, *::before, *::after {
+    *,
+    *::before,
+    *::after {
       animation-duration: 0.001ms !important;
       animation-iteration-count: 1 !important;
       transition-duration: 0.001ms !important;
@@ -683,7 +690,11 @@ html:not([data-theme]).dark {
   .empty-state-icon {
     @apply w-16 h-16 rounded-2xl mb-6;
     @apply flex items-center justify-center;
-    background: linear-gradient(135deg, var(--color-bg-tertiary) 0%, var(--color-bg-secondary) 100%);
+    background: linear-gradient(
+      135deg,
+      var(--color-bg-tertiary) 0%,
+      var(--color-bg-secondary) 100%
+    );
     border: 1px solid var(--color-border-default);
   }
 
@@ -776,16 +787,32 @@ html:not([data-theme]).dark {
   }
 
   @keyframes fadeOut {
-    from { opacity: 1; transform: translateY(0); }
-    to { opacity: 0; transform: translateY(-8px); }
+    from {
+      opacity: 1;
+      transform: translateY(0);
+    }
+    to {
+      opacity: 0;
+      transform: translateY(-8px);
+    }
   }
 
   /* 交错动画 */
-  .stagger-1 { animation-delay: 0.05s; }
-  .stagger-2 { animation-delay: 0.1s; }
-  .stagger-3 { animation-delay: 0.15s; }
-  .stagger-4 { animation-delay: 0.2s; }
-  .stagger-5 { animation-delay: 0.25s; }
+  .stagger-1 {
+    animation-delay: 0.05s;
+  }
+  .stagger-2 {
+    animation-delay: 0.1s;
+  }
+  .stagger-3 {
+    animation-delay: 0.15s;
+  }
+  .stagger-4 {
+    animation-delay: 0.2s;
+  }
+  .stagger-5 {
+    animation-delay: 0.25s;
+  }
 
   /* ==========================================
      工具提示
@@ -872,18 +899,34 @@ html:not([data-theme]).dark {
    模态框动画
    ========================================== */
 @keyframes fadeIn {
-  from { opacity: 0; }
-  to { opacity: 1; }
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
 }
 
 @keyframes fadeInUp {
-  from { opacity: 0; transform: translateY(8px); }
-  to { opacity: 1; transform: translateY(0); }
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 @keyframes scaleIn {
-  from { opacity: 0; transform: scale(0.95); }
-  to { opacity: 1; transform: scale(1); }
+  from {
+    opacity: 0;
+    transform: scale(0.95);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
 }
 
 .animate-fadeIn {

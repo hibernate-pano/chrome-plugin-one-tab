@@ -6,6 +6,7 @@ export interface Tab {
   createdAt: string;
   lastAccessed: string;
   group_id?: string; // 关联标签组ID
+  isPinned?: boolean; // 标签页是否为固定状态
 
   // 同步相关字段
   syncStatus?: 'synced' | 'local-only' | 'remote-only' | 'conflict';
@@ -106,6 +107,9 @@ export interface UserSettings {
 
   // 保持向后兼容性的字段（已废弃，但保留以支持旧版本）
   useDoubleColumnLayout?: boolean;
+
+  // 固定标签页收集设置
+  collectPinnedTabs: boolean; // 是否收集固定标签页，默认 false
 }
 
 export interface User {

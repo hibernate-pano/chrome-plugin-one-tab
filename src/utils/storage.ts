@@ -63,6 +63,7 @@ export const DEFAULT_SETTINGS: UserSettings = {
   deleteStrategy: 'everywhere', // 默认在所有设备上删除
   themeMode: 'auto', // 默认使用自动模式（跟随系统）
   themeStyle: 'legacy', // 默认使用原始主题
+  collectPinnedTabs: false, // 默认不收集固定标签页
 };
 
 // 兼容历史字段

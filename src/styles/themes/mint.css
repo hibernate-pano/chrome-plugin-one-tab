@@ -1,0 +1,321 @@
+/* ==========================================
+   🎨 Mint Theme - Fresh Vitality Style
+   ========================================== */
+
+/* ==========================================
+   薄荷主题 - 浅色模式
+   使用 html[data-theme] 选择器确保优先级
+   ========================================== */
+html[data-theme='mint'] {
+  /* 颜色 - 清爽薄荷色调 */
+  --color-bg-primary: #f0fdf9;
+  --color-bg-secondary: #ffffff;
+  --color-bg-tertiary: #dcfce7;
+  --color-bg-elevated: #ffffff;
+  --color-bg-overlay: rgba(240, 253, 249, 0.9);
+
+  --color-text-primary: #134e4a;
+  --color-text-secondary: #2d6a6a;
+  --color-text-tertiary: #4a8585;
+  --color-text-muted: #7aa0a0;
+
+  --color-border-default: #d1e7dd;
+  --color-border-subtle: #f0fdf9;
+  --color-border-strong: #b8e0d2;
+
+  --color-accent: #38b2ac;
+  --color-accent-hover: #319795;
+  --color-accent-subtle: #d1fae5;
+
+  /* 状态颜色 */
+  --color-warning: #f6ad55;
+  --color-danger: #fc8181;
+  --color-success: #68d391;
+
+  /* 排版 - 清新的字体组合 */
+  --font-family-sans: 'Nunito', 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+  --font-family-mono: 'Cascadia Code', 'Consolas', monospace;
+
+  /* 阴影 - 清爽薄荷 */
+  --shadow-card: 0 2px 8px rgba(56, 178, 172, 0.1), 0 1px 3px rgba(56, 178, 172, 0.08);
+  --shadow-card-hover: 0 4px 12px rgba(56, 178, 172, 0.15), 0 2px 4px rgba(56, 178, 172, 0.1);
+  --shadow-elevation-1: 0 1px 2px rgba(56, 178, 172, 0.06);
+  --shadow-elevation-2: 0 4px 8px rgba(56, 178, 172, 0.1), 0 2px 4px rgba(56, 178, 172, 0.06);
+  --shadow-elevation-3: 0 8px 16px rgba(56, 178, 172, 0.12), 0 4px 8px rgba(56, 178, 172, 0.08);
+
+  /* 圆角 */
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 16px;
+  --radius-xl: 20px;
+  --radius-full: 9999px;
+
+  /* 间距 */
+  --spacing-xs: 4px;
+  --spacing-sm: 8px;
+  --spacing-md: 16px;
+  --spacing-lg: 24px;
+  --spacing-xl: 32px;
+}
+
+/* ==========================================
+   薄荷主题 - 深色模式
+   ========================================== */
+html[data-theme='mint'].dark {
+  --color-bg-primary: #134e4a;
+  --color-bg-secondary: #115e59;
+  --color-bg-tertiary: #0f3d3a;
+  --color-bg-elevated: #115e59;
+  --color-bg-overlay: rgba(19, 78, 74, 0.92);
+
+  --color-text-primary: #ccfbf1;
+  --color-text-secondary: #99f6e4;
+  --color-text-tertiary: #5eead4;
+  --color-text-muted: #2dd4bf;
+
+  --color-border-default: #0f3d3a;
+  --color-border-subtle: #115e59;
+  --color-border-strong: #2d6a6a;
+
+  --color-accent: #5eead4;
+  --color-accent-hover: #99f6e4;
+  --color-accent-subtle: #0f3d3a;
+
+  /* 状态颜色 */
+  --color-warning: #fbd38d;
+  --color-danger: #feb2b2;
+  --color-success: #9ae6b4;
+
+  /* 深色模式阴影 */
+  --shadow-card: 0 2px 8px rgba(0, 0, 0, 0.3), 0 1px 3px rgba(0, 0, 0, 0.25);
+  --shadow-card-hover: 0 4px 12px rgba(0, 0, 0, 0.35), 0 2px 4px rgba(0, 0, 0, 0.28);
+  --shadow-elevation-1: 0 1px 2px rgba(0, 0, 0, 0.2);
+  --shadow-elevation-2: 0 4px 8px rgba(0, 0, 0, 0.3), 0 2px 4px rgba(0, 0, 0, 0.2);
+  --shadow-elevation-3: 0 8px 16px rgba(0, 0, 0, 0.35), 0 4px 8px rgba(0, 0, 0, 0.25);
+}
+
+/* ==========================================
+   薄荷主题特定样式
+   ========================================== */
+html[data-theme='mint'] body {
+  font-family: var(--font-family-sans);
+  font-weight: 600;
+}
+
+/* 薄荷主题按钮样式 - 清爽圆润 */
+html[data-theme='mint'] .btn {
+  border-radius: var(--radius-full);
+  font-weight: 600;
+  transition: all 0.2s ease;
+}
+
+html[data-theme='mint'] .btn-primary {
+  background: linear-gradient(135deg, var(--color-accent) 0%, var(--color-accent-hover) 100%);
+  box-shadow: var(--shadow-elevation-1);
+}
+
+html[data-theme='mint'] .btn-primary:hover {
+  box-shadow: var(--shadow-elevation-2);
+  transform: translateY(-1px);
+}
+
+/* 薄荷主题卡片样式 */
+html[data-theme='mint'] .card {
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-card);
+  border: 1px solid var(--color-border-subtle);
+  background: linear-gradient(180deg, var(--color-bg-secondary) 0%, var(--color-bg-primary) 100%);
+}
+
+html[data-theme='mint'] .card:hover {
+  box-shadow: var(--shadow-card-hover);
+}
+
+/* 薄荷主题输入框样式 */
+html[data-theme='mint'] .input {
+  border: 2px solid var(--color-border-default);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-secondary);
+  transition: all 0.2s ease;
+}
+
+html[data-theme='mint'] .input:focus {
+  border-color: var(--color-accent);
+  box-shadow: 0 0 0 3px var(--color-accent-subtle);
+}
+
+/* 薄荷主题标签组样式 */
+html[data-theme='mint'] .tab-group-card {
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-card);
+  border: 1px solid var(--color-border-subtle);
+  background: var(--color-bg-secondary);
+}
+
+html[data-theme='mint'] .tab-group-card:hover {
+  box-shadow: var(--shadow-card-hover);
+}
+
+html[data-theme='mint'] .tab-group-header {
+  background: linear-gradient(135deg, var(--color-bg-tertiary) 0%, var(--color-bg-primary) 100%);
+  border-bottom: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+}
+
+/* 薄荷主题徽章样式 */
+html[data-theme='mint'] .badge-accent {
+  background: linear-gradient(135deg, var(--color-accent) 0%, var(--color-accent-hover) 100%);
+  color: #ffffff;
+  border-radius: var(--radius-full);
+  padding: 2px 10px;
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+
+html[data-theme='mint'].dark .badge-accent {
+  background: linear-gradient(135deg, var(--color-accent) 0%, var(--color-accent-hover) 100%);
+  color: #134e4a;
+}
+
+/* 薄荷主题空状态样式 */
+html[data-theme='mint'] .empty-state-icon {
+  background: linear-gradient(135deg, var(--color-bg-tertiary) 0%, var(--color-bg-primary) 100%);
+  border: 2px solid var(--color-border-default);
+  border-radius: var(--radius-xl);
+}
+
+/* 薄荷主题头部样式 */
+html[data-theme='mint'] .header {
+  background: var(--color-bg-overlay);
+  border-bottom: 1px solid var(--color-border-subtle);
+  box-shadow: var(--shadow-elevation-1);
+}
+
+/* ==========================================
+   薄荷主题 - 下拉菜单和弹出层样式
+   ========================================== */
+html[data-theme='mint'] .dropdown-menu,
+html[data-theme='mint'] .popup-menu {
+  background: var(--color-bg-secondary);
+  border: 1px solid var(--color-border-default);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-elevation-2);
+}
+
+html[data-theme='mint'] .dropdown-item {
+  color: var(--color-text-primary);
+  border-radius: var(--radius-md);
+  margin: 2px 4px;
+}
+
+html[data-theme='mint'] .dropdown-item:hover {
+  background: linear-gradient(135deg, var(--color-accent-subtle) 0%, var(--color-bg-tertiary) 100%);
+}
+
+/* 薄荷主题 - 模态框样式 */
+html[data-theme='mint'] .modal-content {
+  background: var(--color-bg-secondary);
+  border-radius: var(--radius-xl);
+  box-shadow: var(--shadow-elevation-3);
+  border: 1px solid var(--color-border-default);
+}
+
+/* 薄荷主题 - 工具提示样式 */
+html[data-theme='mint'] .tooltip {
+  background: var(--color-bg-elevated);
+  color: var(--color-text-primary);
+  border: 1px solid var(--color-accent);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-card);
+}
+
+/* 薄荷主题 - 搜索框样式 */
+html[data-theme='mint'] .search-input {
+  background: var(--color-bg-secondary);
+  border: 2px solid var(--color-border-default);
+  border-radius: var(--radius-full);
+  transition: all 0.2s ease;
+}
+
+html[data-theme='mint'] .search-input:focus {
+  border-color: var(--color-accent);
+  box-shadow: 0 0 0 3px var(--color-accent-subtle);
+}
+
+/* 薄荷主题 - 标签项样式 */
+html[data-theme='mint'] .tab-item {
+  border-bottom: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-md);
+  margin: 2px 8px;
+  padding: 8px 12px;
+}
+
+html[data-theme='mint'] .tab-item:hover {
+  background: linear-gradient(135deg, var(--color-accent-subtle) 0%, var(--color-bg-tertiary) 100%);
+}
+
+/* 薄荷主题 - 开关按钮样式 */
+html[data-theme='mint'] .toggle-switch-active {
+  background: linear-gradient(135deg, var(--color-accent) 0%, var(--color-accent-hover) 100%);
+}
+
+html[data-theme='mint'] .toggle-switch-inactive {
+  background-color: var(--color-border-default);
+}
+
+/* ==========================================
+   薄荷主题 - 搜索组件样式
+   ========================================== */
+html[data-theme='mint'] .search-bar-input {
+  border-radius: var(--radius-full);
+  border: 2px solid var(--color-border-default);
+  background: var(--color-bg-secondary);
+  transition: all 0.2s ease;
+}
+
+html[data-theme='mint'] .search-bar-input:focus {
+  border-color: var(--color-accent);
+  box-shadow: 0 0 0 3px var(--color-accent-subtle);
+}
+
+html[data-theme='mint'] .search-result-item {
+  border-radius: var(--radius-md);
+  margin: 4px 8px;
+}
+
+html[data-theme='mint'] .search-result-item:hover {
+  background: linear-gradient(135deg, var(--color-accent-subtle) 0%, var(--color-bg-tertiary) 100%);
+}
+
+html[data-theme='mint'] .search-highlight {
+  background: linear-gradient(135deg, #dcfce7 0%, #bbf7d0 100%);
+  color: #166534;
+  padding: 1px 4px;
+  border-radius: var(--radius-sm);
+}
+
+html[data-theme='mint'].dark .search-highlight {
+  background: linear-gradient(135deg, #0f3d3a 0%, #1a4a47 100%);
+  color: #99f6e4;
+}
+
+/* 薄荷主题搜索结果链接 */
+html[data-theme='mint'] .search-result-link {
+  color: var(--color-accent);
+  font-weight: 600;
+}
+
+html[data-theme='mint'] .search-result-link:hover {
+  color: var(--color-accent-hover);
+}
+
+/* 薄荷主题搜索操作按钮 */
+html[data-theme='mint'] .search-action-btn-accent {
+  color: var(--color-accent);
+}
+
+html[data-theme='mint'] .search-action-btn-accent:hover {
+  color: var(--color-accent-hover);
+  background: var(--color-accent-subtle);
+  border-radius: var(--radius-md);
+}

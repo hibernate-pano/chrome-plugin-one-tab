@@ -118,6 +118,10 @@ const settingsSlice = createSlice({
     toggleShowNotifications: (state) => {
       state.showNotifications = !state.showNotifications;
     },
+    // 切换收集固定标签页设置
+    toggleCollectPinnedTabs: (state) => {
+      state.collectPinnedTabs = !state.collectPinnedTabs;
+    },
     // 设置布局模式
     setLayoutMode: (state, action: PayloadAction<LayoutMode>) => {
       state.layoutMode = action.payload;
@@ -180,6 +184,7 @@ export const {
   toggleConfirmBeforeDelete,
   toggleAllowDuplicateTabs,
   toggleShowNotifications,
+  toggleCollectPinnedTabs,
   setLayoutMode,
   toggleLayoutMode,
   setReorderMode,

@@ -90,10 +90,7 @@ export const TabList: React.FC<TabListProps> = ({ searchQuery }) => {
   if (filteredGroups.length === 0 && !searchQuery) {
     return (
       <div className="space-y-4">
-        <PersonalizedWelcome 
-          tabCount={filteredGroups.length}
-          className="flat-card p-6"
-        />
+        <PersonalizedWelcome tabCount={filteredGroups.length} className="flat-card p-6" />
         <div className="flat-card p-6">
           <EmptyState
             title="开始您的标签页管理之旅"

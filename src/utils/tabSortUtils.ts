@@ -1,27 +1,23 @@
 /**
- * 标签组排序工具
- * 统一处理标签组的排序逻辑,避免重复代码
+ * 标签组排序工具 (兼容层)
+ * 重新导出 groupSortUtils 并添加便捷函数
  */
 
 import { TabGroup } from '@/types/tab';
+import {
+  sortGroupsByCreatedAt,
+  filterActiveGroups,
+} from './groupSortUtils';
 
-/**
- * 按创建时间倒序排序标签组(最新的在前面)
- */
-export function sortGroupsByCreatedAt(groups: TabGroup[]): TabGroup[] {
-  return [...groups].sort((a, b) => {
-    const dateA = new Date(a.createdAt).getTime();
-    const dateB = new Date(b.createdAt).getTime();
-    return dateB - dateA;
-  });
-}
+// 重新导出主要函数
+export { sortGroupsByCreatedAt, filterActiveGroups };
 
 /**
  * 过滤并排序活跃的标签组
  */
 export function getActiveGroupsSorted(groups: TabGroup[]): TabGroup[] {
-  const activeGroups = groups.filter(g => !g.isDeleted);
-  return sortGroupsByCreatedAt(activeGroups);
+  const activeGroups = filterActiveGroups(groups);
+  return sortGroupsByCreatedAt(activeGroups, 'desc');
 }
 
 /**
@@ -32,5 +28,5 @@ export function mergeAndSortGroups(
   newGroups: TabGroup[]
 ): TabGroup[] {
   const mergedGroups = [...newGroups, ...existingGroups];
-  return sortGroupsByCreatedAt(mergedGroups);
+  return sortGroupsByCreatedAt(mergedGroups, 'desc');
 }
