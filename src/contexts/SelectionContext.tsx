@@ -215,14 +215,29 @@ export const SelectionProvider: React.FC<{ children: React.ReactNode }> = ({ chi
 };
 
 /**
+ * 默认的空选择上下文值（用于 Provider 外部的安全降级）
+ */
+const defaultSelectionValue: SelectionContextValue = {
+  selectedIds: new Set(),
+  selectedCount: 0,
+  lastSelectedId: null,
+  toggleSelect: () => {},
+  rangeSelect: () => {},
+  selectAll: () => {},
+  clearSelection: () => {},
+  setSelection: () => {},
+  isSelected: () => false,
+  handleClick: () => {},
+};
+
+/**
  * 使用选择状态的 Hook
+ * 如果在 SelectionProvider 外部调用，返回默认的空值而不是抛出错误
  */
 export function useSelection(): SelectionContextValue {
   const context = useContext(SelectionContext);
-  if (!context) {
-    throw new Error('useSelection must be used within a SelectionProvider');
-  }
-  return context;
+  // 安全降级：如果没有 Provider，返回默认值而不是抛出错误
+  return context ?? defaultSelectionValue;
 }
 
 /**

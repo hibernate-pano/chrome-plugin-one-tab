@@ -50,7 +50,7 @@ const CheckboxIcon = ({ checked }: { checked: boolean }) => (
 /**
  * 可选择的标签页组件
  */
-export const SelectableTab: React.FC<SelectableTabProps> = React.memo(({
+export const SelectableTab: React.FC<SelectableTabProps> = ({
   tab,
   groupId,
   index,
@@ -60,8 +60,10 @@ export const SelectableTab: React.FC<SelectableTabProps> = React.memo(({
   handleDeleteTab
 }) => {
   const ref = useRef<HTMLDivElement>(null);
-  const { isSelected, handleClick } = useSelection();
-  const selected = isSelected(tab.id);
+  // 始终调用 hook，确保 hooks 调用顺序一致
+  const selectionContext = useSelection();
+  const selected = selectionContext.isSelected(tab.id);
+  const handleSelectionClick = selectionContext.handleClick;
 
   const throttledMoveTab = useMemo(
     () => throttle((sourceGroupId, sourceIndex, targetGroupId, targetIndex) => {
@@ -130,18 +132,18 @@ export const SelectableTab: React.FC<SelectableTabProps> = React.memo(({
     e.preventDefault();
     // 如果有修饰键，处理选择逻辑
     if (e.ctrlKey || e.metaKey || e.shiftKey) {
-      handleClick(tab.id, e, allTabIds);
+      handleSelectionClick(tab.id, e, allTabIds);
     } else {
       // 普通点击打开标签页
       handleOpenTab(tab);
     }
-  }, [handleOpenTab, tab, handleClick, allTabIds]);
+  }, [handleOpenTab, tab, handleSelectionClick, allTabIds]);
 
   // 处理复选框点击 - 切换选择
   const handleCheckboxClick = useCallback((e: React.MouseEvent) => {
     e.stopPropagation();
-    handleClick(tab.id, e, allTabIds);
-  }, [handleClick, tab.id, allTabIds]);
+    handleSelectionClick(tab.id, e, allTabIds);
+  }, [handleSelectionClick, tab.id, allTabIds]);
 
   const handleDelete = useCallback((e: React.MouseEvent) => {
     e.stopPropagation();
@@ -203,36 +205,6 @@ export const SelectableTab: React.FC<SelectableTabProps> = React.memo(({
       </div>
     </div>
   );
-}, (prevProps, nextProps) => {
-  const basicPropsEqual =
-    prevProps.tab.id === nextProps.tab.id &&
-    prevProps.groupId === nextProps.groupId &&
-    prevProps.index === nextProps.index;
-
-  if (!basicPropsEqual) return false;
-
-  const tabContentEqual =
-    prevProps.tab.title === nextProps.tab.title &&
-    prevProps.tab.url === nextProps.tab.url &&
-    prevProps.tab.favicon === nextProps.tab.favicon &&
-    prevProps.tab.lastAccessed === nextProps.tab.lastAccessed;
-
-  if (!tabContentEqual) return false;
-
-  // 检查 allTabIds 是否相同（浅比较长度和引用）
-  const allTabIdsEqual = 
-    prevProps.allTabIds === nextProps.allTabIds ||
-    (prevProps.allTabIds.length === nextProps.allTabIds.length &&
-     prevProps.allTabIds.every((id, i) => id === nextProps.allTabIds[i]));
-
-  if (!allTabIdsEqual) return false;
-
-  const callbacksEqual =
-    prevProps.moveTab === nextProps.moveTab &&
-    prevProps.handleOpenTab === nextProps.handleOpenTab &&
-    prevProps.handleDeleteTab === nextProps.handleDeleteTab;
-
-  return callbacksEqual;
-});
+};
 
 export default SelectableTab;

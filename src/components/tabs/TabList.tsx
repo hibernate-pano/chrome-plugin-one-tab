@@ -34,6 +34,38 @@ export const TabList: React.FC<TabListProps> = ({ searchQuery }) => {
   const [isRestoreAllModalOpen, setIsRestoreAllModalOpen] = useState(false);
   const [selectedGroup, setSelectedGroup] = useState<TabGroupType | null>(null);
 
+  // 当有搜索查询时，我们会使用 SearchResultList 组件显示匹配的标签
+  // 这里只需要处理没有搜索查询时的标签组列表
+  const filteredGroups = sortedGroups;
+
+  // 使用 useCallback 优化 moveGroup 回调函数 - 必须在所有条件渲染之前调用
+  const handleMoveGroup = useCallback(
+    (dragIndex: number, hoverIndex: number) => {
+      dispatch(moveGroupAndSync({ dragIndex, hoverIndex }));
+    },
+    [dispatch]
+  );
+
+  // 使用 useMemo 缓存双栏布局的分组 - 必须在所有条件渲染之前调用
+  const { leftColumnGroups, rightColumnGroups } = React.useMemo(() => {
+    if (layoutMode !== 'double') {
+      return { leftColumnGroups: [], rightColumnGroups: [] };
+    }
+
+    const left: Array<{ group: TabGroupType; index: number }> = [];
+    const right: Array<{ group: TabGroupType; index: number }> = [];
+
+    filteredGroups.forEach((group, index) => {
+      if (index % 2 === 0) {
+        left.push({ group, index });
+      } else {
+        right.push({ group, index });
+      }
+    });
+
+    return { leftColumnGroups: left, rightColumnGroups: right };
+  }, [filteredGroups, layoutMode]);
+
   useEffect(() => {
     // 加载标签组数据(迁移已在MainApp中执行)
     dispatch(loadGroups());
@@ -63,38 +95,6 @@ export const TabList: React.FC<TabListProps> = ({ searchQuery }) => {
   if (error) {
     return <div className="flex items-center justify-center h-64 text-red-600">{error}</div>;
   }
-
-  // 当有搜索查询时，我们会使用 SearchResultList 组件显示匹配的标签
-  // 这里只需要处理没有搜索查询时的标签组列表
-  const filteredGroups = sortedGroups;
-
-  // 使用 useCallback 优化 moveGroup 回调函数
-  const handleMoveGroup = useCallback(
-    (dragIndex: number, hoverIndex: number) => {
-      dispatch(moveGroupAndSync({ dragIndex, hoverIndex }));
-    },
-    [dispatch]
-  );
-
-  // 使用 useMemo 缓存双栏布局的分组
-  const { leftColumnGroups, rightColumnGroups } = React.useMemo(() => {
-    if (layoutMode !== 'double') {
-      return { leftColumnGroups: [], rightColumnGroups: [] };
-    }
-
-    const left: Array<{ group: TabGroupType; index: number }> = [];
-    const right: Array<{ group: TabGroupType; index: number }> = [];
-
-    filteredGroups.forEach((group, index) => {
-      if (index % 2 === 0) {
-        left.push({ group, index });
-      } else {
-        right.push({ group, index });
-      }
-    });
-
-    return { leftColumnGroups: left, rightColumnGroups: right };
-  }, [filteredGroups, layoutMode]);
 
   if (filteredGroups.length === 0 && !searchQuery) {
     return (
