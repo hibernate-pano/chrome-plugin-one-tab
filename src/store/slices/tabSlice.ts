@@ -1265,4 +1265,31 @@ export const selectFilteredGroups = createSelector(
   }
 );
 
+// 添加更多优化的selector
+// 选择已排序的标签组（按创建时间倒序）
+export const selectSortedGroups = createSelector(
+  [(state: { tabs: TabState }) => state.tabs.groups],
+  (groups) => {
+    return [...groups].sort((a, b) => {
+      const dateA = new Date(a.createdAt);
+      const dateB = new Date(b.createdAt);
+      return dateB.getTime() - dateA.getTime();
+    });
+  }
+);
+
+// 选择标签总数
+export const selectTotalTabCount = createSelector(
+  [(state: { tabs: TabState }) => state.tabs.groups],
+  (groups) => {
+    return groups.reduce((total, group) => total + group.tabs.length, 0);
+  }
+);
+
+// 选择已锁定的标签组
+export const selectLockedGroups = createSelector(
+  [(state: { tabs: TabState }) => state.tabs.groups],
+  (groups) => groups.filter(g => g.isLocked)
+);
+
 export default tabSlice.reducer;

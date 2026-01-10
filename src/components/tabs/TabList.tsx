@@ -1,4 +1,4 @@
-import React, { useEffect, useState, lazy } from 'react';
+import React, { useEffect, useState, lazy, useMemo, useCallback } from 'react';
 import { useAppDispatch, useAppSelector } from '@/store/hooks';
 import { loadGroups, deleteGroup, moveGroupAndSync } from '@/store/slices/tabSlice';
 import { runMigrations } from '@/utils/migrationUtils';
@@ -10,6 +10,7 @@ import { TabGroup as TabGroupType } from '@/types/tab';
 import { EmptyState } from '@/components/common/EmptyState';
 import { LoadingSpinner } from '@/components/common/LoadingSpinner';
 import { PersonalizedWelcome, QuickActionTips } from '@/components/common/PersonalizedWelcome';
+import { TabListSkeleton } from '@/components/common/Skeleton';
 
 interface TabListProps {
   searchQuery: string;
@@ -62,18 +63,50 @@ export const TabList: React.FC<TabListProps> = ({ searchQuery }) => {
   }, [dispatch]);
 
   if (isLoading) {
-    return (
-      <div className="flex items-center justify-center h-64">
-        <LoadingSpinner size="lg" />
-      </div>
-    );
+    return <TabListSkeleton count={5} />;
   }
 
   if (error) {
     return <div className="flex items-center justify-center h-64 text-red-600">{error}</div>;
   }
 
-  const filteredGroups = sortGroupsByCreatedAt(groups, 'desc');
+  // 使用 useMemo 缓存排序结果，避免每次渲染都重新排序
+  const sortedGroups = useMemo(() => {
+    return [...groups].sort((a, b) => {
+      const dateA = new Date(a.createdAt);
+      const dateB = new Date(b.createdAt);
+      return dateB.getTime() - dateA.getTime(); // 倒序，最新创建的在前面
+    });
+  }, [groups]);
+
+  // 当有搜索查询时，我们会使用 SearchResultList 组件显示匹配的标签
+  // 这里只需要处理没有搜索查询时的标签组列表
+  const filteredGroups = sortedGroups;
+
+  // 使用 useCallback 优化 moveGroup 回调函数
+  const handleMoveGroup = useCallback((dragIndex: number, hoverIndex: number) => {
+    dispatch(moveGroupAndSync({ dragIndex, hoverIndex }));
+  }, [dispatch]);
+
+  // 使用 useMemo 缓存双栏布局的分组
+  const { leftColumnGroups, rightColumnGroups } = useMemo(() => {
+    if (layoutMode !== 'double') {
+      return { leftColumnGroups: [], rightColumnGroups: [] };
+    }
+
+    const left: Array<{ group: TabGroupType; index: number }> = [];
+    const right: Array<{ group: TabGroupType; index: number }> = [];
+
+    filteredGroups.forEach((group, index) => {
+      if (index % 2 === 0) {
+        left.push({ group, index });
+      } else {
+        right.push({ group, index });
+      }
+    });
+
+    return { leftColumnGroups: left, rightColumnGroups: right };
+  }, [filteredGroups, layoutMode]);
 
   if (filteredGroups.length === 0 && !searchQuery) {
     return (
@@ -147,51 +180,35 @@ export const TabList: React.FC<TabListProps> = ({ searchQuery }) => {
   }
 
   return (
-    <div className="space-y-2">
+    <div className="space-y-2 fade-in">
       {/* 搜索结果或标签组列表 */}
       {searchQuery ? (
         <SearchResultList searchQuery={searchQuery} />
       ) : layoutMode === 'double' ? (
-        // 双栏布局
+        // 双栏布局 - 使用优化后的预计算数据
         <div className="grid grid-cols-1 sm:grid-cols-1 md:grid-cols-2 gap-2 sm:gap-3 md:gap-4">
           {/* 左栏 - 偶数索引的标签组 */}
           <div className="space-y-2 transition-all">
-            {filteredGroups
-              .filter((_, index) => index % 2 === 0)
-              .map(group => {
-                // 计算在原始数组中的实际索引
-                const originalIndex = filteredGroups.findIndex(g => g.id === group.id);
-                return (
-                  <DraggableTabGroup
-                    key={group.id}
-                    group={group}
-                    index={originalIndex}
-                    moveGroup={(dragIndex, hoverIndex) => {
-                      dispatch(moveGroupAndSync({ dragIndex, hoverIndex }));
-                    }}
-                  />
-                );
-              })}
+            {leftColumnGroups.map(({ group, index }) => (
+              <DraggableTabGroup
+                key={group.id}
+                group={group}
+                index={index}
+                moveGroup={handleMoveGroup}
+              />
+            ))}
           </div>
 
           {/* 右栏 - 奇数索引的标签组 */}
           <div className="space-y-2 transition-all">
-            {filteredGroups
-              .filter((_, index) => index % 2 === 1)
-              .map(group => {
-                // 计算在原始数组中的实际索引
-                const originalIndex = filteredGroups.findIndex(g => g.id === group.id);
-                return (
-                  <DraggableTabGroup
-                    key={group.id}
-                    group={group}
-                    index={originalIndex}
-                    moveGroup={(dragIndex, hoverIndex) => {
-                      dispatch(moveGroupAndSync({ dragIndex, hoverIndex }));
-                    }}
-                  />
-                );
-              })}
+            {rightColumnGroups.map(({ group, index }) => (
+              <DraggableTabGroup
+                key={group.id}
+                group={group}
+                index={index}
+                moveGroup={handleMoveGroup}
+              />
+            ))}
           </div>
         </div>
       ) : (
@@ -202,9 +219,7 @@ export const TabList: React.FC<TabListProps> = ({ searchQuery }) => {
               key={group.id}
               group={group}
               index={index}
-              moveGroup={(dragIndex, hoverIndex) => {
-                dispatch(moveGroupAndSync({ dragIndex, hoverIndex }));
-              }}
+              moveGroup={handleMoveGroup}
             />
           ))}
         </div>

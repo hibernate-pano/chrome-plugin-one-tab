@@ -1,22 +1,32 @@
-/* 动画效果样式 */
+/* 动画效果样式 - 优化版 */
 
-/* 标签组折叠/展开动画 */
+/* 定义自定义动画曲线 */
+:root {
+  --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+  --ease-smooth: cubic-bezier(0.4, 0, 0.2, 1);
+  --ease-out: cubic-bezier(0, 0, 0.2, 1);
+}
+
+/* 标签组折叠/展开动画 - 改进版 */
 .tab-group-content {
   overflow: hidden;
-  transition: max-height 0.3s ease-in-out;
+  transition: max-height 0.35s var(--ease-smooth), opacity 0.35s var(--ease-smooth);
 }
 
 .tab-group-content.collapsed {
   max-height: 0;
+  opacity: 0;
 }
 
 .tab-group-content.expanded {
-  max-height: 1000px; /* 足够大的值，确保内容能完全展开 */
+  max-height: 2000px; /* 增加最大高度以适应更多内容 */
+  opacity: 1;
 }
 
-/* 标签组折叠/展开图标动画 */
+/* 标签组折叠/展开图标动画 - 改进版 */
 .expand-icon {
-  transition: transform 0.3s ease;
+  transition: transform 0.3s var(--ease-spring);
+  will-change: transform;
 }
 
 .expand-icon.collapsed {
@@ -27,112 +37,128 @@
   transform: rotate(0deg);
 }
 
-/* 拖拽动画效果 */
+/* 拖拽动画效果 - 改进版 */
 .tab-drag-animation {
   transition:
     transform 0.15s ease,
     opacity 0.15s ease,
     box-shadow 0.15s ease;
-}
+
+  transition: transform 0.2s var(--ease-smooth),
+              opacity 0.2s var(--ease-smooth),
+              box-shadow 0.2s var(--ease-smooth);
+  will-change: transform, opacity;}
 
 .tab-drag-animation.dragging {
-  transform: scale(1.02);
-  opacity: 0.7;
-  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+  transform: scale(1.03) rotate(2deg);
+  opacity: 0.85;
+  box-shadow: 0 8px 16px rgba(0, 0, 0, 0.15), 0 2px 4px rgba(0, 0, 0, 0.1);
   z-index: 100;
 }
 
-/* 放置目标高亮动画 */
+/* 放置目标高亮动画 - 改进版 */
 .drop-target-animation {
-  transition:
-    background-color 0.2s ease,
-    border-color 0.2s ease;
-}
+  transition: background-color 0.25s var(--ease-smooth),
+              border-color 0.25s var(--ease-smooth),
+              transform 0.25s var(--ease-smooth);}
 
 .drop-target-animation.active {
-  background-color: rgba(59, 130, 246, 0.1);
-  border-color: rgba(59, 130, 246, 0.5);
+  background-color: rgba(59, 130, 246, 0.12);
+  border-color: rgba(59, 130, 246, 0.6);
+  transform: scale(1.01);
 }
 
 /* 深色模式下的放置目标高亮 */
 .dark .drop-target-animation.active {
-  background-color: rgba(59, 130, 246, 0.2);
-  border-color: rgba(59, 130, 246, 0.6);
+  background-color: rgba(59, 130, 246, 0.25);
+  border-color: rgba(59, 130, 246, 0.7);
 }
 
-/* 标签组拖拽动画 */
+/* 标签组拖拽动画 - 改进版 */
 .group-drag-animation {
-  transition:
-    transform 0.15s ease,
-    opacity 0.15s ease,
-    box-shadow 0.15s ease;
+  transition: transform 0.2s var(--ease-smooth),
+              opacity 0.2s var(--ease-smooth),
+              box-shadow 0.2s var(--ease-smooth);
+  will-change: transform, opacity;
 }
 
 .group-drag-animation.dragging {
-  transform: scale(1.01);
-  opacity: 0.8;
-  box-shadow: 0 6px 12px rgba(0, 0, 0, 0.1);
+  transform: scale(1.02) translateY(-2px);
+  opacity: 0.9;
+  box-shadow: 0 10px 20px rgba(0, 0, 0, 0.15), 0 3px 6px rgba(0, 0, 0, 0.1);
   z-index: 100;
 }
 
-/* 搜索结果高亮动画 */
+/* 搜索结果高亮动画 - 改进版 */
 @keyframes highlight-pulse {
-  0% {
+  0%, 100% {
     background-color: rgba(59, 130, 246, 0.2);
+    transform: scale(1);
   }
   50% {
-    background-color: rgba(59, 130, 246, 0.3);
-  }
-  100% {
-    background-color: rgba(59, 130, 246, 0.2);
+    background-color: rgba(59, 130, 246, 0.35);
+    transform: scale(1.02);
   }
 }
 
 .search-highlight {
   background-color: rgba(59, 130, 246, 0.2);
-  border-radius: 2px;
-  padding: 0 2px;
-  animation: highlight-pulse 1.5s infinite;
+  border-radius: 3px;
+  padding: 1px 3px;
+  animation: highlight-pulse 2s var(--ease-smooth) infinite;
+  display: inline-block;
 }
 
 .dark .search-highlight {
   background-color: rgba(59, 130, 246, 0.3);
 }
 
-/* 标签组操作按钮动画 */
+/* 标签组操作按钮动画 - 改进版 */
 .group-action-button {
-  opacity: 0.5;
-  transition:
-    opacity 0.2s ease,
-    transform 0.2s ease;
+  opacity: 0.6;
+  transition: opacity 0.25s var(--ease-smooth),
+              transform 0.25s var(--ease-spring),
+              background-color 0.25s var(--ease-smooth);
 }
 
 .group-action-button:hover {
   opacity: 1;
-  transform: scale(1.1);
+  transform: scale(1.15) translateY(-1px);
 }
 
-/* 标签页操作按钮动画 */
+.group-action-button:active {
+  transform: scale(0.95);
+}
+
+/* 标签页操作按钮动画 - 改进版 */
 .tab-action-button {
   opacity: 0;
-  transition: opacity 0.2s ease;
+  transform: translateX(-8px);
+  transition: opacity 0.25s var(--ease-smooth),
+              transform 0.25s var(--ease-spring);
 }
 
 .tab-item:hover .tab-action-button {
   opacity: 1;
+  transform: translateX(0);
 }
 
-/* 标签组头部悬停效果 */
+.tab-action-button:hover {
+  transform: scale(1.1) translateX(0);
+}
+
+/* 标签组头部悬停效果 - 改进版 */
 .group-header {
-  transition: background-color 0.2s ease;
+  transition: background-color 0.25s var(--ease-smooth),
+              transform 0.25s var(--ease-smooth);
 }
 
 .group-header:hover {
-  background-color: rgba(0, 0, 0, 0.05);
+  background-color: rgba(0, 0, 0, 0.04);
 }
 
 .dark .group-header:hover {
-  background-color: rgba(255, 255, 255, 0.05);
+  background-color: rgba(255, 255, 255, 0.06);
 }
 
 /* 渐入动画 */
@@ -289,6 +315,9 @@
 
 /* 卡片容器动画 */
 @keyframes card-in {
+
+/* 新增：淡入动画 */
+@keyframes fadeIn {
   from {
     opacity: 0;
     transform: translateY(10px);
@@ -299,23 +328,93 @@
   }
 }
 
-.animate-in {
-  animation: card-in 0.3s ease-out forwards;
+.fade-in {
+  animation: fadeIn 0.4s var(--ease-out);
 }
 
-.group/card:hover .tab-group-action-accent,
-.group/card:hover .tab-group-action-danger {
-  opacity: 1;
-  transform: scale(1);
+/* 新增：骨架屏加载动画 */
+@keyframes shimmer {
+  0% {
+    background-position: -468px 0;
+  }
+  100% {
+    background-position: 468px 0;
+  }
 }
 
-.tab-item-delete-btn {
-  opacity: 0;
-  transform: scale(0.8);
-  transition: all 0.2s ease;
+.skeleton {
+  animation: shimmer 1.5s ease-in-out infinite;
+  background: linear-gradient(
+    to right,
+    #f0f0f0 8%,
+    #f8f8f8 18%,
+    #f0f0f0 33%
+  );
+  background-size: 800px 104px;
 }
 
-.group/tab:hover .tab-item-delete-btn {
-  opacity: 1;
-  transform: scale(1);
+.dark .skeleton {
+  background: linear-gradient(
+    to right,
+    #2a2a2a 8%,
+    #3a3a3a 18%,
+    #2a2a2a 33%
+  );
 }
+
+/* 新增：卡片悬停效果 */
+.card-hover {
+  transition: box-shadow 0.3s var(--ease-smooth),
+              transform 0.3s var(--ease-smooth);
+}
+
+.card-hover:hover {
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+  transform: translateY(-2px);
+}
+
+.dark .card-hover:hover {
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+}
+
+/* 新增：按钮点击反馈 */
+.button-press {
+  transition: transform 0.1s var(--ease-smooth);
+}
+
+.button-press:active {
+  transform: scale(0.96);
+}
+
+/* 新增：平滑滚动 */
+.smooth-scroll {
+  scroll-behavior: smooth;
+}
+
+/* 新增：标签页淡入列表动画 */
+@keyframes slideInUp {
+  from {
+    opacity: 0;
+    transform: translateY(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.slide-in-up {
+  animation: slideInUp 0.4s var(--ease-out);
+}
+
+/* 为列表项添加延迟效果 */
+.stagger-animation > * {
+  animation: slideInUp 0.4s var(--ease-out);
+}
+
+.stagger-animation > *:nth-child(1) { animation-delay: 0.05s; }
+.stagger-animation > *:nth-child(2) { animation-delay: 0.1s; }
+.stagger-animation > *:nth-child(3) { animation-delay: 0.15s; }
+.stagger-animation > *:nth-child(4) { animation-delay: 0.2s; }
+.stagger-animation > *:nth-child(5) { animation-delay: 0.25s; }
+
