@@ -62,7 +62,6 @@ const FeedbackItem: React.FC<{
     if (!message.options.showProgress || !message.options.duration) return;
 
     const duration = message.options.duration;
-    const startTime = Date.now();
     const interval = 16; // 约60fps
 
     const timer = setInterval(() => {

@@ -134,7 +134,7 @@ export function useFocusTrap(active: boolean = true) {
 export function useAnnouncement() {
   const [announcement, setAnnouncement] = React.useState('');
 
-  const announce = React.useCallback((message: string, politeness: 'polite' | 'assertive' = 'polite') => {
+  const announce = React.useCallback((message: string, _politeness: 'polite' | 'assertive' = 'polite') => {
     setAnnouncement(`${message}__${Date.now()}`); // 添加时间戳确保更新
   }, []);
 

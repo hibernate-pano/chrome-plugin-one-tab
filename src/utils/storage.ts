@@ -2,8 +2,8 @@ import { TabGroup, UserSettings, Tab, LayoutMode, ThemeStyle } from '@/types/tab
 import { parseOneTabFormat, formatToOneTabFormat } from './oneTabFormatParser';
 import { secureStorage } from './secureStorage';
 import { kvGet, kvSet, kvRemove } from '@/storage/storageAdapter';
-import { validateTabGroups, isTabGroup } from './typeGuards';
-import { handleError, ErrorCodes } from './errorHandler';
+import { validateTabGroups } from './typeGuards';
+import { handleError } from './errorHandler';
 
 const STORAGE_KEYS = {
   VERSION: 'storage_version',

@@ -64,6 +64,12 @@ export default defineConfig(({ mode }) => {
       chunkSizeWarningLimit: 1000,
       // 为Chrome扩展设置相对路径
       assetsDir: '',
+      // 优化压缩
+      minify: 'esbuild',
+      // 源码映射（生产环境禁用）
+      sourcemap: mode !== 'production',
+      // 目标浏览器
+      target: 'esnext',
       rollupOptions: {
         input: {
           'src/popup/index': resolve(__dirname, 'src/popup/index.html'),
@@ -71,23 +77,43 @@ export default defineConfig(({ mode }) => {
           'confirm': resolve(__dirname, 'src/auth/confirm.html')
         },
         output: {
-          // 手动配置代码分块策略
+          // 手动配置代码分块策略 - 优化版
           manualChunks: (id) => {
-            // React 相关库打包到一起
-            if (id.includes('node_modules/react') || id.includes('node_modules/react-dom') || id.includes('node_modules/react-redux')) {
-              return 'react-vendor';
+            // React 核心库
+            if (id.includes('node_modules/react/') || id.includes('node_modules/react-dom/')) {
+              return 'react-core';
             }
-            // Redux 相关库打包到一起
-            if (id.includes('node_modules/@reduxjs/toolkit')) {
+            // React 生态库
+            if (id.includes('node_modules/react-redux') || id.includes('node_modules/react-window')) {
+              return 'react-ecosystem';
+            }
+            // Redux 相关库
+            if (id.includes('node_modules/@reduxjs/toolkit') || id.includes('node_modules/redux')) {
               return 'redux-vendor';
             }
-            // Supabase 相关库打包到一起
-            if (id.includes('node_modules/@supabase/supabase-js')) {
+            // Supabase 相关库
+            if (id.includes('node_modules/@supabase/')) {
               return 'supabase-vendor';
             }
-            // 工具函数打包到一起
+            // 拖拽相关库
+            if (id.includes('node_modules/@dnd-kit/') || id.includes('node_modules/react-dnd')) {
+              return 'dnd-vendor';
+            }
+            // 工具库
+            if (id.includes('node_modules/lodash') || id.includes('node_modules/lz-string') || id.includes('node_modules/nanoid')) {
+              return 'utils-vendor';
+            }
+            // 应用工具函数
             if (id.includes('src/utils/')) {
-              return 'utils';
+              return 'app-utils';
+            }
+            // 服务层
+            if (id.includes('src/services/')) {
+              return 'services';
+            }
+            // 存储层
+            if (id.includes('src/store/')) {
+              return 'store';
             }
           }
         }
