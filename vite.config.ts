@@ -8,7 +8,7 @@ import { writeFileSync, readFileSync } from 'fs';
 // 创建临时 manifest，不包含 service worker
 const tempManifest = {
   ...manifest,
-  background: undefined
+  background: undefined,
 };
 
 // https://vitejs.dev/config/
@@ -19,13 +19,13 @@ export default defineConfig(({ mode }) => {
   return {
     // 生产环境移除 console 与 debugger
     esbuild: {
-      drop: mode === 'production' ? ['console', 'debugger'] : []
+      drop: mode === 'production' ? ['console', 'debugger'] : [],
     },
     // 设置相对路径基础路径，避免Chrome扩展中的绝对路径问题
     base: './',
     plugins: [
       react(),
-      crx({ 
+      crx({
         manifest: tempManifest,
         contentScripts: {
           preambleCode: false,
@@ -38,19 +38,19 @@ export default defineConfig(({ mode }) => {
           try {
             const manifestPath = resolve(__dirname, 'dist/manifest.json');
             const manifestContent = JSON.parse(readFileSync(manifestPath, 'utf-8'));
-            
+
             // 恢复 background 配置
             manifestContent.background = {
-              service_worker: 'service-worker.js'
+              service_worker: 'service-worker.js',
             };
-            
+
             writeFileSync(manifestPath, JSON.stringify(manifestContent, null, 2));
             console.log('✅ 已恢复 manifest.json 中的 background 配置');
           } catch (error) {
             console.error('❌ 恢复 manifest.json 失败:', error);
           }
-        }
-      }
+        },
+      },
     ],
     resolve: {
       alias: {
@@ -73,18 +73,24 @@ export default defineConfig(({ mode }) => {
       rollupOptions: {
         input: {
           'src/popup/index': resolve(__dirname, 'src/popup/index.html'),
-          'popup': resolve(__dirname, 'popup.html'),
-          'confirm': resolve(__dirname, 'src/auth/confirm.html')
+          popup: resolve(__dirname, 'popup.html'),
+          confirm: resolve(__dirname, 'src/auth/confirm.html'),
         },
         output: {
           // 手动配置代码分块策略 - 优化版
-          manualChunks: (id) => {
+          manualChunks: id => {
             // React 核心库
             if (id.includes('node_modules/react/') || id.includes('node_modules/react-dom/')) {
               return 'react-core';
             }
-            // React 生态库
-            if (id.includes('node_modules/react-redux') || id.includes('node_modules/react-window')) {
+            // React 生态库 (包括拖拽库以确保 React 依赖正确)
+            if (
+              id.includes('node_modules/react-redux') ||
+              id.includes('node_modules/react-window') ||
+              id.includes('node_modules/@dnd-kit/') ||
+              id.includes('node_modules/react-dnd') ||
+              id.includes('node_modules/react-dnd-html5-backend')
+            ) {
               return 'react-ecosystem';
             }
             // Redux 相关库
@@ -95,12 +101,12 @@ export default defineConfig(({ mode }) => {
             if (id.includes('node_modules/@supabase/')) {
               return 'supabase-vendor';
             }
-            // 拖拽相关库
-            if (id.includes('node_modules/@dnd-kit/') || id.includes('node_modules/react-dnd')) {
-              return 'dnd-vendor';
-            }
             // 工具库
-            if (id.includes('node_modules/lodash') || id.includes('node_modules/lz-string') || id.includes('node_modules/nanoid')) {
+            if (
+              id.includes('node_modules/lodash') ||
+              id.includes('node_modules/lz-string') ||
+              id.includes('node_modules/nanoid')
+            ) {
               return 'utils-vendor';
             }
             // 应用工具函数
@@ -115,9 +121,9 @@ export default defineConfig(({ mode }) => {
             if (id.includes('src/store/')) {
               return 'store';
             }
-          }
-        }
-      }
-    }
+          },
+        },
+      },
+    },
   };
 });
