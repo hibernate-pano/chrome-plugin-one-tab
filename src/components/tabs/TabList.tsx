@@ -13,6 +13,8 @@ import { TabGroup as TabGroupType } from '@/types/tab';
 import { EmptyState } from '@/components/common/EmptyState';
 import { PersonalizedWelcome, QuickActionTips } from '@/components/common/PersonalizedWelcome';
 import { TabListSkeleton } from '@/components/common/Skeleton';
+import { VirtualizedTabList, shouldUseVirtualization } from './VirtualizedTabList';
+import { logSanitizer } from '@/utils/logSanitizer';
 
 interface TabListProps {
   searchQuery: string;
@@ -37,9 +39,9 @@ export const TabList: React.FC<TabListProps> = ({ searchQuery }) => {
     dispatch(loadGroups());
 
     // 添加消息监听器，监听数据刷新消息
-    const messageListener = (message: any) => {
+    const messageListener = (message: { type: string }) => {
       if (message.type === 'REFRESH_TAB_LIST') {
-        console.log('收到刷新标签列表消息，重新加载数据');
+        logSanitizer.info('收到刷新标签列表消息，重新加载数据');
         dispatch(loadGroups());
       }
       return true; // 异步响应
@@ -136,10 +138,10 @@ export const TabList: React.FC<TabListProps> = ({ searchQuery }) => {
       // 然后异步完成存储操作
       dispatch(deleteGroup(selectedGroup.id))
         .then(() => {
-          console.log(`删除标签组: ${selectedGroup.id}`);
+          logSanitizer.info('删除标签组成功');
         })
-        .catch(error => {
-          console.error('删除标签组失败:', error);
+        .catch(() => {
+          logSanitizer.error('删除标签组失败');
         });
     }
 
@@ -198,17 +200,24 @@ export const TabList: React.FC<TabListProps> = ({ searchQuery }) => {
           </div>
         </div>
       ) : (
-        // 单栏布局
-        <div className="space-y-2 transition-all">
-          {filteredGroups.map((group, index) => (
-            <DraggableTabGroup
-              key={group.id}
-              group={group}
-              index={index}
-              moveGroup={handleMoveGroup}
-            />
-          ))}
-        </div>
+        // 单栏布局 - 根据数量决定是否使用虚拟滚动
+        shouldUseVirtualization(filteredGroups.length) ? (
+          <VirtualizedTabList
+            groups={filteredGroups}
+            onMoveGroup={handleMoveGroup}
+          />
+        ) : (
+          <div className="space-y-2 transition-all">
+            {filteredGroups.map((group, index) => (
+              <DraggableTabGroup
+                key={group.id}
+                group={group}
+                index={index}
+                moveGroup={handleMoveGroup}
+              />
+            ))}
+          </div>
+        )
       )}
 
       {/* 恢复所有标签确认对话框 */}

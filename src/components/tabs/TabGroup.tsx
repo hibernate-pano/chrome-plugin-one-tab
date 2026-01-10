@@ -1,7 +1,7 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useMemo } from 'react';
 import { useAppDispatch } from '@/store/hooks';
 import { updateGroupNameAndSync, toggleGroupLockAndSync, deleteGroup, updateGroup, moveTabAndSync } from '@/store/slices/tabSlice';
-import { DraggableTab } from '@/components/dnd/DraggableTab';
+import { SelectableTab } from '@/components/tabs/SelectableTab';
 import { TabGroup as TabGroupType, Tab } from '@/types/tab';
 import { shouldAutoDeleteAfterTabRemoval } from '@/utils/tabGroupUtils';
 import { useToast } from '@/contexts/ToastContext';
@@ -46,6 +46,9 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
   const [isEditing, setIsEditing] = useState(false);
   const [newName, setNewName] = useState(group.name);
   const [isCollapsed, setIsCollapsed] = useState(false);
+
+  // 缓存所有标签ID，用于范围选择
+  const allTabIds = useMemo(() => group.tabs.map(tab => tab.id), [group.tabs]);
 
   const handleNameChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     setNewName(e.target.value);
@@ -284,11 +287,12 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
       >
         <div className="tab-group-tabs-container">
           {group.tabs.map((tab, index) => (
-            <DraggableTab
+            <SelectableTab
               key={tab.id}
               tab={tab}
               groupId={group.id}
               index={index}
+              allTabIds={allTabIds}
               moveTab={handleMoveTab}
               handleOpenTab={handleOpenTab}
               handleDeleteTab={handleDeleteTab}

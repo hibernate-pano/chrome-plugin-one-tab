@@ -655,6 +655,52 @@ html:not([data-theme]).dark {
     @apply opacity-100;
   }
 
+  /* 选中状态的标签项 */
+  .tab-item-selected {
+    background: var(--color-accent-subtle, rgba(59, 130, 246, 0.1));
+    border-left: 3px solid var(--color-accent, #3b82f6);
+  }
+
+  .tab-item-selected:hover {
+    background: var(--color-accent-subtle, rgba(59, 130, 246, 0.15));
+  }
+
+  /* ==========================================
+     批量操作工具栏
+     ========================================== */
+  .batch-toolbar {
+    @apply sticky top-0 z-40;
+    @apply px-4 py-2;
+    @apply flex items-center;
+    background: var(--color-bg-secondary);
+    border-bottom: 1px solid var(--color-border-default);
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
+  }
+
+  .batch-toolbar-count {
+    color: var(--color-accent, #3b82f6);
+  }
+
+  .batch-toolbar-btn {
+    @apply rounded-lg transition-colors;
+    color: var(--color-text-secondary);
+  }
+
+  .batch-toolbar-btn:hover {
+    background: var(--color-bg-tertiary);
+    color: var(--color-text-primary);
+  }
+
+  .batch-toolbar-btn-danger {
+    @apply rounded-lg transition-colors;
+    color: var(--color-text-secondary);
+  }
+
+  .batch-toolbar-btn-danger:hover {
+    background: rgba(239, 68, 68, 0.1);
+    color: var(--color-danger, #ef4444);
+  }
+
   /* ==========================================
      徽章组件
      ========================================== */

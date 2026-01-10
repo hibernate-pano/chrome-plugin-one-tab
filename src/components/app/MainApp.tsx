@@ -4,6 +4,9 @@ import { TabList } from '@/components/tabs/TabList';
 import { useAppDispatch, useAppSelector } from '@/store/hooks';
 import { loadSettings } from '@/store/slices/settingsSlice';
 import { ensureMigrations } from '@/utils/migrationManager';
+import { SelectionProvider } from '@/contexts/SelectionContext';
+import { BatchOperationToolbar } from '@/components/tabs/BatchOperationToolbar';
+import { FeatureErrorBoundary } from '@/components/common/FeatureErrorBoundary';
 
 // 使用动态导入懒加载拖放功能
 const DndProvider = lazy(() =>
@@ -87,11 +90,16 @@ export const MainApp: React.FC = () => {
           ) : (
             <>
               <Header onSearch={setSearchQuery} />
-              <main className={`flex-1 w-full py-2 ${getContainerWidthClass()}`}>
-                <Suspense fallback={<div className="p-4 text-center">加载标签列表...</div>}>
-                  <TabList searchQuery={searchQuery} />
-                </Suspense>
-              </main>
+              <SelectionProvider>
+                <BatchOperationToolbar />
+                <main className={`flex-1 w-full py-2 ${getContainerWidthClass()}`}>
+                  <FeatureErrorBoundary featureName="标签列表">
+                    <Suspense fallback={<div className="p-4 text-center">加载标签列表...</div>}>
+                      <TabList searchQuery={searchQuery} />
+                    </Suspense>
+                  </FeatureErrorBoundary>
+                </main>
+              </SelectionProvider>
               <footer className="bg-white dark:bg-gray-900 border-t border-gray-200 dark:border-gray-700 text-xs text-gray-600 dark:text-gray-400">
                 <div className={`w-full py-2 ${getContainerWidthClass()} flex justify-between items-center`}>
                   <div className="flex items-center space-x-2">
