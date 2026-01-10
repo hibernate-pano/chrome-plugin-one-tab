@@ -6,6 +6,7 @@ import { nanoid } from '@reduxjs/toolkit';
 import { mergeTabGroups } from '@/utils/syncUtils';
 import { shouldAutoDeleteAfterTabRemoval } from '@/utils/tabGroupUtils';
 import { updateGroupWithVersion, updateDisplayOrder } from '@/utils/versionHelper';
+import { getActiveGroupsSorted, mergeAndSortGroups, sortGroupsByCreatedAt } from '@/utils/tabSortUtils';
 
 // 为了解决"参数隐式具有"any"类型"的问题，添加明确的类型定义
 // 注意：这些接口暂时保留，可能在未来的功能中使用
@@ -29,18 +30,9 @@ const initialState: TabState = {
 
 export const loadGroups = createAsyncThunk('tabs/loadGroups', async () => {
   const groups = await storage.getGroups();
+  const sortedGroups = getActiveGroupsSorted(groups);
 
-  // 过滤掉已软删除的标签组，避免UI显示
-  const activeGroups = groups.filter(g => !g.isDeleted);
-
-  // 确保标签组始终按创建时间倒序排列（最新创建的在前面）
-  const sortedGroups = activeGroups.sort((a, b) => {
-    const dateA = new Date(a.createdAt);
-    const dateB = new Date(b.createdAt);
-    return dateB.getTime() - dateA.getTime();
-  });
-
-  console.log(`[LoadGroups] 加载 ${sortedGroups.length} 个活跃标签组（已过滤 ${groups.length - activeGroups.length} 个已删除）`);
+  console.log(`[LoadGroups] 加载 ${sortedGroups.length} 个活跃标签组（已过滤 ${groups.length - sortedGroups.length} 个已删除）`);
 
   return sortedGroups;
 });
@@ -50,13 +42,7 @@ export const saveGroup = createAsyncThunk(
   async (group: TabGroup) => {
     // 保存到本地
     const groups = await storage.getGroups();
-    const updatedGroups = [group, ...groups];
-    // 确保按创建时间倒序排列（最新创建的在前面）
-    const sortedGroups = updatedGroups.sort((a, b) => {
-      const dateA = new Date(a.createdAt);
-      const dateB = new Date(b.createdAt);
-      return dateB.getTime() - dateA.getTime();
-    });
+    const sortedGroups = mergeAndSortGroups(groups, [group]);
     await storage.setGroups(sortedGroups);
 
     return group;
@@ -138,13 +124,7 @@ export const importGroups = createAsyncThunk(
 
     // 合并现有标签组和导入的标签组，并按创建时间倒序排列
     const existingGroups = await storage.getGroups();
-    const updatedGroups = [...processedGroups, ...existingGroups];
-    // 按创建时间倒序排列，确保最新创建的标签组在前面
-    const sortedGroups = updatedGroups.sort((a, b) => {
-      const dateA = new Date(a.createdAt);
-      const dateB = new Date(b.createdAt);
-      return dateB.getTime() - dateA.getTime();
-    });
+    const sortedGroups = mergeAndSortGroups(existingGroups, processedGroups);
     await storage.setGroups(sortedGroups);
 
     return processedGroups;
@@ -1032,12 +1012,7 @@ export const tabSlice = createSlice({
       })
       .addCase(saveGroup.fulfilled, (state, action) => {
         // 添加新标签组并按创建时间倒序排列
-        state.groups.unshift(action.payload);
-        state.groups.sort((a, b) => {
-          const dateA = new Date(a.createdAt);
-          const dateB = new Date(b.createdAt);
-          return dateB.getTime() - dateA.getTime();
-        });
+        state.groups = sortGroupsByCreatedAt([...state.groups, action.payload]);
       })
       .addCase(updateGroup.fulfilled, (state, action) => {
         const index = state.groups.findIndex(g => g.id === action.payload.id);
@@ -1299,13 +1274,7 @@ export const selectFilteredGroups = createSelector(
 // 选择已排序的标签组（按创建时间倒序）
 export const selectSortedGroups = createSelector(
   [(state: { tabs: TabState }) => state.tabs.groups],
-  (groups) => {
-    return [...groups].sort((a, b) => {
-      const dateA = new Date(a.createdAt);
-      const dateB = new Date(b.createdAt);
-      return dateB.getTime() - dateA.getTime();
-    });
-  }
+  (groups) => sortGroupsByCreatedAt(groups)
 );
 
 // 选择标签总数
