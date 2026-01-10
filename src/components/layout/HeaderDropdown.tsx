@@ -142,8 +142,9 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({ onClose }) => {
 
         // 异步删除所有标签组，不阻塞用户界面
         dispatch(deleteAllGroups())
-          .then((result: any) => {
-            const count = result.payload?.count || 0;
+          .then((result) => {
+            const payload = result.payload as { count?: number } | undefined;
+            const count = payload?.count || 0;
 
             // 删除成功后，异步同步到云端
             if (isAuthenticated) {

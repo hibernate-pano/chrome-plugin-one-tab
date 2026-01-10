@@ -278,7 +278,7 @@ export const sync = {
         }
 
         // 将标签转换为 TabData 格式
-        const tabsData: TabData[] = tabs.map((tab: any) => ({
+        const tabsData: TabData[] = tabs.map((tab) => ({
           id: String(tab.id),
           url: String(tab.url),
           title: String(tab.title),
@@ -697,7 +697,7 @@ export const sync = {
       console.log(`从云端获取到 ${groups.length} 个标签组`);
 
       // 记录每个云端标签组的基本信息
-      groups.forEach((group: any, index) => {
+      groups.forEach((group, index) => {
         const tabsData = (group.tabs_data || []) as TabData[];
         console.log(`云端标签组 ${index + 1}/${groups.length}:`, {
           id: group.id,
@@ -715,34 +715,27 @@ export const sync = {
       for (const group of groups) {
         // 从 JSONB 字段获取标签数据
         let tabsData: TabData[] = [];
-        const groupAny = group as any;
+        const groupRecord = group as Record<string, unknown>;
 
         // 检查是否是加密数据
-        if (typeof groupAny.tabs_data === 'string') {
+        if (typeof groupRecord.tabs_data === 'string') {
           try {
             // 尝试解密数据
-            tabsData = await decryptData<TabData[]>(groupAny.tabs_data as string, user.id);
-            console.log(`标签组 ${groupAny.id} 的数据已成功解密`);
+            tabsData = await decryptData<TabData[]>(groupRecord.tabs_data as string, user.id);
           } catch (error) {
-            console.error(`解密标签组 ${groupAny.id} 的数据失败:`, error);
+            console.error(`解密标签组 ${groupRecord.id} 的数据失败:`, error);
             // 如果解密失败，尝试直接解析（可能是旧的未加密数据）
             try {
-              if (typeof groupAny.tabs_data === 'string' && !isEncrypted(groupAny.tabs_data)) {
-                tabsData = JSON.parse(groupAny.tabs_data);
-                console.log(`标签组 ${groupAny.id} 的数据是旧的未加密格式，已成功解析`);
+              if (typeof groupRecord.tabs_data === 'string' && !isEncrypted(groupRecord.tabs_data)) {
+                tabsData = JSON.parse(groupRecord.tabs_data);
               }
             } catch (jsonError) {
-              console.error(`解析标签组 ${groupAny.id} 的JSON数据失败:`, jsonError);
-              // 保持空数组
+              console.error(`解析标签组 ${groupRecord.id} 的JSON数据失败:`, jsonError);
             }
           }
-        } else if (Array.isArray(groupAny.tabs_data)) {
-          // 如果已经是数组，直接使用
-          tabsData = groupAny.tabs_data as TabData[];
-          // 数据已是数组格式
+        } else if (Array.isArray(groupRecord.tabs_data)) {
+          tabsData = groupRecord.tabs_data as TabData[];
         }
-
-        // 处理标签组数据
 
         // 将 TabData 转换为 Tab 格式
         const formattedTabs = tabsData.map((tab: TabData) => ({
@@ -752,16 +745,16 @@ export const sync = {
           favicon: tab.favicon,
           createdAt: tab.created_at,
           lastAccessed: tab.last_accessed,
-          group_id: String(groupAny.id)
+          group_id: String(groupRecord.id)
         }));
 
         tabGroups.push({
-          id: String(groupAny.id),
-          name: String(groupAny.name),
+          id: String(groupRecord.id),
+          name: String(groupRecord.name),
           tabs: formattedTabs,
-          createdAt: String(groupAny.created_at),
-          updatedAt: String(groupAny.updated_at),
-          isLocked: Boolean(groupAny.is_locked)
+          createdAt: String(groupRecord.created_at),
+          updatedAt: String(groupRecord.updated_at),
+          isLocked: Boolean(groupRecord.is_locked)
         });
       }
 
@@ -775,7 +768,7 @@ export const sync = {
               .eq('group_id', group.id as string);
 
             if (!tabError && tabs && tabs.length > 0) {
-              group.tabs = tabs.map((tab: any) => ({
+              group.tabs = tabs.map((tab) => ({
                 id: String(tab.id),
                 url: String(tab.url),
                 title: String(tab.title),

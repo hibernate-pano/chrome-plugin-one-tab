@@ -1,3 +1,5 @@
+import type { TabGroup, Tab } from '@/types/tab';
+
 // 拖拽项类型
 export const DragTypes = {
   GROUP: 'group',
@@ -14,13 +16,13 @@ export interface DragData {
 // 标签组拖拽数据
 export interface GroupDragData extends DragData {
   type: 'group';
-  group: any; // 标签组数据
+  group: TabGroup;
 }
 
 // 标签页拖拽数据
 export interface TabDragData extends DragData {
   type: 'tab';
-  tab: any; // 标签页数据
+  tab: Tab;
   groupId: string;
 }
 
