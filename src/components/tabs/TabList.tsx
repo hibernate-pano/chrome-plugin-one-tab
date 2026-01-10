@@ -1,8 +1,6 @@
-import React, { useEffect, useState, lazy, useMemo, useCallback } from 'react';
+import React, { useEffect, useState, lazy, useCallback } from 'react';
 import { useAppDispatch, useAppSelector } from '@/store/hooks';
-import { loadGroups, deleteGroup, moveGroupAndSync } from '@/store/slices/tabSlice';
-import { runMigrations } from '@/utils/migrationUtils';
-import { sortGroupsByCreatedAt } from '@/utils/groupSortUtils';
+import { loadGroups, deleteGroup, moveGroupAndSync, selectSortedGroups } from '@/store/slices/tabSlice';
 
 import { DraggableTabGroup } from '@/components/dnd/DraggableTabGroup';
 import { SearchResultList } from '@/components/search/SearchResultList';
@@ -21,28 +19,18 @@ const ReorderView = lazy(() => import('@/components/tabs/ReorderView'));
 
 export const TabList: React.FC<TabListProps> = ({ searchQuery }) => {
   const dispatch = useAppDispatch();
-  const { groups, isLoading, error } = useAppSelector(state => state.tabs);
+  const { isLoading, error } = useAppSelector(state => state.tabs);
   const { layoutMode, reorderMode } = useAppSelector(state => state.settings);
+
+  // 使用 selector 获取已排序的标签组,避免重复排序
+  const sortedGroups = useAppSelector(selectSortedGroups);
+
   const [isRestoreAllModalOpen, setIsRestoreAllModalOpen] = useState(false);
   const [selectedGroup, setSelectedGroup] = useState<TabGroupType | null>(null);
 
   useEffect(() => {
-    // 先运行数据迁移，然后加载数据
-    const initializeData = async () => {
-      try {
-        // 运行必要的数据迁移
-        await runMigrations();
-
-        // 加载标签组数据
-        dispatch(loadGroups());
-      } catch (error) {
-        console.error('初始化数据失败:', error);
-        // 即使迁移失败，也要尝试加载数据
-        dispatch(loadGroups());
-      }
-    };
-
-    initializeData();
+    // 加载标签组数据(迁移已在MainApp中执行)
+    dispatch(loadGroups());
 
     // 添加消息监听器，监听数据刷新消息
     const messageListener = (message: any) => {
@@ -70,15 +58,6 @@ export const TabList: React.FC<TabListProps> = ({ searchQuery }) => {
     return <div className="flex items-center justify-center h-64 text-red-600">{error}</div>;
   }
 
-  // 使用 useMemo 缓存排序结果，避免每次渲染都重新排序
-  const sortedGroups = useMemo(() => {
-    return [...groups].sort((a, b) => {
-      const dateA = new Date(a.createdAt);
-      const dateB = new Date(b.createdAt);
-      return dateB.getTime() - dateA.getTime(); // 倒序，最新创建的在前面
-    });
-  }, [groups]);
-
   // 当有搜索查询时，我们会使用 SearchResultList 组件显示匹配的标签
   // 这里只需要处理没有搜索查询时的标签组列表
   const filteredGroups = sortedGroups;
@@ -89,7 +68,7 @@ export const TabList: React.FC<TabListProps> = ({ searchQuery }) => {
   }, [dispatch]);
 
   // 使用 useMemo 缓存双栏布局的分组
-  const { leftColumnGroups, rightColumnGroups } = useMemo(() => {
+  const { leftColumnGroups, rightColumnGroups } = React.useMemo(() => {
     if (layoutMode !== 'double') {
       return { leftColumnGroups: [], rightColumnGroups: [] };
     }

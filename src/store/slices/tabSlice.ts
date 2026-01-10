@@ -6,12 +6,13 @@ import { nanoid } from '@reduxjs/toolkit';
 import { mergeTabGroups } from '@/utils/syncUtils';
 import { shouldAutoDeleteAfterTabRemoval } from '@/utils/tabGroupUtils';
 import { updateGroupWithVersion, updateDisplayOrder } from '@/utils/versionHelper';
-import { sortGroupsByCreatedAt, filterActiveGroups } from '@/utils/groupSortUtils';
+import { getActiveGroupsSorted, mergeAndSortGroups, sortGroupsByCreatedAt } from '@/utils/tabSortUtils';
 
 // 为了解决"参数隐式具有"any"类型"的问题，添加明确的类型定义
 // 注意：这些接口暂时保留，可能在未来的功能中使用
 
 // 解决"速记属性...的范围内不存在任何值"的问题，显式声明actions
+
 
 const initialState: TabState = {
   groups: [],
@@ -29,89 +30,106 @@ const initialState: TabState = {
 
 export const loadGroups = createAsyncThunk('tabs/loadGroups', async () => {
   const groups = await storage.getGroups();
-  const activeGroups = filterActiveGroups(groups);
-  const sortedGroups = sortGroupsByCreatedAt(activeGroups, 'desc');
+  const sortedGroups = getActiveGroupsSorted(groups);
+
+  console.log(`[LoadGroups] 加载 ${sortedGroups.length} 个活跃标签组（已过滤 ${groups.length - sortedGroups.length} 个已删除）`);
 
   return sortedGroups;
 });
 
-export const saveGroup = createAsyncThunk('tabs/saveGroup', async (group: TabGroup) => {
-  const groups = await storage.getGroups();
-  const sortedGroups = sortGroupsByCreatedAt([group, ...groups], 'desc');
-  await storage.setGroups(sortedGroups);
+export const saveGroup = createAsyncThunk(
+  'tabs/saveGroup',
+  async (group: TabGroup) => {
+    // 保存到本地
+    const groups = await storage.getGroups();
+    const sortedGroups = mergeAndSortGroups(groups, [group]);
+    await storage.setGroups(sortedGroups);
 
-  return group;
-});
-
-export const updateGroup = createAsyncThunk('tabs/updateGroup', async (group: TabGroup) => {
-  const groups = await storage.getGroups();
-
-  // 使用辅助函数增加版本号
-  const updatedGroups = groups.map(g => (g.id === group.id ? updateGroupWithVersion(g, group) : g));
-
-  await storage.setGroups(updatedGroups);
-
-  return updatedGroups.find(g => g.id === group.id)!;
-});
-
-export const deleteGroup = createAsyncThunk('tabs/deleteGroup', async (groupId: string) => {
-  const groups = await storage.getGroups();
-
-  // 使用软删除：标记为已删除而非直接移除
-  // 这样可以在同步时正确处理删除操作
-  const updatedGroups = groups.map(g => {
-    if (g.id === groupId) {
-      const currentVersion = g.version || 1;
-      return {
-        ...g,
-        isDeleted: true,
-        version: currentVersion + 1, // 增加版本号
-        updatedAt: new Date().toISOString(),
-      };
-    }
-    return g;
-  });
-
-  await storage.setGroups(updatedGroups);
-
-  console.log(
-    `[DeleteGroup] 软删除标签组: ${groupId}, 新版本: ${(groups.find(g => g.id === groupId)?.version || 1) + 1}`
-  );
-
-  return groupId;
-});
-
-export const deleteAllGroups = createAsyncThunk('tabs/deleteAllGroups', async () => {
-  const groups = await storage.getGroups();
-
-  if (groups.length === 0) {
-    return { count: 0 }; // 没有标签组可删除
+    return group;
   }
+);
 
-  // 直接清空本地标签组
-  await storage.setGroups([]);
+export const updateGroup = createAsyncThunk(
+  'tabs/updateGroup',
+  async (group: TabGroup) => {
+    const groups = await storage.getGroups();
 
-  return { count: groups.length };
-});
+    // 使用辅助函数增加版本号
+    const updatedGroups = groups.map(g =>
+      g.id === group.id ? updateGroupWithVersion(g, group) : g
+    );
 
-export const importGroups = createAsyncThunk('tabs/importGroups', async (groups: TabGroup[]) => {
-  // 为导入的标签组和标签页生成新的ID
-  const processedGroups = groups.map(group => ({
-    ...group,
-    id: nanoid(),
-    tabs: group.tabs.map(tab => ({
-      ...tab,
+    await storage.setGroups(updatedGroups);
+
+    return updatedGroups.find(g => g.id === group.id)!;
+  }
+);
+
+export const deleteGroup = createAsyncThunk(
+  'tabs/deleteGroup',
+  async (groupId: string) => {
+    const groups = await storage.getGroups();
+
+    // 使用软删除：标记为已删除而非直接移除
+    // 这样可以在同步时正确处理删除操作
+    const updatedGroups = groups.map(g => {
+      if (g.id === groupId) {
+        const currentVersion = g.version || 1;
+        return {
+          ...g,
+          isDeleted: true,
+          version: currentVersion + 1, // 增加版本号
+          updatedAt: new Date().toISOString()
+        };
+      }
+      return g;
+    });
+
+    await storage.setGroups(updatedGroups);
+
+    console.log(`[DeleteGroup] 软删除标签组: ${groupId}, 新版本: ${(groups.find(g => g.id === groupId)?.version || 1) + 1}`);
+
+    return groupId;
+  }
+);
+
+export const deleteAllGroups = createAsyncThunk(
+  'tabs/deleteAllGroups',
+  async () => {
+    const groups = await storage.getGroups();
+
+    if (groups.length === 0) {
+      return { count: 0 }; // 没有标签组可删除
+    }
+
+    // 直接清空本地标签组
+    await storage.setGroups([]);
+
+    return { count: groups.length };
+  }
+);
+
+export const importGroups = createAsyncThunk(
+  'tabs/importGroups',
+  async (groups: TabGroup[]) => {
+    // 为导入的标签组和标签页生成新的ID
+    const processedGroups = groups.map(group => ({
+      ...group,
       id: nanoid(),
-    })),
-  }));
+      tabs: group.tabs.map(tab => ({
+        ...tab,
+        id: nanoid(),
+      })),
+    }));
 
-  // 合并现有标签组和导入的标签组，并按创建时间倒序排列
-  const existingGroups = await storage.getGroups();
-  const sortedGroups = sortGroupsByCreatedAt([...processedGroups, ...existingGroups], 'desc');
-  await storage.setGroups(sortedGroups);
+    // 合并现有标签组和导入的标签组，并按创建时间倒序排列
+    const existingGroups = await storage.getGroups();
+    const sortedGroups = mergeAndSortGroups(existingGroups, processedGroups);
+    await storage.setGroups(sortedGroups);
 
-  return processedGroups;
-});
+    return processedGroups;
+  }
+);
 
 // 同步标签组到云端
 export const syncTabsToCloud = createAsyncThunk<
@@ -440,9 +458,7 @@ export const updateGroupNameAndSync = createAsyncThunk(
     });
     await storage.setGroups(updatedGroups);
 
-    console.log(
-      `[UpdateGroupName] 更新标签组 ${groupId}, 新版本: ${(groups.find(g => g.id === groupId)?.version || 1) + 1}`
-    );
+    console.log(`[UpdateGroupName] 更新标签组 ${groupId}, 新版本: ${(groups.find(g => g.id === groupId)?.version || 1) + 1}`);
 
     return { groupId, name };
   }
@@ -461,7 +477,7 @@ export const toggleGroupLockAndSync = createAsyncThunk(
 
     if (group) {
       const updatedGroup = updateGroupWithVersion(group, {
-        isLocked: !group.isLocked,
+        isLocked: !group.isLocked
       });
 
       const updatedGroups = groups.map(g => (g.id === groupId ? updatedGroup : g));
@@ -485,7 +501,10 @@ export const toggleGroupLockAndSync = createAsyncThunk(
  */
 export const moveGroupAndSync = createAsyncThunk(
   'tabs/moveGroupAndSync',
-  async ({ dragIndex, hoverIndex }: { dragIndex: number; hoverIndex: number }, { dispatch }) => {
+  async (
+    { dragIndex, hoverIndex }: { dragIndex: number; hoverIndex: number },
+    { dispatch }
+  ) => {
     try {
       // 在 Redux 中移动标签组 - 立即更新UI
       dispatch(moveGroup({ dragIndex, hoverIndex }));
@@ -528,6 +547,7 @@ export const moveGroupAndSync = createAsyncThunk(
           await storage.setGroups(updatedGroups);
 
           console.log(`[MoveGroup] 已更新所有标签组的 displayOrder`);
+
         } catch (error) {
           console.error('存储标签组移动操作失败:', error);
         }
@@ -543,106 +563,110 @@ export const moveGroupAndSync = createAsyncThunk(
 
 // 移动标签页并同步到云端
 // 清理重复标签功能
-export const cleanDuplicateTabs = createAsyncThunk('tabs/cleanDuplicateTabs', async () => {
-  // 保存原始数据，用于错误回滚
-  let originalGroups: TabGroup[] = [];
+export const cleanDuplicateTabs = createAsyncThunk(
+  'tabs/cleanDuplicateTabs',
+  async () => {
+    // 保存原始数据，用于错误回滚
+    let originalGroups: TabGroup[] = [];
 
-  try {
-    // 获取所有标签组并保存原始状态
-    originalGroups = await storage.getGroups();
-    const groups = [...originalGroups]; // 创建副本进行操作
+    try {
+      // 获取所有标签组并保存原始状态
+      originalGroups = await storage.getGroups();
+      const groups = [...originalGroups]; // 创建副本进行操作
 
-    // 创建URL映射，记录每个URL对应的标签页
-    const urlMap = new Map<string, { tab: any; groupId: string }[]>();
+      // 创建URL映射，记录每个URL对应的标签页
+      const urlMap = new Map<string, { tab: any; groupId: string }[]>();
 
-    // 扫描所有标签页，按URL分组
-    groups.forEach(group => {
-      group.tabs.forEach(tab => {
-        if (tab.url) {
-          // 对于loading://开头的URL，需要特殊处理
-          const urlKey = tab.url.startsWith('loading://') ? `${tab.url}|${tab.title}` : tab.url;
+      // 扫描所有标签页，按URL分组
+      groups.forEach(group => {
+        group.tabs.forEach(tab => {
+          if (tab.url) {
+            // 对于loading://开头的URL，需要特殊处理
+            const urlKey = tab.url.startsWith('loading://') ? `${tab.url}|${tab.title}` : tab.url;
 
-          if (!urlMap.has(urlKey)) {
-            urlMap.set(urlKey, []);
+            if (!urlMap.has(urlKey)) {
+              urlMap.set(urlKey, []);
+            }
+            urlMap.get(urlKey)?.push({ tab, groupId: group.id });
           }
-          urlMap.get(urlKey)?.push({ tab, groupId: group.id });
+        });
+      });
+
+      // 处理重复标签页
+      let removedTabsCount = 0;
+      const updatedGroups = [...groups];
+
+      urlMap.forEach(tabsWithSameUrl => {
+        if (tabsWithSameUrl.length > 1) {
+          // 按lastAccessed时间排序，保留最新的标签页
+          tabsWithSameUrl.sort(
+            (a, b) =>
+              new Date(b.tab.lastAccessed).getTime() - new Date(a.tab.lastAccessed).getTime()
+          );
+
+          // 保留第一个（最新的），删除其余的
+          for (let i = 1; i < tabsWithSameUrl.length; i++) {
+            const { groupId, tab } = tabsWithSameUrl[i];
+            const groupIndex = updatedGroups.findIndex(g => g.id === groupId);
+
+            if (groupIndex !== -1) {
+              // 从标签组中删除该标签页
+              updatedGroups[groupIndex].tabs = updatedGroups[groupIndex].tabs.filter(
+                t => t.id !== tab.id
+              );
+              removedTabsCount++;
+
+              // 更新标签组的updatedAt时间和版本号
+              const currentVersion = updatedGroups[groupIndex].version || 1;
+              updatedGroups[groupIndex].updatedAt = new Date().toISOString();
+              updatedGroups[groupIndex].version = currentVersion + 1;
+            }
+          }
         }
       });
-    });
 
-    // 处理重复标签页
-    let removedTabsCount = 0;
-    const updatedGroups = [...groups];
-
-    urlMap.forEach(tabsWithSameUrl => {
-      if (tabsWithSameUrl.length > 1) {
-        // 按lastAccessed时间排序，保留最新的标签页
-        tabsWithSameUrl.sort(
-          (a, b) => new Date(b.tab.lastAccessed).getTime() - new Date(a.tab.lastAccessed).getTime()
-        );
-
-        // 保留第一个（最新的），删除其余的
-        for (let i = 1; i < tabsWithSameUrl.length; i++) {
-          const { groupId, tab } = tabsWithSameUrl[i];
-          const groupIndex = updatedGroups.findIndex(g => g.id === groupId);
-
-          if (groupIndex !== -1) {
-            // 从标签组中删除该标签页
-            updatedGroups[groupIndex].tabs = updatedGroups[groupIndex].tabs.filter(
-              t => t.id !== tab.id
-            );
-            removedTabsCount++;
-
-            // 更新标签组的updatedAt时间和版本号
-            const currentVersion = updatedGroups[groupIndex].version || 1;
-            updatedGroups[groupIndex].updatedAt = new Date().toISOString();
-            updatedGroups[groupIndex].version = currentVersion + 1;
-          }
+      // 清理空标签组（在重复标签清理后进行）
+      let removedGroupsCount = 0;
+      const finalGroups = updatedGroups.filter(group => {
+        // 如果标签组为空且不是锁定状态，则删除
+        if (group.tabs.length === 0 && !group.isLocked) {
+          removedGroupsCount++;
+          return false; // 从数组中移除
         }
-      }
-    });
+        return true; // 保留
+      });
 
-    // 清理空标签组（在重复标签清理后进行）
-    let removedGroupsCount = 0;
-    const finalGroups = updatedGroups.filter(group => {
-      // 如果标签组为空且不是锁定状态，则删除
-      if (group.tabs.length === 0 && !group.isLocked) {
-        removedGroupsCount++;
-        return false; // 从数组中移除
+      // 原子性操作：先保存到本地存储
+      try {
+        await storage.setGroups(finalGroups);
+      } catch (storageError) {
+        console.error('保存到本地存储失败，操作回滚:', storageError);
+        // 如果保存失败，不进行任何更改
+        throw new Error('保存失败，操作已取消');
       }
-      return true; // 保留
-    });
 
-    // 原子性操作：先保存到本地存储
-    try {
-      await storage.setGroups(finalGroups);
-    } catch (storageError) {
-      console.error('保存到本地存储失败，操作回滚:', storageError);
-      // 如果保存失败，不进行任何更改
-      throw new Error('保存失败，操作已取消');
+      return {
+        removedTabsCount,
+        removedGroupsCount,
+        updatedGroups: finalGroups
+      };
+    } catch (error) {
+      console.error('清理重复标签和空标签组失败:', error);
+
+      // 如果操作过程中出现错误，尝试恢复原始状态
+      try {
+        if (originalGroups.length > 0) {
+          await storage.setGroups(originalGroups);
+          console.log('已回滚到原始状态');
+        }
+      } catch (rollbackError) {
+        console.error('回滚失败:', rollbackError);
+      }
+
+      throw error;
     }
-
-    return {
-      removedTabsCount,
-      removedGroupsCount,
-      updatedGroups: finalGroups,
-    };
-  } catch (error) {
-    console.error('清理重复标签和空标签组失败:', error);
-
-    // 如果操作过程中出现错误，尝试恢复原始状态
-    try {
-      if (originalGroups.length > 0) {
-        await storage.setGroups(originalGroups);
-        console.log('已回滚到原始状态');
-      }
-    } catch (rollbackError) {
-      console.error('回滚失败:', rollbackError);
-    }
-
-    throw error;
   }
-});
+);
 
 /**
  * 移动标签页并同步到云端
@@ -739,24 +763,19 @@ export const moveTabAndSync = createAsyncThunk(
             }
 
             // 批量更新本地存储 - 一次性更新所有变更
-            let updatedGroups = groups.map(g => {
-              if (g.id === sourceGroupId) return updatedSourceGroup;
-              if (g.id === targetGroupId) return updatedTargetGroup;
-              return g;
-            });
+            let updatedGroups = groups
+              .map(g => {
+                if (g.id === sourceGroupId) return updatedSourceGroup;
+                if (g.id === targetGroupId) return updatedTargetGroup;
+                return g;
+              });
 
             // 自动清理空标签组（仅在跨组移动时检查源标签组）
-            if (
-              sourceGroupId !== targetGroupId &&
-              updatedSourceGroup &&
-              updatedSourceGroup.tabs.length === 0
-            ) {
+            if (sourceGroupId !== targetGroupId && updatedSourceGroup && updatedSourceGroup.tabs.length === 0) {
               try {
                 // 使用工具函数检查是否应该被自动删除（考虑锁定状态等）
                 if (shouldAutoDeleteAfterTabRemoval(updatedSourceGroup, '')) {
-                  console.log(
-                    `[拖拽自动清理] 检测到空标签组: ${updatedSourceGroup.name} (ID: ${sourceGroupId})`
-                  );
+                  console.log(`[拖拽自动清理] 检测到空标签组: ${updatedSourceGroup.name} (ID: ${sourceGroupId})`);
 
                   // 从存储数组中移除空标签组
                   updatedGroups = updatedGroups.filter(g => g.id !== sourceGroupId);
@@ -770,13 +789,9 @@ export const moveTabAndSync = createAsyncThunk(
                     }
                   }, 100);
 
-                  console.log(
-                    `[拖拽自动清理] 已从存储中移除空标签组: ${updatedSourceGroup.name} (ID: ${sourceGroupId})`
-                  );
+                  console.log(`[拖拽自动清理] 已从存储中移除空标签组: ${updatedSourceGroup.name} (ID: ${sourceGroupId})`);
                 } else {
-                  console.log(
-                    `[拖拽自动清理] 跳过不符合删除条件的空标签组: ${updatedSourceGroup.name} (ID: ${sourceGroupId})`
-                  );
+                  console.log(`[拖拽自动清理] 跳过不符合删除条件的空标签组: ${updatedSourceGroup.name} (ID: ${sourceGroupId})`);
                 }
               } catch (cleanupError) {
                 console.error(`[拖拽自动清理] 清理空标签组时发生错误:`, cleanupError);
@@ -785,6 +800,7 @@ export const moveTabAndSync = createAsyncThunk(
             }
 
             await storage.setGroups(updatedGroups);
+
           }
         } catch (error) {
           console.error('存储标签页移动操作失败:', error);
@@ -857,19 +873,14 @@ export const tabSlice = createSlice({
       const targetGroup = state.groups.find(g => g.id === targetGroupId);
 
       // 验证源组和目标组存在，以及它们的 tabs 数组
-      if (
-        !sourceGroup ||
-        !targetGroup ||
-        !sourceGroup.tabs ||
-        !Array.isArray(sourceGroup.tabs) ||
-        !targetGroup.tabs ||
-        !Array.isArray(targetGroup.tabs)
-      ) {
+      if (!sourceGroup || !targetGroup ||
+        !sourceGroup.tabs || !Array.isArray(sourceGroup.tabs) ||
+        !targetGroup.tabs || !Array.isArray(targetGroup.tabs)) {
         console.error('无效的标签组数据:', {
           sourceGroup: sourceGroup?.id,
           targetGroup: targetGroup?.id,
           sourceTabsValid: Array.isArray(sourceGroup?.tabs),
-          targetTabsValid: Array.isArray(targetGroup?.tabs),
+          targetTabsValid: Array.isArray(targetGroup?.tabs)
         });
         return;
       }
@@ -954,11 +965,12 @@ export const tabSlice = createSlice({
         };
 
         // 更新state中的标签组
-        state.groups = state.groups.map(g => {
-          if (g.id === sourceGroupId) return updatedSourceGroup;
-          if (g.id === targetGroupId) return updatedTargetGroup;
-          return g;
-        });
+        state.groups = state.groups
+          .map(g => {
+            if (g.id === sourceGroupId) return updatedSourceGroup;
+            if (g.id === targetGroupId) return updatedTargetGroup;
+            return g;
+          })
         // 不在此处移除空标签组，交由 SortableTabGroup 组件通过 isMarkedForDeletion 处理
         // .filter(g => g.tabs.length > 0 || g.isLocked);
 
@@ -1000,12 +1012,7 @@ export const tabSlice = createSlice({
       })
       .addCase(saveGroup.fulfilled, (state, action) => {
         // 添加新标签组并按创建时间倒序排列
-        state.groups.unshift(action.payload);
-        state.groups.sort((a, b) => {
-          const dateA = new Date(a.createdAt);
-          const dateB = new Date(b.createdAt);
-          return dateB.getTime() - dateA.getTime();
-        });
+        state.groups = sortGroupsByCreatedAt([...state.groups, action.payload]);
       })
       .addCase(updateGroup.fulfilled, (state, action) => {
         const index = state.groups.findIndex(g => g.id === action.payload.id);
@@ -1085,9 +1092,7 @@ export const tabSlice = createSlice({
         state.lastSyncTime = action.payload.syncTime;
         state.compressionStats = action.payload.stats || null;
 
-        console.log(
-          `[SyncFromCloud] 已同步 ${activeGroups.length} 个活跃标签组（已过滤 ${action.payload.groups.length - activeGroups.length} 个已删除）`
-        );
+        console.log(`[SyncFromCloud] 已同步 ${activeGroups.length} 个活跃标签组（已过滤 ${action.payload.groups.length - activeGroups.length} 个已删除）`);
 
         if (!state.backgroundSync) {
           state.syncStatus = 'success';
@@ -1269,13 +1274,7 @@ export const selectFilteredGroups = createSelector(
 // 选择已排序的标签组（按创建时间倒序）
 export const selectSortedGroups = createSelector(
   [(state: { tabs: TabState }) => state.tabs.groups],
-  (groups) => {
-    return [...groups].sort((a, b) => {
-      const dateA = new Date(a.createdAt);
-      const dateB = new Date(b.createdAt);
-      return dateB.getTime() - dateA.getTime();
-    });
-  }
+  (groups) => sortGroupsByCreatedAt(groups)
 );
 
 // 选择标签总数
