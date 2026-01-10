@@ -3,6 +3,8 @@
  * 提供性能指标收集和分析
  */
 
+import { useState, useEffect, useCallback } from 'react';
+
 export interface PerformanceMetric {
   name: string;
   value: number;
@@ -354,7 +356,7 @@ export function measureAsyncPerformance(name?: string) {
  * React Hook - 测量组件渲染性能
  */
 export function usePerformanceTracking(componentName: string) {
-  React.useEffect(() => {
+  useEffect(() => {
     performanceMonitor.mark(`${componentName}-render-start`);
 
     return () => {
@@ -368,5 +370,82 @@ export function usePerformanceTracking(componentName: string) {
   });
 }
 
-// 注意：需要在文件顶部导入React
-import React from 'react';
+/**
+ * 性能监控 Hook 结构
+ */
+export interface PerformanceMonitorMetrics {
+  memory: {
+    used: number;
+    limit: number;
+  };
+  rendering: {
+    fps: number;
+    averageRenderTime: number;
+    longTasks: number;
+  };
+  storage: {
+    size: number;
+    operations: number;
+  };
+}
+
+/**
+ * React Hook - 获取性能监控数据
+ */
+export function usePerformanceMonitor() {
+  const [metrics, setMetrics] = useState<PerformanceMonitorMetrics | null>(null);
+
+  const getReport = useCallback(() => {
+    const report = performanceMonitor.generateReport();
+    return {
+      ...report,
+      entries: report.metrics,
+    };
+  }, []);
+
+  useEffect(() => {
+    const updateMetrics = () => {
+      const memoryUsage = performanceMonitor.getMemoryUsage();
+      const report = performanceMonitor.generateReport();
+      const longTasks = performanceMonitor.getMetricsByName('long-task');
+
+      // 估算 FPS（基于长任务数量）
+      const fps = Math.max(10, 60 - longTasks.length * 5);
+
+      // 估算存储大小
+      let storageSize = 0;
+      try {
+        const storage = localStorage.getItem('tabvault_groups');
+        storageSize = storage ? new Blob([storage]).size : 0;
+      } catch {
+        // 忽略存储访问错误
+      }
+
+      setMetrics({
+        memory: {
+          used: memoryUsage,
+          limit: (performance as Performance & { memory?: { jsHeapSizeLimit: number } }).memory?.jsHeapSizeLimit || 1024 * 1024 * 1024,
+        },
+        rendering: {
+          fps,
+          averageRenderTime: report.summary.avgRenderTime,
+          longTasks: longTasks.length,
+        },
+        storage: {
+          size: storageSize,
+          operations: report.metrics.filter(m => m.name.includes('storage')).length,
+        },
+      });
+    };
+
+    // 初始更新
+    updateMetrics();
+
+    // 定期更新
+    const interval = setInterval(updateMetrics, 2000);
+
+    return () => clearInterval(interval);
+  }, []);
+
+  return { metrics, getReport };
+}
