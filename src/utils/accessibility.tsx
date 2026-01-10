@@ -134,14 +134,19 @@ export function useFocusTrap(active: boolean = true) {
 export function useAnnouncement() {
   const [announcement, setAnnouncement] = React.useState('');
 
-  const announce = React.useCallback((message: string) => {
-    setAnnouncement(`${message}__${Date.now()}`);
+  const announce = React.useCallback((message: string, _politeness: 'polite' | 'assertive' = 'polite') => {
+    setAnnouncement(`${message}__${Date.now()}`); // 添加时间戳确保更新
   }, []);
 
   return {
     announce,
     announcementElement: announcement ? (
-      <div role="status" aria-live="polite" aria-atomic="true" className="sr-only">
+      <div
+        role="status"
+        aria-live="polite"
+        aria-atomic="true"
+        className="sr-only"
+      >
         {announcement.split('__')[0]}
       </div>
     ) : null,
@@ -240,12 +245,7 @@ export const AccessibleModal: React.FC<AccessibleModalProps> = ({
             aria-label="关闭对话框"
           >
             <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2}
-                d="M6 18L18 6M6 6l12 12"
-              />
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
             </svg>
           </button>
         </div>
@@ -300,21 +300,9 @@ export const AccessibleTooltip: React.FC<TooltipProps> = ({
           <div
             className="absolute w-2 h-2 bg-gray-900 transform rotate-45"
             style={{
-              [position === 'top'
-                ? 'bottom'
-                : position === 'bottom'
-                  ? 'top'
-                  : position === 'left'
-                    ? 'right'
-                    : 'left']: '-4px',
-              ...((position === 'top' || position === 'bottom') && {
-                left: '50%',
-                marginLeft: '-4px',
-              }),
-              ...((position === 'left' || position === 'right') && {
-                top: '50%',
-                marginTop: '-4px',
-              }),
+              [position === 'top' ? 'bottom' : position === 'bottom' ? 'top' : position === 'left' ? 'right' : 'left']: '-4px',
+              ...((position === 'top' || position === 'bottom') && { left: '50%', marginLeft: '-4px' }),
+              ...((position === 'left' || position === 'right') && { top: '50%', marginTop: '-4px' }),
             }}
           />
         </div>
@@ -327,7 +315,11 @@ export const AccessibleTooltip: React.FC<TooltipProps> = ({
  * 仅对屏幕阅读器可见的文本
  */
 export const VisuallyHidden: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  return <span className="sr-only">{children}</span>;
+  return (
+    <span className="sr-only">
+      {children}
+    </span>
+  );
 };
 
 /**
