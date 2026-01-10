@@ -2,6 +2,8 @@ import { TabGroup, UserSettings, Tab, LayoutMode, ThemeStyle } from '@/types/tab
 import { parseOneTabFormat, formatToOneTabFormat } from './oneTabFormatParser';
 import { secureStorage } from './secureStorage';
 import { kvGet, kvSet, kvRemove } from '@/storage/storageAdapter';
+import { validateTabGroups, isTabGroup } from './typeGuards';
+import { handleError, ErrorCodes } from './errorHandler';
 
 const STORAGE_KEYS = {
   VERSION: 'storage_version',
@@ -89,9 +91,28 @@ class ChromeStorage {
     try {
       await this.ensureVersion();
       const groups = await kvGet<unknown>(STORAGE_KEYS.GROUPS);
-      return Array.isArray(groups) ? (groups as TabGroup[]) : [];
+
+      // 使用类型守卫验证数据
+      if (!Array.isArray(groups)) {
+        console.warn('存储的groups不是数组，返回空数组');
+        return [];
+      }
+
+      // 验证并清理所有标签组
+      const validGroups = validateTabGroups(groups);
+
+      // 如果有无效数据被过滤，保存清理后的数据
+      if (validGroups.length !== groups.length) {
+        console.log(`清理了 ${groups.length - validGroups.length} 个无效标签组`);
+        await this.setGroups(validGroups);
+      }
+
+      return validGroups;
     } catch (error) {
-      console.error('获取标签组失败:', error);
+      handleError(error as Error, {
+        severity: 'high',
+        fallbackMessage: '获取标签组失败'
+      });
       return [];
     }
   }
