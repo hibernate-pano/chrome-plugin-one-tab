@@ -116,6 +116,19 @@ const storage = {
       console.error('保存标签组失败:', error);
       throw error;
     }
+  },
+
+  async getSettings() {
+    try {
+      const settings = await kv.get('user_settings');
+      // 返回设置，如果没有则返回默认值
+      return settings || {
+        collectPinnedTabs: false // 默认不收集固定标签页
+      };
+    } catch (error) {
+      console.error('获取设置失败:', error);
+      return { collectPinnedTabs: false };
+    }
   }
 };
 
@@ -166,8 +179,13 @@ const tabManager = {
   },
 
   // 过滤有效的标签页
-  filterValidTabs(tabs) {
+  filterValidTabs(tabs, collectPinnedTabs = false) {
     return tabs.filter(tab => {
+      // 如果不收集固定标签页，则过滤掉固定的标签页
+      if (!collectPinnedTabs && tab.pinned) {
+        console.log(`[SW] 过滤掉固定标签页: ${tab.title}`);
+        return false;
+      }
       if (tab.url) {
         return !tab.url.startsWith('chrome://') &&
           !tab.url.startsWith('chrome-extension://') &&
@@ -180,7 +198,13 @@ const tabManager = {
 
   // 创建标签组
   async createTabGroup(tabs) {
-    const validTabs = this.filterValidTabs(tabs);
+    // 从存储中读取 collectPinnedTabs 设置
+    const settings = await storage.getSettings();
+    const collectPinnedTabs = settings.collectPinnedTabs ?? false;
+    
+    console.log(`[SW] collectPinnedTabs 设置: ${collectPinnedTabs}`);
+    
+    const validTabs = this.filterValidTabs(tabs, collectPinnedTabs);
     const now = new Date().toISOString();
 
     const formattedTabs = validTabs.map(tab => ({
@@ -190,6 +214,7 @@ const tabManager = {
       favicon: sanitizeFaviconUrl(tab.favIconUrl),
       createdAt: now,
       lastAccessed: now,
+      isPinned: tab.pinned ?? false, // 保留固定状态
     }));
 
     return {
@@ -227,8 +252,10 @@ const tabManager = {
       console.log(`成功保存 ${tabGroup.tabs.length} 个标签页到新标签组`);
       await this.showNotification(`已成功保存 ${tabGroup.tabs.length} 个标签页`);
 
-      // 关闭已保存的标签页
-      const tabsToClose = this.filterValidTabs(tabs);
+      // 关闭已保存的标签页 - 使用与收集相同的设置
+      const settings = await storage.getSettings();
+      const collectPinnedTabs = settings.collectPinnedTabs ?? false;
+      const tabsToClose = this.filterValidTabs(tabs, collectPinnedTabs);
       const tabIdsToClose = tabsToClose
         .map(tab => tab.id)
         .filter(id => id !== undefined);
@@ -438,7 +465,10 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
         await storage.setGroups([tabGroup, ...existingGroups]);
         await tabManager.showNotification(`已保存 ${tabGroup.tabs.length} 个标签页`);
 
-        const tabsToClose = tabManager.filterValidTabs(otherTabs);
+        // 关闭已保存的标签页 - 使用与收集相同的设置
+        const settings = await storage.getSettings();
+        const collectPinnedTabs = settings.collectPinnedTabs ?? false;
+        const tabsToClose = tabManager.filterValidTabs(otherTabs, collectPinnedTabs);
         const tabIdsToClose = tabsToClose
           .map(t => t.id)
           .filter(id => id !== undefined);

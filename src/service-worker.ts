@@ -80,9 +80,12 @@ const tabManager = {
 
   // 过滤有效的标签页
   filterValidTabs(tabs: chrome.tabs.Tab[], collectPinnedTabs: boolean = false): chrome.tabs.Tab[] {
+    console.log(`[Service Worker] filterValidTabs 被调用, collectPinnedTabs=${collectPinnedTabs}`);
+    
     return tabs.filter(tab => {
       // 如果不收集固定标签页，则过滤掉固定的标签页
       if (!collectPinnedTabs && tab.pinned) {
+        console.log(`[Service Worker] 过滤掉固定标签页: ${tab.title}`);
         return false;
       }
       if (tab.url) {
@@ -100,6 +103,16 @@ const tabManager = {
     // 从存储中读取 collectPinnedTabs 设置
     const settings = await storage.getSettings();
     const collectPinnedTabs = settings.collectPinnedTabs ?? false;
+    
+    console.log('[Service Worker] 读取设置:', {
+      collectPinnedTabs,
+      rawValue: settings.collectPinnedTabs,
+      allSettings: JSON.stringify(settings)
+    });
+    
+    // 统计固定标签页数量
+    const pinnedCount = tabs.filter(t => t.pinned).length;
+    console.log(`[Service Worker] 标签页统计: 总数=${tabs.length}, 固定=${pinnedCount}, 收集固定=${collectPinnedTabs}`);
     
     const validTabs = this.filterValidTabs(tabs, collectPinnedTabs);
     const now = new Date().toISOString();
