@@ -1,0 +1,321 @@
+/* ==========================================
+   🎨 Pink Theme - Sweet Romance Style
+   ========================================== */
+
+/* ==========================================
+   粉色主题 - 浅色模式
+   使用 html[data-theme] 选择器确保优先级
+   ========================================== */
+html[data-theme='pink'] {
+  /* 颜色 - 甜美粉色调 */
+  --color-bg-primary: #fff5f7;
+  --color-bg-secondary: #ffffff;
+  --color-bg-tertiary: #ffe4ec;
+  --color-bg-elevated: #ffffff;
+  --color-bg-overlay: rgba(255, 245, 247, 0.9);
+
+  --color-text-primary: #4a3c42;
+  --color-text-secondary: #6b5a63;
+  --color-text-tertiary: #8b7882;
+  --color-text-muted: #b59aa3;
+
+  --color-border-default: #f5e0e8;
+  --color-border-subtle: #faf2f5;
+  --color-border-strong: #e5d0d8;
+
+  --color-accent: #e891a8;
+  --color-accent-hover: #d97a92;
+  --color-accent-subtle: #fff0f5;
+
+  /* 状态颜色 */
+  --color-warning: #f0a875;
+  --color-danger: #e85a7a;
+  --color-success: #7dd3a0;
+
+  /* 排版 - 柔和的字体组合 */
+  --font-family-sans: 'Quicksand', 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+  --font-family-mono: 'Cascadia Code', 'Consolas', monospace;
+
+  /* 阴影 - 柔和甜美 */
+  --shadow-card: 0 2px 8px rgba(232, 145, 168, 0.1), 0 1px 3px rgba(232, 145, 168, 0.08);
+  --shadow-card-hover: 0 4px 12px rgba(232, 145, 168, 0.15), 0 2px 4px rgba(232, 145, 168, 0.1);
+  --shadow-elevation-1: 0 1px 2px rgba(232, 145, 168, 0.06);
+  --shadow-elevation-2: 0 4px 8px rgba(232, 145, 168, 0.1), 0 2px 4px rgba(232, 145, 168, 0.06);
+  --shadow-elevation-3: 0 8px 16px rgba(232, 145, 168, 0.12), 0 4px 8px rgba(232, 145, 168, 0.08);
+
+  /* 圆角 */
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 16px;
+  --radius-xl: 20px;
+  --radius-full: 9999px;
+
+  /* 间距 */
+  --spacing-xs: 4px;
+  --spacing-sm: 8px;
+  --spacing-md: 16px;
+  --spacing-lg: 24px;
+  --spacing-xl: 32px;
+}
+
+/* ==========================================
+   粉色主题 - 深色模式
+   ========================================== */
+html[data-theme='pink'].dark {
+  --color-bg-primary: #2d2428;
+  --color-bg-secondary: #3d3238;
+  --color-bg-tertiary: #4d4248;
+  --color-bg-elevated: #4d4248;
+  --color-bg-overlay: rgba(45, 36, 40, 0.92);
+
+  --color-text-primary: #f5e4e8;
+  --color-text-secondary: #d4c0c8;
+  --color-text-tertiary: #b59aa8;
+  --color-text-muted: #8b7680;
+
+  --color-border-default: #4d4248;
+  --color-border-subtle: #3d3238;
+  --color-border-strong: #6d5858;
+
+  --color-accent: #f0a8c0;
+  --color-accent-hover: #f8b8d0;
+  --color-accent-subtle: #4d3840;
+
+  /* 状态颜色 */
+  --color-warning: #f0c090;
+  --color-danger: #f08090;
+  --color-success: #90d8b0;
+
+  /* 深色模式阴影 */
+  --shadow-card: 0 2px 8px rgba(0, 0, 0, 0.25), 0 1px 3px rgba(0, 0, 0, 0.2);
+  --shadow-card-hover: 0 4px 12px rgba(0, 0, 0, 0.3), 0 2px 4px rgba(0, 0, 0, 0.22);
+  --shadow-elevation-1: 0 1px 2px rgba(0, 0, 0, 0.2);
+  --shadow-elevation-2: 0 4px 8px rgba(0, 0, 0, 0.25), 0 2px 4px rgba(0, 0, 0, 0.15);
+  --shadow-elevation-3: 0 8px 16px rgba(0, 0, 0, 0.3), 0 4px 8px rgba(0, 0, 0, 0.2);
+}
+
+/* ==========================================
+   粉色主题特定样式
+   ========================================== */
+html[data-theme='pink'] body {
+  font-family: var(--font-family-sans);
+  font-weight: 600;
+}
+
+/* 粉色主题按钮样式 - 圆润甜美 */
+html[data-theme='pink'] .btn {
+  border-radius: var(--radius-full);
+  font-weight: 600;
+  transition: all 0.2s ease;
+}
+
+html[data-theme='pink'] .btn-primary {
+  background: linear-gradient(135deg, var(--color-accent) 0%, var(--color-accent-hover) 100%);
+  box-shadow: var(--shadow-elevation-1);
+}
+
+html[data-theme='pink'] .btn-primary:hover {
+  box-shadow: var(--shadow-elevation-2);
+  transform: translateY(-1px);
+}
+
+/* 粉色主题卡片样式 */
+html[data-theme='pink'] .card {
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-card);
+  border: 1px solid var(--color-border-subtle);
+  background: linear-gradient(180deg, var(--color-bg-secondary) 0%, var(--color-bg-primary) 100%);
+}
+
+html[data-theme='pink'] .card:hover {
+  box-shadow: var(--shadow-card-hover);
+}
+
+/* 粉色主题输入框样式 */
+html[data-theme='pink'] .input {
+  border: 2px solid var(--color-border-default);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-secondary);
+  transition: all 0.2s ease;
+}
+
+html[data-theme='pink'] .input:focus {
+  border-color: var(--color-accent);
+  box-shadow: 0 0 0 3px var(--color-accent-subtle);
+}
+
+/* 粉色主题标签组样式 */
+html[data-theme='pink'] .tab-group-card {
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-card);
+  border: 1px solid var(--color-border-subtle);
+  background: var(--color-bg-secondary);
+}
+
+html[data-theme='pink'] .tab-group-card:hover {
+  box-shadow: var(--shadow-card-hover);
+}
+
+html[data-theme='pink'] .tab-group-header {
+  background: linear-gradient(135deg, var(--color-bg-tertiary) 0%, var(--color-bg-primary) 100%);
+  border-bottom: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+}
+
+/* 粉色主题徽章样式 */
+html[data-theme='pink'] .badge-accent {
+  background: linear-gradient(135deg, var(--color-accent) 0%, var(--color-accent-hover) 100%);
+  color: #ffffff;
+  border-radius: var(--radius-full);
+  padding: 2px 10px;
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+
+html[data-theme='pink'].dark .badge-accent {
+  background: linear-gradient(135deg, var(--color-accent) 0%, var(--color-accent-hover) 100%);
+  color: #2d2428;
+}
+
+/* 粉色主题空状态样式 */
+html[data-theme='pink'] .empty-state-icon {
+  background: linear-gradient(135deg, var(--color-bg-tertiary) 0%, var(--color-bg-primary) 100%);
+  border: 2px solid var(--color-border-default);
+  border-radius: var(--radius-xl);
+}
+
+/* 粉色主题头部样式 */
+html[data-theme='pink'] .header {
+  background: var(--color-bg-overlay);
+  border-bottom: 1px solid var(--color-border-subtle);
+  box-shadow: var(--shadow-elevation-1);
+}
+
+/* ==========================================
+   粉色主题 - 下拉菜单和弹出层样式
+   ========================================== */
+html[data-theme='pink'] .dropdown-menu,
+html[data-theme='pink'] .popup-menu {
+  background: var(--color-bg-secondary);
+  border: 1px solid var(--color-border-default);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-elevation-2);
+}
+
+html[data-theme='pink'] .dropdown-item {
+  color: var(--color-text-primary);
+  border-radius: var(--radius-md);
+  margin: 2px 4px;
+}
+
+html[data-theme='pink'] .dropdown-item:hover {
+  background: linear-gradient(135deg, var(--color-accent-subtle) 0%, var(--color-bg-tertiary) 100%);
+}
+
+/* 粉色主题 - 模态框样式 */
+html[data-theme='pink'] .modal-content {
+  background: var(--color-bg-secondary);
+  border-radius: var(--radius-xl);
+  box-shadow: var(--shadow-elevation-3);
+  border: 1px solid var(--color-border-default);
+}
+
+/* 粉色主题 - 工具提示样式 */
+html[data-theme='pink'] .tooltip {
+  background: var(--color-bg-elevated);
+  color: var(--color-text-primary);
+  border: 1px solid var(--color-accent);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-card);
+}
+
+/* 粉色主题 - 搜索框样式 */
+html[data-theme='pink'] .search-input {
+  background: var(--color-bg-secondary);
+  border: 2px solid var(--color-border-default);
+  border-radius: var(--radius-full);
+  transition: all 0.2s ease;
+}
+
+html[data-theme='pink'] .search-input:focus {
+  border-color: var(--color-accent);
+  box-shadow: 0 0 0 3px var(--color-accent-subtle);
+}
+
+/* 粉色主题 - 标签项样式 */
+html[data-theme='pink'] .tab-item {
+  border-bottom: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-md);
+  margin: 2px 8px;
+  padding: 8px 12px;
+}
+
+html[data-theme='pink'] .tab-item:hover {
+  background: linear-gradient(135deg, var(--color-accent-subtle) 0%, var(--color-bg-tertiary) 100%);
+}
+
+/* 粉色主题 - 开关按钮样式 */
+html[data-theme='pink'] .toggle-switch-active {
+  background: linear-gradient(135deg, var(--color-accent) 0%, var(--color-accent-hover) 100%);
+}
+
+html[data-theme='pink'] .toggle-switch-inactive {
+  background-color: var(--color-border-default);
+}
+
+/* ==========================================
+   粉色主题 - 搜索组件样式
+   ========================================== */
+html[data-theme='pink'] .search-bar-input {
+  border-radius: var(--radius-full);
+  border: 2px solid var(--color-border-default);
+  background: var(--color-bg-secondary);
+  transition: all 0.2s ease;
+}
+
+html[data-theme='pink'] .search-bar-input:focus {
+  border-color: var(--color-accent);
+  box-shadow: 0 0 0 3px var(--color-accent-subtle);
+}
+
+html[data-theme='pink'] .search-result-item {
+  border-radius: var(--radius-md);
+  margin: 4px 8px;
+}
+
+html[data-theme='pink'] .search-result-item:hover {
+  background: linear-gradient(135deg, var(--color-accent-subtle) 0%, var(--color-bg-tertiary) 100%);
+}
+
+html[data-theme='pink'] .search-highlight {
+  background: linear-gradient(135deg, #ffe4ec 0%, #ffd0dc 100%);
+  color: #8b3a50;
+  padding: 1px 4px;
+  border-radius: var(--radius-sm);
+}
+
+html[data-theme='pink'].dark .search-highlight {
+  background: linear-gradient(135deg, #4d3840 0%, #6d4858 100%);
+  color: #f0c0d0;
+}
+
+/* 粉色主题搜索结果链接 */
+html[data-theme='pink'] .search-result-link {
+  color: var(--color-accent);
+  font-weight: 600;
+}
+
+html[data-theme='pink'] .search-result-link:hover {
+  color: var(--color-accent-hover);
+}
+
+/* 粉色主题搜索操作按钮 */
+html[data-theme='pink'] .search-action-btn-accent {
+  color: var(--color-accent);
+}
+
+html[data-theme='pink'] .search-action-btn-accent:hover {
+  color: var(--color-accent-hover);
+  background: var(--color-accent-subtle);
+  border-radius: var(--radius-md);
+}

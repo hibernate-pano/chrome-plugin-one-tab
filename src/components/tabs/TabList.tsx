@@ -2,6 +2,7 @@ import React, { useEffect, useState, lazy } from 'react';
 import { useAppDispatch, useAppSelector } from '@/store/hooks';
 import { loadGroups, deleteGroup, moveGroupAndSync } from '@/store/slices/tabSlice';
 import { runMigrations } from '@/utils/migrationUtils';
+import { sortGroupsByCreatedAt } from '@/utils/groupSortUtils';
 
 import { DraggableTabGroup } from '@/components/dnd/DraggableTabGroup';
 import { SearchResultList } from '@/components/search/SearchResultList';
@@ -72,25 +73,12 @@ export const TabList: React.FC<TabListProps> = ({ searchQuery }) => {
     return <div className="flex items-center justify-center h-64 text-red-600">{error}</div>;
   }
 
-  // 先按创建时间倒序排序
-  const sortedGroups = [...groups].sort((a, b) => {
-    // 优先使用 createdAt 进行排序
-    const dateA = new Date(a.createdAt);
-    const dateB = new Date(b.createdAt);
-    return dateB.getTime() - dateA.getTime(); // 倒序，最新创建的在前面
-  });
-
-  // 当有搜索查询时，我们会使用 SearchResultList 组件显示匹配的标签
-  // 这里只需要处理没有搜索查询时的标签组列表
-  const filteredGroups = sortedGroups;
+  const filteredGroups = sortGroupsByCreatedAt(groups, 'desc');
 
   if (filteredGroups.length === 0 && !searchQuery) {
     return (
       <div className="space-y-4">
-        <PersonalizedWelcome 
-          tabCount={filteredGroups.length}
-          className="flat-card p-6"
-        />
+        <PersonalizedWelcome tabCount={filteredGroups.length} className="flat-card p-6" />
         <div className="flat-card p-6">
           <EmptyState
             title="开始您的标签页管理之旅"

@@ -1,0 +1,321 @@
+/* ==========================================
+   🎨 Creamy Theme - Warm Comfort Style
+   ========================================== */
+
+/* ==========================================
+   奶黄主题 - 浅色模式
+   使用 html[data-theme] 选择器确保优先级
+   ========================================== */
+html[data-theme='creamy'] {
+  /* 颜色 - 温暖奶黄色调 */
+  --color-bg-primary: #fffef7;
+  --color-bg-secondary: #ffffff;
+  --color-bg-tertiary: #fff9e6;
+  --color-bg-elevated: #ffffff;
+  --color-bg-overlay: rgba(255, 255, 250, 0.9);
+
+  --color-text-primary: #4a3c31;
+  --color-text-secondary: #6b5b4f;
+  --color-text-tertiary: #8b7b6f;
+  --color-text-muted: #b5a59e;
+
+  --color-border-default: #f0e6d3;
+  --color-border-subtle: #faf5eb;
+  --color-border-strong: #e0d4c3;
+
+  --color-accent: #d4a574;
+  --color-accent-hover: #c49462;
+  --color-accent-subtle: #fff5e6;
+
+  /* 状态颜色 */
+  --color-warning: #e6a23c;
+  --color-danger: #e74c3c;
+  --color-success: #67c23a;
+
+  /* 排版 - 温暖的字体组合 */
+  --font-family-sans: 'Nunito', 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+  --font-family-mono: 'Cascadia Code', 'Consolas', monospace;
+
+  /* 阴影 - 柔和温暖 */
+  --shadow-card: 0 2px 8px rgba(212, 165, 116, 0.1), 0 1px 3px rgba(212, 165, 116, 0.08);
+  --shadow-card-hover: 0 4px 12px rgba(212, 165, 116, 0.15), 0 2px 4px rgba(212, 165, 116, 0.1);
+  --shadow-elevation-1: 0 1px 2px rgba(212, 165, 116, 0.06);
+  --shadow-elevation-2: 0 4px 8px rgba(212, 165, 116, 0.1), 0 2px 4px rgba(212, 165, 116, 0.06);
+  --shadow-elevation-3: 0 8px 16px rgba(212, 165, 116, 0.12), 0 4px 8px rgba(212, 165, 116, 0.08);
+
+  /* 圆角 */
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 16px;
+  --radius-xl: 20px;
+  --radius-full: 9999px;
+
+  /* 间距 */
+  --spacing-xs: 4px;
+  --spacing-sm: 8px;
+  --spacing-md: 16px;
+  --spacing-lg: 24px;
+  --spacing-xl: 32px;
+}
+
+/* ==========================================
+   奶黄主题 - 深色模式
+   ========================================== */
+html[data-theme='creamy'].dark {
+  --color-bg-primary: #2d2620;
+  --color-bg-secondary: #3d3530;
+  --color-bg-tertiary: #4d4540;
+  --color-bg-elevated: #4d4540;
+  --color-bg-overlay: rgba(45, 38, 32, 0.92);
+
+  --color-text-primary: #f5ebe0;
+  --color-text-secondary: #d4c4b0;
+  --color-text-tertiary: #b5a090;
+  --color-text-muted: #8b7b70;
+
+  --color-border-default: #4d4540;
+  --color-border-subtle: #3d3530;
+  --color-border-strong: #6d6058;
+
+  --color-accent: #e8c9a0;
+  --color-accent-hover: #f0d9b8;
+  --color-accent-subtle: #4d3d2a;
+
+  /* 状态颜色 */
+  --color-warning: #f0b775;
+  --color-danger: #ef7870;
+  --color-success: #7bc950;
+
+  /* 深色模式阴影 */
+  --shadow-card: 0 2px 8px rgba(0, 0, 0, 0.25), 0 1px 3px rgba(0, 0, 0, 0.2);
+  --shadow-card-hover: 0 4px 12px rgba(0, 0, 0, 0.3), 0 2px 4px rgba(0, 0, 0, 0.22);
+  --shadow-elevation-1: 0 1px 2px rgba(0, 0, 0, 0.2);
+  --shadow-elevation-2: 0 4px 8px rgba(0, 0, 0, 0.25), 0 2px 4px rgba(0, 0, 0, 0.15);
+  --shadow-elevation-3: 0 8px 16px rgba(0, 0, 0, 0.3), 0 4px 8px rgba(0, 0, 0, 0.2);
+}
+
+/* ==========================================
+   奶黄主题特定样式
+   ========================================== */
+html[data-theme='creamy'] body {
+  font-family: var(--font-family-sans);
+  font-weight: 600;
+}
+
+/* 奶黄主题按钮样式 - 圆润温暖 */
+html[data-theme='creamy'] .btn {
+  border-radius: var(--radius-full);
+  font-weight: 600;
+  transition: all 0.2s ease;
+}
+
+html[data-theme='creamy'] .btn-primary {
+  background: linear-gradient(135deg, var(--color-accent) 0%, var(--color-accent-hover) 100%);
+  box-shadow: var(--shadow-elevation-1);
+}
+
+html[data-theme='creamy'] .btn-primary:hover {
+  box-shadow: var(--shadow-elevation-2);
+  transform: translateY(-1px);
+}
+
+/* 奶黄主题卡片样式 */
+html[data-theme='creamy'] .card {
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-card);
+  border: 1px solid var(--color-border-subtle);
+  background: linear-gradient(180deg, var(--color-bg-secondary) 0%, var(--color-bg-primary) 100%);
+}
+
+html[data-theme='creamy'] .card:hover {
+  box-shadow: var(--shadow-card-hover);
+}
+
+/* 奶黄主题输入框样式 */
+html[data-theme='creamy'] .input {
+  border: 2px solid var(--color-border-default);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-secondary);
+  transition: all 0.2s ease;
+}
+
+html[data-theme='creamy'] .input:focus {
+  border-color: var(--color-accent);
+  box-shadow: 0 0 0 3px var(--color-accent-subtle);
+}
+
+/* 奶黄主题标签组样式 */
+html[data-theme='creamy'] .tab-group-card {
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-card);
+  border: 1px solid var(--color-border-subtle);
+  background: var(--color-bg-secondary);
+}
+
+html[data-theme='creamy'] .tab-group-card:hover {
+  box-shadow: var(--shadow-card-hover);
+}
+
+html[data-theme='creamy'] .tab-group-header {
+  background: linear-gradient(135deg, var(--color-bg-tertiary) 0%, var(--color-bg-primary) 100%);
+  border-bottom: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+}
+
+/* 奶黄主题徽章样式 */
+html[data-theme='creamy'] .badge-accent {
+  background: linear-gradient(135deg, var(--color-accent) 0%, var(--color-accent-hover) 100%);
+  color: #ffffff;
+  border-radius: var(--radius-full);
+  padding: 2px 10px;
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+
+html[data-theme='creamy'].dark .badge-accent {
+  background: linear-gradient(135deg, var(--color-accent) 0%, var(--color-accent-hover) 100%);
+  color: #2d2620;
+}
+
+/* 奶黄主题空状态样式 */
+html[data-theme='creamy'] .empty-state-icon {
+  background: linear-gradient(135deg, var(--color-bg-tertiary) 0%, var(--color-bg-primary) 100%);
+  border: 2px solid var(--color-border-default);
+  border-radius: var(--radius-xl);
+}
+
+/* 奶黄主题头部样式 */
+html[data-theme='creamy'] .header {
+  background: var(--color-bg-overlay);
+  border-bottom: 1px solid var(--color-border-subtle);
+  box-shadow: var(--shadow-elevation-1);
+}
+
+/* ==========================================
+   奶黄主题 - 下拉菜单和弹出层样式
+   ========================================== */
+html[data-theme='creamy'] .dropdown-menu,
+html[data-theme='creamy'] .popup-menu {
+  background: var(--color-bg-secondary);
+  border: 1px solid var(--color-border-default);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-elevation-2);
+}
+
+html[data-theme='creamy'] .dropdown-item {
+  color: var(--color-text-primary);
+  border-radius: var(--radius-md);
+  margin: 2px 4px;
+}
+
+html[data-theme='creamy'] .dropdown-item:hover {
+  background: linear-gradient(135deg, var(--color-accent-subtle) 0%, var(--color-bg-tertiary) 100%);
+}
+
+/* 奶黄主题 - 模态框样式 */
+html[data-theme='creamy'] .modal-content {
+  background: var(--color-bg-secondary);
+  border-radius: var(--radius-xl);
+  box-shadow: var(--shadow-elevation-3);
+  border: 1px solid var(--color-border-default);
+}
+
+/* 奶黄主题 - 工具提示样式 */
+html[data-theme='creamy'] .tooltip {
+  background: var(--color-bg-elevated);
+  color: var(--color-text-primary);
+  border: 1px solid var(--color-accent);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-card);
+}
+
+/* 奶黄主题 - 搜索框样式 */
+html[data-theme='creamy'] .search-input {
+  background: var(--color-bg-secondary);
+  border: 2px solid var(--color-border-default);
+  border-radius: var(--radius-full);
+  transition: all 0.2s ease;
+}
+
+html[data-theme='creamy'] .search-input:focus {
+  border-color: var(--color-accent);
+  box-shadow: 0 0 0 3px var(--color-accent-subtle);
+}
+
+/* 奶黄主题 - 标签项样式 */
+html[data-theme='creamy'] .tab-item {
+  border-bottom: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-md);
+  margin: 2px 8px;
+  padding: 8px 12px;
+}
+
+html[data-theme='creamy'] .tab-item:hover {
+  background: linear-gradient(135deg, var(--color-accent-subtle) 0%, var(--color-bg-tertiary) 100%);
+}
+
+/* 奶黄主题 - 开关按钮样式 */
+html[data-theme='creamy'] .toggle-switch-active {
+  background: linear-gradient(135deg, var(--color-accent) 0%, var(--color-accent-hover) 100%);
+}
+
+html[data-theme='creamy'] .toggle-switch-inactive {
+  background-color: var(--color-border-default);
+}
+
+/* ==========================================
+   奶黄主题 - 搜索组件样式
+   ========================================== */
+html[data-theme='creamy'] .search-bar-input {
+  border-radius: var(--radius-full);
+  border: 2px solid var(--color-border-default);
+  background: var(--color-bg-secondary);
+  transition: all 0.2s ease;
+}
+
+html[data-theme='creamy'] .search-bar-input:focus {
+  border-color: var(--color-accent);
+  box-shadow: 0 0 0 3px var(--color-accent-subtle);
+}
+
+html[data-theme='creamy'] .search-result-item {
+  border-radius: var(--radius-md);
+  margin: 4px 8px;
+}
+
+html[data-theme='creamy'] .search-result-item:hover {
+  background: linear-gradient(135deg, var(--color-accent-subtle) 0%, var(--color-bg-tertiary) 100%);
+}
+
+html[data-theme='creamy'] .search-highlight {
+  background: linear-gradient(135deg, #fff5d6 0%, #ffe6b3 100%);
+  color: #8b6914;
+  padding: 1px 4px;
+  border-radius: var(--radius-sm);
+}
+
+html[data-theme='creamy'].dark .search-highlight {
+  background: linear-gradient(135deg, #4d3d2a 0%, #6d5a3a 100%);
+  color: #f0d9a0;
+}
+
+/* 奶黄主题搜索结果链接 */
+html[data-theme='creamy'] .search-result-link {
+  color: var(--color-accent);
+  font-weight: 600;
+}
+
+html[data-theme='creamy'] .search-result-link:hover {
+  color: var(--color-accent-hover);
+}
+
+/* 奶黄主题搜索操作按钮 */
+html[data-theme='creamy'] .search-action-btn-accent {
+  color: var(--color-accent);
+}
+
+html[data-theme='creamy'] .search-action-btn-accent:hover {
+  color: var(--color-accent-hover);
+  background: var(--color-accent-subtle);
+  border-radius: var(--radius-md);
+}
