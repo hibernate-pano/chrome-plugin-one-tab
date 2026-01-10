@@ -191,37 +191,40 @@ const tabManager = {
     };
   },
 
-  // 保存所有标签页
-  async saveAllTabs(inputTabs) {
+  // 保存所有标签页（不关闭标签页，由调用方决定是否关闭）
+  async saveAllTabs(inputTabs, closeAfterSave = true) {
     try {
       const tabs = inputTabs || await chrome.tabs.query({ currentWindow: true });
       const tabGroup = await this.createTabGroup(tabs);
 
       if (tabGroup.tabs.length === 0) {
         await this.showNotification('没有找到可保存的标签页');
-        return;
+        return { saved: false, tabsToClose: [] };
       }
 
       const existingGroups = await storage.getGroups();
       await storage.setGroups([tabGroup, ...existingGroups]);
       await this.showNotification(`已成功保存 ${tabGroup.tabs.length} 个标签页`);
 
-      // 关闭已保存的标签页
+      // 获取需要关闭的标签页ID
       const settings = await storage.getSettings();
       const collectPinnedTabs = settings.collectPinnedTabs ?? false;
       const tabsToClose = this.filterValidTabs(tabs, collectPinnedTabs);
       const tabIdsToClose = tabsToClose.map(tab => tab.id).filter(id => id !== undefined);
 
-      if (tabIdsToClose.length > 0) {
-        try {
-          await chrome.tabs.create({ url: 'chrome://newtab' });
-          await chrome.tabs.remove(tabIdsToClose);
-        } catch { /* ignore */ }
-      }
+      return { saved: true, tabIdsToClose };
     } catch (error) {
       await this.showNotification('保存标签页时发生错误，请重试');
       throw error;
     }
+  },
+
+  // 关闭指定的标签页（在确保有其他标签页存在后调用）
+  async closeTabs(tabIds) {
+    if (!tabIds || tabIds.length === 0) return;
+    try {
+      await chrome.tabs.remove(tabIds);
+    } catch { /* ignore */ }
   },
 
   // 显示通知
@@ -284,8 +287,16 @@ chrome.action.onClicked.addListener(async () => {
   try {
     await tabManager.showNotification('正在收集标签页...');
     const tabs = await chrome.tabs.query({ currentWindow: true });
-    await tabManager.saveAllTabs(tabs);
-    await tabManager.openTabManager(true);
+    const result = await tabManager.saveAllTabs(tabs);
+    
+    if (result.saved && result.tabIdsToClose && result.tabIdsToClose.length > 0) {
+      // 先打开标签管理器，确保窗口中有标签页
+      await tabManager.openTabManager(true);
+      // 然后关闭已保存的标签页
+      await tabManager.closeTabs(result.tabIdsToClose);
+    } else {
+      await tabManager.openTabManager(true);
+    }
   } catch {
     await tabManager.showNotification('无法收集标签页，请重试。如果问题持续，请重启浏览器。');
   }
@@ -297,7 +308,11 @@ chrome.commands.onCommand.addListener(async (command) => {
     switch (command) {
       case 'save_all_tabs': {
         const allTabs = await chrome.tabs.query({ currentWindow: true });
-        await tabManager.saveAllTabs(allTabs);
+        const result = await tabManager.saveAllTabs(allTabs);
+        if (result.saved && result.tabIdsToClose && result.tabIdsToClose.length > 0) {
+          await tabManager.openTabManager(true);
+          await tabManager.closeTabs(result.tabIdsToClose);
+        }
         break;
       }
       case 'save_current_tab': {
@@ -308,6 +323,8 @@ chrome.commands.onCommand.addListener(async (command) => {
             const existingGroups = await storage.getGroups();
             await storage.setGroups([tabGroup, ...existingGroups]);
             await tabManager.showNotification('当前标签页已保存');
+            // 先打开标签管理器，再关闭当前标签
+            await tabManager.openTabManager(false);
             if (activeTab.id) await chrome.tabs.remove(activeTab.id);
           }
         }
@@ -333,9 +350,12 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
         const existingGroups = await storage.getGroups();
         await storage.setGroups([tabGroup, ...existingGroups]);
         await tabManager.showNotification('当前标签页已保存');
+        // 先打开标签管理器，再关闭当前标签
+        await tabManager.openTabManager(true);
         if (tab.id) await chrome.tabs.remove(tab.id);
+      } else {
+        await tabManager.openTabManager(true);
       }
-      await tabManager.openTabManager(true);
     } else if (info.menuItemId === 'saveOtherTabs') {
       const [allTabs, activeTabs] = await Promise.all([
         chrome.tabs.query({ currentWindow: true }),
@@ -361,14 +381,12 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
         const tabsToClose = tabManager.filterValidTabs(otherTabs, collectPinnedTabs);
         const tabIdsToClose = tabsToClose.map(t => t.id).filter(id => id !== undefined);
 
-        if (tabIdsToClose.length > 0) {
-          try {
-            await chrome.tabs.create({ url: 'chrome://newtab' });
-            await chrome.tabs.remove(tabIdsToClose);
-          } catch { /* ignore */ }
-        }
+        // 先打开标签管理器，再关闭其他标签
+        await tabManager.openTabManager(true);
+        await tabManager.closeTabs(tabIdsToClose);
+      } else {
+        await tabManager.openTabManager(true);
       }
-      await tabManager.openTabManager(true);
     }
   } catch { /* ignore */ }
 });
@@ -404,7 +422,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         (async () => {
           try {
             const tabs = await chrome.tabs.query({ currentWindow: true });
-            await tabManager.saveAllTabs(tabs);
+            const result = await tabManager.saveAllTabs(tabs);
+            if (result.saved && result.tabIdsToClose && result.tabIdsToClose.length > 0) {
+              await tabManager.openTabManager(true);
+              await tabManager.closeTabs(result.tabIdsToClose);
+            }
             sendResponse({ success: true });
           } catch (e) {
             sendResponse({ success: false, error: e?.message || '保存失败' });
