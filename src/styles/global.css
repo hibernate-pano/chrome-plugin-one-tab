@@ -5,6 +5,7 @@
 @import './themes/creamy.css';
 @import './themes/pink.css';
 @import './themes/mint.css';
+@import './themes/cyberpunk.css';
 
 @tailwind base;
 @tailwind components;

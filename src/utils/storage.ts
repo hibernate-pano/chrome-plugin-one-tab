@@ -18,7 +18,7 @@ const STORAGE_KEYS = {
 const STORAGE_VERSION = 2;
 
 // 有效的主题风格值
-const VALID_THEME_STYLES: ThemeStyle[] = ['classic', 'refined', 'aurora', 'legacy'];
+const VALID_THEME_STYLES: ThemeStyle[] = ['classic', 'refined', 'aurora', 'legacy', 'creamy', 'pink', 'mint', 'cyberpunk'];
 
 // 有效的主题模式值
 const VALID_THEME_MODES: Array<'light' | 'dark' | 'auto'> = ['light', 'dark', 'auto'];

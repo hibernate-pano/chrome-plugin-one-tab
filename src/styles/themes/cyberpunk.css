@@ -1,0 +1,520 @@
+/* ==========================================
+   🌃 Cyberpunk Theme - Neon Tech Style
+   ========================================== */
+
+/* 
+ * 设计理念：
+ * 灵感来源于赛博朋克、霓虹灯、未来科技
+ * 核心特征：霓虹粉紫、青蓝发光、深色背景
+ * 视觉亮点：发光效果、渐变边框、科技感
+ */
+
+/* ==========================================
+   赛博朋克主题 - 浅色模式（实际上也是深色调）
+   ========================================== */
+html[data-theme="cyberpunk"] {
+  /* 背景色 - 深色科技感 */
+  --color-bg-primary: #0d0d1a;
+  --color-bg-secondary: #13132a;
+  --color-bg-tertiary: #1a1a35;
+  --color-bg-elevated: #1e1e3a;
+  --color-bg-overlay: rgba(13, 13, 26, 0.95);
+
+  /* 文字色 */
+  --color-text-primary: #e0e0ff;
+  --color-text-secondary: #b0b0d0;
+  --color-text-tertiary: #8080a0;
+  --color-text-muted: #606080;
+
+  /* 边框色 - 霓虹感 */
+  --color-border-default: rgba(217, 70, 239, 0.3);
+  --color-border-subtle: rgba(217, 70, 239, 0.15);
+  --color-border-strong: rgba(0, 255, 247, 0.5);
+
+  /* 霓虹强调色 */
+  --color-accent: #00fff7;
+  --color-accent-hover: #00d4ce;
+  --color-accent-subtle: rgba(0, 255, 247, 0.15);
+
+  /* 霓虹粉紫 */
+  --neon-pink: #d946ef;
+  --neon-pink-glow: rgba(217, 70, 239, 0.5);
+  
+  /* 霓虹青 */
+  --neon-cyan: #00fff7;
+  --neon-cyan-glow: rgba(0, 255, 247, 0.5);
+
+  /* 状态颜色 */
+  --color-warning: #ffd700;
+  --color-danger: #ff3366;
+  --color-success: #00ff88;
+
+  /* 字体 */
+  --font-family-sans: 'Rajdhani', 'Orbitron', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+  --font-family-mono: 'JetBrains Mono', 'Fira Code', monospace;
+
+  /* 阴影 - 霓虹发光 */
+  --shadow-card: 0 0 20px rgba(217, 70, 239, 0.15), 0 0 40px rgba(0, 255, 247, 0.1);
+  --shadow-card-hover: 0 0 30px rgba(217, 70, 239, 0.25), 0 0 60px rgba(0, 255, 247, 0.15);
+  --shadow-elevation-1: 0 0 10px rgba(217, 70, 239, 0.1);
+  --shadow-elevation-2: 0 0 20px rgba(217, 70, 239, 0.15);
+  --shadow-elevation-3: 0 0 30px rgba(217, 70, 239, 0.2), 0 0 60px rgba(0, 255, 247, 0.1);
+
+  /* 圆角 - 锐利科技感 */
+  --radius-sm: 2px;
+  --radius-md: 4px;
+  --radius-lg: 6px;
+  --radius-xl: 8px;
+  --radius-full: 9999px;
+
+  /* 间距 */
+  --spacing-xs: 0.25rem;
+  --spacing-sm: 0.5rem;
+  --spacing-md: 1rem;
+  --spacing-lg: 1.5rem;
+  --spacing-xl: 2rem;
+
+  /* 赛博朋克渐变 */
+  --cyber-gradient: linear-gradient(135deg, #d946ef 0%, #00fff7 50%, #bf00ff 100%);
+  --cyber-gradient-subtle: linear-gradient(135deg, rgba(217, 70, 239, 0.2) 0%, rgba(0, 255, 247, 0.2) 100%);
+}
+
+/* 深色模式（与浅色模式相同，赛博朋克本身就是深色） */
+html[data-theme="cyberpunk"].dark {
+  --color-bg-primary: #0a0a12;
+  --color-bg-secondary: #10101f;
+  --color-bg-tertiary: #16162a;
+  --color-bg-elevated: #1a1a30;
+}
+
+/* ==========================================
+   赛博朋克主题 - 全局样式
+   ========================================== */
+html[data-theme="cyberpunk"] body {
+  font-family: var(--font-family-sans);
+  background: var(--color-bg-primary);
+  color: var(--color-text-primary);
+}
+
+/* 页面背景 - 网格效果 */
+html[data-theme="cyberpunk"] .min-h-screen {
+  background: 
+    var(--color-bg-primary)
+    url("data:image/svg+xml,%3Csvg width='60' height='60' viewBox='0 0 60 60' xmlns='http://www.w3.org/2000/svg'%3E%3Cg fill='none' fill-rule='evenodd'%3E%3Cg stroke='%23d946ef' stroke-opacity='0.05'%3E%3Cpath d='M0 0h60v60H0z'/%3E%3C/g%3E%3C/g%3E%3C/svg%3E");
+}
+
+/* ==========================================
+   赛博朋克主题 - 头部样式
+   ========================================== */
+html[data-theme="cyberpunk"] header,
+html[data-theme="cyberpunk"] .header {
+  background: linear-gradient(180deg, var(--color-bg-elevated) 0%, var(--color-bg-secondary) 100%);
+  border-bottom: 1px solid var(--color-border-default);
+  box-shadow: 0 2px 20px rgba(217, 70, 239, 0.2);
+}
+
+/* ==========================================
+   赛博朋克主题 - 标签组卡片
+   ========================================== */
+html[data-theme="cyberpunk"] .tab-group-card {
+  background: linear-gradient(135deg, var(--color-bg-tertiary) 0%, var(--color-bg-secondary) 100%);
+  border: 1px solid var(--color-border-default);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-card);
+  position: relative;
+  overflow: hidden;
+  transition: all 0.3s ease;
+}
+
+/* 顶部霓虹渐变条 */
+html[data-theme="cyberpunk"] .tab-group-card::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: var(--cyber-gradient);
+  opacity: 0.8;
+}
+
+html[data-theme="cyberpunk"] .tab-group-card:hover {
+  border-color: var(--color-border-strong);
+  box-shadow: var(--shadow-card-hover);
+  transform: translateY(-2px);
+}
+
+/* 标签组头部 */
+html[data-theme="cyberpunk"] .tab-group-header {
+  background: linear-gradient(90deg, rgba(217, 70, 239, 0.1) 0%, transparent 100%);
+  border-bottom: 1px solid var(--color-border-subtle);
+}
+
+/* 标签组标题 */
+html[data-theme="cyberpunk"] .tab-group-title {
+  color: var(--neon-pink);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  text-shadow: 0 0 10px var(--neon-pink-glow);
+}
+
+html[data-theme="cyberpunk"] .tab-group-title-hover:hover {
+  color: var(--neon-cyan);
+  text-shadow: 0 0 15px var(--neon-cyan-glow);
+}
+
+/* 标签组计数 */
+html[data-theme="cyberpunk"] .tab-group-count {
+  background: linear-gradient(135deg, var(--neon-cyan) 0%, var(--neon-pink) 100%);
+  color: var(--color-bg-primary);
+  font-weight: 700;
+  padding: 2px 10px;
+  border-radius: var(--radius-sm);
+  font-size: 0.75rem;
+  box-shadow: 0 0 15px var(--neon-cyan-glow);
+}
+
+/* 标签组时间 */
+html[data-theme="cyberpunk"] .tab-group-time {
+  color: var(--color-text-muted);
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  font-family: var(--font-family-mono);
+}
+
+/* ==========================================
+   赛博朋克主题 - 标签项
+   ========================================== */
+html[data-theme="cyberpunk"] .tab-item {
+  background: transparent;
+  border-left: 2px solid transparent;
+  transition: all 0.2s ease;
+}
+
+html[data-theme="cyberpunk"] .tab-item:hover {
+  background: rgba(0, 255, 247, 0.05);
+  border-left-color: var(--neon-cyan);
+}
+
+html[data-theme="cyberpunk"] .tab-item-selected {
+  background: rgba(217, 70, 239, 0.1) !important;
+  border-left-color: var(--neon-pink) !important;
+}
+
+html[data-theme="cyberpunk"] .tab-item-title {
+  color: var(--color-text-primary);
+}
+
+html[data-theme="cyberpunk"] .tab-item-title-hover:hover {
+  color: var(--neon-cyan);
+  text-shadow: 0 0 8px var(--neon-cyan-glow);
+}
+
+html[data-theme="cyberpunk"] .tab-item-url {
+  color: var(--color-text-muted);
+  font-size: 0.7rem;
+  font-family: var(--font-family-mono);
+}
+
+/* ==========================================
+   赛博朋克主题 - 按钮样式
+   ========================================== */
+html[data-theme="cyberpunk"] .btn-icon {
+  color: var(--color-text-secondary);
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  transition: all 0.2s ease;
+}
+
+html[data-theme="cyberpunk"] .btn-icon:hover {
+  color: var(--neon-cyan);
+  border-color: var(--neon-cyan);
+  box-shadow: 0 0 15px var(--neon-cyan-glow);
+  background: rgba(0, 255, 247, 0.1);
+}
+
+/* 主要按钮 */
+html[data-theme="cyberpunk"] .flat-button-primary {
+  background: linear-gradient(135deg, var(--neon-pink) 0%, #bf00ff 100%);
+  color: white;
+  border: none;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  box-shadow: 0 0 20px var(--neon-pink-glow);
+  transition: all 0.3s ease;
+}
+
+html[data-theme="cyberpunk"] .flat-button-primary:hover {
+  box-shadow: 0 0 30px var(--neon-pink-glow), 0 0 50px rgba(191, 0, 255, 0.3);
+  transform: translateY(-1px);
+}
+
+/* 操作按钮 */
+html[data-theme="cyberpunk"] .tab-group-action-accent {
+  color: var(--neon-cyan);
+}
+
+html[data-theme="cyberpunk"] .tab-group-action-accent:hover {
+  color: #00ffff;
+  text-shadow: 0 0 10px var(--neon-cyan-glow);
+}
+
+html[data-theme="cyberpunk"] .tab-group-action-danger,
+html[data-theme="cyberpunk"] .tab-item-delete-btn:hover {
+  color: var(--color-danger);
+}
+
+html[data-theme="cyberpunk"] .tab-group-action-danger:hover {
+  color: #ff6699;
+  box-shadow: 0 0 10px rgba(255, 51, 102, 0.5);
+}
+
+/* ==========================================
+   赛博朋克主题 - 输入框
+   ========================================== */
+html[data-theme="cyberpunk"] input,
+html[data-theme="cyberpunk"] .input {
+  background: var(--color-bg-tertiary);
+  border: 1px solid var(--color-border-default);
+  color: var(--color-text-primary);
+  border-radius: var(--radius-md);
+  transition: all 0.2s ease;
+}
+
+html[data-theme="cyberpunk"] input:focus,
+html[data-theme="cyberpunk"] .input:focus {
+  border-color: var(--neon-cyan);
+  box-shadow: 0 0 15px var(--neon-cyan-glow);
+  outline: none;
+}
+
+html[data-theme="cyberpunk"] input::placeholder {
+  color: var(--color-text-muted);
+}
+
+/* ==========================================
+   赛博朋克主题 - 搜索框
+   ========================================== */
+html[data-theme="cyberpunk"] .search-bar-input {
+  background: var(--color-bg-tertiary);
+  border: 1px solid var(--color-border-default);
+  border-radius: var(--radius-md);
+}
+
+html[data-theme="cyberpunk"] .search-bar-input:focus {
+  border-color: var(--neon-cyan);
+  box-shadow: 0 0 20px var(--neon-cyan-glow);
+}
+
+html[data-theme="cyberpunk"] .search-highlight {
+  background-color: rgba(0, 255, 247, 0.2);
+  color: var(--neon-cyan);
+}
+
+/* ==========================================
+   赛博朋克主题 - 下拉菜单
+   ========================================== */
+html[data-theme="cyberpunk"] .dropdown-menu,
+html[data-theme="cyberpunk"] .popup-menu {
+  background: var(--color-bg-elevated);
+  border: 1px solid var(--color-border-default);
+  box-shadow: var(--shadow-elevation-3);
+  border-radius: var(--radius-lg);
+}
+
+html[data-theme="cyberpunk"] .dropdown-item:hover {
+  background: rgba(0, 255, 247, 0.1);
+}
+
+/* ==========================================
+   赛博朋克主题 - 滚动条
+   ========================================== */
+html[data-theme="cyberpunk"] ::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+html[data-theme="cyberpunk"] ::-webkit-scrollbar-track {
+  background: var(--color-bg-secondary);
+}
+
+html[data-theme="cyberpunk"] ::-webkit-scrollbar-thumb {
+  background: linear-gradient(180deg, var(--neon-pink) 0%, #bf00ff 100%);
+  border-radius: 4px;
+}
+
+html[data-theme="cyberpunk"] ::-webkit-scrollbar-thumb:hover {
+  background: linear-gradient(180deg, var(--neon-cyan) 0%, var(--neon-pink) 100%);
+}
+
+/* ==========================================
+   赛博朋克主题 - 批量操作工具栏
+   ========================================== */
+html[data-theme="cyberpunk"] .batch-toolbar {
+  background: linear-gradient(90deg, var(--color-bg-elevated) 0%, var(--color-bg-tertiary) 100%);
+  border: 1px solid var(--color-border-default);
+  border-left: 3px solid var(--neon-pink);
+  box-shadow: var(--shadow-elevation-2);
+}
+
+html[data-theme="cyberpunk"] .batch-toolbar-count {
+  color: var(--neon-cyan);
+  text-shadow: 0 0 8px var(--neon-cyan-glow);
+}
+
+/* ==========================================
+   赛博朋克主题 - 开关按钮
+   ========================================== */
+html[data-theme="cyberpunk"] .toggle-switch-active {
+  background: linear-gradient(90deg, var(--neon-pink), #bf00ff) !important;
+  box-shadow: 0 0 15px var(--neon-pink-glow);
+}
+
+html[data-theme="cyberpunk"] .toggle-switch-inactive {
+  background: var(--color-bg-tertiary);
+  border: 1px solid var(--color-border-default);
+}
+
+/* ==========================================
+   赛博朋克主题 - 模态框
+   ========================================== */
+html[data-theme="cyberpunk"] .modal-content {
+  background: var(--color-bg-elevated);
+  border: 1px solid var(--color-border-default);
+  box-shadow: var(--shadow-elevation-3);
+  border-radius: var(--radius-lg);
+}
+
+/* ==========================================
+   赛博朋克主题 - 锁定图标
+   ========================================== */
+html[data-theme="cyberpunk"] .tab-group-lock-icon {
+  color: var(--color-warning);
+  filter: drop-shadow(0 0 5px rgba(255, 215, 0, 0.5));
+}
+
+/* ==========================================
+   赛博朋克主题 - 链接
+   ========================================== */
+html[data-theme="cyberpunk"] a {
+  color: var(--neon-cyan);
+  text-decoration: none;
+  transition: all 0.2s ease;
+}
+
+html[data-theme="cyberpunk"] a:hover {
+  color: var(--neon-pink);
+  text-shadow: 0 0 8px var(--neon-pink-glow);
+}
+
+/* ==========================================
+   赛博朋克主题 - 选中文本
+   ========================================== */
+html[data-theme="cyberpunk"] ::selection {
+  background: var(--neon-pink);
+  color: var(--color-bg-primary);
+}
+
+/* ==========================================
+   赛博朋克主题 - 空状态
+   ========================================== */
+html[data-theme="cyberpunk"] .empty-state-default-icon {
+  color: var(--neon-pink);
+  filter: drop-shadow(0 0 15px var(--neon-pink-glow));
+}
+
+/* ==========================================
+   赛博朋克主题 - 页脚
+   ========================================== */
+html[data-theme="cyberpunk"] footer {
+  background: var(--color-bg-secondary);
+  border-top: 1px solid var(--color-border-default);
+  color: var(--color-text-muted);
+}
+
+/* ==========================================
+   赛博朋克主题 - Focus 样式
+   ========================================== */
+html[data-theme="cyberpunk"] :focus-visible {
+  outline: 2px solid var(--neon-cyan);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
+}
+
+/* ==========================================
+   赛博朋克主题 - 动画效果
+   ========================================== */
+
+/* 霓虹呼吸动画 */
+@keyframes cyber-glow {
+  0%, 100% {
+    box-shadow: 0 0 5px var(--neon-cyan-glow), 0 0 10px var(--neon-pink-glow);
+  }
+  50% {
+    box-shadow: 0 0 20px var(--neon-cyan-glow), 0 0 30px var(--neon-pink-glow);
+  }
+}
+
+html[data-theme="cyberpunk"] .cyber-glow {
+  animation: cyber-glow 2s ease-in-out infinite;
+}
+
+/* 霓虹闪烁动画 */
+@keyframes cyber-flicker {
+  0%, 100% { opacity: 1; }
+  92% { opacity: 1; }
+  93% { opacity: 0.7; }
+  94% { opacity: 1; }
+  96% { opacity: 0.8; }
+  97% { opacity: 1; }
+}
+
+html[data-theme="cyberpunk"] .cyber-flicker {
+  animation: cyber-flicker 3s ease-in-out infinite;
+}
+
+/* ==========================================
+   赛博朋克主题 - 骨架屏
+   ========================================== */
+html[data-theme="cyberpunk"] .skeleton {
+  background: linear-gradient(
+    90deg,
+    var(--color-bg-tertiary) 25%,
+    var(--color-bg-elevated) 50%,
+    var(--color-bg-tertiary) 75%
+  );
+  background-size: 200% 100%;
+  animation: skeleton-loading 1.5s infinite;
+}
+
+@keyframes skeleton-loading {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+
+/* ==========================================
+   赛博朋克主题 - 卡片样式
+   ========================================== */
+html[data-theme="cyberpunk"] .card {
+  background: var(--color-bg-secondary);
+  border: 1px solid var(--color-border-default);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-card);
+}
+
+html[data-theme="cyberpunk"] .card:hover {
+  border-color: var(--color-border-strong);
+  box-shadow: var(--shadow-card-hover);
+}
+
+/* ==========================================
+   赛博朋克主题 - 徽章
+   ========================================== */
+html[data-theme="cyberpunk"] .badge-accent {
+  background: rgba(0, 255, 247, 0.15);
+  color: var(--neon-cyan);
+  border: 1px solid rgba(0, 255, 247, 0.3);
+}

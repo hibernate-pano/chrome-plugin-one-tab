@@ -6,7 +6,7 @@
  */
 
 export type ThemeMode = 'light' | 'dark' | 'auto';
-export type ThemeStyle = 'classic' | 'refined' | 'aurora' | 'legacy' | 'creamy' | 'pink' | 'mint';
+export type ThemeStyle = 'classic' | 'refined' | 'aurora' | 'legacy' | 'creamy' | 'pink' | 'mint' | 'cyberpunk';
 
 export interface ThemeConfig {
   mode: ThemeMode;
@@ -235,6 +235,26 @@ const THEME_STYLES: Record<ThemeStyle, Partial<ThemeVariables>> = {
     buttonSecondary: '#2d6a6a',
     link: '#38b2ac',
     focus: '#38b2ac',
+  },
+  cyberpunk: {
+    primary: '#d946ef',
+    secondary: '#a0a0c0',
+    accent: '#00fff7',
+    background: '#0a0a0f',
+    surface: '#1a1a25',
+    text: '#e0e0ff',
+    textSecondary: '#a0a0c0',
+    border: 'rgba(255, 0, 255, 0.2)',
+    error: '#ff3366',
+    warning: '#ffff00',
+    success: '#00ff88',
+    info: '#00fff7',
+    cardBackground: '#12121a',
+    inputBackground: '#1a1a25',
+    buttonPrimary: '#d946ef',
+    buttonSecondary: '#bf00ff',
+    link: '#00fff7',
+    focus: '#00fff7',
   },
 };
 
