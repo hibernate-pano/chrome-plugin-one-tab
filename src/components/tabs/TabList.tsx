@@ -2,13 +2,11 @@ import React, { useEffect, useState, lazy, useMemo, useCallback } from 'react';
 import { useAppDispatch, useAppSelector } from '@/store/hooks';
 import { loadGroups, deleteGroup, moveGroupAndSync } from '@/store/slices/tabSlice';
 import { runMigrations } from '@/utils/migrationUtils';
-import { sortGroupsByCreatedAt } from '@/utils/groupSortUtils';
 
 import { DraggableTabGroup } from '@/components/dnd/DraggableTabGroup';
 import { SearchResultList } from '@/components/search/SearchResultList';
 import { TabGroup as TabGroupType } from '@/types/tab';
 import { EmptyState } from '@/components/common/EmptyState';
-import { LoadingSpinner } from '@/components/common/LoadingSpinner';
 import { PersonalizedWelcome, QuickActionTips } from '@/components/common/PersonalizedWelcome';
 import { TabListSkeleton } from '@/components/common/Skeleton';
 
@@ -84,9 +82,12 @@ export const TabList: React.FC<TabListProps> = ({ searchQuery }) => {
   const filteredGroups = sortedGroups;
 
   // 使用 useCallback 优化 moveGroup 回调函数
-  const handleMoveGroup = useCallback((dragIndex: number, hoverIndex: number) => {
-    dispatch(moveGroupAndSync({ dragIndex, hoverIndex }));
-  }, [dispatch]);
+  const handleMoveGroup = useCallback(
+    (dragIndex: number, hoverIndex: number) => {
+      dispatch(moveGroupAndSync({ dragIndex, hoverIndex }));
+    },
+    [dispatch]
+  );
 
   // 使用 useMemo 缓存双栏布局的分组
   const { leftColumnGroups, rightColumnGroups } = useMemo(() => {

@@ -3,12 +3,14 @@
  * 提供性能指标收集和分析
  */
 
+import React from 'react';
+
 export interface PerformanceMetric {
   name: string;
   value: number;
   unit: 'ms' | 'bytes' | 'count';
   timestamp: number;
-  category: 'rendering' | 'network' | 'memory' | 'interaction';
+  category: 'rendering' | 'network' | 'memory' | 'interaction' | 'storage';
 }
 
 export interface PerformanceReport {
@@ -221,19 +223,22 @@ class PerformanceMonitor {
     const memoryMetrics = this.getMetricsByCategory('memory');
 
     // 计算平均渲染时间
-    const avgRenderTime = renderMetrics.length > 0
-      ? renderMetrics.reduce((sum, m) => sum + m.value, 0) / renderMetrics.length
-      : 0;
+    const avgRenderTime =
+      renderMetrics.length > 0
+        ? renderMetrics.reduce((sum, m) => sum + m.value, 0) / renderMetrics.length
+        : 0;
 
     // 计算平均交互时间
-    const avgInteractionTime = interactionMetrics.length > 0
-      ? interactionMetrics.reduce((sum, m) => sum + m.value, 0) / interactionMetrics.length
-      : 0;
+    const avgInteractionTime =
+      interactionMetrics.length > 0
+        ? interactionMetrics.reduce((sum, m) => sum + m.value, 0) / interactionMetrics.length
+        : 0;
 
     // 获取最新的内存使用
-    const memoryUsage = memoryMetrics.length > 0
-      ? memoryMetrics[memoryMetrics.length - 1].value
-      : this.getMemoryUsage();
+    const memoryUsage =
+      memoryMetrics.length > 0
+        ? memoryMetrics[memoryMetrics.length - 1].value
+        : this.getMemoryUsage();
 
     // 找出慢操作（超过100ms）
     const slowOperations = interactionMetrics
@@ -253,7 +258,8 @@ class PerformanceMonitor {
       recommendations.push('交互响应时间较长，建议使用防抖或节流');
     }
 
-    if (memoryUsage > 50 * 1024 * 1024) { // 50MB
+    if (memoryUsage > 50 * 1024 * 1024) {
+      // 50MB
       recommendations.push('内存使用较高，建议检查内存泄漏');
     }
 
@@ -273,7 +279,8 @@ class PerformanceMonitor {
         avgInteractionTime: Math.round(avgInteractionTime * 100) / 100,
         memoryUsage,
         slowOperations,
-      },      recommendations,
+      },
+      recommendations,
     };
   }
 
@@ -310,11 +317,7 @@ export const performanceMonitor = PerformanceMonitor.getInstance();
  * 性能装饰器 - 自动测量函数性能
  */
 export function measurePerformance(name?: string) {
-  return function (
-    target: any,
-    propertyKey: string,
-    descriptor: PropertyDescriptor
-  ) {
+  return function (target: any, propertyKey: string, descriptor: PropertyDescriptor) {
     const originalMethod = descriptor.value;
     const measureName = name || `${target.constructor.name}.${propertyKey}`;
 
@@ -332,11 +335,7 @@ export function measurePerformance(name?: string) {
  * 异步性能装饰器
  */
 export function measureAsyncPerformance(name?: string) {
-  return function (
-    target: any,
-    propertyKey: string,
-    descriptor: PropertyDescriptor
-  ) {
+  return function (target: any, propertyKey: string, descriptor: PropertyDescriptor) {
     const originalMethod = descriptor.value;
     const measureName = name || `${target.constructor.name}.${propertyKey}`;
 
@@ -368,5 +367,59 @@ export function usePerformanceTracking(componentName: string) {
   });
 }
 
-// 注意：需要在文件顶部导入React
-import React from 'react';
+export function usePerformanceMonitor() {
+  const [, forceUpdate] = React.useState({});
+
+  React.useEffect(() => {
+    const interval = setInterval(() => {
+      performanceMonitor.recordMemoryUsage();
+      forceUpdate({});
+    }, 1000);
+
+    return () => clearInterval(interval);
+  }, []);
+
+  const metrics = React.useMemo(() => {
+    const renderMetrics = performanceMonitor.getMetricsByCategory('rendering');
+    const storageMetrics = performanceMonitor.getMetricsByCategory('storage');
+    const memoryMetrics = performanceMonitor.getMetricsByCategory('memory');
+
+    const longTasks = performanceMonitor.getMetricsByName('long-task');
+    const recentLongTasks = longTasks.filter(m => Date.now() - m.timestamp < 5000);
+    const fps = recentLongTasks.length === 0 ? 60 : Math.max(0, 60 - recentLongTasks.length * 10);
+
+    const avgRenderTime =
+      renderMetrics.length > 0
+        ? renderMetrics.slice(-10).reduce((sum, m) => sum + m.value, 0) /
+          Math.min(renderMetrics.length, 10)
+        : 0;
+
+    return {
+      memory: {
+        used:
+          memoryMetrics.length > 0
+            ? memoryMetrics[memoryMetrics.length - 1].value
+            : performanceMonitor.getMemoryUsage(),
+        limit: 100 * 1024 * 1024,
+      },
+      rendering: {
+        fps,
+        averageRenderTime: avgRenderTime,
+        longTasks: longTasks.length,
+      },
+      storage: {
+        size: performanceMonitor.getMetrics().length * 100,
+        operations: storageMetrics.length,
+      },
+    };
+  }, []);
+
+  const getReport = React.useCallback(() => {
+    return performanceMonitor.generateReport();
+  }, []);
+
+  return {
+    metrics,
+    getReport,
+  };
+}

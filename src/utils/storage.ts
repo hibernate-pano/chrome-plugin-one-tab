@@ -2,8 +2,8 @@ import { TabGroup, UserSettings, Tab, LayoutMode, ThemeStyle } from '@/types/tab
 import { parseOneTabFormat, formatToOneTabFormat } from './oneTabFormatParser';
 import { secureStorage } from './secureStorage';
 import { kvGet, kvSet, kvRemove } from '@/storage/storageAdapter';
-import { validateTabGroups, isTabGroup } from './typeGuards';
-import { handleError, ErrorCodes } from './errorHandler';
+import { validateTabGroups } from './typeGuards';
+import { handleError } from './errorHandler';
 
 const STORAGE_KEYS = {
   VERSION: 'storage_version',
@@ -12,7 +12,7 @@ const STORAGE_KEYS = {
   DELETED_GROUPS: 'deleted_tab_groups',
   DELETED_TABS: 'deleted_tabs',
   LAST_SYNC_TIME: 'last_sync_time',
-  MIGRATION_FLAGS: 'migration_flags'
+  MIGRATION_FLAGS: 'migration_flags',
 };
 
 const STORAGE_VERSION = 2;
@@ -112,7 +112,7 @@ class ChromeStorage {
     } catch (error) {
       handleError(error as Error, {
         severity: 'high',
-        fallbackMessage: '获取标签组失败'
+        fallbackMessage: '获取标签组失败',
       });
       return [];
     }
@@ -140,7 +140,9 @@ class ChromeStorage {
         normalizedSettings.useDoubleColumnLayout !== undefined &&
         normalizedSettings.layoutMode === undefined
       ) {
-        normalizedSettings.layoutMode = normalizedSettings.useDoubleColumnLayout ? 'double' : 'single';
+        normalizedSettings.layoutMode = normalizedSettings.useDoubleColumnLayout
+          ? 'double'
+          : 'single';
         delete normalizedSettings.useDoubleColumnLayout;
         await this.setSettings({ ...DEFAULT_SETTINGS, ...normalizedSettings });
       }
@@ -150,7 +152,7 @@ class ChromeStorage {
       const validatedThemeMode = validateThemeMode(normalizedSettings.themeMode);
 
       // 如果验证后的值与原值不同，说明存储中有无效值，需要更新
-      const needsUpdate = 
+      const needsUpdate =
         normalizedSettings.themeStyle !== validatedThemeStyle ||
         normalizedSettings.themeMode !== validatedThemeMode;
 
@@ -176,14 +178,14 @@ class ChromeStorage {
   async setSettings(settings: UserSettings): Promise<void> {
     try {
       await this.ensureVersion();
-      
+
       // 验证主题相关设置，确保保存的值是有效的
       const validatedSettings: UserSettings = {
         ...settings,
         themeStyle: validateThemeStyle(settings.themeStyle),
         themeMode: validateThemeMode(settings.themeMode),
       };
-      
+
       await kvSet(STORAGE_KEYS.SETTINGS, validatedSettings);
     } catch (error) {
       console.error('保存设置失败:', error);
@@ -244,7 +246,7 @@ class ChromeStorage {
       // 过滤出未过期的已删除标签组
       const validGroups = deletedGroups.filter(group => {
         const updatedAt = new Date(group.updatedAt).getTime();
-        return (now - updatedAt) < maxAgeMs;
+        return now - updatedAt < maxAgeMs;
       });
 
       // 如果有过期的标签组，更新存储
@@ -257,7 +259,7 @@ class ChromeStorage {
       const deletedTabs = await this.getDeletedTabs();
       const validTabs = deletedTabs.filter(tab => {
         const lastAccessed = new Date(tab.lastAccessed).getTime();
-        return (now - lastAccessed) < maxAgeMs;
+        return now - lastAccessed < maxAgeMs;
       });
 
       if (validTabs.length !== deletedTabs.length) {
@@ -299,8 +301,8 @@ class ChromeStorage {
       timestamp: new Date().toISOString(),
       data: {
         groups,
-        settings
-      }
+        settings,
+      },
     };
   }
 
@@ -335,7 +337,7 @@ class ChromeStorage {
         const currentSettings = await this.getSettings();
         await this.setSettings({
           ...currentSettings,
-          ...data.data.settings
+          ...data.data.settings,
         });
       }
 
@@ -391,7 +393,7 @@ class ChromeStorage {
         STORAGE_KEYS.DELETED_GROUPS,
         STORAGE_KEYS.DELETED_TABS,
         STORAGE_KEYS.LAST_SYNC_TIME,
-        STORAGE_KEYS.MIGRATION_FLAGS
+        STORAGE_KEYS.MIGRATION_FLAGS,
       ];
       await Promise.all(keys.map(key => kvRemove(key)));
     } catch (error) {

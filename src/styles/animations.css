@@ -10,7 +10,9 @@
 /* 标签组折叠/展开动画 - 改进版 */
 .tab-group-content {
   overflow: hidden;
-  transition: max-height 0.35s var(--ease-smooth), opacity 0.35s var(--ease-smooth);
+  transition:
+    max-height 0.35s var(--ease-smooth),
+    opacity 0.35s var(--ease-smooth);
 }
 
 .tab-group-content.collapsed {
@@ -44,23 +46,29 @@
     opacity 0.15s ease,
     box-shadow 0.15s ease;
 
-  transition: transform 0.2s var(--ease-smooth),
-              opacity 0.2s var(--ease-smooth),
-              box-shadow 0.2s var(--ease-smooth);
-  will-change: transform, opacity;}
+  transition:
+    transform 0.2s var(--ease-smooth),
+    opacity 0.2s var(--ease-smooth),
+    box-shadow 0.2s var(--ease-smooth);
+  will-change: transform, opacity;
+}
 
 .tab-drag-animation.dragging {
   transform: scale(1.03) rotate(2deg);
   opacity: 0.85;
-  box-shadow: 0 8px 16px rgba(0, 0, 0, 0.15), 0 2px 4px rgba(0, 0, 0, 0.1);
+  box-shadow:
+    0 8px 16px rgba(0, 0, 0, 0.15),
+    0 2px 4px rgba(0, 0, 0, 0.1);
   z-index: 100;
 }
 
 /* 放置目标高亮动画 - 改进版 */
 .drop-target-animation {
-  transition: background-color 0.25s var(--ease-smooth),
-              border-color 0.25s var(--ease-smooth),
-              transform 0.25s var(--ease-smooth);}
+  transition:
+    background-color 0.25s var(--ease-smooth),
+    border-color 0.25s var(--ease-smooth),
+    transform 0.25s var(--ease-smooth);
+}
 
 .drop-target-animation.active {
   background-color: rgba(59, 130, 246, 0.12);
@@ -76,22 +84,26 @@
 
 /* 标签组拖拽动画 - 改进版 */
 .group-drag-animation {
-  transition: transform 0.2s var(--ease-smooth),
-              opacity 0.2s var(--ease-smooth),
-              box-shadow 0.2s var(--ease-smooth);
+  transition:
+    transform 0.2s var(--ease-smooth),
+    opacity 0.2s var(--ease-smooth),
+    box-shadow 0.2s var(--ease-smooth);
   will-change: transform, opacity;
 }
 
 .group-drag-animation.dragging {
   transform: scale(1.02) translateY(-2px);
   opacity: 0.9;
-  box-shadow: 0 10px 20px rgba(0, 0, 0, 0.15), 0 3px 6px rgba(0, 0, 0, 0.1);
+  box-shadow:
+    0 10px 20px rgba(0, 0, 0, 0.15),
+    0 3px 6px rgba(0, 0, 0, 0.1);
   z-index: 100;
 }
 
 /* 搜索结果高亮动画 - 改进版 */
 @keyframes highlight-pulse {
-  0%, 100% {
+  0%,
+  100% {
     background-color: rgba(59, 130, 246, 0.2);
     transform: scale(1);
   }
@@ -116,9 +128,10 @@
 /* 标签组操作按钮动画 - 改进版 */
 .group-action-button {
   opacity: 0.6;
-  transition: opacity 0.25s var(--ease-smooth),
-              transform 0.25s var(--ease-spring),
-              background-color 0.25s var(--ease-smooth);
+  transition:
+    opacity 0.25s var(--ease-smooth),
+    transform 0.25s var(--ease-spring),
+    background-color 0.25s var(--ease-smooth);
 }
 
 .group-action-button:hover {
@@ -134,8 +147,9 @@
 .tab-action-button {
   opacity: 0;
   transform: translateX(-8px);
-  transition: opacity 0.25s var(--ease-smooth),
-              transform 0.25s var(--ease-spring);
+  transition:
+    opacity 0.25s var(--ease-smooth),
+    transform 0.25s var(--ease-spring);
 }
 
 .tab-item:hover .tab-action-button {
@@ -149,8 +163,9 @@
 
 /* 标签组头部悬停效果 - 改进版 */
 .group-header {
-  transition: background-color 0.25s var(--ease-smooth),
-              transform 0.25s var(--ease-smooth);
+  transition:
+    background-color 0.25s var(--ease-smooth),
+    transform 0.25s var(--ease-smooth);
 }
 
 .group-header:hover {
@@ -315,6 +330,15 @@
 
 /* 卡片容器动画 */
 @keyframes card-in {
+  from {
+    opacity: 0;
+    transform: translateY(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
 
 /* 新增：淡入动画 */
 @keyframes fadeIn {
@@ -344,28 +368,19 @@
 
 .skeleton {
   animation: shimmer 1.5s ease-in-out infinite;
-  background: linear-gradient(
-    to right,
-    #f0f0f0 8%,
-    #f8f8f8 18%,
-    #f0f0f0 33%
-  );
+  background: linear-gradient(to right, #f0f0f0 8%, #f8f8f8 18%, #f0f0f0 33%);
   background-size: 800px 104px;
 }
 
 .dark .skeleton {
-  background: linear-gradient(
-    to right,
-    #2a2a2a 8%,
-    #3a3a3a 18%,
-    #2a2a2a 33%
-  );
+  background: linear-gradient(to right, #2a2a2a 8%, #3a3a3a 18%, #2a2a2a 33%);
 }
 
 /* 新增：卡片悬停效果 */
 .card-hover {
-  transition: box-shadow 0.3s var(--ease-smooth),
-              transform 0.3s var(--ease-smooth);
+  transition:
+    box-shadow 0.3s var(--ease-smooth),
+    transform 0.3s var(--ease-smooth);
 }
 
 .card-hover:hover {
@@ -412,9 +427,18 @@
   animation: slideInUp 0.4s var(--ease-out);
 }
 
-.stagger-animation > *:nth-child(1) { animation-delay: 0.05s; }
-.stagger-animation > *:nth-child(2) { animation-delay: 0.1s; }
-.stagger-animation > *:nth-child(3) { animation-delay: 0.15s; }
-.stagger-animation > *:nth-child(4) { animation-delay: 0.2s; }
-.stagger-animation > *:nth-child(5) { animation-delay: 0.25s; }
-
+.stagger-animation > *:nth-child(1) {
+  animation-delay: 0.05s;
+}
+.stagger-animation > *:nth-child(2) {
+  animation-delay: 0.1s;
+}
+.stagger-animation > *:nth-child(3) {
+  animation-delay: 0.15s;
+}
+.stagger-animation > *:nth-child(4) {
+  animation-delay: 0.2s;
+}
+.stagger-animation > *:nth-child(5) {
+  animation-delay: 0.25s;
+}
