@@ -1,0 +1,326 @@
+/* ==========================================
+   🌿 Mint Theme - Fresh Nature Style
+   设计理念：清新自然、生机活力、舒适护眼
+   核心特征：薄荷绿色调、自然渐变、柔和圆角
+   视觉亮点：清爽配色、自然过渡、舒适阅读
+   ========================================== */
+
+html[data-theme='mint'] {
+  /* 颜色 - 清爽薄荷色调 */
+  --color-bg-primary: #f0fdf4;
+  --color-bg-secondary: #ffffff;
+  --color-bg-tertiary: #dcfce7;
+  --color-bg-elevated: #ffffff;
+  --color-bg-overlay: rgba(240, 253, 244, 0.92);
+
+  --color-text-primary: #14532d;
+  --color-text-secondary: #166534;
+  --color-text-tertiary: #15803d;
+  --color-text-muted: #86efac;
+
+  --color-border-default: #bbf7d0;
+  --color-border-subtle: #dcfce7;
+  --color-border-strong: #86efac;
+
+  --color-accent: #22c55e;
+  --color-accent-hover: #16a34a;
+  --color-accent-subtle: #f0fdf4;
+
+  /* 状态颜色 */
+  --color-warning: #f59e0b;
+  --color-danger: #ef4444;
+  --color-success: #10b981;
+
+  /* 排版 */
+  --font-family-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+  --font-family-mono: 'SF Mono', Menlo, Monaco, monospace;
+
+  /* 阴影 - 清爽薄荷 */
+  --shadow-card: 0 2px 8px -2px rgb(34 197 94 / 0.1), 0 1px 3px -1px rgb(34 197 94 / 0.08);
+  --shadow-card-hover: 0 12px 28px -8px rgb(34 197 94 / 0.18), 0 4px 12px -4px rgb(34 197 94 / 0.12);
+  --shadow-elevation-1: 0 1px 2px rgb(34 197 94 / 0.06);
+  --shadow-elevation-2: 0 4px 12px -2px rgb(34 197 94 / 0.1);
+  --shadow-elevation-3: 0 16px 32px -8px rgb(34 197 94 / 0.15);
+  --shadow-glow: 0 0 20px -4px rgb(34 197 94 / 0.35);
+
+  /* 圆角 - 柔和自然 */
+  --radius-sm: 0.5rem;
+  --radius-md: 0.75rem;
+  --radius-lg: 1rem;
+  --radius-xl: 1.25rem;
+  --radius-full: 9999px;
+
+  /* 间距 */
+  --spacing-xs: 0.25rem;
+  --spacing-sm: 0.5rem;
+  --spacing-md: 1rem;
+  --spacing-lg: 1.5rem;
+  --spacing-xl: 2rem;
+}
+
+/* ==========================================
+   薄荷主题 - 深色模式
+   ========================================== */
+html[data-theme='mint'].dark {
+  --color-bg-primary: #052e16;
+  --color-bg-secondary: #14532d;
+  --color-bg-tertiary: #166534;
+  --color-bg-elevated: #166534;
+  --color-bg-overlay: rgba(5, 46, 22, 0.92);
+
+  --color-text-primary: #dcfce7;
+  --color-text-secondary: #bbf7d0;
+  --color-text-tertiary: #86efac;
+  --color-text-muted: #4ade80;
+
+  --color-border-default: #166534;
+  --color-border-subtle: #14532d;
+  --color-border-strong: #22c55e;
+
+  --color-accent: #4ade80;
+  --color-accent-hover: #86efac;
+  --color-accent-subtle: rgba(74, 222, 128, 0.15);
+
+  /* 状态颜色 */
+  --color-warning: #fbbf24;
+  --color-danger: #f87171;
+  --color-success: #34d399;
+
+  /* 深色模式阴影 */
+  --shadow-card: 0 2px 8px -2px rgb(0 0 0 / 0.4), 0 0 1px rgb(74 222 128 / 0.1);
+  --shadow-card-hover: 0 12px 28px -8px rgb(0 0 0 / 0.5), 0 0 20px -4px rgb(74 222 128 / 0.2);
+  --shadow-glow: 0 0 24px -4px rgb(74 222 128 / 0.4);
+}
+
+/* ==========================================
+   薄荷主题特定样式
+   ========================================== */
+html[data-theme='mint'] body {
+  font-family: var(--font-family-sans);
+}
+
+/* 按钮样式 */
+html[data-theme='mint'] .btn-primary {
+  background: linear-gradient(135deg, var(--color-accent) 0%, var(--color-accent-hover) 100%);
+  box-shadow: 0 2px 8px -2px rgb(34 197 94 / 0.3);
+}
+
+html[data-theme='mint'] .btn-primary:hover {
+  box-shadow: var(--shadow-glow);
+  transform: translateY(-1px);
+}
+
+/* 卡片样式 */
+html[data-theme='mint'] .card,
+html[data-theme='mint'] .tab-group-card {
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-card);
+  border: 1px solid var(--color-border-subtle);
+  background: var(--color-bg-secondary);
+}
+
+html[data-theme='mint'] .tab-group-card:hover {
+  box-shadow: var(--shadow-card-hover);
+  border-color: var(--color-border-default);
+}
+
+/* 标签组头部 */
+html[data-theme='mint'] .tab-group-header {
+  background: linear-gradient(180deg, var(--color-bg-tertiary) 0%, var(--color-bg-secondary) 100%);
+  border-bottom: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+}
+
+html[data-theme='mint'] .tab-group-tabs-container {
+  border-radius: 0 0 var(--radius-lg) var(--radius-lg);
+}
+
+/* 徽章样式 */
+html[data-theme='mint'] .badge-accent,
+html[data-theme='mint'] .tab-group-count {
+  background: linear-gradient(135deg, var(--color-accent) 0%, var(--color-accent-hover) 100%);
+  color: #ffffff;
+  font-weight: 600;
+  border-radius: var(--radius-full);
+}
+
+html[data-theme='mint'].dark .badge-accent,
+html[data-theme='mint'].dark .tab-group-count {
+  background: linear-gradient(135deg, var(--color-accent) 0%, var(--color-accent-hover) 100%);
+  color: #052e16;
+}
+
+/* 输入框样式 */
+html[data-theme='mint'] .input,
+html[data-theme='mint'] .search-input,
+html[data-theme='mint'] .search-bar-input {
+  background: var(--color-bg-secondary);
+  border: 2px solid var(--color-border-default);
+  border-radius: var(--radius-full);
+}
+
+html[data-theme='mint'] .input:focus,
+html[data-theme='mint'] .search-input:focus,
+html[data-theme='mint'] .search-bar-input:focus {
+  border-color: var(--color-accent);
+  box-shadow: 0 0 0 3px var(--color-accent-subtle), var(--shadow-glow);
+}
+
+/* 搜索高亮 */
+html[data-theme='mint'] .search-highlight {
+  background: linear-gradient(135deg, #dcfce7 0%, #bbf7d0 100%);
+  color: #166534;
+  padding: 1px 4px;
+  border-radius: var(--radius-sm);
+}
+
+html[data-theme='mint'].dark .search-highlight {
+  background: linear-gradient(135deg, rgba(74, 222, 128, 0.2) 0%, rgba(134, 239, 172, 0.2) 100%);
+  color: #86efac;
+}
+
+/* 头部样式 */
+html[data-theme='mint'] .header {
+  background: var(--color-bg-overlay);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border-bottom: 1px solid var(--color-border-subtle);
+}
+
+/* 下拉菜单 */
+html[data-theme='mint'] .dropdown-menu,
+html[data-theme='mint'] .popup-menu {
+  background: var(--color-bg-secondary);
+  border: 1px solid var(--color-border-default);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-elevation-3);
+}
+
+html[data-theme='mint'] .dropdown-item {
+  border-radius: var(--radius-md);
+  margin: 2px 4px;
+}
+
+html[data-theme='mint'] .dropdown-item:hover {
+  background: linear-gradient(135deg, var(--color-accent-subtle) 0%, var(--color-bg-tertiary) 100%);
+}
+
+/* 模态框 */
+html[data-theme='mint'] .modal-content {
+  background: var(--color-bg-secondary);
+  border-radius: var(--radius-xl);
+  box-shadow: var(--shadow-elevation-3);
+  border: 1px solid var(--color-border-default);
+}
+
+/* 标签项 */
+html[data-theme='mint'] .tab-item {
+  border-bottom: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-md);
+  margin: 2px 8px;
+  padding: 8px 12px;
+}
+
+html[data-theme='mint'] .tab-item:hover {
+  background: linear-gradient(135deg, var(--color-accent-subtle) 0%, var(--color-bg-tertiary) 100%);
+}
+
+/* 空状态 */
+html[data-theme='mint'] .empty-state-icon {
+  background: linear-gradient(135deg, var(--color-bg-tertiary) 0%, var(--color-bg-primary) 100%);
+  border: 2px solid var(--color-border-default);
+  border-radius: var(--radius-xl);
+}
+
+/* 开关按钮 */
+html[data-theme='mint'] .toggle-switch-active {
+  background: linear-gradient(135deg, var(--color-accent) 0%, var(--color-accent-hover) 100%);
+}
+
+html[data-theme='mint'] .toggle-switch-inactive {
+  background-color: var(--color-border-default);
+}
+
+/* 操作按钮颜色 */
+html[data-theme='mint'] .tab-group-action-accent,
+html[data-theme='mint'] .search-action-btn-accent,
+html[data-theme='mint'] .search-result-link {
+  color: var(--color-accent);
+}
+
+html[data-theme='mint'] .tab-group-action-accent:hover,
+html[data-theme='mint'] .search-action-btn-accent:hover,
+html[data-theme='mint'] .search-result-link:hover {
+  color: var(--color-accent-hover);
+}
+
+html[data-theme='mint'] .tab-group-action-danger:hover,
+html[data-theme='mint'] .tab-item-delete-btn:hover {
+  color: var(--color-danger);
+}
+
+html[data-theme='mint'] .tab-item-title-hover:hover,
+html[data-theme='mint'] .tab-group-title-hover:hover {
+  color: var(--color-accent);
+}
+
+/* 锁定图标 */
+html[data-theme='mint'] .tab-group-lock-icon {
+  color: var(--color-warning);
+}
+
+/* 时间显示 */
+html[data-theme='mint'] .tab-group-time {
+  font-size: 0.75rem;
+  color: var(--color-text-muted);
+}
+
+/* 空状态图标 */
+html[data-theme='mint'] .empty-state-default-icon {
+  color: var(--color-text-muted);
+}
+
+/* 滚动条 */
+html[data-theme='mint'] ::-webkit-scrollbar {
+  width: 8px;
+}
+
+html[data-theme='mint'] ::-webkit-scrollbar-track {
+  background: var(--color-bg-tertiary);
+  border-radius: 4px;
+}
+
+html[data-theme='mint'] ::-webkit-scrollbar-thumb {
+  background: var(--color-border-strong);
+  border-radius: 4px;
+}
+
+html[data-theme='mint'] ::-webkit-scrollbar-thumb:hover {
+  background: var(--color-accent);
+}
+
+/* 选中文本 */
+html[data-theme='mint'] ::selection {
+  background-color: var(--color-accent-subtle);
+  color: var(--color-text-primary);
+}
+
+/* Focus 样式 */
+html[data-theme='mint'] :focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
+}
+
+/* 单栏布局优化 */
+html[data-theme="mint"] .single-column-layout .tab-group-card {
+  margin-bottom: 1rem;
+}
+
+html[data-theme="mint"] .single-column-layout .tab-item {
+  padding: 10px 16px;
+}
+
+html[data-theme="mint"] .single-column-layout .tab-item-url {
+  max-width: 350px;
+}

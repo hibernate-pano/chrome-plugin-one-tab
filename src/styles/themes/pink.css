@@ -1,0 +1,326 @@
+/* ==========================================
+   🌸 Pink Theme - Sweet Romance Style
+   设计理念：甜美浪漫、柔和温馨、少女心
+   核心特征：玫瑰粉色调、柔和渐变、圆润设计
+   视觉亮点：粉色系配色、甜美阴影、温柔过渡
+   ========================================== */
+
+html[data-theme='pink'] {
+  /* 颜色 - 甜美粉色调 */
+  --color-bg-primary: #fdf2f8;
+  --color-bg-secondary: #ffffff;
+  --color-bg-tertiary: #fce7f3;
+  --color-bg-elevated: #ffffff;
+  --color-bg-overlay: rgba(253, 242, 248, 0.92);
+
+  --color-text-primary: #831843;
+  --color-text-secondary: #9d174d;
+  --color-text-tertiary: #be185d;
+  --color-text-muted: #f9a8d4;
+
+  --color-border-default: #fbcfe8;
+  --color-border-subtle: #fce7f3;
+  --color-border-strong: #f9a8d4;
+
+  --color-accent: #ec4899;
+  --color-accent-hover: #db2777;
+  --color-accent-subtle: #fdf2f8;
+
+  /* 状态颜色 */
+  --color-warning: #f59e0b;
+  --color-danger: #ef4444;
+  --color-success: #10b981;
+
+  /* 排版 */
+  --font-family-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+  --font-family-mono: 'SF Mono', Menlo, Monaco, monospace;
+
+  /* 阴影 - 柔和甜美 */
+  --shadow-card: 0 2px 8px -2px rgb(236 72 153 / 0.1), 0 1px 3px -1px rgb(236 72 153 / 0.08);
+  --shadow-card-hover: 0 12px 28px -8px rgb(236 72 153 / 0.18), 0 4px 12px -4px rgb(236 72 153 / 0.12);
+  --shadow-elevation-1: 0 1px 2px rgb(236 72 153 / 0.06);
+  --shadow-elevation-2: 0 4px 12px -2px rgb(236 72 153 / 0.1);
+  --shadow-elevation-3: 0 16px 32px -8px rgb(236 72 153 / 0.15);
+  --shadow-glow: 0 0 20px -4px rgb(236 72 153 / 0.35);
+
+  /* 圆角 - 柔和圆润 */
+  --radius-sm: 0.5rem;
+  --radius-md: 0.75rem;
+  --radius-lg: 1rem;
+  --radius-xl: 1.25rem;
+  --radius-full: 9999px;
+
+  /* 间距 */
+  --spacing-xs: 0.25rem;
+  --spacing-sm: 0.5rem;
+  --spacing-md: 1rem;
+  --spacing-lg: 1.5rem;
+  --spacing-xl: 2rem;
+}
+
+/* ==========================================
+   粉色主题 - 深色模式
+   ========================================== */
+html[data-theme='pink'].dark {
+  --color-bg-primary: #1f1218;
+  --color-bg-secondary: #2d1a24;
+  --color-bg-tertiary: #3d2432;
+  --color-bg-elevated: #3d2432;
+  --color-bg-overlay: rgba(31, 18, 24, 0.92);
+
+  --color-text-primary: #fce7f3;
+  --color-text-secondary: #fbcfe8;
+  --color-text-tertiary: #f9a8d4;
+  --color-text-muted: #ec4899;
+
+  --color-border-default: #3d2432;
+  --color-border-subtle: #2d1a24;
+  --color-border-strong: #be185d;
+
+  --color-accent: #f472b6;
+  --color-accent-hover: #f9a8d4;
+  --color-accent-subtle: rgba(244, 114, 182, 0.15);
+
+  /* 状态颜色 */
+  --color-warning: #fbbf24;
+  --color-danger: #f87171;
+  --color-success: #34d399;
+
+  /* 深色模式阴影 */
+  --shadow-card: 0 2px 8px -2px rgb(0 0 0 / 0.4), 0 0 1px rgb(244 114 182 / 0.1);
+  --shadow-card-hover: 0 12px 28px -8px rgb(0 0 0 / 0.5), 0 0 20px -4px rgb(244 114 182 / 0.2);
+  --shadow-glow: 0 0 24px -4px rgb(244 114 182 / 0.4);
+}
+
+/* ==========================================
+   粉色主题特定样式
+   ========================================== */
+html[data-theme='pink'] body {
+  font-family: var(--font-family-sans);
+}
+
+/* 按钮样式 */
+html[data-theme='pink'] .btn-primary {
+  background: linear-gradient(135deg, var(--color-accent) 0%, var(--color-accent-hover) 100%);
+  box-shadow: 0 2px 8px -2px rgb(236 72 153 / 0.3);
+}
+
+html[data-theme='pink'] .btn-primary:hover {
+  box-shadow: var(--shadow-glow);
+  transform: translateY(-1px);
+}
+
+/* 卡片样式 */
+html[data-theme='pink'] .card,
+html[data-theme='pink'] .tab-group-card {
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-card);
+  border: 1px solid var(--color-border-subtle);
+  background: linear-gradient(180deg, var(--color-bg-secondary) 0%, var(--color-bg-primary) 100%);
+}
+
+html[data-theme='pink'] .tab-group-card:hover {
+  box-shadow: var(--shadow-card-hover);
+  border-color: var(--color-border-default);
+}
+
+/* 标签组头部 */
+html[data-theme='pink'] .tab-group-header {
+  background: linear-gradient(135deg, var(--color-bg-tertiary) 0%, var(--color-bg-primary) 100%);
+  border-bottom: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+}
+
+html[data-theme='pink'] .tab-group-tabs-container {
+  border-radius: 0 0 var(--radius-lg) var(--radius-lg);
+}
+
+/* 徽章样式 */
+html[data-theme='pink'] .badge-accent,
+html[data-theme='pink'] .tab-group-count {
+  background: linear-gradient(135deg, var(--color-accent) 0%, var(--color-accent-hover) 100%);
+  color: #ffffff;
+  font-weight: 600;
+  border-radius: var(--radius-full);
+}
+
+html[data-theme='pink'].dark .badge-accent,
+html[data-theme='pink'].dark .tab-group-count {
+  background: linear-gradient(135deg, var(--color-accent) 0%, var(--color-accent-hover) 100%);
+  color: #1f1218;
+}
+
+/* 输入框样式 */
+html[data-theme='pink'] .input,
+html[data-theme='pink'] .search-input,
+html[data-theme='pink'] .search-bar-input {
+  border: 2px solid var(--color-border-default);
+  border-radius: var(--radius-full);
+  background: var(--color-bg-secondary);
+}
+
+html[data-theme='pink'] .input:focus,
+html[data-theme='pink'] .search-input:focus,
+html[data-theme='pink'] .search-bar-input:focus {
+  border-color: var(--color-accent);
+  box-shadow: 0 0 0 3px var(--color-accent-subtle), var(--shadow-glow);
+}
+
+/* 搜索高亮 */
+html[data-theme='pink'] .search-highlight {
+  background: linear-gradient(135deg, #fce7f3 0%, #fbcfe8 100%);
+  color: #9d174d;
+  padding: 1px 4px;
+  border-radius: var(--radius-sm);
+}
+
+html[data-theme='pink'].dark .search-highlight {
+  background: linear-gradient(135deg, rgba(244, 114, 182, 0.2) 0%, rgba(249, 168, 212, 0.2) 100%);
+  color: #f9a8d4;
+}
+
+/* 头部样式 */
+html[data-theme='pink'] .header {
+  background: var(--color-bg-overlay);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border-bottom: 1px solid var(--color-border-subtle);
+}
+
+/* 下拉菜单 */
+html[data-theme='pink'] .dropdown-menu,
+html[data-theme='pink'] .popup-menu {
+  background: var(--color-bg-secondary);
+  border: 1px solid var(--color-border-default);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-elevation-3);
+}
+
+html[data-theme='pink'] .dropdown-item {
+  border-radius: var(--radius-md);
+  margin: 2px 4px;
+}
+
+html[data-theme='pink'] .dropdown-item:hover {
+  background: linear-gradient(135deg, var(--color-accent-subtle) 0%, var(--color-bg-tertiary) 100%);
+}
+
+/* 模态框 */
+html[data-theme='pink'] .modal-content {
+  background: var(--color-bg-secondary);
+  border-radius: var(--radius-xl);
+  box-shadow: var(--shadow-elevation-3);
+  border: 1px solid var(--color-border-default);
+}
+
+/* 标签项 */
+html[data-theme='pink'] .tab-item {
+  border-bottom: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-md);
+  margin: 2px 8px;
+  padding: 8px 12px;
+}
+
+html[data-theme='pink'] .tab-item:hover {
+  background: linear-gradient(135deg, var(--color-accent-subtle) 0%, var(--color-bg-tertiary) 100%);
+}
+
+/* 空状态 */
+html[data-theme='pink'] .empty-state-icon {
+  background: linear-gradient(135deg, var(--color-bg-tertiary) 0%, var(--color-bg-primary) 100%);
+  border: 2px solid var(--color-border-default);
+  border-radius: var(--radius-xl);
+}
+
+/* 开关按钮 */
+html[data-theme='pink'] .toggle-switch-active {
+  background: linear-gradient(135deg, var(--color-accent) 0%, var(--color-accent-hover) 100%);
+}
+
+html[data-theme='pink'] .toggle-switch-inactive {
+  background-color: var(--color-border-default);
+}
+
+/* 操作按钮颜色 */
+html[data-theme='pink'] .tab-group-action-accent,
+html[data-theme='pink'] .search-action-btn-accent,
+html[data-theme='pink'] .search-result-link {
+  color: var(--color-accent);
+}
+
+html[data-theme='pink'] .tab-group-action-accent:hover,
+html[data-theme='pink'] .search-action-btn-accent:hover,
+html[data-theme='pink'] .search-result-link:hover {
+  color: var(--color-accent-hover);
+}
+
+html[data-theme='pink'] .tab-group-action-danger:hover,
+html[data-theme='pink'] .tab-item-delete-btn:hover {
+  color: var(--color-danger);
+}
+
+html[data-theme='pink'] .tab-item-title-hover:hover,
+html[data-theme='pink'] .tab-group-title-hover:hover {
+  color: var(--color-accent);
+}
+
+/* 锁定图标 */
+html[data-theme='pink'] .tab-group-lock-icon {
+  color: var(--color-warning);
+}
+
+/* 时间显示 */
+html[data-theme='pink'] .tab-group-time {
+  font-size: 0.75rem;
+  color: var(--color-text-muted);
+}
+
+/* 空状态图标 */
+html[data-theme='pink'] .empty-state-default-icon {
+  color: var(--color-text-muted);
+}
+
+/* 滚动条 */
+html[data-theme='pink'] ::-webkit-scrollbar {
+  width: 8px;
+}
+
+html[data-theme='pink'] ::-webkit-scrollbar-track {
+  background: var(--color-bg-tertiary);
+  border-radius: 4px;
+}
+
+html[data-theme='pink'] ::-webkit-scrollbar-thumb {
+  background: var(--color-border-strong);
+  border-radius: 4px;
+}
+
+html[data-theme='pink'] ::-webkit-scrollbar-thumb:hover {
+  background: var(--color-accent);
+}
+
+/* 选中文本 */
+html[data-theme='pink'] ::selection {
+  background-color: var(--color-accent-subtle);
+  color: var(--color-text-primary);
+}
+
+/* Focus 样式 */
+html[data-theme='pink'] :focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
+}
+
+/* 单栏布局优化 */
+html[data-theme="pink"] .single-column-layout .tab-group-card {
+  margin-bottom: 1rem;
+}
+
+html[data-theme="pink"] .single-column-layout .tab-item {
+  padding: 10px 16px;
+}
+
+html[data-theme="pink"] .single-column-layout .tab-item-url {
+  max-width: 350px;
+}

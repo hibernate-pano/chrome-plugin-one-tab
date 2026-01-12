@@ -1,0 +1,326 @@
+/* ==========================================
+   🍯 Creamy Theme - Warm Comfort Style
+   设计理念：温暖舒适、奶油质感、复古优雅
+   核心特征：金棕色调、柔和渐变、温馨氛围
+   视觉亮点：奶油色背景、金色强调、柔和阴影
+   ========================================== */
+
+html[data-theme='creamy'] {
+  /* 颜色 - 温暖奶黄色调 */
+  --color-bg-primary: #fefcf3;
+  --color-bg-secondary: #ffffff;
+  --color-bg-tertiary: #fef9e7;
+  --color-bg-elevated: #ffffff;
+  --color-bg-overlay: rgba(254, 252, 243, 0.92);
+
+  --color-text-primary: #44403c;
+  --color-text-secondary: #57534e;
+  --color-text-tertiary: #78716c;
+  --color-text-muted: #a8a29e;
+
+  --color-border-default: #f5e6d3;
+  --color-border-subtle: #fef9e7;
+  --color-border-strong: #e8d5b7;
+
+  --color-accent: #d97706;
+  --color-accent-hover: #b45309;
+  --color-accent-subtle: #fef3c7;
+
+  /* 状态颜色 */
+  --color-warning: #f59e0b;
+  --color-danger: #dc2626;
+  --color-success: #16a34a;
+
+  /* 排版 */
+  --font-family-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+  --font-family-mono: 'SF Mono', Menlo, Monaco, monospace;
+
+  /* 阴影 - 柔和温暖 */
+  --shadow-card: 0 2px 8px -2px rgb(217 119 6 / 0.08), 0 1px 3px -1px rgb(217 119 6 / 0.06);
+  --shadow-card-hover: 0 12px 28px -8px rgb(217 119 6 / 0.15), 0 4px 12px -4px rgb(217 119 6 / 0.1);
+  --shadow-elevation-1: 0 1px 2px rgb(217 119 6 / 0.05);
+  --shadow-elevation-2: 0 4px 12px -2px rgb(217 119 6 / 0.1);
+  --shadow-elevation-3: 0 16px 32px -8px rgb(217 119 6 / 0.15);
+  --shadow-glow: 0 0 20px -4px rgb(217 119 6 / 0.3);
+
+  /* 圆角 - 柔和圆润 */
+  --radius-sm: 0.5rem;
+  --radius-md: 0.75rem;
+  --radius-lg: 1rem;
+  --radius-xl: 1.25rem;
+  --radius-full: 9999px;
+
+  /* 间距 */
+  --spacing-xs: 0.25rem;
+  --spacing-sm: 0.5rem;
+  --spacing-md: 1rem;
+  --spacing-lg: 1.5rem;
+  --spacing-xl: 2rem;
+}
+
+/* ==========================================
+   奶黄主题 - 深色模式
+   ========================================== */
+html[data-theme='creamy'].dark {
+  --color-bg-primary: #1c1917;
+  --color-bg-secondary: #292524;
+  --color-bg-tertiary: #3f3a36;
+  --color-bg-elevated: #3f3a36;
+  --color-bg-overlay: rgba(28, 25, 23, 0.92);
+
+  --color-text-primary: #fef3c7;
+  --color-text-secondary: #fde68a;
+  --color-text-tertiary: #fcd34d;
+  --color-text-muted: #d97706;
+
+  --color-border-default: #3f3a36;
+  --color-border-subtle: #292524;
+  --color-border-strong: #57534e;
+
+  --color-accent: #fbbf24;
+  --color-accent-hover: #fcd34d;
+  --color-accent-subtle: rgba(251, 191, 36, 0.15);
+
+  /* 状态颜色 */
+  --color-warning: #fbbf24;
+  --color-danger: #f87171;
+  --color-success: #4ade80;
+
+  /* 深色模式阴影 */
+  --shadow-card: 0 2px 8px -2px rgb(0 0 0 / 0.4), 0 0 1px rgb(251 191 36 / 0.1);
+  --shadow-card-hover: 0 12px 28px -8px rgb(0 0 0 / 0.5), 0 0 20px -4px rgb(251 191 36 / 0.15);
+  --shadow-glow: 0 0 24px -4px rgb(251 191 36 / 0.4);
+}
+
+/* ==========================================
+   奶黄主题特定样式
+   ========================================== */
+html[data-theme='creamy'] body {
+  font-family: var(--font-family-sans);
+}
+
+/* 按钮样式 */
+html[data-theme='creamy'] .btn-primary {
+  background: linear-gradient(135deg, var(--color-accent) 0%, var(--color-accent-hover) 100%);
+  box-shadow: 0 2px 8px -2px rgb(217 119 6 / 0.3);
+}
+
+html[data-theme='creamy'] .btn-primary:hover {
+  box-shadow: var(--shadow-glow);
+  transform: translateY(-1px);
+}
+
+/* 卡片样式 */
+html[data-theme='creamy'] .card,
+html[data-theme='creamy'] .tab-group-card {
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-card);
+  border: 1px solid var(--color-border-subtle);
+  background: linear-gradient(180deg, var(--color-bg-secondary) 0%, var(--color-bg-primary) 100%);
+}
+
+html[data-theme='creamy'] .tab-group-card:hover {
+  box-shadow: var(--shadow-card-hover);
+  border-color: var(--color-border-default);
+}
+
+/* 标签组头部 */
+html[data-theme='creamy'] .tab-group-header {
+  background: linear-gradient(135deg, var(--color-bg-tertiary) 0%, var(--color-bg-primary) 100%);
+  border-bottom: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+}
+
+html[data-theme='creamy'] .tab-group-tabs-container {
+  border-radius: 0 0 var(--radius-lg) var(--radius-lg);
+}
+
+/* 徽章样式 */
+html[data-theme='creamy'] .badge-accent,
+html[data-theme='creamy'] .tab-group-count {
+  background: linear-gradient(135deg, var(--color-accent) 0%, var(--color-accent-hover) 100%);
+  color: #ffffff;
+  font-weight: 600;
+  border-radius: var(--radius-full);
+}
+
+html[data-theme='creamy'].dark .badge-accent,
+html[data-theme='creamy'].dark .tab-group-count {
+  background: linear-gradient(135deg, var(--color-accent) 0%, var(--color-accent-hover) 100%);
+  color: #1c1917;
+}
+
+/* 输入框样式 */
+html[data-theme='creamy'] .input,
+html[data-theme='creamy'] .search-input,
+html[data-theme='creamy'] .search-bar-input {
+  border: 2px solid var(--color-border-default);
+  border-radius: var(--radius-full);
+  background: var(--color-bg-secondary);
+}
+
+html[data-theme='creamy'] .input:focus,
+html[data-theme='creamy'] .search-input:focus,
+html[data-theme='creamy'] .search-bar-input:focus {
+  border-color: var(--color-accent);
+  box-shadow: 0 0 0 3px var(--color-accent-subtle);
+}
+
+/* 搜索高亮 */
+html[data-theme='creamy'] .search-highlight {
+  background: linear-gradient(135deg, #fef3c7 0%, #fde68a 100%);
+  color: #92400e;
+  padding: 1px 4px;
+  border-radius: var(--radius-sm);
+}
+
+html[data-theme='creamy'].dark .search-highlight {
+  background: linear-gradient(135deg, rgba(251, 191, 36, 0.2) 0%, rgba(252, 211, 77, 0.2) 100%);
+  color: #fcd34d;
+}
+
+/* 头部样式 */
+html[data-theme='creamy'] .header {
+  background: var(--color-bg-overlay);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border-bottom: 1px solid var(--color-border-subtle);
+}
+
+/* 下拉菜单 */
+html[data-theme='creamy'] .dropdown-menu,
+html[data-theme='creamy'] .popup-menu {
+  background: var(--color-bg-secondary);
+  border: 1px solid var(--color-border-default);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-elevation-3);
+}
+
+html[data-theme='creamy'] .dropdown-item {
+  border-radius: var(--radius-md);
+  margin: 2px 4px;
+}
+
+html[data-theme='creamy'] .dropdown-item:hover {
+  background: linear-gradient(135deg, var(--color-accent-subtle) 0%, var(--color-bg-tertiary) 100%);
+}
+
+/* 模态框 */
+html[data-theme='creamy'] .modal-content {
+  background: var(--color-bg-secondary);
+  border-radius: var(--radius-xl);
+  box-shadow: var(--shadow-elevation-3);
+  border: 1px solid var(--color-border-default);
+}
+
+/* 标签项 */
+html[data-theme='creamy'] .tab-item {
+  border-bottom: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-md);
+  margin: 2px 8px;
+  padding: 8px 12px;
+}
+
+html[data-theme='creamy'] .tab-item:hover {
+  background: linear-gradient(135deg, var(--color-accent-subtle) 0%, var(--color-bg-tertiary) 100%);
+}
+
+/* 空状态 */
+html[data-theme='creamy'] .empty-state-icon {
+  background: linear-gradient(135deg, var(--color-bg-tertiary) 0%, var(--color-bg-primary) 100%);
+  border: 2px solid var(--color-border-default);
+  border-radius: var(--radius-xl);
+}
+
+/* 开关按钮 */
+html[data-theme='creamy'] .toggle-switch-active {
+  background: linear-gradient(135deg, var(--color-accent) 0%, var(--color-accent-hover) 100%);
+}
+
+html[data-theme='creamy'] .toggle-switch-inactive {
+  background-color: var(--color-border-default);
+}
+
+/* 操作按钮颜色 */
+html[data-theme='creamy'] .tab-group-action-accent,
+html[data-theme='creamy'] .search-action-btn-accent,
+html[data-theme='creamy'] .search-result-link {
+  color: var(--color-accent);
+}
+
+html[data-theme='creamy'] .tab-group-action-accent:hover,
+html[data-theme='creamy'] .search-action-btn-accent:hover,
+html[data-theme='creamy'] .search-result-link:hover {
+  color: var(--color-accent-hover);
+}
+
+html[data-theme='creamy'] .tab-group-action-danger:hover,
+html[data-theme='creamy'] .tab-item-delete-btn:hover {
+  color: var(--color-danger);
+}
+
+html[data-theme='creamy'] .tab-item-title-hover:hover,
+html[data-theme='creamy'] .tab-group-title-hover:hover {
+  color: var(--color-accent);
+}
+
+/* 锁定图标 */
+html[data-theme='creamy'] .tab-group-lock-icon {
+  color: var(--color-warning);
+}
+
+/* 时间显示 */
+html[data-theme='creamy'] .tab-group-time {
+  font-size: 0.75rem;
+  color: var(--color-text-muted);
+}
+
+/* 空状态图标 */
+html[data-theme='creamy'] .empty-state-default-icon {
+  color: var(--color-text-muted);
+}
+
+/* 滚动条 */
+html[data-theme='creamy'] ::-webkit-scrollbar {
+  width: 8px;
+}
+
+html[data-theme='creamy'] ::-webkit-scrollbar-track {
+  background: var(--color-bg-tertiary);
+  border-radius: 4px;
+}
+
+html[data-theme='creamy'] ::-webkit-scrollbar-thumb {
+  background: var(--color-border-strong);
+  border-radius: 4px;
+}
+
+html[data-theme='creamy'] ::-webkit-scrollbar-thumb:hover {
+  background: var(--color-accent);
+}
+
+/* 选中文本 */
+html[data-theme='creamy'] ::selection {
+  background-color: var(--color-accent-subtle);
+  color: var(--color-text-primary);
+}
+
+/* Focus 样式 */
+html[data-theme='creamy'] :focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
+}
+
+/* 单栏布局优化 */
+html[data-theme="creamy"] .single-column-layout .tab-group-card {
+  margin-bottom: 1rem;
+}
+
+html[data-theme="creamy"] .single-column-layout .tab-item {
+  padding: 10px 16px;
+}
+
+html[data-theme="creamy"] .single-column-layout .tab-item-url {
+  max-width: 350px;
+}

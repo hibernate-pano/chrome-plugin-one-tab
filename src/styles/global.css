@@ -2,6 +2,10 @@
 @import './themes/refined.css';
 @import './themes/aurora.css';
 @import './themes/legacy.css';
+@import './themes/cyberpunk.css';
+@import './themes/creamy.css';
+@import './themes/pink.css';
+@import './themes/mint.css';
 
 @tailwind base;
 @tailwind components;
