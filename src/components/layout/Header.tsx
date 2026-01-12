@@ -164,8 +164,8 @@ export const Header: React.FC<HeaderProps> = ({ onSearch }) => {
   ]);
 
   const getContainerWidthClass = () => {
-    // 搜索模式也跟随当前布局模式
-    return settings.layoutMode === 'double' ? 'layout-double-width' : 'layout-single-width';
+    // 统一使用相同宽度，单栏和双栏布局保持一致
+    return 'layout-double-width';
   };
 
   React.useEffect(() => {

@@ -1,7 +1,7 @@
 import React, { useState, useEffect, lazy, Suspense } from 'react';
 import { Header } from '@/components/layout/Header';
 import { TabList } from '@/components/tabs/TabList';
-import { useAppDispatch, useAppSelector } from '@/store/hooks';
+import { useAppDispatch } from '@/store/hooks';
 import { loadSettings } from '@/store/slices/settingsSlice';
 import { migrateToV2 } from '@/utils/migrationHelper';
 
@@ -25,7 +25,6 @@ export const MainApp: React.FC = () => {
   const dispatch = useAppDispatch();
   const [searchQuery, setSearchQuery] = useState('');
   const [showPerformanceTest, setShowPerformanceTest] = useState(false);
-  const layoutMode = useAppSelector(state => state.settings.layoutMode);
 
   // 加载用户设置
   useEffect(() => {
@@ -50,9 +49,9 @@ export const MainApp: React.FC = () => {
     setShowPerformanceTest(!showPerformanceTest);
   };
 
-  // 根据布局模式确定容器宽度类（搜索模式也跟随当前布局）
+  // 统一使用相同宽度，单栏和双栏布局保持一致
   const getContainerWidthClass = () => {
-    return layoutMode === 'double' ? 'layout-double-width' : 'layout-single-width';
+    return 'layout-double-width';
   };
 
   return (
