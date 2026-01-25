@@ -1,7 +1,5 @@
 import { storage } from '@/utils/storage';
-import { TabGroup, Tab } from '@/types/tab';
-import { nanoid } from '@reduxjs/toolkit';
-import { sanitizeFaviconUrl } from '@/utils/faviconUtils';
+import { createTabGroupFromChromeTabs, filterValidTabs } from '@/domain/tabGroup';
 
 /**
  * 统一的标签页管理器
@@ -61,54 +59,6 @@ export class TabManager {
   }
 
   /**
-   * 过滤有效的标签页
-   * 排除Chrome内部页面和扩展页面
-   */
-  private filterValidTabs(tabs: chrome.tabs.Tab[]): chrome.tabs.Tab[] {
-    return tabs.filter(tab => {
-      // 如果标签页有URL，则检查URL是否为内部页面
-      if (tab.url) {
-        return !tab.url.startsWith('chrome://') &&
-          !tab.url.startsWith('chrome-extension://') &&
-          !tab.url.startsWith('edge://') &&
-          !tab.url.startsWith('about:');
-      }
-      // 如果URL为空，但标题不为空，则保存该标签页（可能是正在加载的页面）
-      return tab.title && tab.title.trim() !== '';
-    });
-  }
-
-  /**
-   * 创建标签组
-   */
-  private async createTabGroup(tabs: chrome.tabs.Tab[]): Promise<TabGroup> {
-    const validTabs = this.filterValidTabs(tabs);
-    const now = new Date().toISOString();
-
-    // 转换为应用内的Tab格式
-    const formattedTabs: Tab[] = validTabs.map(tab => ({
-      id: nanoid(),
-      url: tab.url || 'about:blank',
-      title: tab.title || '未命名标签页',
-      favicon: sanitizeFaviconUrl(tab.favIconUrl),
-      createdAt: now,
-      lastAccessed: now,
-    }));
-
-    // 创建标签组
-    const tabGroup: TabGroup = {
-      id: nanoid(),
-      name: `标签组 ${new Date().toLocaleString()}`,
-      tabs: formattedTabs,
-      createdAt: now,
-      updatedAt: now,
-      isLocked: false,
-    };
-
-    return tabGroup;
-  }
-
-  /**
    * 保存所有标签页
    */
   async saveAllTabs(inputTabs?: chrome.tabs.Tab[]): Promise<void> {
@@ -136,7 +86,7 @@ export class TabManager {
       console.log(`查询到 ${tabs!.length} 个标签页`);
 
       // 创建标签组
-      const tabGroup = await this.createTabGroup(tabs!);
+      const tabGroup = createTabGroupFromChromeTabs(tabs!);
 
       if (tabGroup.tabs.length === 0) {
         console.log('没有有效的标签页需要保存');
@@ -168,7 +118,7 @@ export class TabManager {
       this.notifyTabManagerRefresh();
 
       // 关闭已保存的标签页（排除扩展页面）
-      const tabsToClose = this.filterValidTabs(tabs!);
+      const tabsToClose = filterValidTabs(tabs!);
       const tabIdsToClose = tabsToClose
         .map(tab => tab.id)
         .filter((id): id is number => id !== undefined);
@@ -214,7 +164,7 @@ export class TabManager {
 
     try {
       // 创建包含单个标签的标签组
-      const tabGroup = await this.createTabGroup([tab]);
+      const tabGroup = createTabGroupFromChromeTabs([tab]);
 
       if (tabGroup.tabs.length === 0) {
         console.log('没有有效的标签页需要保存');

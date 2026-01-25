@@ -3,7 +3,8 @@
  * 用于检查云端是否有数据
  */
 
-import { sync as supabaseSync, supabase } from './supabase';
+import { supabase } from './supabase';
+import { downloadTabGroups } from '@/services/tabGroupSyncService';
 
 /**
  * 检查云端是否有数据
@@ -21,7 +22,7 @@ export const checkCloudData = async (): Promise<boolean> => {
     }
 
     // 从云端获取标签组数据
-    const cloudGroups = await supabaseSync.downloadTabGroups();
+    const cloudGroups = await downloadTabGroups();
 
     // 如果云端有标签组数据，返回true
     return Array.isArray(cloudGroups) && cloudGroups.length > 0;

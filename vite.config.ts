@@ -39,9 +39,10 @@ export default defineConfig(({ mode }) => {
             const manifestPath = resolve(__dirname, 'dist/manifest.json');
             const manifestContent = JSON.parse(readFileSync(manifestPath, 'utf-8'));
             
-            // 恢复 background 配置
+            // 恢复 background 配置（模块化 service worker）
             manifestContent.background = {
-              service_worker: 'service-worker.js'
+              service_worker: 'service-worker.js',
+              type: 'module'
             };
             
             writeFileSync(manifestPath, JSON.stringify(manifestContent, null, 2));
@@ -68,9 +69,12 @@ export default defineConfig(({ mode }) => {
         input: {
           'src/popup/index': resolve(__dirname, 'src/popup/index.html'),
           'popup': resolve(__dirname, 'popup.html'),
-          'confirm': resolve(__dirname, 'src/auth/confirm.html')
+          'confirm': resolve(__dirname, 'src/auth/confirm.html'),
+          'service-worker': resolve(__dirname, 'src/service-worker.ts')
         },
         output: {
+          entryFileNames: (chunk) =>
+            chunk.name === 'service-worker' ? 'service-worker.js' : '[name]-[hash].js',
           // 手动配置代码分块策略
           manualChunks: (id) => {
             // React 相关库打包到一起

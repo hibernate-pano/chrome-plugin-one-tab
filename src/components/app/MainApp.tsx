@@ -3,7 +3,6 @@ import { Header } from '@/components/layout/Header';
 import { TabList } from '@/components/tabs/TabList';
 import { useAppDispatch } from '@/store/hooks';
 import { loadSettings } from '@/store/slices/settingsSlice';
-import { migrateToV2 } from '@/utils/migrationHelper';
 
 // 使用动态导入懒加载拖放功能
 const DndProvider = lazy(() =>
@@ -30,19 +29,6 @@ export const MainApp: React.FC = () => {
   useEffect(() => {
     dispatch(loadSettings());
   }, [dispatch]);
-
-  // 执行数据迁移（仅在应用启动时执行一次）
-  useEffect(() => {
-    const runMigration = async () => {
-      try {
-        await migrateToV2();
-      } catch (error) {
-        console.error('数据迁移失败:', error);
-      }
-    };
-
-    runMigration();
-  }, []); // 空依赖数组确保只执行一次
 
   // 切换性能测试页面
   const togglePerformanceTest = () => {

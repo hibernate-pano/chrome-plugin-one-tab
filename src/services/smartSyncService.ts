@@ -2,7 +2,7 @@ import { store } from '@/store';
 import { syncTabsToCloud, syncTabsFromCloud } from '@/store/slices/tabSlice';
 import { syncSettingsToCloud, syncSettingsFromCloud } from '@/store/slices/settingsSlice';
 import { getCurrentUser } from '@/store/slices/authSlice';
-import { sync as supabaseSync } from '@/utils/supabase';
+import { downloadTabGroups } from '@/services/tabGroupSyncService';
 import { storage } from '@/utils/storage';
 import { errorHandler } from '@/utils/errorHandler';
 
@@ -37,7 +37,7 @@ class SmartSyncService {
   // 检查云端是否有数据
   async hasCloudData() {
     try {
-      const cloudGroups = await supabaseSync.downloadTabGroups();
+      const cloudGroups = await downloadTabGroups();
       return cloudGroups.length > 0;
     } catch (error) {
       errorHandler.handle(error as Error, {

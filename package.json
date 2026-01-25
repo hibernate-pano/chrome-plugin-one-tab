@@ -1,12 +1,12 @@
 {
   "name": "chrome-plugin-one-tab",
-  "version": "1.11.1",
+  "version": "1.11.2",
   "description": "一个高效的Chrome标签页管理扩展",
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc && vite build && cp src/service-worker.js dist/service-worker.js",
-    "build:dev": "tsc && vite build && cp src/service-worker.js dist/service-worker.js",
+    "build": "tsc && vite build",
+    "build:dev": "tsc && vite build",
     "package": "pnpm build && node package-extension.js",
     "preview": "vite preview",
     "lint": "eslint src --ext ts,tsx --report-unused-disable-directives --max-warnings 0",

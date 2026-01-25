@@ -1,7 +1,7 @@
 import { createSlice, createAsyncThunk, PayloadAction } from '@reduxjs/toolkit';
 import { UserSettings, LayoutMode, ThemeStyle } from '@/types/tab';
 import { storage, DEFAULT_SETTINGS as defaultSettings, validateThemeStyle, validateThemeMode } from '@/utils/storage';
-import { sync as supabaseSync } from '@/utils/supabase';
+import { downloadSettings, uploadSettings } from '@/services/settingsSyncService';
 
 // 更新默认设置
 const updatedDefaultSettings = {
@@ -38,7 +38,7 @@ export const syncSettingsToCloud = createAsyncThunk<UserSettings, void, { state:
       return settings;
     }
 
-    await supabaseSync.uploadSettings(settings);
+    await uploadSettings(settings);
     return settings;
   }
 );
@@ -55,7 +55,7 @@ export const syncSettingsFromCloud = createAsyncThunk<UserSettings | null, void,
       return settings;
     }
 
-    const cloudSettings = await supabaseSync.downloadSettings();
+    const cloudSettings = await downloadSettings();
     if (cloudSettings) {
       // 将 Record<string, any> 转换为 UserSettings，并验证主题相关设置
       const convertedSettings: UserSettings = {

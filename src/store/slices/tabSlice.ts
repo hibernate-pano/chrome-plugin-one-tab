@@ -1,9 +1,8 @@
 import { createSlice, createAsyncThunk, createSelector } from '@reduxjs/toolkit';
 import { TabState, TabGroup, UserSettings } from '@/types/tab';
 import { storage } from '@/utils/storage';
-import { sync as supabaseSync } from '@/utils/supabase';
+import { downloadTabsFromCloudFlow, uploadTabsToCloudFlow } from '@/services/tabSyncWorkflow';
 import { nanoid } from '@reduxjs/toolkit';
-import { mergeTabGroups } from '@/utils/syncUtils';
 import { shouldAutoDeleteAfterTabRemoval } from '@/utils/tabGroupUtils';
 import { updateGroupWithVersion, updateDisplayOrder } from '@/utils/versionHelper';
 
@@ -170,118 +169,14 @@ export const syncTabsToCloud = createAsyncThunk<
       tabs: TabState;
       settings: UserSettings;
     };
-
-    if (!auth.isAuthenticated) {
-      console.log('用户未登录，无法同步数据到云端');
-      return {
-        syncTime: new Date().toISOString(),
-        stats: null,
-      };
-    }
-
-    // 记录同步模式和覆盖模式
-    console.log(
-      `开始${background ? '后台' : ''}同步标签组到云端${overwriteCloud ? '（覆盖模式）' : '（合并模式）'}...`
-    );
-
-    // 设置初始进度和操作类型
-    if (!background) {
-      dispatch(updateSyncProgress({ progress: 0, operation: 'upload' }));
-    }
-
-    // 检查是否有标签组需要同步
-    if (!tabs.groups || tabs.groups.length === 0) {
-      console.log('没有标签组需要同步');
-      if (!background) {
-        dispatch(updateSyncProgress({ progress: 100, operation: 'none' }));
-      }
-      return {
-        syncTime: tabs.lastSyncTime || new Date().toISOString(),
-        stats: tabs.compressionStats,
-      };
-    }
-
-    // 获取需要同步的标签组
-    // 直接同步所有标签组，不再考虑已删除的标签组
-    const groupsToSync = tabs.groups;
-
-    if (groupsToSync.length === 0) {
-      console.log('没有需要同步的标签组');
-      if (!background) {
-        dispatch(updateSyncProgress({ progress: 100, operation: 'none' }));
-      }
-      return {
-        syncTime: tabs.lastSyncTime || new Date().toISOString(),
-        stats: tabs.compressionStats,
-      };
-    }
-
-    console.log(`将同步 ${groupsToSync.length} 个标签组到云端`);
-
-    // 更新进度到 20%
-    if (!background) {
-      dispatch(updateSyncProgress({ progress: 20, operation: 'upload' }));
-    }
-
-    // 确保所有标签组都有必要的字段
-    const currentTime = new Date().toISOString();
-    const validGroups = groupsToSync.map(group => ({
-      ...group,
-      createdAt: group.createdAt || currentTime,
-      updatedAt: group.updatedAt || currentTime,
-      isLocked: typeof group.isLocked === 'boolean' ? group.isLocked : false,
-      lastSyncedAt: currentTime, // 更新同步时间
-      tabs: group.tabs.map(tab => ({
-        ...tab,
-        createdAt: tab.createdAt || currentTime,
-        lastAccessed: tab.lastAccessed || currentTime,
-        lastSyncedAt: currentTime, // 更新同步时间
-      })),
-    }));
-
-    // 更新进度到 50%
-    if (!background) {
-      dispatch(updateSyncProgress({ progress: 50, operation: 'upload' }));
-    }
-
-    // 上传标签组，传递覆盖模式参数
-    await supabaseSync.uploadTabGroups(validGroups, overwriteCloud);
-
-    // 更新进度到 70%
-    if (!background) {
-      dispatch(updateSyncProgress({ progress: 70, operation: 'upload' }));
-    }
-
-    // 更新本地标签组的同步状态
-    const updatedGroups = tabs.groups.map(group => {
-      const syncedGroup = validGroups.find(g => g.id === group.id && !g.isDeleted);
-      if (syncedGroup) {
-        return {
-          ...group,
-          lastSyncedAt: currentTime,
-          syncStatus: 'synced' as const,
-        };
-      }
-      return group;
+    return await uploadTabsToCloudFlow({
+      auth,
+      tabsState: tabs,
+      background,
+      overwriteCloud,
+      reportProgress: (progress, operation) =>
+        dispatch(updateSyncProgress({ progress, operation })),
     });
-
-    // 保存更新后的标签组
-    await storage.setGroups(updatedGroups as TabGroup[]);
-
-    // 更新最后同步时间
-    await storage.setLastSyncTime(currentTime);
-
-    // 更新进度到 100%
-    if (!background) {
-      dispatch(updateSyncProgress({ progress: 100, operation: 'none' }));
-    }
-
-    // 不再需要处理已删除的数据
-
-    return {
-      syncTime: currentTime,
-      stats: null,
-    };
   } catch (error) {
     console.error('同步标签组到云端失败:', error);
     throw error;
@@ -289,7 +184,11 @@ export const syncTabsToCloud = createAsyncThunk<
 });
 
 // 新增：从云端同步标签组
-export const syncTabsFromCloud = createAsyncThunk(
+export const syncTabsFromCloud = createAsyncThunk<
+  { groups: TabGroup[]; syncTime: string; stats: any | null },
+  { background?: boolean; forceRemoteStrategy?: boolean } | void,
+  { state: any }
+>(
   'tabs/syncTabsFromCloud',
   async (
     options: { background?: boolean; forceRemoteStrategy?: boolean } | void,
@@ -309,142 +208,15 @@ export const syncTabsFromCloud = createAsyncThunk(
         settings: UserSettings;
       };
 
-      if (!auth.isAuthenticated) {
-        console.log('用户未登录，无法从云端同步数据');
-        return {
-          groups: tabs.groups,
-          syncTime: new Date().toISOString(),
-          stats: null,
-        };
-      }
-
-      // 记录同步模式
-      // 开始同步
-
-      // 设置初始进度和操作类型
-      if (!background) {
-        dispatch(updateSyncProgress({ progress: 0, operation: 'download' }));
-      }
-
-      // 获取云端数据
-      const result = await supabaseSync.downloadTabGroups();
-
-      // 更新进度到 30%
-      if (!background) {
-        dispatch(updateSyncProgress({ progress: 30, operation: 'download' }));
-      }
-
-      // 处理返回结果
-      const cloudGroups = result as TabGroup[];
-
-      // 获取本地数据
-      let localGroups = tabs.groups;
-
-      // 增强日志输出，显示更详细的信息
-      console.log('云端标签组数量:', cloudGroups.length);
-      console.log('本地标签组数量:', localGroups.length);
-
-      // 如果是覆盖模式，则清空本地数据
-      if (forceRemoteStrategy) {
-        console.log('覆盖模式: 清空本地数据，只使用云端数据');
-        localGroups = [];
-      }
-
-      // 详细记录每个云端标签组的信息
-      console.log('云端标签组详情:');
-      let totalCloudTabs = 0;
-      cloudGroups.forEach((group, index) => {
-        const tabCount = group.tabs.length;
-        totalCloudTabs += tabCount;
-        console.log(
-          `[${index + 1}/${cloudGroups.length}] ID: ${group.id}, 名称: "${group.name}", 标签数: ${tabCount}, 更新时间: ${group.updatedAt}`
-        );
-
-        // 详细记录每个云端标签组中的标签
-        group.tabs.forEach((tab, tabIndex) => {
-          console.log(
-            `  - 云端标签 [${tabIndex + 1}/${tabCount}]: ID=${tab.id}, 标题="${tab.title}", URL=${tab.url}`
-          );
-        });
+      return await downloadTabsFromCloudFlow({
+        auth,
+        tabsState: tabs,
+        settings,
+        background,
+        forceRemoteStrategy,
+        reportProgress: (progress, operation) =>
+          dispatch(updateSyncProgress({ progress, operation })),
       });
-      console.log(`云端总标签数: ${totalCloudTabs}`);
-
-      // 详细记录每个本地标签组的信息
-      console.log('本地标签组详情:');
-      let totalLocalTabs = 0;
-      localGroups.forEach((group, index) => {
-        const tabCount = group.tabs.length;
-        totalLocalTabs += tabCount;
-        console.log(
-          `[${index + 1}/${localGroups.length}] ID: ${group.id}, 名称: "${group.name}", 标签数: ${tabCount}, 更新时间: ${group.updatedAt}`
-        );
-      });
-      console.log(`本地总标签数: ${totalLocalTabs}`);
-
-      // 更新进度到 50%
-      if (!background) {
-        dispatch(updateSyncProgress({ progress: 50, operation: 'download' }));
-      }
-
-      // 获取当前时间，移动到这里以避免引用错误
-      const currentTime = new Date().toISOString();
-
-      let mergedGroups;
-
-      // 如果是覆盖模式，直接使用云端数据，不进行合并
-      if (forceRemoteStrategy) {
-        // 使用覆盖模式
-        // 直接使用云端数据，但需要确保格式正确
-        mergedGroups = cloudGroups.map(group => ({
-          ...group,
-          syncStatus: 'synced' as const,
-          lastSyncedAt: currentTime,
-        }));
-      } else {
-        // 使用智能合并策略
-        // 使用合并模式
-        const syncStrategy = settings.syncStrategy;
-        mergedGroups = mergeTabGroups(localGroups, cloudGroups, syncStrategy);
-      }
-
-      // 合并完成
-
-      // 更新进度到 70%
-      if (!background) {
-        dispatch(updateSyncProgress({ progress: 70, operation: 'download' }));
-      }
-
-      // 合并完成，继续处理
-
-      // 保存到本地存储
-      await storage.setGroups(mergedGroups);
-
-      // 更新进度到 90%
-      if (!background) {
-        dispatch(updateSyncProgress({ progress: 90, operation: 'download' }));
-      }
-
-      // 更新最后同步时间
-      await storage.setLastSyncTime(currentTime);
-
-      // 检查是否有冲突需要用户解决
-      const hasConflicts = mergedGroups.some(group => group.syncStatus === 'conflict');
-
-      if (hasConflicts && settings.syncStrategy === 'ask') {
-        console.log('检测到数据冲突，需要用户解决');
-        // 在这里可以触发一个通知或弹窗，提示用户解决冲突
-      }
-
-      // 更新进度到 100%
-      if (!background) {
-        dispatch(updateSyncProgress({ progress: 100, operation: 'none' }));
-      }
-
-      return {
-        groups: mergedGroups,
-        syncTime: currentTime,
-        stats: null,
-      };
     } catch (error) {
       console.error('从云端同步标签组失败:', error);
       throw error;
