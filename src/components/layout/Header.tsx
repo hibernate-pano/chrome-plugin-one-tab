@@ -4,6 +4,7 @@ import {
   toggleLayoutMode,
   saveSettings,
   setReorderMode,
+  updateSettings,
 } from '@/store/slices/settingsSlice';
 import { cleanDuplicateTabs } from '@/store/slices/tabSlice';
 import { HeaderDropdown } from './HeaderDropdown';
@@ -135,13 +136,14 @@ export const Header: React.FC<HeaderProps> = ({ onSearch }) => {
         nextLayoutMode = 'single';
     }
 
-    dispatch(
-      saveSettings({
-        ...settings,
-        layoutMode: nextLayoutMode,
-        reorderMode: false,
-      })
-    );
+    // 先更新 Redux state
+    dispatch(updateSettings({
+      layoutMode: nextLayoutMode,
+      reorderMode: false,
+    }));
+    
+    // 然后保存到存储
+    dispatch(saveSettings() as any);
   };
 
   const handleSaveAllTabs = async () => {
@@ -183,13 +185,11 @@ export const Header: React.FC<HeaderProps> = ({ onSearch }) => {
   const handleResetToDefaultView = () => {
     clearSearch();
     if (settings.reorderMode) {
+      // 先更新 Redux state
       dispatch(setReorderMode(false));
-      dispatch(
-        saveSettings({
-          ...settings,
-          reorderMode: false,
-        })
-      );
+      
+      // 然后保存到存储
+      dispatch(saveSettings() as any);
     }
   };
 

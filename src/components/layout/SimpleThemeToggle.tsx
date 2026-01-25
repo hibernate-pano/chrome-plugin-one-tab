@@ -1,7 +1,5 @@
 import React from 'react';
 import { useTheme } from '@/contexts/ThemeContext';
-import { useAppDispatch, useAppSelector } from '@/store/hooks';
-import { saveSettings } from '@/store/slices/settingsSlice';
 import { Tooltip } from '@/components/common/Tooltip';
 
 // 太阳图标
@@ -19,21 +17,12 @@ const MoonIcon = () => (
 );
 
 export const SimpleThemeToggle: React.FC = () => {
-  const dispatch = useAppDispatch();
   const { themeMode, setThemeMode } = useTheme();
-  const settings = useAppSelector(state => state.settings);
 
   const toggleTheme = () => {
     const newMode = themeMode === 'light' ? 'dark' : 'light';
     setThemeMode(newMode);
-
-    dispatch(saveSettings({ ...settings, themeMode: newMode }))
-      .then(() => {
-        console.log('主题设置已保存:', newMode);
-      })
-      .catch(error => {
-        console.error('保存主题设置失败:', error);
-      });
+    // setThemeMode 内部已经处理了保存，不需要再次调用 saveSettings
   };
 
   return (

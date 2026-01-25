@@ -17,9 +17,10 @@ export const loadSettings = createAsyncThunk('settings/loadSettings', async () =
   return await storage.getSettings();
 });
 
-export const saveSettings = createAsyncThunk(
+export const saveSettings = createAsyncThunk<UserSettings, void, { state: { settings: UserSettings } }>(
   'settings/saveSettings',
-  async (settings: UserSettings) => {
+  async (_, { getState }) => {
+    const { settings } = getState();
     await storage.setSettings(settings);
     return settings;
   }

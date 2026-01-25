@@ -31,19 +31,15 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({ onClose }) => {
   // 处理通知开关
   const handleToggleNotifications = async () => {
     dispatch(toggleShowNotifications());
-    await dispatch(saveSettings({
-      ...settings,
-      showNotifications: !settings.showNotifications
-    }));
+    // toggleShowNotifications 已经更新了 Redux state，现在保存到存储
+    await dispatch(saveSettings() as any);
   };
 
   // 处理删除确认开关
   const handleToggleConfirmDelete = async () => {
     dispatch(toggleConfirmBeforeDelete());
-    await dispatch(saveSettings({
-      ...settings,
-      confirmBeforeDelete: !settings.confirmBeforeDelete
-    }));
+    // toggleConfirmBeforeDelete 已经更新了 Redux state，现在保存到存储
+    await dispatch(saveSettings() as any);
   };
 
   // 处理快速刷新（从云端下载并合并）
