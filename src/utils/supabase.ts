@@ -860,6 +860,7 @@ export const sync = {
       'syncStrategy',          // -> sync_strategy
       'deleteStrategy',        // -> delete_strategy
       'themeMode',             // -> theme_mode
+      'themeStyle',            // -> theme_style
       // 'reorderMode'            // -> reorder_mode (数据库中暂无此列，已注释)
     ];
 
@@ -975,6 +976,7 @@ export const sync = {
         'sync_strategy': 'syncStrategy',
         'delete_strategy': 'deleteStrategy',
         'theme_mode': 'themeMode',
+        'theme_style': 'themeStyle',
         'reorder_mode': 'reorderMode',
         // 向后兼容性：如果云端还有旧的字段，也要处理
         'use_double_column_layout': 'useDoubleColumnLayout'

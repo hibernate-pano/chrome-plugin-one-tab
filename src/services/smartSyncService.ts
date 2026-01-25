@@ -145,7 +145,14 @@ class SmartSyncService {
     
     try {
       // 从云端下载数据
-      await store.dispatch(syncSettingsFromCloud());
+      if (overwriteLocal) {
+        // 覆盖模式：设置与标签全部以云端为主
+        await store.dispatch(syncSettingsFromCloud());
+      } else {
+        // 合并模式：仅合并标签数据，保留本地设置（含主题）
+        console.log('[ManualSync] 合并模式：跳过设置同步，保留本地配置');
+      }
+
       await store.dispatch(syncTabsFromCloud({ background, forceRemoteStrategy: overwriteLocal }));
       
       // 更新最后同步时间
