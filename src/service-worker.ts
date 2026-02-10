@@ -230,19 +230,39 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 
   try {
     switch (message.type) {
-      case 'OPEN_TAB':
-        if (message.data?.url) {
-          chrome.tabs.create({ url: message.data.url, active: false })
+      case 'OPEN_TAB': {
+        const data = message.data || {};
+        const singleUrl: string | undefined = data.url || data.tab?.url;
+        const pinned: boolean | undefined = data.pinned ?? data.tab?.pinned;
+
+        if (singleUrl) {
+          chrome.tabs.create({ url: singleUrl, active: false, pinned })
             .then(() => sendResponse({ success: true }))
             .catch(error => sendResponse({ success: false, error: error.message }));
           return true;
         }
         break;
+      }
 
-      case 'OPEN_TABS':
-        if (Array.isArray(message.data?.urls)) {
+      case 'OPEN_TABS': {
+        const data = message.data || {};
+
+        // 新格式：data.tabs = [{ url, pinned? }]
+        if (Array.isArray(data.tabs)) {
           Promise.all(
-            message.data.urls.map((url: string) =>
+            data.tabs.map((tab: { url: string; pinned?: boolean }) =>
+              chrome.tabs.create({ url: tab.url, active: false, pinned: tab.pinned })
+            )
+          )
+            .then(() => sendResponse({ success: true }))
+            .catch(error => sendResponse({ success: false, error: error.message }));
+          return true;
+        }
+
+        // 兼容旧格式：data.urls = string[]
+        if (Array.isArray(data.urls)) {
+          Promise.all(
+            data.urls.map((url: string) =>
               chrome.tabs.create({ url, active: false })
             )
           )
@@ -251,15 +271,25 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
           return true;
         }
         break;
+      }
 
       case 'SAVE_ALL_TABS':
         // 允许前端通过消息触发保存
         (async () => {
           try {
-            const tabs = await chrome.tabs.query({ currentWindow: true });
+            // 优先使用前端传来的标签页数据，避免时间差和状态不一致
+            const tabs = message.data?.tabs || await chrome.tabs.query({ currentWindow: true });
+            console.log('[Service Worker] SAVE_ALL_TABS 收到标签页:', tabs.length);
+            console.log('[Service Worker] 标签页详情:', tabs.map(t => ({
+              title: t.title,
+              pinned: t.pinned,
+              url: t.url
+            })));
+
             await tabManager.saveAllTabs(tabs);
             sendResponse({ success: true });
           } catch (e: any) {
+            console.error('[Service Worker] SAVE_ALL_TABS 失败:', e);
             sendResponse({ success: false, error: e?.message || '保存失败' });
           }
         })();

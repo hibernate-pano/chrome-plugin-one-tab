@@ -169,7 +169,7 @@ export const SortableTabGroup: React.FC<SortableTabGroupProps> = ({ group, index
 
     // Original handleOpenTab logic
     try {
-      chrome.tabs.create({ url: tab.url });
+      chrome.tabs.create({ url: tab.url, pinned: !!tab.pinned });
       // 使用工具函数检查是否应该自动删除标签组
       if (shouldAutoDeleteAfterTabRemoval(group, tab.id)) {
         setIsMarkedForDeletion(true); // Also mark for deletion here

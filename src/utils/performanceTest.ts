@@ -92,7 +92,8 @@ export function generateTestData(groupCount: number, tabsPerGroup: number) {
         favicon: `https://example.com/favicon-${j}.ico`,
         createdAt: new Date().toISOString(),
         lastAccessed: new Date().toISOString(),
-        lastSyncedAt: new Date().toISOString()
+        lastSyncedAt: new Date().toISOString(),
+        pinned: false,
       });
     }
     

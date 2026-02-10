@@ -87,8 +87,11 @@ export const SimpleDraggableTabGroup: React.FC<SimpleDraggableTabGroupProps> = (
       console.warn('Invalid group.tabs data:', group.tabs);
       return;
     }
-    // 收集所有标签页的 URL
-    const urls = group.tabs.map(tab => tab.url);
+    // 收集所有标签页的 URL 和 pinned 状态
+    const tabsPayload = group.tabs.map(tab => ({
+      url: tab.url,
+      pinned: !!tab.pinned,
+    }));
 
     // 如果标签组没有锁定，先在UI中删除标签组
     if (!group.isLocked) {
@@ -109,14 +112,14 @@ export const SimpleDraggableTabGroup: React.FC<SimpleDraggableTabGroupProps> = (
     setTimeout(() => {
       chrome.runtime.sendMessage({
         type: 'OPEN_TABS',
-        data: { urls }
+        data: { tabs: tabsPayload }
       });
     }, 50); // 小延迟确保 UI 先更新
   };
 
   const handleOpenTab = (tab: any) => {
-    // 打开标签页
-    chrome.tabs.create({ url: tab.url });
+    // 打开标签页（保留 pinned 状态）
+    chrome.tabs.create({ url: tab.url, pinned: !!tab.pinned });
 
     // 从标签组中删除该标签页
     const updatedTabs = group.tabs.filter(t => t.id !== tab.id);

@@ -5,6 +5,13 @@ import { updateGroup, deleteGroup } from '@/store/slices/tabSlice';
 import { shouldAutoDeleteAfterTabRemoval } from '@/utils/tabGroupUtils';
 import { SafeFavicon } from '@/components/common/SafeFavicon';
 
+// 钉住图标
+const PinIcon = () => (
+  <svg className="w-3 h-3 text-blue-500 ml-1" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+    <path strokeLinecap="round" strokeLinejoin="round" d="M5 5a2 2 0 012-2h10a2 2 0 012 2v16l-7-3.5L5 21V5z" />
+  </svg>
+);
+
 type SortType = 'time-desc' | 'time-asc' | 'domain-asc' | 'domain-desc';
 
 function getDomain(url: string) {
@@ -70,7 +77,14 @@ const ReorderView: React.FC = () => {
     // 打开标签页并删除原标签
     chrome.runtime.sendMessage({
       type: 'OPEN_TABS',
-      data: { urls: [tab.url] },
+      data: {
+        tabs: [
+          {
+            url: tab.url,
+            pinned: !!tab.pinned,
+          },
+        ],
+      },
     });
 
     // 删除标签
@@ -169,6 +183,7 @@ const ReorderView: React.FC = () => {
                         title={tab.title}
                       >
                         {tab.title}
+                        {tab.pinned && <PinIcon />}
                       </p>
                     </div>
                     <div className="flex items-center text-xs text-gray-500 dark:text-gray-400 mt-1">

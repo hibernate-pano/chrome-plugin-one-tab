@@ -85,8 +85,30 @@ export class TabManager {
 
       console.log(`查询到 ${tabs!.length} 个标签页`);
 
+      // 读取用户设置，决定是否收集固定标签页
+      const settings = await storage.getSettings();
+      const collectPinnedTabs = settings.collectPinnedTabs ?? false;
+      
+      // 调试日志
+      const pinnedCount = tabs!.filter(t => t.pinned).length;
+      console.log(`[DEBUG] collectPinnedTabs 设置: ${collectPinnedTabs}`);
+      console.log(`[DEBUG] 固定标签页数量: ${pinnedCount}`);
+      console.log(`[DEBUG] 所有标签页:`, tabs!.map(t => ({ 
+        title: t.title, 
+        pinned: t.pinned, 
+        url: t.url 
+      })));
+
       // 创建标签组
-      const tabGroup = createTabGroupFromChromeTabs(tabs!);
+      const tabGroup = createTabGroupFromChromeTabs(tabs!, {
+        includePinned: collectPinnedTabs,
+      });
+      
+      console.log(`[DEBUG] 创建的标签组包含 ${tabGroup.tabs.length} 个标签页`);
+      console.log(`[DEBUG] 标签组中的标签页:`, tabGroup.tabs.map(t => ({ 
+        title: t.title, 
+        pinned: t.pinned 
+      })));
 
       if (tabGroup.tabs.length === 0) {
         console.log('没有有效的标签页需要保存');
@@ -118,7 +140,10 @@ export class TabManager {
       this.notifyTabManagerRefresh();
 
       // 关闭已保存的标签页（排除扩展页面）
-      const tabsToClose = filterValidTabs(tabs!);
+      // 注意：如果用户选择不收集固定页，则固定标签页不会被关闭
+      const tabsToClose = filterValidTabs(tabs!, {
+        includePinned: collectPinnedTabs,
+      });
       const tabIdsToClose = tabsToClose
         .map(tab => tab.id)
         .filter((id): id is number => id !== undefined);
@@ -163,8 +188,19 @@ export class TabManager {
     }
 
     try {
+      const settings = await storage.getSettings();
+      const collectPinnedTabs = settings.collectPinnedTabs ?? false;
+
+      // 当用户选择不收集固定页时，固定标签页不保存也不关闭
+      if (!collectPinnedTabs && tab.pinned) {
+        console.log('当前为固定标签页，且设置为不收集固定页，跳过保存');
+        return;
+      }
+
       // 创建包含单个标签的标签组
-      const tabGroup = createTabGroupFromChromeTabs([tab]);
+      const tabGroup = createTabGroupFromChromeTabs([tab], {
+        includePinned: collectPinnedTabs,
+      });
 
       if (tabGroup.tabs.length === 0) {
         console.log('没有有效的标签页需要保存');

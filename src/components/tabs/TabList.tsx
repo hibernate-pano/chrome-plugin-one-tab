@@ -9,6 +9,7 @@ import { TabGroup as TabGroupType } from '@/types/tab';
 import { EmptyState } from '@/components/common/EmptyState';
 import { LoadingSpinner } from '@/components/common/LoadingSpinner';
 import { PersonalizedWelcome, QuickActionTips } from '@/components/common/PersonalizedWelcome';
+import { useEnhancedToast } from '@/utils/toastHelper';
 
 interface TabListProps {
   searchQuery: string;
@@ -21,6 +22,7 @@ export const TabList: React.FC<TabListProps> = ({ searchQuery }) => {
   const dispatch = useAppDispatch();
   const { groups, isLoading, error } = useAppSelector(state => state.tabs);
   const { layoutMode, reorderMode } = useAppSelector(state => state.settings);
+  const { showRestoreSuccess, showDeleteSuccess, showDeleteError } = useEnhancedToast();
   const [isRestoreAllModalOpen, setIsRestoreAllModalOpen] = useState(false);
   const [selectedGroup, setSelectedGroup] = useState<TabGroupType | null>(null);
 
@@ -118,8 +120,11 @@ export const TabList: React.FC<TabListProps> = ({ searchQuery }) => {
   const handleRestoreAll = () => {
     if (!selectedGroup) return;
 
-    // 收集所有标签页的 URL
-    const urls = selectedGroup.tabs.map(tab => tab.url);
+    // 收集所有标签页的 URL 和 pinned 状态
+    const tabsPayload = selectedGroup.tabs.map(tab => ({
+      url: tab.url,
+      pinned: !!tab.pinned,
+    }));
 
     // 如果标签组没有锁定，先在UI中删除标签组
     if (!selectedGroup.isLocked) {
@@ -128,12 +133,17 @@ export const TabList: React.FC<TabListProps> = ({ searchQuery }) => {
 
       // 然后异步完成存储操作
       dispatch(deleteGroup(selectedGroup.id))
+        .unwrap()
         .then(() => {
           console.log(`删除标签组: ${selectedGroup.id}`);
+          showDeleteSuccess(`已恢复标签组 "${selectedGroup.name}" 并删除原标签组`);
         })
         .catch(error => {
           console.error('删除标签组失败:', error);
+          showDeleteError(`恢复标签组失败: ${error.message || '未知错误'}`);
         });
+    } else {
+      showRestoreSuccess(selectedGroup.tabs.length);
     }
 
     // 关闭对话框
@@ -144,7 +154,7 @@ export const TabList: React.FC<TabListProps> = ({ searchQuery }) => {
     setTimeout(() => {
       chrome.runtime.sendMessage({
         type: 'OPEN_TABS',
-        data: { urls },
+        data: { tabs: tabsPayload },
       });
     }, 100); // 小延迟确保 UI 先更新
   };

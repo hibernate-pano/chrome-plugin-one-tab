@@ -1,0 +1,126 @@
+/* ==========================================
+   🎨 TabVault Pro 字体系统
+   Plus Jakarta Sans - 友好、现代、专业
+   ========================================== */
+
+/*
+ * 说明：
+ * Chrome 扩展的 CSP 策略不允许从外部 CDN 加载字体
+ * 因此使用系统字体栈作为主要方案，Plus Jakarta Sans 作为可选增强
+ *
+ * 如需本地化 Plus Jakarta Sans：
+ * 1. 从 Google Fonts 下载字体文件
+ * 2. 放置在 public/fonts/ 目录
+ * 3. 取消下方 @font-face 注释
+ */
+
+/*
+@font-face {
+  font-family: 'Plus Jakarta Sans';
+  font-style: normal;
+  font-weight: 300;
+  font-display: swap;
+  src: url('../fonts/PlusJakartaSans-Light.woff2') format('woff2');
+}
+
+@font-face {
+  font-family: 'Plus Jakarta Sans';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url('../fonts/PlusJakartaSans-Regular.woff2') format('woff2');
+}
+
+@font-face {
+  font-family: 'Plus Jakarta Sans';
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url('../fonts/PlusJakartaSans-Medium.woff2') format('woff2');
+}
+
+@font-face {
+  font-family: 'Plus Jakarta Sans';
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url('../fonts/PlusJakartaSans-SemiBold.woff2') format('woff2');
+}
+
+@font-face {
+  font-family: 'Plus Jakarta Sans';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url('../fonts/PlusJakartaSans-Bold.woff2') format('woff2');
+}
+*/
+
+/*
+ * 系统字体栈 - 优化的字体降级方案
+ * 在不同操作系统上提供最佳的原生字体体验
+ */
+:root {
+  --font-sans:
+    'Plus Jakarta Sans',           /* 如果本地化了字体文件 */
+    -apple-system,                  /* macOS Safari */
+    BlinkMacSystemFont,            /* macOS Chrome */
+    'Segoe UI',                    /* Windows */
+    'SF Pro Display',              /* macOS 系统字体 */
+    'Helvetica Neue',              /* macOS 备选 */
+    'Arial',                       /* 通用备选 */
+    'Noto Sans',                   /* Linux */
+    'Liberation Sans',             /* Linux 备选 */
+    sans-serif,                    /* 最终回退 */
+    'Apple Color Emoji',           /* Emoji 支持 */
+    'Segoe UI Emoji',
+    'Segoe UI Symbol';
+
+  --font-mono:
+    'SF Mono',                     /* macOS 等宽字体 */
+    'Cascadia Code',               /* Windows Terminal 字体 */
+    'Fira Code',                   /* 开发者友好字体 */
+    'Consolas',                    /* Windows */
+    'Monaco',                      /* macOS */
+    'Courier New',                 /* 通用备选 */
+    monospace;                     /* 最终回退 */
+}
+
+/*
+ * 字体平滑渲染优化
+ * 确保在所有浏览器和操作系统上获得最佳显示效果
+ */
+body {
+  font-family: var(--font-sans);
+
+  /* macOS/iOS 字体平滑 */
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+
+  /* 文本渲染优化 */
+  text-rendering: optimizeLegibility;
+
+  /* 字体特性设置（OpenType 特性） */
+  font-feature-settings:
+    "kern" 1,        /* 字距调整 */
+    "liga" 1,        /* 连字 */
+    "calt" 1;        /* 上下文替代 */
+}
+
+/* 等宽字体应用 */
+code,
+kbd,
+samp,
+pre {
+  font-family: var(--font-mono);
+}
+
+/* 数字等宽显示（适用于计数器、统计等） */
+.tabular-nums {
+  font-variant-numeric: tabular-nums;
+}
+
+/* 老式数字样式（更优雅的数字显示） */
+.oldstyle-nums {
+  font-variant-numeric: oldstyle-nums;
+}

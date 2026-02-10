@@ -10,6 +10,7 @@ import { useToast } from '@/contexts/ToastContext';
 import { 
   toggleShowNotifications, 
   toggleConfirmBeforeDelete,
+  toggleCollectPinnedTabs,
   saveSettings 
 } from '@/store/slices/settingsSlice';
 import { ThemeStyleSelector } from './ThemeStyleSelector';
@@ -40,6 +41,15 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({ onClose }) => {
     dispatch(toggleConfirmBeforeDelete());
     // toggleConfirmBeforeDelete 已经更新了 Redux state，现在保存到存储
     await dispatch(saveSettings() as any);
+  };
+
+  // 处理“收集固定页”开关
+  const handleToggleCollectPinnedTabs = async () => {
+    console.log('[DEBUG HeaderDropdown] 切换收集固定页开关，当前值:', settings.collectPinnedTabs);
+    dispatch(toggleCollectPinnedTabs());
+    console.log('[DEBUG HeaderDropdown] 准备保存设置到存储...');
+    await dispatch(saveSettings() as any);
+    console.log('[DEBUG HeaderDropdown] 设置已保存');
   };
 
   // 处理快速刷新（从云端下载并合并）
@@ -296,49 +306,81 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({ onClose }) => {
         {/* 设置区域 */}
         <div className="px-4 py-2">
           <p className="text-xs font-semibold text-gray-500 dark:text-gray-400 mb-2">设置</p>
-          
-          {/* 通知开关 */}
-          <div className="flex items-center justify-between py-2">
-            <div className="flex items-center">
-              <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 mr-2 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" />
-              </svg>
-              <span className="text-sm text-gray-700 dark:text-gray-300">通知提醒</span>
-            </div>
-            <button
-              onClick={handleToggleNotifications}
-              className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
-                settings.showNotifications ? 'bg-primary-600' : 'bg-gray-200 dark:bg-gray-600'
-              }`}
-            >
-              <span
-                className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
-                  settings.showNotifications ? 'translate-x-6' : 'translate-x-1'
+
+          {/* 通用设置分组 */}
+          <div className="mb-3">
+            <p className="text-xs text-gray-500 dark:text-gray-400 mb-2 px-1">通用设置</p>
+            
+            {/* 通知开关 */}
+            <div className="flex items-center justify-between py-2">
+              <div className="flex items-center">
+                <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 mr-2 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" />
+                </svg>
+                <span className="text-sm text-gray-700 dark:text-gray-300">通知提醒</span>
+              </div>
+              <button
+                onClick={handleToggleNotifications}
+                className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
+                  settings.showNotifications ? 'bg-primary-600' : 'bg-gray-200 dark:bg-gray-600'
                 }`}
-              />
-            </button>
+              >
+                <span
+                  className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                    settings.showNotifications ? 'translate-x-6' : 'translate-x-1'
+                  }`}
+                />
+              </button>
+            </div>
+
+            {/* 删除确认开关 */}
+            <div className="flex items-center justify-between py-2">
+              <div className="flex items-center">
+                <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 mr-2 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                </svg>
+                <span className="text-sm text-gray-700 dark:text-gray-300">删除前确认</span>
+              </div>
+              <button
+                onClick={handleToggleConfirmDelete}
+                className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
+                  settings.confirmBeforeDelete ? 'bg-primary-600' : 'bg-gray-200 dark:bg-gray-600'
+                }`}
+              >
+                <span
+                  className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                    settings.confirmBeforeDelete ? 'translate-x-6' : 'translate-x-1'
+                  }`}
+                />
+              </button>
+            </div>
           </div>
 
-          {/* 删除确认开关 */}
-          <div className="flex items-center justify-between py-2">
-            <div className="flex items-center">
-              <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 mr-2 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-              </svg>
-              <span className="text-sm text-gray-700 dark:text-gray-300">删除前确认</span>
-            </div>
-            <button
-              onClick={handleToggleConfirmDelete}
-              className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
-                settings.confirmBeforeDelete ? 'bg-primary-600' : 'bg-gray-200 dark:bg-gray-600'
-              }`}
-            >
-              <span
-                className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
-                  settings.confirmBeforeDelete ? 'translate-x-6' : 'translate-x-1'
+          {/* 标签页设置分组 */}
+          <div className="mb-3">
+            <p className="text-xs text-gray-500 dark:text-gray-400 mb-2 px-1">标签页设置</p>
+            
+            {/* 收集固定页开关 */}
+            <div className="flex items-center justify-between py-2">
+              <div className="flex items-center">
+                <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 mr-2 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3M5 11h14M5 19h14" />
+                </svg>
+                <span className="text-sm text-gray-700 dark:text-gray-300">收集固定页</span>
+              </div>
+              <button
+                onClick={handleToggleCollectPinnedTabs}
+                className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
+                  settings.collectPinnedTabs ? 'bg-primary-600' : 'bg-gray-200 dark:bg-gray-600'
                 }`}
-              />
-            </button>
+              >
+                <span
+                  className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                    settings.collectPinnedTabs ? 'translate-x-6' : 'translate-x-1'
+                  }`}
+                />
+              </button>
+            </div>
           </div>
         </div>
 

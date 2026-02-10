@@ -2,6 +2,13 @@ import { TabGroup, UserSettings, Tab, LayoutMode, ThemeStyle } from '@/types/tab
 import { parseOneTabFormat, formatToOneTabFormat } from './oneTabFormatParser';
 import { secureStorage } from './secureStorage';
 import { kvGet, kvSet, kvRemove } from '@/storage/storageAdapter';
+import { cacheManager, cachedAsyncFn, debounceAsync } from './performance';
+
+// 缓存 TTL 配置常量
+export const CACHE_TTL = {
+  GROUPS: 30 * 1000,    // 30秒
+  SETTINGS: 60 * 1000,  // 60秒
+} as const;
 
 const STORAGE_KEYS = {
   VERSION: 'storage_version',
@@ -70,6 +77,8 @@ export const DEFAULT_SETTINGS: UserSettings = {
   deleteStrategy: 'everywhere', // 默认在所有设备上删除
   themeMode: 'auto', // 默认使用自动模式（跟随系统）
   themeStyle: 'legacy', // 默认使用原始主题
+  // 默认不收集固定标签页（更保守）
+  collectPinnedTabs: false,
 };
 
 // 兼容历史字段
@@ -96,84 +105,140 @@ class ChromeStorage {
 
   async getGroups(): Promise<TabGroup[]> {
     try {
-      await this.ensureVersion();
-      const groups = await kvGet<unknown>(STORAGE_KEYS.GROUPS);
-      return Array.isArray(groups) ? (groups as TabGroup[]) : [];
+      return await cachedAsyncFn('storage', 'groups', async () => {
+        await this.ensureVersion();
+        const groups = await kvGet<unknown>(STORAGE_KEYS.GROUPS);
+        return Array.isArray(groups) ? (groups as TabGroup[]) : [];
+      }, CACHE_TTL.GROUPS);
     } catch (error) {
       console.error('获取标签组失败:', error);
       return [];
     }
   }
 
+  /**
+   * 防抖批量写入 groups（可 await）
+   * - 窗口期内多次 setGroups 会合并为一次落盘（使用最后一次 groups）
+   * - 但每次调用都可以 await，保证返回时已真正写入
+   */
+  private debouncedPersistGroups = debounceAsync(async (groups: TabGroup[]) => {
+    await this.ensureVersion();
+    await kvSet(STORAGE_KEYS.GROUPS, groups);
+
+    // 落盘后刷新缓存 TTL（即便之前已 optimistic 更新）
+    const cache = cacheManager.getCache('storage');
+    cache.set('groups', groups, CACHE_TTL.GROUPS);
+  }, 500);
+
   async setGroups(groups: TabGroup[]): Promise<void> {
+    const cache = cacheManager.getCache('storage');
+    
     try {
-      await this.ensureVersion();
-      await kvSet(STORAGE_KEYS.GROUPS, groups);
+      // optimistic：立刻更新缓存，保证后续读取一致
+      // 注意：在防抖窗口期内，缓存会被多次更新，但最终只有最后一次会持久化
+      cache.set('groups', groups, CACHE_TTL.GROUPS);
+
+      // 强一致：等待最终一次落盘完成
+      await this.debouncedPersistGroups(groups);
     } catch (error) {
       console.error('保存标签组失败:', error);
+      // 清除可能不一致的缓存
+      cache.delete('groups');
+      throw error;
     }
   }
 
   async getSettings(): Promise<UserSettings> {
     try {
-      await this.ensureVersion();
-      const rawSettings = (await kvGet<LegacySettings | unknown>(STORAGE_KEYS.SETTINGS)) || {};
-      const normalizedSettings =
-        rawSettings && typeof rawSettings === 'object' ? (rawSettings as LegacySettings) : {};
+      return await cachedAsyncFn('storage', 'settings', async () => {
+        await this.ensureVersion();
+        const rawSettings = (await kvGet<LegacySettings | unknown>(STORAGE_KEYS.SETTINGS)) || {};
+        const normalizedSettings =
+          rawSettings && typeof rawSettings === 'object' ? (rawSettings as LegacySettings) : {};
 
-      // 向后兼容性处理：将旧的useDoubleColumnLayout转换为新的layoutMode
-      if (
-        'useDoubleColumnLayout' in normalizedSettings &&
-        normalizedSettings.useDoubleColumnLayout !== undefined &&
-        normalizedSettings.layoutMode === undefined
-      ) {
-        normalizedSettings.layoutMode = normalizedSettings.useDoubleColumnLayout ? 'double' : 'single';
-        delete normalizedSettings.useDoubleColumnLayout;
-        await this.setSettings({ ...DEFAULT_SETTINGS, ...normalizedSettings });
-      }
+        // 向后兼容性处理：将旧的useDoubleColumnLayout转换为新的layoutMode
+        if (
+          'useDoubleColumnLayout' in normalizedSettings &&
+          normalizedSettings.useDoubleColumnLayout !== undefined &&
+          normalizedSettings.layoutMode === undefined
+        ) {
+          normalizedSettings.layoutMode = normalizedSettings.useDoubleColumnLayout ? 'double' : 'single';
+          delete normalizedSettings.useDoubleColumnLayout;
+          await this.setSettings({ ...DEFAULT_SETTINGS, ...normalizedSettings });
+        }
 
-      // 验证并修正主题相关设置
-      const validatedThemeStyle = validateThemeStyle(normalizedSettings.themeStyle);
-      const validatedThemeMode = validateThemeMode(normalizedSettings.themeMode);
+        // 验证并修正主题相关设置
+        const validatedThemeStyle = validateThemeStyle(normalizedSettings.themeStyle);
+        const validatedThemeMode = validateThemeMode(normalizedSettings.themeMode);
 
-      // 如果验证后的值与原值不同，说明存储中有无效值，需要更新
-      const needsUpdate = 
-        normalizedSettings.themeStyle !== validatedThemeStyle ||
-        normalizedSettings.themeMode !== validatedThemeMode;
+        // 如果验证后的值与原值不同，说明存储中有无效值，需要更新
+        const needsUpdate =
+          normalizedSettings.themeStyle !== validatedThemeStyle ||
+          normalizedSettings.themeMode !== validatedThemeMode;
 
-      const mergedSettings: UserSettings = {
-        ...DEFAULT_SETTINGS,
-        ...normalizedSettings,
-        themeStyle: validatedThemeStyle,
-        themeMode: validatedThemeMode,
-      };
+        const mergedSettings: UserSettings = {
+          ...DEFAULT_SETTINGS,
+          ...normalizedSettings,
+          themeStyle: validatedThemeStyle,
+          themeMode: validatedThemeMode,
+        };
 
-      // 如果有无效值被修正，保存修正后的设置
-      if (needsUpdate) {
-        await this.setSettings(mergedSettings);
-      }
+        // 如果有无效值被修正，保存修正后的设置
+        if (needsUpdate) {
+          await this.setSettings(mergedSettings);
+        }
 
-      return mergedSettings;
+        return mergedSettings;
+      }, CACHE_TTL.SETTINGS);
     } catch (error) {
       console.error('获取设置失败:', error);
       return DEFAULT_SETTINGS;
     }
   }
 
+  /**
+   * 防抖批量写入 settings（可 await）
+   * - 窗口期内多次 setSettings 会合并为一次落盘（使用最后一次 settings）
+   * - 每次调用都可以 await，保证返回时已真正写入
+   */
+  private debouncedPersistSettings = debounceAsync(async (settings: UserSettings) => {
+    await this.ensureVersion();
+
+    // 验证主题相关设置，确保保存的值是有效的
+    const validatedSettings: UserSettings = {
+      ...settings,
+      themeStyle: validateThemeStyle(settings.themeStyle),
+      themeMode: validateThemeMode(settings.themeMode),
+    };
+
+    await kvSet(STORAGE_KEYS.SETTINGS, validatedSettings);
+
+    // 落盘后刷新缓存 TTL（即便之前已 optimistic 更新）
+    const cache = cacheManager.getCache('storage');
+    cache.set('settings', validatedSettings, CACHE_TTL.SETTINGS);
+  }, 500);
+
   async setSettings(settings: UserSettings): Promise<void> {
+    const validatedSettings: UserSettings = {
+      ...settings,
+      themeStyle: validateThemeStyle(settings.themeStyle),
+      themeMode: validateThemeMode(settings.themeMode),
+    };
+
+    const cache = cacheManager.getCache('storage');
+
     try {
-      await this.ensureVersion();
-      
-      // 验证主题相关设置，确保保存的值是有效的
-      const validatedSettings: UserSettings = {
-        ...settings,
-        themeStyle: validateThemeStyle(settings.themeStyle),
-        themeMode: validateThemeMode(settings.themeMode),
-      };
-      
-      await kvSet(STORAGE_KEYS.SETTINGS, validatedSettings);
+      // optimistic：立刻更新缓存，保证后续读取一致
+      // 注意：在防抖窗口期内，缓存会被多次更新，但最终只有最后一次会持久化
+      cache.set('settings', validatedSettings, CACHE_TTL.SETTINGS);
+
+      // 强一致：等待最终一次落盘完成
+      await this.debouncedPersistSettings(validatedSettings);
     } catch (error) {
       console.error('保存设置失败:', error);
+      // 清除可能不一致的缓存
+      cache.delete('settings');
+      throw error;
     }
   }
 

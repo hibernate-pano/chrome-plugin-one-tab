@@ -407,7 +407,8 @@ export const sync = {
         title: tab.title,
         favicon: tab.favicon,
         created_at: tab.createdAt,
-        last_accessed: tab.lastAccessed
+        last_accessed: tab.lastAccessed,
+        pinned: tab.pinned,
       }));
 
       // 准备返回对象
@@ -752,7 +753,8 @@ export const sync = {
           favicon: tab.favicon,
           createdAt: tab.created_at,
           lastAccessed: tab.last_accessed,
-          group_id: String(groupAny.id)
+          group_id: String(groupAny.id),
+          pinned: tab.pinned ?? false,
         }));
 
         tabGroups.push({
@@ -782,7 +784,8 @@ export const sync = {
                 favicon: tab.favicon ? String(tab.favicon) : undefined,
                 createdAt: String(tab.created_at),
                 lastAccessed: String(tab.last_accessed),
-                group_id: tab.group_id ? String(tab.group_id) : undefined
+                group_id: tab.group_id ? String(tab.group_id) : undefined,
+                pinned: tab.pinned ?? false,
               }));
             }
           } catch (e) {
@@ -861,6 +864,7 @@ export const sync = {
       'deleteStrategy',        // -> delete_strategy
       'themeMode',             // -> theme_mode
       'themeStyle',            // -> theme_style
+      'collectPinnedTabs',     // -> collect_pinned_tabs
       // 'reorderMode'            // -> reorder_mode (数据库中暂无此列，已注释)
     ];
 
@@ -879,14 +883,40 @@ export const sync = {
 
     console.log('转换后的设置:', convertedSettings);
 
-    const { data, error } = await supabase
-      .from('user_settings')
-      .upsert({
-        user_id: user.id,
-        device_id: deviceId, // 添加设备ID，用于过滤自己设备的更新
-        last_sync: new Date().toISOString(),
-        ...convertedSettings // 使用转换后的设置
-      }, { onConflict: 'user_id' });
+    const payload = {
+      user_id: user.id,
+      device_id: deviceId, // 添加设备ID，用于过滤自己设备的更新
+      last_sync: new Date().toISOString(),
+      ...convertedSettings, // 使用转换后的设置
+    };
+
+    const doUpsert = async (body: Record<string, any>) => {
+      return await supabase
+        .from('user_settings')
+        .upsert(body, { onConflict: 'user_id' });
+    };
+
+    let { data, error } = await doUpsert(payload);
+
+    // 兼容：云端尚未加列 collect_pinned_tabs 时，不阻塞其他设置同步
+    if (error) {
+      // 检查是否是 PostgreSQL 的 undefined_column 错误（错误码 42703）
+      const errorCode = (error as any)?.code;
+      const message = (error as any)?.message || '';
+      const details = (error as any)?.details || '';
+      const hint = (error as any)?.hint || '';
+      const combined = `${message} ${details} ${hint}`.toLowerCase();
+
+      // 更精确的列不存在检查
+      const isUndefinedColumn = errorCode === '42703';
+      const mentionsCollectPinned = combined.includes('collect_pinned_tabs');
+
+      if (isUndefinedColumn && mentionsCollectPinned) {
+        console.warn('[Supabase] user_settings 缺少 collect_pinned_tabs 列，已降级重试（忽略该字段）');
+        const { collect_pinned_tabs: _ignored, ...fallback } = payload as any;
+        ({ data, error } = await doUpsert(fallback));
+      }
+    }
 
     if (error) {
       console.error('上传用户设置失败:', error);
@@ -977,6 +1007,7 @@ export const sync = {
         'delete_strategy': 'deleteStrategy',
         'theme_mode': 'themeMode',
         'theme_style': 'themeStyle',
+        'collect_pinned_tabs': 'collectPinnedTabs',
         'reorder_mode': 'reorderMode',
         // 向后兼容性：如果云端还有旧的字段，也要处理
         'use_double_column_layout': 'useDoubleColumnLayout'

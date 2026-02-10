@@ -14,6 +14,13 @@ interface DraggableTabProps {
   handleDeleteTab: (tabId: string) => void;
 }
 
+// 钉住图标
+const PinIcon = () => (
+  <svg className="w-3 h-3 text-blue-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+    <path strokeLinecap="round" strokeLinejoin="round" d="M5 5a2 2 0 012-2h10a2 2 0 012 2v16l-7-3.5L5 21V5z" />
+  </svg>
+);
+
 // 删除图标
 const CloseIcon = () => (
   <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
@@ -122,21 +129,34 @@ export const DraggableTab: React.FC<DraggableTabProps> = React.memo(({
       ref={ref}
       className={`tab-item group/tab ${isDragging ? 'dragging' : ''} ${isOver && canDrop ? 'drag-over' : ''}`}
       style={{ cursor: 'grab' }}
+      role="listitem"
     >
       {/* Favicon */}
-      <SafeFavicon src={tab.favicon} alt="" className="tab-item-favicon" />
+      <SafeFavicon src={tab.favicon} alt={`${tab.title} 网站图标`} className="tab-item-favicon" />
 
       {/* 标题和 URL */}
       <div className="flex-1 min-w-0 flex items-center gap-3">
         <a
           href="#"
-          className="tab-item-title tab-item-title-hover transition-colors"
+          className="tab-item-title tab-item-title-hover transition-colors flex items-center gap-1"
           onClick={handleTabClick}
           title={tabTitle}
+          aria-label={`打开标签页: ${tabTitle}${tab.pinned ? ' (固定)' : ''}`}
+          tabIndex={0}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' || e.key === ' ') {
+              e.preventDefault();
+              handleTabClick(e as any);
+            }
+          }}
         >
           {tabTitle}
+          {tab.pinned && <PinIcon />}
         </a>
-        <span className="tab-item-url hidden sm:block">
+        <span 
+          className="tab-item-url hidden sm:block"
+          aria-label={`网址: ${tab.url}`}
+        >
           {displayUrl}
         </span>
       </div>
@@ -147,6 +167,7 @@ export const DraggableTab: React.FC<DraggableTabProps> = React.memo(({
           onClick={handleDelete}
           className="btn-icon p-1 tab-item-delete-btn"
           title="删除标签页"
+          aria-label={`删除标签页: ${tabTitle}`}
         >
           <CloseIcon />
         </button>
@@ -165,7 +186,8 @@ export const DraggableTab: React.FC<DraggableTabProps> = React.memo(({
     prevProps.tab.title === nextProps.tab.title &&
     prevProps.tab.url === nextProps.tab.url &&
     prevProps.tab.favicon === nextProps.tab.favicon &&
-    prevProps.tab.lastAccessed === nextProps.tab.lastAccessed;
+    prevProps.tab.lastAccessed === nextProps.tab.lastAccessed &&
+    prevProps.tab.pinned === nextProps.tab.pinned;
 
   if (!tabContentEqual) return false;
 

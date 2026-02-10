@@ -7,6 +7,9 @@ export interface Tab {
   lastAccessed: string;
   group_id?: string; // 关联标签组ID
 
+  /** 是否为固定标签页，默认 false */
+  pinned: boolean;
+
   // 同步相关字段
   syncStatus?: 'synced' | 'local-only' | 'remote-only' | 'conflict';
   lastSyncedAt?: string | null;
@@ -21,6 +24,8 @@ export interface TabData {
   favicon?: string;
   created_at: string;
   last_accessed: string;
+  /** 是否为固定标签页，默认 false（向后兼容，可选） */
+  pinned?: boolean;
 }
 
 // 用于 Supabase 中的 tab_groups 表结构
@@ -93,6 +98,9 @@ export interface UserSettings {
   syncEnabled: boolean; // 是否启用同步
   layoutMode: LayoutMode; // 布局模式：单栏、双栏、三栏
   showNotifications: boolean; // 是否显示通知
+
+  // 是否在收集/保存时包含固定标签页（pinned tabs）
+  collectPinnedTabs: boolean;
 
   // 新增同步策略设置
   syncStrategy: 'newest' | 'local' | 'remote' | 'ask'; // 冲突解决策略

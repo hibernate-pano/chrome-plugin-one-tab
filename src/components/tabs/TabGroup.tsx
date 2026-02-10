@@ -5,6 +5,7 @@ import { DraggableTab } from '@/components/dnd/DraggableTab';
 import { TabGroup as TabGroupType, Tab } from '@/types/tab';
 import { shouldAutoDeleteAfterTabRemoval } from '@/utils/tabGroupUtils';
 import { useToast } from '@/contexts/ToastContext';
+import { useEnhancedToast } from '@/utils/toastHelper';
 
 interface TabGroupProps {
   group: TabGroupType;
@@ -42,6 +43,7 @@ const OpenAllIcon = () => (
 export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
   const dispatch = useAppDispatch();
   const { showConfirm } = useToast();
+  const { showDeleteSuccess, showDeleteError, showRestoreSuccess, showRestoreError } = useEnhancedToast();
 
   const [isEditing, setIsEditing] = useState(false);
   const [newName, setNewName] = useState(group.name);
@@ -75,41 +77,67 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
       confirmText: '删除',
       cancelText: '取消',
       onConfirm: () => {
-        dispatch(deleteGroup(group.id));
+        dispatch(deleteGroup(group.id))
+          .unwrap()
+          .then(() => {
+            showDeleteSuccess(`已删除标签组 "${group.name}" (${group.tabs.length} 个标签页)`);
+          })
+          .catch(error => {
+            showDeleteError(`删除标签组失败: ${error.message || '未知错误'}`);
+          });
       },
       onCancel: () => { }
     });
-  }, [dispatch, group.id, showConfirm]);
+  }, [dispatch, group.id, group.name, group.tabs.length, showConfirm, showDeleteSuccess, showDeleteError]);
 
   const handleToggleLock = useCallback(() => {
     dispatch(toggleGroupLockAndSync(group.id));
   }, [dispatch, group.id]);
 
   const handleOpenAllTabs = useCallback(() => {
-    const urls = group.tabs.map(tab => tab.url);
+    const tabsPayload = group.tabs.map(tab => ({
+      url: tab.url,
+      pinned: !!tab.pinned,
+    }));
 
     if (!group.isLocked) {
       dispatch({ type: 'tabs/deleteGroup/fulfilled', payload: group.id });
       dispatch(deleteGroup(group.id))
-        .then(() => console.log(`删除标签组: ${group.id}`))
-        .catch(error => console.error('删除标签组失败:', error));
+        .unwrap()
+        .then(() => {
+          console.log(`删除标签组: ${group.id}`);
+          showDeleteSuccess(`已恢复标签组 "${group.name}" 并删除原标签组`);
+        })
+        .catch(error => {
+          console.error('删除标签组失败:', error);
+          showDeleteError(`删除标签组失败: ${error.message || '未知错误'}`);
+        });
+    } else {
+      showRestoreSuccess(group.tabs.length);
     }
 
     setTimeout(() => {
       chrome.runtime.sendMessage({
         type: 'OPEN_TABS',
-        data: { urls }
+        data: { tabs: tabsPayload }
       });
     }, 50);
-  }, [dispatch, group.id, group.isLocked, group.tabs]);
+  }, [dispatch, group.id, group.isLocked, group.name, group.tabs, showDeleteSuccess, showDeleteError, showRestoreSuccess]);
 
   const handleOpenTab = useCallback((tab: Tab) => {
     if (!group.isLocked) {
       if (shouldAutoDeleteAfterTabRemoval(group, tab.id)) {
         dispatch({ type: 'tabs/deleteGroup/fulfilled', payload: group.id });
         dispatch(deleteGroup(group.id))
-          .then(() => console.log(`自动删除空标签组: ${group.name} (ID: ${group.id})`))
-          .catch(error => console.error('删除标签组失败:', error));
+          .unwrap()
+          .then(() => {
+            console.log(`自动删除空标签组: ${group.name} (ID: ${group.id})`);
+            showDeleteSuccess(`已恢复标签页并自动删除空标签组 "${group.name}"`);
+          })
+          .catch(error => {
+            console.error('删除标签组失败:', error);
+            showDeleteError(`删除标签组失败: ${error.message || '未知错误'}`);
+          });
       } else {
         const updatedTabs = group.tabs.filter(t => t.id !== tab.id);
         const updatedGroup = {
@@ -119,18 +147,27 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
         };
         dispatch({ type: 'tabs/updateGroup/fulfilled', payload: updatedGroup });
         dispatch(updateGroup(updatedGroup))
-          .then(() => console.log(`更新标签组: ${group.name}, 剩余标签页: ${updatedTabs.length}`))
-          .catch(error => console.error('更新标签组失败:', error));
+          .unwrap()
+          .then(() => {
+            console.log(`更新标签组: ${group.name}, 剩余标签页: ${updatedTabs.length}`);
+            showRestoreSuccess(1); // Restore 1 tab
+          })
+          .catch(error => {
+            console.error('更新标签组失败:', error);
+            showRestoreError(`更新标签组失败: ${error.message || '未知错误'}`);
+          });
       }
+    } else {
+      showRestoreSuccess(1); // Restore 1 tab
     }
 
     setTimeout(() => {
       chrome.runtime.sendMessage({
         type: 'OPEN_TAB',
-        data: { url: tab.url }
+        data: { url: tab.url, pinned: !!tab.pinned }
       });
     }, 50);
-  }, [dispatch, group]);
+  }, [dispatch, group, showDeleteSuccess, showDeleteError, showRestoreSuccess, showRestoreError]);
 
   const handleMoveTab = useCallback((sourceGroupId: string, sourceIndex: number, targetGroupId: string, targetIndex: number) => {
     dispatch(moveTabAndSync({
@@ -143,7 +180,14 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
 
   const handleDeleteTab = useCallback((tabId: string) => {
     if (shouldAutoDeleteAfterTabRemoval(group, tabId)) {
-      dispatch(deleteGroup(group.id));
+      dispatch(deleteGroup(group.id))
+        .unwrap()
+        .then(() => {
+          showDeleteSuccess(`已删除标签组 "${group.name}" (最后一个标签页已删除)`);
+        })
+        .catch(error => {
+          showDeleteError(`删除标签组失败: ${error.message || '未知错误'}`);
+        });
       console.log(`自动删除空标签组: ${group.name} (ID: ${group.id})`);
     } else {
       const updatedTabs = group.tabs.filter(t => t.id !== tabId);
@@ -152,10 +196,17 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
         tabs: updatedTabs,
         updatedAt: new Date().toISOString()
       };
-      dispatch(updateGroup(updatedGroup));
+      dispatch(updateGroup(updatedGroup))
+        .unwrap()
+        .then(() => {
+          showDeleteSuccess(`已从 "${group.name}" 删除标签页 (剩余 ${updatedTabs.length} 个)`);
+        })
+        .catch(error => {
+          showDeleteError(`更新标签组失败: ${error.message || '未知错误'}`);
+        });
       console.log(`从标签组删除标签页: ${group.name}, 剩余标签页: ${updatedTabs.length}`);
     }
-  }, [dispatch, group]);
+  }, [dispatch, group, showDeleteSuccess, showDeleteError]);
 
   // 格式化时间
   const formatTime = (dateString: string) => {
@@ -172,7 +223,11 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
   };
 
   return (
-    <div className="tab-group-card animate-in group/card">
+    <div 
+      className="tab-group-card animate-in group/card"
+      role="region"
+      aria-labelledby={`tab-group-title-${group.id}`}
+    >
       {/* 标签组头部 */}
       <div className="tab-group-header">
         <div className="flex items-center gap-3 flex-1 min-w-0">
@@ -181,6 +236,7 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
             onClick={() => setIsCollapsed(!isCollapsed)}
             className="btn-icon p-1 -ml-1"
             aria-label={isCollapsed ? '展开标签组' : '折叠标签组'}
+            aria-expanded={!isCollapsed}
           >
             <svg
               className={`w-4 h-4 transition-transform duration-200 ${isCollapsed ? '-rotate-90' : ''}`}
@@ -188,6 +244,7 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
               viewBox="0 0 24 24"
               stroke="currentColor"
               strokeWidth={2}
+              aria-hidden="true"
             >
               <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
             </svg>
@@ -203,25 +260,41 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
               onKeyDown={handleKeyDown}
               className="input py-1 px-2 text-sm font-medium flex-1"
               autoFocus
+              aria-label="编辑标签组名称"
             />
           ) : (
             <h3
+              id={`tab-group-title-${group.id}`}
               className="tab-group-title truncate cursor-pointer tab-group-title-hover transition-colors"
               onClick={() => !group.isLocked && setIsEditing(true)}
               title={group.isLocked ? group.name : '点击编辑名称'}
+              tabIndex={0}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                  e.preventDefault();
+                  if (!group.isLocked) setIsEditing(true);
+                }
+              }}
             >
               {group.name}
             </h3>
           )}
 
           {/* 数量徽章 */}
-          <span className="tab-group-count flex-shrink-0">
+          <span 
+            className="tab-group-count flex-shrink-0"
+            aria-label={`包含 ${group.tabs.length} 个标签页`}
+          >
             {group.tabs.length}
           </span>
 
           {/* 锁定图标 */}
           {group.isLocked && (
-            <span className="tab-group-lock-icon flex-shrink-0" title="已锁定">
+            <span 
+              className="tab-group-lock-icon flex-shrink-0" 
+              title="已锁定"
+              aria-label="标签组已锁定"
+            >
               <LockIcon locked={true} />
             </span>
           )}
@@ -239,6 +312,7 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
             onClick={handleOpenAllTabs}
             className="btn-icon p-1.5 tab-group-action-accent"
             title="恢复全部标签页"
+            aria-label={`恢复全部 ${group.tabs.length} 个标签页`}
           >
             <OpenAllIcon />
           </button>
@@ -249,6 +323,7 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
               onClick={() => setIsEditing(true)}
               className="btn-icon p-1.5"
               title="重命名"
+              aria-label="重命名标签组"
             >
               <EditIcon />
             </button>
@@ -259,6 +334,7 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
             onClick={handleToggleLock}
             className={`btn-icon p-1.5 ${group.isLocked ? 'tab-group-lock-icon' : ''}`}
             title={group.isLocked ? '解锁' : '锁定'}
+            aria-label={group.isLocked ? '解锁标签组' : '锁定标签组'}
           >
             <LockIcon locked={group.isLocked} />
           </button>
@@ -269,6 +345,7 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
               onClick={handleDelete}
               className="btn-icon p-1.5 tab-group-action-danger"
               title="删除标签组"
+              aria-label="删除标签组"
             >
               <DeleteIcon />
             </button>
@@ -281,6 +358,7 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
         className={`transition-all duration-200 ease-out overflow-hidden ${
           isCollapsed ? 'max-h-0' : 'max-h-[2000px]'
         }`}
+        aria-hidden={isCollapsed}
       >
         <div className="tab-group-tabs-container">
           {group.tabs.map((tab, index) => (

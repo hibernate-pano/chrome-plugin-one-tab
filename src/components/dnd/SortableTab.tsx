@@ -5,6 +5,13 @@ import { Tab } from '@/types/tab';
 import { SafeFavicon } from '@/components/common/SafeFavicon';
 import '@/styles/drag-drop.css';
 
+// 钉住图标
+const PinIcon = () => (
+  <svg className="w-3 h-3 text-blue-500 ml-1" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+    <path strokeLinecap="round" strokeLinejoin="round" d="M5 5a2 2 0 012-2h10a2 2 0 012 2v16l-7-3.5L5 21V5z" />
+  </svg>
+);
+
 interface SortableTabProps {
   tab: Tab;
   groupId: string;
@@ -114,7 +121,7 @@ export const SortableTab: React.FC<SortableTabProps> = ({
         <SafeFavicon src={tab.favicon} alt="" />
         <a
           href="#"
-          className="truncate text-blue-600 hover:text-blue-800 hover:underline text-sm"
+          className="truncate text-blue-600 hover:text-blue-800 hover:underline text-sm flex items-center"
           onClick={e => {
             e.preventDefault();
             safeHandleOpenTab(tab);
@@ -122,6 +129,7 @@ export const SortableTab: React.FC<SortableTabProps> = ({
           title={tab.title}
         >
           {tab.title}
+          {tab.pinned && <PinIcon />}
         </a>
       </div>
       <button
@@ -148,4 +156,16 @@ export const SortableTab: React.FC<SortableTabProps> = ({
   );
 };
 
-export default React.memo(SortableTab);
+export default React.memo(SortableTab, (prevProps, nextProps) => {
+  return (
+    prevProps.tab.id === nextProps.tab.id &&
+    prevProps.tab.title === nextProps.tab.title &&
+    prevProps.tab.url === nextProps.tab.url &&
+    prevProps.tab.favicon === nextProps.tab.favicon &&
+    prevProps.tab.pinned === nextProps.tab.pinned &&
+    prevProps.groupId === nextProps.groupId &&
+    prevProps.index === nextProps.index &&
+    prevProps.handleOpenTab === nextProps.handleOpenTab &&
+    prevProps.handleDeleteTab === nextProps.handleDeleteTab
+  );
+});

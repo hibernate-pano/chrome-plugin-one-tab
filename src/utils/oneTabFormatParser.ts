@@ -44,7 +44,8 @@ export function parseOneTabFormat(text: string): TabGroup[] {
         title,
         favicon: '', // OneTab 导出不包含 favicon
         createdAt: now,
-        lastAccessed: now
+        lastAccessed: now,
+        pinned: false, // OneTab 导出不包含固定标签页信息
       };
     });
     
