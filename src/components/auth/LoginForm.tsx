@@ -63,7 +63,7 @@ export const LoginForm: React.FC<LoginFormProps> = ({ onSuccess }) => {
             <span>{error}</span>
           </div>
           <button
-            className="text-red-700 hover:text-red-900"
+            className="text-red-700 hover:text-red-900 flat-interaction p-1 rounded-full"
             onClick={() => dispatch(clearError())}
           >
             <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -121,7 +121,7 @@ export const LoginForm: React.FC<LoginFormProps> = ({ onSuccess }) => {
         </div>
         <button
           type="submit"
-          className="w-full bg-primary-600 text-white py-3 rounded-lg hover:bg-primary-700 transition-colors font-medium shadow-sm"
+          className="w-full bg-primary-600 text-white py-3 rounded-lg hover:bg-primary-700 disabled:opacity-50 disabled:cursor-not-allowed font-medium shadow-sm primary-button-interaction"
           disabled={isLoading}
         >
           {isLoading ? (

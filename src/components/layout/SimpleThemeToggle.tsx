@@ -32,7 +32,7 @@ export const SimpleThemeToggle: React.FC = () => {
     >
       <button
         onClick={toggleTheme}
-        className="btn-icon"
+        className="btn-icon flat-interaction"
         aria-label={themeMode === 'light' ? '切换到深色模式' : '切换到浅色模式'}
       >
         {themeMode === 'dark' ? <MoonIcon /> : <SunIcon />}

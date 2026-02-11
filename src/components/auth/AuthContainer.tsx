@@ -17,13 +17,13 @@ export const AuthContainer: React.FC = () => {
       <div className="container mx-auto max-w-6xl">
         <div className="flex border-b border-gray-200 dark:border-gray-700">
           <button
-            className={`px-6 py-3 transition-all font-medium ${activeTab === 'login' ? 'text-primary-600 dark:text-primary-400 border-b-2 border-primary-600 dark:border-primary-400' : 'text-gray-600 dark:text-gray-300 hover:text-primary-600 dark:hover:text-primary-400'}`}
+            className={`px-6 py-3 transition-all font-medium flat-interaction ${activeTab === 'login' ? 'text-primary-600 dark:text-primary-400 border-b-2 border-primary-600 dark:border-primary-400' : 'text-gray-600 dark:text-gray-300 hover:text-primary-600 dark:hover:text-primary-400'}`}
             onClick={() => setActiveTab('login')}
           >
             登录
           </button>
           <button
-            className={`px-6 py-3 transition-all font-medium ${activeTab === 'register' ? 'text-primary-600 dark:text-primary-400 border-b-2 border-primary-600 dark:border-primary-400' : 'text-gray-600 dark:text-gray-300 hover:text-primary-600 dark:hover:text-primary-400'}`}
+            className={`px-6 py-3 transition-all font-medium flat-interaction ${activeTab === 'register' ? 'text-primary-600 dark:text-primary-400 border-b-2 border-primary-600 dark:border-primary-400' : 'text-gray-600 dark:text-gray-300 hover:text-primary-600 dark:hover:text-primary-400'}`}
             onClick={() => setActiveTab('register')}
           >
             注册

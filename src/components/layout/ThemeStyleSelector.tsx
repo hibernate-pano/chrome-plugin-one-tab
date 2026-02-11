@@ -16,15 +16,6 @@ const ClassicIcon = () => (
   </svg>
 );
 
-// 精致主题图标 - 极简现代风格
-const RefinedIcon = () => (
-  <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5}>
-    <circle cx="12" cy="12" r="9" strokeLinecap="round" strokeLinejoin="round" />
-    <path d="M12 8v8" strokeLinecap="round" strokeLinejoin="round" />
-    <path d="M8 12h8" strokeLinecap="round" strokeLinejoin="round" />
-  </svg>
-);
-
 // 极光主题图标 - 北极光/雪花风格
 const AuroraIcon = () => (
   <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5}>
@@ -138,17 +129,17 @@ interface ThemeOption {
 
 const themeOptions: ThemeOption[] = [
   {
-    value: 'refined',
-    label: '精致',
-    description: '极简现代',
-    icon: <RefinedIcon />,
-    primaryColor: '#2563eb',
-    secondaryColor: '#3b82f6',
+    value: 'legacy',
+    label: '原始',
+    description: '经典风格',
+    icon: <LegacyIcon />,
+    primaryColor: '#007acc',
+    secondaryColor: '#0ea5e9',
     previewColors: {
-      bg: '#f8fafc',
+      bg: '#f5f5f5',
       card: '#ffffff',
-      accent: '#2563eb',
-      text: '#1e293b',
+      accent: '#007acc',
+      text: '#333333',
     },
   },
   {
@@ -177,20 +168,6 @@ const themeOptions: ThemeOption[] = [
       card: '#ffffff',
       accent: '#06b6d4',
       text: '#0f172a',
-    },
-  },
-  {
-    value: 'legacy',
-    label: '原始',
-    description: '经典风格',
-    icon: <LegacyIcon />,
-    primaryColor: '#007acc',
-    secondaryColor: '#0ea5e9',
-    previewColors: {
-      bg: '#f5f5f5',
-      card: '#ffffff',
-      accent: '#007acc',
-      text: '#333333',
     },
   },
   {
@@ -329,7 +306,7 @@ export const ThemeStyleSelector: React.FC<ThemeStyleSelectorProps> = ({ classNam
       <button
         onClick={toggleExpanded}
         className={cn(
-          "w-full text-left px-4 py-2.5 text-sm",
+          "w-full text-left px-4 py-2.5 text-sm flat-interaction",
           "text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700/50",
           "flex items-center justify-between gap-2",
           "transition-colors duration-150",
@@ -357,12 +334,12 @@ export const ThemeStyleSelector: React.FC<ThemeStyleSelectorProps> = ({ classNam
         <ChevronIcon isExpanded={isExpanded} />
       </button>
 
-      {/* 展开的主题列表 */}
+      {/* 展开的主题列表 - 内容可滚动以确保所有主题（含生产力）可见 */}
       <div
         id="theme-options-panel"
         className={cn(
           "overflow-hidden transition-all duration-200 ease-out",
-          isExpanded ? "max-h-[400px] opacity-100" : "max-h-0 opacity-0"
+          isExpanded ? "max-h-[400px] opacity-100 overflow-y-auto" : "max-h-0 opacity-0"
         )}
         role="listbox"
         aria-label="可用主题列表"
@@ -381,7 +358,7 @@ export const ThemeStyleSelector: React.FC<ThemeStyleSelectorProps> = ({ classNam
                   onMouseLeave={() => setHoveredTheme(null)}
                   disabled={isTransitioning}
                   className={cn(
-                    "relative p-2 rounded-lg text-left",
+                    "relative p-2 rounded-lg text-left flat-interaction",
                     "transition-all duration-150",
                     "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500",
                     isSelected

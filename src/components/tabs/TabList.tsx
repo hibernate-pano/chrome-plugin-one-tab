@@ -171,7 +171,7 @@ export const TabList: React.FC<TabListProps> = ({ searchQuery }) => {
   }
 
   return (
-    <div className="space-y-2">
+    <div className="space-y-2 micro-interaction-container">
       {/* 搜索结果或标签组列表 */}
       {searchQuery ? (
         <SearchResultList searchQuery={searchQuery} />
@@ -179,7 +179,7 @@ export const TabList: React.FC<TabListProps> = ({ searchQuery }) => {
         // 双栏布局
         <div className="grid grid-cols-1 sm:grid-cols-1 md:grid-cols-2 gap-2 sm:gap-3 md:gap-4">
           {/* 左栏 - 偶数索引的标签组 */}
-          <div className="space-y-2 transition-all">
+          <div className="space-y-2 transition-all duration-300 ease-out">
             {filteredGroups
               .filter((_, index) => index % 2 === 0)
               .map(group => {
@@ -199,7 +199,7 @@ export const TabList: React.FC<TabListProps> = ({ searchQuery }) => {
           </div>
 
           {/* 右栏 - 奇数索引的标签组 */}
-          <div className="space-y-2 transition-all">
+          <div className="space-y-2 transition-all duration-300 ease-out">
             {filteredGroups
               .filter((_, index) => index % 2 === 1)
               .map(group => {
@@ -220,7 +220,7 @@ export const TabList: React.FC<TabListProps> = ({ searchQuery }) => {
         </div>
       ) : (
         // 单栏布局
-        <div className="space-y-2 transition-all">
+        <div className="space-y-2 transition-all duration-300 ease-out">
           {filteredGroups.map((group, index) => (
             <DraggableTabGroup
               key={group.id}

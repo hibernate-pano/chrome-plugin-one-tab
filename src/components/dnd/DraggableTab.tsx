@@ -127,7 +127,7 @@ export const DraggableTab: React.FC<DraggableTabProps> = React.memo(({
   return (
     <div
       ref={ref}
-      className={`tab-item group/tab ${isDragging ? 'dragging' : ''} ${isOver && canDrop ? 'drag-over' : ''}`}
+      className={`tab-item group/tab micro-interaction-card ${isDragging ? 'dragging' : ''} ${isOver && canDrop ? 'drag-over' : ''}`}
       style={{ cursor: 'grab' }}
       role="listitem"
     >
@@ -165,7 +165,7 @@ export const DraggableTab: React.FC<DraggableTabProps> = React.memo(({
       <div className="tab-item-actions">
         <button
           onClick={handleDelete}
-          className="btn-icon p-1 tab-item-delete-btn"
+          className="btn-icon p-1 tab-item-delete-btn micro-interaction-button"
           title="删除标签页"
           aria-label={`删除标签页: ${tabTitle}`}
         >

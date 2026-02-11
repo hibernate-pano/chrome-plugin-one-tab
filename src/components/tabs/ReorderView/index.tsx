@@ -168,7 +168,7 @@ const ReorderView: React.FC = () => {
               {flatTabs.map(tab => (
                 <li
                   key={tab.id}
-                  className="flex items-center py-3 px-4 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors cursor-pointer"
+                  className="flex items-center py-3 px-4 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors cursor-pointer flat-interaction"
                   onClick={() => handleOpenTab(tab)}
                 >
                   {settings.showFavicons && (
@@ -207,7 +207,7 @@ const ReorderView: React.FC = () => {
                         e.stopPropagation(); // 阻止事件冒泡
                         handleDeleteTab(tab);
                       }}
-                      className="ml-2 p-1 rounded hover:bg-gray-200 dark:hover:bg-gray-600 text-gray-500 dark:text-gray-400 hover:text-red-500 dark:hover:text-red-400 transition-colors duration-150 flex-shrink-0"
+                      className="ml-2 p-1 rounded hover:bg-gray-200 dark:hover:bg-gray-600 text-gray-500 dark:text-gray-400 hover:text-red-500 dark:hover:text-red-400 transition-colors duration-150 flex-shrink-0 flat-interaction"
                       title="删除标签页"
                     >
                       <svg

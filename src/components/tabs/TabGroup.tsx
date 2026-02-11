@@ -223,8 +223,8 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
   };
 
   return (
-    <div 
-      className="tab-group-card animate-in group/card"
+    <div
+      className="tab-group-card animate-in group/card micro-interaction-card"
       role="region"
       aria-labelledby={`tab-group-title-${group.id}`}
     >
@@ -234,12 +234,12 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
           {/* 折叠按钮 */}
           <button
             onClick={() => setIsCollapsed(!isCollapsed)}
-            className="btn-icon p-1 -ml-1"
+            className="btn-icon p-1 -ml-1 micro-interaction-button"
             aria-label={isCollapsed ? '展开标签组' : '折叠标签组'}
             aria-expanded={!isCollapsed}
           >
             <svg
-              className={`w-4 h-4 transition-transform duration-200 ${isCollapsed ? '-rotate-90' : ''}`}
+              className={`w-4 h-4 transition-transform duration-300 ease-out ${isCollapsed ? '-rotate-90' : ''}`}
               fill="none"
               viewBox="0 0 24 24"
               stroke="currentColor"
@@ -265,7 +265,7 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
           ) : (
             <h3
               id={`tab-group-title-${group.id}`}
-              className="tab-group-title truncate cursor-pointer tab-group-title-hover transition-colors"
+              className="tab-group-title truncate cursor-pointer tab-group-title-hover transition-colors flat-interaction"
               onClick={() => !group.isLocked && setIsEditing(true)}
               title={group.isLocked ? group.name : '点击编辑名称'}
               tabIndex={0}
@@ -306,11 +306,11 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
         </div>
 
         {/* 操作按钮 */}
-        <div className="flex items-center gap-1 opacity-0 group-hover/card:opacity-100 transition-opacity duration-150">
+        <div className="flex items-center gap-1 opacity-0 group-hover/card:opacity-100 transition-all duration-200 ease-out">
           {/* 恢复全部 */}
           <button
             onClick={handleOpenAllTabs}
-            className="btn-icon p-1.5 tab-group-action-accent"
+            className="btn-icon p-1.5 tab-group-action-accent micro-interaction-button"
             title="恢复全部标签页"
             aria-label={`恢复全部 ${group.tabs.length} 个标签页`}
           >
@@ -321,7 +321,7 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
           {!group.isLocked && (
             <button
               onClick={() => setIsEditing(true)}
-              className="btn-icon p-1.5"
+              className="btn-icon p-1.5 micro-interaction-button"
               title="重命名"
               aria-label="重命名标签组"
             >
@@ -332,7 +332,7 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
           {/* 锁定/解锁 */}
           <button
             onClick={handleToggleLock}
-            className={`btn-icon p-1.5 ${group.isLocked ? 'tab-group-lock-icon' : ''}`}
+            className={`btn-icon p-1.5 micro-interaction-button ${group.isLocked ? 'tab-group-lock-icon' : ''}`}
             title={group.isLocked ? '解锁' : '锁定'}
             aria-label={group.isLocked ? '解锁标签组' : '锁定标签组'}
           >
@@ -343,7 +343,7 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
           {!group.isLocked && (
             <button
               onClick={handleDelete}
-              className="btn-icon p-1.5 tab-group-action-danger"
+              className="btn-icon p-1.5 tab-group-action-danger micro-interaction-button"
               title="删除标签组"
               aria-label="删除标签组"
             >
@@ -355,8 +355,8 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
 
       {/* 标签列表 */}
       <div
-        className={`transition-all duration-200 ease-out overflow-hidden ${
-          isCollapsed ? 'max-h-0' : 'max-h-[2000px]'
+        className={`transition-all duration-300 ease-out overflow-hidden ${
+          isCollapsed ? 'max-h-0 opacity-0' : 'max-h-[2000px] opacity-100'
         }`}
         aria-hidden={isCollapsed}
       >

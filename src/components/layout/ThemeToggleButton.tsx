@@ -54,7 +54,7 @@ export const ThemeToggleButton: React.FC = () => {
     <div className="relative">
       <button
         onClick={() => setShowDropdown(!showDropdown)}
-        className="p-2 rounded hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors text-gray-600 dark:text-gray-300 flex items-center justify-center"
+        className="p-2 rounded hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors text-gray-600 dark:text-gray-300 flex items-center justify-center flat-interaction"
         title="主题设置"
       >
         {getThemeIcon()}
@@ -68,7 +68,7 @@ export const ThemeToggleButton: React.FC = () => {
                 setThemeMode('light');
                 setShowDropdown(false);
               }}
-              className={`flex items-center justify-center p-2 rounded-md ${themeMode === 'light'
+              className={`flex items-center justify-center p-2 rounded-md flat-interaction ${themeMode === 'light'
                   ? 'bg-blue-100 text-blue-600 dark:bg-blue-900 dark:text-blue-300'
                   : 'hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300'
                 }`}
@@ -84,7 +84,7 @@ export const ThemeToggleButton: React.FC = () => {
                 setThemeMode('dark');
                 setShowDropdown(false);
               }}
-              className={`flex items-center justify-center p-2 rounded-md ${themeMode === 'dark'
+              className={`flex items-center justify-center p-2 rounded-md flat-interaction ${themeMode === 'dark'
                   ? 'bg-blue-100 text-blue-600 dark:bg-blue-900 dark:text-blue-300'
                   : 'hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300'
                 }`}
@@ -100,7 +100,7 @@ export const ThemeToggleButton: React.FC = () => {
                 setThemeMode('auto');
                 setShowDropdown(false);
               }}
-              className={`flex items-center justify-center p-2 rounded-md ${themeMode === 'auto'
+              className={`flex items-center justify-center p-2 rounded-md flat-interaction ${themeMode === 'auto'
                   ? 'bg-blue-100 text-blue-600 dark:bg-blue-900 dark:text-blue-300'
                   : 'hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300'
                 }`}

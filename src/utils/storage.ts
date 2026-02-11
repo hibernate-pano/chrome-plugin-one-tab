@@ -24,10 +24,9 @@ const STORAGE_VERSION = 2;
 
 // 有效的主题风格值
 const VALID_THEME_STYLES: ThemeStyle[] = [
-  'classic',
-  'refined',
-  'aurora',
   'legacy',
+  'classic',
+  'aurora',
   'creamy',
   'pink',
   'mint',
@@ -40,7 +39,7 @@ const VALID_THEME_MODES: Array<'light' | 'dark' | 'auto'> = ['light', 'dark', 'a
 /**
  * 验证主题风格值
  * @param value 待验证的值
- * @returns 有效的主题风格值，无效时返回默认值 'refined'
+ * @returns 有效的主题风格值，无效时返回默认值 'legacy'
  */
 export function validateThemeStyle(value: unknown): ThemeStyle {
   if (typeof value === 'string' && VALID_THEME_STYLES.includes(value as ThemeStyle)) {

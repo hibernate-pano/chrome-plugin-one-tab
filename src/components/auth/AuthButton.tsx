@@ -36,7 +36,7 @@ export const AuthButton: React.FC = () => {
       <div className="relative">
         <button
           onClick={() => setShowDropdown(!showDropdown)}
-          className="flex items-center space-x-2 px-3 py-2 rounded-lg hover:bg-gray-100 transition-all"
+          className="flex items-center space-x-2 px-3 py-2 rounded-lg hover:bg-gray-100 transition-all flat-interaction"
         >
           <div className="w-8 h-8 rounded-full bg-primary-100 text-primary-600 flex items-center justify-center">
             <span className="text-sm font-bold">{user.email.charAt(0).toUpperCase()}</span>
@@ -68,7 +68,7 @@ export const AuthButton: React.FC = () => {
               </div>
               <button
                 onClick={handleSignOut}
-                className="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 flex items-center"
+                className="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 flex items-center flat-interaction"
               >
                 <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 mr-2 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
@@ -86,7 +86,7 @@ export const AuthButton: React.FC = () => {
     <>
       <button
         onClick={() => setShowAuthModal(true)}
-        className="px-4 py-1.5 rounded text-sm transition-colors bg-primary-600 text-white hover:bg-primary-700 border border-primary-600 min-w-[100px] text-center"
+        className="px-4 py-1.5 rounded text-sm transition-colors bg-primary-600 text-white hover:bg-primary-700 border border-primary-600 min-w-[100px] text-center flat-interaction"
       >
         登录 / 注册
       </button>
@@ -96,19 +96,19 @@ export const AuthButton: React.FC = () => {
           <div className="bg-white rounded-lg shadow-xl w-full max-w-md mx-4">
             <div className="flex border-b border-gray-200">
               <button
-                className={`flex-1 py-3 transition-all font-medium ${activeTab === 'login' ? 'text-primary-600 border-b-2 border-primary-600' : 'text-gray-600 hover:text-primary-600'}`}
+                className={`flex-1 py-3 transition-all font-medium flat-interaction ${activeTab === 'login' ? 'text-primary-600 border-b-2 border-primary-600' : 'text-gray-600 hover:text-primary-600'}`}
                 onClick={() => setActiveTab('login')}
               >
                 登录
               </button>
               <button
-                className={`flex-1 py-3 transition-all font-medium ${activeTab === 'register' ? 'text-primary-600 border-b-2 border-primary-600' : 'text-gray-600 hover:text-primary-600'}`}
+                className={`flex-1 py-3 transition-all font-medium flat-interaction ${activeTab === 'register' ? 'text-primary-600 border-b-2 border-primary-600' : 'text-gray-600 hover:text-primary-600'}`}
                 onClick={() => setActiveTab('register')}
               >
                 注册
               </button>
               <button
-                className="p-3 text-gray-500 hover:text-gray-700"
+                className="p-3 text-gray-500 hover:text-gray-700 flat-interaction"
                 onClick={() => setShowAuthModal(false)}
               >
                 <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">

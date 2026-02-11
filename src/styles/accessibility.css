@@ -1,0 +1,469 @@
+/* ==========================================
+   🌐 可访问性增强样式
+   符合 WCAG 2.1 AA 标准
+   ========================================== */
+
+/*
+ * 可访问性原则：
+ * 1. 对比度比例至少 4.5:1 (AA级) 或 7:1 (AAA级)
+ * 2. 最小触摸目标 44x44px
+ * 3. 键盘导航支持
+ * 4. 屏幕阅读器友好
+ * 5. 减少动画偏好支持
+ */
+
+/* ==========================================
+   焦点管理
+   ========================================== */
+
+/* 移除默认焦点样式 */
+*:focus {
+  outline: none;
+}
+
+/* 自定义焦点指示器 */
+*:focus-visible {
+  outline: 2px solid var(--color-accent, #0D9488);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+/* 高对比度焦点指示器 */
+@media (prefers-contrast: high) {
+  *:focus-visible {
+    outline: 3px solid var(--color-text-primary, #134E4A);
+    outline-offset: 3px;
+    background-color: var(--color-bg-elevated, #FFFFFF);
+  }
+}
+
+/* 跳过链接 */
+.skip-link {
+  position: absolute;
+  top: -40px;
+  left: 6px;
+  background: var(--color-accent, #0D9488);
+  color: white;
+  padding: 8px 16px;
+  text-decoration: none;
+  border-radius: 4px;
+  font-weight: 600;
+  z-index: 1000;
+  transition: top 0.3s;
+}
+
+.skip-link:focus {
+  top: 6px;
+}
+
+/* ==========================================
+   触摸目标优化
+   ========================================== */
+
+/* 确保所有交互元素至少 44x44px */
+button,
+.btn,
+.btn-icon,
+input[type="button"],
+input[type="submit"],
+input[type="reset"],
+a[role="button"],
+[role="button"],
+[tabindex="0"] {
+  min-height: 44px;
+  min-width: 44px;
+}
+
+/* 移动端触摸优化 */
+@media (max-width: 768px) {
+  .tab-item,
+  .dropdown-item,
+  .menu-item {
+    min-height: 48px;
+    padding: 12px 16px;
+  }
+
+  .btn-icon {
+    min-height: 48px;
+    min-width: 48px;
+  }
+}
+
+/* ==========================================
+   文本可读性
+   ========================================== */
+
+/* 确保文本对比度 */
+.text-high-contrast {
+  color: var(--color-text-primary, #134E4A);
+  font-weight: 500;
+}
+
+.text-medium-contrast {
+  color: var(--color-text-secondary, #0F766E);
+  font-weight: 400;
+}
+
+/* 链接可访问性 */
+a {
+  color: var(--color-accent, #0D9488);
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 2px;
+}
+
+a:hover {
+  color: var(--color-accent-hover, #0F766E);
+  text-decoration-thickness: 2px;
+}
+
+a:focus-visible {
+  background-color: var(--color-accent-subtle, #CCFBF1);
+  padding: 2px 4px;
+  margin: -2px -4px;
+  border-radius: 4px;
+}
+
+/* ==========================================
+   屏幕阅读器支持
+   ========================================== */
+
+/* 仅屏幕阅读器可见 */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* 可选择性显示给屏幕阅读器 */
+.sr-only-focusable:focus {
+  position: static;
+  width: auto;
+  height: auto;
+  padding: inherit;
+  margin: inherit;
+  overflow: visible;
+  clip: auto;
+  white-space: normal;
+}
+
+/* ==========================================
+   键盘导航增强
+   ========================================== */
+
+/* 键盘导航指示器 */
+.keyboard-navigation *:focus-visible {
+  box-shadow:
+    0 0 0 2px var(--color-bg-primary, #F0FDFA),
+    0 0 0 4px var(--color-accent, #0D9488);
+}
+
+/* Tab 键导航顺序优化 */
+.tab-group-card:focus-within {
+  border-color: var(--color-accent, #0D9488);
+  box-shadow: 0 0 0 2px var(--color-accent-subtle, #CCFBF1);
+}
+
+/* 下拉菜单键盘导航 */
+.dropdown-menu [role="menuitem"]:focus {
+  background-color: var(--color-accent-subtle, #CCFBF1);
+  color: var(--color-text-primary, #134E4A);
+}
+
+/* ==========================================
+   状态指示器
+   ========================================== */
+
+/* 加载状态 */
+.loading[aria-busy="true"]::after {
+  content: "加载中...";
+  position: absolute;
+  left: -9999px;
+}
+
+/* 错误状态 */
+.error[aria-invalid="true"] {
+  border-color: var(--color-danger, #DC2626);
+  background-color: rgba(220, 38, 38, 0.05);
+}
+
+.error[aria-invalid="true"]::after {
+  content: attr(aria-describedby);
+  position: absolute;
+  left: -9999px;
+}
+
+/* 成功状态 */
+.success[aria-live="polite"]::after {
+  content: "操作成功";
+  position: absolute;
+  left: -9999px;
+}
+
+/* ==========================================
+   高对比度模式支持
+   ========================================== */
+
+@media (prefers-contrast: high) {
+  /* 增强边框对比度 */
+  .card,
+  .btn,
+  .input,
+  .tab-group-card {
+    border: 2px solid var(--color-text-primary, #134E4A);
+  }
+
+  /* 增强文本对比度 */
+  .text-muted {
+    color: var(--color-text-secondary, #0F766E);
+    font-weight: 600;
+  }
+
+  /* 增强按钮对比度 */
+  .btn-primary {
+    background-color: var(--color-text-primary, #134E4A);
+    color: var(--color-bg-primary, #F0FDFA);
+    border: 2px solid var(--color-text-primary, #134E4A);
+  }
+
+  .btn-secondary {
+    background-color: var(--color-bg-primary, #F0FDFA);
+    color: var(--color-text-primary, #134E4A);
+    border: 2px solid var(--color-text-primary, #134E4A);
+  }
+}
+
+/* ==========================================
+   减少动画偏好支持
+   ========================================== */
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+
+  /* 保留重要的状态变化 */
+  .loading-spinner {
+    animation: none;
+  }
+
+  .loading-spinner::after {
+    content: "加载中...";
+    display: inline-block;
+  }
+}
+
+/* ==========================================
+   色彩感知障碍支持
+   ========================================== */
+
+/* 为色盲用户添加图案/形状指示器 */
+.status-success::before {
+  content: "✓ ";
+  font-weight: bold;
+}
+
+.status-warning::before {
+  content: "⚠ ";
+  font-weight: bold;
+}
+
+.status-error::before {
+  content: "✗ ";
+  font-weight: bold;
+}
+
+.status-info::before {
+  content: "ℹ ";
+  font-weight: bold;
+}
+
+/* ==========================================
+   字体大小偏好支持
+   ========================================== */
+
+/* 支持用户字体大小偏好 */
+@media (prefers-font-size: large) {
+  html {
+    font-size: 18px;
+  }
+}
+
+@media (prefers-font-size: small) {
+  html {
+    font-size: 14px;
+  }
+}
+
+/* ==========================================
+   语音控制支持
+   ========================================== */
+
+/* 为语音控制添加可见标签 */
+[data-voice-command]::after {
+  content: attr(data-voice-command);
+  position: absolute;
+  left: -9999px;
+}
+
+/* ==========================================
+   打印样式优化
+   ========================================== */
+
+@media print {
+  /* 确保重要内容在打印时可见 */
+  .sr-only {
+    position: static;
+    width: auto;
+    height: auto;
+    margin: 0;
+    overflow: visible;
+    clip: auto;
+    white-space: normal;
+  }
+
+  /* 移除装饰性元素 */
+  .btn-icon,
+  .micro-interactions,
+  .animation {
+    display: none;
+  }
+
+  /* 确保链接地址可见 */
+  a[href^="http"]::after {
+    content: " (" attr(href) ")";
+    font-size: 0.8em;
+    color: #666;
+  }
+}
+
+/* ==========================================
+   辅助功能工具类
+   ========================================== */
+
+/* 高对比度文本 */
+.a11y-high-contrast {
+  color: var(--color-text-primary, #134E4A) !important;
+  font-weight: 600 !important;
+}
+
+/* 大字体 */
+.a11y-large-text {
+  font-size: 1.25em !important;
+  line-height: 1.6 !important;
+}
+
+/* 无动画 */
+.a11y-no-animation * {
+  animation: none !important;
+  transition: none !important;
+}
+
+/* 高对比度边框 */
+.a11y-high-contrast-border {
+  border: 2px solid var(--color-text-primary, #134E4A) !important;
+}
+
+/* 焦点陷阱 */
+.focus-trap {
+  position: relative;
+}
+
+.focus-trap::before,
+.focus-trap::after {
+  content: '';
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+
+/* ==========================================
+   ARIA 实时区域
+   ========================================== */
+
+.live-region {
+  position: absolute;
+  left: -9999px;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+}
+
+.live-region[aria-live="polite"],
+.live-region[aria-live="assertive"] {
+  position: static;
+  width: auto;
+  height: auto;
+  overflow: visible;
+  padding: 8px;
+  background-color: var(--color-bg-elevated, #FFFFFF);
+  border: 1px solid var(--color-border-default, #A7F3D0);
+  border-radius: 4px;
+  margin: 8px 0;
+}
+
+/* ==========================================
+   工具提示可访问性
+   ========================================== */
+
+.tooltip[role="tooltip"] {
+  background-color: var(--color-text-primary, #134E4A);
+  color: var(--color-bg-primary, #F0FDFA);
+  font-weight: 500;
+  border: 1px solid var(--color-text-primary, #134E4A);
+}
+
+.tooltip[role="tooltip"]::before {
+  border-color: var(--color-text-primary, #134E4A) transparent transparent transparent;
+}
+
+/* ==========================================
+   表单可访问性
+   ========================================== */
+
+.form-group {
+  margin-bottom: 1rem;
+}
+
+.form-label {
+  display: block;
+  font-weight: 600;
+  color: var(--color-text-primary, #134E4A);
+  margin-bottom: 0.5rem;
+}
+
+.form-label[required]::after {
+  content: " *";
+  color: var(--color-danger, #DC2626);
+}
+
+.form-input[aria-invalid="true"] {
+  border-color: var(--color-danger, #DC2626);
+  background-color: rgba(220, 38, 38, 0.05);
+}
+
+.form-error {
+  color: var(--color-danger, #DC2626);
+  font-size: 0.875rem;
+  margin-top: 0.25rem;
+  font-weight: 500;
+}
+
+.form-help {
+  color: var(--color-text-secondary, #0F766E);
+  font-size: 0.875rem;
+  margin-top: 0.25rem;
+}

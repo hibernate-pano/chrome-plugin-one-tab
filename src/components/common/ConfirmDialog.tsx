@@ -95,13 +95,13 @@ export const ConfirmDialog: React.FC<ConfirmDialogProps> = ({
           <div className="flex justify-end space-x-3">
             <button
               onClick={onCancel}
-              className="px-4 py-2 text-gray-700 dark:text-gray-300 bg-gray-200 dark:bg-gray-600 hover:bg-gray-300 dark:hover:bg-gray-500 rounded-md transition-colors"
+              className="px-4 py-2 text-gray-700 dark:text-gray-300 bg-gray-200 dark:bg-gray-600 hover:bg-gray-300 dark:hover:bg-gray-500 rounded-md flat-interaction"
             >
               {cancelText}
             </button>
             <button
               onClick={onConfirm}
-              className={`px-4 py-2 rounded-md transition-colors ${typeStyles.confirmButton}`}
+              className={`px-4 py-2 rounded-md primary-button-interaction ${typeStyles.confirmButton}`}
             >
               {confirmText}
             </button>

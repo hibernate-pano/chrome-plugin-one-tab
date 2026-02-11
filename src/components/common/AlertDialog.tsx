@@ -100,7 +100,7 @@ export const AlertDialog: React.FC<AlertDialogProps> = ({
           <div className="flex justify-end">
             <button
               onClick={onClose}
-              className={`px-4 py-2 rounded-md transition-colors ${typeStyles.button}`}
+              className={`px-4 py-2 rounded-md primary-button-interaction ${typeStyles.button}`}
             >
               {buttonText}
             </button>

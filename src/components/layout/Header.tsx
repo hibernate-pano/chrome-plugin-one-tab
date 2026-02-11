@@ -200,7 +200,7 @@ export const Header: React.FC<HeaderProps> = ({ onSearch }) => {
           {/* Logo 区域 */}
           <button
             onClick={handleResetToDefaultView}
-            className="flex items-center gap-3 group"
+            className="flex items-center gap-3 group flat-interaction"
             title="回到默认视图"
             aria-label="回到默认视图"
           >
@@ -232,7 +232,7 @@ export const Header: React.FC<HeaderProps> = ({ onSearch }) => {
               {searchValue && (
                 <button
                   onClick={handleClearSearch}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 search-clear-btn transition-colors"
+                  className="absolute right-3 top-1/2 -translate-y-1/2 search-clear-btn flat-interaction transition-colors"
                   title="清空搜索"
                 >
                   <CloseIcon />
@@ -250,7 +250,7 @@ export const Header: React.FC<HeaderProps> = ({ onSearch }) => {
             >
               <button
                 onClick={handleToggleLayout}
-                className="btn-icon"
+                className="btn-icon flat-interaction"
                 aria-label={settings.layoutMode === 'single' ? '切换为双栏布局' : '切换为单栏布局'}
               >
                 {settings.layoutMode === 'single' ? <LayoutSingleIcon /> : <LayoutDoubleIcon />}
@@ -261,7 +261,7 @@ export const Header: React.FC<HeaderProps> = ({ onSearch }) => {
             <Tooltip content="清理重复标签" position="bottom">
               <button
                 onClick={handleCleanDuplicateTabs}
-                className="btn-icon"
+                className="btn-icon flat-interaction"
                 aria-label="清理重复标签页"
               >
                 <CleanIcon />
@@ -278,7 +278,7 @@ export const Header: React.FC<HeaderProps> = ({ onSearch }) => {
             <Tooltip content="保存所有标签页" position="bottom">
               <button
                 onClick={handleSaveAllTabs}
-                className="btn btn-primary hidden sm:flex whitespace-nowrap"
+                className="btn btn-primary flat-interaction hidden sm:flex whitespace-nowrap"
                 aria-label="保存当前窗口中的所有标签页"
               >
                 <SaveIcon />
@@ -286,7 +286,7 @@ export const Header: React.FC<HeaderProps> = ({ onSearch }) => {
               </button>
               <button
                 onClick={handleSaveAllTabs}
-                className="btn btn-primary sm:hidden p-2"
+                className="btn btn-primary flat-interaction sm:hidden p-2"
                 aria-label="保存当前窗口中的所有标签页"
               >
                 <SaveIcon />
@@ -297,7 +297,7 @@ export const Header: React.FC<HeaderProps> = ({ onSearch }) => {
             <div className="relative">
               <button
                 onClick={() => setShowDropdown(!showDropdown)}
-                className="btn-icon"
+                className="btn-icon flat-interaction"
                 aria-label="菜单"
               >
                 <MenuIcon />

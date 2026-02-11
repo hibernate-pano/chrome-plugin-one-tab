@@ -57,7 +57,7 @@ export const MainApp: React.FC = () => {
                   <h1 className="text-lg font-bold">性能测试</h1>
                   <button
                     onClick={togglePerformanceTest}
-                    className="px-3 py-1 bg-white text-primary-600 rounded hover:bg-gray-100 transition-colors"
+                    className="px-3 py-1 bg-white text-primary-600 rounded hover:bg-gray-100 transition-colors flat-interaction"
                   >
                     返回主页
                   </button>
@@ -101,7 +101,7 @@ export const MainApp: React.FC = () => {
                     {process.env.NODE_ENV === 'development' && (
                       <button
                         onClick={togglePerformanceTest}
-                        className="ml-2 px-2 py-1 bg-purple-500 text-white text-xs rounded hover:bg-purple-600 transition-colors"
+                        className="ml-2 px-2 py-1 bg-purple-500 text-white text-xs rounded hover:bg-purple-600 transition-colors flat-interaction"
                         title="仅在开发环境可见"
                       >
                         性能测试

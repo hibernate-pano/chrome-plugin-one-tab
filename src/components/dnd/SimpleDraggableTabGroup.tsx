@@ -199,14 +199,14 @@ export const SimpleDraggableTabGroup: React.FC<SimpleDraggableTabGroupProps> = (
         <div className="flex items-center space-x-1">
           <button
             onClick={handleOpenAllTabs}
-            className="text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300 text-xs hover:underline"
+            className="text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300 text-xs hover:underline flat-interaction"
             title="打开所有标签页"
           >
             恢复全部
           </button>
           <button
             onClick={handleEditName}
-            className={`p-1 rounded hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors ${group.isLocked ? 'text-gray-300 dark:text-gray-600 cursor-not-allowed' : 'text-gray-400 hover:text-gray-600 dark:text-gray-500 dark:hover:text-gray-300'}`}
+            className={`p-1 rounded hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors flat-interaction ${group.isLocked ? 'text-gray-300 dark:text-gray-600 cursor-not-allowed' : 'text-gray-400 hover:text-gray-600 dark:text-gray-500 dark:hover:text-gray-300'}`}
             title={group.isLocked ? '锁定的标签组不能重命名' : '重命名标签组'}
             disabled={group.isLocked}
           >
@@ -217,7 +217,7 @@ export const SimpleDraggableTabGroup: React.FC<SimpleDraggableTabGroupProps> = (
 
           <button
             onClick={handleToggleLock}
-            className={`p-1 rounded hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors ${group.isLocked ? 'text-yellow-500 dark:text-yellow-400' : 'text-gray-400 hover:text-yellow-500 dark:text-gray-500 dark:hover:text-yellow-400'}`}
+            className={`p-1 rounded hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors flat-interaction ${group.isLocked ? 'text-yellow-500 dark:text-yellow-400' : 'text-gray-400 hover:text-yellow-500 dark:text-gray-500 dark:hover:text-yellow-400'}`}
             title={group.isLocked ? '解锁标签组' : '锁定标签组'}
           >
             <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
@@ -227,7 +227,7 @@ export const SimpleDraggableTabGroup: React.FC<SimpleDraggableTabGroupProps> = (
 
           <button
             onClick={handleDeleteGroup}
-            className={`p-1 rounded hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors ${group.isLocked ? 'text-gray-300 dark:text-gray-600 cursor-not-allowed' : 'text-gray-400 hover:text-red-500 dark:text-gray-500 dark:hover:text-red-400'}`}
+            className={`p-1 rounded hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors flat-interaction ${group.isLocked ? 'text-gray-300 dark:text-gray-600 cursor-not-allowed' : 'text-gray-400 hover:text-red-500 dark:text-gray-500 dark:hover:text-red-400'}`}
             title={group.isLocked ? '锁定的标签组不能删除' : '删除标签组'}
             disabled={group.isLocked}
           >

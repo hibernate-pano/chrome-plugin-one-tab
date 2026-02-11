@@ -173,7 +173,7 @@ export const SyncButton: React.FC<SyncButtonProps> = () => {
           <button
             onClick={handleUpload}
             disabled={syncStatus === 'syncing'}
-            className={`flex items-center whitespace-nowrap px-3 py-1.5 rounded-md text-sm ${
+            className={`flex items-center whitespace-nowrap px-3 py-1.5 rounded-md text-sm flat-interaction ${
               // 上传按钮始终保持绿色，只是在同步中禁用悬停效果
               syncStatus === 'syncing'
                 ? 'bg-green-100 text-green-600'
@@ -202,7 +202,7 @@ export const SyncButton: React.FC<SyncButtonProps> = () => {
           <button
             onClick={handleDownload}
             disabled={syncStatus === 'syncing'}
-            className={`flex items-center whitespace-nowrap px-3 py-1.5 rounded-md text-sm ${
+            className={`flex items-center whitespace-nowrap px-3 py-1.5 rounded-md text-sm flat-interaction ${
               // 下载按钮始终保持蓝色，只是在同步中禁用悬停效果
               syncStatus === 'syncing'
                 ? 'bg-blue-100 text-blue-600'

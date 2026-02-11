@@ -1,15 +1,14 @@
 /* TabVault Pro 字体系统 */
 @import './fonts.css';
 
-/* 主题系统 */
-@import './themes/classic.css';
-@import './themes/refined.css';
-@import './themes/aurora.css';
+/* 主题系统 - 顺序：原始、经典、极光、奶油、粉红、薄荷、赛博 */
 @import './themes/legacy.css';
-@import './themes/cyberpunk.css';
+@import './themes/classic.css';
+@import './themes/aurora.css';
 @import './themes/creamy.css';
 @import './themes/pink.css';
 @import './themes/mint.css';
+@import './themes/cyberpunk.css';
 
 /* 微交互样式 */
 @import './micro-interactions.css';

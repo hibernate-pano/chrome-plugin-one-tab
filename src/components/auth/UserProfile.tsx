@@ -76,7 +76,7 @@ export const UserProfile: React.FC = () => {
           <div className="flex space-x-3">
             <button
               onClick={handleSignOut}
-              className="px-4 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-all border border-gray-300 font-medium"
+              className="px-4 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-all border border-gray-300 font-medium flat-interaction"
             >
               退出登录
             </button>

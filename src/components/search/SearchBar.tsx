@@ -58,7 +58,7 @@ export const SearchBar: React.FC = () => {
       {localQuery && (
         <button
           onClick={handleClear}
-          className="search-clear-btn"
+          className="search-clear-btn flat-interaction"
           title="清除搜索"
         >
           <svg

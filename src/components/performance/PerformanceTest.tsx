@@ -137,7 +137,7 @@ const PerformanceTest: React.FC = () => {
         <button
           onClick={handleGenerateData}
           disabled={isLoading}
-          className="bg-blue-500 text-white px-4 py-2 rounded hover:bg-blue-600 disabled:opacity-50"
+          className="bg-blue-500 text-white px-4 py-2 rounded hover:bg-blue-600 disabled:opacity-50 flat-interaction"
         >
           {isLoading ? '生成中...' : '生成测试数据'}
         </button>
@@ -149,21 +149,21 @@ const PerformanceTest: React.FC = () => {
           <button
             onClick={handleRunRenderTest}
             disabled={isLoading || groups.length === 0}
-            className="bg-green-500 text-white px-4 py-2 rounded hover:bg-green-600 disabled:opacity-50"
+            className="bg-green-500 text-white px-4 py-2 rounded hover:bg-green-600 disabled:opacity-50 flat-interaction"
           >
             {isLoading ? '测试中...' : '测试渲染性能'}
           </button>
           <button
             onClick={handleRunSearchTest}
             disabled={isLoading || groups.length === 0}
-            className="bg-purple-500 text-white px-4 py-2 rounded hover:bg-purple-600 disabled:opacity-50"
+            className="bg-purple-500 text-white px-4 py-2 rounded hover:bg-purple-600 disabled:opacity-50 flat-interaction"
           >
             {isLoading ? '测试中...' : '测试搜索性能'}
           </button>
           <button
             onClick={handleClearResults}
             disabled={isLoading || testResults.length === 0}
-            className="bg-red-500 text-white px-4 py-2 rounded hover:bg-red-600 disabled:opacity-50"
+            className="bg-red-500 text-white px-4 py-2 rounded hover:bg-red-600 disabled:opacity-50 flat-interaction"
           >
             清除测试结果
           </button>
