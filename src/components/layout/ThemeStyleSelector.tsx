@@ -77,6 +77,16 @@ const CyberpunkIcon = () => (
   </svg>
 );
 
+// 棱镜主题图标 - 毛玻璃/棱镜风格
+const PrismIcon = () => (
+  <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5}>
+    <path d="M12 2L3 8.5V15.5L12 22L21 15.5V8.5L12 2Z" strokeLinecap="round" strokeLinejoin="round" />
+    <path d="M12 2V22" strokeLinecap="round" strokeLinejoin="round" opacity="0.4" />
+    <path d="M3 8.5L21 15.5" strokeLinecap="round" strokeLinejoin="round" opacity="0.3" />
+    <path d="M21 8.5L3 15.5" strokeLinecap="round" strokeLinejoin="round" opacity="0.3" />
+  </svg>
+);
+
 // 调色板图标
 const PaletteIcon = () => (
   <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5}>
@@ -90,14 +100,14 @@ const PaletteIcon = () => (
 
 // 展开/收起图标
 const ChevronIcon = ({ isExpanded }: { isExpanded: boolean }) => (
-  <svg 
+  <svg
     className={cn(
       "w-4 h-4 transition-transform duration-200",
       isExpanded && "rotate-180"
-    )} 
-    viewBox="0 0 24 24" 
-    fill="none" 
-    stroke="currentColor" 
+    )}
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
     strokeWidth={2}
   >
     <path d="M6 9l6 6 6-6" strokeLinecap="round" strokeLinejoin="round" />
@@ -226,6 +236,20 @@ const themeOptions: ThemeOption[] = [
       text: '#e0e0e0',
     },
   },
+  {
+    value: 'prism',
+    label: '棱镜',
+    description: '毛玻璃渐变',
+    icon: <PrismIcon />,
+    primaryColor: '#667eea',
+    secondaryColor: '#764ba2',
+    previewColors: {
+      bg: '#f5f3ff',
+      card: 'rgba(255,255,255,0.85)',
+      accent: '#667eea',
+      text: '#1e1b4b',
+    },
+  },
 ];
 
 
@@ -236,15 +260,15 @@ const ThemePreviewCard: React.FC<{
   isHovered: boolean;
 }> = ({ option, isSelected, isHovered }) => {
   const { previewColors } = option;
-  
+
   return (
-    <div 
+    <div
       className={cn(
         "w-full h-10 rounded-md overflow-hidden border transition-all duration-200",
-        isSelected 
-          ? "border-blue-500 ring-2 ring-blue-500/20" 
-          : isHovered 
-            ? "border-gray-300 dark:border-gray-600" 
+        isSelected
+          ? "border-blue-500 ring-2 ring-blue-500/20"
+          : isHovered
+            ? "border-gray-300 dark:border-gray-600"
             : "border-gray-200 dark:border-gray-700"
       )}
       style={{ backgroundColor: previewColors.bg }}
@@ -252,24 +276,24 @@ const ThemePreviewCard: React.FC<{
       {/* 迷你预览布局 */}
       <div className="flex h-full">
         {/* 侧边栏预览 */}
-        <div 
+        <div
           className="w-2 h-full"
           style={{ backgroundColor: previewColors.accent }}
         />
         {/* 内容区预览 */}
         <div className="flex-1 p-1 flex flex-col justify-center gap-0.5">
           {/* 标题栏 */}
-          <div 
+          <div
             className="h-1.5 w-8 rounded-full"
             style={{ backgroundColor: previewColors.text, opacity: 0.7 }}
           />
           {/* 卡片预览 */}
           <div className="flex gap-0.5">
-            <div 
+            <div
               className="h-3 w-6 rounded-sm"
               style={{ backgroundColor: previewColors.card, boxShadow: '0 1px 2px rgba(0,0,0,0.1)' }}
             />
-            <div 
+            <div
               className="h-3 w-6 rounded-sm"
               style={{ backgroundColor: previewColors.card, boxShadow: '0 1px 2px rgba(0,0,0,0.1)' }}
             />
@@ -295,7 +319,7 @@ export const ThemeStyleSelector: React.FC<ThemeStyleSelectorProps> = ({ classNam
     setIsExpanded(prev => !prev);
   }, []);
 
-  const currentTheme = useMemo(() => 
+  const currentTheme = useMemo(() =>
     themeOptions.find(t => t.value === themeStyle) || themeOptions[0],
     [themeStyle]
   );
@@ -321,7 +345,7 @@ export const ThemeStyleSelector: React.FC<ThemeStyleSelectorProps> = ({ classNam
             <PaletteIcon />
           </span>
           <span className="font-medium">主题风格</span>
-          <span 
+          <span
             className={cn(
               "px-2 py-0.5 text-xs font-medium rounded-full",
               "text-white transition-colors duration-200"
@@ -349,7 +373,7 @@ export const ThemeStyleSelector: React.FC<ThemeStyleSelectorProps> = ({ classNam
             {themeOptions.map((option) => {
               const isSelected = themeStyle === option.value;
               const isHovered = hoveredTheme === option.value;
-              
+
               return (
                 <button
                   key={option.value}
@@ -371,22 +395,22 @@ export const ThemeStyleSelector: React.FC<ThemeStyleSelectorProps> = ({ classNam
                   aria-label={`选择${option.label}主题: ${option.description}`}
                 >
                   {/* 主题预览 */}
-                  <ThemePreviewCard 
-                    option={option} 
+                  <ThemePreviewCard
+                    option={option}
                     isSelected={isSelected}
                     isHovered={isHovered}
                   />
-                  
+
                   {/* 主题信息 */}
                   <div className="flex items-center gap-2 mt-2">
                     {/* 颜色指示器 */}
-                    <div 
+                    <div
                       className={cn(
                         "w-5 h-5 rounded-full flex items-center justify-center",
                         "text-white transition-transform duration-150",
                         isSelected && "scale-110"
                       )}
-                      style={{ 
+                      style={{
                         backgroundColor: option.primaryColor,
                         boxShadow: isSelected ? `0 0 8px ${option.primaryColor}50` : 'none'
                       }}
@@ -397,7 +421,7 @@ export const ThemeStyleSelector: React.FC<ThemeStyleSelectorProps> = ({ classNam
                         <span className="opacity-80">{option.icon}</span>
                       )}
                     </div>
-                    
+
                     {/* 标签和描述 */}
                     <div className="flex-1 min-w-0">
                       <div className={cn(
@@ -415,7 +439,7 @@ export const ThemeStyleSelector: React.FC<ThemeStyleSelectorProps> = ({ classNam
               );
             })}
           </div>
-          
+
           {/* 过渡状态提示 */}
           {isTransitioning && (
             <div className="px-3 py-1.5 text-xs text-gray-500 dark:text-gray-400 text-center border-t border-gray-200/50 dark:border-gray-700/50">

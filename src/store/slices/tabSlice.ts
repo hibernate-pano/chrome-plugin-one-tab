@@ -386,7 +386,10 @@ export const cleanDuplicateTabs = createAsyncThunk(
 
       // 处理重复标签页
       let removedTabsCount = 0;
-      const updatedGroups = [...groups];
+      const updatedGroups = groups.map(group => ({
+        ...group,
+        tabs: [...group.tabs] // 深拷贝 tabs 数组
+      }));
 
       urlMap.forEach(tabsWithSameUrl => {
         if (tabsWithSameUrl.length > 1) {

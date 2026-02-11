@@ -1,0 +1,700 @@
+/* ==========================================
+   🔮 Prism Theme - Glassmorphism Style
+   ========================================== */
+
+/*
+ * 设计理念：
+ * 灵感来源于引导弹窗的毛玻璃 + 紫蓝渐变风格
+ * 核心特征：Glassmorphism、紫蓝渐变、柔光透明
+ * 视觉亮点：渐变边框、毛玻璃卡片、柔和发光
+ *
+ * 调色板：
+ * - 主色：靛蓝紫 #667eea → #764ba2
+ * - 辅色：淡紫粉 #f093fb → #fda085
+ * - 背景：轻微的薰衣草灰调
+ */
+
+/* ==========================================
+   棱镜主题 - 浅色模式
+   ========================================== */
+html[data-theme="prism"] {
+    /* 背景色 - 薰衣草灰 */
+    --color-bg-primary: #f5f3ff;
+    --color-bg-secondary: rgba(255, 255, 255, 0.85);
+    --color-bg-tertiary: rgba(237, 233, 254, 0.6);
+    --color-bg-elevated: rgba(255, 255, 255, 0.92);
+    --color-bg-overlay: rgba(245, 243, 255, 0.85);
+
+    /* 文字色 */
+    --color-text-primary: #1e1b4b;
+    --color-text-secondary: #3730a3;
+    --color-text-tertiary: #6366f1;
+    --color-text-muted: #a5b4fc;
+
+    /* 边框色 - 半透明渐变感 */
+    --color-border-default: rgba(139, 92, 246, 0.15);
+    --color-border-subtle: rgba(139, 92, 246, 0.08);
+    --color-border-strong: rgba(102, 126, 234, 0.3);
+
+    /* 紫蓝渐变强调色 */
+    --color-accent: #667eea;
+    --color-accent-hover: #5a6fd6;
+    --color-accent-subtle: rgba(102, 126, 234, 0.12);
+
+    /* 渐变变量 */
+    --prism-gradient: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    --prism-gradient-soft: linear-gradient(135deg, rgba(102, 126, 234, 0.12) 0%, rgba(118, 75, 162, 0.12) 100%);
+    --prism-gradient-border: linear-gradient(135deg, #667eea 0%, #764ba2 25%, #f093fb 50%, #f5576c 75%, #fda085 100%);
+    --prism-glass-bg: rgba(255, 255, 255, 0.6);
+    --prism-glass-border: rgba(255, 255, 255, 0.3);
+
+    /* 状态颜色 */
+    --color-warning: #f59e0b;
+    --color-danger: #ef4444;
+    --color-success: #10b981;
+
+    /* 字体 */
+    --font-family-sans: 'Inter', 'SF Pro Display', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+    --font-family-mono: 'JetBrains Mono', 'SF Mono', Menlo, Monaco, 'Cascadia Code', monospace;
+
+    /* 阴影 - 紫色柔光 */
+    --shadow-card: 0 1px 3px rgba(102, 126, 234, 0.08), 0 1px 2px rgba(118, 75, 162, 0.05);
+    --shadow-card-hover: 0 8px 25px rgba(102, 126, 234, 0.15), 0 4px 10px rgba(118, 75, 162, 0.1);
+    --shadow-elevation-1: 0 1px 2px rgba(102, 126, 234, 0.06);
+    --shadow-elevation-2: 0 4px 12px rgba(102, 126, 234, 0.1), 0 2px 6px rgba(118, 75, 162, 0.06);
+    --shadow-elevation-3: 0 12px 28px rgba(102, 126, 234, 0.15), 0 6px 12px rgba(118, 75, 162, 0.08);
+
+    /* 圆角 - 圆润 */
+    --radius-sm: 0.375rem;
+    --radius-md: 0.5rem;
+    --radius-lg: 0.75rem;
+    --radius-xl: 1rem;
+    --radius-full: 9999px;
+
+    /* 间距 */
+    --spacing-xs: 0.25rem;
+    --spacing-sm: 0.5rem;
+    --spacing-md: 1rem;
+    --spacing-lg: 1.5rem;
+    --spacing-xl: 2rem;
+}
+
+/* ==========================================
+   棱镜主题 - 深色模式
+   ========================================== */
+html[data-theme="prism"].dark {
+    /* 背景色 - 深紫蓝 */
+    --color-bg-primary: #0f0a1f;
+    --color-bg-secondary: rgba(22, 15, 42, 0.9);
+    --color-bg-tertiary: rgba(35, 25, 65, 0.8);
+    --color-bg-elevated: rgba(30, 20, 55, 0.95);
+    --color-bg-overlay: rgba(15, 10, 31, 0.9);
+
+    /* 文字色 */
+    --color-text-primary: #ede9fe;
+    --color-text-secondary: #c4b5fd;
+    --color-text-tertiary: #a78bfa;
+    --color-text-muted: #6d5aac;
+
+    /* 边框色 */
+    --color-border-default: rgba(139, 92, 246, 0.25);
+    --color-border-subtle: rgba(139, 92, 246, 0.12);
+    --color-border-strong: rgba(167, 139, 250, 0.4);
+
+    /* 深色强调色 - 更亮的紫蓝 */
+    --color-accent: #818cf8;
+    --color-accent-hover: #a5b4fc;
+    --color-accent-subtle: rgba(129, 140, 248, 0.15);
+
+    /* 状态颜色 */
+    --color-warning: #fbbf24;
+    --color-danger: #f87171;
+    --color-success: #34d399;
+
+    /* 深色毛玻璃变量 */
+    --prism-glass-bg: rgba(22, 15, 42, 0.6);
+    --prism-glass-border: rgba(139, 92, 246, 0.15);
+
+    /* 深色阴影 */
+    --shadow-card: 0 1px 3px rgba(0, 0, 0, 0.3), 0 0 8px rgba(102, 126, 234, 0.08);
+    --shadow-card-hover: 0 8px 25px rgba(0, 0, 0, 0.4), 0 0 20px rgba(102, 126, 234, 0.12);
+    --shadow-elevation-1: 0 1px 2px rgba(0, 0, 0, 0.25);
+    --shadow-elevation-2: 0 4px 12px rgba(0, 0, 0, 0.35), 0 0 10px rgba(102, 126, 234, 0.08);
+    --shadow-elevation-3: 0 12px 28px rgba(0, 0, 0, 0.45), 0 0 20px rgba(102, 126, 234, 0.1);
+
+    /* 深色渐变 */
+    --prism-gradient: linear-gradient(135deg, #818cf8 0%, #a78bfa 100%);
+    --prism-gradient-soft: linear-gradient(135deg, rgba(129, 140, 248, 0.15) 0%, rgba(167, 139, 250, 0.15) 100%);
+}
+
+/* ==========================================
+   棱镜主题 - 全局样式
+   ========================================== */
+html[data-theme="prism"] body {
+    font-family: var(--font-family-sans);
+    font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+    background: var(--color-bg-primary);
+    /* 全局微妙渐变底色 */
+    background-image: radial-gradient(ellipse at 20% 50%, rgba(102, 126, 234, 0.05) 0%, transparent 50%),
+        radial-gradient(ellipse at 80% 20%, rgba(118, 75, 162, 0.04) 0%, transparent 50%),
+        radial-gradient(ellipse at 50% 80%, rgba(240, 147, 251, 0.03) 0%, transparent 50%);
+    background-attachment: fixed;
+}
+
+html[data-theme="prism"].dark body {
+    background-image: radial-gradient(ellipse at 20% 50%, rgba(102, 126, 234, 0.08) 0%, transparent 50%),
+        radial-gradient(ellipse at 80% 20%, rgba(118, 75, 162, 0.06) 0%, transparent 50%),
+        radial-gradient(ellipse at 50% 80%, rgba(139, 92, 246, 0.04) 0%, transparent 50%);
+}
+
+/* ==========================================
+   棱镜主题 - 头部样式（毛玻璃）
+   ========================================== */
+html[data-theme="prism"] .header {
+    background: var(--prism-glass-bg);
+    backdrop-filter: blur(20px) saturate(180%);
+    -webkit-backdrop-filter: blur(20px) saturate(180%);
+    border-bottom: 1px solid var(--prism-glass-border);
+    box-shadow: 0 4px 20px rgba(102, 126, 234, 0.06);
+}
+
+html[data-theme="prism"].dark .header {
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3), 0 0 15px rgba(102, 126, 234, 0.05);
+}
+
+/* ==========================================
+   棱镜主题 - 卡片样式（毛玻璃）
+   ========================================== */
+html[data-theme="prism"] .card {
+    background: var(--prism-glass-bg);
+    backdrop-filter: blur(12px) saturate(150%);
+    -webkit-backdrop-filter: blur(12px) saturate(150%);
+    border: 1px solid var(--prism-glass-border);
+    border-radius: var(--radius-xl);
+    box-shadow: var(--shadow-card);
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+html[data-theme="prism"] .card:hover {
+    box-shadow: var(--shadow-card-hover);
+    border-color: var(--color-border-strong);
+    transform: translateY(-1px);
+}
+
+html[data-theme="prism"] .card-glass {
+    background: var(--prism-glass-bg);
+    backdrop-filter: blur(16px) saturate(180%);
+    -webkit-backdrop-filter: blur(16px) saturate(180%);
+    border: 1px solid var(--prism-glass-border);
+    border-radius: var(--radius-xl);
+}
+
+/* ==========================================
+   棱镜主题 - 标签组卡片
+   ========================================== */
+html[data-theme="prism"] .tab-group-card {
+    background: var(--prism-glass-bg);
+    backdrop-filter: blur(12px) saturate(150%);
+    -webkit-backdrop-filter: blur(12px) saturate(150%);
+    border: 1px solid var(--color-border-subtle);
+    border-radius: var(--radius-xl);
+    box-shadow: var(--shadow-card);
+    overflow: hidden;
+    position: relative;
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* 顶部渐变装饰条 */
+html[data-theme="prism"] .tab-group-card::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 2px;
+    background: var(--prism-gradient);
+    opacity: 0.6;
+    transition: opacity 0.3s ease;
+}
+
+html[data-theme="prism"] .tab-group-card:hover {
+    border-color: var(--color-border-strong);
+    box-shadow: var(--shadow-card-hover);
+    transform: translateY(-2px);
+}
+
+html[data-theme="prism"] .tab-group-card:hover::before {
+    opacity: 1;
+}
+
+/* 标签组头部 */
+html[data-theme="prism"] .tab-group-header {
+    background: var(--prism-gradient-soft);
+    border-bottom: 1px solid var(--color-border-subtle);
+}
+
+/* 标签组标题 */
+html[data-theme="prism"] .tab-group-title {
+    color: var(--color-text-primary);
+    font-weight: 600;
+    letter-spacing: -0.01em;
+}
+
+html[data-theme="prism"] .tab-group-title-hover:hover {
+    color: var(--color-accent);
+}
+
+/* 标签组计数徽章 - 渐变 */
+html[data-theme="prism"] .tab-group-count {
+    background: var(--prism-gradient);
+    color: white;
+    font-weight: 600;
+    padding: 2px 10px;
+    border-radius: var(--radius-full);
+    font-size: 0.75rem;
+    box-shadow: 0 2px 8px rgba(102, 126, 234, 0.3);
+}
+
+html[data-theme="prism"].dark .tab-group-count {
+    background: var(--prism-gradient);
+    color: white;
+    box-shadow: 0 2px 12px rgba(129, 140, 248, 0.25);
+}
+
+/* 标签组时间 */
+html[data-theme="prism"] .tab-group-time {
+    color: var(--color-text-muted);
+    font-size: 0.75rem;
+}
+
+/* ==========================================
+   棱镜主题 - 标签项
+   ========================================== */
+html[data-theme="prism"] .tab-item {
+    border-bottom: 1px solid var(--color-border-subtle);
+    transition: all 0.2s ease;
+}
+
+html[data-theme="prism"] .tab-item:hover {
+    background: var(--prism-gradient-soft);
+}
+
+html[data-theme="prism"] .tab-item-title {
+    color: var(--color-text-primary);
+}
+
+html[data-theme="prism"] .tab-item-title-hover:hover {
+    color: var(--color-accent);
+}
+
+html[data-theme="prism"] .tab-item-url {
+    color: var(--color-text-muted);
+}
+
+html[data-theme="prism"] .tab-item-delete-btn:hover {
+    color: var(--color-danger);
+}
+
+/* ==========================================
+   棱镜主题 - 按钮样式
+   ========================================== */
+html[data-theme="prism"] .btn {
+    font-weight: 500;
+    letter-spacing: -0.01em;
+}
+
+html[data-theme="prism"] .btn-primary {
+    background: var(--prism-gradient);
+    color: white;
+    border: none;
+    box-shadow: 0 2px 10px rgba(102, 126, 234, 0.25);
+    transition: all 0.25s ease;
+}
+
+html[data-theme="prism"] .btn-primary:hover {
+    box-shadow: 0 4px 18px rgba(102, 126, 234, 0.4);
+    transform: translateY(-1px);
+}
+
+html[data-theme="prism"] .btn-primary:active {
+    transform: translateY(0);
+}
+
+html[data-theme="prism"] .btn-icon {
+    color: var(--color-text-tertiary);
+    border-radius: var(--radius-lg);
+    transition: all 0.2s ease;
+}
+
+html[data-theme="prism"] .btn-icon:hover {
+    background: var(--prism-gradient-soft);
+    color: var(--color-accent);
+}
+
+/* 操作按钮 */
+html[data-theme="prism"] .tab-group-action-accent {
+    color: var(--color-accent);
+}
+
+html[data-theme="prism"] .tab-group-action-accent:hover {
+    color: var(--color-accent-hover);
+}
+
+html[data-theme="prism"] .tab-group-action-danger:hover {
+    color: var(--color-danger);
+}
+
+/* ==========================================
+   棱镜主题 - 输入框
+   ========================================== */
+html[data-theme="prism"] .input {
+    background: var(--prism-glass-bg);
+    border: 1px solid var(--color-border-default);
+    border-radius: var(--radius-lg);
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+    transition: all 0.2s ease;
+}
+
+html[data-theme="prism"] .input:hover {
+    border-color: var(--color-border-strong);
+}
+
+html[data-theme="prism"] .input:focus {
+    border-color: var(--color-accent);
+    box-shadow: 0 0 0 3px var(--color-accent-subtle), 0 4px 12px rgba(102, 126, 234, 0.1);
+    background: var(--color-bg-elevated);
+}
+
+/* ==========================================
+   棱镜主题 - 搜索框
+   ========================================== */
+html[data-theme="prism"] .search-bar-input {
+    background: var(--prism-glass-bg);
+    border: 1px solid var(--color-border-default);
+    border-radius: var(--radius-full);
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+}
+
+html[data-theme="prism"] .search-bar-input:hover {
+    border-color: var(--color-border-strong);
+}
+
+html[data-theme="prism"] .search-bar-input:focus {
+    border-color: var(--color-accent);
+    box-shadow: 0 0 0 3px var(--color-accent-subtle), 0 4px 12px rgba(102, 126, 234, 0.1);
+}
+
+html[data-theme="prism"] .search-input {
+    background: var(--prism-glass-bg);
+    border: 1px solid var(--color-border-default);
+    border-radius: var(--radius-full);
+}
+
+html[data-theme="prism"] .search-input:hover {
+    border-color: var(--color-border-strong);
+}
+
+html[data-theme="prism"] .search-input:focus {
+    border-color: var(--color-accent);
+    box-shadow: 0 0 0 3px var(--color-accent-subtle);
+}
+
+/* 搜索结果 */
+html[data-theme="prism"] .search-result-item {
+    border-radius: var(--radius-md);
+}
+
+html[data-theme="prism"] .search-result-item:hover {
+    background: var(--prism-gradient-soft);
+}
+
+html[data-theme="prism"] .search-highlight {
+    background-color: rgba(102, 126, 234, 0.15);
+    color: var(--color-accent);
+}
+
+html[data-theme="prism"].dark .search-highlight {
+    background-color: rgba(129, 140, 248, 0.2);
+    color: #a5b4fc;
+}
+
+html[data-theme="prism"] .search-result-link {
+    color: var(--color-accent);
+}
+
+html[data-theme="prism"] .search-result-link:hover {
+    color: var(--color-accent-hover);
+}
+
+html[data-theme="prism"] .search-action-btn-accent {
+    color: var(--color-accent);
+}
+
+html[data-theme="prism"] .search-action-btn-accent:hover {
+    color: var(--color-accent-hover);
+}
+
+/* ==========================================
+   棱镜主题 - 下拉菜单和弹出层（毛玻璃）
+   ========================================== */
+html[data-theme="prism"] .dropdown-menu,
+html[data-theme="prism"] .popup-menu {
+    background: var(--prism-glass-bg);
+    backdrop-filter: blur(20px) saturate(180%);
+    -webkit-backdrop-filter: blur(20px) saturate(180%);
+    border: 1px solid var(--prism-glass-border);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-elevation-3);
+}
+
+html[data-theme="prism"] .dropdown-item {
+    color: var(--color-text-primary);
+    border-radius: var(--radius-md);
+}
+
+html[data-theme="prism"] .dropdown-item:hover {
+    background: var(--prism-gradient-soft);
+}
+
+/* ==========================================
+   棱镜主题 - 模态框（毛玻璃）
+   ========================================== */
+html[data-theme="prism"] .modal-content {
+    background: var(--prism-glass-bg);
+    backdrop-filter: blur(24px) saturate(180%);
+    -webkit-backdrop-filter: blur(24px) saturate(180%);
+    border: 1px solid var(--prism-glass-border);
+    border-radius: var(--radius-xl);
+    box-shadow: var(--shadow-elevation-3);
+}
+
+/* ==========================================
+   棱镜主题 - 工具提示
+   ========================================== */
+html[data-theme="prism"] .tooltip {
+    background: var(--color-bg-elevated);
+    color: var(--color-text-primary);
+    border: 1px solid var(--color-border-default);
+    border-radius: var(--radius-md);
+    box-shadow: var(--shadow-card-hover);
+}
+
+/* ==========================================
+   棱镜主题 - 徽章
+   ========================================== */
+html[data-theme="prism"] .badge-accent {
+    background: var(--color-accent-subtle);
+    color: var(--color-accent);
+}
+
+html[data-theme="prism"].dark .badge-accent {
+    background: rgba(129, 140, 248, 0.15);
+    color: #a5b4fc;
+}
+
+/* ==========================================
+   棱镜主题 - 开关按钮
+   ========================================== */
+html[data-theme="prism"] .toggle-switch-active {
+    background: var(--prism-gradient) !important;
+    box-shadow: 0 2px 8px rgba(102, 126, 234, 0.3);
+}
+
+html[data-theme="prism"] .toggle-switch-inactive {
+    background: var(--color-bg-tertiary);
+    border: 1px solid var(--color-border-default);
+}
+
+/* ==========================================
+   棱镜主题 - 空状态
+   ========================================== */
+html[data-theme="prism"] .empty-state-icon {
+    background: var(--prism-gradient-soft);
+    border: 1px solid var(--color-border-default);
+    border-radius: var(--radius-xl);
+}
+
+html[data-theme="prism"] .empty-state-default-icon {
+    color: var(--color-accent);
+}
+
+/* ==========================================
+   棱镜主题 - 锁定图标
+   ========================================== */
+html[data-theme="prism"] .tab-group-lock-icon {
+    color: var(--color-warning);
+}
+
+/* ==========================================
+   棱镜主题 - 滚动条
+   ========================================== */
+html[data-theme="prism"] ::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+}
+
+html[data-theme="prism"] ::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+html[data-theme="prism"] ::-webkit-scrollbar-thumb {
+    background: var(--color-border-strong);
+    border-radius: var(--radius-full);
+}
+
+html[data-theme="prism"] ::-webkit-scrollbar-thumb:hover {
+    background: var(--color-accent);
+}
+
+/* ==========================================
+   棱镜主题 - 选中文本
+   ========================================== */
+html[data-theme="prism"] ::selection {
+    background-color: var(--color-accent-subtle);
+    color: var(--color-text-primary);
+}
+
+/* ==========================================
+   棱镜主题 - Focus 样式
+   ========================================== */
+html[data-theme="prism"] :focus-visible {
+    outline: 2px solid var(--color-accent);
+    outline-offset: 2px;
+    border-radius: var(--radius-sm);
+}
+
+/* ==========================================
+   棱镜主题 - 特殊效果
+   ========================================== */
+
+/* 棱镜渐变文字 */
+html[data-theme="prism"] .prism-text {
+    background: var(--prism-gradient);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+}
+
+/* 棱镜渐变边框 */
+html[data-theme="prism"] .prism-border {
+    position: relative;
+    background: var(--color-bg-secondary);
+    border-radius: var(--radius-xl);
+}
+
+html[data-theme="prism"] .prism-border::before {
+    content: '';
+    position: absolute;
+    inset: -1px;
+    border-radius: inherit;
+    background: var(--prism-gradient-border);
+    z-index: -1;
+    opacity: 0.5;
+    transition: opacity 0.3s ease;
+}
+
+html[data-theme="prism"] .prism-border:hover::before {
+    opacity: 0.8;
+}
+
+/* ==========================================
+   棱镜主题 - 动画效果
+   ========================================== */
+
+/* 棱镜光晕呼吸 */
+@keyframes prism-glow {
+
+    0%,
+    100% {
+        box-shadow: 0 0 15px rgba(102, 126, 234, 0.15), 0 0 30px rgba(118, 75, 162, 0.08);
+    }
+
+    50% {
+        box-shadow: 0 0 25px rgba(102, 126, 234, 0.25), 0 0 50px rgba(118, 75, 162, 0.12);
+    }
+}
+
+html[data-theme="prism"] .prism-glow {
+    animation: prism-glow 3s ease-in-out infinite;
+}
+
+/* 棱镜渐变流动 */
+@keyframes prism-flow {
+    0% {
+        background-position: 0% 50%;
+    }
+
+    50% {
+        background-position: 100% 50%;
+    }
+
+    100% {
+        background-position: 0% 50%;
+    }
+}
+
+html[data-theme="prism"] .prism-flow {
+    background: var(--prism-gradient-border);
+    background-size: 200% 200%;
+    animation: prism-flow 4s ease infinite;
+}
+
+/* ==========================================
+   棱镜主题 - 同步按钮
+   ========================================== */
+html[data-theme="prism"] .sync-button-syncing {
+    background: var(--prism-gradient);
+    background-size: 200% 200%;
+    animation: prism-flow 2s ease infinite;
+}
+
+/* ==========================================
+   棱镜主题 - 批量操作工具栏
+   ========================================== */
+html[data-theme="prism"] .batch-toolbar {
+    background: var(--prism-glass-bg);
+    backdrop-filter: blur(16px) saturate(180%);
+    -webkit-backdrop-filter: blur(16px) saturate(180%);
+    border: 1px solid var(--prism-glass-border);
+    border-left: 3px solid var(--color-accent);
+    box-shadow: var(--shadow-elevation-2);
+}
+
+/* ==========================================
+   棱镜主题 - 骨架屏
+   ========================================== */
+html[data-theme="prism"] .skeleton {
+    background: linear-gradient(90deg,
+            var(--color-bg-tertiary) 25%,
+            var(--color-bg-elevated) 50%,
+            var(--color-bg-tertiary) 75%);
+    background-size: 200% 100%;
+    animation: skeleton-loading 1.5s infinite;
+}
+
+@keyframes skeleton-loading {
+    0% {
+        background-position: 200% 0;
+    }
+
+    100% {
+        background-position: -200% 0;
+    }
+}
+
+/* ==========================================
+   棱镜主题 - 单栏布局优化
+   ========================================== */
+html[data-theme="prism"] .single-column-layout .tab-group-card {
+    margin-bottom: 1rem;
+}
+
+html[data-theme="prism"] .single-column-layout .tab-item {
+    padding: 10px 16px;
+}
+
+html[data-theme="prism"] .single-column-layout .tab-item-url {
+    max-width: 350px;
+}

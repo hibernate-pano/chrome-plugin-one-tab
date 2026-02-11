@@ -82,8 +82,28 @@ async function setupContextMenus() {
 }
 
 // 初始安装或更新时
-chrome.runtime.onInstalled.addListener(async () => {
-  console.log('Service Worker: 扩展已安装或更新');
+chrome.runtime.onInstalled.addListener(async (details) => {
+  console.log('Service Worker: 扩展已安装或更新, 原因:', details.reason);
+
+  // 记录安装/更新事件以触发用户引导
+  if (details.reason === 'install') {
+    await chrome.storage.local.set({
+      onboarding_trigger: {
+        reason: 'install',
+        version: chrome.runtime.getManifest().version,
+      },
+    });
+    console.log('Service Worker: 已记录首次安装事件');
+  } else if (details.reason === 'update') {
+    await chrome.storage.local.set({
+      onboarding_trigger: {
+        reason: 'update',
+        version: chrome.runtime.getManifest().version,
+        previousVersion: details.previousVersion,
+      },
+    });
+    console.log('Service Worker: 已记录版本更新事件, 旧版本:', details.previousVersion);
+  }
 
   // 迁移旧的存储键 + 数据版本
   await runMigrations();
@@ -196,15 +216,15 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
         chrome.tabs.query({ currentWindow: true }),
         chrome.tabs.query({ active: true, currentWindow: true })
       ]);
-      
+
       // 获取当前活动的标签页ID
       const activeTabId = activeTabs.length > 0 ? activeTabs[0].id : null;
-      
+
       // 过滤掉当前活动的标签页
-      const otherTabs = activeTabId 
+      const otherTabs = activeTabId
         ? allTabs.filter(t => t.id !== activeTabId)
         : allTabs;
-      
+
       if (otherTabs.length === 0) {
         await showNotification('没有其他标签页需要保存');
         return;

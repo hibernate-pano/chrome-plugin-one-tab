@@ -3,6 +3,8 @@ import { Header } from '@/components/layout/Header';
 import { TabList } from '@/components/tabs/TabList';
 import { useAppDispatch } from '@/store/hooks';
 import { loadSettings } from '@/store/slices/settingsSlice';
+import { OnboardingGuide } from '@/components/onboarding/OnboardingGuide';
+import { shouldShowOnboarding } from '@/utils/onboardingStorage';
 
 // 使用动态导入懒加载拖放功能
 const DndProvider = lazy(() =>
@@ -24,11 +26,21 @@ export const MainApp: React.FC = () => {
   const dispatch = useAppDispatch();
   const [searchQuery, setSearchQuery] = useState('');
   const [showPerformanceTest, setShowPerformanceTest] = useState(false);
+  const [showOnboarding, setShowOnboarding] = useState(false);
 
   // 加载用户设置
   useEffect(() => {
     dispatch(loadSettings());
   }, [dispatch]);
+
+  // 检查是否需要显示用户引导
+  useEffect(() => {
+    shouldShowOnboarding().then(should => {
+      if (should) {
+        setShowOnboarding(true);
+      }
+    });
+  }, []);
 
   // 切换性能测试页面
   const togglePerformanceTest = () => {
@@ -114,6 +126,11 @@ export const MainApp: React.FC = () => {
           )}
         </div>
       </DndProvider>
+
+      {/* 用户引导弹窗 */}
+      {showOnboarding && (
+        <OnboardingGuide onComplete={() => setShowOnboarding(false)} />
+      )}
     </Suspense>
   );
 };

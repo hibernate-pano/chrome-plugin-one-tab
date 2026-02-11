@@ -9,6 +9,7 @@
 @import './themes/pink.css';
 @import './themes/mint.css';
 @import './themes/cyberpunk.css';
+@import './themes/prism.css';
 
 /* 微交互样式 */
 @import './micro-interactions.css';
@@ -95,6 +96,7 @@ html:not([data-theme]).dark {
  */
 
 @layer base {
+
   /* 
    * 默认 CSS 变量 - 仅作为回退值
    * 当 data-theme 属性设置时，主题文件中的变量会覆盖这些值
@@ -128,7 +130,7 @@ html:not([data-theme]).dark {
      主题切换过渡动画
      需求: 8.1, 8.2 - 平滑过渡效果 (200-300ms)
      ========================================== */
-  
+
   /* 定义主题过渡时间变量，便于统一管理 */
   :root {
     --theme-transition-duration: 250ms;
@@ -184,7 +186,7 @@ html:not([data-theme]).dark {
   .dropdown-item,
   .popup-menu,
   .modal-content {
-    transition: 
+    transition:
       background-color var(--theme-transition-duration) var(--theme-transition-timing),
       border-color var(--theme-transition-duration) var(--theme-transition-timing),
       color var(--theme-transition-duration) var(--theme-transition-timing),
@@ -198,7 +200,7 @@ html:not([data-theme]).dark {
   svg path,
   svg circle,
   svg rect {
-    transition: 
+    transition:
       fill var(--theme-transition-duration) var(--theme-transition-timing),
       stroke var(--theme-transition-duration) var(--theme-transition-timing);
   }
@@ -240,7 +242,9 @@ html:not([data-theme]).dark {
     --theme-transition-duration: 0.001ms;
   }
 
-  *, *::before, *::after {
+  *,
+  *::before,
+  *::after {
     animation-duration: 0.001ms !important;
     animation-iteration-count: 1 !important;
     transition-duration: 0.001ms !important;
@@ -285,6 +289,7 @@ html:not([data-theme]).dark {
 }
 
 @layer components {
+
   /* ==========================================
      卡片组件
      ========================================== */
@@ -598,7 +603,7 @@ html:not([data-theme]).dark {
     border-color: var(--color-border-subtle);
   }
 
-  .tab-group-tabs-container > * + * {
+  .tab-group-tabs-container>*+* {
     border-top: 1px solid var(--color-border-subtle);
   }
 
@@ -784,16 +789,37 @@ html:not([data-theme]).dark {
   }
 
   @keyframes fadeOut {
-    from { opacity: 1; transform: translateY(0); }
-    to { opacity: 0; transform: translateY(-8px); }
+    from {
+      opacity: 1;
+      transform: translateY(0);
+    }
+
+    to {
+      opacity: 0;
+      transform: translateY(-8px);
+    }
   }
 
   /* 交错动画 */
-  .stagger-1 { animation-delay: 0.05s; }
-  .stagger-2 { animation-delay: 0.1s; }
-  .stagger-3 { animation-delay: 0.15s; }
-  .stagger-4 { animation-delay: 0.2s; }
-  .stagger-5 { animation-delay: 0.25s; }
+  .stagger-1 {
+    animation-delay: 0.05s;
+  }
+
+  .stagger-2 {
+    animation-delay: 0.1s;
+  }
+
+  .stagger-3 {
+    animation-delay: 0.15s;
+  }
+
+  .stagger-4 {
+    animation-delay: 0.2s;
+  }
+
+  .stagger-5 {
+    animation-delay: 0.25s;
+  }
 
   /* ==========================================
      工具提示
@@ -894,18 +920,37 @@ html:not([data-theme]).dark {
    模态框动画
    ========================================== */
 @keyframes fadeIn {
-  from { opacity: 0; }
-  to { opacity: 1; }
+  from {
+    opacity: 0;
+  }
+
+  to {
+    opacity: 1;
+  }
 }
 
 @keyframes fadeInUp {
-  from { opacity: 0; transform: translateY(8px); }
-  to { opacity: 1; transform: translateY(0); }
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 @keyframes scaleIn {
-  from { opacity: 0; transform: scale(0.95); }
-  to { opacity: 1; transform: scale(1); }
+  from {
+    opacity: 0;
+    transform: scale(0.95);
+  }
+
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
 }
 
 .animate-fadeIn {

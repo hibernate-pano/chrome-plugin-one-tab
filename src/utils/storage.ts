@@ -39,6 +39,7 @@ const VALID_THEME_STYLES: ThemeStyle[] = [
   'pink',
   'mint',
   'cyberpunk',
+  'prism',
 ];
 
 // 有效的主题模式值

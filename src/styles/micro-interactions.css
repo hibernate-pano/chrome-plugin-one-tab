@@ -33,6 +33,7 @@
     opacity: 0;
     background: var(--color-accent-hover, #0F766E);
     transition: opacity 80ms ease-out;
+    z-index: -1;
   }
 
   .btn-primary:hover::before {
