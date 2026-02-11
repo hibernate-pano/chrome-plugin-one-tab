@@ -99,10 +99,12 @@ export const TabList: React.FC<TabListProps> = ({ searchQuery }) => {
             description="点击右上角的「保存所有标签」按钮开始保存您的标签页。保存后的标签页将显示在这里。"
             action={
               <button
-                onClick={() => {
+                onClick={async () => {
+                  const tabs = await chrome.tabs.query({ currentWindow: true });
+                  const windowId = tabs[0]?.windowId;
                   chrome.runtime.sendMessage({
                     type: 'SAVE_ALL_TABS',
-                    data: { tabs: [] },
+                    data: { windowId },
                   });
                 }}
                 className="px-6 py-2 text-sm font-medium flat-button-primary flat-interaction"

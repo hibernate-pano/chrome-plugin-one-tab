@@ -148,12 +148,10 @@ export const Header: React.FC<HeaderProps> = ({ onSearch }) => {
 
   const handleSaveAllTabs = async () => {
     const tabs = await chrome.tabs.query({ currentWindow: true });
+    const windowId = tabs[0]?.windowId;
     chrome.runtime.sendMessage({
       type: 'SAVE_ALL_TABS',
-      data: {
-        tabs: tabs,
-        settings,
-      },
+      data: { windowId },
     });
   };
 

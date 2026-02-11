@@ -1,5 +1,6 @@
 import { storage } from '@/utils/storage';
 import { createTabGroupFromChromeTabs, filterValidTabs } from '@/domain/tabGroup';
+import { cacheManager } from '@/utils/performance';
 
 /**
  * 统一的标签页管理器
@@ -86,23 +87,73 @@ export class TabManager {
       console.log(`查询到 ${tabs!.length} 个标签页`);
 
       // 读取用户设置，决定是否收集固定标签页
+      // 强制清除缓存，确保读取到最新设置
+      const cache = cacheManager.getCache('storage');
+      cache.delete('settings');
       const settings = await storage.getSettings();
       const collectPinnedTabs = settings.collectPinnedTabs ?? false;
       
       // 调试日志
       const pinnedCount = tabs!.filter(t => t.pinned).length;
-      console.log(`[DEBUG] collectPinnedTabs 设置: ${collectPinnedTabs}`);
+
+      // #region agent log
+      fetch('http://127.0.0.1:7243/ingest/dc74cad0-0137-41f8-ba3e-10aa1ca8ee34', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          id: `log_${Date.now()}_saveAllTabs_beforeCreateGroup`,
+          runId: 'pre-fix',
+          hypothesisId: 'H1',
+          location: 'TabManager.ts:93',
+          message: 'saveAllTabs before createTabGroupFromChromeTabs',
+          data: {
+            collectPinnedTabs,
+            totalTabs: tabs!.length,
+            pinnedTabsInWindow: pinnedCount,
+          },
+          timestamp: Date.now(),
+        }),
+      }).catch(() => {});
+      // #endregion
+
+      console.log(`[DEBUG] ========== 保存全部标签页 ==========`);
+      console.log(`[DEBUG] 完整设置对象:`, settings);
+      console.log(`[DEBUG] collectPinnedTabs 设置值: ${collectPinnedTabs}`);
+      console.log(`[DEBUG] collectPinnedTabs 类型: ${typeof collectPinnedTabs}`);
       console.log(`[DEBUG] 固定标签页数量: ${pinnedCount}`);
       console.log(`[DEBUG] 所有标签页:`, tabs!.map(t => ({ 
         title: t.title, 
         pinned: t.pinned, 
         url: t.url 
       })));
+      console.log(`[DEBUG] 即将传递给 createTabGroupFromChromeTabs 的 includePinned: ${collectPinnedTabs}`);
 
       // 创建标签组
       const tabGroup = createTabGroupFromChromeTabs(tabs!, {
         includePinned: collectPinnedTabs,
       });
+
+      const savedPinnedCount = tabGroup.tabs.filter(t => t.pinned).length;
+
+      // #region agent log
+      fetch('http://127.0.0.1:7243/ingest/dc74cad0-0137-41f8-ba3e-10aa1ca8ee34', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          id: `log_${Date.now()}_saveAllTabs_afterCreateGroup`,
+          runId: 'pre-fix',
+          hypothesisId: 'H2',
+          location: 'TabManager.ts:112',
+          message: 'saveAllTabs after createTabGroupFromChromeTabs',
+          data: {
+            collectPinnedTabs,
+            totalSavedTabs: tabGroup.tabs.length,
+            savedPinnedCount,
+          },
+          timestamp: Date.now(),
+        }),
+      }).catch(() => {});
+      // #endregion
       
       console.log(`[DEBUG] 创建的标签组包含 ${tabGroup.tabs.length} 个标签页`);
       console.log(`[DEBUG] 标签组中的标签页:`, tabGroup.tabs.map(t => ({ 
@@ -144,6 +195,28 @@ export class TabManager {
       const tabsToClose = filterValidTabs(tabs!, {
         includePinned: collectPinnedTabs,
       });
+
+      const pinnedToClose = tabsToClose.filter(t => t.pinned).length;
+
+      // #region agent log
+      fetch('http://127.0.0.1:7243/ingest/dc74cad0-0137-41f8-ba3e-10aa1ca8ee34', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          id: `log_${Date.now()}_saveAllTabs_tabsToClose`,
+          runId: 'pre-fix',
+          hypothesisId: 'H3',
+          location: 'TabManager.ts:148',
+          message: 'saveAllTabs tabs to close after filterValidTabs',
+          data: {
+            collectPinnedTabs,
+            totalTabsToClose: tabsToClose.length,
+            pinnedTabsToClose: pinnedToClose,
+          },
+          timestamp: Date.now(),
+        }),
+      }).catch(() => {});
+      // #endregion
       const tabIdsToClose = tabsToClose
         .map(tab => tab.id)
         .filter((id): id is number => id !== undefined);

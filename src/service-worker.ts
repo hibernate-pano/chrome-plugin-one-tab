@@ -219,7 +219,7 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
 });
 
 // 简化的消息处理
-chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   console.log('Service Worker 收到消息:', message.type);
 
   // 基本验证
@@ -277,14 +277,13 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
         // 允许前端通过消息触发保存
         (async () => {
           try {
-            // 优先使用前端传来的标签页数据，避免时间差和状态不一致
-            const tabs = message.data?.tabs || await chrome.tabs.query({ currentWindow: true });
-            console.log('[Service Worker] SAVE_ALL_TABS 收到标签页:', tabs.length);
-            console.log('[Service Worker] 标签页详情:', tabs.map(t => ({
-              title: t.title,
-              pinned: t.pinned,
-              url: t.url
-            })));
+            // 优先使用前端传来的 windowId，其次用 sender 信息，最后回退到 currentWindow
+            const windowId = message.data?.windowId ?? sender.tab?.windowId;
+            const tabs = windowId
+              ? await chrome.tabs.query({ windowId })
+              : await chrome.tabs.query({ currentWindow: true });
+
+            console.log('[Service Worker] SAVE_ALL_TABS 查询到标签页:', tabs.length);
 
             await tabManager.saveAllTabs(tabs);
             sendResponse({ success: true });

@@ -50,19 +50,26 @@ export const simpleMoveTabAndSync = createAsyncThunk(
             // 插入标签到目标位置
             newTargetTabs.splice(adjustedIndex, 0, tab);
 
-            // 更新源标签组和目标标签组
-            sourceGroup.tabs = newSourceTabs;
-            sourceGroup.updatedAt = new Date().toISOString();
+            // 创建更新后的标签组对象，避免直接修改原对象
+            const updatedSourceGroup = {
+              ...sourceGroup,
+              tabs: newSourceTabs,
+              updatedAt: new Date().toISOString()
+            };
 
+            let updatedTargetGroup = targetGroup;
             if (sourceGroupId !== targetGroupId) {
-              targetGroup.tabs = newTargetTabs;
-              targetGroup.updatedAt = new Date().toISOString();
+              updatedTargetGroup = {
+                ...targetGroup,
+                tabs: newTargetTabs,
+                updatedAt: new Date().toISOString()
+              };
             }
 
             // 更新本地存储
             const updatedGroups = groups.map(g => {
-              if (g.id === sourceGroupId) return sourceGroup;
-              if (g.id === targetGroupId) return targetGroup;
+              if (g.id === sourceGroupId) return updatedSourceGroup;
+              if (g.id === targetGroupId) return updatedTargetGroup;
               return g;
             }).filter(g => g.tabs.length > 0); // 移除空标签组
 

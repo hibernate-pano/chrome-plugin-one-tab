@@ -45,11 +45,39 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({ onClose }) => {
 
   // 处理“收集固定页”开关
   const handleToggleCollectPinnedTabs = async () => {
-    console.log('[DEBUG HeaderDropdown] 切换收集固定页开关，当前值:', settings.collectPinnedTabs);
+    console.log('[HeaderDropdown] 切换收集固定页开关');
+    console.log('[HeaderDropdown] 切换前的值:', settings.collectPinnedTabs);
+    
     dispatch(toggleCollectPinnedTabs());
-    console.log('[DEBUG HeaderDropdown] 准备保存设置到存储...');
+    
+    // 等待下一个事件循环，确保 Redux state 已更新
+    await new Promise(resolve => setTimeout(resolve, 0));
+    
+    console.log('[HeaderDropdown] 切换后准备保存');
     await dispatch(saveSettings() as any);
-    console.log('[DEBUG HeaderDropdown] 设置已保存');
+    
+    // 验证保存结果
+    const savedSettings = await storage.getSettings();
+    console.log('[HeaderDropdown] 保存后的值:', savedSettings.collectPinnedTabs);
+
+    // #region agent log
+    fetch('http://127.0.0.1:7243/ingest/dc74cad0-0137-41f8-ba3e-10aa1ca8ee34', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        id: `log_${Date.now()}_collectPinnedTabs_toggle`,
+        runId: 'pre-fix',
+        hypothesisId: 'H1',
+        location: 'HeaderDropdown.tsx:61',
+        message: 'Toggled collectPinnedTabs and saved settings',
+        data: {
+          beforeToggle: settings.collectPinnedTabs,
+          afterToggle: savedSettings.collectPinnedTabs,
+        },
+        timestamp: Date.now(),
+      }),
+    }).catch(() => {});
+    // #endregion
   };
 
   // 处理快速刷新（从云端下载并合并）

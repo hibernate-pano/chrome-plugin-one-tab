@@ -217,62 +217,6 @@ html:not([data-theme]).dark {
     color: var(--color-text-primary);
   }
 
-  /* ==========================================
-     可访问性：减少动画偏好支持
-     需求: 8.3 - 如果用户偏好减少动画，跳过过渡动画
-     ========================================== */
-  @media (prefers-reduced-motion: reduce) {
-    /* 将过渡时间设置为接近 0，满足 Property 8 的要求 */
-    :root {
-      --theme-transition-duration: 0.001ms;
-    }
-
-    /* 全局禁用动画和过渡 */
-    *, *::before, *::after {
-      animation-duration: 0.001ms !important;
-      animation-iteration-count: 1 !important;
-      transition-duration: 0.001ms !important;
-      scroll-behavior: auto !important;
-    }
-
-    /* 主题切换时也禁用过渡 - 使用 !important 确保覆盖 */
-    body,
-    .card,
-    .card-glass,
-    .btn,
-    .btn-primary,
-    .btn-secondary,
-    .btn-ghost,
-    .btn-icon,
-    .input,
-    .search-input,
-    .tab-group-card,
-    .tab-group-header,
-    .tab-group-title,
-    .tab-group-count,
-    .tab-item,
-    .tab-item-title,
-    .tab-item-url,
-    .header,
-    .badge,
-    .badge-accent,
-    .empty-state,
-    .empty-state-icon,
-    .empty-state-title,
-    .empty-state-description,
-    .tooltip,
-    .dropdown-menu,
-    .dropdown-item,
-    .popup-menu,
-    .modal-content,
-    svg,
-    svg path,
-    svg circle,
-    svg rect {
-      transition: none !important;
-    }
-  }
-
   /* Focus 样式 */
   :focus-visible {
     outline: 2px solid var(--color-accent);
@@ -284,6 +228,60 @@ html:not([data-theme]).dark {
   ::selection {
     background-color: var(--color-accent-subtle);
     color: var(--color-text-primary);
+  }
+}
+
+/* ==========================================
+   可访问性：减少动画偏好支持
+   需求: 8.3 - 如果用户偏好减少动画，跳过过渡动画
+   放在 @layer 外部，确保选择器不会被 Tailwind 丢弃
+   ========================================== */
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --theme-transition-duration: 0.001ms;
+  }
+
+  *, *::before, *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+
+  body,
+  .card,
+  .card-glass,
+  .btn,
+  .btn-primary,
+  .btn-secondary,
+  .btn-ghost,
+  .btn-icon,
+  .input,
+  .search-input,
+  .tab-group-card,
+  .tab-group-header,
+  .tab-group-title,
+  .tab-group-count,
+  .tab-item,
+  .tab-item-title,
+  .tab-item-url,
+  .header,
+  .badge,
+  .badge-accent,
+  .empty-state,
+  .empty-state-icon,
+  .empty-state-title,
+  .empty-state-description,
+  .tooltip,
+  .dropdown-menu,
+  .dropdown-item,
+  .popup-menu,
+  .modal-content,
+  svg,
+  svg path,
+  svg circle,
+  svg rect {
+    transition: none !important;
   }
 }
 
@@ -836,15 +834,29 @@ html:not([data-theme]).dark {
      向后兼容的旧类名
      ========================================== */
   .flat-card {
-    @apply card;
+    background: var(--color-bg-secondary);
+    border: 1px solid var(--color-border-default);
+    border-radius: 0.75rem;
+    box-shadow: var(--shadow-card);
+    transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
   }
 
   .flat-button-primary {
-    @apply btn btn-primary;
+    @apply inline-flex items-center justify-center gap-2;
+    @apply px-4 py-2 rounded-lg font-medium text-sm;
+    @apply transition-all duration-150;
+    background-color: var(--color-accent);
+    color: white;
+    @apply shadow-soft hover:shadow-medium;
   }
 
   .flat-button-secondary {
-    @apply btn btn-secondary;
+    @apply inline-flex items-center justify-center gap-2;
+    @apply px-4 py-2 rounded-lg font-medium text-sm;
+    @apply transition-all duration-150;
+    background: var(--color-bg-tertiary);
+    color: var(--color-text-primary);
+    border: 1px solid var(--color-border-default);
   }
 
   .flat-interaction {
