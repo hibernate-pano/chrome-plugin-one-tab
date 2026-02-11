@@ -10,6 +10,14 @@ export const CACHE_TTL = {
   SETTINGS: 60 * 1000,  // 60秒
 } as const;
 
+/**
+ * 使标签组缓存失效，下次 getGroups() 会从 chrome.storage 重新读取。
+ * 在后台保存/收集标签页后，由标签管理器页面在刷新前调用，避免读到旧缓存。
+ */
+export function invalidateGroupsCache(): void {
+  cacheManager.getCache('storage').delete('groups');
+}
+
 const STORAGE_KEYS = {
   VERSION: 'storage_version',
   GROUPS: 'tab_groups',

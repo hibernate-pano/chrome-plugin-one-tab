@@ -1,6 +1,7 @@
 import React, { useEffect, useState, lazy } from 'react';
 import { useAppDispatch, useAppSelector } from '@/store/hooks';
 import { loadGroups, deleteGroup, moveGroupAndSync } from '@/store/slices/tabSlice';
+import { invalidateGroupsCache } from '@/utils/storage';
 import { runMigrations } from '@/utils/migrationUtils';
 
 import { DraggableTabGroup } from '@/components/dnd/DraggableTabGroup';
@@ -48,6 +49,7 @@ export const TabList: React.FC<TabListProps> = ({ searchQuery }) => {
     const messageListener = (message: any) => {
       if (message.type === 'REFRESH_TAB_LIST') {
         console.log('收到刷新标签列表消息，重新加载数据');
+        invalidateGroupsCache(); // 清除本地缓存，确保从 storage 读取最新数据
         dispatch(loadGroups());
       }
       return true; // 异步响应
