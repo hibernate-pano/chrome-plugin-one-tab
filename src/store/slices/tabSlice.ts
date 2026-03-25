@@ -1,10 +1,11 @@
 import { createSlice, createAsyncThunk, createSelector } from '@reduxjs/toolkit';
-import { TabState, TabGroup, UserSettings } from '@/types/tab';
+import { RecentRestoreEntry, TabState, TabGroup, UserSettings } from '@/types/tab';
 import { storage } from '@/utils/storage';
 import { downloadTabsFromCloudFlow, uploadTabsToCloudFlow } from '@/services/tabSyncWorkflow';
 import { nanoid } from '@reduxjs/toolkit';
 import { shouldAutoDeleteAfterTabRemoval } from '@/utils/tabGroupUtils';
 import { updateGroupWithVersion, updateDisplayOrder } from '@/utils/versionHelper';
+import { trackProductEvent } from '@/utils/productEvents';
 
 // 为了解决"参数隐式具有"any"类型"的问题，添加明确的类型定义
 // 注意：这些接口暂时保留，可能在未来的功能中使用
@@ -14,6 +15,7 @@ import { updateGroupWithVersion, updateDisplayOrder } from '@/utils/versionHelpe
 
 const initialState: TabState = {
   groups: [],
+  recentRestores: [],
   activeGroupId: null,
   isLoading: false,
   error: null,
@@ -42,6 +44,41 @@ export const loadGroups = createAsyncThunk('tabs/loadGroups', async () => {
   console.log(`[LoadGroups] 加载 ${sortedGroups.length} 个活跃标签组（已过滤 ${groups.length - activeGroups.length} 个已删除）`);
 
   return sortedGroups;
+});
+
+export const loadRecentRestores = createAsyncThunk('tabs/loadRecentRestores', async () => {
+  const restores = await storage.getRecentRestores();
+  return restores.sort(
+    (left, right) => new Date(right.restoredAt).getTime() - new Date(left.restoredAt).getTime()
+  );
+});
+
+export const recordRecentRestore = createAsyncThunk(
+  'tabs/recordRecentRestore',
+  async (entry: RecentRestoreEntry) => {
+    const currentEntries = await storage.getRecentRestores();
+    const existingEntry = currentEntries.find(item => item.sessionId === entry.sessionId);
+    const nextEntry = existingEntry
+      ? {
+          ...existingEntry,
+          ...entry,
+          restoredAt: new Date().toISOString(),
+        }
+      : entry;
+
+    const nextEntries = [
+      nextEntry,
+      ...currentEntries.filter(item => item.sessionId !== entry.sessionId),
+    ].slice(0, 3);
+
+    await storage.setRecentRestores(nextEntries);
+    return nextEntries;
+  }
+);
+
+export const clearRecentRestores = createAsyncThunk('tabs/clearRecentRestores', async () => {
+  await storage.setRecentRestores([]);
+  return [];
 });
 
 export const saveGroup = createAsyncThunk(
@@ -249,6 +286,14 @@ export const updateGroupNameAndSync = createAsyncThunk(
       return g;
     });
     await storage.setGroups(updatedGroups);
+
+    const renamedGroup = updatedGroups.find(group => group.id === groupId);
+    if (renamedGroup) {
+      await trackProductEvent('session_renamed', {
+        sessionId: renamedGroup.id,
+        sessionName: renamedGroup.name,
+      });
+    }
 
     console.log(`[UpdateGroupName] 更新标签组 ${groupId}, 新版本: ${(groups.find(g => g.id === groupId)?.version || 1) + 1}`);
 
@@ -805,6 +850,15 @@ export const tabSlice = createSlice({
         state.isLoading = false;
         state.error = action.error.message || '加载标签组失败';
       })
+      .addCase(loadRecentRestores.fulfilled, (state, action) => {
+        state.recentRestores = action.payload;
+      })
+      .addCase(recordRecentRestore.fulfilled, (state, action) => {
+        state.recentRestores = action.payload;
+      })
+      .addCase(clearRecentRestores.fulfilled, (state, action) => {
+        state.recentRestores = action.payload;
+      })
       .addCase(saveGroup.fulfilled, (state, action) => {
         // 添加新标签组并按创建时间倒序排列
         state.groups.unshift(action.payload);
@@ -1061,6 +1115,7 @@ export const selectFilteredGroups = createSelector(
     return groups.filter(group => {
       // 先检查组名，这是一个快速检查
       if (group.name.toLowerCase().includes(query)) return true;
+      if (group.notes?.toLowerCase().includes(query)) return true;
 
       // 然后检查标签，这可能更耗时
       return group.tabs.some(

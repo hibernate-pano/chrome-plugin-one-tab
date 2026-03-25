@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import { useAppSelector } from '@/store/hooks';
 import { syncService } from '@/services/syncService';
 import { useToast } from '@/contexts/ToastContext';
+import { trackProductEvent } from '@/utils/productEvents';
 
 interface SyncButtonProps { }
 
@@ -27,21 +28,29 @@ export const SyncButton: React.FC<SyncButtonProps> = () => {
   const handleDownload = async () => {
     if (syncStatus !== 'syncing' && isAuthenticated) {
       try {
-        // 检查本地是否有数据
         const hasLocalData = await syncService.hasLocalData();
 
         if (!hasLocalData) {
-          // 本地没有数据，直接下载（相当于覆盖模式）
-          console.log('本地没有数据，直接下载...');
-          await syncService.downloadAndRefresh(true); // overwriteLocal=true
+          void trackProductEvent('sync_download_started', {
+            mode: 'overwrite',
+            directRestore: true,
+          });
+          const result = await syncService.downloadAndRefresh(true);
+          if (result.success) {
+            showToast('本地没有会话，已直接从云端恢复', 'success');
+            void trackProductEvent('sync_download_completed', {
+              mode: 'overwrite',
+              directRestore: true,
+            });
+          } else {
+            showToast(result.error || '下载失败，请重试', 'error');
+          }
         } else {
-          // 本地有数据，显示选择对话框
           setModalAnimation('animate-fadeIn');
           setShowDownloadModal(true);
         }
       } catch (error) {
         console.error('检查本地数据状态失败:', error);
-        // 出错时显示选择对话框，以确保用户可以选择
         setModalAnimation('animate-fadeIn');
         setShowDownloadModal(true);
       }
@@ -62,21 +71,22 @@ export const SyncButton: React.FC<SyncButtonProps> = () => {
   const handleUploadOverwrite = async () => {
     if (syncStatus !== 'syncing' && isAuthenticated) {
       try {
-        // 先关闭模态框，然后开始上传
         closeModals();
-        console.log('开始上传本地数据到云端（覆盖模式）...');
-        const result = await syncService.uploadToCloud(false, true); // background=false, overwriteCloud=true
-        // 上传完成
+        void trackProductEvent('sync_upload_started', {
+          mode: 'overwrite',
+        });
+        const result = await syncService.uploadToCloud(false, true);
 
-        // 根据结果显示提示
         if (result.success) {
-          showToast('数据上传成功', 'success');
+          showToast('已用本地会话覆盖云端数据', 'success');
+          void trackProductEvent('sync_upload_completed', {
+            mode: 'overwrite',
+          });
         } else {
           showToast(result.error || '上传失败，请重试', 'error');
         }
       } catch (error) {
         console.error('上传数据到云端失败:', error);
-        // 显示错误提示
         showToast('上传失败，请重试', 'error');
       }
     }
@@ -86,19 +96,22 @@ export const SyncButton: React.FC<SyncButtonProps> = () => {
   const handleUploadMerge = async () => {
     if (syncStatus !== 'syncing' && isAuthenticated) {
       try {
-        // 先关闭模态框，然后开始上传
         closeModals();
-        const result = await syncService.uploadToCloud(false, false); // background=false, overwriteCloud=false
+        void trackProductEvent('sync_upload_started', {
+          mode: 'merge',
+        });
+        const result = await syncService.uploadToCloud(false, false);
 
-        // 根据结果显示提示
         if (result.success) {
-          showToast('数据上传成功', 'success');
+          showToast('已把本地会话合并上传到云端', 'success');
+          void trackProductEvent('sync_upload_completed', {
+            mode: 'merge',
+          });
         } else {
           showToast(result.error || '上传失败，请重试', 'error');
         }
       } catch (error) {
         console.error('上传数据到云端失败:', error);
-        // 显示错误提示
         showToast('上传失败，请重试', 'error');
       }
     }
@@ -108,21 +121,24 @@ export const SyncButton: React.FC<SyncButtonProps> = () => {
   const handleDownloadOverwrite = async () => {
     if (syncStatus !== 'syncing' && isAuthenticated) {
       try {
-        // 先关闭模态框，然后开始下载
         closeModals();
-        // 使用下载方法，显示进度条
-        const result = await syncService.downloadAndRefresh(true); // overwriteLocal=true
+        void trackProductEvent('sync_download_started', {
+          mode: 'overwrite',
+          directRestore: false,
+        });
+        const result = await syncService.downloadAndRefresh(true);
 
         if (result.success) {
-          // 显示成功提示
-          showToast('数据下载成功', 'success');
+          showToast('已用云端数据覆盖本地会话', 'success');
+          void trackProductEvent('sync_download_completed', {
+            mode: 'overwrite',
+            directRestore: false,
+          });
         } else {
-          // 显示错误提示
           showToast(result.error || '下载失败，请重试', 'error');
         }
       } catch (error) {
         console.error('从云端下载数据失败:', error);
-        // 显示错误提示
         showToast('下载失败，请重试', 'error');
       }
     }
@@ -132,21 +148,24 @@ export const SyncButton: React.FC<SyncButtonProps> = () => {
   const handleDownloadMerge = async () => {
     if (syncStatus !== 'syncing' && isAuthenticated) {
       try {
-        // 先关闭模态框，然后开始下载
         closeModals();
-        // 使用下载方法，显示进度条
-        const result = await syncService.downloadAndRefresh(false); // overwriteLocal=false
+        void trackProductEvent('sync_download_started', {
+          mode: 'merge',
+          directRestore: false,
+        });
+        const result = await syncService.downloadAndRefresh(false);
 
         if (result.success) {
-          // 显示成功提示
-          showToast('数据下载成功', 'success');
+          showToast('已把云端数据合并到本地会话', 'success');
+          void trackProductEvent('sync_download_completed', {
+            mode: 'merge',
+            directRestore: false,
+          });
         } else {
-          // 显示错误提示
           showToast(result.error || '下载失败，请重试', 'error');
         }
       } catch (error) {
         console.error('从云端下载数据失败:', error);
-        // 显示错误提示
         showToast('下载失败，请重试', 'error');
       }
     }
@@ -158,8 +177,7 @@ export const SyncButton: React.FC<SyncButtonProps> = () => {
 
   return (
     <>
-      <div className="flex items-center gap-2">
-        {/* 进度条 - 同步时显示在按钮旁边 */}
+      <div className="sync-button flex items-center gap-2">
         {syncOperation !== 'none' && syncStatus === 'syncing' && (
           <div className="w-16 bg-gray-200 rounded-full h-1.5">
             <div
@@ -174,12 +192,11 @@ export const SyncButton: React.FC<SyncButtonProps> = () => {
             onClick={handleUpload}
             disabled={syncStatus === 'syncing'}
             className={`flex items-center whitespace-nowrap px-3 py-1.5 rounded-md text-sm flat-interaction ${
-              // 上传按钮始终保持绿色，只是在同步中禁用悬停效果
               syncStatus === 'syncing'
                 ? 'bg-green-100 text-green-600'
                 : 'bg-green-100 text-green-600 hover:bg-green-200'
               } transition-colors`}
-            title="上传本地数据到云端"
+            title="手动上传本地会话到云端"
           >
             {syncStatus === 'syncing' && syncOperation === 'upload' ? (
               <>
@@ -203,12 +220,11 @@ export const SyncButton: React.FC<SyncButtonProps> = () => {
             onClick={handleDownload}
             disabled={syncStatus === 'syncing'}
             className={`flex items-center whitespace-nowrap px-3 py-1.5 rounded-md text-sm flat-interaction ${
-              // 下载按钮始终保持蓝色，只是在同步中禁用悬停效果
               syncStatus === 'syncing'
                 ? 'bg-blue-100 text-blue-600'
                 : 'bg-blue-100 text-blue-600 hover:bg-blue-200'
               } transition-colors`}
-            title="从云端下载数据并与本地合并"
+            title="手动从云端下载会话到本地"
           >
             {syncStatus === 'syncing' && syncOperation === 'download' ? (
               <>
@@ -230,7 +246,6 @@ export const SyncButton: React.FC<SyncButtonProps> = () => {
         </div>
       </div>
 
-      {/* 模态框 - 使用 Portal 渲染到 body，避免主题样式影响 */}
       {(showUploadModal || showDownloadModal) && createPortal(
         <div
           className={modalAnimation}
@@ -250,7 +265,6 @@ export const SyncButton: React.FC<SyncButtonProps> = () => {
           }}
           onClick={closeModals}
         >
-          {/* 上传模态框 */}
           {showUploadModal && (
             <div
               className={modalAnimation}
@@ -262,12 +276,11 @@ export const SyncButton: React.FC<SyncButtonProps> = () => {
               onClick={(e) => e.stopPropagation()}
             >
               <div style={{ textAlign: 'center', marginBottom: '16px' }}>
-                <h3 style={{ fontSize: '1.25rem', fontWeight: 'bold', color: '#ffffff', margin: 0 }}>选择上传模式</h3>
-                <p style={{ color: '#d1d5db', margin: '8px 0 0 0' }}>请选择如何处理云端数据</p>
+                <h3 style={{ fontSize: '1.25rem', fontWeight: 'bold', color: '#ffffff', margin: 0 }}>上传到云端</h3>
+                <p style={{ color: '#d1d5db', margin: '8px 0 0 0' }}>选择这次上传是覆盖云端，还是与云端现有数据合并</p>
               </div>
 
               <div style={{ display: 'flex', gap: '16px', justifyContent: 'center' }}>
-                {/* 覆盖模式卡片 */}
                 <div
                   onClick={handleUploadOverwrite}
                   style={{
@@ -290,11 +303,10 @@ export const SyncButton: React.FC<SyncButtonProps> = () => {
                   </div>
                   <div style={{ padding: '12px' }}>
                     <h4 style={{ fontSize: '1rem', fontWeight: '600', color: '#1f2937', marginBottom: '6px', margin: '0 0 6px 0' }}>覆盖模式</h4>
-                    <p style={{ color: '#4b5563', fontSize: '0.8rem', margin: 0, lineHeight: '1.4' }}>将使用本地数据完全替换云端数据，云端现有数据将被删除</p>
+                    <p style={{ color: '#4b5563', fontSize: '0.8rem', margin: 0, lineHeight: '1.4' }}>用当前本地会话完全替换云端数据，适合把这台设备作为最新来源</p>
                   </div>
                 </div>
 
-                {/* 合并模式卡片 */}
                 <div
                   onClick={handleUploadMerge}
                   style={{
@@ -317,7 +329,7 @@ export const SyncButton: React.FC<SyncButtonProps> = () => {
                   </div>
                   <div style={{ padding: '12px' }}>
                     <h4 style={{ fontSize: '1rem', fontWeight: '600', color: '#1f2937', marginBottom: '6px', margin: '0 0 6px 0' }}>合并模式</h4>
-                    <p style={{ color: '#4b5563', fontSize: '0.8rem', margin: 0, lineHeight: '1.4' }}>将本地数据与云端数据智能合并，保留两者的状态</p>
+                    <p style={{ color: '#4b5563', fontSize: '0.8rem', margin: 0, lineHeight: '1.4' }}>把本地新增内容合并到云端，尽量保留两边已有的会话状态</p>
                   </div>
                 </div>
               </div>
@@ -349,7 +361,6 @@ export const SyncButton: React.FC<SyncButtonProps> = () => {
             </div>
           )}
 
-          {/* 下载模态框 */}
           {showDownloadModal && (
             <div
               className={modalAnimation}
@@ -361,12 +372,11 @@ export const SyncButton: React.FC<SyncButtonProps> = () => {
               onClick={(e) => e.stopPropagation()}
             >
               <div style={{ textAlign: 'center', marginBottom: '16px' }}>
-                <h3 style={{ fontSize: '1.25rem', fontWeight: 'bold', color: '#ffffff', margin: 0 }}>选择下载模式</h3>
-                <p style={{ color: '#d1d5db', margin: '8px 0 0 0' }}>请选择如何处理本地数据</p>
+                <h3 style={{ fontSize: '1.25rem', fontWeight: 'bold', color: '#ffffff', margin: 0 }}>下载到本地</h3>
+                <p style={{ color: '#d1d5db', margin: '8px 0 0 0' }}>选择这次下载是覆盖本地，还是与本地现有数据合并</p>
               </div>
 
               <div style={{ display: 'flex', gap: '16px', justifyContent: 'center' }}>
-                {/* 覆盖模式卡片 */}
                 <div
                   onClick={handleDownloadOverwrite}
                   style={{
@@ -389,11 +399,10 @@ export const SyncButton: React.FC<SyncButtonProps> = () => {
                   </div>
                   <div style={{ padding: '12px' }}>
                     <h4 style={{ fontSize: '1rem', fontWeight: '600', color: '#1f2937', marginBottom: '6px', margin: '0 0 6px 0' }}>覆盖模式</h4>
-                    <p style={{ color: '#4b5563', fontSize: '0.8rem', margin: 0, lineHeight: '1.4' }}>将使用云端数据完全替换本地数据，本地状态将被覆盖</p>
+                    <p style={{ color: '#4b5563', fontSize: '0.8rem', margin: 0, lineHeight: '1.4' }}>用云端数据完全替换本地会话，适合在新设备上直接接着工作</p>
                   </div>
                 </div>
 
-                {/* 合并模式卡片 */}
                 <div
                   onClick={handleDownloadMerge}
                   style={{
@@ -416,7 +425,7 @@ export const SyncButton: React.FC<SyncButtonProps> = () => {
                   </div>
                   <div style={{ padding: '12px' }}>
                     <h4 style={{ fontSize: '1rem', fontWeight: '600', color: '#1f2937', marginBottom: '6px', margin: '0 0 6px 0' }}>合并模式</h4>
-                    <p style={{ color: '#4b5563', fontSize: '0.8rem', margin: 0, lineHeight: '1.4' }}>将云端数据与本地数据智能合并，保留两者的状态</p>
+                    <p style={{ color: '#4b5563', fontSize: '0.8rem', margin: 0, lineHeight: '1.4' }}>把云端数据合并进本地，尽量保留当前设备已有的会话和设置</p>
                   </div>
                 </div>
               </div>

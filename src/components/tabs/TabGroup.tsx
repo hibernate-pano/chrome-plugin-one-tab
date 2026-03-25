@@ -1,11 +1,13 @@
-import React, { useState, useCallback } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
 import { useAppDispatch } from '@/store/hooks';
-import { updateGroupNameAndSync, toggleGroupLockAndSync, deleteGroup, updateGroup, moveTabAndSync } from '@/store/slices/tabSlice';
+import { recordRecentRestore, updateGroupNameAndSync, toggleGroupLockAndSync, deleteGroup, updateGroup, moveTabAndSync } from '@/store/slices/tabSlice';
 import { DraggableTab } from '@/components/dnd/DraggableTab';
 import { TabGroup as TabGroupType, Tab } from '@/types/tab';
 import { shouldAutoDeleteAfterTabRemoval } from '@/utils/tabGroupUtils';
 import { useToast } from '@/contexts/ToastContext';
 import { useEnhancedToast } from '@/utils/toastHelper';
+import { trackProductEvent } from '@/utils/productEvents';
+import { buildRecentRestoreEntry, buildSessionRestoreMessage } from '@/utils/sessionPresentation';
 
 interface TabGroupProps {
   group: TabGroupType;
@@ -40,14 +42,33 @@ const OpenAllIcon = () => (
   </svg>
 );
 
+const FavoriteIcon = ({ filled }: { filled: boolean }) => (
+  <svg className="w-4 h-4" fill={filled ? 'currentColor' : 'none'} viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+    <path strokeLinecap="round" strokeLinejoin="round" d="M11.48 3.499a.563.563 0 011.04 0l2.125 5.111a.563.563 0 00.475.345l5.518.442c.499.04.701.663.321.988l-4.204 3.602a.563.563 0 00-.182.557l1.285 5.386a.562.562 0 01-.84.61l-4.725-2.885a.563.563 0 00-.586 0L6.982 20.54a.562.562 0 01-.84-.61l1.285-5.386a.563.563 0 00-.182-.557L3.041 10.385a.563.563 0 01.321-.988l5.518-.442a.563.563 0 00.475-.345L11.48 3.5z" />
+  </svg>
+);
+
+const NotesIcon = () => (
+  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+    <path strokeLinecap="round" strokeLinejoin="round" d="M16.862 3.487a2.625 2.625 0 113.712 3.712L7.5 20.273 3 21l.727-4.5L16.862 3.487z" />
+  </svg>
+);
+
 export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
   const dispatch = useAppDispatch();
-  const { showConfirm } = useToast();
+  const { showConfirm, showToast } = useToast();
   const { showDeleteSuccess, showDeleteError, showRestoreSuccess, showRestoreError } = useEnhancedToast();
 
   const [isEditing, setIsEditing] = useState(false);
   const [newName, setNewName] = useState(group.name);
   const [isCollapsed, setIsCollapsed] = useState(false);
+  const [isEditingNotes, setIsEditingNotes] = useState(false);
+  const [notesDraft, setNotesDraft] = useState(group.notes || '');
+
+  useEffect(() => {
+    setNewName(group.name);
+    setNotesDraft(group.notes || '');
+  }, [group.name, group.notes]);
 
   const handleNameChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     setNewName(e.target.value);
@@ -72,7 +93,7 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
   const handleDelete = useCallback(() => {
     showConfirm({
       title: '删除确认',
-      message: '确定要删除这个标签组吗？',
+      message: '确定要删除这个会话吗？',
       type: 'danger',
       confirmText: '删除',
       cancelText: '取消',
@@ -80,10 +101,10 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
         dispatch(deleteGroup(group.id))
           .unwrap()
           .then(() => {
-            showDeleteSuccess(`已删除标签组 "${group.name}" (${group.tabs.length} 个标签页)`);
+            showDeleteSuccess(`已删除会话 "${group.name}" (${group.tabs.length} 个标签页)`);
           })
           .catch(error => {
-            showDeleteError(`删除标签组失败: ${error.message || '未知错误'}`);
+            showDeleteError(`删除会话失败: ${error.message || '未知错误'}`);
           });
       },
       onCancel: () => { }
@@ -94,26 +115,61 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
     dispatch(toggleGroupLockAndSync(group.id));
   }, [dispatch, group.id]);
 
+  const handleToggleFavorite = useCallback(() => {
+    dispatch(updateGroup({
+      ...group,
+      isFavorite: !group.isFavorite,
+      updatedAt: new Date().toISOString(),
+    }));
+    void trackProductEvent('session_favorited', {
+      sessionId: group.id,
+      sessionName: group.name,
+      isFavorite: !group.isFavorite,
+    });
+  }, [dispatch, group]);
+
+  const handleSaveNotes = useCallback(() => {
+    dispatch(updateGroup({
+      ...group,
+      notes: notesDraft.trim() || undefined,
+      updatedAt: new Date().toISOString(),
+    }));
+    setIsEditingNotes(false);
+    void trackProductEvent('session_note_saved', {
+      sessionId: group.id,
+      sessionName: group.name,
+      hasNotes: !!notesDraft.trim(),
+      noteLength: notesDraft.trim().length,
+    });
+  }, [dispatch, group, notesDraft]);
+
   const handleOpenAllTabs = useCallback(() => {
     const tabsPayload = group.tabs.map(tab => ({
       url: tab.url,
       pinned: !!tab.pinned,
     }));
 
+    dispatch(recordRecentRestore(buildRecentRestoreEntry(group, 'list')));
+    void trackProductEvent('session_restored', {
+      sessionId: group.id,
+      sessionName: group.name,
+      source: 'list',
+      tabCount: group.tabs.length,
+    });
+
     if (!group.isLocked) {
       dispatch({ type: 'tabs/deleteGroup/fulfilled', payload: group.id });
       dispatch(deleteGroup(group.id))
         .unwrap()
         .then(() => {
-          console.log(`删除标签组: ${group.id}`);
-          showDeleteSuccess(`已恢复标签组 "${group.name}" 并删除原标签组`);
+          showToast(buildSessionRestoreMessage(group), 'success', 4500);
         })
         .catch(error => {
-          console.error('删除标签组失败:', error);
-          showDeleteError(`删除标签组失败: ${error.message || '未知错误'}`);
+          console.error('恢复会话后删除原会话失败:', error);
+          showDeleteError(`恢复会话后清理原会话失败: ${error.message || '未知错误'}`);
         });
     } else {
-      showRestoreSuccess(group.tabs.length);
+      showToast(buildSessionRestoreMessage(group), 'success', 4500);
     }
 
     setTimeout(() => {
@@ -122,7 +178,7 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
         data: { tabs: tabsPayload }
       });
     }, 50);
-  }, [dispatch, group.id, group.isLocked, group.name, group.tabs, showDeleteSuccess, showDeleteError, showRestoreSuccess]);
+  }, [dispatch, group, showDeleteError, showToast]);
 
   const handleOpenTab = useCallback((tab: Tab) => {
     if (!group.isLocked) {
@@ -131,12 +187,11 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
         dispatch(deleteGroup(group.id))
           .unwrap()
           .then(() => {
-            console.log(`自动删除空标签组: ${group.name} (ID: ${group.id})`);
-            showDeleteSuccess(`已恢复标签页并自动删除空标签组 "${group.name}"`);
+            showDeleteSuccess(`已恢复标签页并自动删除空会话 "${group.name}"`);
           })
           .catch(error => {
-            console.error('删除标签组失败:', error);
-            showDeleteError(`删除标签组失败: ${error.message || '未知错误'}`);
+            console.error('删除会话失败:', error);
+            showDeleteError(`删除会话失败: ${error.message || '未知错误'}`);
           });
       } else {
         const updatedTabs = group.tabs.filter(t => t.id !== tab.id);
@@ -149,16 +204,15 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
         dispatch(updateGroup(updatedGroup))
           .unwrap()
           .then(() => {
-            console.log(`更新标签组: ${group.name}, 剩余标签页: ${updatedTabs.length}`);
-            showRestoreSuccess(1); // Restore 1 tab
+            showRestoreSuccess(1);
           })
           .catch(error => {
-            console.error('更新标签组失败:', error);
-            showRestoreError(`更新标签组失败: ${error.message || '未知错误'}`);
+            console.error('更新会话失败:', error);
+            showRestoreError(`更新会话失败: ${error.message || '未知错误'}`);
           });
       }
     } else {
-      showRestoreSuccess(1); // Restore 1 tab
+      showRestoreSuccess(1);
     }
 
     setTimeout(() => {
@@ -183,12 +237,11 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
       dispatch(deleteGroup(group.id))
         .unwrap()
         .then(() => {
-          showDeleteSuccess(`已删除标签组 "${group.name}" (最后一个标签页已删除)`);
+          showDeleteSuccess(`已删除会话 "${group.name}"（最后一个标签页已删除）`);
         })
         .catch(error => {
-          showDeleteError(`删除标签组失败: ${error.message || '未知错误'}`);
+          showDeleteError(`删除会话失败: ${error.message || '未知错误'}`);
         });
-      console.log(`自动删除空标签组: ${group.name} (ID: ${group.id})`);
     } else {
       const updatedTabs = group.tabs.filter(t => t.id !== tabId);
       const updatedGroup = {
@@ -196,15 +249,14 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
         tabs: updatedTabs,
         updatedAt: new Date().toISOString()
       };
-      dispatch(updateGroup(updatedGroup))
+        dispatch(updateGroup(updatedGroup))
         .unwrap()
         .then(() => {
           showDeleteSuccess(`已从 "${group.name}" 删除标签页 (剩余 ${updatedTabs.length} 个)`);
         })
         .catch(error => {
-          showDeleteError(`更新标签组失败: ${error.message || '未知错误'}`);
+          showDeleteError(`更新会话失败: ${error.message || '未知错误'}`);
         });
-      console.log(`从标签组删除标签页: ${group.name}, 剩余标签页: ${updatedTabs.length}`);
     }
   }, [dispatch, group, showDeleteSuccess, showDeleteError]);
 
@@ -235,7 +287,7 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
           <button
             onClick={() => setIsCollapsed(!isCollapsed)}
             className="btn-icon p-1 -ml-1 micro-interaction-button"
-            aria-label={isCollapsed ? '展开标签组' : '折叠标签组'}
+            aria-label={isCollapsed ? '展开会话' : '折叠会话'}
             aria-expanded={!isCollapsed}
           >
             <svg
@@ -260,24 +312,34 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
               onKeyDown={handleKeyDown}
               className="input py-1 px-2 text-sm font-medium flex-1"
               autoFocus
-              aria-label="编辑标签组名称"
+              aria-label="编辑会话名称"
             />
           ) : (
-            <h3
-              id={`tab-group-title-${group.id}`}
-              className="tab-group-title truncate cursor-pointer tab-group-title-hover transition-colors flat-interaction"
-              onClick={() => !group.isLocked && setIsEditing(true)}
-              title={group.isLocked ? group.name : '点击编辑名称'}
-              tabIndex={0}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' || e.key === ' ') {
-                  e.preventDefault();
-                  if (!group.isLocked) setIsEditing(true);
-                }
-              }}
-            >
-              {group.name}
-            </h3>
+            <div className="min-w-0 flex items-center gap-2">
+              <h3
+                id={`tab-group-title-${group.id}`}
+                className="tab-group-title truncate cursor-pointer tab-group-title-hover transition-colors flat-interaction"
+                onClick={() => !group.isLocked && setIsEditing(true)}
+                title={group.isLocked ? group.name : '点击编辑会话名称'}
+                tabIndex={0}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    if (!group.isLocked) setIsEditing(true);
+                  }
+                }}
+              >
+                {group.name}
+              </h3>
+              {group.isFavorite && (
+                <span
+                  className="rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-medium text-amber-700 dark:bg-amber-900/40 dark:text-amber-300"
+                  title="已收藏会话"
+                >
+                  已收藏
+                </span>
+              )}
+            </div>
           )}
 
           {/* 数量徽章 */}
@@ -292,8 +354,8 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
           {group.isLocked && (
             <span 
               className="tab-group-lock-icon flex-shrink-0" 
-              title="已锁定"
-              aria-label="标签组已锁定"
+              title="会话已锁定"
+              aria-label="会话已锁定"
             >
               <LockIcon locked={true} />
             </span>
@@ -311,8 +373,8 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
           <button
             onClick={handleOpenAllTabs}
             className="btn-icon p-1.5 tab-group-action-accent micro-interaction-button"
-            title="恢复全部标签页"
-            aria-label={`恢复全部 ${group.tabs.length} 个标签页`}
+            title="恢复整个会话"
+            aria-label={`恢复整个会话，共 ${group.tabs.length} 个标签页`}
           >
             <OpenAllIcon />
           </button>
@@ -322,10 +384,30 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
             <button
               onClick={() => setIsEditing(true)}
               className="btn-icon p-1.5 micro-interaction-button"
-              title="重命名"
-              aria-label="重命名标签组"
+              title="重命名会话"
+              aria-label="重命名会话"
             >
               <EditIcon />
+            </button>
+          )}
+
+          <button
+            onClick={handleToggleFavorite}
+            className={`btn-icon p-1.5 micro-interaction-button ${group.isFavorite ? 'text-amber-500' : ''}`}
+            title={group.isFavorite ? '取消收藏会话' : '收藏会话'}
+            aria-label={group.isFavorite ? '取消收藏会话' : '收藏会话'}
+          >
+            <FavoriteIcon filled={!!group.isFavorite} />
+          </button>
+
+          {!group.isLocked && (
+            <button
+              onClick={() => setIsEditingNotes(current => !current)}
+              className="btn-icon p-1.5 micro-interaction-button"
+              title={group.notes ? '编辑会话备注' : '添加会话备注'}
+              aria-label={group.notes ? '编辑会话备注' : '添加会话备注'}
+            >
+              <NotesIcon />
             </button>
           )}
 
@@ -333,8 +415,8 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
           <button
             onClick={handleToggleLock}
             className={`btn-icon p-1.5 micro-interaction-button ${group.isLocked ? 'tab-group-lock-icon' : ''}`}
-            title={group.isLocked ? '解锁' : '锁定'}
-            aria-label={group.isLocked ? '解锁标签组' : '锁定标签组'}
+            title={group.isLocked ? '解锁会话' : '锁定会话'}
+            aria-label={group.isLocked ? '解锁会话' : '锁定会话'}
           >
             <LockIcon locked={group.isLocked} />
           </button>
@@ -344,14 +426,54 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
             <button
               onClick={handleDelete}
               className="btn-icon p-1.5 tab-group-action-danger micro-interaction-button"
-              title="删除标签组"
-              aria-label="删除标签组"
+              title="删除会话"
+              aria-label="删除会话"
             >
               <DeleteIcon />
             </button>
           )}
         </div>
       </div>
+
+      {(group.notes || isEditingNotes) && (
+        <div className="px-4 pb-3">
+          {isEditingNotes ? (
+            <div className="space-y-2 rounded-lg border border-gray-200 bg-gray-50 p-3 dark:border-gray-700 dark:bg-gray-800/60">
+              <label className="block text-xs font-medium text-gray-600 dark:text-gray-300">
+                会话备注
+              </label>
+              <textarea
+                value={notesDraft}
+                onChange={event => setNotesDraft(event.target.value)}
+                placeholder="给这个会话留一句备注，例如这批标签页是为哪个项目、客户或研究主题准备的。"
+                className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 focus:border-primary-500 focus:outline-none dark:border-gray-600 dark:bg-gray-900 dark:text-gray-100"
+                rows={3}
+              />
+              <div className="flex items-center justify-end gap-2">
+                <button
+                  onClick={() => {
+                    setNotesDraft(group.notes || '');
+                    setIsEditingNotes(false);
+                  }}
+                  className="rounded-lg border border-gray-300 px-3 py-1.5 text-xs font-medium text-gray-600 transition-colors hover:bg-gray-100 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-700"
+                >
+                  取消
+                </button>
+                <button
+                  onClick={handleSaveNotes}
+                  className="rounded-lg bg-primary-600 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-primary-700"
+                >
+                  保存备注
+                </button>
+              </div>
+            </div>
+          ) : (
+            <div className="rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-600 dark:border-gray-700 dark:bg-gray-800/60 dark:text-gray-300">
+              {group.notes}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* 标签列表 */}
       <div
@@ -380,6 +502,8 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
   const basicPropsEqual =
     prevProps.group.id === nextProps.group.id &&
     prevProps.group.name === nextProps.group.name &&
+    prevProps.group.notes === nextProps.group.notes &&
+    prevProps.group.isFavorite === nextProps.group.isFavorite &&
     prevProps.group.isLocked === nextProps.group.isLocked &&
     prevProps.group.tabs.length === nextProps.group.tabs.length &&
     prevProps.group.updatedAt === nextProps.group.updatedAt &&

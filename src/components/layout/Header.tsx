@@ -76,9 +76,9 @@ export const Header: React.FC<HeaderProps> = ({ onSearch }) => {
 
   const handleCleanDuplicateTabs = () => {
     showConfirm({
-      title: '确认清理重复标签和空标签组',
+      title: '确认清理重复标签和空会话',
       message:
-        '此操作将：\n• 清理所有标签组中URL相同的重复标签页，只保留每个URL最新的一个标签页\n• 自动删除不包含任何标签页的空标签组（锁定的标签组除外）\n此操作不可撤销。',
+        '此操作将：\n• 清理所有会话中 URL 相同的重复标签页，只保留每个 URL 最新的一个标签页\n• 自动删除不包含任何标签页的空会话（锁定的会话除外）\n此操作不可撤销。',
       type: 'warning',
       confirmText: '确认清理',
       cancelText: '取消',
@@ -92,11 +92,11 @@ export const Header: React.FC<HeaderProps> = ({ onSearch }) => {
               details.push(`已清理 ${result.removedTabsCount} 个重复标签页`);
             }
             if (result.removedGroupsCount > 0) {
-              details.push(`已删除 ${result.removedGroupsCount} 个空标签组`);
+              details.push(`已删除 ${result.removedGroupsCount} 个空会话`);
             }
             message = `清理完成\n${details.join('\n')}`;
           } else {
-            message = '清理完成，未发现重复标签页或空标签组';
+            message = '清理完成，未发现重复标签页或空会话';
           }
           showAlert({
             title: '清理完成',
@@ -221,11 +221,11 @@ export const Header: React.FC<HeaderProps> = ({ onSearch }) => {
               <input
                 ref={searchInputRef}
                 type="text"
-                placeholder="搜索标签..."
+                placeholder="搜索会话、备注或标签..."
                 className={`input search-input w-full py-2 text-sm ${isSearching ? 'pl-10' : 'pl-3'}`}
                 onChange={handleSearch}
                 value={searchValue}
-                aria-label="搜索标签页"
+                aria-label="搜索会话、备注或标签页"
                 role="searchbox"
                 autoComplete="off"
               />
@@ -275,19 +275,19 @@ export const Header: React.FC<HeaderProps> = ({ onSearch }) => {
             <SyncButton />
 
             {/* 保存按钮 */}
-            <Tooltip content="保存所有标签页" position="bottom">
+            <Tooltip content="保存当前窗口为会话" position="bottom">
               <button
                 onClick={handleSaveAllTabs}
                 className="btn btn-primary flat-interaction hidden sm:flex whitespace-nowrap"
-                aria-label="保存当前窗口中的所有标签页"
+                aria-label="保存当前窗口中的所有标签页为会话"
               >
                 <SaveIcon />
-                <span>保存全部</span>
+                <span>保存会话</span>
               </button>
               <button
                 onClick={handleSaveAllTabs}
                 className="btn btn-primary flat-interaction sm:hidden p-2"
-                aria-label="保存当前窗口中的所有标签页"
+                aria-label="保存当前窗口中的所有标签页为会话"
               >
                 <SaveIcon />
               </button>

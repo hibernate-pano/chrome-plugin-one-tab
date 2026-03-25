@@ -87,7 +87,7 @@ export const SyncStatusIndicator: React.FC<SyncStatusIndicatorProps> = ({
 
   // 构建工具提示内容
   const tooltipContent = showTooltip ? 
-    syncStatus.lastSyncTime ? `最后同步: ${new Date(syncStatus.lastSyncTime).toLocaleString()}` : '从未同步'
+    syncStatus.lastSyncTime ? `最后手动同步: ${new Date(syncStatus.lastSyncTime).toLocaleString()}` : '从未手动同步'
     : '';
 
   // 紧凑模式
@@ -118,7 +118,7 @@ export const SyncStatusIndicator: React.FC<SyncStatusIndicatorProps> = ({
         {syncStatus.isSyncing ? (
           <>
             <div className="w-2 h-2 bg-blue-500 rounded-full animate-pulse"></div>
-            <span className="text-blue-600 dark:text-blue-400">同步中...</span>
+            <span className="text-blue-600 dark:text-blue-400">手动同步中...</span>
           </>
         ) : (
           <>
@@ -141,4 +141,3 @@ export const SyncStatusIndicator: React.FC<SyncStatusIndicatorProps> = ({
 };
 
 export default SyncStatusIndicator;
-

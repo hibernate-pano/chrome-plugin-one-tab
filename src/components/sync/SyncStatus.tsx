@@ -4,7 +4,15 @@ import { useAppSelector } from '@/store/hooks';
 interface SyncStatusProps { }
 
 export const SyncStatus: React.FC<SyncStatusProps> = () => {
-  const { syncStatus, backgroundSync } = useAppSelector(state => state.tabs);
+  const { syncStatus, backgroundSync, lastSyncTime } = useAppSelector(state => state.tabs);
+
+  const getLastSyncLabel = () => {
+    if (!lastSyncTime) {
+      return '尚未手动同步';
+    }
+
+    return `最后同步 ${new Date(lastSyncTime).toLocaleString('zh-CN')}`;
+  };
 
   return (
     <div className="text-xs">
@@ -17,12 +25,12 @@ export const SyncStatus: React.FC<SyncStatusProps> = () => {
                 <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
               </svg>
             </span>
-            正在同步数据...
+            正在手动同步...
           </div>
         ) : (
           <div className="text-green-500 flex items-center">
             <span className="mr-1">✓</span>
-            数据已同步
+            {getLastSyncLabel()}
           </div>
         )}
       </div>

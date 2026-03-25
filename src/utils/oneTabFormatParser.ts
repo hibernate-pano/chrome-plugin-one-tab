@@ -49,10 +49,10 @@ export function parseOneTabFormat(text: string): TabGroup[] {
       };
     });
     
-    // 创建标签组
+    // 创建会话
     return {
       id: nanoid(),
-      name: `导入的标签组 ${index + 1}`,
+      name: `导入的会话 ${index + 1}`,
       tabs,
       createdAt: now,
       updatedAt: now,

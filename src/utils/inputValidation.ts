@@ -237,7 +237,7 @@ export function escapeHtml(text: string): string {
 }
 
 /**
- * 验证标签组名称
+ * 验证会话名称
  */
 export function validateGroupName(name: string): ValidationResult {
   const result = sanitizeText(name, 100);
@@ -247,7 +247,7 @@ export function validateGroupName(name: string): ValidationResult {
   }
 
   if (result.sanitized!.length < 1) {
-    return { isValid: false, error: '标签组名称不能为空' };
+    return { isValid: false, error: '会话名称不能为空' };
   }
 
   return result;

@@ -913,7 +913,8 @@ export const sync = {
 
       if (isUndefinedColumn && mentionsCollectPinned) {
         console.warn('[Supabase] user_settings 缺少 collect_pinned_tabs 列，已降级重试（忽略该字段）');
-        const { collect_pinned_tabs: _ignored, ...fallback } = payload as any;
+        const { collect_pinned_tabs: unusedCollectPinnedTabs, ...fallback } = payload as any;
+        void unusedCollectPinnedTabs;
         ({ data, error } = await doUpsert(fallback));
       }
     }

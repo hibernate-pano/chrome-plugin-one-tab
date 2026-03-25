@@ -1,6 +1,7 @@
 import { storage } from '@/utils/storage';
 import { createTabGroupFromChromeTabs, filterValidTabs } from '@/domain/tabGroup';
 import { cacheManager } from '@/utils/performance';
+import { trackProductEvent } from '@/utils/productEvents';
 
 /**
  * 统一的标签页管理器
@@ -38,13 +39,9 @@ export class TabManager {
    * @param shouldRefresh 是否刷新已存在的页面
    */
   async openTabManager(shouldRefresh: boolean = false): Promise<void> {
-    console.log('打开标签管理器页面');
-
     const existingTabs = await this.getExistingTabManagerTabs();
 
     if (existingTabs.length > 0) {
-      // 如果已经有标签管理页打开，则激活它
-      console.log('已有标签管理页打开，激活');
       const tab = existingTabs[0];
       if (tab.id) {
         await chrome.tabs.update(tab.id, { active: true });
@@ -53,8 +50,6 @@ export class TabManager {
         }
       }
     } else {
-      // 如果没有标签管理页打开，则创建新的
-      console.log('没有标签管理页打开，创建新的');
       await chrome.tabs.create({ url: this.getExtensionUrl() });
     }
   }
@@ -63,174 +58,75 @@ export class TabManager {
    * 保存所有标签页
    */
   async saveAllTabs(inputTabs?: chrome.tabs.Tab[]): Promise<void> {
-    console.log('开始保存所有标签页');
-
     try {
-      // 获取标签页列表，添加重试机制
-      let tabs: chrome.tabs.Tab[];
-      if (inputTabs) {
-        tabs = inputTabs;
-      } else {
-        // 重试查询标签页
-        for (let i = 0; i < 3; i++) {
+      let tabs = inputTabs ?? [];
+
+      if (!inputTabs) {
+        for (let attempt = 0; attempt < 3; attempt += 1) {
           try {
             tabs = await chrome.tabs.query({ currentWindow: true });
             break;
           } catch (error) {
-            console.warn(`查询标签页失败，重试 ${i + 1}/3:`, error);
-            if (i === 2) throw error;
+            console.warn(`查询标签页失败，重试 ${attempt + 1}/3`, error);
+            if (attempt === 2) {
+              throw error;
+            }
             await new Promise(resolve => setTimeout(resolve, 200));
           }
         }
       }
 
-      console.log(`查询到 ${tabs!.length} 个标签页`);
-
-      // 读取用户设置，决定是否收集固定标签页
-      // 强制清除缓存，确保读取到最新设置
       const cache = cacheManager.getCache('storage');
       cache.delete('settings');
       const settings = await storage.getSettings();
       const collectPinnedTabs = settings.collectPinnedTabs ?? false;
-      
-      // 调试日志
-      const pinnedCount = tabs!.filter(t => t.pinned).length;
 
-      // #region agent log
-      fetch('http://127.0.0.1:7243/ingest/dc74cad0-0137-41f8-ba3e-10aa1ca8ee34', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          id: `log_${Date.now()}_saveAllTabs_beforeCreateGroup`,
-          runId: 'pre-fix',
-          hypothesisId: 'H1',
-          location: 'TabManager.ts:93',
-          message: 'saveAllTabs before createTabGroupFromChromeTabs',
-          data: {
-            collectPinnedTabs,
-            totalTabs: tabs!.length,
-            pinnedTabsInWindow: pinnedCount,
-          },
-          timestamp: Date.now(),
-        }),
-      }).catch(() => {});
-      // #endregion
-
-      console.log(`[DEBUG] ========== 保存全部标签页 ==========`);
-      console.log(`[DEBUG] 完整设置对象:`, settings);
-      console.log(`[DEBUG] collectPinnedTabs 设置值: ${collectPinnedTabs}`);
-      console.log(`[DEBUG] collectPinnedTabs 类型: ${typeof collectPinnedTabs}`);
-      console.log(`[DEBUG] 固定标签页数量: ${pinnedCount}`);
-      console.log(`[DEBUG] 所有标签页:`, tabs!.map(t => ({ 
-        title: t.title, 
-        pinned: t.pinned, 
-        url: t.url 
-      })));
-      console.log(`[DEBUG] 即将传递给 createTabGroupFromChromeTabs 的 includePinned: ${collectPinnedTabs}`);
-
-      // 创建标签组
-      const tabGroup = createTabGroupFromChromeTabs(tabs!, {
+      const tabGroup = createTabGroupFromChromeTabs(tabs, {
         includePinned: collectPinnedTabs,
       });
 
-      const savedPinnedCount = tabGroup.tabs.filter(t => t.pinned).length;
-
-      // #region agent log
-      fetch('http://127.0.0.1:7243/ingest/dc74cad0-0137-41f8-ba3e-10aa1ca8ee34', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          id: `log_${Date.now()}_saveAllTabs_afterCreateGroup`,
-          runId: 'pre-fix',
-          hypothesisId: 'H2',
-          location: 'TabManager.ts:112',
-          message: 'saveAllTabs after createTabGroupFromChromeTabs',
-          data: {
-            collectPinnedTabs,
-            totalSavedTabs: tabGroup.tabs.length,
-            savedPinnedCount,
-          },
-          timestamp: Date.now(),
-        }),
-      }).catch(() => {});
-      // #endregion
-      
-      console.log(`[DEBUG] 创建的标签组包含 ${tabGroup.tabs.length} 个标签页`);
-      console.log(`[DEBUG] 标签组中的标签页:`, tabGroup.tabs.map(t => ({ 
-        title: t.title, 
-        pinned: t.pinned 
-      })));
-
       if (tabGroup.tabs.length === 0) {
-        console.log('没有有效的标签页需要保存');
-        // 显示通知
         await this.showNotification({
           type: 'basic',
           iconUrl: chrome.runtime.getURL('icons/icon128.png'),
           title: 'TabVault Pro',
-          message: '没有找到可保存的标签页'
+          message: '当前窗口里没有可保存的标签页'
         });
         return;
       }
 
-      // 保存到存储
       const existingGroups = await storage.getGroups();
       await storage.setGroups([tabGroup, ...existingGroups]);
 
-      console.log(`成功保存 ${tabGroup.tabs.length} 个标签页到新标签组`);
-
-      // 显示成功通知
       await this.showNotification({
         type: 'basic',
         iconUrl: chrome.runtime.getURL('icons/icon128.png'),
         title: 'TabVault Pro',
-        message: `已成功保存 ${tabGroup.tabs.length} 个标签页`
+        message: `已将 ${tabGroup.tabs.length} 个标签页保存为新会话`
       });
 
-      // 通知标签管理器页面刷新数据
+      await trackProductEvent('session_saved', {
+        sessionId: tabGroup.id,
+        sessionName: tabGroup.name,
+        tabCount: tabGroup.tabs.length,
+        pinnedCount: tabGroup.tabs.filter(tab => tab.pinned).length,
+      });
+
       this.notifyTabManagerRefresh();
 
-      // 关闭已保存的标签页（排除扩展页面）
-      // 注意：如果用户选择不收集固定页，则固定标签页不会被关闭
-      const tabsToClose = filterValidTabs(tabs!, {
+      const tabsToClose = filterValidTabs(tabs, {
         includePinned: collectPinnedTabs,
       });
-
-      const pinnedToClose = tabsToClose.filter(t => t.pinned).length;
-
-      // #region agent log
-      fetch('http://127.0.0.1:7243/ingest/dc74cad0-0137-41f8-ba3e-10aa1ca8ee34', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          id: `log_${Date.now()}_saveAllTabs_tabsToClose`,
-          runId: 'pre-fix',
-          hypothesisId: 'H3',
-          location: 'TabManager.ts:148',
-          message: 'saveAllTabs tabs to close after filterValidTabs',
-          data: {
-            collectPinnedTabs,
-            totalTabsToClose: tabsToClose.length,
-            pinnedTabsToClose: pinnedToClose,
-          },
-          timestamp: Date.now(),
-        }),
-      }).catch(() => {});
-      // #endregion
       const tabIdsToClose = tabsToClose
         .map(tab => tab.id)
         .filter((id): id is number => id !== undefined);
 
       if (tabIdsToClose.length > 0) {
         try {
-          // 创建一个新标签页
           await chrome.tabs.create({ url: 'chrome://newtab' });
-          // 关闭已保存的标签页
           await chrome.tabs.remove(tabIdsToClose);
-          console.log(`已关闭 ${tabIdsToClose.length} 个标签页`);
         } catch (error) {
           console.warn('关闭标签页时出错:', error);
-          // 即使关闭失败，也不影响保存功能
         }
       }
 
@@ -256,7 +152,6 @@ export class TabManager {
     console.log('保存当前标签页:', tab.url);
 
     if (!tab.url || tab.url.startsWith('chrome://') || tab.url.startsWith('chrome-extension://')) {
-      console.log('跳过Chrome内部页面或扩展页面');
       return;
     }
 
@@ -264,32 +159,30 @@ export class TabManager {
       const settings = await storage.getSettings();
       const collectPinnedTabs = settings.collectPinnedTabs ?? false;
 
-      // 当用户选择不收集固定页时，固定标签页不保存也不关闭
       if (!collectPinnedTabs && tab.pinned) {
-        console.log('当前为固定标签页，且设置为不收集固定页，跳过保存');
         return;
       }
 
-      // 创建包含单个标签的标签组
       const tabGroup = createTabGroupFromChromeTabs([tab], {
         includePinned: collectPinnedTabs,
       });
 
       if (tabGroup.tabs.length === 0) {
-        console.log('没有有效的标签页需要保存');
         return;
       }
 
-      // 保存到存储
       const existingGroups = await storage.getGroups();
       await storage.setGroups([tabGroup, ...existingGroups]);
 
-      console.log('当前标签页已保存');
+      await trackProductEvent('session_saved', {
+        sessionId: tabGroup.id,
+        sessionName: tabGroup.name,
+        tabCount: tabGroup.tabs.length,
+        pinnedCount: tabGroup.tabs.filter(item => item.pinned).length,
+      });
 
-      // 通知标签管理器页面刷新数据
       this.notifyTabManagerRefresh();
 
-      // 关闭当前标签页
       if (tab.id) {
         await chrome.tabs.remove(tab.id);
       }
@@ -304,17 +197,12 @@ export class TabManager {
    * 打开单个标签页，保留标签管理器页面
    */
   async openTab(url: string): Promise<void> {
-    console.log('打开标签页:', url);
-
     try {
-      // 检查是否已经有标签管理器页面打开
       const existingTabs = await this.getExistingTabManagerTabs();
       const tabManagerId = existingTabs.length > 0 ? existingTabs[0].id : null;
 
-      // 打开要恢复的标签页，但不激活它
       await chrome.tabs.create({ url, active: false });
 
-      // 如果有标签管理器页面，则激活它
       if (tabManagerId) {
         await chrome.tabs.update(tabManagerId, { active: true });
       }
@@ -328,26 +216,38 @@ export class TabManager {
   /**
    * 打开多个标签页，保留标签管理器页面
    */
-  async openTabs(urls: string[]): Promise<void> {
-    console.log('打开多个标签页:', urls);
-
+  async openTabsInNewWindow(tabs: Array<{ url: string; pinned?: boolean }>): Promise<void> {
     try {
-      // 检查是否已经有标签管理器页面打开
-      const existingTabs = await this.getExistingTabManagerTabs();
-      const tabManagerId = existingTabs.length > 0 ? existingTabs[0].id : null;
-
-      // 打开所有标签页，但不激活它们
-      for (const url of urls) {
-        await chrome.tabs.create({ url, active: false });
+      if (tabs.length === 0) {
+        return;
       }
 
-      // 如果有标签管理器页面，则激活它
-      if (tabManagerId) {
-        await chrome.tabs.update(tabManagerId, { active: true });
+      const [firstTab, ...remainingTabs] = tabs;
+      const createdWindow = await chrome.windows.create({ url: firstTab.url, focused: true });
+      const targetWindowId = createdWindow.id;
+      const createdFirstTabId = createdWindow.tabs?.[0]?.id;
+
+      if (!targetWindowId) {
+        throw new Error('无法创建会话恢复窗口');
       }
+
+      if (firstTab.pinned && createdFirstTabId) {
+        await chrome.tabs.update(createdFirstTabId, { pinned: true });
+      }
+
+      await Promise.all(
+        remainingTabs.map(tab =>
+          chrome.tabs.create({
+            windowId: targetWindowId,
+            url: tab.url,
+            active: false,
+            pinned: tab.pinned,
+          })
+        )
+      );
 
     } catch (error) {
-      console.error('打开多个标签页失败:', error);
+      console.error('在新窗口恢复会话失败:', error);
       throw error;
     }
   }
@@ -359,10 +259,7 @@ export class TabManager {
     chrome.runtime.sendMessage({
       type: 'REFRESH_TAB_LIST',
       data: { timestamp: Date.now() }
-    }).catch(error => {
-      // 如果没有接收者，会抛出错误，可以忽略
-      console.log('没有找到标签管理器页面，或者发送消息失败', error);
-    });
+    }).catch(() => {});
   }
 
   /**

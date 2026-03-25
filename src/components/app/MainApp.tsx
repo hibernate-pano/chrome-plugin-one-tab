@@ -5,6 +5,7 @@ import { useAppDispatch } from '@/store/hooks';
 import { loadSettings } from '@/store/slices/settingsSlice';
 import { OnboardingGuide } from '@/components/onboarding/OnboardingGuide';
 import { shouldShowOnboarding } from '@/utils/onboardingStorage';
+import { getAppVersionLabel } from '@/utils/runtimeInfo';
 
 // 使用动态导入懒加载拖放功能
 const DndProvider = lazy(() =>
@@ -106,10 +107,10 @@ export const MainApp: React.FC = () => {
                         d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"
                       />
                     </svg>
-                    <span>TabVault Pro v1.11.1</span>
+                    <span>TabVault Pro {getAppVersionLabel()}</span>
                   </div>
                   <div className="flex items-center space-x-2">
-                    <span>高效的标签页管理工具</span>
+                    <span>Save the session. Find it later.</span>
                     {process.env.NODE_ENV === 'development' && (
                       <button
                         onClick={togglePerformanceTest}

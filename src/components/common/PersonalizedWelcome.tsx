@@ -25,13 +25,13 @@ export const PersonalizedWelcome: React.FC<PersonalizedWelcomeProps> = ({
 
   const getMotivationalMessage = () => {
     if (tabCount === 0) {
-      return '开始整理您的标签页，让浏览更高效';
+      return '先保存一个工作会话，让稍后找回变得轻松';
     } else if (tabCount < 10) {
-      return '保持简洁，继续优化您的浏览体验';
+      return '继续保持，您的工作会话已经开始变得清晰有序';
     } else if (tabCount < 50) {
-      return '管理得很好！继续保持这种高效状态';
+      return '管理得很好，您已经在稳定积累可恢复的工作现场';
     } else {
-      return '标签页管理专家！您的组织能力令人印象深刻';
+      return '会话管理专家，随时都能从上次中断的位置继续工作';
     }
   };
 
@@ -74,7 +74,7 @@ export const PersonalizedWelcome: React.FC<PersonalizedWelcomeProps> = ({
           <div className="flex items-center space-x-1">
             <div className="w-2 h-2 bg-green-500 rounded-full"></div>
             <span className="text-sm text-gray-600 dark:text-gray-300">
-              已整理
+              可恢复
             </span>
           </div>
         </div>
@@ -93,8 +93,8 @@ export const PersonalizedWelcome: React.FC<PersonalizedWelcomeProps> = ({
  */
 export const QuickActionTips: React.FC<{ className?: string }> = ({ className = '' }) => {
   const tips = [
-    { key: 'Ctrl+S', desc: '保存所有标签页' },
-    { key: 'Ctrl+F', desc: '快速搜索' },
+    { key: 'Ctrl+S', desc: '保存当前窗口为会话' },
+    { key: 'Ctrl+F', desc: '快速搜索会话' },
     { key: 'Ctrl+L', desc: '切换布局' },
   ];
 

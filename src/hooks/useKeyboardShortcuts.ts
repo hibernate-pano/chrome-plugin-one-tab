@@ -78,7 +78,7 @@ export const COMMON_SHORTCUTS = {
   SAVE_TABS: {
     key: 's',
     ctrlKey: true,
-    description: '保存所有标签页'
+    description: '保存当前窗口为会话'
   },
   SEARCH: {
     key: 'f',

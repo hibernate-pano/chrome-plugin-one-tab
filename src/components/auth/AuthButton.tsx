@@ -62,7 +62,7 @@ export const AuthButton: React.FC = () => {
                   <span className="inline-block w-2 h-2 rounded-full bg-green-500 mr-1"></span>
                   已登录
                   {lastSyncTime && (
-                    <span className="ml-2 text-gray-400">· 上次同步: {new Date(lastSyncTime).toLocaleString()}</span>
+                    <span className="ml-2 text-gray-400">· 上次手动同步: {new Date(lastSyncTime).toLocaleString()}</span>
                   )}
                 </p>
               </div>

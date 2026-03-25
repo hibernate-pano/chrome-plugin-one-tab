@@ -98,7 +98,7 @@ export const getNotificationConfig = (
     case 'sync-success':
       return {
         title: '同步成功',
-        message: params?.message || '数据已同步到云端',
+        message: params?.message || '手动同步已完成',
         type: 'success',
         duration: 3000
       };

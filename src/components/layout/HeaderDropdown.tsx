@@ -14,6 +14,7 @@ import {
   saveSettings 
 } from '@/store/slices/settingsSlice';
 import { ThemeStyleSelector } from './ThemeStyleSelector';
+import { trackProductEvent } from '@/utils/productEvents';
 
 interface HeaderDropdownProps {
   onClose: () => void;
@@ -45,39 +46,9 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({ onClose }) => {
 
   // 处理“收集固定页”开关
   const handleToggleCollectPinnedTabs = async () => {
-    console.log('[HeaderDropdown] 切换收集固定页开关');
-    console.log('[HeaderDropdown] 切换前的值:', settings.collectPinnedTabs);
-    
     dispatch(toggleCollectPinnedTabs());
-    
-    // 等待下一个事件循环，确保 Redux state 已更新
     await new Promise(resolve => setTimeout(resolve, 0));
-    
-    console.log('[HeaderDropdown] 切换后准备保存');
     await dispatch(saveSettings() as any);
-    
-    // 验证保存结果
-    const savedSettings = await storage.getSettings();
-    console.log('[HeaderDropdown] 保存后的值:', savedSettings.collectPinnedTabs);
-
-    // #region agent log
-    fetch('http://127.0.0.1:7243/ingest/dc74cad0-0137-41f8-ba3e-10aa1ca8ee34', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        id: `log_${Date.now()}_collectPinnedTabs_toggle`,
-        runId: 'pre-fix',
-        hypothesisId: 'H1',
-        location: 'HeaderDropdown.tsx:61',
-        message: 'Toggled collectPinnedTabs and saved settings',
-        data: {
-          beforeToggle: settings.collectPinnedTabs,
-          afterToggle: savedSettings.collectPinnedTabs,
-        },
-        timestamp: Date.now(),
-      }),
-    }).catch(() => {});
-    // #endregion
   };
 
   // 处理快速刷新（从云端下载并合并）
@@ -93,28 +64,27 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({ onClose }) => {
     }
 
     try {
-      console.log('[HeaderDropdown] 开始快速刷新...');
       const result = await syncService.downloadAndRefresh(false); // overwriteLocal=false，合并模式
       
       if (result.success) {
         showAlert({
-          title: '刷新成功',
-          message: '已从云端获取最新数据',
+          title: '手动同步成功',
+          message: '已从云端拉取最新数据并与本地合并',
           type: 'success',
           onClose: () => {}
         });
       } else {
         showAlert({
-          title: '刷新失败',
-          message: result.error || '无法从云端获取数据',
+          title: '手动同步失败',
+          message: result.error || '无法从云端拉取数据',
           type: 'error',
           onClose: () => {}
         });
       }
     } catch (error) {
-      console.error('[HeaderDropdown] 快速刷新失败:', error);
+      console.error('手动同步失败:', error);
       showAlert({
-        title: '刷新失败',
+        title: '手动同步失败',
         message: '网络连接失败，请稍后重试',
         type: 'error',
         onClose: () => {}
@@ -153,26 +123,21 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({ onClose }) => {
   // 移除同步功能，简化逻辑
 
   const handleDeleteAllGroups = () => {
-    // 显示确认对话框
     showConfirm({
       title: '删除确认',
-      message: '确定要删除所有标签组吗？此操作无法撤销。',
+      message: '确定要删除所有会话吗？此操作无法撤销。',
       type: 'danger',
       confirmText: '删除',
       cancelText: '取消',
       onConfirm: () => {
-        // 先关闭下拉菜单，提高用户体验
         onClose();
 
-        // 异步删除所有标签组，不阻塞用户界面
         dispatch(deleteAllGroups())
           .then((result: any) => {
             const count = result.payload?.count || 0;
 
-            // 删除成功后，异步同步到云端
             if (isAuthenticated) {
-              // 同步删除操作
-              syncService.uploadToCloud(true, true) // background=true, overwriteCloud=true
+              syncService.uploadToCloud(true, true)
                 .then(() => {
                   console.log('删除操作已同步到云端');
                 })
@@ -185,7 +150,7 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({ onClose }) => {
 
             showAlert({
               title: '删除成功',
-              message: `成功删除了 ${count} 个标签组`,
+              message: `成功删除了 ${count} 个会话`,
               type: 'success',
               onClose: () => { }
             });
@@ -194,7 +159,7 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({ onClose }) => {
             console.error('删除所有标签组失败:', error);
             showAlert({
               title: '删除失败',
-              message: '删除所有标签组失败',
+              message: '删除所有会话失败',
               type: 'error',
               onClose: () => { }
             });
@@ -291,12 +256,12 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({ onClose }) => {
                 </button>
               </div>
               <div className="flex items-center justify-between">
-                <p className="text-xs text-gray-500 dark:text-gray-400 flex items-center">
-                  <span className="inline-block w-2 h-2 rounded-full bg-green-500 mr-1"></span>
-                  已登录
-                </p>
+                  <p className="text-xs text-gray-500 dark:text-gray-400 flex items-center">
+                    <span className="inline-block w-2 h-2 rounded-full bg-green-500 mr-1"></span>
+                    已登录
+                  </p>
                 {lastSyncTime && (
-                  <p className="text-xs text-gray-400 dark:text-gray-500" title={`上次同步: ${new Date(lastSyncTime).toLocaleString()}`}>
+                  <p className="text-xs text-gray-400 dark:text-gray-500" title={`最后手动同步: ${new Date(lastSyncTime).toLocaleString()}`}>
                     {(() => {
                       const now = new Date();
                       const syncDate = new Date(lastSyncTime);
@@ -394,7 +359,7 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({ onClose }) => {
                 <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 mr-2 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3M5 11h14M5 19h14" />
                 </svg>
-                <span className="text-sm text-gray-700 dark:text-gray-300">收集固定页</span>
+                <span className="text-sm text-gray-700 dark:text-gray-300">保存固定标签页</span>
               </div>
               <button
                 onClick={handleToggleCollectPinnedTabs}
@@ -543,6 +508,10 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({ onClose }) => {
                         const text = event.target?.result as string;
                         const success = await storage.importFromOneTabFormat(text);
                         if (success) {
+                          void trackProductEvent('onetab_import_completed', {
+                            importSource: 'onetab',
+                            importedSessions: text.split('\n\n').filter(Boolean).length,
+                          });
                           showAlert({
                             title: '导入成功',
                             message: 'OneTab 数据导入成功',
@@ -586,7 +555,7 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({ onClose }) => {
           <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 mr-2 text-red-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
           </svg>
-          删除所有标签
+          删除所有会话
         </button>
 
 
