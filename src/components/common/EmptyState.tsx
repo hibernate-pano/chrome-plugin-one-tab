@@ -6,6 +6,7 @@ interface EmptyStateProps {
   description?: string;
   action?: React.ReactNode;
   className?: string;
+  tone?: 'default' | 'search' | 'warning';
 }
 
 // 默认图标 - 更精致的设计
@@ -34,28 +35,40 @@ export const EmptyState: React.FC<EmptyStateProps> = ({
   title,
   description,
   action,
-  className = ''
+  className = '',
+  tone = 'default',
 }) => {
+  const toneStyles = {
+    default: {
+      shell: 'border-gray-200/80 bg-white/90 dark:border-gray-700/80 dark:bg-gray-900/80',
+      icon: 'bg-primary-500/10 text-primary-600 dark:bg-primary-400/10 dark:text-primary-300',
+    },
+    search: {
+      shell: 'border-sky-200/80 bg-sky-50/80 dark:border-sky-900/50 dark:bg-sky-950/20',
+      icon: 'bg-sky-500/10 text-sky-600 dark:bg-sky-400/10 dark:text-sky-300',
+    },
+    warning: {
+      shell: 'border-amber-200/80 bg-amber-50/80 dark:border-amber-900/50 dark:bg-amber-950/20',
+      icon: 'bg-amber-500/10 text-amber-700 dark:bg-amber-400/10 dark:text-amber-300',
+    },
+  }[tone];
+
   return (
-    <div className={`empty-state animate-in ${className}`}>
-      {/* 图标容器 */}
-      <div className="empty-state-icon">
+    <div className={`animate-in rounded-[28px] border px-6 py-8 text-center shadow-[0_24px_60px_-40px_rgba(15,23,42,0.55)] backdrop-blur-sm ${toneStyles.shell} ${className}`}>
+      <div className={`mx-auto inline-flex h-16 w-16 items-center justify-center rounded-2xl ${toneStyles.icon}`}>
         {icon || <DefaultIcon />}
       </div>
 
-      {/* 标题 */}
-      <h3 className="empty-state-title">{title}</h3>
+      <h3 className="mt-5 text-lg font-semibold tracking-tight text-gray-950 dark:text-gray-50">{title}</h3>
 
-      {/* 描述 */}
       {description && (
-        <p className="empty-state-description">
+        <p className="mx-auto mt-2 max-w-md text-sm leading-6 text-gray-600 dark:text-gray-300">
           {description}
         </p>
       )}
 
-      {/* 操作按钮 */}
       {action && (
-        <div className="mt-6">
+        <div className="mt-6 flex justify-center">
           {action}
         </div>
       )}

@@ -17,8 +17,8 @@ export const UserProfile: React.FC = () => {
     // 检查邮箱地址来判断登录方式
     const email = user.email;
     let provider = 'email';
-    let displayName = email;
-    let initial = email.charAt(0).toUpperCase();
+    const displayName = email;
+    const initial = email.charAt(0).toUpperCase();
 
     // 根据邮箱域名判断可能的第三方登录
     if (email.endsWith('@gmail.com')) {

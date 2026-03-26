@@ -10,7 +10,7 @@ export const TabCounter: React.FC = () => {
   return (
     <div className="flex items-center gap-2">
       <span className="badge badge-accent whitespace-nowrap">
-        {groupCount} 组
+        {groupCount} 会话
       </span>
       <span
         className="text-xs font-medium px-2 py-0.5 rounded-full whitespace-nowrap"

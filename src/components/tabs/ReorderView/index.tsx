@@ -135,7 +135,7 @@ const ReorderView: React.FC = () => {
                 d="M4 6h16M4 12h16M4 18h16"
               />
             </svg>
-            <h2 className="text-lg font-medium text-gray-800 dark:text-gray-100">标签重新排序</h2>
+            <h2 className="text-lg font-medium text-gray-800 dark:text-gray-100">会话内标签重排</h2>
             <span className="ml-2 text-sm text-gray-500 dark:text-gray-400">
               共 {flatTabs.length} 个标签
             </span>
@@ -198,7 +198,7 @@ const ReorderView: React.FC = () => {
                     </span>
                     <span
                       className="px-2 py-0.5 text-xs rounded-full bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 whitespace-nowrap"
-                      title={`原分组：${tab.groupName}`}
+                      title={`原会话：${tab.groupName}`}
                     >
                       {tab.groupName}
                     </span>
@@ -248,10 +248,10 @@ const ReorderView: React.FC = () => {
                 </svg>
               </div>
               <h3 className="text-lg font-medium text-gray-700 dark:text-gray-200">
-                没有保存的标签页
+                还没有可重排的会话标签
               </h3>
               <p className="text-gray-500 dark:text-gray-400 max-w-md text-center">
-                点击右上角的"保存所有标签"按钮开始保存您的标签页
+                点击右上角的“保存会话”按钮，先保存当前窗口再回来整理
               </p>
             </div>
           )}

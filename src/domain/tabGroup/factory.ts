@@ -2,6 +2,7 @@ import { nanoid } from '@reduxjs/toolkit';
 import { Tab, TabGroup } from '@/types/tab';
 import { sanitizeFaviconUrl } from '@/utils/faviconUtils';
 import { filterValidTabs } from './filters';
+import { deriveSessionNameFromChromeTabs } from './sessionName';
 
 export interface CreateTabGroupOptions {
   name?: string;
@@ -21,7 +22,7 @@ export function createTabGroupFromChromeTabs(
     includePinned: options.includePinned ?? false,
   });
   const now = options.now ?? new Date().toISOString();
-  const name = options.name ?? `标签组 ${new Date(now).toLocaleString()}`;
+  const name = options.name ?? deriveSessionNameFromChromeTabs(validTabs, now);
 
   const formattedTabs: Tab[] = validTabs.map(tab => ({
     id: nanoid(),

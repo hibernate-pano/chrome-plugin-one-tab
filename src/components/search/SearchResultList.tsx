@@ -1,16 +1,23 @@
-import React, { useState, useEffect } from 'react';
+import React, { useDeferredValue, useEffect, useState, useTransition } from 'react';
 import { useAppDispatch, useAppSelector } from '@/store/hooks';
 import { Tab, TabGroup } from '@/types/tab';
-import { updateGroup, deleteGroup } from '@/store/slices/tabSlice';
-import { shouldAutoDeleteAfterTabRemoval, shouldAutoDeleteAfterMultipleTabRemoval } from '@/utils/tabGroupUtils';
+import { deleteGroup, recordRecentRestore, updateGroup } from '@/store/slices/tabSlice';
+import { shouldAutoDeleteAfterMultipleTabRemoval, shouldAutoDeleteAfterTabRemoval } from '@/utils/tabGroupUtils';
 import { useToast } from '@/contexts/ToastContext';
 import { useEnhancedToast } from '@/utils/toastHelper';
-import { AdvancedSearch, SearchResult, SearchFilters, applySearchFilters } from '@/utils/search';
+import { trackProductEvent } from '@/utils/productEvents';
+import {
+  AdvancedSearch,
+  SearchFilters,
+  SessionSearchResult,
+  applySearchFilters,
+  buildSessionSearchResults,
+} from '@/utils/search';
 import HighlightText from './HighlightText';
 import { SafeFavicon } from '@/components/common/SafeFavicon';
 import { EmptyState } from '@/components/common/EmptyState';
+import { buildRecentRestoreEntry, buildSessionRestoreMessage, getSessionResultSummary } from '@/utils/sessionPresentation';
 
-// 钉住图标
 const PinIcon = () => (
   <svg className="w-3 h-3 text-blue-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
     <path strokeLinecap="round" strokeLinejoin="round" d="M5 5a2 2 0 012-2h10a2 2 0 012 2v16l-7-3.5L5 21V5z" />
@@ -24,124 +31,108 @@ interface SearchResultListProps {
 export const SearchResultList: React.FC<SearchResultListProps> = ({ searchQuery }) => {
   const dispatch = useAppDispatch();
   const { groups } = useAppSelector(state => state.tabs);
-  const { showConfirm } = useToast();
+  const confirmBeforeDelete = useAppSelector(state => state.settings.confirmBeforeDelete);
+  const { showConfirm, showToast } = useToast();
   const { showDeleteSuccess, showDeleteError, showRestoreSuccess, showRestoreError } = useEnhancedToast();
-  
-  // 高级搜索状态
-  const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
   const [filters, setFilters] = useState<SearchFilters>({});
   const [showFilters, setShowFilters] = useState(false);
+  const [isFilterPending, startFilterTransition] = useTransition();
+  const deferredSearchQuery = useDeferredValue(searchQuery);
+  const normalizedSearchQuery = deferredSearchQuery.trim();
 
-  // 执行搜索
+  const baseResults = normalizedSearchQuery
+    ? AdvancedSearch.search(groups, {
+        query: normalizedSearchQuery,
+        searchPinned: true,
+      })
+    : [];
+  const searchResults = applySearchFilters(baseResults, filters);
+  const sessionResults = buildSessionSearchResults(searchResults);
+  const matchingTabs = sessionResults.flatMap(session => session.matches);
+  const activeFilterCount = [
+    !!filters.domain?.trim(),
+    !!filters.groupName?.trim(),
+    !!filters.savedWithin,
+    filters.pinned === 'only' || filters.pinned === 'exclude',
+  ].filter(Boolean).length;
+
   useEffect(() => {
-    if (!searchQuery) {
-      setSearchResults([]);
+    if (!normalizedSearchQuery) {
       return;
     }
 
-    // 基础搜索
-    const baseResults = AdvancedSearch.search(groups, {
-      query: searchQuery,
-      searchPinned: true,
+    void trackProductEvent('search_performed', {
+      query: normalizedSearchQuery,
+      resultCount: searchResults.length,
+      hasDomainFilter: !!filters.domain,
+      hasSavedWithinFilter: !!filters.savedWithin,
     });
 
-    // 应用高级筛选器
-    const filteredResults = applySearchFilters(baseResults, filters);
-    setSearchResults(filteredResults);
-  }, [searchQuery, groups, filters]);
+    if (filters.domain || filters.groupName || filters.pinned !== undefined || filters.savedWithin) {
+      void trackProductEvent('search_filtered', {
+        query: normalizedSearchQuery,
+        domain: filters.domain || null,
+        groupName: filters.groupName || null,
+        pinned: filters.pinned || 'all',
+        savedWithin: filters.savedWithin || null,
+        resultCount: searchResults.length,
+      });
+    }
+  }, [filters, normalizedSearchQuery, searchResults.length]);
 
-  // 从搜索结果中提取匹配的标签
-  const matchingTabs = searchResults.map(result => ({ tab: result.tab, group: result.group }));
+  const updateFilters = (updater: (current: SearchFilters) => SearchFilters) => {
+    startFilterTransition(() => {
+      setFilters(current => updater(current));
+    });
+  };
 
-  const FiltersPanel = ({ withOuterMargin }: { withOuterMargin?: boolean }) => (
-    <>
-      <div className="flex items-center justify-between mb-2 px-2">
-        <h3 className="text-sm font-medium text-gray-700 dark:text-gray-300">搜索结果</h3>
-        <button
-          onClick={() => setShowFilters(!showFilters)}
-          className="text-xs text-blue-600 dark:text-blue-400 hover:underline flex items-center flat-interaction"
-        >
-          <svg xmlns="http://www.w3.org/2000/svg" className="h-3 w-3 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2.586a1 1 0 01-.293.707l-6.414 6.414a1 1 0 00-.293.707V17l-4 4v-6.586a1 1 0 00-.293-.707L3.293 7.207A1 1 0 013 6.5V4z" />
-          </svg>
-          {showFilters ? '隐藏筛选' : '显示筛选'}
-        </button>
-      </div>
+  const clearFilters = () => {
+    startFilterTransition(() => {
+      setFilters({});
+    });
+  };
 
-      {showFilters && (
-        <div className={`bg-gray-50 dark:bg-gray-700 rounded-lg p-3 mb-3 ${withOuterMargin ? 'mx-2' : ''}`}>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
-            {/* 固定标签页筛选 */}
-            <div>
-              <label className="block text-xs text-gray-600 dark:text-gray-300 mb-1">固定标签页</label>
-              <select
-                value={filters.pinned || 'all'}
-                onChange={(e) => setFilters({ ...filters, pinned: e.target.value as any })}
-                className="w-full text-sm border border-gray-300 dark:border-gray-600 rounded px-2 py-1 bg-white dark:bg-gray-600 text-gray-900 dark:text-gray-100"
-              >
-                <option value="all">全部</option>
-                <option value="only">仅固定</option>
-                <option value="exclude">排除固定</option>
-              </select>
-            </div>
+  const getDisplayUrl = (url: string) => {
+    try {
+      return new URL(url).hostname.replace('www.', '');
+    } catch {
+      return url;
+    }
+  };
 
-            {/* 域名筛选 */}
-            <div>
-              <label className="block text-xs text-gray-600 dark:text-gray-300 mb-1">域名</label>
-              <input
-                type="text"
-                placeholder="输入域名..."
-                value={filters.domain || ''}
-                onChange={(e) => setFilters({ ...filters, domain: e.target.value })}
-                className="w-full text-sm border border-gray-300 dark:border-gray-600 rounded px-2 py-1 bg-white dark:bg-gray-600 text-gray-900 dark:text-gray-100"
-              />
-            </div>
+  const restoreSession = (group: TabGroup) => {
+    const tabsPayload = group.tabs.map(tab => ({
+      url: tab.url,
+      pinned: !!tab.pinned,
+    }));
 
-            {/* 标签组筛选 */}
-            <div>
-              <label className="block text-xs text-gray-600 dark:text-gray-300 mb-1">标签组</label>
-              <input
-                type="text"
-                placeholder="输入标签组名称..."
-                value={filters.groupName || ''}
-                onChange={(e) => setFilters({ ...filters, groupName: e.target.value })}
-                className="w-full text-sm border border-gray-300 dark:border-gray-600 rounded px-2 py-1 bg-white dark:bg-gray-600 text-gray-900 dark:text-gray-100"
-              />
-            </div>
-          </div>
-        </div>
-      )}
-    </>
-  );
+    dispatch(recordRecentRestore(buildRecentRestoreEntry(group, 'search')));
+    void trackProductEvent('session_restored', {
+      sessionId: group.id,
+      sessionName: group.name,
+      source: 'search',
+      tabCount: group.tabs.length,
+    });
 
-  if (matchingTabs.length === 0) {
-    return (
-      <div>
-        <FiltersPanel />
+    if (!group.isLocked) {
+      dispatch({ type: 'tabs/deleteGroup/fulfilled', payload: group.id });
+      dispatch(deleteGroup(group.id))
+        .unwrap()
+        .catch(error => {
+          console.error('恢复会话后清理原会话失败:', error);
+          showDeleteError(`恢复会话后清理原会话失败: ${error.message || '未知错误'}`);
+        });
+    }
 
-        <EmptyState
-          icon={
-            <svg xmlns="http://www.w3.org/2000/svg" className="h-12 w-12 empty-state-default-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-            </svg>
-          }
-          title="没有找到匹配的标签"
-          description={`没有找到包含"${searchQuery}"的标签页，请尝试其他关键词。`}
-          action={
-            <div className="text-xs theme-text-muted space-y-1">
-              <div>小提示：</div>
-              <ul className="list-disc list-inside space-y-0.5 text-left">
-                <li>支持搜索标题或 URL 关键词</li>
-                <li>尝试更短的关键词或检查大小写</li>
-                <li>可在设置里导入/同步以获取更多结果</li>
-              </ul>
-            </div>
-          }
-          className="h-40"
-        />
-      </div>
-    );
-  }
+    showToast(buildSessionRestoreMessage(group), 'success', 4500);
+
+    setTimeout(() => {
+      chrome.runtime.sendMessage({
+        type: 'OPEN_TABS',
+        data: { tabs: tabsPayload },
+      });
+    }, 100);
+  };
 
   const handleOpenTab = (tab: Tab, group: TabGroup) => {
     if (!group.isLocked) {
@@ -150,40 +141,39 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({ searchQuery 
         dispatch(deleteGroup(group.id))
           .unwrap()
           .then(() => {
-            console.log(`自动删除空标签组: ${group.name} (ID: ${group.id})`);
-            showDeleteSuccess(`已恢复标签页并自动删除空标签组 "${group.name}"`);
+            showDeleteSuccess(`已恢复标签页并自动删除空会话 "${group.name}"`);
           })
           .catch(error => {
-            console.error('删除标签组失败:', error);
-            showDeleteError(`删除标签组失败: ${error.message || '未知错误'}`);
+            console.error('删除会话失败:', error);
+            showDeleteError(`删除会话失败: ${error.message || '未知错误'}`);
           });
       } else {
-        const updatedTabs = group.tabs.filter(t => t.id !== tab.id);
+        const updatedTabs = group.tabs.filter(item => item.id !== tab.id);
         const updatedGroup = {
           ...group,
           tabs: updatedTabs,
-          updatedAt: new Date().toISOString()
+          updatedAt: new Date().toISOString(),
         };
+
         dispatch({ type: 'tabs/updateGroup/fulfilled', payload: updatedGroup });
         dispatch(updateGroup(updatedGroup))
           .unwrap()
           .then(() => {
-            console.log(`更新标签组: ${group.name}, 剩余标签页: ${updatedTabs.length}`);
-            showRestoreSuccess(1); // Restore 1 tab
+            showRestoreSuccess(1);
           })
           .catch(error => {
-            console.error('更新标签组失败:', error);
-            showRestoreError(`更新标签组失败: ${error.message || '未知错误'}`);
+            console.error('更新会话失败:', error);
+            showRestoreError(`更新会话失败: ${error.message || '未知错误'}`);
           });
       }
     } else {
-      showRestoreSuccess(1); // Restore 1 tab
+      showRestoreSuccess(1);
     }
 
     setTimeout(() => {
       chrome.runtime.sendMessage({
         type: 'OPEN_TAB',
-        data: { url: tab.url, pinned: !!tab.pinned }
+        data: { url: tab.url, pinned: !!tab.pinned },
       });
     }, 50);
   };
@@ -193,53 +183,169 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({ searchQuery 
       dispatch(deleteGroup(group.id))
         .unwrap()
         .then(() => {
-          showDeleteSuccess(`已删除标签组 "${group.name}" (最后一个标签页已删除)`);
+          showDeleteSuccess(`已删除会话 "${group.name}"（最后一个标签页已删除）`);
         })
         .catch(error => {
-          showDeleteError(`删除标签组失败: ${error.message || '未知错误'}`);
+          showDeleteError(`删除会话失败: ${error.message || '未知错误'}`);
         });
-      console.log(`自动删除空标签组: ${group.name} (ID: ${group.id})`);
-    } else {
-      const updatedTabs = group.tabs.filter(t => t.id !== tab.id);
-      const updatedGroup = {
-        ...group,
-        tabs: updatedTabs,
-        updatedAt: new Date().toISOString()
-      };
-      dispatch(updateGroup(updatedGroup))
-        .unwrap()
-        .then(() => {
-          showDeleteSuccess(`已从 "${group.name}" 删除标签页 (剩余 ${updatedTabs.length} 个)`);
-        })
-        .catch(error => {
-          showDeleteError(`更新标签组失败: ${error.message || '未知错误'}`);
+      return;
+    }
+
+    const updatedTabs = group.tabs.filter(item => item.id !== tab.id);
+    const updatedGroup = {
+      ...group,
+      tabs: updatedTabs,
+      updatedAt: new Date().toISOString(),
+    };
+
+    dispatch(updateGroup(updatedGroup))
+      .unwrap()
+      .then(() => {
+        showDeleteSuccess(`已从 "${group.name}" 删除标签页 (剩余 ${updatedTabs.length} 个)`);
+      })
+      .catch(error => {
+        showDeleteError(`更新会话失败: ${error.message || '未知错误'}`);
+      });
+  };
+
+  const handleRestoreAllSearchResults = () => {
+    if (matchingTabs.length === 0) {
+      return;
+    }
+
+    const tabsPayload = matchingTabs.map(({ tab }) => ({
+      url: tab.url,
+      pinned: !!tab.pinned,
+    }));
+
+    const groupsToUpdate = matchingTabs.reduce((accumulator, { tab, group }) => {
+      if (group.isLocked) {
+        return accumulator;
+      }
+
+      if (!accumulator[group.id]) {
+        accumulator[group.id] = { group, tabsToRemove: [] };
+      }
+
+      accumulator[group.id].tabsToRemove.push(tab.id);
+      return accumulator;
+    }, {} as Record<string, { group: TabGroup; tabsToRemove: string[] }>);
+
+    Object.values(groupsToUpdate).forEach(({ group, tabsToRemove }) => {
+      if (tabsToRemove.length === group.tabs.length) {
+        dispatch({ type: 'tabs/deleteGroup/fulfilled', payload: group.id });
+        return;
+      }
+
+      dispatch({
+        type: 'tabs/updateGroup/fulfilled',
+        payload: {
+          ...group,
+          tabs: group.tabs.filter(tab => !tabsToRemove.includes(tab.id)),
+          updatedAt: new Date().toISOString(),
+        },
+      });
+    });
+
+    setTimeout(() => {
+      Object.values(groupsToUpdate).forEach(({ group, tabsToRemove }) => {
+        if (tabsToRemove.length === group.tabs.length) {
+          dispatch(deleteGroup(group.id))
+            .unwrap()
+            .catch(error => {
+              console.error('批量恢复后删除会话失败:', error);
+              showDeleteError(`批量恢复后删除会话失败: ${error.message || '未知错误'}`);
+            });
+          return;
+        }
+
+        const updatedTabs = group.tabs.filter(tab => !tabsToRemove.includes(tab.id));
+        dispatch(updateGroup({
+          ...group,
+          tabs: updatedTabs,
+          updatedAt: new Date().toISOString(),
+        })).unwrap().catch(error => {
+          console.error('批量恢复后更新会话失败:', error);
+          showRestoreError(`批量恢复后更新会话失败: ${error.message || '未知错误'}`);
         });
-      console.log(`从标签组删除标签页: ${group.name}, 剩余标签页: ${updatedTabs.length}`);
+      });
+
+      showToast(`已在新窗口恢复 ${matchingTabs.length} 个匹配标签，涉及 ${sessionResults.length} 个会话`, 'success', 4500);
+
+      chrome.runtime.sendMessage({
+        type: 'OPEN_TABS',
+        data: { tabs: tabsPayload },
+      });
+    }, 100);
+  };
+
+  const handleDeleteAllSearchResults = async () => {
+    if (matchingTabs.length === 0) {
+      return;
+    }
+
+    const groupsToUpdate = matchingTabs.reduce((accumulator, { tab, group }) => {
+      if (group.isLocked) {
+        return accumulator;
+      }
+
+      if (!accumulator[group.id]) {
+        accumulator[group.id] = { group, tabsToRemove: [] };
+      }
+
+      accumulator[group.id].tabsToRemove.push(tab.id);
+      return accumulator;
+    }, {} as Record<string, { group: TabGroup; tabsToRemove: string[] }>);
+
+    try {
+      for (const { group, tabsToRemove } of Object.values(groupsToUpdate)) {
+        if (shouldAutoDeleteAfterMultipleTabRemoval(group, tabsToRemove)) {
+          await dispatch(deleteGroup(group.id)).unwrap();
+          continue;
+        }
+
+        const updatedTabs = group.tabs.filter(tab => !tabsToRemove.includes(tab.id));
+        await dispatch(updateGroup({
+          ...group,
+          tabs: updatedTabs,
+          updatedAt: new Date().toISOString(),
+        })).unwrap();
+      }
+
+      showDeleteSuccess(`成功删除 ${matchingTabs.length} 个搜索命中的标签页`);
+    } catch (error) {
+      console.error('批量删除搜索结果失败:', error);
+      showDeleteError('删除操作失败，请重试');
     }
   };
 
-  // 提取域名显示
-  const getDisplayUrl = (url: string) => {
-    try {
-      const urlObj = new URL(url);
-      return urlObj.hostname.replace('www.', '');
-    } catch {
-      return url;
+  const handleRequestDeleteAllSearchResults = () => {
+    if (!confirmBeforeDelete) {
+      void handleDeleteAllSearchResults();
+      return;
     }
+
+    showConfirm({
+      title: '删除确认',
+      message: `确定要删除所有搜索结果中的 ${matchingTabs.length} 个标签页吗？此操作不可撤销。`,
+      type: 'danger',
+      confirmText: '删除',
+      cancelText: '取消',
+      onConfirm: handleDeleteAllSearchResults,
+      onCancel: () => {},
+    });
   };
 
   const renderTabItem = ({ tab, group }: { tab: Tab; group: TabGroup }) => (
     <div className="tab-item group/tab">
-      {/* Favicon */}
       <SafeFavicon src={tab.favicon} alt="" className="tab-item-favicon" />
 
-      {/* 标题和 URL */}
       <div className="flex-1 min-w-0 flex items-center gap-3">
         <a
           href="#"
           className="tab-item-title tab-item-title-hover transition-colors flex items-center gap-1"
-          onClick={(e) => {
-            e.preventDefault();
+          onClick={event => {
+            event.preventDefault();
             handleOpenTab(tab, group);
           }}
           title={tab.title}
@@ -247,12 +353,9 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({ searchQuery 
           <HighlightText text={tab.title} highlight={searchQuery} />
           {tab.pinned && <PinIcon />}
         </a>
-        <span className="tab-item-url hidden sm:block">
-          {getDisplayUrl(tab.url)}
-        </span>
+        <span className="tab-item-url hidden sm:block">{getDisplayUrl(tab.url)}</span>
       </div>
 
-      {/* 操作按钮 */}
       <div className="tab-item-actions">
         <button
           onClick={() => handleDeleteTab(tab, group)}
@@ -267,185 +370,191 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({ searchQuery 
     </div>
   );
 
-  const handleRestoreAllSearchResults = () => {
-    if (matchingTabs.length === 0) return;
+  const FiltersPanel = ({ withOuterMargin }: { withOuterMargin?: boolean }) => (
+    <>
+      <div className="flex items-center justify-between mb-2 px-2">
+        <div className="flex items-center gap-2">
+          <h3 className="text-sm font-medium text-gray-700 dark:text-gray-300">会话搜索结果</h3>
+          {activeFilterCount > 0 && (
+            <span className="rounded-full bg-blue-100 px-2 py-0.5 text-[11px] font-medium text-blue-700 dark:bg-blue-900/40 dark:text-blue-300">
+              {activeFilterCount} 个筛选
+            </span>
+          )}
+          {isFilterPending && (
+            <span className="text-[11px] text-gray-500 dark:text-gray-400">更新结果中...</span>
+          )}
+        </div>
+        <div className="flex items-center gap-3">
+          {activeFilterCount > 0 && (
+            <button
+              onClick={clearFilters}
+              className="text-xs text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 flat-interaction"
+            >
+              清空筛选
+            </button>
+          )}
+          <button
+            onClick={() => setShowFilters(!showFilters)}
+            className="text-xs text-blue-600 dark:text-blue-400 hover:underline flex items-center flat-interaction"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" className="h-3 w-3 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2.586a1 1 0 01-.293.707l-6.414 6.414a1 1 0 00-.293.707V17l-4 4v-6.586a1 1 0 00-.293-.707L3.293 7.207A1 1 0 013 6.5V4z" />
+            </svg>
+            {showFilters ? '隐藏筛选' : '显示筛选'}
+          </button>
+        </div>
+      </div>
 
-    const tabsPayload = matchingTabs.map(({ tab }) => ({
-      url: tab.url,
-      pinned: !!tab.pinned,
-    }));
+      {showFilters && (
+        <div className={`bg-gray-50 dark:bg-gray-700 rounded-lg p-3 mb-3 ${withOuterMargin ? 'mx-2' : ''}`}>
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-2">
+            <div>
+              <label className="block text-xs text-gray-600 dark:text-gray-300 mb-1">固定标签页</label>
+              <select
+                value={filters.pinned || 'all'}
+                onChange={event => {
+                  const nextPinned = event.target.value as SearchFilters['pinned'];
+                  updateFilters(current => ({
+                    ...current,
+                    pinned: nextPinned === 'all' ? undefined : nextPinned,
+                  }));
+                }}
+                className="w-full text-sm border border-gray-300 dark:border-gray-600 rounded px-2 py-1 bg-white dark:bg-gray-600 text-gray-900 dark:text-gray-100"
+              >
+                <option value="all">全部</option>
+                <option value="only">仅固定</option>
+                <option value="exclude">排除固定</option>
+              </select>
+            </div>
 
-    const groupsToUpdate = matchingTabs.reduce((acc, { tab, group }) => {
-      if (group.isLocked) return acc;
+            <div>
+              <label className="block text-xs text-gray-600 dark:text-gray-300 mb-1">域名</label>
+              <input
+                type="text"
+                placeholder="输入域名..."
+                value={filters.domain || ''}
+                onChange={event => {
+                  const nextDomain = event.target.value;
+                  updateFilters(current => ({
+                    ...current,
+                    domain: nextDomain || undefined,
+                  }));
+                }}
+                className="w-full text-sm border border-gray-300 dark:border-gray-600 rounded px-2 py-1 bg-white dark:bg-gray-600 text-gray-900 dark:text-gray-100"
+              />
+            </div>
 
-      if (!acc[group.id]) {
-        acc[group.id] = { group, tabsToRemove: [] };
-      }
-      acc[group.id].tabsToRemove.push(tab.id);
-      return acc;
-    }, {} as Record<string, { group: TabGroup; tabsToRemove: string[] }>);
+            <div>
+              <label className="block text-xs text-gray-600 dark:text-gray-300 mb-1">会话名称</label>
+              <input
+                type="text"
+                placeholder="输入会话名称..."
+                value={filters.groupName || ''}
+                onChange={event => {
+                  const nextGroupName = event.target.value;
+                  updateFilters(current => ({
+                    ...current,
+                    groupName: nextGroupName || undefined,
+                  }));
+                }}
+                className="w-full text-sm border border-gray-300 dark:border-gray-600 rounded px-2 py-1 bg-white dark:bg-gray-600 text-gray-900 dark:text-gray-100"
+              />
+            </div>
 
-    Object.values(groupsToUpdate).forEach(({ group, tabsToRemove }) => {
-      if (tabsToRemove.length === group.tabs.length) {
-        dispatch({ type: 'tabs/deleteGroup/fulfilled', payload: group.id });
-      } else {
-        const updatedTabs = group.tabs.filter(t => !tabsToRemove.includes(t.id));
-        const updatedGroup = {
-          ...group,
-          tabs: updatedTabs,
-          updatedAt: new Date().toISOString()
-        };
-        dispatch({ type: 'tabs/updateGroup/fulfilled', payload: updatedGroup });
-      }
-    });
+            <div>
+              <label className="block text-xs text-gray-600 dark:text-gray-300 mb-1">保存时间</label>
+              <select
+                value={filters.savedWithin || ''}
+                onChange={event => {
+                  const nextValue = event.target.value as SearchFilters['savedWithin'] | '';
+                  updateFilters(current => ({
+                    ...current,
+                    savedWithin: nextValue || undefined,
+                  }));
+                }}
+                className="w-full text-sm border border-gray-300 dark:border-gray-600 rounded px-2 py-1 bg-white dark:bg-gray-600 text-gray-900 dark:text-gray-100"
+              >
+                <option value="">全部</option>
+                <option value="24h">24 小时内</option>
+                <option value="7d">7 天内</option>
+                <option value="30d">30 天内</option>
+                <option value="older">30 天前</option>
+              </select>
+            </div>
+          </div>
+        </div>
+      )}
+    </>
+  );
 
-    setTimeout(() => {
-      Object.values(groupsToUpdate).forEach(({ group, tabsToRemove }) => {
-        if (tabsToRemove.length === group.tabs.length) {
-          dispatch(deleteGroup(group.id))
-            .unwrap()
-            .then(() => {
-              console.log(`删除标签组: ${group.id}`);
-              showDeleteSuccess(`已恢复搜索结果并删除标签组 "${group.name}"`);
-            })
-            .catch(error => {
-              console.error('删除标签组失败:', error);
-              showDeleteError(`删除标签组失败: ${error.message || '未知错误'}`);
-            });
-        } else {
-          const updatedTabs = group.tabs.filter(t => !tabsToRemove.includes(t.id));
-          const updatedGroup = {
-            ...group,
-            tabs: updatedTabs,
-            updatedAt: new Date().toISOString()
-          };
-          dispatch(updateGroup(updatedGroup))
-            .unwrap()
-            .then(() => {
-              console.log(`更新标签组: ${group.id}, 剩余标签页: ${updatedTabs.length}`);
-              showRestoreSuccess(tabsToRemove.length);
-            })
-            .catch(error => {
-              console.error('更新标签组失败:', error);
-              showRestoreError(`更新标签组失败: ${error.message || '未知错误'}`);
-            });
-        }
-      });
-
-      chrome.runtime.sendMessage({
-        type: 'OPEN_TABS',
-        data: { tabs: tabsPayload }
-      });
-    }, 100);
-  };
-
-  const handleDeleteAllSearchResults = async () => {
-    if (matchingTabs.length === 0) return;
-
-    const groupsToUpdate = matchingTabs.reduce((acc, { tab, group }) => {
-      if (group.isLocked) return acc;
-
-      if (!acc[group.id]) {
-        acc[group.id] = { group, tabsToRemove: [] };
-      }
-      acc[group.id].tabsToRemove.push(tab.id);
-      return acc;
-    }, {} as Record<string, { group: TabGroup; tabsToRemove: string[] }>);
-
-    Object.values(groupsToUpdate).forEach(({ group, tabsToRemove }) => {
-      if (shouldAutoDeleteAfterMultipleTabRemoval(group, tabsToRemove)) {
-        dispatch({ type: 'tabs/deleteGroup/fulfilled', payload: group.id });
-      } else {
-        const updatedTabs = group.tabs.filter(t => !tabsToRemove.includes(t.id));
-        const updatedGroup = {
-          ...group,
-          tabs: updatedTabs,
-          updatedAt: new Date().toISOString()
-        };
-        dispatch({ type: 'tabs/updateGroup/fulfilled', payload: updatedGroup });
-      }
-    });
-
-    return new Promise<void>((resolve, reject) => {
-      setTimeout(async () => {
-        try {
-          const results = [];
-
-          for (const { group, tabsToRemove } of Object.values(groupsToUpdate)) {
-            if (shouldAutoDeleteAfterMultipleTabRemoval(group, tabsToRemove)) {
-              await dispatch(deleteGroup(group.id)).unwrap();
-              results.push({ action: 'delete', groupId: group.id });
-            } else {
-              const updatedTabs = group.tabs.filter(t => !tabsToRemove.includes(t.id));
-              const updatedGroup = {
-                ...group,
-                tabs: updatedTabs,
-                updatedAt: new Date().toISOString()
-              };
-              await dispatch(updateGroup(updatedGroup)).unwrap();
-              results.push({ action: 'update', groupId: group.id, remainingTabs: updatedTabs.length });
-            }
+  if (sessionResults.length === 0) {
+    return (
+      <div>
+        <FiltersPanel />
+        <EmptyState
+          tone="search"
+          icon={
+            <svg xmlns="http://www.w3.org/2000/svg" className="h-12 w-12 empty-state-default-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+            </svg>
           }
-
-          showDeleteSuccess(`成功删除 ${matchingTabs.length} 个标签页`);
-          resolve();
-        } catch (error) {
-          console.error('批量删除存储操作失败:', error);
-          showDeleteError('删除操作失败，请重试');
-          reject(error);
-        }
-      }, 50);
-    });
-  };
+          title="没有找到可找回的会话"
+          description={`没有找到与“${searchQuery}”相关的会话或标签，请尝试其他关键词。`}
+          action={
+            <div className="text-xs theme-text-muted space-y-3">
+              {activeFilterCount > 0 && (
+                <button
+                  onClick={clearFilters}
+                  className="rounded-lg border border-gray-300 px-3 py-1.5 text-xs font-medium text-gray-600 transition-colors hover:bg-gray-100 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-800"
+                >
+                  清空筛选后重试
+                </button>
+              )}
+              <div className="space-y-1">
+                <div>小提示：</div>
+                <ul className="list-disc list-inside space-y-0.5 text-left">
+                  <li>支持搜索会话名称、备注、标签标题或 URL</li>
+                  <li>可结合域名、保存时间和固定标签筛选</li>
+                  <li>如果刚换设备，可先登录后手动同步一次</li>
+                </ul>
+              </div>
+            </div>
+          }
+          className="h-40"
+        />
+      </div>
+    );
+  }
 
   return (
     <div className="tab-group-card animate-in group/card">
-      {/* 搜索结果头部 - 与标签组头部样式一致 */}
       <div className="tab-group-header">
         <div className="flex items-center gap-3 flex-1 min-w-0">
-          {/* 搜索图标 */}
           <div className="p-1 -ml-1">
             <svg className="w-4 h-4 theme-text-muted" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
             </svg>
           </div>
 
-          {/* 标题 */}
-          <h3 className="tab-group-title truncate">
-            搜索结果
-          </h3>
+          <h3 className="tab-group-title truncate">匹配会话</h3>
 
-          {/* 数量徽章 */}
-          <span className="tab-group-count flex-shrink-0">
-            {matchingTabs.length}
-          </span>
+          <span className="tab-group-count flex-shrink-0">{sessionResults.length}</span>
         </div>
 
-        {/* 操作按钮 */}
         {matchingTabs.length > 0 && (
           <div className="flex items-center gap-1 opacity-0 group-hover/card:opacity-100 transition-opacity duration-150">
-            {/* 恢复全部 */}
             <button
               onClick={handleRestoreAllSearchResults}
               className="btn-icon p-1.5 tab-group-action-accent flat-interaction"
-              title="恢复所有搜索到的标签页"
+              title="在新窗口恢复所有匹配标签"
             >
               <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M13.5 6H5.25A2.25 2.25 0 003 8.25v10.5A2.25 2.25 0 005.25 21h10.5A2.25 2.25 0 0018 18.75V10.5m-10.5 6L21 3m0 0h-5.25M21 3v5.25" />
               </svg>
             </button>
 
-            {/* 删除全部 */}
             <button
-              onClick={() => showConfirm({
-                title: '删除确认',
-                message: `确定要删除所有搜索结果中的 ${matchingTabs.length} 个标签页吗？此操作不可撤销。`,
-                type: 'danger',
-                confirmText: '删除',
-                cancelText: '取消',
-                onConfirm: handleDeleteAllSearchResults,
-                onCancel: () => { }
-              })}
+              onClick={handleRequestDeleteAllSearchResults}
               className="btn-icon p-1.5 tab-group-action-danger flat-interaction"
               title="删除所有搜索到的标签页"
             >
@@ -457,15 +566,56 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({ searchQuery 
         )}
       </div>
 
-      {/* 高级筛选器 */}
       <FiltersPanel withOuterMargin />
 
-      {/* 标签列表 - 与标签组内容样式一致 */}
-      <div className="tab-group-tabs-container">
-        {matchingTabs.map(tabInfo => (
-          <React.Fragment key={tabInfo.tab.id}>
-            {renderTabItem(tabInfo)}
-          </React.Fragment>
+      <div className="space-y-3 px-2 pb-2">
+        {sessionResults.map((session: SessionSearchResult) => (
+          <div
+            key={session.group.id}
+            className="rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900/40 p-3"
+            style={{ contentVisibility: 'auto', containIntrinsicSize: '240px' }}
+          >
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+              <div className="min-w-0">
+                <div className="flex items-center gap-2">
+                  <h4 className="text-sm font-semibold text-gray-900 dark:text-gray-100 truncate">
+                    {session.group.name}
+                  </h4>
+                  {session.group.isFavorite && (
+                    <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[11px] text-amber-700 dark:bg-amber-900/40 dark:text-amber-300">
+                      收藏
+                    </span>
+                  )}
+                  <span className="rounded-full bg-gray-100 dark:bg-gray-800 px-2 py-0.5 text-xs text-gray-600 dark:text-gray-300">
+                    命中 {session.matches.length}
+                  </span>
+                </div>
+                <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                  {getSessionResultSummary(session.group, session.matches.length)}
+                </p>
+                {session.group.notes && (
+                  <p className="mt-2 text-xs text-gray-600 dark:text-gray-300 line-clamp-2">
+                    <HighlightText text={session.group.notes} highlight={searchQuery} />
+                  </p>
+                )}
+              </div>
+
+              <button
+                onClick={() => restoreSession(session.group)}
+                className="self-start rounded-lg bg-primary-600 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-primary-700"
+              >
+                恢复整个会话
+              </button>
+            </div>
+
+            <div className="mt-3 space-y-1 border-t border-gray-100 dark:border-gray-800 pt-3">
+              {session.matches.map(result => (
+                <React.Fragment key={`${result.group.id}-${result.tab.id}`}>
+                  {renderTabItem({ tab: result.tab, group: result.group })}
+                </React.Fragment>
+              ))}
+            </div>
+          </div>
         ))}
       </div>
     </div>

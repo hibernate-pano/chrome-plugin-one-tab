@@ -3,10 +3,8 @@ import { Spotlight } from './Spotlight';
 import {
     WelcomeStep,
     SaveTabsStep,
-    ThemeStep,
-    SettingsStep,
-    ShortcutsStep,
-    SyncStep,
+    SearchStep,
+    RestoreStep,
     ReadyStep,
 } from './OnboardingSteps';
 import {
@@ -33,11 +31,9 @@ interface StepConfig {
 
 const STEPS: StepConfig[] = [
     { title: '欢迎使用 TabVault Pro' },
-    { title: '一键保存所有标签', spotlightTarget: '[aria-label="保存当前窗口中的所有标签页"]' },
-    { title: '选择你喜欢的主题', spotlightTarget: '[aria-label*="切换到"]' },
-    { title: '个性化设置', spotlightTarget: '[aria-label="菜单"]' },
-    { title: '高效快捷键' },
-    { title: '云端同步', spotlightTarget: '.sync-button' },
+    { title: '保存工作会话', spotlightTarget: '[aria-label="保存当前窗口中的所有标签页为会话"]' },
+    { title: '搜索工作会话', spotlightTarget: '[aria-label="搜索会话、备注或标签页"]' },
+    { title: '恢复整个会话', spotlightTarget: 'button[aria-label^="恢复整个会话"]' },
     { title: '一切就绪' },
 ];
 
@@ -124,11 +120,9 @@ export const OnboardingGuide: React.FC<OnboardingGuideProps> = ({ onComplete }) 
         switch (currentStep) {
             case 0: return <WelcomeStep version={version.current} />;
             case 1: return <SaveTabsStep />;
-            case 2: return <ThemeStep />;
-            case 3: return <SettingsStep />;
-            case 4: return <ShortcutsStep />;
-            case 5: return <SyncStep />;
-            case 6: return <ReadyStep />;
+            case 2: return <SearchStep />;
+            case 3: return <RestoreStep />;
+            case 4: return <ReadyStep />;
             default: return null;
         }
     };

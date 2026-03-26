@@ -33,13 +33,13 @@ export const SearchBar: React.FC = () => {
         type="text"
         value={localQuery}
         onChange={handleSearch}
-        placeholder="搜索标签..."
-        aria-label="搜索标签页"
+        placeholder="搜索会话、备注或标签..."
+        aria-label="搜索会话、备注或标签页"
         aria-describedby="search-description"
         className="search-bar-input"
       />
       <div id="search-description" className="sr-only">
-        输入关键词搜索已保存的标签页
+        输入关键词搜索已保存的工作会话、备注和标签页
       </div>
       <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
         <svg

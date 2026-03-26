@@ -1,68 +1,165 @@
-import React, { useEffect, useState, lazy } from 'react';
+import React, { useEffect, lazy } from 'react';
 import { useAppDispatch, useAppSelector } from '@/store/hooks';
-import { loadGroups, deleteGroup, moveGroupAndSync } from '@/store/slices/tabSlice';
+import { clearRecentRestores, deleteGroup, loadGroups, loadRecentRestores, moveGroupAndSync, recordRecentRestore } from '@/store/slices/tabSlice';
 import { invalidateGroupsCache } from '@/utils/storage';
 import { runMigrations } from '@/utils/migrationUtils';
-
 import { DraggableTabGroup } from '@/components/dnd/DraggableTabGroup';
 import { SearchResultList } from '@/components/search/SearchResultList';
-import { TabGroup as TabGroupType } from '@/types/tab';
+import { RecentRestoreEntry, TabGroup as TabGroupType } from '@/types/tab';
 import { EmptyState } from '@/components/common/EmptyState';
+import { InlineNotice } from '@/components/common/InlineNotice';
 import { LoadingSpinner } from '@/components/common/LoadingSpinner';
 import { PersonalizedWelcome, QuickActionTips } from '@/components/common/PersonalizedWelcome';
 import { useEnhancedToast } from '@/utils/toastHelper';
+import { useToast } from '@/contexts/ToastContext';
+import { trackProductEvent } from '@/utils/productEvents';
+import { buildRecentRestoreEntry, buildSessionRestoreMessage, getRestoreSourceLabel } from '@/utils/sessionPresentation';
 
 interface TabListProps {
   searchQuery: string;
 }
 
-// 新增：全局排序视图组件（后续实现）
 const ReorderView = lazy(() => import('@/components/tabs/ReorderView'));
+
+const formatRecentSaveTime = (createdAt: string) => {
+  const date = new Date(createdAt);
+
+  if (Number.isNaN(date.getTime())) {
+    return '';
+  }
+
+  return date.toLocaleString('zh-CN', {
+    month: 'numeric',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+};
+
+const quickEntryClassName =
+  'w-full rounded-xl border border-gray-200 dark:border-gray-700 px-3 py-3 text-left transition-colors hover:border-primary-300 hover:bg-primary-50 dark:hover:bg-gray-800';
 
 export const TabList: React.FC<TabListProps> = ({ searchQuery }) => {
   const dispatch = useAppDispatch();
-  const { groups, isLoading, error } = useAppSelector(state => state.tabs);
+  const { groups, recentRestores, isLoading, error } = useAppSelector(state => state.tabs);
   const { layoutMode, reorderMode } = useAppSelector(state => state.settings);
-  const { showRestoreSuccess, showDeleteSuccess, showDeleteError } = useEnhancedToast();
-  const [isRestoreAllModalOpen, setIsRestoreAllModalOpen] = useState(false);
-  const [selectedGroup, setSelectedGroup] = useState<TabGroupType | null>(null);
+  const { showDeleteError } = useEnhancedToast();
+  const { showConfirm, showToast } = useToast();
 
   useEffect(() => {
-    // 先运行数据迁移，然后加载数据
     const initializeData = async () => {
       try {
-        // 运行必要的数据迁移
         await runMigrations();
-
-        // 加载标签组数据
         dispatch(loadGroups());
-      } catch (error) {
-        console.error('初始化数据失败:', error);
-        // 即使迁移失败，也要尝试加载数据
+        dispatch(loadRecentRestores());
+      } catch (migrationError) {
+        console.error('初始化数据失败:', migrationError);
         dispatch(loadGroups());
+        dispatch(loadRecentRestores());
       }
     };
 
     initializeData();
 
-    // 添加消息监听器，监听数据刷新消息
-    const messageListener = (message: any) => {
+    const messageListener = (message: { type?: string }) => {
       if (message.type === 'REFRESH_TAB_LIST') {
-        console.log('收到刷新标签列表消息，重新加载数据');
-        invalidateGroupsCache(); // 清除本地缓存，确保从 storage 读取最新数据
+        invalidateGroupsCache();
         dispatch(loadGroups());
+        dispatch(loadRecentRestores());
       }
-      return true; // 异步响应
+      return true;
     };
 
-    // 注册消息监听器
     chrome.runtime.onMessage.addListener(messageListener);
 
-    // 组件卸载时移除消息监听器
     return () => {
       chrome.runtime.onMessage.removeListener(messageListener);
     };
   }, [dispatch]);
+
+  const restoreSession = (group: TabGroupType) => {
+    const tabsPayload = group.tabs.map(tab => ({
+      url: tab.url,
+      pinned: !!tab.pinned,
+    }));
+
+    dispatch(recordRecentRestore(buildRecentRestoreEntry(group, 'recent-save')));
+    void trackProductEvent('session_restored', {
+      sessionId: group.id,
+      sessionName: group.name,
+      source: 'recent-save',
+      tabCount: group.tabs.length,
+    });
+
+    if (!group.isLocked) {
+      dispatch({ type: 'tabs/deleteGroup/fulfilled', payload: group.id });
+
+      dispatch(deleteGroup(group.id))
+        .unwrap()
+        .catch(error => {
+          console.error('恢复会话后删除原会话失败:', error);
+          showDeleteError(`恢复会话后清理原会话失败: ${error.message || '未知错误'}`);
+        });
+    }
+
+    showToast(buildSessionRestoreMessage(group), 'success', 4500);
+
+    setTimeout(() => {
+      chrome.runtime.sendMessage({
+        type: 'OPEN_TABS',
+        data: { tabs: tabsPayload },
+      });
+    }, 100);
+  };
+
+  const restoreRecentSession = (entry: RecentRestoreEntry) => {
+    dispatch(recordRecentRestore({
+      ...entry,
+      restoredAt: new Date().toISOString(),
+      source: 'recent-restore',
+    }));
+    void trackProductEvent('session_restored_again', {
+      sessionId: entry.sessionId,
+      sessionName: entry.name,
+      source: entry.source,
+      tabCount: entry.tabCount,
+    });
+
+    showToast(
+      `已再次恢复会话“${entry.name}”，${entry.tabCount} 个标签页，来源：${getRestoreSourceLabel(entry.source)}`,
+      'success',
+      4500
+    );
+
+    setTimeout(() => {
+      chrome.runtime.sendMessage({
+        type: 'OPEN_TABS',
+        data: { tabs: entry.tabs },
+      });
+    }, 100);
+  };
+
+  const handleClearRecentRestores = () => {
+    showConfirm({
+      title: '清空最近恢复',
+      message: '清空后将移除最近恢复历史，但不会删除任何已保存会话。',
+      type: 'warning',
+      confirmText: '清空历史',
+      cancelText: '取消',
+      onConfirm: () => {
+        dispatch(clearRecentRestores())
+          .unwrap()
+          .then(() => {
+            showToast('已清空最近恢复历史', 'success');
+          })
+          .catch(error => {
+            console.error('清空最近恢复失败:', error);
+            showToast('清空最近恢复失败，请重试', 'error');
+          });
+      },
+      onCancel: () => {},
+    });
+  };
 
   if (isLoading) {
     return (
@@ -73,32 +170,51 @@ export const TabList: React.FC<TabListProps> = ({ searchQuery }) => {
   }
 
   if (error) {
-    return <div className="flex items-center justify-center h-64 text-red-600">{error}</div>;
+    return (
+      <EmptyState
+        tone="warning"
+        title="会话列表暂时不可用"
+        description={error}
+        action={
+          <button
+            type="button"
+            onClick={() => {
+              dispatch(loadGroups());
+              dispatch(loadRecentRestores());
+            }}
+            className="rounded-2xl border border-gray-200 bg-white px-4 py-2 text-sm font-medium text-gray-700 shadow-sm transition hover:bg-gray-50 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-200 dark:hover:bg-gray-800"
+          >
+            重新加载
+          </button>
+        }
+        className="min-h-[16rem] flex flex-col justify-center"
+      />
+    );
   }
 
-  // 先按创建时间倒序排序
-  const sortedGroups = [...groups].sort((a, b) => {
-    // 优先使用 createdAt 进行排序
-    const dateA = new Date(a.createdAt);
-    const dateB = new Date(b.createdAt);
-    return dateB.getTime() - dateA.getTime(); // 倒序，最新创建的在前面
+  const sortedGroups = [...groups].sort((left, right) => {
+    if (!!left.isFavorite !== !!right.isFavorite) {
+      return left.isFavorite ? -1 : 1;
+    }
+
+    return new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime();
   });
 
-  // 当有搜索查询时，我们会使用 SearchResultList 组件显示匹配的标签
-  // 这里只需要处理没有搜索查询时的标签组列表
   const filteredGroups = sortedGroups;
+  const recentGroups = [...groups]
+    .sort((left, right) => new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime())
+    .slice(0, 3);
+  const totalTabCount = filteredGroups.reduce((count, group) => count + group.tabs.length, 0);
 
-  if (filteredGroups.length === 0 && !searchQuery) {
+  if (filteredGroups.length === 0 && !searchQuery && recentRestores.length === 0) {
     return (
       <div className="space-y-4">
-        <PersonalizedWelcome 
-          tabCount={filteredGroups.length}
-          className="flat-card p-6"
-        />
+        <PersonalizedWelcome tabCount={totalTabCount} className="flat-card p-6" />
         <div className="flat-card p-6">
           <EmptyState
-            title="开始您的标签页管理之旅"
-            description="点击右上角的「保存所有标签」按钮开始保存您的标签页。保存后的标签页将显示在这里。"
+            tone="default"
+            title="先保存一个工作会话"
+            description="点击右上角的「保存会话」按钮，把当前窗口保存成可稍后找回的工作会话。"
             action={
               <button
                 onClick={async () => {
@@ -111,7 +227,7 @@ export const TabList: React.FC<TabListProps> = ({ searchQuery }) => {
                 }}
                 className="px-6 py-2 text-sm font-medium flat-button-primary flat-interaction"
               >
-                保存所有标签
+                保存当前窗口
               </button>
             }
           />
@@ -121,49 +237,6 @@ export const TabList: React.FC<TabListProps> = ({ searchQuery }) => {
     );
   }
 
-  const handleRestoreAll = () => {
-    if (!selectedGroup) return;
-
-    // 收集所有标签页的 URL 和 pinned 状态
-    const tabsPayload = selectedGroup.tabs.map(tab => ({
-      url: tab.url,
-      pinned: !!tab.pinned,
-    }));
-
-    // 如果标签组没有锁定，先在UI中删除标签组
-    if (!selectedGroup.isLocked) {
-      // 先在Redux中删除标签组，立即更新UI
-      dispatch({ type: 'tabs/deleteGroup/fulfilled', payload: selectedGroup.id });
-
-      // 然后异步完成存储操作
-      dispatch(deleteGroup(selectedGroup.id))
-        .unwrap()
-        .then(() => {
-          console.log(`删除标签组: ${selectedGroup.id}`);
-          showDeleteSuccess(`已恢复标签组 "${selectedGroup.name}" 并删除原标签组`);
-        })
-        .catch(error => {
-          console.error('删除标签组失败:', error);
-          showDeleteError(`恢复标签组失败: ${error.message || '未知错误'}`);
-        });
-    } else {
-      showRestoreSuccess(selectedGroup.tabs.length);
-    }
-
-    // 关闭对话框
-    setIsRestoreAllModalOpen(false);
-    setSelectedGroup(null);
-
-    // 最后发送消息给后台脚本打开标签页
-    setTimeout(() => {
-      chrome.runtime.sendMessage({
-        type: 'OPEN_TABS',
-        data: { tabs: tabsPayload },
-      });
-    }, 100); // 小延迟确保 UI 先更新
-  };
-
-  // 新增：全局排序模式入口
   if (reorderMode) {
     return (
       <React.Suspense fallback={<div>加载中...</div>}>
@@ -173,98 +246,173 @@ export const TabList: React.FC<TabListProps> = ({ searchQuery }) => {
   }
 
   return (
-    <div className="space-y-2 micro-interaction-container">
-      {/* 搜索结果或标签组列表 */}
+    <div className="space-y-3 micro-interaction-container">
       {searchQuery ? (
         <SearchResultList searchQuery={searchQuery} />
-      ) : layoutMode === 'double' ? (
-        // 双栏布局
-        <div className="grid grid-cols-1 sm:grid-cols-1 md:grid-cols-2 gap-2 sm:gap-3 md:gap-4">
-          {/* 左栏 - 偶数索引的标签组 */}
-          <div className="space-y-2 transition-all duration-300 ease-out">
-            {filteredGroups
-              .filter((_, index) => index % 2 === 0)
-              .map(group => {
-                // 计算在原始数组中的实际索引
-                const originalIndex = filteredGroups.findIndex(g => g.id === group.id);
-                return (
-                  <DraggableTabGroup
-                    key={group.id}
-                    group={group}
-                    index={originalIndex}
-                    moveGroup={(dragIndex, hoverIndex) => {
-                      dispatch(moveGroupAndSync({ dragIndex, hoverIndex }));
-                    }}
-                  />
-                );
-              })}
-          </div>
-
-          {/* 右栏 - 奇数索引的标签组 */}
-          <div className="space-y-2 transition-all duration-300 ease-out">
-            {filteredGroups
-              .filter((_, index) => index % 2 === 1)
-              .map(group => {
-                // 计算在原始数组中的实际索引
-                const originalIndex = filteredGroups.findIndex(g => g.id === group.id);
-                return (
-                  <DraggableTabGroup
-                    key={group.id}
-                    group={group}
-                    index={originalIndex}
-                    moveGroup={(dragIndex, hoverIndex) => {
-                      dispatch(moveGroupAndSync({ dragIndex, hoverIndex }));
-                    }}
-                  />
-                );
-              })}
-          </div>
-        </div>
       ) : (
-        // 单栏布局
-        <div className="space-y-2 transition-all duration-300 ease-out">
-          {filteredGroups.map((group, index) => (
-            <DraggableTabGroup
-              key={group.id}
-              group={group}
-              index={index}
-              moveGroup={(dragIndex, hoverIndex) => {
-                dispatch(moveGroupAndSync({ dragIndex, hoverIndex }));
-              }}
-            />
-          ))}
-        </div>
-      )}
-
-      {/* 恢复所有标签确认对话框 */}
-      {isRestoreAllModalOpen && selectedGroup && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-lg p-6 max-w-md w-full">
-            <h3 className="text-lg font-medium mb-4">恢复所有标签页</h3>
-            <p className="mb-4">
-              确定要恢复标签组 "{selectedGroup.name}" 中的所有 {selectedGroup.tabs.length}{' '}
-              个标签页吗？
-            </p>
-
-            <div className="flex justify-end space-x-2">
-              <button
-                onClick={() => {
-                  setIsRestoreAllModalOpen(false);
-                  setSelectedGroup(null);
-                }}
-                className="px-4 py-2 rounded-lg bg-gray-200 hover:bg-gray-300 dark:bg-gray-700 dark:hover:bg-gray-600"
-              >
-                取消
-              </button>
-              <button
-                onClick={handleRestoreAll}
-                className="px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 dark:bg-blue-500 dark:hover:bg-blue-600 text-white"
-              >
-                确定
-              </button>
+        <>
+          {recentRestores.length > 0 && (
+            <div className="flat-card p-4">
+              <div className="flex items-center justify-between gap-3 mb-3">
+                <div>
+                  <h2 className="text-sm font-semibold text-gray-900 dark:text-gray-100">最近恢复</h2>
+                  <p className="text-xs text-gray-500 dark:text-gray-400">
+                    查看最近恢复过的会话，也能按最近一次的来源再次打开。
+                  </p>
+                </div>
+                <button
+                  onClick={handleClearRecentRestores}
+                  className="text-xs text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 flat-interaction"
+                >
+                  清空
+                </button>
+              </div>
+              <InlineNotice
+                tone="info"
+                title="恢复历史仅保留最近 3 条"
+                message="这部分记录的是你的恢复动作，不会删除任何仍然保存着的会话。"
+                className="mb-3"
+              />
+              <div className="space-y-2">
+                {recentRestores.map(entry => (
+                  <button
+                    key={`restore-${entry.sessionId}`}
+                    onClick={() => restoreRecentSession(entry)}
+                    className={quickEntryClassName}
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2">
+                          <div className="text-sm font-medium text-gray-900 dark:text-gray-100 truncate">{entry.name}</div>
+                          <span className="rounded-full bg-gray-100 dark:bg-gray-700 px-2 py-0.5 text-[11px] text-gray-600 dark:text-gray-300">
+                            {getRestoreSourceLabel(entry.source)}
+                          </span>
+                        </div>
+                        <div className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                          {entry.tabCount} 个标签页
+                          {entry.pinnedCount > 0 ? ` · ${entry.pinnedCount} 个固定标签页` : ''}
+                          {` · ${formatRecentSaveTime(entry.restoredAt)}`}
+                        </div>
+                        {entry.notes && (
+                          <div className="mt-1 text-xs text-gray-500 dark:text-gray-400 line-clamp-2">
+                            {entry.notes}
+                          </div>
+                        )}
+                      </div>
+                      <span className="rounded-lg bg-primary-600 px-3 py-1.5 text-xs font-medium text-white">
+                        再次恢复
+                      </span>
+                    </div>
+                  </button>
+                ))}
+              </div>
             </div>
-          </div>
-        </div>
+          )}
+
+          {recentGroups.length > 0 && (
+            <div className="flat-card p-4">
+              <div className="flex items-center justify-between gap-3 mb-3">
+                <div>
+                  <h2 className="text-sm font-semibold text-gray-900 dark:text-gray-100">最近保存</h2>
+                  <p className="text-xs text-gray-500 dark:text-gray-400">
+                    直接恢复最近保存的会话，继续上次的工作现场。
+                  </p>
+                </div>
+              </div>
+              <InlineNotice
+                tone="info"
+                title="最近保存严格按时间排序"
+                message="这里只展示最近 3 个新保存的会话，收藏状态不会影响这里的顺序。"
+                className="mb-3"
+              />
+              <div className="space-y-2">
+                {recentGroups.map(group => (
+                  <button
+                    key={`recent-${group.id}`}
+                    onClick={() => restoreSession(group)}
+                    className={quickEntryClassName}
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2">
+                          <div className="text-sm font-medium text-gray-900 dark:text-gray-100 truncate">{group.name}</div>
+                          <span className="rounded-full bg-gray-100 dark:bg-gray-700 px-2 py-0.5 text-[11px] text-gray-600 dark:text-gray-300">
+                            最近保存
+                          </span>
+                          {group.isFavorite && (
+                            <span className="rounded-full bg-amber-100 dark:bg-amber-900/40 px-2 py-0.5 text-[11px] text-amber-700 dark:text-amber-300">
+                              已收藏
+                            </span>
+                          )}
+                        </div>
+                        <div className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                          {group.tabs.length} 个标签页
+                          {group.tabs.some(tab => tab.pinned) ? ` · ${group.tabs.filter(tab => tab.pinned).length} 个固定标签页` : ''}
+                          {group.createdAt ? ` · ${formatRecentSaveTime(group.createdAt)}` : ''}
+                        </div>
+                        {group.notes && (
+                          <div className="mt-1 text-xs text-gray-500 dark:text-gray-400 line-clamp-2">
+                            {group.notes}
+                          </div>
+                        )}
+                      </div>
+                      <span className="rounded-lg bg-primary-600 px-3 py-1.5 text-xs font-medium text-white">
+                        恢复会话
+                      </span>
+                    </div>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {layoutMode === 'double' ? (
+            <div className="grid grid-cols-1 sm:grid-cols-1 md:grid-cols-2 gap-2 sm:gap-3 md:gap-4">
+              <div className="space-y-2 transition-all duration-300 ease-out">
+                {filteredGroups
+                  .filter((_, index) => index % 2 === 0)
+                  .map(group => (
+                    <DraggableTabGroup
+                      key={group.id}
+                      group={group}
+                      index={filteredGroups.findIndex(item => item.id === group.id)}
+                      moveGroup={(dragIndex, hoverIndex) => {
+                        dispatch(moveGroupAndSync({ dragIndex, hoverIndex }));
+                      }}
+                    />
+                  ))}
+              </div>
+
+              <div className="space-y-2 transition-all duration-300 ease-out">
+                {filteredGroups
+                  .filter((_, index) => index % 2 === 1)
+                  .map(group => (
+                    <DraggableTabGroup
+                      key={group.id}
+                      group={group}
+                      index={filteredGroups.findIndex(item => item.id === group.id)}
+                      moveGroup={(dragIndex, hoverIndex) => {
+                        dispatch(moveGroupAndSync({ dragIndex, hoverIndex }));
+                      }}
+                    />
+                  ))}
+              </div>
+            </div>
+          ) : (
+            <div className="space-y-2 transition-all duration-300 ease-out">
+              {filteredGroups.map((group, index) => (
+                <DraggableTabGroup
+                  key={group.id}
+                  group={group}
+                  index={index}
+                  moveGroup={(dragIndex, hoverIndex) => {
+                    dispatch(moveGroupAndSync({ dragIndex, hoverIndex }));
+                  }}
+                />
+              ))}
+            </div>
+          )}
+        </>
       )}
     </div>
   );

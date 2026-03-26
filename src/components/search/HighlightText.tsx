@@ -13,27 +13,28 @@ interface HighlightTextProps {
  * @param highlight 需要高亮的关键词
  */
 export const HighlightText: React.FC<HighlightTextProps> = ({ text, highlight }) => {
-  // 如果没有高亮关键词，直接返回原文本
-  if (!highlight || !highlight.trim()) {
-    return <span>{text}</span>;
-  }
+  const normalizedHighlight = highlight.trim();
 
   // 使用useMemo缓存计算结果，避免不必要的重新计算
   const parts = useMemo(() => {
+    if (!normalizedHighlight) {
+      return [text];
+    }
+
     // 转义正则表达式中的特殊字符
-    const escapedHighlight = highlight.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const escapedHighlight = normalizedHighlight.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     // 创建不区分大小写的正则表达式
     const regex = new RegExp(`(${escapedHighlight})`, 'gi');
     // 分割文本
     return text.split(regex);
-  }, [text, highlight]);
+  }, [normalizedHighlight, text]);
 
   // 渲染高亮文本
   return (
     <span>
       {parts.map((part, i) => {
         // 检查当前部分是否匹配高亮关键词（不区分大小写）
-        const isHighlight = part.toLowerCase() === highlight.toLowerCase();
+        const isHighlight = part.toLowerCase() === normalizedHighlight.toLowerCase();
         return isHighlight ? (
           <span key={i} className="search-highlight">
             {part}

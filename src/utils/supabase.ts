@@ -858,14 +858,14 @@ export const sync = {
       'allowDuplicateTabs',    // -> allow_duplicate_tabs
       // 'syncInterval',          // -> sync_interval (UserSettings中不存在，已注释)
       'syncEnabled',           // -> sync_enabled
-      // 'layoutMode',            // -> layout_mode (数据库中暂无此列，已注释)
+      'layoutMode',            // -> layout_mode
       'showNotifications',     // -> show_notifications
       'syncStrategy',          // -> sync_strategy
       'deleteStrategy',        // -> delete_strategy
       'themeMode',             // -> theme_mode
       'themeStyle',            // -> theme_style
       'collectPinnedTabs',     // -> collect_pinned_tabs
-      // 'reorderMode'            // -> reorder_mode (数据库中暂无此列，已注释)
+      'reorderMode'            // -> reorder_mode
     ];
 
     // 将驼峰命名法转换为下划线命名法，并过滤掉不允许的字段
@@ -913,7 +913,8 @@ export const sync = {
 
       if (isUndefinedColumn && mentionsCollectPinned) {
         console.warn('[Supabase] user_settings 缺少 collect_pinned_tabs 列，已降级重试（忽略该字段）');
-        const { collect_pinned_tabs: _ignored, ...fallback } = payload as any;
+        const { collect_pinned_tabs: unusedCollectPinnedTabs, ...fallback } = payload as any;
+        void unusedCollectPinnedTabs;
         ({ data, error } = await doUpsert(fallback));
       }
     }

@@ -19,6 +19,8 @@ export const DraggableTabGroup: React.FC<DraggableTabGroupProps> = ({ group }) =
       style={{
         opacity: 1,
         cursor: 'default',
+        contentVisibility: 'auto',
+        containIntrinsicSize: '320px',
       }}
       className="transition-material"
     >

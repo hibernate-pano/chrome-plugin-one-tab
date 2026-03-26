@@ -165,7 +165,7 @@ const mergeGroup = (
       console.log('[SyncUtils] 使用本地优先策略');
       break;
     case 'newest':
-    default:
+    default: {
       // 比较更新时间
       const localTime = new Date(localGroup.updatedAt).getTime();
       const cloudTime = new Date(cloudGroup.updatedAt).getTime();
@@ -178,6 +178,7 @@ const mergeGroup = (
         console.log('[SyncUtils] 本地更新，使用本地版本');
       }
       break;
+    }
   }
 
   // 字段级合并
@@ -192,6 +193,10 @@ const mergeGroup = (
       cloudGroup.updatedAt,
       syncStrategy === 'local' ? 'local' : syncStrategy === 'remote' ? 'remote' : 'newest'
     ),
+
+    // 本地会话元数据默认保留在本地
+    notes: localGroup.notes ?? cloudGroup.notes,
+    isFavorite: localGroup.isFavorite ?? cloudGroup.isFavorite,
 
     // 锁定状态：逻辑 OR（任一锁定即锁定）
     isLocked: localGroup.isLocked || cloudGroup.isLocked,

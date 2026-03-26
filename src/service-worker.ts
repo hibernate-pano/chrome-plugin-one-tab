@@ -129,31 +129,14 @@ setupContextMenus().catch(error => {
 
 // 监听扩展图标点击事件
 chrome.action.onClicked.addListener(async () => {
-  console.log('Service Worker版本:', chrome.runtime.getManifest().version);
-  console.log('点击扩展图标，开始处理标签收集');
-
   try {
-    // 显示处理中的通知
-    await showNotification('正在收集标签页...');
-
-    // 查询当前窗口的所有标签页
-    console.log('开始查询标签页...');
+    await showNotification('正在保存当前窗口为会话...');
     const tabs = await chrome.tabs.query({ currentWindow: true });
-    console.log(`成功查询到 ${tabs.length} 个标签页`);
-
-    // 保存标签页
-    console.log('开始保存标签页...');
     await tabManager.saveAllTabs(tabs);
-    console.log('标签页保存完成');
-
-    // 打开标签管理器
-    console.log('打开标签管理器...');
     await tabManager.openTabManager(true);
-    console.log('标签管理器已打开');
-
   } catch (error) {
     console.error('处理扩展图标点击失败:', error);
-    await showNotification('无法收集标签页，请重试。如果问题持续，请重启浏览器。');
+    await showNotification('无法保存当前窗口，请重试。如果问题持续，请重启浏览器。');
   }
 });
 
@@ -163,13 +146,14 @@ chrome.commands.onCommand.addListener(async (command) => {
 
   try {
     switch (command) {
-      case 'save_all_tabs':
+      case 'save_all_tabs': {
         console.log('快捷键保存所有标签页');
         const allTabs = await chrome.tabs.query({ currentWindow: true });
         await tabManager.saveAllTabs(allTabs);
         break;
+      }
 
-      case 'save_current_tab':
+      case 'save_current_tab': {
         console.log('快捷键保存当前标签页');
         const [activeTab] = await chrome.tabs.query({
           active: true,
@@ -183,6 +167,7 @@ chrome.commands.onCommand.addListener(async (command) => {
           console.warn('未找到活跃标签页');
         }
         break;
+      }
 
       case '_execute_action':
         console.log('快捷键打开标签管理器');
@@ -267,24 +252,16 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       case 'OPEN_TABS': {
         const data = message.data || {};
 
-        // 新格式：data.tabs = [{ url, pinned? }]
         if (Array.isArray(data.tabs)) {
-          Promise.all(
-            data.tabs.map((tab: { url: string; pinned?: boolean }) =>
-              chrome.tabs.create({ url: tab.url, active: false, pinned: tab.pinned })
-            )
-          )
+          tabManager.openTabsInNewWindow(data.tabs)
             .then(() => sendResponse({ success: true }))
             .catch(error => sendResponse({ success: false, error: error.message }));
           return true;
         }
 
-        // 兼容旧格式：data.urls = string[]
         if (Array.isArray(data.urls)) {
-          Promise.all(
-            data.urls.map((url: string) =>
-              chrome.tabs.create({ url, active: false })
-            )
+          tabManager.openTabsInNewWindow(
+            data.urls.map((url: string) => ({ url }))
           )
             .then(() => sendResponse({ success: true }))
             .catch(error => sendResponse({ success: false, error: error.message }));

@@ -1,7 +1,7 @@
 {
   "name": "chrome-plugin-one-tab",
   "version": "1.11.4",
-  "description": "一个高效的Chrome标签页管理扩展",
+  "description": "保存浏览器工作会话，稍后快速找回与恢复",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -12,7 +12,8 @@
     "lint": "eslint src --ext ts,tsx --report-unused-disable-directives --max-warnings 0",
     "format": "prettier --write \"src/**/*.{ts,tsx}\"",
     "type-check": "tsc --noEmit",
-    "validate": "node validate-extension.js"
+    "validate": "node scripts/validate-extension.mjs && pnpm type-check && pnpm lint && pnpm build",
+    "test:supabase-smoke": "node scripts/supabase-smoke-test.mjs"
   },
   "keywords": [
     "chrome-extension",

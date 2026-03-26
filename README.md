@@ -1,149 +1,125 @@
-# TabVault Pro - Chrome标签管理器 (v1.8.0)
+# TabVault Pro
 
-一个高效的Chrome浏览器扩展程序，专为解决标签页管理难题而设计。
+当前版本：`1.11.4`
+
+TabVault Pro 是一个面向重度浏览器用户的工作会话保险箱。它的核心目标不是“多一个标签管理器”，而是帮助你把当前窗口保存成可找回、可恢复的工作现场。
 
 ![TabVault Pro](icons/icon128.png)
 
-## 🌟 主要特性
+## 产品定位
 
-- **一键保存标签页** - 快速保存当前窗口的所有标签页
-- **智能标签管理** - 自动过滤无效标签页，支持拖拽排序
-- **云端同步** - 基于Supabase的安全数据同步
-- **高级搜索** - 支持标题、URL、标签组搜索
-- **快捷键支持** - 自定义快捷键，提升操作效率
-- **数据加密** - 端到端加密保护用户隐私
-- **多设备同步** - 支持跨设备数据同步
-- **导入导出** - 支持OneTab格式数据导入导出
+- Save the session
+- Find it later
+- Restore it when you need it
 
-## 🚀 快速开始
+适合这几类用户：
 
-### 安装方式
+- 开发者：文档、PR、Issue、控制台、监控、后台同时开很多页
+- 研究型用户：论文、论坛、竞品、视频、资料长时间并行打开
+- 内容作者：选题、草稿、引用、素材、后台需要反复切换
+- 销售 / 招聘 / 投资：CRM、表格、邮件、公司页、Notion 长时间保持上下文
 
-1. **从Chrome商店安装（推荐）**
+## 当前能力
 
-   - 访问 [Chrome Web Store](https://chrome.google.com/webstore) 搜索 "TabVault Pro"
+- 保存当前窗口中的标签页为一个工作会话
+- 以后按会话名称、标签标题、URL 找回内容
+- 支持按会话备注搜索，并收藏关键会话
+- 在新窗口中恢复整个会话，尽量不打乱当前窗口
+- 提供最近保存与最近恢复入口，继续上次的工作现场
+- 支持导入 / 导出 OneTab 文本格式
+- 支持会话重命名、备注、收藏、删除、锁定、基础整理
+- 支持登录后手动上传到云端或从云端下载到本地
 
-2. **开发者模式安装**
+## 当前同步模式
 
-   ```bash
-   # 克隆项目
-   git clone https://github.com/your-username/chrome-plugin-one-tab.git
-   cd chrome-plugin-one-tab
+当前版本是`手动同步`，不是实时自动同步。
 
-   # 安装依赖
-   pnpm install
+- 上传：把本地会话手动推送到云端
+- 下载：把云端数据手动拉回本地
+- 每次操作前会明确让你选择“覆盖”还是“合并”
+- 如果你没有登录，同步按钮不会出现
 
-   # 构建扩展
-   pnpm build
+## 不承诺的能力
 
-   # 在Chrome中加载扩展
-   # 1. 打开 chrome://extensions/
-   # 2. 启用"开发者模式"
-   # 3. 点击"加载已解压的扩展程序"
-   # 4. 选择 dist 文件夹
-   ```
+当前版本不把以下能力作为已交付承诺：
 
-## 📖 使用指南
+- 实时自动同步
+- 自动跨设备一致性保证
+- 严格意义上的端到端加密声明
 
-### 基本操作
+## 安装
 
-1. **保存标签页**
+### 从 Chrome 商店安装
 
-   - 点击扩展图标保存当前窗口的所有标签页
-   - 使用快捷键 `Ctrl+Shift+S` (Windows) 或 `Cmd+Shift+S` (Mac)
+- 访问 [Chrome Web Store](https://chrome.google.com/webstore) 并搜索 `TabVault Pro`
 
-2. **管理标签页**
-
-   - 在标签管理器中查看所有保存的标签页
-   - 点击标签页标题打开对应网页
-   - 拖拽标签页调整顺序
-
-3. **搜索功能**
-   - 使用搜索框快速查找标签页
-   - 支持按标题、URL、标签组搜索
-
-### 高级功能
-
-1. **云端同步**
-
-   - 注册账号启用云端同步
-   - 数据自动加密存储
-   - 支持多设备数据同步
-
-2. **数据导入导出**
-   - 支持OneTab格式数据导入
-   - 导出数据备份
-
-## 🛠️ 开发指南
-
-### 技术栈
-
-- **前端框架**: React 18 + TypeScript
-- **状态管理**: Redux Toolkit
-- **构建工具**: Vite + @crxjs/vite-plugin
-- **样式**: Tailwind CSS
-- **后端服务**: Supabase
-- **拖拽功能**: @dnd-kit
-
-### 项目结构
-
-```
-src/
-├── components/          # React组件
-├── store/              # Redux状态管理
-├── utils/              # 工具函数
-├── services/           # API服务
-├── types/              # TypeScript类型定义
-├── background/         # 后台脚本
-└── popup/              # 弹出窗口
-```
-
-### 开发命令
+### 开发模式安装
 
 ```bash
-# 开发模式
-pnpm dev
-
-# 构建生产版本
+git clone https://github.com/hibernate-pano/chrome-plugin-one-tab.git
+cd chrome-plugin-one-tab
+pnpm install
 pnpm build
-
-# 打包扩展
-pnpm package
-
-# 代码检查
-pnpm lint
-
-# 类型检查
-pnpm type-check
 ```
 
-## 🔒 隐私与安全
+然后在 `chrome://extensions/` 中开启开发者模式并加载 `dist` 目录。
 
-- 所有数据使用端到端加密
-- 本地数据存储在Chrome扩展存储中
-- 云端数据仅用于同步，不会用于其他目的
-- 遵循Chrome扩展隐私政策
+## 使用方式
 
-## 🤝 贡献指南
+### 保存会话
 
-欢迎提交Issue和Pull Request！
+- 点击扩展图标，或在主界面点击“保存会话”
+- 当前窗口中的标签页会被保存成一个新会话
+- 可配置是否一并保存固定标签页
 
-1. Fork 项目
-2. 创建功能分支 (`git checkout -b feature/AmazingFeature`)
-3. 提交更改 (`git commit -m 'Add some AmazingFeature'`)
-4. 推送到分支 (`git push origin feature/AmazingFeature`)
-5. 打开 Pull Request
+### 找回会话
 
-## 📄 许可证
+- 在搜索框中输入会话名、备注、标签标题或 URL
+- 搜索结果会优先展示匹配到的会话，再展开具体标签命中
+- 可按域名、固定标签、保存时间继续筛选
 
-本项目采用 MIT 许可证 - 查看 [LICENSE](LICENSE) 文件了解详情
+### 恢复会话
 
-## 📞 联系我们
+- 点击会话卡片上的“恢复整个会话”
+- 会在新窗口中恢复该会话
+- 未锁定会话恢复后会从列表中移除；锁定会话会保留
+- 最近恢复区会记录你上次是从哪里恢复的，方便再次打开
 
-- 项目主页: [GitHub](https://github.com/your-username/chrome-plugin-one-tab)
-- 问题反馈: [Issues](https://github.com/your-username/chrome-plugin-one-tab/issues)
-- 邮箱: your-email@example.com
+### 导入 / 导出
 
----
+- 支持 JSON 备份导出
+- 支持 OneTab 文本导入和导出
 
-**TabVault Pro** - 让标签页管理变得简单高效！ 🚀
+## 开发
+
+```bash
+pnpm type-check
+pnpm lint
+pnpm build
+pnpm validate
+```
+
+`pnpm validate` 会先校验扩展元数据，再执行类型检查、Lint 和构建。
+
+如果你要验证真实 Supabase 数据链路，可以额外执行：
+
+```bash
+TEST_EMAIL="your-test-user@example.com" TEST_PASSWORD="your-password" pnpm test:supabase-smoke
+```
+
+这个 smoke test 会验证登录、设置同步、会话写入和 RLS 生效情况，并在结束后自动清理临时测试数据。
+
+## 隐私与数据
+
+- 本地数据默认保存在浏览器扩展存储中
+- 登录后，云端数据仅用于你主动触发的同步
+- 你应当把同步理解为“由你控制的数据搬运”，而不是后台持续同步
+
+## 仓库
+
+- 项目主页：[hibernate-pano/chrome-plugin-one-tab](https://github.com/hibernate-pano/chrome-plugin-one-tab)
+- 问题反馈：[Issues](https://github.com/hibernate-pano/chrome-plugin-one-tab/issues)
+
+## License
+
+MIT

@@ -1,4 +1,4 @@
-import { useEffect, useCallback } from 'react';
+import { useEffect, useRef } from 'react';
 
 interface KeyboardShortcut {
   key: string;
@@ -15,49 +15,52 @@ interface KeyboardShortcut {
  * 提供全局键盘快捷键支持
  */
 export const useKeyboardShortcuts = (shortcuts: KeyboardShortcut[]) => {
-  const handleKeyDown = useCallback((event: KeyboardEvent) => {
-    // 忽略在输入框中的快捷键
-    const target = event.target as HTMLElement;
-    if (
-      target.tagName === 'INPUT' ||
-      target.tagName === 'TEXTAREA' ||
-      target.contentEditable === 'true'
-    ) {
-      return;
-    }
+  const shortcutsRef = useRef(shortcuts);
 
-    // 检查每个快捷键
-    for (const shortcut of shortcuts) {
-      const {
-        key,
-        ctrlKey = false,
-        altKey = false,
-        shiftKey = false,
-        metaKey = false,
-        action
-      } = shortcut;
-
-      // 检查按键组合是否匹配
-      if (
-        event.key.toLowerCase() === key.toLowerCase() &&
-        event.ctrlKey === ctrlKey &&
-        event.altKey === altKey &&
-        event.shiftKey === shiftKey &&
-        event.metaKey === metaKey
-      ) {
-        event.preventDefault();
-        action();
-        break;
-      }
-    }
+  useEffect(() => {
+    shortcutsRef.current = shortcuts;
   }, [shortcuts]);
 
   useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement;
+      if (
+        target.tagName === 'INPUT' ||
+        target.tagName === 'TEXTAREA' ||
+        target.contentEditable === 'true'
+      ) {
+        return;
+      }
+
+      for (const shortcut of shortcutsRef.current) {
+        const {
+          key,
+          ctrlKey = false,
+          altKey = false,
+          shiftKey = false,
+          metaKey = false,
+          action
+        } = shortcut;
+
+        if (
+          event.key.toLowerCase() === key.toLowerCase() &&
+          event.ctrlKey === ctrlKey &&
+          event.altKey === altKey &&
+          event.shiftKey === shiftKey &&
+          event.metaKey === metaKey
+        ) {
+          event.preventDefault();
+          action();
+          break;
+        }
+      }
+    };
+
     document.addEventListener('keydown', handleKeyDown);
     return () => {
       document.removeEventListener('keydown', handleKeyDown);
     };
-  }, [handleKeyDown]);
+  }, []);
 
   return shortcuts.map(s => ({
     key: s.key,
@@ -78,7 +81,7 @@ export const COMMON_SHORTCUTS = {
   SAVE_TABS: {
     key: 's',
     ctrlKey: true,
-    description: '保存所有标签页'
+    description: '保存当前窗口为会话'
   },
   SEARCH: {
     key: 'f',

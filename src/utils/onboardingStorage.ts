@@ -1,3 +1,6 @@
+import { getRuntimeVersion } from '@/utils/runtimeInfo';
+import { trackProductEvent } from '@/utils/productEvents';
+
 /**
  * 用户引导（Onboarding）状态存储工具
  * 使用 chrome.storage.local 持久化引导状态
@@ -81,6 +84,7 @@ export async function setOnboardingCompleted(version: string): Promise<void> {
         await chrome.storage.local.set({ [STORAGE_KEY]: state });
         // 完成后清除触发信息
         await clearOnboardingTrigger();
+        await trackProductEvent('onboarding_completed', { version });
         console.log('[Onboarding] 引导已完成，版本:', version);
     } catch (error) {
         console.error('[Onboarding] 保存引导完成状态失败:', error);
@@ -100,6 +104,7 @@ export async function setOnboardingSkipped(version: string): Promise<void> {
         await chrome.storage.local.set({ [STORAGE_KEY]: state });
         // 跳过后也清除触发信息
         await clearOnboardingTrigger();
+        await trackProductEvent('onboarding_skipped', { version });
         console.log('[Onboarding] 引导已跳过，版本:', version);
     } catch (error) {
         console.error('[Onboarding] 保存引导跳过状态失败:', error);
@@ -146,11 +151,7 @@ export async function shouldShowOnboarding(): Promise<boolean> {
  * 获取当前扩展版本号
  */
 export function getCurrentVersion(): string {
-    try {
-        return chrome.runtime.getManifest().version;
-    } catch {
-        return '1.0.0';
-    }
+    return getRuntimeVersion();
 }
 
 /**

@@ -138,27 +138,8 @@ export const SortableTabGroup: React.FC<SortableTabGroupProps> = ({ group, index
     }
   }, [isMarkedForDeletion, dispatch, group.id]);
 
-  // If marked for deletion, render nothing to allow graceful unmount
-  if (isMarkedForDeletion) {
-    return null;
-  }
-
-  // Safety check for group.tabs - 特别重要在跨组拖拽时
-  if (!group || !group.tabs || !Array.isArray(group.tabs)) {
-    console.warn('Invalid group or tabs data during render:', {
-      groupId: group?.id,
-      groupName: group?.name,
-      tabs: group?.tabs,
-      isMarkedForDeletion
-    });
-    return null;
-  }
-
-  // Create a list of sortable tab IDs
-  const tabIds = group.tabs.map(tab => `${group.id}-tab-${tab.id}`);
-
   // Ensure other handlers also check isMarkedForDeletion if they could conflict
-  const safeHandleOpenTab = useCallback((tab: any) => {
+  const safeHandleOpenTab = useCallback((tab: TabGroupType['tabs'][number]) => {
     if (!isMounted.current || isMarkedForDeletion) return;
 
     // 跨组拖拽时的安全检查
@@ -194,6 +175,25 @@ export const SortableTabGroup: React.FC<SortableTabGroupProps> = ({ group, index
     setIsMarkedForDeletion(true); // Mark for deletion
   }, [isMarkedForDeletion]);
 
+  // If marked for deletion, render nothing to allow graceful unmount
+  if (isMarkedForDeletion) {
+    return null;
+  }
+
+  // Safety check for group.tabs - 特别重要在跨组拖拽时
+  if (!group || !group.tabs || !Array.isArray(group.tabs)) {
+    console.warn('Invalid group or tabs data during render:', {
+      groupId: group?.id,
+      groupName: group?.name,
+      tabs: group?.tabs,
+      isMarkedForDeletion
+    });
+    return null;
+  }
+
+  // Create a list of sortable tab IDs
+  const tabIds = group.tabs.map(tab => `${group.id}-tab-${tab.id}`);
+
   // Update props for SortableTab to use the new safe handlers if necessary
   // For now, assuming SortableTab's internal isMounted check is sufficient for its direct actions
   // The main change is how SortableTabGroup handles its own deletion trigger.
@@ -213,7 +213,7 @@ export const SortableTabGroup: React.FC<SortableTabGroupProps> = ({ group, index
           <button
             onClick={handleToggleExpand}
             className="text-gray-500 hover:text-gray-700 p-1 rounded-full hover:bg-gray-200"
-            title={isExpanded ? '折叠标签组' : '展开标签组'}
+            title={isExpanded ? '折叠会话' : '展开会话'}
           >
             <svg
               xmlns="http://www.w3.org/2000/svg"
@@ -257,7 +257,7 @@ export const SortableTabGroup: React.FC<SortableTabGroupProps> = ({ group, index
           <button
             onClick={safeHandleDeleteGroup}
             className="text-gray-400 hover:text-red-500 p-1 rounded hover:bg-gray-200"
-            title="删除标签组"
+            title="删除会话"
           >
             <svg
               xmlns="http://www.w3.org/2000/svg"
