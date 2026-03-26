@@ -206,7 +206,7 @@ export const TabList: React.FC<TabListProps> = ({ searchQuery }) => {
     .slice(0, 3);
   const totalTabCount = filteredGroups.reduce((count, group) => count + group.tabs.length, 0);
 
-  if (filteredGroups.length === 0 && !searchQuery) {
+  if (filteredGroups.length === 0 && !searchQuery && recentRestores.length === 0) {
     return (
       <div className="space-y-4">
         <PersonalizedWelcome tabCount={totalTabCount} className="flat-card p-6" />
