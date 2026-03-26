@@ -550,12 +550,17 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({ onClose }) => {
 
         <button
           onClick={handleDeleteAllGroups}
-          className="w-full text-left px-4 py-2 text-sm text-red-600 dark:text-red-400 flat-interaction-danger flex items-center"
+          className="mt-1 flex w-full items-center gap-2 rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-left text-sm font-medium text-rose-700 shadow-sm transition hover:bg-rose-100 dark:border-rose-900/40 dark:bg-rose-950/30 dark:text-rose-300 dark:hover:bg-rose-950/50"
         >
-          <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 mr-2 text-red-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 shrink-0 text-rose-500 dark:text-rose-300" fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
           </svg>
-          删除所有会话
+          <span className="flex-1">
+            <span className="block">删除所有会话</span>
+            <span className="mt-0.5 block text-xs font-normal text-rose-600/80 dark:text-rose-300/80">
+              清空本地所有已保存会话，此操作无法撤销。
+            </span>
+          </span>
         </button>
 
 

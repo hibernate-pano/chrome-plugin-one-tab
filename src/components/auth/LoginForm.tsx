@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { useAppDispatch, useAppSelector } from '@/store/hooks';
 import { signIn, clearError } from '@/store/slices/authSlice';
+import { InlineNotice } from '@/components/common/InlineNotice';
 import { validateEmail, validatePassword, validateForm } from '@/utils/inputValidation';
 
 interface LoginFormProps {
@@ -13,6 +14,12 @@ export const LoginForm: React.FC<LoginFormProps> = ({ onSuccess }) => {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [validationErrors, setValidationErrors] = useState<Record<string, string>>({});
+  const inputClassName = (hasError: boolean) =>
+    `w-full rounded-2xl border px-4 py-3 text-sm shadow-sm transition focus:outline-none focus:ring-4 focus:border-transparent bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 ${
+      hasError
+        ? 'border-rose-300 focus:ring-rose-100 dark:border-rose-700 dark:focus:ring-rose-950/60'
+        : 'border-gray-200 dark:border-gray-700 focus:ring-primary-100 dark:focus:ring-primary-950/60'
+    }`;
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -55,32 +62,20 @@ export const LoginForm: React.FC<LoginFormProps> = ({ onSuccess }) => {
   return (
     <div className="max-w-md mx-auto">
       {error && (
-        <div className="bg-red-50 border-l-4 border-red-500 text-red-700 p-4 rounded-lg mb-6 flex justify-between items-center">
-          <div className="flex items-center">
-            <svg className="h-5 w-5 mr-2 text-red-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-            </svg>
-            <span>{error}</span>
-          </div>
-          <button
-            className="text-red-700 hover:text-red-900 flat-interaction p-1 rounded-full"
-            onClick={() => dispatch(clearError())}
-          >
-            <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-            </svg>
-          </button>
-        </div>
+        <InlineNotice
+          tone="error"
+          title="登录失败"
+          message={error}
+          onDismiss={() => dispatch(clearError())}
+          className="mb-6"
+        />
       )}
-      <form onSubmit={handleSubmit} className="bg-white dark:bg-gray-900 shadow-md rounded-lg p-6 border border-gray-200 dark:border-gray-700">
+      <form onSubmit={handleSubmit} className="rounded-[28px] border border-gray-200/80 bg-white/95 p-6 shadow-[0_24px_60px_-40px_rgba(15,23,42,0.45)] backdrop-blur-sm dark:border-gray-700/80 dark:bg-gray-900/90">
         <div className="mb-5">
-          <label className="block text-gray-700 dark:text-gray-300 text-sm font-medium mb-2">邮箱</label>
+          <label className="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-300">邮箱</label>
           <input
             type="email"
-            className={`w-full px-4 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:border-transparent bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 ${validationErrors.email
-                ? 'border-red-500 focus:ring-red-500'
-                : 'border-gray-300 dark:border-gray-600 focus:ring-primary-500'
-              }`}
+            className={inputClassName(Boolean(validationErrors.email))}
             value={email}
             onChange={(e) => {
               setEmail(e.target.value);
@@ -93,17 +88,14 @@ export const LoginForm: React.FC<LoginFormProps> = ({ onSuccess }) => {
             required
           />
           {validationErrors.email && (
-            <p className="mt-1 text-sm text-red-600 dark:text-red-400">{validationErrors.email}</p>
+            <p className="mt-2 text-sm text-rose-600 dark:text-rose-400">{validationErrors.email}</p>
           )}
         </div>
         <div className="mb-6">
-          <label className="block text-gray-700 dark:text-gray-300 text-sm font-medium mb-2">密码</label>
+          <label className="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-300">密码</label>
           <input
             type="password"
-            className={`w-full px-4 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:border-transparent bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 ${validationErrors.password
-                ? 'border-red-500 focus:ring-red-500'
-                : 'border-gray-300 dark:border-gray-600 focus:ring-primary-500'
-              }`}
+            className={inputClassName(Boolean(validationErrors.password))}
             value={password}
             onChange={(e) => {
               setPassword(e.target.value);
@@ -116,12 +108,12 @@ export const LoginForm: React.FC<LoginFormProps> = ({ onSuccess }) => {
             required
           />
           {validationErrors.password && (
-            <p className="mt-1 text-sm text-red-600 dark:text-red-400">{validationErrors.password}</p>
+            <p className="mt-2 text-sm text-rose-600 dark:text-rose-400">{validationErrors.password}</p>
           )}
         </div>
         <button
           type="submit"
-          className="w-full bg-primary-600 text-white py-3 rounded-lg hover:bg-primary-700 disabled:opacity-50 disabled:cursor-not-allowed font-medium shadow-sm primary-button-interaction"
+          className="w-full rounded-2xl bg-primary-600 py-3 text-sm font-semibold text-white shadow-sm transition hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-50 primary-button-interaction"
           disabled={isLoading}
         >
           {isLoading ? (
@@ -134,8 +126,6 @@ export const LoginForm: React.FC<LoginFormProps> = ({ onSuccess }) => {
             </span>
           ) : '登录'}
         </button>
-
-
       </form>
     </div>
   );

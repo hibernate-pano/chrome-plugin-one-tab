@@ -7,6 +7,7 @@ import { DraggableTabGroup } from '@/components/dnd/DraggableTabGroup';
 import { SearchResultList } from '@/components/search/SearchResultList';
 import { RecentRestoreEntry, TabGroup as TabGroupType } from '@/types/tab';
 import { EmptyState } from '@/components/common/EmptyState';
+import { InlineNotice } from '@/components/common/InlineNotice';
 import { LoadingSpinner } from '@/components/common/LoadingSpinner';
 import { PersonalizedWelcome, QuickActionTips } from '@/components/common/PersonalizedWelcome';
 import { useEnhancedToast } from '@/utils/toastHelper';
@@ -169,7 +170,26 @@ export const TabList: React.FC<TabListProps> = ({ searchQuery }) => {
   }
 
   if (error) {
-    return <div className="flex items-center justify-center h-64 text-red-600">{error}</div>;
+    return (
+      <EmptyState
+        tone="warning"
+        title="会话列表暂时不可用"
+        description={error}
+        action={
+          <button
+            type="button"
+            onClick={() => {
+              dispatch(loadGroups());
+              dispatch(loadRecentRestores());
+            }}
+            className="rounded-2xl border border-gray-200 bg-white px-4 py-2 text-sm font-medium text-gray-700 shadow-sm transition hover:bg-gray-50 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-200 dark:hover:bg-gray-800"
+          >
+            重新加载
+          </button>
+        }
+        className="min-h-[16rem] flex flex-col justify-center"
+      />
+    );
   }
 
   const sortedGroups = [...groups].sort((left, right) => {
@@ -192,6 +212,7 @@ export const TabList: React.FC<TabListProps> = ({ searchQuery }) => {
         <PersonalizedWelcome tabCount={totalTabCount} className="flat-card p-6" />
         <div className="flat-card p-6">
           <EmptyState
+            tone="default"
             title="先保存一个工作会话"
             description="点击右上角的「保存会话」按钮，把当前窗口保存成可稍后找回的工作会话。"
             action={
@@ -246,6 +267,12 @@ export const TabList: React.FC<TabListProps> = ({ searchQuery }) => {
                   清空
                 </button>
               </div>
+              <InlineNotice
+                tone="info"
+                title="恢复历史仅保留最近 3 条"
+                message="这部分记录的是你的恢复动作，不会删除任何仍然保存着的会话。"
+                className="mb-3"
+              />
               <div className="space-y-2">
                 {recentRestores.map(entry => (
                   <button
@@ -292,6 +319,12 @@ export const TabList: React.FC<TabListProps> = ({ searchQuery }) => {
                   </p>
                 </div>
               </div>
+              <InlineNotice
+                tone="info"
+                title="最近保存严格按时间排序"
+                message="这里只展示最近 3 个新保存的会话，收藏状态不会影响这里的顺序。"
+                className="mb-3"
+              />
               <div className="space-y-2">
                 {recentGroups.map(group => (
                   <button
