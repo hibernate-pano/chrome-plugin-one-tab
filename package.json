@@ -1,6 +1,6 @@
 {
   "name": "chrome-plugin-one-tab",
-  "version": "1.11.4",
+  "version": "1.11.5",
   "description": "保存浏览器工作会话，稍后快速找回与恢复",
   "type": "module",
   "scripts": {
