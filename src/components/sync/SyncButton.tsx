@@ -2,58 +2,125 @@ import React, { useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useAppSelector } from '@/store/hooks';
 import { syncService } from '@/services/syncService';
+import { downloadTabGroups } from '@/services/tabGroupSyncService';
 import { useToast } from '@/contexts/ToastContext';
 import { trackProductEvent } from '@/utils/productEvents';
+import { storage } from '@/utils/storage';
+import {
+  buildDownloadPreviewSummary,
+  buildUploadPreviewSummary,
+  SyncPreviewSummary,
+} from '@/utils/syncPreview';
 
 interface SyncButtonProps { }
+
+type ModePreviewMap = {
+  overwrite: SyncPreviewSummary;
+  merge: SyncPreviewSummary;
+};
+
+const getSyncStrategyLabel = (strategy: string) => {
+  switch (strategy) {
+    case 'local':
+      return '本地优先';
+    case 'remote':
+      return '云端优先';
+    case 'ask':
+      return '检测冲突后询问';
+    case 'newest':
+    default:
+      return '较新版本优先';
+  }
+};
+
+const renderPreviewNames = (label: string, names: string[], color: string) => {
+  if (names.length === 0) {
+    return null;
+  }
+
+  return (
+    <div style={{ fontSize: '0.72rem', color, lineHeight: '1.5', marginTop: '6px' }}>
+      {label}：{names.join('、')}
+    </div>
+  );
+};
 
 export const SyncButton: React.FC<SyncButtonProps> = () => {
   const { syncStatus, syncProgress, syncOperation } = useAppSelector(state => state.tabs);
   const { isAuthenticated } = useAppSelector(state => state.auth);
+  const settings = useAppSelector(state => state.settings);
   const [showUploadModal, setShowUploadModal] = useState(false);
   const [showDownloadModal, setShowDownloadModal] = useState(false);
   const [modalAnimation, setModalAnimation] = useState('');
+  const [isUploadPreviewLoading, setIsUploadPreviewLoading] = useState(false);
+  const [isDownloadPreviewLoading, setIsDownloadPreviewLoading] = useState(false);
+  const [uploadPreviewError, setUploadPreviewError] = useState<string | null>(null);
+  const [downloadPreviewError, setDownloadPreviewError] = useState<string | null>(null);
+  const [uploadPreview, setUploadPreview] = useState<ModePreviewMap | null>(null);
+  const [downloadPreview, setDownloadPreview] = useState<ModePreviewMap | null>(null);
   const { showToast } = useToast();
+
+  const loadUploadPreview = async () => {
+    setIsUploadPreviewLoading(true);
+    setUploadPreviewError(null);
+
+    try {
+      const [localGroups, remoteGroups] = await Promise.all([
+        storage.getGroups(),
+        downloadTabGroups(),
+      ]);
+
+      setUploadPreview({
+        overwrite: buildUploadPreviewSummary(localGroups, remoteGroups, 'overwrite'),
+        merge: buildUploadPreviewSummary(localGroups, remoteGroups, 'merge'),
+      });
+    } catch (error) {
+      console.error('加载上传预览失败:', error);
+      setUploadPreviewError('暂时无法读取云端会话预览，仍可继续手动上传。');
+      setUploadPreview(null);
+    } finally {
+      setIsUploadPreviewLoading(false);
+    }
+  };
+
+  const loadDownloadPreview = async () => {
+    setIsDownloadPreviewLoading(true);
+    setDownloadPreviewError(null);
+
+    try {
+      const [localGroups, remoteGroups] = await Promise.all([
+        storage.getGroups(),
+        downloadTabGroups(),
+      ]);
+
+      setDownloadPreview({
+        overwrite: buildDownloadPreviewSummary(localGroups, remoteGroups, 'overwrite', settings.syncStrategy),
+        merge: buildDownloadPreviewSummary(localGroups, remoteGroups, 'merge', settings.syncStrategy),
+      });
+    } catch (error) {
+      console.error('加载下载预览失败:', error);
+      setDownloadPreviewError('暂时无法读取云端会话预览，仍可继续手动下载。');
+      setDownloadPreview(null);
+    } finally {
+      setIsDownloadPreviewLoading(false);
+    }
+  };
 
   // 处理上传按钮点击
   const handleUpload = async () => {
     if (syncStatus !== 'syncing' && isAuthenticated) {
-      // 直接显示选择对话框，不再检查云端是否有数据
       setModalAnimation('animate-fadeIn');
       setShowUploadModal(true);
+      void loadUploadPreview();
     }
   };
 
   // 处理下载按钮点击
   const handleDownload = async () => {
     if (syncStatus !== 'syncing' && isAuthenticated) {
-      try {
-        const hasLocalData = await syncService.hasLocalData();
-
-        if (!hasLocalData) {
-          void trackProductEvent('sync_download_started', {
-            mode: 'overwrite',
-            directRestore: true,
-          });
-          const result = await syncService.downloadAndRefresh(true);
-          if (result.success) {
-            showToast('本地没有会话，已直接从云端恢复', 'success');
-            void trackProductEvent('sync_download_completed', {
-              mode: 'overwrite',
-              directRestore: true,
-            });
-          } else {
-            showToast(result.error || '下载失败，请重试', 'error');
-          }
-        } else {
-          setModalAnimation('animate-fadeIn');
-          setShowDownloadModal(true);
-        }
-      } catch (error) {
-        console.error('检查本地数据状态失败:', error);
-        setModalAnimation('animate-fadeIn');
-        setShowDownloadModal(true);
-      }
+      setModalAnimation('animate-fadeIn');
+      setShowDownloadModal(true);
+      void loadDownloadPreview();
     }
   };
 
@@ -65,6 +132,62 @@ export const SyncButton: React.FC<SyncButtonProps> = () => {
       setShowDownloadModal(false);
       setModalAnimation('');
     }, 200);
+  };
+
+  const renderPreviewSummary = (
+    summary: SyncPreviewSummary | null,
+    targetLabel: '云端' | '本地',
+    modeDescription: string,
+    colorPalette: {
+      added: string;
+      updated: string;
+      deleted: string;
+      muted: string;
+    }
+  ) => {
+    if (!summary) {
+      return (
+        <div style={{ fontSize: '0.78rem', color: colorPalette.muted, lineHeight: '1.5', marginTop: '10px' }}>
+          暂无预览数据
+        </div>
+      );
+    }
+
+    return (
+      <div style={{ marginTop: '10px' }}>
+        <div style={{ fontSize: '0.78rem', color: '#374151', lineHeight: '1.5' }}>
+          {modeDescription}
+        </div>
+        <div
+          style={{
+            marginTop: '10px',
+            display: 'grid',
+            gridTemplateColumns: 'repeat(3, minmax(0, 1fr))',
+            gap: '8px',
+          }}
+        >
+          <div style={{ borderRadius: '10px', backgroundColor: '#f9fafb', padding: '8px 10px' }}>
+            <div style={{ fontSize: '0.7rem', color: colorPalette.added }}>新增</div>
+            <div style={{ fontSize: '1rem', fontWeight: 700, color: '#111827' }}>{summary.additions}</div>
+          </div>
+          <div style={{ borderRadius: '10px', backgroundColor: '#f9fafb', padding: '8px 10px' }}>
+            <div style={{ fontSize: '0.7rem', color: colorPalette.updated }}>覆盖</div>
+            <div style={{ fontSize: '1rem', fontWeight: 700, color: '#111827' }}>{summary.updates}</div>
+          </div>
+          <div style={{ borderRadius: '10px', backgroundColor: '#f9fafb', padding: '8px 10px' }}>
+            <div style={{ fontSize: '0.7rem', color: colorPalette.deleted }}>删除</div>
+            <div style={{ fontSize: '1rem', fontWeight: 700, color: '#111827' }}>{summary.deletions}</div>
+          </div>
+        </div>
+        <div style={{ fontSize: '0.72rem', color: '#6b7280', lineHeight: '1.5', marginTop: '8px' }}>
+          操作前 {targetLabel} {summary.beforeCount} 个会话，操作后预计 {summary.afterCount} 个会话。
+          {summary.unchanged > 0 ? ` 另有 ${summary.unchanged} 个会话保持不变。` : ''}
+        </div>
+        {renderPreviewNames('新增示例', summary.addedNames, colorPalette.added)}
+        {renderPreviewNames('覆盖示例', summary.updatedNames, colorPalette.updated)}
+        {renderPreviewNames('删除示例', summary.deletedNames, colorPalette.deleted)}
+      </div>
+    );
   };
 
   // 处理上传确认 - 覆盖模式
@@ -277,8 +400,20 @@ export const SyncButton: React.FC<SyncButtonProps> = () => {
             >
               <div style={{ textAlign: 'center', marginBottom: '16px' }}>
                 <h3 style={{ fontSize: '1.25rem', fontWeight: 'bold', color: '#ffffff', margin: 0 }}>上传到云端</h3>
-                <p style={{ color: '#d1d5db', margin: '8px 0 0 0' }}>选择这次上传是覆盖云端，还是与云端现有数据合并</p>
+                <p style={{ color: '#d1d5db', margin: '8px 0 0 0' }}>先看这次会怎么改动云端会话，再决定覆盖还是合并</p>
               </div>
+
+              {isUploadPreviewLoading && (
+                <div style={{ textAlign: 'center', color: '#d1d5db', marginBottom: '16px', fontSize: '0.875rem' }}>
+                  正在计算上传预览...
+                </div>
+              )}
+
+              {uploadPreviewError && (
+                <div style={{ textAlign: 'center', color: '#fef3c7', marginBottom: '16px', fontSize: '0.8rem' }}>
+                  {uploadPreviewError}
+                </div>
+              )}
 
               <div style={{ display: 'flex', gap: '16px', justifyContent: 'center' }}>
                 <div
@@ -303,7 +438,17 @@ export const SyncButton: React.FC<SyncButtonProps> = () => {
                   </div>
                   <div style={{ padding: '12px' }}>
                     <h4 style={{ fontSize: '1rem', fontWeight: '600', color: '#1f2937', marginBottom: '6px', margin: '0 0 6px 0' }}>覆盖模式</h4>
-                    <p style={{ color: '#4b5563', fontSize: '0.8rem', margin: 0, lineHeight: '1.4' }}>用当前本地会话完全替换云端数据，适合把这台设备作为最新来源</p>
+                    {renderPreviewSummary(
+                      uploadPreview?.overwrite ?? null,
+                      '云端',
+                      '用当前本地会话直接替换云端现状。',
+                      {
+                        added: '#16a34a',
+                        updated: '#dc2626',
+                        deleted: '#b91c1c',
+                        muted: '#6b7280',
+                      }
+                    )}
                   </div>
                 </div>
 
@@ -329,7 +474,17 @@ export const SyncButton: React.FC<SyncButtonProps> = () => {
                   </div>
                   <div style={{ padding: '12px' }}>
                     <h4 style={{ fontSize: '1rem', fontWeight: '600', color: '#1f2937', marginBottom: '6px', margin: '0 0 6px 0' }}>合并模式</h4>
-                    <p style={{ color: '#4b5563', fontSize: '0.8rem', margin: 0, lineHeight: '1.4' }}>把本地新增内容合并到云端，尽量保留两边已有的会话状态</p>
+                    {renderPreviewSummary(
+                      uploadPreview?.merge ?? null,
+                      '云端',
+                      '把本地会话按 ID 合并进云端，未命中的云端会话会保留。',
+                      {
+                        added: '#16a34a',
+                        updated: '#2563eb',
+                        deleted: '#b91c1c',
+                        muted: '#6b7280',
+                      }
+                    )}
                   </div>
                 </div>
               </div>
@@ -373,8 +528,23 @@ export const SyncButton: React.FC<SyncButtonProps> = () => {
             >
               <div style={{ textAlign: 'center', marginBottom: '16px' }}>
                 <h3 style={{ fontSize: '1.25rem', fontWeight: 'bold', color: '#ffffff', margin: 0 }}>下载到本地</h3>
-                <p style={{ color: '#d1d5db', margin: '8px 0 0 0' }}>选择这次下载是覆盖本地，还是与本地现有数据合并</p>
+                <p style={{ color: '#d1d5db', margin: '8px 0 0 0' }}>先看这次会怎么改动本地会话，再决定覆盖还是合并</p>
+                <p style={{ color: '#93c5fd', margin: '6px 0 0 0', fontSize: '0.78rem' }}>
+                  当前合并策略：{getSyncStrategyLabel(settings.syncStrategy)}
+                </p>
               </div>
+
+              {isDownloadPreviewLoading && (
+                <div style={{ textAlign: 'center', color: '#d1d5db', marginBottom: '16px', fontSize: '0.875rem' }}>
+                  正在计算下载预览...
+                </div>
+              )}
+
+              {downloadPreviewError && (
+                <div style={{ textAlign: 'center', color: '#fef3c7', marginBottom: '16px', fontSize: '0.8rem' }}>
+                  {downloadPreviewError}
+                </div>
+              )}
 
               <div style={{ display: 'flex', gap: '16px', justifyContent: 'center' }}>
                 <div
@@ -399,7 +569,17 @@ export const SyncButton: React.FC<SyncButtonProps> = () => {
                   </div>
                   <div style={{ padding: '12px' }}>
                     <h4 style={{ fontSize: '1rem', fontWeight: '600', color: '#1f2937', marginBottom: '6px', margin: '0 0 6px 0' }}>覆盖模式</h4>
-                    <p style={{ color: '#4b5563', fontSize: '0.8rem', margin: 0, lineHeight: '1.4' }}>用云端数据完全替换本地会话，适合在新设备上直接接着工作</p>
+                    {renderPreviewSummary(
+                      downloadPreview?.overwrite ?? null,
+                      '本地',
+                      '用云端会话直接替换本地现状。',
+                      {
+                        added: '#16a34a',
+                        updated: '#dc2626',
+                        deleted: '#b91c1c',
+                        muted: '#6b7280',
+                      }
+                    )}
                   </div>
                 </div>
 
@@ -425,7 +605,17 @@ export const SyncButton: React.FC<SyncButtonProps> = () => {
                   </div>
                   <div style={{ padding: '12px' }}>
                     <h4 style={{ fontSize: '1rem', fontWeight: '600', color: '#1f2937', marginBottom: '6px', margin: '0 0 6px 0' }}>合并模式</h4>
-                    <p style={{ color: '#4b5563', fontSize: '0.8rem', margin: 0, lineHeight: '1.4' }}>把云端数据合并进本地，尽量保留当前设备已有的会话和设置</p>
+                    {renderPreviewSummary(
+                      downloadPreview?.merge ?? null,
+                      '本地',
+                      '按当前同步策略把云端会话合并进本地。',
+                      {
+                        added: '#16a34a',
+                        updated: '#2563eb',
+                        deleted: '#b91c1c',
+                        muted: '#6b7280',
+                      }
+                    )}
                   </div>
                 </div>
               </div>
