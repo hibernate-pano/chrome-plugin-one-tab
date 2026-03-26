@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useTransition } from 'react';
 import { useAppDispatch, useAppSelector } from '@/store/hooks';
 import {
   toggleLayoutMode,
@@ -73,6 +73,7 @@ export const Header: React.FC<HeaderProps> = ({ onSearch }) => {
 
   const { searchValue, debouncedValue, handleSearchChange, clearSearch, isSearching } = useDebouncedSearch();
   const searchInputRef = React.useRef<HTMLInputElement>(null);
+  const [isSearchTransitionPending, startSearchTransition] = useTransition();
 
   const handleCleanDuplicateTabs = () => {
     showConfirm({
@@ -169,8 +170,12 @@ export const Header: React.FC<HeaderProps> = ({ onSearch }) => {
   };
 
   React.useEffect(() => {
-    onSearch(debouncedValue);
+    startSearchTransition(() => {
+      onSearch(debouncedValue);
+    });
   }, [debouncedValue, onSearch]);
+
+  const isSearchBusy = isSearching || isSearchTransitionPending;
 
   const handleSearch = (e: React.ChangeEvent<HTMLInputElement>) => {
     handleSearchChange(e.target.value);
@@ -213,7 +218,7 @@ export const Header: React.FC<HeaderProps> = ({ onSearch }) => {
           {/* 搜索框 */}
           <div className="flex-1 max-w-md mx-4">
             <div className="relative">
-              {isSearching && (
+              {isSearchBusy && (
                 <div className="absolute left-3 top-1/2 -translate-y-1/2 search-icon">
                   <LoadingIcon />
                 </div>
@@ -222,12 +227,13 @@ export const Header: React.FC<HeaderProps> = ({ onSearch }) => {
                 ref={searchInputRef}
                 type="text"
                 placeholder="搜索会话、备注或标签..."
-                className={`input search-input w-full py-2 text-sm ${isSearching ? 'pl-10' : 'pl-3'}`}
+                className={`input search-input w-full py-2 text-sm ${isSearchBusy ? 'pl-10' : 'pl-3'}`}
                 onChange={handleSearch}
                 value={searchValue}
                 aria-label="搜索会话、备注或标签页"
                 role="searchbox"
                 autoComplete="off"
+                aria-busy={isSearchBusy}
               />
               {searchValue && (
                 <button

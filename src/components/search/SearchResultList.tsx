@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useDeferredValue, useEffect, useState, useTransition } from 'react';
 import { useAppDispatch, useAppSelector } from '@/store/hooks';
 import { Tab, TabGroup } from '@/types/tab';
 import { deleteGroup, recordRecentRestore, updateGroup } from '@/store/slices/tabSlice';
@@ -9,7 +9,6 @@ import { trackProductEvent } from '@/utils/productEvents';
 import {
   AdvancedSearch,
   SearchFilters,
-  SearchResult,
   SessionSearchResult,
   applySearchFilters,
   buildSessionSearchResults,
@@ -34,44 +33,63 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({ searchQuery 
   const { groups } = useAppSelector(state => state.tabs);
   const { showConfirm, showToast } = useToast();
   const { showDeleteSuccess, showDeleteError, showRestoreSuccess, showRestoreError } = useEnhancedToast();
-  const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
   const [filters, setFilters] = useState<SearchFilters>({});
   const [showFilters, setShowFilters] = useState(false);
+  const [isFilterPending, startFilterTransition] = useTransition();
+  const deferredSearchQuery = useDeferredValue(searchQuery);
+  const normalizedSearchQuery = deferredSearchQuery.trim();
+
+  const baseResults = normalizedSearchQuery
+    ? AdvancedSearch.search(groups, {
+        query: normalizedSearchQuery,
+        searchPinned: true,
+      })
+    : [];
+  const searchResults = applySearchFilters(baseResults, filters);
+  const sessionResults = buildSessionSearchResults(searchResults);
+  const matchingTabs = sessionResults.flatMap(session => session.matches);
+  const activeFilterCount = [
+    !!filters.domain?.trim(),
+    !!filters.groupName?.trim(),
+    !!filters.savedWithin,
+    filters.pinned === 'only' || filters.pinned === 'exclude',
+  ].filter(Boolean).length;
 
   useEffect(() => {
-    if (!searchQuery) {
-      setSearchResults([]);
+    if (!normalizedSearchQuery) {
       return;
     }
 
-    const baseResults = AdvancedSearch.search(groups, {
-      query: searchQuery,
-      searchPinned: true,
-    });
-
-    const filteredResults = applySearchFilters(baseResults, filters);
-    setSearchResults(filteredResults);
     void trackProductEvent('search_performed', {
-      query: searchQuery,
-      resultCount: filteredResults.length,
+      query: normalizedSearchQuery,
+      resultCount: searchResults.length,
       hasDomainFilter: !!filters.domain,
       hasSavedWithinFilter: !!filters.savedWithin,
     });
 
     if (filters.domain || filters.groupName || filters.pinned !== undefined || filters.savedWithin) {
       void trackProductEvent('search_filtered', {
-        query: searchQuery,
+        query: normalizedSearchQuery,
         domain: filters.domain || null,
         groupName: filters.groupName || null,
         pinned: filters.pinned || 'all',
         savedWithin: filters.savedWithin || null,
-        resultCount: filteredResults.length,
+        resultCount: searchResults.length,
       });
     }
-  }, [filters, groups, searchQuery]);
+  }, [filters, normalizedSearchQuery, searchResults.length]);
 
-  const sessionResults = buildSessionSearchResults(searchResults);
-  const matchingTabs = sessionResults.flatMap(session => session.matches);
+  const updateFilters = (updater: (current: SearchFilters) => SearchFilters) => {
+    startFilterTransition(() => {
+      setFilters(current => updater(current));
+    });
+  };
+
+  const clearFilters = () => {
+    startFilterTransition(() => {
+      setFilters({});
+    });
+  };
 
   const getDisplayUrl = (url: string) => {
     try {
@@ -337,16 +355,36 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({ searchQuery 
   const FiltersPanel = ({ withOuterMargin }: { withOuterMargin?: boolean }) => (
     <>
       <div className="flex items-center justify-between mb-2 px-2">
-        <h3 className="text-sm font-medium text-gray-700 dark:text-gray-300">会话搜索结果</h3>
-        <button
-          onClick={() => setShowFilters(!showFilters)}
-          className="text-xs text-blue-600 dark:text-blue-400 hover:underline flex items-center flat-interaction"
-        >
-          <svg xmlns="http://www.w3.org/2000/svg" className="h-3 w-3 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2.586a1 1 0 01-.293.707l-6.414 6.414a1 1 0 00-.293.707V17l-4 4v-6.586a1 1 0 00-.293-.707L3.293 7.207A1 1 0 013 6.5V4z" />
-          </svg>
-          {showFilters ? '隐藏筛选' : '显示筛选'}
-        </button>
+        <div className="flex items-center gap-2">
+          <h3 className="text-sm font-medium text-gray-700 dark:text-gray-300">会话搜索结果</h3>
+          {activeFilterCount > 0 && (
+            <span className="rounded-full bg-blue-100 px-2 py-0.5 text-[11px] font-medium text-blue-700 dark:bg-blue-900/40 dark:text-blue-300">
+              {activeFilterCount} 个筛选
+            </span>
+          )}
+          {isFilterPending && (
+            <span className="text-[11px] text-gray-500 dark:text-gray-400">更新结果中...</span>
+          )}
+        </div>
+        <div className="flex items-center gap-3">
+          {activeFilterCount > 0 && (
+            <button
+              onClick={clearFilters}
+              className="text-xs text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 flat-interaction"
+            >
+              清空筛选
+            </button>
+          )}
+          <button
+            onClick={() => setShowFilters(!showFilters)}
+            className="text-xs text-blue-600 dark:text-blue-400 hover:underline flex items-center flat-interaction"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" className="h-3 w-3 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2.586a1 1 0 01-.293.707l-6.414 6.414a1 1 0 00-.293.707V17l-4 4v-6.586a1 1 0 00-.293-.707L3.293 7.207A1 1 0 013 6.5V4z" />
+            </svg>
+            {showFilters ? '隐藏筛选' : '显示筛选'}
+          </button>
+        </div>
       </div>
 
       {showFilters && (
@@ -356,7 +394,13 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({ searchQuery 
               <label className="block text-xs text-gray-600 dark:text-gray-300 mb-1">固定标签页</label>
               <select
                 value={filters.pinned || 'all'}
-                onChange={event => setFilters({ ...filters, pinned: event.target.value as SearchFilters['pinned'] })}
+                onChange={event => {
+                  const nextPinned = event.target.value as SearchFilters['pinned'];
+                  updateFilters(current => ({
+                    ...current,
+                    pinned: nextPinned === 'all' ? undefined : nextPinned,
+                  }));
+                }}
                 className="w-full text-sm border border-gray-300 dark:border-gray-600 rounded px-2 py-1 bg-white dark:bg-gray-600 text-gray-900 dark:text-gray-100"
               >
                 <option value="all">全部</option>
@@ -371,7 +415,13 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({ searchQuery 
                 type="text"
                 placeholder="输入域名..."
                 value={filters.domain || ''}
-                onChange={event => setFilters({ ...filters, domain: event.target.value })}
+                onChange={event => {
+                  const nextDomain = event.target.value;
+                  updateFilters(current => ({
+                    ...current,
+                    domain: nextDomain || undefined,
+                  }));
+                }}
                 className="w-full text-sm border border-gray-300 dark:border-gray-600 rounded px-2 py-1 bg-white dark:bg-gray-600 text-gray-900 dark:text-gray-100"
               />
             </div>
@@ -382,7 +432,13 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({ searchQuery 
                 type="text"
                 placeholder="输入会话名称..."
                 value={filters.groupName || ''}
-                onChange={event => setFilters({ ...filters, groupName: event.target.value })}
+                onChange={event => {
+                  const nextGroupName = event.target.value;
+                  updateFilters(current => ({
+                    ...current,
+                    groupName: nextGroupName || undefined,
+                  }));
+                }}
                 className="w-full text-sm border border-gray-300 dark:border-gray-600 rounded px-2 py-1 bg-white dark:bg-gray-600 text-gray-900 dark:text-gray-100"
               />
             </div>
@@ -393,7 +449,10 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({ searchQuery 
                 value={filters.savedWithin || ''}
                 onChange={event => {
                   const nextValue = event.target.value as SearchFilters['savedWithin'] | '';
-                  setFilters({ ...filters, savedWithin: nextValue || undefined });
+                  updateFilters(current => ({
+                    ...current,
+                    savedWithin: nextValue || undefined,
+                  }));
                 }}
                 className="w-full text-sm border border-gray-300 dark:border-gray-600 rounded px-2 py-1 bg-white dark:bg-gray-600 text-gray-900 dark:text-gray-100"
               >
@@ -423,13 +482,23 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({ searchQuery 
           title="没有找到可找回的会话"
           description={`没有找到与“${searchQuery}”相关的会话或标签，请尝试其他关键词。`}
           action={
-            <div className="text-xs theme-text-muted space-y-1">
-              <div>小提示：</div>
-              <ul className="list-disc list-inside space-y-0.5 text-left">
-                <li>支持搜索会话名称、备注、标签标题或 URL</li>
-                <li>可结合域名、保存时间和固定标签筛选</li>
-                <li>如果刚换设备，可先登录后手动同步一次</li>
-              </ul>
+            <div className="text-xs theme-text-muted space-y-3">
+              {activeFilterCount > 0 && (
+                <button
+                  onClick={clearFilters}
+                  className="rounded-lg border border-gray-300 px-3 py-1.5 text-xs font-medium text-gray-600 transition-colors hover:bg-gray-100 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-800"
+                >
+                  清空筛选后重试
+                </button>
+              )}
+              <div className="space-y-1">
+                <div>小提示：</div>
+                <ul className="list-disc list-inside space-y-0.5 text-left">
+                  <li>支持搜索会话名称、备注、标签标题或 URL</li>
+                  <li>可结合域名、保存时间和固定标签筛选</li>
+                  <li>如果刚换设备，可先登录后手动同步一次</li>
+                </ul>
+              </div>
             </div>
           }
           className="h-40"
@@ -490,7 +559,11 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({ searchQuery 
 
       <div className="space-y-3 px-2 pb-2">
         {sessionResults.map((session: SessionSearchResult) => (
-          <div key={session.group.id} className="rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900/40 p-3">
+          <div
+            key={session.group.id}
+            className="rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900/40 p-3"
+            style={{ contentVisibility: 'auto', containIntrinsicSize: '240px' }}
+          >
             <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
               <div className="min-w-0">
                 <div className="flex items-center gap-2">

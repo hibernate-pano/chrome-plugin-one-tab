@@ -1,6 +1,6 @@
 import React, { useEffect, lazy } from 'react';
 import { useAppDispatch, useAppSelector } from '@/store/hooks';
-import { deleteGroup, loadGroups, loadRecentRestores, moveGroupAndSync, recordRecentRestore } from '@/store/slices/tabSlice';
+import { clearRecentRestores, deleteGroup, loadGroups, loadRecentRestores, moveGroupAndSync, recordRecentRestore } from '@/store/slices/tabSlice';
 import { invalidateGroupsCache } from '@/utils/storage';
 import { runMigrations } from '@/utils/migrationUtils';
 import { DraggableTabGroup } from '@/components/dnd/DraggableTabGroup';
@@ -43,7 +43,7 @@ export const TabList: React.FC<TabListProps> = ({ searchQuery }) => {
   const { groups, recentRestores, isLoading, error } = useAppSelector(state => state.tabs);
   const { layoutMode, reorderMode } = useAppSelector(state => state.settings);
   const { showDeleteError } = useEnhancedToast();
-  const { showToast } = useToast();
+  const { showConfirm, showToast } = useToast();
 
   useEffect(() => {
     const initializeData = async () => {
@@ -138,6 +138,28 @@ export const TabList: React.FC<TabListProps> = ({ searchQuery }) => {
     }, 100);
   };
 
+  const handleClearRecentRestores = () => {
+    showConfirm({
+      title: '清空最近恢复',
+      message: '清空后将移除最近恢复历史，但不会删除任何已保存会话。',
+      type: 'warning',
+      confirmText: '清空历史',
+      cancelText: '取消',
+      onConfirm: () => {
+        dispatch(clearRecentRestores())
+          .unwrap()
+          .then(() => {
+            showToast('已清空最近恢复历史', 'success');
+          })
+          .catch(error => {
+            console.error('清空最近恢复失败:', error);
+            showToast('清空最近恢复失败，请重试', 'error');
+          });
+      },
+      onCancel: () => {},
+    });
+  };
+
   if (isLoading) {
     return (
       <div className="flex items-center justify-center h-64">
@@ -217,6 +239,12 @@ export const TabList: React.FC<TabListProps> = ({ searchQuery }) => {
                     查看最近恢复过的会话，也能按最近一次的来源再次打开。
                   </p>
                 </div>
+                <button
+                  onClick={handleClearRecentRestores}
+                  className="text-xs text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 flat-interaction"
+                >
+                  清空
+                </button>
               </div>
               <div className="space-y-2">
                 {recentRestores.map(entry => (

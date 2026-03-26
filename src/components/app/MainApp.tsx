@@ -1,4 +1,4 @@
-import React, { useState, useEffect, lazy, Suspense } from 'react';
+import React, { useState, useEffect, lazy, Suspense, useDeferredValue } from 'react';
 import { Header } from '@/components/layout/Header';
 import { TabList } from '@/components/tabs/TabList';
 import { useAppDispatch } from '@/store/hooks';
@@ -28,6 +28,7 @@ export const MainApp: React.FC = () => {
   const [searchQuery, setSearchQuery] = useState('');
   const [showPerformanceTest, setShowPerformanceTest] = useState(false);
   const [showOnboarding, setShowOnboarding] = useState(false);
+  const deferredSearchQuery = useDeferredValue(searchQuery);
 
   // 加载用户设置
   useEffect(() => {
@@ -87,7 +88,7 @@ export const MainApp: React.FC = () => {
               <Header onSearch={setSearchQuery} />
               <main className={`flex-1 w-full py-2 ${getContainerWidthClass()}`}>
                 <Suspense fallback={<div className="p-4 text-center">加载标签列表...</div>}>
-                  <TabList searchQuery={searchQuery} />
+                  <TabList searchQuery={deferredSearchQuery} />
                 </Suspense>
               </main>
               <footer className="bg-white dark:bg-gray-900 border-t border-gray-200 dark:border-gray-700 text-xs text-gray-600 dark:text-gray-400">
