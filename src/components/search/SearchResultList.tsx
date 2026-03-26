@@ -31,6 +31,7 @@ interface SearchResultListProps {
 export const SearchResultList: React.FC<SearchResultListProps> = ({ searchQuery }) => {
   const dispatch = useAppDispatch();
   const { groups } = useAppSelector(state => state.tabs);
+  const confirmBeforeDelete = useAppSelector(state => state.settings.confirmBeforeDelete);
   const { showConfirm, showToast } = useToast();
   const { showDeleteSuccess, showDeleteError, showRestoreSuccess, showRestoreError } = useEnhancedToast();
   const [filters, setFilters] = useState<SearchFilters>({});
@@ -318,6 +319,23 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({ searchQuery 
     }
   };
 
+  const handleRequestDeleteAllSearchResults = () => {
+    if (!confirmBeforeDelete) {
+      void handleDeleteAllSearchResults();
+      return;
+    }
+
+    showConfirm({
+      title: '删除确认',
+      message: `确定要删除所有搜索结果中的 ${matchingTabs.length} 个标签页吗？此操作不可撤销。`,
+      type: 'danger',
+      confirmText: '删除',
+      cancelText: '取消',
+      onConfirm: handleDeleteAllSearchResults,
+      onCancel: () => {},
+    });
+  };
+
   const renderTabItem = ({ tab, group }: { tab: Tab; group: TabGroup }) => (
     <div className="tab-item group/tab">
       <SafeFavicon src={tab.favicon} alt="" className="tab-item-favicon" />
@@ -536,15 +554,7 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({ searchQuery 
             </button>
 
             <button
-              onClick={() => showConfirm({
-                title: '删除确认',
-                message: `确定要删除所有搜索结果中的 ${matchingTabs.length} 个标签页吗？此操作不可撤销。`,
-                type: 'danger',
-                confirmText: '删除',
-                cancelText: '取消',
-                onConfirm: handleDeleteAllSearchResults,
-                onCancel: () => {},
-              })}
+              onClick={handleRequestDeleteAllSearchResults}
               className="btn-icon p-1.5 tab-group-action-danger flat-interaction"
               title="删除所有搜索到的标签页"
             >

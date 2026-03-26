@@ -27,6 +27,7 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({ onClose }) => {
   const settings = useAppSelector(state => state.settings);
   const [activeTab, setActiveTab] = useState<'login' | 'register'>('login');
   const [showAuthModal, setShowAuthModal] = useState(false);
+  const [openSubmenu, setOpenSubmenu] = useState<'export' | 'import' | null>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
   const { showConfirm, showAlert } = useToast();
 
@@ -123,48 +124,55 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({ onClose }) => {
   // 移除同步功能，简化逻辑
 
   const handleDeleteAllGroups = () => {
+    const runDeleteAll = () => {
+      onClose();
+
+      dispatch(deleteAllGroups())
+        .then((result: any) => {
+          const count = result.payload?.count || 0;
+
+          if (isAuthenticated) {
+            syncService.uploadToCloud(true, true)
+              .then(() => {
+                console.log('删除操作已同步到云端');
+              })
+              .catch(error => {
+                console.error('同步到云端失败:', error);
+              });
+          } else {
+            console.log('用户未登录，跳过同步到云端');
+          }
+
+          showAlert({
+            title: '删除成功',
+            message: `成功删除了 ${count} 个会话`,
+            type: 'success',
+            onClose: () => { }
+          });
+        })
+        .catch(error => {
+          console.error('删除所有标签组失败:', error);
+          showAlert({
+            title: '删除失败',
+            message: '删除所有会话失败',
+            type: 'error',
+            onClose: () => { }
+          });
+        });
+    };
+
+    if (!settings.confirmBeforeDelete) {
+      runDeleteAll();
+      return;
+    }
+
     showConfirm({
       title: '删除确认',
       message: '确定要删除所有会话吗？此操作无法撤销。',
       type: 'danger',
       confirmText: '删除',
       cancelText: '取消',
-      onConfirm: () => {
-        onClose();
-
-        dispatch(deleteAllGroups())
-          .then((result: any) => {
-            const count = result.payload?.count || 0;
-
-            if (isAuthenticated) {
-              syncService.uploadToCloud(true, true)
-                .then(() => {
-                  console.log('删除操作已同步到云端');
-                })
-                .catch(error => {
-                  console.error('同步到云端失败:', error);
-                });
-            } else {
-              console.log('用户未登录，跳过同步到云端');
-            }
-
-            showAlert({
-              title: '删除成功',
-              message: `成功删除了 ${count} 个会话`,
-              type: 'success',
-              onClose: () => { }
-            });
-          })
-          .catch(error => {
-            console.error('删除所有标签组失败:', error);
-            showAlert({
-              title: '删除失败',
-              message: '删除所有会话失败',
-              type: 'error',
-              onClose: () => { }
-            });
-          });
-      },
+      onConfirm: runDeleteAll,
       onCancel: () => { }
     });
   };
@@ -172,6 +180,7 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({ onClose }) => {
   // 导出数据为 JSON 格式
   const handleExportData = async () => {
     try {
+      setOpenSubmenu(null);
       const exportData = await storage.exportData();
       const blob = new Blob([JSON.stringify(exportData, null, 2)], {
         type: 'application/json'
@@ -206,6 +215,7 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({ onClose }) => {
   // 导出数据为 OneTab 格式
   const handleExportOneTabFormat = async () => {
     try {
+      setOpenSubmenu(null);
       const oneTabText = await storage.exportToOneTabFormat();
       const blob = new Blob([oneTabText], {
         type: 'text/plain'
@@ -384,9 +394,13 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({ onClose }) => {
 
         <div className="border-t border-gray-200 dark:border-gray-700 my-1"></div>
 
-        <div className="relative group">
+        <div className="relative">
           <button
+            onClick={() => setOpenSubmenu(current => current === 'export' ? null : 'export')}
             className="w-full text-left px-4 py-2 text-sm text-gray-700 dark:text-gray-300 flat-interaction flex items-center justify-between"
+            aria-expanded={openSubmenu === 'export'}
+            aria-haspopup="menu"
+            type="button"
           >
             <div className="flex items-center">
               <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 mr-2 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -398,10 +412,12 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({ onClose }) => {
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
             </svg>
           </button>
-          <div className="absolute left-full top-0 ml-1 bg-white dark:bg-gray-800 rounded-lg shadow-lg border border-gray-200 dark:border-gray-700 w-48 hidden group-hover:block">
+          {openSubmenu === 'export' && (
+            <div className="absolute left-full top-0 ml-1 w-48 rounded-lg border border-gray-200 bg-white shadow-lg dark:border-gray-700 dark:bg-gray-800">
             <button
               onClick={handleExportData}
               className="w-full text-left px-4 py-2 text-sm text-gray-700 dark:text-gray-300 flat-interaction flex items-center"
+              type="button"
             >
               <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 mr-2 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
@@ -411,18 +427,24 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({ onClose }) => {
             <button
               onClick={handleExportOneTabFormat}
               className="w-full text-left px-4 py-2 text-sm text-gray-700 dark:text-gray-300 flat-interaction flex items-center"
+              type="button"
             >
               <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 mr-2 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
               </svg>
               OneTab 格式
             </button>
-          </div>
+            </div>
+          )}
         </div>
 
-        <div className="relative group">
+        <div className="relative">
           <button
+            onClick={() => setOpenSubmenu(current => current === 'import' ? null : 'import')}
             className="w-full text-left px-4 py-2 text-sm text-gray-700 dark:text-gray-300 flat-interaction flex items-center justify-between"
+            aria-expanded={openSubmenu === 'import'}
+            aria-haspopup="menu"
+            type="button"
           >
             <div className="flex items-center">
               <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 mr-2 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -434,7 +456,8 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({ onClose }) => {
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
             </svg>
           </button>
-          <div className="absolute left-full top-0 ml-1 bg-white dark:bg-gray-800 rounded-lg shadow-lg border border-gray-200 dark:border-gray-700 w-48 hidden group-hover:block">
+          {openSubmenu === 'import' && (
+            <div className="absolute left-full top-0 ml-1 w-48 rounded-lg border border-gray-200 bg-white shadow-lg dark:border-gray-700 dark:bg-gray-800">
             <label
               className="w-full text-left px-4 py-2 text-sm text-gray-700 dark:text-gray-300 flat-interaction flex items-center cursor-pointer"
             >
@@ -454,6 +477,7 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({ onClose }) => {
                       try {
                         const data = JSON.parse(event.target?.result as string);
                         const success = await storage.importData(data);
+                        e.target.value = '';
                         if (success) {
                           showAlert({
                             title: '导入成功',
@@ -474,6 +498,7 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({ onClose }) => {
                         }
                       } catch (error) {
                         console.error('解析导入文件失败:', error);
+                        e.target.value = '';
                         showAlert({
                           title: '导入失败',
                           message: '解析导入文件失败，请确保文件格式正确',
@@ -507,6 +532,7 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({ onClose }) => {
                       try {
                         const text = event.target?.result as string;
                         const success = await storage.importFromOneTabFormat(text);
+                        e.target.value = '';
                         if (success) {
                           void trackProductEvent('onetab_import_completed', {
                             importSource: 'onetab',
@@ -531,6 +557,7 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({ onClose }) => {
                         }
                       } catch (error) {
                         console.error('解析 OneTab 导入文件失败:', error);
+                        e.target.value = '';
                         showAlert({
                           title: '导入失败',
                           message: '解析 OneTab 导入文件失败，请确保文件格式正确',
@@ -545,7 +572,8 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({ onClose }) => {
                 }}
               />
             </label>
-          </div>
+            </div>
+          )}
         </div>
 
         <button
