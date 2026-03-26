@@ -858,14 +858,14 @@ export const sync = {
       'allowDuplicateTabs',    // -> allow_duplicate_tabs
       // 'syncInterval',          // -> sync_interval (UserSettings中不存在，已注释)
       'syncEnabled',           // -> sync_enabled
-      // 'layoutMode',            // -> layout_mode (数据库中暂无此列，已注释)
+      'layoutMode',            // -> layout_mode
       'showNotifications',     // -> show_notifications
       'syncStrategy',          // -> sync_strategy
       'deleteStrategy',        // -> delete_strategy
       'themeMode',             // -> theme_mode
       'themeStyle',            // -> theme_style
       'collectPinnedTabs',     // -> collect_pinned_tabs
-      // 'reorderMode'            // -> reorder_mode (数据库中暂无此列，已注释)
+      'reorderMode'            // -> reorder_mode
     ];
 
     // 将驼峰命名法转换为下划线命名法，并过滤掉不允许的字段
