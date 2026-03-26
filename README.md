@@ -101,6 +101,14 @@ pnpm validate
 
 `pnpm validate` 会先校验扩展元数据，再执行类型检查、Lint 和构建。
 
+如果你要验证真实 Supabase 数据链路，可以额外执行：
+
+```bash
+TEST_EMAIL="your-test-user@example.com" TEST_PASSWORD="your-password" pnpm test:supabase-smoke
+```
+
+这个 smoke test 会验证登录、设置同步、会话写入和 RLS 生效情况，并在结束后自动清理临时测试数据。
+
 ## 隐私与数据
 
 - 本地数据默认保存在浏览器扩展存储中

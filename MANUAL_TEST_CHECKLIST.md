@@ -9,6 +9,7 @@
 - 执行 `pnpm type-check`
 - 执行 `pnpm lint`
 - 执行 `pnpm build`
+- 如果本次改动涉及 Supabase，同步前执行 `TEST_EMAIL="..." TEST_PASSWORD="..." pnpm test:supabase-smoke`
 
 ## 10 个核心手测项
 
@@ -56,7 +57,7 @@
 10. 手动下载
 - 登录后点击下载
 - 分别验证“覆盖模式”和“合并模式”至少一种
-- 预期：操作前说明清楚；成功后 toast 与实际行为一致；无本地数据时会直接恢复云端数据
+- 预期：操作前说明清楚；成功后 toast 与实际行为一致；云端数据能正确落回本地
 
 ## 搜索专项
 
