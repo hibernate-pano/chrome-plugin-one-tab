@@ -1,6 +1,6 @@
 # TabVault Pro
 
-当前版本：`1.11.5`
+当前版本：`1.11.6`
 
 TabVault Pro 是一个面向重度浏览器用户的工作会话保险箱。它的核心目标不是“多一个标签管理器”，而是帮助你把当前窗口保存成可找回、可恢复的工作现场。
 
@@ -118,6 +118,7 @@ TEST_EMAIL="your-test-user@example.com" TEST_PASSWORD="your-password" pnpm test:
 - 本地数据默认保存在浏览器扩展存储中
 - 登录后，云端数据仅用于你主动触发的同步
 - 你应当把同步理解为“由你控制的数据搬运”，而不是后台持续同步
+- 可公开托管的隐私政策文案见 [PRIVACY_POLICY.md](./PRIVACY_POLICY.md)
 
 ## 仓库
 
