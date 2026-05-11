@@ -1,13 +1,13 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { useAppDispatch, useAppSelector } from '@/store/hooks';
-import { recordRecentRestore, updateGroupNameAndSync, toggleGroupLockAndSync, deleteGroup, updateGroup, moveTabAndSync } from '@/store/slices/tabSlice';
+import { updateGroupNameAndSync, toggleGroupLockAndSync, deleteGroup, updateGroup, moveTabAndSync } from '@/store/slices/tabSlice';
 import { DraggableTab } from '@/components/dnd/DraggableTab';
 import { TabGroup as TabGroupType, Tab } from '@/types/tab';
 import { shouldAutoDeleteAfterTabRemoval } from '@/utils/tabGroupUtils';
 import { useToast } from '@/contexts/ToastContext';
 import { useEnhancedToast } from '@/utils/toastHelper';
 import { trackProductEvent } from '@/utils/productEvents';
-import { buildRecentRestoreEntry, buildSessionRestoreMessage } from '@/utils/sessionPresentation';
+import { buildSessionRestoreMessage } from '@/utils/sessionPresentation';
 
 interface TabGroupProps {
   group: TabGroupType;
@@ -157,7 +157,6 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
       pinned: !!tab.pinned,
     }));
 
-    dispatch(recordRecentRestore(buildRecentRestoreEntry(group, 'list')));
     void trackProductEvent('session_restored', {
       sessionId: group.id,
       sessionName: group.name,

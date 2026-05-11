@@ -64,26 +64,8 @@ export interface TabGroup {
   isDeleted?: boolean; // 软删除标记
 }
 
-export type SessionRestoreSource = 'list' | 'search' | 'recent-save' | 'recent-restore';
-
-export interface RecentRestoreEntry {
-  sessionId: string;
-  name: string;
-  notes?: string;
-  tabCount: number;
-  pinnedCount: number;
-  isLocked: boolean;
-  restoredAt: string;
-  source: SessionRestoreSource;
-  tabs: Array<{
-    url: string;
-    pinned: boolean;
-  }>;
-}
-
 export interface TabState {
   groups: TabGroup[];
-  recentRestores: RecentRestoreEntry[];
   activeGroupId: string | null;
   isLoading: boolean;
   error: string | null;

@@ -1,4 +1,4 @@
-import { TabGroup, UserSettings, Tab, LayoutMode, ThemeStyle, RecentRestoreEntry } from '@/types/tab';
+import { TabGroup, UserSettings, Tab, LayoutMode, ThemeStyle } from '@/types/tab';
 import { parseOneTabFormat, formatToOneTabFormat } from './oneTabFormatParser';
 import { secureStorage } from './secureStorage';
 import { kvGet, kvSet, kvRemove } from '@/storage/storageAdapter';
@@ -25,7 +25,6 @@ const STORAGE_KEYS = {
   DELETED_GROUPS: 'deleted_tab_groups',
   DELETED_TABS: 'deleted_tabs',
   LAST_SYNC_TIME: 'last_sync_time',
-  RECENT_RESTORES: 'recent_restores',
   PRODUCT_EVENTS: 'product_events',
   MIGRATION_FLAGS: 'migration_flags'
 };
@@ -103,7 +102,6 @@ interface ExportData {
   data: {
     groups: TabGroup[];
     settings: UserSettings;
-    recentRestores?: RecentRestoreEntry[];
   };
 }
 
@@ -353,27 +351,6 @@ class ChromeStorage {
     }
   }
 
-  async getRecentRestores(): Promise<RecentRestoreEntry[]> {
-    try {
-      await this.ensureVersion();
-      const restores = await kvGet<unknown>(STORAGE_KEYS.RECENT_RESTORES);
-      return Array.isArray(restores) ? (restores as RecentRestoreEntry[]) : [];
-    } catch (error) {
-      console.error('获取最近恢复记录失败:', error);
-      return [];
-    }
-  }
-
-  async setRecentRestores(restores: RecentRestoreEntry[]): Promise<void> {
-    try {
-      await this.ensureVersion();
-      await kvSet(STORAGE_KEYS.RECENT_RESTORES, restores);
-    } catch (error) {
-      console.error('保存最近恢复记录失败:', error);
-      throw error;
-    }
-  }
-
   async getProductEvents(): Promise<Array<Record<string, unknown>>> {
     try {
       await this.ensureVersion();
@@ -398,7 +375,6 @@ class ChromeStorage {
   async exportData(): Promise<ExportData> {
     const groups = await this.getGroups();
     const settings = await this.getSettings();
-    const recentRestores = await this.getRecentRestores();
 
     return {
       version: '1.0.0',
@@ -406,7 +382,6 @@ class ChromeStorage {
       data: {
         groups,
         settings,
-        recentRestores,
       }
     };
   }
@@ -444,10 +419,6 @@ class ChromeStorage {
           ...currentSettings,
           ...data.data.settings
         });
-      }
-
-      if (Array.isArray(data.data.recentRestores)) {
-        await this.setRecentRestores(data.data.recentRestores);
       }
 
       return true;
@@ -502,7 +473,6 @@ class ChromeStorage {
         STORAGE_KEYS.DELETED_GROUPS,
         STORAGE_KEYS.DELETED_TABS,
         STORAGE_KEYS.LAST_SYNC_TIME,
-        STORAGE_KEYS.RECENT_RESTORES,
         STORAGE_KEYS.PRODUCT_EVENTS,
         STORAGE_KEYS.MIGRATION_FLAGS
       ];

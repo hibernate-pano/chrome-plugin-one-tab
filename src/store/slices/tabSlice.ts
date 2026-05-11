@@ -1,5 +1,5 @@
 import { createSlice, createAsyncThunk, createSelector } from '@reduxjs/toolkit';
-import { RecentRestoreEntry, TabState, TabGroup, UserSettings } from '@/types/tab';
+import { TabState, TabGroup, UserSettings } from '@/types/tab';
 import { storage } from '@/utils/storage';
 import { downloadTabsFromCloudFlow, uploadTabsToCloudFlow } from '@/services/tabSyncWorkflow';
 import { nanoid } from '@reduxjs/toolkit';
@@ -15,7 +15,6 @@ import { trackProductEvent } from '@/utils/productEvents';
 
 const initialState: TabState = {
   groups: [],
-  recentRestores: [],
   activeGroupId: null,
   isLoading: false,
   error: null,
@@ -44,41 +43,6 @@ export const loadGroups = createAsyncThunk('tabs/loadGroups', async () => {
   console.log(`[LoadGroups] 加载 ${sortedGroups.length} 个活跃标签组（已过滤 ${groups.length - activeGroups.length} 个已删除）`);
 
   return sortedGroups;
-});
-
-export const loadRecentRestores = createAsyncThunk('tabs/loadRecentRestores', async () => {
-  const restores = await storage.getRecentRestores();
-  return restores.sort(
-    (left, right) => new Date(right.restoredAt).getTime() - new Date(left.restoredAt).getTime()
-  );
-});
-
-export const recordRecentRestore = createAsyncThunk(
-  'tabs/recordRecentRestore',
-  async (entry: RecentRestoreEntry) => {
-    const currentEntries = await storage.getRecentRestores();
-    const existingEntry = currentEntries.find(item => item.sessionId === entry.sessionId);
-    const nextEntry = existingEntry
-      ? {
-          ...existingEntry,
-          ...entry,
-          restoredAt: new Date().toISOString(),
-        }
-      : entry;
-
-    const nextEntries = [
-      nextEntry,
-      ...currentEntries.filter(item => item.sessionId !== entry.sessionId),
-    ].slice(0, 3);
-
-    await storage.setRecentRestores(nextEntries);
-    return nextEntries;
-  }
-);
-
-export const clearRecentRestores = createAsyncThunk('tabs/clearRecentRestores', async () => {
-  await storage.setRecentRestores([]);
-  return [];
 });
 
 export const saveGroup = createAsyncThunk(
@@ -849,15 +813,6 @@ export const tabSlice = createSlice({
       .addCase(loadGroups.rejected, (state, action) => {
         state.isLoading = false;
         state.error = action.error.message || '加载标签组失败';
-      })
-      .addCase(loadRecentRestores.fulfilled, (state, action) => {
-        state.recentRestores = action.payload;
-      })
-      .addCase(recordRecentRestore.fulfilled, (state, action) => {
-        state.recentRestores = action.payload;
-      })
-      .addCase(clearRecentRestores.fulfilled, (state, action) => {
-        state.recentRestores = action.payload;
       })
       .addCase(saveGroup.fulfilled, (state, action) => {
         // 添加新标签组并按创建时间倒序排列

@@ -1,7 +1,7 @@
 import React, { useDeferredValue, useEffect, useState, useTransition } from 'react';
 import { useAppDispatch, useAppSelector } from '@/store/hooks';
 import { Tab, TabGroup } from '@/types/tab';
-import { deleteGroup, recordRecentRestore, updateGroup } from '@/store/slices/tabSlice';
+import { deleteGroup, updateGroup } from '@/store/slices/tabSlice';
 import { shouldAutoDeleteAfterMultipleTabRemoval, shouldAutoDeleteAfterTabRemoval } from '@/utils/tabGroupUtils';
 import { useToast } from '@/contexts/ToastContext';
 import { useEnhancedToast } from '@/utils/toastHelper';
@@ -16,7 +16,7 @@ import {
 import HighlightText from './HighlightText';
 import { SafeFavicon } from '@/components/common/SafeFavicon';
 import { EmptyState } from '@/components/common/EmptyState';
-import { buildRecentRestoreEntry, buildSessionRestoreMessage, getSessionResultSummary } from '@/utils/sessionPresentation';
+import { buildSessionRestoreMessage, getSessionResultSummary } from '@/utils/sessionPresentation';
 
 const PinIcon = () => (
   <svg className="w-3 h-3 text-blue-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
@@ -106,7 +106,6 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({ searchQuery 
       pinned: !!tab.pinned,
     }));
 
-    dispatch(recordRecentRestore(buildRecentRestoreEntry(group, 'search')));
     void trackProductEvent('session_restored', {
       sessionId: group.id,
       sessionName: group.name,

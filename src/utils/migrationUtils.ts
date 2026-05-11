@@ -5,6 +5,7 @@
 
 import { storage } from './storage';
 import { sanitizeFaviconUrl } from './faviconUtils';
+import { kvRemove } from '@/storage/storageAdapter';
 import { TabGroup } from '@/types/tab';
 
 /**
@@ -82,6 +83,16 @@ export async function shouldRunMigration(migrationKey: string): Promise<boolean>
   }
 }
 
+export async function removeRecentRestoreHistory(): Promise<void> {
+  try {
+    await kvRemove('recent_restores');
+    await storage.setMigrationFlag('recent_restore_history_removed_v1', true);
+  } catch (error) {
+    console.error('移除最近恢复历史失败:', error);
+    throw error;
+  }
+}
+
 /**
  * 运行所有必要的数据迁移
  */
@@ -92,6 +103,10 @@ export async function runMigrations(): Promise<void> {
     // 检查并运行 favicon URLs 迁移
     if (await shouldRunMigration('favicon_urls_v1')) {
       await migrateFaviconUrls();
+    }
+
+    if (await shouldRunMigration('recent_restore_history_removed_v1')) {
+      await removeRecentRestoreHistory();
     }
     
     console.log('数据迁移检查完成');
