@@ -253,11 +253,28 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   console.log('Service Worker 收到消息:', message.type);
 
+  // 验证消息来源：仅接受来自同一扩展的消息
+  if (!sender || sender.id !== chrome.runtime.id) {
+    console.warn('Service Worker: 拒绝来自未知发送者的消息', sender);
+    sendResponse({ success: false, error: '未授权的消息来源' });
+    return false;
+  }
+
   // 基本验证
   if (!message || !message.type) {
     sendResponse({ success: false, error: '无效消息' });
     return false;
   }
+
+  // 验证 URL 仅允许 HTTP/HTTPS 协议
+  const isSafeUrl = (url: string): boolean => {
+    try {
+      const parsed = new URL(url);
+      return ['http:', 'https:'].includes(parsed.protocol);
+    } catch {
+      return false;
+    }
+  };
 
   try {
     switch (message.type) {
@@ -267,6 +284,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         const pinned: boolean | undefined = data.pinned ?? data.tab?.pinned;
 
         if (singleUrl) {
+          if (!isSafeUrl(singleUrl)) {
+            sendResponse({ success: false, error: '不安全的 URL 协议' });
+            return false;
+          }
           chrome.tabs.create({ url: singleUrl, active: false, pinned })
             .then(() => sendResponse({ success: true }))
             .catch(error => sendResponse({ success: false, error: error.message }));
@@ -279,6 +300,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         const data = message.data || {};
 
         if (Array.isArray(data.tabs)) {
+          const urls = data.tabs.map((t: any) => t.url).filter(Boolean);
+          if (urls.some((u: string) => !isSafeUrl(u))) {
+            sendResponse({ success: false, error: '包含不安全的 URL 协议' });
+            return false;
+          }
           tabManager.openTabsInNewWindow(data.tabs)
             .then(() => sendResponse({ success: true }))
             .catch(error => sendResponse({ success: false, error: error.message }));
@@ -286,6 +312,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         }
 
         if (Array.isArray(data.urls)) {
+          if (data.urls.some((u: string) => !isSafeUrl(u))) {
+            sendResponse({ success: false, error: '包含不安全的 URL 协议' });
+            return false;
+          }
           tabManager.openTabsInNewWindow(
             data.urls.map((url: string) => ({ url }))
           )
