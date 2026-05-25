@@ -11,11 +11,13 @@ export interface ValidationResult {
 }
 
 // 密码强度等级
-export enum PasswordStrength {
-  WEAK = 'weak',
-  MEDIUM = 'medium',
-  STRONG = 'strong'
-}
+export const PasswordStrength = {
+  WEAK: 'weak',
+  MEDIUM: 'medium',
+  STRONG: 'strong',
+} as const;
+
+export type PasswordStrength = (typeof PasswordStrength)[keyof typeof PasswordStrength];
 
 // 密码强度结果
 export interface PasswordStrengthResult {

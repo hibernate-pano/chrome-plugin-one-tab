@@ -12,8 +12,10 @@ const DndProvider = lazy(() =>
   import('@/components/dnd/DndProvider').then(module => ({ default: module.DndProvider }))
 );
 
-// 使用动态导入懒加载性能测试组件
 const PerformanceTest = lazy(() => import('@/components/performance/PerformanceTest'));
+const StatsPanel = lazy(() =>
+  import('@/components/stats/StatsPanel').then(m => ({ default: m.StatsPanel }))
+);
 
 // 导入样式文件
 import '@/styles/drag-drop.css';
@@ -27,6 +29,7 @@ export const MainApp: React.FC = () => {
   const dispatch = useAppDispatch();
   const [searchQuery, setSearchQuery] = useState('');
   const [showPerformanceTest, setShowPerformanceTest] = useState(false);
+  const [showStats, setShowStats] = useState(false);
   const [showOnboarding, setShowOnboarding] = useState(false);
   const deferredSearchQuery = useDeferredValue(searchQuery);
 
@@ -64,7 +67,11 @@ export const MainApp: React.FC = () => {
     >
       <DndProvider>
         <div className="min-h-screen bg-white dark:bg-gray-900 dark:text-gray-100 flex flex-col">
-          {showPerformanceTest ? (
+          {showStats ? (
+            <Suspense fallback={<div className="p-4 text-center">加载统计数据...</div>}>
+              <StatsPanel onClose={() => setShowStats(false)} />
+            </Suspense>
+          ) : showPerformanceTest ? (
             <>
               <div className="bg-primary-600 text-white p-2">
                 <div className="w-full px-3 sm:px-4 md:px-6 lg:px-8 flex items-center justify-between">
@@ -85,7 +92,7 @@ export const MainApp: React.FC = () => {
             </>
           ) : (
             <>
-              <Header onSearch={setSearchQuery} />
+              <Header onSearch={setSearchQuery} onShowStats={() => setShowStats(true)} />
               <main className={`flex-1 w-full py-2 ${getContainerWidthClass()}`}>
                 <Suspense fallback={<div className="p-4 text-center">加载标签列表...</div>}>
                   <TabList searchQuery={deferredSearchQuery} />

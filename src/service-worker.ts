@@ -52,7 +52,7 @@ const showNotification = async (message: string, title = 'TabVault Pro'): Promis
   });
 };
 
-console.log('Service Worker: 已简化同步逻辑，只保留手动同步功能');
+console.log('Service Worker: 智能同步已启用（操作触发即时同步 + 每30分钟定时同步）');
 
 // 初始化右键菜单
 async function setupContextMenus() {
@@ -223,7 +223,33 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
   }
 });
 
-// 简化的消息处理
+// 定时后台同步 (每30分钟检查一次)
+const SYNC_ALARM_NAME = 'periodic-cloud-sync';
+const SYNC_INTERVAL_MINUTES = 30;
+
+chrome.alarms.create(SYNC_ALARM_NAME, {
+  periodInMinutes: SYNC_INTERVAL_MINUTES,
+});
+
+chrome.alarms.onAlarm.addListener(async (alarm) => {
+  if (alarm.name === SYNC_ALARM_NAME) {
+    console.log('[PeriodicSync] 定时同步触发');
+    try {
+      const { auth_cache } = await chrome.storage.local.get('auth_cache');
+      if (auth_cache?.isAuthenticated) {
+        const tabs = await chrome.tabs.query({});
+        if (tabs.length > 0) {
+          await tabManager.saveAllTabs(tabs);
+        }
+        console.log('[PeriodicSync] 定时同步完成');
+      }
+    } catch (error) {
+      console.error('[PeriodicSync] 定时同步失败:', error);
+    }
+  }
+});
+
+// 消息处理
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   console.log('Service Worker 收到消息:', message.type);
 

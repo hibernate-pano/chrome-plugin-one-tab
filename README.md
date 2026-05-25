@@ -1,59 +1,35 @@
 # TabVault Pro
 
-当前版本：`1.11.6`
+> Save the session. Find it later. Restore it when you need it.
 
-TabVault Pro 是一个面向重度浏览器用户的工作会话保险箱。它的核心目标不是“多一个标签管理器”，而是帮助你把当前窗口保存成可找回、可恢复的工作现场。
+TabVault Pro 是一个面向重度浏览器用户的**工作会话保险箱**。把当前窗口保存成可找回、可恢复的工作现场。
 
-![TabVault Pro](icons/icon128.png)
+## 适合谁用
 
-## 产品定位
+- **开发者**：文档、PR、Issue、控制台、监控 — 同时开几十个标签页
+- **研究者**：论文、论坛、竞品、视频、资料需要长时间并行
+- **内容作者**：选题、草稿、引用、素材反复切换
+- **商务用户**：CRM、表格、邮件、公司页需要保持上下文
 
-- Save the session
-- Find it later
-- Restore it when you need it
+## 核心能力
 
-适合这几类用户：
-
-- 开发者：文档、PR、Issue、控制台、监控、后台同时开很多页
-- 研究型用户：论文、论坛、竞品、视频、资料长时间并行打开
-- 内容作者：选题、草稿、引用、素材、后台需要反复切换
-- 销售 / 招聘 / 投资：CRM、表格、邮件、公司页、Notion 长时间保持上下文
-
-## 当前能力
-
-- 保存当前窗口中的标签页为一个工作会话
-- 以后按会话名称、标签标题、URL 找回内容
-- 支持按会话备注搜索，并收藏关键会话
-- 在新窗口中恢复整个会话，尽量不打乱当前窗口
-- 新会话默认按保存时间生成时间戳名称，可按需重命名
-- 支持导入 / 导出 OneTab 文本格式
-- 支持会话重命名、备注、收藏、删除、锁定、基础整理
-- 支持登录后手动上传到云端或从云端下载到本地
-
-## 当前同步模式
-
-当前版本是`手动同步`，不是实时自动同步。
-
-- 上传：把本地会话手动推送到云端
-- 下载：把云端数据手动拉回本地
-- 每次操作前会明确让你选择“覆盖”还是“合并”
-- 如果你没有登录，同步按钮不会出现
-
-## 不承诺的能力
-
-当前版本不把以下能力作为已交付承诺：
-
-- 实时自动同步
-- 自动跨设备一致性保证
-- 严格意义上的端到端加密声明
+- **一键保存**：将当前窗口所有标签页保存为一个工作会话
+- **智能搜索**：按会话名、备注、标签标题、URL 快速找回
+- **一键恢复**：在新窗口中恢复整个会话，不打乱当前窗口
+- **会话管理**：重命名、备注、收藏、锁定、删除、拖拽排序
+- **云端同步**：登录后自动同步到云端（支持手动上传/下载）
+- **使用统计**：查看保存的会话数、标签数、常用域名等数据分析
+- **8 种主题**：原始、经典、极光、奶油、粉红、薄荷、赛博、棱镜
+- **键盘快捷键**：Ctrl+Shift+S 打开、Alt+Shift+S 保存全部、Alt+S 保存当前
+- **导入导出**：JSON 备份、OneTab 格式兼容
 
 ## 安装
 
-### 从 Chrome 商店安装
+### Chrome 商店
 
-- 访问 [Chrome Web Store](https://chrome.google.com/webstore) 并搜索 `TabVault Pro`
+访问 [Chrome Web Store](https://chrome.google.com/webstore) 搜索 `TabVault Pro`
 
-### 开发模式安装
+### 开发模式
 
 ```bash
 git clone https://github.com/hibernate-pano/chrome-plugin-one-tab.git
@@ -62,68 +38,57 @@ pnpm install
 pnpm build
 ```
 
-然后在 `chrome://extensions/` 中开启开发者模式并加载 `dist` 目录。
-
-## 使用方式
-
-### 保存会话
-
-- 点击扩展图标，或在主界面点击“保存会话”
-- 当前窗口中的标签页会被保存成一个新会话
-- 可配置是否一并保存固定标签页
-
-### 找回会话
-
-- 在搜索框中输入会话名、备注、标签标题或 URL
-- 搜索结果会优先展示匹配到的会话，再展开具体标签命中
-- 可按域名、固定标签、保存时间继续筛选
-
-### 恢复会话
-
-- 点击会话卡片上的“恢复整个会话”
-- 会在新窗口中恢复该会话
-- 未锁定会话恢复后会从列表中移除；锁定会话会保留
-
-### 会话命名
-
-- 新保存的会话默认命名为 `标签组 + 保存时间`
-- 你可以在保存后手动重命名，让会话更容易再次找回
-
-### 导入 / 导出
-
-- 支持 JSON 备份导出
-- 支持 OneTab 文本导入和导出
+在 `chrome://extensions/` 开启开发者模式，加载 `dist` 目录。
 
 ## 开发
 
 ```bash
-pnpm type-check
-pnpm lint
-pnpm build
-pnpm validate
+pnpm install          # 安装依赖
+pnpm dev              # 开发模式
+pnpm build            # 生产构建
+pnpm test             # 运行测试
+pnpm type-check       # 类型检查
+pnpm lint             # 代码规范
+pnpm validate         # 全面验证（元数据 + 类型 + Lint + 构建）
 ```
 
-`pnpm validate` 会先校验扩展元数据，再执行类型检查、Lint 和构建。
-
-如果你要验证真实 Supabase 数据链路，可以额外执行：
+### 测试
 
 ```bash
-TEST_EMAIL="your-test-user@example.com" TEST_PASSWORD="your-password" pnpm test:supabase-smoke
+# 单元测试
+pnpm test
+
+# Supabase 端到端烟雾测试
+TEST_EMAIL="your@email.com" TEST_PASSWORD="password" pnpm test:supabase-smoke
 ```
 
-这个 smoke test 会验证登录、设置同步、会话写入和 RLS 生效情况，并在结束后自动清理临时测试数据。
+## 同步模式
 
-## 隐私与数据
+- **智能同步**：保存/删除/重命名等操作后自动同步到云端（需登录）
+- **定时同步**：每 30 分钟后台自动同步一次
+- **手动同步**：随时通过界面按钮手动上传/下载
+- 每次同步可选择**覆盖**或**合并**策略
 
-- 本地数据默认保存在浏览器扩展存储中
-- 登录后，云端数据仅用于你主动触发的同步
-- 你应当把同步理解为“由你控制的数据搬运”，而不是后台持续同步
-- 可公开托管的隐私政策文案见 [PRIVACY_POLICY.md](./PRIVACY_POLICY.md)
+## 隐私与安全
+
+- 本地数据存储在浏览器扩展的 IndexedDB 中
+- 云端数据使用 AES-GCM 客户端加密后传输
+- 同步完全由你控制，不会在后台持续上传
+- 详见 [PRIVACY_POLICY.md](./PRIVACY_POLICY.md)
+
+## 技术栈
+
+- **前端**：React 18 + TypeScript + Redux Toolkit
+- **拖拽**：@dnd-kit
+- **样式**：Tailwind CSS 3 + 8 套主题
+- **后端**：Supabase（PostgreSQL + Row Level Security）
+- **加密**：Web Crypto API（AES-GCM）
+- **构建**：Vite + crxjs
 
 ## 仓库
 
-- 项目主页：[hibernate-pano/chrome-plugin-one-tab](https://github.com/hibernate-pano/chrome-plugin-one-tab)
-- 问题反馈：[Issues](https://github.com/hibernate-pano/chrome-plugin-one-tab/issues)
+- [hibernate-pano/chrome-plugin-one-tab](https://github.com/hibernate-pano/chrome-plugin-one-tab)
+- [Issue 反馈](https://github.com/hibernate-pano/chrome-plugin-one-tab/issues)
 
 ## License
 
