@@ -223,7 +223,7 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
   }
 });
 
-// 定时后台同步 (每30分钟检查一次)
+// 定时后台保存 + 标记待同步（每30分钟保存当前窗口为会话，打开 popup 后自动推送到云端）
 const SYNC_ALARM_NAME = 'periodic-cloud-sync';
 const SYNC_INTERVAL_MINUTES = 30;
 

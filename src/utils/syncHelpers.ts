@@ -1,73 +1,37 @@
-import { ThunkDispatch, UnknownAction } from '@reduxjs/toolkit';
-import { syncTabsToCloud } from '@/store/slices/tabSlice';
-import { syncSettingsToCloud } from '@/store/slices/settingsSlice';
+import type { AnyAction, ThunkDispatch } from '@reduxjs/toolkit';
 
-let syncDebounceTimer: ReturnType<typeof setTimeout> | null = null;
-const SYNC_DEBOUNCE_DELAY = 2000;
-
-const OPERATION_PRIORITIES: Record<string, number> = {
-  '删除标签组': 10,
-  '删除所有标签组': 10,
-  '新标签组': 8,
-  '导入标签组': 8,
-  '更新标签组': 5,
-  '标签组名称更新': 5,
-  '标签组锁定状态更新': 3,
-  '标签组顺序更新': 3,
-  '标签页移动': 2,
-  '本地更改': 1,
-};
-
-let currentSyncOperation: { type: string; priority: number } | null = null;
+let syncTimer: ReturnType<typeof setTimeout> | null = null;
 let pendingSync = false;
 
-export async function syncToCloud<T>(
-  dispatch: ThunkDispatch<T, any, UnknownAction>,
-  getState: () => any,
-  operationType: string
-): Promise<boolean> {
-  const priority = OPERATION_PRIORITIES[operationType] || 1;
+/**
+ * 调度自动云同步（带优先级防抖）
+ * 高优先级操作（删除/新建）500ms 后触发，低优先级 2000ms 后触发。
+ * 如果在等待期间有更高优先级的操作到来，取消当前计时器以新操作为准。
+ */
+export function scheduleAutoSync(
+  dispatch: ThunkDispatch<any, any, AnyAction>,
+  priority: number
+): void {
+  if (syncTimer) {
+    if (priority <= (syncTimer as any).__priority || 0) return;
+    clearTimeout(syncTimer);
+  }
 
-  return new Promise(resolve => {
-    if (currentSyncOperation && syncDebounceTimer) {
-      if (priority > currentSyncOperation.priority) {
-        clearTimeout(syncDebounceTimer);
-        syncDebounceTimer = null;
-      } else {
-        resolve(true);
-        return;
-      }
+  pendingSync = true;
+  // 将 priority 附在 timer 上以便后续比较
+  (syncTimer as any) = setTimeout(async () => {
+    try {
+      const { syncTabsToCloud } = await import('@/store/slices/tabSlice');
+      const { syncSettingsToCloud } = await import('@/store/slices/settingsSlice');
+      await dispatch(syncTabsToCloud({ background: true, overwriteCloud: false }) as any);
+      await dispatch(syncSettingsToCloud() as any);
+    } catch (e) {
+      console.error('[AutoSync] 自动同步失败:', e);
+    } finally {
+      syncTimer = null;
+      pendingSync = false;
     }
-
-    currentSyncOperation = { type: operationType, priority };
-    pendingSync = true;
-
-    syncDebounceTimer = setTimeout(async () => {
-      try {
-        const state = getState();
-        const isAuthenticated = state.auth?.isAuthenticated || false;
-
-        if (!isAuthenticated) {
-          currentSyncOperation = null;
-          pendingSync = false;
-          resolve(true);
-          return;
-        }
-
-        await dispatch(syncTabsToCloud({ background: true, overwriteCloud: false }) as any);
-        await dispatch(syncSettingsToCloud() as any);
-
-        currentSyncOperation = null;
-        pendingSync = false;
-        resolve(true);
-      } catch (e) {
-        console.error('[AutoSync] 同步失败，将在下次操作时重试:', e);
-        currentSyncOperation = null;
-        pendingSync = false;
-        resolve(false);
-      }
-    }, priority >= 8 ? 500 : SYNC_DEBOUNCE_DELAY);
-  });
+  }, priority >= 8 ? 500 : 2000);
 }
 
 export function hasPendingSync(): boolean {
@@ -75,10 +39,9 @@ export function hasPendingSync(): boolean {
 }
 
 export function cancelPendingSync(): void {
-  if (syncDebounceTimer) {
-    clearTimeout(syncDebounceTimer);
-    syncDebounceTimer = null;
+  if (syncTimer) {
+    clearTimeout(syncTimer);
+    syncTimer = null;
   }
-  currentSyncOperation = null;
   pendingSync = false;
 }

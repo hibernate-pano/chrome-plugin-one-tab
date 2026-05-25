@@ -2,14 +2,11 @@ import { smartSyncService } from './smartSyncService';
 import { errorHandler } from '@/utils/errorHandler';
 
 /**
- * 同步服务包装器 - 仅支持手动同步
- * 已移除所有自动同步功能
+ * 同步服务包装器
+ * 手动同步入口 + 自动同步由 Redux middleware 驱动
  */
 class SyncService {
-  // 初始化同步服务 - 简化版
   async initialize() {
-    console.log('同步服务初始化：仅支持手动同步');
-    // 初始化智能同步服务（仅加载最后同步时间）
     await smartSyncService.initialize();
   }
 
