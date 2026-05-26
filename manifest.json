@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
-  "name": "TabVault Pro",
-  "version": "1.11.6",
-  "description": "Save browser work sessions and restore them later",
+  "name": "TabStack",
+  "version": "1.11.7",
+  "description": "TabStack - 浏览器工作会话管理器。保存当前窗口的标签页为可恢复的会话，随时一键找回。不再重复查找标签页，不再担心工作被中断。支持跨设备云同步、标签去重、智能搜索。",
   "content_security_policy": {
     "extension_pages": "script-src 'self'; object-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self' data:; connect-src 'self' https://reccclnaxadbuccsrwmg.supabase.co; frame-src 'none'; base-uri 'self'; form-action 'self';"
   },
@@ -19,7 +19,7 @@
   ],
   "action": {
     "default_icon": "icons/icon16.png",
-    "default_title": "TabVault Pro - 工作会话保险箱"
+    "default_title": "TabStack - 工作会话管理器"
   },
   "web_accessible_resources": [
     {
@@ -35,7 +35,7 @@
         "src/auth/*.html"
       ],
       "matches": [
-        "https://reccclnaxadbuccsrwmg.supabase.co/auth/v1/*"
+        "https://reccclnaxadbuccsrwmg.supabase.co/*"
       ]
     }
   ],

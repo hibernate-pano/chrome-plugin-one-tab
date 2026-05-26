@@ -1,152 +1,133 @@
-/**
- * 安全的本地存储工具
- * 对敏感数据进行加密存储
- */
+const V1_PREFIX = 'SECURE_V1:';
+const V2_PREFIX = 'SECURE_V2:';
+const PBKDF2_ITERATIONS = 100_000;
+const SALT_LENGTH = 16;
+const IV_LENGTH = 12;
+const KEY_LENGTH = 256;
 
-// 加密前缀，用于识别加密数据
-const ENCRYPTION_PREFIX = 'SECURE_V1:';
-
-// 敏感数据的存储键
-const SENSITIVE_KEYS = [
+const SENSITIVE_KEYS: readonly string[] = [
   'deviceId',
   'migration_flags',
   'auth_cache',
   'user_preferences',
-  'sync_tokens'
+  'sync_tokens',
 ];
 
-/**
- * 生成存储密钥
- */
-async function generateStorageKey(): Promise<CryptoKey> {
-  // 使用扩展ID作为种子生成密钥
-  const extensionId = chrome.runtime.id;
-  const encoder = new TextEncoder();
-  const data = encoder.encode(extensionId + 'storage_key_v1');
+function base64Encode(bytes: Uint8Array): string {
+  // 使用分块处理避免大数组时的栈溢出
+  const CHUNK_SIZE = 16384;
+  let result = '';
+  for (let i = 0; i < bytes.length; i += CHUNK_SIZE) {
+    const chunk = bytes.slice(i, Math.min(i + CHUNK_SIZE, bytes.length));
+    result += btoa(String.fromCharCode(...chunk));
+  }
+  return result;
+}
 
-  // 使用SHA-256哈希
-  const hashBuffer = await crypto.subtle.digest('SHA-256', data);
+function base64Decode(b64: string): Uint8Array {
+  return new Uint8Array(atob(b64).split('').map(c => c.charCodeAt(0)));
+}
 
-  // 从哈希生成AES-GCM密钥
-  return crypto.subtle.importKey(
+function concatArrays(...arrays: Uint8Array[]): Uint8Array {
+  const totalLength = arrays.reduce((sum, a) => sum + a.length, 0);
+  const result = new Uint8Array(totalLength);
+  let offset = 0;
+  for (const a of arrays) {
+    result.set(a, offset);
+    offset += a.length;
+  }
+  return result;
+}
+
+async function deriveKeyPBKDF2(extensionId: string, salt: Uint8Array): Promise<CryptoKey> {
+  const keyMaterial = await crypto.subtle.importKey(
     'raw',
-    hashBuffer,
-    { name: 'AES-GCM', length: 256 },
+    new TextEncoder().encode(extensionId + 'storage_key_v2'),
+    'PBKDF2',
+    false,
+    ['deriveKey']
+  );
+  return crypto.subtle.deriveKey(
+    { name: 'PBKDF2', salt, iterations: PBKDF2_ITERATIONS, hash: 'SHA-256' },
+    keyMaterial,
+    { name: 'AES-GCM', length: KEY_LENGTH },
     false,
     ['encrypt', 'decrypt']
   );
 }
 
-/**
- * 加密数据
- */
-async function encryptData(data: any): Promise<string> {
-  try {
-    // 将数据转换为JSON字符串
-    const jsonString = JSON.stringify(data);
-    const encoder = new TextEncoder();
-    const plaintext = encoder.encode(jsonString);
-
-    // 生成密钥
-    const key = await generateStorageKey();
-
-    // 生成随机IV
-    const iv = crypto.getRandomValues(new Uint8Array(12));
-
-    // 加密数据
-    const ciphertext = await crypto.subtle.encrypt(
-      {
-        name: 'AES-GCM',
-        iv
-      },
-      key,
-      plaintext
-    );
-
-    // 将IV和密文合并
-    const result = new Uint8Array(iv.length + ciphertext.byteLength);
-    result.set(iv, 0);
-    result.set(new Uint8Array(ciphertext), iv.length);
-
-    // 转换为Base64字符串并添加前缀
-    return ENCRYPTION_PREFIX + btoa(String.fromCharCode(...result));
-  } catch (error) {
-    console.error('加密数据失败:', error);
-    throw new Error('数据加密失败');
-  }
+async function deriveKeySHA256(extensionId: string): Promise<CryptoKey> {
+  const hashBuffer = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(extensionId + 'storage_key_v1'));
+  return crypto.subtle.importKey('raw', hashBuffer, { name: 'AES-GCM', length: 256 }, false, ['encrypt', 'decrypt']);
 }
 
-/**
- * 解密数据
- */
-async function decryptData<T>(encryptedData: string): Promise<T> {
-  try {
-    // 检查是否为加密数据
-    if (!encryptedData.startsWith(ENCRYPTION_PREFIX)) {
-      // 如果不是加密数据，直接解析JSON（向后兼容）
-      return JSON.parse(encryptedData) as T;
+async function encryptBytes(plaintext: Uint8Array, key: CryptoKey): Promise<{ iv: Uint8Array; ciphertext: ArrayBuffer }> {
+  const iv = crypto.getRandomValues(new Uint8Array(IV_LENGTH));
+  const ciphertext = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, plaintext);
+  return { iv, ciphertext };
+}
+
+async function encryptValue(data: any): Promise<string> {
+  const extensionId = chrome.runtime.id;
+  const salt = crypto.getRandomValues(new Uint8Array(SALT_LENGTH));
+  const key = await deriveKeyPBKDF2(extensionId, salt);
+  const plaintext = new TextEncoder().encode(JSON.stringify(data));
+  const { iv, ciphertext } = await encryptBytes(plaintext, key);
+  return V2_PREFIX + base64Encode(concatArrays(salt, iv, new Uint8Array(ciphertext)));
+}
+
+async function decryptValue<T>(encryptedStr: string): Promise<T> {
+  const extensionId = chrome.runtime.id;
+
+  if (encryptedStr.startsWith(V2_PREFIX)) {
+    try {
+      const bytes = base64Decode(encryptedStr.substring(V2_PREFIX.length));
+      const salt = bytes.slice(0, SALT_LENGTH);
+      const iv = bytes.slice(SALT_LENGTH, SALT_LENGTH + IV_LENGTH);
+      const ciphertext = bytes.slice(SALT_LENGTH + IV_LENGTH);
+      const key = await deriveKeyPBKDF2(extensionId, salt);
+      const decrypted = await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, key, ciphertext);
+      return JSON.parse(new TextDecoder().decode(decrypted)) as T;
+    } catch {
+      try {
+        return JSON.parse(encryptedStr) as T;
+      } catch {
+        throw new Error('解密数据失败，已损坏或格式错误');
+      }
     }
-
-    // 移除前缀并解码Base64
-    const base64Data = encryptedData.substring(ENCRYPTION_PREFIX.length);
-    const bytes = new Uint8Array(
-      atob(base64Data).split('').map(char => char.charCodeAt(0))
-    );
-
-    // 提取IV和密文
-    const iv = bytes.slice(0, 12);
-    const ciphertext = bytes.slice(12);
-
-    // 生成密钥
-    const key = await generateStorageKey();
-
-    // 解密数据
-    const decrypted = await crypto.subtle.decrypt(
-      {
-        name: 'AES-GCM',
-        iv
-      },
-      key,
-      ciphertext
-    );
-
-    // 将解密后的数据转换为字符串
-    const decoder = new TextDecoder();
-    const jsonString = decoder.decode(decrypted);
-
-    // 解析JSON
-    return JSON.parse(jsonString) as T;
-  } catch (error) {
-    console.error('解密数据失败:', error);
-    throw new Error('数据解密失败');
   }
+
+  if (encryptedStr.startsWith(V1_PREFIX)) {
+    try {
+      const bytes = base64Decode(encryptedStr.substring(V1_PREFIX.length));
+      const iv = bytes.slice(0, IV_LENGTH);
+      const ciphertext = bytes.slice(IV_LENGTH);
+      const key = await deriveKeySHA256(extensionId);
+      const decrypted = await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, key, ciphertext);
+      return JSON.parse(new TextDecoder().decode(decrypted)) as T;
+    } catch {
+      try {
+        return JSON.parse(encryptedStr) as T;
+      } catch {
+        throw new Error('解密数据失败，已损坏或格式错误');
+      }
+    }
+  }
+
+  return JSON.parse(encryptedStr) as T;
 }
 
-/**
- * 检查是否为敏感数据键
- */
 function isSensitiveKey(key: string): boolean {
-  return SENSITIVE_KEYS.some(sensitiveKey =>
-    key === sensitiveKey || key.includes(sensitiveKey)
-  );
+  return SENSITIVE_KEYS.some(k => key === k || key.startsWith(k + '_'));
 }
 
-/**
- * 安全存储类
- */
 export class SecureStorage {
-  /**
-   * 存储数据
-   */
   async set(key: string, value: any): Promise<void> {
     try {
       let dataToStore = value;
-
-      // 如果是敏感数据，进行加密
       if (isSensitiveKey(key)) {
-        dataToStore = await encryptData(value);
+        dataToStore = await encryptValue(value);
       }
-
       await chrome.storage.local.set({ [key]: dataToStore });
     } catch (error) {
       console.error(`存储数据失败 (${key}):`, error);
@@ -154,25 +135,16 @@ export class SecureStorage {
     }
   }
 
-  /**
-   * 获取数据
-   */
   async get<T>(key: string, defaultValue?: T): Promise<T | undefined> {
     try {
       const result = await chrome.storage.local.get(key);
       const storedValue = result[key];
+      if (storedValue === undefined) return defaultValue;
 
-      if (storedValue === undefined) {
-        return defaultValue;
-      }
-
-      // 如果是敏感数据，进行解密
       if (isSensitiveKey(key) && typeof storedValue === 'string') {
         try {
-          return await decryptData<T>(storedValue);
-        } catch (decryptError) {
-          console.warn(`解密失败，使用原始数据 (${key}):`, decryptError);
-          // 如果解密失败，可能是旧的未加密数据，直接返回
+          return await decryptValue<T>(storedValue);
+        } catch {
           return storedValue as T;
         }
       }
@@ -184,9 +156,6 @@ export class SecureStorage {
     }
   }
 
-  /**
-   * 删除数据
-   */
   async remove(key: string): Promise<void> {
     try {
       await chrome.storage.local.remove(key);
@@ -196,21 +165,12 @@ export class SecureStorage {
     }
   }
 
-  /**
-   * 批量存储
-   */
   async setMultiple(items: Record<string, any>): Promise<void> {
     try {
       const processedItems: Record<string, any> = {};
-
       for (const [key, value] of Object.entries(items)) {
-        if (isSensitiveKey(key)) {
-          processedItems[key] = await encryptData(value);
-        } else {
-          processedItems[key] = value;
-        }
+        processedItems[key] = isSensitiveKey(key) ? await encryptValue(value) : value;
       }
-
       await chrome.storage.local.set(processedItems);
     } catch (error) {
       console.error('批量存储数据失败:', error);
@@ -218,31 +178,24 @@ export class SecureStorage {
     }
   }
 
-  /**
-   * 批量获取
-   */
   async getMultiple<T extends Record<string, any>>(keys: string[]): Promise<Partial<T>> {
     try {
       const result = await chrome.storage.local.get(keys);
-      const processedResult: Partial<T> = {};
-
+      const processedResult: any = {};
       for (const key of keys) {
         const storedValue = result[key];
-
         if (storedValue !== undefined) {
           if (isSensitiveKey(key) && typeof storedValue === 'string') {
             try {
-              processedResult[key as keyof T] = await decryptData(storedValue);
-            } catch (decryptError) {
-              console.warn(`解密失败，使用原始数据 (${key}):`, decryptError);
-              (processedResult as any)[key] = storedValue;
+              processedResult[key] = await decryptValue(storedValue);
+            } catch {
+              processedResult[key] = storedValue;
             }
           } else {
-            processedResult[key as keyof T] = storedValue;
+            processedResult[key] = storedValue;
           }
         }
       }
-
       return processedResult;
     } catch (error) {
       console.error('批量获取数据失败:', error);
@@ -250,40 +203,23 @@ export class SecureStorage {
     }
   }
 
-  /**
-   * 清除所有数据
-   */
   async clear(): Promise<void> {
-    try {
-      await chrome.storage.local.clear();
-    } catch (error) {
-      console.error('清除存储失败:', error);
-      throw error;
-    }
+    await chrome.storage.local.clear();
   }
 
-  /**
-   * 迁移现有数据到加密存储
-   */
   async migrateToEncrypted(): Promise<void> {
     try {
       console.log('开始迁移敏感数据到加密存储...');
-
       for (const key of SENSITIVE_KEYS) {
         const result = await chrome.storage.local.get(key);
         const value = result[key];
-
-        if (value !== undefined && typeof value !== 'string') {
-          // 如果数据存在且不是字符串（未加密），则加密它
-          console.log(`迁移敏感数据: ${key}`);
-          await this.set(key, value);
-        } else if (value !== undefined && typeof value === 'string' && !value.startsWith(ENCRYPTION_PREFIX)) {
-          // 如果是字符串但不是加密数据，也需要加密
-          console.log(`迁移字符串数据: ${key}`);
+        if (value !== undefined) {
+          if (typeof value === 'string' && (value.startsWith(V1_PREFIX) || value.startsWith(V2_PREFIX))) {
+            continue; // 已加密
+          }
           await this.set(key, value);
         }
       }
-
       console.log('敏感数据迁移完成');
     } catch (error) {
       console.error('迁移敏感数据失败:', error);
@@ -292,5 +228,64 @@ export class SecureStorage {
   }
 }
 
-// 导出单例实例
 export const secureStorage = new SecureStorage();
+
+/**
+ * 加密本地大数据块（用于 TabGroup 等大型 JSON）
+ * 使用与 secureStorage 相同的 V2 PBKDF2 密钥派生
+ */
+export async function encryptLocalBlob(data: unknown): Promise<string> {
+  const extensionId = chrome.runtime.id;
+  const salt = crypto.getRandomValues(new Uint8Array(SALT_LENGTH));
+  const key = await deriveKeyPBKDF2(extensionId, salt);
+  const plaintext = new TextEncoder().encode(JSON.stringify(data));
+  const iv = crypto.getRandomValues(new Uint8Array(IV_LENGTH));
+  const ciphertext = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, plaintext);
+  return V2_PREFIX + base64Encode(concatArrays(salt, iv, new Uint8Array(ciphertext)));
+}
+
+/**
+ * 解密本地大数据块
+ * 自动兼容 V2/V1/明文三种格式；损坏数据返回 null
+ */
+export async function decryptLocalBlob<T>(stored: unknown): Promise<T | null> {
+  if (typeof stored !== 'string' || stored.length === 0) {
+    return null;
+  }
+
+  const extensionId = chrome.runtime.id;
+
+  if (stored.startsWith(V2_PREFIX)) {
+    try {
+      const bytes = base64Decode(stored.substring(V2_PREFIX.length));
+      const salt = bytes.slice(0, SALT_LENGTH);
+      const iv = bytes.slice(SALT_LENGTH, SALT_LENGTH + IV_LENGTH);
+      const ciphertext = bytes.slice(SALT_LENGTH + IV_LENGTH);
+      const key = await deriveKeyPBKDF2(extensionId, salt);
+      const decrypted = await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, key, ciphertext);
+      return JSON.parse(new TextDecoder().decode(decrypted)) as T;
+    } catch {
+      return null;
+    }
+  }
+
+  if (stored.startsWith(V1_PREFIX)) {
+    try {
+      const bytes = base64Decode(stored.substring(V1_PREFIX.length));
+      const iv = bytes.slice(0, IV_LENGTH);
+      const ciphertext = bytes.slice(IV_LENGTH);
+      const key = await deriveKeySHA256(extensionId);
+      const decrypted = await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, key, ciphertext);
+      return JSON.parse(new TextDecoder().decode(decrypted)) as T;
+    } catch {
+      return null;
+    }
+  }
+
+  // 明文（向后兼容未加密的历史数据）
+  try {
+    return JSON.parse(stored) as T;
+  } catch {
+    return null;
+  }
+}

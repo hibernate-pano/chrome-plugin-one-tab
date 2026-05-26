@@ -1,6 +1,6 @@
 import { TabGroup, UserSettings, Tab, LayoutMode, ThemeStyle } from '@/types/tab';
 import { parseOneTabFormat, formatToOneTabFormat } from './oneTabFormatParser';
-import { secureStorage } from './secureStorage';
+import { secureStorage, encryptLocalBlob, decryptLocalBlob } from './secureStorage';
 import { kvGet, kvSet, kvRemove } from '@/storage/storageAdapter';
 import { cacheManager, cachedAsyncFn, debounceAsync } from './performance';
 
@@ -116,12 +116,34 @@ class ChromeStorage {
     try {
       return await cachedAsyncFn('storage', 'groups', async () => {
         await this.ensureVersion();
-        const groups = await kvGet<unknown>(STORAGE_KEYS.GROUPS);
-        return Array.isArray(groups) ? (groups as TabGroup[]) : [];
+        const raw = await kvGet<unknown>(STORAGE_KEYS.GROUPS);
+        if (typeof raw === 'string') {
+          const groups = await decryptLocalBlob<TabGroup[]>(raw);
+          if (groups !== null) return groups;
+          return [];
+        }
+        if (Array.isArray(raw)) {
+          // 明文数据，首次读取后自动升级为加密存储
+          const groups = raw as TabGroup[];
+          this.persistEncryptedGroups(groups);
+          return groups;
+        }
+        return [];
       }, CACHE_TTL.GROUPS);
     } catch (error) {
       console.error('获取标签组失败:', error);
       return [];
+    }
+  }
+
+  private async persistEncryptedGroups(groups: TabGroup[]): Promise<void> {
+    try {
+      const encrypted = await encryptLocalBlob(groups);
+      await kvSet(STORAGE_KEYS.GROUPS, encrypted);
+      cacheManager.getCache('storage').set('groups', groups, CACHE_TTL.GROUPS);
+    } catch (error) {
+      console.error('加密存储标签组失败:', error);
+      throw error;
     }
   }
 
@@ -132,11 +154,7 @@ class ChromeStorage {
    */
   private debouncedPersistGroups = debounceAsync(async (groups: TabGroup[]) => {
     await this.ensureVersion();
-    await kvSet(STORAGE_KEYS.GROUPS, groups);
-
-    // 落盘后刷新缓存 TTL（即便之前已 optimistic 更新）
-    const cache = cacheManager.getCache('storage');
-    cache.set('groups', groups, CACHE_TTL.GROUPS);
+    await this.persistEncryptedGroups(groups);
   }, 500);
 
   async setGroups(groups: TabGroup[]): Promise<void> {
