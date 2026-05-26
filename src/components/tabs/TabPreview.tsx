@@ -18,43 +18,48 @@ export const TabPreview: React.FC<TabPreviewProps> = ({ tab, visible, position }
 
   // 当标签或可见性变化时，尝试加载预览图
   useEffect(() => {
-    if (visible && tab.url) {
-      setLoading(true);
-      setError(false);
+    if (!visible || !tab.url) {
+      setPreviewImage(null);
+      setLoading(false);
+      return;
+    }
 
-      // 尝试获取预览图
-      // 这里我们使用一个简单的方法：尝试获取网站的 Open Graph 图片或 favicon
-      // 在实际应用中，你可能需要一个更复杂的服务来生成预览图
-      const img = new Image();
-      
-      // 首先尝试使用 favicon
-      if (tab.favicon) {
-        img.src = tab.favicon;
-      } else {
-        // 如果没有 favicon，使用一个默认图标
-        setPreviewImage(null);
-        setLoading(false);
-        return;
-      }
+    setLoading(true);
+    setError(false);
 
-      img.onload = () => {
+    let isMounted = true;
+    const img = new Image();
+
+    const onLoad = () => {
+      if (isMounted) {
         setPreviewImage(img.src);
         setLoading(false);
-      };
-
-      img.onerror = () => {
-        // 如果加载失败，设置为 null
+      }
+    };
+    const onError = () => {
+      if (isMounted) {
         setPreviewImage(null);
         setLoading(false);
         setError(true);
-      };
+      }
+    };
 
-      // 清理函数
-      return () => {
-        img.onload = null;
-        img.onerror = null;
-      };
+    img.onload = onLoad;
+    img.onerror = onError;
+
+    if (tab.favicon) {
+      img.src = tab.favicon;
+    } else {
+      setPreviewImage(null);
+      setLoading(false);
+      return;
     }
+
+    return () => {
+      isMounted = false;
+      img.onload = null;
+      img.onerror = null;
+    };
   }, [tab.url, tab.favicon, visible]);
 
   // 如果不可见，不渲染任何内容

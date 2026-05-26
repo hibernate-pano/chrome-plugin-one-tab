@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import { createPortal } from 'react-dom';
 
 interface ModalFrameProps {
@@ -22,6 +22,16 @@ export const ModalFrame: React.FC<ModalFrameProps> = ({
   footer,
   maxWidthClassName = 'max-w-lg',
 }) => {
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && visible) {
+        onClose();
+      }
+    };
+    document.addEventListener('keydown', handleKeyDown);
+    return () => document.removeEventListener('keydown', handleKeyDown);
+  }, [visible, onClose]);
+
   if (!visible) {
     return null;
   }

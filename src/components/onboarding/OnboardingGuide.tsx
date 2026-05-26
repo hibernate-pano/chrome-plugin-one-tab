@@ -30,7 +30,7 @@ interface StepConfig {
 }
 
 const STEPS: StepConfig[] = [
-    { title: '欢迎使用 TabVault Pro' },
+    { title: '欢迎使用 TabStack' },
     { title: '保存工作会话', spotlightTarget: '[aria-label="保存当前窗口中的所有标签页为会话"]' },
     { title: '搜索工作会话', spotlightTarget: '[aria-label="搜索会话、备注或标签页"]' },
     { title: '恢复整个会话', spotlightTarget: 'button[aria-label^="恢复整个会话"]' },

@@ -5,7 +5,7 @@ import { getCurrentUser } from '@/store/slices/authSlice';
 import { downloadTabGroups } from '@/services/tabGroupSyncService';
 import { storage } from '@/utils/storage';
 import { errorHandler } from '@/utils/errorHandler';
-import { cancelPendingSync } from '@/utils/syncHelpers';
+import { cancelPendingSync, hasPendingSync } from '@/utils/syncHelpers';
 
 class SmartSyncService {
   private static instance: SmartSyncService;
@@ -131,6 +131,74 @@ class SmartSyncService {
       } catch {}
 
       return { success: false, error: error instanceof Error ? error.message : '下载失败' };
+    } finally {
+      this.isSyncing = false;
+    }
+  }
+
+  /**
+   * 自动后台下载：App 打开时静默拉取云端数据。
+   * 带 2 分钟冷却 + 并发控制，避免与手动同步/自动上传冲突。
+   */
+  async maybeAutoDownload(): Promise<void> {
+    const { auth } = store.getState();
+    if (!auth.isAuthenticated) return;
+    if (this.isSyncing) return;
+    if (hasPendingSync()) return;
+
+    // 冷却检查：2 分钟内有过同步则跳过
+    if (this.lastSyncTime) {
+      const elapsed = Date.now() - new Date(this.lastSyncTime).getTime();
+      if (elapsed < 2 * 60 * 1000) return;
+    }
+
+    this.isSyncing = true;
+    cancelPendingSync();
+
+    try {
+      await store.dispatch(
+        syncTabsFromCloud({ background: true, forceRemoteStrategy: false })
+      );
+      await store.dispatch(syncSettingsFromCloud());
+
+      const syncTime = new Date().toISOString();
+      await storage.setLastSyncTime(syncTime);
+      this.lastSyncTime = syncTime;
+    } catch {
+      // 静默失败，不影响用户体验
+    } finally {
+      this.isSyncing = false;
+    }
+  }
+
+  /**
+   * 自动后台上传：本地变更时静默推送到云端。
+   * 带 2 分钟冷却 + 并发控制。
+   */
+  async maybeAutoUpload(): Promise<void> {
+    const { auth } = store.getState();
+    if (!auth.isAuthenticated) return;
+    if (this.isSyncing) return;
+    if (hasPendingSync()) return;
+
+    // 冷却检查：2 分钟内有过同步则跳过
+    if (this.lastSyncTime) {
+      const elapsed = Date.now() - new Date(this.lastSyncTime).getTime();
+      if (elapsed < 2 * 60 * 1000) return;
+    }
+
+    this.isSyncing = true;
+    cancelPendingSync();
+
+    try {
+      await store.dispatch(syncTabsToCloud({ background: true, overwriteCloud: false }));
+      await store.dispatch(syncSettingsToCloud());
+
+      const syncTime = new Date().toISOString();
+      await storage.setLastSyncTime(syncTime);
+      this.lastSyncTime = syncTime;
+    } catch {
+      // 静默失败
     } finally {
       this.isSyncing = false;
     }

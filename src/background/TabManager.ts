@@ -89,7 +89,7 @@ export class TabManager {
         await this.showNotification({
           type: 'basic',
           iconUrl: chrome.runtime.getURL('icons/icon128.png'),
-          title: 'TabVault Pro',
+          title: 'TabStack',
           message: '当前窗口里没有可保存的标签页'
         });
         return;
@@ -101,7 +101,7 @@ export class TabManager {
       await this.showNotification({
         type: 'basic',
         iconUrl: chrome.runtime.getURL('icons/icon128.png'),
-        title: 'TabVault Pro',
+        title: 'TabStack',
         message: `已将 ${tabGroup.tabs.length} 个标签页保存为新会话`
       });
 
@@ -137,7 +137,7 @@ export class TabManager {
       await this.showNotification({
         type: 'basic',
           iconUrl: chrome.runtime.getURL('icons/icon128.png'),
-          title: 'TabVault Pro - 保存失败',
+          title: 'TabStack - 保存失败',
           message: '保存标签页时发生错误，请重试'
         });
 

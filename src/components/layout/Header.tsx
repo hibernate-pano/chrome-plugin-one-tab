@@ -16,7 +16,7 @@ import { LayoutMode } from '@/types/tab';
 import { useDebouncedSearch } from '@/hooks/useDebouncedSearch';
 import { useKeyboardShortcuts, COMMON_SHORTCUTS } from '@/hooks/useKeyboardShortcuts';
 import { Tooltip } from '@/components/common/Tooltip';
-import { TabVaultLogo } from '@/components/common/TabVaultIcon';
+import { TabStackLogo } from '@/components/common/TabVaultIcon';
 
 interface HeaderProps {
   onSearch: (query: string) => void;
@@ -216,7 +216,7 @@ export const Header: React.FC<HeaderProps> = ({ onSearch, onShowStats }) => {
             title="回到默认视图"
             aria-label="回到默认视图"
           >
-            <TabVaultLogo size="sm" showIcon={true} />
+            <TabStackLogo size="sm" showIcon={true} />
             <div className="hidden sm:block">
               <TabCounter />
             </div>

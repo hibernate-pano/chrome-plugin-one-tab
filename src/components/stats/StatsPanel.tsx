@@ -32,7 +32,7 @@ function getWeekStart(): Date {
 const StatCard: React.FC<{
   label: string;
   value: string | number;
-  icon: string;
+  icon: React.ReactNode;
   subtitle?: string;
 }> = ({ label, value, icon, subtitle }) => (
   <div className="rounded-xl border border-gray-200/80 dark:border-gray-700/80 bg-white dark:bg-gray-800 p-4">
@@ -44,9 +44,35 @@ const StatCard: React.FC<{
           <p className="text-xs text-gray-400 dark:text-gray-500 mt-0.5">{subtitle}</p>
         )}
       </div>
-      <span className="text-2xl">{icon}</span>
+      <span className="w-8 h-8 text-gray-400 dark:text-gray-500">{icon}</span>
     </div>
   </div>
+);
+
+// SVG icon components for stats panel (replacing emoji for Chrome Web Store compatibility)
+const FolderIcon = () => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+    <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
+  </svg>
+);
+const BookmarkIcon = () => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+    <path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/>
+  </svg>
+);
+const GlobeIcon = () => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+    <circle cx="12" cy="12" r="10"/>
+    <line x1="2" y1="12" x2="22" y2="12"/>
+    <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/>
+  </svg>
+);
+const ChartIcon = () => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+    <line x1="18" y1="20" x2="18" y2="10"/>
+    <line x1="12" y1="20" x2="12" y2="4"/>
+    <line x1="6" y1="20" x2="6" y2="14"/>
+  </svg>
 );
 
 export const StatsPanel: React.FC<{ onClose: () => void }> = ({ onClose }) => {
@@ -130,13 +156,13 @@ export const StatsPanel: React.FC<{ onClose: () => void }> = ({ onClose }) => {
       </div>
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
-        <StatCard label="会话总数" value={stats.totalSessions} icon="📁" />
-        <StatCard label="标签总数" value={stats.totalTabs} icon="🔖" />
-        <StatCard label="唯一域名" value={stats.totalDomains} icon="🌐" />
+        <StatCard label="会话总数" value={stats.totalSessions} icon={<FolderIcon />} />
+        <StatCard label="标签总数" value={stats.totalTabs} icon={<BookmarkIcon />} />
+        <StatCard label="唯一域名" value={stats.totalDomains} icon={<GlobeIcon />} />
         <StatCard
           label="平均标签/会话"
           value={stats.avgTabsPerSession}
-          icon="📊"
+          icon={<ChartIcon />}
           subtitle={`${stats.pinnedTabCount} 个已固定`}
         />
       </div>

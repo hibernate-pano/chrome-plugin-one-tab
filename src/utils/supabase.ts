@@ -509,48 +509,60 @@ export const sync = {
 
       let data, error;
 
-      // 如果是覆盖模式，先删除用户的所有标签组，然后插入新的标签组
+      // 如果是覆盖模式，先标记旧记录为pending_delete，插入新记录，然后清理
       if (overwriteCloud) {
-        // 使用覆盖模式
+        // 使用覆盖模式：三步原子策略
+        const currentTime = new Date().toISOString();
 
-        // 先删除用户的所有标签组
-        const { error: deleteError } = await supabase
+        // Step 1: 标记所有旧记录为 pending_delete
+        const { error: markError } = await supabase
           .from('tab_groups')
-          .delete()
-          .eq('user_id', sessionData.session.user.id);
+          .update({ pending_delete: true, updated_at: currentTime })
+          .eq('user_id', sessionData.session.user.id)
+          .is('pending_delete', false);
 
-        if (deleteError) {
-          console.error('删除用户标签组失败:', deleteError);
-          console.error('错误详情:', {
-            code: deleteError.code,
-            message: deleteError.message,
-            details: deleteError.details,
-            hint: deleteError.hint
-          });
-          throw deleteError;
+        if (markError) {
+          console.error('标记旧记录失败:', markError);
+          throw markError;
         }
 
-        console.log('用户标签组已删除，准备插入新数据');
+        console.log('Step 1: 已标记所有旧记录为 pending_delete');
 
-        // 等待一小段时间确保删除操作完全完成
-        await new Promise(resolve => setTimeout(resolve, 100));
-
-        // 然后插入新的标签组，使用 upsert 而不是 insert 来避免主键冲突
-        console.log('准备插入标签组数据，用户ID:', sessionData.session.user.id);
-        console.log('要插入的第一个标签组数据样本:', {
-          id: uniqueGroups[0]?.id,
-          name: uniqueGroups[0]?.name,
-          user_id: uniqueGroups[0]?.user_id,
-          device_id: uniqueGroups[0]?.device_id,
-          tabsDataLength: uniqueGroups[0]?.tabs_data?.length
-        });
-
-        const result = await supabase
+        // Step 2: Upsert 新记录
+        const upsertResult = await supabase
           .from('tab_groups')
           .upsert(uniqueGroups as any, { onConflict: 'id' });
 
-        data = result.data;
-        error = result.error;
+        if (upsertResult.error) {
+          console.error('Step 2: Upsert 新记录失败:', upsertResult.error);
+          // 回滚：清除 pending_delete 标记
+          await supabase
+            .from('tab_groups')
+            .update({ pending_delete: false, updated_at: currentTime })
+            .eq('user_id', sessionData.session.user.id)
+            .eq('pending_delete', true);
+          throw upsertResult.error;
+        }
+
+        console.log('Step 2: 新记录 upsert 成功');
+
+        // Step 3: 删除标记为 pending_delete 的旧记录
+        const { error: deleteError } = await supabase
+          .from('tab_groups')
+          .delete()
+          .eq('user_id', sessionData.session.user.id)
+          .eq('pending_delete', true);
+
+        if (deleteError) {
+          console.error('Step 3: 清理旧记录失败:', deleteError);
+          // 不阻塞，视为成功
+          console.warn('清理旧记录失败，但数据已安全上传');
+        } else {
+          console.log('Step 3: 旧记录清理完成');
+        }
+
+        data = upsertResult.data;
+        error = null;
       } else {
         // 合并模式，使用 upsert
         // 使用合并模式
@@ -845,39 +857,36 @@ export const sync = {
 
     // 上传用户设置
 
-    // 定义允许的设置字段，避免上传不存在的字段
-    // 这些字段名对应数据库中的实际列名（驼峰命名，稍后会转换为下划线命名）
-    const allowedFields = [
-      // 'autoSave',              // -> auto_save (UserSettings中不存在，已注释)
-      // 'autoSaveInterval',      // -> auto_save_interval (UserSettings中不存在，已注释)
-      'groupNameTemplate',     // -> group_name_template
-      'showFavicons',          // -> show_favicons
-      'showTabCount',          // -> show_tab_count
-      // 'autoCloseTabs',         // -> auto_close_tabs (UserSettings中不存在，已注释)
-      'confirmBeforeDelete',   // -> confirm_before_delete
-      'allowDuplicateTabs',    // -> allow_duplicate_tabs
-      // 'syncInterval',          // -> sync_interval (UserSettings中不存在，已注释)
-      'syncEnabled',           // -> sync_enabled
-      'layoutMode',            // -> layout_mode
-      'showNotifications',     // -> show_notifications
-      'syncStrategy',          // -> sync_strategy
-      'deleteStrategy',        // -> delete_strategy
-      'themeMode',             // -> theme_mode
-      'themeStyle',            // -> theme_style
-      'collectPinnedTabs',     // -> collect_pinned_tabs
-      'reorderMode'            // -> reorder_mode
+    // 定义允许的设置字段 - 直接从 UserSettings 类型推导，确保类型安全
+    // 任何新增字段必须同时添加到 allowlist 和 cloud fieldMapping 中
+    const allowedSettingsKeys: (keyof UserSettings)[] = [
+      'groupNameTemplate',
+      'showFavicons',
+      'showTabCount',
+      'confirmBeforeDelete',
+      'allowDuplicateTabs',
+      'syncEnabled',
+      'layoutMode',
+      'showNotifications',
+      'syncStrategy',
+      'deleteStrategy',
+      'themeMode',
+      'themeStyle',
+      'collectPinnedTabs',
+      'reorderMode',
     ];
 
     // 将驼峰命名法转换为下划线命名法，并过滤掉不允许的字段
     const convertedSettings: Record<string, any> = {};
     for (const [key, value] of Object.entries(settings)) {
       // 只处理允许的字段
-      if (allowedFields.includes(key)) {
+      if ((allowedSettingsKeys as string[]).includes(key)) {
         // 将驼峰命名转换为下划线命名
         const snakeKey = key.replace(/([A-Z])/g, '_$1').toLowerCase();
         convertedSettings[snakeKey] = value;
-      } else {
-        console.warn(`跳过未知的设置字段: ${key}`);
+      } else if (key in settings) {
+        // 字段存在但不在 allowlist，说明是新增字段但未被同步逻辑支持
+        console.warn(`[uploadSettings] 设置字段 "${key}" 不在同步允许列表中，已跳过。建议检查 allowlist 配置。`);
       }
     }
 

@@ -125,7 +125,7 @@ export const Toast: React.FC<ToastProps> = ({
   return createPortal(
     <div className={`fixed right-4 top-4 z-[110] ${animation}`}>
       <div
-        className={`pointer-events-auto relative min-w-[320px] max-w-[420px] overflow-hidden rounded-2xl border shadow-[0_20px_60px_rgba(15,23,42,0.18)] backdrop-blur ${typeStyles.shell}`}
+        className={`pointer-events-auto relative min-w-[280px] max-w-[420px] overflow-hidden rounded-2xl border shadow-[0_20px_60px_rgba(15,23,42,0.18)] backdrop-blur ${typeStyles.shell}`}
       >
         <div className={`h-1 w-full ${typeStyles.accent}`} style={{ transform: `scaleX(${progress / 100})`, transformOrigin: 'left' }} />
         <div className="flex items-start gap-3 px-4 py-4">

@@ -1,11 +1,98 @@
 import React from 'react';
 
+// SVG icon components (replacing emoji for Chrome Web Store compatibility)
+const CompassIcon = () => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" className="w-8 h-8">
+    <circle cx="12" cy="12" r="10"/>
+    <polygon points="16.24 7.76 14.12 14.12 7.76 16.24 9.88 9.88 16.24 7.76"/>
+  </svg>
+);
+const SaveIcon = () => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" className="w-8 h-8">
+    <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/>
+    <polyline points="17 21 17 13 7 13 7 21"/>
+    <polyline points="7 3 7 8 15 8"/>
+  </svg>
+);
+const SearchIcon = () => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" className="w-8 h-8">
+    <circle cx="11" cy="11" r="8"/>
+    <line x1="21" y1="21" x2="16.65" y2="16.65"/>
+  </svg>
+);
+const RocketIcon = () => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" className="w-8 h-8">
+    <path d="M4.5 16.5c-1.5 1.26-2 5-2 5s3.74-.5 5-2c.71-.84.7-2.13-.09-2.91a2.18 2.18 0 0 0-2.91-.09zM12 15l-3-3a22 22 0 0 1 2-2.95c.37-1.68-.35-3.05-2.11-2.95-1.13-.05-2.31.35-3.16 1.27L3 10l1.41-1.41c.71-.84.7-2.13-.09-2.91a2.18 2.18 0 0 0-2.91-.09L2 5.59"/>
+    <path d="M14 11.5c1 1 2 2.5 2 2.5s1.5-1 2.5-2c.71-.84.7-2.13-.09-2.91a2.18 2.18 0 0 0-2.91-.09z"/>
+    <path d="M17 7l-3 3M17 17l-3-3M7 7L4 4M7 17L4 20"/>
+  </svg>
+);
+const WindowIcon = () => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" className="w-8 h-8">
+    <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/>
+    <line x1="3" y1="9" x2="21" y2="9"/>
+    <line x1="9" y1="21" x2="9" y2="9"/>
+  </svg>
+);
+const PinIcon = () => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" className="w-8 h-8">
+    <line x1="12" y1="17" x2="12" y2="22"/>
+    <path d="M5 17h14v-1.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V6h1a2 2 0 0 0 0-4H8a2 2 0 0 0 0 4h1v4.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V17z"/>
+  </svg>
+);
+const EditIcon = () => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" className="w-8 h-8">
+    <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
+    <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
+  </svg>
+);
+const FolderIcon = () => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" className="w-8 h-8">
+    <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
+  </svg>
+);
+const ClockIcon = () => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" className="w-8 h-8">
+    <circle cx="12" cy="12" r="10"/>
+    <polyline points="12 6 12 12 16 14"/>
+  </svg>
+);
+const StarIcon = () => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" className="w-8 h-8">
+    <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>
+  </svg>
+);
+const WandIcon = () => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" className="w-8 h-8">
+    <path d="M15 4V2"/>
+    <path d="M15 16v-2"/>
+    <path d="M8 9h2"/>
+    <path d="M20 9h2"/>
+    <path d="M17.8 11.8L19 13"/>
+    <path d="M15 9h0"/>
+    <path d="M17.8 6.2L19 5"/>
+    <path d="M3 21l9-9"/>
+    <path d="M12.2 6.2L11 5"/>
+  </svg>
+);
+const LocationIcon = () => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" className="w-8 h-8">
+    <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/>
+    <circle cx="12" cy="10" r="3"/>
+  </svg>
+);
+const CheckIcon = () => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" className="w-8 h-8">
+    <polyline points="20 6 9 17 4 12"/>
+  </svg>
+);
+
 export const WelcomeStep: React.FC<{ version: string }> = ({ version }) => (
   <div className="onboarding-content">
     <div className="onboarding-icon-wrapper">
-      <span>🧭</span>
+      <CompassIcon />
     </div>
-    <h2 className="onboarding-title">欢迎使用 TabVault Pro</h2>
+    <h2 className="onboarding-title">欢迎使用 TabStack</h2>
     <div className="flex justify-center">
       <span className="onboarding-version-badge">v{version}</span>
     </div>
@@ -16,17 +103,17 @@ export const WelcomeStep: React.FC<{ version: string }> = ({ version }) => (
     </p>
     <div className="onboarding-feature-grid">
       <div className="onboarding-feature-card">
-        <div className="onboarding-feature-icon">💾</div>
+        <div className="onboarding-feature-icon"><SaveIcon /></div>
         <div className="onboarding-feature-title">保存</div>
         <div className="onboarding-feature-desc">先把工作现场收起来</div>
       </div>
       <div className="onboarding-feature-card">
-        <div className="onboarding-feature-icon">🔍</div>
+        <div className="onboarding-feature-icon"><SearchIcon /></div>
         <div className="onboarding-feature-title">搜索</div>
         <div className="onboarding-feature-desc">按会话、备注或标签找回</div>
       </div>
       <div className="onboarding-feature-card">
-        <div className="onboarding-feature-icon">🚀</div>
+        <div className="onboarding-feature-icon"><RocketIcon /></div>
         <div className="onboarding-feature-title">恢复</div>
         <div className="onboarding-feature-desc">默认在新窗口里继续工作</div>
       </div>
@@ -37,27 +124,27 @@ export const WelcomeStep: React.FC<{ version: string }> = ({ version }) => (
 export const SaveTabsStep: React.FC = () => (
   <div className="onboarding-content">
     <div className="onboarding-icon-wrapper">
-      <span>💾</span>
+      <SaveIcon />
     </div>
     <h2 className="onboarding-title">先保存一个会话</h2>
     <p className="onboarding-description">
-      点击顶部的“保存会话”按钮
+      点击顶部的"保存会话"按钮
       <br />
       当前窗口会被收成一个可找回的工作会话
     </p>
     <div className="onboarding-feature-grid">
       <div className="onboarding-feature-card">
-        <div className="onboarding-feature-icon">🪟</div>
+        <div className="onboarding-feature-icon"><WindowIcon /></div>
         <div className="onboarding-feature-title">保存当前窗口</div>
         <div className="onboarding-feature-desc">把此刻的工作上下文完整留住</div>
       </div>
       <div className="onboarding-feature-card">
-        <div className="onboarding-feature-icon">📌</div>
+        <div className="onboarding-feature-icon"><PinIcon /></div>
         <div className="onboarding-feature-title">Pinned 可选</div>
         <div className="onboarding-feature-desc">固定标签页可保留，也可一并保存</div>
       </div>
       <div className="onboarding-feature-card">
-        <div className="onboarding-feature-icon">✍️</div>
+        <div className="onboarding-feature-icon"><EditIcon /></div>
         <div className="onboarding-feature-title">备注与收藏</div>
         <div className="onboarding-feature-desc">给重要会话补一句上下文说明</div>
       </div>
@@ -68,7 +155,7 @@ export const SaveTabsStep: React.FC = () => (
 export const SearchStep: React.FC = () => (
   <div className="onboarding-content">
     <div className="onboarding-icon-wrapper">
-      <span>🔍</span>
+      <SearchIcon />
     </div>
     <h2 className="onboarding-title">需要时快速找回</h2>
     <p className="onboarding-description">
@@ -78,17 +165,17 @@ export const SearchStep: React.FC = () => (
     </p>
     <div className="onboarding-feature-grid">
       <div className="onboarding-feature-card">
-        <div className="onboarding-feature-icon">🗂️</div>
+        <div className="onboarding-feature-icon"><FolderIcon /></div>
         <div className="onboarding-feature-title">先找会话</div>
         <div className="onboarding-feature-desc">同一批相关标签会一起出现</div>
       </div>
       <div className="onboarding-feature-card">
-        <div className="onboarding-feature-icon">⏱️</div>
+        <div className="onboarding-feature-icon"><ClockIcon /></div>
         <div className="onboarding-feature-title">按时间过滤</div>
         <div className="onboarding-feature-desc">快速收敛到较新的会话或更久之前</div>
       </div>
       <div className="onboarding-feature-card">
-        <div className="onboarding-feature-icon">⭐</div>
+        <div className="onboarding-feature-icon"><StarIcon /></div>
         <div className="onboarding-feature-title">收藏重要会话</div>
         <div className="onboarding-feature-desc">关键上下文更容易二次定位</div>
       </div>
@@ -99,7 +186,7 @@ export const SearchStep: React.FC = () => (
 export const RestoreStep: React.FC = () => (
   <div className="onboarding-content">
     <div className="onboarding-icon-wrapper">
-      <span>🚀</span>
+      <RocketIcon />
     </div>
     <h2 className="onboarding-title">恢复时继续，而不是重来</h2>
     <p className="onboarding-description">
@@ -109,17 +196,17 @@ export const RestoreStep: React.FC = () => (
     </p>
     <div className="onboarding-feature-grid">
       <div className="onboarding-feature-card">
-        <div className="onboarding-feature-icon">🪄</div>
+        <div className="onboarding-feature-icon"><WandIcon /></div>
         <div className="onboarding-feature-title">新窗口恢复</div>
         <div className="onboarding-feature-desc">尽量不打断你当前正在做的事</div>
       </div>
       <div className="onboarding-feature-card">
-        <div className="onboarding-feature-icon">📍</div>
+        <div className="onboarding-feature-icon"><LocationIcon /></div>
         <div className="onboarding-feature-title">保留 pinned</div>
         <div className="onboarding-feature-desc">固定标签页状态会跟着一起回来</div>
       </div>
       <div className="onboarding-feature-card">
-        <div className="onboarding-feature-icon">🕘</div>
+        <div className="onboarding-feature-icon"><ClockIcon /></div>
         <div className="onboarding-feature-title">时间戳命名</div>
         <div className="onboarding-feature-desc">新会话默认按保存时间命名，回看更直接</div>
       </div>
@@ -130,7 +217,7 @@ export const RestoreStep: React.FC = () => (
 export const ReadyStep: React.FC = () => (
   <div className="onboarding-content text-center">
     <div className="onboarding-icon-wrapper">
-      <span className="onboarding-confetti">✅</span>
+      <span className="onboarding-confetti"><CheckIcon /></span>
     </div>
     <h2 className="onboarding-title">核心闭环已经齐了</h2>
     <p className="onboarding-description">

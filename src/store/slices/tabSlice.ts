@@ -511,104 +511,110 @@ export const moveTabAndSync = createAsyncThunk(
 
       // 使用 requestAnimationFrame 在下一帧执行存储操作，优化性能
       // 这样可以确保UI更新优先，存储操作不会阻塞渲染
-      requestAnimationFrame(async () => {
-        try {
-          // 在本地存储中更新标签页位置
-          const groups = await storage.getGroups();
-          const sourceGroup = groups.find(g => g.id === sourceGroupId);
-          const targetGroup = groups.find(g => g.id === targetGroupId);
+      // 注意：必须 await 等待存储完成，避免用户关闭标签页时数据丢失
+      await new Promise<void>((resolve) => {
+        requestAnimationFrame(async () => {
+          try {
+            // 在本地存储中更新标签页位置
+            const groups = await storage.getGroups();
+            const sourceGroup = groups.find(g => g.id === sourceGroupId);
+            const targetGroup = groups.find(g => g.id === targetGroupId);
 
-          if (sourceGroup && targetGroup) {
-            // 获取要移动的标签页
-            const tab = sourceGroup.tabs[sourceIndex];
+            if (sourceGroup && targetGroup) {
+              // 获取要移动的标签页
+              const tab = sourceGroup.tabs[sourceIndex];
 
-            if (!tab) {
-              console.error('找不到要移动的标签页:', { sourceGroupId, sourceIndex });
-              return;
-            }
-
-            // 创建新的标签页数组以避免直接修改原数组
-            const newSourceTabs = [...sourceGroup.tabs];
-            const newTargetTabs =
-              sourceGroupId === targetGroupId ? newSourceTabs : [...targetGroup.tabs];
-
-            // 从源标签组中删除标签页
-            newSourceTabs.splice(sourceIndex, 1);
-
-            // 修复：计算调整后的目标索引
-            // 对于同组内移动，无论拖动方向如何，都直接使用 targetIndex
-            // 这与 Redux reducer 中的逻辑保持一致
-            let adjustedIndex = targetIndex;
-
-            // 确保索引在有效范围内
-            adjustedIndex = Math.max(0, Math.min(adjustedIndex, newTargetTabs.length));
-
-            // 插入标签到目标位置
-            newTargetTabs.splice(adjustedIndex, 0, tab);
-
-            // 更新源标签组和目标标签组 - 使用不可变更新
-            const sourceVersion = sourceGroup.version || 1;
-            const updatedSourceGroup = {
-              ...sourceGroup,
-              tabs: newSourceTabs,
-              updatedAt: new Date().toISOString(),
-              version: sourceVersion + 1,
-            };
-
-            let updatedTargetGroup = targetGroup;
-            if (sourceGroupId !== targetGroupId) {
-              const targetVersion = targetGroup.version || 1;
-              updatedTargetGroup = {
-                ...targetGroup,
-                tabs: newTargetTabs,
-                updatedAt: new Date().toISOString(),
-                version: targetVersion + 1,
-              };
-            }
-
-            // 批量更新本地存储 - 一次性更新所有变更
-            let updatedGroups = groups
-              .map(g => {
-                if (g.id === sourceGroupId) return updatedSourceGroup;
-                if (g.id === targetGroupId) return updatedTargetGroup;
-                return g;
-              });
-
-            // 自动清理空标签组（仅在跨组移动时检查源标签组）
-            if (sourceGroupId !== targetGroupId && updatedSourceGroup && updatedSourceGroup.tabs.length === 0) {
-              try {
-                // 使用工具函数检查是否应该被自动删除（考虑锁定状态等）
-                if (shouldAutoDeleteAfterTabRemoval(updatedSourceGroup, '')) {
-                  console.log(`[拖拽自动清理] 检测到空标签组: ${updatedSourceGroup.name} (ID: ${sourceGroupId})`);
-
-                  // 从存储数组中移除空标签组
-                  updatedGroups = updatedGroups.filter(g => g.id !== sourceGroupId);
-
-                  // 延迟删除Redux状态中的标签组，避免与UI组件的删除逻辑冲突
-                  setTimeout(() => {
-                    try {
-                      dispatch(deleteGroup(sourceGroupId));
-                    } catch (deleteError) {
-                      console.error(`[拖拽自动清理] 删除Redux状态失败:`, deleteError);
-                    }
-                  }, 100);
-
-                  console.log(`[拖拽自动清理] 已从存储中移除空标签组: ${updatedSourceGroup.name} (ID: ${sourceGroupId})`);
-                } else {
-                  console.log(`[拖拽自动清理] 跳过不符合删除条件的空标签组: ${updatedSourceGroup.name} (ID: ${sourceGroupId})`);
-                }
-              } catch (cleanupError) {
-                console.error(`[拖拽自动清理] 清理空标签组时发生错误:`, cleanupError);
-                // 清理失败时不影响主要的存储操作
+              if (!tab) {
+                console.error('找不到要移动的标签页:', { sourceGroupId, sourceIndex });
+                resolve();
+                return;
               }
+
+              // 创建新的标签页数组以避免直接修改原数组
+              const newSourceTabs = [...sourceGroup.tabs];
+              const newTargetTabs =
+                sourceGroupId === targetGroupId ? newSourceTabs : [...targetGroup.tabs];
+
+              // 从源标签组中删除标签页
+              newSourceTabs.splice(sourceIndex, 1);
+
+              // 修复：计算调整后的目标索引
+              // 对于同组内移动，无论拖动方向如何，都直接使用 targetIndex
+              // 这与 Redux reducer 中的逻辑保持一致
+              let adjustedIndex = targetIndex;
+
+              // 确保索引在有效范围内
+              adjustedIndex = Math.max(0, Math.min(adjustedIndex, newTargetTabs.length));
+
+              // 插入标签到目标位置
+              newTargetTabs.splice(adjustedIndex, 0, tab);
+
+              // 更新源标签组和目标标签组 - 使用不可变更新
+              const sourceVersion = sourceGroup.version || 1;
+              const updatedSourceGroup = {
+                ...sourceGroup,
+                tabs: newSourceTabs,
+                updatedAt: new Date().toISOString(),
+                version: sourceVersion + 1,
+              };
+
+              let updatedTargetGroup = targetGroup;
+              if (sourceGroupId !== targetGroupId) {
+                const targetVersion = targetGroup.version || 1;
+                updatedTargetGroup = {
+                  ...targetGroup,
+                  tabs: newTargetTabs,
+                  updatedAt: new Date().toISOString(),
+                  version: targetVersion + 1,
+                };
+              }
+
+              // 批量更新本地存储 - 一次性更新所有变更
+              let updatedGroups = groups
+                .map(g => {
+                  if (g.id === sourceGroupId) return updatedSourceGroup;
+                  if (g.id === targetGroupId) return updatedTargetGroup;
+                  return g;
+                });
+
+              // 自动清理空标签组（仅在跨组移动时检查源标签组）
+              if (sourceGroupId !== targetGroupId && updatedSourceGroup && updatedSourceGroup.tabs.length === 0) {
+                try {
+                  // 使用工具函数检查是否应该被自动删除（考虑锁定状态等）
+                  if (shouldAutoDeleteAfterTabRemoval(updatedSourceGroup, '')) {
+                    console.log(`[拖拽自动清理] 检测到空标签组: ${updatedSourceGroup.name} (ID: ${sourceGroupId})`);
+
+                    // 从存储数组中移除空标签组
+                    updatedGroups = updatedGroups.filter(g => g.id !== sourceGroupId);
+
+                    // 延迟删除Redux状态中的标签组，避免与UI组件的删除逻辑冲突
+                    setTimeout(() => {
+                      try {
+                        dispatch(deleteGroup(sourceGroupId));
+                      } catch (deleteError) {
+                        console.error(`[拖拽自动清理] 删除Redux状态失败:`, deleteError);
+                      }
+                    }, 100);
+
+                    console.log(`[拖拽自动清理] 已从存储中移除空标签组: ${updatedSourceGroup.name} (ID: ${sourceGroupId})`);
+                  } else {
+                    console.log(`[拖拽自动清理] 跳过不符合删除条件的空标签组: ${updatedSourceGroup.name} (ID: ${sourceGroupId})`);
+                  }
+                } catch (cleanupError) {
+                  console.error(`[拖拽自动清理] 清理空标签组时发生错误:`, cleanupError);
+                  // 清理失败时不影响主要的存储操作
+                }
+              }
+
+              await storage.setGroups(updatedGroups);
+
             }
-
-            await storage.setGroups(updatedGroups);
-
+            resolve();
+          } catch (error) {
+            console.error('存储标签页移动操作失败:', error);
+            resolve(); // Don't reject - storage failure shouldn't crash the UI
           }
-        } catch (error) {
-          console.error('存储标签页移动操作失败:', error);
-        }
+        });
       });
 
       return { sourceGroupId, sourceIndex, targetGroupId, targetIndex };

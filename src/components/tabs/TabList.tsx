@@ -1,6 +1,6 @@
 import React, { useEffect, lazy } from 'react';
 import { useAppDispatch, useAppSelector } from '@/store/hooks';
-import { loadGroups, moveGroupAndSync } from '@/store/slices/tabSlice';
+import { loadGroups, moveGroupAndSync, setSearchQuery } from '@/store/slices/tabSlice';
 import { invalidateGroupsCache } from '@/utils/storage';
 import { runMigrations } from '@/utils/migrationUtils';
 import { DraggableTabGroup } from '@/components/dnd/DraggableTabGroup';
@@ -131,7 +131,7 @@ export const TabList: React.FC<TabListProps> = ({ searchQuery }) => {
   return (
     <div className="space-y-3 micro-interaction-container">
       {searchQuery ? (
-        <SearchResultList searchQuery={searchQuery} />
+        <SearchResultList searchQuery={searchQuery} onClearSearch={() => dispatch(setSearchQuery(''))} />
       ) : layoutMode === 'double' ? (
         <div className="grid grid-cols-1 sm:grid-cols-1 md:grid-cols-2 gap-2 sm:gap-3 md:gap-4">
           <div className="space-y-2 transition-all duration-300 ease-out">

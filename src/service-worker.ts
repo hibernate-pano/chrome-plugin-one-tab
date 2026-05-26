@@ -1,11 +1,12 @@
 import { tabManager } from '@/background/TabManager';
 import { migrateToV2 } from '@/utils/migrationHelper';
+import { secureStorage } from '@/utils/secureStorage';
 
 // Chrome 扩展的 Service Worker
 // 为了避免模块导入问题，早期版本内联了存储逻辑；现统一使用 utils/storage 以与前端页面共享同一数据源（IndexedDB）
 
 // Service Worker启动日志
-console.log('=== TabVault Pro Service Worker 启动 ===');
+console.log('=== TabStack Service Worker 启动 ===');
 console.log('版本:', chrome.runtime.getManifest().version);
 console.log('启动时间:', new Date().toISOString());
 console.log('Chrome APIs 可用性检查:');
@@ -43,7 +44,7 @@ async function runMigrations() {
   }
 }
 
-const showNotification = async (message: string, title = 'TabVault Pro'): Promise<void> => {
+const showNotification = async (message: string, title = 'TabStack'): Promise<void> => {
   await tabManager.showNotification({
     type: 'basic',
     iconUrl: chrome.runtime.getURL('icons/icon128.png'),
@@ -235,14 +236,16 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
   if (alarm.name === SYNC_ALARM_NAME) {
     console.log('[PeriodicSync] 定时同步触发');
     try {
-      const { auth_cache } = await chrome.storage.local.get('auth_cache');
-      if (auth_cache?.isAuthenticated) {
-        const tabs = await chrome.tabs.query({});
-        if (tabs.length > 0) {
-          await tabManager.saveAllTabs(tabs);
-        }
-        console.log('[PeriodicSync] 定时同步完成');
+      const authCache = await secureStorage.get<{ isAuthenticated: boolean }>('auth_cache');
+      if (!authCache?.isAuthenticated) {
+        console.log('[PeriodicSync] 用户未登录，跳过同步');
+        return;
       }
+      const tabs = await chrome.tabs.query({});
+      if (tabs.length > 0) {
+        await tabManager.saveAllTabs(tabs);
+      }
+      console.log('[PeriodicSync] 定时同步完成');
     } catch (error) {
       console.error('[PeriodicSync] 定时同步失败:', error);
     }

@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useCallback } from 'react';
-import { useAppDispatch, useAppSelector } from '@/store/hooks';
+import { useAppDispatch } from '@/store/hooks';
 import { updateGroupNameAndSync, toggleGroupLockAndSync, deleteGroup, updateGroup, moveTabAndSync } from '@/store/slices/tabSlice';
 import { DraggableTab } from '@/components/dnd/DraggableTab';
 import { TabGroup as TabGroupType, Tab } from '@/types/tab';
@@ -56,7 +56,6 @@ const NotesIcon = () => (
 
 export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
   const dispatch = useAppDispatch();
-  const confirmBeforeDelete = useAppSelector(state => state.settings.confirmBeforeDelete);
   const { showConfirm, showToast } = useToast();
   const { showDeleteSuccess, showDeleteError, showRestoreSuccess, showRestoreError } = useEnhancedToast();
 
@@ -103,21 +102,18 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
         });
     };
 
-    if (!confirmBeforeDelete) {
-      runDelete();
-      return;
-    }
-
+    // Session deletion ALWAYS requires confirmation, regardless of confirmBeforeDelete setting
+    // confirmBeforeDelete only affects low-risk operations like single tab deletion
     showConfirm({
       title: '删除确认',
-      message: '确定要删除这个会话吗？',
+      message: `确定要删除会话 "${group.name}" 吗？这将同时删除其中的 ${group.tabs.length} 个标签页，且此操作不可撤销。`,
       type: 'danger',
       confirmText: '删除',
       cancelText: '取消',
       onConfirm: runDelete,
       onCancel: () => { }
     });
-  }, [confirmBeforeDelete, dispatch, group.id, group.name, group.tabs.length, showConfirm, showDeleteSuccess, showDeleteError]);
+  }, [dispatch, group.id, group.name, group.tabs.length, showConfirm, showDeleteSuccess, showDeleteError]);
 
   const handleToggleLock = useCallback(() => {
     dispatch(toggleGroupLockAndSync(group.id));

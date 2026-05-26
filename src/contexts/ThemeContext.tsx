@@ -24,24 +24,48 @@ const ThemeContext = createContext<ThemeContextType | undefined>(undefined);
 
 export const ThemeProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const dispatch = useAppDispatch();
-  const themeMode = useAppSelector((state) => state.settings.themeMode);
+  const themeModeFromStore = useAppSelector((state) => state.settings.themeMode);
   const themeStyleFromStore = useAppSelector((state) => state.settings.themeStyle);
-  const [currentTheme, setCurrentTheme] = useState<Theme>('light');
+
+  // 尝试从 chrome.storage 读取已保存的主题模式，避免首次渲染时闪烁
+  // 这在popup打开时会立即恢复用户之前保存的主题偏好
+  const [savedThemeMode, setSavedThemeMode] = useState<'light' | 'dark' | 'auto' | null>(null);
+
+  // 同步读取已保存的主题设置（popup 打开时立即执行，不等待 React 渲染）
+  useEffect(() => {
+    chrome.storage.local.get(['themeMode', 'themeStyle']).then(result => {
+      if (result.themeMode) {
+        setSavedThemeMode(result.themeMode as 'light' | 'dark' | 'auto');
+      }
+      // 也更新 Redux（如果还没加载的话）
+      if (result.themeMode || result.themeStyle) {
+        dispatch(loadSettings() as any);
+      } else {
+        // 如果存储中没有任何主题设置，仍需加载一次
+        dispatch(loadSettings() as any);
+      }
+      setSettingsReady(true);
+    }).catch(() => {
+      dispatch(loadSettings() as any);
+      setSettingsReady(true);
+    });
+  }, [dispatch]);
+
+  // themeMode 优先使用已保存的值，否则回退到 Redux store 的值
+  const themeMode = savedThemeMode ?? themeModeFromStore;
+  const [currentTheme, setCurrentTheme] = useState<Theme>(() => {
+    if (savedThemeMode === 'dark') return 'dark';
+    if (savedThemeMode === 'light') return 'light';
+    if (savedThemeMode === 'auto') {
+      return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+    }
+    return 'light';
+  });
   const [isTransitioning, setIsTransitioning] = useState(false);
   const [settingsReady, setSettingsReady] = useState(false);
-  
+
   // 主题风格状态，默认为 'legacy'
   const themeStyle: ThemeStyle = themeStyleFromStore || 'legacy';
-
-  // 确保刷新后优先加载已保存的主题设置，避免短暂回退到默认主题
-  useEffect(() => {
-    dispatch(loadSettings() as any)
-      .unwrap?.()
-      .catch((err: unknown) => {
-        console.warn('loadSettings failed in ThemeProvider', err);
-      })
-      .finally(() => setSettingsReady(true));
-  }, [dispatch]);
 
   // 检测系统主题并设置当前主题
   useEffect(() => {

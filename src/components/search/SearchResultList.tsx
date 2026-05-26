@@ -26,9 +26,10 @@ const PinIcon = () => (
 
 interface SearchResultListProps {
   searchQuery: string;
+  onClearSearch?: () => void;
 }
 
-export const SearchResultList: React.FC<SearchResultListProps> = ({ searchQuery }) => {
+export const SearchResultList: React.FC<SearchResultListProps> = ({ searchQuery, onClearSearch }) => {
   const dispatch = useAppDispatch();
   const { groups } = useAppSelector(state => state.tabs);
   const confirmBeforeDelete = useAppSelector(state => state.settings.confirmBeforeDelete);
@@ -498,7 +499,7 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({ searchQuery 
             </svg>
           }
           title="没有找到可找回的会话"
-          description={`没有找到与“${searchQuery}”相关的会话或标签，请尝试其他关键词。`}
+          description={`没有找到与"${searchQuery}"相关的会话或标签，请尝试其他关键词。`}
           action={
             <div className="text-xs theme-text-muted space-y-3">
               {activeFilterCount > 0 && (
@@ -507,6 +508,14 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({ searchQuery 
                   className="rounded-lg border border-gray-300 px-3 py-1.5 text-xs font-medium text-gray-600 transition-colors hover:bg-gray-100 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-800"
                 >
                   清空筛选后重试
+                </button>
+              )}
+              {onClearSearch && (
+                <button
+                  onClick={onClearSearch}
+                  className="rounded-lg border border-primary-300 px-3 py-1.5 text-xs font-medium text-primary-600 transition-colors hover:bg-primary-50 dark:border-primary-600 dark:text-primary-400 dark:hover:bg-primary-900/30"
+                >
+                  清空搜索
                 </button>
               )}
               <div className="space-y-1">

@@ -145,8 +145,8 @@ const mergeGroup = (
 
   console.log(`[SyncUtils] 版本对比 - 本地: v${localVersion}, 云端: v${cloudVersion}`);
 
-  // 检测冲突：版本号不连续
-  const hasVersionConflict = Math.abs(localVersion - cloudVersion) > 1;
+  // 检测冲突：版本号不连续 (仅当两者都 > 1 且不相等时才说明有分歧)
+  const hasVersionConflict = localVersion !== cloudVersion && localVersion > 1 && cloudVersion > 1;
 
   if (hasVersionConflict) {
     console.warn(`[SyncUtils] 检测到版本冲突！本地: v${localVersion}, 云端: v${cloudVersion}`);

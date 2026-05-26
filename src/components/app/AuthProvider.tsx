@@ -1,8 +1,9 @@
-import React, { useEffect, useState } from 'react';
-import { useAppDispatch } from '@/store/hooks';
+import React, { useEffect, useState, useRef } from 'react';
+import { useAppDispatch, useAppSelector } from '@/store/hooks';
 import { getCurrentUser } from '@/store/slices/authSlice';
 import { auth as supabaseAuth } from '@/utils/supabase';
 import { authCache } from '@/utils/authCache';
+import { smartSyncService } from '@/services/smartSyncService';
 
 interface AuthProviderProps {
   children: React.ReactNode;
@@ -14,27 +15,29 @@ interface AuthProviderProps {
  */
 export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   const dispatch = useAppDispatch();
+  const isAuthenticated = useAppSelector(state => state.auth.isAuthenticated);
   const [initialAuthLoaded, setInitialAuthLoaded] = useState(false);
+  const autoDownloadAttempted = useRef(false);
 
-  // 初始化认证状态
+  // 初始化认证状态 + SmartSyncService
   useEffect(() => {
     const initializeAuth = async () => {
       try {
         console.log('开始初始化认证状态...');
 
-        // 首先检查缓存的认证状态
         const cachedAuth = await authCache.getAuthState();
         if (cachedAuth && cachedAuth.isAuthenticated && cachedAuth.user) {
           console.log('发现缓存的认证状态，用户:', cachedAuth.user.email);
-          // 这里可以设置用户状态，但不直接dispatch，让后续的会话检查来处理
         }
 
-        // 标记认证初始化完成
+        // 预热 SmartSyncService（加载 lastSyncTime）
+        await smartSyncService.initialize();
+
         setInitialAuthLoaded(true);
         console.log('认证状态初始化完成');
       } catch (error) {
         console.error('初始化认证状态失败:', error);
-        setInitialAuthLoaded(true); // 即使失败也要标记完成，避免阻塞应用
+        setInitialAuthLoaded(true);
       }
     };
 
@@ -49,11 +52,9 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       try {
         console.log('检查用户会话状态...');
 
-        // 使用 getSession 而不是 getCurrentUser 来避免未登录用户的错误
         const { data } = await supabaseAuth.getSession();
         if (data.session) {
           console.log('发现活跃会话，获取用户信息...');
-          // 只有确认有会话时才调用 getCurrentUser
           dispatch(getCurrentUser())
             .unwrap()
             .then(user => {
@@ -74,6 +75,29 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
 
     checkSession();
   }, [dispatch, initialAuthLoaded]);
+
+  // 重置自动下载标记当用户登出时
+  useEffect(() => {
+    if (!isAuthenticated) {
+      autoDownloadAttempted.current = false;
+    }
+  }, [isAuthenticated]);
+
+  // 登录态确认后，静默拉取云端最新数据（仅触发一次）
+  useEffect(() => {
+    if (!isAuthenticated || autoDownloadAttempted.current) return;
+
+    autoDownloadAttempted.current = true;
+
+    // 延迟 2 秒，确保本地数据先加载完毕，避免并发竞争
+    const timer = setTimeout(() => {
+      smartSyncService.maybeAutoDownload().catch(err => {
+        console.warn('[AutoDownload] 自动下载失败（静默）:', err?.message || err);
+      });
+    }, 2000);
+
+    return () => clearTimeout(timer);
+  }, [isAuthenticated]);
 
   return <>{children}</>;
 };
