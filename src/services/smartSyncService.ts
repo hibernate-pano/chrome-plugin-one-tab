@@ -83,7 +83,9 @@ class SmartSyncService {
 
       try {
         await store.dispatch(getCurrentUser());
-      } catch {}
+      } catch {
+        // 忽略当前用户刷新失败
+      }
 
       return { success: false, error: error instanceof Error ? error.message : '上传失败' };
     } finally {
@@ -128,7 +130,9 @@ class SmartSyncService {
 
       try {
         await store.dispatch(getCurrentUser());
-      } catch {}
+      } catch {
+        // 忽略当前用户刷新失败
+      }
 
       return { success: false, error: error instanceof Error ? error.message : '下载失败' };
     } finally {

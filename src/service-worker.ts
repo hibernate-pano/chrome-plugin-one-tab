@@ -1,6 +1,10 @@
 import { tabManager } from '@/background/TabManager';
 import { migrateToV2 } from '@/utils/migrationHelper';
 import { secureStorage } from '@/utils/secureStorage';
+import { downloadTabGroups, uploadTabGroups } from '@/services/tabGroupSyncService';
+import { storage } from '@/utils/storage';
+import { mergeTabGroups } from '@/utils/syncUtils';
+import type { TabGroup } from '@/types/tab';
 
 // Chrome 扩展的 Service Worker
 // 为了避免模块导入问题，早期版本内联了存储逻辑；现统一使用 utils/storage 以与前端页面共享同一数据源（IndexedDB）
@@ -224,30 +228,123 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
   }
 });
 
-// 定时后台保存 + 标记待同步（每30分钟保存当前窗口为会话，打开 popup 后自动推送到云端）
+// 定时后台云端数据静默同步（每30分钟双向增量同步，不保存/不关闭用户的活动标签页）
 const SYNC_ALARM_NAME = 'periodic-cloud-sync';
+const SYNC_RETRY_ALARM_PREFIX = 'periodic-cloud-sync-retry-';
+const STORAGE_RETRY_COUNT_KEY = 'periodicSyncRetryCount';
 const SYNC_INTERVAL_MINUTES = 30;
+const MAX_SYNC_RETRIES = 3;
+const RETRY_DELAY_MINUTES = 1; // 失败后 1 分钟重试
 
 chrome.alarms.create(SYNC_ALARM_NAME, {
   periodInMinutes: SYNC_INTERVAL_MINUTES,
 });
 
+/**
+ * 执行定时静默同步（带事务性保护）
+ * 1. 检查登录态与同步开关
+ * 2. 保存本地数据快照（用于失败时回滚到真正同步前的状态）
+ * 3. 从云端拉取数据
+ * 4. 按 syncStrategy 合并
+ * 5. 写本地 + 上传云端
+ * 6. 失败时回滚到第 2 步的快照，并通过 chrome.alarms 调度重试（避免 setTimeout 在 SW 休眠后失效）
+ */
+async function performPeriodicSync(retries = 0) {
+  console.log(`[PeriodicSync] 定时静默云同步触发 (attempt ${retries + 1}/${MAX_SYNC_RETRIES + 1})`);
+
+  // 快照在 try 块外声明，catch 块复用——避免在 catch 中重读已合并的脏数据
+  let snapshotGroups: TabGroup[] | null = null;
+
+  try {
+    // 1. 检查用户登录状态
+    const authCache = await secureStorage.get<{ isAuthenticated: boolean }>('auth_cache');
+    if (!authCache?.isAuthenticated) {
+      console.log('[PeriodicSync] 用户未登录，跳过同步');
+      return;
+    }
+
+    // 2. 读取用户设置，判断同步是否开启
+    const settings = await storage.getSettings();
+    if (!settings.syncEnabled) {
+      console.log('[PeriodicSync] 同步未启用，跳过');
+      return;
+    }
+
+    // 3. 保存本地数据快照（用于失败时回滚）
+    snapshotGroups = await storage.getGroups();
+    console.log(`[PeriodicSync] 已保存本地快照: ${snapshotGroups.length} 个标签组`);
+
+    // 4. 从云端拉取数据
+    console.log('[PeriodicSync] 正在从云端拉取会话...');
+    const cloudGroups = await downloadTabGroups();
+
+    // 5. 合并本地与云端标签组（采用用户设置的冲突解决策略）
+    const mergedGroups = mergeTabGroups(snapshotGroups, cloudGroups, settings.syncStrategy);
+    console.log(`[PeriodicSync] 合并完成: 本地 ${snapshotGroups.length} + 云端 ${cloudGroups.length} = 合并后 ${mergedGroups.length}`);
+
+    // 6. 保存合并结果到本地
+    await storage.setGroups(mergedGroups);
+
+    // 7. 将合并结果推送到云端（非覆盖模式，即合并模式）
+    //    uploadTabGroups 成功时返回 { result }，失败时抛异常——任何正常返回都视为成功
+    console.log('[PeriodicSync] 正在上传合并结果到云端...');
+    await uploadTabGroups(mergedGroups, false);
+
+    // 8. 同步成功，记录时间并清除可能存在的重试计数
+    const currentTime = new Date().toISOString();
+    await storage.setLastSyncTime(currentTime);
+    await chrome.storage.local.remove(STORAGE_RETRY_COUNT_KEY);
+    console.log('[PeriodicSync] 定时静默云同步成功，同步时间:', currentTime);
+
+  } catch (error) {
+    console.error('[PeriodicSync] 定时静默云同步失败:', error);
+
+    // 回滚到真正的同步前快照（不是重新读已合并的脏数据）
+    if (snapshotGroups !== null) {
+      try {
+        await storage.setGroups(snapshotGroups);
+        console.log('[PeriodicSync] 已回滚本地数据到同步前快照');
+      } catch (rollbackError) {
+        console.error('[PeriodicSync] 回滚失败:', rollbackError);
+      }
+    } else {
+      console.warn('[PeriodicSync] 无快照可回滚（同步未进入合并阶段）');
+    }
+
+    // 重试机制：用 chrome.alarms 替代 setTimeout，跨 SW 休眠仍能触发
+    if (retries < MAX_SYNC_RETRIES) {
+      const nextRetry = retries + 1;
+      const retryAlarmName = `${SYNC_RETRY_ALARM_PREFIX}${nextRetry}`;
+      try {
+        await chrome.alarms.create(retryAlarmName, { delayInMinutes: RETRY_DELAY_MINUTES });
+        await chrome.storage.local.set({ [STORAGE_RETRY_COUNT_KEY]: nextRetry });
+        console.log(`[PeriodicSync] 将在 ${RETRY_DELAY_MINUTES} 分钟后通过 alarm "${retryAlarmName}" 进行第 ${nextRetry} 次重试`);
+      } catch (alarmError) {
+        console.error('[PeriodicSync] 创建重试 alarm 失败:', alarmError);
+      }
+    } else {
+      console.error(`[PeriodicSync] 已达到最大重试次数 (${MAX_SYNC_RETRIES})，本次同步彻底失败`);
+    }
+  }
+}
+
 chrome.alarms.onAlarm.addListener(async (alarm) => {
+  // 正常周期同步
   if (alarm.name === SYNC_ALARM_NAME) {
-    console.log('[PeriodicSync] 定时同步触发');
-    try {
-      const authCache = await secureStorage.get<{ isAuthenticated: boolean }>('auth_cache');
-      if (!authCache?.isAuthenticated) {
-        console.log('[PeriodicSync] 用户未登录，跳过同步');
-        return;
-      }
-      const tabs = await chrome.tabs.query({});
-      if (tabs.length > 0) {
-        await tabManager.saveAllTabs(tabs);
-      }
-      console.log('[PeriodicSync] 定时同步完成');
-    } catch (error) {
-      console.error('[PeriodicSync] 定时同步失败:', error);
+    await performPeriodicSync();
+    return;
+  }
+
+  // 重试 alarm：读取当前重试计数后继续
+  if (alarm.name.startsWith(SYNC_RETRY_ALARM_PREFIX)) {
+    const stored = await chrome.storage.local.get([STORAGE_RETRY_COUNT_KEY]);
+    const retryCount: number = stored[STORAGE_RETRY_COUNT_KEY] || 0;
+    console.log(`[PeriodicSync] 重试 alarm "${alarm.name}" 触发，重试计数: ${retryCount}`);
+
+    if (retryCount > 0 && retryCount <= MAX_SYNC_RETRIES) {
+      await performPeriodicSync(retryCount);
+    } else {
+      console.warn(`[PeriodicSync] 重试计数异常 (${retryCount})，跳过本次重试`);
     }
   }
 });
