@@ -54,8 +54,8 @@ export const EmptyState: React.FC<EmptyStateProps> = ({
   }[tone];
 
   return (
-    <div className={`animate-in rounded-[28px] border px-6 py-8 text-center shadow-[0_24px_60px_-40px_rgba(15,23,42,0.55)] backdrop-blur-sm ${toneStyles.shell} ${className}`}>
-      <div className={`mx-auto inline-flex h-16 w-16 items-center justify-center rounded-2xl ${toneStyles.icon}`}>
+    <div className={`animate-in rounded-[28px] border px-6 py-8 text-center shadow-[0_24px_60px_-40px_rgba(15,23,42,0.55)] backdrop-blur-sm animate-fade-slide-up ${toneStyles.shell} ${className}`}>
+      <div className={`mx-auto inline-flex h-16 w-16 items-center justify-center rounded-2xl empty-state-illustration animate-float-subtle ${toneStyles.icon}`}>
         {icon || <DefaultIcon />}
       </div>
 

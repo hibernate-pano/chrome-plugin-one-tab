@@ -88,139 +88,139 @@ const CheckIcon = () => (
 );
 
 export const WelcomeStep: React.FC<{ version: string }> = ({ version }) => (
-  <div className="onboarding-content">
-    <div className="onboarding-icon-wrapper">
+  <div className="flex flex-col items-center gap-6 p-8">
+    <div className="onboarding-icon-wrapper rounded-xl shadow-md bg-primary/10 w-12 h-12 flex items-center justify-center">
       <CompassIcon />
     </div>
-    <h2 className="onboarding-title">欢迎使用 TabStack</h2>
+    <h2 className="text-xl font-semibold text-gray-900 dark:text-white">欢迎使用 TabStack</h2>
     <div className="flex justify-center">
-      <span className="onboarding-version-badge">v{version}</span>
+      <span className="text-xs font-medium px-3 py-1 bg-primary/10 text-primary rounded-full">v{version}</span>
     </div>
-    <p className="onboarding-description">
+    <p className="text-sm text-gray-500 dark:text-gray-400">
       把当前窗口保存成可找回、可恢复的工作会话
       <br />
       让中断后的继续工作变得更快、更稳
     </p>
-    <div className="onboarding-feature-grid">
-      <div className="onboarding-feature-card">
-        <div className="onboarding-feature-icon"><SaveIcon /></div>
-        <div className="onboarding-feature-title">保存</div>
-        <div className="onboarding-feature-desc">先把工作现场收起来</div>
+    <div className="onboarding-feature-grid grid grid-cols-1 sm:grid-cols-3 gap-4 w-full max-w-3xl">
+      <div className="onboarding-feature-card rounded-xl shadow-sm bg-white dark:bg-gray-800 p-6 flex flex-col items-center text-center gap-3 transition-all duration-200 hover:scale-105 hover:shadow-md focus-visible:ring-2 focus-visible:ring-primary/50 focus-visible:outline-none animate-fade-in">
+        <div className="onboarding-feature-icon bg-primary/5 w-12 h-12 flex items-center justify-center rounded-xl"><SaveIcon /></div>
+        <div className="onboarding-feature-title font-medium text-gray-900 dark:text-white">保存</div>
+        <div className="onboarding-feature-desc text-sm text-gray-500 dark:text-gray-400">先把工作现场收起来</div>
       </div>
-      <div className="onboarding-feature-card">
-        <div className="onboarding-feature-icon"><SearchIcon /></div>
-        <div className="onboarding-feature-title">搜索</div>
-        <div className="onboarding-feature-desc">按会话、备注或标签找回</div>
+      <div className="onboarding-feature-card rounded-xl shadow-sm bg-white dark:bg-gray-800 p-6 flex flex-col items-center text-center gap-3 transition-all duration-200 hover:scale-105 hover:shadow-md focus-visible:ring-2 focus-visible:ring-primary/50 focus-visible:outline-none animate-fade-in animation-delay-100">
+        <div className="onboarding-feature-icon bg-primary/5 w-12 h-12 flex items-center justify-center rounded-xl"><SearchIcon /></div>
+        <div className="onboarding-feature-title font-medium text-gray-900 dark:text-white">搜索</div>
+        <div className="onboarding-feature-desc text-sm text-gray-500 dark:text-gray-400">按会话、备注或标签找回</div>
       </div>
-      <div className="onboarding-feature-card">
-        <div className="onboarding-feature-icon"><RocketIcon /></div>
-        <div className="onboarding-feature-title">恢复</div>
-        <div className="onboarding-feature-desc">默认在新窗口里继续工作</div>
+      <div className="onboarding-feature-card rounded-xl shadow-sm bg-white dark:bg-gray-800 p-6 flex flex-col items-center text-center gap-3 transition-all duration-200 hover:scale-105 hover:shadow-md focus-visible:ring-2 focus-visible:ring-primary/50 focus-visible:outline-none animate-fade-in animation-delay-200">
+        <div className="onboarding-feature-icon bg-primary/5 w-12 h-12 flex items-center justify-center rounded-xl"><RocketIcon /></div>
+        <div className="onboarding-feature-title font-medium text-gray-900 dark:text-white">恢复</div>
+        <div className="onboarding-feature-desc text-sm text-gray-500 dark:text-gray-400">默认在新窗口里继续工作</div>
       </div>
     </div>
   </div>
 );
 
 export const SaveTabsStep: React.FC = () => (
-  <div className="onboarding-content">
-    <div className="onboarding-icon-wrapper">
+  <div className="flex flex-col items-center gap-6 p-8">
+    <div className="onboarding-icon-wrapper rounded-xl shadow-md bg-primary/10 w-12 h-12 flex items-center justify-center">
       <SaveIcon />
     </div>
-    <h2 className="onboarding-title">先保存一个会话</h2>
-    <p className="onboarding-description">
+    <h2 className="text-xl font-semibold text-gray-900 dark:text-white">先保存一个会话</h2>
+    <p className="text-sm text-gray-500 dark:text-gray-400">
       点击顶部的"保存会话"按钮
       <br />
       当前窗口会被收成一个可找回的工作会话
     </p>
-    <div className="onboarding-feature-grid">
-      <div className="onboarding-feature-card">
-        <div className="onboarding-feature-icon"><WindowIcon /></div>
-        <div className="onboarding-feature-title">保存当前窗口</div>
-        <div className="onboarding-feature-desc">把此刻的工作上下文完整留住</div>
+    <div className="onboarding-feature-grid grid grid-cols-1 sm:grid-cols-3 gap-4 w-full max-w-3xl">
+      <div className="onboarding-feature-card rounded-xl shadow-sm bg-white dark:bg-gray-800 p-6 flex flex-col items-center text-center gap-3 transition-all duration-200 hover:scale-105 hover:shadow-md focus-visible:ring-2 focus-visible:ring-primary/50 focus-visible:outline-none animate-fade-in">
+        <div className="onboarding-feature-icon bg-primary/5 w-12 h-12 flex items-center justify-center rounded-xl"><WindowIcon /></div>
+        <div className="onboarding-feature-title font-medium text-gray-900 dark:text-white">保存当前窗口</div>
+        <div className="onboarding-feature-desc text-sm text-gray-500 dark:text-gray-400">把此刻的工作上下文完整留住</div>
       </div>
-      <div className="onboarding-feature-card">
-        <div className="onboarding-feature-icon"><PinIcon /></div>
-        <div className="onboarding-feature-title">Pinned 可选</div>
-        <div className="onboarding-feature-desc">固定标签页可保留，也可一并保存</div>
+      <div className="onboarding-feature-card rounded-xl shadow-sm bg-white dark:bg-gray-800 p-6 flex flex-col items-center text-center gap-3 transition-all duration-200 hover:scale-105 hover:shadow-md focus-visible:ring-2 focus-visible:ring-primary/50 focus-visible:outline-none animate-fade-in animation-delay-100">
+        <div className="onboarding-feature-icon bg-primary/5 w-12 h-12 flex items-center justify-center rounded-xl"><PinIcon /></div>
+        <div className="onboarding-feature-title font-medium text-gray-900 dark:text-white">Pinned 可选</div>
+        <div className="onboarding-feature-desc text-sm text-gray-500 dark:text-gray-400">固定标签页可保留，也可一并保存</div>
       </div>
-      <div className="onboarding-feature-card">
-        <div className="onboarding-feature-icon"><EditIcon /></div>
-        <div className="onboarding-feature-title">备注与收藏</div>
-        <div className="onboarding-feature-desc">给重要会话补一句上下文说明</div>
+      <div className="onboarding-feature-card rounded-xl shadow-sm bg-white dark:bg-gray-800 p-6 flex flex-col items-center text-center gap-3 transition-all duration-200 hover:scale-105 hover:shadow-md focus-visible:ring-2 focus-visible:ring-primary/50 focus-visible:outline-none animate-fade-in animation-delay-200">
+        <div className="onboarding-feature-icon bg-primary/5 w-12 h-12 flex items-center justify-center rounded-xl"><EditIcon /></div>
+        <div className="onboarding-feature-title font-medium text-gray-900 dark:text-white">备注与收藏</div>
+        <div className="onboarding-feature-desc text-sm text-gray-500 dark:text-gray-400">给重要会话补一句上下文说明</div>
       </div>
     </div>
   </div>
 );
 
 export const SearchStep: React.FC = () => (
-  <div className="onboarding-content">
-    <div className="onboarding-icon-wrapper">
+  <div className="flex flex-col items-center gap-6 p-8">
+    <div className="onboarding-icon-wrapper rounded-xl shadow-md bg-primary/10 w-12 h-12 flex items-center justify-center">
       <SearchIcon />
     </div>
-    <h2 className="onboarding-title">需要时快速找回</h2>
-    <p className="onboarding-description">
+    <h2 className="text-xl font-semibold text-gray-900 dark:text-white">需要时快速找回</h2>
+    <p className="text-sm text-gray-500 dark:text-gray-400">
       搜索会话名、备注、标签标题或 URL
       <br />
       结果会先按会话归组，再展开具体标签
     </p>
-    <div className="onboarding-feature-grid">
-      <div className="onboarding-feature-card">
-        <div className="onboarding-feature-icon"><FolderIcon /></div>
-        <div className="onboarding-feature-title">先找会话</div>
-        <div className="onboarding-feature-desc">同一批相关标签会一起出现</div>
+    <div className="onboarding-feature-grid grid grid-cols-1 sm:grid-cols-3 gap-4 w-full max-w-3xl">
+      <div className="onboarding-feature-card rounded-xl shadow-sm bg-white dark:bg-gray-800 p-6 flex flex-col items-center text-center gap-3 transition-all duration-200 hover:scale-105 hover:shadow-md focus-visible:ring-2 focus-visible:ring-primary/50 focus-visible:outline-none animate-fade-in">
+        <div className="onboarding-feature-icon bg-primary/5 w-12 h-12 flex items-center justify-center rounded-xl"><FolderIcon /></div>
+        <div className="onboarding-feature-title font-medium text-gray-900 dark:text-white">先找会话</div>
+        <div className="onboarding-feature-desc text-sm text-gray-500 dark:text-gray-400">同一批相关标签会一起出现</div>
       </div>
-      <div className="onboarding-feature-card">
-        <div className="onboarding-feature-icon"><ClockIcon /></div>
-        <div className="onboarding-feature-title">按时间过滤</div>
-        <div className="onboarding-feature-desc">快速收敛到较新的会话或更久之前</div>
+      <div className="onboarding-feature-card rounded-xl shadow-sm bg-white dark:bg-gray-800 p-6 flex flex-col items-center text-center gap-3 transition-all duration-200 hover:scale-105 hover:shadow-md focus-visible:ring-2 focus-visible:ring-primary/50 focus-visible:outline-none animate-fade-in animation-delay-100">
+        <div className="onboarding-feature-icon bg-primary/5 w-12 h-12 flex items-center justify-center rounded-xl"><ClockIcon /></div>
+        <div className="onboarding-feature-title font-medium text-gray-900 dark:text-white">按时间过滤</div>
+        <div className="onboarding-feature-desc text-sm text-gray-500 dark:text-gray-400">快速收敛到较新的会话或更久之前</div>
       </div>
-      <div className="onboarding-feature-card">
-        <div className="onboarding-feature-icon"><StarIcon /></div>
-        <div className="onboarding-feature-title">收藏重要会话</div>
-        <div className="onboarding-feature-desc">关键上下文更容易二次定位</div>
+      <div className="onboarding-feature-card rounded-xl shadow-sm bg-white dark:bg-gray-800 p-6 flex flex-col items-center text-center gap-3 transition-all duration-200 hover:scale-105 hover:shadow-md focus-visible:ring-2 focus-visible:ring-primary/50 focus-visible:outline-none animate-fade-in animation-delay-200">
+        <div className="onboarding-feature-icon bg-primary/5 w-12 h-12 flex items-center justify-center rounded-xl"><StarIcon /></div>
+        <div className="onboarding-feature-title font-medium text-gray-900 dark:text-white">收藏重要会话</div>
+        <div className="onboarding-feature-desc text-sm text-gray-500 dark:text-gray-400">关键上下文更容易二次定位</div>
       </div>
     </div>
   </div>
 );
 
 export const RestoreStep: React.FC = () => (
-  <div className="onboarding-content">
-    <div className="onboarding-icon-wrapper">
+  <div className="flex flex-col items-center gap-6 p-8">
+    <div className="onboarding-icon-wrapper rounded-xl shadow-md bg-primary/10 w-12 h-12 flex items-center justify-center">
       <RocketIcon />
     </div>
-    <h2 className="onboarding-title">恢复时继续，而不是重来</h2>
-    <p className="onboarding-description">
+    <h2 className="text-xl font-semibold text-gray-900 dark:text-white">恢复时继续，而不是重来</h2>
+    <p className="text-sm text-gray-500 dark:text-gray-400">
       恢复整个会话时，会默认在新窗口中打开
       <br />
       需要时也可以从会话列表里再次打开刚刚整理过的内容
     </p>
-    <div className="onboarding-feature-grid">
-      <div className="onboarding-feature-card">
-        <div className="onboarding-feature-icon"><WandIcon /></div>
-        <div className="onboarding-feature-title">新窗口恢复</div>
-        <div className="onboarding-feature-desc">尽量不打断你当前正在做的事</div>
+    <div className="onboarding-feature-grid grid grid-cols-1 sm:grid-cols-3 gap-4 w-full max-w-3xl">
+      <div className="onboarding-feature-card rounded-xl shadow-sm bg-white dark:bg-gray-800 p-6 flex flex-col items-center text-center gap-3 transition-all duration-200 hover:scale-105 hover:shadow-md focus-visible:ring-2 focus-visible:ring-primary/50 focus-visible:outline-none animate-fade-in">
+        <div className="onboarding-feature-icon bg-primary/5 w-12 h-12 flex items-center justify-center rounded-xl"><WandIcon /></div>
+        <div className="onboarding-feature-title font-medium text-gray-900 dark:text-white">新窗口恢复</div>
+        <div className="onboarding-feature-desc text-sm text-gray-500 dark:text-gray-400">尽量不打断你当前正在做的事</div>
       </div>
-      <div className="onboarding-feature-card">
-        <div className="onboarding-feature-icon"><LocationIcon /></div>
-        <div className="onboarding-feature-title">保留 pinned</div>
-        <div className="onboarding-feature-desc">固定标签页状态会跟着一起回来</div>
+      <div className="onboarding-feature-card rounded-xl shadow-sm bg-white dark:bg-gray-800 p-6 flex flex-col items-center text-center gap-3 transition-all duration-200 hover:scale-105 hover:shadow-md focus-visible:ring-2 focus-visible:ring-primary/50 focus-visible:outline-none animate-fade-in animation-delay-100">
+        <div className="onboarding-feature-icon bg-primary/5 w-12 h-12 flex items-center justify-center rounded-xl"><LocationIcon /></div>
+        <div className="onboarding-feature-title font-medium text-gray-900 dark:text-white">保留 pinned</div>
+        <div className="onboarding-feature-desc text-sm text-gray-500 dark:text-gray-400">固定标签页状态会跟着一起回来</div>
       </div>
-      <div className="onboarding-feature-card">
-        <div className="onboarding-feature-icon"><ClockIcon /></div>
-        <div className="onboarding-feature-title">时间戳命名</div>
-        <div className="onboarding-feature-desc">新会话默认按保存时间命名，回看更直接</div>
+      <div className="onboarding-feature-card rounded-xl shadow-sm bg-white dark:bg-gray-800 p-6 flex flex-col items-center text-center gap-3 transition-all duration-200 hover:scale-105 hover:shadow-md focus-visible:ring-2 focus-visible:ring-primary/50 focus-visible:outline-none animate-fade-in animation-delay-200">
+        <div className="onboarding-feature-icon bg-primary/5 w-12 h-12 flex items-center justify-center rounded-xl"><ClockIcon /></div>
+        <div className="onboarding-feature-title font-medium text-gray-900 dark:text-white">时间戳命名</div>
+        <div className="onboarding-feature-desc text-sm text-gray-500 dark:text-gray-400">新会话默认按保存时间命名，回看更直接</div>
       </div>
     </div>
   </div>
 );
 
 export const ReadyStep: React.FC = () => (
-  <div className="onboarding-content text-center">
-    <div className="onboarding-icon-wrapper">
-      <span className="onboarding-confetti"><CheckIcon /></span>
+  <div className="flex flex-col items-center gap-6 p-8 text-center">
+    <div className="onboarding-icon-wrapper rounded-xl shadow-md bg-primary/10 w-12 h-12 flex items-center justify-center">
+      <span className="rounded-full w-8 h-8 flex items-center justify-center font-bold text-sm bg-primary/10 text-primary"><CheckIcon /></span>
     </div>
-    <h2 className="onboarding-title">核心闭环已经齐了</h2>
-    <p className="onboarding-description">
+    <h2 className="text-xl font-semibold text-gray-900 dark:text-white">核心闭环已经齐了</h2>
+    <p className="text-sm text-gray-500 dark:text-gray-400">
       现在开始保存、搜索、恢复你的工作会话
       <br />
       需要跨设备时，再按需手动同步

@@ -19,13 +19,13 @@ export const Toast: React.FC<ToastProps> = ({
   visible
 }) => {
   const [isVisible, setIsVisible] = useState(visible);
-  const [animation, setAnimation] = useState('animate-fadeIn');
+  const [animation, setAnimation] = useState('animate-toast-in');
   const [progress, setProgress] = useState(100);
 
   useEffect(() => {
     setIsVisible(visible);
     if (visible) {
-      setAnimation('animate-fadeIn');
+      setAnimation('animate-toast-in');
       setProgress(100);
 
       const startedAt = Date.now();
@@ -36,7 +36,7 @@ export const Toast: React.FC<ToastProps> = ({
       }, 60);
 
       const timer = setTimeout(() => {
-        setAnimation('animate-fadeOut');
+        setAnimation('animate-toast-out');
         window.clearInterval(progressTimer);
 
         setTimeout(() => {
@@ -123,39 +123,47 @@ export const Toast: React.FC<ToastProps> = ({
   const typeStyles = getTypeStyles();
 
   return createPortal(
-    <div className={`fixed right-4 top-4 z-[110] ${animation}`}>
-      <div
-        className={`pointer-events-auto relative min-w-[280px] max-w-[420px] overflow-hidden rounded-2xl border shadow-[0_20px_60px_rgba(15,23,42,0.18)] backdrop-blur ${typeStyles.shell}`}
-      >
-        <div className={`h-1 w-full ${typeStyles.accent}`} style={{ transform: `scaleX(${progress / 100})`, transformOrigin: 'left' }} />
-        <div className="flex items-start gap-3 px-4 py-4">
-          <div className={`mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl ${typeStyles.iconWrap}`}>
-            {getIcon()}
-          </div>
-          <div className="min-w-0 flex-1">
-            <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-400 dark:text-slate-500">
-              {type}
+    <>
+      <style>{`
+        .progress-bar {
+          transform: scaleX(var(--progress));
+          transform-origin: left;
+        }
+      `}</style>
+      <div className={`fixed right-4 top-4 z-[110] ${animation}`}>
+        <div
+          className={`pointer-events-auto relative min-w-[280px] max-w-[420px] overflow-hidden rounded-2xl border shadow-toast backdrop-blur ${typeStyles.shell}`}
+        >
+          <div className={`progress-bar h-1 w-full ${typeStyles.accent}`} style={{ '--progress': progress / 100 } as React.CSSProperties} />
+          <div className="flex items-start gap-3 p-4">
+            <div className={`mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl ${typeStyles.iconWrap}`}>
+              {getIcon()}
             </div>
-            <p className="mt-1 text-sm font-medium leading-6 text-current">{message}</p>
+            <div className="min-w-0 flex-1">
+              <div className="text-xs font-semibold uppercase tracking-toast text-slate-400 dark:text-slate-500">
+                {type}
+              </div>
+              <p className="mt-1 text-sm font-medium leading-6 text-current">{message}</p>
+            </div>
+            <button
+              onClick={() => {
+                setAnimation('animate-toast-out');
+                setTimeout(() => {
+                  setIsVisible(false);
+                  onClose?.();
+                }, 220);
+              }}
+              className="inline-flex h-8 w-8 items-center justify-center rounded-full text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-600 dark:hover:bg-slate-800 dark:hover:text-slate-200"
+              aria-label="关闭提示"
+            >
+              <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
           </div>
-          <button
-            onClick={() => {
-              setAnimation('animate-fadeOut');
-              setTimeout(() => {
-                setIsVisible(false);
-                onClose?.();
-              }, 220);
-            }}
-            className="inline-flex h-8 w-8 items-center justify-center rounded-full text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-600 dark:hover:bg-slate-800 dark:hover:text-slate-200"
-            aria-label="关闭提示"
-          >
-            <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-            </svg>
-          </button>
         </div>
       </div>
-    </div>,
+    </>,
     document.body
   );
 };

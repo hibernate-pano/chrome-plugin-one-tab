@@ -207,7 +207,7 @@ const ReorderView: React.FC = () => {
                         e.stopPropagation(); // 阻止事件冒泡
                         handleDeleteTab(tab);
                       }}
-                      className="ml-2 p-1 rounded hover:bg-gray-200 dark:hover:bg-gray-600 text-gray-500 dark:text-gray-400 hover:text-red-500 dark:hover:text-red-400 transition-colors duration-150 flex-shrink-0 flat-interaction"
+                      className="ml-2 p-1 rounded hover:bg-gray-200 dark:hover:bg-gray-600 text-gray-500 dark:text-gray-400 hover:text-red-500 dark:hover:text-red-400 transition-all duration-200 ease-out flex-shrink-0 flat-interaction"
                       title="删除标签页"
                     >
                       <svg

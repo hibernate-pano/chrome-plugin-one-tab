@@ -66,15 +66,15 @@ export const TabPreview: React.FC<TabPreviewProps> = ({ tab, visible, position }
   if (!visible) return null;
 
   return (
-    <div 
-      className="fixed z-50 bg-white dark:bg-gray-800 rounded-md shadow-lg border border-gray-200 dark:border-gray-700 p-3 max-w-md"
+    <div
+      className="fixed z-50 bg-white dark:bg-gray-800 rounded-md shadow-lg border border-gray-200 dark:border-gray-700 p-3 max-w-md animate-slide-up-fade"
       style={{
         left: `${position.x + 10}px`,
         top: `${position.y + 10}px`,
         transform: 'translateY(-50%)',
-        opacity: visible ? 1 : 0,
-        transition: 'opacity 0.2s ease-in-out',
       }}
+      role="tooltip"
+      aria-label={`预览: ${tab.title}，按 Esc 关闭`}
     >
       <div className="flex flex-col space-y-2">
         {/* 标题 */}
@@ -90,8 +90,8 @@ export const TabPreview: React.FC<TabPreviewProps> = ({ tab, visible, position }
         {/* 预览图 */}
         <div className="mt-2 relative">
           {loading ? (
-            <div className="h-24 bg-gray-100 dark:bg-gray-700 rounded flex items-center justify-center">
-              <div className="animate-pulse text-gray-400 dark:text-gray-500">加载预览...</div>
+            <div className="h-24 bg-gradient-to-r from-gray-100 via-gray-200 to-gray-100 dark:from-gray-700 dark:via-gray-600 dark:to-gray-700 bg-[length:200%_100%] rounded flex items-center justify-center animate-shimmer">
+              <div className="text-gray-400 dark:text-gray-500 text-xs">加载预览...</div>
             </div>
           ) : previewImage ? (
             <div className="relative h-24 bg-gray-100 dark:bg-gray-700 rounded overflow-hidden">

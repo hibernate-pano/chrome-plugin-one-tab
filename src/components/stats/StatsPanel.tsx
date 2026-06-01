@@ -35,11 +35,11 @@ const StatCard: React.FC<{
   icon: React.ReactNode;
   subtitle?: string;
 }> = ({ label, value, icon, subtitle }) => (
-  <div className="rounded-xl border border-gray-200/80 dark:border-gray-700/80 bg-white dark:bg-gray-800 p-4">
+  <div className="rounded-xl border border-gray-200/80 dark:border-gray-700/80 bg-white dark:bg-gray-800 p-4 shadow-sm hover:bg-primary-50 dark:hover:bg-primary-900/20 transition-all duration-200">
     <div className="flex items-start justify-between">
       <div>
         <p className="text-xs text-gray-500 dark:text-gray-400 uppercase tracking-wide">{label}</p>
-        <p className="text-2xl font-bold text-gray-900 dark:text-gray-100 mt-1">{value}</p>
+        <p className="text-2xl font-bold text-gray-900 dark:text-gray-100 mt-1 tabular-nums">{value}</p>
         {subtitle && (
           <p className="text-xs text-gray-400 dark:text-gray-500 mt-0.5">{subtitle}</p>
         )}
@@ -68,10 +68,16 @@ const GlobeIcon = () => (
   </svg>
 );
 const ChartIcon = () => (
-  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
-    <line x1="18" y1="20" x2="18" y2="10"/>
-    <line x1="12" y1="20" x2="12" y2="4"/>
-    <line x1="6" y1="20" x2="6" y2="14"/>
+  <svg viewBox="0 0 24 24" fill="none" className="text-primary-500">
+    <defs>
+      <linearGradient id="chartGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+        <stop offset="0%" stopColor="currentColor" className="from-primary-500" />
+        <stop offset="100%" stopColor="currentColor" className="to-accent-500" />
+      </linearGradient>
+    </defs>
+    <line x1="18" y1="20" x2="18" y2="10" stroke="url(#chartGrad)" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round"/>
+    <line x1="12" y1="20" x2="12" y2="4" stroke="url(#chartGrad)" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round"/>
+    <line x1="6" y1="20" x2="6" y2="14" stroke="url(#chartGrad)" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round"/>
   </svg>
 );
 
@@ -149,7 +155,7 @@ export const StatsPanel: React.FC<{ onClose: () => void }> = ({ onClose }) => {
         </div>
         <button
           onClick={onClose}
-          className="px-3 py-2 text-sm text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 transition-colors"
+          className="px-3 py-2 text-sm text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 transition-colors focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 rounded-md"
         >
           返回
         </button>
@@ -168,19 +174,19 @@ export const StatsPanel: React.FC<{ onClose: () => void }> = ({ onClose }) => {
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
-        <div className="rounded-xl border border-gray-200/80 dark:border-gray-700/80 bg-white dark:bg-gray-800 p-4">
+        <div className="rounded-xl border border-gray-200/80 dark:border-gray-700/80 bg-white dark:bg-gray-800 p-4 shadow-sm">
           <h3 className="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-3">
             本周活动
           </h3>
           <div className="flex gap-6">
             <div>
-              <p className="text-3xl font-bold text-primary-600 dark:text-primary-400">
+              <p className="text-3xl font-bold text-primary-600 dark:text-primary-400 tabular-nums">
                 {stats.savedThisWeek}
               </p>
               <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">保存次数</p>
             </div>
             <div>
-              <p className="text-3xl font-bold text-accent-600 dark:text-accent-400">
+              <p className="text-3xl font-bold text-accent-600 dark:text-accent-400 tabular-nums">
                 {stats.restoredThisWeek}
               </p>
               <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">恢复次数</p>
@@ -188,7 +194,7 @@ export const StatsPanel: React.FC<{ onClose: () => void }> = ({ onClose }) => {
           </div>
         </div>
 
-        <div className="rounded-xl border border-gray-200/80 dark:border-gray-700/80 bg-white dark:bg-gray-800 p-4">
+        <div className="rounded-xl border border-gray-200/80 dark:border-gray-700/80 bg-white dark:bg-gray-800 p-4 shadow-sm">
           <h3 className="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-3">
             常访问域名
           </h3>
@@ -212,7 +218,7 @@ export const StatsPanel: React.FC<{ onClose: () => void }> = ({ onClose }) => {
       </div>
 
       {stats.oldestSession && (
-        <div className="rounded-xl border border-gray-200/80 dark:border-gray-700/80 bg-white dark:bg-gray-800 p-4">
+        <div className="rounded-xl border border-gray-200/80 dark:border-gray-700/80 bg-white dark:bg-gray-800 p-4 shadow-sm">
           <p className="text-xs text-gray-500 dark:text-gray-400">
             最早保存的会话：
             <span className="text-gray-700 dark:text-gray-300 ml-1">

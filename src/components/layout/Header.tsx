@@ -206,8 +206,8 @@ export const Header: React.FC<HeaderProps> = ({ onSearch, onShowStats }) => {
   const [showDropdown, setShowDropdown] = useState(false);
 
   return (
-    <header className="header">
-      <div className={`w-full py-3 px-4 sm:px-6 ${getContainerWidthClass()}`}>
+    <header className="header rounded-xl shadow-sm">
+      <div className={`w-full py-4 px-4 sm:px-6 ${getContainerWidthClass()}`}>
         <div className="flex items-center justify-between gap-4">
           {/* Logo 区域 */}
           <button
@@ -216,7 +216,7 @@ export const Header: React.FC<HeaderProps> = ({ onSearch, onShowStats }) => {
             title="回到默认视图"
             aria-label="回到默认视图"
           >
-            <TabStackLogo size="sm" showIcon={true} />
+            <TabStackLogo size="sm" showIcon={true} className="font-bold" />
             <div className="hidden sm:block">
               <TabCounter />
             </div>
@@ -224,7 +224,7 @@ export const Header: React.FC<HeaderProps> = ({ onSearch, onShowStats }) => {
 
           {/* 搜索框 */}
           <div className="flex-1 max-w-md mx-4">
-            <div className="relative">
+            <div className="relative shadow-sm">
               {isSearchBusy && (
                 <div className="absolute left-3 top-1/2 -translate-y-1/2 search-icon">
                   <LoadingIcon />
@@ -234,7 +234,7 @@ export const Header: React.FC<HeaderProps> = ({ onSearch, onShowStats }) => {
                 ref={searchInputRef}
                 type="text"
                 placeholder="搜索会话、备注或标签..."
-                className={`input search-input w-full py-2 text-sm ${isSearchBusy ? 'pl-10' : 'pl-3'}`}
+                className={`input search-input w-full py-2 text-sm rounded-lg focus-visible:ring-2 focus-visible:ring-primary/50 focus-visible:ring-offset-2 ${isSearchBusy ? 'pl-10' : 'pl-3'}`}
                 onChange={handleSearch}
                 value={searchValue}
                 aria-label="搜索会话、备注或标签页"
@@ -245,7 +245,7 @@ export const Header: React.FC<HeaderProps> = ({ onSearch, onShowStats }) => {
               {searchValue && (
                 <button
                   onClick={handleClearSearch}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 search-clear-btn flat-interaction transition-colors"
+                  className="absolute right-3 top-1/2 -translate-y-1/2 search-clear-btn flat-interaction transition-colors hover:bg-secondary/20"
                   title="清空搜索"
                 >
                   <CloseIcon />
@@ -263,7 +263,7 @@ export const Header: React.FC<HeaderProps> = ({ onSearch, onShowStats }) => {
             >
               <button
                 onClick={handleToggleLayout}
-                className="btn-icon flat-interaction"
+                className="btn-icon flat-interaction hover:scale-105 focus-visible:ring-2 focus-visible:ring-primary/50 focus-visible:ring-offset-2"
                 aria-label={settings.layoutMode === 'single' ? '切换为双栏布局' : '切换为单栏布局'}
               >
                 {settings.layoutMode === 'single' ? <LayoutSingleIcon /> : <LayoutDoubleIcon />}
@@ -274,7 +274,7 @@ export const Header: React.FC<HeaderProps> = ({ onSearch, onShowStats }) => {
             <Tooltip content="清理重复标签" position="bottom">
               <button
                 onClick={handleCleanDuplicateTabs}
-                className="btn-icon flat-interaction"
+                className="btn-icon flat-interaction hover:scale-105 focus-visible:ring-2 focus-visible:ring-primary/50 focus-visible:ring-offset-2"
                 aria-label="清理重复标签页"
               >
                 <CleanIcon />
@@ -286,7 +286,7 @@ export const Header: React.FC<HeaderProps> = ({ onSearch, onShowStats }) => {
               <Tooltip content="使用统计" position="bottom">
                 <button
                   onClick={onShowStats}
-                  className="btn-icon flat-interaction"
+                  className="btn-icon flat-interaction hover:scale-105 focus-visible:ring-2 focus-visible:ring-primary/50 focus-visible:ring-offset-2"
                   aria-label="查看使用统计"
                 >
                   <StatsIcon />
@@ -323,7 +323,7 @@ export const Header: React.FC<HeaderProps> = ({ onSearch, onShowStats }) => {
             <div className="relative">
               <button
                 onClick={() => setShowDropdown(!showDropdown)}
-                className="btn-icon flat-interaction"
+                className="btn-icon flat-interaction hover:scale-105 focus-visible:ring-2 focus-visible:ring-primary/50 focus-visible:ring-offset-2"
                 aria-label="菜单"
               >
                 <MenuIcon />

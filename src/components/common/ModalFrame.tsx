@@ -37,18 +37,19 @@ export const ModalFrame: React.FC<ModalFrameProps> = ({
   }
 
   return createPortal(
-    <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
+    <div className="fixed inset-0 z-[100] flex items-center justify-center p-4"
+      >
       <div
-        className="absolute inset-0 bg-slate-950/55 backdrop-blur-sm transition-opacity"
+        className="absolute inset-0 bg-black/50 backdrop-blur-sm transition-opacity"
         onClick={onClose}
       />
 
       <div
-        className={`relative w-full ${maxWidthClassName} overflow-hidden rounded-[28px] border border-slate-200/80 bg-white/95 shadow-[0_28px_80px_rgba(15,23,42,0.28)] ring-1 ring-white/60 backdrop-blur dark:border-slate-700/80 dark:bg-slate-900/95 dark:ring-slate-800/80`}
+        className={`relative w-full ${maxWidthClassName} overflow-hidden rounded-3xl border border-slate-200/80 bg-white/95 shadow-2xl ring-1 ring-white/60 backdrop-blur transition-transform duration-200 hover:scale-105 dark:border-slate-700/80 dark:bg-slate-900/95 dark:ring-slate-800/80`}
       >
         <button
           onClick={onClose}
-          className="absolute right-4 top-4 inline-flex h-9 w-9 items-center justify-center rounded-full border border-slate-200/80 bg-white/80 text-slate-500 transition-colors hover:border-slate-300 hover:text-slate-700 dark:border-slate-700/80 dark:bg-slate-900/80 dark:text-slate-400 dark:hover:border-slate-600 dark:hover:text-slate-200"
+          className="absolute right-4 top-4 inline-flex h-9 w-9 items-center justify-center rounded-full border border-slate-200/80 bg-white/80 text-slate-500 transition-colors hover:border-slate-300 hover:text-slate-700 focus-visible:ring-2 focus-visible:ring-slate-400 focus-visible:ring-offset-2 focus-visible:outline-none dark:border-slate-700/80 dark:bg-slate-900/80 dark:text-slate-400 dark:hover:border-slate-600 dark:hover:text-slate-200"
           aria-label="关闭弹窗"
         >
           <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>

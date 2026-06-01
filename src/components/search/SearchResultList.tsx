@@ -337,7 +337,7 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({ searchQuery,
   };
 
   const renderTabItem = ({ tab, group }: { tab: Tab; group: TabGroup }) => (
-    <div className="tab-item group/tab">
+    <div className="tab-item group/tab hover:scale-[1.02] hover:bg-primary/5 active:scale-[0.98] transition-all duration-150 ease-out">
       <SafeFavicon src={tab.favicon} alt="" className="tab-item-favicon" />
 
       <div className="flex-1 min-w-0 flex items-center gap-3">

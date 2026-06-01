@@ -64,6 +64,7 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
   const [isCollapsed, setIsCollapsed] = useState(false);
   const [isEditingNotes, setIsEditingNotes] = useState(false);
   const [notesDraft, setNotesDraft] = useState(group.notes || '');
+  const [favoriteAnimating, setFavoriteAnimating] = useState(false);
 
   useEffect(() => {
     setNewName(group.name);
@@ -120,6 +121,8 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
   }, [dispatch, group.id]);
 
   const handleToggleFavorite = useCallback(() => {
+    setFavoriteAnimating(true);
+    setTimeout(() => setFavoriteAnimating(false), 350);
     dispatch(updateGroup({
       ...group,
       isFavorite: !group.isFavorite,
@@ -279,7 +282,7 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
 
   return (
     <div
-      className="tab-group-card animate-in group/card micro-interaction-card"
+      className="tab-group-card animate-fade-in-up group/card micro-interaction-card shadow-sm"
       role="region"
       aria-labelledby={`tab-group-title-${group.id}`}
     >
@@ -289,12 +292,12 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
           {/* 折叠按钮 */}
           <button
             onClick={() => setIsCollapsed(!isCollapsed)}
-            className="btn-icon p-1 -ml-1 micro-interaction-button"
+            className="btn-icon p-1 -ml-1 collapse-icon micro-interaction-button focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-2"
             aria-label={isCollapsed ? '展开会话' : '折叠会话'}
             aria-expanded={!isCollapsed}
           >
             <svg
-              className={`w-4 h-4 transition-transform duration-300 ease-out ${isCollapsed ? '-rotate-90' : ''}`}
+              className={`w-4 h-4 transition-transform duration-300 ease-in-out ${isCollapsed ? '-rotate-90' : 'rotate-180'}`}
               fill="none"
               viewBox="0 0 24 24"
               stroke="currentColor"
@@ -321,7 +324,7 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
             <div className="min-w-0 flex items-center gap-2">
               <h3
                 id={`tab-group-title-${group.id}`}
-                className="tab-group-title truncate cursor-pointer tab-group-title-hover transition-colors flat-interaction"
+                className="tab-group-title truncate cursor-pointer tab-group-title-hover transition-colors flat-interaction font-semibold"
                 onClick={() => !group.isLocked && setIsEditing(true)}
                 title={group.isLocked ? group.name : '点击编辑会话名称'}
                 tabIndex={0}
@@ -346,8 +349,8 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
           )}
 
           {/* 数量徽章 */}
-          <span 
-            className="tab-group-count flex-shrink-0"
+          <span
+            className="tab-group-count flex-shrink-0 animate-count-pop"
             aria-label={`包含 ${group.tabs.length} 个标签页`}
           >
             {group.tabs.length}
@@ -371,11 +374,11 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
         </div>
 
         {/* 操作按钮 */}
-        <div className="flex items-center gap-1 opacity-0 group-hover/card:opacity-100 transition-all duration-200 ease-out">
+        <div className="flex items-center gap-1 opacity-0 group-hover/card:opacity-100 action-btn-reveal transition-all duration-200 ease-out">
           {/* 恢复全部 */}
           <button
             onClick={handleOpenAllTabs}
-            className="btn-icon p-1.5 tab-group-action-accent micro-interaction-button"
+            className="btn-icon p-1.5 tab-group-action-accent micro-interaction-button focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-2"
             title="恢复整个会话"
             aria-label={`恢复整个会话，共 ${group.tabs.length} 个标签页`}
           >
@@ -386,7 +389,7 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
           {!group.isLocked && (
             <button
               onClick={() => setIsEditing(true)}
-              className="btn-icon p-1.5 micro-interaction-button"
+              className="btn-icon p-1.5 micro-interaction-button focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-2"
               title="重命名会话"
               aria-label="重命名会话"
             >
@@ -396,7 +399,7 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
 
           <button
             onClick={handleToggleFavorite}
-            className={`btn-icon p-1.5 micro-interaction-button ${group.isFavorite ? 'text-amber-500' : ''}`}
+            className={`btn-icon p-1.5 favorite-btn micro-interaction-button focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-2 ${favoriteAnimating ? 'animate-heart-bounce' : 'transition-transform duration-200 hover:scale-110'} ${group.isFavorite ? 'text-amber-500' : ''}`}
             title={group.isFavorite ? '取消收藏会话' : '收藏会话'}
             aria-label={group.isFavorite ? '取消收藏会话' : '收藏会话'}
           >
@@ -406,7 +409,7 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
           {!group.isLocked && (
             <button
               onClick={() => setIsEditingNotes(current => !current)}
-              className="btn-icon p-1.5 micro-interaction-button"
+              className="btn-icon p-1.5 micro-interaction-button focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-2"
               title={group.notes ? '编辑会话备注' : '添加会话备注'}
               aria-label={group.notes ? '编辑会话备注' : '添加会话备注'}
             >
@@ -416,8 +419,15 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
 
           {/* 锁定/解锁 */}
           <button
-            onClick={handleToggleLock}
-            className={`btn-icon p-1.5 micro-interaction-button ${group.isLocked ? 'tab-group-lock-icon' : ''}`}
+            onClick={() => {
+              if (group.isLocked) {
+                setFavoriteAnimating(true);
+                setTimeout(() => setFavoriteAnimating(false), 400);
+              } else {
+                handleToggleLock();
+              }
+            }}
+            className={`btn-icon p-1.5 lock-btn micro-interaction-button focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-2 ${group.isLocked ? `tab-group-lock-icon ${favoriteAnimating ? 'animate-shake' : ''}` : ''}`}
             title={group.isLocked ? '解锁会话' : '锁定会话'}
             aria-label={group.isLocked ? '解锁会话' : '锁定会话'}
           >
@@ -428,7 +438,7 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
           {!group.isLocked && (
             <button
               onClick={handleDelete}
-              className="btn-icon p-1.5 tab-group-action-danger micro-interaction-button"
+              className="btn-icon p-1.5 tab-group-action-danger micro-interaction-button focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-2"
               title="删除会话"
               aria-label="删除会话"
             >
@@ -480,7 +490,7 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
 
       {/* 标签列表 */}
       <div
-        className={`transition-all duration-300 ease-out overflow-hidden ${
+        className={`tab-group-content transition-all duration-300 ease-out overflow-hidden ${
           isCollapsed ? 'max-h-0 opacity-0' : 'max-h-[2000px] opacity-100'
         }`}
         aria-hidden={isCollapsed}
@@ -495,6 +505,8 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
               moveTab={handleMoveTab}
               handleOpenTab={handleOpenTab}
               handleDeleteTab={handleDeleteTab}
+              isCollapsed={isCollapsed}
+              isLocked={group.isLocked}
             />
           ))}
         </div>

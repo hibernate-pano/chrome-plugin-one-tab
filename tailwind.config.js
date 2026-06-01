@@ -151,6 +151,12 @@ module.exports = {
         // 内阴影
         'inner-soft': 'inset 0 2px 4px 0 rgb(0 0 0 / 0.04)',
         'inner-glow': 'inset 0 0 0 1px rgb(13 148 136 / 0.1)',
+        // Toast 组件专用阴影
+        'toast': '0 20px 60px -12px rgb(15 23 42 / 0.18)',
+      },
+
+      letterSpacing: {
+        'toast': '0.18em',
       },
 
       backdropBlur: {
@@ -159,14 +165,30 @@ module.exports = {
 
       animation: {
         'fade-in': 'fadeIn 0.2s ease-out',
+        'animate-in': 'fadeIn 0.2s ease-out',
+        'animate-slide-up-fade': 'slideUpFade 0.3s ease-out',
+        'animate-tab-drag-return': 'tabDragReturn 0.3s cubic-bezier(0.34, 1.56, 0.64, 1)',
         'fade-in-up': 'fadeInUp 0.3s ease-out',
         'fade-in-down': 'fadeInDown 0.3s ease-out',
         'scale-in': 'scaleIn 0.2s ease-out',
         'slide-in-right': 'slideInRight 0.3s ease-out',
         'slide-in-left': 'slideInLeft 0.3s ease-out',
-        'shimmer': 'shimmer 2s infinite linear',
+        'slide-out-right': 'slideOutRight 0.25s ease-in forwards',
+        'shimmer': 'shimmer 1.5s infinite linear',
         'pulse-soft': 'pulseSoft 2s infinite ease-in-out',
         'bounce-subtle': 'bounceSubtle 0.4s ease-out',
+        'toast-in': 'toastIn 0.3s ease-out',
+        'toast-out': 'toastOut 0.3s ease-in',
+        'success-bounce': 'successBounce 400ms cubic-bezier(0.68,-0.55,0.265,1.55)',
+        'shake': 'shake 0.4s ease-in-out',
+        'stagger-in': 'staggerIn 300ms ease-out forwards',
+        'float': 'float 3s ease-in-out infinite',
+        'badge-pulse': 'badgePulse 600ms ease-in-out',
+        'heart-bounce': 'heartBounce 400ms ease-out',
+        'float-subtle': 'floatSubtle 3s ease-in-out infinite',
+        'count-pop': 'countPop 300ms cubic-bezier(0.34, 1.56, 0.64, 1)',
+        'fade-slide-up': 'fadeSlideUp 500ms ease-out forwards',
+        'pulse-once': 'pulseOnce 350ms cubic-bezier(0.34, 1.56, 0.64, 1)',
       },
 
       keyframes: {
@@ -207,6 +229,72 @@ module.exports = {
           '50%': { transform: 'scale(1.02)' },
           '100%': { transform: 'scale(1)' },
         },
+        toastIn: {
+          '0%': { transform: 'translateX(100%)', opacity: '0' },
+          '100%': { transform: 'translateX(0)', opacity: '1' },
+        },
+        toastOut: {
+          '0%': { transform: 'translateX(0)', opacity: '1' },
+          '100%': { transform: 'translateX(100%)', opacity: '0' },
+        },
+        slideOutRight: {
+          '0%': { transform: 'translateX(0)', opacity: '1' },
+          '100%': { transform: 'translateX(100%)', opacity: '0' },
+        },
+        successBounce: {
+          '0%': { transform: 'scale(1)' },
+          '50%': { transform: 'scale(1.3)' },
+          '100%': { transform: 'scale(1)' },
+        },
+        shake: {
+          '0%, 100%': { transform: 'translateX(0)' },
+          '10%, 30%, 50%, 70%, 90%': { transform: 'translateX(-4px)' },
+          '20%, 40%, 60%, 80%': { transform: 'translateX(4px)' },
+        },
+        staggerIn: {
+          '0%': { opacity: '0', transform: 'translateY(8px)' },
+          '100%': { opacity: '1', transform: 'translateY(0)' },
+        },
+        float: {
+          '0%, 100%': { transform: 'translateY(0)' },
+          '50%': { transform: 'translateY(-10px)' },
+        },
+        badgePulse: {
+          '0%, 100%': { transform: 'scale(1)' },
+          '50%': { transform: 'scale(1.15)' },
+        },
+        heartBounce: {
+          '0%': { transform: 'scale(1)' },
+          '50%': { transform: 'scale(1.2)' },
+          '100%': { transform: 'scale(1)' },
+        },
+        floatSubtle: {
+          '0%, 100%': { transform: 'translateY(0)' },
+          '50%': { transform: 'translateY(-6px)' },
+        },
+        countPop: {
+          '0%': { transform: 'scale(1)' },
+          '50%': { transform: 'scale(1.15)' },
+          '100%': { transform: 'scale(1)' },
+        },
+        pulseOnce: {
+          '0%': { transform: 'scale(1)' },
+          '50%': { transform: 'scale(1.3)' },
+          '100%': { transform: 'scale(1)' },
+        },
+        fadeSlideUp: {
+          '0%': { opacity: '0', transform: 'translateY(20px)' },
+          '100%': { opacity: '1', transform: 'translateY(0)' },
+        },
+        slideUpFade: {
+          '0%': { opacity: '0', transform: 'translateY(10px)' },
+          '100%': { opacity: '1', transform: 'translateY(0)' },
+        },
+        tabDragReturn: {
+          '0%': { transform: 'scale(1.05)' },
+          '50%': { transform: 'scale(0.98)' },
+          '100%': { transform: 'scale(1)' },
+        },
       },
 
       transitionDuration: {
@@ -219,6 +307,7 @@ module.exports = {
         'smooth': 'cubic-bezier(0.4, 0, 0.2, 1)',
         'bounce': 'cubic-bezier(0.34, 1.56, 0.64, 1)',
         'out-expo': 'cubic-bezier(0.19, 1, 0.22, 1)',
+        'material': 'cubic-bezier(0.4, 0, 0.2, 1)',
       },
     },
   },
