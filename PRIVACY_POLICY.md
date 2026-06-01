@@ -1,8 +1,8 @@
-# TabVault Pro Privacy Policy
+# TabStack Privacy Policy
 
 Last updated: 2026-05-11
 
-TabVault Pro is a Chrome extension for saving, organizing, exporting, and restoring browser tab sessions.
+TabStack is a Chrome extension for saving, organizing, exporting, and restoring browser tab sessions.
 
 ## What data the extension handles
 
@@ -15,7 +15,7 @@ The extension may handle the following user data as part of its core functionali
 
 ## How data is used
 
-TabVault Pro uses this data only to provide its product features:
+TabStack uses this data only to provide its product features:
 
 - Save and restore tab sessions locally in your browser
 - Search, rename, favorite, lock, import, and export saved sessions
@@ -43,7 +43,7 @@ The extension accesses the network only for explicit account and sync flows agai
 
 ## Data sharing
 
-TabVault Pro does not share your data with advertisers or unrelated third parties.
+TabStack does not share your data with advertisers or unrelated third parties.
 Data may be processed by Supabase solely to provide authentication and manual cloud sync for this extension.
 
 ## Data retention and control

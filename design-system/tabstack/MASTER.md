@@ -6,7 +6,7 @@
 
 ---
 
-**Project:** TabVault Pro
+**Project:** TabStack
 **Generated:** 2026-02-10 16:22:45
 **Category:** Productivity Tool
 

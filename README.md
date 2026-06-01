@@ -1,10 +1,10 @@
-# TabVault Pro
+# TabStack
 
 当前版本：`1.11.8`
 
 > Save the session. Find it later. Restore it when you need it.
 
-TabVault Pro 是一个面向重度浏览器用户的**工作会话保险箱**。把当前窗口保存成可找回、可恢复的工作现场。
+TabStack 是一个面向重度浏览器用户的**工作会话保险箱**。把当前窗口保存成可找回、可恢复的工作现场。
 
 ## 适合谁用
 
@@ -29,7 +29,7 @@ TabVault Pro 是一个面向重度浏览器用户的**工作会话保险箱**。
 
 ### Chrome 商店
 
-访问 [Chrome Web Store](https://chrome.google.com/webstore) 搜索 `TabVault Pro`
+访问 [Chrome Web Store](https://chrome.google.com/webstore) 搜索 `TabStack`
 
 ### 开发模式
 

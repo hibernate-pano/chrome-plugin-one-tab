@@ -1,5 +1,5 @@
 import React from 'react';
-import { TabStackLogo } from './TabVaultIcon';
+import { TabStackLogo } from './TabStackIcon';
 
 interface PersonalizedWelcomeProps {
   userName?: string;

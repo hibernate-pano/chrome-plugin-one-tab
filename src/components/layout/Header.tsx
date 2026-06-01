@@ -16,7 +16,7 @@ import { LayoutMode } from '@/types/tab';
 import { useDebouncedSearch } from '@/hooks/useDebouncedSearch';
 import { useKeyboardShortcuts, COMMON_SHORTCUTS } from '@/hooks/useKeyboardShortcuts';
 import { Tooltip } from '@/components/common/Tooltip';
-import { TabStackLogo } from '@/components/common/TabVaultIcon';
+import { TabStackLogo } from '@/components/common/TabStackIcon';
 
 interface HeaderProps {
   onSearch: (query: string) => void;

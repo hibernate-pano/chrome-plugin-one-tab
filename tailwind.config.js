@@ -6,7 +6,7 @@ module.exports = {
     extend: {
       colors: {
         // ==========================================
-        // 🎨 TabVault Pro 生产力工具设计系统
+        // 🎨 TabStack 生产力工具设计系统
         // Micro-interactions + Teal/Orange 配色
         // ==========================================
 
