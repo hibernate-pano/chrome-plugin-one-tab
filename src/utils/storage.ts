@@ -25,6 +25,7 @@ const STORAGE_KEYS = {
   DELETED_GROUPS: 'deleted_tab_groups',
   DELETED_TABS: 'deleted_tabs',
   LAST_SYNC_TIME: 'last_sync_time',
+  SYNC_SNAPSHOT: 'sync_snapshot',
   PRODUCT_EVENTS: 'product_events',
   MIGRATION_FLAGS: 'migration_flags'
 };
@@ -148,25 +149,29 @@ class ChromeStorage {
   }
 
   /**
-   * 防抖批量写入 groups（可 await）
-   * - 窗口期内多次 setGroups 会合并为一次落盘（使用最后一次 groups）
-   * - 但每次调用都可以 await，保证返回时已真正写入
+   * 立即写入 groups（不防抖）
+   *
+   * 历史版本使用 500ms 防抖以"批量"多次写入，但 Chrome 扩展 popup 在用户
+   * 关闭（或 F5 刷新）时 JS context 会被销毁，防抖窗口内的 setTimeout 同步
+   * 被丢弃——结果就是 setGroups 返回的 Promise 永远 pending、IndexedDB 永
+   * 远不会写入。后续 hydration 读 IndexedDB 拿到的是旧的、合并前的数据，
+   * 用户看到"刷新后本地数据丢了"。
+   *
+   * 所有现有调用方（saveGroup / updateGroup / deleteGroup / moveGroup /
+   * moveTab / downloadAndMerge / saveAllTabs 等）都是单次写，没有高频批
+   * 量场景；性能开销（PBKDF2 100K + AES-GCM）原本就存在，去掉防抖只意味
+   * 100ms 内的多次 setGroups 各自跑一次完整加密，但通常不会触发。
    */
-  private debouncedPersistGroups = debounceAsync(async (groups: TabGroup[]) => {
-    await this.ensureVersion();
-    await this.persistEncryptedGroups(groups);
-  }, 500);
-
   async setGroups(groups: TabGroup[]): Promise<void> {
     const cache = cacheManager.getCache('storage');
-    
+
     try {
-      // optimistic：立刻更新缓存，保证后续读取一致
-      // 注意：在防抖窗口期内，缓存会被多次更新，但最终只有最后一次会持久化
+      // optimistic：立刻更新缓存，保证同 context 内的后续读取一致
       cache.set('groups', groups, CACHE_TTL.GROUPS);
 
-      // 强一致：等待最终一次落盘完成
-      await this.debouncedPersistGroups(groups);
+      // 强一致：立刻落盘（不要 debounce——见上方注释）
+      await this.ensureVersion();
+      await this.persistEncryptedGroups(groups);
     } catch (error) {
       console.error('保存标签组失败:', error);
       // 清除可能不一致的缓存
@@ -369,6 +374,48 @@ class ChromeStorage {
     }
   }
 
+  /**
+   * 获取同步前快照（用于 SyncEngine 合并失败时回滚）
+   */
+  async getSyncSnapshot(): Promise<TabGroup[] | null> {
+    try {
+      await this.ensureVersion();
+      const raw = await kvGet<unknown>(STORAGE_KEYS.SYNC_SNAPSHOT);
+      if (typeof raw === 'string') {
+        return await decryptLocalBlob<TabGroup[]>(raw);
+      }
+      if (Array.isArray(raw)) return raw as TabGroup[];
+      return null;
+    } catch (error) {
+      console.error('获取同步快照失败:', error);
+      return null;
+    }
+  }
+
+  /**
+   * 保存同步前快照
+   */
+  async setSyncSnapshot(groups: TabGroup[]): Promise<void> {
+    try {
+      await this.ensureVersion();
+      const encrypted = await encryptLocalBlob(groups);
+      await kvSet(STORAGE_KEYS.SYNC_SNAPSHOT, encrypted);
+    } catch (error) {
+      console.error('保存同步快照失败:', error);
+    }
+  }
+
+  /**
+   * 清除同步快照（合并成功后调用）
+   */
+  async clearSyncSnapshot(): Promise<void> {
+    try {
+      await kvRemove(STORAGE_KEYS.SYNC_SNAPSHOT);
+    } catch (error) {
+      console.error('清除同步快照失败:', error);
+    }
+  }
+
   async getProductEvents(): Promise<Array<Record<string, unknown>>> {
     try {
       await this.ensureVersion();
@@ -491,6 +538,7 @@ class ChromeStorage {
         STORAGE_KEYS.DELETED_GROUPS,
         STORAGE_KEYS.DELETED_TABS,
         STORAGE_KEYS.LAST_SYNC_TIME,
+        STORAGE_KEYS.SYNC_SNAPSHOT,
         STORAGE_KEYS.PRODUCT_EVENTS,
         STORAGE_KEYS.MIGRATION_FLAGS
       ];
