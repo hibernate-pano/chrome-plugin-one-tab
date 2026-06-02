@@ -17,10 +17,15 @@ const ReorderView = lazy(() => import('@/components/tabs/ReorderView'));
 
 export const TabList: React.FC<TabListProps> = ({ searchQuery }) => {
   const dispatch = useAppDispatch();
-  const { groups, isLoading, error } = useAppSelector(state => state.tabs);
+  const { groups, isLoading, error, lastLoadedAt } = useAppSelector(state => state.tabs);
   const { layoutMode, reorderMode } = useAppSelector(state => state.settings);
 
   useEffect(() => {
+    // popup 入口已经把 local 数据塞进 preloadedState（lastLoadedAt !== null），
+    // 跳过重复的 loadGroups，避免无谓的 Storage 读 + Loading 闪烁。
+    // service worker 通过 REFRESH_TAB_LIST 推送的更新仍会走到下面的 listener。
+    if (lastLoadedAt) return;
+
     const initializeData = async () => {
       try {
         await runMigrations();
@@ -46,7 +51,7 @@ export const TabList: React.FC<TabListProps> = ({ searchQuery }) => {
     return () => {
       chrome.runtime.onMessage.removeListener(messageListener);
     };
-  }, [dispatch]);
+  }, [dispatch, lastLoadedAt]);
 
   if (isLoading) {
     return (
