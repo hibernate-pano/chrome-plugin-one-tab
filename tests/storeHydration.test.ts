@@ -7,6 +7,16 @@ import { register } from 'node:module';
 import { pathToFileURL, fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
 
+// Set up Vite-style env stub so the loader can rewrite `import.meta.env`.
+// Must be set BEFORE registering the loader / importing the store
+// (supabase.ts reads import.meta.env at module load time).
+globalThis.__TABSTACK_META_ENV__ = {
+  VITE_SUPABASE_URL: 'https://stub.supabase.co',
+  VITE_SUPABASE_ANON_KEY: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.stub.stub',
+  DEV: false,
+  MODE: 'test',
+};
+
 const LOADER_PATH = pathToFileURL(
   resolve(dirname(fileURLToPath(import.meta.url)), '_alias-loader.mjs')
 ).href;
