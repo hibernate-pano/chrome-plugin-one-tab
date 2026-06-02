@@ -909,6 +909,7 @@ export const tabSlice = createSlice({
         state.groups = activeGroups;
         state.lastSyncTime = action.payload.syncTime;
         state.compressionStats = action.payload.stats || null;
+        state.lastSyncStatus = 'cloud';
 
         console.log(`[SyncFromCloud] 已同步 ${activeGroups.length} 个活跃标签组（已过滤 ${action.payload.groups.length - activeGroups.length} 个已删除）`);
 
