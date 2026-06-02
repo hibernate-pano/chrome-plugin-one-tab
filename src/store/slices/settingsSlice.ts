@@ -8,7 +8,7 @@ const updatedDefaultSettings = {
   ...defaultSettings,
 };
 
-const initialState: UserSettings = {
+export const initialSettingsState: UserSettings = {
   ...updatedDefaultSettings,
   reorderMode: false, // 新增：全局重新排序模式
 };
@@ -75,7 +75,7 @@ export const syncSettingsFromCloud = createAsyncThunk<UserSettings | null, void,
 
 const settingsSlice = createSlice({
   name: 'settings',
-  initialState,
+  initialState: initialSettingsState,
   reducers: {
     // 更新设置（可以更新多个设置项）
     updateSettings: (state, action: PayloadAction<Partial<UserSettings>>) => {
