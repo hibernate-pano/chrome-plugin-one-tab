@@ -115,24 +115,11 @@ export const deleteAllGroups = createAsyncThunk(
     const groups = await storage.getGroups();
 
     if (groups.length === 0) {
-      return { count: 0 };
+      return { count: 0 }; // 没有标签组可删除
     }
 
-    // 1. 先清云端（如果已登录）
-    try {
-      const { markCloudGroupsAsDeleted } = await import('@/services/tabGroupSyncService');
-      const allIds = groups.map(g => g.id);
-      await markCloudGroupsAsDeleted(allIds);
-      console.log(`[DeleteAllGroups] 已从云端删除 ${allIds.length} 个组`);
-    } catch (err) {
-      // 未登录或网络失败 → 继续清本地，云端下次同步时清理
-      console.warn('[DeleteAllGroups] 云端清理失败（将在下次上传时重试）:', err);
-    }
-
-    // 2. 再硬删本地
+    // 直接清空本地标签组
     await storage.setGroups([]);
-
-    console.log(`[DeleteAllGroups] 已清空本地 ${groups.length} 个标签组`);
 
     return { count: groups.length };
   }
