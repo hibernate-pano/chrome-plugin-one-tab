@@ -72,6 +72,20 @@ export interface TabState {
   searchQuery: string;
   syncStatus: 'idle' | 'syncing' | 'success' | 'error'; // 同步状态
   lastSyncTime: string | null; // 最后同步时间
+  /**
+   * 本地 groups 最近一次成功加载到 Redux 的时间戳（ISO 字符串）。
+   * 用于判断 "loadGroups 是否已完成"，避免在 race 条件下基于空 state
+   * 触发下载流程后用空数据覆盖本地存储。
+   * 初始为 null；每次 loadGroups.fulfilled 时刷新。
+   */
+  lastLoadedAt: string | null;
+  /**
+   * 当前显示在 UI 上的数据来源：
+   * - 'local'：来自本地 IndexedDB（preload hydration）
+   * - 'cloud'：来自云端同步（download）
+   * - null：尚未确定（首屏默认）
+   */
+  lastSyncStatus: 'local' | 'cloud' | null;
 
   // 定义压缩统计信息类型（虽然已废弃，但保留类型定义以保持向后兼容）
   compressionStats?: {

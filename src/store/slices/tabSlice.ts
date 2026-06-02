@@ -13,7 +13,7 @@ import { trackProductEvent } from '@/utils/productEvents';
 // 解决"速记属性...的范围内不存在任何值"的问题，显式声明actions
 
 
-const initialState: TabState = {
+export const initialTabState: TabState = {
   groups: [],
   activeGroupId: null,
   isLoading: false,
@@ -21,6 +21,8 @@ const initialState: TabState = {
   searchQuery: '',
   syncStatus: 'idle',
   lastSyncTime: null,
+  lastLoadedAt: null,
+  lastSyncStatus: null,
   compressionStats: null,
   backgroundSync: false,
   syncProgress: 0,
@@ -113,11 +115,24 @@ export const deleteAllGroups = createAsyncThunk(
     const groups = await storage.getGroups();
 
     if (groups.length === 0) {
-      return { count: 0 }; // 没有标签组可删除
+      return { count: 0 };
     }
 
-    // 直接清空本地标签组
+    // 1. 先清云端（如果已登录）
+    try {
+      const { markCloudGroupsAsDeleted } = await import('@/services/tabGroupSyncService');
+      const allIds = groups.map(g => g.id);
+      await markCloudGroupsAsDeleted(allIds);
+      console.log(`[DeleteAllGroups] 已从云端删除 ${allIds.length} 个组`);
+    } catch (err) {
+      // 未登录或网络失败 → 继续清本地，云端下次同步时清理
+      console.warn('[DeleteAllGroups] 云端清理失败（将在下次上传时重试）:', err);
+    }
+
+    // 2. 再硬删本地
     await storage.setGroups([]);
+
+    console.log(`[DeleteAllGroups] 已清空本地 ${groups.length} 个标签组`);
 
     return { count: groups.length };
   }
@@ -627,7 +642,7 @@ export const moveTabAndSync = createAsyncThunk(
 
 export const tabSlice = createSlice({
   name: 'tabs',
-  initialState,
+  initialState: initialTabState,
   reducers: {
     setActiveGroup: (state, action) => {
       state.activeGroupId = action.payload;
@@ -815,6 +830,7 @@ export const tabSlice = createSlice({
       .addCase(loadGroups.fulfilled, (state, action) => {
         state.isLoading = false;
         state.groups = action.payload;
+        state.lastLoadedAt = new Date().toISOString();
       })
       .addCase(loadGroups.rejected, (state, action) => {
         state.isLoading = false;
