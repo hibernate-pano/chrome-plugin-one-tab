@@ -13,7 +13,8 @@
 ## File Map
 
 ### Files to modify
-- `src/store/slices/tabSlice.ts` — rename `initialState` → `initialTabState` and `export` it; add `lastSyncStatus: 'local' | 'cloud' | null` field; set it in `loadGroups.fulfilled` and `syncTabsFromCloud.fulfilled`.
+- `src/store/slices/tabSlice.ts` — rename `initialState` → `initialTabState` and `export` it; add `lastLoadedAt` and `lastSyncStatus: 'local' | 'cloud' | null` fields to `TabState` and `initialTabState`; set `lastLoadedAt` and `lastSyncStatus = 'local'` in `loadGroups.fulfilled`; set `lastSyncStatus = 'cloud'` in `syncTabsFromCloud.fulfilled` (Task 2).
+- `src/types/tab.ts` — add `lastLoadedAt` and `lastSyncStatus` to the `TabState` interface.
 - `src/store/slices/settingsSlice.ts` — rename `initialState` → `initialSettingsState` and `export` it.
 - `src/store/index.ts` — change from singleton export to factory `createStore(preloadedState?)`; export `RootState`, `PreloadedState` types; combine reducers.
 - `src/popup/index.tsx` — rewrite to `async function bootstrap()` that hydrates `preloadedState` from local storage, calls `createStore`, then `createRoot`; falls back to `preloadedState=undefined` on error.
@@ -30,12 +31,14 @@
 
 ---
 
-## Task 1: Export `initialTabState` from tabSlice
+## Task 1: Export `initialTabState` from tabSlice and add hydration fields
 
 **Files:**
-- Modify: `src/store/slices/tabSlice.ts:16-29`
+- Modify: `src/store/slices/tabSlice.ts:16-29` (rename + add fields)
+- Modify: `src/store/slices/tabSlice.ts` `loadGroups.fulfilled` reducer (set `lastLoadedAt`)
+- Modify: `src/types/tab.ts` `TabState` interface (add `lastLoadedAt` and `lastSyncStatus` fields)
 
-- [ ] **Step 1: Rename and export `initialState`**
+- [ ] **Step 1: Rename and export `initialState`, add `lastLoadedAt` and `lastSyncStatus` fields**
 
 In `src/store/slices/tabSlice.ts`, replace the existing block:
 
@@ -48,7 +51,6 @@ const initialState: TabState = {
   searchQuery: '',
   syncStatus: 'idle',
   lastSyncTime: null,
-  lastLoadedAt: null,
   compressionStats: null,
   backgroundSync: false,
   syncProgress: 0,
@@ -76,7 +78,7 @@ export const initialTabState: TabState = {
 };
 ```
 
-(Add `lastSyncStatus: null` between `lastSyncTime: null,` and `compressionStats: null,`.)
+(Two new fields: `lastLoadedAt: null` between `lastSyncTime: null,` and `compressionStats: null,`; `lastSyncStatus: null` directly after `lastLoadedAt`.)
 
 - [ ] **Step 2: Update the slice call to use the renamed constant**
 
@@ -96,35 +98,50 @@ export const tabSlice = createSlice({
   initialState: initialTabState,
 ```
 
-- [ ] **Step 3: Type-check**
+- [ ] **Step 3: Add `lastLoadedAt` and `lastSyncStatus` to the `TabState` interface**
 
-Run: `pnpm type-check`
-Expected: PASS (0 errors). The rename keeps all in-file references valid.
+In `src/types/tab.ts`, find the `TabState` interface and add the two fields after `lastSyncTime: string | null;`:
 
-- [ ] **Step 4: Commit**
+```ts
+export interface TabState {
+  groups: TabGroup[];
+  activeGroupId: string | null;
+  isLoading: boolean;
+  error: string | null;
+  searchQuery: string;
+  syncStatus: 'idle' | 'syncing' | 'success' | 'error';
+  lastSyncTime: string | null;
+  /**
+   * 本地 groups 最近一次成功加载到 Redux 的时间戳（ISO 字符串）。
+   * 用于判断 "loadGroups 是否已完成"，避免在 race 条件下基于空 state
+   * 触发下载流程后用空数据覆盖本地存储。
+   * 初始为 null；每次 loadGroups.fulfilled 时刷新。
+   */
+  lastLoadedAt: string | null;
+  /**
+   * 当前显示在 UI 上的数据来源：
+   * - 'local'：来自本地 IndexedDB（preload hydration）
+   * - 'cloud'：来自云端同步（download）
+   * - null：尚未确定（首屏默认）
+   */
+  lastSyncStatus: 'local' | 'cloud' | null;
 
-```bash
-git add src/store/slices/tabSlice.ts
-git commit -m "refactor(tabSlice): export initialTabState and add lastSyncStatus"
+  // 定义压缩统计信息类型（虽然已废弃，但保留类型定义以保持向后兼容）
+  compressionStats?: { ... } | null;
+  backgroundSync: boolean;
+  syncProgress: number;
+  syncOperation: 'none' | 'upload' | 'download';
+}
 ```
 
----
+- [ ] **Step 4: Set `lastLoadedAt` in `loadGroups.fulfilled` reducer**
 
-## Task 2: Set `lastSyncStatus` in `loadGroups.fulfilled` and `syncTabsFromCloud.fulfilled`
-
-**Files:**
-- Modify: `src/store/slices/tabSlice.ts:829-833` (loadGroups.fulfilled)
-- Modify: `src/store/slices/tabSlice.ts:917-934` (syncTabsFromCloud.fulfilled)
-
-- [ ] **Step 1: Mark `lastSyncStatus = 'local'` when local load completes**
-
-In `src/store/slices/tabSlice.ts`, find the `addCase(loadGroups.fulfilled, ...)` block:
+In `src/store/slices/tabSlice.ts`, find:
 
 ```ts
 .addCase(loadGroups.fulfilled, (state, action) => {
   state.isLoading = false;
   state.groups = action.payload;
-  state.lastLoadedAt = new Date().toISOString();
 })
 ```
 
@@ -135,9 +152,33 @@ Replace with:
   state.isLoading = false;
   state.groups = action.payload;
   state.lastLoadedAt = new Date().toISOString();
-  state.lastSyncStatus = 'local';
 })
 ```
+
+- [ ] **Step 5: Type-check**
+
+Run: `pnpm type-check`
+Expected: PASS (0 errors).
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add src/store/slices/tabSlice.ts src/types/tab.ts
+git commit -m "refactor(tabSlice): export initialTabState and add hydration fields"
+```
+
+---
+
+## Task 2: Set `lastSyncStatus` in `syncTabsFromCloud.fulfilled`
+
+**Note:** `lastSyncStatus` in `loadGroups.fulfilled` is set in Task 1 (alongside `lastLoadedAt`). Task 2 only handles the cloud-sync path.
+
+**Files:**
+- Modify: `src/store/slices/tabSlice.ts` `syncTabsFromCloud.fulfilled` reducer
+
+- [ ] **Step 1: Mark `lastSyncStatus = 'cloud'` when cloud sync completes**
+
+In `src/store/slices/tabSlice.ts`, find the `addCase(syncTabsFromCloud.fulfilled, ...)` block:
 
 - [ ] **Step 2: Mark `lastSyncStatus = 'cloud'` when cloud sync completes**
 
