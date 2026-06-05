@@ -2,7 +2,28 @@
 
 > **更新时间**：2026-06-05
 > **维护者**：每次有结构性改动（尤其是同步层 / 存储层 / 状态层）后必须更新本文件
-> **代码版本**：`package.json` / `manifest.json` 仍标 `1.11.8`，但工作区有一批未提交的 **v1.12.0** 改动（同步层重构 + Web Store 收尾），尚未 bump version
+> **代码版本**：**v1.12.0**（已 bump，三处一致：package.json / manifest.json / README）
+> **分支**：`refactor/sync-engine-v1.12.0`（未合并回 main，未 push）
+
+---
+
+## ⏱ 本次会话已完成（2026-06-05）
+
+上一版本文档写于"工作区一堆未提交改动"时。**这些改动现已全部提交并修复**，分支 `refactor/sync-engine-v1.12.0` 上有 5 个 commit：
+
+| commit | 内容 |
+|---|---|
+| `refactor(sync)` collapse | syncEngine 成为同步唯一入口，service-worker 删 129 行周期同步 |
+| `fix(hydration)` | hydrationDecision 纯函数，空读不固化 lastLoadedAt |
+| `chore(release)` prep | description 英文化、白名单打包、eslint ^_ 规则、gitignore、本文档 |
+| `refactor(sync)` remove dead | **删除死代码**：syncHelpers.ts + tabSyncWorkflow.ts + tabSlice 3 个死 thunk |
+| `chore(release)` bump | v1.12.0、README 修过时内容（删30min同步、@dnd-kit→react-dnd） |
+
+**验证状态**：`pnpm validate` 全链通过（元数据一致 + type-check + lint + build），45 测试全绿。
+
+**仍待办**（见 §8）：① 分支合并/push ② 商店截图还差 3 张 ③ 测试覆盖率 ④ CI/CD。
+
+**注意一个无害的副作用**：删死 thunk 时移除了 `syncTabsFromCloud.fulfilled` 里唯一写 `lastSyncStatus='cloud'` 的地方。该字段目前**无任何 UI 读取**（只在 hydrationDecision 内部用 'local'/null），所以无功能影响。未来若要用它区分"数据来自云端"，需在 smartSyncService 的 setGroups 路径补标记。
 
 ---
 
@@ -93,11 +114,12 @@ type-check: ✅ 通过（未提交的 v1.12.0 重构是健康的）
 |---|---|
 | 3.6 / 5.4：`chrome.alarms` 每 30 分钟周期同步，SW 内 `performPeriodicSync` 快照→合并→回滚 | ❌ **已全部删除**。service-worker 不再有任何同步逻辑/alarm。同步只在 popup 上下文发生 |
 | 3.3：autoSyncMiddleware 有 5 档优先级（10/8/5/3/2），高 500ms / 低 2000ms 防抖 | 🔁 优先级表保留用于排序，但**实际只剩二档延迟**：priority≥8 → 1500ms，否则 3000ms；且调用的是 `syncEngine.scheduleUpload()` |
-| 2.5 / 同步：`tabSyncWorkflow` 两段式 + `smartSyncService.uploadToCloud → uploadTabsToCloudFlow` | 🔁 真实路径改走 `syncEngine`。`tabSyncWorkflow` 仍存在但基本是死代码（见第 6 节死代码地图） |
+| 2.5 / 同步：`tabSyncWorkflow` 两段式 + `smartSyncService.uploadToCloud → uploadTabsToCloudFlow` | 🔁 真实路径改走 `syncEngine`。`tabSyncWorkflow` **已删除**（见 §6） |
 | 7.5：manifest description 中英混排 | ✅ **已改纯英文** |
 | 7.3 / 7.5：dist 残留 .htaccess 与 src 源码目录 | ✅ **已修**（package-extension.js 白名单模式） |
-| README 第 70 行 / 同步模式：「定时同步：每 30 分钟后台自动同步一次」 | ❌ **该功能已移除**，README 这条已过时，需要改 |
-| README 技术栈：拖拽用 `@dnd-kit` | ❌ 实际用 **react-dnd**（@dnd-kit 在 deps 里但未使用）。OVERVIEW 2.1 是对的，README 错 |
+| README：「定时同步：每 30 分钟后台自动同步一次」 | ✅ **已修**（改成"登录自动下载"） |
+| README 技术栈：拖拽用 `@dnd-kit` | ✅ **已修**（README 改成 react-dnd；@dnd-kit 仍在 deps 但未使用） |
+| 9.1：品牌名 README/PRIVACY/design-system/.env 仍叫 "TabVault Pro" | ✅ **基本已解决**：design-system 目录已是 `tabstack/`、.env.example 已是 TabStack、PRIVACY 标题已是 TabStack。源码里仅剩 `tabvaultpro` 作为 **IndexedDB DB 名 / deviceId key**——这是数据兼容标识符，**绝不能改**（改了老用户数据读不到） |
 
 ---
 
@@ -168,31 +190,31 @@ TabList useEffect:  if (lastLoadedAt) return  ← 见非空就永久跳过 loadG
 
 → 这两个函数被 `tests/syncMergeSafety.test.ts` 钉死，**改同步前先跑这个测试**。
 
-### 🪤 死代码地图（最容易踩的坑）
+### ✅ 死代码已清除（2026-06-05）
 
-下面这一整条链**没有任何活跃入口在驱动**，但代码还在仓库里、还能编译、甚至最近还有人往里加保护逻辑：
+历史上这里曾有一整条**没有任何活跃入口驱动**的同步链，已在本次会话删除：
 
 ```
-syncHelpers.scheduleAutoSync()      ← grep 全仓：0 个外部调用者
-  └→ dispatch(syncTabsToCloud / syncTabsFromCloud)   (tabSlice thunk)
-       └→ uploadTabsToCloudFlow / downloadTabsFromCloudFlow   (tabSyncWorkflow.ts)
-            └→ 里面精心写的"安全网 0/1/2"空数据保护 ← 全在没人走的路上
+[已删除] syncHelpers.scheduleAutoSync()  ← 曾 0 调用者
+  └→ [已删除] syncTabsToCloud / syncTabsFromCloud / syncLocalChangesToCloud (tabSlice thunk)
+       └→ [已删除] uploadTabsToCloudFlow / downloadTabsFromCloudFlow (tabSyncWorkflow.ts)
 ```
 
-- `tabSlice.ts` 仍 import 并在 `syncTabsToCloud`/`syncTabsFromCloud` 里调 `tabSyncWorkflow` 的 flow 函数 → 看起来"活着"
-- 但**唯一会 dispatch 这两个 thunk 的是 `syncHelpers.scheduleAutoSync`**，而 `scheduleAutoSync` **全仓库无人调用**（autoSyncMiddleware 早已改走 syncEngine）
-- ⚠️ **当前未提交 diff 正在往 `downloadTabsFromCloudFlow` 加"安全网 0/1/2"**——这是在死路上写保护代码，白费功夫且误导后人
+`src/utils/syncHelpers.ts` 和 `src/services/tabSyncWorkflow.ts` 两个文件、以及 tabSlice 里
+3 个 thunk + 对应 extraReducers，**全部删除**。现在同步只有一条路径，无认知负担。
 
-**结论**：
-- 改同步逻辑 → **只改 `syncEngine.ts` + `syncUtils.ts`**，不要对着 `tabSyncWorkflow.ts` 改
-- 强烈建议**删除整片死代码**（`syncHelpers.ts` + `tabSyncWorkflow.ts` + `tabSlice` 里的 `syncTabsToCloud`/`syncTabsFromCloud`/`syncLocalChangesToCloud` thunk），消除"两套并存"的认知负担。删之前确认 UI 没有任何按钮还在 dispatch 这些 thunk。
+**铁律（仍然有效）**：
+- 改同步逻辑 → **只改 `syncEngine.ts` + `syncUtils.ts`**。
+- 数据安全两道防线 `mergeTabGroups` + `validateMergeResult` 改前先跑 `tests/syncMergeSafety.test.ts`。
+- 如果未来 grep 又冒出 `syncTabsToCloud` / `tabSyncWorkflow` 之类——那是有人从旧 commit 复活了死代码，应拒绝。
+
 
 ---
 
 ## 7. 给后续 AI 的避坑指南
 
-1. **开工前先 `git status`**：工作区有一大批未提交改动，别在不知情的情况下覆盖。
-2. **改同步 → 进 `syncEngine.ts`**，不是 `tabSyncWorkflow.ts`（死代码，见 §6）。
+1. **开工前先 `git status` + 看分支**：当前在 `refactor/sync-engine-v1.12.0`，尚未合并回 main / push。
+2. **改同步 → 进 `syncEngine.ts` + `syncUtils.ts`**（同步唯一入口，见 §6）。
 3. **改 popup 启动 / 存储读取 → 先读 §5**，理解"空读不能固化 lastLoadedAt"这条铁律，否则会复活"刷新丢数据"。
 4. **`preloadedState` 必须 `{ ...initialState, ...partial }` 合并**，整体替换会把未覆盖字段变 undefined。
 5. **测试基础设施有坑**：项目用 `node --test --experimental-strip-types` + 自定义 TS loader（`tests/_alias-loader.mjs`，用 shortCircuit）。**`mock.module` 与这个 loader 不兼容**——所以测试都写成"纯函数、零依赖"（hydrationDecision / syncMergeSafety / inputValidation 等）。别试图给带 IO 的模块写 module-mock 测试，会静默失败。
@@ -204,35 +226,33 @@ syncHelpers.scheduleAutoSync()      ← grep 全仓：0 个外部调用者
 
 ## 8. 下一步建议（决策导向）
 
-### 先收尾，再开新功能
+### ✅ 已完成（本次会话）
 
-1. **把 v1.12.0 重构作为一个整体提交**（§3）：syncEngine + hydrationDecision + 两个 service + middleware + storage 修复 + 两个测试。type-check 已过，先 `pnpm validate` 跑全链再提。
-2. **删除同步死代码**（§6）：syncHelpers + tabSyncWorkflow + tabSlice 三个死 thunk。这次重构正是删它的最佳时机——否则未提交 diff 里那些"白写的安全网"会永久误导后人。
-3. **bump version → 1.12.0**：package.json + manifest.json + README 三处，`validate-extension.mjs` 会校验三处一致。
+- ~~提交 v1.12.0 重构~~ → 5 个 commit 在 `refactor/sync-engine-v1.12.0`
+- ~~删除同步死代码~~ → syncHelpers + tabSyncWorkflow + 3 个死 thunk 已删
+- ~~bump version 1.12.0~~ → 三处一致，validate 通过
+- ~~修 README 过时内容~~ → 30min 同步 / @dnd-kit 已改
 
-### Chrome Web Store 上架（战线 C 剩余）
+### 仍待办
 
-4. **补齐商店截图**：目前只有 1 张，还差主弹窗 / Onboarding / 搜索 / 统计（1280×800 或 640×400）。
-5. **修 README 过时内容**：删"30 分钟定时同步"、把"@dnd-kit"改成 react-dnd（§4）。
-6. **品牌一致性**（OVERVIEW 9.1 仍未解决）：README/PRIVACY/design-system 目录/.env.example 仍叫 "TabVault Pro"，manifest 已是 TabStack。
-
-### 中期质量债
-
-7. **测试覆盖 < 5%**：syncEngine / smartSyncService 是数据安全核心，但只有纯函数层有测试。考虑给 syncEngine 的"验证失败→回滚"路径补集成测试（需解决 §7.5 的 mock 难题，或用依赖注入重构 syncEngine 让 storage/download 可替换）。
-8. **无 CI/CD**：发布全靠本地 `pnpm package` 手动上传。加一个 `.github/workflows/ci.yml` 跑 `pnpm validate` 是高性价比投资。
+1. **合并分支**：`refactor/sync-engine-v1.12.0` → main，并 push（本次未做，等你拍板）。
+2. **补齐商店截图**：目前只有 1 张（`docs/store-screenshots/extensions-page.png`），还差主弹窗 / Onboarding / 搜索 / 统计（1280×800 或 640×400）。
+3. **测试覆盖 < 5%**：syncEngine / smartSyncService 是数据安全核心，但只有纯函数层有测试。考虑给 syncEngine 的"验证失败→回滚"路径补集成测试（需解决 §7.5 的 mock 难题，或用依赖注入重构 syncEngine 让 storage/download 可替换）。
+4. **无 CI/CD**：发布全靠本地 `pnpm package` 手动上传。加一个 `.github/workflows/ci.yml` 跑 `pnpm validate` 是高性价比投资。
+5. **可选清理**：`@dnd-kit/*` 三个依赖在 package.json 里但全项目未使用（实际用 react-dnd），可考虑移除以减小依赖面。
 
 ---
 
 ## 附：关键文件速查
 
-| 你想改… | 去这里 | 别碰 |
+| 你想改… | 去这里 | 备注 |
 |---|---|---|
-| 同步逻辑 | `services/syncEngine.ts` + `utils/syncUtils.ts` | `services/tabSyncWorkflow.ts`（死） |
-| popup 启动/首屏 | `popup/index.tsx` + `utils/hydrationDecision.ts` | — |
-| 本地存储读写 | `utils/storage.ts` → `storage/storageAdapter.ts` → `storage/indexedDbClient.ts` | — |
-| 自动同步触发时机 | `store/middleware/autoSyncMiddleware.ts` | `utils/syncHelpers.ts`（死） |
+| 同步逻辑 | `services/syncEngine.ts` + `utils/syncUtils.ts` | 唯一入口 |
+| popup 启动/首屏 | `popup/index.tsx` + `utils/hydrationDecision.ts` | 先读 §5 铁律 |
+| 本地存储读写 | `utils/storage.ts` → `storage/storageAdapter.ts` → `storage/indexedDbClient.ts` | DB 名 `tabvaultpro` 不可改 |
+| 自动同步触发时机 | `store/middleware/autoSyncMiddleware.ts` | → `syncEngine.scheduleUpload()` |
 | 加密 | `utils/encryptionUtils.ts`（云端）/ `utils/secureStorage.ts`（本地） | — |
-| 状态 | `store/slices/{tab,settings,auth}Slice.ts` | tabSlice 里 3 个 sync thunk（死） |
+| 状态 | `store/slices/{tab,settings,auth}Slice.ts` | — |
 | Supabase 读写 | `utils/supabase.ts` + `services/tabGroupSyncService.ts` | — |
 | 浏览器事件/快捷键 | `service-worker.ts` + `background/TabManager.ts` | 别在这加同步 |
 
