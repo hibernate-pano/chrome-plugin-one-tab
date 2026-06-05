@@ -385,27 +385,34 @@ export function validateMergeResult(
   cloudGroups: TabGroup[],
   mergedGroups: TabGroup[]
 ): { valid: boolean; reason?: string } {
-  // 规则 1：如果两边都为空，合并为空是正常的
-  if (localGroups.length === 0 && cloudGroups.length === 0 && mergedGroups.length === 0) {
+  // ⚠️ 基线只算本地「活跃」组：mergeTabGroups 第一步会跳过本地软删组
+  // （isDeleted=true），而 storage.getGroups() 返回的数组是含软删组的。
+  // 若用 localGroups.length（含软删）当基线，累积的软删组会把 expectedMin
+  // 抬高，导致正常合并结果被误判为非法 → 触发回滚 → 云端变更永远同步不进来。
+  // 任何删过组的用户都会触发（软删组在主存储里永久累积）。
+  const activeLocalCount = localGroups.filter(g => !g.isDeleted).length;
+
+  // 规则 1：如果两边都没有活跃数据，合并为空是正常的
+  if (activeLocalCount === 0 && cloudGroups.length === 0 && mergedGroups.length === 0) {
     return { valid: true };
   }
 
-  // 规则 2：如果本地有数据但合并后为空，异常
-  if (localGroups.length > 0 && mergedGroups.length === 0) {
+  // 规则 2：如果本地有活跃数据但合并后为空，异常
+  if (activeLocalCount > 0 && mergedGroups.length === 0) {
     return {
       valid: false,
-      reason: `本地有 ${localGroups.length} 个组，但合并后为 0（可能云端覆盖了所有本地数据）`,
+      reason: `本地有 ${activeLocalCount} 个活跃组，但合并后为 0（可能云端覆盖了所有本地数据）`,
     };
   }
 
-  // 规则 3：合并后组数不应低于本地组数减去云端明确删除的组数
+  // 规则 3：合并后组数不应低于 活跃本地组数 减去云端明确删除的组数
   const cloudDeletedCount = cloudGroups.filter(g => g.isDeleted).length;
-  const expectedMin = Math.max(0, localGroups.length - cloudDeletedCount);
+  const expectedMin = Math.max(0, activeLocalCount - cloudDeletedCount);
 
   if (mergedGroups.length < expectedMin) {
     return {
       valid: false,
-      reason: `合并后 ${mergedGroups.length} 个组，低于预期最小值 ${expectedMin}（本地 ${localGroups.length}，云端删除 ${cloudDeletedCount}）`,
+      reason: `合并后 ${mergedGroups.length} 个组，低于预期最小值 ${expectedMin}（活跃本地 ${activeLocalCount}，云端删除 ${cloudDeletedCount}）`,
     };
   }
 
