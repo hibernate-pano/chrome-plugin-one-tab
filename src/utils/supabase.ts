@@ -333,7 +333,7 @@ export const sync = {
     }
   },
   // 上传标签组
-  async uploadTabGroups(groups: TabGroup[], overwriteCloud: boolean = false) {
+  async uploadTabGroups(groups: TabGroup[], _overwriteCloud: boolean = false) {
     checkSupabaseConfig();
     const deviceId = await getDeviceId();
 
@@ -450,11 +450,20 @@ export const sync = {
         const group = groupsWithUser[i];
         if (group.tabs_data && Array.isArray(group.tabs_data)) {
           try {
-            // 加密标签数据
-            const encryptedData = await encryptData(group.tabs_data, user.id);
+            // 找到对应的完整 TabGroup，加密完整数据（tabs + 元数据）
+            const fullGroup = groups.find(g => g.id === group.id);
+            const groupPayload = {
+              tabs: group.tabs_data,
+              version: fullGroup?.version,
+              isDeleted: fullGroup?.isDeleted,
+              notes: fullGroup?.notes,
+              isFavorite: fullGroup?.isFavorite,
+              displayOrder: fullGroup?.displayOrder,
+            };
+            const encryptedData = await encryptData(groupPayload, user.id);
             // 替换原始数据为加密数据
             groupsWithUser[i].tabs_data = encryptedData as any;
-            console.log(`标签组 ${group.id} 的数据已加密`);
+            console.log(`标签组 ${group.id} 的数据已加密（含完整元数据）`);
           } catch (error) {
             console.error(`加密标签组 ${group.id} 的数据失败:`, error);
             // 如果加密失败，保留原始数据
@@ -507,72 +516,13 @@ export const sync = {
 
       console.log('所有标签组的用户ID验证通过');
 
-      let data, error;
+      // 使用纯 upsert 模式（不删除现有云端数据，删除通过软删标记传播）
+      const upsertResult = await supabase
+        .from('tab_groups')
+        .upsert(uniqueGroups as any, { onConflict: 'id' });
 
-      // 如果是覆盖模式，先标记旧记录为pending_delete，插入新记录，然后清理
-      if (overwriteCloud) {
-        // 使用覆盖模式：三步原子策略
-        const currentTime = new Date().toISOString();
-
-        // Step 1: 标记所有旧记录为 pending_delete
-        const { error: markError } = await supabase
-          .from('tab_groups')
-          .update({ pending_delete: true, updated_at: currentTime })
-          .eq('user_id', sessionData.session.user.id)
-          .is('pending_delete', false);
-
-        if (markError) {
-          console.error('标记旧记录失败:', markError);
-          throw markError;
-        }
-
-        console.log('Step 1: 已标记所有旧记录为 pending_delete');
-
-        // Step 2: Upsert 新记录
-        const upsertResult = await supabase
-          .from('tab_groups')
-          .upsert(uniqueGroups as any, { onConflict: 'id' });
-
-        if (upsertResult.error) {
-          console.error('Step 2: Upsert 新记录失败:', upsertResult.error);
-          // 回滚：清除 pending_delete 标记
-          await supabase
-            .from('tab_groups')
-            .update({ pending_delete: false, updated_at: currentTime })
-            .eq('user_id', sessionData.session.user.id)
-            .eq('pending_delete', true);
-          throw upsertResult.error;
-        }
-
-        console.log('Step 2: 新记录 upsert 成功');
-
-        // Step 3: 删除标记为 pending_delete 的旧记录
-        const { error: deleteError } = await supabase
-          .from('tab_groups')
-          .delete()
-          .eq('user_id', sessionData.session.user.id)
-          .eq('pending_delete', true);
-
-        if (deleteError) {
-          console.error('Step 3: 清理旧记录失败:', deleteError);
-          // 不阻塞，视为成功
-          console.warn('清理旧记录失败，但数据已安全上传');
-        } else {
-          console.log('Step 3: 旧记录清理完成');
-        }
-
-        data = upsertResult.data;
-        error = null;
-      } else {
-        // 合并模式，使用 upsert
-        // 使用合并模式
-        const result = await supabase
-          .from('tab_groups')
-          .upsert(uniqueGroups as any, { onConflict: 'id' });
-
-        data = result.data;
-        error = result.error;
-      }
+      let data = upsertResult.data;
+      let error = upsertResult.error;
 
       result = data;
 
@@ -757,8 +707,29 @@ export const sync = {
 
         // 处理标签组数据
 
+        // 检测数据格式：新格式为完整 TabGroup payload（含 tabs/version/isDeleted 等），
+        // 旧格式为纯 TabData[] 数组
+        let groupMeta: Partial<TabGroup> = {};
+        let tabDataArray: TabData[] = [];
+
+        if (Array.isArray(tabsData)) {
+          // 旧格式：纯 TabData[]
+          tabDataArray = tabsData;
+        } else if (tabsData && typeof tabsData === 'object' && 'tabs' in (tabsData as any)) {
+          // 新格式：完整 TabGroup payload
+          const full = tabsData as any;
+          tabDataArray = Array.isArray(full.tabs) ? full.tabs : [];
+          groupMeta = {
+            version: full.version,
+            isDeleted: full.isDeleted,
+            notes: full.notes,
+            isFavorite: full.isFavorite,
+            displayOrder: full.displayOrder,
+          };
+        }
+
         // 将 TabData 转换为 Tab 格式
-        const formattedTabs = tabsData.map((tab: TabData) => ({
+        const formattedTabs = tabDataArray.map((tab: TabData) => ({
           id: tab.id,
           url: tab.url,
           title: tab.title,
@@ -775,7 +746,8 @@ export const sync = {
           tabs: formattedTabs,
           createdAt: String(groupAny.created_at),
           updatedAt: String(groupAny.updated_at),
-          isLocked: Boolean(groupAny.is_locked)
+          isLocked: Boolean(groupAny.is_locked),
+          ...groupMeta,
         });
       }
 
@@ -811,6 +783,37 @@ export const sync = {
       console.error('下载标签组失败:', error);
       throw error;
     }
+  },
+
+  /**
+   * 标记云端标签组为已删除（直接删除 Supabase 中的记录）
+   * 仅当本地已软删且确认要清理云端时调用。
+   */
+  async markCloudGroupsAsDeleted(deletedIds: string[]) {
+    if (deletedIds.length === 0) return;
+
+    checkSupabaseConfig();
+    const { data: sessionData } = await supabase.auth.getSession();
+    if (!sessionData?.session) {
+      console.warn('[markCloudGroupsAsDeleted] 未登录，跳过');
+      return;
+    }
+
+    const userId = sessionData.session.user.id;
+    console.log(`[markCloudGroupsAsDeleted] 正在删除云端 ${deletedIds.length} 个组`);
+
+    const { error } = await supabase
+      .from('tab_groups')
+      .delete()
+      .eq('user_id', userId)
+      .in('id', deletedIds);
+
+    if (error) {
+      console.error('[markCloudGroupsAsDeleted] 删除失败:', error);
+      throw error;
+    }
+
+    console.log(`[markCloudGroupsAsDeleted] 已删除 ${deletedIds.length} 个云端组`);
   },
 
   // 上传用户设置

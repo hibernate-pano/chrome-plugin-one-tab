@@ -12,3 +12,7 @@ export async function downloadTabGroups(): Promise<TabGroup[]> {
   const result = await supabaseSync.downloadTabGroups();
   return result as TabGroup[];
 }
+
+export async function markCloudGroupsAsDeleted(deletedIds: string[]): Promise<void> {
+  return supabaseSync.markCloudGroupsAsDeleted(deletedIds);
+}

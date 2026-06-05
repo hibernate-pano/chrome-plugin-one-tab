@@ -256,56 +256,16 @@ const mergeTabs = (
   const currentTime = new Date().toISOString();
 
   // 使用 Map 去重：优先使用 ID，其次使用 URL
+  // ⭐ v1.12.0：本地优先策略 —— 先处理本地标签，云端标签仅补充不冲突的内容
   const tabsById = new Map<string, Tab>();
   const tabsByUrl = new Map<string, string>(); // URL -> Tab ID 映射
 
-  // 先处理云端标签
-  cloudGroup.tabs.forEach(cloudTab => {
-    if (cloudTab.isDeleted) {
-      return; // 跳过已删除的标签
-    }
-
-    tabsById.set(cloudTab.id, {
-      ...cloudTab,
-      syncStatus: 'synced',
-      lastSyncedAt: currentTime
-    });
-
-    if (cloudTab.url) {
-      tabsByUrl.set(cloudTab.url, cloudTab.id);
-    }
-  });
-
-  // 然后处理本地标签
+  // 先处理本地标签（本地优先）
   localGroup.tabs.forEach(localTab => {
     if (localTab.isDeleted) {
       return; // 跳过已删除的标签
     }
 
-    // 检查是否已存在（按 ID）
-    if (tabsById.has(localTab.id)) {
-      // 比较更新时间，保留较新的
-      const existingTab = tabsById.get(localTab.id)!;
-      const localTime = new Date(localTab.lastAccessed).getTime();
-      const cloudTime = new Date(existingTab.lastAccessed).getTime();
-
-      if (localTime > cloudTime) {
-        tabsById.set(localTab.id, {
-          ...localTab,
-          syncStatus: 'synced',
-          lastSyncedAt: currentTime
-        });
-      }
-      return;
-    }
-
-    // 检查 URL 是否重复
-    if (localTab.url && tabsByUrl.has(localTab.url)) {
-      console.log(`[SyncUtils] 跳过重复URL: ${localTab.url}`);
-      return;
-    }
-
-    // 添加新标签
     tabsById.set(localTab.id, {
       ...localTab,
       syncStatus: 'synced',
@@ -314,6 +274,46 @@ const mergeTabs = (
 
     if (localTab.url) {
       tabsByUrl.set(localTab.url, localTab.id);
+    }
+  });
+
+  // 然后处理云端标签（仅补充本地没有的）
+  cloudGroup.tabs.forEach(cloudTab => {
+    if (cloudTab.isDeleted) {
+      return; // 跳过已删除的标签
+    }
+
+    // 检查是否已存在（按 ID）
+    if (tabsById.has(cloudTab.id)) {
+      // ID 冲突：比较 lastAccessed，保留较新的
+      const existingTab = tabsById.get(cloudTab.id)!;
+      const cloudTime = new Date(cloudTab.lastAccessed).getTime();
+      const localTime = new Date(existingTab.lastAccessed).getTime();
+
+      if (cloudTime > localTime) {
+        tabsById.set(cloudTab.id, {
+          ...cloudTab,
+          syncStatus: 'synced',
+          lastSyncedAt: currentTime
+        });
+      }
+      return;
+    }
+
+    // 检查 URL 是否重复（本地已有相同 URL 的标签 → 保留本地版本）
+    if (cloudTab.url && tabsByUrl.has(cloudTab.url)) {
+      return;
+    }
+
+    // 添加云端独有的新标签
+    tabsById.set(cloudTab.id, {
+      ...cloudTab,
+      syncStatus: 'synced',
+      lastSyncedAt: currentTime
+    });
+
+    if (cloudTab.url) {
+      tabsByUrl.set(cloudTab.url, cloudTab.id);
     }
   });
 
@@ -369,3 +369,45 @@ export const getGroupsToSync = (groups: TabGroup[]): TabGroup[] => {
   // 过滤掉已软删除的标签组
   return groups.filter(group => !group.isDeleted);
 };
+
+/**
+ * 验证合并结果是否合理（v1.12.0 新增）
+ *
+ * 防止合并逻辑产生错误结果后覆盖本地数据。
+ * 规则：
+ * - 合并后组数不应少于本地组数减去云端明确标记删除的组数
+ * - 如果本地有数据但合并后为空，视为异常
+ *
+ * @returns { valid: boolean; reason?: string }
+ */
+export function validateMergeResult(
+  localGroups: TabGroup[],
+  cloudGroups: TabGroup[],
+  mergedGroups: TabGroup[]
+): { valid: boolean; reason?: string } {
+  // 规则 1：如果两边都为空，合并为空是正常的
+  if (localGroups.length === 0 && cloudGroups.length === 0 && mergedGroups.length === 0) {
+    return { valid: true };
+  }
+
+  // 规则 2：如果本地有数据但合并后为空，异常
+  if (localGroups.length > 0 && mergedGroups.length === 0) {
+    return {
+      valid: false,
+      reason: `本地有 ${localGroups.length} 个组，但合并后为 0（可能云端覆盖了所有本地数据）`,
+    };
+  }
+
+  // 规则 3：合并后组数不应低于本地组数减去云端明确删除的组数
+  const cloudDeletedCount = cloudGroups.filter(g => g.isDeleted).length;
+  const expectedMin = Math.max(0, localGroups.length - cloudDeletedCount);
+
+  if (mergedGroups.length < expectedMin) {
+    return {
+      valid: false,
+      reason: `合并后 ${mergedGroups.length} 个组，低于预期最小值 ${expectedMin}（本地 ${localGroups.length}，云端删除 ${cloudDeletedCount}）`,
+    };
+  }
+
+  return { valid: true };
+}

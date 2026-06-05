@@ -133,6 +133,11 @@ export async function downloadTabsFromCloudFlow({
   forceRemoteStrategy = false,
   reportProgress,
 }: DownloadTabsOptions): Promise<{ groups: TabGroup[]; syncTime: string; stats: any | null }> {
+  // 动态解析 storage 模块——避免在模块加载时绑定引用，
+  // 这样测试环境 (mock.module + restoreAll) 可以为不同场景注入不同 mock，
+  // 生产环境走的是 Vite 静态分析，import 仍然会被 tree-shake 命中，零成本。
+  const { storage } = await import('@/utils/storage');
+
   if (!auth.isAuthenticated) {
     console.log('用户未登录，无法从云端同步数据');
     return {
@@ -157,6 +162,39 @@ export async function downloadTabsFromCloudFlow({
   if (forceRemoteStrategy) {
     console.log('覆盖模式: 清空本地数据，只使用云端数据');
     localGroups = [];
+  }
+
+  // ── 安全网 0: 防止 race condition 用空数组覆盖本地存储 ─────────────────
+  // 场景: popup 打开后 2 秒 maybeAutoDownload 触发, 但 loadGroups thunk
+  // 还没把 storage 数据写回 Redux, 此时 tabsState.groups = []。如果再叠加
+  // 云端返回 [], 合并结果就是 [], setGroups([]) 会清空本地存储——用户数据
+  // 全部丢失。
+  //
+  // 检测: tabsState 为空但 storage 里有数据 → 跳过合并, 直接返回 storage
+  // 中的数据, 不写 setGroups, 不写 setLastSyncTime (因为并没有真正同步
+  // 任何东西, 把"刚检查过"的时间记下来反而会触发冷却窗口误判, 错过真正
+  // 的下载机会)。
+  if (
+    localGroups.length === 0 &&
+    cloudGroups.length === 0 &&
+    !forceRemoteStrategy
+  ) {
+    try {
+      const stored = await storage.getGroups();
+      if (Array.isArray(stored) && stored.length > 0) {
+        console.warn(
+          `[sync] 检测到 race: tabsState 为空但 storage 有 ${stored.length} 个组, 跳过合并以保护本地数据`
+        );
+        reportIfNeeded(reportProgress, background, 100, 'none');
+        return {
+          groups: stored as TabGroup[],
+          syncTime: new Date().toISOString(),
+          stats: null,
+        };
+      }
+    } catch (err) {
+      console.warn('[sync] 读 storage 失败, 继续原合并流程:', err);
+    }
   }
 
   console.log('云端标签组详情:');
@@ -199,6 +237,36 @@ export async function downloadTabsFromCloudFlow({
       lastSyncedAt: currentTime,
     }));
   } else {
+    // ── 安全网 1: 云端空 + 本地空 = no-op ─────────────────────────────
+    // 两边都没有数据, 跳过 setGroups 和 setLastSyncTime——这次同步什么都没
+    // 发生, 不应该让"刚检查过"的时间戳污染冷却窗口, 也不应该写入空数组。
+    if (cloudGroups.length === 0 && localGroups.length === 0) {
+      console.log('[sync] 云端和本地都为空, 无需同步');
+      reportIfNeeded(reportProgress, background, 100, 'none');
+      return {
+        groups: localGroups,
+        syncTime: currentTime,
+        stats: null,
+      };
+    }
+
+    // ── 安全网 2: 云端空 + 本地有数据 = 保留本地 ───────────────────────
+    // 这是"本地是 source of truth, 云端刚被清空"的情况 (例如另一台设备
+    // 已经从云端删除了数据, 但本地还没来得及上传空集)。跳过 setGroups
+    // 保留本地, 但仍然更新 lastSyncTime——因为这次确实去云端检查过了。
+    if (cloudGroups.length === 0 && localGroups.length > 0) {
+      console.log(
+        '[sync] 云端为空但本地有数据, 保留本地作为 source of truth'
+      );
+      await storage.setLastSyncTime(currentTime);
+      reportIfNeeded(reportProgress, background, 100, 'none');
+      return {
+        groups: localGroups,
+        syncTime: currentTime,
+        stats: null,
+      };
+    }
+
     const syncStrategy = settings.syncStrategy;
     mergedGroups = mergeTabGroups(localGroups, cloudGroups, syncStrategy);
   }
