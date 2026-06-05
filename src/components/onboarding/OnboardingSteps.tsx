@@ -128,7 +128,7 @@ export const SaveTabsStep: React.FC = () => (
     </div>
     <h2 className="text-xl font-semibold text-gray-900 dark:text-white">先保存一个会话</h2>
     <p className="text-sm text-gray-500 dark:text-gray-400">
-      点击顶部的"保存会话"按钮
+      点击顶部的&quot;保存会话&quot;按钮
       <br />
       当前窗口会被收成一个可找回的工作会话
     </p>

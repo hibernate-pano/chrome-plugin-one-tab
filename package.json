@@ -1,6 +1,6 @@
 {
   "name": "chrome-plugin-one-tab",
-  "version": "1.11.8",
+  "version": "1.12.0",
   "description": "保存浏览器工作会话，稍后快速找回与恢复",
   "type": "module",
   "scripts": {
@@ -9,7 +9,7 @@
     "build:dev": "tsc && vite build",
     "package": "pnpm build && node package-extension.js",
     "preview": "vite preview",
-    "test": "node --test --experimental-strip-types tests/*.test.ts",
+    "test": "node --test --test-force-exit --experimental-strip-types --experimental-test-module-mocks tests/*.test.ts",
     "lint": "eslint src --ext ts,tsx --report-unused-disable-directives --max-warnings 0",
     "format": "prettier --write \"src/**/*.{ts,tsx}\"",
     "type-check": "tsc --noEmit",

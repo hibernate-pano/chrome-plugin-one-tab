@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "TabStack",
-  "version": "1.11.8",
-  "description": "TabStack - 浏览器工作会话管理器。保存当前窗口的标签页为可恢复的会话，随时一键找回。不再重复查找标签页，不再担心工作被中断。支持跨设备云同步、标签去重、智能搜索。",
+  "version": "1.12.0",
+  "description": "Save browser tabs as named, searchable, restorable sessions. One keyboard shortcut away. Cloud sync, dedup, 8 themes.",
   "content_security_policy": {
     "extension_pages": "script-src 'self'; object-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self' data:; connect-src 'self' https://reccclnaxadbuccsrwmg.supabase.co; frame-src 'none'; base-uri 'self'; form-action 'self';"
   },
@@ -19,7 +19,7 @@
   ],
   "action": {
     "default_icon": "icons/icon16.png",
-    "default_title": "TabStack - 工作会话管理器"
+    "default_title": "TabStack - Tab Session Manager"
   },
   "web_accessible_resources": [
     {

@@ -10,6 +10,9 @@ node_modules/
 dist/
 **.zip
 
+# pnpm store 缓存，不应进版本库
+.pnpm-store/
+
 # 环境变量文件
 .env
 .env.local

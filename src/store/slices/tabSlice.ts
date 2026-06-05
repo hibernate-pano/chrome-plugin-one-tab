@@ -1,7 +1,7 @@
 import { createSlice, createAsyncThunk, createSelector } from '@reduxjs/toolkit';
-import { TabState, TabGroup, UserSettings } from '@/types/tab';
+import { TabState, TabGroup } from '@/types/tab';
 import { storage } from '@/utils/storage';
-import { downloadTabsFromCloudFlow, uploadTabsToCloudFlow } from '@/services/tabSyncWorkflow';
+
 import { nanoid } from '@reduxjs/toolkit';
 import { shouldAutoDeleteAfterTabRemoval } from '@/utils/tabGroupUtils';
 import { updateGroupWithVersion, updateDisplayOrder } from '@/utils/versionHelper';
@@ -150,89 +150,6 @@ export const importGroups = createAsyncThunk(
     await storage.setGroups(sortedGroups);
 
     return processedGroups;
-  }
-);
-
-// 同步标签组到云端
-export const syncTabsToCloud = createAsyncThunk<
-  { syncTime: string; stats: any | null },
-  { background?: boolean; overwriteCloud?: boolean } | void,
-  { state: any }
->('tabs/syncTabsToCloud', async (options, { getState, dispatch }) => {
-  const background = options?.background || false;
-  const overwriteCloud = options?.overwriteCloud || false;
-  try {
-    // 使用 setTimeout 延迟执行数据处理，避免阻塞主线程
-    // 这样可以让 UI 先更新，然后再处理数据
-    await new Promise(resolve => setTimeout(resolve, 10));
-
-    // 检查用户是否已登录
-    const { auth, tabs } = getState() as {
-      auth: { isAuthenticated: boolean };
-      tabs: TabState;
-      settings: UserSettings;
-    };
-    return await uploadTabsToCloudFlow({
-      auth,
-      tabsState: tabs,
-      background,
-      overwriteCloud,
-      reportProgress: (progress, operation) =>
-        dispatch(updateSyncProgress({ progress, operation })),
-    });
-  } catch (error) {
-    console.error('同步标签组到云端失败:', error);
-    throw error;
-  }
-});
-
-// 新增：从云端同步标签组
-export const syncTabsFromCloud = createAsyncThunk<
-  { groups: TabGroup[]; syncTime: string; stats: any | null },
-  { background?: boolean; forceRemoteStrategy?: boolean } | void,
-  { state: any }
->(
-  'tabs/syncTabsFromCloud',
-  async (
-    options: { background?: boolean; forceRemoteStrategy?: boolean } | void,
-    { getState, dispatch }
-  ) => {
-    const background = options?.background || false;
-    const forceRemoteStrategy = options?.forceRemoteStrategy || false;
-    try {
-      // 使用 setTimeout 延迟执行数据处理，避免阻塞主线程
-      // 这样可以让 UI 先更新，然后再处理数据
-      await new Promise(resolve => setTimeout(resolve, 10));
-
-      // 检查用户是否已登录
-      const { auth, tabs, settings } = getState() as {
-        auth: { isAuthenticated: boolean };
-        tabs: TabState;
-        settings: UserSettings;
-      };
-
-      return await downloadTabsFromCloudFlow({
-        auth,
-        tabsState: tabs,
-        settings,
-        background,
-        forceRemoteStrategy,
-        reportProgress: (progress, operation) =>
-          dispatch(updateSyncProgress({ progress, operation })),
-      });
-    } catch (error) {
-      console.error('从云端同步标签组失败:', error);
-      throw error;
-    }
-  }
-);
-
-// 已禁用自动同步 - 此函数仅用于检查登录状态
-export const syncLocalChangesToCloud = createAsyncThunk(
-  'tabs/syncLocalChangesToCloud',
-  async (_, { getState }) => {
-    const { auth } = getState() as { auth: { isAuthenticated: boolean } };
-    return auth.isAuthenticated;
   }
 );
 
@@ -856,92 +773,6 @@ export const tabSlice = createSlice({
       .addCase(deleteAllGroups.rejected, (state, action) => {
         state.isLoading = false;
         state.error = action.error.message || '删除所有标签组失败';
-      })
-
-      // 同步到云端
-      .addCase(syncTabsToCloud.pending, (state, action) => {
-        // 只有在非后台同步时才更新状态
-        const isBackground = action.meta.arg?.background || false;
-        state.backgroundSync = isBackground;
-
-        if (!isBackground) {
-          state.syncStatus = 'syncing';
-        }
-      })
-      .addCase(syncTabsToCloud.fulfilled, (state, action) => {
-        // 更新同步时间和统计信息，但只有在非后台同步时才更新状态
-        state.lastSyncTime = action.payload.syncTime;
-        state.compressionStats = action.payload.stats || null;
-
-        if (!state.backgroundSync) {
-          state.syncStatus = 'success';
-        }
-
-        // 后台同步完成后重置标志
-        state.backgroundSync = false;
-      })
-      .addCase(syncTabsToCloud.rejected, (state, action) => {
-        // 只有在非后台同步时才更新错误状态
-        if (!state.backgroundSync) {
-          state.syncStatus = 'error';
-          state.error = action.error.message || '同步到云端失败';
-        }
-
-        // 后台同步完成后重置标志
-        state.backgroundSync = false;
-      })
-
-      // 从云端同步
-      .addCase(syncTabsFromCloud.pending, (state, action) => {
-        // 只有在非后台同步时才更新状态
-        const isBackground = action.meta.arg?.background || false;
-        state.backgroundSync = isBackground;
-
-        if (!isBackground) {
-          state.syncStatus = 'syncing';
-          state.isLoading = true;
-        }
-      })
-      .addCase(syncTabsFromCloud.fulfilled, (state, action) => {
-        // 始终更新数据，但只有在非后台同步时才更新状态
-        // 过滤掉已软删除的标签组，避免UI显示
-        const activeGroups = action.payload.groups.filter(g => !g.isDeleted);
-        state.groups = activeGroups;
-        state.lastSyncTime = action.payload.syncTime;
-        state.compressionStats = action.payload.stats || null;
-        state.lastSyncStatus = 'cloud';
-
-        console.log(`[SyncFromCloud] 已同步 ${activeGroups.length} 个活跃标签组（已过滤 ${action.payload.groups.length - activeGroups.length} 个已删除）`);
-
-        if (!state.backgroundSync) {
-          state.syncStatus = 'success';
-          state.isLoading = false;
-        }
-
-        // 后台同步完成后重置标志
-        state.backgroundSync = false;
-      })
-      .addCase(syncTabsFromCloud.rejected, (state, action) => {
-        // 只有在非后台同步时才更新错误状态
-        if (!state.backgroundSync) {
-          state.syncStatus = 'error';
-          state.isLoading = false;
-          state.error = action.error.message || '从云端同步失败';
-        }
-
-        // 后台同步完成后重置标志
-        state.backgroundSync = false;
-      })
-
-      // 同步本地更改到云端
-      .addCase(syncLocalChangesToCloud.pending, () => {
-        // 不更新UI状态，因为这是后台操作
-      })
-      .addCase(syncLocalChangesToCloud.fulfilled, () => {
-        // 不更新UI状态，因为这是后台操作
-      })
-      .addCase(syncLocalChangesToCloud.rejected, () => {
-        // 不更新UI状态，因为这是后台操作
       })
 
       // 更新标签组名称并同步到云端

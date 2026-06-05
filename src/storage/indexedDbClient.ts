@@ -59,19 +59,20 @@ async function runTransaction<T>(
 
 export const indexedDbDriver: StorageDriver = {
   async getItem<T>(key: string): Promise<T | null> {
-    try {
-      const result = await runTransaction<any>('readonly', store => store.get(key));
+    // 注意：不在此处 try/catch 吞掉错误。
+    // IndexedDB 语义：get(不存在的 key) 走 onsuccess(undefined)，不会 onerror。
+    // 因此「键不存在」会正常返回 null；只有事务真正失败（DB 打不开、tx abort）
+    // 才会 reject。把真实读失败抛给上层，让 storage.getGroups 能区分
+    // 「真的空」和「读失败」——后者不应被缓存固化（见 storage.ts getGroups）。
+    const result = await runTransaction<any>('readonly', store => store.get(key));
 
-      // 数据以 { key, value } 形式存入，读取时需要取出 value
-      if (result && typeof result === 'object' && 'value' in result) {
-        return (result as { value: T }).value;
-      }
-
-      // 兼容直接存储原始值的情况
-      return result as T | null;
-    } catch {
-      return null;
+    // 数据以 { key, value } 形式存入，读取时需要取出 value
+    if (result && typeof result === 'object' && 'value' in result) {
+      return (result as { value: T }).value;
     }
+
+    // 兼容直接存储原始值的情况（含 undefined → 视为 null，表示键不存在）
+    return (result ?? null) as T | null;
   },
 
   async setItem<T>(key: string, value: T): Promise<void> {
