@@ -1,6 +1,6 @@
 # TabStack
 
-当前版本：`1.11.8`
+当前版本：`1.12.0`
 
 > Save the session. Find it later. Restore it when you need it.
 
@@ -67,7 +67,7 @@ TEST_EMAIL="your@email.com" TEST_PASSWORD="password" pnpm test:supabase-smoke
 ## 同步模式
 
 - **智能同步**：保存/删除/重命名等操作后自动同步到云端（需登录）
-- **定时同步**：每 30 分钟后台自动同步一次
+- **登录自动下载**：登录后自动从云端拉取并与本地合并
 - **手动同步**：随时通过界面按钮手动上传/下载
 - 每次同步可选择**覆盖**或**合并**策略
 
@@ -81,7 +81,7 @@ TEST_EMAIL="your@email.com" TEST_PASSWORD="password" pnpm test:supabase-smoke
 ## 技术栈
 
 - **前端**：React 18 + TypeScript + Redux Toolkit
-- **拖拽**：@dnd-kit
+- **拖拽**：react-dnd
 - **样式**：Tailwind CSS 3 + 8 套主题
 - **后端**：Supabase（PostgreSQL + Row Level Security）
 - **加密**：Web Crypto API（AES-GCM）
