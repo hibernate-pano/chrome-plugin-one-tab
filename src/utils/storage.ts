@@ -121,7 +121,10 @@ class ChromeStorage {
         if (typeof raw === 'string') {
           const groups = await decryptLocalBlob<TabGroup[]>(raw);
           if (groups !== null) return groups;
-          return [];
+          // 解密失败：抛出而非返回 []，避免「瞬时空读」被 cachedAsyncFn 缓存
+          // 30s 固化——那会让 popup hydration 与 loadGroups 重试都拿到空数据，
+          // 表现为「刷新后数据丢失」。抛出后由外层 catch 返回 []（不入缓存）。
+          throw new Error('decryptLocalBlob 返回 null（数据可能损坏或 key 不匹配）');
         }
         if (Array.isArray(raw)) {
           // 明文数据，首次读取后自动升级为加密存储
@@ -129,10 +132,13 @@ class ChromeStorage {
           this.persistEncryptedGroups(groups);
           return groups;
         }
+        // raw 为 null/undefined：存储里确实没有数据（全新用户或已清空），
+        // 返回 [] 是正确语义，可以安全缓存。
         return [];
       }, CACHE_TTL.GROUPS);
     } catch (error) {
-      console.error('获取标签组失败:', error);
+      // 读取/解密异常：返回 [] 但**不写缓存**，使下次 getGroups 重新尝试读盘。
+      console.error('获取标签组失败（本次不缓存，下次将重试读盘）:', error);
       return [];
     }
   }
