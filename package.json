@@ -9,7 +9,7 @@
     "build:dev": "tsc && vite build",
     "package": "pnpm build && node package-extension.js",
     "preview": "vite preview",
-    "test": "node --test --experimental-strip-types tests/*.test.ts",
+    "test": "node --test --test-force-exit --experimental-strip-types --experimental-test-module-mocks tests/*.test.ts",
     "lint": "eslint src --ext ts,tsx --report-unused-disable-directives --max-warnings 0",
     "format": "prettier --write \"src/**/*.{ts,tsx}\"",
     "type-check": "tsc --noEmit",
