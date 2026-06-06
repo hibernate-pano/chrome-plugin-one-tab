@@ -234,15 +234,21 @@ TabList useEffect:  if (lastLoadedAt) return  ← 见非空就永久跳过 loadG
 - ~~修 README 过时内容~~ → 30min 同步 / @dnd-kit 已改
 - ~~合并 + 推送~~ → `refactor/sync-engine-v1.12.0` 已 `--no-ff` 合并到 main 并 **push 到 origin/main**（2026-06-06）
 - ~~code-review~~ → 抓到并修复 HIGH 回归：`validateMergeResult` 基线只算活跃组（见 §6 末）
+- ~~🔴 删除传播失效~~ → **已修复**（分支 `fix/delete-propagation-tombstone`，2026-06-06）。`markCloudGroupsAsDeleted` 改 `.delete()` → `update({pending_delete:true})` tombstone；`downloadTabGroups` 把列级 `pending_delete` OR 进 `isDeleted`；merge 不变。在一次性 Supabase 测试项目上端到端验证（硬删复现 bug、tombstone 传播成功），并 DB 实测 upsert 不会覆盖 tombstone。回归测试进 `syncMergeSafety.test.ts`（纯函数，49 测试全绿）。
 
 ### 仍待办
 
-1. **🔴 删除传播失效（review 发现，留待后续）**：`supabase.ts` 的 `markCloudGroupsAsDeleted` 用 `.delete()` **硬删除**云端行，不是写 tombstone。后果：设备 A 删组 → 云端行消失 → 设备 B 下载时云端已无该行 → merge 把 B 的本地副本当 local-only **保留** → 删除不跨设备传播。**非破坏性**（不丢数据，只是删除不同步）。修复需改成软删 tombstone（云端行保留 isDeleted=true + version），需 Supabase schema 确认 + 真机验证。
-2. **🟡 依赖漏洞**：GitHub Dependabot 报 29 个（10 high / 14 moderate / 5 low）。push 时提示。建议 `pnpm audit` 排查，优先 high。
-3. **补齐商店截图**：目前只有 1 张（`docs/store-screenshots/extensions-page.png`），还差主弹窗 / Onboarding / 搜索 / 统计（1280×800 或 640×400）。
-4. **测试覆盖 < 5%**：syncEngine / smartSyncService 是数据安全核心，但只有纯函数层有测试。考虑给 syncEngine 的"验证失败→回滚"路径补集成测试（需解决 §7.5 的 mock 难题，或用依赖注入重构 syncEngine 让 storage/download 可替换）。
-5. **无 CI/CD**：发布全靠本地 `pnpm package` 手动上传。加一个 `.github/workflows/ci.yml` 跑 `pnpm validate` 是高性价比投资。
-6. **可选清理**：`@dnd-kit/*` 三个依赖在 package.json 里但全项目未使用（实际用 react-dnd），可考虑移除以减小依赖面。`master` 分支停在 v1.9.7（落后 main 45 commit）是废弃分支，可删。
+1. **🟡 依赖漏洞**：GitHub Dependabot 报 29 个（10 high / 14 moderate / 5 low）。`pnpm audit` 在国内镜像源不可用（endpoint 不存在），需切 `--registry=https://registry.npmjs.org` + 临时 npm lockfile，或直接看 GitHub Security 页。多数应在 devDependencies（不进扩展产物）。
+2. **补齐商店截图**：目前只有 1 张（`docs/store-screenshots/extensions-page.png`），还差主弹窗 / Onboarding / 搜索 / 统计（1280×800 或 640×400）。
+3. **测试覆盖 < 5%**：syncEngine / smartSyncService 是数据安全核心，但只有纯函数层有测试。考虑给 syncEngine 的"验证失败→回滚"路径补集成测试（需解决 §7.5 的 mock 难题，或用依赖注入重构 syncEngine 让 storage/download 可替换）。
+4. **无 CI/CD**：发布全靠本地 `pnpm package` 手动上传。加一个 `.github/workflows/ci.yml` 跑 `pnpm validate` 是高性价比投资。
+5. **可选清理**：`@dnd-kit/*` 三个依赖在 package.json 里但全项目未使用（实际用 react-dnd），可考虑移除以减小依赖面。`master` 分支停在 v1.9.7（落后 main 45 commit）是废弃分支，可删。
+
+### 搭测试环境（删除传播验证留下的资产）
+
+- `scripts/test-project-schema.sql`：从生产库考古出的完整建表 + RLS 脚本，可在任意新 Supabase 测试项目的 SQL Editor 跑，快速复刻表结构。
+- 配 `.env` 指向测试库（URL + anon key）即可让扩展连测试环境。`.env.*.backup` 已加入 gitignore。
+- ⚠️ 新项目默认开启邮箱确认，测试账号注册后需在 DB 把 `auth.users.email_confirmed_at` 置非空才能登录（或在控制台关闭 email confirmation）。
 
 ---
 
