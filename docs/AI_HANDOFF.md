@@ -235,6 +235,7 @@ TabList useEffect:  if (lastLoadedAt) return  ← 见非空就永久跳过 loadG
 - ~~合并 + 推送~~ → `refactor/sync-engine-v1.12.0` 已 `--no-ff` 合并到 main 并 **push 到 origin/main**（2026-06-06）
 - ~~code-review~~ → 抓到并修复 HIGH 回归：`validateMergeResult` 基线只算活跃组（见 §6 末）
 - ~~🔴 删除传播失效~~ → **已修复**（分支 `fix/delete-propagation-tombstone`，2026-06-06）。`markCloudGroupsAsDeleted` 改 `.delete()` → `update({pending_delete:true})` tombstone；`downloadTabGroups` 把列级 `pending_delete` OR 进 `isDeleted`；merge 不变。在一次性 Supabase 测试项目上端到端验证（硬删复现 bug、tombstone 传播成功），并 DB 实测 upsert 不会覆盖 tombstone。回归测试进 `syncMergeSafety.test.ts`（纯函数，49 测试全绿）。
+- ~~合并删除传播修复 + 打 tag~~ → `fix/delete-propagation-tombstone` 已 `--no-ff` 合并到 main（merge commit `66bf5d4`）并 push 到 origin/main；首次为 v1.12.0 打 annotated tag `v1.12.0` 并推送（2026-06-06）。**版本号策略：删除传播折进 v1.12.0，不单独 bump**（v1.12.0 此前从未打 tag、未上架）。
 
 ### 仍待办
 
