@@ -748,6 +748,11 @@ export const sync = {
           updatedAt: String(groupAny.updated_at),
           isLocked: Boolean(groupAny.is_locked),
           ...groupMeta,
+          // 🔧 删除传播：列级 pending_delete 是 tombstone 软删标记。
+          // 必须 OR 进 isDeleted，否则其他设备删除的组下载后没有删除信号，
+          // mergeTabGroups 会把本地副本当 local-only 保留 → 删除不传播。
+          // groupMeta.isDeleted（来自加密 payload）任一为真即视为已删除。
+          isDeleted: Boolean(groupMeta.isDeleted) || Boolean(groupAny.pending_delete),
         });
       }
 
@@ -800,20 +805,26 @@ export const sync = {
     }
 
     const userId = sessionData.session.user.id;
-    console.log(`[markCloudGroupsAsDeleted] 正在删除云端 ${deletedIds.length} 个组`);
+    console.log(`[markCloudGroupsAsDeleted] 正在标记云端 ${deletedIds.length} 个组为已删除`);
 
+    // ⚠️ tombstone 软删，不是物理删除（.delete()）。
+    // 原因：物理删除后云端行消失，其他设备下载时读不到删除信号，
+    // mergeTabGroups 会把本地副本当 local-only 保留 → 删除不跨设备传播
+    //（用户报告的「另一台设备上删掉的组又回来了」）。
+    // 改为标记 pending_delete=true，下载时翻译成 isDeleted 喂给 merge，
+    // merge 的 shouldApplyCloudDeletion 据此应用删除。已在测试库端到端验证。
     const { error } = await supabase
       .from('tab_groups')
-      .delete()
+      .update({ pending_delete: true, updated_at: new Date().toISOString() })
       .eq('user_id', userId)
       .in('id', deletedIds);
 
     if (error) {
-      console.error('[markCloudGroupsAsDeleted] 删除失败:', error);
+      console.error('[markCloudGroupsAsDeleted] 标记删除失败:', error);
       throw error;
     }
 
-    console.log(`[markCloudGroupsAsDeleted] 已删除 ${deletedIds.length} 个云端组`);
+    console.log(`[markCloudGroupsAsDeleted] 已标记 ${deletedIds.length} 个云端组为已删除`);
   },
 
   // 上传用户设置

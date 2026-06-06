@@ -20,3 +20,6 @@ dist/
 .env.test.local
 .env.production.local
 .mcp.json
+
+# 本地环境备份（含密钥，绝不入库）
+.env.*.backup
