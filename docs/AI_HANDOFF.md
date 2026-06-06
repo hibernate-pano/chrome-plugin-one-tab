@@ -232,14 +232,17 @@ TabList useEffect:  if (lastLoadedAt) return  ← 见非空就永久跳过 loadG
 - ~~删除同步死代码~~ → syncHelpers + tabSyncWorkflow + 3 个死 thunk 已删
 - ~~bump version 1.12.0~~ → 三处一致，validate 通过
 - ~~修 README 过时内容~~ → 30min 同步 / @dnd-kit 已改
+- ~~合并 + 推送~~ → `refactor/sync-engine-v1.12.0` 已 `--no-ff` 合并到 main 并 **push 到 origin/main**（2026-06-06）
+- ~~code-review~~ → 抓到并修复 HIGH 回归：`validateMergeResult` 基线只算活跃组（见 §6 末）
 
 ### 仍待办
 
-1. **合并分支**：`refactor/sync-engine-v1.12.0` → main，并 push（本次未做，等你拍板）。
-2. **补齐商店截图**：目前只有 1 张（`docs/store-screenshots/extensions-page.png`），还差主弹窗 / Onboarding / 搜索 / 统计（1280×800 或 640×400）。
-3. **测试覆盖 < 5%**：syncEngine / smartSyncService 是数据安全核心，但只有纯函数层有测试。考虑给 syncEngine 的"验证失败→回滚"路径补集成测试（需解决 §7.5 的 mock 难题，或用依赖注入重构 syncEngine 让 storage/download 可替换）。
-4. **无 CI/CD**：发布全靠本地 `pnpm package` 手动上传。加一个 `.github/workflows/ci.yml` 跑 `pnpm validate` 是高性价比投资。
-5. **可选清理**：`@dnd-kit/*` 三个依赖在 package.json 里但全项目未使用（实际用 react-dnd），可考虑移除以减小依赖面。
+1. **🔴 删除传播失效（review 发现，留待后续）**：`supabase.ts` 的 `markCloudGroupsAsDeleted` 用 `.delete()` **硬删除**云端行，不是写 tombstone。后果：设备 A 删组 → 云端行消失 → 设备 B 下载时云端已无该行 → merge 把 B 的本地副本当 local-only **保留** → 删除不跨设备传播。**非破坏性**（不丢数据，只是删除不同步）。修复需改成软删 tombstone（云端行保留 isDeleted=true + version），需 Supabase schema 确认 + 真机验证。
+2. **🟡 依赖漏洞**：GitHub Dependabot 报 29 个（10 high / 14 moderate / 5 low）。push 时提示。建议 `pnpm audit` 排查，优先 high。
+3. **补齐商店截图**：目前只有 1 张（`docs/store-screenshots/extensions-page.png`），还差主弹窗 / Onboarding / 搜索 / 统计（1280×800 或 640×400）。
+4. **测试覆盖 < 5%**：syncEngine / smartSyncService 是数据安全核心，但只有纯函数层有测试。考虑给 syncEngine 的"验证失败→回滚"路径补集成测试（需解决 §7.5 的 mock 难题，或用依赖注入重构 syncEngine 让 storage/download 可替换）。
+5. **无 CI/CD**：发布全靠本地 `pnpm package` 手动上传。加一个 `.github/workflows/ci.yml` 跑 `pnpm validate` 是高性价比投资。
+6. **可选清理**：`@dnd-kit/*` 三个依赖在 package.json 里但全项目未使用（实际用 react-dnd），可考虑移除以减小依赖面。`master` 分支停在 v1.9.7（落后 main 45 commit）是废弃分支，可删。
 
 ---
 
