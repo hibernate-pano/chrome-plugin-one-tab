@@ -2,8 +2,57 @@
 
 > **更新时间**：2026-06-28
 > **维护者**：每次有结构性改动（尤其是同步层 / 存储层 / 状态层）后必须更新本文件
-> **代码版本**：**v1.13.1**（bumped from 1.13.0，依赖漏洞硬化）
-> **当前状态**：Sprint 2（漏洞硬化 + 测试）已完成，待用户提交商店（U1-U6）
+> **代码版本**：**v1.13.2**（Sprint 3 存储层测试覆盖）
+> **当前状态**：Sprint 3 完成，待用户提交商店（U1-U6）
+
+---
+
+## ⏱ Sprint 3（2026-06-28，存储层集成测试）
+
+| 任务 | 状态 |
+|---|---|
+| 新增 devDep `fake-indexeddb` ^6.2.5 | ✅ |
+| 13 个存储层集成测试（`tests/storageLayer.test.ts`） | ✅ |
+| 测试基础设施：fake-indexeddb auto + chrome.runtime.id polyfill + 缓存清除 | ✅ |
+
+**测试覆盖范围（新增 13 个测试）**：
+1. getGroups/setGroups 往返一致性
+2. 存储后 blob 应为 V2 加密前缀（明文不外泄）
+3. 损坏加密 blob → getGroups 返回 [] 且**不固化缓存**（hydrationDecision 设计前提）
+4. 旧明文数据 → 首次读取返回明文 + 自动升级为加密
+5. setSyncSnapshot → getSyncSnapshot → clearSyncSnapshot 生命周期
+6. snapshot 与 groups 独立存储
+7. invalidateGroupsCache 行为
+8. getSettings 默认值 + 往返
+9. STORAGE_KEYS 通过实际行为验证（GROUPS / SETTINGS / LAST_SYNC_TIME）
+
+**踩坑记录（值得记一笔）**：
+1. `fake-indexeddb/auto` 只需 import 一次，会自动 setup `globalThis.indexedDB`
+2. Node 22 原生 `crypto.subtle` 完整可用，不需要 polyfill
+3. secureStorage 依赖 `chrome.runtime.id` 派生加密 key，测试必须 polyfill `chrome = { runtime: { id: 'test-id' } }`
+4. **缓存隔离坑**：cachedAsyncFn 是模块级单例，必须在 beforeEach 清 cache，否则上一个测试的缓存会污染下一个。beforeEach 需同时 delete IndexedDB + clear cacheManager
+5. STORAGE_KEYS 在 storage.ts 是 `const` 未导出，测试需用实际 key 字符串（'tab_groups' / 'user_settings' / 'last_sync_time' / 'sync_snapshot'）
+
+**测试基础设施（可复用模板）**：
+```typescript
+import 'fake-indexeddb/auto';
+(globalThis as any).chrome = { runtime: { id: 'test-id' } };
+
+beforeEach(async () => {
+  await new Promise<void>((res, rej) => {
+    const req = indexedDB.deleteDatabase('tabvaultpro');
+    req.onsuccess = () => res();
+  });
+  const { invalidateGroupsCache } = await import('@/utils/storage');
+  const { cacheManager } = await import('@/utils/performance');
+  invalidateGroupsCache();
+  cacheManager.getCache('storage').clear();
+});
+```
+
+---
+
+## ⏱ Sprint 2（2026-06-28，漏洞硬化 + 测试覆盖 + 分支清理）
 
 ---
 
