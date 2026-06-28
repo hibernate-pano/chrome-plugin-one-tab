@@ -21,6 +21,7 @@ import { downloadTabGroups, uploadTabGroups, markCloudGroupsAsDeleted } from '@/
 import { mergeTabGroups, validateMergeResult } from '@/utils/syncUtils';
 import { errorHandler } from '@/utils/errorHandler';
 import { cleanupCloudTombstones } from '@/utils/tombstoneGc';
+import type { RootState } from '@/store';
 
 // ── 类型 ───────────────────────────────────────────────────────────
 
@@ -43,21 +44,64 @@ export interface UploadResult {
   error?: string;
 }
 
+/**
+ * 可注入的依赖（用于测试）。
+ * 所有字段都是可选的——不传则使用默认的模块导入。
+ *
+ * 为什么不直接传整个 storage/supabase 实例？
+ * 保持依赖函数级的细粒度，便于单测试替换某一个环节
+ * （例如只替换 downloadTabGroups 而保留 storage 真实运行）。
+ */
+export interface SyncEngineDeps {
+  storage?: Pick<typeof storage, 'getGroups' | 'setGroups' | 'setSyncSnapshot' | 'clearSyncSnapshot' | 'getSettings' | 'setSettings' | 'setLastSyncTime' | 'getLastSyncTime'>;
+  downloadTabGroups?: typeof downloadTabGroups;
+  uploadTabGroups?: typeof uploadTabGroups;
+  markCloudGroupsAsDeleted?: typeof markCloudGroupsAsDeleted;
+  cleanupCloudTombstones?: typeof cleanupCloudTombstones;
+  /** 注入 store 状态获取逻辑，避开 Redux 依赖 */
+  getState?: () => Pick<RootState, 'auth' | 'settings' | 'tabs'>;
+}
+
 // ── SyncEngine ──────────────────────────────────────────────────────
 
 export class SyncEngine {
-  private static instance: SyncEngine;
+  private static instance: SyncEngine | null = null;
   private uploadTimer: ReturnType<typeof setTimeout> | null = null;
   private pendingUpload = false;
   private isSyncing = false;
+  /** 解析后的依赖（构造函数时固化） */
+  private readonly deps: Required<Pick<SyncEngineDeps, 'storage' | 'downloadTabGroups' | 'uploadTabGroups' | 'markCloudGroupsAsDeleted' | 'cleanupCloudTombstones' | 'getState'>>;
 
-  private constructor() {}
+  /**
+   * @param deps 依赖注入（可选）。不传则用默认生产依赖。
+   *
+   * 生产代码：继续用 `syncEngine` singleton 或 `SyncEngine.getInstance()`
+   * 测试代码：`new SyncEngine({ storage: fakeStorage, downloadTabGroups: stubFn, ... })`
+   *
+   * 故意不设为 private：让测试可以 `new SyncEngine(deps)` 直接构造，
+   * 避免 singleton 干扰。生产代码应继续用 `syncEngine` / `getInstance()`。
+   */
+  constructor(deps: SyncEngineDeps = {}) {
+    this.deps = {
+      storage: deps.storage ?? storage,
+      downloadTabGroups: deps.downloadTabGroups ?? downloadTabGroups,
+      uploadTabGroups: deps.uploadTabGroups ?? uploadTabGroups,
+      markCloudGroupsAsDeleted: deps.markCloudGroupsAsDeleted ?? markCloudGroupsAsDeleted,
+      cleanupCloudTombstones: deps.cleanupCloudTombstones ?? cleanupCloudTombstones,
+      getState: deps.getState ?? (() => store.getState() as Pick<RootState, 'auth' | 'settings' | 'tabs'>),
+    };
+  }
 
   static getInstance(): SyncEngine {
     if (!SyncEngine.instance) {
       SyncEngine.instance = new SyncEngine();
     }
     return SyncEngine.instance;
+  }
+
+  /** 测试辅助：重置 singleton，让 getInstance 重新构造（不会影响已创建的实例） */
+  static __resetInstanceForTesting(): void {
+    SyncEngine.instance = null;
   }
 
   // ── 公开方法 ─────────────────────────────────────────────────────
@@ -91,7 +135,7 @@ export class SyncEngine {
    * @param opts.forceRemote 是否强制使用云端数据（覆盖本地）
    */
   async downloadAndMerge(opts?: { forceRemote?: boolean }): Promise<MergeResult> {
-    const { auth } = store.getState();
+    const { auth } = this.deps.getState();
     if (!auth.isAuthenticated) {
       return { success: false, groups: [], reason: 'not_authenticated' };
     }
@@ -106,8 +150,8 @@ export class SyncEngine {
     // 1. 快照
     let snapshot: TabGroup[] = [];
     try {
-      snapshot = await storage.getGroups();
-      await storage.setSyncSnapshot(snapshot);
+      snapshot = await this.deps.storage.getGroups();
+      await this.deps.storage.setSyncSnapshot(snapshot);
       console.log(`[SyncEngine] 快照已保存: ${snapshot.length} 个组`);
     } catch (err) {
       console.error('[SyncEngine] 快照保存失败:', err);
@@ -116,7 +160,7 @@ export class SyncEngine {
 
     try {
       // 2. 下载云端数据
-      const cloudGroups = await downloadTabGroups();
+      const cloudGroups = await this.deps.downloadTabGroups();
       console.log(`[SyncEngine] 云端: ${cloudGroups.length} 个组`);
 
       // 3. 确定本地数据
@@ -124,7 +168,7 @@ export class SyncEngine {
       console.log(`[SyncEngine] 本地: ${localGroups.length} 个组`);
 
       // 4. 合并
-      const settings = store.getState().settings as UserSettings;
+      const settings = this.deps.getState().settings as UserSettings;
       const mergedGroups = mergeTabGroups(
         localGroups,
         cloudGroups,
@@ -149,14 +193,14 @@ export class SyncEngine {
       }
 
       // 6. 写入本地存储
-      await storage.setGroups(mergedGroups);
+      await this.deps.storage.setGroups(mergedGroups);
 
       // 7. 更新同步时间
       const syncTime = new Date().toISOString();
-      await storage.setLastSyncTime(syncTime);
+      await this.deps.storage.setLastSyncTime(syncTime);
 
       // 8. 清除快照（写入成功）
-      await storage.clearSyncSnapshot();
+      await this.deps.storage.clearSyncSnapshot();
 
       console.log(`[SyncEngine] 下载合并完成: ${mergedGroups.length} 个组`);
       this.isSyncing = false;
@@ -196,7 +240,7 @@ export class SyncEngine {
    * @param opts.includeDeleted 是否包含软删标记（deleteAllGroups 场景）
    */
   async upload(opts?: { includeDeleted?: boolean }): Promise<UploadResult> {
-    const { auth } = store.getState();
+    const { auth } = this.deps.getState();
     if (!auth.isAuthenticated) {
       return { success: false, error: '用户未登录' };
     }
@@ -209,7 +253,7 @@ export class SyncEngine {
     this.cancelPendingUpload();
 
     try {
-      const allGroups = await storage.getGroups();
+      const allGroups = await this.deps.storage.getGroups();
 
       // 分离：活跃组（未软删）和软删组 ID
       const activeGroups = allGroups.filter(g => !g.isDeleted);
@@ -221,13 +265,13 @@ export class SyncEngine {
 
       // 上传活跃组（纯 upsert，不删云端现有数据）
       if (activeGroups.length > 0) {
-        await uploadTabGroups(activeGroups, false);
+        await this.deps.uploadTabGroups(activeGroups, false);
       }
 
       // 标记云端软删
       if (deletedIds.length > 0 && opts?.includeDeleted !== false) {
         try {
-          await markCloudGroupsAsDeleted(deletedIds);
+          await this.deps.markCloudGroupsAsDeleted(deletedIds);
           console.log(`[SyncEngine] 已标记 ${deletedIds.length} 个云端组为软删`);
         } catch (err) {
           console.error('[SyncEngine] 标记云端软删失败（不阻塞主流程）:', err);
@@ -236,11 +280,11 @@ export class SyncEngine {
 
       // 更新同步时间
       const syncTime = new Date().toISOString();
-      await storage.setLastSyncTime(syncTime);
+      await this.deps.storage.setLastSyncTime(syncTime);
 
       // Tombstone GC：异步清理自己设备的、超过 30 天的过期 tombstone。
       // fire-and-forget：不阻塞主流程，失败也不影响上传结果。
-      void cleanupCloudTombstones().catch(err =>
+      void this.deps.cleanupCloudTombstones().catch(err =>
         console.warn('[SyncEngine] tombstone GC failed:', err)
       );
 
@@ -301,7 +345,7 @@ export class SyncEngine {
    * @returns 是否在超时前加载完成
    */
   async waitForGroupsLoaded(timeoutMs: number = 5000): Promise<boolean> {
-    if (store.getState().tabs.lastLoadedAt !== null) return true;
+    if (this.deps.getState().tabs.lastLoadedAt !== null) return true;
 
     return new Promise<boolean>(resolve => {
       const timer = setTimeout(() => {
@@ -309,8 +353,10 @@ export class SyncEngine {
         resolve(false);
       }, timeoutMs);
 
+      // 注：store.subscribe 走模块级 singleton。测试代码**不应**调用此方法
+      // （因为 fake store 的 subscribe 行为未定义）。
       const unsubscribe = store.subscribe(() => {
-        if (store.getState().tabs.lastLoadedAt !== null) {
+        if (this.deps.getState().tabs.lastLoadedAt !== null) {
           clearTimeout(timer);
           unsubscribe();
           resolve(true);
@@ -334,14 +380,14 @@ export class SyncEngine {
     }
 
     try {
-      await storage.setGroups(snapshot);
-      await storage.clearSyncSnapshot();
+      await this.deps.storage.setGroups(snapshot);
+      await this.deps.storage.clearSyncSnapshot();
       console.log(`[SyncEngine] 已从快照恢复 ${snapshot.length} 个组`);
     } catch (err) {
       console.error('[SyncEngine] 快照回滚失败:', err);
       // 最后防线：再次尝试
       try {
-        await storage.setGroups(snapshot);
+        await this.deps.storage.setGroups(snapshot);
         console.log('[SyncEngine] 二次回滚成功');
       } catch (retryErr) {
         console.error('[SyncEngine] 二次回滚也失败，数据可能丢失:', retryErr);

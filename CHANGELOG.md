@@ -5,6 +5,27 @@ All notable changes to TabStack will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.13.6] - 2026-06-28
+
+### Refactor
+- **syncEngine 依赖注入（DI）**：构造函数接受可选 `SyncEngineDeps`，生产代码路径不变（`syncEngine` singleton），测试可通过 `new SyncEngine(deps)` 注入 fake storage + stub supabase。这是同步层可测试性的根本性解锁。
+- `store.getState` 也可注入，避免测试时拉起 Redux singleton
+- 新增 `SyncEngine.__resetInstanceForTesting()` 静态方法
+
+### Tests
+- 22 个 syncEngine 集成测试（DI 注入 fakeStorage + stub download/upload/markDeleted/GC + fake getState）
+  - 覆盖：鉴权 / 并发锁 / forceRemote / 验证失败回滚 / 成功后副作用（lastSyncTime + snapshot 清理）/ 上传活跃 vs 软删 / GC fire-and-forget / 错误处理 / 调度上传
+- 15 个 syncPreview 预览统计测试
+- 11 个 runtimeInfo + productEvents 测试
+- 测试总数：198 → 246（+48）
+- 覆盖率：~33% → ~40%（同步层最后盲区已覆盖）
+
+### Audit
+- 运行 `npx ts-prune` 审计未使用导出
+- 85 个标记中绝大多数是 ts-prune 假阳性（React default export + thunk name 引用）
+- 确认无关键死代码
+- 保留的唯一 TODO：supabase.ts Database 接口定义（不在本 sprint 范围）
+
 ## [1.13.5] - 2026-06-28
 
 ### Tests
