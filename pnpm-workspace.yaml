@@ -1,0 +1,26 @@
+# pnpm 10+ configuration
+# overrides 必须放在这里（pnpm.overrides in package.json 在 pnpm 10 已废弃）
+# https://pnpm.io/settings
+
+packages:
+  - .
+
+# Sprint 2 漏洞硬化：强制补丁版本覆盖传递依赖
+# - glob: <10.5.0 有 command injection via -c/--cmd
+# - minimatch: <9.0.6 有 ReDoS
+# - brace-expansion: <2.1.1 有 ReDoS
+# - undici: <6.27.0 有 WebSocket/CRLF/keep-alive 等多个 HIGH
+# - picomatch: <4.0.4 有 ReDoS via extglob
+# - flatted: <3.4.2 有 prototype pollution + unbounded recursion
+# - postcss: <8.4.49 有 XSS via Unescaped </style> (moderate)
+# 暂不动 rollup/vite/esbuild/js-yaml/yaml：要么锁在 @crxjs/vite-plugin 要么
+# 主版本升级风险高。剩下的 HIGH/MODERATE 都在 devDependencies，
+# 仅影响 dev/build 时间，**不进生产 bundle**（见 Vite 默认 external 规则）。
+overrides:
+  glob: ^10.5.0
+  minimatch: ^9.0.6
+  brace-expansion: ^2.1.1
+  undici: ^6.27.0
+  picomatch: ^4.0.4
+  flatted: ^3.4.2
+  postcss: ^8.5.10

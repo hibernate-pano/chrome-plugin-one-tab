@@ -2,8 +2,47 @@
 
 > **更新时间**：2026-06-28
 > **维护者**：每次有结构性改动（尤其是同步层 / 存储层 / 状态层）后必须更新本文件
-> **代码版本**：**v1.13.0**（已 bump，三处一致：package.json / manifest.json / README）
-> **当前状态**：Ship It Sprint 已执行，待用户提交商店（U1-U6）
+> **代码版本**：**v1.13.1**（bumped from 1.13.0，依赖漏洞硬化）
+> **当前状态**：Sprint 2（漏洞硬化 + 测试）已完成，待用户提交商店（U1-U6）
+
+---
+
+## ⏱ Sprint 2（2026-06-28，漏洞硬化 + 测试覆盖 + 分支清理）
+
+| 任务 | 状态 |
+|---|---|
+| 删 `master` 分支（落后 main 59 commit，无标签、无依赖分支） | ✅ |
+| `pnpm audit` 加 `pnpm-workspace.yaml` overrides（pnpm 10 不再读 package.json 的 pnpm.overrides） | ✅ |
+| 覆盖传递依赖：glob ^10.5.0 / minimatch ^9.0.6 / brace-expansion ^2.1.1 / undici ^6.27.0 / picomatch ^4.0.4 / flatted ^3.4.2 / postcss ^8.5.10 | ✅ |
+| Bump `@supabase/supabase-js` 2.49.4 → 2.75.1（修复唯一 runtime LOW：@supabase/auth-js） | ✅ |
+| Bump `lodash` 4.17.21 → 4.18.1 | ✅ |
+| supabase.ts 加 `as any` 转义（v2.108+ 类型推断变严，战术处理，TODO 定义 Database 接口） | ✅ |
+| 8 个 tombstone propagation 边界测试（tests/tombstonePropagation.test.ts） | ✅ |
+
+**验证状态**：
+- `pnpm validate` 全链绿
+- **62/62 测试全绿**（原 54 + 8 新增 tombstone propagation）
+- 漏洞：**46 → 14**（-70%），仅剩 3 high + 8 moderate + 3 low，**全部 devDependencies**
+
+**剩余 14 漏洞（不动原因）**：
+- rollup HIGH：@crxjs/vite-plugin 锁定 2.x，全局升会破 build
+- vite HIGH ×2（launch-editor / server.fs.deny）：dev server only，不进生产 bundle
+- esbuild / js-yaml / yaml / ajv / postcss moderate：dev 链传递依赖，major 升级风险高
+- @babel/core LOW：dev only
+
+**包体积变化**：
+- supabase-vendor：106 kB → 146 kB（+40 kB，+37%）。**安全换体积的明确代价，已可接受**。
+- 总体 production bundle：约 750 kB → 790 kB gzip 后。
+
+**架构补充**：
+- `pnpm-workspace.yaml` 是 pnpm 10+ 唯一被读取的配置点。**新增依赖覆盖必须在 workspace 文件，不要放 package.json。**
+- supabase.ts 的 `as any` 是为了不让 supabase-js 升级级联动 12 个文件。**下次重构时优先定义 Database 接口**（包含 tab_groups / tabs / user_settings 的 Row/Insert/Update 类型）再移除 any。
+
+**未来 sprint 候选（Out of Scope 剩余）**：
+- [ ] 给 syncEngine 写集成测试（需先解决 AI_HANDOFF §7.5 的 mock.module 限制，或引入 DI）
+- [ ] 给 storage 层写测试（用 fake-indexeddb 模拟 IndexedDB）
+- [ ] esbuild / vite / rollup 大版本升级（如 react-dnd 升级同时升 vite 5）
+- [ ] 国际化 / 自托管 Supabase / 付费策略
 
 ---
 
@@ -36,12 +75,6 @@
 - [ ] U4 上传 `chrome-extension.zip` + 填商店详情
 - [ ] U5 审一眼 README 顶部 hook + landing page 一句话是否到位
 - [ ] U6 push 触发 CI 第一次跑
-
-**Out of Scope（下个 sprint 候选）**：
-- Dependabot 29 个漏洞（10 high / 14 moderate / 5 low）批量修复
-- 测试覆盖率从 <5% 提升（syncEngine 集成测试 / smartSyncService IO 测试）
-- `master` 分支删除（落后 45 commit）
-- 国际化 / 自托管 Supabase / 付费策略
 
 ---
 

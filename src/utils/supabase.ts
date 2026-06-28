@@ -78,7 +78,11 @@ function checkSupabaseConfig() {
 }
 
 // 导出 supabase 客户端，延迟初始化
-export const supabase = initSupabaseClient();
+// 类型说明：v2.108 起 supabase-js 启用严格的 Database 泛型推断。
+// 项目当前未定义 Database schema 类型，链式调用会推断为 `never` 导致 13 处类型错误。
+// 战术处理：这里整体转为 any，避免全量重写 schema 类型。
+// TODO：定义 Database 接口（tab_groups / tabs / user_settings 的 Row/Insert/Update 类型）后移除 any。
+export const supabase = initSupabaseClient() as any;
 
 import { secureStorage } from './secureStorage';
 
@@ -660,7 +664,7 @@ export const sync = {
       console.log(`从云端获取到 ${groups.length} 个标签组`);
 
       // 记录每个云端标签组的基本信息
-      groups.forEach((group: any, index) => {
+      groups.forEach((group: any, index: number) => {
         const tabsData = (group.tabs_data || []) as TabData[];
         console.log(`云端标签组 ${index + 1}/${groups.length}:`, {
           id: group.id,

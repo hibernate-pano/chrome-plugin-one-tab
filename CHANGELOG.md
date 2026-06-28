@@ -5,6 +5,23 @@ All notable changes to TabStack will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.13.1] - 2026-06-28
+
+### Security
+- 修复 32 个依赖漏洞（46 → 14）。包含唯一的运行时漏洞 `@supabase/auth-js`。
+- @supabase/supabase-js 2.49.4 → 2.75.1
+- lodash 4.17.21 → 4.18.1
+- 传递依赖覆盖：glob / minimatch / brace-expansion / undici / picomatch / flatted / postcss
+
+### Removed
+- 删 `master` 分支（落后 main 59 commit，无标签）
+
+### Tests
+- 8 个新增 tombstone 跨设备删除传播测试（钉死生产路径关键不变量）
+
+### Note
+- supabase-vendor bundle 增 ~40KB（106KB → 146KB），是接受的安全代价
+
 ## [1.13.0] - 2026-06-28
 
 ### Fixed

@@ -1,6 +1,6 @@
 {
   "name": "chrome-plugin-one-tab",
-  "version": "1.13.0",
+  "version": "1.13.1",
   "description": "保存浏览器工作会话，稍后快速找回与恢复",
   "type": "module",
   "scripts": {
@@ -27,10 +27,10 @@
   "packageManager": "pnpm@10.24.0",
   "dependencies": {
     "@reduxjs/toolkit": "^2.2.1",
-    "@supabase/supabase-js": "^2.49.4",
+    "@supabase/supabase-js": "^2.75.1",
     "@types/lodash": "^4.17.16",
     "clsx": "^2.1.1",
-    "lodash": "^4.17.21",
+    "lodash": "^4.18.1",
     "lz-string": "^1.5.0",
     "react": "^18.2.0",
     "react-dnd": "^16.0.1",
