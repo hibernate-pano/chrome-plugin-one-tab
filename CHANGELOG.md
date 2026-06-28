@@ -5,6 +5,18 @@ All notable changes to TabStack will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.13.4] - 2026-06-28
+
+### Tests
+- 37 个搜索测试（search.ts）：基础匹配 / exactMatch / caseSensitive / 字段开关 / 过滤器 / 评分排序 / matches 元数据 / suggestions / filterOptions / applySearchFilters / buildSessionSearchResults
+- 18 个标签组自动删除测试（tabGroupUtils.ts）
+- 17 个错误处理测试（errorHandler.ts）：ErrorCodes / createAppError / handle 输入类型 / 选项行为 / 返回值
+- 测试总数：108 → 181（+67%）
+- 覆盖率：~20% → ~30%
+
+### Note
+- errorHandler 测试需要显式设置 `globalThis.__TABSTACK_META_ENV__`（v2 依赖 import.meta.env.DEV）。已记录在测试文件 header。
+
 ## [1.13.3] - 2026-06-28
 
 ### Tests

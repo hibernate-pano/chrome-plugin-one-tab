@@ -1,6 +1,6 @@
 # TabStack
 
-当前版本：`1.13.3`
+当前版本：`1.13.4`
 
 > **Save the session. Find it later. Restore it on any device.**
 >
