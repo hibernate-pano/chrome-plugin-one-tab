@@ -5,6 +5,15 @@ All notable changes to TabStack will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.13.5] - 2026-06-28
+
+### Tests
+- 17 个数据迁移测试（migrationUtils.ts）
+- 覆盖：shouldRunMigration / migrateFaviconUrls（xss 过滤）/ removeRecentRestoreHistory / runMigrations 端到端 / 数据完整性不变量
+- 使用 fake-indexeddb 集成测试
+- 测试总数：181 → 198（+9%）
+- 覆盖率：~30% → ~33%
+
 ## [1.13.4] - 2026-06-28
 
 ### Tests
