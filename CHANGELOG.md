@@ -5,6 +5,20 @@ All notable changes to TabStack will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.13.3] - 2026-06-28
+
+### Tests
+- 33 个新增纯函数测试：
+  - versionHelper: 17 个（incrementVersion / updateGroupWithVersion / updateDisplayOrder / initializeVersionFields）
+  - oneTabFormatParser: 16 个（parseOneTabFormat / formatToOneTabFormat / 往返）
+- 测试总数：75 → 108（+44%）
+- 覆盖率：~15% → ~20%
+
+### Developer
+- 新增 `pnpm verify` 脚本（一次性跑 validate + test）
+- 新增 `pnpm audit:fix` 脚本（report-only，支持 `--strict` 模式）
+- CI workflow 改用 `pnpm verify`，增加 `pnpm audit:fix` 作为 informational check
+
 ## [1.13.2] - 2026-06-28
 
 ### Tests

@@ -35,11 +35,13 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Validate (type-check + lint + build)
-        run: pnpm validate
+      - name: Verify (validate + tests)
+        run: pnpm verify
 
-      - name: Run tests
-        run: pnpm test
+      - name: Audit dependencies (informational)
+        run: pnpm audit:fix
+        continue-on-error: true
+        # audit 不 exit 1 以免限制升级；只在 high 漏洞时记录 warning
 
       - name: Build extension package
         run: pnpm package

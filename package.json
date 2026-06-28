@@ -1,6 +1,6 @@
 {
   "name": "chrome-plugin-one-tab",
-  "version": "1.13.2",
+  "version": "1.13.3",
   "description": "保存浏览器工作会话，稍后快速找回与恢复",
   "type": "module",
   "scripts": {
@@ -14,6 +14,8 @@
     "format": "prettier --write \"src/**/*.{ts,tsx}\"",
     "type-check": "tsc --noEmit",
     "validate": "node scripts/validate-extension.mjs && pnpm type-check && pnpm lint && pnpm build",
+    "verify": "pnpm validate && pnpm test",
+    "audit:fix": "node scripts/check-audit.mjs",
     "test:supabase-smoke": "node scripts/supabase-smoke-test.mjs"
   },
   "keywords": [

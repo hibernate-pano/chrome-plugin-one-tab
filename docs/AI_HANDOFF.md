@@ -2,8 +2,28 @@
 
 > **更新时间**：2026-06-28
 > **维护者**：每次有结构性改动（尤其是同步层 / 存储层 / 状态层）后必须更新本文件
-> **代码版本**：**v1.13.2**（Sprint 3 存储层测试覆盖）
-> **当前状态**：Sprint 3 完成，待用户提交商店（U1-U6）
+> **代码版本**：**v1.13.3**（Sprint 4 纯函数测试 + 开发者体验）
+> **当前状态**：Sprint 4 完成，待用户提交商店（U1-U6）
+
+---
+
+## ⏱ Sprint 4（2026-06-28，纯函数测试 + 开发者体验）
+
+| 任务 | 状态 |
+|---|---|
+| versionHelper 完整测试（17 个） | ✅ |
+| oneTabFormatParser 完整测试（16 个） | ✅ |
+| `pnpm verify` 脚本（validate + test 一键） | ✅ |
+| `pnpm audit:fix` 脚本（report-only，支持 --strict） | ✅ |
+| CI workflow 升级（用 verify、加 audit check） | ✅ |
+
+**测试覆盖范围**：
+- versionHelper：版本号递增不变量、displayOrder 分配、初始化、纯函数性质
+- oneTabFormatParser：单/多组、空/边界、BOM 处理、tab id 唯一性、format/parse 往返
+
+**踩坑**：
+- parseOneTabFormat 对空字符串返回「1 个空 tabs 的组」（不是 []），这是当前实现行为，
+  不是 bug，但下游 UI 可能需要过滤空组。已记录在测试注释。
 
 ---
 
