@@ -1,9 +1,53 @@
 # TabStack · AI 协作交接文档（活文档）
 
-> **更新时间**：2026-06-05
+> **更新时间**：2026-06-28
 > **维护者**：每次有结构性改动（尤其是同步层 / 存储层 / 状态层）后必须更新本文件
-> **代码版本**：**v1.12.0**（已 bump，三处一致：package.json / manifest.json / README）
-> **分支**：`refactor/sync-engine-v1.12.0`（未合并回 main，未 push）
+> **代码版本**：**v1.13.0**（已 bump，三处一致：package.json / manifest.json / README）
+> **当前状态**：Ship It Sprint 已执行，待用户提交商店（U1-U6）
+
+---
+
+## ⏱ Ship It Sprint（2026-06-28，22 天后清场 + 上架）
+
+| 任务 | 状态 |
+|---|---|
+| README 重写（"why TabStack" hook + 差异化对比表） | ✅ |
+| CHANGELOG.md（v1.12 + v1.13 用户视角） | ✅ |
+| Landing page（docs/landing/index.html，可 GitHub Pages 部署） | ✅ |
+| 删 `@dnd-kit/*` 三个未用 dep | ✅ pnpm-lock 减 2KB |
+| 删 manifest `alarms` 权限（已无引用） | ✅ |
+| Tombstone GC（src/utils/tombstoneGc.ts + tombstoneGcUtil.ts） | ✅ 5 新测试 |
+| GitHub Actions CI（.github/workflows/ci.yml） | ✅ 待首次 push 触发 |
+| Screenshot Guide（docs/SCREENSHOT_GUIDE.md） | ✅ |
+| AI_HANDOFF 本文档更新 | ✅ |
+
+**验证状态**：`pnpm validate` 全链通过（元数据一致 + type-check + lint + build），**54 测试全绿**（原 49 + GC 新增 5）。
+
+**架构不变量保持**：syncEngine / syncUtils / hydrationDecision / tombstone 软删逻辑均未改动。**清场而非重写。**
+
+**架构补充**：
+- 新增 `tombstoneGc.ts`（IO 部分）+ `tombstoneGcUtil.ts`（纯函数 `computeCutoff`）。分离目的是测试能 import 纯函数部分而不会触发 supabase 模块解析链。
+- `syncEngine.upload()` 末尾 fire-and-forget 调用 `cleanupCloudTombstones()`，默认 30 天阈值，仅清理本设备 tombstone，不阻塞主流程。
+
+**待用户执行（不在本 sprint 内）**：
+- [ ] U1 拍 4 张商店截图（按 `docs/SCREENSHOT_GUIDE.md`）
+- [ ] U2 复制到 `docs/store-screenshots/`
+- [ ] U3 注册 Chrome Web Store 开发者账号（一次性 $5）
+- [ ] U4 上传 `chrome-extension.zip` + 填商店详情
+- [ ] U5 审一眼 README 顶部 hook + landing page 一句话是否到位
+- [ ] U6 push 触发 CI 第一次跑
+
+**Out of Scope（下个 sprint 候选）**：
+- Dependabot 29 个漏洞（10 high / 14 moderate / 5 low）批量修复
+- 测试覆盖率从 <5% 提升（syncEngine 集成测试 / smartSyncService IO 测试）
+- `master` 分支删除（落后 45 commit）
+- 国际化 / 自托管 Supabase / 付费策略
+
+---
+
+## 本次会话已完成（2026-06-05，v1.12.0 sprint）
+
+上一版本文档写于"工作区一堆未提交改动"时。**这些改动现已全部提交并修复**，分支 `refactor/sync-engine-v1.12.0` 上有 5 个 commit：
 
 ---
 

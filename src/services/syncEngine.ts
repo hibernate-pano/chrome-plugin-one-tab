@@ -20,6 +20,7 @@ import { storage } from '@/utils/storage';
 import { downloadTabGroups, uploadTabGroups, markCloudGroupsAsDeleted } from '@/services/tabGroupSyncService';
 import { mergeTabGroups, validateMergeResult } from '@/utils/syncUtils';
 import { errorHandler } from '@/utils/errorHandler';
+import { cleanupCloudTombstones } from '@/utils/tombstoneGc';
 
 // ── 类型 ───────────────────────────────────────────────────────────
 
@@ -236,6 +237,12 @@ export class SyncEngine {
       // 更新同步时间
       const syncTime = new Date().toISOString();
       await storage.setLastSyncTime(syncTime);
+
+      // Tombstone GC：异步清理自己设备的、超过 30 天的过期 tombstone。
+      // fire-and-forget：不阻塞主流程，失败也不影响上传结果。
+      void cleanupCloudTombstones().catch(err =>
+        console.warn('[SyncEngine] tombstone GC failed:', err)
+      );
 
       console.log('[SyncEngine] 上传完成');
       this.isSyncing = false;

@@ -1,0 +1,47 @@
+# Changelog
+
+All notable changes to TabStack will be documented in this file.
+
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
+and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## [1.13.0] - 2026-06-28
+
+### Fixed
+- 部分用户报告"点击扩展图标后看到空白界面"——已修复（empty read 不再被固化为已加载）
+- 跨设备删除现在正确传播（不再出现"另一台设备删的组又回来"）
+
+### Changed
+- 打包体积更小：清理了未使用的 `@dnd-kit/*` 依赖
+- 同步引擎重构为单一入口（开发者向，普通用户无感）
+
+### Security
+- 同步系统新增 tombstone GC 机制，自动清理 30 天以上的软删标记
+
+## [1.12.0] - 2026-06-06
+
+### Added
+- 跨设备云同步（需注册账号，AES-GCM 端到端加密）
+- 8 套主题：原始 / 经典 / 极光 / 奶油 / 粉红 / 薄荷 / 赛博 / 棱镜
+- 智能防抖自动同步
+
+### Fixed
+- 同步过程中可能丢数据的边界条件（合并前快照 + 验证后写入 + 失败回滚）
+- Service Worker 周期同步导致的 CPU 占用（移至 popup 上下文）
+
+### Changed
+- 同步层重构为单一 `SyncEngine` 入口，删除 3 条历史遗留的同步路径
+
+## [1.11.8] - 2026-05-26
+
+### Changed
+- 品牌名统一为 **TabStack**（原 TabVault Pro）
+- UI 动画与可访问性优化
+
+## [1.11.0] - 2026-05
+
+### Added
+- 初次公开发布准备
+- 一键保存 / 一键恢复
+- 智能搜索
+- 基础主题系统

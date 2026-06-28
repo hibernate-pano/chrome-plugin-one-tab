@@ -1,0 +1,275 @@
+<!DOCTYPE html>
+<html lang="zh-CN" class="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>TabStack · Save the session. Restore it on any device.</title>
+  <meta name="description" content="TabStack 是一款 Chrome 扩展，把几十个并行标签页收进可命名、可搜索、可同步的工作会话。端到端加密、跨设备同步、8 套主题开箱即用。" />
+  <meta property="og:title" content="TabStack — Your tabs, on every device" />
+  <meta property="og:description" content="Cross-device tab session manager with end-to-end encryption. OneTab 简单，但换电脑就没了。TabStack 让你的标签组跟着你走。" />
+  <meta property="og:type" content="website" />
+  <link rel="icon" type="image/png" href="./assets/icon-128.png" />
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          colors: {
+            brand: {
+              50: '#eef2ff',
+              100: '#e0e7ff',
+              500: '#6366f1',
+              600: '#4f46e5',
+              700: '#4338ca',
+              900: '#312e81',
+            }
+          }
+        }
+      }
+    }
+  </script>
+  <style>
+    html { scroll-behavior: smooth; }
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; }
+    .gradient-hero {
+      background: radial-gradient(ellipse at top, rgba(99, 102, 241, 0.15) 0%, transparent 50%),
+                  radial-gradient(ellipse at bottom right, rgba(168, 85, 247, 0.1) 0%, transparent 50%);
+    }
+    .feature-card {
+      transition: transform 0.2s ease, border-color 0.2s ease;
+    }
+    .feature-card:hover {
+      transform: translateY(-2px);
+      border-color: rgba(99, 102, 241, 0.4);
+    }
+  </style>
+</head>
+<body class="bg-slate-950 text-slate-100 antialiased">
+
+  <!-- Nav -->
+  <nav class="sticky top-0 z-50 border-b border-slate-800 bg-slate-950/80 backdrop-blur">
+    <div class="max-w-6xl mx-auto px-6 py-4 flex items-center justify-between">
+      <a href="#" class="flex items-center gap-2 font-semibold text-lg">
+        <img src="./assets/icon-128.png" alt="TabStack" class="w-8 h-8" />
+        TabStack
+      </a>
+      <div class="flex items-center gap-6 text-sm">
+        <a href="#features" class="text-slate-400 hover:text-slate-100 transition">功能</a>
+        <a href="#compare" class="text-slate-400 hover:text-slate-100 transition">对比</a>
+        <a href="#privacy" class="text-slate-400 hover:text-slate-100 transition">隐私</a>
+        <a href="https://github.com/hibernate-pano/chrome-plugin-one-tab"
+           class="text-slate-400 hover:text-slate-100 transition">GitHub</a>
+        <a href="https://chrome.google.com/webstore"
+           class="px-4 py-2 bg-brand-600 hover:bg-brand-700 rounded-lg font-medium transition">
+          安装扩展
+        </a>
+      </div>
+    </div>
+  </nav>
+
+  <!-- Hero -->
+  <header class="gradient-hero">
+    <div class="max-w-6xl mx-auto px-6 py-24 md:py-32 text-center">
+      <div class="inline-flex items-center gap-2 px-3 py-1 mb-6 rounded-full border border-slate-700 bg-slate-900/60 text-xs text-slate-300">
+        <span class="w-2 h-2 bg-emerald-400 rounded-full animate-pulse"></span>
+        v1.13.0 已发布 · 修复"刷新后空白"问题
+      </div>
+      <h1 class="text-5xl md:text-7xl font-bold tracking-tight mb-6">
+        Save the session.<br />
+        <span class="bg-gradient-to-r from-brand-500 to-purple-500 bg-clip-text text-transparent">
+          Restore it on any device.
+        </span>
+      </h1>
+      <p class="text-xl text-slate-400 max-w-2xl mx-auto mb-10">
+        OneTab 简单，但换电脑就没了。<br />
+        TabStack 让你的标签组跟着你走 —— 端到端加密，跨设备同步，8 套主题开箱即用。
+      </p>
+      <div class="flex flex-col sm:flex-row gap-4 justify-center">
+        <a href="https://chrome.google.com/webstore"
+           class="px-8 py-4 bg-brand-600 hover:bg-brand-700 rounded-lg font-semibold text-lg transition shadow-lg shadow-brand-600/20">
+          安装到 Chrome
+        </a>
+        <a href="https://github.com/hibernate-pano/chrome-plugin-one-tab"
+           class="px-8 py-4 border border-slate-700 hover:border-slate-600 hover:bg-slate-900 rounded-lg font-semibold text-lg transition">
+          在 GitHub 查看
+        </a>
+      </div>
+      <p class="mt-6 text-sm text-slate-500">
+        Manifest V3 · 客户端加密 · MIT License
+      </p>
+    </div>
+  </header>
+
+  <!-- Why TabStack (Compare) -->
+  <section id="compare" class="py-20 border-t border-slate-800">
+    <div class="max-w-6xl mx-auto px-6">
+      <h2 class="text-3xl md:text-4xl font-bold text-center mb-4">为什么选 TabStack</h2>
+      <p class="text-slate-400 text-center mb-12 max-w-2xl mx-auto">
+        同样是把标签页收起来，TabStack 在三个关键维度做得更远。
+      </p>
+
+      <div class="overflow-x-auto">
+        <table class="w-full text-left">
+          <thead>
+            <tr class="border-b border-slate-800">
+              <th class="py-4 pr-6 text-slate-400 font-medium">特性</th>
+              <th class="py-4 px-6 text-slate-400 font-medium text-center">OneTab</th>
+              <th class="py-4 px-6 text-slate-400 font-medium text-center">Session Buddy</th>
+              <th class="py-4 pl-6 text-brand-500 font-semibold text-center">TabStack</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr class="border-b border-slate-800">
+              <td class="py-4 pr-6 font-medium">跨设备同步</td>
+              <td class="py-4 px-6 text-center text-slate-500">❌</td>
+              <td class="py-4 px-6 text-center text-slate-500">❌</td>
+              <td class="py-4 pl-6 text-center text-emerald-400">✅ 端到端加密</td>
+            </tr>
+            <tr class="border-b border-slate-800">
+              <td class="py-4 pr-6 font-medium">Manifest V3</td>
+              <td class="py-4 px-6 text-center text-slate-500">❌ 老旧</td>
+              <td class="py-4 px-6 text-center text-slate-500">❌ 不再维护</td>
+              <td class="py-4 pl-6 text-center text-emerald-400">✅ 原生 MV3</td>
+            </tr>
+            <tr class="border-b border-slate-800">
+              <td class="py-4 pr-6 font-medium">主题</td>
+              <td class="py-4 px-6 text-center text-slate-500">❌</td>
+              <td class="py-4 px-6 text-center text-slate-500">❌</td>
+              <td class="py-4 pl-6 text-center text-emerald-400">✅ 8 套</td>
+            </tr>
+            <tr class="border-b border-slate-800">
+              <td class="py-4 pr-6 font-medium">OneTab 格式兼容</td>
+              <td class="py-4 px-6 text-center text-emerald-400">✅</td>
+              <td class="py-4 px-6 text-center text-slate-500">❌</td>
+              <td class="py-4 pl-6 text-center text-emerald-400">✅</td>
+            </tr>
+            <tr>
+              <td class="py-4 pr-6 font-medium">客户端加密</td>
+              <td class="py-4 px-6 text-center text-slate-500">❌</td>
+              <td class="py-4 px-6 text-center text-slate-500">❌</td>
+              <td class="py-4 pl-6 text-center text-emerald-400">✅ AES-GCM 256</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <!-- Features -->
+  <section id="features" class="py-20 border-t border-slate-800 bg-slate-900/30">
+    <div class="max-w-6xl mx-auto px-6">
+      <h2 class="text-3xl md:text-4xl font-bold text-center mb-4">核心能力</h2>
+      <p class="text-slate-400 text-center mb-12 max-w-2xl mx-auto">
+        为重度浏览器用户设计 —— 几十个并行标签页不再失控。
+      </p>
+
+      <div class="grid md:grid-cols-2 lg:grid-cols-4 gap-6">
+        <div class="feature-card p-6 border border-slate-800 rounded-xl bg-slate-900/50">
+          <div class="w-12 h-12 mb-4 rounded-lg bg-brand-600/20 flex items-center justify-center text-2xl">⚡</div>
+          <h3 class="font-semibold mb-2">一键保存</h3>
+          <p class="text-sm text-slate-400">把当前窗口所有标签页存为可命名的工作会话，<code class="text-xs">Alt+Shift+S</code> 即按即用。</p>
+        </div>
+
+        <div class="feature-card p-6 border border-slate-800 rounded-xl bg-slate-900/50">
+          <div class="w-12 h-12 mb-4 rounded-lg bg-purple-600/20 flex items-center justify-center text-2xl">🔍</div>
+          <h3 class="font-semibold mb-2">智能搜索</h3>
+          <p class="text-sm text-slate-400">按会话名、备注、标签标题、URL 全文检索，秒级定位。</p>
+        </div>
+
+        <div class="feature-card p-6 border border-slate-800 rounded-xl bg-slate-900/50">
+          <div class="w-12 h-12 mb-4 rounded-lg bg-emerald-600/20 flex items-center justify-center text-2xl">☁️</div>
+          <h3 class="font-semibold mb-2">跨设备同步</h3>
+          <p class="text-sm text-slate-400">登录后自动同步，AES-GCM 端到端加密 —— 云端只存密文，密钥不出本机。</p>
+        </div>
+
+        <div class="feature-card p-6 border border-slate-800 rounded-xl bg-slate-900/50">
+          <div class="w-12 h-12 mb-4 rounded-lg bg-pink-600/20 flex items-center justify-center text-2xl">🎨</div>
+          <h3 class="font-semibold mb-2">8 套主题</h3>
+          <p class="text-sm text-slate-400">原始 / 经典 / 极光 / 奶油 / 粉红 / 薄荷 / 赛博 / 棱镜，找到你的频率。</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Screenshots -->
+  <section id="screenshots" class="py-20 border-t border-slate-800">
+    <div class="max-w-6xl mx-auto px-6">
+      <h2 class="text-3xl md:text-4xl font-bold text-center mb-4">看看实际效果</h2>
+      <p class="text-slate-400 text-center mb-12 max-w-2xl mx-auto">
+        截图占位 —— 商店截图待补（详见 <code class="text-xs">docs/SCREENSHOT_GUIDE.md</code>）。
+      </p>
+
+      <div class="grid md:grid-cols-2 gap-6">
+        <div class="aspect-video border border-slate-800 rounded-xl bg-slate-900/50 flex items-center justify-center text-slate-600">
+          <span class="text-sm">popup-main.png</span>
+        </div>
+        <div class="aspect-video border border-slate-800 rounded-xl bg-slate-900/50 flex items-center justify-center text-slate-600">
+          <span class="text-sm">popup-search.png</span>
+        </div>
+        <div class="aspect-video border border-slate-800 rounded-xl bg-slate-900/50 flex items-center justify-center text-slate-600">
+          <span class="text-sm">popup-sync.png</span>
+        </div>
+        <div class="aspect-video border border-slate-800 rounded-xl bg-slate-900/50 flex items-center justify-center text-slate-600">
+          <span class="text-sm">popup-themes.png</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Privacy -->
+  <section id="privacy" class="py-20 border-t border-slate-800 bg-slate-900/30">
+    <div class="max-w-3xl mx-auto px-6 text-center">
+      <h2 class="text-3xl md:text-4xl font-bold mb-4">隐私优先</h2>
+      <p class="text-slate-400 mb-8">
+        你的数据是你的。TabStack 不会在后台悄悄同步。
+      </p>
+      <div class="grid sm:grid-cols-3 gap-6 text-left">
+        <div class="p-5 border border-slate-800 rounded-xl bg-slate-900/50">
+          <div class="text-2xl mb-2">🔒</div>
+          <h3 class="font-semibold mb-1 text-sm">端到端加密</h3>
+          <p class="text-xs text-slate-400">AES-GCM 256 + PBKDF2 100k 轮，密钥不出本机</p>
+        </div>
+        <div class="p-5 border border-slate-800 rounded-xl bg-slate-900/50">
+          <div class="text-2xl mb-2">🚫</div>
+          <h3 class="font-semibold mb-1 text-sm">无后台同步</h3>
+          <p class="text-xs text-slate-400">完全由你控制，不会在你不操作时上传数据</p>
+        </div>
+        <div class="p-5 border border-slate-800 rounded-xl bg-slate-900/50">
+          <div class="text-2xl mb-2">🗑️</div>
+          <h3 class="font-semibold mb-1 text-sm">完全可删除</h3>
+          <p class="text-xs text-slate-400">本地 + 云端随时可清理，不留尾巴</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- CTA -->
+  <section class="py-20 border-t border-slate-800">
+    <div class="max-w-3xl mx-auto px-6 text-center">
+      <h2 class="text-3xl md:text-4xl font-bold mb-4">不再丢失任何一个工作现场</h2>
+      <p class="text-slate-400 mb-8">免费，MIT 协议，3 秒安装。</p>
+      <a href="https://chrome.google.com/webstore"
+         class="inline-block px-10 py-4 bg-brand-600 hover:bg-brand-700 rounded-lg font-semibold text-lg transition shadow-lg shadow-brand-600/20">
+        安装到 Chrome
+      </a>
+    </div>
+  </section>
+
+  <!-- Footer -->
+  <footer class="py-12 border-t border-slate-800">
+    <div class="max-w-6xl mx-auto px-6 flex flex-col md:flex-row justify-between items-center gap-4 text-sm text-slate-500">
+      <div class="flex items-center gap-2">
+        <img src="./assets/icon-128.png" alt="TabStack" class="w-6 h-6" />
+        <span>TabStack · MIT License</span>
+      </div>
+      <div class="flex items-center gap-6">
+        <a href="https://github.com/hibernate-pano/chrome-plugin-one-tab" class="hover:text-slate-300 transition">GitHub</a>
+        <a href="https://github.com/hibernate-pano/chrome-plugin-one-tab/issues" class="hover:text-slate-300 transition">反馈</a>
+        <a href="./PRIVACY_POLICY.md" class="hover:text-slate-300 transition">隐私政策</a>
+      </div>
+    </div>
+  </footer>
+
+</body>
+</html>
