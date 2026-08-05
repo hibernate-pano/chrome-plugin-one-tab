@@ -1,9 +1,44 @@
 # TabStack · AI 协作交接文档（活文档）
 
-> **更新时间**：2026-06-28
+> **更新时间**：2026-08-05
 > **维护者**：每次有结构性改动（尤其是同步层 / 存储层 / 状态层）后必须更新本文件
 > **代码版本**：**v1.13.6**（Sprint 7 syncEngine DI + 完整测试覆盖）
-> **当前状态**：Sprint 7 完成，待用户提交商店（U1-U6）
+> **当前状态**：Sprint 8 蓝图已批准 → S2 spec 已落 → 待用户 review 后启动 writing-plans
+
+---
+
+## ⏱ Sprint 8（2026-08-05，规划与蓝图）
+
+| 任务 | 状态 |
+|---|---|
+| 主架构蓝图 — 拆为 S1/S2/S3 三 sprint | ✅ `docs/superpowers/specs/2026-08-05-tabstack-personal-revamp-blueprint.md` |
+| S2 详细 spec（UX + 性能 + UI 打磨） | ✅ `docs/superpowers/specs/2026-08-05-S2-ux-performance-polish-design.md` |
+| S1 outline（同步护栏 + 错误分层） | ✅ `docs/superpowers/specs/2026-08-05-S1-sync-guards-outline.md` |
+| S3 outline（新功能 1–2 个候选） | ✅ `docs/superpowers/specs/2026-08-05-S3-new-features-outline.md` |
+
+**Sprint 拆解（用户批准"细粒度"）**：
+- **S1** ≈1 周：同步 + 数据可靠性护栏（storage.hydrateAll 单源化、五类错误分层、加密失败逃生口、离线提示）
+- **S2** ≈2–3 周：启动性能 + 大列表虚拟化 + UI 减负 + 测试 40% → 65%
+- **S3** ≈1–2 周：1–2 个新功能（推荐：Hover-to-preview + 暗色 Auto 模式）
+
+**注意：S1 与 S2 共写 `storage.hydrateAll`，避免半截状态**——S1 应在 S2 P1 阶段启动；或一起提交避免冲突。
+
+**未引入的依赖**（用户确认）：
+- ✅ 引入：`@tanstack/react-virtual` v3.x（事实标准，~7K）
+- ⏸ 待你最后确认 devDeps：`@testing-library/react` + `jsdom`（仅测试环境）
+
+**不动**：
+- React 18.2 / Vite 4.5 / CRXJS 2.x / lodash 锁版本
+- syncEngine / syncUtils / hydrationDecision 三处核心护栏
+- IndexedDB DB 名 `tabvaultpro`
+- Service Worker 不加回同步逻辑
+
+**5 个不变量测试必须保持绿**（任何 sprint 都不可违反）：
+- tests/hydrationDecision.test.ts
+- tests/syncMergeSafety.test.ts
+- tests/storageLayer.test.ts
+- tests/syncEngine.test.ts
+- tests/tombstone{Propagation,Gc}.test.ts
 
 ---
 
