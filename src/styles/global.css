@@ -1,10 +1,11 @@
 /* TabStack 字体系统 */
 @import './fonts.css';
 
-/* 主题系统 - S2 P4 Task 4.4 精简到 3 个主题：极光 / 精致 / 赛博 */
-@import './themes/aurora.css';
-@import './themes/refined.css';
-@import './themes/cyberpunk.css';
+/* 主题 CSS - S2 P4 Task 4.5 改为 dynamic <link> 注入；
+ * 文件位置: public/themes/{aurora|refined|cyberpunk}.css
+ * 注入点: src/contexts/ThemeContext.tsx (setThemeStylesheet)
+ * 不再 eagerly import，避免 3 个主题一次性打入 dist。
+ */
 
 /* 微交互样式 */
 @import './micro-interactions.css';

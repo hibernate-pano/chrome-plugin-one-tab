@@ -38,6 +38,7 @@
   margin-bottom: 4px;
   cursor: move;
   position: relative;
+  transition: transform 0.15s ease, opacity 0.15s ease;
 }
 
 .dark .tab-item {
@@ -46,7 +47,7 @@
 }
 
 .tab-item:hover {
-  background-color: #f9fafb;
+  background-color: #f5f5f5;
 }
 
 .dark .tab-item:hover {
@@ -57,9 +58,14 @@
 .tab-item.dragging {
   opacity: 0.5;
   border-color: #3b82f6;
-  box-shadow: 0 2px 6px rgba(59, 130, 246, 0.2);
+  box-shadow: 0 4px 8px rgba(59, 130, 246, 0.2);
   z-index: 999;
   background-color: #f0f7ff;
+}
+
+.dark .tab-item.dragging {
+  background-color: #1e40af;
+  border-color: #3b82f6;
 }
 
 /* 标签组样式 */
@@ -69,6 +75,7 @@
   border: 1px solid #e5e7eb;
   overflow: hidden;
   margin-bottom: 12px;
+  transition: transform 0.15s ease, opacity 0.15s ease;
 }
 
 .dark .group-item {
@@ -76,8 +83,6 @@
   border-color: #374151;
   color: #e5e7eb;
 }
-
-
 
 /* 标签组拖拽中状态 */
 .group-item.dragging {
@@ -174,46 +179,7 @@
   color: #e5e7eb;
 }
 
-/* 兼容旧样式 */
-.tab-item {
-  display: flex;
-  align-items: center;
-  padding: 8px 12px;
-  border-radius: 4px;
-  background-color: white;
-  border: 1px solid transparent;
-  margin-bottom: 4px;
-  cursor: move;
-  position: relative;
-  transition: transform 0.15s ease, opacity 0.15s ease;
-}
-
-.dark .tab-item {
-  background-color: #1f2937;
-  color: #e5e7eb;
-}
-
-.tab-item:hover {
-  background-color: #f5f5f5;
-}
-
-.dark .tab-item:hover {
-  background-color: #374151;
-}
-
-.tab-item.dragging {
-  opacity: 0.5;
-  border-color: #3b82f6;
-  box-shadow: 0 4px 8px rgba(59, 130, 246, 0.2);
-  z-index: 999;
-  background-color: #f0f7ff;
-}
-
-.dark .tab-item.dragging {
-  background-color: #1e40af;
-  border-color: #3b82f6;
-}
-
+/* 兼容旧样式 - 拖拽覆盖层 */
 .drag-overlay {
   display: flex;
   align-items: center;
@@ -232,16 +198,6 @@
   background-color: #1f2937;
   border-color: #374151;
   color: #e5e7eb;
-}
-
-.group-item {
-  transition: transform 0.15s ease, opacity 0.15s ease;
-}
-
-.group-item.dragging {
-  opacity: 0.5;
-  border-color: #ccc;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
 }
 
 .group-overlay {

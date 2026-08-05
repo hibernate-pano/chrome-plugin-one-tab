@@ -20,6 +20,28 @@ interface ThemeContextType {
 // 主题切换过渡时间 (ms)
 const THEME_TRANSITION_DURATION = 250;
 
+// 主题 <link> id — S2 P4 Task 4.5：动态 <link> 注入，避免 3 个主题同时打入 dist。
+const THEME_LINK_ID = 'theme-stylesheet';
+
+// S2 P4 Task 4.5：注入/切换主题 CSS。
+// 首次切换有 50-100ms 加载，之后瞬切（同一会话内 id 已存在时只换 href）。
+// CSP style-src 'self' 'unsafe-inline' — 走 chrome-extension:// 内置资源，OK。
+function setThemeStylesheet(themeName: string): void {
+  const existing = document.getElementById(THEME_LINK_ID) as HTMLLinkElement | null;
+  if (existing) {
+    // 已注入：直接换 href（同源，浏览器只换样式表，不重排）
+    if (!existing.href.endsWith(`/themes/${themeName}.css`)) {
+      existing.href = chrome.runtime.getURL(`themes/${themeName}.css`);
+    }
+    return;
+  }
+  const link = document.createElement('link');
+  link.id = THEME_LINK_ID;
+  link.rel = 'stylesheet';
+  link.href = chrome.runtime.getURL(`themes/${themeName}.css`);
+  document.head.appendChild(link);
+}
+
 const ThemeContext = createContext<ThemeContextType | undefined>(undefined);
 
 export const ThemeProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
@@ -107,8 +129,10 @@ export const ThemeProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   }, [currentTheme]);
 
   // 应用主题风格到HTML元素的 data-theme 属性
+  // S2 P4 Task 4.5：同时动态注入主题 CSS（lazy <link>）
   useEffect(() => {
     document.documentElement.dataset.theme = themeStyle;
+    setThemeStylesheet(themeStyle);
   }, [themeStyle]);
 
   // 更新主题模式
