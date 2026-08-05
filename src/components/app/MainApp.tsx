@@ -4,6 +4,8 @@ import { TabList } from '@/components/tabs/TabList';
 import { OnboardingGuide } from '@/components/onboarding/OnboardingGuide';
 import { shouldShowOnboarding } from '@/utils/onboardingStorage';
 import { getAppVersionLabel } from '@/utils/runtimeInfo';
+import { useAppSelector } from '@/store/hooks';
+import { formatLastSync } from '@/utils/sessionPresentation';
 
 // 使用动态导入懒加载拖放功能
 const DndProvider = lazy(() =>
@@ -20,6 +22,44 @@ const SettingsTabs = lazy(() =>
 // 导入样式文件
 import '@/styles/drag-drop.css';
 import '@/styles/animations.css';
+
+/**
+ * Footer 中的紧凑云同步状态读数（S2 F8）。
+ * 仅在已登录时渲染：状态点（emerald=空闲/成功，amber=同步中，rose=失败）
+ * + 「已同步 · X前」/「同步中…」/「同步失败」。未登录返回 null（footer 保持原样）。
+ * 非交互只读 —— 只依赖纯工具函数 formatLastSync，不引入 syncService 到主 chunk。
+ */
+const SyncStatusIndicator: React.FC = () => {
+  const isAuthenticated = useAppSelector((state) => state.auth.isAuthenticated);
+  const syncStatus = useAppSelector((state) => state.tabs.syncStatus);
+  const lastSyncTime = useAppSelector((state) => state.tabs.lastSyncTime);
+
+  if (!isAuthenticated) return null;
+
+  const dotClass =
+    syncStatus === 'error'
+      ? 'bg-rose-500'
+      : syncStatus === 'syncing'
+        ? 'bg-amber-500 animate-pulse'
+        : 'bg-emerald-500';
+
+  let label: string;
+  if (syncStatus === 'syncing') {
+    label = '同步中…';
+  } else if (syncStatus === 'error') {
+    label = '同步失败';
+  } else {
+    const rel = formatLastSync(lastSyncTime);
+    label = rel === '尚未同步' ? '尚未同步' : `已同步 · ${rel}`;
+  }
+
+  return (
+    <span className="flex items-center gap-1.5 truncate" title="云同步状态">
+      <span className={`inline-block h-2 w-2 rounded-full shrink-0 ${dotClass}`} aria-hidden="true" />
+      <span className="truncate">{label}</span>
+    </span>
+  );
+};
 
 /**
  * 主应用组件
@@ -88,11 +128,11 @@ export const MainApp: React.FC = () => {
                 </Suspense>
               </main>
               <footer className="bg-white dark:bg-gray-900 border-t border-gray-200 dark:border-gray-700 text-xs text-gray-600 dark:text-gray-400">
-                <div className="w-full py-2 layout-double-width flex justify-between items-center">
-                  <div className="flex items-center space-x-2">
+                <div className="w-full py-2 layout-double-width flex justify-between items-center gap-2">
+                  <div className="flex items-center space-x-2 min-w-0">
                     <svg
                       xmlns="http://www.w3.org/2000/svg"
-                      className="h-4 w-4 text-primary-600"
+                      className="h-4 w-4 text-primary-600 shrink-0"
                       fill="none"
                       viewBox="0 0 24 24"
                       stroke="currentColor"
@@ -104,10 +144,11 @@ export const MainApp: React.FC = () => {
                         d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"
                       />
                     </svg>
-                    <span>TabStack {getAppVersionLabel()}</span>
+                    <span className="truncate">TabStack {getAppVersionLabel()}</span>
                   </div>
-                  <div className="flex items-center space-x-2">
-                    <span>Save the session. Find it later.</span>
+                  <div className="flex items-center space-x-2 min-w-0">
+                    <SyncStatusIndicator />
+                    <span className="truncate">Save the session. Find it later.</span>
                     {process.env.NODE_ENV === 'development' && (
                       <button
                         onClick={togglePerformanceTest}

@@ -2,7 +2,7 @@
 //
 // SyncStatusRow renders three things:
 //   1. a status dot (color varies by syncStatus)
-//   2. a timestamp label ("刚刚同步" / "X分钟前" / "尚未同步")
+//   2. a timestamp label ("刚刚" / "X分钟前" / "尚未同步")
 //   3. a "立即同步" / "同步中…" button that calls syncService.downloadAndRefresh
 //
 // Strategy: render with a real Redux store (configureStore + the three
@@ -50,7 +50,7 @@ test('SyncStatusRow: idle state shows "立即同步" button and "尚未同步" l
 });
 
 test('SyncStatusRow: syncing state shows "同步中…" button (disabled) and recent timestamp', async () => {
-  // A timestamp 30 seconds ago. formatLastSync returns "刚刚同步" since
+  // A timestamp 30 seconds ago. formatLastSync returns "刚刚" since
   // diffMins < 1.
   const recentTimestamp = new Date(Date.now() - 30 * 1000).toISOString();
   const store = makeStore({ syncStatus: 'syncing', lastSyncTime: recentTimestamp });
@@ -60,6 +60,6 @@ test('SyncStatusRow: syncing state shows "同步中…" button (disabled) and re
   assert.equal(button.textContent, '同步中…');
   // In syncing state the button is disabled.
   assert.equal(button.hasAttribute('disabled'), true);
-  assert.equal(screen.getByText('刚刚同步').textContent, '刚刚同步');
+  assert.equal(screen.getByText('刚刚').textContent, '刚刚');
   cleanup();
 });

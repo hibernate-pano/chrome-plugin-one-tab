@@ -2,22 +2,7 @@ import React from 'react';
 import { useAppSelector } from '@/store/hooks';
 import { syncService } from '@/services/syncService';
 import { cn } from '@/lib/utils';
-
-const formatLastSync = (timestamp: string | null): string => {
-  if (!timestamp) return '尚未同步';
-  const ts = new Date(timestamp).getTime();
-  if (Number.isNaN(ts)) return '尚未同步';
-  const now = new Date();
-  const diffMs = now.getTime() - ts;
-  const diffMins = Math.floor(diffMs / 60000);
-
-  if (diffMins < 1) return '刚刚同步';
-  if (diffMins < 60) return `${diffMins}分钟前`;
-  const diffHours = Math.floor(diffMins / 60);
-  if (diffHours < 24) return `${diffHours}小时前`;
-  const diffDays = Math.floor(diffHours / 24);
-  return `${diffDays}天前`;
-};
+import { formatLastSync } from '@/utils/sessionPresentation';
 
 /**
  * Compact "sync status + manual refresh" row used inside SyncTab.
