@@ -9,6 +9,8 @@ import { SearchResultList } from '@/components/search/SearchResultList';
 import { EmptyState } from '@/components/common/EmptyState';
 import { LoadingSpinner } from '@/components/common/LoadingSpinner';
 import { PersonalizedWelcome, QuickActionTips } from '@/components/common/PersonalizedWelcome';
+import { useListVirtualizer } from '@/hooks/useVirtualizer';
+import type { TabGroup } from '@/types/tab';
 
 interface TabListProps {
   searchQuery: string;
@@ -58,6 +60,15 @@ export const TabList: React.FC<TabListProps> = ({ searchQuery }) => {
       chrome.runtime.onMessage.removeListener(messageListener);
     };
   }, [dispatch, lastLoadedAt]);
+
+  // Virtualize long lists so the popup stays responsive. Reorder and search
+  // paths bypass this and render via their own components. Must be called
+  // unconditionally — never after an early `return`.
+  const { virtualizer, parentRef, enabled } = useListVirtualizer(sortedGroups, {
+    itemHeight: 220,
+    overscan: 3,
+    threshold: 30,
+  });
 
   if (isLoading) {
     return (
@@ -136,35 +147,82 @@ export const TabList: React.FC<TabListProps> = ({ searchQuery }) => {
       {searchQuery ? (
         <SearchResultList searchQuery={searchQuery} onClearSearch={() => dispatch(setSearchQuery(''))} />
       ) : layoutMode === 'double' ? (
-        <div className="grid grid-cols-1 sm:grid-cols-1 md:grid-cols-2 gap-2 sm:gap-3 md:gap-4">
-          <div className="space-y-2 transition-all duration-300 ease-out">
-            {filteredGroups
-              .filter((_, index) => index % 2 === 0)
-              .map(group => (
-                <DraggableTabGroup
-                  key={group.id}
-                  group={group}
-                  index={filteredGroups.findIndex(item => item.id === group.id)}
-                  moveGroup={(dragIndex, hoverIndex) => {
-                    dispatch(moveGroupAndSync({ dragIndex, hoverIndex }));
-                  }}
-                />
-              ))}
-          </div>
+        (() => {
+          // Single-pass split: each column gets a (group, index) pair so we can
+          // pass the ORIGINAL filteredGroups index without an O(N^2) findIndex.
+          const left: Array<{ group: TabGroup; index: number }> = [];
+          const right: Array<{ group: TabGroup; index: number }> = [];
+          filteredGroups.forEach((group, index) => {
+            const bucket = index % 2 === 0 ? left : right;
+            bucket.push({ group, index });
+          });
+          return (
+            <div className="grid grid-cols-1 sm:grid-cols-1 md:grid-cols-2 gap-2 sm:gap-3 md:gap-4">
+              <div className="space-y-2 transition-all duration-300 ease-out">
+                {left.map(({ group, index }) => (
+                  <DraggableTabGroup
+                    key={group.id}
+                    group={group}
+                    index={index}
+                    moveGroup={(dragIndex, hoverIndex) => {
+                      dispatch(moveGroupAndSync({ dragIndex, hoverIndex }));
+                    }}
+                  />
+                ))}
+              </div>
 
-          <div className="space-y-2 transition-all duration-300 ease-out">
-            {filteredGroups
-              .filter((_, index) => index % 2 === 1)
-              .map(group => (
-                <DraggableTabGroup
+              <div className="space-y-2 transition-all duration-300 ease-out">
+                {right.map(({ group, index }) => (
+                  <DraggableTabGroup
+                    key={group.id}
+                    group={group}
+                    index={index}
+                    moveGroup={(dragIndex, hoverIndex) => {
+                      dispatch(moveGroupAndSync({ dragIndex, hoverIndex }));
+                    }}
+                  />
+                ))}
+              </div>
+            </div>
+          );
+        })()
+      ) : enabled ? (
+        <div
+          ref={parentRef}
+          className="overflow-auto"
+          style={{ maxHeight: '70vh' }}
+        >
+          <div
+            style={{
+              height: `${virtualizer.getTotalSize()}px`,
+              position: 'relative',
+            }}
+          >
+            {virtualizer.getVirtualItems().map(vi => {
+              const group = filteredGroups[vi.index];
+              return (
+                <div
                   key={group.id}
-                  group={group}
-                  index={filteredGroups.findIndex(item => item.id === group.id)}
-                  moveGroup={(dragIndex, hoverIndex) => {
-                    dispatch(moveGroupAndSync({ dragIndex, hoverIndex }));
+                  data-index={vi.index}
+                  ref={virtualizer.measureElement}
+                  style={{
+                    position: 'absolute',
+                    top: 0,
+                    left: 0,
+                    width: '100%',
+                    transform: `translateY(${vi.start}px)`,
                   }}
-                />
-              ))}
+                >
+                  <DraggableTabGroup
+                    group={group}
+                    index={vi.index}
+                    moveGroup={(dragIndex, hoverIndex) => {
+                      dispatch(moveGroupAndSync({ dragIndex, hoverIndex }));
+                    }}
+                  />
+                </div>
+              );
+            })}
           </div>
         </div>
       ) : (
