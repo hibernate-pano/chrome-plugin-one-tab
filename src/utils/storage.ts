@@ -3,6 +3,7 @@ import { parseOneTabFormat, formatToOneTabFormat } from './oneTabFormatParser';
 import { secureStorage, encryptLocalBlob, decryptLocalBlob } from './secureStorage';
 import { kvGet, kvSet, kvRemove } from '@/storage/storageAdapter';
 import { cacheManager, cachedAsyncFn, debounceAsync } from './performance';
+import { decryptError } from './errors';
 
 // 缓存 TTL 配置常量
 export const CACHE_TTL = {
@@ -41,6 +42,7 @@ const STORAGE_KEYS = {
   DELETED_GROUPS: 'deleted_tab_groups',
   DELETED_TABS: 'deleted_tabs',
   LAST_SYNC_TIME: 'last_sync_time',
+  LAST_SYNC_STATUS: 'last_sync_status',
   SYNC_SNAPSHOT: 'sync_snapshot',
   PRODUCT_EVENTS: 'product_events',
   MIGRATION_FLAGS: 'migration_flags'
@@ -117,6 +119,23 @@ interface ExportData {
   };
 }
 
+/**
+ * 持久化的同步状态（S1 §5）。
+ * 与 tabs slice 的内存态 lastSyncTime 不同——这里落 IndexedDB，
+ * popup 重开后 footer 仍能显示「上次同步 x 小时前」/ 最近一次错误。
+ */
+export interface LastSyncStatus {
+  /** 上次成功同步时间（ISO 字符串）；从未成功同步过为 null */
+  lastSyncAt: string | null;
+  /** 最近一次同步失败的用户可读错误；无失败为 null */
+  lastSyncError: string | null;
+}
+
+const DEFAULT_LAST_SYNC_STATUS: LastSyncStatus = {
+  lastSyncAt: null,
+  lastSyncError: null,
+};
+
 class ChromeStorage {
   private async ensureVersion() {
     const version = await kvGet<number>(STORAGE_KEYS.VERSION);
@@ -135,7 +154,9 @@ class ChromeStorage {
           // 解密失败：抛出而非返回 []，避免「瞬时空读」被 cachedAsyncFn 缓存
           // 30s 固化——那会让 popup hydration 与 loadGroups 重试都拿到空数据，
           // 表现为「刷新后数据丢失」。抛出后由外层 catch 返回 []（不入缓存）。
-          throw new Error('decryptLocalBlob 返回 null（数据可能损坏或 key 不匹配）');
+          // S1: 抛出的错误带类型（DecryptError, retryable=false）——
+          // 外层 catch 的「返回 [] 不缓存」语义保持不变（hydrationDecision 测试依赖）。
+          throw decryptError('decryptLocalBlob 返回 null（数据可能损坏或 key 不匹配）');
         }
         if (Array.isArray(raw)) {
           // 明文数据，首次读取后自动升级为加密存储
@@ -415,6 +436,49 @@ class ChromeStorage {
   }
 
   /**
+   * 获取持久化的同步状态（默认 { lastSyncAt: null, lastSyncError: null }）。
+   * 不做内存缓存——每次从 IndexedDB 读盘，popup 重开后语义自然成立。
+   */
+  async getLastSyncStatus(): Promise<LastSyncStatus> {
+    try {
+      await this.ensureVersion();
+      const raw = await kvGet<unknown>(STORAGE_KEYS.LAST_SYNC_STATUS);
+      if (raw && typeof raw === 'object') {
+        const s = raw as Partial<LastSyncStatus>;
+        return {
+          lastSyncAt: typeof s.lastSyncAt === 'string' ? s.lastSyncAt : null,
+          lastSyncError: typeof s.lastSyncError === 'string' ? s.lastSyncError : null,
+        };
+      }
+      return { ...DEFAULT_LAST_SYNC_STATUS };
+    } catch (error) {
+      console.error('获取同步状态失败:', error);
+      return { ...DEFAULT_LAST_SYNC_STATUS };
+    }
+  }
+
+  /**
+   * 更新同步状态（partial merge，落 `last_sync_status` key，与 settings 同为明文 kv）。
+   * 只覆盖传入字段：失败路径写入 lastSyncError 时**不会**覆盖 lastSyncAt
+   * （保留上次成功时间——S1 §5.2 契约）。
+   * 记录失败只打日志不抛出——它是诊断信息，不应阻塞/掩盖主流程错误。
+   */
+  async setLastSyncStatus(partial: Partial<LastSyncStatus>): Promise<void> {
+    try {
+      const current = await this.getLastSyncStatus();
+      const next: LastSyncStatus = {
+        lastSyncAt: partial.lastSyncAt !== undefined ? partial.lastSyncAt : current.lastSyncAt,
+        lastSyncError:
+          partial.lastSyncError !== undefined ? partial.lastSyncError : current.lastSyncError,
+      };
+      await this.ensureVersion();
+      await kvSet(STORAGE_KEYS.LAST_SYNC_STATUS, next);
+    } catch (error) {
+      console.error('保存同步状态失败:', error);
+    }
+  }
+
+  /**
    * 获取同步前快照（用于 SyncEngine 合并失败时回滚）
    */
   async getSyncSnapshot(): Promise<TabGroup[] | null> {
@@ -578,6 +642,7 @@ class ChromeStorage {
         STORAGE_KEYS.DELETED_GROUPS,
         STORAGE_KEYS.DELETED_TABS,
         STORAGE_KEYS.LAST_SYNC_TIME,
+        STORAGE_KEYS.LAST_SYNC_STATUS,
         STORAGE_KEYS.SYNC_SNAPSHOT,
         STORAGE_KEYS.PRODUCT_EVENTS,
         STORAGE_KEYS.MIGRATION_FLAGS

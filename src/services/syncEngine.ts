@@ -22,6 +22,13 @@ import { mergeTabGroups, validateMergeResult } from '@/utils/syncUtils';
 import { errorHandler } from '@/utils/errorHandler';
 import { cleanupCloudTombstones } from '@/utils/tombstoneGc';
 import type { RootState } from '@/store';
+import {
+  syncError,
+  networkError,
+  isTabStackError,
+  toUserMessage,
+  type TabStackError,
+} from '@/utils/errors';
 
 // ── 类型 ───────────────────────────────────────────────────────────
 
@@ -53,13 +60,39 @@ export interface UploadResult {
  * （例如只替换 downloadTabGroups 而保留 storage 真实运行）。
  */
 export interface SyncEngineDeps {
-  storage?: Pick<typeof storage, 'getGroups' | 'setGroups' | 'setSyncSnapshot' | 'clearSyncSnapshot' | 'getSettings' | 'setSettings' | 'setLastSyncTime' | 'getLastSyncTime'>;
+  storage?: Pick<typeof storage, 'getGroups' | 'setGroups' | 'setSyncSnapshot' | 'clearSyncSnapshot' | 'getSettings' | 'setSettings' | 'setLastSyncTime' | 'getLastSyncTime' | 'getLastSyncStatus' | 'setLastSyncStatus'>;
   downloadTabGroups?: typeof downloadTabGroups;
   uploadTabGroups?: typeof uploadTabGroups;
   markCloudGroupsAsDeleted?: typeof markCloudGroupsAsDeleted;
   cleanupCloudTombstones?: typeof cleanupCloudTombstones;
   /** 注入 store 状态获取逻辑，避开 Redux 依赖 */
   getState?: () => Pick<RootState, 'auth' | 'settings' | 'tabs'>;
+}
+
+// ── 错误分类辅助（S1 §2：五类错误分层）─────────────────────────────
+
+/** 网络类失败：fetch/supabase 抛出的 TypeError、AbortError/NetworkError 或浏览器离线 */
+function isNetworkFailure(e: unknown): boolean {
+  if (isTabStackError(e)) return e.kind === 'network';
+  if (e instanceof TypeError) return true;
+  if (e instanceof DOMException && (e.name === 'AbortError' || e.name === 'NetworkError')) {
+    return true;
+  }
+  if (typeof navigator !== 'undefined' && navigator.onLine === false) return true;
+  return false;
+}
+
+/**
+ * 任意错误归一为 TabStackError：
+ * 网络/fetch 失败 → networkError；其余（merge/校验/存储等）→ syncError。
+ * 已带类型的错误原样返回。包装不改变 message（reason/error 字段对外语义不变）。
+ */
+function toTabStackError(e: unknown): TabStackError {
+  if (isTabStackError(e)) return e;
+  const message = e instanceof Error ? e.message : '未知同步错误';
+  return isNetworkFailure(e)
+    ? networkError(message, { cause: e })
+    : syncError(message, { cause: e });
 }
 
 // ── SyncEngine ──────────────────────────────────────────────────────
@@ -184,6 +217,11 @@ export class SyncEngine {
         // 回滚到快照（直接用本地 snapshot 变量，不依赖存储二次读取）
         await this.restoreSnapshot(snapshot);
 
+        // S1: 合并/校验失败 → 记录用户可读错误（不覆盖 lastSyncAt）
+        await this.deps.storage.setLastSyncStatus?.({
+          lastSyncError: toUserMessage(syncError(`合并验证失败: ${validation.reason}`)),
+        });
+
         this.isSyncing = false;
         return {
           success: false,
@@ -198,6 +236,9 @@ export class SyncEngine {
       // 7. 更新同步时间
       const syncTime = new Date().toISOString();
       await this.deps.storage.setLastSyncTime(syncTime);
+
+      // S1: 持久化同步状态（footer 跨 popup 重开仍显示；?. 兼容旧 DI fake）
+      await this.deps.storage.setLastSyncStatus?.({ lastSyncAt: syncTime });
 
       // 8. 清除快照（写入成功）
       await this.deps.storage.clearSyncSnapshot();
@@ -216,16 +257,21 @@ export class SyncEngine {
         },
       };
     } catch (error) {
-      console.error('[SyncEngine] 下载合并失败:', error);
+      // S1: 归一为 TabStackError（fetch/网络失败 → networkError；其余 → syncError）
+      const wrapped = toTabStackError(error);
+      console.error('[SyncEngine] 下载合并失败:', wrapped);
 
       // 回滚到快照（直接用本地 snapshot 变量）
       await this.restoreSnapshot(snapshot);
+
+      // S1: 记录失败状态（只写 lastSyncError，保留上次成功时间）
+      await this.deps.storage.setLastSyncStatus?.({ lastSyncError: toUserMessage(wrapped) });
 
       this.isSyncing = false;
       return {
         success: false,
         groups: snapshot,
-        reason: error instanceof Error ? error.message : 'download_merge_failed',
+        reason: wrapped.message,
       };
     }
   }
@@ -282,6 +328,9 @@ export class SyncEngine {
       const syncTime = new Date().toISOString();
       await this.deps.storage.setLastSyncTime(syncTime);
 
+      // S1: 持久化同步状态（footer 跨 popup 重开仍显示；?. 兼容旧 DI fake）
+      await this.deps.storage.setLastSyncStatus?.({ lastSyncAt: syncTime });
+
       // Tombstone GC：异步清理自己设备的、超过 30 天的过期 tombstone。
       // fire-and-forget：不阻塞主流程，失败也不影响上传结果。
       void this.deps.cleanupCloudTombstones().catch(err =>
@@ -292,19 +341,24 @@ export class SyncEngine {
       this.isSyncing = false;
       return { success: true };
     } catch (error) {
-      console.error('[SyncEngine] 上传失败:', error);
+      // S1: 归一为 TabStackError（fetch/网络失败 → networkError；其余 → syncError）
+      const wrapped = toTabStackError(error);
+      console.error('[SyncEngine] 上传失败:', wrapped);
       this.isSyncing = false;
 
-      errorHandler.handle(error as Error, {
+      errorHandler.handle(wrapped as Error, {
         showToast: false,
         logToConsole: true,
         severity: 'medium',
         fallbackMessage: '数据上传失败',
       });
 
+      // S1: 记录失败状态（只写 lastSyncError，保留上次成功时间）
+      await this.deps.storage.setLastSyncStatus?.({ lastSyncError: toUserMessage(wrapped) });
+
       return {
         success: false,
-        error: error instanceof Error ? error.message : '上传失败',
+        error: wrapped.message,
       };
     }
   }
