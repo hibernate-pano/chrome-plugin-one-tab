@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { useAppDispatch } from '@/store/hooks';
-import { updateGroupNameAndSync, toggleGroupLockAndSync, deleteGroup, updateGroup, moveTabAndSync } from '@/store/slices/tabSlice';
+import { updateGroupNameAndSync, toggleGroupLockAndSync, deleteGroup, updateGroup } from '@/store/slices/tabSlice';
 import { DraggableTab } from '@/components/dnd/DraggableTab';
 import { TabGroup as TabGroupType, Tab } from '@/types/tab';
 import { shouldAutoDeleteAfterTabRemoval } from '@/utils/tabGroupUtils';
@@ -228,15 +228,6 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
       });
     }, 50);
   }, [dispatch, group, showDeleteSuccess, showDeleteError, showRestoreSuccess, showRestoreError]);
-
-  const handleMoveTab = useCallback((sourceGroupId: string, sourceIndex: number, targetGroupId: string, targetIndex: number) => {
-    dispatch(moveTabAndSync({
-      sourceGroupId,
-      sourceIndex,
-      targetGroupId,
-      targetIndex
-    }));
-  }, [dispatch]);
 
   const handleDeleteTab = useCallback((tabId: string) => {
     if (shouldAutoDeleteAfterTabRemoval(group, tabId)) {
@@ -502,7 +493,6 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
               tab={tab}
               groupId={group.id}
               index={index}
-              moveTab={handleMoveTab}
               handleOpenTab={handleOpenTab}
               handleDeleteTab={handleDeleteTab}
               isCollapsed={isCollapsed}

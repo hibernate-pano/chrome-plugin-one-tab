@@ -4,12 +4,13 @@ import { Tab } from '@/types/tab';
 import { ItemTypes, TabDragItem } from './DndTypes';
 import { throttle } from 'lodash';
 import { SafeFavicon } from '@/components/common/SafeFavicon';
+import { useAppDispatch } from '@/store/hooks';
+import { moveTabLocal, persistGroupsDebounced } from '@/store/slices/tabSlice';
 
 interface DraggableTabProps {
   tab: Tab;
   groupId: string;
   index: number;
-  moveTab: (sourceGroupId: string, sourceIndex: number, targetGroupId: string, targetIndex: number) => void;
   handleOpenTab: (tab: Tab) => void;
   handleDeleteTab: (tabId: string) => void;
   isCollapsed?: boolean;
@@ -38,21 +39,22 @@ export const DraggableTab: React.FC<DraggableTabProps> = React.memo(({
   tab,
   groupId,
   index,
-  moveTab,
   handleOpenTab,
   handleDeleteTab,
   isCollapsed = false,
   isLocked = false
 }) => {
+  const dispatch = useAppDispatch();
   const ref = useRef<HTMLDivElement>(null);
   const [isDeleting, setIsDeleting] = useState(false);
   const [isShaking, setIsShaking] = useState(false);
 
   const throttledMoveTab = useMemo(
-    () => throttle((sourceGroupId, sourceIndex, targetGroupId, targetIndex) => {
-      moveTab(sourceGroupId, sourceIndex, targetGroupId, targetIndex);
+    () => throttle((targetGroupId: string, tabId: string, toIndex: number) => {
+      dispatch(moveTabLocal({ groupId: targetGroupId, tabId, toIndex }));
+      dispatch(persistGroupsDebounced());
     }, 100),
-    [moveTab]
+    [dispatch]
   );
 
   const [{ isDragging }, drag] = useDrag({
@@ -96,7 +98,7 @@ export const DraggableTab: React.FC<DraggableTabProps> = React.memo(({
       if (sourceGroupId === targetGroupId && sourceIndex < targetIndex && hoverPercentage < -threshold) return;
       if (sourceGroupId === targetGroupId && sourceIndex > targetIndex && hoverPercentage > threshold) return;
 
-      throttledMoveTab(sourceGroupId, sourceIndex, targetGroupId, targetIndex);
+      throttledMoveTab(targetGroupId, item.id, targetIndex);
       item.index = targetIndex;
       item.groupId = targetGroupId;
     },
@@ -213,7 +215,6 @@ export const DraggableTab: React.FC<DraggableTabProps> = React.memo(({
   if (!tabContentEqual) return false;
 
   const callbacksEqual =
-    prevProps.moveTab === nextProps.moveTab &&
     prevProps.handleOpenTab === nextProps.handleOpenTab &&
     prevProps.handleDeleteTab === nextProps.handleDeleteTab;
 
