@@ -232,11 +232,16 @@ export const toggleGroupLockAndSync = createAsyncThunk(
 );
 
 /**
- * 移动标签组并同步到云端
- * 优化性能：
- * 1. 使用requestAnimationFrame延迟存储操作
- * 2. 使用节流函数减少云端同步频率
- * 3. 批量处理本地存储操作
+ * 移动标签组并同步到本地存储（防抖版，与 moveTabAndSync 对齐）。
+ *
+ * 重构自旧实现（requestAnimationFrame + 显式 storage.getGroups/setGroups +
+ * updateDisplayOrder）：现在只做两件事——
+ * 1. dispatch `moveGroupLocal` 即时更新 UI（纯 reducer，内部已重算 displayOrder）；
+ * 2. dispatch `persistGroupsDebounced()` 由 debouncedPersistMiddleware 做
+ *    200ms trailing 持久化（persistGroupsThunk 读最新 state.tabs.groups 写盘）。
+ *
+ * DnD hover 期间的高频 dispatch 只跑纯 reducer + 重置防抖 timer，
+ * 不再产生每次 hover 的 storage 读 + 写往返。
  */
 export const moveGroupAndSync = createAsyncThunk(
   'tabs/moveGroupAndSync',
@@ -245,52 +250,11 @@ export const moveGroupAndSync = createAsyncThunk(
     { dispatch }
   ) => {
     try {
-      // 在 Redux 中移动标签组 - 立即更新UI
-      dispatch(moveGroup({ dragIndex, hoverIndex }));
+      // 在 Redux 中移动标签组 —— 纯 reducer，立即更新 UI，不写 storage。
+      dispatch(moveGroupLocal({ dragIndex, hoverIndex }));
 
-      // 使用 requestAnimationFrame 在下一帧执行存储操作，优化性能
-      // 这样可以确保UI更新优先，存储操作不会阻塞渲染
-      requestAnimationFrame(async () => {
-        try {
-          // 在本地存储中更新标签组顺序
-          const groups = await storage.getGroups();
-
-          // 检查索引是否有效
-          if (
-            dragIndex < 0 ||
-            dragIndex >= groups.length ||
-            hoverIndex < 0 ||
-            hoverIndex >= groups.length
-          ) {
-            console.error('无效的标签组索引:', {
-              dragIndex,
-              hoverIndex,
-              groupsLength: groups.length,
-            });
-            return;
-          }
-
-          const dragGroup = groups[dragIndex];
-
-          // 创建新的数组以避免直接修改原数组
-          const newGroups = [...groups];
-          // 删除拖拽的标签组
-          newGroups.splice(dragIndex, 1);
-          // 在新位置插入标签组
-          newGroups.splice(hoverIndex, 0, dragGroup);
-
-          // ⭐ 关键：更新所有标签组的 displayOrder 和 version
-          const updatedGroups = updateDisplayOrder(newGroups);
-
-          // 更新本地存储 - 批量操作
-          await storage.setGroups(updatedGroups);
-
-          console.log(`[MoveGroup] 已更新所有标签组的 displayOrder`);
-
-        } catch (error) {
-          console.error('存储标签组移动操作失败:', error);
-        }
-      });
+      // 触发持久化 —— 200ms trailing 合并，只产生一次写盘。
+      dispatch(persistGroupsDebounced());
 
       return { dragIndex, hoverIndex };
     } catch (error) {
@@ -562,6 +526,36 @@ export const tabSlice = createSlice({
       state.groups = newGroups;
     },
     /**
+     * 纯 UI 移动 reducer —— 不写 storage（moveGroupAndSync 的新路径）。
+     *
+     * 语义与旧 `moveGroup` 一致（dragIndex/hoverIndex 均为移动前数组索引），
+     * 差异：
+     * - dragIndex 越界 / dragIndex === hoverIndex → no-op（不改 groups 引用）；
+     * - hoverIndex 越界 → clamp 到 [0, len-1]（旧实现直接整体 no-op）；
+     * - 重排后通过 `updateDisplayOrder` 重算 displayOrder/version/updatedAt，
+     *   与旧 moveGroupAndSync 存储路径产出一致（syncUtils 合并时按
+     *   displayOrder 保留手动排序，语义不能丢）。
+     * 持久化由 dispatch persistGroupsDebounced() 触发（debouncedPersistMiddleware
+     * 200ms trailing 合并，hover 高频 dispatch 只重置 timer，不产生写盘）。
+     */
+    moveGroupLocal: (
+      state,
+      action: PayloadAction<{ dragIndex: number; hoverIndex: number }>
+    ) => {
+      const { dragIndex, hoverIndex } = action.payload;
+      const len = state.groups.length;
+      if (dragIndex < 0 || dragIndex >= len || dragIndex === hoverIndex) return;
+
+      const clampedHover = Math.max(0, Math.min(len - 1, hoverIndex));
+      const dragGroup = state.groups[dragIndex];
+      const newGroups = [...state.groups];
+      newGroups.splice(dragIndex, 1);
+      newGroups.splice(clampedHover, 0, dragGroup);
+
+      // displayOrder 必须与新顺序一致（旧实现也在写盘路径上做这一步）。
+      state.groups = updateDisplayOrder(newGroups);
+    },
+    /**
      * 移动标签页 - 优化版本
      * 性能优化：
      * 1. 减少不必要的数组复制
@@ -813,6 +807,7 @@ export const tabSlice = createSlice({
 export const {
   setActiveGroup,
   moveTabLocal,
+  moveGroupLocal,
   updateGroupName,
   toggleGroupLock,
   setSearchQuery,
