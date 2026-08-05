@@ -1,13 +1,17 @@
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState, useCallback, useRef } from 'react';
 import { useAppDispatch } from '@/store/hooks';
 import { updateGroupNameAndSync, toggleGroupLockAndSync, deleteGroup, updateGroup } from '@/store/slices/tabSlice';
 import { DraggableTab } from '@/components/dnd/DraggableTab';
+import { TabPreview } from '@/components/tabs/TabPreview';
 import { TabGroup as TabGroupType, Tab } from '@/types/tab';
 import { shouldAutoDeleteAfterTabRemoval } from '@/utils/tabGroupUtils';
 import { useToast } from '@/contexts/ToastContext';
 import { useEnhancedToast } from '@/utils/toastHelper';
 import { trackProductEvent } from '@/utils/productEvents';
 import { buildSessionRestoreMessage } from '@/utils/sessionPresentation';
+
+// S3 §1：hover-to-preview 延迟 250ms（防误触）
+const PREVIEW_HOVER_DELAY_MS = 250;
 
 interface TabGroupProps {
   group: TabGroupType;
@@ -65,6 +69,36 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
   const [isEditingNotes, setIsEditingNotes] = useState(false);
   const [notesDraft, setNotesDraft] = useState(group.notes || '');
   const [favoriteAnimating, setFavoriteAnimating] = useState(false);
+
+  // S3 §1：hover-to-preview 状态 + 250ms 延迟定时器 ref
+  const [previewOpen, setPreviewOpen] = useState(false);
+  const previewTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const cancelPreviewTimer = useCallback(() => {
+    if (previewTimerRef.current !== null) {
+      clearTimeout(previewTimerRef.current);
+      previewTimerRef.current = null;
+    }
+  }, []);
+
+  const handlePreviewEnter = useCallback(() => {
+    // 已有挂起的 timer 不重复排队；防 mousemove 抖动
+    if (previewTimerRef.current !== null) return;
+    previewTimerRef.current = setTimeout(() => {
+      previewTimerRef.current = null;
+      setPreviewOpen(true);
+    }, PREVIEW_HOVER_DELAY_MS);
+  }, []);
+
+  const handlePreviewLeave = useCallback(() => {
+    cancelPreviewTimer();
+    setPreviewOpen(false);
+  }, [cancelPreviewTimer]);
+
+  // 卸载时清理 timer（防 setState after unmount 警告）
+  useEffect(() => {
+    return () => cancelPreviewTimer();
+  }, [cancelPreviewTimer]);
 
   useEffect(() => {
     setNewName(group.name);
@@ -278,7 +312,21 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
       aria-labelledby={`tab-group-title-${group.id}`}
     >
       {/* 标签组头部 */}
-      <div className="tab-group-header">
+      <div
+        className="tab-group-header"
+        onMouseEnter={handlePreviewEnter}
+        onMouseLeave={handlePreviewLeave}
+        onFocus={handlePreviewEnter}
+        onBlur={handlePreviewLeave}
+        onKeyDown={(e) => {
+          // S3 §1.2 键盘可达性：Esc 关闭预览
+          if (e.key === 'Escape' && previewOpen) {
+            e.stopPropagation();
+            cancelPreviewTimer();
+            setPreviewOpen(false);
+          }
+        }}
+      >
         <div className="flex items-center gap-3 flex-1 min-w-0">
           {/* 折叠按钮 */}
           <button
@@ -501,6 +549,9 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
           ))}
         </div>
       </div>
+
+      {/* S3 §1：hover/focus 触发的会话预览浮层（absolute 定位在卡片内） */}
+      {previewOpen && <TabPreview group={group} />}
     </div>
   );
 }, (prevProps, nextProps) => {

@@ -2,6 +2,7 @@ import React, { createContext, useContext, useEffect, useState, useCallback } fr
 import { useAppSelector, useAppDispatch } from '@/store/hooks';
 import { updateSettings, saveSettings, loadSettings, initialSettingsState } from '@/store/slices/settingsSlice';
 import { ThemeStyle } from '@/types/tab';
+import { resolveThemeMode } from '@/utils/themeUtils';
 
 type ThemeMode = 'light' | 'dark' | 'auto';
 type Theme = 'light' | 'dark';
@@ -71,33 +72,28 @@ export const ThemeProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const themeStyle: ThemeStyle = themeStyleFromStore || 'aurora';
 
   // 派生 currentTheme：auto 时跟随系统，其它取 themeMode
+  // S3 §2：使用纯函数 resolveThemeMode 处理 auto → dark/light 的折叠逻辑
+  // （与 ThemeContext 解耦，方便单测覆盖）
   const [currentTheme, setCurrentTheme] = useState<Theme>(() => {
-    if (themeMode === 'dark') return 'dark';
-    if (themeMode === 'light') return 'light';
-    if (themeMode === 'auto') {
-      return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
-    }
-    return 'light';
+    const systemDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+    return resolveThemeMode(themeMode, systemDark);
   });
 
   // 检测系统主题并设置当前主题
   useEffect(() => {
     const setThemeBasedOnMode = () => {
-      if (themeMode === 'auto') {
-        const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
-        setCurrentTheme(prefersDark ? 'dark' : 'light');
-      } else {
-        setCurrentTheme(themeMode as Theme);
-      }
+      const systemDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+      setCurrentTheme(resolveThemeMode(themeMode, systemDark));
     };
 
     setThemeBasedOnMode();
 
-    // 监听系统主题变化
+    // 监听系统主题变化（仅 auto 模式有意义，但 listener 注册是廉价的，
+    // effect 依赖 [themeMode] 在模式切换时自动 cleanup）。
     const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
     const handleChange = () => {
       if (themeMode === 'auto') {
-        setCurrentTheme(mediaQuery.matches ? 'dark' : 'light');
+        setCurrentTheme(resolveThemeMode('auto', mediaQuery.matches));
       }
     };
 
