@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useEffect, useState, useCallback } from 'react';
 import { useAppSelector, useAppDispatch } from '@/store/hooks';
-import { updateSettings, saveSettings, loadSettings } from '@/store/slices/settingsSlice';
+import { updateSettings, saveSettings, loadSettings, initialSettingsState } from '@/store/slices/settingsSlice';
 import { ThemeStyle } from '@/types/tab';
 
 type ThemeMode = 'light' | 'dark' | 'auto';
@@ -49,18 +49,20 @@ export const ThemeProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   // S2 P1 Task 1.3: 直接从 settings slice 读 themeMode / themeStyle。
   // 不再独立 chrome.storage.local.get —— popup bootstrap 已经把 settings
   // 塞进 preloadedState，此处从 redux 读即可（settings slice 已经在 store 中）。
-  // 同时：若 redux 还没拿到 settings（例如 options 页面或未来其它入口），
-  // 走 loadSettings() 兜底拉一次。
   const themeModeFromStore = useAppSelector((state) => state.settings.themeMode);
   const themeStyleFromStore = useAppSelector((state) => state.settings.themeStyle);
+  const settingsFromStore = useAppSelector((state) => state.settings);
 
-  // 兜底：如果 settings 还没有 lastLoaded 标记（preloadedState 没传 settings
-  // 或 settings 是默认空对象），仍然 loadSettings() 拉一次存储。
-  // 旧实现里 settingsReady 标志是「chrome.storage.local 读盘完成」，但现在
-  // settings 已经在 preloadedState 里——所以这个 effect 只在极端兜底时跑。
+  // S2 F7（单源化兜底）：settings 已由 popup bootstrap 注入 preloadedState
+  // 时（`state.settings` 与 `initialSettingsState` 引用不同），不再重复读盘；
+  // 仅当入口未 preload settings（options 页 / 未来其它入口 / hydrate 失败降级）
+  // 时——settings 仍是 initialSettingsState——才兜底 loadSettings() 拉一次，
+  // 防设置丢失。loadSettings fulfilled 后 settings 换成新对象，effect 不再触发。
   useEffect(() => {
-    dispatch(loadSettings() as any);
-  }, [dispatch]);
+    if (settingsFromStore === initialSettingsState) {
+      dispatch(loadSettings() as any);
+    }
+  }, [settingsFromStore, dispatch]);
 
   const [isTransitioning, setIsTransitioning] = useState(false);
 
