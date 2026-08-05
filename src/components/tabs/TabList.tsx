@@ -1,6 +1,7 @@
 import React, { useEffect, lazy } from 'react';
 import { useAppDispatch, useAppSelector } from '@/store/hooks';
 import { loadGroups, moveGroupAndSync, setSearchQuery } from '@/store/slices/tabSlice';
+import { selectSortedGroups, selectIsLoading, selectLastLoadedAt } from '@/store/selectors/tabSelectors';
 import { invalidateGroupsCache } from '@/utils/storage';
 import { runMigrations } from '@/utils/migrationUtils';
 import { DraggableTabGroup } from '@/components/dnd/DraggableTabGroup';
@@ -17,7 +18,12 @@ const ReorderView = lazy(() => import('@/components/tabs/ReorderView'));
 
 export const TabList: React.FC<TabListProps> = ({ searchQuery }) => {
   const dispatch = useAppDispatch();
-  const { groups, isLoading, error, lastLoadedAt } = useAppSelector(state => state.tabs);
+  const { isLoading, error, lastLoadedAt } = useAppSelector(state => ({
+    isLoading: selectIsLoading(state),
+    error: state.tabs.error,
+    lastLoadedAt: selectLastLoadedAt(state),
+  }));
+  const sortedGroups = useAppSelector(selectSortedGroups);
   const { layoutMode, reorderMode } = useAppSelector(state => state.settings);
 
   useEffect(() => {
@@ -82,14 +88,6 @@ export const TabList: React.FC<TabListProps> = ({ searchQuery }) => {
       />
     );
   }
-
-  const sortedGroups = [...groups].sort((left, right) => {
-    if (!!left.isFavorite !== !!right.isFavorite) {
-      return left.isFavorite ? -1 : 1;
-    }
-
-    return new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime();
-  });
 
   const filteredGroups = sortedGroups;
   const totalTabCount = filteredGroups.reduce((count, group) => count + group.tabs.length, 0);

@@ -1,7 +1,8 @@
-import React, { useDeferredValue, useEffect, useState, useTransition } from 'react';
+import React, { useDeferredValue, useEffect, useMemo, useState, useTransition } from 'react';
 import { useAppDispatch, useAppSelector } from '@/store/hooks';
 import { Tab, TabGroup } from '@/types/tab';
 import { deleteGroup, updateGroup } from '@/store/slices/tabSlice';
+import { selectGroups, selectSearchQuery } from '@/store/selectors/tabSelectors';
 import { shouldAutoDeleteAfterMultipleTabRemoval, shouldAutoDeleteAfterTabRemoval } from '@/utils/tabGroupUtils';
 import { useToast } from '@/contexts/ToastContext';
 import { useEnhancedToast } from '@/utils/toastHelper';
@@ -31,7 +32,8 @@ interface SearchResultListProps {
 
 export const SearchResultList: React.FC<SearchResultListProps> = ({ searchQuery, onClearSearch }) => {
   const dispatch = useAppDispatch();
-  const { groups } = useAppSelector(state => state.tabs);
+  const groups = useAppSelector(selectGroups);
+  const storedQuery = useAppSelector(selectSearchQuery);
   const confirmBeforeDelete = useAppSelector(state => state.settings.confirmBeforeDelete);
   const { showConfirm, showToast } = useToast();
   const { showDeleteSuccess, showDeleteError, showRestoreSuccess, showRestoreError } = useEnhancedToast();
@@ -41,12 +43,19 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({ searchQuery,
   const deferredSearchQuery = useDeferredValue(searchQuery);
   const normalizedSearchQuery = deferredSearchQuery.trim();
 
-  const baseResults = normalizedSearchQuery
-    ? AdvancedSearch.search(groups, {
-        query: normalizedSearchQuery,
-        searchPinned: true,
-      })
-    : [];
+  // 把搜索计算用 useMemo 包装，避免每次 render（state 任意字段变化）都重算。
+  // 依赖选 [groups, storedQuery]：groups 由 selectGroups 切片提供，
+  // storedQuery 是 store 里的搜索 query（保留以便后续切换 query 来源）。
+  const baseResults = useMemo(
+    () =>
+      normalizedSearchQuery
+        ? AdvancedSearch.search(groups, {
+            query: normalizedSearchQuery,
+            searchPinned: true,
+          })
+        : [],
+    [groups, storedQuery, normalizedSearchQuery]
+  );
   const searchResults = applySearchFilters(baseResults, filters);
   const sessionResults = buildSessionSearchResults(searchResults);
   const matchingTabs = sessionResults.flatMap(session => session.matches);

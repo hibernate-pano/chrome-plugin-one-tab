@@ -1,8 +1,6 @@
 import React, { useState, useEffect, lazy, Suspense, useDeferredValue } from 'react';
 import { Header } from '@/components/layout/Header';
 import { TabList } from '@/components/tabs/TabList';
-import { useAppDispatch } from '@/store/hooks';
-import { loadSettings } from '@/store/slices/settingsSlice';
 import { OnboardingGuide } from '@/components/onboarding/OnboardingGuide';
 import { shouldShowOnboarding } from '@/utils/onboardingStorage';
 import { getAppVersionLabel } from '@/utils/runtimeInfo';
@@ -26,17 +24,11 @@ import '@/styles/animations.css';
  * 负责应用的主要布局和功能
  */
 export const MainApp: React.FC = () => {
-  const dispatch = useAppDispatch();
   const [searchQuery, setSearchQuery] = useState('');
   const [showPerformanceTest, setShowPerformanceTest] = useState(false);
   const [showStats, setShowStats] = useState(false);
   const [showOnboarding, setShowOnboarding] = useState(false);
   const deferredSearchQuery = useDeferredValue(searchQuery);
-
-  // 加载用户设置
-  useEffect(() => {
-    dispatch(loadSettings());
-  }, [dispatch]);
 
   // 检查是否需要显示用户引导
   useEffect(() => {
