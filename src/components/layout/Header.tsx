@@ -1,4 +1,4 @@
-import React, { useState, useTransition } from 'react';
+import React, { useState, useTransition, lazy, Suspense } from 'react';
 import { useAppDispatch, useAppSelector } from '@/store/hooks';
 import {
   toggleLayoutMode,
@@ -7,7 +7,9 @@ import {
   updateSettings,
 } from '@/store/slices/settingsSlice';
 import { cleanDuplicateTabs } from '@/store/slices/tabSlice';
-import { HeaderDropdown } from './HeaderDropdown';
+const HeaderDropdown = lazy(() =>
+  import('./HeaderDropdown').then(m => ({ default: m.HeaderDropdown }))
+);
 import { useToast } from '@/contexts/ToastContext';
 import { TabCounter } from './TabCounter';
 import SyncButton from '@/components/sync/SyncButton';
@@ -328,7 +330,11 @@ export const Header: React.FC<HeaderProps> = ({ onSearch, onShowStats }) => {
               >
                 <MenuIcon />
               </button>
-              {showDropdown && <HeaderDropdown onClose={() => setShowDropdown(false)} />}
+              {showDropdown && (
+                <Suspense fallback={<div className="fixed top-12 right-2 w-64 h-96 rounded-2xl bg-white shadow animate-pulse" />}>
+                  <HeaderDropdown onClose={() => setShowDropdown(false)} />
+                </Suspense>
+              )}
             </div>
           </div>
         </div>
