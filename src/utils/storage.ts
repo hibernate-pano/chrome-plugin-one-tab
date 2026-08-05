@@ -11,6 +11,22 @@ export const CACHE_TTL = {
 } as const;
 
 /**
+ * 一次性 bootstrap 读取结果（S2 P1 引入）。
+ *
+ * 注意：lastLoadedAt 并不是一个独立的 storage 值——它是 tabs slice 的 redux
+ * 状态，由 hydrationDecision 在「读到非空数据」时固化为 `now`。
+ * 这里返回 null 是因为 hydrateAll 在 bootstrap 阶段调用，此时 lastLoadedAt
+ * 还没被 redux 接管；具体何时固化由调用方（popup/index.tsx）经
+ * decideTabsHydration() 决定。
+ */
+export interface HydrateResult {
+  groups: TabGroup[];
+  settings: UserSettings;
+  /** 当前永远为 null；保留字段以便未来把 lastLoadedAt 也搬到 storage 域。 */
+  lastLoadedAt: string | null;
+}
+
+/**
  * 使标签组缓存失效，下次 getGroups() 会从 chrome.storage 重新读取。
  * 在后台保存/收集标签页后，由标签管理器页面在刷新前调用，避免读到旧缓存。
  */
@@ -368,6 +384,29 @@ class ChromeStorage {
       console.error('获取最后同步时间失败:', error);
       return null;
     }
+  }
+
+  /**
+   * 一次性返回 bootstrap 所需的所有 storage 数据。
+   *
+   * S2 P1 引入：让 popup 入口（src/popup/index.tsx）只发一次「读盘意图」，
+   * 避免在多处散读 / 重复 Promise.all。所有子调用仍然走 cachedAsyncFn
+   * 内存缓存——后续同一 context 内的二次调用全部命中内存。
+   *
+   * 行为契约：
+   *   - groups / settings 任一抛错都会被各自子方法吞掉（getGroups 返回 []、
+   *     getSettings 返回 DEFAULT_SETTINGS），所以 hydrateAll 不会 reject。
+   *     这是为了与现有 getGroups / getSettings 的「静默容错」语义保持一致——
+   *     入口端不需要在 hydrateAll 外再包一层 try/catch。
+   *   - lastLoadedAt 当前固定返回 null；真正的固化由调用方经
+   *     decideTabsHydration() 决定，避免「瞬时空读」被固化为 lastLoadedAt 非空。
+   */
+  async hydrateAll(): Promise<HydrateResult> {
+    const [groups, settings] = await Promise.all([
+      this.getGroups(),
+      this.getSettings(),
+    ]);
+    return { groups, settings, lastLoadedAt: null };
   }
 
   // 设置最后同步时间

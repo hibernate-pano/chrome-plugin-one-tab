@@ -24,53 +24,40 @@ const ThemeContext = createContext<ThemeContextType | undefined>(undefined);
 
 export const ThemeProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const dispatch = useAppDispatch();
+  // S2 P1 Task 1.3: 直接从 settings slice 读 themeMode / themeStyle。
+  // 不再独立 chrome.storage.local.get —— popup bootstrap 已经把 settings
+  // 塞进 preloadedState，此处从 redux 读即可（settings slice 已经在 store 中）。
+  // 同时：若 redux 还没拿到 settings（例如 options 页面或未来其它入口），
+  // 走 loadSettings() 兜底拉一次。
   const themeModeFromStore = useAppSelector((state) => state.settings.themeMode);
   const themeStyleFromStore = useAppSelector((state) => state.settings.themeStyle);
 
-  // 尝试从 chrome.storage 读取已保存的主题模式，避免首次渲染时闪烁
-  // 这在popup打开时会立即恢复用户之前保存的主题偏好
-  const [savedThemeMode, setSavedThemeMode] = useState<'light' | 'dark' | 'auto' | null>(null);
-
-  // 同步读取已保存的主题设置（popup 打开时立即执行，不等待 React 渲染）
+  // 兜底：如果 settings 还没有 lastLoaded 标记（preloadedState 没传 settings
+  // 或 settings 是默认空对象），仍然 loadSettings() 拉一次存储。
+  // 旧实现里 settingsReady 标志是「chrome.storage.local 读盘完成」，但现在
+  // settings 已经在 preloadedState 里——所以这个 effect 只在极端兜底时跑。
   useEffect(() => {
-    chrome.storage.local.get(['themeMode', 'themeStyle']).then(result => {
-      if (result.themeMode) {
-        setSavedThemeMode(result.themeMode as 'light' | 'dark' | 'auto');
-      }
-      // 也更新 Redux（如果还没加载的话）
-      if (result.themeMode || result.themeStyle) {
-        dispatch(loadSettings() as any);
-      } else {
-        // 如果存储中没有任何主题设置，仍需加载一次
-        dispatch(loadSettings() as any);
-      }
-      setSettingsReady(true);
-    }).catch(() => {
-      dispatch(loadSettings() as any);
-      setSettingsReady(true);
-    });
+    dispatch(loadSettings() as any);
   }, [dispatch]);
 
-  // themeMode 优先使用已保存的值，否则回退到 Redux store 的值
-  const themeMode = savedThemeMode ?? themeModeFromStore;
+  const [isTransitioning, setIsTransitioning] = useState(false);
+
+  // themeMode / themeStyle 直接从 redux 读
+  const themeMode: ThemeMode = themeModeFromStore;
+  const themeStyle: ThemeStyle = themeStyleFromStore || 'legacy';
+
+  // 派生 currentTheme：auto 时跟随系统，其它取 themeMode
   const [currentTheme, setCurrentTheme] = useState<Theme>(() => {
-    if (savedThemeMode === 'dark') return 'dark';
-    if (savedThemeMode === 'light') return 'light';
-    if (savedThemeMode === 'auto') {
+    if (themeMode === 'dark') return 'dark';
+    if (themeMode === 'light') return 'light';
+    if (themeMode === 'auto') {
       return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
     }
     return 'light';
   });
-  const [isTransitioning, setIsTransitioning] = useState(false);
-  const [settingsReady, setSettingsReady] = useState(false);
-
-  // 主题风格状态，默认为 'legacy'
-  const themeStyle: ThemeStyle = themeStyleFromStore || 'legacy';
 
   // 检测系统主题并设置当前主题
   useEffect(() => {
-    if (!settingsReady) return;
-
     const setThemeBasedOnMode = () => {
       if (themeMode === 'auto') {
         const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
@@ -92,46 +79,43 @@ export const ThemeProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
     mediaQuery.addEventListener('change', handleChange);
     return () => mediaQuery.removeEventListener('change', handleChange);
-  }, [themeMode, settingsReady]);
+  }, [themeMode]);
 
   // 应用主题到HTML元素（带过渡效果）
   useEffect(() => {
-    if (!settingsReady) return;
-
     const root = document.documentElement;
-    
+
     // 添加过渡类
     root.style.setProperty('--theme-transition', `${THEME_TRANSITION_DURATION}ms`);
     root.classList.add('theme-transitioning');
     setIsTransitioning(true);
-    
+
     // 应用主题
     if (currentTheme === 'dark') {
       root.classList.add('dark');
     } else {
       root.classList.remove('dark');
     }
-    
+
     // 移除过渡类
     const timer = setTimeout(() => {
       root.classList.remove('theme-transitioning');
       setIsTransitioning(false);
     }, THEME_TRANSITION_DURATION);
-    
+
     return () => clearTimeout(timer);
-  }, [currentTheme, settingsReady]);
+  }, [currentTheme]);
 
   // 应用主题风格到HTML元素的 data-theme 属性
   useEffect(() => {
-    if (!settingsReady) return;
     document.documentElement.dataset.theme = themeStyle;
-  }, [themeStyle, settingsReady]);
+  }, [themeStyle]);
 
   // 更新主题模式
   const setThemeMode = useCallback((mode: ThemeMode) => {
     // 更新Redux状态（会自动触发保存到存储）
     dispatch(updateSettings({ themeMode: mode }));
-    
+
     // 保存到存储 - 使用 thunk 从 store 获取最新状态
     dispatch(saveSettings() as any);
   }, [dispatch]);
@@ -139,20 +123,20 @@ export const ThemeProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   // 更新主题风格（保留当前明暗模式）
   const setThemeStyle = useCallback((style: ThemeStyle) => {
     const root = document.documentElement;
-    
+
     // 添加过渡效果
     root.classList.add('theme-transitioning');
     setIsTransitioning(true);
-    
+
     // 同步更新 DOM data-theme 属性（即时应用）
     root.dataset.theme = style;
-    
+
     // 更新Redux状态（会自动触发保存到存储）
     dispatch(updateSettings({ themeStyle: style }));
-    
+
     // 保存到存储 - 使用 thunk 从 store 获取最新状态
     dispatch(saveSettings() as any);
-    
+
     // 移除过渡类
     setTimeout(() => {
       root.classList.remove('theme-transitioning');
@@ -161,13 +145,13 @@ export const ThemeProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   }, [dispatch]);
 
   return (
-    <ThemeContext.Provider value={{ 
-      themeMode, 
-      currentTheme, 
-      setThemeMode, 
-      themeStyle, 
+    <ThemeContext.Provider value={{
+      themeMode,
+      currentTheme,
+      setThemeMode,
+      themeStyle,
       setThemeStyle,
-      isTransitioning 
+      isTransitioning
     }}>
       {children}
     </ThemeContext.Provider>

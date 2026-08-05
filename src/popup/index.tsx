@@ -27,10 +27,11 @@ async function bootstrap() {
   let preloadedState: PreloadedState | undefined;
   try {
     await initStorage();
-    const [groups, settings] = await Promise.all([
-      storage.getGroups(),
-      storage.getSettings(),
-    ]);
+    // S2 P1 Task 1.3: 用 storage.hydrateAll() 一次性拿 groups + settings
+    // （lastLoadedAt 是 redux 状态，不在 storage 域，所以由 hydrationDecision
+    // 决定是否固化）。这是「单源化」入口：bootstrap 路径只发一次「读盘意图」，
+    // 内部 cachedAsyncFn 还会做内存命中。
+    const { groups, settings } = await storage.hydrateAll();
 
     const decision = decideTabsHydration({ groups, now: new Date().toISOString() });
     const tabsPreload = buildTabsPreloadedState(decision);
