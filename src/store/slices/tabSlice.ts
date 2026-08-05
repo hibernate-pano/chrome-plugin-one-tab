@@ -1,5 +1,5 @@
-import { createSlice, createAsyncThunk, createSelector } from '@reduxjs/toolkit';
-import { TabState, TabGroup } from '@/types/tab';
+import { createSlice, createAsyncThunk, createSelector, createAction, PayloadAction } from '@reduxjs/toolkit';
+import { TabState, TabGroup, Tab } from '@/types/tab';
 import { storage } from '@/utils/storage';
 
 import { nanoid } from '@reduxjs/toolkit';
@@ -12,6 +12,14 @@ import { trackProductEvent } from '@/utils/productEvents';
 
 // 解决"速记属性...的范围内不存在任何值"的问题，显式声明actions
 
+
+/**
+ * 占位 action —— Task 2.2 才会新增持久化中间件处理它。
+ * 在 Task 2.1 中我们重写 moveTabAndSync thunk 以 dispatch 此 action，
+ * 这样 thunk 能编译通过，但当前 dispatch 是 no-op（storage 写入仍由
+ * moveTabAndSync 内部旧路径完成，Task 2.2 会拆分掉那一块）。
+ */
+export const persistGroupsDebounced = createAction('tabs/persistGroupsDebounced');
 
 export const initialTabState: TabState = {
   groups: [],
@@ -400,6 +408,23 @@ export const cleanDuplicateTabs = createAsyncThunk(
  * 4. 优化拖拽过程中的状态更新
  * 5. 自动清理拖拽后的空标签组
  */
+/**
+ * 移动标签页 thunk（v2.1 拆分版）。
+ *
+ * - 不再直接调用 storage.setGroups / 不再做空组自动清理。
+ * - 只做两件事：(1) dispatch `moveTabLocal` 即时更新 UI；
+ *              (2) dispatch `persistGroupsDebounced()` 由 Task 2.2 的中间件
+ *                  完成 200ms trailing 持久化（当前是 no-op，feature 是已知
+ *                  临时回归，会在 Task 2.2 之后恢复）。
+ *
+ * 旧版本行为：
+ * - requestAnimationFrame + 显式 storage.setGroups + 跨组时调用 deleteGroup
+ *   自动清理空源标签组 + shouldAutoDeleteAfterTabRemoval 判定。
+ * 这些副作用全部下移到 Task 2.2 的 persistGroupsDebounced 中间件中。
+ *
+ * 调用者签名仍保持 (sourceGroupId, sourceIndex, targetGroupId, targetIndex,
+ * updateSourceInDrag?)，以便现有调用方 TabGroup.handleMoveTab 不需要修改。
+ */
 export const moveTabAndSync = createAsyncThunk(
   'tabs/moveTabAndSync',
   async (
@@ -416,125 +441,28 @@ export const moveTabAndSync = createAsyncThunk(
       targetIndex: number;
       updateSourceInDrag?: boolean;
     },
-    { dispatch }
+    { dispatch, getState }
   ) => {
     try {
-      // 在 Redux 中移动标签页 - 立即更新UI
-      dispatch(moveTab({ sourceGroupId, sourceIndex, targetGroupId, targetIndex }));
-
-      // 如果是在拖动过程中且不需要更新源，跳过存储操作
-      // 这是一个优化，避免在拖拽过程中频繁更新存储
-      if (!updateSourceInDrag) {
+      // 从当前 Redux state 中查找被移动的 tab ID（调用方传的是 index）。
+      const state = getState() as { tabs: TabState };
+      const sourceGroup = state.tabs.groups.find(g => g.id === sourceGroupId);
+      const tab = sourceGroup?.tabs[sourceIndex];
+      if (!tab) {
+        // 拖拽过程中 sourceGroup 不存在或 sourceIndex 越界时直接返回 —— UI 已经回弹。
         return { sourceGroupId, sourceIndex, targetGroupId, targetIndex };
       }
 
-      // 使用 requestAnimationFrame 在下一帧执行存储操作，优化性能
-      // 这样可以确保UI更新优先，存储操作不会阻塞渲染
-      // 注意：必须 await 等待存储完成，避免用户关闭标签页时数据丢失
-      await new Promise<void>((resolve) => {
-        requestAnimationFrame(async () => {
-          try {
-            // 在本地存储中更新标签页位置
-            const groups = await storage.getGroups();
-            const sourceGroup = groups.find(g => g.id === sourceGroupId);
-            const targetGroup = groups.find(g => g.id === targetGroupId);
+      // UI 立即更新 —— 纯 reducer，不写 storage。
+      dispatch(
+        moveTabLocal({ groupId: targetGroupId, tabId: tab.id, toIndex: targetIndex })
+      );
 
-            if (sourceGroup && targetGroup) {
-              // 获取要移动的标签页
-              const tab = sourceGroup.tabs[sourceIndex];
-
-              if (!tab) {
-                console.error('找不到要移动的标签页:', { sourceGroupId, sourceIndex });
-                resolve();
-                return;
-              }
-
-              // 创建新的标签页数组以避免直接修改原数组
-              const newSourceTabs = [...sourceGroup.tabs];
-              const newTargetTabs =
-                sourceGroupId === targetGroupId ? newSourceTabs : [...targetGroup.tabs];
-
-              // 从源标签组中删除标签页
-              newSourceTabs.splice(sourceIndex, 1);
-
-              // 修复：计算调整后的目标索引
-              // 对于同组内移动，无论拖动方向如何，都直接使用 targetIndex
-              // 这与 Redux reducer 中的逻辑保持一致
-              let adjustedIndex = targetIndex;
-
-              // 确保索引在有效范围内
-              adjustedIndex = Math.max(0, Math.min(adjustedIndex, newTargetTabs.length));
-
-              // 插入标签到目标位置
-              newTargetTabs.splice(adjustedIndex, 0, tab);
-
-              // 更新源标签组和目标标签组 - 使用不可变更新
-              const sourceVersion = sourceGroup.version || 1;
-              const updatedSourceGroup = {
-                ...sourceGroup,
-                tabs: newSourceTabs,
-                updatedAt: new Date().toISOString(),
-                version: sourceVersion + 1,
-              };
-
-              let updatedTargetGroup = targetGroup;
-              if (sourceGroupId !== targetGroupId) {
-                const targetVersion = targetGroup.version || 1;
-                updatedTargetGroup = {
-                  ...targetGroup,
-                  tabs: newTargetTabs,
-                  updatedAt: new Date().toISOString(),
-                  version: targetVersion + 1,
-                };
-              }
-
-              // 批量更新本地存储 - 一次性更新所有变更
-              let updatedGroups = groups
-                .map(g => {
-                  if (g.id === sourceGroupId) return updatedSourceGroup;
-                  if (g.id === targetGroupId) return updatedTargetGroup;
-                  return g;
-                });
-
-              // 自动清理空标签组（仅在跨组移动时检查源标签组）
-              if (sourceGroupId !== targetGroupId && updatedSourceGroup && updatedSourceGroup.tabs.length === 0) {
-                try {
-                  // 使用工具函数检查是否应该被自动删除（考虑锁定状态等）
-                  if (shouldAutoDeleteAfterTabRemoval(updatedSourceGroup, '')) {
-                    console.log(`[拖拽自动清理] 检测到空标签组: ${updatedSourceGroup.name} (ID: ${sourceGroupId})`);
-
-                    // 从存储数组中移除空标签组
-                    updatedGroups = updatedGroups.filter(g => g.id !== sourceGroupId);
-
-                    // 延迟删除Redux状态中的标签组，避免与UI组件的删除逻辑冲突
-                    setTimeout(() => {
-                      try {
-                        dispatch(deleteGroup(sourceGroupId));
-                      } catch (deleteError) {
-                        console.error(`[拖拽自动清理] 删除Redux状态失败:`, deleteError);
-                      }
-                    }, 100);
-
-                    console.log(`[拖拽自动清理] 已从存储中移除空标签组: ${updatedSourceGroup.name} (ID: ${sourceGroupId})`);
-                  } else {
-                    console.log(`[拖拽自动清理] 跳过不符合删除条件的空标签组: ${updatedSourceGroup.name} (ID: ${sourceGroupId})`);
-                  }
-                } catch (cleanupError) {
-                  console.error(`[拖拽自动清理] 清理空标签组时发生错误:`, cleanupError);
-                  // 清理失败时不影响主要的存储操作
-                }
-              }
-
-              await storage.setGroups(updatedGroups);
-
-            }
-            resolve();
-          } catch (error) {
-            console.error('存储标签页移动操作失败:', error);
-            resolve(); // Don't reject - storage failure shouldn't crash the UI
-          }
-        });
-      });
+      // 触发持久化（Task 2.2 才接，当前是 no-op）。
+      // 注意：拖拽中的高频 dispatch 不应被持久化污染 —— updateSourceInDrag=false 跳过。
+      if (updateSourceInDrag !== false) {
+        dispatch(persistGroupsDebounced());
+      }
 
       return { sourceGroupId, sourceIndex, targetGroupId, targetIndex };
     } catch (error) {
@@ -550,6 +478,41 @@ export const tabSlice = createSlice({
   reducers: {
     setActiveGroup: (state, action) => {
       state.activeGroupId = action.payload;
+    },
+    /**
+     * 纯 UI 移动 reducer —— 不写 storage。
+     *
+     * 契约（与 tabSlice 集成方式）：
+     * - `groupId`：目标标签组 ID（被移动 tab 的新所在组）
+     * - `tabId`：被移动的 tab ID（跨组移动时，会从它原本所在的标签组中移除）
+     * - `toIndex`：插入到目标标签组的索引位置（clamp 到 [0, tabs.length]）
+     *
+     * 通过跨所有标签组查找 tabId 实现"跨组移动"。
+     * 持久化由 dispatch persistGroupsDebounced() 触发（Task 2.2 中间件）。
+     */
+    moveTabLocal: (
+      state,
+      action: PayloadAction<{ groupId: string; tabId: string; toIndex: number }>
+    ) => {
+      const { groupId, tabId, toIndex } = action.payload;
+      const target = state.groups.find(g => g.id === groupId);
+      if (!target) return;
+
+      // 从所有标签组里查找 tab —— 找到就移除（支持跨组移动）。
+      let sourceTab: Tab | undefined;
+      for (const g of state.groups) {
+        const idx = g.tabs.findIndex(t => t.id === tabId);
+        if (idx >= 0) {
+          const [extracted] = g.tabs.splice(idx, 1);
+          sourceTab = extracted;
+          break;
+        }
+      }
+      if (!sourceTab) return;
+
+      // clamp 到 [0, target.tabs.length]，避免越界。
+      const clamped = Math.max(0, Math.min(target.tabs.length, toIndex));
+      target.tabs.splice(clamped, 0, sourceTab);
     },
     updateGroupName: (state, action) => {
       const { groupId, name } = action.payload;
@@ -838,6 +801,7 @@ export const tabSlice = createSlice({
 // 将 actions 单独导出，避免循环依赖
 export const {
   setActiveGroup,
+  moveTabLocal,
   updateGroupName,
   toggleGroupLock,
   setSearchQuery,
