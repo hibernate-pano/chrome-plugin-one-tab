@@ -26,3 +26,6 @@ dist/
 
 # Subagent-driven progress ledger（scratch — destroy by `git clean -fdx` 没问题）
 .superpowers/
+
+# Playwright MCP 本地缓存（不进仓库）
+.playwright-mcp/

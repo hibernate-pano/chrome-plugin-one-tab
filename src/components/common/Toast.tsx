@@ -3,12 +3,34 @@ import { createPortal } from 'react-dom';
 
 export type ToastType = 'success' | 'error' | 'info' | 'warning';
 
+/**
+ * S3 §4: 撤销按钮配置（与 ToastContext.ToastAction 形状一致，
+ * 单独 export 避免 toast → ToastContext 循环引用）。
+ */
+export interface ToastActionPayload {
+  label: string;
+  onClick: () => void;
+}
+
 interface ToastProps {
   message: string;
   type?: ToastType;
   duration?: number;
   onClose?: () => void;
   visible: boolean;
+  /**
+   * 可选撤销按钮（S3 §4 Undo delete）。
+   * - 提供时，toast 渲染一个按钮行（label + onClick）；
+   * - 点击按钮触发 onClick + 关闭 toast（onClose 仍由 parent 提供）。
+   * - 默认 null：不渲染按钮。
+   */
+  action?: ToastActionPayload | null;
+  /**
+   * 撤销按钮回调（与 action.onClick 配套的"立即关闭"信号）。
+   * 如果提供，点击撤销按钮时除了执行 action.onClick 还会触发 onAction，
+   * parent 在 onAction 中关闭 toast（避免双重关闭竞态）。
+   */
+  onAction?: () => void;
 }
 
 export const Toast: React.FC<ToastProps> = ({
@@ -16,7 +38,9 @@ export const Toast: React.FC<ToastProps> = ({
   type = 'success',
   duration = 3000,
   onClose,
-  visible
+  visible,
+  action = null,
+  onAction,
 }) => {
   const [isVisible, setIsVisible] = useState(visible);
   const [animation, setAnimation] = useState('animate-toast-in');
@@ -144,6 +168,26 @@ export const Toast: React.FC<ToastProps> = ({
                 {type}
               </div>
               <p className="mt-1 text-sm font-medium leading-6 text-current">{message}</p>
+              {action && (
+                <div className="mt-2 flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      // 关闭动画 + 触发 onAction（parent 关闭 toast）。
+                      setAnimation('animate-toast-out');
+                      setTimeout(() => {
+                        setIsVisible(false);
+                        onAction?.();
+                      }, 220);
+                    }}
+                    aria-label={action.label}
+                    data-testid="toast-action"
+                    className="inline-flex items-center rounded-full bg-primary-600 px-3 py-1 text-xs font-semibold text-white shadow-sm transition-colors hover:bg-primary-700 focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-2"
+                  >
+                    {action.label}
+                  </button>
+                </div>
+              )}
             </div>
             <button
               onClick={() => {
