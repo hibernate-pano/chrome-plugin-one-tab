@@ -30,6 +30,7 @@
   "dependencies": {
     "@reduxjs/toolkit": "^2.2.1",
     "@supabase/supabase-js": "^2.75.1",
+    "@tanstack/react-virtual": "^3.14.9",
     "@types/lodash": "^4.17.16",
     "clsx": "^2.1.1",
     "lodash": "^4.18.1",
