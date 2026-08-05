@@ -18,6 +18,7 @@ import HighlightText from './HighlightText';
 import { SafeFavicon } from '@/components/common/SafeFavicon';
 import { EmptyState } from '@/components/common/EmptyState';
 import { buildSessionRestoreMessage, getSessionResultSummary } from '@/utils/sessionPresentation';
+import { useListVirtualizer } from '@/hooks/useVirtualizer';
 
 const PinIcon = () => (
   <svg className="w-3 h-3 text-blue-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
@@ -43,28 +44,40 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({ searchQuery,
   const deferredSearchQuery = useDeferredValue(searchQuery);
   const normalizedSearchQuery = deferredSearchQuery.trim();
 
-  // 把搜索计算用 useMemo 包装，避免每次 render（state 任意字段变化）都重算。
-  // 依赖选 [groups, storedQuery]：groups 由 selectGroups 切片提供，
-  // storedQuery 是 store 里的搜索 query（保留以便后续切换 query 来源）。
-  const baseResults = useMemo(
-    () =>
-      normalizedSearchQuery
-        ? AdvancedSearch.search(groups, {
-            query: normalizedSearchQuery,
-            searchPinned: true,
-          })
-        : [],
-    [groups, storedQuery, normalizedSearchQuery]
+  // 把搜索计算 + 筛选 + 分组打包到一个 useMemo 里，避免每次 render 重算。
+  // deps 选 [groups, storedQuery, normalizedSearchQuery, filters]：
+  // - groups 来自 selectGroups 切片
+  // - storedQuery 保留以便未来切换 query 来源
+  // - normalizedSearchQuery 是实际驱动 AdvancedSearch.search 的字符串
+  // - filters 变化（用户调整筛选）需要重算搜索结果
+  const sessionResults = useMemo(() => {
+    const baseResults = normalizedSearchQuery
+      ? AdvancedSearch.search(groups, {
+          query: normalizedSearchQuery,
+          searchPinned: true,
+        })
+      : [];
+    const searchResults = applySearchFilters(baseResults, filters);
+    return buildSessionSearchResults(searchResults);
+  }, [groups, storedQuery, normalizedSearchQuery, filters]);
+  const matchingTabs = useMemo(
+    () => sessionResults.flatMap(session => session.matches),
+    [sessionResults]
   );
-  const searchResults = applySearchFilters(baseResults, filters);
-  const sessionResults = buildSessionSearchResults(searchResults);
-  const matchingTabs = sessionResults.flatMap(session => session.matches);
   const activeFilterCount = [
     !!filters.domain?.trim(),
     !!filters.groupName?.trim(),
     !!filters.savedWithin,
     filters.pinned === 'only' || filters.pinned === 'exclude',
   ].filter(Boolean).length;
+
+  // 搜索命中较多时启用虚拟化。hook 必须在任何 early return 之前调用
+  // （rules-of-hooks）。空结果分支在 hook 之后单独 return。
+  const { virtualizer, parentRef, enabled } = useListVirtualizer(sessionResults, {
+    itemHeight: 240,
+    overscan: 3,
+    threshold: 30,
+  });
 
   useEffect(() => {
     if (!normalizedSearchQuery) {
@@ -73,7 +86,7 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({ searchQuery,
 
     void trackProductEvent('search_performed', {
       query: normalizedSearchQuery,
-      resultCount: searchResults.length,
+      resultCount: matchingTabs.length,
       hasDomainFilter: !!filters.domain,
       hasSavedWithinFilter: !!filters.savedWithin,
     });
@@ -85,10 +98,10 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({ searchQuery,
         groupName: filters.groupName || null,
         pinned: filters.pinned || 'all',
         savedWithin: filters.savedWithin || null,
-        resultCount: searchResults.length,
+        resultCount: matchingTabs.length,
       });
     }
-  }, [filters, normalizedSearchQuery, searchResults.length]);
+  }, [filters, normalizedSearchQuery, matchingTabs.length]);
 
   const updateFilters = (updater: (current: SearchFilters) => SearchFilters) => {
     startFilterTransition(() => {
@@ -345,6 +358,54 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({ searchQuery,
     });
   };
 
+  const renderSessionCard = (session: SessionSearchResult) => (
+    <div
+      className="rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900/40 p-3"
+      style={{ contentVisibility: 'auto', containIntrinsicSize: '240px' }}
+    >
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div className="min-w-0">
+          <div className="flex items-center gap-2">
+            <h4 className="text-sm font-semibold text-gray-900 dark:text-gray-100 truncate">
+              {session.group.name}
+            </h4>
+            {session.group.isFavorite && (
+              <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[11px] text-amber-700 dark:bg-amber-900/40 dark:text-amber-300">
+                收藏
+              </span>
+            )}
+            <span className="rounded-full bg-gray-100 dark:bg-gray-800 px-2 py-0.5 text-xs text-gray-600 dark:text-gray-300">
+              命中 {session.matches.length}
+            </span>
+          </div>
+          <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+            {getSessionResultSummary(session.group, session.matches.length)}
+          </p>
+          {session.group.notes && (
+            <p className="mt-2 text-xs text-gray-600 dark:text-gray-300 line-clamp-2">
+              <HighlightText text={session.group.notes} highlight={searchQuery} />
+            </p>
+          )}
+        </div>
+
+        <button
+          onClick={() => restoreSession(session.group)}
+          className="self-start rounded-lg bg-primary-600 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-primary-700"
+        >
+          恢复整个会话
+        </button>
+      </div>
+
+      <div className="mt-3 space-y-1 border-t border-gray-100 dark:border-gray-800 pt-3">
+        {session.matches.map(result => (
+          <React.Fragment key={`${result.group.id}-${result.tab.id}`}>
+            {renderTabItem({ tab: result.tab, group: result.group })}
+          </React.Fragment>
+        ))}
+      </div>
+    </div>
+  );
+
   const renderTabItem = ({ tab, group }: { tab: Tab; group: TabGroup }) => (
     <div className="tab-item group/tab hover:scale-[1.02] hover:bg-primary/5 active:scale-[0.98] transition-all duration-150 ease-out">
       <SafeFavicon src={tab.favicon} alt="" className="tab-item-favicon" />
@@ -585,55 +646,46 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({ searchQuery,
 
       <FiltersPanel withOuterMargin />
 
-      <div className="space-y-3 px-2 pb-2">
-        {sessionResults.map((session: SessionSearchResult) => (
+      <div className="px-2 pb-2">
+        {enabled ? (
           <div
-            key={session.group.id}
-            className="rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900/40 p-3"
-            style={{ contentVisibility: 'auto', containIntrinsicSize: '240px' }}
+            ref={parentRef}
+            className="overflow-auto space-y-3"
+            style={{ maxHeight: '70vh' }}
           >
-            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-              <div className="min-w-0">
-                <div className="flex items-center gap-2">
-                  <h4 className="text-sm font-semibold text-gray-900 dark:text-gray-100 truncate">
-                    {session.group.name}
-                  </h4>
-                  {session.group.isFavorite && (
-                    <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[11px] text-amber-700 dark:bg-amber-900/40 dark:text-amber-300">
-                      收藏
-                    </span>
-                  )}
-                  <span className="rounded-full bg-gray-100 dark:bg-gray-800 px-2 py-0.5 text-xs text-gray-600 dark:text-gray-300">
-                    命中 {session.matches.length}
-                  </span>
-                </div>
-                <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
-                  {getSessionResultSummary(session.group, session.matches.length)}
-                </p>
-                {session.group.notes && (
-                  <p className="mt-2 text-xs text-gray-600 dark:text-gray-300 line-clamp-2">
-                    <HighlightText text={session.group.notes} highlight={searchQuery} />
-                  </p>
-                )}
-              </div>
-
-              <button
-                onClick={() => restoreSession(session.group)}
-                className="self-start rounded-lg bg-primary-600 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-primary-700"
-              >
-                恢复整个会话
-              </button>
-            </div>
-
-            <div className="mt-3 space-y-1 border-t border-gray-100 dark:border-gray-800 pt-3">
-              {session.matches.map(result => (
-                <React.Fragment key={`${result.group.id}-${result.tab.id}`}>
-                  {renderTabItem({ tab: result.tab, group: result.group })}
-                </React.Fragment>
-              ))}
+            <div
+              style={{
+                height: `${virtualizer.getTotalSize()}px`,
+                width: '100%',
+                position: 'relative',
+              }}
+            >
+              {virtualizer.getVirtualItems().map(vi => {
+                const session = sessionResults[vi.index];
+                return (
+                  <div
+                    key={session.group.id}
+                    data-index={vi.index}
+                    ref={virtualizer.measureElement}
+                    style={{
+                      position: 'absolute',
+                      top: 0,
+                      left: 0,
+                      width: '100%',
+                      transform: `translateY(${vi.start}px)`,
+                    }}
+                  >
+                    {renderSessionCard(session)}
+                  </div>
+                );
+              })}
             </div>
           </div>
-        ))}
+        ) : (
+          <div className="space-y-3">
+            {sessionResults.map((session: SessionSearchResult) => renderSessionCard(session))}
+          </div>
+        )}
       </div>
     </div>
   );
