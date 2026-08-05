@@ -89,7 +89,17 @@ export async function load(url, context, nextLoad) {
     return nextLoad(url, context);
   }
   const filepath = fileURLToPath(url);
-  if (!filepath.startsWith(SRC_DIR + '/')) {
+  if (!filepath.endsWith('.ts') && !filepath.endsWith('.tsx') && !filepath.endsWith('.mts')) {
+    return nextLoad(url, context);
+  }
+  // Restrict TypeScript transpilation to source and test directories.
+  // Test files outside SRC_DIR (e.g. tests/components/*.tsx) also need
+  // transformation because --experimental-strip-types handles .ts but not
+  // .tsx. The loader is the single shared transpilation path.
+  const inScope =
+    filepath.startsWith(SRC_DIR + '/') ||
+    filepath.startsWith(resolvePath(PROJECT_ROOT, 'tests') + '/');
+  if (!inScope) {
     return nextLoad(url, context);
   }
   if (!filepath.endsWith('.ts') && !filepath.endsWith('.tsx') && !filepath.endsWith('.mts')) {
@@ -105,6 +115,10 @@ export async function load(url, context, nextLoad) {
     importHelpers: false,
     esModuleInterop: true,
     allowSyntheticDefaultImports: true,
+    // JSX support for .tsx files under both src/ and tests/. The runtime
+    // JSX helper (`react/jsx-runtime`) is matched automatically by the
+    // `react-jsx` transform.
+    jsx: ts.JsxEmit.ReactJSX,
   };
   let transformed = ts.transpileModule(source, {
     compilerOptions,
@@ -116,9 +130,44 @@ export async function load(url, context, nextLoad) {
     /import\.meta\.env/g,
     'globalThis.__TABSTACK_META_ENV__'
   );
+  // Rewrite `import { throttle } from 'lodash'` (and similar named
+  // imports from the lodash CJS bundle) into the per-function default
+  // import path. Node's ESM loader cannot extract named exports from a
+  // CJS package, so the original source-level named import never resolves
+  // at runtime. The source code is untouched; this is a test-infra-only
+  // transformation to make the existing src importable under node:test.
+  transformed.outputText = rewriteLodashNamedImports(transformed.outputText);
   return {
     format: 'module',
     source: transformed.outputText,
     shortCircuit: true,
   };
+}
+
+/**
+ * Convert `import { foo, bar } from 'lodash'` to
+ * `import foo from 'lodash/foo.js'; import bar from 'lodash/bar.js';`
+ * for the top-level `lodash` specifier only. Local subpath imports
+ * (`lodash/foo`) are passed through unchanged.
+ */
+function rewriteLodashNamedImports(source) {
+  const namedImportFromLodash = /import\s*\{([^}]+)\}\s*from\s*['"]lodash['"];?/g;
+  return source.replace(namedImportFromLodash, (_match, namesRaw) => {
+    const names = namesRaw
+      .split(',')
+      .map(n => n.trim())
+      .filter(n => n.length > 0)
+      // `foo as bar` or default `foo` are both valid bindings; keep the
+      // local identifier (the part after `as` if present, else the name).
+      .map(binding => {
+        const asMatch = binding.match(/^(\S+)\s+as\s+(\S+)$/);
+        return {
+          imported: asMatch ? asMatch[1] : binding,
+          local: asMatch ? asMatch[2] : binding,
+        };
+      });
+    return names
+      .map(n => `import ${n.local} from 'lodash/${n.imported}.js';`)
+      .join(' ');
+  });
 }
