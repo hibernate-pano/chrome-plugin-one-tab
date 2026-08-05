@@ -3,6 +3,7 @@ import { useAppDispatch, useAppSelector } from '@/store/hooks';
 import { setReorderMode, saveSettings } from '@/store/slices/settingsSlice';
 import { selectReorderMode } from '@/store/selectors/tabSelectors';
 import { TabCounter } from './TabCounter';
+import { SyncStatusInline } from './SyncStatusInline';
 import { useDebouncedSearch } from '@/hooks/useDebouncedSearch';
 import { useKeyboardShortcuts, COMMON_SHORTCUTS } from '@/hooks/useKeyboardShortcuts';
 import { Tooltip } from '@/components/common/Tooltip';
@@ -154,6 +155,9 @@ export const Header: React.FC<HeaderProps> = ({ onSearch, onOpenSettings }) => {
                 <span>保存会话</span>
               </button>
             </Tooltip>
+
+            {/* F10: 同步快捷入口（仅登录可见，自带拆分按钮 + popover） */}
+            <SyncStatusInline onOpenSettings={onOpenSettings} />
 
             {/* Kebab 菜单 - 触发 SettingsTabs（在 MainApp 内 lazy 加载） */}
             <Tooltip content="设置" position="bottom">
