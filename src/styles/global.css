@@ -1,15 +1,10 @@
 /* TabStack 字体系统 */
 @import './fonts.css';
 
-/* 主题系统 - 顺序：原始、经典、极光、奶油、粉红、薄荷、赛博 */
-@import './themes/legacy.css';
-@import './themes/classic.css';
+/* 主题系统 - S2 P4 Task 4.4 精简到 3 个主题：极光 / 精致 / 赛博 */
 @import './themes/aurora.css';
-@import './themes/creamy.css';
-@import './themes/pink.css';
-@import './themes/mint.css';
+@import './themes/refined.css';
 @import './themes/cyberpunk.css';
-@import './themes/prism.css';
 
 /* 微交互样式 */
 @import './micro-interactions.css';
@@ -35,7 +30,7 @@
  * 4. 确保 data-theme 属性始终存在于 html 元素上
  */
 
-/* 默认主题回退 - 当 data-theme 未设置时使用 legacy 主题的值 */
+/* 默认主题回退 - 当 data-theme 未设置时使用 aurora 主题的值 */
 html:not([data-theme]) {
   --color-bg-primary: #f9fafb;
   --color-bg-secondary: #ffffff;

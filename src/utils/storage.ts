@@ -48,16 +48,11 @@ const STORAGE_KEYS = {
 
 const STORAGE_VERSION = 2;
 
-// 有效的主题风格值
+// 有效的主题风格值（S2 P4 Task 4.4: 8 选 3 精简）
 const VALID_THEME_STYLES: ThemeStyle[] = [
-  'legacy',
-  'classic',
   'aurora',
-  'creamy',
-  'pink',
-  'mint',
+  'refined',
   'cyberpunk',
-  'prism',
 ];
 
 // 有效的主题模式值
@@ -66,14 +61,14 @@ const VALID_THEME_MODES: Array<'light' | 'dark' | 'auto'> = ['light', 'dark', 'a
 /**
  * 验证主题风格值
  * @param value 待验证的值
- * @returns 有效的主题风格值，无效时返回默认值 'legacy'
+ * @returns 有效的主题风格值，无效时回退到默认值 'aurora'
  */
 export function validateThemeStyle(value: unknown): ThemeStyle {
   if (typeof value === 'string' && VALID_THEME_STYLES.includes(value as ThemeStyle)) {
     return value as ThemeStyle;
   }
   console.warn('无效的主题风格值，使用默认值:', value);
-  return 'legacy';
+  return 'aurora';
 }
 
 /**
@@ -102,7 +97,7 @@ export const DEFAULT_SETTINGS: UserSettings = {
   syncStrategy: 'newest', // 默认使用最新版本
   deleteStrategy: 'everywhere', // 默认在所有设备上删除
   themeMode: 'auto', // 默认使用自动模式（跟随系统）
-  themeStyle: 'legacy', // 默认使用原始主题
+  themeStyle: 'aurora', // 默认使用极光主题
   // 默认不收集固定标签页（更保守）
   collectPinnedTabs: false,
 };

@@ -102,8 +102,8 @@ export interface TabState {
 // 布局模式枚举
 export type LayoutMode = 'single' | 'double';
 
-// 主题风格类型
-export type ThemeStyle = 'legacy' | 'classic' | 'aurora' | 'creamy' | 'pink' | 'mint' | 'cyberpunk' | 'prism';
+// 主题风格类型（S2 P4 Task 4.4: 从 8 个精简到 3 个）
+export type ThemeStyle = 'aurora' | 'refined' | 'cyberpunk';
 
 export interface UserSettings {
   groupNameTemplate: string;

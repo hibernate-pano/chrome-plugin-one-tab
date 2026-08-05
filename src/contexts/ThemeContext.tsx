@@ -44,7 +44,7 @@ export const ThemeProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
   // themeMode / themeStyle 直接从 redux 读
   const themeMode: ThemeMode = themeModeFromStore;
-  const themeStyle: ThemeStyle = themeStyleFromStore || 'legacy';
+  const themeStyle: ThemeStyle = themeStyleFromStore || 'aurora';
 
   // 派生 currentTheme：auto 时跟随系统，其它取 themeMode
   const [currentTheme, setCurrentTheme] = useState<Theme>(() => {
