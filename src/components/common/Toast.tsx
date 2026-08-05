@@ -130,7 +130,7 @@ export const Toast: React.FC<ToastProps> = ({
           transform-origin: left;
         }
       `}</style>
-      <div className={`fixed right-4 top-4 z-[110] ${animation}`}>
+      <div className={`fixed right-2 top-2 max-w-[340px] z-[110] ${animation}`}>
         <div
           className={`pointer-events-auto relative min-w-[280px] max-w-[420px] overflow-hidden rounded-2xl border shadow-toast backdrop-blur ${typeStyles.shell}`}
         >

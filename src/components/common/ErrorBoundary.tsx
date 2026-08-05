@@ -91,12 +91,12 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
 
             {/* 错误标题 */}
             <h2 className="text-xl font-semibold text-gray-900 dark:text-gray-100 mb-2">
-              出现了一些问题
+              TabStack 遇到了一个问题
             </h2>
 
             {/* 错误描述 */}
             <p className="text-gray-600 dark:text-gray-300 mb-6">
-              应用遇到了意外错误。您可以尝试重新加载或重试操作。
+              临时错误。点击重试，或刷新窗口。
             </p>
 
             {/* 开发环境下显示错误详情 */}
