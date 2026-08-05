@@ -1,12 +1,12 @@
 # TabStack
 
-当前版本：`1.13.6`
+当前版本：`1.14.0`
 
 > **Save the session. Find it later. Restore it on any device.**
 >
-> OneTab 简单，但换电脑就没了。TabStack 让你的标签组跟着你走 —— 端到端加密、跨设备同步、8 套主题开箱即用。
+> OneTab 简单，但换电脑就没了。TabStack 让你的标签组跟着你走 —— 端到端加密、跨设备同步、3 套主题开箱即用。
 
-[![Version](https://img.shields.io/badge/version-1.13.0-blue)]()
+[![Version](https://img.shields.io/badge/version-1.14.0-blue)]()
 [![License](https://img.shields.io/badge/license-MIT-green)]()
 [![MV3](https://img.shields.io/badge/Manifest-V3-orange)]()
 
@@ -16,7 +16,7 @@
 |---|:---:|:---:|:---:|
 | 跨设备同步 | ❌ 本机存储 | ❌ 本机存储 | ✅ **端到端加密** |
 | Manifest V3 | ❌ 老旧 | ❌ 不再维护 | ✅ 原生 MV3 |
-| 8 套主题 | ❌ | ❌ | ✅ |
+| 3 套主题 | ❌ | ❌ | ✅ |
 | OneTab 格式兼容 | ✅ | ❌ | ✅ |
 | 客户端加密 | ❌ | ❌ | ✅ AES-GCM |
 
@@ -103,7 +103,7 @@ CI 自动跑 `pnpm validate` + `pnpm test`，详见 `.github/workflows/ci.yml`�
 
 - **前端**：React 18 + TypeScript + Redux Toolkit
 - **拖拽**：react-dnd
-- **样式**：Tailwind CSS 3 + 8 套主题
+- **样式**：Tailwind CSS 3 + 3 套主题
 - **后端**：Supabase（PostgreSQL + Row Level Security）
 - **加密**：Web Crypto API（AES-GCM 256）
 - **构建**：Vite + crxjs

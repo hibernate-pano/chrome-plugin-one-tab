@@ -359,7 +359,7 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
           )}
 
           {/* 时间 */}
-          <span className="tab-group-time hidden sm:block flex-shrink-0">
+          <span className="tab-group-time block flex-shrink-0 truncate max-w-24">
             {formatTime(group.createdAt)}
           </span>
         </div>

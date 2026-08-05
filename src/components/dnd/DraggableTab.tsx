@@ -161,7 +161,7 @@ export const DraggableTab: React.FC<DraggableTabProps> = React.memo(({
       <div className="flex-1 min-w-0 flex items-center gap-3">
         <a
           href="#"
-          className="tab-item-title tab-item-title-hover transition-colors flex items-center gap-1 focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
+          className="tab-item-title tab-item-title-hover transition-colors flex items-center gap-1 min-w-0 truncate focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
           onClick={handleTabClick}
           title={tabTitle}
           aria-label={`打开标签页: ${tabTitle}${tab.pinned ? ' (固定)' : ''}`}
@@ -177,7 +177,7 @@ export const DraggableTab: React.FC<DraggableTabProps> = React.memo(({
           {tab.pinned && <PinIcon />}
         </a>
         <span 
-          className="tab-item-url hidden sm:block"
+          className="tab-item-url block truncate max-w-[45%] text-xs"
           aria-label={`网址: ${tab.url}`}
         >
           {displayUrl}

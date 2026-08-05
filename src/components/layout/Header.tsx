@@ -96,22 +96,23 @@ export const Header: React.FC<HeaderProps> = ({ onSearch, onOpenSettings }) => {
   return (
     <header className="header rounded-xl shadow-sm">
       <div className={`w-full py-4 px-4 sm:px-6 ${getContainerWidthClass()}`}>
-        <div className="flex items-center justify-between gap-4">
+        <div className="flex items-center justify-between gap-1.5 sm:gap-4">
           {/* Logo 区域 */}
           <button
             onClick={handleResetToDefaultView}
-            className="flex items-center gap-3 group flat-interaction"
+            className="flex items-center gap-1.5 sm:gap-3 group flat-interaction flex-shrink-0"
             title="回到默认视图"
             aria-label="回到默认视图"
           >
-            <TabStackLogo size="sm" showIcon={true} className="font-bold" />
-            <div className="hidden sm:block">
+            {/* 380px popup 下隐藏 "TabStack" 文字，仅保留图标，给搜索框腾出空间 */}
+            <TabStackLogo size="sm" showIcon={true} className="font-bold [&>span]:hidden sm:[&>span]:inline" />
+            <div className="block">
               <TabCounter />
             </div>
           </button>
 
           {/* 搜索框 */}
-          <div className="flex-1 max-w-md mx-4">
+          <div className="flex-1 min-w-0 max-w-md mx-1 sm:mx-4">
             <div className="relative shadow-sm">
               {isSearchBusy && (
                 <div className="absolute left-3 top-1/2 -translate-y-1/2 search-icon">
@@ -143,23 +144,16 @@ export const Header: React.FC<HeaderProps> = ({ onSearch, onOpenSettings }) => {
           </div>
 
           {/* 操作按钮组 */}
-          <div className="flex items-center gap-1 sm:gap-2 flex-shrink-0">
-            {/* 保存按钮 */}
+          <div className="flex items-center gap-1 flex-shrink-0">
+            {/* 保存按钮：popup 始终显示文字标签 */}
             <Tooltip content="保存当前窗口为会话" position="bottom">
               <button
                 onClick={handleSaveAllTabs}
-                className="btn btn-primary flat-interaction hidden sm:flex whitespace-nowrap"
+                className="btn btn-primary flat-interaction flex items-center gap-1 whitespace-nowrap px-2 sm:px-3 text-sm"
                 aria-label="保存当前窗口中的所有标签页为会话"
               >
                 <SaveIcon />
                 <span>保存会话</span>
-              </button>
-              <button
-                onClick={handleSaveAllTabs}
-                className="btn btn-primary flat-interaction sm:hidden p-2"
-                aria-label="保存当前窗口中的所有标签页为会话"
-              >
-                <SaveIcon />
               </button>
             </Tooltip>
 
