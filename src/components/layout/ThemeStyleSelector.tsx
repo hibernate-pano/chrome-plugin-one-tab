@@ -231,7 +231,7 @@ export const ThemeStyleSelector: React.FC<ThemeStyleSelectorProps> = ({ classNam
           "text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700/50",
           "flex items-center justify-between gap-2",
           "transition-colors duration-150",
-          "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-1"
+          "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-600 focus-visible:ring-offset-1"
         )}
         aria-expanded={isExpanded}
         aria-controls="theme-options-panel"
@@ -281,9 +281,9 @@ export const ThemeStyleSelector: React.FC<ThemeStyleSelectorProps> = ({ classNam
                   className={cn(
                     "relative p-2 rounded-lg text-left flat-interaction",
                     "transition-all duration-150",
-                    "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500",
+                    "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-600",
                     isSelected
-                      ? "bg-white dark:bg-gray-700 shadow-sm ring-2 ring-blue-500/30"
+                      ? "bg-white dark:bg-gray-700 shadow-sm ring-2 ring-primary-600/30"
                       : "hover:bg-white/80 dark:hover:bg-gray-700/80",
                     isTransitioning && "opacity-50 cursor-not-allowed"
                   )}
@@ -341,7 +341,7 @@ export const ThemeStyleSelector: React.FC<ThemeStyleSelectorProps> = ({ classNam
           {isTransitioning && (
             <div className="px-3 py-1.5 text-xs text-gray-500 dark:text-gray-400 text-center border-t border-gray-200/50 dark:border-gray-700/50">
               <span className="inline-flex items-center gap-1.5">
-                <span className="w-1.5 h-1.5 rounded-full bg-blue-500 animate-pulse" />
+                <span className="w-1.5 h-1.5 rounded-full bg-primary-600 animate-pulse" />
                 正在切换主题...
               </span>
             </div>

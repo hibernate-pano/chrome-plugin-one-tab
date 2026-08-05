@@ -378,7 +378,7 @@ export const SyncButton: React.FC<SyncButtonProps> = () => {
           <div className="absolute inset-0 bg-slate-950/55 backdrop-blur-sm" />
           {showUploadModal && (
             <div
-              className={`relative w-full max-w-5xl overflow-hidden rounded-[28px] border border-slate-200/80 bg-white/95 shadow-[0_28px_80px_rgba(15,23,42,0.28)] ring-1 ring-white/60 backdrop-blur dark:border-slate-700/80 dark:bg-slate-900/95 dark:ring-slate-800/80 ${modalAnimation}`}
+              className={`relative w-full max-w-5xl overflow-hidden rounded-xl border border-slate-200/80 bg-white/95 shadow-lg ring-1 ring-white/60 backdrop-blur dark:border-slate-700/80 dark:bg-slate-900/95 dark:ring-slate-800/80 ${modalAnimation}`}
               onClick={(e) => e.stopPropagation()}
             >
               <button
@@ -475,7 +475,7 @@ export const SyncButton: React.FC<SyncButtonProps> = () => {
 
           {showDownloadModal && (
             <div
-              className={`relative w-full max-w-5xl overflow-hidden rounded-[28px] border border-slate-200/80 bg-white/95 shadow-[0_28px_80px_rgba(15,23,42,0.28)] ring-1 ring-white/60 backdrop-blur dark:border-slate-700/80 dark:bg-slate-900/95 dark:ring-slate-800/80 ${modalAnimation}`}
+              className={`relative w-full max-w-5xl overflow-hidden rounded-xl border border-slate-200/80 bg-white/95 shadow-lg ring-1 ring-white/60 backdrop-blur dark:border-slate-700/80 dark:bg-slate-900/95 dark:ring-slate-800/80 ${modalAnimation}`}
               onClick={(e) => e.stopPropagation()}
             >
               <button

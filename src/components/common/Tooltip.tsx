@@ -91,7 +91,7 @@ export const Tooltip: React.FC<TooltipProps> = ({
       {isVisible && (
         <div
           ref={tooltipRef}
-          className={`absolute z-50 px-3 py-2 text-sm text-white bg-gray-900 dark:bg-gray-800 rounded-lg shadow-xl whitespace-nowrap backdrop-blur-sm border border-gray-700 dark:border-gray-600 ${getPositionClasses()} animate-fadeIn`}
+          className={`absolute z-50 px-3 py-2 text-sm text-white bg-gray-900 dark:bg-gray-800 rounded-lg shadow-md whitespace-nowrap backdrop-blur-sm border border-gray-700 dark:border-gray-600 ${getPositionClasses()} animate-fadeIn`}
           role="tooltip"
         >
           {content}

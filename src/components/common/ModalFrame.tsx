@@ -45,7 +45,7 @@ export const ModalFrame: React.FC<ModalFrameProps> = ({
       />
 
       <div
-        className={`relative w-full ${maxWidthClassName} overflow-hidden rounded-3xl border border-slate-200/80 bg-white/95 shadow-2xl ring-1 ring-white/60 backdrop-blur transition-transform duration-200 hover:scale-105 dark:border-slate-700/80 dark:bg-slate-900/95 dark:ring-slate-800/80`}
+        className={`relative w-full ${maxWidthClassName} overflow-hidden rounded-2xl border border-slate-200/80 bg-white/95 shadow-xl ring-1 ring-white/60 backdrop-blur transition-transform duration-200 hover:scale-105 dark:border-slate-700/80 dark:bg-slate-900/95 dark:ring-slate-800/80`}
       >
         <button
           onClick={onClose}

@@ -12,6 +12,7 @@ module.exports = {
 
         // 主色调 - 专业的青色（Teal）
         primary: {
+          DEFAULT: '#0D9488', // 默认值 = 品牌色（同 600）
           50: '#F0FDFA',   // 极淡青色背景
           100: '#CCFBF1',  // 淡青色
           200: '#99F6E4',
@@ -27,6 +28,7 @@ module.exports = {
 
         // CTA 行动色 - 活力橙色
         accent: {
+          DEFAULT: '#F97316', // 默认值 = 品牌橙色（同 500）
           50: '#FFF7ED',
           100: '#FFEDD5',
           200: '#FED7AA',

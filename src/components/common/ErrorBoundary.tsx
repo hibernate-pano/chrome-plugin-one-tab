@@ -71,7 +71,7 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
       // 默认错误UI
       return (
         <div className="min-h-screen bg-white dark:bg-gray-900 flex items-center justify-center p-4">
-          <div className="max-w-md w-full bg-white dark:bg-gray-800 rounded-lg shadow-lg p-6 text-center">
+          <div className="max-w-md w-full bg-white dark:bg-gray-800 rounded-lg shadow-md p-6 text-center">
             {/* 错误图标 */}
             <div className="mb-4">
               <svg 
