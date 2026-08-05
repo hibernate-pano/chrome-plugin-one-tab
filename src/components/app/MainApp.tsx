@@ -11,11 +11,8 @@ const DndProvider = lazy(() =>
 );
 
 const PerformanceTest = lazy(() => import('@/components/performance/PerformanceTest'));
-const StatsPanel = lazy(() =>
-  import('@/components/stats/StatsPanel').then(m => ({ default: m.StatsPanel }))
-);
 
-// Settings 全屏面板（懒加载 —— Task 4.3 路由入口；Task 4.4 将替换为完整 6 tab 实现）
+// Settings 全屏面板（懒加载 —— Task 4.3 路由入口；Task 4.4 将替换为完整 6 tab 实现；统计面板已作为 7th tab 挂载于 SettingsTabs 内）
 const SettingsTabs = lazy(() =>
   import('@/components/settings/SettingsTabs').then(m => ({ default: m.SettingsTabs }))
 );
@@ -31,7 +28,6 @@ import '@/styles/animations.css';
 export const MainApp: React.FC = () => {
   const [searchQuery, setSearchQuery] = useState('');
   const [showPerformanceTest, setShowPerformanceTest] = useState(false);
-  const [showStats, setShowStats] = useState(false);
   const [showOnboarding, setShowOnboarding] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const deferredSearchQuery = useDeferredValue(searchQuery);
@@ -50,11 +46,6 @@ export const MainApp: React.FC = () => {
     setShowPerformanceTest(!showPerformanceTest);
   };
 
-  // 统一使用相同宽度，单栏和双栏布局保持一致
-  const getContainerWidthClass = () => {
-    return 'layout-double-width';
-  };
-
   return (
     <Suspense
       fallback={
@@ -68,10 +59,6 @@ export const MainApp: React.FC = () => {
           {showSettings ? (
             <Suspense fallback={<div className="p-4 text-center">加载设置...</div>}>
               <SettingsTabs onClose={() => setShowSettings(false)} />
-            </Suspense>
-          ) : showStats ? (
-            <Suspense fallback={<div className="p-4 text-center">加载统计数据...</div>}>
-              <StatsPanel onClose={() => setShowStats(false)} />
             </Suspense>
           ) : showPerformanceTest ? (
             <>
@@ -95,13 +82,13 @@ export const MainApp: React.FC = () => {
           ) : (
             <>
               <Header onSearch={setSearchQuery} onOpenSettings={() => setShowSettings(true)} />
-              <main className={`flex-1 w-full py-2 ${getContainerWidthClass()}`}>
+              <main className={`flex-1 w-full py-2 layout-double-width`}>
                 <Suspense fallback={<div className="p-4 text-center">加载标签列表...</div>}>
                   <TabList searchQuery={deferredSearchQuery} />
                 </Suspense>
               </main>
               <footer className="bg-white dark:bg-gray-900 border-t border-gray-200 dark:border-gray-700 text-xs text-gray-600 dark:text-gray-400">
-                <div className={`w-full py-2 ${getContainerWidthClass()} flex justify-between items-center`}>
+                <div className="w-full py-2 layout-double-width flex justify-between items-center">
                   <div className="flex items-center space-x-2">
                     <svg
                       xmlns="http://www.w3.org/2000/svg"

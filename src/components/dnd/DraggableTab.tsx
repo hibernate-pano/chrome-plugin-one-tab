@@ -144,7 +144,7 @@ export const DraggableTab: React.FC<DraggableTabProps> = React.memo(({
   return (
     <div
       ref={ref}
-      className={`tab-item group/tab micro-interaction-card cursor-grab relative
+      className={`tab-item group/tab cursor-grab relative
         ${isDragging ? 'cursor-grabbing shadow-xl scale-105 opacity-90 z-50' : ''}
         ${isOver && canDrop ? 'drop-target scale-[1.05] bg-primary-100/70 dark:bg-primary-800/40 ring-2 ring-primary border-2 border-dashed border-primary' : ''}
         ${isDeleting ? 'animate-slide-out-right opacity-0 scale-95' : ''}
@@ -188,7 +188,7 @@ export const DraggableTab: React.FC<DraggableTabProps> = React.memo(({
       <div className="tab-item-actions">
         <button
           onClick={handleDelete}
-          className="btn-icon p-1 tab-item-delete-btn micro-interaction-button hover:scale-90 hover:bg-red-100 dark:hover:bg-red-900/50 transition-all duration-200 ease-out focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
+          className="btn-icon p-1 tab-item-delete-btn hover:scale-90 hover:bg-red-100 dark:hover:bg-red-900/50 transition-all duration-200 ease-out focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
           title="删除标签页"
           aria-label={`删除标签页: ${tabTitle}`}
         >

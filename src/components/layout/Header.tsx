@@ -61,11 +61,6 @@ export const Header: React.FC<HeaderProps> = ({ onSearch, onOpenSettings }) => {
     { ...COMMON_SHORTCUTS.CLEAR_SEARCH, action: () => { if (searchValue) clearSearch(); } },
   ]);
 
-  const getContainerWidthClass = () => {
-    // 统一使用相同宽度，单栏和双栏布局保持一致
-    return 'layout-double-width';
-  };
-
   React.useEffect(() => {
     startSearchTransition(() => {
       onSearch(debouncedValue);
@@ -95,7 +90,7 @@ export const Header: React.FC<HeaderProps> = ({ onSearch, onOpenSettings }) => {
 
   return (
     <header className="header rounded-xl shadow-sm">
-      <div className={`w-full py-4 px-4 sm:px-6 ${getContainerWidthClass()}`}>
+      <div className="w-full py-4 px-4 sm:px-6 layout-double-width">
         <div className="flex items-center justify-between gap-1.5 sm:gap-4">
           {/* Logo 区域 */}
           <button

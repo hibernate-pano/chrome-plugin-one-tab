@@ -68,11 +68,11 @@ const GlobeIcon = () => (
   </svg>
 );
 const ChartIcon = () => (
-  <svg viewBox="0 0 24 24" fill="none" className="text-primary-500">
+  <svg viewBox="0 0 24 24" fill="none">
     <defs>
       <linearGradient id="chartGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-        <stop offset="0%" stopColor="currentColor" className="from-primary-500" />
-        <stop offset="100%" stopColor="currentColor" className="to-accent-500" />
+        <stop offset="0%" stopColor="#14B8A6" />
+        <stop offset="100%" stopColor="#F97316" />
       </linearGradient>
     </defs>
     <line x1="18" y1="20" x2="18" y2="10" stroke="url(#chartGrad)" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round"/>
@@ -81,7 +81,7 @@ const ChartIcon = () => (
   </svg>
 );
 
-export const StatsPanel: React.FC<{ onClose: () => void }> = ({ onClose }) => {
+export const StatsPanel: React.FC<{ onClose?: () => void }> = ({ onClose }) => {
   const groups = useAppSelector(state => state.tabs.groups);
   const [events, setEvents] = useState<Array<Record<string, unknown>>>([]);
   const [isLoading, setIsLoading] = useState(true);

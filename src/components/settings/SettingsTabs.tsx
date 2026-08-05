@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { lazy, Suspense, useState } from 'react';
 import { AccountTab } from './AccountTab';
 import { SyncTab } from './SyncTab';
 import { AppearanceTab } from './AppearanceTab';
@@ -7,19 +7,25 @@ import { NotificationsTab } from './NotificationsTab';
 import { DangerZoneTab } from './DangerZoneTab';
 import { cn } from '@/lib/utils';
 
+// 统计面板懒加载（复用原 MainApp 中的 lazy 入口，使 StatsPanel 可达）
+const StatsPanel = lazy(() =>
+  import('@/components/stats/StatsPanel').then(m => ({ default: m.StatsPanel }))
+);
+
 type TabId =
   | 'account'
   | 'sync'
   | 'appearance'
   | 'import-export'
   | 'notifications'
-  | 'danger';
+  | 'danger'
+  | 'stats';
 
 interface TabMeta {
   id: TabId;
   label: string;
   description: string;
-  component: React.FC;
+  component: React.FC<{ onClose?: () => void }>;
 }
 
 const TABS: TabMeta[] = [
@@ -39,6 +45,12 @@ const TABS: TabMeta[] = [
     component: NotificationsTab,
   },
   { id: 'danger', label: '危险区', description: '清空所有本地会话', component: DangerZoneTab },
+  {
+    id: 'stats',
+    label: '统计',
+    description: '会话 / 标签 / 本周活动概览',
+    component: StatsPanel,
+  },
 ];
 
 interface SettingsTabsProps {
@@ -106,7 +118,9 @@ export const SettingsTabs: React.FC<SettingsTabsProps> = ({ onClose }) => {
             {activeMeta.description}
           </p>
         </header>
-        <Active />
+        <Suspense fallback={<div className="py-10 text-center text-sm text-gray-500 dark:text-gray-400">加载中...</div>}>
+          <Active onClose={onClose} />
+        </Suspense>
       </main>
     </div>
   );

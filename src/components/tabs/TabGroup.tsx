@@ -273,7 +273,7 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
 
   return (
     <div
-      className="tab-group-card animate-fade-in-up group/card micro-interaction-card shadow-sm"
+      className="tab-group-card animate-fade-in-up group/card shadow-sm"
       role="region"
       aria-labelledby={`tab-group-title-${group.id}`}
     >
@@ -283,7 +283,7 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
           {/* 折叠按钮 */}
           <button
             onClick={() => setIsCollapsed(!isCollapsed)}
-            className="btn-icon p-1 -ml-1 collapse-icon micro-interaction-button focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-2"
+            className="btn-icon p-1 -ml-1 collapse-icon  focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-2"
             aria-label={isCollapsed ? '展开会话' : '折叠会话'}
             aria-expanded={!isCollapsed}
           >
@@ -365,11 +365,11 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
         </div>
 
         {/* 操作按钮 */}
-        <div className="flex items-center gap-1 opacity-0 group-hover/card:opacity-100 action-btn-reveal transition-all duration-200 ease-out">
+        <div className="flex items-center gap-1 opacity-0 group-hover/card:opacity-100 transition-all duration-200 ease-out">
           {/* 恢复全部 */}
           <button
             onClick={handleOpenAllTabs}
-            className="btn-icon p-1.5 tab-group-action-accent micro-interaction-button focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-2"
+            className="btn-icon p-1.5 tab-group-action-accent  focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-2"
             title="恢复整个会话"
             aria-label={`恢复整个会话，共 ${group.tabs.length} 个标签页`}
           >
@@ -380,7 +380,7 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
           {!group.isLocked && (
             <button
               onClick={() => setIsEditing(true)}
-              className="btn-icon p-1.5 micro-interaction-button focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-2"
+              className="btn-icon p-1.5  focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-2"
               title="重命名会话"
               aria-label="重命名会话"
             >
@@ -390,7 +390,7 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
 
           <button
             onClick={handleToggleFavorite}
-            className={`btn-icon p-1.5 favorite-btn micro-interaction-button focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-2 ${favoriteAnimating ? 'animate-heart-bounce' : 'transition-transform duration-200 hover:scale-110'} ${group.isFavorite ? 'text-amber-500' : ''}`}
+            className={`btn-icon p-1.5 favorite-btn  focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-2 ${favoriteAnimating ? 'animate-heart-bounce' : 'transition-transform duration-200 hover:scale-110'} ${group.isFavorite ? 'text-amber-500' : ''}`}
             title={group.isFavorite ? '取消收藏会话' : '收藏会话'}
             aria-label={group.isFavorite ? '取消收藏会话' : '收藏会话'}
           >
@@ -400,7 +400,7 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
           {!group.isLocked && (
             <button
               onClick={() => setIsEditingNotes(current => !current)}
-              className="btn-icon p-1.5 micro-interaction-button focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-2"
+              className="btn-icon p-1.5  focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-2"
               title={group.notes ? '编辑会话备注' : '添加会话备注'}
               aria-label={group.notes ? '编辑会话备注' : '添加会话备注'}
             >
@@ -418,7 +418,7 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
                 handleToggleLock();
               }
             }}
-            className={`btn-icon p-1.5 lock-btn micro-interaction-button focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-2 ${group.isLocked ? `tab-group-lock-icon ${favoriteAnimating ? 'animate-shake' : ''}` : ''}`}
+            className={`btn-icon p-1.5 lock-btn  focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-2 ${group.isLocked ? `tab-group-lock-icon ${favoriteAnimating ? 'animate-shake' : ''}` : ''}`}
             title={group.isLocked ? '解锁会话' : '锁定会话'}
             aria-label={group.isLocked ? '解锁会话' : '锁定会话'}
           >
@@ -429,7 +429,7 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
           {!group.isLocked && (
             <button
               onClick={handleDelete}
-              className="btn-icon p-1.5 tab-group-action-danger micro-interaction-button focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-2"
+              className="btn-icon p-1.5 tab-group-action-danger  focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-2"
               title="删除会话"
               aria-label="删除会话"
             >
