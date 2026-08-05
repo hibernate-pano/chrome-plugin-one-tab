@@ -1,8 +1,10 @@
-import React, { useRef } from 'react';
+import React, { useRef, useState } from 'react';
 import { storage } from '@/utils/storage';
 import { useToast } from '@/contexts/ToastContext';
 import { trackProductEvent } from '@/utils/productEvents';
 import { exportRawBackup, rawBackupFilename } from '@/utils/backupUtils';
+import { useAppDispatch } from '@/store/hooks';
+import { cleanDuplicateTabs } from '@/store/slices/tabSlice';
 
 const todayFilename = (prefix: string, ext: string): string => {
   const d = new Date();
@@ -29,8 +31,33 @@ const triggerDownload = (blob: Blob, filename: string) => {
  */
 export const ImportExportTab: React.FC = () => {
   const { showAlert } = useToast();
+  const dispatch = useAppDispatch();
   const jsonInputRef = useRef<HTMLInputElement>(null);
   const oneTabInputRef = useRef<HTMLInputElement>(null);
+  const [cleaning, setCleaning] = useState(false);
+
+  const handleCleanDuplicates = async () => {
+    if (cleaning) return;
+    setCleaning(true);
+    try {
+      const result = await dispatch(cleanDuplicateTabs()).unwrap();
+      showAlert({
+        title: '清理完成',
+        message: `已移除 ${result.removedTabsCount} 个重复标签页`,
+        type: 'success',
+        onClose: () => {},
+      });
+    } catch (e: any) {
+      showAlert({
+        title: '清理失败',
+        message: e?.message || '请重试',
+        type: 'error',
+        onClose: () => {},
+      });
+    } finally {
+      setCleaning(false);
+    }
+  };
 
   const handleExportJson = async () => {
     try {
@@ -211,6 +238,24 @@ export const ImportExportTab: React.FC = () => {
             加密失败时的逃生口：导出 IndexedDB 中的原始（未解密）数据，不经过解密。
             正常情况请使用上方导出；此按钮保留字节原样，便于密钥修复后恢复。
           </p>
+        </div>
+      </section>
+
+      <section className="rounded-lg border border-gray-200 bg-white p-5 dark:border-gray-700 dark:bg-gray-800">
+        <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100">
+          数据维护
+        </h3>
+        <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+          在所有会话中按 URL 查找重复标签页，保留最近访问的那一个。空会话组（0 个 tab）也会一并清理。
+        </p>
+        <div className="mt-4">
+          <button
+            onClick={handleCleanDuplicates}
+            disabled={cleaning}
+            className="inline-flex items-center justify-center rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-100 disabled:cursor-not-allowed disabled:opacity-60 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-200 dark:hover:bg-gray-700 flat-interaction focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-2"
+          >
+            {cleaning ? '清理中…' : '删除重复标签'}
+          </button>
         </div>
       </section>
 
