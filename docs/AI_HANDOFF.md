@@ -2,8 +2,8 @@
 
 > **更新时间**：2026-08-05
 > **维护者**：每次有结构性改动（尤其是同步层 / 存储层 / 状态层）后必须更新本文件
-> **代码版本**：**v1.14.0**（Sprint 8 S2 完整落地）
-> **当前状态**：S2 全部完成（18 commits, 274/274 tests pass）→ 下一步 S1
+> **代码版本**：**v1.14.0**（Sprint 8：S2 + 修复 sprint + S1 + S3 全部完成）
+> **当前状态**：S2 / S1 / S3 全部完成 → 等用户实测反馈 / 决定下一步
 
 ---
 
@@ -75,8 +75,49 @@
 - tests/syncEngine.test.ts
 - tests/tombstone{Propagation,Gc}.test.ts
 
----
+### Sprint 8 后续补充（2026-08-05 晚）
 
+**修复 sprint F1–F8**（基于 Post-S2 视觉/UX 审计 + whole-branch review Important 3 项）：
+- `016e0f4` fix(s2): tailwind `primary/accent` `DEFAULT` 缺失（导致 `text-primary` / `ring-primary` / `bg-primary/10` / `hover:bg-primary/5` 等**全部裸类在 dist CSS 中零生成**——焦点环 / hover 高亮 / drop-target 边框静默失效）；视觉一致性 sweep（EmptyState/LoginForm/RegisterForm/SyncButton/ErrorBoundary/ModalFrame/Tooltip 的 rounded+shadow 统一）+ dark mode indigo→teal
+- `e90acf2` fix(s2): Save CTA + TabCounter + 会话时间 + tab 域名在 380px popup 内可见（去掉 `sm:` 门槛）；版本 bump 1.13.6→1.14.0 + manifest description "8 themes"→"3 themes" + README/landing "8 套主题" 同步
+- `1e96ff4` fix(s2): StatsPanel rewire 到 SettingsTabs 第 7 tab "统计"（之前 dead 7KB chunk 不可达）；ChartIcon 渐变 bug（SVG stops 上 `from-primary-500` Tailwind gradient 无效 → 改 literal hex）；删 SimpleThemeToggle.tsx + globals.css + TabPreview.tsx（orphaned）+ 未定义 micro-interaction-{card,button}/action-btn-reveal 类清理；getContainerWidthClass() 内联
+- `68989a7` fix(s2): 6-action tray a11y（`pointer-events-none group-hover:pointer-events-auto` 防止不可见按钮被盲点 + `group-focus-within/card:opacity-100` 键盘 focus 显示）；AccountTab Google logo SVG 修复（替换 −26…63 错误坐标）
+- `1803eaa` fix(s2): TabList + Header + ReorderView 全部用 discrete slice selector（消 inline-object selector pattern → React-Redux warning + memoization 失效）
+- `2ac1341` refactor(s2): `moveGroupLocal` reducer + `moveGroupAndSync` debounced via `persistGroupsDebounced`（与 moveTab 对称）+ 5 个 reducer 测试
+- `aafbe4f` fix(s2): ThemeContext 仅当 `state.settings === initialSettingsState` 时 dispatch `loadSettings`（popup bootstrap preloaded 路径不再重复读 chrome.storage）
+- `dbe0653` feat(s2): footer compact sync status（仅登录用户可见，dot 颜色映射 emerald/amber/rose）；提取 `formatLastSync` 到 `src/utils/sessionPresentation.ts`（复用）+ 2 测试
+
+**S1 落地**（同步护栏）：
+- `22e27fc` feat(s1): TabStackError 五分类（sync/storage/decrypt/migration/network）+ `toUserMessage`；sync/last_sync_status 持久化；storage/migrationUtils/syncEngine 错误包装（数据契约保留：hydrationDecision/syncMergeSafety 测试不变；F1a `setLastSyncStatus?.()` 让现有 syncEngine fake deps 不崩）+ 22 测试
+- `e1b044b` feat(s1): raw backup 逃生口（`exportRawBackup` 读 IndexedDB 原始 blob，包成 JSON 文件下载）+ offline hook + NetworkBanner 顶部琥珀条 + 网络恢复自动重试（5s 防抖）；syncEngine 5 个 integration tests（no module mocking，全部真 SyncEngine + injected fake deps）；ImportExportTab 加按钮；footer 持久化同步状态 + SyncTab 错误说明
+- `a14427a` docs(s1): spec
+
+**S3 落地**（个人新功能）：
+- `facc5d6` feat(s3): hover-to-preview on session cards（复活 TabPreview，前 8 tab 2-col grid + favicon + "+N 更多"，250ms debounced hover，Esc 关闭）+ dark auto mode（prefers-color-scheme 实时跟随）+ 5 测试
+- `6087d3e` feat(s3): favorites strip（置顶独立区，selectFavoriteGroups + TabList 顶部）+ deferred delete（useDeferredDelete hook 10s undo toast + ToastContext action 扩展）+ 9 测试
+- `1504656` docs(s3): spec
+
+### Sprint 8 最终测试统计
+
+- 节点测试：297 (S2 baseline 246) → 313 (F1-F8 +9) → 305 (S1a) → **313** (S1b) → **313** (S3a) → **313** (S3b). Final: **313**.
+- jsdom 测试：8 → 15 → 17 → 21. Final: **21**.
+- **总计：334 / 334 全绿**（baseline 274 → +60 测试；覆盖率约 65%）。
+- **5 个不变量测试**（hydrationDecision, syncMergeSafety, storageLayer, syncEngine + syncEngine.integration, tombstoneGc, tombstonePropagation）全部保持绿。
+
+### Sprint 8 bundle 状态
+
+- popup entry JS: 217 KB (pre-S2) → 193 KB (S2 end) → **200 KB** (post-F2 with visible labels)
+- global CSS: 148 KB (pre-S2) → 74 KB (S2) → **74 KB** (unchanged after F1 visual sweep)
+- chrome-extension.zip: 249.2 KB ≤ **280 KB gate**（CI 强制）
+
+### 本次 sprint 后未动
+
+- React 18.2 / Vite 4.5 / CRXJS 2.x / lodash 锁版本
+- mergeTabGroups / validateMergeResult / decideTabsHydration / IndexedDB DB 名 `tabvaultpro`
+- Service Worker 同步逻辑（v1.12.0 推翻的旧设计不再回来）
+- 6 个新增依赖已锁定：@tanstack/react-virtual@3.14.9, @testing-library/react@14.3.1, jsdom@24.1.3（devDeps）
+
+---
 ## ⏱ Sprint 5（2026-06-28，核心功能测试覆盖）
 
 | 任务 | 状态 |
