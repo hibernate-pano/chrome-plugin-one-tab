@@ -1,20 +1,7 @@
-import React, { useState, useTransition, lazy, Suspense } from 'react';
+import React, { useTransition } from 'react';
 import { useAppDispatch, useAppSelector } from '@/store/hooks';
-import {
-  toggleLayoutMode,
-  saveSettings,
-  setReorderMode,
-  updateSettings,
-} from '@/store/slices/settingsSlice';
-import { cleanDuplicateTabs } from '@/store/slices/tabSlice';
-const HeaderDropdown = lazy(() =>
-  import('./HeaderDropdown').then(m => ({ default: m.HeaderDropdown }))
-);
-import { useToast } from '@/contexts/ToastContext';
+import { setReorderMode, saveSettings } from '@/store/slices/settingsSlice';
 import { TabCounter } from './TabCounter';
-import SyncButton from '@/components/sync/SyncButton';
-import { SimpleThemeToggle } from './SimpleThemeToggle';
-import { LayoutMode } from '@/types/tab';
 import { useDebouncedSearch } from '@/hooks/useDebouncedSearch';
 import { useKeyboardShortcuts, COMMON_SHORTCUTS } from '@/hooks/useKeyboardShortcuts';
 import { Tooltip } from '@/components/common/Tooltip';
@@ -22,7 +9,7 @@ import { TabStackLogo } from '@/components/common/TabStackIcon';
 
 interface HeaderProps {
   onSearch: (query: string) => void;
-  onShowStats?: () => void;
+  onOpenSettings: () => void;
 }
 
 // 图标组件
@@ -39,24 +26,6 @@ const CloseIcon = () => (
   </svg>
 );
 
-const LayoutSingleIcon = () => (
-  <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-    <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 6.75h16.5M3.75 12h16.5m-16.5 5.25h16.5" />
-  </svg>
-);
-
-const LayoutDoubleIcon = () => (
-  <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-    <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 6.75h7.5M3.75 12h7.5m-7.5 5.25h7.5m4.5-10.5h4.5m-4.5 5.25h4.5m-4.5 5.25h4.5" />
-  </svg>
-);
-
-const CleanIcon = () => (
-  <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-    <path strokeLinecap="round" strokeLinejoin="round" d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0" />
-  </svg>
-);
-
 const MenuIcon = () => (
   <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
     <path strokeLinecap="round" strokeLinejoin="round" d="M12 6.75a.75.75 0 110-1.5.75.75 0 010 1.5zM12 12.75a.75.75 0 110-1.5.75.75 0 010 1.5zM12 18.75a.75.75 0 110-1.5.75.75 0 010 1.5z" />
@@ -69,92 +38,13 @@ const SaveIcon = () => (
   </svg>
 );
 
-const StatsIcon = () => (
-  <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-    <path strokeLinecap="round" strokeLinejoin="round" d="M3 13.125C3 12.504 3.504 12 4.125 12h2.25c.621 0 1.125.504 1.125 1.125v6.75C7.5 20.496 6.996 21 6.375 21h-2.25A1.125 1.125 0 013 19.875v-6.75zM9.75 8.625c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125v11.25c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 01-1.125-1.125V8.625zM16.5 4.125c0-.621.504-1.125 1.125-1.125h2.25C20.496 3 21 3.504 21 4.125v15.75c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 01-1.125-1.125V4.125z" />
-  </svg>
-);
-
-export const Header: React.FC<HeaderProps> = ({ onSearch, onShowStats }) => {
+export const Header: React.FC<HeaderProps> = ({ onSearch, onOpenSettings }) => {
   const dispatch = useAppDispatch();
-  const { showConfirm, showAlert } = useToast();
   const settings = useAppSelector(state => state.settings);
 
   const { searchValue, debouncedValue, handleSearchChange, clearSearch, isSearching } = useDebouncedSearch();
   const searchInputRef = React.useRef<HTMLInputElement>(null);
   const [isSearchTransitionPending, startSearchTransition] = useTransition();
-
-  const handleCleanDuplicateTabs = () => {
-    showConfirm({
-      title: '确认清理重复标签和空会话',
-      message:
-        '此操作将：\n• 清理所有会话中 URL 相同的重复标签页，只保留每个 URL 最新的一个标签页\n• 自动删除不包含任何标签页的空会话（锁定的会话除外）\n此操作不可撤销。',
-      type: 'warning',
-      confirmText: '确认清理',
-      cancelText: '取消',
-      onConfirm: async () => {
-        try {
-          const result = await dispatch(cleanDuplicateTabs()).unwrap();
-          let message = '清理完成';
-          if (result.removedTabsCount > 0 || result.removedGroupsCount > 0) {
-            const details = [];
-            if (result.removedTabsCount > 0) {
-              details.push(`已清理 ${result.removedTabsCount} 个重复标签页`);
-            }
-            if (result.removedGroupsCount > 0) {
-              details.push(`已删除 ${result.removedGroupsCount} 个空会话`);
-            }
-            message = `清理完成\n${details.join('\n')}`;
-          } else {
-            message = '清理完成，未发现重复标签页或空会话';
-          }
-          showAlert({
-            title: '清理完成',
-            message,
-            type: 'success',
-            onClose: () => { },
-          });
-        } catch (error) {
-          console.error('清理重复标签失败:', error);
-          showAlert({
-            title: '清理失败',
-            message: '清理重复标签失败，请重试',
-            type: 'error',
-            onClose: () => { },
-          });
-        }
-      },
-      onCancel: () => { },
-    });
-  };
-
-  const handleToggleLayout = () => {
-    if (settings.reorderMode) {
-      dispatch(setReorderMode(false));
-    }
-    dispatch(toggleLayoutMode());
-
-    let nextLayoutMode: LayoutMode;
-    switch (settings.layoutMode) {
-      case 'single':
-        nextLayoutMode = 'double';
-        break;
-      case 'double':
-        nextLayoutMode = 'single';
-        break;
-      default:
-        nextLayoutMode = 'single';
-    }
-
-    // 先更新 Redux state
-    dispatch(updateSettings({
-      layoutMode: nextLayoutMode,
-      reorderMode: false,
-    }));
-    
-    // 然后保存到存储
-    dispatch(saveSettings() as any);
-  };
 
   const handleSaveAllTabs = async () => {
     const tabs = await chrome.tabs.query({ currentWindow: true });
@@ -169,8 +59,6 @@ export const Header: React.FC<HeaderProps> = ({ onSearch, onShowStats }) => {
     { ...COMMON_SHORTCUTS.SAVE_TABS, action: handleSaveAllTabs },
     { ...COMMON_SHORTCUTS.SEARCH, action: () => searchInputRef.current?.focus() },
     { ...COMMON_SHORTCUTS.CLEAR_SEARCH, action: () => { if (searchValue) clearSearch(); } },
-    { ...COMMON_SHORTCUTS.TOGGLE_LAYOUT, action: handleToggleLayout },
-    { ...COMMON_SHORTCUTS.CLEAN_DUPLICATES, action: handleCleanDuplicateTabs }
   ]);
 
   const getContainerWidthClass = () => {
@@ -199,13 +87,11 @@ export const Header: React.FC<HeaderProps> = ({ onSearch, onShowStats }) => {
     if (settings.reorderMode) {
       // 先更新 Redux state
       dispatch(setReorderMode(false));
-      
+
       // 然后保存到存储
       dispatch(saveSettings() as any);
     }
   };
-
-  const [showDropdown, setShowDropdown] = useState(false);
 
   return (
     <header className="header rounded-xl shadow-sm">
@@ -258,50 +144,6 @@ export const Header: React.FC<HeaderProps> = ({ onSearch, onShowStats }) => {
 
           {/* 操作按钮组 */}
           <div className="flex items-center gap-1 sm:gap-2 flex-shrink-0">
-            {/* 布局切换 */}
-            <Tooltip
-              content={settings.layoutMode === 'single' ? '切换双栏布局' : '切换单栏布局'}
-              position="bottom"
-            >
-              <button
-                onClick={handleToggleLayout}
-                className="btn-icon flat-interaction hover:scale-105 focus-visible:ring-2 focus-visible:ring-primary/50 focus-visible:ring-offset-2"
-                aria-label={settings.layoutMode === 'single' ? '切换为双栏布局' : '切换为单栏布局'}
-              >
-                {settings.layoutMode === 'single' ? <LayoutSingleIcon /> : <LayoutDoubleIcon />}
-              </button>
-            </Tooltip>
-
-            {/* 清理重复 */}
-            <Tooltip content="清理重复标签" position="bottom">
-              <button
-                onClick={handleCleanDuplicateTabs}
-                className="btn-icon flat-interaction hover:scale-105 focus-visible:ring-2 focus-visible:ring-primary/50 focus-visible:ring-offset-2"
-                aria-label="清理重复标签页"
-              >
-                <CleanIcon />
-              </button>
-            </Tooltip>
-
-            {/* 使用统计 */}
-            {onShowStats && (
-              <Tooltip content="使用统计" position="bottom">
-                <button
-                  onClick={onShowStats}
-                  className="btn-icon flat-interaction hover:scale-105 focus-visible:ring-2 focus-visible:ring-primary/50 focus-visible:ring-offset-2"
-                  aria-label="查看使用统计"
-                >
-                  <StatsIcon />
-                </button>
-              </Tooltip>
-            )}
-
-            {/* 主题切换 */}
-            <SimpleThemeToggle />
-
-            {/* 同步按钮 */}
-            <SyncButton />
-
             {/* 保存按钮 */}
             <Tooltip content="保存当前窗口为会话" position="bottom">
               <button
@@ -321,21 +163,16 @@ export const Header: React.FC<HeaderProps> = ({ onSearch, onShowStats }) => {
               </button>
             </Tooltip>
 
-            {/* 更多菜单 */}
-            <div className="relative">
+            {/* Kebab 菜单 - 触发 SettingsTabs（在 MainApp 内 lazy 加载） */}
+            <Tooltip content="设置" position="bottom">
               <button
-                onClick={() => setShowDropdown(!showDropdown)}
+                onClick={onOpenSettings}
                 className="btn-icon flat-interaction hover:scale-105 focus-visible:ring-2 focus-visible:ring-primary/50 focus-visible:ring-offset-2"
-                aria-label="菜单"
+                aria-label="打开设置"
               >
                 <MenuIcon />
               </button>
-              {showDropdown && (
-                <Suspense fallback={<div className="fixed top-12 right-2 w-64 h-96 rounded-2xl bg-white shadow animate-pulse" />}>
-                  <HeaderDropdown onClose={() => setShowDropdown(false)} />
-                </Suspense>
-              )}
-            </div>
+            </Tooltip>
           </div>
         </div>
       </div>

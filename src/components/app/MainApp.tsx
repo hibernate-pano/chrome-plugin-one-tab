@@ -15,6 +15,11 @@ const StatsPanel = lazy(() =>
   import('@/components/stats/StatsPanel').then(m => ({ default: m.StatsPanel }))
 );
 
+// Settings 全屏面板（懒加载 —— Task 4.3 路由入口；Task 4.4 将替换为完整 6 tab 实现）
+const SettingsTabs = lazy(() =>
+  import('@/components/settings/SettingsTabs').then(m => ({ default: m.SettingsTabs }))
+);
+
 // 导入样式文件
 import '@/styles/drag-drop.css';
 import '@/styles/animations.css';
@@ -28,6 +33,7 @@ export const MainApp: React.FC = () => {
   const [showPerformanceTest, setShowPerformanceTest] = useState(false);
   const [showStats, setShowStats] = useState(false);
   const [showOnboarding, setShowOnboarding] = useState(false);
+  const [showSettings, setShowSettings] = useState(false);
   const deferredSearchQuery = useDeferredValue(searchQuery);
 
   // 检查是否需要显示用户引导
@@ -59,7 +65,11 @@ export const MainApp: React.FC = () => {
     >
       <DndProvider>
         <div className="min-h-screen bg-white dark:bg-gray-900 dark:text-gray-100 flex flex-col">
-          {showStats ? (
+          {showSettings ? (
+            <Suspense fallback={<div className="p-4 text-center">加载设置...</div>}>
+              <SettingsTabs onClose={() => setShowSettings(false)} />
+            </Suspense>
+          ) : showStats ? (
             <Suspense fallback={<div className="p-4 text-center">加载统计数据...</div>}>
               <StatsPanel onClose={() => setShowStats(false)} />
             </Suspense>
@@ -84,7 +94,7 @@ export const MainApp: React.FC = () => {
             </>
           ) : (
             <>
-              <Header onSearch={setSearchQuery} onShowStats={() => setShowStats(true)} />
+              <Header onSearch={setSearchQuery} onOpenSettings={() => setShowSettings(true)} />
               <main className={`flex-1 w-full py-2 ${getContainerWidthClass()}`}>
                 <Suspense fallback={<div className="p-4 text-center">加载标签列表...</div>}>
                   <TabList searchQuery={deferredSearchQuery} />
