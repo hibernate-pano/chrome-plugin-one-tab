@@ -44,11 +44,15 @@ export interface MergeResult {
   };
   /** 失败原因（success=false 时） */
   reason?: string;
+  /** S1: 本次失败是否可重试（network/sync → true；decrypt/migration → false） */
+  retryable?: boolean;
 }
 
 export interface UploadResult {
   success: boolean;
   error?: string;
+  /** S1: 本次失败是否可重试（network/sync → true；decrypt/migration → false） */
+  retryable?: boolean;
 }
 
 /**
@@ -237,8 +241,9 @@ export class SyncEngine {
       const syncTime = new Date().toISOString();
       await this.deps.storage.setLastSyncTime(syncTime);
 
-      // S1: 持久化同步状态（footer 跨 popup 重开仍显示；?. 兼容旧 DI fake）
-      await this.deps.storage.setLastSyncStatus?.({ lastSyncAt: syncTime });
+      // S1: 持久化同步状态（footer 跨 popup 重开仍显示；?. 兼容旧 DI fake）。
+      // 成功同时清除 lastSyncError——partial merge 语义下显式传 null 才会覆盖。
+      await this.deps.storage.setLastSyncStatus?.({ lastSyncAt: syncTime, lastSyncError: null });
 
       // 8. 清除快照（写入成功）
       await this.deps.storage.clearSyncSnapshot();
@@ -272,6 +277,7 @@ export class SyncEngine {
         success: false,
         groups: snapshot,
         reason: wrapped.message,
+        retryable: wrapped.retryable,
       };
     }
   }
@@ -328,8 +334,9 @@ export class SyncEngine {
       const syncTime = new Date().toISOString();
       await this.deps.storage.setLastSyncTime(syncTime);
 
-      // S1: 持久化同步状态（footer 跨 popup 重开仍显示；?. 兼容旧 DI fake）
-      await this.deps.storage.setLastSyncStatus?.({ lastSyncAt: syncTime });
+      // S1: 持久化同步状态（footer 跨 popup 重开仍显示；?. 兼容旧 DI fake）。
+      // 成功同时清除 lastSyncError——partial merge 语义下显式传 null 才会覆盖。
+      await this.deps.storage.setLastSyncStatus?.({ lastSyncAt: syncTime, lastSyncError: null });
 
       // Tombstone GC：异步清理自己设备的、超过 30 天的过期 tombstone。
       // fire-and-forget：不阻塞主流程，失败也不影响上传结果。
@@ -359,6 +366,7 @@ export class SyncEngine {
       return {
         success: false,
         error: wrapped.message,
+        retryable: wrapped.retryable,
       };
     }
   }

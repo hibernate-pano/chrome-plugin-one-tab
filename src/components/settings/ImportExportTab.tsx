@@ -2,6 +2,7 @@ import React, { useRef } from 'react';
 import { storage } from '@/utils/storage';
 import { useToast } from '@/contexts/ToastContext';
 import { trackProductEvent } from '@/utils/productEvents';
+import { exportRawBackup, rawBackupFilename } from '@/utils/backupUtils';
 
 const todayFilename = (prefix: string, ext: string): string => {
   const d = new Date();
@@ -59,6 +60,40 @@ export const ImportExportTab: React.FC = () => {
       showAlert({
         title: '导出失败',
         message: '导出 OneTab 格式数据失败，请重试',
+        type: 'error',
+        onClose: () => {},
+      });
+    }
+  };
+
+  /**
+   * S1 §3 加密失败逃生口：导出 IndexedDB 中的原始 blob（不解密）。
+   * 当解密失败（key 漂移 / 数据损坏）时，这是唯一能取回数据的路径。
+   */
+  const handleExportRawBackup = async () => {
+    try {
+      const blob = await exportRawBackup();
+      if (!blob) {
+        showAlert({
+          title: '导出失败',
+          message: '没有可导出的数据',
+          type: 'error',
+          onClose: () => {},
+        });
+        return;
+      }
+      triggerDownload(blob, rawBackupFilename());
+      showAlert({
+        title: '导出成功',
+        message: '原始备份已导出（加密数据，不解密）',
+        type: 'success',
+        onClose: () => {},
+      });
+    } catch (error) {
+      console.error('导出原始备份失败:', error);
+      showAlert({
+        title: '导出失败',
+        message: '导出原始备份失败，请重试',
         type: 'error',
         onClose: () => {},
       });
@@ -163,6 +198,19 @@ export const ImportExportTab: React.FC = () => {
           >
             导出为 OneTab 格式
           </button>
+        </div>
+        {/* S1 §3：加密失败逃生口——原始（未解密）数据导出 */}
+        <div className="mt-4 border-t border-gray-100 pt-4 dark:border-gray-700">
+          <button
+            onClick={handleExportRawBackup}
+            className="inline-flex items-center justify-center rounded-lg border border-amber-300 bg-amber-50 px-4 py-2 text-sm font-medium text-amber-800 hover:bg-amber-100 dark:border-amber-700 dark:bg-amber-900/20 dark:text-amber-300 dark:hover:bg-amber-900/30 flat-interaction"
+          >
+            导出原始备份
+          </button>
+          <p className="mt-2 text-xs text-gray-500 dark:text-gray-400">
+            加密失败时的逃生口：导出 IndexedDB 中的原始（未解密）数据，不经过解密。
+            正常情况请使用上方导出；此按钮保留字节原样，便于密钥修复后恢复。
+          </p>
         </div>
       </section>
 

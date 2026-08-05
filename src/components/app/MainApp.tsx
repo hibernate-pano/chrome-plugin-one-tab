@@ -6,6 +6,8 @@ import { shouldShowOnboarding } from '@/utils/onboardingStorage';
 import { getAppVersionLabel } from '@/utils/runtimeInfo';
 import { useAppSelector } from '@/store/hooks';
 import { formatLastSync } from '@/utils/sessionPresentation';
+import { storage, type LastSyncStatus } from '@/utils/storage';
+import { NetworkBanner } from '@/components/common/NetworkBanner';
 
 // 使用动态导入懒加载拖放功能
 const DndProvider = lazy(() =>
@@ -24,20 +26,33 @@ import '@/styles/drag-drop.css';
 import '@/styles/animations.css';
 
 /**
- * Footer 中的紧凑云同步状态读数（S2 F8）。
+ * Footer 中的紧凑云同步状态读数（S2 F8，S1 §5.3 增强）。
  * 仅在已登录时渲染：状态点（emerald=空闲/成功，amber=同步中，rose=失败）
  * + 「已同步 · X前」/「同步中…」/「同步失败」。未登录返回 null（footer 保持原样）。
  * 非交互只读 —— 只依赖纯工具函数 formatLastSync，不引入 syncService 到主 chunk。
+ *
+ * S1：新增持久化状态兜底。`persistedLastSyncAt` / `persistedLastSyncError` 来自
+ * storage.getLastSyncStatus()（IndexedDB，popup 重开后仍有值）。本次会话有
+ * 更新的内存态（tabSlice.lastSyncTime / syncStatus）时优先，持久化错误只在
+ * 「本次会话还没同步成功过」时显示（避免成功后残留 rose dot）。
  */
-const SyncStatusIndicator: React.FC = () => {
+const SyncStatusIndicator: React.FC<{
+  persistedLastSyncAt?: string | null;
+  persistedLastSyncError?: string | null;
+}> = ({ persistedLastSyncAt, persistedLastSyncError }) => {
   const isAuthenticated = useAppSelector((state) => state.auth.isAuthenticated);
   const syncStatus = useAppSelector((state) => state.tabs.syncStatus);
   const lastSyncTime = useAppSelector((state) => state.tabs.lastSyncTime);
 
   if (!isAuthenticated) return null;
 
+  // 持久化错误仅在没有更新的会话内信号时展示（lastSyncTime 非空 = 本会话已同步成功）
+  const showPersistedError = !!persistedLastSyncError && !lastSyncTime;
+  const showError = syncStatus === 'error' || (syncStatus !== 'syncing' && showPersistedError);
+  const effectiveLastSyncTime = lastSyncTime ?? persistedLastSyncAt ?? null;
+
   const dotClass =
-    syncStatus === 'error'
+    showError
       ? 'bg-rose-500'
       : syncStatus === 'syncing'
         ? 'bg-amber-500 animate-pulse'
@@ -46,10 +61,10 @@ const SyncStatusIndicator: React.FC = () => {
   let label: string;
   if (syncStatus === 'syncing') {
     label = '同步中…';
-  } else if (syncStatus === 'error') {
+  } else if (showError) {
     label = '同步失败';
   } else {
-    const rel = formatLastSync(lastSyncTime);
+    const rel = formatLastSync(effectiveLastSyncTime);
     label = rel === '尚未同步' ? '尚未同步' : `已同步 · ${rel}`;
   }
 
@@ -70,6 +85,10 @@ export const MainApp: React.FC = () => {
   const [showPerformanceTest, setShowPerformanceTest] = useState(false);
   const [showOnboarding, setShowOnboarding] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
+  const [persistedSyncStatus, setPersistedSyncStatus] = useState<LastSyncStatus>({
+    lastSyncAt: null,
+    lastSyncError: null,
+  });
   const deferredSearchQuery = useDeferredValue(searchQuery);
 
   // 检查是否需要显示用户引导
@@ -80,6 +99,20 @@ export const MainApp: React.FC = () => {
       }
     });
   }, []);
+
+  // S1 §5.3：popup 打开时读取持久化同步状态（IndexedDB），
+  // footer 跨 popup 重开仍显示「上次同步 x 小时前」/ 最近失败
+  useEffect(() => {
+    let cancelled = false;
+    storage.getLastSyncStatus().then(status => {
+      if (!cancelled) setPersistedSyncStatus(status);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const isAuthenticated = useAppSelector(state => state.auth.isAuthenticated);
 
   // 切换性能测试页面
   const togglePerformanceTest = () => {
@@ -96,6 +129,8 @@ export const MainApp: React.FC = () => {
     >
       <DndProvider>
         <div className="min-h-screen bg-white dark:bg-gray-900 dark:text-gray-100 flex flex-col">
+          {/* S1 §4.2：离线提示条（仅登录后显示，Header 上方） */}
+          {isAuthenticated && <NetworkBanner />}
           {showSettings ? (
             <Suspense fallback={<div className="p-4 text-center">加载设置...</div>}>
               <SettingsTabs onClose={() => setShowSettings(false)} />
@@ -147,7 +182,10 @@ export const MainApp: React.FC = () => {
                     <span className="truncate">TabStack {getAppVersionLabel()}</span>
                   </div>
                   <div className="flex items-center space-x-2 min-w-0">
-                    <SyncStatusIndicator />
+                    <SyncStatusIndicator
+                      persistedLastSyncAt={persistedSyncStatus.lastSyncAt}
+                      persistedLastSyncError={persistedSyncStatus.lastSyncError}
+                    />
                     <span className="truncate">Save the session. Find it later.</span>
                     {process.env.NODE_ENV === 'development' && (
                       <button
