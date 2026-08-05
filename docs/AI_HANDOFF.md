@@ -2,36 +2,71 @@
 
 > **更新时间**：2026-08-05
 > **维护者**：每次有结构性改动（尤其是同步层 / 存储层 / 状态层）后必须更新本文件
-> **代码版本**：**v1.13.6**（Sprint 7 syncEngine DI + 完整测试覆盖）
-> **当前状态**：Sprint 8 蓝图已批准 → S2 spec 已落 → 待用户 review 后启动 writing-plans
+> **代码版本**：**v1.14.0**（Sprint 8 S2 完整落地）
+> **当前状态**：S2 全部完成（18 commits, 274/274 tests pass）→ 下一步 S1
 
 ---
 
-## ⏱ Sprint 8（2026-08-05，规划与蓝图）
+## ⏱ Sprint 8 完成（2026-08-05，S2 全面落地）
 
-| 任务 | 状态 |
-|---|---|
-| 主架构蓝图 — 拆为 S1/S2/S3 三 sprint | ✅ `docs/superpowers/specs/2026-08-05-tabstack-personal-revamp-blueprint.md` |
-| S2 详细 spec（UX + 性能 + UI 打磨） | ✅ `docs/superpowers/specs/2026-08-05-S2-ux-performance-polish-design.md` |
-| S1 outline（同步护栏 + 错误分层） | ✅ `docs/superpowers/specs/2026-08-05-S1-sync-guards-outline.md` |
-| S3 outline（新功能 1–2 个候选） | ✅ `docs/superpowers/specs/2026-08-05-S3-new-features-outline.md` |
+**S2 实施完毕** — 18 个 commits across 5 phases, 274/274 tests pass (266 node + 8 jsdom), chrome-extension.zip 249 KB ≤ 280 KB gate.
 
-**Sprint 拆解（用户批准"细粒度"）**：
-- **S1** ≈1 周：同步 + 数据可靠性护栏（storage.hydrateAll 单源化、五类错误分层、加密失败逃生口、离线提示）
-- **S2** ≈2–3 周：启动性能 + 大列表虚拟化 + UI 减负 + 测试 40% → 65%
-- **S3** ≈1–2 周：1–2 个新功能（推荐：Hover-to-preview + 暗色 Auto 模式）
+### 18 commits（branch `61fc26f..d7ed4ed`）
 
-**注意：S1 与 S2 共写 `storage.hydrateAll`，避免半截状态**——S1 应在 S2 P1 阶段启动；或一起提交避免冲突。
+| Phase | Commits | 内容 |
+|---|---|---|
+| **P1** (死代码 + selector + bootstrap) | `49b261e`, `1aa12c2`, `4641beb` | 删 7 个死文件 + 7 主题 CSS（refined 重生）；新建 `store/selectors/tabSelectors.ts`（6 slice selectors + `createSelector` memo on `selectSortedGroups`）；`storage.hydrateAll()` 单源化 + popup bootstrap 单读 + ThemeContext 从 settings slice 读主题 |
+| **P2** (DnD hover 解耦) | `316f20e`, `ace95df`, `3978259` | `moveTabLocal` reducer 纯化 UI；`debouncedPersistMiddleware` 200ms trailing 防抖；DraggableTab hover 改用 `moveTabLocal + persistGroupsDebounced`；syncMergeSafety 13/13 绿 |
+| **P3** (虚拟化) | `b907af6`, `986cd9f`, `a93ee62`, `f44a0da` | 装 `@tanstack/react-virtual@3.14.9`；`useListVirtualizer` hook + `computeVirtualWindow` 纯函数（3 unit tests）；TabList 虚拟化阈值 30 + 删 O(N²) `findIndex`；SearchResultList 虚拟化 + `useMemo` 搜索 |
+| **P4** (lazy + Header + Settings + CSS) | `0edfbea`, `b4ec11b`, `3a8a00f`, `1776285` | HeaderDropdown lazy；Header 收拢到 4 主操作（Logo/Save/Search/Kebab）；新建 SettingsTabs + 6 个 settings tab (Account/Sync/Appearance/ImportExport/Notifications/DangerZone)；theme 缩到 3（aurora/refined/cyberpunk），5 个主题 CSS 删；dynamic `<link>` 主题注入；drag-drop.css de-dup |
+| **P5** (test infra + UI 测试 + CI) | `794e9b3`, `0cb8693`, `69a9d23`, `481a37a`, `d7ed4ed` | `@testing-library/react@14.3.1 + jsdom@24.1.3`（devDeps only）；`tests/_jsdom-helpers.mjs` 共享 helper；3 个 UI smoke test（TabList / TabGroup / SyncStatusRow）共 7 个；ErrorBoundary 文案友好 + Toast 位置修；Onboarding 5→3 step + 3 种模板；`.github/workflows/ci.yml` 加 zip 体积门禁 280KB |
 
-**未引入的依赖**（用户确认）：
-- ✅ 引入：`@tanstack/react-virtual` v3.x（事实标准，~7K）
-- ⏸ 待你最后确认 devDeps：`@testing-library/react` + `jsdom`（仅测试环境）
+### 关键不变量仍绿（5/5）
 
-**不动**：
+- `tests/hydrationDecision.test.ts` — 6/6 ✓
+- `tests/syncMergeSafety.test.ts` — 13/13 ✓
+- `tests/storageLayer.test.ts` — 18/18 ✓
+- `tests/syncEngine.test.ts` — 25/25 ✓
+- `tests/tombstone{Propagation,Gc}.test.ts` — 16/16 ✓
+
+### 三项 Whole-Branch Review Important（carry-over 给 S1/S3，不阻塞 merge）
+
+1. **`src/components/tabs/TabList.tsx:23-29`** — 仍用 inline object-returning `useAppSelector`，违背了 P1 selector 切片化的初衷。**S3 修**：拆为 discrete selectors。
+2. **`moveGroupAndSync` 在 `src/store/slices/tabSlice.ts:241-301`** — group-level DnD 仍 hover 写盘，未被 P2 debounced。**S1 修**：引入 `moveGroupLocal + persistGroupsDebounced` 对称；约 5 测试 + 15 行。
+3. **`src/contexts/ThemeContext.tsx:61-63`** — 仍保留 `loadSettings` 兜底 effect，违背 P1 "ThemeContext 读 settings 从 redux 切片"。**S3 修**：删 effect，加 `state.settings !== initialSettingsState` 防丢失兜底。
+
+### S1/S3 follow-up 待写详细 spec 时机
+
+- **S1 详细 spec** 在 S2 落地后写，**重点**：`storage.hydrateAll` 与 S2 共写完了；还要加 storage.hydrateAll.lastLoadedAt 真实读取、加密失败逃生口、五类错误类（`SyncError`/`StorageError`/`DecryptError`/`MigrationError`/`NetworkError`）、离线 hook、syncEngine integration test 覆盖回滚/tombstone 冲突/envelope 漂移。
+- **S3 详细 spec** 在 S3 起头时写，**重点**：从 outline 候选 7 个里选 1–2 个（推荐 3.1 Hover-to-preview + 3.6 暗色 Auto）；同时清理上面三项 Important。
+
+### Bundle 体积
+
+| 指标 | Sprint 7 baseline | Sprint 8 落地 | 差 |
+|---|---|---|---|
+| popup entry JS | 217.15 KB | 192.59 KB | **-11%** |
+| global CSS | 148 KB | 73.99 KB | **-50%** |
+| chrome-extension.zip | (1.13.6 baseline ≈ 230KB) | 249.2 KB | +8%（CSS/JS 减重被 SettingsTabs 78KB 增量抵消；supabase-vendor ~146KB 静态） |
+| 插件 zip 体积门禁 | 无 | 280KB | CI 强制 |
+
+### Sprint 8 文档（位于 `docs/superpowers/`）
+
+- `specs/2026-08-05-tabstack-personal-revamp-blueprint.md` — 三 sprint 蓝图
+- `specs/2026-08-05-S2-ux-performance-polish-design.md` — S2 详细 spec
+- `specs/2026-08-05-S1-sync-guards-outline.md` — S1 outline
+- `specs/2026-08-05-S3-new-features-outline.md` — S3 outline
+- `plans/2026-08-05-S2-ux-performance-polish-plan.md` — S2 实施 plan（18 tasks）
+
+### 引入的依赖
+
+- ✅ `@tanstack/react-virtual@^3.14.9` — production
+- ✅ `@testing-library/react@^14.3.1` + `jsdom@^24.1.3` — devDeps（只用于 jsdom 测试）
+- ⚠ `@testing-library/dom@^10.0.0` **未装**（peer 冲突，被 RTL 14 的 `dom@^9` 替代）。
+
+### 本次未动
+
 - React 18.2 / Vite 4.5 / CRXJS 2.x / lodash 锁版本
-- syncEngine / syncUtils / hydrationDecision 三处核心护栏
-- IndexedDB DB 名 `tabvaultpro`
-- Service Worker 不加回同步逻辑
+- syncEngine / syncUtils / hydrationDecision / tabvaultpro / Service Worker 同步逻辑
 
 **5 个不变量测试必须保持绿**（任何 sprint 都不可违反）：
 - tests/hydrationDecision.test.ts
