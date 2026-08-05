@@ -1,6 +1,7 @@
 import React, { useTransition } from 'react';
 import { useAppDispatch, useAppSelector } from '@/store/hooks';
 import { setReorderMode, saveSettings } from '@/store/slices/settingsSlice';
+import { selectReorderMode } from '@/store/selectors/tabSelectors';
 import { TabCounter } from './TabCounter';
 import { useDebouncedSearch } from '@/hooks/useDebouncedSearch';
 import { useKeyboardShortcuts, COMMON_SHORTCUTS } from '@/hooks/useKeyboardShortcuts';
@@ -40,7 +41,9 @@ const SaveIcon = () => (
 
 export const Header: React.FC<HeaderProps> = ({ onSearch, onOpenSettings }) => {
   const dispatch = useAppDispatch();
-  const settings = useAppSelector(state => state.settings);
+  // 只订阅 reorderMode 字段 —— 旧实现 `state => state.settings` 订阅整个
+  // settings slice，任何设置变更都会重渲染 Header。
+  const reorderMode = useAppSelector(selectReorderMode);
 
   const { searchValue, debouncedValue, handleSearchChange, clearSearch, isSearching } = useDebouncedSearch();
   const searchInputRef = React.useRef<HTMLInputElement>(null);
@@ -79,7 +82,7 @@ export const Header: React.FC<HeaderProps> = ({ onSearch, onOpenSettings }) => {
 
   const handleResetToDefaultView = () => {
     clearSearch();
-    if (settings.reorderMode) {
+    if (reorderMode) {
       // 先更新 Redux state
       dispatch(setReorderMode(false));
 

@@ -5,7 +5,10 @@ export const selectGroups = (s: RootState) => s.tabs.groups;
 export const selectIsLoading = (s: RootState) => s.tabs.isLoading;
 export const selectLastLoadedAt = (s: RootState) => s.tabs.lastLoadedAt;
 export const selectSearchQuery = (s: RootState) => s.tabs.searchQuery;
+export const selectError = (s: RootState) => s.tabs.error;
 export const selectLayoutMode = (s: RootState) => s.settings.layoutMode;
+export const selectReorderMode = (s: RootState) => s.settings.reorderMode;
+export const selectSettings = (s: RootState) => s.settings;
 
 /**
  * Sorted by: isFavorite desc, createdAt desc. New array reference only when

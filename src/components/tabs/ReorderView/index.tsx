@@ -2,6 +2,7 @@ import React, { useMemo, useState } from 'react';
 import { useAppSelector, useAppDispatch } from '@/store/hooks';
 import { Tab, TabGroup } from '@/types/tab';
 import { updateGroup, deleteGroup } from '@/store/slices/tabSlice';
+import { selectGroups } from '@/store/selectors/tabSelectors';
 import { shouldAutoDeleteAfterTabRemoval } from '@/utils/tabGroupUtils';
 import { SafeFavicon } from '@/components/common/SafeFavicon';
 
@@ -67,8 +68,9 @@ const sortOptions = [
 
 const ReorderView: React.FC = () => {
   const dispatch = useAppDispatch();
-  const groups = useAppSelector(state => state.tabs.groups);
-  const settings = useAppSelector(state => state.settings);
+  const groups = useAppSelector(selectGroups);
+  // 原始值 selector —— 不订阅整个 settings slice。
+  const showFavicons = useAppSelector(state => state.settings.showFavicons);
   const [sortType, setSortType] = useState<SortType>('time-desc');
 
   const flatTabs = useMemo(() => sortTabs(flattenTabs(groups), sortType), [groups, sortType]);
@@ -171,7 +173,7 @@ const ReorderView: React.FC = () => {
                   className="flex items-center py-3 px-4 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors cursor-pointer flat-interaction"
                   onClick={() => handleOpenTab(tab)}
                 >
-                  {settings.showFavicons && (
+                  {showFavicons && (
                     <div className="mr-3 flex-shrink-0">
                       <SafeFavicon src={tab.favicon} alt="" />
                     </div>

@@ -1,7 +1,14 @@
 import React, { useEffect, lazy } from 'react';
 import { useAppDispatch, useAppSelector } from '@/store/hooks';
 import { loadGroups, moveGroupAndSync, setSearchQuery } from '@/store/slices/tabSlice';
-import { selectSortedGroups, selectIsLoading, selectLastLoadedAt } from '@/store/selectors/tabSelectors';
+import {
+  selectSortedGroups,
+  selectIsLoading,
+  selectLastLoadedAt,
+  selectError,
+  selectLayoutMode,
+  selectReorderMode,
+} from '@/store/selectors/tabSelectors';
 import { invalidateGroupsCache } from '@/utils/storage';
 import { runMigrations } from '@/utils/migrationUtils';
 import { DraggableTabGroup } from '@/components/dnd/DraggableTabGroup';
@@ -20,13 +27,15 @@ const ReorderView = lazy(() => import('@/components/tabs/ReorderView'));
 
 export const TabList: React.FC<TabListProps> = ({ searchQuery }) => {
   const dispatch = useAppDispatch();
-  const { isLoading, error, lastLoadedAt } = useAppSelector(state => ({
-    isLoading: selectIsLoading(state),
-    error: state.tabs.error,
-    lastLoadedAt: selectLastLoadedAt(state),
-  }));
+  // 离散 selector 切片 —— 每个 useAppSelector 只订阅一个字段。
+  // 旧实现 `useAppSelector(state => ({...}))` 每次 dispatch 都返回新对象引用，
+  // 触发 React-Redux "Selector unknown returned a different result" 警告并击穿 memoization。
+  const isLoading = useAppSelector(selectIsLoading);
+  const lastLoadedAt = useAppSelector(selectLastLoadedAt);
+  const error = useAppSelector(selectError);
+  const layoutMode = useAppSelector(selectLayoutMode);
+  const reorderMode = useAppSelector(selectReorderMode);
   const sortedGroups = useAppSelector(selectSortedGroups);
-  const { layoutMode, reorderMode } = useAppSelector(state => state.settings);
 
   useEffect(() => {
     // popup 入口已经把 local 数据塞进 preloadedState（lastLoadedAt !== null），
