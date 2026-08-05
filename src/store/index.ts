@@ -3,6 +3,8 @@ import tabReducer, { initialTabState } from './slices/tabSlice';
 import settingsReducer, { initialSettingsState } from './slices/settingsSlice';
 import authReducer from './slices/authSlice';
 import { autoSyncMiddleware } from './middleware/autoSyncMiddleware';
+import { debouncedPersistMiddleware } from './middleware/debouncedPersist';
+import { persistGroupsThunk } from './slices/tabSlice';
 
 const rootReducer = combineReducers({
   tabs: tabReducer,
@@ -27,7 +29,16 @@ function buildStore(preloadedState?: PreloadedState) {
           ignoredActionPaths: ['payload.tab', 'payload.tabs'],
           ignoredPaths: ['tabs.currentTab'],
         },
-      }).concat(autoSyncMiddleware),
+      })
+        .concat(autoSyncMiddleware)
+        .concat(
+          debouncedPersistMiddleware({
+            // 闭包捕获 _store 引用：createStore() 重建后，timer 触发时
+            // 仍能 dispatch 到当前 store（store proxy 也走 _store）。
+            persistFn: () => _store.dispatch(persistGroupsThunk()),
+            delayMs: 200,
+          })
+        ),
   });
 }
 

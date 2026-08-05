@@ -1,4 +1,4 @@
-import { createSlice, createAsyncThunk, createSelector, createAction, PayloadAction } from '@reduxjs/toolkit';
+import { createSlice, createAsyncThunk, createSelector, PayloadAction } from '@reduxjs/toolkit';
 import { TabState, TabGroup, Tab } from '@/types/tab';
 import { storage } from '@/utils/storage';
 
@@ -6,6 +6,7 @@ import { nanoid } from '@reduxjs/toolkit';
 import { shouldAutoDeleteAfterTabRemoval } from '@/utils/tabGroupUtils';
 import { updateGroupWithVersion, updateDisplayOrder } from '@/utils/versionHelper';
 import { trackProductEvent } from '@/utils/productEvents';
+import { persistGroupsDebounced } from '@/store/middleware/debouncedPersist';
 
 // 为了解决"参数隐式具有"any"类型"的问题，添加明确的类型定义
 // 注意：这些接口暂时保留，可能在未来的功能中使用
@@ -13,13 +14,23 @@ import { trackProductEvent } from '@/utils/productEvents';
 // 解决"速记属性...的范围内不存在任何值"的问题，显式声明actions
 
 
+// re-export 让旧 import 路径 (`@/store/slices/tabSlice`) 继续可用；
+// 不破坏 Task 2.1 中引入的 moveTabAndSync 调用方。
+export { persistGroupsDebounced };
+
 /**
- * 占位 action —— Task 2.2 才会新增持久化中间件处理它。
- * 在 Task 2.1 中我们重写 moveTabAndSync thunk 以 dispatch 此 action，
- * 这样 thunk 能编译通过，但当前 dispatch 是 no-op（storage 写入仍由
- * moveTabAndSync 内部旧路径完成，Task 2.2 会拆分掉那一块）。
+ * 实际写盘 thunk —— 读最新 state.tabs.groups，调用 storage.setGroups。
+ *
+ * 由 `debouncedPersistMiddleware` 在 delayMs 静默期结束时通过 store.dispatch 触发，
+ * 不应被业务代码直接 dispatch（直接调用会绕过防抖窗口）。
  */
-export const persistGroupsDebounced = createAction('tabs/persistGroupsDebounced');
+export const persistGroupsThunk = createAsyncThunk(
+  'tabs/persistGroups',
+  async (_, { getState }) => {
+    const s = getState() as { tabs: { groups: TabGroup[] } };
+    await storage.setGroups(s.tabs.groups);
+  }
+);
 
 export const initialTabState: TabState = {
   groups: [],
