@@ -31,7 +31,7 @@ before(async () => {
 
 // 注意：必须用动态 import，因为 alias-loader 必须在 register 之后才生效。
 // 静态 import 会在顶层求值，绕过 register 钩子，导致 ERR_MODULE_NOT_FOUND。
-const { selectGroups, selectSortedGroups, selectIsLoading } = await import(
+const { selectGroups, selectSortedGroups, selectIsLoading, selectFavoriteGroups } = await import(
   '@/store/selectors/tabSelectors'
 );
 const { initialTabState } = await import('@/store/slices/tabSlice');
@@ -99,4 +99,22 @@ test('selectSortedGroups ignores searchQuery (consumer-side filter)', () => {
   const s1 = makeRootState({ tabs: { groups: sharedGroups, searchQuery: '' } as any });
   const s2 = makeRootState({ tabs: { groups: sharedGroups, searchQuery: 'xxx' } as any });
   assert.equal(selectSortedGroups(s1), selectSortedGroups(s2));
+});
+
+// S3 §3: selectFavoriteGroups — 收藏会话过滤
+test('selectFavoriteGroups returns only groups with isFavorite=true', () => {
+  const a = mkGroup({ id: 'a', isFavorite: false });
+  const b = mkGroup({ id: 'b', isFavorite: true });
+  const c = mkGroup({ id: 'c', isFavorite: false });
+  const d = mkGroup({ id: 'd', isFavorite: true });
+  const s = makeRootState({ tabs: { groups: [a, b, c, d] } as any });
+  const favs = selectFavoriteGroups(s);
+  assert.deepEqual(favs.map(g => g.id), ['b', 'd'], '应仅包含 isFavorite=true 的组');
+});
+
+test('selectFavoriteGroups returns [] when no favorites exist', () => {
+  const a = mkGroup({ id: 'a', isFavorite: false });
+  const b = mkGroup({ id: 'b', isFavorite: false });
+  const s = makeRootState({ tabs: { groups: [a, b] } as any });
+  assert.deepEqual(selectFavoriteGroups(s), []);
 });

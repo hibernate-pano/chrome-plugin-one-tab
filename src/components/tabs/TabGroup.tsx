@@ -7,11 +7,15 @@ import { TabGroup as TabGroupType, Tab } from '@/types/tab';
 import { shouldAutoDeleteAfterTabRemoval } from '@/utils/tabGroupUtils';
 import { useToast } from '@/contexts/ToastContext';
 import { useEnhancedToast } from '@/utils/toastHelper';
+import { useDeferredDelete } from '@/hooks/useDeferredDelete';
 import { trackProductEvent } from '@/utils/productEvents';
 import { buildSessionRestoreMessage } from '@/utils/sessionPresentation';
 
 // S3 §1：hover-to-preview 延迟 250ms（防误触）
 const PREVIEW_HOVER_DELAY_MS = 250;
+
+// S3 §4：拖出/点击删除的撤销窗口（毫秒）；10 秒后可撤销就是不让 30 秒太久。
+const DELETE_DEFER_MS = 10000;
 
 interface TabGroupProps {
   group: TabGroupType;
@@ -60,7 +64,7 @@ const NotesIcon = () => (
 
 export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
   const dispatch = useAppDispatch();
-  const { showConfirm, showToast } = useToast();
+  const { showToast } = useToast();
   const { showDeleteSuccess, showDeleteError, showRestoreSuccess, showRestoreError } = useEnhancedToast();
 
   const [isEditing, setIsEditing] = useState(false);
@@ -125,30 +129,50 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
     }
   }, [handleNameSubmit, group.name]);
 
-  const handleDelete = useCallback(() => {
-    const runDelete = () => {
-      dispatch(deleteGroup(group.id))
+  // S3 §4: 软删 + 10s 撤销 toast —— 取代旧 confirm modal 流程。
+  // Hook 必须在组件顶层调用（rules-of-hooks），不能放在 useCallback 内部。
+  // 用 ref 锁住 onCommit 让最新的 dispatch/toast 闭包参与。
+  const deferredDeleteArgsRef = useRef<{ id: string; name: string; tabCount: number }>({
+    id: group.id,
+    name: group.name,
+    tabCount: group.tabs.length,
+  });
+  useEffect(() => {
+    deferredDeleteArgsRef.current = {
+      id: group.id,
+      name: group.name,
+      tabCount: group.tabs.length,
+    };
+  }, [group.id, group.name, group.tabs.length]);
+
+  const deferredDelete = useDeferredDelete({
+    delayMs: DELETE_DEFER_MS,
+    onCommit: () => {
+      const { id, name, tabCount } = deferredDeleteArgsRef.current;
+      dispatch(deleteGroup(id))
         .unwrap()
         .then(() => {
-          showDeleteSuccess(`已删除会话 "${group.name}" (${group.tabs.length} 个标签页)`);
+          showDeleteSuccess(`已删除会话 "${name}" (${tabCount} 个标签页)`);
         })
         .catch(error => {
           showDeleteError(`删除会话失败: ${error.message || '未知错误'}`);
         });
-    };
+    },
+  });
 
-    // Session deletion ALWAYS requires confirmation, regardless of confirmBeforeDelete setting
-    // confirmBeforeDelete only affects low-risk operations like single tab deletion
-    showConfirm({
-      title: '删除确认',
-      message: `确定要删除会话 "${group.name}" 吗？这将同时删除其中的 ${group.tabs.length} 个标签页，且此操作不可撤销。`,
-      type: 'danger',
-      confirmText: '删除',
-      cancelText: '取消',
-      onConfirm: runDelete,
-      onCancel: () => { }
+  const handleDelete = useCallback(() => {
+    // - 删除按钮点击后立即显示 toast "已删除 + 撤销" 按钮；
+    // - 10s 内点撤销 → cancel() 取消未触发的 commit；
+    // - 10s 后自动 dispatch(deleteGroup) → 真正删除；
+    // - 锁定组的删除按钮仍然不显示（UI 守护），保留 confirmBeforeDelete 仅
+    //   影响单标签页删除（参见 handleDeleteTab）。
+    showToast({
+      message: `已删除"${group.name}"`,
+      // S3 §4: 撤销按钮；点击 → cancel() 阻止 timer 触发，然后 toast 关闭
+      action: { label: '撤销', onClick: deferredDelete.cancel },
     });
-  }, [dispatch, group.id, group.name, group.tabs.length, showConfirm, showDeleteSuccess, showDeleteError]);
+    deferredDelete.requestDelete();
+  }, [group.name, deferredDelete, showToast]);
 
   const handleToggleLock = useCallback(() => {
     dispatch(toggleGroupLockAndSync(group.id));

@@ -25,3 +25,16 @@ export const selectSortedGroups = createSelector(
       return new Date(r.createdAt).getTime() - new Date(l.createdAt).getTime();
     })
 );
+
+/**
+ * S3 §3: 收藏会话过滤 —— 仅返回 isFavorite === true 的组。
+ *
+ * 用途：TabList 顶部独立渲染 FavoriteStrip（与 selectSortedGroups 解耦，避免
+ * 改动主排序逻辑导致意料外的回归）。
+ *
+ * createSelector memo：groups 引用不变时返回同一数组引用。
+ */
+export const selectFavoriteGroups = createSelector(
+  [selectGroups],
+  (groups) => groups.filter((g) => !!g.isFavorite)
+);
