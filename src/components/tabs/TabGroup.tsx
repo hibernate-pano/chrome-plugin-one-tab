@@ -365,7 +365,7 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
         </div>
 
         {/* 操作按钮 */}
-        <div className="flex items-center gap-1 opacity-0 group-hover/card:opacity-100 transition-all duration-200 ease-out">
+        <div className="flex items-center gap-1 opacity-0 group-focus-within/card:opacity-100 pointer-events-none group-hover/card:pointer-events-auto group-hover/card:opacity-100 transition-all duration-200 ease-out">
           {/* 恢复全部 */}
           <button
             onClick={handleOpenAllTabs}

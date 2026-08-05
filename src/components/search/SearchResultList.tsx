@@ -620,11 +620,12 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({ searchQuery,
         </div>
 
         {matchingTabs.length > 0 && (
-          <div className="flex items-center gap-1 opacity-0 group-hover/card:opacity-100 transition-opacity duration-150">
+          <div className="flex items-center gap-1 opacity-0 group-focus-within/card:opacity-100 pointer-events-none group-hover/card:pointer-events-auto group-hover/card:opacity-100 transition-opacity duration-150">
             <button
               onClick={handleRestoreAllSearchResults}
-              className="btn-icon p-1.5 tab-group-action-accent flat-interaction"
+              className="btn-icon p-1.5 tab-group-action-accent flat-interaction focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-2"
               title="在新窗口恢复所有匹配标签"
+              aria-label="在新窗口恢复所有匹配标签"
             >
               <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M13.5 6H5.25A2.25 2.25 0 003 8.25v10.5A2.25 2.25 0 005.25 21h10.5A2.25 2.25 0 0018 18.75V10.5m-10.5 6L21 3m0 0h-5.25M21 3v5.25" />
@@ -633,8 +634,9 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({ searchQuery,
 
             <button
               onClick={handleRequestDeleteAllSearchResults}
-              className="btn-icon p-1.5 tab-group-action-danger flat-interaction"
+              className="btn-icon p-1.5 tab-group-action-danger flat-interaction focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-2"
               title="删除所有搜索到的标签页"
+              aria-label="删除所有搜索到的标签页"
             >
               <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0" />
