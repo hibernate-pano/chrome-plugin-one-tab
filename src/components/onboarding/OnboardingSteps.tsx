@@ -1,12 +1,6 @@
 import React from 'react';
 
 // SVG icon components (replacing emoji for Chrome Web Store compatibility)
-const CompassIcon = () => (
-  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" className="w-8 h-8">
-    <circle cx="12" cy="12" r="10"/>
-    <polygon points="16.24 7.76 14.12 14.12 7.76 16.24 9.88 9.88 16.24 7.76"/>
-  </svg>
-);
 const SaveIcon = () => (
   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" className="w-8 h-8">
     <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/>
@@ -27,203 +21,221 @@ const RocketIcon = () => (
     <path d="M17 7l-3 3M17 17l-3-3M7 7L4 4M7 17L4 20"/>
   </svg>
 );
-const WindowIcon = () => (
-  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" className="w-8 h-8">
-    <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/>
-    <line x1="3" y1="9" x2="21" y2="9"/>
-    <line x1="9" y1="21" x2="9" y2="9"/>
+const SyncIcon = () => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4">
+    <polyline points="23 4 23 10 17 10"/>
+    <polyline points="1 20 1 14 7 14"/>
+    <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>
   </svg>
 );
-const PinIcon = () => (
-  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" className="w-8 h-8">
-    <line x1="12" y1="17" x2="12" y2="22"/>
-    <path d="M5 17h14v-1.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V6h1a2 2 0 0 0 0-4H8a2 2 0 0 0 0 4h1v4.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V17z"/>
-  </svg>
-);
-const EditIcon = () => (
-  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" className="w-8 h-8">
-    <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
-    <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
-  </svg>
-);
-const FolderIcon = () => (
-  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" className="w-8 h-8">
-    <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
-  </svg>
-);
-const ClockIcon = () => (
-  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" className="w-8 h-8">
-    <circle cx="12" cy="12" r="10"/>
-    <polyline points="12 6 12 12 16 14"/>
-  </svg>
-);
-const StarIcon = () => (
-  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" className="w-8 h-8">
-    <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>
-  </svg>
-);
-const WandIcon = () => (
-  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" className="w-8 h-8">
-    <path d="M15 4V2"/>
-    <path d="M15 16v-2"/>
-    <path d="M8 9h2"/>
-    <path d="M20 9h2"/>
-    <path d="M17.8 11.8L19 13"/>
-    <path d="M15 9h0"/>
-    <path d="M17.8 6.2L19 5"/>
-    <path d="M3 21l9-9"/>
-    <path d="M12.2 6.2L11 5"/>
-  </svg>
-);
-const LocationIcon = () => (
-  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" className="w-8 h-8">
-    <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/>
-    <circle cx="12" cy="10" r="3"/>
+const BarChartIcon = () => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4">
+    <line x1="12" y1="20" x2="12" y2="10"/>
+    <line x1="18" y1="20" x2="18" y2="4"/>
+    <line x1="6" y1="20" x2="6" y2="16"/>
   </svg>
 );
 const CheckIcon = () => (
-  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" className="w-8 h-8">
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" className="w-3 h-3">
     <polyline points="20 6 9 17 4 12"/>
   </svg>
 );
-
-export const WelcomeStep: React.FC<{ version: string }> = ({ version }) => (
-  <div className="flex flex-col items-center gap-6 p-8">
-    <div className="onboarding-icon-wrapper rounded-xl shadow-md bg-primary/10 w-12 h-12 flex items-center justify-center">
-      <CompassIcon />
-    </div>
-    <h2 className="text-xl font-semibold text-gray-900 dark:text-white">欢迎使用 TabStack</h2>
-    <div className="flex justify-center">
-      <span className="text-xs font-medium px-3 py-1 bg-primary/10 text-primary rounded-full">v{version}</span>
-    </div>
-    <p className="text-sm text-gray-500 dark:text-gray-400">
-      把当前窗口保存成可找回、可恢复的工作会话
-      <br />
-      让中断后的继续工作变得更快、更稳
-    </p>
-    <div className="onboarding-feature-grid grid grid-cols-1 sm:grid-cols-3 gap-4 w-full max-w-3xl">
-      <div className="onboarding-feature-card rounded-xl shadow-sm bg-white dark:bg-gray-800 p-6 flex flex-col items-center text-center gap-3 transition-all duration-200 hover:scale-105 hover:shadow-md focus-visible:ring-2 focus-visible:ring-primary/50 focus-visible:outline-none animate-fade-in">
-        <div className="onboarding-feature-icon bg-primary/5 w-12 h-12 flex items-center justify-center rounded-xl"><SaveIcon /></div>
-        <div className="onboarding-feature-title font-medium text-gray-900 dark:text-white">保存</div>
-        <div className="onboarding-feature-desc text-sm text-gray-500 dark:text-gray-400">先把工作现场收起来</div>
-      </div>
-      <div className="onboarding-feature-card rounded-xl shadow-sm bg-white dark:bg-gray-800 p-6 flex flex-col items-center text-center gap-3 transition-all duration-200 hover:scale-105 hover:shadow-md focus-visible:ring-2 focus-visible:ring-primary/50 focus-visible:outline-none animate-fade-in animation-delay-100">
-        <div className="onboarding-feature-icon bg-primary/5 w-12 h-12 flex items-center justify-center rounded-xl"><SearchIcon /></div>
-        <div className="onboarding-feature-title font-medium text-gray-900 dark:text-white">搜索</div>
-        <div className="onboarding-feature-desc text-sm text-gray-500 dark:text-gray-400">按会话、备注或标签找回</div>
-      </div>
-      <div className="onboarding-feature-card rounded-xl shadow-sm bg-white dark:bg-gray-800 p-6 flex flex-col items-center text-center gap-3 transition-all duration-200 hover:scale-105 hover:shadow-md focus-visible:ring-2 focus-visible:ring-primary/50 focus-visible:outline-none animate-fade-in animation-delay-200">
-        <div className="onboarding-feature-icon bg-primary/5 w-12 h-12 flex items-center justify-center rounded-xl"><RocketIcon /></div>
-        <div className="onboarding-feature-title font-medium text-gray-900 dark:text-white">恢复</div>
-        <div className="onboarding-feature-desc text-sm text-gray-500 dark:text-gray-400">默认在新窗口里继续工作</div>
-      </div>
-    </div>
-  </div>
+const XIcon = () => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" className="w-3 h-3">
+    <line x1="18" y1="6" x2="6" y2="18"/>
+    <line x1="6" y1="6" x2="18" y2="18"/>
+  </svg>
+);
+const LightbulbIcon = () => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4">
+    <path d="M9 18h6M10 22h4M12 2a7 7 0 0 0-4 12.74V17h8v-2.26A7 7 0 0 0 12 2z"/>
+  </svg>
+);
+const TagIcon = () => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4">
+    <path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/>
+    <line x1="7" y1="7" x2="7.01" y2="7"/>
+  </svg>
+);
+const KeyboardIcon = () => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4">
+    <rect x="2" y="4" width="20" height="16" rx="2"/>
+    <path d="M6 8h.01M10 8h.01M14 8h.01M18 8h.01M6 12h.01M10 12h.01M14 12h.01M18 12h.01M7 16h10"/>
+  </svg>
 );
 
+/**
+ * Step 1: 保存 — action + CTA 模板
+ * 强调"做什么动作" + 模拟按钮视觉，让用户看到一眼会点哪里。
+ */
 export const SaveTabsStep: React.FC = () => (
-  <div className="flex flex-col items-center gap-6 p-8">
+  <div className="flex flex-col items-center gap-5 p-6">
     <div className="onboarding-icon-wrapper rounded-xl shadow-md bg-primary/10 w-12 h-12 flex items-center justify-center">
       <SaveIcon />
     </div>
-    <h2 className="text-xl font-semibold text-gray-900 dark:text-white">先保存一个会话</h2>
-    <p className="text-sm text-gray-500 dark:text-gray-400">
-      点击顶部的&quot;保存会话&quot;按钮
-      <br />
-      当前窗口会被收成一个可找回的工作会话
-    </p>
-    <div className="onboarding-feature-grid grid grid-cols-1 sm:grid-cols-3 gap-4 w-full max-w-3xl">
-      <div className="onboarding-feature-card rounded-xl shadow-sm bg-white dark:bg-gray-800 p-6 flex flex-col items-center text-center gap-3 transition-all duration-200 hover:scale-105 hover:shadow-md focus-visible:ring-2 focus-visible:ring-primary/50 focus-visible:outline-none animate-fade-in">
-        <div className="onboarding-feature-icon bg-primary/5 w-12 h-12 flex items-center justify-center rounded-xl"><WindowIcon /></div>
-        <div className="onboarding-feature-title font-medium text-gray-900 dark:text-white">保存当前窗口</div>
-        <div className="onboarding-feature-desc text-sm text-gray-500 dark:text-gray-400">把此刻的工作上下文完整留住</div>
+    <div className="text-center">
+      <h2 className="text-xl font-semibold text-gray-900 dark:text-white">先把窗口存起来</h2>
+      <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
+        点击顶部&ldquo;保存会话&rdquo;，当前窗口变成一个可找回的工作会话
+      </p>
+    </div>
+
+    {/* Action + CTA: 一个被点亮的按钮 + 操作要点列表 */}
+    <div className="w-full max-w-md flex flex-col gap-4">
+      <div className="rounded-xl bg-gradient-to-br from-primary/10 to-primary/5 border border-primary/20 px-5 py-4 flex items-center justify-between">
+        <div className="flex items-center gap-3">
+          <div className="rounded-lg bg-primary text-white p-2 flex items-center justify-center">
+            <SaveIcon />
+          </div>
+          <div>
+            <div className="text-sm font-medium text-gray-900 dark:text-white">保存当前窗口</div>
+            <div className="text-xs text-gray-500 dark:text-gray-400">这一步就是你需要的全部动作</div>
+          </div>
+        </div>
+        <span className="text-xs font-mono px-2 py-1 rounded bg-white/60 dark:bg-gray-800/60 text-gray-600 dark:text-gray-300 border border-gray-200 dark:border-gray-700">⌘ / Ctrl + S</span>
       </div>
-      <div className="onboarding-feature-card rounded-xl shadow-sm bg-white dark:bg-gray-800 p-6 flex flex-col items-center text-center gap-3 transition-all duration-200 hover:scale-105 hover:shadow-md focus-visible:ring-2 focus-visible:ring-primary/50 focus-visible:outline-none animate-fade-in animation-delay-100">
-        <div className="onboarding-feature-icon bg-primary/5 w-12 h-12 flex items-center justify-center rounded-xl"><PinIcon /></div>
-        <div className="onboarding-feature-title font-medium text-gray-900 dark:text-white">Pinned 可选</div>
-        <div className="onboarding-feature-desc text-sm text-gray-500 dark:text-gray-400">固定标签页可保留，也可一并保存</div>
-      </div>
-      <div className="onboarding-feature-card rounded-xl shadow-sm bg-white dark:bg-gray-800 p-6 flex flex-col items-center text-center gap-3 transition-all duration-200 hover:scale-105 hover:shadow-md focus-visible:ring-2 focus-visible:ring-primary/50 focus-visible:outline-none animate-fade-in animation-delay-200">
-        <div className="onboarding-feature-icon bg-primary/5 w-12 h-12 flex items-center justify-center rounded-xl"><EditIcon /></div>
-        <div className="onboarding-feature-title font-medium text-gray-900 dark:text-white">备注与收藏</div>
-        <div className="onboarding-feature-desc text-sm text-gray-500 dark:text-gray-400">给重要会话补一句上下文说明</div>
+
+      <ul className="space-y-2 text-sm text-gray-700 dark:text-gray-300">
+        <li className="flex items-start gap-2">
+          <span className="mt-0.5 text-primary"><CheckIcon /></span>
+          <span>默认保存当前窗口所有未固定的标签</span>
+        </li>
+        <li className="flex items-start gap-2">
+          <span className="mt-0.5 text-primary"><CheckIcon /></span>
+          <span>固定标签(pinned)可按设置一并保存</span>
+        </li>
+        <li className="flex items-start gap-2">
+          <span className="mt-0.5 text-primary"><CheckIcon /></span>
+          <span>需要时给会话补一句备注或加标签</span>
+        </li>
+      </ul>
+
+      <div className="text-xs text-gray-500 dark:text-gray-400 bg-gray-50 dark:bg-gray-800/50 rounded-lg px-3 py-2 leading-relaxed">
+        需要跨设备时再按需手动同步；本地保存已足够日常使用。
       </div>
     </div>
   </div>
 );
 
-export const SearchStep: React.FC = () => (
-  <div className="flex flex-col items-center gap-6 p-8">
-    <div className="onboarding-icon-wrapper rounded-xl shadow-md bg-primary/10 w-12 h-12 flex items-center justify-center">
-      <SearchIcon />
-    </div>
-    <h2 className="text-xl font-semibold text-gray-900 dark:text-white">需要时快速找回</h2>
-    <p className="text-sm text-gray-500 dark:text-gray-400">
-      搜索会话名、备注、标签标题或 URL
-      <br />
-      结果会先按会话归组，再展开具体标签
-    </p>
-    <div className="onboarding-feature-grid grid grid-cols-1 sm:grid-cols-3 gap-4 w-full max-w-3xl">
-      <div className="onboarding-feature-card rounded-xl shadow-sm bg-white dark:bg-gray-800 p-6 flex flex-col items-center text-center gap-3 transition-all duration-200 hover:scale-105 hover:shadow-md focus-visible:ring-2 focus-visible:ring-primary/50 focus-visible:outline-none animate-fade-in">
-        <div className="onboarding-feature-icon bg-primary/5 w-12 h-12 flex items-center justify-center rounded-xl"><FolderIcon /></div>
-        <div className="onboarding-feature-title font-medium text-gray-900 dark:text-white">先找会话</div>
-        <div className="onboarding-feature-desc text-sm text-gray-500 dark:text-gray-400">同一批相关标签会一起出现</div>
-      </div>
-      <div className="onboarding-feature-card rounded-xl shadow-sm bg-white dark:bg-gray-800 p-6 flex flex-col items-center text-center gap-3 transition-all duration-200 hover:scale-105 hover:shadow-md focus-visible:ring-2 focus-visible:ring-primary/50 focus-visible:outline-none animate-fade-in animation-delay-100">
-        <div className="onboarding-feature-icon bg-primary/5 w-12 h-12 flex items-center justify-center rounded-xl"><ClockIcon /></div>
-        <div className="onboarding-feature-title font-medium text-gray-900 dark:text-white">按时间过滤</div>
-        <div className="onboarding-feature-desc text-sm text-gray-500 dark:text-gray-400">快速收敛到较新的会话或更久之前</div>
-      </div>
-      <div className="onboarding-feature-card rounded-xl shadow-sm bg-white dark:bg-gray-800 p-6 flex flex-col items-center text-center gap-3 transition-all duration-200 hover:scale-105 hover:shadow-md focus-visible:ring-2 focus-visible:ring-primary/50 focus-visible:outline-none animate-fade-in animation-delay-200">
-        <div className="onboarding-feature-icon bg-primary/5 w-12 h-12 flex items-center justify-center rounded-xl"><StarIcon /></div>
-        <div className="onboarding-feature-title font-medium text-gray-900 dark:text-white">收藏重要会话</div>
-        <div className="onboarding-feature-desc text-sm text-gray-500 dark:text-gray-400">关键上下文更容易二次定位</div>
-      </div>
-    </div>
-  </div>
-);
-
+/**
+ * Step 2: 恢复 — 示例对比 模板
+ * 一边"没保存 → 重新打开"，另一边"保存 → 一键恢复"，直白对比价值。
+ */
 export const RestoreStep: React.FC = () => (
-  <div className="flex flex-col items-center gap-6 p-8">
+  <div className="flex flex-col items-center gap-5 p-6">
     <div className="onboarding-icon-wrapper rounded-xl shadow-md bg-primary/10 w-12 h-12 flex items-center justify-center">
       <RocketIcon />
     </div>
-    <h2 className="text-xl font-semibold text-gray-900 dark:text-white">恢复时继续，而不是重来</h2>
-    <p className="text-sm text-gray-500 dark:text-gray-400">
-      恢复整个会话时，会默认在新窗口中打开
-      <br />
-      需要时也可以从会话列表里再次打开刚刚整理过的内容
-    </p>
-    <div className="onboarding-feature-grid grid grid-cols-1 sm:grid-cols-3 gap-4 w-full max-w-3xl">
-      <div className="onboarding-feature-card rounded-xl shadow-sm bg-white dark:bg-gray-800 p-6 flex flex-col items-center text-center gap-3 transition-all duration-200 hover:scale-105 hover:shadow-md focus-visible:ring-2 focus-visible:ring-primary/50 focus-visible:outline-none animate-fade-in">
-        <div className="onboarding-feature-icon bg-primary/5 w-12 h-12 flex items-center justify-center rounded-xl"><WandIcon /></div>
-        <div className="onboarding-feature-title font-medium text-gray-900 dark:text-white">新窗口恢复</div>
-        <div className="onboarding-feature-desc text-sm text-gray-500 dark:text-gray-400">尽量不打断你当前正在做的事</div>
+    <div className="text-center">
+      <h2 className="text-xl font-semibold text-gray-900 dark:text-white">恢复，而不是重来</h2>
+      <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
+        一次性把整个会话在新窗口打开，回到上次的工作现场
+      </p>
+    </div>
+
+    {/* Example contrast: 没有 / 有 */}
+    <div className="w-full max-w-md grid grid-cols-1 gap-3">
+      <div className="rounded-xl border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/40 p-4">
+        <div className="flex items-center gap-2 mb-2">
+          <span className="text-gray-400"><XIcon /></span>
+          <span className="text-xs font-medium uppercase tracking-wide text-gray-500">没保存</span>
+        </div>
+        <div className="space-y-1.5">
+          <div className="text-xs px-2 py-1 rounded bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 text-gray-500 line-through">
+            一个一个重新打开标签
+          </div>
+          <div className="text-xs px-2 py-1 rounded bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 text-gray-500 line-through">
+            翻历史记录找回刚才的链接
+          </div>
+          <div className="text-xs px-2 py-1 rounded bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 text-gray-500 line-through">
+            重新登录每个网站
+          </div>
+        </div>
       </div>
-      <div className="onboarding-feature-card rounded-xl shadow-sm bg-white dark:bg-gray-800 p-6 flex flex-col items-center text-center gap-3 transition-all duration-200 hover:scale-105 hover:shadow-md focus-visible:ring-2 focus-visible:ring-primary/50 focus-visible:outline-none animate-fade-in animation-delay-100">
-        <div className="onboarding-feature-icon bg-primary/5 w-12 h-12 flex items-center justify-center rounded-xl"><LocationIcon /></div>
-        <div className="onboarding-feature-title font-medium text-gray-900 dark:text-white">保留 pinned</div>
-        <div className="onboarding-feature-desc text-sm text-gray-500 dark:text-gray-400">固定标签页状态会跟着一起回来</div>
-      </div>
-      <div className="onboarding-feature-card rounded-xl shadow-sm bg-white dark:bg-gray-800 p-6 flex flex-col items-center text-center gap-3 transition-all duration-200 hover:scale-105 hover:shadow-md focus-visible:ring-2 focus-visible:ring-primary/50 focus-visible:outline-none animate-fade-in animation-delay-200">
-        <div className="onboarding-feature-icon bg-primary/5 w-12 h-12 flex items-center justify-center rounded-xl"><ClockIcon /></div>
-        <div className="onboarding-feature-title font-medium text-gray-900 dark:text-white">时间戳命名</div>
-        <div className="onboarding-feature-desc text-sm text-gray-500 dark:text-gray-400">新会话默认按保存时间命名，回看更直接</div>
+
+      <div className="rounded-xl border border-primary/30 bg-primary/5 dark:bg-primary/10 p-4">
+        <div className="flex items-center gap-2 mb-2">
+          <span className="text-primary"><CheckIcon /></span>
+          <span className="text-xs font-medium uppercase tracking-wide text-primary">用 TabStack 恢复</span>
+        </div>
+        <div className="space-y-1.5">
+          <div className="text-xs px-2 py-1 rounded bg-white dark:bg-gray-900 border border-primary/30 text-gray-800 dark:text-gray-200">
+            一次打开会话里的全部标签
+          </div>
+          <div className="text-xs px-2 py-1 rounded bg-white dark:bg-gray-900 border border-primary/30 text-gray-800 dark:text-gray-200">
+            pinned 标签的状态也跟着回来
+          </div>
+          <div className="text-xs px-2 py-1 rounded bg-white dark:bg-gray-900 border border-primary/30 text-gray-800 dark:text-gray-200">
+            默认在新窗口打开，不打断当前工作
+          </div>
+        </div>
       </div>
     </div>
   </div>
 );
 
-export const ReadyStep: React.FC = () => (
-  <div className="flex flex-col items-center gap-6 p-8 text-center">
+/**
+ * Step 3: 搜索 — 技巧提示 模板
+ * 一组"上手即用"的小贴士，按编号列出，便于扫读。
+ */
+export const SearchStep: React.FC = () => (
+  <div className="flex flex-col items-center gap-5 p-6">
     <div className="onboarding-icon-wrapper rounded-xl shadow-md bg-primary/10 w-12 h-12 flex items-center justify-center">
-      <span className="rounded-full w-8 h-8 flex items-center justify-center font-bold text-sm bg-primary/10 text-primary"><CheckIcon /></span>
+      <SearchIcon />
     </div>
-    <h2 className="text-xl font-semibold text-gray-900 dark:text-white">核心闭环已经齐了</h2>
-    <p className="text-sm text-gray-500 dark:text-gray-400">
-      现在开始保存、搜索、恢复你的工作会话
-      <br />
-      需要跨设备时，再按需手动同步
-    </p>
+    <div className="text-center">
+      <h2 className="text-xl font-semibold text-gray-900 dark:text-white">需要时快速找回</h2>
+      <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
+        搜索会话名、备注、标签或 URL，先按会话归组，再展开标签
+      </p>
+    </div>
+
+    {/* Tips list: 编号 + 图标 + 文案 */}
+    <div className="w-full max-w-md space-y-2.5">
+      <div className="flex items-start gap-3 rounded-lg px-3 py-2.5 bg-gray-50 dark:bg-gray-800/40">
+        <span className="flex-shrink-0 w-6 h-6 rounded-full bg-primary text-white text-xs font-semibold flex items-center justify-center">1</span>
+        <div className="flex-1">
+          <div className="text-sm font-medium text-gray-900 dark:text-white flex items-center gap-1.5">
+            <TagIcon />标签/会话名/备注都是关键字
+          </div>
+          <div className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">模糊匹配，不必输完整词</div>
+        </div>
+      </div>
+
+      <div className="flex items-start gap-3 rounded-lg px-3 py-2.5 bg-gray-50 dark:bg-gray-800/40">
+        <span className="flex-shrink-0 w-6 h-6 rounded-full bg-primary text-white text-xs font-semibold flex items-center justify-center">2</span>
+        <div className="flex-1">
+          <div className="text-sm font-medium text-gray-900 dark:text-white flex items-center gap-1.5">
+            <KeyboardIcon />快捷键 ⌘ / Ctrl + K 直接聚焦搜索
+          </div>
+          <div className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">免去点输入框的动作</div>
+        </div>
+      </div>
+
+      <div className="flex items-start gap-3 rounded-lg px-3 py-2.5 bg-gray-50 dark:bg-gray-800/40">
+        <span className="flex-shrink-0 w-6 h-6 rounded-full bg-primary text-white text-xs font-semibold flex items-center justify-center">3</span>
+        <div className="flex-1">
+          <div className="text-sm font-medium text-gray-900 dark:text-white flex items-center gap-1.5">
+            <BarChartIcon />收藏重要会话，二次定位更快
+          </div>
+          <div className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">关键上下文打星常驻列表顶部</div>
+        </div>
+      </div>
+
+      <div className="flex items-start gap-3 rounded-lg px-3 py-2.5 bg-gray-50 dark:bg-gray-800/40">
+        <span className="flex-shrink-0 w-6 h-6 rounded-full bg-primary text-white text-xs font-semibold flex items-center justify-center">4</span>
+        <div className="flex-1">
+          <div className="text-sm font-medium text-gray-900 dark:text-white flex items-center gap-1.5">
+            <SyncIcon />跨设备搜索结果以最后一次同步为准
+          </div>
+          <div className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">本地优先，必要时再触发同步</div>
+        </div>
+      </div>
+    </div>
+
+    <div className="flex items-center gap-2 text-xs text-gray-500 dark:text-gray-400 bg-amber-50 dark:bg-amber-900/20 border border-amber-200/60 dark:border-amber-700/40 rounded-lg px-3 py-2 max-w-md">
+      <span className="text-amber-600 dark:text-amber-400"><LightbulbIcon /></span>
+      <span>提示：保存时给会话起个有意义的名字，搜索时召回率会高很多。</span>
+    </div>
   </div>
 );
