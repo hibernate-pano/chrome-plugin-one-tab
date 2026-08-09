@@ -149,4 +149,67 @@ describe('刷新数据丢失根因：读失败不能被当成空数据', () => {
     assert.equal(state.groups.length, 1);
     assert.notEqual(state.lastLoadedAt, null, '成功后应固化已加载状态');
   });
+
+  it('preserveUndecryptableGroups 保留原始 blob，不直接覆盖', async () => {
+    const { storage } = await import('@/utils/storage');
+    const { kvGet } = await import('@/storage/storageAdapter');
+
+    await corruptStoredGroups();
+    const preserved = await storage.preserveUndecryptableGroups();
+
+    assert.equal(preserved, true, '存在原始 blob 时应备份成功');
+    assert.equal(
+      await kvGet('tab_groups_legacy_backup'),
+      'corrupt-local-blob',
+      '旧 blob 必须原样保留到备份 key'
+    );
+  });
+
+  it('保存新会话时，旧数据读不出也必须能继续收纳当前标签', async () => {
+    const { storage } = await import('@/utils/storage');
+    const { kvGet } = await import('@/storage/storageAdapter');
+    const { tabManager } = await import('@/background/TabManager');
+
+    await corruptStoredGroups();
+
+    (globalThis as any).chrome = {
+      ...(globalThis as any).chrome,
+      runtime: {
+        id: 'test-ext-id',
+        getURL: (path: string) => path,
+        sendMessage: async () => ({}),
+      },
+      notifications: {
+        create: async () => {},
+      },
+      tabs: {
+        create: async () => ({}),
+        remove: async () => {},
+        query: async () => [],
+      },
+      storage: {
+        local: {
+          get: async () => ({}),
+          set: async () => {},
+          remove: async () => {},
+        },
+      },
+    };
+
+    await tabManager.saveAllTabs([
+      {
+        id: 1,
+        url: 'https://example.com/new-tab',
+        title: 'New Tab',
+      } as any,
+    ]);
+
+    const groups = await storage.getGroupsOrThrow();
+    assert.equal(groups.length, 1, '即使旧数据无法解密，也应保存当前标签为新会话');
+    assert.equal(
+      await kvGet('tab_groups_legacy_backup'),
+      'corrupt-local-blob',
+      '旧 blob 必须继续保留在备份 key'
+    );
+  });
 });

@@ -2,6 +2,7 @@ import { storage } from '@/utils/storage';
 import { createTabGroupFromChromeTabs, filterValidTabs } from '@/domain/tabGroup';
 import { cacheManager } from '@/utils/performance';
 import { trackProductEvent } from '@/utils/productEvents';
+import type { TabGroup } from '@/types/tab';
 
 /**
  * 统一的标签页管理器
@@ -95,8 +96,17 @@ export class TabManager {
         return;
       }
 
-      const existingGroups = await storage.getGroupsOrThrow();
+      const { groups: existingGroups, recoveredUndecryptable } = await this.readGroupsForMutation();
       await storage.setGroups([tabGroup, ...existingGroups]);
+
+      if (recoveredUndecryptable) {
+        await this.showNotification({
+          type: 'basic',
+          iconUrl: chrome.runtime.getURL('icons/icon128.png'),
+          title: 'TabVault Pro - 数据恢复',
+          message: '检测到旧会话无法解密，原始数据已保留为备份；本次已保存新会话',
+        });
+      }
 
       await this.showNotification({
         type: 'basic',
@@ -171,8 +181,17 @@ export class TabManager {
         return;
       }
 
-      const existingGroups = await storage.getGroupsOrThrow();
+      const { groups: existingGroups, recoveredUndecryptable } = await this.readGroupsForMutation();
       await storage.setGroups([tabGroup, ...existingGroups]);
+
+      if (recoveredUndecryptable) {
+        await this.showNotification({
+          type: 'basic',
+          iconUrl: chrome.runtime.getURL('icons/icon128.png'),
+          title: 'TabVault Pro - 数据恢复',
+          message: '检测到旧会话无法解密，原始数据已保留为备份；本次已保存新会话',
+        });
+      }
 
       await trackProductEvent('session_saved', {
         sessionId: tabGroup.id,
@@ -249,6 +268,39 @@ export class TabManager {
     } catch (error) {
       console.error('在新窗口恢复会话失败:', error);
       throw error;
+    }
+  }
+
+  /**
+   * 读-改-写路径的统一入口。
+   *
+   * 新分支已经不再加密本地 groups，但用户可能从旧版升级，旧数据仍是加密 blob。
+   * 如果旧 blob 无法用当前 key 解密，先把原始数据备份，再以空列表作为本次保存
+   * 的基线。这样核心功能不会因为旧数据读不出来而失效，同时旧 blob 不会直接丢失。
+   */
+  private async readGroupsForMutation(): Promise<{
+    groups: TabGroup[];
+    recoveredUndecryptable: boolean;
+  }> {
+    try {
+      const groups = await storage.getGroupsOrThrow();
+      return { groups, recoveredUndecryptable: false };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (!message.includes('读取本地会话失败')) {
+        throw error;
+      }
+
+      const preserved = await storage.preserveUndecryptableGroups();
+      if (!preserved) {
+        throw error;
+      }
+
+      console.warn(
+        '[TabManager] 检测到无法解密的旧数据，已保留原始备份；本次以空基线保存新会话',
+        error
+      );
+      return { groups: [], recoveredUndecryptable: true };
     }
   }
 

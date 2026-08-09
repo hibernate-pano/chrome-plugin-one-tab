@@ -35,6 +35,8 @@ export function invalidateGroupsCache(): void {
 const STORAGE_KEYS = {
   VERSION: 'storage_version',
   GROUPS: 'tab_groups',
+  LEGACY_GROUPS_BACKUP: 'tab_groups_legacy_backup',
+  DECRYPT_RECOVERY_PENDING: 'decrypt_recovery_pending',
   SETTINGS: 'user_settings',
   DELETED_GROUPS: 'deleted_tab_groups',
   DELETED_TABS: 'deleted_tabs',
@@ -182,6 +184,26 @@ class ChromeStorage {
    */
   async getGroupsOrThrow(): Promise<TabGroup[]> {
     return this.readGroupsFromDisk();
+  }
+
+  /**
+   * 旧版加密数据无法用当前 key 解密时，先把原始 blob 复制到独立备份 key。
+   * 保存路径拿到这个备份后可以安全地继续保存新会话，而不会让旧数据彻底丢失。
+   */
+  async preserveUndecryptableGroups(): Promise<boolean> {
+    const raw = await kvGet<unknown>(STORAGE_KEYS.GROUPS);
+    if (raw === null || raw === undefined) return false;
+
+    const existingBackup = await kvGet<unknown>(STORAGE_KEYS.LEGACY_GROUPS_BACKUP);
+    if (existingBackup === undefined || existingBackup === null) {
+      await kvSet(STORAGE_KEYS.LEGACY_GROUPS_BACKUP, raw);
+    }
+
+    await kvSet(STORAGE_KEYS.DECRYPT_RECOVERY_PENDING, {
+      preservedAt: new Date().toISOString(),
+      message: '检测到本地旧会话无法解密，原始数据已保留为备份',
+    });
+    return true;
   }
 
   async setGroups(groups: TabGroup[]): Promise<void> {
@@ -533,6 +555,8 @@ class ChromeStorage {
       const keys = [
         STORAGE_KEYS.VERSION,
         STORAGE_KEYS.GROUPS,
+        STORAGE_KEYS.LEGACY_GROUPS_BACKUP,
+        STORAGE_KEYS.DECRYPT_RECOVERY_PENDING,
         STORAGE_KEYS.SETTINGS,
         STORAGE_KEYS.DELETED_GROUPS,
         STORAGE_KEYS.DELETED_TABS,
