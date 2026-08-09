@@ -105,8 +105,10 @@ chrome.alarms.onAlarm.addListener(alarm => {  // NEW
 Current row shows dot (idle/syncing/error colors) + last-sync time + "立即同步"
 button. Enhance:
 
-- Read `lastSyncError` from the persisted `lastSyncStatus` (via
-  `useAppSelector` on `tabs.lastSyncStatus` or the same source SyncTab uses).
+- Read `lastSyncError` from persisted `lastSyncStatus` via
+  `storage.getLastSyncStatus()` on mount (the same source SyncTab uses —
+  IndexedDB direct read, NOT Redux; Redux `tabs.lastSyncStatus` is not
+  guaranteed fresh for SW-written errors).
 - When `lastSyncError` is non-empty, render it as a small rose-colored line
   under the row (same style as SyncTab.tsx:100-102) — no blocking, just visible.
 - Keep the "立即同步" button; clicking it still calls
