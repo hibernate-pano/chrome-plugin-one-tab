@@ -4,7 +4,7 @@
 
 **Goal:** Integrate the 81 commits from `origin/main` (Sprint 1-8) into `codex/v1-11-6-integration`, then add the Toast action button UI/Context upgrade on top, ending with a clean branch that preserves the local-persistence rebuild invariants protected by AGENTS.md.
 
-**Architecture:** A single merge commit (`git merge --no-ff origin/main`) brings main's history in. Real conflicts (12 files) are resolved file-by-file per spec §2.2. Three load-bearing files (`src/store/index.ts`, `src/store/slices/tabSlice.ts`, `src/utils/storage.ts`) require grep-based post-merge verification even though they don't produce conflict markers. After the merge is green, the Toast action button UI + ToastContext options API are added as a small separate commit (or two).
+**Architecture:** A single merge commit (`git merge --no-ff origin/main`) brings main's history in. Real conflicts (15 files, including 3 add/add, 1 modify/delete, 1 lockfile, and 11 content) are resolved file-by-file per spec §2.2. Main's sync layer wholesale replaces the local `tabSyncWorkflow.ts`. The local `getGroupsOrThrow` and decrypt-failure try/catch (AGENTS.md invariants) are ported into main's `src/utils/storage.ts` during resolution. After the merge is green, the Toast action button UI + ToastContext options API are added as a small separate commit (or two).
 
 **Tech Stack:** git, pnpm, TypeScript, React, Redux Toolkit, Vitest/node:test.
 
@@ -23,28 +23,36 @@
 
 Files this plan touches (relative to repo root):
 
-| File | Operation | Role |
+### Task 2 — 15 conflict files (per recon dump `/tmp/merge-conflicts-dump.txt`)
+
+| File | Conflict type | Resolution |
 |---|---|---|
-| `.eslintrc.cjs` | merge resolution | trivial; take main |
-| `package-extension.js` | merge resolution | trivial; take main |
-| `src/auth/confirm.js` | merge resolution | trivial; take main |
-| `src/components/dnd/DraggableTabGroup.tsx` | merge resolution | trivial; take main |
-| `src/components/search/SearchResultList.tsx` | merge resolution | trivial; take main |
-| `src/components/tabs/ReorderView/index.tsx` | merge resolution | trivial; take main |
-| `src/popup/index.html` | merge resolution | trivial; take main |
-| `src/store/hooks.ts` | merge resolution | trivial; take main |
-| `src/store/slices/settingsSlice.ts` | merge resolution | manual review (1 hunk) |
-| `src/styles/micro-interactions.css` | merge resolution | trivial; take main |
-| `src/utils/inputValidation.ts` | merge resolution | manual review (2 hunks) |
-| `src/utils/sessionPresentation.ts` | merge resolution | manual review (2 hunks) |
-| `src/store/index.ts` | silent-merge verification | load-bearing; grep-check |
-| `src/store/slices/tabSlice.ts` | silent-merge verification | load-bearing; grep-check |
-| `src/utils/storage.ts` | silent-merge verification | load-bearing; grep-check |
-| `src/components/common/Toast.tsx` | create/extend | add `action` button UI |
-| `src/contexts/ToastContext.tsx` | create/extend | upgrade `showToast` to options API |
-| `tests/components/ToastContext.smoke.test.tsx` | create/extend | assertion for action button render |
-| `tests/useDeferredDelete.test.ts` | extend | assertion for action button click → `cancel` |
-| `AGENTS.md` | reconcile | keep 3 strong invariants, move sprint guidance to `docs/AI_HANDOFF.md` |
+| `package.json` | content (both modified) | take main |
+| `pnpm-lock.yaml` | content (1 region) | take main + `pnpm install` after merge |
+| `src/store/index.ts` | content (5 regions) | take main wholesale |
+| `src/store/slices/tabSlice.ts` | content (4 regions) | manual: take main + port `getGroupsOrThrow` |
+| `src/utils/storage.ts` | content (6 regions) | manual: take main + port `getGroupsOrThrow` + decrypt try/catch |
+| `src/components/layout/Header.tsx` | content (3 regions) | take main |
+| `src/components/tabs/TabGroup.tsx` | content (6 regions) | take main |
+| `src/components/tabs/TabList.tsx` | content (4 regions) | take main |
+| `src/components/tabs/FavoriteStrip.tsx` | add/add | take main |
+| `src/popup/index.tsx` | content (1 region) | take main |
+| `src/services/tabSyncWorkflow.ts` | modify/delete | take main's deletion |
+| `src/types/tab.ts` | content (1 region) | take main |
+| `src/utils/hydrationDecision.ts` | add/add | manual: take main + add local's `isDeleted` filter |
+| `src/utils/secureStorage.ts` | content (4 regions) | take main |
+| `src/utils/supabase.ts` | content (1 region) | take main |
+| `tests/_alias-loader.mjs` | add/add | take main |
+
+### Tasks 5-8 — Toast + AGENTS.md
+
+| File | Operation |
+|---|---|
+| `src/components/common/Toast.tsx` | add `action` button UI |
+| `src/contexts/ToastContext.tsx` | upgrade `showToast` to options API |
+| `tests/components/ToastContext.smoke.test.tsx` | extend with action-button assertion |
+| `tests/useDeferredDelete.test.ts` | extend with action-button end-to-end |
+| `AGENTS.md` | reconcile with `docs/AI_HANDOFF.md` |
 
 ---
 
@@ -83,8 +91,7 @@ No commit needed. Record the `/tmp/premerge-head.txt` value in the next task's c
 
 ## Task 2: Perform the merge
 
-**Files:**
-- Touch: every file that appears as a conflict marker (12 files) plus the silent-merge load-bearing files (3 files).
+**Files:** 15 conflict files (per spec §2.2 / recon dump `/tmp/merge-conflicts-dump.txt`).
 
 - [ ] **Step 1: Fetch origin to ensure origin/main is current**
 
@@ -93,139 +100,241 @@ Expected: no output (or "Fetching origin" header).
 
 - [ ] **Step 2: Start the merge**
 
-Run: `git merge --no-ff origin/main -m "merge: integrate codex/v1-11-6-integration with main (Sprint 1-8)" -m "Brings 81 commits from Sprint 1-8 into the v1.11.6-integration branch. Preserves local-persistence rebuild (getGroupsOrThrow + decrypt-failure save guard). See docs/superpowers/specs/2026-08-09-v1-11-6-branch-integration-design.md for the conflict playbook."`
-Expected: merge commit created OR merge stopped with conflict markers.
+Run:
+```bash
+git merge --no-ff origin/main \
+  -m "merge: integrate codex/v1-11-6-integration with main (Sprint 1-8)" \
+  -m "Brings 81 commits from Sprint 1-8. Conflict resolution per docs/superpowers/specs/2026-08-09-v1-11-6-branch-integration-design.md §2: take main's sync layer wholesale; preserve getGroupsOrThrow + decrypt-failure try/catch as AGENTS.md invariants."
+```
+Expected: merge commit created OR merge stopped with conflict markers on 15 files.
 
-- [ ] **Step 3: Check which files need manual resolution**
+- [ ] **Step 3: Verify exactly 15 conflict files**
 
-Run: `git diff --name-only --diff-filter=U`
-Expected: a list of ~12 files (the "real conflicts" set per spec §2.2).
+Run:
+```bash
+git diff --name-only --diff-filter=U | tee /tmp/conflict-files.txt | wc -l
+```
+Expected output: `15`.
 
-- [ ] **Step 4: Save the conflict list**
+If fewer or more than 15, STOP and inspect. Recon at `/tmp/merge-conflicts-dump.txt` documents the expected set.
 
-Run: `git diff --name-only --diff-filter=U > /tmp/conflict-files.txt && cat /tmp/conflict-files.txt`
-Expected: 12 paths.
-
-If fewer than 12 appear, that's fine (some conflict hunks may resolve automatically). If more appear than 12, STOP and review the diff before continuing — main may have introduced new conflicts we didn't predict.
-
-- [ ] **Step 5: Take main for the trivial conflicts**
+- [ ] **Step 4: Take main for the 9 "trivial" conflicts**
 
 For each of these 9 files, run `git checkout --theirs <file> && git add <file>`:
 
+```bash
+git checkout --theirs package.json pnpm-lock.yaml
+git add package.json pnpm-lock.yaml
+
+git checkout --theirs src/components/layout/Header.tsx
+git add src/components/layout/Header.tsx
+
+git checkout --theirs src/components/tabs/TabGroup.tsx
+git add src/components/tabs/TabGroup.tsx
+
+git checkout --theirs src/components/tabs/TabList.tsx
+git add src/components/tabs/TabList.tsx
+
+git checkout --theirs src/popup/index.tsx
+git add src/popup/index.tsx
+
+git checkout --theirs src/types/tab.ts
+git add src/types/tab.ts
+
+git checkout --theirs src/utils/secureStorage.ts
+git add src/utils/secureStorage.ts
+
+git checkout --theirs src/utils/supabase.ts
+git add src/utils/supabase.ts
+
+git checkout --theirs src/store/index.ts
+git add src/store/index.ts
 ```
-.eslintrc.cjs
-package-extension.js
-src/auth/confirm.js
-src/components/dnd/DraggableTabGroup.tsx
-src/components/search/SearchResultList.tsx
-src/components/tabs/ReorderView/index.tsx
-src/popup/index.html
-src/store/hooks.ts
-src/styles/micro-interactions.css
+
+These 9 files all resolve to "take main" per spec §2.2. Note: `pnpm-lock.yaml` will need `pnpm install` after the merge commit (Task 4 territory).
+
+- [ ] **Step 5: Delete `src/services/tabSyncWorkflow.ts` (modify/delete resolution)**
+
+Main deleted this file in commit `e1a13e1`. Per spec §2.2, take main's deletion:
+
+```bash
+git rm src/services/tabSyncWorkflow.ts
 ```
 
-(These all have the resolution "Take main" per spec §2.2 — they have no overlapping local reason.)
+- [ ] **Step 6: Take main for the 3 add/add files**
 
-- [ ] **Step 6: Resolve `src/store/slices/settingsSlice.ts`**
+For the 3 add/add files, run `git checkout --theirs` (main's version wins per spec §2.2):
 
-Open the file and resolve the conflict markers.
+```bash
+git checkout --theirs src/components/tabs/FavoriteStrip.tsx
+git add src/components/tabs/FavoriteStrip.tsx
 
-Expected conflict shape (from merge-tree output):
+git checkout --theirs src/utils/hydrationDecision.ts
+git add src/utils/hydrationDecision.ts
+
+git checkout --theirs tests/_alias-loader.mjs
+git add tests/_alias-loader.mjs
 ```
--  initialState,
-+  initialState: initialSettingsState,
+
+`FavoriteStrip.tsx` — main's Sprint 3 implementation wins.
+`hydrationDecision.ts` — take main as the base (will get local's `isDeleted` filter in a follow-up commit; out of scope for this merge).
+`tests/_alias-loader.mjs` — main's newer jsdom helper wins.
+
+- [ ] **Step 7: Resolve `src/store/slices/tabSlice.ts` (manual merge)**
+
+This file has 4 conflict regions. Per spec §2.2, the resolution is:
+- Take main's `initialTabState` (adds `lastLoadedAt?`, `lastSyncStatus?`, `compressionStats?`, `backgroundSync?`, `syncProgress?`, `syncOperation?`).
+- Take main's `persistGroupsThunk`.
+- Take main's `moveGroupLocal` reducer and `moveGroupAndSync` debounced thunk.
+- **Preserve local's `getGroupsOrThrow` call in `loadGroups`** (AGENTS.md invariant).
+- If main's `saveGroups` thunk lacks the `130ce09` decrypt-failure try/catch, port it back in.
+
+Open the file. For each conflict region:
+1. The `initialTabState` shape conflict: take main's (with all new fields).
+2. The `persistGroupsThunk` export: take main's (re-export from tabSlice).
+3. The reducer body conflicts: take main's (it has moveGroupLocal, lastSyncStatus handling, etc.).
+4. The `loadGroups` thunk body: **manually preserve** `const groups = await storage.getGroupsOrThrow();` — replace main's `storage.getGroups()` with `storage.getGroupsOrThrow()` if main didn't already.
+
+If main already uses `getGroupsOrThrow` (likely), no change is needed beyond taking main's hunks. If main uses `getGroups()` in any read-modify-write thunk, change it back to `getGroupsOrThrow()` per AGENTS.md.
+
+After resolving:
+```bash
+git add src/store/slices/tabSlice.ts
+pnpm type-check --noEmit 2>&1 | grep -E "tabSlice|error" | head -10
+```
+Expected: no errors in `tabSlice.ts`.
+
+- [ ] **Step 8: Resolve `src/utils/storage.ts` (manual merge)**
+
+This file has 6 conflict regions. Per spec §2.2, the resolution is:
+- Take main's `HydrateResult` interface and `cacheManager` / `encryptLocalBlob` / `decryptError` integration.
+- **Preserve local's `getGroupsOrThrow`** (AGENTS.md invariant).
+- **Preserve the decrypt-failure try/catch from `130ce09`** in the save path.
+
+Open the file. For each conflict region:
+1. `HydrateResult` interface: take main's.
+2. `getGroupsCore` boundaries: take main's structure, but ensure `getGroupsOrThrow` is exported and used by callers.
+3. `decryptLocalBlob` try/catch: take main's, BUT ensure the local `130ce09` pattern (graceful error if decrypt fails — fall through to empty array) is preserved. If main doesn't have this guard, add it back.
+4. `setGroups` / `saveGroups` thunk body: take main's, ensure the decrypt-failure save guard from `130ce09` is present (so save doesn't fail catastrophically when local data is corrupted).
+5. `cacheManager` integration: take main's.
+6. Other internal helpers: take main's.
+
+After resolving:
+```bash
+git add src/utils/storage.ts
+pnpm type-check --noEmit 2>&1 | grep -E "storage|error" | head -10
+```
+Expected: no errors in `storage.ts`.
+
+- [ ] **Step 9: Confirm no conflict markers remain**
+
+Run:
+```bash
+git diff --name-only --diff-filter=U
+```
+Expected: empty output.
+
+If non-empty, STOP and inspect. The 15-file resolution MUST be complete before continuing.
+
+- [ ] **Step 10: Run `pnpm install` to regenerate the lockfile**
+
+The merged `pnpm-lock.yaml` may have a stale dependency graph because main added `jsdom`. Run:
+
+```bash
+pnpm install
 ```
 
-Resolution: keep main's `initialState: initialSettingsState`. The reducer body on the local side and the `name: 'settings'` line are identical — no other changes needed.
+Expected: lockfile updates if needed; no errors.
 
-Run: `git add src/store/slices/settingsSlice.ts`
+- [ ] **Step 11: Run `pnpm type-check` and `pnpm lint` to catch resolution errors**
 
-- [ ] **Step 7: Resolve `src/utils/inputValidation.ts`**
+Run:
+```bash
+pnpm type-check
+pnpm lint
+```
+Expected: 0 errors, 0 warnings.
 
-Open the file. Expected conflict hunks:
+If errors appear, the most likely culprit is the manual merges in tabSlice.ts or storage.ts. Re-open the affected file and fix.
 
-1. `PasswordStrength` enum → const-object refactor (main's version).
-2. `escapeHtml` dual-environment behavior (local's version with both browser + SSR branches).
+- [ ] **Step 12: Complete the merge commit**
 
-Resolution:
-- Take main's `PasswordStrength` const-object + the new `type` alias it adds.
-- Keep local's `escapeHtml` (with `if (typeof window !== 'undefined' && typeof document !== 'undefined')` branch) — this is what makes input validation safe in SSR / node:test environments.
+Run:
+```bash
+git add package.json pnpm-lock.yaml
+git commit --no-edit
+```
+Expected: merge commit created.
 
-After resolving, run: `pnpm type-check --noEmit 2>&1 | head -20`
-Expected: no errors in `inputValidation.ts`.
+- [ ] **Step 13: Verify the merge commit exists**
 
-Run: `git add src/utils/inputValidation.ts`
-
-- [ ] **Step 8: Resolve `src/utils/sessionPresentation.ts`**
-
-Open the file. Expected conflict hunks: the existing functions (unchanged locally) + main's appended `formatLastSync` helper.
-
-Resolution: keep all existing local functions; append main's `formatLastSync` function verbatim.
-
-Run: `git add src/utils/sessionPresentation.ts`
-
-- [ ] **Step 9: Resolve any remaining conflict markers**
-
-Run: `git diff --name-only --diff-filter=U`
-Expected: empty.
-
-If non-empty, STOP and inspect. The merge-tree analysis predicted exactly 12 conflict files; anything else is unexpected.
-
-- [ ] **Step 10: Complete the merge commit**
-
-Run: `git commit --no-edit`
-Expected: merge commit created with the original message.
-
-- [ ] **Step 11: Verify the merge commit exists**
-
-Run: `git log --oneline HEAD~1..HEAD`
+Run:
+```bash
+git log --oneline HEAD~1..HEAD
+```
 Expected: 2 entries — the merge commit on top, and the previous HEAD below.
+
+- [ ] **Step 14: Sanity-check the merge commit's diff stat**
+
+Run:
+```bash
+git show --stat HEAD | head -50
+```
+Expected: a long list of files changed (81 commits from main + conflict resolutions).
 
 ---
 
-## Task 3: Post-merge silent-load verification
+## Task 3: Post-merge invariant verification
 
 **Files:**
-- Read: `src/store/index.ts`, `src/store/slices/tabSlice.ts`, `src/utils/storage.ts`
+- Read: `src/utils/storage.ts`, `src/store/slices/tabSlice.ts`, `src/components/tabs/FavoriteStrip.tsx`, `src/utils/hydrationDecision.ts`, `tests/refreshDataLossRootCause.test.ts`
 
-**Goal:** Confirm the three load-bearing files kept their invariants after the silent merge. AGENTS.md "Refresh persistence regression" mandates this.
+**Goal:** Confirm AGENTS.md "Refresh persistence regression" invariants survived the conflict resolution. Although these files were conflict files (not silent-merge), manual resolution may have introduced regressions.
 
-- [ ] **Step 1: Grep-check `src/store/index.ts`**
-
-Run:
-```bash
-git diff origin/main HEAD -- 'src/store/index.ts' | grep -E 'createStore|_store|proxy|autoSyncMiddleware|debouncedPersistMiddleware'
-```
-
-Expected: all 5 tokens appear in the diff (the diff shows the local-side additions that aren't on main).
-
-If any of `createStore`, `_store`, or `proxy` is missing, the local-only `createStore + proxy singleton` pattern was lost — STOP, restore by hand, recommit.
-
-If `autoSyncMiddleware` or `debouncedPersistMiddleware` is missing, main's middleware chain was lost — STOP, restore by hand, recommit.
-
-- [ ] **Step 2: Grep-check `src/store/slices/tabSlice.ts`**
+- [ ] **Step 1: Grep-check `getGroupsOrThrow` exists and is called**
 
 Run:
 ```bash
-git diff origin/main HEAD -- 'src/store/slices/tabSlice.ts' | grep -E 'getGroupsOrThrow|lastSyncStatus|moveGroupLocal|moveGroupAndSync'
+grep -n "getGroupsOrThrow" src/utils/storage.ts | head -5
+grep -rn "getGroupsOrThrow" src/store/slices/ | head -5
 ```
 
-Expected: all 4 tokens appear.
+Expected: `getGroupsOrThrow` defined in `src/utils/storage.ts` and imported by at least one thunk in `src/store/slices/`.
 
-If `getGroupsOrThrow` is missing from the diff output, **the AGENTS.md invariant was lost**. STOP, restore the import + call sites in the read-modify-write thunks, recommit. Run `pnpm verify:refresh` to confirm.
+If the definition is missing, the AGENTS.md invariant was lost during resolution. STOP, restore from pre-merge HEAD's version (`git show $(cat /tmp/premerge-head.txt):src/utils/storage.ts`), recommit.
 
-- [ ] **Step 3: Grep-check `src/utils/storage.ts`**
+- [ ] **Step 2: Grep-check decrypt-failure try/catch in save path**
 
 Run:
 ```bash
-git diff origin/main HEAD -- 'src/utils/storage.ts' | grep -E 'getGroupsOrThrow|decryptLocalBlob|cacheManager|encryptLocalBlob|decryptError'
+grep -n "decryptError\|decrypt-failure\|decrypt failure" src/utils/storage.ts | head -5
 ```
 
-Expected: all 5 tokens appear.
+Expected: at least one match (the local `130ce09` introduced a guard around the decrypt call).
 
-If `getGroupsOrThrow` is missing, STOP. If the `try { ... } catch { ... }` decrypt-failure guard introduced in commit `130ce09` is missing, STOP. Restore by referring to the pre-merge `/tmp/premerge-head.txt` HEAD's `src/utils/storage.ts`.
+If empty, the local invariant was lost. STOP, restore the try/catch from `130ce09`'s diff.
 
-- [ ] **Step 4: Run `pnpm verify:refresh`**
+- [ ] **Step 3: Grep-check `initialTabState` exported**
+
+Run:
+```bash
+grep -n "export const initialTabState" src/store/slices/tabSlice.ts
+```
+
+Expected: one match (used by `src/store/index.ts` for the preloadedState shape).
+
+If empty, main's rename was lost. STOP, restore from `origin/main`.
+
+- [ ] **Step 4: Grep-check `refreshDataLossRootCause.test.ts` still references the protected path**
+
+Run:
+```bash
+grep -n "getGroupsOrThrow\|getGroups" tests/refreshDataLossRootCause.test.ts | head -5
+```
+
+Expected: matches confirming the test still exercises the protected path.
+
+- [ ] **Step 5: Run `pnpm verify:refresh`**
 
 Run: `pnpm verify:refresh`
 Expected: green.
