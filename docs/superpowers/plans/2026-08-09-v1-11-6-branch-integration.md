@@ -15,7 +15,7 @@
 - AGENTS.md "Responses": reply in Chinese unless asked otherwise.
 - pnpm `^10.24.0`, package.json version target = `1.14.0` (what `origin/main` carries after merge).
 - CI zip-size gate: `chrome-extension.zip` ≤ 280 KB (`pnpm package`).
-- TypeScript strict mode, ESLint 0 warnings, `pnpm test` must be all green before claiming done.
+- TypeScript strict mode, ESLint 0 warnings, all tests green (`pnpm test` covers top-level `tests/*.test.ts`; smoke / jsdom tests under `tests/components/` and `tests/jsdom/` require the explicit `node --test ...` invocation with `find tests -name '*.test.ts*'`). Both must be green before claiming done.
 - Do NOT migrate `hibernate-pano/*` "five-round" branches.
 - Do NOT re-tag `v1.11.6` (separate ticket).
 
@@ -234,8 +234,13 @@ If red, the merge silently broke the AGENTS.md invariant. Do NOT proceed. Invest
 
 - [ ] **Step 5: Run full test suite**
 
-Run: `pnpm test`
-Expected: all green. (Target ~339+ tests inherited from main plus the local refresh regression test.)
+Run:
+```bash
+pnpm test
+node --test --test-force-exit --test-concurrency=1 --experimental-strip-types --experimental-test-module-mocks --loader ./tests/_alias-loader.mjs $(find tests -name '*.test.ts*' | tr '\n' ' ')
+```
+
+Expected: all green. (Target ~339+ tests inherited from main plus the local refresh regression test plus any new tests in `tests/components/` and `tests/jsdom/`.)
 
 - [ ] **Step 6: Run type-check + lint**
 
@@ -391,10 +396,20 @@ Note: this is a deliberate deviation from the original commit `58710e6`'s `Toast
 Run: `node --test --test-force-exit --test-concurrency=1 --experimental-strip-types --experimental-test-module-mocks --loader ./tests/_alias-loader.mjs tests/components/ToastContext.smoke.test.tsx 2>&1 | tail -20`
 Expected: PASS.
 
-- [ ] **Step 5: Run the full smoke test set to confirm no regression**
+- [ ] **Step 5: Run the full test set to confirm no regression**
 
-Run: `pnpm test`
-Expected: all green.
+The repository's `pnpm test` script runs only `tests/*.test.ts` (top-level glob), not `tests/components/*.smoke.test.tsx` or `tests/jsdom/*.test.ts`. Run BOTH:
+
+```bash
+pnpm test
+node --test --test-force-exit --test-concurrency=1 --experimental-strip-types --experimental-test-module-mocks --loader ./tests/_alias-loader.mjs 'tests/**/*.test.ts' 'tests/**/*.test.tsx'
+```
+
+Expected: all green. If `tests/**/*.test.tsx` glob is rejected by your shell, fall back to running the specific files you touched plus the smoke set explicitly:
+```bash
+pnpm test
+node --test ... tests/components/ToastContext.smoke.test.tsx tests/useDeferredDelete.test.ts
+```
 
 - [ ] **Step 6: Commit**
 
@@ -532,7 +547,12 @@ Expected: PASS for both new test cases (and all pre-existing ones).
 
 - [ ] **Step 5: Run the full test suite**
 
-Run: `pnpm test`
+Run:
+```bash
+pnpm test
+node --test --test-force-exit --test-concurrency=1 --experimental-strip-types --experimental-test-module-mocks --loader ./tests/_alias-loader.mjs $(find tests -name '*.test.ts*' | tr '\n' ' ')
+```
+
 Expected: all green.
 
 - [ ] **Step 6: Commit**
@@ -608,7 +628,12 @@ Expected: PASS.
 
 - [ ] **Step 3: Run the full test suite**
 
-Run: `pnpm test`
+Run:
+```bash
+pnpm test
+node --test --test-force-exit --test-concurrency=1 --experimental-strip-types --experimental-test-module-mocks --loader ./tests/_alias-loader.mjs $(find tests -name '*.test.ts*' | tr '\n' ' ')
+```
+
 Expected: all green.
 
 - [ ] **Step 4: Commit**
@@ -650,7 +675,15 @@ If AGENTS.md needs editing (e.g. to drop an outdated reference to "1.11.6" since
 
 - [ ] **Step 4: Run full verification**
 
-Run: `pnpm type-check && pnpm lint && pnpm test && pnpm verify:refresh`
+Run:
+```bash
+pnpm type-check
+pnpm lint
+pnpm test
+pnpm verify:refresh
+node --test --test-force-exit --test-concurrency=1 --experimental-strip-types --experimental-test-module-mocks --loader ./tests/_alias-loader.mjs $(find tests -name '*.test.ts*' | tr '\n' ' ')
+```
+
 Expected: all green.
 
 - [ ] **Step 5: Commit**
@@ -680,8 +713,13 @@ If we need to bump to a new integration version (e.g. `1.15.0`), edit `package.j
 
 - [ ] **Step 3: Run the full verify pipeline**
 
-Run: `pnpm verify`
-Expected: all of `type-check`, `lint`, `build`, `test`, `verify:refresh` are green.
+Run:
+```bash
+pnpm verify
+node --test --test-force-exit --test-concurrency=1 --experimental-strip-types --experimental-test-module-mocks --loader ./tests/_alias-loader.mjs $(find tests -name '*.test.ts*' | tr '\n' ' ')
+```
+
+Expected: all of `type-check`, `lint`, `build`, `test`, `verify:refresh`, AND the smoke / jsdom test set are green. (`pnpm verify` only runs top-level `tests/*.test.ts`, so the second command is required to cover the smoke / jsdom tests.)
 
 - [ ] **Step 4: Build the package**
 
@@ -704,7 +742,8 @@ git -c user.name=panbo -c user.email=panbo.coding@qq.com commit -m "chore: bump 
 - [ ] `git log --oneline $(cat /tmp/premerge-head.txt)..HEAD` shows the merge commit + Toast-related commits + reconcile commits.
 - [ ] `pnpm type-check` is 0 error.
 - [ ] `pnpm lint` is 0 warning.
-- [ ] `pnpm test` is all green.
+- [ ] `pnpm test` is all green (top-level `tests/*.test.ts`).
+- [ ] Smoke / jsdom tests under `tests/components/` and `tests/jsdom/` are all green (`node --test ... $(find tests -name '*.test.ts*')`).
 - [ ] `pnpm verify:refresh` is green.
 - [ ] `pnpm build` succeeds.
 - [ ] `pnpm package` produces a zip ≤ 280 KB.
