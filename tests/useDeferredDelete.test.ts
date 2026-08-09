@@ -105,6 +105,9 @@ test('useDeferredDelete: repeat requestDelete resets timer (no double commit)', 
 test('useDeferredDelete: clicking the undo action button cancels the commit', async () => {
   // E2E: renderHook + ToastProvider wrapper, simulate the spec §4.4 flow
   // ("delete → 10s undo toast with button → click → cancel").
+  //
+  // 注意：这个文件会被 `pnpm test`（纯 node:test，无 JSX 编译）直接执行，
+  // 所以这里不能用 JSX 语法 —— 用 React.createElement 保持可解析。
   let commits = 0;
   const { useToast } = await import('@/contexts/ToastContext.tsx');
 
@@ -114,21 +117,21 @@ test('useDeferredDelete: clicking the undo action button cancels the commit', as
     const { showToast } = useToast();
     const deferred = useDeferredDelete({ delayMs: 10000, onCommit: () => { commits += 1; } });
     captured = deferred;
-    return (
-      <button
-        type="button"
-        data-testid="delete"
-        onClick={() => {
+    return React.createElement(
+      'button',
+      {
+        type: 'button',
+        'data-testid': 'delete',
+        onClick: () => {
           showToast({
             message: '已删除',
             duration: 10000,
             action: { label: '撤销', onClick: deferred.cancel },
           });
           deferred.requestDelete();
-        }}
-      >
-        delete
-      </button>
+        },
+      },
+      'delete'
     );
   };
 
@@ -136,9 +139,7 @@ test('useDeferredDelete: clicking the undo action button cancels the commit', as
   const { render, fireEvent, cleanup } = await import('@testing-library/react');
 
   const { unmount } = render(
-    <ToastProvider>
-      <Host />
-    </ToastProvider>
+    React.createElement(ToastProvider, null, React.createElement(Host))
   );
 
   // 点击 delete 触发 showToast + requestDelete
