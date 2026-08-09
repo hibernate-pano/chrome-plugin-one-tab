@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
+import type { ToastAction } from '@/contexts/ToastContext';
 
 export type ToastType = 'success' | 'error' | 'info' | 'warning';
 
@@ -9,6 +10,17 @@ interface ToastProps {
   duration?: number;
   onClose?: () => void;
   visible: boolean;
+  /**
+   * 可选撤销/操作按钮。提供时在 toast 内部渲染一个按钮行（label + onClick）。
+   * 点击按钮触发 `onAction` —— parent 应在 `onAction` 内关闭 toast 并触发
+   * `action.onClick()`（通常在同一个 updater 里同步调用，避免双重触发）。
+   */
+  action?: ToastAction | null;
+  /**
+   * 撤销/操作按钮回调（与 `action.onClick` 配套的"立即关闭"信号）。
+   * parent 应在此回调内关闭 toast（一般调用 `setToast(prev => ({ ...prev, visible: false }))`）。
+   */
+  onAction?: () => void;
 }
 
 export const Toast: React.FC<ToastProps> = ({
@@ -16,7 +28,9 @@ export const Toast: React.FC<ToastProps> = ({
   type = 'success',
   duration = 3000,
   onClose,
-  visible
+  visible,
+  action = null,
+  onAction,
 }) => {
   const [isVisible, setIsVisible] = useState(visible);
   const [animation, setAnimation] = useState('animate-toast-in');
@@ -144,6 +158,28 @@ export const Toast: React.FC<ToastProps> = ({
                 {type}
               </div>
               <p className="mt-1 text-sm font-medium leading-6 text-current">{message}</p>
+              {action && (
+                <div className="mt-2 flex items-center gap-2">
+                  <button
+                    type="button"
+                    data-testid="toast-action"
+                    onClick={() => {
+                      // 关闭动画 + 触发 onAction（parent 负责关闭 toast 并触发
+                      // action.onClick —— 在 handleToastAction 的 updater 内同步
+                      // 调用，避免双重触发）。
+                      setAnimation('animate-toast-out');
+                      setTimeout(() => {
+                        setIsVisible(false);
+                        onAction?.();
+                      }, 220);
+                    }}
+                    aria-label={action.label}
+                    className="inline-flex items-center rounded-md border border-current/20 px-2.5 py-1 text-xs font-medium text-current transition-colors hover:bg-current/10 focus:outline-none focus:ring-2 focus:ring-current/30"
+                  >
+                    {action.label}
+                  </button>
+                </div>
+              )}
             </div>
             <button
               onClick={() => {
