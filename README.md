@@ -1,12 +1,12 @@
 # TabStack
 
-当前版本：`1.14.1`
+当前版本：`1.15.0`
 
 > **Save the session. Find it later. Restore it on any device.**
 >
 > OneTab 简单，但换电脑就没了。TabStack 让你的标签组跟着你走 —— 端到端加密、跨设备同步、3 套主题开箱即用。
 
-[![Version](https://img.shields.io/badge/version-1.14.1-blue)]()
+[![Version](https://img.shields.io/badge/version-1.15.0-blue)]()
 [![License](https://img.shields.io/badge/license-MIT-green)]()
 [![MV3](https://img.shields.io/badge/Manifest-V3-orange)]()
 
