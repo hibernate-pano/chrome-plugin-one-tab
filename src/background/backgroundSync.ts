@@ -35,18 +35,19 @@ export async function handleBackgroundSyncAlarm(): Promise<void> {
     }
 
     const settings = await storage.getSettings();
+    // SW 场景不需要完整 Redux state —— engine 只用 auth + settings，
+    // 这里用最小 shape 注入，避免在 worker 里初始化整个 store。
     const engine = new SyncEngine({
-      getState: () => ({
-        auth: { isAuthenticated: true, user: cachedAuth.user } as any,
-        settings: { syncStrategy: settings.syncStrategy ?? 'newest' } as any,
-        tabs: undefined as any,
-      }),
+      getState: () =>
+        ({
+          auth: { isAuthenticated: true, user: cachedAuth.user },
+          settings: { syncStrategy: settings.syncStrategy ?? 'newest' },
+        }) as any,
     });
 
     const result = await engine.downloadAndMerge();
     console.log(
       `[BackgroundSync] ${result.success ? '同步成功' : '同步失败'}: ` +
-        `本地 ${result.stats?.localCount ?? 0} / 云端 ${result.stats?.cloudCount ?? 0} / ` +
         `合并 ${result.stats?.mergedCount ?? 0} 个组` +
         (result.reason ? ` (${result.reason})` : '')
     );
