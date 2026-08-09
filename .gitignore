@@ -9,6 +9,8 @@ node_modules/
 .codex/
 dist/
 **.zip
+.playwright-mcp/
+.pnpm-store/
 
 # 环境变量文件
 .env

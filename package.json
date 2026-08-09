@@ -9,11 +9,13 @@
     "build:dev": "tsc && vite build",
     "package": "pnpm build && node package-extension.js",
     "preview": "vite preview",
-    "test": "node --test --experimental-strip-types tests/*.test.ts",
+    "test": "node --test --test-force-exit --test-concurrency=1 --experimental-strip-types --experimental-test-module-mocks --loader ./tests/_alias-loader.mjs tests/*.test.ts",
+    "verify:refresh": "node --test --test-force-exit --test-concurrency=1 --experimental-strip-types --experimental-test-module-mocks --loader ./tests/_alias-loader.mjs tests/refreshDataLossRootCause.test.ts",
     "lint": "eslint src --ext ts,tsx --report-unused-disable-directives --max-warnings 0",
     "format": "prettier --write \"src/**/*.{ts,tsx}\"",
     "type-check": "tsc --noEmit",
     "validate": "node scripts/validate-extension.mjs && pnpm type-check && pnpm lint && pnpm build",
+    "verify": "pnpm type-check && pnpm lint && pnpm build && pnpm test && pnpm verify:refresh",
     "test:supabase-smoke": "node scripts/supabase-smoke-test.mjs"
   },
   "keywords": [
@@ -61,6 +63,7 @@
     "eslint-config-prettier": "^9.1.0",
     "eslint-plugin-react": "^7.34.0",
     "eslint-plugin-react-hooks": "^4.6.0",
+    "fake-indexeddb": "^6.2.5",
     "postcss": "^8.4.35",
     "prettier": "^3.2.5",
     "tailwindcss": "^3.4.1",

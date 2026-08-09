@@ -95,7 +95,7 @@ export class TabManager {
         return;
       }
 
-      const existingGroups = await storage.getGroups();
+      const existingGroups = await storage.getGroupsOrThrow();
       await storage.setGroups([tabGroup, ...existingGroups]);
 
       await this.showNotification({
@@ -171,7 +171,7 @@ export class TabManager {
         return;
       }
 
-      const existingGroups = await storage.getGroups();
+      const existingGroups = await storage.getGroupsOrThrow();
       await storage.setGroups([tabGroup, ...existingGroups]);
 
       await trackProductEvent('session_saved', {

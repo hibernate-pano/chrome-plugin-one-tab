@@ -283,7 +283,7 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
 
   return (
     <div
-      className="tab-group-card animate-in group/card micro-interaction-card"
+      className="tab-group-card animate-in group/card micro-interaction-card relative"
       role="region"
       aria-labelledby={`tab-group-title-${group.id}`}
     >
@@ -374,9 +374,8 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
           </span>
         </div>
 
-        {/* 操作按钮 */}
-        <div className="flex items-center gap-1 opacity-0 group-hover/card:opacity-100 transition-all duration-200 ease-out">
-          {/* 恢复全部 */}
+        {/* 操作按钮：恢复始终可见，次要操作在 hover / focus 时展开 */}
+        <div className="flex items-center gap-0.5">
           <button
             onClick={handleOpenAllTabs}
             className="btn-icon p-1.5 tab-group-action-accent micro-interaction-button"
@@ -386,59 +385,58 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
             <OpenAllIcon />
           </button>
 
-          {/* 编辑 */}
-          {!group.isLocked && (
+          <div className="absolute right-3 top-1.5 flex items-center gap-0.5 opacity-0 group-focus-within/card:opacity-100 pointer-events-none group-hover/card:pointer-events-auto group-hover/card:opacity-100 transition-all duration-200 ease-out">
+            {!group.isLocked && (
+              <button
+                onClick={() => setIsEditing(true)}
+                className="btn-icon p-1.5 micro-interaction-button"
+                title="重命名会话"
+                aria-label="重命名会话"
+              >
+                <EditIcon />
+              </button>
+            )}
+
             <button
-              onClick={() => setIsEditing(true)}
-              className="btn-icon p-1.5 micro-interaction-button"
-              title="重命名会话"
-              aria-label="重命名会话"
+              onClick={handleToggleFavorite}
+              className={`btn-icon p-1.5 micro-interaction-button ${group.isFavorite ? 'text-amber-500' : ''}`}
+              title={group.isFavorite ? '取消收藏会话' : '收藏会话'}
+              aria-label={group.isFavorite ? '取消收藏会话' : '收藏会话'}
             >
-              <EditIcon />
+              <FavoriteIcon filled={!!group.isFavorite} />
             </button>
-          )}
 
-          <button
-            onClick={handleToggleFavorite}
-            className={`btn-icon p-1.5 micro-interaction-button ${group.isFavorite ? 'text-amber-500' : ''}`}
-            title={group.isFavorite ? '取消收藏会话' : '收藏会话'}
-            aria-label={group.isFavorite ? '取消收藏会话' : '收藏会话'}
-          >
-            <FavoriteIcon filled={!!group.isFavorite} />
-          </button>
+            {!group.isLocked && (
+              <button
+                onClick={() => setIsEditingNotes(current => !current)}
+                className="btn-icon p-1.5 micro-interaction-button"
+                title={group.notes ? '编辑会话备注' : '添加会话备注'}
+                aria-label={group.notes ? '编辑会话备注' : '添加会话备注'}
+              >
+                <NotesIcon />
+              </button>
+            )}
 
-          {!group.isLocked && (
             <button
-              onClick={() => setIsEditingNotes(current => !current)}
-              className="btn-icon p-1.5 micro-interaction-button"
-              title={group.notes ? '编辑会话备注' : '添加会话备注'}
-              aria-label={group.notes ? '编辑会话备注' : '添加会话备注'}
+              onClick={handleToggleLock}
+              className={`btn-icon p-1.5 micro-interaction-button ${group.isLocked ? 'tab-group-lock-icon' : ''}`}
+              title={group.isLocked ? '解锁会话' : '锁定会话'}
+              aria-label={group.isLocked ? '解锁会话' : '锁定会话'}
             >
-              <NotesIcon />
+              <LockIcon locked={group.isLocked} />
             </button>
-          )}
 
-          {/* 锁定/解锁 */}
-          <button
-            onClick={handleToggleLock}
-            className={`btn-icon p-1.5 micro-interaction-button ${group.isLocked ? 'tab-group-lock-icon' : ''}`}
-            title={group.isLocked ? '解锁会话' : '锁定会话'}
-            aria-label={group.isLocked ? '解锁会话' : '锁定会话'}
-          >
-            <LockIcon locked={group.isLocked} />
-          </button>
-
-          {/* 删除 */}
-          {!group.isLocked && (
-            <button
-              onClick={handleDelete}
-              className="btn-icon p-1.5 tab-group-action-danger micro-interaction-button"
-              title="删除会话"
-              aria-label="删除会话"
-            >
-              <DeleteIcon />
-            </button>
-          )}
+            {!group.isLocked && (
+              <button
+                onClick={handleDelete}
+                className="btn-icon p-1.5 tab-group-action-danger micro-interaction-button"
+                title="删除会话"
+                aria-label="删除会话"
+              >
+                <DeleteIcon />
+              </button>
+            )}
+          </div>
         </div>
       </div>
 

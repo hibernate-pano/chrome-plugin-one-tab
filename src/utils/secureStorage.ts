@@ -294,3 +294,85 @@ export class SecureStorage {
 
 // 导出单例实例
 export const secureStorage = new SecureStorage();
+
+/**
+ * 本地大数据块的 V2 加密格式。
+ *
+ * v1.11.6 主数据本身不加密；这里只为“从旧版扩展升级”保留兼容读取能力。
+ * 一旦旧 blob 能成功解密，storage 层会把它转成明文数组并继续使用明文路径，
+ * 不再依赖扩展 ID。
+ */
+const V2_PREFIX = 'SECURE_V2:';
+const V2_PBKDF2_ITERATIONS = 100_000;
+const V2_SALT_LENGTH = 16;
+const V2_IV_LENGTH = 12;
+const V2_KEY_LENGTH = 256;
+
+function getLocalBlobKeyMaterial(): string {
+  if (typeof import.meta !== 'undefined' && import.meta.env?.DEV) {
+    return 'tabstack_dev_mode_fixed_key_v2';
+  }
+  return chrome.runtime.id + 'storage_key_v2';
+}
+
+function base64Decode(b64: string): Uint8Array {
+  return new Uint8Array(atob(b64).split('').map(c => c.charCodeAt(0)));
+}
+
+async function deriveV2LocalKey(salt: Uint8Array): Promise<CryptoKey> {
+  const keyMaterial = await crypto.subtle.importKey(
+    'raw',
+    new TextEncoder().encode(getLocalBlobKeyMaterial()),
+    'PBKDF2',
+    false,
+    ['deriveKey']
+  );
+  return crypto.subtle.deriveKey(
+    {
+      name: 'PBKDF2',
+      salt,
+      iterations: V2_PBKDF2_ITERATIONS,
+      hash: 'SHA-256',
+    },
+    keyMaterial,
+    { name: 'AES-GCM', length: V2_KEY_LENGTH },
+    false,
+    ['encrypt', 'decrypt']
+  );
+}
+
+/**
+ * 解密本地旧版 groups blob。支持 V2 / V1 / 明文三种格式。
+ * 解密失败返回 null，由 storage 层决定如何暴露错误，绝不吞成空数组。
+ */
+export async function decryptLocalBlob<T>(stored: unknown): Promise<T | null> {
+  if (typeof stored !== 'string' || stored.length === 0) return null;
+
+  if (stored.startsWith(V2_PREFIX)) {
+    try {
+      const bytes = base64Decode(stored.substring(V2_PREFIX.length));
+      const salt = bytes.slice(0, V2_SALT_LENGTH);
+      const iv = bytes.slice(V2_SALT_LENGTH, V2_SALT_LENGTH + V2_IV_LENGTH);
+      const ciphertext = bytes.slice(V2_SALT_LENGTH + V2_IV_LENGTH);
+      const key = await deriveV2LocalKey(salt);
+      const decrypted = await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, key, ciphertext);
+      return JSON.parse(new TextDecoder().decode(decrypted)) as T;
+    } catch {
+      return null;
+    }
+  }
+
+  if (stored.startsWith(ENCRYPTION_PREFIX)) {
+    try {
+      return await decryptData<T>(stored);
+    } catch {
+      return null;
+    }
+  }
+
+  try {
+    return JSON.parse(stored) as T;
+  } catch {
+    return null;
+  }
+}

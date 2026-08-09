@@ -53,7 +53,7 @@ class SmartSyncService {
   // 检查本地是否有数据
   async hasLocalData() {
     try {
-      const localGroups = await storage.getGroups();
+      const localGroups = await storage.getGroupsOrThrow();
       return localGroups.length > 0;
     } catch (error) {
       errorHandler.handle(error as Error, {

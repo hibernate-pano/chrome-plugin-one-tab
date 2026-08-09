@@ -16,7 +16,7 @@ export async function migrateFaviconUrls(): Promise<void> {
     console.log('开始迁移 favicon URLs...');
     
     // 获取所有标签组
-    const groups = await storage.getGroups();
+    const groups = await storage.getGroupsOrThrow();
     let migrationCount = 0;
     let totalTabs = 0;
     

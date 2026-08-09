@@ -15,27 +15,7 @@ console.log('- chrome.action:', !!chrome.action);
 console.log('- chrome.storage:', !!chrome.storage);
 console.log('=====================================');
 
-// 迁移旧的存储键到新的统一键名
-async function migrateStorageKeys() {
-  try {
-    const { tabGroups } = await chrome.storage.local.get(['tabGroups']);
-    const { tab_groups } = await chrome.storage.local.get(['tab_groups']);
-
-    // 如果存在旧键且新键不存在或为空，则迁移
-    if (Array.isArray(tabGroups) && (!Array.isArray(tab_groups) || tab_groups.length === 0)) {
-      await chrome.storage.local.set({ tab_groups: tabGroups });
-      // 迁移完成后可选择清理旧键（可选）
-      await chrome.storage.local.remove('tabGroups');
-      console.log('已将旧键 tabGroups 迁移为 tab_groups');
-    }
-  } catch (error) {
-    console.warn('迁移存储键失败（可忽略）:', error);
-  }
-}
-
 async function runMigrations() {
-  await migrateStorageKeys();
-
   try {
     await migrateToV2();
   } catch (error) {

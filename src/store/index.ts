@@ -1,23 +1,52 @@
-import { configureStore } from '@reduxjs/toolkit';
+import { configureStore, combineReducers } from '@reduxjs/toolkit';
 import tabReducer from './slices/tabSlice';
 import settingsReducer from './slices/settingsSlice';
 import authReducer from './slices/authSlice';
+import type { TabState, UserSettings } from '@/types/tab';
 
-export const store = configureStore({
-  reducer: {
-    tabs: tabReducer,
-    settings: settingsReducer,
-    auth: authReducer, // 新增：认证reducer
-  },
-  middleware: getDefaultMiddleware =>
-    getDefaultMiddleware({
-      serializableCheck: {
-        // 忽略 chrome.tabs.Tab 类型的序列化检查
-        ignoredActionPaths: ['payload.tab', 'payload.tabs'],
-        ignoredPaths: ['tabs.currentTab'],
-      },
-    }),
+const rootReducer = combineReducers({
+  tabs: tabReducer,
+  settings: settingsReducer,
+  auth: authReducer,
 });
 
-export type AppDispatch = typeof store.dispatch;
-export type RootState = ReturnType<typeof store.getState>;
+export type RootState = ReturnType<typeof rootReducer>;
+
+export interface PreloadedState {
+  tabs?: Partial<TabState>;
+  settings?: Partial<UserSettings>;
+}
+
+function buildStore(preloadedState?: PreloadedState) {
+  return configureStore({
+    reducer: rootReducer,
+    preloadedState: preloadedState as RootState | undefined,
+    middleware: getDefaultMiddleware =>
+      getDefaultMiddleware({
+        serializableCheck: {
+          ignoredActionPaths: ['payload.tab', 'payload.tabs'],
+          ignoredPaths: ['tabs.currentTab'],
+        },
+      }),
+  });
+}
+
+export type AppStore = ReturnType<typeof buildStore>;
+export type AppDispatch = AppStore['dispatch'];
+
+let _store: AppStore = buildStore();
+
+/**
+ * 共享 store 引用。popup 在 mount 前用 createStore(preloadedState) 重建，
+ * 让首屏直接拿到本地数据；业务模块通过 proxy 始终访问当前 store。
+ */
+export const store = new Proxy({} as AppStore, {
+  get(_target, prop: string | symbol) {
+    return (_store as any)[prop];
+  },
+});
+
+export function createStore(preloadedState?: PreloadedState): AppStore {
+  _store = buildStore(preloadedState);
+  return _store;
+}

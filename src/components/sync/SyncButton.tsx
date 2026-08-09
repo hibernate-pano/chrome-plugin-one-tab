@@ -66,7 +66,7 @@ export const SyncButton: React.FC<SyncButtonProps> = () => {
 
     try {
       const [localGroups, remoteGroups] = await Promise.all([
-        storage.getGroups(),
+        storage.getGroupsOrThrow(),
         downloadTabGroups(),
       ]);
 
@@ -89,7 +89,7 @@ export const SyncButton: React.FC<SyncButtonProps> = () => {
 
     try {
       const [localGroups, remoteGroups] = await Promise.all([
-        storage.getGroups(),
+        storage.getGroupsOrThrow(),
         downloadTabGroups(),
       ]);
 

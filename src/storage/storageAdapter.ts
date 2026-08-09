@@ -24,6 +24,14 @@ function pickBackend(): StorageBackend {
   return 'localStorage';
 }
 
+function isEmptyValue(value: unknown): boolean {
+  if (value === null || value === undefined) return true;
+  if (Array.isArray(value)) return value.length === 0;
+  if (typeof value === 'string') return value.length === 0;
+  if (typeof value === 'object') return Object.keys(value).length === 0;
+  return false;
+}
+
 async function migrateFromLocalStorage(target: StorageDriver) {
   // Service Worker 环境没有 window，跳过迁移以避免报错
   if (typeof window === 'undefined') return;
@@ -59,7 +67,13 @@ async function migrateFromLocalStorage(target: StorageDriver) {
 
   if (!candidates.length) return;
 
-  await Promise.all(candidates.map(entry => target.setItem(entry.key, entry.value)));
+  // 只迁移目标里不存在的键。绝不能把旧 localStorage 数据覆盖到已经存在
+  // 的新数据上，否则刷新后会出现“旧数据顶掉新数据”的丢数据假象。
+  await Promise.all(candidates.map(async entry => {
+    const existing = await target.getItem(entry.key);
+    if (!isEmptyValue(existing)) return;
+    await target.setItem(entry.key, entry.value);
+  }));
 }
 
 // 将 chrome.storage.local 中的旧数据迁移到统一的 kv 存储
@@ -88,12 +102,15 @@ async function migrateFromChromeStorage(target: StorageDriver) {
     const entries = Object.entries(result).filter(([, value]) => value !== undefined);
     if (!entries.length) return;
 
-    await Promise.all(entries.map(([key, value]) => target.setItem(key, value)));
+    for (const [key, value] of entries) {
+      const existing = await target.getItem(key);
+      if (!isEmptyValue(existing)) continue;
+      await target.setItem(key, value);
+    }
 
     // 标记已迁移，并清理旧键，避免后续刷新重新写回旧数据
     flags.chromeStorageMigrated = true;
     await target.setItem(MIGRATION_KEYS.migrationFlags, flags);
-    await chrome.storage.local.remove(keys);
   } catch (error) {
     console.warn('[storage] migrateFromChromeStorage failed, skip migration', error);
   }
@@ -141,4 +158,3 @@ export async function kvRemove(key: string): Promise<void> {
 export function getActiveBackend(): StorageBackend | null {
   return backend;
 }
-

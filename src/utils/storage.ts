@@ -1,6 +1,6 @@
 import { TabGroup, UserSettings, Tab, LayoutMode, ThemeStyle } from '@/types/tab';
 import { parseOneTabFormat, formatToOneTabFormat } from './oneTabFormatParser';
-import { secureStorage } from './secureStorage';
+import { secureStorage, decryptLocalBlob } from './secureStorage';
 import { kvGet, kvSet, kvRemove } from '@/storage/storageAdapter';
 import { cacheManager, cachedAsyncFn, debounceAsync } from './performance';
 
@@ -9,6 +9,20 @@ export const CACHE_TTL = {
   GROUPS: 30 * 1000,    // 30秒
   SETTINGS: 60 * 1000,  // 60秒
 } as const;
+
+/**
+ * Popup bootstrap 的一次性读盘结果。
+ *
+ * groups 是严格读取的结果：读取失败时由调用方通过 groupsReadFailed 区分
+ * “确实为空”和“读失败”，绝不能把失败当成空列表展示。
+ */
+export interface HydrateResult {
+  groups: TabGroup[];
+  settings: UserSettings;
+  lastLoadedAt: string | null;
+  groupsReadFailed?: boolean;
+  groupsReadError?: unknown;
+}
 
 /**
  * 使标签组缓存失效，下次 getGroups() 会从 chrome.storage 重新读取。
@@ -112,13 +126,51 @@ class ChromeStorage {
     await kvSet(STORAGE_KEYS.VERSION, STORAGE_VERSION);
   }
 
+  /**
+   * 直接读盘、不信任内存缓存。本地 groups 以明文数组为主。
+   *
+   * 如果读到的是旧版加密字符串，会尝试用兼容解密器转成明文数组并落盘。
+   * 解密失败抛出错误，让 getGroupsOrThrow / loadGroups 显示可恢复错误，
+   * 而不是把“有数据但读不出”伪装成“空数据”。
+   */
+  private async readGroupsFromDisk(): Promise<TabGroup[]> {
+    await this.ensureVersion();
+    const raw = await kvGet<unknown>(STORAGE_KEYS.GROUPS);
+
+    if (Array.isArray(raw)) {
+      return raw as TabGroup[];
+    }
+
+    if (typeof raw === 'string') {
+      const groups = await decryptLocalBlob<TabGroup[]>(raw);
+      if (groups !== null) {
+        await this.persistPlainGroups(groups);
+        return groups;
+      }
+      throw new Error('读取本地会话失败：数据可能已损坏或密钥不匹配');
+    }
+
+    return [];
+  }
+
+  private async persistPlainGroups(groups: TabGroup[]): Promise<void> {
+    await this.ensureVersion();
+    await kvSet(STORAGE_KEYS.GROUPS, groups);
+    cacheManager.getCache('storage').set('groups', groups, CACHE_TTL.GROUPS);
+  }
+
+  private async getGroupsCore(): Promise<TabGroup[]> {
+    return cachedAsyncFn(
+      'storage',
+      'groups',
+      () => this.readGroupsFromDisk(),
+      CACHE_TTL.GROUPS
+    );
+  }
+
   async getGroups(): Promise<TabGroup[]> {
     try {
-      return await cachedAsyncFn('storage', 'groups', async () => {
-        await this.ensureVersion();
-        const groups = await kvGet<unknown>(STORAGE_KEYS.GROUPS);
-        return Array.isArray(groups) ? (groups as TabGroup[]) : [];
-      }, CACHE_TTL.GROUPS);
+      return await this.getGroupsCore();
     } catch (error) {
       console.error('获取标签组失败:', error);
       return [];
@@ -126,35 +178,47 @@ class ChromeStorage {
   }
 
   /**
-   * 防抖批量写入 groups（可 await）
-   * - 窗口期内多次 setGroups 会合并为一次落盘（使用最后一次 groups）
-   * - 但每次调用都可以 await，保证返回时已真正写入
+   * 不吞错的读取。所有读-改-写路径必须使用这个方法。
    */
-  private debouncedPersistGroups = debounceAsync(async (groups: TabGroup[]) => {
-    await this.ensureVersion();
-    await kvSet(STORAGE_KEYS.GROUPS, groups);
-
-    // 落盘后刷新缓存 TTL（即便之前已 optimistic 更新）
-    const cache = cacheManager.getCache('storage');
-    cache.set('groups', groups, CACHE_TTL.GROUPS);
-  }, 500);
+  async getGroupsOrThrow(): Promise<TabGroup[]> {
+    return this.readGroupsFromDisk();
+  }
 
   async setGroups(groups: TabGroup[]): Promise<void> {
     const cache = cacheManager.getCache('storage');
-    
+
     try {
       // optimistic：立刻更新缓存，保证后续读取一致
-      // 注意：在防抖窗口期内，缓存会被多次更新，但最终只有最后一次会持久化
       cache.set('groups', groups, CACHE_TTL.GROUPS);
 
-      // 强一致：等待最终一次落盘完成
-      await this.debouncedPersistGroups(groups);
+      // 立即落盘，不防抖。Chrome 扩展 popup 随时可能关闭，防抖窗口内的
+      // 异步写盘会被 JS context 销毁打断，表现为“刚保存，刷新后没了”。
+      await this.persistPlainGroups(groups);
     } catch (error) {
       console.error('保存标签组失败:', error);
       // 清除可能不一致的缓存
       cache.delete('groups');
       throw error;
     }
+  }
+
+  /**
+   * 一次性返回 bootstrap 所需数据，并显式标记 groups 读取是否失败。
+   */
+  async hydrateAll(): Promise<HydrateResult> {
+    const [groupsResult, settings] = await Promise.all([
+      this.getGroupsOrThrow()
+        .then(groups => ({ groups, failed: false as const, error: undefined as unknown }))
+        .catch(error => ({ groups: [] as TabGroup[], failed: true as const, error })),
+      this.getSettings(),
+    ]);
+    return {
+      groups: groupsResult.groups,
+      settings,
+      lastLoadedAt: null,
+      groupsReadFailed: groupsResult.failed || undefined,
+      groupsReadError: groupsResult.failed ? groupsResult.error : undefined,
+    };
   }
 
   async getSettings(): Promise<UserSettings> {
@@ -373,7 +437,7 @@ class ChromeStorage {
   }
 
   async exportData(): Promise<ExportData> {
-    const groups = await this.getGroups();
+    const groups = await this.getGroupsOrThrow();
     const settings = await this.getSettings();
 
     return {
@@ -391,7 +455,7 @@ class ChromeStorage {
    * @returns OneTab 格式的导出文本
    */
   async exportToOneTabFormat(): Promise<string> {
-    const groups = await this.getGroups();
+    const groups = await this.getGroupsOrThrow();
     return formatToOneTabFormat(groups);
   }
 
@@ -402,7 +466,7 @@ class ChromeStorage {
       }
 
       // 导入标签组，并按创建时间倒序排列
-      const existingGroups = await this.getGroups();
+      const existingGroups = await this.getGroupsOrThrow();
       const allGroups = [...data.data.groups, ...existingGroups];
       // 按创建时间倒序排列，确保最新创建的标签组在前面
       const sortedGroups = allGroups.sort((a, b) => {
@@ -447,7 +511,7 @@ class ChromeStorage {
       }
 
       // 导入标签组，并按创建时间倒序排列
-      const existingGroups = await this.getGroups();
+      const existingGroups = await this.getGroupsOrThrow();
       const allGroups = [...parsedGroups, ...existingGroups];
       // 按创建时间倒序排列，确保最新创建的标签组在前面
       const sortedGroups = allGroups.sort((a, b) => {

@@ -68,7 +68,7 @@ const SaveIcon = () => (
 
 export const Header: React.FC<HeaderProps> = ({ onSearch }) => {
   const dispatch = useAppDispatch();
-  const { showConfirm, showAlert } = useToast();
+  const { showConfirm, showAlert, showToast } = useToast();
   const settings = useAppSelector(state => state.settings);
 
   const { searchValue, debouncedValue, handleSearchChange, clearSearch, isSearching } = useDebouncedSearch();
@@ -150,10 +150,18 @@ export const Header: React.FC<HeaderProps> = ({ onSearch }) => {
   const handleSaveAllTabs = async () => {
     const tabs = await chrome.tabs.query({ currentWindow: true });
     const windowId = tabs[0]?.windowId;
-    chrome.runtime.sendMessage({
-      type: 'SAVE_ALL_TABS',
-      data: { windowId },
-    });
+    try {
+      const response = await chrome.runtime.sendMessage({
+        type: 'SAVE_ALL_TABS',
+        data: { windowId },
+      });
+      if (!response?.success) {
+        showToast(response?.error || '保存失败，请重试', 'error', 4500);
+      }
+    } catch (error) {
+      console.error('保存会话失败:', error);
+      showToast('保存失败，请检查扩展 Service Worker 状态后重试', 'error', 4500);
+    }
   };
 
   useKeyboardShortcuts([
@@ -199,7 +207,7 @@ export const Header: React.FC<HeaderProps> = ({ onSearch }) => {
   const [showDropdown, setShowDropdown] = useState(false);
 
   return (
-    <header className="header">
+    <header className="header rounded-xl shadow-sm">
       <div className={`w-full py-3 px-4 sm:px-6 ${getContainerWidthClass()}`}>
         <div className="flex items-center justify-between gap-4">
           {/* Logo 区域 */}
@@ -284,18 +292,11 @@ export const Header: React.FC<HeaderProps> = ({ onSearch }) => {
             <Tooltip content="保存当前窗口为会话" position="bottom">
               <button
                 onClick={handleSaveAllTabs}
-                className="btn btn-primary flat-interaction hidden sm:flex whitespace-nowrap"
+                className="btn btn-primary flat-interaction flex items-center gap-1 whitespace-nowrap px-2 min-[430px]:px-3"
                 aria-label="保存当前窗口中的所有标签页为会话"
               >
                 <SaveIcon />
-                <span>保存会话</span>
-              </button>
-              <button
-                onClick={handleSaveAllTabs}
-                className="btn btn-primary flat-interaction sm:hidden p-2"
-                aria-label="保存当前窗口中的所有标签页为会话"
-              >
-                <SaveIcon />
+                <span className="hidden min-[430px]:inline">保存会话</span>
               </button>
             </Tooltip>
 

@@ -57,17 +57,8 @@ export async function uploadTabsToCloudFlow({
 
   reportIfNeeded(reportProgress, background, 0, 'upload');
 
-  // 检查是否有标签组需要同步
-  if (!tabsState.groups || tabsState.groups.length === 0) {
-    console.log('没有标签组需要同步');
-    reportIfNeeded(reportProgress, background, 100, 'none');
-    return {
-      syncTime: tabsState.lastSyncTime || new Date().toISOString(),
-      stats: tabsState.compressionStats,
-    };
-  }
-
-  const groupsToSync = tabsState.groups;
+  // 以持久层为同步基线，避免 Redux 尚未加载完成时把“空列表”误传上云。
+  const groupsToSync = await storage.getGroupsOrThrow();
 
   if (groupsToSync.length === 0) {
     console.log('没有需要同步的标签组');
@@ -102,7 +93,7 @@ export async function uploadTabsToCloudFlow({
 
   reportIfNeeded(reportProgress, background, 70, 'upload');
 
-  const updatedGroups = tabsState.groups.map(group => {
+  const updatedGroups = groupsToSync.map(group => {
     const syncedGroup = validGroups.find(g => g.id === group.id && !g.isDeleted);
     if (syncedGroup) {
       return {
@@ -149,7 +140,8 @@ export async function downloadTabsFromCloudFlow({
   reportIfNeeded(reportProgress, background, 30, 'download');
 
   const cloudGroups = result as TabGroup[];
-  let localGroups = tabsState.groups;
+  // 以持久层为合并基线，避免本地数据尚未加载时把空列表当作“本地现状”。
+  let localGroups = await storage.getGroupsOrThrow();
 
   console.log('云端标签组数量:', cloudGroups.length);
   console.log('本地标签组数量:', localGroups.length);

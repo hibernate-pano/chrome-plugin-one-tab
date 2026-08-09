@@ -13,7 +13,7 @@ import { trackProductEvent } from '@/utils/productEvents';
 // 解决"速记属性...的范围内不存在任何值"的问题，显式声明actions
 
 
-const initialState: TabState = {
+export const initialTabState: TabState = {
   groups: [],
   activeGroupId: null,
   isLoading: false,
@@ -21,6 +21,8 @@ const initialState: TabState = {
   searchQuery: '',
   syncStatus: 'idle',
   lastSyncTime: null,
+  lastLoadedAt: null,
+  lastSyncStatus: null,
   compressionStats: null,
   backgroundSync: false,
   syncProgress: 0,
@@ -28,7 +30,7 @@ const initialState: TabState = {
 };
 
 export const loadGroups = createAsyncThunk('tabs/loadGroups', async () => {
-  const groups = await storage.getGroups();
+  const groups = await storage.getGroupsOrThrow();
 
   // 过滤掉已软删除的标签组，避免UI显示
   const activeGroups = groups.filter(g => !g.isDeleted);
@@ -49,7 +51,7 @@ export const saveGroup = createAsyncThunk(
   'tabs/saveGroup',
   async (group: TabGroup) => {
     // 保存到本地
-    const groups = await storage.getGroups();
+    const groups = await storage.getGroupsOrThrow();
     const updatedGroups = [group, ...groups];
     // 确保按创建时间倒序排列（最新创建的在前面）
     const sortedGroups = updatedGroups.sort((a, b) => {
@@ -66,7 +68,7 @@ export const saveGroup = createAsyncThunk(
 export const updateGroup = createAsyncThunk(
   'tabs/updateGroup',
   async (group: TabGroup) => {
-    const groups = await storage.getGroups();
+    const groups = await storage.getGroupsOrThrow();
 
     // 使用辅助函数增加版本号
     const updatedGroups = groups.map(g =>
@@ -82,7 +84,7 @@ export const updateGroup = createAsyncThunk(
 export const deleteGroup = createAsyncThunk(
   'tabs/deleteGroup',
   async (groupId: string) => {
-    const groups = await storage.getGroups();
+    const groups = await storage.getGroupsOrThrow();
 
     // 使用软删除：标记为已删除而非直接移除
     // 这样可以在同步时正确处理删除操作
@@ -110,7 +112,7 @@ export const deleteGroup = createAsyncThunk(
 export const deleteAllGroups = createAsyncThunk(
   'tabs/deleteAllGroups',
   async () => {
-    const groups = await storage.getGroups();
+    const groups = await storage.getGroupsOrThrow();
 
     if (groups.length === 0) {
       return { count: 0 }; // 没有标签组可删除
@@ -137,7 +139,7 @@ export const importGroups = createAsyncThunk(
     }));
 
     // 合并现有标签组和导入的标签组，并按创建时间倒序排列
-    const existingGroups = await storage.getGroups();
+    const existingGroups = await storage.getGroupsOrThrow();
     const updatedGroups = [...processedGroups, ...existingGroups];
     // 按创建时间倒序排列，确保最新创建的标签组在前面
     const sortedGroups = updatedGroups.sort((a, b) => {
@@ -242,7 +244,7 @@ export const updateGroupNameAndSync = createAsyncThunk(
     dispatch(updateGroupName({ groupId, name }));
 
     // 在本地存储中更新标签组
-    const groups = await storage.getGroups();
+    const groups = await storage.getGroupsOrThrow();
     const updatedGroups = groups.map(g => {
       if (g.id === groupId) {
         return updateGroupWithVersion(g, { name });
@@ -273,7 +275,7 @@ export const toggleGroupLockAndSync = createAsyncThunk(
     dispatch(toggleGroupLock(groupId));
 
     // 在本地存储中更新标签组
-    const groups = await storage.getGroups();
+    const groups = await storage.getGroupsOrThrow();
     const group = groups.find(g => g.id === groupId);
 
     if (group) {
@@ -315,7 +317,7 @@ export const moveGroupAndSync = createAsyncThunk(
       requestAnimationFrame(async () => {
         try {
           // 在本地存储中更新标签组顺序
-          const groups = await storage.getGroups();
+          const groups = await storage.getGroupsOrThrow();
 
           // 检查索引是否有效
           if (
@@ -372,7 +374,7 @@ export const cleanDuplicateTabs = createAsyncThunk(
 
     try {
       // 获取所有标签组并保存原始状态
-      originalGroups = await storage.getGroups();
+      originalGroups = await storage.getGroupsOrThrow();
       const groups = [...originalGroups]; // 创建副本进行操作
 
       // 创建URL映射，记录每个URL对应的标签页
@@ -514,7 +516,7 @@ export const moveTabAndSync = createAsyncThunk(
       requestAnimationFrame(async () => {
         try {
           // 在本地存储中更新标签页位置
-          const groups = await storage.getGroups();
+          const groups = await storage.getGroupsOrThrow();
           const sourceGroup = groups.find(g => g.id === sourceGroupId);
           const targetGroup = groups.find(g => g.id === targetGroupId);
 
@@ -621,7 +623,7 @@ export const moveTabAndSync = createAsyncThunk(
 
 export const tabSlice = createSlice({
   name: 'tabs',
-  initialState,
+  initialState: initialTabState,
   reducers: {
     setActiveGroup: (state, action) => {
       state.activeGroupId = action.payload;
@@ -797,7 +799,9 @@ export const tabSlice = createSlice({
     },
     // 设置标签组数据（用于性能测试等场景）
     setGroups: (state, action) => {
-      state.groups = action.payload;
+      const incoming = Array.isArray(action.payload) ? action.payload : [];
+      state.groups = incoming.filter(g => !g.isDeleted);
+      state.lastLoadedAt = new Date().toISOString();
     },
   },
   extraReducers: builder => {
@@ -809,6 +813,7 @@ export const tabSlice = createSlice({
       .addCase(loadGroups.fulfilled, (state, action) => {
         state.isLoading = false;
         state.groups = action.payload;
+        state.lastLoadedAt = new Date().toISOString();
       })
       .addCase(loadGroups.rejected, (state, action) => {
         state.isLoading = false;
@@ -899,6 +904,7 @@ export const tabSlice = createSlice({
         const activeGroups = action.payload.groups.filter(g => !g.isDeleted);
         state.groups = activeGroups;
         state.lastSyncTime = action.payload.syncTime;
+        state.lastLoadedAt = new Date().toISOString();
         state.compressionStats = action.payload.stats || null;
 
         console.log(`[SyncFromCloud] 已同步 ${activeGroups.length} 个活跃标签组（已过滤 ${action.payload.groups.length - activeGroups.length} 个已删除）`);
@@ -1015,7 +1021,7 @@ export const deleteTabAndSync = createAsyncThunk<
 >('tabs/deleteTabAndSync', async ({ groupId, tabId }: { groupId: string; tabId: string }) => {
   try {
     // 在本地存储中删除标签
-    const groups = await storage.getGroups();
+    const groups = await storage.getGroupsOrThrow();
     const groupIndex = groups.findIndex(g => g.id === groupId);
 
     if (groupIndex !== -1) {

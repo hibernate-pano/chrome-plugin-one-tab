@@ -7,7 +7,7 @@ import { initializeVersionFields } from './versionHelper';
  */
 export async function migrateToV2(): Promise<void> {
   try {
-    const groups = await storage.getGroups();
+    const groups = await storage.getGroupsOrThrow();
 
     // 检查是否需要迁移
     const needsMigration = groups.some(g => g.version === undefined || g.displayOrder === undefined);
@@ -44,7 +44,7 @@ export async function getMigrationStatus(): Promise<{
   totalGroups: number;
   migratedGroups: number;
 }> {
-  const groups = await storage.getGroups();
+  const groups = await storage.getGroupsOrThrow();
 
   const migratedGroups = groups.filter(
     g => g.version !== undefined && g.displayOrder !== undefined

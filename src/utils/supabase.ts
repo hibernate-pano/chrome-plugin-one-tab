@@ -78,7 +78,7 @@ function checkSupabaseConfig() {
 }
 
 // 导出 supabase 客户端，延迟初始化
-export const supabase = initSupabaseClient();
+export const supabase = initSupabaseClient() as any;
 
 import { secureStorage } from './secureStorage';
 
@@ -698,7 +698,7 @@ export const sync = {
       console.log(`从云端获取到 ${groups.length} 个标签组`);
 
       // 记录每个云端标签组的基本信息
-      groups.forEach((group: any, index) => {
+      groups.forEach((group: any, index: number) => {
         const tabsData = (group.tabs_data || []) as TabData[];
         console.log(`云端标签组 ${index + 1}/${groups.length}:`, {
           id: group.id,

@@ -8,6 +8,7 @@ import { SearchResultList } from '@/components/search/SearchResultList';
 import { EmptyState } from '@/components/common/EmptyState';
 import { LoadingSpinner } from '@/components/common/LoadingSpinner';
 import { PersonalizedWelcome, QuickActionTips } from '@/components/common/PersonalizedWelcome';
+import { FavoriteStrip } from '@/components/tabs/FavoriteStrip';
 
 interface TabListProps {
   searchQuery: string;
@@ -17,26 +18,30 @@ const ReorderView = lazy(() => import('@/components/tabs/ReorderView'));
 
 export const TabList: React.FC<TabListProps> = ({ searchQuery }) => {
   const dispatch = useAppDispatch();
-  const { groups, isLoading, error } = useAppSelector(state => state.tabs);
+  const { groups, isLoading, error, lastLoadedAt } = useAppSelector(state => state.tabs);
   const { layoutMode, reorderMode } = useAppSelector(state => state.settings);
 
   useEffect(() => {
-    const initializeData = async () => {
-      try {
-        await runMigrations();
-        dispatch(loadGroups());
-      } catch (migrationError) {
-        console.error('初始化数据失败:', migrationError);
-        dispatch(loadGroups());
-      }
-    };
+    // bootstrap 已把本地数据注入 preloadedState 时，不重复 loadGroups。
+    // 仍监听 Service Worker 的 REFRESH_TAB_LIST，保证保存后能刷新。
+    if (!lastLoadedAt) {
+      const initializeData = async () => {
+        try {
+          await runMigrations();
+          dispatch(loadGroups()).catch(() => {});
+        } catch (migrationError) {
+          console.error('初始化数据失败:', migrationError);
+          dispatch(loadGroups()).catch(() => {});
+        }
+      };
 
-    initializeData();
+      void initializeData();
+    }
 
     const messageListener = (message: { type?: string }) => {
       if (message.type === 'REFRESH_TAB_LIST') {
         invalidateGroupsCache();
-        dispatch(loadGroups());
+        dispatch(loadGroups()).catch(() => {});
       }
       return true;
     };
@@ -46,7 +51,31 @@ export const TabList: React.FC<TabListProps> = ({ searchQuery }) => {
     return () => {
       chrome.runtime.onMessage.removeListener(messageListener);
     };
-  }, [dispatch]);
+  }, [dispatch, lastLoadedAt]);
+
+  // 读取失败时自动重试，避免用户看到一次性的空状态后关闭 popup。
+  useEffect(() => {
+    if (!error) return;
+
+    let cancelled = false;
+    const retry = async () => {
+      for (let attempt = 1; attempt <= 3; attempt += 1) {
+        await new Promise(resolve => setTimeout(resolve, 800 * attempt));
+        if (cancelled) return;
+        invalidateGroupsCache();
+        try {
+          await dispatch(loadGroups());
+          return;
+        } catch {
+          // 下次重试
+        }
+      }
+    };
+    void retry();
+    return () => {
+      cancelled = true;
+    };
+  }, [error, dispatch]);
 
   if (isLoading) {
     return (
@@ -66,7 +95,7 @@ export const TabList: React.FC<TabListProps> = ({ searchQuery }) => {
           <button
             type="button"
             onClick={() => {
-              dispatch(loadGroups());
+              dispatch(loadGroups()).catch(() => {});
             }}
             className="rounded-2xl border border-gray-200 bg-white px-4 py-2 text-sm font-medium text-gray-700 shadow-sm transition hover:bg-gray-50 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-200 dark:hover:bg-gray-800"
           >
@@ -88,6 +117,7 @@ export const TabList: React.FC<TabListProps> = ({ searchQuery }) => {
 
   const filteredGroups = sortedGroups;
   const totalTabCount = filteredGroups.reduce((count, group) => count + group.tabs.length, 0);
+  const favoriteGroups = filteredGroups.filter(group => !!group.isFavorite);
 
   if (filteredGroups.length === 0 && !searchQuery) {
     return (
@@ -130,6 +160,9 @@ export const TabList: React.FC<TabListProps> = ({ searchQuery }) => {
 
   return (
     <div className="space-y-3 micro-interaction-container">
+      {!searchQuery && favoriteGroups.length > 0 && (
+        <FavoriteStrip groups={favoriteGroups} />
+      )}
       {searchQuery ? (
         <SearchResultList searchQuery={searchQuery} />
       ) : layoutMode === 'double' ? (
