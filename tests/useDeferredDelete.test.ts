@@ -101,3 +101,63 @@ test('useDeferredDelete: repeat requestDelete resets timer (no double commit)', 
 
   unmount();
 });
+
+test('useDeferredDelete: clicking the undo action button cancels the commit', async () => {
+  // E2E: renderHook + ToastProvider wrapper, simulate the spec §4.4 flow
+  // ("delete → 10s undo toast with button → click → cancel").
+  let commits = 0;
+  const { useToast } = await import('@/contexts/ToastContext.tsx');
+
+  let captured: { requestDelete: () => void; cancel: () => void } | null = null;
+
+  const Host: React.FC = () => {
+    const { showToast } = useToast();
+    const deferred = useDeferredDelete({ delayMs: 10000, onCommit: () => { commits += 1; } });
+    captured = deferred;
+    return (
+      <button
+        type="button"
+        data-testid="delete"
+        onClick={() => {
+          showToast({
+            message: '已删除',
+            duration: 10000,
+            action: { label: '撤销', onClick: deferred.cancel },
+          });
+          deferred.requestDelete();
+        }}
+      >
+        delete
+      </button>
+    );
+  };
+
+  const { ToastProvider } = await import('@/contexts/ToastContext.tsx');
+  const { render, fireEvent, cleanup } = await import('@testing-library/react');
+
+  const { unmount } = render(
+    <ToastProvider>
+      <Host />
+    </ToastProvider>
+  );
+
+  // 点击 delete 触发 showToast + requestDelete
+  fireEvent.click(document.querySelector('[data-testid="delete"]') as HTMLButtonElement);
+  assert.equal(captured!.pending, true, 'requestDelete 后 pending=true');
+
+  // 找到 toast 上的撤销按钮并点击
+  const actionBtn = document.body.querySelector('[data-testid="toast-action"]') as HTMLButtonElement;
+  assert.ok(actionBtn, '撤销按钮应已渲染');
+  assert.equal(actionBtn.textContent, '撤销');
+
+  fireEvent.click(actionBtn);
+
+  // 等 toast 关闭动画 220ms + 余量
+  await new Promise(resolve => setTimeout(resolve, 350));
+
+  assert.equal(commits, 0, '点击撤销按钮后 commit 不应触发');
+  assert.equal(captured!.pending, false, '点击撤销后 pending=false');
+
+  unmount();
+  cleanup();
+});
