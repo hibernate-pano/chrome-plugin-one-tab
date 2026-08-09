@@ -95,105 +95,94 @@ commits remain individually inspectable in history.
 
 ### 2. Conflict resolution playbook
 
-`git merge-tree` predicts **26 files** with merge markers: **12 real
-conflicts** (`changed in both` hunks) and **14 single-side changes**
-(`added/removed in remote`).
+#### 2.0 Why this section was rewritten
 
-Note: `git merge-tree` does NOT flag `src/store/index.ts`,
-`src/store/slices/tabSlice.ts`, or `src/utils/storage.ts` as having
-`changed in both` hunks. Despite that, these three files are the
-load-bearing pieces for the local-persistence rebuild and require
-**manual review** after the merge — not because the merge will produce
-conflict markers, but because:
+An earlier version of this section relied on `git merge-tree` to
+predict conflict files. `git merge-tree` only flags `changed in both`
+hunks and silently misses `add/add`, `modify/delete`, and lockfile
+conflicts. A recon merge against the actual `origin/main` revealed
+**15 real conflict files**, not the 12 originally predicted. This
+section is the corrected playbook, based on the recon dump at
+`/tmp/merge-conflicts-dump.txt` (15 sections, 7179 lines).
 
-- `src/store/index.ts` carries the local-only `createStore +
-  _store proxy singleton` pattern that must survive merge
-- `src/store/slices/tabSlice.ts` is much larger locally (1089 vs 894
-  on main) and may interleave with main's `lastSyncStatus` /
-  `moveGroupLocal` changes in subtle ways
-- `src/utils/storage.ts` carries `getGroupsOrThrow` + the
-  decrypt-failure try/catch that AGENTS.md's
-  "Refresh persistence regression" rule protects
+The three "silent-merge load-bearing files" the earlier spec assumed
+were silent-merge — `src/store/index.ts`, `src/store/slices/tabSlice.ts`,
+`src/utils/storage.ts` — actually have **5, 4, and 6 conflict regions
+respectively** spanning their public interfaces. They are now part of
+the 15-file conflict set, not a post-merge verification step.
 
-All three must be grep-checked for the protected symbols after the
-merge even if no conflict markers appear.
+#### 2.1 Architectural decision: take main's sync layer
 
-#### 2.1 Single-side changes — accept main (14 files)
+The local branch's two commits (`fe10a29`, `130ce09`) implemented a
+"local persistence rebuild" + decrypt-failure fix that, on closer
+inspection, **is largely a back-port of main's later architecture**
+(`autoSyncMiddleware` + `debouncedPersistMiddleware` + proxy store).
+Main has since:
 
-Direct resolution to the main version. The local branch has no
-overlapping reason to keep any of these:
+- Replaced `src/services/tabSyncWorkflow.ts` (deleted in commit
+  `e1a13e1`) with `src/services/syncEngine.ts`.
+- Added `src/store/middleware/autoSyncMiddleware.ts` and
+  `src/store/middleware/debouncedPersist.ts`.
+- Added `src/hooks/useDeferredDelete.ts` (10s undo toast).
+- Added `src/components/tabs/FavoriteStrip.tsx` (Sprint 3 favorites
+  strip).
 
-- `README.md`
-- `icons/icon48.png`
-- `src/components/common/ModalFrame.tsx`
-- `src/components/common/PersonalizedWelcome.tsx`
-- `src/components/common/Tooltip.tsx` (removed in remote)
-- `src/components/layout/ThemeStyleSelector.tsx` (removed in remote)
-- `src/components/onboarding/OnboardingSteps.tsx` (removed in remote)
-- `src/services/tabGroupSyncService.ts` (removed in remote)
-- `src/styles/global.css` (removed in remote)
-- `src/utils/authCache.ts`
-- `src/utils/encryptionUtils.ts`
-- `src/utils/syncUtils.ts`
-- `src/domain/tabGroup/filters.ts`
-- `tailwind.config.js`
+**Decision for the merge**: take main's sync layer wholesale. The
+local `tabSyncWorkflow.ts` is deleted in main and SHOULD be deleted
+in this branch. The local `getGroupsOrThrow` and the decrypt-failure
+try/catch guard are NOT redundant with main — they are an
+**additional** invariant protected by AGENTS.md "Refresh persistence
+regression", so they must be ported into main's `src/utils/storage.ts`
+during conflict resolution.
 
-#### 2.2 Real conflicts — file-by-file decision (12 files)
+#### 2.2 The 15 conflict files
 
-| File | Hunks | Resolution |
-|---|---|---|
-| `.eslintrc.cjs` | 1 | Take main (local branch only adds lines, no structural change) |
-| `package-extension.js` | 2 | Take main |
-| `src/auth/confirm.js` | 1 | Take main |
-| `src/components/dnd/DraggableTabGroup.tsx` | 1 | Take main (dnd-kit refactor lives on main) |
-| `src/components/search/SearchResultList.tsx` | 1 | Take main (local changes are cosmetic animation class names; can be re-applied later if desired) |
-| `src/components/tabs/ReorderView/index.tsx` | 2 | Take main |
-| `src/popup/index.html` | 3 | Take main |
-| `src/store/hooks.ts` | 1 | Take main (importing `AppDispatch` from `@/store` is cleaner) |
-| `src/store/slices/settingsSlice.ts` | 1 | **Manual review**: take main's `initialState: initialSettingsState` rename; the reducer body should merge cleanly, but verify all settings-related state fields still line up. |
-| `src/styles/micro-interactions.css` | 1 | Take main |
-| `src/utils/inputValidation.ts` | 2 | **Manual review**: take main's `PasswordStrength` const-object pattern (TS 5.x idiom); keep `escapeHtml`'s dual-environment behavior. |
-| `src/utils/sessionPresentation.ts` | 2 | **Manual review**: keep existing functions; append main's `formatLastSync` helper (no real overlap with local code, but the merge will produce conflict markers that must be resolved by hand). |
+| # | File | Type | Resolution |
+|---|---|---|---|
+| 1 | `package.json` | content (both modified) | Take main's version + dependency list. The local branch has no version bump strategy of its own (its `1.11.6` was a pre-existing tag artifact); main's `1.14.0` is the canonical integrated version. After merge, bump to `1.15.0` if desired (separate step). |
+| 2 | `pnpm-lock.yaml` | content (1 region) | Take main's `jsdom` entry. **After the merge commit, run `pnpm install` to regenerate the lockfile** because the dependency graph changed on main's side. |
+| 3 | `src/store/index.ts` | content (5 regions) | **Take main's version wholesale.** Main's store already includes `createStore + proxy singleton + autoSyncMiddleware + debouncedPersistMiddleware`, which is exactly what the local branch's rebuild was building toward. The local branch is now redundant. |
+| 4 | `src/store/slices/tabSlice.ts` | content (4 regions) | **Manual merge**: take main's `initialTabState` (adds `lastLoadedAt?`, `lastSyncStatus?`, `compressionStats?`, `backgroundSync?`, `syncProgress?`, `syncOperation?`). Take main's `persistGroupsThunk`. Take main's `moveGroupLocal` reducer and `moveGroupAndSync` debounced thunk. **Preserve local's `getGroupsOrThrow` call in `loadGroups`** (the AGENTS.md invariant). Port local's `130ce09` decrypt-failure try/catch into main's `saveGroups` thunk if main's version doesn't have it. |
+| 5 | `src/utils/storage.ts` | content (6 regions) | **Manual merge**: take main's `HydrateResult` interface and `cacheManager` / `encryptLocalBlob` / `decryptError` integration. **Preserve local's `getGroupsOrThrow`** (AGENTS.md invariant) and the decrypt-failure try/catch from `130ce09` in the save path. |
+| 6 | `src/components/layout/Header.tsx` | content (3 regions) | Take main's collapsed Header (Logo+Save+Search+Kebab) — local's expanded version is what main already simplified away. |
+| 7 | `src/components/tabs/TabGroup.tsx` | content (6 regions) | Take main's group card with hover-preview + collapse aria attrs. |
+| 8 | `src/components/tabs/TabList.tsx` | content (4 regions) | Take main's tab list (selectors + virtualization + double-column logic). |
+| 9 | `src/components/tabs/FavoriteStrip.tsx` | **add/add** (no common base) | **Take main's version** (Sprint 3's favorites strip with toast/event hooks). The local branch's fe10a29 version is the older prototype. |
+| 10 | `src/popup/index.tsx` | content (1 region) | Take main's `bootstrap()` preloadedState handling. |
+| 11 | `src/services/tabSyncWorkflow.ts` | **modify/delete** | **Take main's deletion** (commit `e1a13e1`). Local's version is dead code post-merge. |
+| 12 | `src/types/tab.ts` | content (1 region) | Take main's `TabState` (which adds `lastLoadedAt?`, `lastSyncStatus?`). Local's extra fields are now part of main's definition. |
+| 13 | `src/utils/hydrationDecision.ts` | **add/add** (no common base) | **Manual merge**: take main's hydration-decision module as the base, **add local's `isDeleted` filter** for tombstone-filtered groups. Both sides wrote the same logical module; combine them. |
+| 14 | `src/utils/secureStorage.ts` | content (4 regions) | Take main's V2 crypto helpers + `decryptLocalBlob` fallback path. Verify the local `130ce09` decrypt-failure guard works with main's path. |
+| 15 | `src/utils/supabase.ts` | content (1 region) | Take main's typed `as any` export shape. |
+| 16 | `tests/_alias-loader.mjs` | **add/add** (no common base) | **Take main's version** (Sprint 2's jsdom helper). Local's older alias loader is superseded. |
 
-#### 2.3 Post-merge verification — load-bearing files
+Note: 16 entries are listed (the 15 recon files plus the conceptual
+"sync layer" decision in 2.1). The 15 recon files are the actual
+conflict set.
 
-These files are NOT flagged as conflicts by `git merge-tree`, but they
-are critical to the local-persistence rebuild and AGENTS.md's
-"Refresh persistence regression" rule. **After the merge completes,
-verify each by hand and by grep:**
+#### 2.3 Post-merge verification — load-bearing invariants
 
-- **`src/store/index.ts`**: confirm the `createStore(preloadedState)`
-  factory and the `_store` proxy singleton survived the merge. Confirm
-  main's `autoSyncMiddleware` and `debouncedPersistMiddleware` are
-  concatenated into the middleware chain (not lost). Confirm
-  `initialTabState` / `initialSettingsState` are exported and
-  referenced by the merged `settingsSlice.ts` and `tabSlice.ts`.
+After the merge commit is created, regardless of how conflict
+resolution went, **grep-verify these invariants** to confirm AGENTS.md
+"Refresh persistence regression" was preserved:
 
-  ```bash
-  git diff origin/main HEAD -- 'src/store/index.ts' | grep -E 'createStore|_store|proxy'
-  ```
+```bash
+# getGroupsOrThrow must still exist
+grep -n "getGroupsOrThrow" src/utils/storage.ts | head -5
+grep -rn "getGroupsOrThrow" src/store/slices/ | head -5
 
-- **`src/store/slices/tabSlice.ts`**: confirm `getGroupsOrThrow` is
-  still imported and called in the read-modify-write paths (thunks
-  that load groups, mutate, then save). Confirm main's
-  `lastSyncStatus` field, `moveGroupLocal` reducer, and
-  `moveGroupAndSync` thunk are present.
+# decrypt-failure try/catch must still exist in the save path
+grep -n "decryptError\|decrypt-failure\|decrypt failure" src/utils/storage.ts | head -5
 
-  ```bash
-  git diff origin/main HEAD -- 'src/store/slices/tabSlice.ts' | grep -E 'getGroupsOrThrow|lastSyncStatus|moveGroupLocal'
-  ```
+# initialTabState must still be exported (used by store/index.ts preloadedState)
+grep -n "export const initialTabState" src/store/slices/tabSlice.ts
 
-- **`src/utils/storage.ts`**: confirm `getGroupsOrThrow` is exported
-  and that the decrypt-failure try/catch from `130ce09` is still in
-  the save path. Confirm main's `encryptLocalBlob` import,
-  `decryptError` import, and `cacheManager` integration are present.
+# refreshDataLossRootCause test still references the protected path
+grep -n "getGroupsOrThrow\|getGroups" tests/refreshDataLossRootCause.test.ts | head -5
+```
 
-  ```bash
-  git diff origin/main HEAD -- 'src/utils/storage.ts' | grep -E 'getGroupsOrThrow|decryptLocalBlob|cacheManager'
-  ```
-
-If any grep fails, the merge lost critical local-persistence code —
-**stop, do not commit, fix the file by hand.**
+If any of these greps returns empty, the AGENTS.md invariant was
+silently lost during resolution. STOP, do not push, fix by hand.
 
 ### 3. Toast action button integration
 
