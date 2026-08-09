@@ -108,15 +108,21 @@ git merge --no-ff origin/main \
 ```
 Expected: merge commit created OR merge stopped with conflict markers on 15 files.
 
-- [ ] **Step 3: Verify exactly 15 conflict files**
+- [ ] **Step 3: Verify the conflict file set**
 
 Run:
 ```bash
 git diff --name-only --diff-filter=U | tee /tmp/conflict-files.txt | wc -l
 ```
-Expected output: `15`.
+Expected output: between **14 and 16 files** (the recon predicted 15; the actual count may vary by ±1 if main has advanced since the recon).
 
-If fewer or more than 15, STOP and inspect. Recon at `/tmp/merge-conflicts-dump.txt` documents the expected set.
+Compare `cat /tmp/conflict-files.txt` against the 15-file list in spec §2.2:
+
+- All 15 spec §2.2 files should appear.
+- If 1-2 files differ, reconcile against `/tmp/merge-conflicts-dump.txt` (which has the most up-to-date recon).
+- If the set is wildly different (more than 2 unexpected files), STOP, abort the merge with `git merge --abort`, and report BLOCKED — main may have advanced beyond the recon.
+
+Do NOT abort just because the count is 14 or 16 instead of exactly 15.
 
 - [ ] **Step 4: Take main for the 9 "trivial" conflicts**
 

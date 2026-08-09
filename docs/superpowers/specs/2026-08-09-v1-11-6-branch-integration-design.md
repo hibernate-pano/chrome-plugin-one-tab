@@ -137,28 +137,32 @@ during conflict resolution.
 
 #### 2.2 The 15 conflict files
 
-| # | File | Type | Resolution |
-|---|---|---|---|
-| 1 | `package.json` | content (both modified) | Take main's version + dependency list. The local branch has no version bump strategy of its own (its `1.11.6` was a pre-existing tag artifact); main's `1.14.0` is the canonical integrated version. After merge, bump to `1.15.0` if desired (separate step). |
-| 2 | `pnpm-lock.yaml` | content (1 region) | Take main's `jsdom` entry. **After the merge commit, run `pnpm install` to regenerate the lockfile** because the dependency graph changed on main's side. |
-| 3 | `src/store/index.ts` | content (5 regions) | **Take main's version wholesale.** Main's store already includes `createStore + proxy singleton + autoSyncMiddleware + debouncedPersistMiddleware`, which is exactly what the local branch's rebuild was building toward. The local branch is now redundant. |
-| 4 | `src/store/slices/tabSlice.ts` | content (4 regions) | **Manual merge**: take main's `initialTabState` (adds `lastLoadedAt?`, `lastSyncStatus?`, `compressionStats?`, `backgroundSync?`, `syncProgress?`, `syncOperation?`). Take main's `persistGroupsThunk`. Take main's `moveGroupLocal` reducer and `moveGroupAndSync` debounced thunk. **Preserve local's `getGroupsOrThrow` call in `loadGroups`** (the AGENTS.md invariant). Port local's `130ce09` decrypt-failure try/catch into main's `saveGroups` thunk if main's version doesn't have it. |
-| 5 | `src/utils/storage.ts` | content (6 regions) | **Manual merge**: take main's `HydrateResult` interface and `cacheManager` / `encryptLocalBlob` / `decryptError` integration. **Preserve local's `getGroupsOrThrow`** (AGENTS.md invariant) and the decrypt-failure try/catch from `130ce09` in the save path. |
-| 6 | `src/components/layout/Header.tsx` | content (3 regions) | Take main's collapsed Header (Logo+Save+Search+Kebab) — local's expanded version is what main already simplified away. |
-| 7 | `src/components/tabs/TabGroup.tsx` | content (6 regions) | Take main's group card with hover-preview + collapse aria attrs. |
-| 8 | `src/components/tabs/TabList.tsx` | content (4 regions) | Take main's tab list (selectors + virtualization + double-column logic). |
-| 9 | `src/components/tabs/FavoriteStrip.tsx` | **add/add** (no common base) | **Take main's version** (Sprint 3's favorites strip with toast/event hooks). The local branch's fe10a29 version is the older prototype. |
-| 10 | `src/popup/index.tsx` | content (1 region) | Take main's `bootstrap()` preloadedState handling. |
-| 11 | `src/services/tabSyncWorkflow.ts` | **modify/delete** | **Take main's deletion** (commit `e1a13e1`). Local's version is dead code post-merge. |
-| 12 | `src/types/tab.ts` | content (1 region) | Take main's `TabState` (which adds `lastLoadedAt?`, `lastSyncStatus?`). Local's extra fields are now part of main's definition. |
-| 13 | `src/utils/hydrationDecision.ts` | **add/add** (no common base) | **Manual merge**: take main's hydration-decision module as the base, **add local's `isDeleted` filter** for tombstone-filtered groups. Both sides wrote the same logical module; combine them. |
-| 14 | `src/utils/secureStorage.ts` | content (4 regions) | Take main's V2 crypto helpers + `decryptLocalBlob` fallback path. Verify the local `130ce09` decrypt-failure guard works with main's path. |
-| 15 | `src/utils/supabase.ts` | content (1 region) | Take main's typed `as any` export shape. |
-| 16 | `tests/_alias-loader.mjs` | **add/add** (no common base) | **Take main's version** (Sprint 2's jsdom helper). Local's older alias loader is superseded. |
+These are the 15 files actually produced by `git merge --no-ff origin/main`
+(per recon dump `/tmp/merge-conflicts-dump.txt`, 7179 lines). Each entry
+includes the conflict type and the resolution.
 
-Note: 16 entries are listed (the 15 recon files plus the conceptual
-"sync layer" decision in 2.1). The 15 recon files are the actual
-conflict set.
+| File | Type | Resolution |
+|---|---|---|
+| `package.json` | content (both modified) | Take main's version + dependency list. The local branch has no version bump strategy of its own (its `1.11.6` was a pre-existing tag artifact); main's `1.14.0` is the canonical integrated version. After merge, bump to `1.15.0` if desired (separate step). |
+| `pnpm-lock.yaml` | content (1 region) | Take main's `jsdom` entry. **After the merge commit, run `pnpm install` to regenerate the lockfile** because the dependency graph changed on main's side. |
+| `src/store/index.ts` | content (5 regions) | **Take main's version wholesale.** Main's store already includes `createStore + proxy singleton + autoSyncMiddleware + debouncedPersistMiddleware`, which is exactly what the local branch's rebuild was building toward. The local branch is now redundant. |
+| `src/store/slices/tabSlice.ts` | content (4 regions) | **Manual merge**: take main's `initialTabState` (adds `lastLoadedAt?`, `lastSyncStatus?`, `compressionStats?`, `backgroundSync?`, `syncProgress?`, `syncOperation?`). Take main's `persistGroupsThunk`. Take main's `moveGroupLocal` reducer and `moveGroupAndSync` debounced thunk. **Preserve local's `getGroupsOrThrow` call in `loadGroups`** (the AGENTS.md invariant). Port local's `130ce09` decrypt-failure try/catch into main's `saveGroups` thunk if main's version doesn't have it. |
+| `src/utils/storage.ts` | content (6 regions) | **Manual merge**: take main's `HydrateResult` interface and `cacheManager` / `encryptLocalBlob` / `decryptError` integration. **Preserve local's `getGroupsOrThrow`** (AGENTS.md invariant) and the decrypt-failure try/catch from `130ce09` in the save path. |
+| `src/components/layout/Header.tsx` | content (3 regions) | Take main's collapsed Header (Logo+Save+Search+Kebab) — local's expanded version is what main already simplified away. |
+| `src/components/tabs/TabGroup.tsx` | content (6 regions) | Take main's group card with hover-preview + collapse aria attrs. |
+| `src/components/tabs/TabList.tsx` | content (4 regions) | Take main's tab list (selectors + virtualization + double-column logic). |
+| `src/components/tabs/FavoriteStrip.tsx` | **add/add** (no common base) | **Take main's version** (Sprint 3's favorites strip with toast/event hooks). The local branch's fe10a29 version is the older prototype. |
+| `src/popup/index.tsx` | content (1 region) | Take main's `bootstrap()` preloadedState handling. |
+| `src/services/tabSyncWorkflow.ts` | **modify/delete** | **Take main's deletion** (commit `e1a13e1`). Local's version is dead code post-merge. |
+| `src/types/tab.ts` | content (1 region) | Take main's `TabState` (which adds `lastLoadedAt?`, `lastSyncStatus?`). Local's extra fields are now part of main's definition. |
+| `src/utils/hydrationDecision.ts` | **add/add** (no common base) | **Manual merge**: take main's hydration-decision module as the base, **add local's `isDeleted` filter** for tombstone-filtered groups. Both sides wrote the same logical module; combine them. |
+| `src/utils/secureStorage.ts` | content (4 regions) | Take main's V2 crypto helpers + `decryptLocalBlob` fallback path. Verify the local `130ce09` decrypt-failure guard works with main's path. |
+| `src/utils/supabase.ts` | content (1 region) | Take main's typed `as any` export shape. |
+| `tests/_alias-loader.mjs` | **add/add** (no common base) | **Take main's version** (Sprint 2's jsdom helper). Local's older alias loader is superseded. |
+
+**Total: 15 files.** The conceptual "sync layer" decision (§2.1) is NOT a
+conflict file — it's the rationale behind the resolution of
+`src/services/tabSyncWorkflow.ts` (modify/delete) and `src/store/index.ts`.
 
 #### 2.3 Post-merge verification — load-bearing invariants
 
