@@ -96,8 +96,27 @@ commits remain individually inspectable in history.
 ### 2. Conflict resolution playbook
 
 `git merge-tree` predicts **26 files** with merge markers: **12 real
-conflicts** (`changed in both`) and **14 single-side changes**
+conflicts** (`changed in both` hunks) and **14 single-side changes**
 (`added/removed in remote`).
+
+Note: `git merge-tree` does NOT flag `src/store/index.ts`,
+`src/store/slices/tabSlice.ts`, or `src/utils/storage.ts` as having
+`changed in both` hunks. Despite that, these three files are the
+load-bearing pieces for the local-persistence rebuild and require
+**manual review** after the merge — not because the merge will produce
+conflict markers, but because:
+
+- `src/store/index.ts` carries the local-only `createStore +
+  _store proxy singleton` pattern that must survive merge
+- `src/store/slices/tabSlice.ts` is much larger locally (1089 vs 894
+  on main) and may interleave with main's `lastSyncStatus` /
+  `moveGroupLocal` changes in subtle ways
+- `src/utils/storage.ts` carries `getGroupsOrThrow` + the
+  decrypt-failure try/catch that AGENTS.md's
+  "Refresh persistence regression" rule protects
+
+All three must be grep-checked for the protected symbols after the
+merge even if no conflict markers appear.
 
 #### 2.1 Single-side changes — accept main (14 files)
 
@@ -121,23 +140,60 @@ overlapping reason to keep any of these:
 
 #### 2.2 Real conflicts — file-by-file decision (12 files)
 
-| File | Resolution |
-|---|---|
-| `.eslintrc.cjs` | Take main (local branch only adds lines, no structural change) |
-| `package-extension.js` | Take main |
-| `src/auth/confirm.js` | Take main |
-| `src/components/dnd/DraggableTabGroup.tsx` | Take main (dnd-kit refactor lives on main) |
-| `src/components/search/SearchResultList.tsx` | Take main (local changes are cosmetic animation class names; can be re-applied later if desired) |
-| `src/components/tabs/ReorderView/index.tsx` | Take main |
-| `src/popup/index.html` | Take main |
-| `src/store/hooks.ts` | Take main (importing `AppDispatch` from `@/store` is cleaner) |
-| **`src/store/index.ts`** | **Manual merge**: keep the local `createStore(preloadedState)` factory + `_store` proxy singleton (serves the local-persistence rebuild), AND concat main's `autoSyncMiddleware` + `debouncedPersistMiddleware` into the middleware chain. Keep local's `PreloadedState` shape using `Partial<TabState>` / `Partial<UserSettings>`, but also export `initialTabState` / `initialSettingsState` for main's call sites. |
-| **`src/store/slices/settingsSlice.ts`** | **Manual merge**: take main's `initialState: initialSettingsState` rename, keep all existing reducer logic. |
-| **`src/store/slices/tabSlice.ts`** | **Manual merge**: keep local's `getGroupsOrThrow` integration points (in thunks that read-modify-write groups), AND take main's `lastSyncStatus` field, `moveGroupLocal` reducer, and `moveGroupAndSync` debounced thunk. |
-| `src/styles/micro-interactions.css` | Take main |
-| **`src/utils/inputValidation.ts`** | **Manual merge**: take main's `PasswordStrength` const-object pattern (TS 5.x idiom), keep `escapeHtml`'s dual-environment behavior. |
-| **`src/utils/sessionPresentation.ts`** | **Manual merge**: keep existing functions, append main's `formatLastSync` helper (it was added as new code with no overlap, so this should be a clean append). |
-| **`src/utils/storage.ts`** | **Manual merge (highest risk)**: keep local's `getGroupsOrThrow`, keep the decrypt-failure try/catch from `130ce09`'s save path, AND take main's `encryptLocalBlob` import, `decryptError` import, and `cacheManager` integration. |
+| File | Hunks | Resolution |
+|---|---|---|
+| `.eslintrc.cjs` | 1 | Take main (local branch only adds lines, no structural change) |
+| `package-extension.js` | 2 | Take main |
+| `src/auth/confirm.js` | 1 | Take main |
+| `src/components/dnd/DraggableTabGroup.tsx` | 1 | Take main (dnd-kit refactor lives on main) |
+| `src/components/search/SearchResultList.tsx` | 1 | Take main (local changes are cosmetic animation class names; can be re-applied later if desired) |
+| `src/components/tabs/ReorderView/index.tsx` | 2 | Take main |
+| `src/popup/index.html` | 3 | Take main |
+| `src/store/hooks.ts` | 1 | Take main (importing `AppDispatch` from `@/store` is cleaner) |
+| `src/store/slices/settingsSlice.ts` | 1 | **Manual review**: take main's `initialState: initialSettingsState` rename; the reducer body should merge cleanly, but verify all settings-related state fields still line up. |
+| `src/styles/micro-interactions.css` | 1 | Take main |
+| `src/utils/inputValidation.ts` | 2 | **Manual review**: take main's `PasswordStrength` const-object pattern (TS 5.x idiom); keep `escapeHtml`'s dual-environment behavior. |
+| `src/utils/sessionPresentation.ts` | 2 | **Manual review**: keep existing functions; append main's `formatLastSync` helper (no real overlap with local code, but the merge will produce conflict markers that must be resolved by hand). |
+
+#### 2.3 Post-merge verification — load-bearing files
+
+These files are NOT flagged as conflicts by `git merge-tree`, but they
+are critical to the local-persistence rebuild and AGENTS.md's
+"Refresh persistence regression" rule. **After the merge completes,
+verify each by hand and by grep:**
+
+- **`src/store/index.ts`**: confirm the `createStore(preloadedState)`
+  factory and the `_store` proxy singleton survived the merge. Confirm
+  main's `autoSyncMiddleware` and `debouncedPersistMiddleware` are
+  concatenated into the middleware chain (not lost). Confirm
+  `initialTabState` / `initialSettingsState` are exported and
+  referenced by the merged `settingsSlice.ts` and `tabSlice.ts`.
+
+  ```bash
+  git diff origin/main HEAD -- 'src/store/index.ts' | grep -E 'createStore|_store|proxy'
+  ```
+
+- **`src/store/slices/tabSlice.ts`**: confirm `getGroupsOrThrow` is
+  still imported and called in the read-modify-write paths (thunks
+  that load groups, mutate, then save). Confirm main's
+  `lastSyncStatus` field, `moveGroupLocal` reducer, and
+  `moveGroupAndSync` thunk are present.
+
+  ```bash
+  git diff origin/main HEAD -- 'src/store/slices/tabSlice.ts' | grep -E 'getGroupsOrThrow|lastSyncStatus|moveGroupLocal'
+  ```
+
+- **`src/utils/storage.ts`**: confirm `getGroupsOrThrow` is exported
+  and that the decrypt-failure try/catch from `130ce09` is still in
+  the save path. Confirm main's `encryptLocalBlob` import,
+  `decryptError` import, and `cacheManager` integration are present.
+
+  ```bash
+  git diff origin/main HEAD -- 'src/utils/storage.ts' | grep -E 'getGroupsOrThrow|decryptLocalBlob|cacheManager'
+  ```
+
+If any grep fails, the merge lost critical local-persistence code —
+**stop, do not commit, fix the file by hand.**
 
 ### 3. Toast action button integration
 
@@ -191,16 +247,26 @@ Per AGENTS.md "Completion rule" and "Refresh persistence regression":
 
 ### 6. Risks
 
-- **`src/utils/storage.ts` merge**: the local `getGroupsOrThrow` is the
-  load-bearing piece behind AGENTS.md's refresh-persistence rule. Any
-  accidental loss during merge violates the rule. **Mitigation**:
-  hand-merge line-by-line; grep for `getGroupsOrThrow` after the merge;
-  run `pnpm verify:refresh` before claiming done.
-- **`src/store/index.ts` proxy singleton**: the local branch's
-  `createStore + proxy` pattern doesn't exist on main. After merge,
-  this branch becomes the only place with that pattern. **Mitigation**:
-  keep the proxy; document why in `docs/AI_HANDOFF.md` (or a follow-up
-  if main picks up the pattern later).
+- **`src/utils/storage.ts` merge (silent, not flagged as conflict)**:
+  the local `getGroupsOrThrow` and decrypt-failure try/catch are
+  load-bearing pieces behind AGENTS.md's refresh-persistence rule.
+  `git merge-tree` does NOT flag this file as conflicting, so a
+  successful merge may still silently drop these symbols if main's
+  changes to the same lines happen to be a superset. **Mitigation**:
+  grep-check `getGroupsOrThrow` immediately after merge; run
+  `pnpm verify:refresh` before claiming done. See §2.3 for the exact
+  grep commands.
+- **`src/store/index.ts` proxy singleton (silent, not flagged as
+  conflict)**: the local branch's `createStore + proxy` pattern
+  doesn't exist on main. After merge, this branch becomes the only
+  place with that pattern, and the silent merge might lose the proxy
+  or the middleware concat. **Mitigation**: grep-check the proxy and
+  middleware after merge; document why in `docs/AI_HANDOFF.md`.
+- **`src/store/slices/tabSlice.ts` (silent, not flagged as conflict)**:
+  local is 1089 lines vs main 894; the merge will silently weave
+  `getGroupsOrThrow` integration points through main's new fields.
+  **Mitigation**: grep-check `getGroupsOrThrow`, `lastSyncStatus`,
+  `moveGroupLocal` after merge.
 - **`package.json` version**: local says `1.11.6`, main says `1.14.0`.
   Merge result will be `1.14.0`. If a `1.11.x` continuation is needed,
   that's a separate ticket.
