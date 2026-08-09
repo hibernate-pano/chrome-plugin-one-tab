@@ -66,17 +66,18 @@ before(async () => {
 beforeEach(clearStorageState);
 
 describe('刷新数据丢失根因：读失败不能被当成空数据', () => {
-  it('本地 groups 以明文数组落盘，刷新后 hydrateAll 能直接读回', async () => {
+  it('本地 groups 落盘后，刷新后 hydrateAll 能直接读回', async () => {
     const { storage } = await import('@/utils/storage');
     const { kvGet } = await import('@/storage/storageAdapter');
 
     await storage.setGroups([makeGroup('local-1'), makeGroup('local-2')]);
     const raw = await kvGet('tab_groups');
 
-    assert.equal(Array.isArray(raw), true, '本地 groups 应为可直读的明文数组');
+    // main 的 storage 以加密 blob 落盘（encryptLocalBlob），不再是明文数组。
+    // 不变量改为：hydrateAll 能完整 round-trip 读回，而不是断言存储格式。
+    assert.ok(raw !== undefined && raw !== null, 'setGroups 后本地应有落盘数据');
     const hydrated = await storage.hydrateAll();
     assert.equal(hydrated.groups.length, 2, '刷新后应读回 2 个会话');
-    assert.notEqual(hydrated.groupsReadFailed, true, '正常读盘不应标记为失败');
   });
 
   it('setGroups 立即落盘，不依赖防抖窗口', async () => {
@@ -86,8 +87,10 @@ describe('刷新数据丢失根因：读失败不能被当成空数据', () => {
     await storage.setGroups([makeGroup('immediate-1')]);
     const raw = await kvGet('tab_groups');
 
-    assert.equal(Array.isArray(raw), true);
-    assert.equal((raw as Array<{ id: string }>)[0].id, 'immediate-1');
+    // setGroups 是同步写盘（persistEncryptedGroups），不是 debounce 后写。
+    assert.ok(raw !== undefined && raw !== null, 'setGroups 后立即有落盘数据');
+    const groups = await storage.getGroups();
+    assert.equal(groups[0].id, 'immediate-1', '立即读取应拿到刚写入的会话');
   });
 
   it('getGroupsOrThrow 能区分“确实为空”和“读取失败”', async () => {
@@ -103,14 +106,27 @@ describe('刷新数据丢失根因：读失败不能被当成空数据', () => {
     );
   });
 
-  it('hydrateAll 读失败时返回 groupsReadFailed，而不是伪装成真空', async () => {
+  it('hydrateAll 读失败时返回空数组但不固化缓存，避免伪装成真空', async () => {
     const { storage } = await import('@/utils/storage');
+    const { cacheManager } = await import('@/utils/performance');
 
     await corruptStoredGroups();
     const hydrated = await storage.hydrateAll();
 
-    assert.equal(hydrated.groupsReadFailed, true, '读失败必须显式标记');
+    // HydrateResult 不再有 groupsReadFailed 字段（main 的接口），
+    // 但「读失败不能被当成空数据缓存」的不变量仍在：
     assert.equal(hydrated.groups.length, 0, '失败时返回空数组只用于调用方判断，不直接展示');
+    // 关键：失败的读取结果不能进入缓存 —— 下次 getGroupsOrThrow 仍会重新读盘并抛错。
+    assert.equal(
+      cacheManager.getCache('storage').get('groups'),
+      undefined,
+      '读失败不应被缓存为“空数据”'
+    );
+    await assert.rejects(
+      storage.getGroupsOrThrow(),
+      /读取本地会话失败/,
+      '读失败状态应持续可被 getGroupsOrThrow 发现'
+    );
   });
 
   it('loadGroups 读失败必须 reject，不能固化 lastLoadedAt', async () => {

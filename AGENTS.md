@@ -10,7 +10,7 @@
 
 - Root cause: `storage.getGroups()` silently returns `[]` on read/decrypt failure. Code that treats that as "empty local data" can overwrite IndexedDB with an empty array or permanently show an empty list.
 - All read-modify-write paths and `loadGroups` must use `storage.getGroupsOrThrow()` so read failure is surfaced instead of being treated as "no data".
-- Run `pnpm verify:refresh` after changes touching storage, hydration, tab thunks, sync engine, or migrations.
+- Run `pnpm verify` after changes touching storage, hydration, tab thunks, sync engine, or migrations. `pnpm verify` includes the full suite (type-check, lint, build, `tests/*.test.ts`, `tests/jsdom/*`, `tests/components/*.smoke.test.tsx`).
 - Keep the regression test `tests/refreshDataLossRootCause.test.ts` green.
 
 ## Responses
