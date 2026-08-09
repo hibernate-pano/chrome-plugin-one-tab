@@ -326,23 +326,22 @@ Expected: FAIL — `toast-action` testid not found.
 
 - [ ] **Step 3: Add `action` prop to `Toast.tsx`**
 
-Edit `src/components/common/Toast.tsx`. The full diff (taken from commit `58710e6`):
+Edit `src/components/common/Toast.tsx`. The action type is imported from `ToastContext` (no duplicate definition):
 
 ```diff
+ import React, { useEffect, useState } from 'react';
+ import { createPortal } from 'react-dom';
++import type { ToastAction } from '@/contexts/ToastContext';
+
  export type ToastType = 'success' | 'error' | 'info' | 'warning';
 
-+export interface ToastActionPayload {
-+  label: string;
-+  onClick: () => void;
-+}
-+
  interface ToastProps {
    message: string;
    type?: ToastType;
    duration?: number;
    onClose?: () => void;
    visible: boolean;
-+  action?: ToastActionPayload | null;
++  action?: ToastAction | null;
 +  onAction?: () => void;
  }
 
@@ -384,6 +383,8 @@ Then in the JSX (right after the `<p>{message}</p>` element), add:
 ```
 
 (Match the existing button styling — copy it from the close button already in the file. The animation class name must match what the file already uses; if the post-merge `Toast.tsx` uses `animate-fadeOut`/`animate-fadeIn` instead of `animate-toast-out`/`animate-toast-in`, use those.)
+
+Note: this is a deliberate deviation from the original commit `58710e6`'s `ToastActionPayload` local interface — we use `ToastAction` from `@/contexts/ToastContext` to keep a single source of truth for the action shape, which is what `useDeferredDelete` and any future consumer will import.
 
 - [ ] **Step 4: Run the test to confirm it passes**
 
