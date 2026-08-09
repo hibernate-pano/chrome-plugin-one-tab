@@ -7,15 +7,6 @@ interface ThemeStyleSelectorProps {
   className?: string;
 }
 
-// 经典主题图标 - Material Design 风格
-const ClassicIcon = () => (
-  <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5}>
-    <rect x="3" y="3" width="18" height="18" rx="2" strokeLinecap="round" strokeLinejoin="round" />
-    <path d="M3 9h18" strokeLinecap="round" strokeLinejoin="round" />
-    <path d="M9 21V9" strokeLinecap="round" strokeLinejoin="round" />
-  </svg>
-);
-
 // 极光主题图标 - 北极光/雪花风格
 const AuroraIcon = () => (
   <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5}>
@@ -27,37 +18,12 @@ const AuroraIcon = () => (
   </svg>
 );
 
-// Legacy 主题图标 - 原始简约风格
-const LegacyIcon = () => (
+// 精致（refined）主题图标 - 简约笔触
+const RefinedIcon = () => (
   <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5}>
-    <rect x="4" y="4" width="16" height="16" rx="1" strokeLinecap="round" strokeLinejoin="round" />
-    <path d="M4 8h16" strokeLinecap="round" strokeLinejoin="round" />
-    <path d="M8 4v4" strokeLinecap="round" strokeLinejoin="round" />
-  </svg>
-);
-
-// 奶油主题图标 - 温暖柔和风格
-const CreamyIcon = () => (
-  <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5}>
-    <path d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707" strokeLinecap="round" strokeLinejoin="round" />
-    <circle cx="12" cy="12" r="4" strokeLinecap="round" strokeLinejoin="round" />
-  </svg>
-);
-
-
-// 粉色主题图标 - 甜美风格
-const PinkIcon = () => (
-  <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5}>
-    <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z" strokeLinecap="round" strokeLinejoin="round" />
-  </svg>
-);
-
-// 薄荷主题图标 - 清新风格
-const MintIcon = () => (
-  <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5}>
-    <path d="M12 2L2 7l10 5 10-5-10-5z" strokeLinecap="round" strokeLinejoin="round" />
-    <path d="M2 17l10 5 10-5" strokeLinecap="round" strokeLinejoin="round" />
-    <path d="M2 12l10 5 10-5" strokeLinecap="round" strokeLinejoin="round" />
+    <rect x="4" y="4" width="16" height="16" rx="3" strokeLinecap="round" strokeLinejoin="round" />
+    <path d="M8 12h8" strokeLinecap="round" strokeLinejoin="round" />
+    <path d="M12 8v8" strokeLinecap="round" strokeLinejoin="round" opacity="0.6" />
   </svg>
 );
 
@@ -74,16 +40,6 @@ const CyberpunkIcon = () => (
     <path d="M16 9h4" strokeLinecap="round" strokeLinejoin="round" />
     <path d="M16 15h4" strokeLinecap="round" strokeLinejoin="round" />
     <circle cx="12" cy="12" r="2" fill="currentColor" />
-  </svg>
-);
-
-// 棱镜主题图标 - 毛玻璃/棱镜风格
-const PrismIcon = () => (
-  <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5}>
-    <path d="M12 2L3 8.5V15.5L12 22L21 15.5V8.5L12 2Z" strokeLinecap="round" strokeLinejoin="round" />
-    <path d="M12 2V22" strokeLinecap="round" strokeLinejoin="round" opacity="0.4" />
-    <path d="M3 8.5L21 15.5" strokeLinecap="round" strokeLinejoin="round" opacity="0.3" />
-    <path d="M21 8.5L3 15.5" strokeLinecap="round" strokeLinejoin="round" opacity="0.3" />
   </svg>
 );
 
@@ -137,35 +93,12 @@ interface ThemeOption {
   };
 }
 
+/**
+ * S2 P4 Task 4.4: theme picker slimmed to 3 curated themes.
+ * Dropped themes (legacy/classic/creamy/pink/mint/prism) were removed
+ * from `themeOptions` — their CSS files are also being deleted.
+ */
 const themeOptions: ThemeOption[] = [
-  {
-    value: 'legacy',
-    label: '原始',
-    description: '经典风格',
-    icon: <LegacyIcon />,
-    primaryColor: '#007acc',
-    secondaryColor: '#0ea5e9',
-    previewColors: {
-      bg: '#f5f5f5',
-      card: '#ffffff',
-      accent: '#007acc',
-      text: '#333333',
-    },
-  },
-  {
-    value: 'classic',
-    label: '经典',
-    description: 'Material',
-    icon: <ClassicIcon />,
-    primaryColor: '#3b82f6',
-    secondaryColor: '#60a5fa',
-    previewColors: {
-      bg: '#fafafa',
-      card: '#ffffff',
-      accent: '#3b82f6',
-      text: '#212121',
-    },
-  },
   {
     value: 'aurora',
     label: '极光',
@@ -181,45 +114,17 @@ const themeOptions: ThemeOption[] = [
     },
   },
   {
-    value: 'creamy',
-    label: '奶油',
-    description: '温暖柔和',
-    icon: <CreamyIcon />,
-    primaryColor: '#d4a574',
-    secondaryColor: '#e8c9a8',
+    value: 'refined',
+    label: '精致',
+    description: '现代简约',
+    icon: <RefinedIcon />,
+    primaryColor: '#475569',
+    secondaryColor: '#94a3b8',
     previewColors: {
-      bg: '#faf8f5',
-      card: '#fffdf9',
-      accent: '#d4a574',
-      text: '#5c4a3a',
-    },
-  },
-  {
-    value: 'pink',
-    label: '粉红',
-    description: '甜美可爱',
-    icon: <PinkIcon />,
-    primaryColor: '#e891a8',
-    secondaryColor: '#f5b5c8',
-    previewColors: {
-      bg: '#fdf2f8',
+      bg: '#fafafa',
       card: '#ffffff',
-      accent: '#e891a8',
-      text: '#831843',
-    },
-  },
-  {
-    value: 'mint',
-    label: '薄荷',
-    description: '清新自然',
-    icon: <MintIcon />,
-    primaryColor: '#38b2ac',
-    secondaryColor: '#4fd1c5',
-    previewColors: {
-      bg: '#f0fdfa',
-      card: '#ffffff',
-      accent: '#38b2ac',
-      text: '#134e4a',
+      accent: '#475569',
+      text: '#1e293b',
     },
   },
   {
@@ -236,22 +141,7 @@ const themeOptions: ThemeOption[] = [
       text: '#e0e0e0',
     },
   },
-  {
-    value: 'prism',
-    label: '棱镜',
-    description: '毛玻璃渐变',
-    icon: <PrismIcon />,
-    primaryColor: '#667eea',
-    secondaryColor: '#764ba2',
-    previewColors: {
-      bg: '#f5f3ff',
-      card: 'rgba(255,255,255,0.85)',
-      accent: '#667eea',
-      text: '#1e1b4b',
-    },
-  },
 ];
-
 
 // 主题预览卡片组件
 const ThemePreviewCard: React.FC<{
@@ -309,6 +199,13 @@ export const ThemeStyleSelector: React.FC<ThemeStyleSelectorProps> = ({ classNam
   const [isExpanded, setIsExpanded] = useState(false);
   const [hoveredTheme, setHoveredTheme] = useState<ThemeStyle | null>(null);
 
+  // 当前主题可能在历史数据里是已删除的 themeStyle；如果不在新选项里，
+  // 就把选中态映射到极光（第一个选项），避免 UI 显示空白选中环。
+  const resolvedThemeStyle: ThemeStyle = useMemo(
+    () => (themeOptions.some(t => t.value === themeStyle) ? themeStyle : themeOptions[0].value),
+    [themeStyle]
+  );
+
   const handleThemeChange = useCallback((style: ThemeStyle) => {
     if (style !== themeStyle && !isTransitioning) {
       setThemeStyle(style);
@@ -320,8 +217,8 @@ export const ThemeStyleSelector: React.FC<ThemeStyleSelectorProps> = ({ classNam
   }, []);
 
   const currentTheme = useMemo(() =>
-    themeOptions.find(t => t.value === themeStyle) || themeOptions[0],
-    [themeStyle]
+    themeOptions.find(t => t.value === resolvedThemeStyle) || themeOptions[0],
+    [resolvedThemeStyle]
   );
 
   return (
@@ -334,7 +231,7 @@ export const ThemeStyleSelector: React.FC<ThemeStyleSelectorProps> = ({ classNam
           "text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700/50",
           "flex items-center justify-between gap-2",
           "transition-colors duration-150",
-          "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-1"
+          "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-600 focus-visible:ring-offset-1"
         )}
         aria-expanded={isExpanded}
         aria-controls="theme-options-panel"
@@ -358,7 +255,7 @@ export const ThemeStyleSelector: React.FC<ThemeStyleSelectorProps> = ({ classNam
         <ChevronIcon isExpanded={isExpanded} />
       </button>
 
-      {/* 展开的主题列表 - 内容可滚动以确保所有主题（含生产力）可见 */}
+      {/* 展开的主题列表 */}
       <div
         id="theme-options-panel"
         className={cn(
@@ -369,9 +266,9 @@ export const ThemeStyleSelector: React.FC<ThemeStyleSelectorProps> = ({ classNam
         aria-label="可用主题列表"
       >
         <div className="bg-gray-50/50 dark:bg-gray-800/30 border-y border-gray-200/50 dark:border-gray-700/50">
-          <div className="grid grid-cols-2 gap-1.5 p-2">
+          <div className="grid grid-cols-3 gap-1.5 p-2">
             {themeOptions.map((option) => {
-              const isSelected = themeStyle === option.value;
+              const isSelected = resolvedThemeStyle === option.value;
               const isHovered = hoveredTheme === option.value;
 
               return (
@@ -384,9 +281,9 @@ export const ThemeStyleSelector: React.FC<ThemeStyleSelectorProps> = ({ classNam
                   className={cn(
                     "relative p-2 rounded-lg text-left flat-interaction",
                     "transition-all duration-150",
-                    "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500",
+                    "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-600",
                     isSelected
-                      ? "bg-white dark:bg-gray-700 shadow-sm ring-2 ring-blue-500/30"
+                      ? "bg-white dark:bg-gray-700 shadow-sm ring-2 ring-primary-600/30"
                       : "hover:bg-white/80 dark:hover:bg-gray-700/80",
                     isTransitioning && "opacity-50 cursor-not-allowed"
                   )}
@@ -444,7 +341,7 @@ export const ThemeStyleSelector: React.FC<ThemeStyleSelectorProps> = ({ classNam
           {isTransitioning && (
             <div className="px-3 py-1.5 text-xs text-gray-500 dark:text-gray-400 text-center border-t border-gray-200/50 dark:border-gray-700/50">
               <span className="inline-flex items-center gap-1.5">
-                <span className="w-1.5 h-1.5 rounded-full bg-blue-500 animate-pulse" />
+                <span className="w-1.5 h-1.5 rounded-full bg-primary-600 animate-pulse" />
                 正在切换主题...
               </span>
             </div>

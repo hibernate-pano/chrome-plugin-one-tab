@@ -7,6 +7,7 @@ import { storage } from './storage';
 import { sanitizeFaviconUrl } from './faviconUtils';
 import { kvRemove } from '@/storage/storageAdapter';
 import { TabGroup } from '@/types/tab';
+import { migrationError } from './errors';
 
 /**
  * 迁移现有数据中的 favicon URLs，确保符合 CSP 策略
@@ -113,6 +114,12 @@ export async function runMigrations(): Promise<void> {
     
   } catch (error) {
     console.error('数据迁移失败:', error);
-    // 不抛出错误，避免影响应用启动
+    // S1: 包一层 MigrationError（retryable=false）再抛出，让调用方能识别
+    // 「升级失败」——数据本身仍在 IndexedDB，只是迁移没跑完（旧数据保留）。
+    // 调用方（TabList.initializeData）已有 try/catch，不会因此中断启动。
+    throw migrationError(error instanceof Error ? error.message : '数据迁移失败', {
+      cause: error,
+      userMessage: '升级失败，旧数据已保留',
+    });
   }
 }

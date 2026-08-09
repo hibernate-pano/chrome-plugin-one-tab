@@ -1,18 +1,22 @@
 document.addEventListener('DOMContentLoaded', async () => {
-  // 获取完整URL
-  const fullUrl = window.location.href;
+  const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
   const urlParams = new URLSearchParams(window.location.search);
   const token = urlParams.get('token');
   const type = urlParams.get('type');
 
-  if (token && type === 'signup') {
+  if (token && type === 'signup' && supabaseUrl) {
     try {
-      // 直接将用户重定向到Supabase的验证端点
-      const verifyUrl = `https://reccclnaxadbuccsrwmg.supabase.co/auth/v1/verify?token=${token}&type=${type}&redirect_to=`;
+      // 保持验证页与当前配置的 Supabase 项目一致，避免 host 配置漂移。
+      const verifyUrl = new URL('/auth/v1/verify', supabaseUrl);
+      verifyUrl.searchParams.set('token', token);
+      verifyUrl.searchParams.set('type', type);
+      verifyUrl.searchParams.set('redirect_to', '');
 
       // 显示成功信息
       document.getElementById('loading').style.display = 'none';
       document.getElementById('success').style.display = 'block';
+
+      window.location.replace(verifyUrl.toString());
 
       // 设置打开扩展的按钮
       document.getElementById('openExtension').addEventListener('click', (e) => {

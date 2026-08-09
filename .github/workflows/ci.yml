@@ -1,0 +1,81 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# 防止重复运行
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    name: Lint + Type-check + Build + Test
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.24.0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Verify (validate + tests)
+        run: pnpm verify
+
+      - name: Audit dependencies (informational)
+        run: pnpm audit:fix
+        continue-on-error: true
+        # audit 不 exit 1 以免限制升级；只在 high 漏洞时记录 warning
+
+      - name: Build extension package
+        run: pnpm package
+        env:
+          # CI 环境无 .env 文件，用 placeholder 让 build 通过
+          VITE_SUPABASE_URL: https://placeholder.supabase.co
+          VITE_SUPABASE_ANON_KEY: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InBsYWNlaG9sZGVyIiwicm9sZSI6ImFub24iLCJpYXQiOjE2NDUxOTIwMDAsImV4cCI6MTk2MDc2ODAwMH0.placeholder
+
+      # 体积门禁：package-extension.js 输出 chrome-extension.zip（白名单模式），
+      # 实际当前构建 ~250 KB。门禁值 280 KB 与 package-extension.js 自带的
+      # "严格 < 280 KB" 上限对齐；超过即失败（防止新依赖偷偷膨胀扩展体积）。
+      - name: Check zip size
+        if: always()
+        run: |
+          set -e
+          if [ ! -f chrome-extension.zip ]; then
+            echo "::error::chrome-extension.zip not found — did pnpm package succeed?"
+            exit 1
+          fi
+          SIZE=$(stat -c%s chrome-extension.zip)
+          SIZE_KB=$((SIZE / 1024))
+          echo "chrome-extension.zip size: ${SIZE} bytes (${SIZE_KB} KB)"
+          # 门禁 280 KB（280000 bytes）；与 package-extension.js 自报一致
+          if [ "$SIZE" -gt 280000 ]; then
+            echo "::error::chrome-extension.zip exceeds 280 KB (actual: ${SIZE} bytes / ${SIZE_KB} KB)"
+            echo "::error::见 package-extension.js 末尾'严格 < 280 KB'自检；超过即拒收"
+            exit 1
+          fi
+
+      - name: Upload dist artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist-${{ github.sha }}
+          path: |
+            dist
+            chrome-extension.zip
+          retention-days: 7

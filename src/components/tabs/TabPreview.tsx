@@ -1,115 +1,70 @@
-import React, { useState, useEffect } from 'react';
-import { Tab } from '@/types/tab';
+import React from 'react';
+import { TabGroup as TabGroupType } from '@/types/tab';
+import { SafeFavicon } from '@/components/common/SafeFavicon';
 
 interface TabPreviewProps {
-  tab: Tab;
-  visible: boolean;
-  position: { x: number; y: number };
+  group: TabGroupType;
 }
 
 /**
- * 标签预览组件
- * 显示标签页的预览信息，包括标题、URL和图标
+ * Hover-to-preview 浮层（S3 §1）。
+ *
+ * 视觉：浮在 TabGroup 卡片内右下，rounded-xl + shadow-lg，符合 S2 视觉规范。
+ * 内容：前 8 个 tab 的 favicon + 截断标题，两列网格；超过 8 个显示 "+N 更多"。
+ *
+ * 必须挂在 `position: relative` 的父元素内（TabGroup 卡片已有 @apply relative）。
+ *
+ * 无障碍：role="region" + aria-label="会话预览" — 比 role="tooltip" 更合适，
+ * 因为内容比一行提示更密。
+ *
+ * 测试要点（spec §1.4）：
+ * - 0 tabs 时返回 null（不渲染浮层容器）
+ * - N tabs 时最多渲染 8 个网格行
  */
-export const TabPreview: React.FC<TabPreviewProps> = ({ tab, visible, position }) => {
-  const [previewImage, setPreviewImage] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState(false);
+const MAX_VISIBLE_TABS = 8;
 
-  // 当标签或可见性变化时，尝试加载预览图
-  useEffect(() => {
-    if (visible && tab.url) {
-      setLoading(true);
-      setError(false);
+export const TabPreview: React.FC<TabPreviewProps> = ({ group }) => {
+  // 0 tabs：什么也不渲染（spec §1.2 行为）
+  if (!group.tabs || group.tabs.length === 0) {
+    return null;
+  }
 
-      // 尝试获取预览图
-      // 这里我们使用一个简单的方法：尝试获取网站的 Open Graph 图片或 favicon
-      // 在实际应用中，你可能需要一个更复杂的服务来生成预览图
-      const img = new Image();
-      
-      // 首先尝试使用 favicon
-      if (tab.favicon) {
-        img.src = tab.favicon;
-      } else {
-        // 如果没有 favicon，使用一个默认图标
-        setPreviewImage(null);
-        setLoading(false);
-        return;
-      }
-
-      img.onload = () => {
-        setPreviewImage(img.src);
-        setLoading(false);
-      };
-
-      img.onerror = () => {
-        // 如果加载失败，设置为 null
-        setPreviewImage(null);
-        setLoading(false);
-        setError(true);
-      };
-
-      // 清理函数
-      return () => {
-        img.onload = null;
-        img.onerror = null;
-      };
-    }
-  }, [tab.url, tab.favicon, visible]);
-
-  // 如果不可见，不渲染任何内容
-  if (!visible) return null;
+  const visibleTabs = group.tabs.slice(0, MAX_VISIBLE_TABS);
+  const hiddenCount = group.tabs.length - visibleTabs.length;
 
   return (
-    <div 
-      className="fixed z-50 bg-white dark:bg-gray-800 rounded-md shadow-lg border border-gray-200 dark:border-gray-700 p-3 max-w-md"
-      style={{
-        left: `${position.x + 10}px`,
-        top: `${position.y + 10}px`,
-        transform: 'translateY(-50%)',
-        opacity: visible ? 1 : 0,
-        transition: 'opacity 0.2s ease-in-out',
-      }}
+    <div
+      role="region"
+      aria-label="会话预览"
+      data-testid="tab-preview"
+      className="absolute right-0 top-full mt-1 w-72 max-h-56 overflow-y-auto rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 shadow-lg p-3 z-20"
     >
-      <div className="flex flex-col space-y-2">
-        {/* 标题 */}
-        <div className="font-medium text-gray-900 dark:text-gray-100 text-sm">
-          {tab.title}
-        </div>
-        
-        {/* URL */}
-        <div className="text-gray-500 dark:text-gray-400 text-xs truncate">
-          {tab.url}
-        </div>
-        
-        {/* 预览图 */}
-        <div className="mt-2 relative">
-          {loading ? (
-            <div className="h-24 bg-gray-100 dark:bg-gray-700 rounded flex items-center justify-center">
-              <div className="animate-pulse text-gray-400 dark:text-gray-500">加载预览...</div>
-            </div>
-          ) : previewImage ? (
-            <div className="relative h-24 bg-gray-100 dark:bg-gray-700 rounded overflow-hidden">
-              <img 
-                src={previewImage} 
-                alt={tab.title}
-                className="w-full h-full object-contain"
-              />
-            </div>
-          ) : (
-            <div className="h-24 bg-gray-100 dark:bg-gray-700 rounded flex items-center justify-center">
-              <div className="text-gray-400 dark:text-gray-500 text-xs">
-                {error ? '无法加载预览' : '无预览可用'}
-              </div>
-            </div>
-          )}
-        </div>
-        
-        {/* 创建时间 */}
-        <div className="text-gray-400 dark:text-gray-500 text-xs">
-          保存于: {new Date(tab.createdAt).toLocaleString()}
-        </div>
+      <div className="grid grid-cols-2 gap-x-3 gap-y-2">
+        {visibleTabs.map((tab) => (
+          <div
+            key={tab.id}
+            className="flex items-center gap-2 min-w-0"
+            data-testid="tab-preview-row"
+          >
+            <SafeFavicon
+              src={tab.favicon}
+              alt=""
+              className="w-4 h-4 flex-shrink-0"
+            />
+            <span className="text-xs truncate text-gray-700 dark:text-gray-200" title={tab.title}>
+              {tab.title}
+            </span>
+          </div>
+        ))}
       </div>
+      {hiddenCount > 0 && (
+        <div
+          className="mt-2 pt-2 border-t border-gray-100 dark:border-gray-700 text-[11px] text-gray-500 dark:text-gray-400"
+          data-testid="tab-preview-overflow"
+        >
+          +{hiddenCount} 更多
+        </div>
+      )}
     </div>
   );
 };

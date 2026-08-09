@@ -24,7 +24,7 @@ export const signUp = createAsyncThunk(
       if (data.user) {
         return {
           id: data.user.id,
-          email: data.user.email!,
+          email: data.user.email ?? 'unknown',
           lastLogin: new Date().toISOString(),
         } as User;
       }
@@ -55,7 +55,7 @@ export const signIn = createAsyncThunk(
       if (data.user) {
         return {
           id: data.user.id,
-          email: data.user.email!,
+          email: data.user.email ?? 'unknown',
           lastLogin: new Date().toISOString(),
         } as User;
       }
@@ -128,7 +128,7 @@ export const getCurrentUser = createAsyncThunk(
       if (data.user) {
         return {
           id: data.user.id,
-          email: data.user.email!,
+          email: data.user.email ?? 'unknown',
           lastLogin: new Date().toISOString(),
         } as User;
       }

@@ -34,5 +34,11 @@ module.exports = {
     '@typescript-eslint/no-explicit-any': 'off',
     'react-hooks/rules-of-hooks': 'error',
     'react-hooks/exhaustive-deps': 'off',
+    // 下划线前缀参数/变量表示「有意保留但不使用」（如为兼容调用方签名而保留的参数）。
+    // 这是社区通行约定，ESLint 默认不识别，这里显式打开。
+    '@typescript-eslint/no-unused-vars': [
+      'error',
+      { argsIgnorePattern: '^_', varsIgnorePattern: '^_', caughtErrorsIgnorePattern: '^_' },
+    ],
   },
 };

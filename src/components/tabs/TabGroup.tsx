@@ -1,13 +1,21 @@
-import React, { useEffect, useState, useCallback } from 'react';
-import { useAppDispatch, useAppSelector } from '@/store/hooks';
-import { updateGroupNameAndSync, toggleGroupLockAndSync, deleteGroup, updateGroup, moveTabAndSync } from '@/store/slices/tabSlice';
+import React, { useEffect, useState, useCallback, useRef } from 'react';
+import { useAppDispatch } from '@/store/hooks';
+import { updateGroupNameAndSync, toggleGroupLockAndSync, deleteGroup, updateGroup } from '@/store/slices/tabSlice';
 import { DraggableTab } from '@/components/dnd/DraggableTab';
+import { TabPreview } from '@/components/tabs/TabPreview';
 import { TabGroup as TabGroupType, Tab } from '@/types/tab';
 import { shouldAutoDeleteAfterTabRemoval } from '@/utils/tabGroupUtils';
 import { useToast } from '@/contexts/ToastContext';
 import { useEnhancedToast } from '@/utils/toastHelper';
+import { useDeferredDelete } from '@/hooks/useDeferredDelete';
 import { trackProductEvent } from '@/utils/productEvents';
 import { buildSessionRestoreMessage } from '@/utils/sessionPresentation';
+
+// S3 §1：hover-to-preview 延迟 250ms（防误触）
+const PREVIEW_HOVER_DELAY_MS = 250;
+
+// S3 §4：拖出/点击删除的撤销窗口（毫秒）；10 秒后可撤销就是不让 30 秒太久。
+const DELETE_DEFER_MS = 10000;
 
 interface TabGroupProps {
   group: TabGroupType;
@@ -56,8 +64,7 @@ const NotesIcon = () => (
 
 export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
   const dispatch = useAppDispatch();
-  const confirmBeforeDelete = useAppSelector(state => state.settings.confirmBeforeDelete);
-  const { showConfirm, showToast } = useToast();
+  const { showToast } = useToast();
   const { showDeleteSuccess, showDeleteError, showRestoreSuccess, showRestoreError } = useEnhancedToast();
 
   const [isEditing, setIsEditing] = useState(false);
@@ -65,6 +72,37 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
   const [isCollapsed, setIsCollapsed] = useState(false);
   const [isEditingNotes, setIsEditingNotes] = useState(false);
   const [notesDraft, setNotesDraft] = useState(group.notes || '');
+  const [favoriteAnimating, setFavoriteAnimating] = useState(false);
+
+  // S3 §1：hover-to-preview 状态 + 250ms 延迟定时器 ref
+  const [previewOpen, setPreviewOpen] = useState(false);
+  const previewTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const cancelPreviewTimer = useCallback(() => {
+    if (previewTimerRef.current !== null) {
+      clearTimeout(previewTimerRef.current);
+      previewTimerRef.current = null;
+    }
+  }, []);
+
+  const handlePreviewEnter = useCallback(() => {
+    // 已有挂起的 timer 不重复排队；防 mousemove 抖动
+    if (previewTimerRef.current !== null) return;
+    previewTimerRef.current = setTimeout(() => {
+      previewTimerRef.current = null;
+      setPreviewOpen(true);
+    }, PREVIEW_HOVER_DELAY_MS);
+  }, []);
+
+  const handlePreviewLeave = useCallback(() => {
+    cancelPreviewTimer();
+    setPreviewOpen(false);
+  }, [cancelPreviewTimer]);
+
+  // 卸载时清理 timer（防 setState after unmount 警告）
+  useEffect(() => {
+    return () => cancelPreviewTimer();
+  }, [cancelPreviewTimer]);
 
   useEffect(() => {
     setNewName(group.name);
@@ -91,39 +129,58 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
     }
   }, [handleNameSubmit, group.name]);
 
-  const handleDelete = useCallback(() => {
-    const runDelete = () => {
-      dispatch(deleteGroup(group.id))
+  // S3 §4: 软删 + 10s 撤销 toast —— 取代旧 confirm modal 流程。
+  // Hook 必须在组件顶层调用（rules-of-hooks），不能放在 useCallback 内部。
+  // 用 ref 锁住 onCommit 让最新的 dispatch/toast 闭包参与。
+  const deferredDeleteArgsRef = useRef<{ id: string; name: string; tabCount: number }>({
+    id: group.id,
+    name: group.name,
+    tabCount: group.tabs.length,
+  });
+  useEffect(() => {
+    deferredDeleteArgsRef.current = {
+      id: group.id,
+      name: group.name,
+      tabCount: group.tabs.length,
+    };
+  }, [group.id, group.name, group.tabs.length]);
+
+  const deferredDelete = useDeferredDelete({
+    delayMs: DELETE_DEFER_MS,
+    onCommit: () => {
+      const { id, name, tabCount } = deferredDeleteArgsRef.current;
+      dispatch(deleteGroup(id))
         .unwrap()
         .then(() => {
-          showDeleteSuccess(`已删除会话 "${group.name}" (${group.tabs.length} 个标签页)`);
+          showDeleteSuccess(`已删除会话 "${name}" (${tabCount} 个标签页)`);
         })
         .catch(error => {
           showDeleteError(`删除会话失败: ${error.message || '未知错误'}`);
         });
-    };
+    },
+  });
 
-    if (!confirmBeforeDelete) {
-      runDelete();
-      return;
-    }
-
-    showConfirm({
-      title: '删除确认',
-      message: '确定要删除这个会话吗？',
-      type: 'danger',
-      confirmText: '删除',
-      cancelText: '取消',
-      onConfirm: runDelete,
-      onCancel: () => { }
+  const handleDelete = useCallback(() => {
+    // - 删除按钮点击后立即显示 toast "已删除 + 撤销" 按钮；
+    // - 10s 内点撤销 → cancel() 取消未触发的 commit；
+    // - 10s 后自动 dispatch(deleteGroup) → 真正删除；
+    // - 锁定组的删除按钮仍然不显示（UI 守护），保留 confirmBeforeDelete 仅
+    //   影响单标签页删除（参见 handleDeleteTab）。
+    showToast({
+      message: `已删除"${group.name}"`,
+      // S3 §4: 撤销按钮；点击 → cancel() 阻止 timer 触发，然后 toast 关闭
+      action: { label: '撤销', onClick: deferredDelete.cancel },
     });
-  }, [confirmBeforeDelete, dispatch, group.id, group.name, group.tabs.length, showConfirm, showDeleteSuccess, showDeleteError]);
+    deferredDelete.requestDelete();
+  }, [group.name, deferredDelete, showToast]);
 
   const handleToggleLock = useCallback(() => {
     dispatch(toggleGroupLockAndSync(group.id));
   }, [dispatch, group.id]);
 
   const handleToggleFavorite = useCallback(() => {
+    setFavoriteAnimating(true);
+    setTimeout(() => setFavoriteAnimating(false), 350);
     dispatch(updateGroup({
       ...group,
       isFavorite: !group.isFavorite,
@@ -230,15 +287,6 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
     }, 50);
   }, [dispatch, group, showDeleteSuccess, showDeleteError, showRestoreSuccess, showRestoreError]);
 
-  const handleMoveTab = useCallback((sourceGroupId: string, sourceIndex: number, targetGroupId: string, targetIndex: number) => {
-    dispatch(moveTabAndSync({
-      sourceGroupId,
-      sourceIndex,
-      targetGroupId,
-      targetIndex
-    }));
-  }, [dispatch]);
-
   const handleDeleteTab = useCallback((tabId: string) => {
     if (shouldAutoDeleteAfterTabRemoval(group, tabId)) {
       dispatch(deleteGroup(group.id))
@@ -283,22 +331,36 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
 
   return (
     <div
-      className="tab-group-card animate-in group/card micro-interaction-card relative"
+      className="tab-group-card animate-fade-in-up group/card shadow-sm"
       role="region"
       aria-labelledby={`tab-group-title-${group.id}`}
     >
       {/* 标签组头部 */}
-      <div className="tab-group-header">
+      <div
+        className="tab-group-header"
+        onMouseEnter={handlePreviewEnter}
+        onMouseLeave={handlePreviewLeave}
+        onFocus={handlePreviewEnter}
+        onBlur={handlePreviewLeave}
+        onKeyDown={(e) => {
+          // S3 §1.2 键盘可达性：Esc 关闭预览
+          if (e.key === 'Escape' && previewOpen) {
+            e.stopPropagation();
+            cancelPreviewTimer();
+            setPreviewOpen(false);
+          }
+        }}
+      >
         <div className="flex items-center gap-3 flex-1 min-w-0">
           {/* 折叠按钮 */}
           <button
             onClick={() => setIsCollapsed(!isCollapsed)}
-            className="btn-icon p-1 -ml-1 micro-interaction-button"
+            className="btn-icon p-1 -ml-1 collapse-icon  focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-2"
             aria-label={isCollapsed ? '展开会话' : '折叠会话'}
             aria-expanded={!isCollapsed}
           >
             <svg
-              className={`w-4 h-4 transition-transform duration-300 ease-out ${isCollapsed ? '-rotate-90' : ''}`}
+              className={`w-4 h-4 transition-transform duration-300 ease-in-out ${isCollapsed ? '-rotate-90' : 'rotate-180'}`}
               fill="none"
               viewBox="0 0 24 24"
               stroke="currentColor"
@@ -325,7 +387,7 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
             <div className="min-w-0 flex items-center gap-2">
               <h3
                 id={`tab-group-title-${group.id}`}
-                className="tab-group-title truncate cursor-pointer tab-group-title-hover transition-colors flat-interaction"
+                className="tab-group-title truncate cursor-pointer tab-group-title-hover transition-colors flat-interaction font-semibold"
                 onClick={() => !group.isLocked && setIsEditing(true)}
                 title={group.isLocked ? group.name : '点击编辑会话名称'}
                 tabIndex={0}
@@ -350,8 +412,8 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
           )}
 
           {/* 数量徽章 */}
-          <span 
-            className="tab-group-count flex-shrink-0"
+          <span
+            className="tab-group-count flex-shrink-0 animate-count-pop"
             aria-label={`包含 ${group.tabs.length} 个标签页`}
           >
             {group.tabs.length}
@@ -369,74 +431,83 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
           )}
 
           {/* 时间 */}
-          <span className="tab-group-time hidden sm:block flex-shrink-0">
+          <span className="tab-group-time block flex-shrink-0 truncate max-w-24">
             {formatTime(group.createdAt)}
           </span>
         </div>
 
-        {/* 操作按钮：恢复始终可见，次要操作在 hover / focus 时展开 */}
-        <div className="flex items-center gap-0.5">
+        {/* 操作按钮 */}
+        <div className="flex items-center gap-1 opacity-0 group-focus-within/card:opacity-100 pointer-events-none group-hover/card:pointer-events-auto group-hover/card:opacity-100 transition-all duration-200 ease-out">
+          {/* 恢复全部 */}
           <button
             onClick={handleOpenAllTabs}
-            className="btn-icon p-1.5 tab-group-action-accent micro-interaction-button"
+            className="btn-icon p-1.5 tab-group-action-accent  focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-2"
             title="恢复整个会话"
             aria-label={`恢复整个会话，共 ${group.tabs.length} 个标签页`}
           >
             <OpenAllIcon />
           </button>
 
-          <div className="absolute right-3 top-1.5 flex items-center gap-0.5 opacity-0 group-focus-within/card:opacity-100 pointer-events-none group-hover/card:pointer-events-auto group-hover/card:opacity-100 transition-all duration-200 ease-out">
-            {!group.isLocked && (
-              <button
-                onClick={() => setIsEditing(true)}
-                className="btn-icon p-1.5 micro-interaction-button"
-                title="重命名会话"
-                aria-label="重命名会话"
-              >
-                <EditIcon />
-              </button>
-            )}
-
+          {/* 编辑 */}
+          {!group.isLocked && (
             <button
-              onClick={handleToggleFavorite}
-              className={`btn-icon p-1.5 micro-interaction-button ${group.isFavorite ? 'text-amber-500' : ''}`}
-              title={group.isFavorite ? '取消收藏会话' : '收藏会话'}
-              aria-label={group.isFavorite ? '取消收藏会话' : '收藏会话'}
+              onClick={() => setIsEditing(true)}
+              className="btn-icon p-1.5  focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-2"
+              title="重命名会话"
+              aria-label="重命名会话"
             >
-              <FavoriteIcon filled={!!group.isFavorite} />
+              <EditIcon />
             </button>
+          )}
 
-            {!group.isLocked && (
-              <button
-                onClick={() => setIsEditingNotes(current => !current)}
-                className="btn-icon p-1.5 micro-interaction-button"
-                title={group.notes ? '编辑会话备注' : '添加会话备注'}
-                aria-label={group.notes ? '编辑会话备注' : '添加会话备注'}
-              >
-                <NotesIcon />
-              </button>
-            )}
+          <button
+            onClick={handleToggleFavorite}
+            className={`btn-icon p-1.5 favorite-btn  focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-2 ${favoriteAnimating ? 'animate-heart-bounce' : 'transition-transform duration-200 hover:scale-110'} ${group.isFavorite ? 'text-amber-500' : ''}`}
+            title={group.isFavorite ? '取消收藏会话' : '收藏会话'}
+            aria-label={group.isFavorite ? '取消收藏会话' : '收藏会话'}
+          >
+            <FavoriteIcon filled={!!group.isFavorite} />
+          </button>
 
+          {!group.isLocked && (
             <button
-              onClick={handleToggleLock}
-              className={`btn-icon p-1.5 micro-interaction-button ${group.isLocked ? 'tab-group-lock-icon' : ''}`}
-              title={group.isLocked ? '解锁会话' : '锁定会话'}
-              aria-label={group.isLocked ? '解锁会话' : '锁定会话'}
+              onClick={() => setIsEditingNotes(current => !current)}
+              className="btn-icon p-1.5  focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-2"
+              title={group.notes ? '编辑会话备注' : '添加会话备注'}
+              aria-label={group.notes ? '编辑会话备注' : '添加会话备注'}
             >
-              <LockIcon locked={group.isLocked} />
+              <NotesIcon />
             </button>
+          )}
 
-            {!group.isLocked && (
-              <button
-                onClick={handleDelete}
-                className="btn-icon p-1.5 tab-group-action-danger micro-interaction-button"
-                title="删除会话"
-                aria-label="删除会话"
-              >
-                <DeleteIcon />
-              </button>
-            )}
-          </div>
+          {/* 锁定/解锁 */}
+          <button
+            onClick={() => {
+              if (group.isLocked) {
+                setFavoriteAnimating(true);
+                setTimeout(() => setFavoriteAnimating(false), 400);
+              } else {
+                handleToggleLock();
+              }
+            }}
+            className={`btn-icon p-1.5 lock-btn  focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-2 ${group.isLocked ? `tab-group-lock-icon ${favoriteAnimating ? 'animate-shake' : ''}` : ''}`}
+            title={group.isLocked ? '解锁会话' : '锁定会话'}
+            aria-label={group.isLocked ? '解锁会话' : '锁定会话'}
+          >
+            <LockIcon locked={group.isLocked} />
+          </button>
+
+          {/* 删除 */}
+          {!group.isLocked && (
+            <button
+              onClick={handleDelete}
+              className="btn-icon p-1.5 tab-group-action-danger  focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-2"
+              title="删除会话"
+              aria-label="删除会话"
+            >
+              <DeleteIcon />
+            </button>
+          )}
         </div>
       </div>
 
@@ -482,7 +553,7 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
 
       {/* 标签列表 */}
       <div
-        className={`transition-all duration-300 ease-out overflow-hidden ${
+        className={`tab-group-content transition-all duration-300 ease-out overflow-hidden ${
           isCollapsed ? 'max-h-0 opacity-0' : 'max-h-[2000px] opacity-100'
         }`}
         aria-hidden={isCollapsed}
@@ -494,13 +565,17 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
               tab={tab}
               groupId={group.id}
               index={index}
-              moveTab={handleMoveTab}
               handleOpenTab={handleOpenTab}
               handleDeleteTab={handleDeleteTab}
+              isCollapsed={isCollapsed}
+              isLocked={group.isLocked}
             />
           ))}
         </div>
       </div>
+
+      {/* S3 §1：hover/focus 触发的会话预览浮层（absolute 定位在卡片内） */}
+      {previewOpen && <TabPreview group={group} />}
     </div>
   );
 }, (prevProps, nextProps) => {

@@ -1,17 +1,36 @@
-import { createSlice, createAsyncThunk, createSelector } from '@reduxjs/toolkit';
-import { TabState, TabGroup, UserSettings } from '@/types/tab';
+import { createSlice, createAsyncThunk, createSelector, PayloadAction } from '@reduxjs/toolkit';
+import { TabState, TabGroup, Tab } from '@/types/tab';
 import { storage } from '@/utils/storage';
-import { downloadTabsFromCloudFlow, uploadTabsToCloudFlow } from '@/services/tabSyncWorkflow';
+
 import { nanoid } from '@reduxjs/toolkit';
 import { shouldAutoDeleteAfterTabRemoval } from '@/utils/tabGroupUtils';
 import { updateGroupWithVersion, updateDisplayOrder } from '@/utils/versionHelper';
 import { trackProductEvent } from '@/utils/productEvents';
+import { persistGroupsDebounced } from '@/store/middleware/debouncedPersist';
 
 // 为了解决"参数隐式具有"any"类型"的问题，添加明确的类型定义
 // 注意：这些接口暂时保留，可能在未来的功能中使用
 
 // 解决"速记属性...的范围内不存在任何值"的问题，显式声明actions
 
+
+// re-export 让旧 import 路径 (`@/store/slices/tabSlice`) 继续可用；
+// 不破坏 Task 2.1 中引入的 moveTabAndSync 调用方。
+export { persistGroupsDebounced };
+
+/**
+ * 实际写盘 thunk —— 读最新 state.tabs.groups，调用 storage.setGroups。
+ *
+ * 由 `debouncedPersistMiddleware` 在 delayMs 静默期结束时通过 store.dispatch 触发，
+ * 不应被业务代码直接 dispatch（直接调用会绕过防抖窗口）。
+ */
+export const persistGroupsThunk = createAsyncThunk(
+  'tabs/persistGroups',
+  async (_, { getState }) => {
+    const s = getState() as { tabs: { groups: TabGroup[] } };
+    await storage.setGroups(s.tabs.groups);
+  }
+);
 
 export const initialTabState: TabState = {
   groups: [],
@@ -153,89 +172,6 @@ export const importGroups = createAsyncThunk(
   }
 );
 
-// 同步标签组到云端
-export const syncTabsToCloud = createAsyncThunk<
-  { syncTime: string; stats: any | null },
-  { background?: boolean; overwriteCloud?: boolean } | void,
-  { state: any }
->('tabs/syncTabsToCloud', async (options, { getState, dispatch }) => {
-  const background = options?.background || false;
-  const overwriteCloud = options?.overwriteCloud || false;
-  try {
-    // 使用 setTimeout 延迟执行数据处理，避免阻塞主线程
-    // 这样可以让 UI 先更新，然后再处理数据
-    await new Promise(resolve => setTimeout(resolve, 10));
-
-    // 检查用户是否已登录
-    const { auth, tabs } = getState() as {
-      auth: { isAuthenticated: boolean };
-      tabs: TabState;
-      settings: UserSettings;
-    };
-    return await uploadTabsToCloudFlow({
-      auth,
-      tabsState: tabs,
-      background,
-      overwriteCloud,
-      reportProgress: (progress, operation) =>
-        dispatch(updateSyncProgress({ progress, operation })),
-    });
-  } catch (error) {
-    console.error('同步标签组到云端失败:', error);
-    throw error;
-  }
-});
-
-// 新增：从云端同步标签组
-export const syncTabsFromCloud = createAsyncThunk<
-  { groups: TabGroup[]; syncTime: string; stats: any | null },
-  { background?: boolean; forceRemoteStrategy?: boolean } | void,
-  { state: any }
->(
-  'tabs/syncTabsFromCloud',
-  async (
-    options: { background?: boolean; forceRemoteStrategy?: boolean } | void,
-    { getState, dispatch }
-  ) => {
-    const background = options?.background || false;
-    const forceRemoteStrategy = options?.forceRemoteStrategy || false;
-    try {
-      // 使用 setTimeout 延迟执行数据处理，避免阻塞主线程
-      // 这样可以让 UI 先更新，然后再处理数据
-      await new Promise(resolve => setTimeout(resolve, 10));
-
-      // 检查用户是否已登录
-      const { auth, tabs, settings } = getState() as {
-        auth: { isAuthenticated: boolean };
-        tabs: TabState;
-        settings: UserSettings;
-      };
-
-      return await downloadTabsFromCloudFlow({
-        auth,
-        tabsState: tabs,
-        settings,
-        background,
-        forceRemoteStrategy,
-        reportProgress: (progress, operation) =>
-          dispatch(updateSyncProgress({ progress, operation })),
-      });
-    } catch (error) {
-      console.error('从云端同步标签组失败:', error);
-      throw error;
-    }
-  }
-);
-
-// 已禁用自动同步 - 此函数仅用于检查登录状态
-export const syncLocalChangesToCloud = createAsyncThunk(
-  'tabs/syncLocalChangesToCloud',
-  async (_, { getState }) => {
-    const { auth } = getState() as { auth: { isAuthenticated: boolean } };
-    return auth.isAuthenticated;
-  }
-);
-
 // 更新标签组名称并同步到云端
 export const updateGroupNameAndSync = createAsyncThunk(
   'tabs/updateGroupNameAndSync',
@@ -296,11 +232,16 @@ export const toggleGroupLockAndSync = createAsyncThunk(
 );
 
 /**
- * 移动标签组并同步到云端
- * 优化性能：
- * 1. 使用requestAnimationFrame延迟存储操作
- * 2. 使用节流函数减少云端同步频率
- * 3. 批量处理本地存储操作
+ * 移动标签组并同步到本地存储（防抖版，与 moveTabAndSync 对齐）。
+ *
+ * 重构自旧实现（requestAnimationFrame + 显式 storage.getGroups/setGroups +
+ * updateDisplayOrder）：现在只做两件事——
+ * 1. dispatch `moveGroupLocal` 即时更新 UI（纯 reducer，内部已重算 displayOrder）；
+ * 2. dispatch `persistGroupsDebounced()` 由 debouncedPersistMiddleware 做
+ *    200ms trailing 持久化（persistGroupsThunk 读最新 state.tabs.groups 写盘）。
+ *
+ * DnD hover 期间的高频 dispatch 只跑纯 reducer + 重置防抖 timer，
+ * 不再产生每次 hover 的 storage 读 + 写往返。
  */
 export const moveGroupAndSync = createAsyncThunk(
   'tabs/moveGroupAndSync',
@@ -309,52 +250,11 @@ export const moveGroupAndSync = createAsyncThunk(
     { dispatch }
   ) => {
     try {
-      // 在 Redux 中移动标签组 - 立即更新UI
-      dispatch(moveGroup({ dragIndex, hoverIndex }));
+      // 在 Redux 中移动标签组 —— 纯 reducer，立即更新 UI，不写 storage。
+      dispatch(moveGroupLocal({ dragIndex, hoverIndex }));
 
-      // 使用 requestAnimationFrame 在下一帧执行存储操作，优化性能
-      // 这样可以确保UI更新优先，存储操作不会阻塞渲染
-      requestAnimationFrame(async () => {
-        try {
-          // 在本地存储中更新标签组顺序
-          const groups = await storage.getGroupsOrThrow();
-
-          // 检查索引是否有效
-          if (
-            dragIndex < 0 ||
-            dragIndex >= groups.length ||
-            hoverIndex < 0 ||
-            hoverIndex >= groups.length
-          ) {
-            console.error('无效的标签组索引:', {
-              dragIndex,
-              hoverIndex,
-              groupsLength: groups.length,
-            });
-            return;
-          }
-
-          const dragGroup = groups[dragIndex];
-
-          // 创建新的数组以避免直接修改原数组
-          const newGroups = [...groups];
-          // 删除拖拽的标签组
-          newGroups.splice(dragIndex, 1);
-          // 在新位置插入标签组
-          newGroups.splice(hoverIndex, 0, dragGroup);
-
-          // ⭐ 关键：更新所有标签组的 displayOrder 和 version
-          const updatedGroups = updateDisplayOrder(newGroups);
-
-          // 更新本地存储 - 批量操作
-          await storage.setGroups(updatedGroups);
-
-          console.log(`[MoveGroup] 已更新所有标签组的 displayOrder`);
-
-        } catch (error) {
-          console.error('存储标签组移动操作失败:', error);
-        }
-      });
+      // 触发持久化 —— 200ms trailing 合并，只产生一次写盘。
+      dispatch(persistGroupsDebounced());
 
       return { dragIndex, hoverIndex };
     } catch (error) {
@@ -483,6 +383,23 @@ export const cleanDuplicateTabs = createAsyncThunk(
  * 4. 优化拖拽过程中的状态更新
  * 5. 自动清理拖拽后的空标签组
  */
+/**
+ * 移动标签页 thunk（v2.1 拆分版）。
+ *
+ * - 不再直接调用 storage.setGroups / 不再做空组自动清理。
+ * - 只做两件事：(1) dispatch `moveTabLocal` 即时更新 UI；
+ *              (2) dispatch `persistGroupsDebounced()` 由 Task 2.2 的中间件
+ *                  完成 200ms trailing 持久化（当前是 no-op，feature 是已知
+ *                  临时回归，会在 Task 2.2 之后恢复）。
+ *
+ * 旧版本行为：
+ * - requestAnimationFrame + 显式 storage.setGroups + 跨组时调用 deleteGroup
+ *   自动清理空源标签组 + shouldAutoDeleteAfterTabRemoval 判定。
+ * 这些副作用全部下移到 Task 2.2 的 persistGroupsDebounced 中间件中。
+ *
+ * 调用者签名仍保持 (sourceGroupId, sourceIndex, targetGroupId, targetIndex,
+ * updateSourceInDrag?)，以便现有调用方 TabGroup.handleMoveTab 不需要修改。
+ */
 export const moveTabAndSync = createAsyncThunk(
   'tabs/moveTabAndSync',
   async (
@@ -499,119 +416,28 @@ export const moveTabAndSync = createAsyncThunk(
       targetIndex: number;
       updateSourceInDrag?: boolean;
     },
-    { dispatch }
+    { dispatch, getState }
   ) => {
     try {
-      // 在 Redux 中移动标签页 - 立即更新UI
-      dispatch(moveTab({ sourceGroupId, sourceIndex, targetGroupId, targetIndex }));
-
-      // 如果是在拖动过程中且不需要更新源，跳过存储操作
-      // 这是一个优化，避免在拖拽过程中频繁更新存储
-      if (!updateSourceInDrag) {
+      // 从当前 Redux state 中查找被移动的 tab ID（调用方传的是 index）。
+      const state = getState() as { tabs: TabState };
+      const sourceGroup = state.tabs.groups.find(g => g.id === sourceGroupId);
+      const tab = sourceGroup?.tabs[sourceIndex];
+      if (!tab) {
+        // 拖拽过程中 sourceGroup 不存在或 sourceIndex 越界时直接返回 —— UI 已经回弹。
         return { sourceGroupId, sourceIndex, targetGroupId, targetIndex };
       }
 
-      // 使用 requestAnimationFrame 在下一帧执行存储操作，优化性能
-      // 这样可以确保UI更新优先，存储操作不会阻塞渲染
-      requestAnimationFrame(async () => {
-        try {
-          // 在本地存储中更新标签页位置
-          const groups = await storage.getGroupsOrThrow();
-          const sourceGroup = groups.find(g => g.id === sourceGroupId);
-          const targetGroup = groups.find(g => g.id === targetGroupId);
+      // UI 立即更新 —— 纯 reducer，不写 storage。
+      dispatch(
+        moveTabLocal({ groupId: targetGroupId, tabId: tab.id, toIndex: targetIndex })
+      );
 
-          if (sourceGroup && targetGroup) {
-            // 获取要移动的标签页
-            const tab = sourceGroup.tabs[sourceIndex];
-
-            if (!tab) {
-              console.error('找不到要移动的标签页:', { sourceGroupId, sourceIndex });
-              return;
-            }
-
-            // 创建新的标签页数组以避免直接修改原数组
-            const newSourceTabs = [...sourceGroup.tabs];
-            const newTargetTabs =
-              sourceGroupId === targetGroupId ? newSourceTabs : [...targetGroup.tabs];
-
-            // 从源标签组中删除标签页
-            newSourceTabs.splice(sourceIndex, 1);
-
-            // 修复：计算调整后的目标索引
-            // 对于同组内移动，无论拖动方向如何，都直接使用 targetIndex
-            // 这与 Redux reducer 中的逻辑保持一致
-            let adjustedIndex = targetIndex;
-
-            // 确保索引在有效范围内
-            adjustedIndex = Math.max(0, Math.min(adjustedIndex, newTargetTabs.length));
-
-            // 插入标签到目标位置
-            newTargetTabs.splice(adjustedIndex, 0, tab);
-
-            // 更新源标签组和目标标签组 - 使用不可变更新
-            const sourceVersion = sourceGroup.version || 1;
-            const updatedSourceGroup = {
-              ...sourceGroup,
-              tabs: newSourceTabs,
-              updatedAt: new Date().toISOString(),
-              version: sourceVersion + 1,
-            };
-
-            let updatedTargetGroup = targetGroup;
-            if (sourceGroupId !== targetGroupId) {
-              const targetVersion = targetGroup.version || 1;
-              updatedTargetGroup = {
-                ...targetGroup,
-                tabs: newTargetTabs,
-                updatedAt: new Date().toISOString(),
-                version: targetVersion + 1,
-              };
-            }
-
-            // 批量更新本地存储 - 一次性更新所有变更
-            let updatedGroups = groups
-              .map(g => {
-                if (g.id === sourceGroupId) return updatedSourceGroup;
-                if (g.id === targetGroupId) return updatedTargetGroup;
-                return g;
-              });
-
-            // 自动清理空标签组（仅在跨组移动时检查源标签组）
-            if (sourceGroupId !== targetGroupId && updatedSourceGroup && updatedSourceGroup.tabs.length === 0) {
-              try {
-                // 使用工具函数检查是否应该被自动删除（考虑锁定状态等）
-                if (shouldAutoDeleteAfterTabRemoval(updatedSourceGroup, '')) {
-                  console.log(`[拖拽自动清理] 检测到空标签组: ${updatedSourceGroup.name} (ID: ${sourceGroupId})`);
-
-                  // 从存储数组中移除空标签组
-                  updatedGroups = updatedGroups.filter(g => g.id !== sourceGroupId);
-
-                  // 延迟删除Redux状态中的标签组，避免与UI组件的删除逻辑冲突
-                  setTimeout(() => {
-                    try {
-                      dispatch(deleteGroup(sourceGroupId));
-                    } catch (deleteError) {
-                      console.error(`[拖拽自动清理] 删除Redux状态失败:`, deleteError);
-                    }
-                  }, 100);
-
-                  console.log(`[拖拽自动清理] 已从存储中移除空标签组: ${updatedSourceGroup.name} (ID: ${sourceGroupId})`);
-                } else {
-                  console.log(`[拖拽自动清理] 跳过不符合删除条件的空标签组: ${updatedSourceGroup.name} (ID: ${sourceGroupId})`);
-                }
-              } catch (cleanupError) {
-                console.error(`[拖拽自动清理] 清理空标签组时发生错误:`, cleanupError);
-                // 清理失败时不影响主要的存储操作
-              }
-            }
-
-            await storage.setGroups(updatedGroups);
-
-          }
-        } catch (error) {
-          console.error('存储标签页移动操作失败:', error);
-        }
-      });
+      // 触发持久化（Task 2.2 才接，当前是 no-op）。
+      // 注意：拖拽中的高频 dispatch 不应被持久化污染 —— updateSourceInDrag=false 跳过。
+      if (updateSourceInDrag !== false) {
+        dispatch(persistGroupsDebounced());
+      }
 
       return { sourceGroupId, sourceIndex, targetGroupId, targetIndex };
     } catch (error) {
@@ -627,6 +453,41 @@ export const tabSlice = createSlice({
   reducers: {
     setActiveGroup: (state, action) => {
       state.activeGroupId = action.payload;
+    },
+    /**
+     * 纯 UI 移动 reducer —— 不写 storage。
+     *
+     * 契约（与 tabSlice 集成方式）：
+     * - `groupId`：目标标签组 ID（被移动 tab 的新所在组）
+     * - `tabId`：被移动的 tab ID（跨组移动时，会从它原本所在的标签组中移除）
+     * - `toIndex`：插入到目标标签组的索引位置（clamp 到 [0, tabs.length]）
+     *
+     * 通过跨所有标签组查找 tabId 实现"跨组移动"。
+     * 持久化由 dispatch persistGroupsDebounced() 触发（Task 2.2 中间件）。
+     */
+    moveTabLocal: (
+      state,
+      action: PayloadAction<{ groupId: string; tabId: string; toIndex: number }>
+    ) => {
+      const { groupId, tabId, toIndex } = action.payload;
+      const target = state.groups.find(g => g.id === groupId);
+      if (!target) return;
+
+      // 从所有标签组里查找 tab —— 找到就移除（支持跨组移动）。
+      let sourceTab: Tab | undefined;
+      for (const g of state.groups) {
+        const idx = g.tabs.findIndex(t => t.id === tabId);
+        if (idx >= 0) {
+          const [extracted] = g.tabs.splice(idx, 1);
+          sourceTab = extracted;
+          break;
+        }
+      }
+      if (!sourceTab) return;
+
+      // clamp 到 [0, target.tabs.length]，避免越界。
+      const clamped = Math.max(0, Math.min(target.tabs.length, toIndex));
+      target.tabs.splice(clamped, 0, sourceTab);
     },
     updateGroupName: (state, action) => {
       const { groupId, name } = action.payload;
@@ -663,6 +524,36 @@ export const tabSlice = createSlice({
       newGroups.splice(hoverIndex, 0, dragGroup);
       // 更新状态
       state.groups = newGroups;
+    },
+    /**
+     * 纯 UI 移动 reducer —— 不写 storage（moveGroupAndSync 的新路径）。
+     *
+     * 语义与旧 `moveGroup` 一致（dragIndex/hoverIndex 均为移动前数组索引），
+     * 差异：
+     * - dragIndex 越界 / dragIndex === hoverIndex → no-op（不改 groups 引用）；
+     * - hoverIndex 越界 → clamp 到 [0, len-1]（旧实现直接整体 no-op）；
+     * - 重排后通过 `updateDisplayOrder` 重算 displayOrder/version/updatedAt，
+     *   与旧 moveGroupAndSync 存储路径产出一致（syncUtils 合并时按
+     *   displayOrder 保留手动排序，语义不能丢）。
+     * 持久化由 dispatch persistGroupsDebounced() 触发（debouncedPersistMiddleware
+     * 200ms trailing 合并，hover 高频 dispatch 只重置 timer，不产生写盘）。
+     */
+    moveGroupLocal: (
+      state,
+      action: PayloadAction<{ dragIndex: number; hoverIndex: number }>
+    ) => {
+      const { dragIndex, hoverIndex } = action.payload;
+      const len = state.groups.length;
+      if (dragIndex < 0 || dragIndex >= len || dragIndex === hoverIndex) return;
+
+      const clampedHover = Math.max(0, Math.min(len - 1, hoverIndex));
+      const dragGroup = state.groups[dragIndex];
+      const newGroups = [...state.groups];
+      newGroups.splice(dragIndex, 1);
+      newGroups.splice(clampedHover, 0, dragGroup);
+
+      // displayOrder 必须与新顺序一致（旧实现也在写盘路径上做这一步）。
+      state.groups = updateDisplayOrder(newGroups);
     },
     /**
      * 移动标签页 - 优化版本
@@ -799,9 +690,7 @@ export const tabSlice = createSlice({
     },
     // 设置标签组数据（用于性能测试等场景）
     setGroups: (state, action) => {
-      const incoming = Array.isArray(action.payload) ? action.payload : [];
-      state.groups = incoming.filter(g => !g.isDeleted);
-      state.lastLoadedAt = new Date().toISOString();
+      state.groups = action.payload;
     },
   },
   extraReducers: builder => {
@@ -852,92 +741,6 @@ export const tabSlice = createSlice({
       .addCase(deleteAllGroups.rejected, (state, action) => {
         state.isLoading = false;
         state.error = action.error.message || '删除所有标签组失败';
-      })
-
-      // 同步到云端
-      .addCase(syncTabsToCloud.pending, (state, action) => {
-        // 只有在非后台同步时才更新状态
-        const isBackground = action.meta.arg?.background || false;
-        state.backgroundSync = isBackground;
-
-        if (!isBackground) {
-          state.syncStatus = 'syncing';
-        }
-      })
-      .addCase(syncTabsToCloud.fulfilled, (state, action) => {
-        // 更新同步时间和统计信息，但只有在非后台同步时才更新状态
-        state.lastSyncTime = action.payload.syncTime;
-        state.compressionStats = action.payload.stats || null;
-
-        if (!state.backgroundSync) {
-          state.syncStatus = 'success';
-        }
-
-        // 后台同步完成后重置标志
-        state.backgroundSync = false;
-      })
-      .addCase(syncTabsToCloud.rejected, (state, action) => {
-        // 只有在非后台同步时才更新错误状态
-        if (!state.backgroundSync) {
-          state.syncStatus = 'error';
-          state.error = action.error.message || '同步到云端失败';
-        }
-
-        // 后台同步完成后重置标志
-        state.backgroundSync = false;
-      })
-
-      // 从云端同步
-      .addCase(syncTabsFromCloud.pending, (state, action) => {
-        // 只有在非后台同步时才更新状态
-        const isBackground = action.meta.arg?.background || false;
-        state.backgroundSync = isBackground;
-
-        if (!isBackground) {
-          state.syncStatus = 'syncing';
-          state.isLoading = true;
-        }
-      })
-      .addCase(syncTabsFromCloud.fulfilled, (state, action) => {
-        // 始终更新数据，但只有在非后台同步时才更新状态
-        // 过滤掉已软删除的标签组，避免UI显示
-        const activeGroups = action.payload.groups.filter(g => !g.isDeleted);
-        state.groups = activeGroups;
-        state.lastSyncTime = action.payload.syncTime;
-        state.lastLoadedAt = new Date().toISOString();
-        state.compressionStats = action.payload.stats || null;
-
-        console.log(`[SyncFromCloud] 已同步 ${activeGroups.length} 个活跃标签组（已过滤 ${action.payload.groups.length - activeGroups.length} 个已删除）`);
-
-        if (!state.backgroundSync) {
-          state.syncStatus = 'success';
-          state.isLoading = false;
-        }
-
-        // 后台同步完成后重置标志
-        state.backgroundSync = false;
-      })
-      .addCase(syncTabsFromCloud.rejected, (state, action) => {
-        // 只有在非后台同步时才更新错误状态
-        if (!state.backgroundSync) {
-          state.syncStatus = 'error';
-          state.isLoading = false;
-          state.error = action.error.message || '从云端同步失败';
-        }
-
-        // 后台同步完成后重置标志
-        state.backgroundSync = false;
-      })
-
-      // 同步本地更改到云端
-      .addCase(syncLocalChangesToCloud.pending, () => {
-        // 不更新UI状态，因为这是后台操作
-      })
-      .addCase(syncLocalChangesToCloud.fulfilled, () => {
-        // 不更新UI状态，因为这是后台操作
-      })
-      .addCase(syncLocalChangesToCloud.rejected, () => {
-        // 不更新UI状态，因为这是后台操作
       })
 
       // 更新标签组名称并同步到云端
@@ -1003,6 +806,8 @@ export const tabSlice = createSlice({
 // 将 actions 单独导出，避免循环依赖
 export const {
   setActiveGroup,
+  moveTabLocal,
+  moveGroupLocal,
   updateGroupName,
   toggleGroupLock,
   setSearchQuery,

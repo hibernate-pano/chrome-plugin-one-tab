@@ -1,9 +1,16 @@
 <!doctype html>
-<html lang="en" data-theme="legacy">
+<!--
+  S2 P4 Task 4.5：data-theme 不再硬编码 aurora —— 主题 CSS 现在由
+  ThemeContext 动态 <link> 注入。如果预设为 aurora 但 aurora.css
+  还没注入，会出现 CSS 变量未解析 → 视觉错乱。因此保持 :not([data-theme])
+  状态，由 ThemeContext 在挂载后立刻注入正确主题（首屏用 global.css
+  内置的 fallback 变量，肉眼几乎察觉不到差异）。
+-->
+<html lang="en">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>TabVault Pro</title>
+    <title>TabStack</title>
     <link rel="icon" type="image/x-icon" href="/favicon.ico" />
   </head>
   <body>

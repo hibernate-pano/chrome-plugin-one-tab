@@ -13,7 +13,7 @@ export const TabCounter: React.FC = () => {
         {groupCount} 会话
       </span>
       <span
-        className="text-xs font-medium px-2 py-0.5 rounded-full whitespace-nowrap"
+        className="tab-count-badge text-xs font-medium px-2 py-0.5 rounded-full whitespace-nowrap animate-count-pop"
         style={{
           background: 'var(--color-bg-tertiary)',
           color: 'var(--color-text-secondary)'

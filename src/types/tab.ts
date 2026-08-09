@@ -72,8 +72,20 @@ export interface TabState {
   searchQuery: string;
   syncStatus: 'idle' | 'syncing' | 'success' | 'error'; // 同步状态
   lastSyncTime: string | null; // 最后同步时间
-  lastLoadedAt?: string | null; // 本地数据已加载时间；首屏 hydration 用
-  lastSyncStatus?: 'local' | 'cloud' | null; // 本地/云端数据来源标记
+  /**
+   * 本地 groups 最近一次成功加载到 Redux 的时间戳（ISO 字符串）。
+   * 用于判断 "loadGroups 是否已完成"，避免在 race 条件下基于空 state
+   * 触发下载流程后用空数据覆盖本地存储。
+   * 初始为 null；每次 loadGroups.fulfilled 时刷新。
+   */
+  lastLoadedAt: string | null;
+  /**
+   * 当前显示在 UI 上的数据来源：
+   * - 'local'：来自本地 IndexedDB（preload hydration）
+   * - 'cloud'：来自云端同步（download）
+   * - null：尚未确定（首屏默认）
+   */
+  lastSyncStatus: 'local' | 'cloud' | null;
 
   // 定义压缩统计信息类型（虽然已废弃，但保留类型定义以保持向后兼容）
   compressionStats?: {
@@ -90,8 +102,8 @@ export interface TabState {
 // 布局模式枚举
 export type LayoutMode = 'single' | 'double';
 
-// 主题风格类型
-export type ThemeStyle = 'legacy' | 'classic' | 'aurora' | 'creamy' | 'pink' | 'mint' | 'cyberpunk' | 'prism';
+// 主题风格类型（S2 P4 Task 4.4: 从 8 个精简到 3 个）
+export type ThemeStyle = 'aurora' | 'refined' | 'cyberpunk';
 
 export interface UserSettings {
   groupNameTemplate: string;

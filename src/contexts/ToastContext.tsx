@@ -1,11 +1,36 @@
-import React, { createContext, useContext, useState, ReactNode, useEffect } from 'react';
+import React, { createContext, useContext, useState, ReactNode, useEffect, useCallback } from 'react';
 import Toast, { ToastType } from '../components/common/Toast';
 import ConfirmDialog, { ConfirmDialogProps } from '../components/common/ConfirmDialog';
 import AlertDialog, { AlertDialogProps } from '../components/common/AlertDialog';
 import { errorHandler } from '@/utils/errorHandler';
 
+/**
+ * 撤销按钮配置（S3 §4）。点击后调用 onClick + 关闭 toast。
+ * 用于"删除会话 → 撤销"等延迟操作（useDeferredDelete 配合）。
+ */
+export interface ToastAction {
+  label: string;
+  onClick: () => void;
+}
+
+/**
+ * S3 §4: 新的 showToast options 形式 —— 支持 action 按钮。
+ * 双签名兼容：旧调用 `(message, type?, duration?)` 与新调用 `(options)` 均可。
+ */
+export type ShowToastOptions = {
+  message: string;
+  type?: ToastType;
+  duration?: number;
+  action?: ToastAction | null;
+};
+
 interface ToastContextType {
-  showToast: (message: string, type?: ToastType, duration?: number) => void;
+  showToast: (
+    messageOrOptions: string | ShowToastOptions,
+    type?: ToastType,
+    duration?: number,
+    action?: ToastAction | null
+  ) => void;
   showConfirm: (options: Omit<ConfirmDialogProps, 'visible'>) => void;
   showAlert: (options: Omit<AlertDialogProps, 'visible'>) => void;
 }
@@ -24,12 +49,21 @@ interface ToastProviderProps {
   children: ReactNode;
 }
 
+interface ToastState {
+  visible: boolean;
+  message: string;
+  type: ToastType;
+  duration: number;
+  action: ToastAction | null;
+}
+
 export const ToastProvider: React.FC<ToastProviderProps> = ({ children }) => {
-  const [toast, setToast] = useState({
+  const [toast, setToast] = useState<ToastState>({
     visible: false,
     message: '',
-    type: 'success' as ToastType,
+    type: 'success',
     duration: 3000,
+    action: null,
   });
 
   const [confirmDialog, setConfirmDialog] = useState<ConfirmDialogProps>({
@@ -47,14 +81,34 @@ export const ToastProvider: React.FC<ToastProviderProps> = ({ children }) => {
     onClose: () => { },
   });
 
-  const showToast = (message: string, type: ToastType = 'success', duration: number = 3000) => {
-    setToast({
-      visible: true,
-      message,
-      type,
-      duration,
-    });
-  };
+  const showToast = useCallback(
+    (
+      messageOrOptions: string | ShowToastOptions,
+      type: ToastType = 'success',
+      duration: number = 3000,
+      action: ToastAction | null = null
+    ) => {
+      if (typeof messageOrOptions === 'object' && messageOrOptions !== null) {
+        const opts = messageOrOptions;
+        setToast({
+          visible: true,
+          message: opts.message,
+          type: opts.type ?? 'success',
+          duration: opts.duration ?? 3000,
+          action: opts.action ?? null,
+        });
+        return;
+      }
+      setToast({
+        visible: true,
+        message: messageOrOptions,
+        type,
+        duration,
+        action,
+      });
+    },
+    []
+  );
 
   const showConfirm = (options: Omit<ConfirmDialogProps, 'visible'>) => {
     setConfirmDialog({
@@ -70,9 +124,20 @@ export const ToastProvider: React.FC<ToastProviderProps> = ({ children }) => {
     });
   };
 
-  const handleToastClose = () => {
+  const handleToastClose = useCallback(() => {
     setToast(prev => ({ ...prev, visible: false }));
-  };
+  }, []);
+
+  const handleToastAction = useCallback(() => {
+    // 触发撤销回调后立即关闭 toast —— 撤销动作的"什么也不做"语义
+    // 由 useDeferredDelete 持有真实状态，外部 cancel 已经取消 timer。
+    setToast(prev => {
+      // 在 updater 内同步触发 onClick：保证 setter 闭包内的 action 引用新鲜，
+      // 避免 updater 外 capturedAction?.onClick() 的类型收窄为 never。
+      prev.action?.onClick();
+      return { ...prev, visible: false };
+    });
+  }, []);
 
   const handleConfirmClose = () => {
     setConfirmDialog(prev => ({ ...prev, visible: false }));
@@ -87,7 +152,7 @@ export const ToastProvider: React.FC<ToastProviderProps> = ({ children }) => {
     errorHandler.setToastCallback((message: string, type: 'error' | 'warning') => {
       showToast(message, type);
     });
-  }, []);
+  }, [showToast]);
 
   return (
     <ToastContext.Provider value={{ showToast, showConfirm, showAlert }}>
@@ -97,6 +162,8 @@ export const ToastProvider: React.FC<ToastProviderProps> = ({ children }) => {
         message={toast.message}
         type={toast.type}
         duration={toast.duration}
+        action={toast.action}
+        onAction={handleToastAction}
         onClose={handleToastClose}
       />
       <ConfirmDialog

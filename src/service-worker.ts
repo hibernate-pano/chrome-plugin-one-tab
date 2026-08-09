@@ -1,11 +1,12 @@
 import { tabManager } from '@/background/TabManager';
 import { migrateToV2 } from '@/utils/migrationHelper';
 
+
 // Chrome 扩展的 Service Worker
 // 为了避免模块导入问题，早期版本内联了存储逻辑；现统一使用 utils/storage 以与前端页面共享同一数据源（IndexedDB）
 
 // Service Worker启动日志
-console.log('=== TabVault Pro Service Worker 启动 ===');
+console.log('=== TabStack Service Worker 启动 ===');
 console.log('版本:', chrome.runtime.getManifest().version);
 console.log('启动时间:', new Date().toISOString());
 console.log('Chrome APIs 可用性检查:');
@@ -23,7 +24,7 @@ async function runMigrations() {
   }
 }
 
-const showNotification = async (message: string, title = 'TabVault Pro'): Promise<void> => {
+const showNotification = async (message: string, title = 'TabStack'): Promise<void> => {
   await tabManager.showNotification({
     type: 'basic',
     iconUrl: chrome.runtime.getURL('icons/icon128.png'),
@@ -32,7 +33,6 @@ const showNotification = async (message: string, title = 'TabVault Pro'): Promis
   });
 };
 
-console.log('Service Worker: 已简化同步逻辑，只保留手动同步功能');
 
 // 初始化右键菜单
 async function setupContextMenus() {
@@ -203,15 +203,35 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
   }
 });
 
-// 简化的消息处理
+// 定时后台云端同步已移除（v1.12.0）
+// 所有同步操作统一由 Popup 中的 SyncEngine 处理，Service Worker 仅负责 TabManager
+
+// 消息处理
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   console.log('Service Worker 收到消息:', message.type);
+
+  // 验证消息来源：仅接受来自同一扩展的消息
+  if (!sender || sender.id !== chrome.runtime.id) {
+    console.warn('Service Worker: 拒绝来自未知发送者的消息', sender);
+    sendResponse({ success: false, error: '未授权的消息来源' });
+    return false;
+  }
 
   // 基本验证
   if (!message || !message.type) {
     sendResponse({ success: false, error: '无效消息' });
     return false;
   }
+
+  // 验证 URL 仅允许 HTTP/HTTPS 协议
+  const isSafeUrl = (url: string): boolean => {
+    try {
+      const parsed = new URL(url);
+      return ['http:', 'https:'].includes(parsed.protocol);
+    } catch {
+      return false;
+    }
+  };
 
   try {
     switch (message.type) {
@@ -221,6 +241,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         const pinned: boolean | undefined = data.pinned ?? data.tab?.pinned;
 
         if (singleUrl) {
+          if (!isSafeUrl(singleUrl)) {
+            sendResponse({ success: false, error: '不安全的 URL 协议' });
+            return false;
+          }
           chrome.tabs.create({ url: singleUrl, active: false, pinned })
             .then(() => sendResponse({ success: true }))
             .catch(error => sendResponse({ success: false, error: error.message }));
@@ -233,6 +257,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         const data = message.data || {};
 
         if (Array.isArray(data.tabs)) {
+          const urls = data.tabs.map((t: any) => t.url).filter(Boolean);
+          if (urls.some((u: string) => !isSafeUrl(u))) {
+            sendResponse({ success: false, error: '包含不安全的 URL 协议' });
+            return false;
+          }
           tabManager.openTabsInNewWindow(data.tabs)
             .then(() => sendResponse({ success: true }))
             .catch(error => sendResponse({ success: false, error: error.message }));
@@ -240,6 +269,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         }
 
         if (Array.isArray(data.urls)) {
+          if (data.urls.some((u: string) => !isSafeUrl(u))) {
+            sendResponse({ success: false, error: '包含不安全的 URL 协议' });
+            return false;
+          }
           tabManager.openTabsInNewWindow(
             data.urls.map((url: string) => ({ url }))
           )

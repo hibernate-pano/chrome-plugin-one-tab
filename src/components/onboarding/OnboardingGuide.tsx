@@ -1,11 +1,9 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Spotlight } from './Spotlight';
 import {
-    WelcomeStep,
     SaveTabsStep,
-    SearchStep,
     RestoreStep,
-    ReadyStep,
+    SearchStep,
 } from './OnboardingSteps';
 import {
     setOnboardingCompleted,
@@ -30,11 +28,9 @@ interface StepConfig {
 }
 
 const STEPS: StepConfig[] = [
-    { title: '欢迎使用 TabVault Pro' },
     { title: '保存工作会话', spotlightTarget: '[aria-label="保存当前窗口中的所有标签页为会话"]' },
-    { title: '搜索工作会话', spotlightTarget: '[aria-label="搜索会话、备注或标签页"]' },
     { title: '恢复整个会话', spotlightTarget: 'button[aria-label^="恢复整个会话"]' },
-    { title: '一切就绪' },
+    { title: '搜索工作会话', spotlightTarget: '[aria-label="搜索会话、备注或标签页"]' },
 ];
 
 const TOTAL_STEPS = STEPS.length;
@@ -118,11 +114,9 @@ export const OnboardingGuide: React.FC<OnboardingGuideProps> = ({ onComplete }) 
     // 渲染当前步骤内容
     const renderStep = () => {
         switch (currentStep) {
-            case 0: return <WelcomeStep version={version.current} />;
-            case 1: return <SaveTabsStep />;
+            case 0: return <SaveTabsStep />;
+            case 1: return <RestoreStep />;
             case 2: return <SearchStep />;
-            case 3: return <RestoreStep />;
-            case 4: return <ReadyStep />;
             default: return null;
         }
     };

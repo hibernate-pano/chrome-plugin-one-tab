@@ -22,7 +22,7 @@ export const DraggableTabGroup: React.FC<DraggableTabGroupProps> = ({ group }) =
         contentVisibility: 'auto',
         containIntrinsicSize: '320px',
       }}
-      className="transition-material"
+      className="ease-out"
     >
       <TabGroup group={group} />
     </div>

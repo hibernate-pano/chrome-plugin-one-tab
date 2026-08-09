@@ -11,11 +11,13 @@ export interface ValidationResult {
 }
 
 // 密码强度等级
-export enum PasswordStrength {
-  WEAK = 'weak',
-  MEDIUM = 'medium',
-  STRONG = 'strong'
-}
+export const PasswordStrength = {
+  WEAK: 'weak',
+  MEDIUM: 'medium',
+  STRONG: 'strong',
+} as const;
+
+export type PasswordStrength = (typeof PasswordStrength)[keyof typeof PasswordStrength];
 
 // 密码强度结果
 export interface PasswordStrengthResult {
@@ -227,13 +229,20 @@ function containsDangerousChars(input: string): boolean {
   return dangerousPatterns.some(pattern => pattern.test(input));
 }
 
-/**
- * 防止XSS的HTML编码
- */
 export function escapeHtml(text: string): string {
-  const div = document.createElement('div');
-  div.textContent = text;
-  return div.innerHTML;
+  // 检查是否在浏览器环境（有 DOM）
+  if (typeof window !== 'undefined' && typeof document !== 'undefined') {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+  }
+  // 服务端/无 DOM 环境：纯字符串转义
+  return text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
 }
 
 /**

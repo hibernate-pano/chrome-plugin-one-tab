@@ -78,6 +78,10 @@ function checkSupabaseConfig() {
 }
 
 // 导出 supabase 客户端，延迟初始化
+// 类型说明：v2.108 起 supabase-js 启用严格的 Database 泛型推断。
+// 项目当前未定义 Database schema 类型，链式调用会推断为 `never` 导致 13 处类型错误。
+// 战术处理：这里整体转为 any，避免全量重写 schema 类型。
+// TODO：定义 Database 接口（tab_groups / tabs / user_settings 的 Row/Insert/Update 类型）后移除 any。
 export const supabase = initSupabaseClient() as any;
 
 import { secureStorage } from './secureStorage';
@@ -333,7 +337,7 @@ export const sync = {
     }
   },
   // 上传标签组
-  async uploadTabGroups(groups: TabGroup[], overwriteCloud: boolean = false) {
+  async uploadTabGroups(groups: TabGroup[], _overwriteCloud: boolean = false) {
     checkSupabaseConfig();
     const deviceId = await getDeviceId();
 
@@ -450,11 +454,20 @@ export const sync = {
         const group = groupsWithUser[i];
         if (group.tabs_data && Array.isArray(group.tabs_data)) {
           try {
-            // 加密标签数据
-            const encryptedData = await encryptData(group.tabs_data, user.id);
+            // 找到对应的完整 TabGroup，加密完整数据（tabs + 元数据）
+            const fullGroup = groups.find(g => g.id === group.id);
+            const groupPayload = {
+              tabs: group.tabs_data,
+              version: fullGroup?.version,
+              isDeleted: fullGroup?.isDeleted,
+              notes: fullGroup?.notes,
+              isFavorite: fullGroup?.isFavorite,
+              displayOrder: fullGroup?.displayOrder,
+            };
+            const encryptedData = await encryptData(groupPayload, user.id);
             // 替换原始数据为加密数据
             groupsWithUser[i].tabs_data = encryptedData as any;
-            console.log(`标签组 ${group.id} 的数据已加密`);
+            console.log(`标签组 ${group.id} 的数据已加密（含完整元数据）`);
           } catch (error) {
             console.error(`加密标签组 ${group.id} 的数据失败:`, error);
             // 如果加密失败，保留原始数据
@@ -507,60 +520,13 @@ export const sync = {
 
       console.log('所有标签组的用户ID验证通过');
 
-      let data, error;
+      // 使用纯 upsert 模式（不删除现有云端数据，删除通过软删标记传播）
+      const upsertResult = await supabase
+        .from('tab_groups')
+        .upsert(uniqueGroups as any, { onConflict: 'id' });
 
-      // 如果是覆盖模式，先删除用户的所有标签组，然后插入新的标签组
-      if (overwriteCloud) {
-        // 使用覆盖模式
-
-        // 先删除用户的所有标签组
-        const { error: deleteError } = await supabase
-          .from('tab_groups')
-          .delete()
-          .eq('user_id', sessionData.session.user.id);
-
-        if (deleteError) {
-          console.error('删除用户标签组失败:', deleteError);
-          console.error('错误详情:', {
-            code: deleteError.code,
-            message: deleteError.message,
-            details: deleteError.details,
-            hint: deleteError.hint
-          });
-          throw deleteError;
-        }
-
-        console.log('用户标签组已删除，准备插入新数据');
-
-        // 等待一小段时间确保删除操作完全完成
-        await new Promise(resolve => setTimeout(resolve, 100));
-
-        // 然后插入新的标签组，使用 upsert 而不是 insert 来避免主键冲突
-        console.log('准备插入标签组数据，用户ID:', sessionData.session.user.id);
-        console.log('要插入的第一个标签组数据样本:', {
-          id: uniqueGroups[0]?.id,
-          name: uniqueGroups[0]?.name,
-          user_id: uniqueGroups[0]?.user_id,
-          device_id: uniqueGroups[0]?.device_id,
-          tabsDataLength: uniqueGroups[0]?.tabs_data?.length
-        });
-
-        const result = await supabase
-          .from('tab_groups')
-          .upsert(uniqueGroups as any, { onConflict: 'id' });
-
-        data = result.data;
-        error = result.error;
-      } else {
-        // 合并模式，使用 upsert
-        // 使用合并模式
-        const result = await supabase
-          .from('tab_groups')
-          .upsert(uniqueGroups as any, { onConflict: 'id' });
-
-        data = result.data;
-        error = result.error;
-      }
+      let data = upsertResult.data;
+      let error = upsertResult.error;
 
       result = data;
 
@@ -745,8 +711,29 @@ export const sync = {
 
         // 处理标签组数据
 
+        // 检测数据格式：新格式为完整 TabGroup payload（含 tabs/version/isDeleted 等），
+        // 旧格式为纯 TabData[] 数组
+        let groupMeta: Partial<TabGroup> = {};
+        let tabDataArray: TabData[] = [];
+
+        if (Array.isArray(tabsData)) {
+          // 旧格式：纯 TabData[]
+          tabDataArray = tabsData;
+        } else if (tabsData && typeof tabsData === 'object' && 'tabs' in (tabsData as any)) {
+          // 新格式：完整 TabGroup payload
+          const full = tabsData as any;
+          tabDataArray = Array.isArray(full.tabs) ? full.tabs : [];
+          groupMeta = {
+            version: full.version,
+            isDeleted: full.isDeleted,
+            notes: full.notes,
+            isFavorite: full.isFavorite,
+            displayOrder: full.displayOrder,
+          };
+        }
+
         // 将 TabData 转换为 Tab 格式
-        const formattedTabs = tabsData.map((tab: TabData) => ({
+        const formattedTabs = tabDataArray.map((tab: TabData) => ({
           id: tab.id,
           url: tab.url,
           title: tab.title,
@@ -763,7 +750,13 @@ export const sync = {
           tabs: formattedTabs,
           createdAt: String(groupAny.created_at),
           updatedAt: String(groupAny.updated_at),
-          isLocked: Boolean(groupAny.is_locked)
+          isLocked: Boolean(groupAny.is_locked),
+          ...groupMeta,
+          // 🔧 删除传播：列级 pending_delete 是 tombstone 软删标记。
+          // 必须 OR 进 isDeleted，否则其他设备删除的组下载后没有删除信号，
+          // mergeTabGroups 会把本地副本当 local-only 保留 → 删除不传播。
+          // groupMeta.isDeleted（来自加密 payload）任一为真即视为已删除。
+          isDeleted: Boolean(groupMeta.isDeleted) || Boolean(groupAny.pending_delete),
         });
       }
 
@@ -799,6 +792,43 @@ export const sync = {
       console.error('下载标签组失败:', error);
       throw error;
     }
+  },
+
+  /**
+   * 标记云端标签组为已删除（直接删除 Supabase 中的记录）
+   * 仅当本地已软删且确认要清理云端时调用。
+   */
+  async markCloudGroupsAsDeleted(deletedIds: string[]) {
+    if (deletedIds.length === 0) return;
+
+    checkSupabaseConfig();
+    const { data: sessionData } = await supabase.auth.getSession();
+    if (!sessionData?.session) {
+      console.warn('[markCloudGroupsAsDeleted] 未登录，跳过');
+      return;
+    }
+
+    const userId = sessionData.session.user.id;
+    console.log(`[markCloudGroupsAsDeleted] 正在标记云端 ${deletedIds.length} 个组为已删除`);
+
+    // ⚠️ tombstone 软删，不是物理删除（.delete()）。
+    // 原因：物理删除后云端行消失，其他设备下载时读不到删除信号，
+    // mergeTabGroups 会把本地副本当 local-only 保留 → 删除不跨设备传播
+    //（用户报告的「另一台设备上删掉的组又回来了」）。
+    // 改为标记 pending_delete=true，下载时翻译成 isDeleted 喂给 merge，
+    // merge 的 shouldApplyCloudDeletion 据此应用删除。已在测试库端到端验证。
+    const { error } = await supabase
+      .from('tab_groups')
+      .update({ pending_delete: true, updated_at: new Date().toISOString() })
+      .eq('user_id', userId)
+      .in('id', deletedIds);
+
+    if (error) {
+      console.error('[markCloudGroupsAsDeleted] 标记删除失败:', error);
+      throw error;
+    }
+
+    console.log(`[markCloudGroupsAsDeleted] 已标记 ${deletedIds.length} 个云端组为已删除`);
   },
 
   // 上传用户设置
@@ -845,39 +875,36 @@ export const sync = {
 
     // 上传用户设置
 
-    // 定义允许的设置字段，避免上传不存在的字段
-    // 这些字段名对应数据库中的实际列名（驼峰命名，稍后会转换为下划线命名）
-    const allowedFields = [
-      // 'autoSave',              // -> auto_save (UserSettings中不存在，已注释)
-      // 'autoSaveInterval',      // -> auto_save_interval (UserSettings中不存在，已注释)
-      'groupNameTemplate',     // -> group_name_template
-      'showFavicons',          // -> show_favicons
-      'showTabCount',          // -> show_tab_count
-      // 'autoCloseTabs',         // -> auto_close_tabs (UserSettings中不存在，已注释)
-      'confirmBeforeDelete',   // -> confirm_before_delete
-      'allowDuplicateTabs',    // -> allow_duplicate_tabs
-      // 'syncInterval',          // -> sync_interval (UserSettings中不存在，已注释)
-      'syncEnabled',           // -> sync_enabled
-      'layoutMode',            // -> layout_mode
-      'showNotifications',     // -> show_notifications
-      'syncStrategy',          // -> sync_strategy
-      'deleteStrategy',        // -> delete_strategy
-      'themeMode',             // -> theme_mode
-      'themeStyle',            // -> theme_style
-      'collectPinnedTabs',     // -> collect_pinned_tabs
-      'reorderMode'            // -> reorder_mode
+    // 定义允许的设置字段 - 直接从 UserSettings 类型推导，确保类型安全
+    // 任何新增字段必须同时添加到 allowlist 和 cloud fieldMapping 中
+    const allowedSettingsKeys: (keyof UserSettings)[] = [
+      'groupNameTemplate',
+      'showFavicons',
+      'showTabCount',
+      'confirmBeforeDelete',
+      'allowDuplicateTabs',
+      'syncEnabled',
+      'layoutMode',
+      'showNotifications',
+      'syncStrategy',
+      'deleteStrategy',
+      'themeMode',
+      'themeStyle',
+      'collectPinnedTabs',
+      'reorderMode',
     ];
 
     // 将驼峰命名法转换为下划线命名法，并过滤掉不允许的字段
     const convertedSettings: Record<string, any> = {};
     for (const [key, value] of Object.entries(settings)) {
       // 只处理允许的字段
-      if (allowedFields.includes(key)) {
+      if ((allowedSettingsKeys as string[]).includes(key)) {
         // 将驼峰命名转换为下划线命名
         const snakeKey = key.replace(/([A-Z])/g, '_$1').toLowerCase();
         convertedSettings[snakeKey] = value;
-      } else {
-        console.warn(`跳过未知的设置字段: ${key}`);
+      } else if (key in settings) {
+        // 字段存在但不在 allowlist，说明是新增字段但未被同步逻辑支持
+        console.warn(`[uploadSettings] 设置字段 "${key}" 不在同步允许列表中，已跳过。建议检查 allowlist 配置。`);
       }
     }
 

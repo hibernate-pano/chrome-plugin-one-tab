@@ -10,32 +10,47 @@ import { initialTabState } from '@/store/slices/tabSlice';
 import { decideTabsHydration, buildTabsPreloadedState } from '@/utils/hydrationDecision';
 import { benchmarkStorageRoundtrip, seedLargeDataset } from '@/utils/performanceTest';
 
+/**
+ * 在 createRoot 之前先 await 把 local 数据塞进 preloadedState，
+ * 让首屏 render 直接显示已保存的标签组，避免 EmptyState 闪烁。
+ *
+ * ⚠️ 刷新后数据丢失防护（见 utils/hydrationDecision.ts）：
+ * storage.getGroups() 在冷启动 race / 解密失败时会**静默返回 []**。如果
+ * 把这种「瞬时空读」固化成 lastLoadedAt 非空，TabList 会永久跳过 loadGroups
+ * 重试，用户看到 EmptyState——表现为「刷新后数据没了」。因此只有真正读到
+ * 非空数据时才 hydrate tabs + 固化 lastLoadedAt；读到空时不 hydrate tabs，
+ * 交给 TabList 走带 isLoading 状态的 loadGroups 路径。
+ *
+ * 失败时降级为不带 preloadedState（走原 useEffect loadGroups 路径）。
+ */
 async function bootstrap() {
   let preloadedState: PreloadedState | undefined;
-
   try {
     await initStorage();
-    const { groups, settings, groupsReadFailed, groupsReadError } = await storage.hydrateAll();
-    const decision = decideTabsHydration({
-      groups,
-      now: new Date().toISOString(),
-      readFailed: groupsReadFailed === true,
-    });
+    // S2 P1 Task 1.3: 用 storage.hydrateAll() 一次性拿 groups + settings
+    // （lastLoadedAt 是 redux 状态，不在 storage 域，所以由 hydrationDecision
+    // 决定是否固化）。这是「单源化」入口：bootstrap 路径只发一次「读盘意图」，
+    // 内部 cachedAsyncFn 还会做内存命中。
+    const { groups, settings } = await storage.hydrateAll();
+
+    const decision = decideTabsHydration({ groups, now: new Date().toISOString() });
     const tabsPreload = buildTabsPreloadedState(decision);
 
-    if (groupsReadFailed) {
-      console.warn(
-        '[popup] hydration: 读盘失败，不当作真空，交给 loadGroups 重试。错误:',
-        groupsReadError instanceof Error ? groupsReadError.message : String(groupsReadError)
-      );
-    }
+    console.log(
+      `[popup] hydration: 本地读到 ${decision.activeGroups.length} 个活跃组, ` +
+        `treatAsLoaded=${decision.treatAsLoaded}` +
+        (decision.treatAsLoaded ? '' : '（空读，不固化 lastLoadedAt，交给 loadGroups 重试）')
+    );
 
     preloadedState = {
+      // ⚠️ preloadedState 是整体替换 slice，必须用 initialTabState 合并补全
+      // isLoading/error/searchQuery/activeGroupId 等字段，否则它们会变 undefined。
+      // tabsPreload 为 null（空读）时只注入 initialTabState（lastLoadedAt=null）。
       tabs: { ...initialTabState, ...(tabsPreload ?? {}) },
       settings,
     };
-  } catch (error) {
-    console.warn('[popup] local hydration failed, falling back to empty store', error);
+  } catch (err) {
+    console.warn('[popup] local hydration failed, falling back to empty store', err);
   }
 
   createStore(preloadedState);

@@ -1,10 +1,10 @@
 {
   "manifest_version": 3,
-  "name": "TabVault Pro",
-  "version": "1.11.5",
-  "description": "Save browser work sessions and restore them later",
+  "name": "TabStack",
+  "version": "1.14.0",
+  "description": "Save browser tabs as named, searchable, restorable sessions. One keyboard shortcut away. Cloud sync, dedup, 3 themes.",
   "content_security_policy": {
-    "extension_pages": "script-src 'self'; object-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https: http:; font-src 'self' data:; connect-src 'self' https://*.supabase.co; frame-src 'none'; base-uri 'self'; form-action 'self';"
+    "extension_pages": "script-src 'self'; object-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self' data:; connect-src 'self' https://reccclnaxadbuccsrwmg.supabase.co; frame-src 'none'; base-uri 'self'; form-action 'self';"
   },
   "permissions": [
     "tabs",
@@ -14,11 +14,11 @@
     "contextMenus"
   ],
   "host_permissions": [
-    "https://*.supabase.co/*"
+    "https://reccclnaxadbuccsrwmg.supabase.co/*"
   ],
   "action": {
     "default_icon": "icons/icon16.png",
-    "default_title": "TabVault Pro - 工作会话保险箱"
+    "default_title": "TabStack - Tab Session Manager"
   },
   "web_accessible_resources": [
     {
@@ -34,7 +34,7 @@
         "src/auth/*.html"
       ],
       "matches": [
-        "https://*.supabase.co/*"
+        "https://reccclnaxadbuccsrwmg.supabase.co/*"
       ]
     }
   ],

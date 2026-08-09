@@ -1,8 +1,9 @@
 import { TabGroup, UserSettings, Tab, LayoutMode, ThemeStyle } from '@/types/tab';
 import { parseOneTabFormat, formatToOneTabFormat } from './oneTabFormatParser';
-import { secureStorage, decryptLocalBlob } from './secureStorage';
+import { secureStorage, encryptLocalBlob, decryptLocalBlob } from './secureStorage';
 import { kvGet, kvSet, kvRemove } from '@/storage/storageAdapter';
 import { cacheManager, cachedAsyncFn, debounceAsync } from './performance';
+import { decryptError } from './errors';
 
 // 缓存 TTL 配置常量
 export const CACHE_TTL = {
@@ -11,17 +12,19 @@ export const CACHE_TTL = {
 } as const;
 
 /**
- * Popup bootstrap 的一次性读盘结果。
+ * 一次性 bootstrap 读取结果（S2 P1 引入）。
  *
- * groups 是严格读取的结果：读取失败时由调用方通过 groupsReadFailed 区分
- * “确实为空”和“读失败”，绝不能把失败当成空列表展示。
+ * 注意：lastLoadedAt 并不是一个独立的 storage 值——它是 tabs slice 的 redux
+ * 状态，由 hydrationDecision 在「读到非空数据」时固化为 `now`。
+ * 这里返回 null 是因为 hydrateAll 在 bootstrap 阶段调用，此时 lastLoadedAt
+ * 还没被 redux 接管；具体何时固化由调用方（popup/index.tsx）经
+ * decideTabsHydration() 决定。
  */
 export interface HydrateResult {
   groups: TabGroup[];
   settings: UserSettings;
+  /** 当前永远为 null；保留字段以便未来把 lastLoadedAt 也搬到 storage 域。 */
   lastLoadedAt: string | null;
-  groupsReadFailed?: boolean;
-  groupsReadError?: unknown;
 }
 
 /**
@@ -41,22 +44,19 @@ const STORAGE_KEYS = {
   DELETED_GROUPS: 'deleted_tab_groups',
   DELETED_TABS: 'deleted_tabs',
   LAST_SYNC_TIME: 'last_sync_time',
+  LAST_SYNC_STATUS: 'last_sync_status',
+  SYNC_SNAPSHOT: 'sync_snapshot',
   PRODUCT_EVENTS: 'product_events',
   MIGRATION_FLAGS: 'migration_flags'
 };
 
 const STORAGE_VERSION = 2;
 
-// 有效的主题风格值
+// 有效的主题风格值（S2 P4 Task 4.4: 8 选 3 精简）
 const VALID_THEME_STYLES: ThemeStyle[] = [
-  'legacy',
-  'classic',
   'aurora',
-  'creamy',
-  'pink',
-  'mint',
+  'refined',
   'cyberpunk',
-  'prism',
 ];
 
 // 有效的主题模式值
@@ -65,14 +65,14 @@ const VALID_THEME_MODES: Array<'light' | 'dark' | 'auto'> = ['light', 'dark', 'a
 /**
  * 验证主题风格值
  * @param value 待验证的值
- * @returns 有效的主题风格值，无效时返回默认值 'legacy'
+ * @returns 有效的主题风格值，无效时回退到默认值 'aurora'
  */
 export function validateThemeStyle(value: unknown): ThemeStyle {
   if (typeof value === 'string' && VALID_THEME_STYLES.includes(value as ThemeStyle)) {
     return value as ThemeStyle;
   }
   console.warn('无效的主题风格值，使用默认值:', value);
-  return 'legacy';
+  return 'aurora';
 }
 
 /**
@@ -101,7 +101,7 @@ export const DEFAULT_SETTINGS: UserSettings = {
   syncStrategy: 'newest', // 默认使用最新版本
   deleteStrategy: 'everywhere', // 默认在所有设备上删除
   themeMode: 'auto', // 默认使用自动模式（跟随系统）
-  themeStyle: 'legacy', // 默认使用原始主题
+  themeStyle: 'aurora', // 默认使用极光主题
   // 默认不收集固定标签页（更保守）
   collectPinnedTabs: false,
 };
@@ -121,6 +121,23 @@ interface ExportData {
   };
 }
 
+/**
+ * 持久化的同步状态（S1 §5）。
+ * 与 tabs slice 的内存态 lastSyncTime 不同——这里落 IndexedDB，
+ * popup 重开后 footer 仍能显示「上次同步 x 小时前」/ 最近一次错误。
+ */
+export interface LastSyncStatus {
+  /** 上次成功同步时间（ISO 字符串）；从未成功同步过为 null */
+  lastSyncAt: string | null;
+  /** 最近一次同步失败的用户可读错误；无失败为 null */
+  lastSyncError: string | null;
+}
+
+const DEFAULT_LAST_SYNC_STATUS: LastSyncStatus = {
+  lastSyncAt: null,
+  lastSyncError: null,
+};
+
 class ChromeStorage {
   private async ensureVersion() {
     const version = await kvGet<number>(STORAGE_KEYS.VERSION);
@@ -128,62 +145,68 @@ class ChromeStorage {
     await kvSet(STORAGE_KEYS.VERSION, STORAGE_VERSION);
   }
 
-  /**
-   * 直接读盘、不信任内存缓存。本地 groups 以明文数组为主。
-   *
-   * 如果读到的是旧版加密字符串，会尝试用兼容解密器转成明文数组并落盘。
-   * 解密失败抛出错误，让 getGroupsOrThrow / loadGroups 显示可恢复错误，
-   * 而不是把“有数据但读不出”伪装成“空数据”。
-   */
-  private async readGroupsFromDisk(): Promise<TabGroup[]> {
-    await this.ensureVersion();
-    const raw = await kvGet<unknown>(STORAGE_KEYS.GROUPS);
-
-    if (Array.isArray(raw)) {
-      return raw as TabGroup[];
-    }
-
-    if (typeof raw === 'string') {
-      const groups = await decryptLocalBlob<TabGroup[]>(raw);
-      if (groups !== null) {
-        await this.persistPlainGroups(groups);
-        return groups;
-      }
-      throw new Error('读取本地会话失败：数据可能已损坏或密钥不匹配');
-    }
-
-    return [];
-  }
-
-  private async persistPlainGroups(groups: TabGroup[]): Promise<void> {
-    await this.ensureVersion();
-    await kvSet(STORAGE_KEYS.GROUPS, groups);
-    cacheManager.getCache('storage').set('groups', groups, CACHE_TTL.GROUPS);
-  }
-
-  private async getGroupsCore(): Promise<TabGroup[]> {
-    return cachedAsyncFn(
-      'storage',
-      'groups',
-      () => this.readGroupsFromDisk(),
-      CACHE_TTL.GROUPS
-    );
-  }
-
   async getGroups(): Promise<TabGroup[]> {
     try {
-      return await this.getGroupsCore();
+      return await cachedAsyncFn('storage', 'groups', async () => {
+        await this.ensureVersion();
+        const raw = await kvGet<unknown>(STORAGE_KEYS.GROUPS);
+        if (typeof raw === 'string') {
+          const groups = await decryptLocalBlob<TabGroup[]>(raw);
+          if (groups !== null) return groups;
+          // 解密失败：抛出而非返回 []，避免「瞬时空读」被 cachedAsyncFn 缓存
+          // 30s 固化——那会让 popup hydration 与 loadGroups 重试都拿到空数据，
+          // 表现为「刷新后数据丢失」。抛出后由外层 catch 返回 []（不入缓存）。
+          // S1: 抛出的错误带类型（DecryptError, retryable=false）——
+          // 外层 catch 的「返回 [] 不缓存」语义保持不变（hydrationDecision 测试依赖）。
+          throw decryptError('decryptLocalBlob 返回 null（数据可能损坏或 key 不匹配）');
+        }
+        if (Array.isArray(raw)) {
+          // 明文数据，首次读取后自动升级为加密存储
+          const groups = raw as TabGroup[];
+          this.persistEncryptedGroups(groups);
+          return groups;
+        }
+        // raw 为 null/undefined：存储里确实没有数据（全新用户或已清空），
+        // 返回 [] 是正确语义，可以安全缓存。
+        return [];
+      }, CACHE_TTL.GROUPS);
     } catch (error) {
-      console.error('获取标签组失败:', error);
+      // 读取/解密异常：返回 [] 但**不写缓存**，使下次 getGroups 重新尝试读盘。
+      console.error('获取标签组失败（本次不缓存，下次将重试读盘）:', error);
       return [];
+    }
+  }
+
+  private async persistEncryptedGroups(groups: TabGroup[]): Promise<void> {
+    try {
+      const encrypted = await encryptLocalBlob(groups);
+      await kvSet(STORAGE_KEYS.GROUPS, encrypted);
+      cacheManager.getCache('storage').set('groups', groups, CACHE_TTL.GROUPS);
+    } catch (error) {
+      console.error('加密存储标签组失败:', error);
+      throw error;
     }
   }
 
   /**
    * 不吞错的读取。所有读-改-写路径必须使用这个方法。
+   *
+   * 与 `getGroups()` 不同：本方法在解密失败时直接抛错，由调用方（loadGroups、
+   * saveGroup/updateGroup/deleteGroup 等）决定如何呈现可恢复错误，
+   * 避免把「有数据但读不出」伪装成「空数据」覆盖本地存储。
    */
   async getGroupsOrThrow(): Promise<TabGroup[]> {
-    return this.readGroupsFromDisk();
+    await this.ensureVersion();
+    const raw = await kvGet<unknown>(STORAGE_KEYS.GROUPS);
+    if (Array.isArray(raw)) {
+      return raw as TabGroup[];
+    }
+    if (typeof raw === 'string') {
+      const groups = await decryptLocalBlob<TabGroup[]>(raw);
+      if (groups !== null) return groups;
+      throw new Error('读取本地会话失败：数据可能已损坏或密钥不匹配');
+    }
+    return [];
   }
 
   /**
@@ -206,41 +229,36 @@ class ChromeStorage {
     return true;
   }
 
+  /**
+   * 立即写入 groups（不防抖）
+   *
+   * 历史版本使用 500ms 防抖以"批量"多次写入，但 Chrome 扩展 popup 在用户
+   * 关闭（或 F5 刷新）时 JS context 会被销毁，防抖窗口内的 setTimeout 同步
+   * 被丢弃——结果就是 setGroups 返回的 Promise 永远 pending、IndexedDB 永
+   * 远不会写入。后续 hydration 读 IndexedDB 拿到的是旧的、合并前的数据，
+   * 用户看到"刷新后本地数据丢了"。
+   *
+   * 所有现有调用方（saveGroup / updateGroup / deleteGroup / moveGroup /
+   * moveTab / downloadAndMerge / saveAllTabs 等）都是单次写，没有高频批
+   * 量场景；性能开销（PBKDF2 100K + AES-GCM）原本就存在，去掉防抖只意味
+   * 100ms 内的多次 setGroups 各自跑一次完整加密，但通常不会触发。
+   */
   async setGroups(groups: TabGroup[]): Promise<void> {
     const cache = cacheManager.getCache('storage');
 
     try {
-      // optimistic：立刻更新缓存，保证后续读取一致
+      // optimistic：立刻更新缓存，保证同 context 内的后续读取一致
       cache.set('groups', groups, CACHE_TTL.GROUPS);
 
-      // 立即落盘，不防抖。Chrome 扩展 popup 随时可能关闭，防抖窗口内的
-      // 异步写盘会被 JS context 销毁打断，表现为“刚保存，刷新后没了”。
-      await this.persistPlainGroups(groups);
+      // 强一致：立刻落盘（不要 debounce——见上方注释）
+      await this.ensureVersion();
+      await this.persistEncryptedGroups(groups);
     } catch (error) {
       console.error('保存标签组失败:', error);
       // 清除可能不一致的缓存
       cache.delete('groups');
       throw error;
     }
-  }
-
-  /**
-   * 一次性返回 bootstrap 所需数据，并显式标记 groups 读取是否失败。
-   */
-  async hydrateAll(): Promise<HydrateResult> {
-    const [groupsResult, settings] = await Promise.all([
-      this.getGroupsOrThrow()
-        .then(groups => ({ groups, failed: false as const, error: undefined as unknown }))
-        .catch(error => ({ groups: [] as TabGroup[], failed: true as const, error })),
-      this.getSettings(),
-    ]);
-    return {
-      groups: groupsResult.groups,
-      settings,
-      lastLoadedAt: null,
-      groupsReadFailed: groupsResult.failed || undefined,
-      groupsReadError: groupsResult.failed ? groupsResult.error : undefined,
-    };
   }
 
   async getSettings(): Promise<UserSettings> {
@@ -427,6 +445,29 @@ class ChromeStorage {
     }
   }
 
+  /**
+   * 一次性返回 bootstrap 所需的所有 storage 数据。
+   *
+   * S2 P1 引入：让 popup 入口（src/popup/index.tsx）只发一次「读盘意图」，
+   * 避免在多处散读 / 重复 Promise.all。所有子调用仍然走 cachedAsyncFn
+   * 内存缓存——后续同一 context 内的二次调用全部命中内存。
+   *
+   * 行为契约：
+   *   - groups / settings 任一抛错都会被各自子方法吞掉（getGroups 返回 []、
+   *     getSettings 返回 DEFAULT_SETTINGS），所以 hydrateAll 不会 reject。
+   *     这是为了与现有 getGroups / getSettings 的「静默容错」语义保持一致——
+   *     入口端不需要在 hydrateAll 外再包一层 try/catch。
+   *   - lastLoadedAt 当前固定返回 null；真正的固化由调用方经
+   *     decideTabsHydration() 决定，避免「瞬时空读」被固化为 lastLoadedAt 非空。
+   */
+  async hydrateAll(): Promise<HydrateResult> {
+    const [groups, settings] = await Promise.all([
+      this.getGroups(),
+      this.getSettings(),
+    ]);
+    return { groups, settings, lastLoadedAt: null };
+  }
+
   // 设置最后同步时间
   async setLastSyncTime(time: string): Promise<void> {
     try {
@@ -434,6 +475,91 @@ class ChromeStorage {
       await kvSet(STORAGE_KEYS.LAST_SYNC_TIME, time);
     } catch (error) {
       console.error('设置最后同步时间失败:', error);
+    }
+  }
+
+  /**
+   * 获取持久化的同步状态（默认 { lastSyncAt: null, lastSyncError: null }）。
+   * 不做内存缓存——每次从 IndexedDB 读盘，popup 重开后语义自然成立。
+   */
+  async getLastSyncStatus(): Promise<LastSyncStatus> {
+    try {
+      await this.ensureVersion();
+      const raw = await kvGet<unknown>(STORAGE_KEYS.LAST_SYNC_STATUS);
+      if (raw && typeof raw === 'object') {
+        const s = raw as Partial<LastSyncStatus>;
+        return {
+          lastSyncAt: typeof s.lastSyncAt === 'string' ? s.lastSyncAt : null,
+          lastSyncError: typeof s.lastSyncError === 'string' ? s.lastSyncError : null,
+        };
+      }
+      return { ...DEFAULT_LAST_SYNC_STATUS };
+    } catch (error) {
+      console.error('获取同步状态失败:', error);
+      return { ...DEFAULT_LAST_SYNC_STATUS };
+    }
+  }
+
+  /**
+   * 更新同步状态（partial merge，落 `last_sync_status` key，与 settings 同为明文 kv）。
+   * 只覆盖传入字段：失败路径写入 lastSyncError 时**不会**覆盖 lastSyncAt
+   * （保留上次成功时间——S1 §5.2 契约）。
+   * 记录失败只打日志不抛出——它是诊断信息，不应阻塞/掩盖主流程错误。
+   */
+  async setLastSyncStatus(partial: Partial<LastSyncStatus>): Promise<void> {
+    try {
+      const current = await this.getLastSyncStatus();
+      const next: LastSyncStatus = {
+        lastSyncAt: partial.lastSyncAt !== undefined ? partial.lastSyncAt : current.lastSyncAt,
+        lastSyncError:
+          partial.lastSyncError !== undefined ? partial.lastSyncError : current.lastSyncError,
+      };
+      await this.ensureVersion();
+      await kvSet(STORAGE_KEYS.LAST_SYNC_STATUS, next);
+    } catch (error) {
+      console.error('保存同步状态失败:', error);
+    }
+  }
+
+  /**
+   * 获取同步前快照（用于 SyncEngine 合并失败时回滚）
+   */
+  async getSyncSnapshot(): Promise<TabGroup[] | null> {
+    try {
+      await this.ensureVersion();
+      const raw = await kvGet<unknown>(STORAGE_KEYS.SYNC_SNAPSHOT);
+      if (typeof raw === 'string') {
+        return await decryptLocalBlob<TabGroup[]>(raw);
+      }
+      if (Array.isArray(raw)) return raw as TabGroup[];
+      return null;
+    } catch (error) {
+      console.error('获取同步快照失败:', error);
+      return null;
+    }
+  }
+
+  /**
+   * 保存同步前快照
+   */
+  async setSyncSnapshot(groups: TabGroup[]): Promise<void> {
+    try {
+      await this.ensureVersion();
+      const encrypted = await encryptLocalBlob(groups);
+      await kvSet(STORAGE_KEYS.SYNC_SNAPSHOT, encrypted);
+    } catch (error) {
+      console.error('保存同步快照失败:', error);
+    }
+  }
+
+  /**
+   * 清除同步快照（合并成功后调用）
+   */
+  async clearSyncSnapshot(): Promise<void> {
+    try {
+      await kvRemove(STORAGE_KEYS.SYNC_SNAPSHOT);
+    } catch (error) {
+      console.error('清除同步快照失败:', error);
     }
   }
 
@@ -459,7 +585,7 @@ class ChromeStorage {
   }
 
   async exportData(): Promise<ExportData> {
-    const groups = await this.getGroupsOrThrow();
+    const groups = await this.getGroups();
     const settings = await this.getSettings();
 
     return {
@@ -477,7 +603,7 @@ class ChromeStorage {
    * @returns OneTab 格式的导出文本
    */
   async exportToOneTabFormat(): Promise<string> {
-    const groups = await this.getGroupsOrThrow();
+    const groups = await this.getGroups();
     return formatToOneTabFormat(groups);
   }
 
@@ -488,7 +614,7 @@ class ChromeStorage {
       }
 
       // 导入标签组，并按创建时间倒序排列
-      const existingGroups = await this.getGroupsOrThrow();
+      const existingGroups = await this.getGroups();
       const allGroups = [...data.data.groups, ...existingGroups];
       // 按创建时间倒序排列，确保最新创建的标签组在前面
       const sortedGroups = allGroups.sort((a, b) => {
@@ -533,7 +659,7 @@ class ChromeStorage {
       }
 
       // 导入标签组，并按创建时间倒序排列
-      const existingGroups = await this.getGroupsOrThrow();
+      const existingGroups = await this.getGroups();
       const allGroups = [...parsedGroups, ...existingGroups];
       // 按创建时间倒序排列，确保最新创建的标签组在前面
       const sortedGroups = allGroups.sort((a, b) => {
@@ -555,12 +681,12 @@ class ChromeStorage {
       const keys = [
         STORAGE_KEYS.VERSION,
         STORAGE_KEYS.GROUPS,
-        STORAGE_KEYS.LEGACY_GROUPS_BACKUP,
-        STORAGE_KEYS.DECRYPT_RECOVERY_PENDING,
         STORAGE_KEYS.SETTINGS,
         STORAGE_KEYS.DELETED_GROUPS,
         STORAGE_KEYS.DELETED_TABS,
         STORAGE_KEYS.LAST_SYNC_TIME,
+        STORAGE_KEYS.LAST_SYNC_STATUS,
+        STORAGE_KEYS.SYNC_SNAPSHOT,
         STORAGE_KEYS.PRODUCT_EVENTS,
         STORAGE_KEYS.MIGRATION_FLAGS
       ];

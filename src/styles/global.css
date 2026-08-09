@@ -1,15 +1,11 @@
-/* TabVault Pro 字体系统 */
+/* TabStack 字体系统 */
 @import './fonts.css';
 
-/* 主题系统 - 顺序：原始、经典、极光、奶油、粉红、薄荷、赛博 */
-@import './themes/legacy.css';
-@import './themes/classic.css';
-@import './themes/aurora.css';
-@import './themes/creamy.css';
-@import './themes/pink.css';
-@import './themes/mint.css';
-@import './themes/cyberpunk.css';
-@import './themes/prism.css';
+/* 主题 CSS - S2 P4 Task 4.5 改为 dynamic <link> 注入；
+ * 文件位置: public/themes/{aurora|refined|cyberpunk}.css
+ * 注入点: src/contexts/ThemeContext.tsx (setThemeStylesheet)
+ * 不再 eagerly import，避免 3 个主题一次性打入 dist。
+ */
 
 /* 微交互样式 */
 @import './micro-interactions.css';
@@ -35,7 +31,7 @@
  * 4. 确保 data-theme 属性始终存在于 html 元素上
  */
 
-/* 默认主题回退 - 当 data-theme 未设置时使用 legacy 主题的值 */
+/* 默认主题回退 - 当 data-theme 未设置时使用 aurora 主题的值 */
 html:not([data-theme]) {
   --color-bg-primary: #f9fafb;
   --color-bg-secondary: #ffffff;
@@ -568,8 +564,8 @@ html:not([data-theme]).dark {
   }
 
   .dark .tab-group-count {
-    background: rgba(99, 102, 241, 0.15);
-    color: #a5b4fc;
+    background: rgba(20, 184, 166, 0.15);
+    color: #5eead4;
   }
 
   /* 标签组锁定图标 */
