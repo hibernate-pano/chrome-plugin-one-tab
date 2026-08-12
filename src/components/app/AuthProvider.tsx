@@ -1,5 +1,5 @@
-import React, { useEffect, useState, useRef } from 'react';
-import { useAppDispatch, useAppSelector } from '@/store/hooks';
+import React, { useEffect, useState } from 'react';
+import { useAppDispatch } from '@/store/hooks';
 import { getCurrentUser } from '@/store/slices/authSlice';
 import { auth as supabaseAuth } from '@/utils/supabase';
 import { authCache } from '@/utils/authCache';
@@ -15,9 +15,7 @@ interface AuthProviderProps {
  */
 export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   const dispatch = useAppDispatch();
-  const isAuthenticated = useAppSelector(state => state.auth.isAuthenticated);
   const [initialAuthLoaded, setInitialAuthLoaded] = useState(false);
-  const autoDownloadAttempted = useRef(false);
 
   // 初始化认证状态 + SmartSyncService
   useEffect(() => {
@@ -75,29 +73,6 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
 
     checkSession();
   }, [dispatch, initialAuthLoaded]);
-
-  // 重置自动下载标记当用户登出时
-  useEffect(() => {
-    if (!isAuthenticated) {
-      autoDownloadAttempted.current = false;
-    }
-  }, [isAuthenticated]);
-
-  // 登录态确认后，静默拉取云端最新数据（仅触发一次）
-  useEffect(() => {
-    if (!isAuthenticated || autoDownloadAttempted.current) return;
-
-    autoDownloadAttempted.current = true;
-
-    // 延迟 2 秒，确保本地数据先加载完毕，避免并发竞争
-    const timer = setTimeout(() => {
-      smartSyncService.maybeAutoDownload().catch(err => {
-        console.warn('[AutoDownload] 自动下载失败（静默）:', err?.message || err);
-      });
-    }, 2000);
-
-    return () => clearTimeout(timer);
-  }, [isAuthenticated]);
 
   return <>{children}</>;
 };

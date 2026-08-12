@@ -186,7 +186,6 @@ module.exports = {
         'stagger-in': 'staggerIn 300ms ease-out forwards',
         'float': 'float 3s ease-in-out infinite',
         'badge-pulse': 'badgePulse 600ms ease-in-out',
-        'heart-bounce': 'heartBounce 400ms ease-out',
         'float-subtle': 'floatSubtle 3s ease-in-out infinite',
         'count-pop': 'countPop 300ms cubic-bezier(0.34, 1.56, 0.64, 1)',
         'fade-slide-up': 'fadeSlideUp 500ms ease-out forwards',
@@ -264,11 +263,6 @@ module.exports = {
         badgePulse: {
           '0%, 100%': { transform: 'scale(1)' },
           '50%': { transform: 'scale(1.15)' },
-        },
-        heartBounce: {
-          '0%': { transform: 'scale(1)' },
-          '50%': { transform: 'scale(1.2)' },
-          '100%': { transform: 'scale(1)' },
         },
         floatSubtle: {
           '0%, 100%': { transform: 'translateY(0)' },

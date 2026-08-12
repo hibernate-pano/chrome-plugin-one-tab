@@ -8,10 +8,8 @@
  * 4. 上传使用纯 upsert（无三步覆盖法），删除通过软删标记传播
  *
  * 使用方：
- * - smartSyncService（冷却 + 并发锁）→ 委托 SyncEngine
+ * - smartSyncService（并发锁）→ 委托 SyncEngine
  * - syncService（手动同步入口）→ 委托 SyncEngine
- * - autoSyncMiddleware（延迟调度）→ syncEngine.scheduleUpload()
- * - AuthProvider（自动下载）→ syncEngine.downloadAndMerge()
  */
 
 import { store } from '@/store';
@@ -103,8 +101,6 @@ function toTabStackError(e: unknown): TabStackError {
 
 export class SyncEngine {
   private static instance: SyncEngine | null = null;
-  private uploadTimer: ReturnType<typeof setTimeout> | null = null;
-  private pendingUpload = false;
   private isSyncing = false;
   /** 解析后的依赖（构造函数时固化） */
   private readonly deps: Required<Pick<SyncEngineDeps, 'storage' | 'downloadTabGroups' | 'uploadTabGroups' | 'markCloudGroupsAsDeleted' | 'cleanupCloudTombstones' | 'getState'>>;
@@ -148,20 +144,6 @@ export class SyncEngine {
     return this.isSyncing;
   }
 
-  /** 是否有待执行的延迟上传 */
-  hasPendingUpload(): boolean {
-    return this.pendingUpload;
-  }
-
-  /** 取消待执行的延迟上传 */
-  cancelPendingUpload(): void {
-    if (this.uploadTimer) {
-      clearTimeout(this.uploadTimer);
-      this.uploadTimer = null;
-    }
-    this.pendingUpload = false;
-  }
-
   /**
    * 下载云端数据并与本地合并
    *
@@ -182,7 +164,6 @@ export class SyncEngine {
     }
 
     this.isSyncing = true;
-    this.cancelPendingUpload();
 
     // 1. 快照
     let snapshot: TabGroup[] = [];
@@ -302,7 +283,6 @@ export class SyncEngine {
     }
 
     this.isSyncing = true;
-    this.cancelPendingUpload();
 
     try {
       const allGroups = await this.deps.storage.getGroups();
@@ -369,62 +349,6 @@ export class SyncEngine {
         retryable: wrapped.retryable,
       };
     }
-  }
-
-  /**
-   * 调度延迟上传
-   * autoSyncMiddleware 调用此方法，带优先级防抖
-   *
-   * @param delayMs 延迟毫秒数（默认 3000ms）
-   */
-  scheduleUpload(delayMs: number = 3000): void {
-    // 取消已有的 timer
-    if (this.uploadTimer) {
-      clearTimeout(this.uploadTimer);
-    }
-
-    this.pendingUpload = true;
-    this.uploadTimer = setTimeout(async () => {
-      try {
-        await this.upload();
-      } catch (err) {
-        console.error('[SyncEngine] 延迟上传失败:', err);
-      } finally {
-        this.uploadTimer = null;
-        this.pendingUpload = false;
-      }
-    }, delayMs);
-  }
-
-  /**
-   * 等待本地 groups 加载完成（Race condition 保护）
-   * 用于 maybeAutoDownload 场景：
-   *   Popup 打开后 2 秒触发自动下载，
-   *   如果此时 loadGroups 还没把本地数据写回 Redux，
-   *   则等待直到 lastLoadedAt 非空。
-   *
-   * @param timeoutMs 超时毫秒数
-   * @returns 是否在超时前加载完成
-   */
-  async waitForGroupsLoaded(timeoutMs: number = 5000): Promise<boolean> {
-    if (this.deps.getState().tabs.lastLoadedAt !== null) return true;
-
-    return new Promise<boolean>(resolve => {
-      const timer = setTimeout(() => {
-        unsubscribe();
-        resolve(false);
-      }, timeoutMs);
-
-      // 注：store.subscribe 走模块级 singleton。测试代码**不应**调用此方法
-      // （因为 fake store 的 subscribe 行为未定义）。
-      const unsubscribe = store.subscribe(() => {
-        if (this.deps.getState().tabs.lastLoadedAt !== null) {
-          clearTimeout(timer);
-          unsubscribe();
-          resolve(true);
-        }
-      });
-    });
   }
 
   // ── 私有方法 ─────────────────────────────────────────────────────

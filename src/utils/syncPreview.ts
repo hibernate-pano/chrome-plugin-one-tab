@@ -23,7 +23,6 @@ const getComparableFingerprint = (group: TabGroup) =>
   JSON.stringify({
     name: group.name,
     notes: group.notes || '',
-    isFavorite: !!group.isFavorite,
     isLocked: !!group.isLocked,
     updatedAt: group.updatedAt,
     version: group.version || 0,

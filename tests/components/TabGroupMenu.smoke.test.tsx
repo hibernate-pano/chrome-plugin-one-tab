@@ -3,11 +3,10 @@
 // The brief originally called for a `TabGroupMenu` component. A search of
 // `src/components/` confirms that no such component exists in the current
 // codebase — the per-group action surface is the button row inside
-// `TabGroup.tsx` (恢复 / 重命名 / 收藏 / 备注 / 锁定 / 删除), rendered
+// `TabGroup.tsx` (恢复 / 重命名 / 备注 / 锁定 / 删除), rendered
 // via `DraggableTabGroup` → `TabGroup`. We test that surface directly:
 //
-//   1. TabGroup renders its action buttons (恢复整个会话, 重命名, 收藏, etc.)
-//   2. The "收藏" toggle changes the visible "已收藏" indicator
+//   1. TabGroup renders its action buttons (恢复整个会话, 重命名, etc.)
 //
 // This is a faithful substitute: it is the same UI element the user
 // interacts with, just reached via the actual production component
@@ -55,7 +54,6 @@ function makeGroup(overrides: Record<string, unknown> = {}) {
     createdAt: NOW,
     updatedAt: NOW,
     isLocked: false,
-    isFavorite: false,
     version: 1,
     ...overrides,
   };
@@ -85,7 +83,7 @@ function renderTabGroup(group: any) {
   );
 }
 
-test('TabGroup surface: renders the action buttons (恢复 / 重命名 / 收藏 / 锁定 / 删除)', () => {
+test('TabGroup surface: renders the action buttons (恢复 / 重命名 / 锁定 / 删除)', () => {
   const group = makeGroup();
   renderTabGroup(group);
 
@@ -94,22 +92,7 @@ test('TabGroup surface: renders the action buttons (恢复 / 重命名 / 收藏 
   // opacity is animated. We can query them by their aria-label.
   assert.ok(screen.getByLabelText('恢复整个会话，共 1 个标签页'), 'restore-all button should be in the DOM');
   assert.ok(screen.getByLabelText('重命名会话'), 'rename button should be in the DOM');
-  assert.ok(screen.getByLabelText('收藏会话'), 'favorite button should be in the DOM');
   assert.ok(screen.getByLabelText('锁定会话'), 'lock button should be in the DOM');
   assert.ok(screen.getByLabelText('删除会话'), 'delete button should be in the DOM');
-  cleanup();
-});
-
-test('TabGroup surface: renders "已收藏" badge when group isFavorite is true', () => {
-  // Driving the favorite toggle click in jsdom requires the full storage
-  // + version-helper chain (storage.getGroups returns [] in our stubbed
-  // chrome API, which makes the updateGroup thunk resolve with an
-  // undefined payload and crash a downstream reducer). For a smoke test
-  // we just verify the badge renders when preloaded state says isFavorite.
-  const group = makeGroup({ isFavorite: true });
-  renderTabGroup(group);
-
-  // When isFavorite is true, the badge appears next to the group title.
-  assert.ok(screen.getByText('已收藏'), '已收藏 badge should render when isFavorite is true');
   cleanup();
 });

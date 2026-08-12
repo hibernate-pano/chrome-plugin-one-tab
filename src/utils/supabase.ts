@@ -461,7 +461,6 @@ export const sync = {
               version: fullGroup?.version,
               isDeleted: fullGroup?.isDeleted,
               notes: fullGroup?.notes,
-              isFavorite: fullGroup?.isFavorite,
               displayOrder: fullGroup?.displayOrder,
             };
             const encryptedData = await encryptData(groupPayload, user.id);
@@ -727,7 +726,6 @@ export const sync = {
             version: full.version,
             isDeleted: full.isDeleted,
             notes: full.notes,
-            isFavorite: full.isFavorite,
             displayOrder: full.displayOrder,
           };
         }

@@ -8,8 +8,6 @@ import {
   selectError,
   selectLayoutMode,
   selectReorderMode,
-  selectFavoriteGroups,
-  selectSearchQuery,
 } from '@/store/selectors/tabSelectors';
 import { invalidateGroupsCache } from '@/utils/storage';
 import { runMigrations } from '@/utils/migrationUtils';
@@ -18,7 +16,6 @@ import { SearchResultList } from '@/components/search/SearchResultList';
 import { EmptyState } from '@/components/common/EmptyState';
 import { LoadingSpinner } from '@/components/common/LoadingSpinner';
 import { PersonalizedWelcome, QuickActionTips } from '@/components/common/PersonalizedWelcome';
-import { FavoriteStrip } from '@/components/tabs/FavoriteStrip';
 import { useListVirtualizer } from '@/hooks/useVirtualizer';
 import type { TabGroup } from '@/types/tab';
 
@@ -39,9 +36,6 @@ export const TabList: React.FC<TabListProps> = ({ searchQuery }) => {
   const layoutMode = useAppSelector(selectLayoutMode);
   const reorderMode = useAppSelector(selectReorderMode);
   const sortedGroups = useAppSelector(selectSortedGroups);
-  // S3 §3: 收藏会话独立区（仅在非搜索模式 + 有收藏时显示）
-  const selectStoredSearchQuery = useAppSelector(selectSearchQuery);
-  const favoriteGroups = useAppSelector(selectFavoriteGroups);
 
   useEffect(() => {
     // popup 入口已经把 local 数据塞进 preloadedState（lastLoadedAt !== null），
@@ -159,10 +153,6 @@ export const TabList: React.FC<TabListProps> = ({ searchQuery }) => {
 
   return (
     <div className="space-y-3 micro-interaction-container">
-      {/* S3 §3: 收藏会话独立区 — 必须在虚拟化列表之外，且仅在非搜索模式显示 */}
-      {!searchQuery && !selectStoredSearchQuery && favoriteGroups.length > 0 && (
-        <FavoriteStrip groups={favoriteGroups} />
-      )}
       {searchQuery ? (
         <SearchResultList searchQuery={searchQuery} onClearSearch={() => dispatch(setSearchQuery(''))} />
       ) : layoutMode === 'double' ? (

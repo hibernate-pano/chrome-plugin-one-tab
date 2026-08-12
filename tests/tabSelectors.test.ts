@@ -1,9 +1,9 @@
 // tabSelectors 测试：钉死 selector 切片契约。
 //
-// 6 个测试覆盖：
+// 5 个测试覆盖：
 // 1. selectGroups 返回 tabSlice.groups
 // 2. selectIsLoading 返回 tabSlice.isLoading
-// 3. selectSortedGroups 排序：favorite 优先，再按 createdAt desc
+// 3. selectSortedGroups 排序：createdAt desc
 // 4. selectSortedGroups memoization：相同输入返回相同引用
 // 5. selectSortedGroups 当 groups 变化时返回新引用
 // 6. selectSortedGroups 忽略 searchQuery（consumer-side filter）
@@ -31,7 +31,7 @@ before(async () => {
 
 // 注意：必须用动态 import，因为 alias-loader 必须在 register 之后才生效。
 // 静态 import 会在顶层求值，绕过 register 钩子，导致 ERR_MODULE_NOT_FOUND。
-const { selectGroups, selectSortedGroups, selectIsLoading, selectFavoriteGroups } = await import(
+const { selectGroups, selectSortedGroups, selectIsLoading } = await import(
   '@/store/selectors/tabSelectors'
 );
 const { initialTabState } = await import('@/store/slices/tabSlice');
@@ -51,7 +51,6 @@ const mkGroup = (overrides: any) => ({
   createdAt: '2026-08-05T00:00:00Z',
   updatedAt: '2026-08-05T00:00:00Z',
   tabs: [],
-  isFavorite: false,
   isLocked: false,
   isDeleted: false,
   displayOrder: 0,
@@ -68,13 +67,13 @@ test('selectIsLoading returns tabSlice.isLoading', () => {
   assert.equal(selectIsLoading(makeRootState()), false);
 });
 
-test('selectSortedGroups puts favorite groups first, then newest', () => {
-  const a = mkGroup({ id: 'a', createdAt: '2026-08-01T00:00:00Z', isFavorite: false });
-  const b = mkGroup({ id: 'b', createdAt: '2026-08-05T00:00:00Z', isFavorite: false });
-  const c = mkGroup({ id: 'c', createdAt: '2026-08-03T00:00:00Z', isFavorite: true });
+test('selectSortedGroups sorts by createdAt desc (newest first)', () => {
+  const a = mkGroup({ id: 'a', createdAt: '2026-08-01T00:00:00Z' });
+  const b = mkGroup({ id: 'b', createdAt: '2026-08-05T00:00:00Z' });
+  const c = mkGroup({ id: 'c', createdAt: '2026-08-03T00:00:00Z' });
   const s = makeRootState({ tabs: { groups: [a, b, c] } as any });
   const sorted = selectSortedGroups(s);
-  assert.deepEqual(sorted.map(g => g.id), ['c', 'b', 'a']);
+  assert.deepEqual(sorted.map(g => g.id), ['b', 'c', 'a']);
 });
 
 test('selectSortedGroups is memoized: same input returns same reference', () => {
@@ -99,22 +98,4 @@ test('selectSortedGroups ignores searchQuery (consumer-side filter)', () => {
   const s1 = makeRootState({ tabs: { groups: sharedGroups, searchQuery: '' } as any });
   const s2 = makeRootState({ tabs: { groups: sharedGroups, searchQuery: 'xxx' } as any });
   assert.equal(selectSortedGroups(s1), selectSortedGroups(s2));
-});
-
-// S3 §3: selectFavoriteGroups — 收藏会话过滤
-test('selectFavoriteGroups returns only groups with isFavorite=true', () => {
-  const a = mkGroup({ id: 'a', isFavorite: false });
-  const b = mkGroup({ id: 'b', isFavorite: true });
-  const c = mkGroup({ id: 'c', isFavorite: false });
-  const d = mkGroup({ id: 'd', isFavorite: true });
-  const s = makeRootState({ tabs: { groups: [a, b, c, d] } as any });
-  const favs = selectFavoriteGroups(s);
-  assert.deepEqual(favs.map(g => g.id), ['b', 'd'], '应仅包含 isFavorite=true 的组');
-});
-
-test('selectFavoriteGroups returns [] when no favorites exist', () => {
-  const a = mkGroup({ id: 'a', isFavorite: false });
-  const b = mkGroup({ id: 'b', isFavorite: false });
-  const s = makeRootState({ tabs: { groups: [a, b] } as any });
-  assert.deepEqual(selectFavoriteGroups(s), []);
 });

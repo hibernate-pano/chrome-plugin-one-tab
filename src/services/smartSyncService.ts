@@ -1,8 +1,8 @@
 /**
- * SmartSyncService — 智能同步服务（冷却控制 + 并发锁）
+ * SmartSyncService — 智能同步服务（并发锁 + 便捷方法）
  *
- * v1.12.0 重构：核心同步逻辑委托给 SyncEngine，
- * SmartSyncService 仅保留冷却窗口、并发控制和便捷方法。
+ * 仅支持手动同步：核心逻辑委托给 SyncEngine。
+ * 已移除所有自动同步功能（自动下载 / 自动上传）。
  */
 
 import { store } from '@/store';
@@ -40,13 +40,6 @@ class SmartSyncService {
     return this.isSyncing || syncEngine.getIsSyncing();
   }
 
-  /** 冷却检查：上次同步在 2 分钟内则跳过 */
-  private isInCooldown(): boolean {
-    if (!this.lastSyncTime) return false;
-    const elapsed = Date.now() - new Date(this.lastSyncTime).getTime();
-    return elapsed < 2 * 60 * 1000;
-  }
-
   async hasCloudData() {
     try {
       const cloudGroups = await downloadTabGroups();
@@ -65,7 +58,9 @@ class SmartSyncService {
     }
   }
 
-  /** 上传到云端（委托 SyncEngine） */
+  /**
+   * 上传到云端（委托 SyncEngine）
+   */
   async uploadToCloud(_background = false, _overwriteCloud = false) {
     const { auth } = store.getState();
     if (!auth.isAuthenticated) {
@@ -77,7 +72,6 @@ class SmartSyncService {
     }
 
     this.isSyncing = true;
-    syncEngine.cancelPendingUpload();
 
     try {
       const result = await syncEngine.upload();
@@ -115,7 +109,6 @@ class SmartSyncService {
     }
 
     this.isSyncing = true;
-    syncEngine.cancelPendingUpload();
 
     try {
       if (overwriteLocal) {
@@ -146,68 +139,6 @@ class SmartSyncService {
         await store.dispatch(getCurrentUser());
       } catch { /* 忽略 */ }
       return { success: false, error: error instanceof Error ? error.message : '下载失败' };
-    } finally {
-      this.isSyncing = false;
-    }
-  }
-
-  /**
-   * 自动后台下载：Popup 打开时静默拉取云端数据。
-   * 带 2 分钟冷却 + 并发控制 + race 保护。
-   */
-  async maybeAutoDownload(): Promise<void> {
-    const { auth } = store.getState();
-    if (!auth.isAuthenticated) return;
-    if (this.isSyncing || syncEngine.getIsSyncing()) return;
-    if (syncEngine.hasPendingUpload()) return;
-    if (this.isInCooldown()) return;
-
-    // race 保护：等待 loadGroups 完成
-    const loaded = await syncEngine.waitForGroupsLoaded(5000);
-    if (!loaded) {
-      console.warn('[SmartSync] 等待 loadGroups 超时，跳过自动下载');
-      return;
-    }
-
-    this.isSyncing = true;
-    syncEngine.cancelPendingUpload();
-
-    try {
-      const result = await syncEngine.downloadAndMerge({ forceRemote: false });
-      if (result.success) {
-        store.dispatch(setGroups(result.groups));
-        await store.dispatch(syncSettingsFromCloud());
-        await storage.setLastSyncTime(new Date().toISOString());
-        this.lastSyncTime = new Date().toISOString();
-      }
-    } catch {
-      // 静默失败
-    } finally {
-      this.isSyncing = false;
-    }
-  }
-
-  /**
-   * 自动后台上传：本地变更时静默推送到云端。
-   * 由 autoSyncMiddleware 触发。
-   */
-  async maybeAutoUpload(): Promise<void> {
-    const { auth } = store.getState();
-    if (!auth.isAuthenticated) return;
-    if (this.isSyncing || syncEngine.getIsSyncing()) return;
-    if (syncEngine.hasPendingUpload()) return;
-    if (this.isInCooldown()) return;
-
-    this.isSyncing = true;
-    syncEngine.cancelPendingUpload();
-
-    try {
-      await syncEngine.upload();
-      await store.dispatch(syncSettingsToCloud());
-      await storage.setLastSyncTime(new Date().toISOString());
-      this.lastSyncTime = new Date().toISOString();
-    } catch {
-      // 静默失败
     } finally {
       this.isSyncing = false;
     }

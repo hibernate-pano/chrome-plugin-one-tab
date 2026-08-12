@@ -3,7 +3,8 @@ import { useAppDispatch, useAppSelector } from '@/store/hooks';
 import { setReorderMode, saveSettings } from '@/store/slices/settingsSlice';
 import { selectReorderMode } from '@/store/selectors/tabSelectors';
 import { TabCounter } from './TabCounter';
-import { SyncStatusInline } from './SyncStatusInline';
+import { SyncButton } from '@/components/sync/SyncButton';
+import { HeaderDropdown } from './HeaderDropdown';
 import { useDebouncedSearch } from '@/hooks/useDebouncedSearch';
 import { useKeyboardShortcuts, COMMON_SHORTCUTS } from '@/hooks/useKeyboardShortcuts';
 import { Tooltip } from '@/components/common/Tooltip';
@@ -11,7 +12,6 @@ import { TabStackLogo } from '@/components/common/TabStackIcon';
 
 interface HeaderProps {
   onSearch: (query: string) => void;
-  onOpenSettings: () => void;
 }
 
 // 图标组件
@@ -40,7 +40,7 @@ const SaveIcon = () => (
   </svg>
 );
 
-export const Header: React.FC<HeaderProps> = ({ onSearch, onOpenSettings }) => {
+export const Header: React.FC<HeaderProps> = ({ onSearch }) => {
   const dispatch = useAppDispatch();
   // 只订阅 reorderMode 字段 —— 旧实现 `state => state.settings` 订阅整个
   // settings slice，任何设置变更都会重渲染 Header。
@@ -49,6 +49,7 @@ export const Header: React.FC<HeaderProps> = ({ onSearch, onOpenSettings }) => {
   const { searchValue, debouncedValue, handleSearchChange, clearSearch, isSearching } = useDebouncedSearch();
   const searchInputRef = React.useRef<HTMLInputElement>(null);
   const [isSearchTransitionPending, startSearchTransition] = useTransition();
+  const [showDropdown, setShowDropdown] = React.useState(false);
 
   const handleSaveAllTabs = async () => {
     const tabs = await chrome.tabs.query({ currentWindow: true });
@@ -156,19 +157,23 @@ export const Header: React.FC<HeaderProps> = ({ onSearch, onOpenSettings }) => {
               </button>
             </Tooltip>
 
-            {/* F10: 同步快捷入口（仅登录可见，自带拆分按钮 + popover） */}
-            <SyncStatusInline onOpenSettings={onOpenSettings} />
+            {/* 手动同步 */}
+            <SyncButton />
 
-            {/* Kebab 菜单 - 触发 SettingsTabs（在 MainApp 内 lazy 加载） */}
-            <Tooltip content="设置" position="bottom">
-              <button
-                onClick={onOpenSettings}
-                className="btn-icon flat-interaction hover:scale-105 focus-visible:ring-2 focus-visible:ring-primary/50 focus-visible:ring-offset-2"
-                aria-label="打开设置"
-              >
-                <MenuIcon />
-              </button>
-            </Tooltip>
+            {/* Kebab 菜单：用 relative 容器包裹，为 HeaderDropdown 的 absolute 定位提供参照 */}
+            <div className="relative">
+              <Tooltip content="菜单" position="bottom">
+                <button
+                  onClick={() => setShowDropdown(current => !current)}
+                  className="btn-icon flat-interaction hover:scale-105 focus-visible:ring-2 focus-visible:ring-primary/50 focus-visible:ring-offset-2"
+                  aria-label="菜单"
+                  aria-expanded={showDropdown}
+                >
+                  <MenuIcon />
+                </button>
+              </Tooltip>
+              {showDropdown && <HeaderDropdown onClose={() => setShowDropdown(false)} />}
+            </div>
           </div>
         </div>
       </div>

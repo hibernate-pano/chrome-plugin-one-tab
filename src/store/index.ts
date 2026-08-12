@@ -2,7 +2,6 @@ import { configureStore, combineReducers } from '@reduxjs/toolkit';
 import tabReducer, { initialTabState } from './slices/tabSlice';
 import settingsReducer, { initialSettingsState } from './slices/settingsSlice';
 import authReducer from './slices/authSlice';
-import { autoSyncMiddleware } from './middleware/autoSyncMiddleware';
 import { debouncedPersistMiddleware } from './middleware/debouncedPersist';
 import { persistGroupsThunk } from './slices/tabSlice';
 
@@ -30,7 +29,6 @@ function buildStore(preloadedState?: PreloadedState) {
           ignoredPaths: ['tabs.currentTab'],
         },
       })
-        .concat(autoSyncMiddleware)
         .concat(
           debouncedPersistMiddleware({
             // 闭包捕获 _store 引用：createStore() 重建后，timer 触发时

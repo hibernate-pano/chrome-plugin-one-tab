@@ -11,8 +11,7 @@
     "storage",
     "unlimitedStorage",
     "notifications",
-    "contextMenus",
-    "alarms"
+    "contextMenus"
   ],
   "host_permissions": [
     "https://reccclnaxadbuccsrwmg.supabase.co/*"

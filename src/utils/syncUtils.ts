@@ -196,7 +196,6 @@ const mergeGroup = (
 
     // 本地会话元数据默认保留在本地
     notes: localGroup.notes ?? cloudGroup.notes,
-    isFavorite: localGroup.isFavorite ?? cloudGroup.isFavorite,
 
     // 锁定状态：逻辑 OR（任一锁定即锁定）
     isLocked: localGroup.isLocked || cloudGroup.isLocked,

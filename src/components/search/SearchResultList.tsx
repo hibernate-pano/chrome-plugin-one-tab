@@ -369,11 +369,6 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({ searchQuery,
             <h4 className="text-sm font-semibold text-gray-900 dark:text-gray-100 truncate">
               {session.group.name}
             </h4>
-            {session.group.isFavorite && (
-              <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[11px] text-amber-700 dark:bg-amber-900/40 dark:text-amber-300">
-                收藏
-              </span>
-            )}
             <span className="rounded-full bg-gray-100 dark:bg-gray-800 px-2 py-0.5 text-xs text-gray-600 dark:text-gray-300">
               命中 {session.matches.length}
             </span>

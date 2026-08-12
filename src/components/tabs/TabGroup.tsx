@@ -50,12 +50,6 @@ const OpenAllIcon = () => (
   </svg>
 );
 
-const FavoriteIcon = ({ filled }: { filled: boolean }) => (
-  <svg className="w-4 h-4" fill={filled ? 'currentColor' : 'none'} viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-    <path strokeLinecap="round" strokeLinejoin="round" d="M11.48 3.499a.563.563 0 011.04 0l2.125 5.111a.563.563 0 00.475.345l5.518.442c.499.04.701.663.321.988l-4.204 3.602a.563.563 0 00-.182.557l1.285 5.386a.562.562 0 01-.84.61l-4.725-2.885a.563.563 0 00-.586 0L6.982 20.54a.562.562 0 01-.84-.61l1.285-5.386a.563.563 0 00-.182-.557L3.041 10.385a.563.563 0 01.321-.988l5.518-.442a.563.563 0 00.475-.345L11.48 3.5z" />
-  </svg>
-);
-
 const NotesIcon = () => (
   <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
     <path strokeLinecap="round" strokeLinejoin="round" d="M16.862 3.487a2.625 2.625 0 113.712 3.712L7.5 20.273 3 21l.727-4.5L16.862 3.487z" />
@@ -72,7 +66,8 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
   const [isCollapsed, setIsCollapsed] = useState(false);
   const [isEditingNotes, setIsEditingNotes] = useState(false);
   const [notesDraft, setNotesDraft] = useState(group.notes || '');
-  const [favoriteAnimating, setFavoriteAnimating] = useState(false);
+  // 解锁 shake 动画状态
+  const [lockAnimating, setLockAnimating] = useState(false);
 
   // S3 §1：hover-to-preview 状态 + 250ms 延迟定时器 ref
   const [previewOpen, setPreviewOpen] = useState(false);
@@ -177,21 +172,6 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
   const handleToggleLock = useCallback(() => {
     dispatch(toggleGroupLockAndSync(group.id));
   }, [dispatch, group.id]);
-
-  const handleToggleFavorite = useCallback(() => {
-    setFavoriteAnimating(true);
-    setTimeout(() => setFavoriteAnimating(false), 350);
-    dispatch(updateGroup({
-      ...group,
-      isFavorite: !group.isFavorite,
-      updatedAt: new Date().toISOString(),
-    }));
-    void trackProductEvent('session_favorited', {
-      sessionId: group.id,
-      sessionName: group.name,
-      isFavorite: !group.isFavorite,
-    });
-  }, [dispatch, group]);
 
   const handleSaveNotes = useCallback(() => {
     dispatch(updateGroup({
@@ -400,14 +380,6 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
               >
                 {group.name}
               </h3>
-              {group.isFavorite && (
-                <span
-                  className="rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-medium text-amber-700 dark:bg-amber-900/40 dark:text-amber-300"
-                  title="已收藏会话"
-                >
-                  已收藏
-                </span>
-              )}
             </div>
           )}
 
@@ -460,15 +432,6 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
             </button>
           )}
 
-          <button
-            onClick={handleToggleFavorite}
-            className={`btn-icon p-1.5 favorite-btn  focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-2 ${favoriteAnimating ? 'animate-heart-bounce' : 'transition-transform duration-200 hover:scale-110'} ${group.isFavorite ? 'text-amber-500' : ''}`}
-            title={group.isFavorite ? '取消收藏会话' : '收藏会话'}
-            aria-label={group.isFavorite ? '取消收藏会话' : '收藏会话'}
-          >
-            <FavoriteIcon filled={!!group.isFavorite} />
-          </button>
-
           {!group.isLocked && (
             <button
               onClick={() => setIsEditingNotes(current => !current)}
@@ -484,13 +447,13 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
           <button
             onClick={() => {
               if (group.isLocked) {
-                setFavoriteAnimating(true);
-                setTimeout(() => setFavoriteAnimating(false), 400);
+                setLockAnimating(true);
+                setTimeout(() => setLockAnimating(false), 400);
               } else {
                 handleToggleLock();
               }
             }}
-            className={`btn-icon p-1.5 lock-btn  focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-2 ${group.isLocked ? `tab-group-lock-icon ${favoriteAnimating ? 'animate-shake' : ''}` : ''}`}
+            className={`btn-icon p-1.5 lock-btn  focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-2 ${group.isLocked ? `tab-group-lock-icon ${lockAnimating ? 'animate-shake' : ''}` : ''}`}
             title={group.isLocked ? '解锁会话' : '锁定会话'}
             aria-label={group.isLocked ? '解锁会话' : '锁定会话'}
           >
@@ -583,7 +546,6 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
     prevProps.group.id === nextProps.group.id &&
     prevProps.group.name === nextProps.group.name &&
     prevProps.group.notes === nextProps.group.notes &&
-    prevProps.group.isFavorite === nextProps.group.isFavorite &&
     prevProps.group.isLocked === nextProps.group.isLocked &&
     prevProps.group.tabs.length === nextProps.group.tabs.length &&
     prevProps.group.updatedAt === nextProps.group.updatedAt &&

@@ -49,7 +49,6 @@ export interface TabGroup {
   updatedAt: string;
   isLocked: boolean;
   notes?: string;
-  isFavorite?: boolean;
   user_id?: string; // 关联用户ID
   device_id?: string; // 创建设备ID
   last_sync?: string; // 最后同步时间
@@ -94,7 +93,6 @@ export interface TabState {
     ratio?: number;
     savedBytes?: number;
   } | null;
-  backgroundSync: boolean; // 是否在后台同步
   syncProgress: number; // 同步进度（0-100）
   syncOperation: 'none' | 'upload' | 'download'; // 当前同步操作类型
 }

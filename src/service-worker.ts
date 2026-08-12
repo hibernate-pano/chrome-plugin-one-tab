@@ -1,6 +1,5 @@
 import { tabManager } from '@/background/TabManager';
 import { migrateToV2 } from '@/utils/migrationHelper';
-import { ensureBackgroundSyncAlarm, handleBackgroundSyncAlarm, BACKGROUND_SYNC_ALARM } from '@/background/backgroundSync';
 
 
 // Chrome 扩展的 Service Worker
@@ -91,9 +90,6 @@ chrome.runtime.onInstalled.addListener(async (details) => {
 
   // 创建右键菜单
   await setupContextMenus();
-
-  // 后台自动同步 alarm（幂等）
-  ensureBackgroundSyncAlarm();
 });
 
 // 浏览器启动时
@@ -104,9 +100,6 @@ chrome.runtime.onStartup.addListener(async () => {
 
   // 确保右键菜单存在
   await setupContextMenus();
-
-  // 后台自动同步 alarm（幂等）
-  ensureBackgroundSyncAlarm();
 });
 
 // Service Worker 激活时也初始化一次，防止遗漏
@@ -207,15 +200,6 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
     }
   } catch (error) {
     console.error('处理右键菜单点击失败:', error);
-  }
-});
-
-// 后台自动同步：每 15 分钟拉取并合并云端数据（popup 关闭时也能同步）。
-// 只下载+合并，上传保持 autoSyncMiddleware 响应式；失败写 lastSyncStatus.lastSyncError，
-// popup 打开时在 SyncStatusRow / SyncTab 可见（不弹系统通知）。
-chrome.alarms.onAlarm.addListener(alarm => {
-  if (alarm.name === BACKGROUND_SYNC_ALARM) {
-    void handleBackgroundSyncAlarm();
   }
 });
 

@@ -7,7 +7,6 @@
 // - storage：注入 fake（基于 fake-indexeddb 的 in-memory map）
 // - downloadTabGroups / uploadTabGroups / markCloudGroupsAsDeleted：注入 stub
 // - getState：注入假 Redux 状态（绕过 store singleton）
-// - 不调用 waitForGroupsLoaded（用 store.subscribe 不便 mock）
 
 import { describe, it, before, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
@@ -515,41 +514,5 @@ describe('SyncEngine.upload: 失败处理', () => {
 
     const result = await engine.upload();
     assert.equal(result.success, true, 'mark 失败不应导致 upload 失败');
-  });
-});
-
-describe('SyncEngine: 调度上传', () => {
-  it('scheduleUpload 后 hasPendingUpload 为 true', async () => {
-    const { SyncEngine } = await import('@/services/syncEngine');
-    const engine = new SyncEngine({
-      storage: makeFakeStorage({ groups: [] }),
-      uploadTabGroups: makeUploadStub(),
-      markCloudGroupsAsDeleted: makeMarkDeletedStub(),
-      cleanupCloudTombstones: makeGCStub(),
-      getState: makeFakeState({ isAuthenticated: true }),
-    });
-
-    assert.equal(engine.hasPendingUpload(), false);
-    engine.scheduleUpload(50);
-    assert.equal(engine.hasPendingUpload(), true);
-    engine.cancelPendingUpload();
-    assert.equal(engine.hasPendingUpload(), false);
-  });
-
-  it('连续 scheduleUpload 只保留最后一次的 timer', async () => {
-    const { SyncEngine } = await import('@/services/syncEngine');
-    const engine = new SyncEngine({
-      storage: makeFakeStorage({ groups: [] }),
-      uploadTabGroups: makeUploadStub(),
-      markCloudGroupsAsDeleted: makeMarkDeletedStub(),
-      cleanupCloudTombstones: makeGCStub(),
-      getState: makeFakeState({ isAuthenticated: true }),
-    });
-
-    engine.scheduleUpload(100);
-    engine.scheduleUpload(100);
-    engine.scheduleUpload(100);
-    assert.equal(engine.hasPendingUpload(), true);
-    engine.cancelPendingUpload();
   });
 });

@@ -43,7 +43,6 @@ export const initialTabState: TabState = {
   lastLoadedAt: null,
   lastSyncStatus: null,
   compressionStats: null,
-  backgroundSync: false,
   syncProgress: 0,
   syncOperation: 'none',
 };

@@ -3,7 +3,7 @@
 //
 // 历史背景：旧测试针对 downloadTabsFromCloudFlow（tabSyncWorkflow.ts），
 // 但该路径在 v1.12.0 后已是**死代码**——生产自动下载走
-//   AuthProvider → smartSyncService.maybeAutoDownload → syncEngine.downloadAndMerge
+// - 只保留手动同步（自动下载/上传已移除），所有同步由 SyncButton 手动触发
 // 而 downloadAndMerge 的数据安全完全建立在这两个纯函数上：
 //   1. mergeTabGroups(local, cloud, strategy) 永不无故丢弃本地组
 //   2. validateMergeResult(local, cloud, merged) 在合并异常缩水时拦截 → 触发回滚
