@@ -3,7 +3,6 @@ import { useAppDispatch } from '@/store/hooks';
 import { getCurrentUser } from '@/store/slices/authSlice';
 import { auth as supabaseAuth } from '@/utils/supabase';
 import { authCache } from '@/utils/authCache';
-import { smartSyncService } from '@/services/smartSyncService';
 
 interface AuthProviderProps {
   children: React.ReactNode;
@@ -17,7 +16,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   const dispatch = useAppDispatch();
   const [initialAuthLoaded, setInitialAuthLoaded] = useState(false);
 
-  // 初始化认证状态 + SmartSyncService
+  // 初始化认证状态
   useEffect(() => {
     const initializeAuth = async () => {
       try {
@@ -27,9 +26,6 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
         if (cachedAuth && cachedAuth.isAuthenticated && cachedAuth.user) {
           console.log('发现缓存的认证状态，用户:', cachedAuth.user.email);
         }
-
-        // 预热 SmartSyncService（加载 lastSyncTime）
-        await smartSyncService.initialize();
 
         setInitialAuthLoaded(true);
         console.log('认证状态初始化完成');
