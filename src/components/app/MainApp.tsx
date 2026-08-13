@@ -1,9 +1,11 @@
 import React, { useState, useEffect, lazy, Suspense, useDeferredValue } from 'react';
+import { useAppSelector } from '@/store/hooks';
+import { selectGroups } from '@/store/selectors/tabSelectors';
 import { Header } from '@/components/layout/Header';
 import { TabList } from '@/components/tabs/TabList';
 import { OnboardingGuide } from '@/components/onboarding/OnboardingGuide';
-import { shouldShowOnboarding } from '@/utils/onboardingStorage';
-import { getAppVersionLabel } from '@/utils/runtimeInfo';
+import { shouldShowOnboarding, setOnboardingSkipped } from '@/utils/onboardingStorage';
+import { getAppVersionLabel, getRuntimeVersion } from '@/utils/runtimeInfo';
 
 // 使用动态导入懒加载拖放功能
 const DndProvider = lazy(() =>
@@ -26,14 +28,32 @@ export const MainApp: React.FC = () => {
   const [showOnboarding, setShowOnboarding] = useState(false);
   const deferredSearchQuery = useDeferredValue(searchQuery);
 
+  // 修复 v1.15.4 之前的 OnboardingGuide bug：
+  //   当用户已有会话数据时，onboarding_trigger 即使残留（用户之前没点跳过就关了 popup）
+  //   也会让 OnboardingGuide 显示 —— 但 OnboardingGuide 是 fixed inset-0 全屏遮罩，
+  //   会遮住 TabList 让用户以为"数据丢了"。
+  // 现在：已有会话时直接跳过 onboarding 并清 trigger，避免再次显示。
+  const groups = useAppSelector(selectGroups);
+  const hasExistingData = groups.length > 0;
+
   // 检查是否需要显示用户引导
   useEffect(() => {
+    if (hasExistingData) {
+      // 用户已有数据 —— onboarding 没必要再询问，顺手清掉残留 trigger
+      // （setOnboardingSkipped 是幂等的：没有 trigger 时直接 no-op）
+      void setOnboardingSkipped(getRuntimeVersion());
+      return;
+    }
+    let cancelled = false;
     shouldShowOnboarding().then(should => {
-      if (should) {
+      if (!cancelled && should) {
         setShowOnboarding(true);
       }
     });
-  }, []);
+    return () => {
+      cancelled = true;
+    };
+  }, [hasExistingData]);
 
   // 切换性能测试页面
   const togglePerformanceTest = () => {

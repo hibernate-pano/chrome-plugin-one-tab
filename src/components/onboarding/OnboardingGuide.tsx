@@ -77,7 +77,7 @@ export const OnboardingGuide: React.FC<OnboardingGuideProps> = ({ onComplete }) 
         }, 300);
     }, [onComplete]);
 
-    // 跳过引导
+    // 跳过引导（任何步骤都可用，与 handleComplete 共用清 trigger 路径）
     const handleSkip = useCallback(async () => {
         setIsClosing(true);
         await setOnboardingSkipped(version.current);
@@ -85,6 +85,15 @@ export const OnboardingGuide: React.FC<OnboardingGuideProps> = ({ onComplete }) 
             onComplete();
         }, 300);
     }, [onComplete]);
+
+    // Backdrop 点击关闭：onboarding-overlay 是 fixed inset-0 全屏遮罩，
+    // 点击非卡片区域（即 event.target === overlay 自身）即视为 dismiss。
+    // 用户不再被卡死 —— 直接关 popup / 点别处 / 按 Esc 都能走完。
+    const handleOverlayClick = useCallback((event: React.MouseEvent<HTMLDivElement>) => {
+        if (event.target === event.currentTarget) {
+            void handleSkip();
+        }
+    }, [handleSkip]);
 
     // 键盘导航
     useEffect(() => {
@@ -143,6 +152,7 @@ export const OnboardingGuide: React.FC<OnboardingGuideProps> = ({ onComplete }) 
                 role="dialog"
                 aria-modal="true"
                 aria-label="用户引导"
+                onClick={handleOverlayClick}
             >
                 {/* 引导卡片 */}
                 <div
@@ -153,16 +163,18 @@ export const OnboardingGuide: React.FC<OnboardingGuideProps> = ({ onComplete }) 
                     }}
                 >
                     <div className="onboarding-card-inner">
-                        {/* 跳过按钮 */}
-                        {!isLastStep && (
-                            <button
-                                onClick={handleSkip}
-                                className="onboarding-btn-skip"
-                                aria-label="跳过引导"
-                            >
-                                跳过
-                            </button>
-                        )}
+                        {/* 关闭按钮（X）—— 永远可点，与 handleSkip 等价，
+                            解决"必须走完最后一步才能关"的体验问题 */}
+                        <button
+                            onClick={handleSkip}
+                            className="onboarding-btn-close"
+                            aria-label="关闭引导"
+                            type="button"
+                        >
+                            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                                <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                            </svg>
+                        </button>
 
                         {/* 步骤内容 */}
                         <div
@@ -227,6 +239,15 @@ export const OnboardingGuide: React.FC<OnboardingGuideProps> = ({ onComplete }) 
                                         <path strokeLinecap="round" strokeLinejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z" />
                                     </svg>
                                 )}
+                            </button>
+
+                            {/* 跳过引导 —— 流式布局，最后一步也可见（不重叠，不卡死） */}
+                            <button
+                                onClick={handleSkip}
+                                className="onboarding-btn-skip-inline"
+                                aria-label="跳过引导"
+                            >
+                                跳过
                             </button>
                         </div>
                     </div>

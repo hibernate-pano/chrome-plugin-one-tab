@@ -84,6 +84,43 @@
     background: rgba(30, 30, 40, 0.97);
 }
 
+/* X 关闭按钮 —— 卡片右上角，永远可点。
+   之前用户只能走完最后一步才能关闭 OnboardingGuide，导致 onboarding_trigger
+   永远残留 → 下次启动 OnboardingGuide 又显示，遮住真实数据。 */
+.onboarding-btn-close {
+    position: absolute;
+    top: 12px;
+    right: 12px;
+    width: 32px;
+    height: 32px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: 8px;
+    color: rgba(100, 116, 139, 0.85);
+    cursor: pointer;
+    transition: all 0.15s ease;
+    z-index: 1;
+}
+
+.onboarding-btn-close:hover {
+    background: rgba(100, 116, 139, 0.1);
+    border-color: rgba(100, 116, 139, 0.2);
+    color: rgba(71, 85, 105, 1);
+}
+
+.dark .onboarding-btn-close {
+    color: rgba(148, 163, 184, 0.85);
+}
+
+.dark .onboarding-btn-close:hover {
+    background: rgba(148, 163, 184, 0.12);
+    border-color: rgba(148, 163, 184, 0.25);
+    color: rgba(226, 232, 240, 1);
+}
+
 @keyframes onboardingCardIn {
     from {
         opacity: 0;
@@ -282,12 +319,9 @@
     color: #d1d5db;
 }
 
-/* 跳过按钮 */
-.onboarding-btn-skip {
-    position: absolute;
-    top: 16px;
-    right: 16px;
-    padding: 4px 12px;
+/* 跳过按钮（inline 流式版 —— 位于操作按钮区右侧，不重叠、不卡死） */
+.onboarding-btn-skip-inline {
+    padding: 6px 12px;
     border-radius: 8px;
     font-size: 0.75rem;
     color: #9ca3af;
@@ -295,15 +329,15 @@
     border: none;
     cursor: pointer;
     transition: all 0.2s ease;
-    z-index: 1;
+    flex-shrink: 0;
 }
 
-.onboarding-btn-skip:hover {
+.onboarding-btn-skip-inline:hover {
     color: #6b7280;
     background: #f3f4f6;
 }
 
-.dark .onboarding-btn-skip:hover {
+.dark .onboarding-btn-skip-inline:hover {
     color: #d1d5db;
     background: #1f2937;
 }

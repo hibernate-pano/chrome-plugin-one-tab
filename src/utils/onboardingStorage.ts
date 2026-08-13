@@ -124,6 +124,17 @@ export async function shouldShowOnboarding(): Promise<boolean> {
             return false;
         }
 
+        // 触发信息中的版本号如果 <= 当前版本，说明是残留的旧 trigger
+        // （例如 v1.15.3 升级到 v1.15.4 时 onInstalled 又写了一次 update
+        //  trigger，但版本号相同——patch 升级不应重复引导）。
+        // 直接清除并返回 false，避免 OnboardingGuide 反复遮挡数据。
+        // ⚠️ 只对 reason='update' 生效：install trigger 的 version 同样等于
+        // 当前版本（首次安装写入），必须保留并显示引导。
+        if (trigger.reason === 'update' && trigger.version === getCurrentVersion()) {
+            await clearOnboardingTrigger();
+            return false;
+        }
+
         // 首次安装，始终展示
         if (trigger.reason === 'install') {
             return true;
