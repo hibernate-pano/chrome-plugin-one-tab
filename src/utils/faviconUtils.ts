@@ -4,6 +4,42 @@
  */
 
 /**
+ * 允许的 favicon 协议白名单 —— 与 manifest.json CSP `img-src 'self' data: https:` 严格对齐。
+ *
+ * 之前列表里包含 `http:` 和 `chrome-extension:`，但 manifest CSP 不允许这两个
+ * scheme（'self' 只匹配当前扩展自身，非任意 chrome-extension://）。结果是
+ * sanitize 通过的 URL 在浏览器实际加载时仍被 CSP 拦截，console 刷出大量
+ * "Loading the image violates CSP" 错误（每条 favicon 一行）。
+ *
+ * 现在收紧到 manifest 白名单本身：
+ *   - https:   —— 站点 favicon，常见
+ *   - data:    —— 内联 base64 图，常见于扩展自己生成的占位图标
+ *   - 'self'   —— chrome-extension://[this-ext-id]/...；协议层无法表达，依赖
+ *                 Chrome CSP 自己匹配（'self' 自动包含当前扩展 origin），
+ *                 因此不在 allowedProtocols 里。
+ *
+ * 如果用户真的需要把 chrome-extension:// 资源当 favicon，应该用 chrome.runtime.getURL
+ * 构造的 URL（'self' 命中）——而不是任意外部扩展的资源。
+ */
+const ALLOWED_FAVICON_PROTOCOLS = ['https:', 'data:'] as const;
+
+const DANGEROUS_FAVICON_PROTOCOLS = [
+  'javascript:',
+  'vbscript:',
+  'file:',
+  'ftp:',
+  // Chrome 内部 scheme：扩展 manifest CSP 不允许这些 protocol，
+  // 即使 sanitize 通过也只会被浏览器拦截 + console 报错。
+  'chrome:',
+  'chrome-extension:',
+  'chrome-search:',
+  'chrome-untrusted:',
+  'devtools:',
+  'view-source:',
+  'about:',
+] as const;
+
+/**
  * 清理和验证 favicon URL，确保符合 CSP 策略
  * @param faviconUrl 原始 favicon URL
  * @returns 安全的 favicon URL 或空字符串
@@ -25,30 +61,20 @@ export function sanitizeFaviconUrl(faviconUrl: string | undefined | null): strin
   try {
     const url = new URL(cleanUrl);
 
-    // 允许的协议：https、http、data、chrome-extension
-    const allowedProtocols = ['https:', 'http:', 'data:', 'chrome-extension:'];
-
-    // 危险的协议列表
-    const dangerousProtocols = ['javascript:', 'vbscript:', 'file:', 'ftp:'];
-
-    // 检查是否是危险协议
-    if (dangerousProtocols.includes(url.protocol)) {
-      console.warn(`危险的 favicon 协议，已过滤: ${url.protocol} - ${cleanUrl}`);
+    // 危险协议 → 直接过滤（不 log，避免 console 噪音）
+    if ((DANGEROUS_FAVICON_PROTOCOLS as readonly string[]).includes(url.protocol)) {
       return '';
     }
 
-    // 检查是否是允许的协议
-    if (allowedProtocols.includes(url.protocol)) {
+    // 只允许 manifest CSP 白名单内的 protocol
+    if ((ALLOWED_FAVICON_PROTOCOLS as readonly string[]).includes(url.protocol)) {
       return cleanUrl;
     }
 
-    // 其他未知协议，返回空字符串
-    console.warn(`未知的 favicon 协议，已过滤: ${url.protocol} - ${cleanUrl}`);
+    // 其他未知协议（如 ws: blob: 等）→ 过滤
     return '';
-
-  } catch (error) {
+  } catch {
     // URL 格式无效
-    console.warn(`无效的 favicon URL 格式，已过滤: ${cleanUrl}`, error);
     return '';
   }
 }
@@ -64,7 +90,7 @@ export function sanitizeFaviconUrls(faviconUrls: (string | undefined | null)[]):
 
 /**
  * 检查 favicon URL 是否安全
- * 现在允许 HTTP 和 HTTPS 协议，但仍然过滤危险协议
+ * 与 sanitizeFaviconUrl 保持同样的白名单（manifest CSP 对齐）。
  * @param faviconUrl favicon URL
  * @returns 是否安全
  */
@@ -74,20 +100,11 @@ export function isFaviconUrlSafe(faviconUrl: string | undefined | null): boolean
   try {
     const url = new URL(faviconUrl);
 
-    // 允许的协议：https、http、data、chrome-extension
-    const allowedProtocols = ['https:', 'http:', 'data:', 'chrome-extension:'];
-
-    // 危险的协议列表
-    const dangerousProtocols = ['javascript:', 'vbscript:', 'file:', 'ftp:'];
-
-    // 检查是否是危险协议
-    if (dangerousProtocols.includes(url.protocol)) {
-      console.warn(`危险的 favicon 协议，已过滤: ${url.protocol} - ${faviconUrl}`);
+    if ((DANGEROUS_FAVICON_PROTOCOLS as readonly string[]).includes(url.protocol)) {
       return false;
     }
 
-    // 检查是否是允许的协议
-    return allowedProtocols.includes(url.protocol);
+    return (ALLOWED_FAVICON_PROTOCOLS as readonly string[]).includes(url.protocol);
   } catch {
     return false;
   }

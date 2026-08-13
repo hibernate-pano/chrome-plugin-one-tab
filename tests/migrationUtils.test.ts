@@ -106,7 +106,7 @@ describe('migrateFaviconUrls', () => {
 
     // migration flag 应被设置
     const flags = await storage.getMigrationFlags();
-    assert.equal(flags.favicon_urls_v1, true, '迁移完成后应标记 flag');
+    assert.equal(flags.favicon_urls_v2, true, '迁移完成后应标记 flag');
 
     // 数据无变化
     invalidateGroupsCache();
@@ -227,7 +227,8 @@ describe('migrateFaviconUrls', () => {
 
     await migrateFaviconUrls();
     const flags = await storage.getMigrationFlags();
-    assert.equal(flags.favicon_urls_v1, true);
+    // v1.15.3 起改用 v2 key（旧 v1 不再是「已迁移」凭证，避免旧用户升级后漏掉清理）
+    assert.equal(flags.favicon_urls_v2, true);
   });
 });
 
@@ -248,24 +249,24 @@ describe('runMigrations: 端到端', () => {
     const { runMigrations } = await import('@/utils/migrationUtils');
     const { storage } = await import('@/utils/storage');
 
-    // 初始无 flag
+    // 初始无 flag（v2 key 是新增的，旧用户即使有 v1 也算首次）
     const initialFlags = await storage.getMigrationFlags();
-    assert.equal(initialFlags.favicon_urls_v1, undefined);
+    assert.equal(initialFlags.favicon_urls_v2, undefined);
 
     await runMigrations();
 
     // 所有 flag 应被设置
     const finalFlags = await storage.getMigrationFlags();
-    assert.equal(finalFlags.favicon_urls_v1, true);
+    assert.equal(finalFlags.favicon_urls_v2, true);
     assert.equal(finalFlags.recent_restore_history_removed_v1, true);
   });
 
-  it('迁移已完成 → 不重复跑', async () => {
+  it('v2 已完成 → 不重复跑', async () => {
     const { runMigrations } = await import('@/utils/migrationUtils');
     const { storage } = await import('@/utils/storage');
 
-    // 先预置 flag
-    await storage.setMigrationFlag('favicon_urls_v1', true);
+    // 先预置 v2 flag（v2 是当前权威凭证）
+    await storage.setMigrationFlag('favicon_urls_v2', true);
     await storage.setMigrationFlag('recent_restore_history_removed_v1', true);
 
     // 写入一个会被「迁移」的数据（javascript: favicon）
@@ -280,20 +281,52 @@ describe('runMigrations: 端到端', () => {
     const result = await storage.getGroups();
 
     // 验证 favicon 没被清除（说明迁移被跳过）
-    assert.equal(result[0].tabs[0].favicon, 'javascript:bad', '已完成的迁移不应再次执行');
+    assert.equal(result[0].tabs[0].favicon, 'javascript:bad', 'v2 已完成时迁移不应再跑');
+  });
+
+  it('v1 已完成但 v2 未设 → 必须重跑（v1.15.0/v1.15.1/v1.15.2 升级路径）', async () => {
+    const { runMigrations } = await import('@/utils/migrationUtils');
+    const { storage } = await import('@/utils/storage');
+
+    // 模拟「v1.15.x 升 v1.15.3」：只有旧 v1 flag
+    await storage.setMigrationFlag('favicon_urls_v1', true);
+
+    // 旧版本曾写入 IndexedDB 的 favicon —— 现在已被新白名单排除
+    const groups = [
+      makeGroup([makeTab({ id: 't-http', favicon: 'http://insecure.example/f.ico' })], { id: 'g-http' }),
+      makeGroup([makeTab({ id: 't-ext', favicon: 'chrome-extension://other-ext/icon.png' })], { id: 'g-ext' }),
+      makeGroup([makeTab({ id: 't-search', favicon: 'chrome-search://local-ntp/favicon.ico' })], { id: 'g-search' }),
+    ];
+    await storage.setGroups(groups);
+
+    await runMigrations();
+
+    const { invalidateGroupsCache } = await import('@/utils/storage');
+    invalidateGroupsCache();
+    const result = await storage.getGroups();
+    const tabs = result.flatMap(g => g.tabs);
+    const faviconById = Object.fromEntries(tabs.map(t => [t.id, t.favicon]));
+    assert.equal(faviconById['t-http'], '', 'http:// 必须被清理');
+    assert.equal(faviconById['t-ext'], '', 'chrome-extension:// 必须被清理');
+    assert.equal(faviconById['t-search'], '', 'chrome-search:// 必须被清理');
+
+    // v2 flag 现在被写入了
+    const flags = await storage.getMigrationFlags();
+    assert.equal(flags.favicon_urls_v2, true);
+    assert.equal(flags.favicon_urls_v1, true, '旧 v1 flag 也保留——可追溯历史');
   });
 
   it('部分迁移完成 → 只跑未完成的', async () => {
     const { runMigrations } = await import('@/utils/migrationUtils');
     const { storage } = await import('@/utils/storage');
 
-    // 只预置 favicon 的 flag
-    await storage.setMigrationFlag('favicon_urls_v1', true);
+    // 只预置 favicon 的 v2 flag
+    await storage.setMigrationFlag('favicon_urls_v2', true);
 
     await runMigrations();
 
     const flags = await storage.getMigrationFlags();
-    assert.equal(flags.favicon_urls_v1, true, '已完成的仍为 true');
+    assert.equal(flags.favicon_urls_v2, true, '已完成的仍为 true');
     assert.equal(flags.recent_restore_history_removed_v1, true, '未完成的被补上');
   });
 });

@@ -10,7 +10,11 @@ interface SafeFaviconProps {
 
 /**
  * 安全的 Favicon 组件
- * 只显示符合 CSP 策略的 favicon，对于不安全的 URL 显示默认图标
+ * 只渲染符合 CSP 白名单（manifest.json img-src）的 favicon，其余降级为默认图标。
+ *
+ * useState 仅跟踪运行时加载失败（onError）—— 协议级安全由 isFaviconUrlSafe 在 render 时
+ * 直接判断，不需要 useEffect 协议层检查（避免每个 tab 触发额外 render + 移除旧实现的 console.warn 噪音）。
+ * 但 src 变化时需要重置 loadFailed，否则换 tab 后还卡在 fallback 上。
  */
 export const SafeFavicon: React.FC<SafeFaviconProps> = ({
   src,
@@ -18,37 +22,21 @@ export const SafeFavicon: React.FC<SafeFaviconProps> = ({
   className = 'w-4 h-4 flex-shrink-0',
   fallbackIcon
 }) => {
-  const [shouldShowImage, setShouldShowImage] = useState(false);
-  const [imageError, setImageError] = useState(false);
+  const [loadFailed, setLoadFailed] = useState(false);
 
+  // src 变化 → 重置加载失败标记，让新的 src 有机会重试一次
   useEffect(() => {
-    // 重置状态
-    setImageError(false);
-    
-    // 检查 URL 是否安全
-    if (src && isFaviconUrlSafe(src)) {
-      setShouldShowImage(true);
-    } else {
-      setShouldShowImage(false);
-      if (src) {
-        console.warn('不安全的 favicon URL，已过滤:', src);
-      }
-    }
+    setLoadFailed(false);
   }, [src]);
-
-  const handleImageError = () => {
-    setImageError(true);
-    setShouldShowImage(false);
-  };
 
   // 默认的回退图标
   const defaultFallbackIcon = (
     <div className={`bg-gray-200 dark:bg-gray-600 flex items-center justify-center ${className}`}>
-      <svg 
-        xmlns="http://www.w3.org/2000/svg" 
-        className="h-3 w-3 text-gray-500 dark:text-gray-300" 
-        fill="none" 
-        viewBox="0 0 24 24" 
+      <svg
+        xmlns="http://www.w3.org/2000/svg"
+        className="h-3 w-3 text-gray-500 dark:text-gray-300"
+        fill="none"
+        viewBox="0 0 24 24"
         stroke="currentColor"
       >
         <path
@@ -61,18 +49,17 @@ export const SafeFavicon: React.FC<SafeFaviconProps> = ({
     </div>
   );
 
-  // 如果应该显示图片且没有错误，显示图片
-  if (shouldShowImage && !imageError) {
+  // URL 通过协议白名单 + 之前没有加载失败 → 渲染 <img>
+  if (src && isFaviconUrlSafe(src) && !loadFailed) {
     return (
-      <img 
-        src={src} 
-        alt={alt} 
+      <img
+        src={src}
+        alt={alt}
         className={className}
-        onError={handleImageError}
+        onError={() => setLoadFailed(true)}
       />
     );
   }
 
-  // 否则显示回退图标
   return fallbackIcon || defaultFallbackIcon;
 };

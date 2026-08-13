@@ -59,8 +59,8 @@ export async function migrateFaviconUrls(): Promise<void> {
       console.log(`favicon 迁移检查完成: 共检查 ${totalTabs} 个标签，无需迁移`);
     }
     
-    // 标记迁移已完成
-    await storage.setMigrationFlag('favicon_urls_v1', true);
+    // 标记迁移已完成（v2 key——v1.15.3 起白名单收紧，需要区分新旧用户）
+    await storage.setMigrationFlag('favicon_urls_v2', true);
     
   } catch (error) {
     console.error('迁移 favicon URLs 失败:', error);
@@ -100,18 +100,21 @@ export async function removeRecentRestoreHistory(): Promise<void> {
 export async function runMigrations(): Promise<void> {
   try {
     console.log('开始检查数据迁移...');
-    
-    // 检查并运行 favicon URLs 迁移
-    if (await shouldRunMigration('favicon_urls_v1')) {
+
+    // favicon_urls_v2：v1.15.3 起收紧白名单（http:/chrome-extension: → 不可用）。
+    // 用新 key v2 而不是 v1，让从 v1.15.x 升上来的用户**重新跑一次**迁移：
+    // 旧版本已写入 IndexedDB 的 favicon 字段可能含 http:// 或 chrome-extension://
+    // 等当前不再合规的协议，必须清掉否则刷新后会触发 CSP img-src 拦截。
+    if (await shouldRunMigration('favicon_urls_v2')) {
       await migrateFaviconUrls();
     }
 
     if (await shouldRunMigration('recent_restore_history_removed_v1')) {
       await removeRecentRestoreHistory();
     }
-    
+
     console.log('数据迁移检查完成');
-    
+
   } catch (error) {
     console.error('数据迁移失败:', error);
     // S1: 包一层 MigrationError（retryable=false）再抛出，让调用方能识别
