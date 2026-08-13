@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import ModalFrame from './ModalFrame';
 
 export interface ConfirmDialogProps {
@@ -8,6 +8,12 @@ export interface ConfirmDialogProps {
   confirmText?: string;
   cancelText?: string;
   type?: 'danger' | 'warning' | 'info';
+  /**
+   * 要求用户输入此字符串才可点确认 —— 用于不可逆破坏性操作（删库、清理全部会话等）。
+   * 留空则不显示输入框，确认按钮始终可点。
+   */
+  requireInput?: string;
+  inputPlaceholder?: string;
   onConfirm: () => void;
   onCancel: () => void;
 }
@@ -19,9 +25,17 @@ export const ConfirmDialog: React.FC<ConfirmDialogProps> = ({
   confirmText = '确认',
   cancelText = '取消',
   type = 'warning',
+  requireInput,
+  inputPlaceholder,
   onConfirm,
   onCancel
 }) => {
+  const [input, setInput] = useState('');
+  const canConfirm = !requireInput || input.trim() === requireInput;
+  // visible 切换时清空输入
+  React.useEffect(() => {
+    if (!visible) setInput('');
+  }, [visible]);
   const getTypeStyles = () => {
     switch (type) {
       case 'danger':
@@ -84,13 +98,30 @@ export const ConfirmDialog: React.FC<ConfirmDialogProps> = ({
           </button>
           <button
             onClick={onConfirm}
-            className={`inline-flex items-center justify-center rounded-xl px-4 py-2.5 text-sm font-medium transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 ${typeStyles.confirmButton}`}
+            disabled={!canConfirm}
+            className={`inline-flex items-center justify-center rounded-xl px-4 py-2.5 text-sm font-medium transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 disabled:cursor-not-allowed disabled:opacity-50 ${typeStyles.confirmButton}`}
           >
             {confirmText}
           </button>
         </>
       }
-    />
+    >
+      {requireInput && (
+        <div className="mt-4">
+          <label className="mb-2 block text-xs font-medium text-slate-600 dark:text-slate-300">
+            请输入「{requireInput}」以确认此操作
+          </label>
+          <input
+            type="text"
+            value={input}
+            onChange={e => setInput(e.target.value)}
+            placeholder={inputPlaceholder ?? requireInput}
+            autoComplete="off"
+            className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 focus:border-rose-500 focus:outline-none dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100"
+          />
+        </div>
+      )}
+    </ModalFrame>
   );
 };
 

@@ -102,11 +102,12 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({ onClose, onReque
     }
 
     showConfirm({
-      title: '删除确认',
-      message: '确定要删除所有会话吗？此操作无法撤销。',
+      title: '清空所有会话',
+      message: '此操作会删除全部会话（含云端 tombstone 软删标记），且无法撤销。请输入「确认清空」以继续。',
       type: 'danger',
       confirmText: '删除',
       cancelText: '取消',
+      requireInput: '确认清空',
       onConfirm: runDeleteAll,
       onCancel: () => {},
     });

@@ -12,6 +12,7 @@ import { TabStackLogo } from '@/components/common/TabStackIcon';
 import { ModalFrame } from '@/components/common/ModalFrame';
 import { LoginForm } from '../auth/LoginForm';
 import { RegisterForm } from '../auth/RegisterForm';
+import { storage } from '@/utils/storage';
 
 interface HeaderProps {
   onSearch: (query: string) => void;
@@ -51,6 +52,28 @@ const LoginIcon = () => (
   </svg>
 );
 
+// 已登录用户：显示最近一次同步失败状态（数据来自 storage.getLastSyncStatus
+// + Redux syncStatus；成功时整组隐藏，不打扰正常使用）。
+const SyncErrorBadge: React.FC<{ errorMessage: string }> = ({ errorMessage }) => (
+  <Tooltip content={`上次同步失败：${errorMessage}`} position="bottom">
+    <button
+      type="button"
+      aria-label={`同步失败：${errorMessage}`}
+      className="flat-interaction inline-flex h-7 items-center gap-1 rounded-full bg-amber-100 px-2 text-xs font-medium text-amber-700 hover:bg-amber-200 dark:bg-amber-500/15 dark:text-amber-300 dark:hover:bg-amber-500/25"
+      onClick={() => {
+        // 点开后通过 HeaderDropdown 的「上传」按钮打开手动同步弹窗 —— 简化处理：直接跳到 SyncButton
+        document.querySelector<HTMLButtonElement>('button[title*="上传"]')?.click();
+      }}
+    >
+      <span className="relative inline-flex h-2 w-2" aria-hidden="true">
+        <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-amber-400 opacity-75" />
+        <span className="relative inline-flex h-2 w-2 rounded-full bg-amber-500" />
+      </span>
+      同步失败
+    </button>
+  </Tooltip>
+);
+
 export const Header: React.FC<HeaderProps> = ({ onSearch }) => {
   const dispatch = useAppDispatch();
   // 只订阅 reorderMode 字段 —— 旧实现 `state => state.settings` 订阅整个
@@ -65,6 +88,22 @@ export const Header: React.FC<HeaderProps> = ({ onSearch }) => {
   // AuthModal 状态从 HeaderDropdown 上提 —— 让 Header 的「登录」按钮和菜单里的入口共用同一个 Modal
   const [showAuthModal, setShowAuthModal] = useState(false);
   const [authTab, setAuthTab] = useState<'login' | 'register'>('login');
+
+  // 已登录 + 上次同步失败：显示错误徽章。读 storage.lastSyncError + Redux syncStatus。
+  const syncStatus = useAppSelector(state => state.tabs.syncStatus);
+  const [persistedSyncError, setPersistedSyncError] = useState<string | null>(null);
+  React.useEffect(() => {
+    if (!isAuthenticated) return;
+    let cancelled = false;
+    storage.getLastSyncStatus().then(s => {
+      if (!cancelled) setPersistedSyncError(s.lastSyncError ?? null);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [isAuthenticated, syncStatus]);
+  const syncErrorMessage =
+    syncStatus === 'error' ? persistedSyncError : persistedSyncError;
 
   const openAuthModal = () => {
     setAuthTab('login');
@@ -181,7 +220,10 @@ export const Header: React.FC<HeaderProps> = ({ onSearch }) => {
 
             {/* 已登录显示手动同步；未登录显示「登录」入口，把云同步能力在第一眼暴露 */}
             {isAuthenticated ? (
-              <SyncButton />
+              <>
+                <SyncButton />
+                {syncErrorMessage && <SyncErrorBadge errorMessage={syncErrorMessage} />}
+              </>
             ) : (
               <Tooltip content="登录后跨设备同步" position="bottom">
                 <button

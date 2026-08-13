@@ -5,6 +5,7 @@ import { storage } from '@/utils/storage';
 import { nanoid } from '@reduxjs/toolkit';
 import { shouldAutoDeleteAfterTabRemoval } from '@/utils/tabGroupUtils';
 import { updateGroupWithVersion, updateDisplayOrder } from '@/utils/versionHelper';
+import { previewCleanDuplicateTabs } from '@/utils/cleanDuplicate';
 import { trackProductEvent } from '@/utils/productEvents';
 import { persistGroupsDebounced } from '@/store/middleware/debouncedPersist';
 
@@ -267,108 +268,45 @@ export const moveGroupAndSync = createAsyncThunk(
 // 清理重复标签功能
 export const cleanDuplicateTabs = createAsyncThunk(
   'tabs/cleanDuplicateTabs',
-  async () => {
-    // 保存原始数据，用于错误回滚
+  async (_, { rejectWithValue }) => {
     let originalGroups: TabGroup[] = [];
 
     try {
-      // 获取所有标签组并保存原始状态
       originalGroups = await storage.getGroupsOrThrow();
-      const groups = [...originalGroups]; // 创建副本进行操作
+      const result = previewCleanDuplicateTabs(originalGroups);
 
-      // 创建URL映射，记录每个URL对应的标签页
-      const urlMap = new Map<string, { tab: any; groupId: string }[]>();
-
-      // 扫描所有标签页，按URL分组
-      groups.forEach(group => {
-        group.tabs.forEach(tab => {
-          if (tab.url) {
-            // 对于loading://开头的URL，需要特殊处理
-            const urlKey = tab.url.startsWith('loading://') ? `${tab.url}|${tab.title}` : tab.url;
-
-            if (!urlMap.has(urlKey)) {
-              urlMap.set(urlKey, []);
-            }
-            urlMap.get(urlKey)?.push({ tab, groupId: group.id });
-          }
-        });
+      // 给所有发生变化的组升级 version + updatedAt（保留旧 thunk 的乐观锁语义）
+      const versionBumped = result.finalGroups.map(g => {
+        const wasChanged =
+          (originalGroups.find(o => o.id === g.id)?.tabs.length ?? 0) !== g.tabs.length;
+        return wasChanged ? updateGroupWithVersion(g) : g;
       });
 
-      // 处理重复标签页
-      let removedTabsCount = 0;
-      const updatedGroups = groups.map(group => ({
-        ...group,
-        tabs: [...group.tabs] // 深拷贝 tabs 数组
-      }));
-
-      urlMap.forEach(tabsWithSameUrl => {
-        if (tabsWithSameUrl.length > 1) {
-          // 按lastAccessed时间排序，保留最新的标签页
-          tabsWithSameUrl.sort(
-            (a, b) =>
-              new Date(b.tab.lastAccessed).getTime() - new Date(a.tab.lastAccessed).getTime()
-          );
-
-          // 保留第一个（最新的），删除其余的
-          for (let i = 1; i < tabsWithSameUrl.length; i++) {
-            const { groupId, tab } = tabsWithSameUrl[i];
-            const groupIndex = updatedGroups.findIndex(g => g.id === groupId);
-
-            if (groupIndex !== -1) {
-              // 从标签组中删除该标签页
-              updatedGroups[groupIndex].tabs = updatedGroups[groupIndex].tabs.filter(
-                t => t.id !== tab.id
-              );
-              removedTabsCount++;
-
-              // 更新标签组的updatedAt时间和版本号
-              const currentVersion = updatedGroups[groupIndex].version || 1;
-              updatedGroups[groupIndex].updatedAt = new Date().toISOString();
-              updatedGroups[groupIndex].version = currentVersion + 1;
-            }
-          }
-        }
-      });
-
-      // 清理空标签组（在重复标签清理后进行）
-      let removedGroupsCount = 0;
-      const finalGroups = updatedGroups.filter(group => {
-        // 如果标签组为空且不是锁定状态，则删除
-        if (group.tabs.length === 0 && !group.isLocked) {
-          removedGroupsCount++;
-          return false; // 从数组中移除
-        }
-        return true; // 保留
-      });
-
-      // 原子性操作：先保存到本地存储
+      // 原子性写入本地存储
       try {
-        await storage.setGroups(finalGroups);
+        await storage.setGroups(versionBumped);
       } catch (storageError) {
         console.error('保存到本地存储失败，操作回滚:', storageError);
-        // 如果保存失败，不进行任何更改
         throw new Error('保存失败，操作已取消');
       }
 
       return {
-        removedTabsCount,
-        removedGroupsCount,
-        updatedGroups: finalGroups
+        removedTabsCount: result.removedTabsCount,
+        removedGroupsCount: result.removedGroupsCount,
+        updatedGroups: versionBumped,
+        // 撤销用：执行前的完整快照
+        originalGroups,
       };
     } catch (error) {
       console.error('清理重复标签和空标签组失败:', error);
-
-      // 如果操作过程中出现错误，尝试恢复原始状态
       try {
         if (originalGroups.length > 0) {
           await storage.setGroups(originalGroups);
-          console.log('已回滚到原始状态');
         }
       } catch (rollbackError) {
         console.error('回滚失败:', rollbackError);
       }
-
-      throw error;
+      return rejectWithValue(error instanceof Error ? error.message : '清理失败');
     }
   }
 );
