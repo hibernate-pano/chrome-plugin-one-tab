@@ -108,7 +108,7 @@ test('TabList: empty state renders when no groups and no search', () => {
   // The empty-state branch shows the PersonalizedWelcome component which
   // greets with "早上好" / "下午好" / "晚上好" based on local time, plus
   // the EmptyState component with a "保存当前窗口" CTA button.
-  assert.ok(screen.getByText('保存当前窗口'), 'empty-state CTA should be visible');
+  assert.ok(screen.getAllByText('保存当前窗口为会话').length >= 1, 'empty-state CTA should be visible');
   cleanup();
 });
 

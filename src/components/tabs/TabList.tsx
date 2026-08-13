@@ -133,7 +133,7 @@ export const TabList: React.FC<TabListProps> = ({ searchQuery }) => {
                 }}
                 className="px-6 py-2 text-sm font-medium flat-button-primary flat-interaction focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
               >
-                保存当前窗口
+                保存当前窗口为会话
               </button>
             }
           />

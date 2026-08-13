@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useEffect } from 'react';
 import { useAppSelector, useAppDispatch } from '@/store/hooks';
 import { signOut } from '@/store/slices/authSlice';
 import { deleteAllGroups } from '@/store/slices/tabSlice';
@@ -10,26 +10,23 @@ import {
   saveSettings,
 } from '@/store/slices/settingsSlice';
 import { useToast } from '@/contexts/ToastContext';
-import { LoginForm } from '../auth/LoginForm';
-import { RegisterForm } from '../auth/RegisterForm';
 import { ThemeStyleSelector } from './ThemeStyleSelector';
-import { ModalFrame } from '@/components/common/ModalFrame';
 import { MenuSection } from './MenuSection';
 import { MenuToggleRow } from './MenuToggleRow';
 import { ExportImportMenu } from './ExportImportMenu';
 
 interface HeaderDropdownProps {
   onClose: () => void;
+  /** 未登录时点击「登录 / 注册」按钮回调 —— 由父组件打开登录弹窗 */
+  onRequestLogin: () => void;
 }
 
 /** 轻量菜单 —— 只放用户高频需要的操作：账户、外观、数据备份。 */
-export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({ onClose }) => {
+export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({ onClose, onRequestLogin }) => {
   const dispatch = useAppDispatch();
   const { isAuthenticated, user } = useAppSelector(state => state.auth);
   const settings = useAppSelector(state => state.settings);
-  const [activeTab, setActiveTab] = useState<'login' | 'register'>('login');
-  const [showAuthModal, setShowAuthModal] = useState(false);
-  const dropdownRef = useRef<HTMLDivElement>(null);
+  const dropdownRef = React.useRef<HTMLDivElement>(null);
   const { showConfirm, showAlert } = useToast();
 
   // 处理通知开关
@@ -137,7 +134,10 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({ onClose }) => {
           </div>
         ) : (
           <button
-            onClick={() => setShowAuthModal(true)}
+            onClick={() => {
+              onClose();
+              onRequestLogin();
+            }}
             className="w-full text-left px-4 py-2 text-sm text-gray-700 dark:text-gray-300 flat-interaction flex items-center"
             type="button"
           >
@@ -185,10 +185,10 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({ onClose }) => {
             ariaLabel="删除前确认"
           />
           <MenuToggleRow
-            label="保存固定标签页"
+            label="连置顶标签一起保存"
             checked={settings.collectPinnedTabs}
             onChange={handleToggleCollectPinnedTabs}
-            ariaLabel="保存固定标签页"
+            ariaLabel="连置顶标签一起保存"
           />
         </MenuSection>
 
@@ -206,55 +206,6 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({ onClose }) => {
           清空所有会话
         </button>
       </div>
-
-      {/* 登录/注册弹窗 */}
-      {showAuthModal && (
-        <ModalFrame
-          visible={showAuthModal}
-          onClose={() => setShowAuthModal(false)}
-          title={activeTab === 'login' ? '登录' : '注册'}
-        >
-          <div className="mb-4 flex gap-2">
-            <button
-              onClick={() => setActiveTab('login')}
-              className={`flex-1 rounded-lg px-3 py-2 text-sm font-medium transition-colors ${
-                activeTab === 'login'
-                  ? 'bg-primary-600 text-white'
-                  : 'bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-300'
-              }`}
-              type="button"
-            >
-              登录
-            </button>
-            <button
-              onClick={() => setActiveTab('register')}
-              className={`flex-1 rounded-lg px-3 py-2 text-sm font-medium transition-colors ${
-                activeTab === 'register'
-                  ? 'bg-primary-600 text-white'
-                  : 'bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-300'
-              }`}
-              type="button"
-            >
-              注册
-            </button>
-          </div>
-          {activeTab === 'login' ? (
-            <LoginForm
-              onSuccess={() => {
-                setShowAuthModal(false);
-                onClose();
-              }}
-            />
-          ) : (
-            <RegisterForm
-              onSuccess={() => {
-                setShowAuthModal(false);
-                onClose();
-              }}
-            />
-          )}
-        </ModalFrame>
-      )}
     </div>
   );
 };

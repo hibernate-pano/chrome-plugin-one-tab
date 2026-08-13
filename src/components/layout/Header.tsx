@@ -1,4 +1,4 @@
-import React, { useTransition } from 'react';
+import React, { useState, useTransition } from 'react';
 import { useAppDispatch, useAppSelector } from '@/store/hooks';
 import { setReorderMode, saveSettings } from '@/store/slices/settingsSlice';
 import { selectReorderMode } from '@/store/selectors/tabSelectors';
@@ -9,6 +9,9 @@ import { useDebouncedSearch } from '@/hooks/useDebouncedSearch';
 import { useKeyboardShortcuts, COMMON_SHORTCUTS } from '@/hooks/useKeyboardShortcuts';
 import { Tooltip } from '@/components/common/Tooltip';
 import { TabStackLogo } from '@/components/common/TabStackIcon';
+import { ModalFrame } from '@/components/common/ModalFrame';
+import { LoginForm } from '../auth/LoginForm';
+import { RegisterForm } from '../auth/RegisterForm';
 
 interface HeaderProps {
   onSearch: (query: string) => void;
@@ -40,16 +43,35 @@ const SaveIcon = () => (
   </svg>
 );
 
+// 未登录 Header 上展示的「登录」次级按钮 —— 把"云同步能力"在第一眼暴露给新用户。
+// 与 HeaderDropdown 内「登录 / 注册」按钮打开同一个 AuthModal，由 Header 统一管理。
+const LoginIcon = () => (
+  <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+    <path strokeLinecap="round" strokeLinejoin="round" d="M11 16l-4-4m0 0l4-4m-4 4h14m-5 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h7a3 3 0 013 3v1" />
+  </svg>
+);
+
 export const Header: React.FC<HeaderProps> = ({ onSearch }) => {
   const dispatch = useAppDispatch();
   // 只订阅 reorderMode 字段 —— 旧实现 `state => state.settings` 订阅整个
   // settings slice，任何设置变更都会重渲染 Header。
   const reorderMode = useAppSelector(selectReorderMode);
+  const isAuthenticated = useAppSelector(state => state.auth.isAuthenticated);
 
   const { searchValue, debouncedValue, handleSearchChange, clearSearch, isSearching } = useDebouncedSearch();
   const searchInputRef = React.useRef<HTMLInputElement>(null);
   const [isSearchTransitionPending, startSearchTransition] = useTransition();
   const [showDropdown, setShowDropdown] = React.useState(false);
+  // AuthModal 状态从 HeaderDropdown 上提 —— 让 Header 的「登录」按钮和菜单里的入口共用同一个 Modal
+  const [showAuthModal, setShowAuthModal] = useState(false);
+  const [authTab, setAuthTab] = useState<'login' | 'register'>('login');
+
+  const openAuthModal = () => {
+    setAuthTab('login');
+    setShowAuthModal(true);
+  };
+
+  const closeAuthModal = () => setShowAuthModal(false);
 
   const handleSaveAllTabs = async () => {
     const tabs = await chrome.tabs.query({ currentWindow: true });
@@ -153,12 +175,24 @@ export const Header: React.FC<HeaderProps> = ({ onSearch }) => {
                 aria-label="保存当前窗口中的所有标签页为会话"
               >
                 <SaveIcon />
-                <span>保存会话</span>
+                <span>保存当前窗口为会话</span>
               </button>
             </Tooltip>
 
-            {/* 手动同步 */}
-            <SyncButton />
+            {/* 已登录显示手动同步；未登录显示「登录」入口，把云同步能力在第一眼暴露 */}
+            {isAuthenticated ? (
+              <SyncButton />
+            ) : (
+              <Tooltip content="登录后跨设备同步" position="bottom">
+                <button
+                  onClick={openAuthModal}
+                  className="btn-icon flat-interaction hover:scale-105 focus-visible:ring-2 focus-visible:ring-primary/50 focus-visible:ring-offset-2"
+                  aria-label="登录后跨设备同步"
+                >
+                  <LoginIcon />
+                </button>
+              </Tooltip>
+            )}
 
             {/* Kebab 菜单：用 relative 容器包裹，为 HeaderDropdown 的 absolute 定位提供参照 */}
             <div className="relative">
@@ -172,11 +206,56 @@ export const Header: React.FC<HeaderProps> = ({ onSearch }) => {
                   <MenuIcon />
                 </button>
               </Tooltip>
-              {showDropdown && <HeaderDropdown onClose={() => setShowDropdown(false)} />}
+              {showDropdown && (
+                <HeaderDropdown
+                  onClose={() => setShowDropdown(false)}
+                  onRequestLogin={() => {
+                    setShowDropdown(false);
+                    openAuthModal();
+                  }}
+                />
+              )}
             </div>
           </div>
         </div>
       </div>
+
+      {/* 登录/注册弹窗：未登录 Header 按钮 / 菜单内入口共用 */}
+      <ModalFrame
+        visible={showAuthModal}
+        onClose={closeAuthModal}
+        title={authTab === 'login' ? '登录' : '注册'}
+      >
+        <div className="mb-4 flex gap-2">
+          <button
+            onClick={() => setAuthTab('login')}
+            className={`flex-1 rounded-lg px-3 py-2 text-sm font-medium transition-colors ${
+              authTab === 'login'
+                ? 'bg-primary-600 text-white'
+                : 'bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-300'
+            }`}
+            type="button"
+          >
+            登录
+          </button>
+          <button
+            onClick={() => setAuthTab('register')}
+            className={`flex-1 rounded-lg px-3 py-2 text-sm font-medium transition-colors ${
+              authTab === 'register'
+                ? 'bg-primary-600 text-white'
+                : 'bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-300'
+            }`}
+            type="button"
+          >
+            注册
+          </button>
+        </div>
+        {authTab === 'login' ? (
+          <LoginForm onSuccess={closeAuthModal} />
+        ) : (
+          <RegisterForm onSuccess={closeAuthModal} />
+        )}
+      </ModalFrame>
     </header>
   );
 };
