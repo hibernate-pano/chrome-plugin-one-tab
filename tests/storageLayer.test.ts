@@ -98,7 +98,7 @@ describe('storage layer: getGroups/setGroups 往返', () => {
     assert.equal(output[1].isFavorite, true, '字段完整保留');
   });
 
-  it('setGroups 写盘的数据是加密的（V2 前缀），不能明文读出', async () => {
+  it('setGroups 写盘的数据是加密的（V3 前缀），不能明文读出', async () => {
     const { storage } = await import('@/utils/storage');
     const { kvGet } = await import('@/storage/storageAdapter');
     const input = [makeGroup('g-secret')];
@@ -109,8 +109,8 @@ describe('storage layer: getGroups/setGroups 往返', () => {
 
     assert.ok(typeof raw === 'string', '存储后应是字符串');
     assert.ok(
-      raw.startsWith('SECURE_V2:'),
-      `数据应使用 V2 加密前缀（实际: ${(raw as string).slice(0, 30)}...）`
+      raw.startsWith('SECURE_V3:'),
+      `数据应使用 V3 加密前缀（实际: ${(raw as string).slice(0, 30)}...）`
     );
     assert.ok(
       !raw.includes('Group g-secret'),

@@ -152,7 +152,12 @@ class ChromeStorage {
         const raw = await kvGet<unknown>(STORAGE_KEYS.GROUPS);
         if (typeof raw === 'string') {
           const groups = await decryptLocalBlob<TabGroup[]>(raw);
-          if (groups !== null) return groups;
+          if (groups !== null) {
+            // V2/V1 旧格式：解密成功后后台迁移为 V3（持久化密钥），
+            // 避免下次扩展重新加载（runtime.id 变化）导致再次解不开。
+            this.migrateToV3IfNeeded(raw, groups);
+            return groups;
+          }
           // 解密失败：抛出而非返回 []，避免「瞬时空读」被 cachedAsyncFn 缓存
           // 30s 固化——那会让 popup hydration 与 loadGroups 重试都拿到空数据，
           // 表现为「刷新后数据丢失」。抛出后由外层 catch 返回 []（不入缓存）。
@@ -175,6 +180,22 @@ class ChromeStorage {
       console.error('获取标签组失败（本次不缓存，下次将重试读盘）:', error);
       return [];
     }
+  }
+
+  /**
+   * 旧格式（V1/V2/明文）解密成功后，后台把存储重写为 V3 格式。
+   * fire-and-forget：不阻塞读取路径；重写失败只打日志，下次读到仍能再迁移。
+   */
+  private migrateToV3IfNeeded(raw: unknown, groups: TabGroup[]): void {
+    const isLegacy =
+      typeof raw === 'string' &&
+      (raw.startsWith('SECURE_V1:') || raw.startsWith('SECURE_V2:')) ||
+      Array.isArray(raw);
+    if (!isLegacy) return;
+
+    this.persistEncryptedGroups(groups)
+      .then(() => console.log('[storage] 已迁移本地数据为 V3 加密格式'))
+      .catch(e => console.warn('[storage] V3 迁移失败（下次读取会重试）:', e));
   }
 
   private async persistEncryptedGroups(groups: TabGroup[]): Promise<void> {
@@ -203,7 +224,10 @@ class ChromeStorage {
     }
     if (typeof raw === 'string') {
       const groups = await decryptLocalBlob<TabGroup[]>(raw);
-      if (groups !== null) return groups;
+      if (groups !== null) {
+        this.migrateToV3IfNeeded(raw, groups);
+        return groups;
+      }
       throw new Error('读取本地会话失败：数据可能已损坏或密钥不匹配');
     }
     return [];

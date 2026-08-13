@@ -2,7 +2,7 @@
 //   本地保存 → 手动同步下载覆盖/合并 → 写盘 → 模拟 popup 重开 → 读盘 → 渲染
 //
 // 关键不变量：
-//   写盘后重新 open IndexedDB + 解密 SECURE_V2 blob 必须 round-trip 出原始数据。
+//   写盘后重新 open IndexedDB + 解密 SECURE_V3 blob 必须 round-trip 出原始数据。
 //
 // 之前 refreshDataLossRootCause 测试只覆盖 setGroups → getGroups 的基础路径，
 // 没覆盖 SyncEngine.downloadAndMerge 写出来的数据。这条路径才是用户卡住的。
@@ -79,7 +79,7 @@ beforeEach(async () => {
 });
 
 describe('SyncEngine.downloadAndMerge → 真实 storage → 真加密 → 重启 → 读盘', () => {
-  it('覆盖模式：写入 SECURE_V2 blob，重启后 hydrateAll 能完整读回', async () => {
+  it('覆盖模式：写入 SECURE_V3 blob，重启后 hydrateAll 能完整读回', async () => {
     const { SyncEngine } = await import('@/services/syncEngine');
     const { storage } = await import('@/utils/storage');
     const { cacheManager } = await import('@/utils/performance');
@@ -111,11 +111,11 @@ describe('SyncEngine.downloadAndMerge → 真实 storage → 真加密 → 重�
     assert.equal(res.success, true, '下载覆盖必须 success');
     assert.equal(res.groups.length, 1, '覆盖后只剩云端的 1 个组');
 
-    // Step 3: 验证 IndexedDB 实际写入了 SECURE_V2 加密 blob
+    // Step 3: 验证 IndexedDB 实际写入了 SECURE_V3 加密 blob
     cacheManager.getCache('storage').clear();
     const raw = await kvGet('tab_groups');
     assert.ok(typeof raw === 'string', 'setGroups 后 IndexedDB 里应是 string');
-    assert.ok((raw as string).startsWith('SECURE_V2:'), '写入应是 SECURE_V2 加密格式');
+    assert.ok((raw as string).startsWith('SECURE_V3:'), '写入应是 SECURE_V3 加密格式');
 
     // Step 4: 模拟 popup 关闭 + 重开 —— 重置 IDB 连接 + 清所有缓存
     cacheManager.getCache('storage').clear();
@@ -272,7 +272,70 @@ describe('SyncEngine.downloadAndMerge → 真实 storage → 真加密 → 重�
     assert.equal(groups[0].id, 'cloud-X', 'tab_groups 应是 cloud-X，不是 local-A');
   });
 
-  it('【关键】云端下载后 bootstrap hydration 必须把数据灌进 preloadedState', async () => {
+  it('【关键】V3 持久化密钥：扩展 ID 变化后仍能解密（V3 修复的核心不变量）', async () => {
+    // 场景：写盘用 ID-A 加密（V3 持久 key，与 ID 无关）→ 模拟 ID 变化为 ID-B → 应能解密。
+    // 旧 V2 方案：写盘时 ID-A 派生 key → ID 变 ID-B 后无法解密（用户报告的 bug）。
+    const { storage } = await import('@/utils/storage');
+    const { cacheManager } = await import('@/utils/performance');
+    const { kvGet } = await import('@/storage/storageAdapter');
+
+    await storage.setGroups([makeGroup('v3-key-1'), makeGroup('v3-key-2')]);
+
+    // 模拟 chrome.runtime.id 在两次调用之间变化（unpacked 重新加载、profile 变化等）。
+    // chrome.runtime.id 是模块级变量；改写再读不影响 V3（持久 key 与 ID 无关）。
+    const originalRuntimeId = (globalThis as any).chrome.runtime.id;
+    (globalThis as any).chrome.runtime = { id: 'totally-different-id-after-reload' };
+
+    cacheManager.getCache('storage').clear();
+    const decrypted = await storage.getGroupsOrThrow();
+    assert.equal(decrypted.length, 2, 'ID 变化后 V3 blob 仍能解密（持久 key 不依赖 ID）');
+    assert.deepEqual(
+      decrypted.map(g => g.id).sort(),
+      ['v3-key-1', 'v3-key-2']
+    );
+
+    // 还原
+    (globalThis as any).chrome.runtime = { id: originalRuntimeId };
+  });
+
+  it('【关键】旧 V2 blob 在 ID 没变时仍可解密（向后兼容）', async () => {
+    // 模拟历史用户的 V2 blob：直接写入 IndexedDB，用当前 ID 的 V2 派生密钥加密
+    const { storage } = await import('@/utils/storage');
+    const { cacheManager } = await import('@/utils/performance');
+    const { kvSet } = await import('@/storage/storageAdapter');
+
+    const extensionId = (globalThis as any).chrome.runtime.id;
+    const enc = new TextEncoder();
+    const salt = crypto.getRandomValues(new Uint8Array(16));
+    const iv = crypto.getRandomValues(new Uint8Array(12));
+    const km = await crypto.subtle.importKey(
+      'raw', enc.encode(extensionId + 'storage_key_v2'),
+      'PBKDF2', false, ['deriveKey']
+    );
+    const key = await crypto.subtle.deriveKey(
+      { name: 'PBKDF2', salt, iterations: 100000, hash: 'SHA-256' }, km,
+      { name: 'AES-GCM', length: 256 }, false, ['encrypt', 'decrypt']
+    );
+    const legacyGroups = [makeGroup('legacy-v2-1'), makeGroup('legacy-v2-2')];
+    const ct = await crypto.subtle.encrypt(
+      { name: 'AES-GCM', iv }, key,
+      enc.encode(JSON.stringify(legacyGroups))
+    );
+    const concat = new Uint8Array(salt.length + iv.length + ct.byteLength);
+    concat.set(salt, 0); concat.set(iv, salt.length); concat.set(new Uint8Array(ct), salt.length + iv.length);
+    const legacyBlob = 'SECURE_V2:' + btoa(String.fromCharCode(...concat));
+    await kvSet('tab_groups', legacyBlob);
+
+    cacheManager.getCache('storage').clear();
+    const decrypted = await storage.getGroupsOrThrow();
+    assert.equal(decrypted.length, 2, 'V2 旧 blob 在 ID 没变时仍可解密');
+    assert.deepEqual(
+      decrypted.map(g => g.id).sort(),
+      ['legacy-v2-1', 'legacy-v2-2']
+    );
+  });
+
+it('【关键】云端下载后 bootstrap hydration 必须把数据灌进 preloadedState', async () => {
     // 这是用户报告的真实 bug 路径：写盘成功 + hydrateAll 返回数据 +
     // 但 hydration 路径的某一步出错，导致 preloadedState.tabs 没有 groups /
     // lastLoadedAt 是 null，最后 TabList 走 loadGroups → 显示空。
