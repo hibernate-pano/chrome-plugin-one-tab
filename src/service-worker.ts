@@ -5,7 +5,7 @@ import { migrateToV2 } from '@/utils/migrationHelper';
 // 为了避免模块导入问题，早期版本内联了存储逻辑；现统一使用 utils/storage 以与前端页面共享同一数据源（IndexedDB）
 
 // Service Worker启动日志
-console.log('=== TabVault Pro Service Worker 启动 ===');
+console.log('=== TapStack Service Worker 启动 ===');
 console.log('版本:', chrome.runtime.getManifest().version);
 console.log('启动时间:', new Date().toISOString());
 console.log('Chrome APIs 可用性检查:');
@@ -43,7 +43,7 @@ async function runMigrations() {
   }
 }
 
-const showNotification = async (message: string, title = 'TabVault Pro'): Promise<void> => {
+const showNotification = async (message: string, title = 'TapStack'): Promise<void> => {
   await tabManager.showNotification({
     type: 'basic',
     iconUrl: chrome.runtime.getURL('icons/icon128.png'),

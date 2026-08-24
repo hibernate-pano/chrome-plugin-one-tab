@@ -1,16 +1,16 @@
 import React from 'react';
 
-interface TabVaultIconProps {
+interface TapStackIconProps {
   size?: number;
   className?: string;
   variant?: 'default' | 'gradient' | 'outline';
 }
 
 /**
- * TabVault Pro 品牌图标组件
+ * TapStack 品牌图标组件
  * 现代简约风格
  */
-export const TabVaultIcon: React.FC<TabVaultIconProps> = ({
+export const TapStackIcon: React.FC<TapStackIconProps> = ({
   size = 24,
   className = '',
   variant = 'default'
@@ -56,10 +56,10 @@ export const TabVaultIcon: React.FC<TabVaultIconProps> = ({
 };
 
 /**
- * TabVault Pro 文字Logo组件
+ * TapStack 文字Logo组件
  * 精致简约风格
  */
-export const TabVaultLogo: React.FC<{
+export const TapStackLogo: React.FC<{
   size?: 'sm' | 'md' | 'lg';
   className?: string;
   showIcon?: boolean;
@@ -93,7 +93,7 @@ export const TabVaultLogo: React.FC<{
   return (
     <div className={`flex items-center gap-2 ${className}`}>
       {showIcon && (
-        <TabVaultIcon
+        <TapStackIcon
           size={getIconSize()}
           variant="gradient"
           className="flex-shrink-0"
@@ -104,20 +104,11 @@ export const TabVaultLogo: React.FC<{
           className={`font-semibold tracking-tight ${getSizeClasses()}`}
           style={{ color: 'var(--color-text-primary)' }}
         >
-          TabVault
-        </span>
-        <span
-          className="text-xs font-medium px-1.5 py-0.5 rounded-md"
-          style={{
-            background: 'var(--color-accent-subtle)',
-            color: 'var(--color-accent)'
-          }}
-        >
-          Pro
+          TapStack
         </span>
       </div>
     </div>
   );
 };
 
-export default TabVaultIcon;
+export default TapStackIcon;

@@ -5,7 +5,7 @@ export const WelcomeStep: React.FC<{ version: string }> = ({ version }) => (
     <div className="onboarding-icon-wrapper">
       <span>🧭</span>
     </div>
-    <h2 className="onboarding-title">欢迎使用 TabVault Pro</h2>
+    <h2 className="onboarding-title">欢迎使用 TapStack</h2>
     <div className="flex justify-center">
       <span className="onboarding-version-badge">v{version}</span>
     </div>

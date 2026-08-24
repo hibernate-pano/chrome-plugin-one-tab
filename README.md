@@ -1,10 +1,10 @@
-# TabVault Pro
+# TapStack
 
 当前版本：`1.11.5`
 
-TabVault Pro 是一个面向重度浏览器用户的工作会话保险箱。它的核心目标不是“多一个标签管理器”，而是帮助你把当前窗口保存成可找回、可恢复的工作现场。
+TapStack 是一个面向重度浏览器用户的工作会话保险箱。它的核心目标不是“多一个标签管理器”，而是帮助你把当前窗口保存成可找回、可恢复的工作现场。
 
-![TabVault Pro](icons/icon128.png)
+![TapStack](icons/icon128.png)
 
 ## 产品定位
 
@@ -51,7 +51,7 @@ TabVault Pro 是一个面向重度浏览器用户的工作会话保险箱。它�
 
 ### 从 Chrome 商店安装
 
-- 访问 [Chrome Web Store](https://chrome.google.com/webstore) 并搜索 `TabVault Pro`
+- 访问 [Chrome Web Store](https://chrome.google.com/webstore) 并搜索 `TapStack`
 
 ### 开发模式安装
 

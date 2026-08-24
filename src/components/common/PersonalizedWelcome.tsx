@@ -1,5 +1,5 @@
 import React from 'react';
-import { TabVaultLogo } from './TabVaultIcon';
+import { TapStackLogo } from './TapStackIcon';
 
 interface PersonalizedWelcomeProps {
   userName?: string;
@@ -54,7 +54,7 @@ export const PersonalizedWelcome: React.FC<PersonalizedWelcomeProps> = ({
       {/* 欢迎文字 */}
       <div className="mb-4">
         <h1 className="flat-text-primary mb-2">
-          {getGreeting()}，{userName ? `${userName}！` : '欢迎使用 TabVault Pro！'}
+          {getGreeting()}，{userName ? `${userName}！` : '欢迎使用 TapStack！'}
         </h1>
         <p className="flat-text-tertiary text-sm max-w-md mx-auto">
           {getMotivationalMessage()}
@@ -82,7 +82,7 @@ export const PersonalizedWelcome: React.FC<PersonalizedWelcomeProps> = ({
 
       {/* 品牌标识 */}
       <div className="mt-6 flex justify-center">
-        <TabVaultLogo size="sm" showIcon={true} />
+        <TapStackLogo size="sm" showIcon={true} />
       </div>
     </div>
   );

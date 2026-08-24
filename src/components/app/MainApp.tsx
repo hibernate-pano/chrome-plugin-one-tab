@@ -108,7 +108,7 @@ export const MainApp: React.FC = () => {
                         d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"
                       />
                     </svg>
-                    <span>TabVault Pro {getAppVersionLabel()}</span>
+                    <span>TapStack {getAppVersionLabel()}</span>
                   </div>
                   <div className="flex items-center space-x-2">
                     <span>Save the session. Find it later.</span>
