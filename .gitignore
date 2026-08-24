@@ -8,6 +8,7 @@ node_modules/
 .claude/
 .codex/
 dist/
+dist-web/
 **.zip
 
 # 环境变量文件
@@ -17,3 +18,5 @@ dist/
 .env.test.local
 .env.production.local
 .mcp.json
+.vercel
+.env*
