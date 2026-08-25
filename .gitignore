@@ -20,3 +20,4 @@ dist-web/
 .mcp.json
 .vercel
 .env*
+.pi/
