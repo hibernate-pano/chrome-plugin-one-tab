@@ -2,7 +2,6 @@ import React, { useRef, useCallback, useMemo } from 'react';
 import { useDrag, useDrop } from 'react-dnd';
 import { Tab } from '@/types/tab';
 import { ItemTypes, TabDragItem } from './DndTypes';
-import { throttle } from 'lodash';
 import { SafeFavicon } from '@/components/common/SafeFavicon';
 
 interface DraggableTabProps {
@@ -42,12 +41,33 @@ export const DraggableTab: React.FC<DraggableTabProps> = React.memo(({
 }) => {
   const ref = useRef<HTMLDivElement>(null);
 
-  const throttledMoveTab = useMemo(
-    () => throttle((sourceGroupId, sourceIndex, targetGroupId, targetIndex) => {
-      moveTab(sourceGroupId, sourceIndex, targetGroupId, targetIndex);
-    }, 100),
-    [moveTab]
-  );
+  const throttledMoveTab = useMemo(() => {
+    // 手写节流（原 lodash.throttle，100ms leading+trailing）：
+    // 拖拽 hover 高频触发，限制 moveTab 调用频率，trailing 用最新参数
+    let lastCall = 0;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    let lastArgs: [string, number, string, number] | null = null;
+    return (sourceGroupId: string, sourceIndex: number, targetGroupId: string, targetIndex: number) => {
+      lastArgs = [sourceGroupId, sourceIndex, targetGroupId, targetIndex];
+      const now = Date.now();
+      const remaining = 100 - (now - lastCall);
+      if (remaining <= 0) {
+        lastCall = now;
+        if (timer) {
+          clearTimeout(timer);
+          timer = null;
+        }
+        moveTab(sourceGroupId, sourceIndex, targetGroupId, targetIndex);
+        return;
+      }
+      if (timer) return;
+      timer = setTimeout(() => {
+        timer = null;
+        lastCall = Date.now();
+        if (lastArgs) moveTab(...lastArgs);
+      }, remaining);
+    };
+  }, [moveTab]);
 
   const [{ isDragging }, drag] = useDrag({
     type: ItemTypes.TAB,

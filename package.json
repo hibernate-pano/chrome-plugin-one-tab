@@ -29,9 +29,7 @@
   "dependencies": {
     "@reduxjs/toolkit": "^2.2.1",
     "@supabase/supabase-js": "^2.49.4",
-    "@types/lodash": "^4.17.16",
     "clsx": "^2.1.1",
-    "lodash": "^4.17.21",
     "lz-string": "^1.5.0",
     "react": "^18.2.0",
     "react-dnd": "^16.0.1",
