@@ -1,7 +1,9 @@
 import React, { useState } from 'react';
 import { createPortal } from 'react-dom';
-import { useAppSelector } from '@/store/hooks';
-import { syncService } from '@/services/syncService';
+import { useAppSelector, useAppDispatch } from '@/store/hooks';
+import { loadGroups } from '@/store/slices/tabSlice';
+import { syncEngine } from '@/services/syncEngine';
+import type { SyncOperation } from '@/services/syncEngine';
 import { downloadTabGroups } from '@/services/tabGroupSyncService';
 import { useToast } from '@/contexts/ToastContext';
 import { trackProductEvent } from '@/utils/productEvents';
@@ -46,9 +48,12 @@ const renderPreviewNames = (label: string, names: string[], color: string) => {
 };
 
 export const SyncButton: React.FC<SyncButtonProps> = () => {
-  const { syncStatus, syncProgress, syncOperation } = useAppSelector(state => state.tabs);
+  const dispatch = useAppDispatch();
   const { isAuthenticated } = useAppSelector(state => state.auth);
   const settings = useAppSelector(state => state.settings);
+  const [isWorking, setIsWorking] = useState(false);
+  const [workingOperation, setWorkingOperation] = useState<SyncOperation>('none');
+  const [workingProgress, setWorkingProgress] = useState(0);
   const [showUploadModal, setShowUploadModal] = useState(false);
   const [showDownloadModal, setShowDownloadModal] = useState(false);
   const [modalAnimation, setModalAnimation] = useState('');
@@ -108,7 +113,7 @@ export const SyncButton: React.FC<SyncButtonProps> = () => {
 
   // 处理上传按钮点击
   const handleUpload = async () => {
-    if (syncStatus !== 'syncing' && isAuthenticated) {
+    if (!isWorking && isAuthenticated) {
       setModalAnimation('animate-fadeIn');
       setShowUploadModal(true);
       void loadUploadPreview();
@@ -117,7 +122,7 @@ export const SyncButton: React.FC<SyncButtonProps> = () => {
 
   // 处理下载按钮点击
   const handleDownload = async () => {
-    if (syncStatus !== 'syncing' && isAuthenticated) {
+    if (!isWorking && isAuthenticated) {
       setModalAnimation('animate-fadeIn');
       setShowDownloadModal(true);
       void loadDownloadPreview();
@@ -192,105 +197,173 @@ export const SyncButton: React.FC<SyncButtonProps> = () => {
 
   // 处理上传确认 - 覆盖模式
   const handleUploadOverwrite = async () => {
-    if (syncStatus !== 'syncing' && isAuthenticated) {
-      try {
-        closeModals();
-        void trackProductEvent('sync_upload_started', {
+    if (isWorking || !isAuthenticated) return;
+    try {
+      closeModals();
+      void trackProductEvent('sync_upload_started', {
+        mode: 'overwrite',
+      });
+      setIsWorking(true);
+      setWorkingOperation('upload');
+      const result = await syncEngine.upload({
+        overwriteCloud: true,
+        syncSettings: true,
+        onProgress: (p, op) => {
+          setWorkingProgress(p);
+          setWorkingOperation(op);
+        },
+      });
+
+      if (result.success) {
+        showToast('已用本地会话覆盖云端数据', 'success');
+        void trackProductEvent('sync_upload_completed', {
           mode: 'overwrite',
         });
-        const result = await syncService.uploadToCloud(false, true);
-
-        if (result.success) {
-          showToast('已用本地会话覆盖云端数据', 'success');
-          void trackProductEvent('sync_upload_completed', {
-            mode: 'overwrite',
-          });
-        } else {
-          showToast(result.error || '上传失败，请重试', 'error');
-        }
-      } catch (error) {
-        console.error('上传数据到云端失败:', error);
-        showToast('上传失败，请重试', 'error');
+      } else {
+        showToast(result.error || '上传失败，请重试', 'error');
       }
+    } catch (error) {
+      console.error('上传数据到云端失败:', error);
+      showToast('上传失败，请重试', 'error');
+    } finally {
+      setIsWorking(false);
+      setWorkingOperation('none');
+      setWorkingProgress(0);
     }
   };
 
   // 处理上传确认 - 合并模式
   const handleUploadMerge = async () => {
-    if (syncStatus !== 'syncing' && isAuthenticated) {
-      try {
-        closeModals();
-        void trackProductEvent('sync_upload_started', {
+    if (isWorking || !isAuthenticated) return;
+    try {
+      closeModals();
+      void trackProductEvent('sync_upload_started', {
+        mode: 'merge',
+      });
+      setIsWorking(true);
+      setWorkingOperation('upload');
+      const result = await syncEngine.upload({
+        overwriteCloud: false,
+        syncSettings: true,
+        onProgress: (p, op) => {
+          setWorkingProgress(p);
+          setWorkingOperation(op);
+        },
+      });
+
+      if (result.success) {
+        showToast('已把本地会话合并上传到云端', 'success');
+        void trackProductEvent('sync_upload_completed', {
           mode: 'merge',
         });
-        const result = await syncService.uploadToCloud(false, false);
-
-        if (result.success) {
-          showToast('已把本地会话合并上传到云端', 'success');
-          void trackProductEvent('sync_upload_completed', {
-            mode: 'merge',
-          });
-        } else {
-          showToast(result.error || '上传失败，请重试', 'error');
-        }
-      } catch (error) {
-        console.error('上传数据到云端失败:', error);
-        showToast('上传失败，请重试', 'error');
+      } else {
+        showToast(result.error || '上传失败，请重试', 'error');
       }
+    } catch (error) {
+      console.error('上传数据到云端失败:', error);
+      showToast('上传失败，请重试', 'error');
+    } finally {
+      setIsWorking(false);
+      setWorkingOperation('none');
+      setWorkingProgress(0);
     }
   };
 
   // 处理下载确认 - 覆盖模式
   const handleDownloadOverwrite = async () => {
-    if (syncStatus !== 'syncing' && isAuthenticated) {
+    if (isWorking || !isAuthenticated) return;
+
+    const refreshRedux = async () => {
       try {
-        closeModals();
-        void trackProductEvent('sync_download_started', {
+        await dispatch(loadGroups()).unwrap();
+      } catch (err) {
+        console.warn('同步后刷新本地会话失败:', err);
+      }
+    };
+
+    try {
+      closeModals();
+      void trackProductEvent('sync_download_started', {
+        mode: 'overwrite',
+        directRestore: false,
+      });
+      setIsWorking(true);
+      setWorkingOperation('download');
+      const result = await syncEngine.downloadAndMerge({
+        forceRemote: true,
+        syncSettings: true,
+        onProgress: (p, op) => {
+          setWorkingProgress(p);
+          setWorkingOperation(op);
+        },
+      });
+
+      if (result.success) {
+        await refreshRedux();
+        showToast('已用云端数据覆盖本地会话', 'success');
+        void trackProductEvent('sync_download_completed', {
           mode: 'overwrite',
           directRestore: false,
         });
-        const result = await syncService.downloadAndRefresh(true);
-
-        if (result.success) {
-          showToast('已用云端数据覆盖本地会话', 'success');
-          void trackProductEvent('sync_download_completed', {
-            mode: 'overwrite',
-            directRestore: false,
-          });
-        } else {
-          showToast(result.error || '下载失败，请重试', 'error');
-        }
-      } catch (error) {
-        console.error('从云端下载数据失败:', error);
-        showToast('下载失败，请重试', 'error');
+      } else {
+        showToast(result.reason === 'not_authenticated' ? '未登录' : (result.reason || '下载失败，请重试'), 'error');
       }
+    } catch (error) {
+      console.error('从云端下载数据失败:', error);
+      showToast('下载失败，请重试', 'error');
+    } finally {
+      setIsWorking(false);
+      setWorkingOperation('none');
+      setWorkingProgress(0);
     }
   };
 
   // 处理下载确认 - 合并模式
   const handleDownloadMerge = async () => {
-    if (syncStatus !== 'syncing' && isAuthenticated) {
+    if (isWorking || !isAuthenticated) return;
+
+    const refreshRedux = async () => {
       try {
-        closeModals();
-        void trackProductEvent('sync_download_started', {
+        await dispatch(loadGroups()).unwrap();
+      } catch (err) {
+        console.warn('同步后刷新本地会话失败:', err);
+      }
+    };
+
+    try {
+      closeModals();
+      void trackProductEvent('sync_download_started', {
+        mode: 'merge',
+        directRestore: false,
+      });
+      setIsWorking(true);
+      setWorkingOperation('download');
+      const result = await syncEngine.downloadAndMerge({
+        forceRemote: false,
+        syncSettings: false,
+        onProgress: (p, op) => {
+          setWorkingProgress(p);
+          setWorkingOperation(op);
+        },
+      });
+
+      if (result.success) {
+        await refreshRedux();
+        showToast('已把云端数据合并到本地会话', 'success');
+        void trackProductEvent('sync_download_completed', {
           mode: 'merge',
           directRestore: false,
         });
-        const result = await syncService.downloadAndRefresh(false);
-
-        if (result.success) {
-          showToast('已把云端数据合并到本地会话', 'success');
-          void trackProductEvent('sync_download_completed', {
-            mode: 'merge',
-            directRestore: false,
-          });
-        } else {
-          showToast(result.error || '下载失败，请重试', 'error');
-        }
-      } catch (error) {
-        console.error('从云端下载数据失败:', error);
-        showToast('下载失败，请重试', 'error');
+      } else {
+        showToast(result.reason === 'not_authenticated' ? '未登录' : (result.reason || '下载失败，请重试'), 'error');
       }
+    } catch (error) {
+      console.error('从云端下载数据失败:', error);
+      showToast('下载失败，请重试', 'error');
+    } finally {
+      setIsWorking(false);
+      setWorkingOperation('none');
+      setWorkingProgress(0);
     }
   };
 
@@ -301,11 +374,11 @@ export const SyncButton: React.FC<SyncButtonProps> = () => {
   return (
     <>
       <div className="sync-button flex items-center gap-2">
-        {syncOperation !== 'none' && syncStatus === 'syncing' && (
+        {workingOperation !== 'none' && isWorking && (
           <div className="w-16 bg-gray-200 rounded-full h-1.5">
             <div
-              className={`h-1.5 rounded-full ${syncOperation === 'upload' ? 'bg-green-600' : 'bg-blue-600'}`}
-              style={{ width: `${syncProgress}%` }}
+              className={`h-1.5 rounded-full ${workingOperation === 'upload' ? 'bg-green-600' : 'bg-blue-600'}`}
+              style={{ width: `${workingProgress}%` }}
             ></div>
           </div>
         )}
@@ -313,15 +386,15 @@ export const SyncButton: React.FC<SyncButtonProps> = () => {
         <div className="flex items-center gap-2">
           <button
             onClick={handleUpload}
-            disabled={syncStatus === 'syncing'}
+            disabled={isWorking}
             className={`flex items-center whitespace-nowrap px-3 py-1.5 rounded-md text-sm flat-interaction ${
-              syncStatus === 'syncing'
+              isWorking
                 ? 'bg-green-100 text-green-600'
                 : 'bg-green-100 text-green-600 hover:bg-green-200'
               } transition-colors`}
             title="手动上传本地会话到云端"
           >
-            {syncStatus === 'syncing' && syncOperation === 'upload' ? (
+            {isWorking && workingOperation === 'upload' ? (
               <>
                 <svg className="animate-spin h-4 w-4 mr-1" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
                   <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
@@ -341,15 +414,15 @@ export const SyncButton: React.FC<SyncButtonProps> = () => {
 
           <button
             onClick={handleDownload}
-            disabled={syncStatus === 'syncing'}
+            disabled={isWorking}
             className={`flex items-center whitespace-nowrap px-3 py-1.5 rounded-md text-sm flat-interaction ${
-              syncStatus === 'syncing'
+              isWorking
                 ? 'bg-blue-100 text-blue-600'
                 : 'bg-blue-100 text-blue-600 hover:bg-blue-200'
               } transition-colors`}
             title="手动从云端下载会话到本地"
           >
-            {syncStatus === 'syncing' && syncOperation === 'download' ? (
+            {isWorking && workingOperation === 'download' ? (
               <>
                 <svg className="animate-spin h-4 w-4 mr-1" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
                   <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>

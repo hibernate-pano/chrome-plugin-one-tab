@@ -6,8 +6,10 @@ import {
   uploadTabGroups,
   markCloudGroupsAsDeleted,
 } from '@/services/tabGroupSyncService';
+import { uploadSettings, downloadSettings } from '@/services/settingsSyncService';
 import { mergeTabGroups, validateMergeResult } from '@/utils/syncUtils';
 import { errorHandler } from '@/utils/errorHandler';
+import { validateThemeStyle, validateThemeMode } from '@/utils/storage';
 
 // ── 类型 ───────────────────────────────────────────────────────────
 
@@ -26,6 +28,26 @@ export interface MergeResult {
 export interface UploadResult {
   success: boolean;
   error?: string;
+}
+
+export type SyncOperation = 'upload' | 'download' | 'none';
+
+export type SyncProgressCallback = (progress: number, operation: SyncOperation) => void;
+
+/** 与旧 settingsSlice.syncSettingsFromCloud 相同的合并/校验逻辑，供引擎内复用 */
+async function mergeCloudSettingsIntoLocal(): Promise<void> {
+  const cloudSettings = await downloadSettings();
+  if (!cloudSettings) return;
+
+  const state = store.getState() as { settings: UserSettings };
+  const updatedDefault = state.settings;
+  const convertedSettings: UserSettings = {
+    ...updatedDefault,
+    ...cloudSettings,
+    themeStyle: validateThemeStyle(cloudSettings.themeStyle),
+    themeMode: validateThemeMode(cloudSettings.themeMode),
+  } as UserSettings;
+  await storage.setSettings(convertedSettings);
 }
 
 // ── SyncEngine ──────────────────────────────────────────────────────
@@ -92,7 +114,11 @@ export class SyncEngine {
    * 安全流水线：快照 → 下载 → 合并 → 验证 → 写入；任一步失败自动回滚。
    * @param opts.forceRemote 是否强制用云端数据覆盖本地
    */
-  async downloadAndMerge(opts?: { forceRemote?: boolean }): Promise<MergeResult> {
+  async downloadAndMerge(opts?: {
+    forceRemote?: boolean;
+    syncSettings?: boolean;
+    onProgress?: SyncProgressCallback;
+  }): Promise<MergeResult> {
     const state = store.getState() as { auth: { isAuthenticated: boolean }; settings: UserSettings };
     if (!state.auth.isAuthenticated) {
       return { success: false, groups: [], reason: 'not_authenticated' };
@@ -101,6 +127,7 @@ export class SyncEngine {
       return { success: false, groups: [], reason: 'already_syncing' };
     }
 
+    const report = opts?.onProgress || (() => {});
     this.isSyncing = true;
     this.cancelPendingUpload();
 
@@ -114,16 +141,27 @@ export class SyncEngine {
     }
 
     try {
+      report(10, 'download');
       // 2. 下载云端
       const cloudGroups = await downloadTabGroups();
+      report(55, 'download');
       // 3. 确定本地
       const localGroups = opts?.forceRemote ? [] : snapshot;
+      // 3.5 覆盖模式：同步设置（与旧 smartSyncService 的 overwriteLocal 行为一致）
+      if (opts?.forceRemote && opts?.syncSettings) {
+        try {
+          await mergeCloudSettingsIntoLocal();
+        } catch (err) {
+          console.warn('[SyncEngine] 覆盖下载时同步设置失败（不阻塞主流程）:', err);
+        }
+      }
       // 4. 合并
       const mergedGroups = mergeTabGroups(
         localGroups,
         cloudGroups,
         state.settings.syncStrategy || 'newest'
       );
+      report(80, 'download');
       // 5. 验证
       const validation = validateMergeResult(localGroups, cloudGroups, mergedGroups);
       if (!validation.valid) {
@@ -138,6 +176,7 @@ export class SyncEngine {
       await storage.setLastSyncTime(new Date().toISOString());
       // 8. 清除快照
       await storage.clearSyncSnapshot();
+      report(100, 'none');
 
       this.isSyncing = false;
       return {
@@ -168,8 +207,13 @@ export class SyncEngine {
    * 失败不影响本地数据。
    * @param opts.includeDeleted 是否包含软删标记（deleteAllGroups 场景）
    */
-  async upload(opts?: { includeDeleted?: boolean }): Promise<UploadResult> {
-    const state = store.getState() as { auth: { isAuthenticated: boolean } };
+  async upload(opts?: {
+    includeDeleted?: boolean;
+    overwriteCloud?: boolean;
+    syncSettings?: boolean;
+    onProgress?: SyncProgressCallback;
+  }): Promise<UploadResult> {
+    const state = store.getState() as { auth: { isAuthenticated: boolean }; settings: UserSettings };
     if (!state.auth.isAuthenticated) {
       return { success: false, error: '用户未登录' };
     }
@@ -177,17 +221,25 @@ export class SyncEngine {
       return { success: false, error: '正在同步中' };
     }
 
+    const report = opts?.onProgress || (() => {});
     this.isSyncing = true;
     this.cancelPendingUpload();
 
     try {
+      report(15, 'upload');
       const allGroups = await storage.getGroups();
       const activeGroups = allGroups.filter(g => !g.isDeleted);
       const deletedIds = allGroups.filter(g => g.isDeleted).map(g => g.id);
 
+      const overwriteCloud = opts?.overwriteCloud || false;
       if (activeGroups.length > 0) {
-        await uploadTabGroups(activeGroups, false);
+        await uploadTabGroups(activeGroups, overwriteCloud);
+      } else if (overwriteCloud) {
+        // ponytail: 与旧 uploadTabsToCloudFlow 的空本地保护一致——本地没有任何活跃组时
+        // 绝不执行覆盖模式（覆盖 = 先删云端全部再插），否则会把云端数据清空。
+        console.warn('[SyncEngine] 覆盖上传被跳过：本地没有活跃组（保留云端数据）');
       }
+      report(70, 'upload');
       if (deletedIds.length > 0 && opts?.includeDeleted !== false) {
         try {
           await markCloudGroupsAsDeleted(deletedIds);
@@ -195,8 +247,18 @@ export class SyncEngine {
           console.error('[SyncEngine] 标记云端软删失败（不阻塞主流程）:', err);
         }
       }
+      // 设置同步：与旧 smartSyncService.uploadToCloud 一致（上传标签组后总带上传设置）
+      if (opts?.syncSettings) {
+        try {
+          await uploadSettings(state.settings);
+        } catch (err) {
+          console.warn('[SyncEngine] 上传设置失败（不阻塞主流程）:', err);
+        }
+      }
+      report(95, 'upload');
 
       await storage.setLastSyncTime(new Date().toISOString());
+      report(100, 'none');
       this.isSyncing = false;
       return { success: true };
     } catch (error) {

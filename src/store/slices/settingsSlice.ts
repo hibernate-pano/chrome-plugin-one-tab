@@ -1,7 +1,6 @@
 import { createSlice, createAsyncThunk, PayloadAction } from '@reduxjs/toolkit';
 import { UserSettings, LayoutMode, ThemeStyle } from '@/types/tab';
-import { storage, DEFAULT_SETTINGS as defaultSettings, validateThemeStyle, validateThemeMode } from '@/utils/storage';
-import { downloadSettings, uploadSettings } from '@/services/settingsSyncService';
+import { storage, DEFAULT_SETTINGS as defaultSettings } from '@/utils/storage';
 
 // 更新默认设置
 const updatedDefaultSettings = {
@@ -23,53 +22,6 @@ export const saveSettings = createAsyncThunk<UserSettings, void, { state: { sett
     const { settings } = getState();
     await storage.setSettings(settings);
     return settings;
-  }
-);
-
-// 新增：同步设置到云端
-export const syncSettingsToCloud = createAsyncThunk<UserSettings, void, { state: { settings: UserSettings, auth: { isAuthenticated: boolean } } }>(
-  'settings/syncSettingsToCloud',
-  async (_, { getState }) => {
-    const { settings, auth } = getState();
-
-    // 检查用户是否已登录
-    if (!auth.isAuthenticated) {
-      console.log('用户未登录，无法同步设置到云端');
-      return settings;
-    }
-
-    await uploadSettings(settings);
-    return settings;
-  }
-);
-
-// 新增：从云端同步设置
-export const syncSettingsFromCloud = createAsyncThunk<UserSettings | null, void, { state: { auth: { isAuthenticated: boolean }, settings: UserSettings } }>(
-  'settings/syncSettingsFromCloud',
-  async (_, { getState }) => {
-    const { auth, settings } = getState();
-
-    // 检查用户是否已登录
-    if (!auth.isAuthenticated) {
-      console.log('用户未登录，无法从云端同步设置');
-      return settings;
-    }
-
-    const cloudSettings = await downloadSettings();
-    if (cloudSettings) {
-      // 将 Record<string, any> 转换为 UserSettings，并验证主题相关设置
-      const convertedSettings: UserSettings = {
-        ...updatedDefaultSettings,
-        ...cloudSettings,
-        // 验证主题相关设置，确保从云端同步的值是有效的
-        themeStyle: validateThemeStyle(cloudSettings.themeStyle),
-        themeMode: validateThemeMode(cloudSettings.themeMode),
-      } as UserSettings;
-      // 保存到本地存储
-      await storage.setSettings(convertedSettings);
-      return convertedSettings;
-    }
-    return null;
   }
 );
 
@@ -153,22 +105,6 @@ const settingsSlice = createSlice({
       .addCase(saveSettings.fulfilled, (_, action) => {
         return action.payload;
       })
-
-      // 同步设置到云端
-      .addCase(syncSettingsToCloud.fulfilled, (_, action) => {
-        return action.payload;
-      })
-
-      // 从云端同步设置
-      .addCase(syncSettingsFromCloud.fulfilled, (state, action) => {
-        if (action.payload) {
-          return {
-            ...updatedDefaultSettings,
-            ...action.payload,
-          };
-        }
-        return state;
-      });
   },
 });
 

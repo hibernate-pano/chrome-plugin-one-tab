@@ -1,8 +1,8 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { useAppSelector, useAppDispatch } from '@/store/hooks';
 import { signOut } from '@/store/slices/authSlice';
-import { deleteAllGroups } from '@/store/slices/tabSlice';
-import { syncService } from '@/services/syncService';
+import { deleteAllGroups, loadGroups } from '@/store/slices/tabSlice';
+import { syncEngine } from '@/services/syncEngine';
 import { storage } from '@/utils/storage';
 import { LoginForm } from '../auth/LoginForm';
 import { RegisterForm } from '../auth/RegisterForm';
@@ -65,9 +65,17 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({ onClose }) => {
     }
 
     try {
-      const result = await syncService.downloadAndRefresh(false); // overwriteLocal=false，合并模式
+      const result = await syncEngine.downloadAndMerge({
+        forceRemote: false,
+        syncSettings: false,
+      });
       
       if (result.success) {
+        try {
+          await dispatch(loadGroups()).unwrap();
+        } catch (err) {
+          console.warn('同步后刷新本地会话失败:', err);
+        }
         showAlert({
           title: '手动同步成功',
           message: '已从云端拉取最新数据并与本地合并',
@@ -77,7 +85,7 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({ onClose }) => {
       } else {
         showAlert({
           title: '手动同步失败',
-          message: result.error || '无法从云端拉取数据',
+          message: result.reason === 'not_authenticated' ? '未登录' : (result.reason || '无法从云端拉取数据'),
           type: 'error',
           onClose: () => {}
         });
@@ -132,7 +140,10 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({ onClose }) => {
           const count = result.payload?.count || 0;
 
           if (isAuthenticated) {
-            syncService.uploadToCloud(true, true)
+            syncEngine.upload({
+              overwriteCloud: true,
+              syncSettings: true,
+            })
               .then(() => {
                 console.log('删除操作已同步到云端');
               })

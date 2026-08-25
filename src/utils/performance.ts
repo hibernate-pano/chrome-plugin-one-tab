@@ -245,6 +245,10 @@ export class CacheManager {
     this.cleanupInterval = setInterval(() => {
       this.cleanup();
     }, 60 * 1000); // 每分钟清理一次
+    // unref：Node 测试/SSR 环境下不阻止进程退出（浏览器中无影响）
+    if (typeof (this.cleanupInterval as any)?.unref === 'function') {
+      (this.cleanupInterval as any).unref();
+    }
   }
 
   /**
