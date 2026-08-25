@@ -4,7 +4,7 @@
  * 复用扩展的纯逻辑层（auth + downloadTabGroups），这些模块不依赖 chrome.* API，
  * 因此可直接在浏览器 Web 环境中运行。本文件提供面向页面组件的薄接口。
  */
-import { supabase, auth as supabaseAuth } from '@/utils/supabase';
+import { supabase, auth as supabaseAuth, supportsCloudTombstone } from '@/utils/supabase';
 import { decryptData, encryptData } from '@/utils/encryptionUtils';
 import { formatToOneTabFormat } from '@/utils/oneTabFormatParser';
 import type { Tab, TabGroup } from '@/types/tab';
@@ -111,6 +111,10 @@ export async function fetchGroups(): Promise<TabGroup[]> {
 
   for (const row of rows ?? []) {
     const groupAny = row as any;
+    // 云端墓碑行（is_deleted=true）不展示在 Web 列表
+    if (groupAny.is_deleted) {
+      continue;
+    }
     const groupId = String(groupAny.id);
     const fallbackName = String(groupAny.name ?? '未命名会话');
     const fallbackCreatedAt = String(groupAny.created_at ?? '');
@@ -220,9 +224,23 @@ export async function renameGroup(groupId: string, name: string): Promise<void> 
   if (error) throw new Error(error.message);
 }
 
-/** 删除标签组 */
+/** 删除标签组（双轨：云端有 is_deleted 列 → 软删墓碑；无列 → 回退硬删） */
 export async function deleteGroup(groupId: string): Promise<void> {
   const userId = await requireUserId();
+
+  if (await supportsCloudTombstone()) {
+    // tombstone：保留行标记 is_deleted=true 并推新 updated_at，
+    // 这样扩展端同步时能收到删除意图，不会"复活"已删组
+    const { error } = await supabase
+      .from('tab_groups')
+      .update({ is_deleted: true, updated_at: new Date().toISOString() })
+      .eq('id', groupId)
+      .eq('user_id', userId);
+    if (error) throw new Error(error.message);
+    return;
+  }
+
+  // 降级：硬删（旧行为）
   const { error } = await supabase
     .from('tab_groups')
     .delete()

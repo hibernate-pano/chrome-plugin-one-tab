@@ -80,6 +80,51 @@ function checkSupabaseConfig() {
 // 导出 supabase 客户端，延迟初始化
 export const supabase = initSupabaseClient();
 
+// ── 云端 tombstone（软删）双轨支持 ────────────────────────────────
+// 背景：Web 端删除需要跨端一致（扩展端上传不能"复活"已删的云端行）。
+// 正确做法是云端 tab_groups 增加 is_deleted 列（软删墓碑），但需要
+// Supabase 控制台执行 migration（anon key 无 DDL 权限）：
+//   ALTER TABLE tab_groups ADD COLUMN is_deleted boolean NOT NULL DEFAULT false;
+// 代码侧双轨：探测到列 → 走 tombstone；未探测到 → 回退硬删并给出提示。
+
+let tombstoneSupportCache: boolean | null = null;
+
+/**
+ * 探测云端 tab_groups 表是否已有 is_deleted 列（结果缓存）。
+ * 探测方式：select 该列 limit 1，列不存在时 Supabase 会返回 PGRST204 错误。
+ */
+export async function supportsCloudTombstone(): Promise<boolean> {
+  if (tombstoneSupportCache !== null) return tombstoneSupportCache;
+  if (!isSupabaseConfigured()) {
+    tombstoneSupportCache = false;
+    return false;
+  }
+  try {
+    const probe = await supabase.from('tab_groups').select('is_deleted').limit(1);
+    if (probe.error) {
+      if (probe.error.code === 'PGRST204' || /is_deleted/i.test(probe.error.message)) {
+        console.warn(
+          '[tombstone] 云端 tab_groups 表缺少 is_deleted 列，降级为硬删。\n' +
+          '  如需跨端软删一致性，请在 Supabase 控制台 SQL Editor 执行：\n' +
+          '  ALTER TABLE tab_groups ADD COLUMN is_deleted boolean NOT NULL DEFAULT false;'
+        );
+        tombstoneSupportCache = false;
+      } else {
+        // 其他错误（网络等）→ 视为不支持，下次再探
+        console.warn('[tombstone] 列探测失败（非 PGRST204）:', probe.error.message);
+        tombstoneSupportCache = false;
+      }
+    } else {
+      tombstoneSupportCache = true;
+    }
+    return tombstoneSupportCache;
+  } catch (err) {
+    console.warn('[tombstone] 列探测异常，降级为硬删:', (err as Error).message);
+    tombstoneSupportCache = false;
+    return false;
+  }
+}
+
 import { secureStorage } from './secureStorage';
 
 // 获取设备ID（使用加密存储）
@@ -498,6 +543,14 @@ export const sync = {
         console.log(`标签组 ${index + 1}: ${group.id} 用户ID从 ${oldUserId} 更新为 ${group.user_id}`);
       });
 
+      // 云端有 is_deleted 列时，上传的活跃组显式置 is_deleted=false，
+      // 把 Web 端已软删、本地仍活跃（恢复/取消删除）的组复位为活跃
+      if (await supportsCloudTombstone()) {
+        uniqueGroups.forEach(group => {
+          (group as any).is_deleted = false;
+        });
+      }
+
       // 验证所有组的用户ID是否正确
       const invalidGroups = uniqueGroups.filter(group => group.user_id !== sessionData.session.user.id);
       if (invalidGroups.length > 0) {
@@ -621,7 +674,9 @@ export const sync = {
     return { result };
   },
 
-  // 把本地软删的标签组 ID 同步到云端（硬删云端对应行，与本地 tombstone 保持一致）
+  // 把本地软删的标签组 ID 同步到云端。
+  // 双轨：云端有 is_deleted 列 → 置墓碑（保留行，跨端一致性关键）；
+  //       无列（未执行 migration）→ 回退硬删，并提示执行 SQL。
   async markCloudGroupsAsDeleted(deletedIds: string[]) {
     if (deletedIds.length === 0) return;
 
@@ -633,20 +688,38 @@ export const sync = {
     }
 
     const userId = sessionData.session.user.id;
-    console.log(`[markCloudGroupsAsDeleted] 正在删除云端 ${deletedIds.length} 个组`);
+    console.log(`[markCloudGroupsAsDeleted] 正在标记云端 ${deletedIds.length} 个组为删除`);
 
-    const { error } = await supabase
-      .from('tab_groups')
-      .delete()
-      .eq('user_id', userId)
-      .in('id', deletedIds);
+    if (await supportsCloudTombstone()) {
+      // tombstone：保留行，置 is_deleted=true 并把 updated_at 推新，
+      // 让 merge 的版本/时间比较能识别 Web 端的删除意图
+      const { error } = await supabase
+        .from('tab_groups')
+        .update({ is_deleted: true, updated_at: new Date().toISOString() })
+        .eq('user_id', userId)
+        .in('id', deletedIds);
 
-    if (error) {
-      console.error('[markCloudGroupsAsDeleted] 删除失败:', error);
-      throw error;
+      if (error) {
+        console.error('[markCloudGroupsAsDeleted] 标记墓碑失败:', error);
+        throw error;
+      }
+
+      console.log(`[markCloudGroupsAsDeleted] 已标记 ${deletedIds.length} 个云端组为删除`);
+    } else {
+      // 降级：硬删云端行（旧的统一做法）
+      const { error } = await supabase
+        .from('tab_groups')
+        .delete()
+        .eq('user_id', userId)
+        .in('id', deletedIds);
+
+      if (error) {
+        console.error('[markCloudGroupsAsDeleted] 删除失败:', error);
+        throw error;
+      }
+
+      console.log(`[markCloudGroupsAsDeleted] 已删除 ${deletedIds.length} 个云端组`);
     }
-
-    console.log(`[markCloudGroupsAsDeleted] 已删除 ${deletedIds.length} 个云端组`);
   },
 
   // 下载标签组
@@ -791,7 +864,9 @@ export const sync = {
           tabs: formattedTabs,
           createdAt: String(groupAny.created_at),
           updatedAt: String(groupAny.updated_at),
-          isLocked: Boolean(groupAny.is_locked)
+          isLocked: Boolean(groupAny.is_locked),
+          // 云端 tombstone：is_deleted 列存在时才有值；无列时 undefined → 视为未删除
+          isDeleted: Boolean(groupAny.is_deleted),
         });
       }
 
