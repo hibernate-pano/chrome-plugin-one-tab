@@ -25,6 +25,7 @@ const STORAGE_KEYS = {
   DELETED_GROUPS: 'deleted_tab_groups',
   DELETED_TABS: 'deleted_tabs',
   LAST_SYNC_TIME: 'last_sync_time',
+  SYNC_SNAPSHOT: 'sync_snapshot',
   PRODUCT_EVENTS: 'product_events',
   MIGRATION_FLAGS: 'migration_flags'
 };
@@ -348,6 +349,38 @@ class ChromeStorage {
       await kvSet(STORAGE_KEYS.LAST_SYNC_TIME, time);
     } catch (error) {
       console.error('设置最后同步时间失败:', error);
+    }
+  }
+
+  // 获取同步前快照（合并失败时用于回滚）
+  async getSyncSnapshot(): Promise<TabGroup[] | null> {
+    try {
+      await this.ensureVersion();
+      const raw = await kvGet<unknown>(STORAGE_KEYS.SYNC_SNAPSHOT);
+      return Array.isArray(raw) ? (raw as TabGroup[]) : null;
+    } catch (error) {
+      console.error('获取同步快照失败:', error);
+      return null;
+    }
+  }
+
+  // 保存同步前快照
+  async setSyncSnapshot(groups: TabGroup[]): Promise<void> {
+    try {
+      await this.ensureVersion();
+      await kvSet(STORAGE_KEYS.SYNC_SNAPSHOT, groups);
+    } catch (error) {
+      console.error('保存同步快照失败:', error);
+    }
+  }
+
+  // 清除同步快照（合并成功后调用）
+  async clearSyncSnapshot(): Promise<void> {
+    try {
+      await this.ensureVersion();
+      await kvRemove(STORAGE_KEYS.SYNC_SNAPSHOT);
+    } catch (error) {
+      console.error('清除同步快照失败:', error);
     }
   }
 

@@ -621,6 +621,34 @@ export const sync = {
     return { result };
   },
 
+  // 把本地软删的标签组 ID 同步到云端（硬删云端对应行，与本地 tombstone 保持一致）
+  async markCloudGroupsAsDeleted(deletedIds: string[]) {
+    if (deletedIds.length === 0) return;
+
+    checkSupabaseConfig();
+    const { data: sessionData } = await supabase.auth.getSession();
+    if (!sessionData?.session) {
+      console.warn('[markCloudGroupsAsDeleted] 未登录，跳过');
+      return;
+    }
+
+    const userId = sessionData.session.user.id;
+    console.log(`[markCloudGroupsAsDeleted] 正在删除云端 ${deletedIds.length} 个组`);
+
+    const { error } = await supabase
+      .from('tab_groups')
+      .delete()
+      .eq('user_id', userId)
+      .in('id', deletedIds);
+
+    if (error) {
+      console.error('[markCloudGroupsAsDeleted] 删除失败:', error);
+      throw error;
+    }
+
+    console.log(`[markCloudGroupsAsDeleted] 已删除 ${deletedIds.length} 个云端组`);
+  },
+
   // 下载标签组
   async downloadTabGroups() {
     checkSupabaseConfig();

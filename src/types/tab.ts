@@ -72,6 +72,8 @@ export interface TabState {
   searchQuery: string;
   syncStatus: 'idle' | 'syncing' | 'success' | 'error'; // 同步状态
   lastSyncTime: string | null; // 最后同步时间
+  lastLoadedAt: string | null; // 本地数据最近一次成功加载时间（hydration 判断）
+  lastSyncStatus: 'local' | 'cloud' | null; // 最近一次数据来源
 
   // 定义压缩统计信息类型（虽然已废弃，但保留类型定义以保持向后兼容）
   compressionStats?: {

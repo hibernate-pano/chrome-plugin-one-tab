@@ -10,12 +10,13 @@ export interface ValidationResult {
   sanitized?: string;
 }
 
-// 密码强度等级
-export enum PasswordStrength {
-  WEAK = 'weak',
-  MEDIUM = 'medium',
-  STRONG = 'strong'
-}
+// 密码强度等级（union type，避免 enum — --experimental-strip-types 不支持 enum）
+export const PasswordStrength = {
+  WEAK: 'weak',
+  MEDIUM: 'medium',
+  STRONG: 'strong',
+} as const;
+export type PasswordStrength = (typeof PasswordStrength)[keyof typeof PasswordStrength];
 
 // 密码强度结果
 export interface PasswordStrengthResult {
@@ -109,7 +110,7 @@ export function checkPasswordStrength(password: string): PasswordStrengthResult 
 
   if (!password) {
     return {
-      strength: PasswordStrength.WEAK,
+      strength: 'weak',
       score: 0,
       feedback: ['请输入密码']
     };
@@ -142,11 +143,11 @@ export function checkPasswordStrength(password: string): PasswordStrengthResult 
   // 确定强度等级
   let strength: PasswordStrength;
   if (score >= 6) {
-    strength = PasswordStrength.STRONG;
+    strength = 'strong';
   } else if (score >= 4) {
-    strength = PasswordStrength.MEDIUM;
+    strength = 'medium';
   } else {
-    strength = PasswordStrength.WEAK;
+    strength = 'weak';
   }
 
   return { strength, score, feedback };

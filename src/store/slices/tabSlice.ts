@@ -13,7 +13,7 @@ import { trackProductEvent } from '@/utils/productEvents';
 // 解决"速记属性...的范围内不存在任何值"的问题，显式声明actions
 
 
-const initialState: TabState = {
+export const initialTabState: TabState = {
   groups: [],
   activeGroupId: null,
   isLoading: false,
@@ -21,6 +21,8 @@ const initialState: TabState = {
   searchQuery: '',
   syncStatus: 'idle',
   lastSyncTime: null,
+  lastLoadedAt: null,
+  lastSyncStatus: null,
   compressionStats: null,
   backgroundSync: false,
   syncProgress: 0,
@@ -621,7 +623,7 @@ export const moveTabAndSync = createAsyncThunk(
 
 export const tabSlice = createSlice({
   name: 'tabs',
-  initialState,
+  initialState: initialTabState,
   reducers: {
     setActiveGroup: (state, action) => {
       state.activeGroupId = action.payload;
@@ -809,6 +811,7 @@ export const tabSlice = createSlice({
       .addCase(loadGroups.fulfilled, (state, action) => {
         state.isLoading = false;
         state.groups = action.payload;
+        state.lastLoadedAt = new Date().toISOString();
       })
       .addCase(loadGroups.rejected, (state, action) => {
         state.isLoading = false;
