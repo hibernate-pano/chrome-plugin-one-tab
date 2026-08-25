@@ -16,7 +16,7 @@ import {
 import HighlightText from './HighlightText';
 import { SafeFavicon } from '@/components/common/SafeFavicon';
 import { EmptyState } from '@/components/common/EmptyState';
-import { buildSessionRestoreMessage, getSessionResultSummary } from '@/utils/sessionPresentation';
+import { getSessionResultSummary } from '@/utils/sessionPresentation';
 
 const PinIcon = () => (
   <svg className="w-3 h-3 text-blue-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
@@ -32,8 +32,8 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({ searchQuery 
   const dispatch = useAppDispatch();
   const { groups } = useAppSelector(state => state.tabs);
   const confirmBeforeDelete = useAppSelector(state => state.settings.confirmBeforeDelete);
-  const { showConfirm, showToast } = useToast();
-  const { showDeleteSuccess, showDeleteError, showRestoreSuccess, showRestoreError } = useEnhancedToast();
+  const { showConfirm } = useToast();
+  const { showDeleteSuccess, showDeleteError, showRestoreError } = useEnhancedToast();
   const [filters, setFilters] = useState<SearchFilters>({});
   const [showFilters, setShowFilters] = useState(false);
   const [isFilterPending, startFilterTransition] = useTransition();
@@ -123,8 +123,6 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({ searchQuery 
         });
     }
 
-    showToast(buildSessionRestoreMessage(group), 'success', 4500);
-
     setTimeout(() => {
       chrome.runtime.sendMessage({
         type: 'OPEN_TABS',
@@ -157,16 +155,11 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({ searchQuery 
         dispatch({ type: 'tabs/updateGroup/fulfilled', payload: updatedGroup });
         dispatch(updateGroup(updatedGroup))
           .unwrap()
-          .then(() => {
-            showRestoreSuccess(1);
-          })
           .catch(error => {
             console.error('更新会话失败:', error);
             showRestoreError(`更新会话失败: ${error.message || '未知错误'}`);
           });
       }
-    } else {
-      showRestoreSuccess(1);
     }
 
     setTimeout(() => {
@@ -268,8 +261,6 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({ searchQuery 
           showRestoreError(`批量恢复后更新会话失败: ${error.message || '未知错误'}`);
         });
       });
-
-      showToast(`已在新窗口恢复 ${matchingTabs.length} 个匹配标签，涉及 ${sessionResults.length} 个会话`, 'success', 4500);
 
       chrome.runtime.sendMessage({
         type: 'OPEN_TABS',

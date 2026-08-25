@@ -7,7 +7,6 @@ import { shouldAutoDeleteAfterTabRemoval } from '@/utils/tabGroupUtils';
 import { useToast } from '@/contexts/ToastContext';
 import { useEnhancedToast } from '@/utils/toastHelper';
 import { trackProductEvent } from '@/utils/productEvents';
-import { buildSessionRestoreMessage } from '@/utils/sessionPresentation';
 
 interface TabGroupProps {
   group: TabGroupType;
@@ -63,8 +62,8 @@ const NotesIcon = () => (
 export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
   const dispatch = useAppDispatch();
   const confirmBeforeDelete = useAppSelector(state => state.settings.confirmBeforeDelete);
-  const { showConfirm, showToast } = useToast();
-  const { showDeleteSuccess, showDeleteError, showRestoreSuccess, showRestoreError } = useEnhancedToast();
+  const { showConfirm } = useToast();
+  const { showDeleteSuccess, showDeleteError, showRestoreError } = useEnhancedToast();
 
   const [isEditing, setIsEditing] = useState(false);
   const [newName, setNewName] = useState(group.name);
@@ -174,15 +173,10 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
       dispatch({ type: 'tabs/deleteGroup/fulfilled', payload: group.id });
       dispatch(deleteGroup(group.id))
         .unwrap()
-        .then(() => {
-          showToast(buildSessionRestoreMessage(group), 'success', 4500);
-        })
         .catch(error => {
           console.error('恢复会话后删除原会话失败:', error);
           showDeleteError(`恢复会话后清理原会话失败: ${error.message || '未知错误'}`);
         });
-    } else {
-      showToast(buildSessionRestoreMessage(group), 'success', 4500);
     }
 
     setTimeout(() => {
@@ -191,7 +185,7 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
         data: { tabs: tabsPayload, inCurrentWindow }
       });
     }, 50);
-  }, [dispatch, group, showDeleteError, showToast]);
+  }, [dispatch, group, showDeleteError]);
 
   const handleOpenAllTabs = useCallback(() => openAllTabs(false), [openAllTabs]);
   const handleOpenAllTabsInCurrentWindow = useCallback(() => openAllTabs(true), [openAllTabs]);
@@ -219,16 +213,11 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
         dispatch({ type: 'tabs/updateGroup/fulfilled', payload: updatedGroup });
         dispatch(updateGroup(updatedGroup))
           .unwrap()
-          .then(() => {
-            showRestoreSuccess(1);
-          })
           .catch(error => {
             console.error('更新会话失败:', error);
             showRestoreError(`更新会话失败: ${error.message || '未知错误'}`);
           });
       }
-    } else {
-      showRestoreSuccess(1);
     }
 
     setTimeout(() => {
@@ -237,7 +226,7 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
         data: { url: tab.url, pinned: !!tab.pinned }
       });
     }, 50);
-  }, [dispatch, group, showDeleteSuccess, showDeleteError, showRestoreSuccess, showRestoreError]);
+  }, [dispatch, group, showDeleteSuccess, showDeleteError, showRestoreError]);
 
   const handleMoveTab = useCallback((sourceGroupId: string, sourceIndex: number, targetGroupId: string, targetIndex: number) => {
     dispatch(moveTabAndSync({
