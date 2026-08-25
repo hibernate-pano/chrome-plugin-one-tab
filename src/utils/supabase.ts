@@ -46,6 +46,60 @@ function getSecureConfig() {
 // 延迟初始化 Supabase 客户端
 let supabaseClient: ReturnType<typeof createClient> | null = null;
 
+/**
+ * 跨上下文持久化 Supabase session 的 storage adapter。
+ *
+ * 背景：supabase-js 默认把 session token 存 localStorage，但 MV3
+ * service-worker 没有 localStorage（每次唤醒 memory storage 为空），
+ * 导致后台轮询无法恢复登录态。统一改用 chrome.storage.local ——
+ * popup 与 service-worker 共享同一 session。
+ */
+const supabaseSharedStorage: {
+  getItem: (key: string) => Promise<string | null>;
+  setItem: (key: string, value: string) => Promise<void>;
+  removeItem: (key: string) => Promise<void>;
+} = {
+  async getItem(key: string): Promise<string | null> {
+    // 非扩展环境（如 node 测试）无 chrome.storage，退化为无 session
+    if (typeof chrome === 'undefined' || !chrome.storage?.local) return null;
+    const result = await chrome.storage.local.get(key);
+    return (result[key] as string | undefined) ?? null;
+  },
+  async setItem(key: string, value: string): Promise<void> {
+    if (typeof chrome === 'undefined' || !chrome.storage?.local) return;
+    await chrome.storage.local.set({ [key]: value });
+  },
+  async removeItem(key: string): Promise<void> {
+    if (typeof chrome === 'undefined' || !chrome.storage?.local) return;
+    await chrome.storage.local.remove(key);
+  },
+};
+
+/**
+ * 迁移旧版 localStorage 中 supabase-js 的 session token 到 chrome.storage.local。
+ * 早期版本 supabase-js 默认使用 localStorage 存 session（popup 上下文可用，
+ * service-worker 不可用）。升级后统一走 chrome.storage，未登录用户无感；
+ * 已登录用户 token 会被搬过去，避免升级后要求重新登录。
+ */
+async function migrateLegacySupabaseSession(): Promise<void> {
+  try {
+    if (typeof localStorage === 'undefined') return;
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (key && key.startsWith('sb-') && key.endsWith('-auth-token')) {
+        const value = localStorage.getItem(key);
+        if (value) {
+          await chrome.storage.local.set({ [key]: value });
+          console.log('[Supabase] 已迁移旧 session 到 chrome.storage.local');
+        }
+        localStorage.removeItem(key);
+      }
+    }
+  } catch (err) {
+    console.warn('[Supabase] 迁移旧 session 失败（可忽略）:', err);
+  }
+}
+
 function initSupabaseClient() {
   if (supabaseClient) {
     return supabaseClient;
@@ -60,7 +114,19 @@ function initSupabaseClient() {
     return supabaseClient;
   }
 
-  supabaseClient = createClient(config.url, config.anonKey);
+  supabaseClient = createClient(config.url, config.anonKey, {
+    auth: {
+      // service-worker 无 localStorage，统一用 chrome.storage.local 持久化 session
+      storage: supabaseSharedStorage,
+      autoRefreshToken: true,
+      persistSession: true,
+      detectSessionInUrl: false,
+    },
+  });
+
+  // 旧 session 迁移（幂等：只搬一次，搬完即删 localStorage 源）
+  void migrateLegacySupabaseSession();
+
   return supabaseClient;
 }
 

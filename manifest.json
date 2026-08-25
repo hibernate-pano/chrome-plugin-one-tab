@@ -11,7 +11,8 @@
     "storage",
     "unlimitedStorage",
     "notifications",
-    "contextMenus"
+    "contextMenus",
+    "alarms"
   ],
   "host_permissions": [
     "https://*.supabase.co/*"

@@ -1,5 +1,6 @@
 import { tabManager } from '@/background/TabManager';
 import { migrateToV2 } from '@/utils/migrationHelper';
+import { setupBackgroundSync } from '@/background/backgroundSync';
 
 // Chrome 扩展的 Service Worker
 // 为了避免模块导入问题，早期版本内联了存储逻辑；现统一使用 utils/storage 以与前端页面共享同一数据源（IndexedDB）
@@ -110,6 +111,9 @@ chrome.runtime.onInstalled.addListener(async (details) => {
 
   // 创建右键菜单
   await setupContextMenus();
+
+  // 注册后台同步 alarm（每 60s 拉取云端变更）
+  setupBackgroundSync();
 });
 
 // 浏览器启动时
@@ -120,12 +124,18 @@ chrome.runtime.onStartup.addListener(async () => {
 
   // 确保右键菜单存在
   await setupContextMenus();
+
+  // 注册后台同步 alarm（程序启动后恢复轮询）
+  setupBackgroundSync();
 });
 
 // Service Worker 激活时也初始化一次，防止遗漏
 setupContextMenus().catch(error => {
   console.error('初始化右键菜单失败:', error);
 });
+
+// 后台同步 alarm（SW 被唤醒时重新注册，防遗漏）
+setupBackgroundSync();
 
 // 监听扩展图标点击事件
 chrome.action.onClicked.addListener(async () => {
