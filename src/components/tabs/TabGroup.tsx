@@ -42,6 +42,12 @@ const OpenAllIcon = () => (
   </svg>
 );
 
+const OpenAllInPlaceIcon = () => (
+  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+    <path strokeLinecap="round" strokeLinejoin="round" d="M13.5 6H5.25A2.25 2.25 0 003 8.25v10.5A2.25 2.25 0 005.25 21h10.5A2.25 2.25 0 0018 18.75V10.5M21 3v5.25M21 3h-5.25M21 3l-7.5 7.5" />
+  </svg>
+);
+
 const FavoriteIcon = ({ filled }: { filled: boolean }) => (
   <svg className="w-4 h-4" fill={filled ? 'currentColor' : 'none'} viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
     <path strokeLinecap="round" strokeLinejoin="round" d="M11.48 3.499a.563.563 0 011.04 0l2.125 5.111a.563.563 0 00.475.345l5.518.442c.499.04.701.663.321.988l-4.204 3.602a.563.563 0 00-.182.557l1.285 5.386a.562.562 0 01-.84.61l-4.725-2.885a.563.563 0 00-.586 0L6.982 20.54a.562.562 0 01-.84-.61l1.285-5.386a.563.563 0 00-.182-.557L3.041 10.385a.563.563 0 01.321-.988l5.518-.442a.563.563 0 00.475-.345L11.48 3.5z" />
@@ -151,7 +157,7 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
     });
   }, [dispatch, group, notesDraft]);
 
-  const handleOpenAllTabs = useCallback(() => {
+  const openAllTabs = useCallback((inCurrentWindow: boolean) => {
     const tabsPayload = group.tabs.map(tab => ({
       url: tab.url,
       pinned: !!tab.pinned,
@@ -160,7 +166,7 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
     void trackProductEvent('session_restored', {
       sessionId: group.id,
       sessionName: group.name,
-      source: 'list',
+      source: inCurrentWindow ? 'list-current-window' : 'list',
       tabCount: group.tabs.length,
     });
 
@@ -182,10 +188,13 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
     setTimeout(() => {
       chrome.runtime.sendMessage({
         type: 'OPEN_TABS',
-        data: { tabs: tabsPayload }
+        data: { tabs: tabsPayload, inCurrentWindow }
       });
     }, 50);
   }, [dispatch, group, showDeleteError, showToast]);
+
+  const handleOpenAllTabs = useCallback(() => openAllTabs(false), [openAllTabs]);
+  const handleOpenAllTabsInCurrentWindow = useCallback(() => openAllTabs(true), [openAllTabs]);
 
   const handleOpenTab = useCallback((tab: Tab) => {
     if (!group.isLocked) {
@@ -376,14 +385,24 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
 
         {/* 操作按钮 */}
         <div className="flex items-center gap-1 opacity-0 group-hover/card:opacity-100 transition-all duration-200 ease-out">
-          {/* 恢复全部 */}
+          {/* 恢复全部（新窗口） */}
           <button
             onClick={handleOpenAllTabs}
             className="btn-icon p-1.5 tab-group-action-accent micro-interaction-button"
-            title="恢复整个会话"
-            aria-label={`恢复整个会话，共 ${group.tabs.length} 个标签页`}
+            title="在新窗口恢复整个会话"
+            aria-label={`在新窗口恢复整个会话，共 ${group.tabs.length} 个标签页`}
           >
             <OpenAllIcon />
+          </button>
+
+          {/* 在当前窗口打开 */}
+          <button
+            onClick={handleOpenAllTabsInCurrentWindow}
+            className="btn-icon p-1.5 micro-interaction-button"
+            title="在当前窗口打开整个会话"
+            aria-label={`在当前窗口打开整个会话，共 ${group.tabs.length} 个标签页`}
+          >
+            <OpenAllInPlaceIcon />
           </button>
 
           {/* 编辑 */}

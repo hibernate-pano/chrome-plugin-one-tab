@@ -253,6 +253,34 @@ export class TabManager {
   }
 
   /**
+   * 在当前窗口打开多个标签页（保留已打开的标签，不新建窗口）
+   */
+  async openTabsInCurrentWindow(tabs: Array<{ url: string; pinned?: boolean }>): Promise<void> {
+    try {
+      if (tabs.length === 0) {
+        return;
+      }
+
+      // 固定在当前窗口的最后一个标签页之后打开，避免打断当前浏览上下文
+      const [currentTab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+      const index = currentTab ? currentTab.index + 1 : undefined;
+
+      const [firstTab, ...remainingTabs] = tabs;
+      // 第一个标签激活，其余后台打开
+      await chrome.tabs.create({ url: firstTab.url, active: true, pinned: !!firstTab.pinned, index });
+
+      await Promise.all(
+        remainingTabs.map(tab =>
+          chrome.tabs.create({ url: tab.url, active: false, pinned: !!tab.pinned })
+        )
+      );
+    } catch (error) {
+      console.error('在当前窗口恢复会话失败:', error);
+      throw error;
+    }
+  }
+
+  /**
    * 通知标签管理器页面刷新数据
    */
   private notifyTabManagerRefresh(): void {

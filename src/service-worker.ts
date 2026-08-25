@@ -253,16 +253,25 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         const data = message.data || {};
 
         if (Array.isArray(data.tabs)) {
-          tabManager.openTabsInNewWindow(data.tabs)
+          // inCurrentWindow: true → 在当前窗口打开（不新建窗口）
+          const opener = data.inCurrentWindow
+            ? tabManager.openTabsInCurrentWindow(data.tabs)
+            : tabManager.openTabsInNewWindow(data.tabs);
+          opener
             .then(() => sendResponse({ success: true }))
             .catch(error => sendResponse({ success: false, error: error.message }));
           return true;
         }
 
         if (Array.isArray(data.urls)) {
-          tabManager.openTabsInNewWindow(
-            data.urls.map((url: string) => ({ url }))
-          )
+          const opener = data.inCurrentWindow
+            ? tabManager.openTabsInCurrentWindow(
+                data.urls.map((url: string) => ({ url }))
+              )
+            : tabManager.openTabsInNewWindow(
+                data.urls.map((url: string) => ({ url }))
+              );
+          opener
             .then(() => sendResponse({ success: true }))
             .catch(error => sendResponse({ success: false, error: error.message }));
           return true;
