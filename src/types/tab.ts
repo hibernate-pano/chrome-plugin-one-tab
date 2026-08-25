@@ -66,6 +66,8 @@ export interface TabGroup {
 
 export interface TabState {
   groups: TabGroup[];
+  // 已软删（墓碑）的标签组，用于误删保护恢复视图；不参与主列表渲染
+  deletedGroups: TabGroup[];
   activeGroupId: string | null;
   isLoading: boolean;
   error: string | null;

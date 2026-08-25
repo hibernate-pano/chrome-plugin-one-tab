@@ -14,6 +14,7 @@ import { trackProductEvent } from '@/utils/productEvents';
 
 export const initialTabState: TabState = {
   groups: [],
+  deletedGroups: [],
   activeGroupId: null,
   isLoading: false,
   error: null,
@@ -123,6 +124,57 @@ export const deleteAllGroups = createAsyncThunk(
     return { count: groups.length };
   }
 );
+
+/**
+ * 恢复已软删的标签组（误删保护核心）：
+ * 置回活跃 → 版本 +1 → 下次同步时以 is_deleted:false 覆写云端墓碑，跨端恢复。
+ */
+export const restoreGroup = createAsyncThunk(
+  'tabs/restoreGroup',
+  async (groupId: string) => {
+    const groups = await storage.getGroups();
+    const target = groups.find(g => g.id === groupId);
+    if (!target) {
+      throw new Error('未找到该标签组');
+    }
+
+    const restored = groups.map(g => {
+      if (g.id === groupId) {
+        const currentVersion = g.version || 1;
+        return {
+          ...g,
+          isDeleted: false,
+          version: currentVersion + 1, // 版本递增，同步时云端墓碑被复位
+          updatedAt: new Date().toISOString()
+        };
+      }
+      return g;
+    });
+
+    await storage.setGroups(restored);
+    return { groupId, restoredGroup: restored.find(g => g.id === groupId)! };
+  }
+);
+
+/**
+ * 彻底删除已软删的标签组（仅移除本地墓碑；云端仍由软删路径保留墓碑，
+ * 若需同步清除请后续在 Web 端执行彻底删除）。
+ */
+export const purgeGroup = createAsyncThunk(
+  'tabs/purgeGroup',
+  async (groupId: string) => {
+    const groups = await storage.getGroups();
+    const remaining = groups.filter(g => g.id !== groupId);
+    await storage.setGroups(remaining);
+    return groupId;
+  }
+);
+
+/** 加载已软删的标签组（误删保护恢复视图的数据源） */
+export const loadDeletedGroups = createAsyncThunk('tabs/loadDeletedGroups', async () => {
+  const groups = await storage.getGroups();
+  return groups.filter(g => g.isDeleted);
+});
 
 export const importGroups = createAsyncThunk(
   'tabs/importGroups',
@@ -749,10 +801,38 @@ export const tabSlice = createSlice({
         }
       })
       .addCase(deleteGroup.fulfilled, (state, action) => {
+        const removed = state.groups.find(g => g.id === action.payload);
         state.groups = state.groups.filter(g => g.id !== action.payload);
+        if (removed) {
+          // 误删保护：被删组进入恢复视图（墓碑）
+          state.deletedGroups = state.deletedGroups.filter(g => g.id !== action.payload);
+          state.deletedGroups.push({
+            ...removed,
+            isDeleted: true,
+            version: (removed.version || 1) + 1,
+            updatedAt: new Date().toISOString()
+          });
+        }
         if (state.activeGroupId === action.payload) {
           state.activeGroupId = null;
         }
+      })
+      .addCase(loadDeletedGroups.fulfilled, (state, action) => {
+        state.deletedGroups = action.payload;
+      })
+      .addCase(restoreGroup.fulfilled, (state, action) => {
+        state.deletedGroups = state.deletedGroups.filter(g => g.id !== action.payload.groupId);
+        // 恢复的组立即回到主列表（后续 loadGroups 会做最终排序）
+        state.groups = state.groups.filter(g => g.id !== action.payload.groupId);
+        state.groups.unshift(action.payload.restoredGroup);
+        state.groups.sort((a, b) => {
+          const dateA = new Date(a.createdAt);
+          const dateB = new Date(b.createdAt);
+          return dateB.getTime() - dateA.getTime();
+        });
+      })
+      .addCase(purgeGroup.fulfilled, (state, action) => {
+        state.deletedGroups = state.deletedGroups.filter(g => g.id !== action.payload);
       })
       .addCase(deleteAllGroups.pending, state => {
         state.isLoading = true;

@@ -90,6 +90,67 @@ function toTabGroupFromEncrypted(groupId: string, decrypted: unknown): TabGroup 
   return null;
 }
 
+/**
+ * 将一行 tab_groups 云端行解密为 TabGroup（与 fetchGroups 共用）。
+ * 失败时返回 null（解密失败或格式不支持）。
+ */
+async function decryptRowToGroup(row: Record<string, unknown>, userId: string): Promise<TabGroup | null> {
+  const groupAny = row as any;
+  const groupId = String(groupAny.id);
+  const fallbackName = String(groupAny.name ?? '未命名会话');
+  const fallbackCreatedAt = String(groupAny.created_at ?? '');
+  const fallbackUpdatedAt = String(groupAny.updated_at ?? '');
+  const fallbackIsLocked = Boolean(groupAny.is_locked ?? false);
+
+  if (typeof groupAny.tabs_data === 'string') {
+    try {
+      const decrypted = await decryptData(groupAny.tabs_data, userId);
+      const group = toTabGroupFromEncrypted(groupId, decrypted);
+      if (!group) {
+        console.warn(`[decryptRowToGroup] 组 ${groupAny.id} 解密结果无法解析`);
+        return null;
+      }
+      // 用 group 表字段补齐（加密对象常缺 name/时间戳）
+      group.name = group.name || fallbackName;
+      group.createdAt = group.createdAt || fallbackCreatedAt;
+      group.updatedAt = group.updatedAt || fallbackUpdatedAt;
+      group.isLocked = group.isLocked || fallbackIsLocked;
+      return group;
+    } catch (decryptError) {
+      console.warn(`[decryptRowToGroup] 组 ${groupAny.id} 解密失败:`, decryptError);
+      // 最后回退：普通解析
+      try {
+        const parsed = JSON.parse(groupAny.tabs_data);
+        if (Array.isArray(parsed)) {
+          return {
+            id: groupId, name: fallbackName, tabs: (parsed as unknown[]).filter(isValidTab),
+            createdAt: fallbackCreatedAt, updatedAt: fallbackUpdatedAt, isLocked: fallbackIsLocked,
+          };
+        }
+      } catch {
+        // 忽略
+      }
+      return null;
+    }
+  }
+
+  if (Array.isArray(groupAny.tabs_data)) {
+    // tabs_data 已经是数组（明文）
+    const g = toTabGroupFromEncrypted(groupId, groupAny.tabs_data) as TabGroup;
+    g.name = g.name || fallbackName;
+    g.createdAt = g.createdAt || fallbackCreatedAt;
+    g.updatedAt = g.updatedAt || fallbackUpdatedAt;
+    g.isLocked = g.isLocked || fallbackIsLocked;
+    return g;
+  }
+
+  // 无 tabs_data，仍显示组
+  return {
+    id: groupId, name: fallbackName, tabs: [],
+    createdAt: fallbackCreatedAt, updatedAt: fallbackUpdatedAt, isLocked: fallbackIsLocked,
+  };
+}
+
 /** 下载当前用户的会话数据（解密结果可能是 TabGroup 对象或数组，均做防护） */
 export async function fetchGroups(): Promise<TabGroup[]> {
   const current = await getCurrentUser();
@@ -115,59 +176,62 @@ export async function fetchGroups(): Promise<TabGroup[]> {
     if (groupAny.is_deleted) {
       continue;
     }
-    const groupId = String(groupAny.id);
-    const fallbackName = String(groupAny.name ?? '未命名会话');
-    const fallbackCreatedAt = String(groupAny.created_at ?? '');
-    const fallbackUpdatedAt = String(groupAny.updated_at ?? '');
-    const fallbackIsLocked = Boolean(groupAny.is_locked ?? false);
-
-    if (typeof groupAny.tabs_data === 'string') {
-      try {
-        const decrypted = await decryptData(groupAny.tabs_data, userId);
-        const group = toTabGroupFromEncrypted(groupId, decrypted);
-        if (group) {
-          // 用 group 表字段补齐（加密对象常缺 name/时间戳）
-          group.name = group.name || fallbackName;
-          group.createdAt = group.createdAt || fallbackCreatedAt;
-          group.updatedAt = group.updatedAt || fallbackUpdatedAt;
-          group.isLocked = group.isLocked || fallbackIsLocked;
-          tabGroups.push(group);
-        } else {
-          console.warn(`[fetchGroups] 组 ${groupAny.id} 解密结果无法解析`);
-        }
-      } catch (decryptError) {
-        console.warn(`[fetchGroups] 组 ${groupAny.id} 解密失败:`, decryptError);
-        // 最后回退：普通解析
-        try {
-          const parsed = JSON.parse(groupAny.tabs_data);
-          if (Array.isArray(parsed)) {
-            tabGroups.push({
-              id: groupId, name: fallbackName, tabs: (parsed as unknown[]).filter(isValidTab),
-              createdAt: fallbackCreatedAt, updatedAt: fallbackUpdatedAt, isLocked: fallbackIsLocked,
-            });
-          }
-        } catch {
-          // 忽略
-        }
-      }
-    } else if (Array.isArray(groupAny.tabs_data)) {
-      // tabs_data 已经是数组（明文）
-      const g = toTabGroupFromEncrypted(groupId, groupAny.tabs_data) as TabGroup;
-      g.name = g.name || fallbackName;
-      g.createdAt = g.createdAt || fallbackCreatedAt;
-      g.updatedAt = g.updatedAt || fallbackUpdatedAt;
-      g.isLocked = g.isLocked || fallbackIsLocked;
-      tabGroups.push(g);
-    } else {
-      // 无 tabs_data，仍显示组
-      tabGroups.push({
-        id: groupId, name: fallbackName, tabs: [],
-        createdAt: fallbackCreatedAt, updatedAt: fallbackUpdatedAt, isLocked: fallbackIsLocked,
-      });
-    }
+    const group = await decryptRowToGroup(row as Record<string, unknown>, userId);
+    if (group) tabGroups.push(group);
   }
 
   return tabGroups;
+}
+
+/** 仅加载已软删（墓碑）的会话，供 Web 误删恢复视图使用 */
+export async function fetchDeletedGroups(): Promise<TabGroup[]> {
+  const current = await getCurrentUser();
+  if (!current) {
+    throw new WebAuthError('未登录');
+  }
+  const userId = current.id;
+  const { data: rows, error } = await supabase
+    .from('tab_groups')
+    .select('*')
+    .eq('user_id', userId)
+    .eq('is_deleted', true)
+    .order('updated_at', { ascending: false });
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  const groups: TabGroup[] = [];
+  for (const row of rows ?? []) {
+    const group = await decryptRowToGroup(row as Record<string, unknown>, userId);
+    if (group) {
+      group.isDeleted = true;
+      groups.push(group);
+    }
+  }
+  return groups;
+}
+
+/** 恢复已软删的会话（云端墓碑复位为活跃，扩展端同步时会合并回来） */
+export async function restoreGroup(groupId: string): Promise<void> {
+  const userId = await requireUserId();
+  const { error } = await supabase
+    .from('tab_groups')
+    .update({ is_deleted: false, updated_at: new Date().toISOString() })
+    .eq('id', groupId)
+    .eq('user_id', userId);
+  if (error) throw new Error(error.message);
+}
+
+/** 云端彻底删除（DELETE 行本身；墓碑恢复能力的最终兜底，谨慎使用） */
+export async function purgeGroupPermanent(groupId: string): Promise<void> {
+  const userId = await requireUserId();
+  const { error } = await supabase
+    .from('tab_groups')
+    .delete()
+    .eq('id', groupId)
+    .eq('user_id', userId);
+  if (error) throw new Error(error.message);
 }
 
 export { supabase };

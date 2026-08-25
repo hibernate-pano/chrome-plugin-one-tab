@@ -5,6 +5,7 @@ import { syncEngine } from '@/services/syncEngine';
 const ACTION_PRIORITIES: Record<string, number> = {
   'tabs/deleteGroup/fulfilled': 10,
   'tabs/deleteAllGroups/fulfilled': 10,
+  'tabs/restoreGroup/fulfilled': 10, // 恢复 = 覆写云端墓碑，尽快传播
   'tabs/saveGroup/fulfilled': 8,
   'tabs/importGroups/fulfilled': 8,
   'tabs/updateGroup/fulfilled': 5,

@@ -164,4 +164,39 @@ describe('syncMergeSafety: 同步合并不丢本地数据（真实生产路径�
     assert.equal(v.valid, true);
     assert.equal(merged.length, 2);
   });
+
+  // ── 误删保护闭环：删除 → 云端墓碑 → 恢复 → 合并带回 ──────────────────
+  it('误删保护：Web 端恢复（墓碑复位活跃）后，扩展端 merge 能把组带回来', async () => {
+    const { mergeTabGroups } = await import('@/utils/syncUtils');
+    // 场景：用户在 Web 端误删会话（云端 is_deleted=true，带新时间戳/版本），
+    // 又从 Web「已删除」区点恢复 → 云端墓碑复位 is_deleted=false。
+    // 扩展端下载时云端行是活跃的，merge 不应把它当墓碑丢弃。
+    const cloud = [
+      makeGroup('g1', 'G1', {
+        isDeleted: false,
+        version: 4,
+        updatedAt: '2026-06-05T09:00:00.000Z',
+      }),
+    ];
+    const local = [];
+    const merged = mergeTabGroups(local, cloud, 'newest');
+    assert.equal(merged.some(g => g.id === 'g1'), true, '恢复后的云端活跃组应被合并带回 (remote-only)');
+    assert.equal(merged.some(g => g.isDeleted), false, '墓碑已复位，合并结果不应含墓碑');
+  });
+
+  it('误删保护：扩展端恢复（restoreGroup 版本+1）上传后，云端墓碑被覆写为活跃', async () => {
+    const { mergeTabGroups } = await import('@/utils/syncUtils');
+    // 场景：扩展端删组（本地墓碑）→ 用户从扩展端恢复区点恢复 →
+    // restoreGroup 置 isDeleted=false 且 version+1 → 上传以 is_deleted:false 覆写云端。
+    // 这里验证 merge 对「本地已恢复、云端仍是墓碑」的正确合并：
+    // 云端墓碑版本低于本地恢复版本 → 不应用删除，保留本地。
+    const local = [makeGroup('g2', 'G2', { isDeleted: false, version: 3 })];
+    const cloud = [makeGroup('g2', 'G2', { isDeleted: true, version: 2 })];
+    const merged = mergeTabGroups(local, cloud, 'newest');
+    assert.equal(
+      merged.some(g => g.id === 'g2'),
+      true,
+      '本地版本更高且已恢复 → 不应被云端旧墓碑删除'
+    );
+  });
 });

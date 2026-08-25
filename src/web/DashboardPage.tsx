@@ -1,8 +1,9 @@
 import React, { useEffect, useState } from 'react';
 import type { TabGroup } from '@/types/tab';
 import {
-  fetchGroups, signOut, getCurrentUser,
+  fetchGroups, fetchDeletedGroups, signOut, getCurrentUser,
   exportJsonBackup, exportOneTab, renameGroup, deleteGroup, deleteTab,
+  restoreGroup, purgeGroupPermanent,
 } from './webApi';
 import { ConfirmModal, PromptModal } from './Modal';
 
@@ -38,15 +39,20 @@ const GroupSkeleton: React.FC = () => (
 
 export const DashboardPage: React.FC<Props> = ({ onSignOut }) => {
   const [groups, setGroups] = useState<TabGroup[]>([]);
+  const [deletedGroups, setDeletedGroups] = useState<TabGroup[]>([]);
   const [email, setEmail] = useState('');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  // 已删除区折叠状态
+  const [trashOpen, setTrashOpen] = useState(false);
 
   // 模态状态：rename / deleteTab / deleteGroup 各管一个，避免互相干扰
   const [renameTarget, setRenameTarget] = useState<TabGroup | null>(null);
   const [deleteTabTarget, setDeleteTabTarget] = useState<{ groupId: string; tabId: string } | null>(null);
   const [deleteGroupTarget, setDeleteGroupTarget] = useState<TabGroup | null>(null);
+  // 彻底删除（云端 DELETE）二次确认
+  const [purgeTarget, setPurgeTarget] = useState<TabGroup | null>(null);
 
   const [busy, setBusy] = useState(false);
   const [exporting, setExporting] = useState(false);
@@ -62,8 +68,15 @@ export const DashboardPage: React.FC<Props> = ({ onSignOut }) => {
         const user = await getCurrentUser();
         if (user) setEmail(user.email);
         const data = await fetchGroups();
+        let deleted: TabGroup[] = [];
+        try {
+          deleted = await fetchDeletedGroups();
+        } catch (deletedErr) {
+          console.warn('加载已删除会话失败:', deletedErr);
+        }
         if (active) {
           setGroups(data);
+          setDeletedGroups(deleted);
           // 默认展开所有标签组，避免逐一点击；仍可手动折叠单个组
           setExpanded(new Set(data.map((g) => g.id)));
         }
@@ -149,6 +162,11 @@ export const DashboardPage: React.FC<Props> = ({ onSignOut }) => {
     try {
       await deleteGroup(groupId);
       setGroups((prev) => prev.filter((g) => g.id !== groupId));
+      // 误删保护：被删组进入已删除恢复区（墓碑已由云端软删建好）
+      setDeletedGroups((prev) => {
+        if (prev.some((g) => g.id === groupId)) return prev;
+        return [deleteGroupTarget, ...prev];
+      });
       setDeleteGroupTarget(null);
     } catch (err) {
       fail(err, '删除标签组失败');
@@ -172,6 +190,38 @@ export const DashboardPage: React.FC<Props> = ({ onSignOut }) => {
     }
   };
 
+  const handleRestoreDeleted = async (group: TabGroup) => {
+    setBusy(true);
+    try {
+      await restoreGroup(group.id);
+      // 云端墓碑复位 → 从已删除区移除，回到主列表（扩展端下次同步会合并恢复）
+      setDeletedGroups((prev) => prev.filter((g) => g.id !== group.id));
+      setGroups((prev) => {
+        if (prev.some((g) => g.id === group.id)) return prev;
+        return [group, ...prev];
+      });
+    } catch (err) {
+      fail(err, '恢复会话失败');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handlePurgeConfirmed = async () => {
+    if (!purgeTarget) return;
+    const groupId = purgeTarget.id;
+    setBusy(true);
+    try {
+      await purgeGroupPermanent(groupId);
+      setDeletedGroups((prev) => prev.filter((g) => g.id !== groupId));
+      setPurgeTarget(null);
+    } catch (err) {
+      fail(err, '彻底删除失败');
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const totalTabs = groups.reduce((sum, g) => sum + (g.tabs?.length ?? 0), 0);
 
   return (
@@ -182,6 +232,7 @@ export const DashboardPage: React.FC<Props> = ({ onSignOut }) => {
             <h1 className="text-lg font-semibold text-gray-900">TapStack</h1>
             <p className="text-xs text-gray-500">
               {groups.length} 个会话 · {totalTabs} 个标签页
+              {deletedGroups.length > 0 && ` · ${deletedGroups.length} 个已删除`}
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-3">
@@ -333,7 +384,62 @@ export const DashboardPage: React.FC<Props> = ({ onSignOut }) => {
             })}
           </div>
         )}
+
+        {!loading && deletedGroups.length > 0 && (
+          <div className="mt-8">
+            <button
+              onClick={() => setTrashOpen((v) => !v)}
+              className="flex w-full items-center justify-between rounded-xl border border-dashed border-gray-300 bg-white/60 px-4 py-3 text-sm text-gray-500 transition hover:bg-gray-100 dark:border-gray-700 dark:bg-gray-900/40"
+            >
+              <span>已删除（{deletedGroups.length}）——可恢复</span>
+              <span>{trashOpen ? '−' : '+'}</span>
+            </button>
+
+            {trashOpen && (
+              <div className="mt-3 space-y-3">
+                {deletedGroups.map((group) => (
+                  <div
+                    key={group.id}
+                    className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-gray-200 bg-white px-5 py-3 opacity-75 shadow-sm"
+                  >
+                    <div className="min-w-0">
+                      <h3 className="truncate text-sm font-medium text-gray-600">{group.name}</h3>
+                      <p className="text-xs text-gray-400">{group.tabs.length} 个标签页</p>
+                    </div>
+                    <div className="flex shrink-0 gap-2">
+                      <button
+                        onClick={() => handleRestoreDeleted(group)}
+                        disabled={busy}
+                        className="rounded-lg border border-gray-200 px-3 py-1.5 text-xs text-gray-700 transition hover:bg-gray-100 disabled:opacity-50"
+                      >
+                        恢复
+                      </button>
+                      <button
+                        onClick={() => setPurgeTarget(group)}
+                        disabled={busy}
+                        className="rounded-lg border border-rose-200 px-3 py-1.5 text-xs text-rose-600 transition hover:bg-rose-50 disabled:opacity-50"
+                      >
+                        彻底删除
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
       </main>
+
+      <ConfirmModal
+        open={Boolean(purgeTarget)}
+        title="彻底删除会话"
+        message={`确定彻底删除「${purgeTarget?.name ?? ''}」吗？删除后数据将从云端移除，无法恢复。`}
+        confirmLabel="彻底删除"
+        danger
+        busy={busy}
+        onCancel={() => setPurgeTarget(null)}
+        onConfirm={handlePurgeConfirmed}
+      />
 
       <ConfirmModal
         open={Boolean(deleteTabTarget)}
@@ -349,7 +455,7 @@ export const DashboardPage: React.FC<Props> = ({ onSignOut }) => {
       <ConfirmModal
         open={Boolean(deleteGroupTarget)}
         title="删除标签组"
-        message={`确定删除会话「${deleteGroupTarget?.name ?? ''}」吗？该操作会同步更新云端数据，且不可撤销。`}
+        message={`确定删除会话「${deleteGroupTarget?.name ?? ''}」吗？删除后会移入「已删除」，可随时恢复。`}
         confirmLabel="删除"
         danger
         busy={busy}
