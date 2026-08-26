@@ -1,6 +1,7 @@
 import { tabManager } from '@/background/TabManager';
 import { migrateToV2 } from '@/utils/migrationHelper';
 import { setupBackgroundSync } from '@/background/backgroundSync';
+import { syncEngine, SYNC_UPLOAD_ALARM } from '@/services/syncEngine';
 
 // Chrome 扩展的 Service Worker
 // 为了避免模块导入问题，早期版本内联了存储逻辑；现统一使用 utils/storage 以与前端页面共享同一数据源（IndexedDB）
@@ -136,6 +137,14 @@ setupContextMenus().catch(error => {
 
 // 后台同步 alarm（SW 被唤醒时重新注册，防遗漏）
 setupBackgroundSync();
+
+// ponytail: 上传报警听器。syncEngine.scheduleUpload() 改用 chrome.alarms
+// （setTimeout 在 MV3 SW idle 被杀后丢），这里负责接收 alarm 事件并触发上传。
+chrome.alarms.onAlarm.addListener((alarm) => {
+  if (alarm.name === SYNC_UPLOAD_ALARM) {
+    void syncEngine.runScheduledUpload();
+  }
+});
 
 // 监听扩展图标点击事件
 chrome.action.onClicked.addListener(async () => {

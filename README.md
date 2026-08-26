@@ -4,6 +4,8 @@
 
 最近变更：`main` 补齐“保存后自动上传”承诺接入点——TabManager 在 `saveAllTabs` / `saveTab` 后调用 `syncEngine.scheduleUpload(3000)`，未登录安全跳过。同步引擎 `upload()` 进入点懒恢复登录态（SW 是独立执行上下文）。验证 E2E：`scripts/e2e-auto-upload-test.mjs`、`scripts/e2e-background-sync-test.mjs`。
 
+另：`main` 修复“点开标签 / 删除会话后 60s 被云端复活”——`scheduleUpload` 从 `setTimeout` 改为 `chrome.alarms`（MV3 SW idle 被杀后 timer 会丢），并加 35s 上传保护窗口，避免上传完成前下载误覆盖。验证：`scripts/e2e-local-delete-no-resurrect.mjs`。
+
 TapStack 是一个面向重度浏览器用户的工作会话保险箱。它的核心目标不是“多一个标签管理器”，而是帮助你把当前窗口保存成可找回、可恢复的工作现场。
 
 ![TapStack](icons/icon128.png)

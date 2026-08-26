@@ -1,5 +1,15 @@
 import { store } from '@/store';
 import { getCurrentUser, setFromCache } from '@/store/slices/authSlice';
+
+/** MV3 SW 中由 chrome.alarms 驱动的延迟上传 alarm。 */
+export const SYNC_UPLOAD_ALARM = 'tapstack-scheduled-upload';
+
+/**
+ * 上传保护窗口。本地刚刚完成上传的时间窗口内，后台下载合并跳过——避免
+ * MV3 SW 中 chrome.alarms 的上传（30s）与轮询（60s）偶尔同时触发时下载
+ * 在上传完成前用云端旧版本覆盖本地新版本。forceRemote 手动下载不受限。
+ */
+export const UPLOAD_GUARD_MS = 35_000;
 import type { TabGroup, UserSettings } from '@/types/tab';
 import { storage } from '@/utils/storage';
 import {
@@ -96,18 +106,38 @@ export class SyncEngine {
    * @param delayMs 延迟毫秒数（默认 3000ms）
    */
   scheduleUpload(delayMs: number = 3000): void {
+    // ponytail: MV3 SW 可能在 idle 后被杀，setTimeout 会永远丢——手动“点开
+    // 一个标签”这类操作可能上传不到云端，然后后台 60s 轮询下来云端仍为旧版本，
+    // 本地新版本被“复活”。用 chrome.alarms 持久调度（与 backgroundSync 的
+    // SYNC_ALARM 同模式）：SW 被杀后 alarm 仍能触发唤醒重新上传。
+    // chrome.alarms 最小 delayInMinutes 是 0.5（30s），足够合并同 tick 多次调度。
+    if (typeof chrome !== 'undefined' && chrome.alarms) {
+      void chrome.alarms.clear(SYNC_UPLOAD_ALARM).catch(() => {});
+      const delayMinutes = Math.max(0.5, delayMs / 60000);
+      chrome.alarms.create(SYNC_UPLOAD_ALARM, { delayInMinutes: delayMinutes });
+      this.pendingUpload = true;
+      return;
+    }
+    // 非扩展运行时 fallback：单测可走这里
     if (this.uploadTimer) clearTimeout(this.uploadTimer);
     this.pendingUpload = true;
-    this.uploadTimer = setTimeout(async () => {
-      try {
-        await this.upload();
-      } catch (err) {
-        console.error('[SyncEngine] 延迟上传失败:', err);
-      } finally {
-        this.uploadTimer = null;
-        this.pendingUpload = false;
-      }
+    this.uploadTimer = setTimeout(() => {
+      this.uploadTimer = null;
+      this.pendingUpload = false;
+      void this.upload().catch(err => console.error('[SyncEngine] 延迟上传失败:', err));
     }, delayMs);
+  }
+
+  /**
+   * 由 chrome.alarms.onAlarm 回调。fire-and-forget；错误靠 console.error 报。
+   */
+  async runScheduledUpload(): Promise<void> {
+    this.pendingUpload = false;
+    try {
+      await this.upload();
+    } catch (err) {
+      console.error('[SyncEngine] alarm 驱动上传失败:', err);
+    }
   }
 
   /**
@@ -126,6 +156,27 @@ export class SyncEngine {
     }
     if (this.isSyncing) {
       return { success: false, groups: [], reason: 'already_syncing' };
+    }
+
+    // ponytail: 上传窗口保护。chrome.alarms 驱动上传 30s 最小间隔内，
+    // 如果后台 60s 轮询 alarm 也几乎同时触发，可能在上传完成前先下载并
+    // 用云端旧版本覆盖本地新版本。这里检查最近上传时间戳，若窗口内则跳过
+    // 下载合并（除非 forceRemote 显式要求覆盖）。
+    if (!opts?.forceRemote) {
+      try {
+        const lastUp = await storage.getLastSyncTime();
+        if (lastUp) {
+          const sinceUp = Date.now() - new Date(lastUp).getTime();
+          // UPLOAD_GUARD_MS 窗口内的轮询跳过（上传在背景运行，让它先完成）
+          if (sinceUp >= 0 && sinceUp < UPLOAD_GUARD_MS) {
+            console.log(`[SyncEngine] 最近 ${Math.round(sinceUp / 1000)}s 内刚上传过，跳过本次下载（避免覆盖本地新版本）`);
+            this.isSyncing = false;
+            return { success: false, groups: [], reason: 'recent_upload_guard' };
+          }
+        }
+      } catch (e) {
+        // storage 读失败不阻塞主流程
+      }
     }
 
     const report = opts?.onProgress || (() => {});
