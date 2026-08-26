@@ -773,20 +773,42 @@ export const sync = {
     console.log(`[markCloudGroupsAsDeleted] 正在标记云端 ${deletedIds.length} 个组为删除`);
 
     if (await supportsCloudTombstone()) {
-      // tombstone：保留行，置 is_deleted=true 并把 updated_at 推新，
-      // 让 merge 的版本/时间比较能识别 Web 端的删除意图
-      const { error } = await supabase
+      // ponytail: 防御性双步——服务端触发器 (guard_tab_group_version) 在
+      // NEW.version <= OLD.version 时会 RETURN NULL 静默跳过。先读出现有
+      // version，UPDATE 时 version+1 + 翻转 is_deleted，让墓碑意图总是传播。
+      // 单步 update + 不带 version 会让所有软删被吞（v1.17.0 上一 migration 的 bug）。
+      const { data: rows, error: readError } = await supabase
         .from('tab_groups')
-        .update({ is_deleted: true, updated_at: new Date().toISOString() })
+        .select('id, version')
         .eq('user_id', userId)
         .in('id', deletedIds);
 
-      if (error) {
-        console.error('[markCloudGroupsAsDeleted] 标记墓碑失败:', error);
-        throw error;
+      if (readError) {
+        console.error('[markCloudGroupsAsDeleted] 读取现有 version 失败:', readError);
+        throw readError;
       }
 
-      console.log(`[markCloudGroupsAsDeleted] 已标记 ${deletedIds.length} 个云端组为删除`);
+      const now = new Date().toISOString();
+      let successCount = 0;
+      // 每行单独 UPDATE 以携带各自的 (version+1)；批量 update 在 RLS 下会丢逐行 version
+      for (const row of (rows ?? []) as Array<{ id: string; version: number | null }>) {
+        const { error } = await supabase
+          .from('tab_groups')
+          .update({
+            is_deleted: true,
+            updated_at: now,
+            version: (row.version ?? 1) + 1,
+          })
+          .eq('id', row.id)
+          .eq('user_id', userId);
+        if (error) {
+          console.error(`[markCloudGroupsAsDeleted] 标记 ${row.id} 墓碑失败:`, error);
+          throw error;
+        }
+        successCount++;
+      }
+
+      console.log(`[markCloudGroupsAsDeleted] 已标记 ${successCount}/${deletedIds.length} 个云端组为删除`);
     } else {
       // 降级：硬删云端行（旧的统一做法）
       const { error } = await supabase

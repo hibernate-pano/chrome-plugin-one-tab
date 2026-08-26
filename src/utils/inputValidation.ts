@@ -230,29 +230,26 @@ function containsDangerousChars(input: string): boolean {
 
 /**
  * Tab URL 协议白名单/黑名单。导入、解析、下载的 tab URL 都必须经过此处。
- * - 接受 http/https/ftp/about/loading（loading 是未加载占位）
- * - 拒绝 javascript:/data:/vbscript:/file:/blob: 等危险协议
- * - 接受其他未知协议（保持现状，最严格仅 http/https 会误杀历史 about:blank 等）
- *
- * 返回合法 URL 字符串或 null（null 表示调用方应丢弃该 tab）。
+ * - ponytail v1.17.0 hotfix：上一版三分支全 return trimmed 是死代码（白名单不起作用）
+ * - 现在严格按白名单生效：只有 http/https/ftp/about/loading 接受
+ * - 显式黑名单（防漏检）：javascript:/data:/vbscript:/file:/blob:
+ * - 返回合法 URL 字符串或 null（null 表示调用方应丢弃该 tab）
  */
-const ALLOWED_TAB_PROTOCOLS = new Set(['http:', 'https:', 'ftp:', 'about:']);
+const ALLOWED_TAB_PROTOCOLS = new Set(['http:', 'https:', 'ftp:', 'about:', 'loading:']);
+const DANGEROUS_TAB_PROTOCOLS = new Set([
+  'javascript:', 'data:', 'vbscript:', 'file:', 'blob:',
+]);
 
 export function sanitizeTabUrl(url: unknown): string | null {
   if (typeof url !== 'string') return null;
   const trimmed = url.trim();
   if (!trimmed) return null;
-  // loading:// 占位符保留
+  // loading:// 占位符保留（URL 解析器不认，单独短路）
   if (trimmed.startsWith('loading://')) return trimmed;
   try {
     const u = new URL(trimmed);
-    if (u.protocol === 'javascript:' || u.protocol === 'data:' ||
-        u.protocol === 'vbscript:' || u.protocol === 'file:' ||
-        u.protocol === 'blob:') {
-      return null;
-    }
-    // 已知协议直接接受；其他 unknown 也接受（保守）
-    if (ALLOWED_TAB_PROTOCOLS.has(u.protocol) || u.protocol === 'loading:') return trimmed;
+    if (DANGEROUS_TAB_PROTOCOLS.has(u.protocol)) return null;
+    if (!ALLOWED_TAB_PROTOCOLS.has(u.protocol)) return null;
     return trimmed;
   } catch {
     return null;

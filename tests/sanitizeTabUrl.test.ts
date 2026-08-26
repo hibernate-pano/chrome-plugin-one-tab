@@ -89,4 +89,14 @@ describe('sanitizeTabUrl: 协议白名单/黑名单', () => {
       'https://example.com'
     );
   });
+
+  // ponytail: v1.17.0 hotfix — 白名单真正生效（之前是死代码，三分支全 return trimmed）
+  it('白名单严格生效：chrome-extension://、intent://、view-source: 等非白名单协议拒绝', async () => {
+    const { sanitizeTabUrl } = await import('@/utils/inputValidation');
+    assert.strictEqual(sanitizeTabUrl('chrome-extension://abcd/popup.html'), null);
+    assert.strictEqual(sanitizeTabUrl('intent://example.com#Intent;scheme=https'), null);
+    assert.strictEqual(sanitizeTabUrl('view-source:https://example.com'), null);
+    assert.strictEqual(sanitizeTabUrl('ms-appx-web://example.com'), null);
+    assert.strictEqual(sanitizeTabUrl('chrome://settings'), null);
+  });
 });
