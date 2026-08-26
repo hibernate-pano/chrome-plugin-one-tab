@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>隐私权政策 · TapStack</title>
+  <style>
+    body { font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif; line-height: 1.7; color: #1f2937; margin: 0; background: #f9fafb; }
+    main { max-width: 760px; margin: 0 auto; padding: 40px 24px 64px; background: #fff; min-height: 100vh; }
+    h1 { font-size: 26px; }
+    h2 { font-size: 19px; margin-top: 32px; }
+    p, li { font-size: 15px; }
+    .muted { color: #6b7280; font-size: 13px; }
+    .eff { background: #f3f4f6; border: 1px solid #e5e7eb; border-radius: 6px; padding: 12px 16px; font-size: 14px; color: #374151; }
+  </style>
+</head>
+<body>
+<main>
+  <h1>TapStack 隐私权政策</h1>
+  <p class="muted">最后更新：2026-02-13</p>
+
+  <p>TapStack（"我们"）提供一款浏览器标签页会话管理与同步工具。本政策说明我们收集哪些数据、如何使用、以及您的权利。使用本扩展即表示您同意本政策。</p>
+
+  <h2>1. 我们收集的数据</h2>
+  <ul>
+    <li><strong>会话数据</strong>：您主动保存的标签页信息（页面标题、URL、标签页分组结构）。</li>
+    <li><strong>账户信息</strong>：仅当您注册并登录账户后，会话数据才会同步到云端。账户使用邮箱和密码（通过 Supabase Auth 提供）。</li>
+  </ul>
+
+  <h2>2. 数据存储</h2>
+  <ul>
+    <li><strong>本地存储</strong>：会话数据默认保存在您浏览器的 <code>chrome.storage</code> 中，仅存于您的设备。</li>
+    <li><strong>云端存储</strong>：登录后，为支持多设备同步，会话数据会加密后上传至我们的托管服务提供商 <strong>Supabase</strong> 的云服务器。</li>
+  </ul>
+
+  <h2>3. 数据的使用与共享</h2>
+  <ul>
+    <li>数据仅用于实现"保存/恢复/同步会话"这一核心功能。</li>
+    <li>我们<strong>不向任何第三方出售、出租或共享</strong>您的个人数据。唯一的第三方是提供数据托管服务的 Supabase。</li>
+    <li>我们<strong>不使用</strong>数据做广告、用户画像或任何营销用途。</li>
+  </ul>
+
+  <h2>4. 数据与删除</h2>
+  <ul>
+    <li>您可以随时删除任意保存的会话——删除后本地与云端数据同步清除。</li>
+    <li>如需删除账户及云端全部数据，请通过下方联系方式联系我们将您的账户数据彻底删除。</li>
+  </ul>
+
+  <h2>5. 权限使用</h2>
+  <div class="eff">本扩展使用 <code>alarms</code> 权限仅用于在您未打开扩展时，定时在后台同步会话数据（详见扩展商店"隐私权规范"说明）。扩展不会后台采集您未保存的其他浏览数据。</div>
+
+  <h2>6. 安全</h2>
+  <p>我们采用传输加密（HTTPS）、服务端行级安全策略（RLS）等业界常规措施保护您的数据。请妥善保管您的账户密码。</p>
+
+  <h2>7. 政策更新</h2>
+  <p>如本政策发生实质变更，我们会在本页面发布更新并注明日期。</p>
+
+  <h2>8. 联系我们</h2>
+  <p>如对本政策或您的数据有任何疑问或请求，请发送邮件至：<strong>privacy@tapstack.app</strong></p>
+</main>
+</body>
+</html>
