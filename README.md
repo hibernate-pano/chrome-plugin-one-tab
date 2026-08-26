@@ -2,6 +2,8 @@
 
 当前版本：`1.16.0`
 
+最近变更：`main` 补齐“保存后自动上传”承诺接入点——TabManager 在 `saveAllTabs` / `saveTab` 后调用 `syncEngine.scheduleUpload(3000)`，未登录安全跳过。同步引擎 `upload()` 进入点懒恢复登录态（SW 是独立执行上下文）。验证 E2E：`scripts/e2e-auto-upload-test.mjs`、`scripts/e2e-background-sync-test.mjs`。
+
 TapStack 是一个面向重度浏览器用户的工作会话保险箱。它的核心目标不是“多一个标签管理器”，而是帮助你把当前窗口保存成可找回、可恢复的工作现场。
 
 ![TapStack](icons/icon128.png)
@@ -41,6 +43,7 @@ TapStack 是一个面向重度浏览器用户的工作会话保险箱。它的�
 - **跨端软删**：Web 端删除改为云端墓碑（`is_deleted` 列，需 Supabase migration `supabase/migrations/20260825130248_add_is_deleted_tombstone.sql`，已在生产库执行）；扩展端同步时按版本 / 时间比较应用删除，不会“复活”已删行。
 - **单引擎**：所有同步（自动 + 手动 + 设置同步）统一走 `syncEngine.ts`，旧 `syncService` / `smartSyncService` / `tabSyncWorkflow` 已移除。
 - 没有登录时不触发云端同步。
+- **保存路径**：popup 按钮 / 快捷键 / 右键菜单都走 SW `TabManager.saveAllTabs()` → `storage.setGroups()` 后立刻调 `syncEngine.scheduleUpload(3000)`（防抖）推送。`autoSyncMiddleware` 负责捕获 store 侧的重命名 / 删除 / 锁定 / 拖拽 `dispatch` thunk 的 fulfilled 动作；MV3 SW 是独立执行上下文，`syncEngine.upload()` 进入点懒恢复登录态（重复调用是 no-op，与 `backgroundSync` 一致）。
 
 ## 不承诺的能力
 
@@ -118,8 +121,9 @@ TEST_EMAIL="your-test-user@example.com" TEST_PASSWORD="your-password" pnpm test:
 ## 隐私与数据
 
 - 本地数据默认保存在浏览器扩展存储中
-- 登录后，云端数据仅用于你主动触发的同步
-- 你应当把同步理解为“由你控制的数据搬运”，而不是后台持续同步
+- 登录后，云端数据仅用于跨设备找回和主动触发的同步
+- 同步采用增量防抖：保存 / 重命名 / 删除 / 锁定后自动上传云端；后台 alarm 每 60s 自动拉取云端变更到本地（未登录不触发）
+- 你可以随时用手动入口（同步按钮）切换“合并 / 覆盖”模式或强制重新同步
 
 ## 仓库
 

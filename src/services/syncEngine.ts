@@ -1,4 +1,5 @@
 import { store } from '@/store';
+import { getCurrentUser, setFromCache } from '@/store/slices/authSlice';
 import type { TabGroup, UserSettings } from '@/types/tab';
 import { storage } from '@/utils/storage';
 import {
@@ -213,7 +214,16 @@ export class SyncEngine {
     syncSettings?: boolean;
     onProgress?: SyncProgressCallback;
   }): Promise<UploadResult> {
-    const state = store.getState() as { auth: { isAuthenticated: boolean }; settings: UserSettings };
+    let state = store.getState() as { auth: { isAuthenticated: boolean; user: { id: string; email: string } | null }; settings: UserSettings };
+    // ponytail: SW 进程是独立执行上下文，store 是新实例。TabManager.saveAllTabs 后
+    // 自动调 scheduleUpload() 时 SW store 中 isAuthenticated 仍为 false——
+    // 这里懒恢复一次登录态（从 chrome.storage.local 里的 supabase session 读）。
+    // backgroundSync.performBackgroundSync 先调过一次，此处二次调用是 no-op。
+    if (!state.auth.isAuthenticated) {
+      const user = await store.dispatch(getCurrentUser()).unwrap().catch(() => null);
+      if (user) store.dispatch(setFromCache({ user, isAuthenticated: true }));
+      state = store.getState() as typeof state;
+    }
     if (!state.auth.isAuthenticated) {
       return { success: false, error: '用户未登录' };
     }

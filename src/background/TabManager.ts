@@ -2,6 +2,7 @@ import { storage } from '@/utils/storage';
 import { createTabGroupFromChromeTabs, filterValidTabs } from '@/domain/tabGroup';
 import { cacheManager } from '@/utils/performance';
 import { trackProductEvent } from '@/utils/productEvents';
+import { syncEngine } from '@/services/syncEngine';
 
 /**
  * 统一的标签页管理器
@@ -98,6 +99,11 @@ export class TabManager {
       const existingGroups = await storage.getGroups();
       await storage.setGroups([tabGroup, ...existingGroups]);
 
+      // ponytail: 自动上传承诺接入点。SW 保存路径完全绕过 Redux（直接 setGroups），
+      // autoSyncMiddleware 永远监听不到 saveGroup.fulfilled——这里补上 scheduleUpload
+      // 让"保存后自动同步云端"实际生效（未登录时 syncEngine 安全跳过）。
+      syncEngine.scheduleUpload(3000);
+
       await this.showNotification({
         type: 'basic',
         iconUrl: chrome.runtime.getURL('icons/icon128.png'),
@@ -173,6 +179,9 @@ export class TabManager {
 
       const existingGroups = await storage.getGroups();
       await storage.setGroups([tabGroup, ...existingGroups]);
+
+      // ponytail: 关闭单标签时也会触发数据变更（保存到当前会话）——同样需自动上传。
+      syncEngine.scheduleUpload(3000);
 
       await trackProductEvent('session_saved', {
         sessionId: tabGroup.id,
