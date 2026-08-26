@@ -395,7 +395,8 @@ export const sync = {
           title: String(tab.title),
           favicon: tab.favicon ? String(tab.favicon) : undefined,
           created_at: String(tab.created_at),
-          last_accessed: String(tab.last_accessed)
+          last_accessed: String(tab.last_accessed),
+          is_deleted: tab.isDeleted === true ? true : undefined,
         }));
 
         // 更新标签组，添加 tabs_data 字段
@@ -511,16 +512,17 @@ export const sync = {
       const createdAt = group.createdAt || currentTime;
       const updatedAt = group.updatedAt || currentTime;
 
-      // 将标签转换为 TabData 格式
-      const tabsData: TabData[] = group.tabs.map(tab => ({
-        id: tab.id,
-        url: tab.url,
-        title: tab.title,
-        favicon: tab.favicon,
-        created_at: tab.createdAt,
-        last_accessed: tab.lastAccessed,
-        pinned: tab.pinned,
-      }));
+        // 将标签转换为 TabData 格式
+        const tabsData: TabData[] = group.tabs.map(tab => ({
+          id: tab.id,
+          url: tab.url,
+          title: tab.title,
+          favicon: tab.favicon,
+          created_at: tab.createdAt,
+          last_accessed: tab.lastAccessed,
+          pinned: tab.pinned,
+          is_deleted: tab.isDeleted || undefined,
+        }));
 
       // 准备返回对象
       const returnObj = {
@@ -557,6 +559,9 @@ export const sync = {
     let result: any = null;
     try {
       // 对每个标签组的数据进行加密
+      // 安全约束：加密失败的组绝不允许明文上云——宁可本次同步失败重试，
+      // 也不能把用户浏览记录以明文写入云端（Web Crypto 不可用等环境会走到这里）
+      const encryptionFailedIds: string[] = [];
       for (let i = 0; i < groupsWithUser.length; i++) {
         const group = groupsWithUser[i];
         if (group.tabs_data && Array.isArray(group.tabs_data)) {
@@ -568,9 +573,15 @@ export const sync = {
             console.log(`标签组 ${group.id} 的数据已加密`);
           } catch (error) {
             console.error(`加密标签组 ${group.id} 的数据失败:`, error);
-            // 如果加密失败，保留原始数据
+            encryptionFailedIds.push(group.id);
           }
         }
+      }
+
+      if (encryptionFailedIds.length > 0) {
+        throw new Error(
+          `${encryptionFailedIds.length} 个标签组加密失败，已中止上传以避免明文上云（组ID: ${encryptionFailedIds.join(', ')}）。请检查浏览器环境是否支持 Web Crypto。`
+        );
       }
 
       // 验证数据
@@ -922,6 +933,7 @@ export const sync = {
           lastAccessed: tab.last_accessed,
           group_id: String(groupAny.id),
           pinned: tab.pinned ?? false,
+          isDeleted: tab.is_deleted === true ? true : undefined,
         }));
 
         tabGroups.push({

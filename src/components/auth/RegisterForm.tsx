@@ -2,8 +2,7 @@ import React, { useState } from 'react';
 import { useAppDispatch, useAppSelector } from '@/store/hooks';
 import { signUp, signIn, clearError } from '@/store/slices/authSlice';
 import { InlineNotice } from '@/components/common/InlineNotice';
-// TODO: 集成输入验证功能
-// import { validateEmail, validatePassword, validateForm, checkPasswordStrength, PasswordStrength } from '@/utils/inputValidation';
+import { validateEmail, validatePassword } from '@/utils/inputValidation';
 
 interface RegisterFormProps {
   onSuccess?: () => void;
@@ -16,6 +15,7 @@ export const RegisterForm: React.FC<RegisterFormProps> = ({ onSuccess }) => {
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [passwordError, setPasswordError] = useState('');
+  const [emailError, setEmailError] = useState('');
   const inputClassName = (hasError = false) =>
     `w-full rounded-2xl border px-4 py-3 text-sm shadow-sm transition focus:outline-none focus:ring-4 focus:border-transparent bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 ${
       hasError
@@ -29,6 +29,19 @@ export const RegisterForm: React.FC<RegisterFormProps> = ({ onSuccess }) => {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
+    const emailResult = validateEmail(email);
+    if (!emailResult.isValid) {
+      setEmailError(emailResult.error || '邮箱格式不正确');
+      return;
+    }
+    setEmailError('');
+
+    const passwordResult = validatePassword(password);
+    if (!passwordResult.isValid) {
+      setPasswordError(passwordResult.error || '密码不符合要求');
+      return;
+    }
+
     if (password !== confirmPassword) {
       setPasswordError('两次输入的密码不一致');
       return;
@@ -40,7 +53,7 @@ export const RegisterForm: React.FC<RegisterFormProps> = ({ onSuccess }) => {
     try {
       if (email && password) {
         // 注册用户
-        const result = await dispatch(signUp({ email, password })).unwrap();
+        const result = await dispatch(signUp({ email: emailResult.sanitized || email, password })).unwrap();
 
         if (result) {
           setRegistrationSuccess(true);
@@ -94,12 +107,20 @@ export const RegisterForm: React.FC<RegisterFormProps> = ({ onSuccess }) => {
           <label className="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-300">邮箱</label>
           <input
             type="email"
-            className={inputClassName()}
+            className={inputClassName(Boolean(emailError))}
             value={email}
-            onChange={(e) => setEmail(e.target.value)}
+            onChange={(e) => {
+              setEmail(e.target.value);
+              if (emailError) {
+                setEmailError('');
+              }
+            }}
             placeholder="请输入您的邮箱"
             required
           />
+          {emailError && (
+            <p className="mt-2 text-sm text-rose-600 dark:text-rose-400">{emailError}</p>
+          )}
         </div>
         <div className="mb-5">
           <label className="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-300">密码</label>

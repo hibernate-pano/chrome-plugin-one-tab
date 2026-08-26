@@ -1,8 +1,9 @@
 {
   "manifest_version": 3,
   "name": "TapStack",
-  "version": "1.16.0",
+  "version": "1.16.1",
   "description": "Save browser work sessions and restore them later",
+  "minimum_chrome_version": "120",
   "content_security_policy": {
     "extension_pages": "script-src 'self'; object-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https: http:; font-src 'self' data:; connect-src 'self' https://*.supabase.co; frame-src 'none'; base-uri 'self'; form-action 'self';"
   },

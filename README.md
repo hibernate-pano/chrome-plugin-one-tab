@@ -1,8 +1,10 @@
 # TapStack
 
-当前版本：`1.16.0`
+当前版本：`1.16.1`
 
-最近变更：`main` 补齐“保存后自动上传”承诺接入点——TabManager 在 `saveAllTabs` / `saveTab` 后调用 `syncEngine.scheduleUpload(3000)`，未登录安全跳过。同步引擎 `upload()` 进入点懒恢复登录态（SW 是独立执行上下文）。验证 E2E：`scripts/e2e-auto-upload-test.mjs`、`scripts/e2e-background-sync-test.mjs`。
+最近变更：`v1.16.1` 修复**单标签删除跨设备复活**——删除标签改为墓碑（tab 级 `isDeleted`），`mergeTabs` 按墓碑剔除对侧活跃副本并传播删除意图，空组自动删除改走与 `deleteGroup` 一致的软删墓碑；上传序列化双向携带 `is_deleted`。下载前置保护重构为纯函数 `decideDownloadPrecheck` 并补单测。安全加固：注册表单接入邮箱/密码强度校验；上传加密失败改为中止同步而非明文上云。验证：`tests/tabTombstone.test.ts` + 双实例 E2E `scripts/e2e-tab-delete-no-resurrect.mjs`。
+
+前情：`main` 补齐“保存后自动上传”承诺接入点——TabManager 在 `saveAllTabs` / `saveTab` 后调用 `syncEngine.scheduleUpload(3000)`，未登录安全跳过。同步引擎 `upload()` 进入点懒恢复登录态（SW 是独立执行上下文）。验证 E2E：`scripts/e2e-auto-upload-test.mjs`、`scripts/e2e-background-sync-test.mjs`。
 
 另：`main` 修复“点开标签 / 删除会话后 60s 被云端复活”——`scheduleUpload` 从 `setTimeout` 改为 `chrome.alarms`（MV3 SW idle 被杀后 timer 会丢），并加 35s 上传保护窗口，避免上传完成前下载误覆盖。验证：`scripts/e2e-local-delete-no-resurrect.mjs`。
 
