@@ -27,11 +27,14 @@ export const shouldAutoDeleteAfterTabRemoval = (group: TabGroup, tabIdToDelete: 
   if (group.isLocked) {
     return false;
   }
-  
-  // 计算删除指定标签页后剩余的标签页数量
-  const remainingTabsCount = group.tabs.filter(tab => tab.id !== tabIdToDelete).length;
-  
-  // 如果删除后没有剩余标签页，则应该自动删除标签组
+
+  // 只统计活跃（非墓碑）标签：storage 中墓碑 tab 用于同步删除意图，
+  // 不代表用户可见的标签；否则墓碑会让空组永远不满足自动删除条件
+  const remainingTabsCount = group.tabs.filter(
+    tab => tab.id !== tabIdToDelete && !tab.isDeleted
+  ).length;
+
+  // 如果删除后没有剩余活跃标签页，则应该自动删除标签组
   return remainingTabsCount === 0;
 };
 
@@ -46,11 +49,13 @@ export const shouldAutoDeleteAfterMultipleTabRemoval = (group: TabGroup, tabIdsT
   if (group.isLocked) {
     return false;
   }
-  
-  // 计算删除指定标签页后剩余的标签页数量
-  const remainingTabsCount = group.tabs.filter(tab => !tabIdsToDelete.includes(tab.id)).length;
-  
-  // 如果删除后没有剩余标签页，则应该自动删除标签组
+
+  // 只统计活跃（非墓碑）标签（同 shouldAutoDeleteAfterTabRemoval）
+  const remainingTabsCount = group.tabs.filter(
+    tab => !tabIdsToDelete.includes(tab.id) && !tab.isDeleted
+  ).length;
+
+  // 如果删除后没有剩余活跃标签页，则应该自动删除标签组
   return remainingTabsCount === 0;
 };
 

@@ -73,14 +73,17 @@ async function performBackgroundSync(): Promise<boolean> {
 
   // 3. ponytail: 先上传本地未推送变更。持久化标志 storage.getPendingUpload()
   // 跨进程跨 SW 重启保留：popup 失焦销毁后本地有变更 = true，下一次后台
-  // alarm 起来时会先上传。forceUpload=true 跳过 cancelPendingUpload 短路。
+  // alarm 起来时会先上传。forcePending=true 跳过 isSyncing 短路。
+  // 上传失败（网络断等）则中止本次下载：拉下来的只会是云端旧数据，
+  // 会覆盖本地未推送的新状态（复活）。pending flag 已保留，下轮重试。
   try {
     const hasPending = await syncEngine.hasPendingUpload();
     if (hasPending) {
       console.log('[BackgroundSync] 本地有未上传变更，先上传再下载');
       const upResult = await syncEngine.upload({ forcePending: true });
       if (!upResult.success) {
-        console.warn(`[BackgroundSync] 上传未成功：${upResult.error}—继续下载（后续 alarm 会重试）`);
+        console.warn(`[BackgroundSync] 上传未成功，跳过本次下载: ${upResult.error}（下轮 alarm 重试）`);
+        return true;
       }
     }
   } catch (e) {
@@ -91,7 +94,8 @@ async function performBackgroundSync(): Promise<boolean> {
   const result = await syncEngine.downloadAndMerge();
   if (!result.success) {
     const reason = result.reason ?? 'unknown';
-    if (reason !== 'already_syncing' && reason !== 'recent_upload_guard') {
+    // already_syncing / recent_upload_guard / pending_upload_failed 属正常并发或保护性跳过，不视为错误
+    if (reason !== 'already_syncing' && reason !== 'recent_upload_guard' && reason !== 'pending_upload_failed') {
       console.warn(`[BackgroundSync] 自动下载未成功: ${reason}`);
     }
     return true;

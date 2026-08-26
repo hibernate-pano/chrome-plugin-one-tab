@@ -200,3 +200,90 @@ describe('syncMergeSafety: 同步合并不丢本地数据（真实生产路径�
     );
   });
 });
+
+// ── 下载前置保护（decideDownloadPrecheck） ──────────────────────────────
+// 防止「本地删除/点开的标签被云端旧数据复活」的第二道防线：
+// downloadAndMerge 在拉取云端前，先判断是否需要跳过或先推送本地变更。
+
+describe('syncMergeSafety: 下载前置保护 decideDownloadPrecheck', () => {
+  const NOW = Date.parse('2026-06-04T08:00:00.000Z');
+
+  it('forceRemote（覆盖下载）→ 直接 proceed，跳过一切保护', async () => {
+    const { decideDownloadPrecheck } = await import('@/utils/syncUtils');
+    const decision = decideDownloadPrecheck({
+      forceRemote: true,
+      lastUploadTime: new Date(NOW - 5_000).toISOString(), // 刚上传过
+      pendingUpload: true, // 且有未推送变更
+      now: NOW,
+    });
+    assert.deepEqual(decision, { action: 'proceed' });
+  });
+
+  it('UPLOAD_GUARD_MS 窗口内刚上传过 → skip (recent_upload_guard)', async () => {
+    const { decideDownloadPrecheck } = await import('@/utils/syncUtils');
+    const decision = decideDownloadPrecheck({
+      forceRemote: false,
+      lastUploadTime: new Date(NOW - 10_000).toISOString(), // 10s 前刚上传
+      pendingUpload: false,
+      now: NOW,
+    });
+    assert.deepEqual(decision, { action: 'skip', reason: 'recent_upload_guard' });
+  });
+
+  it('上传发生在窗口之外（>35s）→ 不触发 guard', async () => {
+    const { decideDownloadPrecheck, UPLOAD_GUARD_MS } = await import('@/utils/syncUtils');
+    const decision = decideDownloadPrecheck({
+      forceRemote: false,
+      lastUploadTime: new Date(NOW - UPLOAD_GUARD_MS - 1_000).toISOString(),
+      pendingUpload: false,
+      now: NOW,
+    });
+    assert.deepEqual(decision, { action: 'proceed' });
+  });
+
+  it('从未上传过（lastUploadTime=null）→ 不触发 guard', async () => {
+    const { decideDownloadPrecheck } = await import('@/utils/syncUtils');
+    const decision = decideDownloadPrecheck({
+      forceRemote: false,
+      lastUploadTime: null,
+      pendingUpload: false,
+      now: NOW,
+    });
+    assert.deepEqual(decision, { action: 'proceed' });
+  });
+
+  it('lastUploadTime 为未来时间戳（时钟偏差）→ sinceUpload<0，不误杀下载', async () => {
+    const { decideDownloadPrecheck } = await import('@/utils/syncUtils');
+    const decision = decideDownloadPrecheck({
+      forceRemote: false,
+      lastUploadTime: new Date(NOW + 60_000).toISOString(),
+      pendingUpload: false,
+      now: NOW,
+    });
+    assert.deepEqual(decision, { action: 'proceed' });
+  });
+
+  it('有未推送变更且不在 guard 窗口 → upload_first（先推后拉的防复活核心）', async () => {
+    const { decideDownloadPrecheck } = await import('@/utils/syncUtils');
+    // 真实场景：删除书签 → pending=true、upload alarm 排在未来 → 此时任何
+    // downloadAndMerge 都必须先把删除推上云，否则云端旧数据会复活已删内容。
+    const decision = decideDownloadPrecheck({
+      forceRemote: false,
+      lastUploadTime: new Date(NOW - 120_000).toISOString(),
+      pendingUpload: true,
+      now: NOW,
+    });
+    assert.deepEqual(decision, { action: 'upload_first' });
+  });
+
+  it('guard 规则优先于 upload_first：刚传完又出现 pending → skip 下载，等下轮 alarm 推送', async () => {
+    const { decideDownloadPrecheck } = await import('@/utils/syncUtils');
+    const decision = decideDownloadPrecheck({
+      forceRemote: false,
+      lastUploadTime: new Date(NOW - 5_000).toISOString(),
+      pendingUpload: true,
+      now: NOW,
+    });
+    assert.deepEqual(decision, { action: 'skip', reason: 'recent_upload_guard' });
+  });
+});

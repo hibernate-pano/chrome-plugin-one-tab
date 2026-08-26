@@ -29,14 +29,21 @@ export const initialTabState: TabState = {
   syncOperation: 'none',
 };
 
+/** 过滤组内标签级墓碑（storage 保留墓碑用于同步删除意图，Redux/UI 不感知） */
+const stripTombstonedTabs = (group: TabGroup): TabGroup =>
+  group.tabs.some(t => t.isDeleted) ? { ...group, tabs: group.tabs.filter(t => !t.isDeleted) } : group;
+
 export const loadGroups = createAsyncThunk('tabs/loadGroups', async () => {
   const groups = await storage.getGroups();
 
   // 过滤掉已软删除的标签组，避免UI显示
   const activeGroups = groups.filter(g => !g.isDeleted);
 
+  // 标签级墓碑只存在于 storage 用于跨设备传播删除意图，不进入 UI
+  const groupsWithoutTombstonedTabs = activeGroups.map(stripTombstonedTabs);
+
   // 确保标签组始终按创建时间倒序排列（最新创建的在前面）
-  const sortedGroups = activeGroups.sort((a, b) => {
+  const sortedGroups = groupsWithoutTombstonedTabs.sort((a, b) => {
     const dateA = new Date(a.createdAt);
     const dateB = new Date(b.createdAt);
     return dateB.getTime() - dateA.getTime();
@@ -69,15 +76,35 @@ export const updateGroup = createAsyncThunk(
   'tabs/updateGroup',
   async (group: TabGroup) => {
     const groups = await storage.getGroups();
+    const now = new Date().toISOString();
 
-    // 使用辅助函数增加版本号
-    const updatedGroups = groups.map(g =>
-      g.id === group.id ? updateGroupWithVersion(g, group) : g
-    );
+    const updatedGroups = groups.map(g => {
+      if (g.id !== group.id) return g;
+
+      // tab 级墓碑保护：UI 各路径（TabGroup、SearchResultList、ReorderView 等）
+      // 通过传入「过滤后的 tabs」来表达删除标签。diff 出 storage 有而传入没有的
+      // tab，标记为墓碑追加回去——删除意图随下次上传传播到云端与其他设备。
+      // 否则其他设备的后台轮询会把该标签当作 remote/local-only 合并回来（复活）。
+      // 已是墓碑的原样保留（幂等，防止重复 version 膨胀）。
+      const incomingIds = new Set(group.tabs.map(t => t.id));
+      const tombstones = g.tabs
+        .filter(prev => !incomingIds.has(prev.id))
+        .map(prev =>
+          prev.isDeleted ? prev : { ...prev, isDeleted: true, lastAccessed: now }
+        );
+
+      // 使用辅助函数增加版本号
+      return updateGroupWithVersion(g, {
+        ...group,
+        tabs: [...group.tabs, ...tombstones],
+      });
+    });
 
     await storage.setGroups(updatedGroups);
 
-    return updatedGroups.find(g => g.id === group.id)!;
+    const updated = updatedGroups.find(g => g.id === group.id)!;
+    // 出口过滤：墓碑不进 Redux（与 loadGroups 口径一致），UI 永远看不到墓碑
+    return stripTombstonedTabs(updated);
   }
 );
 
@@ -919,14 +946,17 @@ export const {
   setGroups,
 } = tabSlice.actions;
 
-// 新增：删除单个标签页
+// 删除单个标签页（墓碑化）：标记 isDeleted 而非物理移除，
+// 删除意图随上传传播到云端与其他设备；墓碑由各出口过滤不出现在 UI。
+// 注意：当前主要删除路径是 UI 组件直接 updateGroup(filter)，
+// 由 updateGroup thunk 的 diff 统一墓碑化；本 thunk 保留为显式删除入口。
 export const deleteTabAndSync = createAsyncThunk<
   { group: TabGroup | null },
   { groupId: string; tabId: string },
   { state: any }
 >('tabs/deleteTabAndSync', async ({ groupId, tabId }: { groupId: string; tabId: string }) => {
   try {
-    // 在本地存储中删除标签
+    // 在本地存储中处理标签
     const groups = await storage.getGroups();
     const groupIndex = groups.findIndex(g => g.id === groupId);
 
@@ -935,31 +965,41 @@ export const deleteTabAndSync = createAsyncThunk<
 
       // 使用工具函数检查删除标签页后是否应该自动删除标签组
       if (shouldAutoDeleteAfterTabRemoval(currentGroup, tabId)) {
-        // 自动删除空的未锁定标签组
-        const updatedGroups = groups.filter(g => g.id !== groupId);
+        // 自动删除空的未锁定标签组：必须与 deleteGroup 相同的软删墓碑形态
+        // （isDeleted + version+1），否则上传时 deletedIds 缺失该组、云端行残留，
+        // 下次下载合并会以 remote-only 身份整体复活成僵尸空组。
+        const now2 = new Date().toISOString();
+        const updatedGroups = groups.map(g =>
+          g.id === groupId
+            ? { ...g, isDeleted: true, version: (g.version || 1) + 1, updatedAt: now2 }
+            : g
+        );
         await storage.setGroups(updatedGroups);
 
-        console.log(`自动删除空标签组: ${currentGroup.name} (ID: ${groupId})`);
+        console.log(`自动软删除空标签组: ${currentGroup.name} (ID: ${groupId})`);
         return { group: null };
-      } else {
-        // 更新标签组，移除指定的标签页
-        const updatedTabs = currentGroup.tabs.filter(tab => tab.id !== tabId);
-        const currentVersion = currentGroup.version || 1;
-        const updatedGroup = {
-          ...currentGroup,
-          tabs: updatedTabs,
-          updatedAt: new Date().toISOString(),
-          version: currentVersion + 1,
-        };
-
-        // 更新本地存储
-        const updatedGroups = [...groups];
-        updatedGroups[groupIndex] = updatedGroup;
-        await storage.setGroups(updatedGroups);
-
-        console.log(`从标签组删除标签页: ${currentGroup.name}, 剩余标签页: ${updatedTabs.length}`);
-        return { group: updatedGroup };
       }
+
+      const now = new Date().toISOString();
+      const updatedTabs = currentGroup.tabs.map(tab =>
+        tab.id === tabId && !tab.isDeleted
+          ? { ...tab, isDeleted: true, lastAccessed: now }
+          : tab
+      );
+      const updatedGroup = {
+        ...currentGroup,
+        tabs: updatedTabs,
+        updatedAt: now,
+        version: (currentGroup.version || 1) + 1,
+      };
+
+      // 更新本地存储
+      const updatedGroups = [...groups];
+      updatedGroups[groupIndex] = updatedGroup;
+      await storage.setGroups(updatedGroups);
+
+      console.log(`从标签组删除标签页(墓碑): ${currentGroup.name}, 活跃标签页: ${updatedTabs.filter(t => !t.isDeleted).length}`);
+      return { group: stripTombstonedTabs(updatedGroup) };
     }
 
     return { group: null };

@@ -3,13 +3,9 @@ import { getCurrentUser, setFromCache } from '@/store/slices/authSlice';
 
 /** MV3 SW 中由 chrome.alarms 驱动的延迟上传 alarm。 */
 export const SYNC_UPLOAD_ALARM = 'tapstack-scheduled-upload';
-
-/**
- * 上传保护窗口。本地刚刚完成上传的时间窗口内，后台下载合并跳过——避免
- * MV3 SW 中 chrome.alarms 的上传（30s）与轮询（60s）偶尔同时触发时下载
- * 在上传完成前用云端旧版本覆盖本地新版本。forceRemote 手动下载不受限。
- */
-export const UPLOAD_GUARD_MS = 35_000;
+// UPLOAD_GUARD_MS 常量与下载前置决策在 syncUtils（纯函数，可单测），
+// 此处 re-export 供既有引用方不破坏。
+export { UPLOAD_GUARD_MS } from '@/utils/syncUtils';
 import type { TabGroup, UserSettings } from '@/types/tab';
 import { storage } from '@/utils/storage';
 import {
@@ -18,7 +14,11 @@ import {
   markCloudGroupsAsDeleted,
 } from '@/services/tabGroupSyncService';
 import { uploadSettings, downloadSettings } from '@/services/settingsSyncService';
-import { mergeTabGroups, validateMergeResult } from '@/utils/syncUtils';
+import {
+  mergeTabGroups,
+  validateMergeResult,
+  decideDownloadPrecheck,
+} from '@/utils/syncUtils';
 import { errorHandler } from '@/utils/errorHandler';
 import { validateThemeStyle, validateThemeMode } from '@/utils/storage';
 
@@ -155,8 +155,9 @@ export class SyncEngine {
 
   /**
    * 从云端下载并合并到本地。
-   * 安全流水线：快照 → 下载 → 合并 → 验证 → 写入；任一步失败自动回滚。
-   * @param opts.forceRemote 是否强制用云端数据覆盖本地
+   * 安全流水线：上传窗口守卫 → 未推送变更先上传 → 快照 → 下载 → 合并 →
+   * 验证 → 写入；任一步失败自动回滚。
+   * @param opts.forceRemote 是否强制用云端数据覆盖本地（跳过上传守卫与先传后拉）
    */
   async downloadAndMerge(opts?: {
     forceRemote?: boolean;
@@ -171,24 +172,43 @@ export class SyncEngine {
       return { success: false, groups: [], reason: 'already_syncing' };
     }
 
-    // ponytail: 上传窗口保护。chrome.alarms 驱动上传 30s 最小间隔内，
-    // 如果后台 60s 轮询 alarm 也几乎同时触发，可能在上传完成前先下载并
-    // 用云端旧版本覆盖本地新版本。这里检查最近上传时间戳，若窗口内则跳过
-    // 下载合并（除非 forceRemote 显式要求覆盖）。
+    // ponytail: 下载前置保护（决策逻辑见 decideDownloadPrecheck 单测）：
+    // 1) 刚上传过 → 跳过下载（云端已是本地新状态）
+    // 2) 有未推送变更 → 先上传再下载，否则「删除书签后 upload alarm 未到
+    //    就触发下载」会让云端旧数据先合并回来（复活），事后的 re-schedule
+    //    再把复活后的状态推上去，删除意图彻底丢失。
     if (!opts?.forceRemote) {
+      let decision: ReturnType<typeof decideDownloadPrecheck>;
       try {
-        const lastUp = await storage.getLastSyncTime();
-        if (lastUp) {
-          const sinceUp = Date.now() - new Date(lastUp).getTime();
-          // UPLOAD_GUARD_MS 窗口内的轮询跳过（上传在背景运行，让它先完成）
-          if (sinceUp >= 0 && sinceUp < UPLOAD_GUARD_MS) {
-            console.log(`[SyncEngine] 最近 ${Math.round(sinceUp / 1000)}s 内刚上传过，跳过本次下载（避免覆盖本地新版本）`);
-            this.isSyncing = false;
-            return { success: false, groups: [], reason: 'recent_upload_guard' };
-          }
-        }
+        const [lastUpload, pending] = await Promise.all([
+          storage.getLastUploadTime(),
+          this.hasPendingUpload(),
+        ]);
+        decision = decideDownloadPrecheck({
+          forceRemote: false,
+          lastUploadTime: lastUpload,
+          pendingUpload: pending,
+          now: Date.now(),
+        });
       } catch (e) {
-        // storage 读失败不阻塞主流程
+        // storage 读失败不阻塞主流程，走正常下载
+        decision = { action: 'proceed' };
+      }
+
+      if (decision.action === 'skip') {
+        console.log(`[SyncEngine] 跳过本次下载（${decision.reason}：刚上传过，避免覆盖本地新版本）`);
+        return { success: false, groups: [], reason: decision.reason };
+      }
+
+      if (decision.action === 'upload_first') {
+        console.log('[SyncEngine] 本地有未上传变更，下载前先推送');
+        const upResult = await this.upload({ forcePending: true });
+        if (!upResult.success) {
+          // 上传失败（如网络断开）时中止下载：此时拉云端只会用旧数据覆盖
+          // 本地未推送的新状态。pending flag 已保留，下轮 alarm / 手动同步重试。
+          console.warn(`[SyncEngine] 上传未成功，跳过本次下载: ${upResult.error}`);
+          return { success: false, groups: [], reason: 'pending_upload_failed' };
+        }
       }
     }
 
@@ -251,7 +271,9 @@ export class SyncEngine {
           console.log('[SyncEngine] 下载完成但本地仍有未上传变更，重新调度上传');
           this.scheduleUpload(0);
         }
-      } catch {}
+      } catch (e) {
+        // pending 检查失败不阻塞主流程（上传意图仍由持久化 flag 保留）
+      }
       report(100, 'none');
 
       this.isSyncing = false;

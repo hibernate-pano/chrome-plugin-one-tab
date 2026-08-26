@@ -1,5 +1,59 @@
 import { TabGroup, Tab, UserSettings } from '@/types/tab';
 
+// ── 下载前置保护（防「本地删除被云端旧数据复活」） ──────────────────────
+
+/**
+ * 上传保护窗口。chrome.alarms 驱动的延迟上传最小间隔 30s，刚完成上传的
+ * 短窗口内云端已是本地新状态，后续到达的下载合并应跳过——避免与在途
+ * 上传竞态、用云端旧版本覆盖本地新版本。
+ */
+export const UPLOAD_GUARD_MS = 35_000;
+
+export interface DownloadPrecheckInput {
+  /** forceRemote = 用户显式要求云端覆盖本地，跳过一切保护 */
+  forceRemote: boolean;
+  /** 最近一次成功上传时间戳（ISO），null 表示从未上传 */
+  lastUploadTime: string | null;
+  /** 本地是否有未推送变更 */
+  pendingUpload: boolean;
+  now: number;
+}
+
+export type DownloadPrecheckAction =
+  | { action: 'skip'; reason: 'recent_upload_guard' }
+  | { action: 'upload_first' }
+  | { action: 'proceed' };
+
+/**
+ * 决定 downloadAndMerge 的前置动作。纯函数，便于单测覆盖全部分支。
+ *
+ * 规则（按顺序短路）：
+ * 1. forceRemote → 直接下载（用户显式覆盖意图）
+ * 2. 刚上传过（UPLOAD_GUARD_MS 内）→ 跳过下载：云端已是本地新状态，
+ *    再拉只会浪费且可能与在途上传竞态
+ * 3. 有未推送变更 → 先上传再下载：否则「删除书签后 upload alarm 未到
+ *    就触发下载」会让云端旧数据把刚删的内容合并回来（复活），事后再
+ *    把复活后的状态推上云，删除意图彻底丢失
+ * 4. 其余 → 正常下载
+ *
+ * 注意 guard 只在此处检查一次；upload_first 成功后的下载流程不再重查
+ * （否则会被自己刚刷新的 lastUploadTime 挡住）。
+ */
+export function decideDownloadPrecheck(input: DownloadPrecheckInput): DownloadPrecheckAction {
+  if (input.forceRemote) return { action: 'proceed' };
+
+  if (input.lastUploadTime) {
+    const sinceUpload = input.now - new Date(input.lastUploadTime).getTime();
+    if (sinceUpload >= 0 && sinceUpload < UPLOAD_GUARD_MS) {
+      return { action: 'skip', reason: 'recent_upload_guard' };
+    }
+  }
+
+  if (input.pendingUpload) return { action: 'upload_first' };
+
+  return { action: 'proceed' };
+}
+
 /**
  * 智能合并本地和云端标签组
  *
@@ -247,7 +301,12 @@ function selectNewerField<T>(
 }
 
 /**
- * 合并两个标签组的标签（智能去重）
+ * 合并两个标签组的标签（智能去重 + 墓碑传播）
+ *
+ * 删除意图优先于状态并集：任一侧标记 isDeleted 的 tab，在另一侧即使
+ * 仍是活跃状态也必须剔除。否则「A 删标签 → 上传 → B 轮询下载合并」会把
+ * 活跃副本当作 local-only 并回来，再经 B 上传传回 A（跨设备复活）。
+ * 墓碑本体保留在结果中，继续向尚未应用删除的第三方设备传播。
  */
 const mergeTabs = (
   localGroup: TabGroup,
@@ -255,14 +314,35 @@ const mergeTabs = (
 ): Tab[] => {
   const currentTime = new Date().toISOString();
 
+  // 第一步：收集两侧全部墓碑 ID（仅精确 ID 匹配，不做 URL 推断——
+  // 避免误删用户在同一会话中重新添加的同 URL 新标签）
+  const tombstonedIds = new Set<string>();
+  for (const t of localGroup.tabs) {
+    if (t.isDeleted) tombstonedIds.add(t.id);
+  }
+  for (const t of cloudGroup.tabs) {
+    if (t.isDeleted) tombstonedIds.add(t.id);
+  }
+
   // 使用 Map 去重：优先使用 ID，其次使用 URL
   const tabsById = new Map<string, Tab>();
   const tabsByUrl = new Map<string, string>(); // URL -> Tab ID 映射
+  const tombstonesById = new Map<string, Tab>();
 
   // 先处理云端标签
   cloudGroup.tabs.forEach(cloudTab => {
     if (cloudTab.isDeleted) {
-      return; // 跳过已删除的标签
+      // 保留墓碑：传播删除意图给尚未应用的设备
+      tombstonesById.set(cloudTab.id, {
+        ...cloudTab,
+        syncStatus: 'synced',
+        lastSyncedAt: currentTime
+      });
+      return;
+    }
+
+    if (tombstonedIds.has(cloudTab.id)) {
+      return; // 另一侧已删除，剔除活跃副本
     }
 
     tabsById.set(cloudTab.id, {
@@ -279,7 +359,19 @@ const mergeTabs = (
   // 然后处理本地标签
   localGroup.tabs.forEach(localTab => {
     if (localTab.isDeleted) {
-      return; // 跳过已删除的标签
+      // 本地墓碑：云端可能还没有（未上传），保留以维持删除意图
+      if (!tombstonesById.has(localTab.id)) {
+        tombstonesById.set(localTab.id, {
+          ...localTab,
+          syncStatus: 'synced',
+          lastSyncedAt: currentTime
+        });
+      }
+      return;
+    }
+
+    if (tombstonedIds.has(localTab.id)) {
+      return; // 另一侧已删除，剔除活跃副本
     }
 
     // 检查是否已存在（按 ID）
@@ -317,8 +409,9 @@ const mergeTabs = (
     }
   });
 
-  const mergedTabs = Array.from(tabsById.values());
-  console.log(`[SyncUtils] 标签合并：本地 ${localGroup.tabs.length}，云端 ${cloudGroup.tabs.length}，合并后 ${mergedTabs.length}`);
+  // 活跃标签在前，墓碑追加尾部（渲染层过滤墓碑，顺序不影响显示）
+  const mergedTabs = [...Array.from(tabsById.values()), ...Array.from(tombstonesById.values())];
+  console.log(`[SyncUtils] 标签合并：本地 ${localGroup.tabs.length}，云端 ${cloudGroup.tabs.length}，合并后 ${mergedTabs.length}（含墓碑 ${tombstonesById.size}）`);
 
   return mergedTabs;
 };
