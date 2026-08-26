@@ -2,6 +2,7 @@ import { tabManager } from '@/background/TabManager';
 import { migrateToV2 } from '@/utils/migrationHelper';
 import { setupBackgroundSync } from '@/background/backgroundSync';
 import { syncEngine, SYNC_UPLOAD_ALARM } from '@/services/syncEngine';
+import { sanitizeTabUrl } from '@/utils/inputValidation';
 
 // Chrome 扩展的 Service Worker
 // 为了避免模块导入问题，早期版本内联了存储逻辑；现统一使用 utils/storage 以与前端页面共享同一数据源（IndexedDB）
@@ -256,14 +257,21 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     switch (message.type) {
       case 'OPEN_TAB': {
         const data = message.data || {};
-        const singleUrl: string | undefined = data.url || data.tab?.url;
+        const rawUrl: string | undefined = data.url || data.tab?.url;
         const pinned: boolean | undefined = data.pinned ?? data.tab?.pinned;
+        // 防御性 sanitize：URL 来源不可信（云端同步 / 导入 / 跨设备）
+        const singleUrl = rawUrl ? sanitizeTabUrl(rawUrl) : null;
 
         if (singleUrl) {
           chrome.tabs.create({ url: singleUrl, active: false, pinned })
             .then(() => sendResponse({ success: true }))
             .catch(error => sendResponse({ success: false, error: error.message }));
           return true;
+        }
+        // 拒开时明确告知调用方（避免 UI 显示"已打开"但其实静默丢弃）
+        if (rawUrl) {
+          sendResponse({ success: false, error: 'URL scheme not allowed' });
+          return false;
         }
         break;
       }
@@ -272,10 +280,20 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         const data = message.data || {};
 
         if (Array.isArray(data.tabs)) {
-          // inCurrentWindow: true → 在当前窗口打开（不新建窗口）
+          // 过滤危险 URL 后再交给 TabManager（TabManager 内部也会 sanitize，这里
+          // 再加一层防御：哪怕 TabManager 跳过 sanitize，未来重构也不会立刻爆雷）
+          const safeTabs: Array<{ url: string; pinned?: boolean }> = [];
+          for (const t of data.tabs as Array<{ url?: string; pinned?: boolean }>) {
+            const url = sanitizeTabUrl(t.url);
+            if (url) safeTabs.push({ url, pinned: t.pinned });
+          }
+          if (safeTabs.length === 0) {
+            sendResponse({ success: false, error: 'no valid URLs' });
+            return false;
+          }
           const opener = data.inCurrentWindow
-            ? tabManager.openTabsInCurrentWindow(data.tabs)
-            : tabManager.openTabsInNewWindow(data.tabs);
+            ? tabManager.openTabsInCurrentWindow(safeTabs)
+            : tabManager.openTabsInNewWindow(safeTabs);
           opener
             .then(() => sendResponse({ success: true }))
             .catch(error => sendResponse({ success: false, error: error.message }));
@@ -283,13 +301,19 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         }
 
         if (Array.isArray(data.urls)) {
+          const safeTabs = (data.urls as unknown[])
+            .map(u => {
+              const url = sanitizeTabUrl(u);
+              return url ? { url } : null;
+            })
+            .filter((t): t is { url: string } => t !== null);
+          if (safeTabs.length === 0) {
+            sendResponse({ success: false, error: 'no valid URLs' });
+            return false;
+          }
           const opener = data.inCurrentWindow
-            ? tabManager.openTabsInCurrentWindow(
-                data.urls.map((url: string) => ({ url }))
-              )
-            : tabManager.openTabsInNewWindow(
-                data.urls.map((url: string) => ({ url }))
-              );
+            ? tabManager.openTabsInCurrentWindow(safeTabs)
+            : tabManager.openTabsInNewWindow(safeTabs);
           opener
             .then(() => sendResponse({ success: true }))
             .catch(error => sendResponse({ success: false, error: error.message }));

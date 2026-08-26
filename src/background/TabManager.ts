@@ -3,6 +3,7 @@ import { createTabGroupFromChromeTabs, filterValidTabs } from '@/domain/tabGroup
 import { cacheManager } from '@/utils/performance';
 import { trackProductEvent } from '@/utils/productEvents';
 import { syncEngine } from '@/services/syncEngine';
+import { sanitizeTabUrl } from '@/utils/inputValidation';
 
 /**
  * 统一的标签页管理器
@@ -86,7 +87,22 @@ export class TabManager {
         includePinned: collectPinnedTabs,
       });
 
-      if (tabGroup.tabs.length === 0) {
+      // URL 清洗：拒绝 javascript:/data:/file: 等危险协议（chrome.tabs.query
+      // 仍可能返回用户曾手动跳转过的 javascript: URL）。失败计数用日志告知，
+      // 不污染 storage，也不打断保存流程。
+      const sanitizedTabs: typeof tabGroup.tabs = [];
+      let droppedTabs = 0;
+      for (const t of tabGroup.tabs) {
+        const url = sanitizeTabUrl(t.url);
+        if (url) sanitizedTabs.push({ ...t, url });
+        else droppedTabs++;
+      }
+      if (droppedTabs > 0) {
+        console.warn(`[TabManager] 保存时丢弃 ${droppedTabs} 个危险 URL 标签`);
+      }
+      const safeGroup = { ...tabGroup, tabs: sanitizedTabs };
+
+      if (safeGroup.tabs.length === 0) {
         await this.showNotification({
           type: 'basic',
           iconUrl: chrome.runtime.getURL('icons/icon128.png'),
@@ -97,7 +113,7 @@ export class TabManager {
       }
 
       const existingGroups = await storage.getGroups();
-      await storage.setGroups([tabGroup, ...existingGroups]);
+      await storage.setGroups([safeGroup, ...existingGroups]);
 
       // ponytail: 自动上传承诺接入点。SW 保存路径完全绕过 Redux（直接 setGroups），
       // autoSyncMiddleware 永远监听不到 saveGroup.fulfilled——这里补上 scheduleUpload
@@ -108,14 +124,14 @@ export class TabManager {
         type: 'basic',
         iconUrl: chrome.runtime.getURL('icons/icon128.png'),
         title: 'TapStack',
-        message: `已将 ${tabGroup.tabs.length} 个标签页保存为新会话`
+        message: `已将 ${safeGroup.tabs.length} 个标签页保存为新会话`
       });
 
       await trackProductEvent('session_saved', {
-        sessionId: tabGroup.id,
-        sessionName: tabGroup.name,
-        tabCount: tabGroup.tabs.length,
-        pinnedCount: tabGroup.tabs.filter(tab => tab.pinned).length,
+        sessionId: safeGroup.id,
+        sessionName: safeGroup.name,
+        tabCount: safeGroup.tabs.length,
+        pinnedCount: safeGroup.tabs.filter(tab => tab.pinned).length,
       });
 
       this.notifyTabManagerRefresh();
@@ -173,21 +189,29 @@ export class TabManager {
         includePinned: collectPinnedTabs,
       });
 
-      if (tabGroup.tabs.length === 0) {
+      // URL 清洗（saveAllTabs 同语义，单标签版本）
+      const sanitizedTabs: typeof tabGroup.tabs = [];
+      for (const t of tabGroup.tabs) {
+        const url = sanitizeTabUrl(t.url);
+        if (url) sanitizedTabs.push({ ...t, url });
+      }
+      const safeGroup = { ...tabGroup, tabs: sanitizedTabs };
+
+      if (safeGroup.tabs.length === 0) {
         return;
       }
 
       const existingGroups = await storage.getGroups();
-      await storage.setGroups([tabGroup, ...existingGroups]);
+      await storage.setGroups([safeGroup, ...existingGroups]);
 
       // ponytail: 关闭单标签时也会触发数据变更（保存到当前会话）——同样需自动上传。
       syncEngine.scheduleUpload(3000);
 
       await trackProductEvent('session_saved', {
-        sessionId: tabGroup.id,
-        sessionName: tabGroup.name,
-        tabCount: tabGroup.tabs.length,
-        pinnedCount: tabGroup.tabs.filter(item => item.pinned).length,
+        sessionId: safeGroup.id,
+        sessionName: safeGroup.name,
+        tabCount: safeGroup.tabs.length,
+        pinnedCount: safeGroup.tabs.filter(item => item.pinned).length,
       });
 
       this.notifyTabManagerRefresh();

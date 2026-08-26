@@ -1,5 +1,6 @@
 import { TabGroup, Tab } from '@/types/tab';
 import { nanoid } from '@reduxjs/toolkit';
+import { sanitizeTabUrl } from './inputValidation';
 
 /**
  * 解析 OneTab 格式的导出文本
@@ -31,14 +32,17 @@ export function parseOneTabFormat(text: string): TabGroup[] {
     const lines = groupText.split('\n').filter(line => line.trim() !== '');
     
     // 解析每一行为标签
-    const tabs: Tab[] = lines.map(line => {
+    const tabs: Tab[] = lines.flatMap(line => {
       // 使用管道符号(|)分割 URL 和标题
       const parts = line.split('|');
-      const url = parts[0].trim();
+      const rawUrl = parts[0].trim();
+      // 拒绝危险协议（javascript:/data:/file: 等），整行丢弃而不是污染 storage
+      const url = sanitizeTabUrl(rawUrl);
+      if (!url) return [];
       // 如果没有标题部分，使用 URL 作为标题
       const title = parts.length > 1 ? parts[1].trim() : url;
-      
-      return {
+
+      return [{
         id: nanoid(),
         url,
         title,
@@ -46,7 +50,7 @@ export function parseOneTabFormat(text: string): TabGroup[] {
         createdAt: now,
         lastAccessed: now,
         pinned: false, // OneTab 导出不包含固定标签页信息
-      };
+      }];
     });
     
     // 创建会话

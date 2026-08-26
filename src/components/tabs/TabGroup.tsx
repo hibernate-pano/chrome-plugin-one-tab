@@ -170,7 +170,8 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
     });
 
     if (!group.isLocked) {
-      dispatch({ type: 'tabs/deleteGroup/fulfilled', payload: group.id });
+      // ponytail: 去掉 fake dispatch — autoSyncMiddleware 会通过真实 thunk 的
+      // fulfilled action 触发 scheduleUpload，无需骗一次
       dispatch(deleteGroup(group.id))
         .unwrap()
         .catch(error => {
@@ -193,7 +194,7 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
   const handleOpenTab = useCallback((tab: Tab) => {
     if (!group.isLocked) {
       if (shouldAutoDeleteAfterTabRemoval(group, tab.id)) {
-        dispatch({ type: 'tabs/deleteGroup/fulfilled', payload: group.id });
+        // ponytail: 去掉 fake dispatch，依赖真实 thunk fulfilled 触发 reducer + middleware
         dispatch(deleteGroup(group.id))
           .unwrap()
           .then(() => {
@@ -210,7 +211,7 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
           tabs: updatedTabs,
           updatedAt: new Date().toISOString()
         };
-        dispatch({ type: 'tabs/updateGroup/fulfilled', payload: updatedGroup });
+        // ponytail: 同上，去掉 fake dispatch
         dispatch(updateGroup(updatedGroup))
           .unwrap()
           .catch(error => {

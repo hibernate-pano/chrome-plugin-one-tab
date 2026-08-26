@@ -114,7 +114,7 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({ searchQuery 
     });
 
     if (!group.isLocked) {
-      dispatch({ type: 'tabs/deleteGroup/fulfilled', payload: group.id });
+      // ponytail: 去掉 fake dispatch，依赖真实 thunk fulfilled 触发 reducer + middleware
       dispatch(deleteGroup(group.id))
         .unwrap()
         .catch(error => {
@@ -134,7 +134,7 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({ searchQuery 
   const handleOpenTab = (tab: Tab, group: TabGroup) => {
     if (!group.isLocked) {
       if (shouldAutoDeleteAfterTabRemoval(group, tab.id)) {
-        dispatch({ type: 'tabs/deleteGroup/fulfilled', payload: group.id });
+        // ponytail: 去掉 fake dispatch
         dispatch(deleteGroup(group.id))
           .unwrap()
           .then(() => {
@@ -152,7 +152,7 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({ searchQuery 
           updatedAt: new Date().toISOString(),
         };
 
-        dispatch({ type: 'tabs/updateGroup/fulfilled', payload: updatedGroup });
+        // ponytail: 去掉 fake dispatch
         dispatch(updateGroup(updatedGroup))
           .unwrap()
           .catch(error => {

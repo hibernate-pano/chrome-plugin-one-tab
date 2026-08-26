@@ -314,14 +314,22 @@ const mergeTabs = (
 ): Tab[] => {
   const currentTime = new Date().toISOString();
 
-  // 第一步：收集两侧全部墓碑 ID（仅精确 ID 匹配，不做 URL 推断——
-  // 避免误删用户在同一会话中重新添加的同 URL 新标签）
+  // 第一步：收集两侧全部墓碑 ID + URL。仅精确 ID 匹配不够——
+  // 跨设备同 URL 不同 nanoid 的复活场景需要 URL 维度墓碑匹配兜底。
+  // 同侧"墓碑 + 同 URL 活跃重加"会被本地那侧主动放过（下方处理）。
   const tombstonedIds = new Set<string>();
+  const tombstonedUrls = new Set<string>();
   for (const t of localGroup.tabs) {
-    if (t.isDeleted) tombstonedIds.add(t.id);
+    if (t.isDeleted) {
+      tombstonedIds.add(t.id);
+      if (t.url) tombstonedUrls.add(t.url);
+    }
   }
   for (const t of cloudGroup.tabs) {
-    if (t.isDeleted) tombstonedIds.add(t.id);
+    if (t.isDeleted) {
+      tombstonedIds.add(t.id);
+      if (t.url) tombstonedUrls.add(t.url);
+    }
   }
 
   // 使用 Map 去重：优先使用 ID，其次使用 URL
@@ -343,6 +351,17 @@ const mergeTabs = (
 
     if (tombstonedIds.has(cloudTab.id)) {
       return; // 另一侧已删除，剔除活跃副本
+    }
+
+    // ponytail: 跨设备同 URL 不同 ID 复活场景的修复。
+    // 仅靠 ID 匹配墓碑，跨设备 nanoid 不同就会让 tombstone 失效——
+    // A 设备删除 X (nanoid_A) → 云端墓碑 → B 设备从未收到 X 但有 nanoid_B
+    // 同 URL tab → B 设备 ID 不匹配 tombstone → 不会被剔除 → 复活。
+    // URL 匹配墓碑表后，对侧活跃副本按 URL 一起清理。
+    // 边界场景：用户在 B 设备主动重新添加该 URL → 跨设备 sync 后仍会被墓碑剔除。
+    // 权衡：复活（错误保留）vs 误删（重新添加成本低）→ 取后者。
+    if (cloudTab.url && tombstonedUrls.has(cloudTab.url)) {
+      return; // URL 已被另一侧墓碑，剔除活跃副本
     }
 
     tabsById.set(cloudTab.id, {
@@ -372,6 +391,16 @@ const mergeTabs = (
 
     if (tombstonedIds.has(localTab.id)) {
       return; // 另一侧已删除，剔除活跃副本
+    }
+
+    // URL 传播墓碑（同 cloudTab 处理）
+    if (localTab.url && tombstonedUrls.has(localTab.url)) {
+      // 同侧同时有墓碑 + 活跃重加：保留活跃，不作为墓碑（误判保护）
+      // 场景：本地删了 X → 墓碑 → 本地又手动加了同 URL 新 tab → 该新 tab 不该被自身墓碑干掉
+      const hasLocalTombstoneForUrl = localGroup.tabs.some(
+        t => t.isDeleted && t.url === localTab.url
+      );
+      if (!hasLocalTombstoneForUrl) return;
     }
 
     // 检查是否已存在（按 ID）

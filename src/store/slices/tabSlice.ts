@@ -1,8 +1,9 @@
 import { createSlice, createAsyncThunk, createSelector } from '@reduxjs/toolkit';
-import { TabState, TabGroup } from '@/types/tab';
+import { TabState, TabGroup, Tab } from '@/types/tab';
 import { storage } from '@/utils/storage';
 import { nanoid } from '@reduxjs/toolkit';
 import { shouldAutoDeleteAfterTabRemoval } from '@/utils/tabGroupUtils';
+import { sanitizeTabUrl } from '@/utils/inputValidation';
 import { updateGroupWithVersion, updateDisplayOrder } from '@/utils/versionHelper';
 import { trackProductEvent } from '@/utils/productEvents';
 
@@ -145,8 +146,20 @@ export const deleteAllGroups = createAsyncThunk(
       return { count: 0 }; // 没有标签组可删除
     }
 
-    // 直接清空本地标签组
-    await storage.setGroups([]);
+    // ponytail: 改为软删墓碑，与 deleteGroup 同语义——否则本地硬清空后
+    // 上传路径 deletedIds 为空、云端行残留，下次下载合并以 remote-only 复活。
+    // 仅对活跃组加墓碑；已软删的版本号不动（幂等）。
+    const now = new Date().toISOString();
+    const updatedGroups = groups.map(g => {
+      if (g.isDeleted) return g;
+      return {
+        ...g,
+        isDeleted: true,
+        version: (g.version || 1) + 1,
+        updatedAt: now,
+      };
+    });
+    await storage.setGroups(updatedGroups);
 
     return { count: groups.length };
   }
@@ -207,13 +220,16 @@ export const importGroups = createAsyncThunk(
   'tabs/importGroups',
   async (groups: TabGroup[]) => {
     // 为导入的标签组和标签页生成新的ID
+    // 顺手 sanitize URL：拒绝危险协议（javascript:/data:/file:），整 tab 丢弃而非污染 storage
     const processedGroups = groups.map(group => ({
       ...group,
       id: nanoid(),
-      tabs: group.tabs.map(tab => ({
-        ...tab,
-        id: nanoid(),
-      })),
+      tabs: group.tabs.reduce<Tab[]>((acc, tab) => {
+        const url = sanitizeTabUrl(tab.url);
+        if (!url) return acc;
+        acc.push({ ...tab, url, id: nanoid() });
+        return acc;
+      }, []),
     }));
 
     // 合并现有标签组和导入的标签组，并按创建时间倒序排列
@@ -378,6 +394,8 @@ export const cleanDuplicateTabs = createAsyncThunk(
       // 扫描所有标签页，按URL分组
       groups.forEach(group => {
         group.tabs.forEach(tab => {
+          // 跳过墓碑：墓碑代表已删除意图，不应再被当作重复候选
+          if (tab.isDeleted) return;
           if (tab.url) {
             // 对于loading://开头的URL，需要特殊处理
             const urlKey = tab.url.startsWith('loading://') ? `${tab.url}|${tab.title}` : tab.url;
@@ -405,21 +423,24 @@ export const cleanDuplicateTabs = createAsyncThunk(
               new Date(b.tab.lastAccessed).getTime() - new Date(a.tab.lastAccessed).getTime()
           );
 
-          // 保留第一个（最新的），删除其余的
+          // 保留第一个（最新的），其余标记墓碑而非物理删除——
+          // 删除意图需随下次上传传播到云端与其他设备，否则会被复活。
           for (let i = 1; i < tabsWithSameUrl.length; i++) {
             const { groupId, tab } = tabsWithSameUrl[i];
             const groupIndex = updatedGroups.findIndex(g => g.id === groupId);
 
             if (groupIndex !== -1) {
-              // 从标签组中删除该标签页
-              updatedGroups[groupIndex].tabs = updatedGroups[groupIndex].tabs.filter(
-                t => t.id !== tab.id
+              const stampNow = new Date().toISOString();
+              updatedGroups[groupIndex].tabs = updatedGroups[groupIndex].tabs.map(t =>
+                t.id === tab.id && !t.isDeleted
+                  ? { ...t, isDeleted: true, lastAccessed: stampNow }
+                  : t
               );
               removedTabsCount++;
 
               // 更新标签组的updatedAt时间和版本号
               const currentVersion = updatedGroups[groupIndex].version || 1;
-              updatedGroups[groupIndex].updatedAt = new Date().toISOString();
+              updatedGroups[groupIndex].updatedAt = stampNow;
               updatedGroups[groupIndex].version = currentVersion + 1;
             }
           }
@@ -427,14 +448,23 @@ export const cleanDuplicateTabs = createAsyncThunk(
       });
 
       // 清理空标签组（在重复标签清理后进行）
+      // ponytail: 墓碑化（与 deleteGroup 同语义）而非物理移除——
+      // 否则 markCloudGroupsAsDeleted 拿不到 ID、云端行残留 → 下次下载复活成僵尸空组。
+      // 只看活跃 tab 数（墓碑不算），与 shouldAutoDeleteAfterTabRemoval 口径一致。
       let removedGroupsCount = 0;
-      const finalGroups = updatedGroups.filter(group => {
-        // 如果标签组为空且不是锁定状态，则删除
-        if (group.tabs.length === 0 && !group.isLocked) {
+      const stampNow2 = new Date().toISOString();
+      const finalGroups = updatedGroups.map(group => {
+        const activeTabs = group.tabs.filter(t => !t.isDeleted);
+        if (activeTabs.length === 0 && !group.isLocked) {
           removedGroupsCount++;
-          return false; // 从数组中移除
+          return {
+            ...group,
+            isDeleted: true,
+            version: (group.version || 1) + 1,
+            updatedAt: stampNow2,
+          };
         }
-        return true; // 保留
+        return group;
       });
 
       // 原子性操作：先保存到本地存储
@@ -865,10 +895,23 @@ export const tabSlice = createSlice({
         state.isLoading = true;
         state.error = null;
       })
-      .addCase(deleteAllGroups.fulfilled, state => {
+      .addCase(deleteAllGroups.fulfilled, (state) => {
         state.isLoading = false;
+        const removed = state.groups;
         state.groups = [];
         state.activeGroupId = null;
+        // 把所有刚删的组加入墓碑列表（与 deleteGroup 同语义，误删保护可恢复）
+        const now = new Date().toISOString();
+        const removedIds = new Set(removed.map(g => g.id));
+        state.deletedGroups = [
+          ...state.deletedGroups.filter(g => !removedIds.has(g.id)),
+          ...removed.map(g => ({
+            ...g,
+            isDeleted: true,
+            version: (g.version || 1) + 1,
+            updatedAt: now,
+          })),
+        ];
       })
       .addCase(deleteAllGroups.rejected, (state, action) => {
         state.isLoading = false;

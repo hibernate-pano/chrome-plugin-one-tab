@@ -2,6 +2,7 @@ import { createClient } from '@supabase/supabase-js';
 import { TabGroup, UserSettings, TabData, SupabaseTabGroup } from '@/types/tab';
 
 import { encryptData, decryptData, isEncrypted } from './encryptionUtils';
+import { sanitizeTabUrl } from './inputValidation';
 
 // 安全的配置管理
 function getSecureConfig() {
@@ -534,6 +535,10 @@ export const sync = {
         user_id: user.id,
         device_id: deviceId,
         last_sync: currentTime,
+        // 发送到服务端 version 字段，配合 supabase migration
+        // 20260827_add_tab_group_version_guard.sql 的 BEFORE UPDATE 触发器
+        // 做客户端合并的最终裁决：低/相等 version 的 UPDATE 被静默跳过
+        version: typeof group.version === 'number' ? group.version : 1,
         tabs_data: tabsData // 临时存储，稍后会被加密
       };
 
@@ -924,17 +929,25 @@ export const sync = {
         // 处理标签组数据
 
         // 将 TabData 转换为 Tab 格式
-        const formattedTabs = tabsData.map((tab: TabData) => ({
-          id: tab.id,
-          url: tab.url,
-          title: tab.title,
-          favicon: tab.favicon,
-          createdAt: tab.created_at,
-          lastAccessed: tab.last_accessed,
-          group_id: String(groupAny.id),
-          pinned: tab.pinned ?? false,
-          isDeleted: tab.is_deleted === true ? true : undefined,
-        }));
+        // 顺手 sanitize URL：拒绝危险协议，避免云端污染直达本地（即便 RLS 完整，
+        // 也防另一台设备的旧版本上传了恶意 URL 同步过来）
+        const formattedTabs = tabsData
+          .map((tab: TabData) => {
+            const url = sanitizeTabUrl(tab.url);
+            if (!url) return null;
+            return {
+              id: tab.id,
+              url,
+              title: tab.title,
+              favicon: tab.favicon,
+              createdAt: tab.created_at,
+              lastAccessed: tab.last_accessed,
+              group_id: String(groupAny.id),
+              pinned: tab.pinned ?? false,
+              isDeleted: tab.is_deleted === true ? true : undefined,
+            };
+          })
+          .filter((t): t is NonNullable<typeof t> => t !== null);
 
         tabGroups.push({
           id: String(groupAny.id),
@@ -945,6 +958,9 @@ export const sync = {
           isLocked: Boolean(groupAny.is_locked),
           // 云端 tombstone：is_deleted 列存在时才有值；无列时 undefined → 视为未删除
           isDeleted: Boolean(groupAny.is_deleted),
+          // 服务端返回的 version：mergeGroup 会以此为基线 Math.max()+1
+          // 如列不存在则为 undefined → 本地默认 1（与 SQL DEFAULT 对齐）
+          version: typeof groupAny.version === 'number' ? groupAny.version : undefined,
         });
       }
 
@@ -958,16 +974,23 @@ export const sync = {
               .eq('group_id', group.id as string);
 
             if (!tabError && tabs && tabs.length > 0) {
-              group.tabs = tabs.map((tab: any) => ({
-                id: String(tab.id),
-                url: String(tab.url),
-                title: String(tab.title),
-                favicon: tab.favicon ? String(tab.favicon) : undefined,
-                createdAt: String(tab.created_at),
-                lastAccessed: String(tab.last_accessed),
-                group_id: tab.group_id ? String(tab.group_id) : undefined,
-                pinned: tab.pinned ?? false,
-              }));
+              // 同上：拒绝危险 URL
+              const safeTabs: typeof group.tabs = [];
+              for (const tab of tabs as any[]) {
+                const safeUrl = sanitizeTabUrl(String(tab.url));
+                if (!safeUrl) continue;
+                safeTabs.push({
+                  id: String(tab.id),
+                  url: safeUrl,
+                  title: String(tab.title),
+                  favicon: tab.favicon ? String(tab.favicon) : undefined,
+                  createdAt: String(tab.created_at),
+                  lastAccessed: String(tab.last_accessed),
+                  group_id: tab.group_id ? String(tab.group_id) : undefined,
+                  pinned: tab.pinned ?? false,
+                });
+              }
+              group.tabs = safeTabs;
             }
           } catch (e) {
             console.warn(`从 tabs 表获取标签失败，忽略错误:`, e);

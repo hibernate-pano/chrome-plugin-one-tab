@@ -144,6 +144,72 @@ describe('tabTombstone: 标签级删除意图跨设备传播', () => {
   });
 });
 
+// ── 跨设备同 URL 不同 ID 复活场景 ──────────────────────────────────
+// 修复前：mergeTabs 只按 ID 匹配墓碑，跨设备 nanoid 不同 → tombstone 失效。
+// 修复后：URL 维度也建墓碑集，对侧活跃副本被剔除。
+
+describe('tabTombstone: 跨设备同 URL 不同 ID 的复活防护（URL 维度墓碑）', () => {
+  it('A 设备删除 nanoid_X → 云端墓碑；B 设备从未收到 nanoid_X 但有 nanoid_Y 同 URL → Y 被剔除', async () => {
+    const { mergeTabGroups } = await import('@/utils/syncUtils');
+
+    const local = [
+      makeGroup('g1', [
+        makeTab('nanoid-B', 'https://evil.example.com'), // B 设备自己生成的 nanoid
+      ]),
+    ];
+    const cloud = [
+      makeGroup('g1', [
+        makeTab('nanoid-A', 'https://evil.example.com', { isDeleted: true }), // A 设备生成的 nanoid
+      ]),
+    ];
+
+    const merged = mergeTabGroups(local, cloud, 'newest');
+    const g1 = merged.find(g => g.id === 'g1')!;
+
+    const activeTabs = g1.tabs.filter(t => !t.isDeleted);
+    assert.strictEqual(activeTabs.length, 0,
+      '跨设备同 URL 不同 ID 复活应被 URL 维度墓碑拦截');
+  });
+
+  it('本地主动重新添加被墓碑的 URL（同侧 tombstone + 新 active）→ 不误删', async () => {
+    const { mergeTabGroups } = await import('@/utils/syncUtils');
+
+    // 用户场景：在 A 设备删了 X → 上传 → 在 A 设备自己又手动加了一个 X。
+    // 这条"再次添加"不该被自身墓碑干掉——这是用户主动意图。
+    const local = [
+      makeGroup('g1', [
+        makeTab('t-tomb', 'https://a.com', { isDeleted: true }),
+        makeTab('t-fresh', 'https://a.com'), // 同侧重加
+      ]),
+    ];
+    const cloud = [makeGroup('g1', [])]; // 云端还没收到重加
+
+    const merged = mergeTabGroups(local, cloud, 'newest');
+    const g1 = merged.find(g => g.id === 'g1')!;
+    const activeTabs = g1.tabs.filter(t => !t.isDeleted);
+
+    assert.strictEqual(activeTabs.length, 1,
+      '同侧 tombstone + 同 URL 活跃重加应保留活跃');
+    assert.strictEqual(activeTabs[0].id, 't-fresh');
+  });
+
+  it('云端 tombstone + 本地有同 URL 但 nanoid 不同的活跃 → URL 匹配剔除', async () => {
+    const { mergeTabGroups } = await import('@/utils/syncUtils');
+
+    const local = [makeGroup('g1', [makeTab('local-X', 'https://foo.com')])];
+    const cloud = [makeGroup('g1', [makeTab('cloud-X', 'https://foo.com', { isDeleted: true })])];
+
+    const merged = mergeTabGroups(local, cloud, 'newest');
+    const g1 = merged.find(g => g.id === 'g1')!;
+
+    assert.strictEqual(g1.tabs.filter(t => !t.isDeleted).length, 0,
+      'URL 维度墓碑应剔除对侧同 URL 活跃副本');
+    // 墓碑本体保留（向其他设备传播）
+    assert.ok(g1.tabs.some(t => t.isDeleted && t.url === 'https://foo.com'),
+      '墓碑本身应保留以继续传播删除意图');
+  });
+});
+
 describe('tabTombstone: 空组自动删除判断按活跃计数', () => {
   it('组内只剩墓碑 + 删除最后一个活跃 tab → 触发自动删除', async () => {
     const { shouldAutoDeleteAfterTabRemoval } = await import('@/utils/tabGroupUtils');
