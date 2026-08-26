@@ -75,7 +75,8 @@ async function mergeCloudSettingsIntoLocal(): Promise<void> {
 export class SyncEngine {
   private static instance: SyncEngine;
   private uploadTimer: ReturnType<typeof setTimeout> | null = null;
-  private pendingUpload = false;
+  // ponytail: pending_upload 状态完全由 storage 持久化（跨进程跨 SW 重启保留），
+  // 不再需要内存字段。hasPendingUpload() async 版本读 storage。
   private isSyncing = false;
 
   private constructor() {}
@@ -89,16 +90,31 @@ export class SyncEngine {
     return this.isSyncing;
   }
 
-  hasPendingUpload(): boolean {
-    return this.pendingUpload;
+  /**
+   * ponytail: 读持久化 pending_upload。MV3 popup 失焦销毁后内存实例消失，
+   * storage 中的标志仍在——下一次后台 alarm 起来的 SW 能读到这个事实
+   * 先上传。backgroundSync.performBackgroundSync 调用此方法决定是否
+   * “先上传后下载”。
+   */
+  async hasPendingUpload(): Promise<boolean> {
+    try {
+      return await storage.getPendingUpload();
+    } catch {
+      return false;
+    }
   }
 
   cancelPendingUpload(): void {
+    // ponytail: 仅取消当前 timer/alarm，不动持久化 pending_upload 标志——
+    // “本地有未上传变更”这个事实跨进程跨 SW 重启仍应保留，否则 downloadAndMerge
+    // 会清掉所有上传意图、云端旧版本被合并后本地新版本被覆盖（“复活”）。
     if (this.uploadTimer) {
       clearTimeout(this.uploadTimer);
       this.uploadTimer = null;
     }
-    this.pendingUpload = false;
+    if (typeof chrome !== 'undefined' && chrome.alarms) {
+      void chrome.alarms.clear(SYNC_UPLOAD_ALARM).catch(() => {});
+    }
   }
 
   /**
@@ -108,22 +124,20 @@ export class SyncEngine {
   scheduleUpload(delayMs: number = 3000): void {
     // ponytail: MV3 SW 可能在 idle 后被杀，setTimeout 会永远丢——手动“点开
     // 一个标签”这类操作可能上传不到云端，然后后台 60s 轮询下来云端仍为旧版本，
-    // 本地新版本被“复活”。用 chrome.alarms 持久调度（与 backgroundSync 的
-    // SYNC_ALARM 同模式）：SW 被杀后 alarm 仍能触发唤醒重新上传。
+    // 本地新版本被“复活”。同时持久化“本地有变更”标志，让 downloadAndMerge
+    // 后能重新调度，backgroundSync 也能在下载前先上传。
     // chrome.alarms 最小 delayInMinutes 是 0.5（30s），足够合并同 tick 多次调度。
+    void storage.setPendingUpload(true);
     if (typeof chrome !== 'undefined' && chrome.alarms) {
       void chrome.alarms.clear(SYNC_UPLOAD_ALARM).catch(() => {});
       const delayMinutes = Math.max(0.5, delayMs / 60000);
       chrome.alarms.create(SYNC_UPLOAD_ALARM, { delayInMinutes: delayMinutes });
-      this.pendingUpload = true;
       return;
     }
     // 非扩展运行时 fallback：单测可走这里
     if (this.uploadTimer) clearTimeout(this.uploadTimer);
-    this.pendingUpload = true;
     this.uploadTimer = setTimeout(() => {
       this.uploadTimer = null;
-      this.pendingUpload = false;
       void this.upload().catch(err => console.error('[SyncEngine] 延迟上传失败:', err));
     }, delayMs);
   }
@@ -132,7 +146,6 @@ export class SyncEngine {
    * 由 chrome.alarms.onAlarm 回调。fire-and-forget；错误靠 console.error 报。
    */
   async runScheduledUpload(): Promise<void> {
-    this.pendingUpload = false;
     try {
       await this.upload();
     } catch (err) {
@@ -228,6 +241,17 @@ export class SyncEngine {
       await storage.setLastSyncTime(new Date().toISOString());
       // 8. 清除快照
       await storage.clearSyncSnapshot();
+      // ponytail: 下载可能掩盖本地未上传变更（合并出“新增”项）。检查持久化
+      // pending_upload：若仍 true，表明本地有未传云端的意图，重新调度一次上传
+      // 让后台按“下载后上传”顺序把所有本地变更推到云端。避免云端在“删除/点开”
+      // 后仍为旧状态供下次下载复活本地。
+      try {
+        const stillPending = await storage.getPendingUpload();
+        if (stillPending) {
+          console.log('[SyncEngine] 下载完成但本地仍有未上传变更，重新调度上传');
+          this.scheduleUpload(0);
+        }
+      } catch {}
       report(100, 'none');
 
       this.isSyncing = false;
@@ -264,6 +288,9 @@ export class SyncEngine {
     overwriteCloud?: boolean;
     syncSettings?: boolean;
     onProgress?: SyncProgressCallback;
+    // ponytail: 后台轮询同步路径专用——跳过 cancelPendingUpload 短路、跳过
+    // isSyncing 检查（backgroundSync 路径互不冲突）。常规 UI 调用无需此参数。
+    forcePending?: boolean;
   }): Promise<UploadResult> {
     let state = store.getState() as { auth: { isAuthenticated: boolean; user: { id: string; email: string } | null }; settings: UserSettings };
     // ponytail: SW 进程是独立执行上下文，store 是新实例。TabManager.saveAllTabs 后
@@ -278,7 +305,9 @@ export class SyncEngine {
     if (!state.auth.isAuthenticated) {
       return { success: false, error: '用户未登录' };
     }
-    if (this.isSyncing) {
+    // ponytail: 后台轮询路径可带 forcePending 绕过 isSyncing 检查；
+    // 但仅在不与当前下载合并冲突时调用（backgroundSync 已先检查）。
+    if (this.isSyncing && !opts?.forcePending) {
       return { success: false, error: '正在同步中' };
     }
 
@@ -319,6 +348,12 @@ export class SyncEngine {
       report(95, 'upload');
 
       await storage.setLastSyncTime(new Date().toISOString());
+      const now = new Date().toISOString();
+      await storage.setLastUploadTime(now);
+      // ponytail: 上传成功才清持久化 pending_upload。失败时保留，下一轮
+      // alarm / 后台轮询重新尝试。cancelPendingUpload 不清这个标志——
+      // “本地有变更”这个事实在 upload 真正成功前都成立。
+      await storage.setPendingUpload(false);
       report(100, 'none');
       this.isSyncing = false;
       return { success: true };

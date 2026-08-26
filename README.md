@@ -6,6 +6,8 @@
 
 另：`main` 修复“点开标签 / 删除会话后 60s 被云端复活”——`scheduleUpload` 从 `setTimeout` 改为 `chrome.alarms`（MV3 SW idle 被杀后 timer 会丢），并加 35s 上传保护窗口，避免上传完成前下载误覆盖。验证：`scripts/e2e-local-delete-no-resurrect.mjs`。
 
+接着二次加固：添加持久化 `pending_upload` 标志（跨进程跨 SW 重启保留）——`scheduleUpload` 写 storage，`upload` 成功才清。`cancelPendingUpload` 只清内存 timer/alarm，**不动**持久化意图。后台轮询 `performBackgroundSync` 改为**先上传后下载**，避免后台轮询在上传意图丢失后用云端旧版本覆盖本地新版本。下载完成后若 `pending_upload` 仍为 true 重新调度上传。验证：`scripts/e2e-stress-no-resurrect.mjs`（4-tab 会话连点 3 个，关闭 popup 90s 跨两个 alarm 周期仍 1 tab）。
+
 TapStack 是一个面向重度浏览器用户的工作会话保险箱。它的核心目标不是“多一个标签管理器”，而是帮助你把当前窗口保存成可找回、可恢复的工作现场。
 
 ![TapStack](icons/icon128.png)

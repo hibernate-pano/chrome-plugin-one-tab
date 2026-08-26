@@ -27,7 +27,14 @@ const STORAGE_KEYS = {
   LAST_SYNC_TIME: 'last_sync_time',
   SYNC_SNAPSHOT: 'sync_snapshot',
   PRODUCT_EVENTS: 'product_events',
-  MIGRATION_FLAGS: 'migration_flags'
+  MIGRATION_FLAGS: 'migration_flags',
+  // ponytail: 本地是否有未上传变更。跨进程持久化——MV3 popup 失焦销毁后
+  // 依然能从 chrome.storage / IndexedDB 读回。后续轮询 / 上传 alarm 唤醒 SW
+  // 时检查此标志，未上传则先上传，避免云端旧版本覆盖本地新版本。
+  PENDING_UPLOAD: 'pending_upload',
+  // 最近一次成功上传的时间戳（独立于 last_sync_time，后者下载也会更新）。
+  // 用于：1）downloadAndMerge 保护窗口 2）调试 / product_event 上报
+  LAST_UPLOAD_TIME: 'last_upload_time',
 };
 
 const STORAGE_VERSION = 2;
@@ -349,6 +356,44 @@ class ChromeStorage {
       await kvSet(STORAGE_KEYS.LAST_SYNC_TIME, time);
     } catch (error) {
       console.error('设置最后同步时间失败:', error);
+    }
+  }
+
+  // ponytail: 持久化的“本地有未上传变更”标志。
+  // scheduleUpload 置 true；upload 成功置 false；cancelPendingUpload 不动。
+  async getPendingUpload(): Promise<boolean> {
+    try {
+      await this.ensureVersion();
+      return (await kvGet<boolean>(STORAGE_KEYS.PENDING_UPLOAD)) === true;
+    } catch {
+      return false;
+    }
+  }
+
+  async setPendingUpload(pending: boolean): Promise<void> {
+    try {
+      await this.ensureVersion();
+      await kvSet(STORAGE_KEYS.PENDING_UPLOAD, pending);
+    } catch (error) {
+      console.error('设置 pending_upload 失败:', error);
+    }
+  }
+
+  async getLastUploadTime(): Promise<string | null> {
+    try {
+      await this.ensureVersion();
+      return (await kvGet<string>(STORAGE_KEYS.LAST_UPLOAD_TIME)) || null;
+    } catch {
+      return null;
+    }
+  }
+
+  async setLastUploadTime(time: string): Promise<void> {
+    try {
+      await this.ensureVersion();
+      await kvSet(STORAGE_KEYS.LAST_UPLOAD_TIME, time);
+    } catch (error) {
+      console.error('设置 last_upload_time 失败:', error);
     }
   }
 
