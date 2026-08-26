@@ -199,6 +199,46 @@ describe('syncMergeSafety: 同步合并不丢本地数据（真实生产路径�
       '本地版本更高且已恢复 → 不应被云端旧墓碑删除'
     );
   });
+
+  // ── 回归：移走最后一个标签后自动关组（isDeleted 墓碑 vs 物理移除）──────────
+  // 生产 bug：moveTabAndSync 跨组移走最后一枚 tab 时，把空组从本地 storage
+  // 物理过滤掉（无墓碑）→ upload() 的 deletedIds 不含本组、云端行 is_deleted=false
+  // 残留 → 下载合并把云端该组以 remote-only 复活（“最后一个标签刷新后又回来”）。
+  it('回归：云端残留活跃组 + 本地物理移除 → 会被 merge 复活（Bug 场景）', async () => {
+    const { mergeTabGroups } = await import('@/utils/syncUtils');
+    // 本地：该组已被物理移除（storage 中不存在；本地只剩另一个活跃组）
+    const local = [makeGroup('other', 'Other')];
+    // 云端：旧组仍为 is_deleted=false（物理移除从未把删除意图播到云端）
+    const cloud = [makeGroup('old', 'OldEmptyGroup'), makeGroup('other', 'Other')];
+    const merged = mergeTabGroups(local, cloud, 'newest');
+    assert.equal(
+      merged.some(g => g.id === 'old'),
+      true,
+      '云端未删残留会被作为 remote-only 复活 —— 这就是最后一个标签删不掉的根因'
+    );
+  });
+
+  it('回归：本地墓碑 + 云端墓碑（上传已播删除后）→ 刷新不复活、其他组存活', async () => {
+    const { mergeTabGroups } = await import('@/utils/syncUtils');
+    // 修复后：空组不再物理移除，而是本地打 isDeleted 墓碑 → upload 把 deletedIds
+    // 播到云端、markCloudGroupsAsDeleted 使云端同组也 is_deleted=true。
+    // 此处验证该稳态：两端都是墓碑 → 刷新/下载不会把组复活回来（Bug 已消除）。
+    const local = [
+      makeGroup('old', 'OldEmptyGroup', { isDeleted: true, version: 3 }),
+      makeGroup('other', 'Other'),
+    ];
+    const cloud = [
+      makeGroup('old', 'OldEmptyGroup', { isDeleted: true, version: 3 }),
+      makeGroup('other', 'Other'),
+    ];
+    const merged = mergeTabGroups(local, cloud, 'newest');
+    assert.equal(
+      merged.some(g => g.id === 'old'),
+      false,
+      '两端墓碑 → 空组不复活（物理移除的旧 bug 会在 refreshed 后把它带回来）'
+    );
+    assert.equal(merged.some(g => g.id === 'other'), true, '其他活跃组不受影响');
+  });
 });
 
 // ── 下载前置保护（decideDownloadPrecheck） ──────────────────────────────

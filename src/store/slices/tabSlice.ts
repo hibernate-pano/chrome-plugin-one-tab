@@ -608,10 +608,27 @@ export const moveTabAndSync = createAsyncThunk(
                 if (shouldAutoDeleteAfterTabRemoval(updatedSourceGroup, '')) {
                   console.log(`[拖拽自动清理] 检测到空标签组: ${updatedSourceGroup.name} (ID: ${sourceGroupId})`);
 
-                  // 从存储数组中移除空标签组
-                  updatedGroups = updatedGroups.filter(g => g.id !== sourceGroupId);
+                  // ponytail: 用软删墓碑（isDeleted:true）而非从存储中物理移除。
+                  // 物理移除会让 upload() 的 deletedIds 不包含本组、云端行
+                  // is_deleted=false 残留，下载合并时以 remote-only 把最后一枚
+                  // tab 复活回原组（“最后一个标签删不掉，刷新就回来”）。
+                  // 墓碑保证远端 markCloudGroupsAsDeleted(deletedIds) 播到云端，
+                  // 下次合并按 shouldApplyCloudDeletion 应用删除，不再复活。
+                  const nowDeletedAt = new Date().toISOString();
+                  updatedGroups = updatedGroups.map(g => {
+                    if (g.id !== sourceGroupId) return g;
+                    // 已墓碑过则不动（幂等），否则标记删除
+                    if (g.isDeleted) return g;
+                    return {
+                      ...g,
+                      isDeleted: true,
+                      version: (g.version || 1) + 1,
+                      updatedAt: nowDeletedAt,
+                    };
+                  });
 
-                  // 延迟删除Redux状态中的标签组，避免与UI组件的删除逻辑冲突
+                  // 延迟删除Redux状态中的标签组（收益：进误删保护恢复视图），
+                  // 避免与UI组件的删除逻辑冲突
                   setTimeout(() => {
                     try {
                       dispatch(deleteGroup(sourceGroupId));
@@ -620,7 +637,7 @@ export const moveTabAndSync = createAsyncThunk(
                     }
                   }, 100);
 
-                  console.log(`[拖拽自动清理] 已从存储中移除空标签组: ${updatedSourceGroup.name} (ID: ${sourceGroupId})`);
+                  console.log(`[拖拽自动清理] 已墓碑化空标签组: ${updatedSourceGroup.name} (ID: ${sourceGroupId})`);
                 } else {
                   console.log(`[拖拽自动清理] 跳过不符合删除条件的空标签组: ${updatedSourceGroup.name} (ID: ${sourceGroupId})`);
                 }
@@ -801,18 +818,26 @@ export const tabSlice = createSlice({
             if (g.id === sourceGroupId) return updatedSourceGroup;
             if (g.id === targetGroupId) return updatedTargetGroup;
             return g;
-          })
-        // 不在此处移除空标签组，交由 SortableTabGroup 组件通过 isMarkedForDeletion 处理
-        // .filter(g => g.tabs.length > 0 || g.isLocked);
+          });
 
-        // 不再立即重置活动组，让SortableTabGroup组件处理
-        // if (
-        //   state.activeGroupId === sourceGroupId &&
-        //   updatedSourceGroup.tabs.length === 0 &&
-        //   !updatedSourceGroup.isLocked
-        // ) {
-        //   state.activeGroupId = null;
-        // }
+        // 自动清理：跨组移走后源组变空且未锁定 → 立即墓碑化（同步、确定）。
+        // 历史回归：旧改把空组删除逻辑移到 SortableTabGroup/isMarkedForDeletion
+        // 组件，但该组件早已移除，只剩 moveTabAndSync 里 100ms 的异步 deleteGroup
+        // dispatch——一旦该异步落空（时序/异常），空组就永久卡在 UI。这里在
+        // reducer 里同步熄掉，与 deleteGroup 的 Redux 效果一致（撤销区可恢复）。
+        if (sourceGroupId !== targetGroupId && shouldAutoDeleteAfterTabRemoval(updatedSourceGroup, '')) {
+          state.groups = state.groups.filter(g => g.id !== sourceGroupId);
+          state.deletedGroups = state.deletedGroups.filter(g => g.id !== sourceGroupId);
+          state.deletedGroups.push({
+            ...updatedSourceGroup,
+            isDeleted: true,
+            version: (updatedSourceGroup.version || 1) + 1,
+            updatedAt: now,
+          });
+          if (state.activeGroupId === sourceGroupId) {
+            state.activeGroupId = null;
+          }
+        }
       }
     },
 
