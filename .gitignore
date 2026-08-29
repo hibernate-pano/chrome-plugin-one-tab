@@ -21,3 +21,4 @@ dist-web/
 .vercel
 .env*
 .pi/
+.pnpm-store/

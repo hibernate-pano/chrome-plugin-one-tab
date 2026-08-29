@@ -11,7 +11,7 @@ import { resolve as resolvePath, dirname, extname } from 'node:path';
 import { existsSync, readFileSync, statSync } from 'node:fs';
 import ts from 'typescript';
 
-const PROJECT_ROOT = '/Users/panbo/Code/Demos/chrome-plugin-one-tab';
+const PROJECT_ROOT = resolvePath(dirname(fileURLToPath(import.meta.url)), '..');
 const SRC_DIR = resolvePath(PROJECT_ROOT, 'src');
 
 // Vite-style env stub used to satisfy `import.meta.env` reads.

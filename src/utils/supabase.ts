@@ -3,6 +3,7 @@ import { TabGroup, UserSettings, TabData, SupabaseTabGroup } from '@/types/tab';
 
 import { encryptData, decryptData, isEncrypted } from './encryptionUtils';
 import { sanitizeTabUrl } from './inputValidation';
+import { normalizeTabsData } from './normalizeTabsData';
 
 // 安全的配置管理
 function getSecureConfig() {
@@ -486,16 +487,20 @@ export const sync = {
 
     // 详细记录每个要上传的标签组
     groups.forEach((group, index) => {
+      const safeTabs = Array.isArray(group.tabs) ? group.tabs : [];
+      if (!Array.isArray(group.tabs)) {
+        console.warn(`标签组 ${group.id} 的 tabs 字段不是数组，日志统计将按空数据处理`);
+      }
       console.log(`要上传的标签组 ${index + 1}/${groups.length}:`, {
         id: group.id,
         name: group.name,
-        tabCount: group.tabs.length,
+        tabCount: safeTabs.length,
         updatedAt: group.updatedAt,
         lastSyncedAt: group.lastSyncedAt
       });
 
       // 记录每个标签组中的标签数量和类型
-      const urlTypes = group.tabs.reduce((acc, tab) => {
+      const urlTypes = safeTabs.reduce((acc, tab) => {
         const urlType = tab.url.startsWith('http') ? 'http' :
           tab.url.startsWith('loading://') ? 'loading' : 'other';
         acc[urlType] = (acc[urlType] || 0) + 1;
@@ -513,8 +518,14 @@ export const sync = {
       const createdAt = group.createdAt || currentTime;
       const updatedAt = group.updatedAt || currentTime;
 
+      // 上传侧止损：tabs 字段异常时置空数组，绝不把坏形状数据原样上行
+      const sourceTabs = Array.isArray(group.tabs) ? group.tabs : [];
+      if (!Array.isArray(group.tabs)) {
+        console.warn(`标签组 ${group.id} 的 tabs 字段不是数组，已按空数组上传（组ID: ${group.id}）`);
+      }
+
         // 将标签转换为 TabData 格式
-        const tabsData: TabData[] = group.tabs.map(tab => ({
+        const tabsData: TabData[] = sourceTabs.map(tab => ({
           id: tab.id,
           url: tab.url,
           title: tab.title,
@@ -580,6 +591,11 @@ export const sync = {
             console.error(`加密标签组 ${group.id} 的数据失败:`, error);
             encryptionFailedIds.push(group.id);
           }
+        } else if (group.tabs_data !== undefined && group.tabs_data !== null) {
+          // 上传侧止损：tabs_data 存在但不是数组（坏形状数据），
+          // 不能原样上行（旧版本会把坏行明文写入云端），置为空数组并告警
+          console.warn(`标签组 ${group.id} 的 tabs_data 不是数组，已置为空数组后上传（组ID: ${group.id}）`);
+          groupsWithUser[i].tabs_data = [] as any;
         }
       }
 
@@ -919,6 +935,9 @@ export const sync = {
       const tabGroups: TabGroup[] = [];
 
       for (const group of groups) {
+        // 单行容错：一个坏组（形状异常/字段缺失）不应让整次下载/合并失败，
+        // 跳过该组并告警，其余组继续处理
+        try {
         // 从 JSONB 字段获取标签数据
         let tabsData: TabData[] = [];
         const groupAny = group as any;
@@ -927,14 +946,17 @@ export const sync = {
         if (typeof groupAny.tabs_data === 'string') {
           try {
             // 尝试解密数据
-            tabsData = await decryptData<TabData[]>(groupAny.tabs_data as string, user.id);
+            const decrypted = await decryptData<unknown>(groupAny.tabs_data as string, user.id);
+            // decryptData 内部 JSON.parse 后 as T，无形状校验，必须在这里归一化
+            tabsData = normalizeTabsData(decrypted, String(groupAny.id));
             console.log(`标签组 ${groupAny.id} 的数据已成功解密`);
           } catch (error) {
             console.error(`解密标签组 ${groupAny.id} 的数据失败:`, error);
             // 如果解密失败，尝试直接解析（可能是旧的未加密数据）
             try {
               if (typeof groupAny.tabs_data === 'string' && !isEncrypted(groupAny.tabs_data)) {
-                tabsData = JSON.parse(groupAny.tabs_data);
+                // 旧版本可能把非数组数据明文写入云端，解析后同样必须归一化
+                tabsData = normalizeTabsData(JSON.parse(groupAny.tabs_data), String(groupAny.id));
                 console.log(`标签组 ${groupAny.id} 的数据是旧的未加密格式，已成功解析`);
               }
             } catch (jsonError) {
@@ -942,10 +964,10 @@ export const sync = {
               // 保持空数组
             }
           }
-        } else if (Array.isArray(groupAny.tabs_data)) {
-          // 如果已经是数组，直接使用
-          tabsData = groupAny.tabs_data as TabData[];
-          // 数据已是数组格式
+        } else {
+          // 非字符串（可能是 JSONB 对象/数组/其他脏数据）：统一归一化，
+          // 数组直通，wrapper 对象尝试恢复，其余降级为空数组
+          tabsData = normalizeTabsData(groupAny.tabs_data, String(groupAny.id));
         }
 
         // 处理标签组数据
@@ -984,6 +1006,13 @@ export const sync = {
           // 如列不存在则为 undefined → 本地默认 1（与 SQL DEFAULT 对齐）
           version: typeof groupAny.version === 'number' ? groupAny.version : undefined,
         });
+        } catch (groupError) {
+          // 单组处理失败（如字段形状异常）不影响其他组的下载与合并
+          console.error(
+            `处理标签组 ${(group as any)?.id} 失败，已跳过该组:`,
+            groupError
+          );
+        }
       }
 
       // 兼容性处理：如果标签组没有 tabs_data，尝试从 tabs 表获取
