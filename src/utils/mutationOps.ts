@@ -5,7 +5,7 @@
  */
 import type { TabGroup, Tab } from '@/types/tab';
 import { shouldAutoDeleteAfterTabRemoval } from '@/utils/tabGroupUtils';
-import { updateGroupWithVersion } from '@/utils/versionHelper';
+import { updateDisplayOrder, updateGroupWithVersion } from '@/utils/versionHelper';
 
 /** saveGroup 语义（tabSlice.ts:58）：新组置顶，按 createdAt 倒序 */
 export function applySaveGroup(groups: TabGroup[], group: TabGroup, _now: string): TabGroup[] {
@@ -150,4 +150,116 @@ export function applyImportGroups(
     ),
     imported: processed,
   };
+}
+
+/** moveGroup 语义（moveGroupAndSync，tabSlice.ts:316）：索引非法返回 null */
+export function applyMoveGroup(
+  groups: TabGroup[],
+  dragIndex: number,
+  hoverIndex: number
+): TabGroup[] | null {
+  if (dragIndex < 0 || dragIndex >= groups.length || hoverIndex < 0 || hoverIndex >= groups.length) {
+    return null;
+  }
+  const newGroups = [...groups];
+  const [dragGroup] = newGroups.splice(dragIndex, 1);
+  newGroups.splice(hoverIndex, 0, dragGroup);
+  return updateDisplayOrder(newGroups);
+}
+
+/** moveTab 语义（moveTabAndSync，tabSlice.ts:511）：跨组移空源组→墓碑（含空组自动删除判断） */
+export function applyMoveTab(
+  groups: TabGroup[],
+  args: { sourceGroupId: string; sourceIndex: number; targetGroupId: string; targetIndex: number },
+  now: string
+): { groups: TabGroup[]; autoDeletedGroupId: string | null } {
+  const source = groups.find(g => g.id === args.sourceGroupId);
+  const target = groups.find(g => g.id === args.targetGroupId);
+  if (!source || !target) return { groups, autoDeletedGroupId: null };
+  const tab = source.tabs[args.sourceIndex];
+  if (!tab) return { groups, autoDeletedGroupId: null };
+
+  const newSourceTabs = [...source.tabs];
+  const newTargetTabs = args.sourceGroupId === args.targetGroupId ? newSourceTabs : [...target.tabs];
+  newSourceTabs.splice(args.sourceIndex, 1);
+  const adjusted = Math.max(0, Math.min(args.targetIndex, newTargetTabs.length));
+  newTargetTabs.splice(adjusted, 0, tab);
+
+  const bump = (g: TabGroup, tabs: Tab[]): TabGroup => ({
+    ...g, tabs, updatedAt: now, version: (g.version || 1) + 1,
+  });
+
+  let out = groups.map(g => {
+    if (g.id === args.sourceGroupId) return bump(g, newSourceTabs);
+    if (g.id === args.targetGroupId) return bump(g, newTargetTabs);
+    return g;
+  });
+
+  let autoDeletedGroupId: string | null = null;
+  const movedSource = out.find(g => g.id === args.sourceGroupId)!;
+  if (args.sourceGroupId !== args.targetGroupId && movedSource.tabs.length === 0
+      && shouldAutoDeleteAfterTabRemoval(movedSource, '')) {
+    autoDeletedGroupId = args.sourceGroupId;
+    out = out.map(g =>
+      g.id === args.sourceGroupId && !g.isDeleted
+        ? { ...g, isDeleted: true, version: (g.version || 1) + 1, updatedAt: now }
+        : g
+    );
+  }
+  return { groups: out, autoDeletedGroupId };
+}
+
+/** cleanDuplicateTabs 语义（tabSlice.ts:380）：同 URL 留最新，余者墓碑；清空未锁定组→墓碑 */
+export function applyCleanDuplicates(
+  groups: TabGroup[],
+  now: string
+): { groups: TabGroup[]; removedTabsCount: number; removedGroupsCount: number } {
+  let removedTabsCount = 0;
+  const urlMap = new Map<string, { tab: Tab; groupId: string }[]>();
+  groups.forEach(group => {
+    group.tabs.forEach(tab => {
+      if (tab.isDeleted) return;
+      if (!tab.url) return;
+      const key = tab.url.startsWith('loading://') ? `${tab.url}|${tab.title}` : tab.url;
+      if (!urlMap.has(key)) urlMap.set(key, []);
+      urlMap.get(key)!.push({ tab, groupId: group.id });
+    });
+  });
+
+  const tombstoned = new Map<string, Set<string>>(); // groupId -> 待墓碑 tabId 集
+  urlMap.forEach(list => {
+    if (list.length <= 1) return;
+    const sorted = [...list].sort(
+      (a, b) => new Date(b.tab.lastAccessed).getTime() - new Date(a.tab.lastAccessed).getTime()
+    );
+    for (let i = 1; i < sorted.length; i++) {
+      const { groupId, tab } = sorted[i];
+      if (!tombstoned.has(groupId)) tombstoned.set(groupId, new Set());
+      tombstoned.get(groupId)!.add(tab.id);
+      removedTabsCount++;
+    }
+  });
+
+  let removedGroupsCount = 0;
+  const withTombstones = groups.map(g => {
+    const ids = tombstoned.get(g.id);
+    if (!ids) return g;
+    return {
+      ...g,
+      tabs: g.tabs.map(t => (ids.has(t.id) && !t.isDeleted ? { ...t, isDeleted: true, lastAccessed: now } : t)),
+      updatedAt: now,
+      version: (g.version || 1) + 1,
+    };
+  });
+
+  const finalGroups = withTombstones.map(g => {
+    const hasActive = g.tabs.some(t => !t.isDeleted);
+    if (!hasActive && !g.isLocked && !g.isDeleted) {
+      removedGroupsCount++;
+      return { ...g, isDeleted: true, version: (g.version || 1) + 1, updatedAt: now };
+    }
+    return g;
+  });
+
+  return { groups: finalGroups, removedTabsCount, removedGroupsCount };
 }

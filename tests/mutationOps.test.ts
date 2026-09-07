@@ -164,3 +164,71 @@ describe('mutationOps 组生命周期', () => {
     assert.equal(groups[0].id, 'new1'); // 置顶
   });
 });
+
+describe('mutationOps 移动与清理', () => {
+  it('applyMoveGroup：交换位置并重排 displayOrder', async () => {
+    const { applyMoveGroup } = await import('@/utils/mutationOps');
+    const a = mkGroup('a', []), b = mkGroup('b', []);
+    const out = applyMoveGroup([a, b], 0, 1);
+    assert.deepEqual(out!.map(g => g.id), ['b', 'a']);
+    assert.ok(out!.every(g => typeof g.displayOrder === 'number'));
+  });
+  it('applyMoveGroup：索引越界 → null', async () => {
+    const { applyMoveGroup } = await import('@/utils/mutationOps');
+    assert.equal(applyMoveGroup([mkGroup('a', [])], 0, 5), null);
+    assert.equal(applyMoveGroup([mkGroup('a', [])], -1, 0), null);
+  });
+  it('applyMoveTab：跨组移动，两侧 version+1', async () => {
+    const { applyMoveTab } = await import('@/utils/mutationOps');
+    const g1 = mkGroup('g1', [mkTab('t1'), mkTab('t2')]);
+    const g2 = mkGroup('g2', [mkTab('t3')]);
+    const { groups } = applyMoveTab([g1, g2], { sourceGroupId: 'g1', sourceIndex: 0, targetGroupId: 'g2', targetIndex: 1 }, NOW);
+    const out1 = groups.find(g => g.id === 'g1')!;
+    const out2 = groups.find(g => g.id === 'g2')!;
+    assert.deepEqual(out2.tabs.map(t => t.id), ['t3', 't1']);
+    assert.deepEqual(out1.tabs.map(t => t.id), ['t2']);
+    assert.equal(out1.version, 2);
+    assert.equal(out2.version, 2);
+  });
+  it('applyMoveTab：同组移动只动一个组、version+1 一次', async () => {
+    const { applyMoveTab } = await import('@/utils/mutationOps');
+    const g1 = mkGroup('g1', [mkTab('t1'), mkTab('t2'), mkTab('t3')]);
+    const { groups } = applyMoveTab([g1], { sourceGroupId: 'g1', sourceIndex: 0, targetGroupId: 'g1', targetIndex: 2 }, NOW);
+    const out = groups.find(g => g.id === 'g1')!;
+    assert.deepEqual(out.tabs.map(t => t.id), ['t2', 't3', 't1']);
+    assert.equal(out.version, 2);
+  });
+  it('applyMoveTab：跨组移空源组且未锁定 → 源组墓碑化', async () => {
+    const { applyMoveTab } = await import('@/utils/mutationOps');
+    const g1 = mkGroup('g1', [mkTab('t1')]);
+    const g2 = mkGroup('g2', []);
+    const { groups, autoDeletedGroupId } = applyMoveTab([g1, g2], { sourceGroupId: 'g1', sourceIndex: 0, targetGroupId: 'g2', targetIndex: 0 }, NOW);
+    assert.equal(autoDeletedGroupId, 'g1');
+    assert.equal(groups.find(g => g.id === 'g1')!.isDeleted, true);
+  });
+  it('applyMoveTab：源组锁定 → 不墓碑', async () => {
+    const { applyMoveTab } = await import('@/utils/mutationOps');
+    const g1 = mkGroup('g1', [mkTab('t1')], { isLocked: true });
+    const g2 = mkGroup('g2', []);
+    const { autoDeletedGroupId } = applyMoveTab([g1, g2], { sourceGroupId: 'g1', sourceIndex: 0, targetGroupId: 'g2', targetIndex: 0 }, NOW);
+    assert.equal(autoDeletedGroupId, null);
+  });
+  it('applyCleanDuplicates：同 URL 保留最新（lastAccessed），其余墓碑；清理后空且未锁定的组墓碑化', async () => {
+    const { applyCleanDuplicates } = await import('@/utils/mutationOps');
+    const old = mkTab('old', { url: 'https://dup.com', lastAccessed: '2026-01-01T00:00:00.000Z' });
+    const fresh = mkTab('fresh', { url: 'https://dup.com', lastAccessed: NOW });
+    const g1 = mkGroup('g1', [old, fresh]);
+    // 修正（brief 笔误）：原 brief 用 mkTab('solo', { url: 'https://x.com' }) + stale2（同 URL，旧时间戳）。
+    // 由于 solo 默认 EARLIER (2026-09-01) 比 stale2 (2026-01-01) 更新 → solo 不被墓碑、g2 不空，
+    // 与断言 removedGroupsCount===1 矛盾。
+    // 改为让 g2 的 tab 与 g1 的 https://dup.com 重复（老时间戳）→ 被 fresh 挤掉 → g2 清空 → 墓碑 g2。
+    const g2 = mkGroup('g2', [mkTab('stale2', { url: 'https://dup.com', lastAccessed: '2026-01-01T00:00:00.000Z' })]);
+    const { groups, removedTabsCount, removedGroupsCount } = applyCleanDuplicates([g1, g2], NOW);
+    const out1 = groups.find(g => g.id === 'g1')!;
+    assert.equal(removedTabsCount, 2);
+    assert.equal(out1.tabs.find(t => t.id === 'old')!.isDeleted, true);
+    assert.equal(out1.tabs.find(t => t.id === 'fresh')!.isDeleted, false);
+    assert.equal(removedGroupsCount, 1); // g2 清空且未锁定
+    assert.equal(groups.find(g => g.id === 'g2')!.isDeleted, true);
+  });
+});
