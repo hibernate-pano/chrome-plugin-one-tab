@@ -143,9 +143,14 @@ setupBackgroundSync();
 
 // ponytail: 上传报警听器。syncEngine.scheduleUpload() 改用 chrome.alarms
 // （setTimeout 在 MV3 SW idle 被杀后丢），这里负责接收 alarm 事件并触发上传。
+// 重要：与 popup SYNC 'upload' 走同一个队列名 'sync:upload'，确保所有数据
+// 写动作（包括 alarm 驱动的延迟上传）都通过 mutationQueue 串行化，避免与
+// 实时上传产生竞态导致本地状态被云端旧数据覆盖。
 chrome.alarms.onAlarm.addListener((alarm) => {
   if (alarm.name === SYNC_UPLOAD_ALARM) {
-    void syncEngine.runScheduledUpload();
+    enqueue('sync:upload', () => syncEngine.runScheduledUpload()).catch(err => {
+      console.error('[ServiceWorker] alarm 驱动的上传入队失败:', err);
+    });
   }
 });
 
