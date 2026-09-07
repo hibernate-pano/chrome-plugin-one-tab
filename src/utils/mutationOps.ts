@@ -8,6 +8,7 @@ import { shouldAutoDeleteAfterTabRemoval } from '@/utils/tabGroupUtils';
 import { updateDisplayOrder, updateGroupWithVersion } from '@/utils/versionHelper';
 
 /** saveGroup 语义（tabSlice.ts:58）：新组置顶，按 createdAt 倒序 */
+// eslint-disable-next-line @typescript-eslint/no-unused-vars -- _now 保留用于与同级 apply* 形参形状一致；sort 按 createdAt，不使用 _now
 export function applySaveGroup(groups: TabGroup[], group: TabGroup, _now: string): TabGroup[] {
   return [group, ...groups].sort(
     (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
@@ -137,6 +138,7 @@ export function applyUpdateGroupFields(
   groups: TabGroup[],
   groupId: string,
   fields: { isFavorite?: boolean; notes?: string },
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars -- _now 仅用于与其他 apply* 形参形状一致
   _now: string
 ): { groups: TabGroup[]; updated: TabGroup | null } {
   const target = groups.find(g => g.id === groupId);
@@ -151,6 +153,7 @@ export function applyImportGroups(
   groups: TabGroup[],
   incoming: TabGroup[],
   deps: { genId: () => string; sanitizeUrl: (url: string) => string | null },
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars -- _now 保留形参位用于签名一致；sort 按 createdAt
   _now: string
 ): { groups: TabGroup[]; imported: TabGroup[] } {
   const processed = incoming.map(group => ({
