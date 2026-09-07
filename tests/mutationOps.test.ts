@@ -96,3 +96,71 @@ describe('mutationOps.applyRemoveTab（语义命令，替代 updateGroup diff—
     assert.equal(groups.length, 0);
   });
 });
+
+describe('mutationOps 组生命周期', () => {
+  it('applyDeleteGroup：软删 + version+1，其余组不动', async () => {
+    const { applyDeleteGroup } = await import('@/utils/mutationOps');
+    const out = applyDeleteGroup([mkGroup('a', []), mkGroup('b', [])], 'a', NOW);
+    assert.equal(out.find(g => g.id === 'a')!.isDeleted, true);
+    assert.equal(out.find(g => g.id === 'a')!.version, 2);
+    assert.equal(out.find(g => g.id === 'b')!.isDeleted, false);
+  });
+
+  it('applyDeleteAllGroups：只墓碑活跃组；已墓碑的 version 不动（幂等）', async () => {
+    const { applyDeleteAllGroups } = await import('@/utils/mutationOps');
+    const tomb = mkGroup('dead', [], { isDeleted: true, version: 7 });
+    const out = applyDeleteAllGroups([mkGroup('a', []), tomb], NOW);
+    assert.equal(out.count, 2); // 与现 thunk 一致：count = groups.length
+    assert.equal(out.groups.find(g => g.id === 'a')!.isDeleted, true);
+    assert.equal(out.groups.find(g => g.id === 'dead')!.version, 7);
+  });
+
+  it('applyRestoreGroup：置回活跃 + version+1', async () => {
+    const { applyRestoreGroup } = await import('@/utils/mutationOps');
+    const g = mkGroup('a', [], { isDeleted: true });
+    const out = applyRestoreGroup([g], 'a', NOW);
+    assert.equal(out.restored!.isDeleted, false);
+    assert.equal(out.restored!.version, 2);
+  });
+
+  it('applyRestoreGroup：未找到 → restored=null', async () => {
+    const { applyRestoreGroup } = await import('@/utils/mutationOps');
+    assert.equal(applyRestoreGroup([], 'x', NOW).restored, null);
+  });
+
+  it('applyPurgeGroup：物理移除', async () => {
+    const { applyPurgeGroup } = await import('@/utils/mutationOps');
+    const out = applyPurgeGroup([mkGroup('a', []), mkGroup('b', [])], 'a');
+    assert.deepEqual(out.map(g => g.id), ['b']);
+  });
+
+  it('applyRenameGroup：走 updateGroupWithVersion（version+1）', async () => {
+    const { applyRenameGroup } = await import('@/utils/mutationOps');
+    const out = applyRenameGroup([mkGroup('a', [])], 'a', '新名字', NOW);
+    assert.equal(out.renamed!.name, '新名字');
+    assert.equal(out.renamed!.version, 2);
+    assert.equal(out.renamed!.updatedAt, NOW);
+  });
+
+  it('applyToggleGroupLock：翻转锁定', async () => {
+    const { applyToggleGroupLock } = await import('@/utils/mutationOps');
+    const out = applyToggleGroupLock([mkGroup('a', [], { isLocked: false })], 'a', NOW);
+    assert.equal(out.isLocked, true);
+  });
+
+  it('applyImportGroups：生成新 id、丢弃危险 URL tab、置顶', async () => {
+    const { applyImportGroups } = await import('@/utils/mutationOps');
+    const src = mkGroup('old', [mkTab('x', { url: 'javascript:alert(1)' }), mkTab('y')]);
+    const { groups, imported } = applyImportGroups(
+      [mkGroup('existing', [])],
+      [src],
+      { genId: (() => { let i = 0; return () => `new${++i}`; })(), sanitizeUrl: (u) => u.startsWith('javascript:') ? null : u },
+      NOW
+    );
+    assert.equal(imported.length, 1);
+    assert.equal(imported[0].id, 'new1');
+    assert.equal(imported[0].tabs.length, 1); // javascript: 被丢
+    assert.equal(imported[0].tabs[0].id, 'new2');
+    assert.equal(groups[0].id, 'new1'); // 置顶
+  });
+});
