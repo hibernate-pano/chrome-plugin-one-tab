@@ -118,23 +118,32 @@ export class SyncEngine {
   }
 
   /**
-   * 调度延迟上传。autoSyncMiddleware 调用此方法，带优先级防抖。
+   * 调度延迟上传。mutationHandlers / autoSyncMiddleware 调用此方法。
+   * 双驱动：setTimeout 为 SW 存活期内的快路径（1.5~3s 真延迟，R6 修复）；
+   * chrome.alarms 为 SW 被杀后的兜底（≥30s）。upload() 成功路径会
+   * cancelPendingUpload() 清双驱动。
    * @param delayMs 延迟毫秒数（默认 3000ms）
    */
   scheduleUpload(delayMs: number = 3000): void {
-    // ponytail: MV3 SW 可能在 idle 后被杀，setTimeout 会永远丢——手动“点开
-    // 一个标签”这类操作可能上传不到云端，然后后台 60s 轮询下来云端仍为旧版本，
-    // 本地新版本被“复活”。同时持久化“本地有变更”标志，让 downloadAndMerge
-    // 后能重新调度，backgroundSync 也能在下载前先上传。
-    // chrome.alarms 最小 delayInMinutes 是 0.5（30s），足够合并同 tick 多次调度。
     void storage.setPendingUpload(true);
     if (typeof chrome !== 'undefined' && chrome.alarms) {
+      // ponytail: 双驱动——R6 修复。chrome.alarms 最小 delayInMinutes 是 0.5（30s），
+      // 仅靠 alarm 会把“点开一个标签”这种 1.5~3s 意图拉伸到 ≥30s，期间本地变更
+      // 未推送。setTimeout 在 SW 存活期内 1.5~3s 真触发；alarm 在 SW 被杀后兜底。
+      // 两者都清旧，幂等可重复触发（upload() 成功会 cancelPendingUpload 清双驱动）。
+      // 快路径
+      if (this.uploadTimer) clearTimeout(this.uploadTimer);
+      this.uploadTimer = setTimeout(() => {
+        this.uploadTimer = null;
+        void this.upload().catch(err => console.error('[SyncEngine] 快路径上传失败:', err));
+      }, delayMs);
+      // 兜底
       void chrome.alarms.clear(SYNC_UPLOAD_ALARM).catch(() => {});
       const delayMinutes = Math.max(0.5, delayMs / 60000);
       chrome.alarms.create(SYNC_UPLOAD_ALARM, { delayInMinutes: delayMinutes });
       return;
     }
-    // 非扩展运行时 fallback：单测可走这里
+    // 非扩展运行时 fallback：单测走这里
     if (this.uploadTimer) clearTimeout(this.uploadTimer);
     this.uploadTimer = setTimeout(() => {
       this.uploadTimer = null;
