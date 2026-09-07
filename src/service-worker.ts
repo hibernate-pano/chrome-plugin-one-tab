@@ -372,7 +372,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           // 统一包装为 MutationResult：ok=业务成败，error=原因码（already_syncing 等），
           // payload=完整原始结果（MergeResult/UploadResult，popup 按需取字段）
           if (data.op === 'upload') {
-            const r = await syncEngine.upload({ forcePending: true });
+            const r = await syncEngine.upload({
+              forcePending: true,
+              overwriteCloud: !!data.overwriteCloud,
+              syncSettings: data.syncSettings !== false,
+            });
             return { ok: r.success, error: r.error, payload: r };
           }
           if (data.op === 'download') {

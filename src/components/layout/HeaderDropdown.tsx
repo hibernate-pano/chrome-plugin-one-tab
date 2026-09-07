@@ -2,7 +2,7 @@ import React, { useState, useRef, useEffect } from 'react';
 import { useAppSelector, useAppDispatch } from '@/store/hooks';
 import { signOut } from '@/store/slices/authSlice';
 import { deleteAllGroups, loadGroups } from '@/store/slices/tabSlice';
-import { syncEngine } from '@/services/syncEngine';
+import { sendSyncCommand } from '@/shared/mutationProtocol';
 import { storage } from '@/utils/storage';
 import { LoginForm } from '../auth/LoginForm';
 import { RegisterForm } from '../auth/RegisterForm';
@@ -65,12 +65,12 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({ onClose }) => {
     }
 
     try {
-      const result = await syncEngine.downloadAndMerge({
+      const res = await sendSyncCommand('download', {
         forceRemote: false,
         syncSettings: false,
       });
-      
-      if (result.success) {
+
+      if (res.ok) {
         try {
           await dispatch(loadGroups()).unwrap();
         } catch (err) {
@@ -85,7 +85,7 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({ onClose }) => {
       } else {
         showAlert({
           title: '手动同步失败',
-          message: result.reason === 'not_authenticated' ? '未登录' : (result.reason || '无法从云端拉取数据'),
+          message: res.error === 'not_authenticated' ? '未登录' : (res.error || '无法从云端拉取数据'),
           type: 'error',
           onClose: () => {}
         });
@@ -140,7 +140,7 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({ onClose }) => {
           const count = result.payload?.count || 0;
 
           if (isAuthenticated) {
-            syncEngine.upload({
+            sendSyncCommand('upload', {
               overwriteCloud: true,
               syncSettings: true,
             })

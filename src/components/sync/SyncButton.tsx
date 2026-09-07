@@ -2,9 +2,11 @@ import React, { useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useAppSelector, useAppDispatch } from '@/store/hooks';
 import { loadGroups } from '@/store/slices/tabSlice';
-import { syncEngine } from '@/services/syncEngine';
-import type { SyncOperation } from '@/services/syncEngine';
 import { downloadTabGroups } from '@/services/tabGroupSyncService';
+import { sendSyncCommand } from '@/shared/mutationProtocol';
+
+// 与 syncEngine.SyncOperation 同语义（仅 UI 进度条用），本文件不再 import syncEngine。
+type SyncOperation = 'upload' | 'download' | 'none';
 import { useToast } from '@/contexts/ToastContext';
 import { trackProductEvent } from '@/utils/productEvents';
 import { storage } from '@/utils/storage';
@@ -205,22 +207,23 @@ export const SyncButton: React.FC<SyncButtonProps> = () => {
       });
       setIsWorking(true);
       setWorkingOperation('upload');
-      const result = await syncEngine.upload({
+      // 进度条本地模拟：跨消息边界 SW 端的 onProgress 不会回传到 popup，
+      // 此处驱动本地进度条 UI；真实结果经 sendSyncCommand 消息回传。
+      const progressTimer = simulateLocalProgress();
+      const res = await sendSyncCommand('upload', {
         overwriteCloud: true,
         syncSettings: true,
-        onProgress: (p, op) => {
-          setWorkingProgress(p);
-          setWorkingOperation(op);
-        },
       });
+      clearTimeout(progressTimer);
+      setWorkingProgress(100);
 
-      if (result.success) {
+      if (res.ok) {
         showToast('已用本地会话覆盖云端数据', 'success');
         void trackProductEvent('sync_upload_completed', {
           mode: 'overwrite',
         });
       } else {
-        showToast(result.error || '上传失败，请重试', 'error');
+        showToast(res.error || '上传失败，请重试', 'error');
       }
     } catch (error) {
       console.error('上传数据到云端失败:', error);
@@ -242,22 +245,23 @@ export const SyncButton: React.FC<SyncButtonProps> = () => {
       });
       setIsWorking(true);
       setWorkingOperation('upload');
-      const result = await syncEngine.upload({
+      // 进度条本地模拟：跨消息边界 SW 端的 onProgress 不会回传到 popup，
+      // 此处驱动本地进度条 UI；真实结果经 sendSyncCommand 消息回传。
+      const progressTimer = simulateLocalProgress();
+      const res = await sendSyncCommand('upload', {
         overwriteCloud: false,
         syncSettings: true,
-        onProgress: (p, op) => {
-          setWorkingProgress(p);
-          setWorkingOperation(op);
-        },
       });
+      clearTimeout(progressTimer);
+      setWorkingProgress(100);
 
-      if (result.success) {
+      if (res.ok) {
         showToast('已把本地会话合并上传到云端', 'success');
         void trackProductEvent('sync_upload_completed', {
           mode: 'merge',
         });
       } else {
-        showToast(result.error || '上传失败，请重试', 'error');
+        showToast(res.error || '上传失败，请重试', 'error');
       }
     } catch (error) {
       console.error('上传数据到云端失败:', error);
@@ -289,16 +293,17 @@ export const SyncButton: React.FC<SyncButtonProps> = () => {
       });
       setIsWorking(true);
       setWorkingOperation('download');
-      const result = await syncEngine.downloadAndMerge({
+      // 进度条本地模拟：跨消息边界 SW 端的 onProgress 不会回传到 popup，
+      // 此处驱动本地进度条 UI；真实结果经 sendSyncCommand 消息回传。
+      const progressTimer = simulateLocalProgress();
+      const res = await sendSyncCommand('download', {
         forceRemote: true,
         syncSettings: true,
-        onProgress: (p, op) => {
-          setWorkingProgress(p);
-          setWorkingOperation(op);
-        },
       });
+      clearTimeout(progressTimer);
+      setWorkingProgress(100);
 
-      if (result.success) {
+      if (res.ok) {
         await refreshRedux();
         showToast('已用云端数据覆盖本地会话', 'success');
         void trackProductEvent('sync_download_completed', {
@@ -306,7 +311,8 @@ export const SyncButton: React.FC<SyncButtonProps> = () => {
           directRestore: false,
         });
       } else {
-        showToast(result.reason === 'not_authenticated' ? '未登录' : (result.reason || '下载失败，请重试'), 'error');
+        const reason = res.error;
+        showToast(reason === 'not_authenticated' ? '未登录' : (reason || '下载失败，请重试'), 'error');
       }
     } catch (error) {
       console.error('从云端下载数据失败:', error);
@@ -338,16 +344,17 @@ export const SyncButton: React.FC<SyncButtonProps> = () => {
       });
       setIsWorking(true);
       setWorkingOperation('download');
-      const result = await syncEngine.downloadAndMerge({
+      // 进度条本地模拟：跨消息边界 SW 端的 onProgress 不会回传到 popup，
+      // 此处驱动本地进度条 UI；真实结果经 sendSyncCommand 消息回传。
+      const progressTimer = simulateLocalProgress();
+      const res = await sendSyncCommand('download', {
         forceRemote: false,
         syncSettings: false,
-        onProgress: (p, op) => {
-          setWorkingProgress(p);
-          setWorkingOperation(op);
-        },
       });
+      clearTimeout(progressTimer);
+      setWorkingProgress(100);
 
-      if (result.success) {
+      if (res.ok) {
         await refreshRedux();
         showToast('已把云端数据合并到本地会话', 'success');
         void trackProductEvent('sync_download_completed', {
@@ -355,7 +362,8 @@ export const SyncButton: React.FC<SyncButtonProps> = () => {
           directRestore: false,
         });
       } else {
-        showToast(result.reason === 'not_authenticated' ? '未登录' : (result.reason || '下载失败，请重试'), 'error');
+        const reason = res.error;
+        showToast(reason === 'not_authenticated' ? '未登录' : (reason || '下载失败，请重试'), 'error');
       }
     } catch (error) {
       console.error('从云端下载数据失败:', error);
@@ -365,6 +373,22 @@ export const SyncButton: React.FC<SyncButtonProps> = () => {
       setWorkingOperation('none');
       setWorkingProgress(0);
     }
+  };
+
+  // 进度条本地模拟器：SW 不回传 onProgress；用一组 setTimeout 推进进度条。
+  // 返回 timer 句柄，调用方负责在真实结果回来时 clearTimeout 立即归位 100%。
+  const simulateLocalProgress = () => {
+    const steps = [10, 30, 55, 80];
+    let i = 0;
+    const tick = () => {
+      if (i < steps.length) {
+        setWorkingProgress(steps[i]);
+        i += 1;
+        return setTimeout(tick, 400);
+      }
+      return undefined;
+    };
+    return setTimeout(tick, 200);
   };
 
   if (!isAuthenticated) {

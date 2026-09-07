@@ -4,7 +4,7 @@ import { getCurrentUser } from '@/store/slices/authSlice';
 import { loadGroups } from '@/store/slices/tabSlice';
 import { auth as supabaseAuth } from '@/utils/supabase';
 import { authCache } from '@/utils/authCache';
-import { syncEngine } from '@/services/syncEngine';
+import { sendSyncCommand } from '@/shared/mutationProtocol';
 
 interface AuthProviderProps {
   children: React.ReactNode;
@@ -62,15 +62,15 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
               if (user) {
                 console.log('用户已自动登录:', user.email);
                 // 登录后自动从云端合并到本地（跨设备找回。失败不阻塞，静默处理）
-                syncEngine
-                  .downloadAndMerge()
-                  .then(result => {
-                    if (result.success) {
-                      console.log(`[AutoSync] 自动下载合并完成: ${result.groups.length} 个组`);
+                sendSyncCommand('download')
+                  .then(res => {
+                    if (res.ok) {
+                      const payload = res.payload as { groups?: unknown[] } | undefined;
+                      console.log(`[AutoSync] 自动下载合并完成: ${payload?.groups?.length ?? 0} 个组`);
                       // 合并结果写进了 storage，需刷新 Redux 让 UI 更新
                       dispatch(loadGroups());
-                    } else if (result.reason && result.reason !== 'already_syncing') {
-                      console.warn('[AutoSync] 自动下载未成功:', result.reason);
+                    } else if (res.error && res.error !== 'already_syncing' && res.error !== 'recent_upload_guard' && res.error !== 'pending_upload_failed') {
+                      console.warn('[AutoSync] 自动下载未成功:', res.error);
                     }
                   })
                   .catch(err => console.warn('[AutoSync] 自动下载异常:', err));

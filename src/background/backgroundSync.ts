@@ -2,6 +2,7 @@ import { store } from '@/store';
 import { getCurrentUser, setFromCache } from '@/store/slices/authSlice';
 import { loadSettings } from '@/store/slices/settingsSlice';
 import { syncEngine } from '@/services/syncEngine';
+import { enqueue } from './mutationQueue';
 
 /**
  * 后台定时同步（chrome.alarms 驱动，Service Worker 常驻时每 60s 触发）。
@@ -80,7 +81,9 @@ async function performBackgroundSync(): Promise<boolean> {
     const hasPending = await syncEngine.hasPendingUpload();
     if (hasPending) {
       console.log('[BackgroundSync] 本地有未上传变更，先上传再下载');
-      const upResult = await syncEngine.upload({ forcePending: true });
+      // 单写者队列（与 service-worker.ts 的 SYNC upload handler 同名 'sync:upload'），
+      // 后台轮询上传与 popup SYNC 消息上传串行执行，避免并发 upload/download 撞车。
+      const upResult = await enqueue('sync:upload', () => syncEngine.upload({ forcePending: true }));
       if (!upResult.success) {
         console.warn(`[BackgroundSync] 上传未成功，跳过本次下载: ${upResult.error}（下轮 alarm 重试）`);
         return true;
@@ -90,8 +93,8 @@ async function performBackgroundSync(): Promise<boolean> {
     console.warn('[BackgroundSync] 检查 pending_upload 失败（继续）:', e);
   }
 
-  // 4. 下载并合并到本地 storage
-  const result = await syncEngine.downloadAndMerge();
+  // 4. 下载并合并到本地 storage（同 'sync:download' 名，串行化）
+  const result = await enqueue('sync:download', () => syncEngine.downloadAndMerge());
   if (!result.success) {
     const reason = result.reason ?? 'unknown';
     // already_syncing / recent_upload_guard / pending_upload_failed 属正常并发或保护性跳过，不视为错误
