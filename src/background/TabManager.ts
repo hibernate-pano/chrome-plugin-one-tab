@@ -4,6 +4,7 @@ import { cacheManager } from '@/utils/performance';
 import { trackProductEvent } from '@/utils/productEvents';
 import { syncEngine } from '@/services/syncEngine';
 import { sanitizeTabUrl } from '@/utils/inputValidation';
+import { enqueue } from './mutationQueue';
 
 /**
  * 统一的标签页管理器
@@ -112,8 +113,15 @@ export class TabManager {
         return;
       }
 
-      const existingGroups = await storage.getGroups();
-      await storage.setGroups([safeGroup, ...existingGroups]);
+      // 单写者：saveAllTabs 的存储写入也必须经 mutation 队列，与 popup 命令串行
+      // （否则 SW 内部仍可能与其他 job 交错读写 groups）
+      const finalGroups = await enqueue('saveAllTabs', async () => {
+        const existingGroups = await storage.getGroups();
+        return [safeGroup, ...existingGroups].sort(
+          (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+        );
+      });
+      await storage.setGroups(finalGroups);
 
       // ponytail: 自动上传承诺接入点。SW 保存路径完全绕过 Redux（直接 setGroups），
       // autoSyncMiddleware 永远监听不到 saveGroup.fulfilled——这里补上 scheduleUpload

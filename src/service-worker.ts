@@ -3,6 +3,8 @@ import { migrateToV2 } from '@/utils/migrationHelper';
 import { setupBackgroundSync } from '@/background/backgroundSync';
 import { syncEngine, SYNC_UPLOAD_ALARM } from '@/services/syncEngine';
 import { sanitizeTabUrl } from '@/utils/inputValidation';
+import { enqueue } from '@/background/mutationQueue';
+import { mutationService } from '@/background/mutationService';
 
 // Chrome 扩展的 Service Worker
 // 为了避免模块导入问题，早期版本内联了存储逻辑；现统一使用 utils/storage 以与前端页面共享同一数据源（IndexedDB）
@@ -346,6 +348,45 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       case 'REFRESH_TAB_LIST':
         sendResponse({ success: true });
         return false;
+
+      case 'MUTATE': {
+        const cmd = message.data;
+        if (!cmd || typeof cmd.op !== 'string') {
+          sendResponse({ ok: false, error: '无效命令' });
+          return false;
+        }
+        enqueue(cmd.op, () => mutationService.handle(cmd))
+          .then(res => sendResponse(res))
+          .catch(err => sendResponse({ ok: false, error: err?.message || '命令执行失败' }));
+        return true; // 异步响应
+      }
+
+      case 'SYNC': {
+        const data = message.data || {};
+        if (data.op === 'scheduleUpload') {
+          syncEngine.scheduleUpload(typeof data.delayMs === 'number' ? data.delayMs : 3000);
+          sendResponse({ ok: true });
+          return false;
+        }
+        enqueue(`sync:${data.op}`, async () => {
+          // 统一包装为 MutationResult：ok=业务成败，error=原因码（already_syncing 等），
+          // payload=完整原始结果（MergeResult/UploadResult，popup 按需取字段）
+          if (data.op === 'upload') {
+            const r = await syncEngine.upload({ forcePending: true });
+            return { ok: r.success, error: r.error, payload: r };
+          }
+          if (data.op === 'download') {
+            const r = await syncEngine.downloadAndMerge({
+              forceRemote: !!data.forceRemote, syncSettings: !!data.syncSettings,
+            });
+            return { ok: r.success, error: r.reason, payload: r };
+          }
+          return { ok: false, error: `未知同步操作: ${data.op}` };
+        })
+          .then(res => sendResponse(res))
+          .catch(err => sendResponse({ ok: false, error: err?.message || '同步失败' }));
+        return true;
+      }
 
       default:
         sendResponse({ success: false, error: '未知消息类型' });
