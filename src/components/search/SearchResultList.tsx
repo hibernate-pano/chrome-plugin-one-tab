@@ -1,8 +1,7 @@
 import React, { useDeferredValue, useEffect, useState, useTransition } from 'react';
 import { useAppDispatch, useAppSelector } from '@/store/hooks';
 import { Tab, TabGroup } from '@/types/tab';
-import { deleteGroup, updateGroup } from '@/store/slices/tabSlice';
-import { shouldAutoDeleteAfterMultipleTabRemoval, shouldAutoDeleteAfterTabRemoval } from '@/utils/tabGroupUtils';
+import { deleteGroup, deleteTabAndSync } from '@/store/slices/tabSlice';
 import { useToast } from '@/contexts/ToastContext';
 import { useEnhancedToast } from '@/utils/toastHelper';
 import { trackProductEvent } from '@/utils/productEvents';
@@ -133,33 +132,17 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({ searchQuery 
 
   const handleOpenTab = (tab: Tab, group: TabGroup) => {
     if (!group.isLocked) {
-      if (shouldAutoDeleteAfterTabRemoval(group, tab.id)) {
-        // ponytail: 去掉 fake dispatch
-        dispatch(deleteGroup(group.id))
-          .unwrap()
-          .then(() => {
+      dispatch(deleteTabAndSync({ groupId: group.id, tabId: tab.id }))
+        .unwrap()
+        .then(payload => {
+          if (payload.group === null) {
             showDeleteSuccess(`已恢复标签页并自动删除空会话 "${group.name}"`);
-          })
-          .catch(error => {
-            console.error('删除会话失败:', error);
-            showDeleteError(`删除会话失败: ${error.message || '未知错误'}`);
-          });
-      } else {
-        const updatedTabs = group.tabs.filter(item => item.id !== tab.id);
-        const updatedGroup = {
-          ...group,
-          tabs: updatedTabs,
-          updatedAt: new Date().toISOString(),
-        };
-
-        // ponytail: 去掉 fake dispatch
-        dispatch(updateGroup(updatedGroup))
-          .unwrap()
-          .catch(error => {
-            console.error('更新会话失败:', error);
-            showRestoreError(`更新会话失败: ${error.message || '未知错误'}`);
-          });
-      }
+          }
+        })
+        .catch(error => {
+          console.error('更新会话失败:', error);
+          showRestoreError(`更新会话失败: ${error.message || '未知错误'}`);
+        });
     }
 
     setTimeout(() => {
@@ -171,29 +154,14 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({ searchQuery 
   };
 
   const handleDeleteTab = (tab: Tab, group: TabGroup) => {
-    if (shouldAutoDeleteAfterTabRemoval(group, tab.id)) {
-      dispatch(deleteGroup(group.id))
-        .unwrap()
-        .then(() => {
-          showDeleteSuccess(`已删除会话 "${group.name}"（最后一个标签页已删除）`);
-        })
-        .catch(error => {
-          showDeleteError(`删除会话失败: ${error.message || '未知错误'}`);
-        });
-      return;
-    }
-
-    const updatedTabs = group.tabs.filter(item => item.id !== tab.id);
-    const updatedGroup = {
-      ...group,
-      tabs: updatedTabs,
-      updatedAt: new Date().toISOString(),
-    };
-
-    dispatch(updateGroup(updatedGroup))
+    dispatch(deleteTabAndSync({ groupId: group.id, tabId: tab.id }))
       .unwrap()
-      .then(() => {
-        showDeleteSuccess(`已从 "${group.name}" 删除标签页 (剩余 ${updatedTabs.length} 个)`);
+      .then(payload => {
+        if (payload.group === null) {
+          showDeleteSuccess(`已删除会话 "${group.name}"（最后一个标签页已删除）`);
+        } else {
+          showDeleteSuccess(`已从 "${group.name}" 删除标签页 (剩余 ${payload.group.tabs.length} 个)`);
+        }
       })
       .catch(error => {
         showDeleteError(`更新会话失败: ${error.message || '未知错误'}`);
@@ -210,58 +178,21 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({ searchQuery 
       pinned: !!tab.pinned,
     }));
 
-    const groupsToUpdate = matchingTabs.reduce((accumulator, { tab, group }) => {
-      if (group.isLocked) {
-        return accumulator;
+    // 串行删除每枚 tab：deleteTabAndSync 内部处理"删到组空→自动整组删除"。
+    // 旧版用 updateGroup(filter) 走 diff 通道，存在 UI 状态陈旧时误伤的风险（根因 R3）。
+    void (async () => {
+      for (const { tab, group } of matchingTabs) {
+        if (group.isLocked) continue;
+        try {
+          await dispatch(deleteTabAndSync({ groupId: group.id, tabId: tab.id })).unwrap();
+        } catch (error) {
+          console.error('批量恢复后删除会话失败:', error);
+          showDeleteError(`批量恢复后清理原会话失败: ${(error as { message?: string })?.message || '未知错误'}`);
+        }
       }
-
-      if (!accumulator[group.id]) {
-        accumulator[group.id] = { group, tabsToRemove: [] };
-      }
-
-      accumulator[group.id].tabsToRemove.push(tab.id);
-      return accumulator;
-    }, {} as Record<string, { group: TabGroup; tabsToRemove: string[] }>);
-
-    Object.values(groupsToUpdate).forEach(({ group, tabsToRemove }) => {
-      if (tabsToRemove.length === group.tabs.length) {
-        dispatch({ type: 'tabs/deleteGroup/fulfilled', payload: group.id });
-        return;
-      }
-
-      dispatch({
-        type: 'tabs/updateGroup/fulfilled',
-        payload: {
-          ...group,
-          tabs: group.tabs.filter(tab => !tabsToRemove.includes(tab.id)),
-          updatedAt: new Date().toISOString(),
-        },
-      });
-    });
+    })();
 
     setTimeout(() => {
-      Object.values(groupsToUpdate).forEach(({ group, tabsToRemove }) => {
-        if (tabsToRemove.length === group.tabs.length) {
-          dispatch(deleteGroup(group.id))
-            .unwrap()
-            .catch(error => {
-              console.error('批量恢复后删除会话失败:', error);
-              showDeleteError(`批量恢复后删除会话失败: ${error.message || '未知错误'}`);
-            });
-          return;
-        }
-
-        const updatedTabs = group.tabs.filter(tab => !tabsToRemove.includes(tab.id));
-        dispatch(updateGroup({
-          ...group,
-          tabs: updatedTabs,
-          updatedAt: new Date().toISOString(),
-        })).unwrap().catch(error => {
-          console.error('批量恢复后更新会话失败:', error);
-          showRestoreError(`批量恢复后更新会话失败: ${error.message || '未知错误'}`);
-        });
-      });
-
       chrome.runtime.sendMessage({
         type: 'OPEN_TABS',
         data: { tabs: tabsPayload },
@@ -274,32 +205,10 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({ searchQuery 
       return;
     }
 
-    const groupsToUpdate = matchingTabs.reduce((accumulator, { tab, group }) => {
-      if (group.isLocked) {
-        return accumulator;
-      }
-
-      if (!accumulator[group.id]) {
-        accumulator[group.id] = { group, tabsToRemove: [] };
-      }
-
-      accumulator[group.id].tabsToRemove.push(tab.id);
-      return accumulator;
-    }, {} as Record<string, { group: TabGroup; tabsToRemove: string[] }>);
-
     try {
-      for (const { group, tabsToRemove } of Object.values(groupsToUpdate)) {
-        if (shouldAutoDeleteAfterMultipleTabRemoval(group, tabsToRemove)) {
-          await dispatch(deleteGroup(group.id)).unwrap();
-          continue;
-        }
-
-        const updatedTabs = group.tabs.filter(tab => !tabsToRemove.includes(tab.id));
-        await dispatch(updateGroup({
-          ...group,
-          tabs: updatedTabs,
-          updatedAt: new Date().toISOString(),
-        })).unwrap();
+      for (const { tab, group } of matchingTabs) {
+        if (group.isLocked) continue;
+        await dispatch(deleteTabAndSync({ groupId: group.id, tabId: tab.id })).unwrap();
       }
 
       showDeleteSuccess(`成功删除 ${matchingTabs.length} 个搜索命中的标签页`);

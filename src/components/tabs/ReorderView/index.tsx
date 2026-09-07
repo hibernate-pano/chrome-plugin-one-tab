@@ -1,8 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import { useAppSelector, useAppDispatch } from '@/store/hooks';
 import { Tab, TabGroup } from '@/types/tab';
-import { updateGroup, deleteGroup } from '@/store/slices/tabSlice';
-import { shouldAutoDeleteAfterTabRemoval } from '@/utils/tabGroupUtils';
+import { deleteTabAndSync } from '@/store/slices/tabSlice';
 import { SafeFavicon } from '@/components/common/SafeFavicon';
 
 // 钉住图标
@@ -87,7 +86,7 @@ const ReorderView: React.FC = () => {
       },
     });
 
-    // 删除标签
+    // 删除标签（走 removeTab 语义命令，组空时自动整组删除）
     handleDeleteTab(tab);
   };
 
@@ -99,21 +98,19 @@ const ReorderView: React.FC = () => {
     // 如果标签组被锁定，不允许删除
     if (group.isLocked) return;
 
-    // 使用工具函数检查是否应该自动删除标签组
-    if (shouldAutoDeleteAfterTabRemoval(group, tab.id)) {
-      dispatch(deleteGroup(group.id));
-      console.log(`自动删除空标签组: ${group.name} (ID: ${group.id})`);
-    } else {
-      // 更新标签组，移除该标签页
-      const updatedTabs = group.tabs.filter(t => t.id !== tab.id);
-      const updatedGroup = {
-        ...group,
-        tabs: updatedTabs,
-        updatedAt: new Date().toISOString(),
-      };
-      dispatch(updateGroup(updatedGroup));
-      console.log(`从标签组删除标签页: ${group.name}, 剩余标签页: ${updatedTabs.length}`);
-    }
+    // 走 deleteTabAndSync → removeTab 语义命令：组空时自动整组删除（payload.group === null）
+    dispatch(deleteTabAndSync({ groupId: group.id, tabId: tab.id }))
+      .unwrap()
+      .then(payload => {
+        if (payload.group === null) {
+          console.log(`自动删除空标签组: ${group.name} (ID: ${group.id})`);
+        } else {
+          console.log(`从标签组删除标签页: ${group.name}, 剩余标签页: ${payload.group.tabs.length}`);
+        }
+      })
+      .catch(error => {
+        console.error('删除标签页失败:', error);
+      });
   };
 
   return (

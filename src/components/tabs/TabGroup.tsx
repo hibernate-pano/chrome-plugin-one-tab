@@ -1,9 +1,8 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { useAppDispatch, useAppSelector } from '@/store/hooks';
-import { updateGroupNameAndSync, toggleGroupLockAndSync, deleteGroup, updateGroup, moveTabAndSync } from '@/store/slices/tabSlice';
+import { updateGroupNameAndSync, toggleGroupLockAndSync, deleteGroup, updateGroupFields, persistGroupFields, deleteTabAndSync, moveTabAndSync } from '@/store/slices/tabSlice';
 import { DraggableTab } from '@/components/dnd/DraggableTab';
 import { TabGroup as TabGroupType, Tab } from '@/types/tab';
-import { shouldAutoDeleteAfterTabRemoval } from '@/utils/tabGroupUtils';
 import { useToast } from '@/contexts/ToastContext';
 import { useEnhancedToast } from '@/utils/toastHelper';
 import { trackProductEvent } from '@/utils/productEvents';
@@ -129,30 +128,26 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
   }, [dispatch, group.id]);
 
   const handleToggleFavorite = useCallback(() => {
-    dispatch(updateGroup({
-      ...group,
-      isFavorite: !group.isFavorite,
-      updatedAt: new Date().toISOString(),
-    }));
+    const nextFavorite = !group.isFavorite;
+    dispatch(updateGroupFields({ groupId: group.id, fields: { isFavorite: nextFavorite } }));
+    void persistGroupFields(group.id, { isFavorite: nextFavorite });
     void trackProductEvent('session_favorited', {
       sessionId: group.id,
       sessionName: group.name,
-      isFavorite: !group.isFavorite,
+      isFavorite: nextFavorite,
     });
   }, [dispatch, group]);
 
   const handleSaveNotes = useCallback(() => {
-    dispatch(updateGroup({
-      ...group,
-      notes: notesDraft.trim() || undefined,
-      updatedAt: new Date().toISOString(),
-    }));
+    const trimmed = notesDraft.trim() || undefined;
+    dispatch(updateGroupFields({ groupId: group.id, fields: { notes: trimmed } }));
+    void persistGroupFields(group.id, { notes: trimmed });
     setIsEditingNotes(false);
     void trackProductEvent('session_note_saved', {
       sessionId: group.id,
       sessionName: group.name,
-      hasNotes: !!notesDraft.trim(),
-      noteLength: notesDraft.trim().length,
+      hasNotes: !!trimmed,
+      noteLength: trimmed?.length ?? 0,
     });
   }, [dispatch, group, notesDraft]);
 
@@ -193,32 +188,17 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
 
   const handleOpenTab = useCallback((tab: Tab) => {
     if (!group.isLocked) {
-      if (shouldAutoDeleteAfterTabRemoval(group, tab.id)) {
-        // ponytail: 去掉 fake dispatch，依赖真实 thunk fulfilled 触发 reducer + middleware
-        dispatch(deleteGroup(group.id))
-          .unwrap()
-          .then(() => {
+      dispatch(deleteTabAndSync({ groupId: group.id, tabId: tab.id }))
+        .unwrap()
+        .then(payload => {
+          if (payload.group === null) {
             showDeleteSuccess(`已恢复标签页并自动删除空会话 "${group.name}"`);
-          })
-          .catch(error => {
-            console.error('删除会话失败:', error);
-            showDeleteError(`删除会话失败: ${error.message || '未知错误'}`);
-          });
-      } else {
-        const updatedTabs = group.tabs.filter(t => t.id !== tab.id);
-        const updatedGroup = {
-          ...group,
-          tabs: updatedTabs,
-          updatedAt: new Date().toISOString()
-        };
-        // ponytail: 同上，去掉 fake dispatch
-        dispatch(updateGroup(updatedGroup))
-          .unwrap()
-          .catch(error => {
-            console.error('更新会话失败:', error);
-            showRestoreError(`更新会话失败: ${error.message || '未知错误'}`);
-          });
-      }
+          }
+        })
+        .catch(error => {
+          console.error('更新会话失败:', error);
+          showRestoreError(`更新会话失败: ${error.message || '未知错误'}`);
+        });
     }
 
     setTimeout(() => {
@@ -227,7 +207,7 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
         data: { url: tab.url, pinned: !!tab.pinned }
       });
     }, 50);
-  }, [dispatch, group, showDeleteSuccess, showDeleteError, showRestoreError]);
+  }, [dispatch, group, showDeleteSuccess, showRestoreError]);
 
   const handleMoveTab = useCallback((sourceGroupId: string, sourceIndex: number, targetGroupId: string, targetIndex: number) => {
     dispatch(moveTabAndSync({
@@ -239,31 +219,18 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
   }, [dispatch]);
 
   const handleDeleteTab = useCallback((tabId: string) => {
-    if (shouldAutoDeleteAfterTabRemoval(group, tabId)) {
-      dispatch(deleteGroup(group.id))
-        .unwrap()
-        .then(() => {
+    dispatch(deleteTabAndSync({ groupId: group.id, tabId }))
+      .unwrap()
+      .then(payload => {
+        if (payload.group === null) {
           showDeleteSuccess(`已删除会话 "${group.name}"（最后一个标签页已删除）`);
-        })
-        .catch(error => {
-          showDeleteError(`删除会话失败: ${error.message || '未知错误'}`);
-        });
-    } else {
-      const updatedTabs = group.tabs.filter(t => t.id !== tabId);
-      const updatedGroup = {
-        ...group,
-        tabs: updatedTabs,
-        updatedAt: new Date().toISOString()
-      };
-        dispatch(updateGroup(updatedGroup))
-        .unwrap()
-        .then(() => {
-          showDeleteSuccess(`已从 "${group.name}" 删除标签页 (剩余 ${updatedTabs.length} 个)`);
-        })
-        .catch(error => {
-          showDeleteError(`更新会话失败: ${error.message || '未知错误'}`);
-        });
-    }
+        } else {
+          showDeleteSuccess(`已从 "${group.name}" 删除标签页 (剩余 ${payload.group.tabs.length} 个)`);
+        }
+      })
+      .catch(error => {
+        showDeleteError(`更新会话失败: ${error.message || '未知错误'}`);
+      });
   }, [dispatch, group, showDeleteSuccess, showDeleteError]);
 
   // 格式化时间

@@ -8,7 +8,6 @@ const ACTION_PRIORITIES: Record<string, number> = {
   'tabs/restoreGroup/fulfilled': 10, // 恢复 = 覆写云端墓碑，尽快传播
   'tabs/saveGroup/fulfilled': 8,
   'tabs/importGroups/fulfilled': 8,
-  'tabs/updateGroup/fulfilled': 5,
   'tabs/updateGroupNameAndSync/fulfilled': 5,
   'tabs/cleanDuplicateTabs/fulfilled': 5,
   'tabs/toggleGroupLockAndSync/fulfilled': 3,
