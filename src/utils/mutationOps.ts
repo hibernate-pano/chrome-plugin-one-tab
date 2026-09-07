@@ -126,6 +126,25 @@ export function applyToggleGroupLock(
   return { groups: groups.map(g => (g.id === groupId ? withStamp : g)), isLocked: withStamp.isLocked };
 }
 
+/**
+ * updateGroupFields 语义（持久化 isFavorite/notes 等本地 UI 偏好）：
+ * 仅覆写传入字段；【不】bump version/updatedAt（这些字段不在云端 sync 范围内，
+ * 不应触发远端 version 噪声）。stage1 review fix：替代旧 persistGroupFields 直接写 storage
+ * 的回归路径，单写者保证。
+ * _now 入参仅用于签名一致（本函数不使用，避免与其他 apply* 形参形状不齐）。
+ */
+export function applyUpdateGroupFields(
+  groups: TabGroup[],
+  groupId: string,
+  fields: { isFavorite?: boolean; notes?: string },
+  _now: string
+): { groups: TabGroup[]; updated: TabGroup | null } {
+  const target = groups.find(g => g.id === groupId);
+  if (!target) return { groups, updated: null };
+  const updated: TabGroup = { ...target, ...fields };
+  return { groups: groups.map(g => (g.id === groupId ? updated : g)), updated };
+}
+
 /** importGroups 语义（tabSlice.ts:219）：新 id、URL 清洗、置顶按 createdAt DESC；
  * genId/sanitizeUrl 注入便于测试。 */
 export function applyImportGroups(

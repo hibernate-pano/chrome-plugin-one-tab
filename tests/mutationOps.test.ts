@@ -165,6 +165,45 @@ describe('mutationOps 组生命周期', () => {
   });
 });
 
+describe('mutationOps 本地字段（isFavorite/notes 不进 sync —— 阶段一 review fix）', () => {
+  it('applyUpdateGroupFields：覆写 isFavorite/notes，【不】bump version/updatedAt', async () => {
+    const { applyUpdateGroupFields } = await import('@/utils/mutationOps');
+    const g = mkGroup('a', [], { isFavorite: false, notes: undefined, version: 5, updatedAt: EARLIER });
+    const { groups, updated } = applyUpdateGroupFields(
+      [g], 'a', { isFavorite: true, notes: 'hi' }, NOW
+    );
+    const out = groups.find(x => x.id === 'a')!;
+    assert.equal(out.isFavorite, true);
+    assert.equal(out.notes, 'hi');
+    assert.equal(out.version, 5, 'version MUST NOT bump for local-pref writes');
+    assert.equal(out.updatedAt, EARLIER, 'updatedAt MUST NOT bump for local-pref writes');
+    assert.equal(updated!.isFavorite, true);
+  });
+  it('applyUpdateGroupFields：未找到 → updated=null', async () => {
+    const { applyUpdateGroupFields } = await import('@/utils/mutationOps');
+    const { groups, updated } = applyUpdateGroupFields([], 'nope', { isFavorite: true }, NOW);
+    assert.equal(updated, null);
+    assert.deepEqual(groups, []);
+  });
+  it('applyUpdateGroupFields：空 fields 对象 → 仍命中组，返回新对象（不可变）', async () => {
+    const { applyUpdateGroupFields } = await import('@/utils/mutationOps');
+    const g = mkGroup('a', [], { version: 2 });
+    const before = g;
+    const { groups, updated } = applyUpdateGroupFields([g], 'a', {}, NOW);
+    assert.notEqual(updated, before, '应返回新引用（Object.assign 创建新对象）');
+    assert.equal(groups.length, 1);
+    assert.equal(updated!.version, 2);
+  });
+  it('applyUpdateGroupFields：其他组不被影响', async () => {
+    const { applyUpdateGroupFields } = await import('@/utils/mutationOps');
+    const a = mkGroup('a', [], { isFavorite: false });
+    const b = mkGroup('b', [], { isFavorite: false });
+    const { groups } = applyUpdateGroupFields([a, b], 'a', { isFavorite: true }, NOW);
+    assert.equal(groups.find(x => x.id === 'a')!.isFavorite, true);
+    assert.equal(groups.find(x => x.id === 'b')!.isFavorite, false);
+  });
+});
+
 describe('mutationOps 移动与清理', () => {
   it('applyMoveGroup：交换位置并重排 displayOrder', async () => {
     const { applyMoveGroup } = await import('@/utils/mutationOps');

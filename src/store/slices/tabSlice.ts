@@ -33,28 +33,24 @@ const stripTombstonedTabs = (group: TabGroup): TabGroup =>
   group.tabs.some(t => t.isDeleted) ? { ...group, tabs: group.tabs.filter(t => !t.isDeleted) } : group;
 
 /**
- * 本地字段持久化（isFavorite/notes 等）：仅写 storage；调用方需同步 dispatch
- * updateGroupFields 同步 reducer 以更新 Redux 状态。不走语义命令通道——
- * 这些字段不在云端同步范围内，是纯本地 UI 偏好。后续阶段如需云端同步，再
- * 升级为新的 updateGroupFields 语义命令（见 Task 9+ 计划）。
+ * 本地 UI 偏好持久化（isFavorite/notes）：走 updateGroupFields 语义命令，
+ * 经 mutationQueue 串行由 SW 单写者执行，符合阶段一单写者不变量。
+ * 不 bump version/updatedAt——这些字段不在云端 sync 范围内。
+ * Redux 端由 updateGroupFields 同步 reducer 立即乐观更新，存储端由此 thunk
+ * 经 MUTATE 消息交 SW 落盘，避免 popup/SW 并发直写 storage 的 R1 race。
  */
-export async function persistGroupFields(
-  groupId: string,
-  fields: Partial<TabGroup>
-): Promise<void> {
-  const groups = await storage.getGroups();
-  const updatedGroups = groups.map(g => {
-    if (g.id !== groupId) return g;
-    const currentVersion = g.version || 1;
-    return {
-      ...g,
-      ...fields,
-      version: currentVersion + 1,
-      updatedAt: new Date().toISOString(),
-    };
+export const persistGroupFields = createAsyncThunk<
+  { groupId: string; fields: { isFavorite?: boolean; notes?: string } },
+  { groupId: string; fields: { isFavorite?: boolean; notes?: string } }
+>('tabs/persistGroupFields', async ({ groupId, fields }) => {
+  const res = await sendMutation<{ groupId: string; updated: TabGroup | null; fields: { isFavorite?: boolean; notes?: string } }>({
+    op: 'updateGroupFields',
+    groupId,
+    fields,
   });
-  await storage.setGroups(updatedGroups);
-}
+  if (!res.ok) throw new Error(res.error ?? '本地偏好保存失败');
+  return { groupId, fields };
+});
 
 export const loadGroups = createAsyncThunk('tabs/loadGroups', async () => {
   const groups = await storage.getGroups();
@@ -319,15 +315,18 @@ export const tabSlice = createSlice({
     },
     /**
      * 本地字段更新（isFavorite/notes 等不在云端同步范围内的字段）：
-     * 仅乐观更新 Redux 状态；持久化由调用方配合 persistGroupFields() 完成。
-     * 不走语义命令通道，因为这些字段不在 sync 管线中，是纯本地 UI 偏好。
+     * 仅乐观更新 Redux 状态；持久化由 persistGroupFields thunk 走 updateGroupFields
+     * 语义命令完成（统一单写者管线）。【不】bump version/updatedAt——这些字段
+     * 不进入云端 sync 载荷，bump 会污染远端版本号与合并决策。
      */
     updateGroupFields: (state, action) => {
-      const { groupId, fields } = action.payload as { groupId: string; fields: Partial<TabGroup> };
+      const { groupId, fields } = action.payload as {
+        groupId: string;
+        fields: { isFavorite?: boolean; notes?: string };
+      };
       const group = state.groups.find(g => g.id === groupId);
       if (group) {
         Object.assign(group, fields);
-        group.updatedAt = new Date().toISOString();
       }
     },
     setSearchQuery: (state, action) => {

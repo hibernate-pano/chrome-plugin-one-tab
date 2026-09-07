@@ -130,7 +130,7 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
   const handleToggleFavorite = useCallback(() => {
     const nextFavorite = !group.isFavorite;
     dispatch(updateGroupFields({ groupId: group.id, fields: { isFavorite: nextFavorite } }));
-    void persistGroupFields(group.id, { isFavorite: nextFavorite });
+    dispatch(persistGroupFields({ groupId: group.id, fields: { isFavorite: nextFavorite } }));
     void trackProductEvent('session_favorited', {
       sessionId: group.id,
       sessionName: group.name,
@@ -141,7 +141,7 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
   const handleSaveNotes = useCallback(() => {
     const trimmed = notesDraft.trim() || undefined;
     dispatch(updateGroupFields({ groupId: group.id, fields: { notes: trimmed } }));
-    void persistGroupFields(group.id, { notes: trimmed });
+    dispatch(persistGroupFields({ groupId: group.id, fields: { notes: trimmed } }));
     setIsEditingNotes(false);
     void trackProductEvent('session_note_saved', {
       sessionId: group.id,

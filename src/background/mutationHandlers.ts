@@ -20,6 +20,7 @@ import {
   applyImportGroups,
   applyRenameGroup,
   applyToggleGroupLock,
+  applyUpdateGroupFields,
   applyMoveGroup,
   applyMoveTab,
   applyCleanDuplicates,
@@ -109,6 +110,19 @@ export function createMutationHandlers(deps: MutationDeps) {
         return {
           ok: true,
           payload: { groupId: cmd.groupId, isLocked: r.isLocked },
+        };
+      }
+      case 'updateGroupFields': {
+        // 本地 UI 偏好（isFavorite/notes），不进入云端 sync 载荷；
+        // 仍走单写者队列以避免 popup/SW 直写 storage 的 R1 race。
+        // 字段语义上不需要触发上传，但保留 scheduleUpload 形状与其他字段命令一致。
+        const groups = await deps.getGroups();
+        const r = applyUpdateGroupFields(groups, cmd.groupId, cmd.fields, now);
+        await deps.setGroups(r.groups);
+        deps.scheduleUpload(NORMAL_MS);
+        return {
+          ok: true,
+          payload: { groupId: cmd.groupId, updated: r.updated, fields: cmd.fields },
         };
       }
       case 'moveGroup': {
