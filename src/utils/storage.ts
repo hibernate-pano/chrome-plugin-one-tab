@@ -39,6 +39,20 @@ const STORAGE_KEYS = {
 
 const STORAGE_VERSION = 2;
 
+/**
+ * 订阅 groups 变化（规格 §3.1 步骤3）：跨进程可靠对账，替代 REFRESH_TAB_LIST 手动广播。
+ * SW 侧任何写入都会触发；回调前自动失效本进程 groups 缓存。
+ */
+export function onGroupsChanged(cb: () => void): () => void {
+  const listener = (changes: Record<string, chrome.storage.StorageChange>, area: string) => {
+    if (area !== 'local' || !changes[STORAGE_KEYS.GROUPS]) return;
+    invalidateGroupsCache();
+    cb();
+  };
+  chrome.storage.onChanged.addListener(listener);
+  return () => chrome.storage.onChanged.removeListener(listener);
+}
+
 // 有效的主题风格值
 const VALID_THEME_STYLES: ThemeStyle[] = [
   'legacy',

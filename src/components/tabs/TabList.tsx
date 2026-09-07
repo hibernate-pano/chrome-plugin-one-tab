@@ -1,7 +1,7 @@
 import React, { useEffect, lazy, useState } from 'react';
 import { useAppDispatch, useAppSelector } from '@/store/hooks';
 import { loadGroups, loadDeletedGroups, restoreGroup, purgeGroup, moveGroupAndSync } from '@/store/slices/tabSlice';
-import { invalidateGroupsCache } from '@/utils/storage';
+import { invalidateGroupsCache, onGroupsChanged } from '@/utils/storage';
 import { runMigrations } from '@/utils/migrationUtils';
 import { DraggableTabGroup } from '@/components/dnd/DraggableTabGroup';
 import { SearchResultList } from '@/components/search/SearchResultList';
@@ -51,8 +51,19 @@ export const TabList: React.FC<TabListProps> = ({ searchQuery }) => {
 
     chrome.runtime.onMessage.addListener(messageListener);
 
+    let debounceTimer: ReturnType<typeof setTimeout> | null = null;
+    const unsubscribe = onGroupsChanged(() => {
+      if (debounceTimer) clearTimeout(debounceTimer);
+      debounceTimer = setTimeout(() => {
+        dispatch(loadGroups());
+        dispatch(loadDeletedGroups());
+      }, 150);
+    });
+
     return () => {
       chrome.runtime.onMessage.removeListener(messageListener);
+      if (debounceTimer) clearTimeout(debounceTimer);
+      unsubscribe();
     };
   }, [dispatch]);
 
