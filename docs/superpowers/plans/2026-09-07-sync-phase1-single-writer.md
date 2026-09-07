@@ -47,6 +47,7 @@ describe('mutationQueue: SW 单写者串行化', () => {
       order.push(`${name}:start`);
       await new Promise(r => setTimeout(r, ms));
       order.push(`${name}:end`);
+      return name;
     };
     const [a, b, c] = await Promise.all([
       enqueue('a', job('a', 30)),
@@ -298,7 +299,9 @@ git commit -m "feat(sync): 语义命令协议 MUTATE/SYNC（阶段一·规格§3
 
 ```ts
 // tests/mutationOps.test.ts
-// 文件头部样板（后续 mutationOps 相关测试文件复用同样的环境/loader 注入）
+// 文件头部样板——必须与 tests/tabTombstone.test.ts 的既有模式一致：
+// @/ 别名的模块只能在 register(loader) 之后【动态 import】（静态 import 会被
+// 提升、先于 loader 注册而失败）。本文件的每个 it 内用 await import('@/...')。
 import { describe, it, before } from 'node:test';
 import assert from 'node:assert/strict';
 import { register } from 'node:module';
@@ -314,20 +317,33 @@ globalThis.__TABSTACK_META_ENV__ = {
 const LOADER_PATH = pathToFileURL(
   resolve(dirname(fileURLToPath(import.meta.url)), '_alias-loader.mjs')
 ).href;
-before(() => { register('./_alias-loader.mjs', pathToFileURL('./').href); });
 
-import { applySaveGroup, applyRemoveTab } from '@/utils/mutationOps';
-import type { TabGroup, Tab } from '@/types/tab';
+before(async () => {
+  register(LOADER_PATH);
+});
 
+// 共享构造器（纯数据，无 @/ 依赖，可安全静态定义）
 const NOW = '2026-09-07T10:00:00.000Z';
 const EARLIER = '2026-09-01T10:00:00.000Z';
 
-function mkTab(id: string, over: Partial<Tab> = {}): Tab {
-  return { id, url: `https://e.com/${id}`, title: id, favicon: '', createdAt: EARLIER, lastAccessed: EARLIER, pinned: false, ...over } as Tab;
+function mkTab(id: string, over: Record<string, unknown> = {}) {
+  return { id, url: `https://e.com/${id}`, title: id, favicon: '', createdAt: EARLIER, lastAccessed: EARLIER, pinned: false, ...over };
 }
-function mkGroup(id: string, tabs: Tab[], over: Partial<TabGroup> = {}): TabGroup {
-  return { id, name: `g-${id}`, tabs, createdAt: EARLIER, updatedAt: EARLIER, version: 1, isDeleted: false, ...over } as TabGroup;
+function mkGroup(id: string, tabs: unknown[], over: Record<string, unknown> = {}) {
+  return { id, name: `g-${id}`, tabs, createdAt: EARLIER, updatedAt: EARLIER, version: 1, isDeleted: false, isLocked: false, ...over };
 }
+```
+
+每个 `it` 内按需动态导入，例如：
+
+```ts
+  it('新组插入头部，按 createdAt 倒序', async () => {
+    const { applySaveGroup } = await import('@/utils/mutationOps');
+    const a = mkGroup('a', []);
+    const fresh = mkGroup('fresh', [], { createdAt: NOW });
+    const out = applySaveGroup([a], fresh, NOW);
+    assert.deepEqual(out.map(g => g.id), ['fresh', 'a']);
+  });
 
 describe('mutationOps.applySaveGroup', () => {
   it('新组插入头部，按 createdAt 倒序', () => {
@@ -482,7 +498,8 @@ git commit -m "feat(sync): saveGroup/removeTab 语义纯函数（阶段一·规�
 - [ ] **Step 1: 写失败测试**
 
 ```ts
-// 追加到 tests/mutationOps.test.ts 末尾
+// 追加到 tests/mutationOps.test.ts 末尾（导入遵守 Task 3 样板：本组用例首个 it 内
+// const { applyDeleteGroup, ... } = await import('@/utils/mutationOps')，后续 it 可复用文件级缓存变量）
 import {
   applyDeleteGroup, applyDeleteAllGroups, applyRestoreGroup, applyPurgeGroup,
   applyRenameGroup, applyToggleGroupLock, applyImportGroups,
@@ -680,7 +697,7 @@ git commit -m "feat(sync): 组生命周期/字段命令纯函数（阶段一·�
 - [ ] **Step 1: 写失败测试**
 
 ```ts
-// 追加到 tests/mutationOps.test.ts 末尾
+// 追加到 tests/mutationOps.test.ts 末尾（导入方式同 Task 4 注记：动态 import）
 import { applyMoveGroup, applyMoveTab, applyCleanDuplicates } from '@/utils/mutationOps';
 
 describe('mutationOps 移动与清理', () => {
@@ -920,6 +937,7 @@ function memStorage() {
   const uploads: number[] = [];
   return {
     uploads,
+    now: () => NOW,
     async getGroups: async () => [...groups],
     async setGroups: async (g: TabGroup[]) => { groups = [...g]; },
     scheduleUpload: (ms: number) => { uploads.push(ms); },
@@ -1174,10 +1192,18 @@ git commit -m "feat(sync): SW 端语义命令执行器（阶段一·规格§3.2�
           return false;
         }
         enqueue(`sync:${data.op}`, async () => {
-          if (data.op === 'upload') return await syncEngine.upload({ forcePending: true });
-          if (data.op === 'download') return await syncEngine.downloadAndMerge({
-            forceRemote: !!data.forceRemote, syncSettings: !!data.syncSettings,
-          });
+          // 统一包装为 MutationResult：ok=业务成败，error=原因码（already_syncing 等），
+          // payload=完整原始结果（MergeResult/UploadResult，popup 按需取字段）
+          if (data.op === 'upload') {
+            const r = await syncEngine.upload({ forcePending: true });
+            return { ok: r.success, error: r.error, payload: r };
+          }
+          if (data.op === 'download') {
+            const r = await syncEngine.downloadAndMerge({
+              forceRemote: !!data.forceRemote, syncSettings: !!data.syncSettings,
+            });
+            return { ok: r.success, error: r.reason, payload: r };
+          }
           return { ok: false, error: `未知同步操作: ${data.op}` };
         })
           .then(res => sendResponse(res))
