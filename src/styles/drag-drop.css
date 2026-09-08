@@ -69,6 +69,14 @@
   border: 1px solid #e5e7eb;
   overflow: hidden;
   margin-bottom: 12px;
+
+  /* 渲染性能（modern-web-guidance: defer-rendering-heavy-content）：
+     组卡片数量大时，视口外的卡片跳过布局/绘制；contain-intrinsic-size 的
+     auto 记忆关键词在首次渲染后记住真实尺寸，防止视口外折叠为 0 高导致
+     滚动条跳动。列表为动态排序，无法静态区分首屏内外，由浏览器按可见
+     边界自行决定跳过哪些卡片（首屏内卡片照常渲染）。 */
+  content-visibility: auto;
+  contain-intrinsic-size: auto none auto 220px;
 }
 
 .dark .group-item {
