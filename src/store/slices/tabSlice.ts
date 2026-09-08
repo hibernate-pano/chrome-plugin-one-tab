@@ -535,6 +535,32 @@ export const tabSlice = createSlice({
           state.activeGroupId = null;
         }
       })
+      .addCase(deleteTabAndSync.fulfilled, (state, action) => {
+        // 即时 UI 反馈（旧行为：updateGroup.fulfilled 即时替换组）。没有这个 case，
+        // UI 只能等 onChanged→loadGroups 的回环（约 0.7s~数秒），表现为"点击后标签不消失"。
+        const groupId = action.meta.arg.groupId;
+        const { group } = action.payload;
+        if (group === null) {
+          // 组内最后一个活跃 tab 被移除 → 整组软删：镜像 deleteGroup.fulfilled（误删保护视图同语义）
+          const removed = state.groups.find(g => g.id === groupId);
+          state.groups = state.groups.filter(g => g.id !== groupId);
+          if (removed) {
+            state.deletedGroups = state.deletedGroups.filter(g => g.id !== groupId);
+            state.deletedGroups.push({
+              ...removed,
+              isDeleted: true,
+              version: (removed.version || 1) + 1,
+              updatedAt: new Date().toISOString(),
+            });
+          }
+          if (state.activeGroupId === groupId) {
+            state.activeGroupId = null;
+          }
+        } else {
+          const idx = state.groups.findIndex(g => g.id === groupId);
+          if (idx !== -1) state.groups[idx] = group;
+        }
+      })
       .addCase(loadDeletedGroups.fulfilled, (state, action) => {
         state.deletedGroups = action.payload;
       })
@@ -665,7 +691,9 @@ export const deleteTabAndSync = createAsyncThunk<
     tabId,
   });
   if (!res.ok) throw new Error(res.error ?? '删除失败');
-  return res.payload!;
+  const { group } = res.payload!;
+  // 出口过滤：handler 返回的是 storage 原始组（含墓碑），墓碑不进 Redux（与 loadGroups 口径一致）
+  return { group: group ? stripTombstonedTabs(group) : null };
 });
 
 // 使用createSelector创建记忆化选择器，避免不必要的重新计算
