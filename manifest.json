@@ -25,14 +25,6 @@
   "web_accessible_resources": [
     {
       "resources": [
-        "icons/*.png"
-      ],
-      "matches": [
-        "chrome-extension://*/*"
-      ]
-    },
-    {
-      "resources": [
         "src/auth/*.html"
       ],
       "matches": [
