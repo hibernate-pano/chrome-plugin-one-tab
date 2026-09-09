@@ -38,9 +38,13 @@ const STORAGE_KEYS = {
   // 阶段二·§4.1：本设备 seq 单调计数器。SW 启动时由 seqRegistry 修复为
   // max(持久化, 实体印记中本设备 max s) + 100。
   DEVICE_SEQ: 'device_seq',
+  // 阶段二·§4.3：journal write-ahead log（FIFO 上限 1000）。
+  JOURNAL: 'journal',
+  // 阶段二·§4.3：upload 成功后已确认的最大 seq，调试视图用。
+  LAST_SYNCED_SEQ: 'last_synced_seq',
 };
 
-const STORAGE_VERSION = 3;
+const STORAGE_VERSION = 4;
 
 /**
  * 订阅 groups 变化（规格 §3.1 步骤3）：跨进程可靠对账，替代 REFRESH_TAB_LIST 手动广播。
@@ -434,6 +438,43 @@ class ChromeStorage {
     }
   }
 
+  // 阶段二·§4.3：journal 读写（mutationHandlers 通过 createJournal 工厂间接访问）
+  async getJournal(): Promise<unknown[]> {
+    try {
+      await this.ensureVersion();
+      return (await kvGet<unknown[]>(STORAGE_KEYS.JOURNAL)) ?? [];
+    } catch {
+      return [];
+    }
+  }
+
+  async setJournal(entries: unknown[]): Promise<void> {
+    try {
+      await this.ensureVersion();
+      await kvSet(STORAGE_KEYS.JOURNAL, entries);
+    } catch (error) {
+      console.error('写 journal 失败:', error);
+    }
+  }
+
+  async getLastSyncedSeq(): Promise<number> {
+    try {
+      await this.ensureVersion();
+      return (await kvGet<number>(STORAGE_KEYS.LAST_SYNCED_SEQ)) ?? 0;
+    } catch {
+      return 0;
+    }
+  }
+
+  async setLastSyncedSeq(s: number): Promise<void> {
+    try {
+      await this.ensureVersion();
+      await kvSet(STORAGE_KEYS.LAST_SYNCED_SEQ, s);
+    } catch (error) {
+      console.error('设置 last_synced_seq 失败:', error);
+    }
+  }
+
   // 获取同步前快照（合并失败时用于回滚）
   async getSyncSnapshot(): Promise<TabGroup[] | null> {
     try {
@@ -593,6 +634,8 @@ class ChromeStorage {
         STORAGE_KEYS.PENDING_UPLOAD,
         STORAGE_KEYS.LAST_UPLOAD_TIME,
         STORAGE_KEYS.DEVICE_SEQ,
+        STORAGE_KEYS.JOURNAL,
+        STORAGE_KEYS.LAST_SYNCED_SEQ,
       ];
       await Promise.all(keys.map(key => kvRemove(key)));
     } catch (error) {
