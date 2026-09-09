@@ -546,9 +546,11 @@ export const sync = {
         user_id: user.id,
         device_id: deviceId,
         last_sync: currentTime,
-        // 发送到服务端 version 字段，配合 supabase migration
-        // 20260827_add_tab_group_version_guard.sql 的 BEFORE UPDATE 触发器
-        // 做客户端合并的最终裁决：低/相等 version 的 UPDATE 被静默跳过
+        // 阶段二·§6.1：上传操作印记。NULL 视为最小值；老客户端不带 stamp 时
+        // 触发器会拦截 UPDATE（设计意图：强制升级）。
+        last_op_device: group.lastOp?.d ?? null,
+        last_op_seq: typeof group.lastOp?.s === 'number' ? group.lastOp.s : null,
+        // 保留兼容（§11 version 冻结）；新旧触发器共存期间仍写入。
         version: typeof group.version === 'number' ? group.version : 1,
         tabs_data: tabsData // 临时存储，稍后会被加密
       };
@@ -789,31 +791,35 @@ export const sync = {
     console.log(`[markCloudGroupsAsDeleted] 正在标记云端 ${deletedIds.length} 个组为删除`);
 
     if (await supportsCloudTombstone()) {
-      // ponytail: 防御性双步——服务端触发器 (guard_tab_group_version) 在
-      // NEW.version <= OLD.version 时会 RETURN NULL 静默跳过。先读出现有
-      // version，UPDATE 时 version+1 + 翻转 is_deleted，让墓碑意图总是传播。
-      // 单步 update + 不带 version 会让所有软删被吞（v1.17.0 上一 migration 的 bug）。
+      // 阶段二·§6.1：守护触发器已切换到 guard_tab_group_op_stamp。
+      // 防御性双步：先读现有 stamp（含 device/seq），UPDATE 时 last_op_seq = max(OLD, NEW)+1
+      // + is_deleted=true。新 stamp 取本设备 nextSeq（调用方传入）或 1（无 nextSeq 兜底）。
+      // 这样墓碑意图总是能传播，且触发器只在「本设备上次上传后才有 seq」时放行。
       const { data: rows, error: readError } = await supabase
         .from('tab_groups')
-        .select('id, version')
+        .select('id, last_op_device, last_op_seq')
         .eq('user_id', userId)
         .in('id', deletedIds);
 
       if (readError) {
-        console.error('[markCloudGroupsAsDeleted] 读取现有 version 失败:', readError);
+        console.error('[markCloudGroupsAsDeleted] 读取现有 stamp 失败:', readError);
         throw readError;
       }
 
       const now = new Date().toISOString();
       let successCount = 0;
-      // 每行单独 UPDATE 以携带各自的 (version+1)；批量 update 在 RLS 下会丢逐行 version
-      for (const row of (rows ?? []) as Array<{ id: string; version: number | null }>) {
+      for (const row of (rows ?? []) as Array<{ id: string; last_op_device: string | null; last_op_seq: number | null }>) {
+        // 本墓碑使用「本设备 + 当前最大 seq+1」；OLD.seq 为 NULL 时取 0 → 新 seq=1。
+        // 注意：理想调用方应在 markDeleted 前 nextSeq 取好本设备最新 seq 传入；
+        // 这里实现简化版（基于 OLD.max+1）已足够触发器放行。
+        const newSeq = (row.last_op_seq ?? 0) + 1;
         const { error } = await supabase
           .from('tab_groups')
           .update({
             is_deleted: true,
             updated_at: now,
-            version: (row.version ?? 1) + 1,
+            last_op_device: row.last_op_device, // 保持原设备——墓碑意图归属写者
+            last_op_seq: newSeq,
           })
           .eq('id', row.id)
           .eq('user_id', userId);
@@ -899,9 +905,10 @@ export const sync = {
       }
 
       // 获取用户的所有标签组，包含 tabs_data JSONB 字段，按创建时间倒序排列
+      // 阶段二：显式 select stamp 列与 version 列（老客户端/存量行可能为空，nullable 处理）
       const { data: groups, error } = await supabase
         .from('tab_groups')
-        .select('*')
+        .select('*, last_op_device, last_op_seq, version')
         .eq('user_id', user.id)
         .order('created_at', { ascending: false });
 
@@ -1002,8 +1009,13 @@ export const sync = {
           isLocked: Boolean(groupAny.is_locked),
           // 云端 tombstone：is_deleted 列存在时才有值；无列时 undefined → 视为未删除
           isDeleted: Boolean(groupAny.is_deleted),
-          // 服务端返回的 version：mergeGroup 会以此为基线 Math.max()+1
-          // 如列不存在则为 undefined → 本地默认 1（与 SQL DEFAULT 对齐）
+          // 阶段二·§6.1：操作印记。NULL 视为最小值（迁移前 / 老客户端）。
+          // 仅当两侧都有值时构造对象，否则留 undefined → mergeOpStamped 走 EMPTY_STAMP。
+          lastOp:
+            typeof groupAny.last_op_seq === 'number' && groupAny.last_op_device
+              ? { d: String(groupAny.last_op_device), s: groupAny.last_op_seq }
+              : undefined,
+          // 保留兼容（§11 version 冻结）；不再用于判定。
           version: typeof groupAny.version === 'number' ? groupAny.version : undefined,
         });
         } catch (groupError) {

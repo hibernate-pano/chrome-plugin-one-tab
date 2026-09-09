@@ -44,6 +44,11 @@ export interface SupabaseTabGroup {
   device_id: string;
   last_sync: string;
   tabs_data?: TabData[];
+  // 阶段二·§6.1：操作印记列。客户端带 stamp 上传；老客户端不带时为 NULL（视为最小值）。
+  last_op_device?: string | null;
+  last_op_seq?: number | null;
+  // 保留兼容（阶段二·§11 冻结 version 字段）；不再用于冲突裁决。
+  version?: number | null;
 }
 
 export interface TabGroup {
