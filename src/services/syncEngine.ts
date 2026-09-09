@@ -15,12 +15,12 @@ import {
 } from '@/services/tabGroupSyncService';
 import { uploadSettings, downloadSettings } from '@/services/settingsSyncService';
 import {
-  mergeTabGroups,
+  mergeTabGroupsLegacy,
   validateMergeResult,
   decideDownloadPrecheck,
 } from '@/utils/syncUtils';
-// 阶段二：主路径走 mergeOpStamped（OpStamp 全序决胜）。旧 mergeTabGroups 在 Task 10
-// 暂留为云端 schema 未升级期间的回退分支。
+// 阶段二：主路径走 mergeOpStamped（OpStamp 全序决胜）。mergeTabGroupsLegacy 在
+// 云端 schema 未升级期间作为回退分支（Task 11 发布前删除）。
 import { mergeOpStamped } from '@/utils/opStampMerge';
 import { createSeqRegistry } from '@/utils/seqRegistry';
 import { getDeviceId } from '@/utils/deviceUtils';
@@ -272,7 +272,7 @@ export class SyncEngine {
         ? mergeOpStamped(localGroups, cloudGroups, {
             mergeStamp: { d: deviceId, s: await seqRegistry.nextSeq() },
           })
-        : mergeTabGroups(
+        : mergeTabGroupsLegacy(
             localGroups,
             cloudGroups,
             state.settings.syncStrategy || 'newest'

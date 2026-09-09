@@ -68,6 +68,20 @@ export function decideDownloadPrecheck(input: DownloadPrecheckInput): DownloadPr
  * @param syncStrategy 同步策略
  * @returns 合并后的标签组
  */
+/**
+ * 智能合并本地和云端标签组
+ *
+ * 改进点：
+ * 1. 使用版本号检测冲突
+ * 2. 字段级合并而非整体覆盖
+ * 3. 支持软删除（isDeleted）
+ * 4. 保留手动排序（displayOrder）
+ *
+ * @param localGroups 本地标签组
+ * @param cloudGroups 云端标签组
+ * @param syncStrategy 同步策略
+ * @returns 合并后的标签组
+ */
 export const mergeTabGroups = (
   localGroups: TabGroup[],
   cloudGroups: TabGroup[],
@@ -532,3 +546,14 @@ export function validateMergeResult(
 
   return { valid: true };
 }
+
+/**
+ * @deprecated 阶段二（§5）：合并语义已切换到 `mergeOpStamped`。
+ * `mergeTabGroupsLegacy` 仅作为「云端 schema 未升级（last_op_device/last_op_seq 列
+ * 不存在）」期间的回退分支，syncEngine.downloadAndMerge 在 cloudHasStamp 为 false 时
+ * 使用。Task 11（发布前）删除该函数及其 fallback 分支。
+ *
+ * 既有 syncMergeSafety / tabTombstone 测试继续通过 `mergeTabGroups` 旧名访问
+ * （= `mergeTabGroupsLegacy`），保留旧合并函数的回归保护——双轨直到 Task 11 收尾。
+ */
+export const mergeTabGroupsLegacy = mergeTabGroups;
