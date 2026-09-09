@@ -22,3 +22,8 @@ dist-web/
 .env*
 .pi/
 .pnpm-store/
+
+# 本地工具/Hook 生成目录（不入库）
+.mimosa/
+.v2c/
+.video_agent/
