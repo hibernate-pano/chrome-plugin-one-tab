@@ -32,6 +32,10 @@ const NOW = '2026-01-01T00:00:00.000Z';
 function memStorage() {
   let groups: import('@/types/tab').TabGroup[] = [];
   const uploads: number[] = [];
+  // 阶段二·§4.3：handlers 现在必须注入 journal + seq。测试用极简 mock：
+  // seq 单调递增、journal 内存追加，stamp 来源于此。
+  const entries: any[] = [];
+  let seqN = 0;
   return {
     uploads,
     now: () => NOW,
@@ -43,6 +47,21 @@ function memStorage() {
     },
     scheduleUpload(ms: number): void {
       uploads.push(ms);
+    },
+    journal: {
+      async appendEntry(p: any) {
+        seqN += 1;
+        const e = { d: 'devTest', s: seqN, ts: NOW, ...p };
+        entries.push(e);
+        return e;
+      },
+      async read() { return entries; },
+      async markConfirmedUpTo() { return 0; },
+    },
+    seq: {
+      async nextSeq() { return ++seqN; },
+      async getDeviceSeq() { return seqN; },
+      async bumpSeqIfLower(c: number) { return c > seqN ? (seqN = c) : seqN; },
     },
   };
 }
