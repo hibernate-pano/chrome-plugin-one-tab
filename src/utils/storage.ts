@@ -42,9 +42,11 @@ const STORAGE_KEYS = {
   JOURNAL: 'journal',
   // 阶段二·§4.3：upload 成功后已确认的最大 seq，调试视图用。
   LAST_SYNCED_SEQ: 'last_synced_seq',
+  // 阶段二·§7：存量数据迁移完成标记。
+  OP_STAMP_MIGRATED: 'op_stamp_migrated',
 };
 
-const STORAGE_VERSION = 4;
+const STORAGE_VERSION = 5;
 
 /**
  * 订阅 groups 变化（规格 §3.1 步骤3）：跨进程可靠对账，替代 REFRESH_TAB_LIST 手动广播。
@@ -475,6 +477,25 @@ class ChromeStorage {
     }
   }
 
+  // 阶段二·§7：迁移标志位
+  async getOpStampMigrated(): Promise<boolean> {
+    try {
+      await this.ensureVersion();
+      return (await kvGet<boolean>(STORAGE_KEYS.OP_STAMP_MIGRATED)) === true;
+    } catch {
+      return false;
+    }
+  }
+
+  async setOpStampMigrated(v: boolean): Promise<void> {
+    try {
+      await this.ensureVersion();
+      await kvSet(STORAGE_KEYS.OP_STAMP_MIGRATED, v);
+    } catch (error) {
+      console.error('设置 op_stamp_migrated 失败:', error);
+    }
+  }
+
   // 获取同步前快照（合并失败时用于回滚）
   async getSyncSnapshot(): Promise<TabGroup[] | null> {
     try {
@@ -636,6 +657,7 @@ class ChromeStorage {
         STORAGE_KEYS.DEVICE_SEQ,
         STORAGE_KEYS.JOURNAL,
         STORAGE_KEYS.LAST_SYNCED_SEQ,
+        STORAGE_KEYS.OP_STAMP_MIGRATED,
       ];
       await Promise.all(keys.map(key => kvRemove(key)));
     } catch (error) {
