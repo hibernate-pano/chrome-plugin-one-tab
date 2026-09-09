@@ -14,6 +14,9 @@ export interface Tab {
   syncStatus?: 'synced' | 'local-only' | 'remote-only' | 'conflict';
   lastSyncedAt?: string | null;
   isDeleted?: boolean; // 软删除标记
+
+  // 阶段二·§4.1：操作印记（写入者）。merge 时按全序决胜。
+  lastOp?: { d: string; s: number };
 }
 
 // 用于存储到 Supabase 的标签数据格式
@@ -64,6 +67,9 @@ export interface TabGroup {
   syncStatus?: 'synced' | 'local-only' | 'remote-only' | 'conflict';
   lastSyncedAt?: string | null;
   isDeleted?: boolean; // 软删除标记
+
+  // 阶段二·§4.1：操作印记（写入者）。merge 时按全序决胜。
+  lastOp?: { d: string; s: number };
 }
 
 export interface TabState {

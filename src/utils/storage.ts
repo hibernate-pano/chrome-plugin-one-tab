@@ -35,9 +35,12 @@ const STORAGE_KEYS = {
   // 最近一次成功上传的时间戳（独立于 last_sync_time，后者下载也会更新）。
   // 用于：1）downloadAndMerge 保护窗口 2）调试 / product_event 上报
   LAST_UPLOAD_TIME: 'last_upload_time',
+  // 阶段二·§4.1：本设备 seq 单调计数器。SW 启动时由 seqRegistry 修复为
+  // max(持久化, 实体印记中本设备 max s) + 100。
+  DEVICE_SEQ: 'device_seq',
 };
 
-const STORAGE_VERSION = 2;
+const STORAGE_VERSION = 3;
 
 /**
  * 订阅 groups 变化（规格 §3.1 步骤3）：跨进程可靠对账，替代 REFRESH_TAB_LIST 手动广播。
@@ -411,6 +414,26 @@ class ChromeStorage {
     }
   }
 
+  // 阶段二·§4.1：本设备 seq。SW 启动时由 seqRegistry 读取并修复；
+  // mutationHandlers 在每次写入前调用 seqRegistry.nextSeq() 原子自增。
+  async getDeviceSeq(): Promise<number> {
+    try {
+      await this.ensureVersion();
+      return (await kvGet<number>(STORAGE_KEYS.DEVICE_SEQ)) ?? 0;
+    } catch {
+      return 0;
+    }
+  }
+
+  async setDeviceSeq(seq: number): Promise<void> {
+    try {
+      await this.ensureVersion();
+      await kvSet(STORAGE_KEYS.DEVICE_SEQ, seq);
+    } catch (error) {
+      console.error('设置 device_seq 失败:', error);
+    }
+  }
+
   // 获取同步前快照（合并失败时用于回滚）
   async getSyncSnapshot(): Promise<TabGroup[] | null> {
     try {
@@ -566,7 +589,10 @@ class ChromeStorage {
         STORAGE_KEYS.DELETED_TABS,
         STORAGE_KEYS.LAST_SYNC_TIME,
         STORAGE_KEYS.PRODUCT_EVENTS,
-        STORAGE_KEYS.MIGRATION_FLAGS
+        STORAGE_KEYS.MIGRATION_FLAGS,
+        STORAGE_KEYS.PENDING_UPLOAD,
+        STORAGE_KEYS.LAST_UPLOAD_TIME,
+        STORAGE_KEYS.DEVICE_SEQ,
       ];
       await Promise.all(keys.map(key => kvRemove(key)));
     } catch (error) {
