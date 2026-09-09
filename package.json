@@ -15,7 +15,10 @@
     "format": "prettier --write \"src/**/*.{ts,tsx}\"",
     "type-check": "tsc --noEmit",
     "validate": "node scripts/validate-extension.mjs && pnpm type-check && pnpm lint && pnpm build",
-    "test:supabase-smoke": "node scripts/supabase-smoke-test.mjs"
+    "test:supabase-smoke": "node scripts/supabase-smoke-test.mjs",
+    "supabase:migrate": "node scripts/supabase-migrate.mjs",
+    "supabase:migrate:dry-run": "node scripts/supabase-migrate.mjs --dry-run",
+    "supabase:verify": "node scripts/supabase-migrate.mjs --verify-only"
   },
   "keywords": [
     "chrome-extension",
@@ -43,6 +46,7 @@
     "@types/chrome": "^0.0.262",
     "@types/lz-string": "^1.5.0",
     "@types/node": "^22.14.0",
+    "@types/pg": "^8.23.1",
     "@types/react": "^18.2.64",
     "@types/react-dom": "^18.2.21",
     "@typescript-eslint/eslint-plugin": "^7.1.1",
@@ -53,6 +57,7 @@
     "eslint-config-prettier": "^9.1.0",
     "eslint-plugin-react": "^7.34.0",
     "eslint-plugin-react-hooks": "^4.6.0",
+    "pg": "^8.23.0",
     "playwright": "1.61.0",
     "postcss": "^8.4.35",
     "prettier": "^3.2.5",
