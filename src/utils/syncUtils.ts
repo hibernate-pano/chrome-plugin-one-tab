@@ -546,14 +546,3 @@ export function validateMergeResult(
 
   return { valid: true };
 }
-
-/**
- * @deprecated 阶段二（§5）：合并语义已切换到 `mergeOpStamped`。
- * `mergeTabGroupsLegacy` 仅作为「云端 schema 未升级（last_op_device/last_op_seq 列
- * 不存在）」期间的回退分支，syncEngine.downloadAndMerge 在 cloudHasStamp 为 false 时
- * 使用。Task 11（发布前）删除该函数及其 fallback 分支。
- *
- * 既有 syncMergeSafety / tabTombstone 测试继续通过 `mergeTabGroups` 旧名访问
- * （= `mergeTabGroupsLegacy`），保留旧合并函数的回归保护——双轨直到 Task 11 收尾。
- */
-export const mergeTabGroupsLegacy = mergeTabGroups;

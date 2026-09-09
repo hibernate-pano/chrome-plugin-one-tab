@@ -15,12 +15,11 @@ import {
 } from '@/services/tabGroupSyncService';
 import { uploadSettings, downloadSettings } from '@/services/settingsSyncService';
 import {
-  mergeTabGroupsLegacy,
   validateMergeResult,
   decideDownloadPrecheck,
 } from '@/utils/syncUtils';
-// 阶段二：主路径走 mergeOpStamped（OpStamp 全序决胜）。mergeTabGroupsLegacy 在
-// 云端 schema 未升级期间作为回退分支（Task 11 发布前删除）。
+// 阶段二（§5 + §9）：合并语义已统一为 mergeOpStamped（OpStamp 全序决胜）。
+// 云端 schema 与客户端同步发布，旧 mergeTabGroups 已删除。
 import { mergeOpStamped } from '@/utils/opStampMerge';
 import { createSeqRegistry } from '@/utils/seqRegistry';
 import { getDeviceId } from '@/utils/deviceUtils';
@@ -259,24 +258,14 @@ export class SyncEngine {
       // 阶段二·§5：合并语义切换到 mergeOpStamped（OpStamp 全序决胜）。
       // mergeStamp 取本设备 nextSeq：合并设备产生的 URL 去重败者盖本设备 stamp，
       // 由此下载本身成为本设备的一次「合并操作」，与用户操作共享全序空间。
-      //
-      // 决策：若云端至少一个组带 stamp（lastOp 非空）→ 走 mergeOpStamped；否则走
-      // mergeTabGroups 作为「云端 schema 未升级」期间的回退（Task 10 收尾）。
       const deviceId = await getDeviceId();
       const seqRegistry = createSeqRegistry({
         kvGet, kvSet, getDeviceId,
         getGroups: () => storage.getGroups(),
       });
-      const cloudHasStamp = cloudGroups.some(g => g.lastOp);
-      const mergedGroups = cloudHasStamp
-        ? mergeOpStamped(localGroups, cloudGroups, {
-            mergeStamp: { d: deviceId, s: await seqRegistry.nextSeq() },
-          })
-        : mergeTabGroupsLegacy(
-            localGroups,
-            cloudGroups,
-            state.settings.syncStrategy || 'newest'
-          );
+      const mergedGroups = mergeOpStamped(localGroups, cloudGroups, {
+        mergeStamp: { d: deviceId, s: await seqRegistry.nextSeq() },
+      });
       report(80, 'download');
       // 5. 验证
       const validation = validateMergeResult(localGroups, cloudGroups, mergedGroups);

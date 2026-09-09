@@ -19,7 +19,6 @@ import { updateDisplayOrder, updateGroupWithVersion } from '@/utils/versionHelpe
 export function applySaveGroup(
   groups: TabGroup[],
   group: TabGroup,
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars -- _now 保留用于与同级 apply* 形参形状一致；sort 按 createdAt
   _now: string,
   stamp: OpStamp
 ): TabGroup[] {
@@ -187,7 +186,6 @@ export function applyUpdateGroupFields(
   groups: TabGroup[],
   groupId: string,
   fields: { isFavorite?: boolean; notes?: string },
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars -- _now 仅用于与其他 apply* 形参形状一致
   _now: string,
   stamp: OpStamp
 ): { groups: TabGroup[]; updated: TabGroup | null } {
@@ -203,7 +201,6 @@ export function applyImportGroups(
   groups: TabGroup[],
   incoming: TabGroup[],
   deps: { genId: () => string; sanitizeUrl: (url: string) => string | null },
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars -- _now 保留形参位用于签名一致；sort 按 createdAt
   _now: string,
   stamp: OpStamp
 ): { groups: TabGroup[]; imported: TabGroup[] } {
