@@ -8,7 +8,7 @@
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { execSync } from 'child_process';
+import { execFileSync } from 'child_process';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -64,9 +64,14 @@ try {
 
   // 5. 创建zip文件
   console.log('🔄 正在创建zip文件...');
-  
-  const zipCommand = `cd "${DIST_DIR}" && zip -r "${OUTPUT_FILE}" . -x "*.DS_Store" "*.git*"`;
-  execSync(zipCommand, { stdio: 'inherit' });
+
+  // 改用 execFileSync + 数组参数：DIST_DIR/OUTPUT_FILE 即使将来改为外部输入，
+  // 也不会被 shell 解析为额外 token，从模式上消除命令注入风险。
+  execFileSync(
+    'zip',
+    ['-r', OUTPUT_FILE, '.', '-x', '*.DS_Store', '*.git*'],
+    { cwd: DIST_DIR, stdio: 'inherit' }
+  );
 
   // 6. 验证zip文件
   if (!fs.existsSync(OUTPUT_FILE)) {

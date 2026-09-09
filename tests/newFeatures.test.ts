@@ -200,10 +200,14 @@ describe('supabase 客户端共享 storage adapter', () => {
     const { supabase } = await import('@/utils/supabase');
     assert.ok(supabase, 'supabase 客户端应可初始化');
 
-    // 写入一条 模拟 supabase-js 持久化 session
-    await chrome.storage.local.set({ 'sb-stub-auth-token': 'jwt-token' });
-    const out = await chrome.storage.local.get('sb-stub-auth-token');
-    assert.equal(out['sb-stub-auth-token'], 'jwt-token');
+    // 测试 fixture：构造一条伪 session 验证 chrome.storage.local 读写回路。
+    // 这不是真实凭据——仅用于断言 storage adapter 在 SW 环境（无 localStorage）下
+    // 正确回落到 chrome.storage.local。
+    const STUB_SESSION_KEY = 'sb-stub-auth-token';
+    const STUB_SESSION_VALUE = 'fixture-not-a-credential';
+    await chrome.storage.local.set({ [STUB_SESSION_KEY]: STUB_SESSION_VALUE });
+    const out = await chrome.storage.local.get(STUB_SESSION_KEY);
+    assert.equal(out[STUB_SESSION_KEY], STUB_SESSION_VALUE);
     void mockStore;
   });
 });
