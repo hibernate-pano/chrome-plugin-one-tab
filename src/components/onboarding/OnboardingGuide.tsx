@@ -5,6 +5,7 @@ import {
     SaveTabsStep,
     SearchStep,
     RestoreStep,
+    SyncStep,
     ReadyStep,
 } from './OnboardingSteps';
 import {
@@ -34,6 +35,7 @@ const STEPS: StepConfig[] = [
     { title: '保存工作会话', spotlightTarget: '[aria-label="保存当前窗口中的所有标签页为会话"]' },
     { title: '搜索工作会话', spotlightTarget: '[aria-label="搜索会话、备注或标签页"]' },
     { title: '恢复整个会话', spotlightTarget: 'button[aria-label^="恢复整个会话"]' },
+    { title: '跨设备同步', spotlightTarget: '[aria-label="菜单"]' },
     { title: '一切就绪' },
 ];
 
@@ -122,7 +124,8 @@ export const OnboardingGuide: React.FC<OnboardingGuideProps> = ({ onComplete }) 
             case 1: return <SaveTabsStep />;
             case 2: return <SearchStep />;
             case 3: return <RestoreStep />;
-            case 4: return <ReadyStep />;
+            case 4: return <SyncStep />;
+            case 5: return <ReadyStep />;
             default: return null;
         }
     };

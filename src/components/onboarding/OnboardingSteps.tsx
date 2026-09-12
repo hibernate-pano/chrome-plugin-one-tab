@@ -127,6 +127,37 @@ export const RestoreStep: React.FC = () => (
   </div>
 );
 
+export const SyncStep: React.FC = () => (
+  <div className="onboarding-content">
+    <div className="onboarding-icon-wrapper">
+      <span>☁️</span>
+    </div>
+    <h2 className="onboarding-title">换台设备也能找回</h2>
+    <p className="onboarding-description">
+      通过右上角菜单「登录 / 注册」开启同步
+      <br />
+      保存后会自动备份到云端，新设备登录即恢复
+    </p>
+    <div className="onboarding-feature-grid">
+      <div className="onboarding-feature-card">
+        <div className="onboarding-feature-icon">🔄</div>
+        <div className="onboarding-feature-title">自动同步</div>
+        <div className="onboarding-feature-desc">保存、重命名、备注都自动备份</div>
+      </div>
+      <div className="onboarding-feature-card">
+        <div className="onboarding-feature-icon">💻</div>
+        <div className="onboarding-feature-title">Web 仪表盘</div>
+        <div className="onboarding-feature-desc">在任何浏览器里查看和管理会话</div>
+      </div>
+      <div className="onboarding-feature-card">
+        <div className="onboarding-feature-icon">🛟</div>
+        <div className="onboarding-feature-title">误删保护</div>
+        <div className="onboarding-feature-desc">删除的会话可在列表底部找回</div>
+      </div>
+    </div>
+  </div>
+);
+
 export const ReadyStep: React.FC = () => (
   <div className="onboarding-content text-center">
     <div className="onboarding-icon-wrapper">

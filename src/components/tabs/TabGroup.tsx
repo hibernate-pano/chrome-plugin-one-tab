@@ -291,7 +291,7 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
             <div className="min-w-0 flex items-center gap-2">
               <h3
                 id={`tab-group-title-${group.id}`}
-                className="tab-group-title truncate cursor-pointer tab-group-title-hover transition-colors flat-interaction"
+                className="tab-group-title truncate cursor-pointer tab-group-title-hover transition-colors flat-interaction min-w-0"
                 onClick={() => !group.isLocked && setIsEditing(true)}
                 title={group.isLocked ? group.name : '点击编辑会话名称'}
                 tabIndex={0}
@@ -306,7 +306,7 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
               </h3>
               {group.isFavorite && (
                 <span
-                  className="rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-medium text-amber-700 dark:bg-amber-900/40 dark:text-amber-300"
+                  className="flex-shrink-0 whitespace-nowrap rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-medium text-amber-700 dark:bg-amber-900/40 dark:text-amber-300"
                   title="已收藏会话"
                 >
                   已收藏
@@ -376,7 +376,7 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
 
           <button
             onClick={handleToggleFavorite}
-            className={`btn-icon p-1.5 micro-interaction-button ${group.isFavorite ? 'text-amber-500' : ''}`}
+            className={`btn-icon p-1.5 micro-interaction-button ${group.isFavorite ? 'text-amber-500 hover:text-amber-600' : ''}`}
             title={group.isFavorite ? '取消收藏会话' : '收藏会话'}
             aria-label={group.isFavorite ? '取消收藏会话' : '收藏会话'}
           >
@@ -428,6 +428,13 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
               <textarea
                 value={notesDraft}
                 onChange={event => setNotesDraft(event.target.value)}
+                onKeyDown={event => {
+                  if (event.key === 'Escape') {
+                    event.stopPropagation();
+                    setNotesDraft(group.notes || '');
+                    setIsEditingNotes(false);
+                  }
+                }}
                 placeholder="给这个会话留一句备注，例如这批标签页是为哪个项目、客户或研究主题准备的。"
                 className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 focus:border-primary-500 focus:outline-none dark:border-gray-600 dark:bg-gray-900 dark:text-gray-100"
                 rows={3}
