@@ -17,14 +17,21 @@
  * 退出码：0 = 成功；1 = 执行失败；2 = 验证发现列/触发器缺失
  */
 
-import { readFileSync, existsSync } from 'node:fs';
+import { readFileSync, existsSync, readdirSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(__dirname, '..');
-const MIGRATION_FILE = resolve(ROOT, 'supabase/migrations/20260909_add_op_stamp_columns.sql');
+const MIGRATIONS_DIR = resolve(ROOT, 'supabase/migrations');
+/** 目录内全部 .sql 按文件名（= 时间戳前缀）升序——顺序即语义（add → fix） */
+function migrationFiles() {
+  return readdirSync(MIGRATIONS_DIR)
+    .filter(f => f.endsWith('.sql'))
+    .sort()
+    .map(f => resolve(MIGRATIONS_DIR, f));
+}
 
 function readEnvFile(path) {
   const env = {};
@@ -40,10 +47,10 @@ function readEnvFile(path) {
 }
 
 function loadSqlText() {
-  if (!existsSync(MIGRATION_FILE)) {
-    throw new Error(`migration file not found: ${MIGRATION_FILE}`);
-  }
-  return readFileSync(MIGRATION_FILE, 'utf8');
+  return migrationFiles().map(file => {
+    if (!existsSync(file)) throw new Error(`migration file not found: ${file}`);
+    return `-- ==== ${file.split('/').pop()} ====\n${readFileSync(file, 'utf8')}`;
+  });
 }
 
 /**
@@ -89,6 +96,18 @@ async function verify(client) {
   `);
   console.log('triggers:', JSON.stringify(trigRes.rows, null, 2));
 
+  // 守卫**函数体**也必须校验：只看「列在、触发器在」曾经给出过假阳性——
+  // 生产库跑着 `<=` 版本的守卫（吞掉全部同印记重发）却显示 VERIFY OK。
+  const fnRes = await client.query(`
+    SELECT pg_get_functiondef(p.oid) AS def
+    FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+    WHERE n.nspname='public' AND p.proname='guard_tab_group_op_stamp';
+  `);
+  const def = fnRes.rows[0]?.def ?? '';
+  const usesLt = /NEW\.last_op_seq\s*<\s*OLD\.last_op_seq/.test(def);
+  const usesLe = /NEW\.last_op_seq\s*<=\s*OLD\.last_op_seq/.test(def);
+  const blocksNullWipe = /OLD\.last_op_seq IS NOT NULL AND NEW\.last_op_seq IS NULL/.test(def);
+
   const hasDevice = colRes.rows.some(r => r.column_name === 'last_op_device');
   const hasSeq = colRes.rows.some(r => r.column_name === 'last_op_seq');
   const hasTrig = trigRes.rows.some(r => r.trigger_name === 'tab_group_op_stamp_guard');
@@ -96,7 +115,13 @@ async function verify(client) {
     console.error('\n✗ VERIFY FAILED: missing columns or trigger');
     return false;
   }
-  console.log('\n✓ VERIFY OK: last_op_device, last_op_seq, guard trigger all present');
+  if (!usesLt || usesLe || !blocksNullWipe) {
+    console.error('\n✗ VERIFY FAILED: guard body 不是修复版');
+    console.error(`   strict '<' : ${usesLt}   残留 '<=' : ${usesLe}   NULL 清空防护 : ${blocksNullWipe}`);
+    console.error('   期望: 20260910_fix_op_stamp_guard_strict_lt.sql');
+    return false;
+  }
+  console.log('\n✓ VERIFY OK: 列 + 触发器 + 守卫函数体（严格 <、NULL 清空防护）全部正确');
   return true;
 }
 
@@ -106,9 +131,10 @@ async function main() {
   const dryRun = args.includes('--dry-run');
 
   if (dryRun) {
-    const sql = loadSqlText();
-    console.log(`--- DRY RUN: ${MIGRATION_FILE} ---\n`);
-    console.log(sql);
+    for (const sql of loadSqlText()) {
+      console.log(`--- DRY RUN ---\n`);
+      console.log(sql);
+    }
     return;
   }
 
@@ -120,16 +146,16 @@ async function main() {
     process.exit(1);
   }
 
-  const sql = loadSqlText();
-
   const client = new pg.Client({ connectionString: url, ssl: { rejectUnauthorized: false } });
   await client.connect();
   try {
     if (!verifyOnly) {
       console.log('\n=== Migration ===');
-      // 一次 query 跑整段 multi-statement SQL（pg 支持）
-      await client.query(sql);
-      console.log('✓ Migration applied');
+      for (const file of migrationFiles()) {
+        // 一次 query 跑整段 multi-statement SQL（pg 支持）；每个文件独立事务
+        await client.query(readFileSync(file, 'utf8'));
+        console.log(`✓ applied: ${file.split('/').pop()}`);
+      }
     }
     const ok = await verify(client);
     process.exit(ok ? 0 : 2);
