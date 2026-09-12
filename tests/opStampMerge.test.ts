@@ -181,3 +181,49 @@ describe('mergeOpStamped: §5.4 URL 去重（跨设备同 URL 重加存活）', 
     assert.equal(localOut.isDeleted, false); // 没盖墓碑
   });
 });
+// ── 客户端决胜 与 服务端守卫放行 的一致性契约 ─────────────────────────────
+// 这两个规则一个在 TS（谁赢）、一个在 SQL（谁能写）。两者不一致时会出现最糟的
+// 静默状态：客户端认为「本地赢」，于是不上传（或上传后被丢弃），然后下次下载
+// 又把本地改动覆盖回去 —— 用户看到编辑成功却消失。
+// 历史事故正是如此：服务端用 NEW <= OLD 拒收，而客户端对「相等」判本地赢。
+//
+// 注意：下面的 serverAllows 是 SQL 守卫的 JS 镜像，其真实行为由
+// tests/opStampGuard.pg.test.ts 在真实 Postgres 上钉死（两处必须一致）。
+describe('客户端决胜 ↔ 服务端守卫 一致性（双侧都有印记、非墓碑翻转）', () => {
+  /** supabase/migrations/20260910 守卫（修复后）：仅 NEW.s < OLD.s 拒收 */
+  const serverAllows = (local: { s: number }, cloud: { s: number }) => !(local.s < cloud.s);
+
+  it('客户端判「本地赢」时，服务端必须放行本次写入', async () => {
+    const { compareStamps } = await import('@/utils/opStamp');
+    const stamps = [
+      { d: 'devA', s: 1 }, { d: 'devA', s: 400 }, { d: 'devB', s: 1 },
+      { d: 'devB', s: 400 }, { d: 'devC', s: 400 },
+    ];
+    for (const local of stamps) {
+      for (const cloud of stamps) {
+        const clientPicksLocal = compareStamps(local, cloud) >= 0;
+        if (!clientPicksLocal) continue;
+        assert.ok(
+          serverAllows(local, cloud),
+          `客户端判本地赢 (${local.d},${local.s}) vs 云端 (${cloud.d},${cloud.s})，但服务端会拒收 → 编辑静默丢失`
+        );
+      }
+    }
+  });
+
+  it('服务端拒收时，客户端必须也判云端赢（否则本地留着永远不会上云的修改）', async () => {
+    const { compareStamps } = await import('@/utils/opStamp');
+    const stamps = [
+      { d: 'devA', s: 1 }, { d: 'devA', s: 400 }, { d: 'devB', s: 1 }, { d: 'devB', s: 400 },
+    ];
+    for (const local of stamps) {
+      for (const cloud of stamps) {
+        if (serverAllows(local, cloud)) continue;
+        assert.ok(
+          compareStamps(local, cloud) < 0,
+          `服务端拒收 (${local.d},${local.s}) vs (${cloud.d},${cloud.s})，但客户端不认为云端赢`
+        );
+      }
+    }
+  });
+});

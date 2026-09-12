@@ -327,3 +327,20 @@ describe('syncMergeSafety: 下载前置保护 decideDownloadPrecheck', () => {
     assert.deepEqual(decision, { action: 'skip', reason: 'recent_upload_guard' });
   });
 });
+
+// ── 云端软删写入方式（降级行为护栏）────────────────────────────────────────
+// 复核发现：把「印记列探测失败」当成「不能软删」→ 降级硬删 → 云端行永久消失、
+// 他端活跃副本重新 INSERT = 幽灵复活。印记列与「把 is_deleted 置 true」无关。
+describe('decideCloudTombstoneWrite: 只有连 is_deleted 列都没有才允许硬删', () => {
+  it('有 is_deleted 列时永远不做硬删（印记列缺失或探测失败也只降级为不带 stamp 的软删）', async () => {
+    const { decideCloudTombstoneWrite } = await import('@/utils/syncUtils');
+    assert.equal(decideCloudTombstoneWrite(true, true), 'stamp');
+    assert.equal(decideCloudTombstoneWrite(true, false), 'plain', '印记列缺失 → 必须仍是软删');
+  });
+
+  it('仅当云端连 is_deleted 列都没有时才硬删', async () => {
+    const { decideCloudTombstoneWrite } = await import('@/utils/syncUtils');
+    assert.equal(decideCloudTombstoneWrite(false, false), 'hard-delete');
+    assert.equal(decideCloudTombstoneWrite(false, true), 'hard-delete');
+  });
+});

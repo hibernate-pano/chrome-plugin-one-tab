@@ -5,6 +5,24 @@ import { trackProductEvent } from '@/utils/productEvents';
 import { syncEngine } from '@/services/syncEngine';
 import { sanitizeTabUrl } from '@/utils/inputValidation';
 import { enqueue } from './mutationQueue';
+import { createSeqRegistry } from '@/utils/seqRegistry';
+import { getDeviceId } from '@/utils/deviceUtils';
+import { kvGet, kvSet } from '@/storage/storageAdapter';
+import type { OpStamp } from '@/utils/opStamp';
+
+// 保存路径也走同一套印记（与 mutationService 的 registry 各持一实例，但无 memo、
+// 同一持久化 key + Lamport 推导，因此互相一致）。无印记的组在合并中等价于
+// EMPTY_STAMP（全序最小值）：一旦它被云端带上印记的副本碰上，本地标签列表会整体输掉。
+const seqRegistry = createSeqRegistry({
+  kvGet,
+  kvSet,
+  getGroups: () => storage.getGroups(),
+});
+
+/** 新实体的印记：本设备下一个 Lamport 序号 */
+async function stampForNewEntity(): Promise<OpStamp> {
+  return { d: await getDeviceId(), s: await seqRegistry.nextSeq() };
+}
 
 /**
  * 统一的标签页管理器
@@ -113,15 +131,17 @@ export class TabManager {
         return;
       }
 
-      // 单写者：saveAllTabs 的存储写入也必须经 mutation 队列，与 popup 命令串行
-      // （否则 SW 内部仍可能与其他 job 交错读写 groups）
-      const finalGroups = await enqueue('saveAllTabs', async () => {
+      // 单写者：读-改-写必须整体在队列内（只把读放进队列、写在队列外 =
+      // 与其他 job 交错读改写，会丢刚写入的会话）
+      await enqueue('saveAllTabs', async () => {
         const existingGroups = await storage.getGroups();
-        return [safeGroup, ...existingGroups].sort(
-          (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+        const stamped: typeof safeGroup = { ...safeGroup, lastOp: await stampForNewEntity() };
+        await storage.setGroups(
+          [stamped, ...existingGroups].sort(
+            (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+          )
         );
       });
-      await storage.setGroups(finalGroups);
 
       // ponytail: 自动上传承诺接入点。SW 保存路径完全绕过 Redux（直接 setGroups），
       // autoSyncMiddleware 永远监听不到 saveGroup.fulfilled——这里补上 scheduleUpload
@@ -209,8 +229,12 @@ export class TabManager {
         return;
       }
 
-      const existingGroups = await storage.getGroups();
-      await storage.setGroups([safeGroup, ...existingGroups]);
+      // 单写者 + 盖印记：与 saveAllTabs 同一语义（原先连 enqueue 都没有，属丢更新路径）
+      await enqueue('saveCurrentTab', async () => {
+        const existingGroups = await storage.getGroups();
+        const stamped: typeof safeGroup = { ...safeGroup, lastOp: await stampForNewEntity() };
+        await storage.setGroups([stamped, ...existingGroups]);
+      });
 
       // ponytail: 关闭单标签时也会触发数据变更（保存到当前会话）——同样需自动上传。
       syncEngine.scheduleUpload(3000);

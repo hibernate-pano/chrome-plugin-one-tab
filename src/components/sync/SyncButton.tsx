@@ -101,8 +101,8 @@ export const SyncButton: React.FC<SyncButtonProps> = () => {
       ]);
 
       setDownloadPreview({
-        overwrite: buildDownloadPreviewSummary(localGroups, remoteGroups, 'overwrite', settings.syncStrategy),
-        merge: buildDownloadPreviewSummary(localGroups, remoteGroups, 'merge', settings.syncStrategy),
+        overwrite: buildDownloadPreviewSummary(localGroups, remoteGroups, 'overwrite'),
+        merge: buildDownloadPreviewSummary(localGroups, remoteGroups, 'merge'),
       });
     } catch (error) {
       console.error('加载下载预览失败:', error);

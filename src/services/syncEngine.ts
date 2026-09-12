@@ -21,7 +21,8 @@ import {
 // 阶段二（§5 + §9）：合并语义已统一为 mergeOpStamped（OpStamp 全序决胜）。
 // 云端 schema 与客户端同步发布，旧 mergeTabGroups 已删除。
 import { mergeOpStamped } from '@/utils/opStampMerge';
-import { createSeqRegistry } from '@/utils/seqRegistry';
+import { createSeqRegistry, maxObservedSeq } from '@/utils/seqRegistry';
+import { ensureOpStampMigrated } from '@/background/opStampMigratedGuard';
 import { getDeviceId } from '@/utils/deviceUtils';
 import { ensureAuthenticated } from '@/utils/authGuard';
 import { kvGet, kvSet } from '@/storage/storageAdapter';
@@ -194,6 +195,14 @@ export class SyncEngine {
       return { success: false, groups: [], reason: 'already_syncing' };
     }
 
+    // 合并前兜底：本地实体没有印记时，合并会把它当成全序最小值，
+    // 静默输给任何带印记的云端行（用户本地数据无声消失）。幂等，已迁移用户只多读一次标志位。
+    try {
+      await ensureOpStampMigrated();
+    } catch (err) {
+      console.warn('[SyncEngine] 印记迁移兜底失败（不阻塞同步）:', err);
+    }
+
     // ponytail: 下载前置保护（决策逻辑见 decideDownloadPrecheck 单测）：
     // 1) 刚上传过 → 跳过下载（云端已是本地新状态）
     // 2) 有未推送变更 → 先上传再下载，否则「删除书签后 upload alarm 未到
@@ -268,11 +277,19 @@ export class SyncEngine {
       // 由此下载本身成为本设备的一次「合并操作」，与用户操作共享全序空间。
       const deviceId = await getDeviceId();
       const seqRegistry = createSeqRegistry({
-        kvGet, kvSet, getDeviceId,
+        kvGet, kvSet,
         getGroups: () => storage.getGroups(),
       });
+      // 合并印记必须大于「本地 + 云端」观察到的所有印记：seqRegistry.current() 只读
+      // 合并前的本地快照，而本次合并产生的墓碑（§5.4 URL 败者）若不大于刚下载到的
+      // 云端印记，下次合并就会被云端那条更新的记录原样复活。
+      const observed = maxObservedSeq([...localGroups, ...cloudGroups]);
+      let mergeSeq = await seqRegistry.nextSeq();
+      if (observed !== null && observed >= mergeSeq) {
+        mergeSeq = await seqRegistry.bumpSeqIfLower(observed + 1);
+      }
       const mergedGroups = mergeOpStamped(localGroups, cloudGroups, {
-        mergeStamp: { d: deviceId, s: await seqRegistry.nextSeq() },
+        mergeStamp: { d: deviceId, s: mergeSeq },
       });
       report(80, 'download');
       // 5. 验证

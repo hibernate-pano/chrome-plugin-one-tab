@@ -5,6 +5,7 @@ import { syncEngine, SYNC_UPLOAD_ALARM } from '@/services/syncEngine';
 import { sanitizeTabUrl } from '@/utils/inputValidation';
 import { enqueue } from '@/background/mutationQueue';
 import { mutationService } from '@/background/mutationService';
+import { ensureOpStampMigrated } from '@/background/opStampMigratedGuard';
 
 // Chrome 扩展的 Service Worker
 // 为了避免模块导入问题，早期版本内联了存储逻辑；现统一使用 utils/storage 以与前端页面共享同一数据源（IndexedDB）
@@ -45,6 +46,14 @@ async function runMigrations() {
     await migrateToV2();
   } catch (error) {
     console.error('[Migration] 数据迁移失败:', error);
+  }
+
+  // 阶段二·§7：存量实体补操作印记。必须在任何同步/写入之前跑完——
+  // 没有印记的本地实体会被合并当成全序最小值，在首次与云端合并时静默输给云端。
+  try {
+    await ensureOpStampMigrated();
+  } catch (error) {
+    console.error('[Migration] 操作印记迁移失败:', error);
   }
 }
 

@@ -55,32 +55,13 @@ export function decideDownloadPrecheck(input: DownloadPrecheckInput): DownloadPr
 }
 
 /**
- * 智能合并本地和云端标签组
+ * 智能合并本地和云端标签组（version + 时间戳 LWW）
  *
- * 改进点：
- * 1. 使用版本号检测冲突
- * 2. 字段级合并而非整体覆盖
- * 3. 支持软删除（isDeleted）
- * 4. 保留手动排序（displayOrder）
- *
- * @param localGroups 本地标签组
- * @param cloudGroups 云端标签组
- * @param syncStrategy 同步策略
- * @returns 合并后的标签组
- */
-/**
- * 智能合并本地和云端标签组
- *
- * 改进点：
- * 1. 使用版本号检测冲突
- * 2. 字段级合并而非整体覆盖
- * 3. 支持软删除（isDeleted）
- * 4. 保留手动排序（displayOrder）
- *
- * @param localGroups 本地标签组
- * @param cloudGroups 云端标签组
- * @param syncStrategy 同步策略
- * @returns 合并后的标签组
+ * @deprecated 生产同步已全部切到 OpStamp 全序决胜（`@/utils/opStampMerge` 的 mergeOpStamped，
+ * 入口 syncEngine.downloadAndMerge 与 syncPreview）。本函数已无生产调用点，仅作参考/回滚对比。
+ * ⚠️ 其语义（低 version 直接丢弃、墓碑靠 version 翻牌）与新机制不同，不要再接回生产路径；
+ * 针对它的单测**不代表**当前同步语义的保障（真正钉死见 tests/opStampMerge.test.ts 与
+ * tests/opStampGuard.pg.test.ts）。
  */
 export const mergeTabGroups = (
   localGroups: TabGroup[],
@@ -494,6 +475,22 @@ function sortGroups(groups: TabGroup[]): TabGroup[] {
     const dateB = new Date(b.createdAt).getTime();
     return dateB - dateA;
   });
+}
+
+/**
+ * 云端软删（墓碑）写入方式决策——纯函数，便于单测钉住降级行为。
+ *
+ * 关键不变式：**只有云端连 is_deleted 列都没有时才允许硬删**。
+ * 印记列（last_op_seq）缺失或探测失败时，软删必须仍走「不带印记的局部 UPDATE」，
+ * 绝不降级成 DELETE——硬删让云端行永久消失，他端活跃副本再上传就重新 INSERT 出同一组
+ * = 幽灵复活；而印记列与「把 is_deleted 置 true」本身无关。
+ */
+export function decideCloudTombstoneWrite(
+  hasTombstoneColumn: boolean,
+  hasStampColumn: boolean
+): 'stamp' | 'plain' | 'hard-delete' {
+  if (!hasTombstoneColumn) return 'hard-delete';
+  return hasStampColumn ? 'stamp' : 'plain';
 }
 
 /**

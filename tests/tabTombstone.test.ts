@@ -1,5 +1,9 @@
 // tab 级墓碑语义回归测试——钉死「单标签删除跨设备复活」bug 的修复。
 //
+// ⚠️ 本文件里的合并类断言针对 syncUtils.mergeTabGroups（已废弃、无生产调用点，见其
+// @deprecated 注释）。当前生产同步语义由 tests/opStampMerge.test.ts 与
+// tests/opStampGuard.pg.test.ts 保障；本文件仅保留 tabDataCodec / shouldAutoDelete 部分有效。
+//
 // 历史背景：v1.16.0 及之前，deleteTabAndSync / UI updateGroup(filter) 物理
 // 移除 tab 且无墓碑；mergeTabs 对两侧非删除 tab 做并集 → A 设备删除的标签
 // 在 B 设备后台轮询合并时以 local-only 身份复活，再经 B 上传传回 A。

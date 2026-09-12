@@ -5,6 +5,7 @@ import { encryptData, decryptData, isEncrypted } from './encryptionUtils';
 import { sanitizeTabUrl } from './inputValidation';
 import { normalizeTabsData } from './normalizeTabsData';
 import { serializeTab, deserializeTab } from './tabDataCodec';
+import { decideCloudTombstoneWrite } from './syncUtils';
 
 // 安全的配置管理
 function getSecureConfig() {
@@ -190,6 +191,47 @@ export async function supportsCloudTombstone(): Promise<boolean> {
   } catch (err) {
     console.warn('[tombstone] 列探测异常，降级为硬删:', (err as Error).message);
     tombstoneSupportCache = false;
+    return false;
+  }
+}
+
+let opStampSupportCache: boolean | null = null;
+
+/**
+ * 探测云端 tab_groups 表是否已有 last_op_seq 列（结果缓存）。
+ *
+ * 为什么必须探测：客户端先于 SQL 迁移发布时，上传 payload 里带上不存在的列会让
+ * PostgREST 报 42703（column does not exist）——整个 upsert 失败，用户数据全部卡在本地。
+ * 探测失败就整列省略，退回到「无印记」的旧上传行为，等迁移跑完自动启用。
+ */
+export async function supportsOpStamp(): Promise<boolean> {
+  if (opStampSupportCache !== null) return opStampSupportCache;
+  if (!isSupabaseConfigured()) {
+    opStampSupportCache = false;
+    return false;
+  }
+  try {
+    const probe = await supabase.from('tab_groups').select('last_op_seq').limit(1);
+    if (probe.error) {
+      if (probe.error.code === 'PGRST204' || /last_op_seq/i.test(probe.error.message)) {
+        console.warn(
+          '[op-stamp] 云端 tab_groups 表缺少 last_op_seq 列，本次上传省略印记列（降级为旧行为）。\n' +
+          '  请执行：pnpm supabase:migrate（或 Supabase SQL Editor 跑 supabase/migrations/20260910_fix_op_stamp_guard_strict_lt.sql）'
+        );
+        // 确定性的「列不存在」→ 缓存结果（本 SW 生命周期内无需重探）
+        opStampSupportCache = false;
+      } else {
+        // 网络/权限等非确定性失败：**不缓存**。写死 false 会让一次网络抖动把整个 SW
+        // 生命周期钉在降级模式（不上传印记、软删走不带 stamp 的分支），且不会自愈。
+        console.warn('[op-stamp] 列探测失败（非 PGRST204），本次按不支持处理，下次重探:', probe.error.message);
+        return false;
+      }
+    } else {
+      opStampSupportCache = true;
+    }
+    return opStampSupportCache;
+  } catch (err) {
+    console.warn('[op-stamp] 列探测异常，本次按不支持处理，下次重探:', (err as Error).message);
     return false;
   }
 }
@@ -514,6 +556,9 @@ export const sync = {
     // 为每个标签组添加用户ID和设备ID
     const currentTime = new Date().toISOString();
 
+    // 云端是否已有印记列：没有就整列省略（带上不存在的列会让整批 upsert 报 42703 失败）
+    const opStampSupported = await supportsOpStamp();
+
     const groupsWithUser = groups.map(group => {
       // 确保必要字段都有值
       const createdAt = group.createdAt || currentTime;
@@ -538,10 +583,14 @@ export const sync = {
         user_id: user.id,
         device_id: deviceId,
         last_sync: currentTime,
-        // 阶段二·§6.1：上传操作印记。NULL 视为最小值；老客户端不带 stamp 时
-        // 触发器会拦截 UPDATE（设计意图：强制升级）。
-        last_op_device: group.lastOp?.d ?? null,
-        last_op_seq: typeof group.lastOp?.s === 'number' ? group.lastOp.s : null,
+        // 阶段二·§6.1：上传操作印记。NULL 表示「无从比较」，触发器只在双侧都有值时仲裁。
+        // 云端列不存在时整体省略（见 supportsOpStamp）。
+        ...(opStampSupported
+          ? {
+              last_op_device: group.lastOp?.d ?? null,
+              last_op_seq: typeof group.lastOp?.s === 'number' ? group.lastOp.s : null,
+            }
+          : {}),
         // 保留兼容（§11 version 冻结）；新旧触发器共存期间仍写入。
         version: typeof group.version === 'number' ? group.version : 1,
         tabs_data: tabsData // 临时存储，稍后会被加密
@@ -782,14 +831,31 @@ export const sync = {
     const userId = sessionData.session.user.id;
     console.log(`[markCloudGroupsAsDeleted] 正在标记云端 ${deletedIds.length} 个组为删除`);
 
-    if (await supportsCloudTombstone()) {
-      // 阶段二·§6.1：守护触发器已切换到 guard_tab_group_op_stamp。
-      // 防御性双步：先读现有 stamp（含 device/seq），UPDATE 时 last_op_seq = max(OLD, NEW)+1
-      // + is_deleted=true。新 stamp 取本设备 nextSeq（调用方传入）或 1（无 nextSeq 兜底）。
-      // 这样墓碑意图总是能传播，且触发器只在「本设备上次上传后才有 seq」时放行。
+    const mode = decideCloudTombstoneWrite(await supportsCloudTombstone(), await supportsOpStamp());
+
+    if (mode === 'plain') {
+      // 云端有 is_deleted 列但无印记列（客户端先于 SQL 迁移发布）：
+      // 软删是局部 UPDATE，与印记列无关；绝不能降级成硬删（见 decideCloudTombstoneWrite）。
+      const { error } = await supabase
+        .from('tab_groups')
+        .update({ is_deleted: true, updated_at: new Date().toISOString() })
+        .eq('user_id', userId)
+        .in('id', deletedIds);
+      if (error) {
+        console.error('[markCloudGroupsAsDeleted] 软删（无印记列）失败:', error);
+        throw error;
+      }
+      console.log(`[markCloudGroupsAsDeleted] 已软删 ${deletedIds.length} 个云端组（云端无印记列，不带 stamp）`);
+      return;
+    }
+
+    if (mode === 'stamp') {
+      // 有印记列：墓碑意图必须带「本设备」印记。以前写 row.last_op_device（原设备）+ seq+1，
+      // 等于伪造他设备的印记——他设备真实 seq 落后时，它自己的上传会被守卫当「更旧」拒收。
+      // seq 取 OLD+1 保证严格递增（NEW > OLD 必然满足守卫放行条件）。
       const { data: rows, error: readError } = await supabase
         .from('tab_groups')
-        .select('id, last_op_device, last_op_seq')
+        .select('id, last_op_seq')
         .eq('user_id', userId)
         .in('id', deletedIds);
 
@@ -798,19 +864,17 @@ export const sync = {
         throw readError;
       }
 
+      const localDeviceId = await getDeviceId();
       const now = new Date().toISOString();
       let successCount = 0;
-      for (const row of (rows ?? []) as Array<{ id: string; last_op_device: string | null; last_op_seq: number | null }>) {
-        // 本墓碑使用「本设备 + 当前最大 seq+1」；OLD.seq 为 NULL 时取 0 → 新 seq=1。
-        // 注意：理想调用方应在 markDeleted 前 nextSeq 取好本设备最新 seq 传入；
-        // 这里实现简化版（基于 OLD.max+1）已足够触发器放行。
+      for (const row of (rows ?? []) as Array<{ id: string; last_op_seq: number | null }>) {
         const newSeq = (row.last_op_seq ?? 0) + 1;
         const { error } = await supabase
           .from('tab_groups')
           .update({
             is_deleted: true,
             updated_at: now,
-            last_op_device: row.last_op_device, // 保持原设备——墓碑意图归属写者
+            last_op_device: localDeviceId, // 墓碑意图归属写者（本设备），不冒用原设备
             last_op_seq: newSeq,
           })
           .eq('id', row.id)
@@ -824,6 +888,7 @@ export const sync = {
 
       console.log(`[markCloudGroupsAsDeleted] 已标记 ${successCount}/${deletedIds.length} 个云端组为删除`);
     } else {
+      // mode === 'hard-delete'：云端连 is_deleted 列都没有，只能物理删除
       // 降级：硬删云端行（旧的统一做法）
       const { error } = await supabase
         .from('tab_groups')
@@ -897,10 +962,14 @@ export const sync = {
       }
 
       // 获取用户的所有标签组，包含 tabs_data JSONB 字段，按创建时间倒序排列
-      // 阶段二：显式 select stamp 列与 version 列（老客户端/存量行可能为空，nullable 处理）
+      // 阶段二：显式 select stamp 列与 version 列（老客户端/存量行可能为空，nullable 处理）。
+      // 云端没跑迁移时必须回退 `*`：带上不存在的列会让 PostgREST 报 42703 → **整次下载失败**（比上传失败更严重）。
+      const selectColumns = (await supportsOpStamp())
+        ? '*, last_op_device, last_op_seq, version'
+        : '*';
       const { data: groups, error } = await supabase
         .from('tab_groups')
-        .select('*, last_op_device, last_op_seq, version')
+        .select(selectColumns)
         .eq('user_id', user.id)
         .order('created_at', { ascending: false });
 
