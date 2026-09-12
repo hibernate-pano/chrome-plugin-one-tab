@@ -160,13 +160,23 @@ try {
   console.log(`🎯 目标删除标签: "${victimTitle}" (${victimUrl})`);
 
   // ── B: UI 删除第 2 个标签（真实路径: handleDeleteTab → updateGroup(filter)）──
-  const card = pageB.locator('.tab-group-card').first();
-  // 若会话卡片处于折叠态先展开
-  const expandBtn = card.locator('button[aria-label="展开会话"]');
-  if (await expandBtn.count()) { await expandBtn.first().click().catch(() => {}); await pageB.waitForTimeout(500); }
+  // 先展开所有折叠的卡片（B 端可能同时存在下载组 + 本地自建组）
+  const expanders = pageB.locator('button[aria-label="展开会话"]');
+  for (let i = 0; i < 10 && (await expanders.count()) > 0; i++) {
+    await expanders.first().click().catch(() => {});
+    await pageB.waitForTimeout(300);
+  }
+  // 按内容定位目标卡片（而非 .first()，避免选到其他组）
+  const card = pageB.locator('.tab-group-card').filter({ hasText: victimTitle }).first();
+  if (!(await card.count())) {
+    const names = await pageB.locator('.tab-group-card h3').allTextContents().catch(() => []);
+    console.log(`❌ 找不到含目标标签的卡片。页面卡片数=${await pageB.locator('.tab-group-card').count()}，卡片标题: ${JSON.stringify(names)}`);
+    ok = false;
+    throw new Error('card not found');
+  }
 
   const delBtn = card.locator(`button[aria-label="删除标签页: ${victimTitle}"]`).first();
-  await delBtn.click();
+  await delBtn.click({ timeout: 10000 });
   await pageB.waitForTimeout(800);
   // 兼容确认对话框（confirmBeforeDelete）
   const confirmBtn = pageB.locator('.fixed button:has-text("确认"), .fixed button:has-text("删除")').last();

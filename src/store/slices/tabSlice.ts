@@ -1,6 +1,6 @@
 import { createSlice, createAsyncThunk, createSelector } from '@reduxjs/toolkit';
 import { TabState, TabGroup } from '@/types/tab';
-import { storage } from '@/utils/storage';
+import { storage, invalidateGroupsCache } from '@/utils/storage';
 import { shouldAutoDeleteAfterTabRemoval } from '@/utils/tabGroupUtils';
 import { sendMutation } from '@/shared/mutationProtocol';
 import { trackProductEvent } from '@/utils/productEvents';
@@ -53,6 +53,9 @@ export const persistGroupFields = createAsyncThunk<
 });
 
 export const loadGroups = createAsyncThunk('tabs/loadGroups', async () => {
+  // 显式加载必须读存储真值：SW 侧同步合并只写 IndexedDB，不会触发
+  // chrome.storage.onChanged 来失效本进程 30s 缓存，否则同步后列表读不到新会话。
+  invalidateGroupsCache();
   const groups = await storage.getGroups();
 
   // 过滤掉已软删除的标签组，避免UI显示
@@ -131,6 +134,7 @@ export const purgeGroup = createAsyncThunk(
 
 /** 加载已软删的标签组（误删保护恢复视图的数据源） */
 export const loadDeletedGroups = createAsyncThunk('tabs/loadDeletedGroups', async () => {
+  invalidateGroupsCache(); // 与 loadGroups 同源同缓存，同样要求读存储真值
   const groups = await storage.getGroups();
   return groups.filter(g => g.isDeleted);
 });
