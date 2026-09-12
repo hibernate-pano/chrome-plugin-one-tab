@@ -31,6 +31,9 @@ export interface TabData {
   pinned?: boolean;
   /** 软删除墓碑标记：true 表示该标签已被删除，同步时删除意图跨设备传播（向后兼容，可选） */
   is_deleted?: boolean;
+  // 阶段二·§5.3：tab 级操作印记随 tabs_data JSON 上云往返（NULL = 最小值，老数据/老客户端兼容）
+  last_op_device?: string | null;
+  last_op_seq?: number | null;
 }
 
 // 用于 Supabase 中的 tab_groups 表结构

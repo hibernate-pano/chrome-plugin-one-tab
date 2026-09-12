@@ -4,6 +4,7 @@ import { TabGroup, UserSettings, TabData, SupabaseTabGroup } from '@/types/tab';
 import { encryptData, decryptData, isEncrypted } from './encryptionUtils';
 import { sanitizeTabUrl } from './inputValidation';
 import { normalizeTabsData } from './normalizeTabsData';
+import { serializeTab, deserializeTab } from './tabDataCodec';
 
 // 安全的配置管理
 function getSecureConfig() {
@@ -524,17 +525,8 @@ export const sync = {
         console.warn(`标签组 ${group.id} 的 tabs 字段不是数组，已按空数组上传（组ID: ${group.id}）`);
       }
 
-        // 将标签转换为 TabData 格式
-        const tabsData: TabData[] = sourceTabs.map(tab => ({
-          id: tab.id,
-          url: tab.url,
-          title: tab.title,
-          favicon: tab.favicon,
-          created_at: tab.createdAt,
-          last_accessed: tab.lastAccessed,
-          pinned: tab.pinned,
-          is_deleted: tab.isDeleted || undefined,
-        }));
+        // 将标签转换为 TabData 格式（含 tab 级 op-stamp，§5.3 上云往返）
+        const tabsData: TabData[] = sourceTabs.map(tab => serializeTab(tab));
 
       // 准备返回对象
       const returnObj = {
@@ -979,25 +971,9 @@ export const sync = {
 
         // 处理标签组数据
 
-        // 将 TabData 转换为 Tab 格式
-        // 顺手 sanitize URL：拒绝危险协议，避免云端污染直达本地（即便 RLS 完整，
-        // 也防另一台设备的旧版本上传了恶意 URL 同步过来）
+        // 将 TabData 转换为 Tab 格式（还原 tab 级 op-stamp；sanitize 防线在 codec 内）
         const formattedTabs = tabsData
-          .map((tab: TabData) => {
-            const url = sanitizeTabUrl(tab.url);
-            if (!url) return null;
-            return {
-              id: tab.id,
-              url,
-              title: tab.title,
-              favicon: tab.favicon,
-              createdAt: tab.created_at,
-              lastAccessed: tab.last_accessed,
-              group_id: String(groupAny.id),
-              pinned: tab.pinned ?? false,
-              isDeleted: tab.is_deleted === true ? true : undefined,
-            };
-          })
+          .map((tab: TabData) => deserializeTab(tab, String(groupAny.id)))
           .filter((t): t is NonNullable<typeof t> => t !== null);
 
         tabGroups.push({

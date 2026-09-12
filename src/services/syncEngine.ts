@@ -23,6 +23,7 @@ import {
 import { mergeOpStamped } from '@/utils/opStampMerge';
 import { createSeqRegistry } from '@/utils/seqRegistry';
 import { getDeviceId } from '@/utils/deviceUtils';
+import { ensureAuthenticated } from '@/utils/authGuard';
 import { kvGet, kvSet } from '@/storage/storageAdapter';
 import { errorHandler } from '@/utils/errorHandler';
 import { validateThemeStyle, validateThemeMode } from '@/utils/storage';
@@ -178,8 +179,15 @@ export class SyncEngine {
     syncSettings?: boolean;
     onProgress?: SyncProgressCallback;
   }): Promise<MergeResult> {
-    const state = store.getState() as { auth: { isAuthenticated: boolean }; settings: UserSettings };
-    if (!state.auth.isAuthenticated) {
+    // ponytail: 冷 SW 的 store 未恢复登录态（SW 是独立执行上下文）——
+    // 先尝试从持久化 session 恢复一次，否则 popup 发起的下载会一律
+    // not_authenticated（upload 已有同等恢复，download 曾缺失）。
+    const authed = await ensureAuthenticated({
+      isAuthenticated: () =>
+        (store.getState() as { auth: { isAuthenticated: boolean } }).auth.isAuthenticated,
+      restoreAuth: () => this.restoreAuth(),
+    });
+    if (!authed) {
       return { success: false, groups: [], reason: 'not_authenticated' };
     }
     if (this.isSyncing) {
@@ -334,17 +342,14 @@ export class SyncEngine {
     // isSyncing 检查（backgroundSync 路径互不冲突）。常规 UI 调用无需此参数。
     forcePending?: boolean;
   }): Promise<UploadResult> {
-    let state = store.getState() as { auth: { isAuthenticated: boolean; user: { id: string; email: string } | null }; settings: UserSettings };
-    // ponytail: SW 进程是独立执行上下文，store 是新实例。TabManager.saveAllTabs 后
-    // 自动调 scheduleUpload() 时 SW store 中 isAuthenticated 仍为 false——
-    // 这里懒恢复一次登录态（从 chrome.storage.local 里的 supabase session 读）。
-    // backgroundSync.performBackgroundSync 先调过一次，此处二次调用是 no-op。
-    if (!state.auth.isAuthenticated) {
-      const user = await store.dispatch(getCurrentUser()).unwrap().catch(() => null);
-      if (user) store.dispatch(setFromCache({ user, isAuthenticated: true }));
-      state = store.getState() as typeof state;
-    }
-    if (!state.auth.isAuthenticated) {
+    // ponytail: SW 进程是独立执行上下文，store 是新实例——先恢复登录态
+    // （与 downloadAndMerge 共用 ensureAuthenticated 守卫）。
+    const authed = await ensureAuthenticated({
+      isAuthenticated: () =>
+        (store.getState() as { auth: { isAuthenticated: boolean } }).auth.isAuthenticated,
+      restoreAuth: () => this.restoreAuth(),
+    });
+    if (!authed) {
       return { success: false, error: '用户未登录' };
     }
     // ponytail: 后台轮询路径可带 forcePending 绕过 isSyncing 检查；
@@ -380,9 +385,11 @@ export class SyncEngine {
         }
       }
       // 设置同步：与旧 smartSyncService.uploadToCloud 一致（上传标签组后总带上传设置）
+      // ponytail: 必须从 storage 读——SW 冷启动时 store.settings 是代码默认值，
+      // 直接上传会把用户云端设置覆盖成默认值（2026-09-12 审计发现）。
       if (opts?.syncSettings) {
         try {
-          await uploadSettings(state.settings);
+          await uploadSettings(await storage.getSettings());
         } catch (err) {
           console.warn('[SyncEngine] 上传设置失败（不阻塞主流程）:', err);
         }
@@ -434,6 +441,14 @@ export class SyncEngine {
   }
 
   // ── 私有 ─────────────────────────────────────────────────────────
+
+  /** 从 chrome.storage.local 里的持久化 supabase session 恢复 SW store 登录态。 */
+  private async restoreAuth(): Promise<boolean> {
+    const user = await store.dispatch(getCurrentUser()).unwrap().catch(() => null);
+    if (!user) return false;
+    store.dispatch(setFromCache({ user, isAuthenticated: true }));
+    return true;
+  }
 
   private async restoreSnapshot(snapshot: TabGroup[]): Promise<void> {
     if (snapshot.length === 0) {
