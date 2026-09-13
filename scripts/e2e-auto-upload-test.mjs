@@ -9,6 +9,7 @@ import { join, resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { createServer } from 'node:http';
 import { createClient } from '@supabase/supabase-js';
+import { dismissOnboarding, readLocalGroups, LOGIN_TIMEOUT_MS } from './e2e-helpers.mjs';
 import { readFileSync } from 'node:fs';
 
 const DIST = resolve(process.cwd(), 'dist');
@@ -36,11 +37,10 @@ function launchCtx() {
 async function extId(ctx) {
   return new URL(ctx.serviceWorkers()[0].url()).host;
 }
-async function ensureNoOverlay(page) {
-  await page.evaluate(() =>
-    document.querySelectorAll('.onboarding-overlay, [role=dialog][aria-label="用户引导"]').forEach(el => el.remove())
-  ).catch(() => {});
-}
+// 引导遮罩改由共享 helper 处理：只点「跳过引导」。
+// ⚠️ 不要直接 el.remove() 删遮罩 —— 那是 React 管理的节点，外部删除后 React patch
+// 会抛 NotFoundError(insertBefore/removeChild) 并把整个应用打进错误边界。
+const ensureNoOverlay = dismissOnboarding;
 
 const ctx = await launchCtx();
 let server;
@@ -70,7 +70,7 @@ try {
   await page.fill('input[placeholder="请输入密码"]', PWD);
   await page.fill('input[placeholder="请再次输入密码"]', PWD);
   await page.click('button[type="submit"]');
-  await page.waitForSelector('button[title="手动上传本地会话到云端"]', { timeout: 25000 });
+  await page.waitForSelector('button[title="手动上传本地会话到云端"]', { timeout: LOGIN_TIMEOUT_MS });
   console.log('✅ registered:', EMAIL);
 
   // 打开 3 个真实页面
@@ -92,7 +92,8 @@ try {
   const supa = createClient(SUPA_URL, SUPA_ANON, {
     auth: { persistSession: false, autoRefreshToken: false },
   });
-  const { error: signInErr } = await supa.auth.signInWithPassword({ email: EMAIL, password: PWD });
+  const { data: authData, error: signInErr } = await supa.auth.signInWithPassword({ email: EMAIL, password: PWD });
+  const userId = authData?.user?.id;
   if (signInErr) {
     console.log('❌ supabase 登录失败:', signInErr.message);
     process.exitCode = 1;
@@ -100,6 +101,7 @@ try {
     const { data: cloudGroups, error: cloudErr } = await supa
       .from('tab_groups')
       .select('id, name, user_id, is_deleted, updated_at')
+      .eq('user_id', userId)
       .eq('is_deleted', false);
     if (cloudErr) {
       console.log('❌ 云端查询失败:', cloudErr.message);
@@ -109,20 +111,26 @@ try {
       for (const g of cloudGroups || []) {
         console.log(`   - ${g.name} (id=${g.id.slice(0, 8)}, updated=${g.updated_at})`);
       }
-      // 自动上传应包含 AUTO-1/2/3 标签——会话名是默认时间戳，但点开看 tab_url 应当含 127.0.0.1
+      // 自动上传应真的把「刚保存的那个会话」送上去。
+      // 强化点（原版只看"有密文就算过"，空内容/别人的行也能满足）：
+      //   a) 只查本账号的行（RLS 失效时别人的行也能满足原断言）
+      //   b) 云端行的 name 必须与本机会话名对得上
+      //   c) tabs_data 必须是非空密文
+      const localGroups = await readLocalGroups(page);
+      const localNames = localGroups.filter(g => !g.isDeleted).map(g => g.name);
       const { data: fullRows } = await supa
         .from('tab_groups')
-        .select('id, name, tabs_data, updated_at')
+        .select('id, name, tabs_data, user_id, updated_at')
+        .eq('user_id', userId)
         .eq('is_deleted', false)
         .order('updated_at', { ascending: false });
-      let hasAutoUpload = false;
-      for (const row of fullRows || []) {
-        if (typeof row.tabs_data === 'string' && row.tabs_data.startsWith('ENCRYPTED_')) {
-          // 解密 blobs 需要 user key；我们只验证"有加密数据上云"——即非空 ENCRYPTED_V2_S: 字符串
-          hasAutoUpload = true;
-          console.log(`   🔐 上传的会话（密文长度 ${row.tabs_data.length}）: ${row.name}`);
-        }
-      }
+      const rows = fullRows || [];
+      console.log(`   本地会话名: ${JSON.stringify(localNames)}`);
+      console.log(`   云端行: ${rows.map(r => r.name).join(' | ') || '(无)'}`);
+      const matched = rows.find(r => localNames.includes(r.name));
+      const dataOk = matched && typeof matched.tabs_data === 'string'
+        && matched.tabs_data.startsWith('ENCRYPTED_') && matched.tabs_data.length > 40;
+      let hasAutoUpload = Boolean(matched && dataOk);
       if (hasAutoUpload && (cloudGroups?.length || 0) > 0) {
         console.log('\n✅ 自动上传验证通过：');
         console.log('   保存会话后未点手动上传按钮，TabManager.saveAllTabs 自动触发');

@@ -17,6 +17,7 @@ import { fileURLToPath } from 'node:url';
 import { randomUUID } from 'node:crypto';
 import { createClient } from '@supabase/supabase-js';
 import { readFileSync } from 'node:fs';
+import { dismissOnboarding, LOGIN_TIMEOUT_MS } from './e2e-helpers.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = resolve(__dirname, '..');
@@ -127,18 +128,11 @@ async function startLocalSite() {
 
 /** 登录（若尚未登录则先注册） */
 async function login(page, email, password, { register = false } = {}) {
-  // 若首启引导出现，先跳过
-  const skipBtn = page.locator('button[aria-label="跳过引导"]');
-  if (await skipBtn.count() > 0 && await skipBtn.isVisible().catch(() => false)) {
-    await skipBtn.click().catch(() => {});
-    await page.waitForTimeout(500);
-  }
-
-  // 打开菜单 dropdown（先兜底清除可能延迟渲染的引导 overlay）
-  await page.evaluate(() => {
-    document.querySelectorAll('.onboarding-overlay, [role=dialog][aria-label=用户引导]').forEach(el => el.remove());
-  }).catch(() => {});
-  await page.click('button[aria-label="菜单"]', { timeout: 15000 });
+  // 首启引导：只点「跳过引导」让 React 自己收掉。
+  // ⚠️ 不要 el.remove() 删遮罩 —— 那会破坏 React 的 DOM 预期，之后任何重渲染都会抛
+  // NotFoundError(insertBefore/removeChild) 把整个 popup 打进错误边界。
+  await dismissOnboarding(page);
+  await page.click('button[aria-label="菜单"]', { timeout: LOGIN_TIMEOUT_MS });
   await page.waitForSelector('button:has-text("登录 / 注册")', { timeout: 10000 });
   await page.click('button:has-text("登录 / 注册")');
   await page.waitForSelector('text=注册', { timeout: 10000 });
@@ -156,7 +150,7 @@ async function login(page, email, password, { register = false } = {}) {
   await page.click('button[type="submit"]');
 
   // 等待登录成功：SyncButton（上传/下载）仅登录后渲染
-  await page.waitForSelector('button[title="手动上传本地会话到云端"]', { timeout: 20000 });
+  await page.waitForSelector('button[title="手动上传本地会话到云端"]', { timeout: LOGIN_TIMEOUT_MS });
 }
 
 async function main() {
@@ -207,7 +201,10 @@ async function main() {
     console.log('✅ A 已完成上传（预览弹窗→确认）');
 
     // 等等上传完成：UI 弹窗关闭或出现提示
-    await pageA.waitForSelector('.fixed h3:has-text("上传到云端")', { state: 'detached', timeout: 20000 }).catch(() => {});
+    const uploadDialogClosed = await pageA
+      .waitForSelector('.fixed h3:has-text("上传到云端")', { state: 'detached', timeout: 20000 })
+      .then(() => true)
+      .catch(() => false);
     await pageA.waitForTimeout(3000);
 
     // ── 设备 B：登录 + 下载 + 验证 ──
@@ -244,16 +241,20 @@ async function main() {
       titlesVisible = [...new Set([...bodyTextB.matchAll(/E2E-标签-[A-Z]\d/g)].map(m => m[0]))];
     }
     const bothVisible = titlesVisible.includes('E2E-标签-A1') && titlesVisible.includes('E2E-标签-A2');
-    console.log(`✅ B 解密后可见标题: ${titlesVisible.join(', ') || '(无)'}`);
+    console.log(`B 解密后可见标题: ${titlesVisible.join(', ') || '(无)'}`);
 
     // 汇总
     console.log('\n═══════════════ 测试结果 ═══════════════');
     console.log(`测试账号: ${TEST_EMAIL}`);
-    console.log(`A 保存并上传: ✅`);
-    console.log(`B 下载并获数据: ✅（UI 会话数=${bCount}）`);
-    if (!bothVisible) {
-      // 标题通常只在展开会话卡时可见，不作为失败条件；但若两者都缺失说明解密链路异常
-      console.log(`⚠️  B 端仅见 ${titlesVisible.length} 个标签标题（折叠态或视图模式所致），解密链路以会话数同步 + 内容校验为准`);
+    // 原先这三行是无条件打印 ✅（断言没通过也显示成功），现按实际结果判定
+    const uploadOk = uploadDialogClosed;
+    const downloadOk = bCount >= 1;
+    console.log(`A 保存并上传: ${uploadOk ? '✅' : '❌（上传弹窗未正常关闭）'}`);
+    console.log(`B 下载并获数据: ${downloadOk ? '✅' : '❌'}（UI 会话数=${bCount}）`);
+    console.log(`B 端内容可解密（A1/A2 标题）: ${bothVisible ? '✅' : '❌'}（可见：${titlesVisible.join(', ') || '无'}）`);
+    if (!uploadOk || !downloadOk || !bothVisible) {
+      console.log('\n❌ 端到端同步未全部通过');
+      process.exitCode = 1;
     }
     console.log('═══════════════════════════════════════\n');
     await cleanupTestUser(TEST_EMAIL);

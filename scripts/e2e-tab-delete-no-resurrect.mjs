@@ -17,61 +17,16 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { createServer } from 'node:http';
+import { launchCtx, extId, dismissOnboarding, readLocalGroups, manualUpload, manualDownload } from './e2e-helpers.mjs';
 
 const DIST = resolve(process.cwd(), 'dist');
 const EMAIL = `e2e-tb-${randomUUID().slice(0, 6)}@test.tapstack.dev`;
 const PWD = 'SyncTest#2026!';
 
-function launchCtx(label) {
-  const dir = mkdtempSync(join(tmpdir(), `tapstack-${label}-`));
-  return chromium.launchPersistentContext(dir, {
-    headless: false,
-    args: [`--disable-extensions-except=${DIST}`, `--load-extension=${DIST}`, '--no-first-run'],
-  });
-}
-async function extId(ctx) { return new URL(ctx.serviceWorkers()[0].url()).host; }
-async function ensureNoOverlay(page) {
-  await page.evaluate(() =>
-    document.querySelectorAll('.onboarding-overlay, [role=dialog][aria-label="用户引导"]').forEach(el => el.remove())
-  ).catch(() => {});
-}
+// 共享 helper（含「只点跳过引导、不删 React 节点」的遮罩处理与严格 IDB 读取）
+const ensureNoOverlay = dismissOnboarding;
 
-/** 直读 IndexedDB（db=tabvaultpro, store=kv）取本地 groups 全量（含墓碑） */
-function makeReadLocalGroups() {
-  return page => page.evaluate(async () => {
-    return new Promise((resolve) => {
-      const r = indexedDB.open('tabvaultpro', 1);
-      r.onerror = () => resolve([]);
-      r.onsuccess = () => {
-        const db = r.result;
-        if (!db.objectStoreNames.contains('kv')) { db.close(); resolve([]); return; }
-        const tx = db.transaction('kv', 'readonly');
-        const all = tx.objectStore('kv').getAll();
-        all.onsuccess = () => {
-          db.close();
-          const rec = all.result || [];
-          const entry = rec.find(v => v?.key === 'tab_groups');
-          resolve(entry?.value || []);
-        };
-        all.onerror = () => { db.close(); resolve([]); };
-      };
-    });
-  });
-}
-const readLocalGroups = makeReadLocalGroups();
 
-async function manualUpload(page) {
-  await page.click('button[title="手动上传本地会话到云端"]');
-  await page.waitForSelector('.fixed h3:has-text("上传到云端")');
-  await page.locator('.fixed h4:has-text("合并模式"), .fixed h4:has-text("覆盖模式")').first().click();
-  await page.waitForTimeout(4000);
-}
-async function manualDownload(page) {
-  await page.click('button[title="手动从云端下载会话到本地"]');
-  await page.waitForSelector('.fixed h3:has-text("下载到本地")');
-  await page.locator('.fixed h4:has-text("合并模式"), .fixed h4:has-text("覆盖模式")').first().click();
-  await page.waitForTimeout(4000);
-}
 
 /** 下载并轮询 storage 直到出现活跃组（规避登录初始化竞态），最多 attempts 次 */
 async function downloadUntilData(page, readFn, attempts = 3) {
@@ -114,7 +69,7 @@ try {
   await pageA.fill('input[placeholder="请输入密码"]', PWD);
   await pageA.fill('input[placeholder="请再次输入密码"]', PWD);
   await pageA.click('button[type="submit"]');
-  await pageA.waitForSelector('button[title="手动上传本地会话到云端"]', { timeout: 25000 });
+  await pageA.waitForSelector('button[title="手动上传本地会话到云端"]', { timeout: 40000 });
   console.log('✅ A registered');
 
   for (const p of ['/p1', '/p2', '/p3']) {
@@ -143,7 +98,7 @@ try {
   await pageB.fill('input[placeholder="请输入您的邮箱"]', EMAIL);
   await pageB.fill('input[placeholder="请输入您的密码"]', PWD);
   await pageB.click('button[type="submit"]');
-  await pageB.waitForSelector('button[title="手动上传本地会话到云端"]', { timeout: 25000 });
+  await pageB.waitForSelector('button[title="手动上传本地会话到云端"]', { timeout: 40000 });
   await pageB.waitForTimeout(2000); // 等登录初始化（AuthProvider 自动流程）稳定
 
   const bGroups0 = await downloadUntilData(pageB, readLocalGroups);
@@ -217,7 +172,10 @@ try {
   } else if (aActive !== 2) {
     console.log(`❌ 断言②失败: A 端活跃标签应为 2，实际 ${aActive}（跨设备复活！）`);
     ok = false;
-  } else if (aVictim && aVictim.isDeleted !== true) {
+  } else if (!aVictim) {
+    console.log('❌ 断言②失败: A 端找不到该 URL 的标签（墓碑不存在 = 数据凭空消失，而非"删除意图传播"）');
+    ok = false;
+  } else if (aVictim.isDeleted !== true) {
     console.log('❌ 断言②失败: A 端被删标签为活跃状态（复活变体）');
     ok = false;
   } else {
