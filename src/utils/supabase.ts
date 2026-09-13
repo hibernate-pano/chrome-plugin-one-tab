@@ -55,27 +55,53 @@ let supabaseClient: ReturnType<typeof createClient> | null = null;
  *
  * 背景：supabase-js 默认把 session token 存 localStorage，但 MV3
  * service-worker 没有 localStorage（每次唤醒 memory storage 为空），
- * 导致后台轮询无法恢复登录态。统一改用 chrome.storage.local ——
+ * 导致后台轮询无法恢复登录态。所以在扩展环境统一改用 chrome.storage.local ——
  * popup 与 service-worker 共享同一 session。
+ *
+ * ⚠️ 非扩展环境（网页版仪表盘）必须回退到 localStorage：
+ * 网页版（src/web/webApi.ts）复用了本模块，而它没有 chrome.* API。
+ * 早期实现里“无 chrome.storage 就当没有 session”，导致网页版登录请求成功
+ * （/auth/v1/token 200）但 session 永远无法持久化 —— 仪表盘随后报“未登录”、
+ * 一个 /rest/v1/tab_groups 请求都不会发出。回退到 localStorage 等价于
+ * supabase-js 的默认行为，网页版恢复可用。
  */
+const hasExtensionStorage = (): boolean =>
+  typeof chrome !== 'undefined' && Boolean(chrome.storage?.local);
+
+const hasWebStorage = (): boolean => {
+  try {
+    return typeof localStorage !== 'undefined' && localStorage !== null;
+  } catch {
+    // MV3 service worker 访问 localStorage 会抛错（未定义）
+    return false;
+  }
+};
+
 const supabaseSharedStorage: {
   getItem: (key: string) => Promise<string | null>;
   setItem: (key: string, value: string) => Promise<void>;
   removeItem: (key: string) => Promise<void>;
 } = {
   async getItem(key: string): Promise<string | null> {
-    // 非扩展环境（如 node 测试）无 chrome.storage，退化为无 session
-    if (typeof chrome === 'undefined' || !chrome.storage?.local) return null;
-    const result = await chrome.storage.local.get(key);
-    return (result[key] as string | undefined) ?? null;
+    if (hasExtensionStorage()) {
+      const result = await chrome.storage.local.get(key);
+      return (result[key] as string | undefined) ?? null;
+    }
+    return hasWebStorage() ? localStorage.getItem(key) : null;
   },
   async setItem(key: string, value: string): Promise<void> {
-    if (typeof chrome === 'undefined' || !chrome.storage?.local) return;
-    await chrome.storage.local.set({ [key]: value });
+    if (hasExtensionStorage()) {
+      await chrome.storage.local.set({ [key]: value });
+      return;
+    }
+    if (hasWebStorage()) localStorage.setItem(key, value);
   },
   async removeItem(key: string): Promise<void> {
-    if (typeof chrome === 'undefined' || !chrome.storage?.local) return;
-    await chrome.storage.local.remove(key);
+    if (hasExtensionStorage()) {
+      await chrome.storage.local.remove(key);
+      return;
+    }
+    if (hasWebStorage()) localStorage.removeItem(key);
   },
 };
 
@@ -87,6 +113,9 @@ const supabaseSharedStorage: {
  */
 async function migrateLegacySupabaseSession(): Promise<void> {
   try {
+    // 只在扩展环境做迁移：网页版的 session 本来就该待在 localStorage，
+    // 没有 chrome.storage 可搬（否则会先删 localStorage 却无处写入）。
+    if (!hasExtensionStorage()) return;
     if (typeof localStorage === 'undefined') return;
     for (let i = 0; i < localStorage.length; i++) {
       const key = localStorage.key(i);
@@ -236,28 +265,13 @@ export async function supportsOpStamp(): Promise<boolean> {
   }
 }
 
-import { secureStorage } from './secureStorage';
+import { getDeviceId } from './deviceUtils';
 
-// 获取设备ID（使用加密存储）
-export const getDeviceId = async (): Promise<string> => {
-  try {
-    const deviceId = await secureStorage.get<string>('deviceId');
-    if (deviceId) return deviceId;
-
-    const newDeviceId = crypto.randomUUID();
-    await secureStorage.set('deviceId', newDeviceId);
-    return newDeviceId;
-  } catch (error) {
-    console.error('获取设备ID失败:', error);
-    // 降级到普通存储
-    const { deviceId } = await chrome.storage.local.get('deviceId');
-    if (deviceId) return deviceId;
-
-    const newDeviceId = crypto.randomUUID();
-    await chrome.storage.local.set({ deviceId: newDeviceId });
-    return newDeviceId;
-  }
-};
+// 设备 ID 统一来源：与操作印记 last_op_device 同源（deviceUtils），
+// 避免同一台设备在云端留下两种身份（历史上这里曾另有一套 UUID 实现，
+// 导致 tab_groups.device_id 与 last_op_device 长期不一致）。
+// 已确认全仓没有任何逻辑比较 device_id 的值，改来源只影响元数据一致性。
+export { getDeviceId };
 
 // 用户认证相关方法
 export const auth = {

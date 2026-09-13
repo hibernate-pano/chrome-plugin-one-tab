@@ -19,7 +19,13 @@ export default defineConfig(({ mode }) => {
   return {
     // 生产环境移除 console 与 debugger
     esbuild: {
-      drop: mode === 'production' ? ['console', 'debugger'] : []
+      // 保留 console.warn/error：生产环境出问题时（尤其错误边界与同步失败）
+      // 完全没有日志会让线上排查只能靠猜；只清掉调试级日志与 debugger。
+      drop: mode === 'production' ? ['debugger'] : [],
+      pure:
+        mode === 'production'
+          ? ['console.log', 'console.info', 'console.debug']
+          : [],
     },
     // 设置相对路径基础路径，避免Chrome扩展中的绝对路径问题
     base: './',

@@ -327,6 +327,14 @@ class ChromeStorage {
   }
 
   // 新增：清理过期的已删除标签组
+  /**
+   * ⚠️ 已废弃，勿接入调度：本函数读写的是旧「回收站列表」（getDeletedGroups/
+   * getDeletedTabs），而阶段二的墓碑是**内联在 groups 数组里**的 `isDeleted: true`
+   * 实体（带 lastOp 印记）→ 调用它不会回收任何墓碑，只是死代码。
+   * 墓碑压缩需「云端已确认 + 30 天龄期」（规格 §8），属阶段三，
+   * 届时需按印记模型重写（包含云端行删除与本地内联墓碑清理）。
+   * 现状：墓碑只增不减，但增速 = 用户删除频率，不构成即时风险。
+   */
   async cleanupDeletedGroups(maxAgeInDays: number = 30): Promise<void> {
     try {
       const deletedGroups = await this.getDeletedGroups();
@@ -399,6 +407,29 @@ class ChromeStorage {
       await kvSet(STORAGE_KEYS.PENDING_UPLOAD, pending);
     } catch (error) {
       console.error('设置 pending_upload 失败:', error);
+    }
+  }
+
+  /**
+   * 导入（JSON / OneTab）后把变更标记为待上传并请求一次调度上传。
+   *
+   * 为什么需要：导入只写本地 groups，不经过 mutationService，因此既不盖操作印记也
+   * 不会置 pending_upload；而后台 alarm（backgroundSync）仅在 hasPending 为真时才
+   * 上传 → 导入的会话会**永远只留在本地**（多设备下备份恢复承诺不成立）。
+   *
+   * 非扩展环境（网页版）没有 runtime.sendMessage，只置标志后静默返回。
+   */
+  private async markGroupsChangedByImport(): Promise<void> {
+    try {
+      await this.setPendingUpload(true);
+      if (typeof chrome !== 'undefined' && chrome.runtime?.sendMessage) {
+        // 与 mutationProtocol.sendSyncCommand 同一消息形态（不依赖它，避免循环引用）
+        await chrome.runtime.sendMessage({ type: 'SYNC', data: { op: 'scheduleUpload' } })
+          .catch(() => undefined);
+      }
+    } catch (error) {
+      // 上传调度失败不影响导入本身，但必须留下痕迹
+      console.warn('[Storage] 导入后请求上传调度失败（下次后台轮询会重试）:', error);
     }
   }
 
@@ -588,6 +619,9 @@ class ChromeStorage {
         return dateB.getTime() - dateA.getTime();
       });
       await this.setGroups(sortedGroups);
+      // 导入的数据必须能上云：导入只写本地 groups，不经过 mutationService（不盖印记、
+      // 不置 pending_upload），而后台 alarm 仅在 pending_upload 为真时才上传。
+      await this.markGroupsChangedByImport();
 
       // 如果有设置数据，则合并设置
       if (data.data.settings) {
@@ -633,6 +667,7 @@ class ChromeStorage {
         return dateB.getTime() - dateA.getTime();
       });
       await this.setGroups(sortedGroups);
+      await this.markGroupsChangedByImport();
 
       return true;
     } catch (error) {
