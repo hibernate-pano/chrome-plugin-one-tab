@@ -1,4 +1,4 @@
-// 云端印记守卫触发器的真实行为验证（规则见 supabase/migrations/20260909_add_op_stamp_columns.sql）。
+// 云端印记守卫触发器的真实行为验证（规则见 20260913_fix_op_stamp_device_tiebreak.sql）。
 //
 // 为什么必须用真 Postgres：触发器的行为（BEFORE UPDATE 返回 NULL → 该行被静默跳过、
 // 命令标记为 UPDATE 0、客户端收到 error=null）无法用纯函数单测覆盖，而这里恰好是
@@ -24,6 +24,7 @@ const MIGRATIONS = [
   '20260827_fix_version_guard_for_tombstones.sql',
   '20260909_add_op_stamp_columns.sql',
   '20260910_fix_op_stamp_guard_strict_lt.sql',
+  '20260913_fix_op_stamp_device_tiebreak.sql',
 ];
 
 function findBinary(name: string): string | null {
@@ -87,7 +88,7 @@ function currentRow(): { is_deleted: boolean; last_op_seq: number | null; tabs_d
 
 // ── 永远执行的文本护栏：真正行为见下面的 PG 测试 ────────────────────────────
 describe('op-stamp 守卫 SQL 文本护栏', () => {
-  const sqlText = readFileSync(join(ROOT, 'supabase/migrations/20260910_fix_op_stamp_guard_strict_lt.sql'), 'utf8');
+  const sqlText = readFileSync(join(ROOT, 'supabase/migrations/20260913_fix_op_stamp_device_tiebreak.sql'), 'utf8');
 
   it('守卫必须用严格 `<`，不得回到 `<=`（历史上因此吞掉全部 delete/重发）', () => {
     const fn = sqlText.slice(sqlText.indexOf('CREATE OR REPLACE FUNCTION public.guard_tab_group_op_stamp'));
@@ -107,7 +108,21 @@ describe('op-stamp 守卫 SQL 文本护栏', () => {
       /OLD\.last_op_seq IS NOT NULL AND NEW\.last_op_seq IS NULL/.test(fn),
       '缺少「OLD 有值 + NEW NULL 拒收」分支：客户端显式写 NULL 会清空云端印记、让守卫永久失效'
     );
-    assert.ok(/OLD\.last_op_seq IS NULL OR NEW\.last_op_seq IS NULL/.test(fn), '缺少任一侧 NULL 放行分支');
+    assert.ok(
+      /OLD\.last_op_device IS NOT NULL AND NEW\.last_op_device IS NULL/.test(fn),
+      '缺少 device NULL 清空防护'
+    );
+    assert.ok(/OLD\.last_op_seq IS NULL OR NEW\.last_op_seq IS NULL/.test(fn), '缺少 seq 任一侧 NULL 放行分支');
+    assert.ok(/OLD\.last_op_device IS NULL OR NEW\.last_op_device IS NULL/.test(fn), '缺少 device 任一侧 NULL 放行分支');
+  });
+
+  it('守卫必须比较 device 平局，客户端与服务端全序一致', () => {
+    const fn = sqlText.slice(sqlText.indexOf('CREATE OR REPLACE FUNCTION public.guard_tab_group_op_stamp'));
+    assert.ok(
+      /NEW\.last_op_seq\s*=\s*OLD\.last_op_seq/.test(fn)
+      && /NEW\.last_op_device\s+COLLATE\s+"C"\s*<\s*OLD\.last_op_device\s+COLLATE\s+"C"/.test(fn),
+      '缺少 seq 相等时按 device 字典序决胜'
+    );
   });
 
   it('墓碑不得享有无条件翻转豁免（规格 §5：墓碑同样参与比印记）', () => {
@@ -184,6 +199,26 @@ describe('op-stamp 守卫触发器（真实 Postgres）', { skip: PG_AVAILABLE ?
   it('更新的组级印记落库', () => {
     resetRow();
     assert.equal(updateRows(`UPDATE tab_groups SET last_op_seq=101, version=2 WHERE id='${GID}';`), 1);
+  });
+
+  it('seq 相等时按 device 字典序决胜，与客户端 compareStamps 一致', () => {
+    resetRow({ stamp: 100 });
+    assert.equal(
+      updateRows(`UPDATE tab_groups SET last_op_device='dev0', version=2 WHERE id='${GID}';`),
+      0,
+      '相同 seq、较小 device 的写入应被拒绝'
+    );
+    assert.equal(updateRows(`UPDATE tab_groups SET last_op_device='devZ', version=2 WHERE id='${GID}';`), 1);
+    assert.equal(currentRow().last_op_seq, 100);
+  });
+
+  it('seq 更大时即使 device 更小也应放行', () => {
+    resetRow({ stamp: 100 });
+    assert.equal(
+      updateRows(`UPDATE tab_groups SET last_op_device='dev0', last_op_seq=101, version=2 WHERE id='${GID}';`),
+      1
+    );
+    assert.equal(currentRow().last_op_seq, 101);
   });
 
   it('严格更旧的印记被静默跳过，且数据不变（不报错）', () => {

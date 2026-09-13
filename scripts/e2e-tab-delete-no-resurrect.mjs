@@ -17,7 +17,10 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { createServer } from 'node:http';
-import { launchCtx, extId, dismissOnboarding, readLocalGroups, manualUpload, manualDownload } from './e2e-helpers.mjs';
+import {
+  launchCtx, extId, dismissOnboarding, readLocalGroups, manualUpload, manualDownload,
+  openTabsInSameWindow,
+} from './e2e-helpers.mjs';
 
 const DIST = resolve(process.cwd(), 'dist');
 const EMAIL = `e2e-tb-${randomUUID().slice(0, 6)}@test.tapstack.dev`;
@@ -72,9 +75,8 @@ try {
   await pageA.waitForSelector('button[title="手动上传本地会话到云端"]', { timeout: 40000 });
   console.log('✅ A registered');
 
-  for (const p of ['/p1', '/p2', '/p3']) {
-    const pg = await ctxA.newPage(); await pg.goto(`${base}${p}`); await pg.waitForSelector('h1');
-  }
+  const contentPages = await openTabsInSameWindow(pageA, ['/p1', '/p2', '/p3'].map(p => `${base}${p}`));
+  for (const contentPage of contentPages) await contentPage.waitForSelector('h1');
   await pageA.locator('[aria-label="保存当前窗口中的所有标签页为会话"]').first().click();
   await pageA.waitForTimeout(2500);
   // 关闭 3 个内容页，只留扩展页，避免后续干扰

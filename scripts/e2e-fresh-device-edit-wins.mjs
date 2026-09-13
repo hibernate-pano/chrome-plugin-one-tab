@@ -22,6 +22,7 @@ import { join, resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { createServer } from 'node:http';
 import { createClient } from '@supabase/supabase-js';
+import { openTabsInSameWindow } from './e2e-helpers.mjs';
 
 const DIST = resolve(process.cwd(), 'dist');
 const EMAIL = `e2e-fresh-${randomUUID().slice(0, 6)}@test.tapstack.dev`;
@@ -196,9 +197,8 @@ try {
   await login(pageA, { register: true });
   console.log('✅ A 注册并登录');
 
-  for (const p of ['/p1', '/p2', '/p3']) {
-    const pg = await ctxA.newPage(); await pg.goto(`${base}${p}`); await pg.waitForSelector('h1');
-  }
+  const contentPages = await openTabsInSameWindow(pageA, ['/p1', '/p2', '/p3'].map(p => `${base}${p}`));
+  for (const contentPage of contentPages) await contentPage.waitForSelector('h1');
   // 保存两次（新建两个会话）+ 重命名一次 = 让 A 的 seq 走到 ≥3
   await pageA.locator('[aria-label="保存当前窗口中的所有标签页为会话"]').first().click();
   await pageA.waitForTimeout(2500);

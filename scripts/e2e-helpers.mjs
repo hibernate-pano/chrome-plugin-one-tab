@@ -237,6 +237,37 @@ export async function openPopup(ctx, id, { waitMs = 1500 } = {}) {
 }
 
 /**
+ * 在扩展管理页所在的同一 Chrome 窗口创建内容标签。
+ *
+ * Playwright 的 ctx.newPage() 在部分 Chromium/窗口管理器组合下会创建到新窗口，
+ * 导致产品保存逻辑的 chrome.tabs.query({ currentWindow: true }) 看不到测试标签，
+ * 最终保存 0 个页面。这里显式使用 popup 页的 windowId，保证测试造数符合真实使用场景。
+ */
+export async function openTabsInSameWindow(popupPage, urls) {
+  const windowId = await popupPage.evaluate(async () => {
+    const current = await chrome.tabs.getCurrent();
+    return current?.windowId;
+  });
+  if (typeof windowId !== 'number') {
+    throw new Error('无法获取扩展管理页所在窗口');
+  }
+
+  const pages = [];
+  for (const url of urls) {
+    const pagePromise = popupPage.context().waitForEvent('page');
+    await popupPage.evaluate(
+      ({ targetUrl, targetWindowId }) =>
+        chrome.tabs.create({ url: targetUrl, windowId: targetWindowId, active: false }),
+      { targetUrl: url, targetWindowId: windowId }
+    );
+    const page = await pagePromise;
+    await page.waitForLoadState('domcontentloaded');
+    pages.push(page);
+  }
+  return pages;
+}
+
+/**
  * 登录（register=true 时注册）。超时统一 40s（冷启动抖动）。
  * 注意登录/注册表单的密码占位符不同：注册是「请输入密码」，登录是「请输入您的密码」。
  */

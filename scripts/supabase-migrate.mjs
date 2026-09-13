@@ -106,7 +106,12 @@ async function verify(client) {
   const def = fnRes.rows[0]?.def ?? '';
   const usesLt = /NEW\.last_op_seq\s*<\s*OLD\.last_op_seq/.test(def);
   const usesLe = /NEW\.last_op_seq\s*<=\s*OLD\.last_op_seq/.test(def);
-  const blocksNullWipe = /OLD\.last_op_seq IS NOT NULL AND NEW\.last_op_seq IS NULL/.test(def);
+  const usesDeviceTieBreak =
+    /NEW\.last_op_seq\s*=\s*OLD\.last_op_seq/.test(def)
+    && /NEW\.last_op_device\s+COLLATE\s+"C"\s*<\s*OLD\.last_op_device\s+COLLATE\s+"C"/.test(def);
+  const blocksNullWipe =
+    /OLD\.last_op_seq IS NOT NULL AND NEW\.last_op_seq IS NULL/.test(def)
+    && /OLD\.last_op_device IS NOT NULL AND NEW\.last_op_device IS NULL/.test(def);
 
   const hasDevice = colRes.rows.some(r => r.column_name === 'last_op_device');
   const hasSeq = colRes.rows.some(r => r.column_name === 'last_op_seq');
@@ -115,13 +120,16 @@ async function verify(client) {
     console.error('\n✗ VERIFY FAILED: missing columns or trigger');
     return false;
   }
-  if (!usesLt || usesLe || !blocksNullWipe) {
+  if (!usesLt || usesLe || !usesDeviceTieBreak || !blocksNullWipe) {
     console.error('\n✗ VERIFY FAILED: guard body 不是修复版');
-    console.error(`   strict '<' : ${usesLt}   残留 '<=' : ${usesLe}   NULL 清空防护 : ${blocksNullWipe}`);
-    console.error('   期望: 20260910_fix_op_stamp_guard_strict_lt.sql');
+    console.error(
+      `   strict '<' : ${usesLt}   残留 '<=' : ${usesLe}`
+      + `   device 平局 : ${usesDeviceTieBreak}   NULL 清空防护 : ${blocksNullWipe}`
+    );
+    console.error('   期望: 20260913_fix_op_stamp_device_tiebreak.sql');
     return false;
   }
-  console.log('\n✓ VERIFY OK: 列 + 触发器 + 守卫函数体（严格 <、NULL 清空防护）全部正确');
+  console.log('\n✓ VERIFY OK: 列 + 触发器 + 守卫函数体（全序、NULL 清空防护）全部正确');
   return true;
 }
 

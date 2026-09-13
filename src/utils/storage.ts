@@ -3,6 +3,7 @@ import { parseOneTabFormat, formatToOneTabFormat } from './oneTabFormatParser';
 import { secureStorage } from './secureStorage';
 import { kvGet, kvSet, kvRemove } from '@/storage/storageAdapter';
 import { cacheManager, cachedAsyncFn, debounceAsync } from './performance';
+import { sendMutation } from '@/shared/mutationProtocol';
 
 // 缓存 TTL 配置常量
 export const CACHE_TTL = {
@@ -410,29 +411,6 @@ class ChromeStorage {
     }
   }
 
-  /**
-   * 导入（JSON / OneTab）后把变更标记为待上传并请求一次调度上传。
-   *
-   * 为什么需要：导入只写本地 groups，不经过 mutationService，因此既不盖操作印记也
-   * 不会置 pending_upload；而后台 alarm（backgroundSync）仅在 hasPending 为真时才
-   * 上传 → 导入的会话会**永远只留在本地**（多设备下备份恢复承诺不成立）。
-   *
-   * 非扩展环境（网页版）没有 runtime.sendMessage，只置标志后静默返回。
-   */
-  private async markGroupsChangedByImport(): Promise<void> {
-    try {
-      await this.setPendingUpload(true);
-      if (typeof chrome !== 'undefined' && chrome.runtime?.sendMessage) {
-        // 与 mutationProtocol.sendSyncCommand 同一消息形态（不依赖它，避免循环引用）
-        await chrome.runtime.sendMessage({ type: 'SYNC', data: { op: 'scheduleUpload' } })
-          .catch(() => undefined);
-      }
-    } catch (error) {
-      // 上传调度失败不影响导入本身，但必须留下痕迹
-      console.warn('[Storage] 导入后请求上传调度失败（下次后台轮询会重试）:', error);
-    }
-  }
-
   async getLastUploadTime(): Promise<string | null> {
     try {
       await this.ensureVersion();
@@ -609,19 +587,17 @@ class ChromeStorage {
         throw new Error('无效的导入数据格式');
       }
 
-      // 导入标签组，并按创建时间倒序排列
-      const existingGroups = await this.getGroups();
-      const allGroups = [...data.data.groups, ...existingGroups];
-      // 按创建时间倒序排列，确保最新创建的标签组在前面
-      const sortedGroups = allGroups.sort((a, b) => {
-        const dateA = new Date(a.createdAt);
-        const dateB = new Date(b.createdAt);
-        return dateB.getTime() - dateA.getTime();
+      // 导入必须走与普通写入相同的单写者语义命令：
+      // 生成新 ID、盖 lastOp、清洗 URL，并由 mutationService 统一调度上传。
+      // 直接写 storage 会保留备份里的旧 ID，遇到云端同 ID 行时印记为 NULL，
+      // 服务端守卫会静默跳过，形成“提示导入成功但实际没上云”的假成功。
+      const result = await sendMutation<TabGroup[]>({
+        op: 'importGroups',
+        groups: data.data.groups,
       });
-      await this.setGroups(sortedGroups);
-      // 导入的数据必须能上云：导入只写本地 groups，不经过 mutationService（不盖印记、
-      // 不置 pending_upload），而后台 alarm 仅在 pending_upload 为真时才上传。
-      await this.markGroupsChangedByImport();
+      if (!result.ok) {
+        throw new Error(result.error ?? '导入命令执行失败');
+      }
 
       // 如果有设置数据，则合并设置
       if (data.data.settings) {
@@ -657,17 +633,13 @@ class ChromeStorage {
         throw new Error('解析失败或没有有效的标签组');
       }
 
-      // 导入标签组，并按创建时间倒序排列
-      const existingGroups = await this.getGroups();
-      const allGroups = [...parsedGroups, ...existingGroups];
-      // 按创建时间倒序排列，确保最新创建的标签组在前面
-      const sortedGroups = allGroups.sort((a, b) => {
-        const dateA = new Date(a.createdAt);
-        const dateB = new Date(b.createdAt);
-        return dateB.getTime() - dateA.getTime();
+      const result = await sendMutation<TabGroup[]>({
+        op: 'importGroups',
+        groups: parsedGroups,
       });
-      await this.setGroups(sortedGroups);
-      await this.markGroupsChangedByImport();
+      if (!result.ok) {
+        throw new Error(result.error ?? '导入命令执行失败');
+      }
 
       return true;
     } catch (error) {

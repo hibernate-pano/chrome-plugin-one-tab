@@ -186,14 +186,19 @@ export const supabase = initSupabaseClient();
 //   ALTER TABLE tab_groups ADD COLUMN is_deleted boolean NOT NULL DEFAULT false;
 // 代码侧双轨：探测到列 → 走 tombstone；未探测到 → 回退硬删并给出提示。
 
-let tombstoneSupportCache: boolean | null = null;
+let tombstoneSupportCache: boolean | null | undefined = undefined;
 
 /**
  * 探测云端 tab_groups 表是否已有 is_deleted 列（结果缓存）。
  * 探测方式：select 该列 limit 1，列不存在时 Supabase 会返回 PGRST204 错误。
+ *
+ * 返回值三态：
+ * - true：确定存在
+ * - false：确定不存在（仅明确的缺列错误会缓存）
+ * - null：网络、权限等非确定性失败；不缓存，调用方不得据此执行破坏性降级
  */
-export async function supportsCloudTombstone(): Promise<boolean> {
-  if (tombstoneSupportCache !== null) return tombstoneSupportCache;
+export async function supportsCloudTombstone(): Promise<boolean | null> {
+  if (tombstoneSupportCache !== undefined) return tombstoneSupportCache;
   if (!isSupabaseConfigured()) {
     tombstoneSupportCache = false;
     return false;
@@ -209,18 +214,17 @@ export async function supportsCloudTombstone(): Promise<boolean> {
         );
         tombstoneSupportCache = false;
       } else {
-        // 其他错误（网络等）→ 视为不支持，下次再探
-        console.warn('[tombstone] 列探测失败（非 PGRST204）:', probe.error.message);
-        tombstoneSupportCache = false;
+        // 网络/权限等非确定性失败：返回 unknown 且不缓存。
+        console.warn('[tombstone] 列探测失败（非 PGRST204），拒绝猜测 schema:', probe.error.message);
+        return null;
       }
     } else {
       tombstoneSupportCache = true;
     }
     return tombstoneSupportCache;
   } catch (err) {
-    console.warn('[tombstone] 列探测异常，降级为硬删:', (err as Error).message);
-    tombstoneSupportCache = false;
-    return false;
+    console.warn('[tombstone] 列探测异常，拒绝猜测 schema:', (err as Error).message);
+    return null;
   }
 }
 
@@ -700,7 +704,8 @@ export const sync = {
 
       // 云端有 is_deleted 列时，上传的活跃组显式置 is_deleted=false，
       // 把 Web 端已软删、本地仍活跃（恢复/取消删除）的组复位为活跃
-      if (await supportsCloudTombstone()) {
+      const cloudTombstoneSupported = await supportsCloudTombstone();
+      if (cloudTombstoneSupported === true) {
         uniqueGroups.forEach(group => {
           (group as any).is_deleted = false;
         });
@@ -861,6 +866,12 @@ export const sync = {
       }
       console.log(`[markCloudGroupsAsDeleted] 已软删 ${deletedIds.length} 个云端组（云端无印记列，不带 stamp）`);
       return;
+    }
+
+    if (mode === 'unavailable') {
+      throw new Error(
+        '无法确认云端是否支持软删除，已中止删除以保护数据；请检查网络后重试'
+      );
     }
 
     if (mode === 'stamp') {

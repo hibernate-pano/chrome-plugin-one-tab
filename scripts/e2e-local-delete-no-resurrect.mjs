@@ -20,7 +20,7 @@
 import { randomUUID } from 'node:crypto';
 import {
   launchCtx, extId, dismissOnboarding, readLocalGroups,
-  manualUpload, manualDownload, downloadUntil, login, startContentSite,
+  manualUpload, manualDownload, downloadUntil, login, startContentSite, openTabsInSameWindow,
 } from './e2e-helpers.mjs';
 
 const EMAIL = `e2e-nr-${randomUUID().slice(0, 6)}@test.tapstack.dev`;
@@ -43,13 +43,9 @@ try {
   console.log('✅ A 注册并登录');
 
   const mkTabs = async n => {
-    const pages = [];
-    for (let i = 0; i < n; i++) {
-      const pg = await ctxA.newPage();
-      await pg.goto(`${site.base}/t${Date.now()}-${i}`);
-      await pg.waitForSelector('h1');
-      pages.push(pg);
-    }
+    const urls = Array.from({ length: n }, (_, i) => `${site.base}/t${Date.now()}-${i}`);
+    const pages = await openTabsInSameWindow(pageA, urls);
+    for (const page of pages) await page.waitForSelector('h1');
     return pages;
   };
   let tabs = await mkTabs(2);

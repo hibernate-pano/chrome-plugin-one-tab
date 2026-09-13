@@ -291,8 +291,9 @@ export async function renameGroup(groupId: string, name: string): Promise<void> 
 /** 删除标签组（双轨：云端有 is_deleted 列 → 软删墓碑；无列 → 回退硬删） */
 export async function deleteGroup(groupId: string): Promise<void> {
   const userId = await requireUserId();
+  const tombstoneSupported = await supportsCloudTombstone();
 
-  if (await supportsCloudTombstone()) {
+  if (tombstoneSupported === true) {
     // tombstone：保留行标记 is_deleted=true 并推新 updated_at，
     // 这样扩展端同步时能收到删除意图，不会"复活"已删组
     const { error } = await supabase
@@ -302,6 +303,10 @@ export async function deleteGroup(groupId: string): Promise<void> {
       .eq('user_id', userId);
     if (error) throw new Error(error.message);
     return;
+  }
+
+  if (tombstoneSupported === null) {
+    throw new Error('无法确认云端软删除能力，为避免误删已中止操作，请稍后重试');
   }
 
   // 降级：硬删（旧行为）

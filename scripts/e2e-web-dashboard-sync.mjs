@@ -22,7 +22,7 @@ import { join, resolve, extname } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { createServer } from 'node:http';
 import { createClient } from '@supabase/supabase-js';
-import { readLocalGroups } from './e2e-helpers.mjs';
+import { openTabsInSameWindow, readLocalGroups } from './e2e-helpers.mjs';
 
 const DIST = resolve(process.cwd(), 'dist');
 const DIST_WEB = resolve(process.cwd(), 'dist-web');
@@ -130,9 +130,8 @@ try {
   await pageE.fill('input[placeholder="请再次输入密码"]', PWD);
   await pageE.click('button[type="submit"]');
   await pageE.waitForSelector('button[title="手动上传本地会话到云端"]', { timeout: 40000 });
-  for (const p of ['/s1', '/s2']) {
-    const pg = await extCtx.newPage(); await pg.goto(`${cbase}${p}`); await pg.waitForSelector('h1');
-  }
+  const contentPages = await openTabsInSameWindow(pageE, ['/s1', '/s2'].map(p => `${cbase}${p}`));
+  for (const contentPage of contentPages) await contentPage.waitForSelector('h1');
   await pageE.locator('[aria-label="保存当前窗口中的所有标签页为会话"]').first().click();
   await pageE.waitForTimeout(2500);
   for (const pg of extCtx.pages()) if (pg !== pageE && !pg.url().startsWith('chrome-extension://')) await pg.close().catch(() => {});
