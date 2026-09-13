@@ -16,7 +16,7 @@
 import { randomUUID } from 'node:crypto';
 import {
   launchCtx, extId, readGroupsFromSW, readKvFromSW, kvValue,
-  manualUpload, downloadUntil, login, startContentSite,
+  manualUpload, downloadUntil, login, startContentSite, openTabsInSameWindow,
 } from './e2e-helpers.mjs';
 
 const EMAIL = `e2e-bgsync-${randomUUID().slice(0, 6)}@test.tapstack.dev`;
@@ -38,14 +38,10 @@ try {
   await login(pageA, EMAIL, PWD, { register: true });
 
   const openTabs = async n => {
-    const ps = [];
-    for (let i = 0; i < n; i++) {
-      const p = await ctxA.newPage();
-      await p.goto(`${site.base}/b${Date.now()}-${i}`);
-      await p.waitForSelector('h1');
-      ps.push(p);
-    }
-    return ps;
+    const urls = Array.from({ length: n }, (_, i) => `${site.base}/b${Date.now()}-${i}`);
+    const pages = await openTabsInSameWindow(pageA, urls);
+    for (const page of pages) await page.waitForSelector('h1');
+    return pages;
   };
   let tabs = await openTabs(2);
   await pageA.locator('[aria-label="保存当前窗口中的所有标签页为会话"]').first().click();

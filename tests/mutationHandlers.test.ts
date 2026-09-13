@@ -148,6 +148,51 @@ describe('mutationHandlers: 编排（读→apply→写→调度上传）', () =>
     assert.match(res.error ?? '', /未找到/);
   });
 
+  it('importGroups：生成新 ID、清洗 URL、盖 stamp 并调度上传', async () => {
+    const { createMutationHandlers } = await import('@/background/mutationHandlers');
+    const deps = memStorage();
+    const handlers = createMutationHandlers(deps as any);
+    const res = await handlers.handle({
+      op: 'importGroups',
+      groups: [{
+        id: 'backup-id',
+        name: '导入会话',
+        tabs: [
+          {
+            id: 'backup-tab-ok',
+            url: 'https://example.com',
+            title: 'safe',
+            createdAt: NOW,
+            lastAccessed: NOW,
+            pinned: false,
+          },
+          {
+            id: 'backup-tab-bad',
+            url: 'javascript:alert(1)',
+            title: 'bad',
+            createdAt: NOW,
+            lastAccessed: NOW,
+            pinned: false,
+          },
+        ],
+        createdAt: NOW,
+        updatedAt: NOW,
+        version: 1,
+        isDeleted: false,
+        isLocked: false,
+      }],
+    });
+    assert.equal(res.ok, true);
+    assert.deepEqual(deps.uploads, [1500]);
+    const stored = await deps.getGroups();
+    assert.equal(stored.length, 1);
+    assert.notEqual(stored[0].id, 'backup-id');
+    assert.deepEqual(stored[0].lastOp, { d: 'devTest', s: 1 });
+    assert.equal(stored[0].tabs.length, 1);
+    assert.equal(stored[0].tabs[0].url, 'https://example.com');
+    assert.notEqual(stored[0].tabs[0].id, 'backup-tab-ok');
+  });
+
   it('未知 op → ok:false', async () => {
     const { createMutationHandlers } = await import('@/background/mutationHandlers');
     const handlers = createMutationHandlers(memStorage() as any);

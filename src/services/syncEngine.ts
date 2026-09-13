@@ -395,11 +395,10 @@ export class SyncEngine {
       }
       report(70, 'upload');
       if (deletedIds.length > 0 && opts?.includeDeleted !== false) {
-        try {
-          await markCloudGroupsAsDeleted(deletedIds);
-        } catch (err) {
-          console.error('[SyncEngine] 标记云端软删失败（不阻塞主流程）:', err);
-        }
+        // 删除意图是云端状态的一部分，不能 best-effort 后仍宣告上传成功。
+        // 失败时保留 pending_upload，让下一轮 alarm 自动重试，避免其他设备
+        // 永远看到已删除的活跃副本。
+        await markCloudGroupsAsDeleted(deletedIds);
       }
       // 设置同步：与旧 smartSyncService.uploadToCloud 一致（上传标签组后总带上传设置）
       // ponytail: 必须从 storage 读——SW 冷启动时 store.settings 是代码默认值，

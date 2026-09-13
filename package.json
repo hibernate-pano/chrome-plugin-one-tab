@@ -1,6 +1,6 @@
 {
   "name": "tapstack",
-  "version": "1.19.3",
+  "version": "1.19.4",
   "description": "保存浏览器工作会话，稍后快速找回与恢复",
   "type": "module",
   "scripts": {
@@ -13,11 +13,12 @@
     "test": "node --test --experimental-strip-types tests/*.test.ts",
     "e2e": "node scripts/run-e2e.mjs",
     "e2e:list": "node scripts/run-e2e.mjs --list",
+    "store-assets": "pnpm build && node scripts/capture-store-assets.mjs",
     "lint": "eslint src --ext ts,tsx --report-unused-disable-directives --max-warnings 0",
     "security:audit": "pnpm audit --config.registry=https://registry.npmjs.org/",
     "format": "prettier --write \"src/**/*.{ts,tsx}\"",
     "type-check": "tsc --noEmit",
-    "validate": "node scripts/validate-extension.mjs && pnpm type-check && pnpm lint && pnpm build",
+    "validate": "node scripts/validate-extension.mjs && pnpm type-check && pnpm lint && pnpm test && pnpm build && pnpm build:web && pnpm security:audit",
     "test:supabase-smoke": "node scripts/supabase-smoke-test.mjs",
     "supabase:migrate": "node scripts/supabase-migrate.mjs",
     "supabase:migrate:dry-run": "node scripts/supabase-migrate.mjs --dry-run",
@@ -34,7 +35,7 @@
   "packageManager": "pnpm@10.24.0",
   "dependencies": {
     "@reduxjs/toolkit": "^2.2.1",
-    "@supabase/supabase-js": "^2.49.4",
+    "@supabase/supabase-js": "2.50.0",
     "clsx": "^2.1.1",
     "lz-string": "^1.5.0",
     "react": "^18.2.0",

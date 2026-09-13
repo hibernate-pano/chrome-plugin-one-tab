@@ -190,8 +190,11 @@ describe('mergeOpStamped: §5.4 URL 去重（跨设备同 URL 重加存活）', 
 // 注意：下面的 serverAllows 是 SQL 守卫的 JS 镜像，其真实行为由
 // tests/opStampGuard.pg.test.ts 在真实 Postgres 上钉死（两处必须一致）。
 describe('客户端决胜 ↔ 服务端守卫 一致性（双侧都有印记、非墓碑翻转）', () => {
-  /** supabase/migrations/20260910 守卫（修复后）：仅 NEW.s < OLD.s 拒收 */
-  const serverAllows = (local: { s: number }, cloud: { s: number }) => !(local.s < cloud.s);
+  /** supabase/migrations/20260910 守卫（修复后）：seq 后按 device 字典序比较 */
+  const serverAllows = (
+    local: { d: string; s: number },
+    cloud: { d: string; s: number }
+  ) => local.s > cloud.s || (local.s === cloud.s && local.d >= cloud.d);
 
   it('客户端判「本地赢」时，服务端必须放行本次写入', async () => {
     const { compareStamps } = await import('@/utils/opStamp');
@@ -222,6 +225,24 @@ describe('客户端决胜 ↔ 服务端守卫 一致性（双侧都有印记、�
         assert.ok(
           compareStamps(local, cloud) < 0,
           `服务端拒收 (${local.d},${local.s}) vs (${cloud.d},${cloud.s})，但客户端不认为云端赢`
+        );
+      }
+    }
+  });
+
+  it('同 seq 不同 device：服务端放行集合与客户端 pick 本地条件完全一致', async () => {
+    const { compareStamps } = await import('@/utils/opStamp');
+    const stamps = [
+      { d: 'devA', s: 400 },
+      { d: 'devB', s: 400 },
+      { d: 'devC', s: 400 },
+    ];
+    for (const local of stamps) {
+      for (const cloud of stamps) {
+        assert.equal(
+          serverAllows(local, cloud),
+          compareStamps(local, cloud) >= 0,
+          `同 seq 平局规则不一致: ${local.d} vs ${cloud.d}`
         );
       }
     }

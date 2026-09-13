@@ -17,7 +17,7 @@ import { fileURLToPath } from 'node:url';
 import { randomUUID } from 'node:crypto';
 import { createClient } from '@supabase/supabase-js';
 import { readFileSync } from 'node:fs';
-import { dismissOnboarding, LOGIN_TIMEOUT_MS } from './e2e-helpers.mjs';
+import { dismissOnboarding, LOGIN_TIMEOUT_MS, openTabsInSameWindow } from './e2e-helpers.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = resolve(__dirname, '..');
@@ -55,7 +55,8 @@ async function waitForSessionCount(page, expected) {
     if (count === expected) return count;
     await new Promise(r => setTimeout(r, 500));
   }
-  throw new Error(`等待会话数=${expected} 超时`);
+  const finalText = await page.evaluate(() => document.body.innerText).catch(() => '');
+  throw new Error(`等待会话数=${expected} 超时；当前页面文本: ${finalText.slice(0, 500)}`);
 }
 
 /** 读 .env 键值 */
@@ -172,13 +173,8 @@ async function main() {
     console.log('✅ A 已注册并登录');
 
     // A 开真实标签页再保存会话（扩展保存当前窗口标签）
-    const tabA1 = await deviceA.context.newPage();
-    await tabA1.goto(`${site.base}/a`);
-    const tabA2 = await deviceA.context.newPage();
-    await tabA2.goto(`${site.base}/b`);
-    // 等标题读取完成
-    await tabA1.waitForSelector('h1');
-    await tabA2.waitForSelector('h1');
+    const contentPages = await openTabsInSameWindow(pageA, [`${site.base}/a`, `${site.base}/b`]);
+    for (const contentPage of contentPages) await contentPage.waitForSelector('h1');
 
     console.log('══ 设备 A：保存当前窗口为会话 ══');
     // 在真实标签页点击扩展 action 会打开 popup——直接在 popup 页面点保存按钮

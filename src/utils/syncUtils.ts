@@ -486,9 +486,12 @@ function sortGroups(groups: TabGroup[]): TabGroup[] {
  * = 幽灵复活；而印记列与「把 is_deleted 置 true」本身无关。
  */
 export function decideCloudTombstoneWrite(
-  hasTombstoneColumn: boolean,
+  hasTombstoneColumn: boolean | null,
   hasStampColumn: boolean
-): 'stamp' | 'plain' | 'hard-delete' {
+): 'stamp' | 'plain' | 'hard-delete' | 'unavailable' {
+  // null 表示探测因网络/权限等非确定性原因失败。能力未知时绝不能猜成
+  // “旧 schema”，否则一次短暂故障就会把软删降级为物理 DELETE。
+  if (hasTombstoneColumn === null) return 'unavailable';
   if (!hasTombstoneColumn) return 'hard-delete';
   return hasStampColumn ? 'stamp' : 'plain';
 }

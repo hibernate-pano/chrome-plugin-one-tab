@@ -343,4 +343,10 @@ describe('decideCloudTombstoneWrite: 只有连 is_deleted 列都没有才允许�
     assert.equal(decideCloudTombstoneWrite(false, false), 'hard-delete');
     assert.equal(decideCloudTombstoneWrite(false, true), 'hard-delete');
   });
+
+  it('schema 探测失败（null）时必须返回 unavailable，禁止任何写降级', async () => {
+    const { decideCloudTombstoneWrite } = await import('@/utils/syncUtils');
+    assert.equal(decideCloudTombstoneWrite(null, true), 'unavailable');
+    assert.equal(decideCloudTombstoneWrite(null, false), 'unavailable');
+  });
 });

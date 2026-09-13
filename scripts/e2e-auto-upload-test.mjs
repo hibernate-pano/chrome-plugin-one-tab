@@ -9,7 +9,9 @@ import { join, resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { createServer } from 'node:http';
 import { createClient } from '@supabase/supabase-js';
-import { dismissOnboarding, readLocalGroups, LOGIN_TIMEOUT_MS } from './e2e-helpers.mjs';
+import {
+  dismissOnboarding, readLocalGroups, LOGIN_TIMEOUT_MS, openTabsInSameWindow,
+} from './e2e-helpers.mjs';
 import { readFileSync } from 'node:fs';
 
 const DIST = resolve(process.cwd(), 'dist');
@@ -73,12 +75,12 @@ try {
   await page.waitForSelector('button[title="手动上传本地会话到云端"]', { timeout: LOGIN_TIMEOUT_MS });
   console.log('✅ registered:', EMAIL);
 
-  // 打开 3 个真实页面
-  for (let i = 1; i <= 3; i++) {
-    const p = await ctx.newPage();
-    await p.goto(`${base}/p${i}`);
-    await p.waitForSelector('h1');
-  }
+  // 打开 3 个真实页面，必须与扩展管理页处于同一个 Chrome 窗口。
+  const contentPages = await openTabsInSameWindow(
+    page,
+    [1, 2, 3].map(i => `${base}/p${i}`)
+  );
+  for (const contentPage of contentPages) await contentPage.waitForSelector('h1');
 
   // 保存会话（关键：永远不点手动上传按钮）
   await page.locator('[aria-label="保存当前窗口中的所有标签页为会话"]').first().click();
