@@ -8,8 +8,7 @@ import type { TabGroup } from '@/types/tab';
 import type { MutationOp, MutationResult } from '@/shared/mutationProtocol';
 import type { Journal } from '@/utils/journal';
 import type { SeqRegistry } from '@/utils/seqRegistry';
-import type { OpStamp } from '@/utils/opStamp';
-import { sanitizeTabUrl } from '@/utils/inputValidation';
+import type { OpStamp } from '@/utils/opStamp';import { sanitizeTabUrl } from '@/utils/inputValidation';
 import { nanoid } from '@reduxjs/toolkit';
 import {
   applySaveGroup,
@@ -41,12 +40,21 @@ export interface MutationDeps {
    * 日志中明确给出该风险而非静默）。
    */
   notePurgedGroup?: (groupId: string) => Promise<void> | void;
+  /**
+   * V2 影子双写：主写（journal → apply* → setGroups）成功后由 handle()
+   * fire-and-forget 调用。实现见 src/core/yShadow.ts maybeShadowWrite。
+   * 可选依赖——缺失/抛错时主同步零影响（handle 内 try/catch + 不 await）。
+   */
+  shadowWrite?: (args: { op: MutationOp; stamp: OpStamp; now: string }) => unknown;
 }
 
 const DELETE_PRIORITY_MS = 1500; // 删除/新建类（对齐原 autoSyncMiddleware 优先级 ≥8）
 const NORMAL_MS = 3000;
 
 export function createMutationHandlers(deps: MutationDeps) {
+  // V2 影子双写：run() 内最近一次成功取到的 stamp/now（handle 在主写 ok 后取用）。
+  let lastMeta: { stamp: OpStamp; now: string } | null = null;
+
   async function run(cmd: MutationOp): Promise<MutationResult> {
     const now = deps.now();
 
@@ -57,6 +65,7 @@ export function createMutationHandlers(deps: MutationDeps) {
       tabId: 'tabId' in cmd ? (cmd as { tabId?: string }).tabId : undefined,
     });
     const stamp: OpStamp = { d: entry.d, s: entry.s };
+    lastMeta = { stamp, now };
 
     switch (cmd.op) {
       case 'saveGroup': {
@@ -212,7 +221,19 @@ export function createMutationHandlers(deps: MutationDeps) {
   return {
     async handle(cmd: MutationOp): Promise<MutationResult> {
       try {
-        return await run(cmd);
+        const res = await run(cmd);
+        if (res.ok && lastMeta && deps.shadowWrite) {
+          // V2 影子双写：mutation 落盘成功后异步翻译写入 Y.Doc（读仍走 blob）。
+          // fire-and-forget（不 await，不延迟 SW 响应）+ 全程吞错：
+          // 影子永不阻断主同步、不影响返回值（结果由 yShadow 内部 journallog 化）。
+          const meta = lastMeta;
+          try {
+            void Promise.resolve(deps.shadowWrite({ op: cmd, stamp: meta.stamp, now: meta.now })).catch(() => {});
+          } catch {
+            /* 同步抛错同样静默 */
+          }
+        }
+        return res;
       } catch (e) {
         return { ok: false, error: e instanceof Error ? e.message : String(e) };
       }

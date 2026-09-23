@@ -17,3 +17,9 @@ export * from '@/core/syncDecision';
 export * from '@/core/opStampMerge';
 export * from '@/core/mutationOps';
 export * from '@/core/mutationProtocol';
+// V2 影子双写（纯函数 + 动态 import，顶层无 yjs/dexie 静态依赖，主包零增长）
+export * from '@/core/yShadowConfig';
+export * from '@/core/yTranslate';
+export * from '@/core/yMaterialize';
+export * from '@/core/yShadow';
+export { Y_DOC_NAME, Y_ROOT_KEYS, cryptoSlot, passthroughEncryptor } from '@/core/ydoc';

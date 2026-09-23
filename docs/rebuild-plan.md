@@ -1,6 +1,6 @@
 # TapStack 重构方案：Local-First + CRDT（指导文档）
 
-> 状态：S1–S4 已完成，S5 执行中，V2 待排期。本文档是重构唯一指导源，阶段状态在此更新。
+> 状态：S1–S5、V2 已完成（影子双写上线，灰度 10%，体积门通过），V3 待决策。本文档是重构唯一指导源，阶段状态在此更新。
 > 原则：Spec-First —— 先定接口与验收标准，再写实现；绞杀式演进，不搞大爆炸重写。
 
 ## 0. 诉求边界
@@ -83,7 +83,7 @@ Y-Schema（`packages/core/ydoc.ts`）：`groups: Y.Map`、`tabs: Y.Map`、`order
 - [x] S2 存储 KV 收敛（已完成：src/storage-kv + re-export，tsc/单测/eslint/vite 全绿，行为零变化）
 - [x] S3 supabase.ts 拆分（已完成：SupabasePort 接口+8 模块+16 行门面，251 单测全绿）
 - [x] S4 单写者收口 + 废弃合并隔离
-- [ ] S5 删除语义统一（进行中）
-- [ ] V2 影子双写 + 灰度
+- [x] S5 删除语义统一（已完成：webTombstone+墓碑命令+门禁，259 单测全绿）
+- [x] V2 影子双写 + 灰度（已完成：Yjs+Dexie 影子链路，sync 表已上线，277 单测全绿）
 - [ ] V3 切读 + 下线 blob/触发器
 - [ ] E2EE 恢复码 UX + 发版说明（含 removeTab stamp 语义变化）

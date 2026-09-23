@@ -16,6 +16,8 @@ import { createSeqRegistry } from '@/utils/seqRegistry';
 import { createJournal } from '@/utils/journal';
 import { kvGet, kvSet } from '@/storage/storageAdapter';
 import { getDeviceId } from '@/utils/deviceUtils';
+import { auth } from '@/utils/supabase/auth';
+import { maybeShadowWrite } from '@/core/yShadow';
 
 const seq = createSeqRegistry({
   kvGet,
@@ -39,4 +41,21 @@ export const mutationService = createMutationHandlers({
   seq,
   // P1-6：purge 出队记入持久化队列，由 SyncEngine.upload 删云端行后 clear。
   notePurgedGroup: id => storage.addPendingPurgeId(id),
+  // V2 影子双写：落盘成功后异步翻译写入 Y.Doc（读仍走 blob）。
+  // 灰度/开关/吞错全在 maybeShadowWrite 内部；此处仅做依赖绑定。
+  shadowWrite: ({ op, stamp, now }) =>
+    maybeShadowWrite(op, stamp, now, {
+      getGroups: () => storage.getGroups(),
+      getUserId: async () => {
+        try {
+          const { data } = await auth.getCurrentUser();
+          const u = (data as { user?: { id?: string } | null } | null)?.user;
+          return u?.id ?? null;
+        } catch {
+          return null;
+        }
+      },
+      kvGet,
+      kvSet,
+    }),
 });
