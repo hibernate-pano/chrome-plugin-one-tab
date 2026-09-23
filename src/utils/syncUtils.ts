@@ -1,58 +1,13 @@
 import { TabGroup, Tab, UserSettings } from '@/types/tab';
 
-// ── 下载前置保护（防「本地删除被云端旧数据复活」） ──────────────────────
-
 /**
- * 上传保护窗口。chrome.alarms 驱动的延迟上传最小间隔 30s，刚完成上传的
- * 短窗口内云端已是本地新状态，后续到达的下载合并应跳过——避免与在途
- * 上传竞态、用云端旧版本覆盖本地新版本。
+ * S1 重构：纯决策函数（decideDownloadPrecheck / decideCloudTombstoneWrite /
+ * hasRemoteChanges / getGroupsToSync / validateMergeResult）已搬迁至
+ * @/core/syncDecision，此处 re-export 转发（行为零变化）。
+ * 已废弃的 version+时间戳 LWW 合并（mergeTabGroups/mergeGroup/mergeTabs）保留在原地，
+ * 仅供参考/回滚对比与既有单测，不再接回生产路径。
  */
-export const UPLOAD_GUARD_MS = 35_000;
-
-export interface DownloadPrecheckInput {
-  /** forceRemote = 用户显式要求云端覆盖本地，跳过一切保护 */
-  forceRemote: boolean;
-  /** 最近一次成功上传时间戳（ISO），null 表示从未上传 */
-  lastUploadTime: string | null;
-  /** 本地是否有未推送变更 */
-  pendingUpload: boolean;
-  now: number;
-}
-
-export type DownloadPrecheckAction =
-  | { action: 'skip'; reason: 'recent_upload_guard' }
-  | { action: 'upload_first' }
-  | { action: 'proceed' };
-
-/**
- * 决定 downloadAndMerge 的前置动作。纯函数，便于单测覆盖全部分支。
- *
- * 规则（按顺序短路）：
- * 1. forceRemote → 直接下载（用户显式覆盖意图）
- * 2. 刚上传过（UPLOAD_GUARD_MS 内）→ 跳过下载：云端已是本地新状态，
- *    再拉只会浪费且可能与在途上传竞态
- * 3. 有未推送变更 → 先上传再下载：否则「删除书签后 upload alarm 未到
- *    就触发下载」会让云端旧数据把刚删的内容合并回来（复活），事后再
- *    把复活后的状态推上云，删除意图彻底丢失
- * 4. 其余 → 正常下载
- *
- * 注意 guard 只在此处检查一次；upload_first 成功后的下载流程不再重查
- * （否则会被自己刚刷新的 lastUploadTime 挡住）。
- */
-export function decideDownloadPrecheck(input: DownloadPrecheckInput): DownloadPrecheckAction {
-  if (input.forceRemote) return { action: 'proceed' };
-
-  if (input.lastUploadTime) {
-    const sinceUpload = input.now - new Date(input.lastUploadTime).getTime();
-    if (sinceUpload >= 0 && sinceUpload < UPLOAD_GUARD_MS) {
-      return { action: 'skip', reason: 'recent_upload_guard' };
-    }
-  }
-
-  if (input.pendingUpload) return { action: 'upload_first' };
-
-  return { action: 'proceed' };
-}
+export * from '@/core/syncDecision';
 
 /**
  * 智能合并本地和云端标签组（version + 时间戳 LWW）
@@ -475,71 +430,4 @@ function sortGroups(groups: TabGroup[]): TabGroup[] {
     const dateB = new Date(b.createdAt).getTime();
     return dateB - dateA;
   });
-}
-
-/**
- * 云端软删（墓碑）写入方式决策——纯函数，便于单测钉住降级行为。
- *
- * 关键不变式：**只有云端连 is_deleted 列都没有时才允许硬删**。
- * 印记列（last_op_seq）缺失或探测失败时，软删必须仍走「不带印记的局部 UPDATE」，
- * 绝不降级成 DELETE——硬删让云端行永久消失，他端活跃副本再上传就重新 INSERT 出同一组
- * = 幽灵复活；而印记列与「把 is_deleted 置 true」本身无关。
- */
-export function decideCloudTombstoneWrite(
-  hasTombstoneColumn: boolean,
-  hasStampColumn: boolean
-): 'stamp' | 'plain' | 'hard-delete' {
-  if (!hasTombstoneColumn) return 'hard-delete';
-  return hasStampColumn ? 'stamp' : 'plain';
-}
-
-/**
- * 获取需要同步到云端的标签组
- * @param groups 所有标签组
- * @returns 需要同步的标签组（排除软删除的）
- */
-export const getGroupsToSync = (groups: TabGroup[]): TabGroup[] => {
-  // 过滤掉已软删除的标签组
-  return groups.filter(group => !group.isDeleted);
-};
-
-/**
- * 校验合并结果，防止「同步覆盖导致本地数据丢失」时自动回滚。
- *
- * ⚠️ 基线只算本地「活跃」组（isDeleted=false）：mergeTabGroups 第一步会跳过软删组，
- * 而 storage.getGroups() 返回的数组含软删组。若用 localGroups.length（含软删）当基线，
- * 累积的软删组会抬高 expectedMin，导致正常合并被误判为非法 → 触发回滚 → 云端变更永远同步不进来。
- */
-export function validateMergeResult(
-  localGroups: TabGroup[],
-  cloudGroups: TabGroup[],
-  mergedGroups: TabGroup[]
-): { valid: boolean; reason?: string } {
-  const activeLocalCount = localGroups.filter(g => !g.isDeleted).length;
-
-  // 规则 1：两边都没有活跃数据，合并为空是正常的
-  if (activeLocalCount === 0 && cloudGroups.length === 0 && mergedGroups.length === 0) {
-    return { valid: true };
-  }
-
-  // 规则 2：本地有活跃数据但合并后为空，异常
-  if (activeLocalCount > 0 && mergedGroups.length === 0) {
-    return {
-      valid: false,
-      reason: `本地有 ${activeLocalCount} 个活跃组，但合并后为 0（可能云端覆盖了所有本地数据）`,
-    };
-  }
-
-  // 规则 3：合并后组数不应低于 活跃本地组数 减去云端明确删除的组数
-  const cloudDeletedCount = cloudGroups.filter(g => g.isDeleted).length;
-  const expectedMin = Math.max(0, activeLocalCount - cloudDeletedCount);
-
-  if (mergedGroups.length < expectedMin) {
-    return {
-      valid: false,
-      reason: `合并后 ${mergedGroups.length} 个组，低于预期最小值 ${expectedMin}（活跃本地 ${activeLocalCount}，云端删除 ${cloudDeletedCount}）`,
-    };
-  }
-
-  return { valid: true };
 }

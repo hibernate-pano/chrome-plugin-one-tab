@@ -177,7 +177,13 @@ export async function fetchGroups(): Promise<TabGroup[]> {
       continue;
     }
     const group = await decryptRowToGroup(row as Record<string, unknown>, userId);
-    if (group) tabGroups.push(group);
+    if (group) {
+      // 标签级墓碑只用于同步删除意图：Web 列表与顶部统计都不计入（与扩展端 stripTombstonedTabs 同口径）
+      if (group.tabs?.some(t => t.isDeleted)) {
+        group.tabs = group.tabs.filter(t => !t.isDeleted);
+      }
+      tabGroups.push(group);
+    }
   }
 
   return tabGroups;

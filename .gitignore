@@ -27,3 +27,4 @@ dist-web/
 .mimosa/
 .v2c/
 .video_agent/
+supabase/.temp/

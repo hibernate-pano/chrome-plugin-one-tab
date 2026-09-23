@@ -34,6 +34,13 @@ export interface MutationDeps {
   now(): string;
   journal: Journal;
   seq: SeqRegistry;
+  /**
+   * P1-6：purge 出队记录。本地物理移除组后，把 id 记入持久化 purge 队列，
+   * 由 upload 侧调用 purgeCloudGroups 删掉云端对应行（含读回确认）。
+   * 可选依赖——缺失时仅告警（本地 purge 照常，云端行残留则下轮下载可能复活，
+   * 日志中明确给出该风险而非静默）。
+   */
+  notePurgedGroup?: (groupId: string) => Promise<void> | void;
 }
 
 const DELETE_PRIORITY_MS = 1500; // 删除/新建类（对齐原 autoSyncMiddleware 优先级 ≥8）
@@ -90,8 +97,25 @@ export function createMutationHandlers(deps: MutationDeps) {
         };
       }
       case 'purgeGroup': {
+        // P1-6 purge 语义修齐：
+        // 1) 仅允许 purge 回收站中的墓碑（isDeleted=true）。活跃组直接物理移除会
+        //    绕过墓碑广播——云端行残留，下次下载以 remote-only 复活（静默丢删除意图）。
+        //    必须先 deleteGroup（墓碑+上传广播）再 purge，且两次上传之间要有间隔
+        //    让墓碑先上云；否则拦截并报错，由调用方引导用户走“删除→清空回收站”两步。
+        // 2) purge 通过后把 id 记入持久化队列，upload 侧删云端行；无 is_deleted 列
+        //    的环境走硬删并给出明确告警（见 supabase.markCloudGroupsAsDeleted）。
         const groups = await deps.getGroups();
+        const target = groups.find(g => g.id === cmd.groupId);
+        if (!target) throw new Error('未找到该标签组');
+        if (!target.isDeleted) {
+          throw new Error('仅允许彻底删除回收站中的已删除组（请先删除该组，等待同步后再清空）');
+        }
         await deps.setGroups(applyPurgeGroup(groups, cmd.groupId, now, stamp));
+        try {
+          await deps.notePurgedGroup?.(cmd.groupId);
+        } catch (e) {
+          console.warn('[mutationHandlers] 记录 purge 队列失败（云端行可能残留复活）:', e);
+        }
         deps.scheduleUpload(NORMAL_MS);
         return { ok: true, payload: cmd.groupId };
       }

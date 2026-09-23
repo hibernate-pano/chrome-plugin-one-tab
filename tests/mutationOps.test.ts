@@ -287,7 +287,7 @@ describe('mutationOps: stamp 盖印（阶段二·§4.1/§5）', () => {
     const out = applySaveGroup([], fresh, NOW, stamp);
     assert.deepEqual(out[0].lastOp, stamp);
   });
-  it('applyRemoveTab：盖被墓碑 tab 的 lastOp，组 lastOp 不动（§5.3）', async () => {
+  it('applyRemoveTab：盖被墓碑 tab 的 lastOp，组 lastOp 同步提升（P0-3）', async () => {
     const { applyRemoveTab } = await import('@/utils/mutationOps');
     const stamp = { d: 'devA', s: 11 };
     const g = mkGroup('g1', [mkTab('t1'), mkTab('t2')]);
@@ -295,7 +295,8 @@ describe('mutationOps: stamp 盖印（阶段二·§4.1/§5）', () => {
     const out = groups.find(x => x.id === 'g1')!;
     assert.deepEqual(out.tabs.find(t => t.id === 't1')!.lastOp, stamp);
     assert.equal(out.tabs.find(t => t.id === 't2')!.lastOp, undefined);
-    assert.equal(out.lastOp, undefined); // §5.3：标签级操作不盖组 stamp
+    // P0-3：digest 以单调 seq 为主信号，组 stamp 不动会让“删 tab”在探活与合并时不可见
+    assert.deepEqual(out.lastOp, stamp);
   });
   it('applyRemoveTab 整组清空路径：组 lastOp 也要盖（与 deleteGroup 一致）', async () => {
     const { applyRemoveTab } = await import('@/utils/mutationOps');

@@ -539,11 +539,49 @@ export const tabSlice = createSlice({
           state.activeGroupId = null;
         }
       })
+      .addCase(deleteTabAndSync.pending, (state, action) => {
+        // 乐观更新：点击即从列表消失，不等 SW mutation + 云端回环（此前只在
+        // fulfilled 更新，SW 冷启动时延迟可达数百毫秒，体感就是"点了没反应"）。
+        // 服务端真值以 fulfilled 回填为准；失败走 rejected 回滚。
+        const { groupId, tabId } = action.meta.arg;
+        const idx = state.groups.findIndex(g => g.id === groupId);
+        if (idx === -1) return;
+        state.optimisticBackup = { groupId, group: state.groups[idx] };
+        const tabs = state.groups[idx].tabs.filter(t => t.id !== tabId);
+        if (tabs.length === 0) {
+          // 与 fulfilled(group===null) 同语义：拿掉最后一个活跃 tab 后整组进误删保护视图
+          const [removed] = state.groups.splice(idx, 1);
+          state.deletedGroups = state.deletedGroups.filter(g => g.id !== groupId);
+          state.deletedGroups.push({
+            ...removed,
+            tabs,
+            isDeleted: true,
+            version: (removed.version || 1) + 1,
+            updatedAt: new Date().toISOString(),
+          });
+          if (state.activeGroupId === groupId) state.activeGroupId = null;
+        } else {
+          state.groups[idx] = { ...state.groups[idx], tabs };
+        }
+      })
+      .addCase(deleteTabAndSync.rejected, (state, action) => {
+        // 回滚乐观更新；下次 loadGroups 再与真值对齐
+        const backup = state.optimisticBackup;
+        if (backup) {
+          state.deletedGroups = state.deletedGroups.filter(g => g.id !== backup.groupId);
+          const idx = state.groups.findIndex(g => g.id === backup.groupId);
+          if (idx !== -1) state.groups[idx] = backup.group;
+          else state.groups.unshift(backup.group);
+          state.optimisticBackup = null;
+        }
+        state.error = action.error.message || '更新会话失败';
+      })
       .addCase(deleteTabAndSync.fulfilled, (state, action) => {
         // 即时 UI 反馈（旧行为：updateGroup.fulfilled 即时替换组）。没有这个 case，
         // UI 只能等 onChanged→loadGroups 的回环（约 0.7s~数秒），表现为"点击后标签不消失"。
         const groupId = action.meta.arg.groupId;
         const { group } = action.payload;
+        state.optimisticBackup = null;
         if (group === null) {
           // 组内最后一个活跃 tab 被移除 → 整组软删：镜像 deleteGroup.fulfilled（误删保护视图同语义）
           const removed = state.groups.find(g => g.id === groupId);

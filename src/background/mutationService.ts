@@ -37,4 +37,6 @@ export const mutationService = createMutationHandlers({
   now: () => new Date().toISOString(),
   journal,
   seq,
+  // P1-6：purge 出队记入持久化队列，由 SyncEngine.upload 删云端行后 clear。
+  notePurgedGroup: id => storage.addPendingPurgeId(id),
 });

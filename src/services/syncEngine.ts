@@ -7,16 +7,19 @@ export const SYNC_UPLOAD_ALARM = 'tapstack-scheduled-upload';
 // 此处 re-export 供既有引用方不破坏。
 export { UPLOAD_GUARD_MS } from '@/utils/syncUtils';
 import type { TabGroup, UserSettings } from '@/types/tab';
-import { storage } from '@/utils/storage';
+import { storage, invalidateGroupsCache } from '@/utils/storage';
 import {
   downloadTabGroups,
+  downloadTabGroupsDigest,
   uploadTabGroups,
   markCloudGroupsAsDeleted,
+  purgeCloudGroups,
 } from '@/services/tabGroupSyncService';
 import { uploadSettings, downloadSettings } from '@/services/settingsSyncService';
 import {
   validateMergeResult,
   decideDownloadPrecheck,
+  hasRemoteChanges,
 } from '@/utils/syncUtils';
 // 阶段二（§5 + §9）：合并语义已统一为 mergeOpStamped（OpStamp 全序决胜）。
 // 云端 schema 与客户端同步发布，旧 mergeTabGroups 已删除。
@@ -41,6 +44,8 @@ export interface MergeResult {
     conflicts: number;
   };
   reason?: string;
+  /** 轻量探活命中（云端无变更，直接返回本地快照）时为 true */
+  upToDate?: boolean;
 }
 
 export interface UploadResult {
@@ -247,10 +252,10 @@ export class SyncEngine {
     this.isSyncing = true;
     this.cancelPendingUpload();
 
-    // 1. 快照
+    // 1. 快照（P1-4：新鲜读 + 直写，绕过 30s 缓存与 500ms 防抖——SW 可随时被杀）
     let snapshot: TabGroup[] = [];
     try {
-      snapshot = await storage.getGroups();
+      snapshot = await storage.getGroupsFresh();
       await storage.setSyncSnapshot(snapshot);
     } catch (err) {
       console.error('[SyncEngine] 快照保存失败:', err);
@@ -258,6 +263,37 @@ export class SyncEngine {
 
     try {
       report(10, 'download');
+      // 2.0 轻量探活：全量下载前先拉指纹列，无变更直接返回本地快照。
+      // 短路条件：非 forceRemote（forceRemote 必须绕过探活）且本地非空
+      // （首次同步本地为空必须全量下载）。探活失败 fail-open 走原全量流程。
+      if (!opts?.forceRemote && snapshot.length > 0) {
+        try {
+          const digest = await downloadTabGroupsDigest();
+          if (!hasRemoteChanges(snapshot, digest)) {
+            console.log(
+              `[SyncEngine] 探活命中：云端无变更（${digest.length} 行指纹一致），跳过全量下载`
+            );
+            report(100, 'none');
+            await storage.setLastSyncTime(new Date().toISOString());
+            this.isSyncing = false;
+            return {
+              success: true,
+              groups: snapshot,
+              stats: {
+                localCount: snapshot.length,
+                cloudCount: digest.length,
+                mergedCount: snapshot.length,
+                conflicts: 0,
+              },
+              reason: 'up_to_date',
+              upToDate: true,
+            };
+          }
+          console.log('[SyncEngine] 探活未命中：检测到云端变更，走全量下载合并');
+        } catch (err) {
+          console.warn('[SyncEngine] 指纹探活失败，走全量下载:', err);
+        }
+      }
       // 2. 下载云端
       const cloudGroups = await downloadTabGroups();
       report(55, 'download');
@@ -298,10 +334,13 @@ export class SyncEngine {
         console.error(`[SyncEngine] 合并验证失败: ${validation.reason}`);
         await this.restoreSnapshot(snapshot);
         this.isSyncing = false;
+        // P1-5：验证失败回滚后，若本地仍有未上传变更必须重调度上传，
+        // 否则删除/点开意图会静默躺在本地直到下一次手动同步。
+        await this.rescheduleUploadIfPending();
         return { success: false, groups: snapshot, reason: `validation_failed: ${validation.reason}` };
       }
-      // 6. 写入
-      await storage.setGroups(mergedGroups);
+      // 6. 写入（P1-4：直写落盘，不经过防抖窗口）
+      await storage.setGroupsImmediate(mergedGroups);
       // 7. 更新同步时间
       await storage.setLastSyncTime(new Date().toISOString());
       // 8. 清除快照
@@ -336,6 +375,8 @@ export class SyncEngine {
       console.error('[SyncEngine] 下载合并失败:', error);
       await this.restoreSnapshot(snapshot);
       this.isSyncing = false;
+      // P1-5：下载抛错/回滚后，若 pending 仍 true 必须重调度上传。
+      await this.rescheduleUploadIfPending();
       return {
         success: false,
         groups: snapshot,
@@ -381,6 +422,9 @@ export class SyncEngine {
 
     try {
       report(15, 'upload');
+      // P1-4：上传读取本地前先失效缓存——同一进程内 mutation 刚写完（防抖窗口期）
+      // 就触发上传时，不能读到 30s 缓存里的旧快照（否则把旧状态推上云覆盖新数据）。
+      invalidateGroupsCache();
       const allGroups = await storage.getGroups();
       const activeGroups = allGroups.filter(g => !g.isDeleted);
       const deletedIds = allGroups.filter(g => g.isDeleted).map(g => g.id);
@@ -395,11 +439,19 @@ export class SyncEngine {
       }
       report(70, 'upload');
       if (deletedIds.length > 0 && opts?.includeDeleted !== false) {
-        try {
-          await markCloudGroupsAsDeleted(deletedIds);
-        } catch (err) {
-          console.error('[SyncEngine] 标记云端软删失败（不阻塞主流程）:', err);
-        }
+        // P0-2：软删失败必须阻断上传成功。markCloudGroupsAsDeleted 抛错（写失败、
+        // 读回不一致、未登录跳过）直接上浮到外层 catch → 本次 upload 整体失败，
+        // pending_upload 保留、lastUploadTime 不刷，下轮 alarm 重试。
+        // 禁止在此 try/catch 吞掉只 console.error（那会清 pending 假装成功，
+        // 云端没删、下次下载直接复活）。
+        await markCloudGroupsAsDeleted(deletedIds);
+      }
+      // P1-6：本地已 purge 的组，云端墓碑行必须同步彻底删除，否则下次下载
+      // 以 remote-only 复活。删后才 clear 队列；抛错则阻断本次上传成功、下轮重试。
+      const pendingPurgeIds = await storage.getPendingPurgeIds();
+      if (pendingPurgeIds.length > 0) {
+        await purgeCloudGroups(pendingPurgeIds);
+        await storage.clearPendingPurgeIds();
       }
       // 设置同步：与旧 smartSyncService.uploadToCloud 一致（上传标签组后总带上传设置）
       // ponytail: 必须从 storage 读——SW 冷启动时 store.settings 是代码默认值，
@@ -473,16 +525,34 @@ export class SyncEngine {
       return;
     }
     try {
-      await storage.setGroups(snapshot);
+      // P1-4：回滚直写落盘，不经过防抖窗口（SW 可能在窗口期内被杀导致回滚丢失）。
+      await storage.setGroupsImmediate(snapshot);
       await storage.clearSyncSnapshot();
       console.log(`[SyncEngine] 已从快照恢复 ${snapshot.length} 个组`);
     } catch (err) {
       console.error('[SyncEngine] 快照回滚失败:', err);
       try {
-        await storage.setGroups(snapshot);
+        await storage.setGroupsImmediate(snapshot);
       } catch (retryErr) {
         console.error('[SyncEngine] 二次回滚也失败，数据可能丢失:', retryErr);
       }
+    }
+  }
+
+  /**
+   * P1-5：失败路径重调度。若 pending_upload 仍为 true（本地有未上传意图），
+   * 重新排一次上传，避免删除/点开意图在下载失败后静默躺平。
+   * 调用方保证 isSyncing 已置 false（scheduleUpload 的 timer 回调走 upload()，
+   * isSyncing 为 true 会拒绝非 force 调用）。失败检查本身不抛错。
+   */
+  private async rescheduleUploadIfPending(): Promise<void> {
+    try {
+      if (await storage.getPendingUpload()) {
+        console.log('[SyncEngine] 同步失败但本地仍有未上传变更，重新调度上传');
+        this.scheduleUpload(0);
+      }
+    } catch {
+      // pending 检查失败不阻塞主流程（上传意图仍由持久化 flag 保留）
     }
   }
 }

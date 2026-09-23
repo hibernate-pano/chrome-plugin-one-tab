@@ -6,6 +6,8 @@ import { sanitizeTabUrl } from './inputValidation';
 import { normalizeTabsData } from './normalizeTabsData';
 import { serializeTab, deserializeTab } from './tabDataCodec';
 import { decideCloudTombstoneWrite } from './syncUtils';
+import { hasExtensionStorage } from '@/storage-kv/env';
+import { sharedStringStorage } from '@/storage-kv/stringStore';
 
 // 安全的配置管理
 function getSecureConfig() {
@@ -50,60 +52,10 @@ function getSecureConfig() {
 // 延迟初始化 Supabase 客户端
 let supabaseClient: ReturnType<typeof createClient> | null = null;
 
-/**
- * 跨上下文持久化 Supabase session 的 storage adapter。
- *
- * 背景：supabase-js 默认把 session token 存 localStorage，但 MV3
- * service-worker 没有 localStorage（每次唤醒 memory storage 为空），
- * 导致后台轮询无法恢复登录态。所以在扩展环境统一改用 chrome.storage.local ——
- * popup 与 service-worker 共享同一 session。
- *
- * ⚠️ 非扩展环境（网页版仪表盘）必须回退到 localStorage：
- * 网页版（src/web/webApi.ts）复用了本模块，而它没有 chrome.* API。
- * 早期实现里“无 chrome.storage 就当没有 session”，导致网页版登录请求成功
- * （/auth/v1/token 200）但 session 永远无法持久化 —— 仪表盘随后报“未登录”、
- * 一个 /rest/v1/tab_groups 请求都不会发出。回退到 localStorage 等价于
- * supabase-js 的默认行为，网页版恢复可用。
- */
-const hasExtensionStorage = (): boolean =>
-  typeof chrome !== 'undefined' && Boolean(chrome.storage?.local);
-
-const hasWebStorage = (): boolean => {
-  try {
-    return typeof localStorage !== 'undefined' && localStorage !== null;
-  } catch {
-    // MV3 service worker 访问 localStorage 会抛错（未定义）
-    return false;
-  }
-};
-
-const supabaseSharedStorage: {
-  getItem: (key: string) => Promise<string | null>;
-  setItem: (key: string, value: string) => Promise<void>;
-  removeItem: (key: string) => Promise<void>;
-} = {
-  async getItem(key: string): Promise<string | null> {
-    if (hasExtensionStorage()) {
-      const result = await chrome.storage.local.get(key);
-      return (result[key] as string | undefined) ?? null;
-    }
-    return hasWebStorage() ? localStorage.getItem(key) : null;
-  },
-  async setItem(key: string, value: string): Promise<void> {
-    if (hasExtensionStorage()) {
-      await chrome.storage.local.set({ [key]: value });
-      return;
-    }
-    if (hasWebStorage()) localStorage.setItem(key, value);
-  },
-  async removeItem(key: string): Promise<void> {
-    if (hasExtensionStorage()) {
-      await chrome.storage.local.remove(key);
-      return;
-    }
-    if (hasWebStorage()) localStorage.removeItem(key);
-  },
-};
+// S2 收敛：跨上下文 session 存储与环境探测已下沉为共享单源
+// （@/storage-kv/env + @/storage-kv/stringStore，与 KV 迁移层同源），
+// 实现逐字搬运，行为零变化。调用方 import 路径保持不变。
+const supabaseSharedStorage = sharedStringStorage;
 
 /**
  * 迁移旧版 localStorage 中 supabase-js 的 session token 到 chrome.storage.local。
@@ -207,19 +159,22 @@ export async function supportsCloudTombstone(): Promise<boolean> {
           '  如需跨端软删一致性，请在 Supabase 控制台 SQL Editor 执行：\n' +
           '  ALTER TABLE tab_groups ADD COLUMN is_deleted boolean NOT NULL DEFAULT false;'
         );
+        // 确定性的「列不存在」→ 缓存结果（本 SW 生命周期内无需重探）
         tombstoneSupportCache = false;
       } else {
-        // 其他错误（网络等）→ 视为不支持，下次再探
-        console.warn('[tombstone] 列探测失败（非 PGRST204）:', probe.error.message);
-        tombstoneSupportCache = false;
+        // P1-5：网络/权限等非确定性失败：**不缓存**，与 supportsOpStamp 同策略。
+        // 写死 false 会让一次网络抖动把整个 SW 生命周期钉在降级模式（硬删分支），
+        // 且不会自愈——本次按不支持处理，下次重探。
+        console.warn('[tombstone] 列探测失败（非 PGRST204），本次按不支持处理，下次重探:', probe.error.message);
+        return false;
       }
     } else {
       tombstoneSupportCache = true;
     }
     return tombstoneSupportCache;
   } catch (err) {
-    console.warn('[tombstone] 列探测异常，降级为硬删:', (err as Error).message);
-    tombstoneSupportCache = false;
+    // P1-5：异常同样不缓存，下次重探（与 supportsOpStamp 同策略）。
+    console.warn('[tombstone] 列探测异常，本次按不支持处理，下次重探:', (err as Error).message);
     return false;
   }
 }
@@ -272,6 +227,191 @@ import { getDeviceId } from './deviceUtils';
 // 导致 tab_groups.device_id 与 last_op_device 长期不一致）。
 // 已确认全仓没有任何逻辑比较 device_id 的值，改来源只影响元数据一致性。
 export { getDeviceId };
+
+// ── 轻量变更探活（降 egress） ──────────────────────────────────────────
+//
+// 背景：后台每 60s 一次 downloadAndMerge 轮询，绝大多数时候云端无变化，
+// 却每次都 select * 全量拉取（含 tabs_data / compressed_data 大 JSONB）。
+// fetchTabGroupsDigest 只取 (id, updated_at, version, is_deleted[, 印记列])
+// 指纹列做变更判断，无变更时 SyncEngine 直接返回本地快照、不走全量下载。
+// 列集合按 supportsOpStamp / supportsCloudTombstone 探测结果组装：
+// 未迁移的云端带上不存在的列会报 42703 / PGRST204，失败时回退最小列。
+
+export interface TabGroupDigest {
+  id: string;
+  updated_at: string;
+  version?: number | null;
+  is_deleted?: boolean | null;
+  last_op_device?: string | null;
+  last_op_seq?: number | null;
+}
+
+/**
+ * 轻量探活：只拉用户行的指纹列，不含 tabs_data 大字段。
+ * 与 downloadTabGroups 相同的鉴权前置；失败时抛错，调用方 fail-open 走全量。
+ */
+export async function fetchTabGroupsDigest(): Promise<TabGroupDigest[]> {
+  checkSupabaseConfig();
+  const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
+  if (sessionError) {
+    throw new Error(`获取会话失败: ${sessionError.message}`);
+  }
+  if (!sessionData.session) {
+    throw new Error('用户未登录或会话已过期，请重新登录');
+  }
+  const { data: { user }, error: userError } = await supabase.auth.getUser();
+  if (userError) {
+    throw new Error(`获取用户信息失败: ${userError.message}`);
+  }
+  if (!user?.id) {
+    throw new Error('用户未登录');
+  }
+  const uid = user.id !== sessionData.session.user.id ? sessionData.session.user.id : user.id;
+
+  const [stampSupported, tombstoneSupported] = await Promise.all([
+    supportsOpStamp(),
+    supportsCloudTombstone(),
+  ]);
+  let columns = 'id, updated_at, version';
+  if (tombstoneSupported) columns += ', is_deleted';
+  if (stampSupported) columns += ', last_op_device, last_op_seq';
+
+  const query = async (cols: string) =>
+    supabase.from('tab_groups').select(cols).eq('user_id', uid);
+
+  const { data, error } = await query(columns);
+  if (!error) return ((data ?? []) as unknown) as TabGroupDigest[];
+
+  // 未迁移 schema（42703 / PGRST204）→ 回退最小列；其他错误直接抛出
+  const msg = `${error.code ?? ''} ${error.message ?? ''}`;
+  if (/42703|PGRST204|column/i.test(msg) && columns !== 'id, updated_at') {
+    console.warn(`[digest] 指纹列查询失败，回退最小列重试: ${msg}`);
+    const fallback = await query('id, updated_at');
+    if (fallback.error) throw fallback.error;
+    return ((fallback.data ?? []) as unknown) as TabGroupDigest[];
+  }
+  throw error;
+}
+
+// ── P0-1 上传读回校验（纯比对 + 读回验证，防服务端静默吞写） ───────────────
+//
+// 背景：云端 op-stamp 守卫触发器在仲裁失败时 `RETURN NULL`（静默吞写、不报错），
+// RLS 策略也可能静默丢行——upsert 返回成功不代表落盘。成功后按 id 读回关键列
+// （last_op_seq/is_deleted/updated_at）逐行比对，不一致直接抛错，让调用方保留
+// pending_upload 走重试，而不是清标志/刷 lastUploadTime 假装成功。
+// 纯函数 compare* 可单测；verify* 做 IO 并在不一致时 throw。
+
+export interface UploadReadbackExpect {
+  id: string;
+  updatedAt?: string;
+  lastOp?: { d: string; s: number } | null;
+}
+
+export interface UploadReadbackRow {
+  id: string;
+  updated_at: string;
+  last_op_seq?: number | null;
+  last_op_device?: string | null;
+  is_deleted?: boolean | null;
+}
+
+export function compareUploadReadback(
+  expect: UploadReadbackExpect[],
+  actual: UploadReadbackRow[],
+  opts: { checkStamp: boolean; checkTombstone: boolean }
+): { ok: boolean; reason?: string } {
+  if (expect.length === 0) return { ok: true };
+  const byId = new Map(actual.map(r => [r.id, r]));
+  for (const e of expect) {
+    const row = byId.get(e.id);
+    if (!row) {
+      return { ok: false, reason: `云端缺失组 ${e.id}（疑似服务端守卫/RLS 静默吞写）` };
+    }
+    if (opts.checkTombstone && row.is_deleted !== undefined && row.is_deleted !== null) {
+      if (row.is_deleted !== false) {
+        return { ok: false, reason: `组 ${e.id} 读回 is_deleted=${String(row.is_deleted)}，期望活跃 false（复位失败）` };
+      }
+    }
+    if (opts.checkStamp && e.lastOp) {
+      if ((row.last_op_seq ?? null) !== e.lastOp.s || (row.last_op_device ?? null) !== e.lastOp.d) {
+        return { ok: false, reason: `组 ${e.id} 读回印记(${String(row.last_op_device)},${String(row.last_op_seq)})与本地(${e.lastOp.d},${e.lastOp.s})不一致` };
+      }
+    }
+    if (e.updatedAt) {
+      const a = Date.parse(row.updated_at);
+      const b = Date.parse(e.updatedAt);
+      const same = Number.isNaN(a) || Number.isNaN(b) ? row.updated_at === e.updatedAt : a === b;
+      if (!same) {
+        return { ok: false, reason: `组 ${e.id} 读回 updated_at=${row.updated_at} 与本地 ${e.updatedAt} 不一致` };
+      }
+    }
+  }
+  return { ok: true };
+}
+
+async function verifyUploadReadback(
+  expect: UploadReadbackExpect[],
+  userId: string,
+  opts: { checkStamp: boolean; checkTombstone: boolean }
+): Promise<void> {
+  if (expect.length === 0) return;
+  const ids = expect.map(e => e.id);
+  let cols = 'id, updated_at';
+  if (opts.checkStamp) cols += ', last_op_device, last_op_seq';
+  if (opts.checkTombstone) cols += ', is_deleted';
+  const { data, error } = await supabase
+    .from('tab_groups')
+    .select(cols)
+    .eq('user_id', userId)
+    .in('id', ids);
+  if (error) throw error;
+  const cmp = compareUploadReadback(expect, ((data ?? []) as unknown) as UploadReadbackRow[], opts);
+  if (!cmp.ok) throw new Error(`[upload-verify] ${cmp.reason}`);
+  console.log(`[upload-verify] 读回校验通过（${expect.length} 组）`);
+}
+
+/** 软删读回：目标行必须存在且 is_deleted=true，否则删除意图没落盘 */
+export function compareTombstoneReadback(
+  ids: string[],
+  rows: Array<{ id: string; is_deleted?: boolean | null }>
+): { ok: boolean; reason?: string } {
+  const byId = new Map(rows.map(r => [r.id, r]));
+  for (const id of ids) {
+    const row = byId.get(id);
+    if (!row) {
+      return { ok: false, reason: `云端缺失组 ${id}（软删目标行不存在，删除意图未落盘）` };
+    }
+    if (row.is_deleted !== true) {
+      return { ok: false, reason: `组 ${id} 读回 is_deleted=${String(row.is_deleted)}，期望 true` };
+    }
+  }
+  return { ok: true };
+}
+
+async function verifyTombstoneReadback(ids: string[], userId: string): Promise<void> {
+  if (ids.length === 0) return;
+  const { data, error } = await supabase
+    .from('tab_groups')
+    .select('id, is_deleted')
+    .eq('user_id', userId)
+    .in('id', ids);
+  if (error) throw error;
+  const cmp = compareTombstoneReadback(ids, ((data ?? []) as unknown) as Array<{ id: string; is_deleted?: boolean | null }>);
+  if (!cmp.ok) throw new Error(`[tombstone-verify] ${cmp.reason}`);
+  console.log(`[tombstone-verify] 软删读回校验通过（${ids.length} 组）`);
+}
+
+/** 硬删读回：目标 id 必须全部消失，残留即抛错（P1-6 明确阻断而非静默） */
+export function compareHardDeleteReadback(
+  _ids: string[],
+  remainingRows: Array<{ id: string }>
+): { ok: boolean; reason?: string } {
+  if (remainingRows.length === 0) return { ok: true };
+  return {
+    ok: false,
+    reason: `云端仍残留 ${remainingRows.length} 行未删(${remainingRows.slice(0, 5).map(r => r.id).join(',')}${remainingRows.length > 5 ? '…' : ''})`,
+  };
+}
 
 // 用户认证相关方法
 export const auth = {
@@ -826,6 +966,18 @@ export const sync = {
       console.error('上传标签组时发生异常:', e);
       throw e;
     }
+
+    // P0-1 上传读回校验：upsert 成功不代表落盘（守卫 RETURN NULL 静默吞写 /
+    // RLS 静默丢行都不报错）。按 id 读回印记/删除位/时间戳比对，不一致抛错——
+    // 调用方保留 pending_upload 走重试，绝不清标志假装成功。
+    // 去重口径与上面的 uniqueGroups 一致（保留首个同 id 组）。
+    const firstById = new Map<string, TabGroup>();
+    for (const g of groups) if (!firstById.has(g.id)) firstById.set(g.id, g);
+    await verifyUploadReadback(
+      [...firstById.values()].map(g => ({ id: g.id, updatedAt: g.updatedAt, lastOp: g.lastOp ?? null })),
+      sessionData.session.user.id,
+      { checkStamp: opStampSupported, checkTombstone: await supportsCloudTombstone() }
+    );
     return { result };
   },
 
@@ -838,12 +990,18 @@ export const sync = {
     checkSupabaseConfig();
     const { data: sessionData } = await supabase.auth.getSession();
     if (!sessionData?.session) {
-      console.warn('[markCloudGroupsAsDeleted] 未登录，跳过');
-      return;
+      // P0-2：未登录必须抛错阻断上传成功（见上），禁止静默跳过。
+      throw new Error('[markCloudGroupsAsDeleted] 未登录，软删意图保留下轮重试');
     }
 
     const userId = sessionData.session.user.id;
     console.log(`[markCloudGroupsAsDeleted] 正在标记云端 ${deletedIds.length} 个组为删除`);
+
+    // P0-2：未登录不再静默跳过——跳过等于“删了本地、没删云端还报成功”，
+    // 下次下载直接复活。抛错让 upload 整体失败、保留 pending 下轮重试。
+    if (!userId) {
+      throw new Error('[markCloudGroupsAsDeleted] 会话无效，软删意图保留下轮重试');
+    }
 
     const mode = decideCloudTombstoneWrite(await supportsCloudTombstone(), await supportsOpStamp());
 
@@ -859,6 +1017,8 @@ export const sync = {
         console.error('[markCloudGroupsAsDeleted] 软删（无印记列）失败:', error);
         throw error;
       }
+      // P0-1：软删读回校验——局部 UPDATE 也可能被守卫吞写，读回确认墓碑落盘。
+      await verifyTombstoneReadback(deletedIds, userId);
       console.log(`[markCloudGroupsAsDeleted] 已软删 ${deletedIds.length} 个云端组（云端无印记列，不带 stamp）`);
       return;
     }
@@ -901,8 +1061,20 @@ export const sync = {
       }
 
       console.log(`[markCloudGroupsAsDeleted] 已标记 ${successCount}/${deletedIds.length} 个云端组为删除`);
+      // P0-1：墓碑读回校验——逐行 UPDATE 任一行被守卫吞写都必须现形。
+      // 注意只校验本次实际处理到的行（rows）：云端根本不存在的 id 说明本地墓碑
+      // 从未上过云，软删无目标可写——直接视为意图已达成（无行可复活），不报错。
+      const touchedIds = ((rows ?? []) as Array<{ id: string }>).map(r => r.id);
+      await verifyTombstoneReadback(touchedIds, userId);
     } else {
-      // mode === 'hard-delete'：云端连 is_deleted 列都没有，只能物理删除
+      // mode === 'hard-delete'：云端连 is_deleted 列都没有，只能物理删除。
+      // P1-6：这是降级路径，必须明确告警（缺 migration），且删后读回确认无残留——
+      // 禁止静默硬删：残留行会让对端活跃副本重新 INSERT = 幽灵复活。
+      console.error(
+        '[markCloudGroupsAsDeleted] 降级为硬删：云端缺少 is_deleted 列，跨端删除一致性无保障。\n' +
+        '  请尽快在 Supabase 控制台 SQL Editor 执行：\n' +
+        '  ALTER TABLE tab_groups ADD COLUMN is_deleted boolean NOT NULL DEFAULT false;'
+      );
       // 降级：硬删云端行（旧的统一做法）
       const { error } = await supabase
         .from('tab_groups')
@@ -915,8 +1087,62 @@ export const sync = {
         throw error;
       }
 
+      const { data: remaining, error: reError } = await supabase
+        .from('tab_groups')
+        .select('id')
+        .eq('user_id', userId)
+        .in('id', deletedIds);
+      if (reError) throw reError;
+      const cmp = compareHardDeleteReadback(
+        deletedIds,
+        ((remaining ?? []) as unknown) as Array<{ id: string }>
+      );
+      if (!cmp.ok) throw new Error(`[markCloudGroupsAsDeleted] ${cmp.reason}`);
+
       console.log(`[markCloudGroupsAsDeleted] 已删除 ${deletedIds.length} 个云端组`);
     }
+  },
+
+  // P1-6：把本地已 purge（物理移除）的组 id 同步删掉云端对应行。
+  // upload 成功删掉后调用方才 clear 队列；抛错则保留队列、阻断本次上传成功。
+  async purgeCloudGroups(purgedIds: string[]) {
+    if (purgedIds.length === 0) return;
+
+    checkSupabaseConfig();
+    const { data: sessionData } = await supabase.auth.getSession();
+    if (!sessionData?.session) {
+      throw new Error('[purgeCloudGroups] 未登录，purge 队列保留下轮重试');
+    }
+    const userId = sessionData.session.user.id;
+    console.log(`[purgeCloudGroups] 正在彻底删除云端 ${purgedIds.length} 个组`);
+
+    const { error } = await supabase
+      .from('tab_groups')
+      .delete()
+      .eq('user_id', userId)
+      .in('id', purgedIds);
+    if (error) {
+      console.error('[purgeCloudGroups] 删除失败:', error);
+      throw error;
+    }
+
+    const { data: remaining, error: reError } = await supabase
+      .from('tab_groups')
+      .select('id')
+      .eq('user_id', userId)
+      .in('id', purgedIds);
+    if (reError) throw reError;
+    const cmp = compareHardDeleteReadback(
+      purgedIds,
+      ((remaining ?? []) as unknown) as Array<{ id: string }>
+    );
+    if (!cmp.ok) throw new Error(`[purgeCloudGroups] ${cmp.reason}`);
+    console.log(`[purgeCloudGroups] 已彻底删除 ${purgedIds.length} 个云端组`);
+  },
+
+  // 轻量探活（指纹列，无大字段）：供 SyncEngine 全量下载前做变更判断
+  async fetchTabGroupsDigest() {
+    return fetchTabGroupsDigest();
   },
 
   // 下载标签组

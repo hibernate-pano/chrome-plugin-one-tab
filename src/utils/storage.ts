@@ -2,7 +2,12 @@ import { TabGroup, UserSettings, Tab, LayoutMode, ThemeStyle } from '@/types/tab
 import { parseOneTabFormat, formatToOneTabFormat } from './oneTabFormatParser';
 import { secureStorage } from './secureStorage';
 import { kvGet, kvSet, kvRemove } from '@/storage/storageAdapter';
+import { STORAGE_KEYS, STORAGE_VERSION } from '@/storage-kv/keys';
 import { cacheManager, cachedAsyncFn, debounceAsync } from './performance';
+
+// S2 收敛：KV 键常量单源见 @/storage-kv/keys（与 storageAdapter 迁移键表同源）。
+// 此处 re-export，保持既有调用方 import 路径兼容。
+export { STORAGE_KEYS, STORAGE_VERSION };
 
 // 缓存 TTL 配置常量
 export const CACHE_TTL = {
@@ -18,35 +23,8 @@ export function invalidateGroupsCache(): void {
   cacheManager.getCache('storage').delete('groups');
 }
 
-const STORAGE_KEYS = {
-  VERSION: 'storage_version',
-  GROUPS: 'tab_groups',
-  SETTINGS: 'user_settings',
-  DELETED_GROUPS: 'deleted_tab_groups',
-  DELETED_TABS: 'deleted_tabs',
-  LAST_SYNC_TIME: 'last_sync_time',
-  SYNC_SNAPSHOT: 'sync_snapshot',
-  PRODUCT_EVENTS: 'product_events',
-  MIGRATION_FLAGS: 'migration_flags',
-  // ponytail: 本地是否有未上传变更。跨进程持久化——MV3 popup 失焦销毁后
-  // 依然能从 chrome.storage / IndexedDB 读回。后续轮询 / 上传 alarm 唤醒 SW
-  // 时检查此标志，未上传则先上传，避免云端旧版本覆盖本地新版本。
-  PENDING_UPLOAD: 'pending_upload',
-  // 最近一次成功上传的时间戳（独立于 last_sync_time，后者下载也会更新）。
-  // 用于：1）downloadAndMerge 保护窗口 2）调试 / product_event 上报
-  LAST_UPLOAD_TIME: 'last_upload_time',
-  // 阶段二·§4.1：本设备 seq 单调计数器。SW 启动时由 seqRegistry 修复为
-  // max(持久化, 实体印记中本设备 max s) + 100。
-  DEVICE_SEQ: 'device_seq',
-  // 阶段二·§4.3：journal write-ahead log（FIFO 上限 1000）。
-  JOURNAL: 'journal',
-  // 阶段二·§4.3：upload 成功后已确认的最大 seq，调试视图用。
-  LAST_SYNCED_SEQ: 'last_synced_seq',
-  // 阶段二·§7：存量数据迁移完成标记。
-  OP_STAMP_MIGRATED: 'op_stamp_migrated',
-};
-
-const STORAGE_VERSION = 5;
+// S2 收敛：STORAGE_KEYS / STORAGE_VERSION 已下沉至 @/storage-kv/keys（见文件顶部 import + re-export）。
+// 门面双路径语义（防抖 setGroups / 直写 setGroupsImmediate）保持原地不动，行为零变化。
 
 /**
  * 订阅 groups 变化（规格 §3.1 步骤3）：跨进程可靠对账，替代 REFRESH_TAB_LIST 手动广播。
@@ -186,6 +164,36 @@ class ChromeStorage {
       cache.delete('groups');
       throw error;
     }
+  }
+
+  /**
+   * P1-4：同步关键路径专用直写（绕过 500ms 防抖）。
+   *
+   * 为什么需要：MV3 Service Worker 可随时被杀——setGroups 的防抖窗口期内
+   * 若 SW 被挂起，合并结果/快照回滚可能根本没落盘，下次唤醒读到旧数据
+   * （合并过的数据“丢了”，云端却以为已同步）。同步路径调用量小、无高频
+   * 连写压力，直写 kv + 同步刷新缓存即可；用户操作热路径仍走防抖 setGroups。
+   */
+  async setGroupsImmediate(groups: TabGroup[]): Promise<void> {
+    const cache = cacheManager.getCache('storage');
+    try {
+      await this.ensureVersion();
+      await kvSet(STORAGE_KEYS.GROUPS, groups);
+      cache.set('groups', groups, CACHE_TTL.GROUPS);
+    } catch (error) {
+      console.error('直接保存标签组失败:', error);
+      cache.delete('groups');
+      throw error;
+    }
+  }
+
+  /**
+   * P1-4：同步关键路径专用新鲜读（先失效 30s 缓存再读）。
+   * 同一进程内 mutation 刚写完就触发下载时，缓存可能是防抖窗口期的旧快照。
+   */
+  async getGroupsFresh(): Promise<TabGroup[]> {
+    invalidateGroupsCache();
+    return this.getGroups();
   }
 
   async getSettings(): Promise<UserSettings> {
@@ -448,6 +456,38 @@ class ChromeStorage {
       await kvSet(STORAGE_KEYS.LAST_UPLOAD_TIME, time);
     } catch (error) {
       console.error('设置 last_upload_time 失败:', error);
+    }
+  }
+
+  // P1-6：purge 出队/入队。upload 成功删掉云端对应行后才 clear；失败保留下轮重试。
+  async getPendingPurgeIds(): Promise<string[]> {
+    try {
+      await this.ensureVersion();
+      const ids = await kvGet<unknown>(STORAGE_KEYS.PENDING_PURGE_IDS);
+      return Array.isArray(ids) ? (ids as unknown[]).filter((x): x is string => typeof x === 'string') : [];
+    } catch {
+      return [];
+    }
+  }
+
+  async addPendingPurgeId(id: string): Promise<void> {
+    try {
+      const ids = await this.getPendingPurgeIds();
+      if (!ids.includes(id)) {
+        await this.ensureVersion();
+        await kvSet(STORAGE_KEYS.PENDING_PURGE_IDS, [...ids, id]);
+      }
+    } catch (error) {
+      console.error('记录 pending_purge_ids 失败:', error);
+    }
+  }
+
+  async clearPendingPurgeIds(): Promise<void> {
+    try {
+      await this.ensureVersion();
+      await kvRemove(STORAGE_KEYS.PENDING_PURGE_IDS);
+    } catch (error) {
+      console.error('清除 pending_purge_ids 失败:', error);
     }
   }
 

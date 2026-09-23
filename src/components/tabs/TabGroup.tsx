@@ -187,6 +187,12 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
   const handleOpenAllTabsInCurrentWindow = useCallback(() => openAllTabs(true), [openAllTabs]);
 
   const handleOpenTab = useCallback((tab: Tab) => {
+    // 先开标签再删本地项，两路并行：chrome.tabs.create 不依赖删除结果，
+    // 此前 setTimeout 50ms + 等 dispatch 发起，白白串行了 SW 唤醒和开标签。
+    chrome.runtime.sendMessage({
+      type: 'OPEN_TAB',
+      data: { url: tab.url, pinned: !!tab.pinned }
+    });
     if (!group.isLocked) {
       dispatch(deleteTabAndSync({ groupId: group.id, tabId: tab.id }))
         .unwrap()
@@ -200,13 +206,6 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
           showRestoreError(`更新会话失败: ${error.message || '未知错误'}`);
         });
     }
-
-    setTimeout(() => {
-      chrome.runtime.sendMessage({
-        type: 'OPEN_TAB',
-        data: { url: tab.url, pinned: !!tab.pinned }
-      });
-    }, 50);
   }, [dispatch, group, showDeleteSuccess, showRestoreError]);
 
   const handleMoveTab = useCallback((sourceGroupId: string, sourceIndex: number, targetGroupId: string, targetIndex: number) => {

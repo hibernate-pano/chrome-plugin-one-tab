@@ -103,6 +103,8 @@ export interface TabState {
   backgroundSync: boolean; // 是否在后台同步
   syncProgress: number; // 同步进度（0-100）
   syncOperation: 'none' | 'upload' | 'download'; // 当前同步操作类型
+  // deleteTabAndSync 乐观更新的回滚备份（pending 写入，fulfilled/rejected 清除）
+  optimisticBackup?: { groupId: string; group: TabGroup } | null;
 }
 
 // 布局模式枚举
