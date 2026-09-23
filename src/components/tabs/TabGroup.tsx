@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState, useCallback, useRef } from 'react';
 import { useAppDispatch, useAppSelector } from '@/store/hooks';
 import { updateGroupNameAndSync, toggleGroupLockAndSync, deleteGroup, updateGroupFields, persistGroupFields, deleteTabAndSync, moveTabAndSync } from '@/store/slices/tabSlice';
 import { DraggableTab } from '@/components/dnd/DraggableTab';
@@ -69,6 +69,8 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
   const [isCollapsed, setIsCollapsed] = useState(false);
   const [isEditingNotes, setIsEditingNotes] = useState(false);
   const [notesDraft, setNotesDraft] = useState(group.notes || '');
+  // tabId → 最近一次打开时间戳（在途去重 + 3s 冷却，防重复打开同一标签）
+  const openingRef = useRef<Map<string, number>>(new Map());
 
   useEffect(() => {
     setNewName(group.name);
@@ -187,6 +189,11 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
   const handleOpenAllTabsInCurrentWindow = useCallback(() => openAllTabs(true), [openAllTabs]);
 
   const handleOpenTab = useCallback((tab: Tab) => {
+    // 在途+冷却去重：mutation 回包前的重复点击直接忽略；回包后 3s 内同样忽略，
+    // 防止“复活项”被二次点开导致同一 URL 打开多个浏览器标签。
+    const lastOpen = openingRef.current.get(tab.id) ?? 0;
+    if (Date.now() - lastOpen < 3000) return;
+    openingRef.current.set(tab.id, Date.now());
     // 先开标签再删本地项，两路并行：chrome.tabs.create 不依赖删除结果，
     // 此前 setTimeout 50ms + 等 dispatch 发起，白白串行了 SW 唤醒和开标签。
     chrome.runtime.sendMessage({

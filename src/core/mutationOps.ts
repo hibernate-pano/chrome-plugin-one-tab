@@ -28,11 +28,13 @@ export function applySaveGroup(
 }
 
 /**
- * removeTab 语义（= 现有 deleteTabAndSync thunk，tabSlice.ts:1021）：
+ * removeTab 语义（= 现有 deleteTabAndSync thunk）：
  * 删除 tabId 后若组内无活跃 tab 且未锁定 → 整组软删墓碑；否则只墓碑该 tab。
  * 幂等：已删除的 tab 不重复处理（version 不膨胀）。
  *
- * §5.3：仅盖被墓碑 tab 的 lastOp；组 lastOp 不动。
+ * 标签级删除同步提升组级印记（updatedAt/version/lastOp）：digest 以单调 seq 为主
+ * 信号做探活，组 stamp 不动会导致“删 tab”在指纹层不可见；且合并时组字段按组
+ * stamp 决胜——不盖组 stamp 会让对端稍新的组 stamp 把本次删除连带覆盖。
  */
 export function applyRemoveTab(
   groups: TabGroup[],

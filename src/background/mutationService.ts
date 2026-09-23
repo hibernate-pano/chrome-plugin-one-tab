@@ -34,7 +34,7 @@ const journal = createJournal({
 
 export const mutationService = createMutationHandlers({
   getGroups: () => storage.getGroups(),
-  setGroups: g => storage.setGroups(g),
+  setGroups: g => storage.setGroupsImmediate(g),
   scheduleUpload: ms => syncEngine.scheduleUpload(ms),
   now: () => new Date().toISOString(),
   journal,
