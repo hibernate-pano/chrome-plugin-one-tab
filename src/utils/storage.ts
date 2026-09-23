@@ -167,16 +167,22 @@ class ChromeStorage {
   }
 
   /**
-   * P1-4：同步关键路径专用直写（绕过 500ms 防抖）。
+   * P1-4：SW 侧统一的 groups 写路径（绕过 500ms 防抖，直写 kv）。
    *
    * 为什么需要：MV3 Service Worker 可随时被杀——setGroups 的防抖窗口期内
    * 若 SW 被挂起，合并结果/快照回滚可能根本没落盘，下次唤醒读到旧数据
-   * （合并过的数据“丢了”，云端却以为已同步）。同步路径调用量小、无高频
-   * 连写压力，直写 kv + 同步刷新缓存即可；用户操作热路径仍走防抖 setGroups。
+   * （合并过的数据“丢了”，云端却以为已同步）。
+   *
+   * 先排空防抖再直写：同一进程内若还有未决的防抖写入（旧快照），必须先让它
+   * 落盘，再用本次更新的数据覆盖；否则定时器稍后触发会用旧数据覆盖新数据。
+   *
+   * 写路径分工：SW 内所有写者（mutation、TabManager 保存、导入、迁移）都走
+   * 本函数；只有 UI 进程的用户操作热路径走防抖 setGroups（高频连写合并）。
    */
   async setGroupsImmediate(groups: TabGroup[]): Promise<void> {
     const cache = cacheManager.getCache('storage');
     try {
+      await this.debouncedPersistGroups.flush();
       await this.ensureVersion();
       await kvSet(STORAGE_KEYS.GROUPS, groups);
       cache.set('groups', groups, CACHE_TTL.GROUPS);
@@ -658,7 +664,9 @@ class ChromeStorage {
         const dateB = new Date(b.createdAt);
         return dateB.getTime() - dateA.getTime();
       });
-      await this.setGroups(sortedGroups);
+      // SW/后台语境的导入走直写（与 mutation/TabManager 同一写路径），避免防抖
+      // 窗口期内 SW 被挂起导致导入结果丢失。
+      await this.setGroupsImmediate(sortedGroups);
       // 导入的数据必须能上云：导入只写本地 groups，不经过 mutationService（不盖印记、
       // 不置 pending_upload），而后台 alarm 仅在 pending_upload 为真时才上传。
       await this.markGroupsChangedByImport();
@@ -706,7 +714,8 @@ class ChromeStorage {
         const dateB = new Date(b.createdAt);
         return dateB.getTime() - dateA.getTime();
       });
-      await this.setGroups(sortedGroups);
+      // 同 importData：直写，防 SW 挂起丢导入结果。
+      await this.setGroupsImmediate(sortedGroups);
       await this.markGroupsChangedByImport();
 
       return true;

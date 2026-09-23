@@ -132,11 +132,12 @@ export class TabManager {
       }
 
       // 单写者：读-改-写必须整体在队列内（只把读放进队列、写在队列外 =
-      // 与其他 job 交错读改写，会丢刚写入的会话）
+      // 与其他 job 交错读改写，会丢刚写入的会话）。写走直写：SW 可随时被挂起，
+      // 防抖窗口期内的保存会丢失；且 SW 内 mutation 已是直写，混用会互相覆盖。
       await enqueue('saveAllTabs', async () => {
         const existingGroups = await storage.getGroups();
         const stamped: typeof safeGroup = { ...safeGroup, lastOp: await stampForNewEntity() };
-        await storage.setGroups(
+        await storage.setGroupsImmediate(
           [stamped, ...existingGroups].sort(
             (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
           )
@@ -229,11 +230,12 @@ export class TabManager {
         return;
       }
 
-      // 单写者 + 盖印记：与 saveAllTabs 同一语义（原先连 enqueue 都没有，属丢更新路径）
+      // 单写者 + 盖印记：与 saveAllTabs 同一语义（原先连 enqueue 都没有，属丢更新路径）。
+      // 写走直写，理由同 saveAllTabs（SW 挂起丢保存 + 与 mutation 直写混用覆盖）。
       await enqueue('saveCurrentTab', async () => {
         const existingGroups = await storage.getGroups();
         const stamped: typeof safeGroup = { ...safeGroup, lastOp: await stampForNewEntity() };
-        await storage.setGroups([stamped, ...existingGroups]);
+        await storage.setGroupsImmediate([stamped, ...existingGroups]);
       });
 
       // ponytail: 关闭单标签时也会触发数据变更（保存到当前会话）——同样需自动上传。

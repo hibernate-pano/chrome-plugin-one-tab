@@ -15,7 +15,7 @@ import type { OpStamp } from './opStamp';
 import { shouldAutoDeleteAfterTabRemoval } from './tabGroupUtils';
 import { updateDisplayOrder, updateGroupWithVersion } from './versionHelper';
 
-/** saveGroup 语义（tabSlice.ts:58）：新组置顶，按 createdAt 倒序 */
+/** saveGroup 语义（对应 tabSlice.saveGroup）：新组置顶，按 createdAt 倒序 */
 export function applySaveGroup(
   groups: TabGroup[],
   group: TabGroup,
@@ -76,7 +76,7 @@ export function applyRemoveTab(
   return { groups: out, group: updatedGroup };
 }
 
-/** deleteGroup 语义（tabSlice.ts:112）：软删墓碑，幂等（已墓碑不重复处理） */
+/** deleteGroup 语义（对应 tabSlice.deleteGroup）：软删墓碑，幂等（已墓碑不重复处理） */
 export function applyDeleteGroup(
   groups: TabGroup[],
   groupId: string,
@@ -90,7 +90,7 @@ export function applyDeleteGroup(
   );
 }
 
-/** deleteAllGroups 语义（tabSlice.ts:140）：仅活跃组加墓碑；count = groups.length（与 thunk 口径一致） */
+/** deleteAllGroups 语义（对应 tabSlice.deleteAllGroups）：仅活跃组加墓碑；count = groups.length（与 thunk 口径一致） */
 export function applyDeleteAllGroups(
   groups: TabGroup[],
   now: string,
@@ -106,7 +106,7 @@ export function applyDeleteAllGroups(
   };
 }
 
-/** restoreGroup 语义（tabSlice.ts:172）：置回活跃 + version+1；restored=null 表示未找到 */
+/** restoreGroup 语义（对应 tabSlice.restoreGroup）：置回活跃 + version+1；restored=null 表示未找到 */
 export function applyRestoreGroup(
   groups: TabGroup[],
   groupId: string,
@@ -131,7 +131,7 @@ export function applyRestoreGroup(
   };
 }
 
-/** purgeGroup 语义（tabSlice.ts:203）：物理移除（仅回收站场景）；stamp 参数保留以
+/** purgeGroup 语义（对应 tabSlice.purgeGroup）：物理移除（仅回收站场景）；stamp 参数保留以
  * 统一签名，但物理移除无实体承接 stamp——保留为调用方需要的"同一意图"语义。 */
 export function applyPurgeGroup(
   groups: TabGroup[],
@@ -144,7 +144,7 @@ export function applyPurgeGroup(
   return groups.filter(g => g.id !== groupId);
 }
 
-/** renameGroup 语义（updateGroupNameAndSync，tabSlice.ts:251）：
+/** renameGroup 语义（对应 tabSlice.updateGroupNameAndSync）：
  * 走 updateGroupWithVersion（version+1），再覆写 updatedAt=now 保持与 thunk 现行语义一致
  * （versionHelper 内部固定使用 new Date().toISOString()，不接受 updatedAt 入参）。 */
 export function applyRenameGroup(
@@ -164,7 +164,7 @@ export function applyRenameGroup(
   return { groups: out, renamed };
 }
 
-/** toggleGroupLock 语义（toggleGroupLockAndSync，tabSlice.ts:282）：
+/** toggleGroupLock 语义（对应 tabSlice.toggleGroupLockAndSync）：
  * 翻转 isLocked；同 updateGroupWithVersion 路径，并覆写 updatedAt=now。 */
 export function applyToggleGroupLock(
   groups: TabGroup[],
@@ -201,7 +201,7 @@ export function applyUpdateGroupFields(
   return { groups: groups.map(g => (g.id === groupId ? updated : g)), updated };
 }
 
-/** importGroups 语义（tabSlice.ts:219）：新 id、URL 清洗、置顶按 createdAt DESC；
+/** importGroups 语义（对应 tabSlice.importGroups）：新 id、URL 清洗、置顶按 createdAt DESC；
  * genId/sanitizeUrl 注入便于测试。所有导入组盖统一 stamp——它们属于同一次导入意图。 */
 export function applyImportGroups(
   groups: TabGroup[],
@@ -229,7 +229,7 @@ export function applyImportGroups(
   };
 }
 
-/** moveGroup 语义（moveGroupAndSync，tabSlice.ts:316）：索引非法返回 null
+/** moveGroup 语义（对应 tabSlice.moveGroupAndSync）：索引非法返回 null
  * 被拖动组盖 stamp（这是用户主动排序意图） */
 export function applyMoveGroup(
   groups: TabGroup[],
@@ -248,7 +248,7 @@ export function applyMoveGroup(
   );
 }
 
-/** moveTab 语义（moveTabAndSync，tabSlice.ts:511）：跨组移空源组→墓碑（含空组自动删除判断）
+/** moveTab 语义（对应 tabSlice.moveTabAndSync）：跨组移空源组→墓碑（含空组自动删除判断）
  * 源组与目标组都盖 stamp（这是组级拖动意图）；跨组自动墓碑路径组 stamp 也由同一 stamp 覆盖。 */
 export function applyMoveTab(
   groups: TabGroup[],
@@ -292,7 +292,7 @@ export function applyMoveTab(
   return { groups: out, autoDeletedGroupId };
 }
 
-/** cleanDuplicateTabs 语义（tabSlice.ts:380）：同 URL 留最新，余者墓碑；清空未锁定组→墓碑
+/** cleanDuplicateTabs 语义（对应 tabSlice.cleanDuplicateTabs）：同 URL 留最新，余者墓碑；清空未锁定组→墓碑
  * 所有被墓碑实体盖同一 stamp——本设备一次 cleanDuplicates 是同一次清理意图。 */
 export function applyCleanDuplicates(
   groups: TabGroup[],

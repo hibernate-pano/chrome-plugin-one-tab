@@ -55,10 +55,20 @@ export function throttle<T extends (...args: any[]) => any>(
  * - 每次调用都会返回一个 Promise，只有当最终执行完成后才 resolve/reject
  * - 适合用在“频繁写入但需要 await 落盘”的场景（例如存储层 setGroups/setSettings）
  */
+export interface DebouncedAsyncFn<TArgs extends any[], TResult> {
+  (...args: TArgs): Promise<TResult>;
+  /**
+   * 排空未决的防抖写入：若窗口期内有待执行调用，立即用最后一次参数执行一次
+   * 并让所有等待者拿到结果；无未决调用时直接返回 undefined（fn 不执行）。
+   * 供 setGroupsImmediate 这类“直写”路径调用，避免旧快照在直写之后落盘覆盖新数据。
+   */
+  flush: () => Promise<TResult | undefined>;
+}
+
 export function debounceAsync<TArgs extends any[], TResult>(
   fn: (...args: TArgs) => Promise<TResult>,
   delay: number
-): (...args: TArgs) => Promise<TResult> {
+): DebouncedAsyncFn<TArgs, TResult> {
   let timeoutId: ReturnType<typeof setTimeout> | null = null;
   let lastArgs: TArgs | null = null;
 
@@ -97,7 +107,7 @@ export function debounceAsync<TArgs extends any[], TResult>(
     }, delay);
   };
 
-  return (...args: TArgs) => {
+  const invoke = (...args: TArgs) => {
     lastArgs = args;
 
     if (!pending) {
@@ -113,6 +123,28 @@ export function debounceAsync<TArgs extends any[], TResult>(
     schedule();
     return pending.promise;
   };
+
+  const flush = async (): Promise<TResult | undefined> => {
+    if (timeoutId) {
+      clearTimeout(timeoutId);
+      timeoutId = null;
+    }
+    const args = lastArgs;
+    if (!args) return pending ? pending.promise : undefined;
+    lastArgs = null;
+    const currentPending = pending;
+    pending = null;
+    try {
+      const result = await fn(...args);
+      currentPending?.resolve(result);
+      return result;
+    } catch (err) {
+      currentPending?.reject(err);
+      throw err;
+    }
+  };
+
+  return Object.assign(invoke, { flush });
 }
 
 /**

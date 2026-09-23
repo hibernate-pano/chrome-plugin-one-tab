@@ -5,6 +5,7 @@ import { DraggableTab } from '@/components/dnd/DraggableTab';
 import { TabGroup as TabGroupType, Tab } from '@/types/tab';
 import { useToast } from '@/contexts/ToastContext';
 import { useEnhancedToast } from '@/utils/toastHelper';
+import { OpenGuard, OpenAllGuard } from '@/utils/openGuard';
 import { trackProductEvent } from '@/utils/productEvents';
 
 interface TabGroupProps {
@@ -69,8 +70,12 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
   const [isCollapsed, setIsCollapsed] = useState(false);
   const [isEditingNotes, setIsEditingNotes] = useState(false);
   const [notesDraft, setNotesDraft] = useState(group.notes || '');
-  // tabId → 最近一次打开时间戳（在途去重 + 3s 冷却，防重复打开同一标签）
-  const openingRef = useRef<Map<string, number>>(new Map());
+  // 复活去重守卫（逻辑见 @/utils/openGuard，可单测）：单 tab 按 tabId 冷却去重，
+  // 整组恢复按 group.id 加同类在途锁。组件卸载即丢弃，无需额外清理。
+  const openGuardRef = useRef<OpenGuard | null>(null);
+  const openAllGuardRef = useRef<OpenAllGuard | null>(null);
+  if (openGuardRef.current === null) openGuardRef.current = new OpenGuard();
+  if (openAllGuardRef.current === null) openAllGuardRef.current = new OpenAllGuard();
 
   useEffect(() => {
     setNewName(group.name);
@@ -154,6 +159,18 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
   }, [dispatch, group, notesDraft]);
 
   const openAllTabs = useCallback((inCurrentWindow: boolean) => {
+    const allGuard = openAllGuardRef.current as OpenAllGuard;
+    // 同类在途锁：恢复流程（删本地组 + SW 开窗口）结束前，同组重复点击直接忽略，
+    // 防一次恢复开出两个浏览器窗口
+    if (!allGuard.tryAcquire(group.id)) return;
+    const releaseAll = () => allGuard.release(group.id);
+    // 兜底：dispatch 悬挂时不永久锁死该组的恢复入口
+    const safetyTimer = setTimeout(releaseAll, 10000);
+    const releaseAllOnce = () => {
+      clearTimeout(safetyTimer);
+      releaseAll();
+    };
+
     const tabsPayload = group.tabs.map(tab => ({
       url: tab.url,
       pinned: !!tab.pinned,
@@ -174,7 +191,8 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
         .catch(error => {
           console.error('恢复会话后删除原会话失败:', error);
           showDeleteError(`恢复会话后清理原会话失败: ${error.message || '未知错误'}`);
-        });
+        })
+        .finally(releaseAllOnce);
     }
 
     setTimeout(() => {
@@ -182,6 +200,8 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
         type: 'OPEN_TABS',
         data: { tabs: tabsPayload, inCurrentWindow }
       });
+      // 锁定组不删本地项、无 dispatch 可挂 finally，随开窗消息发出即解锁
+      if (group.isLocked) releaseAllOnce();
     }, 50);
   }, [dispatch, group, showDeleteError]);
 
@@ -189,11 +209,12 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
   const handleOpenAllTabsInCurrentWindow = useCallback(() => openAllTabs(true), [openAllTabs]);
 
   const handleOpenTab = useCallback((tab: Tab) => {
-    // 在途+冷却去重：mutation 回包前的重复点击直接忽略；回包后 3s 内同样忽略，
+    // 在途+冷却去重：mutation 回包前的重复点击直接忽略；回包后冷却期内同样忽略，
     // 防止“复活项”被二次点开导致同一 URL 打开多个浏览器标签。
-    const lastOpen = openingRef.current.get(tab.id) ?? 0;
-    if (Date.now() - lastOpen < 3000) return;
-    openingRef.current.set(tab.id, Date.now());
+    // 锁定组不删本地项、恢复立即可见，只需防双击（见 openCooldownMs）；
+    // 失败必须 release，否则该 tab 会被记住一整个冷却窗口、点重试无反应。
+    const guard = openGuardRef.current as OpenGuard;
+    if (!guard.tryAcquire(tab.id, group.isLocked)) return;
     // 先开标签再删本地项，两路并行：chrome.tabs.create 不依赖删除结果，
     // 此前 setTimeout 50ms + 等 dispatch 发起，白白串行了 SW 唤醒和开标签。
     chrome.runtime.sendMessage({
@@ -209,6 +230,7 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
           }
         })
         .catch(error => {
+          guard.release(tab.id);
           console.error('更新会话失败:', error);
           showRestoreError(`更新会话失败: ${error.message || '未知错误'}`);
         });
