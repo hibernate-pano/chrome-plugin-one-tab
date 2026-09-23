@@ -1,5 +1,7 @@
 // 防止「同步覆盖本地数据」——钉死真实生产路径 syncEngine.downloadAndMerge
-// 所依赖的两道纯函数防线：mergeTabGroups + validateMergeResult。
+// 所依赖的纯函数防线 validateMergeResult（现役，@/core/syncDecision），以及
+// 已隔离到 @/utils/syncUtils.legacy 的 mergeTabGroups 回归（⛔禁接回生产，
+// 仅作回滚对比；不代表当前同步语义，语义保障见 tests/opStampMerge.test.ts）。
 //
 // 历史背景：旧测试针对 downloadTabsFromCloudFlow（tabSyncWorkflow.ts），
 // 但该路径在 v1.12.0 后已是**死代码**——生产自动下载走
@@ -56,9 +58,9 @@ before(async () => {
 });
 
 describe('syncMergeSafety: 同步合并不丢本地数据（真实生产路径防线）', () => {
-  // ── mergeTabGroups ────────────────────────────────────────────────
+  // ── mergeTabGroups（legacy 隔离回归，⛔禁接回生产）────────────────────────
   it('云端空 + 本地有数据 → 合并后保留全部本地组', async () => {
-    const { mergeTabGroups } = await import('@/utils/syncUtils');
+    const { mergeTabGroups } = await import('@/utils/syncUtils.legacy');
     const local = [makeGroup('g-A', 'A'), makeGroup('g-B', 'B'), makeGroup('g-C', 'C')];
     const merged = mergeTabGroups(local, [], 'newest');
     assert.deepEqual(
@@ -69,12 +71,12 @@ describe('syncMergeSafety: 同步合并不丢本地数据（真实生产路径�
   });
 
   it('云端空 + 本地空 → 合并为空（正常）', async () => {
-    const { mergeTabGroups } = await import('@/utils/syncUtils');
+    const { mergeTabGroups } = await import('@/utils/syncUtils.legacy');
     assert.deepEqual(mergeTabGroups([], [], 'newest'), []);
   });
 
   it('云端独有 + 本地独有 → 合并为并集', async () => {
-    const { mergeTabGroups } = await import('@/utils/syncUtils');
+    const { mergeTabGroups } = await import('@/utils/syncUtils.legacy');
     const local = [makeGroup('g-A', 'A')];
     const cloud = [makeGroup('g-Z', 'Z')];
     const merged = mergeTabGroups(local, cloud, 'newest');
@@ -82,7 +84,7 @@ describe('syncMergeSafety: 同步合并不丢本地数据（真实生产路径�
   });
 
   it('未删除的本地组不会因云端缺失而消失', async () => {
-    const { mergeTabGroups } = await import('@/utils/syncUtils');
+    const { mergeTabGroups } = await import('@/utils/syncUtils.legacy');
     const local = [makeGroup('keep', 'Keep')];
     const cloud = [makeGroup('cloud-only', 'CloudOnly')];
     const merged = mergeTabGroups(local, cloud, 'remote'); // 即便远程优先
@@ -140,7 +142,8 @@ describe('syncMergeSafety: 同步合并不丢本地数据（真实生产路径�
   });
 
   it('端到端：删过组的用户（本地含软删）+ 云端空 → merge 结果能通过 validate', async () => {
-    const { mergeTabGroups, validateMergeResult } = await import('@/utils/syncUtils');
+    const { mergeTabGroups } = await import('@/utils/syncUtils.legacy');
+    const { validateMergeResult } = await import('@/utils/syncUtils');
     const local = [
       makeGroup('keep-1', 'Keep1'),
       makeGroup('keep-2', 'Keep2'),
@@ -157,7 +160,8 @@ describe('syncMergeSafety: 同步合并不丢本地数据（真实生产路径�
 
   // ── 端到端组合：合并 + 验证 一起守住 ──────────────────────────────
   it('组合：云端空 + 本地有数据，merge 结果能通过 validate', async () => {
-    const { mergeTabGroups, validateMergeResult } = await import('@/utils/syncUtils');
+    const { mergeTabGroups } = await import('@/utils/syncUtils.legacy');
+    const { validateMergeResult } = await import('@/utils/syncUtils');
     const local = [makeGroup('g-A', 'A'), makeGroup('g-B', 'B')];
     const merged = mergeTabGroups(local, [], 'newest');
     const v = validateMergeResult(local, [], merged);
@@ -167,7 +171,7 @@ describe('syncMergeSafety: 同步合并不丢本地数据（真实生产路径�
 
   // ── 误删保护闭环：删除 → 云端墓碑 → 恢复 → 合并带回 ──────────────────
   it('误删保护：Web 端恢复（墓碑复位活跃）后，扩展端 merge 能把组带回来', async () => {
-    const { mergeTabGroups } = await import('@/utils/syncUtils');
+    const { mergeTabGroups } = await import('@/utils/syncUtils.legacy');
     // 场景：用户在 Web 端误删会话（云端 is_deleted=true，带新时间戳/版本），
     // 又从 Web「已删除」区点恢复 → 云端墓碑复位 is_deleted=false。
     // 扩展端下载时云端行是活跃的，merge 不应把它当墓碑丢弃。
@@ -185,7 +189,7 @@ describe('syncMergeSafety: 同步合并不丢本地数据（真实生产路径�
   });
 
   it('误删保护：扩展端恢复（restoreGroup 版本+1）上传后，云端墓碑被覆写为活跃', async () => {
-    const { mergeTabGroups } = await import('@/utils/syncUtils');
+    const { mergeTabGroups } = await import('@/utils/syncUtils.legacy');
     // 场景：扩展端删组（本地墓碑）→ 用户从扩展端恢复区点恢复 →
     // restoreGroup 置 isDeleted=false 且 version+1 → 上传以 is_deleted:false 覆写云端。
     // 这里验证 merge 对「本地已恢复、云端仍是墓碑」的正确合并：
@@ -205,7 +209,7 @@ describe('syncMergeSafety: 同步合并不丢本地数据（真实生产路径�
   // 物理过滤掉（无墓碑）→ upload() 的 deletedIds 不含本组、云端行 is_deleted=false
   // 残留 → 下载合并把云端该组以 remote-only 复活（“最后一个标签刷新后又回来”）。
   it('回归：云端残留活跃组 + 本地物理移除 → 会被 merge 复活（Bug 场景）', async () => {
-    const { mergeTabGroups } = await import('@/utils/syncUtils');
+    const { mergeTabGroups } = await import('@/utils/syncUtils.legacy');
     // 本地：该组已被物理移除（storage 中不存在；本地只剩另一个活跃组）
     const local = [makeGroup('other', 'Other')];
     // 云端：旧组仍为 is_deleted=false（物理移除从未把删除意图播到云端）
@@ -219,7 +223,7 @@ describe('syncMergeSafety: 同步合并不丢本地数据（真实生产路径�
   });
 
   it('回归：本地墓碑 + 云端墓碑（上传已播删除后）→ 刷新不复活、其他组存活', async () => {
-    const { mergeTabGroups } = await import('@/utils/syncUtils');
+    const { mergeTabGroups } = await import('@/utils/syncUtils.legacy');
     // 修复后：空组不再物理移除，而是本地打 isDeleted 墓碑 → upload 把 deletedIds
     // 播到云端、markCloudGroupsAsDeleted 使云端同组也 is_deleted=true。
     // 此处验证该稳态：两端都是墓碑 → 刷新/下载不会把组复活回来（Bug 已消除）。

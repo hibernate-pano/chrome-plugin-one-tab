@@ -22,7 +22,7 @@ import {
   hasRemoteChanges,
 } from '@/utils/syncUtils';
 // 阶段二（§5 + §9）：合并语义已统一为 mergeOpStamped（OpStamp 全序决胜）。
-// 云端 schema 与客户端同步发布，旧 mergeTabGroups 已删除。
+// 旧 LWW 合并 mergeTabGroups 已隔离至 @/utils/syncUtils.legacy（⛔禁接回生产）。
 import { mergeOpStamped } from '@/utils/opStampMerge';
 import { createSeqRegistry, maxObservedSeq } from '@/utils/seqRegistry';
 import { ensureOpStampMigrated } from '@/background/opStampMigratedGuard';

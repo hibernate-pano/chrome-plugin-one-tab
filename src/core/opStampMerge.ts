@@ -1,6 +1,6 @@
 /**
- * 按 OpStamp 全序决胜的合并纯函数（规格 §5）：替代现有 syncUtils.mergeTabGroups
- * （其使用 version + 时间戳 LWW）。同全序保证下，交换律/幂等/收敛自然成立。
+ * 按 OpStamp 全序决胜的合并纯函数（规格 §5）：替代已隔离至 syncUtils.legacy 的
+ * mergeTabGroups（其使用 version + 时间戳 LWW）。同全序保证下，交换律/幂等/收敛自然成立。
  *
  * 设计要点：
  * - stamp 缺失视为全序最小值（EMPTY_STAMP），保证迁移前数据 + 云端空列正确输给

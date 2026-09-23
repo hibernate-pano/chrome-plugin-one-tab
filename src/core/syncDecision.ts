@@ -144,7 +144,7 @@ export const getGroupsToSync = (groups: TabGroup[]): TabGroup[] => {
 /**
  * 校验合并结果，防止「同步覆盖导致本地数据丢失」时自动回滚。
  *
- * ⚠️ 基线只算本地「活跃」组（isDeleted=false）：mergeTabGroups 第一步会跳过软删组，
+ * ⚠️ 基线只算本地「活跃」组（isDeleted=false）：legacy 的 mergeTabGroups 第一步会跳过软删组，
  * 而 storage.getGroups() 返回的数组含软删组。若用 localGroups.length（含软删）当基线，
  * 累积的软删组会抬高 expectedMin，导致正常合并被误判为非法 → 触发回滚 → 云端变更永远同步不进来。
  */

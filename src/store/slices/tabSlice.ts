@@ -1,3 +1,17 @@
+/**
+ * S4 单写者收口：本文件不直接写 storage/supabase。所有写语义均为 sendMutation
+ * 薄代理（语义与 @/core/mutationOps 对齐），唯一写者是 SW 侧 mutationHandlers
+ *（journal→stamp→apply→setGroups→scheduleUpload），唯一同步入口是 syncEngine。
+ * UI 侧乐观更新 / rejected 回滚保留；读路径（loadGroups/loadDeletedGroups 经
+ * storage.getGroups 读真值）不在写收口范围内。
+ *
+ * 旧路径 → mutation op 代理清单：
+ * saveGroup→saveGroup / deleteGroup→deleteGroup / deleteAllGroups→deleteAllGroups /
+ * restoreGroup→restoreGroup / purgeGroup→purgeGroup / importGroups→importGroups /
+ * updateGroupNameAndSync→renameGroup / toggleGroupLockAndSync→toggleGroupLock /
+ * moveGroupAndSync→moveGroup / moveTabAndSync→moveTab / cleanDuplicateTabs→cleanDuplicates /
+ * deleteTabAndSync→removeTab / persistGroupFields→updateGroupFields
+ */
 import { createSlice, createAsyncThunk, createSelector } from '@reduxjs/toolkit';
 import { TabState, TabGroup } from '@/types/tab';
 import { storage, invalidateGroupsCache } from '@/utils/storage';

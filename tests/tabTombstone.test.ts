@@ -1,7 +1,7 @@
 // tab 级墓碑语义回归测试——钉死「单标签删除跨设备复活」bug 的修复。
 //
-// ⚠️ 本文件里的合并类断言针对 syncUtils.mergeTabGroups（已废弃、无生产调用点，见其
-// @deprecated 注释）。当前生产同步语义由 tests/opStampMerge.test.ts 与
+// ⚠️ 本文件里的合并类断言针对 syncUtils.legacy.mergeTabGroups（已废弃、已与生产隔离，见其
+// ⛔禁接回注释）。当前生产同步语义由 tests/opStampMerge.test.ts 与
 // tests/opStampGuard.pg.test.ts 保障；本文件仅保留 tabDataCodec / shouldAutoDelete 部分有效。
 //
 // 历史背景：v1.16.0 及之前，deleteTabAndSync / UI updateGroup(filter) 物理
@@ -64,7 +64,7 @@ before(async () => {
 
 describe('tabTombstone: 标签级删除意图跨设备传播', () => {
   it('本地删除（墓碑）+ 云端仍活跃 → 合并后该 tab 被剔除', async () => {
-    const { mergeTabGroups } = await import('@/utils/syncUtils');
+    const { mergeTabGroups } = await import('@/utils/syncUtils.legacy');
 
     const local = [
       makeGroup('g1', [
@@ -92,7 +92,7 @@ describe('tabTombstone: 标签级删除意图跨设备传播', () => {
   });
 
   it('云端删除（墓碑）+ 本地仍活跃 → 合并后本地副本被剔除', async () => {
-    const { mergeTabGroups } = await import('@/utils/syncUtils');
+    const { mergeTabGroups } = await import('@/utils/syncUtils.legacy');
 
     const local = [
       makeGroup('g1', [makeTab('t1', 'https://a.com')]), // B 设备还没收到删除
@@ -111,7 +111,7 @@ describe('tabTombstone: 标签级删除意图跨设备传播', () => {
   });
 
   it('墓碑本体保留在合并结果中（第三方设备可继续接收删除意图）', async () => {
-    const { mergeTabGroups } = await import('@/utils/syncUtils');
+    const { mergeTabGroups } = await import('@/utils/syncUtils.legacy');
 
     const local = [makeGroup('g1', [makeTab('t2', 'https://b.com', { isDeleted: true })])];
     const cloud = [makeGroup('g1', [])]; // 第三方设备从未见过 t2
@@ -125,7 +125,7 @@ describe('tabTombstone: 标签级删除意图跨设备传播', () => {
   });
 
   it('活跃 tab 未命中墓碑 → 正常保留（不误删）', async () => {
-    const { mergeTabGroups } = await import('@/utils/syncUtils');
+    const { mergeTabGroups } = await import('@/utils/syncUtils.legacy');
 
     const local = [
       makeGroup('g1', [
@@ -154,7 +154,7 @@ describe('tabTombstone: 标签级删除意图跨设备传播', () => {
 
 describe('tabTombstone: 跨设备同 URL 不同 ID 的复活防护（URL 维度墓碑）', () => {
   it('A 设备删除 nanoid_X → 云端墓碑；B 设备从未收到 nanoid_X 但有 nanoid_Y 同 URL → Y 被剔除', async () => {
-    const { mergeTabGroups } = await import('@/utils/syncUtils');
+    const { mergeTabGroups } = await import('@/utils/syncUtils.legacy');
 
     const local = [
       makeGroup('g1', [
@@ -176,7 +176,7 @@ describe('tabTombstone: 跨设备同 URL 不同 ID 的复活防护（URL 维度�
   });
 
   it('本地主动重新添加被墓碑的 URL（同侧 tombstone + 新 active）→ 不误删', async () => {
-    const { mergeTabGroups } = await import('@/utils/syncUtils');
+    const { mergeTabGroups } = await import('@/utils/syncUtils.legacy');
 
     // 用户场景：在 A 设备删了 X → 上传 → 在 A 设备自己又手动加了一个 X。
     // 这条"再次添加"不该被自身墓碑干掉——这是用户主动意图。
@@ -198,7 +198,7 @@ describe('tabTombstone: 跨设备同 URL 不同 ID 的复活防护（URL 维度�
   });
 
   it('云端 tombstone + 本地有同 URL 但 nanoid 不同的活跃 → URL 匹配剔除', async () => {
-    const { mergeTabGroups } = await import('@/utils/syncUtils');
+    const { mergeTabGroups } = await import('@/utils/syncUtils.legacy');
 
     const local = [makeGroup('g1', [makeTab('local-X', 'https://foo.com')])];
     const cloud = [makeGroup('g1', [makeTab('cloud-X', 'https://foo.com', { isDeleted: true })])];
