@@ -80,6 +80,18 @@ export interface TabGroup {
   lastOp?: { d: string; s: number };
 }
 
+/** deleteTabAndSync 单项乐观备份（key 化槽位的值类型） */
+export interface OptimisticTabBackup {
+  groupId: string;
+  tabId: string;
+  /** 被移除 tab 的深拷贝（回滚时单项重插用） */
+  tab: Tab;
+  /** 移除前在组内的下标（回滚时尽量原位插回） */
+  index: number;
+  /** pending 发起时整组的深拷贝（组被拿空时的恢复基线） */
+  snapshot: TabGroup;
+}
+
 export interface TabState {
   groups: TabGroup[];
   // 已软删（墓碑）的标签组，用于误删保护恢复视图；不参与主列表渲染
@@ -103,8 +115,17 @@ export interface TabState {
   backgroundSync: boolean; // 是否在后台同步
   syncProgress: number; // 同步进度（0-100）
   syncOperation: 'none' | 'upload' | 'download'; // 当前同步操作类型
-  // deleteTabAndSync 乐观更新的回滚备份（pending 写入，fulfilled/rejected 清除）
-  optimisticBackup?: { groupId: string; group: TabGroup } | null;
+  // deleteTabAndSync 乐观更新的回滚备份：按 `${groupId}:${tabId}` key 化。
+  // 单槽位在快速连点不同 tab 时会被后一次 pending 覆盖，导致 rejected 错位回滚；
+  // key 化后 fulfilled/rejected 只处理对应项，互不干扰。
+  // （pending 写入对应项，fulfilled 清对应项，rejected 只回滚对应项）
+  optimisticBackups?: Record<string, OptimisticTabBackup>;
+  // 回环代际 guard：deleteTabAndSync.pending 自增 mutationEpoch；
+  // loadGroups/loadDeletedGroups.pending 快照发起时 epoch，fulfilled 时若快照
+  // 落后于当前 epoch（mutation 在途期读到的旧快照）则忽略，避免覆盖乐观态。
+  // 与发起时 epoch 相等则接受——外部变更（他端同步）触发的新回环不受影响，不饿死。
+  mutationEpoch?: number;
+  pendingLoadGuards?: Record<string, number>;
 }
 
 // 布局模式枚举

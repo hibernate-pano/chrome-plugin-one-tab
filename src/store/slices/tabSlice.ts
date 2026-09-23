@@ -13,7 +13,7 @@
  * deleteTabAndSync→removeTab / persistGroupFields→updateGroupFields
  */
 import { createSlice, createAsyncThunk, createSelector } from '@reduxjs/toolkit';
-import { TabState, TabGroup } from '@/types/tab';
+import { TabState, TabGroup, OptimisticTabBackup } from '@/types/tab';
 import { storage, invalidateGroupsCache } from '@/utils/storage';
 import { shouldAutoDeleteAfterTabRemoval } from '@/utils/tabGroupUtils';
 import { sendMutation } from '@/shared/mutationProtocol';
@@ -40,6 +40,36 @@ export const initialTabState: TabState = {
   backgroundSync: false,
   syncProgress: 0,
   syncOperation: 'none',
+  optimisticBackups: {},
+  mutationEpoch: 0,
+  pendingLoadGuards: {},
+};
+
+/** 乐观备份槽位 key：按 tab 维度隔离，避免连点不同 tab 时错位回滚 */
+const backupKeyOf = (groupId: string, tabId: string): string => `${groupId}:${tabId}`;
+
+/** load 回环代际判定：在途 mutation（epoch 前进）之后发起的旧快照一律忽略 */
+const isStaleLoad = (
+  guards: Record<string, number> | undefined,
+  requestId: string,
+  mutationEpoch: number | undefined
+): boolean => {
+  const initiatedEpoch = guards?.[requestId];
+  // 无快照（historical 状态/未知来源）一律放行，避免外部变更刷新被饿死
+  if (initiatedEpoch === undefined) return false;
+  return initiatedEpoch < (mutationEpoch ?? 0);
+};
+
+const takeLoadGuard = (
+  state: TabState,
+  requestId: string
+): void => {
+  if (!state.pendingLoadGuards) state.pendingLoadGuards = {};
+  state.pendingLoadGuards[requestId] = state.mutationEpoch ?? 0;
+};
+
+const dropLoadGuard = (state: TabState, requestId: string): void => {
+  if (state.pendingLoadGuards) delete state.pendingLoadGuards[requestId];
 };
 
 /** 过滤组内标签级墓碑（storage 保留墓碑用于同步删除意图，Redux/UI 不感知） */
@@ -514,17 +544,35 @@ export const tabSlice = createSlice({
   },
   extraReducers: builder => {
     builder
-      .addCase(loadGroups.pending, state => {
+      .addCase(loadGroups.pending, (state, action) => {
         state.isLoading = true;
         state.error = null;
+        // 快照发起时代际：mutation 在途期读到的旧快照在 fulfilled 时被忽略
+        takeLoadGuard(state, action.meta.requestId);
       })
       .addCase(loadGroups.fulfilled, (state, action) => {
+        const stale = isStaleLoad(
+          state.pendingLoadGuards,
+          action.meta.requestId,
+          state.mutationEpoch
+        );
+        dropLoadGuard(state, action.meta.requestId);
         state.isLoading = false;
+        // 在途旧回环（发起早于某次 deleteTab 乐观更新）直接丢弃，保留乐观态；
+        // 与当前代际一致的新回环（含外部变更触发的）正常应用，不饿死。
+        if (stale) return;
         state.groups = action.payload;
         state.lastLoadedAt = new Date().toISOString();
       })
       .addCase(loadGroups.rejected, (state, action) => {
+        const stale = isStaleLoad(
+          state.pendingLoadGuards,
+          action.meta.requestId,
+          state.mutationEpoch
+        );
+        dropLoadGuard(state, action.meta.requestId);
         state.isLoading = false;
+        if (stale) return;
         state.error = action.error.message || '加载标签组失败';
       })
       .addCase(saveGroup.fulfilled, (state, action) => {
@@ -560,8 +608,24 @@ export const tabSlice = createSlice({
         const { groupId, tabId } = action.meta.arg;
         const idx = state.groups.findIndex(g => g.id === groupId);
         if (idx === -1) return;
-        state.optimisticBackup = { groupId, group: state.groups[idx] };
-        const tabs = state.groups[idx].tabs.filter(t => t.id !== tabId);
+        const current = state.groups[idx];
+        const tabIndex = current.tabs.findIndex(t => t.id === tabId);
+        // 待删 tab 本不存在：无操作，不建占位、不 bump epoch，避免幽灵备份/代际污染
+        if (tabIndex === -1) return;
+        // 代际前进一步：此后发起的 load 回环若带着旧代际会被忽略（根除复活闪现）
+        state.mutationEpoch = (state.mutationEpoch ?? 0) + 1;
+        // key 化备份：连点不同 tab 时各管各的槽位，不再互相覆盖（根除错位回滚）
+        if (!state.optimisticBackups) state.optimisticBackups = {};
+        const key = backupKeyOf(groupId, tabId);
+        const removedTab = { ...current.tabs[tabIndex] };
+        state.optimisticBackups[key] = {
+          groupId,
+          tabId,
+          tab: removedTab,
+          index: tabIndex,
+          snapshot: { ...current, tabs: current.tabs.map(t => ({ ...t })) },
+        };
+        const tabs = current.tabs.filter(t => t.id !== tabId);
         if (tabs.length === 0) {
           // 与 fulfilled(group===null) 同语义：拿掉最后一个活跃 tab 后整组进误删保护视图
           const [removed] = state.groups.splice(idx, 1);
@@ -575,18 +639,42 @@ export const tabSlice = createSlice({
           });
           if (state.activeGroupId === groupId) state.activeGroupId = null;
         } else {
-          state.groups[idx] = { ...state.groups[idx], tabs };
+          state.groups[idx] = { ...current, tabs };
         }
       })
       .addCase(deleteTabAndSync.rejected, (state, action) => {
-        // 回滚乐观更新；下次 loadGroups 再与真值对齐
-        const backup = state.optimisticBackup;
+        // 只回滚对应项：其他在途删除的备份槽位原样保留，互不干扰
+        const { groupId, tabId } = action.meta.arg;
+        const key = backupKeyOf(groupId, tabId);
+        const backup: OptimisticTabBackup | undefined = state.optimisticBackups?.[key];
+        if (state.optimisticBackups) delete state.optimisticBackups[key];
         if (backup) {
-          state.deletedGroups = state.deletedGroups.filter(g => g.id !== backup.groupId);
-          const idx = state.groups.findIndex(g => g.id === backup.groupId);
-          if (idx !== -1) state.groups[idx] = backup.group;
-          else state.groups.unshift(backup.group);
-          state.optimisticBackup = null;
+          const idx = state.groups.findIndex(g => g.id === groupId);
+          if (idx !== -1) {
+            // 组仍在：仅把本项插回（原位，存在则跳过），其他 tab 原样不动
+            const tabs = [...state.groups[idx].tabs];
+            if (!tabs.some(t => t.id === tabId)) {
+              tabs.splice(Math.max(0, Math.min(backup.index, tabs.length)), 0, backup.tab);
+            }
+            state.groups[idx] = { ...state.groups[idx], tabs };
+          } else {
+            // 组已不在（本项拿空了组，或他项 fulfilled 整组软删）：按快照恢复，
+            // 但过滤掉已被他项成功删除的 tab（无在途备份且不在任何现态中），避免复活它们。
+            // live 只=自身+现态 groups/deletedGroups 中的 tab：同组在途项不计入，
+            // 与 fulfilled 的 tabs.filter(t => !pendingTabIds.has(t.id)) 同语义。
+            const liveTabIds = new Set<string>([tabId]);
+            for (const g of state.groups) for (const t of g.tabs) liveTabIds.add(t.id);
+            for (const g of state.deletedGroups) for (const t of g.tabs) liveTabIds.add(t.id);
+            const tabs = backup.snapshot.tabs.filter(
+              t => t.id === tabId || liveTabIds.has(t.id)
+            );
+            // 兜底：tab 必然在恢复结果中（快照里没有它说明 pending 时它已不在）
+            const restoredTabs = tabs.some(t => t.id === tabId)
+              ? tabs
+              : [...tabs.slice(0, Math.max(0, Math.min(backup.index, tabs.length))), backup.tab, ...tabs.slice(Math.max(0, Math.min(backup.index, tabs.length)))];
+            state.deletedGroups = state.deletedGroups.filter(g => g.id !== groupId);
+            state.groups.unshift({ ...backup.snapshot, tabs: restoredTabs });
+          }
         }
         state.error = action.error.message || '更新会话失败';
       })
@@ -594,8 +682,10 @@ export const tabSlice = createSlice({
         // 即时 UI 反馈（旧行为：updateGroup.fulfilled 即时替换组）。没有这个 case，
         // UI 只能等 onChanged→loadGroups 的回环（约 0.7s~数秒），表现为"点击后标签不消失"。
         const groupId = action.meta.arg.groupId;
+        const tabId = action.meta.arg.tabId;
         const { group } = action.payload;
-        state.optimisticBackup = null;
+        // 只清对应项：在途的其他备份继续保留，等待各自的 settled
+        if (state.optimisticBackups) delete state.optimisticBackups[backupKeyOf(groupId, tabId)];
         if (group === null) {
           // 组内最后一个活跃 tab 被移除 → 整组软删：镜像 deleteGroup.fulfilled（误删保护视图同语义）
           const removed = state.groups.find(g => g.id === groupId);
@@ -614,11 +704,36 @@ export const tabSlice = createSlice({
           }
         } else {
           const idx = state.groups.findIndex(g => g.id === groupId);
-          if (idx !== -1) state.groups[idx] = group;
+          if (idx !== -1) {
+            // 回填服务端真值后，重放同组仍在途的乐观删除：先到的 fulfilled
+            // 可能带着后发起删除的 tab，直接覆盖会造成其短暂复活闪现。
+            const pendingTabIds = new Set(
+              Object.values(state.optimisticBackups ?? {})
+                .filter(b => b.groupId === groupId)
+                .map(b => b.tabId)
+            );
+            state.groups[idx] = pendingTabIds.size === 0
+              ? group
+              : { ...group, tabs: group.tabs.filter(t => !pendingTabIds.has(t.id)) };
+          }
         }
       })
+      .addCase(loadDeletedGroups.pending, (state, action) => {
+        takeLoadGuard(state, action.meta.requestId);
+      })
       .addCase(loadDeletedGroups.fulfilled, (state, action) => {
+        const stale = isStaleLoad(
+          state.pendingLoadGuards,
+          action.meta.requestId,
+          state.mutationEpoch
+        );
+        dropLoadGuard(state, action.meta.requestId);
+        // 与 loadGroups 同代际语义：在途旧回环忽略，新回环（含外部墓碑变更）正常应用
+        if (stale) return;
         state.deletedGroups = action.payload;
+      })
+      .addCase(loadDeletedGroups.rejected, (state, action) => {
+        dropLoadGuard(state, action.meta.requestId);
       })
       .addCase(restoreGroup.fulfilled, (state, action) => {
         state.deletedGroups = state.deletedGroups.filter(g => g.id !== action.payload.groupId);
