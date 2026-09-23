@@ -35,6 +35,8 @@ export interface ShadowDeps {
   /** 注入点（测试替身）；默认真实实现（Y.Doc 单事务 + Dexie 物化） */
   docRunner?: (plans: YPlan[], stamp: OpStamp) => Promise<{ updateBytes: number; updateB64: string }>;
   now?: () => string;
+  /** 灰度百分比覆写（仅测试用；默认 SHADOW_ROLLOUT_PERCENT） */
+  rolloutPercent?: number;
 }
 
 export type ShadowOutcome =
@@ -95,7 +97,7 @@ export async function maybeShadowWrite(
       } catch {
         userId = null;
       }
-      if (!isShadowSampled(userId, SHADOW_ROLLOUT_PERCENT)) {
+      if (!isShadowSampled(userId, deps.rolloutPercent ?? SHADOW_ROLLOUT_PERCENT)) {
         outcome = { ok: false, skipped: 'rollout' };
       } else {
         const snapshot = await deps.getGroups();

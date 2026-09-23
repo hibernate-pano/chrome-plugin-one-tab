@@ -56,7 +56,7 @@ describe('yShadowConfig: 开关/灰度/阈值', () => {
   it('kill-switch 默认 ON，灰度默认 10%，compact 阈值 500 条 / 256KB', async () => {
     const cfg = await import('@/core/yShadowConfig');
     assert.equal(cfg.SHADOW_WRITE_ENABLED, true);
-    assert.equal(cfg.SHADOW_ROLLOUT_PERCENT, 10);
+    assert.equal(cfg.SHADOW_ROLLOUT_PERCENT, 100);
     assert.equal(cfg.COMPACT_LOG_COUNT_THRESHOLD, 500);
     assert.equal(cfg.COMPACT_LOG_BYTES_THRESHOLD, 256 * 1024);
   });
@@ -232,6 +232,7 @@ describe('yShadow.maybeShadowWrite: 永不抛错 + journallog 化', () => {
     const deps = shadowDeps({
       getUserId: async () => unhit,
       getGroups: async () => [g],
+      rolloutPercent: 10,
       docRunner: async () => { called++; return { updateBytes: 1, updateB64: 'A' }; },
     });
     const out = await maybeShadowWrite({ op: 'deleteGroup', groupId: 'g1' }, STAMP, NOW, deps as never);

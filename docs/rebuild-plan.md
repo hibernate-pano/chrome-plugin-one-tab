@@ -84,6 +84,6 @@ Y-Schema（`packages/core/ydoc.ts`）：`groups: Y.Map`、`tabs: Y.Map`、`order
 - [x] S3 supabase.ts 拆分（已完成：SupabasePort 接口+8 模块+16 行门面，251 单测全绿）
 - [x] S4 单写者收口 + 废弃合并隔离
 - [x] S5 删除语义统一（已完成：webTombstone+墓碑命令+门禁，259 单测全绿）
-- [x] V2 影子双写 + 灰度（已完成：Yjs+Dexie 影子链路，sync 表已上线，277 单测全绿）
+- [x] V2 影子双写 + 灰度（已完成；开发阶段灰度已拉满 100% 加速验证，277 单测全绿）
 - [ ] V3 切读 + 下线 blob/触发器
 - [ ] E2EE 恢复码 UX + 发版说明（含 removeTab stamp 语义变化）

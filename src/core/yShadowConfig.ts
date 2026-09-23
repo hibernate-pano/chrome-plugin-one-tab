@@ -3,7 +3,7 @@
  *
  * - SHADOW_WRITE_ENABLED：kill-switch。false = 整条影子链路零执行
  *  （mutationHandlers 甚至不调用 writer），主同步零影响。
- * - SHADOW_ROLLOUT_PERCENT：按 userId 哈希百分比切流（默认 10）。
+ * - SHADOW_ROLLOUT_PERCENT：按 userId 哈希百分比切流（开发阶段默认 100 全量，快速验证影子数据质量；进生产前按需调低）。
  *   调整为 100 即全量；调整为 0 等价于软 kill（保留调用开销，可观测）。
  * - COMPACT_*：Y update 本地 KV 日志的 compact 阈值（>500 条或 >256KB 时
  *   置 needsSnapshot，由 V2 同步面做 snapshot 上传；影子本期只打标不上传）。
@@ -15,8 +15,8 @@
 /** kill-switch：false 即关闭整条影子链路（默认 ON=true，影子模式） */
 export const SHADOW_WRITE_ENABLED = true;
 
-/** 灰度百分比（0-100，默认 10）。按 userId 稳定哈希切流。 */
-export const SHADOW_ROLLOUT_PERCENT = 10;
+/** 灰度百分比（0-100，开发阶段默认 100 全量）。按 userId 稳定哈希切流。 */
+export const SHADOW_ROLLOUT_PERCENT = 100;
 
 /** compact 阈值：本地 Y update 日志条数 */
 export const COMPACT_LOG_COUNT_THRESHOLD = 500;
