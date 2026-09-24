@@ -129,7 +129,10 @@ describe('回环代际 guard（mutationEpoch）', () => {
     store.dispatch(loadDeletedGroups.fulfilled([], 'DL-old', undefined));
     assert.equal(store.getState().tabs.deletedGroups.length, 1, '在途旧墓碑回环必须被忽略');
 
-    // 落定后的新回环正常应用
+    // 删除落定（用例原意即“落定后”），新回环正常应用
+    store.dispatch(
+      deleteTabAndSync.fulfilled({ group: null }, 'D1', { groupId: 'g', tabId: 't1' })
+    );
     store.dispatch(loadDeletedGroups.pending('DL-new', undefined));
     store.dispatch(loadDeletedGroups.fulfilled([], 'DL-new', undefined));
     assert.equal(store.getState().tabs.deletedGroups.length, 0, '新回环应正常应用');
@@ -158,6 +161,61 @@ describe('乐观备份 key 化（groupId:tabId）', () => {
       !store.getState().tabs.optimisticBackups?.['g:t1'],
       't1 的备份槽位必须清除'
     );
+  });
+
+  it('同代际在途回环不复活 tab：pending 之后发起的 load（快照同代际）过滤在途项', async () => {
+    const { loadGroups, deleteTabAndSync } = await slice();
+    const store = await makeStore([makeGroup('g', ['t1', 't2'])]);
+    // 点击删 t1：pending 自增 epoch，乐观删除
+    store.dispatch(deleteTabAndSync.pending('D1', { groupId: 'g', tabId: 't1' }));
+    // load 在 pending 之后发起 → 快照 epoch 与当前相同 → isStaleLoad=false（残留窗口）
+    store.dispatch(loadGroups.pending('L-after', undefined));
+    // 它读到的是 SW 落盘前的旧 KV：payload 仍含 t1
+    store.dispatch(
+      loadGroups.fulfilled([makeGroup('g', ['t1', 't2'])], 'L-after', undefined)
+    );
+    assert.deepEqual(tabIdsOf(store.getState().tabs, 'g'), ['t2'], '在途被删的 t1 不得复活');
+  });
+
+  it('同代际在途回环不复活整组：唯一在途 tab 被删时组不进 active', async () => {
+    const { loadGroups, deleteTabAndSync } = await slice();
+    const store = await makeStore([makeGroup('g', ['t1'])]);
+    store.dispatch(deleteTabAndSync.pending('D1', { groupId: 'g', tabId: 't1' }));
+    assert.equal(store.getState().tabs.deletedGroups.length, 1, '整组乐观进误删保护视图');
+    store.dispatch(loadGroups.pending('L-after', undefined));
+    store.dispatch(loadGroups.fulfilled([makeGroup('g', ['t1'])], 'L-after', undefined));
+    assert.equal(store.getState().tabs.groups.length, 0, '整组在途软删，active 不得复活');
+    assert.equal(store.getState().tabs.deletedGroups.length, 1, '误删保护视图保留（pending 加入）');
+  });
+
+  it('同代际在途回环保留回收站中在途软删的组：旧 KV payload 不得将其清出', async () => {
+    const { loadGroups, loadDeletedGroups, deleteTabAndSync } = await slice();
+    const store = await makeStore([makeGroup('g', ['t1'])]);
+    store.dispatch(deleteTabAndSync.pending('D1', { groupId: 'g', tabId: 't1' }));
+    // 回收站回环在 pending 之后发起（同代际）：旧 KV 还没有 g 墓碑 → payload 为空
+    store.dispatch(loadDeletedGroups.pending('DL-after', undefined));
+    store.dispatch(loadDeletedGroups.fulfilled([], 'DL-after', undefined));
+    assert.equal(
+      store.getState().tabs.deletedGroups.length, 1,
+      '在途整组软删不得被旧 payload 清出回收站'
+    );
+    // 删除落定后，后续回收站回环正常应用（不饿死）
+    store.dispatch(
+      deleteTabAndSync.fulfilled({ group: null }, 'D1', { groupId: 'g', tabId: 't1' })
+    );
+    store.dispatch(loadDeletedGroups.pending('DL-new', undefined));
+    store.dispatch(loadDeletedGroups.fulfilled([], 'DL-new', undefined));
+    assert.equal(store.getState().tabs.deletedGroups.length, 0, '落定后新回环正常应用');
+  });
+
+  it('无在途备份时回环原样应用（过滤器不误伤）', async () => {
+    const { loadGroups } = await slice();
+    const store = await makeStore([makeGroup('g', ['t1'])]);
+    store.dispatch(loadGroups.pending('L-plain', undefined));
+    store.dispatch(
+      loadGroups.fulfilled([makeGroup('g2', ['t9'])], 'L-plain', undefined)
+    );
+    assert.deepEqual(store.getState().tabs.groups.map(g => g.id), ['g2']);
   });
 
   it('不同组的连点互不干扰', async () => {

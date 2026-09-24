@@ -48,6 +48,38 @@ export const initialTabState: TabState = {
 /** 乐观备份槽位 key：按 tab 维度隔离，避免连点不同 tab 时错位回滚 */
 const backupKeyOf = (groupId: string, tabId: string): string => `${groupId}:${tabId}`;
 
+/**
+ * 回环 payload 过滤：剥掉仍在途的乐观删除项（与 deleteTab.fulfilled 重放过滤同语义）。
+ * 代际 guard 只拦“发起早于 pending”的 load；pending 之后、SW 落盘之前发起的 load
+ * 快照与当前同代际，会带着删除前的旧 KV 结算——这里按在途备份补刀，堵住复活窗口：
+ * - 组内部分在途：过滤掉在途 tab，其余变更正常应用；
+ * - 整组在途软删（过滤后为空且 payload 非空）：组不进 active（pending 已放入误删视图）。
+ */
+const stripInFlightTabs = (
+  groups: TabGroup[],
+  backups: OptimisticTabBackup[]
+): TabGroup[] => {
+  if (backups.length === 0) return groups;
+  const pendingByGroup = new Map<string, Set<string>>();
+  for (const b of backups) {
+    const set = pendingByGroup.get(b.groupId) ?? new Set<string>();
+    set.add(b.tabId);
+    pendingByGroup.set(b.groupId, set);
+  }
+  const out: TabGroup[] = [];
+  for (const g of groups) {
+    const pend = pendingByGroup.get(g.id);
+    if (!pend) {
+      out.push(g);
+      continue;
+    }
+    const tabs = g.tabs.filter(t => !pend.has(t.id));
+    if (tabs.length === 0 && g.tabs.length > 0) continue;
+    out.push(tabs.length === g.tabs.length ? g : { ...g, tabs });
+  }
+  return out;
+};
+
 /** load 回环代际判定：在途 mutation（epoch 前进）之后发起的旧快照一律忽略 */
 const isStaleLoad = (
   guards: Record<string, number> | undefined,
@@ -560,8 +592,13 @@ export const tabSlice = createSlice({
         state.isLoading = false;
         // 在途旧回环（发起早于某次 deleteTab 乐观更新）直接丢弃，保留乐观态；
         // 与当前代际一致的新回环（含外部变更触发的）正常应用，不饿死。
+        // 同代际但仍在途的回环（pending 之后、SW 落盘之前发起）：按在途备份过滤，
+        // 防止旧 KV payload 复活正被删除的 tab。
         if (stale) return;
-        state.groups = action.payload;
+        state.groups = stripInFlightTabs(
+          action.payload,
+          Object.values(state.optimisticBackups ?? {})
+        );
         state.lastLoadedAt = new Date().toISOString();
       })
       .addCase(loadGroups.rejected, (state, action) => {
@@ -730,7 +767,20 @@ export const tabSlice = createSlice({
         dropLoadGuard(state, action.meta.requestId);
         // 与 loadGroups 同代际语义：在途旧回环忽略，新回环（含外部墓碑变更）正常应用
         if (stale) return;
-        state.deletedGroups = action.payload;
+        // 在途整组软删的组由 pending 乐观加入回收站，旧 KV 的 payload 不含它——
+        // 直接覆盖会让它从回收站凭空消失（deleteTab.fulfilled 的 group===null 分支
+        // 只在 state.groups 里找 removed，找不到就不回推）。这里保留这类组。
+        const backups = Object.values(state.optimisticBackups ?? {});
+        if (backups.length > 0) {
+          const pendIds = new Set(backups.map(b => b.groupId));
+          const payloadIds = new Set(action.payload.map(g => g.id));
+          state.deletedGroups = [
+            ...action.payload,
+            ...state.deletedGroups.filter(g => pendIds.has(g.id) && !payloadIds.has(g.id)),
+          ];
+        } else {
+          state.deletedGroups = action.payload;
+        }
       })
       .addCase(loadDeletedGroups.rejected, (state, action) => {
         dropLoadGuard(state, action.meta.requestId);
