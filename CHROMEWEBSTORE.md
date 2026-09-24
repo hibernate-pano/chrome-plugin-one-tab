@@ -11,28 +11,48 @@
 TapStack
 
 **Short Description** [REQUIRED]
-<!-- ≤132 字符。写具体功能，不写口号。 -->
+<!-- ≤132 字符。写具体功能，不写口号。中英双语拼接。 -->
 
-保存、命名和管理你的浏览器标签页会话，随时一键恢复或跨设备同步找回。
+保存、命名和恢复浏览器标签会话，跨设备同步找回。Save, restore & sync your tab sessions.
 
 **Detailed Description** [REQUIRED]
-<!-- 用户视角，禁提实现细节（API/框架/代码模式）。CWS 会剥离 markdown。 -->
+<!-- 用户视角，禁提实现细节（API/框架/代码模式）。CWS 会剥离 markdown。中英双语用 --- 分隔。 -->
 
-TapStack 把你当前浏览器窗口里的所有标签页保存为一个命名会话，随时恢复，不让标签页堆积成灾难。
+TapStack 把你当前浏览器窗口里的所有标签页保存为一个命名会话，随时找回、随时恢复，不让标签页堆积成灾难。
 
 主要功能：
-· 一键把当前窗口保存为会话，支持快捷键（Ctrl+Shift+S 打开管理器，Alt+Shift+S 快速保存）
-· 右键菜单保存当前标签页或除当前页外的其他标签页
-· 每个会话可重命名、收藏、加备注、锁定防误删、拖拽排序
-· 点开会话中的单个标签即可继续工作，标签自动从会话中移除；整组恢复可一键打开全部标签
-· 强大的搜索：按会话名、备注和标签页标题/网址过滤
-· 误删保护：删除的会话进入回收站，可随时恢复
-· 自动清理重复标签页和空会话
-· 登录 TapStack 账号后，会话自动同步云端——换设备、换浏览器也能找回你的工作
+· 一键保存：把当前窗口的全部标签页存为会话；快捷键 Ctrl+Shift+S 打开管理器、Alt+Shift+S 保存全部、Alt+S 保存当前页
+· 右键菜单：不打开管理界面，也能保存当前标签页或窗口里的其他标签页
+· 会话整理：每个会话可重命名、加备注、收藏、锁定防误删、拖拽排序
+· 快速恢复：一键在新窗口打开整组标签，不打乱当前窗口；点开单个标签直接继续工作，它会自动从会话中移除
+· 会话搜索：按会话名、备注、标签标题/网址查找，支持按域名过滤，并提供按域名等维度的排序视图
+· 误删保护：删除的会话进入回收站，随时可恢复
+· 一键清理：清除重复标签页和空会话
+· 导入导出：支持 OneTab 文本格式导入导出，以及 JSON 备份
+· 登录同步：登录后会话自动同步云端，换设备、换浏览器也能找回你的工作现场
 
-隐私说明：会话数据只保存在你的浏览器本地；仅在你登录并开启同步后，数据才会传输到你自己的云端账户。扩展不上传你的浏览记录，不收集任何分析数据。
+隐私说明：会话数据默认只保存在你的浏览器本地；仅当你登录并开启同步后，数据才会传输到你自己的云端账户。扩展不收集任何分析数据，也不上传你的浏览历史。
 
 反馈与问题：https://github.com/hibernate-pano/chrome-plugin-one-tab/issues
+
+---
+
+TapStack saves every tab in your current window as a named session, so you can find and restore your work later — no more tab pileups.
+
+Key features:
+· One-click save: store all tabs of the current window as a session. Shortcuts: Ctrl+Shift+S opens the manager, Alt+Shift+S saves all tabs, Alt+S saves the current tab
+· Right-click menu: save the current tab — or all other tabs — without opening the manager
+· Session tools: rename, add notes, favorite, lock against accidental deletion, drag to reorder
+· Fast restore: reopen the whole session in a new window without disturbing the current one; click a single tab to jump straight back into work — it is then removed from the session
+· Search: find sessions by name, notes, tab title or URL, filter by domain, and sort by domain and more
+· Deletion protection: deleted sessions go to the recycle bin and can be restored anytime
+· One-click cleanup: remove duplicate tabs and empty sessions
+· Import/export: OneTab text format, plus JSON backup
+· Cloud sync: sign in and your sessions sync automatically, so you can pick up your work on any device or browser
+
+Privacy: session data stays in your browser by default; it is sent to your own cloud account only when you sign in and enable sync. The extension collects no analytics and never uploads your browsing history.
+
+Issues: https://github.com/hibernate-pano/chrome-plugin-one-tab/issues
 
 **Category** [REQUIRED]
 
@@ -127,7 +147,7 @@ https://github.com/hibernate-pano/chrome-plugin-one-tab
 
 | Version | Date | Changes | Status |
 |---------|------|---------|--------|
-| 1.20.2 | 2026-09-24 | 合并 1.19.3–1.20.2 一次性上架：同步可靠性加固（上传读回校验、软删失败阻断、落盘直写、彻底删除门禁）、点击体验（点开即响应、修复列表项闪现复活、防重复打开、成功操作静默）、增量同步探活（大幅降低流量）、网页版与扩展删除语义统一、RLS 性能优化 | 待提交 |
+| 1.20.2 | 2026-09-24 | 合并 1.19.3–1.20.2 一次性上架：同步可靠性加固（上传读回校验、软删失败阻断、落盘直写、彻底删除门禁）、点击体验（点开即响应、修复列表项闪现复活、防重复打开、成功操作静默）、增量同步探活（大幅降低流量）、网页版与扩展删除语义统一、RLS 性能优化 | Published |
 | 1.19.3 | 2026-09-13 | 同步数据安全修复：云端守卫改严格 `<`（标签删除/网页版写入不再被静默吞掉）、操作印记跨设备可比（换机/重装后可正常保存）、存量迁移接线；网页版登录持久化修复；导入数据现在会自动上云；依赖安全治理 | 未上架（并入 1.20.2） |
 | 1.19.2 | 2026-09-12 | 依赖安全治理：vite 4→6 等（GitHub 告警 50→1，high 21→0） | 未上架（仅 git tag） |
 | 1.19.1 | 2026-09-12 | 同步层阶段二修复（同 1.19.3 的同步部分） | 未上架（仅 git tag） |
