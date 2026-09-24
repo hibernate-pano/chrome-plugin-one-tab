@@ -76,12 +76,6 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({ onClose }) => {
         } catch (err) {
           console.warn('同步后刷新本地会话失败:', err);
         }
-        showAlert({
-          title: '手动同步成功',
-          message: '已从云端拉取最新数据并与本地合并',
-          type: 'success',
-          onClose: () => {}
-        });
       } else {
         showAlert({
           title: '手动同步失败',
@@ -136,9 +130,7 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({ onClose }) => {
       onClose();
 
       dispatch(deleteAllGroups())
-        .then((result: any) => {
-          const count = result.payload?.count || 0;
-
+        .then(() => {
           if (isAuthenticated) {
             sendSyncCommand('upload', {
               overwriteCloud: true,
@@ -153,13 +145,6 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({ onClose }) => {
           } else {
             console.log('用户未登录，跳过同步到云端');
           }
-
-          showAlert({
-            title: '删除成功',
-            message: `成功删除了 ${count} 个会话`,
-            type: 'success',
-            onClose: () => { }
-          });
         })
         .catch(error => {
           console.error('删除所有标签组失败:', error);
@@ -490,15 +475,8 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({ onClose }) => {
                         const success = await storage.importData(data);
                         e.target.value = '';
                         if (success) {
-                          showAlert({
-                            title: '导入成功',
-                            message: '数据导入成功',
-                            type: 'success',
-                            onClose: () => {
-                              // 刷新页面
-                              window.location.reload();
-                            }
-                          });
+                          // 成功不弹提示（Unix 哲学）：直接刷新展示导入结果
+                          window.location.reload();
                         } else {
                           showAlert({
                             title: '导入失败',
@@ -549,15 +527,8 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({ onClose }) => {
                             importSource: 'onetab',
                             importedSessions: text.split('\n\n').filter(Boolean).length,
                           });
-                          showAlert({
-                            title: '导入成功',
-                            message: 'OneTab 数据导入成功',
-                            type: 'success',
-                            onClose: () => {
-                              // 刷新页面
-                              window.location.reload();
-                            }
-                          });
+                          // 成功不弹提示（Unix 哲学）：直接刷新展示导入结果
+                          window.location.reload();
                         } else {
                           showAlert({
                             title: '导入失败',

@@ -23,7 +23,7 @@ export const TabList: React.FC<TabListProps> = ({ searchQuery }) => {
   const { groups, deletedGroups, isLoading, error } = useAppSelector(state => state.tabs);
   const { layoutMode, reorderMode } = useAppSelector(state => state.settings);
   const { showConfirm, showToast } = useToast();
-  const { showRestoreSuccess, showRestoreError } = useEnhancedToast();
+  const { showRestoreError } = useEnhancedToast();
 
   useEffect(() => {
     const initializeData = async () => {
@@ -203,7 +203,6 @@ export const TabList: React.FC<TabListProps> = ({ searchQuery }) => {
         onRestore={groupId => {
           dispatch(restoreGroup(groupId))
             .unwrap()
-            .then(() => showRestoreSuccess(1))
             .catch(err => showRestoreError(err.message || '未知错误'));
         }}
         onPurge={groupId => {
@@ -217,7 +216,6 @@ export const TabList: React.FC<TabListProps> = ({ searchQuery }) => {
             onConfirm: () => {
               dispatch(purgeGroup(groupId))
                 .unwrap()
-                .then(() => showToast('已彻底删除', 'success'))
                 .catch(err => showToast(`删除失败: ${err.message || '未知错误'}`, 'error'));
             },
           });

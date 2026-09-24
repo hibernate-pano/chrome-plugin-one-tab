@@ -32,7 +32,7 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({ searchQuery 
   const { groups } = useAppSelector(state => state.tabs);
   const confirmBeforeDelete = useAppSelector(state => state.settings.confirmBeforeDelete);
   const { showConfirm } = useToast();
-  const { showDeleteSuccess, showDeleteError, showRestoreError } = useEnhancedToast();
+  const { showDeleteError, showRestoreError } = useEnhancedToast();
   const [filters, setFilters] = useState<SearchFilters>({});
   const [showFilters, setShowFilters] = useState(false);
   const [isFilterPending, startFilterTransition] = useTransition();
@@ -134,11 +134,6 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({ searchQuery 
     if (!group.isLocked) {
       dispatch(deleteTabAndSync({ groupId: group.id, tabId: tab.id }))
         .unwrap()
-        .then(payload => {
-          if (payload.group === null) {
-            showDeleteSuccess(`已恢复标签页并自动删除空会话 "${group.name}"`);
-          }
-        })
         .catch(error => {
           console.error('更新会话失败:', error);
           showRestoreError(`更新会话失败: ${error.message || '未知错误'}`);
@@ -156,13 +151,6 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({ searchQuery 
   const handleDeleteTab = (tab: Tab, group: TabGroup) => {
     dispatch(deleteTabAndSync({ groupId: group.id, tabId: tab.id }))
       .unwrap()
-      .then(payload => {
-        if (payload.group === null) {
-          showDeleteSuccess(`已删除会话 "${group.name}"（最后一个标签页已删除）`);
-        } else {
-          showDeleteSuccess(`已从 "${group.name}" 删除标签页 (剩余 ${payload.group.tabs.length} 个)`);
-        }
-      })
       .catch(error => {
         showDeleteError(`更新会话失败: ${error.message || '未知错误'}`);
       });
@@ -210,8 +198,6 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({ searchQuery 
         if (group.isLocked) continue;
         await dispatch(deleteTabAndSync({ groupId: group.id, tabId: tab.id })).unwrap();
       }
-
-      showDeleteSuccess(`成功删除 ${matchingTabs.length} 个搜索命中的标签页`);
     } catch (error) {
       console.error('批量删除搜索结果失败:', error);
       showDeleteError('删除操作失败，请重试');

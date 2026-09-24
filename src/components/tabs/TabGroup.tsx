@@ -63,7 +63,7 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
   const dispatch = useAppDispatch();
   const confirmBeforeDelete = useAppSelector(state => state.settings.confirmBeforeDelete);
   const { showConfirm } = useToast();
-  const { showDeleteSuccess, showDeleteError, showRestoreError } = useEnhancedToast();
+  const { showDeleteError, showRestoreError } = useEnhancedToast();
 
   const [isEditing, setIsEditing] = useState(false);
   const [newName, setNewName] = useState(group.name);
@@ -106,9 +106,6 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
     const runDelete = () => {
       dispatch(deleteGroup(group.id))
         .unwrap()
-        .then(() => {
-          showDeleteSuccess(`已删除会话 "${group.name}" (${group.tabs.length} 个标签页)`);
-        })
         .catch(error => {
           showDeleteError(`删除会话失败: ${error.message || '未知错误'}`);
         });
@@ -128,7 +125,7 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
       onConfirm: runDelete,
       onCancel: () => { }
     });
-  }, [confirmBeforeDelete, dispatch, group.id, group.name, group.tabs.length, showConfirm, showDeleteSuccess, showDeleteError]);
+  }, [confirmBeforeDelete, dispatch, group.id, group.name, group.tabs.length, showConfirm, showDeleteError]);
 
   const handleToggleLock = useCallback(() => {
     dispatch(toggleGroupLockAndSync(group.id));
@@ -224,18 +221,13 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
     if (!group.isLocked) {
       dispatch(deleteTabAndSync({ groupId: group.id, tabId: tab.id }))
         .unwrap()
-        .then(payload => {
-          if (payload.group === null) {
-            showDeleteSuccess(`已恢复标签页并自动删除空会话 "${group.name}"`);
-          }
-        })
         .catch(error => {
           guard.release(tab.id);
           console.error('更新会话失败:', error);
           showRestoreError(`更新会话失败: ${error.message || '未知错误'}`);
         });
     }
-  }, [dispatch, group, showDeleteSuccess, showRestoreError]);
+  }, [dispatch, group, showRestoreError]);
 
   const handleMoveTab = useCallback((sourceGroupId: string, sourceIndex: number, targetGroupId: string, targetIndex: number) => {
     dispatch(moveTabAndSync({
@@ -249,17 +241,10 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
   const handleDeleteTab = useCallback((tabId: string) => {
     dispatch(deleteTabAndSync({ groupId: group.id, tabId }))
       .unwrap()
-      .then(payload => {
-        if (payload.group === null) {
-          showDeleteSuccess(`已删除会话 "${group.name}"（最后一个标签页已删除）`);
-        } else {
-          showDeleteSuccess(`已从 "${group.name}" 删除标签页 (剩余 ${payload.group.tabs.length} 个)`);
-        }
-      })
       .catch(error => {
         showDeleteError(`更新会话失败: ${error.message || '未知错误'}`);
       });
-  }, [dispatch, group, showDeleteSuccess, showDeleteError]);
+  }, [dispatch, group, showDeleteError]);
 
   // 格式化时间
   const formatTime = (dateString: string) => {

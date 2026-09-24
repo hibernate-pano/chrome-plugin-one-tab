@@ -218,7 +218,6 @@ export const SyncButton: React.FC<SyncButtonProps> = () => {
       setWorkingProgress(100);
 
       if (res.ok) {
-        showToast('已用本地会话覆盖云端数据', 'success');
         void trackProductEvent('sync_upload_completed', {
           mode: 'overwrite',
         });
@@ -256,7 +255,6 @@ export const SyncButton: React.FC<SyncButtonProps> = () => {
       setWorkingProgress(100);
 
       if (res.ok) {
-        showToast('已把本地会话合并上传到云端', 'success');
         void trackProductEvent('sync_upload_completed', {
           mode: 'merge',
         });
@@ -305,7 +303,6 @@ export const SyncButton: React.FC<SyncButtonProps> = () => {
 
       if (res.ok) {
         await refreshRedux();
-        showToast('已用云端数据覆盖本地会话', 'success');
         void trackProductEvent('sync_download_completed', {
           mode: 'overwrite',
           directRestore: false,
@@ -356,7 +353,6 @@ export const SyncButton: React.FC<SyncButtonProps> = () => {
 
       if (res.ok) {
         await refreshRedux();
-        showToast('已把云端数据合并到本地会话', 'success');
         void trackProductEvent('sync_download_completed', {
           mode: 'merge',
           directRestore: false,

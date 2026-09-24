@@ -85,26 +85,7 @@ export const Header: React.FC<HeaderProps> = ({ onSearch }) => {
       cancelText: '取消',
       onConfirm: async () => {
         try {
-          const result = await dispatch(cleanDuplicateTabs()).unwrap();
-          let message = '清理完成';
-          if (result.removedTabsCount > 0 || result.removedGroupsCount > 0) {
-            const details = [];
-            if (result.removedTabsCount > 0) {
-              details.push(`已清理 ${result.removedTabsCount} 个重复标签页`);
-            }
-            if (result.removedGroupsCount > 0) {
-              details.push(`已删除 ${result.removedGroupsCount} 个空会话`);
-            }
-            message = `清理完成\n${details.join('\n')}`;
-          } else {
-            message = '清理完成，未发现重复标签页或空会话';
-          }
-          showAlert({
-            title: '清理完成',
-            message,
-            type: 'success',
-            onClose: () => { },
-          });
+          await dispatch(cleanDuplicateTabs()).unwrap();
         } catch (error) {
           console.error('清理重复标签失败:', error);
           showAlert({
