@@ -29,7 +29,12 @@ import { execFileSync } from 'node:child_process';
 const CLIENT_ID = process.env.CWS_CLIENT_ID;
 const CLIENT_SECRET = process.env.CWS_CLIENT_SECRET;
 const REFRESH_TOKEN = process.env.CWS_REFRESH_TOKEN;
-const ITEM_ID = process.argv[3] || process.env.CWS_ITEM_ID;
+const cmd = process.argv[2];
+// ⚠️ 参数布局：upload 的 argv[3] 是 zip 路径，itemId 只能是 argv[4] 或 env——
+// 2026-09-27 事故：upload chrome-extension.zip 时 zip 占了 argv[3] 被当成 itemId，
+// URL 变成 items/chrome-extension.zip，服务端返回误导性 404。
+const positional = process.argv[3];
+const ITEM_ID = (cmd === 'upload' ? process.argv[4] : positional) || process.env.CWS_ITEM_ID;
 const BASE = 'https://www.googleapis.com/chromewebstore/v1.1';
 
 for (const [k, v] of Object.entries({ CWS_CLIENT_ID: CLIENT_ID, CWS_CLIENT_SECRET: CLIENT_SECRET, CWS_REFRESH_TOKEN: REFRESH_TOKEN })) {
@@ -47,10 +52,13 @@ function http(method, url, { headers = [], body } = {}) {
   return { status: Number(out.slice(nl + 1).trim()), body: out.slice(0, nl) };
 }
 
-/** 文件直传（curl -T，zip 走这里） */
+/** 文件直传（curl -T，zip 走这里）。
+ * ⚠️ -T 必须放在 URL 之前：curl 把命令行按 URL 分组，URL 之后的选项作用于
+ * 「下一个 URL」——-T 放在 URL 后会导致 PUT 没有上传源，服务端返回 404。 */
 function httpUpload(method, url, filePath, { headers = [] } = {}) {
-  const args = ['-sS', '-X', method, url, '-T', filePath, '-w', '\n%{http_code}'];
+  const args = ['-sS', '-X', method, '-T', filePath];
   for (const [k, v] of Object.entries(headers)) args.push('-H', `${k}: ${v}`);
+  args.push(url, '-w', '\n%{http_code}');
   const out = execFileSync('curl', args, { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024, timeout: 300_000 });
   const nl = out.lastIndexOf('\n');
   return { status: Number(out.slice(nl + 1).trim()), body: out.slice(0, nl) };
@@ -71,7 +79,6 @@ function accessToken() {
   return json.access_token;
 }
 
-const cmd = process.argv[2];
 if (!['status', 'upload', 'publish'].includes(cmd)) {
   console.error('未知子命令:', cmd, '（可用：status / upload <zip> / publish）');
   process.exit(1);
