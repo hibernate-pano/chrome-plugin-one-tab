@@ -10,6 +10,31 @@ import { supabase, checkSupabaseConfig, getDeviceId } from './client';
 import { supportsCloudTombstone, supportsOpStamp } from './probe';
 import { verifyUploadReadback, verifyTombstoneReadback, compareHardDeleteReadback } from './readback';
 
+/**
+ * 选定本次实际上云的组。
+ *
+ * 覆盖模式（overwriteCloud）：本地墓碑必须一起上行——覆盖会先 DELETE 掉云端该
+ * 用户的全部行，墓碑若留在本地就等于把删除意图丢在云端之外（另一端的活跃副本
+ * 下次合并即复活）。云端有 is_deleted 列时按墓碑原样上行（由写入侧置 is_deleted）。
+ *
+ * 云端没有 is_deleted 列（decideCloudTombstoneWrite 的 hard-delete 降级）时不能
+ * 带上墓碑行（整批 upsert 会因未知列 42703 失败），且此时覆盖本身已把云端清空，
+ * 「行不存在」已经承载了删除意图（等价硬删），与 markCloudGroupsAsDeleted 的
+ * hard-delete 降级同口径。
+ *
+ * 合并模式：只上行活跃组（墓碑交由 markCloudGroupsAsDeleted 按旧路径处理），
+ * 调用方本就已经过滤过，这里再兜一层以防误传。
+ */
+export function selectRowsForUpload(
+  groups: TabGroup[],
+  opts: { overwriteCloud: boolean; tombstoneColumn: boolean }
+): TabGroup[] {
+  if (opts.overwriteCloud) {
+    return opts.tombstoneColumn ? [...groups] : groups.filter(g => g.isDeleted !== true);
+  }
+  return groups.filter(g => g.isDeleted !== true);
+}
+
 export const uploadSync = {
   // 迁移数据到 JSONB 格式
   async migrateToJsonb() {
@@ -227,8 +252,23 @@ export const uploadSync = {
 
     // 云端是否已有印记列：没有就整列省略（带上不存在的列会让整批 upsert 报 42703 失败）
     const opStampSupported = await supportsOpStamp();
+    // 云端是否已有 is_deleted 列（覆盖模式能否把本地墓碑写上云的前提）
+    const tombstoneSupported = await supportsCloudTombstone();
 
-    const groupsWithUser = groups.map(group => {
+    // 覆盖模式必须把本地墓碑一起上行：覆盖 = 先 DELETE 掉云端该用户的全部行，
+    // 墓碑若不随 upsert 一起写，删除意图就随那次 DELETE 一起丢了
+    // （云端此后「行不存在」= 另一端持有活跃副本时会被复活）。
+    // 云端没有 is_deleted 列时不能带上墓碑行（整批 upsert 会 42703 失败），
+    // 此时覆盖本身已把云端清空，墓碑语义由「行不存在」承载，等价于硬删。
+    const rowsToUpload = selectRowsForUpload(groups, { overwriteCloud, tombstoneColumn: tombstoneSupported });
+    const tombstonedIds = new Set(
+      rowsToUpload.filter(g => g.isDeleted === true).map(g => g.id)
+    );
+    if (overwriteCloud && tombstonedIds.size > 0 && tombstoneSupported) {
+      console.log(`[upload] 覆盖模式随 upsert 一并写入 ${tombstonedIds.size} 个本地墓碑组`);
+    }
+
+    const groupsWithUser = rowsToUpload.map(group => {
       // 确保必要字段都有值
       const createdAt = group.createdAt || currentTime;
       const updatedAt = group.updatedAt || currentTime;
@@ -353,11 +393,15 @@ export const uploadSync = {
         console.log(`标签组 ${index + 1}: ${group.id} 用户ID从 ${oldUserId} 更新为 ${group.user_id}`);
       });
 
-      // 云端有 is_deleted 列时，上传的活跃组显式置 is_deleted=false，
-      // 把 Web 端已软删、本地仍活跃（恢复/取消删除）的组复位为活跃
-      if (await supportsCloudTombstone()) {
+      // 覆盖模式必须把本地墓碑一起写上云（否则覆盖先删空云端，墓碑意图无处可存，
+      // 另一端的活跃副本会在下次合并时复活该组）。
+      // 一条规则同时服务两个语义：
+      //   本地认为活跃 → is_deleted=false：把 Web 端已软删、本地仍活跃（恢复/取消删除）的组复位为活跃；
+      //   本地已墓碑   → is_deleted=true ：把删除意图随覆盖写上云。
+      // 合并上传路径本来就只传活跃组（syncEngine 过滤），取值恒为 false，行为不变。
+      if (tombstoneSupported) {
         uniqueGroups.forEach(group => {
-          (group as any).is_deleted = false;
+          (group as any).is_deleted = tombstonedIds.has(group.id);
         });
       }
 
@@ -394,9 +438,8 @@ export const uploadSync = {
         }
 
         console.log('用户标签组已删除，准备插入新数据');
-
-        // 等待一小段时间确保删除操作完全完成
-        await new Promise(resolve => setTimeout(resolve, 100));
+        // 无需等待：DELETE 的 promise resolve 时事务已提交（原来的 100ms sleep
+        // 对「删除是否完成」不提供任何保证，只会在每次覆盖上传里白白拖慢同步）。
 
         // 然后插入新的标签组，使用 upsert 而不是 insert 来避免主键冲突
         console.log('准备插入标签组数据，用户ID:', sessionData.session.user.id);
@@ -487,9 +530,15 @@ export const uploadSync = {
     // 调用方保留 pending_upload 走重试，绝不清标志假装成功。
     // 去重口径与上面的 uniqueGroups 一致（保留首个同 id 组）。
     const firstById = new Map<string, TabGroup>();
-    for (const g of groups) if (!firstById.has(g.id)) firstById.set(g.id, g);
+    for (const g of rowsToUpload) if (!firstById.has(g.id)) firstById.set(g.id, g);
     await verifyUploadReadback(
-      [...firstById.values()].map(g => ({ id: g.id, updatedAt: g.updatedAt, lastOp: g.lastOp ?? null })),
+      [...firstById.values()].map(g => ({
+        id: g.id,
+        updatedAt: g.updatedAt,
+        lastOp: g.lastOp ?? null,
+        // 覆盖模式上行墓碑时，云端读回必须是 is_deleted=true（默认 false = 活跃）
+        isDeleted: tombstonedIds.has(g.id),
+      })),
       sessionData.session.user.id,
       { checkStamp: opStampSupported, checkTombstone: await supportsCloudTombstone() }
     );

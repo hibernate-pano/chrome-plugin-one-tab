@@ -55,6 +55,17 @@ export async function supportsCloudTombstone(): Promise<boolean> {
 let opStampSupportCache: boolean | null = null;
 
 /**
+ * 仅供单元测试：清空列探测缓存。
+ * 探测结果在进程内是单例缓存（同一 SW 生命周期只探一次），而测试要在同一个
+ * 进程里分别跑 stamp / plain / hard-delete 三种列形态，必须能重置。
+ * 生产代码不得调用。
+ */
+export function __resetCloudColumnProbeCacheForTests(): void {
+  tombstoneSupportCache = null;
+  opStampSupportCache = null;
+}
+
+/**
  * 探测云端 tab_groups 表是否已有 last_op_seq 列（结果缓存）。
  *
  * 为什么必须探测：客户端先于 SQL 迁移发布时，上传 payload 里带上不存在的列会让

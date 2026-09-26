@@ -16,6 +16,8 @@ export interface UploadReadbackExpect {
   id: string;
   updatedAt?: string;
   lastOp?: { d: string; s: number } | null;
+  /** 期望的云端 is_deleted（省略 = false = 活跃）。覆盖模式上行墓碑时为 true。 */
+  isDeleted?: boolean;
 }
 
 export interface UploadReadbackRow {
@@ -39,8 +41,14 @@ export function compareUploadReadback(
       return { ok: false, reason: `云端缺失组 ${e.id}（疑似服务端守卫/RLS 静默吞写）` };
     }
     if (opts.checkTombstone && row.is_deleted !== undefined && row.is_deleted !== null) {
-      if (row.is_deleted !== false) {
-        return { ok: false, reason: `组 ${e.id} 读回 is_deleted=${String(row.is_deleted)}，期望活跃 false（复位失败）` };
+      const wantDeleted = e.isDeleted === true;
+      if (row.is_deleted !== wantDeleted) {
+        return {
+          ok: false,
+          reason: `组 ${e.id} 读回 is_deleted=${String(row.is_deleted)}，期望 ${String(wantDeleted)}（${
+            wantDeleted ? '墓碑未落盘' : '复位失败'
+          }）`,
+        };
       }
     }
     if (opts.checkStamp && e.lastOp) {

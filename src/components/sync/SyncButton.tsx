@@ -218,9 +218,16 @@ export const SyncButton: React.FC<SyncButtonProps> = () => {
       setWorkingProgress(100);
 
       if (res.ok) {
-        void trackProductEvent('sync_upload_completed', {
-          mode: 'overwrite',
-        });
+        // 空本地保护：本地没有任何活跃组时覆盖上传被跳过（绝不清空云端）。
+        // 引擎把这件事如实回传，这里不能再当成「上传成功」上报/提示。
+        const payload = res.payload as { skippedOverwrite?: string } | undefined;
+        if (payload?.skippedOverwrite === 'no-active-groups') {
+          showToast('本地没有活跃会话，覆盖上传已跳过（云端数据保持不变）', 'info');
+        } else {
+          void trackProductEvent('sync_upload_completed', {
+            mode: 'overwrite',
+          });
+        }
       } else {
         showToast(res.error || '上传失败，请重试', 'error');
       }

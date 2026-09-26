@@ -51,6 +51,12 @@ export interface MergeResult {
 export interface UploadResult {
   success: boolean;
   error?: string;
+  /**
+   * 本次确实没有执行的操作（success 仍为 true：墓碑/purge/设置等其他环节照常完成）。
+   * 上传入口据此区分「已覆盖云端」与「空本地保护跳过覆盖」，避免给用户报假的成功。
+   * 目前只有一种：本地无活跃组时跳过覆盖上传（绝不拿空本地清空云端）。
+   */
+  skippedOverwrite?: 'no-active-groups';
 }
 
 export type SyncOperation = 'upload' | 'download' | 'none';
@@ -430,12 +436,21 @@ export class SyncEngine {
       const deletedIds = allGroups.filter(g => g.isDeleted).map(g => g.id);
 
       const overwriteCloud = opts?.overwriteCloud || false;
+      let skippedOverwrite: UploadResult['skippedOverwrite'];
       if (activeGroups.length > 0) {
-        await uploadTabGroups(activeGroups, overwriteCloud);
+        // 覆盖模式把墓碑一起交给 uploadTabGroups：覆盖会先删空云端，墓碑必须
+        // 随同一次 upsert 写上云（selectRowsForUpload 决定实际写入哪些行），
+        // 否则删除意图随覆盖一起丢失，另一端的活跃副本下次合并即复活。
+        // 合并模式仍只传活跃组（墓碑走 markCloudGroupsAsDeleted）。
+        await uploadTabGroups(overwriteCloud ? allGroups : activeGroups, overwriteCloud);
       } else if (overwriteCloud) {
         // ponytail: 与旧 uploadTabsToCloudFlow 的空本地保护一致——本地没有任何活跃组时
         // 绝不执行覆盖模式（覆盖 = 先删云端全部再插），否则会把云端数据清空。
+        // 该保护本身是对的，但结果必须让调用方看得见（见 UploadResult.skippedOverwrite）：
+        // 继续走到 report(70) 并 success 只会让 SyncButton 弹「上传成功」，
+        // 而这次覆盖根本没发生。
         console.warn('[SyncEngine] 覆盖上传被跳过：本地没有活跃组（保留云端数据）');
+        skippedOverwrite = 'no-active-groups';
       }
       report(70, 'upload');
       if (deletedIds.length > 0 && opts?.includeDeleted !== false) {
@@ -474,7 +489,7 @@ export class SyncEngine {
       await storage.setPendingUpload(false);
       report(100, 'none');
       this.isSyncing = false;
-      return { success: true };
+      return { success: true, ...(skippedOverwrite ? { skippedOverwrite } : {}) };
     } catch (error) {
       console.error('[SyncEngine] 上传失败:', error);
       this.isSyncing = false;
