@@ -18,6 +18,14 @@ async function migrateFromLocalStorage(target: StorageDriver) {
   if (typeof window === 'undefined') return;
   if (!isLocalStorageAvailable()) return;
   const ls = window.localStorage;
+
+  // 迁移只执行一次（与 migrateFromChromeStorage 同语义）。
+  // 无此标志时，每次冷启动（popup 每次打开都调 initStorage，见 AppContainer）
+  // 都会把 localStorage 里的旧值无条件覆盖回 IndexedDB —— 用户列表被无声回滚，
+  // 且 pending_upload 不在迁移键表内，回滚后的数据不会被重新上传。
+  const flags = (await target.getItem<Record<string, boolean>>(MIGRATION_KEYS.migrationFlags)) || {};
+  if (flags.localStorageMigrated) return;
+
   const candidates: Array<{ key: string; value: unknown }> = [];
 
   for (let i = 0; i < ls.length; i += 1) {
@@ -48,7 +56,19 @@ async function migrateFromLocalStorage(target: StorageDriver) {
 
   if (!candidates.length) return;
 
-  await Promise.all(candidates.map(entry => target.setItem(entry.key, entry.value)));
+  try {
+    await Promise.all(candidates.map(entry => target.setItem(entry.key, entry.value)));
+
+    // 全部落盘成功后才标记已迁移，并清理源键（顺序与 migrateFromChromeStorage 一致）：
+    // 写回中断时标志不置位，下次冷启动会重试而不是半迁移卡死。
+    flags.localStorageMigrated = true;
+    await target.setItem(MIGRATION_KEYS.migrationFlags, flags);
+    for (const entry of candidates) {
+      ls.removeItem(entry.key);
+    }
+  } catch (error) {
+    console.warn('[storage] migrateFromLocalStorage failed, skip migration', error);
+  }
 }
 
 // 将 chrome.storage.local 中的旧数据迁移到统一的 kv 存储

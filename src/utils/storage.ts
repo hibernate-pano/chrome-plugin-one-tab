@@ -121,17 +121,20 @@ class ChromeStorage {
     await kvSet(STORAGE_KEYS.VERSION, STORAGE_VERSION);
   }
 
+  /**
+   * 读取全部标签组（30s 内存缓存）。
+   *
+   * fail-closed：读失败**抛错**，不返回 []。所有写路径都是本方法的读-改-写
+   * （mutationService / TabManager / import），返回 [] 等于「现有列表为空」，
+   * 下一次写入会把整组用户会话截断成单个元素并回报成功。抛错则写路径整条失败，
+   * 用户数据保持原样。
+   */
   async getGroups(): Promise<TabGroup[]> {
-    try {
-      return await cachedAsyncFn('storage', 'groups', async () => {
-        await this.ensureVersion();
-        const groups = await kvGet<unknown>(STORAGE_KEYS.GROUPS);
-        return Array.isArray(groups) ? (groups as TabGroup[]) : [];
-      }, CACHE_TTL.GROUPS);
-    } catch (error) {
-      console.error('获取标签组失败:', error);
-      return [];
-    }
+    return cachedAsyncFn('storage', 'groups', async () => {
+      await this.ensureVersion();
+      const groups = await kvGet<unknown>(STORAGE_KEYS.GROUPS);
+      return Array.isArray(groups) ? (groups as TabGroup[]) : [];
+    }, CACHE_TTL.GROUPS);
   }
 
   /**
