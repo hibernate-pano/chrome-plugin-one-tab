@@ -31,6 +31,7 @@ import { ensureAuthenticated } from '@/utils/authGuard';
 import { kvGet, kvSet } from '@/storage/storageAdapter';
 import { errorHandler } from '@/utils/errorHandler';
 import { validateThemeStyle, validateThemeMode } from '@/utils/storage';
+import { logError, logInfo, logWarn } from '../utils/log';
 
 // ── 类型 ───────────────────────────────────────────────────────────
 
@@ -153,7 +154,7 @@ export class SyncEngine {
       if (this.uploadTimer) clearTimeout(this.uploadTimer);
       this.uploadTimer = setTimeout(() => {
         this.uploadTimer = null;
-        void this.upload().catch(err => console.error('[SyncEngine] 快路径上传失败:', err));
+        void this.upload().catch(err => logError('[SyncEngine] 快路径上传失败:', err));
       }, delayMs);
       // 兜底
       void chrome.alarms.clear(SYNC_UPLOAD_ALARM).catch(() => {});
@@ -165,7 +166,7 @@ export class SyncEngine {
     if (this.uploadTimer) clearTimeout(this.uploadTimer);
     this.uploadTimer = setTimeout(() => {
       this.uploadTimer = null;
-      void this.upload().catch(err => console.error('[SyncEngine] 延迟上传失败:', err));
+      void this.upload().catch(err => logError('[SyncEngine] 延迟上传失败:', err));
     }, delayMs);
   }
 
@@ -176,7 +177,7 @@ export class SyncEngine {
     try {
       await this.upload();
     } catch (err) {
-      console.error('[SyncEngine] alarm 驱动上传失败:', err);
+      logError('[SyncEngine] alarm 驱动上传失败:', err);
     }
   }
 
@@ -211,7 +212,7 @@ export class SyncEngine {
     try {
       await ensureOpStampMigrated();
     } catch (err) {
-      console.warn('[SyncEngine] 印记迁移兜底失败（不阻塞同步）:', err);
+      logWarn('[SyncEngine] 印记迁移兜底失败（不阻塞同步）:', err);
     }
 
     // ponytail: 下载前置保护（决策逻辑见 decideDownloadPrecheck 单测）：
@@ -238,17 +239,17 @@ export class SyncEngine {
       }
 
       if (decision.action === 'skip') {
-        console.log(`[SyncEngine] 跳过本次下载（${decision.reason}：刚上传过，避免覆盖本地新版本）`);
+        logInfo(`[SyncEngine] 跳过本次下载（${decision.reason}：刚上传过，避免覆盖本地新版本）`);
         return { success: false, groups: [], reason: decision.reason };
       }
 
       if (decision.action === 'upload_first') {
-        console.log('[SyncEngine] 本地有未上传变更，下载前先推送');
+        logInfo('[SyncEngine] 本地有未上传变更，下载前先推送');
         const upResult = await this.upload({ forcePending: true });
         if (!upResult.success) {
           // 上传失败（如网络断开）时中止下载：此时拉云端只会用旧数据覆盖
           // 本地未推送的新状态。pending flag 已保留，下轮 alarm / 手动同步重试。
-          console.warn(`[SyncEngine] 上传未成功，跳过本次下载: ${upResult.error}`);
+          logWarn(`[SyncEngine] 上传未成功，跳过本次下载: ${upResult.error}`);
           return { success: false, groups: [], reason: 'pending_upload_failed' };
         }
       }
@@ -268,7 +269,7 @@ export class SyncEngine {
     try {
       snapshot = await storage.getGroupsFresh();
     } catch (err) {
-      console.error('[SyncEngine] 本地快照读失败，中止本次下载（fail-closed，不写入）:', err);
+      logError('[SyncEngine] 本地快照读失败，中止本次下载（fail-closed，不写入）:', err);
       this.isSyncing = false;
       return { success: false, groups: [], reason: 'snapshot_failed' };
     }
@@ -277,7 +278,7 @@ export class SyncEngine {
     try {
       await storage.setSyncSnapshot(snapshot);
     } catch (err) {
-      console.error('[SyncEngine] 快照保存失败:', err);
+      logError('[SyncEngine] 快照保存失败:', err);
     }
 
     try {
@@ -289,7 +290,7 @@ export class SyncEngine {
         try {
           const digest = await downloadTabGroupsDigest();
           if (!hasRemoteChanges(snapshot, digest)) {
-            console.log(
+            logInfo(
               `[SyncEngine] 探活命中：云端无变更（${digest.length} 行指纹一致），跳过全量下载`
             );
             report(100, 'none');
@@ -308,9 +309,9 @@ export class SyncEngine {
               upToDate: true,
             };
           }
-          console.log('[SyncEngine] 探活未命中：检测到云端变更，走全量下载合并');
+          logInfo('[SyncEngine] 探活未命中：检测到云端变更，走全量下载合并');
         } catch (err) {
-          console.warn('[SyncEngine] 指纹探活失败，走全量下载:', err);
+          logWarn('[SyncEngine] 指纹探活失败，走全量下载:', err);
         }
       }
       // 2. 下载云端
@@ -323,7 +324,7 @@ export class SyncEngine {
         try {
           await mergeCloudSettingsIntoLocal();
         } catch (err) {
-          console.warn('[SyncEngine] 覆盖下载时同步设置失败（不阻塞主流程）:', err);
+          logWarn('[SyncEngine] 覆盖下载时同步设置失败（不阻塞主流程）:', err);
         }
       }
       // 4. 合并
@@ -350,7 +351,7 @@ export class SyncEngine {
       // 5. 验证
       const validation = validateMergeResult(localGroups, cloudGroups, mergedGroups);
       if (!validation.valid) {
-        console.error(`[SyncEngine] 合并验证失败: ${validation.reason}`);
+        logError(`[SyncEngine] 合并验证失败: ${validation.reason}`);
         await this.restoreSnapshot(snapshot);
         this.isSyncing = false;
         // P1-5：验证失败回滚后，若本地仍有未上传变更必须重调度上传，
@@ -371,7 +372,7 @@ export class SyncEngine {
       try {
         const stillPending = await storage.getPendingUpload();
         if (stillPending) {
-          console.log('[SyncEngine] 下载完成但本地仍有未上传变更，重新调度上传');
+          logInfo('[SyncEngine] 下载完成但本地仍有未上传变更，重新调度上传');
           this.scheduleUpload(0);
         }
       } catch (e) {
@@ -391,7 +392,7 @@ export class SyncEngine {
         },
       };
     } catch (error) {
-      console.error('[SyncEngine] 下载合并失败:', error);
+      logError('[SyncEngine] 下载合并失败:', error);
       await this.restoreSnapshot(snapshot);
       this.isSyncing = false;
       // P1-5：下载抛错/回滚后，若 pending 仍 true 必须重调度上传。
@@ -465,7 +466,7 @@ export class SyncEngine {
         // 该保护本身是对的，但结果必须让调用方看得见（见 UploadResult.skippedOverwrite）：
         // 继续走到 report(70) 并 success 只会让 SyncButton 弹「上传成功」，
         // 而这次覆盖根本没发生。
-        console.warn('[SyncEngine] 覆盖上传被跳过：本地没有活跃组（保留云端数据）');
+        logWarn('[SyncEngine] 覆盖上传被跳过：本地没有活跃组（保留云端数据）');
         skippedOverwrite = 'no-active-groups';
       }
       report(70, 'upload');
@@ -503,7 +504,7 @@ export class SyncEngine {
         try {
           await uploadSettings(await storage.getSettings());
         } catch (err) {
-          console.warn('[SyncEngine] 上传设置失败（不阻塞主流程）:', err);
+          logWarn('[SyncEngine] 上传设置失败（不阻塞主流程）:', err);
         }
       }
       report(95, 'upload');
@@ -519,7 +520,7 @@ export class SyncEngine {
       this.isSyncing = false;
       return { success: true, ...(skippedOverwrite ? { skippedOverwrite } : {}) };
     } catch (error) {
-      console.error('[SyncEngine] 上传失败:', error);
+      logError('[SyncEngine] 上传失败:', error);
       this.isSyncing = false;
       errorHandler.handle(error as Error, {
         showToast: false,
@@ -564,20 +565,20 @@ export class SyncEngine {
 
   private async restoreSnapshot(snapshot: TabGroup[]): Promise<void> {
     if (snapshot.length === 0) {
-      console.warn('[SyncEngine] 快照为空，跳过回滚（保持本地数据不变）');
+      logWarn('[SyncEngine] 快照为空，跳过回滚（保持本地数据不变）');
       return;
     }
     try {
       // P1-4：回滚直写落盘，不经过防抖窗口（SW 可能在窗口期内被杀导致回滚丢失）。
       await storage.setGroupsImmediate(snapshot);
       await storage.clearSyncSnapshot();
-      console.log(`[SyncEngine] 已从快照恢复 ${snapshot.length} 个组`);
+      logInfo(`[SyncEngine] 已从快照恢复 ${snapshot.length} 个组`);
     } catch (err) {
-      console.error('[SyncEngine] 快照回滚失败:', err);
+      logError('[SyncEngine] 快照回滚失败:', err);
       try {
         await storage.setGroupsImmediate(snapshot);
       } catch (retryErr) {
-        console.error('[SyncEngine] 二次回滚也失败，数据可能丢失:', retryErr);
+        logError('[SyncEngine] 二次回滚也失败，数据可能丢失:', retryErr);
       }
     }
   }
@@ -591,7 +592,7 @@ export class SyncEngine {
   private async rescheduleUploadIfPending(): Promise<void> {
     try {
       if (await storage.getPendingUpload()) {
-        console.log('[SyncEngine] 同步失败但本地仍有未上传变更，重新调度上传');
+        logInfo('[SyncEngine] 同步失败但本地仍有未上传变更，重新调度上传');
         this.scheduleUpload(0);
       }
     } catch {

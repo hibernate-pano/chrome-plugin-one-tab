@@ -5,6 +5,7 @@
 
 import { supabase } from './supabase';
 import { downloadTabGroups } from '@/services/tabGroupSyncService';
+import { logError, logInfo } from './log';
 
 /**
  * 检查云端是否有数据
@@ -17,7 +18,7 @@ export const checkCloudData = async (): Promise<boolean> => {
 
     // 如果用户未登录，直接返回false
     if (!sessionData.session) {
-      console.log('用户未登录，无法检查云端数据');
+      logInfo('用户未登录，无法检查云端数据');
       return false;
     }
 
@@ -32,11 +33,11 @@ export const checkCloudData = async (): Promise<boolean> => {
       (error.message.includes('用户未登录') ||
         error.message.includes('会话已过期') ||
         error.message.includes('row-level security policy'))) {
-      console.log('用户认证问题，无法检查云端数据:', error.message);
+      logInfo('用户认证问题，无法检查云端数据:', error.message);
       return false;
     }
 
-    console.error('检查云端数据失败:', error);
+    logError('检查云端数据失败:', error);
     return false;
   }
 };

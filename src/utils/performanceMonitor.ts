@@ -60,7 +60,7 @@ class PerformanceMonitor {
         longTaskObserver.observe({ entryTypes: ['longtask'] });
         this.observers.push(longTaskObserver);
       } catch (e) {
-        console.warn('Long task observer not supported');
+        logWarn('Long task observer not supported');
       }
 
       // 观察布局偏移
@@ -81,7 +81,7 @@ class PerformanceMonitor {
         layoutShiftObserver.observe({ entryTypes: ['layout-shift'] });
         this.observers.push(layoutShiftObserver);
       } catch (e) {
-        console.warn('Layout shift observer not supported');
+        logWarn('Layout shift observer not supported');
       }
     }
   }
@@ -160,7 +160,7 @@ class PerformanceMonitor {
         });
       }
     } catch (e) {
-      console.warn(`Failed to measure ${name}:`, e);
+      logWarn(`Failed to measure ${name}:`, e);
     }
   }
 
@@ -371,3 +371,4 @@ export function usePerformanceTracking(componentName: string) {
 
 // 注意：需要在文件顶部导入React
 import React from 'react';
+import { logWarn } from './log';

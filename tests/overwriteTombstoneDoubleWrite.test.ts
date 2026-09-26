@@ -28,6 +28,7 @@ import assert from 'node:assert/strict';
 import { register } from 'node:module';
 import { pathToFileURL, fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
+import { stubSessionJson } from './_helpers/stubSession.ts';
 
 globalThis.__TABSTACK_META_ENV__ = {
   VITE_SUPABASE_URL: 'https://stub.supabase.co',
@@ -227,16 +228,8 @@ const TOMB_B = mkGroup('g-tomb-b', { isDeleted: true, lastOp: { d: DEVICE_ID, s:
 
 before(async () => {
   await register(LOADER_PATH);
-  const session = JSON.stringify({
-    access_token: 'stub-access-token',
-    token_type: 'bearer',
-    expires_in: 3600,
-    expires_at: Math.floor(Date.now() / 1000) + 3600,
-    refresh_token: 'stub-refresh-token',
-    user: { id: USER_ID, aud: 'authenticated', role: 'authenticated', email: 'ext@test.dev' },
-  });
-  lsData.set(SESSION_KEY, session);
-  chromeData.set(SESSION_KEY, session);
+  lsData.set(SESSION_KEY, stubSessionJson(USER_ID));
+  chromeData.set(SESSION_KEY, stubSessionJson(USER_ID));
   lsData.set('storage_version', JSON.stringify(5));
   lsData.set('tabvaultpro_device_id', JSON.stringify(DEVICE_ID));
 

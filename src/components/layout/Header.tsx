@@ -17,6 +17,7 @@ import { useDebouncedSearch } from '@/hooks/useDebouncedSearch';
 import { useKeyboardShortcuts, COMMON_SHORTCUTS } from '@/hooks/useKeyboardShortcuts';
 import { Tooltip } from '@/components/common/Tooltip';
 import { TapStackLogo } from '@/components/common/TapStackIcon';
+import { logError } from '../../utils/log';
 
 interface HeaderProps {
   onSearch: (query: string) => void;
@@ -87,7 +88,7 @@ export const Header: React.FC<HeaderProps> = ({ onSearch }) => {
         try {
           await dispatch(cleanDuplicateTabs()).unwrap();
         } catch (error) {
-          console.error('清理重复标签失败:', error);
+          logError('清理重复标签失败:', error);
           showAlert({
             title: '清理失败',
             message: '清理重复标签失败，请重试',

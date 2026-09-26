@@ -6,6 +6,7 @@ import {
   restoreGroup, purgeGroupPermanent,
 } from './webApi';
 import { ConfirmModal, PromptModal } from './Modal';
+import { logWarn } from '../utils/log';
 
 interface Props {
   onSignOut: () => void;
@@ -72,7 +73,7 @@ export const DashboardPage: React.FC<Props> = ({ onSignOut }) => {
         try {
           deleted = await fetchDeletedGroups();
         } catch (deletedErr) {
-          console.warn('加载已删除会话失败:', deletedErr);
+          logWarn('加载已删除会话失败:', deletedErr);
         }
         if (active) {
           setGroups(data);

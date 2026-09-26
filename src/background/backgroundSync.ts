@@ -3,6 +3,7 @@ import { getCurrentUser, setFromCache } from '@/store/slices/authSlice';
 import { loadSettings } from '@/store/slices/settingsSlice';
 import { syncEngine } from '@/services/syncEngine';
 import { enqueue } from './mutationQueue';
+import { logError, logInfo, logWarn } from '../utils/log';
 
 /**
  * 后台定时同步（chrome.alarms 驱动，Service Worker 常驻时每 60s 触发）。
@@ -28,7 +29,7 @@ export function setupBackgroundSync(): void {
     periodInMinutes: SYNC_INTERVAL_MINUTES,
   });
   chrome.alarms.onAlarm.addListener(handleAlarm);
-  console.log(`[BackgroundSync] 已注册后台同步 alarm（每 ${SYNC_INTERVAL_MINUTES} 分钟）`);
+  logInfo(`[BackgroundSync] 已注册后台同步 alarm（每 ${SYNC_INTERVAL_MINUTES} 分钟）`);
 }
 
 /** 供手动触发一次（测试/调试） */
@@ -41,7 +42,7 @@ async function handleAlarm(alarm: chrome.alarms.Alarm): Promise<void> {
   try {
     await performBackgroundSync();
   } catch (err) {
-    console.error('[BackgroundSync] 后台同步异常:', err);
+    logError('[BackgroundSync] 后台同步异常:', err);
   }
 }
 
@@ -60,7 +61,7 @@ async function performBackgroundSync(): Promise<boolean> {
   // 1. 恢复登录态（读取 chrome.storage.local 中的 session）
   const user = await store.dispatch(getCurrentUser()).unwrap().catch(() => null);
   if (!user) {
-    console.log('[BackgroundSync] 未登录，跳过后台同步');
+    logInfo('[BackgroundSync] 未登录，跳过后台同步');
     return false;
   }
 
@@ -80,17 +81,17 @@ async function performBackgroundSync(): Promise<boolean> {
   try {
     const hasPending = await syncEngine.hasPendingUpload();
     if (hasPending) {
-      console.log('[BackgroundSync] 本地有未上传变更，先上传再下载');
+      logInfo('[BackgroundSync] 本地有未上传变更，先上传再下载');
       // 单写者队列（与 service-worker.ts 的 SYNC upload handler 同名 'sync:upload'），
       // 后台轮询上传与 popup SYNC 消息上传串行执行，避免并发 upload/download 撞车。
       const upResult = await enqueue('sync:upload', () => syncEngine.upload({ forcePending: true }));
       if (!upResult.success) {
-        console.warn(`[BackgroundSync] 上传未成功，跳过本次下载: ${upResult.error}（下轮 alarm 重试）`);
+        logWarn(`[BackgroundSync] 上传未成功，跳过本次下载: ${upResult.error}（下轮 alarm 重试）`);
         return true;
       }
     }
   } catch (e) {
-    console.warn('[BackgroundSync] 检查 pending_upload 失败（继续）:', e);
+    logWarn('[BackgroundSync] 检查 pending_upload 失败（继续）:', e);
   }
 
   // 4. 下载并合并到本地 storage（同 'sync:download' 名，串行化）
@@ -99,7 +100,7 @@ async function performBackgroundSync(): Promise<boolean> {
     const reason = result.reason ?? 'unknown';
     // already_syncing / recent_upload_guard / pending_upload_failed 属正常并发或保护性跳过，不视为错误
     if (reason !== 'already_syncing' && reason !== 'recent_upload_guard' && reason !== 'pending_upload_failed') {
-      console.warn(`[BackgroundSync] 自动下载未成功: ${reason}`);
+      logWarn(`[BackgroundSync] 自动下载未成功: ${reason}`);
     }
     return true;
   }
@@ -108,6 +109,6 @@ async function performBackgroundSync(): Promise<boolean> {
   const summary = result.stats
     ? `（本地 ${result.stats.localCount} → 云端 ${result.stats.cloudCount}，合并 ${result.stats.mergedCount}）`
     : '';
-  console.log(`[BackgroundSync] 后台同步完成: ${result.groups.length} 个组${summary}`);
+  logInfo(`[BackgroundSync] 后台同步完成: ${result.groups.length} 个组${summary}`);
   return true;
 }

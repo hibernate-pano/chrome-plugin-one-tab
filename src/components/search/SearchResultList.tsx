@@ -16,6 +16,7 @@ import HighlightText from './HighlightText';
 import { SafeFavicon } from '@/components/common/SafeFavicon';
 import { EmptyState } from '@/components/common/EmptyState';
 import { getSessionResultSummary } from '@/utils/sessionPresentation';
+import { logError } from '../../utils/log';
 
 const PinIcon = () => (
   <svg className="w-3 h-3 text-blue-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
@@ -117,7 +118,7 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({ searchQuery 
       dispatch(deleteGroup(group.id))
         .unwrap()
         .catch(error => {
-          console.error('恢复会话后清理原会话失败:', error);
+          logError('恢复会话后清理原会话失败:', error);
           showDeleteError(`恢复会话后清理原会话失败: ${error.message || '未知错误'}`);
         });
     }
@@ -135,7 +136,7 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({ searchQuery 
       dispatch(deleteTabAndSync({ groupId: group.id, tabId: tab.id }))
         .unwrap()
         .catch(error => {
-          console.error('更新会话失败:', error);
+          logError('更新会话失败:', error);
           showRestoreError(`更新会话失败: ${error.message || '未知错误'}`);
         });
     }
@@ -174,7 +175,7 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({ searchQuery 
         try {
           await dispatch(deleteTabAndSync({ groupId: group.id, tabId: tab.id })).unwrap();
         } catch (error) {
-          console.error('批量恢复后删除会话失败:', error);
+          logError('批量恢复后删除会话失败:', error);
           showDeleteError(`批量恢复后清理原会话失败: ${(error as { message?: string })?.message || '未知错误'}`);
         }
       }
@@ -199,7 +200,7 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({ searchQuery 
         await dispatch(deleteTabAndSync({ groupId: group.id, tabId: tab.id })).unwrap();
       }
     } catch (error) {
-      console.error('批量删除搜索结果失败:', error);
+      logError('批量删除搜索结果失败:', error);
       showDeleteError('删除操作失败，请重试');
     }
   };

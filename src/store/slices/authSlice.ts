@@ -2,6 +2,7 @@ import { createSlice, createAsyncThunk } from '@reduxjs/toolkit';
 import { AuthState, User } from '@/types/tab';
 import { auth as supabaseAuth } from '@/utils/supabase';
 import { authCache } from '@/utils/authCache';
+import { logError, logInfo } from '../../utils/log';
 
 const initialState: AuthState = {
   user: null,
@@ -16,7 +17,7 @@ export const signUp = createAsyncThunk(
     try {
       const { data, error } = await supabaseAuth.signUp(email, password);
       if (error) {
-        console.error('注册错误:', error);
+        logError('注册错误:', error);
         throw new Error(typeof error === 'object' && error !== null && 'message' in error ?
           (error as { message: string }).message : '注册失败');
       }
@@ -31,7 +32,7 @@ export const signUp = createAsyncThunk(
 
       throw new Error('注册失败');
     } catch (err) {
-      console.error('注册异常:', err);
+      logError('注册异常:', err);
       if (err instanceof Error) {
         throw new Error(err.message);
       } else {
@@ -47,7 +48,7 @@ export const signIn = createAsyncThunk(
     try {
       const { data, error } = await supabaseAuth.signIn(email, password);
       if (error) {
-        console.error('登录错误:', error);
+        logError('登录错误:', error);
         throw new Error(typeof error === 'object' && error !== null && 'message' in error ?
           (error as { message: string }).message : '登录失败');
       }
@@ -62,7 +63,7 @@ export const signIn = createAsyncThunk(
 
       throw new Error('登录失败');
     } catch (err) {
-      console.error('登录异常:', err);
+      logError('登录异常:', err);
       if (err instanceof Error) {
         throw new Error(err.message);
       } else {
@@ -81,20 +82,20 @@ export const signOut = createAsyncThunk(
   async () => {
     try {
       // 移除实时同步功能，简化逻辑
-      console.log('已简化同步逻辑，只保留手动同步功能');
+      logInfo('已简化同步逻辑，只保留手动同步功能');
 
       // 退出登录
       const { error } = await supabaseAuth.signOut();
       if (error) {
-        console.error('退出登录错误:', error);
+        logError('退出登录错误:', error);
         throw new Error(typeof error === 'object' && error !== null && 'message' in error ?
           (error as { message: string }).message : '退出登录失败');
       }
 
-      console.log('退出登录成功');
+      logInfo('退出登录成功');
       return null;
     } catch (err) {
-      console.error('退出登录异常:', err);
+      logError('退出登录异常:', err);
       if (err instanceof Error) {
         throw new Error(err.message);
       } else {
@@ -113,14 +114,14 @@ export const getCurrentUser = createAsyncThunk(
 
       // 如果没有会话，直接返回 null，不触发错误
       if (!sessionData || !sessionData.session) {
-        console.log('没有活跃会话，用户未登录');
+        logInfo('没有活跃会话，用户未登录');
         return null;
       }
 
       // 如果有会话，才获取用户信息
       const { data, error } = await supabaseAuth.getCurrentUser();
       if (error) {
-        console.error('获取用户信息错误:', error);
+        logError('获取用户信息错误:', error);
         throw new Error(typeof error === 'object' && error !== null && 'message' in error ?
           (error as { message: string }).message : '获取用户信息失败');
       }
@@ -135,7 +136,7 @@ export const getCurrentUser = createAsyncThunk(
 
       return null;
     } catch (err) {
-      console.error('获取用户信息异常:', err);
+      logError('获取用户信息异常:', err);
       // 确保返回一个字符串错误消息，而不是对象
       if (err instanceof Error) {
         throw new Error(err.message);
@@ -192,7 +193,7 @@ const authSlice = createSlice({
         // 登录成功后缓存认证状态
         if (action.payload) {
           authCache.saveAuthState(action.payload, true);
-          console.log('登录成功 - 手动同步模式');
+          logInfo('登录成功 - 手动同步模式');
         }
       })
       .addCase(signIn.rejected, (state, action) => {
@@ -241,7 +242,7 @@ const authSlice = createSlice({
         state.isLoading = false;
         // 确保错误消息是字符串而不是对象
         state.error = typeof action.error.message === 'string' ? action.error.message : '获取用户信息失败';
-        console.log('自动登录失败，但这是正常的，用户可能未登录');
+        logInfo('自动登录失败，但这是正常的，用户可能未登录');
       });
   },
 });

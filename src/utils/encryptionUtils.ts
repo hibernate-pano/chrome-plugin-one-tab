@@ -1,5 +1,6 @@
 import { TabGroup, TabData, SupabaseTabGroup } from '@/types/tab';
 import { secureStorage } from '@/utils/secureStorage';
+import { logError } from './log';
 
 const V1_PREFIX = 'ENCRYPTED_V1:';
 const V2_STANDARD_PREFIX = 'ENCRYPTED_V2_S:';  // 标准 V2 密钥（无 deviceId）
@@ -114,7 +115,7 @@ export async function encryptData<T>(data: T, userId: string, useDeviceId = fals
     const prefix = useDeviceId ? V2_DEVICE_PREFIX : V2_STANDARD_PREFIX;
     return prefix + base64Encode(concatArrays(salt, iv, new Uint8Array(ciphertext)));
   } catch (error) {
-    console.error('加密数据失败:', error);
+    logError('加密数据失败:', error);
     throw new Error('加密数据失败');
   }
 }
@@ -182,7 +183,7 @@ export async function decryptData<T>(encryptedData: string, userId: string): Pro
     // 未加密数据
     return JSON.parse(encryptedData) as T;
   } catch (error) {
-    console.error('解密数据失败:', error);
+    logError('解密数据失败:', error);
     throw new Error('解密数据失败，可能是数据格式不正确或已损坏');
   }
 }
@@ -204,7 +205,7 @@ export async function decryptTabGroups(encryptedData: string, userId: string): P
   try {
     return await decryptData<TabGroup[]>(encryptedData, userId);
   } catch (error) {
-    console.error('解密标签组数据失败:', error);
+    logError('解密标签组数据失败:', error);
     try {
       return JSON.parse(encryptedData) as TabGroup[];
     } catch {
@@ -228,7 +229,7 @@ export async function decryptSupabaseTabGroup(group: SupabaseTabGroup, userId: s
       const decryptedTabsData = await decryptData<TabData[]>(group.tabs_data, userId);
       return { ...group, tabs_data: decryptedTabsData };
     } catch (error) {
-      console.error(`解密标签组 ${group.id} 的数据失败:`, error);
+      logError(`解密标签组 ${group.id} 的数据失败:`, error);
       return { ...group, tabs_data: [] };
     }
   }

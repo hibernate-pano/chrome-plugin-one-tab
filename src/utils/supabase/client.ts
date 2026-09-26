@@ -34,7 +34,7 @@ function getSecureConfig() {
 
   // 在生产环境中，不要在控制台输出完整的配置信息
   if (import.meta.env.DEV) {
-    console.log('Supabase 配置已加载:', {
+    logInfo('Supabase 配置已加载:', {
       url: SUPABASE_URL,
       keyPrefix: SUPABASE_ANON_KEY.substring(0, 10) + '...'
     });
@@ -72,13 +72,13 @@ async function migrateLegacySupabaseSession(): Promise<void> {
         const value = localStorage.getItem(key);
         if (value) {
           await chrome.storage.local.set({ [key]: value });
-          console.log('[Supabase] 已迁移旧 session 到 chrome.storage.local');
+          logInfo('[Supabase] 已迁移旧 session 到 chrome.storage.local');
         }
         localStorage.removeItem(key);
       }
     }
   } catch (err) {
-    console.warn('[Supabase] 迁移旧 session 失败（可忽略）:', err);
+    logWarn('[Supabase] 迁移旧 session 失败（可忽略）:', err);
   }
 }
 
@@ -91,7 +91,7 @@ function initSupabaseClient() {
   if (!config) {
     // 配置缺失时，创建一个占位符客户端
     // 使用占位符 URL 和 key，避免后续调用时出错
-    console.warn('Supabase 配置缺失。同步功能将不可用。如需使用同步功能，请在 .env 文件中设置 VITE_SUPABASE_URL 和 VITE_SUPABASE_ANON_KEY。');
+    logWarn('Supabase 配置缺失。同步功能将不可用。如需使用同步功能，请在 .env 文件中设置 VITE_SUPABASE_URL 和 VITE_SUPABASE_ANON_KEY。');
     supabaseClient = createClient('https://placeholder.supabase.co', 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InBsYWNlaG9sZGVyIiwicm9sZSI6ImFub24iLCJpYXQiOjE2NDUxOTIwMDAsImV4cCI6MTk2MDc2ODAwMH0.placeholder');
     return supabaseClient;
   }
@@ -129,6 +129,7 @@ export function checkSupabaseConfig() {
 export const supabase = initSupabaseClient();
 
 export { getDeviceId } from '../deviceUtils';
+import { logInfo, logWarn } from '../log';
 
 // 设备 ID 统一来源：与操作印记 last_op_device 同源（deviceUtils），
 // 避免同一台设备在云端留下两种身份（历史上这里曾另有一套 UUID 实现，

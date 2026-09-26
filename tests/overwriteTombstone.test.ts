@@ -21,6 +21,7 @@ import assert from 'node:assert/strict';
 import { register } from 'node:module';
 import { pathToFileURL, fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
+import { stubSessionJson } from './_helpers/stubSession.ts';
 
 globalThis.__TABSTACK_META_ENV__ = {
   VITE_SUPABASE_URL: 'https://stub.supabase.co',
@@ -63,18 +64,7 @@ function installLocalStorageStub() {
 const store = installLocalStorageStub();
 
 // 未过期的假 session：uploadTabGroups 前置的 getSession/getUser 都靠它放行。
-// expires_at 放到未来，避免 supabase-js 触发自动刷新定时器。
-store.set(
-  SESSION_KEY,
-  JSON.stringify({
-    access_token: 'stub-access-token',
-    token_type: 'bearer',
-    expires_in: 3600,
-    expires_at: Math.floor(Date.now() / 1000) + 3600,
-    refresh_token: 'stub-refresh-token',
-    user: { id: USER_ID, aud: 'authenticated', role: 'authenticated', email: 'ext@test.dev' },
-  })
-);
+store.set(SESSION_KEY, stubSessionJson(USER_ID));
 
 // ── 环境桩 2：假云端（PostgREST 子集） ────────────────────────────────────
 interface CloudRow {

@@ -18,6 +18,7 @@ import assert from 'node:assert/strict';
 import { register } from 'node:module';
 import { pathToFileURL, fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
+import { stubSessionJson } from './_helpers/stubSession.ts';
 
 globalThis.__TABSTACK_META_ENV__ = {
   VITE_SUPABASE_URL: 'https://stub.supabase.co',
@@ -134,16 +135,8 @@ before(async () => {
   register(LOADER_PATH);
   lsData.set('tab_groups', JSON.stringify(LOCAL_GROUPS));
   lsData.set('storage_version', JSON.stringify(5));
-  const session = JSON.stringify({
-    access_token: 'stub-access-token',
-    token_type: 'bearer',
-    expires_in: 3600,
-    expires_at: Math.floor(Date.now() / 1000) + 3600,
-    refresh_token: 'stub-refresh-token',
-    user: { id: USER_ID, aud: 'authenticated', role: 'authenticated', email: 'ext@test.dev' },
-  });
-  chromeData.set(SESSION_KEY, session);
-  lsData.set(SESSION_KEY, session);
+  chromeData.set(SESSION_KEY, stubSessionJson(USER_ID));
+  lsData.set(SESSION_KEY, stubSessionJson(USER_ID));
 
   const { store } = await import('@/store');
   const { setFromCache } = await import('@/store/slices/authSlice');

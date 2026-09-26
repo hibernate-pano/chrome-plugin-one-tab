@@ -3,6 +3,7 @@ import Toast, { ToastType } from '../components/common/Toast';
 import ConfirmDialog, { ConfirmDialogProps } from '../components/common/ConfirmDialog';
 import AlertDialog, { AlertDialogProps } from '../components/common/AlertDialog';
 import { errorHandler } from '@/utils/errorHandler';
+import { logError } from '../utils/log';
 
 interface ToastContextType {
   showToast: (message: string, type?: ToastType, duration?: number) => void;
@@ -106,7 +107,7 @@ export const ToastProvider: React.FC<ToastProviderProps> = ({ children }) => {
             // 支持异步的onConfirm回调
             await confirmDialog.onConfirm();
           } catch (error) {
-            console.error('确认操作失败:', error);
+            logError('确认操作失败:', error);
           } finally {
             handleConfirmClose();
           }

@@ -1,5 +1,6 @@
 import { storage } from './storage';
 import { initializeVersionFields } from './versionHelper';
+import { logError, logInfo } from './log';
 
 /**
  * 数据迁移到 v2.0
@@ -13,11 +14,11 @@ export async function migrateToV2(): Promise<void> {
     const needsMigration = groups.some(g => g.version === undefined || g.displayOrder === undefined);
 
     if (!needsMigration) {
-      console.log('[Migration] 数据已是 v2.0 格式，无需迁移');
+      logInfo('[Migration] 数据已是 v2.0 格式，无需迁移');
       return;
     }
 
-    console.log(`[Migration] 开始迁移 ${groups.length} 个标签组到 v2.0 格式...`);
+    logInfo(`[Migration] 开始迁移 ${groups.length} 个标签组到 v2.0 格式...`);
 
     // 初始化 version 和 displayOrder
     const migratedGroups = groups.map((group, index) =>
@@ -27,11 +28,11 @@ export async function migrateToV2(): Promise<void> {
     // 保存迁移后的数据
     await storage.setGroups(migratedGroups);
 
-    console.log('[Migration] 迁移完成！');
-    console.log(`[Migration] 已初始化 ${migratedGroups.length} 个标签组的 version 和 displayOrder`);
+    logInfo('[Migration] 迁移完成！');
+    logInfo(`[Migration] 已初始化 ${migratedGroups.length} 个标签组的 version 和 displayOrder`);
 
   } catch (error) {
-    console.error('[Migration] 迁移失败:', error);
+    logError('[Migration] 迁移失败:', error);
     throw error;
   }
 }

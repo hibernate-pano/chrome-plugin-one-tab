@@ -36,6 +36,15 @@ export const Y_UPDATE_LOG_KEY = 'y_update_log';
 /** 影子日志 FIFO 上限 */
 export const SHADOW_LOG_MAX = 200;
 
+/** P1 对账采样率（%）：命中才读 Y 快照做一致性比对，默认 5% */
+export const AUDIT_SAMPLE_PERCENT = 5;
+
+/** 对账结果日志 KV 键（FIFO 上限 AUDIT_LOG_MAX，供调试视图读取） */
+export const Y_AUDIT_LOG_KEY = 'y_audit_log';
+
+/** 对账日志 FIFO 上限 */
+export const AUDIT_LOG_MAX = 50;
+
 function hashUserId(userId: string): number {
   // FNV-1a 32bit：稳定、无依赖、与服务端切流可复刻
   let h = 0x811c9dc5;

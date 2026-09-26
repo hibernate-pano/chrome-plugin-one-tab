@@ -1,3 +1,4 @@
+import { logError, logWarn } from './log';
 const V1_PREFIX = 'SECURE_V1:';
 const V2_PREFIX = 'SECURE_V2:';
 const V3_PREFIX = 'SECURE_V3:';
@@ -142,7 +143,7 @@ export class SecureStorage {
       }
       await chrome.storage.local.set({ [key]: dataToStore });
     } catch (error) {
-      console.error(`存储数据失败 (${key}):`, error);
+      logError(`存储数据失败 (${key}):`, error);
       throw error;
     }
   }
@@ -163,7 +164,7 @@ export class SecureStorage {
 
       return storedValue as T;
     } catch (error) {
-      console.error(`获取数据失败 (${key}):`, error);
+      logError(`获取数据失败 (${key}):`, error);
       return defaultValue;
     }
   }
@@ -172,7 +173,7 @@ export class SecureStorage {
     try {
       await chrome.storage.local.remove(key);
     } catch (error) {
-      console.error(`删除数据失败 (${key}):`, error);
+      logError(`删除数据失败 (${key}):`, error);
       throw error;
     }
   }
@@ -185,7 +186,7 @@ export class SecureStorage {
       }
       await chrome.storage.local.set(processedItems);
     } catch (error) {
-      console.error('批量存储数据失败:', error);
+      logError('批量存储数据失败:', error);
       throw error;
     }
   }
@@ -210,7 +211,7 @@ export class SecureStorage {
       }
       return processedResult;
     } catch (error) {
-      console.error('批量获取数据失败:', error);
+      logError('批量获取数据失败:', error);
       return {};
     }
   }
@@ -268,7 +269,7 @@ async function loadOrCreateLocalKey(): Promise<CryptoKey> {
     throw new Error('[secureStorage] 密钥持久化校验失败：写入后无法读回');
   }
   if (verified !== encoded) {
-    console.warn('[secureStorage] 检测到并发密钥生成冲突，采用存储中已有的密钥');
+    logWarn('[secureStorage] 检测到并发密钥生成冲突，采用存储中已有的密钥');
     cachedLocalKey = null;
     localKeyPromise = null;
     return loadOrCreateLocalKey();
@@ -381,7 +382,7 @@ export async function decryptLocalBlob<T>(stored: unknown): Promise<T | null> {
       const decrypted = await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, key, ciphertext);
       return JSON.parse(new TextDecoder().decode(decrypted)) as T;
     } catch (e) {
-      console.error('[decryptLocalBlob] V3 解密失败:', e);
+      logError('[decryptLocalBlob] V3 解密失败:', e);
       return null;
     }
   }

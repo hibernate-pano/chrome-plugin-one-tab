@@ -5,6 +5,7 @@ import { loadGroups } from '@/store/slices/tabSlice';
 import { auth as supabaseAuth } from '@/utils/supabase';
 import { authCache } from '@/utils/authCache';
 import { sendSyncCommand } from '@/shared/mutationProtocol';
+import { logError, logInfo, logWarn } from '../../utils/log';
 
 interface AuthProviderProps {
   children: React.ReactNode;
@@ -22,20 +23,20 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   useEffect(() => {
     const initializeAuth = async () => {
       try {
-        console.log('开始初始化认证状态...');
+        logInfo('开始初始化认证状态...');
 
         // 首先检查缓存的认证状态
         const cachedAuth = await authCache.getAuthState();
         if (cachedAuth && cachedAuth.isAuthenticated && cachedAuth.user) {
-          console.log('发现缓存的认证状态，用户:', cachedAuth.user.email);
+          logInfo('发现缓存的认证状态，用户:', cachedAuth.user.email);
           // 这里可以设置用户状态，但不直接dispatch，让后续的会话检查来处理
         }
 
         // 标记认证初始化完成
         setInitialAuthLoaded(true);
-        console.log('认证状态初始化完成');
+        logInfo('认证状态初始化完成');
       } catch (error) {
-        console.error('初始化认证状态失败:', error);
+        logError('初始化认证状态失败:', error);
         setInitialAuthLoaded(true); // 即使失败也要标记完成，避免阻塞应用
       }
     };
@@ -49,41 +50,41 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
 
     const checkSession = async () => {
       try {
-        console.log('检查用户会话状态...');
+        logInfo('检查用户会话状态...');
 
         // 使用 getSession 而不是 getCurrentUser 来避免未登录用户的错误
         const { data } = await supabaseAuth.getSession();
         if (data.session) {
-          console.log('发现活跃会话，获取用户信息...');
+          logInfo('发现活跃会话，获取用户信息...');
           // 只有确认有会话时才调用 getCurrentUser
           dispatch(getCurrentUser())
             .unwrap()
             .then(user => {
               if (user) {
-                console.log('用户已自动登录:', user.email);
+                logInfo('用户已自动登录:', user.email);
                 // 登录后自动从云端合并到本地（跨设备找回。失败不阻塞，静默处理）
                 sendSyncCommand('download')
                   .then(res => {
                     if (res.ok) {
                       const payload = res.payload as { groups?: unknown[] } | undefined;
-                      console.log(`[AutoSync] 自动下载合并完成: ${payload?.groups?.length ?? 0} 个组`);
+                      logInfo(`[AutoSync] 自动下载合并完成: ${payload?.groups?.length ?? 0} 个组`);
                       // 合并结果写进了 storage，需刷新 Redux 让 UI 更新
                       dispatch(loadGroups());
                     } else if (res.error && res.error !== 'already_syncing' && res.error !== 'recent_upload_guard' && res.error !== 'pending_upload_failed') {
-                      console.warn('[AutoSync] 自动下载未成功:', res.error);
+                      logWarn('[AutoSync] 自动下载未成功:', res.error);
                     }
                   })
-                  .catch(err => console.warn('[AutoSync] 自动下载异常:', err));
+                  .catch(err => logWarn('[AutoSync] 自动下载异常:', err));
               }
             })
             .catch(() => {
-              console.log('获取用户信息失败，但会话存在');
+              logInfo('获取用户信息失败，但会话存在');
             });
         } else {
-          console.log('没有活跃会话，用户未登录');
+          logInfo('没有活跃会话，用户未登录');
         }
       } catch (err) {
-        console.log('检查会话状态时出错，假定用户未登录');
+        logInfo('检查会话状态时出错，假定用户未登录');
       }
     };
 

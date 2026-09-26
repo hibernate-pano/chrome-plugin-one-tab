@@ -5,6 +5,7 @@ import ErrorBoundary from '@/components/common/ErrorBoundary';
 import { AuthProvider } from './AuthProvider';
 import { MainApp } from './MainApp';
 import { initStorage, getActiveBackend } from '@/storage/storageAdapter';
+import { logError, logInfo } from '../../utils/log';
 
 /**
  * 应用容器组件
@@ -17,11 +18,11 @@ export const AppContainer: React.FC = () => {
       .then(() => {
         const backend = getActiveBackend();
         if (backend) {
-          console.log(`[storage] active backend: ${backend}`);
+          logInfo(`[storage] active backend: ${backend}`);
         }
       })
       .catch(err => {
-        console.error('[storage] init failed', err);
+        logError('[storage] init failed', err);
       });
   }, []);
 

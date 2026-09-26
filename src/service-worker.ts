@@ -6,20 +6,21 @@ import { sanitizeTabUrl } from '@/utils/inputValidation';
 import { enqueue } from '@/background/mutationQueue';
 import { mutationService } from '@/background/mutationService';
 import { ensureOpStampMigrated } from '@/background/opStampMigratedGuard';
+import { logError, logInfo, logWarn } from './utils/log';
 
 // Chrome 扩展的 Service Worker
 // 为了避免模块导入问题，早期版本内联了存储逻辑；现统一使用 utils/storage 以与前端页面共享同一数据源（IndexedDB）
 
 // Service Worker启动日志
-console.log('=== TapStack Service Worker 启动 ===');
-console.log('版本:', chrome.runtime.getManifest().version);
-console.log('启动时间:', new Date().toISOString());
-console.log('Chrome APIs 可用性检查:');
-console.log('- chrome.tabs:', !!chrome.tabs);
-console.log('- chrome.runtime:', !!chrome.runtime);
-console.log('- chrome.action:', !!chrome.action);
-console.log('- chrome.storage:', !!chrome.storage);
-console.log('=====================================');
+logInfo('=== TapStack Service Worker 启动 ===');
+logInfo('版本:', chrome.runtime.getManifest().version);
+logInfo('启动时间:', new Date().toISOString());
+logInfo('Chrome APIs 可用性检查:');
+logInfo('- chrome.tabs:', !!chrome.tabs);
+logInfo('- chrome.runtime:', !!chrome.runtime);
+logInfo('- chrome.action:', !!chrome.action);
+logInfo('- chrome.storage:', !!chrome.storage);
+logInfo('=====================================');
 
 // 迁移旧的存储键到新的统一键名
 async function migrateStorageKeys() {
@@ -32,10 +33,10 @@ async function migrateStorageKeys() {
       await chrome.storage.local.set({ tab_groups: tabGroups });
       // 迁移完成后可选择清理旧键（可选）
       await chrome.storage.local.remove('tabGroups');
-      console.log('已将旧键 tabGroups 迁移为 tab_groups');
+      logInfo('已将旧键 tabGroups 迁移为 tab_groups');
     }
   } catch (error) {
-    console.warn('迁移存储键失败（可忽略）:', error);
+    logWarn('迁移存储键失败（可忽略）:', error);
   }
 }
 
@@ -45,7 +46,7 @@ async function runMigrations() {
   try {
     await migrateToV2();
   } catch (error) {
-    console.error('[Migration] 数据迁移失败:', error);
+    logError('[Migration] 数据迁移失败:', error);
   }
 
   // 阶段二·§7：存量实体补操作印记。必须在任何同步/写入之前跑完——
@@ -53,7 +54,7 @@ async function runMigrations() {
   try {
     await ensureOpStampMigrated();
   } catch (error) {
-    console.error('[Migration] 操作印记迁移失败:', error);
+    logError('[Migration] 操作印记迁移失败:', error);
   }
 }
 
@@ -66,14 +67,14 @@ const showNotification = async (message: string, title = 'TapStack'): Promise<vo
   });
 };
 
-console.log('Service Worker: 已简化同步逻辑，只保留手动同步功能');
+logInfo('Service Worker: 已简化同步逻辑，只保留手动同步功能');
 
 // 初始化右键菜单
 async function setupContextMenus() {
   try {
     await chrome.contextMenus.removeAll();
   } catch (error) {
-    console.warn('清理旧的右键菜单失败，可忽略:', error);
+    logWarn('清理旧的右键菜单失败，可忽略:', error);
   }
 
   chrome.contextMenus.create({
@@ -97,7 +98,7 @@ async function setupContextMenus() {
 
 // 初始安装或更新时
 chrome.runtime.onInstalled.addListener(async (details) => {
-  console.log('Service Worker: 扩展已安装或更新, 原因:', details.reason);
+  logInfo('Service Worker: 扩展已安装或更新, 原因:', details.reason);
 
   // 记录安装/更新事件以触发用户引导
   if (details.reason === 'install') {
@@ -107,7 +108,7 @@ chrome.runtime.onInstalled.addListener(async (details) => {
         version: chrome.runtime.getManifest().version,
       },
     });
-    console.log('Service Worker: 已记录首次安装事件');
+    logInfo('Service Worker: 已记录首次安装事件');
   } else if (details.reason === 'update') {
     await chrome.storage.local.set({
       onboarding_trigger: {
@@ -116,7 +117,7 @@ chrome.runtime.onInstalled.addListener(async (details) => {
         previousVersion: details.previousVersion,
       },
     });
-    console.log('Service Worker: 已记录版本更新事件, 旧版本:', details.previousVersion);
+    logInfo('Service Worker: 已记录版本更新事件, 旧版本:', details.previousVersion);
   }
 
   // 迁移旧的存储键 + 数据版本
@@ -131,7 +132,7 @@ chrome.runtime.onInstalled.addListener(async (details) => {
 
 // 浏览器启动时
 chrome.runtime.onStartup.addListener(async () => {
-  console.log('Service Worker: 浏览器已启动');
+  logInfo('Service Worker: 浏览器已启动');
   // 尝试进行一次迁移，确保老用户数据可见
   await runMigrations();
 
@@ -144,7 +145,7 @@ chrome.runtime.onStartup.addListener(async () => {
 
 // Service Worker 激活时也初始化一次，防止遗漏
 setupContextMenus().catch(error => {
-  console.error('初始化右键菜单失败:', error);
+  logError('初始化右键菜单失败:', error);
 });
 
 // 后台同步 alarm（SW 被唤醒时重新注册，防遗漏）
@@ -158,7 +159,7 @@ setupBackgroundSync();
 chrome.alarms.onAlarm.addListener((alarm) => {
   if (alarm.name === SYNC_UPLOAD_ALARM) {
     enqueue('sync:upload', () => syncEngine.runScheduledUpload()).catch(err => {
-      console.error('[ServiceWorker] alarm 驱动的上传入队失败:', err);
+      logError('[ServiceWorker] alarm 驱动的上传入队失败:', err);
     });
   }
 });
@@ -171,26 +172,26 @@ chrome.action.onClicked.addListener(async () => {
     await tabManager.saveAllTabs(tabs);
     await tabManager.openTabManager(true);
   } catch (error) {
-    console.error('处理扩展图标点击失败:', error);
+    logError('处理扩展图标点击失败:', error);
     await showNotification('无法保存当前窗口，请重试。如果问题持续，请重启浏览器。');
   }
 });
 
 // 监听快捷键命令
 chrome.commands.onCommand.addListener(async (command) => {
-  console.log('收到快捷键命令:', command);
+  logInfo('收到快捷键命令:', command);
 
   try {
     switch (command) {
       case 'save_all_tabs': {
-        console.log('快捷键保存所有标签页');
+        logInfo('快捷键保存所有标签页');
         const allTabs = await chrome.tabs.query({ currentWindow: true });
         await tabManager.saveAllTabs(allTabs);
         break;
       }
 
       case 'save_current_tab': {
-        console.log('快捷键保存当前标签页');
+        logInfo('快捷键保存当前标签页');
         const [activeTab] = await chrome.tabs.query({
           active: true,
           currentWindow: true
@@ -200,38 +201,38 @@ chrome.commands.onCommand.addListener(async (command) => {
           await tabManager.saveCurrentTab(activeTab);
           await showNotification('当前标签页已保存');
         } else {
-          console.warn('未找到活跃标签页');
+          logWarn('未找到活跃标签页');
         }
         break;
       }
 
       case '_execute_action':
-        console.log('快捷键打开标签管理器');
+        logInfo('快捷键打开标签管理器');
         await tabManager.openTabManager();
         break;
     }
   } catch (error) {
-    console.error('处理快捷键命令失败:', error);
+    logError('处理快捷键命令失败:', error);
     await showNotification('快捷键操作失败，请重试');
   }
 });
 
 // 监听右键菜单点击事件
 chrome.contextMenus.onClicked.addListener(async (info, tab) => {
-  console.log('右键菜单点击:', info.menuItemId);
+  logInfo('右键菜单点击:', info.menuItemId);
 
   try {
     if (info.menuItemId === 'open-tab-manager') {
-      console.log('点击右键菜单，打开标签管理器');
+      logInfo('点击右键菜单，打开标签管理器');
       await tabManager.openTabManager();
     } else if (info.menuItemId === 'saveCurrentTab' && tab) {
-      console.log('点击右键菜单，保存当前标签页');
+      logInfo('点击右键菜单，保存当前标签页');
       // 简化的保存当前标签页逻辑
       await tabManager.saveCurrentTab(tab);
       await showNotification('当前标签页已保存');
       await tabManager.openTabManager(true);
     } else if (info.menuItemId === 'saveOtherTabs') {
-      console.log('点击右键菜单，保存除当前标签以外的所有标签');
+      logInfo('点击右键菜单，保存除当前标签以外的所有标签');
       // 获取当前窗口的所有标签页和当前活动的标签页
       const [allTabs, activeTabs] = await Promise.all([
         chrome.tabs.query({ currentWindow: true }),
@@ -255,13 +256,13 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
       await tabManager.openTabManager(true);
     }
   } catch (error) {
-    console.error('处理右键菜单点击失败:', error);
+    logError('处理右键菜单点击失败:', error);
   }
 });
 
 // 简化的消息处理
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  console.log('Service Worker 收到消息:', message.type);
+  logInfo('Service Worker 收到消息:', message.type);
 
   // 基本验证
   if (!message || !message.type) {
@@ -348,12 +349,12 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
               ? await chrome.tabs.query({ windowId })
               : await chrome.tabs.query({ currentWindow: true });
 
-            console.log('[Service Worker] SAVE_ALL_TABS 查询到标签页:', tabs.length);
+            logInfo('[Service Worker] SAVE_ALL_TABS 查询到标签页:', tabs.length);
 
             await tabManager.saveAllTabs(tabs);
             sendResponse({ success: true });
           } catch (e: any) {
-            console.error('[Service Worker] SAVE_ALL_TABS 失败:', e);
+            logError('[Service Worker] SAVE_ALL_TABS 失败:', e);
             sendResponse({ success: false, error: e?.message || '保存失败' });
           }
         })();
@@ -411,7 +412,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         return false;
     }
   } catch (error) {
-    console.error('处理消息失败:', error);
+    logError('处理消息失败:', error);
     sendResponse({ success: false, error: '处理消息失败' });
     return false;
   }

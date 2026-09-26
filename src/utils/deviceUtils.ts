@@ -4,6 +4,7 @@
  */
 
 import { kvGet, kvSet } from '@/storage/storageAdapter';
+import { logInfo } from './log';
 
 // 设备ID存储键（迁移时会同步到 IndexedDB）
 const DEVICE_ID_KEY = 'tabvaultpro_device_id';
@@ -31,7 +32,7 @@ export async function getDeviceId(): Promise<string> {
   if (!deviceId) {
     deviceId = generateDeviceId();
     await kvSet(DEVICE_ID_KEY, deviceId);
-    console.log('生成新的设备ID:', deviceId);
+    logInfo('生成新的设备ID:', deviceId);
   }
 
   return deviceId;
@@ -45,6 +46,6 @@ export async function getDeviceId(): Promise<string> {
 export async function resetDeviceId(): Promise<string> {
   const newDeviceId = generateDeviceId();
   await kvSet(DEVICE_ID_KEY, newDeviceId);
-  console.log('重置设备ID:', newDeviceId);
+  logInfo('重置设备ID:', newDeviceId);
   return newDeviceId;
 }

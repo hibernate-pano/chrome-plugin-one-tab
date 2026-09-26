@@ -1,5 +1,6 @@
 import { getRuntimeVersion } from '@/utils/runtimeInfo';
 import { trackProductEvent } from '@/utils/productEvents';
+import { logError, logInfo, logWarn } from './log';
 
 /**
  * 用户引导（Onboarding）状态存储工具
@@ -42,7 +43,7 @@ export async function getOnboardingState(): Promise<OnboardingState> {
         const result = await chrome.storage.local.get(STORAGE_KEY);
         return result[STORAGE_KEY] || { ...DEFAULT_STATE };
     } catch (error) {
-        console.warn('[Onboarding] 获取引导状态失败:', error);
+        logWarn('[Onboarding] 获取引导状态失败:', error);
         return { ...DEFAULT_STATE };
     }
 }
@@ -55,7 +56,7 @@ export async function getOnboardingTrigger(): Promise<OnboardingTrigger | null> 
         const result = await chrome.storage.local.get(TRIGGER_KEY);
         return result[TRIGGER_KEY] || null;
     } catch (error) {
-        console.warn('[Onboarding] 获取触发信息失败:', error);
+        logWarn('[Onboarding] 获取触发信息失败:', error);
         return null;
     }
 }
@@ -67,7 +68,7 @@ export async function clearOnboardingTrigger(): Promise<void> {
     try {
         await chrome.storage.local.remove(TRIGGER_KEY);
     } catch (error) {
-        console.warn('[Onboarding] 清除触发信息失败:', error);
+        logWarn('[Onboarding] 清除触发信息失败:', error);
     }
 }
 
@@ -85,9 +86,9 @@ export async function setOnboardingCompleted(version: string): Promise<void> {
         // 完成后清除触发信息
         await clearOnboardingTrigger();
         await trackProductEvent('onboarding_completed', { version });
-        console.log('[Onboarding] 引导已完成，版本:', version);
+        logInfo('[Onboarding] 引导已完成，版本:', version);
     } catch (error) {
-        console.error('[Onboarding] 保存引导完成状态失败:', error);
+        logError('[Onboarding] 保存引导完成状态失败:', error);
     }
 }
 
@@ -105,9 +106,9 @@ export async function setOnboardingSkipped(version: string): Promise<void> {
         // 跳过后也清除触发信息
         await clearOnboardingTrigger();
         await trackProductEvent('onboarding_skipped', { version });
-        console.log('[Onboarding] 引导已跳过，版本:', version);
+        logInfo('[Onboarding] 引导已跳过，版本:', version);
     } catch (error) {
-        console.error('[Onboarding] 保存引导跳过状态失败:', error);
+        logError('[Onboarding] 保存引导跳过状态失败:', error);
     }
 }
 
@@ -142,7 +143,7 @@ export async function shouldShowOnboarding(): Promise<boolean> {
         // 其他情况不展示
         return false;
     } catch (error) {
-        console.warn('[Onboarding] 判断引导展示条件失败:', error);
+        logWarn('[Onboarding] 判断引导展示条件失败:', error);
         return false;
     }
 }
@@ -167,8 +168,8 @@ export async function resetOnboarding(): Promise<void> {
                 version: getCurrentVersion(),
             },
         });
-        console.log('[Onboarding] 引导状态已重置');
+        logInfo('[Onboarding] 引导状态已重置');
     } catch (error) {
-        console.error('[Onboarding] 重置引导状态失败:', error);
+        logError('[Onboarding] 重置引导状态失败:', error);
     }
 }

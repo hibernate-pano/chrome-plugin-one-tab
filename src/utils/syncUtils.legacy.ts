@@ -4,7 +4,8 @@
  * （`@/utils/opStampMerge` 的 mergeOpStamped，唯一入口 syncEngine.downloadAndMerge）。
  * 本文件的语义（低 version 直接丢弃、墓碑靠 version 翻牌）与新机制不同。
  *
- * ⛔ 禁接回生产：src/ 下任何生产代码不得 import 本模块。
+ * ⛔ 禁接回生产：src/ 下任何生产代码不得 import 本模块（eslint no-restricted-imports 强制）。
+ * 删除日期：V2-P3（见 docs/v2-plan.md §6 P3），届时整文件删除，回归用例迁移至 Y 路径。
  * 本模块仅供以下两类隔离单测做回归/回滚对比：
  *   - tests/tabTombstone.test.ts（墓碑传播回归）
  *   - tests/syncMergeSafety.test.ts（合并防线回归）
@@ -14,6 +15,7 @@
  * mergeGroup / mergeTabs 保持模块私有（不 export），进一步缩小误接面。
  */
 import { TabGroup, Tab, UserSettings } from '@/types/tab';
+import { logInfo, logWarn } from './log';
 
 /**
  * 智能合并本地和云端标签组（version + 时间戳 LWW）
@@ -29,9 +31,9 @@ export const mergeTabGroups = (
   cloudGroups: TabGroup[],
   syncStrategy: UserSettings['syncStrategy'] = 'newest'
 ): TabGroup[] => {
-  console.log('[SyncUtils] 开始合并标签组');
-  console.log(`[SyncUtils] 本地: ${localGroups.length} 个, 云端: ${cloudGroups.length} 个`);
-  console.log(`[SyncUtils] 策略: ${syncStrategy}`);
+  logInfo('[SyncUtils] 开始合并标签组');
+  logInfo(`[SyncUtils] 本地: ${localGroups.length} 个, 云端: ${cloudGroups.length} 个`);
+  logInfo(`[SyncUtils] 策略: ${syncStrategy}`);
 
   // 创建一个映射，以标签组ID为键
   const mergedGroupsMap = new Map<string, TabGroup>();
@@ -41,7 +43,7 @@ export const mergeTabGroups = (
   localGroups.forEach(localGroup => {
     // 过滤掉本地已删除的标签组（不参与同步）
     if (localGroup.isDeleted) {
-      console.log(`[SyncUtils] 跳过本地已删除的标签组: ${localGroup.name} (ID: ${localGroup.id})`);
+      logInfo(`[SyncUtils] 跳过本地已删除的标签组: ${localGroup.name} (ID: ${localGroup.id})`);
       return;
     }
 
@@ -65,10 +67,10 @@ export const mergeTabGroups = (
       if (localGroup) {
         // 本地有，云端标记删除 → 检查版本决定是否删除
         if (shouldApplyCloudDeletion(localGroup, cloudGroup, syncStrategy)) {
-          console.log(`[SyncUtils] 应用云端删除: ${localGroup.name} (ID: ${localGroup.id})`);
+          logInfo(`[SyncUtils] 应用云端删除: ${localGroup.name} (ID: ${localGroup.id})`);
           mergedGroupsMap.delete(cloudGroup.id);
         } else {
-          console.log(`[SyncUtils] 保留本地版本，忽略云端删除: ${localGroup.name}`);
+          logInfo(`[SyncUtils] 保留本地版本，忽略云端删除: ${localGroup.name}`);
         }
       }
       // 本地没有，云端删除 → 不需要处理
@@ -79,7 +81,7 @@ export const mergeTabGroups = (
 
     if (!localGroup) {
       // 云端独有的标签组 → 直接添加
-      console.log(`[SyncUtils] 添加云端独有标签组: ${cloudGroup.name} (ID: ${cloudGroup.id})`);
+      logInfo(`[SyncUtils] 添加云端独有标签组: ${cloudGroup.name} (ID: ${cloudGroup.id})`);
       const group: TabGroup = {
         ...cloudGroup,
         syncStatus: 'remote-only' as const,
@@ -90,7 +92,7 @@ export const mergeTabGroups = (
       mergedGroupsMap.set(cloudGroup.id, group);
     } else {
       // 本地和云端都有 → 需要智能合并
-      console.log(`[SyncUtils] 合并标签组: ${localGroup.name} (ID: ${localGroup.id})`);
+      logInfo(`[SyncUtils] 合并标签组: ${localGroup.name} (ID: ${localGroup.id})`);
       const mergedGroup = mergeGroup(localGroup, cloudGroup, syncStrategy, currentTime);
       mergedGroupsMap.set(cloudGroup.id, mergedGroup);
     }
@@ -102,7 +104,7 @@ export const mergeTabGroups = (
   // 使用智能排序：优先 displayOrder，回退到 createdAt
   const sortedGroups = sortGroups(mergedArray);
 
-  console.log(`[SyncUtils] 合并完成，最终: ${sortedGroups.length} 个标签组`);
+  logInfo(`[SyncUtils] 合并完成，最终: ${sortedGroups.length} 个标签组`);
 
   return sortedGroups;
 };
@@ -153,13 +155,13 @@ const mergeGroup = (
   const localVersion = localGroup.version || 1;
   const cloudVersion = cloudGroup.version || 1;
 
-  console.log(`[SyncUtils] 版本对比 - 本地: v${localVersion}, 云端: v${cloudVersion}`);
+  logInfo(`[SyncUtils] 版本对比 - 本地: v${localVersion}, 云端: v${cloudVersion}`);
 
   // 检测冲突：版本号不连续
   const hasVersionConflict = Math.abs(localVersion - cloudVersion) > 1;
 
   if (hasVersionConflict) {
-    console.warn(`[SyncUtils] 检测到版本冲突！本地: v${localVersion}, 云端: v${cloudVersion}`);
+    logWarn(`[SyncUtils] 检测到版本冲突！本地: v${localVersion}, 云端: v${cloudVersion}`);
   }
 
   // 根据策略选择基础版本
@@ -168,11 +170,11 @@ const mergeGroup = (
   switch (syncStrategy) {
     case 'remote':
       baseGroup = cloudGroup;
-      console.log('[SyncUtils] 使用远程优先策略');
+      logInfo('[SyncUtils] 使用远程优先策略');
       break;
     case 'local':
       baseGroup = localGroup;
-      console.log('[SyncUtils] 使用本地优先策略');
+      logInfo('[SyncUtils] 使用本地优先策略');
       break;
     case 'newest':
     default: {
@@ -182,10 +184,10 @@ const mergeGroup = (
 
       if (cloudTime > localTime) {
         baseGroup = cloudGroup;
-        console.log('[SyncUtils] 云端更新，使用云端版本');
+        logInfo('[SyncUtils] 云端更新，使用云端版本');
       } else {
         baseGroup = localGroup;
-        console.log('[SyncUtils] 本地更新，使用本地版本');
+        logInfo('[SyncUtils] 本地更新，使用本地版本');
       }
       break;
     }
@@ -378,7 +380,7 @@ const mergeTabs = (
 
     // 检查 URL 是否重复
     if (localTab.url && tabsByUrl.has(localTab.url)) {
-      console.log(`[SyncUtils] 跳过重复URL: ${localTab.url}`);
+      logInfo(`[SyncUtils] 跳过重复URL: ${localTab.url}`);
       return;
     }
 
@@ -396,7 +398,7 @@ const mergeTabs = (
 
   // 活跃标签在前，墓碑追加尾部（渲染层过滤墓碑，顺序不影响显示）
   const mergedTabs = [...Array.from(tabsById.values()), ...Array.from(tombstonesById.values())];
-  console.log(`[SyncUtils] 标签合并：本地 ${localGroup.tabs.length}，云端 ${cloudGroup.tabs.length}，合并后 ${mergedTabs.length}（含墓碑 ${tombstonesById.size}）`);
+  logInfo(`[SyncUtils] 标签合并：本地 ${localGroup.tabs.length}，云端 ${cloudGroup.tabs.length}，合并后 ${mergedTabs.length}（含墓碑 ${tombstonesById.size}）`);
 
   return mergedTabs;
 };

@@ -15,6 +15,7 @@ import {
 } from '@/store/slices/settingsSlice';
 import { ThemeStyleSelector } from './ThemeStyleSelector';
 import { trackProductEvent } from '@/utils/productEvents';
+import { logError, logInfo, logWarn } from '../../utils/log';
 
 interface HeaderDropdownProps {
   onClose: () => void;
@@ -74,7 +75,7 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({ onClose }) => {
         try {
           await dispatch(loadGroups()).unwrap();
         } catch (err) {
-          console.warn('同步后刷新本地会话失败:', err);
+          logWarn('同步后刷新本地会话失败:', err);
         }
       } else {
         showAlert({
@@ -85,7 +86,7 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({ onClose }) => {
         });
       }
     } catch (error) {
-      console.error('手动同步失败:', error);
+      logError('手动同步失败:', error);
       showAlert({
         title: '手动同步失败',
         message: '网络连接失败，请稍后重试',
@@ -116,10 +117,10 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({ onClose }) => {
     // 异步登出，不阻塞用户界面
     dispatch(signOut())
       .then(() => {
-        console.log('登出成功');
+        logInfo('登出成功');
       })
       .catch(error => {
-        console.error('登出失败:', error);
+        logError('登出失败:', error);
       });
   };
 
@@ -144,7 +145,7 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({ onClose }) => {
                 // 「删除操作已同步到云端」是在对没发生的事报成功。
                 // 只有 res.ok 且 payload 里没有 skippedOverwrite，才算真的覆盖了云端。
                 if (!res.ok) {
-                  console.error('删除操作同步到云端失败:', res.error);
+                  logError('删除操作同步到云端失败:', res.error);
                   showAlert({
                     title: '同步失败',
                     message: `本机会话已删除，但云端同步失败：${res.error || '未知错误'}`,
@@ -154,7 +155,7 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({ onClose }) => {
                   return;
                 }
                 if (res.payload?.skippedOverwrite) {
-                  console.warn('[HeaderDropdown] 覆盖上传被跳过（本地无活跃组）:', res.payload.skippedOverwrite);
+                  logWarn('[HeaderDropdown] 覆盖上传被跳过（本地无活跃组）:', res.payload.skippedOverwrite);
                   showAlert({
                     title: '云端未清空',
                     message: '本机会话已全部删除，但云端数据未清空（覆盖上传已跳过）。稍后请用「同步」手动覆盖。',
@@ -163,17 +164,17 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({ onClose }) => {
                   });
                   return;
                 }
-                console.log('删除操作已同步到云端');
+                logInfo('删除操作已同步到云端');
               })
               .catch(error => {
-                console.error('同步到云端失败:', error);
+                logError('同步到云端失败:', error);
               });
           } else {
-            console.log('用户未登录，跳过同步到云端');
+            logInfo('用户未登录，跳过同步到云端');
           }
         })
         .catch(error => {
-          console.error('删除所有标签组失败:', error);
+          logError('删除所有标签组失败:', error);
           showAlert({
             title: '删除失败',
             message: '删除所有会话失败',
@@ -224,7 +225,7 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({ onClose }) => {
 
       onClose();
     } catch (error) {
-      console.error('导出数据失败:', error);
+      logError('导出数据失败:', error);
       showAlert({
         title: '导出失败',
         message: '导出数据失败，请重试',
@@ -259,7 +260,7 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({ onClose }) => {
 
       onClose();
     } catch (error) {
-      console.error('导出 OneTab 格式数据失败:', error);
+      logError('导出 OneTab 格式数据失败:', error);
       showAlert({
         title: '导出失败',
         message: '导出 OneTab 格式数据失败，请重试',
@@ -512,7 +513,7 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({ onClose }) => {
                           });
                         }
                       } catch (error) {
-                        console.error('解析导入文件失败:', error);
+                        logError('解析导入文件失败:', error);
                         e.target.value = '';
                         showAlert({
                           title: '导入失败',
@@ -564,7 +565,7 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({ onClose }) => {
                           });
                         }
                       } catch (error) {
-                        console.error('解析 OneTab 导入文件失败:', error);
+                        logError('解析 OneTab 导入文件失败:', error);
                         e.target.value = '';
                         showAlert({
                           title: '导入失败',

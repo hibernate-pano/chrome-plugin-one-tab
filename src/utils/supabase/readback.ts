@@ -3,6 +3,7 @@
  * （原 src/utils/supabase.ts 对应节逐字搬运；verify* 原为模块私有，现导出供 upload 使用，门面不转出。）
  */
 import { supabase } from './client';
+import { logInfo } from '../log';
 
 // ── P0-1 上传读回校验（纯比对 + 读回验证，防服务端静默吞写） ───────────────
 //
@@ -86,7 +87,7 @@ export async function verifyUploadReadback(
   if (error) throw error;
   const cmp = compareUploadReadback(expect, ((data ?? []) as unknown) as UploadReadbackRow[], opts);
   if (!cmp.ok) throw new Error(`[upload-verify] ${cmp.reason}`);
-  console.log(`[upload-verify] 读回校验通过（${expect.length} 组）`);
+  logInfo(`[upload-verify] 读回校验通过（${expect.length} 组）`);
 }
 
 /** 软删读回：目标行必须存在且 is_deleted=true，否则删除意图没落盘 */
@@ -117,7 +118,7 @@ export async function verifyTombstoneReadback(ids: string[], userId: string): Pr
   if (error) throw error;
   const cmp = compareTombstoneReadback(ids, ((data ?? []) as unknown) as Array<{ id: string; is_deleted?: boolean | null }>);
   if (!cmp.ok) throw new Error(`[tombstone-verify] ${cmp.reason}`);
-  console.log(`[tombstone-verify] 软删读回校验通过（${ids.length} 组）`);
+  logInfo(`[tombstone-verify] 软删读回校验通过（${ids.length} 组）`);
 }
 
 /** 硬删读回：目标 id 必须全部消失，残留即抛错（P1-6 明确阻断而非静默） */

@@ -1,0 +1,31 @@
+-- ─────────────────────────────────────────────────────────────
+-- D3 墓碑 7 天 · 服务端兜底清理（手动步骤，不随迁移自动启用）。
+--
+-- 前置：先执行 supabase/migrations/20260926090000_tombstone_expiry.sql
+--     （pnpm supabase:migrate），确认 deleted_at 列已存在。
+-- 启用条件（负责人确认，三条缺一不可）：
+--   1) 客户端 sweep 已上线 ≥1 个版本（本地主清理先生效，服务端只做兜底）；
+--   2) 已在 staging 项目演练过本脚本（先 SELECT 计数，再 DELETE）；
+--   3) 明确 pg_cron 可用（Dashboard → Database → Extensions 勾选 pg_cron），
+--      不可用则改用 Supabase Scheduled Job / Vercel Cron 调同语义接口。
+--
+-- 语义（与 src/core/tombstone.ts 对齐，偏保守）：
+--   只删“已被 snapshot 覆盖的 log 前缀中的过期墓碑 update”——
+--   绝不直接删未被 snapshot 覆盖的 log（防新设备恢复断链）。
+-- ─────────────────────────────────────────────────────────────
+
+-- 演练（只读）：先看 7 天后视角下有多少行会被清
+-- SELECT count(*) FROM public.tab_groups
+--  WHERE is_deleted = true
+--    AND COALESCE(deleted_at, updated_at) < now() - interval '7 days';
+
+-- 每日清理（pg_cron；按项目时区调整 cron 表达式）
+-- SELECT cron.schedule(
+--   'tapstack-tombstone-expiry',
+--   '0 3 * * *',
+--   $$
+--   DELETE FROM public.tab_groups
+--   WHERE is_deleted = true
+--     AND COALESCE(deleted_at, updated_at) < now() - interval '7 days';
+--   $$
+-- );

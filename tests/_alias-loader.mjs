@@ -111,11 +111,21 @@ export async function load(url, context, nextLoad) {
     fileName: filepath,
     reportDiagnostics: false,
   });
-  // Replace Vite's `import.meta.env` with our Node-side stub.
-  transformed.outputText = transformed.outputText.replace(
-    /import\.meta\.env/g,
-    'globalThis.__TABSTACK_META_ENV__'
-  );
+  // Replace Vite's `import.meta.env` with an injected Node-side stub.
+  // （根因：module.register 把 loader 跑在独立线程，loader 线程的 globalThis
+  // 应用线程不可见；旧 globalThis 方案在应用线程永远是 undefined。）
+  if (transformed.outputText.includes('import.meta.env')) {
+    transformed.outputText = transformed.outputText.replace(
+      /import\.meta\.env/g,
+      '__TABSTACK_TEST_ENV__'
+    );
+    transformed.outputText =
+      'const __TABSTACK_TEST_ENV__ = globalThis.__TABSTACK_META_ENV__ ?? ' +
+      '{ VITE_SUPABASE_URL: \'https://stub.supabase.co\', ' +
+      'VITE_SUPABASE_ANON_KEY: \'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.stub.stub\', ' +
+      'DEV: false, MODE: \'test\' };\n' +
+      transformed.outputText;
+  }
   return {
     format: 'module',
     source: transformed.outputText,

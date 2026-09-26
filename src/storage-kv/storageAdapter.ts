@@ -3,6 +3,7 @@ import { localStorageDriver, isLocalStorageAvailable } from './localStorageFallb
 import type { StorageBackend, StorageDriver } from './types';
 import { MIGRATION_KEYS } from './keys';
 import { hasExtensionStorage } from './env';
+import { logWarn } from '../utils/log';
 
 let backend: StorageBackend | null = null;
 let driver: StorageDriver | null = null;
@@ -67,7 +68,7 @@ async function migrateFromLocalStorage(target: StorageDriver) {
       ls.removeItem(entry.key);
     }
   } catch (error) {
-    console.warn('[storage] migrateFromLocalStorage failed, skip migration', error);
+    logWarn('[storage] migrateFromLocalStorage failed, skip migration', error);
   }
 }
 
@@ -104,7 +105,7 @@ async function migrateFromChromeStorage(target: StorageDriver) {
     await target.setItem(MIGRATION_KEYS.migrationFlags, flags);
     await chrome.storage.local.remove(keys);
   } catch (error) {
-    console.warn('[storage] migrateFromChromeStorage failed, skip migration', error);
+    logWarn('[storage] migrateFromChromeStorage failed, skip migration', error);
   }
 }
 

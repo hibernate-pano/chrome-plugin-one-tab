@@ -51,14 +51,14 @@ export function applyRemoveTab(
     // 整组软删：这是组级删除语义（与 deleteGroup 同），所以组 lastOp 也要盖。
     const out = groups.map(g =>
       g.id === groupId && !g.isDeleted
-        ? { ...g, isDeleted: true, lastOp: stamp, version: (g.version || 1) + 1, updatedAt: now }
+        ? { ...g, isDeleted: true, deletedAt: now, lastOp: stamp, version: (g.version || 1) + 1, updatedAt: now }
         : g
     );
     return { groups: out, group: null };
   }
 
   const updatedTabs: Tab[] = current.tabs.map(tab =>
-    tab.id === tabId && !tab.isDeleted ? { ...tab, isDeleted: true, lastOp: stamp, lastAccessed: now } : tab
+    tab.id === tabId && !tab.isDeleted ? { ...tab, isDeleted: true, deletedAt: now, lastOp: stamp, lastAccessed: now } : tab
   );
   // P0-3：标签级删除同样提升组级印记。digest 以单调 seq 为主信号做探活，
   // 组 stamp 不动会导致“删 tab”在指纹层不可见；且合并时组字段（name/lock 等）
@@ -85,7 +85,7 @@ export function applyDeleteGroup(
 ): TabGroup[] {
   return groups.map(g =>
     g.id === groupId && !g.isDeleted
-      ? { ...g, isDeleted: true, lastOp: stamp, version: (g.version || 1) + 1, updatedAt: now }
+      ? { ...g, isDeleted: true, deletedAt: now, lastOp: stamp, version: (g.version || 1) + 1, updatedAt: now }
       : g
   );
 }
@@ -100,7 +100,7 @@ export function applyDeleteAllGroups(
     groups: groups.map(g =>
       g.isDeleted
         ? g
-        : { ...g, isDeleted: true, lastOp: stamp, version: (g.version || 1) + 1, updatedAt: now }
+        : { ...g, isDeleted: true, deletedAt: now, lastOp: stamp, version: (g.version || 1) + 1, updatedAt: now }
     ),
     count: groups.length,
   };
@@ -118,12 +118,13 @@ export function applyRestoreGroup(
   return {
     groups: groups.map(g =>
       g.id === groupId
-        ? { ...g, isDeleted: false, lastOp: stamp, version: (target.version || 1) + 1, updatedAt: now }
+        ? { ...g, isDeleted: false, deletedAt: undefined, lastOp: stamp, version: (target.version || 1) + 1, updatedAt: now }
         : g
     ),
     restored: {
       ...target,
       isDeleted: false,
+      deletedAt: undefined,
       lastOp: stamp,
       version: (target.version || 1) + 1,
       updatedAt: now,
@@ -285,7 +286,7 @@ export function applyMoveTab(
     autoDeletedGroupId = args.sourceGroupId;
     out = out.map(g =>
       g.id === args.sourceGroupId && !g.isDeleted
-        ? { ...g, isDeleted: true, lastOp: stamp, version: (g.version || 1) + 1, updatedAt: now }
+        ? { ...g, isDeleted: true, deletedAt: now, lastOp: stamp, version: (g.version || 1) + 1, updatedAt: now }
         : g
     );
   }
@@ -331,7 +332,7 @@ export function applyCleanDuplicates(
     if (!ids) return g;
     return {
       ...g,
-      tabs: g.tabs.map(t => (ids.has(t.id) && !t.isDeleted ? { ...t, isDeleted: true, lastOp: stamp, lastAccessed: now } : t)),
+      tabs: g.tabs.map(t => (ids.has(t.id) && !t.isDeleted ? { ...t, isDeleted: true, deletedAt: now, lastOp: stamp, lastAccessed: now } : t)),
       updatedAt: now,
       version: (g.version || 1) + 1,
       lastOp: stamp,
@@ -342,7 +343,7 @@ export function applyCleanDuplicates(
     const hasActive = g.tabs.some(t => !t.isDeleted);
     if (!hasActive && !g.isLocked && !g.isDeleted) {
       removedGroupsCount++;
-      return { ...g, isDeleted: true, lastOp: stamp, version: (g.version || 1) + 1, updatedAt: now };
+      return { ...g, isDeleted: true, deletedAt: now, lastOp: stamp, version: (g.version || 1) + 1, updatedAt: now };
     }
     return g;
   });

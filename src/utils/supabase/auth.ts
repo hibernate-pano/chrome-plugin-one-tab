@@ -3,6 +3,7 @@
  * （原 src/utils/supabase.ts 对应节逐字搬运；行为零变化。）
  */
 import { supabase, checkSupabaseConfig, isSupabaseConfigured } from './client';
+import { logError } from '../log';
 
 // 用户认证相关方法
 export const auth = {
@@ -54,7 +55,7 @@ export const auth = {
       // 如果有会话，才获取用户信息
       return await supabase.auth.getUser();
     } catch (error) {
-      console.error('获取当前用户失败:', error);
+      logError('获取当前用户失败:', error);
       // 返回一个结构化的错误对象
       return {
         data: { user: null },
@@ -75,7 +76,7 @@ export const auth = {
       }
       return await supabase.auth.getSession();
     } catch (error) {
-      console.error('获取会话失败:', error);
+      logError('获取会话失败:', error);
       // 返回一个结构化的错误对象
       return {
         data: { session: null },

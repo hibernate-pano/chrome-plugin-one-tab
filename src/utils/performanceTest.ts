@@ -1,5 +1,6 @@
 import { storage } from './storage';
 import type { TabGroup, Tab } from '@/types/tab';
+import { logInfo, logWarn } from './log';
 
 /**
  * 性能测试工具函数
@@ -18,7 +19,7 @@ export function measurePerformance(
   testFn: () => void,
   iterations: number = 10
 ): { avg: number; min: number; max: number } {
-  console.log(`开始测试: ${testName}`);
+  logInfo(`开始测试: ${testName}`);
   
   const times: number[] = [];
   
@@ -33,10 +34,10 @@ export function measurePerformance(
   const min = Math.min(...times);
   const max = Math.max(...times);
   
-  console.log(`测试结果: ${testName}`);
-  console.log(`  平均时间: ${avg.toFixed(2)}ms`);
-  console.log(`  最小时间: ${min.toFixed(2)}ms`);
-  console.log(`  最大时间: ${max.toFixed(2)}ms`);
+  logInfo(`测试结果: ${testName}`);
+  logInfo(`  平均时间: ${avg.toFixed(2)}ms`);
+  logInfo(`  最小时间: ${min.toFixed(2)}ms`);
+  logInfo(`  最大时间: ${max.toFixed(2)}ms`);
   
   return { avg, min, max };
 }
@@ -57,12 +58,12 @@ export function monitorRenderPerformance() {
   ) => {
     // 记录性能数据
     if (actualDuration > 16) { // 超过16ms（60fps）的渲染
-      console.warn(`组件 ${id} 渲染时间过长: ${actualDuration.toFixed(2)}ms`);
+      logWarn(`组件 ${id} 渲染时间过长: ${actualDuration.toFixed(2)}ms`);
     }
     
     // 可以在这里添加更详细的性能日志或发送到性能监控服务
     if (process.env.NODE_ENV === 'development') {
-      console.log(`组件 ${id} 渲染性能:`, {
+      logInfo(`组件 ${id} 渲染性能:`, {
         phase,
         actualDuration: `${actualDuration.toFixed(2)}ms`,
         baseDuration: `${baseDuration.toFixed(2)}ms`,
@@ -138,7 +139,7 @@ export async function benchmarkStorageRoundtrip(options?: {
     const readEnd = performance.now();
     readTimes.push(readEnd - readStart);
 
-    console.log(`[benchmark] iter ${i + 1}: write ${writeTimes[i].toFixed(2)}ms, read ${readTimes[i].toFixed(2)}ms, count=${result.length}`);
+    logInfo(`[benchmark] iter ${i + 1}: write ${writeTimes[i].toFixed(2)}ms, read ${readTimes[i].toFixed(2)}ms, count=${result.length}`);
   }
 
   const avg = (arr: number[]) => arr.reduce((s, v) => s + v, 0) / arr.length;
@@ -176,14 +177,14 @@ export function showPerformanceComparison(
   const minImprovement = ((beforeResults.min - afterResults.min) / beforeResults.min) * 100;
   const maxImprovement = ((beforeResults.max - afterResults.max) / beforeResults.max) * 100;
   
-  console.log(`性能比较: ${testName}`);
-  console.log(`  平均时间改进: ${avgImprovement.toFixed(2)}%`);
-  console.log(`  最小时间改进: ${minImprovement.toFixed(2)}%`);
-  console.log(`  最大时间改进: ${maxImprovement.toFixed(2)}%`);
+  logInfo(`性能比较: ${testName}`);
+  logInfo(`  平均时间改进: ${avgImprovement.toFixed(2)}%`);
+  logInfo(`  最小时间改进: ${minImprovement.toFixed(2)}%`);
+  logInfo(`  最大时间改进: ${maxImprovement.toFixed(2)}%`);
   
   if (avgImprovement > 0) {
-    console.log(`  ✅ 性能提升: 优化后平均快 ${avgImprovement.toFixed(2)}%`);
+    logInfo(`  ✅ 性能提升: 优化后平均快 ${avgImprovement.toFixed(2)}%`);
   } else {
-    console.log(`  ❌ 性能下降: 优化后平均慢 ${Math.abs(avgImprovement).toFixed(2)}%`);
+    logInfo(`  ❌ 性能下降: 优化后平均慢 ${Math.abs(avgImprovement).toFixed(2)}%`);
   }
 }

@@ -4,6 +4,7 @@ import { secureStorage } from './secureStorage';
 import { kvGet, kvSet, kvRemove } from '@/storage/storageAdapter';
 import { STORAGE_KEYS, STORAGE_VERSION } from '@/storage-kv/keys';
 import { cacheManager, cachedAsyncFn, debounceAsync } from './performance';
+import { logError, logInfo, logWarn } from './log';
 
 // S2 收敛：KV 键常量单源见 @/storage-kv/keys（与 storageAdapter 迁移键表同源）。
 // 此处 re-export，保持既有调用方 import 路径兼容。
@@ -64,7 +65,7 @@ export function validateThemeStyle(value: unknown): ThemeStyle {
   if (typeof value === 'string' && VALID_THEME_STYLES.includes(value as ThemeStyle)) {
     return value as ThemeStyle;
   }
-  console.warn('无效的主题风格值，使用默认值:', value);
+  logWarn('无效的主题风格值，使用默认值:', value);
   return 'legacy';
 }
 
@@ -77,7 +78,7 @@ export function validateThemeMode(value: unknown): 'light' | 'dark' | 'auto' {
   if (typeof value === 'string' && VALID_THEME_MODES.includes(value as 'light' | 'dark' | 'auto')) {
     return value as 'light' | 'dark' | 'auto';
   }
-  console.warn('无效的明暗模式值，使用默认值:', value);
+  logWarn('无效的明暗模式值，使用默认值:', value);
   return 'auto';
 }
 
@@ -162,7 +163,7 @@ class ChromeStorage {
       // 强一致：等待最终一次落盘完成
       await this.debouncedPersistGroups(groups);
     } catch (error) {
-      console.error('保存标签组失败:', error);
+      logError('保存标签组失败:', error);
       // 清除可能不一致的缓存
       cache.delete('groups');
       throw error;
@@ -190,7 +191,7 @@ class ChromeStorage {
       await kvSet(STORAGE_KEYS.GROUPS, groups);
       cache.set('groups', groups, CACHE_TTL.GROUPS);
     } catch (error) {
-      console.error('直接保存标签组失败:', error);
+      logError('直接保存标签组失败:', error);
       cache.delete('groups');
       throw error;
     }
@@ -248,7 +249,7 @@ class ChromeStorage {
         return mergedSettings;
       }, CACHE_TTL.SETTINGS);
     } catch (error) {
-      console.error('获取设置失败:', error);
+      logError('获取设置失败:', error);
       return DEFAULT_SETTINGS;
     }
   }
@@ -292,7 +293,7 @@ class ChromeStorage {
       // 强一致：等待最终一次落盘完成
       await this.debouncedPersistSettings(validatedSettings);
     } catch (error) {
-      console.error('保存设置失败:', error);
+      logError('保存设置失败:', error);
       // 清除可能不一致的缓存
       cache.delete('settings');
       throw error;
@@ -306,7 +307,7 @@ class ChromeStorage {
       const groups = await kvGet<unknown>(STORAGE_KEYS.DELETED_GROUPS);
       return Array.isArray(groups) ? (groups as TabGroup[]) : [];
     } catch (error) {
-      console.error('获取已删除标签组失败:', error);
+      logError('获取已删除标签组失败:', error);
       return [];
     }
   }
@@ -317,7 +318,7 @@ class ChromeStorage {
       await this.ensureVersion();
       await kvSet(STORAGE_KEYS.DELETED_GROUPS, groups);
     } catch (error) {
-      console.error('设置已删除标签组失败:', error);
+      logError('设置已删除标签组失败:', error);
     }
   }
 
@@ -328,7 +329,7 @@ class ChromeStorage {
       const tabs = await kvGet<unknown>(STORAGE_KEYS.DELETED_TABS);
       return Array.isArray(tabs) ? (tabs as Tab[]) : [];
     } catch (error) {
-      console.error('获取已删除标签页失败:', error);
+      logError('获取已删除标签页失败:', error);
       return [];
     }
   }
@@ -339,7 +340,7 @@ class ChromeStorage {
       await this.ensureVersion();
       await kvSet(STORAGE_KEYS.DELETED_TABS, tabs);
     } catch (error) {
-      console.error('设置已删除标签页失败:', error);
+      logError('设置已删除标签页失败:', error);
     }
   }
 
@@ -367,7 +368,7 @@ class ChromeStorage {
       // 如果有过期的标签组，更新存储
       if (validGroups.length !== deletedGroups.length) {
         await this.setDeletedGroups(validGroups);
-        console.log(`清理了 ${deletedGroups.length - validGroups.length} 个过期的已删除标签组`);
+        logInfo(`清理了 ${deletedGroups.length - validGroups.length} 个过期的已删除标签组`);
       }
 
       // 同时清理过期的已删除标签页
@@ -379,10 +380,10 @@ class ChromeStorage {
 
       if (validTabs.length !== deletedTabs.length) {
         await this.setDeletedTabs(validTabs);
-        console.log(`清理了 ${deletedTabs.length - validTabs.length} 个过期的已删除标签页`);
+        logInfo(`清理了 ${deletedTabs.length - validTabs.length} 个过期的已删除标签页`);
       }
     } catch (error) {
-      console.error('清理已删除数据失败:', error);
+      logError('清理已删除数据失败:', error);
     }
   }
 
@@ -392,7 +393,7 @@ class ChromeStorage {
       await this.ensureVersion();
       return (await kvGet<string>(STORAGE_KEYS.LAST_SYNC_TIME)) || null;
     } catch (error) {
-      console.error('获取最后同步时间失败:', error);
+      logError('获取最后同步时间失败:', error);
       return null;
     }
   }
@@ -403,7 +404,7 @@ class ChromeStorage {
       await this.ensureVersion();
       await kvSet(STORAGE_KEYS.LAST_SYNC_TIME, time);
     } catch (error) {
-      console.error('设置最后同步时间失败:', error);
+      logError('设置最后同步时间失败:', error);
     }
   }
 
@@ -423,7 +424,7 @@ class ChromeStorage {
       await this.ensureVersion();
       await kvSet(STORAGE_KEYS.PENDING_UPLOAD, pending);
     } catch (error) {
-      console.error('设置 pending_upload 失败:', error);
+      logError('设置 pending_upload 失败:', error);
     }
   }
 
@@ -446,7 +447,7 @@ class ChromeStorage {
       }
     } catch (error) {
       // 上传调度失败不影响导入本身，但必须留下痕迹
-      console.warn('[Storage] 导入后请求上传调度失败（下次后台轮询会重试）:', error);
+      logWarn('[Storage] 导入后请求上传调度失败（下次后台轮询会重试）:', error);
     }
   }
 
@@ -464,7 +465,7 @@ class ChromeStorage {
       await this.ensureVersion();
       await kvSet(STORAGE_KEYS.LAST_UPLOAD_TIME, time);
     } catch (error) {
-      console.error('设置 last_upload_time 失败:', error);
+      logError('设置 last_upload_time 失败:', error);
     }
   }
 
@@ -487,7 +488,7 @@ class ChromeStorage {
         await kvSet(STORAGE_KEYS.PENDING_PURGE_IDS, [...ids, id]);
       }
     } catch (error) {
-      console.error('记录 pending_purge_ids 失败:', error);
+      logError('记录 pending_purge_ids 失败:', error);
     }
   }
 
@@ -496,7 +497,7 @@ class ChromeStorage {
       await this.ensureVersion();
       await kvRemove(STORAGE_KEYS.PENDING_PURGE_IDS);
     } catch (error) {
-      console.error('清除 pending_purge_ids 失败:', error);
+      logError('清除 pending_purge_ids 失败:', error);
     }
   }
 
@@ -516,7 +517,7 @@ class ChromeStorage {
       await this.ensureVersion();
       await kvSet(STORAGE_KEYS.DEVICE_SEQ, seq);
     } catch (error) {
-      console.error('设置 device_seq 失败:', error);
+      logError('设置 device_seq 失败:', error);
     }
   }
 
@@ -535,7 +536,7 @@ class ChromeStorage {
       await this.ensureVersion();
       await kvSet(STORAGE_KEYS.JOURNAL, entries);
     } catch (error) {
-      console.error('写 journal 失败:', error);
+      logError('写 journal 失败:', error);
     }
   }
 
@@ -553,7 +554,7 @@ class ChromeStorage {
       await this.ensureVersion();
       await kvSet(STORAGE_KEYS.LAST_SYNCED_SEQ, s);
     } catch (error) {
-      console.error('设置 last_synced_seq 失败:', error);
+      logError('设置 last_synced_seq 失败:', error);
     }
   }
 
@@ -572,7 +573,7 @@ class ChromeStorage {
       await this.ensureVersion();
       await kvSet(STORAGE_KEYS.OP_STAMP_MIGRATED, v);
     } catch (error) {
-      console.error('设置 op_stamp_migrated 失败:', error);
+      logError('设置 op_stamp_migrated 失败:', error);
     }
   }
 
@@ -583,7 +584,7 @@ class ChromeStorage {
       const raw = await kvGet<unknown>(STORAGE_KEYS.SYNC_SNAPSHOT);
       return Array.isArray(raw) ? (raw as TabGroup[]) : null;
     } catch (error) {
-      console.error('获取同步快照失败:', error);
+      logError('获取同步快照失败:', error);
       return null;
     }
   }
@@ -594,7 +595,7 @@ class ChromeStorage {
       await this.ensureVersion();
       await kvSet(STORAGE_KEYS.SYNC_SNAPSHOT, groups);
     } catch (error) {
-      console.error('保存同步快照失败:', error);
+      logError('保存同步快照失败:', error);
     }
   }
 
@@ -604,7 +605,7 @@ class ChromeStorage {
       await this.ensureVersion();
       await kvRemove(STORAGE_KEYS.SYNC_SNAPSHOT);
     } catch (error) {
-      console.error('清除同步快照失败:', error);
+      logError('清除同步快照失败:', error);
     }
   }
 
@@ -614,7 +615,7 @@ class ChromeStorage {
       const events = await kvGet<unknown>(STORAGE_KEYS.PRODUCT_EVENTS);
       return Array.isArray(events) ? (events as Array<Record<string, unknown>>) : [];
     } catch (error) {
-      console.error('获取产品事件失败:', error);
+      logError('获取产品事件失败:', error);
       return [];
     }
   }
@@ -685,7 +686,7 @@ class ChromeStorage {
 
       return true;
     } catch (error) {
-      console.error('导入数据失败:', error);
+      logError('导入数据失败:', error);
       return false;
     }
   }
@@ -723,7 +724,7 @@ class ChromeStorage {
 
       return true;
     } catch (error) {
-      console.error('从 OneTab 格式导入数据失败:', error);
+      logError('从 OneTab 格式导入数据失败:', error);
       return false;
     }
   }
@@ -748,7 +749,7 @@ class ChromeStorage {
       ];
       await Promise.all(keys.map(key => kvRemove(key)));
     } catch (error) {
-      console.error('清除存储失败:', error);
+      logError('清除存储失败:', error);
     }
   }
 
@@ -763,7 +764,7 @@ class ChromeStorage {
       const result = await kvGet<Record<string, boolean>>(STORAGE_KEYS.MIGRATION_FLAGS);
       return result || {};
     } catch (error) {
-      console.error('获取迁移标志失败:', error);
+      logError('获取迁移标志失败:', error);
       return {};
     }
   }
@@ -776,14 +777,14 @@ class ChromeStorage {
       // 使用加密存储
       await secureStorage.set(STORAGE_KEYS.MIGRATION_FLAGS, flags);
     } catch (error) {
-      console.error('设置迁移标志失败:', error);
+      logError('设置迁移标志失败:', error);
       // 降级到普通存储
       try {
         const flags = await this.getMigrationFlags();
         flags[key] = value;
         await kvSet(STORAGE_KEYS.MIGRATION_FLAGS, flags);
       } catch (fallbackError) {
-        console.error('降级存储也失败:', fallbackError);
+        logError('降级存储也失败:', fallbackError);
       }
     }
   }

@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { isFaviconUrlSafe } from '@/utils/faviconUtils';
+import { logWarn } from '../../utils/log';
 
 interface SafeFaviconProps {
   src?: string;
@@ -31,7 +32,7 @@ export const SafeFavicon: React.FC<SafeFaviconProps> = ({
     } else {
       setShouldShowImage(false);
       if (src) {
-        console.warn('不安全的 favicon URL，已过滤:', src);
+        logWarn('不安全的 favicon URL，已过滤:', src);
       }
     }
   }, [src]);

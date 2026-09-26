@@ -17,6 +17,7 @@ export function serializeTab(tab: Tab): TabData {
     last_accessed: tab.lastAccessed,
     pinned: tab.pinned,
     is_deleted: tab.isDeleted || undefined,
+    deleted_at: tab.deletedAt ?? undefined,
     last_op_device: tab.lastOp?.d ?? null,
     last_op_seq: typeof tab.lastOp?.s === 'number' ? tab.lastOp.s : null,
   };
@@ -36,6 +37,7 @@ export function deserializeTab(data: TabData, groupId: string): Tab | null {
     group_id: groupId,
     pinned: data.pinned ?? false,
     isDeleted: data.is_deleted === true ? true : undefined,
+    deletedAt: data.deleted_at ?? undefined,
     lastOp:
       typeof data.last_op_seq === 'number' && data.last_op_device
         ? { d: String(data.last_op_device), s: data.last_op_seq }

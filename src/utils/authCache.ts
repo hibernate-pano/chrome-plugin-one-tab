@@ -1,4 +1,5 @@
 import { User } from '@/types/tab';
+import { logError, logInfo } from './log';
 
 // 存储键名
 const AUTH_CACHE_KEY = 'auth_cache';
@@ -30,9 +31,9 @@ export const authCache = {
       };
 
       await chrome.storage.local.set({ [AUTH_CACHE_KEY]: cacheData });
-      console.log('认证状态已缓存');
+      logInfo('认证状态已缓存');
     } catch (error) {
-      console.error('缓存认证状态失败:', error);
+      logError('缓存认证状态失败:', error);
     }
   },
 
@@ -55,7 +56,7 @@ export const authCache = {
       const cacheExpired = cacheAge > 30 * 24 * 60 * 60 * 1000;
 
       if (cacheExpired) {
-        console.log('认证缓存已过期');
+        logInfo('认证缓存已过期');
         await this.clearAuthState();
         return null;
       }
@@ -65,7 +66,7 @@ export const authCache = {
         isAuthenticated: cacheData.isAuthenticated
       };
     } catch (error) {
-      console.error('获取认证缓存失败:', error);
+      logError('获取认证缓存失败:', error);
       return null;
     }
   },
@@ -76,9 +77,9 @@ export const authCache = {
   async clearAuthState(): Promise<void> {
     try {
       await chrome.storage.local.remove(AUTH_CACHE_KEY);
-      console.log('认证缓存已清除');
+      logInfo('认证缓存已清除');
     } catch (error) {
-      console.error('清除认证缓存失败:', error);
+      logError('清除认证缓存失败:', error);
     }
   }
 };

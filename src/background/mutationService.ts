@@ -18,6 +18,7 @@ import { kvGet, kvSet } from '@/storage/storageAdapter';
 import { getDeviceId } from '@/utils/deviceUtils';
 import { auth } from '@/utils/supabase/auth';
 import { maybeShadowWrite } from '@/core/yShadow';
+import { maybeAuditConsistency } from '@/core/yAudit';
 
 const seq = createSeqRegistry({
   kvGet,
@@ -44,9 +45,12 @@ export const mutationService = createMutationHandlers({
   // V2 影子双写：落盘成功后异步翻译写入 Y.Doc（读仍走 blob）。
   // 灰度/开关/吞错全在 maybeShadowWrite 内部；此处仅做依赖绑定。
   shadowWrite: ({ op, stamp, now }) =>
-    maybeShadowWrite(op, stamp, now, {
-      getGroups: () => storage.getGroups(),
-      getUserId: async () => {
+    (async () => {
+      // P1 对账：影子写后采样比对 Y 物化视图 vs 本地真相（默认 5% 命中才读 Y）。
+      // 对账只读不写、失败吞错，返回值与调用约定（Promise<ShadowOutcome>）不变；
+      // 上游 fire-and-forget 语义不变（见 mutationHandlers handle）。
+      const getGroups = () => storage.getGroups();
+      const getUserId = async () => {
         try {
           const { data } = await auth.getCurrentUser();
           const u = (data as { user?: { id?: string } | null } | null)?.user;
@@ -54,8 +58,13 @@ export const mutationService = createMutationHandlers({
         } catch {
           return null;
         }
-      },
-      kvGet,
-      kvSet,
-    }),
+      };
+      const out = await maybeShadowWrite(op, stamp, now, { getGroups, getUserId, kvGet, kvSet });
+      try {
+        await maybeAuditConsistency(stamp.s, { getGroups, getUserId, kvGet, kvSet });
+      } catch {
+        /* 对账永不阻断影子结果回传 */
+      }
+      return out;
+    })(),
 });

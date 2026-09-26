@@ -2,6 +2,7 @@ import React, { createContext, useContext, useEffect, useState, useCallback } fr
 import { useAppSelector, useAppDispatch } from '@/store/hooks';
 import { updateSettings, saveSettings, loadSettings } from '@/store/slices/settingsSlice';
 import { ThemeStyle } from '@/types/tab';
+import { logWarn } from '../utils/log';
 
 type ThemeMode = 'light' | 'dark' | 'auto';
 type Theme = 'light' | 'dark';
@@ -38,7 +39,7 @@ export const ThemeProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     dispatch(loadSettings() as any)
       .unwrap?.()
       .catch((err: unknown) => {
-        console.warn('loadSettings failed in ThemeProvider', err);
+        logWarn('loadSettings failed in ThemeProvider', err);
       })
       .finally(() => setSettingsReady(true));
   }, [dispatch]);

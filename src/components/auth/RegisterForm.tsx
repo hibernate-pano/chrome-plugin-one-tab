@@ -3,6 +3,7 @@ import { useAppDispatch, useAppSelector } from '@/store/hooks';
 import { signUp, signIn, clearError } from '@/store/slices/authSlice';
 import { InlineNotice } from '@/components/common/InlineNotice';
 import { validateEmail, validatePassword } from '@/utils/inputValidation';
+import { logError } from '../../utils/log';
 
 interface RegisterFormProps {
   onSuccess?: () => void;
@@ -66,7 +67,7 @@ export const RegisterForm: React.FC<RegisterFormProps> = ({ onSuccess }) => {
         }
       }
     } catch (error) {
-      console.error('注册失败:', error);
+      logError('注册失败:', error);
     } finally {
       setIsRegistering(false);
     }

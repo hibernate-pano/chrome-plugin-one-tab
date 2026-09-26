@@ -14,6 +14,8 @@ export interface Tab {
   syncStatus?: 'synced' | 'local-only' | 'remote-only' | 'conflict';
   lastSyncedAt?: string | null;
   isDeleted?: boolean; // 软删除标记
+  /** D3 墓碑 7 天：删除时刻（执行删除的 mutation 的 now）。恢复时清空；缺失回退 updatedAt。 */
+  deletedAt?: string;
 
   // 阶段二·§4.1：操作印记（写入者）。merge 时按全序决胜。
   lastOp?: { d: string; s: number };
@@ -31,6 +33,8 @@ export interface TabData {
   pinned?: boolean;
   /** 软删除墓碑标记：true 表示该标签已被删除，同步时删除意图跨设备传播（向后兼容，可选） */
   is_deleted?: boolean;
+  /** D3：删除时刻 ISO（随 tabs_data JSON 往返；缺失回退 last_accessed/组 updatedAt） */
+  deleted_at?: string;
   // 阶段二·§5.3：tab 级操作印记随 tabs_data JSON 上云往返（NULL = 最小值，老数据/老客户端兼容）
   last_op_device?: string | null;
   last_op_seq?: number | null;
@@ -52,6 +56,8 @@ export interface SupabaseTabGroup {
   last_op_seq?: number | null;
   // 保留兼容（阶段二·§11 冻结 version 字段）；不再用于冲突裁决。
   version?: number | null;
+  /** D3：组级删除时刻（需云端 deleted_at 列，见迁移；缺失回退 updated_at） */
+  deleted_at?: string | null;
 }
 
 export interface TabGroup {
@@ -75,6 +81,8 @@ export interface TabGroup {
   syncStatus?: 'synced' | 'local-only' | 'remote-only' | 'conflict';
   lastSyncedAt?: string | null;
   isDeleted?: boolean; // 软删除标记
+  /** D3 墓碑 7 天：删除时刻（执行删除的 mutation 的 now）。恢复时清空；缺失回退 updatedAt。 */
+  deletedAt?: string;
 
   // 阶段二·§4.1：操作印记（写入者）。merge 时按全序决胜。
   lastOp?: { d: string; s: number };

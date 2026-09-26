@@ -9,6 +9,7 @@ import { normalizeTabsData } from '../normalizeTabsData';
 import { deserializeTab } from '../tabDataCodec';
 import { supabase, checkSupabaseConfig } from './client';
 import { supportsOpStamp } from './probe';
+import { logError, logInfo, logWarn } from '../log';
 
 export const downloadSync = {
   // 下载标签组
@@ -18,12 +19,12 @@ export const downloadSync = {
     const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
 
     if (sessionError) {
-      console.error('获取会话失败:', sessionError);
+      logError('获取会话失败:', sessionError);
       throw new Error(`获取会话失败: ${sessionError.message}`);
     }
 
     if (!sessionData.session) {
-      console.error('用户未登录或会话已过期');
+      logError('用户未登录或会话已过期');
       throw new Error('用户未登录或会话已过期，请重新登录');
     }
 
@@ -31,17 +32,17 @@ export const downloadSync = {
     const { data: { user }, error: userError } = await supabase.auth.getUser();
 
     if (userError) {
-      console.error('获取用户信息失败:', userError);
+      logError('获取用户信息失败:', userError);
       throw new Error(`获取用户信息失败: ${userError.message}`);
     }
 
     if (!user) {
-      console.error('用户未登录');
+      logError('用户未登录');
       throw new Error('用户未登录');
     }
 
     if (!user.id) {
-      console.error('用户ID无效');
+      logError('用户ID无效');
       throw new Error('用户ID无效');
     }
 
@@ -50,12 +51,12 @@ export const downloadSync = {
       // 确保用户已登录并且会话有效
       const { data: sessionCheck } = await supabase.auth.getSession();
       if (!sessionCheck.session) {
-        console.error('会话已过期，无法下载数据');
+        logError('会话已过期，无法下载数据');
         throw new Error('会话已过期，请重新登录');
       }
 
       // 记录详细的会话信息
-      console.log('会话信息:', {
+      logInfo('会话信息:', {
         userID: user.id,
         sessionUserID: sessionCheck.session.user.id,
         isSessionValid: !!sessionCheck.session
@@ -63,7 +64,7 @@ export const downloadSync = {
 
       // 确保用户ID匹配会话用户ID
       if (user.id !== sessionCheck.session.user.id) {
-        console.warn('用户ID与会话用户ID不匹配，使用会话用户ID');
+        logWarn('用户ID与会话用户ID不匹配，使用会话用户ID');
         user.id = sessionCheck.session.user.id;
       }
 
@@ -80,8 +81,8 @@ export const downloadSync = {
         .order('created_at', { ascending: false });
 
       if (error) {
-        console.error('获取标签组失败:', error);
-        console.error('错误详情:', {
+        logError('获取标签组失败:', error);
+        logError('错误详情:', {
           code: error.code,
           message: error.message,
           details: error.details,
@@ -90,12 +91,12 @@ export const downloadSync = {
         throw error;
       }
 
-      console.log(`从云端获取到 ${groups.length} 个标签组`);
+      logInfo(`从云端获取到 ${groups.length} 个标签组`);
 
       // 记录每个云端标签组的基本信息
       groups.forEach((group: any, index) => {
         const tabsData = (group.tabs_data || []) as TabData[];
-        console.log(`云端标签组 ${index + 1}/${groups.length}:`, {
+        logInfo(`云端标签组 ${index + 1}/${groups.length}:`, {
           id: group.id,
           name: group.name,
           tabCount: tabsData.length,
@@ -123,18 +124,18 @@ export const downloadSync = {
             const decrypted = await decryptData<unknown>(groupAny.tabs_data as string, user.id);
             // decryptData 内部 JSON.parse 后 as T，无形状校验，必须在这里归一化
             tabsData = normalizeTabsData(decrypted, String(groupAny.id));
-            console.log(`标签组 ${groupAny.id} 的数据已成功解密`);
+            logInfo(`标签组 ${groupAny.id} 的数据已成功解密`);
           } catch (error) {
-            console.error(`解密标签组 ${groupAny.id} 的数据失败:`, error);
+            logError(`解密标签组 ${groupAny.id} 的数据失败:`, error);
             // 如果解密失败，尝试直接解析（可能是旧的未加密数据）
             try {
               if (typeof groupAny.tabs_data === 'string' && !isEncrypted(groupAny.tabs_data)) {
                 // 旧版本可能把非数组数据明文写入云端，解析后同样必须归一化
                 tabsData = normalizeTabsData(JSON.parse(groupAny.tabs_data), String(groupAny.id));
-                console.log(`标签组 ${groupAny.id} 的数据是旧的未加密格式，已成功解析`);
+                logInfo(`标签组 ${groupAny.id} 的数据是旧的未加密格式，已成功解析`);
               }
             } catch (jsonError) {
-              console.error(`解析标签组 ${groupAny.id} 的JSON数据失败:`, jsonError);
+              logError(`解析标签组 ${groupAny.id} 的JSON数据失败:`, jsonError);
               // 保持空数组
             }
           }
@@ -160,6 +161,11 @@ export const downloadSync = {
           isLocked: Boolean(groupAny.is_locked),
           // 云端 tombstone：is_deleted 列存在时才有值；无列时 undefined → 视为未删除
           isDeleted: Boolean(groupAny.is_deleted),
+          // D3：云端 deleted_at 列存在时才有值；缺失 → undefined → sweep 回退 updatedAt
+          deletedAt:
+            typeof (groupAny as { deleted_at?: unknown }).deleted_at === 'string'
+              ? String((groupAny as { deleted_at?: unknown }).deleted_at)
+              : undefined,
           // 阶段二·§6.1：操作印记。NULL 视为最小值（迁移前 / 老客户端）。
           // 仅当两侧都有值时构造对象，否则留 undefined → mergeOpStamped 走 EMPTY_STAMP。
           lastOp:
@@ -171,7 +177,7 @@ export const downloadSync = {
         });
         } catch (groupError) {
           // 单组处理失败（如字段形状异常）不影响其他组的下载与合并
-          console.error(
+          logError(
             `处理标签组 ${(group as any)?.id} 失败，已跳过该组:`,
             groupError
           );
@@ -207,14 +213,14 @@ export const downloadSync = {
               group.tabs = safeTabs;
             }
           } catch (e) {
-            console.warn(`从 tabs 表获取标签失败，忽略错误:`, e);
+            logWarn(`从 tabs 表获取标签失败，忽略错误:`, e);
           }
         }
       }
 
       return tabGroups;
     } catch (error) {
-      console.error('下载标签组失败:', error);
+      logError('下载标签组失败:', error);
       throw error;
     }
   },
@@ -225,12 +231,12 @@ export const downloadSync = {
     const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
 
     if (sessionError) {
-      console.error('获取会话失败:', sessionError);
+      logError('获取会话失败:', sessionError);
       throw new Error(`获取会话失败: ${sessionError.message}`);
     }
 
     if (!sessionData.session) {
-      console.error('用户未登录或会话已过期');
+      logError('用户未登录或会话已过期');
       throw new Error('用户未登录或会话已过期，请重新登录');
     }
 
@@ -238,23 +244,23 @@ export const downloadSync = {
     const { data: { user }, error: userError } = await supabase.auth.getUser();
 
     if (userError) {
-      console.error('获取用户信息失败:', userError);
+      logError('获取用户信息失败:', userError);
       throw new Error(`获取用户信息失败: ${userError.message}`);
     }
 
     if (!user) {
-      console.error('用户未登录');
+      logError('用户未登录');
       throw new Error('用户未登录');
     }
 
     if (!user.id) {
-      console.error('用户ID无效');
+      logError('用户ID无效');
       throw new Error('用户ID无效');
     }
 
     // 确保用户ID匹配会话用户ID
     if (user.id !== sessionData.session.user.id) {
-      console.warn('用户ID与会话用户ID不匹配，使用会话用户ID');
+      logWarn('用户ID与会话用户ID不匹配，使用会话用户ID');
       user.id = sessionData.session.user.id;
     }
 
@@ -267,8 +273,8 @@ export const downloadSync = {
       .single();
 
     if (error && error.code !== 'PGRST116') {
-      console.error('下载用户设置失败:', error);
-      console.error('错误详情:', {
+      logError('下载用户设置失败:', error);
+      logError('错误详情:', {
         code: error.code,
         message: error.message,
         details: error.details,
@@ -310,7 +316,7 @@ export const downloadSync = {
         if (fieldMapping[key]) {
           convertedSettings[fieldMapping[key]] = value;
         } else {
-          console.warn(`跳过未知的数据库字段: ${key}`);
+          logWarn(`跳过未知的数据库字段: ${key}`);
         }
       }
 

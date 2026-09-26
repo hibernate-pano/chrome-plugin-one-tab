@@ -1,4 +1,5 @@
 import { storage } from '@/utils/storage';
+import { logError } from './log';
 
 export type ProductEventName =
   | 'onboarding_completed'
@@ -28,6 +29,6 @@ export const trackProductEvent = async (
       createdAt: new Date().toISOString(),
     });
   } catch (error) {
-    console.error('记录产品事件失败:', error);
+    logError('记录产品事件失败:', error);
   }
 };

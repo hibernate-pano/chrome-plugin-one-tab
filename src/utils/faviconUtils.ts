@@ -1,3 +1,4 @@
+import { logError, logInfo, logWarn } from './log';
 /**
  * Favicon URL 处理工具
  * 用于确保 favicon URL 符合 CSP 安全策略
@@ -33,7 +34,7 @@ export function sanitizeFaviconUrl(faviconUrl: string | undefined | null): strin
 
     // 检查是否是危险协议
     if (dangerousProtocols.includes(url.protocol)) {
-      console.warn(`危险的 favicon 协议，已过滤: ${url.protocol} - ${cleanUrl}`);
+      logWarn(`危险的 favicon 协议，已过滤: ${url.protocol} - ${cleanUrl}`);
       return '';
     }
 
@@ -43,12 +44,12 @@ export function sanitizeFaviconUrl(faviconUrl: string | undefined | null): strin
     }
 
     // 其他未知协议，返回空字符串
-    console.warn(`未知的 favicon 协议，已过滤: ${url.protocol} - ${cleanUrl}`);
+    logWarn(`未知的 favicon 协议，已过滤: ${url.protocol} - ${cleanUrl}`);
     return '';
 
   } catch (error) {
     // URL 格式无效
-    console.warn(`无效的 favicon URL 格式，已过滤: ${cleanUrl}`, error);
+    logWarn(`无效的 favicon URL 格式，已过滤: ${cleanUrl}`, error);
     return '';
   }
 }
@@ -82,7 +83,7 @@ export function isFaviconUrlSafe(faviconUrl: string | undefined | null): boolean
 
     // 检查是否是危险协议
     if (dangerousProtocols.includes(url.protocol)) {
-      console.warn(`危险的 favicon 协议，已过滤: ${url.protocol} - ${faviconUrl}`);
+      logWarn(`危险的 favicon 协议，已过滤: ${url.protocol} - ${faviconUrl}`);
       return false;
     }
 
@@ -100,12 +101,12 @@ export function isFaviconUrlSafe(faviconUrl: string | undefined | null): boolean
 export async function migrateFaviconUrls(): Promise<void> {
   try {
     // 这里需要导入storage，但为了避免循环依赖，我们将在调用处处理
-    console.log('开始迁移 favicon URLs...');
+    logInfo('开始迁移 favicon URLs...');
 
     // 注意：实际的迁移逻辑将在调用此函数的地方实现
     // 这里只是一个占位符函数
 
   } catch (error) {
-    console.error('迁移 favicon URLs 失败:', error);
+    logError('迁移 favicon URLs 失败:', error);
   }
 }

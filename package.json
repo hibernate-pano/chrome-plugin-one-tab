@@ -10,7 +10,7 @@
     "build:web": "tsc --noEmit && vite build --config vite.web.config.ts",
     "package": "pnpm build && node package-extension.js",
     "preview": "vite preview",
-    "test": "node --test --experimental-strip-types tests/*.test.ts",
+    "test": "node --test --import ./tests/_register-loader.mjs --experimental-strip-types tests/*.test.ts",
     "e2e": "node scripts/run-e2e.mjs",
     "e2e:list": "node scripts/run-e2e.mjs --list",
     "lint": "eslint src --ext ts,tsx --report-unused-disable-directives --max-warnings 0",

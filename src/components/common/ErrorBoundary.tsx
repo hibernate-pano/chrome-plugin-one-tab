@@ -1,4 +1,5 @@
 import React, { Component, ReactNode } from 'react';
+import { logError } from '../../utils/log';
 
 interface ErrorBoundaryState {
   hasError: boolean;
@@ -32,8 +33,8 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
 
   componentDidCatch(error: Error, errorInfo: React.ErrorInfo) {
     // 记录错误信息
-    console.error('ErrorBoundary捕获到错误:', error);
-    console.error('错误详情:', errorInfo);
+    logError('ErrorBoundary捕获到错误:', error);
+    logError('错误详情:', errorInfo);
     
     // 更新state以包含错误信息
     this.setState({

@@ -41,6 +41,8 @@ export interface YGroupRec {
   updatedAt: string;
   isLocked: boolean;
   is_deleted: boolean;
+  /** D3：删除时刻（恢复时缺席；缺失回退对端 updatedAt） */
+  deletedAt?: string;
   version: number;
   last_op_device: string | null;
   last_op_seq: number | null;
@@ -55,6 +57,8 @@ export interface YTabRec {
   title: string;
   lastAccessed: string;
   is_deleted: boolean;
+  /** D3：删除时刻（恢复时缺席） */
+  deletedAt?: string;
   last_op_device: string | null;
   last_op_seq: number | null;
 }
@@ -98,6 +102,7 @@ export function toYGroupRec(g: TabGroup): YGroupRec {
     updatedAt: g.updatedAt,
     isLocked: g.isLocked,
     is_deleted: g.isDeleted === true,
+    ...(g.deletedAt !== undefined ? { deletedAt: g.deletedAt } : {}),
     version: g.version ?? 1,
     last_op_device: st ? st.d : null,
     last_op_seq: st ? st.s : null,
@@ -114,6 +119,7 @@ export function toYTabRecs(g: TabGroup): YTabRec[] {
     title: t.title,
     lastAccessed: t.lastAccessed,
     is_deleted: t.isDeleted === true,
+    ...(t.deletedAt !== undefined ? { deletedAt: t.deletedAt } : {}),
     last_op_device: t.lastOp ? t.lastOp.d : null,
     last_op_seq: t.lastOp ? t.lastOp.s : null,
   }));

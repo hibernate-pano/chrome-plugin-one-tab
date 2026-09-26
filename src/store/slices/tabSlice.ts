@@ -17,7 +17,9 @@ import { TabState, TabGroup, OptimisticTabBackup } from '@/types/tab';
 import { storage, invalidateGroupsCache } from '@/utils/storage';
 import { shouldAutoDeleteAfterTabRemoval } from '@/utils/tabGroupUtils';
 import { sendMutation } from '@/shared/mutationProtocol';
+import { backupKeyOf, dropLoadGuard, isStaleLoad, stripInFlightTabs, stripTombstonedTabs, takeLoadGuard } from './tabSliceHelpers';
 import { trackProductEvent } from '@/utils/productEvents';
+import { logError, logInfo } from '../../utils/log';
 
 // 为了解决"参数隐式具有"any"类型"的问题，添加明确的类型定义
 // 注意：这些接口暂时保留，可能在未来的功能中使用
@@ -45,68 +47,6 @@ export const initialTabState: TabState = {
   pendingLoadGuards: {},
 };
 
-/** 乐观备份槽位 key：按 tab 维度隔离，避免连点不同 tab 时错位回滚 */
-const backupKeyOf = (groupId: string, tabId: string): string => `${groupId}:${tabId}`;
-
-/**
- * 回环 payload 过滤：剥掉仍在途的乐观删除项（与 deleteTab.fulfilled 重放过滤同语义）。
- * 代际 guard 只拦“发起早于 pending”的 load；pending 之后、SW 落盘之前发起的 load
- * 快照与当前同代际，会带着删除前的旧 KV 结算——这里按在途备份补刀，堵住复活窗口：
- * - 组内部分在途：过滤掉在途 tab，其余变更正常应用；
- * - 整组在途软删（过滤后为空且 payload 非空）：组不进 active（pending 已放入误删视图）。
- */
-const stripInFlightTabs = (
-  groups: TabGroup[],
-  backups: OptimisticTabBackup[]
-): TabGroup[] => {
-  if (backups.length === 0) return groups;
-  const pendingByGroup = new Map<string, Set<string>>();
-  for (const b of backups) {
-    const set = pendingByGroup.get(b.groupId) ?? new Set<string>();
-    set.add(b.tabId);
-    pendingByGroup.set(b.groupId, set);
-  }
-  const out: TabGroup[] = [];
-  for (const g of groups) {
-    const pend = pendingByGroup.get(g.id);
-    if (!pend) {
-      out.push(g);
-      continue;
-    }
-    const tabs = g.tabs.filter(t => !pend.has(t.id));
-    if (tabs.length === 0 && g.tabs.length > 0) continue;
-    out.push(tabs.length === g.tabs.length ? g : { ...g, tabs });
-  }
-  return out;
-};
-
-/** load 回环代际判定：在途 mutation（epoch 前进）之后发起的旧快照一律忽略 */
-const isStaleLoad = (
-  guards: Record<string, number> | undefined,
-  requestId: string,
-  mutationEpoch: number | undefined
-): boolean => {
-  const initiatedEpoch = guards?.[requestId];
-  // 无快照（historical 状态/未知来源）一律放行，避免外部变更刷新被饿死
-  if (initiatedEpoch === undefined) return false;
-  return initiatedEpoch < (mutationEpoch ?? 0);
-};
-
-const takeLoadGuard = (
-  state: TabState,
-  requestId: string
-): void => {
-  if (!state.pendingLoadGuards) state.pendingLoadGuards = {};
-  state.pendingLoadGuards[requestId] = state.mutationEpoch ?? 0;
-};
-
-const dropLoadGuard = (state: TabState, requestId: string): void => {
-  if (state.pendingLoadGuards) delete state.pendingLoadGuards[requestId];
-};
-
-/** 过滤组内标签级墓碑（storage 保留墓碑用于同步删除意图，Redux/UI 不感知） */
-const stripTombstonedTabs = (group: TabGroup): TabGroup =>
-  group.tabs.some(t => t.isDeleted) ? { ...group, tabs: group.tabs.filter(t => !t.isDeleted) } : group;
 
 /**
  * 本地 UI 偏好持久化（isFavorite/notes）：走 updateGroupFields 语义命令，
@@ -147,7 +87,7 @@ export const loadGroups = createAsyncThunk('tabs/loadGroups', async () => {
     return dateB.getTime() - dateA.getTime();
   });
 
-  console.log(`[LoadGroups] 加载 ${sortedGroups.length} 个活跃标签组（已过滤 ${groups.length - activeGroups.length} 个已删除）`);
+  logInfo(`[LoadGroups] 加载 ${sortedGroups.length} 个活跃标签组（已过滤 ${groups.length - activeGroups.length} 个已删除）`);
 
   return sortedGroups;
 });
@@ -446,7 +386,7 @@ export const tabSlice = createSlice({
       if (!sourceGroup || !targetGroup ||
         !sourceGroup.tabs || !Array.isArray(sourceGroup.tabs) ||
         !targetGroup.tabs || !Array.isArray(targetGroup.tabs)) {
-        console.error('无效的标签组数据:', {
+        logError('无效的标签组数据:', {
           sourceGroup: sourceGroup?.id,
           targetGroup: targetGroup?.id,
           sourceTabsValid: Array.isArray(sourceGroup?.tabs),
@@ -457,7 +397,7 @@ export const tabSlice = createSlice({
 
       // 验证源索引有效
       if (sourceIndex < 0 || sourceIndex >= sourceGroup.tabs.length) {
-        console.error('无效的源标签索引:', { sourceIndex, tabsLength: sourceGroup.tabs.length });
+        logError('无效的源标签索引:', { sourceIndex, tabsLength: sourceGroup.tabs.length });
         return;
       }
 
@@ -555,6 +495,7 @@ export const tabSlice = createSlice({
             isDeleted: true,
             version: (updatedSourceGroup.version || 1) + 1,
             updatedAt: now,
+            deletedAt: now,
           });
           if (state.activeGroupId === sourceGroupId) {
             state.activeGroupId = null;
@@ -630,6 +571,7 @@ export const tabSlice = createSlice({
           state.deletedGroups.push({
             ...removed,
             isDeleted: true,
+            deletedAt: new Date().toISOString(),
             version: (removed.version || 1) + 1,
             updatedAt: new Date().toISOString()
           });
@@ -671,6 +613,7 @@ export const tabSlice = createSlice({
             ...removed,
             tabs,
             isDeleted: true,
+            deletedAt: new Date().toISOString(),
             version: (removed.version || 1) + 1,
             updatedAt: new Date().toISOString(),
           });
@@ -732,6 +675,7 @@ export const tabSlice = createSlice({
             state.deletedGroups.push({
               ...removed,
               isDeleted: true,
+              deletedAt: new Date().toISOString(),
               version: (removed.version || 1) + 1,
               updatedAt: new Date().toISOString(),
             });
@@ -818,6 +762,7 @@ export const tabSlice = createSlice({
             isDeleted: true,
             version: (g.version || 1) + 1,
             updatedAt: now,
+            deletedAt: now,
           })),
         ];
       })

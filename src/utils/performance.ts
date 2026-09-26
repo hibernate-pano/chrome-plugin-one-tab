@@ -1,3 +1,4 @@
+import { logError } from './log';
 /**
  * 性能优化工具
  * 包括缓存、防抖、节流等功能
@@ -88,7 +89,7 @@ export function debounceAsync<TArgs extends any[], TResult>(
       
       // 安全检查：确保有参数可用
       if (!lastArgs) {
-        console.error('debounceAsync: No arguments available for execution');
+        logError('debounceAsync: No arguments available for execution');
         return;
       }
       

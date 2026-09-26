@@ -7,6 +7,7 @@ import { useToast } from '@/contexts/ToastContext';
 import { useEnhancedToast } from '@/utils/toastHelper';
 import { OpenGuard, OpenAllGuard } from '@/utils/openGuard';
 import { trackProductEvent } from '@/utils/productEvents';
+import { logError } from '../../utils/log';
 
 interface TabGroupProps {
   group: TabGroupType;
@@ -186,7 +187,7 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
       dispatch(deleteGroup(group.id))
         .unwrap()
         .catch(error => {
-          console.error('恢复会话后删除原会话失败:', error);
+          logError('恢复会话后删除原会话失败:', error);
           showDeleteError(`恢复会话后清理原会话失败: ${error.message || '未知错误'}`);
         })
         .finally(releaseAllOnce);
@@ -223,7 +224,7 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
         .unwrap()
         .catch(error => {
           guard.release(tab.id);
-          console.error('更新会话失败:', error);
+          logError('更新会话失败:', error);
           showRestoreError(`更新会话失败: ${error.message || '未知错误'}`);
         });
     }

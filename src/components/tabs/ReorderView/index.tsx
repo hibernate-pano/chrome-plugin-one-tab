@@ -3,6 +3,7 @@ import { useAppSelector, useAppDispatch } from '@/store/hooks';
 import { Tab, TabGroup } from '@/types/tab';
 import { deleteTabAndSync } from '@/store/slices/tabSlice';
 import { SafeFavicon } from '@/components/common/SafeFavicon';
+import { logError, logInfo } from '../../../utils/log';
 
 // 钉住图标
 const PinIcon = () => (
@@ -103,13 +104,13 @@ const ReorderView: React.FC = () => {
       .unwrap()
       .then(payload => {
         if (payload.group === null) {
-          console.log(`自动删除空标签组: ${group.name} (ID: ${group.id})`);
+          logInfo(`自动删除空标签组: ${group.name} (ID: ${group.id})`);
         } else {
-          console.log(`从标签组删除标签页: ${group.name}, 剩余标签页: ${payload.group.tabs.length}`);
+          logInfo(`从标签组删除标签页: ${group.name}, 剩余标签页: ${payload.group.tabs.length}`);
         }
       })
       .catch(error => {
-        console.error('删除标签页失败:', error);
+        logError('删除标签页失败:', error);
       });
   };
 

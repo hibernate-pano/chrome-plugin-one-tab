@@ -25,6 +25,7 @@ import {
   applyMoveTab,
   applyCleanDuplicates,
 } from '@/utils/mutationOps';
+import { logWarn } from '../utils/log';
 
 export interface MutationDeps {
   getGroups(): Promise<TabGroup[]>;
@@ -123,7 +124,7 @@ export function createMutationHandlers(deps: MutationDeps) {
         try {
           await deps.notePurgedGroup?.(cmd.groupId);
         } catch (e) {
-          console.warn('[mutationHandlers] 记录 purge 队列失败（云端行可能残留复活）:', e);
+          logWarn('[mutationHandlers] 记录 purge 队列失败（云端行可能残留复活）:', e);
         }
         deps.scheduleUpload(NORMAL_MS);
         return { ok: true, payload: cmd.groupId };

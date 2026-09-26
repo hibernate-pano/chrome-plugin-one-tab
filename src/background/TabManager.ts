@@ -9,6 +9,7 @@ import { createSeqRegistry } from '@/utils/seqRegistry';
 import { getDeviceId } from '@/utils/deviceUtils';
 import { kvGet, kvSet } from '@/storage/storageAdapter';
 import type { OpStamp } from '@/utils/opStamp';
+import { logError, logInfo, logWarn } from '../utils/log';
 
 // 保存路径也走同一套印记（与 mutationService 的 registry 各持一实例，但无 memo、
 // 同一持久化 key + Lamport 推导，因此互相一致）。无印记的组在合并中等价于
@@ -88,7 +89,7 @@ export class TabManager {
             tabs = await chrome.tabs.query({ currentWindow: true });
             break;
           } catch (error) {
-            console.warn(`查询标签页失败，重试 ${attempt + 1}/3`, error);
+            logWarn(`查询标签页失败，重试 ${attempt + 1}/3`, error);
             if (attempt === 2) {
               throw error;
             }
@@ -117,7 +118,7 @@ export class TabManager {
         else droppedTabs++;
       }
       if (droppedTabs > 0) {
-        console.warn(`[TabManager] 保存时丢弃 ${droppedTabs} 个危险 URL 标签`);
+        logWarn(`[TabManager] 保存时丢弃 ${droppedTabs} 个危险 URL 标签`);
       }
       const safeGroup = { ...tabGroup, tabs: sanitizedTabs };
 
@@ -177,12 +178,12 @@ export class TabManager {
           await chrome.tabs.create({ url: 'chrome://newtab' });
           await chrome.tabs.remove(tabIdsToClose);
         } catch (error) {
-          console.warn('关闭标签页时出错:', error);
+          logWarn('关闭标签页时出错:', error);
         }
       }
 
     } catch (error) {
-      console.error('保存标签页失败:', error);
+      logError('保存标签页失败:', error);
 
       // 显示错误通知
       await this.showNotification({
@@ -200,7 +201,7 @@ export class TabManager {
    * 保存当前标签页
    */
   async saveCurrentTab(tab: chrome.tabs.Tab): Promise<void> {
-    console.log('保存当前标签页:', tab.url);
+    logInfo('保存当前标签页:', tab.url);
 
     if (!tab.url || tab.url.startsWith('chrome://') || tab.url.startsWith('chrome-extension://')) {
       return;
@@ -255,7 +256,7 @@ export class TabManager {
       }
 
     } catch (error) {
-      console.error('保存当前标签页失败:', error);
+      logError('保存当前标签页失败:', error);
       throw error;
     }
   }
@@ -275,7 +276,7 @@ export class TabManager {
       }
 
     } catch (error) {
-      console.error('打开标签页失败:', error);
+      logError('打开标签页失败:', error);
       throw error;
     }
   }
@@ -314,7 +315,7 @@ export class TabManager {
       );
 
     } catch (error) {
-      console.error('在新窗口恢复会话失败:', error);
+      logError('在新窗口恢复会话失败:', error);
       throw error;
     }
   }
@@ -342,7 +343,7 @@ export class TabManager {
         )
       );
     } catch (error) {
-      console.error('在当前窗口恢复会话失败:', error);
+      logError('在当前窗口恢复会话失败:', error);
       throw error;
     }
   }
@@ -374,7 +375,7 @@ export class TabManager {
         message: options.message
       });
     } catch (error) {
-      console.error('显示通知失败:', error);
+      logError('显示通知失败:', error);
     }
   }
 }

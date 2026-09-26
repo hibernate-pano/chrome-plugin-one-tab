@@ -3,6 +3,7 @@ import { useAppDispatch, useAppSelector } from '@/store/hooks';
 import { signIn, clearError } from '@/store/slices/authSlice';
 import { InlineNotice } from '@/components/common/InlineNotice';
 import { validateEmail, validatePassword, validateForm } from '@/utils/inputValidation';
+import { logError } from '../../utils/log';
 
 interface LoginFormProps {
   onSuccess?: () => void;
@@ -53,7 +54,7 @@ export const LoginForm: React.FC<LoginFormProps> = ({ onSuccess }) => {
         onSuccess();
       }
     } catch (error) {
-      console.error('登录失败:', error);
+      logError('登录失败:', error);
     }
   };
 

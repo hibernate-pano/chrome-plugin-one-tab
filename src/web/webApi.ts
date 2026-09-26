@@ -9,6 +9,7 @@ import { applyWebRemoveTab, mintWebStamp } from '@/utils/webTombstone';
 import { decryptData, encryptData } from '@/utils/encryptionUtils';
 import { formatToOneTabFormat } from '@/utils/oneTabFormatParser';
 import type { Tab, TabGroup } from '@/types/tab';
+import { logWarn } from '../utils/log';
 
 export interface WebUser {
   id: string;
@@ -108,7 +109,7 @@ async function decryptRowToGroup(row: Record<string, unknown>, userId: string): 
       const decrypted = await decryptData(groupAny.tabs_data, userId);
       const group = toTabGroupFromEncrypted(groupId, decrypted);
       if (!group) {
-        console.warn(`[decryptRowToGroup] 组 ${groupAny.id} 解密结果无法解析`);
+        logWarn(`[decryptRowToGroup] 组 ${groupAny.id} 解密结果无法解析`);
         return null;
       }
       // 用 group 表字段补齐（加密对象常缺 name/时间戳）
@@ -118,7 +119,7 @@ async function decryptRowToGroup(row: Record<string, unknown>, userId: string): 
       group.isLocked = group.isLocked || fallbackIsLocked;
       return group;
     } catch (decryptError) {
-      console.warn(`[decryptRowToGroup] 组 ${groupAny.id} 解密失败:`, decryptError);
+      logWarn(`[decryptRowToGroup] 组 ${groupAny.id} 解密失败:`, decryptError);
       // 最后回退：普通解析
       try {
         const parsed = JSON.parse(groupAny.tabs_data);

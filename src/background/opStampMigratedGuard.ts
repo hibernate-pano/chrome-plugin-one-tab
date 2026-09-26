@@ -20,6 +20,7 @@ import { storage } from '@/utils/storage';
 import { getDeviceId } from '@/utils/deviceUtils';
 import { migrateOpStamps } from '@/utils/opStampMigration';
 import { enqueue, getQueueDepth } from '@/background/mutationQueue';
+import { logInfo } from '../utils/log';
 
 async function runMigration(): Promise<void> {
   if (await storage.getOpStampMigrated()) return;
@@ -31,7 +32,7 @@ async function runMigration(): Promise<void> {
   const { groups: migratedGroups, migrated } = migrateOpStamps(groups, deviceId);
   if (migrated > 0) {
     await storage.setGroups(migratedGroups);
-    console.log(`[OpStamp] 迁移完成: ${migrated} 个实体盖本设备印记`);
+    logInfo(`[OpStamp] 迁移完成: ${migrated} 个实体盖本设备印记`);
   }
   await storage.setOpStampMigrated(true);
 }

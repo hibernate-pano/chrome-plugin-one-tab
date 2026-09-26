@@ -11,6 +11,7 @@ import { PersonalizedWelcome, QuickActionTips } from '@/components/common/Person
 import { useToast } from '@/contexts/ToastContext';
 import { useEnhancedToast } from '@/utils/toastHelper';
 import type { TabGroup as TabGroupType } from '@/types/tab';
+import { logError } from '../../utils/log';
 
 interface TabListProps {
   searchQuery: string;
@@ -32,7 +33,7 @@ export const TabList: React.FC<TabListProps> = ({ searchQuery }) => {
         dispatch(loadGroups());
         dispatch(loadDeletedGroups());
       } catch (migrationError) {
-        console.error('初始化数据失败:', migrationError);
+        logError('初始化数据失败:', migrationError);
         dispatch(loadGroups());
         dispatch(loadDeletedGroups());
       }

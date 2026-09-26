@@ -7,13 +7,14 @@ import { storage } from './storage';
 import { sanitizeFaviconUrl } from './faviconUtils';
 import { kvRemove } from '@/storage/storageAdapter';
 import { TabGroup } from '@/types/tab';
+import { logError, logInfo } from './log';
 
 /**
  * 迁移现有数据中的 favicon URLs，确保符合 CSP 策略
  */
 export async function migrateFaviconUrls(): Promise<void> {
   try {
-    console.log('开始迁移 favicon URLs...');
+    logInfo('开始迁移 favicon URLs...');
     
     // 获取所有标签组
     const groups = await storage.getGroups();
@@ -32,7 +33,7 @@ export async function migrateFaviconUrls(): Promise<void> {
           // 如果清理后的 URL 与原 URL 不同，说明进行了迁移
           if (sanitizedFavicon !== tab.favicon) {
             migrationCount++;
-            console.log(`迁移 favicon: ${tab.favicon} -> ${sanitizedFavicon || '(已移除)'}`);
+            logInfo(`迁移 favicon: ${tab.favicon} -> ${sanitizedFavicon || '(已移除)'}`);
           }
           
           return {
@@ -53,16 +54,16 @@ export async function migrateFaviconUrls(): Promise<void> {
     // 如果有数据被迁移，保存更新后的数据
     if (migrationCount > 0) {
       await storage.setGroups(migratedGroups);
-      console.log(`favicon 迁移完成: 共处理 ${totalTabs} 个标签，迁移了 ${migrationCount} 个 favicon`);
+      logInfo(`favicon 迁移完成: 共处理 ${totalTabs} 个标签，迁移了 ${migrationCount} 个 favicon`);
     } else {
-      console.log(`favicon 迁移检查完成: 共检查 ${totalTabs} 个标签，无需迁移`);
+      logInfo(`favicon 迁移检查完成: 共检查 ${totalTabs} 个标签，无需迁移`);
     }
     
     // 标记迁移已完成
     await storage.setMigrationFlag('favicon_urls_v1', true);
     
   } catch (error) {
-    console.error('迁移 favicon URLs 失败:', error);
+    logError('迁移 favicon URLs 失败:', error);
     throw error;
   }
 }
@@ -77,7 +78,7 @@ export async function shouldRunMigration(migrationKey: string): Promise<boolean>
     const migrationFlags = await storage.getMigrationFlags();
     return !migrationFlags[migrationKey];
   } catch (error) {
-    console.error(`检查迁移状态失败 (${migrationKey}):`, error);
+    logError(`检查迁移状态失败 (${migrationKey}):`, error);
     // 如果检查失败，为了安全起见，假设需要运行迁移
     return true;
   }
@@ -88,7 +89,7 @@ export async function removeRecentRestoreHistory(): Promise<void> {
     await kvRemove('recent_restores');
     await storage.setMigrationFlag('recent_restore_history_removed_v1', true);
   } catch (error) {
-    console.error('移除最近恢复历史失败:', error);
+    logError('移除最近恢复历史失败:', error);
     throw error;
   }
 }
@@ -98,7 +99,7 @@ export async function removeRecentRestoreHistory(): Promise<void> {
  */
 export async function runMigrations(): Promise<void> {
   try {
-    console.log('开始检查数据迁移...');
+    logInfo('开始检查数据迁移...');
     
     // 检查并运行 favicon URLs 迁移
     if (await shouldRunMigration('favicon_urls_v1')) {
@@ -109,10 +110,10 @@ export async function runMigrations(): Promise<void> {
       await removeRecentRestoreHistory();
     }
     
-    console.log('数据迁移检查完成');
+    logInfo('数据迁移检查完成');
     
   } catch (error) {
-    console.error('数据迁移失败:', error);
+    logError('数据迁移失败:', error);
     // 不抛出错误，避免影响应用启动
   }
 }

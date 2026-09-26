@@ -5,6 +5,7 @@ import { store } from '../store';
 import App from './App';
 import '../styles/global.css';
 import { benchmarkStorageRoundtrip, seedLargeDataset } from '@/utils/performanceTest';
+import { logInfo } from '../utils/log';
 
 const root = ReactDOM.createRoot(
   document.getElementById('root') as HTMLElement
@@ -24,5 +25,5 @@ if (import.meta.env.DEV && typeof window !== 'undefined') {
     benchmarkStorageRoundtrip,
     seedLargeDataset
   };
-  console.log('[bench] helpers attached to window.__TV_BENCH__');
+  logInfo('[bench] helpers attached to window.__TV_BENCH__');
 }

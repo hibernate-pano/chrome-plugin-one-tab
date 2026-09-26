@@ -3,6 +3,8 @@
  * （原 src/utils/supabase.ts 对应节逐字搬运；缓存单例语义不变。）
  */
 import { supabase, checkSupabaseConfig, isSupabaseConfigured } from './client';
+import { requireSessionUserId } from './session';
+import { logWarn } from '../log';
 
 // ── 云端 tombstone（软删）双轨支持 ────────────────────────────────
 // 背景：Web 端删除需要跨端一致（扩展端上传不能"复活"已删的云端行）。
@@ -27,7 +29,7 @@ export async function supportsCloudTombstone(): Promise<boolean> {
     const probe = await supabase.from('tab_groups').select('is_deleted').limit(1);
     if (probe.error) {
       if (probe.error.code === 'PGRST204' || /is_deleted/i.test(probe.error.message)) {
-        console.warn(
+        logWarn(
           '[tombstone] 云端 tab_groups 表缺少 is_deleted 列，降级为硬删。\n' +
           '  如需跨端软删一致性，请在 Supabase 控制台 SQL Editor 执行：\n' +
           '  ALTER TABLE tab_groups ADD COLUMN is_deleted boolean NOT NULL DEFAULT false;'
@@ -38,7 +40,7 @@ export async function supportsCloudTombstone(): Promise<boolean> {
         // P1-5：网络/权限等非确定性失败：**不缓存**，与 supportsOpStamp 同策略。
         // 写死 false 会让一次网络抖动把整个 SW 生命周期钉在降级模式（硬删分支），
         // 且不会自愈——本次按不支持处理，下次重探。
-        console.warn('[tombstone] 列探测失败（非 PGRST204），本次按不支持处理，下次重探:', probe.error.message);
+        logWarn('[tombstone] 列探测失败（非 PGRST204），本次按不支持处理，下次重探:', probe.error.message);
         return false;
       }
     } else {
@@ -47,7 +49,44 @@ export async function supportsCloudTombstone(): Promise<boolean> {
     return tombstoneSupportCache;
   } catch (err) {
     // P1-5：异常同样不缓存，下次重探（与 supportsOpStamp 同策略）。
-    console.warn('[tombstone] 列探测异常，本次按不支持处理，下次重探:', (err as Error).message);
+    logWarn('[tombstone] 列探测异常，本次按不支持处理，下次重探:', (err as Error).message);
+    return false;
+  }
+}
+
+let deletedAtSupportCache: boolean | null = null;
+
+/**
+ * D3：探测云端 tab_groups 表是否已有 deleted_at 列（结果缓存）。
+ * 口径与 supportsCloudTombstone/supportsOpStamp 完全一致：
+ * 确定性缺列（PGRST204）→ 缓存 false；网络抖动 → 不缓存下次重探。
+ * 缺列时调用方省略 deleted_at（墓碑过期回退 updatedAt，见 tombstone.ts）。
+ */
+export async function supportsDeletedAt(): Promise<boolean> {
+  if (deletedAtSupportCache !== null) return deletedAtSupportCache;
+  if (!isSupabaseConfigured()) {
+    deletedAtSupportCache = false;
+    return false;
+  }
+  try {
+    const probe = await supabase.from('tab_groups').select('deleted_at').limit(1);
+    if (probe.error) {
+      if (probe.error.code === 'PGRST204' || /deleted_at/i.test(probe.error.message)) {
+        logWarn(
+          '[tombstone] 云端 tab_groups 表缺少 deleted_at 列，墓碑过期回退 updatedAt。\n' +
+          '  请执行：pnpm supabase:migrate（见 supabase/migrations/*tombstone_expiry*.sql）'
+        );
+        deletedAtSupportCache = false;
+      } else {
+        logWarn('[tombstone] deleted_at 列探测失败（非 PGRST204），本次按不支持处理，下次重探:', probe.error.message);
+        return false;
+      }
+    } else {
+      deletedAtSupportCache = true;
+    }
+    return deletedAtSupportCache;
+  } catch (err) {
+    logWarn('[tombstone] deleted_at 列探测异常，本次按不支持处理，下次重探:', (err as Error).message);
     return false;
   }
 }
@@ -63,6 +102,7 @@ let opStampSupportCache: boolean | null = null;
 export function __resetCloudColumnProbeCacheForTests(): void {
   tombstoneSupportCache = null;
   opStampSupportCache = null;
+  deletedAtSupportCache = null;
 }
 
 /**
@@ -82,7 +122,7 @@ export async function supportsOpStamp(): Promise<boolean> {
     const probe = await supabase.from('tab_groups').select('last_op_seq').limit(1);
     if (probe.error) {
       if (probe.error.code === 'PGRST204' || /last_op_seq/i.test(probe.error.message)) {
-        console.warn(
+        logWarn(
           '[op-stamp] 云端 tab_groups 表缺少 last_op_seq 列，本次上传省略印记列（降级为旧行为）。\n' +
           '  请执行：pnpm supabase:migrate（或 Supabase SQL Editor 跑 supabase/migrations/20260910_fix_op_stamp_guard_strict_lt.sql）'
         );
@@ -91,7 +131,7 @@ export async function supportsOpStamp(): Promise<boolean> {
       } else {
         // 网络/权限等非确定性失败：**不缓存**。写死 false 会让一次网络抖动把整个 SW
         // 生命周期钉在降级模式（不上传印记、软删走不带 stamp 的分支），且不会自愈。
-        console.warn('[op-stamp] 列探测失败（非 PGRST204），本次按不支持处理，下次重探:', probe.error.message);
+        logWarn('[op-stamp] 列探测失败（非 PGRST204），本次按不支持处理，下次重探:', probe.error.message);
         return false;
       }
     } else {
@@ -99,7 +139,7 @@ export async function supportsOpStamp(): Promise<boolean> {
     }
     return opStampSupportCache;
   } catch (err) {
-    console.warn('[op-stamp] 列探测异常，本次按不支持处理，下次重探:', (err as Error).message);
+    logWarn('[op-stamp] 列探测异常，本次按不支持处理，下次重探:', (err as Error).message);
     return false;
   }
 }
@@ -127,21 +167,7 @@ export interface TabGroupDigest {
  */
 export async function fetchTabGroupsDigest(): Promise<TabGroupDigest[]> {
   checkSupabaseConfig();
-  const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
-  if (sessionError) {
-    throw new Error(`获取会话失败: ${sessionError.message}`);
-  }
-  if (!sessionData.session) {
-    throw new Error('用户未登录或会话已过期，请重新登录');
-  }
-  const { data: { user }, error: userError } = await supabase.auth.getUser();
-  if (userError) {
-    throw new Error(`获取用户信息失败: ${userError.message}`);
-  }
-  if (!user?.id) {
-    throw new Error('用户未登录');
-  }
-  const uid = user.id !== sessionData.session.user.id ? sessionData.session.user.id : user.id;
+  const uid = await requireSessionUserId();
 
   const [stampSupported, tombstoneSupported] = await Promise.all([
     supportsOpStamp(),
@@ -160,7 +186,7 @@ export async function fetchTabGroupsDigest(): Promise<TabGroupDigest[]> {
   // 未迁移 schema（42703 / PGRST204）→ 回退最小列；其他错误直接抛出
   const msg = `${error.code ?? ''} ${error.message ?? ''}`;
   if (/42703|PGRST204|column/i.test(msg) && columns !== 'id, updated_at') {
-    console.warn(`[digest] 指纹列查询失败，回退最小列重试: ${msg}`);
+    logWarn(`[digest] 指纹列查询失败，回退最小列重试: ${msg}`);
     const fallback = await query('id, updated_at');
     if (fallback.error) throw fallback.error;
     return ((fallback.data ?? []) as unknown) as TabGroupDigest[];

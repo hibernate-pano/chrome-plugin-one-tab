@@ -4,6 +4,7 @@ import { useAppSelector, useAppDispatch } from '@/store/hooks';
 import { loadGroups } from '@/store/slices/tabSlice';
 import { downloadTabGroups } from '@/services/tabGroupSyncService';
 import { sendSyncCommand } from '@/shared/mutationProtocol';
+import { createSimulatedProgress, getSyncStrategyLabel, renderPreviewSummary } from './syncPreviewView';
 
 // 与 syncEngine.SyncOperation 同语义（仅 UI 进度条用），本文件不再 import syncEngine。
 type SyncOperation = 'upload' | 'download' | 'none';
@@ -15,6 +16,7 @@ import {
   buildUploadPreviewSummary,
   SyncPreviewSummary,
 } from '@/utils/syncPreview';
+import { logError, logWarn } from '../../utils/log';
 
 interface SyncButtonProps { }
 
@@ -23,31 +25,6 @@ type ModePreviewMap = {
   merge: SyncPreviewSummary;
 };
 
-const getSyncStrategyLabel = (strategy: string) => {
-  switch (strategy) {
-    case 'local':
-      return '本地优先';
-    case 'remote':
-      return '云端优先';
-    case 'ask':
-      return '检测冲突后询问';
-    case 'newest':
-    default:
-      return '较新版本优先';
-  }
-};
-
-const renderPreviewNames = (label: string, names: string[], color: string) => {
-  if (names.length === 0) {
-    return null;
-  }
-
-  return (
-    <div style={{ fontSize: '0.72rem', color, lineHeight: '1.5', marginTop: '6px' }}>
-      {label}：{names.join('、')}
-    </div>
-  );
-};
 
 export const SyncButton: React.FC<SyncButtonProps> = () => {
   const dispatch = useAppDispatch();
@@ -82,7 +59,7 @@ export const SyncButton: React.FC<SyncButtonProps> = () => {
         merge: buildUploadPreviewSummary(localGroups, remoteGroups, 'merge'),
       });
     } catch (error) {
-      console.error('加载上传预览失败:', error);
+      logError('加载上传预览失败:', error);
       setUploadPreviewError('暂时无法读取云端会话预览，仍可继续手动上传。');
       setUploadPreview(null);
     } finally {
@@ -105,7 +82,7 @@ export const SyncButton: React.FC<SyncButtonProps> = () => {
         merge: buildDownloadPreviewSummary(localGroups, remoteGroups, 'merge'),
       });
     } catch (error) {
-      console.error('加载下载预览失败:', error);
+      logError('加载下载预览失败:', error);
       setDownloadPreviewError('暂时无法读取云端会话预览，仍可继续手动下载。');
       setDownloadPreview(null);
     } finally {
@@ -141,62 +118,6 @@ export const SyncButton: React.FC<SyncButtonProps> = () => {
     }, 200);
   };
 
-  const renderPreviewSummary = (
-    summary: SyncPreviewSummary | null,
-    targetLabel: '云端' | '本地',
-    modeDescription: string,
-    colorPalette: {
-      added: string;
-      updated: string;
-      deleted: string;
-      muted: string;
-    }
-  ) => {
-    if (!summary) {
-      return (
-        <div style={{ fontSize: '0.78rem', color: colorPalette.muted, lineHeight: '1.5', marginTop: '10px' }}>
-          暂无预览数据
-        </div>
-      );
-    }
-
-    return (
-      <div style={{ marginTop: '10px' }}>
-        <div style={{ fontSize: '0.78rem', color: '#374151', lineHeight: '1.5' }}>
-          {modeDescription}
-        </div>
-        <div
-          style={{
-            marginTop: '10px',
-            display: 'grid',
-            gridTemplateColumns: 'repeat(3, minmax(0, 1fr))',
-            gap: '8px',
-          }}
-        >
-          <div style={{ borderRadius: '10px', backgroundColor: '#f9fafb', padding: '8px 10px' }}>
-            <div style={{ fontSize: '0.7rem', color: colorPalette.added }}>新增</div>
-            <div style={{ fontSize: '1rem', fontWeight: 700, color: '#111827' }}>{summary.additions}</div>
-          </div>
-          <div style={{ borderRadius: '10px', backgroundColor: '#f9fafb', padding: '8px 10px' }}>
-            <div style={{ fontSize: '0.7rem', color: colorPalette.updated }}>覆盖</div>
-            <div style={{ fontSize: '1rem', fontWeight: 700, color: '#111827' }}>{summary.updates}</div>
-          </div>
-          <div style={{ borderRadius: '10px', backgroundColor: '#f9fafb', padding: '8px 10px' }}>
-            <div style={{ fontSize: '0.7rem', color: colorPalette.deleted }}>删除</div>
-            <div style={{ fontSize: '1rem', fontWeight: 700, color: '#111827' }}>{summary.deletions}</div>
-          </div>
-        </div>
-        <div style={{ fontSize: '0.72rem', color: '#6b7280', lineHeight: '1.5', marginTop: '8px' }}>
-          操作前 {targetLabel} {summary.beforeCount} 个会话，操作后预计 {summary.afterCount} 个会话。
-          {summary.unchanged > 0 ? ` 另有 ${summary.unchanged} 个会话保持不变。` : ''}
-        </div>
-        {renderPreviewNames('新增示例', summary.addedNames, colorPalette.added)}
-        {renderPreviewNames('覆盖示例', summary.updatedNames, colorPalette.updated)}
-        {renderPreviewNames('删除示例', summary.deletedNames, colorPalette.deleted)}
-      </div>
-    );
-  };
-
   // 处理上传确认 - 覆盖模式
   const handleUploadOverwrite = async () => {
     if (isWorking || !isAuthenticated) return;
@@ -209,7 +130,7 @@ export const SyncButton: React.FC<SyncButtonProps> = () => {
       setWorkingOperation('upload');
       // 进度条本地模拟：跨消息边界 SW 端的 onProgress 不会回传到 popup，
       // 此处驱动本地进度条 UI；真实结果经 sendSyncCommand 消息回传。
-      const progressTimer = simulateLocalProgress();
+      const progressTimer = createSimulatedProgress(setWorkingProgress);
       const res = await sendSyncCommand('upload', {
         overwriteCloud: true,
         syncSettings: true,
@@ -232,7 +153,7 @@ export const SyncButton: React.FC<SyncButtonProps> = () => {
         showToast(res.error || '上传失败，请重试', 'error');
       }
     } catch (error) {
-      console.error('上传数据到云端失败:', error);
+      logError('上传数据到云端失败:', error);
       showToast('上传失败，请重试', 'error');
     } finally {
       setIsWorking(false);
@@ -253,7 +174,7 @@ export const SyncButton: React.FC<SyncButtonProps> = () => {
       setWorkingOperation('upload');
       // 进度条本地模拟：跨消息边界 SW 端的 onProgress 不会回传到 popup，
       // 此处驱动本地进度条 UI；真实结果经 sendSyncCommand 消息回传。
-      const progressTimer = simulateLocalProgress();
+      const progressTimer = createSimulatedProgress(setWorkingProgress);
       const res = await sendSyncCommand('upload', {
         overwriteCloud: false,
         syncSettings: true,
@@ -269,7 +190,7 @@ export const SyncButton: React.FC<SyncButtonProps> = () => {
         showToast(res.error || '上传失败，请重试', 'error');
       }
     } catch (error) {
-      console.error('上传数据到云端失败:', error);
+      logError('上传数据到云端失败:', error);
       showToast('上传失败，请重试', 'error');
     } finally {
       setIsWorking(false);
@@ -286,7 +207,7 @@ export const SyncButton: React.FC<SyncButtonProps> = () => {
       try {
         await dispatch(loadGroups()).unwrap();
       } catch (err) {
-        console.warn('同步后刷新本地会话失败:', err);
+        logWarn('同步后刷新本地会话失败:', err);
       }
     };
 
@@ -300,7 +221,7 @@ export const SyncButton: React.FC<SyncButtonProps> = () => {
       setWorkingOperation('download');
       // 进度条本地模拟：跨消息边界 SW 端的 onProgress 不会回传到 popup，
       // 此处驱动本地进度条 UI；真实结果经 sendSyncCommand 消息回传。
-      const progressTimer = simulateLocalProgress();
+      const progressTimer = createSimulatedProgress(setWorkingProgress);
       const res = await sendSyncCommand('download', {
         forceRemote: true,
         syncSettings: true,
@@ -319,7 +240,7 @@ export const SyncButton: React.FC<SyncButtonProps> = () => {
         showToast(reason === 'not_authenticated' ? '未登录' : (reason || '下载失败，请重试'), 'error');
       }
     } catch (error) {
-      console.error('从云端下载数据失败:', error);
+      logError('从云端下载数据失败:', error);
       showToast('下载失败，请重试', 'error');
     } finally {
       setIsWorking(false);
@@ -336,7 +257,7 @@ export const SyncButton: React.FC<SyncButtonProps> = () => {
       try {
         await dispatch(loadGroups()).unwrap();
       } catch (err) {
-        console.warn('同步后刷新本地会话失败:', err);
+        logWarn('同步后刷新本地会话失败:', err);
       }
     };
 
@@ -350,7 +271,7 @@ export const SyncButton: React.FC<SyncButtonProps> = () => {
       setWorkingOperation('download');
       // 进度条本地模拟：跨消息边界 SW 端的 onProgress 不会回传到 popup，
       // 此处驱动本地进度条 UI；真实结果经 sendSyncCommand 消息回传。
-      const progressTimer = simulateLocalProgress();
+      const progressTimer = createSimulatedProgress(setWorkingProgress);
       const res = await sendSyncCommand('download', {
         forceRemote: false,
         syncSettings: false,
@@ -369,7 +290,7 @@ export const SyncButton: React.FC<SyncButtonProps> = () => {
         showToast(reason === 'not_authenticated' ? '未登录' : (reason || '下载失败，请重试'), 'error');
       }
     } catch (error) {
-      console.error('从云端下载数据失败:', error);
+      logError('从云端下载数据失败:', error);
       showToast('下载失败，请重试', 'error');
     } finally {
       setIsWorking(false);
@@ -378,21 +299,6 @@ export const SyncButton: React.FC<SyncButtonProps> = () => {
     }
   };
 
-  // 进度条本地模拟器：SW 不回传 onProgress；用一组 setTimeout 推进进度条。
-  // 返回 timer 句柄，调用方负责在真实结果回来时 clearTimeout 立即归位 100%。
-  const simulateLocalProgress = () => {
-    const steps = [10, 30, 55, 80];
-    let i = 0;
-    const tick = () => {
-      if (i < steps.length) {
-        setWorkingProgress(steps[i]);
-        i += 1;
-        return setTimeout(tick, 400);
-      }
-      return undefined;
-    };
-    return setTimeout(tick, 200);
-  };
 
   if (!isAuthenticated) {
     return null; // 未登录时不显示同步按钮

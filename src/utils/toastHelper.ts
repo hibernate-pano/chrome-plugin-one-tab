@@ -4,6 +4,7 @@
  */
 
 import { useToast } from '@/contexts/ToastContext';
+import { logError } from './log';
 
 /**
  * 通知消息类型
@@ -152,7 +153,7 @@ export const useEnhancedToast = () => {
   
   // 如果 ToastContext 未提供，返回空操作函数
   if (!toastContext) {
-    console.error('useEnhancedToast must be used within ToastProvider');
+    logError('useEnhancedToast must be used within ToastProvider');
     const noop = () => {};
     return {
       showSaveSuccess: noop,

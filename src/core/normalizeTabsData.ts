@@ -7,6 +7,7 @@
  * 本函数在任何 JSON 解析/解密之后调用，保证返回值一定是 TabData[]。
  */
 import type { TabData } from '../types/tab';
+import { logWarn } from '../utils/log';
 
 /** wrapper 对象上可能携带标签数组的字段名（按优先级排列） */
 const WRAPPER_KEYS = ['tabs', 'groups', 'tabs_data', 'tabsData'] as const;
@@ -30,7 +31,7 @@ export function normalizeTabsData(value: unknown, contextId?: string): TabData[]
     for (const key of WRAPPER_KEYS) {
       const candidate = (value as Record<string, unknown>)[key];
       if (Array.isArray(candidate)) {
-        console.warn(
+        logWarn(
           `[normalizeTabsData] tabs_data 非数组，已从 wrapper 对象的字段 "${key}" 恢复` +
             (contextId ? `（组ID: ${contextId}）` : '')
         );
@@ -39,7 +40,7 @@ export function normalizeTabsData(value: unknown, contextId?: string): TabData[]
     }
   }
 
-  console.warn(
+  logWarn(
     '[normalizeTabsData] tabs_data 形状异常且无法恢复，已降级为空数组' +
       (contextId ? `（组ID: ${contextId}）` : '') +
       `，实际类型: ${value === null ? 'null' : typeof value}`
