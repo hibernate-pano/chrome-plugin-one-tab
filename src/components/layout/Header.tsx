@@ -80,7 +80,7 @@ export const Header: React.FC<HeaderProps> = ({ onSearch }) => {
     showConfirm({
       title: '确认清理重复标签和空会话',
       message:
-        '此操作将：\n• 清理所有会话中 URL 相同的重复标签页，只保留每个 URL 最新的一个标签页\n• 自动删除不包含任何标签页的空会话（锁定的会话除外）\n此操作不可撤销。',
+        '将清理所有会话中 URL 相同的重复标签页（每个 URL 只保留最新的一个），并删除没有任何标签页的空会话（锁定的会话除外）。\n\n此操作无法撤销。',
       type: 'warning',
       confirmText: '确认清理',
       cancelText: '取消',

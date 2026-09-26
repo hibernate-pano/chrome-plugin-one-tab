@@ -190,19 +190,14 @@ async function main() {
     await page2.screenshot({ path: join(OUT_DIR, '04-search.png') });
     console.log('✅ 04-search');
 
-    // 05 暗色模式（点主题切换按钮）
+    // 05 确认弹窗（清理重复标签，点 header 垃圾桶按钮触发）
     await page2.keyboard.press('Escape');
     await page2.locator('input[type="text"], input[placeholder*="搜索"]').first().fill('');
     await page2.waitForTimeout(500);
-    const themeBtn = page2.locator('button[aria-label*="主题"], button[title*="主题"], button[aria-label*="暗"], button[title*="暗"], header button:has(svg)').nth(2);
-    await themeBtn.click({ timeout: 3000 }).catch(async () => {
-      // 兜底：点 header 上第 3 个图标按钮
-      const btns = page2.locator('header button');
-      await btns.nth(2).click();
-    });
-    await page2.waitForTimeout(800);
-    await page2.screenshot({ path: join(OUT_DIR, '05-dark.png') });
-    console.log('✅ 05-dark');
+    await page2.click('button[aria-label="清理重复标签页"]');
+    await page2.waitForTimeout(600);
+    await page2.screenshot({ path: join(OUT_DIR, '05-confirm-dialog.png') });
+    console.log('✅ 05-confirm-dialog');
 
     // ── 空状态（不注入数据的新 profile 页面）──
     const page3 = await newPopupPage(ctx, id);
