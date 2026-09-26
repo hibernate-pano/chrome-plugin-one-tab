@@ -59,7 +59,7 @@ const DropdownToggleRow: React.FC<{
 export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({ onClose }) => {
   const dispatch = useAppDispatch();
   const { isAuthenticated, user } = useAppSelector(state => state.auth);
-  const { lastSyncTime } = useAppSelector(state => state.tabs);
+  const { groups, lastSyncTime } = useAppSelector(state => state.tabs);
   const settings = useAppSelector(state => state.settings);
   const [activeTab, setActiveTab] = useState<'login' | 'register'>('login');
   const [showAuthModal, setShowAuthModal] = useState(false);
@@ -161,7 +161,12 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({ onClose }) => {
 
   // 移除同步功能，简化逻辑
 
+  // 处理删除所有标签组。核弹级操作：不受「删除前确认」开关控制，永远弹确认
+  // （该开关只应管单组删除；关闭后一键删光全部曾造成误操作事故 2026-09-26）。
+  // v1.21.0 起删除走墓碑，7 天内可从回收站恢复，文案按此描述。
   const handleDeleteAllGroups = () => {
+    if (groups.length === 0) return;
+
     const runDeleteAll = () => {
       onClose();
 
@@ -219,16 +224,11 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({ onClose }) => {
         });
     };
 
-    if (!settings.confirmBeforeDelete) {
-      runDeleteAll();
-      return;
-    }
-
     showConfirm({
-      title: '删除确认',
-      message: '确定要删除所有会话吗？此操作无法撤销。',
+      title: `删除全部 ${groups.length} 个会话`,
+      message: `将删除本地全部 ${groups.length} 个会话，进入回收站保留 7 天，可在列表底部「已删除」区恢复。确认继续吗？`,
       type: 'danger',
-      confirmText: '删除',
+      confirmText: '全部删除',
       cancelText: '取消',
       onConfirm: runDeleteAll,
       onCancel: () => { }
@@ -577,23 +577,26 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({ onClose }) => {
           )}
         </div>
 
-        {/* 危险区：与菜单平面语言一致（rounded-lg + 留边），用色块与普通项区分防误触 */}
-        <div className="px-2 pt-1.5 pb-0.5">
-          <button
-            onClick={handleDeleteAllGroups}
-            className="flex w-full items-center gap-2 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2.5 text-left text-sm font-medium text-rose-700 transition-colors hover:bg-rose-100 dark:border-rose-900/40 dark:bg-rose-950/30 dark:text-rose-300 dark:hover:bg-rose-950/50"
-          >
-            <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 shrink-0 text-rose-500 dark:text-rose-300" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-            </svg>
-            <span className="flex-1">
-              <span className="block">删除所有会话</span>
-              <span className="mt-0.5 block text-xs font-normal text-rose-600/80 dark:text-rose-300/80">
-                清空本地所有已保存会话，此操作无法撤销。
+        {/* 危险区：与菜单平面语言一致（rounded-lg + 留边），用色块与普通项区分防误触。
+            核弹级操作：强制确认不受「删除前确认」开关控制；无组时隐藏；描述带数量。 */}
+        {groups.length > 0 && (
+          <div className="px-2 pt-1.5 pb-0.5">
+            <button
+              onClick={handleDeleteAllGroups}
+              className="flex w-full items-center gap-2 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2.5 text-left text-sm font-medium text-rose-700 transition-colors hover:bg-rose-100 dark:border-rose-900/40 dark:bg-rose-950/30 dark:text-rose-300 dark:hover:bg-rose-950/50"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 shrink-0 text-rose-500 dark:text-rose-300" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+              </svg>
+              <span className="flex-1">
+                <span className="block">删除所有会话（{groups.length}）</span>
+                <span className="mt-0.5 block text-xs font-normal text-rose-600/80 dark:text-rose-300/80">
+                  将清空本地全部会话，进入回收站保留 7 天。
+                </span>
               </span>
-            </span>
-          </button>
-        </div>
+            </button>
+          </div>
+        )}
 
         {isAuthenticated && (
           <>

@@ -206,6 +206,19 @@ export const TabList: React.FC<TabListProps> = ({ searchQuery }) => {
             .unwrap()
             .catch(err => showRestoreError(err.message || '未知错误'));
         }}
+        onRestoreAll={async () => {
+          // 批量恢复走现有 restoreGroup 单组 op，串行入队（mutation 队列本身串行），
+          // 失败不中断其余恢复，最后汇总报错。成功静默（Unix 哲学）。
+          let failed = 0;
+          for (const g of deletedGroups) {
+            try {
+              await dispatch(restoreGroup(g.id)).unwrap();
+            } catch {
+              failed += 1;
+            }
+          }
+          if (failed > 0) showRestoreError(`${failed} 个会话恢复失败，请重试`);
+        }}
         onPurge={groupId => {
           showConfirm({
             title: '彻底删除',
@@ -230,37 +243,48 @@ export const TabList: React.FC<TabListProps> = ({ searchQuery }) => {
 interface DeletedGroupsSectionProps {
   deletedGroups: TabGroupType[];
   onRestore: (groupId: string) => void;
+  onRestoreAll: () => void;
   onPurge: (groupId: string) => void;
 }
 
-const DeletedGroupsSection: React.FC<DeletedGroupsSectionProps> = ({ deletedGroups, onRestore, onPurge }) => {
+const DeletedGroupsSection: React.FC<DeletedGroupsSectionProps> = ({ deletedGroups, onRestore, onRestoreAll, onPurge }) => {
   const [expanded, setExpanded] = useState(false);
 
   if (deletedGroups.length === 0) return null;
 
   return (
     <div className="mt-4 rounded-2xl border border-dashed border-gray-300 bg-gray-50/50 p-4 dark:border-gray-700 dark:bg-gray-900/40">
-      <button
-        type="button"
-        onClick={() => setExpanded(v => !v)}
-        className="flex w-full items-center justify-between text-left"
-      >
-        <span className="text-sm font-medium text-gray-500 dark:text-gray-400">
-          已删除（{deletedGroups.length}）
-        </span>
-        <span className="text-gray-400">
-          <svg
-            className={`w-4 h-4 transition-transform duration-200 ${expanded ? 'rotate-180' : ''}`}
-            fill="none"
-            viewBox="0 0 24 24"
-            stroke="currentColor"
-            strokeWidth={2}
-            aria-hidden="true"
-          >
-            <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
-          </svg>
-        </span>
-      </button>
+      {/* 外层不能是 button（内部还要嵌按钮），拆成左右两个 button */}
+      <div className="flex w-full items-center justify-between gap-2 text-left">
+        <button
+          type="button"
+          onClick={() => setExpanded(v => !v)}
+          className="flex flex-1 items-center justify-between text-left"
+        >
+          <span className="text-sm font-medium text-gray-500 dark:text-gray-400">
+            已删除（{deletedGroups.length}）
+          </span>
+          <span className="text-gray-400">
+            <svg
+              className={`w-4 h-4 transition-transform duration-200 ${expanded ? 'rotate-180' : ''}`}
+              fill="none"
+              viewBox="0 0 24 24"
+              stroke="currentColor"
+              strokeWidth={2}
+              aria-hidden="true"
+            >
+              <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+            </svg>
+          </span>
+        </button>
+        <button
+          type="button"
+          onClick={onRestoreAll}
+          className="shrink-0 rounded-md px-2 py-1 text-xs font-medium text-primary-600 transition-colors hover:bg-primary-50 dark:text-primary-400 dark:hover:bg-primary-950/40"
+        >
+          全部恢复
+        </button>
+      </div>
 
       {expanded && (
         <ul className="mt-3 space-y-2">
