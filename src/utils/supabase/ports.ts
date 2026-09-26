@@ -9,7 +9,15 @@ import type { TabGroupDigest } from './probe';
 export interface SupabaseSyncPort {
   migrateToJsonb(): Promise<{ success: boolean; migratedGroups: number }>;
   // 注：数据型返回值刻意保持 `any`（与拆分前 sync 对象推断类型一致），避免收紧后击穿既有调用方。
-  uploadTabGroups(groups: TabGroup[], overwriteCloud?: boolean): Promise<{ result: any }>;
+  /**
+   * `writtenTombstoneIds` = 本次 upsert 真正写上云的墓碑行 id（见
+   * uploadTabGroups 内注释：调用方必须用它把同批 id 从
+   * markCloudGroupsAsDeleted 里剔除，避免同一 id 被二次写墓碑）。
+   */
+  uploadTabGroups(
+    groups: TabGroup[],
+    overwriteCloud?: boolean
+  ): Promise<{ result: any; writtenTombstoneIds?: string[] }>;
   markCloudGroupsAsDeleted(deletedIds: string[]): Promise<void>;
   purgeCloudGroups(purgedIds: string[]): Promise<void>;
   fetchTabGroupsDigest(): Promise<TabGroupDigest[]>;

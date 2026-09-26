@@ -18,9 +18,11 @@ import { verifyUploadReadback, verifyTombstoneReadback, compareHardDeleteReadbac
  * 下次合并即复活）。云端有 is_deleted 列时按墓碑原样上行（由写入侧置 is_deleted）。
  *
  * 云端没有 is_deleted 列（decideCloudTombstoneWrite 的 hard-delete 降级）时不能
- * 带上墓碑行（整批 upsert 会因未知列 42703 失败），且此时覆盖本身已把云端清空，
- * 「行不存在」已经承载了删除意图（等价硬删），与 markCloudGroupsAsDeleted 的
- * hard-delete 降级同口径。
+ * 带上墓碑行（整批 upsert 会因未知列 42703 失败）。此时墓碑行本次不会上行，
+ * 调用方仍需把本地墓碑交给 markCloudGroupsAsDeleted 处理（覆盖虽然已经删空
+ * 云端，但那是「本地无活跃组、覆盖被跳过」的路径云端根本没被清；且这里不写
+ * 不代表别的设备不会复活该组）——所以本函数只回答「哪些行本次真的上行」，
+ * 不承担删除意图的兜底。
  *
  * 合并模式：只上行活跃组（墓碑交由 markCloudGroupsAsDeleted 按旧路径处理），
  * 调用方本就已经过滤过，这里再兜一层以防误传。
@@ -258,12 +260,31 @@ export const uploadSync = {
     // 覆盖模式必须把本地墓碑一起上行：覆盖 = 先 DELETE 掉云端该用户的全部行，
     // 墓碑若不随 upsert 一起写，删除意图就随那次 DELETE 一起丢了
     // （云端此后「行不存在」= 另一端持有活跃副本时会被复活）。
-    // 云端没有 is_deleted 列时不能带上墓碑行（整批 upsert 会 42703 失败），
-    // 此时覆盖本身已把云端清空，墓碑语义由「行不存在」承载，等价于硬删。
+    // 云端没有 is_deleted 列时不能带上墓碑行（整批 upsert 会 42703 失败）。
+    // 此时墓碑行本次不上行，删除意图仍由 syncEngine 交回 markCloudGroupsAsDeleted
+    // 的 hard-delete 分支处理（“行不存在 = 删除意图”只在没有任何活跃组、
+    // 覆盖被跳过的路径成立；这里仍有活跃组要写上去，另一端持有活跃副本的组
+    // 会被重新 INSERT —— 也就是 upload.ts 里 markCloudGroupsAsDeleted 已注释的
+    // 「幽灵复活」。绝不在这条分支假装删除意图已达成。
     const rowsToUpload = selectRowsForUpload(groups, { overwriteCloud, tombstoneColumn: tombstoneSupported });
+    const tombstonesDropped = overwriteCloud && !tombstoneSupported
+      ? groups.filter(g => g.isDeleted === true).map(g => g.id)
+      : [];
     const tombstonedIds = new Set(
       rowsToUpload.filter(g => g.isDeleted === true).map(g => g.id)
     );
+    if (overwriteCloud && tombstonesDropped.length > 0) {
+      // P1：探测缓存里 tombstoneSupported 只在 PGRST204（确实没这列）时为 false；
+      // 一次网络抖动导致的 false 不被缓存，于是本地墓碑会被静默丢掉——
+      // 正是 1bdad51 刚修好的「覆盖上传丢失本机墓碑」在探测抖动下原样复发。
+      // 该分支必须出声：否则调用方看到的是一次「成功」的覆盖上传，
+      // 而删除意图根本没上过云（另一端的活跃副本下次合并即复活）。
+      console.error(
+        `[upload] 覆盖模式丢弃了 ${tombstonesDropped.length} 个本地墓碑组` +
+          `（${tombstonesDropped.join(',')}）：云端探测不到 is_deleted 列` +
+          `（网络抖动或缺 migration），这些组的删除意图未随本次覆盖上行`
+      );
+    }
     if (overwriteCloud && tombstonedIds.size > 0 && tombstoneSupported) {
       console.log(`[upload] 覆盖模式随 upsert 一并写入 ${tombstonedIds.size} 个本地墓碑组`);
     }
@@ -542,7 +563,15 @@ export const uploadSync = {
       sessionData.session.user.id,
       { checkStamp: opStampSupported, checkTombstone: await supportsCloudTombstone() }
     );
-    return { result };
+    // 本次 upsert 真正写上云的墓碑 id。调用方（syncEngine.upload）必须用它把
+    // 这些 id 从 markCloudGroupsAsDeleted 的输入里剔除：这些行已经带着本机的
+    // lastOp 印记落盘了，再让 markCloudGroupsAsDeleted 走一遍 stamp 分支，
+    // 会按云端 OLD.last_op_seq+1 重新 UPDATE（换 device、换 seq），
+    // 既多 N 次往返，又可能在严格 LT 守卫下与本次 upsert 互相吞写，
+    // 令 verifyUploadReadback 的 checkStamp 永远对不上 → 上传卡死在重试循环。
+    // hard-delete 降级（无 is_deleted 列）时墓碑未上行，此处不含它们 →
+    // 它们仍由 markCloudGroupsAsDeleted 的 hard-delete 分支清理。
+    return { result, writtenTombstoneIds: [...tombstonedIds] };
   },
   // 把本地软删的标签组 ID 同步到云端。
   // 双轨：云端有 is_deleted 列 → 置墓碑（保留行，跨端一致性关键）；

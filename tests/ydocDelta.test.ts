@@ -127,12 +127,10 @@ describe('BUG 1/2 · withYDoc 捕获的是可重放增量（真实 Y.Doc 全路�
       { openPersistence: fakePersistence(stateUpdate) }
     );
 
-    // (a) 是增量：严格小于旧行为（已存 state + 增量）的拼接长度
-    assert.ok(
-      out.update.length < stateUpdate.length + deltaBytes,
-      `捕获字节 ${out.update.length} 不得是「整份 state ${stateUpdate.length} + 增量 ${deltaBytes}」的拼接（BUG 1）`
-    );
-
+    // (a) 是增量（结构性证据，取代已删除的字节数断言）：
+    //     单独 apply 到空 doc 后只能得到本次事务写入的 g2，不含已存的 g1。
+    //     旧的 `out.update.length < stateUpdate.length + deltaBytes` 字节数比较
+    //     实测只差 0 字节（566 vs 566），clientID/时钟 ±1-2 字节就会随机变红。
     // (a') 单独 apply 到空 doc：只有 g2（不含已存的 g1）⇒ 证明不是全量快照
     const fresh = new Y.Doc();
     Y.applyUpdate(fresh, out.update);

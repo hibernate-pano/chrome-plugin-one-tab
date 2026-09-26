@@ -326,7 +326,7 @@ describe('uploadTabGroups 覆盖模式 · plain 模式（有 is_deleted、无印
 });
 
 describe('uploadTabGroups 覆盖模式 · hard-delete 降级（云端无 is_deleted 列）', () => {
-  it('墓碑行不上行：覆盖已把云端清空，「行不存在」即删除意图，不留复活面', async () => {
+  it('墓碑行不上行：覆盖已把云端清空，但删除意图仍交回 markCloudGroupsAsDeleted（存在复活面）', async () => {
     const { uploadTabGroups } = await loadUploadModule('hard-delete');
     // 预置一条云端活跃行，覆盖后应被活跃组替换、墓碑组彻底不出现
     cloud.rows.set('g-stale', { id: 'g-stale', user_id: USER_ID, updated_at: NOW });

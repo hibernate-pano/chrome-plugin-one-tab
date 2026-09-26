@@ -259,9 +259,22 @@ export class SyncEngine {
     this.cancelPendingUpload();
 
     // 1. 快照（P1-4：新鲜读 + 直写，绕过 30s 缓存与 500ms 防抖——SW 可随时被杀）
+    //    fail-closed：本地快照读失败时不得拿 snapshot=[] 继续。这是最后一条
+    //    「读失败能变成写」的路径——继续跑会把 localGroups 当成空集合，
+    //    mergeOpStamped( [], cloud ) 的结果几乎等于 cloud 本身，
+    //    再 setGroupsImmediate 写回：一次 IndexedDB 读错误就能把本地整组会话
+    //    换成云端快照（合并验证挡不住：local 为空时 validate 恒 valid）。
     let snapshot: TabGroup[] = [];
     try {
       snapshot = await storage.getGroupsFresh();
+    } catch (err) {
+      console.error('[SyncEngine] 本地快照读失败，中止本次下载（fail-closed，不写入）:', err);
+      this.isSyncing = false;
+      return { success: false, groups: [], reason: 'snapshot_failed' };
+    }
+    // 快照保存失败只影响回滚点，不影响本次读到的内容（getGroupsFresh 已成功）；
+    // setSyncSnapshot 内部自带 catch，这里只留日志。
+    try {
       await storage.setSyncSnapshot(snapshot);
     } catch (err) {
       console.error('[SyncEngine] 快照保存失败:', err);
@@ -437,12 +450,15 @@ export class SyncEngine {
 
       const overwriteCloud = opts?.overwriteCloud || false;
       let skippedOverwrite: UploadResult['skippedOverwrite'];
+      // 本次 upsert 已经写上云的墓碑 id（覆盖模式才可能非空）。
+      let writtenTombstoneIds: Set<string> = new Set();
       if (activeGroups.length > 0) {
         // 覆盖模式把墓碑一起交给 uploadTabGroups：覆盖会先删空云端，墓碑必须
         // 随同一次 upsert 写上云（selectRowsForUpload 决定实际写入哪些行），
         // 否则删除意图随覆盖一起丢失，另一端的活跃副本下次合并即复活。
         // 合并模式仍只传活跃组（墓碑走 markCloudGroupsAsDeleted）。
-        await uploadTabGroups(overwriteCloud ? allGroups : activeGroups, overwriteCloud);
+        const up = await uploadTabGroups(overwriteCloud ? allGroups : activeGroups, overwriteCloud);
+        writtenTombstoneIds = new Set(up?.writtenTombstoneIds ?? []);
       } else if (overwriteCloud) {
         // ponytail: 与旧 uploadTabsToCloudFlow 的空本地保护一致——本地没有任何活跃组时
         // 绝不执行覆盖模式（覆盖 = 先删云端全部再插），否则会把云端数据清空。
@@ -453,13 +469,25 @@ export class SyncEngine {
         skippedOverwrite = 'no-active-groups';
       }
       report(70, 'upload');
-      if (deletedIds.length > 0 && opts?.includeDeleted !== false) {
+      // P1：覆盖 upsert 已经把墓碑按「本机印记」写上云了，这些 id 绝不能再来一次
+      // markCloudGroupsAsDeleted——它会按云端 OLD.last_op_seq+1 且换成本设备重新
+      // UPDATE，同一行被写两遍：
+      //   (a) 多 N 次 UPDATE 往返 + 一次读回 SELECT；
+      //   (b) 严格 LT 守卫（BEFORE UPDATE）可能把第二次写静默吞掉，与 upsert
+      //       写入的印记互相打架 → verifyUploadReadback 的 checkStamp 永远对不上
+      //       → 抛错、pending_upload 保留 → 上传永久卡在重试循环。
+      // 今天能跑通只是因为覆盖的 DELETE 删在 upsert 前（于是 upsert 走 INSERT，
+      // 守卫根本不参与）——那是 upload.ts 内部的隐式不变量，碎了就是 P1 事故。
+      // 未被 upsert 写到的墓碑（hard-delete 降级、或无活跃组导致覆盖被跳过）
+      // 仍然要交回 markCloudGroupsAsDeleted，删除意图一条都不能漏。
+      const cloudDeleteIds = deletedIds.filter(id => !writtenTombstoneIds.has(id));
+      if (cloudDeleteIds.length > 0 && opts?.includeDeleted !== false) {
         // P0-2：软删失败必须阻断上传成功。markCloudGroupsAsDeleted 抛错（写失败、
         // 读回不一致、未登录跳过）直接上浮到外层 catch → 本次 upload 整体失败，
         // pending_upload 保留、lastUploadTime 不刷，下轮 alarm 重试。
         // 禁止在此 try/catch 吞掉只 console.error（那会清 pending 假装成功，
         // 云端没删、下次下载直接复活）。
-        await markCloudGroupsAsDeleted(deletedIds);
+        await markCloudGroupsAsDeleted(cloudDeleteIds);
       }
       // P1-6：本地已 purge 的组，云端墓碑行必须同步彻底删除，否则下次下载
       // 以 remote-only 复活。删后才 clear 队列；抛错则阻断本次上传成功、下轮重试。

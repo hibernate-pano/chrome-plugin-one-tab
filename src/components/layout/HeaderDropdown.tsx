@@ -136,7 +136,33 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({ onClose }) => {
               overwriteCloud: true,
               syncSettings: true,
             })
-              .then(() => {
+              .then(raw => {
+                const res = raw as { ok: boolean; error?: string; payload?: { skippedOverwrite?: string } };
+                // 「删光本机全部会话」之后每个组都是墓碑 → activeGroups.length === 0
+                // → uploadTabGroups 的空本地保护必然跳过 overwriteCloud（宁可不清空
+                // 云端）。也就是说这条命令的覆盖上传几乎总是被跳过，此前无条件打印
+                // 「删除操作已同步到云端」是在对没发生的事报成功。
+                // 只有 res.ok 且 payload 里没有 skippedOverwrite，才算真的覆盖了云端。
+                if (!res.ok) {
+                  console.error('删除操作同步到云端失败:', res.error);
+                  showAlert({
+                    title: '同步失败',
+                    message: `本机会话已删除，但云端同步失败：${res.error || '未知错误'}`,
+                    type: 'error',
+                    onClose: () => {}
+                  });
+                  return;
+                }
+                if (res.payload?.skippedOverwrite) {
+                  console.warn('[HeaderDropdown] 覆盖上传被跳过（本地无活跃组）:', res.payload.skippedOverwrite);
+                  showAlert({
+                    title: '云端未清空',
+                    message: '本机会话已全部删除，但云端数据未清空（覆盖上传已跳过）。稍后请用「同步」手动覆盖。',
+                    type: 'warning',
+                    onClose: () => {}
+                  });
+                  return;
+                }
                 console.log('删除操作已同步到云端');
               })
               .catch(error => {
