@@ -1,14 +1,15 @@
 # TapStack
 
-当前版本：`1.16.1`
+当前版本：`1.21.0`
 
-最近变更：`v1.16.1` 修复**单标签删除跨设备复活**——删除标签改为墓碑（tab 级 `isDeleted`），`mergeTabs` 按墓碑剔除对侧活跃副本并传播删除意图，空组自动删除改走与 `deleteGroup` 一致的软删墓碑；上传序列化双向携带 `is_deleted`。下载前置保护重构为纯函数 `decideDownloadPrecheck` 并补单测。安全加固：注册表单接入邮箱/密码强度校验；上传加密失败改为中止同步而非明文上云。验证：`tests/tabTombstone.test.ts` + 双实例 E2E `scripts/e2e-tab-delete-no-resurrect.mjs`。
+最近变更：`v1.21.0` 两件事——
 
-前情：`main` 补齐“保存后自动上传”承诺接入点——TabManager 在 `saveAllTabs` / `saveTab` 后调用 `syncEngine.scheduleUpload(3000)`，未登录安全跳过。同步引擎 `upload()` 进入点懒恢复登录态（SW 是独立执行上下文）。验证 E2E：`scripts/e2e-auto-upload-test.mjs`、`scripts/e2e-background-sync-test.mjs`。
+1. **误删保护升级：墓碑 7 天生命周期**。删除的会话/标签带 `deletedAt` 墓碑戳，7 天内可在回收站恢复，7 天后自动彻底清除（客户端 sweep + 服务端 cron 双保险，cron 待人工启用）。删除语义对外承诺为「7 天内可恢复，7 天后彻底消失」。
+2. **P0 结构手术**（V2 计划，见 `docs/v2-plan.md`）：全仓 339 处 `console.*` 收口到 `@/utils/log`、上帝文件拆分（`upload.ts` 会话/日志收口、`tabSlice`/`SyncButton` 拆分）、测试 loader 全局预装修复、eslint 加 `no-console` 与 legacy 双门禁。零行为变更。
 
-另：`main` 修复“点开标签 / 删除会话后 60s 被云端复活”——`scheduleUpload` 从 `setTimeout` 改为 `chrome.alarms`（MV3 SW idle 被杀后 timer 会丢），并加 35s 上传保护窗口，避免上传完成前下载误覆盖。验证：`scripts/e2e-local-delete-no-resurrect.mjs`。
+工程状态：V2 同步架构重构进行中——Yjs 影子双写已 100% 灰度（读路径仍走快照，P1 对账观察期），云端日志管道（P2）未启动。
 
-接着二次加固：添加持久化 `pending_upload` 标志（跨进程跨 SW 重启保留）——`scheduleUpload` 写 storage，`upload` 成功才清。`cancelPendingUpload` 只清内存 timer/alarm，**不动**持久化意图。后台轮询 `performBackgroundSync` 改为**先上传后下载**，避免后台轮询在上传意图丢失后用云端旧版本覆盖本地新版本。下载完成后若 `pending_upload` 仍为 true 重新调度上传。验证：`scripts/e2e-stress-no-resurrect.mjs`（4-tab 会话连点 3 个，关闭 popup 90s 跨两个 alarm 周期仍 1 tab）。
+---
 
 TapStack 是一个面向重度浏览器用户的工作会话保险箱。它的核心目标不是“多一个标签管理器”，而是帮助你把当前窗口保存成可找回、可恢复的工作现场。
 
@@ -29,14 +30,17 @@ TapStack 是一个面向重度浏览器用户的工作会话保险箱。它的�
 
 ## 当前能力
 
-- 保存当前窗口中的标签页为一个工作会话
+- 保存当前窗口中的标签页为一个工作会话（整窗 / 单个标签 / 右键菜单 / 快捷键）
 - 以后按会话名称、标签标题、URL 找回内容
 - 支持按会话备注搜索，并收藏关键会话
 - 在新窗口中恢复整个会话，尽量不打乱当前窗口
 - 新会话默认按保存时间生成时间戳名称，可按需重命名
-- 支持导入 / 导出 OneTab 文本格式
-- 支持会话重命名、备注、收藏、删除、锁定、基础整理
+- 会话重命名、备注、收藏、锁定防误删、拖拽排序、清理重复标签
+- 误删保护：删除进回收站，7 天内可恢复，7 天后彻底清除
+- 支持导入 / 导出 OneTab 文本格式，JSON 备份导出
+- 9 套主题风格 + 暗色模式，单 / 双栏布局
 - 登录后自动同步：数据变更自动上传，登录时自动从云端合并下载
+- 网页版 Dashboard（Vercel 部署）：浏览器里查看和管理云端会话
 
 ## 当前同步模式
 

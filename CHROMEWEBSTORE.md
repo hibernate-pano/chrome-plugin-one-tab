@@ -1,6 +1,6 @@
 # Chrome Web Store Listing — TapStack
 
-> Last Updated: 2026-09-24
+> Last Updated: 2026-09-26
 > 本文件是 Chrome Web Store 上架信息的单一事实来源（chrome-extensions skill 约定）。
 > 标注 ⚠️ 的字段需要发布者确认后才能提交。
 
@@ -71,13 +71,15 @@ Productivity
 | Asset | Dimensions | Status | Filename |
 |-------|-----------|--------|----------|
 | Store Icon [REQUIRED] | 128×128 PNG | ✅ Ready | icons/icon128.png |
-| Screenshot 1 [REQUIRED] | 1280×800 or 640×400 | ⬜ Not created | |
-| Screenshot 2 [RECOMMENDED] | 1280×800 or 640×400 | ⬜ Not created | |
+| Screenshot 1 [REQUIRED] | 1280×800 | ✅ Ready | store-assets/screenshot-1-main.png（主界面：多会话 + 备注/收藏/锁定） |
+| Screenshot 2 [RECOMMENDED] | 1280×800 | ✅ Ready | store-assets/screenshot-2-search.png（搜索命中高亮） |
 | Small Promo Tile [RECOMMENDED] | 440×280 | ⬜ Not created | |
 
 ### Screenshot Notes
 <!-- 建议截图内容：1) 双列布局下有多个已保存会话的主界面；2) 搜索过滤效果；
      3) 拖拽排序/整理视图；4) 回收站恢复流程。展示使用中的界面，而非仅弹窗空壳。 -->
+<!-- 1/2 已由 scripts/make-store-screenshots.mjs 生成（演示数据注入 dist 扩展后实拍，1280×800）。
+     重新生成：pnpm build && node scripts/make-store-screenshots.mjs -->
 
 ## Permissions Justification
 
@@ -147,6 +149,7 @@ https://github.com/hibernate-pano/chrome-plugin-one-tab
 
 | Version | Date | Changes | Status |
 |---------|------|---------|--------|
+| 1.21.0 | 2026-09-26 | 误删保护升级：删除的会话/标签 7 天内可在回收站恢复，7 天后自动彻底清除；同步引擎结构手术（日志收口、单写者路径拆分），无功能变化 | 待上传 |
 | 1.20.2 | 2026-09-24 | 合并 1.19.3–1.20.2 一次性上架：同步可靠性加固（上传读回校验、软删失败阻断、落盘直写、彻底删除门禁）、点击体验（点开即响应、修复列表项闪现复活、防重复打开、成功操作静默）、增量同步探活（大幅降低流量）、网页版与扩展删除语义统一、RLS 性能优化 | Published |
 | 1.19.3 | 2026-09-13 | 同步数据安全修复：云端守卫改严格 `<`（标签删除/网页版写入不再被静默吞掉）、操作印记跨设备可比（换机/重装后可正常保存）、存量迁移接线；网页版登录持久化修复；导入数据现在会自动上云；依赖安全治理 | 未上架（并入 1.20.2） |
 | 1.19.2 | 2026-09-12 | 依赖安全治理：vite 4→6 等（GitHub 告警 50→1，high 21→0） | 未上架（仅 git tag） |
@@ -161,5 +164,5 @@ https://github.com/hibernate-pano/chrome-plugin-one-tab
 
 ### Known Issues / Limitations
 - 多设备同步要求登录；未登录用户仅使用本地功能。
-- 云端同步删除的会话以「墓碑」形式保留，用于跨设备传播删除意图（跨设备恢复窗口）；
-  墓碑的自动压缩清理（含云端确认与龄期判定）尚未实现，属后续版本。
+- 删除的会话/标签以「墓碑」形式保留 7 天（回收站可恢复），7 天后由清理任务彻底清除；
+  服务端定时清理 cron 需人工确认后启用（`supabase/manual/tombstone_expiry_cron.sql`）。
