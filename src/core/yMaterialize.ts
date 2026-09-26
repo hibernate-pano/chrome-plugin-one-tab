@@ -10,6 +10,10 @@
  * snapshotToRows() 为纯函数（node:test 直测）；writeMaterializedView() 内动态
  * import('dexie')（vite 异步 chunk，主包零增长），indexedDB 不可用时返回
  * { persisted: false } 且永不抛错（影子链路不阻断主同步）。
+ *
+ * 一致性：写入走 upsert + 差集删除（bulkDelete 本次快照缺席的主键），
+ * 否则 purge/移出组的行会在物化视图里永久残留，与 Y.Doc 静默分叉。
+ * 物化视图是 Y.Doc 的全量镜像（快照即真相），不做增量合并。
  */
 import type { YGroupRec, YTabRec } from '@/core/yTranslate';
 
@@ -67,26 +71,57 @@ export function readMemoryFallback(): MVMemoryFallback {
   return { groups: [...memoryFallback.groups], tabs: [...memoryFallback.tabs] };
 }
 
-/** 物化写入 Dexie（幂等 bulkPut；失败/无 indexedDB → 内存兜底，永不抛错） */
+/** Dexie 最小面（供默认实现与 node 单测替身共用） */
+export interface MVDbLike {
+  version(v: number): { stores(s: Record<string, string>): unknown };
+  table<T extends { id: string }>(name: string): {
+    toCollection(): { primaryKeys(): Promise<string[]> };
+    bulkPut(rows: T[]): Promise<void>;
+    bulkDelete(keys: string[]): Promise<void>;
+  };
+  close(): void;
+}
+
+/** upsert + 差集删除：让表内容收敛到本次快照（不残留已消失的 id） */
+async function syncStore<T extends { id: string }>(db: MVDbLike, name: string, rows: T[]): Promise<void> {
+  const table = db.table<T>(name);
+  await table.bulkPut(rows);
+  const keep = new Set(rows.map(r => r.id));
+  const stale = (await table.toCollection().primaryKeys()).filter(id => !keep.has(id));
+  if (stale.length > 0) await table.bulkDelete(stale);
+}
+
+/** 物化写入 Dexie（幂等 upsert + 删除缺席行；失败/无 indexedDB → 内存兜底，永不抛错） */
 export async function writeMaterializedView(
-  rows: MVMaterialized
+  rows: MVMaterialized,
+  /** createDb 仅供 node 单测注入（node 无 indexedDB，无法直测删除路径） */
+  opts: { createDb?: () => MVDbLike } = {}
 ): Promise<{ persisted: boolean; groups: number; tabs: number }> {
   memoryFallback.groups = rows.groups;
   memoryFallback.tabs = rows.tabs;
+  let db: MVDbLike | null = null;
   try {
-    if (typeof indexedDB === 'undefined') return { persisted: false, groups: rows.groups.length, tabs: rows.tabs.length };
-    const { default: Dexie } = await import('dexie');
-    const db = new Dexie(MV_DB_NAME) as unknown as {
-      version(v: number): { stores(s: Record<string, string>): unknown };
-      table<T>(name: string): { bulkPut(rows: T[]): Promise<void> };
-      close(): void;
-    };
+    if (opts.createDb) {
+      db = opts.createDb();
+    } else {
+      if (typeof indexedDB === 'undefined') {
+        return { persisted: false, groups: rows.groups.length, tabs: rows.tabs.length };
+      }
+      const { default: Dexie } = await import('dexie');
+      db = new Dexie(MV_DB_NAME) as unknown as MVDbLike;
+    }
     db.version(MV_DB_VERSION).stores(MV_STORES_SCHEMA);
-    await db.table<MVGroupRow>('tab_groups').bulkPut(rows.groups);
-    await db.table<MVTabRow>('tabs').bulkPut(rows.tabs);
-    db.close();
+    await syncStore(db, 'tab_groups', rows.groups);
+    await syncStore(db, 'tabs', rows.tabs);
     return { persisted: true, groups: rows.groups.length, tabs: rows.tabs.length };
   } catch {
     return { persisted: false, groups: rows.groups.length, tabs: rows.tabs.length };
+  } finally {
+    // bulkPut 失败也必须关闭，否则 Dexie 连接泄漏
+    try {
+      db?.close();
+    } catch {
+      /* ignore */
+    }
   }
 }

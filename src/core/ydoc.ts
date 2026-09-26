@@ -82,23 +82,39 @@ export function plansToDoc(doc: YDocType, plans: YPlan[], stamp: { d: string; s:
 
 /**
  * 短命 Doc 会话：建 doc → y-indexeddb 载入 → 回调（单事务写）→ 捕获 update → 销毁。
- * 返回捕获到的增量 update（transact 内 exactly 一次 update 事件；无变更时为空数组）。
+ * 返回捕获到的增量 update。
+ *
+ * 捕获时机（BUG 1 修复）：'update' 监听在持久化载入【之后】才注册。y-indexeddb
+ * 回放已存 state 时会在事务内 Y.applyUpdate，那批 update 事件不是本次写入的增量；
+ * 若一并捕获，updateBytes 记的是整份文档大小，compact 阈值也失去意义。
+ * 监听晚注册 ⇒ updates 恒 ≤ 1 个元素（fn 内单事务）；仍用 Y.mergeUpdates 收敛，
+ * 以防调用方未来在 fn 内开多个事务。
+ *
+ * 合并用 Yjs 真 merge（非字节拼接）：Y.applyUpdate 不接受拼接的 update 流，
+ * 静默只取第一段，尾段丢失。动态 import 保持本模块顶层无静态依赖。
  * indexedDB 不可用（node/隐私模式）时跳过持久化，内存 Doc 照常工作。
+ * opts.openPersistence 仅供 node 单测替换持久化层（语义同 y-indexeddb 回放）。
  */
 export async function withYDoc<T>(
   fn: (doc: YDocType) => T,
-  opts: { loadPersisted?: boolean } = {}
+  opts: { loadPersisted?: boolean; openPersistence?: (doc: YDocType) => Promise<{ destroy(): Promise<void> }> } = {}
 ): Promise<{ result: T; update: Uint8Array }> {
-  const { Doc } = await import('yjs');
+  const { Doc, mergeUpdates: mergeYUpdates } = await import('yjs');
   const doc: YDocType = new Doc();
   const updates: Uint8Array[] = [];
   const onUpdate = (u: Uint8Array) => {
     updates.push(u);
   };
-  doc.on('update', onUpdate);
   let persistence: { destroy(): Promise<void> } | null = null;
   try {
-    if (opts.loadPersisted !== false && typeof indexedDB !== 'undefined') {
+    if (opts.openPersistence) {
+      // 测试缝：node 无 indexedDB，用替身回放已持久化 state（语义同 y-indexeddb）。
+      try {
+        persistence = await opts.openPersistence(doc);
+      } catch {
+        /* ignore */
+      }
+    } else if (opts.loadPersisted !== false && typeof indexedDB !== 'undefined') {
       try {
         const { IndexeddbPersistence } = await import('y-indexeddb');
         const p = new IndexeddbPersistence(Y_DOC_NAME, doc);
@@ -108,10 +124,14 @@ export async function withYDoc<T>(
         // 持久化失败不阻断：内存 Doc 继续（本次 update 仍进 KV 日志）
       }
     }
+    // 持久化回放已结束，此刻才注册监听：捕获到的只有本次写入产生的增量
+    // （回放阶段同样会发 'update'，提前注册会把整份已存 state 混进来）。
+    doc.on('update', onUpdate);
     // fn 自行管理事务（plansToDoc 内 single transact）；此处不另包 transact，
     // 避免嵌套事务产生多个 update 事件。
     const result: T = fn(doc);
-    const merged = mergeUpdates(updates);
+    const merged =
+      updates.length === 0 ? new Uint8Array(0) : updates.length === 1 ? updates[0] : mergeYUpdates(updates);
     // 加密插槽（本期透传）
     const out = await cryptoSlot.encryptor(merged);
     return { result, update: out };
@@ -124,21 +144,6 @@ export async function withYDoc<T>(
     }
     doc.destroy();
   }
-}
-
-function mergeUpdates(parts: Uint8Array[]): Uint8Array {
-  if (parts.length === 0) return new Uint8Array(0);
-  if (parts.length === 1) return parts[0];
-  // 兜底：单事务路径下 updates.length 恒 ≤ 1；多分片在此简单拼接后由
-  // Y.applyUpdate 逐段应用时仍可逐个解析（调用方按切分应用，不直接整体 apply）。
-  const total = parts.reduce((n, p) => n + p.length, 0);
-  const out = new Uint8Array(total);
-  let off = 0;
-  for (const p of parts) {
-    out.set(p, off);
-    off += p.length;
-  }
-  return out;
 }
 
 /** 读快照（物化 / 调试用）：Y.Doc → plain */
