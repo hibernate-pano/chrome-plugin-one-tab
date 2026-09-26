@@ -77,7 +77,7 @@ export const ConfirmModal: React.FC<ConfirmModalProps> = ({
         onClick={onConfirm}
         disabled={busy}
         className={`rounded-lg px-3 py-1.5 text-sm text-white transition disabled:opacity-50 ${
-          danger ? 'bg-rose-600 hover:bg-rose-700' : 'bg-blue-600 hover:bg-blue-700'
+          danger ? 'bg-rose-600 hover:bg-rose-700' : 'bg-primary-600 hover:bg-primary-700'
         }`}
       >
         {confirmLabel}
@@ -132,7 +132,7 @@ export const PromptModal: React.FC<PromptModalProps> = ({
           <button
             type="submit"
             disabled={busy || !value.trim()}
-            className="rounded-lg bg-blue-600 px-3 py-1.5 text-sm text-white transition hover:bg-blue-700 disabled:opacity-50"
+            className="rounded-lg bg-primary-600 px-3 py-1.5 text-sm text-white transition hover:bg-primary-700 disabled:opacity-50"
           >
             确认
           </button>

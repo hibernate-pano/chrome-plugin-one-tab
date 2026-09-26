@@ -345,13 +345,17 @@ export const ThemeStyleSelector: React.FC<ThemeStyleSelectorProps> = ({ classNam
             <PaletteIcon />
           </span>
           <span className="font-medium">主题风格</span>
+          {/* 当前主题：灰底 pill + 主题色圆点。实心主题色块会把菜单视线抢走（pill 不是 CTA）。 */}
           <span
             className={cn(
-              "px-2 py-0.5 text-xs font-medium rounded-full",
-              "text-white transition-colors duration-200"
+              "inline-flex items-center gap-1.5 px-2 py-0.5 text-xs font-medium rounded-full",
+              "bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-300"
             )}
-            style={{ backgroundColor: currentTheme.primaryColor }}
           >
+            <span
+              className="w-2 h-2 rounded-full shrink-0"
+              style={{ backgroundColor: currentTheme.primaryColor }}
+            />
             {currentTheme.label}
           </span>
         </div>

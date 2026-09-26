@@ -137,7 +137,7 @@ const PerformanceTest: React.FC = () => {
         <button
           onClick={handleGenerateData}
           disabled={isLoading}
-          className="bg-blue-500 text-white px-4 py-2 rounded hover:bg-blue-600 disabled:opacity-50 flat-interaction"
+          className="bg-primary-500 text-white px-4 py-2 rounded hover:bg-primary-600 disabled:opacity-50 flat-interaction"
         >
           {isLoading ? '生成中...' : '生成测试数据'}
         </button>

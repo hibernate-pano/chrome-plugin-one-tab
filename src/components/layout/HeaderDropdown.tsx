@@ -21,6 +21,41 @@ interface HeaderDropdownProps {
   onClose: () => void;
 }
 
+/** 菜单行的统一 hover 反馈。菜单行不做位移（flat-interaction 的 -translate-y 会轻微跳动），只做背景色。 */
+const MENU_ROW = "w-full text-left px-4 py-2 text-sm text-gray-700 dark:text-gray-300 flex items-center transition-colors duration-150 hover:bg-gray-50 dark:hover:bg-gray-700/50";
+
+/** 菜单内的开关行：整行可点，toggle 只做状态显示 */
+const DropdownToggleRow: React.FC<{
+  icon: React.ReactNode;
+  label: string;
+  checked: boolean;
+  onToggle: () => void;
+}> = ({ icon, label, checked, onToggle }) => (
+  <button
+    onClick={onToggle}
+    className={MENU_ROW + ' justify-between'}
+    role="switch"
+    aria-checked={checked}
+    type="button"
+  >
+    <span className="flex items-center">
+      {icon}
+      <span className="text-sm text-gray-700 dark:text-gray-300">{label}</span>
+    </span>
+    <span
+      className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors ${
+        checked ? 'bg-primary-600' : 'bg-gray-200 dark:bg-gray-600'
+      }`}
+    >
+      <span
+        className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform ${
+          checked ? 'translate-x-6' : 'translate-x-1'
+        }`}
+      />
+    </span>
+  </button>
+);
+
 export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({ onClose }) => {
   const dispatch = useAppDispatch();
   const { isAuthenticated, user } = useAppSelector(state => state.auth);
@@ -283,7 +318,7 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({ onClose }) => {
                   className="p-1.5 rounded-full flat-interaction transition-colors"
                   title="从云端刷新数据"
                 >
-                  <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 text-blue-600 dark:text-blue-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 text-primary-600 dark:text-primary-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
                   </svg>
                 </button>
@@ -318,7 +353,7 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({ onClose }) => {
         {!isAuthenticated && (
           <button
             onClick={() => setShowAuthModal(true)}
-            className="w-full text-left px-4 py-2 text-sm text-gray-700 dark:text-gray-300 flat-interaction flex items-center"
+            className={MENU_ROW}
           >
             <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 mr-2 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 16l-4-4m0 0l4-4m-4 4h14m-5 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h7a3 3 0 013 3v1" />
@@ -327,100 +362,57 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({ onClose }) => {
           </button>
         )}
 
-        <div className="border-t border-gray-200 dark:border-gray-700 my-1"></div>
+        <div className="border-t border-gray-200 dark:border-gray-700 my-1.5"></div>
 
-        {/* 设置区域 */}
-        <div className="px-4 py-2">
-          <p className="text-xs font-semibold text-gray-500 dark:text-gray-400 mb-2">设置</p>
-
-          {/* 通用设置分组 */}
-          <div className="mb-3">
-            <p className="text-xs text-gray-500 dark:text-gray-400 mb-2 px-1">通用设置</p>
-            
-            {/* 通知开关 */}
-            <div className="flex items-center justify-between py-2">
-              <div className="flex items-center">
-                <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 mr-2 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" />
-                </svg>
-                <span className="text-sm text-gray-700 dark:text-gray-300">通知提醒</span>
-              </div>
-              <button
-                onClick={handleToggleNotifications}
-                className={`relative inline-flex h-6 w-11 items-center rounded-full flat-interaction transition-colors ${
-                  settings.showNotifications ? 'bg-primary-600' : 'bg-gray-200 dark:bg-gray-600'
-                }`}
-              >
-                <span
-                  className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
-                    settings.showNotifications ? 'translate-x-6' : 'translate-x-1'
-                  }`}
-                />
-              </button>
-            </div>
-
-            {/* 删除确认开关 */}
-            <div className="flex items-center justify-between py-2">
-              <div className="flex items-center">
-                <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 mr-2 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-                </svg>
-                <span className="text-sm text-gray-700 dark:text-gray-300">删除前确认</span>
-              </div>
-              <button
-                onClick={handleToggleConfirmDelete}
-                className={`relative inline-flex h-6 w-11 items-center rounded-full flat-interaction transition-colors ${
-                  settings.confirmBeforeDelete ? 'bg-primary-600' : 'bg-gray-200 dark:bg-gray-600'
-                }`}
-              >
-                <span
-                  className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
-                    settings.confirmBeforeDelete ? 'translate-x-6' : 'translate-x-1'
-                  }`}
-                />
-              </button>
-            </div>
-          </div>
-
-          {/* 标签页设置分组 */}
-          <div className="mb-3">
-            <p className="text-xs text-gray-500 dark:text-gray-400 mb-2 px-1">标签页设置</p>
-            
-            {/* 收集固定页开关 */}
-            <div className="flex items-center justify-between py-2">
-              <div className="flex items-center">
-                <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 mr-2 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3M5 11h14M5 19h14" />
-                </svg>
-                <span className="text-sm text-gray-700 dark:text-gray-300">保存固定标签页</span>
-              </div>
-              <button
-                onClick={handleToggleCollectPinnedTabs}
-                className={`relative inline-flex h-6 w-11 items-center rounded-full flat-interaction transition-colors ${
-                  settings.collectPinnedTabs ? 'bg-primary-600' : 'bg-gray-200 dark:bg-gray-600'
-                }`}
-              >
-                <span
-                  className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
-                    settings.collectPinnedTabs ? 'translate-x-6' : 'translate-x-1'
-                  }`}
-                />
-              </button>
-            </div>
-          </div>
+        {/* 设置区：一层节标题 + 三行开关（行本身自解释，不再分「通用/标签页」小标题） */}
+        <div className="px-4 pt-1.5 pb-1">
+          <p className="text-xs font-medium text-gray-400 dark:text-gray-500">设置</p>
         </div>
+
+        <DropdownToggleRow
+          icon={
+            <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 mr-2 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" />
+            </svg>
+          }
+          label="通知提醒"
+          checked={settings.showNotifications}
+          onToggle={handleToggleNotifications}
+        />
+
+        <DropdownToggleRow
+          icon={
+            <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 mr-2 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+            </svg>
+          }
+          label="删除前确认"
+          checked={settings.confirmBeforeDelete}
+          onToggle={handleToggleConfirmDelete}
+        />
+
+        <DropdownToggleRow
+          icon={
+            <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 mr-2 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3M5 11h14M5 19h14" />
+            </svg>
+          }
+          label="保存固定标签页"
+          checked={settings.collectPinnedTabs}
+          onToggle={handleToggleCollectPinnedTabs}
+        />
 
         <div className="border-t border-gray-200 dark:border-gray-700 my-1"></div>
 
         {/* 主题风格选择 */}
         <ThemeStyleSelector />
 
-        <div className="border-t border-gray-200 dark:border-gray-700 my-1"></div>
+        <div className="border-t border-gray-200 dark:border-gray-700 my-1.5"></div>
 
         <div className="relative">
           <button
             onClick={() => setOpenSubmenu(current => current === 'export' ? null : 'export')}
-            className="w-full text-left px-4 py-2 text-sm text-gray-700 dark:text-gray-300 flat-interaction flex items-center justify-between"
+            className={MENU_ROW + ' justify-between'}
             aria-expanded={openSubmenu === 'export'}
             aria-haspopup="menu"
             type="button"
@@ -439,7 +431,7 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({ onClose }) => {
             <div className="absolute left-full top-0 ml-1 w-48 rounded-lg border border-gray-200 bg-white shadow-lg dark:border-gray-700 dark:bg-gray-800">
             <button
               onClick={handleExportData}
-              className="w-full text-left px-4 py-2 text-sm text-gray-700 dark:text-gray-300 flat-interaction flex items-center"
+              className={MENU_ROW}
               type="button"
             >
               <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 mr-2 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -449,7 +441,7 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({ onClose }) => {
             </button>
             <button
               onClick={handleExportOneTabFormat}
-              className="w-full text-left px-4 py-2 text-sm text-gray-700 dark:text-gray-300 flat-interaction flex items-center"
+              className={MENU_ROW}
               type="button"
             >
               <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 mr-2 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -464,7 +456,7 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({ onClose }) => {
         <div className="relative">
           <button
             onClick={() => setOpenSubmenu(current => current === 'import' ? null : 'import')}
-            className="w-full text-left px-4 py-2 text-sm text-gray-700 dark:text-gray-300 flat-interaction flex items-center justify-between"
+            className={MENU_ROW + ' justify-between'}
             aria-expanded={openSubmenu === 'import'}
             aria-haspopup="menu"
             type="button"
@@ -482,7 +474,7 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({ onClose }) => {
           {openSubmenu === 'import' && (
             <div className="absolute left-full top-0 ml-1 w-48 rounded-lg border border-gray-200 bg-white shadow-lg dark:border-gray-700 dark:bg-gray-800">
             <label
-              className="w-full text-left px-4 py-2 text-sm text-gray-700 dark:text-gray-300 flat-interaction flex items-center cursor-pointer"
+              className={MENU_ROW + ' cursor-pointer'}
             >
               <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 mr-2 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
@@ -530,7 +522,7 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({ onClose }) => {
               />
             </label>
             <label
-              className="w-full text-left px-4 py-2 text-sm text-gray-700 dark:text-gray-300 flat-interaction flex items-center cursor-pointer"
+              className={MENU_ROW + ' cursor-pointer'}
             >
               <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 mr-2 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
@@ -585,29 +577,30 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({ onClose }) => {
           )}
         </div>
 
-        <button
-          onClick={handleDeleteAllGroups}
-          className="mt-1 flex w-full items-center gap-2 rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-left text-sm font-medium text-rose-700 shadow-sm transition hover:bg-rose-100 dark:border-rose-900/40 dark:bg-rose-950/30 dark:text-rose-300 dark:hover:bg-rose-950/50"
-        >
-          <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 shrink-0 text-rose-500 dark:text-rose-300" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-          </svg>
-          <span className="flex-1">
-            <span className="block">删除所有会话</span>
-            <span className="mt-0.5 block text-xs font-normal text-rose-600/80 dark:text-rose-300/80">
-              清空本地所有已保存会话，此操作无法撤销。
+        {/* 危险区：与菜单平面语言一致（rounded-lg + 留边），用色块与普通项区分防误触 */}
+        <div className="px-2 pt-1.5 pb-0.5">
+          <button
+            onClick={handleDeleteAllGroups}
+            className="flex w-full items-center gap-2 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2.5 text-left text-sm font-medium text-rose-700 transition-colors hover:bg-rose-100 dark:border-rose-900/40 dark:bg-rose-950/30 dark:text-rose-300 dark:hover:bg-rose-950/50"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 shrink-0 text-rose-500 dark:text-rose-300" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+            </svg>
+            <span className="flex-1">
+              <span className="block">删除所有会话</span>
+              <span className="mt-0.5 block text-xs font-normal text-rose-600/80 dark:text-rose-300/80">
+                清空本地所有已保存会话，此操作无法撤销。
+              </span>
             </span>
-          </span>
-        </button>
-
-
+          </button>
+        </div>
 
         {isAuthenticated && (
           <>
-            <div className="border-t border-gray-200 dark:border-gray-700 my-1"></div>
+            <div className="border-t border-gray-200 dark:border-gray-700 my-1.5"></div>
             <button
               onClick={handleSignOut}
-              className="w-full text-left px-4 py-2 text-sm text-gray-700 dark:text-gray-300 flat-interaction flex items-center"
+              className={MENU_ROW}
             >
               <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 mr-2 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />

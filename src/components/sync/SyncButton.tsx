@@ -310,7 +310,7 @@ export const SyncButton: React.FC<SyncButtonProps> = () => {
         {workingOperation !== 'none' && isWorking && (
           <div className="w-16 bg-gray-200 rounded-full h-1.5">
             <div
-              className={`h-1.5 rounded-full ${workingOperation === 'upload' ? 'bg-green-600' : 'bg-blue-600'}`}
+              className={`h-1.5 rounded-full ${workingOperation === 'upload' ? 'bg-green-600' : 'bg-primary-600'}`}
               style={{ width: `${workingProgress}%` }}
             ></div>
           </div>
@@ -350,8 +350,8 @@ export const SyncButton: React.FC<SyncButtonProps> = () => {
             disabled={isWorking}
             className={`flex items-center whitespace-nowrap px-3 py-1.5 rounded-md text-sm flat-interaction ${
               isWorking
-                ? 'bg-blue-100 text-blue-600'
-                : 'bg-blue-100 text-blue-600 hover:bg-blue-200'
+                ? 'bg-primary-100 text-primary-600'
+                : 'bg-primary-100 text-primary-600 hover:bg-primary-200'
               } transition-colors`}
             title="手动从云端下载会话到本地"
           >
