@@ -7,15 +7,6 @@ interface ThemeStyleSelectorProps {
   className?: string;
 }
 
-// 经典主题图标 - Material Design 风格
-const ClassicIcon = () => (
-  <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5}>
-    <rect x="3" y="3" width="18" height="18" rx="2" strokeLinecap="round" strokeLinejoin="round" />
-    <path d="M3 9h18" strokeLinecap="round" strokeLinejoin="round" />
-    <path d="M9 21V9" strokeLinecap="round" strokeLinejoin="round" />
-  </svg>
-);
-
 // 极光主题图标 - 北极光/雪花风格
 const AuroraIcon = () => (
   <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5}>
@@ -45,38 +36,7 @@ const CreamyIcon = () => (
 );
 
 
-// 粉色主题图标 - 甜美风格
-const PinkIcon = () => (
-  <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5}>
-    <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z" strokeLinecap="round" strokeLinejoin="round" />
-  </svg>
-);
-
-// 薄荷主题图标 - 清新风格
-const MintIcon = () => (
-  <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5}>
-    <path d="M12 2L2 7l10 5 10-5-10-5z" strokeLinecap="round" strokeLinejoin="round" />
-    <path d="M2 17l10 5 10-5" strokeLinecap="round" strokeLinejoin="round" />
-    <path d="M2 12l10 5 10-5" strokeLinecap="round" strokeLinejoin="round" />
-  </svg>
-);
-
-// 赛博朋克主题图标 - 霓虹科技风格
-const CyberpunkIcon = () => (
-  <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5}>
-    <rect x="4" y="4" width="16" height="16" rx="2" strokeLinecap="round" strokeLinejoin="round" />
-    <path d="M9 4v4" strokeLinecap="round" strokeLinejoin="round" />
-    <path d="M15 4v4" strokeLinecap="round" strokeLinejoin="round" />
-    <path d="M9 16v4" strokeLinecap="round" strokeLinejoin="round" />
-    <path d="M15 16v4" strokeLinecap="round" strokeLinejoin="round" />
-    <path d="M4 9h4" strokeLinecap="round" strokeLinejoin="round" />
-    <path d="M4 15h4" strokeLinecap="round" strokeLinejoin="round" />
-    <path d="M16 9h4" strokeLinecap="round" strokeLinejoin="round" />
-    <path d="M16 15h4" strokeLinecap="round" strokeLinejoin="round" />
-    <circle cx="12" cy="12" r="2" fill="currentColor" />
-  </svg>
-);
-
+// 奶油主题图标 - 温暖柔和风格
 // 棱镜主题图标 - 毛玻璃/棱镜风格
 const PrismIcon = () => (
   <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5}>
@@ -141,7 +101,7 @@ const themeOptions: ThemeOption[] = [
   {
     value: 'legacy',
     label: '原始',
-    description: '经典风格',
+    description: '默认主题',
     icon: <LegacyIcon />,
     primaryColor: '#007acc',
     secondaryColor: '#0ea5e9',
@@ -150,20 +110,6 @@ const themeOptions: ThemeOption[] = [
       card: '#ffffff',
       accent: '#007acc',
       text: '#333333',
-    },
-  },
-  {
-    value: 'classic',
-    label: '经典',
-    description: 'Material',
-    icon: <ClassicIcon />,
-    primaryColor: '#3b82f6',
-    secondaryColor: '#60a5fa',
-    previewColors: {
-      bg: '#fafafa',
-      card: '#ffffff',
-      accent: '#3b82f6',
-      text: '#212121',
     },
   },
   {
@@ -192,48 +138,6 @@ const themeOptions: ThemeOption[] = [
       card: '#fffdf9',
       accent: '#d4a574',
       text: '#5c4a3a',
-    },
-  },
-  {
-    value: 'pink',
-    label: '粉红',
-    description: '甜美可爱',
-    icon: <PinkIcon />,
-    primaryColor: '#e891a8',
-    secondaryColor: '#f5b5c8',
-    previewColors: {
-      bg: '#fdf2f8',
-      card: '#ffffff',
-      accent: '#e891a8',
-      text: '#831843',
-    },
-  },
-  {
-    value: 'mint',
-    label: '薄荷',
-    description: '清新自然',
-    icon: <MintIcon />,
-    primaryColor: '#38b2ac',
-    secondaryColor: '#4fd1c5',
-    previewColors: {
-      bg: '#f0fdfa',
-      card: '#ffffff',
-      accent: '#38b2ac',
-      text: '#134e4a',
-    },
-  },
-  {
-    value: 'cyberpunk',
-    label: '赛博',
-    description: '霓虹科技',
-    icon: <CyberpunkIcon />,
-    primaryColor: '#d946ef',
-    secondaryColor: '#f0abfc',
-    previewColors: {
-      bg: '#0a0a0f',
-      card: '#1a1a2e',
-      accent: '#d946ef',
-      text: '#e0e0e0',
     },
   },
   {

@@ -1,14 +1,10 @@
 /* TabVault Pro 字体系统 */
 @import './fonts.css';
 
-/* 主题系统 - 顺序：原始、经典、极光、奶油、粉红、薄荷、赛博 */
+/* 主题系统 - 2026-09-28 收敛为 4 套：原始、极光、奶油、棱镜（被砍主题由 storage 迁移映射接管） */
 @import './themes/legacy.css';
-@import './themes/classic.css';
 @import './themes/aurora.css';
 @import './themes/creamy.css';
-@import './themes/pink.css';
-@import './themes/mint.css';
-@import './themes/cyberpunk.css';
 @import './themes/prism.css';
 
 /* 微交互样式 */

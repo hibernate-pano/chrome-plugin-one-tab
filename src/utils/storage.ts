@@ -42,16 +42,21 @@ export function onGroupsChanged(cb: () => void): () => void {
 }
 
 // 有效的主题风格值
-const VALID_THEME_STYLES: ThemeStyle[] = [
-  'legacy',
-  'classic',
-  'aurora',
-  'creamy',
-  'pink',
-  'mint',
-  'cyberpunk',
-  'prism',
-];
+const VALID_THEME_STYLES: ThemeStyle[] = ['legacy', 'aurora', 'creamy', 'prism'];
+
+/**
+ * 主题收敛迁移映射（2026-09-28：8 → 4）。
+ * 被砍主题的存量设置按气质最近归宿迁移，而非一律回落 legacy：
+ * classic（蓝系生产力）→ legacy；mint（冷调清新）→ aurora（同为冷调）；
+ * pink（粉调柔和）→ creamy（同为暖调柔和）；cyberpunk（个性暗色）→ prism（个性渐变）。
+ * 升级 supabase-js 等场景无关；下一次用户设置落盘时自动持久化为新值。
+ */
+const RETIRED_THEME_STYLES: Record<string, ThemeStyle> = {
+  classic: 'legacy',
+  mint: 'aurora',
+  pink: 'creamy',
+  cyberpunk: 'prism',
+};
 
 // 有效的主题模式值
 const VALID_THEME_MODES: Array<'light' | 'dark' | 'auto'> = ['light', 'dark', 'auto'];
@@ -59,11 +64,16 @@ const VALID_THEME_MODES: Array<'light' | 'dark' | 'auto'> = ['light', 'dark', 'a
 /**
  * 验证主题风格值
  * @param value 待验证的值
- * @returns 有效的主题风格值，无效时返回默认值 'legacy'
+ * @returns 有效的主题风格值：保留值原样；被砍主题映射到保留主题；未知值回落 'legacy'
  */
 export function validateThemeStyle(value: unknown): ThemeStyle {
   if (typeof value === 'string' && VALID_THEME_STYLES.includes(value as ThemeStyle)) {
     return value as ThemeStyle;
+  }
+  if (typeof value === 'string' && value in RETIRED_THEME_STYLES) {
+    const migrated = RETIRED_THEME_STYLES[value];
+    logWarn(`主题「${value}」已下线，迁移到「${migrated}」`);
+    return migrated;
   }
   logWarn('无效的主题风格值，使用默认值:', value);
   return 'legacy';
