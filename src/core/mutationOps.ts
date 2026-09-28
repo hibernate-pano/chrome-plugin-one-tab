@@ -294,7 +294,9 @@ export function applyMoveTab(
 }
 
 /** cleanDuplicateTabs 语义（对应 tabSlice.cleanDuplicateTabs）：同 URL 留最新，余者墓碑；清空未锁定组→墓碑
- * 所有被墓碑实体盖同一 stamp——本设备一次 cleanDuplicates 是同一次清理意图。 */
+ * 所有被墓碑实体盖同一 stamp——本设备一次 cleanDuplicates 是同一次清理意图。
+ * 去重范围仅限活跃组：回收站墓碑组（isDeleted=true，组内 tab 仍活跃）不参与 urlMap，
+ * 否则墓碑组里"更新"的同 URL tab 会挤掉活跃组的 tab、最坏把活跃组清空连带墓碑。 */
 export function applyCleanDuplicates(
   groups: TabGroup[],
   now: string,
@@ -303,6 +305,7 @@ export function applyCleanDuplicates(
   let removedTabsCount = 0;
   const urlMap = new Map<string, { tab: Tab; groupId: string }[]>();
   groups.forEach(group => {
+    if (group.isDeleted) return;
     group.tabs.forEach(tab => {
       if (tab.isDeleted) return;
       if (!tab.url) return;

@@ -67,3 +67,13 @@ export const dropLoadGuard = (state: TabState, requestId: string): void => {
 /** 过滤组内标签级墓碑（storage 保留墓碑用于同步删除意图，Redux/UI 不感知） */
 export const stripTombstonedTabs = (group: TabGroup): TabGroup =>
   group.tabs.some(t => t.isDeleted) ? { ...group, tabs: group.tabs.filter(t => !t.isDeleted) } : group;
+
+/**
+ * storage 全量 → UI 活跃视图（loadGroups 建立的主状态不变量）：
+ * 剔除组级墓碑 + 组内标签级墓碑。所有把 storage 数据灌回 state.groups 的路径
+ * （loadGroups / cleanDuplicateTabs.fulfilled 等）必须经此管线，否则墓碑组与
+ * 墓碑 tab 涌入主状态——TabCounter/渲染不过滤墓碑，计数会反增、回收站内容泄漏。
+ * 排序由调用方自理（loadGroups 按 createdAt 倒序；fulfilled 沿用 storage 序）。
+ */
+export const toActiveGroupsView = (groups: TabGroup[]): TabGroup[] =>
+  groups.filter(g => !g.isDeleted).map(stripTombstonedTabs);

@@ -17,7 +17,7 @@ import { TabState, TabGroup, OptimisticTabBackup } from '@/types/tab';
 import { storage, invalidateGroupsCache } from '@/utils/storage';
 import { shouldAutoDeleteAfterTabRemoval } from '@/utils/tabGroupUtils';
 import { sendMutation } from '@/shared/mutationProtocol';
-import { backupKeyOf, dropLoadGuard, isStaleLoad, stripInFlightTabs, stripTombstonedTabs, takeLoadGuard } from './tabSliceHelpers';
+import { backupKeyOf, dropLoadGuard, isStaleLoad, stripInFlightTabs, stripTombstonedTabs, toActiveGroupsView, takeLoadGuard } from './tabSliceHelpers';
 import { trackProductEvent } from '@/utils/productEvents';
 import { logError, logInfo } from '../../utils/log';
 
@@ -75,13 +75,10 @@ export const loadGroups = createAsyncThunk('tabs/loadGroups', async () => {
   const groups = await storage.getGroups();
 
   // 过滤掉已软删除的标签组，避免UI显示
-  const activeGroups = groups.filter(g => !g.isDeleted);
-
-  // 标签级墓碑只存在于 storage 用于跨设备传播删除意图，不进入 UI
-  const groupsWithoutTombstonedTabs = activeGroups.map(stripTombstonedTabs);
+  const activeGroups = toActiveGroupsView(groups);
 
   // 确保标签组始终按创建时间倒序排列（最新创建的在前面）
-  const sortedGroups = groupsWithoutTombstonedTabs.sort((a, b) => {
+  const sortedGroups = activeGroups.sort((a, b) => {
     const dateA = new Date(a.createdAt);
     const dateB = new Date(b.createdAt);
     return dateB.getTime() - dateA.getTime();
@@ -822,7 +819,10 @@ export const tabSlice = createSlice({
       })
       .addCase(cleanDuplicateTabs.fulfilled, (state, action) => {
         state.isLoading = false;
-        state.groups = action.payload.updatedGroups;
+        // SW 返回的是 storage 全量（含组级墓碑与组内墓碑 tab）。主状态不变量是
+        // "只含活跃视图"（loadGroups 同管线）；直灌会让 TabCounter 把回收站的
+        // 组/tab 计入，出现"清理后数量反增"（223/994 → 230/1106）。
+        state.groups = toActiveGroupsView(action.payload.updatedGroups);
       })
       .addCase(cleanDuplicateTabs.rejected, (state, action) => {
         state.isLoading = false;
