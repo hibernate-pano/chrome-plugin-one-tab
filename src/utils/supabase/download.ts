@@ -136,13 +136,38 @@ export const downloadSync = {
               }
             } catch (jsonError) {
               logError(`解析标签组 ${groupAny.id} 的JSON数据失败:`, jsonError);
-              // 保持空数组
+            }
+            // 【读不出来 ≠ 是空的】解密与明文回退都失败时，这一行携带的是我们
+            // 读不出的真实数据，绝不能降级成"零标签的组"——下游会把它当成空壳
+            // 硬删除并登记云端 purge，那等于把用户仅存于云端的那份数据删掉。
+            // 原则：读不出来就不碰。整组跳过，不合入本地、不登记 purge，
+            // 云端行原封保留，等问题修好后自然重新出现。
+            if (tabsData.length === 0 && String(groupAny.tabs_data).length > 2) {
+              logError(
+                `标签组 ${groupAny.id} 的内容无法读取（解密与明文解析均失败），` +
+                  `已跳过该组以保护云端数据不被误删`
+              );
+              continue;
             }
           }
         } else {
           // 非字符串（可能是 JSONB 对象/数组/其他脏数据）：统一归一化，
           // 数组直通，wrapper 对象尝试恢复，其余降级为空数组
           tabsData = normalizeTabsData(groupAny.tabs_data, String(groupAny.id));
+          // 同上：原始值非空却归一化成空数组 = 形状不可恢复，不是真的空组
+          if (tabsData.length === 0 && groupAny.tabs_data != null) {
+            const rawLooksLikeContent =
+              typeof groupAny.tabs_data === 'object'
+                ? Object.keys(groupAny.tabs_data as object).length > 0
+                : String(groupAny.tabs_data).length > 2;
+            if (rawLooksLikeContent) {
+              logError(
+                `标签组 ${groupAny.id} 的 tabs_data 形状无法恢复且原始值非空，` +
+                  `已跳过该组以保护云端数据不被误删`
+              );
+              continue;
+            }
+          }
         }
 
         // 处理标签组数据

@@ -19,6 +19,12 @@ export interface UploadReadbackExpect {
   lastOp?: { d: string; s: number } | null;
   /** 期望的云端 is_deleted（省略 = false = 活跃）。覆盖模式上行墓碑时为 true。 */
   isDeleted?: boolean;
+  /**
+   * 本次上行的 version。用于区分两种"没写上"：云端 version 更高 = 对端更新、
+   * 本次写入输掉了竞争（OpStamp 合并本来就让先到的写输，不是故障）；云端
+   * version 不更高 = 真被守卫静默吞写，必须报错。
+   */
+  version?: number | null;
 }
 
 export interface UploadReadbackRow {
@@ -27,19 +33,43 @@ export interface UploadReadbackRow {
   last_op_seq?: number | null;
   last_op_device?: string | null;
   is_deleted?: boolean | null;
+  version?: number | null;
+}
+
+/**
+ * 本次写入是否被更新的一侧合法取代（而非被守卫静默吞写）。
+ *
+ * 生产库有遗留的 version BEFORE UPDATE 守卫：`NEW.version < OLD.version`
+ * 即 RETURN NULL 整行丢弃（HTTP 200、无 error）。设备离线久了本地 version
+ * 落后云端时，它的上传会被这条守卫静默吞掉——若读回校验只认"不一致即失败"，
+ * 整台上传就会永久失败；而上传失败又会跳过下载（避免用旧云端覆盖本地），
+ * 该设备就此既不能上传也不能下载，只能靠连续编辑把 version 一格格追平。
+ *
+ * 云端 version 更高说明对端确实更新、这次写入按设计输掉，标记为"已被取代"
+ * 让上传继续走完；数据没有丢（云端存着更新的那份），本地下次下载会合并回来。
+ */
+export function isSupersededByCloud(expect: UploadReadbackExpect, row: UploadReadbackRow): boolean {
+  if (expect.version == null || row.version == null) return false;
+  return row.version > expect.version;
 }
 
 export function compareUploadReadback(
   expect: UploadReadbackExpect[],
   actual: UploadReadbackRow[],
   opts: { checkStamp: boolean; checkTombstone: boolean }
-): { ok: boolean; reason?: string } {
+): { ok: boolean; reason?: string; superseded?: string[] } {
   if (expect.length === 0) return { ok: true };
   const byId = new Map(actual.map(r => [r.id, r]));
+  // 被更新一侧合法取代的组：不算失败，但要记下来给调用方看（见 isSupersededByCloud）
+  const superseded: string[] = [];
   for (const e of expect) {
     const row = byId.get(e.id);
     if (!row) {
       return { ok: false, reason: `云端缺失组 ${e.id}（疑似服务端守卫/RLS 静默吞写）` };
+    }
+    if (isSupersededByCloud(e, row)) {
+      superseded.push(e.id);
+      continue;
     }
     if (opts.checkTombstone && row.is_deleted !== undefined && row.is_deleted !== null) {
       const wantDeleted = e.isDeleted === true;
@@ -66,7 +96,7 @@ export function compareUploadReadback(
       }
     }
   }
-  return { ok: true };
+  return superseded.length > 0 ? { ok: true, superseded } : { ok: true };
 }
 
 export async function verifyUploadReadback(
@@ -76,7 +106,9 @@ export async function verifyUploadReadback(
 ): Promise<void> {
   if (expect.length === 0) return;
   const ids = expect.map(e => e.id);
-  let cols = 'id, updated_at';
+  // version 必须取：没有它就无法区分"被守卫静默吞写"与"被更新一侧合法取代"，
+  // 后者若也判失败会让整台设备的上传永久卡死（连带下载被跳过）。
+  let cols = 'id, updated_at, version';
   if (opts.checkStamp) cols += ', last_op_device, last_op_seq';
   if (opts.checkTombstone) cols += ', is_deleted';
   const { data, error } = await supabase
@@ -87,6 +119,12 @@ export async function verifyUploadReadback(
   if (error) throw error;
   const cmp = compareUploadReadback(expect, ((data ?? []) as unknown) as UploadReadbackRow[], opts);
   if (!cmp.ok) throw new Error(`[upload-verify] ${cmp.reason}`);
+  if (cmp.superseded?.length) {
+    logInfo(
+      `[upload-verify] ${cmp.superseded.length} 个组被更新一侧合法取代（云端 version 更高），` +
+        `按设计让先到的写入输，不计为失败：${cmp.superseded.join(', ')}`
+    );
+  }
   logInfo(`[upload-verify] 读回校验通过（${expect.length} 组）`);
 }
 

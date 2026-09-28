@@ -30,7 +30,7 @@ import { logWarn } from '../utils/log';
 export interface MutationDeps {
   getGroups(): Promise<TabGroup[]>;
   setGroups(groups: TabGroup[]): Promise<void>;
-  scheduleUpload(delayMs: number): void;
+  scheduleUpload(delayMs: number): void | Promise<void>;
   now(): string;
   journal: Journal;
   seq: SeqRegistry;
@@ -103,7 +103,10 @@ export function createMutationHandlers(deps: MutationDeps) {
         const r = applyRemoveTab(groups, cmd.groupId, cmd.tabId, now, stamp);
         await deps.setGroups(r.groups);
         await noteHardDeleted(deps, [r.hardDeletedGroupId]);
-        deps.scheduleUpload(DELETE_PRIORITY_MS);
+        // 删除类必须 await 置位：组已从磁盘移除、purge 队列已写入，但
+        // pending_upload 还没落盘时 SW 被回收 → 后台看到 pendingUpload=false
+        // 就不上传 → 云端行删不掉，并集合并又把已删的组拉回来，删除被静默撤销。
+        await deps.scheduleUpload(DELETE_PRIORITY_MS);
         return { ok: true, payload: { group: r.group } };
       }
       case 'deleteGroup': {
@@ -111,7 +114,7 @@ export function createMutationHandlers(deps: MutationDeps) {
         const r = applyDeleteGroup(groups, cmd.groupId, now, stamp);
         await deps.setGroups(r.groups);
         await noteHardDeleted(deps, [r.hardDeletedGroupId]);
-        deps.scheduleUpload(DELETE_PRIORITY_MS);
+        await deps.scheduleUpload(DELETE_PRIORITY_MS);
         return { ok: true, payload: cmd.groupId };
       }
       case 'deleteAllGroups': {
@@ -119,7 +122,7 @@ export function createMutationHandlers(deps: MutationDeps) {
         const r = applyDeleteAllGroups(groups, now, stamp);
         await deps.setGroups(r.groups);
         await noteHardDeleted(deps, r.hardDeletedGroupIds);
-        deps.scheduleUpload(DELETE_PRIORITY_MS);
+        await deps.scheduleUpload(DELETE_PRIORITY_MS);
         return { ok: true, payload: { count: r.count } };
       }
       case 'restoreGroup': {
@@ -153,7 +156,8 @@ export function createMutationHandlers(deps: MutationDeps) {
         } catch (e) {
           logWarn('[mutationHandlers] 记录 purge 队列失败（云端行可能残留复活）:', e);
         }
-        deps.scheduleUpload(NORMAL_MS);
+        // 同 removeTab：本地已物理移除 + 队列已写入，置位必须落盘，否则删除被撤销
+        await deps.scheduleUpload(NORMAL_MS);
         return { ok: true, payload: cmd.groupId };
       }
       case 'importGroups': {
@@ -212,8 +216,8 @@ export function createMutationHandlers(deps: MutationDeps) {
         const r = applyMoveTab(groups, cmd, now, stamp);
         await deps.setGroups(r.groups);
         await noteHardDeleted(deps, [r.autoDeletedGroupId]);
-        if (r.autoDeletedGroupId) deps.scheduleUpload(DELETE_PRIORITY_MS);
-        else deps.scheduleUpload(NORMAL_MS);
+        // 搬空源组属删除类：置位必须落盘，否则那次硬删除会被并集合并撤销
+        await deps.scheduleUpload(r.autoDeletedGroupId ? DELETE_PRIORITY_MS : NORMAL_MS);
         return {
           ok: true,
           payload: {
@@ -230,7 +234,8 @@ export function createMutationHandlers(deps: MutationDeps) {
         const r = applyCleanDuplicates(groups, now, stamp);
         await deps.setGroups(r.groups);
         await noteHardDeleted(deps, r.hardDeletedGroupIds);
-        deps.scheduleUpload(NORMAL_MS);
+        // 清空产生的硬删除同样依赖 purge 队列 + 置位，别让删除停在半路
+        await deps.scheduleUpload(NORMAL_MS);
         return {
           ok: true,
           payload: {

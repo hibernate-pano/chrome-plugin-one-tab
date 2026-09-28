@@ -142,10 +142,19 @@ export class SyncEngine {
    * 双驱动：setTimeout 为 SW 存活期内的快路径（1.5~3s 真延迟，R6 修复）；
    * chrome.alarms 为 SW 被杀后的兜底（≥30s）。upload() 成功路径会
    * cancelPendingUpload() 清双驱动。
+   *
+   * 【置位必须先于调用方返回】返回 Promise 让调用方 await：MV3 的 SW 随时可能
+   * 在"组已从磁盘移除 / purge 队列已写入"与"pending_upload 置位"之间被回收，
+   * 那样后台轮询看到 pendingUpload=false 就不上传，云端行删不掉、并集合并又
+   * 把已删的组拉回来——删除被静默撤销。此前 `void storage.setPendingUpload(true)`
+   * 是 fire-and-forget，mutationHandlers 里 setGroups 之后紧接着就调度上传，
+   * 正好落在这个窗口里。
    * @param delayMs 延迟毫秒数（默认 3000ms）
    */
-  scheduleUpload(delayMs: number = 3000): void {
-    void storage.setPendingUpload(true);
+  scheduleUpload(delayMs: number = 3000): Promise<void> {
+    const marked = storage.setPendingUpload(true).catch(err => {
+      logWarn('[SyncEngine] 置位 pending_upload 失败:', err);
+    });
     if (typeof chrome !== 'undefined' && chrome.alarms) {
       // ponytail: 双驱动——R6 修复。chrome.alarms 最小 delayInMinutes 是 0.5（30s），
       // 仅靠 alarm 会把“点开一个标签”这种 1.5~3s 意图拉伸到 ≥30s，期间本地变更
@@ -161,7 +170,7 @@ export class SyncEngine {
       void chrome.alarms.clear(SYNC_UPLOAD_ALARM).catch(() => {});
       const delayMinutes = Math.max(0.5, delayMs / 60000);
       chrome.alarms.create(SYNC_UPLOAD_ALARM, { delayInMinutes: delayMinutes });
-      return;
+      return marked;
     }
     // 非扩展运行时 fallback：单测走这里
     if (this.uploadTimer) clearTimeout(this.uploadTimer);
@@ -169,6 +178,7 @@ export class SyncEngine {
       this.uploadTimer = null;
       void this.upload().catch(err => logError('[SyncEngine] 延迟上传失败:', err));
     }, delayMs);
+    return marked;
   }
 
   /**
@@ -214,6 +224,26 @@ export class SyncEngine {
       await ensureOpStampMigrated();
     } catch (err) {
       logWarn('[SyncEngine] 印记迁移兜底失败（不阻塞同步）:', err);
+    }
+
+    // forceRemote（"从云端下载（覆盖）"）此前完全绕过 purge 队列：本地已
+    // "彻底删除"（回收站清空）的组，其墓碑行仍在云端，覆盖下载会把它连同
+    // 标签一起拉回回收站；随后上传把它 purge 掉，但本地那份因为并集语义
+    // （lg && !cg → 保留本地）永远留着——一个删不掉的僵尸条目。
+    // 非 forceRemote 路径由 decideDownloadPrecheck 的 upload_first 间接覆盖
+    // （upload 会先 purgeCloudGroups），缺口只在这条显式覆盖路径。
+    if (opts?.forceRemote) {
+      try {
+        const pendingPurge = await storage.getPendingPurgeIds();
+        if (pendingPurge.length > 0) {
+          await purgeCloudGroups(pendingPurge);
+          await storage.clearPendingPurgeIds();
+          logInfo(`[SyncEngine] 覆盖下载前已清除 ${pendingPurge.length} 条待 purge 的云端行`);
+        }
+      } catch (err) {
+        // 不阻断覆盖下载：用户明确选了覆盖语义，但要让日志留下"可能复活"的痕迹
+        logWarn('[SyncEngine] 覆盖下载前清理 purge 队列失败（已清空的会话可能被拉回）:', err);
+      }
     }
 
     // ponytail: 下载前置保护（决策逻辑见 decideDownloadPrecheck 单测）：
@@ -371,15 +401,30 @@ export class SyncEngine {
       const shellsDropped = mergedGroups.filter(isEmptyShellGroup);
       const finalGroups = dropEmptyShellGroups(mergedGroups);
       await storage.setGroupsImmediate(finalGroups);
+      // purge 队列必须伴随 pending_upload 置位，否则入队了也没人执行：
+      // backgroundSync 只在 hasPendingUpload() 为真时才上传，而下载路径此前
+      // 从不置这个标志 → 云端行永远删不掉；同时云端多出来的行让
+      // hasRemoteChanges 的行数比对恒不相等 → 探活永久失效 → 每 60 秒一次
+      // 全量 select *（带全部 tabs_data 大 JSONB），持续烧 Supabase 额度。
+      // 这里显式置位：本地确实产生了需要上云的变更（待删的行）。
+      let purgeQueued = false;
       if (shellsDropped.length > 0) {
         for (const g of shellsDropped) {
           try {
             await storage.addPendingPurgeId(g.id);
+            purgeQueued = true;
           } catch (e) {
             logWarn('[SyncEngine] 登记空壳 purge 队列失败（云端行可能残留复活）:', g.id, e);
           }
         }
         logInfo(`[SyncEngine] 合并清掉 ${shellsDropped.length} 个空壳会话并登记云端 purge`);
+      }
+      if (purgeQueued) {
+        try {
+          await storage.setPendingUpload(true);
+        } catch (e) {
+          logWarn('[SyncEngine] 置位 pending_upload 失败（purge 队列可能滞留）:', e);
+        }
       }
       // 7. 更新同步时间
       await storage.setLastSyncTime(new Date().toISOString());

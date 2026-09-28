@@ -498,6 +498,9 @@ export const uploadSync = {
         lastOp: g.lastOp ?? null,
         // 覆盖模式上行墓碑时，云端读回必须是 is_deleted=true（默认 false = 活跃）
         isDeleted: tombstonedIds.has(g.id),
+        // 带上 version，读回才能区分"被守卫静默吞写"与"被更新一侧合法取代"：
+        // 后者若也判失败，整台设备的上传会永久卡死（连带下载被跳过）
+        version: typeof g.version === 'number' ? g.version : null,
       })),
       userId,
       { checkStamp: opStampSupported, checkTombstone: await supportsCloudTombstone() }
