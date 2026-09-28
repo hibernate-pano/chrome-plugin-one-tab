@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>TapStack 图标重设计 · 方案对比</title>
+<style>
+  :root { --brand: #2563eb; --ink: #1e293b; --muted: #64748b; }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: -apple-system, "PingFang SC", "Segoe UI", sans-serif; background: #f8fafc; color: var(--ink); padding: 48px 40px; }
+  h1 { font-size: 26px; letter-spacing: -0.5px; }
+  .sub { color: var(--muted); margin: 8px 0 40px; font-size: 14px; }
+  section { background: #fff; border: 1px solid #e2e8f0; border-radius: 16px; padding: 32px; margin-bottom: 28px; }
+  h2 { font-size: 15px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: 1px; margin-bottom: 20px; }
+  .row { display: flex; gap: 48px; align-items: flex-start; flex-wrap: wrap; }
+  .card { text-align: center; }
+  .card img { display: block; margin: 0 auto; }
+  .card .label { margin-top: 12px; font-size: 13px; color: var(--muted); }
+  .card .name { font-size: 15px; font-weight: 600; margin-top: 4px; }
+  .badge { display: inline-block; background: #dbeafe; color: #1d4ed8; font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 999px; margin-bottom: 10px; }
+
+  /* 工具栏模拟 */
+  .toolbar { display: flex; align-items: center; gap: 10px; padding: 8px 14px; border-radius: 10px; width: fit-content; }
+  .toolbar.light { background: #dee1e6; }
+  .toolbar.dark { background: #292a2d; }
+  .tab { width: 120px; height: 26px; border-radius: 8px 8px 0 0; margin-bottom: -8px; }
+  .fake { width: 18px; height: 18px; border-radius: 50%; }
+  .fake.ext { border-radius: 4px; width: 16px; height: 16px; }
+  .urlbox { width: 300px; height: 26px; border-radius: 13px; margin-left: 8px; }
+  .light .tab { background: #f1f3f4; } .light .urlbox { background: #f1f3f4; } .light .fake { background: #bdc1c6; }
+  .dark .tab { background: #3c3d3f; } .dark .urlbox { background: #3c3d3f; } .dark .fake { background: #5f6368; }
+  .tb-wrap { display: flex; flex-direction: column; gap: 14px; }
+  .tb-label { font-size: 12px; color: var(--muted); margin-bottom: -6px; }
+
+  /* 商店卡片模拟 */
+  .store { display: flex; gap: 20px; align-items: center; padding: 20px; border: 1px solid #e2e8f0; border-radius: 12px; width: 420px; }
+  .store img { width: 64px; height: 64px; border-radius: 14px; }
+  .store .t { font-size: 17px; font-weight: 700; }
+  .store .d { font-size: 13px; color: var(--muted); margin-top: 3px; }
+  .store .r { font-size: 12px; color: #94a3b8; margin-top: 6px; }
+  .store-old { opacity: .75; }
+  .two-col { display: flex; gap: 28px; flex-wrap: wrap; }
+</style>
+</head>
+<body>
+  <h1>TapStack 图标重设计</h1>
+  <p class="sub">2026-09-28 · 三个方向的提案。旧图标的问题：画的是"云上传"（机制），不是"收拢工作现场"（价值）；16px 糊掉；米黄底与品牌蓝 UI 脱节。</p>
+
+  <section>
+    <h2>方向对比 · 128px</h2>
+    <div class="row">
+      <div class="card">
+        <img src="a-stack-128.png" width="128" height="128">
+        <div class="name">A · 收拢的现场</div>
+        <div class="label">散落的页面 → 一叠会话。许多到一，Stack 即名字</div>
+      </div>
+      <div class="card">
+        <img src="b-tmark-128.png" width="128" height="128">
+        <div class="name">B · 阶梯 T 印记</div>
+        <div class="label">TapStack 的 T，横杠本身就是三张错位收拢的卡片</div>
+      </div>
+      <div class="card" style="opacity:.55">
+        <img src="c-vault-128.png" width="128" height="128">
+        <div class="name">C · 保险箱抽屉（已淘汰）</div>
+        <div class="label">概念成立但视觉松散，重心偏下</div>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>工具栏实装模拟 · 16px 原尺寸</h2>
+    <div class="two-col">
+      <div class="tb-wrap">
+        <div class="tb-label">浅色工具栏</div>
+        <div class="toolbar light">
+          <div class="fake"></div><div class="fake"></div>
+          <img class="ext" src="a-stack-16.png" title="A">
+          <img class="ext" src="b-tmark-16.png" title="B">
+          <div class="tab"></div><div class="urlbox"></div>
+        </div>
+      </div>
+      <div class="tb-wrap">
+        <div class="tb-label">深色工具栏</div>
+        <div class="toolbar dark">
+          <div class="fake"></div><div class="fake"></div>
+          <img class="ext" src="a-stack-16.png" title="A">
+          <img class="ext" src="b-tmark-16.png" title="B">
+          <div class="tab"></div><div class="urlbox"></div>
+        </div>
+      </div>
+      <div class="tb-wrap">
+        <div class="tb-label">16px ×4 放大检视（左 A / 右 B）</div>
+        <div class="row" style="gap:16px">
+          <img src="a-stack-16-zoom.png" width="128" height="128" style="image-rendering:pixelated">
+          <img src="b-tmark-16-zoom.png" width="128" height="128" style="image-rendering:pixelated">
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>Chrome 商店卡片对比</h2>
+    <div class="two-col">
+      <div class="store">
+        <img src="a-stack-128.png">
+        <div>
+          <div class="t">TapStack — 工作会话保险箱</div>
+          <div class="d">Save the session · Find it later · Restore it</div>
+          <div class="r">新方案 A · 收拢的现场</div>
+        </div>
+      </div>
+      <div class="store store-old">
+        <img src="../ui-audit/old-icon-ref.png" onerror="this.src='../../icons/icon128.png'">
+        <div>
+          <div class="t">TapStack — 工作会话保险箱</div>
+          <div class="d">旧图标：云上传意象 + 手绘描边 + 米黄底</div>
+          <div class="r">现状对照</div>
+        </div>
+      </div>
+    </div>
+  </section>
+</body>
+</html>

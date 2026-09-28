@@ -8,7 +8,10 @@ interface TapStackIconProps {
 
 /**
  * TapStack 品牌图标组件
- * 现代简约风格
+ *
+ * 构型：「收拢的现场」——三张错位层叠的卡片，散落的标签页被收拢成一叠会话。
+ * 与扩展图标（icons/icon128.png）同构：蓝底白卡 + 折角 + 内容条；
+ * 应用内为单色 currentColor 版本，随主题着色。
  */
 export const TapStackIcon: React.FC<TapStackIconProps> = ({
   size = 24,
@@ -35,22 +38,10 @@ export const TapStackIcon: React.FC<TapStackIconProps> = ({
       fill="none"
       xmlns="http://www.w3.org/2000/svg"
     >
-      {/* 圆角矩形容器 */}
-      <rect
-        x="3"
-        y="3"
-        width="18"
-        height="18"
-        rx="5"
-        stroke="currentColor"
-        strokeWidth="1.5"
-        fill="none"
-      />
-
-      {/* 简洁的标签页指示器 */}
-      <rect x="7" y="7" width="10" height="2" rx="1" fill="currentColor" />
-      <rect x="7" y="11" width="7" height="2" rx="1" fill="currentColor" opacity="0.6" />
-      <rect x="7" y="15" width="5" height="2" rx="1" fill="currentColor" opacity="0.3" />
+      {/* 三层错位卡片：从左上（远）到右下（近） */}
+      <rect x="5.9" y="5.6" width="11.25" height="7.9" rx="1.7" fill="currentColor" opacity=".35" />
+      <rect x="6.4" y="8" width="11.25" height="7.9" rx="1.7" fill="currentColor" opacity=".6" />
+      <rect x="7" y="10.4" width="11.25" height="7.9" rx="1.7" fill="currentColor" />
     </svg>
   );
 };
