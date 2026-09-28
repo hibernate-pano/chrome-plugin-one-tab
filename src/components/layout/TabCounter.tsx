@@ -9,8 +9,14 @@ export const TabCounter: React.FC = () => {
 
   return (
     <div className="flex items-center gap-2">
-      <span className="badge badge-accent whitespace-nowrap">
-        {groupCount} 会话
+      <span
+        className="whitespace-nowrap text-xs font-medium px-2 py-0.5 rounded-full"
+        style={{
+          background: 'var(--color-bg-tertiary)',
+          color: 'var(--color-text-secondary)'
+        }}
+      >
+        <strong style={{ color: 'var(--color-accent)' }}>{groupCount}</strong> 会话
       </span>
       <span
         className="text-xs font-medium px-2 py-0.5 rounded-full whitespace-nowrap"
@@ -19,7 +25,7 @@ export const TabCounter: React.FC = () => {
           color: 'var(--color-text-secondary)'
         }}
       >
-        {tabCount} 标签
+        <strong>{tabCount}</strong> 标签
       </span>
     </div>
   );

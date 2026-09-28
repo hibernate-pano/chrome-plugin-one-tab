@@ -92,8 +92,9 @@ export const MainApp: React.FC = () => {
                 </Suspense>
               </main>
               <footer className="bg-white dark:bg-gray-900 border-t border-gray-200 dark:border-gray-700 text-xs text-gray-600 dark:text-gray-400">
-                <div className={`w-full py-2 ${getContainerWidthClass()} flex justify-between items-center`}>
-                  <div className="flex items-center space-x-2">
+                {/* 版本 + slogan 一行居中：原左右分挂两头，弱信息占满整行宽 */}
+                <div className={`w-full py-2 ${getContainerWidthClass()} flex justify-center items-center gap-2`}>
+                  <span className="flex items-center gap-1.5">
                     <svg
                       xmlns="http://www.w3.org/2000/svg"
                       className="h-4 w-4 text-primary-600"
@@ -108,20 +109,19 @@ export const MainApp: React.FC = () => {
                         d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"
                       />
                     </svg>
-                    <span>TapStack {getAppVersionLabel()}</span>
-                  </div>
-                  <div className="flex items-center space-x-2">
-                    <span>Save the session. Find it later.</span>
-                    {process.env.NODE_ENV === 'development' && (
-                      <button
-                        onClick={togglePerformanceTest}
-                        className="ml-2 px-2 py-1 bg-purple-500 text-white text-xs rounded hover:bg-purple-600 transition-colors flat-interaction"
-                        title="仅在开发环境可见"
-                      >
-                        性能测试
-                      </button>
-                    )}
-                  </div>
+                    TapStack {getAppVersionLabel()}
+                  </span>
+                  <span aria-hidden="true">·</span>
+                  <span>Save the session. Find it later.</span>
+                  {process.env.NODE_ENV === 'development' && (
+                    <button
+                      onClick={togglePerformanceTest}
+                      className="ml-2 px-2 py-1 bg-purple-500 text-white text-xs rounded hover:bg-purple-600 transition-colors flat-interaction"
+                      title="仅在开发环境可见"
+                    >
+                      性能测试
+                    </button>
+                  )}
                 </div>
               </footer>
             </>

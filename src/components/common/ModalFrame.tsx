@@ -62,7 +62,7 @@ export const ModalFrame: React.FC<ModalFrameProps> = ({
           </div>
 
           {children && <div className="mt-5">{children}</div>}
-          {footer && <div className="mt-6 flex justify-end gap-3">{footer}</div>}
+          {footer && <div className="mt-5 flex justify-end gap-3">{footer}</div>}
         </div>
       </div>
     </div>,

@@ -37,15 +37,18 @@ const CloseIcon = () => (
   </svg>
 );
 
+// 单栏：一个整框（换掉旧的三横线——和菜单图标撞形）
 const LayoutSingleIcon = () => (
   <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-    <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 6.75h16.5M3.75 12h16.5m-16.5 5.25h16.5" />
+    <rect x="3.75" y="5.25" width="16.5" height="13.5" rx="1.5" strokeLinecap="round" strokeLinejoin="round" />
   </svg>
 );
 
+// 双栏：整框 + 中缝
 const LayoutDoubleIcon = () => (
   <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-    <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 6.75h7.5M3.75 12h7.5m-7.5 5.25h7.5m4.5-10.5h4.5m-4.5 5.25h4.5m-4.5 5.25h4.5" />
+    <rect x="3.75" y="5.25" width="16.5" height="13.5" rx="1.5" strokeLinecap="round" strokeLinejoin="round" />
+    <path d="M12 5.25v13.5" strokeLinecap="round" strokeLinejoin="round" />
   </svg>
 );
 
@@ -80,7 +83,7 @@ export const Header: React.FC<HeaderProps> = ({ onSearch }) => {
     showConfirm({
       title: '确认清理重复标签和空会话',
       message:
-        '将清理所有会话中 URL 相同的重复标签页（每个 URL 只保留最新的一个），并删除没有任何标签页的空会话（锁定的会话除外）。\n\n此操作无法撤销。',
+        '将清理所有会话中 URL 相同的重复标签页（每个 URL 只保留最新的一个），并删除没有任何标签页的空会话（锁定的会话除外）。\n此操作无法撤销。',
       type: 'warning',
       confirmText: '确认清理',
       cancelText: '取消',
