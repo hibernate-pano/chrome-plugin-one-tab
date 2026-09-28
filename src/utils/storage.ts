@@ -211,7 +211,33 @@ class ChromeStorage {
    * P1-4：同步关键路径专用新鲜读（先失效 30s 缓存再读）。
    * 同一进程内 mutation 刚写完就触发下载时，缓存可能是防抖窗口期的旧快照。
    */
-  async getGroupsFresh(): Promise<TabGroup[]> {
+  async getGroupsFresh(): Promise<TabGroup[]>
+  {
+    invalidateGroupsCache();
+    return this.getGroups();
+  }
+
+  /**
+   * 写路径专用读：先落盘 pending 的防抖写、失效 30s 缓存，再读真值。
+   *
+   * 【为什么读-改-写必须用它，而不是 getGroups()】
+   * getGroups() 有 30s 进程内缓存，而 groups 并非只有 SW 一个上下文会写：
+   * popup 的 runMigrations（migrateFaviconUrls）会在 TabList 挂载时调
+   * setGroups() 写 GROUPS key。SW 侧没有注册 onGroupsChanged，感知不到这次写入，
+   * 缓存就此陈旧。
+   *
+   * 后果不是"读到旧数据"这么轻——所有 mutation 都是「读-改-写」：拿陈旧快照
+   * 改完再写回，期间由别的上下文写入的数据被整段抹掉，且回报成功
+   * （这与 v1.21.2 的墓碑灌入、fail-closed 注释描述的是同一类"读失败变成写"）。
+   * 触发窗口窄（升级后首次打开 popup 的那一瞬），但后果是全部会话丢失，
+   * 且恰好发生在用户升级、最不该丢数据的时刻。
+   *
+   * 先 flush 再失效：保证同进程内尚未落盘的防抖写不会因这次新鲜读而被跳过
+   * （读到的必须是"含 pending 写"的真值，否则紧接着的写会把 pending 覆盖掉）。
+   * 读-改-写的三处入口统一走这里：mutationService / TabManager 两处保存路径。
+   */
+  async getGroupsForWrite(): Promise<TabGroup[]> {
+    await this.debouncedPersistGroups.flush();
     invalidateGroupsCache();
     return this.getGroups();
   }

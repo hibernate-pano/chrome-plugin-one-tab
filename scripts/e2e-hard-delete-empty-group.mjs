@@ -43,13 +43,10 @@ try {
   const before = await readGroupsFromSW(ctx);
   console.log(`初始: ${before.length} 组 ->`, before.map(g => `${g.name}(${(g.tabs||[]).length}tab)`).join(', '));
 
-  // ⚠️ 必须等 SW 侧 storage 缓存过期（30s TTL）再发 mutation。
-  // SW 启动时 runMigrations 会先读一次 tab_groups——那时本脚本还没注入数据，于是
-  // 缓存里留下陈旧的 []。mutation 走 storage.getGroups() 命中这个空缓存，
-  // applyRemoveTab 找不到组就原样返回 []，调用方 setGroups([]) 会把数据全抹了。
-  // 这是测试注入方式造成的假象（生产里 SW 启动时库里已有数据），不是被测逻辑的问题。
-  console.log('等待 SW storage 缓存 TTL 过期（30s）…');
-  await page.waitForTimeout(31_000);
+  // 不再等 SW storage 缓存 TTL：写路径已改走 getGroupsForWrite()（先 flush 再失效
+  // 缓存读真值），陈旧缓存不再能变成写入。修复前这里必须等 30s——SW 启动时
+  // runMigrations 读到的空快照会被缓存住，mutation 拿它读-改-写就把数据全抹了。
+  // 现在保留这个"立即发"的写法，本身就是对修复的回归防线。
 
   // 走生产语义命令（SW 单写者路径）：删掉「单页会话」唯一的标签
   // 必须从 popup 上下文发：SW 内部自发自收会死锁（消息通道在响应前关闭）

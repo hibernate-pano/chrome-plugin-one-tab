@@ -34,7 +34,10 @@ const journal = createJournal({
 });
 
 export const mutationService = createMutationHandlers({
-  getGroups: () => storage.getGroups(),
+  // 读-改-写必须读真值：getGroups() 的 30s 缓存可能比 popup 上下文
+  // （runMigrations 会写 GROUPS key）更旧，拿旧快照改完写回会抹掉期间的数据。
+  // 详见 storage.getGroupsForWrite 的注释。
+  getGroups: () => storage.getGroupsForWrite(),
   setGroups: g => storage.setGroupsImmediate(g),
   scheduleUpload: ms => syncEngine.scheduleUpload(ms),
   now: () => new Date().toISOString(),

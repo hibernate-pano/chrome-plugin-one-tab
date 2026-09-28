@@ -136,7 +136,7 @@ export class TabManager {
       // 与其他 job 交错读改写，会丢刚写入的会话）。写走直写：SW 可随时被挂起，
       // 防抖窗口期内的保存会丢失；且 SW 内 mutation 已是直写，混用会互相覆盖。
       await enqueue('saveAllTabs', async () => {
-        const existingGroups = await storage.getGroups();
+        const existingGroups = await storage.getGroupsForWrite();
         const stamped: typeof safeGroup = { ...safeGroup, lastOp: await stampForNewEntity() };
         await storage.setGroupsImmediate(
           [stamped, ...existingGroups].sort(
@@ -234,7 +234,7 @@ export class TabManager {
       // 单写者 + 盖印记：与 saveAllTabs 同一语义（原先连 enqueue 都没有，属丢更新路径）。
       // 写走直写，理由同 saveAllTabs（SW 挂起丢保存 + 与 mutation 直写混用覆盖）。
       await enqueue('saveCurrentTab', async () => {
-        const existingGroups = await storage.getGroups();
+        const existingGroups = await storage.getGroupsForWrite();
         const stamped: typeof safeGroup = { ...safeGroup, lastOp: await stampForNewEntity() };
         await storage.setGroupsImmediate([stamped, ...existingGroups]);
       });
