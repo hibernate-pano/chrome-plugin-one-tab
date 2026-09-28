@@ -24,6 +24,7 @@ import {
 // 阶段二（§5 + §9）：合并语义已统一为 mergeOpStamped（OpStamp 全序决胜）。
 // 旧 LWW 合并 mergeTabGroups 已隔离至 @/utils/syncUtils.legacy（⛔禁接回生产）。
 import { mergeOpStamped } from '@/utils/opStampMerge';
+import { dropEmptyShellGroups, isEmptyShellGroup } from '@/core/mutationOps';
 import { createSeqRegistry, maxObservedSeq } from '@/utils/seqRegistry';
 import { ensureOpStampMigrated } from '@/background/opStampMigratedGuard';
 import { getDeviceId } from '@/utils/deviceUtils';
@@ -360,7 +361,26 @@ export class SyncEngine {
         return { success: false, groups: snapshot, reason: `validation_failed: ${validation.reason}` };
       }
       // 6. 写入（P1-4：直写落盘，不经过防抖窗口）
-      await storage.setGroupsImmediate(mergedGroups);
+      //
+      // 【空壳会话清理】合并结果的组墓碑语义管不到"被剥空"的组：mergeTabsOpStamped
+      // 的 URL 去重只盖标签级墓碑，组墓碑不置位，于是剥空的组以 isDeleted:false 落盘，
+      // 在 UI 渲染成空会话卡，且每轮后台同步都有机会再剥空一个——空组越攒越多。
+      // 统一规则（空组无内容可恢复 → 物理移除，见 core/mutationOps.dropEmptyShellGroups）
+      // 在这里落地：合并结果先剔除空壳再落盘，并把 id 登记进 purge 队列让云端行
+      // 一并删除——只删本地的话云端行残留，下次下载会以 remote-only 复活。
+      const shellsDropped = mergedGroups.filter(isEmptyShellGroup);
+      const finalGroups = dropEmptyShellGroups(mergedGroups);
+      await storage.setGroupsImmediate(finalGroups);
+      if (shellsDropped.length > 0) {
+        for (const g of shellsDropped) {
+          try {
+            await storage.addPendingPurgeId(g.id);
+          } catch (e) {
+            logWarn('[SyncEngine] 登记空壳 purge 队列失败（云端行可能残留复活）:', g.id, e);
+          }
+        }
+        logInfo(`[SyncEngine] 合并清掉 ${shellsDropped.length} 个空壳会话并登记云端 purge`);
+      }
       // 7. 更新同步时间
       await storage.setLastSyncTime(new Date().toISOString());
       // 8. 清除快照
@@ -383,12 +403,12 @@ export class SyncEngine {
       this.isSyncing = false;
       return {
         success: true,
-        groups: mergedGroups,
+        groups: finalGroups,
         stats: {
           localCount: localGroups.length,
           cloudCount: cloudGroups.length,
-          mergedCount: mergedGroups.length,
-          conflicts: mergedGroups.filter(g => g.syncStatus === 'conflict').length,
+          mergedCount: finalGroups.length,
+          conflicts: finalGroups.filter(g => g.syncStatus === 'conflict').length,
         },
       };
     } catch (error) {

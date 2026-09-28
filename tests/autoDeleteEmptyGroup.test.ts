@@ -61,7 +61,7 @@ before(async () => {
 });
 
 describe('autoDeleteEmptyGroup: 移走最后一个标签 → 空会话立即关闭', () => {
-  it('跨组移走源组唯一标签 → 源空组立即从主列表消失并进入已删除区', async () => {
+  it('跨组移走源组唯一标签 → 源空组立即物理消失，且不进回收站', async () => {
     const { default: reducer, moveTab } = await import('@/store/slices/tabSlice');
     const state = makeState([
       { id: 'A', tabs: ['t1'] }, // 唯一标签
@@ -78,10 +78,13 @@ describe('autoDeleteEmptyGroup: 移走最后一个标签 → 空会话立即关�
       false,
       '空的未锁定源组应立即从主列表移除（不再卡住）'
     );
+    // 2026-09-28 产品决策：空组无内容可恢复 → 硬删除，不进回收站。
+    // 旧行为是打墓碑进回收站，但空壳墓碑没有任何可恢复内容，只会在回收站堆噪音，
+    // 且组墓碑不置位时还会以 isDeleted:false 留在活跃列表渲染成空会话卡。
     assert.equal(
       next.deletedGroups.some(g => g.id === 'A'),
-      true,
-      '被自动关闭的组进入已删除区（可恢复）'
+      false,
+      '空壳会话不进回收站（无内容可恢复）'
     );
     assert.equal(next.groups.some(g => g.id === 'B'), true, '目标组保留');
     // 被移走的标签已在目标组

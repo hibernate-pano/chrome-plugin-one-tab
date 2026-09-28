@@ -52,6 +52,29 @@ export interface MutationDeps {
 const DELETE_PRIORITY_MS = 1500; // 删除/新建类（对齐原 autoSyncMiddleware 优先级 ≥8）
 const NORMAL_MS = 3000;
 
+/**
+ * 空壳会话硬删除后登记云端 purge 队列。
+ *
+ * 墓碑的价值是"广播删除意图 + 7 天可恢复"；空壳组两样都用不上，直接物理移除。
+ * 但**本地移除不等于云端删除**：云端行残留时，下次 downloadAndMerge 会以
+ * remote-only 把它复活（这正是 purgeGroup 当初要两步走的同一条理由）。
+ * 所以硬删除必须走 notePurgedGroup → pendingPurgeIds → upload 时 purgeCloudGroups，
+ * 让云端行真正消失。登记失败只告警不阻断（本地已删干净，残留风险写进日志）。
+ */
+async function noteHardDeleted(
+  deps: MutationDeps,
+  ids: (string | null)[]
+): Promise<void> {
+  for (const id of ids) {
+    if (!id) continue;
+    try {
+      await deps.notePurgedGroup?.(id);
+    } catch (e) {
+      logWarn('[mutationHandlers] 登记空壳硬删除 purge 队列失败（云端行可能残留复活）:', id, e);
+    }
+  }
+}
+
 export function createMutationHandlers(deps: MutationDeps) {
   // V2 影子双写：run() 内最近一次成功取到的 stamp/now（handle 在主写 ok 后取用）。
   let lastMeta: { stamp: OpStamp; now: string } | null = null;
@@ -79,12 +102,15 @@ export function createMutationHandlers(deps: MutationDeps) {
         const groups = await deps.getGroups();
         const r = applyRemoveTab(groups, cmd.groupId, cmd.tabId, now, stamp);
         await deps.setGroups(r.groups);
+        await noteHardDeleted(deps, [r.hardDeletedGroupId]);
         deps.scheduleUpload(DELETE_PRIORITY_MS);
         return { ok: true, payload: { group: r.group } };
       }
       case 'deleteGroup': {
         const groups = await deps.getGroups();
-        await deps.setGroups(applyDeleteGroup(groups, cmd.groupId, now, stamp));
+        const r = applyDeleteGroup(groups, cmd.groupId, now, stamp);
+        await deps.setGroups(r.groups);
+        await noteHardDeleted(deps, [r.hardDeletedGroupId]);
         deps.scheduleUpload(DELETE_PRIORITY_MS);
         return { ok: true, payload: cmd.groupId };
       }
@@ -92,6 +118,7 @@ export function createMutationHandlers(deps: MutationDeps) {
         const groups = await deps.getGroups();
         const r = applyDeleteAllGroups(groups, now, stamp);
         await deps.setGroups(r.groups);
+        await noteHardDeleted(deps, r.hardDeletedGroupIds);
         deps.scheduleUpload(DELETE_PRIORITY_MS);
         return { ok: true, payload: { count: r.count } };
       }
@@ -184,6 +211,7 @@ export function createMutationHandlers(deps: MutationDeps) {
         const groups = await deps.getGroups();
         const r = applyMoveTab(groups, cmd, now, stamp);
         await deps.setGroups(r.groups);
+        await noteHardDeleted(deps, [r.autoDeletedGroupId]);
         if (r.autoDeletedGroupId) deps.scheduleUpload(DELETE_PRIORITY_MS);
         else deps.scheduleUpload(NORMAL_MS);
         return {
@@ -201,6 +229,7 @@ export function createMutationHandlers(deps: MutationDeps) {
         const groups = await deps.getGroups();
         const r = applyCleanDuplicates(groups, now, stamp);
         await deps.setGroups(r.groups);
+        await noteHardDeleted(deps, r.hardDeletedGroupIds);
         deps.scheduleUpload(NORMAL_MS);
         return {
           ok: true,

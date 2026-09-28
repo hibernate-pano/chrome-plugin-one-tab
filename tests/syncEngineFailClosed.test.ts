@@ -121,7 +121,12 @@ function makeGroup(id: string) {
   return {
     id,
     name: `group-${id}`,
-    tabs: [],
+    // 必须带一个活跃标签：空壳会话（无活跃标签）在合并落盘前会被硬删除
+    // （2026-09-28 统一规则），用空组做种子会让本用例测不到"本地组必须保留"这件事。
+    tabs: [{
+      id: `${id}-t1`, url: `https://${id}.com`, title: id,
+      createdAt: NOW, lastAccessed: NOW, pinned: false,
+    }],
     createdAt: NOW,
     updatedAt: NOW,
     isLocked: false,

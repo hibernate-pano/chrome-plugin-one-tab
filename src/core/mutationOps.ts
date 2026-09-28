@@ -15,6 +15,37 @@ import type { OpStamp } from './opStamp';
 import { shouldAutoDeleteAfterTabRemoval } from './tabGroupUtils';
 import { updateDisplayOrder, updateGroupWithVersion } from './versionHelper';
 
+/**
+ * 空壳会话的唯一判据与清理（2026-09-28 产品决策）。
+ *
+ * 规则：**组内没有活跃标签的会话不属于"被删除"，它没有任何可恢复的内容，
+ * 直接物理移除，不留墓碑、不进回收站。** 有内容的会话被手动删除才打墓碑，
+ * 7 天内可恢复。
+ *
+ * 为什么改（旧行为是给空组打墓碑）：
+ * - 墓碑的唯一价值是"跨设备广播删除意图 + 7 天可恢复"。空组两者都用不上：
+ *   没内容可恢复，而墓碑本身会在回收站堆成噪音。
+ * - 更严重的是同步合并路径（mergeTabsOpStamped 的 URL 去重）会给败者盖**标签级**
+ *   墓碑却从不处理组，于是组墓碑不置位、剥空后剩一个 isDeleted:false 的空壳，
+ *   留在活跃列表里渲染成空会话卡，且每轮后台同步都有机会再剥空一个——空组越攒越多。
+ *   硬删除让"剥空"的结果无处可留，根源直接断掉。
+ *
+ * 锁定组豁免：锁定是用户显式的防误删保护，任何自动清理都不得越过（README 锁定语义）。
+ * 判据复用 tabGroupUtils.shouldAutoDeleteAfterTabRemoval，规则只此一处。
+ */
+export const isEmptyShellGroup = (group: TabGroup): boolean =>
+  shouldAutoDeleteAfterTabRemoval(group, '');
+
+/** 物理移除空壳会话（保留全部有内容组，含回收站中仍有标签的墓碑组）。 */
+export const dropEmptyShellGroups = (groups: TabGroup[]): TabGroup[] =>
+  groups.filter(g => !isEmptyShellGroup(g));
+
+/** 本次操作中被硬删除的组 id（供调用方登记云端 purge 队列）。 */
+export const emptiedGroupIds = (before: TabGroup[], after: TabGroup[]): string[] => {
+  const kept = new Set(after.map(g => g.id));
+  return before.filter(g => !kept.has(g.id)).map(g => g.id);
+};
+
 /** saveGroup 语义（对应 tabSlice.saveGroup）：新组置顶，按 createdAt 倒序 */
 export function applySaveGroup(
   groups: TabGroup[],
@@ -29,11 +60,11 @@ export function applySaveGroup(
 
 /**
  * removeTab 语义（= 现有 deleteTabAndSync thunk）：
- * 删除 tabId 后若组内无活跃 tab 且未锁定 → 整组软删墓碑；否则只墓碑该 tab。
- * 幂等：已删除的 tab 不重复处理（version 不膨胀）。
+ * 删除 tabId 后若组内无活跃 tab 且未锁定 → **整组硬删除**（不留墓碑，见 dropEmptyShellGroups）；
+ * 否则只墓碑该 tab。幂等：已删除的 tab 不重复处理（version 不膨胀）。
  *
  * 标签级删除同步提升组级印记（updatedAt/version/lastOp）：digest 以单调 seq 为主
- * 信号做探活，组 stamp 不动会导致“删 tab”在指纹层不可见；且合并时组字段按组
+ * 信号做探活，组 stamp 不动会导致“删 tab”在探活与合并时不可见；且合并时组字段按组
  * stamp 决胜——不盖组 stamp 会让对端稍新的组 stamp 把本次删除连带覆盖。
  */
 export function applyRemoveTab(
@@ -42,19 +73,19 @@ export function applyRemoveTab(
   tabId: string,
   now: string,
   stamp: OpStamp
-): { groups: TabGroup[]; group: TabGroup | null } {
+): { groups: TabGroup[]; group: TabGroup | null; hardDeletedGroupId: string | null } {
   const idx = groups.findIndex(g => g.id === groupId);
-  if (idx === -1) return { groups, group: null };
+  if (idx === -1) return { groups, group: null, hardDeletedGroupId: null };
   const current = groups[idx];
 
   if (shouldAutoDeleteAfterTabRemoval(current, tabId)) {
-    // 整组软删：这是组级删除语义（与 deleteGroup 同），所以组 lastOp 也要盖。
-    const out = groups.map(g =>
-      g.id === groupId && !g.isDeleted
-        ? { ...g, isDeleted: true, deletedAt: now, lastOp: stamp, version: (g.version || 1) + 1, updatedAt: now }
-        : g
-    );
-    return { groups: out, group: null };
+    // 整组硬删除：组内已无活跃标签，没有任何可恢复的内容，留墓碑只会制造空壳噪音。
+    // 云端行由调用方按 hardDeletedGroupId 登记 purge 队列物理删除（否则下次下载复活）。
+    return {
+      groups: groups.filter(g => g.id !== groupId),
+      group: null,
+      hardDeletedGroupId: groupId,
+    };
   }
 
   const updatedTabs: Tab[] = current.tabs.map(tab =>
@@ -73,37 +104,53 @@ export function applyRemoveTab(
   };
   const out = [...groups];
   out[idx] = updatedGroup;
-  return { groups: out, group: updatedGroup };
+  return { groups: out, group: updatedGroup, hardDeletedGroupId: null };
 }
 
-/** deleteGroup 语义（对应 tabSlice.deleteGroup）：软删墓碑，幂等（已墓碑不重复处理） */
+/**
+ * deleteGroup 语义（对应 tabSlice.deleteGroup）：
+ * - 组内已无活跃标签（空壳）→ **物理移除**，不进回收站（无内容可恢复）
+ * - 有内容 → 墓碑 + 7 天可恢复；幂等（已墓碑不重复处理）
+ */
 export function applyDeleteGroup(
   groups: TabGroup[],
   groupId: string,
   now: string,
   stamp: OpStamp
-): TabGroup[] {
-  return groups.map(g =>
-    g.id === groupId && !g.isDeleted
-      ? { ...g, isDeleted: true, deletedAt: now, lastOp: stamp, version: (g.version || 1) + 1, updatedAt: now }
-      : g
-  );
+): { groups: TabGroup[]; hardDeletedGroupId: string | null } {
+  const target = groups.find(g => g.id === groupId);
+  if (!target) return { groups, hardDeletedGroupId: null };
+  if (isEmptyShellGroup(target)) {
+    return { groups: groups.filter(g => g.id !== groupId), hardDeletedGroupId: groupId };
+  }
+  return {
+    groups: groups.map(g =>
+      g.id === groupId && !g.isDeleted
+        ? { ...g, isDeleted: true, deletedAt: now, lastOp: stamp, version: (g.version || 1) + 1, updatedAt: now }
+        : g
+    ),
+    hardDeletedGroupId: null,
+  };
 }
 
-/** deleteAllGroups 语义（对应 tabSlice.deleteAllGroups）：仅活跃组加墓碑；count = groups.length（与 thunk 口径一致） */
+/** deleteAllGroups 语义（对应 tabSlice.deleteAllGroups）：
+ * 有内容的活跃组加墓碑（可恢复）；空壳组直接物理移除，不进回收站。
+ * count = groups.length（与 thunk 口径一致）。 */
 export function applyDeleteAllGroups(
   groups: TabGroup[],
   now: string,
   stamp: OpStamp
-): { groups: TabGroup[]; count: number } {
-  return {
-    groups: groups.map(g =>
-      g.isDeleted
-        ? g
-        : { ...g, isDeleted: true, deletedAt: now, lastOp: stamp, version: (g.version || 1) + 1, updatedAt: now }
-    ),
-    count: groups.length,
-  };
+): { groups: TabGroup[]; count: number; hardDeletedGroupIds: string[] } {
+  const hardDeletedGroupIds: string[] = [];
+  const out = groups.flatMap(g => {
+    if (g.isDeleted) return [g];
+    if (isEmptyShellGroup(g)) {
+      hardDeletedGroupIds.push(g.id);
+      return [];
+    }
+    return [{ ...g, isDeleted: true, deletedAt: now, lastOp: stamp, version: (g.version || 1) + 1, updatedAt: now }];
+  });
+  return { groups: out, count: groups.length, hardDeletedGroupIds };
 }
 
 /** restoreGroup 语义（对应 tabSlice.restoreGroup）：置回活跃 + version+1；restored=null 表示未找到 */
@@ -281,19 +328,16 @@ export function applyMoveTab(
 
   let autoDeletedGroupId: string | null = null;
   const movedSource = out.find(g => g.id === args.sourceGroupId)!;
-  if (args.sourceGroupId !== args.targetGroupId && movedSource.tabs.length === 0
-      && shouldAutoDeleteAfterTabRemoval(movedSource, '')) {
+  if (args.sourceGroupId !== args.targetGroupId && isEmptyShellGroup(movedSource)) {
+    // 源组被搬空 → 硬删除（无内容可恢复，不留空壳）
     autoDeletedGroupId = args.sourceGroupId;
-    out = out.map(g =>
-      g.id === args.sourceGroupId && !g.isDeleted
-        ? { ...g, isDeleted: true, deletedAt: now, lastOp: stamp, version: (g.version || 1) + 1, updatedAt: now }
-        : g
-    );
+    out = out.filter(g => g.id !== args.sourceGroupId);
   }
   return { groups: out, autoDeletedGroupId };
 }
 
-/** cleanDuplicateTabs 语义（对应 tabSlice.cleanDuplicateTabs）：同 URL 留最新，余者墓碑；清空未锁定组→墓碑
+/** cleanDuplicateTabs 语义（对应 tabSlice.cleanDuplicateTabs）：同 URL 留最新，余者墓碑；
+ * 被清空且未锁定的组**硬删除**（无内容可恢复，不留空壳）。
  * 所有被墓碑实体盖同一 stamp——本设备一次 cleanDuplicates 是同一次清理意图。
  * 去重范围仅限活跃组：回收站墓碑组（isDeleted=true，组内 tab 仍活跃）不参与 urlMap，
  * 否则墓碑组里"更新"的同 URL tab 会挤掉活跃组的 tab、最坏把活跃组清空连带墓碑。 */
@@ -301,7 +345,7 @@ export function applyCleanDuplicates(
   groups: TabGroup[],
   now: string,
   stamp: OpStamp
-): { groups: TabGroup[]; removedTabsCount: number; removedGroupsCount: number } {
+): { groups: TabGroup[]; removedTabsCount: number; removedGroupsCount: number; hardDeletedGroupIds: string[] } {
   let removedTabsCount = 0;
   const urlMap = new Map<string, { tab: Tab; groupId: string }[]>();
   groups.forEach(group => {
@@ -342,14 +386,19 @@ export function applyCleanDuplicates(
     };
   });
 
-  const finalGroups = withTombstones.map(g => {
-    const hasActive = g.tabs.some(t => !t.isDeleted);
-    if (!hasActive && !g.isLocked && !g.isDeleted) {
+  const finalGroups = withTombstones.filter(g => {
+    // 空壳会话（无活跃标签且未锁定）直接物理移除，不进回收站——墓碑对它没有价值。
+    if (isEmptyShellGroup(g)) {
       removedGroupsCount++;
-      return { ...g, isDeleted: true, deletedAt: now, lastOp: stamp, version: (g.version || 1) + 1, updatedAt: now };
+      return false;
     }
-    return g;
+    return true;
   });
 
-  return { groups: finalGroups, removedTabsCount, removedGroupsCount };
+  const kept = new Set(finalGroups.map(g => g.id));
+  const hardDeletedGroupIds = withTombstones
+    .filter(g => !kept.has(g.id))
+    .map(g => g.id);
+
+  return { groups: finalGroups, removedTabsCount, removedGroupsCount, hardDeletedGroupIds };
 }

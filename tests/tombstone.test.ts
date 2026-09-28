@@ -59,9 +59,18 @@ function mkGroup(id: string, over: Record<string, unknown> = {}) {
 describe('mutationOps deletedAt', () => {
   it('applyDeleteGroup 盖 deletedAt=now', () => {
     const now = iso(NOW);
-    const out = ops.applyDeleteGroup([mkGroup('g1') as never], 'g1', now, STAMP);
+    // 用有内容的组：空壳会话按 2026-09-28 统一规则走硬删除（不留墓碑、无 deletedAt）
+    const g = { ...mkGroup('g1'), tabs: [{ id: 't1', url: 'https://a.com', title: 'A', createdAt: iso(NOW), lastAccessed: iso(NOW), pinned: false }] };
+    const out = ops.applyDeleteGroup([g as never], 'g1', now, STAMP).groups;
     assert.equal(out[0].isDeleted, true);
     assert.equal(out[0].deletedAt, now);
+  });
+
+  it('applyDeleteGroup：空壳会话硬删除，不产生墓碑/deletedAt', () => {
+    const now = iso(NOW);
+    const r = ops.applyDeleteGroup([mkGroup('shell') as never], 'shell', now, STAMP);
+    assert.equal(r.groups.length, 0, '空壳组被物理移除');
+    assert.equal(r.hardDeletedGroupId, 'shell');
   });
 
   it('applyRemoveTab 盖 tab 级 deletedAt=now', () => {

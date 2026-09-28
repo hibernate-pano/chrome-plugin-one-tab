@@ -63,6 +63,10 @@ function memStorage() {
       async getDeviceSeq() { return seqN; },
       async bumpSeqIfLower(c: number) { return c > seqN ? (seqN = c) : seqN; },
     },
+    // 空壳会话硬删除后登记的云端 purge 队列（本地删干净还不够，云端行必须一并删，
+    // 否则下次 downloadAndMerge 以 remote-only 复活）
+    purgedIds: [] as string[],
+    async notePurgedGroup(id: string) { (this as any).purgedIds.push(id); },
   };
 }
 
@@ -108,7 +112,7 @@ describe('mutationHandlers: 编排（读→apply→写→调度上传）', () =>
     assert.equal(stored[0].tabs[0].isDeleted, true);
   });
 
-  it('removeTab 整组清空 → payload.group 为 null；组被墓碑化且也调度 1500', async () => {
+  it('removeTab 整组清空 → payload.group 为 null；空壳组被硬删除并登记云端 purge', async () => {
     const { createMutationHandlers } = await import('@/background/mutationHandlers');
     const deps = memStorage();
     const handlers = createMutationHandlers(deps as any);
@@ -136,7 +140,12 @@ describe('mutationHandlers: 编排（读→apply→写→调度上传）', () =>
     const res = await handlers.handle({ op: 'removeTab', groupId: 'g1', tabId: 't1' });
     assert.equal((res.payload as any).group, null);
     const stored = await deps.getGroups();
-    assert.equal(stored[0].isDeleted, true);
+    // 2026-09-28 统一规则：组内最后一个活跃标签被删 → 组无内容可恢复 → 物理移除，
+    // 不打墓碑（墓碑对空壳没有价值，还会以 isDeleted:false 留在 UI 上变成空会话卡）。
+    assert.equal(stored.length, 0, '空壳组被物理移除，不留墓碑');
+    // 云端行必须一并 purge：本地删了但云端行残留的话，下次下载会以 remote-only 复活。
+    const purged = (deps as any).purgedIds ?? [];
+    assert.deepEqual(purged, ['g1'], '硬删除的组 id 已登记 purge 队列');
   });
 
   it('apply 层抛错 → ok:false + error 文本（如 restoreGroup 未找到）', async () => {

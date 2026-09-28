@@ -154,35 +154,28 @@ export const TabList: React.FC<TabListProps> = ({ searchQuery }) => {
         <SearchResultList searchQuery={searchQuery} />
       ) : layoutMode === 'double' ? (
         <div className="grid grid-cols-1 sm:grid-cols-1 md:grid-cols-2 gap-2 sm:gap-3 md:gap-4">
-          <div className="space-y-2 transition-all duration-300 ease-out">
-            {filteredGroups
-              .filter((_, index) => index % 2 === 0)
-              .map(group => (
-                <DraggableTabGroup
-                  key={group.id}
-                  group={group}
-                  index={filteredGroups.findIndex(item => item.id === group.id)}
-                  moveGroup={(dragIndex, hoverIndex) => {
-                    dispatch(moveGroupAndSync({ dragIndex, hoverIndex }));
-                  }}
-                />
-              ))}
-          </div>
-
-          <div className="space-y-2 transition-all duration-300 ease-out">
-            {filteredGroups
-              .filter((_, index) => index % 2 === 1)
-              .map(group => (
-                <DraggableTabGroup
-                  key={group.id}
-                  group={group}
-                  index={filteredGroups.findIndex(item => item.id === group.id)}
-                  moveGroup={(dragIndex, hoverIndex) => {
-                    dispatch(moveGroupAndSync({ dragIndex, hoverIndex }));
-                  }}
-                />
-              ))}
-          </div>
+          {(() => {
+            // 按次序左右对分：前半进左栏、后半进右栏，读序与单栏一致。
+            // 历史实现用奇偶交替（index % 2），导致阅读顺序错乱（1,3,5… 后 2,4,6…），
+            // 且总数为奇数时左栏恒好多出一个——用户观感就是「左边多一个、右边不匀」。
+            // 奇数时把多出的一项放左栏：左栏是读序起点，视觉与语义都更自然。
+            const mid = Math.ceil(filteredGroups.length / 2);
+            const columns = [filteredGroups.slice(0, mid), filteredGroups.slice(mid)];
+            return columns.map((column, columnIndex) => (
+              <div key={columnIndex} className="space-y-2 transition-all duration-300 ease-out">
+                {column.map(group => (
+                  <DraggableTabGroup
+                    key={group.id}
+                    group={group}
+                    index={filteredGroups.findIndex(item => item.id === group.id)}
+                    moveGroup={(dragIndex, hoverIndex) => {
+                      dispatch(moveGroupAndSync({ dragIndex, hoverIndex }));
+                    }}
+                  />
+                ))}
+              </div>
+            ));
+          })()}
         </div>
       ) : (
         <div className="space-y-2 transition-all duration-300 ease-out">

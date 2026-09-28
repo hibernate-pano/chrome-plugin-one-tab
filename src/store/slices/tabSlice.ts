@@ -479,21 +479,15 @@ export const tabSlice = createSlice({
             return g;
           });
 
-        // 自动清理：跨组移走后源组变空且未锁定 → 立即墓碑化（同步、确定）。
+        // 自动清理：跨组移走后源组变空且未锁定 → 立即物理移除（同步、确定）。
+        // 空组无内容可恢复，不进回收站（与 SW applyMoveTab 的硬删除语义一致）。
         // 历史回归：旧改把空组删除逻辑移到 SortableTabGroup/isMarkedForDeletion
         // 组件，但该组件早已移除，只剩 moveTabAndSync 里 100ms 的异步 deleteGroup
         // dispatch——一旦该异步落空（时序/异常），空组就永久卡在 UI。这里在
-        // reducer 里同步熄掉，与 deleteGroup 的 Redux 效果一致（撤销区可恢复）。
+        // reducer 里同步熄掉。
         if (sourceGroupId !== targetGroupId && shouldAutoDeleteAfterTabRemoval(updatedSourceGroup, '')) {
           state.groups = state.groups.filter(g => g.id !== sourceGroupId);
           state.deletedGroups = state.deletedGroups.filter(g => g.id !== sourceGroupId);
-          state.deletedGroups.push({
-            ...updatedSourceGroup,
-            isDeleted: true,
-            version: (updatedSourceGroup.version || 1) + 1,
-            updatedAt: now,
-            deletedAt: now,
-          });
           if (state.activeGroupId === sourceGroupId) {
             state.activeGroupId = null;
           }
@@ -562,7 +556,9 @@ export const tabSlice = createSlice({
       .addCase(deleteGroup.fulfilled, (state, action) => {
         const removed = state.groups.find(g => g.id === action.payload);
         state.groups = state.groups.filter(g => g.id !== action.payload);
-        if (removed) {
+        // 空壳会话（无活跃标签）不进恢复视图：没有内容可恢复，留着只是回收站噪音。
+        // 与 SW applyDeleteGroup 的硬删除语义保持一致（乐观层与单写者不得分叉）。
+        if (removed && !shouldAutoDeleteAfterTabRemoval(removed, '')) {
           // 误删保护：被删组进入恢复视图（墓碑）
           state.deletedGroups = state.deletedGroups.filter(g => g.id !== action.payload);
           state.deletedGroups.push({
@@ -664,19 +660,10 @@ export const tabSlice = createSlice({
         // 只清对应项：在途的其他备份继续保留，等待各自的 settled
         if (state.optimisticBackups) delete state.optimisticBackups[backupKeyOf(groupId, tabId)];
         if (group === null) {
-          // 组内最后一个活跃 tab 被移除 → 整组软删：镜像 deleteGroup.fulfilled（误删保护视图同语义）
-          const removed = state.groups.find(g => g.id === groupId);
+          // 组内最后一个活跃 tab 被移除 → 整组硬删除：空组无内容可恢复，不进回收站
+          // （与 SW applyRemoveTab 的硬删除语义一致，避免界面闪现一条马上消失的恢复项）
           state.groups = state.groups.filter(g => g.id !== groupId);
-          if (removed) {
-            state.deletedGroups = state.deletedGroups.filter(g => g.id !== groupId);
-            state.deletedGroups.push({
-              ...removed,
-              isDeleted: true,
-              deletedAt: new Date().toISOString(),
-              version: (removed.version || 1) + 1,
-              updatedAt: new Date().toISOString(),
-            });
-          }
+          state.deletedGroups = state.deletedGroups.filter(g => g.id !== groupId);
           if (state.activeGroupId === groupId) {
             state.activeGroupId = null;
           }
