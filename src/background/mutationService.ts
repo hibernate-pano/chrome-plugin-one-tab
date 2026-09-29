@@ -43,8 +43,9 @@ export const mutationService = createMutationHandlers({
   now: () => new Date().toISOString(),
   journal,
   seq,
-  // P1-6：purge 出队记入持久化队列，由 SyncEngine.upload 删云端行后 clear。
-  notePurgedGroup: id => storage.addPendingPurgeId(id),
+  // 无墓碑模型：物理删除的组登记 pendingDeleteIds，由 SyncEngine.upload
+  // markCloudGroupsAsDeleted 标记云端行（删除广播）后 clear。
+  noteGroupDeleted: id => storage.addPendingDeleteId(id),
   // V2 影子双写：落盘成功后异步翻译写入 Y.Doc（读仍走 blob）。
   // 灰度/开关/吞错全在 maybeShadowWrite 内部；此处仅做依赖绑定。
   shadowWrite: ({ op, stamp, now }) =>

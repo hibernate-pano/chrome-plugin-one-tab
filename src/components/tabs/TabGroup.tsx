@@ -119,7 +119,7 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
 
     showConfirm({
       title: '删除确认',
-      message: '确定要删除这个会话吗？',
+      message: '确定要删除这个会话吗？删除后无法恢复。',
       type: 'danger',
       confirmText: '删除',
       cancelText: '取消',

@@ -10,8 +10,6 @@ export type MutationOp =
   | { op: 'removeTab'; groupId: string; tabId: string }          // 点开=移出、显式删除，同语义
   | { op: 'deleteGroup'; groupId: string }
   | { op: 'deleteAllGroups' }
-  | { op: 'restoreGroup'; groupId: string }
-  | { op: 'purgeGroup'; groupId: string }
   | { op: 'importGroups'; groups: TabGroup[] }
   | { op: 'renameGroup'; groupId: string; name: string }
   | { op: 'toggleGroupLock'; groupId: string }

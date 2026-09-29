@@ -679,7 +679,52 @@ export const uploadSync = {
       ((remaining ?? []) as unknown) as Array<{ id: string }>
     );
     if (!cmp.ok) throw new Error(`[purgeCloudGroups] ${cmp.reason}`);
-    logInfo(`[purgeCloudGroups] 已彻底删除 ${purgedIds.length} 个云端组`);
+      logInfo(`[purgeCloudGroups] 已彻底删除 ${purgedIds.length} 个云端组`);
+  },
+
+  // 无墓碑模型：云端墓碑行的使命是让所有在线设备服从删除。行数只增不减会
+  // 重演本地墓碑坟场的问题，故按龄期物理清理：is_deleted=true 且
+  // deleted_at（缺列回退 updated_at）早于 maxAgeDays 的行整行 DELETE。
+  // 30 天未上线的设备其活跃副本会重新出现——与旧模型「回收站到期」复活风险同类。
+  // 返回本次物理删除的行数；无删除广播列的环境（hard-delete 降级）直接返回 0。
+  async purgeExpiredCloudTombstones(maxAgeDays: number = 30) {
+    if (maxAgeDays <= 0) return 0;
+    const [tombstoneColumn, deletedAtColumn] = await Promise.all([
+      supportsCloudTombstone(),
+      supportsDeletedAt(),
+    ]);
+    if (!tombstoneColumn) return 0;
+
+    const { data: sessionData } = await supabase.auth.getSession();
+    const userId = sessionData?.session?.user?.id as string | undefined;
+    if (!userId) return 0;
+
+    const cutoff = new Date(Date.now() - maxAgeDays * 24 * 60 * 60 * 1000).toISOString();
+    const timeColumn = deletedAtColumn ? 'deleted_at' : 'updated_at';
+    const { data: expired, error } = await supabase
+      .from('tab_groups')
+      .select('id')
+      .eq('user_id', userId)
+      .eq('is_deleted', true)
+      .lt(timeColumn, cutoff);
+    if (error) {
+      logWarn('[purgeExpiredCloudTombstones] 读取过期墓碑失败（下轮重试）:', error);
+      return 0;
+    }
+    const ids = ((expired ?? []) as Array<{ id: string }>).map(r => r.id);
+    if (ids.length === 0) return 0;
+
+    const { error: deleteError } = await supabase
+      .from('tab_groups')
+      .delete()
+      .eq('user_id', userId)
+      .in('id', ids);
+    if (deleteError) {
+      logWarn('[purgeExpiredCloudTombstones] 删除过期墓碑失败（下轮重试）:', deleteError);
+      return 0;
+    }
+    logInfo(`[purgeExpiredCloudTombstones] 已清理 ${ids.length} 个超过 ${maxAgeDays} 天的云端墓碑行`);
+    return ids.length;
   },
   // 上传用户设置
   async uploadSettings(settings: UserSettings) {

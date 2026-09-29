@@ -36,13 +36,13 @@ const NOW = '2026-09-28T14:00:00.000Z';
 let compareUploadReadback: typeof import('../src/utils/supabase/readback.ts').compareUploadReadback;
 let isSupersededByCloud: typeof import('../src/utils/supabase/readback.ts').isSupersededByCloud;
 let normalizeTabsData: typeof import('../src/core/normalizeTabsData.ts').normalizeTabsData;
-let isEmptyShellGroup: typeof import('../src/core/mutationOps.ts').isEmptyShellGroup;
+let isEmptyGroup: typeof import('../src/core/mutationOps.ts').isEmptyGroup;
 
 before(async () => {
   register(LOADER_PATH, import.meta.url);
   ({ compareUploadReadback, isSupersededByCloud } = await import('../src/utils/supabase/readback.ts'));
   ({ normalizeTabsData } = await import('../src/core/normalizeTabsData.ts'));
-  ({ isEmptyShellGroup } = await import('../src/core/mutationOps.ts'));
+  ({ isEmptyGroup } = await import('../src/core/mutationOps.ts'));
 });
 
 describe('同步审计修复 · 读回校验能识别"被合法取代"', () => {
@@ -74,16 +74,16 @@ describe('同步审计修复 · 读回校验能识别"被合法取代"', () => {
 });
 
 describe('同步审计修复 · 读不出来 ≠ 是空的', () => {
-  it('形状无法恢复的 tabs_data 归一化成空数组后会被判为空壳（这正是隐患）', () => {
-    // 旧行为：这里返回 []，下游当成"零标签的组" → 硬删除 + purge 云端行
+  it('形状无法恢复的 tabs_data 归一化成空数组后会被判为空组（这正是隐患）', () => {
+    // 旧行为：这里返回 []，下游当成"零标签的组" → 物理移除 + 广播删除云端行
     const normalized = normalizeTabsData({ someUnrecoverableShape: 1 }, 'g1');
     assert.deepEqual(normalized, []);
 
-    const wouldBeShell = isEmptyShellGroup({
+    const wouldBeEmpty = isEmptyGroup({
       id: 'g1', name: 'g', tabs: normalized,
       createdAt: NOW, updatedAt: NOW, isLocked: false, version: 1,
     } as any);
-    assert.equal(wouldBeShell, true, '确认：空数组会被判为空壳——所以下载侧必须提前跳过');
+    assert.equal(wouldBeEmpty, true, '确认：空数组会被判为空组——所以下载侧必须提前跳过');
   });
 
   it('真正的空数组仍然归一化为空（不能把合法的空组也当不可信）', () => {

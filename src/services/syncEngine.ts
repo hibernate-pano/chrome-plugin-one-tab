@@ -13,7 +13,7 @@ import {
   downloadTabGroupsDigest,
   uploadTabGroups,
   markCloudGroupsAsDeleted,
-  purgeCloudGroups,
+  purgeExpiredCloudTombstones,
 } from '@/services/tabGroupSyncService';
 import { uploadSettings, downloadSettings } from '@/services/settingsSyncService';
 import {
@@ -24,12 +24,9 @@ import {
 // 阶段二（§5 + §9）：合并语义已统一为 mergeOpStamped（OpStamp 全序决胜）。
 // 旧 LWW 合并 mergeTabGroups 已隔离至 @/utils/syncUtils.legacy（⛔禁接回生产）。
 import { mergeOpStamped } from '@/utils/opStampMerge';
-import { dropEmptyShellGroups, isEmptyShellGroup } from '@/core/mutationOps';
-import { createSeqRegistry, maxObservedSeq } from '@/utils/seqRegistry';
+import { dropEmptyGroups, removedGroupIds } from '@/core/mutationOps';
 import { ensureOpStampMigrated } from '@/background/opStampMigratedGuard';
-import { getDeviceId } from '@/utils/deviceUtils';
 import { ensureAuthenticated } from '@/utils/authGuard';
-import { kvGet, kvSet } from '@/storage/storageAdapter';
 import { errorHandler } from '@/utils/errorHandler';
 import { validateThemeStyle, validateThemeMode } from '@/utils/storage';
 import { logError, logInfo, logWarn } from '../utils/log';
@@ -226,23 +223,21 @@ export class SyncEngine {
       logWarn('[SyncEngine] 印记迁移兜底失败（不阻塞同步）:', err);
     }
 
-    // forceRemote（"从云端下载（覆盖）"）此前完全绕过 purge 队列：本地已
-    // "彻底删除"（回收站清空）的组，其墓碑行仍在云端，覆盖下载会把它连同
-    // 标签一起拉回回收站；随后上传把它 purge 掉，但本地那份因为并集语义
-    // （lg && !cg → 保留本地）永远留着——一个删不掉的僵尸条目。
-    // 非 forceRemote 路径由 decideDownloadPrecheck 的 upload_first 间接覆盖
-    // （upload 会先 purgeCloudGroups），缺口只在这条显式覆盖路径。
+    // forceRemote（"从云端下载（覆盖）"）此前完全绕过删除广播队列：本地已物理删除、
+    // 还没标记到云端的组，其活跃行仍在云端，覆盖下载会把它连同标签一起拉回来。
+    // 覆盖语义 = 云端完全镜像本地：先把队列里的删除意图标记到云端（行保留 is_deleted），
+    // 再让覆盖上传用本地全量重建云端。
     if (opts?.forceRemote) {
       try {
-        const pendingPurge = await storage.getPendingPurgeIds();
-        if (pendingPurge.length > 0) {
-          await purgeCloudGroups(pendingPurge);
-          await storage.clearPendingPurgeIds();
-          logInfo(`[SyncEngine] 覆盖下载前已清除 ${pendingPurge.length} 条待 purge 的云端行`);
+        const pendingDeletes = await storage.getPendingDeleteIds();
+        if (pendingDeletes.length > 0) {
+          await markCloudGroupsAsDeleted(pendingDeletes);
+          await storage.clearPendingDeleteIds();
+          logInfo(`[SyncEngine] 覆盖下载前已广播 ${pendingDeletes.length} 条删除意图`);
         }
       } catch (err) {
         // 不阻断覆盖下载：用户明确选了覆盖语义，但要让日志留下"可能复活"的痕迹
-        logWarn('[SyncEngine] 覆盖下载前清理 purge 队列失败（已清空的会话可能被拉回）:', err);
+        logWarn('[SyncEngine] 覆盖下载前广播删除意图失败（已删组可能被拉回）:', err);
       }
     }
 
@@ -348,8 +343,6 @@ export class SyncEngine {
       // 2. 下载云端
       const cloudGroups = await downloadTabGroups();
       report(55, 'download');
-      // 3. 确定本地
-      const localGroups = opts?.forceRemote ? [] : snapshot;
       // 3.5 覆盖模式：同步设置（与旧 smartSyncService 的 overwriteLocal 行为一致）
       if (opts?.forceRemote && opts?.syncSettings) {
         try {
@@ -358,26 +351,15 @@ export class SyncEngine {
           logWarn('[SyncEngine] 覆盖下载时同步设置失败（不阻塞主流程）:', err);
         }
       }
+      // 3. 确定本地。覆盖模式（forceRemote）= 云端完全镜像本地：本地置空，
+      //    merge 退化为「云端活跃行直通」（云端墓碑行被 merge 跳过，永不入库）。
+      //    正常模式剥掉本地残留的组级墓碑（老版本写入形状，见上）。
+      const localGroups = opts?.forceRemote ? [] : snapshot.filter(g => !g.isDeleted);
       // 4. 合并
-      // 阶段二·§5：合并语义切换到 mergeOpStamped（OpStamp 全序决胜）。
-      // mergeStamp 取本设备 nextSeq：合并设备产生的 URL 去重败者盖本设备 stamp，
-      // 由此下载本身成为本设备的一次「合并操作」，与用户操作共享全序空间。
-      const deviceId = await getDeviceId();
-      const seqRegistry = createSeqRegistry({
-        kvGet, kvSet,
-        getGroups: () => storage.getGroups(),
-      });
-      // 合并印记必须大于「本地 + 云端」观察到的所有印记：seqRegistry.current() 只读
-      // 合并前的本地快照，而本次合并产生的墓碑（§5.4 URL 败者）若不大于刚下载到的
-      // 云端印记，下次合并就会被云端那条更新的记录原样复活。
-      const observed = maxObservedSeq([...localGroups, ...cloudGroups]);
-      let mergeSeq = await seqRegistry.nextSeq();
-      if (observed !== null && observed >= mergeSeq) {
-        mergeSeq = await seqRegistry.bumpSeqIfLower(observed + 1);
-      }
-      const mergedGroups = mergeOpStamped(localGroups, cloudGroups, {
-        mergeStamp: { d: deviceId, s: mergeSeq },
-      });
+      // 无墓碑模型（2026-09-29）：组级 LWW 整组覆盖（语义见 mergeOpStamped 头注释）。
+      // 云端 is_deleted 行 = 删除广播：对端活跃副本 stamp 更旧则服从删除；
+      // 本地离线修改更新则保留。合并不产生新实体、不铸 mergeStamp。
+      const mergedGroups = mergeOpStamped(localGroups, cloudGroups);
       report(80, 'download');
       // 5. 验证
       const validation = validateMergeResult(localGroups, cloudGroups, mergedGroups);
@@ -392,38 +374,36 @@ export class SyncEngine {
       }
       // 6. 写入（P1-4：直写落盘，不经过防抖窗口）
       //
-      // 【空壳会话清理】合并结果的组墓碑语义管不到"被剥空"的组：mergeTabsOpStamped
-      // 的 URL 去重只盖标签级墓碑，组墓碑不置位，于是剥空的组以 isDeleted:false 落盘，
-      // 在 UI 渲染成空会话卡，且每轮后台同步都有机会再剥空一个——空组越攒越多。
-      // 统一规则（空组无内容可恢复 → 物理移除，见 core/mutationOps.dropEmptyShellGroups）
-      // 在这里落地：合并结果先剔除空壳再落盘，并把 id 登记进 purge 队列让云端行
-      // 一并删除——只删本地的话云端行残留，下次下载会以 remote-only 复活。
-      const shellsDropped = mergedGroups.filter(isEmptyShellGroup);
-      const finalGroups = dropEmptyShellGroups(mergedGroups);
+      // 【空组统一规则】合并结果剔除空组（无内容可恢复；锁定组豁免）。
+      // 物理模型下正常合并不产生空组（组是整体进出的），此处仅兜底：
+      // 老版本设备写入的空壳/导入的空组随 LWW 赢家到达时不再落地。
+      // 被剔除的组登记删除广播队列，云端行由 upload 标记 is_deleted。
+      // 【空组统一规则】合并结果剔除空组（无内容可恢复；锁定组豁免）。
+      // 物理模型下正常合并不产生空组（组是整体进出的），此处仅兜底：
+      // 老版本设备写入的空壳/导入的空组随 LWW 赢家到达时不再落地。
+      const finalGroups = dropEmptyGroups(mergedGroups);
       await storage.setGroupsImmediate(finalGroups);
-      // purge 队列必须伴随 pending_upload 置位，否则入队了也没人执行：
-      // backgroundSync 只在 hasPendingUpload() 为真时才上传，而下载路径此前
-      // 从不置这个标志 → 云端行永远删不掉；同时云端多出来的行让
-      // hasRemoteChanges 的行数比对恒不相等 → 探活永久失效 → 每 60 秒一次
-      // 全量 select *（带全部 tabs_data 大 JSONB），持续烧 Supabase 额度。
-      // 这里显式置位：本地确实产生了需要上云的变更（待删的行）。
-      let purgeQueued = false;
-      if (shellsDropped.length > 0) {
-        for (const g of shellsDropped) {
+      // 广播队列必须伴随 pending_upload 置位，否则入队了也没人执行：
+      // backgroundSync 只在 hasPendingUpload() 为真时才上传，而下载路径
+      // 从不置这个标志 → 云端行永远标记不到 → 对端复活。
+      let deleteQueued = false;
+      const droppedIds = removedGroupIds(mergedGroups, finalGroups);
+      if (droppedIds.length > 0) {
+        for (const id of droppedIds) {
           try {
-            await storage.addPendingPurgeId(g.id);
-            purgeQueued = true;
+            await storage.addPendingDeleteId(id);
+            deleteQueued = true;
           } catch (e) {
-            logWarn('[SyncEngine] 登记空壳 purge 队列失败（云端行可能残留复活）:', g.id, e);
+            logWarn('[SyncEngine] 登记删除广播队列失败（云端行可能残留复活）:', id, e);
           }
         }
-        logInfo(`[SyncEngine] 合并清掉 ${shellsDropped.length} 个空壳会话并登记云端 purge`);
+        logInfo(`[SyncEngine] 合并剔除 ${droppedIds.length} 个空组并登记删除广播`);
       }
-      if (purgeQueued) {
+      if (deleteQueued) {
         try {
           await storage.setPendingUpload(true);
         } catch (e) {
-          logWarn('[SyncEngine] 置位 pending_upload 失败（purge 队列可能滞留）:', e);
+          logWarn('[SyncEngine] 置位 pending_upload 失败（删除广播可能滞留）:', e);
         }
       }
       // 7. 更新同步时间
@@ -472,9 +452,10 @@ export class SyncEngine {
 
   /**
    * 上传本地数据到云端。
-   * 流程：读取 → 分离活跃组/软删 ID → 上传活跃组 → 标记云端软删。
-   * 失败不影响本地数据。
-   * @param opts.includeDeleted 是否包含软删标记（deleteAllGroups 场景）
+   * 无墓碑模型：本地全部是活跃组（老版本残留墓碑见下），删除意图走
+   * pendingDeleteIds 队列 → markCloudGroupsAsDeleted（UPDATE is_deleted=true，
+   * 行保留 = 对端的删除广播载体）。失败不影响本地数据。
+   * @param opts.includeDeleted 是否包含删除广播（false 仅测试用）
    */
   async upload(opts?: {
     includeDeleted?: boolean;
@@ -512,17 +493,19 @@ export class SyncEngine {
       invalidateGroupsCache();
       const allGroups = await storage.getGroups();
       const activeGroups = allGroups.filter(g => !g.isDeleted);
-      const deletedIds = allGroups.filter(g => g.isDeleted).map(g => g.id);
+      // 老版本设备写入的本地组级墓碑（迁移前的残留形状）：它们的删除意图
+      // 已随旧模型上过云，这里兜底再标记一次，标记成功后从本地物理清除
+      // （新模型本地不留墓碑，见文件头）。
+      const legacyTombstoneIds = allGroups.filter(g => g.isDeleted).map(g => g.id);
 
       const overwriteCloud = opts?.overwriteCloud || false;
       let skippedOverwrite: UploadResult['skippedOverwrite'];
       // 本次 upsert 已经写上云的墓碑 id（覆盖模式才可能非空）。
       let writtenTombstoneIds: Set<string> = new Set();
       if (activeGroups.length > 0) {
-        // 覆盖模式把墓碑一起交给 uploadTabGroups：覆盖会先删空云端，墓碑必须
+        // 覆盖模式把残留墓碑一起交给 uploadTabGroups：覆盖会先删空云端，墓碑必须
         // 随同一次 upsert 写上云（selectRowsForUpload 决定实际写入哪些行），
         // 否则删除意图随覆盖一起丢失，另一端的活跃副本下次合并即复活。
-        // 合并模式仍只传活跃组（墓碑走 markCloudGroupsAsDeleted）。
         const up = await uploadTabGroups(overwriteCloud ? allGroups : activeGroups, overwriteCloud);
         writtenTombstoneIds = new Set(up?.writtenTombstoneIds ?? []);
       } else if (overwriteCloud) {
@@ -542,25 +525,33 @@ export class SyncEngine {
       //   (b) 严格 LT 守卫（BEFORE UPDATE）可能把第二次写静默吞掉，与 upsert
       //       写入的印记互相打架 → verifyUploadReadback 的 checkStamp 永远对不上
       //       → 抛错、pending_upload 保留 → 上传永久卡在重试循环。
-      // 今天能跑通只是因为覆盖的 DELETE 删在 upsert 前（于是 upsert 走 INSERT，
-      // 守卫根本不参与）——那是 upload.ts 内部的隐式不变量，碎了就是 P1 事故。
-      // 未被 upsert 写到的墓碑（hard-delete 降级、或无活跃组导致覆盖被跳过）
-      // 仍然要交回 markCloudGroupsAsDeleted，删除意图一条都不能漏。
-      const cloudDeleteIds = deletedIds.filter(id => !writtenTombstoneIds.has(id));
+      // 未被 upsert 写到的墓碑仍然要交回 markCloudGroupsAsDeleted，删除意图一条都不能漏。
+      // P0-2：markCloudGroupsAsDeleted 抛错（写失败、读回不一致、未登录跳过）直接
+      // 上浮到外层 catch → 本次 upload 整体失败，pending_upload 与删除队列保留，
+      // 下轮 alarm 重试。禁止吞错假装成功（云端没标记、下次下载直接复活）。
+      const pendingDeleteIds = await storage.getPendingDeleteIds();
+      const cloudDeleteIds = [...new Set([
+        ...pendingDeleteIds,
+        ...legacyTombstoneIds.filter(id => !writtenTombstoneIds.has(id)),
+      ])];
       if (cloudDeleteIds.length > 0 && opts?.includeDeleted !== false) {
-        // P0-2：软删失败必须阻断上传成功。markCloudGroupsAsDeleted 抛错（写失败、
-        // 读回不一致、未登录跳过）直接上浮到外层 catch → 本次 upload 整体失败，
-        // pending_upload 保留、lastUploadTime 不刷，下轮 alarm 重试。
-        // 禁止在此 try/catch 吞掉只 console.error（那会清 pending 假装成功，
-        // 云端没删、下次下载直接复活）。
         await markCloudGroupsAsDeleted(cloudDeleteIds);
       }
-      // P1-6：本地已 purge 的组，云端墓碑行必须同步彻底删除，否则下次下载
-      // 以 remote-only 复活。删后才 clear 队列；抛错则阻断本次上传成功、下轮重试。
-      const pendingPurgeIds = await storage.getPendingPurgeIds();
-      if (pendingPurgeIds.length > 0) {
-        await purgeCloudGroups(pendingPurgeIds);
-        await storage.clearPendingPurgeIds();
+      // 广播成功 → 清删除队列；本地残留墓碑物理清除（云端已有 is_deleted 行，
+      // 本地副本不再承担任何职责——新模型本地 storage 永远只有活跃数据）。
+      await storage.clearPendingDeleteIds();
+      if (legacyTombstoneIds.length > 0) {
+        await storage.setGroupsImmediate(activeGroups);
+        logInfo(`[SyncEngine] 已广播 ${legacyTombstoneIds.length} 个老版本残留墓碑并从本地清除`);
+      }
+      // 云端墓碑 TTL：删除广播行的使命是让所有在线设备服从删除；30 天后物理
+      // 删除（防云端行只增不减）。30 天未上线的设备其活跃副本会重新出现——
+      // 与旧模型「7 天回收站到期」的复活风险同类，且窗口更长。
+      // 失败不阻断上传（下轮再试），TTL 只延迟。
+      try {
+        await purgeExpiredCloudTombstones();
+      } catch (err) {
+        logWarn('[SyncEngine] 云端墓碑 TTL 清理失败（下轮上传重试）:', err);
       }
       // 设置同步：与旧 smartSyncService.uploadToCloud 一致（上传标签组后总带上传设置）
       // ponytail: 必须从 storage 读——SW 冷启动时 store.settings 是代码默认值，

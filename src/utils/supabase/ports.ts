@@ -20,6 +20,8 @@ export interface SupabaseSyncPort {
   ): Promise<{ result: any; writtenTombstoneIds?: string[] }>;
   markCloudGroupsAsDeleted(deletedIds: string[]): Promise<void>;
   purgeCloudGroups(purgedIds: string[]): Promise<void>;
+  /** 无墓碑模型：物理删除云端过期墓碑行（is_deleted=true 且 deleted_at 早于龄期）。 */
+  purgeExpiredCloudTombstones(maxAgeDays?: number): Promise<number>;
   fetchTabGroupsDigest(): Promise<TabGroupDigest[]>;
   downloadTabGroups(): Promise<TabGroup[]>;
   uploadSettings(settings: UserSettings): Promise<any>;

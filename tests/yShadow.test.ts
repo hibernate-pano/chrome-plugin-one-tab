@@ -88,7 +88,7 @@ describe('yTranslate: MutationOp → Y 计划', () => {
     assert.equal((upserts[0] as { group: { id: string } }).group.id, 'g1');
     assert.equal(plans[plans.length - 1].kind, 'setOrder');
   });
-  it('翻译表全覆盖：13 种 op 均可翻译，purgeGroup 生成 removeGroup', async () => {
+  it('翻译表全覆盖：11 种 op 均可翻译（upsert + setOrder）', async () => {
     const { planShadowSync } = await import('@/core/yTranslate');
     const g = mkGroup('g1', [mkTab('t1')], { lastOp: { ...STAMP } });
     const ops = [
@@ -96,7 +96,6 @@ describe('yTranslate: MutationOp → Y 计划', () => {
       { op: 'removeTab', groupId: 'g1', tabId: 't1' },
       { op: 'deleteGroup', groupId: 'g1' },
       { op: 'deleteAllGroups' },
-      { op: 'restoreGroup', groupId: 'g1' },
       { op: 'importGroups', groups: [g] },
       { op: 'renameGroup', groupId: 'g1', name: 'n' },
       { op: 'toggleGroupLock', groupId: 'g1' },
@@ -109,8 +108,27 @@ describe('yTranslate: MutationOp → Y 计划', () => {
       const plans = planShadowSync(op as never, [g] as never, STAMP, NOW);
       assert.ok(plans.length >= 2, `${(op as { op: string }).op} 应产出 upsert+order`);
     }
-    const purge = planShadowSync({ op: 'purgeGroup', groupId: 'g1' } as never, [] as never, STAMP, NOW);
-    assert.equal(purge[0].kind, 'removeGroup');
+  });
+
+  it('无墓碑模型：物理删除经 setOrder 修剪传播（快照缺席的组从影子移除）', async () => {
+    const { planShadowSync, applyYPlans, newYState } = await import('@/core/yTranslate');
+    const g1 = mkGroup('g1', [mkTab('t1')], { lastOp: { ...STAMP } });
+    const g2 = mkGroup('g2', [mkTab('t2')], { lastOp: { ...STAMP } });
+
+    // 先把两个组写进影子
+    const s = newYState();
+    applyYPlans(s, planShadowSync({ op: 'importGroups', groups: [g1, g2] } as never, [g1, g2] as never, STAMP, NOW), STAMP);
+    assert.equal(s.groups.size, 2);
+
+    // deleteGroup g1：快照只剩 g2（组物理移除），plans 无专门 removeGroup，
+    // 修剪由 setOrder 承担——g1 的组记录与 tabs 镜像全部消失
+    const plans = planShadowSync({ op: 'deleteGroup', groupId: 'g1' } as never, [g2] as never, { d: 'devTest', s: 3 }, NOW);
+    assert.ok(!plans.some(p => p.kind === 'removeGroup'), '无墓碑模型不再生成专门 removeGroup 计划');
+    applyYPlans(s, plans, { d: 'devTest', s: 3 });
+    assert.equal(s.groups.has('g1'), false, '快照缺席的组被修剪');
+    assert.equal(s.groups.has('g2'), true, '存留组不受影响');
+    assert.equal([...s.tabs.keys()].some(k => k.startsWith('g1:')), false, '被修剪组的 tabs 镜像一并移除');
+    assert.deepEqual(s.order, ['g2']);
   });
   it('applyYPlans 幂等：同一 plans 应用两次结果一致', async () => {
     const { planShadowSync, applyYPlans, newYState } = await import('@/core/yTranslate');
@@ -327,7 +345,7 @@ describe('mutationHandlers 影子接线：成功后触发、失败不阻断', ()
     const res = await handlers.handle({ op: 'deleteAllGroups' });
     assert.equal(res.ok, true);
   });
-  it('主写失败（restoreGroup 未找到）→ shadowWrite 不被调用', async () => {
+  it('主写失败（无效 moveGroup 索引）→ shadowWrite 不被调用', async () => {
     const { createMutationHandlers } = await import('@/background/mutationHandlers');
     const deps = memStorage();
     let called = 0;
@@ -335,7 +353,7 @@ describe('mutationHandlers 影子接线：成功后触发、失败不阻断', ()
       ...deps,
       shadowWrite: () => { called++; },
     } as never);
-    const res = await handlers.handle({ op: 'restoreGroup', groupId: 'missing' });
+    const res = await handlers.handle({ op: 'moveGroup', dragIndex: 0, hoverIndex: 5 });
     await new Promise(r => setTimeout(r, 10));
     assert.equal(res.ok, false);
     assert.equal(called, 0);

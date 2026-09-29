@@ -191,115 +191,6 @@ export async function fetchGroups(): Promise<TabGroup[]> {
   return tabGroups;
 }
 
-/** 仅加载已软删（墓碑）的会话，供 Web 误删恢复视图使用 */
-export async function fetchDeletedGroups(): Promise<TabGroup[]> {
-  const current = await getCurrentUser();
-  if (!current) {
-    throw new WebAuthError('未登录');
-  }
-  const userId = current.id;
-  const { data: rows, error } = await supabase
-    .from('tab_groups')
-    .select('*')
-    .eq('user_id', userId)
-    .eq('is_deleted', true)
-    .order('updated_at', { ascending: false });
-
-  if (error) {
-    throw new Error(error.message);
-  }
-
-  const groups: TabGroup[] = [];
-  for (const row of rows ?? []) {
-    const group = await decryptRowToGroup(row as Record<string, unknown>, userId);
-    if (group) {
-      group.isDeleted = true;
-      groups.push(group);
-    }
-  }
-  return groups;
-}
-
-/**
- * 恢复已软删的会话（S5：与扩展 restoreGroup 同语义——复位活跃 + 组 stamp 提升，
- * 使恢复意图在跨端合并时盖过删除前的旧 stamp；无印记列时退化为 plain 复位）。
- */
-export async function restoreGroup(groupId: string): Promise<void> {
-  const userId = await requireUserId();
-  const now = new Date().toISOString();
-  if (await supportsOpStamp()) {
-    // 读现 seq 铸新 stamp（OLD+1，归属本设备；读不到则从 1 起，仍盖过无印记旧行）
-    let cloudSeq: number | null = null;
-    try {
-      const { data } = await supabase
-        .from('tab_groups')
-        .select('last_op_seq')
-        .eq('id', groupId)
-        .eq('user_id', userId)
-        .single();
-      if (data && typeof (data as Record<string, unknown>).last_op_seq === 'number') {
-        cloudSeq = (data as Record<string, unknown>).last_op_seq as number;
-      }
-    } catch {
-      // 读失败不断恢复流程：降级用基准 stamp（下文列缺失时还会再退 plain）
-    }
-    const stamp = mintWebStamp(await getDeviceId(), cloudSeq);
-    const { error } = await supabase
-      .from('tab_groups')
-      .update({ is_deleted: false, updated_at: now, last_op_device: stamp.d, last_op_seq: stamp.s })
-      .eq('id', groupId)
-      .eq('user_id', userId);
-    if (!error) return;
-    // 列探测缓存与实际 schema 不一致（42703/PGRST204）→ 退 plain 复位，不中断恢复
-    if (/42703|PGRST204|column/i.test(`${error.code ?? ''} ${error.message ?? ''}`)) {
-      const { error: plainError } = await supabase
-        .from('tab_groups')
-        .update({ is_deleted: false, updated_at: now })
-        .eq('id', groupId)
-        .eq('user_id', userId);
-      if (plainError) throw new Error(plainError.message);
-      return;
-    }
-    throw new Error(error.message);
-  }
-  const { error } = await supabase
-    .from('tab_groups')
-    .update({ is_deleted: false, updated_at: now })
-    .eq('id', groupId)
-    .eq('user_id', userId);
-  if (error) throw new Error(error.message);
-}
-
-/**
- * 云端彻底删除（S5：与扩展 purgeGroup 门禁对齐——仅允许 purge 回收站中的墓碑组。
- * 活跃组直接物理移除会绕过墓碑广播，对端活跃副本下轮上传即幽灵复活；
- * 无 is_deleted 列的旧云端无法设门，沿用历史硬删行为。）
- */
-export async function purgeGroupPermanent(groupId: string): Promise<void> {
-  const userId = await requireUserId();
-  if (await supportsCloudTombstone()) {
-    const { data, error: getErr } = await supabase
-      .from('tab_groups')
-      .select('is_deleted')
-      .eq('id', groupId)
-      .eq('user_id', userId)
-      .single();
-    if (getErr) {
-      if (getErr.code === 'PGRST116') throw new Error('未找到该标签组');
-      throw new Error(getErr.message);
-    }
-    if (!(data as Record<string, unknown>)?.is_deleted) {
-      throw new Error('仅允许彻底删除回收站中的已删除组（请先删除该组后再清空）');
-    }
-  }
-  const { error } = await supabase
-    .from('tab_groups')
-    .delete()
-    .eq('id', groupId)
-    .eq('user_id', userId);
-  if (error) throw new Error(error.message);
-}
-
 export { supabase };
 
 /** 导出为插件 JSON 备份格式（与扩展端 storage.exportData 结构一致） */
@@ -354,13 +245,14 @@ export async function renameGroup(groupId: string, name: string): Promise<void> 
   if (error) throw new Error(error.message);
 }
 
-/** 删除标签组（双轨：云端有 is_deleted 列 → 软删墓碑；无列 → 回退硬删） */
+/**
+ * 删除标签组：UPDATE is_deleted=true（行保留 = 跨设备删除广播载体）。
+ * 无 is_deleted 列的旧云端 → 回退硬删。
+ */
 export async function deleteGroup(groupId: string): Promise<void> {
   const userId = await requireUserId();
 
   if (await supportsCloudTombstone()) {
-    // tombstone：保留行标记 is_deleted=true 并推新 updated_at，
-    // 这样扩展端同步时能收到删除意图，不会"复活"已删组
     const { error } = await supabase
       .from('tab_groups')
       .update({ is_deleted: true, updated_at: new Date().toISOString() })
@@ -380,16 +272,17 @@ export async function deleteGroup(groupId: string): Promise<void> {
 }
 
 /**
- * 删除标签组中的单个标签（S5：与扩展端同口径的墓碑命令，纯变换见 @/core/webTombstone）。
- * 旧行为「解密-过滤-重加密」物理移除 tab，跨端合并时扩展端无法识别删除意图而复活；
- * 现行为：墓碑 tab 保留在 tabs_data 内（isDeleted/is_deleted + stamp），组行 updated_at
- * 与组 stamp 同步提升；删后无活跃 tab 且未锁定则整行盖组级墓碑（与 applyRemoveTab 同语义）。
+ * 删除标签组中的单个标签（无墓碑模型：物理移除 + 组级 LWW 广播）。
+ * 流程：解密 → 按 id 物理剔除 → 组 stamp 提升（OLD+1）→ 重加密整组回写。
+ * 对端下次合并按组 stamp 整组覆盖，删除随整组行广播（见 @/core/opStampMerge）。
+ * 删后无 tab 且未锁定 → 整行盖删除广播（is_deleted=true），与扩展端
+ * applyRemoveTab 拿空组的语义一致。
  * 加密/解密失败整批中止（不写任何列）；RLS 不变（全程 user_id 自带 + 同表同策略）。
  */
 export async function deleteTab(groupId: string, tabId: string): Promise<void> {
   const userId = await requireUserId();
 
-  // 读取当前行（含墓碑/印记列；列缺失时回退最小列，与 digest 探活同策略）
+  // 读取当前行（含印记/删除列；列缺失时回退最小列，与 digest 探活同策略）
   const tombstoneSupported = await supportsCloudTombstone();
   const stampSupported = await supportsOpStamp();
   let columns = 'tabs_data, name, created_at, updated_at, is_locked';
@@ -409,7 +302,7 @@ export async function deleteTab(groupId: string, tabId: string): Promise<void> {
       columns !== 'tabs_data, name, created_at, updated_at, is_locked' &&
       /42703|PGRST204|column/i.test(`${getErr.code ?? ''} ${getErr.message ?? ''}`)
     ) {
-      // 列探测缓存与实际 schema 不一致 → 回退最小列（本次按 plain/无组墓碑执行）
+      // 列探测缓存与实际 schema 不一致 → 回退最小列
       const fallback = await supabase
         .from('tab_groups')
         .select('tabs_data, name, created_at, updated_at, is_locked')
@@ -422,7 +315,6 @@ export async function deleteTab(groupId: string, tabId: string): Promise<void> {
       throw new Error(getErr.message);
     }
   }
-  // 回退分支下强制关闭新列语义（本函数后续只读这两个布尔值的一次性快照）
   const hasTombstoneCol = tombstoneSupported && 'is_deleted' in groupAny;
   const hasStampCol = stampSupported && 'last_op_seq' in groupAny;
 
@@ -437,22 +329,21 @@ export async function deleteTab(groupId: string, tabId: string): Promise<void> {
     throw new Error('无法解密该标签组数据');
   }
 
-  // 同一次删除只铸一个 stamp：墓碑 tab 与组行共用（P0-3 组级提升的 Web 侧实现）
+  // 同一次删除铸一个 stamp：组行提升（OLD+1），对端整组覆盖时用它决胜
   const stamp = mintWebStamp(
     await getDeviceId(),
     typeof groupAny.last_op_seq === 'number' ? (groupAny.last_op_seq as number) : null
   );
   const now = new Date().toISOString();
-  const r = applyWebRemoveTab(decrypted, tabId, stamp, now, { isLocked: Boolean(groupAny.is_locked) });
+  const r = applyWebRemoveTab(decrypted, tabId, { isLocked: Boolean(groupAny.is_locked) });
   if (!r.found) throw new Error('未找到该标签页');
-  if (r.alreadyTombstoned) return; // 幂等：已是墓碑，无需重写
 
   const stampCols = hasStampCol ? { last_op_device: stamp.d, last_op_seq: stamp.s } : {};
 
   if (r.autoDeleteGroup) {
-    // 删后无活跃 tab 且未锁定 → 整行盖组级墓碑，不再回写 tabs_data
+    // 删后无 tab 且未锁定 → 整行删除广播，不再回写 tabs_data
     if (!hasTombstoneCol) {
-      // 无 is_deleted 列 → 硬删兜底（与 markCloudGroupsAsDeleted 同口径）
+      // 无 is_deleted 列 → 硬删兜底（与 deleteGroup 降级同口径）
       const { error } = await supabase
         .from('tab_groups')
         .delete()
@@ -470,7 +361,7 @@ export async function deleteTab(groupId: string, tabId: string): Promise<void> {
     return;
   }
 
-  // 墓碑载荷重加密回写（形状不变：数组仍数组，wrapper 保留其余键）
+  // 物理移除后的载荷重加密回写（形状不变：数组仍数组，wrapper 保留其余键）
   let newEncrypted: string;
   try {
     newEncrypted = await encryptData(r.updated, userId);

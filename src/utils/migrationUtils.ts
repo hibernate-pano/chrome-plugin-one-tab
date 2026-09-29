@@ -3,7 +3,7 @@
  * 用于处理应用版本升级时的数据迁移
  */
 
-import { storage } from './storage';
+import { storage, STORAGE_KEYS } from './storage';
 import { sanitizeFaviconUrl } from './faviconUtils';
 import { kvRemove } from '@/storage/storageAdapter';
 import { TabGroup } from '@/types/tab';
@@ -95,12 +95,65 @@ export async function removeRecentRestoreHistory(): Promise<void> {
 }
 
 /**
+ * 无墓碑模型迁移（2026-09-29 产品拍板：删除即物理移除，回收站/恢复废除）。
+ *
+ * 1. 清除本地组级墓碑（isDeleted 组，即旧「回收站」内容——含其中尚未恢复的标签）
+ *    与组内标签级墓碑（历史单删/清理重复/合并去重累积的不可见死标签）。
+ *    已删除组的删除意图不丢失：老模型上传时已写过云端 is_deleted 行；
+ *    未上过云的残留由下一次 upload 的兜底标记覆盖（见 syncEngine.upload）。
+ * 2. 旧 purge 队列（PENDING_PURGE_IDS，空壳硬删除遗留）转入删除广播队列
+ *    PENDING_DELETE_IDS——标记删除（行保留）比物理删保守且语义正确。
+ * 3. 删除旧「回收站列表」遗留键（DELETED_GROUPS / DELETED_TABS，早期实现，已死代码）。
+ */
+export async function purgeTombstones(): Promise<void> {
+  try {
+    const groups = await storage.getGroups();
+    const hadGroupTombstones = groups.some(g => g.isDeleted);
+    const hadTabTombstones = groups.some(g => g.tabs?.some(t => t.isDeleted));
+
+    if (hadGroupTombstones || hadTabTombstones) {
+      const activeGroups = groups
+        .filter(g => !g.isDeleted)
+        .map(g =>
+          g.tabs?.some(t => t.isDeleted)
+            ? { ...g, tabs: g.tabs.filter(t => !t.isDeleted) }
+            : g
+        );
+      // SW/后台语境同类写路径：直写落盘（迁移一次性，不经防抖窗口）
+      await storage.setGroupsImmediate(activeGroups);
+      const removedGroups = groups.length - activeGroups.length;
+      const removedTabs = groups.reduce(
+        (n, g) => n + (g.tabs?.filter(t => t.isDeleted).length ?? 0),
+        0
+      );
+      logInfo(`[迁移] 无墓碑清理：移除 ${removedGroups} 个墓碑组（回收站内容）、${removedTabs} 个墓碑标签`);
+    }
+
+    // 旧 purge 队列 → 删除广播队列（标记删除语义，云端行保留广播删除意图）
+    const legacyPurgeIds = await storage.getPendingPurgeIds();
+    for (const id of legacyPurgeIds) {
+      await storage.addPendingDeleteId(id);
+    }
+
+    // 遗留键清理（旧回收站列表 + 旧 purge 队列）
+    await kvRemove(STORAGE_KEYS.DELETED_GROUPS);
+    await kvRemove(STORAGE_KEYS.DELETED_TABS);
+    await kvRemove(STORAGE_KEYS.PENDING_PURGE_IDS);
+
+    await storage.setMigrationFlag('tombstones_removed_v1', true);
+  } catch (error) {
+    logError('无墓碑清理迁移失败:', error);
+    throw error;
+  }
+}
+
+/**
  * 运行所有必要的数据迁移
  */
 export async function runMigrations(): Promise<void> {
   try {
     logInfo('开始检查数据迁移...');
-    
+
     // 检查并运行 favicon URLs 迁移
     if (await shouldRunMigration('favicon_urls_v1')) {
       await migrateFaviconUrls();
@@ -109,9 +162,13 @@ export async function runMigrations(): Promise<void> {
     if (await shouldRunMigration('recent_restore_history_removed_v1')) {
       await removeRecentRestoreHistory();
     }
-    
+
+    if (await shouldRunMigration('tombstones_removed_v1')) {
+      await purgeTombstones();
+    }
+
     logInfo('数据迁移检查完成');
-    
+
   } catch (error) {
     logError('数据迁移失败:', error);
     // 不抛出错误，避免影响应用启动

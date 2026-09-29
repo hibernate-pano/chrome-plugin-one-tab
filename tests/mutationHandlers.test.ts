@@ -1,11 +1,11 @@
-// 钉死 SW 端语义命令执行器（规格 §3.2/§3.3）的编排契约：
-// 1) removeTab 写入 storage 且按删除优先级 1500ms 调度上传；
-// 2) removeTab 整组清空时 payload.group = null 且组被墓碑化、调度仍为 1500ms；
-// 3) apply 层抛错（如 restoreGroup 未找到）被 handle 包装为 ok:false + error 文本；
+// 钉死 SW 端语义命令执行器的编排契约（无墓碑模型，2026-09-29）：
+// 1) removeTab 物理移除 tab，写回 storage 且按删除优先级 1500ms 调度上传；
+// 2) removeTab 拿空整组 → payload.group = null、组被物理移除、id 登记删除广播队列；
+// 3) apply 层抛错被 handle 包装为 ok:false + error 文本；
 // 4) 未知 op 返回 ok:false。
 //
 // 文件头部样板与 tests/mutationQueue.test.ts / tests/mutationProtocol.test.ts 一致：
-// @/ 别名模块只能在 register(loader) 之后【动态 import】（静态 import 会被
+// @/ 别名的模块只能在 register(loader) 之后【动态 import】（静态 import 会被
 // 提升、先于 loader 注册而失败）。本文件的每个 it 内用 await import('@/...')。
 import { describe, it, before } from 'node:test';
 import assert from 'node:assert/strict';
@@ -29,11 +29,14 @@ before(async () => {
 
 const NOW = '2026-01-01T00:00:00.000Z';
 
+function mkTab(id: string) {
+  return { id, url: `https://${id}.com`, title: id, favicon: '', createdAt: NOW, lastAccessed: NOW, pinned: false };
+}
+
 function memStorage() {
   let groups: import('@/types/tab').TabGroup[] = [];
   const uploads: number[] = [];
-  // 阶段二·§4.3：handlers 现在必须注入 journal + seq。测试用极简 mock：
-  // seq 单调递增、journal 内存追加，stamp 来源于此。
+  // journal + seq 极简 mock：seq 单调递增、journal 内存追加，stamp 来源于此。
   const entries: any[] = [];
   let seqN = 0;
   return {
@@ -63,45 +66,25 @@ function memStorage() {
       async getDeviceSeq() { return seqN; },
       async bumpSeqIfLower(c: number) { return c > seqN ? (seqN = c) : seqN; },
     },
-    // 空壳会话硬删除后登记的云端 purge 队列（本地删干净还不够，云端行必须一并删，
-    // 否则下次 downloadAndMerge 以 remote-only 复活）
-    purgedIds: [] as string[],
-    async notePurgedGroup(id: string) { (this as any).purgedIds.push(id); },
+    // 无墓碑模型：物理删除的组 id 登记删除广播队列（云端行由 upload 侧
+    // markCloudGroupsAsDeleted 标记 is_deleted，对端合并时服从删除）。
+    deletedIds: [] as string[],
+    async noteGroupDeleted(id: string) { (this as any).deletedIds.push(id); },
   };
 }
 
 describe('mutationHandlers: 编排（读→apply→写→调度上传）', () => {
-  it('removeTab：写入 storage 并按删除优先级 1500ms 调度上传', async () => {
+  it('removeTab：物理移除 tab 写回 storage，并按删除优先级 1500ms 调度上传', async () => {
     const { createMutationHandlers } = await import('@/background/mutationHandlers');
     const deps = memStorage();
     const handlers = createMutationHandlers(deps as any);
     const g = {
       id: 'g1',
       name: 'g',
-      tabs: [
-        {
-          id: 't1',
-          url: 'https://a.com',
-          title: 'a',
-          favicon: '',
-          createdAt: NOW,
-          lastAccessed: NOW,
-          pinned: false,
-        },
-        {
-          id: 't2',
-          url: 'https://b.com',
-          title: 'b',
-          favicon: '',
-          createdAt: NOW,
-          lastAccessed: NOW,
-          pinned: false,
-        },
-      ],
+      tabs: [mkTab('t1'), mkTab('t2')],
       createdAt: NOW,
       updatedAt: NOW,
       version: 1,
-      isDeleted: false,
       isLocked: false,
     } as import('@/types/tab').TabGroup;
     await deps.setGroups([g]);
@@ -109,58 +92,71 @@ describe('mutationHandlers: 编排（读→apply→写→调度上传）', () =>
     assert.equal(res.ok, true);
     assert.deepEqual(deps.uploads, [1500]);
     const stored = await deps.getGroups();
-    assert.equal(stored[0].tabs[0].isDeleted, true);
+    assert.equal(stored[0].tabs.some(t => t.id === 't1'), false, '被删 tab 物理移除');
+    assert.equal(stored[0].tabs.length, 1, '其余 tab 保留');
   });
 
-  it('removeTab 整组清空 → payload.group 为 null；空壳组被硬删除并登记云端 purge', async () => {
+  it('removeTab 拿空整组 → payload.group 为 null；组被物理移除并登记删除广播队列', async () => {
     const { createMutationHandlers } = await import('@/background/mutationHandlers');
     const deps = memStorage();
     const handlers = createMutationHandlers(deps as any);
     const g = {
       id: 'g1',
       name: 'g',
-      tabs: [
-        {
-          id: 't1',
-          url: 'https://a.com',
-          title: 'a',
-          favicon: '',
-          createdAt: NOW,
-          lastAccessed: NOW,
-          pinned: false,
-        },
-      ],
+      tabs: [mkTab('t1')],
       createdAt: NOW,
       updatedAt: NOW,
       version: 1,
-      isDeleted: false,
       isLocked: false,
     } as import('@/types/tab').TabGroup;
     await deps.setGroups([g]);
     const res = await handlers.handle({ op: 'removeTab', groupId: 'g1', tabId: 't1' });
     assert.equal((res.payload as any).group, null);
     const stored = await deps.getGroups();
-    // 2026-09-28 统一规则：组内最后一个活跃标签被删 → 组无内容可恢复 → 物理移除，
-    // 不打墓碑（墓碑对空壳没有价值，还会以 isDeleted:false 留在 UI 上变成空会话卡）。
-    assert.equal(stored.length, 0, '空壳组被物理移除，不留墓碑');
-    // 云端行必须一并 purge：本地删了但云端行残留的话，下次下载会以 remote-only 复活。
-    const purged = (deps as any).purgedIds ?? [];
-    assert.deepEqual(purged, ['g1'], '硬删除的组 id 已登记 purge 队列');
+    assert.equal(stored.length, 0, '空组被物理移除，本地不留任何删除痕迹');
+    // 删除广播：云端行必须被标记 is_deleted（行保留），否则对端下次合并复活。
+    // 本地物理删除后 mutation 层唯一职责 = 登记队列，广播由 upload 侧执行。
+    assert.deepEqual((deps as any).deletedIds, ['g1'], '被删组 id 已登记删除广播队列');
   });
 
-  it('apply 层抛错 → ok:false + error 文本（如 restoreGroup 未找到）', async () => {
+  it('deleteGroup：物理移除 + 登记广播队列 + 1500ms 调度', async () => {
     const { createMutationHandlers } = await import('@/background/mutationHandlers');
     const deps = memStorage();
     const handlers = createMutationHandlers(deps as any);
-    const res = await handlers.handle({ op: 'restoreGroup', groupId: 'nope' });
-    assert.equal(res.ok, false);
-    assert.match(res.error ?? '', /未找到/);
+    await deps.setGroups([
+      { id: 'a', name: 'a', tabs: [mkTab('a1')], createdAt: NOW, updatedAt: NOW, version: 1, isLocked: false },
+      { id: 'b', name: 'b', tabs: [mkTab('b1')], createdAt: NOW, updatedAt: NOW, version: 1, isLocked: false },
+    ] as import('@/types/tab').TabGroup[]);
+    const res = await handlers.handle({ op: 'deleteGroup', groupId: 'a' });
+    assert.equal(res.ok, true);
+    const stored = await deps.getGroups();
+    assert.deepEqual(stored.map(g => g.id), ['b']);
+    assert.deepEqual((deps as any).deletedIds, ['a']);
+    assert.deepEqual(deps.uploads, [1500]);
   });
 
-  it('未知 op → ok:false', async () => {
+  it('deleteAllGroups：全部物理移除，每个组 id 都登记广播队列', async () => {
     const { createMutationHandlers } = await import('@/background/mutationHandlers');
-    const handlers = createMutationHandlers(memStorage() as any);
+    const deps = memStorage();
+    const handlers = createMutationHandlers(deps as any);
+    await deps.setGroups([
+      { id: 'a', name: 'a', tabs: [mkTab('a1')], createdAt: NOW, updatedAt: NOW, version: 1, isLocked: false },
+      { id: 'b', name: 'b', tabs: [], createdAt: NOW, updatedAt: NOW, version: 1, isLocked: true },
+    ] as import('@/types/tab').TabGroup[]);
+    const res = await handlers.handle({ op: 'deleteAllGroups' });
+    assert.equal(res.ok, true);
+    assert.equal((res.payload as any).count, 2);
+    const stored = await deps.getGroups();
+    assert.equal(stored.length, 0);
+    assert.deepEqual((deps as any).deletedIds.sort(), ['a', 'b']);
+  });
+
+  it('apply 层抛错 → ok:false + error 文本（未知命令）', async () => {
+    const { createMutationHandlers } = await import('@/background/mutationHandlers');
+    const deps = memStorage();
+    const handlers = createMutationHandlers(deps as any);
     const res = await handlers.handle({ op: 'nope' } as any);
     assert.equal(res.ok, false);
+    assert.match(res.error ?? '', /未知命令/);
   });
 });

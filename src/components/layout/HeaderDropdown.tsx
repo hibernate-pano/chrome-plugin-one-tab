@@ -163,7 +163,7 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({ onClose }) => {
 
   // 处理删除所有标签组。核弹级操作：不受「删除前确认」开关控制，永远弹确认
   // （该开关只应管单组删除；关闭后一键删光全部曾造成误操作事故 2026-09-26）。
-  // v1.21.0 起删除走墓碑，7 天内可从回收站恢复，文案按此描述。
+  // 无墓碑模型（2026-09-29）：删除即物理移除，跨设备广播由云端 is_deleted 行承担。
   const handleDeleteAllGroups = () => {
     if (groups.length === 0) return;
 
@@ -179,9 +179,9 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({ onClose }) => {
             })
               .then(raw => {
                 const res = raw as { ok: boolean; error?: string; payload?: { skippedOverwrite?: string } };
-                // 「删光本机全部会话」之后每个组都是墓碑 → activeGroups.length === 0
-                // → uploadTabGroups 的空本地保护必然跳过 overwriteCloud（宁可不清空
-                // 云端）。也就是说这条命令的覆盖上传几乎总是被跳过，此前无条件打印
+                // 「删光本机全部会话」之后本地没有活跃组 → uploadTabGroups 的
+                // 空本地保护必然跳过 overwriteCloud（宁可不清空云端）。也就是说
+                // 这条命令的覆盖上传几乎总是被跳过，此前无条件打印
                 // 「删除操作已同步到云端」是在对没发生的事报成功。
                 // 只有 res.ok 且 payload 里没有 skippedOverwrite，才算真的覆盖了云端。
                 if (!res.ok) {
@@ -195,13 +195,10 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({ onClose }) => {
                   return;
                 }
                 if (res.payload?.skippedOverwrite) {
-                  logWarn('[HeaderDropdown] 覆盖上传被跳过（本地无活跃组）:', res.payload.skippedOverwrite);
-                  showAlert({
-                    title: '云端未清空',
-                    message: '本机会话已全部删除，但云端数据未清空（覆盖上传已跳过）。稍后请用「同步」手动覆盖。',
-                    type: 'warning',
-                    onClose: () => {}
-                  });
+                  // 删光后本地无活跃组 → 覆盖被跳过是预期路径；删除意图已由
+                  // upload 内的 markCloudGroupsAsDeleted（pendingDeleteIds 队列）
+                  // 广播到云端，无需报警。
+                  logInfo('[HeaderDropdown] 覆盖上传被跳过（本地无活跃组），删除意图已按队列广播:', res.payload.skippedOverwrite);
                   return;
                 }
                 logInfo('删除操作已同步到云端');
@@ -226,7 +223,7 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({ onClose }) => {
 
     showConfirm({
       title: `删除全部 ${groups.length} 个会话`,
-      message: `将删除本地全部 ${groups.length} 个会话，进入回收站保留 7 天，可在列表底部「已删除」区恢复。确认继续吗？`,
+      message: `将删除本地全部 ${groups.length} 个会话，删除后无法恢复${isAuthenticated ? '，其他登录设备将同步删除' : ''}。确认继续吗？`,
       type: 'danger',
       confirmText: '全部删除',
       cancelText: '取消',
@@ -591,7 +588,7 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({ onClose }) => {
               <span className="flex-1">
                 <span className="block">删除所有会话（{groups.length}）</span>
                 <span className="mt-0.5 block text-xs font-normal text-rose-600/80 dark:text-rose-300/80">
-                  将清空本地全部会话，进入回收站保留 7 天。
+                  将清空本地全部会话，删除后无法恢复（其他登录设备同步删除）。
                 </span>
               </span>
             </button>

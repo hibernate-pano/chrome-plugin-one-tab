@@ -26,10 +26,13 @@ export const STORAGE_KEYS = {
   // 最近一次成功上传的时间戳（独立于 last_sync_time，后者下载也会更新）。
   // 用于：1）downloadAndMerge 保护窗口 2）调试 / product_event 上报
   LAST_UPLOAD_TIME: 'last_upload_time',
-  // P1-6：已在本地 purge（物理移除）但尚未同步到云端的组 id 队列。
-  // purge 把内联墓碑从 groups 数组里彻底删掉后，upload 侧再也看不到删除意图——
-  // 不记这个队列，云端墓碑行会永久残留，下次下载以 remote-only 复活。
+  // P1-6（历史）：本地 purge（物理移除）未同步的组 id 队列。无墓碑重写后废弃，
+  // 残留值由迁移 purge_tombstones_v1 转入 PENDING_DELETE_IDS 后删除本键。
   PENDING_PURGE_IDS: 'pending_purge_ids',
+  // 无墓碑模型：本地已物理删除、但云端行尚未标记 is_deleted 的组 id 队列。
+  // 组删除的唯一跨设备广播载体（本地不留任何删除痕迹）：
+  // mutation 登记 → upload 时 markCloudGroupsAsDeleted 成功（读回确认）后清队。
+  PENDING_DELETE_IDS: 'pending_delete_ids',
   // 阶段二·§4.1：本设备 seq 单调计数器。SW 启动时由 seqRegistry 修复为
   // max(持久化, 实体印记中本设备 max s) + 100。
   DEVICE_SEQ: 'device_seq',

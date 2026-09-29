@@ -99,20 +99,24 @@ describe('跨上下文写入后 UI 显式加载', () => {
     assert.equal(second[0].id, 'g-active');
   });
 
-  it('loadDeletedGroups 读到另一上下文写入的墓碑组，而不是 30s 旧缓存', async () => {
+  it('loadGroups 读到另一上下文写入的新组，而不是 30s 旧缓存（无墓碑模型：墓碑组不进主状态）', async () => {
     const { configureStore } = await import('@reduxjs/toolkit');
-    const { default: tabReducer, loadDeletedGroups } = await import('@/store/slices/tabSlice');
+    const { default: tabReducer, loadGroups } = await import('@/store/slices/tabSlice');
     const { kvSet } = await import('@/storage/storageAdapter');
 
     const store = configureStore({ reducer: { tabs: tabReducer } });
 
-    const first = await store.dispatch(loadDeletedGroups()).unwrap();
-    assert.deepEqual(first, [], '首屏（无墓碑）应为空列表');
+    // 显式刷新必须读存储真值（注意：同文件上一个用例已写入 g-active，
+    // 共享 kv 后端下首屏不保证为空，这里只断言增量写入后的可见性）
+    await store.dispatch(loadGroups()).unwrap();
 
-    await kvSet('tab_groups', [makeGroup('g-deleted', { isDeleted: true })]);
+    await kvSet('tab_groups', [
+      makeGroup('g-fresh'),
+      makeGroup('g-deleted', { isDeleted: true }),
+    ]);
 
-    const second = await store.dispatch(loadDeletedGroups()).unwrap();
-    assert.equal(second.length, 1, '误删保护视图必须读到新写入的墓碑组');
-    assert.equal(second[0].id, 'g-deleted');
+    const second = await store.dispatch(loadGroups()).unwrap();
+    assert.deepEqual(second.map(g => g.id), ['g-fresh'],
+      '新写入的活跃组可见；老版本写入的墓碑组被防御层剥离');
   });
 });

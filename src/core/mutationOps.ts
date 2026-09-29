@@ -1,14 +1,22 @@
 /**
- * 语义命令的纯函数核心（规格 §3.2 + §4.1/§5）：输入 groups 快照，输出新 groups。
- * 与 tabSlice 各 thunk 的存储写语义逐字段一致（阶段一行为保持）；
- * 纯函数无 IO，node:test 直测。阶段二统一加盖操作印记。
+ * 语义命令的纯函数核心：输入 groups 快照，输出新 groups。
+ * 纯函数无 IO，node:test 直测。
  *
- * stamp 盖印决策（§5.3 + P0-3）：
- * - 组级命令（saveGroup/deleteGroup/deleteAllGroups/restoreGroup/purgeGroup/
- *   renameGroup/toggleGroupLock/updateGroupFields/moveGroup/moveTab/importGroups/
- *   cleanDuplicates）→ 盖 group.lastOp = stamp
- * - 标签级命令（removeTab）→ 被墓碑 tab 盖 lastOp，且组 lastOp 同步提升
- *   （P0-3：digest 以单调 seq 为主信号，组 stamp 不动会让删 tab 在探活与合并时不可见）
+ * ── 2026-09-29 删除语义重写：无墓碑（奥卡姆剃刀，产品拍板）──
+ *
+ * 旧模型（v1.21.0–1.21.7）：删除盖墓碑（组级 isDeleted / tab 级 isDeleted），
+ * 靠墓碑做「7 天回收站」与「跨设备删除广播」。实践暴露的根因级问题：
+ * 墓碑只增不减（tab 墓碑永久留在组内）→ 计数虚高、恢复不完整、URL 去重坟场、
+ * 空壳清理补丁层层叠加。
+ *
+ * 新模型：
+ * - **本地删除一律物理移除**。删除前由 UI 确认（confirmBeforeDelete / 删除全部强制确认）。
+ * - **跨设备删除广播只剩一个载体：云端行的 is_deleted 标记**。
+ *   组删除 → 本地物理删 + pendingDeleteIds 队列 → upload 时 markCloudGroupsAsDeleted
+ *   （UPDATE is_deleted=true，行保留）→ 对端下载合并时服从（见 opStampMerge）。
+ *   tab 删除 → 物理移除 + 组 stamp 提升 → 整组行上传覆盖（组级 LWW，无 tab 级合并）。
+ * - 读取防御：老版本设备（商店 1.21.4）仍会写入墓碑形状数据，读路径统一剥离
+ *   （tabSlice.toActiveGroupsView / download 归一化），本文件写路径永远产出干净数据。
  */
 import type { TabGroup, Tab } from '../types/tab';
 import type { OpStamp } from './opStamp';
@@ -16,32 +24,20 @@ import { shouldAutoDeleteAfterTabRemoval } from './tabGroupUtils';
 import { updateDisplayOrder, updateGroupWithVersion } from './versionHelper';
 
 /**
- * 空壳会话的唯一判据与清理（2026-09-28 产品决策）。
- *
- * 规则：**组内没有活跃标签的会话不属于"被删除"，它没有任何可恢复的内容，
- * 直接物理移除，不留墓碑、不进回收站。** 有内容的会话被手动删除才打墓碑，
- * 7 天内可恢复。
- *
- * 为什么改（旧行为是给空组打墓碑）：
- * - 墓碑的唯一价值是"跨设备广播删除意图 + 7 天可恢复"。空组两者都用不上：
- *   没内容可恢复，而墓碑本身会在回收站堆成噪音。
- * - 更严重的是同步合并路径（mergeTabsOpStamped 的 URL 去重）会给败者盖**标签级**
- *   墓碑却从不处理组，于是组墓碑不置位、剥空后剩一个 isDeleted:false 的空壳，
- *   留在活跃列表里渲染成空会话卡，且每轮后台同步都有机会再剥空一个——空组越攒越多。
- *   硬删除让"剥空"的结果无处可留，根源直接断掉。
- *
- * 锁定组豁免：锁定是用户显式的防误删保护，任何自动清理都不得越过（README 锁定语义）。
- * 判据复用 tabGroupUtils.shouldAutoDeleteAfterTabRemoval，规则只此一处。
+ * 空组判据（v1.21.5 拍板沿用）：组内没有标签且未锁定。
+ * 锁定组豁免——锁定是用户显式的防误删保护，任何自动清理都不得越过。
+ * 判据复用 tabGroupUtils.shouldAutoDeleteAfterTabRemoval（其内部跳过 isDeleted tab，
+ * 对老版本写入的墓碑形状数据保持防御），规则只此一处。
  */
-export const isEmptyShellGroup = (group: TabGroup): boolean =>
+export const isEmptyGroup = (group: TabGroup): boolean =>
   shouldAutoDeleteAfterTabRemoval(group, '');
 
-/** 物理移除空壳会话（保留全部有内容组，含回收站中仍有标签的墓碑组）。 */
-export const dropEmptyShellGroups = (groups: TabGroup[]): TabGroup[] =>
-  groups.filter(g => !isEmptyShellGroup(g));
+/** 合并/导入结果的统一兜底：剔除空组（无内容可恢复，物理移除）。 */
+export const dropEmptyGroups = (groups: TabGroup[]): TabGroup[] =>
+  groups.filter(g => !isEmptyGroup(g));
 
-/** 本次操作中被硬删除的组 id（供调用方登记云端 purge 队列）。 */
-export const emptiedGroupIds = (before: TabGroup[], after: TabGroup[]): string[] => {
+/** 本次操作中被物理删除的组 id（供调用方登记云端删除广播队列）。 */
+export const removedGroupIds = (before: TabGroup[], after: TabGroup[]): string[] => {
   const kept = new Set(after.map(g => g.id));
   return before.filter(g => !kept.has(g.id)).map(g => g.id);
 };
@@ -59,13 +55,10 @@ export function applySaveGroup(
 }
 
 /**
- * removeTab 语义（= 现有 deleteTabAndSync thunk）：
- * 删除 tabId 后若组内无活跃 tab 且未锁定 → **整组硬删除**（不留墓碑，见 dropEmptyShellGroups）；
- * 否则只墓碑该 tab。幂等：已删除的 tab 不重复处理（version 不膨胀）。
- *
- * 标签级删除同步提升组级印记（updatedAt/version/lastOp）：digest 以单调 seq 为主
- * 信号做探活，组 stamp 不动会导致“删 tab”在探活与合并时不可见；且合并时组字段按组
- * stamp 决胜——不盖组 stamp 会让对端稍新的组 stamp 把本次删除连带覆盖。
+ * removeTab 语义（= deleteTabAndSync thunk）：
+ * 物理**移除该 tab**；组内无剩余标签且未锁定 → 整组物理移除
+ * （删除意图由调用方经 pendingDeleteIds 广播，见文件头）。
+ * 幂等：tab 不存在时原样返回（version 不膨胀）。
  */
 export function applyRemoveTab(
   groups: TabGroup[],
@@ -73,128 +66,69 @@ export function applyRemoveTab(
   tabId: string,
   now: string,
   stamp: OpStamp
-): { groups: TabGroup[]; group: TabGroup | null; hardDeletedGroupId: string | null } {
+): { groups: TabGroup[]; group: TabGroup | null; removedGroupId: string | null } {
   const idx = groups.findIndex(g => g.id === groupId);
-  if (idx === -1) return { groups, group: null, hardDeletedGroupId: null };
+  if (idx === -1) return { groups, group: null, removedGroupId: null };
   const current = groups[idx];
+  const tabIndex = current.tabs.findIndex(t => t.id === tabId);
+  if (tabIndex === -1) return { groups, group: null, removedGroupId: null };
 
+  const remainingTabs = current.tabs.filter(t => t.id !== tabId);
   if (shouldAutoDeleteAfterTabRemoval(current, tabId)) {
-    // 整组硬删除：组内已无活跃标签，没有任何可恢复的内容，留墓碑只会制造空壳噪音。
-    // 云端行由调用方按 hardDeletedGroupId 登记 purge 队列物理删除（否则下次下载复活）。
+    // 拿空最后一个（活跃）标签 → 整组物理移除（无内容可保留）。
+    // 判据走 shouldAutoDeleteAfterTabRemoval（跳过 isDeleted tab）：老版本残留的
+    // 墓碑 tab 不算内容，最后一个活跃 tab 被删时整组连同残留一并清掉。
     return {
       groups: groups.filter(g => g.id !== groupId),
       group: null,
-      hardDeletedGroupId: groupId,
+      removedGroupId: groupId,
     };
   }
 
-  const updatedTabs: Tab[] = current.tabs.map(tab =>
-    tab.id === tabId && !tab.isDeleted ? { ...tab, isDeleted: true, deletedAt: now, lastOp: stamp, lastAccessed: now } : tab
-  );
-  // P0-3：标签级删除同样提升组级印记。digest 以单调 seq 为主信号做探活，
-  // 组 stamp 不动会导致“删 tab”在指纹层不可见；且合并时组字段（name/lock 等）
-  // 按组 stamp 决胜——不盖组 stamp 会让对端稍新的组 stamp 把本次删除连带覆盖。
-  // 跨设备组名并发修改的冲突仍由全序 seq 比较裁决（后写赢），不靠“盖不盖”取巧。
   const updatedGroup: TabGroup = {
     ...current,
-    tabs: updatedTabs,
+    tabs: remainingTabs,
     updatedAt: now,
     version: (current.version || 1) + 1,
     lastOp: stamp,
   };
   const out = [...groups];
   out[idx] = updatedGroup;
-  return { groups: out, group: updatedGroup, hardDeletedGroupId: null };
+  return { groups: out, group: updatedGroup, removedGroupId: null };
 }
 
 /**
- * deleteGroup 语义（对应 tabSlice.deleteGroup）：
- * - 组内已无活跃标签（空壳）→ **物理移除**，不进回收站（无内容可恢复）
- * - 有内容 → 墓碑 + 7 天可恢复；幂等（已墓碑不重复处理）
+ * deleteGroup 语义（= deleteGroup thunk）：物理移除。幂等（组不存在原样返回）。
  */
 export function applyDeleteGroup(
   groups: TabGroup[],
   groupId: string,
-  now: string,
-  stamp: OpStamp
-): { groups: TabGroup[]; hardDeletedGroupId: string | null } {
-  const target = groups.find(g => g.id === groupId);
-  if (!target) return { groups, hardDeletedGroupId: null };
-  if (isEmptyShellGroup(target)) {
-    return { groups: groups.filter(g => g.id !== groupId), hardDeletedGroupId: groupId };
-  }
-  return {
-    groups: groups.map(g =>
-      g.id === groupId && !g.isDeleted
-        ? { ...g, isDeleted: true, deletedAt: now, lastOp: stamp, version: (g.version || 1) + 1, updatedAt: now }
-        : g
-    ),
-    hardDeletedGroupId: null,
-  };
-}
-
-/** deleteAllGroups 语义（对应 tabSlice.deleteAllGroups）：
- * 有内容的活跃组加墓碑（可恢复）；空壳组直接物理移除，不进回收站。
- * count = groups.length（与 thunk 口径一致）。 */
-export function applyDeleteAllGroups(
-  groups: TabGroup[],
-  now: string,
-  stamp: OpStamp
-): { groups: TabGroup[]; count: number; hardDeletedGroupIds: string[] } {
-  const hardDeletedGroupIds: string[] = [];
-  const out = groups.flatMap(g => {
-    if (g.isDeleted) return [g];
-    if (isEmptyShellGroup(g)) {
-      hardDeletedGroupIds.push(g.id);
-      return [];
-    }
-    return [{ ...g, isDeleted: true, deletedAt: now, lastOp: stamp, version: (g.version || 1) + 1, updatedAt: now }];
-  });
-  return { groups: out, count: groups.length, hardDeletedGroupIds };
-}
-
-/** restoreGroup 语义（对应 tabSlice.restoreGroup）：置回活跃 + version+1；restored=null 表示未找到 */
-export function applyRestoreGroup(
-  groups: TabGroup[],
-  groupId: string,
-  now: string,
-  stamp: OpStamp
-): { groups: TabGroup[]; restored: TabGroup | null } {
-  const target = groups.find(g => g.id === groupId);
-  if (!target) return { groups, restored: null };
-  return {
-    groups: groups.map(g =>
-      g.id === groupId
-        ? { ...g, isDeleted: false, deletedAt: undefined, lastOp: stamp, version: (target.version || 1) + 1, updatedAt: now }
-        : g
-    ),
-    restored: {
-      ...target,
-      isDeleted: false,
-      deletedAt: undefined,
-      lastOp: stamp,
-      version: (target.version || 1) + 1,
-      updatedAt: now,
-    },
-  };
-}
-
-/** purgeGroup 语义（对应 tabSlice.purgeGroup）：物理移除（仅回收站场景）；stamp 参数保留以
- * 统一签名，但物理移除无实体承接 stamp——保留为调用方需要的"同一意图"语义。 */
-export function applyPurgeGroup(
-  groups: TabGroup[],
-  groupId: string,
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars -- 物理移除无实体可盖 stamp
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars -- 物理移除无实体可盖 stamp（签名与其它 apply* 一致）
   _now: string,
   // eslint-disable-next-line @typescript-eslint/no-unused-vars -- 同上
   _stamp: OpStamp
-): TabGroup[] {
-  return groups.filter(g => g.id !== groupId);
+): { groups: TabGroup[]; removedGroupId: string | null } {
+  const target = groups.find(g => g.id === groupId);
+  if (!target) return { groups, removedGroupId: null };
+  return { groups: groups.filter(g => g.id !== groupId), removedGroupId: groupId };
 }
 
-/** renameGroup 语义（对应 tabSlice.updateGroupNameAndSync）：
- * 走 updateGroupWithVersion（version+1），再覆写 updatedAt=now 保持与 thunk 现行语义一致
- * （versionHelper 内部固定使用 new Date().toISOString()，不接受 updatedAt 入参）。 */
+/** deleteAllGroups 语义：全部物理移除。count = groups.length（与 thunk 口径一致）。 */
+export function applyDeleteAllGroups(
+  groups: TabGroup[],
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars -- 物理移除无实体可盖 stamp（签名与其它 apply* 一致）
+  _now: string,
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars -- 同上
+  _stamp: OpStamp
+): { groups: TabGroup[]; count: number; removedGroupIds: string[] } {
+  return {
+    groups: [],
+    count: groups.length,
+    removedGroupIds: groups.map(g => g.id),
+  };
+}
+
+/** renameGroup 语义（= updateGroupNameAndSync thunk）：走 updateGroupWithVersion（version+1）。 */
 export function applyRenameGroup(
   groups: TabGroup[],
   groupId: string,
@@ -212,8 +146,7 @@ export function applyRenameGroup(
   return { groups: out, renamed };
 }
 
-/** toggleGroupLock 语义（对应 tabSlice.toggleGroupLockAndSync）：
- * 翻转 isLocked；同 updateGroupWithVersion 路径，并覆写 updatedAt=now。 */
+/** toggleGroupLock 语义（= toggleGroupLockAndSync thunk）：翻转 isLocked + stamp 提升。 */
 export function applyToggleGroupLock(
   groups: TabGroup[],
   groupId: string,
@@ -230,11 +163,8 @@ export function applyToggleGroupLock(
 /**
  * updateGroupFields 语义（持久化 isFavorite/notes 等本地 UI 偏好）：
  * 仅覆写传入字段；【不】bump version/updatedAt（这些字段不在云端 sync 范围内，
- * 不应触发远端 version 噪声）。stage1 review fix：替代旧 persistGroupFields 直接写 storage
- * 的回归路径，单写者保证。
- *
- * 阶段二：仍然盖 stamp——本设备这次修改是意图，必须能被对端合并决胜（即便字段是本地偏好）。
- * _now 入参仅用于签名一致（本函数不使用）。
+ * 不应触发远端 version 噪声）。
+ * 仍盖 stamp——本设备这次修改是意图，必须能被对端合并决胜（即便字段是本地偏好）。
  */
 export function applyUpdateGroupFields(
   groups: TabGroup[],
@@ -249,7 +179,7 @@ export function applyUpdateGroupFields(
   return { groups: groups.map(g => (g.id === groupId ? updated : g)), updated };
 }
 
-/** importGroups 语义（对应 tabSlice.importGroups）：新 id、URL 清洗、置顶按 createdAt DESC；
+/** importGroups 语义（= importGroups thunk）：新 id、URL 清洗、置顶按 createdAt DESC。
  * genId/sanitizeUrl 注入便于测试。所有导入组盖统一 stamp——它们属于同一次导入意图。 */
 export function applyImportGroups(
   groups: TabGroup[],
@@ -277,8 +207,7 @@ export function applyImportGroups(
   };
 }
 
-/** moveGroup 语义（对应 tabSlice.moveGroupAndSync）：索引非法返回 null
- * 被拖动组盖 stamp（这是用户主动排序意图） */
+/** moveGroup 语义（= moveGroupAndSync thunk）：索引非法返回 null；被拖动组盖 stamp。 */
 export function applyMoveGroup(
   groups: TabGroup[],
   dragIndex: number,
@@ -296,19 +225,18 @@ export function applyMoveGroup(
   );
 }
 
-/** moveTab 语义（对应 tabSlice.moveTabAndSync）：跨组移空源组→墓碑（含空组自动删除判断）
- * 源组与目标组都盖 stamp（这是组级拖动意图）；跨组自动墓碑路径组 stamp 也由同一 stamp 覆盖。 */
+/** moveTab 语义（= moveTabAndSync thunk）：物理移动；跨组移空源组 → 整组物理移除。 */
 export function applyMoveTab(
   groups: TabGroup[],
   args: { sourceGroupId: string; sourceIndex: number; targetGroupId: string; targetIndex: number },
   now: string,
   stamp: OpStamp
-): { groups: TabGroup[]; autoDeletedGroupId: string | null } {
+): { groups: TabGroup[]; removedGroupId: string | null } {
   const source = groups.find(g => g.id === args.sourceGroupId);
   const target = groups.find(g => g.id === args.targetGroupId);
-  if (!source || !target) return { groups, autoDeletedGroupId: null };
+  if (!source || !target) return { groups, removedGroupId: null };
   const tab = source.tabs[args.sourceIndex];
-  if (!tab) return { groups, autoDeletedGroupId: null };
+  if (!tab) return { groups, removedGroupId: null };
 
   const newSourceTabs = [...source.tabs];
   const newTargetTabs = args.sourceGroupId === args.targetGroupId ? newSourceTabs : [...target.tabs];
@@ -326,32 +254,27 @@ export function applyMoveTab(
     return g;
   });
 
-  let autoDeletedGroupId: string | null = null;
+  let removedGroupId: string | null = null;
   const movedSource = out.find(g => g.id === args.sourceGroupId)!;
-  if (args.sourceGroupId !== args.targetGroupId && isEmptyShellGroup(movedSource)) {
-    // 源组被搬空 → 硬删除（无内容可恢复，不留空壳）
-    autoDeletedGroupId = args.sourceGroupId;
+  if (args.sourceGroupId !== args.targetGroupId && isEmptyGroup(movedSource)) {
+    // 源组被搬空 → 物理移除
+    removedGroupId = args.sourceGroupId;
     out = out.filter(g => g.id !== args.sourceGroupId);
   }
-  return { groups: out, autoDeletedGroupId };
+  return { groups: out, removedGroupId };
 }
 
-/** cleanDuplicateTabs 语义（对应 tabSlice.cleanDuplicateTabs）：同 URL 留最新，余者墓碑；
- * 被清空且未锁定的组**硬删除**（无内容可恢复，不留空壳）。
- * 所有被墓碑实体盖同一 stamp——本设备一次 cleanDuplicates 是同一次清理意图。
- * 去重范围仅限活跃组：回收站墓碑组（isDeleted=true，组内 tab 仍活跃）不参与 urlMap，
- * 否则墓碑组里"更新"的同 URL tab 会挤掉活跃组的 tab、最坏把活跃组清空连带墓碑。 */
+/** cleanDuplicateTabs 语义（= cleanDuplicateTabs thunk）：同 URL 留最新，余者物理移除；
+ * 被清空且未锁定的组整组物理移除。去重范围 = 全部组（物理模型下不存在墓碑组）。 */
 export function applyCleanDuplicates(
   groups: TabGroup[],
   now: string,
   stamp: OpStamp
-): { groups: TabGroup[]; removedTabsCount: number; removedGroupsCount: number; hardDeletedGroupIds: string[] } {
+): { groups: TabGroup[]; removedTabsCount: number; removedGroupsCount: number; removedGroupIds: string[] } {
   let removedTabsCount = 0;
   const urlMap = new Map<string, { tab: Tab; groupId: string }[]>();
   groups.forEach(group => {
-    if (group.isDeleted) return;
     group.tabs.forEach(tab => {
-      if (tab.isDeleted) return;
       if (!tab.url) return;
       const key = tab.url.startsWith('loading://') ? `${tab.url}|${tab.title}` : tab.url;
       if (!urlMap.has(key)) urlMap.set(key, []);
@@ -359,36 +282,35 @@ export function applyCleanDuplicates(
     });
   });
 
-  const tombstoned = new Map<string, Set<string>>(); // groupId -> 待墓碑 tabId 集
+  const toRemove = new Map<string, Set<string>>(); // groupId -> 待移除 tabId 集
   urlMap.forEach(list => {
     if (list.length <= 1) return;
     const sorted = [...list].sort(
-          (a, b) => new Date(b.tab.lastAccessed).getTime() - new Date(a.tab.lastAccessed).getTime()
-        );
+      (a, b) => new Date(b.tab.lastAccessed).getTime() - new Date(a.tab.lastAccessed).getTime()
+    );
     for (let i = 1; i < sorted.length; i++) {
       const { groupId, tab } = sorted[i];
-      if (!tombstoned.has(groupId)) tombstoned.set(groupId, new Set());
-      tombstoned.get(groupId)!.add(tab.id);
+      if (!toRemove.has(groupId)) toRemove.set(groupId, new Set());
+      toRemove.get(groupId)!.add(tab.id);
       removedTabsCount++;
     }
   });
 
   let removedGroupsCount = 0;
-  const withTombstones = groups.map(g => {
-    const ids = tombstoned.get(g.id);
+  const withRemovals = groups.map(g => {
+    const ids = toRemove.get(g.id);
     if (!ids) return g;
     return {
       ...g,
-      tabs: g.tabs.map(t => (ids.has(t.id) && !t.isDeleted ? { ...t, isDeleted: true, deletedAt: now, lastOp: stamp, lastAccessed: now } : t)),
+      tabs: g.tabs.filter(t => !ids.has(t.id)),
       updatedAt: now,
       version: (g.version || 1) + 1,
       lastOp: stamp,
     };
   });
 
-  const finalGroups = withTombstones.filter(g => {
-    // 空壳会话（无活跃标签且未锁定）直接物理移除，不进回收站——墓碑对它没有价值。
-    if (isEmptyShellGroup(g)) {
+  const finalGroups = withRemovals.filter(g => {
+    if (isEmptyGroup(g)) {
       removedGroupsCount++;
       return false;
     }
@@ -396,9 +318,7 @@ export function applyCleanDuplicates(
   });
 
   const kept = new Set(finalGroups.map(g => g.id));
-  const hardDeletedGroupIds = withTombstones
-    .filter(g => !kept.has(g.id))
-    .map(g => g.id);
+  const removedGroupIds = withRemovals.filter(g => !kept.has(g.id)).map(g => g.id);
 
-  return { groups: finalGroups, removedTabsCount, removedGroupsCount, hardDeletedGroupIds };
+  return { groups: finalGroups, removedTabsCount, removedGroupsCount, removedGroupIds };
 }

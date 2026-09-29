@@ -152,7 +152,7 @@ export const SyncStep: React.FC = () => (
       <div className="onboarding-feature-card">
         <div className="onboarding-feature-icon">🛟</div>
         <div className="onboarding-feature-title">误删保护</div>
-        <div className="onboarding-feature-desc">删除的会话可在列表底部找回</div>
+        <div className="onboarding-feature-desc">删除前二次确认，防手滑清空工作现场</div>
       </div>
     </div>
   </div>

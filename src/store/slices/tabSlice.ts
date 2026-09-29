@@ -2,34 +2,33 @@
  * S4 单写者收口：本文件不直接写 storage/supabase。所有写语义均为 sendMutation
  * 薄代理（语义与 @/core/mutationOps 对齐），唯一写者是 SW 侧 mutationHandlers
  *（journal→stamp→apply→setGroups→scheduleUpload），唯一同步入口是 syncEngine。
- * UI 侧乐观更新 / rejected 回滚保留；读路径（loadGroups/loadDeletedGroups 经
+ * UI 侧乐观更新 / rejected 回滚保留；读路径（loadGroups 经
  * storage.getGroups 读真值）不在写收口范围内。
  *
  * 旧路径 → mutation op 代理清单：
  * saveGroup→saveGroup / deleteGroup→deleteGroup / deleteAllGroups→deleteAllGroups /
- * restoreGroup→restoreGroup / purgeGroup→purgeGroup / importGroups→importGroups /
- * updateGroupNameAndSync→renameGroup / toggleGroupLockAndSync→toggleGroupLock /
- * moveGroupAndSync→moveGroup / moveTabAndSync→moveTab / cleanDuplicateTabs→cleanDuplicates /
+ * importGroups→importGroups / updateGroupNameAndSync→renameGroup /
+ * toggleGroupLockAndSync→toggleGroupLock / moveGroupAndSync→moveGroup /
+ * moveTabAndSync→moveTab / cleanDuplicateTabs→cleanDuplicates /
  * deleteTabAndSync→removeTab / persistGroupFields→updateGroupFields
+ *
+ * ── 2026-09-29 无墓碑重写 ──
+ * 删除一律物理移除（删除前由 UI 确认）；跨设备广播由云端 is_deleted 行承担。
+ * 回收站/恢复/彻底删除（restoreGroup/purgeGroup/loadDeletedGroups）随墓碑一并移除，
+ * TabState.deletedGroups 字段废除。toActiveGroupsView 保留为读路径防御层：
+ * 老版本设备（商店 1.21.4）仍会写入墓碑形状数据，剥掉后不进主状态。
  */
 import { createSlice, createAsyncThunk, createSelector } from '@reduxjs/toolkit';
 import { TabState, TabGroup, OptimisticTabBackup } from '@/types/tab';
 import { storage, invalidateGroupsCache } from '@/utils/storage';
-import { shouldAutoDeleteAfterTabRemoval } from '@/utils/tabGroupUtils';
 import { sendMutation } from '@/shared/mutationProtocol';
 import { backupKeyOf, dropLoadGuard, isStaleLoad, stripInFlightTabs, stripTombstonedTabs, toActiveGroupsView, takeLoadGuard } from './tabSliceHelpers';
 import { trackProductEvent } from '@/utils/productEvents';
 import { logError, logInfo } from '../../utils/log';
 
-// 为了解决"参数隐式具有"any"类型"的问题，添加明确的类型定义
-// 注意：这些接口暂时保留，可能在未来的功能中使用
-
-// 解决"速记属性...的范围内不存在任何值"的问题，显式声明actions
-
 
 export const initialTabState: TabState = {
   groups: [],
-  deletedGroups: [],
   activeGroupId: null,
   isLoading: false,
   error: null,
@@ -74,7 +73,7 @@ export const loadGroups = createAsyncThunk('tabs/loadGroups', async () => {
   invalidateGroupsCache();
   const groups = await storage.getGroups();
 
-  // 过滤掉已软删除的标签组，避免UI显示
+  // 防御层：剥掉组级/标签级墓碑与空组（老版本设备写入的残留形状，见文件头）
   const activeGroups = toActiveGroupsView(groups);
 
   // 确保标签组始终按创建时间倒序排列（最新创建的在前面）
@@ -84,7 +83,7 @@ export const loadGroups = createAsyncThunk('tabs/loadGroups', async () => {
     return dateB.getTime() - dateA.getTime();
   });
 
-  logInfo(`[LoadGroups] 加载 ${sortedGroups.length} 个活跃标签组（已过滤 ${groups.length - activeGroups.length} 个已删除）`);
+  logInfo(`[LoadGroups] 加载 ${sortedGroups.length} 个活跃标签组（已过滤 ${groups.length - activeGroups.length} 个墓碑/空组）`);
 
   return sortedGroups;
 });
@@ -115,42 +114,6 @@ export const deleteAllGroups = createAsyncThunk(
     return res.payload!;
   }
 );
-
-/**
- * 恢复已软删的标签组（误删保护核心）：
- * 置回活跃 → 版本 +1 → 下次同步时以 is_deleted:false 覆写云端墓碑，跨端恢复。
- */
-export const restoreGroup = createAsyncThunk(
-  'tabs/restoreGroup',
-  async (groupId: string) => {
-    const res = await sendMutation<{ groupId: string; restoredGroup: TabGroup }>({
-      op: 'restoreGroup',
-      groupId,
-    });
-    if (!res.ok) throw new Error(res.error ?? '恢复失败');
-    return res.payload!;
-  }
-);
-
-/**
- * 彻底删除已软删的标签组（仅移除本地墓碑；云端仍由软删路径保留墓碑，
- * 若需同步清除请后续在 Web 端执行彻底删除）。
- */
-export const purgeGroup = createAsyncThunk(
-  'tabs/purgeGroup',
-  async (groupId: string) => {
-    const res = await sendMutation<string>({ op: 'purgeGroup', groupId });
-    if (!res.ok) throw new Error(res.error ?? '清除失败');
-    return res.payload!;
-  }
-);
-
-/** 加载已软删的标签组（误删保护恢复视图的数据源） */
-export const loadDeletedGroups = createAsyncThunk('tabs/loadDeletedGroups', async () => {
-  invalidateGroupsCache(); // 与 loadGroups 同源同缓存，同样要求读存储真值
-  const groups = await storage.getGroups();
-  return groups.filter(g => g.isDeleted);
-});
 
 export const importGroups = createAsyncThunk(
   'tabs/importGroups',
@@ -229,7 +192,6 @@ export const moveGroupAndSync = createAsyncThunk(
   }
 );
 
-// 移动标签页并同步到云端
 // 清理重复标签功能
 export const cleanDuplicateTabs = createAsyncThunk(
   'tabs/cleanDuplicateTabs',
@@ -247,8 +209,8 @@ export const cleanDuplicateTabs = createAsyncThunk(
 /**
  * 移动标签页并同步到云端
  * Redux 乐观更新由 moveTab 同步 reducer 承担；存储写由 mutationQueue 异步完成。
- * handler 返回 autoDeletedGroupId 时（跨组移空源组），立即 dispatch(deleteGroup)
- * 让误删保护恢复视图能查到该组（deleteGroup 也走语义命令，幂等）。
+ * handler 返回 removedGroupId 时（跨组移空源组被物理移除），dispatch(deleteGroup)
+ * 同步语义队列（deleteGroup 幂等，广播队列由 SW 侧登记，这里只为 UI 收口）。
  */
 export const moveTabAndSync = createAsyncThunk(
   'tabs/moveTabAndSync',
@@ -268,7 +230,7 @@ export const moveTabAndSync = createAsyncThunk(
     },
     { dispatch }
   ) => {
-    // 在 Redux 中移动标签页 - 立即更新UI（同步 reducer，已含空源组自动墓碑）
+    // 在 Redux 中移动标签页 - 立即更新UI（同步 reducer，已含空源组自动移除）
     dispatch(moveTab({ sourceGroupId, sourceIndex, targetGroupId, targetIndex }));
 
     // 如果是在拖动过程中且不需要更新源，跳过存储操作
@@ -278,7 +240,7 @@ export const moveTabAndSync = createAsyncThunk(
         sourceIndex,
         targetGroupId,
         targetIndex,
-        autoDeletedGroupId: null,
+        removedGroupId: null,
       };
     }
 
@@ -287,7 +249,7 @@ export const moveTabAndSync = createAsyncThunk(
       sourceIndex: number;
       targetGroupId: string;
       targetIndex: number;
-      autoDeletedGroupId: string | null;
+      removedGroupId: string | null;
     }>({
       op: 'moveTab',
       sourceGroupId,
@@ -296,11 +258,6 @@ export const moveTabAndSync = createAsyncThunk(
       targetIndex,
     });
     if (!res.ok) throw new Error(res.error ?? '移动失败');
-
-    if (res.payload!.autoDeletedGroupId) {
-      // 让误删保护恢复视图拿到该组；deleteGroup 自身走 removeTab 语义，幂等
-      dispatch(deleteGroup(res.payload!.autoDeletedGroupId));
-    }
 
     return res.payload!;
   }
@@ -366,11 +323,10 @@ export const tabSlice = createSlice({
       state.groups = newGroups;
     },
     /**
-     * 移动标签页 - 优化版本
-     * 性能优化：
-     * 1. 减少不必要的数组复制
-     * 2. 使用immer的不可变更新模式
-     * 3. 优化条件判断逻辑
+     * 移动标签页 - 优化版本（immer 不可变更新）。
+     * 跨组移走后源组变空且未锁定 → 立即物理移除（与 SW applyMoveTab 同语义）。
+     * 历史回归：空组删除曾移到早已删除的组件里异步做，一旦异步落空空组就
+     * 永久卡在 UI——必须在 reducer 里同步熄掉。
      */
     moveTab: (state, action) => {
       const { sourceGroupId, sourceIndex, targetGroupId, targetIndex } = action.payload;
@@ -412,16 +368,7 @@ export const tabSlice = createSlice({
         // 先移除源标签
         newTabs.splice(sourceIndex, 1);
 
-        // 修复：计算调整后的目标索引
-        // 无论拖动方向如何，都直接使用 targetIndex 作为插入位置
-        // 这样可以确保标签页准确移动到用户指示的目标位置
-        //
-        // 原来的逻辑问题：
-        // - 从上向下拖动时，targetIndex - 1 会导致插入位置偏前一位
-        // - 从下向上拖动时，直接使用 targetIndex 是正确的
-        //
-        // 修正后的逻辑：
-        // - 无论方向，都使用 targetIndex，因为用户期望插入到目标位置
+        // 修正后的逻辑：无论方向，都使用 targetIndex（用户期望插入到目标位置）
         const adjustedIndex = Math.max(0, Math.min(targetIndex, newTabs.length));
 
         // 插入到目标位置
@@ -480,14 +427,8 @@ export const tabSlice = createSlice({
           });
 
         // 自动清理：跨组移走后源组变空且未锁定 → 立即物理移除（同步、确定）。
-        // 空组无内容可恢复，不进回收站（与 SW applyMoveTab 的硬删除语义一致）。
-        // 历史回归：旧改把空组删除逻辑移到 SortableTabGroup/isMarkedForDeletion
-        // 组件，但该组件早已移除，只剩 moveTabAndSync 里 100ms 的异步 deleteGroup
-        // dispatch——一旦该异步落空（时序/异常），空组就永久卡在 UI。这里在
-        // reducer 里同步熄掉。
-        if (sourceGroupId !== targetGroupId && shouldAutoDeleteAfterTabRemoval(updatedSourceGroup, '')) {
+        if (newSourceTabs.length === 0 && !sourceGroup.isLocked) {
           state.groups = state.groups.filter(g => g.id !== sourceGroupId);
-          state.deletedGroups = state.deletedGroups.filter(g => g.id !== sourceGroupId);
           if (state.activeGroupId === sourceGroupId) {
             state.activeGroupId = null;
           }
@@ -554,21 +495,7 @@ export const tabSlice = createSlice({
         });
       })
       .addCase(deleteGroup.fulfilled, (state, action) => {
-        const removed = state.groups.find(g => g.id === action.payload);
         state.groups = state.groups.filter(g => g.id !== action.payload);
-        // 空壳会话（无活跃标签）不进恢复视图：没有内容可恢复，留着只是回收站噪音。
-        // 与 SW applyDeleteGroup 的硬删除语义保持一致（乐观层与单写者不得分叉）。
-        if (removed && !shouldAutoDeleteAfterTabRemoval(removed, '')) {
-          // 误删保护：被删组进入恢复视图（墓碑）
-          state.deletedGroups = state.deletedGroups.filter(g => g.id !== action.payload);
-          state.deletedGroups.push({
-            ...removed,
-            isDeleted: true,
-            deletedAt: new Date().toISOString(),
-            version: (removed.version || 1) + 1,
-            updatedAt: new Date().toISOString()
-          });
-        }
         if (state.activeGroupId === action.payload) {
           state.activeGroupId = null;
         }
@@ -599,18 +526,13 @@ export const tabSlice = createSlice({
         };
         const tabs = current.tabs.filter(t => t.id !== tabId);
         if (tabs.length === 0) {
-          // 与 fulfilled(group===null) 同语义：拿掉最后一个活跃 tab 后整组进误删保护视图
-          const [removed] = state.groups.splice(idx, 1);
-          state.deletedGroups = state.deletedGroups.filter(g => g.id !== groupId);
-          state.deletedGroups.push({
-            ...removed,
-            tabs,
-            isDeleted: true,
-            deletedAt: new Date().toISOString(),
-            version: (removed.version || 1) + 1,
-            updatedAt: new Date().toISOString(),
-          });
-          if (state.activeGroupId === groupId) state.activeGroupId = null;
+          // 与 fulfilled(group===null) 同语义：拿掉最后一个 tab 整组消失（未锁定组）
+          if (!current.isLocked) {
+            state.groups.splice(idx, 1);
+            if (state.activeGroupId === groupId) state.activeGroupId = null;
+          } else {
+            state.groups[idx] = { ...current, tabs };
+          }
         } else {
           state.groups[idx] = { ...current, tabs };
         }
@@ -631,13 +553,10 @@ export const tabSlice = createSlice({
             }
             state.groups[idx] = { ...state.groups[idx], tabs };
           } else {
-            // 组已不在（本项拿空了组，或他项 fulfilled 整组软删）：按快照恢复，
+            // 组已不在（本项拿空了组，或他项 fulfilled 整组移除）：按快照恢复，
             // 但过滤掉已被他项成功删除的 tab（无在途备份且不在任何现态中），避免复活它们。
-            // live 只=自身+现态 groups/deletedGroups 中的 tab：同组在途项不计入，
-            // 与 fulfilled 的 tabs.filter(t => !pendingTabIds.has(t.id)) 同语义。
             const liveTabIds = new Set<string>([tabId]);
             for (const g of state.groups) for (const t of g.tabs) liveTabIds.add(t.id);
-            for (const g of state.deletedGroups) for (const t of g.tabs) liveTabIds.add(t.id);
             const tabs = backup.snapshot.tabs.filter(
               t => t.id === tabId || liveTabIds.has(t.id)
             );
@@ -645,7 +564,6 @@ export const tabSlice = createSlice({
             const restoredTabs = tabs.some(t => t.id === tabId)
               ? tabs
               : [...tabs.slice(0, Math.max(0, Math.min(backup.index, tabs.length))), backup.tab, ...tabs.slice(Math.max(0, Math.min(backup.index, tabs.length)))];
-            state.deletedGroups = state.deletedGroups.filter(g => g.id !== groupId);
             state.groups.unshift({ ...backup.snapshot, tabs: restoredTabs });
           }
         }
@@ -660,10 +578,8 @@ export const tabSlice = createSlice({
         // 只清对应项：在途的其他备份继续保留，等待各自的 settled
         if (state.optimisticBackups) delete state.optimisticBackups[backupKeyOf(groupId, tabId)];
         if (group === null) {
-          // 组内最后一个活跃 tab 被移除 → 整组硬删除：空组无内容可恢复，不进回收站
-          // （与 SW applyRemoveTab 的硬删除语义一致，避免界面闪现一条马上消失的恢复项）
+          // 组内最后一个 tab 被移除 → 整组物理移除（与 SW applyRemoveTab 语义一致）
           state.groups = state.groups.filter(g => g.id !== groupId);
-          state.deletedGroups = state.deletedGroups.filter(g => g.id !== groupId);
           if (state.activeGroupId === groupId) {
             state.activeGroupId = null;
           }
@@ -683,72 +599,14 @@ export const tabSlice = createSlice({
           }
         }
       })
-      .addCase(loadDeletedGroups.pending, (state, action) => {
-        takeLoadGuard(state, action.meta.requestId);
-      })
-      .addCase(loadDeletedGroups.fulfilled, (state, action) => {
-        const stale = isStaleLoad(
-          state.pendingLoadGuards,
-          action.meta.requestId,
-          state.mutationEpoch
-        );
-        dropLoadGuard(state, action.meta.requestId);
-        // 与 loadGroups 同代际语义：在途旧回环忽略，新回环（含外部墓碑变更）正常应用
-        if (stale) return;
-        // 在途整组软删的组由 pending 乐观加入回收站，旧 KV 的 payload 不含它——
-        // 直接覆盖会让它从回收站凭空消失（deleteTab.fulfilled 的 group===null 分支
-        // 只在 state.groups 里找 removed，找不到就不回推）。这里保留这类组。
-        const backups = Object.values(state.optimisticBackups ?? {});
-        if (backups.length > 0) {
-          const pendIds = new Set(backups.map(b => b.groupId));
-          const payloadIds = new Set(action.payload.map(g => g.id));
-          state.deletedGroups = [
-            ...action.payload,
-            ...state.deletedGroups.filter(g => pendIds.has(g.id) && !payloadIds.has(g.id)),
-          ];
-        } else {
-          state.deletedGroups = action.payload;
-        }
-      })
-      .addCase(loadDeletedGroups.rejected, (state, action) => {
-        dropLoadGuard(state, action.meta.requestId);
-      })
-      .addCase(restoreGroup.fulfilled, (state, action) => {
-        state.deletedGroups = state.deletedGroups.filter(g => g.id !== action.payload.groupId);
-        // 恢复的组立即回到主列表（后续 loadGroups 会做最终排序）
-        state.groups = state.groups.filter(g => g.id !== action.payload.groupId);
-        state.groups.unshift(action.payload.restoredGroup);
-        state.groups.sort((a, b) => {
-          const dateA = new Date(a.createdAt);
-          const dateB = new Date(b.createdAt);
-          return dateB.getTime() - dateA.getTime();
-        });
-      })
-      .addCase(purgeGroup.fulfilled, (state, action) => {
-        state.deletedGroups = state.deletedGroups.filter(g => g.id !== action.payload);
-      })
       .addCase(deleteAllGroups.pending, state => {
         state.isLoading = true;
         state.error = null;
       })
       .addCase(deleteAllGroups.fulfilled, (state) => {
         state.isLoading = false;
-        const removed = state.groups;
         state.groups = [];
         state.activeGroupId = null;
-        // 把所有刚删的组加入墓碑列表（与 deleteGroup 同语义，误删保护可恢复）
-        const now = new Date().toISOString();
-        const removedIds = new Set(removed.map(g => g.id));
-        state.deletedGroups = [
-          ...state.deletedGroups.filter(g => !removedIds.has(g.id)),
-          ...removed.map(g => ({
-            ...g,
-            isDeleted: true,
-            version: (g.version || 1) + 1,
-            updatedAt: now,
-            deletedAt: now,
-          })),
-        ];
       })
       .addCase(deleteAllGroups.rejected, (state, action) => {
         state.isLoading = false;
@@ -806,9 +664,7 @@ export const tabSlice = createSlice({
       })
       .addCase(cleanDuplicateTabs.fulfilled, (state, action) => {
         state.isLoading = false;
-        // SW 返回的是 storage 全量（含组级墓碑与组内墓碑 tab）。主状态不变量是
-        // "只含活跃视图"（loadGroups 同管线）；直灌会让 TabCounter 把回收站的
-        // 组/tab 计入，出现"清理后数量反增"（223/994 → 230/1106）。
+        // SW 返回的是 storage 全量。主状态不变量是"只含活跃视图"（loadGroups 同管线）。
         state.groups = toActiveGroupsView(action.payload.updatedGroups);
       })
       .addCase(cleanDuplicateTabs.rejected, (state, action) => {
@@ -830,9 +686,8 @@ export const {
   setGroups,
 } = tabSlice.actions;
 
-// 删除单个标签页（墓碑化）：标记 isDeleted 而非物理移除，
-// 删除意图随上传传播到云端与其他设备；墓碑由各出口过滤不出现在 UI。
-// 该 thunk 现在走 removeTab 语义命令，替代旧的 updateGroup(filter) diff 通道（根因 R3）。
+// 删除单个标签页：物理移除，删除意图随整组上传广播到云端与其他设备。
+// 该 thunk 走 removeTab 语义命令（点开=移出、显式删除，同语义）。
 export const deleteTabAndSync = createAsyncThunk<
   { group: TabGroup | null },
   { groupId: string; tabId: string },
@@ -845,7 +700,7 @@ export const deleteTabAndSync = createAsyncThunk<
   });
   if (!res.ok) throw new Error(res.error ?? '删除失败');
   const { group } = res.payload!;
-  // 出口过滤：handler 返回的是 storage 原始组（含墓碑），墓碑不进 Redux（与 loadGroups 口径一致）
+  // 出口防御：handler 返回的是 storage 原始组，老版本残留墓碑不进 Redux（与 loadGroups 口径一致）
   return { group: group ? stripTombstonedTabs(group) : null };
 });
 

@@ -163,9 +163,9 @@ describe('P0-1 读回比对：静默吞写必须现形', () => {
   });
 });
 
-// ── P0-3：removeTab 提升组印记 ───────────────────────────────────────────
+// ── P0-3：removeTab 提升组印记（无墓碑模型：组是 LWW 广播载体）──────────
 describe('P0-3 applyRemoveTab: 标签删除同步提升组级印记', () => {
-  it('删 tab 后组 lastOp 与被删 tab lastOp 同盖新 stamp', async () => {
+  it('删 tab 后组 lastOp 盖新 stamp；被删 tab 物理移除无实体可盖', async () => {
     const { applyRemoveTab } = await import('@/utils/mutationOps');
     const stamp = { d: 'devA', s: 42 };
     const groups = [
@@ -178,12 +178,12 @@ describe('P0-3 applyRemoveTab: 标签删除同步提升组级印记', () => {
     ];
     const r = applyRemoveTab(groups as any, 'g', 't1', NOW, stamp as any);
     assert.deepEqual(r.groups[0].lastOp, stamp);
-    assert.deepEqual(r.groups[0].tabs.find((t: any) => t.id === 't1')?.lastOp, stamp);
+    assert.equal(r.groups[0].tabs.some((t: any) => t.id === 't1'), false, '被删 tab 物理移除');
   });
 });
 
-// ── P1-6：purge 门禁 + 出队 ──────────────────────────────────────────────
-describe('P1-6 purgeGroup: 仅回收站墓碑可清 + 出队云端', () => {
+// ── 无墓碑模型：deleteGroup 门禁 + 出队 ─────────────────────────────────
+describe('deleteGroup: 本地物理移除 + 登记删除广播队列', () => {
   function memDeps(groups: any[]) {
     let store: any[] = [...groups];
     const noted: string[] = [];
@@ -206,37 +206,38 @@ describe('P1-6 purgeGroup: 仅回收站墓碑可清 + 出队云端', () => {
         async getDeviceSeq() { return seqN; },
         async bumpSeqIfLower(c: number) { return c > seqN ? (seqN = c) : seqN; },
       },
-      async notePurgedGroup(id: string) { noted.push(id); },
+      async noteGroupDeleted(id: string) { noted.push(id); },
     };
   }
 
-  it('purge 活跃组 → ok:false，本地不动，不出队', async () => {
+  it('deleteGroup 活跃组 → ok:true，本地移除 + id 出队 + 调度上传', async () => {
     const { createMutationHandlers } = await import('@/background/mutationHandlers');
     const deps = memDeps([makeGroup('g', { isDeleted: false })]);
     const h = createMutationHandlers(deps as any);
-    const res = await h.handle({ op: 'purgeGroup', groupId: 'g' });
-    assert.equal(res.ok, false);
-    assert.match(res.error ?? '', /回收站/);
-    assert.equal(deps.store().length, 1);
-    assert.deepEqual(deps.noted, []);
+    const res = await h.handle({ op: 'deleteGroup', groupId: 'g' });
+    assert.equal(res.ok, true);
+    assert.equal(deps.store().length, 0);
+    assert.deepEqual(deps.noted, ['g']);
+    assert.equal(deps.uploads.length, 1);
   });
 
-  it('purge 回收站墓碑 → ok:true，本地移除 + id 出队 + 调度上传', async () => {
+  it('deleteGroup 老版本墓碑形状的组 → 同样物理移除并出队（残留兜底）', async () => {
     const { createMutationHandlers } = await import('@/background/mutationHandlers');
     const deps = memDeps([makeGroup('g', { isDeleted: true }), makeGroup('keep', {})]);
     const h = createMutationHandlers(deps as any);
-    const res = await h.handle({ op: 'purgeGroup', groupId: 'g' });
+    const res = await h.handle({ op: 'deleteGroup', groupId: 'g' });
     assert.equal(res.ok, true);
     assert.deepEqual(deps.store().map((g: any) => g.id), ['keep']);
     assert.deepEqual(deps.noted, ['g']);
     assert.equal(deps.uploads.length, 1);
   });
 
-  it('purge 不存在的组 → ok:false', async () => {
+  it('deleteGroup 不存在的组 → ok:true 且不出队（幂等）', async () => {
     const { createMutationHandlers } = await import('@/background/mutationHandlers');
     const deps = memDeps([]);
     const h = createMutationHandlers(deps as any);
-    const res = await h.handle({ op: 'purgeGroup', groupId: 'nope' });
-    assert.equal(res.ok, false);
+    const res = await h.handle({ op: 'deleteGroup', groupId: 'nope' });
+    assert.equal(res.ok, true, '幂等：组不存在时原样返回');
+    assert.deepEqual(deps.noted, []);
   });
 });

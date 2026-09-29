@@ -1,7 +1,7 @@
-// 钉死 SW 单写者使用的语义纯函数（规格 §3.2）：
+// 钉死 SW 单写者使用的语义纯函数（无墓碑模型，2026-09-29）：
 // 1) applySaveGroup —— 新组置顶并按 createdAt 倒序排序；
-// 2) applyRemoveTab —— 命令式指定 (groupId, tabId) 墓碑化，替代 updateGroup(filter) diff
-//    在 UI 状态陈旧时误伤的根因 R3；行为与 tabSlice.deleteTabAndSync 逐字段一致。
+// 2) applyRemoveTab —— 命令式指定 (groupId, tabId) **物理移除**，删除意图由
+//    pendingDeleteIds 队列 + 整组行上传广播（见 tests/_new-delete-semantics.md）。
 //
 // 文件头部样板必须与 tests/mutationQueue.test.ts 的既有模式一致：
 // @/ 别名的模块只能在 register(loader) 之后【动态 import】（静态 import 会被
@@ -29,15 +29,14 @@ before(async () => {
 // 共享构造器（纯数据，无 @/ 依赖，可安全静态定义）
 const NOW = '2026-09-07T10:00:00.000Z';
 const EARLIER = '2026-09-01T10:00:00.000Z';
-// 阶段二·§4.1：apply* 全部接 stamp 入参。测试用固定 stamp 不参与决胜，仅验证
-// stamp 透传到被改实体（具体 stamp 盖印验收见文末 stamp 盖印 describe 块）。
+// stamp 入参不参与决胜，仅验证透传到被改实体（具体验收见文末 stamp 盖印 describe 块）。
 const STAMP = { d: 'devTest', s: 1 };
 
 function mkTab(id: string, over: Record<string, unknown> = {}) {
-  return { id, url: `https://e.com/${id}`, title: id, favicon: '', createdAt: EARLIER, lastAccessed: EARLIER, pinned: false, isDeleted: false, ...over };
+  return { id, url: `https://e.com/${id}`, title: id, favicon: '', createdAt: EARLIER, lastAccessed: EARLIER, pinned: false, ...over };
 }
 function mkGroup(id: string, tabs: unknown[], over: Record<string, unknown> = {}) {
-  return { id, name: `g-${id}`, tabs, createdAt: EARLIER, updatedAt: EARLIER, version: 1, isDeleted: false, isLocked: false, ...over };
+  return { id, name: `g-${id}`, tabs, createdAt: EARLIER, updatedAt: EARLIER, version: 1, isLocked: false, ...over };
 }
 
 describe('mutationOps.applySaveGroup', () => {
@@ -57,39 +56,49 @@ describe('mutationOps.applySaveGroup', () => {
   });
 });
 
-describe('mutationOps.applyRemoveTab（语义命令，替代 updateGroup diff——根因 R3）', () => {
-  it('只墓碑化指定 tab：其余 tab 原样，组 version+1、updatedAt=now', async () => {
+describe('mutationOps.applyRemoveTab（物理移除语义，2026-09-29 无墓碑重写）', () => {
+  it('只移除指定 tab：其余 tab 原样，组 version+1、updatedAt=now', async () => {
     const { applyRemoveTab } = await import('@/utils/mutationOps');
     const g = mkGroup('g1', [mkTab('t1'), mkTab('t2')]);
     const { groups, group } = applyRemoveTab([g], 'g1', 't1', NOW, STAMP);
     const out = groups.find(x => x.id === 'g1')!;
     assert.equal(group!.version, 2);
-    assert.equal(out.tabs.find(t => t.id === 't1')!.isDeleted, true);
-    assert.equal(out.tabs.find(t => t.id === 't2')!.isDeleted, false);
+    assert.equal(out.tabs.some(t => t.id === 't1'), false, '被删 tab 物理移除，不留墓碑');
+    assert.equal(out.tabs.find(t => t.id === 't2')!.isDeleted, undefined);
     assert.equal(out.updatedAt, NOW);
     assert.equal(out.tabs.find(t => t.id === 't2')!.lastAccessed, EARLIER); // 未动
   });
-  it('已删除最后一个活跃 tab 且组未锁定 → 整组硬删除（不进回收站，2026-09-28 统一规则）', async () => {
+  it('删除最后一个 tab 且组未锁定 → 整组物理移除（removedGroupId 回报广播 id）', async () => {
     const { applyRemoveTab } = await import('@/utils/mutationOps');
     const g = mkGroup('g1', [mkTab('t1')]);
     const r = applyRemoveTab([g], 'g1', 't1', NOW, STAMP);
     assert.equal(r.group, null);
-    assert.equal(r.groups.some(x => x.id === 'g1'), false, '空壳组被物理移除，不留墓碑');
-    assert.equal(r.hardDeletedGroupId, 'g1');
+    assert.equal(r.groups.some(x => x.id === 'g1'), false, '空组被物理移除');
+    assert.equal(r.removedGroupId, 'g1', '回报被删组 id，供调用方登记删除广播队列');
   });
-  it('锁定组删到最后一个活跃 tab → 只墓碑 tab，组保留', async () => {
+  it('锁定组删到最后一个 tab → tab 移除，组保留为空（锁定豁免自动删除）', async () => {
     const { applyRemoveTab } = await import('@/utils/mutationOps');
     const g = mkGroup('g1', [mkTab('t1')], { isLocked: true });
     const { groups, group } = applyRemoveTab([g], 'g1', 't1', NOW, STAMP);
-    assert.equal(group!.isDeleted, false);
-    assert.equal(groups.find(x => x.id === 'g1')!.tabs[0].isDeleted, true);
+    assert.equal(group!.isLocked, true);
+    assert.equal(groups.find(x => x.id === 'g1')!.tabs.length, 0);
+    assert.equal(group!.version, 2);
   });
-  it('组内只剩墓碑时删最后一个活跃 tab → 按活跃计数触发整组硬删除（口径与 autoDeleteEmptyGroup 一致）', async () => {
+  it('老版本残留墓碑 tab 不算内容：删掉活跃 tab 后按 shouldAutoDeleteAfterTabRemoval 判空', async () => {
     const { applyRemoveTab } = await import('@/utils/mutationOps');
     const g = mkGroup('g1', [mkTab('dead', { isDeleted: true }), mkTab('t1')]);
     const r = applyRemoveTab([g], 'g1', 't1', NOW, STAMP);
-    // 判据按"活跃 tab 数"算：墓碑 tab 不算内容，所以删掉 t1 后组确实空了 → 硬删除
-    assert.equal(r.groups.some(x => x.id === 'g1'), false, '按活跃计数判空并硬删除');
+    // 判据走 shouldAutoDeleteAfterTabRemoval（跳过 isDeleted tab）：删掉 t1 后组内
+    // 无活跃 tab → 整组物理移除，残留墓碑一并清掉
+    assert.equal(r.groups.some(x => x.id === 'g1'), false, '按活跃计数判空并物理移除');
+    assert.equal(r.removedGroupId, 'g1');
+  });
+  it('tab 不存在 → group 返回 null，数组原样（幂等，不 bump version）', async () => {
+    const { applyRemoveTab } = await import('@/utils/mutationOps');
+    const g = mkGroup('g1', [mkTab('t1')]);
+    const { groups, group } = applyRemoveTab([g], 'g1', 'nope', NOW, STAMP);
+    assert.equal(group, null);
+    assert.equal(groups[0].version, 1, '幂等命中不膨胀 version');
   });
   it('组不存在 → group 返回 null，数组原样', async () => {
     const { applyRemoveTab } = await import('@/utils/mutationOps');
@@ -99,57 +108,29 @@ describe('mutationOps.applyRemoveTab（语义命令，替代 updateGroup diff—
   });
 });
 
-describe('mutationOps 组生命周期', () => {
-  it('applyDeleteGroup：有内容的组软删 + version+1，其余组不动', async () => {
+describe('mutationOps 组生命周期（物理删除）', () => {
+  it('applyDeleteGroup：物理移除目标组，其余组不动，removedGroupId 回报', async () => {
     const { applyDeleteGroup } = await import('@/utils/mutationOps');
-    const out = applyDeleteGroup([mkGroup('a', [mkTab('a1')]), mkGroup('b', [mkTab('b1')])], 'a', NOW, STAMP).groups;
-    assert.equal(out.find(g => g.id === 'a')!.isDeleted, true);
-    assert.equal(out.find(g => g.id === 'a')!.version, 2);
-    assert.equal(out.find(g => g.id === 'b')!.isDeleted, false);
-  });
-
-  it('applyDeleteGroup：空壳会话直接硬删除，不进回收站（2026-09-28 统一规则）', async () => {
-    const { applyDeleteGroup } = await import('@/utils/mutationOps');
-    const r = applyDeleteGroup([mkGroup('a', []), mkGroup('b', [mkTab('b1')])], 'a', NOW, STAMP);
-    assert.equal(r.groups.some(g => g.id === 'a'), false, '空壳组被物理移除');
-    assert.equal(r.hardDeletedGroupId, 'a', '回报硬删除 id，供调用方登记云端 purge');
+    const r = applyDeleteGroup([mkGroup('a', [mkTab('a1')]), mkGroup('b', [mkTab('b1')])], 'a', NOW, STAMP);
+    assert.equal(r.groups.some(g => g.id === 'a'), false, '目标组被物理移除');
+    assert.equal(r.removedGroupId, 'a');
     assert.equal(r.groups.some(g => g.id === 'b'), true, '其他组不受影响');
   });
 
-  it('applyDeleteAllGroups：只墓碑有内容的活跃组；已墓碑的 version 不动（幂等）', async () => {
+  it('applyDeleteGroup：组不存在 → 原样返回（幂等）', async () => {
+    const { applyDeleteGroup } = await import('@/utils/mutationOps');
+    const groups = [mkGroup('b', [mkTab('b1')])];
+    const r = applyDeleteGroup(groups, 'nope', NOW, STAMP);
+    assert.equal(r.removedGroupId, null);
+    assert.equal(r.groups.length, 1);
+  });
+
+  it('applyDeleteAllGroups：全部物理移除，removedGroupIds 含所有组，count = 原组数', async () => {
     const { applyDeleteAllGroups } = await import('@/utils/mutationOps');
-    const tomb = mkGroup('dead', [mkTab('d1')], { isDeleted: true, version: 7 });
-    const out = applyDeleteAllGroups([mkGroup('a', [mkTab('a1')]), tomb], NOW, STAMP);
-    assert.equal(out.count, 2); // 与现 thunk 一致：count = groups.length
-    assert.equal(out.groups.find(g => g.id === 'a')!.isDeleted, true);
-    assert.equal(out.groups.find(g => g.id === 'dead')!.version, 7);
-  });
-
-  it('applyDeleteAllGroups：空壳会话硬删除、有内容的组仍进回收站（统一规则）', async () => {
-    const { applyDeleteAllGroups } = await import('@/utils/mutationOps');
-    const out = applyDeleteAllGroups([mkGroup('shell', []), mkGroup('a', [mkTab('a1')])], NOW, STAMP);
-    assert.equal(out.groups.some(g => g.id === 'shell'), false, '空壳组被物理移除');
-    assert.deepEqual(out.hardDeletedGroupIds, ['shell']);
-    assert.equal(out.groups.find(g => g.id === 'a')!.isDeleted, true, '有内容的组仍进回收站');
-  });
-
-  it('applyRestoreGroup：置回活跃 + version+1', async () => {
-    const { applyRestoreGroup } = await import('@/utils/mutationOps');
-    const g = mkGroup('a', [], { isDeleted: true });
-    const out = applyRestoreGroup([g], 'a', NOW, STAMP);
-    assert.equal(out.restored!.isDeleted, false);
-    assert.equal(out.restored!.version, 2);
-  });
-
-  it('applyRestoreGroup：未找到 → restored=null', async () => {
-    const { applyRestoreGroup } = await import('@/utils/mutationOps');
-    assert.equal(applyRestoreGroup([], 'x', NOW, STAMP).restored, null);
-  });
-
-  it('applyPurgeGroup：物理移除', async () => {
-    const { applyPurgeGroup } = await import('@/utils/mutationOps');
-    const out = applyPurgeGroup([mkGroup('a', []), mkGroup('b', [])], 'a', NOW, STAMP);
-    assert.deepEqual(out.map(g => g.id), ['b']);
+    const out = applyDeleteAllGroups([mkGroup('a', [mkTab('a1')]), mkGroup('shell', [])], NOW, STAMP);
+    assert.equal(out.groups.length, 0);
+    assert.equal(out.count, 2);
+    assert.deepEqual(out.removedGroupIds.sort(), ['a', 'shell']);
   });
 
   it('applyRenameGroup：走 updateGroupWithVersion（version+1）', async () => {
@@ -256,44 +237,50 @@ describe('mutationOps 移动与清理', () => {
     assert.deepEqual(out.tabs.map(t => t.id), ['t2', 't3', 't1']);
     assert.equal(out.version, 2);
   });
-  it('applyMoveTab：跨组移空源组且未锁定 → 源组硬删除（不进回收站）', async () => {
+  it('applyMoveTab：跨组移空源组且未锁定 → 源组物理移除（removedGroupId 回报）', async () => {
     const { applyMoveTab } = await import('@/utils/mutationOps');
     const g1 = mkGroup('g1', [mkTab('t1')]);
     const g2 = mkGroup('g2', []);
-    const { groups, autoDeletedGroupId } = applyMoveTab([g1, g2], { sourceGroupId: 'g1', sourceIndex: 0, targetGroupId: 'g2', targetIndex: 0 }, NOW, STAMP);
-    assert.equal(autoDeletedGroupId, 'g1');
-    assert.equal(groups.some(g => g.id === 'g1'), false, '空源组被物理移除，不留墓碑');
+    const { groups, removedGroupId } = applyMoveTab([g1, g2], { sourceGroupId: 'g1', sourceIndex: 0, targetGroupId: 'g2', targetIndex: 0 }, NOW, STAMP);
+    assert.equal(removedGroupId, 'g1');
+    assert.equal(groups.some(g => g.id === 'g1'), false, '空源组被物理移除');
     assert.equal(groups.find(g => g.id === 'g2')!.tabs.length, 1, '标签已落到目标组');
   });
-  it('applyMoveTab：源组锁定 → 不墓碑', async () => {
+  it('applyMoveTab：源组锁定 → 组保留为空', async () => {
     const { applyMoveTab } = await import('@/utils/mutationOps');
     const g1 = mkGroup('g1', [mkTab('t1')], { isLocked: true });
     const g2 = mkGroup('g2', []);
-    const { autoDeletedGroupId } = applyMoveTab([g1, g2], { sourceGroupId: 'g1', sourceIndex: 0, targetGroupId: 'g2', targetIndex: 0 }, NOW, STAMP);
-    assert.equal(autoDeletedGroupId, null);
+    const { groups, removedGroupId } = applyMoveTab([g1, g2], { sourceGroupId: 'g1', sourceIndex: 0, targetGroupId: 'g2', targetIndex: 0 }, NOW, STAMP);
+    assert.equal(removedGroupId, null);
+    assert.equal(groups.find(g => g.id === 'g1')!.tabs.length, 0, '锁定组保留空壳');
   });
-  it('applyCleanDuplicates：同 URL 保留最新（lastAccessed），其余墓碑；清理后空的组硬删除', async () => {
+  it('applyCleanDuplicates：同 URL 保留最新（lastAccessed），败者物理移除；清空的组物理移除', async () => {
     const { applyCleanDuplicates } = await import('@/utils/mutationOps');
     const old = mkTab('old', { url: 'https://dup.com', lastAccessed: '2026-01-01T00:00:00.000Z' });
     const fresh = mkTab('fresh', { url: 'https://dup.com', lastAccessed: NOW });
     const g1 = mkGroup('g1', [old, fresh]);
     const g2 = mkGroup('g2', [mkTab('stale2', { url: 'https://dup.com', lastAccessed: '2026-01-01T00:00:00.000Z' })]);
-    const { groups, removedTabsCount, removedGroupsCount, hardDeletedGroupIds } = applyCleanDuplicates([g1, g2], NOW, STAMP);
+    const { groups, removedTabsCount, removedGroupsCount, removedGroupIds } = applyCleanDuplicates([g1, g2], NOW, STAMP);
     const out1 = groups.find(g => g.id === 'g1')!;
     assert.equal(removedTabsCount, 2);
-    assert.equal(out1.tabs.find(t => t.id === 'old')!.isDeleted, true);
-    assert.equal(out1.tabs.find(t => t.id === 'fresh')!.isDeleted, false);
+    assert.equal(out1.tabs.some(t => t.id === 'old'), false, '败者 tab 物理移除，不留墓碑');
+    assert.equal(out1.tabs.some(t => t.id === 'fresh'), true);
     assert.equal(removedGroupsCount, 1); // g2 被清空且未锁定
-    // 2026-09-28 统一规则：清空后的组无内容可恢复 → 物理移除，不进回收站
     assert.equal(groups.some(g => g.id === 'g2'), false, '被清空的组被物理移除');
-    assert.deepEqual(hardDeletedGroupIds, ['g2'], '回报硬删除 id 供登记云端 purge');
+    assert.deepEqual(removedGroupIds, ['g2'], '回报被删组 id 供登记删除广播队列');
+  });
+  it('applyCleanDuplicates：loading:// 同 URL 不同标题视为不同 tab（不去重）', async () => {
+    const { applyCleanDuplicates } = await import('@/utils/mutationOps');
+    const a = mkTab('a', { url: 'loading://x', title: '页面A' });
+    const b = mkTab('b', { url: 'loading://x', title: '页面B' });
+    const { groups, removedTabsCount } = applyCleanDuplicates([mkGroup('g', [a, b])], NOW, STAMP);
+    assert.equal(removedTabsCount, 0);
+    assert.equal(groups[0].tabs.length, 2);
   });
 });
 
-// 阶段二·§5.3：stamp 盖印验收。apply* 写入 stamp 到被改实体的 lastOp 字段。
-// 这是「自己写自己测」的关键锚点——既有测试不参与 stamp 决胜，本组用例钉死
-// stamp 实际落到目标实体上。
-describe('mutationOps: stamp 盖印（阶段二·§4.1/§5）', () => {
+// stamp 盖印验收。apply* 写入 stamp 到被改实体的 lastOp 字段。
+describe('mutationOps: stamp 盖印', () => {
   it('applySaveGroup：盖 group.lastOp', async () => {
     const { applySaveGroup } = await import('@/utils/mutationOps');
     const stamp = { d: 'devA', s: 10 };
@@ -301,25 +288,24 @@ describe('mutationOps: stamp 盖印（阶段二·§4.1/§5）', () => {
     const out = applySaveGroup([], fresh, NOW, stamp);
     assert.deepEqual(out[0].lastOp, stamp);
   });
-  it('applyRemoveTab：盖被墓碑 tab 的 lastOp，组 lastOp 同步提升（P0-3）', async () => {
+  it('applyRemoveTab：组 lastOp 同步提升（组是 LWW 广播的载体）；被删 tab 物理移除无实体可盖', async () => {
     const { applyRemoveTab } = await import('@/utils/mutationOps');
     const stamp = { d: 'devA', s: 11 };
     const g = mkGroup('g1', [mkTab('t1'), mkTab('t2')]);
     const { groups } = applyRemoveTab([g], 'g1', 't1', NOW, stamp);
     const out = groups.find(x => x.id === 'g1')!;
-    assert.deepEqual(out.tabs.find(t => t.id === 't1')!.lastOp, stamp);
+    assert.equal(out.tabs.some(t => t.id === 't1'), false);
     assert.equal(out.tabs.find(t => t.id === 't2')!.lastOp, undefined);
-    // P0-3：digest 以单调 seq 为主信号，组 stamp 不动会让“删 tab”在探活与合并时不可见
+    // 组 stamp 提升是删除广播的前提：整组行上传后对端按组 stamp 整组覆盖
     assert.deepEqual(out.lastOp, stamp);
   });
-  it('applyRemoveTab 整组清空路径：空壳组硬删除，不留墓碑（2026-09-28 统一规则）', async () => {
+  it('applyRemoveTab 整组清空路径：组物理移除，无实体承接 stamp', async () => {
     const { applyRemoveTab } = await import('@/utils/mutationOps');
     const stamp = { d: 'devA', s: 12 };
     const g = mkGroup('g1', [mkTab('t1')]);
     const r = applyRemoveTab([g], 'g1', 't1', NOW, stamp);
-    // 组内最后一个活跃标签被删 → 组无内容可恢复 → 物理移除（不给墓碑盖 stamp 的机会）
-    assert.equal(r.groups.some(x => x.id === 'g1'), false, '空壳组被物理移除');
-    assert.equal(r.hardDeletedGroupId, 'g1', '回报硬删除 id 供登记云端 purge');
+    assert.equal(r.groups.some(x => x.id === 'g1'), false, '空组被物理移除');
+    assert.equal(r.removedGroupId, 'g1', '回报被删组 id 供登记删除广播队列');
     assert.equal(r.group, null, '无存活组可回填');
   });
   it('applyRenameGroup：盖 group.lastOp', async () => {
@@ -334,7 +320,7 @@ describe('mutationOps: stamp 盖印（阶段二·§4.1/§5）', () => {
     const out = applyToggleGroupLock([mkGroup('a', [], { isLocked: false })], 'a', NOW, stamp);
     assert.deepEqual(out.groups.find(g => g.id === 'a')!.lastOp, stamp);
   });
-  it('applyMoveTab：目标组的 lastOp 盖（组级操作）；被移空的源组硬删除', async () => {
+  it('applyMoveTab：目标组的 lastOp 盖（组级操作）；被移空的源组物理移除', async () => {
     const { applyMoveTab } = await import('@/utils/mutationOps');
     const stamp = { d: 'devA', s: 15 };
     const g1 = mkGroup('g1', [mkTab('t1')]);
@@ -345,7 +331,6 @@ describe('mutationOps: stamp 盖印（阶段二·§4.1/§5）', () => {
       NOW,
       stamp
     );
-    // 源组被搬空 → 硬删除，没有实体承接 stamp（2026-09-28 统一规则）
     assert.equal(groups.some(x => x.id === 'g1'), false, '被移空的源组被物理移除');
     assert.deepEqual(groups.find(x => x.id === 'g2')!.lastOp, stamp);
   });
@@ -368,7 +353,7 @@ describe('mutationOps: stamp 盖印（阶段二·§4.1/§5）', () => {
     assert.deepEqual(out.find(g => g.id === 'a')!.lastOp, stamp); // 拖动组
     assert.equal(out.find(g => g.id === 'b')!.lastOp, undefined); // 静止组不动
   });
-  it('applyCleanDuplicates：被墓碑 tab 与被改组都盖 stamp；被清空的组硬删除（无实体不盖）', async () => {
+  it('applyCleanDuplicates：存活组盖 stamp；被清空的组物理移除（无实体不盖）', async () => {
     const { applyCleanDuplicates } = await import('@/utils/mutationOps');
     const stamp = { d: 'devA', s: 18 };
     const old = mkTab('old', { url: 'https://dup.com', lastAccessed: '2026-01-01T00:00:00.000Z' });
@@ -377,9 +362,7 @@ describe('mutationOps: stamp 盖印（阶段二·§4.1/§5）', () => {
     const g2 = mkGroup('g2', [mkTab('stale2', { url: 'https://dup.com', lastAccessed: '2026-01-01T00:00:00.000Z' })]);
     const { groups } = applyCleanDuplicates([g1, g2], NOW, stamp);
     const out1 = groups.find(g => g.id === 'g1')!;
-    assert.deepEqual(out1.tabs.find(t => t.id === 'old')!.lastOp, stamp);
-    assert.deepEqual(out1.lastOp, stamp); // 组也被改（tabs 变化 → version bump → 盖组 stamp）
-    // g2 被清空 → 硬删除：物理移除的组没有实体承接 stamp（与 applyPurgeGroup 同理）
+    assert.deepEqual(out1.lastOp, stamp); // 组被改（tabs 变化 → version bump → 盖组 stamp）
     assert.equal(groups.some(g => g.id === 'g2'), false);
   });
 });

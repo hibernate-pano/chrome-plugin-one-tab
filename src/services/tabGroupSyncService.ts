@@ -34,9 +34,14 @@ export async function markCloudGroupsAsDeleted(deletedIds: string[]): Promise<vo
   return activeSyncPort.markCloudGroupsAsDeleted(deletedIds);
 }
 
-/** P1-6：本地 purge 的组 id 出队后，彻底删除云端对应行（含读回确认无残留） */
+/** P1-6（历史）：按 id 彻底删除云端行（含读回确认无残留）。 */
 export async function purgeCloudGroups(purgedIds: string[]): Promise<void> {
   return activeSyncPort.purgeCloudGroups(purgedIds);
+}
+
+/** 无墓碑模型：物理删除超过龄期的云端墓碑行（is_deleted=true），返回删除行数。 */
+export async function purgeExpiredCloudTombstones(maxAgeDays: number = 30): Promise<number> {
+  return activeSyncPort.purgeExpiredCloudTombstones(maxAgeDays);
 }
 
 /** 轻量探活：只拉 (id, updated_at, version, is_deleted[, 印记列]) 指纹，无大字段。 */

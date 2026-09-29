@@ -15,16 +15,14 @@
  * | op               | 计划来源 |
  * |------------------|----------|
  * | saveGroup        | 快照中带本次 stamp 的组 → upsertGroup |
- * | removeTab        | 同上（整组墓碑时组 isDeleted=true 一并带入） |
- * | deleteGroup      | 同上（墓碑组 upsert，is_deleted=1） |
- * | deleteAllGroups  | 同上（全部活跃组被盖 stamp → 全部 upsert） |
- * | restoreGroup     | 同上（isDeleted=false 覆写） |
- * | purgeGroup       | removeGroup(groupId)（快照已无该组）+ setOrder |
+ * | removeTab        | 同上（拿空组时组已物理移除 → setOrder 修剪） |
+ * | deleteGroup      | 同上（组物理移除 → setOrder 修剪） |
+ * | deleteAllGroups  | 同上（快照为空 → setOrder 修剪全部） |
  * | importGroups     | 同上（新组全带 stamp → 全部 upsert） |
  * | renameGroup / toggleGroupLock / updateGroupFields / moveGroup | 同上 |
- * | moveTab          | 同上（源组+目标组同 stamp → 双 upsert） |
- * | cleanDuplicates  | 同上（被墓碑 tab/组全带 stamp） |
- * | 任意 op          | setOrder 恒附带（快照 id 序列，purge 后自然缺席） |
+ * | moveTab          | 同上（源组+目标组同 stamp → 双 upsert；源组移空 → 修剪） |
+ * | cleanDuplicates  | 同上（被移除 tab/组随整组 upsert / setOrder 修剪） |
+ * | 任意 op          | setOrder 恒附带（快照 id 序列；物理删除的组经修剪移除） |
  *
  * 状态表示（与 Y.Doc 同构，测试用 plain 实现，生产经 ydoc.ts 适配到 Y.*）：
  * - groups: Map<groupId, GroupRec>；tabs: Map<`${groupId}:${tabId}`, TabRec>；
@@ -126,25 +124,24 @@ export function toYTabRecs(g: TabGroup): YTabRec[] {
 }
 
 /**
- * 统一翻译入口：op 决定 removeGroup（仅 purge），其余一律按 stamp 从快照取受影响组。
+ * 统一翻译入口：按 stamp 从快照取受影响组（无墓碑模型，2026-09-29）。
+ * 物理删除（deleteGroup/拿空组/deleteAllGroups 等）不再有专门的 op 分支——
+ * 被删组从快照消失，由 setOrder 的修剪语义统一移除（见 applyYPlans）。
  * now 入参保留签名位（排序/时间回填未来用），本期未使用。
  */
 export function planShadowSync(
-  op: MutationOp,
+  // _op：签名保留（调用方按 op 统一分发）；物理删除由 setOrder 修剪统一覆盖
+  _op: MutationOp,
   snapshot: TabGroup[],
   stamp: OpStamp,
   // eslint-disable-next-line @typescript-eslint/no-unused-vars -- 签名预留位（排序/时间回填未来用）
   _now: string
 ): YPlan[] {
   const plans: YPlan[] = [];
-  if (op.op === 'purgeGroup') {
-    plans.push({ kind: 'removeGroup', groupId: op.groupId });
-  } else {
-    for (const g of snapshot) {
-      const st = stampOf(g);
-      if (st && sameStamp(st, stamp)) {
-        plans.push({ kind: 'upsertGroup', group: toYGroupRec(g), tabs: toYTabRecs(g) });
-      }
+  for (const g of snapshot) {
+    const st = stampOf(g);
+    if (st && sameStamp(st, stamp)) {
+      plans.push({ kind: 'upsertGroup', group: toYGroupRec(g), tabs: toYTabRecs(g) });
     }
   }
   plans.push({ kind: 'setOrder', order: snapshot.map(g => g.id) });
@@ -177,7 +174,18 @@ export function applyYPlans(state: YStateLike, plans: YPlan[], stamp: OpStamp): 
       }
       state.order = state.order.filter(id => id !== p.groupId);
     } else {
-      // setOrder：直接采用快照顺序（快照即 blob 真源，读路径仍走 blob）
+      // setOrder：直接采用快照顺序（快照即 blob 真源，读路径仍走 blob）。
+      // 无墓碑模型：快照里缺席的组 = 已被物理删除，顺带从影子修剪
+      // （含其 tabs）——删除意图由此传播，不再依赖专门的 removeGroup 计划。
+      const alive = new Set(p.order);
+      for (const id of [...state.groups.keys()]) {
+        if (!alive.has(id)) {
+          state.groups.delete(id);
+          for (const key of [...state.tabs.keys()]) {
+            if (key.startsWith(`${id}:`)) state.tabs.delete(key);
+          }
+        }
+      }
       state.order = [...p.order];
     }
   }

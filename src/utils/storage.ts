@@ -1,10 +1,10 @@
-import { TabGroup, UserSettings, Tab, LayoutMode, ThemeStyle } from '@/types/tab';
+import { TabGroup, UserSettings, LayoutMode, ThemeStyle } from '@/types/tab';
 import { parseOneTabFormat, formatToOneTabFormat } from './oneTabFormatParser';
 import { secureStorage } from './secureStorage';
 import { kvGet, kvSet, kvRemove } from '@/storage/storageAdapter';
 import { STORAGE_KEYS, STORAGE_VERSION } from '@/storage-kv/keys';
 import { cacheManager, cachedAsyncFn, debounceAsync } from './performance';
-import { logError, logInfo, logWarn } from './log';
+import { logError, logWarn } from './log';
 
 // S2 收敛：KV 键常量单源见 @/storage-kv/keys（与 storageAdapter 迁移键表同源）。
 // 此处 re-export，保持既有调用方 import 路径兼容。
@@ -337,6 +337,7 @@ class ChromeStorage {
   }
 
   // 新增：获取已删除的标签组
+  // ⚠️ 无墓碑重写（2026-09-29）后已无写入方；保留仅为迁移期读取旧键（迁移后删除）。
   async getDeletedGroups(): Promise<TabGroup[]> {
     try {
       await this.ensureVersion();
@@ -348,78 +349,48 @@ class ChromeStorage {
     }
   }
 
-  // 新增：设置已删除的标签组
-  async setDeletedGroups(groups: TabGroup[]): Promise<void> {
+  // P1-6（历史）：purge 队列读写。无墓碑模型改用 pendingDeleteIds（见下），
+  // 本组方法仅为迁移读取残留队列保留，迁移完成后清除该键。
+  async getPendingPurgeIds(): Promise<string[]> {
     try {
       await this.ensureVersion();
-      await kvSet(STORAGE_KEYS.DELETED_GROUPS, groups);
-    } catch (error) {
-      logError('设置已删除标签组失败:', error);
-    }
-  }
-
-  // 新增：获取已删除的标签页
-  async getDeletedTabs(): Promise<Tab[]> {
-    try {
-      await this.ensureVersion();
-      const tabs = await kvGet<unknown>(STORAGE_KEYS.DELETED_TABS);
-      return Array.isArray(tabs) ? (tabs as Tab[]) : [];
-    } catch (error) {
-      logError('获取已删除标签页失败:', error);
+      const ids = await kvGet<unknown>(STORAGE_KEYS.PENDING_PURGE_IDS);
+      return Array.isArray(ids) ? (ids as unknown[]).filter((x): x is string => typeof x === 'string') : [];
+    } catch {
       return [];
     }
   }
 
-  // 新增：设置已删除的标签页
-  async setDeletedTabs(tabs: Tab[]): Promise<void> {
+  // 无墓碑模型：删除广播队列。本地物理删除组后由 mutation 登记，
+  // upload 时 markCloudGroupsAsDeleted 成功（读回确认）后才 clear；失败保留下轮重试。
+  async getPendingDeleteIds(): Promise<string[]> {
     try {
       await this.ensureVersion();
-      await kvSet(STORAGE_KEYS.DELETED_TABS, tabs);
-    } catch (error) {
-      logError('设置已删除标签页失败:', error);
+      const ids = await kvGet<unknown>(STORAGE_KEYS.PENDING_DELETE_IDS);
+      return Array.isArray(ids) ? (ids as unknown[]).filter((x): x is string => typeof x === 'string') : [];
+    } catch {
+      return [];
     }
   }
 
-  // 新增：清理过期的已删除标签组
-  /**
-   * ⚠️ 已废弃，勿接入调度：本函数读写的是旧「回收站列表」（getDeletedGroups/
-   * getDeletedTabs），而阶段二的墓碑是**内联在 groups 数组里**的 `isDeleted: true`
-   * 实体（带 lastOp 印记）→ 调用它不会回收任何墓碑，只是死代码。
-   * 墓碑压缩需「云端已确认 + 30 天龄期」（规格 §8），属阶段三，
-   * 届时需按印记模型重写（包含云端行删除与本地内联墓碑清理）。
-   * 现状：墓碑只增不减，但增速 = 用户删除频率，不构成即时风险。
-   */
-  async cleanupDeletedGroups(maxAgeInDays: number = 30): Promise<void> {
+  async addPendingDeleteId(id: string): Promise<void> {
     try {
-      const deletedGroups = await this.getDeletedGroups();
-      const now = new Date().getTime();
-      const maxAgeMs = maxAgeInDays * 24 * 60 * 60 * 1000;
-
-      // 过滤出未过期的已删除标签组
-      const validGroups = deletedGroups.filter(group => {
-        const updatedAt = new Date(group.updatedAt).getTime();
-        return (now - updatedAt) < maxAgeMs;
-      });
-
-      // 如果有过期的标签组，更新存储
-      if (validGroups.length !== deletedGroups.length) {
-        await this.setDeletedGroups(validGroups);
-        logInfo(`清理了 ${deletedGroups.length - validGroups.length} 个过期的已删除标签组`);
-      }
-
-      // 同时清理过期的已删除标签页
-      const deletedTabs = await this.getDeletedTabs();
-      const validTabs = deletedTabs.filter(tab => {
-        const lastAccessed = new Date(tab.lastAccessed).getTime();
-        return (now - lastAccessed) < maxAgeMs;
-      });
-
-      if (validTabs.length !== deletedTabs.length) {
-        await this.setDeletedTabs(validTabs);
-        logInfo(`清理了 ${deletedTabs.length - validTabs.length} 个过期的已删除标签页`);
+      const ids = await this.getPendingDeleteIds();
+      if (!ids.includes(id)) {
+        await this.ensureVersion();
+        await kvSet(STORAGE_KEYS.PENDING_DELETE_IDS, [...ids, id]);
       }
     } catch (error) {
-      logError('清理已删除数据失败:', error);
+      logError('记录 pending_delete_ids 失败:', error);
+    }
+  }
+
+  async clearPendingDeleteIds(): Promise<void> {
+    try {
+      await this.ensureVersion();
+      await kvRemove(STORAGE_KEYS.PENDING_DELETE_IDS);
+    } catch (error) {
+      logError('清除 pending_delete_ids 失败:', error);
     }
   }
 
@@ -502,38 +473,6 @@ class ChromeStorage {
       await kvSet(STORAGE_KEYS.LAST_UPLOAD_TIME, time);
     } catch (error) {
       logError('设置 last_upload_time 失败:', error);
-    }
-  }
-
-  // P1-6：purge 出队/入队。upload 成功删掉云端对应行后才 clear；失败保留下轮重试。
-  async getPendingPurgeIds(): Promise<string[]> {
-    try {
-      await this.ensureVersion();
-      const ids = await kvGet<unknown>(STORAGE_KEYS.PENDING_PURGE_IDS);
-      return Array.isArray(ids) ? (ids as unknown[]).filter((x): x is string => typeof x === 'string') : [];
-    } catch {
-      return [];
-    }
-  }
-
-  async addPendingPurgeId(id: string): Promise<void> {
-    try {
-      const ids = await this.getPendingPurgeIds();
-      if (!ids.includes(id)) {
-        await this.ensureVersion();
-        await kvSet(STORAGE_KEYS.PENDING_PURGE_IDS, [...ids, id]);
-      }
-    } catch (error) {
-      logError('记录 pending_purge_ids 失败:', error);
-    }
-  }
-
-  async clearPendingPurgeIds(): Promise<void> {
-    try {
-      await this.ensureVersion();
-      await kvRemove(STORAGE_KEYS.PENDING_PURGE_IDS);
-    } catch (error) {
-      logError('清除 pending_purge_ids 失败:', error);
     }
   }
 
@@ -778,6 +717,8 @@ class ChromeStorage {
         STORAGE_KEYS.MIGRATION_FLAGS,
         STORAGE_KEYS.PENDING_UPLOAD,
         STORAGE_KEYS.LAST_UPLOAD_TIME,
+        STORAGE_KEYS.PENDING_PURGE_IDS,
+        STORAGE_KEYS.PENDING_DELETE_IDS,
         STORAGE_KEYS.DEVICE_SEQ,
         STORAGE_KEYS.JOURNAL,
         STORAGE_KEYS.LAST_SYNCED_SEQ,

@@ -13,8 +13,9 @@ export interface Tab {
   // 同步相关字段
   syncStatus?: 'synced' | 'local-only' | 'remote-only' | 'conflict';
   lastSyncedAt?: string | null;
-  isDeleted?: boolean; // 软删除标记
-  /** D3 墓碑 7 天：删除时刻（执行删除的 mutation 的 now）。恢复时清空；缺失回退 updatedAt。 */
+  /** @deprecated 无墓碑模型（2026-09-29）新写入不再产生；仅为读取老版本设备数据保留 */
+  isDeleted?: boolean;
+  /** @deprecated 同上（老数据兼容读取） */
   deletedAt?: string;
 
   // 阶段二·§4.1：操作印记（写入者）。merge 时按全序决胜。
@@ -80,8 +81,9 @@ export interface TabGroup {
   // 同步相关字段
   syncStatus?: 'synced' | 'local-only' | 'remote-only' | 'conflict';
   lastSyncedAt?: string | null;
-  isDeleted?: boolean; // 软删除标记
-  /** D3 墓碑 7 天：删除时刻（执行删除的 mutation 的 now）。恢复时清空；缺失回退 updatedAt。 */
+  /** @deprecated 无墓碑模型（2026-09-29）本地新写入不再产生；云端 is_deleted 行为删除广播载体，读路径防御保留 */
+  isDeleted?: boolean;
+  /** @deprecated 同上（老数据兼容读取） */
   deletedAt?: string;
 
   // 阶段二·§4.1：操作印记（写入者）。merge 时按全序决胜。
@@ -102,8 +104,6 @@ export interface OptimisticTabBackup {
 
 export interface TabState {
   groups: TabGroup[];
-  // 已软删（墓碑）的标签组，用于误删保护恢复视图；不参与主列表渲染
-  deletedGroups: TabGroup[];
   activeGroupId: string | null;
   isLoading: boolean;
   error: string | null;
@@ -129,7 +129,7 @@ export interface TabState {
   // （pending 写入对应项，fulfilled 清对应项，rejected 只回滚对应项）
   optimisticBackups?: Record<string, OptimisticTabBackup>;
   // 回环代际 guard：deleteTabAndSync.pending 自增 mutationEpoch；
-  // loadGroups/loadDeletedGroups.pending 快照发起时 epoch，fulfilled 时若快照
+  // loadGroups.pending 快照发起时 epoch，fulfilled 时若快照
   // 落后于当前 epoch（mutation 在途期读到的旧快照）则忽略，避免覆盖乐观态。
   // 与发起时 epoch 相等则接受——外部变更（他端同步）触发的新回环不受影响，不饿死。
   mutationEpoch?: number;

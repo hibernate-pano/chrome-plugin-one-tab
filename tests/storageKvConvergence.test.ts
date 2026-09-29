@@ -109,6 +109,7 @@ describe('S2 键常量单源', () => {
       PENDING_UPLOAD: 'pending_upload',
       LAST_UPLOAD_TIME: 'last_upload_time',
       PENDING_PURGE_IDS: 'pending_purge_ids',
+      PENDING_DELETE_IDS: 'pending_delete_ids',
       DEVICE_SEQ: 'device_seq',
       JOURNAL: 'journal',
       LAST_SYNCED_SEQ: 'last_synced_seq',

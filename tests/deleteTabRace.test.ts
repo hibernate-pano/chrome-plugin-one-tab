@@ -116,26 +116,26 @@ describe('回环代际 guard（mutationEpoch）', () => {
     assert.deepEqual(tabIdsOf(store.getState().tabs, 'g'), ['t1', 't2']);
   });
 
-  it('loadDeletedGroups 同代际语义：在途旧回环忽略、新回环应用', async () => {
-    const { loadDeletedGroups, deleteTabAndSync } = await slice();
+  it('组级删除乐观态：在途旧回环不得把已拿空的组复活回来', async () => {
+    const { loadGroups, deleteTabAndSync } = await slice();
     const store = await makeStore([makeGroup('g', ['t1'])]);
 
-    store.dispatch(loadDeletedGroups.pending('DL-old', undefined));
-    // 删掉最后一个 tab → 整组乐观进误删保护视图
+    store.dispatch(loadGroups.pending('L-old', undefined));
+    // 删掉最后一个 tab → 整组乐观移除（无墓碑模型：组直接消失）
     store.dispatch(deleteTabAndSync.pending('D1', { groupId: 'g', tabId: 't1' }));
-    assert.equal(store.getState().tabs.deletedGroups.length, 1, '乐观删除应先产生墓碑');
+    assert.equal(store.getState().tabs.groups.length, 0, '乐观删除应先移除整组');
 
-    // 旧回环带着空墓碑列表回来 → 必须丢弃（否则恢复区闪失）
-    store.dispatch(loadDeletedGroups.fulfilled([], 'DL-old', undefined));
-    assert.equal(store.getState().tabs.deletedGroups.length, 1, '在途旧墓碑回环必须被忽略');
+    // 旧回环带着含 t1 的旧 KV 快照回来 → 必须丢弃/过滤（否则组复活闪现）
+    store.dispatch(loadGroups.fulfilled([makeGroup('g', ['t1'])], 'L-old', undefined));
+    assert.equal(store.getState().tabs.groups.length, 0, '在途旧回环不得复活被删的组');
 
-    // 删除落定（用例原意即“落定后”），新回环正常应用
+    // 删除落定后，新回环正常应用（不饿死）
     store.dispatch(
       deleteTabAndSync.fulfilled({ group: null }, 'D1', { groupId: 'g', tabId: 't1' })
     );
-    store.dispatch(loadDeletedGroups.pending('DL-new', undefined));
-    store.dispatch(loadDeletedGroups.fulfilled([], 'DL-new', undefined));
-    assert.equal(store.getState().tabs.deletedGroups.length, 0, '新回环应正常应用');
+    store.dispatch(loadGroups.pending('L-new', undefined));
+    store.dispatch(loadGroups.fulfilled([makeGroup('g2', ['x1'])], 'L-new', undefined));
+    assert.deepEqual(store.getState().tabs.groups.map(g => g.id), ['g2'], '新回环应正常应用');
   });
 });
 
@@ -181,31 +181,22 @@ describe('乐观备份 key 化（groupId:tabId）', () => {
     const { loadGroups, deleteTabAndSync } = await slice();
     const store = await makeStore([makeGroup('g', ['t1'])]);
     store.dispatch(deleteTabAndSync.pending('D1', { groupId: 'g', tabId: 't1' }));
-    assert.equal(store.getState().tabs.deletedGroups.length, 1, '整组乐观进误删保护视图');
+    assert.equal(store.getState().tabs.groups.length, 0, '整组乐观移除（无墓碑模型）');
     store.dispatch(loadGroups.pending('L-after', undefined));
     store.dispatch(loadGroups.fulfilled([makeGroup('g', ['t1'])], 'L-after', undefined));
-    assert.equal(store.getState().tabs.groups.length, 0, '整组在途软删，active 不得复活');
-    assert.equal(store.getState().tabs.deletedGroups.length, 1, '误删保护视图保留（pending 加入）');
+    assert.equal(store.getState().tabs.groups.length, 0, '整组在途删除，active 不得复活');
   });
 
-  it('同代际在途回环保留回收站中在途软删的组：旧 KV payload 不得将其清出', async () => {
-    const { loadGroups, loadDeletedGroups, deleteTabAndSync } = await slice();
+  it('落定后（group=null 回包）回环正常应用被删组之外的组', async () => {
+    const { loadGroups, deleteTabAndSync } = await slice();
     const store = await makeStore([makeGroup('g', ['t1'])]);
     store.dispatch(deleteTabAndSync.pending('D1', { groupId: 'g', tabId: 't1' }));
-    // 回收站回环在 pending 之后发起（同代际）：旧 KV 还没有 g 墓碑 → payload 为空
-    store.dispatch(loadDeletedGroups.pending('DL-after', undefined));
-    store.dispatch(loadDeletedGroups.fulfilled([], 'DL-after', undefined));
-    assert.equal(
-      store.getState().tabs.deletedGroups.length, 1,
-      '在途整组软删不得被旧 payload 清出回收站'
-    );
-    // 删除落定后，后续回收站回环正常应用（不饿死）
     store.dispatch(
       deleteTabAndSync.fulfilled({ group: null }, 'D1', { groupId: 'g', tabId: 't1' })
     );
-    store.dispatch(loadDeletedGroups.pending('DL-new', undefined));
-    store.dispatch(loadDeletedGroups.fulfilled([], 'DL-new', undefined));
-    assert.equal(store.getState().tabs.deletedGroups.length, 0, '落定后新回环正常应用');
+    store.dispatch(loadGroups.pending('L-new', undefined));
+    store.dispatch(loadGroups.fulfilled([makeGroup('g2', ['x1'])], 'L-new', undefined));
+    assert.deepEqual(store.getState().tabs.groups.map(g => g.id), ['g2'], '落定后新回环正常应用');
   });
 
   it('无在途备份时回环原样应用（过滤器不误伤）', async () => {
@@ -224,7 +215,7 @@ describe('乐观备份 key 化（groupId:tabId）', () => {
 
     store.dispatch(deleteTabAndSync.pending('D1', { groupId: 'g1', tabId: 'a1' }));
     store.dispatch(deleteTabAndSync.pending('D2', { groupId: 'g2', tabId: 'b1' }));
-    // g1 被拿空 → 进误删保护视图
+    // g1 被拿空 → 整组移除
     assert.equal(tabIdsOf(store.getState().tabs, 'g1'), null);
     assert.deepEqual(tabIdsOf(store.getState().tabs, 'g2'), ['b2']);
 
@@ -235,18 +226,17 @@ describe('乐观备份 key 化（groupId:tabId）', () => {
     assert.equal(tabIdsOf(store.getState().tabs, 'g1'), null, 'g1 的乐观态不得被错位恢复');
   });
 
-  it('拿空组的 rejected：整组从误删保护视图恢复，墓碑清除', async () => {
+  it('拿空组的 rejected：整组按快照恢复', async () => {
     const { deleteTabAndSync } = await slice();
     const store = await makeStore([makeGroup('g', ['t1'])]);
 
     store.dispatch(deleteTabAndSync.pending('D1', { groupId: 'g', tabId: 't1' }));
-    assert.equal(store.getState().tabs.deletedGroups.length, 1);
+    assert.equal(store.getState().tabs.groups.length, 0, '乐观删除先移除整组');
 
     store.dispatch(
       deleteTabAndSync.rejected(new Error('net'), 'D1', { groupId: 'g', tabId: 't1' })
     );
     assert.deepEqual(tabIdsOf(store.getState().tabs, 'g'), ['t1'], '组应带着 t1 回到主列表');
-    assert.equal(store.getState().tabs.deletedGroups.length, 0, '乐观墓碑必须清除');
   });
 
   it('fulfilled 只清对应项 + 重放同组在途删除（先到的服务端真值不得复活后删项）', async () => {
@@ -256,7 +246,7 @@ describe('乐观备份 key 化（groupId:tabId）', () => {
     store.dispatch(deleteTabAndSync.pending('D1', { groupId: 'g', tabId: 't1' }));
     store.dispatch(deleteTabAndSync.pending('D2', { groupId: 'g', tabId: 't2' }));
     // D1 的服务端回包（只删了 t1，还含 t2）先到 → 不得把 t2 复活回主列表
-    // （组已被 D2 乐观拿空进误删保护视图，stale 回包不得复活它）
+    // （组已被 D2 乐观拿空移除，stale 回包不得复活它）
     store.dispatch(
       deleteTabAndSync.fulfilled({ group: makeGroup('g', ['t2']) }, 'D1', {
         groupId: 'g',
@@ -265,12 +255,12 @@ describe('乐观备份 key 化（groupId:tabId）', () => {
     );
     const allLiveTabs = store.getState().tabs.groups.flatMap(g => g.tabs.map(t => t.id));
     assert.ok(!allLiveTabs.includes('t2'), 't2 仍在途，不得被回填复活');
-    assert.equal(tabIdsOf(store.getState().tabs, 'g'), null, '组应保持乐观墓碑态，不被 stale 回包复活');
+    assert.equal(tabIdsOf(store.getState().tabs, 'g'), null, '组应保持乐观移除态，不被 stale 回包复活');
     assert.ok(
       store.getState().tabs.optimisticBackups?.['g:t2'],
       't2 的备份槽位必须保留到其自身落定'
     );
-    // D2 落定（组空）→ 整组软删
+    // D2 落定（组空）→ 整组移除
     store.dispatch(
       deleteTabAndSync.fulfilled({ group: null }, 'D2', { groupId: 'g', tabId: 't2' })
     );

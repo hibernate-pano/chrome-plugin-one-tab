@@ -1,6 +1,6 @@
-import React, { useEffect, lazy, useState } from 'react';
+import React, { useEffect, lazy } from 'react';
 import { useAppDispatch, useAppSelector } from '@/store/hooks';
-import { loadGroups, loadDeletedGroups, restoreGroup, purgeGroup, moveGroupAndSync } from '@/store/slices/tabSlice';
+import { loadGroups, moveGroupAndSync } from '@/store/slices/tabSlice';
 import { invalidateGroupsCache, onGroupsChanged } from '@/utils/storage';
 import { runMigrations } from '@/utils/migrationUtils';
 import { DraggableTabGroup } from '@/components/dnd/DraggableTabGroup';
@@ -8,9 +8,6 @@ import { SearchResultList } from '@/components/search/SearchResultList';
 import { EmptyState } from '@/components/common/EmptyState';
 import { LoadingSpinner } from '@/components/common/LoadingSpinner';
 import { PersonalizedWelcome, QuickActionTips } from '@/components/common/PersonalizedWelcome';
-import { useToast } from '@/contexts/ToastContext';
-import { useEnhancedToast } from '@/utils/toastHelper';
-import type { TabGroup as TabGroupType } from '@/types/tab';
 import { logError } from '../../utils/log';
 
 interface TabListProps {
@@ -21,21 +18,17 @@ const ReorderView = lazy(() => import('@/components/tabs/ReorderView'));
 
 export const TabList: React.FC<TabListProps> = ({ searchQuery }) => {
   const dispatch = useAppDispatch();
-  const { groups, deletedGroups, isLoading, error } = useAppSelector(state => state.tabs);
+  const { groups, isLoading, error } = useAppSelector(state => state.tabs);
   const { layoutMode, reorderMode } = useAppSelector(state => state.settings);
-  const { showConfirm, showToast } = useToast();
-  const { showRestoreError } = useEnhancedToast();
 
   useEffect(() => {
     const initializeData = async () => {
       try {
         await runMigrations();
         dispatch(loadGroups());
-        dispatch(loadDeletedGroups());
       } catch (migrationError) {
         logError('初始化数据失败:', migrationError);
         dispatch(loadGroups());
-        dispatch(loadDeletedGroups());
       }
     };
 
@@ -45,7 +38,6 @@ export const TabList: React.FC<TabListProps> = ({ searchQuery }) => {
       if (message.type === 'REFRESH_TAB_LIST') {
         invalidateGroupsCache();
         dispatch(loadGroups());
-        dispatch(loadDeletedGroups());
       }
       return true;
     };
@@ -57,7 +49,6 @@ export const TabList: React.FC<TabListProps> = ({ searchQuery }) => {
       if (debounceTimer) clearTimeout(debounceTimer);
       debounceTimer = setTimeout(() => {
         dispatch(loadGroups());
-        dispatch(loadDeletedGroups());
       }, 150);
     });
 
@@ -190,125 +181,6 @@ export const TabList: React.FC<TabListProps> = ({ searchQuery }) => {
             />
           ))}
         </div>
-      )}
-
-      <DeletedGroupsSection
-        deletedGroups={deletedGroups}
-        onRestore={groupId => {
-          dispatch(restoreGroup(groupId))
-            .unwrap()
-            .catch(err => showRestoreError(err.message || '未知错误'));
-        }}
-        onRestoreAll={async () => {
-          // 批量恢复走现有 restoreGroup 单组 op，串行入队（mutation 队列本身串行），
-          // 失败不中断其余恢复，最后汇总报错。成功静默（Unix 哲学）。
-          let failed = 0;
-          for (const g of deletedGroups) {
-            try {
-              await dispatch(restoreGroup(g.id)).unwrap();
-            } catch {
-              failed += 1;
-            }
-          }
-          if (failed > 0) showRestoreError(`${failed} 个会话恢复失败，请重试`);
-        }}
-        onPurge={groupId => {
-          showConfirm({
-            title: '彻底删除',
-            message: '彻底删除后无法恢复（仅移除本地，云端墓碑保留）。确定吗？',
-            confirmText: '彻底删除',
-            cancelText: '取消',
-            type: 'danger',
-            onCancel: () => {},
-            onConfirm: () => {
-              dispatch(purgeGroup(groupId))
-                .unwrap()
-                .catch(err => showToast(`删除失败: ${err.message || '未知错误'}`, 'error'));
-            },
-          });
-        }}
-      />
-    </div>
-  );
-};
-
-// ── 已删除（误删保护恢复）区 ──────────────────────────────
-interface DeletedGroupsSectionProps {
-  deletedGroups: TabGroupType[];
-  onRestore: (groupId: string) => void;
-  onRestoreAll: () => void;
-  onPurge: (groupId: string) => void;
-}
-
-const DeletedGroupsSection: React.FC<DeletedGroupsSectionProps> = ({ deletedGroups, onRestore, onRestoreAll, onPurge }) => {
-  const [expanded, setExpanded] = useState(false);
-
-  if (deletedGroups.length === 0) return null;
-
-  return (
-    <div className="mt-4 rounded-2xl border border-dashed border-gray-300 bg-gray-50/50 p-4 dark:border-gray-700 dark:bg-gray-900/40">
-      {/* 外层不能是 button（内部还要嵌按钮），拆成左右两个 button */}
-      <div className="flex w-full items-center justify-between gap-2 text-left">
-        <button
-          type="button"
-          onClick={() => setExpanded(v => !v)}
-          className="flex flex-1 items-center justify-between text-left"
-        >
-          <span className="text-sm font-medium text-gray-500 dark:text-gray-400">
-            已删除（{deletedGroups.length}）
-          </span>
-          <span className="text-gray-400">
-            <svg
-              className={`w-4 h-4 transition-transform duration-200 ${expanded ? 'rotate-180' : ''}`}
-              fill="none"
-              viewBox="0 0 24 24"
-              stroke="currentColor"
-              strokeWidth={2}
-              aria-hidden="true"
-            >
-              <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
-            </svg>
-          </span>
-        </button>
-        <button
-          type="button"
-          onClick={onRestoreAll}
-          className="shrink-0 rounded-md px-2 py-1 text-xs font-medium text-primary-600 transition-colors hover:bg-primary-50 dark:text-primary-400 dark:hover:bg-primary-950/40"
-        >
-          全部恢复
-        </button>
-      </div>
-
-      {expanded && (
-        <ul className="mt-3 space-y-2">
-          {deletedGroups.map(group => (
-            <li
-              key={group.id}
-              className="flex items-center justify-between gap-2 rounded-xl bg-white px-3 py-2 shadow-sm dark:bg-gray-800"
-            >
-              <div className="min-w-0">
-                <p className="truncate text-sm text-gray-700 dark:text-gray-200">{group.name}</p>
-                <p className="text-xs text-gray-400">{group.tabs.length} 个标签页</p>
-              </div>
-              <div className="flex shrink-0 gap-2">
-                <button
-                  type="button"
-                  onClick={() => onRestore(group.id)}
-                  className="rounded-md border border-gray-200 px-2 py-1 text-xs text-gray-700 transition hover:bg-gray-100 dark:border-gray-600 dark:text-gray-200 dark:hover:bg-gray-700"
-                >
-                  恢复
-                </button>
-                <button
-                  type="button"
-                  onClick={() => onPurge(group.id)}
-                  className="rounded-md border border-rose-200 px-2 py-1 text-xs text-rose-600 transition hover:bg-rose-50 dark:border-rose-900 dark:text-rose-400 dark:hover:bg-rose-950"
-                >
-                  彻底删除
-                </button>
-              </div>
-            </li>
-          ))}
-        </ul>
       )}
     </div>
   );

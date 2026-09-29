@@ -1,10 +1,10 @@
-// 钉死按 OpStamp 全序决胜的合并纯函数（规格 §5）：
-// - §5.1 组级：并集 + 按 stamp 决胜；墓碑也参与比较
-// - §5.2 组字段：name/isFavorite/displayOrder 跟随组 stamp 赢家；isLocked OR；version 冻结
-// - §5.3 标签级：tab 按 id 并集 + stamp 决胜
-// - §5.4 URL 去重：同 URL 多活跃 stamp 决胜，败者盖墓碑 + mergeStamp
+// 钉死组级 LWW（整组覆盖）合并纯函数（无墓碑模型，2026-09-29）：
+// - 组是合并的最小单位：两端都有 → 组 stamp（lastOp）大者整组赢（tabs 全跟赢家）
+// - 云端 is_deleted 行 = 删除广播：本地无副本 → 跳过；本地有副本 → stamp 决胜
+//   （云端新 → 本地组服从删除；本地新 → 保留本地，下次上传覆盖云端墓碑）
+// - 无 tab 级合并、无 URL 去重、合并不铸新 stamp
 //
-// 性质测试（§10）：交换律 / 幂等 / 收敛——验收"确定性"。
+// 性质测试（交换律 / 幂等 / 收敛）保留：LWW 决胜确定性不变。
 //
 // 文件样板与 tests/mutationOps.test.ts 一致：@/ 别名需在 register(loader) 之后动态 import。
 import { describe, it, before } from 'node:test';
@@ -35,15 +35,15 @@ function mkG(id: string, tabs: any[] = [], over: any = {}) {
   return {
     id, name: `g-${id}`, tabs,
     createdAt: NOW, updatedAt: NOW,
-    version: 1, isDeleted: false, isLocked: false,
+    version: 1, isLocked: false,
     ...over,
   };
 }
 function mkT(id: string, url: string, over: any = {}) {
-  return { id, url, title: id, favicon: '', createdAt: NOW, lastAccessed: NOW, pinned: false, isDeleted: false, ...over };
+  return { id, url, title: id, favicon: '', createdAt: NOW, lastAccessed: NOW, pinned: false, ...over };
 }
 
-describe('mergeOpStamped: 交换律 / 幂等 / 收敛（§10 性质测试）', () => {
+describe('mergeOpStamped: 交换律 / 幂等 / 收敛（性质测试）', () => {
   it('交换律: merge(A,B) ≡ merge(B,A)', async () => {
     const { mergeOpStamped } = await import('@/utils/opStampMerge');
     const a = [mkG('g1', [mkT('t1', 'https://a')], { lastOp: STAMP_A })];
@@ -67,55 +67,22 @@ describe('mergeOpStamped: 交换律 / 幂等 / 收敛（§10 性质测试）', (
   });
 });
 
-describe('mergeOpStamped: §5.1/§5.2 组级', () => {
-  it('云端 stamp 更高 → 云端赢家', async () => {
+describe('mergeOpStamped: 组级 LWW（整组覆盖）', () => {
+  it('云端 stamp 更高 → 云端整组赢', async () => {
     const { mergeOpStamped } = await import('@/utils/opStampMerge');
-    const local = [mkG('g1', [], { lastOp: { d: 'devA', s: 1 }, name: '本地名' })];
-    const cloud = [mkG('g1', [], { lastOp: { d: 'devB', s: 99 }, name: '云端名' })];
+    const local = [mkG('g1', [mkT('tLocal', 'https://local')], { lastOp: { d: 'devA', s: 1 }, name: '本地名' })];
+    const cloud = [mkG('g1', [mkT('tCloud', 'https://cloud')], { lastOp: { d: 'devB', s: 99 }, name: '云端名' })];
     const out = mergeOpStamped(local, cloud);
     assert.equal(out[0].name, '云端名');
+    assert.deepEqual(out[0].tabs.map(t => t.id), ['tCloud'], 'tabs 整组跟赢家，不做 tab 级并集');
   });
-  it('本地 stamp 更高 → 本地赢家', async () => {
+  it('本地 stamp 更高 → 本地整组赢', async () => {
     const { mergeOpStamped } = await import('@/utils/opStampMerge');
-    const local = [mkG('g1', [], { lastOp: { d: 'devA', s: 99 }, name: '本地' })];
-    const cloud = [mkG('g1', [], { lastOp: { d: 'devB', s: 1 }, name: '云端' })];
+    const local = [mkG('g1', [mkT('tLocal', 'https://local')], { lastOp: { d: 'devA', s: 99 }, name: '本地' })];
+    const cloud = [mkG('g1', [mkT('tCloud', 'https://cloud')], { lastOp: { d: 'devB', s: 1 }, name: '云端' })];
     const out = mergeOpStamped(local, cloud);
     assert.equal(out[0].name, '本地');
-  });
-  it('墓碑 (isDeleted) 同样参与 stamp 比较：赢家是墓碑 → 保留 isDeleted=true', async () => {
-    const { mergeOpStamped } = await import('@/utils/opStampMerge');
-    const local = [mkG('g1', [], { lastOp: { d: 'devA', s: 5 } })]; // 活跃
-    const cloud = [mkG('g1', [], { lastOp: { d: 'devB', s: 99 }, isDeleted: true })];
-    const out = mergeOpStamped(local, cloud);
-    assert.equal(out[0].isDeleted, true);
-  });
-  it('活跃 stamp > 墓碑 stamp → 保留活跃（恢复/取消删除语义）', async () => {
-    const { mergeOpStamped } = await import('@/utils/opStampMerge');
-    const local = [mkG('g1', [], { lastOp: { d: 'devA', s: 99 } })]; // 活跃最新
-    const cloud = [mkG('g1', [], { lastOp: { d: 'devB', s: 5 }, isDeleted: true })];
-    const out = mergeOpStamped(local, cloud);
-    assert.equal(out[0].isDeleted, false);
-  });
-  it('单侧独有：保留', async () => {
-    const { mergeOpStamped } = await import('@/utils/opStampMerge');
-    const local = [mkG('g1', [])];
-    const cloud = [mkG('g2', [])];
-    const out = mergeOpStamped(local, cloud);
-    assert.equal(out.length, 2);
-  });
-  it('version 冻结：保留原值，不 max+1', async () => {
-    const { mergeOpStamped } = await import('@/utils/opStampMerge');
-    const local = [mkG('g1', [], { lastOp: STAMP_A, version: 5 })];
-    const cloud = [mkG('g1', [], { lastOp: STAMP_B, version: 7 })];
-    const out = mergeOpStamped(local, cloud);
-    assert.equal(out[0].version, 7); // 跟随赢家原值，不 +1
-  });
-  it('isLocked OR：任一锁定即锁定', async () => {
-    const { mergeOpStamped } = await import('@/utils/opStampMerge');
-    const local = [mkG('g1', [], { lastOp: STAMP_A, isLocked: false })];
-    const cloud = [mkG('g1', [], { lastOp: STAMP_B, isLocked: true })];
-    const out = mergeOpStamped(local, cloud);
-    assert.equal(out[0].isLocked, true);
+    assert.deepEqual(out[0].tabs.map(t => t.id), ['tLocal']);
   });
   it('无 stamp 的实体（全序最小值）→ 输给任何带 stamp 的实体', async () => {
     const { mergeOpStamped } = await import('@/utils/opStampMerge');
@@ -124,63 +91,66 @@ describe('mergeOpStamped: §5.1/§5.2 组级', () => {
     const out = mergeOpStamped(local, cloud);
     assert.equal(out[0].name, '新数据');
   });
-});
-
-describe('mergeOpStamped: §5.3 标签级', () => {
-  it('tab 按 stamp 决胜', async () => {
+  it('单侧独有：保留', async () => {
     const { mergeOpStamped } = await import('@/utils/opStampMerge');
-    const localTab = mkT('t1', 'https://a', { lastAccessed: '2026-01-01T00:00:00.000Z', lastOp: { d: 'devA', s: 1 } });
-    const cloudTab = mkT('t1', 'https://a', { lastAccessed: '2026-06-01T00:00:00.000Z', lastOp: { d: 'devB', s: 99 } });
-    const local = [mkG('g1', [localTab], { lastOp: { d: 'devA', s: 1 } })];
-    const cloud = [mkG('g1', [cloudTab], { lastOp: { d: 'devB', s: 99 } })];
+    const local = [mkG('g1', [])];
+    const cloud = [mkG('g2', [])];
     const out = mergeOpStamped(local, cloud);
-    assert.equal(out[0].tabs[0].lastAccessed, '2026-06-01T00:00:00.000Z');
+    assert.equal(out.length, 2);
   });
-  it('标签墓碑同样参与 stamp 比较', async () => {
+  it('version 冻结：跟随赢家原值，不 max+1', async () => {
     const { mergeOpStamped } = await import('@/utils/opStampMerge');
-    const localTab = mkT('t1', 'https://a', { lastOp: { d: 'devA', s: 1 } }); // 活跃
-    const cloudTab = mkT('t1', 'https://a', { lastOp: { d: 'devB', s: 99 }, isDeleted: true });
-    const local = [mkG('g1', [localTab], { lastOp: { d: 'devA', s: 1 } })];
-    const cloud = [mkG('g1', [cloudTab], { lastOp: { d: 'devB', s: 99 } })];
+    const local = [mkG('g1', [], { lastOp: STAMP_A, version: 5 })];
+    const cloud = [mkG('g1', [], { lastOp: STAMP_B, version: 7 })];
     const out = mergeOpStamped(local, cloud);
-    assert.equal(out[0].tabs[0].isDeleted, true);
+    assert.equal(out[0].version, 7);
   });
 });
 
-describe('mergeOpStamped: §5.4 URL 去重（跨设备同 URL 重加存活）', () => {
-  it('跨设备同 URL 重加：双方都视为独立实体，按 stamp 决胜（重加存活）', async () => {
-    // 规格 §5.4 + §12 第 3 条：跨设备同 URL 不同 id = 独立实体，不再被 URL 墓碑误杀。
+describe('mergeOpStamped: 删除广播（云端 is_deleted 行的服从语义）', () => {
+  it('仅云端有且 is_deleted=true → 不收入（行永不入库）', async () => {
     const { mergeOpStamped } = await import('@/utils/opStampMerge');
-    const localTab = mkT('tLocal', 'https://x.com', { lastOp: { d: 'devA', s: 5 } });
-    const cloudTab = mkT('tCloud', 'https://x.com', { lastOp: { d: 'devB', s: 1 } });
-    const local = [mkG('g1', [localTab], { lastOp: { d: 'devA', s: 5 } })];
-    const cloud = [mkG('g1', [cloudTab], { lastOp: { d: 'devB', s: 1 } })];
+    const cloud = [mkG('g1', [mkT('t1', 'https://a')], { lastOp: STAMP_A, isDeleted: true })];
+    const out = mergeOpStamped([], cloud);
+    assert.equal(out.length, 0, '云端墓碑行不进合并结果');
+  });
+  it('云端墓碑 stamp 更新 → 本地活跃副本服从删除（物理移除）', async () => {
+    const { mergeOpStamped } = await import('@/utils/opStampMerge');
+    const local = [mkG('g1', [mkT('t1', 'https://a')], { lastOp: { d: 'devA', s: 5 } })];
+    const cloud = [mkG('g1', [mkT('t1', 'https://a')], { lastOp: { d: 'devB', s: 99 }, isDeleted: true })];
     const out = mergeOpStamped(local, cloud);
-    const tabIds = out[0].tabs.map(t => t.id).sort();
-    assert.deepEqual(tabIds, ['tCloud', 'tLocal']); // 双方都在
+    assert.equal(out.length, 0, '删除广播生效：本地组被移除');
   });
-  it('同组同 URL 不同 id 双方 stamp：败者盖墓碑并带 mergeStamp', async () => {
+  it('本地 stamp 更新（离线修改未上传）→ 本地活跃副本保留，删除被本地更新撤销', async () => {
     const { mergeOpStamped } = await import('@/utils/opStampMerge');
-    const localTab = mkT('tLocal', 'https://x.com', { lastOp: { d: 'devA', s: 1 } });
-    const cloudTab = mkT('tCloud', 'https://x.com', { lastOp: { d: 'devB', s: 99 } });
-    const local = [mkG('g1', [localTab], { lastOp: { d: 'devA', s: 1 } })];
-    const cloud = [mkG('g1', [cloudTab], { lastOp: { d: 'devB', s: 99 } })];
-    const out = mergeOpStamped(local, cloud, { mergeStamp: STAMP_A });
-    const localOut = out[0].tabs.find(t => t.id === 'tLocal')!;
-    assert.equal(localOut.isDeleted, true);
-    assert.deepEqual(localOut.lastOp, STAMP_A); // 盖合并设备 stamp
-  });
-  it('不传 mergeStamp：URL 败者不被墓碑（默认不主动清理）', async () => {
-    const { mergeOpStamped } = await import('@/utils/opStampMerge');
-    const localTab = mkT('tLocal', 'https://x.com', { lastOp: { d: 'devA', s: 1 } });
-    const cloudTab = mkT('tCloud', 'https://x.com', { lastOp: { d: 'devB', s: 99 } });
-    const local = [mkG('g1', [localTab], { lastOp: { d: 'devA', s: 1 } })];
-    const cloud = [mkG('g1', [cloudTab], { lastOp: { d: 'devB', s: 99 } })];
-    const out = mergeOpStamped(local, cloud); // 无 mergeStamp
-    const localOut = out[0].tabs.find(t => t.id === 'tLocal')!;
-    assert.equal(localOut.isDeleted, false); // 没盖墓碑
+    const local = [mkG('g1', [mkT('t1', 'https://a')], { lastOp: { d: 'devA', s: 99 }, name: '离线改名' })];
+    const cloud = [mkG('g1', [mkT('t1', 'https://a')], { lastOp: { d: 'devB', s: 5 }, isDeleted: true })];
+    const out = mergeOpStamped(local, cloud);
+    assert.equal(out.length, 1);
+    assert.notEqual(out[0].isDeleted, true, '本地活跃副本保留（非墓碑）');
+    assert.equal(out[0].name, '离线改名');
   });
 });
+
+describe('mergeOpStamped: 无 tab 级合并 / 无 URL 去重（无墓碑模型）', () => {
+  it('同 URL 不同 id 的 tab 不被去重：整组覆盖语义下 tabs 跟赢家', async () => {
+    const { mergeOpStamped } = await import('@/utils/opStampMerge');
+    const local = [mkG('g1', [mkT('tLocal', 'https://x.com')], { lastOp: { d: 'devA', s: 5 } })];
+    const cloud = [mkG('g1', [mkT('tCloud', 'https://x.com'), mkT('tCloud2', 'https://y.com')], { lastOp: { d: 'devB', s: 1 } })];
+    const out = mergeOpStamped(local, cloud);
+    // 本地 stamp 高 → 本地整组赢：云端 tabs 不并集进来
+    assert.deepEqual(out[0].tabs.map(t => t.id), ['tLocal']);
+  });
+  it('合并不产生墓碑：任何输出的 tab/组都不带 isDeleted=true', async () => {
+    const { mergeOpStamped } = await import('@/utils/opStampMerge');
+    const local = [mkG('g1', [mkT('t1', 'https://a')], { lastOp: { d: 'devA', s: 9 } })];
+    const cloud = [mkG('g2', [mkT('t2', 'https://b')], { lastOp: { d: 'devB', s: 9 }, isDeleted: true })];
+    const out = mergeOpStamped(local, cloud);
+    assert.equal(out.some(g => g.isDeleted), false);
+    assert.equal(out.some(g => g.tabs.some(t => t.isDeleted)), false);
+  });
+});
+
 // ── 客户端决胜 与 服务端守卫放行 的一致性契约 ─────────────────────────────
 // 这两个规则一个在 TS（谁赢）、一个在 SQL（谁能写）。两者不一致时会出现最糟的
 // 静默状态：客户端认为「本地赢」，于是不上传（或上传后被丢弃），然后下次下载
