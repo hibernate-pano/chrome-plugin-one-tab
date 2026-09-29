@@ -36,22 +36,6 @@ export const passthroughEncryptor: UpdateEncryptor = async update => update;
 /** 显式插槽位：V3 E2EE 在此接入（如 aesGcmEncryptor），影子写路径已预留调用点 */
 export const cryptoSlot: { encryptor: UpdateEncryptor } = { encryptor: passthroughEncryptor };
 
-/** Y root 的最小结构约束（真实 Y.Doc / 测试替身共用） */
-export interface YRoots {
-  getMap<T>(key: string): {
-    get(k: string): T | undefined;
-    set(k: string, v: T): void;
-    delete(k: string): void;
-    keys(): IterableIterator<string>;
-  };
-  getArray(key: string): {
-    length: number;
-    toArray(): string[];
-    delete(i: number, len: number): void;
-    push(items: string[]): void;
-  };
-}
-
 /** 把真实 Y.Doc 适配为 YStateLike（单事务内快照读 + 计划写，恒产生 ≤1 个 update） */
 export function plansToDoc(doc: YDocType, plans: YPlan[], stamp: { d: string; s: number }): void {
   doc.transact(() => {

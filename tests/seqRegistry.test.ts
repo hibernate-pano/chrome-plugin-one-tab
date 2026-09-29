@@ -128,8 +128,8 @@ describe('跨设备端到端：新设备的编辑必须能胜出', () => {
 
   it('全新设备（无持久化序号、无自身印记）改名后：上传不被守卫拒收、合并不被云端回滚', async () => {
     const { createSeqRegistry } = await import('@/utils/seqRegistry');
-    const { applyRenameGroup } = await import('@/utils/mutationOps');
-    const { mergeOpStamped } = await import('@/utils/opStampMerge');
+    const { applyRenameGroup } = await import('@/core/mutationOps');
+    const { mergeOpStamped } = await import('@/core/opStampMerge');
 
     // 设备 B：本地内容 = 刚从云端下载到的行；device_seq 为空（全新安装）
     const kv = new Map<string, unknown>();
@@ -151,7 +151,7 @@ describe('跨设备端到端：新设备的编辑必须能胜出', () => {
 
   it('两台设备交替编辑：后观察者后写必胜（Lamport 因果序）', async () => {
     const { createSeqRegistry } = await import('@/utils/seqRegistry');
-    const { mergeOpStamped } = await import('@/utils/opStampMerge');
+    const { mergeOpStamped } = await import('@/core/opStampMerge');
 
     // B 先编辑（观察过 A 的 400）
     const kvB = new Map<string, unknown>();
@@ -165,5 +165,12 @@ describe('跨设备端到端：新设备的编辑必须能胜出', () => {
     const stampA = { d: 'devA', s: await regA.nextSeq() };
 
     assert.ok(stampA.s > stampB.s, 'A 在见过 B 的写入后必须发出更大的序号');
+
+    // 序号更大只是前提，真正的防线是合并结果：A 的编辑必须赢，否则下次下载就把 A 的
+    // 这次改名回滚掉（本文件上面那条用例走的就是「seq + 合并」两步，这里补齐第二步）。
+    const aSide = { ...observedByA, name: 'A 的名', lastOp: stampA };
+    const bSide = { ...observedByA, lastOp: stampB };
+    const merged = mergeOpStamped([aSide] as any, [bSide] as any);
+    assert.equal(merged[0].name, 'A 的名', '后写者印记更大 → 合并必须判 A 赢');
   });
 });

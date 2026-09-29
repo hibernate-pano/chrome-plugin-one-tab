@@ -1,4 +1,4 @@
-import React, { useDeferredValue, useEffect, useState, useTransition } from 'react';
+import React, { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState, useTransition } from 'react';
 import { useAppDispatch, useAppSelector } from '@/store/hooks';
 import { Tab, TabGroup } from '@/types/tab';
 import { deleteGroup, deleteTabAndSync } from '@/store/slices/tabSlice';
@@ -12,6 +12,14 @@ import {
   applySearchFilters,
   buildSessionSearchResults,
 } from '@/utils/search';
+import {
+  SEARCH_EVENT_THROTTLE_MS,
+  SearchEventSnapshot,
+  buildSearchEventSignature,
+  remainingMsUntilAllowed,
+  searchEventNames,
+  shouldEmitSearchEvents,
+} from './searchAnalytics';
 import HighlightText from './HighlightText';
 import { SafeFavicon } from '@/components/common/SafeFavicon';
 import { EmptyState } from '@/components/common/EmptyState';
@@ -23,6 +31,14 @@ const PinIcon = () => (
     <path strokeLinecap="round" strokeLinejoin="round" d="M5 5a2 2 0 012-2h10a2 2 0 012 2v16l-7-3.5L5 21V5z" />
   </svg>
 );
+
+/** 筛选控件的 id 前缀：同一时刻只有一个搜索结果面板，固定前缀即可保证 label 唯一。 */
+const FILTER_IDS = {
+  pinned: 'search-filter-pinned',
+  domain: 'search-filter-domain',
+  groupName: 'search-filter-group-name',
+  savedWithin: 'search-filter-saved-within',
+} as const;
 
 interface SearchResultListProps {
   searchQuery: string;
@@ -40,65 +56,145 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({ searchQuery 
   const deferredSearchQuery = useDeferredValue(searchQuery);
   const normalizedSearchQuery = deferredSearchQuery.trim();
 
-  const baseResults = normalizedSearchQuery
-    ? AdvancedSearch.search(groups, {
-        query: normalizedSearchQuery,
-        searchPinned: true,
-      })
-    : [];
-  const searchResults = applySearchFilters(baseResults, filters);
-  const sessionResults = buildSessionSearchResults(searchResults);
-  const matchingTabs = sessionResults.flatMap(session => session.matches);
-  const activeFilterCount = [
-    !!filters.domain?.trim(),
-    !!filters.groupName?.trim(),
-    !!filters.savedWithin,
-    filters.pinned === 'only' || filters.pinned === 'exclude',
-  ].filter(Boolean).length;
+  // 搜索管线（全文检索 → 筛选 → 按会话归组）是本组件最重的计算。
+  // 此前每次渲染都全量重跑，包括用户每敲一个字符的中间态；
+  // 用 useMemo 把重算收敛到「groups / 查询词 / 筛选条件真正变化」时才发生。
+  const baseResults = useMemo(
+    () =>
+      normalizedSearchQuery
+        ? AdvancedSearch.search(groups, {
+            query: normalizedSearchQuery,
+            searchPinned: true,
+          })
+        : [],
+    [groups, normalizedSearchQuery]
+  );
+  const searchResults = useMemo(() => applySearchFilters(baseResults, filters), [baseResults, filters]);
+  const sessionResults = useMemo(() => buildSessionSearchResults(searchResults), [searchResults]);
+  const matchingTabs = useMemo(
+    () => sessionResults.flatMap(session => session.matches),
+    [sessionResults]
+  );
+  const activeFilterCount = useMemo(
+    () =>
+      [
+        !!filters.domain?.trim(),
+        !!filters.groupName?.trim(),
+        !!filters.savedWithin,
+        filters.pinned === 'only' || filters.pinned === 'exclude',
+      ].filter(Boolean).length,
+    [filters.domain, filters.groupName, filters.savedWithin, filters.pinned]
+  );
+
+  // ── 埋点：leading + trailing 节流（见 ./searchAnalytics） ────────────────
+  // 依赖 filters 对象时每敲一个字符就会重跑；节流后连续输入只在窗口首尾各发一次，
+  // 且保证「用户停下时的最终状态」一定被记录（trailing 补发）。
+  const analyticsStateRef = useRef({ lastSignature: '', lastEmitAt: 0 });
+  const latestSnapshotRef = useRef<SearchEventSnapshot>({
+    query: normalizedSearchQuery,
+    domain: null,
+    groupName: null,
+    pinned: 'all',
+    savedWithin: null,
+    resultCount: 0,
+  });
+  const trailingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const emitSearchEvents = useCallback((snapshot: SearchEventSnapshot) => {
+    const names = searchEventNames(snapshot);
+    for (const name of names) {
+      void trackProductEvent(name, {
+        query: snapshot.query,
+        resultCount: snapshot.resultCount,
+        ...(name === 'search_filtered'
+          ? {
+              domain: snapshot.domain,
+              groupName: snapshot.groupName,
+              pinned: snapshot.pinned,
+              savedWithin: snapshot.savedWithin,
+            }
+          : {
+              hasDomainFilter: !!snapshot.domain,
+              hasSavedWithinFilter: !!snapshot.savedWithin,
+            }),
+      });
+    }
+    analyticsStateRef.current = {
+      lastSignature: buildSearchEventSignature(snapshot),
+      lastEmitAt: Date.now(),
+    };
+  }, []);
 
   useEffect(() => {
-    if (!normalizedSearchQuery) {
+    const snapshot: SearchEventSnapshot = {
+      query: normalizedSearchQuery,
+      domain: filters.domain || null,
+      groupName: filters.groupName || null,
+      pinned: filters.pinned || 'all',
+      savedWithin: filters.savedWithin || null,
+      resultCount: searchResults.length,
+    };
+    latestSnapshotRef.current = snapshot;
+
+    if (!snapshot.query) return;
+
+    const state = analyticsStateRef.current;
+    const now = Date.now();
+    if (
+      shouldEmitSearchEvents({
+        lastSignature: state.lastSignature,
+        lastEmitAt: state.lastEmitAt,
+        nextSignature: buildSearchEventSignature(snapshot),
+        now,
+      })
+    ) {
+      if (trailingTimerRef.current) {
+        clearTimeout(trailingTimerRef.current);
+        trailingTimerRef.current = null;
+      }
+      emitSearchEvents(snapshot);
       return;
     }
 
-    void trackProductEvent('search_performed', {
-      query: normalizedSearchQuery,
-      resultCount: searchResults.length,
-      hasDomainFilter: !!filters.domain,
-      hasSavedWithinFilter: !!filters.savedWithin,
-    });
+    // 窗口内：重排 trailing 定时器（每次输入都把补发时间推到窗口末尾），
+    // 补发的是 latestSnapshotRef 里的最新快照，不是触发本次 effect 的旧快照。
+    if (trailingTimerRef.current) clearTimeout(trailingTimerRef.current);
+    const wait = remainingMsUntilAllowed(state.lastEmitAt, now, SEARCH_EVENT_THROTTLE_MS);
+    trailingTimerRef.current = setTimeout(() => {
+      trailingTimerRef.current = null;
+      const latest = latestSnapshotRef.current;
+      if (!latest.query) return;
+      if (buildSearchEventSignature(latest) === analyticsStateRef.current.lastSignature) return;
+      emitSearchEvents(latest);
+    }, wait);
+  }, [emitSearchEvents, filters, normalizedSearchQuery, searchResults.length]);
 
-    if (filters.domain || filters.groupName || filters.pinned !== undefined || filters.savedWithin) {
-      void trackProductEvent('search_filtered', {
-        query: normalizedSearchQuery,
-        domain: filters.domain || null,
-        groupName: filters.groupName || null,
-        pinned: filters.pinned || 'all',
-        savedWithin: filters.savedWithin || null,
-        resultCount: searchResults.length,
-      });
-    }
-  }, [filters, normalizedSearchQuery, searchResults.length]);
+  useEffect(
+    () => () => {
+      if (trailingTimerRef.current) clearTimeout(trailingTimerRef.current);
+    },
+    []
+  );
 
-  const updateFilters = (updater: (current: SearchFilters) => SearchFilters) => {
+  const updateFilters = useCallback((updater: (current: SearchFilters) => SearchFilters) => {
     startFilterTransition(() => {
       setFilters(current => updater(current));
     });
-  };
+  }, []);
 
-  const clearFilters = () => {
+  const clearFilters = useCallback(() => {
     startFilterTransition(() => {
       setFilters({});
     });
-  };
+  }, []);
 
-  const getDisplayUrl = (url: string) => {
+  const getDisplayUrl = useCallback((url: string) => {
     try {
       return new URL(url).hostname.replace('www.', '');
     } catch {
       return url;
     }
-  };
+  }, []);
 
   const restoreSession = (group: TabGroup) => {
     const tabsPayload = group.tabs.map(tab => ({
@@ -247,6 +343,7 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({ searchQuery 
           onClick={() => handleDeleteTab(tab, group)}
           className="btn-icon p-1 tab-item-delete-btn flat-interaction"
           title="删除标签页"
+          aria-label={`删除标签页: ${tab.title}`}
         >
           <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
             <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
@@ -295,8 +392,14 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({ searchQuery 
         <div className={`bg-gray-50 dark:bg-gray-700 rounded-lg p-3 mb-3 ${withOuterMargin ? 'mx-2' : ''}`}>
           <div className="grid grid-cols-1 md:grid-cols-4 gap-2">
             <div>
-              <label className="block text-xs text-gray-600 dark:text-gray-300 mb-1">固定标签页</label>
+              <label
+                htmlFor={FILTER_IDS.pinned}
+                className="block text-xs text-gray-600 dark:text-gray-300 mb-1"
+              >
+                固定标签页
+              </label>
               <select
+                id={FILTER_IDS.pinned}
                 value={filters.pinned || 'all'}
                 onChange={event => {
                   const nextPinned = event.target.value as SearchFilters['pinned'];
@@ -314,8 +417,14 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({ searchQuery 
             </div>
 
             <div>
-              <label className="block text-xs text-gray-600 dark:text-gray-300 mb-1">域名</label>
+              <label
+                htmlFor={FILTER_IDS.domain}
+                className="block text-xs text-gray-600 dark:text-gray-300 mb-1"
+              >
+                域名
+              </label>
               <input
+                id={FILTER_IDS.domain}
                 type="text"
                 placeholder="输入域名..."
                 value={filters.domain || ''}
@@ -331,8 +440,14 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({ searchQuery 
             </div>
 
             <div>
-              <label className="block text-xs text-gray-600 dark:text-gray-300 mb-1">会话名称</label>
+              <label
+                htmlFor={FILTER_IDS.groupName}
+                className="block text-xs text-gray-600 dark:text-gray-300 mb-1"
+              >
+                会话名称
+              </label>
               <input
+                id={FILTER_IDS.groupName}
                 type="text"
                 placeholder="输入会话名称..."
                 value={filters.groupName || ''}
@@ -348,8 +463,14 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({ searchQuery 
             </div>
 
             <div>
-              <label className="block text-xs text-gray-600 dark:text-gray-300 mb-1">保存时间</label>
+              <label
+                htmlFor={FILTER_IDS.savedWithin}
+                className="block text-xs text-gray-600 dark:text-gray-300 mb-1"
+              >
+                保存时间
+              </label>
               <select
+                id={FILTER_IDS.savedWithin}
                 value={filters.savedWithin || ''}
                 onChange={event => {
                   const nextValue = event.target.value as SearchFilters['savedWithin'] | '';
@@ -428,11 +549,14 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({ searchQuery 
         </div>
 
         {matchingTabs.length > 0 && (
-          <div className="flex items-center gap-1 opacity-0 group-hover/card:opacity-100 transition-opacity duration-150">
+          // group-focus-within/card：只有 group-hover 时，纯键盘用户 Tab 到这两个
+          // 「恢复全部 / 删除全部」按钮时它们仍是透明的——其中删除全部是不可撤销的批量操作。
+          <div className="flex items-center gap-1 opacity-0 group-hover/card:opacity-100 group-focus-within/card:opacity-100 transition-opacity duration-150">
             <button
               onClick={handleRestoreAllSearchResults}
               className="btn-icon p-1.5 tab-group-action-accent flat-interaction"
               title="在新窗口恢复所有匹配标签"
+              aria-label={`在新窗口恢复所有匹配标签，共 ${matchingTabs.length} 个标签页`}
             >
               <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M13.5 6H5.25A2.25 2.25 0 003 8.25v10.5A2.25 2.25 0 005.25 21h10.5A2.25 2.25 0 0018 18.75V10.5m-10.5 6L21 3m0 0h-5.25M21 3v5.25" />
@@ -443,6 +567,7 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({ searchQuery 
               onClick={handleRequestDeleteAllSearchResults}
               className="btn-icon p-1.5 tab-group-action-danger flat-interaction"
               title="删除所有搜索到的标签页"
+              aria-label={`删除所有搜索到的标签页，共 ${matchingTabs.length} 个`}
             >
               <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0" />

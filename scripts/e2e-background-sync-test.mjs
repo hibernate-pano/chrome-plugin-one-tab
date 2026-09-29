@@ -18,9 +18,11 @@ import {
   launchCtx, extId, readGroupsFromSW, readKvFromSW, kvValue,
   manualUpload, downloadUntil, login, startContentSite,
 } from './e2e-helpers.mjs';
+import { accountMarker } from './e2e-support.mjs';
 
 const EMAIL = `e2e-bgsync-${randomUUID().slice(0, 6)}@test.tapstack.dev`;
 const PWD = 'SyncTest#2026!';
+console.log(accountMarker(EMAIL)); // 供 run-e2e 收尾统一清理
 
 let ok = true;
 const fail = m => { console.log(m); ok = false; };

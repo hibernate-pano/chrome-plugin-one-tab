@@ -14,6 +14,8 @@ import assert from 'node:assert/strict';
 import { register } from 'node:module';
 import { pathToFileURL, fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
+// 纯类型导入：编译期擦除，运行时零依赖，故不受「@/ 必须 register(loader) 后动态 import」的约束。
+import type { Tab, TabGroup } from '@/types/tab';
 
 globalThis.__TABSTACK_META_ENV__ = {
   VITE_SUPABASE_URL: 'https://stub.supabase.co',
@@ -33,7 +35,9 @@ const NOW = '2026-09-28T10:00:00.000Z';
 const OLD = '2026-01-01T00:00:00.000Z';
 const STAMP = { d: 'devTest', s: 1 };
 
-function mkTab(id: string, over: Record<string, unknown> = {}) {
+// over 收紧为 Partial<...>：用 Record<string, unknown> 会给结果带上索引签名，
+// tabs 退化成 unknown[]，传给 applyCleanDuplicates 时判为不兼容（TS2322）。
+function mkTab(id: string, over: Partial<Tab> = {}): Tab {
   return {
     id,
     url: `https://e.com/${id}`,
@@ -46,7 +50,7 @@ function mkTab(id: string, over: Record<string, unknown> = {}) {
   };
 }
 
-function mkGroup(id: string, tabs: unknown[], over: Record<string, unknown> = {}) {
+function mkGroup(id: string, tabs: Tab[], over: Partial<TabGroup> = {}): TabGroup {
   return {
     id,
     name: `g-${id}`,
@@ -61,7 +65,7 @@ function mkGroup(id: string, tabs: unknown[], over: Record<string, unknown> = {}
 
 describe('applyCleanDuplicates：物理移除语义（无墓碑）', () => {
   it('同 URL 跨组去重：败者物理移除，胜者保留', async () => {
-    const { applyCleanDuplicates } = await import('@/utils/mutationOps');
+    const { applyCleanDuplicates } = await import('@/core/mutationOps');
     const older = mkTab('older', { url: 'https://dup.com', lastAccessed: OLD });
     const newer = mkTab('newer', { url: 'https://dup.com', lastAccessed: NOW });
     const g1 = mkGroup('g1', [older]);
@@ -76,7 +80,7 @@ describe('applyCleanDuplicates：物理移除语义（无墓碑）', () => {
   });
 
   it('被清空且未锁定的组整组物理移除，removedGroupIds 回报广播 id', async () => {
-    const { applyCleanDuplicates } = await import('@/utils/mutationOps');
+    const { applyCleanDuplicates } = await import('@/core/mutationOps');
     const stale = mkTab('stale2', { url: 'https://dup.com', lastAccessed: OLD });
     const fresh = mkTab('fresh', { url: 'https://dup.com', lastAccessed: NOW });
     const g1 = mkGroup('g1', [fresh]);
@@ -90,7 +94,7 @@ describe('applyCleanDuplicates：物理移除语义（无墓碑）', () => {
   });
 
   it('锁定组被清空后保留空壳（锁定豁免自动删除）', async () => {
-    const { applyCleanDuplicates } = await import('@/utils/mutationOps');
+    const { applyCleanDuplicates } = await import('@/core/mutationOps');
     const stale = mkTab('stale', { url: 'https://dup.com', lastAccessed: OLD });
     const fresh = mkTab('fresh', { url: 'https://dup.com', lastAccessed: NOW });
     const g1 = mkGroup('g1', [fresh]);

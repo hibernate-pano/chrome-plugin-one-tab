@@ -1,5 +1,5 @@
 import type { TabGroup } from '@/types/tab';
-import { sync as supabaseSync, type TabGroupDigest, type SupabaseSyncPort } from '@/utils/supabase';
+import { sync as supabaseSync, type TabGroupDigest, type SupabaseSyncPort } from '@/utils/supabaseFacade';
 
 export type { TabGroupDigest };
 export type { SupabaseSyncPort };

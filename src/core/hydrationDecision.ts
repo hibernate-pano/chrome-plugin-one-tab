@@ -1,4 +1,4 @@
-import type { TabGroup, UserSettings } from '../types/tab';
+import type { TabGroup } from '../types/tab';
 
 /**
  * Popup 首屏 hydration 决策（纯函数，零依赖，可单测）。
@@ -65,9 +65,4 @@ export function buildTabsPreloadedState(
     lastLoadedAt: decision.lastLoadedAt,
     lastSyncStatus: decision.lastSyncStatus,
   };
-}
-
-/** settings hydration 永远安全（getSettings 有 DEFAULT_SETTINGS 兜底） */
-export function shouldHydrateSettings(settings: UserSettings | null | undefined): boolean {
-  return settings != null && typeof settings === 'object';
 }

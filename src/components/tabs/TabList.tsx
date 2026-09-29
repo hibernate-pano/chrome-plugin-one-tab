@@ -8,6 +8,7 @@ import { SearchResultList } from '@/components/search/SearchResultList';
 import { EmptyState } from '@/components/common/EmptyState';
 import { LoadingSpinner } from '@/components/common/LoadingSpinner';
 import { PersonalizedWelcome, QuickActionTips } from '@/components/common/PersonalizedWelcome';
+import { toListErrorCopy } from './listErrorCopy';
 import { logError } from '../../utils/log';
 
 interface TabListProps {
@@ -59,6 +60,15 @@ export const TabList: React.FC<TabListProps> = ({ searchQuery }) => {
     };
   }, [dispatch]);
 
+  // 原始异常（PostgREST / message-port / chrome.storage 内部文本）只进日志，
+  // 界面上给的是可行动文案——见 listErrorCopy。必须排在所有提前 return 之前，
+  // 否则就是「条件 Hook」，渲染分支一变 hook 数量就变。
+  useEffect(() => {
+    if (error) logError('加载会话列表失败:', error);
+  }, [error]);
+
+  const errorCopy = toListErrorCopy(error);
+
   if (isLoading) {
     return (
       <div className="flex items-center justify-center h-64">
@@ -71,8 +81,8 @@ export const TabList: React.FC<TabListProps> = ({ searchQuery }) => {
     return (
       <EmptyState
         tone="warning"
-        title="会话列表暂时不可用"
-        description={error}
+        title={errorCopy.title}
+        description={errorCopy.description}
         action={
           <button
             type="button"

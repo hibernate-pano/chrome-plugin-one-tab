@@ -30,7 +30,7 @@ const NOW = '2026-09-28T10:00:00.000Z';
 
 let dropEmptyGroups: typeof import('../src/core/mutationOps.ts').dropEmptyGroups;
 let isEmptyGroup: typeof import('../src/core/mutationOps.ts').isEmptyGroup;
-let mergeOpStamped: typeof import('../src/utils/opStampMerge.ts').mergeOpStamped;
+let mergeOpStamped: typeof import('../src/core/opStampMerge.ts').mergeOpStamped;
 
 function tab(id: string, url: string, extra: Record<string, unknown> = {}) {
   return { id, url, title: id, createdAt: NOW, lastAccessed: NOW, pinned: false, ...extra };
@@ -46,7 +46,7 @@ function group(id: string, tabs: unknown[], extra: Record<string, unknown> = {})
 before(async () => {
   register(LOADER_PATH, import.meta.url);
   ({ dropEmptyGroups, isEmptyGroup } = await import('../src/core/mutationOps.ts'));
-  ({ mergeOpStamped } = await import('../src/utils/opStampMerge.ts'));
+  ({ mergeOpStamped } = await import('../src/core/opStampMerge.ts'));
 });
 
 describe('同步合并 · 空会话卡不留', () => {

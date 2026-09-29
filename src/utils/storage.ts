@@ -1,10 +1,39 @@
 import { TabGroup, UserSettings, LayoutMode, ThemeStyle } from '@/types/tab';
-import { parseOneTabFormat, formatToOneTabFormat } from './oneTabFormatParser';
+import { parseOneTabFormat, formatToOneTabFormat } from '@/core/oneTabFormatParser';
 import { secureStorage } from './secureStorage';
 import { kvGet, kvSet, kvRemove } from '@/storage/storageAdapter';
 import { STORAGE_KEYS, STORAGE_VERSION } from '@/storage-kv/keys';
 import { cacheManager, cachedAsyncFn, debounceAsync } from './performance';
 import { logError, logWarn } from './log';
+// 导入路径需要与 SW 单写者同构的语义：盖印记（LWW 载体）+ URL 白名单 + 重排。
+// 纯函数在 @/core/mutationOps，与 mutationHandlers 走的是同一份实现，
+// 本地兜底（无 SW 语境）与 SW 语义不可能漂移。
+import { applyImportGroups } from '@/core/mutationOps';
+import { sanitizeTabUrl } from './inputValidation';
+import { createSeqRegistry } from './seqRegistry';
+import { getDeviceId } from './deviceUtils';
+import { sendMutation } from '@/shared/mutationProtocol';
+import type { OpStamp } from '@/core/opStamp';
+import { nanoid } from '@reduxjs/toolkit';
+
+/**
+ * 是否存在可接收 MUTATE 消息的 Service Worker。
+ * 扩展运行时为真；网页版 / node:test 无 chrome 或无 runtime.sendMessage，为假。
+ * 判定用 chrome.runtime.sendMessage 的**存在性**而非试发消息：试发失败无法区分
+ * 「SW 暂时不可用」（此时必须让用户重试，绝不能退回本地直写把竞态请回来）
+ * 与「根本没有 SW」（网页版，此时本地直写是唯一正确行为）。
+ */
+function hasMutationSender(): boolean {
+  return typeof chrome !== 'undefined' && typeof chrome.runtime?.sendMessage === 'function';
+}
+
+/**
+ * 删除广播队列的内存兜底（见 getPendingDeleteIds）。
+ * 进程级状态，key = 组 id；只在 KV 写失败时兜住删除意图，不让删除被静默撤销。
+ * 生命周期由 clearPendingDeleteIds 决定：只有被调用方点名「本轮已广播成功」的 id
+ * 才会从这里消失——所以**不要**把它当成「一次上传周期结束就清空」的临时缓冲。
+ */
+const unsyncedDeleteIds = new Set<string>();
 
 // S2 收敛：KV 键常量单源见 @/storage-kv/keys（与 storageAdapter 迁移键表同源）。
 // 此处 re-export，保持既有调用方 import 路径兼容。
@@ -234,7 +263,9 @@ class ChromeStorage {
    *
    * 先 flush 再失效：保证同进程内尚未落盘的防抖写不会因这次新鲜读而被跳过
    * （读到的必须是"含 pending 写"的真值，否则紧接着的写会把 pending 覆盖掉）。
-   * 读-改-写的三处入口统一走这里：mutationService / TabManager 两处保存路径。
+   * 读-改-写的入口统一走这里：mutationService 的全部 mutation、TabManager 两处
+   * 保存路径、三处迁移（migrateFaviconUrls / purgeTombstones / migrateToV2），
+   * 以及无 SW 语境下的导入兜底（mergeImportedGroups）。
    */
   async getGroupsForWrite(): Promise<TabGroup[]> {
     await this.debouncedPersistGroups.flush();
@@ -242,6 +273,23 @@ class ChromeStorage {
     return this.getGroups();
   }
 
+  /**
+   * 读取用户设置（60s 内存缓存）。
+   *
+   * fail-closed：读失败**抛错**，不返回 DEFAULT_SETTINGS。
+   *
+   * 【为什么这里降级的代价和 getGroups 一样致命，方向却相反】
+   * getGroups 降级成 [] 会把「列表为空」当成真值写回；本方法的降级值是一个
+   * **看起来完全合法的设置对象**，调用方无法区分「读到了默认值」与「用户就是
+   * 默认值」。而 getSettings 的调用方里有一条直通云端写的路径：
+   * syncEngine.upload 末尾 `uploadSettings(await storage.getSettings())`，
+   * uploadSettings 是**无条件 upsert**（无 stamp / 无 version / 无 LWW，
+   * 见 @/utils/supabase/upload.ts）——一次偶发 IndexedDB 读错误就能把用户
+   * 真实的云端设置整行覆盖成默认值，其他设备下次下载再复制一遍。
+   *
+   * 抛错后该上传路径已有的 try/catch 只记一行日志、不发请求；本地设置原样保留，
+   * 下一轮重试读成功再上传。与 getGroups 一致：读失败只能停在读，不得变成写。
+   */
   async getSettings(): Promise<UserSettings> {
     try {
       return await cachedAsyncFn('storage', 'settings', async () => {
@@ -285,8 +333,30 @@ class ChromeStorage {
         return mergedSettings;
       }, CACHE_TTL.SETTINGS);
     } catch (error) {
-      logError('获取设置失败:', error);
-      return DEFAULT_SETTINGS;
+      // 不降级、不返回 DEFAULT_SETTINGS（见方法注释）：降级值会被上传路径当真值写上云端。
+      logError('获取设置失败（抛错，不降级为默认值）:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * 只读本地设置、允许降级为 DEFAULT_SETTINGS。
+   *
+   * 为什么需要它：getSettings 的 fail-closed 是**为上云服务的**——uploadSettings 是
+   * 无 stamp / 无 version / 无 LWW 的无条件 upsert，一旦把降级值当真值推上去，就会
+   * 覆盖掉用户真实的云端设置。但同一个 getter 如果被纯本地路径调用（保存标签页时
+   * 读 collectPinnedTabs），一次瞬时 IndexedDB 读错误就会让「保存全部标签 / 保存当前
+   * 标签」整条中止——为一个只影响云端的隐患，赔上了本地保存功能，不成比例。
+   *
+   * 因此按「结果会不会被上传」分流：会 → getSettings（抛错）；不会 → 本方法（降级）。
+   * 降级值只用于本地行为判断，永远不参与任何上传。
+   */
+  async getSettingsForLocalUse(): Promise<UserSettings> {
+    try {
+      return await this.getSettings();
+    } catch (error) {
+      logWarn('本地读取设置失败，降级为默认值（该降级值不参与任何上传）:', error);
+      return { ...DEFAULT_SETTINGS };
     }
   }
 
@@ -349,30 +419,67 @@ class ChromeStorage {
     }
   }
 
+  // ── 删除广播队列（PENDING_PURGE_IDS / PENDING_DELETE_IDS）───────────────
+  //
+  // 【为什么这一组读写必须 fail-closed】
+  // pendingDeleteIds 是组删除**唯一的**跨设备广播载体：无墓碑模型下本地不留
+  // 任何删除痕迹，云端行的 is_deleted 标记就是载体本身。任一环节静默降级都会
+  // 让删除被撤销，且没有任何痕迹：
+  //   读失败降级成 []  → upload 只推幸存者，随后 clearPendingDeleteIds() 把队列
+  //                      当成「已消费」清掉 → 删除意图永久丢失 → 对端下次合并
+  //                      （mergeOpStamped 的 cg && !lg）把已删的组整组加回来。
+  //   写失败被吞掉    → 本地组已物理删除、队列没这条 id、云端行仍是活跃行，
+  //                      同样复活，而 UI/handler 全程回报成功。
+  // 所以：读失败抛错（upload 整体失败、pending_upload 保留、下轮重试），
+  // 写失败抛错（不再谎报成功）。补偿见 unsyncedDeleteIds。
+  //
+  // 【清队不是「清空」而是「确认已广播」】读-写两侧都 fail-closed 只解决一半：
+  // 一轮上传期间队列还会继续长（新登记的删除），所以 clearPendingDeleteIds 必须
+  // 由调用方点名本轮真的广播成功的 id，没点名的继续留着。详见该方法的注释。
+
   // P1-6（历史）：purge 队列读写。无墓碑模型改用 pendingDeleteIds（见下），
   // 本组方法仅为迁移读取残留队列保留，迁移完成后清除该键。
+  // 读失败必须抛错：purgeTombstones 读完就把这个键删掉，读失败返回 [] 等于
+  // 「队列本来就是空的」→ 迁移删键 → 队列里的删除意图当场销毁。
   async getPendingPurgeIds(): Promise<string[]> {
-    try {
-      await this.ensureVersion();
-      const ids = await kvGet<unknown>(STORAGE_KEYS.PENDING_PURGE_IDS);
-      return Array.isArray(ids) ? (ids as unknown[]).filter((x): x is string => typeof x === 'string') : [];
-    } catch {
-      return [];
-    }
+    await this.ensureVersion();
+    const ids = await kvGet<unknown>(STORAGE_KEYS.PENDING_PURGE_IDS);
+    return Array.isArray(ids) ? (ids as unknown[]).filter((x): x is string => typeof x === 'string') : [];
   }
 
   // 无墓碑模型：删除广播队列。本地物理删除组后由 mutation 登记，
   // upload 时 markCloudGroupsAsDeleted 成功（读回确认）后才 clear；失败保留下轮重试。
+  // 读失败抛错（理由同上），返回值 = 持久化队列 ∪ 内存兜底队列（后者的来源见下）。
+  // 这就是「一轮上传的批次」：clear 必须原样点回这份清单（见 clearPendingDeleteIds），
+  // 队列在这轮期间新增的条目一条都不能被这次清队带走。
   async getPendingDeleteIds(): Promise<string[]> {
-    try {
-      await this.ensureVersion();
-      const ids = await kvGet<unknown>(STORAGE_KEYS.PENDING_DELETE_IDS);
-      return Array.isArray(ids) ? (ids as unknown[]).filter((x): x is string => typeof x === 'string') : [];
-    } catch {
-      return [];
-    }
+    await this.ensureVersion();
+    const ids = await kvGet<unknown>(STORAGE_KEYS.PENDING_DELETE_IDS);
+    const persisted = Array.isArray(ids)
+      ? (ids as unknown[]).filter((x): x is string => typeof x === 'string')
+      : [];
+    if (unsyncedDeleteIds.size === 0) return persisted;
+    return [...new Set([...persisted, ...unsyncedDeleteIds])];
   }
 
+  /**
+   * 登记一条删除广播意图。
+   *
+   * 写失败时**两条腿都走**：先把 id 暂存到进程内存（unsyncedDeleteIds），
+   * 再把错误抛出去。内存兜底承担的职责只有一个——**让这条意图继续留在队列里**：
+   * getPendingDeleteIds 把内存态并进返回值，所以同进程内的 upload 仍能读到它并
+   * 广播到云端，「本地已删、云端行还没标 is_deleted」的窗口不会因为一次写失败而
+   * 当场消失；抛错则保证这次删除对上层是显式失败（handler 不回报成功）。
+   *
+   * 兜底的边界要说清楚：SW 被回收后内存态随之消失；那种场景下 KV 根本写不进去，
+   * 任何进程内手段都救不了，能做的只有让失败显形（抛错 + 日志 + 上层重试），
+   * 而不是静默当成删除成功。
+   *
+   * 【兜底不等于「会被清掉」】内存里的意图何时消失由 clearPendingDeleteIds 决定，
+   * 而它只移除**调用方点名确认广播成功**的那些 id；没被点名的意图（没读到、
+   * 没广播成功、读队列之后才登记的）一律继续留着等下一轮。自己不点名的后果见
+   * clearPendingDeleteIds 的注释。
+   */
   async addPendingDeleteId(id: string): Promise<void> {
     try {
       const ids = await this.getPendingDeleteIds();
@@ -381,17 +488,69 @@ class ChromeStorage {
         await kvSet(STORAGE_KEYS.PENDING_DELETE_IDS, [...ids, id]);
       }
     } catch (error) {
-      logError('记录 pending_delete_ids 失败:', error);
+      unsyncedDeleteIds.add(id);
+      logError('记录 pending_delete_ids 失败（已暂存内存兜底，删除不会被静默撤销）:', error);
+      throw error;
     }
   }
 
-  async clearPendingDeleteIds(): Promise<void> {
-    try {
-      await this.ensureVersion();
+  /**
+   * 消费删除广播队列：**只**移除本轮确认已广播成功的那些 id，其余一律保留。
+   *
+   * @param confirmedBroadcastIds 本轮 markCloudGroupsAsDeleted 读回确认成功的 id
+   *   清单（调用方上一次 getPendingDeleteIds() 读到的队列里，实际广播成功的那部分）。
+   *   省略 = 旧语义「整队清空」，仅当调用方确定刚把**整条合并队列**（KV ∪ 内存兜底）
+   *   都广播成功时才成立；否则必须显式传清单。
+   *
+   * 【为什么不能整队清空】队列有两个来源：KV 持久化队列与 unsyncedDeleteIds 内存兜底，
+   * 而一轮上传的周期里两者都在长。复现窗口：上传读走队列（内容 A）→ 用户又删了 B，
+   * B 的 KV 写失败只进了内存 → 本轮 A 广播成功 → 整队清空把 B 一起抹掉。此时 B 已经
+   * 本地物理删除、云端行仍是活跃行、无墓碑无回收站 → 下次合并（mergeOpStamped 的
+   * cg && !lg）整组复活，用户永久找不回，且全程没有任何提示。清队必须逐条点名。
+   *
+   * 【为什么是读-改-写而不是直接删键】读队列之后才登记的条目（这一轮根本没广播过，
+   * 哪怕它已经落进 KV）不在 confirmed 里；直接删键会把它们连坐删掉，写回剩余项才
+   * 与内存兜底保持同一套「按确认消费」的语义。
+   *
+   * fail-closed：任何一步失败都在**动内存兜底之前**抛出。抛错时 KV 队列与内存兜底
+   * 都保持原样，上层 upload 整体失败并保留 pending_upload，下轮重试——重复广播一次
+   * 删除是幂等的，代价远小于丢一条删除意图。
+   */
+  async clearPendingDeleteIds(confirmedBroadcastIds?: readonly string[]): Promise<void> {
+    await this.ensureVersion();
+
+    if (confirmedBroadcastIds === undefined) {
+      // 无参旧路径：整队清空。危险面 = 内存兜底里「本轮没广播成功」的 id 被连坐抹掉。
+      // 两个生产调用方（syncEngine 的覆盖下载前广播、覆盖上传后广播）都已改为传确认
+      // 清单，所以生产里**不应该**再走到这里。保留这条分支 + 这条告警，是给未来
+      // 新增调用方的绊线：谁图省事不传清单，告警会立刻指出来，而不是让一条删除
+      // 意图在上传竞态里悄悄蒸发。若确认今后不再有调用方，可以整条删掉。
+      logWarn(
+        '[storage] clearPendingDeleteIds() 未提供「本轮确认广播成功」清单，将整队清空——'
+        + '内存兜底里未广播的删除意图会被一并抹掉（已删组可能在下次合并时复活）。'
+      );
       await kvRemove(STORAGE_KEYS.PENDING_DELETE_IDS);
-    } catch (error) {
-      logError('清除 pending_delete_ids 失败:', error);
+      unsyncedDeleteIds.clear();
+      return;
     }
+
+    // 只认字符串 id：非字符串条目视为「未确认」，留在队列里等下轮，不污染兜底集合。
+    const confirmed = new Set(confirmedBroadcastIds.filter((id): id is string => typeof id === 'string'));
+
+    const raw = await kvGet<unknown>(STORAGE_KEYS.PENDING_DELETE_IDS);
+    const persisted = Array.isArray(raw)
+      ? raw.filter((x): x is string => typeof x === 'string')
+      : [];
+    const remaining = [...new Set(persisted.filter((id) => !confirmed.has(id)))];
+
+    if (remaining.length === 0) {
+      await kvRemove(STORAGE_KEYS.PENDING_DELETE_IDS);
+    } else {
+      await kvSet(STORAGE_KEYS.PENDING_DELETE_IDS, remaining);
+    }
+
+    // KV 落定后才动内存兜底（反过来则会在清队列失败时凭空丢掉兜底里的 id）。
+    for (const id of confirmed) unsyncedDeleteIds.delete(id);
   }
 
   // 获取最后同步时间
@@ -426,23 +585,29 @@ class ChromeStorage {
     }
   }
 
+  /**
+   * 置/清 pending_upload 标志（本地有未上传变更）。
+   *
+   * 失败即抛：这个标志是「后台 alarm 要不要上传」的唯一判据，两头都不能出错——
+   *   置位失败 → 本地变更永远不推上云（云端保持旧状态，下次下载把本地覆盖回去）；
+   *   清位失败 → 保守方向（多传一轮），无害。
+   * 上层 scheduleUpload 仍会吞掉这个错误并只记日志（见 syncEngine），那是另一个
+   * 文件的语义；本层不再假装写成功，把失败如实交出去。
+   */
   async setPendingUpload(pending: boolean): Promise<void> {
-    try {
-      await this.ensureVersion();
-      await kvSet(STORAGE_KEYS.PENDING_UPLOAD, pending);
-    } catch (error) {
-      logError('设置 pending_upload 失败:', error);
-    }
+    await this.ensureVersion();
+    await kvSet(STORAGE_KEYS.PENDING_UPLOAD, pending);
   }
 
   /**
-   * 导入（JSON / OneTab）后把变更标记为待上传并请求一次调度上传。
+   * 导入后把变更标记为待上传并请求一次调度上传（**仅无 SW 兜底路径**）。
    *
-   * 为什么需要：导入只写本地 groups，不经过 mutationService，因此既不盖操作印记也
-   * 不会置 pending_upload；而后台 alarm（backgroundSync）仅在 hasPending 为真时才
-   * 上传 → 导入的会话会**永远只留在本地**（多设备下备份恢复承诺不成立）。
+   * SW 路径不需要它：mutationHandlers 的 importGroups 分支自己会
+   * scheduleUpload（置 pending_upload + alarm）。
    *
-   * 非扩展环境（网页版）没有 runtime.sendMessage，只置标志后静默返回。
+   * 无 SW 语境（网页版）里导入只写本地 groups，既不盖操作印记也不会置
+   * pending_upload，而后台上传仅在 hasPending 为真时才跑 → 导入的会话会永远
+   * 只留在本地（多设备下备份恢复承诺不成立），所以这里补置标志。
    */
   private async markGroupsChangedByImport(): Promise<void> {
     try {
@@ -456,6 +621,64 @@ class ChromeStorage {
       // 上传调度失败不影响导入本身，但必须留下痕迹
       logWarn('[Storage] 导入后请求上传调度失败（下次后台轮询会重试）:', error);
     }
+  }
+
+  /**
+   * 导入的读-改-写入口。
+   *
+   * 【为什么导入不能自己读自己写】（2026-09-29 修）
+   * 修复前 importData / importFromOneTabFormat 在 popup 进程里
+   * getGroups()（30s 缓存读）→ 拼接 → setGroupsImmediate（整表直写），
+   * 既不盖印记、不进队列，也完全不与 SW 协调。而后台 60 秒 alarm
+   * （backgroundSync）触发的下载合并是「读快照 → 耗时若干秒下载 → 无条件整表
+   * 覆盖」：两者交错时序是
+   *     t0 SW 读快照 → t1 popup 写导入结果 → t2 SW 用 t0 快照覆盖
+   * 刚导入的会话当场从本地消失，紧接着 pending_upload 又把这个「没有导入内容」
+   * 的状态推上云端——本地与云端一起丢。
+   *
+   * 【现在的做法】复用仓库已有的单写者串行化路径，而不是自己另搞一把锁：
+   * popup 把 importGroups 语义命令发给 SW，service-worker 的 MUTATE 分支用
+   * **同一个 mutationQueue** 排它，与 sync:upload / sync:download 严格串行——
+   * 导入要么排在下载合并之前（合并的快照已含导入结果），要么排在之后（导入读到的
+   * 是合并后的真值），两种顺序都不会丢数据。SW 侧的读-改-写本来就是
+   * getGroupsForWrite + applyImportGroups（盖 stamp）+ setGroupsImmediate，
+   * 三件事一次做完：真值读、LWW 印记、上传调度。
+   *
+   * 无 SW（网页版 / node:test）时走本地兜底：同样的语义、同样的纯函数，
+   * 只是由本进程串行执行（此语境下没有并发同步合并，竞态不成立）。
+   */
+  private async mergeImportedGroups(incoming: TabGroup[]): Promise<void> {
+    if (hasMutationSender()) {
+      const res = await sendMutation<TabGroup[]>({ op: 'importGroups', groups: incoming });
+      if (!res.ok) {
+        // 明确失败就如实失败：不退回本地直写——那正是本方法要消灭的竞态路径。
+        throw new Error(res.error ?? 'Service Worker 未接受导入');
+      }
+      return;
+    }
+
+    const existing = await this.getGroupsForWrite();
+    const stamp = await this.nextLocalOpStamp(existing);
+    const merged = applyImportGroups(
+      existing,
+      incoming,
+      { genId: () => nanoid(), sanitizeUrl: sanitizeTabUrl },
+      new Date().toISOString(),
+      stamp
+    );
+    await this.setGroupsImmediate(merged.groups);
+    await this.markGroupsChangedByImport();
+  }
+
+  /**
+   * 本地兜底导入盖印记用的号（无 SW 语境没有 journal/seqRegistry 单例）。
+   * 规则与 createSeqRegistry 一致：号位下限 = max(持久化 device_seq, 已观察到的
+   * 全部实体印记 s)，即 Lamport 时钟——保证导入组盖的 stamp 严格大于本地既有
+   * 任何实体印记，合并时不会「输给自己刚写的东西」。
+   */
+  private async nextLocalOpStamp(observed: TabGroup[]): Promise<OpStamp> {
+    const seq = createSeqRegistry({ kvGet, kvSet, getGroups: async () => observed });
+    return { d: await getDeviceId(), s: await seq.nextSeq() };
   }
 
   async getLastUploadTime(): Promise<string | null> {
@@ -606,7 +829,11 @@ class ChromeStorage {
   }
 
   async exportData(): Promise<ExportData> {
-    const groups = await this.getGroups();
+    // 导出是写用户备份，必须是最新真值：30s 缓存快照会让「备份恢复」把用户带回
+    // 几分钟前的状态（且此后云端合并可能已把这段时间的改动上传过）。
+    // 用 getGroupsForWrite 而非 getGroupsFresh：后者只失效缓存、不 flush 500ms 防抖
+    // 窗口，用户「刚改名完 200ms 就点导出」时那次 setGroups 还没落盘，备份会缺这一笔。
+    const groups = await this.getGroupsForWrite();
     const settings = await this.getSettings();
 
     return {
@@ -614,7 +841,7 @@ class ChromeStorage {
       timestamp: new Date().toISOString(),
       data: {
         groups,
-        settings,
+        settings
       }
     };
   }
@@ -624,39 +851,37 @@ class ChromeStorage {
    * @returns OneTab 格式的导出文本
    */
   async exportToOneTabFormat(): Promise<string> {
-    const groups = await this.getGroups();
+    // 同 exportData：getGroupsForWrite 会 flush 防抖窗口，getGroupsFresh 不会
+    const groups = await this.getGroupsForWrite();
     return formatToOneTabFormat(groups);
   }
 
+  /**
+   * 导入 JSON 备份。
+   *
+   * 组数据走 mergeImportedGroups（SW 单写者串行化 + 真值读 + 盖印记），
+   * 设置合并单独兜错：设置读失败（fail-closed）不得把**已经落盘**的组导入
+   * 判成整体失败，用户看到「导入失败」却发现会话其实已经进来了。
+   */
   async importData(data: ExportData): Promise<boolean> {
     try {
       if (!data || !data.data || !Array.isArray(data.data.groups)) {
         throw new Error('无效的导入数据格式');
       }
 
-      // 导入标签组，并按创建时间倒序排列
-      const existingGroups = await this.getGroups();
-      const allGroups = [...data.data.groups, ...existingGroups];
-      // 按创建时间倒序排列，确保最新创建的标签组在前面
-      const sortedGroups = allGroups.sort((a, b) => {
-        const dateA = new Date(a.createdAt);
-        const dateB = new Date(b.createdAt);
-        return dateB.getTime() - dateA.getTime();
-      });
-      // SW/后台语境的导入走直写（与 mutation/TabManager 同一写路径），避免防抖
-      // 窗口期内 SW 被挂起导致导入结果丢失。
-      await this.setGroupsImmediate(sortedGroups);
-      // 导入的数据必须能上云：导入只写本地 groups，不经过 mutationService（不盖印记、
-      // 不置 pending_upload），而后台 alarm 仅在 pending_upload 为真时才上传。
-      await this.markGroupsChangedByImport();
+      await this.mergeImportedGroups(data.data.groups);
 
       // 如果有设置数据，则合并设置
       if (data.data.settings) {
-        const currentSettings = await this.getSettings();
-        await this.setSettings({
-          ...currentSettings,
-          ...data.data.settings
-        });
+        try {
+          const currentSettings = await this.getSettings();
+          await this.setSettings({
+            ...currentSettings,
+            ...data.data.settings
+          });
+        } catch (settingsError) {
+          logWarn('[Storage] 导入的设置未合并（标签组已导入成功，设置保持原样）:', settingsError);
+        }
       }
 
       return true;
@@ -684,18 +909,8 @@ class ChromeStorage {
         throw new Error('解析失败或没有有效的标签组');
       }
 
-      // 导入标签组，并按创建时间倒序排列
-      const existingGroups = await this.getGroups();
-      const allGroups = [...parsedGroups, ...existingGroups];
-      // 按创建时间倒序排列，确保最新创建的标签组在前面
-      const sortedGroups = allGroups.sort((a, b) => {
-        const dateA = new Date(a.createdAt);
-        const dateB = new Date(b.createdAt);
-        return dateB.getTime() - dateA.getTime();
-      });
-      // 同 importData：直写，防 SW 挂起丢导入结果。
-      await this.setGroupsImmediate(sortedGroups);
-      await this.markGroupsChangedByImport();
+      // 同 importData：交单写者串行化执行读-改-写（真值读 + 盖印记 + 上传调度）
+      await this.mergeImportedGroups(parsedGroups);
 
       return true;
     } catch (error) {

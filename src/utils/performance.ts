@@ -5,30 +5,6 @@ import { logError } from './log';
  */
 
 /**
- * 防抖函数
- * @param func 要防抖的函数
- * @param delay 延迟时间（毫秒）
- * @returns 防抖后的函数
- */
-export function debounce<T extends (...args: any[]) => any>(
-  func: T,
-  delay: number
-): (...args: Parameters<T>) => void {
-  // 在浏览器 / Service Worker / Node 环境下都兼容的定时器类型
-  let timeoutId: ReturnType<typeof setTimeout> | null = null;
-
-  return function (this: any, ...args: Parameters<T>): void {
-    if (timeoutId) {
-      clearTimeout(timeoutId);
-    }
-
-    timeoutId = setTimeout(() => {
-      func.apply(this, args);
-    }, delay);
-  };
-}
-
-/**
  * 节流函数
  * @param func 要节流的函数
  * @param limit 限制时间（毫秒）

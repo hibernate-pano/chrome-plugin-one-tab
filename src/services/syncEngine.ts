@@ -3,9 +3,9 @@ import { getCurrentUser, setFromCache } from '@/store/slices/authSlice';
 
 /** MV3 SW 中由 chrome.alarms 驱动的延迟上传 alarm。 */
 export const SYNC_UPLOAD_ALARM = 'tapstack-scheduled-upload';
-// UPLOAD_GUARD_MS 常量与下载前置决策在 syncUtils（纯函数，可单测），
+// UPLOAD_GUARD_MS 常量与下载前置决策在 core/syncDecision（纯函数，可单测），
 // 此处 re-export 供既有引用方不破坏。
-export { UPLOAD_GUARD_MS } from '@/utils/syncUtils';
+export { UPLOAD_GUARD_MS } from '@/core/syncDecision';
 import type { TabGroup, UserSettings } from '@/types/tab';
 import { storage, invalidateGroupsCache } from '@/utils/storage';
 import {
@@ -20,13 +20,13 @@ import {
   validateMergeResult,
   decideDownloadPrecheck,
   hasRemoteChanges,
-} from '@/utils/syncUtils';
+} from '@/core/syncDecision';
 // 阶段二（§5 + §9）：合并语义已统一为 mergeOpStamped（OpStamp 全序决胜）。
 // 旧 LWW 合并 mergeTabGroups 已隔离至 @/utils/syncUtils.legacy（⛔禁接回生产）。
-import { mergeOpStamped } from '@/utils/opStampMerge';
+import { mergeOpStamped } from '@/core/opStampMerge';
 import { dropEmptyGroups, removedGroupIds } from '@/core/mutationOps';
 import { ensureOpStampMigrated } from '@/background/opStampMigratedGuard';
-import { ensureAuthenticated } from '@/utils/authGuard';
+import { ensureAuthenticated } from '@/core/authGuard';
 import { errorHandler } from '@/utils/errorHandler';
 import { validateThemeStyle, validateThemeMode } from '@/utils/storage';
 import { logError, logInfo, logWarn } from '../utils/log';
@@ -232,7 +232,10 @@ export class SyncEngine {
         const pendingDeletes = await storage.getPendingDeleteIds();
         if (pendingDeletes.length > 0) {
           await markCloudGroupsAsDeleted(pendingDeletes);
-          await storage.clearPendingDeleteIds();
+          // 点名本轮实际广播成功的这一批，不整队清空（队列在读走之后还会继续长，
+          // 整队清会把没广播过的删除意图连坐抹掉 → 云端行仍活跃 → 复活）。
+          // markCloudGroupsAsDeleted 失败会抛给下面的 catch，此时不会走到清队。
+          await storage.clearPendingDeleteIds(pendingDeletes);
           logInfo(`[SyncEngine] 覆盖下载前已广播 ${pendingDeletes.length} 条删除意图`);
         }
       } catch (err) {
@@ -534,12 +537,20 @@ export class SyncEngine {
         ...pendingDeleteIds,
         ...legacyTombstoneIds.filter(id => !writtenTombstoneIds.has(id)),
       ])];
+      // 广播与清队必须成对：includeDeleted===false 时这一轮**根本没广播**，
+      // 此时清队等于把删除意图直接丢弃 —— 方向与 fail-closed 正好相反。
+      // 所以清队放进同一个 if，且只在 markCloudGroupsAsDeleted 成功返回后才执行
+      // （它失败会抛给外层 catch，整批要么都确认、要么整批留下等下轮）。
       if (cloudDeleteIds.length > 0 && opts?.includeDeleted !== false) {
         await markCloudGroupsAsDeleted(cloudDeleteIds);
+        // 按本轮实际广播成功的清单消费队列，而不是整队清空：一轮上传期间队列
+        // 还会继续长（读走 A 之后用户又删了 B，B 写 KV 失败只落进内存兜底），
+        // 整队清空会把没广播过的 B 连坐抹掉 → 云端行仍活跃 → 下次合并整组复活，
+        // 且 v1.22.0 起无回收站、用户无法找回。详见 storage.clearPendingDeleteIds。
+        await storage.clearPendingDeleteIds(cloudDeleteIds);
+      } else if (cloudDeleteIds.length > 0) {
+        logWarn('[SyncEngine] includeDeleted=false：删除意图本轮未广播，队列保留不清理');
       }
-      // 广播成功 → 清删除队列；本地残留墓碑物理清除（云端已有 is_deleted 行，
-      // 本地副本不再承担任何职责——新模型本地 storage 永远只有活跃数据）。
-      await storage.clearPendingDeleteIds();
       if (legacyTombstoneIds.length > 0) {
         await storage.setGroupsImmediate(activeGroups);
         logInfo(`[SyncEngine] 已广播 ${legacyTombstoneIds.length} 个老版本残留墓碑并从本地清除`);

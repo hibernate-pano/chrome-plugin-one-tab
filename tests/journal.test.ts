@@ -49,8 +49,12 @@ describe('journal: write-ahead log（§4.3）', () => {
     const { createJournal } = await import('@/utils/journal');
     let currentSeq = 5;
     const deps = {
-      kvGet: async <T>(k: string) => null,
-      kvSet: async (k: string, v: unknown) => { /* noop */ },
+      // 恒返回 null 的 kvGet：泛型与键都不进返回值，但签名要和 JournalDeps 对得上
+      // （可核对），故写成完整泛型形态；未用到的名字按下划线前缀惯例豁免
+      // （.eslintrc.cjs 的 tests 覆盖层只放行 ^_ 开头）。
+      kvGet: async <_T>(_k: string) => null,
+      // noop kvSet：参数只为与 JournalDeps 签名对齐而写出来，同样走下划线豁免。
+      kvSet: async (_k: string, _v: unknown) => { /* noop */ },
       getDeviceId: async () => 'devA',
       nextSeq: async () => ++currentSeq,
     };
@@ -82,8 +86,10 @@ describe('journal: write-ahead log（§4.3）', () => {
     const { createJournal } = await import('@/utils/journal');
     let seq = 0;
     const deps = {
-      kvGet: async <T>(k: string) => null,
-      kvSet: async (k: string, v: unknown) => { /* noop */ },
+      // 同上：恒返回 null 的 kvGet 桩，泛型/键加下划线前缀走豁免。
+      kvGet: async <_T>(_k: string) => null,
+      // noop kvSet：同上，参数只为签名对齐。
+      kvSet: async (_k: string, _v: unknown) => { /* noop */ },
       getDeviceId: async () => 'devB',
       nextSeq: async () => ++seq,
     };

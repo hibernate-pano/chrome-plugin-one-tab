@@ -11,13 +11,17 @@ import { logError, logInfo } from './log';
 
 /**
  * 迁移现有数据中的 favicon URLs，确保符合 CSP 策略
+ *
+ * 读路径必须用 getGroupsForWrite()：本迁移在 TabList 挂载时于 popup 上下文跑，
+ * 而 getGroups() 有 30s 进程内缓存、且 SW 侧不感知本上下文的写入——拿陈旧快照
+ * 整表写回会把同期由 SW/后台写入的会话整段抹掉（详见 storage.getGroupsForWrite）。
  */
 export async function migrateFaviconUrls(): Promise<void> {
   try {
     logInfo('开始迁移 favicon URLs...');
-    
-    // 获取所有标签组
-    const groups = await storage.getGroups();
+
+    // 获取所有标签组（写路径新鲜读：先 flush pending 防抖写、失效缓存，再读真值）
+    const groups = await storage.getGroupsForWrite();
     let migrationCount = 0;
     let totalTabs = 0;
     
@@ -53,7 +57,9 @@ export async function migrateFaviconUrls(): Promise<void> {
     
     // 如果有数据被迁移，保存更新后的数据
     if (migrationCount > 0) {
-      await storage.setGroups(migratedGroups);
+      // 直写落盘（与 purgeTombstones / mutation 同一写路径）：迁移是整表重写，
+      // 不该挤在 500ms 防抖窗口里等定时器——popup 随时可能被销毁。
+      await storage.setGroupsImmediate(migratedGroups);
       logInfo(`favicon 迁移完成: 共处理 ${totalTabs} 个标签，迁移了 ${migrationCount} 个 favicon`);
     } else {
       logInfo(`favicon 迁移检查完成: 共检查 ${totalTabs} 个标签，无需迁移`);
@@ -107,7 +113,9 @@ export async function removeRecentRestoreHistory(): Promise<void> {
  */
 export async function purgeTombstones(): Promise<void> {
   try {
-    const groups = await storage.getGroups();
+    // 写路径新鲜读：purgeTombstones 在 1.22.0 升级当天首次运行，是最不该
+    // 拿陈旧快照整表写回去的时刻（见 storage.getGroupsForWrite 注释）。
+    const groups = await storage.getGroupsForWrite();
     const hadGroupTombstones = groups.some(g => g.isDeleted);
     const hadTabTombstones = groups.some(g => g.tabs?.some(t => t.isDeleted));
 

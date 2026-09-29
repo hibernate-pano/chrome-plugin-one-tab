@@ -1,5 +1,5 @@
 import type { UserSettings } from '@/types/tab';
-import { sync as supabaseSync } from '@/utils/supabase';
+import { sync as supabaseSync } from '@/utils/supabaseFacade';
 
 export async function uploadSettings(settings: UserSettings) {
   return supabaseSync.uploadSettings(settings);

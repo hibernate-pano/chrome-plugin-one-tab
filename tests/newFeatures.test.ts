@@ -147,9 +147,12 @@ describe('TabManager.openTabsInCurrentWindow', () => {
     const { TabManager } = await import('@/background/TabManager');
     const manager = TabManager.getInstance();
 
+    // openTabsInCurrentWindow 的形参就是 Array<{ url: string; pinned?: boolean }>
+    // （src/background/TabManager.ts:340）——chrome.tabs.create 也只吃得到
+    // url/active/pinned/index，title 与 favicon 根本无处可去。这里只传真会被读的字段。
     await manager.openTabsInCurrentWindow([
-      { url: 'https://a.example', pinned: true, favIconUrl: '', title: 'A', createdAt: 't', lastAccessed: 't' },
-      { url: 'https://b.example', pinned: false, favIconUrl: '', title: 'B', createdAt: 't', lastAccessed: 't' },
+      { url: 'https://a.example', pinned: true },
+      { url: 'https://b.example', pinned: false },
     ]);
 
     assert.equal(created.length, 2);
@@ -182,7 +185,7 @@ describe('TabManager.openTabsInCurrentWindow', () => {
 
     const { TabManager } = await import('@/background/TabManager');
     await TabManager.getInstance().openTabsInCurrentWindow([
-      { url: 'https://c.example', pinned: false, favIconUrl: '', title: 'C', createdAt: 't', lastAccessed: 't' },
+      { url: 'https://c.example', pinned: false },
     ]);
 
     assert.equal(created.length, 1);
@@ -197,7 +200,7 @@ describe('supabase 客户端共享 storage adapter', () => {
   it('session token 读写落到 chrome.storage.local 而非内存', async () => {
     const { mockStore } = installChromeMock();
     // localStorage 不可用（SW 环境）→ 不崩溃
-    const { supabase } = await import('@/utils/supabase');
+    const { supabase } = await import('@/utils/supabaseFacade');
     assert.ok(supabase, 'supabase 客户端应可初始化');
 
     // 测试 fixture：构造一条伪 session 验证 chrome.storage.local 读写回路。

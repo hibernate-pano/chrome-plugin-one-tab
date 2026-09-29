@@ -1,5 +1,6 @@
-import React from 'react';
+import React, { useId, useRef } from 'react';
 import { createPortal } from 'react-dom';
+import { useDialogA11y } from '@/hooks/useKeyboardNavigation';
 
 interface ModalFrameProps {
   visible: boolean;
@@ -22,6 +23,14 @@ export const ModalFrame: React.FC<ModalFrameProps> = ({
   footer,
   maxWidthClassName = 'max-w-lg',
 }) => {
+  const panelRef = useRef<HTMLDivElement>(null);
+  const titleId = useId();
+  const descriptionId = useId();
+
+  // 钩子必须在 `if (!visible) return null` 之前调用：
+  // visible 是渲染开关而不是卸载开关，焦点契约要跟着它一起开合。
+  useDialogA11y(panelRef, visible, onClose);
+
   if (!visible) {
     return null;
   }
@@ -34,11 +43,18 @@ export const ModalFrame: React.FC<ModalFrameProps> = ({
       />
 
       <div
-        className={`relative w-full ${maxWidthClassName} overflow-hidden rounded-[28px] border border-slate-200/80 bg-white/95 shadow-[0_28px_80px_rgba(15,23,42,0.28)] ring-1 ring-white/60 backdrop-blur dark:border-slate-700/80 dark:bg-slate-900/95 dark:ring-slate-800/80`}
+        ref={panelRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
+        aria-describedby={description ? descriptionId : undefined}
+        tabIndex={-1}
+        className={`relative w-full ${maxWidthClassName} overflow-hidden rounded-[28px] border border-slate-200/80 bg-white/95 shadow-[0_28px_80px_rgba(15,23,42,0.28)] ring-1 ring-white/60 backdrop-blur focus:outline-none dark:border-slate-700/80 dark:bg-slate-900/95 dark:ring-slate-800/80`}
       >
         <button
+          type="button"
           onClick={onClose}
-          className="absolute right-4 top-4 inline-flex h-9 w-9 items-center justify-center rounded-full border border-slate-200/80 bg-white/80 text-slate-500 transition-colors hover:border-slate-300 hover:text-slate-700 dark:border-slate-700/80 dark:bg-slate-900/80 dark:text-slate-400 dark:hover:border-slate-600 dark:hover:text-slate-200"
+          className="absolute right-4 top-4 inline-flex h-9 w-9 items-center justify-center rounded-full border border-slate-200/80 bg-white/80 text-slate-500 transition-colors hover:border-slate-300 hover:text-slate-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-400 dark:border-slate-700/80 dark:bg-slate-900/80 dark:text-slate-400 dark:hover:border-slate-600 dark:hover:text-slate-200"
           aria-label="关闭弹窗"
         >
           <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
@@ -50,11 +66,17 @@ export const ModalFrame: React.FC<ModalFrameProps> = ({
           <div className="flex items-start gap-4 pr-10">
             {icon && <div className="mt-0.5 shrink-0">{icon}</div>}
             <div className="min-w-0">
-              <h3 className="text-lg font-semibold tracking-tight text-slate-900 dark:text-slate-50">
+              <h3
+                id={titleId}
+                className="text-lg font-semibold tracking-tight text-slate-900 dark:text-slate-50"
+              >
                 {title}
               </h3>
               {description && (
-                <p className="mt-2 whitespace-pre-line text-sm leading-6 text-slate-600 dark:text-slate-300">
+                <p
+                  id={descriptionId}
+                  className="mt-2 whitespace-pre-line text-sm leading-6 text-slate-600 dark:text-slate-300"
+                >
                   {description}
                 </p>
               )}

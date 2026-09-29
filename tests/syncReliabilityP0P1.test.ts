@@ -44,49 +44,49 @@ function makeGroup(id: string, overrides: Record<string, unknown> = {}) {
 // ── P0-3：hasRemoteChanges seq 为主 ──────────────────────────────────────
 describe('P0-3 hasRemoteChanges: 单调 seq 为主信号，时间戳仅参考', () => {
   it('seq 不等 → 有变更（即使 updated_at/version 完全相同）', async () => {
-    const { hasRemoteChanges } = await import('@/utils/syncUtils');
+    const { hasRemoteChanges } = await import('@/core/syncDecision');
     const local = [makeGroup('g', { lastOp: { d: 'devA', s: 5 } })];
     const digest = [{ id: 'g', updated_at: NOW, version: 1, last_op_device: 'devA', last_op_seq: 7 }];
     assert.equal(hasRemoteChanges(local as any, digest), true);
   });
 
   it('云端有印记、本地无印记 → 有变更（迁移前本地 vs 已迁移云端不漏判）', async () => {
-    const { hasRemoteChanges } = await import('@/utils/syncUtils');
+    const { hasRemoteChanges } = await import('@/core/syncDecision');
     const local = [makeGroup('g')];
     const digest = [{ id: 'g', updated_at: NOW, version: 1, last_op_device: 'devA', last_op_seq: 3 }];
     assert.equal(hasRemoteChanges(local as any, digest), true);
   });
 
   it('device 不同但 seq 相同 → 有变更（同 seq 不同设备不可视为同一意图）', async () => {
-    const { hasRemoteChanges } = await import('@/utils/syncUtils');
+    const { hasRemoteChanges } = await import('@/core/syncDecision');
     const local = [makeGroup('g', { lastOp: { d: 'devA', s: 5 } })];
     const digest = [{ id: 'g', updated_at: NOW, version: 1, last_op_device: 'devB', last_op_seq: 5 }];
     assert.equal(hasRemoteChanges(local as any, digest), true);
   });
 
   it('seq/device/version/时间戳全一致 → 无变更（短路成立）', async () => {
-    const { hasRemoteChanges } = await import('@/utils/syncUtils');
+    const { hasRemoteChanges } = await import('@/core/syncDecision');
     const local = [makeGroup('g', { lastOp: { d: 'devA', s: 5 } })];
     const digest = [{ id: 'g', updated_at: NOW, version: 1, is_deleted: false, last_op_device: 'devA', last_op_seq: 5 }];
     assert.equal(hasRemoteChanges(local as any, digest), false);
   });
 
   it('seq 相等但 version 不等 → 仍判有变更（seq 相等不屏蔽其他信号）', async () => {
-    const { hasRemoteChanges } = await import('@/utils/syncUtils');
+    const { hasRemoteChanges } = await import('@/core/syncDecision');
     const local = [makeGroup('g', { lastOp: { d: 'devA', s: 5 } })];
     const digest = [{ id: 'g', updated_at: NOW, version: 2, last_op_device: 'devA', last_op_seq: 5 }];
     assert.equal(hasRemoteChanges(local as any, digest), true);
   });
 
   it('最小列 digest（无印记列）+ 时间戳一致 → 无变更（未迁移云端 fail-open 不误报）', async () => {
-    const { hasRemoteChanges } = await import('@/utils/syncUtils');
+    const { hasRemoteChanges } = await import('@/core/syncDecision');
     const local = [makeGroup('g')];
     const digest = [{ id: 'g', updated_at: NOW, version: 1 }];
     assert.equal(hasRemoteChanges(local as any, digest), false);
   });
 
   it('最小列 digest + updated_at 不等 → 有变更（Web 端只触时间戳的写不漏判）', async () => {
-    const { hasRemoteChanges } = await import('@/utils/syncUtils');
+    const { hasRemoteChanges } = await import('@/core/syncDecision');
     const local = [makeGroup('g')];
     const digest = [{ id: 'g', updated_at: '2026-09-23T09:00:00.000Z', version: 1 }];
     assert.equal(hasRemoteChanges(local as any, digest), true);
@@ -96,7 +96,7 @@ describe('P0-3 hasRemoteChanges: 单调 seq 为主信号，时间戳仅参考', 
 // ── P0-1：上传/软删/硬删读回比对 ─────────────────────────────────────────
 describe('P0-1 读回比对：静默吞写必须现形', () => {
   it('compareUploadReadback：全一致 → ok', async () => {
-    const { compareUploadReadback } = await import('@/utils/supabase');
+    const { compareUploadReadback } = await import('@/utils/supabaseFacade');
     const r = compareUploadReadback(
       [{ id: 'g', updatedAt: NOW, lastOp: { d: 'devA', s: 9 } }],
       [{ id: 'g', updated_at: NOW, last_op_device: 'devA', last_op_seq: 9, is_deleted: false }],
@@ -106,7 +106,7 @@ describe('P0-1 读回比对：静默吞写必须现形', () => {
   });
 
   it('compareUploadReadback：云端缺行 → 不 ok（守卫吞写现形）', async () => {
-    const { compareUploadReadback } = await import('@/utils/supabase');
+    const { compareUploadReadback } = await import('@/utils/supabaseFacade');
     const r = compareUploadReadback(
       [{ id: 'g', updatedAt: NOW, lastOp: { d: 'devA', s: 9 } }],
       [],
@@ -117,7 +117,7 @@ describe('P0-1 读回比对：静默吞写必须现形', () => {
   });
 
   it('compareUploadReadback：印记不一致 → 不 ok', async () => {
-    const { compareUploadReadback } = await import('@/utils/supabase');
+    const { compareUploadReadback } = await import('@/utils/supabaseFacade');
     const r = compareUploadReadback(
       [{ id: 'g', updatedAt: NOW, lastOp: { d: 'devA', s: 9 } }],
       [{ id: 'g', updated_at: NOW, last_op_device: 'devA', last_op_seq: 4, is_deleted: false }],
@@ -128,7 +128,7 @@ describe('P0-1 读回比对：静默吞写必须现形', () => {
   });
 
   it('compareUploadReadback：未迁移环境 checkStamp=false 时忽略印记列', async () => {
-    const { compareUploadReadback } = await import('@/utils/supabase');
+    const { compareUploadReadback } = await import('@/utils/supabaseFacade');
     const r = compareUploadReadback(
       [{ id: 'g', updatedAt: NOW, lastOp: { d: 'devA', s: 9 } }],
       [{ id: 'g', updated_at: NOW }],
@@ -138,7 +138,7 @@ describe('P0-1 读回比对：静默吞写必须现形', () => {
   });
 
   it('compareUploadReadback：活跃组读回 is_deleted=true → 不 ok（复位失败现形）', async () => {
-    const { compareUploadReadback } = await import('@/utils/supabase');
+    const { compareUploadReadback } = await import('@/utils/supabaseFacade');
     const r = compareUploadReadback(
       [{ id: 'g', updatedAt: NOW }],
       [{ id: 'g', updated_at: NOW, is_deleted: true }],
@@ -148,14 +148,14 @@ describe('P0-1 读回比对：静默吞写必须现形', () => {
   });
 
   it('compareTombstoneReadback：目标行缺失或 is_deleted 非 true → 不 ok', async () => {
-    const { compareTombstoneReadback } = await import('@/utils/supabase');
+    const { compareTombstoneReadback } = await import('@/utils/supabaseFacade');
     assert.equal(compareTombstoneReadback(['a'], [{ id: 'a', is_deleted: true }]).ok, true);
     assert.equal(compareTombstoneReadback(['a'], []).ok, false);
     assert.equal(compareTombstoneReadback(['a'], [{ id: 'a', is_deleted: false }]).ok, false);
   });
 
   it('compareHardDeleteReadback：有残留 → 不 ok；清空 → ok', async () => {
-    const { compareHardDeleteReadback } = await import('@/utils/supabase');
+    const { compareHardDeleteReadback } = await import('@/utils/supabaseFacade');
     assert.equal(compareHardDeleteReadback(['a'], []).ok, true);
     const r = compareHardDeleteReadback(['a', 'b'], [{ id: 'b' }]);
     assert.equal(r.ok, false);
@@ -166,7 +166,7 @@ describe('P0-1 读回比对：静默吞写必须现形', () => {
 // ── P0-3：removeTab 提升组印记（无墓碑模型：组是 LWW 广播载体）──────────
 describe('P0-3 applyRemoveTab: 标签删除同步提升组级印记', () => {
   it('删 tab 后组 lastOp 盖新 stamp；被删 tab 物理移除无实体可盖', async () => {
-    const { applyRemoveTab } = await import('@/utils/mutationOps');
+    const { applyRemoveTab } = await import('@/core/mutationOps');
     const stamp = { d: 'devA', s: 42 };
     const groups = [
       makeGroup('g', {

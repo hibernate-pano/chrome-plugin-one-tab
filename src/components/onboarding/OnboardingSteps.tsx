@@ -1,11 +1,18 @@
 import React from 'react';
 
+/**
+ * 引导各步内容。
+ *
+ * 每个步骤标题都带 tabIndex={-1}：不是给键盘用户新增一个 Tab 落点（-1 本就不进 Tab 序列），
+ * 而是给 OnboardingGuide 在切步时提供聚焦目标——读屏会播报新标题，
+ * 键盘用户的焦点也不会停留在上一步已经卸载的按钮上。
+ */
 export const WelcomeStep: React.FC<{ version: string }> = ({ version }) => (
   <div className="onboarding-content">
     <div className="onboarding-icon-wrapper">
       <span>🧭</span>
     </div>
-    <h2 className="onboarding-title">欢迎使用 TapStack</h2>
+    <h2 tabIndex={-1} className="onboarding-title">欢迎使用 TapStack</h2>
     <div className="flex justify-center">
       <span className="onboarding-version-badge">v{version}</span>
     </div>
@@ -39,7 +46,7 @@ export const SaveTabsStep: React.FC = () => (
     <div className="onboarding-icon-wrapper">
       <span>💾</span>
     </div>
-    <h2 className="onboarding-title">先保存一个会话</h2>
+    <h2 tabIndex={-1} className="onboarding-title">先保存一个会话</h2>
     <p className="onboarding-description">
       点击顶部的“保存会话”按钮
       <br />
@@ -70,7 +77,7 @@ export const SearchStep: React.FC = () => (
     <div className="onboarding-icon-wrapper">
       <span>🔍</span>
     </div>
-    <h2 className="onboarding-title">需要时快速找回</h2>
+    <h2 tabIndex={-1} className="onboarding-title">需要时快速找回</h2>
     <p className="onboarding-description">
       搜索会话名、备注、标签标题或 URL
       <br />
@@ -101,7 +108,7 @@ export const RestoreStep: React.FC = () => (
     <div className="onboarding-icon-wrapper">
       <span>🚀</span>
     </div>
-    <h2 className="onboarding-title">恢复时继续，而不是重来</h2>
+    <h2 tabIndex={-1} className="onboarding-title">恢复时继续，而不是重来</h2>
     <p className="onboarding-description">
       恢复整个会话时，会默认在新窗口中打开
       <br />
@@ -132,7 +139,7 @@ export const SyncStep: React.FC = () => (
     <div className="onboarding-icon-wrapper">
       <span>☁️</span>
     </div>
-    <h2 className="onboarding-title">换台设备也能找回</h2>
+    <h2 tabIndex={-1} className="onboarding-title">换台设备也能找回</h2>
     <p className="onboarding-description">
       通过右上角菜单「登录 / 注册」开启同步
       <br />
@@ -163,7 +170,7 @@ export const ReadyStep: React.FC = () => (
     <div className="onboarding-icon-wrapper">
       <span className="onboarding-confetti">✅</span>
     </div>
-    <h2 className="onboarding-title">核心闭环已经齐了</h2>
+    <h2 tabIndex={-1} className="onboarding-title">核心闭环已经齐了</h2>
     <p className="onboarding-description">
       现在开始保存、搜索、恢复你的工作会话
       <br />

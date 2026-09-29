@@ -5,13 +5,31 @@
  */
 import type { TabGroup, UserSettings, TabData, SupabaseTabGroup } from '@/types/tab';
 import { encryptData } from '../encryptionUtils';
-import { serializeTab } from '../tabDataCodec';
-import { decideCloudTombstoneWrite } from '../syncUtils';
+import { serializeTab } from '@/core/tabDataCodec';
+import { decideCloudTombstoneWrite } from '@/core/syncDecision';
 import { supabase, checkSupabaseConfig, getDeviceId } from './client';
 import { requireSessionUserId } from './session';
 import { logError, logInfo, logWarn } from '../log';
 import { supportsCloudTombstone, supportsDeletedAt, supportsOpStamp } from './probe';
-import { verifyUploadReadback, verifyTombstoneReadback, compareHardDeleteReadback } from './readback';
+import {
+  verifyUploadReadback,
+  verifyTombstoneReadback,
+  compareHardDeleteReadback,
+  isConcededToCloudTombstone,
+  type UploadReadbackRow,
+} from './readback';
+// 墓碑 stamp 必须与本地其他写入同源（Lamport）：本设备持久化 device_seq +
+// 观察到的全网最大印记。registry 各处各持一实例但无 memo、同一持久化 key、
+// 同一推导规则（见 utils/seqRegistry.ts 头注释），因此彼此一致。
+import { createSeqRegistry } from '@/utils/seqRegistry';
+import { kvGet, kvSet } from '@/storage/storageAdapter';
+import { storage } from '@/utils/storage';
+
+const tombstoneSeq = createSeqRegistry({
+  kvGet,
+  kvSet,
+  getGroups: () => storage.getGroups(),
+});
 
 /**
  * 选定本次实际上云的组。
@@ -38,6 +56,110 @@ export function selectRowsForUpload(
     return opts.tombstoneColumn ? [...groups] : groups.filter(g => g.isDeleted !== true);
   }
   return groups.filter(g => g.isDeleted !== true);
+}
+
+/**
+ * 【P0】合并模式预检：挑出「云端已经是墓碑、且云端印记严格新于本地」的组。
+ *
+ * 修复前这类组让整台设备永久卡死：
+ *   1. 合并模式把每个活跃组以 is_deleted=false 写出；
+ *   2. 云端行是另一台设备写的墓碑、last_op_seq 更大 → 服务端
+ *      guard_tab_group_op_stamp 判 `NEW < OLD` → RETURN NULL，**整行静默吞写**
+ *      （version 守卫第 1 条放行 is_deleted 翻转，所以拦不住它）；
+ *   3. verifyUploadReadback 的 is_deleted 比对发现 true !== false → 抛错；
+ *   4. syncEngine.upload 的 catch 吞掉 → success:false，pending_upload 永不清；
+ *   5. 之后每次 downloadAndMerge 都先撞 upload_first，上传又失败 →
+ *      一次都下载不了，闹钟每 60s 重试一次。
+ *
+ * 修法不是「让读回校验放过这次失败」（那只是把症状藏起来），而是**写之前就按
+ * 合并用的同一套全序判据认输**：云端墓碑印记更大 ⇒ 本地这一份本来就该死
+ * （mergeOpStamped 的「云端墓碑 vs 本地活跃」正是这条判据）。认输的组本次
+ * 不上行、也不进读回校验；它的本地副本由紧接着的那次下载合并物理移除——
+ * 于是「云端更新」变成一次正常的收敛，而不是卡死。
+ *
+ * 覆盖模式不做预检：覆盖会先 DELETE 掉该用户全部行，upsert 退化成 INSERT，
+ * 两个守卫都是 BEFORE UPDATE、不参与，本就没有撞守卫的可能。
+ *
+ * 云端缺 is_deleted 列（hard-delete 降级）或缺印记列（decideCloudTombstoneWrite
+ * 的 plain 形态）时也不做：没有印记列就无从比较（服务端守卫此时按「任一侧
+ * NULL → 放行」处理，本来也不会吞写），而 select 一个不存在的列会让整次
+ * 预检直接 PGRST204/42703 失败，把一个本来正常的上传打死。
+ *
+ * 「缺列」有两个入口，口径必须一致——否则预检自己就成了一条「上传全废」的路：
+ *   1) 探测口径：opts.tombstoneColumn / opts.stampColumn 为 false → 上面的
+ *      前置 return，整段预检不发生；
+ *   2) 读回口径：探测结果在本 SW 生命周期内被缓存为 true，之后该列被删（迁移
+ *      回滚、换环境、schema 漂移），本次 select 拿到 PGRST204/42703 → 按缺列
+ *      降级放行（视作无印记列、跳过整段预检），与 probe.ts 的 fetchTabGroupsDigest
+ *      和 webApi.ts 的两处读对**同一个 schema 不一致**的处理同口径。
+ * 入口 2 若按「任何 error 都抛」处理，缓存窗口内**每一次上传**都会失败
+ * （MV3 SW 重启重置缓存才自愈，所以不是永久卡死，但这台设备当下上传全废），
+ * 而它防的那个卡死（见上）在缺列时根本不会发生：没有印记列就没有守卫会吞写。
+ *
+ * 非缺列的读失败一律 fail-closed（见函数体内注释）——绝不「读不出来就当没有要
+ * 认输的组」，那会把真冲突当成没冲突，放行一次注定被守卫拒收的写。
+ */
+export async function findConcededGroupIds(
+  rows: TabGroup[],
+  userId: string,
+  opts: { tombstoneColumn: boolean; stampColumn: boolean; overwrite: boolean }
+): Promise<Set<string>> {
+  const conceded = new Set<string>();
+  if (opts.overwrite) return conceded;
+  if (!opts.tombstoneColumn || !opts.stampColumn || rows.length === 0) return conceded;
+
+  const { data, error } = await supabase
+    .from('tab_groups')
+    .select('id, is_deleted, last_op_device, last_op_seq')
+    .eq('user_id', userId)
+    .in('id', rows.map(r => r.id));
+
+  if (error) {
+    // 「列不存在」→ 降级放行：视作「无印记列」，跳过整段预检（认输集为空，
+    // 全部照常上行），与函数开头 `!opts.stampColumn` 的前置 return 同一分支。
+    //
+    // 为什么缺列可以放行：缺的是这条判据的**前提**（没有印记可比），不是判据的
+    // 结论。缺印记列时服务端守卫按「任一侧 NULL → 放行」处理，本来就不会吞写，
+    // 这次上传的行为与本预检存在之前完全相同（见函数头注释的入口 2）。
+    // 判定只认结构化的 error.code，不用 message 里的 'column' 关键字。
+    //
+    // 为什么这里比同批其它两处更严（probe.ts / webApi.ts 用的是 code+message 拼串
+    // 匹配 'column'）：那两处判错的后果是一次列回退（少盖个印记，降级继续跑）；
+    // 这里判错的后果是**放行一次注定被服务端 guard_tab_group_op_stamp 静默吞写的
+    // upsert**，随后 verifyUploadReadback 抛错、pending_upload 永不清，
+    // 整台设备钉死在 pending_upload_failed 循环里——本工作包要根治的就是它。
+    // 一条恰好提到 column 的网关/传输层错误文本就够了把真冲突误判成缺列。
+    // code 未知（老客户端/代理抹掉 code）时才回退到 message 匹配，宁可多误报
+    // 一次上传失败，也不要把真冲突当没冲突。
+    const code = String(error.code ?? '');
+    const isMissingColumn =
+      code === 'PGRST204' || code === '42703' || (code === '' && /42703|PGRST204|column/i.test(String(error.message ?? '')));
+    if (isMissingColumn) {
+      logWarn(
+        '[upload] 认输预检读不到印记列（schema 漂移/迁移回滚/换环境），' +
+          '本次按「无印记列」跳过预检、照常上行（服务端守卫此时不会吞写）:',
+        error
+      );
+      return conceded;
+    }
+
+    // 非缺列的读失败：预检读不出来 ≠ 没有要认输的组。放行等于发起一次注定被
+    // 守卫吞写的 upsert，之后必然在读回抛错，把这台设备钉死在
+    // pending_upload_failed 循环里（pending_upload 永不清 → 下载被无限跳过）。
+    // 与本文件其它云端错误同口径：抛错，让本次上传失败、下轮重试。
+    logError('[upload] 预检云端墓碑失败，本次上传中止:', error);
+    throw error;
+  }
+
+  const localById = new Map(rows.map(r => [r.id, r]));
+  for (const row of ((data ?? []) as unknown) as UploadReadbackRow[]) {
+    const local = localById.get(row.id);
+    if (!local) continue;
+    if (isConcededToCloudTombstone({ id: row.id, lastOp: local.lastOp ?? null }, row)) {
+      conceded.add(row.id);
+    }
+  }
+  return conceded;
 }
 
 export const uploadSync = {
@@ -228,7 +350,23 @@ export const uploadSync = {
       logInfo(`[upload] 覆盖模式随 upsert 一并写入 ${tombstonedIds.size} 个本地墓碑组`);
     }
 
-    const groupsWithUser = rowsToUpload.map(group => {
+    // 【P0】合并模式预检：云端已是「更新的墓碑」的组本次认输、不上行（见
+    // findConcededGroupIds）。必须在 upsert 之前完成——撞完守卫再靠读回抛错，
+    // 那台设备会永久卡在 pending_upload_failed，一次都下载不了。
+    const concededIds = await findConcededGroupIds(rowsToUpload, userId, {
+      tombstoneColumn: tombstoneSupported,
+      stampColumn: opStampSupported,
+      overwrite: overwriteCloud,
+    });
+    const uploadRows = concededIds.size > 0 ? rowsToUpload.filter(g => !concededIds.has(g.id)) : rowsToUpload;
+    if (concededIds.size > 0) {
+      logInfo(
+        `[upload] ${concededIds.size} 个本地组的云端已是更新的墓碑（云端 last_op_seq 更大），` +
+          `本次认输不上行（${[...concededIds].join(',')}）：本地副本由下次下载合并物理移除`
+      );
+    }
+
+    const groupsWithUser = uploadRows.map(group => {
       // 确保必要字段都有值
       const createdAt = group.createdAt || currentTime;
       const updatedAt = group.updatedAt || currentTime;
@@ -359,9 +497,25 @@ export const uploadSync = {
       //   本地认为活跃 → is_deleted=false：把 Web 端已软删、本地仍活跃（恢复/取消删除）的组复位为活跃；
       //   本地已墓碑   → is_deleted=true ：把删除意图随覆盖写上云。
       // 合并上传路径本来就只传活跃组（syncEngine 过滤），取值恒为 false，行为不变。
+      //
+      // 【P2】凡是写出 is_deleted=true 的行都必须带 deleted_at：
+      // purgeExpiredCloudTombstones 以 deleted_at 为龄期基准（缺列才回退
+      // updated_at），只写 is_deleted 不写 deleted_at 的墓碑行会退化成
+      // 「按 updated_at 计时」——覆盖上传会把 updated_at 刷成本次上传时刻，
+      // 30 天清理因此形同虚设，云端墓碑行只增不减。
+      // 取值一律用本次写入时刻（不沿用本地可能很旧的 deletedAt）：
+      // 删除广播的时刻就是它被写上云的时刻，偏晚只会让墓碑多留一会儿，
+      // 绝不会提前清除。
+      // 复位为活跃的行写 deleted_at=null，避免残留的旧删除时刻误导后续判定。
+      // 云端没有该列时整列省略（带上不存在的列会让整批 upsert 报 42703）。
       if (tombstoneSupported) {
+        const deletedAtSupported = await supportsDeletedAt();
         uniqueGroups.forEach(group => {
-          (group as any).is_deleted = tombstonedIds.has(group.id);
+          const isTombstone = tombstonedIds.has(group.id);
+          (group as any).is_deleted = isTombstone;
+          if (deletedAtSupported) {
+            (group as any).deleted_at = isTombstone ? currentTime : null;
+          }
         });
       }
 
@@ -411,18 +565,24 @@ export const uploadSync = {
           tabsDataLength: uniqueGroups[0]?.tabs_data?.length
         });
 
-        const result = await supabase
-          .from('tab_groups')
-          .upsert(uniqueGroups as any, { onConflict: 'id' });
+        const result = uniqueGroups.length > 0
+          ? await supabase
+            .from('tab_groups')
+            .upsert(uniqueGroups as any, { onConflict: 'id' })
+          : { data: null, error: null };
 
         data = result.data;
         error = result.error;
       } else {
         // 合并模式，使用 upsert
         // 使用合并模式
-        const result = await supabase
-          .from('tab_groups')
-          .upsert(uniqueGroups as any, { onConflict: 'id' });
+        // 空批（全部组都在预检里认输给更新的云端墓碑）不发 upsert：
+        // PostgREST 不接受空数组体，凭空造一个 400 只会把一次正常的收敛变成失败。
+        const result = uniqueGroups.length > 0
+          ? await supabase
+            .from('tab_groups')
+            .upsert(uniqueGroups as any, { onConflict: 'id' })
+          : { data: null, error: null };
 
         data = result.data;
         error = result.error;
@@ -489,8 +649,11 @@ export const uploadSync = {
     // RLS 静默丢行都不报错）。按 id 读回印记/删除位/时间戳比对，不一致抛错——
     // 调用方保留 pending_upload 走重试，绝不清标志假装成功。
     // 去重口径与上面的 uniqueGroups 一致（保留首个同 id 组）。
+    // 认输给更新云端墓碑的组（concededIds）本次**没有写**，不能进校验名单：
+    // 拿「我写了 is_deleted=false」去比对一条本就该保持墓碑的云端行，必然误报，
+    // 又把上传打成失败——正是本次要根治的那个卡死。
     const firstById = new Map<string, TabGroup>();
-    for (const g of rowsToUpload) if (!firstById.has(g.id)) firstById.set(g.id, g);
+    for (const g of uploadRows) if (!firstById.has(g.id)) firstById.set(g.id, g);
     await verifyUploadReadback(
       [...firstById.values()].map(g => ({
         id: g.id,
@@ -568,7 +731,16 @@ export const uploadSync = {
     if (mode === 'stamp') {
       // 有印记列：墓碑意图必须带「本设备」印记。以前写 row.last_op_device（原设备）+ seq+1，
       // 等于伪造他设备的印记——他设备真实 seq 落后时，它自己的上传会被守卫当「更旧」拒收。
-      // seq 取 OLD+1 保证严格递增（NEW > OLD 必然满足守卫放行条件）。
+      //
+      // 【P1】seq 必须走本设备自己的 Lamport 时钟（与 mutationHandlers /
+      // TabManager / 导入兜底同一套 createSeqRegistry），不能拿云端 OLD+1 凑：
+      //   - 云端行 last_op_seq 为 NULL 时，OLD+1 = 1。对方设备只要 seq >= 2，
+      //     在 mergeOpStamped 里就赢过这条墓碑 → 保留该组并重新上传为活跃，
+      //     删除被静默撤销。
+      //   - 服务端守卫只看「严格小于就吞写」，OLD+1 能过守卫纯属巧合：
+      //     客户端合并不看守卫，只看全序。
+      // 取号后还要把「观察到的云端 seq」吸收进本机时钟（bumpSeqIfLower），
+      // 保证本设备随后发出的任何号都大于刚盖过的这个云端号——Lamport 不变式。
       const { data: rows, error: readError } = await supabase
         .from('tab_groups')
         .select('id, last_op_seq')
@@ -584,7 +756,13 @@ export const uploadSync = {
       const now = new Date().toISOString();
       let successCount = 0;
       for (const row of (rows ?? []) as Array<{ id: string; last_op_seq: number | null }>) {
-        const newSeq = (row.last_op_seq ?? 0) + 1;
+        // 本地 Lamport 号（严格大于本机见过的任何印记）与「必须压过这一行云端
+        // 旧印记」两个下界取大者：前者保证在全局全序里单调、不输给自己写过的
+        // 东西，后者保证服务端守卫放行且合并时本地删除意图胜出。
+        const lamportSeq = await tombstoneSeq.nextSeq();
+        const newSeq = Math.max(lamportSeq, (row.last_op_seq ?? 0) + 1);
+        // 把本机时钟抬到 newSeq，下一次取号不会退回这个号以下
+        await tombstoneSeq.bumpSeqIfLower(newSeq);
         const { error } = await supabase
           .from('tab_groups')
           .update({

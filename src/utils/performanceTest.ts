@@ -162,29 +162,3 @@ export async function seedLargeDataset(options?: { groupCount?: number; tabsPerG
   return { groupCount, tabsPerGroup, totalTabs: groupCount * tabsPerGroup };
 }
 
-/**
- * 在控制台中显示性能比较结果
- * @param beforeResults 优化前的测试结果
- * @param afterResults 优化后的测试结果
- * @param testName 测试名称
- */
-export function showPerformanceComparison(
-  beforeResults: { avg: number; min: number; max: number },
-  afterResults: { avg: number; min: number; max: number },
-  testName: string
-) {
-  const avgImprovement = ((beforeResults.avg - afterResults.avg) / beforeResults.avg) * 100;
-  const minImprovement = ((beforeResults.min - afterResults.min) / beforeResults.min) * 100;
-  const maxImprovement = ((beforeResults.max - afterResults.max) / beforeResults.max) * 100;
-  
-  logInfo(`性能比较: ${testName}`);
-  logInfo(`  平均时间改进: ${avgImprovement.toFixed(2)}%`);
-  logInfo(`  最小时间改进: ${minImprovement.toFixed(2)}%`);
-  logInfo(`  最大时间改进: ${maxImprovement.toFixed(2)}%`);
-  
-  if (avgImprovement > 0) {
-    logInfo(`  ✅ 性能提升: 优化后平均快 ${avgImprovement.toFixed(2)}%`);
-  } else {
-    logInfo(`  ❌ 性能下降: 优化后平均慢 ${Math.abs(avgImprovement).toFixed(2)}%`);
-  }
-}

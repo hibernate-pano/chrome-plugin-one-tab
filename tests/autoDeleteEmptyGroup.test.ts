@@ -41,7 +41,6 @@ function makeState(groups: Array<{ id: string; tabs: string[]; isLocked?: boolea
   }));
   return {
     groups: g,
-    deletedGroups: [] as any[],
     activeGroupId: null as string | null,
     isLoading: false,
     error: null,
@@ -81,10 +80,14 @@ describe('autoDeleteEmptyGroup: 移走最后一个标签 → 空会话立即关�
     // 2026-09-28 产品决策：空组无内容可恢复 → 硬删除，不进回收站。
     // 旧行为是打墓碑进回收站，但空壳墓碑没有任何可恢复内容，只会在回收站堆噪音，
     // 且组墓碑不置位时还会以 isDeleted:false 留在活跃列表渲染成空会话卡。
+    // v1.22.0 起回收站整体废除，TabState 里**不再有** deletedGroups 桶。
+    // 原来那条 next.deletedGroups.some(...) 断言读的是 makeState 自己塞进去的空数组，
+    // 测的是夹具不是 reducer——等于没有防线。改成钉住废除这件事本身：
+    // 状态里不得复活回收站字段。
     assert.equal(
-      next.deletedGroups.some(g => g.id === 'A'),
+      'deletedGroups' in next,
       false,
-      '空壳会话不进回收站（无内容可恢复）'
+      '回收站已于 v1.22.0 废除：reducer 之后状态里不得再出现 deletedGroups 桶'
     );
     assert.equal(next.groups.some(g => g.id === 'B'), true, '目标组保留');
     // 被移走的标签已在目标组

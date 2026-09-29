@@ -31,17 +31,18 @@ const LOADER_PATH = pathToFileURL(
 
 // ── localStorage 桩（无 indexedDB 时 storageAdapter 回退到它）────────────
 const lsData = new Map<string, string>();
-(globalThis as Record<string, unknown>).window = {
-  localStorage: {
-    get length() { return lsData.size; },
-    key: (i: number) => [...lsData.keys()][i] ?? null,
-    getItem: (k: string) => (lsData.has(k) ? (lsData.get(k) as string) : null),
-    setItem: (k: string, v: string) => { lsData.set(k, String(v)); },
-    removeItem: (k: string) => { lsData.delete(k); },
-    clear: () => lsData.clear(),
-  },
+// 桩先起成具名常量再挂到 globalThis：否则要回读 window.localStorage 就得再断一次
+// （globalThis 被断言成 Record<string, unknown>，属性取出来是 unknown）。
+const localStorageStub = {
+  get length() { return lsData.size; },
+  key: (i: number) => [...lsData.keys()][i] ?? null,
+  getItem: (k: string) => (lsData.has(k) ? (lsData.get(k) as string) : null),
+  setItem: (k: string, v: string) => { lsData.set(k, String(v)); },
+  removeItem: (k: string) => { lsData.delete(k); },
+  clear: () => lsData.clear(),
 };
-(globalThis as Record<string, unknown>).localStorage = (globalThis as Record<string, unknown>).window.localStorage;
+(globalThis as Record<string, unknown>).window = { localStorage: localStorageStub };
+(globalThis as Record<string, unknown>).localStorage = localStorageStub;
 (globalThis as Record<string, unknown>).chrome = {
   storage: {
     local: {

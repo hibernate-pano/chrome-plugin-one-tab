@@ -36,7 +36,12 @@ describe('createStore + preloadedState', () => {
   });
 
   it('传入 preloadedState 时把 groups / lastLoadedAt / lastSyncStatus 注入初始 state', async () => {
+    // createStore 的形参是 Partial<RootState>，也就是 tabs 必须是**完整**的 TabState；
+    // 真实调用方（buildTabsPreloadedState 的文档，src/core/hydrationDecision.ts:56）
+    // 要求 `{ ...initialTabState, ...buildTabsPreloadedState(...) }` 合并后再传。
+    // 这里照抄那条纪律：只覆盖被注入的 3 个字段，其余保持默认值。
     const { createStore } = await import('@/store');
+    const { initialTabState } = await import('@/store/slices/tabSlice');
     const now = '2026-06-02T08:00:00.000Z';
     const localGroups = [
       {
@@ -50,7 +55,7 @@ describe('createStore + preloadedState', () => {
       },
     ];
     const store = createStore({
-      tabs: { groups: localGroups, lastLoadedAt: now, lastSyncStatus: 'local' },
+      tabs: { ...initialTabState, groups: localGroups, lastLoadedAt: now, lastSyncStatus: 'local' },
       settings: undefined,
     });
     const state = store.getState();

@@ -313,13 +313,3 @@ export function handleError(
 ): AppError {
   return errorHandler.handle(error, options);
 }
-
-/**
- * 异步错误处理函数
- */
-export async function handleAsyncError<T>(
-  operation: () => Promise<T>,
-  options?: ErrorHandlerOptions
-): Promise<T | null> {
-  return errorHandler.handleAsync(operation, options);
-}

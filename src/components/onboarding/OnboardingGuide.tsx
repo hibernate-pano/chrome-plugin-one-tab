@@ -13,6 +13,7 @@ import {
     setOnboardingSkipped,
     getCurrentVersion,
 } from '@/utils/onboardingStorage';
+import { FOCUSABLE_SELECTOR, resolveOnboardingAction, resolveTabCycleTarget } from './onboardingKeymap';
 
 // 导入样式
 import '@/styles/onboarding.css';
@@ -30,11 +31,24 @@ interface StepConfig {
     spotlightTarget?: string;
 }
 
+/*
+ * spotlightTarget 依赖对应组件的 aria-label 文案，改文案必须同步改这里
+ * （文案本身是给读屏用户听的，不要为了迁就选择器去改 aria-label）：
+ * - 保存 / 搜索 / 菜单 → Header.tsx
+ * - 恢复 → TabGroup.tsx 的「在新窗口恢复整个会话，共 N 个标签页」与
+ *   SearchResultList.tsx 的「在新窗口恢复所有匹配标签，共 N 个标签页」。
+ *   旧的 `button[aria-label^="恢复整个会话"]` 匹配不到任何一个：真实文案以
+ *   「在新窗口…」开头，第 4 步因此静默不高亮。tests/a11yLists.test.ts 会交叉校验。
+ */
 const STEPS: StepConfig[] = [
     { title: '欢迎使用 TapStack' },
     { title: '保存工作会话', spotlightTarget: '[aria-label="保存当前窗口中的所有标签页为会话"]' },
     { title: '搜索工作会话', spotlightTarget: '[aria-label="搜索会话、备注或标签页"]' },
-    { title: '恢复整个会话', spotlightTarget: 'button[aria-label^="恢复整个会话"]' },
+    {
+        title: '恢复整个会话',
+        spotlightTarget:
+            'button[aria-label^="在新窗口恢复整个会话"], button[aria-label^="在新窗口恢复所有匹配标签"]',
+    },
     { title: '跨设备同步', spotlightTarget: '[aria-label="菜单"]' },
     { title: '一切就绪' },
 ];
@@ -51,9 +65,17 @@ export const OnboardingGuide: React.FC<OnboardingGuideProps> = ({ onComplete }) 
     const [animKey, setAnimKey] = useState(0);
     const [isClosing, setIsClosing] = useState(false);
     const version = useRef(getCurrentVersion());
+    // aria-modal="true" 的三件套：打开移焦、Tab 循环、关闭还焦。
+    // 此前只声明了 aria-modal，实际焦点全程在主界面上——读屏用户根本不知道弹层开了。
+    const overlayRef = useRef<HTMLDivElement>(null);
+    const restoreFocusRef = useRef<HTMLElement | null>(null);
 
     // 获取当前步骤的 Spotlight 目标
     const currentSpotlightTarget = STEPS[currentStep]?.spotlightTarget;
+    // 必须声明在下面的键盘 effect 之前：依赖数组在渲染期求值，
+    // 放在 return 前面会命中 const 的 TDZ 直接抛 ReferenceError。
+    const isLastStep = currentStep === TOTAL_STEPS - 1;
+    const isFirstStep = currentStep === 0;
 
     // 下一步
     const handleNext = useCallback(() => {
@@ -92,22 +114,46 @@ export const OnboardingGuide: React.FC<OnboardingGuideProps> = ({ onComplete }) 
         }, 300);
     }, [onComplete]);
 
-    // 键盘导航
+    // 键盘导航。
+    // 双触发根因：此前不判 event.target、不 preventDefault——在「下一步」上按 Enter
+    // 会「按钮 onClick 走一步 + window 处理器再走一步」= 一步跳过两步；在「跳过」上
+    // 按 Enter 则是跳过与前进同时发生。规则与守卫都在 onboardingKeymap（可单测）。
     useEffect(() => {
         const handleKeyDown = (e: KeyboardEvent) => {
-            switch (e.key) {
-                case 'ArrowRight':
-                case 'Enter':
-                    if (currentStep === TOTAL_STEPS - 1) {
-                        handleComplete();
-                    } else {
-                        handleNext();
-                    }
+            // Tab 循环：焦点不许跑出弹层（aria-modal 成立的前提）
+            if (e.key === 'Tab') {
+                const overlay = overlayRef.current;
+                if (!overlay) return;
+                const focusable = Array.from(
+                    overlay.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR)
+                ).filter(el => !el.hasAttribute('disabled') && el.tabIndex !== -1);
+                const activeIndex = focusable.indexOf(document.activeElement as HTMLElement);
+                const cycleTarget = resolveTabCycleTarget(activeIndex, focusable.length, e.shiftKey);
+                if (!cycleTarget) return;
+                e.preventDefault();
+                const next = cycleTarget === 'first' ? focusable[0] : focusable[focusable.length - 1];
+                next?.focus();
+                return;
+            }
+
+            const action = resolveOnboardingAction(
+                { key: e.key, target: e.target, defaultPrevented: e.defaultPrevented },
+                { isFirstStep, isLastStep }
+            );
+            if (!action) return;
+            // 只在确实接管时才 preventDefault，避免吞掉按钮自身的 Enter 语义
+            e.preventDefault();
+            switch (action) {
+                case 'next':
+                    handleNext();
                     break;
-                case 'ArrowLeft':
+                case 'prev':
                     handlePrev();
                     break;
-                case 'Escape':
+                case 'complete':
+                    handleComplete();
+                    break;
+                case 'skip':
                     handleSkip();
                     break;
             }
@@ -115,7 +161,25 @@ export const OnboardingGuide: React.FC<OnboardingGuideProps> = ({ onComplete }) 
 
         window.addEventListener('keydown', handleKeyDown);
         return () => window.removeEventListener('keydown', handleKeyDown);
-    }, [currentStep, handleNext, handlePrev, handleComplete, handleSkip]);
+    }, [isFirstStep, isLastStep, handleNext, handlePrev, handleComplete, handleSkip]);
+
+    // 打开时记住原焦点并移进弹层；卸载时还回去。
+    useEffect(() => {
+        restoreFocusRef.current =
+            document.activeElement instanceof HTMLElement ? document.activeElement : null;
+        overlayRef.current?.focus();
+        return () => {
+            restoreFocusRef.current?.focus();
+        };
+    }, []);
+
+    // 每步切换后把焦点送到该步标题：OnboardingSteps 的 h2 带 tabIndex={-1}，
+    // 读屏会播报新标题，键盘用户也不会停留在已销毁的按钮上。
+    useEffect(() => {
+        if (isClosing) return;
+        const title = overlayRef.current?.querySelector<HTMLElement>('.onboarding-title');
+        title?.focus();
+    }, [currentStep, isClosing]);
 
     // 渲染当前步骤内容
     const renderStep = () => {
@@ -130,9 +194,6 @@ export const OnboardingGuide: React.FC<OnboardingGuideProps> = ({ onComplete }) 
         }
     };
 
-    const isLastStep = currentStep === TOTAL_STEPS - 1;
-    const isFirstStep = currentStep === 0;
-
     return (
         <>
             {/* Spotlight 高亮 */}
@@ -142,8 +203,11 @@ export const OnboardingGuide: React.FC<OnboardingGuideProps> = ({ onComplete }) 
                 padding={10}
             />
 
-            {/* 引导遮罩 */}
+            {/* 引导遮罩。tabIndex={-1}：打开时把焦点移到这里，读屏才会播报
+                「用户引导 对话框」；不设的话焦点仍留在主界面，弹层等于不存在。 */}
             <div
+                ref={overlayRef}
+                tabIndex={-1}
                 className="onboarding-overlay"
                 style={{
                     opacity: isClosing ? 0 : 1,

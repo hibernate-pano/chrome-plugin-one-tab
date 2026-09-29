@@ -225,6 +225,7 @@ export const Header: React.FC<HeaderProps> = ({ onSearch }) => {
                   onClick={handleClearSearch}
                   className="absolute right-3 top-1/2 -translate-y-1/2 search-clear-btn flat-interaction transition-colors"
                   title="清空搜索"
+                  aria-label="清空搜索"
                 >
                   <CloseIcon />
                 </button>
@@ -284,12 +285,16 @@ export const Header: React.FC<HeaderProps> = ({ onSearch }) => {
               </button>
             </Tooltip>
 
-            {/* 更多菜单 */}
+            {/* 更多菜单。aria-expanded/haspopup 是菜单按钮的最低契约：
+                读屏要能播报「已折叠/已展开，菜单按钮」，
+                引导第 5 步的聚光灯也锚在这个 aria-label 上。 */}
             <div className="relative">
               <button
                 onClick={() => setShowDropdown(!showDropdown)}
                 className="btn-icon flat-interaction"
                 aria-label="菜单"
+                aria-haspopup="menu"
+                aria-expanded={showDropdown}
               >
                 <MenuIcon />
               </button>

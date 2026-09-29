@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useId, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useAppSelector, useAppDispatch } from '@/store/hooks';
 import { loadGroups } from '@/store/slices/tabSlice';
@@ -9,6 +9,7 @@ import { createSimulatedProgress, getSyncStrategyLabel, renderPreviewSummary } f
 // 与 syncEngine.SyncOperation 同语义（仅 UI 进度条用），本文件不再 import syncEngine。
 type SyncOperation = 'upload' | 'download' | 'none';
 import { useToast } from '@/contexts/ToastContext';
+import { useDialogA11y } from '@/hooks/useKeyboardNavigation';
 import { trackProductEvent } from '@/utils/productEvents';
 import { storage } from '@/utils/storage';
 import {
@@ -25,6 +26,49 @@ type ModePreviewMap = {
   merge: SyncPreviewSummary;
 };
 
+/**
+ * 手动同步的四个动作（上传/下载 × 覆盖/合并）的行为描述表。
+ *
+ * 根因：原来四个 handler 是整段复制粘贴的同一段逻辑，只有 (方向, 模式) 不同。
+ * 复制粘贴的直接后果是「改一条漏三条」——四个错误文案、日志前缀、
+ * 下发给引擎的参数组合散落在四个函数体里，彼此没有任何约束关系。
+ * 收成数据表后，四者的差异被显式摆在一处，一眼可核对。
+ */
+const SYNC_ACTIONS = {
+  'upload.overwrite': {
+    command: { overwriteCloud: true, syncSettings: true },
+    failureMessage: '上传失败，请重试',
+    failureLogLabel: '上传数据到云端失败:',
+    // 上传不改动本地会话，成功后无需重载。
+    refreshLocal: false,
+    // 空本地保护：覆盖上传被跳过时不能当成「上传成功」上报/提示。
+    reportSkippedOverwrite: true,
+  },
+  'upload.merge': {
+    command: { overwriteCloud: false, syncSettings: true },
+    failureMessage: '上传失败，请重试',
+    failureLogLabel: '上传数据到云端失败:',
+    refreshLocal: false,
+    reportSkippedOverwrite: false,
+  },
+  'download.overwrite': {
+    command: { forceRemote: true, syncSettings: true },
+    failureMessage: '下载失败，请重试',
+    failureLogLabel: '从云端下载数据失败:',
+    // 下载会改写本地会话，必须重载。
+    refreshLocal: true,
+    reportSkippedOverwrite: false,
+  },
+  'download.merge': {
+    command: { forceRemote: false, syncSettings: false },
+    failureMessage: '下载失败，请重试',
+    failureLogLabel: '从云端下载数据失败:',
+    refreshLocal: true,
+    reportSkippedOverwrite: false,
+  },
+} as const;
+
+type SyncActionKey = keyof typeof SYNC_ACTIONS;
 
 export const SyncButton: React.FC<SyncButtonProps> = () => {
   const dispatch = useAppDispatch();
@@ -42,6 +86,11 @@ export const SyncButton: React.FC<SyncButtonProps> = () => {
   const [downloadPreviewError, setDownloadPreviewError] = useState<string | null>(null);
   const [uploadPreview, setUploadPreview] = useState<ModePreviewMap | null>(null);
   const [downloadPreview, setDownloadPreview] = useState<ModePreviewMap | null>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
+  const uploadTitleId = useId();
+  const uploadDescriptionId = useId();
+  const downloadTitleId = useId();
+  const downloadDescriptionId = useId();
   const { showToast } = useToast();
 
   const loadUploadPreview = async () => {
@@ -118,187 +167,83 @@ export const SyncButton: React.FC<SyncButtonProps> = () => {
     }, 200);
   };
 
-  // 处理上传确认 - 覆盖模式
-  const handleUploadOverwrite = async () => {
+  // 同步弹窗的键盘与焦点契约。两个面板同时只渲染一个，共用同一个 ref。
+  // 不接管的话，Escape 会被 Header 注册的全局 CLEAR_SEARCH 快捷键抢走，
+  // 结果是「关不掉弹窗，反而把弹窗背后的搜索框清空」。
+  useDialogA11y(panelRef, showUploadModal || showDownloadModal, closeModals);
+
+  // 手动同步的唯一入口：(方向, 模式) 决定下发给引擎的参数、埋点、失败文案。
+  // 四个动作的行为差异全部来自 SYNC_ACTIONS 表，不再散落在四个函数体里。
+  const runSyncAction = async (actionKey: SyncActionKey) => {
+    const spec = SYNC_ACTIONS[actionKey];
+    const direction: SyncOperation = actionKey.startsWith('upload') ? 'upload' : 'download';
+    const mode = actionKey.endsWith('overwrite') ? 'overwrite' : 'merge';
+
     if (isWorking || !isAuthenticated) return;
+
+    const refreshLocal = async () => {
+      try {
+        await dispatch(loadGroups()).unwrap();
+      } catch (err) {
+        logWarn('同步后刷新本地会话失败:', err);
+      }
+    };
+
+    // 下载侧的埋点额外带 directRestore（下载按钮走的是菜单，不是直接恢复）。
+    const trackingPayload = () =>
+      direction === 'download' ? { mode, directRestore: false } : { mode };
+
     try {
       closeModals();
-      void trackProductEvent('sync_upload_started', {
-        mode: 'overwrite',
-      });
+      void trackProductEvent(
+        direction === 'upload' ? 'sync_upload_started' : 'sync_download_started',
+        trackingPayload()
+      );
       setIsWorking(true);
-      setWorkingOperation('upload');
+      setWorkingOperation(direction);
       // 进度条本地模拟：跨消息边界 SW 端的 onProgress 不会回传到 popup，
       // 此处驱动本地进度条 UI；真实结果经 sendSyncCommand 消息回传。
       const progressTimer = createSimulatedProgress(setWorkingProgress);
-      const res = await sendSyncCommand('upload', {
-        overwriteCloud: true,
-        syncSettings: true,
-      });
+      const res = await sendSyncCommand(direction, spec.command);
       clearTimeout(progressTimer);
       setWorkingProgress(100);
 
       if (res.ok) {
-        // 空本地保护：本地没有任何活跃组时覆盖上传被跳过（绝不清空云端）。
-        // 引擎把这件事如实回传，这里不能再当成「上传成功」上报/提示。
-        const payload = res.payload as { skippedOverwrite?: string } | undefined;
-        if (payload?.skippedOverwrite === 'no-active-groups') {
-          showToast('本地没有活跃会话，覆盖上传已跳过（云端数据保持不变）', 'info');
-        } else {
-          void trackProductEvent('sync_upload_completed', {
-            mode: 'overwrite',
-          });
+        if (spec.refreshLocal) {
+          await refreshLocal();
         }
-      } else {
-        showToast(res.error || '上传失败，请重试', 'error');
-      }
-    } catch (error) {
-      logError('上传数据到云端失败:', error);
-      showToast('上传失败，请重试', 'error');
-    } finally {
-      setIsWorking(false);
-      setWorkingOperation('none');
-      setWorkingProgress(0);
-    }
-  };
 
-  // 处理上传确认 - 合并模式
-  const handleUploadMerge = async () => {
-    if (isWorking || !isAuthenticated) return;
-    try {
-      closeModals();
-      void trackProductEvent('sync_upload_started', {
-        mode: 'merge',
-      });
-      setIsWorking(true);
-      setWorkingOperation('upload');
-      // 进度条本地模拟：跨消息边界 SW 端的 onProgress 不会回传到 popup，
-      // 此处驱动本地进度条 UI；真实结果经 sendSyncCommand 消息回传。
-      const progressTimer = createSimulatedProgress(setWorkingProgress);
-      const res = await sendSyncCommand('upload', {
-        overwriteCloud: false,
-        syncSettings: true,
-      });
-      clearTimeout(progressTimer);
-      setWorkingProgress(100);
+        if (direction === 'upload' && spec.reportSkippedOverwrite) {
+          // 空本地保护：本地没有任何活跃组时覆盖上传被跳过（绝不清空云端）。
+          // 引擎把这件事如实回传，这里不能再当成「上传成功」上报/提示。
+          const payload = res.payload as { skippedOverwrite?: string } | undefined;
+          if (payload?.skippedOverwrite === 'no-active-groups') {
+            showToast('本地没有活跃会话，覆盖上传已跳过（云端数据保持不变）', 'info');
+            return;
+          }
+        }
 
-      if (res.ok) {
-        void trackProductEvent('sync_upload_completed', {
-          mode: 'merge',
-        });
-      } else {
-        showToast(res.error || '上传失败，请重试', 'error');
-      }
-    } catch (error) {
-      logError('上传数据到云端失败:', error);
-      showToast('上传失败，请重试', 'error');
-    } finally {
-      setIsWorking(false);
-      setWorkingOperation('none');
-      setWorkingProgress(0);
-    }
-  };
-
-  // 处理下载确认 - 覆盖模式
-  const handleDownloadOverwrite = async () => {
-    if (isWorking || !isAuthenticated) return;
-
-    const refreshRedux = async () => {
-      try {
-        await dispatch(loadGroups()).unwrap();
-      } catch (err) {
-        logWarn('同步后刷新本地会话失败:', err);
-      }
-    };
-
-    try {
-      closeModals();
-      void trackProductEvent('sync_download_started', {
-        mode: 'overwrite',
-        directRestore: false,
-      });
-      setIsWorking(true);
-      setWorkingOperation('download');
-      // 进度条本地模拟：跨消息边界 SW 端的 onProgress 不会回传到 popup，
-      // 此处驱动本地进度条 UI；真实结果经 sendSyncCommand 消息回传。
-      const progressTimer = createSimulatedProgress(setWorkingProgress);
-      const res = await sendSyncCommand('download', {
-        forceRemote: true,
-        syncSettings: true,
-      });
-      clearTimeout(progressTimer);
-      setWorkingProgress(100);
-
-      if (res.ok) {
-        await refreshRedux();
-        void trackProductEvent('sync_download_completed', {
-          mode: 'overwrite',
-          directRestore: false,
-        });
+        void trackProductEvent(
+          direction === 'upload' ? 'sync_upload_completed' : 'sync_download_completed',
+          trackingPayload()
+        );
       } else {
         const reason = res.error;
-        showToast(reason === 'not_authenticated' ? '未登录' : (reason || '下载失败，请重试'), 'error');
+        const shown =
+          direction === 'download' && reason === 'not_authenticated'
+            ? '未登录'
+            : (reason || spec.failureMessage);
+        showToast(shown, 'error');
       }
     } catch (error) {
-      logError('从云端下载数据失败:', error);
-      showToast('下载失败，请重试', 'error');
+      logError(spec.failureLogLabel, error);
+      showToast(spec.failureMessage, 'error');
     } finally {
       setIsWorking(false);
       setWorkingOperation('none');
       setWorkingProgress(0);
     }
   };
-
-  // 处理下载确认 - 合并模式
-  const handleDownloadMerge = async () => {
-    if (isWorking || !isAuthenticated) return;
-
-    const refreshRedux = async () => {
-      try {
-        await dispatch(loadGroups()).unwrap();
-      } catch (err) {
-        logWarn('同步后刷新本地会话失败:', err);
-      }
-    };
-
-    try {
-      closeModals();
-      void trackProductEvent('sync_download_started', {
-        mode: 'merge',
-        directRestore: false,
-      });
-      setIsWorking(true);
-      setWorkingOperation('download');
-      // 进度条本地模拟：跨消息边界 SW 端的 onProgress 不会回传到 popup，
-      // 此处驱动本地进度条 UI；真实结果经 sendSyncCommand 消息回传。
-      const progressTimer = createSimulatedProgress(setWorkingProgress);
-      const res = await sendSyncCommand('download', {
-        forceRemote: false,
-        syncSettings: false,
-      });
-      clearTimeout(progressTimer);
-      setWorkingProgress(100);
-
-      if (res.ok) {
-        await refreshRedux();
-        void trackProductEvent('sync_download_completed', {
-          mode: 'merge',
-          directRestore: false,
-        });
-      } else {
-        const reason = res.error;
-        showToast(reason === 'not_authenticated' ? '未登录' : (reason || '下载失败，请重试'), 'error');
-      }
-    } catch (error) {
-      logError('从云端下载数据失败:', error);
-      showToast('下载失败，请重试', 'error');
-    } finally {
-      setIsWorking(false);
-      setWorkingOperation('none');
-      setWorkingProgress(0);
-    }
-  };
-
 
   if (!isAuthenticated) {
     return null; // 未登录时不显示同步按钮
@@ -318,6 +263,7 @@ export const SyncButton: React.FC<SyncButtonProps> = () => {
 
         <div className="flex items-center gap-2">
           <button
+            type="button"
             onClick={handleUpload}
             disabled={isWorking}
             className={`flex items-center whitespace-nowrap px-3 py-1.5 rounded-md text-sm flat-interaction ${
@@ -384,12 +330,19 @@ export const SyncButton: React.FC<SyncButtonProps> = () => {
           <div className="absolute inset-0 bg-slate-950/55 backdrop-blur-sm" />
           {showUploadModal && (
             <div
-              className={`relative w-full max-w-5xl overflow-hidden rounded-[28px] border border-slate-200/80 bg-white/95 shadow-[0_28px_80px_rgba(15,23,42,0.28)] ring-1 ring-white/60 backdrop-blur dark:border-slate-700/80 dark:bg-slate-900/95 dark:ring-slate-800/80 ${modalAnimation}`}
+              ref={panelRef}
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby={uploadTitleId}
+              aria-describedby={uploadDescriptionId}
+              tabIndex={-1}
+              className={`relative w-full max-w-5xl overflow-hidden rounded-[28px] border border-slate-200/80 bg-white/95 shadow-[0_28px_80px_rgba(15,23,42,0.28)] ring-1 ring-white/60 backdrop-blur focus:outline-none dark:border-slate-700/80 dark:bg-slate-900/95 dark:ring-slate-800/80 ${modalAnimation}`}
               onClick={(e) => e.stopPropagation()}
             >
               <button
+                type="button"
                 onClick={closeModals}
-                className="absolute right-4 top-4 inline-flex h-9 w-9 items-center justify-center rounded-full border border-slate-200/80 bg-white/80 text-slate-500 transition-colors hover:border-slate-300 hover:text-slate-700 dark:border-slate-700/80 dark:bg-slate-900/80 dark:text-slate-400 dark:hover:border-slate-600 dark:hover:text-slate-200"
+                className="absolute right-4 top-4 inline-flex h-9 w-9 items-center justify-center rounded-full border border-slate-200/80 bg-white/80 text-slate-500 transition-colors hover:border-slate-300 hover:text-slate-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-400 dark:border-slate-700/80 dark:bg-slate-900/80 dark:text-slate-400 dark:hover:border-slate-600 dark:hover:text-slate-200"
                 aria-label="关闭同步弹窗"
               >
                 <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
@@ -399,26 +352,32 @@ export const SyncButton: React.FC<SyncButtonProps> = () => {
 
               <div className="px-6 pb-6 pt-6 sm:px-7 sm:pb-7 sm:pt-7">
                 <div style={{ textAlign: 'center', marginBottom: '16px' }}>
-                  <h3 className="text-xl font-semibold tracking-tight text-slate-900 dark:text-slate-50">上传到云端</h3>
-                  <p className="mt-2 text-sm leading-6 text-slate-600 dark:text-slate-300">先看这次会怎么改动云端会话，再决定覆盖还是合并</p>
+                  <h3 id={uploadTitleId} className="text-xl font-semibold tracking-tight text-slate-900 dark:text-slate-50">上传到云端</h3>
+                  <p id={uploadDescriptionId} className="mt-2 text-sm leading-6 text-slate-600 dark:text-slate-300">先看这次会怎么改动云端会话，再决定覆盖还是合并</p>
                 </div>
 
-                {isUploadPreviewLoading && (
-                  <div className="mb-4 text-center text-sm text-slate-500 dark:text-slate-400">
-                    正在计算上传预览...
-                  </div>
-                )}
-
-                {uploadPreviewError && (
-                  <div className="mb-4 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-center text-sm text-amber-700 dark:border-amber-500/20 dark:bg-amber-500/10 dark:text-amber-300">
-                    {uploadPreviewError}
-                  </div>
-                )}
+                {/* 预览是异步算出来的：不播报的话读屏用户按了按钮后毫无反馈。
+                    容器常驻、只换里面的文案，读屏才会播报这处内容变化。 */}
+                <div
+                  role="status"
+                  aria-live="polite"
+                  className={`text-center text-sm ${isUploadPreviewLoading || uploadPreviewError ? 'mb-4' : ''}`}
+                >
+                  {isUploadPreviewLoading && (
+                    <span className="text-slate-500 dark:text-slate-400">正在计算上传预览...</span>
+                  )}
+                  {uploadPreviewError && (
+                    <span className="block rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-amber-700 dark:border-amber-500/20 dark:bg-amber-500/10 dark:text-amber-300">
+                      {uploadPreviewError}
+                    </span>
+                  )}
+                </div>
 
                 <div className="grid gap-4 lg:grid-cols-2">
-                  <div
-                    onClick={handleUploadOverwrite}
-                    className="cursor-pointer overflow-hidden rounded-[24px] border border-rose-200/70 bg-white shadow-sm transition-transform duration-200 hover:-translate-y-0.5 hover:shadow-lg dark:border-rose-500/20 dark:bg-slate-900/80"
+                  <button
+                    type="button"
+                    onClick={() => void runSyncAction('upload.overwrite')}
+                    className="w-full cursor-pointer overflow-hidden rounded-[24px] border border-rose-200/70 bg-white text-left shadow-sm transition-transform duration-200 hover:-translate-y-0.5 hover:shadow-lg focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-rose-500 dark:border-rose-500/20 dark:bg-slate-900/80"
                   >
                     <div className="flex items-center justify-center bg-rose-600 px-5 py-5 text-white">
                       <svg xmlns="http://www.w3.org/2000/svg" className="h-12 w-12" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -439,11 +398,12 @@ export const SyncButton: React.FC<SyncButtonProps> = () => {
                         }
                       )}
                     </div>
-                  </div>
+                  </button>
 
-                  <div
-                    onClick={handleUploadMerge}
-                    className="cursor-pointer overflow-hidden rounded-[24px] border border-emerald-200/70 bg-white shadow-sm transition-transform duration-200 hover:-translate-y-0.5 hover:shadow-lg dark:border-emerald-500/20 dark:bg-slate-900/80"
+                  <button
+                    type="button"
+                    onClick={() => void runSyncAction('upload.merge')}
+                    className="w-full cursor-pointer overflow-hidden rounded-[24px] border border-emerald-200/70 bg-white text-left shadow-sm transition-transform duration-200 hover:-translate-y-0.5 hover:shadow-lg focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-500 dark:border-emerald-500/20 dark:bg-slate-900/80"
                   >
                     <div className="flex items-center justify-center bg-emerald-600 px-5 py-5 text-white">
                       <svg xmlns="http://www.w3.org/2000/svg" className="h-12 w-12" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -464,13 +424,14 @@ export const SyncButton: React.FC<SyncButtonProps> = () => {
                         }
                       )}
                     </div>
-                  </div>
+                  </button>
                 </div>
 
                 <div className="mt-6 text-center">
                   <button
+                    type="button"
                     onClick={closeModals}
-                    className="inline-flex items-center justify-center rounded-xl border border-slate-200 bg-slate-100 px-4 py-2.5 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-200 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700"
+                    className="inline-flex items-center justify-center rounded-xl border border-slate-200 bg-slate-100 px-4 py-2.5 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-200 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-400 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700"
                   >
                     取消
                   </button>
@@ -481,12 +442,19 @@ export const SyncButton: React.FC<SyncButtonProps> = () => {
 
           {showDownloadModal && (
             <div
-              className={`relative w-full max-w-5xl overflow-hidden rounded-[28px] border border-slate-200/80 bg-white/95 shadow-[0_28px_80px_rgba(15,23,42,0.28)] ring-1 ring-white/60 backdrop-blur dark:border-slate-700/80 dark:bg-slate-900/95 dark:ring-slate-800/80 ${modalAnimation}`}
+              ref={panelRef}
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby={downloadTitleId}
+              aria-describedby={downloadDescriptionId}
+              tabIndex={-1}
+              className={`relative w-full max-w-5xl overflow-hidden rounded-[28px] border border-slate-200/80 bg-white/95 shadow-[0_28px_80px_rgba(15,23,42,0.28)] ring-1 ring-white/60 backdrop-blur focus:outline-none dark:border-slate-700/80 dark:bg-slate-900/95 dark:ring-slate-800/80 ${modalAnimation}`}
               onClick={(e) => e.stopPropagation()}
             >
               <button
+                type="button"
                 onClick={closeModals}
-                className="absolute right-4 top-4 inline-flex h-9 w-9 items-center justify-center rounded-full border border-slate-200/80 bg-white/80 text-slate-500 transition-colors hover:border-slate-300 hover:text-slate-700 dark:border-slate-700/80 dark:bg-slate-900/80 dark:text-slate-400 dark:hover:border-slate-600 dark:hover:text-slate-200"
+                className="absolute right-4 top-4 inline-flex h-9 w-9 items-center justify-center rounded-full border border-slate-200/80 bg-white/80 text-slate-500 transition-colors hover:border-slate-300 hover:text-slate-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-400 dark:border-slate-700/80 dark:bg-slate-900/80 dark:text-slate-400 dark:hover:border-slate-600 dark:hover:text-slate-200"
                 aria-label="关闭同步弹窗"
               >
                 <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
@@ -496,29 +464,33 @@ export const SyncButton: React.FC<SyncButtonProps> = () => {
 
               <div className="px-6 pb-6 pt-6 sm:px-7 sm:pb-7 sm:pt-7">
                 <div style={{ textAlign: 'center', marginBottom: '16px' }}>
-                  <h3 className="text-xl font-semibold tracking-tight text-slate-900 dark:text-slate-50">下载到本地</h3>
-                  <p className="mt-2 text-sm leading-6 text-slate-600 dark:text-slate-300">先看这次会怎么改动本地会话，再决定覆盖还是合并</p>
+                  <h3 id={downloadTitleId} className="text-xl font-semibold tracking-tight text-slate-900 dark:text-slate-50">下载到本地</h3>
+                  <p id={downloadDescriptionId} className="mt-2 text-sm leading-6 text-slate-600 dark:text-slate-300">先看这次会怎么改动本地会话，再决定覆盖还是合并</p>
                   <p className="mt-2 text-xs font-medium text-sky-600 dark:text-sky-300">
                     当前合并策略：{getSyncStrategyLabel(settings.syncStrategy)}
                   </p>
                 </div>
 
-                {isDownloadPreviewLoading && (
-                  <div className="mb-4 text-center text-sm text-slate-500 dark:text-slate-400">
-                    正在计算下载预览...
-                  </div>
-                )}
-
-                {downloadPreviewError && (
-                  <div className="mb-4 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-center text-sm text-amber-700 dark:border-amber-500/20 dark:bg-amber-500/10 dark:text-amber-300">
-                    {downloadPreviewError}
-                  </div>
-                )}
+                <div
+                  role="status"
+                  aria-live="polite"
+                  className={`text-center text-sm ${isDownloadPreviewLoading || downloadPreviewError ? 'mb-4' : ''}`}
+                >
+                  {isDownloadPreviewLoading && (
+                    <span className="text-slate-500 dark:text-slate-400">正在计算下载预览...</span>
+                  )}
+                  {downloadPreviewError && (
+                    <span className="block rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-amber-700 dark:border-amber-500/20 dark:bg-amber-500/10 dark:text-amber-300">
+                      {downloadPreviewError}
+                    </span>
+                  )}
+                </div>
 
                 <div className="grid gap-4 lg:grid-cols-2">
-                  <div
-                    onClick={handleDownloadOverwrite}
-                    className="cursor-pointer overflow-hidden rounded-[24px] border border-rose-200/70 bg-white shadow-sm transition-transform duration-200 hover:-translate-y-0.5 hover:shadow-lg dark:border-rose-500/20 dark:bg-slate-900/80"
+                  <button
+                    type="button"
+                    onClick={() => void runSyncAction('download.overwrite')}
+                    className="w-full cursor-pointer overflow-hidden rounded-[24px] border border-rose-200/70 bg-white text-left shadow-sm transition-transform duration-200 hover:-translate-y-0.5 hover:shadow-lg focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-rose-500 dark:border-rose-500/20 dark:bg-slate-900/80"
                   >
                     <div className="flex items-center justify-center bg-rose-600 px-5 py-5 text-white">
                       <svg xmlns="http://www.w3.org/2000/svg" className="h-12 w-12" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -539,11 +511,12 @@ export const SyncButton: React.FC<SyncButtonProps> = () => {
                         }
                       )}
                     </div>
-                  </div>
+                  </button>
 
-                  <div
-                    onClick={handleDownloadMerge}
-                    className="cursor-pointer overflow-hidden rounded-[24px] border border-sky-200/70 bg-white shadow-sm transition-transform duration-200 hover:-translate-y-0.5 hover:shadow-lg dark:border-sky-500/20 dark:bg-slate-900/80"
+                  <button
+                    type="button"
+                    onClick={() => void runSyncAction('download.merge')}
+                    className="w-full cursor-pointer overflow-hidden rounded-[24px] border border-sky-200/70 bg-white text-left shadow-sm transition-transform duration-200 hover:-translate-y-0.5 hover:shadow-lg focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sky-500 dark:border-sky-500/20 dark:bg-slate-900/80"
                   >
                     <div className="flex items-center justify-center bg-sky-600 px-5 py-5 text-white">
                       <svg xmlns="http://www.w3.org/2000/svg" className="h-12 w-12" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -564,13 +537,14 @@ export const SyncButton: React.FC<SyncButtonProps> = () => {
                         }
                       )}
                     </div>
-                  </div>
+                  </button>
                 </div>
 
                 <div className="mt-6 text-center">
                   <button
+                    type="button"
                     onClick={closeModals}
-                    className="inline-flex items-center justify-center rounded-xl border border-slate-200 bg-slate-100 px-4 py-2.5 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-200 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700"
+                    className="inline-flex items-center justify-center rounded-xl border border-slate-200 bg-slate-100 px-4 py-2.5 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-200 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-400 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700"
                   >
                     取消
                   </button>

@@ -16,7 +16,7 @@
 //
 // 文件样板与 tests/webDeleteTombstone.test.ts 一致：@/ 别名模块只能动态 import，
 // 且环境桩（localStorage / fetch）必须在 import 被测模块之前就位。
-import { describe, it, before, beforeEach } from 'node:test';
+import { describe, it, before } from 'node:test';
 import assert from 'node:assert/strict';
 import { register } from 'node:module';
 import { pathToFileURL, fileURLToPath } from 'node:url';
@@ -38,8 +38,9 @@ before(async () => {
 });
 
 const USER_ID = 'user-under-test';
-const SUPABASE_HOST = 'https://stub.supabase.co';
-// supabase-js 默认 storageKey：sb-<hostname 首段>-auth-token
+// supabase-js 默认 storageKey：sb-<hostname 首段>-auth-token。
+// 假云端固定在 stub.supabase.co，首段恒为 'stub'，所以键直接写死；
+// 换 host 时要一并改这里，否则 session 桩写进去的键与 supabase-js 读的不一致。
 const SESSION_KEY = 'sb-stub-auth-token';
 const NOW = '2026-09-24T08:00:00.000Z';
 const LATER = '2026-09-24T09:00:00.000Z';

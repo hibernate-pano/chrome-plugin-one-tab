@@ -93,19 +93,19 @@ describe('syncMergeSafety: 同步合并不丢本地数据（真实生产路径�
 
   // ── validateMergeResult ───────────────────────────────────────────
   it('本地有数据但合并后为空 → 判定 invalid（触发回滚）', async () => {
-    const { validateMergeResult } = await import('@/utils/syncUtils');
+    const { validateMergeResult } = await import('@/core/syncDecision');
     const local = [makeGroup('g-A', 'A'), makeGroup('g-B', 'B')];
     const r = validateMergeResult(local, [], []);
     assert.equal(r.valid, false, '本地非空却合并为空必须被拦截');
   });
 
   it('两边都空 + 合并空 → valid', async () => {
-    const { validateMergeResult } = await import('@/utils/syncUtils');
+    const { validateMergeResult } = await import('@/core/syncDecision');
     assert.equal(validateMergeResult([], [], []).valid, true);
   });
 
   it('合并数低于（本地 - 云端删除）下限 → invalid', async () => {
-    const { validateMergeResult } = await import('@/utils/syncUtils');
+    const { validateMergeResult } = await import('@/core/syncDecision');
     const local = [makeGroup('a', 'A'), makeGroup('b', 'B'), makeGroup('c', 'C')];
     // 云端没有任何删除标记，但合并后只剩 1 个 → 异常缩水
     const merged = [makeGroup('a', 'A')];
@@ -113,7 +113,7 @@ describe('syncMergeSafety: 同步合并不丢本地数据（真实生产路径�
   });
 
   it('云端明确删除 1 个 → 合并少 1 个是 valid', async () => {
-    const { validateMergeResult } = await import('@/utils/syncUtils');
+    const { validateMergeResult } = await import('@/core/syncDecision');
     const local = [makeGroup('a', 'A'), makeGroup('b', 'B')];
     const cloud = [makeGroup('b', 'B', { isDeleted: true })];
     const merged = [makeGroup('a', 'A')];
@@ -125,7 +125,7 @@ describe('syncMergeSafety: 同步合并不丢本地数据（真实生产路径�
   // 回主存储）。mergeTabGroups 第一步会跳过软删组，所以 validateMergeResult
   // 必须用「活跃本地组数」当基线，否则累积的软删组会让正常合并被误判为非法。
   it('本地 3 活跃 + 2 软删，云端空 → 合并 3 个应判 valid（不被软删抬高基线）', async () => {
-    const { validateMergeResult } = await import('@/utils/syncUtils');
+    const { validateMergeResult } = await import('@/core/syncDecision');
     const local = [
       makeGroup('a', 'A'),
       makeGroup('b', 'B'),
@@ -143,7 +143,7 @@ describe('syncMergeSafety: 同步合并不丢本地数据（真实生产路径�
 
   it('端到端：删过组的用户（本地含软删）+ 云端空 → merge 结果能通过 validate', async () => {
     const { mergeTabGroups } = await import('@/utils/syncUtils.legacy');
-    const { validateMergeResult } = await import('@/utils/syncUtils');
+    const { validateMergeResult } = await import('@/core/syncDecision');
     const local = [
       makeGroup('keep-1', 'Keep1'),
       makeGroup('keep-2', 'Keep2'),
@@ -161,7 +161,7 @@ describe('syncMergeSafety: 同步合并不丢本地数据（真实生产路径�
   // ── 端到端组合：合并 + 验证 一起守住 ──────────────────────────────
   it('组合：云端空 + 本地有数据，merge 结果能通过 validate', async () => {
     const { mergeTabGroups } = await import('@/utils/syncUtils.legacy');
-    const { validateMergeResult } = await import('@/utils/syncUtils');
+    const { validateMergeResult } = await import('@/core/syncDecision');
     const local = [makeGroup('g-A', 'A'), makeGroup('g-B', 'B')];
     const merged = mergeTabGroups(local, [], 'newest');
     const v = validateMergeResult(local, [], merged);
@@ -182,7 +182,7 @@ describe('syncMergeSafety: 同步合并不丢本地数据（真实生产路径�
         updatedAt: '2026-06-05T09:00:00.000Z',
       }),
     ];
-    const local = [];
+    const local: ReturnType<typeof makeGroup>[] = [];
     const merged = mergeTabGroups(local, cloud, 'newest');
     assert.equal(merged.some(g => g.id === 'g1'), true, '恢复后的云端活跃组应被合并带回 (remote-only)');
     assert.equal(merged.some(g => g.isDeleted), false, '墓碑已复位，合并结果不应含墓碑');
@@ -253,7 +253,7 @@ describe('syncMergeSafety: 下载前置保护 decideDownloadPrecheck', () => {
   const NOW = Date.parse('2026-06-04T08:00:00.000Z');
 
   it('forceRemote（覆盖下载）→ 直接 proceed，跳过一切保护', async () => {
-    const { decideDownloadPrecheck } = await import('@/utils/syncUtils');
+    const { decideDownloadPrecheck } = await import('@/core/syncDecision');
     const decision = decideDownloadPrecheck({
       forceRemote: true,
       lastUploadTime: new Date(NOW - 5_000).toISOString(), // 刚上传过
@@ -264,7 +264,7 @@ describe('syncMergeSafety: 下载前置保护 decideDownloadPrecheck', () => {
   });
 
   it('UPLOAD_GUARD_MS 窗口内刚上传过 → skip (recent_upload_guard)', async () => {
-    const { decideDownloadPrecheck } = await import('@/utils/syncUtils');
+    const { decideDownloadPrecheck } = await import('@/core/syncDecision');
     const decision = decideDownloadPrecheck({
       forceRemote: false,
       lastUploadTime: new Date(NOW - 10_000).toISOString(), // 10s 前刚上传
@@ -275,7 +275,7 @@ describe('syncMergeSafety: 下载前置保护 decideDownloadPrecheck', () => {
   });
 
   it('上传发生在窗口之外（>35s）→ 不触发 guard', async () => {
-    const { decideDownloadPrecheck, UPLOAD_GUARD_MS } = await import('@/utils/syncUtils');
+    const { decideDownloadPrecheck, UPLOAD_GUARD_MS } = await import('@/core/syncDecision');
     const decision = decideDownloadPrecheck({
       forceRemote: false,
       lastUploadTime: new Date(NOW - UPLOAD_GUARD_MS - 1_000).toISOString(),
@@ -286,7 +286,7 @@ describe('syncMergeSafety: 下载前置保护 decideDownloadPrecheck', () => {
   });
 
   it('从未上传过（lastUploadTime=null）→ 不触发 guard', async () => {
-    const { decideDownloadPrecheck } = await import('@/utils/syncUtils');
+    const { decideDownloadPrecheck } = await import('@/core/syncDecision');
     const decision = decideDownloadPrecheck({
       forceRemote: false,
       lastUploadTime: null,
@@ -297,7 +297,7 @@ describe('syncMergeSafety: 下载前置保护 decideDownloadPrecheck', () => {
   });
 
   it('lastUploadTime 为未来时间戳（时钟偏差）→ sinceUpload<0，不误杀下载', async () => {
-    const { decideDownloadPrecheck } = await import('@/utils/syncUtils');
+    const { decideDownloadPrecheck } = await import('@/core/syncDecision');
     const decision = decideDownloadPrecheck({
       forceRemote: false,
       lastUploadTime: new Date(NOW + 60_000).toISOString(),
@@ -308,7 +308,7 @@ describe('syncMergeSafety: 下载前置保护 decideDownloadPrecheck', () => {
   });
 
   it('有未推送变更且不在 guard 窗口 → upload_first（先推后拉的防复活核心）', async () => {
-    const { decideDownloadPrecheck } = await import('@/utils/syncUtils');
+    const { decideDownloadPrecheck } = await import('@/core/syncDecision');
     // 真实场景：删除书签 → pending=true、upload alarm 排在未来 → 此时任何
     // downloadAndMerge 都必须先把删除推上云，否则云端旧数据会复活已删内容。
     const decision = decideDownloadPrecheck({
@@ -321,7 +321,7 @@ describe('syncMergeSafety: 下载前置保护 decideDownloadPrecheck', () => {
   });
 
   it('guard 规则优先于 upload_first：刚传完又出现 pending → skip 下载，等下轮 alarm 推送', async () => {
-    const { decideDownloadPrecheck } = await import('@/utils/syncUtils');
+    const { decideDownloadPrecheck } = await import('@/core/syncDecision');
     const decision = decideDownloadPrecheck({
       forceRemote: false,
       lastUploadTime: new Date(NOW - 5_000).toISOString(),
@@ -337,13 +337,13 @@ describe('syncMergeSafety: 下载前置保护 decideDownloadPrecheck', () => {
 // 他端活跃副本重新 INSERT = 幽灵复活。印记列与「把 is_deleted 置 true」无关。
 describe('decideCloudTombstoneWrite: 只有连 is_deleted 列都没有才允许硬删', () => {
   it('有 is_deleted 列时永远不做硬删（印记列缺失或探测失败也只降级为不带 stamp 的软删）', async () => {
-    const { decideCloudTombstoneWrite } = await import('@/utils/syncUtils');
+    const { decideCloudTombstoneWrite } = await import('@/core/syncDecision');
     assert.equal(decideCloudTombstoneWrite(true, true), 'stamp');
     assert.equal(decideCloudTombstoneWrite(true, false), 'plain', '印记列缺失 → 必须仍是软删');
   });
 
   it('仅当云端连 is_deleted 列都没有时才硬删', async () => {
-    const { decideCloudTombstoneWrite } = await import('@/utils/syncUtils');
+    const { decideCloudTombstoneWrite } = await import('@/core/syncDecision');
     assert.equal(decideCloudTombstoneWrite(false, false), 'hard-delete');
     assert.equal(decideCloudTombstoneWrite(false, true), 'hard-delete');
   });

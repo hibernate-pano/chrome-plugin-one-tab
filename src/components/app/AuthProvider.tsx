@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { useAppDispatch } from '@/store/hooks';
 import { getCurrentUser } from '@/store/slices/authSlice';
 import { loadGroups } from '@/store/slices/tabSlice';
-import { auth as supabaseAuth } from '@/utils/supabase';
+import { auth as supabaseAuth } from '@/utils/supabaseFacade';
 import { authCache } from '@/utils/authCache';
 import { sendSyncCommand } from '@/shared/mutationProtocol';
 import { logError, logInfo, logWarn } from '../../utils/log';

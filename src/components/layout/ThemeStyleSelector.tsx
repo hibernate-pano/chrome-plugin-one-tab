@@ -266,7 +266,11 @@ export const ThemeStyleSelector: React.FC<ThemeStyleSelectorProps> = ({ classNam
         <ChevronIcon isExpanded={isExpanded} />
       </button>
 
-      {/* 展开的主题列表 - 内容可滚动以确保所有主题（含生产力）可见 */}
+      {/* 展开的主题列表 - 内容可滚动以确保所有主题（含生产力）可见。
+          与 TabGroup 的折叠会话组同一个根因：max-h-0/opacity-0 只改视觉，
+          收起时 4 个主题选项按钮仍在 Tab 序列里，键盘用户能 Tab 进一片空白、
+          盲按 Enter 就改了主题。外层容器保留（aria-controls 要指得到、还要过渡），
+          内容用 hidden（display:none，真正移出可交互树）而不是只改透明度。 */}
       <div
         id="theme-options-panel"
         className={cn(
@@ -275,8 +279,12 @@ export const ThemeStyleSelector: React.FC<ThemeStyleSelectorProps> = ({ classNam
         )}
         role="listbox"
         aria-label="可用主题列表"
+        aria-hidden={!isExpanded}
       >
-        <div className="bg-gray-50/50 dark:bg-gray-800/30 border-y border-gray-200/50 dark:border-gray-700/50">
+        <div
+          hidden={!isExpanded}
+          className="bg-gray-50/50 dark:bg-gray-800/30 border-y border-gray-200/50 dark:border-gray-700/50"
+        >
           <div className="grid grid-cols-2 gap-1.5 p-2">
             {themeOptions.map((option) => {
               const isSelected = themeStyle === option.value;

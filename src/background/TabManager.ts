@@ -1,5 +1,5 @@
 import { storage } from '@/utils/storage';
-import { createTabGroupFromChromeTabs, filterValidTabs } from '@/domain/tabGroup';
+import { createTabGroupFromChromeTabs, filterValidTabs, isInternalUrl } from '@/domain/tabGroup';
 import { cacheManager } from '@/utils/performance';
 import { trackProductEvent } from '@/utils/productEvents';
 import { syncEngine } from '@/services/syncEngine';
@@ -8,7 +8,7 @@ import { enqueue } from './mutationQueue';
 import { createSeqRegistry } from '@/utils/seqRegistry';
 import { getDeviceId } from '@/utils/deviceUtils';
 import { kvGet, kvSet } from '@/storage/storageAdapter';
-import type { OpStamp } from '@/utils/opStamp';
+import type { OpStamp } from '@/core/opStamp';
 import { logError, logInfo, logWarn } from '../utils/log';
 
 // 保存路径也走同一套印记（与 mutationService 的 registry 各持一实例，但无 memo、
@@ -100,7 +100,10 @@ export class TabManager {
 
       const cache = cacheManager.getCache('storage');
       cache.delete('settings');
-      const settings = await storage.getSettings();
+      // 本地保存路径：读失败降级为默认值即可（collectPinnedTabs 只是本地行为开关）。
+      // 不能让一次瞬时存储错误把「保存全部标签」整条打死——那是为了一个只影响云端的
+      // 隐患赔上本地保存功能，不成比例。见 storage.getSettingsForLocalUse 的分流理由。
+      const settings = await storage.getSettingsForLocalUse();
       const collectPinnedTabs = settings.collectPinnedTabs ?? false;
 
       const tabGroup = createTabGroupFromChromeTabs(tabs, {
@@ -203,12 +206,23 @@ export class TabManager {
   async saveCurrentTab(tab: chrome.tabs.Tab): Promise<void> {
     logInfo('保存当前标签页:', tab.url);
 
-    if (!tab.url || tab.url.startsWith('chrome://') || tab.url.startsWith('chrome-extension://')) {
+    // 内部 URL 判定收敛到 domain/tabGroup/filters.isInternalUrl（唯一真相源）。
+    // 原先这里内联了一份残缺列表（只认 chrome:// 与 chrome-extension://，
+    // 漏了 edge:// 与 about:），与同文件上方 filterValidTabs 用的完整列表给出
+    // 不同答案。改成引用后**可观测行为不变**——下方 createTabGroupFromChromeTabs
+    // 内部先走 filterValidTabs → isValidTab → isInternalUrl，那两类页面在那里
+    // 已经被丢弃。消除的是「同一判断两处不同答案」的隐患（下次往 filters 里加
+    // 协议时旧代码会静默漏掉这条路径），不是修一个正在漏的数据 bug。
+    // 注意这与后面的 sanitizeTabUrl 是两道正交的串联门：先按前缀滤掉自己的
+    // 页面，再按协议滤掉危险地址。about: 是唯一被两表同时点名的协议
+    // （这里拒、sanitizeTabUrl 放行），必须靠这道门挡住。
+    if (!tab.url || isInternalUrl(tab.url)) {
       return;
     }
 
     try {
-      const settings = await storage.getSettings();
+      // 同 saveAllTabs：本地保存路径，读失败降级而非抛错
+      const settings = await storage.getSettingsForLocalUse();
       const collectPinnedTabs = settings.collectPinnedTabs ?? false;
 
       if (!collectPinnedTabs && tab.pinned) {

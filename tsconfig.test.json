@@ -1,0 +1,13 @@
+{
+  // 测试用 --experimental-strip-types 运行，那个选项只**剥掉**类型语法、不做类型检查，
+  // 于是 tests/ 下 4000+ 行代码的类型错误长期无人发现（生产代码由 tsconfig.json 把关）。
+  // 这个配置把 tests/ 纳入 tsc 的检查范围：compilerOptions 直接继承 tsconfig.json
+  // （strict / noUnusedLocals / @/* 别名 全部一致，不另起一套宽松规则）。
+  "extends": "./tsconfig.json",
+  // tests 里要 import 仓库的 .mjs 脚本（例如 scripts/validate-extension.mjs），
+  // 不开 allowJs 会因「找不到类型声明」而报 TS7016，那属于假错误。
+  "compilerOptions": {
+    "allowJs": true
+  },
+  "include": ["src", "tests"]
+}

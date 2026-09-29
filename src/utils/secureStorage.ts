@@ -1,4 +1,5 @@
 import { logError, logWarn } from './log';
+import { base64Decode, base64Encode, concatArrays } from './base64';
 const V1_PREFIX = 'SECURE_V1:';
 const V2_PREFIX = 'SECURE_V2:';
 const V3_PREFIX = 'SECURE_V3:';
@@ -20,52 +21,6 @@ const SENSITIVE_KEYS: readonly string[] = [
   'user_preferences',
   'sync_tokens',
 ];
-
-function base64Encode(bytes: Uint8Array): string {
-  // 分块处理避免 String.fromCharCode(...chunk) 在大数组时的栈溢出。
-  // ⚠️ 块大小必须是 3 的倍数：base64 每 3 字节映射 4 字符，非 3 倍数块的
-  // 独立 btoa 会在末尾产生 '=' padding 并拼进结果中间，产出非法 base64 ——
-  // 写入成功但 atob 解码必失败（v1.15.5~v1.15.6 大于 16KB 的数据全部中招，
-  // 表现为「保存成功、刷新后读取本地会话失败」）。
-  const CHUNK_SIZE = 3 * 8192; // 24576，3 的倍数
-  let result = '';
-  for (let i = 0; i < bytes.length; i += CHUNK_SIZE) {
-    const chunk = bytes.slice(i, Math.min(i + CHUNK_SIZE, bytes.length));
-    result += btoa(String.fromCharCode(...chunk));
-  }
-  return result;
-}
-
-function base64Decode(b64: string): Uint8Array {
-  try {
-    return new Uint8Array(atob(b64).split('').map(c => c.charCodeAt(0)));
-  } catch (e) {
-    // 兼容 v1.15.5/v1.15.6 的历史坏数据：旧 base64Encode 以 16384（非 3 倍数）
-    // 分块，每块末尾带 '=' padding 拼在字符串中间。按旧的块字符长度切分，
-    // 各段独立 atob 后拼接二进制。
-    // 旧块 16384 字节 → ceil(16384/3)*4 = 21848 个 base64 字符/块。
-    const LEGACY_CHUNK_CHARS = Math.ceil(16384 / 3) * 4;
-    if (b64.length > LEGACY_CHUNK_CHARS && b64.indexOf('=', LEGACY_CHUNK_CHARS - 4) !== -1) {
-      let binary = '';
-      for (let i = 0; i < b64.length; i += LEGACY_CHUNK_CHARS) {
-        binary += atob(b64.slice(i, i + LEGACY_CHUNK_CHARS));
-      }
-      return new Uint8Array(binary.split('').map(c => c.charCodeAt(0)));
-    }
-    throw e;
-  }
-}
-
-function concatArrays(...arrays: Uint8Array[]): Uint8Array {
-  const totalLength = arrays.reduce((sum, a) => sum + a.length, 0);
-  const result = new Uint8Array(totalLength);
-  let offset = 0;
-  for (const a of arrays) {
-    result.set(a, offset);
-    offset += a.length;
-  }
-  return result;
-}
 
 async function deriveKeyPBKDF2(extensionId: string, salt: Uint8Array): Promise<CryptoKey> {
   const keyMaterial = await crypto.subtle.importKey(

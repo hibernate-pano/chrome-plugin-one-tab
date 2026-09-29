@@ -357,8 +357,10 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
           </span>
         </div>
 
-        {/* 操作按钮 */}
-        <div className="flex items-center gap-1 opacity-0 group-hover/card:opacity-100 transition-all duration-200 ease-out">
+        {/* 操作按钮。group-focus-within/card 是键盘可达的等价态：
+            此前只有 group-hover/card 显形，纯键盘用户 Tab 进来看到的是一片空白，
+            按 Enter 等于对「看不见的按钮」盲操作。 */}
+        <div className="flex items-center gap-1 opacity-0 group-hover/card:opacity-100 group-focus-within/card:opacity-100 transition-all duration-200 ease-out">
           {/* 恢复全部（新窗口） */}
           <button
             onClick={handleOpenAllTabs}
@@ -439,10 +441,14 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
         <div className="px-4 pb-3">
           {isEditingNotes ? (
             <div className="space-y-2 rounded-lg border border-gray-200 bg-gray-50 p-3 dark:border-gray-700 dark:bg-gray-800/60">
-              <label className="block text-xs font-medium text-gray-600 dark:text-gray-300">
+              <label
+                htmlFor={`group-notes-${group.id}`}
+                className="block text-xs font-medium text-gray-600 dark:text-gray-300"
+              >
                 会话备注
               </label>
               <textarea
+                id={`group-notes-${group.id}`}
                 value={notesDraft}
                 onChange={event => setNotesDraft(event.target.value)}
                 onKeyDown={event => {
@@ -482,26 +488,37 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
         </div>
       )}
 
-      {/* 标签列表 */}
+      {/* 标签列表。
+          折叠态必须**不渲染**可交互子元素，而不是靠 CSS/aria 藏起来：
+          `max-h-0 opacity-0` 只改视觉，`aria-hidden` 只改读屏曝光，两者都不影响 Tab 序列。
+          1.22.0 起删除即物理移除（无回收站、无撤销），一旦 Tab 进看不见的折叠组、
+          误按 Enter 就是静默真删。React 18 尚无原生 inert 属性，条件渲染是唯一可靠手段。 */}
       <div
         className={`transition-all duration-300 ease-out overflow-hidden ${
           isCollapsed ? 'max-h-0 opacity-0' : 'max-h-[2000px] opacity-100'
         }`}
         aria-hidden={isCollapsed}
       >
-        <div className="tab-group-tabs-container">
-          {group.tabs.map((tab, index) => (
-            <DraggableTab
-              key={tab.id}
-              tab={tab}
-              groupId={group.id}
-              index={index}
-              moveTab={handleMoveTab}
-              handleOpenTab={handleOpenTab}
-              handleDeleteTab={handleDeleteTab}
-            />
-          ))}
-        </div>
+        {!isCollapsed && (
+          <div
+            className="tab-group-tabs-container"
+            role="list"
+            aria-label="会话内的标签页，可用上下方向键调整顺序"
+          >
+            {group.tabs.map((tab, index) => (
+              <DraggableTab
+                key={tab.id}
+                tab={tab}
+                groupId={group.id}
+                index={index}
+                itemCount={group.tabs.length}
+                moveTab={handleMoveTab}
+                handleOpenTab={handleOpenTab}
+                handleDeleteTab={handleDeleteTab}
+              />
+            ))}
+          </div>
+        )}
       </div>
     </div>
   );

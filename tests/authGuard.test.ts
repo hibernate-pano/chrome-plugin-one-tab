@@ -25,7 +25,7 @@ before(async () => {
 
 describe('ensureAuthenticated: SW 登录态恢复守卫', () => {
   it('store 已认证 → 直接放行，不触发恢复（不碰 supabase 网络）', async () => {
-    const { ensureAuthenticated } = await import('@/utils/authGuard');
+    const { ensureAuthenticated } = await import('@/core/authGuard');
     let restoreCalled = 0;
     const ok = await ensureAuthenticated({
       isAuthenticated: () => true,
@@ -36,7 +36,7 @@ describe('ensureAuthenticated: SW 登录态恢复守卫', () => {
   });
 
   it('store 未认证 + 恢复成功 → 放行', async () => {
-    const { ensureAuthenticated } = await import('@/utils/authGuard');
+    const { ensureAuthenticated } = await import('@/core/authGuard');
     const ok = await ensureAuthenticated({
       isAuthenticated: () => false,
       restoreAuth: async () => true,
@@ -45,7 +45,7 @@ describe('ensureAuthenticated: SW 登录态恢复守卫', () => {
   });
 
   it('store 未认证 + 恢复失败（无持久化 session）→ 拒绝', async () => {
-    const { ensureAuthenticated } = await import('@/utils/authGuard');
+    const { ensureAuthenticated } = await import('@/core/authGuard');
     const ok = await ensureAuthenticated({
       isAuthenticated: () => false,
       restoreAuth: async () => false,
@@ -54,7 +54,7 @@ describe('ensureAuthenticated: SW 登录态恢复守卫', () => {
   });
 
   it('恢复抛异常 → 拒绝而不抛出（入口不能因为恢复失败而崩溃）', async () => {
-    const { ensureAuthenticated } = await import('@/utils/authGuard');
+    const { ensureAuthenticated } = await import('@/core/authGuard');
     const ok = await ensureAuthenticated({
       isAuthenticated: () => false,
       restoreAuth: async () => { throw new Error('network down'); },

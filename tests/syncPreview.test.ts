@@ -57,10 +57,7 @@ describe('buildDownloadPreviewSummary: 与实际合并同源', () => {
 
   it('预览的活跃结果与 mergeOpStamped 完全一致', async () => {
     const { buildDownloadPreviewSummary } = await import('@/utils/syncPreview');
-    const [{ mergeOpStamped }, { EMPTY_STAMP }] = await Promise.all([
-      import('@/utils/opStampMerge'),
-      import('@/utils/opStamp'),
-    ]);
+    const { mergeOpStamped } = await import('@/core/opStampMerge');
 
     const local = [
       group({ id: 'keep-local', name: '只有本地', version: 1, lastOp: { d: 'devA', s: 5 } }),
@@ -74,7 +71,9 @@ describe('buildDownloadPreviewSummary: 与实际合并同源', () => {
     ];
 
     const summary = buildDownloadPreviewSummary(local as any, remote as any, 'merge');
-    const merged = mergeOpStamped(local as any, remote as any, { mergeStamp: EMPTY_STAMP });
+    // mergeOpStamped 现在只收两个参数（旧的第三个 mergeStamp 已在操作印记重写时移除），
+    // 这里跟着去掉，免得测试看起来还在传一个早就不存在的实参。
+    const merged = mergeOpStamped(local as any, remote as any);
 
     assert.equal(summary.afterCount, merged.filter(g => !g.isDeleted).length);
     assert.equal(summary.additions, 1, '云端独有的组应计为新增');

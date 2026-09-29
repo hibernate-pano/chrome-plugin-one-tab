@@ -20,7 +20,7 @@
  * 本文件保持纯函数 + 依赖注入，便于 node:test。
  */
 import type { TabGroup } from '@/types/tab';
-import type { OpStamp } from '@/utils/opStamp';
+import type { OpStamp } from '@/core/opStamp';
 
 const DEVICE_SEQ_KEY = 'device_seq';
 

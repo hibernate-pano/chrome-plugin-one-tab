@@ -18,34 +18,37 @@ describe('isInternalUrl', () => {
   });
 });
 
+// isValidTab / filterValidTabs 收的是 chrome.tabs.Tab（不是本仓库的 Tab 业务类型）：
+// 业务 Tab 额外带 createdAt / lastAccessed，chrome.tabs.Tab 上没有这两个字段。
+// 手搓半截字面量会让类型检查失效、也测不到真实形状，统一走这一个构造器。
+// id 用递增计数器而不是 Math.random()：这是测试夹具，用随机数只会让失败不可复现。
+let nextTabId = 1;
+const createTab = (url: string, pinned = false): chrome.tabs.Tab => ({
+  url,
+  pinned,
+  id: nextTabId++,
+  index: 0,
+  windowId: 1,
+  highlighted: false,
+  active: false,
+  incognito: false,
+  selected: false,
+  discarded: false,
+  autoDiscardable: true,
+  groupId: -1,
+});
+
 describe('isValidTab', () => {
   it('validates a normal HTTP tab', () => {
-    const tab = { id: '1', url: 'https://example.com', title: 'Example', createdAt: new Date().toISOString(), lastAccessed: new Date().toISOString() };
-    assert.equal(isValidTab(tab), true);
+    assert.equal(isValidTab(createTab('https://example.com')), true);
   });
 
   it('rejects chrome:// tabs', () => {
-    const tab = { id: '1', url: 'chrome://newtab', title: 'New Tab', createdAt: new Date().toISOString(), lastAccessed: new Date().toISOString() };
-    assert.equal(isValidTab(tab), false);
+    assert.equal(isValidTab(createTab('chrome://newtab')), false);
   });
 });
 
 describe('filterValidTabs', () => {
-  const createTab = (url: string, pinned = false): chrome.tabs.Tab => ({
-    url,
-    pinned,
-    id: Math.floor(Math.random() * 10000),
-    index: 0,
-    windowId: 1,
-    highlighted: false,
-    active: false,
-    incognito: false,
-    selected: false,
-    discarded: false,
-    autoDiscardable: true,
-    groupId: -1,
-  });
-
   it('filters out internal URLs', () => {
     const tabs = [
       createTab('https://example.com'),

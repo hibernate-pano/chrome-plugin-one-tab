@@ -37,15 +37,3 @@ export async function getDeviceId(): Promise<string> {
 
   return deviceId;
 }
-
-/**
- * 重置设备ID
- * 用于用户登出或需要重新生成设备ID的情况
- * @returns 新的设备ID
- */
-export async function resetDeviceId(): Promise<string> {
-  const newDeviceId = generateDeviceId();
-  await kvSet(DEVICE_ID_KEY, newDeviceId);
-  logInfo('重置设备ID:', newDeviceId);
-  return newDeviceId;
-}

@@ -21,7 +21,9 @@
 //   B) 「第二遍写」确实会改写印记（见证旧行为不是 no-op）——直接调
 //      markCloudGroupsAsDeleted 后 seq 由 5 变 6、device 变成本设备
 //   C) 合并模式（overwriteCloud=false）：墓碑仍走 markCloudGroupsAsDeleted
-//      （防止修复过度过滤，把删除意图整批丢掉）
+//      （防止修复过度过滤，把删除意图整批丢掉）；墓碑 seq 的断言已从
+//      「= 云端 OLD+1」改为「> 本机观察到的最大印记」，并在下方
+//      「P1-2 墓碑 stamp 语义」里用真实 mergeOpStamped 钉住合并方向
 //   D) 覆盖被跳过（本地无活跃组）时，墓碑仍走 markCloudGroupsAsDeleted
 import { describe, it, before, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
@@ -226,6 +228,14 @@ const ACTIVE = mkGroup('g-active', { lastOp: { d: DEVICE_ID, s: 3 } });
 const TOMB_A = mkGroup('g-tomb-a', { isDeleted: true, lastOp: { d: DEVICE_ID, s: 5 } });
 const TOMB_B = mkGroup('g-tomb-b', { isDeleted: true, lastOp: { d: DEVICE_ID, s: 6 } });
 
+/**
+ * case C 云端旧行的印记。它**故意远小于**本机观察到的最大印记（6），
+ * 正是「墓碑 stamp 取云端 OLD+1」这个 bug 的触发形状：那样写出来的墓碑
+ * （seq 2）在 mergeOpStamped 里会输给本地活跃副本（seq 5/6），本地组被保留
+ * 并在下次上传时把 is_deleted 改回 false = 删除被静默撤销。
+ */
+const CLOUD_OLD_SEQ = 1;
+
 before(async () => {
   await register(LOADER_PATH);
   lsData.set(SESSION_KEY, stubSessionJson(USER_ID));
@@ -290,15 +300,21 @@ describe('ITEM 1 覆盖上传：墓碑只写一遍（不再 tombstone double-wri
 
   it('C) 合并模式（overwriteCloud=false）：墓碑仍走 markCloudGroupsAsDeleted（未被过度过滤）', async () => {
     const { syncEngine } = await import('@/services/syncEngine');
-    // 云端预置两条旧行（印记 1 / 2），合并模式下 upsert 走 onConflict 覆盖，
+    const { storage } = await import('@/utils/storage');
+    const { maxObservedSeq } = await import('@/utils/seqRegistry');
+    // 基准从 fixture 推导，不写死数字：墓碑 stamp 走本机 Lamport 时钟
+    // （createSeqRegistry = 持久化 device_seq + 观察到的全网最大印记），
+    // 不变式是「本设备发出的序号必须大于它观察到的任何设备的任何印记」。
+    const observedMaxBefore = maxObservedSeq(await storage.getGroups());
+    // 云端预置两条旧行（印记远小于本机观察值），合并模式下 upsert 走 onConflict 覆盖，
     // 墓碑不在本次 upsert 列表里 → 必须由 markCloudGroupsAsDeleted 处理
     cloud.rows.set('g-tomb-a', {
       id: 'g-tomb-a', user_id: USER_ID, is_deleted: false,
-      last_op_device: 'devOld', last_op_seq: 1,
+      last_op_device: 'devOld', last_op_seq: CLOUD_OLD_SEQ,
     });
     cloud.rows.set('g-tomb-b', {
       id: 'g-tomb-b', user_id: USER_ID, is_deleted: false,
-      last_op_device: 'devOld', last_op_seq: 2,
+      last_op_device: 'devOld', last_op_seq: CLOUD_OLD_SEQ,
     });
 
     const res = await syncEngine.upload({ syncSettings: false, forcePending: true });
@@ -308,9 +324,18 @@ describe('ITEM 1 覆盖上传：墓碑只写一遍（不再 tombstone double-wri
     assert.ok(patched.length > 0, '合并模式必须对墓碑行发 UPDATE（markCloudGroupsAsDeleted）');
     assert.equal(cloud.rows.get('g-tomb-a')?.is_deleted, true, 'g-tomb-a 必须被标成墓碑');
     assert.equal(cloud.rows.get('g-tomb-b')?.is_deleted, true, 'g-tomb-b 必须被标成墓碑');
-    // 合并模式墓碑由 markCloudGroupsAsDeleted 抬到 OLD+1（本设备）
-    assert.equal(cloud.rows.get('g-tomb-a')?.last_op_seq, 2, '合并模式墓碑 seq = OLD+1');
+    // 合并模式墓碑由 markCloudGroupsAsDeleted 盖「本机 Lamport 印记」。
+    // 旧断言写死 seq = 云端 OLD+1 = 2，而本机观察到的最大印记是 6 ——
+    // 那个数字就是 bug 本身：seq 2 的墓碑在 mergeOpStamped 里输给 seq 5/6 的
+    // 本地活跃副本，删除被撤销（见下方「墓碑 stamp 语义」用例）。
     assert.equal(cloud.rows.get('g-tomb-a')?.last_op_device, DEVICE_ID);
+    assert.ok(
+      observedMaxBefore !== null &&
+        typeof cloud.rows.get('g-tomb-a')?.last_op_seq === 'number' &&
+        (cloud.rows.get('g-tomb-a')!.last_op_seq as number) > observedMaxBefore,
+      `墓碑 seq（${String(cloud.rows.get('g-tomb-a')?.last_op_seq)}）必须严格大于本机观察到的最大印记 ` +
+        `（${String(observedMaxBefore)}）：取云端 OLD+1 会写出输给本地活跃副本的墓碑 = 删除被撤销`
+    );
   });
 
   it('D) 覆盖被跳过（本地无活跃组）：墓碑仍走 markCloudGroupsAsDeleted', async () => {
@@ -337,6 +362,87 @@ describe('ITEM 1 覆盖上传：墓碑只写一遍（不再 tombstone double-wri
       cloud.rows.get('g-tomb-a')?.is_deleted,
       true,
       '覆盖没发生时，删除意图必须仍然由 markCloudGroupsAsDeleted 播出（不能随过滤一起丢掉）'
+    );
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// P1-2 墓碑 stamp 的**语义**（不钉死任何具体数字）
+//
+// 危害不在「墓碑 seq 是 2 还是 7」，在**合并时墓碑会输给本地活跃组**：
+// compareStamps 判本地赢 → mergeOpStamped 保留本地副本 → 下次上传把
+// is_deleted 改回 false → 删除被静默撤销。下面的用例把「本机盖出的墓碑
+// 印记」直接喂给真实的 mergeOpStamped 来断言这个方向，因此不依赖任何
+// 取号策略的具体数值；将来实现怎么微调都不会失效，也不会被写死的数字挡住。
+// ─────────────────────────────────────────────────────────────────────────
+describe('P1-2 墓碑 stamp 语义：合并时墓碑必须赢过本地活跃副本', () => {
+  /** 跑一次合并上传，让 markCloudGroupsAsDeleted 真的给云端行盖上本机墓碑印记 */
+  async function broadcastTombstone(
+    cloudRow: Record<string, unknown>
+  ): Promise<{ device: string; seq: number }> {
+    const { syncEngine } = await import('@/services/syncEngine');
+    const { storage } = await import('@/utils/storage');
+    cloud.rows.set('g-tomb-a', {
+      id: 'g-tomb-a', user_id: USER_ID, is_deleted: false, ...cloudRow,
+    } as any);
+    await storage.clearPendingDeleteIds();
+    const res = await syncEngine.upload({ syncSettings: false, forcePending: true });
+    assert.equal(res.success, true, `合并上传应成功：${res.error ?? ''}`);
+    const row = cloud.rows.get('g-tomb-a')!;
+    assert.equal(row.is_deleted, true, '墓碑必须真的落云（否则下面的合并断言没有意义）');
+    return { device: String(row.last_op_device), seq: row.last_op_seq as number };
+  }
+
+  /** 把云端墓碑行还原成 mergeOpStamped 认识的形状（只靠真实落库的那枚印记） */
+  function asCloudTombstone(stamp: { device: string; seq: number }) {
+    return {
+      ...TOMB_A,
+      isDeleted: true,
+      lastOp: { d: stamp.device, s: stamp.seq },
+    } as any;
+  }
+
+  it('云端旧印记远小于本机观察值时，本机盖出的墓碑仍然赢（本地活跃副本被移除）', async () => {
+    const stamp = await broadcastTombstone({ last_op_device: 'devOld', last_op_seq: CLOUD_OLD_SEQ });
+    const { mergeOpStamped } = await import('@/core/opStampMerge');
+
+    // 本地活跃副本：把残留墓碑还原成「对端还没收到删除广播时的活跃组」
+    const localActive = { ...TOMB_A, isDeleted: false } as any;
+    const merged = mergeOpStamped([localActive], [asCloudTombstone(stamp)]);
+
+    assert.deepEqual(
+      merged.map(g => g.id),
+      [],
+      '墓碑赢时本地活跃副本必须被判为已删除（不进合并结果 → 不会被重新上传成活跃）'
+    );
+  });
+
+  it('云端行 last_op_seq 为 NULL 时（本 bug 的直接触发条件），墓碑同样赢', async () => {
+    // 旧实现 (null ?? 0) + 1 = 1：seq 1 的墓碑输给本地任何 seq >= 2 的组 = 删除被撤销
+    const stamp = await broadcastTombstone({ last_op_device: null, last_op_seq: null });
+    const { mergeOpStamped } = await import('@/core/opStampMerge');
+
+    const localActive = { ...TOMB_A, isDeleted: false } as any;
+    const merged = mergeOpStamped([localActive], [asCloudTombstone(stamp)]);
+
+    assert.deepEqual(
+      merged.map(g => g.id),
+      [],
+      '云端没有旧印记时，墓碑也必须赢——否则 seq 1 会被本地 seq 5/6 盖过，删除被撤销'
+    );
+  });
+
+  it('对照：墓碑印记比本地旧时本地赢（compareStamps 方向不能反）', async () => {
+    const { mergeOpStamped } = await import('@/core/opStampMerge');
+    const localActive = { ...TOMB_A, isDeleted: false } as any;
+    // 一枚**故意更旧**的墓碑（seq 0，设备号排在本机之后，不影响 s 的比较）
+    const staleTombstone = { ...TOMB_A, isDeleted: true, lastOp: { d: 'devOld', s: 0 } } as any;
+
+    const merged = mergeOpStamped([localActive], [staleTombstone]);
+    assert.deepEqual(
+      merged.map(g => g.id),
+      ['g-tomb-a'],
+      '墓碑比本地旧时必须保留本地活跃组（离线期间的本地修改赢过删除广播）'
     );
   });
 });

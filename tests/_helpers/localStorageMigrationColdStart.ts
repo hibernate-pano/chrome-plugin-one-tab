@@ -96,7 +96,9 @@ g.window = {
   },
 };
 
-const { initStorage, getActiveBackend } = await import('@/storage-kv/storageAdapter');
+// 只解构 initStorage：backend 直接取它的返回值。原先也解构了 getActiveBackend，
+// 但整份脚本从没读过它（backend 字段只认 initStorage 的返回值）。
+const { initStorage } = await import('@/storage-kv/storageAdapter');
 const backend = await initStorage();
 
 const out: State & { backend: string | null } = {

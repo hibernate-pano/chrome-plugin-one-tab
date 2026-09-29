@@ -1,5 +1,5 @@
-import { TabGroup, TabData, SupabaseTabGroup } from '@/types/tab';
 import { secureStorage } from '@/utils/secureStorage';
+import { base64Decode, base64Encode, concatArrays } from './base64';
 import { logError } from './log';
 
 const V1_PREFIX = 'ENCRYPTED_V1:';
@@ -54,49 +54,6 @@ async function encryptBytes(plaintext: Uint8Array, key: CryptoKey): Promise<{ iv
   const iv = crypto.getRandomValues(new Uint8Array(IV_LENGTH));
   const ciphertext = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, plaintext);
   return { iv, ciphertext };
-}
-
-function concatArrays(...arrays: Uint8Array[]): Uint8Array {
-  const totalLength = arrays.reduce((sum, a) => sum + a.length, 0);
-  const result = new Uint8Array(totalLength);
-  let offset = 0;
-  for (const a of arrays) {
-    result.set(a, offset);
-    offset += a.length;
-  }
-  return result;
-}
-
-function base64Encode(bytes: Uint8Array): string {
-  // 分块处理避免 String.fromCharCode(...chunk) 在大数组时的栈溢出。
-  // ⚠️ 块大小必须是 3 的倍数：非 3 倍数块的独立 btoa 会在末尾产生 '=' padding
-  // 并拼进结果中间，产出非法 base64（写入成功但解码必失败）。
-  // 与 secureStorage.base64Encode 保持一致，见该文件内的详细注释。
-  const CHUNK_SIZE = 3 * 8192; // 24576，3 的倍数
-  let result = '';
-  for (let i = 0; i < bytes.length; i += CHUNK_SIZE) {
-    const chunk = bytes.slice(i, Math.min(i + CHUNK_SIZE, bytes.length));
-    result += btoa(String.fromCharCode(...chunk));
-  }
-  return result;
-}
-
-function base64Decode(b64: string): Uint8Array {
-  try {
-    return new Uint8Array(atob(b64).split('').map(c => c.charCodeAt(0)));
-  } catch (e) {
-    // 兼容历史坏数据：旧实现以 16384（非 3 倍数）分块编码，中间嵌 '=' padding。
-    // 按旧的块字符长度切分，各段独立 atob 后拼接二进制。
-    const LEGACY_CHUNK_CHARS = Math.ceil(16384 / 3) * 4;
-    if (b64.length > LEGACY_CHUNK_CHARS && b64.indexOf('=', LEGACY_CHUNK_CHARS - 4) !== -1) {
-      let binary = '';
-      for (let i = 0; i < b64.length; i += LEGACY_CHUNK_CHARS) {
-        binary += atob(b64.slice(i, i + LEGACY_CHUNK_CHARS));
-      }
-      return new Uint8Array(binary.split('').map(c => c.charCodeAt(0)));
-    }
-    throw e;
-  }
 }
 
 /**
@@ -195,44 +152,4 @@ export function isEncrypted(data: unknown): boolean {
     data.startsWith(V2_DEVICE_PREFIX) ||
     data.startsWith(V2_LEGACY_PREFIX)
   );
-}
-
-export async function encryptTabGroups(groups: TabGroup[], userId: string): Promise<string> {
-  return encryptData(groups, userId);
-}
-
-export async function decryptTabGroups(encryptedData: string, userId: string): Promise<TabGroup[]> {
-  try {
-    return await decryptData<TabGroup[]>(encryptedData, userId);
-  } catch (error) {
-    logError('解密标签组数据失败:', error);
-    try {
-      return JSON.parse(encryptedData) as TabGroup[];
-    } catch {
-      throw new Error('无法解密或解析数据');
-    }
-  }
-}
-
-export async function encryptSupabaseTabGroup(group: SupabaseTabGroup, userId: string): Promise<SupabaseTabGroup> {
-  if (!group.tabs_data || group.tabs_data.length === 0) return group;
-
-  const encryptedTabsData = await encryptData(group.tabs_data, userId);
-  return { ...group, tabs_data: encryptedTabsData as unknown as TabData[] };
-}
-
-export async function decryptSupabaseTabGroup(group: SupabaseTabGroup, userId: string): Promise<SupabaseTabGroup> {
-  if (!group.tabs_data) return group;
-
-  if (typeof group.tabs_data === 'string') {
-    try {
-      const decryptedTabsData = await decryptData<TabData[]>(group.tabs_data, userId);
-      return { ...group, tabs_data: decryptedTabsData };
-    } catch (error) {
-      logError(`解密标签组 ${group.id} 的数据失败:`, error);
-      return { ...group, tabs_data: [] };
-    }
-  }
-
-  return group;
 }

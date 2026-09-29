@@ -18,7 +18,7 @@
  * TabState.deletedGroups 字段废除。toActiveGroupsView 保留为读路径防御层：
  * 老版本设备（商店 1.21.4）仍会写入墓碑形状数据，剥掉后不进主状态。
  */
-import { createSlice, createAsyncThunk, createSelector } from '@reduxjs/toolkit';
+import { createSlice, createAsyncThunk } from '@reduxjs/toolkit';
 import { TabState, TabGroup, OptimisticTabBackup } from '@/types/tab';
 import { storage, invalidateGroupsCache } from '@/utils/storage';
 import { sendMutation } from '@/shared/mutationProtocol';
@@ -703,28 +703,5 @@ export const deleteTabAndSync = createAsyncThunk<
   // 出口防御：handler 返回的是 storage 原始组，老版本残留墓碑不进 Redux（与 loadGroups 口径一致）
   return { group: group ? stripTombstonedTabs(group) : null };
 });
-
-// 使用createSelector创建记忆化选择器，避免不必要的重新计算
-export const selectFilteredGroups = createSelector(
-  [
-    (state: { tabs: TabState }) => state.tabs.groups,
-    (state: { tabs: TabState }) => state.tabs.searchQuery,
-  ],
-  (groups, searchQuery) => {
-    if (!searchQuery) return groups;
-
-    const query = searchQuery.toLowerCase();
-    return groups.filter(group => {
-      // 先检查组名，这是一个快速检查
-      if (group.name.toLowerCase().includes(query)) return true;
-      if (group.notes?.toLowerCase().includes(query)) return true;
-
-      // 然后检查标签，这可能更耗时
-      return group.tabs.some(
-        tab => tab.title.toLowerCase().includes(query) || tab.url.toLowerCase().includes(query)
-      );
-    });
-  }
-);
 
 export default tabSlice.reducer;

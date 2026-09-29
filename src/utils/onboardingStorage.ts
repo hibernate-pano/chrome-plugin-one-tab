@@ -29,25 +29,6 @@ export interface OnboardingTrigger {
 const STORAGE_KEY = 'onboarding_state';
 const TRIGGER_KEY = 'onboarding_trigger';
 
-// 默认引导状态
-const DEFAULT_STATE: OnboardingState = {
-    hasCompletedOnboarding: false,
-    lastOnboardingVersion: '',
-};
-
-/**
- * 获取引导状态
- */
-export async function getOnboardingState(): Promise<OnboardingState> {
-    try {
-        const result = await chrome.storage.local.get(STORAGE_KEY);
-        return result[STORAGE_KEY] || { ...DEFAULT_STATE };
-    } catch (error) {
-        logWarn('[Onboarding] 获取引导状态失败:', error);
-        return { ...DEFAULT_STATE };
-    }
-}
-
 /**
  * 获取安装/更新触发信息
  */
@@ -155,21 +136,3 @@ export function getCurrentVersion(): string {
     return getRuntimeVersion();
 }
 
-/**
- * 重置引导状态（开发调试用）
- */
-export async function resetOnboarding(): Promise<void> {
-    try {
-        await chrome.storage.local.remove(STORAGE_KEY);
-        // 模拟一个安装触发
-        await chrome.storage.local.set({
-            [TRIGGER_KEY]: {
-                reason: 'install',
-                version: getCurrentVersion(),
-            },
-        });
-        logInfo('[Onboarding] 引导状态已重置');
-    } catch (error) {
-        logError('[Onboarding] 重置引导状态失败:', error);
-    }
-}

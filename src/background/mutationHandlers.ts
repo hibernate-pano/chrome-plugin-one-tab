@@ -14,7 +14,8 @@ import type { TabGroup } from '@/types/tab';
 import type { MutationOp, MutationResult } from '@/shared/mutationProtocol';
 import type { Journal } from '@/utils/journal';
 import type { SeqRegistry } from '@/utils/seqRegistry';
-import type { OpStamp } from '@/utils/opStamp';import { sanitizeTabUrl } from '@/utils/inputValidation';
+import type { OpStamp } from '@/core/opStamp';
+import { sanitizeTabUrl } from '@/utils/inputValidation';
 import { nanoid } from '@reduxjs/toolkit';
 import {
   applySaveGroup,
@@ -28,7 +29,7 @@ import {
   applyMoveGroup,
   applyMoveTab,
   applyCleanDuplicates,
-} from '@/utils/mutationOps';
+} from '@/core/mutationOps';
 import { logWarn } from '../utils/log';
 
 export interface MutationDeps {

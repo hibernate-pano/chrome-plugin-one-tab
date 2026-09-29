@@ -43,31 +43,65 @@ function mkTab(id: string, url: string) {
   };
 }
 
-describe('mintWebStamp: OLD+1 归属写者本设备', () => {
+describe('mintWebStamp: 归属写者本设备，序号压过两个下界', () => {
   it('云端 seq=7 → 新 stamp s=8 且 d=本设备', async () => {
-    const { mintWebStamp } = await import('@/utils/webTombstone');
+    const { mintWebStamp } = await import('@/core/webTombstone');
     assert.deepEqual(mintWebStamp('devWeb', 7), { d: 'devWeb', s: 8 });
   });
 
   it('云端无印记（null）→ 从 s=1 起', async () => {
-    const { mintWebStamp } = await import('@/utils/webTombstone');
+    const { mintWebStamp } = await import('@/core/webTombstone');
     assert.deepEqual(mintWebStamp('devWeb', null), { d: 'devWeb', s: 1 });
     assert.deepEqual(mintWebStamp('devWeb', undefined), { d: 'devWeb', s: 1 });
+  });
+
+  it('观测到更高印记时取观测值 +1，不退回裸 OLD+1', async () => {
+    const { mintWebStamp } = await import('@/core/webTombstone');
+    // 本行 OLD 只有 3，但同一账号别的行已被推到 12 → 必须铸 13
+    assert.deepEqual(mintWebStamp('devWeb', 3, 12), { d: 'devWeb', s: 13 });
+    // 观测值低于本行 OLD 时取本行 OLD（服务端严格 LT 守卫放行优先）
+    assert.deepEqual(mintWebStamp('devWeb', 30, 12), { d: 'devWeb', s: 31 });
+    // 观测值缺省 / 0 / null 时退化成裸 OLD+1，与修复前同口径
+    assert.deepEqual(mintWebStamp('devWeb', 7, 0), { d: 'devWeb', s: 8 });
+    assert.deepEqual(mintWebStamp('devWeb', 7, null), { d: 'devWeb', s: 8 });
+  });
+
+  // 回归钉子：裸 OLD+1 会输掉对端已上传的更高印记，导致用户在网页上的删除被静默撤销。
+  // 这条在加入 Lamport 下限之前必然失败。
+  it('回归：Web 铸的删除 stamp 必须赢过对端已上传的更高印记', async () => {
+    const { mintWebStamp } = await import('@/core/webTombstone');
+    const { compareStamps } = await import('@/core/opStamp');
+
+    // 对端设备 E 已把本组上传到 {E,12}；本行 OLD 仍是 8（Web 读到的就是 8）
+    const remote = { d: 'devE', s: 12 };
+
+    // 修复前的铸法：裸 OLD+1 = 9 → 输给对端，删除被撤销
+    const naive = { d: 'devWeb', s: 8 + 1 };
+    assert.equal(compareStamps(remote, naive), 1, '裸 OLD+1 确实会输（这正是被修掉的 bug）');
+
+    // 修复后：观察到全表最大值 12 → 铸 13 → 赢过对端
+    const fixed = mintWebStamp('devWeb', 8, 12);
+    assert.equal(compareStamps(fixed, remote), 1, 'Web 的删除印记必须压过对端');
+    assert.equal(compareStamps(remote, fixed), -1);
   });
 });
 
 describe('形状A：扩展形 TabData[] → Web 物理移除 → 合并整组覆盖', () => {
   it('删除后目标 tab 物理消失，广播经组 stamp 提升 + 整组覆盖传播', async () => {
-    const { applyWebRemoveTab, mintWebStamp } = await import('@/utils/webTombstone');
-    const { serializeTab, deserializeTab } = await import('@/utils/tabDataCodec');
-    const { normalizeTabsData } = await import('@/utils/normalizeTabsData');
-    const { mergeOpStamped } = await import('@/utils/opStampMerge');
+    const { applyWebRemoveTab, mintWebStamp } = await import('@/core/webTombstone');
+    const { serializeTab, deserializeTab } = await import('@/core/tabDataCodec');
+    const { normalizeTabsData } = await import('@/core/normalizeTabsData');
+    const { mergeOpStamped } = await import('@/core/opStampMerge');
 
     // 云端现状（扩展此前上传）：t1/t2 均活跃，组 stamp s=7
     const cloudPayload = [serializeTab({ ...mkTab('t1', 'https://a.com'), group_id: 'g1' } as never), serializeTab({ ...mkTab('t2', 'https://b.com'), group_id: 'g1' } as never)];
 
     // ── Web 写：删 t2（物理移除，组 stamp OLD+1）──
     const stamp = mintWebStamp('devWeb', 7);
+    // 整条链的承重不变量：Web 铸出的删除印记必须严格压过上传前云端那枚 s=7。
+    // 本地之所以会输、t2 之所以不复活，全靠这一条；以前这里是写死的字面量 8，
+    // 铸出来却不用，等于没人验证过「Web 的 stamp 一定比旧的大」。
+    assert.ok(stamp.s > 7, `Web 铸出的删除印记必须大于云端原有的 7，实得 ${stamp.s}`);
     const r = applyWebRemoveTab(cloudPayload, 't2', { isLocked: false });
     assert.equal(r.found, true);
     assert.equal(r.autoDeleteGroup, false);
@@ -94,7 +128,7 @@ describe('形状A：扩展形 TabData[] → Web 物理移除 → 合并整组覆
     }];
     const cloudSide = [{
       id: 'g1', name: 'g1', tabs: extTabs,
-      createdAt: EARLIER, updatedAt: NOW, isLocked: false, lastOp: { d: 'devWeb', s: 8 },
+      createdAt: EARLIER, updatedAt: NOW, isLocked: false, lastOp: { ...stamp },
     }];
     const merged = mergeOpStamped(localStale as never, cloudSide as never);
     const mg = merged.find(g => g.id === 'g1')!;
@@ -104,8 +138,8 @@ describe('形状A：扩展形 TabData[] → Web 物理移除 → 合并整组覆
   });
 
   it('未命中 tab → found=false（调用方抛错，不写云）', async () => {
-    const { applyWebRemoveTab } = await import('@/utils/webTombstone');
-    const { serializeTab } = await import('@/utils/tabDataCodec');
+    const { applyWebRemoveTab } = await import('@/core/webTombstone');
+    const { serializeTab } = await import('@/core/tabDataCodec');
     const payload = [serializeTab({ ...mkTab('t1', 'https://a.com'), group_id: 'g1' } as never)];
     const r = applyWebRemoveTab(payload, 'nope', {});
     assert.equal(r.found, false);
@@ -115,9 +149,9 @@ describe('形状A：扩展形 TabData[] → Web 物理移除 → 合并整组覆
 
 describe('形状B：Web 形 wrapper { tabs, version, displayOrder } → 物理移除', () => {
   it('wrapper 其余键保留、目标 tab 消失、扩展链可还原', async () => {
-    const { applyWebRemoveTab } = await import('@/utils/webTombstone');
-    const { normalizeTabsData } = await import('@/utils/normalizeTabsData');
-    const { deserializeTab } = await import('@/utils/tabDataCodec');
+    const { applyWebRemoveTab } = await import('@/core/webTombstone');
+    const { normalizeTabsData } = await import('@/core/normalizeTabsData');
+    const { deserializeTab } = await import('@/core/tabDataCodec');
 
     const wrapper = {
       id: 'g1', name: 'g1', version: 2, displayOrder: 0,
@@ -142,7 +176,7 @@ describe('形状B：Web 形 wrapper { tabs, version, displayOrder } → 物理�
   });
 
   it('锁定组删空 → tabs 保留为空数组，autoDeleteGroup=false（锁定豁免）', async () => {
-    const { applyWebRemoveTab } = await import('@/utils/webTombstone');
+    const { applyWebRemoveTab } = await import('@/core/webTombstone');
     const wrapper = {
       id: 'g1', name: 'g1', version: 1,
       tabs: [mkTab('t1', 'https://a.com')],
@@ -155,7 +189,7 @@ describe('形状B：Web 形 wrapper { tabs, version, displayOrder } → 物理�
   });
 
   it('未锁定组删掉最后一个 tab → autoDeleteGroup=true（整行删除广播信号）', async () => {
-    const { applyWebRemoveTab } = await import('@/utils/webTombstone');
+    const { applyWebRemoveTab } = await import('@/core/webTombstone');
     const wrapper = {
       id: 'g1', name: 'g1', version: 1,
       tabs: [mkTab('t1', 'https://a.com')],

@@ -54,7 +54,7 @@ before(async () => {
 
 describe('hydrationDecision: 防止空读被固化（刷新后数据丢失根因）', () => {
   it('读到空数组 [] → 不固化 lastLoadedAt（让 TabList 重试 loadGroups）', async () => {
-    const { decideTabsHydration } = await import('@/utils/hydrationDecision');
+    const { decideTabsHydration } = await import('@/core/hydrationDecision');
     const d = decideTabsHydration({ groups: [], now: NOW });
 
     assert.equal(d.treatAsLoaded, false, '空读不应被当作已加载');
@@ -64,14 +64,14 @@ describe('hydrationDecision: 防止空读被固化（刷新后数据丢失根因
   });
 
   it('groups 为 null（getGroups 静默失败）→ 不固化', async () => {
-    const { decideTabsHydration } = await import('@/utils/hydrationDecision');
+    const { decideTabsHydration } = await import('@/core/hydrationDecision');
     const d = decideTabsHydration({ groups: null, now: NOW });
     assert.equal(d.treatAsLoaded, false);
     assert.equal(d.lastLoadedAt, null);
   });
 
   it('全是软删组 → 视为空，不固化', async () => {
-    const { decideTabsHydration } = await import('@/utils/hydrationDecision');
+    const { decideTabsHydration } = await import('@/core/hydrationDecision');
     const d = decideTabsHydration({
       groups: [makeGroup('a', { isDeleted: true }), makeGroup('b', { isDeleted: true })],
       now: NOW,
@@ -81,7 +81,7 @@ describe('hydrationDecision: 防止空读被固化（刷新后数据丢失根因
   });
 
   it('读到真实数据 → 固化 lastLoadedAt + lastSyncStatus=local（首屏直显）', async () => {
-    const { decideTabsHydration } = await import('@/utils/hydrationDecision');
+    const { decideTabsHydration } = await import('@/core/hydrationDecision');
     const d = decideTabsHydration({
       groups: [makeGroup('a'), makeGroup('b', { isDeleted: true }), makeGroup('c')],
       now: NOW,
@@ -93,18 +93,21 @@ describe('hydrationDecision: 防止空读被固化（刷新后数据丢失根因
   });
 
   it('buildTabsPreloadedState：空读返回 null（不 hydrate tabs）', async () => {
-    const { decideTabsHydration, buildTabsPreloadedState } = await import('@/utils/hydrationDecision');
+    const { decideTabsHydration, buildTabsPreloadedState } = await import('@/core/hydrationDecision');
     const d = decideTabsHydration({ groups: [], now: NOW });
     assert.equal(buildTabsPreloadedState(d), null);
   });
 
   it('buildTabsPreloadedState：有数据返回 3 字段对象', async () => {
-    const { decideTabsHydration, buildTabsPreloadedState } = await import('@/utils/hydrationDecision');
+    const { decideTabsHydration, buildTabsPreloadedState } = await import('@/core/hydrationDecision');
     const d = decideTabsHydration({ groups: [makeGroup('a')], now: NOW });
     const p = buildTabsPreloadedState(d);
     assert.ok(p);
-    assert.equal(p!.groups.length, 1);
-    assert.equal(p!.lastLoadedAt, NOW);
-    assert.equal(p!.lastSyncStatus, 'local');
+    // 声明类型是 Partial<Pick<...>>，但 treatAsLoaded 为真时三个字段是成套给出的；
+    // 这里逐个断言到位，而不是靠 `p!.groups!.length` 把可选性绕过去。
+    assert.ok(p.groups, 'treatAsLoaded 为真时必须带上 groups');
+    assert.equal(p.groups.length, 1);
+    assert.equal(p.lastLoadedAt, NOW);
+    assert.equal(p.lastSyncStatus, 'local');
   });
 });

@@ -1,30 +1,42 @@
-// 复现 v2：定位「切双栏多出空标签组」是渲染重复还是数据变化。
+// 「切双栏多出空标签组」到底来自渲染重复还是既有数据 —— v1.22.0 无墓碑模型下钉死判据。
 //
-// 关键判据（每种布局都测）：
-//   UI 卡片数(.tab-group-card) vs 存储组数 —— 双栏下若 UI > 存储，即渲染重复；
-//   双栏下若 UI == 存储但组本身 tabs 为空，即"空组是既有数据被渲染出来"。
+// 原脚本的造数据方式属于旧世界：g4/g5 直接 seed isDeleted: true 的墓碑 tab。
+// 1.22.0（提交 bdad42d）后本地写路径永不产墓碑，读路径改为**剥离**老版本
+// （商店 1.21.4）写入的墓碑形状：purgeTombstones 迁移在首启把它们从 storage 里
+// 物理清除（src/utils/migrationUtils.ts），toActiveGroupsView 再挡一层视图
+// （src/store/slices/tabSliceHelpers.ts）。
 //
-// 用带真实特征的数据：正常组 / 已空组 / 重复 URL 组 / 墓碑 tab 组 / 奇数个组。
+// 保留「老版本数据」这条造数据方式是**故意的**：它正是新版必须扛住的输入。
+// 现在检验的不变量：
+//   ① 首启后 storage 里不再有任何 isDeleted 墓碑 tab（老版本形状已被物理剥离）
+//   ② storage 里不再有组级 isDeleted 组（旧回收站内容已随迁移清除）
+//   ③ UI 卡片数 == 存储中「有内容的组」数 —— 多出来的空组只能来自数据，不能来自渲染
+//   ④ 单栏↔双栏来回切 3 轮，UI 卡片数与 storage 组数都不变（切布局不写数据、不长空壳）
 import { launchCtx, readGroupsFromSW, dismissOnboarding, openPopup } from './e2e-helpers.mjs';
+import { createGate } from './e2e-support.mjs';
 
 const label = process.argv[2] || 'layoutbug2';
 const now = () => new Date().toISOString();
 const rid = () => Math.random().toString(36).slice(2, 10);
 
+const gate = createGate();
+
 function tab(url, title, extra = {}) {
   return { id: `t-${rid()}`, url, title, createdAt: now(), lastAccessed: now(), pinned: false, ...extra };
 }
 
-// 直接构造最终的存储形状（跳过 SW 内部逻辑，只测渲染）
+// 直接构造最终的存储形状（跳过 SW 内部逻辑，只测读路径 + 渲染）
 const SEED_GROUPS = [
   { name: 'g1-正常', tabs: [tab('https://a.com', 'A'), tab('https://b.com', 'B')] },
-  { name: 'g2-空组', tabs: [] },
+  { name: 'g2-空组', tabs: [] },                                              // 遗留空壳
   { name: 'g3-重复URL', tabs: [tab('https://dup.com', 'D1'), tab('https://dup.com', 'D2')] },
-  { name: 'g4-墓碑tab', tabs: [tab('https://c.com', 'C1', { isDeleted: true }), tab('https://c.com', 'C2')] },
-  { name: 'g5-全墓碑', tabs: [tab('https://e.com', 'E1', { isDeleted: true })] },
+  { name: 'g4-老版本墓碑tab', tabs: [tab('https://c.com', 'C1', { isDeleted: true }), tab('https://c.com', 'C2')] },
+  { name: 'g5-老版本全墓碑', tabs: [tab('https://e.com', 'E1', { isDeleted: true })] },
   { name: 'g6-单页', tabs: [tab('https://f.com', 'F')] },
   { name: 'g7-正常2', tabs: [tab('https://g.com', 'G'), tab('https://h.com', 'H')] },
 ];
+/** 视图层的存活判据：非组级墓碑、且至少一个非墓碑 tab（= toActiveGroupsView） */
+const visibleInView = g => !g.isDeleted && (g.tabs || []).some(t => !t.isDeleted);
 
 const ctx = await launchCtx(label);
 try {
@@ -51,34 +63,70 @@ try {
     db.close();
     return groups.length;
   }, SEED_GROUPS);
-  console.log(`已写入存储: ${written} 组（含 1 个真空组）`);
+  console.log(`已写入存储: ${written} 组（含老版本墓碑形状与 1 个真空组）`);
 
   const page = await openPopup(ctx, id);
   await dismissOnboarding(page);
-  await page.waitForTimeout(2000);
 
-  async function probe(label) {
-    const cards = await page.locator('.tab-group-card').count();
-    const groups = await readGroupsFromSW(ctx);
-    const emptyStored = groups.filter(g => !(g.tabs || []).some(t => !t.isDeleted)).length;
-    const names = await page.locator('.tab-group-card').evaluateAll(
-      els => els.map(e => (e.querySelector('input')?.value || e.textContent || '').slice(0, 18))
-    );
-    console.log(`\n[${label}] UI 卡片=${cards} | 存储组=${groups.length} | 存储中无活跃tab的组=${emptyStored}`);
-    console.log(`  UI 卡片: ${JSON.stringify(names)}`);
-    if (cards > groups.length) console.log(`  ⚠️ UI 多出 ${cards - groups.length} 张卡 → 渲染重复`);
-    if (cards === groups.length && emptyStored > 0) console.log(`  ⚠️ ${emptyStored} 个组本就没有活跃 tab → 空组来自既有数据`);
+  // 迁移在 popup 挂载时异步跑，轮询等它落盘，不用固定 sleep（见 e2e-helpers 约定）
+  let groups = [];
+  for (let i = 0; i < 15; i++) {
+    await page.waitForTimeout(1000);
+    groups = await readGroupsFromSW(ctx);
+    if (!groups.flatMap(g => g.tabs || []).some(t => t.isDeleted === true)) break;
   }
 
-  await probe('初始(单栏)');
-  const t1 = page.locator('button[aria-label*="切换为"]').first();
-  await t1.click();
-  await page.waitForTimeout(2500);
-  await probe('切到双栏');
-  const t2 = page.locator('button[aria-label*="切换为"]').first();
-  await t2.click();
-  await page.waitForTimeout(2500);
-  await probe('切回单栏');
+  const tabTombs = groups.flatMap(g => g.tabs || []).filter(t => t.isDeleted === true);
+  const groupTombs = groups.filter(g => g.isDeleted);
+  const expectedVisible = groups.filter(visibleInView).length;
+  console.log(`首启迁移后: 存储组=${groups.length}，其中视图可见=${expectedVisible}` +
+    `，墓碑组=${groupTombs.length}，墓碑 tab=${tabTombs.length}`);
+
+  gate.check('老版本标签级墓碑已从 storage 物理剥离（purgeTombstones）', tabTombs.length === 0,
+    `仍残留 ${tabTombs.length} 个：${tabTombs.map(t => t.title).join(', ')}`);
+  gate.check('老版本组级墓碑已从 storage 物理剥离', groupTombs.length === 0,
+    `仍残留 ${groupTombs.length} 个`);
+
+  async function probe(tag) {
+    const cards = await page.locator('.tab-group-card').count();
+    const stored = await readGroupsFromSW(ctx);
+    const visible = stored.filter(visibleInView).length;
+    const names = await page.locator('.tab-group-card').evaluateAll(
+      els => els.map(e => (e.querySelector('h3.tab-group-title')?.textContent || '').trim())
+    );
+    console.log(`\n[${tag}] UI 卡片=${cards} | 存储组=${stored.length} | 视图可见组=${visible}`);
+    console.log(`  UI 卡片: ${JSON.stringify(names)}`);
+    return { cards, stored, visible };
+  }
+
+  const first = await probe('初始(单栏)');
+  gate.check('UI 卡片数 == 视图可见组数（无渲染重复）', first.cards === first.visible,
+    `UI ${first.cards} 张 vs 可见 ${first.visible} 组`);
+
+  const toDouble = page.locator('button[aria-label*="切换为双栏"]').first();
+  const toSingle = page.locator('button[aria-label*="切换为单栏"]').first();
+  let prev = first;
+  for (let round = 1; round <= 3; round++) {
+    if (await toDouble.count()) { await toDouble.click(); await page.waitForTimeout(1800); }
+    const d = await probe(`第${round}轮 双栏`);
+    gate.check(`第${round}轮：切双栏后 UI 卡片数不变（不凭空多出空组卡）`,
+      d.cards === prev.cards, `${prev.cards} → ${d.cards}`);
+    gate.check(`第${round}轮：切双栏后 storage 组数不变（渲染不写数据）`,
+      d.stored.length === prev.stored.length, `${prev.stored.length} → ${d.stored.length}`);
+
+    if (await toSingle.count()) { await toSingle.click(); await page.waitForTimeout(1800); }
+    const s = await probe(`第${round}轮 单栏`);
+    gate.check(`第${round}轮：切回单栏后 UI 卡片数不变`, s.cards === d.cards, `${d.cards} → ${s.cards}`);
+    gate.check(`第${round}轮：切回单栏后 storage 组数不变`, s.stored.length === d.stored.length,
+      `${d.stored.length} → ${s.stored.length}`);
+    prev = s;
+  }
+
+  gate.report('布局切换不产生空壳会话（v1.22.0 无墓碑模型）');
+} catch (e) {
+  console.error('\n💥 执行异常:', e.message);
+  gate.check('脚本执行未抛异常', false, e.message);
+  gate.report('布局切换不产生空壳会话（v1.22.0 无墓碑模型）');
 } finally {
-  await ctx.close();
+  try { await ctx.close(); } catch { /* 关不掉不影响判定 */ }
 }

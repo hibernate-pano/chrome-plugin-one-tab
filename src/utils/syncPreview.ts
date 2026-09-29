@@ -1,5 +1,5 @@
 import type { TabGroup } from '@/types/tab';
-import { mergeOpStamped } from '@/utils/opStampMerge';
+import { mergeOpStamped } from '@/core/opStampMerge';
 
 export interface SyncPreviewSummary {
   additions: number;

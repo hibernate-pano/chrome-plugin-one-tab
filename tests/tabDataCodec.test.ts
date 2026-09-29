@@ -27,7 +27,7 @@ before(async () => {
 
 describe('tabDataCodec: tab 印记上云往返', () => {
   it('序列化携带 lastOp（device + seq 双字段）', async () => {
-    const { serializeTab } = await import('@/utils/tabDataCodec');
+    const { serializeTab } = await import('@/core/tabDataCodec');
     const tab = {
       id: 't1', url: 'https://a.com', title: 'A',
       createdAt: '2026-01-01T00:00:00Z', lastAccessed: '2026-01-01T00:00:00Z',
@@ -42,7 +42,7 @@ describe('tabDataCodec: tab 印记上云往返', () => {
   });
 
   it('无印记的 tab 序列化为 null（老客户端兼容：NULL 视为最小值）', async () => {
-    const { serializeTab } = await import('@/utils/tabDataCodec');
+    const { serializeTab } = await import('@/core/tabDataCodec');
     const data = serializeTab({
       id: 't1', url: 'https://a.com', title: 'A',
       createdAt: '2026-01-01T00:00:00Z', lastAccessed: '2026-01-01T00:00:00Z',
@@ -52,7 +52,7 @@ describe('tabDataCodec: tab 印记上云往返', () => {
   });
 
   it('反序列化还原 lastOp → tab.lastOp', async () => {
-    const { deserializeTab } = await import('@/utils/tabDataCodec');
+    const { deserializeTab } = await import('@/core/tabDataCodec');
     const tab = deserializeTab({
       id: 't1', url: 'https://a.com', title: 'A',
       created_at: '2026-01-01T00:00:00Z', last_accessed: '2026-01-01T00:00:00Z',
@@ -63,7 +63,7 @@ describe('tabDataCodec: tab 印记上云往返', () => {
   });
 
   it('云端行无印记字段（老数据/老客户端写入）→ lastOp 为 undefined（EMPTY_STAMP 语义）', async () => {
-    const { deserializeTab } = await import('@/utils/tabDataCodec');
+    const { deserializeTab } = await import('@/core/tabDataCodec');
     const tab = deserializeTab({
       id: 't1', url: 'https://a.com', title: 'A',
       created_at: '2026-01-01T00:00:00Z', last_accessed: '2026-01-01T00:00:00Z',
@@ -72,7 +72,7 @@ describe('tabDataCodec: tab 印记上云往返', () => {
   });
 
   it('往返一致：serialize → deserialize 保留印记与 isDeleted', async () => {
-    const { serializeTab, deserializeTab } = await import('@/utils/tabDataCodec');
+    const { serializeTab, deserializeTab } = await import('@/core/tabDataCodec');
     const original = {
       id: 't1', url: 'https://a.com/x', title: 'A',
       createdAt: '2026-01-01T00:00:00Z', lastAccessed: '2026-01-02T00:00:00Z',
@@ -87,7 +87,7 @@ describe('tabDataCodec: tab 印记上云往返', () => {
   });
 
   it('危险协议（javascript:）→ 反序列化返回 null（云端污染防线保留）', async () => {
-    const { deserializeTab } = await import('@/utils/tabDataCodec');
+    const { deserializeTab } = await import('@/core/tabDataCodec');
     const tab = deserializeTab({
       id: 't1', url: 'javascript:alert(1)', title: 'x',
       created_at: '2026-01-01T00:00:00Z', last_accessed: '2026-01-01T00:00:00Z',
@@ -96,7 +96,7 @@ describe('tabDataCodec: tab 印记上云往返', () => {
   });
 
   it('loading:// 伪装 URL 带标题 key 参与去重 → 原样保留 url 与 title', async () => {
-    const { deserializeTab } = await import('@/utils/tabDataCodec');
+    const { deserializeTab } = await import('@/core/tabDataCodec');
     const tab = deserializeTab({
       id: 't1', url: 'loading://page', title: 'loading tab',
       created_at: '2026-01-01T00:00:00Z', last_accessed: '2026-01-01T00:00:00Z',

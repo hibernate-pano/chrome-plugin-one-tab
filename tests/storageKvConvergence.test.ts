@@ -2,7 +2,7 @@
 //
 // 覆盖：
 // - 键常量单源：STORAGE_KEYS 全量字面值锁定 + STORAGE_VERSION + MIGRATION_KEYS 同源引用
-// - 原位置转发同一性：@/storage/* 与 @/storage-kv/* 导出同一函数引用
+// - driver 单源唯一性：drivers 只剩 @/storage-kv/* 一处实现，adapter 直连其单例
 // - 门面 re-export 同一性：@/utils/storage 的 STORAGE_KEYS 与共享单源同一引用
 // - sharedStringStorage 三环境语义（扩展 chrome.storage / 网页 localStorage / 双无降级）
 // - 双路径语义保留：防抖 setGroups（last-write-wins 合并）vs 直写 setGroupsImmediate
@@ -162,15 +162,24 @@ describe('S2 原位置转发同一性（调用方 import 不动）', () => {
     }
   });
 
-  it('drivers 旧路径与新路径导出同一对象', async () => {
-    const oldIdb = await import('@/storage/indexedDbClient');
-    const newIdb = await import('@/storage-kv/indexedDbClient');
-    assert.equal(oldIdb.indexedDbDriver, newIdb.indexedDbDriver);
-    assert.equal(oldIdb.isIndexedDbAvailable, newIdb.isIndexedDbAvailable);
-    const oldLs = await import('@/storage/localStorageFallback');
-    const newLs = await import('@/storage-kv/localStorageFallback');
-    assert.equal(oldLs.localStorageDriver, newLs.localStorageDriver);
-    assert.equal(oldLs.isLocalStorageAvailable, newLs.isLocalStorageAvailable);
+  it('drivers 已收敛为单源：storageAdapter 直连 storage-kv 的 driver 单例', async () => {
+    const idb = await import('@/storage-kv/indexedDbClient');
+    const ls = await import('@/storage-kv/localStorageFallback');
+    // 旧路径（@/storage/indexedDbClient、@/storage/localStorageFallback）已物理删除，
+    // drivers 只剩 storage-kv 一处实现。因此这里锁的是「单例唯一」而不是「双路径同引用」：
+    // 同一模块重复 import 必须给出同一 driver 对象，防止有人再复制一份实现。
+    const idbAgain = await import('@/storage-kv/indexedDbClient');
+    const lsAgain = await import('@/storage-kv/localStorageFallback');
+    assert.equal(idb.indexedDbDriver, idbAgain.indexedDbDriver, 'indexedDbDriver 必须是单例');
+    assert.equal(ls.localStorageDriver, lsAgain.localStorageDriver, 'localStorageDriver 必须是单例');
+    // 且 adapter 选中的后端必须与实际可用的 driver 一致（本环境无 indexedDB → 落 localStorage）
+    const { getActiveBackend, initStorage } = await import('@/storage-kv/storageAdapter');
+    assert.equal(idb.isIndexedDbAvailable(), false, 'node 测试环境没有 indexedDB');
+    assert.equal(ls.isLocalStorageAvailable(), true, 'window.localStorage 桩应可用');
+    // backend 是懒初始化的：必须先走一次 initStorage（否则拿到的是未初始化的 null），
+    // 这正是下面那条「经由旧路径的 kv 读写」用例断言 localStorage 的前提。
+    await initStorage();
+    assert.equal(getActiveBackend(), 'localStorage');
   });
 
   it('经由旧路径的 kv 读写落盘可用（localStorage 后端）', async () => {
@@ -268,7 +277,7 @@ describe('S2 双路径语义保留（防抖 setGroups vs 直写 setGroupsImmedia
 
 describe('S2 supabase 改线冒烟', () => {
   it('supabase 模块在共享存储改线后仍可初始化', async () => {
-    const mod = await import('@/utils/supabase');
+    const mod = await import('@/utils/supabaseFacade');
     assert.ok(mod.supabase, 'supabase client 应成功创建');
     assert.equal(typeof mod.isSupabaseConfigured, 'function');
     assert.equal(typeof mod.supportsOpStamp, 'function');

@@ -7,6 +7,10 @@
  *
  * 运行前需先构建 dist：pnpm build
  * 运行：node scripts/e2e-sync-test.mjs
+ *
+ * ── 凭据来源（2026-09-29 修）──
+ * 收尾清理需要 VITE_SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY：**优先读 process.env，
+ * 缺失才回退读 .env / .env.local**（共享 loadEnv）。变量名与 .env 里的一致，没有改。
  */
 
 import { chromium } from 'playwright';
@@ -16,8 +20,8 @@ import { join, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { randomUUID } from 'node:crypto';
 import { createClient } from '@supabase/supabase-js';
-import { readFileSync } from 'node:fs';
 import { dismissOnboarding, LOGIN_TIMEOUT_MS } from './e2e-helpers.mjs';
+import { accountMarker, loadEnv } from './e2e-support.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = resolve(__dirname, '..');
@@ -25,6 +29,7 @@ const DIST_PATH = join(PROJECT_ROOT, 'dist');
 
 const TEST_EMAIL = `e2e-sync-${randomUUID().slice(0, 8)}@test.tapstack.dev`;
 const TEST_PASSWORD = 'SyncTest#2026!';
+console.log(accountMarker(TEST_EMAIL)); // 供 run-e2e 收尾统一清理（脚本自己也会清一次，幂等）
 
 const EXTENSION_ID_CACHE = new Map();
 
@@ -58,22 +63,9 @@ async function waitForSessionCount(page, expected) {
   throw new Error(`等待会话数=${expected} 超时`);
 }
 
-/** 读 .env 键值 */
-function readEnvFile(path) {
-  const env = {};
-  const text = readFileSync(path, 'utf8');
-  for (const line of text.split(/\r?\n/)) {
-    const l = line.trim();
-    if (!l || l.startsWith('#')) continue;
-    const i = l.indexOf('=');
-    if (i > 0) env[l.slice(0, i)] = l.slice(i + 1);
-  }
-  return env;
-}
-
-/** 清理测试账号及其云端数据（admin 权限直连数据库）*/
+/** 清理测试账号及其云端数据（admin 权限直连数据库）。凭据 process.env 优先。*/
 async function cleanupTestUser(email) {
-  const env = { ...readEnvFile(join(PROJECT_ROOT, '.env')), ...process.env };
+  const env = loadEnv({ cwd: PROJECT_ROOT });
   const url = env.VITE_SUPABASE_URL;
   const serviceKey = env.SUPABASE_SERVICE_ROLE_KEY;
   if (!url || !serviceKey) {

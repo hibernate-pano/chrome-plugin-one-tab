@@ -1,6 +1,34 @@
 # TapStack V2 执行计划（唯一指导源）
 
-> 版本：v1.0 / 日期：2026-09-26 / 负责人决策已锁定 / 基线：`v1.21.0`
+> ⚠️ **部分作废声明（2026-09-29，v1.22.0 起）**
+>
+> 本文成文于「墓碑 7 天生命周期 / 回收站」模型之下。`v1.22.0`（提交 `bdad42d`，2026-09-29）**彻底移除了墓碑体系**：删除即物理移除，无回收站、不可恢复。因此凡以「墓碑 7 天可恢复」为前提的内容已失效。
+>
+> **本文不重写**——Yjs 同步重构的规划大部分仍然有效。下表只划掉失效部分，未列出者按有效对待。
+>
+> | 章节 | 状态 | 说明 |
+> |---|---|---|
+> | §1 决策 D3（墓碑云端保留 7 天） | ❌ 已被推翻 | 新模型：云端只把对应行 `UPDATE` 成 `is_deleted=true` 作为**跨端删除广播载体**（该行的加密 `tabs_data` 仍原样留在 Supabase，30 天后才整行物理删除），期间**没有任何入口可以查看或恢复它**。30 天后由 `purgeExpiredCloudTombstones`（`src/utils/supabase/upload.ts:825`，随上传执行）物理删除整行。**没有 7 天恢复窗口。** D1 / D2 仍有效。 |
+> | §2 基线现状 | ⚠️ 历史快照 | 描述的是 v1.21.0 状态。Yjs 影子 / 单写者收口部分仍有效；「墓碑 `is_deleted` 防复活」一句已被新模型取代。 |
+> | §3 目标架构图第 34 行、不变式 3 | ❌ 作废 | 「墓碑 7 天清理」「删除 = Y DeleteSet + 墓碑行，7 天后物理清除」不再成立。 |
+> | §4.1 Y-Schema 中的 `is_deleted` / `deletedAt` | ❌ 字段已作废 | `src/core/ydoc.ts` 当前**不含**这两个字段（2026-09-29 核实）。 |
+> | §5 墓碑 7 天生命周期（§5.1–§5.4、T1–T4） | ❌ 整节作废 | 回收站、7 天 TTL、`purgeGroup` 手动恢复路径随 v1.22.0 一并废除。 |
+> | §6 P0 / P1 | ✅ 仍然有效 | 已完成。 |
+> | §6 P2 | ⚠️ 部分作废 | 日志管道（push/pull、触发器旁路、存量迁移）有效；「T1–T4 墓碑用例全绿」作废（T1–T4 已不存在）；迁移文件已实际落地，见文末事实改正。 |
+> | §6 P3 / P4 | ⚠️ 部分作废 | legacy 下线、体积与性能打磨有效；P4 的「删除 7 天文案三处一致」作废（已无 7 天文案）。 |
+> | §7 测试策略 | ⚠️ 部分作废 | 「墓碑状态机 / expires 计算 / 新增 T1–T4」作废，其余有效。 |
+> | §8 文件清单 | ⚠️ 部分作废 | `src/core/tombstone.ts` 在当前代码树中不存在；其余所列文件均已核实存在。 |
+> | §9 风险表「墓碑时钟漂移」 | ❌ 作废 | 新模型无墓碑时钟（删除时刻仅用于云端行 TTL 龄期基准，不参与同步仲裁）。 |
+> | §10 Backlog「墓碑保留时长可配置（当前写死 7 天）」 | ❌ 作废 | 前提（7 天墓碑）已不存在。云端删除标记行 TTL 现写死 30 天。 |
+> | §11 里程碑 M1 | ❌ 事实已改 | 见文末事实改正。 |
+>
+> **已就地改正的事实错误**（无需读本声明，正文即准确）：
+>
+> - §5 状态栏原称「新建 `src/core/tombstone.ts`（7 天常量 + sweep 纯函数）+ `tests/tombstone.test.ts`（12 用例）」——**这两个文件在当前代码树中不存在**（`ls` 核实）。无墓碑重写时未落地，相关常量随 1.22.0 一起消失。
+> - §6 P0 验证行与验收行原写「334 单测」——当前基线为 **368 个单测**。
+> - §11 M1 原写「`v1.22.0`，Y 对账全绿，灰度 100%」——实际 `v1.22.0` 发布的是**废除墓碑体系**（见 `CHROMEWEBSTORE.md` 版本历史表的 1.22.0 行），不是 P1 转正。P1 对账仍在观察窗内。
+
+> 版本：v1.1 / 日期：2026-09-29（v1.0 成文 2026-09-26，基线 `v1.21.0`） / D3 决策已被 v1.22.0 推翻，其余决策仍锁定
 > 与 `docs/rebuild-plan.md` 的关系：rebuild-plan 是方向文档，本文是可执行计划。本文与之冲突处以本文为准。
 > 原则：绞杀式演进，每期独立可发版；Spec-First，先验收标准后实现；不搞大爆炸重写；UI 交互冻结。
 
@@ -10,11 +38,13 @@
 |---|---|---|---|
 | D1 | 恢复码 UX | 优先级低，有时间再做 | E2EE 只做到“接口预留 + 明文现状”，不做恢复码 / 二维码递送 / KEK 流程，相关工作全部移入 V2-Backlog |
 | D2 | 外部实时共编 | 非刚需 | 否决 y-websocket 自建、Workers DO、托管同步服务。同步管道唯一方案：Supabase 上自建 Y-Update log（HTTPS 拉取 + Broadcast 只发通知）。`sync.ts` 保留传输抽象但不实现第二种传输 |
-| D3 | 墓碑云端保留 | 最多 7 天 | 所有墓碑（组级 / tab 级）自 `deletedAt` 起 7 天后物理清除；客户端与服务端各做一道清理，互为兜底。删除语义对外承诺为“7 天内可恢复，7 天后彻底消失” |
+| D3 | 墓碑云端保留 | ~~最多 7 天~~ ❌ **已被 v1.22.0 推翻** | 原结论（7 天 TTL、7 天内可恢复）作废。现行做法：删除即物理移除；云端仅把行标成 `is_deleted=true` 作跨端删除广播，30 天 TTL（`purgeExpiredCloudTombstones`）后物理清除，无恢复窗口。**做 P2 日志管道时不要照搬本行。** |
 
 非目标（V2 不做）：UI 改版、交互改动、共编 presence / 光标、多设备 E2EE 完整闭环、恢复码 UX、自建 websocket 运维、Automatmerge 替换 Yjs。
 
 ## 2. 基线现状（v1.21.0，从哪出发）
+
+> ⚠️ 历史快照：以下描述的是 v1.21.0 的状态。其中「墓碑 `is_deleted` 防复活」一句已被 v1.22.0 取代（云端 `is_deleted` 行仍在，但语义从「可恢复墓碑」变成「30 天跨端删除广播载体」）；其余（单写者收口、Yjs 影子、同步表、已知债）仍然准确。
 
 - 同步模型：整组 JSONB 快照 + `opStamp` 全序决胜 + DB 触发器守卫（严格 `<`）+ 墓碑 `is_deleted` 防复活。
 - 本地写路径已收口：UI → `sendMutation` → SW 侧 `mutationHandlers`（journal→stamp→apply→setGroups→scheduleUpload），唯一同步入口 `syncEngine`。见 `src/store/slices/tabSlice.ts` 头注释。
@@ -31,16 +61,18 @@ popup / Web（只读本地 Dexie 视图，瞬间响应）
 core（Y.Doc 真相源 + Dexie 物化视图，唯一语义实现）
    │ Y-Update 增量（明文，V2 不加密；cryptoSlot.encryptor 透传预留）
    ▼
-Supabase（sync_updates append-only + sync_snapshots compact + 墓碑 7 天清理）
+Supabase（sync_updates append-only + sync_snapshots compact + ~~墓碑 7 天清理~~ ❌见下注）
    ▲ Broadcast 只发“有新 seq”通知，拉取走 HTTPS
 SW（无状态搬运工，可随时被杀，无常驻状态）
 ```
+
+> ❌ 图注「墓碑 7 天清理」已作废（v1.22.0）：无墓碑、无 7 天 TTL。现行做法是删除即物理移除，云端仅留 `is_deleted=true` 行作跨端删除广播，30 天后物理清除（`purgeExpiredCloudTombstones`，随上传执行）。P2 落地时按此改写，不引入清理 job。
 
 关键不变式：
 
 1. UI 永远只读本地，不等待网络；无网络时全功能可用（除跨端同步）。
 2. 并发在数学上可合并，不再有输家；`opStamp` 退化为 Y 事务内的排序提示，不再是仲裁者。
-3. 删除 = Y DeleteSet + 墓碑行，7 天后物理清除；清除前恢复 = 普通 upsert。
+3. ~~删除 = Y DeleteSet + 墓碑行，7 天后物理清除；清除前恢复 = 普通 upsert。~~ ❌ **已作废（v1.22.0）**：改为「删除即物理移除，无恢复路径」。组删除靠 `pendingDeleteIds` 队列 → 云端行 `is_deleted` 标记广播；标签增删靠**组级 LWW 整组覆盖**广播。已知代价：两台设备同时编辑同一会话，后保存方整组赢。
 4. SW 可杀：`withYDoc()` 短命会话（建 Doc → y-indexeddb 载入 → 单事务应用 → 取 update → 销毁），Doc 不常驻内存。
 5. 双端语义只有一份：Web 与扩展共用 `src/core`（搬运层除外），统计、过滤、墓碑判定不允许各写一份。
 
@@ -68,14 +100,17 @@ SW（无状态搬运工，可随时被杀，无常驻状态）
 
 ## 5. 墓碑 7 天生命周期（D3 落地细则）
 
+> ❌ **整节作废（v1.22.0，2026-09-29）**：墓碑体系已彻底移除，回收站 / 7 天 TTL / `purgeGroup` 手动恢复路径全部不存在。本节仅作历史记录保留，**不要按它实现任何东西**。现行删除语义见 `README.md` 头部与 `docs/dev-plan-2026-09-27.md` 顶部状态声明。
+
 > 🟡 客户端地基完成（2026-09-26）：`TabGroup/Tab/TabData/SupabaseTabGroup` 加 `deletedAt/deleted_at`；
 > `mutationOps` 7 处墓碑盖戳 + 2 处恢复清空；tabSlice 5 处乐观墓碑盖戳；
 > codec 往返；Y recs + 翻译携带；`probe.supportsDeletedAt`（PGRST204 口径）；
 > `markCloudGroupsAsDeleted` 双分支带 `deleted_at`（缺列省略，对端回退 updatedAt）；
-> download 回填；新建 `src/core/tombstone.ts`（7 天常量 + sweep 纯函数）+ `tests/tombstone.test.ts`（12 用例）；
+> download 回填；~~新建 `src/core/tombstone.ts`（7 天常量 + sweep 纯函数）+ `tests/tombstone.test.ts`（12 用例）~~
+> **（事实改正 2026-09-29：这两个文件在当前代码树中不存在——无墓碑重写时未落地，7 天常量随 1.22.0 一起消失）**；
 > audit 纳入 deletedAt 比对；服务端 additive 迁移 `20260926090000_tombstone_expiry.sql`（迁移脚本 dry-run 已识别）；
 > 定时清理为 `supabase/manual/tombstone_expiry_cron.sql` 手动步骤（启用需负责人三确认，不自动执行）。
-> ⏳ 待 P2：sweep 执行接线（需经单写者 sweepExpired op）+ cron 启用确认。
+> ⏳ 待 P2：sweep 执行接线（需经单写者 sweepExpired op）+ cron 启用确认。**（作废：1.22.0 后已无 sweep，清理改由 `purgeExpiredCloudTombstones` 30 天 TTL 承担）**
 
 ### 5.1 定义
 
@@ -117,14 +152,14 @@ SW（无状态搬运工，可随时被杀，无常驻状态）
 > - 全仓 50 文件 339 处 `console.*` 收口；eslint 新增 `no-console` + `no-restricted-imports(syncUtils.legacy)` 双门禁
 > - 测试 infra 根因修复：`--import tests/_register-loader.mjs` 全局预装 loader；loader stub 改注入式（旧跨线程 globalThis 永为 undefined）；`log.ts` import.meta 安全访问
 > - `tabSlice.ts` 943→883行（纯函数抽 `tabSliceHelpers.ts`）；`SyncButton.tsx` 682→590行（展示层抽 `syncPreviewView.tsx`）；legacy 头加 P3 删除日期
-> - 验证：type-check ✓ / lint ✓ / 334 单测 ✓ / vite build ✓；体积门见 y-bundle 报告（Y 增量仍 ≤120KB）
+> - 验证：type-check ✓ / lint ✓ / 334 单测 ✓（该数字为 2026-09-26 当时快照；**当前基线 368 单测**，2026-09-29 核实）/ vite build ✓；体积门见 y-bundle 报告（Y 增量仍 ≤120KB）
 
 - 目标：为 V2 腾出手，不改同步语义，纯结构。
 - 改动：
   - `upload.ts` 按“会话鉴权 / 上传 / 探活重试”拆三模块，`console.*` 全部收口到 `src/utils/errorHandler.ts`，加 eslint `no-console`（production error/warn 除外白名单）。
   - `tabSlice.ts` 只留 Redux 纯状态，同步副作用搬 `syncEngine`；`SyncButton.tsx` 拆展示与调度。
   - `syncUtils.legacy.ts` 标记 `@deprecated 冻结`，禁止新引用（eslint `no-restricted-imports`），删除日期定 V2-P3。
-- 验收：`type-check + lint + 334 用例` 全绿；包体积不增；无行为变更（e2e 回归全过）。
+- 验收：`type-check + lint + 334 用例` 全绿（334 为当时快照，当前基线 368）；包体积不增；无行为变更（e2e 回归全过）。
 - 回滚：纯重命名与搬运，直接 revert。
 
 ### P1 影子转正：Y.Doc 升为主真相源候选（1–2 周）
@@ -201,10 +236,12 @@ SW（无状态搬运工，可随时被杀，无常驻状态）
 ## 11. 里程碑与发版
 
 - M0（P0 完成）：`v1.21.x` 补丁版，零行为变更。
-- M1（P1 完成）：`v1.22.0`，Y 对账全绿，灰度 100%。
+- M1（P1 完成）：~~`v1.22.0`，Y 对账全绿，灰度 100%~~ ❌ **事实改正（2026-09-29）**：版本号被实际发布内容抢占——`v1.22.0` 发的是**废除墓碑体系**（`bdad42d`），P1 转正尚未发生。Y 对账仍在观察窗（对账差异率 <0.1% 持续 7 天）。P1 转正的下一个版本号由发版时再定。
 - M2（P2 完成）：`v2.0.0`，日志管道上线，触发器旁路。
 - M3（P3+P4 完成）：`v2.1.0`，legacy 下线，触发器删除，文档封版。
 
 ---
 
 附：决策原文（Jasper 2026-09-26）→ D1 恢复码低优先级；D2 实时共编非刚需；D3 墓碑最多 7 天。本文已按此锁定，不再收集新需求，进码。
+
+> **D3 后续变更（2026-09-29）**：D3 已被 `v1.22.0` 推翻——删除语义改为「删除即物理移除，不进回收站、不可恢复」。云端仅保留 `is_deleted` 标记行 30 天作跨端删除广播，之后物理清除。D1 / D2 未变，仍锁定。

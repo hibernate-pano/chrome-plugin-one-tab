@@ -1,15 +1,32 @@
 /**
  * ⚠️ LEGACY——已废弃的 version + 时间戳 LWW 合并（mergeTabGroups）。
  * 隔离原因（S4 单写者收口）：生产同步已全部切到 OpStamp 全序决胜
- * （`@/utils/opStampMerge` 的 mergeOpStamped，唯一入口 syncEngine.downloadAndMerge）。
+ * （`@/core/opStampMerge` 的 mergeOpStamped，唯一入口 syncEngine.downloadAndMerge）。
  * 本文件的语义（低 version 直接丢弃、墓碑靠 version 翻牌）与新机制不同。
  *
- * ⛔ 禁接回生产：src/ 下任何生产代码不得 import 本模块（eslint no-restricted-imports 强制）。
- * 删除日期：V2-P3（见 docs/v2-plan.md §6 P3），届时整文件删除，回归用例迁移至 Y 路径。
- * 本模块仅供以下两类隔离单测做回归/回滚对比：
- *   - tests/tabTombstone.test.ts（墓碑传播回归）
- *   - tests/syncMergeSafety.test.ts（合并防线回归）
- * 针对它的单测**不代表**当前同步语义的保障（真正钉死见 tests/opStampMerge.test.ts
+ * ── 它现在到底在保护什么 ──────────────────────────────────────────
+ * 保留它的理由不是「还有人用」，而是它**锁住旧合并语义的行为**，让回归能对照：
+ * tests/syncMergeSafety.test.ts 用它做「新旧同输入、结果不同」的对照，
+ * tests/tabTombstone.test.ts 用它固定墓碑传播在旧模型下的样子。
+ * 只要这些对照还在，本文件就是「旧语义的可执行文档」——删了它，对照组就没了，
+ * 将来有人拿旧断言当新语义的证据时，就失去了反驳的支点。
+ *
+ * ── 什么时候可以删 ──────────────────────────────────────────────
+ * docs/v2-plan.md §6 的 P3：Y 路径（yShadow/yTranslate/yMaterialize）接管合并后，
+ * 旧 LWW 彻底退役，届时整文件删除，回归用例迁移到 Y 路径。
+ * 判据是「生产路径零引用 + 迁移后的对照用例已就位」，不是「看起来没人用了」。
+ *
+ * ── ⛔ 禁接回生产的守卫依赖两个前提（改动时务必同时确认）─────────────
+ * 1. .eslintrc.cjs:33-38 的 no-restricted-imports（group 里以 `syncUtils.legacy` 结尾的
+ *    glob pattern）确实生效，且 .eslintrc.cjs:47-52 的 override 只对 tests/** 关闭该规则。
+ * 2. package.json 的 lint 脚本是 `eslint src --ext ts,tsx ...`，即**只扫 src**。
+ *    两个前提同时成立，生产代码 import 本模块才会当场报错。
+ *
+ * 已知缝隙（改动 lint 脚本时必须一起想）：scripts/ 与任何新增的顶层目录不在
+ * `eslint src` 覆盖范围内，往那些目录放生产逻辑会绕过这条规则；CI 若改成
+ * `eslint .` 则本文件自身也会被扫到（规则本身不禁止 tests 之外的文件存在，只禁止 import）。
+ *
+ * 针对本模块的单测**不代表**当前同步语义的保障（真正钉死见 tests/opStampMerge.test.ts
  * 与 tests/opStampGuard.pg.test.ts）。
  *
  * mergeGroup / mergeTabs 保持模块私有（不 export），进一步缩小误接面。
@@ -20,7 +37,7 @@ import { logInfo, logWarn } from './log';
 /**
  * 智能合并本地和云端标签组（version + 时间戳 LWW）
  *
- * @deprecated 生产同步已全部切到 OpStamp 全序决胜（`@/utils/opStampMerge` 的 mergeOpStamped，
+ * @deprecated 生产同步已全部切到 OpStamp 全序决胜（`@/core/opStampMerge` 的 mergeOpStamped，
  * 入口 syncEngine.downloadAndMerge 与 syncPreview）。本函数已无生产调用点，仅作参考/回滚对比。
  * ⚠️ 其语义（低 version 直接丢弃、墓碑靠 version 翻牌）与新机制不同，不要再接回生产路径；
  * 针对它的单测**不代表**当前同步语义的保障（真正钉死见 tests/opStampMerge.test.ts 与

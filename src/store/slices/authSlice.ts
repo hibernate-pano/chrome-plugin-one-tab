@@ -1,6 +1,6 @@
 import { createSlice, createAsyncThunk } from '@reduxjs/toolkit';
 import { AuthState, User } from '@/types/tab';
-import { auth as supabaseAuth } from '@/utils/supabase';
+import { auth as supabaseAuth } from '@/utils/supabaseFacade';
 import { authCache } from '@/utils/authCache';
 import { logError, logInfo } from '../../utils/log';
 

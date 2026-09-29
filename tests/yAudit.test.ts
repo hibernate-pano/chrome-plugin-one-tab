@@ -7,6 +7,8 @@ import assert from 'node:assert/strict';
 import { register } from 'node:module';
 import { pathToFileURL, fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
+// 纯类型导入：编译期擦除，运行时零依赖，故不受「@/ 必须 register(loader) 后动态 import」的约束。
+import type { Tab, TabGroup } from '@/types/tab';
 
 globalThis.__TABSTACK_META_ENV__ = {
   VITE_SUPABASE_URL: 'https://stub.supabase.co',
@@ -29,7 +31,9 @@ before(async () => {
   audit = await import('@/core/yAudit');
 });
 
-function mkGroup(id: string, tabs: Array<Record<string, unknown>> = [], over: Record<string, unknown> = {}) {
+// tabs 入参是「只给关心的字段」的偏量：Partial<Tab> 而不是 Record<string, unknown>——
+// 后者让 t.id 取出来是 unknown，拼出来的 tab 根本不是 Tab（TS2322）。
+function mkGroup(id: string, tabs: Array<Partial<Tab>> = [], over: Partial<TabGroup> = {}): TabGroup {
   return {
     id,
     name: `G-${id}`,
@@ -37,7 +41,9 @@ function mkGroup(id: string, tabs: Array<Record<string, unknown>> = [], over: Re
       id: t.id ?? `t${i}`,
       url: t.url ?? 'https://a.com',
       title: t.title ?? 'A',
+      createdAt: t.createdAt ?? '2026-09-26T00:00:00.000Z',
       lastAccessed: t.lastAccessed ?? '2026-09-26T00:00:00.000Z',
+      pinned: t.pinned ?? false,
       ...(t.isDeleted === true ? { isDeleted: true } : {}),
     })),
     createdAt: '2026-09-26T00:00:00.000Z',
@@ -63,7 +69,7 @@ function toY(local: Array<ReturnType<typeof mkGroup>>) {
   }));
   const tabs: Array<Record<string, unknown>> = [];
   for (const g of local) {
-    for (const t of g.tabs as Array<Record<string, unknown>>) {
+    for (const t of g.tabs) {
       tabs.push({
         id: `${g.id}:${t.id}`,
         groupId: g.id,

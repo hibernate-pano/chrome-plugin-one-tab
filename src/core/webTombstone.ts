@@ -76,13 +76,37 @@ export function applyWebRemoveTab(
 }
 
 /**
- * Web 侧 stamp 铸造：OLD+1 严格递增，归属本设备。
+ * Web 侧 stamp 铸造：归属本设备，序号严格大于两个下界的较大者 +1。
+ *
+ * 两个下界缺一不可：
+ *   - `cloudSeq`——本行云端 last_op_seq。必须压过它，否则服务端 guard_tab_group_op_stamp
+ *     的严格 LT 守卫（NEW < OLD 即 RETURN NULL）会静默拒收这次写。
+ *   - `observedMaxSeq`——本账号在云端观察到的**全部**行 last_op_seq 的最大值，
+ *     即 Lamport 时钟分量。少了这一项，Web 就会铸出一个可能输给其它设备的号。
+ *
+ * 为什么第二项不是可有可无（这正是 v1.22.0 之后 P1 缺陷的形态）：
+ *   扩展端设备 E 离线时把某组推到 {E,12} 并**尚未上传**，云端行仍停在 8。
+ *   用户此时在 Web 上改名或删该组 → Web 读 OLD=8、铸 {W,9} → E 恢复联网后
+ *   core/opStampMerge.pickByStamp 判 {E,12} > {W,9}，本地组胜出、保留并整组覆盖回云端，
+ *   用户在网页上做的删除被静默撤销，且 1.22.0 起没有回收站。
+ *   扩展端 src/utils/supabase/upload.ts 的 markCloudGroupsAsDeleted 早已改用
+ *   `Math.max(本机 Lamport 号, 云端 OLD+1)` + bumpSeqIfLower；Web 侧曾长期停在
+ *   裸 OLD+1，同一个缺陷只修了一半。
+ *
+ * 诚实的边界：Lamport 只能压过「观察得到」的写入。扩展端完全离线、从未上传过的
+ * 本地印记，Web 在原理上无从得知，那种情况是 LWW 模型固有的最后写入方全胜，
+ * 属于 README 已声明的既定代价，不是选一个更大的数能修掉的。
+ *
  * @param deviceId 本设备 ID（与扩展 getDeviceId 同源）
- * @param cloudSeq 云端行 last_op_seq（null/缺失 = 迁移前数据 → 从 1 起）
+ * @param cloudSeq 本行云端 last_op_seq（null/缺失 = 迁移前数据 → 该下界按 0 算）
+ * @param observedMaxSeq 本账号云端全部行 last_op_seq 的最大值；缺省 0（无观测）
  */
 export function mintWebStamp(
   deviceId: string,
-  cloudSeq: number | null | undefined
+  cloudSeq: number | null | undefined,
+  observedMaxSeq?: number | null
 ): { d: string; s: number } {
-  return { d: deviceId, s: (typeof cloudSeq === 'number' ? cloudSeq : 0) + 1 };
+  const rowFloor = typeof cloudSeq === 'number' ? cloudSeq : 0;
+  const observed = typeof observedMaxSeq === 'number' ? observedMaxSeq : 0;
+  return { d: deviceId, s: Math.max(rowFloor, observed) + 1 };
 }

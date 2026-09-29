@@ -1,31 +1,42 @@
-// 高压力验证：多次快速本地移除 + 云端持续写入，后台轮询「先上传再下载」后本地意图不被覆盖。
+// 高压力验证：连续本地移除 + 云端持续写入，后台轮询「先上传再下载」后本地意图不被覆盖。
 //
-// 为什么重写（原版只有一个负向断言，功能全坏也会绿，见测试报告 §4.3）：
-//   原断言是 `live.length === 1 && live[0].tabs.length === 1` —— 若 upload/download 全变成
-//   空操作，B 本地本来就停在「1 会话 1 tab」→ 照样通过。「没被复活」与「根本没同步」不可区分。
+// 原脚本为什么重写过一轮（测试报告 §4.3）：原断言只有一个负向检查，若 upload/download
+// 全变成空操作，B 本地本来就停在删除后的状态，照样通过——「没被复活」与「根本没同步」
+// 不可区分。这层正控保留。
 //
-// 本版三层保护：
-//   正控① 每个被移除的 tab 在本地确实变成墓碑（按 tab id，逐个轮询）
-//   正控② 后台同步确实跑过：在 **SW 上下文**读存储（不挂载 popup，避免被
-//          AuthProvider 的挂载自动下载冒充），看到 A 后上传的新会话 + last_sync_time 前进
-//   正控③ 本地变更确实上传过：pending_upload 已清
-//   负控   90s 后所有被移除的 tab 仍是墓碑，且无常 URL 活跃副本
+// ── 2026-09-29 v1.22.0：墓碑体系废除（提交 bdad42d），删除即物理移除 ──
+// 原判据是「3 个被点开的 tab 仍是 isDeleted 墓碑」——旧世界语义。新模型下点开标签
+// 走 applyRemoveTab 物理移除（src/core/mutationOps.ts），本地写路径永不产墓碑；
+// 跨端复活防线是组级 LWW 整组覆盖（src/core/opStampMerge.ts）——A 端那份 4-tab
+// 的旧副本在 A 再上传时要么被预检剔出、要么输给 B 的新 stamp，赢不了。
 //
-// 流程：A 保存 4-tab 会话并上传 → B 登录下载（正控）→ B 点开 3 个标签逐个移除（正控×3）
+// 现在检验的不变量：
+//   正控① 每次点开后目标 tab 立即从整个 storage 物理消失（不是墓碑化）
+//   正控② 后台同步确实跑过（SW 上下文读 last_sync_time 前进，且拉到 A 的新会话）
+//   正控③ 本地变更确实上传过（pending_upload 已清）
+//   负控  90s 后该组只剩 1 个标签，3 个被移除的 URL 在整个 storage 里都不存在，
+//          且没有任何 isDeleted 墓碑 tab / 空壳组被同步带回来
+//
+// 流程：A 保存 4-tab 会话并上传 → B 登录下载 → B 点开 3 个标签逐个移除
 //      → A 再上传一个新会话（制造云端新数据）→ B 关 popup 等 90s → 在 SW 上下文验收
+//
+// 运行：node scripts/e2e-stress-no-resurrect.mjs（需先 pnpm build）
 
 import { randomUUID } from 'node:crypto';
 import {
   launchCtx, extId, readLocalGroups, readGroupsFromSW, readKvFromSW, kvValue,
-  manualUpload, downloadUntil, login, startContentSite, swEval,
+  manualUpload, downloadUntil, login, startContentSite,
 } from './e2e-helpers.mjs';
+import { accountMarker, createGate } from './e2e-support.mjs';
 
 const EMAIL = `e2e-st-${randomUUID().slice(0, 6)}@test.tapstack.dev`;
 const PWD = 'SyncTest#2026!';
+console.log(accountMarker(EMAIL)); // 供 run-e2e 收尾统一清理
 
-let ok = true;
-const fail = m => { console.log(m); ok = false; };
-const activeTabs = g => (g ? g.tabs.filter(t => !t.isDeleted) : []);
+const gate = createGate();
+
+const urlsInStorage = (groups, url) => groups.flatMap(g => g.tabs || []).filter(t => t.url === url);
+const tombstoneTabs = groups => groups.flatMap(g => g.tabs || []).filter(t => t.isDeleted === true);
 
 const ctxA = await launchCtx('A');
 const ctxB = await launchCtx('B');
@@ -55,37 +66,43 @@ try {
   await manualUpload(pageA);
   console.log('✅ A: 4-tab 会话已上云');
 
-  // ── B：登录 + 下载（正控：拿到 4 个活跃标签）────────────────────
+  // ── B：登录 + 下载（正控：拿到 4 个标签）─────────────────────────
   await ctxB.waitForEvent('serviceworker', { timeout: 20000 }).catch(() => {});
   const pageB = await ctxB.newPage();
   await pageB.goto(`chrome-extension://${id}/src/popup/index.html`);
   await login(pageB, EMAIL, PWD);
   const { groups: bInit } = await downloadUntil(
     pageB,
-    gs => gs.some(g => !g.isDeleted && activeTabs(g).length === 4),
-    'B 本地出现 4 活跃标签的会话'
+    gs => gs.some(g => g.tabs.length === 4),
+    'B 本地出现 4-tab 会话'
   );
-  const grp0 = bInit.find(g => !g.isDeleted && activeTabs(g).length === 4);
-  if (!grp0) { fail('❌ 前置失败：B 未拿到 A 的 4-tab 会话'); throw new Error('setup failed'); }
+  const grp0 = bInit.find(g => g.tabs.length === 4);
+  gate.check('前置：B 拿到 A 的 4-tab 会话', Boolean(grp0),
+    `实际 ${bInit.map(g => `${g.name}=${g.tabs.length}`).join(', ')}`);
+  if (!grp0) throw new Error('setup failed');
   const groupId = grp0.id;
-  const victims = activeTabs(grp0).slice(0, 3); // 连续移除 3 个
-  console.log(`✅ 正控① 通过: B 本地 "${grp0.name}" 4 个活跃标签；目标移除 ${victims.map(t => t.title).join(', ')}`);
+  const victims = grp0.tabs.slice(0, 3); // 连续移除 3 个，保留 1 个让组继续存在
+  console.log(`📊 B 本地 "${grp0.name}" 4 个标签；目标移除 ${victims.map(t => t.title).join(', ')}`);
 
-  // ── B：逐个点开移除 3 个标签（每次都要看到本地墓碑才算数）────────
+  // ── B：逐个点开 3 个标签（打开即物理移除）──────────────────────
   for (const v of victims) {
     const card = pageB.locator('.tab-group-card').filter({ hasText: grp0.name }).first();
     const btn = card.locator(`a[aria-label^="打开标签页: ${v.title}"]`).first();
-    if (!(await btn.count())) { fail(`❌ 找不到标签打开按钮: ${v.title}`); continue; }
-    await btn.click({ timeout: 15_000 });
-    let tombstoned = false;
+    if (!(await btn.count())) {
+      gate.check(`正控①：点开「${v.title}」`, false, '找不到标签打开按钮');
+      continue;
+    }
+    await btn.click({ timeout: 15000 });
+    let gone = false;
     for (let i = 0; i < 6; i++) {
       const gs = await readLocalGroups(pageB);
-      const g = gs.find(x => x.id === groupId);
-      if (g?.tabs.find(t => t.id === v.id)?.isDeleted === true) { tombstoned = true; break; }
+      if (urlsInStorage(gs, v.url).length === 0) { gone = true; break; }
       await pageB.waitForTimeout(1000);
     }
-    if (!tombstoned) fail(`❌ 正控① 失败: 点开「${v.title}」后本地未墓碑化（后续断言无意义）`);
-    else console.log(`   ✓ 正控①: 「${v.title}」已墓碑化（活跃 ${activeTabs((await readLocalGroups(pageB)).find(x => x.id === groupId)).length} tabs）`);
+    const now = await readLocalGroups(pageB);
+    const left = now.find(g => g.id === groupId);
+    gate.check(`正控①：点开「${v.title}」后本地物理消失（剩 ${left?.tabs.length ?? '-'} 个标签）`,
+      gone, gone ? '' : `该 URL 仍在 storage 中（组内剩 ${left?.tabs.length ?? '-'} 个标签）`);
     // 点开会真实打开浏览器标签页，清掉以免干扰
     for (const pg of ctxB.pages()) {
       if (pg !== pageB && !pg.url().startsWith('chrome-extension://')) await pg.close().catch(() => {});
@@ -99,8 +116,11 @@ try {
   for (const p of tabs) await p.close();
   await manualUpload(pageA);
   const aGroups = await readLocalGroups(pageA);
-  const newGroup = aGroups.find(g => !g.isDeleted && g.tabs.length === 2);
-  console.log(`✅ A 追加新会话 "${newGroup?.name}" 并上传（用于验证后台同步确实发生过）`);
+  const newGroup = aGroups.find(g => g.tabs.length === 2);
+  gate.check('前置：A 追加并上传了一个 2-tab 新会话', Boolean(newGroup),
+    `实际 ${aGroups.map(g => `${g.name}=${g.tabs.length}`).join(', ')}`);
+  if (!newGroup) throw new Error('setup failed');
+  console.log(`✅ A 追加新会话 "${newGroup.name}" 并上传（用于验证后台同步确实发生过）`);
 
   // ── B 关 popup，等 90s（30s 上传 alarm + 60s 同步 alarm）─────────
   const syncBefore = kvValue(await readKvFromSW(ctxB), 'last_sync_time');
@@ -113,36 +133,43 @@ try {
   const syncAfter = kvValue(kvAfter, 'last_sync_time');
   const pendingAfter = kvValue(kvAfter, 'pending_upload');
   const finalGroups = await readGroupsFromSW(ctxB);
-  if (!finalGroups.length) { fail('❌ 负控失败：SW 侧本地 groups 为空（数据丢失或读取失败）'); throw new Error('empty'); }
+  gate.check('正控：SW 侧本地数据非空（读失败/数据丢失一律判失败）', finalGroups.length > 0,
+    `组数=${finalGroups.length}`);
 
   const didSync = Boolean(syncAfter) && syncAfter !== syncBefore;
-  const sawNewSession = finalGroups.some(g => g.id === newGroup?.id && !g.isDeleted);
-  console.log(`📊 SW 侧: last_sync_time ${syncBefore || '-'} → ${syncAfter || '-'}（前进=${didSync}）| 看到 A 的新会话=${sawNewSession} | pending_upload=${pendingAfter}`);
-  if (!didSync) fail('❌ 正控② 失败：90s 内后台没有执行过同步（last_sync_time 未前进）→ 断言无意义');
-  else if (!sawNewSession) fail('❌ 正控② 失败：后台同步跑了但没拿到 A 的新会话（云端→本地未生效）');
-  else console.log('✅ 正控② 通过：后台同步确实执行并拉到了云端新数据');
-  if (pendingAfter === true) fail('❌ 正控③ 失败：本地变更仍未上传（pending_upload 始终为 true）');
-  else console.log('✅ 正控③ 通过：本地变更已上传（pending_upload 已清）');
+  const sawNewSession = finalGroups.some(g => g.id === newGroup.id);
+  console.log(`📊 SW 侧: last_sync_time ${syncBefore || '-'} → ${syncAfter || '-'}` +
+    `（前进=${didSync}）| 看到 A 的新会话=${sawNewSession} | pending_upload=${pendingAfter}`);
+  gate.check('正控②：90s 内后台执行过同步（last_sync_time 前进）', didSync,
+    '后台没跑同步 → 负控无意义');
+  gate.check('正控②：后台同步拉到 A 的新会话（云端→本地确实生效）', sawNewSession,
+    `没看到 ${newGroup.id}`);
+  gate.check('正控③：本地变更已上传（pending_upload 已清）', pendingAfter !== true,
+    `pending_upload=${pendingAfter}`);
 
-  // ── 负控：3 个被移除的标签全部仍是墓碑、无常 URL 活跃副本 ──────
+  // ── 负控：3 个被移除的标签没有被云端带回来 ──────────────────────
   const gFinal = finalGroups.find(g => g.id === groupId);
-  const stillTombstoned = victims.filter(v => gFinal?.tabs.find(t => t.id === v.id)?.isDeleted === true);
-  const dupActive = gFinal ? activeTabs(gFinal).filter(t => victims.some(v => v.url === t.url)).length : -1;
-  console.log(`📊 负控: 仍墓碑 ${stillTombstoned.length}/${victims.length} | 活跃 tab=${activeTabs(gFinal).length} | 同 URL 活跃副本=${dupActive}`);
-  if (stillTombstoned.length !== victims.length) fail(`❌ 负控失败: ${victims.length - stillTombstoned.length} 个被移除标签被云端复活`);
-  else if (dupActive > 0) fail(`❌ 负控失败: 出现 ${dupActive} 个同 URL 活跃副本（变体复活）`);
-  else console.log('✅ 负控通过: 3 个本地移除意图均未被云端覆盖');
+  const revived = victims.filter(v => urlsInStorage(finalGroups, v.url).length > 0);
+  const tombs = tombstoneTabs(finalGroups);
+  const shells = finalGroups.filter(g => !(g.tabs || []).length).length;
+  console.log(`📊 负控: 复活 ${revived.length}/${victims.length}` +
+    ` | 该组剩 ${gFinal?.tabs.length ?? '-'} 个标签 | 墓碑 tab ${tombs.length} | 空壳组 ${shells}`);
+  gate.check(`负控：${victims.length} 个被移除的标签都没有复活`, revived.length === 0,
+    `复活：${revived.map(v => v.title).join(', ')}`);
+  gate.check('负控：该组只剩 1 个标签（组级 LWW 让 B 的新版本赢）', gFinal?.tabs.length === 1,
+    `实际 ${gFinal?.tabs.length ?? '组不存在'}`);
+  gate.check('负控：同步后 storage 里没有墓碑 tab（新模型不产生墓碑）', tombs.length === 0,
+    `发现 ${tombs.length} 个`);
+  gate.check('负控：同步后没有空壳组（删除不产生空会话卡）', shells === 0,
+    `发现 ${shells} 个`);
 
-  console.log('\n' + '═'.repeat(62));
-  console.log(`测试账号: ${EMAIL}`);
-  console.log(`高压力（云端持续写入下本地移除不被复活）: ${ok ? '✅ 通过（含 3 项正控）' : '❌ 失败'}`);
-  console.log('═'.repeat(62));
-  process.exitCode = ok ? 0 : 1;
+  gate.report('高压力：云端持续写入下本地移除不被复活（v1.22.0 无墓碑模型）');
 } catch (e) {
   console.error('\n💥 执行异常:', e.message);
-  process.exitCode = 1;
+  gate.check('脚本执行未抛异常', false, e.message);
+  gate.report('高压力：云端持续写入下本地移除不被复活（v1.22.0 无墓碑模型）');
 } finally {
-  try { site.server.close(); } catch {}
-  try { await ctxA.close(); } catch {}
-  try { await ctxB.close(); } catch {}
+  try { site.server.close(); } catch { /* 关不掉不影响判定 */ }
+  try { await ctxA.close(); } catch { /* 同上 */ }
+  try { await ctxB.close(); } catch { /* 同上 */ }
 }

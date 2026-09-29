@@ -1,6 +1,6 @@
 # Chrome Web Store Listing — TapStack
 
-> Last Updated: 2026-09-26
+> Last Updated: 2026-09-29
 > 本文件是 Chrome Web Store 上架信息的单一事实来源（chrome-extensions skill 约定）。
 > 标注 ⚠️ 的字段需要发布者确认后才能提交。
 
@@ -45,7 +45,7 @@ Key features:
 · Session tools: rename, add notes, favorite, lock against accidental deletion, drag to reorder
 · Fast restore: reopen the whole session in a new window without disturbing the current one; click a single tab to jump straight back into work — it is then removed from the session
 · Search: find sessions by name, notes, tab title or URL, filter by domain, and sort by domain and more
-· Deletion protection: deleted sessions go to the recycle bin and can be restored anytime
+· Deletion protection: you confirm before anything is deleted (deleting all sessions always asks and shows the count), and a deleted session is permanently removed — there is no recycle bin and no undo
 · One-click cleanup: remove duplicate tabs and empty sessions
 · Import/export: OneTab text format, plus JSON backup
 · Cloud sync: sign in and your sessions sync automatically, so you can pick up your work on any device or browser
@@ -120,7 +120,7 @@ Productivity
 
 **Privacy Policy URL** [REQUIRED] ⚠️ 需确认
 
-<!-- 隐私政策页面源码：src/web/public/privacy.html（最后更新 2026-02-13）。
+<!-- 隐私政策页面源码：src/web/public/privacy.html（最后更新 2026-09-29）。
      提交前填入该页面实际部署的公网地址。 -->
 
 ## Distribution
@@ -146,11 +146,14 @@ https://github.com/hibernate-pano/chrome-plugin-one-tab
 ## Version History
 
 <!-- 每次提交到商店的版本都要加一条。 -->
+<!-- ⚠️ 1.21.1 的发布状态是本表唯一的空洞：它夹在「1.21.0 已上架」与「1.22.0 已提审」之间，
+     历史 changelog 写的是回收站功能（该功能已被 1.22.0 废除）。是否真的上传过需向 Chrome
+     Web Store 后台核对，核对前不要改写本行状态。 -->
 
 | Version | Date | Changes | Status |
 |---------|------|---------|--------|
 | 1.22.0 | 2026-09-29 | 简化删除模型：移除回收站与「墓碑」机制，删除即彻底清除（删除前仍有二次确认）；修复删除恢复不完整（标签计数虚高）；跨设备删除广播改由云端标记承载（30 天自动清理），标签增删按会话整组同步 | 已提交审核（2026-09-29） |
-| 1.21.1 | 2026-09-26 | 防误删加固：「清空全部会话」现在始终弹出确认并显示会话数量；回收站新增「全部恢复」，误删后可一键找回；界面细节打磨（菜单布局、按钮配色统一） | 待上传 |
+| 1.21.1 | 2026-09-26 | 防误删加固：「清空全部会话」现在始终弹出确认并显示会话数量；回收站新增「全部恢复」，误删后可一键找回；界面细节打磨（菜单布局、按钮配色统一） | ⚠️ **未确认**：该版本是否真的发布过，尚未澄清 |
 | 1.21.0 | 2026-09-26 | 误删保护升级：删除的会话/标签 7 天内可在回收站恢复，7 天后自动彻底清除；同步引擎结构手术（日志收口、单写者路径拆分），无功能变化 | Published（2026-09-26 当天过审） |
 | 1.20.2 | 2026-09-24 | 合并 1.19.3–1.20.2 一次性上架：同步可靠性加固（上传读回校验、软删失败阻断、落盘直写、彻底删除门禁）、点击体验（点开即响应、修复列表项闪现复活、防重复打开、成功操作静默）、增量同步探活（大幅降低流量）、网页版与扩展删除语义统一、RLS 性能优化 | Published |
 | 1.19.3 | 2026-09-13 | 同步数据安全修复：云端守卫改严格 `<`（标签删除/网页版写入不再被静默吞掉）、操作印记跨设备可比（换机/重装后可正常保存）、存量迁移接线；网页版登录持久化修复；导入数据现在会自动上云；依赖安全治理 | 未上架（并入 1.20.2） |

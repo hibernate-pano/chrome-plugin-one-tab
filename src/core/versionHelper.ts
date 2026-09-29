@@ -6,16 +6,6 @@ import { TabGroup } from '../types/tab';
  */
 
 /**
- * 递增标签组的版本号
- * @param group 标签组
- * @returns 新的版本号
- */
-export function incrementVersion(group: TabGroup): number {
-  const currentVersion = group.version || 1;
-  return currentVersion + 1;
-}
-
-/**
  * 为标签组添加版本号和更新时间
  * @param group 标签组
  * @param additionalFields 额外要更新的字段

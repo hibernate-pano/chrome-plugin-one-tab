@@ -20,7 +20,7 @@ before(async () => {
 
 describe('normalizeTabsData: 形状归一化', () => {
   it('数组直通：合法 TabData[] 原样返回（同一引用）', async () => {
-    const { normalizeTabsData } = await import('@/utils/normalizeTabsData');
+    const { normalizeTabsData } = await import('@/core/normalizeTabsData');
     const arr = [
       { id: '1', url: 'https://a.com', title: 'A', created_at: '2024-01-01', last_accessed: '2024-01-01' },
       { id: '2', url: 'https://b.com', title: 'B', created_at: '2024-01-02', last_accessed: '2024-01-02' },
@@ -31,20 +31,20 @@ describe('normalizeTabsData: 形状归一化', () => {
   });
 
   it('空数组也直通，不告警降级', async () => {
-    const { normalizeTabsData } = await import('@/utils/normalizeTabsData');
+    const { normalizeTabsData } = await import('@/core/normalizeTabsData');
     const arr: unknown[] = [];
     assert.strictEqual(normalizeTabsData(arr), arr);
   });
 
   it('wrapper 恢复：{ tabs: [...] } 返回内层数组', async () => {
-    const { normalizeTabsData } = await import('@/utils/normalizeTabsData');
+    const { normalizeTabsData } = await import('@/core/normalizeTabsData');
     const inner = [{ id: '1', url: 'https://a.com', title: 'A', created_at: '', last_accessed: '' }];
     const result = normalizeTabsData({ tabs: inner, name: '坏行' }, 'group-2');
     assert.strictEqual(result, inner);
   });
 
   it('wrapper 恢复：{ tabs_data: [...] } / { groups: [...] } / { tabsData: [...] } 均可恢复', async () => {
-    const { normalizeTabsData } = await import('@/utils/normalizeTabsData');
+    const { normalizeTabsData } = await import('@/core/normalizeTabsData');
     const a = [{ id: '1', url: 'u', title: 't', created_at: '', last_accessed: '' }];
     const b = [{ id: '2', url: 'u', title: 't', created_at: '', last_accessed: '' }];
     const c = [{ id: '3', url: 'u', title: 't', created_at: '', last_accessed: '' }];
@@ -54,13 +54,13 @@ describe('normalizeTabsData: 形状归一化', () => {
   });
 
   it('wrapper 无数组字段：降级为空数组', async () => {
-    const { normalizeTabsData } = await import('@/utils/normalizeTabsData');
+    const { normalizeTabsData } = await import('@/core/normalizeTabsData');
     assert.deepStrictEqual(normalizeTabsData({ foo: 'bar' }, 'group-3'), []);
     assert.deepStrictEqual(normalizeTabsData({ tabs: 'not-an-array' }, 'group-3'), []);
   });
 
   it('非数组降级：对象/null/字符串/数字/undefined → 空数组', async () => {
-    const { normalizeTabsData } = await import('@/utils/normalizeTabsData');
+    const { normalizeTabsData } = await import('@/core/normalizeTabsData');
     assert.deepStrictEqual(normalizeTabsData(null, 'group-4'), []);
     assert.deepStrictEqual(normalizeTabsData('random string', 'group-4'), []);
     assert.deepStrictEqual(normalizeTabsData(42, 'group-4'), []);
@@ -69,7 +69,7 @@ describe('normalizeTabsData: 形状归一化', () => {
   });
 
   it('contextId 缺省时不抛错', async () => {
-    const { normalizeTabsData } = await import('@/utils/normalizeTabsData');
+    const { normalizeTabsData } = await import('@/core/normalizeTabsData');
     assert.deepStrictEqual(normalizeTabsData('bad'), []);
   });
 });

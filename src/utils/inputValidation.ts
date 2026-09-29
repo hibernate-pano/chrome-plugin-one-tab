@@ -154,35 +154,6 @@ export function checkPasswordStrength(password: string): PasswordStrengthResult 
 }
 
 /**
- * URL验证
- */
-export function validateUrl(url: string): ValidationResult {
-  if (!url || typeof url !== 'string') {
-    return { isValid: false, error: 'URL不能为空' };
-  }
-
-  const sanitized = url.trim();
-
-  try {
-    const urlObj = new URL(sanitized);
-    
-    // 只允许HTTP和HTTPS协议
-    if (!['http:', 'https:'].includes(urlObj.protocol)) {
-      return { isValid: false, error: '只支持HTTP和HTTPS协议' };
-    }
-
-    // 检查危险字符
-    if (containsDangerousChars(sanitized)) {
-      return { isValid: false, error: 'URL包含非法字符' };
-    }
-
-    return { isValid: true, sanitized };
-  } catch {
-    return { isValid: false, error: 'URL格式不正确' };
-  }
-}
-
-/**
  * 通用文本清理
  */
 export function sanitizeText(text: string, maxLength: number = 1000): ValidationResult {
@@ -234,6 +205,21 @@ function containsDangerousChars(input: string): boolean {
  * - 现在严格按白名单生效：只有 http/https/ftp/about/loading 接受
  * - 显式黑名单（防漏检）：javascript:/data:/vbscript:/file:/blob:
  * - 返回合法 URL 字符串或 null（null 表示调用方应丢弃该 tab）
+ *
+ * ── 为什么这张表和 favicon 的表不一样（别合并）─────────────────────────
+ * 本表回答的是「这个地址能不能被**重新打开**」，不是「能不能被渲染」。
+ * - 放行 ftp:/about:/loading:：它们是合法的可导航地址，用户真的会开。
+ * - 放行 http:：明文 http 不代表可被劫持（页面内已由浏览器同源策略隔离），
+ *   但内网 http 站点是真实场景，收紧会把用户的内网页面全部丢掉。
+ * - 拒绝 file:/blob:：恢复会话 = 让扩展替用户去读本地文件 / 造同源 blob，
+ *   这是能力放大，不是 XSS。
+ * - 拒绝 chrome:/edge:/chrome-extension:（不在白名单里）：浏览器自己的页面
+ *   没有可复现的内容。这道门与 domain/tabGroup/filters.isInternalUrl 是**两道
+ *   正交的串联门**：本表按协议拒，isInternalUrl 按前缀拒。about: 是唯一同时被
+ *   两边提到、但答案相反的协议——本表放行（合法可导航），isInternalUrl 判内部
+ *   （不保存）。见该文件头注释。
+ * favicon 表（utils/faviconUtils.ts）答的是「能不能当 <img src>」，放行 data:、
+ * 拒绝 ftp:，答案天然相反。
  */
 const ALLOWED_TAB_PROTOCOLS = new Set(['http:', 'https:', 'ftp:', 'about:', 'loading:']);
 const DANGEROUS_TAB_PROTOCOLS = new Set([

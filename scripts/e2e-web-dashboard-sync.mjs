@@ -14,35 +14,32 @@
 //   ⑤ 扩展重新下载 → 确认网页版的删除意图生效（活跃列表里不再出现该会话）
 //
 // 运行：node scripts/e2e-web-dashboard-sync.mjs（需先 pnpm build && pnpm build:web）
+//
+// ── 凭据来源（2026-09-29 修）──
+// 需要 VITE_SUPABASE_URL / VITE_SUPABASE_ANON_KEY（SUPABASE_SERVICE_ROLE_KEY 可选，
+// 供收尾清理）。**优先读 process.env，缺失才回退读 .env / .env.local**（共享
+// loadEnv）；变量名与 .env 里的一致，没有改。原先只读文件，密钥来源写死在代码里，
+// CI 与其他环境无法注入。
 
 import { chromium } from 'playwright';
-import { mkdtempSync, readFileSync, existsSync, createReadStream, statSync } from 'node:fs';
+import { mkdtempSync, createReadStream, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve, extname } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { createServer } from 'node:http';
 import { createClient } from '@supabase/supabase-js';
 import { readLocalGroups } from './e2e-helpers.mjs';
+import { accountMarker, loadEnv } from './e2e-support.mjs';
 
 const DIST = resolve(process.cwd(), 'dist');
 const DIST_WEB = resolve(process.cwd(), 'dist-web');
 const EMAIL = `e2e-web-${randomUUID().slice(0, 6)}@test.tapstack.dev`;
 const PWD = 'SyncTest#2026!';
+console.log(accountMarker(EMAIL)); // 供 run-e2e 收尾统一清理
 const SEED_NAME = 'WEB-端到端-种子会话';
 const RENAMED = 'WEB-网页版改的名字';
 
-function env() {
-  const out = {};
-  for (const f of ['.env', '.env.local']) {
-    if (!existsSync(f)) continue;
-    for (const line of readFileSync(f, 'utf8').split('\n')) {
-      const m = line.match(/^\s*([A-Z_]+)\s*=\s*(.+)\s*$/);
-      if (m) out[m[1]] = m[2].trim();
-    }
-  }
-  return out;
-}
-const E = env();
+const E = loadEnv({ cwd: resolve(process.cwd()) });
 
 // 受控实验开关：给网页版注入最小 chrome.storage 垫片（用 localStorage 承载）。
 // 若注入后仪表盘能正常列出数据，则「登录不持久 = 复用扩展的 chrome.storage-only

@@ -14,33 +14,29 @@
 //   ③ A（老设备）下载后看到 B 的改名（没有被云端旧值回滚）
 //
 // 运行：node scripts/e2e-fresh-device-edit-wins.mjs（需先 pnpm build）
+//
+// ── 凭据来源（2026-09-29 修）──
+// 需要 VITE_SUPABASE_URL / VITE_SUPABASE_ANON_KEY（SUPABASE_SERVICE_ROLE_KEY 可选，
+// 供收尾清理）。**优先读 process.env，缺失才回退读 .env / .env.local**（共享
+// loadEnv）；变量名与 .env 里的一致，没有改。
 
 import { chromium } from 'playwright';
-import { mkdtempSync, readFileSync, existsSync } from 'node:fs';
+import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { createServer } from 'node:http';
 import { createClient } from '@supabase/supabase-js';
+import { accountMarker, loadEnv } from './e2e-support.mjs';
 
 const DIST = resolve(process.cwd(), 'dist');
 const EMAIL = `e2e-fresh-${randomUUID().slice(0, 6)}@test.tapstack.dev`;
 const PWD = 'SyncTest#2026!';
+console.log(accountMarker(EMAIL)); // 供 run-e2e 收尾统一清理
 const NAME_A = 'A-老设备起的名字';
 const NAME_B = 'B-新设备改的名字';
 
-function env() {
-  const out = {};
-  for (const f of ['.env', '.env.local']) {
-    if (!existsSync(f)) continue;
-    for (const line of readFileSync(f, 'utf8').split('\n')) {
-      const m = line.match(/^\s*([A-Z_]+)\s*=\s*(.+)\s*$/);
-      if (m) out[m[1]] = m[2].trim();
-    }
-  }
-  return out;
-}
-const E = env();
+const E = loadEnv({ cwd: resolve(process.cwd()) });
 
 function launchCtx(label) {
   const dir = mkdtempSync(join(tmpdir(), `tapstack-${label}-`));

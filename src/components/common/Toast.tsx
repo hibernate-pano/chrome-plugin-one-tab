@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 
 export type ToastType = 'success' | 'error' | 'info' | 'warning';
@@ -11,6 +11,14 @@ interface ToastProps {
   visible: boolean;
 }
 
+/**
+ * 进度条收缩动画的 keyframes。
+ * 原来是 setInterval(…, 60) 驱动一个 React state，只为了画一段 scaleX——
+ * 每个 toast 白白重渲染约 50 次。改成纯 CSS 动画后重渲染次数归零。
+ */
+const PROGRESS_KEYFRAMES =
+  '@keyframes tapstack-toast-progress { from { transform: scaleX(1); } to { transform: scaleX(0); } }';
+
 export const Toast: React.FC<ToastProps> = ({
   message,
   type = 'success',
@@ -20,39 +28,37 @@ export const Toast: React.FC<ToastProps> = ({
 }) => {
   const [isVisible, setIsVisible] = useState(visible);
   const [animation, setAnimation] = useState('animate-fadeIn');
-  const [progress, setProgress] = useState(100);
+
+  // onClose 每次渲染都是新的函数引用（ToastContext 里的箭头函数），
+  // 放进 effect 依赖会让「弹窗期间再来一个弹窗」把计时器重置、动画重播。
+  // 用 ref 取最新值，effect 只依赖 visible / duration。
+  const onCloseRef = useRef(onClose);
+  useEffect(() => {
+    onCloseRef.current = onClose;
+  });
 
   useEffect(() => {
     setIsVisible(visible);
-    if (visible) {
-      setAnimation('animate-fadeIn');
-      setProgress(100);
+    if (!visible) return;
 
-      const startedAt = Date.now();
-      const progressTimer = window.setInterval(() => {
-        const elapsed = Date.now() - startedAt;
-        const nextProgress = Math.max(0, 100 - (elapsed / duration) * 100);
-        setProgress(nextProgress);
-      }, 60);
+    setAnimation('animate-fadeIn');
 
-      const timer = setTimeout(() => {
-        setAnimation('animate-fadeOut');
-        window.clearInterval(progressTimer);
+    let fadeOutTimer: ReturnType<typeof setTimeout> | undefined = undefined;
 
-        setTimeout(() => {
-          setIsVisible(false);
-          if (onClose) onClose();
-        }, 300);
-      }, duration);
+    const dismissTimer = setTimeout(() => {
+      setAnimation('animate-fadeOut');
 
-      return () => {
-        clearTimeout(timer);
-        window.clearInterval(progressTimer);
-      };
-    }
-  }, [visible, duration, onClose]);
+      fadeOutTimer = setTimeout(() => {
+        setIsVisible(false);
+        onCloseRef.current?.();
+      }, 300);
+    }, duration);
 
-  if (!isVisible) return null;
+    return () => {
+      clearTimeout(dismissTimer);
+      if (fadeOutTimer !== undefined) clearTimeout(fadeOutTimer);
+    };
+  }, [visible, duration]);
 
   const getTypeStyles = () => {
     switch (type) {
@@ -122,39 +128,63 @@ export const Toast: React.FC<ToastProps> = ({
 
   const typeStyles = getTypeStyles();
 
+  // 错误要打断当前朗读（assertive），其余提示排队等空档（polite）。
+  const isAssertive = type === 'error';
+
+  // 外层 live region 永远挂载（不可见时只留一个空壳，不 display:none）：
+  // 读屏只播报「已经存在于无障碍树里的区域」的内容变化，
+  // 区域和文案同一帧插入的话多数读屏不会播报 —— 那就等于没有 aria-live。
   return createPortal(
-    <div className={`fixed right-4 top-4 z-[110] ${animation}`}>
-      <div
-        className={`pointer-events-auto relative min-w-[320px] max-w-[420px] overflow-hidden rounded-2xl border shadow-[0_20px_60px_rgba(15,23,42,0.18)] backdrop-blur ${typeStyles.shell}`}
-      >
-        <div className={`h-1 w-full ${typeStyles.accent}`} style={{ transform: `scaleX(${progress / 100})`, transformOrigin: 'left' }} />
-        <div className="flex items-start gap-3 px-4 py-4">
-          <div className={`mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl ${typeStyles.iconWrap}`}>
-            {getIcon()}
-          </div>
-          <div className="min-w-0 flex-1">
-            <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-400 dark:text-slate-500">
-              {type}
-            </div>
-            <p className="mt-1 text-sm font-medium leading-6 text-current">{message}</p>
-          </div>
-          <button
-            onClick={() => {
-              setAnimation('animate-fadeOut');
-              setTimeout(() => {
-                setIsVisible(false);
-                onClose?.();
-              }, 220);
+    <div
+      role={isAssertive ? 'alert' : 'status'}
+      aria-live={isAssertive ? 'assertive' : 'polite'}
+      aria-atomic="true"
+      className={`pointer-events-none fixed right-4 top-4 z-[110] ${isVisible ? animation : ''}`}
+    >
+      <style>{PROGRESS_KEYFRAMES}</style>
+
+      {isVisible && (
+        <div
+          className={`pointer-events-auto relative min-w-[320px] max-w-[420px] overflow-hidden rounded-2xl border shadow-[0_20px_60px_rgba(15,23,42,0.18)] backdrop-blur ${typeStyles.shell}`}
+        >
+          <div
+            className={`h-1 w-full ${typeStyles.accent}`}
+            style={{
+              transformOrigin: 'left',
+              animation: isVisible
+                ? `tapstack-toast-progress ${duration}ms linear forwards`
+                : 'none',
             }}
-            className="inline-flex h-8 w-8 items-center justify-center rounded-full text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-600 dark:hover:bg-slate-800 dark:hover:text-slate-200"
-            aria-label="关闭提示"
-          >
-            <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-            </svg>
-          </button>
+          />
+          <div className="flex items-start gap-3 px-4 py-4">
+            <div className={`mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl ${typeStyles.iconWrap}`}>
+              {getIcon()}
+            </div>
+            <div className="min-w-0 flex-1">
+              <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-400 dark:text-slate-500">
+                {type}
+              </div>
+              <p className="mt-1 text-sm font-medium leading-6 text-current">{message}</p>
+            </div>
+            <button
+              type="button"
+              onClick={() => {
+                setAnimation('animate-fadeOut');
+                setTimeout(() => {
+                  setIsVisible(false);
+                  onCloseRef.current?.();
+                }, 220);
+              }}
+              className="inline-flex h-8 w-8 items-center justify-center rounded-full text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-600 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-400 dark:hover:bg-slate-800 dark:hover:text-slate-200"
+              aria-label="关闭提示"
+            >
+              <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
+          </div>
         </div>
-      </div>
+      )}
     </div>,
     document.body
   );

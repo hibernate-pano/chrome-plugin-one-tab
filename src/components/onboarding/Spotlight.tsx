@@ -1,4 +1,5 @@
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useRef, useState, useCallback } from 'react';
+import { logWarn } from '@/utils/log';
 
 interface SpotlightProps {
     /** 目标元素的 CSS 选择器 */
@@ -7,6 +8,19 @@ interface SpotlightProps {
     padding?: number;
     /** 是否显示 */
     visible?: boolean;
+}
+
+/**
+ * 选区命中多个元素时（选择器用逗号并列了多个候选）取第一个真正可见的：
+ * 命中但零尺寸的节点画出来是一个看不见的高亮框，等同于没高亮。
+ */
+function firstVisibleMatch(targetSelector: string): Element | null {
+    const matches = document.querySelectorAll(targetSelector);
+    for (const match of Array.from(matches)) {
+        const rect = match.getBoundingClientRect();
+        if (rect.width > 0 && rect.height > 0) return match;
+    }
+    return null;
 }
 
 /**
@@ -19,18 +33,27 @@ export const Spotlight: React.FC<SpotlightProps> = ({
     visible = true,
 }) => {
     const [rect, setRect] = useState<DOMRect | null>(null);
+    // 选不中时只警告一次：MutationObserver 每次 DOM 变动都会重跑定位，
+    // 每次都 warn 会把控制刷满，真正的信号反而看不见。
+    const warnedSelectorRef = useRef<string | null>(null);
 
     // 计算目标元素位置
     const updatePosition = useCallback(() => {
         if (!targetSelector) {
             setRect(null);
+            warnedSelectorRef.current = null;
             return;
         }
 
-        const element = document.querySelector(targetSelector);
+        const element = firstVisibleMatch(targetSelector);
         if (element) {
             setRect(element.getBoundingClientRect());
+            warnedSelectorRef.current = null;
         } else {
+            if (warnedSelectorRef.current !== targetSelector) {
+                warnedSelectorRef.current = targetSelector;
+                logWarn('[Onboarding] Spotlight 选择器未命中任何可见元素:', targetSelector);
+            }
             setRect(null);
         }
     }, [targetSelector]);

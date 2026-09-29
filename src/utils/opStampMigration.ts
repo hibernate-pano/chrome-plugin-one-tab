@@ -14,7 +14,7 @@
  * 3. 归属诚实：印记代表「某台设备声称此实体处于此状态」，没有设备叫 legacy。
  */
 import type { TabGroup, Tab } from '@/types/tab';
-import { makeStamp } from '@/utils/opStamp';
+import { makeStamp } from '@/core/opStamp';
 
 export interface MigrationResult {
   groups: TabGroup[];

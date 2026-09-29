@@ -3,6 +3,7 @@
  * （原 src/utils/supabase.ts 对应节逐字搬运；verify* 原为模块私有，现导出供 upload 使用，门面不转出。）
  */
 import { supabase } from './client';
+import { compareStamps, EMPTY_STAMP } from '@/core/opStamp';
 import { logInfo } from '../log';
 
 // ── P0-1 上传读回校验（纯比对 + 读回验证，防服务端静默吞写） ───────────────
@@ -53,15 +54,52 @@ export function isSupersededByCloud(expect: UploadReadbackExpect, row: UploadRea
   return row.version > expect.version;
 }
 
+/**
+ * 本次「写活跃」是否输给了**更新的云端墓碑**（收敛，不是故障）。
+ *
+ * 背景：合并模式上传时每个活跃组都以 is_deleted=false 写出。若同一行的云端
+ * 版本是**另一台设备**写的墓碑、且它的 last_op_seq 更大，那么按全序
+ * （opStamp.compareStamps）本地本来就该认输——mergeOpStamped 对
+ * 「云端墓碑 vs 本地活跃」正是这条判据：云端印记大 → 本地组服从删除。
+ * 但上传层原本不知道这件事：它拿更旧的 stamp 去 upsert，服务端
+ * guard_tab_group_op_stamp 判 `NEW.last_op_seq < OLD.last_op_seq` → RETURN NULL
+ * 整行静默吞写（HTTP 200、无 error），紧接着 is_deleted 比对抛错 →
+ * upload 失败 → pending_upload 永不清 → downloadAndMerge 永远撞 upload_first
+ * → 该设备既传不上也下不来（后台闹钟每 60s 重试一次）。
+ *
+ * 口径与两处保持一致，缺一不可：
+ *   1. 只认「本次要写活跃、读回是墓碑」这一个方向；反方向（要写墓碑读回活跃）
+ *      永远是「墓碑未落盘」的故障，不能放过。
+ *   2. 云端墓碑**必须带印记**才算数：两侧任一无印记时服务端守卫是放行的
+ *      （守卫第 2 条「NULL 不是最小印记，是不知道」），那种情况下读回不一致
+ *      是真被吞写，必须报错。
+ * 上传侧已在 upsert **之前**用同一判据预检（见 upload.ts 的预检）把这类组
+ * 剔出本次写入；本函数是那条预检与 upsert 之间的竞态兜底。
+ */
+export function isConcededToCloudTombstone(
+  expect: UploadReadbackExpect,
+  row: UploadReadbackRow
+): boolean {
+  if (expect.isDeleted === true) return false;
+  if (row.is_deleted !== true) return false;
+  if (typeof row.last_op_seq !== 'number' || !row.last_op_device) return false;
+  return compareStamps(
+    { d: String(row.last_op_device), s: row.last_op_seq },
+    expect.lastOp ?? EMPTY_STAMP
+  ) > 0;
+}
+
 export function compareUploadReadback(
   expect: UploadReadbackExpect[],
   actual: UploadReadbackRow[],
   opts: { checkStamp: boolean; checkTombstone: boolean }
-): { ok: boolean; reason?: string; superseded?: string[] } {
+): { ok: boolean; reason?: string; superseded?: string[]; conceded?: string[] } {
   if (expect.length === 0) return { ok: true };
   const byId = new Map(actual.map(r => [r.id, r]));
   // 被更新一侧合法取代的组：不算失败，但要记下来给调用方看（见 isSupersededByCloud）
   const superseded: string[] = [];
+  // 输给更新的云端墓碑的组：同属收敛（见 isConcededToCloudTombstone）
+  const conceded: string[] = [];
   for (const e of expect) {
     const row = byId.get(e.id);
     if (!row) {
@@ -69,6 +107,10 @@ export function compareUploadReadback(
     }
     if (isSupersededByCloud(e, row)) {
       superseded.push(e.id);
+      continue;
+    }
+    if (opts.checkTombstone && isConcededToCloudTombstone(e, row)) {
+      conceded.push(e.id);
       continue;
     }
     if (opts.checkTombstone && row.is_deleted !== undefined && row.is_deleted !== null) {
@@ -96,7 +138,12 @@ export function compareUploadReadback(
       }
     }
   }
-  return superseded.length > 0 ? { ok: true, superseded } : { ok: true };
+  if (superseded.length === 0 && conceded.length === 0) return { ok: true };
+  return {
+    ok: true,
+    ...(superseded.length > 0 ? { superseded } : {}),
+    ...(conceded.length > 0 ? { conceded } : {}),
+  };
 }
 
 export async function verifyUploadReadback(
@@ -123,6 +170,12 @@ export async function verifyUploadReadback(
     logInfo(
       `[upload-verify] ${cmp.superseded.length} 个组被更新一侧合法取代（云端 version 更高），` +
         `按设计让先到的写入输，不计为失败：${cmp.superseded.join(', ')}`
+    );
+  }
+  if (cmp.conceded?.length) {
+    logInfo(
+      `[upload-verify] ${cmp.conceded.length} 个组输给了更新的云端墓碑（云端 last_op_seq 更大），` +
+        `按合并语义让本地认输，不计为失败（本地副本由下次下载合并物理移除）：${cmp.conceded.join(', ')}`
     );
   }
   logInfo(`[upload-verify] 读回校验通过（${expect.length} 组）`);

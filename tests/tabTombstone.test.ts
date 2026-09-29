@@ -216,7 +216,7 @@ describe('tabTombstone: 跨设备同 URL 不同 ID 的复活防护（URL 维度�
 
 describe('tabTombstone: 空组自动删除判断按活跃计数', () => {
   it('组内只剩墓碑 + 删除最后一个活跃 tab → 触发自动删除', async () => {
-    const { shouldAutoDeleteAfterTabRemoval } = await import('@/utils/tabGroupUtils');
+    const { shouldAutoDeleteAfterTabRemoval } = await import('@/core/tabGroupUtils');
 
     const group = makeGroup('g1', [
       makeTab('t1', 'https://a.com'),
@@ -228,7 +228,7 @@ describe('tabTombstone: 空组自动删除判断按活跃计数', () => {
   });
 
   it('组内仍有其他活跃 tab → 不触发自动删除', async () => {
-    const { shouldAutoDeleteAfterTabRemoval } = await import('@/utils/tabGroupUtils');
+    const { shouldAutoDeleteAfterTabRemoval } = await import('@/core/tabGroupUtils');
 
     const group = makeGroup('g1', [
       makeTab('t1', 'https://a.com'),
@@ -240,7 +240,7 @@ describe('tabTombstone: 空组自动删除判断按活跃计数', () => {
   });
 
   it('锁定组永不触发自动删除', async () => {
-    const { shouldAutoDeleteAfterTabRemoval } = await import('@/utils/tabGroupUtils');
+    const { shouldAutoDeleteAfterTabRemoval } = await import('@/core/tabGroupUtils');
 
     const group = makeGroup('g1', [makeTab('t1', 'https://a.com')], { isLocked: true });
 

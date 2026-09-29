@@ -1,15 +1,83 @@
 /**
  * S3 拆分 · download：下行链路（全量下载/设置下载，含解密归一化）。
- * 方法体为原 `sync` 对象对应成员逐字搬运（含缩进），仅对象壳更名；行为零变化。
+ * 方法体为原 `sync` 对象对应成员逐字搬运（含缩进），仅对象壳更名。
+ *
+ * 2026-09-29 补：下行链路的「读不出来就不碰」判据补齐到**部分**失败与
+ * **形状**两个维度（见 MIN_RESTORABLE_TAB_RATIO 与 isUnrecoverableTabsShape）。
+ * 原则不变：读不出来的一行绝不降级成「零标签的组」，因为 v1.22.0 起空组即物理
+ * 删除、降级即等于删掉用户仅存于云端的那份数据。
  */
 import type { TabGroup, TabData } from '@/types/tab';
 import { decryptData, isEncrypted } from '../encryptionUtils';
 import { sanitizeTabUrl } from '../inputValidation';
-import { normalizeTabsData } from '../normalizeTabsData';
-import { deserializeTab } from '../tabDataCodec';
+import { normalizeTabsData } from '@/core/normalizeTabsData';
+import { deserializeTab } from '@/core/tabDataCodec';
 import { supabase, checkSupabaseConfig } from './client';
 import { supportsOpStamp } from './probe';
 import { logError, logInfo, logWarn } from '../log';
+
+/**
+ * 还原率阈值：云端一行里的标签有低于这个比例能还原成 Tab 时，这一行**整组跳过**。
+ *
+ * ── 为什么需要它（v1.22.0 无回收站，截断后回写 = 永久删除）────────────────
+ * 一组 10 个标签、只有 1 个 https 能还原时，deserializeTab 会滤掉另外 9 个，
+ * 产出「1 个标签的组」。这个截断组在 mergeOpStamped 里是赢家（云端 stamp 更新）
+ * 就整组覆盖回云端，那 9 个标签在所有设备上同时消失。原有 fail-safe 只覆盖
+ * 「一个都还原不出来」，部分失败完全没被接住。
+ *
+ * ── 0.5 这个数从哪来 ────────────────────────────────────────────────────
+ * 两族「URL 过不了 sanitizeTabUrl」在比值上天然分离：
+ *   A. 偶发异类链接（老版本 v1.17.0 之前 sanitizeTabUrl 白名单是死代码，
+ *      file:/blob:/data: 会被存进云端；当前版本经 factory→filterValidTabs
+ *      与导入链 applyImportGroups，两道门都不会再产生这类行）
+ *      → 集中在「1~2 个 / 十几二十个」，比值贴着 1.0；
+ *   B. 结构性坏行（整行被某个绕过 isInternalUrl 的写入方写成浏览器内部页：
+ *      chrome:// / edge:// / chrome-extension://，或形状被别的版本改坏）
+ *      → 主体全是滤不掉的，比值远低于 1。
+ * 0.5 取两族之间的空档中点：离 A 的簇（>0.9）够远，离 B 的主体（<0.3）够远。
+ * 它不是从某批云端真实数据里量出来的——那条样本拿不到，见包结果 remaining。
+ * 判据本身刻意只看比值不看绝对数：一组 2 个标签掉 1 个（0.5）放行，
+ * 一组 40 个掉 1 个（0.975）也放行，规则与组大小无关，调阈值只有一个旋钮。
+ *
+ * ── 宁可漏同步也不截断 ──────────────────────────────────────────────────
+ * 低于阈值 → 整组跳过：不进下载结果、不参与合并、不登记 pendingDeleteIds，
+ * 云端行原封保留，等问题修好（或对端重写）后自然重新出现。代价是「这一次
+ * 同步窗口里看不见这一组」；反过来（截断后回写）的代价是「所有设备上永久
+ * 丢失」。这两个代价不对称，所以偏向跳过。
+ * 要调阈值只改这一个数。
+ */
+export const MIN_RESTORABLE_TAB_RATIO = 0.5;
+
+/**
+ * 一行的还原率是否可接受。
+ * @param restorable 成功还原成 Tab 的数量
+ * @param total      云端这一行声称的标签总数
+ */
+const isRestoreRateAcceptable = (restorable: number, total: number): boolean =>
+  // total=0 不是「读不出来」，是「本来就没有标签」——空组的语义由下游空组规则
+  // 统一处理（v1.22.0 起空组即删除），不在这里判定。
+  total <= 0 || restorable / total >= MIN_RESTORABLE_TAB_RATIO;
+
+/** 明确表示「没有标签」的标量写法：空串与两个空 JSON 文本 */
+const EMPTY_TAB_DATA_LITERALS = new Set(['', '[]', '{}']);
+
+/**
+ * 归一化后一个标签都不剩时，判断这是「本来就没有标签」还是「形状读不出来」。
+ * 只有后者必须让整组跳过。
+ *
+ * @param raw        解密/解析之后的原始值（不是 JSONB 原值：原值是加密串时这里放的是解出来的形状）
+ * @param normalized normalizeTabsData 的结果（已确认长度为 0 时才有意义）
+ */
+const isUnrecoverableTabsShape = (raw: unknown, normalized: TabData[]): boolean => {
+  if (normalized.length > 0) return false;
+  // null/undefined = 这一行没有 tabs_data（老版本形态），不是读不出来：
+  // 它要进结果，下面的兼容分支再去 tabs 表回填。
+  if (raw == null) return false;
+  if (Array.isArray(raw)) return raw.length > 0; // 非空数组会直通，归一化不会吃掉它
+  if (typeof raw === 'object') return Object.keys(raw as object).length > 0;
+  // 剩下的都是标量。合法形态只有数组与 wrapper 对象，标量一律是读不出来。
+  return !EMPTY_TAB_DATA_LITERALS.has(String(raw));
+};
 
 export const downloadSync = {
   // 下载标签组
@@ -113,61 +181,47 @@ export const downloadSync = {
         // 单行容错：一个坏组（形状异常/字段缺失）不应让整次下载/合并失败，
         // 跳过该组并告警，其余组继续处理
         try {
-        // 从 JSONB 字段获取标签数据
-        let tabsData: TabData[] = [];
         const groupAny = group as any;
-
-        // 检查是否是加密数据
-        if (typeof groupAny.tabs_data === 'string') {
+        // ── 取出「这一行声称的标签」，并把「真的空」与「读不出来」分开 ──────────
+        //
+        // 两条来源（加密串 / JSONB 原值）过去各写各的：只有 JSONB 分支带形状
+        // fail-safe，加密串分支解密「成功」但结果不是数组时被直接归一化成空数组
+        // 并当成零标签空组放行（→ 下游硬删 + 登记 purge）。同一个形状两种答案，
+        // 现在合成一条判据，判据只看「归一化后是否还剩东西」。
+        const rawTabsData: unknown = groupAny.tabs_data;
+        let rawShape: unknown = rawTabsData;
+        if (typeof rawTabsData === 'string') {
           try {
-            // 尝试解密数据
-            const decrypted = await decryptData<unknown>(groupAny.tabs_data as string, user.id);
-            // decryptData 内部 JSON.parse 后 as T，无形状校验，必须在这里归一化
-            tabsData = normalizeTabsData(decrypted, String(groupAny.id));
+            rawShape = await decryptData<unknown>(rawTabsData, user.id);
             logInfo(`标签组 ${groupAny.id} 的数据已成功解密`);
           } catch (error) {
             logError(`解密标签组 ${groupAny.id} 的数据失败:`, error);
             // 如果解密失败，尝试直接解析（可能是旧的未加密数据）
             try {
-              if (typeof groupAny.tabs_data === 'string' && !isEncrypted(groupAny.tabs_data)) {
-                // 旧版本可能把非数组数据明文写入云端，解析后同样必须归一化
-                tabsData = normalizeTabsData(JSON.parse(groupAny.tabs_data), String(groupAny.id));
+              if (!isEncrypted(rawTabsData)) {
+                // 旧版本可能把非数组数据明文写入云端，解析结果同样要过下面的形状判据
+                rawShape = JSON.parse(rawTabsData);
                 logInfo(`标签组 ${groupAny.id} 的数据是旧的未加密格式，已成功解析`);
               }
             } catch (jsonError) {
               logError(`解析标签组 ${groupAny.id} 的JSON数据失败:`, jsonError);
             }
-            // 【读不出来 ≠ 是空的】解密与明文回退都失败时，这一行携带的是我们
-            // 读不出的真实数据，绝不能降级成"零标签的组"——下游会把它当成空壳
-            // 硬删除并登记云端 purge，那等于把用户仅存于云端的那份数据删掉。
-            // 原则：读不出来就不碰。整组跳过，不合入本地、不登记 purge，
-            // 云端行原封保留，等问题修好后自然重新出现。
-            if (tabsData.length === 0 && String(groupAny.tabs_data).length > 2) {
-              logError(
-                `标签组 ${groupAny.id} 的内容无法读取（解密与明文解析均失败），` +
-                  `已跳过该组以保护云端数据不被误删`
-              );
-              continue;
-            }
           }
-        } else {
-          // 非字符串（可能是 JSONB 对象/数组/其他脏数据）：统一归一化，
-          // 数组直通，wrapper 对象尝试恢复，其余降级为空数组
-          tabsData = normalizeTabsData(groupAny.tabs_data, String(groupAny.id));
-          // 同上：原始值非空却归一化成空数组 = 形状不可恢复，不是真的空组
-          if (tabsData.length === 0 && groupAny.tabs_data != null) {
-            const rawLooksLikeContent =
-              typeof groupAny.tabs_data === 'object'
-                ? Object.keys(groupAny.tabs_data as object).length > 0
-                : String(groupAny.tabs_data).length > 2;
-            if (rawLooksLikeContent) {
-              logError(
-                `标签组 ${groupAny.id} 的 tabs_data 形状无法恢复且原始值非空，` +
-                  `已跳过该组以保护云端数据不被误删`
-              );
-              continue;
-            }
-          }
+        }
+        // decryptData 内部 JSON.parse 后 as T，无形状校验，必须在这里归一化
+        const tabsData = normalizeTabsData(rawShape, String(groupAny.id));
+
+        // 【读不出来 ≠ 是空的】这一行携带的是我们读不出的真实数据，绝不能降级成
+        // 「零标签的组」——下游会把它当成空壳硬删除并登记云端 purge，那等于把用户
+        // 仅存于云端的那份数据删掉（v1.22.0 无回收站）。
+        // 原则：读不出来就不碰。整组跳过，不合入本地、不登记 purge，云端行原封
+        // 保留，等问题修好后自然重新出现。
+        if (isUnrecoverableTabsShape(rawShape, tabsData)) {
+          logError(
+            `标签组 ${groupAny.id} 的内容无法读取（解密与明文解析均失败，或形状不可恢复），` +
+              `已跳过该组以保护云端数据不被误删`
+          );
+          continue;
         }
 
         // 处理标签组数据
@@ -176,6 +230,26 @@ export const downloadSync = {
         const formattedTabs = tabsData
           .map((tab: TabData) => deserializeTab(tab, String(groupAny.id)))
           .filter((t): t is NonNullable<typeof t> => t !== null);
+
+        // 【读不出来 ≠ 是空的 · 第二条，与上面那条同源同治】
+        // tabs_data 明明有 N 个标签，却有大半还原不出来（被 sanitizeTabUrl 判为
+        // 危险协议/非法 URL：chrome://、edge://、file:、blob:、data:…）——这不等于
+        // 「这一组本来就没有那么多标签」。还原出来的截断组会被 mergeOpStamped 当
+        // 赢家整组覆盖回云端，落差的标签在所有设备上一起消失；dropEmptyGroups 那条
+        // 兜底也拦不住（截断组非空）。v1.22.0 起没有回收站 = 永久删除。
+        // 读不出来就不碰：整组跳过，不合入本地、不登记 purge，云端行原封保留。
+        // 判据用比值（MIN_RESTORABLE_TAB_RATIO，见文件顶部），全失败是它的 0 端；
+        // 注意只在 tabs_data **非空**时判定——真的空组仍要进结果（老版本还没有
+        // tabs_data 的组要在下面的兼容分支里回查 tabs 表）。
+        if (tabsData.length > 0 && !isRestoreRateAcceptable(formattedTabs.length, tabsData.length)) {
+          const lost = tabsData.length - formattedTabs.length;
+          logError(
+            `标签组 ${groupAny.id} 的 ${tabsData.length} 个标签有 ${lost} 个无法还原` +
+              `（URL 未通过安全校验），还原率 ${(formattedTabs.length / tabsData.length).toFixed(2)} ` +
+              `低于阈值 ${MIN_RESTORABLE_TAB_RATIO}，已跳过该组以保护云端数据不被截断回写`
+          );
+          continue;
+        }
 
         tabGroups.push({
           id: String(groupAny.id),
@@ -210,6 +284,11 @@ export const downloadSync = {
       }
 
       // 兼容性处理：如果标签组没有 tabs_data，尝试从 tabs 表获取
+      // 同样受还原率判据约束：tabs 表也是老版本的写入方，回填出截断组的后果与
+      // tabs_data 路径完全一样（合并后整组回写云端 → 标签永久消失）。但这里不能
+      // 「留空 tabs」了事——空组会被 dropEmptyGroups 硬删并登记 purge，与「读不出来
+      // 就不碰」相反。只能把这一组从结果里整个拿掉。
+      const truncatedByTabsTable = new Set<string>();
       for (const group of tabGroups) {
         if (group.tabs.length === 0) {
           try {
@@ -235,6 +314,15 @@ export const downloadSync = {
                   pinned: tab.pinned ?? false,
                 });
               }
+              if (!isRestoreRateAcceptable(safeTabs.length, tabs.length)) {
+                logError(
+                  `标签组 ${group.id} 从 tabs 表回填时 ${tabs.length} 行有 ${tabs.length - safeTabs.length} 行无法还原` +
+                    `（URL 未通过安全校验），还原率 ${(safeTabs.length / tabs.length).toFixed(2)} ` +
+                    `低于阈值 ${MIN_RESTORABLE_TAB_RATIO}，已跳过该组以保护云端数据不被截断回写`
+                );
+                truncatedByTabsTable.add(group.id);
+                continue;
+              }
               group.tabs = safeTabs;
             }
           } catch (e) {
@@ -243,7 +331,9 @@ export const downloadSync = {
         }
       }
 
-      return tabGroups;
+      return truncatedByTabsTable.size > 0
+        ? tabGroups.filter(g => !truncatedByTabsTable.has(g.id))
+        : tabGroups;
     } catch (error) {
       logError('下载标签组失败:', error);
       throw error;

@@ -3,6 +3,13 @@
 > 状态：影子模式。mutation 落盘成功后异步翻译写入 Y.Doc，**读路径仍走 blob**。
 > 主同步零影响：kill-switch 常量、灰度采样、影子全程 try/catch + fire-and-forget。
 
+> ⚠️ **部分过时（2026-09-29，v1.22.0 起）**：本文成文于墓碑模型之下。`v1.22.0` 废除墓碑体系后，
+> **`restoreGroup` / `purgeGroup` 两个 MutationOp 已不存在**（见 `src/store/slices/tabSlice.ts` 头注释），
+> 因此 §3 翻译表里列的 `restoreGroup` 与 `purgeGroup` 两行不再成立；组删除现在走
+> `deleteGroup` / `deleteAllGroups` 的物理移除路径。**翻译表以 `src/core/yTranslate.ts` 的头注释为准**
+> （该表已随 1.22.0 更新）。§4 Dexie 索引里的 `is_deleted` 字段在记录结构上仍保留（云端
+> `tab_groups.is_deleted` 列也在），但本地不再产生墓碑数据。§1 体积数据、§5 同步表结构仍然有效。
+
 ## 1. 新增依赖与体积
 
 `pnpm add yjs y-indexeddb dexie`（`package.json` dependencies）：

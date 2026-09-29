@@ -7,6 +7,7 @@ import { storage } from '@/utils/storage';
 import { LoginForm } from '../auth/LoginForm';
 import { RegisterForm } from '../auth/RegisterForm';
 import { useToast } from '@/contexts/ToastContext';
+import { useDialogA11y } from '@/hooks/useKeyboardNavigation';
 import { 
   toggleShowNotifications, 
   toggleConfirmBeforeDelete,
@@ -15,7 +16,49 @@ import {
 } from '@/store/slices/settingsSlice';
 import { ThemeStyleSelector } from './ThemeStyleSelector';
 import { trackProductEvent } from '@/utils/productEvents';
+import {
+  collectDiagnostics,
+  diagnosticsFileName,
+  diagnosticsSummaryText,
+  serializeDiagnosticsReport,
+} from '@/utils/diagnostics';
 import { logError, logInfo, logWarn } from '../../utils/log';
+
+/** 问题反馈落点：GitHub issues 新建页。用户自己决定粘不粘诊断摘要。 */
+const FEEDBACK_ISSUE_URL = 'https://github.com/hibernate-pano/chrome-plugin-one-tab/issues/new';
+
+/**
+ * 复制文本到剪贴板，两级降级，返回是否真的写进去了。
+ *
+ * 为什么不静默：用户点了「问题反馈」却在 issue 里发现没有摘要，只能自己去翻
+ * 扩展目录找文件——那等于这个功能没做。所以失败必须让用户看见，且要给他一条
+ * 还能拿到内容的路（把摘要原文摆在弹窗里，手动复制）。
+ * 第一级用 Clipboard API；它在非安全上下文或权限被拒时抛错，此时退回
+ * execCommand（老但可用），再失败就交给调用方弹窗。
+ */
+const copyTextToClipboard = async (text: string): Promise<boolean> => {
+  try {
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch (error) {
+    logWarn('Clipboard API 写入失败，降级到 execCommand:', error);
+  }
+  try {
+    const textarea = document.createElement('textarea');
+    textarea.value = text;
+    textarea.setAttribute('readonly', '');
+    textarea.style.position = 'fixed';
+    textarea.style.opacity = '0';
+    document.body.appendChild(textarea);
+    textarea.select();
+    const ok = document.execCommand('copy');
+    document.body.removeChild(textarea);
+    return ok;
+  } catch (error) {
+    logError('剪贴板降级路径也失败:', error);
+    return false;
+  }
+};
 
 interface HeaderDropdownProps {
   onClose: () => void;
@@ -65,7 +108,13 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({ onClose }) => {
   const [showAuthModal, setShowAuthModal] = useState(false);
   const [openSubmenu, setOpenSubmenu] = useState<'export' | 'import' | null>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
-  const { showConfirm, showAlert } = useToast();
+  const authModalRef = useRef<HTMLDivElement>(null);
+  const { showConfirm, showAlert, showToast } = useToast();
+
+  // 账号弹窗的键盘与焦点契约：打开移焦、Tab 循环、Escape 关闭、关闭还焦。
+  // 不接管 Escape 的话，按键会被 Header 的全局 CLEAR_SEARCH 快捷键吃掉，
+  // 弹窗关不掉，反而把背后的搜索框清空。
+  useDialogA11y(authModalRef, showAuthModal, () => setShowAuthModal(false));
 
   // 处理通知开关
   const handleToggleNotifications = async () => {
@@ -302,6 +351,70 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({ onClose }) => {
     }
   };
 
+  // 导出脱敏诊断信息（B1）。只传登录态布尔值：user 对象里有邮箱与 id，
+  // 诊断文件里不允许出现任何一个（见 src/utils/diagnostics.ts 的白名单说明）。
+  const handleExportDiagnostics = async () => {
+    try {
+      setOpenSubmenu(null);
+      // 载荷与文件名共用同一个 Date：跨零点时两者才对得上（见 exportStamp.ts）。
+      const now = new Date();
+      const report = await collectDiagnostics({ isAuthenticated, now });
+      const blob = new Blob([serializeDiagnosticsReport(report)], {
+        type: 'application/json'
+      });
+
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = diagnosticsFileName(report.environment.extensionVersion, now);
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+
+      onClose();
+    } catch (error) {
+      logError('导出诊断信息失败:', error);
+      showAlert({
+        title: '导出失败',
+        message: '收集诊断信息失败，请重试；若反复失败请到「问题反馈」里说明',
+        type: 'error',
+        onClose: () => { }
+      });
+    }
+  };
+
+  // 问题反馈（B2）：打开 GitHub issues 新建页，并把脱敏摘要放进剪贴板。
+  // 先开页面再收集：window.open 必须落在用户手势的同步路径里，等 await 之后再开
+  // 可能被弹窗拦截；而收集失败也不该把用户已经打开的反馈页关掉。
+  const handleReportIssue = async () => {
+    onClose();
+    window.open(FEEDBACK_ISSUE_URL, '_blank', 'noopener,noreferrer');
+    try {
+      const report = await collectDiagnostics({ isAuthenticated });
+      const summary = diagnosticsSummaryText(report);
+      if (await copyTextToClipboard(summary)) {
+        showToast('诊断摘要已复制，请在 issue 正文里粘贴', 'success');
+      } else {
+        // 复制不了就把原文摆出来让用户手动拿，不静默吞掉
+        showAlert({
+          title: '诊断摘要未复制',
+          message: `浏览器拒绝了剪贴板写入，请手动复制以下内容：\n\n${summary}`,
+          type: 'warning',
+          onClose: () => { }
+        });
+      }
+    } catch (error) {
+      logError('生成诊断摘要失败:', error);
+      showAlert({
+        title: '诊断摘要生成失败',
+        message: '已为你打开反馈页，但收集诊断信息失败，请在 issue 里补充复现步骤',
+        type: 'error',
+        onClose: () => { }
+      });
+    }
+  };
+
   return (
     <div ref={dropdownRef} className="absolute right-0 mt-2 w-64 bg-white dark:bg-gray-800 rounded-lg shadow-lg border border-gray-200 dark:border-gray-700 z-20">
       <div className="py-2">
@@ -446,6 +559,18 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({ onClose }) => {
               </svg>
               OneTab 格式
             </button>
+            {/* 诊断信息：同样是一次导出，但内容是脱敏后的规模与环境快照
+                （不含任何标签 URL、标题、会话名），用于反馈问题时贴 issue。 */}
+            <button
+              onClick={handleExportDiagnostics}
+              className={MENU_ROW}
+              type="button"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 mr-2 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3.75 12h16.5m-16.5 0a3 3 0 013-3m13.5 0a3 3 0 013 3m-16.5 0a3 3 0 003 3m13.5 0a3 3 0 003-3m-16.5 0a9 9 0 0118 0m-18 0a9 9 0 018 9m-8-9a9 9 0 00-8 9m0-9v9m18-9v9" />
+              </svg>
+              诊断信息
+            </button>
             </div>
           )}
         </div>
@@ -574,6 +699,19 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({ onClose }) => {
           )}
         </div>
 
+        {/* 问题反馈：与导出/导入同一层的普通菜单行（真 button + 可见文字，
+            读屏有名字；不是图标按钮，所以不需要 aria-label）。 */}
+        <button
+          onClick={handleReportIssue}
+          className={MENU_ROW}
+          type="button"
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 mr-2 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8.625 12a.375.375 0 11-.75 0 .375.375 0 01.75 0zm0 0H8.25m4.125 0a.375.375 0 11-.75 0 .375.375 0 01.75 0zm0 0H12m4.125 0a.375.375 0 11-.75 0 .375.375 0 01.75 0zm0 0h-.375M21 12c0 4.556-4.03 8.25-9 8.25a9.764 9.764 0 01-2.555-.337A5.972 5.972 0 015.41 20.97a5.969 5.969 0 01-.474-.065 4.48 4.48 0 00.978-2.025c.09-.457-.133-.901-.467-1.226C3.93 16.178 3 14.189 3 12c0-4.556 4.03-8.25 9-8.25s9 3.694 9 8.25z" />
+          </svg>
+          问题反馈
+        </button>
+
         {/* 危险区：与菜单平面语言一致（rounded-lg + 留边），用色块与普通项区分防误触。
             核弹级操作：强制确认不受「删除前确认」开关控制；无组时隐藏；描述带数量。 */}
         {groups.length > 0 && (
@@ -613,23 +751,34 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({ onClose }) => {
 
       {showAuthModal && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-white dark:bg-gray-800 rounded-lg shadow-xl w-full max-w-md mx-4">
+          <div
+            ref={authModalRef}
+            role="dialog"
+            aria-modal="true"
+            aria-label="登录或注册账号"
+            tabIndex={-1}
+            className="bg-white dark:bg-gray-800 rounded-lg shadow-xl w-full max-w-md mx-4 focus:outline-none"
+          >
             <div className="flex border-b border-gray-300 dark:border-gray-700">
               <button
+                type="button"
                 className={`flex-1 py-3 transition-all font-medium ${activeTab === 'login' ? 'text-primary-600 border-b-2 border-primary-600' : 'text-gray-600 dark:text-gray-300 hover:text-primary-600 dark:hover:text-primary-400'}`}
                 onClick={() => setActiveTab('login')}
               >
                 登录
               </button>
               <button
+                type="button"
                 className={`flex-1 py-3 transition-all font-medium ${activeTab === 'register' ? 'text-primary-600 border-b-2 border-primary-600' : 'text-gray-600 dark:text-gray-300 hover:text-primary-600 dark:hover:text-primary-400'}`}
                 onClick={() => setActiveTab('register')}
               >
                 注册
               </button>
               <button
-                className="p-3 text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200"
+                type="button"
+                className="p-3 text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-gray-400"
                 onClick={() => setShowAuthModal(false)}
+                aria-label="关闭登录弹窗"
               >
                 <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />

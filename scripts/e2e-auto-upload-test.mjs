@@ -1,6 +1,16 @@
 // 真实环境验证：保存会话后自动上传触发链路
 // 真实证据路径：保存（不点手动上传） → 等 8s → 用 supabase-js 以同一账号登录
 //   → 查 public.tab_groups 应有新行（标题含 "AUTO-1-自动同步"）
+//
+// ── 凭据来源（2026-09-29 修）──
+// 本脚本需要这两个环境变量，**优先读 process.env，缺失时才回退读仓库根目录的
+// .env / .env.local**（scripts/e2e-support.mjs 的 loadEnv）：
+//   VITE_SUPABASE_URL       —— Supabase 项目地址
+//   VITE_SUPABASE_ANON_KEY  —— 匿名 key（公开可读，非 service_role）
+// 变量名与 .env 里的一致，没有改。原先硬 readFileSync('.env')，密钥来源被写死在
+// 代码里，CI 与其他环境无法注入（只能在恰好有 .env 的机器上跑）。
+//
+// 运行：node scripts/e2e-auto-upload-test.mjs（需先 pnpm build）
 
 import { chromium } from 'playwright';
 import { mkdtempSync } from 'node:fs';
@@ -10,20 +20,15 @@ import { randomUUID } from 'node:crypto';
 import { createServer } from 'node:http';
 import { createClient } from '@supabase/supabase-js';
 import { dismissOnboarding, readLocalGroups, LOGIN_TIMEOUT_MS } from './e2e-helpers.mjs';
-import { readFileSync } from 'node:fs';
+import { accountMarker, loadEnv, requireEnv } from './e2e-support.mjs';
 
 const DIST = resolve(process.cwd(), 'dist');
 const EMAIL = `e2e-auto-${randomUUID().slice(0, 6)}@test.tapstack.dev`;
 const PWD = 'SyncTest#2026!';
+console.log(accountMarker(EMAIL)); // 供 run-e2e 收尾统一清理
 
-// 读 .env
-const env = {};
-for (const l of readFileSync(resolve('.env'), 'utf8').split('\n')) {
-  const t = l.trim();
-  if (!t || t.startsWith('#')) continue;
-  const i = t.indexOf('=');
-  if (i > 0) env[t.slice(0, i)] = t.slice(i + 1);
-}
+// process.env 优先，缺失才回退 .env；两个都缺就直接报缺哪个键
+const env = requireEnv(loadEnv({ cwd: resolve(process.cwd()) }));
 const SUPA_URL = env.VITE_SUPABASE_URL;
 const SUPA_ANON = env.VITE_SUPABASE_ANON_KEY;
 
