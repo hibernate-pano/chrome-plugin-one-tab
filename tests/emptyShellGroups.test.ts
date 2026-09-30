@@ -5,8 +5,9 @@
 // 墓碑——组级墓碑不置位，stripTombstonedTabs 剥完标签级墓碑只剩 tabs: []，
 // 于是一张空会话卡永远挂在列表里。
 //
-// 修复：toActiveGroupsView 复用 moveTab reducer 既有的 shouldAutoDeleteAfterTabRemoval
-// 判据把空壳会话剔出活跃视图；锁定组豁免（用户显式保护，不静默隐藏）。
+// 修复：toActiveGroupsView 按 id 去重 + 用 core/mutationOps.isEmptyGroup 把空壳会话剔出
+// 活跃视图。锁定豁免只对「有内容的锁定组」成立——零标签的锁定组是空壳，照样熄掉
+// （2026-09-30 语义修订，真实故障见 isEmptyGroup 注释）。
 // 只过滤视图、不写 storage——读路径不产生写（v1.21.2 墓碑灌入事故的教训）。
 
 import { describe, it, before } from 'node:test';
@@ -80,12 +81,31 @@ describe('toActiveGroupsView · 空壳会话', () => {
     assert.deepEqual(view[0].tabs.map(t => t.id), ['t1'], '墓碑标签不进 UI');
   });
 
-  it('锁定组豁免：用户显式保护的空会话不静默隐藏', () => {
+  it('锁定但零标签的组仍按空壳熄掉——锁定保护的是内容，不是空壳', () => {
     const view = toActiveGroupsView([
       group('locked-empty', [tab('t1', { isDeleted: true })], { isLocked: true }),
     ]);
 
-    assert.equal(view.length, 1, '锁定组沿用既有语义：不自动删除');
+    assert.equal(view.length, 0, '零标签的锁定组没有内容可保护，按空壳处理');
+  });
+
+  it('有内容的锁定组照旧保留（不得误伤用户显式保护的会话）', () => {
+    const view = toActiveGroupsView([
+      group('locked-full', [tab('t1'), tab('t2')], { isLocked: true }),
+    ]);
+
+    assert.deepEqual(view.map(g => g.id), ['locked-full'], '有内容的锁定组必须保留');
+  });
+
+  it('重复 id 收敛成一条：否则 TabList 的 key 撞车，双栏把 33 张卡渲染成 39 张', () => {
+    const view = toActiveGroupsView([
+      group('dup', [tab('t1')]),
+      group('dup', [tab('t2')]),
+      group('other', [tab('t3')]),
+    ]);
+
+    assert.deepEqual(view.map(g => g.id), ['dup', 'other'], '同 id 只保留一条，顺序不变');
+    assert.equal(new Set(view.map(g => g.id)).size, view.length, '视图内 id 必须唯一');
   });
 
   it('组级墓碑照旧剔除，且不误伤正常组', () => {

@@ -24,13 +24,19 @@ import { shouldAutoDeleteAfterTabRemoval } from './tabGroupUtils';
 import { updateDisplayOrder, updateGroupWithVersion } from './versionHelper';
 
 /**
- * 空组判据（v1.21.5 拍板沿用）：组内没有标签且未锁定。
- * 锁定组豁免——锁定是用户显式的防误删保护，任何自动清理都不得越过。
- * 判据复用 tabGroupUtils.shouldAutoDeleteAfterTabRemoval（其内部跳过 isDeleted tab，
- * 对老版本写入的墓碑形状数据保持防御），规则只此一处。
+ * 空组判据（2026-09-30 修订）：组内没有任何活跃标签即为空壳，**不看锁定态**。
+ *
+ * 为什么不再复用 shouldAutoDeleteAfterTabRemoval：那个判据回答的是另一个问题——
+ * 「用户刚删掉这个 tab，组该不该跟着消失」，锁定必须豁免，那是用户当场的显式意图。
+ * isEmptyGroup 回答的是「这个组还有没有内容」，零标签的组没有任何东西可保护，
+ * 锁定语义对它不成立。两者混用会让「锁定 + 零标签」的空壳永久挂在列表上：
+ * 真实故障（2026-09-30）就是两条逐字段相同的锁定空组在本地躺了 7 个月，
+ * 双栏把数组重切成两半后撞上 React 重复 key，33 张卡渲染成 39 张。
+ *
+ * 只统计非墓碑 tab：老版本（商店 1.21.4）写入的墓碑形状数据不代表用户可见内容。
  */
 export const isEmptyGroup = (group: TabGroup): boolean =>
-  shouldAutoDeleteAfterTabRemoval(group, '');
+  group.tabs.filter(tab => !tab.isDeleted).length === 0;
 
 /** 合并/导入结果的统一兜底：剔除空组（无内容可恢复，物理移除）。 */
 export const dropEmptyGroups = (groups: TabGroup[]): TabGroup[] =>
@@ -256,8 +262,9 @@ export function applyMoveTab(
 
   let removedGroupId: string | null = null;
   const movedSource = out.find(g => g.id === args.sourceGroupId)!;
-  if (args.sourceGroupId !== args.targetGroupId && isEmptyGroup(movedSource)) {
-    // 源组被搬空 → 物理移除
+  if (args.sourceGroupId !== args.targetGroupId && shouldAutoDeleteAfterTabRemoval(movedSource, '')) {
+    // 源组被搬空 → 物理移除。注意这里用锁定豁免版判据而非 isEmptyGroup：
+    // 拖走最后一个标签是用户当场的显式动作，锁定组必须活着（否则等于「锁定白锁」）。
     removedGroupId = args.sourceGroupId;
     out = out.filter(g => g.id !== args.sourceGroupId);
   }
@@ -310,7 +317,9 @@ export function applyCleanDuplicates(
   });
 
   const finalGroups = withRemovals.filter(g => {
-    if (isEmptyGroup(g)) {
+    // 同上：手动清理按钮的文案就写着「锁定的会话除外」，这里必须用锁定豁免版判据。
+    // 自动空壳清理（dropEmptyGroups / toActiveGroupsView）才用 isEmptyGroup。
+    if (shouldAutoDeleteAfterTabRemoval(g, '')) {
       removedGroupsCount++;
       return false;
     }

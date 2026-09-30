@@ -10,8 +10,16 @@
 // 现在检验的不变量：
 //   ① 首启后 storage 里不再有任何 isDeleted 墓碑 tab（老版本形状已被物理剥离）
 //   ② storage 里不再有组级 isDeleted 组（旧回收站内容已随迁移清除）
-//   ③ UI 卡片数 == 存储中「有内容的组」数 —— 多出来的空组只能来自数据，不能来自渲染
+//   ③ UI 卡片数 == 存储中「有内容且 id 唯一」的组数 —— 多出来的空组只能来自数据，
+//      不能来自渲染；重复 id 必须收敛（否则 React 重复 key 会在双栏把卡片数放大）
 //   ④ 单栏↔双栏来回切 3 轮，UI 卡片数与 storage 组数都不变（切布局不写数据、不长空壳）
+//
+// ── 2026-09-30 补登：g8/g9/g10 是真实故障的种子 ──
+// 上一版种子只有 isLocked:false 的空组、且没有重复 id，于是 15/15 全绿却漏掉了
+// 真实用户的故障：两条**逐字段相同的锁定空组 + 同 id**，本地躺了 7 个月。
+// 双栏把数组重切成两半后撞上 key={group.id} 撞车，33 张卡渲染成 39 张。
+// g8 = 锁定 + 零标签（空壳判据必须熄掉，不管锁定）
+// g9/g10 = 同 id 两条且都有内容（去重必须保留 1 张；dedupe 后写入者胜）
 import { launchCtx, readGroupsFromSW, dismissOnboarding, openPopup } from './e2e-helpers.mjs';
 import { createGate } from './e2e-support.mjs';
 
@@ -25,6 +33,9 @@ function tab(url, title, extra = {}) {
   return { id: `t-${rid()}`, url, title, createdAt: now(), lastAccessed: now(), pinned: false, ...extra };
 }
 
+// 重复 id 用的固定 id（2026-09-30 真实故障：F0pMPuUTxt45Ky0XB_fok 出现两次）
+const DUP_ID = 'seed-dup-id-001';
+
 // 直接构造最终的存储形状（跳过 SW 内部逻辑，只测读路径 + 渲染）
 const SEED_GROUPS = [
   { name: 'g1-正常', tabs: [tab('https://a.com', 'A'), tab('https://b.com', 'B')] },
@@ -34,6 +45,9 @@ const SEED_GROUPS = [
   { name: 'g5-老版本全墓碑', tabs: [tab('https://e.com', 'E1', { isDeleted: true })] },
   { name: 'g6-单页', tabs: [tab('https://f.com', 'F')] },
   { name: 'g7-正常2', tabs: [tab('https://g.com', 'G'), tab('https://h.com', 'H')] },
+  { name: 'g8-锁定空组', tabs: [], isLocked: true },                           // 零标签 + 锁定 = 空壳
+  { name: 'g9-重复id-A', tabs: [tab('https://k.com', 'K1')], id: DUP_ID },
+  { name: 'g10-重复id-B', tabs: [tab('https://l.com', 'L1')], id: DUP_ID },
 ];
 /** 视图层的存活判据：非组级墓碑、且至少一个非墓碑 tab（= toActiveGroupsView） */
 const visibleInView = g => !g.isDeleted && (g.tabs || []).some(t => !t.isDeleted);
@@ -50,10 +64,10 @@ try {
     const db = r.result;
     const n = new Date().toISOString();
     const groups = seed.map(s => ({
-      id: `seed-${Math.random().toString(36).slice(2, 10)}`,
+      id: s.id || `seed-${Math.random().toString(36).slice(2, 10)}`,
       name: s.name,
       tabs: s.tabs.map(t => ({ ...t, id: `t-${Math.random().toString(36).slice(2, 10)}` })),
-      createdAt: n, updatedAt: n, isLocked: false, version: 1,
+      createdAt: n, updatedAt: n, isLocked: Boolean(s.isLocked), version: 1,
     }));
     await new Promise((res, rej) => {
       const tx = db.transaction('kv', 'readwrite');
@@ -90,18 +104,26 @@ try {
   async function probe(tag) {
     const cards = await page.locator('.tab-group-card').count();
     const stored = await readGroupsFromSW(ctx);
-    const visible = stored.filter(visibleInView).length;
+    // 按 id 去重后再数：UI 卡片数必须等于「有内容且 id 唯一」的组数。
+    // 不去重的话这条断言会把「重复 id 正常渲染出 2 张」误判为通过，而那正是
+    // React 重复 key 在双栏放大卡片数的起点（2026-09-30 真实故障）。
+    const byId = new Map();
+    for (const g of stored) if (visibleInView(g)) byId.set(g.id, g);
+    const visible = byId.size;
     const names = await page.locator('.tab-group-card').evaluateAll(
       els => els.map(e => (e.querySelector('h3.tab-group-title')?.textContent || '').trim())
     );
-    console.log(`\n[${tag}] UI 卡片=${cards} | 存储组=${stored.length} | 视图可见组=${visible}`);
+    console.log(`\n[${tag}] UI 卡片=${cards} | 存储组=${stored.length} | 视图可见组(按 id 去重)=${visible}`);
     console.log(`  UI 卡片: ${JSON.stringify(names)}`);
     return { cards, stored, visible };
   }
 
   const first = await probe('初始(单栏)');
-  gate.check('UI 卡片数 == 视图可见组数（无渲染重复）', first.cards === first.visible,
-    `UI ${first.cards} 张 vs 可见 ${first.visible} 组`);
+  const dupCount = first.stored.length - new Set(first.stored.map(g => g.id)).size;
+  gate.check('种子里的重复 id 确实写进了存储（否则本轮不构成回归验证）', dupCount === 1,
+    `期望 1 组重复 id，实际 ${dupCount}`);
+  gate.check('UI 卡片数 == 视图可见组数（无渲染重复、无重复 id 放大）', first.cards === first.visible,
+    `UI ${first.cards} 张 vs 去重后可见 ${first.visible} 组`);
 
   const toDouble = page.locator('button[aria-label*="切换为双栏"]').first();
   const toSingle = page.locator('button[aria-label*="切换为单栏"]').first();

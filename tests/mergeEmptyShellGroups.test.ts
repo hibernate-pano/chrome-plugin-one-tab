@@ -72,14 +72,24 @@ describe('同步合并 · 空会话卡不留', () => {
     assert.deepEqual(final.map(g => g.id), ['ok'], '空组不进落盘结果');
   });
 
-  it('有内容的组与锁定组一律保留（不得误伤）', () => {
+  it('有内容的组与有内容的锁定组一律保留（不得误伤）', () => {
     const groups = [
       group('ok', [tab('t1', 'https://a.com')]),
-      group('locked-empty', [], { isLocked: true }), // 锁定 = 用户显式防误删
+      group('locked-full', [tab('t2', 'https://b.com')], { isLocked: true }),
     ];
     const final = dropEmptyGroups(groups);
 
-    assert.deepEqual(final.map(g => g.id), ['ok', 'locked-empty'], '锁定空组豁免自动清理');
+    assert.deepEqual(final.map(g => g.id), ['ok', 'locked-full'], '锁定但有内容的组豁免自动清理');
+  });
+
+  it('锁定但零标签的组按空壳清掉（2026-09-30 语义修订）', () => {
+    const groups = [
+      group('ok', [tab('t1', 'https://a.com')]),
+      group('locked-empty', [], { isLocked: true }),
+    ];
+    const final = dropEmptyGroups(groups);
+
+    assert.deepEqual(final.map(g => g.id), ['ok'], '零标签的锁定组没有内容可保护');
   });
 
   it('纯函数：输入不被就地修改', () => {
