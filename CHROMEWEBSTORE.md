@@ -23,7 +23,7 @@ TapStack 把你当前浏览器窗口里的所有标签页保存为一个命名�
 主要功能：
 · 一键保存：把当前窗口的全部标签页存为会话；快捷键 Ctrl+Shift+S 打开管理器、Alt+Shift+S 保存全部、Alt+S 保存当前页
 · 右键菜单：不打开管理界面，也能保存当前标签页或窗口里的其他标签页
-· 会话整理：每个会话可重命名、加备注、收藏、锁定防误删、拖拽排序
+· 会话整理：每个会话可重命名、加备注、收藏、锁定防误删
 · 快速恢复：一键在新窗口打开整组标签，不打乱当前窗口；点开单个标签直接继续工作，它会自动从会话中移除
 · 会话搜索：按会话名、备注、标签标题/网址查找，支持按域名过滤，并提供按域名等维度的排序视图
 · 误删保护：删除前二次确认（「删除全部会话」强制确认并显示数量），删除后彻底清除
@@ -42,7 +42,7 @@ TapStack saves every tab in your current window as a named session, so you can f
 Key features:
 · One-click save: store all tabs of the current window as a session. Shortcuts: Ctrl+Shift+S opens the manager, Alt+Shift+S saves all tabs, Alt+S saves the current tab
 · Right-click menu: save the current tab — or all other tabs — without opening the manager
-· Session tools: rename, add notes, favorite, lock against accidental deletion, drag to reorder
+· Session tools: rename, add notes, favorite, lock against accidental deletion
 · Fast restore: reopen the whole session in a new window without disturbing the current one; click a single tab to jump straight back into work — it is then removed from the session
 · Search: find sessions by name, notes, tab title or URL, filter by domain, and sort by domain and more
 · Deletion protection: you confirm before anything is deleted (deleting all sessions always asks and shows the count), and a deleted session is permanently removed — there is no recycle bin and no undo
@@ -77,7 +77,8 @@ Productivity
 
 ### Screenshot Notes
 <!-- 建议截图内容：1) 双列布局下有多个已保存会话的主界面；2) 搜索过滤效果；
-     3) 拖拽排序/整理视图。展示使用中的界面，而非仅弹窗空壳。 -->
+     3) 行内重命名/备注编辑态。展示使用中的界面，而非仅弹窗空壳。
+     注：1.22.3 起不再有「拖拽排序/整理视图」，勿再为其截图。 -->
 <!-- 1/2 已由 scripts/make-store-screenshots.mjs 生成（演示数据注入 dist 扩展后实拍，1280×800）。
      重新生成：pnpm build && node scripts/make-store-screenshots.mjs -->
 
@@ -152,6 +153,7 @@ https://github.com/hibernate-pano/chrome-plugin-one-tab
 
 | Version | Date | Changes | Status |
 |---------|------|---------|--------|
+| 1.22.3 | 2026-09-30 | 修复三个用户可见缺陷：① 开着管理页时，后台保存或云端合并后列表不刷新（旧监听器盯的是已废弃的 chrome.storage 键，事件永不触发）② 重命名/锁定/收藏/备注写失败时界面照样显示「已保存」，刷新后丢失；锁定状态不一致会直接导致会话被自动清理误删 ③ 同步「覆盖模式」在预览还没算完时就能点，一次点击清空对面全部会话且无确认——现在预览未就绪时按钮置灰，并需二次确认。移除抢占浏览器快捷键的页内快捷键（Ctrl+S/F/L/D），以及从未可用的会话拖拽排序功能 | 未发布（待 1.22.2 过审后提交） |
 | 1.22.2 | 2026-09-30 | 修复「切换双栏布局时凭空多出空标签组、每切一次就多一张」：本地存储里重复的会话记录（历史读-改-写竞态留下的脏数据）不再渲染成多张卡片；被锁定后又清空所有标签的空会话不再永久显示为空卡片——锁定保护的是会话内容，空壳不再受保护。手动清理按钮与拖拽移出标签的锁定豁免行为不变 | 已提交审核（2026-09-30，publish 返回 PENDING_REVIEW；线上 1.22.1 待过审后自动切换） |
 | 1.22.1 | 2026-09-29 | 同步可靠性加固（用户可见的破坏性 bug 修复）：修复「在网页版删除或重命名会话后被扩展端静默撤销并复活」；修复「某台设备同步可能永久卡死、既不能上传也不能下载」；修复「导入备份与后台同步撞车导致导入内容两边一起丢失」；修复「会话部分标签还原失败时被整组截断、其余标签永久消失」；修复「删除广播在上传竞态中蒸发导致已删会话复活」；修复「纯键盘用户在折叠的会话里误删看不见的标签」；网页版补链接消毒（此前不拦截 `javascript:` 链接）；新增「导出诊断信息」（默认脱敏，不含任何网址/标题/会话名）；新增 GitHub Actions 持续集成 | 已提交审核（2026-09-29，publish 返回 OK） |
 | 1.22.0 | 2026-09-29 | 简化删除模型：移除回收站与「墓碑」机制，删除即彻底清除（删除前仍有二次确认）；修复删除恢复不完整（标签计数虚高）；跨设备删除广播改由云端标记承载（30 天自动清理），标签增删按会话整组同步 | 已提交审核（2026-09-29） |
