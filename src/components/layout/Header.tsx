@@ -3,7 +3,6 @@ import { useAppDispatch, useAppSelector } from '@/store/hooks';
 import {
   toggleLayoutMode,
   saveSettings,
-  setReorderMode,
   updateSettings,
 } from '@/store/slices/settingsSlice';
 import { cleanDuplicateTabs } from '@/store/slices/tabSlice';
@@ -14,7 +13,6 @@ import SyncButton from '@/components/sync/SyncButton';
 import { SimpleThemeToggle } from './SimpleThemeToggle';
 import { LayoutMode } from '@/types/tab';
 import { useDebouncedSearch } from '@/hooks/useDebouncedSearch';
-import { useKeyboardShortcuts, COMMON_SHORTCUTS } from '@/hooks/useKeyboardShortcuts';
 import { Tooltip } from '@/components/common/Tooltip';
 import { TapStackLogo } from '@/components/common/TapStackIcon';
 import { logError } from '../../utils/log';
@@ -105,9 +103,6 @@ export const Header: React.FC<HeaderProps> = ({ onSearch }) => {
   };
 
   const handleToggleLayout = () => {
-    if (settings.reorderMode) {
-      dispatch(setReorderMode(false));
-    }
     dispatch(toggleLayoutMode());
 
     let nextLayoutMode: LayoutMode;
@@ -125,7 +120,6 @@ export const Header: React.FC<HeaderProps> = ({ onSearch }) => {
     // 先更新 Redux state
     dispatch(updateSettings({
       layoutMode: nextLayoutMode,
-      reorderMode: false,
     }));
     
     // 然后保存到存储
@@ -140,14 +134,6 @@ export const Header: React.FC<HeaderProps> = ({ onSearch }) => {
       data: { windowId },
     });
   };
-
-  useKeyboardShortcuts([
-    { ...COMMON_SHORTCUTS.SAVE_TABS, action: handleSaveAllTabs },
-    { ...COMMON_SHORTCUTS.SEARCH, action: () => searchInputRef.current?.focus() },
-    { ...COMMON_SHORTCUTS.CLEAR_SEARCH, action: () => { if (searchValue) clearSearch(); } },
-    { ...COMMON_SHORTCUTS.TOGGLE_LAYOUT, action: handleToggleLayout },
-    { ...COMMON_SHORTCUTS.CLEAN_DUPLICATES, action: handleCleanDuplicateTabs }
-  ]);
 
   const getContainerWidthClass = () => {
     // 统一使用相同宽度，单栏和双栏布局保持一致
@@ -172,13 +158,6 @@ export const Header: React.FC<HeaderProps> = ({ onSearch }) => {
 
   const handleResetToDefaultView = () => {
     clearSearch();
-    if (settings.reorderMode) {
-      // 先更新 Redux state
-      dispatch(setReorderMode(false));
-      
-      // 然后保存到存储
-      dispatch(saveSettings() as any);
-    }
   };
 
   const [showDropdown, setShowDropdown] = useState(false);

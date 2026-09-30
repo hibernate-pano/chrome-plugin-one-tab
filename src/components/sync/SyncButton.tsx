@@ -4,7 +4,7 @@ import { useAppSelector, useAppDispatch } from '@/store/hooks';
 import { loadGroups } from '@/store/slices/tabSlice';
 import { downloadTabGroups } from '@/services/tabGroupSyncService';
 import { sendSyncCommand } from '@/shared/mutationProtocol';
-import { createSimulatedProgress, getSyncStrategyLabel, renderPreviewSummary } from './syncPreviewView';
+import { createSimulatedProgress, decideOverwriteClick, getSyncStrategyLabel, isOverwriteGateOpen, renderPreviewSummary, syncModeOf } from './syncPreviewView';
 
 // 与 syncEngine.SyncOperation 同语义（仅 UI 进度条用），本文件不再 import syncEngine。
 type SyncOperation = 'upload' | 'download' | 'none';
@@ -86,6 +86,9 @@ export const SyncButton: React.FC<SyncButtonProps> = () => {
   const [downloadPreviewError, setDownloadPreviewError] = useState<string | null>(null);
   const [uploadPreview, setUploadPreview] = useState<ModePreviewMap | null>(null);
   const [downloadPreview, setDownloadPreview] = useState<ModePreviewMap | null>(null);
+  // P1-6：覆盖模式的两段式确认。armed 只表示「用户看到了风险文案并又点了一次」，
+  // 只有 armed === 当前 actionKey 时下一次点击才真下发；任何其他点击/关窗都会清空。
+  const [armedOverwrite, setArmedOverwrite] = useState<SyncActionKey | null>(null);
   const panelRef = useRef<HTMLDivElement>(null);
   const uploadTitleId = useId();
   const uploadDescriptionId = useId();
@@ -109,7 +112,7 @@ export const SyncButton: React.FC<SyncButtonProps> = () => {
       });
     } catch (error) {
       logError('加载上传预览失败:', error);
-      setUploadPreviewError('暂时无法读取云端会话预览，仍可继续手动上传。');
+      setUploadPreviewError('暂时无法读取云端会话预览：合并模式仍可使用，覆盖模式需预览就绪后才会解锁。');
       setUploadPreview(null);
     } finally {
       setIsUploadPreviewLoading(false);
@@ -132,7 +135,7 @@ export const SyncButton: React.FC<SyncButtonProps> = () => {
       });
     } catch (error) {
       logError('加载下载预览失败:', error);
-      setDownloadPreviewError('暂时无法读取云端会话预览，仍可继续手动下载。');
+      setDownloadPreviewError('暂时无法读取云端会话预览：合并模式仍可使用，覆盖模式需预览就绪后才会解锁。');
       setDownloadPreview(null);
     } finally {
       setIsDownloadPreviewLoading(false);
@@ -143,6 +146,7 @@ export const SyncButton: React.FC<SyncButtonProps> = () => {
   const handleUpload = async () => {
     if (!isWorking && isAuthenticated) {
       setModalAnimation('animate-fadeIn');
+      setArmedOverwrite(null);
       setShowUploadModal(true);
       void loadUploadPreview();
     }
@@ -152,6 +156,7 @@ export const SyncButton: React.FC<SyncButtonProps> = () => {
   const handleDownload = async () => {
     if (!isWorking && isAuthenticated) {
       setModalAnimation('animate-fadeIn');
+      setArmedOverwrite(null);
       setShowDownloadModal(true);
       void loadDownloadPreview();
     }
@@ -160,11 +165,58 @@ export const SyncButton: React.FC<SyncButtonProps> = () => {
   // 关闭模态框
   const closeModals = () => {
     setModalAnimation('animate-fadeOut');
+    setArmedOverwrite(null);
     setTimeout(() => {
       setShowUploadModal(false);
       setShowDownloadModal(false);
       setModalAnimation('');
     }, 200);
+  };
+
+  /**
+   * 覆盖按钮的当前状态（预览未就绪 → blocked/disabled；否则 armed/run 两段式）。
+   * 两个方向各算一份，参数只差 preview 数据与目标侧标签。
+   */
+  const uploadOverwriteState = decideOverwriteClick({
+    summary: uploadPreview?.overwrite ?? null,
+    isPreviewLoading: isUploadPreviewLoading,
+    hasPreviewError: !!uploadPreviewError,
+    isArmed: armedOverwrite === 'upload.overwrite',
+    isBusy: isWorking,
+    targetLabel: '云端',
+  });
+  const downloadOverwriteState = decideOverwriteClick({
+    summary: downloadPreview?.overwrite ?? null,
+    isPreviewLoading: isDownloadPreviewLoading,
+    hasPreviewError: !!downloadPreviewError,
+    isArmed: armedOverwrite === 'download.overwrite',
+    isBusy: isWorking,
+    targetLabel: '本地',
+  });
+
+  /**
+   * 两个模式卡片的统一点击出口。覆盖模式在这里被拆成两下：
+   * blocked → 告知原因不执行；armed → 写入风险文案、不下发；run → 真下发。
+   * 合并模式无破坏性，直接执行（但同样会清掉 armed 状态，避免跨模式误触发）。
+   */
+  const handleSyncActionClick = async (actionKey: SyncActionKey) => {
+    if (syncModeOf(actionKey) !== 'overwrite') {
+      setArmedOverwrite(null);
+      await runSyncAction(actionKey, false);
+      return;
+    }
+    const state = actionKey === 'upload.overwrite' ? uploadOverwriteState : downloadOverwriteState;
+    if (state.type === 'blocked') {
+      showToast(state.reason, 'info');
+      return;
+    }
+    if (state.type === 'armed') {
+      setArmedOverwrite(actionKey);
+      showToast(state.reason, 'warning');
+      return;
+    }
+    setArmedOverwrite(null);
+    await runSyncAction(actionKey, true);
   };
 
   // 同步弹窗的键盘与焦点契约。两个面板同时只渲染一个，共用同一个 ref。
@@ -174,12 +226,15 @@ export const SyncButton: React.FC<SyncButtonProps> = () => {
 
   // 手动同步的唯一入口：(方向, 模式) 决定下发给引擎的参数、埋点、失败文案。
   // 四个动作的行为差异全部来自 SYNC_ACTIONS 表，不再散落在四个函数体里。
-  const runSyncAction = async (actionKey: SyncActionKey) => {
+  const runSyncAction = async (actionKey: SyncActionKey, isOverwriteConfirmed = false) => {
     const spec = SYNC_ACTIONS[actionKey];
     const direction: SyncOperation = actionKey.startsWith('upload') ? 'upload' : 'download';
-    const mode = actionKey.endsWith('overwrite') ? 'overwrite' : 'merge';
+    const mode = syncModeOf(actionKey);
 
-    if (isWorking || !isAuthenticated) return;
+    // 硬闸门：覆盖模式没有确认标记就拒跑（UI 侧已双闸门，这里是绕过 UI 时的兵底）
+    if (!isOverwriteGateOpen({ mode, isConfirmed: isOverwriteConfirmed, isBusy: isWorking, isAuthenticated })) {
+      return;
+    }
 
     const refreshLocal = async () => {
       try {
@@ -376,8 +431,10 @@ export const SyncButton: React.FC<SyncButtonProps> = () => {
                 <div className="grid gap-4 lg:grid-cols-2">
                   <button
                     type="button"
-                    onClick={() => void runSyncAction('upload.overwrite')}
-                    className="w-full cursor-pointer overflow-hidden rounded-[24px] border border-rose-200/70 bg-white text-left shadow-sm transition-transform duration-200 hover:-translate-y-0.5 hover:shadow-lg focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-rose-500 dark:border-rose-500/20 dark:bg-slate-900/80"
+                    onClick={() => void handleSyncActionClick('upload.overwrite')}
+                    disabled={uploadOverwriteState.type === 'blocked'}
+                    aria-disabled={uploadOverwriteState.type === 'blocked'}
+                    className="w-full overflow-hidden rounded-[24px] border border-rose-200/70 bg-white text-left shadow-sm transition-transform duration-200 hover:-translate-y-0.5 hover:shadow-lg focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-rose-500 disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:translate-y-0 disabled:hover:shadow-sm dark:border-rose-500/20 dark:bg-slate-900/80"
                   >
                     <div className="flex items-center justify-center bg-rose-600 px-5 py-5 text-white">
                       <svg xmlns="http://www.w3.org/2000/svg" className="h-12 w-12" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -397,12 +454,20 @@ export const SyncButton: React.FC<SyncButtonProps> = () => {
                           muted: '#6b7280',
                         }
                       )}
+                      {/* 闸门提示：blocked 说清为何点不动；armed 说清再点一次会发生什么 */}
+                      <div className="mt-3 rounded-xl bg-rose-50 px-3 py-2 text-xs leading-5 text-rose-700 dark:bg-rose-500/10 dark:text-rose-300">
+                        {uploadOverwriteState.type === 'blocked'
+                          ? uploadOverwriteState.reason
+                          : uploadOverwriteState.type === 'armed'
+                            ? uploadOverwriteState.reason
+                            : '再点一次立即执行覆盖（不可撤销）'}
+                      </div>
                     </div>
                   </button>
 
                   <button
                     type="button"
-                    onClick={() => void runSyncAction('upload.merge')}
+                    onClick={() => void handleSyncActionClick('upload.merge')}
                     className="w-full cursor-pointer overflow-hidden rounded-[24px] border border-emerald-200/70 bg-white text-left shadow-sm transition-transform duration-200 hover:-translate-y-0.5 hover:shadow-lg focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-500 dark:border-emerald-500/20 dark:bg-slate-900/80"
                   >
                     <div className="flex items-center justify-center bg-emerald-600 px-5 py-5 text-white">
@@ -489,8 +554,10 @@ export const SyncButton: React.FC<SyncButtonProps> = () => {
                 <div className="grid gap-4 lg:grid-cols-2">
                   <button
                     type="button"
-                    onClick={() => void runSyncAction('download.overwrite')}
-                    className="w-full cursor-pointer overflow-hidden rounded-[24px] border border-rose-200/70 bg-white text-left shadow-sm transition-transform duration-200 hover:-translate-y-0.5 hover:shadow-lg focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-rose-500 dark:border-rose-500/20 dark:bg-slate-900/80"
+                    onClick={() => void handleSyncActionClick('download.overwrite')}
+                    disabled={downloadOverwriteState.type === 'blocked'}
+                    aria-disabled={downloadOverwriteState.type === 'blocked'}
+                    className="w-full overflow-hidden rounded-[24px] border border-rose-200/70 bg-white text-left shadow-sm transition-transform duration-200 hover:-translate-y-0.5 hover:shadow-lg focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-rose-500 disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:translate-y-0 disabled:hover:shadow-sm dark:border-rose-500/20 dark:bg-slate-900/80"
                   >
                     <div className="flex items-center justify-center bg-rose-600 px-5 py-5 text-white">
                       <svg xmlns="http://www.w3.org/2000/svg" className="h-12 w-12" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -510,12 +577,19 @@ export const SyncButton: React.FC<SyncButtonProps> = () => {
                           muted: '#6b7280',
                         }
                       )}
+                      <div className="mt-3 rounded-xl bg-rose-50 px-3 py-2 text-xs leading-5 text-rose-700 dark:bg-rose-500/10 dark:text-rose-300">
+                        {downloadOverwriteState.type === 'blocked'
+                          ? downloadOverwriteState.reason
+                          : downloadOverwriteState.type === 'armed'
+                            ? downloadOverwriteState.reason
+                            : '再点一次立即执行覆盖（不可撤销）'}
+                      </div>
                     </div>
                   </button>
 
                   <button
                     type="button"
-                    onClick={() => void runSyncAction('download.merge')}
+                    onClick={() => void handleSyncActionClick('download.merge')}
                     className="w-full cursor-pointer overflow-hidden rounded-[24px] border border-sky-200/70 bg-white text-left shadow-sm transition-transform duration-200 hover:-translate-y-0.5 hover:shadow-lg focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sky-500 dark:border-sky-500/20 dark:bg-slate-900/80"
                   >
                     <div className="flex items-center justify-center bg-sky-600 px-5 py-5 text-white">

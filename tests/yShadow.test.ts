@@ -88,7 +88,7 @@ describe('yTranslate: MutationOp → Y 计划', () => {
     assert.equal((upserts[0] as { group: { id: string } }).group.id, 'g1');
     assert.equal(plans[plans.length - 1].kind, 'setOrder');
   });
-  it('翻译表全覆盖：11 种 op 均可翻译（upsert + setOrder）', async () => {
+  it('翻译表全覆盖：10 种 op 均可翻译（upsert + setOrder）', async () => {
     const { planShadowSync } = await import('@/core/yTranslate');
     const g = mkGroup('g1', [mkTab('t1')], { lastOp: { ...STAMP } });
     const ops = [
@@ -100,7 +100,6 @@ describe('yTranslate: MutationOp → Y 计划', () => {
       { op: 'renameGroup', groupId: 'g1', name: 'n' },
       { op: 'toggleGroupLock', groupId: 'g1' },
       { op: 'updateGroupFields', groupId: 'g1', fields: {} },
-      { op: 'moveGroup', dragIndex: 0, hoverIndex: 0 },
       { op: 'moveTab', sourceGroupId: 'g1', sourceIndex: 0, targetGroupId: 'g1', targetIndex: 0 },
       { op: 'cleanDuplicates' },
     ] as never[];
@@ -345,7 +344,7 @@ describe('mutationHandlers 影子接线：成功后触发、失败不阻断', ()
     const res = await handlers.handle({ op: 'deleteAllGroups' });
     assert.equal(res.ok, true);
   });
-  it('主写失败（无效 moveGroup 索引）→ shadowWrite 不被调用', async () => {
+  it('未知 op（协议里已无 moveGroup）→ 主写失败且 shadowWrite 不被调用', async () => {
     const { createMutationHandlers } = await import('@/background/mutationHandlers');
     const deps = memStorage();
     let called = 0;
@@ -353,7 +352,9 @@ describe('mutationHandlers 影子接线：成功后触发、失败不阻断', ()
       ...deps,
       shadowWrite: () => { called++; },
     } as never);
-    const res = await handlers.handle({ op: 'moveGroup', dragIndex: 0, hoverIndex: 5 });
+    // moveGroup 已从 MutationOp 删除，SW 分支也随之消失；旧客户端若仍发这个 op，
+    // 必须被 default 分支挡下（ok:false）而不是「静默成功」。
+    const res = await handlers.handle({ op: 'moveGroup', dragIndex: 0, hoverIndex: 5 } as never);
     await new Promise(r => setTimeout(r, 10));
     assert.equal(res.ok, false);
     assert.equal(called, 0);

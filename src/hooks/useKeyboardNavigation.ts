@@ -1,114 +1,4 @@
-import { useEffect, useCallback, useRef } from 'react';
-
-interface KeyboardNavigationOptions {
-  onEnter?: () => void;
-  onEscape?: () => void;
-  onArrowUp?: () => void;
-  onArrowDown?: () => void;
-  onArrowLeft?: () => void;
-  onArrowRight?: () => void;
-  onTab?: () => void;
-  onShiftTab?: () => void;
-  enabled?: boolean;
-}
-
-/**
- * 键盘导航Hook
- * 提供统一的键盘事件处理
- * @param options 键盘事件处理选项
- * @param deps 依赖数组
- */
-export function useKeyboardNavigation(
-  options: KeyboardNavigationOptions,
-  deps: React.DependencyList = []
-) {
-  const {
-    onEnter,
-    onEscape,
-    onArrowUp,
-    onArrowDown,
-    onArrowLeft,
-    onArrowRight,
-    onTab,
-    onShiftTab,
-    enabled = true
-  } = options;
-
-  const handleKeyDown = useCallback(
-    (event: KeyboardEvent) => {
-      if (!enabled) return;
-
-      switch (event.key) {
-        case 'Enter':
-          if (onEnter) {
-            event.preventDefault();
-            onEnter();
-          }
-          break;
-        case 'Escape':
-          if (onEscape) {
-            event.preventDefault();
-            onEscape();
-          }
-          break;
-        case 'ArrowUp':
-          if (onArrowUp) {
-            event.preventDefault();
-            onArrowUp();
-          }
-          break;
-        case 'ArrowDown':
-          if (onArrowDown) {
-            event.preventDefault();
-            onArrowDown();
-          }
-          break;
-        case 'ArrowLeft':
-          if (onArrowLeft) {
-            event.preventDefault();
-            onArrowLeft();
-          }
-          break;
-        case 'ArrowRight':
-          if (onArrowRight) {
-            event.preventDefault();
-            onArrowRight();
-          }
-          break;
-        case 'Tab':
-          if (event.shiftKey && onShiftTab) {
-            event.preventDefault();
-            onShiftTab();
-          } else if (!event.shiftKey && onTab) {
-            event.preventDefault();
-            onTab();
-          }
-          break;
-      }
-    },
-    [
-      enabled,
-      onEnter,
-      onEscape,
-      onArrowUp,
-      onArrowDown,
-      onArrowLeft,
-      onArrowRight,
-      onTab,
-      onShiftTab,
-      ...deps
-    ]
-  );
-
-  useEffect(() => {
-    if (enabled) {
-      document.addEventListener('keydown', handleKeyDown);
-      return () => {
-        document.removeEventListener('keydown', handleKeyDown);
-      };
-    }
-  }, [handleKeyDown, enabled]);
-}
+import { useEffect, useRef } from 'react';
 
 /**
  * 对话框内可聚焦元素的查询选择器。
@@ -249,9 +139,9 @@ export function useFocusTrap(
  * 对话框的键盘与焦点契约：打开移焦 → Tab 循环 → Escape 关闭 → 关闭还焦。
  * 只管键盘/焦点，role="dialog" / aria-modal / aria-labelledby 由调用方写在 JSX 上。
  *
- * Escape 必须在 window 捕获阶段拦截：Header 的 useKeyboardShortcuts 注册了无修饰键的
- * CLEAR_SEARCH: Escape（document 冒泡监听器，且比弹窗先注册 → 必然先触发），
- * 冒泡阶段的 stopPropagation 已经来不及，只能在事件到达 document 之前吞掉。
+ * Escape 必须在 window 捕获阶段拦截：对话框可能被挂在别处的菜单/弹层里，
+ * 那些容器上的冒泡监听器比它先注册（document 上更早），冒泡阶段的
+ * stopPropagation 已经来不及，只能在事件到达 document 之前吞掉。
  *
  * @param containerRef 对话框根节点引用（元素需带 tabIndex={-1}）
  * @param open 对话框是否打开
@@ -285,31 +175,4 @@ export function useDialogA11y(
       window.removeEventListener('keydown', handleKeyDown, true);
     };
   }, [open]);
-}
-
-/**
- * 跳过链接Hook
- * 为屏幕阅读器用户提供跳过导航的功能
- */
-export function useSkipLink() {
-  const skipLinkRef = useRef<HTMLAnchorElement>(null);
-
-  const showSkipLink = useCallback(() => {
-    if (skipLinkRef.current) {
-      skipLinkRef.current.style.transform = 'translateY(0)';
-      skipLinkRef.current.focus();
-    }
-  }, []);
-
-  const hideSkipLink = useCallback(() => {
-    if (skipLinkRef.current) {
-      skipLinkRef.current.style.transform = 'translateY(-100%)';
-    }
-  }, []);
-
-  return {
-    skipLinkRef,
-    showSkipLink,
-    hideSkipLink
-  };
 }

@@ -29,7 +29,7 @@
  * { d(设备号), s(seq), ts, type, groupId, tabId, payload }，
  * **没有 message，也没有 level/severity**。journal 记的是语义命令（MutationOp），
  * 本身不存在「错误条目」这一说。所以本文件不带 message、也不带 groupId/tabId/d/payload，
- * 只按 `type` 聚合计数——`type` 是 src/core/mutationProtocol.ts:8-19 里 11 个字面量的
+ * 只按 `type` 聚合计数——`type` 是 src/core/mutationProtocol.ts 里 10 个字面量的
  * 封闭联合，代码常量，不是用户数据。若将来 journal 真的开始记 message，
  * message 里极可能混着 URL 与会话名（renameGroup 的 payload 就是会话名，
  * 见 tests/journal.test.ts:91），届时必须先分类再决定带不带，不许直接透传。
@@ -94,7 +94,6 @@ const JOURNAL_OP_TYPES: Record<MutationOp['op'], true> = {
   renameGroup: true,
   toggleGroupLock: true,
   updateGroupFields: true,
-  moveGroup: true,
   moveTab: true,
   cleanDuplicates: true,
 };

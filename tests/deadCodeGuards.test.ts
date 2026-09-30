@@ -68,6 +68,9 @@ const DEAD_FILES = [
   'src/components/auth/AuthButton.tsx',
   'src/components/auth/AuthContainer.tsx',
   'src/styles/accessibility.css',
+  // 页内快捷键层 + 标签组拖拽排序/重排模式（1.22.x 第二轮清理）
+  'src/hooks/useKeyboardShortcuts.ts',
+  'src/components/tabs/ReorderView/index.tsx',
 ];
 
 describe('转发垫片已物理删除，不得复活', () => {
@@ -97,6 +100,66 @@ describe('零引用文件已删除，不得复活', () => {
       [],
       `死文件复活：${revived.join('、')}。若确实要恢复（例如 accessibility.css 真的接进了无障碍修复），请连同本断言一起更新。`,
     );
+  });
+});
+
+describe('页内快捷键层与「标签组拖拽 + 重排模式」已下线', () => {
+  /** 剥掉注释后再搜标识符——注释里提到旧名字不算引用。 */
+  const code = (rel: string) => stripComments(readFileSync(p(rel), 'utf8'));
+
+  it('useKeyboardShortcuts 不在了，页面上也不再注册 document 级快捷键', () => {
+    assert.ok(!existsSync(p('src/hooks/useKeyboardShortcuts.ts')));
+    // Header 是快捷键层唯一的挂载点：它现在不得再 import / 调用这个 hook
+    const header = code('src/components/layout/Header.tsx');
+    assert.ok(!header.includes('useKeyboardShortcuts'));
+    assert.ok(!header.includes('COMMON_SHORTCUTS'));
+    // 快捷键提示卡片一并消失（QuickActionTips 只讲 Ctrl+S / Ctrl+F / Ctrl+L）
+    assert.ok(!code('src/components/common/PersonalizedWelcome.tsx').includes('QuickActionTips'));
+    assert.ok(!code('src/components/tabs/TabList.tsx').includes('QuickActionTips'));
+  });
+
+  it('useKeyboardNavigation 只剩对话框无障碍契约，通用方向键层已删', () => {
+    // ModalFrame / SyncButton / HeaderDropdown 三个对话框仍依赖它，不可整文件删
+    const nav = code('src/hooks/useKeyboardNavigation.ts');
+    for (const keep of ['useFocusTrap', 'useDialogA11y', 'resolveTabTarget', 'FOCUSABLE_SELECTOR']) {
+      assert.ok(nav.includes(keep), `无障碍契约的 ${keep} 被误删`);
+    }
+    for (const gone of ['function useKeyboardNavigation(', 'function useSkipLink(', 'KeyboardNavigationOptions']) {
+      assert.ok(!nav.includes(gone), `${gone} 应随页内快捷键层一起删除`);
+    }
+  });
+
+  it('重排模式：组件、Redux 开关、协议 op 全链路消失', () => {
+    assert.ok(!existsSync(p('src/components/tabs/ReorderView')));
+    for (const rel of [
+      'src/components/tabs/TabList.tsx',
+      'src/components/layout/Header.tsx',
+      'src/store/slices/settingsSlice.ts',
+      'src/store/slices/tabSlice.ts',
+      'src/components/dnd/DraggableTabGroup.tsx',
+    ]) {
+      const src = code(rel);
+      assert.ok(!/reorderMode|ReorderView|setReorderMode/.test(src), `${rel} 仍在引用重排模式`);
+    }
+  });
+
+  it('标签组拖拽排序：UI 回调、thunk、reducer、协议 op、SW 分支一起消失', () => {
+    assert.ok(!code('src/components/tabs/TabList.tsx').includes('moveGroup'));
+    assert.ok(!code('src/components/dnd/DraggableTabGroup.tsx').includes('moveGroup'));
+    assert.ok(!code('src/store/slices/tabSlice.ts').includes('moveGroup'));
+    assert.ok(!code('src/core/mutationOps.ts').includes('applyMoveGroup'));
+    // 协议 op 删了，docs 里的 op 清单也必须跟着改，否则下一个人会照着注释把它加回来
+    assert.ok(!code('src/core/mutationProtocol.ts').includes('moveGroup'));
+    assert.ok(!/\bmoveGroup\b/.test(code('src/core/yTranslate.ts')));
+    // versionHelper.updateDisplayOrder 只服务于 applyMoveGroup，一并退场
+    assert.ok(!code('src/core/versionHelper.ts').includes('updateDisplayOrder'));
+  });
+
+  it('会话内标签排序（moveTab）仍在：那条路是有真实调用方的', () => {
+    // 容易被「顺手一起删」误伤的是 moveTab —— TabGroup 拖拽 / DraggableTab 键盘重排都在用
+    assert.ok(existsSync(p('src/components/dnd/keyboardReorder.ts')));
+    assert.ok(code('src/components/tabs/TabGroup.tsx').includes('moveTabAndSync'));
+    assert.ok(code('src/core/mutationOps.ts').includes('applyMoveTab'));
   });
 });
 

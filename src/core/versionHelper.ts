@@ -27,20 +27,6 @@ export function updateGroupWithVersion<T extends Partial<TabGroup>>(
 }
 
 /**
- * 批量更新标签组的 displayOrder
- * @param groups 标签组数组（已排序）
- * @returns 更新后的标签组数组
- */
-export function updateDisplayOrder(groups: TabGroup[]): TabGroup[] {
-  return groups.map((group, index) => ({
-    ...group,
-    displayOrder: index,
-    version: (group.version || 1) + 1,
-    updatedAt: new Date().toISOString(),
-  }));
-}
-
-/**
  * 初始化标签组的版本号和显示顺序（用于数据迁移）
  * @param group 标签组
  * @param index 在数组中的索引

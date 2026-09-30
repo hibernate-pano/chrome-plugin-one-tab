@@ -1,13 +1,13 @@
-import React, { useEffect, lazy } from 'react';
+import React, { useEffect } from 'react';
 import { useAppDispatch, useAppSelector } from '@/store/hooks';
-import { loadGroups, moveGroupAndSync } from '@/store/slices/tabSlice';
+import { loadGroups } from '@/store/slices/tabSlice';
 import { invalidateGroupsCache, onGroupsChanged } from '@/utils/storage';
 import { runMigrations } from '@/utils/migrationUtils';
 import { DraggableTabGroup } from '@/components/dnd/DraggableTabGroup';
 import { SearchResultList } from '@/components/search/SearchResultList';
 import { EmptyState } from '@/components/common/EmptyState';
 import { LoadingSpinner } from '@/components/common/LoadingSpinner';
-import { PersonalizedWelcome, QuickActionTips } from '@/components/common/PersonalizedWelcome';
+import { PersonalizedWelcome } from '@/components/common/PersonalizedWelcome';
 import { toListErrorCopy } from './listErrorCopy';
 import { logError } from '../../utils/log';
 
@@ -15,12 +15,10 @@ interface TabListProps {
   searchQuery: string;
 }
 
-const ReorderView = lazy(() => import('@/components/tabs/ReorderView'));
-
 export const TabList: React.FC<TabListProps> = ({ searchQuery }) => {
   const dispatch = useAppDispatch();
   const { groups, isLoading, error } = useAppSelector(state => state.tabs);
-  const { layoutMode, reorderMode } = useAppSelector(state => state.settings);
+  const { layoutMode } = useAppSelector(state => state.settings);
 
   useEffect(() => {
     const initializeData = async () => {
@@ -136,16 +134,7 @@ export const TabList: React.FC<TabListProps> = ({ searchQuery }) => {
             }
           />
         </div>
-        <QuickActionTips className="flat-card p-4" />
       </div>
-    );
-  }
-
-  if (reorderMode) {
-    return (
-      <React.Suspense fallback={<div>加载中...</div>}>
-        <ReorderView />
-      </React.Suspense>
     );
   }
 
@@ -165,14 +154,7 @@ export const TabList: React.FC<TabListProps> = ({ searchQuery }) => {
             return columns.map((column, columnIndex) => (
               <div key={columnIndex} className="space-y-2 transition-all duration-300 ease-out">
                 {column.map(group => (
-                  <DraggableTabGroup
-                    key={group.id}
-                    group={group}
-                    index={filteredGroups.findIndex(item => item.id === group.id)}
-                    moveGroup={(dragIndex, hoverIndex) => {
-                      dispatch(moveGroupAndSync({ dragIndex, hoverIndex }));
-                    }}
-                  />
+                  <DraggableTabGroup key={group.id} group={group} />
                 ))}
               </div>
             ));
@@ -180,15 +162,8 @@ export const TabList: React.FC<TabListProps> = ({ searchQuery }) => {
         </div>
       ) : (
         <div className="space-y-2 transition-all duration-300 ease-out">
-          {filteredGroups.map((group, index) => (
-            <DraggableTabGroup
-              key={group.id}
-              group={group}
-              index={index}
-              moveGroup={(dragIndex, hoverIndex) => {
-                dispatch(moveGroupAndSync({ dragIndex, hoverIndex }));
-              }}
-            />
+          {filteredGroups.map(group => (
+            <DraggableTabGroup key={group.id} group={group} />
           ))}
         </div>
       )}

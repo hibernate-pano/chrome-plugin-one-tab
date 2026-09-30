@@ -19,7 +19,7 @@
  * | deleteGroup      | 同上（组物理移除 → setOrder 修剪） |
  * | deleteAllGroups  | 同上（快照为空 → setOrder 修剪全部） |
  * | importGroups     | 同上（新组全带 stamp → 全部 upsert） |
- * | renameGroup / toggleGroupLock / updateGroupFields / moveGroup | 同上 |
+ * | renameGroup / toggleGroupLock / updateGroupFields | 同上 |
  * | moveTab          | 同上（源组+目标组同 stamp → 双 upsert；源组移空 → 修剪） |
  * | cleanDuplicates  | 同上（被移除 tab/组随整组 upsert / setOrder 修剪） |
  * | 任意 op          | setOrder 恒附带（快照 id 序列；物理删除的组经修剪移除） |

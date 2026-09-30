@@ -26,7 +26,6 @@ import {
   applyRenameGroup,
   applyToggleGroupLock,
   applyUpdateGroupFields,
-  applyMoveGroup,
   applyMoveTab,
   applyCleanDuplicates,
 } from '@/core/mutationOps';
@@ -166,17 +165,6 @@ export function createMutationHandlers(deps: MutationDeps) {
         return {
           ok: true,
           payload: { groupId: cmd.groupId, updated: r.updated, fields: cmd.fields },
-        };
-      }
-      case 'moveGroup': {
-        const groups = await deps.getGroups();
-        const next = applyMoveGroup(groups, cmd.dragIndex, cmd.hoverIndex, stamp);
-        if (!next) return { ok: false, error: '无效的标签组索引' };
-        await deps.setGroups(next);
-        deps.scheduleUpload(NORMAL_MS);
-        return {
-          ok: true,
-          payload: { dragIndex: cmd.dragIndex, hoverIndex: cmd.hoverIndex },
         };
       }
       case 'moveTab': {

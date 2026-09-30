@@ -8,8 +8,7 @@
  * 旧路径 → mutation op 代理清单：
  * saveGroup→saveGroup / deleteGroup→deleteGroup / deleteAllGroups→deleteAllGroups /
  * importGroups→importGroups / updateGroupNameAndSync→renameGroup /
- * toggleGroupLockAndSync→toggleGroupLock / moveGroupAndSync→moveGroup /
- * moveTabAndSync→moveTab / cleanDuplicateTabs→cleanDuplicates /
+ * toggleGroupLockAndSync→toggleGroupLock / moveTabAndSync→moveTab / cleanDuplicateTabs→cleanDuplicates /
  * deleteTabAndSync→removeTab / persistGroupFields→updateGroupFields
  *
  * ── 2026-09-29 无墓碑重写 ──
@@ -22,7 +21,7 @@ import { createSlice, createAsyncThunk } from '@reduxjs/toolkit';
 import { TabState, TabGroup, OptimisticTabBackup } from '@/types/tab';
 import { storage, invalidateGroupsCache } from '@/utils/storage';
 import { sendMutation } from '@/shared/mutationProtocol';
-import { backupKeyOf, dropLoadGuard, isStaleLoad, stripInFlightTabs, stripTombstonedTabs, toActiveGroupsView, takeLoadGuard } from './tabSliceHelpers';
+import { backupKeyOf, dropLoadGuard, GroupLocalFields, GroupMetaSnapshot, isStaleLoad, restoreGroupLocalFields, restoreGroupLock, restoreGroupName, snapshotGroupLocalFields, snapshotGroupMeta, stripInFlightTabs, stripTombstonedTabs, toActiveGroupsView, takeLoadGuard } from './tabSliceHelpers';
 import { trackProductEvent } from '@/utils/productEvents';
 import { logError, logInfo } from '../../utils/log';
 
@@ -54,16 +53,30 @@ export const initialTabState: TabState = {
  * Redux 端由 updateGroupFields 同步 reducer 立即乐观更新，存储端由此 thunk
  * 经 MUTATE 消息交 SW 落盘，避免 popup/SW 并发直写 storage 的 R1 race。
  */
+/**
+ * P1-5：失败必须把乐观值收回去。快照在乐观更新之前抓，失败时随 rejectValue 带回来，
+ * rejected reducer 还原（见 tabSliceHelpers 的回滚说明）。
+ * 组件侧靠匹配 thunk 的 rejected action 弹错误 toast，不再静默。
+ */
 export const persistGroupFields = createAsyncThunk<
-  { groupId: string; fields: { isFavorite?: boolean; notes?: string } },
-  { groupId: string; fields: { isFavorite?: boolean; notes?: string } }
->('tabs/persistGroupFields', async ({ groupId, fields }) => {
-  const res = await sendMutation<{ groupId: string; updated: TabGroup | null; fields: { isFavorite?: boolean; notes?: string } }>({
+  { groupId: string; fields: GroupLocalFields },
+  { groupId: string; fields: GroupLocalFields },
+  { state: { tabs: TabState }; rejectValue: { groupId: string; snapshot: GroupLocalFields | null } }
+>('tabs/persistGroupFields', async ({ groupId, fields }, { getState, rejectWithValue }) => {
+  const snapshot = snapshotGroupLocalFields(
+    (getState() as { tabs: TabState }).tabs.groups,
+    groupId,
+    fields
+  );
+  const res = await sendMutation<{ groupId: string; updated: TabGroup | null; fields: GroupLocalFields }>({
     op: 'updateGroupFields',
     groupId,
     fields,
   });
-  if (!res.ok) throw new Error(res.error ?? '本地偏好保存失败');
+  if (!res.ok) {
+    logError('[persistGroupFields] 本地偏好保存失败:', { groupId, fields, error: res.error });
+    return rejectWithValue({ groupId, snapshot });
+  }
   return { groupId, fields };
 });
 
@@ -125,9 +138,16 @@ export const importGroups = createAsyncThunk(
 );
 
 // 更新标签组名称并同步到云端
-export const updateGroupNameAndSync = createAsyncThunk(
+export const updateGroupNameAndSync = createAsyncThunk<
+  { groupId: string; name: string },
+  { groupId: string; name: string },
+  { state: { tabs: TabState }; rejectValue: { groupId: string; snapshot: GroupMetaSnapshot | null } }
+>(
   'tabs/updateGroupNameAndSync',
-  async ({ groupId, name }: { groupId: string; name: string }, { dispatch, getState }) => {
+  async ({ groupId, name }, { dispatch, getState, rejectWithValue }) => {
+    // 写入前抓快照（必须在乐观 dispatch 之前，否则抓到的是新名字）
+    const snapshot = snapshotGroupMeta((getState() as { tabs: TabState }).tabs.groups, groupId);
+
     // 在 Redux 中更新标签组名称（乐观更新）
     dispatch(updateGroupName({ groupId, name }));
 
@@ -136,7 +156,11 @@ export const updateGroupNameAndSync = createAsyncThunk(
       groupId,
       name,
     });
-    if (!res.ok) throw new Error(res.error ?? '重命名失败');
+    if (!res.ok) {
+      // 不 throw：抛错会丢掉快照，rejected reducer 拿不到还原所需的数据
+      logError('[updateGroupNameAndSync] 重命名失败:', { groupId, name, error: res.error });
+      return rejectWithValue({ groupId, snapshot });
+    }
 
     const state = getState() as { tabs: TabState };
     const renamedGroup = state.tabs.groups.find(group => group.id === groupId);
@@ -152,9 +176,15 @@ export const updateGroupNameAndSync = createAsyncThunk(
 );
 
 // 切换标签组锁定状态并同步到云端
-export const toggleGroupLockAndSync = createAsyncThunk(
+export const toggleGroupLockAndSync = createAsyncThunk<
+  { groupId: string; isLocked: boolean },
+  string,
+  { state: { tabs: TabState }; rejectValue: { groupId: string; snapshot: GroupMetaSnapshot | null } }
+>(
   'tabs/toggleGroupLockAndSync',
-  async (groupId: string, { dispatch }) => {
+  async (groupId, { dispatch, getState, rejectWithValue }) => {
+    const snapshot = snapshotGroupMeta((getState() as { tabs: TabState }).tabs.groups, groupId);
+
     // 在 Redux 中切换标签组锁定状态（乐观更新）
     dispatch(toggleGroupLock(groupId));
 
@@ -162,31 +192,10 @@ export const toggleGroupLockAndSync = createAsyncThunk(
       op: 'toggleGroupLock',
       groupId,
     });
-    if (!res.ok) throw new Error(res.error ?? '切换锁定失败');
-
-    return res.payload!;
-  }
-);
-
-/**
- * 移动标签组并同步到云端
- * Redux 乐观更新由 moveGroup 同步 reducer 承担；存储写由 mutationQueue 异步完成。
- */
-export const moveGroupAndSync = createAsyncThunk(
-  'tabs/moveGroupAndSync',
-  async (
-    { dragIndex, hoverIndex }: { dragIndex: number; hoverIndex: number },
-    { dispatch }
-  ) => {
-    // 在 Redux 中移动标签组 - 立即更新UI
-    dispatch(moveGroup({ dragIndex, hoverIndex }));
-
-    const res = await sendMutation<{ dragIndex: number; hoverIndex: number }>({
-      op: 'moveGroup',
-      dragIndex,
-      hoverIndex,
-    });
-    if (!res.ok) throw new Error(res.error ?? '移动失败');
+    if (!res.ok) {
+      logError('[toggleGroupLockAndSync] 切换锁定失败:', { groupId, error: res.error });
+      return rejectWithValue({ groupId, snapshot });
+    }
 
     return res.payload!;
   }
@@ -309,18 +318,6 @@ export const tabSlice = createSlice({
     // 新增：设置同步状态
     setSyncStatus: (state, action) => {
       state.syncStatus = action.payload;
-    },
-    moveGroup: (state, action) => {
-      const { dragIndex, hoverIndex } = action.payload;
-      const dragGroup = state.groups[dragIndex];
-      // 创建新的数组以避免直接修改原数组
-      const newGroups = [...state.groups];
-      // 删除拖拽的标签组
-      newGroups.splice(dragIndex, 1);
-      // 在新位置插入标签组
-      newGroups.splice(hoverIndex, 0, dragGroup);
-      // 更新状态
-      state.groups = newGroups;
     },
     /**
      * 移动标签页 - 优化版本（immer 不可变更新）。
@@ -620,8 +617,15 @@ export const tabSlice = createSlice({
       .addCase(updateGroupNameAndSync.fulfilled, () => {
         // 不更新UI状态，因为已经在 reducer 中更新了
       })
-      .addCase(updateGroupNameAndSync.rejected, () => {
-        // 不更新UI状态，因为已经在 reducer 中更新了
+      .addCase(updateGroupNameAndSync.rejected, (state, action) => {
+        // P1-5：storage 写失败 → 把乐观新名字收回去。
+        // 以前这里是空 reducer，UI 永久显示未落盘的名字，storage 永远是旧的。
+        const snapshot = action.payload?.snapshot;
+        if (snapshot) {
+          const group = state.groups.find(g => g.id === action.payload?.groupId);
+          if (group) restoreGroupName(group, snapshot);
+        }
+        state.error = action.error.message || '重命名失败，会话名称已恢复';
       })
 
       // 切换标签组锁定状态并同步到云端
@@ -631,19 +635,25 @@ export const tabSlice = createSlice({
       .addCase(toggleGroupLockAndSync.fulfilled, () => {
         // 不更新UI状态，因为已经在 reducer 中更新了
       })
-      .addCase(toggleGroupLockAndSync.rejected, () => {
-        // 不更新UI状态，因为已经在 reducer 中更新了
+      .addCase(toggleGroupLockAndSync.rejected, (state, action) => {
+        // P1-5：这条不还原后果最重——UI 显示“已锁定”而 storage 未锁定，
+        // 自动清理/删除保护按 storage 判据执行，用户刚锁的会话会被当普通组清掉。
+        const snapshot = action.payload?.snapshot;
+        if (snapshot) {
+          const group = state.groups.find(g => g.id === action.payload?.groupId);
+          if (group) restoreGroupLock(group, snapshot);
+        }
+        state.error = action.error.message || '切换锁定失败，锁定状态已恢复';
       })
 
-      // 移动标签组并同步到云端
-      .addCase(moveGroupAndSync.pending, () => {
-        // 不更新UI状态，因为已经在 reducer 中更新了
-      })
-      .addCase(moveGroupAndSync.fulfilled, () => {
-        // 不更新UI状态，因为已经在 reducer 中更新了
-      })
-      .addCase(moveGroupAndSync.rejected, () => {
-        // 不更新UI状态，因为已经在 reducer 中更新了
+      // 收藏/备注（本地偏好，不进云端）：失败同样回滚，否则 UI 与 storage 永久不一致
+      .addCase(persistGroupFields.rejected, (state, action) => {
+        const snapshot = action.payload?.snapshot;
+        if (snapshot) {
+          const group = state.groups.find(g => g.id === action.payload?.groupId);
+          if (group) restoreGroupLocalFields(group, snapshot);
+        }
+        state.error = action.error.message || '保存失败，已恢复原值';
       })
 
       // 移动标签页并同步到云端
@@ -681,7 +691,6 @@ export const {
   toggleGroupLock,
   updateGroupFields,
   setSearchQuery,
-  moveGroup,
   moveTab,
   setGroups,
 } = tabSlice.actions;

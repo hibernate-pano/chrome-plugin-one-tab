@@ -9,7 +9,6 @@ const updatedDefaultSettings = {
 
 const initialState: UserSettings = {
   ...updatedDefaultSettings,
-  reorderMode: false, // 新增：全局重新排序模式
 };
 
 export const loadSettings = createAsyncThunk('settings/loadSettings', async () => {
@@ -93,9 +92,6 @@ const settingsSlice = createSlice({
           state.layoutMode = 'single';
       }
     },
-    setReorderMode(state, action) {
-      state.reorderMode = action.payload;
-    },
   },
   extraReducers: (builder) => {
     builder
@@ -124,7 +120,6 @@ export const {
    toggleCollectPinnedTabs,
   setLayoutMode,
   toggleLayoutMode,
-  setReorderMode,
 } = settingsSlice.actions;
 
 export default settingsSlice.reducer;

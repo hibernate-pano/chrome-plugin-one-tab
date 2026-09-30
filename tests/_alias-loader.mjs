@@ -105,6 +105,10 @@ export async function load(url, context, nextLoad) {
     importHelpers: false,
     esModuleInterop: true,
     allowSyntheticDefaultImports: true,
+    // .tsx 需要真的编译 JSX：不设的话 transpileModule 默认保留 JSX，
+    // Node 解析到源码里的 '<' 直接 SyntaxError（此前无测试 import 过 .tsx，
+    // 所以这个洞一直没暴露）。react/jsx-runtime 在 node_modules 里，可直接用。
+    jsx: ts.JsxEmit.ReactJSX,
   };
   let transformed = ts.transpileModule(source, {
     compilerOptions,

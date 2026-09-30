@@ -11,7 +11,7 @@
  *       「计时器不能重新依赖 onClose」这类回归。
  *
  * 没覆盖的（见交付说明）：真实 DOM 上的聚焦/还焦时序、读屏实际播报行为、
- * Escape 与 useKeyboardShortcuts 的运行时事件顺序 —— 这些都需要 DOM 环境。
+ * Escape 与后台菜单/弹层的运行时事件顺序 —— 这些都需要 DOM 环境。
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -133,9 +133,9 @@ test('ModalFrame 走焦点契约：容器可编程聚焦 + 打开移焦 / Tab �
   assert.ok(MODAL_FRAME.includes('useDialogA11y(panelRef, visible, onClose)'));
 });
 
-test('useDialogA11y 在 window 捕获阶段接管 Escape，压过 document 上的全局快捷键', () => {
-  // Header 的 useKeyboardShortcuts(CLEAR_SEARCH: Escape) 是 document 冒泡监听器，
-  // 比弹窗先注册必然先触发；冒泡阶段的 stopPropagation 已经来不及。
+test('useDialogA11y 在 window 捕获阶段接管 Escape，压过挂在别处的冒泡监听器', () => {
+  // 对话框可能被挂在菜单/弹层里，那些容器上的冒泡监听器比它先注册；
+  // 冒泡阶段的 stopPropagation 已经来不及，只能在事件到达 document 前吞掉。
   assert.ok(KEYBOARD_HOOKS.includes("window.addEventListener('keydown', handleKeyDown, true)"));
   assert.ok(KEYBOARD_HOOKS.includes("window.removeEventListener('keydown', handleKeyDown, true)"));
   assert.ok(KEYBOARD_HOOKS.includes('event.stopPropagation();'));
@@ -165,8 +165,9 @@ test('确认框与提示框统一继承 ModalFrame 的修复（不各自手搓�
 // ---------------------------------------------------------------------------
 
 test('同步弹窗的四个主操作是真按钮，不是裸 div onClick', () => {
-  const hosts = tagsWithAttribute(SYNC_BUTTON, 'runSyncAction(');
-  assert.equal(hosts.length, 4, `runSyncAction 挂了 ${hosts.length} 个元素`);
+  // P1-6 后四个按钮不再直调 runSyncAction，而是统一走带闸门的 handleSyncActionClick
+  const hosts = tagsWithAttribute(SYNC_BUTTON, 'handleSyncActionClick(');
+  assert.equal(hosts.length, 4, `handleSyncActionClick 挂了 ${hosts.length} 个元素`);
   assert.deepEqual([...new Set(hosts.map(h => h.name))], ['button']);
 });
 
@@ -183,7 +184,7 @@ test('同步弹窗里非控件的 onClick 只有「点遮罩关闭」和「阻�
 
 test('四个同步动作收敛成按 (方向, 模式) 参数化的单一入口', () => {
   for (const key of ['upload.overwrite', 'upload.merge', 'download.overwrite', 'download.merge']) {
-    assert.ok(SYNC_BUTTON.includes(`runSyncAction('${key}')`), `缺少 runSyncAction('${key}')`);
+    assert.ok(SYNC_BUTTON.includes(`handleSyncActionClick('${key}')`), `缺少 handleSyncActionClick('${key}')`);
   }
   // 四个复制粘贴的 handler 必须消失
   for (const legacy of ['handleUploadOverwrite', 'handleUploadMerge', 'handleDownloadOverwrite', 'handleDownloadMerge']) {

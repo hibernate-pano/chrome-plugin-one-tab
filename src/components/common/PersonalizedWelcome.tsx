@@ -88,36 +88,4 @@ export const PersonalizedWelcome: React.FC<PersonalizedWelcomeProps> = ({
   );
 };
 
-/**
- * 快速操作提示组件
- */
-export const QuickActionTips: React.FC<{ className?: string }> = ({ className = '' }) => {
-  const tips = [
-    { key: 'Ctrl+S', desc: '保存当前窗口为会话' },
-    { key: 'Ctrl+F', desc: '快速搜索会话' },
-    { key: 'Ctrl+L', desc: '切换布局' },
-  ];
-
-  return (
-    <div className={`${className}`}>
-      <div className="text-center mb-4">
-        <h3 className="flat-text-secondary text-sm mb-2">💡 快捷键提示</h3>
-      </div>
-      <div className="flex flex-wrap justify-center gap-2">
-        {tips.map((tip, index) => (
-          <div
-            key={index}
-            className="flex items-center space-x-1 px-2 py-1 bg-gray-100 dark:bg-gray-700 rounded text-xs"
-          >
-            <kbd className="px-1 py-0.5 bg-white dark:bg-gray-600 rounded text-gray-600 dark:text-gray-300 font-mono">
-              {tip.key}
-            </kbd>
-            <span className="text-gray-600 dark:text-gray-300">{tip.desc}</span>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-};
-
 export default PersonalizedWelcome;

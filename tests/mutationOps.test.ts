@@ -211,17 +211,12 @@ describe('mutationOps 本地字段（isFavorite/notes 不进 sync —— 阶段�
 });
 
 describe('mutationOps 移动与清理', () => {
-  it('applyMoveGroup：交换位置并重排 displayOrder', async () => {
-    const { applyMoveGroup } = await import('@/core/mutationOps');
-    const a = mkGroup('a', []), b = mkGroup('b', []);
-    const out = applyMoveGroup([a, b], 0, 1, STAMP);
-    assert.deepEqual(out!.map(g => g.id), ['b', 'a']);
-    assert.ok(out!.every(g => typeof g.displayOrder === 'number'));
-  });
-  it('applyMoveGroup：索引越界 → null', async () => {
-    const { applyMoveGroup } = await import('@/core/mutationOps');
-    assert.equal(applyMoveGroup([mkGroup('a', [])], 0, 5, STAMP), null);
-    assert.equal(applyMoveGroup([mkGroup('a', [])], -1, 0, STAMP), null);
+  it('applyMoveGroup 已随标签组拖拽排序下线', async () => {
+    // 钉住「不是忘了删，是有意删的」：一旦有人把 applyMoveGroup 加回来，这里立刻红。
+    // 协议侧（MutationOp 里不再有 'moveGroup'）由 tsc 拦：
+    // src/utils/diagnostics.ts 的 Record<MutationOp['op'], true> 会报缺少属性。
+    const ops = await import('@/core/mutationOps');
+    assert.equal((ops as Record<string, unknown>).applyMoveGroup, undefined);
   });
   it('applyMoveTab：跨组移动，两侧 version+1', async () => {
     const { applyMoveTab } = await import('@/core/mutationOps');
@@ -350,14 +345,15 @@ describe('mutationOps: stamp 盖印', () => {
     );
     assert.deepEqual(imported[0].lastOp, stamp);
   });
-  it('applyMoveGroup：被拖动组盖 stamp，其他组不动', async () => {
-    const { applyMoveGroup } = await import('@/core/mutationOps');
+  it('applyMoveTab：被搬空/收进标签的组盖 stamp', async () => {
+    const { applyMoveTab } = await import('@/core/mutationOps');
     const stamp = { d: 'devA', s: 17 };
-    const a = mkGroup('a', []);
-    const b = mkGroup('b', []);
-    const out = applyMoveGroup([a, b], 0, 1, stamp)!;
-    assert.deepEqual(out.find(g => g.id === 'a')!.lastOp, stamp); // 拖动组
-    assert.equal(out.find(g => g.id === 'b')!.lastOp, undefined); // 静止组不动
+    const a = mkGroup('a', [mkTab('a1')]);
+    const b = mkGroup('b', [mkTab('b1'), mkTab('b2')]);
+    const { groups } = applyMoveTab([a, b], { sourceGroupId: 'a', sourceIndex: 0, targetGroupId: 'b', targetIndex: 0 }, NOW, stamp);
+    // 源组被搬空 → 整组物理移除（不留空壳），所以只能在目标组上验 stamp
+    assert.equal(groups.find(g => g.id === 'a'), undefined);
+    assert.deepEqual(groups.find(g => g.id === 'b')!.lastOp, stamp);
   });
   it('applyCleanDuplicates：存活组盖 stamp；被清空的组物理移除（无实体不盖）', async () => {
     const { applyCleanDuplicates } = await import('@/core/mutationOps');

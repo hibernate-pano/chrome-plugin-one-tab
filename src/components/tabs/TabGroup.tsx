@@ -63,7 +63,7 @@ const NotesIcon = () => (
 export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
   const dispatch = useAppDispatch();
   const confirmBeforeDelete = useAppSelector(state => state.settings.confirmBeforeDelete);
-  const { showConfirm } = useToast();
+  const { showConfirm, showToast } = useToast();
   const { showDeleteError, showRestoreError } = useEnhancedToast();
 
   const [isEditing, setIsEditing] = useState(false);
@@ -78,21 +78,45 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
   if (openGuardRef.current === null) openGuardRef.current = new OpenGuard();
   if (openAllGuardRef.current === null) openAllGuardRef.current = new OpenAllGuard();
 
+  // 只在“不处于编辑态”时把外部值同步进草稿。
+  // 失败回滚会让 group.name/group.notes 短暂变回旧值（那正是我们要的），
+  // 但如果这里无条件回写，用户正在输入框里的草稿会被回滚值抹掉——保存失败后
+  // 恰恰是最需要保留草稿让人重试的时刻。
   useEffect(() => {
-    setNewName(group.name);
-    setNotesDraft(group.notes || '');
-  }, [group.name, group.notes]);
+    if (!isEditing) setNewName(group.name);
+    if (!isEditingNotes) setNotesDraft(group.notes || '');
+  }, [group.name, group.notes, isEditing, isEditingNotes]);
 
   const handleNameChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     setNewName(e.target.value);
   }, []);
 
+  /**
+   * P1-5：四条乐观写路径（重命名/锁定/收藏/备注）的失败出口。
+   * thunk 用 rejectWithValue 把写入前快照带回来，slice 的 rejected reducer 已据此
+   * 把 Redux 回滚到与 storage 一致的值；这里只负责「告诉用户刚才那下没生效」并
+   * 把编辑态/草稿留在原处（可立即重试），否则用户以为已经改成功了。
+   * 之前这四条 dispatch 全部没有失败处理，写失败静默、UI 与 storage 永久分叉。
+   */
   const handleNameSubmit = useCallback(() => {
-    if (newName.trim() !== '') {
-      dispatch(updateGroupNameAndSync({ groupId: group.id, name: newName.trim() }));
-      setIsEditing(false);
+    const trimmed = newName.trim();
+    // 名字没变就不写：既避免 Enter + blur 双触发时发两次 rename（第二次会拿到
+    // 自己的乐观值当快照），也避免无意义的 version bump。
+    if (trimmed !== '' && trimmed !== group.name) {
+      void dispatch(updateGroupNameAndSync({ groupId: group.id, name: trimmed }))
+        .then(action => {
+          if (updateGroupNameAndSync.rejected.match(action)) {
+            logError('重命名失败，已恢复原名称:', action.error);
+            showToast('重命名失败，会话名称已恢复', 'error');
+            // 保持编辑态：草稿还在输入框里，用户可以直接重试
+            setIsEditing(true);
+            return;
+          }
+          setIsEditing(false);
+        })
+        .catch(error => logError('重命名失败:', error));
     }
-  }, [dispatch, group.id, newName]);
+  }, [dispatch, group.id, group.name, newName, showToast]);
 
   const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
     if (e.key === 'Enter') {
@@ -129,25 +153,48 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
   }, [confirmBeforeDelete, dispatch, group.id, group.name, group.tabs.length, showConfirm, showDeleteError]);
 
   const handleToggleLock = useCallback(() => {
-    dispatch(toggleGroupLockAndSync(group.id));
-  }, [dispatch, group.id]);
+    void dispatch(toggleGroupLockAndSync(group.id))
+      .then(action => {
+        if (toggleGroupLockAndSync.rejected.match(action)) {
+          logError('切换锁定失败，已恢复原状态:', action.error);
+          showToast('切换锁定失败，锁定状态已恢复', 'error');
+        }
+      })
+      .catch(error => logError('切换锁定失败:', error));
+  }, [dispatch, group.id, showToast]);
 
   const handleToggleFavorite = useCallback(() => {
     const nextFavorite = !group.isFavorite;
     dispatch(updateGroupFields({ groupId: group.id, fields: { isFavorite: nextFavorite } }));
-    dispatch(persistGroupFields({ groupId: group.id, fields: { isFavorite: nextFavorite } }));
+    void dispatch(persistGroupFields({ groupId: group.id, fields: { isFavorite: nextFavorite } }))
+      .then(action => {
+        if (persistGroupFields.rejected.match(action)) {
+          logError('收藏状态保存失败，已恢复原状态:', action.error);
+          showToast('收藏保存失败，状态已恢复', 'error');
+        }
+      })
+      .catch(error => logError('收藏状态保存失败:', error));
     void trackProductEvent('session_favorited', {
       sessionId: group.id,
       sessionName: group.name,
       isFavorite: nextFavorite,
     });
-  }, [dispatch, group]);
+  }, [dispatch, group, showToast]);
 
   const handleSaveNotes = useCallback(() => {
     const trimmed = notesDraft.trim() || undefined;
     dispatch(updateGroupFields({ groupId: group.id, fields: { notes: trimmed } }));
-    dispatch(persistGroupFields({ groupId: group.id, fields: { notes: trimmed } }));
-    setIsEditingNotes(false);
+    void dispatch(persistGroupFields({ groupId: group.id, fields: { notes: trimmed } }))
+      .then(action => {
+        if (persistGroupFields.rejected.match(action)) {
+          logError('备注保存失败，已恢复原备注:', action.error);
+          showToast('备注保存失败，内容已恢复', 'error');
+          setIsEditingNotes(true);
+          return;
+        }
+        setIsEditingNotes(false);
+      })
+      .catch(error => logError('备注保存失败:', error));
     void trackProductEvent('session_note_saved', {
       sessionId: group.id,
       sessionName: group.name,

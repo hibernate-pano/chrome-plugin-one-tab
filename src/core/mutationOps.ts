@@ -21,7 +21,7 @@
 import type { TabGroup, Tab } from '../types/tab';
 import type { OpStamp } from './opStamp';
 import { shouldAutoDeleteAfterTabRemoval } from './tabGroupUtils';
-import { updateDisplayOrder, updateGroupWithVersion } from './versionHelper';
+import { updateGroupWithVersion } from './versionHelper';
 
 /**
  * 空组判据（2026-09-30 修订）：组内没有任何活跃标签即为空壳，**不看锁定态**。
@@ -211,24 +211,6 @@ export function applyImportGroups(
     ),
     imported: processed,
   };
-}
-
-/** moveGroup 语义（= moveGroupAndSync thunk）：索引非法返回 null；被拖动组盖 stamp。 */
-export function applyMoveGroup(
-  groups: TabGroup[],
-  dragIndex: number,
-  hoverIndex: number,
-  stamp: OpStamp
-): TabGroup[] | null {
-  if (dragIndex < 0 || dragIndex >= groups.length || hoverIndex < 0 || hoverIndex >= groups.length) {
-    return null;
-  }
-  const newGroups = [...groups];
-  const [dragGroup] = newGroups.splice(dragIndex, 1);
-  newGroups.splice(hoverIndex, 0, dragGroup);
-  return updateDisplayOrder(newGroups).map(g =>
-    g.id === dragGroup.id ? { ...g, lastOp: stamp } : g
-  );
 }
 
 /** moveTab 语义（= moveTabAndSync thunk）：物理移动；跨组移空源组 → 整组物理移除。 */

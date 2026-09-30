@@ -4,8 +4,6 @@ import { TabGroup } from '@/components/tabs/TabGroup';
 
 interface DraggableTabGroupProps {
   group: TabGroupType;
-  index: number;
-  moveGroup: (dragIndex: number, hoverIndex: number) => void;
 }
 
 export const DraggableTabGroup: React.FC<DraggableTabGroupProps> = ({ group }) => {

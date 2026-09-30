@@ -2,6 +2,7 @@ import { TabGroup, UserSettings, LayoutMode, ThemeStyle } from '@/types/tab';
 import { parseOneTabFormat, formatToOneTabFormat } from '@/core/oneTabFormatParser';
 import { secureStorage } from './secureStorage';
 import { kvGet, kvSet, kvRemove } from '@/storage/storageAdapter';
+import { notifyGroupsChanged, subscribeGroupsChanged } from '@/storage-kv/groupsChangedBus';
 import { STORAGE_KEYS, STORAGE_VERSION } from '@/storage-kv/keys';
 import { cacheManager, cachedAsyncFn, debounceAsync } from './performance';
 import { logError, logWarn } from './log';
@@ -58,16 +59,28 @@ export function invalidateGroupsCache(): void {
 
 /**
  * 订阅 groups 变化（规格 §3.1 步骤3）：跨进程可靠对账，替代 REFRESH_TAB_LIST 手动广播。
- * SW 侧任何写入都会触发；回调前自动失效本进程 groups 缓存。
+ * 回调前自动失效本进程 groups 缓存。
+ *
+ * 【2026-09-30 修 P0：事件源从「存储后端事件」换成「写入口」】
+ * 原来这里监听 chrome.storage.onChanged 的 tab_groups 键。但组数据早已迁到
+ * IndexedDB（见 @/storage-kv/storageAdapter），生产写路径一个字节都不写
+ * chrome.storage.local —— 该事件永不触发，于是 SW 在后台保存 / 导入 / 云端
+ * 合并之后，已打开的管理页列表永不刷新。
+ *
+ * 现在订阅 @/storage-kv/groupsChangedBus：由 groups 的两个写入口
+ * （debouncedPersistGroups / setGroupsImmediate）落盘后主动发事件，覆盖
+ * 同进程订阅与跨上下文（chrome.runtime 消息）两种情形，所有写路径
+ * （mutation / TabManager / 导入 / 三处迁移 / syncEngine 合并）都经过它们。
+ *
+ * 刻意**不再**监听 chrome.storage.onChanged：groups 已不在那里，除了
+ * service-worker 的 migrateStorageKeys 残留写入（会伪造一次全量刷新）之外
+ * 没有任何真实写方，纯属误导性的死监听。
  */
 export function onGroupsChanged(cb: () => void): () => void {
-  const listener = (changes: Record<string, chrome.storage.StorageChange>, area: string) => {
-    if (area !== 'local' || !changes[STORAGE_KEYS.GROUPS]) return;
+  return subscribeGroupsChanged(() => {
     invalidateGroupsCache();
     cb();
-  };
-  chrome.storage.onChanged.addListener(listener);
-  return () => chrome.storage.onChanged.removeListener(listener);
+  });
 }
 
 // 有效的主题风格值
@@ -189,6 +202,11 @@ class ChromeStorage {
     // 落盘后刷新缓存 TTL（即便之前已 optimistic 更新）
     const cache = cacheManager.getCache('storage');
     cache.set('groups', groups, CACHE_TTL.GROUPS);
+
+    // 事件源：groups 落盘即广播（订阅方收到后失效自己的 30s 缓存并重新加载）。
+    // 放在 cache.set 之后：订阅方本进程失效缓存时，缓存里已经是本次的新值，
+    // 不会退化成「失效后读到空」。
+    notifyGroupsChanged();
   }, 500);
 
   async setGroups(groups: TabGroup[]): Promise<void> {
@@ -229,6 +247,10 @@ class ChromeStorage {
       await this.ensureVersion();
       await kvSet(STORAGE_KEYS.GROUPS, groups);
       cache.set('groups', groups, CACHE_TTL.GROUPS);
+      // 事件源：同 debouncedPersistGroups（见那里的注释）。
+      // 这条是 SW 侧所有写路径（mutation / TabManager / 导入 / syncEngine 合并）
+      // 真正落盘的地方 —— 云端合并后管理页不刷新，根因就是这里以前不发任何事件。
+      notifyGroupsChanged();
     } catch (error) {
       logError('直接保存标签组失败:', error);
       cache.delete('groups');

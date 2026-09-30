@@ -41,6 +41,88 @@ export const stripInFlightTabs = (
   return out;
 };
 
+/**
+ * P1-5 · 乐观写失败回滚快照（纯函数，reducer 与单测共用）。
+ *
+ * 根因：重命名/锁定/收藏/备注四条写路径都是「先乐观改 Redux，再 sendMutation」，
+ * 而 sendMutation 失败时没有任何人把 Redux 改回去——UI 显示新值、storage 还是旧值，
+ * 且此后无人再收敛（loadGroups 只有回环才触发）。锁定尤其致命：UI 认为已锁定、
+ * storage 认为未锁定，自动清理与删除保护全部按 UI 之外的 storage 判据执行，
+ * 用户刚锁上的会话会被当成普通空组清掉。
+ *
+ * 修法：写入前在 thunk 里抓一份快照，失败时 rejectWithValue 带回来，
+ * rejected reducer 用它精确还原。快照只含本次动过的字段，
+ * 避免把并发的其他字段改动一起覆盖掉。
+ */
+export type GroupMetaSnapshot = {
+  name: string;
+  isLocked: boolean;
+  version: number;
+  updatedAt: string;
+};
+
+export type GroupLocalFields = { isFavorite?: boolean; notes?: string };
+
+/** 写入前抓取组元信息快照；组不存在返回 null（无组可回滚） */
+export const snapshotGroupMeta = (
+  groups: TabGroup[],
+  groupId: string
+): GroupMetaSnapshot | null => {
+  const group = groups.find(g => g.id === groupId);
+  if (!group) return null;
+  return {
+    name: group.name,
+    isLocked: !!group.isLocked,
+    version: group.version || 1,
+    updatedAt: group.updatedAt,
+  };
+};
+
+/** 写入前抓取本地偏好字段快照：只取本次实际要写的键（不写 isFavorite 就不还原它） */
+export const snapshotGroupLocalFields = (
+  groups: TabGroup[],
+  groupId: string,
+  fields: GroupLocalFields
+): GroupLocalFields | null => {
+  const group = groups.find(g => g.id === groupId);
+  if (!group) return null;
+  const snapshot: GroupLocalFields = {};
+  if ('isFavorite' in fields) snapshot.isFavorite = !!group.isFavorite;
+  if ('notes' in fields) snapshot.notes = group.notes;
+  return snapshot;
+};
+
+/**
+ * 重命名回滚：name + version + updatedAt 一起还原。
+ * 只还原 name 会留下「本地 version 比 storage 高、updatedAt 更新」的假新状态，
+ * 下一次同步合并会把 storage 的旧名当陈旧版本丢掉——比 UI 显示错更隐蔽。
+ * 不碰 isLocked：并发锁定不该被这次重命名失败顺手改回去。
+ */
+export const restoreGroupName = (group: TabGroup, snapshot: GroupMetaSnapshot): void => {
+  group.name = snapshot.name;
+  group.version = snapshot.version;
+  group.updatedAt = snapshot.updatedAt;
+};
+
+/**
+ * 锁定回滚：只还原 isLocked。
+ * 不还原 version/updatedAt —— 与上面相反，那两个字段是共享的元信息，
+ * 一次还原会盖掉并发写入方的 bump；残留的版本偏差由下次 loadGroups 读真值收口，
+ * 锁定判据（用户显式保护的那条）本身不含 version。
+ */
+export const restoreGroupLock = (group: TabGroup, snapshot: GroupMetaSnapshot): void => {
+  group.isLocked = snapshot.isLocked;
+};
+
+/** 收藏/备注回滚：只还原快照里出现过的键 */
+export const restoreGroupLocalFields = (
+  group: TabGroup,
+  snapshot: GroupLocalFields
+): void => {
+  if ('isFavorite' in snapshot) group.isFavorite = snapshot.isFavorite;
+  if ('notes' in snapshot) group.notes = snapshot.notes;
+};
+
 /** load 回环代际判定：在途 mutation（epoch 前进）之后发起的旧快照一律忽略 */
 export const isStaleLoad = (
   guards: Record<string, number> | undefined,
