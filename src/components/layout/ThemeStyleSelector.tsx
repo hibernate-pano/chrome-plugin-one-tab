@@ -7,17 +7,6 @@ interface ThemeStyleSelectorProps {
   className?: string;
 }
 
-// 极光主题图标 - 北极光/雪花风格
-const AuroraIcon = () => (
-  <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5}>
-    <path d="M3 12c2-3 4-4 6-2s4 1 6-2 4-1 6 2" strokeLinecap="round" strokeLinejoin="round" />
-    <path d="M3 16c2-3 4-4 6-2s4 1 6-2 4-1 6 2" strokeLinecap="round" strokeLinejoin="round" opacity="0.6" />
-    <path d="M3 8c2-3 4-4 6-2s4 1 6-2 4-1 6 2" strokeLinecap="round" strokeLinejoin="round" opacity="0.3" />
-    <circle cx="18" cy="6" r="1" fill="currentColor" />
-    <circle cx="6" cy="18" r="0.5" fill="currentColor" />
-  </svg>
-);
-
 // Legacy 主题图标 - 原始简约风格
 const LegacyIcon = () => (
   <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5}>
@@ -138,20 +127,6 @@ const themeOptions: ThemeOption[] = [
       card: '#ffffff',
       accent: '#007acc',
       text: '#333333',
-    },
-  },
-  {
-    value: 'aurora',
-    label: '极光',
-    description: '北欧冷调',
-    icon: <AuroraIcon />,
-    primaryColor: '#06b6d4',
-    secondaryColor: '#22d3ee',
-    previewColors: {
-      bg: '#f8fafc',
-      card: '#ffffff',
-      accent: '#06b6d4',
-      text: '#0f172a',
     },
   },
   {

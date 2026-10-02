@@ -459,7 +459,7 @@ describe('P1-2 迁移必须读真值', () => {
 // ════════════════════════════════════════════════════════════════════════
 describe('P1-3 设置读失败 fail-closed：降级值会被无条件覆盖到云端', () => {
   it('getSettings 读失败抛错，不返回 DEFAULT_SETTINGS', async () => {
-    await kvSet('user_settings', { groupNameTemplate: '会话 %d', themeStyle: 'aurora' });
+    await kvSet('user_settings', { groupNameTemplate: '会话 %d', themeStyle: 'prism' });
 
     // 先成功读一次，让缓存里有真实设置（证明后面失败的是读，不是"本来就没设置"）
     const ok = await storage.getSettings();
@@ -483,13 +483,13 @@ describe('P1-3 设置读失败 fail-closed：降级值会被无条件覆盖到�
 
   it('读失败时上传路径不会把默认值写进云端', async () => {
     const { uploadSettings } = await import('@/services/settingsSyncService');
-    await kvSet('user_settings', { groupNameTemplate: '真实模板 %d', themeStyle: 'aurora' });
+    await kvSet('user_settings', { groupNameTemplate: '真实模板 %d', themeStyle: 'prism' });
 
     // 对照组先证明「假云端 + 真实 uploadSettings 这条路确实能写进去」
     await uploadSettings(await storage.getSettings());
     assert.equal(cloud.settingsWrites.length, 1, '对照组：读成功时上传照常发生');
     assert.equal(cloud.settings?.group_name_template, '真实模板 %d');
-    assert.equal(cloud.settings?.theme_style, 'aurora');
+    assert.equal(cloud.settings?.theme_style, 'prism');
 
     // 现在制造一次读失败，走 syncEngine.upload 尾部的同一道闸门（原样三行）
     cacheManager.getCache('storage').delete('settings');
@@ -513,7 +513,7 @@ describe('P1-3 设置读失败 fail-closed：降级值会被无条件覆盖到�
       '读失败时不得发出任何 user_settings 写请求（一次读错误就能把云端真实设置覆盖成默认值）'
     );
     assert.equal(cloud.settings?.group_name_template, '真实模板 %d', '云端设置保持原样');
-    assert.equal(cloud.settings?.theme_style, 'aurora', '云端设置保持原样');
+    assert.equal(cloud.settings?.theme_style, 'prism', '云端设置保持原样');
   });
 });
 

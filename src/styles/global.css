@@ -3,7 +3,6 @@
 
 /* 主题系统 - 2026-09-28 收敛为 4 套：原始、极光、奶油、棱镜（被砍主题由 storage 迁移映射接管） */
 @import './themes/legacy.css';
-@import './themes/aurora.css';
 @import './themes/creamy.css';
 @import './themes/prism.css';
 @import './themes/apple.css';

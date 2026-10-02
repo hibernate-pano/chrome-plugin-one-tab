@@ -39,7 +39,7 @@ TapStack 是一个面向重度浏览器用户的工作会话保险箱。它的�
 - 会话重命名、备注、收藏、锁定防误删、拖拽排序、清理重复标签
 - 误删保护：删除前二次确认（删除全部强制确认），删除即物理清除
 - 支持导入 / 导出 OneTab 文本格式，JSON 备份导出
-- 7 套主题风格（legacy / aurora / creamy / prism / apple / chrome / claude）+ 暗色模式，单 / 双栏布局
+- 6 套主题风格（legacy / creamy / prism / apple / chrome / claude）+ 暗色模式，单 / 双栏布局
 - 登录后自动同步：数据变更自动上传，登录时自动从云端合并下载
 - 网页版 Dashboard（Vercel 部署）：浏览器里查看和管理云端会话
 

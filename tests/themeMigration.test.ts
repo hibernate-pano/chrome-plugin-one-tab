@@ -26,7 +26,6 @@ describe('validateThemeStyle：主题收敛迁移映射', () => {
   it('保留主题原样通过', async () => {
     const { validateThemeStyle } = await import('@/utils/storage');
     assert.equal(validateThemeStyle('legacy'), 'legacy');
-    assert.equal(validateThemeStyle('aurora'), 'aurora');
     assert.equal(validateThemeStyle('creamy'), 'creamy');
     assert.equal(validateThemeStyle('prism'), 'prism');
     assert.equal(validateThemeStyle('apple'), 'apple');
@@ -37,7 +36,8 @@ describe('validateThemeStyle：主题收敛迁移映射', () => {
   it('被砍主题按气质最近归宿迁移', async () => {
     const { validateThemeStyle } = await import('@/utils/storage');
     assert.equal(validateThemeStyle('classic'), 'legacy', '蓝系生产力 → legacy');
-    assert.equal(validateThemeStyle('mint'), 'aurora', '冷调清新 → aurora');
+    assert.equal(validateThemeStyle('mint'), 'apple', '冷调清新 → apple（aurora 下线后）');
+    assert.equal(validateThemeStyle('aurora'), 'prism', '极光 → prism（2026-10-02 二次收敛）');
     assert.equal(validateThemeStyle('pink'), 'creamy', '暖调柔和 → creamy');
     assert.equal(validateThemeStyle('cyberpunk'), 'prism', '个性渐变 → prism');
   });

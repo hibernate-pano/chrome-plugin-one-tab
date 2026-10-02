@@ -141,7 +141,7 @@ export type LayoutMode = 'single' | 'double';
 
 // 主题风格类型（2026-09-28 收敛：8 → 4，砍 classic/mint/pink/cyberpunk；
 // 存量用户由 storage.validateThemeStyle 的迁移映射归入气质最近的保留主题）
-export type ThemeStyle = 'legacy' | 'aurora' | 'creamy' | 'prism' | 'apple' | 'chrome' | 'claude';
+export type ThemeStyle = 'legacy' | 'creamy' | 'prism' | 'apple' | 'chrome' | 'claude';
 
 export interface UserSettings {
   groupNameTemplate: string;

@@ -84,18 +84,20 @@ export function onGroupsChanged(cb: () => void): () => void {
 }
 
 // 有效的主题风格值
-const VALID_THEME_STYLES: ThemeStyle[] = ['legacy', 'aurora', 'creamy', 'prism', 'apple', 'chrome', 'claude'];
+const VALID_THEME_STYLES: ThemeStyle[] = ['legacy', 'creamy', 'prism', 'apple', 'chrome', 'claude'];
 
 /**
  * 主题收敛迁移映射（2026-09-28：8 → 4）。
  * 被砍主题的存量设置按气质最近归宿迁移，而非一律回落 legacy：
- * classic（蓝系生产力）→ legacy；mint（冷调清新）→ aurora（同为冷调）；
+ * classic（蓝系生产力）→ legacy；mint（冷调清新）→ apple（同为冷调系统感）；
  * pink（粉调柔和）→ creamy（同为暖调柔和）；cyberpunk（个性暗色）→ prism（个性渐变）。
+ * 2026-10-02 二次收敛（7 → 6）：aurora（极光渐变/毛玻璃）→ prism（同为渐变玻璃系）。
  * 升级 supabase-js 等场景无关；下一次用户设置落盘时自动持久化为新值。
  */
 const RETIRED_THEME_STYLES: Record<string, ThemeStyle> = {
   classic: 'legacy',
-  mint: 'aurora',
+  mint: 'apple',
+  aurora: 'prism',
   pink: 'creamy',
   cyberpunk: 'prism',
 };
