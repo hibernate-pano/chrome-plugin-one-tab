@@ -96,10 +96,12 @@ html[data-theme="apple"].dark {
 
 /* 页面外壳：Apple 产品页灰 / 纯黑（legacy 由 --color-shell 默认值保持原样） */
 html[data-theme="apple"] {
+  --color-note-bg: #f5f5f7;
   --color-shell: #f5f5f7;
 }
 
 html[data-theme="apple"].dark {
+  --color-note-bg: #2c2c2e;
   --color-shell: #000000;
 }
 

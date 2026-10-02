@@ -30,6 +30,8 @@ describe('validateThemeStyle：主题收敛迁移映射', () => {
     assert.equal(validateThemeStyle('creamy'), 'creamy');
     assert.equal(validateThemeStyle('prism'), 'prism');
     assert.equal(validateThemeStyle('apple'), 'apple');
+    assert.equal(validateThemeStyle('chrome'), 'chrome');
+    assert.equal(validateThemeStyle('claude'), 'claude');
   });
 
   it('被砍主题按气质最近归宿迁移', async () => {

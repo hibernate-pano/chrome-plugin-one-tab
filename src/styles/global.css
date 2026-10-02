@@ -7,6 +7,8 @@
 @import './themes/creamy.css';
 @import './themes/prism.css';
 @import './themes/apple.css';
+@import './themes/chrome.css';
+@import './themes/claude.css';
 
 /* 微交互样式 */
 @import './micro-interactions.css';
@@ -119,6 +121,8 @@ html:not([data-theme]).dark {
     --color-toggle-off: #e5e7eb;
     /* 页面外壳（legacy 原值：亮白 / 暗 gray-900） */
     --color-shell: #ffffff;
+    /* 备注块底色（legacy 原值：亮 gray-50 / 暗 gray-800@60%） */
+    --color-note-bg: #f9fafb;
 
     /* 间距 - 默认值 */
     --spacing-xs: 0.25rem;
@@ -150,6 +154,7 @@ html:not([data-theme]).dark {
     --color-toggle-on: #2563eb;
     --color-toggle-off: #4b5563;
     --color-shell: #111827;
+    --color-note-bg: rgba(31, 41, 55, 0.6);
   }
 
   html {
@@ -1074,6 +1079,10 @@ html:not([data-theme]).dark {
 
 .theme-toggle-off {
   background-color: var(--color-toggle-off);
+}
+
+.theme-note-bg {
+  background: var(--color-note-bg);
 }
 
 .theme-shell {

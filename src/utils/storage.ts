@@ -84,7 +84,7 @@ export function onGroupsChanged(cb: () => void): () => void {
 }
 
 // 有效的主题风格值
-const VALID_THEME_STYLES: ThemeStyle[] = ['legacy', 'aurora', 'creamy', 'prism', 'apple'];
+const VALID_THEME_STYLES: ThemeStyle[] = ['legacy', 'aurora', 'creamy', 'prism', 'apple', 'chrome', 'claude'];
 
 /**
  * 主题收敛迁移映射（2026-09-28：8 → 4）。

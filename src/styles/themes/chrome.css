@@ -1,0 +1,164 @@
+/* ==========================================
+   Chrome 原生风格主题 - Material / Chrome 浏览器 UI 语言
+   ==========================================
+   设计语言来源：Chrome 浏览器与 Material 3 的公开视觉惯例——
+   - 工具栏白 + 标签条灰（#f1f3f4）、Google 灰阶文字（#202124 / #5f6368）
+   - 强调色 Google 蓝 #1a73e8（暗色 #8ab4f8）
+   - 搜索框 = Omnibox 形态：灰底填充 + 药丸圆角
+   - 按钮药丸化（Material 3 filled button），卡片 8px 圆角 + Material 分层投影
+   - hover 用 Google 灰 #f1f3f4，分割线 #dadce0 */
+
+html[data-theme="chrome"] {
+  --color-bg-primary: #ffffff;
+  --color-bg-secondary: #ffffff;
+  --color-bg-tertiary: #f1f3f4;
+  --color-bg-elevated: #ffffff;
+  --color-bg-overlay: rgba(255, 255, 255, 0.92);
+  --color-row-hover: #f1f3f4;
+  --color-menu-hover: #f1f3f4;
+
+  --color-text-primary: #202124;
+  --color-text-secondary: #3c4043;
+  --color-text-tertiary: #5f6368;
+  --color-text-muted: #80868b;
+
+  --color-border-default: #dadce0;
+  --color-border-subtle: #e8eaed;
+  --color-border-strong: #bdc1c6;
+
+  --color-accent: #1a73e8;
+  --color-accent-hover: #1765cc;
+  --color-accent-subtle: #e8f0fe;
+
+  --color-warning: #f9ab00;
+  --color-danger: #d93025;
+  --color-success: #188038;
+
+  --color-toggle-on: #1a73e8;
+  --color-toggle-off: #dadce0;
+
+  --font-family-sans: 'Google Sans', Roboto, -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif;
+
+  /* Material 分层投影 */
+  --shadow-card: 0 1px 2px rgba(60, 64, 67, 0.3), 0 1px 3px 1px rgba(60, 64, 67, 0.15);
+  --shadow-card-hover: 0 1px 3px rgba(60, 64, 67, 0.3), 0 4px 8px 3px rgba(60, 64, 67, 0.15);
+  --shadow-elevation-1: 0 1px 2px rgba(60, 64, 67, 0.3);
+  --shadow-elevation-2: 0 1px 2px rgba(60, 64, 67, 0.3), 0 2px 6px 2px rgba(60, 64, 67, 0.15);
+  --shadow-elevation-3: 0 4px 8px 3px rgba(60, 64, 67, 0.15), 0 1px 3px rgba(60, 64, 67, 0.3);
+}
+
+html[data-theme="chrome"].dark {
+  --color-bg-primary: #202124;
+  --color-bg-secondary: #292a2d;
+  --color-bg-tertiary: #35363a;
+  --color-bg-elevated: #292a2d;
+  --color-bg-overlay: rgba(32, 33, 36, 0.92);
+  --color-row-hover: #35363a;
+  --color-menu-hover: #35363a;
+
+  --color-text-primary: #e8eaed;
+  --color-text-secondary: #dadce0;
+  --color-text-tertiary: #9aa0a6;
+  --color-text-muted: #80868b;
+
+  --color-border-default: #5f6368;
+  --color-border-subtle: #3c4043;
+  --color-border-strong: #80868b;
+
+  --color-accent: #8ab4f8;
+  --color-accent-hover: #aecbfa;
+  --color-accent-subtle: rgba(138, 180, 248, 0.16);
+
+  --color-warning: #fdd663;
+  --color-danger: #f28b82;
+  --color-success: #81c995;
+
+  --color-toggle-on: #8ab4f8;
+  --color-toggle-off: #5f6368;
+
+  --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.5), 0 1px 3px 1px rgba(0, 0, 0, 0.3);
+  --shadow-card-hover: 0 1px 3px rgba(0, 0, 0, 0.5), 0 4px 8px 3px rgba(0, 0, 0, 0.3);
+}
+
+/* ── 结构性覆盖：Chrome / Material 形态 ─────────────────────── */
+
+/* 顶栏：Chrome 工具栏（实底 + 发丝底线，不用毛玻璃） */
+html[data-theme="chrome"] .header {
+  background: var(--color-bg-secondary);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  border-bottom: 1px solid var(--color-border-default);
+}
+
+/* Omnibox 形态搜索框 */
+html[data-theme="chrome"] .input,
+html[data-theme="chrome"] .search-input {
+  border-radius: 9999px;
+  background: var(--color-bg-tertiary);
+}
+
+html[data-theme="chrome"] .input:hover,
+html[data-theme="chrome"] .search-input:hover {
+  background: var(--color-bg-tertiary);
+  box-shadow: inset 0 0 0 1px var(--color-border-default);
+}
+
+/* Material 3 卡片：8px 圆角 + 分层投影 */
+html[data-theme="chrome"] .tab-group-card {
+  border-radius: 8px;
+  border: 1px solid var(--color-border-subtle);
+  box-shadow: var(--shadow-card);
+}
+
+html[data-theme="chrome"] .tab-group-card:hover {
+  border-color: var(--color-border-subtle);
+  box-shadow: var(--shadow-card-hover);
+}
+
+html[data-theme="chrome"] .tab-group-header {
+  background: var(--color-bg-tertiary);
+  border-bottom: 1px solid var(--color-border-subtle);
+}
+
+html[data-theme="chrome"] .tab-item {
+  background: transparent;
+  border-radius: 8px;
+}
+
+html[data-theme="chrome"] .tab-item:hover {
+  background: var(--color-row-hover);
+}
+
+/* Material filled button：药丸 */
+html[data-theme="chrome"] .btn-primary {
+  border-radius: 9999px;
+  font-weight: 500;
+}
+
+html[data-theme="chrome"] .btn-icon {
+  border-radius: 9999px;
+}
+
+html[data-theme="chrome"] .flat-card {
+  border-radius: 8px;
+  box-shadow: var(--shadow-card);
+}
+
+html[data-theme="chrome"] .ts-panel {
+  border-radius: 8px;
+}
+
+html[data-theme="chrome"] .ts-modal {
+  border-radius: 16px;
+}
+
+/* 页面外壳：Chrome 标签条灰 */
+html[data-theme="chrome"] {
+  --color-note-bg: #f1f3f4;
+  --color-shell: #f1f3f4;
+}
+
+html[data-theme="chrome"].dark {
+  --color-note-bg: #35363a;
+  --color-shell: #202124;
+}

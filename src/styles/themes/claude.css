@@ -1,0 +1,165 @@
+/* ==========================================
+   Claude 原生风格主题 - Anthropic 设计语言
+   ==========================================
+   设计语言来源：Anthropic 官网/产品的公开视觉惯例——
+   - 暖纸底（shell #f0eee6 / 表面 #faf9f5），暗色 #191817 / #262523
+   - 陶土强调色 Crail #d97757（暗色提亮 #e08b6d）
+   - 暖墨文字 #141413 / #3d3929，暖灰分割线 #e5e2d6
+   - 标题用衬线（系统衬线栈，CSP 零风险），正文无衬线
+   - 卡片 12px 圆角、极轻投影，整体"纸面编辑感" */
+
+html[data-theme="claude"] {
+  --color-bg-primary: #f0eee6;
+  --color-bg-secondary: #faf9f5;
+  --color-bg-tertiary: #ece9df;
+  --color-bg-elevated: #faf9f5;
+  --color-bg-overlay: rgba(250, 249, 245, 0.88);
+  --color-row-hover: rgba(217, 119, 87, 0.07);
+  --color-menu-hover: rgba(217, 119, 87, 0.07);
+
+  --color-text-primary: #141413;
+  --color-text-secondary: #3d3929;
+  --color-text-tertiary: #6c675c;
+  --color-text-muted: #9a948a;
+
+  --color-border-default: #d9d5c9;
+  --color-border-subtle: #e5e2d6;
+  --color-border-strong: #b8b3a4;
+
+  --color-accent: #d97757;
+  --color-accent-hover: #c56a4b;
+  --color-accent-subtle: #f6e8e0;
+
+  --color-warning: #b98a2f;
+  --color-danger: #c04b3b;
+  --color-success: #6a8f5f;
+
+  --color-toggle-on: #d97757;
+  --color-toggle-off: #d9d5c9;
+
+  /* 正文仍无衬线；标题走 --font-family-serif（见下覆盖） */
+  --font-family-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+  --font-family-serif: 'Iowan Old Style', Georgia, 'Times New Roman', 'Songti SC', serif;
+
+  /* 纸面：几乎无投影，靠边框与底色分层 */
+  --shadow-card: 0 1px 2px rgba(20, 20, 19, 0.05);
+  --shadow-card-hover: 0 2px 8px rgba(20, 20, 19, 0.08);
+  --shadow-elevation-1: 0 1px 2px rgba(20, 20, 19, 0.05);
+  --shadow-elevation-2: 0 2px 8px rgba(20, 20, 19, 0.08);
+  --shadow-elevation-3: 0 8px 24px rgba(20, 20, 19, 0.1);
+}
+
+html[data-theme="claude"].dark {
+  --color-bg-primary: #191817;
+  --color-bg-secondary: #262523;
+  --color-bg-tertiary: #302e2b;
+  --color-bg-elevated: #262523;
+  --color-bg-overlay: rgba(25, 24, 23, 0.88);
+  --color-row-hover: rgba(224, 139, 109, 0.1);
+  --color-menu-hover: rgba(224, 139, 109, 0.1);
+
+  --color-text-primary: #f0eee6;
+  --color-text-secondary: #d9d5c9;
+  --color-text-tertiary: #a8a294;
+  --color-text-muted: #7d776b;
+
+  --color-border-default: #45423c;
+  --color-border-subtle: #383632;
+  --color-border-strong: #5c584f;
+
+  --color-accent: #e08b6d;
+  --color-accent-hover: #e9a188;
+  --color-accent-subtle: rgba(224, 139, 109, 0.16);
+
+  --color-warning: #d9b45b;
+  --color-danger: #e07b6b;
+  --color-success: #93b588;
+
+  --color-toggle-on: #e08b6d;
+  --color-toggle-off: #45423c;
+
+  --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --shadow-card-hover: 0 2px 8px rgba(0, 0, 0, 0.5);
+}
+
+/* ── 结构性覆盖：纸面编辑感 ─────────────────────────────────── */
+
+html[data-theme="claude"] .header {
+  background: var(--color-bg-overlay);
+  backdrop-filter: saturate(140%) blur(16px);
+  -webkit-backdrop-filter: saturate(140%) blur(16px);
+  border-bottom: 1px solid var(--color-border-subtle);
+}
+
+/* 会话标题换衬线：Claude 的编辑感核心 */
+html[data-theme="claude"] .tab-group-title {
+  font-family: var(--font-family-serif);
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+
+html[data-theme="claude"] .tab-group-card {
+  border-radius: 12px;
+  border: 1px solid var(--color-border-subtle);
+  box-shadow: var(--shadow-card);
+}
+
+html[data-theme="claude"] .tab-group-card:hover {
+  border-color: var(--color-border-default);
+  box-shadow: var(--shadow-card-hover);
+}
+
+html[data-theme="claude"] .tab-group-header {
+  background: transparent;
+  border-bottom: 1px solid var(--color-border-subtle);
+}
+
+html[data-theme="claude"] .tab-item {
+  background: transparent;
+  border-radius: 6px;
+}
+
+html[data-theme="claude"] .tab-item:hover {
+  background: var(--color-row-hover);
+}
+
+html[data-theme="claude"] .input,
+html[data-theme="claude"] .search-input {
+  border-radius: 8px;
+  border: 1px solid var(--color-border-subtle);
+  background: var(--color-bg-secondary);
+}
+
+/* Anthropic 按钮：小圆角矩形，非药丸 */
+html[data-theme="claude"] .btn-primary {
+  border-radius: 8px;
+  font-weight: 500;
+}
+
+html[data-theme="claude"] .btn-icon {
+  border-radius: 8px;
+}
+
+html[data-theme="claude"] .flat-card {
+  border-radius: 12px;
+  border-color: var(--color-border-subtle);
+  box-shadow: var(--shadow-card);
+}
+
+html[data-theme="claude"] .ts-panel {
+  border-radius: 12px;
+}
+
+html[data-theme="claude"] .ts-modal {
+  border-radius: 16px;
+}
+
+html[data-theme="claude"] {
+  --color-note-bg: #ece9df;
+  --color-shell: #f0eee6;
+}
+
+html[data-theme="claude"].dark {
+  --color-note-bg: #302e2b;
+  --color-shell: #191817;
+}

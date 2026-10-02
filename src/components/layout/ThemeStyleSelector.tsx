@@ -58,6 +58,23 @@ const AppleIcon = () => (
   </svg>
 );
 
+// Chrome 主题图标 - 浏览器圆环
+const ChromeIcon = () => (
+  <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5}>
+    <circle cx="12" cy="12" r="9" />
+    <circle cx="12" cy="12" r="3.5" />
+    <path d="M12 8.5h8.2M8.9 13.8l-4.1 7M15.1 13.8l4.1 7" strokeLinecap="round" />
+  </svg>
+);
+
+// Claude 主题图标 - 星芒（Anthropic 标记意象）
+const ClaudeIcon = () => (
+  <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5}>
+    <path d="M12 3v18M3 12h18M6 6l12 12M18 6L6 18" strokeLinecap="round" opacity="0.9" />
+    <circle cx="12" cy="12" r="2.5" fill="currentColor" stroke="none" />
+  </svg>
+);
+
 // 调色板图标
 const PaletteIcon = () => (
   <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5}>
@@ -163,6 +180,34 @@ const themeOptions: ThemeOption[] = [
       card: '#ffffff',
       accent: '#0071e3',
       text: '#1d1d1f',
+    },
+  },
+  {
+    value: 'chrome',
+    label: 'Chrome',
+    description: '浏览器原生',
+    icon: <ChromeIcon />,
+    primaryColor: '#1a73e8',
+    secondaryColor: '#8ab4f8',
+    previewColors: {
+      bg: '#f1f3f4',
+      card: '#ffffff',
+      accent: '#1a73e8',
+      text: '#202124',
+    },
+  },
+  {
+    value: 'claude',
+    label: 'Claude',
+    description: '暖纸编辑感',
+    icon: <ClaudeIcon />,
+    primaryColor: '#d97757',
+    secondaryColor: '#e08b6d',
+    previewColors: {
+      bg: '#f0eee6',
+      card: '#faf9f5',
+      accent: '#d97757',
+      text: '#141413',
     },
   },
   {

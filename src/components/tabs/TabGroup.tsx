@@ -487,7 +487,7 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
       {(group.notes || isEditingNotes) && (
         <div className="px-4 pb-3">
           {isEditingNotes ? (
-            <div className="space-y-2 rounded-lg border border-gray-200 bg-gray-50 p-3 dark:border-gray-700 dark:bg-gray-800/60">
+            <div className="space-y-2 rounded-lg border theme-border-default theme-note-bg p-3">
               <label
                 htmlFor={`group-notes-${group.id}`}
                 className="block text-xs font-medium text-gray-600 dark:text-gray-300"
@@ -528,7 +528,7 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
               </div>
             </div>
           ) : (
-            <div className="rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-600 dark:border-gray-700 dark:bg-gray-800/60 dark:text-gray-300">
+            <div className="rounded-lg border theme-border-default theme-note-bg px-3 py-2 text-sm text-gray-600 dark:text-gray-300">
               {group.notes}
             </div>
           )}
