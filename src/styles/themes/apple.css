@@ -173,3 +173,25 @@ html[data-theme="apple"] .ts-modal {
   backdrop-filter: saturate(180%) blur(20px);
   -webkit-backdrop-filter: saturate(180%) blur(20px);
 }
+
+/* ── 签名动效与焦点态 ─────────────────────────────────────────
+   卡片 hover 轻抬 1px：Apple 列表材质的"可拾起"感（legacy/其他主题无位移）。 */
+html[data-theme="apple"] .tab-group-card {
+  transition: box-shadow 0.2s ease, transform 0.2s ease, border-color 0.2s ease;
+}
+
+html[data-theme="apple"] .tab-group-card:hover {
+  transform: translateY(-1px);
+}
+
+/* 焦点光环：系统蓝四像素晕（暗色用暗色蓝），区别于 Chrome 的双像素描边 */
+html[data-theme="apple"] .search-input:focus,
+html[data-theme="apple"] .input:focus {
+  box-shadow: 0 0 0 4px rgba(0, 113, 227, 0.22);
+  border-color: transparent;
+}
+
+html[data-theme="apple"].dark .search-input:focus,
+html[data-theme="apple"].dark .input:focus {
+  box-shadow: 0 0 0 4px rgba(10, 132, 255, 0.32);
+}

@@ -9,6 +9,9 @@
    - hover 用 Google 灰 #f1f3f4，分割线 #dadce0 */
 
 html[data-theme="chrome"] {
+  /* 页面底 = Google gray-50：比 legacy 白底多一层"浏览器chrome区"的灰，
+     卡片靠可见边框 + Material 投影分离，而不是靠底色差 */
+  --color-shell: #f8f9fa;
   --color-bg-primary: #ffffff;
   --color-bg-secondary: #ffffff;
   --color-bg-tertiary: #f1f3f4;
@@ -103,10 +106,10 @@ html[data-theme="chrome"] .search-input:hover {
   box-shadow: inset 0 0 0 1px var(--color-border-default);
 }
 
-/* Material 3 卡片：8px 圆角 + 分层投影 */
+/* Material 3 卡片：8px 圆角 + 可见边框 + 分层投影（Chrome 的分离语言是描边，不是底色） */
 html[data-theme="chrome"] .tab-group-card {
   border-radius: 8px;
-  border: 1px solid var(--color-border-subtle);
+  border: 1px solid var(--color-border-default);
   box-shadow: var(--shadow-card);
 }
 
@@ -115,8 +118,9 @@ html[data-theme="chrome"] .tab-group-card:hover {
   box-shadow: var(--shadow-card-hover);
 }
 
+/* 工具栏语言：卡头不铺灰带（legacy 的灰带是"通用后台"感），白底 + 发丝线 */
 html[data-theme="chrome"] .tab-group-header {
-  background: var(--color-bg-tertiary);
+  background: transparent;
   border-bottom: 1px solid var(--color-border-subtle);
 }
 
@@ -150,6 +154,19 @@ html[data-theme="chrome"] .ts-panel {
 
 html[data-theme="chrome"] .ts-modal {
   border-radius: 16px;
+}
+
+/* Omnibox 焦点：白底 + 蓝色双像素描边（Chrome 地址栏聚焦态），无位移无光晕扩散 */
+html[data-theme="chrome"] .search-input:focus,
+html[data-theme="chrome"] .input:focus {
+  background: var(--color-bg-secondary);
+  box-shadow: 0 0 0 2px var(--color-accent);
+  border-color: transparent;
+}
+
+/* Material 状态层：hover 不抬升，只叠状态色（与 Apple 的位移签名互斥） */
+html[data-theme="chrome"] .tab-group-card:hover {
+  transform: none;
 }
 
 /* 页面外壳：Chrome 标签条灰 */

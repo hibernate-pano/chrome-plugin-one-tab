@@ -110,7 +110,7 @@ html[data-theme="claude"] .tab-group-card:hover {
 }
 
 html[data-theme="claude"] .tab-group-header {
-  background: transparent;
+  background: var(--color-note-bg);
   border-bottom: 1px solid var(--color-border-subtle);
 }
 
@@ -155,11 +155,12 @@ html[data-theme="claude"] .ts-modal {
 }
 
 html[data-theme="claude"] {
-  --color-note-bg: #ece9df;
+  /* 纸面章节带：卡头与备注块同色，形成"书页分节"的编辑感（Apple/Chrome 无此带） */
+  --color-note-bg: #f4f1e8;
   --color-shell: #f0eee6;
 }
 
 html[data-theme="claude"].dark {
-  --color-note-bg: #302e2b;
+  --color-note-bg: #2a2825;
   --color-shell: #191817;
 }
