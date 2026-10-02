@@ -55,7 +55,7 @@ TapStack 是一个面向重度浏览器用户的工作会话保险箱。它的�
 - **整组覆盖**：同一会话在两台设备上被同时编辑时，以**最后保存的一方**为准（会话内标签的增删随整组一起同步，不逐标签合并）。错峰使用不受影响。
 - **单引擎**：所有同步（自动 + 手动 + 设置同步）统一走 `syncEngine.ts`，旧 `syncService` / `smartSyncService` / `tabSyncWorkflow` 已移除。
 - 没有登录时不触发云端同步。
-- **保存路径**：popup 按钮 / 快捷键 / 右键菜单都走 SW `TabManager.saveAllTabs()` → `storage.setGroups()` 后立刻调 `syncEngine.scheduleUpload(3000)`（防抖）推送。`autoSyncMiddleware` 负责捕获 store 侧的重命名 / 删除 / 锁定 / 拖拽 `dispatch` thunk 的 fulfilled 动作；MV3 SW 是独立执行上下文，`syncEngine.upload()` 进入点懒恢复登录态（重复调用是 no-op，与 `backgroundSync` 一致）。
+- **保存路径**：popup 按钮 / 快捷键 / 右键菜单都走 SW `TabManager.saveAllTabs()` → `storage.setGroups()` 后立刻调 `syncEngine.scheduleUpload(3000)`（防抖）推送。`autoSyncMiddleware` 仅兜底转发设置类 action（`settings/*`）的上传调度；重命名 / 删除 / 锁定等写操作的上传调度在 SW 侧 `mutationHandlers` 完成；MV3 SW 是独立执行上下文，`syncEngine.upload()` 进入点懒恢复登录态（重复调用是 no-op，与 `backgroundSync` 一致）。
 
 ## 不承诺的能力
 

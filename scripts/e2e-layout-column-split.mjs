@@ -77,7 +77,9 @@ try {
   }
 
   // 视图排序 = createdAt 倒序（TabList.tsx:92）→ 正好是 seed 里的 会话1..会话7
-  const EXPECTED_ORDER = SEED.filter(s => s.tabs > 0).map(s => s.name);
+  // SEED 里的 tabs 已经是数组（map 时已展开），判「有内容」必须看 length：
+  // 旧写法 `s.tabs > 0` 对数组恒为 false → 期望列表恒为空 → 4 条次序判据假红。
+  const EXPECTED_ORDER = SEED.filter(s => s.tabs.length > 0).map(s => s.name);
 
   const first = await readColumns();
   gate.check('单栏初始：7 个有内容的会话都渲染出来了（空壳被视图过滤）',

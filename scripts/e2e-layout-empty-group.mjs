@@ -58,10 +58,25 @@ try {
   const sw = ctx.serviceWorkers()[0];
   const id = sw.url().split('/')[2];
 
+  // 冷启动竞态：SW 刚起来时扩展还没建过 tabvaultpro，indexedDB.open 会返回
+  // 一个没有 kv store 的空库 → transaction('kv') 抛 NotFoundError，种子写不进去，
+  // 整条回归直接假红。先轮询等 kv store 出现（扩展首启建库），再写种子。
+  for (let i = 0; i < 20; i++) {
+    const ready = await sw.evaluate(() => new Promise((res) => {
+      const r = indexedDB.open('tabvaultpro', 1);
+      r.onsuccess = () => { const ok = r.result.objectStoreNames.contains('kv'); r.result.close(); res(ok); };
+      r.onerror = () => res(false);
+      r.onblocked = () => res(false);
+    }));
+    if (ready) break;
+    await new Promise(r => setTimeout(r, 500));
+  }
+
   const written = await sw.evaluate(async (seed) => {
     const r = indexedDB.open('tabvaultpro', 1);
     await new Promise((res, rej) => { r.onsuccess = res; r.onerror = () => rej(new Error('open')); });
     const db = r.result;
+    if (!db.objectStoreNames.contains('kv')) throw new Error('tabvaultpro 缺少 kv store（扩展未建库）');
     const n = new Date().toISOString();
     const groups = seed.map(s => ({
       id: s.id || `seed-${Math.random().toString(36).slice(2, 10)}`,

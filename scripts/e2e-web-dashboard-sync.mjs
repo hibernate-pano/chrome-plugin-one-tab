@@ -9,9 +9,9 @@
 // 断言链（全部落在真实产物上）：
 //   ① 网页版能看到扩展上传的会话（读取 + 解密路径）
 //   ② 网页版改名 → 云端 name 真的变了（局部 UPDATE 被放行）
-//   ③ 网页版删除 → 云端 is_deleted = true（跨端软删写入被放行）
-//   ④ 网页版恢复 → 云端 is_deleted = false
-//   ⑤ 扩展重新下载 → 确认网页版的删除意图生效（活跃列表里不再出现该会话）
+//   ③ 网页版删除 → 云端 is_deleted = true（跨端删除广播写入被放行）
+//   ④ 删除后网页版列表不再显示该会话，且不存在回收站/恢复入口（v1.22.0 无回收站）
+//   ⑤ 扩展重新下载 → 该会话在本地物理消失（无墓碑、不进活跃列表）
 //
 // 运行：node scripts/e2e-web-dashboard-sync.mjs（需先 pnpm build && pnpm build:web）
 //
@@ -227,34 +227,26 @@ try {
     fail(`❌ 断言③失败: 云端 is_deleted=${afterDelete?.is_deleted}，期望 true（网页版删除没传播）`);
   } else console.log('✅ 断言③通过: 云端已标记 is_deleted=true');
 
-  // ── 5. 网页版恢复 → 云端 is_deleted = false ─────────────────────────
+  // ── 5. 删除后网页版列表不再显示，且没有回收站/恢复入口 ──────────────
+  // v1.22.0 起删除即物理清除：Web 端读路径跳过 is_deleted 行（webApi.ts），
+  // 界面上不存在「已删除（N）——可恢复」这类回收站入口。旧断言④（点恢复按钮）
+  // 测的是 1.21.x 的回收站模型，留着就是假红。
+  step('断言④ 删除后网页版列表隐藏且无回收站入口');
+  let hidden = false;
+  for (let i = 0; i < 8 && !hidden; i++) {
+    await pageW.waitForTimeout(1000);
+    hidden = (await pageW.locator(`h2:has-text("${RENAMED}")`).count()) === 0;
+  }
   const trashToggle = pageW.locator('button:has-text("已删除")').first();
-  if (!(await trashToggle.count())) {
-    fail('❌ 断言④失败: 找不到回收站入口（删除后应出现「已删除（N）——可恢复」）');
+  if (!hidden) {
+    fail(`❌ 断言④失败: 删除后网页版列表仍显示「${RENAMED}」（is_deleted 行未被读路径过滤）`);
+  } else if (await trashToggle.count()) {
+    fail('❌ 断言④失败: 网页版出现回收站入口（v1.22.0 无回收站，属语义回归）');
   } else {
-    await trashToggle.click({ timeout: 15000 });
-    // 回收站行也是 div.rounded-2xl，用组名锚定具体那一行
-    const restoreBtn = pageW.locator('div.rounded-2xl').filter({ hasText: RENAMED })
-      .locator('button:has-text("恢复")').first();
-    await restoreBtn.waitFor({ state: 'visible', timeout: 15000 });
-    await restoreBtn.click({ timeout: 10000 });
-    // 恢复是直接动作（无确认弹窗）→ 轮询云端直到 is_deleted=false
-    let restored = false;
-    for (let i = 0; i < 8; i++) {
-      await pageW.waitForTimeout(1000);
-      const row = (await api.rows()).find(r => r.id === seeded.id);
-      if (row?.is_deleted === false) { restored = true; break; }
-    }
-    step('断言④ 网页版恢复落到云端');
-    if (!restored) fail('❌ 断言④失败: 点「恢复」后云端 is_deleted 仍为 true（轮询 8 次）');
-    else console.log('✅ 断言④通过: 云端已复位为活跃');
+    console.log('✅ 断言④通过: 删除后网页版列表隐藏该会话，且无回收站/恢复入口');
   }
 
-  // ── 6. 网页版再删除 → 扩展下载后该会话不应出现在活跃列表 ────────────
-  await pageW.locator('div.rounded-2xl').filter({ hasText: RENAMED }).first()
-    .locator('button:has-text("删除")').first().click().catch(() => {});
-  await pageW.locator('.fixed button:has-text("删除")').last().click({ timeout: 10000 }).catch(() => {});
-  await pageW.waitForTimeout(2500);
+  // ── 6. 扩展下载 → 该会话在本地物理消失 ──────────────────────────────
   await pageE.click('button[title="手动从云端下载会话到本地"]');
   await pageE.waitForSelector('.fixed h3:has-text("下载到本地")');
   await pageE.locator('.fixed h4:has-text("合并模式"), .fixed h4:has-text("覆盖模式")').first().click();
@@ -265,14 +257,14 @@ try {
   console.log(`   扩展端当前卡片标题: ${JSON.stringify(activeNames)}`);
   const extGroups = await readLocalGroups(pageE);
   const localAfter = extGroups.find(g => g.id === seeded.id);
-  if (!localAfter) {
-    fail('❌ 断言⑤失败: 扩展端本地已无该会话（无法判定是"墓碑传播"还是"数据丢失"）');
-  } else if (localAfter.isDeleted !== true) {
-    fail(`❌ 断言⑤失败: 扩展端本地该会话不是墓碑（isDeleted=${localAfter.isDeleted}）→ 网页版删除未跨端生效`);
+  // v1.22.0 无墓碑：云端 is_deleted 行 + 更新印记在合并时让本地活跃副本整组消失
+  // （物理移除，本地不留 isDeleted 行）。旧断言要求 isDeleted===true 是 1.21.x 语义。
+  if (localAfter) {
+    fail(`❌ 断言⑤失败: 扩展下载后本地仍存在该会话（isDeleted=${localAfter.isDeleted}）→ 网页版删除未跨端生效`);
   } else if (visible > 0) {
-    fail(`❌ 断言⑤失败: 会话已是墓碑却仍出现在活跃列表（UI 过滤异常）`);
+    fail('❌ 断言⑤失败: 本地存储已无该会话却仍出现在活跃列表（渲染异常）');
   } else {
-    console.log('✅ 断言⑤通过: 扩展端本地已是墓碑且不再显示为活跃（跨端软删生效）');
+    console.log('✅ 断言⑤通过: 扩展下载后该会话本地物理消失（无墓碑、不进活跃列表）');
   }
 
   console.log('\n' + '═'.repeat(62));

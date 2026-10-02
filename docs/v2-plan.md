@@ -25,7 +25,7 @@
 > **已就地改正的事实错误**（无需读本声明，正文即准确）：
 >
 > - §5 状态栏原称「新建 `src/core/tombstone.ts`（7 天常量 + sweep 纯函数）+ `tests/tombstone.test.ts`（12 用例）」——**这两个文件在当前代码树中不存在**（`ls` 核实）。无墓碑重写时未落地，相关常量随 1.22.0 一起消失。
-> - §6 P0 验证行与验收行原写「334 单测」——当前基线为 **368 个单测**。
+> - §6 P0 验证行与验收行原写「334 单测」——当前基线为 **695 个单测**（2026-10-02 实测）。
 > - §11 M1 原写「`v1.22.0`，Y 对账全绿，灰度 100%」——实际 `v1.22.0` 发布的是**废除墓碑体系**（见 `CHROMEWEBSTORE.md` 版本历史表的 1.22.0 行），不是 P1 转正。P1 对账仍在观察窗内。
 
 > 版本：v1.1 / 日期：2026-09-29（v1.0 成文 2026-09-26，基线 `v1.21.0`） / D3 决策已被 v1.22.0 推翻，其余决策仍锁定
@@ -152,14 +152,14 @@ SW（无状态搬运工，可随时被杀，无常驻状态）
 > - 全仓 50 文件 339 处 `console.*` 收口；eslint 新增 `no-console` + `no-restricted-imports(syncUtils.legacy)` 双门禁
 > - 测试 infra 根因修复：`--import tests/_register-loader.mjs` 全局预装 loader；loader stub 改注入式（旧跨线程 globalThis 永为 undefined）；`log.ts` import.meta 安全访问
 > - `tabSlice.ts` 943→883行（纯函数抽 `tabSliceHelpers.ts`）；`SyncButton.tsx` 682→590行（展示层抽 `syncPreviewView.tsx`）；legacy 头加 P3 删除日期
-> - 验证：type-check ✓ / lint ✓ / 334 单测 ✓（该数字为 2026-09-26 当时快照；**当前基线 368 单测**，2026-09-29 核实）/ vite build ✓；体积门见 y-bundle 报告（Y 增量仍 ≤120KB）
+> - 验证：type-check ✓ / lint ✓ / 334 单测 ✓（该数字为 2026-09-26 当时快照；**当前基线 695 单测**，2026-10-02 核实）/ vite build ✓；体积门见 y-bundle 报告（Y 增量仍 ≤120KB）
 
 - 目标：为 V2 腾出手，不改同步语义，纯结构。
 - 改动：
   - `upload.ts` 按“会话鉴权 / 上传 / 探活重试”拆三模块，`console.*` 全部收口到 `src/utils/errorHandler.ts`，加 eslint `no-console`（production error/warn 除外白名单）。
   - `tabSlice.ts` 只留 Redux 纯状态，同步副作用搬 `syncEngine`；`SyncButton.tsx` 拆展示与调度。
   - `syncUtils.legacy.ts` 标记 `@deprecated 冻结`，禁止新引用（eslint `no-restricted-imports`），删除日期定 V2-P3。
-- 验收：`type-check + lint + 334 用例` 全绿（334 为当时快照，当前基线 368）；包体积不增；无行为变更（e2e 回归全过）。
+- 验收：`type-check + lint + 334 用例` 全绿（334 为当时快照，当前基线 695）；包体积不增；无行为变更（e2e 回归全过）。
 - 回滚：纯重命名与搬运，直接 revert。
 
 ### P1 影子转正：Y.Doc 升为主真相源候选（1–2 周）

@@ -119,22 +119,31 @@ Productivity
 
 ## Privacy Policy
 
-**Privacy Policy URL** [REQUIRED] ⚠️ 需确认
+**Privacy Policy URL** [REQUIRED]
+
+https://tapstack-two.vercel.app/privacy.html
 
 <!-- 隐私政策页面源码：src/web/public/privacy.html（最后更新 2026-09-29）。
-     提交前填入该页面实际部署的公网地址。 -->
+     2026-10-02 与线上商店页核对：商店 Privacy 区展示的就是该 URL。 -->
 
 ## Distribution
 
-**Visibility**: Public ⚠️ 需确认
-**Regions**: All regions ⚠️ 需确认
+**Visibility**: Public（2026-10-02 线上商店页可公开访问，已核实）
+**Regions**: All regions ⚠️ 需确认（商店页不直接展示区域配置，需后台核对）
 
 ## Developer Info
 
-**Publisher Name** [REQUIRED] ⚠️ 需确认（git 提交署名：panbo）
+**Publisher Name** [REQUIRED]
 
-**Contact Email** [REQUIRED] ⚠️ 需确认
-<!-- git 署名邮箱 panbo.coding@qq.com，请确认是否作为公开联系邮箱。 -->
+Jasper Pan
+
+<!-- 2026-10-02 线上商店页「Offered by」实测值。 -->
+
+**Contact Email** [REQUIRED]
+
+panbo362472407@gmail.com
+
+<!-- 2026-10-02 线上商店页开发者信息区实测值（非 git 署名邮箱）。 -->
 
 **Support URL / Email** [RECOMMENDED]
 

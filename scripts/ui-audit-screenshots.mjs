@@ -199,9 +199,25 @@ async function main() {
     await page2.screenshot({ path: join(OUT_DIR, '05-confirm-dialog.png') });
     console.log('✅ 05-confirm-dialog');
 
-    // ── 空状态（不注入数据的新 profile 页面）──
+    // ── 空状态（清空本 profile 已注入的数据，拍真实空态）──
+    // 旧写法直接新开一页拍：profile 里已经注入过演示数据，「空状态」截图其实是
+    // 满列表，脚本还打印 ✅（假绿）。现在先写空存储，再等空态文案出现才拍；
+    // 等不到就抛错，不留会说谎的截图。
+    await page2.evaluate(async () => {
+      await new Promise((res, rej) => {
+        const req = indexedDB.open('tabvaultpro', 1);
+        req.onerror = () => rej(req.error);
+        req.onsuccess = () => {
+          const db = req.result;
+          const tx = db.transaction('kv', 'readwrite');
+          tx.objectStore('kv').put({ key: 'tab_groups', value: [] });
+          tx.oncomplete = () => { db.close(); res(); };
+          tx.onerror = () => { db.close(); rej(tx.error); };
+        };
+      });
+    });
     const page3 = await newPopupPage(ctx, id);
-    await page3.waitForTimeout(1000);
+    await page3.waitForSelector('text=先保存一个工作会话', { timeout: 15000 });
     await page3.screenshot({ path: join(OUT_DIR, '07-empty.png') });
     console.log('✅ 07-empty');
   } finally {

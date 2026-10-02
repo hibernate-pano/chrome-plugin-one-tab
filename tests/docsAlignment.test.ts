@@ -164,7 +164,7 @@ describe('docs/v2-plan.md：作废声明 + 不引用不存在的文件', () => {
   it('提到旧测试数的地方必须同时给出当前基线', () => {
     for (const [i, line] of V2_PLAN.split('\n').entries()) {
       if (!/\b334\b/.test(line)) continue;
-      assert.match(line, /368/, `docs/v2-plan.md:${i + 1} 提到 334 单测但没给当前基线 368`);
+      assert.match(line, /695/, `docs/v2-plan.md:${i + 1} 提到 334 单测但没给当前基线 695`);
     }
   });
 
@@ -190,7 +190,7 @@ describe('docs/dev-plan-2026-09-27.md：顶部状态声明 + 版本/测试数已
   it('提到旧测试数的地方必须同时给出当前基线', () => {
     for (const [i, line] of DEV_PLAN.split('\n').entries()) {
       if (!/\b356\b/.test(line)) continue;
-      assert.match(line, /368/, `docs/dev-plan-2026-09-27.md:${i + 1} 提到 356 但没给当前基线 368`);
+      assert.match(line, /695/, `docs/dev-plan-2026-09-27.md:${i + 1} 提到 356 但没给当前基线 695`);
     }
   });
 

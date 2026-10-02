@@ -38,9 +38,9 @@ describe('CI: verify.yml 存在且会被触发', () => {
 });
 
 describe('CI: Postgres 必须真的装上（防静默 skip）', () => {
-  it('装了 Postgres 16', () => {
-    assert.match(live, /supercharge\/setup-postgres@v1/);
-    assert.match(live, /postgresql-version:\s*16/);
+  it('装了 Postgres 16（显式 apt 安装，不依赖已下架的第三方 action）', () => {
+    // supercharge/setup-postgres 仓库 2026-10 已不存在，继续钉它等于钉一个必红的 CI。
+    assert.match(live, /apt-get install -y postgresql-16/);
   });
 
   it('探测三个二进制的同一步里必须 exit 1', () => {
