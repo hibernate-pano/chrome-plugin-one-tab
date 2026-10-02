@@ -6,6 +6,7 @@
 @import './themes/aurora.css';
 @import './themes/creamy.css';
 @import './themes/prism.css';
+@import './themes/apple.css';
 
 /* 微交互样式 */
 @import './micro-interactions.css';
@@ -109,6 +110,16 @@ html:not([data-theme]).dark {
     --radius-xl: 0.75rem;
     --radius-full: 9999px;
 
+    /* 行/菜单 hover 与开关色（legacy 默认值 = 现网观感；主题可覆盖）。
+       拆两个 hover token：legacy 下标签行与菜单行的暗色 hover 本就不同
+       （#374151 vs gray-700/50），合并会偷改现网观感。 */
+    --color-row-hover: #f9fafb;
+    --color-menu-hover: #f9fafb;
+    --color-toggle-on: #2563eb;
+    --color-toggle-off: #e5e7eb;
+    /* 页面外壳（legacy 原值：亮白 / 暗 gray-900） */
+    --color-shell: #ffffff;
+
     /* 间距 - 默认值 */
     --spacing-xs: 0.25rem;
     --spacing-sm: 0.5rem;
@@ -131,6 +142,14 @@ html:not([data-theme]).dark {
   :root {
     --theme-transition-duration: 250ms;
     --theme-transition-timing: cubic-bezier(0.4, 0, 0.2, 1);
+  }
+
+  html.dark {
+    --color-row-hover: #374151;
+    --color-menu-hover: rgba(55, 65, 81, 0.5);
+    --color-toggle-on: #2563eb;
+    --color-toggle-off: #4b5563;
+    --color-shell: #111827;
   }
 
   html {
@@ -1038,6 +1057,32 @@ html:not([data-theme]).dark {
 
 .theme-shadow-card-hover {
   box-shadow: var(--shadow-card-hover);
+}
+
+/* 行 hover / 菜单 hover / 开关 / 材质表面 工具类 */
+.theme-row-hover:hover {
+  background: var(--color-row-hover);
+}
+
+.theme-menu-hover:hover {
+  background: var(--color-menu-hover);
+}
+
+.theme-toggle-on {
+  background-color: var(--color-toggle-on);
+}
+
+.theme-toggle-off {
+  background-color: var(--color-toggle-off);
+}
+
+.theme-shell {
+  background: var(--color-shell);
+}
+
+.theme-surface {
+  backdrop-filter: saturate(180%) blur(20px);
+  -webkit-backdrop-filter: saturate(180%) blur(20px);
 }
 
 /* 圆角工具类 */

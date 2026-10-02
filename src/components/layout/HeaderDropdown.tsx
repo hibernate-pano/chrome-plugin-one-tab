@@ -65,7 +65,7 @@ interface HeaderDropdownProps {
 }
 
 /** 菜单行的统一 hover 反馈。菜单行不做位移（flat-interaction 的 -translate-y 会轻微跳动），只做背景色。 */
-const MENU_ROW = "w-full text-left px-4 py-2 text-sm text-gray-700 dark:text-gray-300 flex items-center transition-colors duration-150 hover:bg-gray-50 dark:hover:bg-gray-700/50";
+const MENU_ROW = "w-full text-left px-4 py-2 text-sm text-gray-700 dark:text-gray-300 flex items-center transition-colors duration-150 theme-menu-hover";
 
 /** 菜单内的开关行：整行可点，toggle 只做状态显示 */
 const DropdownToggleRow: React.FC<{
@@ -87,7 +87,7 @@ const DropdownToggleRow: React.FC<{
     </span>
     <span
       className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors ${
-        checked ? 'bg-primary-600' : 'bg-gray-200 dark:bg-gray-600'
+        checked ? 'theme-toggle-on' : 'theme-toggle-off'
       }`}
     >
       <span
@@ -416,7 +416,7 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({ onClose }) => {
   };
 
   return (
-    <div ref={dropdownRef} className="absolute right-0 mt-2 w-64 bg-white dark:bg-gray-800 rounded-lg shadow-lg border border-gray-200 dark:border-gray-700 z-20">
+    <div ref={dropdownRef} className="ts-panel absolute right-0 mt-2 w-64 theme-bg-elevated rounded-lg shadow-lg border theme-border-default z-20">
       <div className="py-2">
         {isAuthenticated && user && (
           <>
@@ -538,7 +538,7 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({ onClose }) => {
             </svg>
           </button>
           {openSubmenu === 'export' && (
-            <div className="absolute left-full top-0 ml-1 w-48 rounded-lg border border-gray-200 bg-white shadow-lg dark:border-gray-700 dark:bg-gray-800">
+            <div className="ts-panel absolute left-full top-0 ml-1 w-48 rounded-lg border theme-border-default theme-bg-elevated shadow-lg">
             <button
               onClick={handleExportData}
               className={MENU_ROW}
@@ -594,7 +594,7 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({ onClose }) => {
             </svg>
           </button>
           {openSubmenu === 'import' && (
-            <div className="absolute left-full top-0 ml-1 w-48 rounded-lg border border-gray-200 bg-white shadow-lg dark:border-gray-700 dark:bg-gray-800">
+            <div className="ts-panel absolute left-full top-0 ml-1 w-48 rounded-lg border theme-border-default theme-bg-elevated shadow-lg">
             <label
               className={MENU_ROW + ' cursor-pointer'}
             >
@@ -757,7 +757,7 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({ onClose }) => {
             aria-modal="true"
             aria-label="登录或注册账号"
             tabIndex={-1}
-            className="bg-white dark:bg-gray-800 rounded-lg shadow-xl w-full max-w-md mx-4 focus:outline-none"
+            className="ts-modal theme-bg-elevated rounded-lg shadow-xl w-full max-w-md mx-4 focus:outline-none"
           >
             <div className="flex border-b border-gray-300 dark:border-gray-700">
               <button

@@ -1,0 +1,173 @@
+/* ==========================================
+   Apple 风格主题 - 系统质感（macOS / iOS 设计语言）
+   ==========================================
+   设计语言来源：Apple HIG 的公开视觉惯例——
+   - 底色 #f5f5f7（apple.com 产品页灰）、卡片纯白、发丝分割线
+   - 强调色 #0071e3（行动蓝）/ 暗色 #0a84ff（系统蓝）
+   - 开关绿 #34c759 / #30d158（iOS Switch 色）
+   - 半透明 + saturate(180%) blur(20px) 的材质顶栏
+   - 大圆角卡片（14px）+ 分层柔和投影，CTA 药丸化
+   字体走系统栈（-apple-system 在 macOS/iOS 即 SF Pro），CSP 零风险。
+   本文件只定义 token 与结构性覆盖；交互与布局不变。 */
+
+html[data-theme="apple"] {
+  /* 表面 */
+  --color-bg-primary: #f5f5f7;
+  --color-bg-secondary: #ffffff;
+  --color-bg-tertiary: #f5f5f7;
+  --color-bg-elevated: #ffffff;
+  --color-bg-overlay: rgba(246, 246, 248, 0.8);
+  --color-row-hover: rgba(0, 0, 0, 0.04);
+  --color-menu-hover: rgba(0, 0, 0, 0.04);
+
+  /* 文字 */
+  --color-text-primary: #1d1d1f;
+  --color-text-secondary: #424245;
+  --color-text-tertiary: #6e6e73;
+  --color-text-muted: #86868b;
+
+  /* 发丝线 */
+  --color-border-default: #d2d2d7;
+  --color-border-subtle: rgba(0, 0, 0, 0.08);
+  --color-border-strong: #b9b9be;
+
+  /* 行动蓝 */
+  --color-accent: #0071e3;
+  --color-accent-hover: #0077ed;
+  --color-accent-subtle: #e8f2fd;
+
+  /* 语义色（iOS 系统色） */
+  --color-warning: #ff9f0a;
+  --color-danger: #ff3b30;
+  --color-success: #34c759;
+
+  /* 开关（iOS Switch） */
+  --color-toggle-on: #34c759;
+  --color-toggle-off: rgba(120, 120, 128, 0.16);
+
+  /* 排版：系统栈即 SF Pro */
+  --font-family-sans: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Helvetica Neue', system-ui, sans-serif;
+  --font-family-mono: 'SF Mono', ui-monospace, Menlo, monospace;
+
+  /* 分层柔和投影 */
+  --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.04), 0 8px 24px rgba(0, 0, 0, 0.06);
+  --shadow-card-hover: 0 2px 6px rgba(0, 0, 0, 0.06), 0 12px 32px rgba(0, 0, 0, 0.1);
+  --shadow-elevation-1: 0 1px 2px rgba(0, 0, 0, 0.05);
+  --shadow-elevation-2: 0 4px 12px rgba(0, 0, 0, 0.08);
+  --shadow-elevation-3: 0 12px 32px rgba(0, 0, 0, 0.12);
+}
+
+html[data-theme="apple"].dark {
+  --color-bg-primary: #000000;
+  --color-bg-secondary: #1c1c1e;
+  --color-bg-tertiary: #2c2c2e;
+  --color-bg-elevated: #2c2c2e;
+  --color-bg-overlay: rgba(22, 22, 24, 0.8);
+  --color-row-hover: rgba(255, 255, 255, 0.06);
+  --color-menu-hover: rgba(255, 255, 255, 0.06);
+
+  --color-text-primary: #f5f5f7;
+  --color-text-secondary: #d6d6db;
+  --color-text-tertiary: #98989d;
+  --color-text-muted: #6e6e73;
+
+  --color-border-default: #38383a;
+  --color-border-subtle: rgba(255, 255, 255, 0.08);
+  --color-border-strong: #48484a;
+
+  --color-accent: #0a84ff;
+  --color-accent-hover: #409cff;
+  --color-accent-subtle: rgba(10, 132, 255, 0.18);
+
+  --color-warning: #ff9f0a;
+  --color-danger: #ff453a;
+  --color-success: #30d158;
+
+  --color-toggle-on: #30d158;
+  --color-toggle-off: rgba(120, 120, 128, 0.32);
+
+  --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.4), 0 8px 24px rgba(0, 0, 0, 0.35);
+  --shadow-card-hover: 0 2px 6px rgba(0, 0, 0, 0.5), 0 12px 32px rgba(0, 0, 0, 0.45);
+}
+
+/* ── 结构性覆盖：把通用组件表面换成 Apple 的形态 ─────────────────
+   选择器带 html[data-theme="apple"] 前缀，特异性高于 drag-drop.css /
+   global.css 的裸类名规则，无需改动组件结构即可换形态。 */
+
+/* 页面外壳：Apple 产品页灰 / 纯黑（legacy 由 --color-shell 默认值保持原样） */
+html[data-theme="apple"] {
+  --color-shell: #f5f5f7;
+}
+
+html[data-theme="apple"].dark {
+  --color-shell: #000000;
+}
+
+/* 顶栏：系统材质（半透明 + 饱和模糊） */
+html[data-theme="apple"] .header {
+  background: var(--color-bg-overlay);
+  backdrop-filter: saturate(180%) blur(20px);
+  -webkit-backdrop-filter: saturate(180%) blur(20px);
+  border-bottom: 1px solid var(--color-border-subtle);
+}
+
+/* 会话卡片：大圆角 + 发丝边 + 分层投影；头部去底色，整卡一个表面 */
+html[data-theme="apple"] .tab-group-card {
+  border-radius: 14px;
+  border: 1px solid var(--color-border-subtle);
+  box-shadow: var(--shadow-card);
+}
+
+html[data-theme="apple"] .tab-group-card:hover {
+  border-color: var(--color-border-default);
+  box-shadow: var(--shadow-card-hover);
+}
+
+html[data-theme="apple"] .tab-group-header {
+  background: transparent;
+  border-bottom: 1px solid var(--color-border-subtle);
+}
+
+/* 标签行：去卡片感，hover 用系统灰 */
+html[data-theme="apple"] .tab-item {
+  background: transparent;
+  border-radius: 8px;
+}
+
+html[data-theme="apple"] .tab-item:hover {
+  background: var(--color-row-hover);
+}
+
+/* 输入框 / 按钮：系统圆角 */
+html[data-theme="apple"] .input,
+html[data-theme="apple"] .search-input {
+  border-radius: 10px;
+}
+
+html[data-theme="apple"] .btn-primary {
+  border-radius: 9999px;
+  font-weight: 500;
+}
+
+html[data-theme="apple"] .btn-icon {
+  border-radius: 8px;
+}
+
+html[data-theme="apple"] .flat-card {
+  border-radius: 14px;
+  border-color: var(--color-border-subtle);
+  box-shadow: var(--shadow-card);
+}
+
+/* 下拉面板 / 弹窗：系统弹层（圆角与材质只在 apple 作用域改，legacy 保持原值） */
+html[data-theme="apple"] .ts-panel {
+  border-radius: 12px;
+  backdrop-filter: saturate(180%) blur(20px);
+  -webkit-backdrop-filter: saturate(180%) blur(20px);
+}
+
+html[data-theme="apple"] .ts-modal {
+  border-radius: 16px;
+  backdrop-filter: saturate(180%) blur(20px);
+  -webkit-backdrop-filter: saturate(180%) blur(20px);
+}

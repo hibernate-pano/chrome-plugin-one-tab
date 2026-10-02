@@ -47,6 +47,17 @@ const PrismIcon = () => (
   </svg>
 );
 
+// Apple 主题图标 - 系统质感（SF 风格圆角窗格）
+const AppleIcon = () => (
+  <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5}>
+    <rect x="3" y="4" width="18" height="14" rx="3" strokeLinecap="round" strokeLinejoin="round" />
+    <path d="M3 9h18" strokeLinecap="round" />
+    <circle cx="6" cy="6.5" r="0.5" fill="currentColor" />
+    <circle cx="8" cy="6.5" r="0.5" fill="currentColor" />
+    <path d="M9 21h6" strokeLinecap="round" />
+  </svg>
+);
+
 // 调色板图标
 const PaletteIcon = () => (
   <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5}>
@@ -138,6 +149,20 @@ const themeOptions: ThemeOption[] = [
       card: '#fffdf9',
       accent: '#d4a574',
       text: '#5c4a3a',
+    },
+  },
+  {
+    value: 'apple',
+    label: 'Apple',
+    description: '系统质感',
+    icon: <AppleIcon />,
+    primaryColor: '#0071e3',
+    secondaryColor: '#0a84ff',
+    previewColors: {
+      bg: '#f5f5f7',
+      card: '#ffffff',
+      accent: '#0071e3',
+      text: '#1d1d1f',
     },
   },
   {

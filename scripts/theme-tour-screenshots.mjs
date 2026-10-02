@@ -15,7 +15,7 @@ const now = Date.now();
 const iso = ms => new Date(ms).toISOString();
 
 // 2026-09-28 主题收敛（8 → 4）后的保留清单
-const THEMES = ['legacy', 'aurora', 'creamy', 'prism'];
+const THEMES = ['legacy', 'aurora', 'creamy', 'prism', 'apple'];
 const MODES = ['light', 'dark'];
 
 function tab(groupId, url, title, ageHours) {

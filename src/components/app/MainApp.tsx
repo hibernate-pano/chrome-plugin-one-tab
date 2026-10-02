@@ -57,13 +57,13 @@ export const MainApp: React.FC = () => {
   return (
     <Suspense
       fallback={
-        <div className="min-h-screen bg-white dark:bg-gray-900 dark:text-gray-100 flex flex-col items-center justify-center">
+        <div className="app-shell theme-shell min-h-screen dark:text-gray-100 flex flex-col items-center justify-center">
           加载拖放功能...
         </div>
       }
     >
       <DndProvider>
-        <div className="min-h-screen bg-white dark:bg-gray-900 dark:text-gray-100 flex flex-col">
+        <div className="app-shell theme-shell min-h-screen dark:text-gray-100 flex flex-col">
           {showPerformanceTest ? (
             <>
               <div className="bg-primary-600 text-white p-2">
@@ -91,7 +91,7 @@ export const MainApp: React.FC = () => {
                   <TabList searchQuery={deferredSearchQuery} />
                 </Suspense>
               </main>
-              <footer className="bg-white dark:bg-gray-900 border-t border-gray-200 dark:border-gray-700 text-xs text-gray-600 dark:text-gray-400">
+              <footer className="app-shell theme-shell border-t theme-border-default text-xs text-gray-600 dark:text-gray-400">
                 {/* 版本 + slogan 一行居中：原左右分挂两头，弱信息占满整行宽 */}
                 <div className={`w-full py-2 ${getContainerWidthClass()} flex justify-center items-center gap-2`}>
                   <span className="flex items-center gap-1.5">
