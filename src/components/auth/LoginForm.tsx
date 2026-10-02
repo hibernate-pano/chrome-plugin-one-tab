@@ -16,10 +16,10 @@ export const LoginForm: React.FC<LoginFormProps> = ({ onSuccess }) => {
   const [password, setPassword] = useState('');
   const [validationErrors, setValidationErrors] = useState<Record<string, string>>({});
   const inputClassName = (hasError: boolean) =>
-    `w-full rounded-2xl border px-4 py-3 text-sm shadow-sm transition focus:outline-none focus:ring-4 focus:border-transparent bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 ${
+    `w-full theme-radius-input theme-bg-elevated border px-4 py-3 text-sm shadow-sm transition focus:outline-none text-gray-900 dark:text-gray-100 ${
       hasError
-        ? 'border-rose-300 focus:ring-rose-100 dark:border-rose-700 dark:focus:ring-rose-950/60'
-        : 'border-gray-200 dark:border-gray-700 focus:ring-primary-100 dark:focus:ring-primary-950/60'
+        ? 'border-rose-300 focus:ring-4 focus:ring-rose-100 dark:border-rose-700 dark:focus:ring-rose-950/60'
+        : 'theme-border-default theme-focus'
     }`;
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -71,7 +71,7 @@ export const LoginForm: React.FC<LoginFormProps> = ({ onSuccess }) => {
           className="mb-6"
         />
       )}
-      <form onSubmit={handleSubmit} className="rounded-[28px] border border-gray-200/80 bg-white/95 p-6 shadow-[0_24px_60px_-40px_rgba(15,23,42,0.45)] backdrop-blur-sm dark:border-gray-700/80 dark:bg-gray-900/90">
+      <form onSubmit={handleSubmit} className="theme-radius-panel theme-panel-translucent theme-panel-blur theme-border-default theme-shadow-panel border p-6">
         <div className="mb-5">
           <label className="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-300">邮箱</label>
           <input
@@ -114,7 +114,7 @@ export const LoginForm: React.FC<LoginFormProps> = ({ onSuccess }) => {
         </div>
         <button
           type="submit"
-          className="w-full rounded-2xl bg-primary-600 py-3 text-sm font-semibold text-white shadow-sm transition hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-50 primary-button-interaction"
+          className="theme-cta theme-radius-input w-full py-3 text-sm font-semibold text-white shadow-sm transition disabled:cursor-not-allowed disabled:opacity-50"
           disabled={isLoading}
         >
           {isLoading ? (

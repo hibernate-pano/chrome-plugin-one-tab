@@ -132,6 +132,15 @@ async function main() {
         });
         await page.reload();
         await page.waitForSelector('text=V2 同步架构评审', { timeout: 15000 });
+        // 引导遮罩兜底：首启/冷启动时序抖动会让 skip 点击落空，遮罩一旦进截图
+        // 整张作废（2026-10-02 事故：legacy-light 拍到遮罩，74% 像素假差异）。
+        // reload 后若遮罩仍在，再点一次跳过并等它消失。
+        const overlay = page.locator('.onboarding-overlay');
+        if (await overlay.count()) {
+          const skipBtn = page.locator('button[aria-label="跳过引导"]');
+          await skipBtn.click({ timeout: 5000 }).catch(() => page.keyboard.press('Escape'));
+          await overlay.waitFor({ state: 'detached', timeout: 8000 }).catch(() => {});
+        }
         await page.waitForTimeout(1200); // 主题过渡 250ms + 字体/favicon 稳定
 
         // 防串味：确认 DOM 上确实是我们拍的主题

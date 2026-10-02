@@ -123,6 +123,29 @@ html:not([data-theme]).dark {
     /* 备注块底色（legacy 原值：亮 gray-50 / 暗 gray-800@60%） */
     --color-note-bg: #f9fafb;
 
+    /* 二级界面 token（legacy 默认值 = 现网观感）：
+       圆角三档（卡片/弹层/控件）、强调文字/描边/淡染、井底（well） */
+    --radius-card: 0.75rem;
+    --radius-panel: 1.75rem;
+    --radius-control: 0.5rem;
+    --radius-input: 1rem;
+    --radius-input-sm: 0.25rem;
+    --radius-search: 9999px;
+    --color-accent-text: #1d4ed8;
+    --color-accent-strong: #2563eb;
+    --color-accent-border: #93c5fd;
+    --color-accent-wash: rgba(59, 130, 246, 0.1);
+    --color-well: #f9fafb;
+    /* 按钮 hover / 强调实底淡色 / 半透明弹层 / 焦点环 / 弹层投影与模糊
+       （legacy 默认值逐处取自现网类：white/95+blur(4px)+24/60/-40@0.55 等） */
+    --color-btn-hover: #f3f4f6;
+    --color-accent-soft: #dbeafe;
+    --color-panel-translucent: rgba(255, 255, 255, 0.9);
+    --color-border-translucent: rgba(229, 231, 235, 0.8);
+    --focus-ring: 0 0 0 4px #dbeafe;
+    --shadow-panel: 0 24px 60px -40px rgba(15, 23, 42, 0.55);
+    --panel-blur: blur(4px);
+
     /* 间距 - 默认值 */
     --spacing-xs: 0.25rem;
     --spacing-sm: 0.5rem;
@@ -154,6 +177,18 @@ html:not([data-theme]).dark {
     --color-toggle-off: #4b5563;
     --color-shell: #111827;
     --color-note-bg: rgba(31, 41, 55, 0.6);
+    --color-accent-text: #93c5fd;
+    --color-accent-border: rgba(59, 130, 246, 0.4);
+    --color-accent-wash: rgba(96, 165, 250, 0.1);
+    --color-well: #1f2937;
+    --color-btn-hover: #1f2937;
+    --color-accent-soft: #1e3a8a;
+    --color-accent-strong: #3b82f6;
+    --color-panel-translucent: rgba(17, 24, 39, 0.8);
+    --color-border-translucent: rgba(55, 65, 81, 0.8);
+    --focus-ring: 0 0 0 4px rgba(23, 37, 84, 0.6);
+    --shadow-panel: 0 24px 60px -40px rgba(0, 0, 0, 0.7);
+    --panel-blur: blur(4px);
   }
 
   html {
@@ -429,7 +464,7 @@ html:not([data-theme]).dark {
   .search-input {
     @apply pl-10 pr-10;
     background: var(--color-bg-tertiary);
-    border-radius: 9999px;
+    border-radius: var(--radius-search);
   }
 
   .search-input:focus {
@@ -558,7 +593,8 @@ html:not([data-theme]).dark {
      标签组组件
      ========================================== */
   .tab-group-card {
-    @apply rounded-xl overflow-hidden;
+    @apply overflow-hidden;
+    border-radius: var(--radius-card);
     background: var(--color-bg-secondary);
     border: 1px solid var(--color-border-subtle);
     transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
@@ -1062,6 +1098,46 @@ html:not([data-theme]).dark {
 .theme-shadow-card-hover {
   box-shadow: var(--shadow-card-hover);
 }
+
+/* 二级界面工具类：圆角三档 / 强调族 / 井底 / 弹层 / 焦点 / CTA / 衬线标题 */
+.theme-btn-hover:hover { background: var(--color-btn-hover); }
+.theme-accent-soft { background: var(--color-accent-soft); }
+.theme-panel-translucent { background: var(--color-panel-translucent); }
+.theme-focus:focus { box-shadow: var(--focus-ring); }
+.theme-accent-outline {
+  border-color: var(--color-accent-border);
+  color: var(--color-accent-text);
+}
+.theme-accent-outline:hover {
+  background: var(--color-accent);
+  border-color: var(--color-accent);
+  color: #ffffff;
+}
+.theme-cta {
+  border-radius: var(--radius-control);
+  background-color: var(--color-accent);
+}
+.theme-cta:hover { background-color: var(--color-accent-hover); }
+
+/* 二级界面工具类：圆角三档 / 强调文字 / 强调描边 / 强调淡染 / 井底 / 衬线标题 */
+.theme-radius-card { border-radius: var(--radius-card); }
+.theme-radius-panel { border-radius: var(--radius-panel); }
+.theme-radius-control { border-radius: var(--radius-control); }
+.theme-radius-input { border-radius: var(--radius-input); }
+.theme-radius-input-sm { border-radius: var(--radius-input-sm); }
+.theme-accent-text { color: var(--color-accent-text); }
+.theme-accent-strong-text { color: var(--color-accent-strong); }
+.theme-shadow-panel { box-shadow: var(--shadow-panel); }
+.theme-border-translucent { border-color: var(--color-border-translucent); }
+
+.theme-panel-blur {
+  backdrop-filter: var(--panel-blur);
+  -webkit-backdrop-filter: var(--panel-blur);
+}
+.theme-accent-border { border-color: var(--color-accent-border); }
+.theme-accent-wash { background: var(--color-accent-wash); }
+.theme-well { background: var(--color-well); }
+.theme-title-serif { font-family: var(--font-family-serif, inherit); }
 
 /* 行 hover / 菜单 hover / 开关 / 材质表面 工具类 */
 .theme-row-hover:hover {

@@ -320,7 +320,7 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
           {/* 折叠按钮 */}
           <button
             onClick={() => setIsCollapsed(!isCollapsed)}
-            className="btn-icon p-1 -ml-1 micro-interaction-button"
+            className="btn-icon theme-btn-hover p-1 -ml-1 micro-interaction-button"
             aria-label={isCollapsed ? '展开会话' : '折叠会话'}
             aria-expanded={!isCollapsed}
           >
@@ -411,7 +411,7 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
           {/* 恢复全部（新窗口） */}
           <button
             onClick={handleOpenAllTabs}
-            className="btn-icon p-1.5 tab-group-action-accent micro-interaction-button"
+            className="btn-icon theme-btn-hover p-1.5 tab-group-action-accent micro-interaction-button"
             title="在新窗口恢复整个会话"
             aria-label={`在新窗口恢复整个会话，共 ${group.tabs.length} 个标签页`}
           >
@@ -421,7 +421,7 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
           {/* 在当前窗口打开 */}
           <button
             onClick={handleOpenAllTabsInCurrentWindow}
-            className="btn-icon p-1.5 micro-interaction-button"
+            className="btn-icon theme-btn-hover p-1.5 micro-interaction-button"
             title="在当前窗口打开整个会话"
             aria-label={`在当前窗口打开整个会话，共 ${group.tabs.length} 个标签页`}
           >
@@ -432,7 +432,7 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
           {!group.isLocked && (
             <button
               onClick={() => setIsEditing(true)}
-              className="btn-icon p-1.5 micro-interaction-button"
+              className="btn-icon theme-btn-hover p-1.5 micro-interaction-button"
               title="重命名会话"
               aria-label="重命名会话"
             >
@@ -452,7 +452,7 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
           {!group.isLocked && (
             <button
               onClick={() => setIsEditingNotes(current => !current)}
-              className="btn-icon p-1.5 micro-interaction-button"
+              className="btn-icon theme-btn-hover p-1.5 micro-interaction-button"
               title={group.notes ? '编辑会话备注' : '添加会话备注'}
               aria-label={group.notes ? '编辑会话备注' : '添加会话备注'}
             >
@@ -506,7 +506,7 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
                   }
                 }}
                 placeholder="给这个会话留一句备注，例如这批标签页是为哪个项目、客户或研究主题准备的。"
-                className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 focus:border-primary-500 focus:outline-none dark:border-gray-600 dark:bg-gray-900 dark:text-gray-100"
+                className="w-full theme-radius-control theme-bg-elevated theme-border-default theme-focus border px-3 py-2 text-sm text-gray-900 focus:outline-none dark:text-gray-100"
                 rows={3}
               />
               <div className="flex items-center justify-end gap-2">
@@ -521,7 +521,7 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
                 </button>
                 <button
                   onClick={handleSaveNotes}
-                  className="rounded-lg bg-primary-600 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-primary-700"
+                  className="theme-cta px-3 py-1.5 text-xs font-medium text-white transition-colors"
                 >
                   保存备注
                 </button>

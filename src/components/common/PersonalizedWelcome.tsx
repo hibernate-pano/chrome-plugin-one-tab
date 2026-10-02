@@ -46,7 +46,7 @@ export const PersonalizedWelcome: React.FC<PersonalizedWelcomeProps> = ({
     <div className={`text-center py-8 px-4 ${className}`}>
       {/* 欢迎图标 */}
       <div className="mb-4">
-        <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-blue-100 dark:bg-blue-900 mb-3">
+        <div className="theme-accent-soft inline-flex items-center justify-center w-16 h-16 rounded-full mb-3">
           <span className="text-2xl">{getEmoji()}</span>
         </div>
       </div>
@@ -63,7 +63,7 @@ export const PersonalizedWelcome: React.FC<PersonalizedWelcomeProps> = ({
 
       {/* 统计信息 */}
       {tabCount > 0 && (
-        <div className="inline-flex items-center space-x-4 px-4 py-2 bg-gray-50 dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700">
+        <div className="theme-well theme-radius-control theme-border-default inline-flex items-center space-x-4 px-4 py-2 border">
           <div className="flex items-center space-x-1">
             <div className="w-2 h-2 bg-blue-500 rounded-full"></div>
             <span className="text-sm text-gray-600 dark:text-gray-300">

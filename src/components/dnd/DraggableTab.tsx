@@ -212,7 +212,7 @@ export const DraggableTab: React.FC<DraggableTabProps> = React.memo(({
       <div className="tab-item-actions">
         <button
           onClick={handleDelete}
-          className="btn-icon p-1 tab-item-delete-btn micro-interaction-button"
+          className="btn-icon theme-btn-hover p-1 tab-item-delete-btn micro-interaction-button"
           title="删除标签页"
           aria-label={`删除标签页: ${tabTitle}`}
         >

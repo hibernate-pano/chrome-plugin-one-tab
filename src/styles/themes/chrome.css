@@ -1,17 +1,13 @@
 /* ==========================================
    Chrome 原生风格主题 - Material / Chrome 浏览器 UI 语言
    ==========================================
-   设计语言来源：Chrome 浏览器与 Material 3 的公开视觉惯例——
-   - 工具栏白 + 标签条灰（#f1f3f4）、Google 灰阶文字（#202124 / #5f6368）
-   - 强调色 Google 蓝 #1a73e8（暗色 #8ab4f8）
-   - 搜索框 = Omnibox 形态：灰底填充 + 药丸圆角
-   - 按钮药丸化（Material 3 filled button），卡片 8px 圆角 + Material 分层投影
-   - hover 用 Google 灰 #f1f3f4，分割线 #dadce0 */
+   外壳标签条灰 #f8f9fa、卡片可见边框分离、卡头无灰带、Omnibox 药丸搜索、
+   Material 状态层（hover 不抬升）、2px 蓝描边焦点、石墨灰暗色。
+   本文件 = 完整 token 集（与 legacy 同构）+ 结构性覆盖。
+   交互与布局不变；legacy 观感由 global.css 默认值保证。 */
 
 html[data-theme="chrome"] {
-  /* 页面底 = Google gray-50：比 legacy 白底多一层"浏览器chrome区"的灰，
-     卡片靠可见边框 + Material 投影分离，而不是靠底色差 */
-  --color-shell: #f8f9fa;
+  /* 表面 */
   --color-bg-primary: #ffffff;
   --color-bg-secondary: #ffffff;
   --color-bg-tertiary: #f1f3f4;
@@ -20,29 +16,57 @@ html[data-theme="chrome"] {
   --color-row-hover: #f1f3f4;
   --color-menu-hover: #f1f3f4;
 
+  /* 文字 */
   --color-text-primary: #202124;
   --color-text-secondary: #3c4043;
   --color-text-tertiary: #5f6368;
   --color-text-muted: #80868b;
 
+  /* 分割线 */
   --color-border-default: #dadce0;
   --color-border-subtle: #e8eaed;
   --color-border-strong: #bdc1c6;
 
+  /* 强调 */
   --color-accent: #1a73e8;
   --color-accent-hover: #1765cc;
   --color-accent-subtle: #e8f0fe;
 
+  /* 语义色 */
   --color-warning: #f9ab00;
   --color-danger: #d93025;
   --color-success: #188038;
 
+  /* 开关 */
   --color-toggle-on: #1a73e8;
   --color-toggle-off: #dadce0;
 
-  --font-family-sans: 'Google Sans', Roboto, -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif;
+  /* 二级界面：圆角 / 强调族 / 井底 / 按钮 / 弹层 / 焦点 */
+  --radius-card: 0.5rem;
+  --radius-panel: 1rem;
+  --radius-control: 0.5rem;
+  --radius-input: 0.5rem;
+  --radius-input-sm: 9999px;
+  --color-accent-text: #1967d2;
+  --color-accent-strong: #1a73e8;
+  --color-accent-border: rgba(26, 115, 232, 0.4);
+  --color-accent-wash: rgba(26, 115, 232, 0.1);
+  --color-well: #f1f3f4;
+  --color-note-bg: #f1f3f4;
+  --color-btn-hover: #f1f3f4;
+  --color-accent-soft: #d2e3fc;
+  --color-panel-translucent: rgba(255, 255, 255, 0.96);
+  --color-border-translucent: rgba(218, 220, 224, 0.9);
+  --focus-ring: 0 0 0 2px #1a73e8;
+  --shadow-panel: 0 1px 3px rgba(60, 64, 67, 0.3), 0 4px 8px 3px rgba(60, 64, 67, 0.15);
+  --panel-blur: none;
+  --color-shell: #f8f9fa;
 
-  /* Material 分层投影 */
+  /* 排版 */
+  --font-family-sans: 'Google Sans', Roboto, -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif;
+  --font-family-mono: Roboto Mono, ui-monospace, Menlo, monospace;
+
+  /* 投影 */
   --shadow-card: 0 1px 2px rgba(60, 64, 67, 0.3), 0 1px 3px 1px rgba(60, 64, 67, 0.15);
   --shadow-card-hover: 0 1px 3px rgba(60, 64, 67, 0.3), 0 4px 8px 3px rgba(60, 64, 67, 0.15);
   --shadow-elevation-1: 0 1px 2px rgba(60, 64, 67, 0.3);
@@ -79,13 +103,27 @@ html[data-theme="chrome"].dark {
   --color-toggle-on: #8ab4f8;
   --color-toggle-off: #5f6368;
 
+  --color-accent-text: #8ab4f8;
+  --color-accent-strong: #8ab4f8;
+  --color-accent-border: rgba(138, 180, 248, 0.45);
+  --color-accent-wash: rgba(138, 180, 248, 0.14);
+  --color-well: #35363a;
+  --color-note-bg: #35363a;
+  --color-btn-hover: #3c4043;
+  --color-accent-soft: rgba(138, 180, 248, 0.2);
+  --color-panel-translucent: rgba(41, 42, 45, 0.96);
+  --color-border-translucent: rgba(95, 99, 104, 0.7);
+  --focus-ring: 0 0 0 2px #8ab4f8;
+  --shadow-panel: 0 4px 8px 3px rgba(0, 0, 0, 0.4);
+  --panel-blur: none;
+  --color-shell: #202124;
+
   --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.5), 0 1px 3px 1px rgba(0, 0, 0, 0.3);
   --shadow-card-hover: 0 1px 3px rgba(0, 0, 0, 0.5), 0 4px 8px 3px rgba(0, 0, 0, 0.3);
 }
 
-/* ── 结构性覆盖：Chrome / Material 形态 ─────────────────────── */
-
-/* 顶栏：Chrome 工具栏（实底 + 发丝底线，不用毛玻璃） */
+/* ── 结构性覆盖 ─────────────────────────────────────────────── */
+/* 工具栏语言：实底顶栏，不用毛玻璃 */
 html[data-theme="chrome"] .header {
   background: var(--color-bg-secondary);
   backdrop-filter: none;
@@ -93,89 +131,20 @@ html[data-theme="chrome"] .header {
   border-bottom: 1px solid var(--color-border-default);
 }
 
-/* Omnibox 形态搜索框 */
-html[data-theme="chrome"] .input,
-html[data-theme="chrome"] .search-input {
-  border-radius: 9999px;
-  background: var(--color-bg-tertiary);
-}
-
-html[data-theme="chrome"] .input:hover,
-html[data-theme="chrome"] .search-input:hover {
-  background: var(--color-bg-tertiary);
-  box-shadow: inset 0 0 0 1px var(--color-border-default);
-}
-
-/* Material 3 卡片：8px 圆角 + 可见边框 + 分层投影（Chrome 的分离语言是描边，不是底色） */
-html[data-theme="chrome"] .tab-group-card {
-  border-radius: 8px;
-  border: 1px solid var(--color-border-default);
-  box-shadow: var(--shadow-card);
-}
-
-html[data-theme="chrome"] .tab-group-card:hover {
-  border-color: var(--color-border-subtle);
-  box-shadow: var(--shadow-card-hover);
-}
-
-/* 工具栏语言：卡头不铺灰带（legacy 的灰带是"通用后台"感），白底 + 发丝线 */
+/* 卡片分离靠可见描边（Material 语言），卡头无灰带 */
+html[data-theme="chrome"] .tab-group-card { border: 1px solid var(--color-border-default); }
 html[data-theme="chrome"] .tab-group-header {
   background: transparent;
   border-bottom: 1px solid var(--color-border-subtle);
 }
 
-html[data-theme="chrome"] .tab-item {
-  background: transparent;
-  border-radius: 8px;
-}
+html[data-theme="chrome"] .tab-item { background: transparent; }
+html[data-theme="chrome"] .tab-item:hover { background: var(--color-row-hover); }
 
-html[data-theme="chrome"] .tab-item:hover {
-  background: var(--color-row-hover);
-}
+/* Omnibox 药丸搜索 */
+html[data-theme="chrome"] .search-input { border-radius: 9999px; }
 
-/* Material filled button：药丸 */
-html[data-theme="chrome"] .btn-primary {
-  border-radius: 9999px;
-  font-weight: 500;
-}
-
-html[data-theme="chrome"] .btn-icon {
-  border-radius: 9999px;
-}
-
-html[data-theme="chrome"] .flat-card {
-  border-radius: 8px;
-  box-shadow: var(--shadow-card);
-}
-
-html[data-theme="chrome"] .ts-panel {
-  border-radius: 8px;
-}
-
-html[data-theme="chrome"] .ts-modal {
-  border-radius: 16px;
-}
-
-/* Omnibox 焦点：白底 + 蓝色双像素描边（Chrome 地址栏聚焦态），无位移无光晕扩散 */
-html[data-theme="chrome"] .search-input:focus,
-html[data-theme="chrome"] .input:focus {
-  background: var(--color-bg-secondary);
-  box-shadow: 0 0 0 2px var(--color-accent);
-  border-color: transparent;
-}
-
-/* Material 状态层：hover 不抬升，只叠状态色（与 Apple 的位移签名互斥） */
-html[data-theme="chrome"] .tab-group-card:hover {
-  transform: none;
-}
-
-/* 页面外壳：Chrome 标签条灰 */
-html[data-theme="chrome"] {
-  --color-note-bg: #f1f3f4;
-  --color-shell: #f1f3f4;
-}
-
-html[data-theme="chrome"].dark {
-  --color-note-bg: #35363a;
-  --color-shell: #202124;
-}
+/* Material 状态层：hover 不抬升 */
+html[data-theme="chrome"] .tab-group-card:hover { transform: none; }
+html[data-theme="chrome"] .btn-primary { border-radius: 9999px; font-weight: 500; }
+html[data-theme="chrome"] .btn-icon { border-radius: 9999px; }

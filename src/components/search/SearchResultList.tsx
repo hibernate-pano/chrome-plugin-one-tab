@@ -359,7 +359,7 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({ searchQuery 
         <div className="flex items-center gap-2">
           <h3 className="text-sm font-medium text-gray-700 dark:text-gray-300">会话搜索结果</h3>
           {activeFilterCount > 0 && (
-            <span className="rounded-full bg-blue-100 px-2 py-0.5 text-[11px] font-medium text-blue-700 dark:bg-blue-900/40 dark:text-blue-300">
+            <span className="theme-accent-soft theme-accent-text rounded-full px-2 py-0.5 text-[11px] font-medium">
               {activeFilterCount} 个筛选
             </span>
           )}
@@ -389,7 +389,7 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({ searchQuery 
       </div>
 
       {showFilters && (
-        <div className={`bg-gray-50 dark:bg-gray-700 rounded-lg p-3 mb-3 ${withOuterMargin ? 'mx-2' : ''}`}>
+        <div className={`theme-well theme-radius-control p-3 mb-3 ${withOuterMargin ? 'mx-2' : ''}`}>
           <div className="grid grid-cols-1 md:grid-cols-4 gap-2">
             <div>
               <label
@@ -408,7 +408,7 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({ searchQuery 
                     pinned: nextPinned === 'all' ? undefined : nextPinned,
                   }));
                 }}
-                className="w-full text-sm border border-gray-300 dark:border-gray-600 rounded px-2 py-1 bg-white dark:bg-gray-600 text-gray-900 dark:text-gray-100"
+                className="w-full text-sm border theme-border-default theme-radius-input-sm theme-focus theme-bg-elevated px-2 py-1 text-gray-900 dark:text-gray-100"
               >
                 <option value="all">全部</option>
                 <option value="only">仅固定</option>
@@ -435,7 +435,7 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({ searchQuery 
                     domain: nextDomain || undefined,
                   }));
                 }}
-                className="w-full text-sm border border-gray-300 dark:border-gray-600 rounded px-2 py-1 bg-white dark:bg-gray-600 text-gray-900 dark:text-gray-100"
+                className="w-full text-sm border theme-border-default theme-radius-input-sm theme-focus theme-bg-elevated px-2 py-1 text-gray-900 dark:text-gray-100"
               />
             </div>
 
@@ -458,7 +458,7 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({ searchQuery 
                     groupName: nextGroupName || undefined,
                   }));
                 }}
-                className="w-full text-sm border border-gray-300 dark:border-gray-600 rounded px-2 py-1 bg-white dark:bg-gray-600 text-gray-900 dark:text-gray-100"
+                className="w-full text-sm border theme-border-default theme-radius-input-sm theme-focus theme-bg-elevated px-2 py-1 text-gray-900 dark:text-gray-100"
               />
             </div>
 
@@ -479,7 +479,7 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({ searchQuery 
                     savedWithin: nextValue || undefined,
                   }));
                 }}
-                className="w-full text-sm border border-gray-300 dark:border-gray-600 rounded px-2 py-1 bg-white dark:bg-gray-600 text-gray-900 dark:text-gray-100"
+                className="w-full text-sm border theme-border-default theme-radius-input-sm theme-focus theme-bg-elevated px-2 py-1 text-gray-900 dark:text-gray-100"
               >
                 <option value="">全部</option>
                 <option value="24h">24 小时内</option>
@@ -512,7 +512,7 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({ searchQuery 
               {activeFilterCount > 0 && (
                 <button
                   onClick={clearFilters}
-                  className="rounded-lg border border-gray-300 px-3 py-1.5 text-xs font-medium text-gray-600 transition-colors hover:bg-gray-100 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-800"
+                  className="theme-radius-control theme-btn-hover border theme-border-default px-3 py-1.5 text-xs font-medium text-gray-600 transition-colors dark:text-gray-300"
                 >
                   清空筛选后重试
                 </button>
@@ -583,7 +583,7 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({ searchQuery 
         {sessionResults.map((session: SessionSearchResult) => (
           <div
             key={session.group.id}
-            className="rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900/40 p-3"
+            className="theme-radius-card theme-border-default theme-bg-elevated border p-3"
             style={{ contentVisibility: 'auto', containIntrinsicSize: '240px' }}
           >
             <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
@@ -613,7 +613,7 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({ searchQuery 
 
               <button
                 onClick={() => restoreSession(session.group)}
-                className="self-start rounded-lg border border-primary-300 px-3 py-1.5 text-xs font-medium text-primary-700 transition-colors hover:bg-primary-600 hover:border-primary-600 hover:text-white dark:border-primary-500/40 dark:text-primary-300 dark:hover:bg-primary-600 dark:hover:border-primary-600 dark:hover:text-white"
+                className="theme-accent-outline theme-radius-control self-start border px-3 py-1.5 text-xs font-medium transition-colors"
               >
                 恢复整个会话
               </button>

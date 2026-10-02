@@ -40,8 +40,8 @@ export const EmptyState: React.FC<EmptyStateProps> = ({
 }) => {
   const toneStyles = {
     default: {
-      shell: 'border-gray-200/80 bg-white/90 dark:border-gray-700/80 dark:bg-gray-900/80',
-      icon: 'bg-primary-500/10 text-primary-600 dark:bg-primary-400/10 dark:text-primary-300',
+      shell: 'theme-border-translucent theme-panel-translucent',
+      icon: 'theme-accent-wash theme-accent-strong-text',
     },
     search: {
       shell: 'border-sky-200/80 bg-sky-50/80 dark:border-sky-900/50 dark:bg-sky-950/20',
@@ -54,7 +54,7 @@ export const EmptyState: React.FC<EmptyStateProps> = ({
   }[tone];
 
   return (
-    <div className={`animate-in rounded-[28px] border px-6 py-8 text-center shadow-[0_24px_60px_-40px_rgba(15,23,42,0.55)] backdrop-blur-sm ${toneStyles.shell} ${className}`}>
+    <div className={`animate-in theme-radius-panel theme-shadow-panel theme-panel-blur border px-6 py-8 text-center ${toneStyles.shell} ${className}`}>
       <div className={`mx-auto inline-flex h-16 w-16 items-center justify-center rounded-2xl ${toneStyles.icon}`}>
         {icon || <DefaultIcon />}
       </div>
