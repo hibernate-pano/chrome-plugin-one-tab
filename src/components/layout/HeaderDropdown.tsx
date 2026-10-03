@@ -750,14 +750,18 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({ onClose }) => {
       </div>
 
       {showAuthModal && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+        // 扩展 popup 的高度由未登录弹窗之外的内容决定。原先「垂直居中 + 不可滚动」
+        // 会让超出视口的弹窗上下两端被裁掉（顶部即「位置过高、显示不全」）。
+        // 外层负责滚动、内层 min-h-full 居中：放得下就居中，放不下就从顶部起排并可滚动。
+        <div className="fixed inset-0 z-50 overflow-y-auto bg-black bg-opacity-50">
+          <div className="flex min-h-full items-center justify-center p-4">
           <div
             ref={authModalRef}
             role="dialog"
             aria-modal="true"
             aria-label="登录或注册账号"
             tabIndex={-1}
-            className="ts-modal theme-bg-elevated rounded-lg shadow-xl w-full max-w-md mx-4 focus:outline-none"
+            className="ts-modal theme-bg-elevated rounded-lg shadow-xl w-full max-w-md focus:outline-none"
           >
             <div className="flex border-b border-gray-300 dark:border-gray-700">
               <button
@@ -798,6 +802,7 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({ onClose }) => {
                 }} />
               )}
             </div>
+          </div>
           </div>
         </div>
       )}
