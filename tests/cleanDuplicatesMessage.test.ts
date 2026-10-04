@@ -43,7 +43,9 @@ describe('Header：清理重复标签的成功反馈不得被静默', () => {
   it('成功分支把两个计数转成文案并用 toast 展示', () => {
     assert.match(
       HEADER,
-      /cleanDuplicatesResultMessage\(result\.removedTabsCount,\s*result\.removedGroupsCount\)/,
+      // v1.22.9 契约变更：计数改从 SW 回传的**权威计划**里取（result.plan.*），
+      // 不再是 mutation 结果的顶层字段。原意不变——成功分支必须用真实计数生成文案。
+      /cleanDuplicatesResultMessage\(\s*result\.plan\.removedTabsCount,\s*result\.plan\.removedGroupsCount,?\s*\)/,
       '成功分支必须用清理结果计数生成文案',
     );
     assert.match(HEADER, /showToast\(\s*cleanDuplicatesResultMessage/, '文案必须经 showToast 展示给用户');

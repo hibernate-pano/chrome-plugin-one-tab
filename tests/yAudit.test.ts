@@ -169,6 +169,41 @@ describe('maybeAuditConsistency', () => {
     assert.equal((store.get('y_audit_log') as Array<unknown>).length, 1);
   });
 
+  it('采样命中 → 同时写按天聚合 y_audit_daily（门禁判定读这份）', async () => {
+    const { deps, store } = mkDeps({ sampleKey: 'u1:37' });
+    await audit.maybeAuditConsistency(37, deps as never);
+    const daily = store.get('y_audit_daily') as Array<Record<string, unknown>>;
+    assert.ok(Array.isArray(daily), 'y_audit_daily 必须被写入');
+    assert.equal(daily.length, 1);
+    // now() 固定为 2026-09-26 → 桶落在这一天
+    assert.equal(daily[0].date, '2026-09-26');
+    assert.equal(daily[0].samples, 1);
+    assert.equal(daily[0].overThresholdSamples, 0, '完全一致的对账不该记超阈');
+    assert.equal(daily[0].worstMismatchRate, 0);
+  });
+
+  it('多次命中同一天 → 累加到同一个桶，而不是每天多行', async () => {
+    const { deps, store } = mkDeps({ sampleKey: 'u1:37' });
+    await audit.maybeAuditConsistency(37, deps as never);
+    await audit.maybeAuditConsistency(37, deps as never);
+    const daily = store.get('y_audit_daily') as Array<Record<string, unknown>>;
+    assert.equal(daily.length, 1);
+    assert.equal(daily[0].samples, 2);
+  });
+
+  it('聚合写入失败不影响对账结果返回（永不阻断主同步）', async () => {
+    const { deps } = mkDeps({
+      sampleKey: 'u1:37',
+      // 只让 y_audit_daily 的写入炸掉：逐条日志照常，聚合失败被吞
+      kvSet: async (k: string, v: unknown) => {
+        if (k === 'y_audit_daily') throw new Error('quota exceeded');
+        void v;
+      },
+    });
+    const r = await audit.maybeAuditConsistency(37, deps as never);
+    assert.notEqual(r, null, '聚合失败不该让对账结果变成 null');
+  });
+
   it('采样未命中（u1:0 实测落空）→ 返回 null 且不读 Y 不写日志', async () => {
     let read = 0;
     const { deps, store } = mkDeps({

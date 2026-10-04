@@ -217,3 +217,65 @@ describe('downloadAndMerge fail-closed：本地快照读失败不得变成写入
     );
   });
 });
+
+// 后台同步不得再写 sync_snapshot（v1.22.9 删除的 write-only 磁盘副本）。
+//
+// 为什么这是一条值得钉住的回归：被删掉的是一次**全量 groups 写盘**，发生在
+// 每 60s 一次的后台同步里，且位于单写者队列内 —— 它直接延长用户操作（删除会话、
+// 清理重复）的排队等待。而它提供的回滚能力为零：getSyncSnapshot() 全仓零调用，
+// 回滚路径 restoreSnapshot() 用的是内存变量，也没有任何启动时读回磁盘快照的入口。
+// 删掉它不损失安全性，但如果有人日后「顺手加回一个持久化回滚点」，
+// 这条测试会立刻指出代价：后台同步多了一次全量写盘。
+describe('downloadAndMerge：不得写 sync_snapshot 磁盘副本', () => {
+  it('成功路径零 sync_snapshot 写入（内存快照已足够回滚）', async () => {
+    const { syncEngine } = await import('@/services/syncEngine');
+    const { invalidateGroupsCache } = await import('@/utils/storage');
+    invalidateGroupsCache();
+
+    writes.length = 0;
+    const result = await syncEngine.downloadAndMerge();
+    assert.equal(result.success, true, '前置条件：本次下载必须真的跑完');
+
+    assert.equal(
+      writes.includes('sync_snapshot'),
+      false,
+      'sync_snapshot 是 write-only 副本（无人读回），后台同步不得再为它做一次全量写盘'
+    );
+  });
+
+  it('覆盖模式同样不写 sync_snapshot', async () => {
+    const { syncEngine } = await import('@/services/syncEngine');
+    const { invalidateGroupsCache } = await import('@/utils/storage');
+    invalidateGroupsCache();
+
+    writes.length = 0;
+    await syncEngine.downloadAndMerge({ forceRemote: true });
+
+    assert.equal(
+      writes.includes('sync_snapshot'),
+      false,
+      'forceRemote 路径绕过探活，但同样不需要这份磁盘副本'
+    );
+  });
+
+  it('storage 不再提供 getSyncSnapshot / setSyncSnapshot（写入口已随副本一起移除）', async () => {
+    const { storage } = await import('@/utils/storage');
+    assert.equal(
+      typeof (storage as unknown as { getSyncSnapshot?: unknown }).getSyncSnapshot,
+      'undefined',
+      'getSyncSnapshot 全仓零调用，留着会被当成「有人在用」而阻止后续清理'
+    );
+    assert.equal(
+      typeof (storage as unknown as { setSyncSnapshot?: unknown }).setSyncSnapshot,
+      'undefined',
+      'setSyncSnapshot 是那次全量写盘的唯一入口，必须一并移除'
+    );
+    // clearSyncSnapshot 刻意保留：存量用户磁盘上还躺着上一次写入的副本，
+    // 下载成功后清掉它；幂等、便宜。
+    assert.equal(
+      typeof (storage as unknown as { clearSyncSnapshot?: unknown }).clearSyncSnapshot,
+      'function',
+      'clearSyncSnapshot 必须保留，用于清理存量用户的遗留副本'
+    );
+  });
+});

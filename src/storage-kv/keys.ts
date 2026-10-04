@@ -42,6 +42,10 @@ export const STORAGE_KEYS = {
   LAST_SYNCED_SEQ: 'last_synced_seq',
   // 阶段二·§7：存量数据迁移完成标记。
   OP_STAMP_MIGRATED: 'op_stamp_migrated',
+  // 性能 span 环形缓冲（诊断观测用，见 @/utils/perfTrace）。
+  // 不参与任何业务判定，因此不属于「数据键」；但同样必须走键常量单源，
+  // 否则改名时新旧两份 trace 会各自累积、诊断导出只看到其中一份。
+  PERF_SPANS: 'perf_spans',
 } as const;
 
 export const STORAGE_VERSION = 5;

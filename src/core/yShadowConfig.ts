@@ -10,6 +10,9 @@
  * - BUNDLE_GZIP_BUDGET_KB：扩展构建 gzip 增量预算 120KB（见 scripts/report-y-bundle.mjs）。
  * - SHADOW_LOG_KEY / Y_UPDATE_LOG_KEY：KV 键（经 kvGet/kvSet 注入，与现有
  *   storage-kv 键表解耦，避免循环依赖）。
+ * - Y_AUDIT_LOG_KEY / Y_AUDIT_DAILY_KEY：对账结果的逐条日志与按天聚合。
+ *   **门禁判定读按天聚合**（逐条 FIFO 50 条的时间跨度可能远短于 7 天窗口，
+ *   靠它无法证明「持续」——见 Y_AUDIT_DAILY_KEY 的说明）。
  */
 
 /** kill-switch：false 即关闭整条影子链路（默认 ON=true，影子模式） */
@@ -44,6 +47,33 @@ export const Y_AUDIT_LOG_KEY = 'y_audit_log';
 
 /** 对账日志 FIFO 上限 */
 export const AUDIT_LOG_MAX = 50;
+
+/**
+ * 对账「按天滚动聚合」KV 键（FIFO 上限 AUDIT_DAILY_MAX 天）。
+ *
+ * 【为什么必须有它，而不是直接读 Y_AUDIT_LOG_KEY 判定门禁】
+ * 门禁要求「7 天持续」，但 Y_AUDIT_LOG_KEY 只留最近 50 条样本。采样率 5% 时，
+ * 50 条对一个正常使用的用户可能只覆盖几小时——**日志窗口比门禁窗口短**，
+ * 于是「7 天持续达标」这件事在原日志里根本无法被证明，只能永远显示「数据不足」。
+ * 逐条日志仍保留（排障要看具体某次 mismatch 的形状），但门禁判定改读按天聚合：
+ * 每天一行（样本数 / 最差 mismatchRate / 超阈样本数），30 天容量，
+ * 早年样本被 FIFO 淘汰也不会把「那一天达标了」这个事实一起丢掉。
+ */
+export const Y_AUDIT_DAILY_KEY = 'y_audit_daily';
+
+/** 按天聚合的保留天数（≥ 门禁窗口，留出余量以便看趋势） */
+export const AUDIT_DAILY_MAX = 30;
+
+/**
+ * P1 门禁阈值：mismatchRate 上限 0.1%（见 docs/v2-plan.md 的 P1 验收口径）。
+ *
+ * 对齐的是「影子物化视图能否替代 blob 作为读路径」这一判断——超过阈值说明
+ * Y 侧与本地真相已经开始分叉，此时切读会把分叉暴露给用户。
+ */
+export const GATE_MISMATCH_RATE_MAX = 0.001;
+
+/** P1 门禁窗口：连续达标天数（见 docs/v2-plan.md 的 P1 验收口径）。 */
+export const GATE_WINDOW_DAYS = 7;
 
 function hashUserId(userId: string): number {
   // FNV-1a 32bit：稳定、无依赖、与服务端切流可复刻

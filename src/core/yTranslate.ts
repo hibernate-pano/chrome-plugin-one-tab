@@ -149,10 +149,92 @@ export function planShadowSync(
 }
 
 /**
+ * tabs 的 key 形如 `${groupId}:${tabId}`；groupId 是 nanoid、tabId 来自
+ * nanoid 或云端 UUID，**都不含冒号**，因此首个冒号之前就是 groupId。
+ * 无冒号的 key（本模块不会产出）返回 null，调用方按「不属于任何组」跳过 ——
+ * 这与原实现的 `key.startsWith(`${id}:`)` 判定一致（该前缀必含冒号，永假）。
+ */
+function groupIdOfTabKey(key: string): string | null {
+  const idx = key.indexOf(':');
+  return idx === -1 ? null : key.slice(0, idx);
+}
+
+/**
  * 计划应用（幂等 + stamp 门控后写赢）。state 既可是测试用 plain，也可经
  * ydoc.ts 的适配器接到真实 Y.Map/Y.Array（同一事务内调用）。
+ *
+ * 【为什么要有 tabs 索引】原实现在每次「清掉某组的 tab 镜像」时都全表扫一遍
+ * `state.tabs.keys()` 做前缀匹配，成本是 O(计划数 × 全部标签数)。
+ * cleanDuplicates 正是最坏形状：一次删几百个组 ⇒ setOrder 分支要为每个死组
+ * 扫一遍全表。实测 1000 组 × 20 标签（2 万标签）删 400 组要 80ms，
+ * 而这是**同步纯计算**，跑在 SW 唯一线程上 —— 影子写虽然 fire-and-forget
+ * （不 await），它一开始算，队列里的下一个用户操作就得等它算完。
+ *
+ * 索引在「第一次真要清某组 tab」时构建（成本 = 一次全表扫描），此后每次 tabs
+ * 增删都同步维护，把**后续每次**清理从 O(T) 降到 O(该组标签数)。
+ *
+ * 【单次调用的成本没有变差】planShadowSync 对一次 mutation 产出 N 个 upsertGroup
+ * + 1 个 setOrder（N = 带本次 stamp 的组数）。N=1（改名/锁定等单组操作）时，
+ * 建索引就是一次 O(T) 扫描，与原实现的前缀匹配扫描同阶，只是多了 Map/Set 的分配；
+ * N 很大（cleanDuplicates 一次删几百组）时原实现是 O(N×T)，这里仍是 O(T) + O(被删标签数)。
+ * 也就是说：**不存在比原来更慢的输入**，收益随组数线性放大。
+ *
+ * clearGroupTabs 里保留的全表扫描分支只服务于「索引尚未构建」的情形
+ *（实际只有 removeGroup 会走到——无墓碑模型下 planShadowSync 不再产出该计划）。
  */
 export function applyYPlans(state: YStateLike, plans: YPlan[], stamp: OpStamp): void {
+  /** groupId → 该组的 tab key 集合。null = 尚未构建。 */
+  let index: Map<string, Set<string>> | null = null;
+
+  function ensureIndex(): Map<string, Set<string>> {
+    if (index) return index;
+    const built = new Map<string, Set<string>>();
+    for (const key of [...state.tabs.keys()]) {
+      const gid = groupIdOfTabKey(key);
+      if (gid === null) continue;
+      const set = built.get(gid);
+      if (set) set.add(key);
+      else built.set(gid, new Set([key]));
+    }
+    index = built;
+    return built;
+  }
+
+  // 所有 tabs 变更都必须走这两个包装，否则索引与真实状态分叉（分叉会漏删/误删镜像）。
+  function tabsSet(key: string, value: YTabRec): void {
+    state.tabs.set(key, value);
+    if (!index) return;
+    const gid = groupIdOfTabKey(key);
+    if (gid === null) return;
+    const set = index.get(gid);
+    if (set) set.add(key);
+    else index.set(gid, new Set([key]));
+  }
+
+  function tabsDelete(key: string): void {
+    state.tabs.delete(key);
+    if (!index) return;
+    const gid = groupIdOfTabKey(key);
+    if (gid === null) return;
+    index.get(gid)?.delete(key);
+  }
+
+  /** 清掉某组的全部 tab 镜像（删除意图不残留）。 */
+  function clearGroupTabs(groupId: string): void {
+    if (index) {
+      const set = index.get(groupId);
+      if (!set) return;
+      // 先快照再迭代：tabsDelete 会改这个集合
+      for (const key of [...set]) tabsDelete(key);
+      index.delete(groupId);
+      return;
+    }
+    const prefix = `${groupId}:`;
+    for (const key of [...state.tabs.keys()]) {
+      if (key.startsWith(prefix)) state.tabs.delete(key);
+    }
+  }
+
   for (const p of plans) {
     if (p.kind === 'upsertGroup') {
       const existing = state.groups.get(p.group.id);
@@ -162,29 +244,29 @@ export function applyYPlans(state: YStateLike, plans: YPlan[], stamp: OpStamp): 
           : null;
       if (existingStamp && stampGte(existingStamp, stamp)) continue; // 旧 stamp 重放 → 跳过
       state.groups.set(p.group.id, p.group);
-      // 先清本组旧镜像，再写入当前 tabs（删除意图不残留）
-      for (const key of [...state.tabs.keys()]) {
-        if (key.startsWith(`${p.group.id}:`)) state.tabs.delete(key);
-      }
-      for (const t of p.tabs) state.tabs.set(`${t.groupId}:${t.id}`, t);
+      // 先清本组旧镜像，再写入当前 tabs（删除意图不残留）。
+      // 只有真要清的时候才建索引：stamp 门控 continue 掉的计划不付这个成本。
+      ensureIndex();
+      clearGroupTabs(p.group.id);
+      for (const t of p.tabs) tabsSet(`${t.groupId}:${t.id}`, t);
     } else if (p.kind === 'removeGroup') {
       state.groups.delete(p.groupId);
-      for (const key of [...state.tabs.keys()]) {
-        if (key.startsWith(`${p.groupId}:`)) state.tabs.delete(key);
-      }
+      clearGroupTabs(p.groupId);
       state.order = state.order.filter(id => id !== p.groupId);
     } else {
       // setOrder：直接采用快照顺序（快照即 blob 真源，读路径仍走 blob）。
       // 无墓碑模型：快照里缺席的组 = 已被物理删除，顺带从影子修剪
       // （含其 tabs）——删除意图由此传播，不再依赖专门的 removeGroup 计划。
       const alive = new Set(p.order);
+      const deadIds: string[] = [];
       for (const id of [...state.groups.keys()]) {
-        if (!alive.has(id)) {
-          state.groups.delete(id);
-          for (const key of [...state.tabs.keys()]) {
-            if (key.startsWith(`${id}:`)) state.tabs.delete(key);
-          }
-        }
+        if (!alive.has(id)) deadIds.push(id);
+      }
+      // 有死组才建索引（没有死组时 setOrder 只是重排，不该付建索引的钱）
+      if (deadIds.length > 0) ensureIndex();
+      for (const id of deadIds) {
+        state.groups.delete(id);
+        clearGroupTabs(id);
       }
       state.order = [...p.order];
     }

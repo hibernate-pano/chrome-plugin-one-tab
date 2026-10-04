@@ -71,12 +71,12 @@ describe('applyCleanDuplicates：物理移除语义（无墓碑）', () => {
     const g1 = mkGroup('g1', [older]);
     const g2 = mkGroup('g2', [newer]);
 
-    const { groups, removedTabsCount, removedGroupIds } = applyCleanDuplicates([g1, g2], NOW, STAMP);
+    const { groups, plan } = applyCleanDuplicates([g1, g2], NOW, STAMP);
 
-    assert.equal(removedTabsCount, 1);
+    assert.equal(plan.removedTabsCount, 1);
     assert.equal(groups.some(g => g.id === 'g1'), false, '败者所在组被清空 → 整组物理移除');
     assert.equal(groups.find(g => g.id === 'g2')!.tabs.some(t => t.id === 'newer'), true);
-    assert.deepEqual(removedGroupIds, ['g1']);
+    assert.deepEqual(plan.removedGroupIds, ['g1']);
   });
 
   it('被清空且未锁定的组整组物理移除，removedGroupIds 回报广播 id', async () => {
@@ -86,11 +86,11 @@ describe('applyCleanDuplicates：物理移除语义（无墓碑）', () => {
     const g1 = mkGroup('g1', [fresh]);
     const g2 = mkGroup('g2', [stale]);
 
-    const { groups, removedGroupsCount, removedGroupIds } = applyCleanDuplicates([g1, g2], NOW, STAMP);
+    const { groups, plan } = applyCleanDuplicates([g1, g2], NOW, STAMP);
 
-    assert.equal(removedGroupsCount, 1);
+    assert.equal(plan.removedGroupsCount, 1);
     assert.equal(groups.some(g => g.id === 'g2'), false, '被清空的组被物理移除');
-    assert.deepEqual(removedGroupIds, ['g2']);
+    assert.deepEqual(plan.removedGroupIds, ['g2']);
   });
 
   it('锁定组被清空后保留空壳（锁定豁免自动删除）', async () => {
@@ -100,9 +100,9 @@ describe('applyCleanDuplicates：物理移除语义（无墓碑）', () => {
     const g1 = mkGroup('g1', [fresh]);
     const gLocked = mkGroup('gLocked', [stale], { isLocked: true });
 
-    const { groups, removedGroupsCount } = applyCleanDuplicates([g1, gLocked], NOW, STAMP);
+    const { groups, plan } = applyCleanDuplicates([g1, gLocked], NOW, STAMP);
 
-    assert.equal(removedGroupsCount, 0);
+    assert.equal(plan.removedGroupsCount, 0);
     const out = groups.find(g => g.id === 'gLocked')!;
     assert.equal(out.tabs.length, 0);
     assert.equal(out.isLocked, true);
@@ -110,15 +110,25 @@ describe('applyCleanDuplicates：物理移除语义（无墓碑）', () => {
 });
 
 describe('cleanDuplicateTabs.fulfilled：不把墓碑形状数据灌入 Redux 主状态', () => {
-  it('老版本设备写入的 storage 全量（含墓碑组/墓碑 tab）被防御层剥掉', async () => {
+  /**
+   * 契约变更（v1.22.9）：SW 不再回传 groups 全量，只回传删除计划 + now/stamp。
+   * 原先那条「payload 里的墓碑被剥掉」的失效模式在结构上已不可能发生
+   * （payload 里根本没有 groups）。但**同一条不变量**仍然必须成立：
+   * 主状态永远只含活跃视图。现在它由两处保证：
+   *   - 基线来自 pending 抓的快照（由 loadGroups 建立，已是活跃视图）；
+   *   - 收尾再过一次 toActiveGroupsView（见 applyCleanPlanToActiveView）。
+   * 本用例把第二处钉住：即便基线里混进了墓碑形状数据，也不许留在主状态里。
+   */
+  it('基线里混入墓碑形状数据时，收尾防御层仍把它剥掉', async () => {
     const { configureStore } = await import('@reduxjs/toolkit');
-    const { default: tabReducer } = await import('@/store/slices/tabSlice');
+    const { default: tabReducer, setGroups } = await import('@/store/slices/tabSlice');
     const { cleanDuplicateTabs } = await import('@/store/slices/tabSlice');
 
     const store = configureStore({ reducer: { tabs: tabReducer } });
 
     // 模拟老版本设备写入的 storage 全量：2 个活跃组（其中 1 个混 1 个墓碑 tab）
-    // + 2 个组级墓碑组（组内 tab 活跃）——对应线上 223/994 → 230/1106 的形态
+    // + 2 个组级墓碑组（组内 tab 活跃）——对应线上 223/994 → 230/1106 的形态。
+    // 直接用 setGroups 灌入，绕过 loadGroups 的过滤，以检验 fulfilled 自己的防御。
     const storageSnapshot = [
       mkGroup('g1', [
         mkTab('g1-t1', { url: 'https://dup.com', lastAccessed: NOW }),
@@ -135,13 +145,21 @@ describe('cleanDuplicateTabs.fulfilled：不把墓碑形状数据灌入 Redux �
         deletedAt: OLD,
       }),
     ];
+    store.dispatch(setGroups(storageSnapshot as never));
 
+    // pending 抓快照并乐观应用；随后 fulfilled 用 SW 的权威计划从快照重推。
+    store.dispatch(cleanDuplicateTabs.pending('req-1', undefined));
     store.dispatch(
       cleanDuplicateTabs.fulfilled(
         {
-          removedTabsCount: 1,
-          removedGroupsCount: 0,
-          updatedGroups: storageSnapshot,
+          plan: {
+            removedTabsByGroup: [{ groupId: 'g1', tabIds: ['g1-t2'] }],
+            removedGroupIds: [],
+            removedTabsCount: 1,
+            removedGroupsCount: 0,
+          },
+          now: NOW,
+          stamp: STAMP,
         },
         'req-1',
         undefined
@@ -159,8 +177,8 @@ describe('cleanDuplicateTabs.fulfilled：不把墓碑形状数据灌入 Redux �
     const g1 = state.groups.find(g => g.id === 'g1')!;
     assert.deepEqual(
       g1.tabs.map(t => t.id).sort(),
-      ['g1-t1', 'g1-t2'],
-      '主状态组内不得包含墓碑 tab'
+      ['g1-t1'],
+      '主状态组内不得包含墓碑 tab；计划里点名的 g1-t2 也已被移除'
     );
   });
 });

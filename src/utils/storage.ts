@@ -824,29 +824,23 @@ class ChromeStorage {
     }
   }
 
-  // 获取同步前快照（合并失败时用于回滚）
-  async getSyncSnapshot(): Promise<TabGroup[] | null> {
-    try {
-      await this.ensureVersion();
-      const raw = await kvGet<unknown>(STORAGE_KEYS.SYNC_SNAPSHOT);
-      return Array.isArray(raw) ? (raw as TabGroup[]) : null;
-    } catch (error) {
-      logError('获取同步快照失败:', error);
-      return null;
-    }
-  }
-
-  // 保存同步前快照
-  async setSyncSnapshot(groups: TabGroup[]): Promise<void> {
-    try {
-      await this.ensureVersion();
-      await kvSet(STORAGE_KEYS.SYNC_SNAPSHOT, groups);
-    } catch (error) {
-      logError('保存同步快照失败:', error);
-    }
-  }
-
-  // 清除同步快照（合并成功后调用）
+  /**
+   * 清除 sync_snapshot 键 —— **只用于清理历史遗留**。
+   *
+   * 【为什么 get/set 被删掉了】这个键曾是「下载合并前回滚点」的持久化副本，
+   * 但 getSyncSnapshot() 全仓零调用：回滚路径 restoreSnapshot() 用的是内存里的
+   * snapshot 变量，而全仓也没有任何「启动时读回磁盘快照」的恢复入口。
+   * 也就是说它一直是 write-only —— 每 60s 一次的后台同步都会把整份 groups
+   * 再写一遍到磁盘，提供零回滚能力，却实打实占用单写者队列的时间
+   * （全量 blob 场景下是秒级 I/O，正是「删除/清理有时特别慢」的贡献者之一）。
+   *
+   * groups 是单个 blob、一次 kvSet 原子写入，不存在「写到一半的撕裂态」需要
+   * 磁盘副本来恢复，因此删掉写入不损失任何安全性。
+   *
+   * 【为什么 clear 要留着】存量用户磁盘上还躺着上一次写入的副本（一份全量 groups，
+   * 可能几 MB）。下载成功后调用一次把它清掉；幂等、便宜，之后键不存在就是空操作。
+   * 键名保留在 STORAGE_KEYS 里，storage.clear() 也仍会删它。
+   */
   async clearSyncSnapshot(): Promise<void> {
     try {
       await this.ensureVersion();
@@ -970,24 +964,13 @@ class ChromeStorage {
 
   async clear(): Promise<void> {
     try {
-      const keys = [
-        STORAGE_KEYS.VERSION,
-        STORAGE_KEYS.GROUPS,
-        STORAGE_KEYS.SETTINGS,
-        STORAGE_KEYS.DELETED_GROUPS,
-        STORAGE_KEYS.DELETED_TABS,
-        STORAGE_KEYS.LAST_SYNC_TIME,
-        STORAGE_KEYS.PRODUCT_EVENTS,
-        STORAGE_KEYS.MIGRATION_FLAGS,
-        STORAGE_KEYS.PENDING_UPLOAD,
-        STORAGE_KEYS.LAST_UPLOAD_TIME,
-        STORAGE_KEYS.PENDING_PURGE_IDS,
-        STORAGE_KEYS.PENDING_DELETE_IDS,
-        STORAGE_KEYS.DEVICE_SEQ,
-        STORAGE_KEYS.JOURNAL,
-        STORAGE_KEYS.LAST_SYNCED_SEQ,
-        STORAGE_KEYS.OP_STAMP_MIGRATED,
-      ];
+      // 键清单直接从 STORAGE_KEYS 派生，不再手抄一份。
+      //
+      // 手抄版已经和单源漂移了：SYNC_SNAPSHOT 不在原清单里，于是「清除本地数据」
+      // 之后仍留着一个同步回滚快照（它对应的 groups 已被清掉，是个永远不该被
+      // restore 的孤儿回滚点）。此后每加一个键都会重演这个遗漏——加键的人不会想到
+      // 还有一份平行的清单要同步改。
+      const keys = Object.values(STORAGE_KEYS);
       await Promise.all(keys.map(key => kvRemove(key)));
     } catch (error) {
       logError('清除存储失败:', error);

@@ -30,6 +30,7 @@ import {
   applyCleanDuplicates,
 } from '@/core/mutationOps';
 import { logWarn } from '../utils/log';
+import { perfTrace } from '@/utils/perfTrace';
 
 export interface MutationDeps {
   getGroups(): Promise<TabGroup[]>;
@@ -86,13 +87,46 @@ export function createMutationHandlers(deps: MutationDeps) {
   // V2 影子双写：run() 内最近一次成功取到的 stamp/now（handle 在主写 ok 后取用）。
   let lastMeta: { stamp: OpStamp; now: string } | null = null;
 
+  /**
+   * 阶段计时包装（诊断观测，见 @/utils/perfTrace）。
+   *
+   * 为什么包 deps 而不是改 10 个 case：每个 case 的 IO 骨架都是同一条
+   * 「journal → 读全量 → 纯计算 → 写全量 → 登记删除 → 调度上传」。在依赖注入
+   * 边界上计时，一处覆盖全部命令，且新增 op 自动获得计时（漏不掉）。
+   * 纯计算段没有 IO 可包，由诊断聚合时用 run 总时长减去各 IO 段推出
+   * （见 buildDiagnosticsReport 的 applyMs）。
+   *
+   * 计时不改变行为：measure 只多记一次时间，异常原样向上抛。
+   */
+  function timedDeps(op: string): MutationDeps {
+    return {
+      ...deps,
+      journal: {
+        ...deps.journal,
+        appendEntry: p => perfTrace().measure(op, 'journal', () => deps.journal.appendEntry(p)),
+      },
+      getGroups: () => perfTrace().measure(op, 'read', () => deps.getGroups()),
+      setGroups: (g, originId) => perfTrace().measure(op, 'write', () => deps.setGroups(g, originId)),
+      scheduleUpload: ms => perfTrace().measure(op, 'scheduleUpload', () => deps.scheduleUpload(ms)),
+      // 可选依赖：缺失时保持缺失（noteDeletedGroups 用 `?.` 判定，不能把
+      // undefined 包成一个函数，否则「没注入」会被误判成「注入了但很慢」）。
+      ...(deps.noteGroupDeleted
+        ? {
+            noteGroupDeleted: (ids: readonly string[]) =>
+              perfTrace().measure(op, 'noteDeleted', () => deps.noteGroupDeleted!(ids)),
+          }
+        : {}),
+    };
+  }
+
   async function run(cmd: MutationOp, originId?: string): Promise<MutationResult> {
-    const now = deps.now();
+    const d = timedDeps(cmd.op);
+    const now = d.now();
     // 本次命令的统一落盘出口：把 originId 透传给写路径（广播过滤用）。
-    const persist = (groups: TabGroup[]) => deps.setGroups(groups, originId);
+    const persist = (groups: TabGroup[]) => d.setGroups(groups, originId);
 
     // 阶段二·§4.3 写序：journal + seq 一次性落盘先于 apply* 状态写。
-    const entry = await deps.journal.appendEntry({
+    const entry = await d.journal.appendEntry({
       type: cmd.op,
       groupId: 'groupId' in cmd ? (cmd as { groupId?: string }).groupId : undefined,
       tabId: 'tabId' in cmd ? (cmd as { tabId?: string }).tabId : undefined,
@@ -102,40 +136,40 @@ export function createMutationHandlers(deps: MutationDeps) {
 
     switch (cmd.op) {
       case 'saveGroup': {
-        const groups = await deps.getGroups();
+        const groups = await d.getGroups();
         await persist(applySaveGroup(groups, cmd.group, now, stamp));
-        deps.scheduleUpload(DELETE_PRIORITY_MS);
+        d.scheduleUpload(DELETE_PRIORITY_MS);
         return { ok: true, payload: cmd.group };
       }
       case 'removeTab': {
-        const groups = await deps.getGroups();
+        const groups = await d.getGroups();
         const r = applyRemoveTab(groups, cmd.groupId, cmd.tabId, now, stamp);
         await persist(r.groups);
-        await noteDeletedGroups(deps, [r.removedGroupId]);
+        await noteDeletedGroups(d, [r.removedGroupId]);
         // 删除类必须 await 置位：组已从磁盘移除、广播队列已写入，但
         // pending_upload 还没落盘时 SW 被回收 → 后台看到 pendingUpload=false
         // 就不上传 → 云端行没标记删除，对端并集合并把已删的组拉回来。
-        await deps.scheduleUpload(DELETE_PRIORITY_MS);
+        await d.scheduleUpload(DELETE_PRIORITY_MS);
         return { ok: true, payload: { group: r.group } };
       }
       case 'deleteGroup': {
-        const groups = await deps.getGroups();
+        const groups = await d.getGroups();
         const r = applyDeleteGroup(groups, cmd.groupId, now, stamp);
         await persist(r.groups);
-        await noteDeletedGroups(deps, [r.removedGroupId]);
-        await deps.scheduleUpload(DELETE_PRIORITY_MS);
+        await noteDeletedGroups(d, [r.removedGroupId]);
+        await d.scheduleUpload(DELETE_PRIORITY_MS);
         return { ok: true, payload: cmd.groupId };
       }
       case 'deleteAllGroups': {
-        const groups = await deps.getGroups();
+        const groups = await d.getGroups();
         const r = applyDeleteAllGroups(groups, now, stamp);
         await persist(r.groups);
-        await noteDeletedGroups(deps, r.removedGroupIds);
-        await deps.scheduleUpload(DELETE_PRIORITY_MS);
+        await noteDeletedGroups(d, r.removedGroupIds);
+        await d.scheduleUpload(DELETE_PRIORITY_MS);
         return { ok: true, payload: { count: r.count } };
       }
       case 'importGroups': {
-        const groups = await deps.getGroups();
+        const groups = await d.getGroups();
         const r = applyImportGroups(
           groups,
           cmd.groups,
@@ -144,46 +178,46 @@ export function createMutationHandlers(deps: MutationDeps) {
           stamp
         );
         await persist(r.groups);
-        deps.scheduleUpload(DELETE_PRIORITY_MS);
+        d.scheduleUpload(DELETE_PRIORITY_MS);
         return { ok: true, payload: r.imported };
       }
       case 'renameGroup': {
-        const groups = await deps.getGroups();
+        const groups = await d.getGroups();
         const r = applyRenameGroup(groups, cmd.groupId, cmd.name, now, stamp);
         await persist(r.groups);
-        deps.scheduleUpload(NORMAL_MS);
+        d.scheduleUpload(NORMAL_MS);
         return {
           ok: true,
           payload: { groupId: cmd.groupId, name: cmd.name },
         };
       }
       case 'toggleGroupLock': {
-        const groups = await deps.getGroups();
+        const groups = await d.getGroups();
         const r = applyToggleGroupLock(groups, cmd.groupId, now, stamp);
         await persist(r.groups);
-        deps.scheduleUpload(NORMAL_MS);
+        d.scheduleUpload(NORMAL_MS);
         return {
           ok: true,
           payload: { groupId: cmd.groupId, isLocked: r.isLocked },
         };
       }
       case 'updateGroupFields': {
-        const groups = await deps.getGroups();
+        const groups = await d.getGroups();
         const r = applyUpdateGroupFields(groups, cmd.groupId, cmd.fields, now, stamp);
         await persist(r.groups);
-        deps.scheduleUpload(NORMAL_MS);
+        d.scheduleUpload(NORMAL_MS);
         return {
           ok: true,
           payload: { groupId: cmd.groupId, updated: r.updated, fields: cmd.fields },
         };
       }
       case 'moveTab': {
-        const groups = await deps.getGroups();
+        const groups = await d.getGroups();
         const r = applyMoveTab(groups, cmd, now, stamp);
         await persist(r.groups);
-        await noteDeletedGroups(deps, [r.removedGroupId]);
+        await noteDeletedGroups(d, [r.removedGroupId]);
         // 搬空源组属删除类：置位必须落盘，否则那次删除广播不到云端
-        await deps.scheduleUpload(r.removedGroupId ? DELETE_PRIORITY_MS : NORMAL_MS);
+        await d.scheduleUpload(r.removedGroupId ? DELETE_PRIORITY_MS : NORMAL_MS);
         return {
           ok: true,
           payload: {
@@ -196,18 +230,21 @@ export function createMutationHandlers(deps: MutationDeps) {
         };
       }
       case 'cleanDuplicates': {
-        const groups = await deps.getGroups();
+        const groups = await d.getGroups();
         const r = applyCleanDuplicates(groups, now, stamp);
         await persist(r.groups);
-        await noteDeletedGroups(deps, r.removedGroupIds);
+        await noteDeletedGroups(d, r.plan.removedGroupIds);
         // 清空产生的删除同样依赖广播队列 + 置位，别让删除停在半路
-        await deps.scheduleUpload(NORMAL_MS);
+        await d.scheduleUpload(NORMAL_MS);
         return {
           ok: true,
           payload: {
-            removedTabsCount: r.removedTabsCount,
-            removedGroupsCount: r.removedGroupsCount,
-            updatedGroups: r.groups,
+            // 只回传计划 + 落盘用的 now/stamp，不回传 groups 全量。
+            // popup 用同一份 plan + 同一个 now/stamp 跑 applyCleanDuplicatesPlan，
+            // 得到与磁盘逐字段一致的结果（见 CleanDuplicatesPlan 的说明）。
+            plan: r.plan,
+            now,
+            stamp,
           },
         };
       }

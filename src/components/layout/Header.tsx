@@ -8,6 +8,7 @@ import {
 import { cleanDuplicateTabs } from '@/store/slices/tabSlice';
 import { HeaderDropdown } from './HeaderDropdown';
 import { AuthModal, AuthTab } from '@/components/auth/AuthModal';
+import { ShadowGatePanel } from '@/components/diagnostics/ShadowGatePanel';
 import { useToast } from '@/contexts/ToastContext';
 import { TabCounter } from './TabCounter';
 import SyncButton from '@/components/sync/SyncButton';
@@ -100,8 +101,15 @@ export const Header: React.FC<HeaderProps> = ({ onSearch }) => {
             const result = await dispatch(cleanDuplicateTabs()).unwrap();
             // 清理是有成效的操作，结果必须让用户看见——静默会让「点了一下没反应」
             // 与「真的没东西可清」无法区分。
+            //
+            // 计数取自 SW 回传的权威计划，而不是本地乐观算出的那份：popup 的
+            // state.groups 可能陈旧，本地计数会与实际落盘结果不符（见 tabSlice
+            // 的 cleanDuplicateTabs 注释）。列表更新在 pending 阶段就已经发生了。
             showToast(
-              cleanDuplicatesResultMessage(result.removedTabsCount, result.removedGroupsCount),
+              cleanDuplicatesResultMessage(
+                result.plan.removedTabsCount,
+                result.plan.removedGroupsCount,
+              ),
               'success',
               4000,
             );
@@ -184,6 +192,9 @@ export const Header: React.FC<HeaderProps> = ({ onSearch }) => {
   // 账号弹窗是应用级关注点：挂在 Header 上、portal 到 body，
   // 不随菜单开关而卸载（菜单点完就关，弹窗独立存活）。
   const [authModal, setAuthModal] = useState<AuthTab | null>(null);
+  // 影子对账视图同理挂在这里：HeaderDropdown 在菜单收起时被卸载（见下方三元），
+  // 弹窗若由它托管会在点开的一瞬间随菜单一起消失。
+  const [showShadowGate, setShowShadowGate] = useState(false);
 
   return (
     <header className="header">
@@ -309,6 +320,10 @@ export const Header: React.FC<HeaderProps> = ({ onSearch }) => {
                     setShowDropdown(false);
                     setAuthModal(tab);
                   }}
+                  onOpenShadowGate={() => {
+                    setShowDropdown(false);
+                    setShowShadowGate(true);
+                  }}
                 />
               )}
             </div>
@@ -321,6 +336,8 @@ export const Header: React.FC<HeaderProps> = ({ onSearch }) => {
         initialTab={authModal ?? 'login'}
         onClose={() => setAuthModal(null)}
       />
+
+      <ShadowGatePanel visible={showShadowGate} onClose={() => setShowShadowGate(false)} />
     </header>
   );
 };

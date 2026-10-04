@@ -15,6 +15,7 @@ import { deserializeTab } from '@/core/tabDataCodec';
 import { supabase, checkSupabaseConfig } from './client';
 import { supportsOpStamp } from './probe';
 import { logError, logInfo, logWarn } from '../log';
+import { CRYPTO_CONCURRENCY, mapWithConcurrency } from '../concurrency';
 
 /**
  * 还原率阈值：云端一行里的标签有低于这个比例能还原成 Tab 时，这一行**整组跳过**。
@@ -78,6 +79,45 @@ const isUnrecoverableTabsShape = (raw: unknown, normalized: TabData[]): boolean 
   // 剩下的都是标量。合法形态只有数组与 wrapper 对象，标量一律是读不出来。
   return !EMPTY_TAB_DATA_LITERALS.has(String(raw));
 };
+
+/**
+ * 解密一行的 tabs_data，得到「原始形状」（解密结果 / 明文 JSON 解析结果 / 原值）。
+ *
+ * 三条分支的语义与并发化前逐字一致：
+ *  - 非字符串（JSONB 原值）→ 原样返回，交给下游 normalizeTabsData 做形状判据；
+ *  - 字符串且解密成功 → 返回解密结果；
+ *  - 解密失败 → **仅当** isEncrypted 判定为「本来就没加密」时才尝试 JSON.parse
+ *    （老版本的明文行）；解析失败或本来就是密文时保持原字符串，
+ *    由下游 isUnrecoverableTabsShape 判为不可恢复并整组跳过。
+ *
+ * 【为什么抽出来】下载循环体内混着 `continue`（还原率判据）与逐组 try/catch，
+ * 整循环并发化要同时保住「顺序」「跳过语义」「错误隔离」三件事，改动面太大。
+ * 把唯一 CPU 密集的一步（每组一次 PBKDF2-100k 解密，约 9ms）抽成可并发的预处理，
+ * 循环体一行不改 —— 语义等价性因此可以直接验证，而不必重新论证整段容错逻辑。
+ */
+async function resolveTabsShape(groupAny: any, userId: string): Promise<unknown> {
+  const rawTabsData: unknown = groupAny.tabs_data;
+  if (typeof rawTabsData !== 'string') return rawTabsData;
+  try {
+    const decrypted = await decryptData<unknown>(rawTabsData, userId);
+    logInfo(`标签组 ${groupAny.id} 的数据已成功解密`);
+    return decrypted;
+  } catch (error) {
+    logError(`解密标签组 ${groupAny.id} 的数据失败:`, error);
+    // 如果解密失败，尝试直接解析（可能是旧的未加密数据）
+    try {
+      if (!isEncrypted(rawTabsData)) {
+        // 旧版本可能把非数组数据明文写入云端，解析结果同样要过下面的形状判据
+        const parsed = JSON.parse(rawTabsData);
+        logInfo(`标签组 ${groupAny.id} 的数据是旧的未加密格式，已成功解析`);
+        return parsed;
+      }
+    } catch (jsonError) {
+      logError(`解析标签组 ${groupAny.id} 的JSON数据失败:`, jsonError);
+    }
+    return rawTabsData;
+  }
+}
 
 export const downloadSync = {
   // 下载标签组
@@ -177,7 +217,25 @@ export const downloadSync = {
       // 将数据转换为应用格式
       const tabGroups: TabGroup[] = [];
 
-      for (const group of groups) {
+      // 并发解密预处理（见 resolveTabsShape 的说明）。
+      //
+      // 与上传侧同一个理由：每组一次 PBKDF2-100k（约 9ms 纯 CPU），串行跑 N 组
+      // 就是 N×9ms，而这段时间全在 SW 的单写者队列里 —— 后台同步每 60s 一次，
+      // 用户此刻点「删除会话 / 清理重复」必须排在它后面。
+      // mapWithConcurrency 保证结果顺序与输入一致，因此可以按下标取用。
+      //
+      // 【代价与对策】并发解密会把**全部**结果同时留在内存里（resolvedShapes），
+      // 而串行版本是「解密一组、处理一组、随即释放」。这会在原有峰值
+      // （groups 密文 + tabGroups 成型数据）之上再多出一份解密明文副本。
+      // 因此每处理完一组就把槽位置空，让 GC 能回收已消费的明文 ——
+      // 峰值从「全部明文」降回「同时在飞的 8 组 + 尚未处理的」。
+      const resolvedShapes = await mapWithConcurrency<unknown, unknown>(
+        groups,
+        CRYPTO_CONCURRENCY,
+        group => resolveTabsShape(group as any, user.id)
+      );
+
+      for (const [index, group] of groups.entries()) {
         // 单行容错：一个坏组（形状异常/字段缺失）不应让整次下载/合并失败，
         // 跳过该组并告警，其余组继续处理
         try {
@@ -188,26 +246,10 @@ export const downloadSync = {
         // fail-safe，加密串分支解密「成功」但结果不是数组时被直接归一化成空数组
         // 并当成零标签空组放行（→ 下游硬删 + 登记 purge）。同一个形状两种答案，
         // 现在合成一条判据，判据只看「归一化后是否还剩东西」。
-        const rawTabsData: unknown = groupAny.tabs_data;
-        let rawShape: unknown = rawTabsData;
-        if (typeof rawTabsData === 'string') {
-          try {
-            rawShape = await decryptData<unknown>(rawTabsData, user.id);
-            logInfo(`标签组 ${groupAny.id} 的数据已成功解密`);
-          } catch (error) {
-            logError(`解密标签组 ${groupAny.id} 的数据失败:`, error);
-            // 如果解密失败，尝试直接解析（可能是旧的未加密数据）
-            try {
-              if (!isEncrypted(rawTabsData)) {
-                // 旧版本可能把非数组数据明文写入云端，解析结果同样要过下面的形状判据
-                rawShape = JSON.parse(rawTabsData);
-                logInfo(`标签组 ${groupAny.id} 的数据是旧的未加密格式，已成功解析`);
-              }
-            } catch (jsonError) {
-              logError(`解析标签组 ${groupAny.id} 的JSON数据失败:`, jsonError);
-            }
-          }
-        }
+        // 解密已在循环前并发完成（见 resolveTabsShape）；这里只按下标取结果。
+        const rawShape: unknown = resolvedShapes[index];
+        // 取走即释放：这份明文已被 normalizeTabsData 消费，留着只增加峰值内存
+        resolvedShapes[index] = null;
         // decryptData 内部 JSON.parse 后 as T，无形状校验，必须在这里归一化
         const tabsData = normalizeTabsData(rawShape, String(groupAny.id));
 

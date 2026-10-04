@@ -21,7 +21,9 @@ import { createSlice, createAsyncThunk } from '@reduxjs/toolkit';
 import { TabState, TabGroup, OptimisticTabBackup } from '@/types/tab';
 import { storage, invalidateGroupsCache } from '@/utils/storage';
 import { sendMutation } from '@/shared/mutationProtocol';
-import { backupKeyOf, dropLoadGuard, GroupLocalFields, GroupMetaSnapshot, isStaleLoad, restoreGroupLocalFields, restoreGroupLock, restoreGroupName, snapshotGroupLocalFields, snapshotGroupMeta, stripInFlightTabs, stripTombstonedTabs, toActiveGroupsView, takeLoadGuard } from './tabSliceHelpers';
+import { applyCleanPlanToActiveView, backupKeyOf, dropLoadGuard, GroupLocalFields, GroupMetaSnapshot, isStaleLoad, planOptimisticClean, restoreGroupLocalFields, restoreGroupLock, restoreGroupName, snapshotGroupLocalFields, snapshotGroupMeta, stripInFlightDeletions, stripTombstonedTabs, toActiveGroupsView, takeLoadGuard } from './tabSliceHelpers';
+import type { CleanDuplicatesPlan } from '@/core/mutationOps';
+import type { OpStamp } from '@/core/opStamp';
 import { trackProductEvent } from '@/utils/productEvents';
 import { logError, logInfo } from '../../utils/log';
 
@@ -43,7 +45,13 @@ export const initialTabState: TabState = {
   optimisticBackups: {},
   mutationEpoch: 0,
   pendingLoadGuards: {},
+  cleanDuplicatesSnapshot: null,
+  deletedGroupBackups: {},
 };
+
+/** 当前在途（已乐观移除、尚未落定）的组级删除 id。见 stripInFlightDeletions 的说明。 */
+const inFlightDeletedGroupIds = (state: TabState): string[] =>
+  Object.keys(state.deletedGroupBackups ?? {});
 
 
 /**
@@ -201,15 +209,25 @@ export const toggleGroupLockAndSync = createAsyncThunk<
   }
 );
 
-// 清理重复标签功能
+/** SW 回传的清理结果：只有计划与落盘用的 now/stamp，没有 groups 全量（见 CleanDuplicatesPlan）。 */
+export interface CleanDuplicatesResult {
+  plan: CleanDuplicatesPlan;
+  now: string;
+  stamp: OpStamp;
+}
+
+/**
+ * 清理重复标签。
+ *
+ * UI 反馈不再等 SW 回传 groups 全量：pending 阶段用同一个纯函数在本地算计划并
+ * 立即应用（乐观更新），fulfilled 用 SW 的权威计划从快照重推收敛到磁盘真值。
+ * 计数取自计划，因此 toast 文案在 fulfilled 才确定（pending 的本地计数可能因
+ * popup 状态陈旧而与 SW 不同，不能拿来当结论）。
+ */
 export const cleanDuplicateTabs = createAsyncThunk(
   'tabs/cleanDuplicateTabs',
-  async () => {
-    const res = await sendMutation<{
-      removedTabsCount: number;
-      removedGroupsCount: number;
-      updatedGroups: TabGroup[];
-    }>({ op: 'cleanDuplicates' });
+  async (): Promise<CleanDuplicatesResult> => {
+    const res = await sendMutation<CleanDuplicatesResult>({ op: 'cleanDuplicates' });
     if (!res.ok) throw new Error(res.error ?? '清理失败');
     return res.payload!;
   }
@@ -465,9 +483,10 @@ export const tabSlice = createSlice({
         // 同代际但仍在途的回环（pending 之后、SW 落盘之前发起）：按在途备份过滤，
         // 防止旧 KV payload 复活正被删除的 tab。
         if (stale) return;
-        state.groups = stripInFlightTabs(
+        state.groups = stripInFlightDeletions(
           action.payload,
-          Object.values(state.optimisticBackups ?? {})
+          Object.values(state.optimisticBackups ?? {}),
+          inFlightDeletedGroupIds(state)
         );
         state.lastLoadedAt = new Date().toISOString();
       })
@@ -491,11 +510,75 @@ export const tabSlice = createSlice({
           return dateB.getTime() - dateA.getTime();
         });
       })
-      .addCase(deleteGroup.fulfilled, (state, action) => {
-        state.groups = state.groups.filter(g => g.id !== action.payload);
-        if (state.activeGroupId === action.payload) {
+      // 删除整个会话：乐观移除 + 失败还原。
+      //
+      // 【为什么需要乐观】原先只有 fulfilled case：用户点删除后，UI 要等
+      // 「排队 → 读全量 → 写全量 → 登记删除队列 → 置位上传 → 跨进程回包」整条链
+      // 跑完才动。SW 冷启动或队列里排着后台同步时，这个等待是秒级的，
+      // 体感就是「点了删除没反应」——与清理重复标签是同一个病根。
+      .addCase(deleteGroup.pending, (state, action) => {
+        const groupId = action.meta.arg;
+        const index = state.groups.findIndex(g => g.id === groupId);
+        // 组不在列表里：无可删，也不建备份（避免 fulfilled/rejected 处理幽灵槽位）
+        if (index === -1) return;
+        if (!state.deletedGroupBackups) state.deletedGroupBackups = {};
+        // 备份整组 + 位置：rejected 时按原下标插回，避免还原后顺序跳变
+        state.deletedGroupBackups[groupId] = {
+          group: state.groups[index],
+          index,
+        };
+        state.groups.splice(index, 1);
+        if (state.activeGroupId === groupId) {
           state.activeGroupId = null;
         }
+        // 代际前进：此后到达的旧 loadGroups 回环不得把刚删的组带回来
+        //（与 deleteTabAndSync / cleanDuplicateTabs 同一机制）。
+        state.mutationEpoch = (state.mutationEpoch ?? 0) + 1;
+        // 此刻**不**作废在途的单标签删除备份：pending 只是乐观意图，磁盘还没删。
+        // 若这次组删除失败，rejected 会把整组还原，那些备份还要用来把标签插回原位；
+        // 作废的时机是 fulfilled（磁盘确认组已不存在），见那里的注释。
+        state.error = null;
+      })
+      .addCase(deleteGroup.fulfilled, (state, action) => {
+        const groupId = action.payload;
+        // 磁盘已删：清掉回滚基线（乐观结果就是最终结果）。
+        // 幂等——pending 时组已移除，这里再 filter 一次可覆盖「pending 未跑」的
+        // 直接 dispatch（测试）与并发删除的极端情形。
+        if (state.deletedGroupBackups) delete state.deletedGroupBackups[groupId];
+        state.groups = state.groups.filter(g => g.id !== groupId);
+        if (state.activeGroupId === groupId) {
+          state.activeGroupId = null;
+        }
+        // 作废该组在途的单标签删除备份。
+        //
+        // 【为什么在 fulfilled 而不是 pending 作废】pending 只是乐观意图，磁盘还没删：
+        // 若这次组删除**失败**，deleteGroup.rejected 会把整组还原，此时那些标签备份
+        // 仍有意义（标签删除若也失败，要能把它插回原位）。只有 fulfilled 才代表
+        // 磁盘上组已确实不存在——那些标签连同组一起没了，备份已无从回滚。
+        //
+        // 【留着备份的后果】deleteTabAndSync.rejected 在「组不在」时会按它抓的整组
+        // 快照 unshift 把组恢复回来。整组被显式删除后，一次失败的标签删除就会
+        // **复活用户刚删掉的整个会话**；v1.22.0 起没有回收站，用户看到的是「删了又回来」。
+        if (state.optimisticBackups) {
+          for (const key of Object.keys(state.optimisticBackups)) {
+            if (state.optimisticBackups[key]?.groupId === groupId) {
+              delete state.optimisticBackups[key];
+            }
+          }
+        }
+      })
+      .addCase(deleteGroup.rejected, (state, action) => {
+        const groupId = action.meta.arg;
+        const backup = state.deletedGroupBackups?.[groupId];
+        if (state.deletedGroupBackups) delete state.deletedGroupBackups[groupId];
+        if (backup) {
+          // 按原下标插回；下标越界（期间列表变短）则追加到末尾
+          const at = Math.max(0, Math.min(backup.index, state.groups.length));
+          if (!state.groups.some(g => g.id === groupId)) {
+            state.groups.splice(at, 0, backup.group);
+          }
+        }
+        state.error = action.error.message || '删除会话失败';
       })
       .addCase(deleteTabAndSync.pending, (state, action) => {
         // 乐观更新：点击即从列表消失，不等 SW mutation + 云端回环（此前只在
@@ -549,6 +632,26 @@ export const tabSlice = createSlice({
               tabs.splice(Math.max(0, Math.min(backup.index, tabs.length)), 0, backup.tab);
             }
             state.groups[idx] = { ...state.groups[idx], tabs };
+          } else if (state.deletedGroupBackups?.[groupId]) {
+            // 组不在，且原因是**整组删除正在途**（deleteGroup.pending 已乐观移除，
+            // 尚未 fulfilled/rejected）。
+            //
+            // 此时绝不能走下面的「按快照恢复整组」分支：那会把用户刚删掉的会话
+            // 原地复活（v1.22.0 起没有回收站，用户看到的就是「删了又回来」）。
+            //
+            // 但也不能什么都不做：这次标签删除失败了，磁盘上它还在，而组删除的
+            // 备份是在「标签已被乐观移除之后」抓的，里面没有它。若组删除随后也失败，
+            // 按那份备份还原就会**永久漏掉这个标签**（UI 少显示、磁盘上还在）。
+            //
+            // 正解是把标签并回组删除的备份，让两种结局都正确：
+            //   组删除成功 → 整组连同它一起消失（磁盘上确实没了）；
+            //   组删除失败 → 按合并后的备份还原，标签完整回来。
+            const gb = state.deletedGroupBackups[groupId];
+            const tabs = [...gb.group.tabs];
+            if (!tabs.some(t => t.id === tabId)) {
+              tabs.splice(Math.max(0, Math.min(backup.index, tabs.length)), 0, backup.tab);
+            }
+            gb.group = { ...gb.group, tabs };
           } else {
             // 组已不在（本项拿空了组，或他项 fulfilled 整组移除）：按快照恢复，
             // 但过滤掉已被他项成功删除的 tab（无在途备份且不在任何现态中），避免复活它们。
@@ -604,6 +707,21 @@ export const tabSlice = createSlice({
         state.isLoading = false;
         state.groups = [];
         state.activeGroupId = null;
+        // 磁盘上一个组都不剩了 ⇒ **两类**乐观删除备份全部作废。
+        //
+        // 留着备份的后果不是「多占点内存」，而是复活：
+        //  - 组级（deletedGroupBackups）：随后到达的 deleteGroup.rejected 会按备份
+        //    把那个组插回列表，而它在磁盘上已经被全删干掉；
+        //  - 标签级（optimisticBackups）：随后到达的 deleteTabAndSync.rejected 走
+        //    「组不在列表」分支时会按整组快照 unshift，把**整个会话**带回来。
+        // 两者都属于「用户删光了，界面上却冒出会话」。
+        //
+        // 与 deleteGroup.fulfilled 作废标签备份是同一条规则：备份只在「磁盘上还在」
+        // 的前提下有意义；全删成功后这个前提对任何组都不成立。
+        state.deletedGroupBackups = {};
+        state.optimisticBackups = {};
+        // 代际前进：全删之后到达的旧 loadGroups 回环不得把整份列表带回来
+        state.mutationEpoch = (state.mutationEpoch ?? 0) + 1;
       })
       .addCase(deleteAllGroups.rejected, (state, action) => {
         state.isLoading = false;
@@ -667,18 +785,50 @@ export const tabSlice = createSlice({
         // 不更新UI状态，因为已经在 reducer 中更新了
       })
 
-      // 清理重复标签和空标签组
+      // 清理重复标签和空会话：pending 乐观应用，fulfilled 从快照重推收敛，
+      // rejected 整段还原。计划与 SW 共用同一纯函数（见 tabSliceHelpers）。
       .addCase(cleanDuplicateTabs.pending, state => {
-        state.isLoading = true;
+        // 抓快照必须在乐观改之前：fulfilled/rejected 都以它为基线。
+        state.cleanDuplicatesSnapshot = state.groups;
+        const optimistic = planOptimisticClean(state.groups);
+        state.groups = optimistic.groups;
+        // 代际前进：此后到达的 loadGroups 回环若带的是清理前快照，一律忽略
+        //（与 deleteTabAndSync 同一机制）。少了这一步，一次在途回环就会把
+        // 刚清掉的重复标签整批复活。
+        state.mutationEpoch = (state.mutationEpoch ?? 0) + 1;
         state.error = null;
+        // 不再置 isLoading=true：清理已有乐观结果，列表不该整页转圈
+        //（TabList 只在 groups 为空时才整页 loading，但置位仍会引发多余重渲染）。
       })
       .addCase(cleanDuplicateTabs.fulfilled, (state, action) => {
+        const { plan, now, stamp } = action.payload;
+        // 基线 = pending 抓的快照；缺失（如直接 dispatch fulfilled action 的测试、
+        // 或 pending reducer 未跑）则退回当前值，保证不崩。
+        const base = state.cleanDuplicatesSnapshot ?? state.groups;
+        state.cleanDuplicatesSnapshot = null;
         state.isLoading = false;
-        // SW 返回的是 storage 全量。主状态不变量是"只含活跃视图"（loadGroups 同管线）。
-        state.groups = toActiveGroupsView(action.payload.updatedGroups);
+        // 用 SW 的权威计划从快照重推（理由见 planOptimisticClean 注释）。
+        const derived = applyCleanPlanToActiveView(base, plan, now, stamp);
+        // 仍要剥掉在途的乐观删除项：清理与单标签删除可能同时在途，
+        // 重推出的结果基于快照，会把那次删除的标签又带回来。
+        state.groups = stripInFlightDeletions(
+          derived,
+          Object.values(state.optimisticBackups ?? {}),
+          inFlightDeletedGroupIds(state)
+        );
       })
       .addCase(cleanDuplicateTabs.rejected, (state, action) => {
         state.isLoading = false;
+        // 乐观结果整段还原（清理失败时磁盘没变，UI 不能留着假象）。
+        // 同样要在还原后剥掉在途删除项，避免快照复活正在删的标签。
+        if (state.cleanDuplicatesSnapshot) {
+          state.groups = stripInFlightDeletions(
+            state.cleanDuplicatesSnapshot,
+            Object.values(state.optimisticBackups ?? {}),
+            inFlightDeletedGroupIds(state)
+          );
+        }
+        state.cleanDuplicatesSnapshot = null;
         state.error = action.error.message || '清理重复标签和空标签组失败';
       });
   },

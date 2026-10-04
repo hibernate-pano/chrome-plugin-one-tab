@@ -261,21 +261,21 @@ describe('mutationOps 移动与清理', () => {
     const fresh = mkTab('fresh', { url: 'https://dup.com', lastAccessed: NOW });
     const g1 = mkGroup('g1', [old, fresh]);
     const g2 = mkGroup('g2', [mkTab('stale2', { url: 'https://dup.com', lastAccessed: '2026-01-01T00:00:00.000Z' })]);
-    const { groups, removedTabsCount, removedGroupsCount, removedGroupIds } = applyCleanDuplicates([g1, g2], NOW, STAMP);
+    const { groups, plan } = applyCleanDuplicates([g1, g2], NOW, STAMP);
     const out1 = groups.find(g => g.id === 'g1')!;
-    assert.equal(removedTabsCount, 2);
+    assert.equal(plan.removedTabsCount, 2);
     assert.equal(out1.tabs.some(t => t.id === 'old'), false, '败者 tab 物理移除，不留墓碑');
     assert.equal(out1.tabs.some(t => t.id === 'fresh'), true);
-    assert.equal(removedGroupsCount, 1); // g2 被清空且未锁定
+    assert.equal(plan.removedGroupsCount, 1); // g2 被清空且未锁定
     assert.equal(groups.some(g => g.id === 'g2'), false, '被清空的组被物理移除');
-    assert.deepEqual(removedGroupIds, ['g2'], '回报被删组 id 供登记删除广播队列');
+    assert.deepEqual(plan.removedGroupIds, ['g2'], '回报被删组 id 供登记删除广播队列');
   });
   it('applyCleanDuplicates：loading:// 同 URL 不同标题视为不同 tab（不去重）', async () => {
     const { applyCleanDuplicates } = await import('@/core/mutationOps');
     const a = mkTab('a', { url: 'loading://x', title: '页面A' });
     const b = mkTab('b', { url: 'loading://x', title: '页面B' });
-    const { groups, removedTabsCount } = applyCleanDuplicates([mkGroup('g', [a, b])], NOW, STAMP);
-    assert.equal(removedTabsCount, 0);
+    const { groups, plan } = applyCleanDuplicates([mkGroup('g', [a, b])], NOW, STAMP);
+    assert.equal(plan.removedTabsCount, 0);
     assert.equal(groups[0].tabs.length, 2);
   });
 });

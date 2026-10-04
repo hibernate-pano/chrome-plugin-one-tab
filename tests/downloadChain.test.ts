@@ -505,6 +505,44 @@ describe('下载：单行读不出来（历史事故点）', () => {
     assert.equal(cloud.rows.has('g-cipher'), true, '云端行必须原封保留，等问题修好后自然恢复');
   });
 
+  it('并发解密不得错位：组数超过并发度时，每组的标签仍归各自所有', async () => {
+    // v1.22.9 起下载侧的逐组解密改为有界并发（CRYPTO_CONCURRENCY）。
+    // 保序是硬要求：明文按下标写回 resolvedShapes[index]，一旦错位就是
+    // 「A 组的标签出现在 B 组名下」—— 那是静默的数据损坏，且合并后整组回写云端，
+    // 会扩散到所有设备。既有两条失败用例只有 2 个组（低于并发度，恒不会乱序完成），
+    // 测不到这条路径，所以这里专门造「组数 > 并发度 + 每组内容互不相同」的场景。
+    const { encryptData } = await import('@/utils/encryptionUtils');
+    const { downloadSync } = await import('@/utils/supabase/download');
+    const { CRYPTO_CONCURRENCY } = await import('@/utils/concurrency');
+
+    const N = CRYPTO_CONCURRENCY * 3; // 远超并发度，保证 worker 反复取任务、完成顺序被打乱
+    for (let i = 0; i < N; i++) {
+      // 组序号与 URL 里的 owner 必须用**同一个**字符串：错位检测靠比对两者，
+      // 若一个补零一个不补零，测试会把自己判成失败（这个坑已经踩过一次）。
+      const owner = String(i).padStart(2, '0');
+      const gid = `g-enc-${owner}`;
+      // 每组 3 个标签，URL 里带 owner 序号：错位会立刻体现在 tabs 的 URL 上
+      const tabs = [0, 1, 2].map(k =>
+        tabData(`${gid}-t${k}`, `https://owner-${owner}.example.com/page-${k}`)
+      );
+      seedGroup(cloudRow(gid, { tabs_data: await encryptData(tabs, USER_ID) }));
+    }
+
+    const groups = await downloadSync.downloadTabGroups();
+    assert.equal(groups.length, N, '所有加密组都必须解析出来');
+
+    for (const g of groups) {
+      const expectedOwner = g.id.replace('g-enc-', ''); // 例如 '07'（与 URL 里的 owner 同源）
+      assert.equal(g.tabs.length, 3, `${g.id} 应解出 3 个标签`);
+      for (const t of g.tabs) {
+        assert.ok(
+          t.url.startsWith(`https://owner-${expectedOwner}.example.com/`),
+          `${g.id} 的标签 URL 是 ${t.url}，不属于该组 —— 并发解密发生了下标错位`
+        );
+      }
+    }
+  });
+
   it('明文也解析不了的行（不是加密串但语法坏）同样整行跳过', async () => {
     const { downloadSync } = await import('@/utils/supabase/download');
     seedGroup(cloudRow('g-broken', { tabs_data: '{not json at all' }));

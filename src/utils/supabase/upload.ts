@@ -12,6 +12,7 @@ import { requireSessionUserId } from './session';
 import { logError, logInfo, logWarn } from '../log';
 import { supportsCloudTombstone, supportsDeletedAt, supportsOpStamp } from './probe';
 import { chunkIds } from './idBatches';
+import { CRYPTO_CONCURRENCY, mapWithConcurrency } from '../concurrency';
 import {
   verifyUploadReadback,
   verifyTombstoneReadback,
@@ -430,30 +431,49 @@ export const uploadSync = {
     // 上传标签组元数据和标签数据
     let result: any = null;
     try {
-      // 对每个标签组的数据进行加密
+      // 对每个标签组的数据进行加密。
+      //
       // 安全约束：加密失败的组绝不允许明文上云——宁可本次同步失败重试，
-      // 也不能把用户浏览记录以明文写入云端（Web Crypto 不可用等环境会走到这里）
+      // 也不能把用户浏览记录以明文写入云端（Web Crypto 不可用等环境会走到这里）。
+      //
+      // 【为什么并发】每组一次 PBKDF2-100k 密钥派生（约 9ms 纯 CPU），串行跑 N 组
+      // 就是 N×9ms，而这段时间全在 SW 的单写者队列里 —— 用户此刻点「删除会话 /
+      // 清理重复」必须排在它后面。实测 300 组串行约 2.8s、并发 8 约 0.8s。
+      // 并发度与保序语义见 @/utils/concurrency。
+      //
+      // 保序是必须的：密文要按输入下标写回 groupsWithUser[i].tabs_data，
+      // 乱序等于把 A 组的密文写到 B 组的行上。
       const encryptionFailedIds: string[] = [];
-      for (let i = 0; i < groupsWithUser.length; i++) {
-        const group = groupsWithUser[i];
-        if (group.tabs_data && Array.isArray(group.tabs_data)) {
-          try {
-            // 加密标签数据
-            const encryptedData = await encryptData(group.tabs_data, userId);
-            // 替换原始数据为加密数据
-            groupsWithUser[i].tabs_data = encryptedData as any;
-            logInfo(`标签组 ${group.id} 的数据已加密`);
-          } catch (error) {
-            logError(`加密标签组 ${group.id} 的数据失败:`, error);
-            encryptionFailedIds.push(group.id);
+      await mapWithConcurrency(
+        groupsWithUser,
+        CRYPTO_CONCURRENCY,
+        async (group, i) => {
+          if (group.tabs_data && Array.isArray(group.tabs_data)) {
+            try {
+              // 加密标签数据（按下标原位回写：group 与 groupsWithUser[i] 是同一对象）
+              const encryptedData = await encryptData(group.tabs_data, userId);
+              groupsWithUser[i].tabs_data = encryptedData as any;
+              logInfo(`标签组 ${group.id} 的数据已加密`);
+            } catch (error) {
+              // 逐组收集而不 fail-fast：错误信息要一次报全所有失败的组，
+              // 只报第一个会让用户修一处、下一轮又撞上另一处。
+              logError(`加密标签组 ${group.id} 的数据失败:`, error);
+              encryptionFailedIds.push(group.id);
+            }
+          } else if (group.tabs_data !== undefined && group.tabs_data !== null) {
+            // 上传侧止损：tabs_data 存在但不是数组（坏形状数据），
+            // 不能原样上行（旧版本会把坏行明文写入云端），置为空数组并告警
+            logWarn(`标签组 ${group.id} 的 tabs_data 不是数组，已置为空数组后上传（组ID: ${group.id}）`);
+            groupsWithUser[i].tabs_data = [] as any;
           }
-        } else if (group.tabs_data !== undefined && group.tabs_data !== null) {
-          // 上传侧止损：tabs_data 存在但不是数组（坏形状数据），
-          // 不能原样上行（旧版本会把坏行明文写入云端），置为空数组并告警
-          logWarn(`标签组 ${group.id} 的 tabs_data 不是数组，已置为空数组后上传（组ID: ${group.id}）`);
-          groupsWithUser[i].tabs_data = [] as any;
         }
-      }
+      );
+      // 并发下失败 id 的到达顺序不再等于输入顺序（谁先失败谁先进）。
+      // 排回输入序：错误信息是给用户的，顺序抖动会让同一份数据每次报得不一样，
+      // 也无法与日志/工单里的上一次比对。
+      const failedSet = new Set(encryptionFailedIds);
+      encryptionFailedIds.length = 0;
+      for (const g of groupsWithUser) if (failedSet.has(g.id)) encryptionFailedIds.push(g.id);
 
       if (encryptionFailedIds.length > 0) {
         throw new Error(

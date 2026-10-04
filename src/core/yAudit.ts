@@ -8,10 +8,21 @@
  * - maybeAuditConsistency：采样执行器。默认 5%（见 AUDIT_SAMPLE_PERCENT），
  *   fire-and-forget 语义：任何失败吞错返回 null，主同步零影响。
  *   对账只读（withYDoc 短命会话读快照），不写 Y、不碰网络。
+ * - 每次命中采样写两份：逐条结果进 y_audit_log（FIFO 50，排障看单次差异形状），
+ *   按天聚合进 y_audit_daily（FIFO 30 天，**门禁判定读这份**——逐条日志的窗口
+ *   比 7 天门禁短，靠它无法证明「持续达标」，见 yGate.evaluateShadowGate）。
  */
 import type { TabGroup } from '@/types/tab';
 import type { MVMaterialized } from '@/core/yMaterialize';
-import { AUDIT_LOG_MAX, AUDIT_SAMPLE_PERCENT, Y_AUDIT_LOG_KEY, isShadowSampled } from '@/core/yShadowConfig';
+import type { AuditDailyBucket } from '@/core/yGate';
+import { foldAuditDaily } from '@/core/yGate';
+import {
+  AUDIT_LOG_MAX,
+  AUDIT_SAMPLE_PERCENT,
+  Y_AUDIT_DAILY_KEY,
+  Y_AUDIT_LOG_KEY,
+  isShadowSampled,
+} from '@/core/yShadowConfig';
 
 export interface AuditMismatch {
   scope: 'group' | 'tab' | 'order';
@@ -209,6 +220,15 @@ export async function maybeAuditConsistency(
       await deps.kvSet(Y_AUDIT_LOG_KEY, next);
     } catch {
       /* 日志失败不影响对账结果返回 */
+    }
+    // 按天聚合：门禁判定读这份（逐条日志只留 50 条，窗口比 7 天门禁短，
+    // 见 yShadowConfig.Y_AUDIT_DAILY_KEY 的说明）。独立 try：
+    // 逐条日志写失败不该连带丢掉落进聚合的那份门禁事实。
+    try {
+      const curDaily = await deps.kvGet<AuditDailyBucket[]>(Y_AUDIT_DAILY_KEY);
+      await deps.kvSet(Y_AUDIT_DAILY_KEY, foldAuditDaily(curDaily, ts, result));
+    } catch {
+      /* 聚合失败不影响对账结果返回 */
     }
     return result;
   } catch {

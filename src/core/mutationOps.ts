@@ -253,14 +253,38 @@ export function applyMoveTab(
   return { groups: out, removedGroupId };
 }
 
-/** cleanDuplicateTabs 语义（= cleanDuplicateTabs thunk）：同 URL 留最新，余者物理移除；
- * 被清空且未锁定的组整组物理移除。去重范围 = 全部组（物理模型下不存在墓碑组）。 */
-export function applyCleanDuplicates(
-  groups: TabGroup[],
-  now: string,
-  stamp: OpStamp
-): { groups: TabGroup[]; removedTabsCount: number; removedGroupsCount: number; removedGroupIds: string[] } {
-  let removedTabsCount = 0;
+/**
+ * cleanDuplicates 的**删除计划**：SW 与 popup 之间唯一的契约。
+ *
+ * 【为什么要有这个中间形态】原先 mutation 的 payload 直接把落盘后的 storage 全量
+ * （updatedGroups）跨进程克隆回 popup，几 MB 的数据换来 popup 再全量重算一遍
+ * toActiveGroupsView + React 全量重渲染。清理是纯本地去重，需要跨进程传的
+ * 只有「删了哪些」——一份 id 清单，KB 级。
+ *
+ * 【为什么是数组不是 Set/Map】这份结构要经 chrome.runtime 消息做结构化克隆，
+ * Set/Map 虽然可克隆但接收端类型不可靠（且旧版 Chrome 上行为不一致），
+ * 数组是最不会出意外的形状。
+ */
+export interface CleanDuplicatesPlan {
+  /** groupId → 该组内待移除的 tabId 列表（组内原序）。 */
+  removedTabsByGroup: Array<{ groupId: string; tabIds: string[] }>;
+  /** 被整组移除的 groupId（按输入 groups 顺序）。 */
+  removedGroupIds: string[];
+  removedTabsCount: number;
+  removedGroupsCount: number;
+}
+
+/**
+ * 计算去重计划（纯函数，无 IO）。
+ *
+ * 规则：同 URL 留最新（lastAccessed 最大），余者物理移除；被清空且未锁定的组
+ * 整组移除。`loading://` 的同 URL 不同标题视为不同 tab（占位 URL，标题才是身份）。
+ *
+ * 【为什么单独成函数】计划是 SW 与 popup 共用的唯一真相：SW 用它决定落盘内容，
+ * popup 用它做乐观更新。两边跑同一个函数 ⇒ 规则不可能漂移；
+ * 若各写一份，「本地显示删了、磁盘上没删」这类不一致迟早会出现。
+ */
+export function planCleanDuplicates(groups: TabGroup[]): CleanDuplicatesPlan {
   const urlMap = new Map<string, { tab: Tab; groupId: string }[]>();
   groups.forEach(group => {
     group.tabs.forEach(tab => {
@@ -271,7 +295,16 @@ export function applyCleanDuplicates(
     });
   });
 
-  const toRemove = new Map<string, Set<string>>(); // groupId -> 待移除 tabId 集
+  let removedTabsCount = 0;
+  const toRemove = new Map<string, string[]>(); // groupId -> 待移除 tabId
+  // groupId -> (tabId -> 组内原下标)：用于把待移除 id 排回原序（见下面的排序说明）
+  const tabOrder = new Map<string, Map<string, number>>();
+  groups.forEach(g => {
+    const m = new Map<string, number>();
+    g.tabs.forEach((t, i) => m.set(t.id, i));
+    tabOrder.set(g.id, m);
+  });
+
   urlMap.forEach(list => {
     if (list.length <= 1) return;
     const sorted = [...list].sort(
@@ -279,16 +312,67 @@ export function applyCleanDuplicates(
     );
     for (let i = 1; i < sorted.length; i++) {
       const { groupId, tab } = sorted[i];
-      if (!toRemove.has(groupId)) toRemove.set(groupId, new Set());
-      toRemove.get(groupId)!.add(tab.id);
+      if (!toRemove.has(groupId)) toRemove.set(groupId, []);
+      toRemove.get(groupId)!.push(tab.id);
       removedTabsCount++;
     }
   });
 
-  let removedGroupsCount = 0;
-  const withRemovals = groups.map(g => {
+  // 组内按原下标排序：移除后的 tabs 顺序必须与「原序过滤」一致，
+  // 否则同一份数据在 SW 与 popup 上会得出不同的标签顺序（列表视觉跳动）。
+  const removedTabsByGroup: Array<{ groupId: string; tabIds: string[] }> = [];
+  groups.forEach(g => {
     const ids = toRemove.get(g.id);
-    if (!ids) return g;
+    if (!ids || ids.length === 0) return;
+    const order = tabOrder.get(g.id) ?? new Map<string, number>();
+    removedTabsByGroup.push({
+      groupId: g.id,
+      tabIds: [...ids].sort((a, b) => (order.get(a) ?? 0) - (order.get(b) ?? 0)),
+    });
+  });
+
+  // 先按计划在内存里得出「移除后」的组，再用锁定豁免判据决定哪些组整组消失。
+  const byGroup = new Map(removedTabsByGroup.map(e => [e.groupId, new Set(e.tabIds)]));
+  let removedGroupsCount = 0;
+  const removedGroupIds: string[] = [];
+  groups.forEach(g => {
+    const ids = byGroup.get(g.id);
+    const after: TabGroup = ids ? { ...g, tabs: g.tabs.filter(t => !ids.has(t.id)) } : g;
+    // 手动清理按钮的文案就写着「锁定的会话除外」，这里必须用锁定豁免版判据。
+    // 自动空壳清理（dropEmptyGroups / toActiveGroupsView）才用 isEmptyGroup。
+    if (shouldAutoDeleteAfterTabRemoval(after, '')) {
+      removedGroupsCount++;
+      removedGroupIds.push(g.id);
+    }
+  });
+
+  return { removedTabsByGroup, removedGroupIds, removedTabsCount, removedGroupsCount };
+}
+
+/**
+ * 按计划在 groups 上落地（纯函数）。
+ *
+ * @param now   落盘时刻。必须由调用方传入（SW 与 popup 用同一个值），
+ *              否则两侧的 updatedAt 不同 ⇒ 组级 LWW 合并时会误判谁更新。
+ * @param stamp 操作印记。同理：两侧必须一致，否则 popup 的本地视图与磁盘
+ *              在 lastOp 上分叉，下一次同步的裁决依据就不一样了。
+ *
+ * 【对计划里不存在的 id 的处理】一律跳过，不报错。计划由 storage 真值算出，
+ * 而调用方手上的 groups 可能是「活跃视图」（老版本设备写入的墓碑组已被剥掉），
+ * 两者天然可能不完全对应；这里要的是幂等与容错，不是抛错。
+ */
+export function applyCleanDuplicatesPlan(
+  groups: TabGroup[],
+  plan: CleanDuplicatesPlan,
+  now: string,
+  stamp: OpStamp
+): TabGroup[] {
+  const byGroup = new Map(plan.removedTabsByGroup.map(e => [e.groupId, new Set(e.tabIds)]));
+  const removedGroups = new Set(plan.removedGroupIds);
+
+  const withRemovals = groups.map(g => {
+    const ids = byGroup.get(g.id);
+    if (!ids || ids.size === 0) return g;
     return {
       ...g,
       tabs: g.tabs.filter(t => !ids.has(t.id)),
@@ -298,18 +382,19 @@ export function applyCleanDuplicates(
     };
   });
 
-  const finalGroups = withRemovals.filter(g => {
-    // 同上：手动清理按钮的文案就写着「锁定的会话除外」，这里必须用锁定豁免版判据。
-    // 自动空壳清理（dropEmptyGroups / toActiveGroupsView）才用 isEmptyGroup。
-    if (shouldAutoDeleteAfterTabRemoval(g, '')) {
-      removedGroupsCount++;
-      return false;
-    }
-    return true;
-  });
+  return withRemovals.filter(g => !removedGroups.has(g.id));
+}
 
-  const kept = new Set(finalGroups.map(g => g.id));
-  const removedGroupIds = withRemovals.filter(g => !kept.has(g.id)).map(g => g.id);
-
-  return { groups: finalGroups, removedTabsCount, removedGroupsCount, removedGroupIds };
+/** cleanDuplicateTabs 语义（= cleanDuplicateTabs thunk）：同 URL 留最新，余者物理移除；
+ * 被清空且未锁定的组整组物理移除。去重范围 = 全部组（物理模型下不存在墓碑组）。
+ *
+ * 计划 + 落地的组合入口（SW 侧用）：返回值同时给出新 groups 与计划本身，
+ * 计划随 mutation 结果回传 popup 做乐观更新（见 CleanDuplicatesPlan 的说明）。 */
+export function applyCleanDuplicates(
+  groups: TabGroup[],
+  now: string,
+  stamp: OpStamp
+): { groups: TabGroup[]; plan: CleanDuplicatesPlan } {
+  const plan = planCleanDuplicates(groups);
+  return { groups: applyCleanDuplicatesPlan(groups, plan, now, stamp), plan };
 }

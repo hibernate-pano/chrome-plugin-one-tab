@@ -94,27 +94,55 @@ function makeGroup(id: string) {
 }
 
 describe('S2 键常量单源', () => {
+  /**
+   * 搬迁时既有的键：字面值是**用户数据的物理位置**，改一个就等于让存量数据
+   * 变成孤儿（旧键没人再读、新键永远读不到值）。这份清单是逐字快照，不许动。
+   */
+  const LEGACY_PINNED_KEYS: Record<string, string> = {
+    VERSION: 'storage_version',
+    GROUPS: 'tab_groups',
+    SETTINGS: 'user_settings',
+    DELETED_GROUPS: 'deleted_tab_groups',
+    DELETED_TABS: 'deleted_tabs',
+    LAST_SYNC_TIME: 'last_sync_time',
+    SYNC_SNAPSHOT: 'sync_snapshot',
+    PRODUCT_EVENTS: 'product_events',
+    MIGRATION_FLAGS: 'migration_flags',
+    PENDING_UPLOAD: 'pending_upload',
+    LAST_UPLOAD_TIME: 'last_upload_time',
+    PENDING_PURGE_IDS: 'pending_purge_ids',
+    PENDING_DELETE_IDS: 'pending_delete_ids',
+    DEVICE_SEQ: 'device_seq',
+    JOURNAL: 'journal',
+    LAST_SYNCED_SEQ: 'last_synced_seq',
+    OP_STAMP_MIGRATED: 'op_stamp_migrated',
+  };
+
+  /**
+   * 搬迁之后**新增**的键（新增不改存量数据位置，与改名是两回事）。
+   *
+   * 为什么单独一张表而不是把新键塞进上面那份快照：上面那份的断言含义是
+   * 「与搬迁前逐字一致」，混进新键会让这句话变成假的，而且看不出哪个是历史键、
+   * 哪个是后来加的。分开之后，改历史键 → 上面那条断言红；加新键 → 必须在这里
+   * 显式登记一行，代码评审看得见。
+   *
+   * - PERF_SPANS：性能 span 环形缓冲（v1.22.9 起，诊断观测用，不含用户会话数据）。
+   */
+  const ADDED_KEYS: Record<string, string> = {
+    PERF_SPANS: 'perf_spans',
+  };
+
   it('STORAGE_KEYS 字面值与搬迁前逐字一致', async () => {
     const { STORAGE_KEYS, STORAGE_VERSION } = await import('@/storage-kv/keys');
-    assert.deepEqual({ ...STORAGE_KEYS }, {
-      VERSION: 'storage_version',
-      GROUPS: 'tab_groups',
-      SETTINGS: 'user_settings',
-      DELETED_GROUPS: 'deleted_tab_groups',
-      DELETED_TABS: 'deleted_tabs',
-      LAST_SYNC_TIME: 'last_sync_time',
-      SYNC_SNAPSHOT: 'sync_snapshot',
-      PRODUCT_EVENTS: 'product_events',
-      MIGRATION_FLAGS: 'migration_flags',
-      PENDING_UPLOAD: 'pending_upload',
-      LAST_UPLOAD_TIME: 'last_upload_time',
-      PENDING_PURGE_IDS: 'pending_purge_ids',
-      PENDING_DELETE_IDS: 'pending_delete_ids',
-      DEVICE_SEQ: 'device_seq',
-      JOURNAL: 'journal',
-      LAST_SYNCED_SEQ: 'last_synced_seq',
-      OP_STAMP_MIGRATED: 'op_stamp_migrated',
-    });
+    const actual = { ...STORAGE_KEYS };
+    // 历史键必须逐字在位且值不变（改名/删键/改值都在这里红）。
+    const actualByKey: Record<string, string> = actual;
+    for (const [key, value] of Object.entries(LEGACY_PINNED_KEYS)) {
+      assert.equal(actualByKey[key], value, `历史键 ${key} 的字面值变了（存量数据会变孤儿）`);
+    }
+    // 全集 = 历史键 ∪ 显式登记的新增键。多出未登记的键同样红：
+    // 新增键必须在上面的 ADDED_KEYS 里写一行，避免键表悄悄长胖。
+    assert.deepEqual(actual, { ...LEGACY_PINNED_KEYS, ...ADDED_KEYS });
     assert.equal(STORAGE_VERSION, 5);
   });
 

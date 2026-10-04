@@ -7,6 +7,8 @@ import { enqueue } from '@/background/mutationQueue';
 import { mutationService } from '@/background/mutationService';
 import { ensureOpStampMigrated } from '@/background/opStampMigratedGuard';
 import { logError, logInfo, logWarn } from './utils/log';
+// 诊断导出前落盘性能 span 用（见 PERF_FLUSH 消息分支）。
+import { perfTrace } from './utils/perfTrace';
 
 // Chrome 扩展的 Service Worker
 // 为了避免模块导入问题，早期版本内联了存储逻辑；现统一使用 utils/storage 以与前端页面共享同一数据源（IndexedDB）
@@ -363,6 +365,21 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       case 'REFRESH_TAB_LIST':
         sendResponse({ success: true });
         return false;
+
+      // 诊断导出前请求 SW 落盘性能 span（见 @/utils/perfTrace）。
+      //
+      // 【为什么不入 mutationQueue】入队就会排在正在执行的慢任务后面，而我们要看的
+      // 恰恰是那次慢操作的计时——等它排队，现场已经过期。这里只写 PERF_SPANS 这一个
+      // 与业务数据无关的键，不参与「读-改-写」，绕过队列是安全的。
+      //
+      // 【为什么必须显式请求】span 记在 SW 进程，落盘有节流窗口；诊断导出跑在 UI 进程，
+      // 读不到 SW 的内存缓冲。不主动 flush 就会丢掉最近几秒——通常正是复现的那几秒。
+      case 'PERF_FLUSH': {
+        void perfTrace().flush()
+          .then(() => sendResponse({ success: true }))
+          .catch(() => sendResponse({ success: true }));
+        return true; // 异步响应
+      }
 
       case 'MUTATE': {
         const cmd = message.data;

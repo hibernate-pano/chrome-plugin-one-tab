@@ -36,6 +36,13 @@ const MARKERS = {
   eventPayload: 'ZZMARKER-EVENTPAYLOAD-dd44',
   journalPayload: 'ZZMARKER-JOURNALPAYLOAD-ee55',
   journalDevice: 'ZZMARKER-JOURNALDEV-ff66',
+  // v3 影子/门禁段：这几个标记专盯最容易漏的三处——
+  // 对账差异里的**真实字段值**、sampleKey 里的 userId、影子日志的 error message。
+  userId: 'ZZMARKER-USERID-gg77',
+  auditField: 'ZZMARKER-AUDITFIELD-hh88',
+  shadowOp: 'ZZMARKER-SHADOWOP-ii99',
+  shadowSkip: 'ZZMARKER-SHADOWSKIP-jj00',
+  shadowError: 'ZZMARKER-SHADOWERR-kk11',
 } as const;
 
 const NOW = new Date('2026-09-29T12:00:00.000Z');
@@ -126,6 +133,94 @@ function makeSources(overrides: Record<string, unknown> = {}) {
     lastSyncedSeq: 2,
     pendingDeleteCount: 0,
     pendingUpload: false,
+    // 性能 span：默认空（观测数据缺失是正常态，不是错误态——见 diagnostics.ts
+    // 的 DiagnosticsSources.perfSpans 注释，它刻意不进 unavailable）。
+    perfSpans: [],
+    // v3 影子/门禁三键。默认按**最恶劣形态**给：逐条对账里塞真实 url/标题/会话名
+    // 与 sampleKey（含 userId），影子日志里塞设备号与 error message。
+    // 只要序列化层哪天顺手透传一个字段，上面的全串搜索就会红。
+    shadowAudit: {
+      auditLog: [
+        {
+          ts: daysAgo(0),
+          sampleKey: `${MARKERS.userId}:37`,
+          result: {
+            checkedGroups: 4,
+            checkedTabs: 20,
+            match: false,
+            mismatchRate: 1 / 24,
+            mismatches: [
+              {
+                scope: 'tab',
+                id: `${MARKERS.groupId}:${MARKERS.tabId}`,
+                field: 'url',
+                ySide: `${MARKERS.url}?y-side`,
+                localSide: `${MARKERS.url}?local-side`,
+              },
+              {
+                scope: 'group',
+                id: MARKERS.groupId,
+                field: 'name',
+                ySide: `${MARKERS.groupName}-y`,
+                localSide: `${MARKERS.groupName}-l`,
+              },
+              // 词表外的 field + scope：丢弃并记账
+              {
+                scope: MARKERS.auditField,
+                id: MARKERS.groupId,
+                field: MARKERS.auditField,
+                ySide: MARKERS.title,
+                localSide: MARKERS.note,
+              },
+            ],
+          },
+        },
+      ],
+      // 7 天全覆盖且全部达标 → 默认应当判 pass
+      auditDaily: Array.from({ length: 7 }, (_, i) => ({
+        date: daysAgo(i).slice(0, 10),
+        samples: 4,
+        overThresholdSamples: 0,
+        worstMismatchRate: 0,
+        checkedGroups: 4,
+        checkedTabs: 20,
+      })),
+      shadowLog: [
+        {
+          ts: daysAgo(0.5),
+          op: 'saveGroup',
+          stamp: { d: MARKERS.deviceId, s: 7 },
+          outcome: { ok: true, plans: 3, updateBytes: 512, needsSnapshot: false },
+        },
+        {
+          ts: daysAgo(0.25),
+          op: 'deleteGroup',
+          stamp: { d: MARKERS.deviceId, s: 8 },
+          outcome: { ok: false, skipped: 'rollout' },
+        },
+        {
+          ts: daysAgo(0),
+          // 词表外的 op：只记 droppedUnknownOpCount，不影响本条 outcome 计数
+          op: MARKERS.shadowOp,
+          stamp: { d: MARKERS.deviceId, s: 9 },
+          outcome: { ok: true, plans: 1, updateBytes: 128, needsSnapshot: true },
+        },
+        {
+          ts: daysAgo(0),
+          op: 'removeTab',
+          stamp: { d: MARKERS.deviceId, s: 10 },
+          // error message 里可能嵌 URL：绝不许进输出
+          outcome: { ok: false, skipped: 'error', error: `${MARKERS.shadowError} ${MARKERS.url}` },
+        },
+        {
+          ts: daysAgo(0),
+          op: 'moveTab',
+          stamp: { d: MARKERS.deviceId, s: 11 },
+          // 词表外的 skipped：整条按畸形记账（不能猜它是什么结果）
+          outcome: { ok: false, skipped: MARKERS.shadowSkip },
+        },
+      ],
+    },
     environment: {
       extensionVersion: '1.22.0',
       userAgent: 'Mozilla/5.0 Chrome/141.0.0.0',
@@ -338,6 +433,151 @@ describe('诊断导出：降级与边界（不许崩、不许编数据）', () =
     assert.equal(sources.isAuthenticated, false);
     assert.equal(sources.pendingUpload, false);
     assert.equal(typeof sources.environment.extensionVersion, 'string');
+  });
+});
+
+describe('诊断导出：影子/门禁段（v3）', () => {
+  it('schemaVersion 升到 3：结构变了必须升版本，否则老报告无法被识别', async () => {
+    const { buildDiagnosticsReport, DIAGNOSTICS_SCHEMA_VERSION } = await import('@/utils/diagnostics');
+    const report = buildDiagnosticsReport(makeSources() as never, NOW);
+    assert.equal(report.schemaVersion, DIAGNOSTICS_SCHEMA_VERSION);
+    assert.equal(report.schemaVersion, 3);
+  });
+
+  it('默认（7 天全覆盖 + 全部达标）→ gate 判 pass，数字与按天聚合一致', async () => {
+    const { buildDiagnosticsReport } = await import('@/utils/diagnostics');
+    const report = buildDiagnosticsReport(makeSources() as never, NOW);
+    assert.equal(report.gate.verdict, 'pass');
+    assert.equal(report.gate.daysWithSamples, 7);
+    assert.equal(report.gate.samples, 28);
+    assert.equal(report.gate.overThresholdSamples, 0);
+    assert.equal(report.gate.days.length, 7);
+  });
+
+  it('按天聚合缺一天 → insufficient_coverage：样本全部达标也不许说「通过」', async () => {
+    const { buildDiagnosticsReport } = await import('@/utils/diagnostics');
+    const sources = makeSources();
+    // 直接对原数组 filter/map（不要中间声明一个 { date: string }[] 之类的窄类型，
+    // 那样赋回去会丢字段 —— type-check:tests 会拦下来）
+    const missingDay = daysAgo(3).slice(0, 10);
+    sources.shadowAudit.auditDaily = sources.shadowAudit.auditDaily.filter(
+      b => b.date !== missingDay
+    );
+    const report = buildDiagnosticsReport(sources as never, NOW);
+    assert.equal(report.gate.verdict, 'insufficient_coverage');
+    assert.equal(report.gate.daysWithSamples, 6);
+    assert.equal(report.gate.overThresholdSamples, 0, '样本本身没问题，只是没覆盖满');
+  });
+
+  it('有超阈样本 → fail，且理由指到具体日期', async () => {
+    const { buildDiagnosticsReport } = await import('@/utils/diagnostics');
+    const sources = makeSources();
+    const badDay = daysAgo(2).slice(0, 10);
+    sources.shadowAudit.auditDaily = sources.shadowAudit.auditDaily.map(b =>
+      b.date === badDay ? { ...b, overThresholdSamples: 2, worstMismatchRate: 0.05 } : b
+    );
+    const report = buildDiagnosticsReport(sources as never, NOW);
+    assert.equal(report.gate.verdict, 'fail');
+    assert.equal(report.gate.overThresholdSamples, 2);
+    assert.ok(report.gate.reason.includes(badDay));
+  });
+
+  it('没有按天聚合数据 → no_data：绝不能被读成「通过」', async () => {
+    const { buildDiagnosticsReport } = await import('@/utils/diagnostics');
+    const sources = makeSources();
+    sources.shadowAudit.auditDaily = [];
+    const report = buildDiagnosticsReport(sources as never, NOW);
+    assert.equal(report.gate.verdict, 'no_data');
+    assert.notEqual(report.gate.verdict, 'pass');
+    assert.equal(report.gate.samples, 0);
+  });
+
+  it('影子/对账键读失败（shadowAudit: null）→ 进 unavailable，段内容降级为空而不是崩', async () => {
+    const { buildDiagnosticsReport, serializeDiagnosticsReport } = await import('@/utils/diagnostics');
+    const report = buildDiagnosticsReport(makeSources({ shadowAudit: null }) as never, NOW);
+    assert.ok(report.unavailable.includes('shadowAudit'));
+    assert.equal(report.gate.verdict, 'no_data');
+    assert.equal(report.shadow.entryCount, 0);
+    assert.equal(report.audit.entryCount, 0);
+    assert.doesNotThrow(() => JSON.parse(serializeDiagnosticsReport(report)));
+  });
+
+  it('影子日志按 outcome / op 计数，词表外的只记账不静默', async () => {
+    const { buildDiagnosticsReport } = await import('@/utils/diagnostics');
+    const report = buildDiagnosticsReport(makeSources() as never, NOW);
+    // ok×2（saveGroup + 词表外 op 的那条）、rollout×1、error×1；词表外 skipped 记畸形
+    assert.equal(report.shadow.entryCount, 4);
+    assert.equal(report.shadow.malformedCount, 1);
+    assert.deepEqual(report.shadow.byOutcome, [
+      { outcome: 'error', count: 1 },
+      { outcome: 'ok', count: 2 },
+      { outcome: 'rollout', count: 1 },
+    ]);
+    // byOp 求和 3 < entryCount 4：差值由 droppedUnknownOpCount 解释
+    assert.equal(report.shadow.byOp.reduce((n, o) => n + o.count, 0), 3);
+    assert.equal(report.shadow.droppedUnknownOpCount, 1);
+  });
+
+  it('影子写入字节 / compact 次数 / 覆盖时长落账（egress 与窗口够不够看这两个）', async () => {
+    const { buildDiagnosticsReport } = await import('@/utils/diagnostics');
+    const report = buildDiagnosticsReport(makeSources() as never, NOW);
+    assert.equal(report.shadow.okCount, 2);
+    assert.equal(report.shadow.totalUpdateBytes, 640);
+    assert.equal(report.shadow.maxUpdateBytes, 512);
+    assert.equal(report.shadow.needsSnapshotCount, 1);
+    // 最老样本 0.5 天前、最新为 0 → 跨度 12 小时
+    assert.equal(report.shadow.coverageHours, 12);
+    assert.equal(report.shadow.latestAgeHours, 0);
+  });
+
+  it('对账差异只按 scope / field 计数：字段值、记录 id、sampleKey 一个都不进输出', async () => {
+    const { buildDiagnosticsReport, serializeDiagnosticsReport } = await import('@/utils/diagnostics');
+    const report = buildDiagnosticsReport(makeSources() as never, NOW);
+    const json = serializeDiagnosticsReport(report);
+
+    assert.equal(report.audit.entryCount, 1);
+    assert.equal(report.audit.mismatchedSampleCount, 1);
+    assert.deepEqual(report.audit.byScope, [
+      { scope: 'group', count: 1 },
+      { scope: 'tab', count: 1 },
+    ]);
+    assert.deepEqual(report.audit.byField, [
+      { field: 'name', count: 1 },
+      { field: 'url', count: 1 },
+    ]);
+    assert.equal(report.audit.droppedUnknownFieldCount, 1);
+
+    for (const marker of [
+      MARKERS.url,
+      MARKERS.title,
+      MARKERS.groupName,
+      MARKERS.note,
+      MARKERS.userId,
+      MARKERS.auditField,
+      MARKERS.groupId,
+      MARKERS.tabId,
+      MARKERS.shadowOp,
+      MARKERS.shadowSkip,
+      MARKERS.shadowError,
+      MARKERS.deviceId,
+    ]) {
+      assert.ok(!json.includes(marker), `影子/门禁段泄露了：${marker}`);
+    }
+    // 连「差异记录本身」都不该出现：id 字段在输出结构里根本不存在
+    assert.ok(!json.includes('"ySide"'), '差异值字段名不该出现在输出里');
+    assert.ok(!json.includes('"localSide"'), '差异值字段名不该出现在输出里');
+    assert.ok(!json.includes('sampleKey'), 'sampleKey（含 userId）不该出现在输出里');
+  });
+
+  it('摘要文本带上门禁判定与理由（不只给数字，覆盖不足与未达成要修的东西不同）', async () => {
+    const { buildDiagnosticsReport, diagnosticsSummaryText } = await import('@/utils/diagnostics');
+    const pass = diagnosticsSummaryText(buildDiagnosticsReport(makeSources() as never, NOW));
+    assert.ok(pass.includes('V3 门禁（达成）'), pass);
+
+    const sources = makeSources();
+    sources.shadowAudit.auditDaily = [];
+    const none = diagnosticsSummaryText(buildDiagnosticsReport(sources as never, NOW));
+    assert.ok(none.includes('V3 门禁（无数据）'), none);
   });
 });
 

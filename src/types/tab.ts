@@ -134,6 +134,15 @@ export interface TabState {
   // 与发起时 epoch 相等则接受——外部变更（他端同步）触发的新回环不受影响，不饿死。
   mutationEpoch?: number;
   pendingLoadGuards?: Record<string, number>;
+  // deleteGroup 乐观删除的回滚基线：groupId → 删除前的整组快照与位置。
+  // pending 移除、rejected 按此还原（与 deleteTabAndSync 的 optimisticBackups 同一思路，
+  // 但备份粒度是整组）。fulfilled 后清除（磁盘已删，无需回滚基线）。
+  deletedGroupBackups?: Record<string, { group: TabGroup; index: number }>;
+  // 清理重复标签的收敛基线：pending 时抓取的「清理前活跃视图」快照。
+  // fulfilled 用它 + SW 回传的权威计划重推（见 tabSliceHelpers 的 planOptimisticClean
+  // 注释：叠加乐观结果无法纠正「本地误删」，只有从快照重推才无条件等于磁盘真值）；
+  // rejected 用它整段还原。null = 当前没有在途清理。
+  cleanDuplicatesSnapshot?: TabGroup[] | null;
 }
 
 // 布局模式枚举

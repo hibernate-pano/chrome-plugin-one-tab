@@ -302,14 +302,6 @@ export class SyncEngine {
       this.isSyncing = false;
       return { success: false, groups: [], reason: 'snapshot_failed' };
     }
-    // 快照保存失败只影响回滚点，不影响本次读到的内容（getGroupsFresh 已成功）；
-    // setSyncSnapshot 内部自带 catch，这里只留日志。
-    try {
-      await storage.setSyncSnapshot(snapshot);
-    } catch (err) {
-      logError('[SyncEngine] 快照保存失败:', err);
-    }
-
     try {
       report(10, 'download');
       // 2.0 轻量探活：全量下载前先拉指纹列，无变更直接返回本地快照。
@@ -639,7 +631,6 @@ export class SyncEngine {
     try {
       // P1-4：回滚直写落盘，不经过防抖窗口（SW 可能在窗口期内被杀导致回滚丢失）。
       await storage.setGroupsImmediate(snapshot);
-      await storage.clearSyncSnapshot();
       logInfo(`[SyncEngine] 已从快照恢复 ${snapshot.length} 个组`);
     } catch (err) {
       logError('[SyncEngine] 快照回滚失败:', err);
