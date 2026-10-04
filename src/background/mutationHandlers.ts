@@ -33,7 +33,11 @@ import { logWarn } from '../utils/log';
 
 export interface MutationDeps {
   getGroups(): Promise<TabGroup[]>;
-  setGroups(groups: TabGroup[]): Promise<void>;
+  /**
+   * originId：发起本次命令的上下文身份（见 @/core/contextOrigin）。
+   * 落盘广播时原样带回，供发起方忽略自己的回声；缺失（SW 自身写入）则广播给所有人。
+   */
+  setGroups(groups: TabGroup[], originId?: string): Promise<void>;
   scheduleUpload(delayMs: number): void | Promise<void>;
   now(): string;
   journal: Journal;
@@ -78,8 +82,10 @@ export function createMutationHandlers(deps: MutationDeps) {
   // V2 影子双写：run() 内最近一次成功取到的 stamp/now（handle 在主写 ok 后取用）。
   let lastMeta: { stamp: OpStamp; now: string } | null = null;
 
-  async function run(cmd: MutationOp): Promise<MutationResult> {
+  async function run(cmd: MutationOp, originId?: string): Promise<MutationResult> {
     const now = deps.now();
+    // 本次命令的统一落盘出口：把 originId 透传给写路径（广播过滤用）。
+    const persist = (groups: TabGroup[]) => deps.setGroups(groups, originId);
 
     // 阶段二·§4.3 写序：journal + seq 一次性落盘先于 apply* 状态写。
     const entry = await deps.journal.appendEntry({
@@ -93,14 +99,14 @@ export function createMutationHandlers(deps: MutationDeps) {
     switch (cmd.op) {
       case 'saveGroup': {
         const groups = await deps.getGroups();
-        await deps.setGroups(applySaveGroup(groups, cmd.group, now, stamp));
+        await persist(applySaveGroup(groups, cmd.group, now, stamp));
         deps.scheduleUpload(DELETE_PRIORITY_MS);
         return { ok: true, payload: cmd.group };
       }
       case 'removeTab': {
         const groups = await deps.getGroups();
         const r = applyRemoveTab(groups, cmd.groupId, cmd.tabId, now, stamp);
-        await deps.setGroups(r.groups);
+        await persist(r.groups);
         await noteDeletedGroups(deps, [r.removedGroupId]);
         // 删除类必须 await 置位：组已从磁盘移除、广播队列已写入，但
         // pending_upload 还没落盘时 SW 被回收 → 后台看到 pendingUpload=false
@@ -111,7 +117,7 @@ export function createMutationHandlers(deps: MutationDeps) {
       case 'deleteGroup': {
         const groups = await deps.getGroups();
         const r = applyDeleteGroup(groups, cmd.groupId, now, stamp);
-        await deps.setGroups(r.groups);
+        await persist(r.groups);
         await noteDeletedGroups(deps, [r.removedGroupId]);
         await deps.scheduleUpload(DELETE_PRIORITY_MS);
         return { ok: true, payload: cmd.groupId };
@@ -119,7 +125,7 @@ export function createMutationHandlers(deps: MutationDeps) {
       case 'deleteAllGroups': {
         const groups = await deps.getGroups();
         const r = applyDeleteAllGroups(groups, now, stamp);
-        await deps.setGroups(r.groups);
+        await persist(r.groups);
         await noteDeletedGroups(deps, r.removedGroupIds);
         await deps.scheduleUpload(DELETE_PRIORITY_MS);
         return { ok: true, payload: { count: r.count } };
@@ -133,14 +139,14 @@ export function createMutationHandlers(deps: MutationDeps) {
           now,
           stamp
         );
-        await deps.setGroups(r.groups);
+        await persist(r.groups);
         deps.scheduleUpload(DELETE_PRIORITY_MS);
         return { ok: true, payload: r.imported };
       }
       case 'renameGroup': {
         const groups = await deps.getGroups();
         const r = applyRenameGroup(groups, cmd.groupId, cmd.name, now, stamp);
-        await deps.setGroups(r.groups);
+        await persist(r.groups);
         deps.scheduleUpload(NORMAL_MS);
         return {
           ok: true,
@@ -150,7 +156,7 @@ export function createMutationHandlers(deps: MutationDeps) {
       case 'toggleGroupLock': {
         const groups = await deps.getGroups();
         const r = applyToggleGroupLock(groups, cmd.groupId, now, stamp);
-        await deps.setGroups(r.groups);
+        await persist(r.groups);
         deps.scheduleUpload(NORMAL_MS);
         return {
           ok: true,
@@ -160,7 +166,7 @@ export function createMutationHandlers(deps: MutationDeps) {
       case 'updateGroupFields': {
         const groups = await deps.getGroups();
         const r = applyUpdateGroupFields(groups, cmd.groupId, cmd.fields, now, stamp);
-        await deps.setGroups(r.groups);
+        await persist(r.groups);
         deps.scheduleUpload(NORMAL_MS);
         return {
           ok: true,
@@ -170,7 +176,7 @@ export function createMutationHandlers(deps: MutationDeps) {
       case 'moveTab': {
         const groups = await deps.getGroups();
         const r = applyMoveTab(groups, cmd, now, stamp);
-        await deps.setGroups(r.groups);
+        await persist(r.groups);
         await noteDeletedGroups(deps, [r.removedGroupId]);
         // 搬空源组属删除类：置位必须落盘，否则那次删除广播不到云端
         await deps.scheduleUpload(r.removedGroupId ? DELETE_PRIORITY_MS : NORMAL_MS);
@@ -188,7 +194,7 @@ export function createMutationHandlers(deps: MutationDeps) {
       case 'cleanDuplicates': {
         const groups = await deps.getGroups();
         const r = applyCleanDuplicates(groups, now, stamp);
-        await deps.setGroups(r.groups);
+        await persist(r.groups);
         await noteDeletedGroups(deps, r.removedGroupIds);
         // 清空产生的删除同样依赖广播队列 + 置位，别让删除停在半路
         await deps.scheduleUpload(NORMAL_MS);
@@ -210,9 +216,9 @@ export function createMutationHandlers(deps: MutationDeps) {
   }
 
   return {
-    async handle(cmd: MutationOp): Promise<MutationResult> {
+    async handle(cmd: MutationOp, originId?: string): Promise<MutationResult> {
       try {
-        const res = await run(cmd);
+        const res = await run(cmd, originId);
         if (res.ok && lastMeta && deps.shadowWrite) {
           // V2 影子双写：mutation 落盘成功后异步翻译写入 Y.Doc（读仍走 blob）。
           // fire-and-forget（不 await，不延迟 SW 响应）+ 全程吞错：

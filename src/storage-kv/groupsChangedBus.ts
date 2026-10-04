@@ -36,7 +36,13 @@ import { logWarn } from '../utils/log';
 /** 跨上下文广播用的消息类型。改它要同步改 onGroupsChanged 的订阅侧（本文件内）。 */
 const GROUPS_CHANGED_MESSAGE = 'TABSTACK_GROUPS_CHANGED';
 
-type Listener = () => void;
+/**
+ * 订阅回调会收到 originId：发起这次写入的上下文身份（UI 语义命令会带）。
+ * 订阅方自己决定要不要响应——维护乐观状态的订阅方（列表）应忽略自己的回声，
+ * 而只失效缓存 / 读存储真值的订阅方则照常处理。总线不做过滤，避免把
+ * 「缓存该失效」也一并吞掉。
+ */
+type Listener = (originId?: string) => void;
 
 const listeners = new Set<Listener>();
 let runtimeListenerRegistered = false;
@@ -46,10 +52,10 @@ function canSendRuntimeMessage(): boolean {
 }
 
 /** 同进程派发：逐个调用订阅者，单个订阅者抛错不影响其余订阅者。 */
-function emitLocally(): void {
+function emitLocally(originId?: string): void {
   for (const listener of [...listeners]) {
     try {
-      listener();
+      listener(originId);
     } catch (error) {
       logWarn('[groupsChangedBus] 订阅者抛错（已忽略）:', error);
     }
@@ -57,10 +63,10 @@ function emitLocally(): void {
 }
 
 /** 跨上下文广播。没有接收方时 sendMessage 会 reject —— 那正是「没人要听」，吞掉。 */
-function broadcast(): void {
+function broadcast(originId?: string): void {
   if (!canSendRuntimeMessage()) return;
   try {
-    const maybePromise = chrome.runtime.sendMessage({ type: GROUPS_CHANGED_MESSAGE });
+    const maybePromise = chrome.runtime.sendMessage({ type: GROUPS_CHANGED_MESSAGE, originId });
     if (maybePromise && typeof maybePromise.catch === 'function') {
       maybePromise.catch(() => undefined);
     }
@@ -73,19 +79,22 @@ function ensureRuntimeListener(): void {
   if (runtimeListenerRegistered) return;
   if (typeof chrome === 'undefined' || typeof chrome.runtime?.onMessage?.addListener !== 'function') return;
   runtimeListenerRegistered = true;
-  chrome.runtime.onMessage.addListener((message: { type?: string }) => {
+  chrome.runtime.onMessage.addListener((message: { type?: string; originId?: string }) => {
     // 只 emit，不转发（见文件头「为什么收到广播后不再广播」）
-    if (message?.type === GROUPS_CHANGED_MESSAGE) emitLocally();
+    if (message?.type === GROUPS_CHANGED_MESSAGE) emitLocally(message.originId);
   });
 }
 
 /**
  * 写方在 groups 落盘（且本进程 30s 缓存已更新）之后调用。
  * 同进程订阅者立即收到；其它扩展上下文经 runtime 消息收到。
+ *
+ * originId：发起写入的上下文身份（UI 语义命令会带上），原样交给订阅方。
+ * 缺省表示「非 UI 发起」（SW 自身写入）；两类都会广播，过滤判定在订阅方。
  */
-export function notifyGroupsChanged(): void {
-  emitLocally();
-  broadcast();
+export function notifyGroupsChanged(originId?: string): void {
+  emitLocally(originId);
+  broadcast(originId);
 }
 
 /**

@@ -38,7 +38,7 @@ export const mutationService = createMutationHandlers({
   // （runMigrations 会写 GROUPS key）更旧，拿旧快照改完写回会抹掉期间的数据。
   // 详见 storage.getGroupsForWrite 的注释。
   getGroups: () => storage.getGroupsForWrite(),
-  setGroups: g => storage.setGroupsImmediate(g),
+  setGroups: (g, originId) => storage.setGroupsImmediate(g, originId),
   scheduleUpload: ms => syncEngine.scheduleUpload(ms),
   now: () => new Date().toISOString(),
   journal,

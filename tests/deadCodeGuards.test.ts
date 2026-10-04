@@ -119,7 +119,7 @@ describe('页内快捷键层与「标签组拖拽 + 重排模式」已下线', (
   });
 
   it('useKeyboardNavigation 只剩对话框无障碍契约，通用方向键层已删', () => {
-    // ModalFrame / SyncButton / HeaderDropdown 三个对话框仍依赖它，不可整文件删
+    // ModalFrame / SyncButton / AuthModal 三个对话框仍依赖它，不可整文件删
     const nav = code('src/hooks/useKeyboardNavigation.ts');
     for (const keep of ['useFocusTrap', 'useDialogA11y', 'resolveTabTarget', 'FOCUSABLE_SELECTOR']) {
       assert.ok(nav.includes(keep), `无障碍契约的 ${keep} 被误删`);

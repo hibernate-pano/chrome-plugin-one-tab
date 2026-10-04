@@ -7,6 +7,7 @@ import {
 } from '@/store/slices/settingsSlice';
 import { cleanDuplicateTabs } from '@/store/slices/tabSlice';
 import { HeaderDropdown } from './HeaderDropdown';
+import { AuthModal, AuthTab } from '@/components/auth/AuthModal';
 import { useToast } from '@/contexts/ToastContext';
 import { TabCounter } from './TabCounter';
 import SyncButton from '@/components/sync/SyncButton';
@@ -161,6 +162,9 @@ export const Header: React.FC<HeaderProps> = ({ onSearch }) => {
   };
 
   const [showDropdown, setShowDropdown] = useState(false);
+  // 账号弹窗是应用级关注点：挂在 Header 上、portal 到 body，
+  // 不随菜单开关而卸载（菜单点完就关，弹窗独立存活）。
+  const [authModal, setAuthModal] = useState<AuthTab | null>(null);
 
   return (
     <header className="header">
@@ -277,11 +281,25 @@ export const Header: React.FC<HeaderProps> = ({ onSearch }) => {
               >
                 <MenuIcon />
               </button>
-              {showDropdown && <HeaderDropdown onClose={() => setShowDropdown(false)} />}
+              {showDropdown && (
+                <HeaderDropdown
+                  onClose={() => setShowDropdown(false)}
+                  onOpenAuth={(tab) => {
+                    setShowDropdown(false);
+                    setAuthModal(tab);
+                  }}
+                />
+              )}
             </div>
           </div>
         </div>
       </div>
+
+      <AuthModal
+        visible={authModal !== null}
+        initialTab={authModal ?? 'login'}
+        onClose={() => setAuthModal(null)}
+      />
     </header>
   );
 };

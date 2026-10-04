@@ -461,7 +461,7 @@ describe('会话列表加载失败：用户可见文案', () => {
 
   it('错误日志的 effect 排在所有提前 return 之前（Hooks 规则）', () => {
     const logIndex = TAB_LIST.indexOf("logError('加载会话列表失败:'");
-    const earlyReturnIndex = TAB_LIST.indexOf('if (isLoading) {');
+    const earlyReturnIndex = TAB_LIST.indexOf('if (isLoading');
     assert.ok(logIndex !== -1 && earlyReturnIndex !== -1);
     assert.ok(logIndex < earlyReturnIndex, 'useEffect 不能排在条件 return 之后');
   });

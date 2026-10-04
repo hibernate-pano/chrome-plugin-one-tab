@@ -28,6 +28,7 @@ const ALERT_DIALOG = readFileSync(new URL('../src/components/common/AlertDialog.
 const TOAST = readFileSync(new URL('../src/components/common/Toast.tsx', import.meta.url), 'utf8');
 const SYNC_BUTTON = readFileSync(new URL('../src/components/sync/SyncButton.tsx', import.meta.url), 'utf8');
 const HEADER_DROPDOWN = readFileSync(new URL('../src/components/layout/HeaderDropdown.tsx', import.meta.url), 'utf8');
+const AUTH_MODAL = readFileSync(new URL('../src/components/auth/AuthModal.tsx', import.meta.url), 'utf8');
 const KEYBOARD_HOOKS = readFileSync(new URL('../src/hooks/useKeyboardNavigation.ts', import.meta.url), 'utf8');
 
 /** 取一段 JSX 文本开头到第一个分隔符之前的标签名。 */
@@ -257,17 +258,23 @@ test('Toast 的消失计时器不再依赖每次渲染都变的 onClose', () => 
 // ---------------------------------------------------------------------------
 
 test('账号弹窗的关闭按钮有无障碍名称', () => {
-  assert.ok(HEADER_DROPDOWN.includes('aria-label="关闭登录弹窗"'));
+  assert.ok(AUTH_MODAL.includes('aria-label="关闭登录弹窗"'));
 });
 
 test('账号弹窗补齐对话框语义与焦点管理', () => {
-  assert.ok(HEADER_DROPDOWN.includes('role="dialog"'));
-  assert.ok(HEADER_DROPDOWN.includes('aria-modal="true"'));
-  assert.ok(HEADER_DROPDOWN.includes('aria-label="登录或注册账号"'));
-  assert.ok(HEADER_DROPDOWN.includes('tabIndex={-1}'));
-  assert.ok(
-    HEADER_DROPDOWN.includes('useDialogA11y(authModalRef, showAuthModal, () => setShowAuthModal(false))')
-  );
+  assert.ok(AUTH_MODAL.includes('role="dialog"'));
+  assert.ok(AUTH_MODAL.includes('aria-modal="true"'));
+  assert.ok(AUTH_MODAL.includes('aria-label="登录或注册账号"'));
+  assert.ok(AUTH_MODAL.includes('tabIndex={-1}'));
+  assert.ok(AUTH_MODAL.includes('useDialogA11y(panelRef, visible, onClose)'));
+});
+
+// 2026-10-03：登录页「像在另一个图层」的根因是弹窗渲染在 `.header`
+// （backdrop-filter 会让它成为 fixed 后代的包含块）里。防线：必须 portal 到 body。
+test('账号弹窗 portal 到 body，不受 header 的 backdrop-filter 包含块影响', () => {
+  assert.ok(AUTH_MODAL.includes('createPortal('));
+  assert.ok(AUTH_MODAL.includes('document.body'));
+  assert.ok(!HEADER_DROPDOWN.includes('showAuthModal'), '弹窗不得再寄生在菜单内');
 });
 
 test('HeaderDropdown 里所有 onClick 都落在真控件上', () => {

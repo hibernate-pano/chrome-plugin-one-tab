@@ -5,6 +5,7 @@
 import { supabase } from './client';
 import { compareStamps, EMPTY_STAMP } from '@/core/opStamp';
 import { logInfo } from '../log';
+import { chunkIds } from './idBatches';
 
 // ── P0-1 上传读回校验（纯比对 + 读回验证，防服务端静默吞写） ───────────────
 //
@@ -158,13 +159,18 @@ export async function verifyUploadReadback(
   let cols = 'id, updated_at, version';
   if (opts.checkStamp) cols += ', last_op_device, last_op_seq';
   if (opts.checkTombstone) cols += ', is_deleted';
-  const { data, error } = await supabase
-    .from('tab_groups')
-    .select(cols)
-    .eq('user_id', userId)
-    .in('id', ids);
-  if (error) throw error;
-  const cmp = compareUploadReadback(expect, ((data ?? []) as unknown) as UploadReadbackRow[], opts);
+  // 分批读：ids 可能上千，整串 .in() 会让 URL 超过网关上限（400 纯文本，无 code）。
+  const rows: UploadReadbackRow[] = [];
+  for (const batch of chunkIds(ids)) {
+    const { data, error } = await supabase
+      .from('tab_groups')
+      .select(cols)
+      .eq('user_id', userId)
+      .in('id', batch);
+    if (error) throw error;
+    rows.push(...((data ?? []) as unknown as UploadReadbackRow[]));
+  }
+  const cmp = compareUploadReadback(expect, rows, opts);
   if (!cmp.ok) throw new Error(`[upload-verify] ${cmp.reason}`);
   if (cmp.superseded?.length) {
     logInfo(
@@ -201,13 +207,18 @@ export function compareTombstoneReadback(
 
 export async function verifyTombstoneReadback(ids: string[], userId: string): Promise<void> {
   if (ids.length === 0) return;
-  const { data, error } = await supabase
-    .from('tab_groups')
-    .select('id, is_deleted')
-    .eq('user_id', userId)
-    .in('id', ids);
-  if (error) throw error;
-  const cmp = compareTombstoneReadback(ids, ((data ?? []) as unknown) as Array<{ id: string; is_deleted?: boolean | null }>);
+  // 分批读：见 idBatches.ts（删除队列可能上千，整串 .in() 会 400）。
+  const rows: Array<{ id: string; is_deleted?: boolean | null }> = [];
+  for (const batch of chunkIds(ids)) {
+    const { data, error } = await supabase
+      .from('tab_groups')
+      .select('id, is_deleted')
+      .eq('user_id', userId)
+      .in('id', batch);
+    if (error) throw error;
+    rows.push(...((data ?? []) as unknown as Array<{ id: string; is_deleted?: boolean | null }>));
+  }
+  const cmp = compareTombstoneReadback(ids, rows);
   if (!cmp.ok) throw new Error(`[tombstone-verify] ${cmp.reason}`);
   logInfo(`[tombstone-verify] 软删读回校验通过（${ids.length} 组）`);
 }

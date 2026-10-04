@@ -31,6 +31,7 @@ import { register } from 'node:module';
 import { pathToFileURL, fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
 import { stubSessionJson } from './_helpers/stubSession.ts';
+import { ID_BATCH_SIZE } from '../src/utils/supabase/idBatches.ts';
 
 globalThis.__TABSTACK_META_ENV__ = {
   VITE_SUPABASE_URL: 'https://stub.supabase.co',
@@ -159,6 +160,16 @@ globalThis.fetch = (async (input: any, init: RequestInit = {}) => {
   if (!url.pathname.endsWith('/rest/v1/tab_groups')) return jsonRes({ message: 'not found' }, 404);
 
   const params = url.searchParams;
+
+  // 模拟 Supabase/Kong 网关的请求 URL 长度上限：单个 in.(...) 列表超过一批即
+  // 返回 400（真实网关返回的是纯文本 "Bad Request"，客户端拿到一个没有
+  // code/message 的普通对象——正是线上日志里那个无法定位的 "Object"）。
+  for (const raw of params.values()) {
+    if (raw.startsWith('in.(')) {
+      const count = raw.slice(4, -1).split(',').filter(Boolean).length;
+      if (count > ID_BATCH_SIZE) return new Response('Bad Request', { status: 400 });
+    }
+  }
 
   if (method === 'GET') {
     const cols = (params.get('select') ?? 'id').split(',').map(s => s.trim());
@@ -444,5 +455,40 @@ describe('P1-2 墓碑 stamp 语义：合并时墓碑必须赢过本地活跃副�
       ['g-tomb-a'],
       '墓碑比本地旧时必须保留本地活跃组（离线期间的本地修改赢过删除广播）'
     );
+  });
+});
+
+// 回归（2026-10-03）：删除重复标签报错「[markCloudGroupsAsDeleted] 读取现有
+// stamp 失败」，日志里错误只显示 "Object"，无从定位。
+//
+// 根因：PostgREST 过滤条件走 URL query，Supabase/Kong 网关对 URL 长度有硬上限
+// （实测 ~900 个 UUID / ~33KB → 400 Bad Request，响应体是纯文本、没有 code）。
+// `pendingDeleteIds` 是**累积**队列，重用户清一次重复/空会话就可能上千条，整串塞进
+// 一个 `.in('id', ...)` 必然超限 → 上传整体失败 → 队列越滚越长 → 永久重试。
+//
+// 防线：所有这类 `.in()` 走 chunkIds 分批（见 src/utils/supabase/idBatches.ts）。
+// 本用例的假网关对超过一批的 `in.()` 直接 400 —— 不做分批必然在这里挂。
+describe('墓碑广播：删除队列很长时分批查询（Supabase 网关 URL 上限）', () => {
+  it('超过一批的 id 列表不再塞进单个请求：全部标为墓碑且整体成功', async () => {
+    const ids = Array.from(
+      { length: ID_BATCH_SIZE + 1 },
+      (_, i) => `g-batch-${String(i).padStart(4, '0')}`
+    );
+    for (const id of ids) {
+      cloud.rows.set(id, {
+        id,
+        user_id: USER_ID,
+        is_deleted: false,
+        last_op_device: 'devOld',
+        last_op_seq: 1,
+      });
+    }
+
+    const { markCloudGroupsAsDeleted } = await import('@/services/tabGroupSyncService');
+    await markCloudGroupsAsDeleted(ids);
+
+    for (const id of ids) {
+      assert.equal(cloud.rows.get(id)?.is_deleted, true, `${id} 必须被标成墓碑`);
+    }
   });
 });

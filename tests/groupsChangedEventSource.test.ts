@@ -181,6 +181,50 @@ describe('groups 变化事件：跨上下文广播', () => {
   });
 });
 
+// 回归（2026-10-03）：拖拽标签时整页刷新。
+// 根因：hover 持续派发 moveTabAndSync → SW 每次落盘都广播 → popup 收到自己
+// 写入的回声后 dispatch(loadGroups()) → isLoading=true → 整页换成 spinner。
+// 修法：写方带 originId，广播带回；**总线不做过滤**（否则连缓存失效一起吞掉），
+// 由维护乐观状态的订阅方（TabList）按 originId 忽略自己的回声。
+describe('groups 变化事件：originId 透传给订阅方，由订阅方自行判定', () => {
+  it('写入 originId 原样交给订阅者（供其判断是不是自己的回声）', async () => {
+    const seen: (string | undefined)[] = [];
+    const off = onGroupsChanged(originId => { seen.push(originId); });
+    try {
+      await storage.setGroupsImmediate([group('tagged')], 'ctx_writer');
+      assert.deepEqual(seen, ['ctx_writer'], 'originId 必须原样送达，订阅方才能过滤');
+    } finally {
+      off();
+    }
+  });
+
+  it('即使是自己写出的回声，订阅者仍被唤醒（缓存失效不能被吞）', async () => {
+    // 关键不变量：过滤发生在订阅方，不在总线。否则 popup 进程的 30s 缓存
+    // 会因自己的写入长期不失效，直接读存储的路径（上传/下载预览）读到旧值。
+    const { getContextOrigin } = await import('../src/core/contextOrigin.ts');
+    let fired = 0;
+    const off = onGroupsChanged(() => { fired += 1; });
+    try {
+      await storage.setGroupsImmediate([group('self')], getContextOrigin());
+      assert.equal(fired, 1, '自己写出的回声也必须送到订阅方（由其决定是否重载）');
+    } finally {
+      off();
+    }
+  });
+
+  it('无 originId（SW 自身写入 / 云端合并）同样送达订阅者', async () => {
+    const seen: (string | undefined)[] = [];
+    const off = onGroupsChanged(originId => { seen.push(originId); });
+    try {
+      await storage.setGroupsImmediate([group('sw')]);
+      assert.equal(seen.length, 1);
+      assert.equal(seen[0], undefined, '后台写入没有 originId，订阅方不会误判为自己');
+    } finally {
+      off();
+    }
+  });
+});
+
 describe('结构守卫：每一个 groups 写入口都必须发事件', () => {
   const storageSource = readFileSync(
     resolve(PROJECT_ROOT, 'src/utils/storage.ts'),
@@ -198,7 +242,7 @@ describe('结构守卫：每一个 groups 写入口都必须发事件', () => {
 
     for (const i of writeSites) {
       const window = lines.slice(i, i + 12).join('\n');
-      assert.match(window, /notifyGroupsChanged\(\)/,
+      assert.match(window, /notifyGroupsChanged\(/,
         `第 ${i + 1} 行的 groups 写入没有发出变化事件 —— 新增写路径若漏发，`
         + '管理页就会重现「后台保存/云端合并后不刷新」');
     }
@@ -219,5 +263,29 @@ describe('结构守卫：每一个 groups 写入口都必须发事件', () => {
     assert.match(bus, /export function notifyGroupsChanged/);
     assert.match(bus, /export function subscribeGroupsChanged/);
     assert.match(storageSource, /from '@\/storage-kv\/groupsChangedBus'/);
+  });
+
+  // 2026-10-03 拖拽整页刷新的防线：过滤必须在订阅方，且订阅方只忽略「自己的」回声。
+  it('onGroupsChanged 先失效缓存再回调（自己写入的缓存也必须失效）', () => {
+    const start = storageSource.indexOf('export function onGroupsChanged');
+    const body = storageSource.slice(start, storageSource.indexOf('\n}', start) + 2);
+    const invalidateIndex = body.indexOf('invalidateGroupsCache()');
+    const callbackIndex = body.indexOf('cb(');
+    assert.ok(invalidateIndex !== -1, 'onGroupsChanged 必须失效本进程 groups 缓存');
+    assert.ok(callbackIndex === -1 || invalidateIndex < callbackIndex,
+      '缓存失效必须发生在回调之前，且不得被回声过滤跳过');
+  });
+
+  it('TabList 只忽略「自己」的回声，别的上下文照常重载', () => {
+    const tabList = readFileSync(
+      resolve(PROJECT_ROOT, 'src/components/tabs/TabList.tsx'),
+      'utf8'
+    );
+    assert.match(tabList, /import\s*\{\s*getContextOrigin\s*\}\s*from\s*'@\/core\/contextOrigin'/,
+      'TabList 需要本上下文身份来判断哪些回声该忽略');
+    assert.match(tabList, /originId\s*===\s*getContextOrigin\(\)/,
+      'TabList 必须用 originId === 本上下文身份 判定自己的回声；'
+      + '不能用「有 originId 就忽略」——那会漏掉别的窗口的变更');
+    assert.match(tabList, /onGroupsChanged\(/);
   });
 });

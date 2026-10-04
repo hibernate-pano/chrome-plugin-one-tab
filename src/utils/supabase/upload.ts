@@ -11,6 +11,7 @@ import { supabase, checkSupabaseConfig, getDeviceId } from './client';
 import { requireSessionUserId } from './session';
 import { logError, logInfo, logWarn } from '../log';
 import { supportsCloudTombstone, supportsDeletedAt, supportsOpStamp } from './probe';
+import { chunkIds } from './idBatches';
 import {
   verifyUploadReadback,
   verifyTombstoneReadback,
@@ -108,51 +109,56 @@ export async function findConcededGroupIds(
   if (opts.overwrite) return conceded;
   if (!opts.tombstoneColumn || !opts.stampColumn || rows.length === 0) return conceded;
 
-  const { data, error } = await supabase
-    .from('tab_groups')
-    .select('id, is_deleted, last_op_device, last_op_seq')
-    .eq('user_id', userId)
-    .in('id', rows.map(r => r.id));
+  // 分批读：本次上行的活跃组可能很多，整串 .in() 会让 URL 超过网关上限（400 纯文本，无 code）。
+  const readRows: UploadReadbackRow[] = [];
+  for (const batch of chunkIds(rows.map(r => r.id))) {
+    const { data, error } = await supabase
+      .from('tab_groups')
+      .select('id, is_deleted, last_op_device, last_op_seq')
+      .eq('user_id', userId)
+      .in('id', batch);
 
-  if (error) {
-    // 「列不存在」→ 降级放行：视作「无印记列」，跳过整段预检（认输集为空，
-    // 全部照常上行），与函数开头 `!opts.stampColumn` 的前置 return 同一分支。
-    //
-    // 为什么缺列可以放行：缺的是这条判据的**前提**（没有印记可比），不是判据的
-    // 结论。缺印记列时服务端守卫按「任一侧 NULL → 放行」处理，本来就不会吞写，
-    // 这次上传的行为与本预检存在之前完全相同（见函数头注释的入口 2）。
-    // 判定只认结构化的 error.code，不用 message 里的 'column' 关键字。
-    //
-    // 为什么这里比同批其它两处更严（probe.ts / webApi.ts 用的是 code+message 拼串
-    // 匹配 'column'）：那两处判错的后果是一次列回退（少盖个印记，降级继续跑）；
-    // 这里判错的后果是**放行一次注定被服务端 guard_tab_group_op_stamp 静默吞写的
-    // upsert**，随后 verifyUploadReadback 抛错、pending_upload 永不清，
-    // 整台设备钉死在 pending_upload_failed 循环里——本工作包要根治的就是它。
-    // 一条恰好提到 column 的网关/传输层错误文本就够了把真冲突误判成缺列。
-    // code 未知（老客户端/代理抹掉 code）时才回退到 message 匹配，宁可多误报
-    // 一次上传失败，也不要把真冲突当没冲突。
-    const code = String(error.code ?? '');
-    const isMissingColumn =
-      code === 'PGRST204' || code === '42703' || (code === '' && /42703|PGRST204|column/i.test(String(error.message ?? '')));
-    if (isMissingColumn) {
-      logWarn(
-        '[upload] 认输预检读不到印记列（schema 漂移/迁移回滚/换环境），' +
-          '本次按「无印记列」跳过预检、照常上行（服务端守卫此时不会吞写）:',
-        error
-      );
-      return conceded;
+    if (error) {
+      // 「列不存在」→ 降级放行：视作「无印记列」，跳过整段预检（认输集为空，
+      // 全部照常上行），与函数开头 `!opts.stampColumn` 的前置 return 同一分支。
+      //
+      // 为什么缺列可以放行：缺的是这条判据的**前提**（没有印记可比），不是判据的
+      // 结论。缺印记列时服务端守卫按「任一侧 NULL → 放行」处理，本来就不会吞写，
+      // 这次上传的行为与本预检存在之前完全相同（见函数头注释的入口 2）。
+      // 判定只认结构化的 error.code，不用 message 里的 'column' 关键字。
+      //
+      // 为什么这里比同批其它两处更严（probe.ts / webApi.ts 用的是 code+message 拼串
+      // 匹配 'column'）：那两处判错的后果是一次列回退（少盖个印记，降级继续跑）；
+      // 这里判错的后果是**放行一次注定被服务端 guard_tab_group_op_stamp 静默吞写的
+      // upsert**，随后 verifyUploadReadback 抛错、pending_upload 永不清，
+      // 整台设备钉死在 pending_upload_failed 循环里——本工作包要根治的就是它。
+      // 一条恰好提到 column 的网关/传输层错误文本就够了把真冲突误判成缺列。
+      // code 未知（老客户端/代理抹掉 code）时才回退到 message 匹配，宁可多误报
+      // 一次上传失败，也不要把真冲突当没冲突。
+      const code = String(error.code ?? '');
+      const isMissingColumn =
+        code === 'PGRST204' || code === '42703' || (code === '' && /42703|PGRST204|column/i.test(String(error.message ?? '')));
+      if (isMissingColumn) {
+        logWarn(
+          '[upload] 认输预检读不到印记列（schema 漂移/迁移回滚/换环境），' +
+            '本次按「无印记列」跳过预检、照常上行（服务端守卫此时不会吞写）:',
+          error
+        );
+        return conceded;
+      }
+
+      // 非缺列的读失败：预检读不出来 ≠ 没有要认输的组。放行等于发起一次注定被
+      // 守卫吞写的 upsert，之后必然在读回抛错，把这台设备钉死在
+      // pending_upload_failed 循环里（pending_upload 永不清 → 下载被无限跳过）。
+      // 与本文件其它云端错误同口径：抛错，让本次上传失败、下轮重试。
+      logError('[upload] 预检云端墓碑失败，本次上传中止:', error);
+      throw error;
     }
-
-    // 非缺列的读失败：预检读不出来 ≠ 没有要认输的组。放行等于发起一次注定被
-    // 守卫吞写的 upsert，之后必然在读回抛错，把这台设备钉死在
-    // pending_upload_failed 循环里（pending_upload 永不清 → 下载被无限跳过）。
-    // 与本文件其它云端错误同口径：抛错，让本次上传失败、下轮重试。
-    logError('[upload] 预检云端墓碑失败，本次上传中止:', error);
-    throw error;
+    readRows.push(...((data ?? []) as unknown as UploadReadbackRow[]));
   }
 
   const localById = new Map(rows.map(r => [r.id, r]));
-  for (const row of ((data ?? []) as unknown) as UploadReadbackRow[]) {
+  for (const row of readRows) {
     const local = localById.get(row.id);
     if (!local) continue;
     if (isConcededToCloudTombstone({ id: row.id, lastOp: local.lastOp ?? null }, row)) {
@@ -713,14 +719,17 @@ export const uploadSync = {
     if (mode === 'plain') {
       // 云端有 is_deleted 列但无印记列（客户端先于 SQL 迁移发布）：
       // 软删是局部 UPDATE，与印记列无关；绝不能降级成硬删（见 decideCloudTombstoneWrite）。
-      const { error } = await supabase
-        .from('tab_groups')
-        .update({ is_deleted: true, updated_at: new Date().toISOString(), ...deletedAtPatch })
-        .eq('user_id', userId)
-        .in('id', deletedIds);
-      if (error) {
-        logError('[markCloudGroupsAsDeleted] 软删（无印记列）失败:', error);
-        throw error;
+      // 分批 UPDATE：deletedIds 可能上千，整串 .in() 会让 URL 超过网关上限（400 纯文本，无 code）。
+      for (const batch of chunkIds(deletedIds)) {
+        const { error } = await supabase
+          .from('tab_groups')
+          .update({ is_deleted: true, updated_at: new Date().toISOString(), ...deletedAtPatch })
+          .eq('user_id', userId)
+          .in('id', batch);
+        if (error) {
+          logError('[markCloudGroupsAsDeleted] 软删（无印记列）失败:', error);
+          throw error;
+        }
       }
       // P0-1：软删读回校验——局部 UPDATE 也可能被守卫吞写，读回确认墓碑落盘。
       await verifyTombstoneReadback(deletedIds, userId);
@@ -741,21 +750,28 @@ export const uploadSync = {
       //     客户端合并不看守卫，只看全序。
       // 取号后还要把「观察到的云端 seq」吸收进本机时钟（bumpSeqIfLower），
       // 保证本设备随后发出的任何号都大于刚盖过的这个云端号——Lamport 不变式。
-      const { data: rows, error: readError } = await supabase
-        .from('tab_groups')
-        .select('id, last_op_seq')
-        .eq('user_id', userId)
-        .in('id', deletedIds);
+      // 分批读：deletedIds 是**累积**的删除队列，重用户清一次重复/空会话就可能上千条。
+      // 整串 .in() 的 URL 超过网关上限时返回的是 400 纯文本（无 code/message），
+      // 只有 "Object" 可查——就是这个「读取现有 stamp 失败」反复刷屏的根因。
+      const rows: Array<{ id: string; last_op_seq: number | null }> = [];
+      for (const batch of chunkIds(deletedIds)) {
+        const { data, error: readError } = await supabase
+          .from('tab_groups')
+          .select('id, last_op_seq')
+          .eq('user_id', userId)
+          .in('id', batch);
 
-      if (readError) {
-        logError('[markCloudGroupsAsDeleted] 读取现有 stamp 失败:', readError);
-        throw readError;
+        if (readError) {
+          logError('[markCloudGroupsAsDeleted] 读取现有 stamp 失败:', readError);
+          throw readError;
+        }
+        rows.push(...((data ?? []) as Array<{ id: string; last_op_seq: number | null }>));
       }
 
       const localDeviceId = await getDeviceId();
       const now = new Date().toISOString();
       let successCount = 0;
-      for (const row of (rows ?? []) as Array<{ id: string; last_op_seq: number | null }>) {
+      for (const row of rows) {
         // 本地 Lamport 号（严格大于本机见过的任何印记）与「必须压过这一行云端
         // 旧印记」两个下界取大者：前者保证在全局全序里单调、不输给自己写过的
         // 东西，后者保证服务端守卫放行且合并时本地删除意图胜出。
@@ -785,7 +801,7 @@ export const uploadSync = {
       // P0-1：墓碑读回校验——逐行 UPDATE 任一行被守卫吞写都必须现形。
       // 注意只校验本次实际处理到的行（rows）：云端根本不存在的 id 说明本地墓碑
       // 从未上过云，软删无目标可写——直接视为意图已达成（无行可复活），不报错。
-      const touchedIds = ((rows ?? []) as Array<{ id: string }>).map(r => r.id);
+      const touchedIds = rows.map(r => r.id);
       await verifyTombstoneReadback(touchedIds, userId);
     } else {
       // mode === 'hard-delete'：云端连 is_deleted 列都没有，只能物理删除。
@@ -797,26 +813,33 @@ export const uploadSync = {
         '  ALTER TABLE tab_groups ADD COLUMN is_deleted boolean NOT NULL DEFAULT false;'
       );
       // 降级：硬删云端行（旧的统一做法）
-      const { error } = await supabase
-        .from('tab_groups')
-        .delete()
-        .eq('user_id', userId)
-        .in('id', deletedIds);
+      // 分批：同软删，deletedIds 可能上千，整串 .in() 会触发网关 400。
+      for (const batch of chunkIds(deletedIds)) {
+        const { error } = await supabase
+          .from('tab_groups')
+          .delete()
+          .eq('user_id', userId)
+          .in('id', batch);
 
-      if (error) {
-        logError('[markCloudGroupsAsDeleted] 删除失败:', error);
-        throw error;
+        if (error) {
+          logError('[markCloudGroupsAsDeleted] 删除失败:', error);
+          throw error;
+        }
       }
 
-      const { data: remaining, error: reError } = await supabase
-        .from('tab_groups')
-        .select('id')
-        .eq('user_id', userId)
-        .in('id', deletedIds);
-      if (reError) throw reError;
+      const remaining: Array<{ id: string }> = [];
+      for (const batch of chunkIds(deletedIds)) {
+        const { data, error: reError } = await supabase
+          .from('tab_groups')
+          .select('id')
+          .eq('user_id', userId)
+          .in('id', batch);
+        if (reError) throw reError;
+        remaining.push(...((data ?? []) as Array<{ id: string }>));
+      }
       const cmp = compareHardDeleteReadback(
         deletedIds,
-        ((remaining ?? []) as unknown) as Array<{ id: string }>
+        remaining
       );
       if (!cmp.ok) throw new Error(`[markCloudGroupsAsDeleted] ${cmp.reason}`);
 
@@ -836,25 +859,32 @@ export const uploadSync = {
     const userId = sessionData.session.user.id;
     logInfo(`[purgeCloudGroups] 正在彻底删除云端 ${purgedIds.length} 个组`);
 
-    const { error } = await supabase
-      .from('tab_groups')
-      .delete()
-      .eq('user_id', userId)
-      .in('id', purgedIds);
-    if (error) {
-      logError('[purgeCloudGroups] 删除失败:', error);
-      throw error;
+    // 分批：purge 队列同样可能很长，整串 .in() 会触发网关 400。
+    for (const batch of chunkIds(purgedIds)) {
+      const { error } = await supabase
+        .from('tab_groups')
+        .delete()
+        .eq('user_id', userId)
+        .in('id', batch);
+      if (error) {
+        logError('[purgeCloudGroups] 删除失败:', error);
+        throw error;
+      }
     }
 
-    const { data: remaining, error: reError } = await supabase
-      .from('tab_groups')
-      .select('id')
-      .eq('user_id', userId)
-      .in('id', purgedIds);
-    if (reError) throw reError;
+    const remaining: Array<{ id: string }> = [];
+    for (const batch of chunkIds(purgedIds)) {
+      const { data, error: reError } = await supabase
+        .from('tab_groups')
+        .select('id')
+        .eq('user_id', userId)
+        .in('id', batch);
+      if (reError) throw reError;
+      remaining.push(...((data ?? []) as Array<{ id: string }>));
+    }
     const cmp = compareHardDeleteReadback(
       purgedIds,
-      ((remaining ?? []) as unknown) as Array<{ id: string }>
+      remaining
     );
     if (!cmp.ok) throw new Error(`[purgeCloudGroups] ${cmp.reason}`);
       logInfo(`[purgeCloudGroups] 已彻底删除 ${purgedIds.length} 个云端组`);
@@ -892,14 +922,17 @@ export const uploadSync = {
     const ids = ((expired ?? []) as Array<{ id: string }>).map(r => r.id);
     if (ids.length === 0) return 0;
 
-    const { error: deleteError } = await supabase
-      .from('tab_groups')
-      .delete()
-      .eq('user_id', userId)
-      .in('id', ids);
-    if (deleteError) {
-      logWarn('[purgeExpiredCloudTombstones] 删除过期墓碑失败（下轮重试）:', deleteError);
-      return 0;
+    // 分批：过期墓碑可能积很多，整串 .in() 会触发网关 400（这里失败只告警，下轮重试）。
+    for (const batch of chunkIds(ids)) {
+      const { error: deleteError } = await supabase
+        .from('tab_groups')
+        .delete()
+        .eq('user_id', userId)
+        .in('id', batch);
+      if (deleteError) {
+        logWarn('[purgeExpiredCloudTombstones] 删除过期墓碑失败（下轮重试）:', deleteError);
+        return 0;
+      }
     }
     logInfo(`[purgeExpiredCloudTombstones] 已清理 ${ids.length} 个超过 ${maxAgeDays} 天的云端墓碑行`);
     return ids.length;

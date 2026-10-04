@@ -9,6 +9,7 @@ import { EmptyState } from '@/components/common/EmptyState';
 import { LoadingSpinner } from '@/components/common/LoadingSpinner';
 import { PersonalizedWelcome } from '@/components/common/PersonalizedWelcome';
 import { toListErrorCopy } from './listErrorCopy';
+import { getContextOrigin } from '@/core/contextOrigin';
 import { logError } from '../../utils/log';
 
 interface TabListProps {
@@ -33,22 +34,33 @@ export const TabList: React.FC<TabListProps> = ({ searchQuery }) => {
 
     initializeData();
 
+    // 刷新统一走这个 150ms 防抖出口：把「拖拽中连续 hover 触发的多次写盘回声」、
+    // SW 的 REFRESH_TAB_LIST 合并成一次读取，避免同一帧内反复重载。
+    let debounceTimer: ReturnType<typeof setTimeout> | null = null;
+    const scheduleReload = () => {
+      if (debounceTimer) clearTimeout(debounceTimer);
+      debounceTimer = setTimeout(() => {
+        debounceTimer = null;
+        dispatch(loadGroups());
+      }, 150);
+    };
+
     const messageListener = (message: { type?: string }) => {
       if (message.type === 'REFRESH_TAB_LIST') {
         invalidateGroupsCache();
-        dispatch(loadGroups());
+        scheduleReload();
       }
       return true;
     };
 
     chrome.runtime.onMessage.addListener(messageListener);
 
-    let debounceTimer: ReturnType<typeof setTimeout> | null = null;
-    const unsubscribe = onGroupsChanged(() => {
-      if (debounceTimer) clearTimeout(debounceTimer);
-      debounceTimer = setTimeout(() => {
-        dispatch(loadGroups());
-      }, 150);
+    const unsubscribe = onGroupsChanged(originId => {
+      // 自己写出的回声：Redux 已是乐观更新后的新值，重载只会把列表打回存储态，
+      // 拖拽时表现为整页刷新。缓存失效照旧（见 onGroupsChanged），其它上下文
+      //（另一个窗口 / SW 后台写入 / 云端合并）的变更照常重载。
+      if (originId === getContextOrigin()) return;
+      scheduleReload();
     });
 
     return () => {
@@ -67,7 +79,11 @@ export const TabList: React.FC<TabListProps> = ({ searchQuery }) => {
 
   const errorCopy = toListErrorCopy(error);
 
-  if (isLoading) {
+  // 只有「冷启动还没有任何数据」才整页 loading。
+  // 后台刷新（onGroupsChanged / REFRESH_TAB_LIST）也会把 isLoading 置真，
+  // 若照旧整页替换，拖拽/同步每次落盘都会闪一次全屏 spinner——即用户看到的
+  // 「整个标签管理器页面都刷新了」。有数据时让刷新静默进行。
+  if (isLoading && groups.length === 0) {
     return (
       <div className="flex items-center justify-center h-64">
         <LoadingSpinner size="lg" />
@@ -75,7 +91,8 @@ export const TabList: React.FC<TabListProps> = ({ searchQuery }) => {
     );
   }
 
-  if (error) {
+  // 同理：已有数据时后台刷新失败不该把列表整页换成错误页，日志照旧（见上 error effect）。
+  if (error && groups.length === 0) {
     return (
       <EmptyState
         tone="warning"

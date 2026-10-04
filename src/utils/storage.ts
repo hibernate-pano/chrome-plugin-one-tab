@@ -76,10 +76,13 @@ export function invalidateGroupsCache(): void {
  * service-worker 的 migrateStorageKeys 残留写入（会伪造一次全量刷新）之外
  * 没有任何真实写方，纯属误导性的死监听。
  */
-export function onGroupsChanged(cb: () => void): () => void {
-  return subscribeGroupsChanged(() => {
+export function onGroupsChanged(cb: (originId?: string) => void): () => void {
+  return subscribeGroupsChanged((originId) => {
+    // 缓存失效与「要不要重载」是两件事：无论是不是自己写出的回声，本进程
+    // 30s 缓存都必须失效（否则紧接着直接读存储的路径——上传/下载预览等——
+    // 会读到旧值）。是否重载由订阅方按 originId 自行判断。
     invalidateGroupsCache();
-    cb();
+    cb(originId);
   });
 }
 
@@ -242,7 +245,7 @@ class ChromeStorage {
    * 写路径分工：SW 内所有写者（mutation、TabManager 保存、导入、迁移）都走
    * 本函数；只有 UI 进程的用户操作热路径走防抖 setGroups（高频连写合并）。
    */
-  async setGroupsImmediate(groups: TabGroup[]): Promise<void> {
+  async setGroupsImmediate(groups: TabGroup[], originId?: string): Promise<void> {
     const cache = cacheManager.getCache('storage');
     try {
       await this.debouncedPersistGroups.flush();
@@ -252,7 +255,9 @@ class ChromeStorage {
       // 事件源：同 debouncedPersistGroups（见那里的注释）。
       // 这条是 SW 侧所有写路径（mutation / TabManager / 导入 / syncEngine 合并）
       // 真正落盘的地方 —— 云端合并后管理页不刷新，根因就是这里以前不发任何事件。
-      notifyGroupsChanged();
+      // originId：MUTATE 命令的发起方身份。发起方据此忽略自己的写入回声，
+      // 其它上下文（另一个窗口 / SW 自身写入）照常收到通知。
+      notifyGroupsChanged(originId);
     } catch (error) {
       logError('直接保存标签组失败:', error);
       cache.delete('groups');

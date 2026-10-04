@@ -4,10 +4,8 @@ import { signOut } from '@/store/slices/authSlice';
 import { deleteAllGroups, loadGroups } from '@/store/slices/tabSlice';
 import { sendSyncCommand } from '@/shared/mutationProtocol';
 import { storage } from '@/utils/storage';
-import { LoginForm } from '../auth/LoginForm';
-import { RegisterForm } from '../auth/RegisterForm';
+import type { AuthTab } from '../auth/AuthModal';
 import { useToast } from '@/contexts/ToastContext';
-import { useDialogA11y } from '@/hooks/useKeyboardNavigation';
 import { 
   toggleShowNotifications, 
   toggleConfirmBeforeDelete,
@@ -62,6 +60,8 @@ const copyTextToClipboard = async (text: string): Promise<boolean> => {
 
 interface HeaderDropdownProps {
   onClose: () => void;
+  /** 打开应用级登录/注册弹窗（由 Header 托管，portal 到 body）。 */
+  onOpenAuth: (tab: AuthTab) => void;
 }
 
 /** 菜单行的统一 hover 反馈。菜单行不做位移（flat-interaction 的 -translate-y 会轻微跳动），只做背景色。 */
@@ -99,22 +99,14 @@ const DropdownToggleRow: React.FC<{
   </button>
 );
 
-export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({ onClose }) => {
+export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({ onClose, onOpenAuth }) => {
   const dispatch = useAppDispatch();
   const { isAuthenticated, user } = useAppSelector(state => state.auth);
   const { groups, lastSyncTime } = useAppSelector(state => state.tabs);
   const settings = useAppSelector(state => state.settings);
-  const [activeTab, setActiveTab] = useState<'login' | 'register'>('login');
-  const [showAuthModal, setShowAuthModal] = useState(false);
   const [openSubmenu, setOpenSubmenu] = useState<'export' | 'import' | null>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
-  const authModalRef = useRef<HTMLDivElement>(null);
   const { showConfirm, showAlert, showToast } = useToast();
-
-  // 账号弹窗的键盘与焦点契约：打开移焦、Tab 循环、Escape 关闭、关闭还焦。
-  // 不接管 Escape 的话，按键会被 Header 的全局 CLEAR_SEARCH 快捷键吃掉，
-  // 弹窗关不掉，反而把背后的搜索框清空。
-  useDialogA11y(authModalRef, showAuthModal, () => setShowAuthModal(false));
 
   // 处理通知开关
   const handleToggleNotifications = async () => {
@@ -462,7 +454,7 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({ onClose }) => {
 
         {!isAuthenticated && (
           <button
-            onClick={() => setShowAuthModal(true)}
+            onClick={() => onOpenAuth('login')}
             className={MENU_ROW}
           >
             <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 mr-2 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -749,63 +741,6 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({ onClose }) => {
         )}
       </div>
 
-      {showAuthModal && (
-        // 扩展 popup 的高度由未登录弹窗之外的内容决定。原先「垂直居中 + 不可滚动」
-        // 会让超出视口的弹窗上下两端被裁掉（顶部即「位置过高、显示不全」）。
-        // 外层负责滚动、内层 min-h-full 居中：放得下就居中，放不下就从顶部起排并可滚动。
-        <div className="fixed inset-0 z-50 overflow-y-auto bg-black bg-opacity-50">
-          <div className="flex min-h-full items-center justify-center p-4">
-          <div
-            ref={authModalRef}
-            role="dialog"
-            aria-modal="true"
-            aria-label="登录或注册账号"
-            tabIndex={-1}
-            className="ts-modal theme-bg-elevated rounded-lg shadow-xl w-full max-w-md focus:outline-none"
-          >
-            <div className="flex border-b border-gray-300 dark:border-gray-700">
-              <button
-                type="button"
-                className={`flex-1 py-3 transition-all font-medium ${activeTab === 'login' ? 'text-primary-600 border-b-2 border-primary-600' : 'text-gray-600 dark:text-gray-300 hover:text-primary-600 dark:hover:text-primary-400'}`}
-                onClick={() => setActiveTab('login')}
-              >
-                登录
-              </button>
-              <button
-                type="button"
-                className={`flex-1 py-3 transition-all font-medium ${activeTab === 'register' ? 'text-primary-600 border-b-2 border-primary-600' : 'text-gray-600 dark:text-gray-300 hover:text-primary-600 dark:hover:text-primary-400'}`}
-                onClick={() => setActiveTab('register')}
-              >
-                注册
-              </button>
-              <button
-                type="button"
-                className="p-3 text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-gray-400"
-                onClick={() => setShowAuthModal(false)}
-                aria-label="关闭登录弹窗"
-              >
-                <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                </svg>
-              </button>
-            </div>
-            <div className="p-6">
-              {activeTab === 'login' ? (
-                <LoginForm onSuccess={() => {
-                  setShowAuthModal(false);
-                  onClose();
-                }} />
-              ) : (
-                <RegisterForm onSuccess={() => {
-                  setShowAuthModal(false);
-                  onClose();
-                }} />
-              )}
-            </div>
-          </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 };

@@ -4,6 +4,7 @@
  * sender 可注入，node:test 无 chrome 环境可测。
  */
 import type { TabGroup } from '../types/tab';
+import { getContextOrigin } from './contextOrigin';
 
 export type MutationOp =
   | { op: 'saveGroup'; group: TabGroup }
@@ -34,7 +35,13 @@ export async function sendMutation<P = unknown>(
   sender: MessageSender = defaultSender
 ): Promise<MutationResult<P>> {
   try {
-    const res = (await sender({ type: 'MUTATE', data: cmd })) as MutationResult<P> | undefined;
+    // originId：写方身份。SW 落盘广播时会带回它，本上下文据此忽略自己的回声
+    //（避免「自己写 → 广播 → 自己全量重载」把拖拽中的列表整页刷掉）。
+    const res = (await sender({
+      type: 'MUTATE',
+      data: cmd,
+      originId: getContextOrigin(),
+    })) as MutationResult<P> | undefined;
     if (!res) return { ok: false, error: 'SW 无响应' };
     return res;
   } catch (e) {

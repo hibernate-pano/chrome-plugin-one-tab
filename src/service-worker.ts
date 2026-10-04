@@ -370,7 +370,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           sendResponse({ ok: false, error: '无效命令' });
           return false;
         }
-        enqueue(cmd.op, () => mutationService.handle(cmd))
+        // originId 由发起上下文提供，一路带到落盘广播，供发起方过滤自己的回声。
+        const originId = typeof message.originId === 'string' ? message.originId : undefined;
+        enqueue(cmd.op, () => mutationService.handle(cmd, originId))
           .then(res => sendResponse(res))
           .catch(err => sendResponse({ ok: false, error: err?.message || '命令执行失败' }));
         return true; // 异步响应
