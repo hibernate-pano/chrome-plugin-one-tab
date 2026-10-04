@@ -510,14 +510,34 @@ class ChromeStorage {
    * clearPendingDeleteIds 的注释。
    */
   async addPendingDeleteId(id: string): Promise<void> {
+    return this.addPendingDeleteIds([id]);
+  }
+
+  /**
+   * 批量登记删除广播意图（addPendingDeleteId 的 N 条版本）。
+   *
+   * 【为什么必须批量】单次清理（cleanDuplicates）/ 批量迁移会一次移除成百上千个组，
+   * 逐条调用 addPendingDeleteId 的代价是 **2N 次 IndexedDB 往返**（每条都读一遍
+   * 全队列、再写回全队列）+ 2N 次整队列序列化。2000 条实测约 9 秒——这就是
+   * 「清理重复标签点击后卡住」的根因（计算本身只要几十毫秒，全耗在队列 I/O 上）。
+   * 批量化后是 2 次往返，与条数无关。
+   *
+   * 语义与逐条版完全一致：读-合并-写；写失败时把**本批全部** id 推进内存兜底
+   * 并抛错（不让任何一条被静默丢弃）。并发调用由 KV 写本身的串行性兜底——本文件
+   * 的 addPendingDeleteId 系列都在 SW 的单写者队列内被调用。
+   */
+  async addPendingDeleteIds(newIds: readonly string[]): Promise<void> {
+    const idsToAdd = [...new Set(newIds.filter((id): id is string => typeof id === 'string'))];
+    if (idsToAdd.length === 0) return;
     try {
       const ids = await this.getPendingDeleteIds();
-      if (!ids.includes(id)) {
-        await this.ensureVersion();
-        await kvSet(STORAGE_KEYS.PENDING_DELETE_IDS, [...ids, id]);
-      }
+      const existing = new Set(ids);
+      const merged = [...ids, ...idsToAdd.filter(id => !existing.has(id))];
+      if (merged.length === ids.length) return; // 全部已在队列里
+      await this.ensureVersion();
+      await kvSet(STORAGE_KEYS.PENDING_DELETE_IDS, merged);
     } catch (error) {
-      unsyncedDeleteIds.add(id);
+      for (const id of idsToAdd) unsyncedDeleteIds.add(id);
       logError('记录 pending_delete_ids 失败（已暂存内存兜底，删除不会被静默撤销）:', error);
       throw error;
     }

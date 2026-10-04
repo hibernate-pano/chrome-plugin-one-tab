@@ -69,7 +69,7 @@ function memStorage() {
     // 无墓碑模型：物理删除的组 id 登记删除广播队列（云端行由 upload 侧
     // markCloudGroupsAsDeleted 标记 is_deleted，对端合并时服从删除）。
     deletedIds: [] as string[],
-    async noteGroupDeleted(id: string) { (this as any).deletedIds.push(id); },
+    async noteGroupDeleted(ids: readonly string[]) { (this as any).deletedIds.push(...ids); },
   };
 }
 

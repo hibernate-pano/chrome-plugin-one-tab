@@ -183,6 +183,15 @@ test('同步弹窗里非控件的 onClick 只有「点遮罩关闭」和「阻�
   assert.ok(SYNC_BUTTON.includes('aria-label="关闭同步弹窗"'));
 });
 
+// 回归（2026-10-04，浏览器实测）：窄视口（420×480）下同步弹窗高 1030px，
+// 旧实现是「flex items-center justify-center」且遮罩不可滚动 → 弹窗被垂直居中
+// 顶出屏幕，标题与关闭按钮落在视口上方且无法滚到（实测 top −275，均不可达）。
+// 修法与 AuthModal 一致：外层 overflow-y-auto + 内层 min-h-full 居中。
+test('同步弹窗在矮视口下可滚动，标题/关闭按钮不被顶出屏幕', () => {
+  assert.match(SYNC_BUTTON, /overflow-y-auto/, '遮罩必须可滚动');
+  assert.match(SYNC_BUTTON, /flex min-h-full items-center justify-center/, '必须用 min-h-full 居中包裹层');
+});
+
 test('四个同步动作收敛成按 (方向, 模式) 参数化的单一入口', () => {
   for (const key of ['upload.overwrite', 'upload.merge', 'download.overwrite', 'download.merge']) {
     assert.ok(SYNC_BUTTON.includes(`handleSyncActionClick('${key}')`), `缺少 handleSyncActionClick('${key}')`);

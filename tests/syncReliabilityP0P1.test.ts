@@ -206,7 +206,7 @@ describe('deleteGroup: 本地物理移除 + 登记删除广播队列', () => {
         async getDeviceSeq() { return seqN; },
         async bumpSeqIfLower(c: number) { return c > seqN ? (seqN = c) : seqN; },
       },
-      async noteGroupDeleted(id: string) { noted.push(id); },
+      async noteGroupDeleted(ids: readonly string[]) { noted.push(...ids); },
     };
   }
 

@@ -379,10 +379,15 @@ export const SyncButton: React.FC<SyncButtonProps> = () => {
       {(showUploadModal || showDownloadModal) && createPortal(
         <div
           style={{ zIndex: 99999 }}
-          className={`fixed inset-0 z-[105] flex items-center justify-center p-4 ${modalAnimation}`}
+          // 外层负责滚动、内层 min-h-full 居中：放得下就居中，放不下就从顶部起排并可滚动。
+          // 之前是「flex items-center justify-center」且不可滚动——弹窗内容较高时（窄视口 /
+          // 长会话名）会被垂直居中顶出屏幕，标题与关闭按钮落到视口上方且无法滚到（实测
+          // 420×480 下弹窗高 1030、top −275，标题与关闭按钮都不可达）。与 AuthModal 同一模式。
+          className={`fixed inset-0 z-[105] overflow-y-auto ${modalAnimation}`}
           onClick={closeModals}
         >
-          <div className="absolute inset-0 bg-slate-950/55 backdrop-blur-sm" />
+          <div className="fixed inset-0 bg-slate-950/55 backdrop-blur-sm" />
+          <div className="relative flex min-h-full items-center justify-center p-4">
           {showUploadModal && (
             <div
               ref={panelRef}
@@ -406,7 +411,9 @@ export const SyncButton: React.FC<SyncButtonProps> = () => {
               </button>
 
               <div className="px-6 pb-6 pt-6 sm:px-7 sm:pb-7 sm:pt-7">
-                <div style={{ textAlign: 'center', marginBottom: '16px' }}>
+                {/* 描述区固定最小高度：上传弹窗没有「当前合并策略」那行，下载有；
+                    不固定的话两个弹窗高度不同，看起来「大小不一」。 */}
+                <div className="mb-4 min-h-[4.5rem] text-center">
                   <h3 id={uploadTitleId} className="text-xl font-semibold tracking-tight text-slate-900 dark:text-slate-50">上传到云端</h3>
                   <p id={uploadDescriptionId} className="mt-2 text-sm leading-6 text-slate-600 dark:text-slate-300">先看这次会怎么改动云端会话，再决定覆盖还是合并</p>
                 </div>
@@ -436,8 +443,8 @@ export const SyncButton: React.FC<SyncButtonProps> = () => {
                     aria-disabled={uploadOverwriteState.type === 'blocked'}
                     className="w-full overflow-hidden rounded-[24px] border border-rose-200/70 bg-white text-left shadow-sm transition-transform duration-200 hover:-translate-y-0.5 hover:shadow-lg focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-rose-500 disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:translate-y-0 disabled:hover:shadow-sm dark:border-rose-500/20 dark:bg-slate-900/80"
                   >
-                    <div className="flex items-center justify-center bg-rose-600 px-5 py-5 text-white">
-                      <svg xmlns="http://www.w3.org/2000/svg" className="h-12 w-12" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <div className="flex items-center justify-center bg-rose-600 px-5 py-3.5 text-white">
+                      <svg xmlns="http://www.w3.org/2000/svg" className="h-8 w-8" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
                       </svg>
                     </div>
@@ -447,12 +454,6 @@ export const SyncButton: React.FC<SyncButtonProps> = () => {
                         uploadPreview?.overwrite ?? null,
                         '云端',
                         '用当前本地会话直接替换云端现状。',
-                        {
-                          added: '#16a34a',
-                          updated: '#dc2626',
-                          deleted: '#b91c1c',
-                          muted: '#6b7280',
-                        }
                       )}
                       {/* 闸门提示：blocked 说清为何点不动；armed 说清再点一次会发生什么 */}
                       <div className="mt-3 rounded-xl bg-rose-50 px-3 py-2 text-xs leading-5 text-rose-700 dark:bg-rose-500/10 dark:text-rose-300">
@@ -470,8 +471,8 @@ export const SyncButton: React.FC<SyncButtonProps> = () => {
                     onClick={() => void handleSyncActionClick('upload.merge')}
                     className="w-full cursor-pointer overflow-hidden rounded-[24px] border border-emerald-200/70 bg-white text-left shadow-sm transition-transform duration-200 hover:-translate-y-0.5 hover:shadow-lg focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-500 dark:border-emerald-500/20 dark:bg-slate-900/80"
                   >
-                    <div className="flex items-center justify-center bg-emerald-600 px-5 py-5 text-white">
-                      <svg xmlns="http://www.w3.org/2000/svg" className="h-12 w-12" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <div className="flex items-center justify-center bg-emerald-600 px-5 py-3.5 text-white">
+                      <svg xmlns="http://www.w3.org/2000/svg" className="h-8 w-8" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4" />
                       </svg>
                     </div>
@@ -481,12 +482,6 @@ export const SyncButton: React.FC<SyncButtonProps> = () => {
                         uploadPreview?.merge ?? null,
                         '云端',
                         '把本地会话按 ID 合并进云端，未命中的云端会话会保留。',
-                        {
-                          added: '#16a34a',
-                          updated: '#2563eb',
-                          deleted: '#b91c1c',
-                          muted: '#6b7280',
-                        }
                       )}
                     </div>
                   </button>
@@ -528,7 +523,8 @@ export const SyncButton: React.FC<SyncButtonProps> = () => {
               </button>
 
               <div className="px-6 pb-6 pt-6 sm:px-7 sm:pb-7 sm:pt-7">
-                <div style={{ textAlign: 'center', marginBottom: '16px' }}>
+                {/* 与上传弹窗同高（min-h 固定描述区），保证两个弹窗尺寸一致。 */}
+                <div className="mb-4 min-h-[4.5rem] text-center">
                   <h3 id={downloadTitleId} className="text-xl font-semibold tracking-tight text-slate-900 dark:text-slate-50">下载到本地</h3>
                   <p id={downloadDescriptionId} className="mt-2 text-sm leading-6 text-slate-600 dark:text-slate-300">先看这次会怎么改动本地会话，再决定覆盖还是合并</p>
                   <p className="mt-2 text-xs font-medium text-sky-600 dark:text-sky-300">
@@ -559,8 +555,8 @@ export const SyncButton: React.FC<SyncButtonProps> = () => {
                     aria-disabled={downloadOverwriteState.type === 'blocked'}
                     className="w-full overflow-hidden rounded-[24px] border border-rose-200/70 bg-white text-left shadow-sm transition-transform duration-200 hover:-translate-y-0.5 hover:shadow-lg focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-rose-500 disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:translate-y-0 disabled:hover:shadow-sm dark:border-rose-500/20 dark:bg-slate-900/80"
                   >
-                    <div className="flex items-center justify-center bg-rose-600 px-5 py-5 text-white">
-                      <svg xmlns="http://www.w3.org/2000/svg" className="h-12 w-12" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <div className="flex items-center justify-center bg-rose-600 px-5 py-3.5 text-white">
+                      <svg xmlns="http://www.w3.org/2000/svg" className="h-8 w-8" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
                       </svg>
                     </div>
@@ -570,12 +566,6 @@ export const SyncButton: React.FC<SyncButtonProps> = () => {
                         downloadPreview?.overwrite ?? null,
                         '本地',
                         '用云端会话直接替换本地现状。',
-                        {
-                          added: '#16a34a',
-                          updated: '#dc2626',
-                          deleted: '#b91c1c',
-                          muted: '#6b7280',
-                        }
                       )}
                       <div className="mt-3 rounded-xl bg-rose-50 px-3 py-2 text-xs leading-5 text-rose-700 dark:bg-rose-500/10 dark:text-rose-300">
                         {downloadOverwriteState.type === 'blocked'
@@ -592,8 +582,8 @@ export const SyncButton: React.FC<SyncButtonProps> = () => {
                     onClick={() => void handleSyncActionClick('download.merge')}
                     className="w-full cursor-pointer overflow-hidden rounded-[24px] border border-sky-200/70 bg-white text-left shadow-sm transition-transform duration-200 hover:-translate-y-0.5 hover:shadow-lg focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sky-500 dark:border-sky-500/20 dark:bg-slate-900/80"
                   >
-                    <div className="flex items-center justify-center bg-sky-600 px-5 py-5 text-white">
-                      <svg xmlns="http://www.w3.org/2000/svg" className="h-12 w-12" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <div className="flex items-center justify-center bg-sky-600 px-5 py-3.5 text-white">
+                      <svg xmlns="http://www.w3.org/2000/svg" className="h-8 w-8" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4" />
                       </svg>
                     </div>
@@ -603,12 +593,6 @@ export const SyncButton: React.FC<SyncButtonProps> = () => {
                         downloadPreview?.merge ?? null,
                         '本地',
                         '按当前同步策略把云端会话合并进本地。',
-                        {
-                          added: '#16a34a',
-                          updated: '#2563eb',
-                          deleted: '#b91c1c',
-                          muted: '#6b7280',
-                        }
                       )}
                     </div>
                   </button>
@@ -626,6 +610,7 @@ export const SyncButton: React.FC<SyncButtonProps> = () => {
               </div>
             </div>
           )}
+          </div>
         </div>,
         document.body
       )}

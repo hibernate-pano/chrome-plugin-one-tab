@@ -392,14 +392,15 @@ export class SyncEngine {
       let deleteQueued = false;
       const droppedIds = removedGroupIds(mergedGroups, finalGroups);
       if (droppedIds.length > 0) {
-        for (const id of droppedIds) {
-          try {
-            await storage.addPendingDeleteId(id);
-            deleteQueued = true;
-          } catch (e) {
-            logWarn('[SyncEngine] 登记删除广播队列失败（云端行可能残留复活）:', id, e);
-          }
+        try {
+          // 批量登记：下载合并可能一次丢弃很多空壳组，逐条登记是 2N 次 KV 往返。
+          await storage.addPendingDeleteIds(droppedIds);
+        } catch (e) {
+          // 写失败时 addPendingDeleteIds 已把整批推进内存兜底，意图仍在，
+          // 仍需置位 pending_upload 让下一轮上传尝试广播（否则删除只留在内存）。
+          logWarn('[SyncEngine] 登记删除广播队列失败（云端行可能残留复活）:', e);
         }
+        deleteQueued = true;
         logInfo(`[SyncEngine] 合并剔除 ${droppedIds.length} 个空组并登记删除广播`);
       }
       if (deleteQueued) {

@@ -45,7 +45,7 @@ export const mutationService = createMutationHandlers({
   seq,
   // 无墓碑模型：物理删除的组登记 pendingDeleteIds，由 SyncEngine.upload
   // markCloudGroupsAsDeleted 标记云端行（删除广播）后 clear。
-  noteGroupDeleted: id => storage.addPendingDeleteId(id),
+  noteGroupDeleted: ids => storage.addPendingDeleteIds(ids),
   // V2 影子双写：落盘成功后异步翻译写入 Y.Doc（读仍走 blob）。
   // 灰度/开关/吞错全在 maybeShadowWrite 内部；此处仅做依赖绑定。
   shadowWrite: ({ op, stamp, now }) =>

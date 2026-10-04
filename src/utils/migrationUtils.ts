@@ -139,9 +139,8 @@ export async function purgeTombstones(): Promise<void> {
 
     // 旧 purge 队列 → 删除广播队列（标记删除语义，云端行保留广播删除意图）
     const legacyPurgeIds = await storage.getPendingPurgeIds();
-    for (const id of legacyPurgeIds) {
-      await storage.addPendingDeleteId(id);
-    }
+    // 批量登记：旧队列可能很长，逐条是 2N 次 KV 往返。
+    await storage.addPendingDeleteIds(legacyPurgeIds);
 
     // 遗留键清理（旧回收站列表 + 旧 purge 队列）
     await kvRemove(STORAGE_KEYS.DELETED_GROUPS);

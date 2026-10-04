@@ -364,7 +364,7 @@ before(async () => {
     now: () => new Date().toISOString(),
     journal,
     seq,
-    noteGroupDeleted: (id: string) => storage.addPendingDeleteId(id),
+    noteGroupDeleted: (ids: readonly string[]) => storage.addPendingDeleteIds(ids),
   });
   handlers = {
     mutate: async (cmd: any) => {

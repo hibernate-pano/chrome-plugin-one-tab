@@ -48,7 +48,11 @@ export interface MutationDeps {
    * 可选依赖——缺失时仅告警（本地已删干净，云端行残留则对端可能复活，
    * 日志中明确给出该风险而非静默）。
    */
-  noteGroupDeleted?: (groupId: string) => Promise<void> | void;
+  /**
+   * 登录删除广播意图（批量）。cleanDuplicates 一次可能删上千个组，逐条登记
+   * 是 2N 次 IndexedDB 往返（曾导致清理操作卡死数秒）；批量登记仅 2 次往返。
+   */
+  noteGroupDeleted?: (groupIds: readonly string[]) => Promise<void> | void;
   /**
    * V2 影子双写：主写（journal → apply* → setGroups）成功后由 handle()
    * fire-and-forget 调用。实现见 src/core/yShadow.ts maybeShadowWrite。
@@ -68,13 +72,13 @@ async function noteDeletedGroups(
   deps: MutationDeps,
   ids: (string | null | undefined)[]
 ): Promise<void> {
-  for (const id of ids) {
-    if (!id) continue;
-    try {
-      await deps.noteGroupDeleted?.(id);
-    } catch (e) {
-      logWarn('[mutationHandlers] 登记删除广播队列失败（云端行可能残留复活）:', id, e);
-    }
+  const validIds = ids.filter((id): id is string => typeof id === 'string' && id.length > 0);
+  if (validIds.length === 0) return;
+  try {
+    // 一次登记整批：逐条会造成 2N 次 KV 往返（大清理场景卡死的根因）。
+    await deps.noteGroupDeleted?.(validIds);
+  } catch (e) {
+    logWarn('[mutationHandlers] 登记删除广播队列失败（云端行可能残留复活）:', validIds, e);
   }
 }
 

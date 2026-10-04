@@ -96,73 +96,105 @@ export const getSyncStrategyLabel = (strategy: string) => {
   }
 };
 
-export const renderPreviewNames = (label: string, names: string[], color: string) => {
+const MAX_VISIBLE_NAMES = 2;
+
+const renderPreviewNames = (label: string, names: string[], toneClass: string) => {
   if (names.length === 0) {
     return null;
   }
-
+  const shown = names.slice(0, MAX_VISIBLE_NAMES);
+  const extra = names.length - shown.length;
   return (
-    <div style={{ fontSize: '0.72rem', color, lineHeight: '1.5', marginTop: '6px' }}>
-      {label}：{names.join('、')}
-    </div>
+    <p
+      className={`truncate text-[0.72rem] leading-5 ${toneClass}`}
+      title={`${label}：${names.join('、')}`}
+    >
+      {label}：{shown.join('、')}
+      {extra > 0 ? ` 等 ${names.length} 个` : ''}
+    </p>
   );
 };
 
+/** 带符号的净变化：+N / −N / ±0，用 tabular-nums 保证多行数字右对齐不跳动。 */
+export const formatDelta = (delta: number): { text: string; toneClass: string } => {
+  if (delta > 0) return { text: `+${delta}`, toneClass: 'text-emerald-600 dark:text-emerald-400' };
+  if (delta < 0) return { text: `−${Math.abs(delta)}`, toneClass: 'text-rose-600 dark:text-rose-400' };
+  return { text: '±0', toneClass: 'text-slate-400 dark:text-slate-500' };
+};
+
+/**
+ * 同步预览卡片的内容区。
+ *
+ * 三块固定结构（顺序稳定，便于两张卡片横向/纵向对齐）：
+ *   1) 模式说明（会说清这次怎么改动目标侧）
+ *   2) 新增 / 更新 / 删除 三个等宽数字块（统一尺寸与基线）
+ *   3) 目标侧会话数的「现有 → 预计（净变化）」一行 + 示例名
+ *
+ * 颜色改用主题类（dark: 变体）而非内联固定色，避免暗色主题下白底黑字发糊。
+ */
 export const renderPreviewSummary = (
   summary: SyncPreviewSummary | null,
-    targetLabel: '云端' | '本地',
-    modeDescription: string,
-    colorPalette: {
-      added: string;
-      updated: string;
-      deleted: string;
-      muted: string;
-    }
-  ) => {
-    if (!summary) {
-      return (
-        <div style={{ fontSize: '0.78rem', color: colorPalette.muted, lineHeight: '1.5', marginTop: '10px' }}>
-          暂无预览数据
-        </div>
-      );
-    }
-
+  targetLabel: '云端' | '本地',
+  modeDescription: string,
+) => {
+  if (!summary) {
     return (
-      <div style={{ marginTop: '10px' }}>
-        <div style={{ fontSize: '0.78rem', color: '#374151', lineHeight: '1.5' }}>
-          {modeDescription}
-        </div>
-        <div
-          style={{
-            marginTop: '10px',
-            display: 'grid',
-            gridTemplateColumns: 'repeat(3, minmax(0, 1fr))',
-            gap: '8px',
-          }}
-        >
-          <div style={{ borderRadius: '10px', backgroundColor: '#f9fafb', padding: '8px 10px' }}>
-            <div style={{ fontSize: '0.7rem', color: colorPalette.added }}>新增</div>
-            <div style={{ fontSize: '1rem', fontWeight: 700, color: '#111827' }}>{summary.additions}</div>
-          </div>
-          <div style={{ borderRadius: '10px', backgroundColor: '#f9fafb', padding: '8px 10px' }}>
-            <div style={{ fontSize: '0.7rem', color: colorPalette.updated }}>覆盖</div>
-            <div style={{ fontSize: '1rem', fontWeight: 700, color: '#111827' }}>{summary.updates}</div>
-          </div>
-          <div style={{ borderRadius: '10px', backgroundColor: '#f9fafb', padding: '8px 10px' }}>
-            <div style={{ fontSize: '0.7rem', color: colorPalette.deleted }}>删除</div>
-            <div style={{ fontSize: '1rem', fontWeight: 700, color: '#111827' }}>{summary.deletions}</div>
-          </div>
-        </div>
-        <div style={{ fontSize: '0.72rem', color: '#6b7280', lineHeight: '1.5', marginTop: '8px' }}>
-          操作前 {targetLabel} {summary.beforeCount} 个会话，操作后预计 {summary.afterCount} 个会话。
-          {summary.unchanged > 0 ? ` 另有 ${summary.unchanged} 个会话保持不变。` : ''}
-        </div>
-        {renderPreviewNames('新增示例', summary.addedNames, colorPalette.added)}
-        {renderPreviewNames('覆盖示例', summary.updatedNames, colorPalette.updated)}
-        {renderPreviewNames('删除示例', summary.deletedNames, colorPalette.deleted)}
-      </div>
+      <p className="mt-3 text-[0.78rem] leading-5 text-slate-400 dark:text-slate-500">暂无预览数据</p>
     );
-  };
+  }
+
+  const stats = [
+    { key: 'added', label: '新增', value: summary.additions, tone: 'text-emerald-600 dark:text-emerald-400' },
+    { key: 'updated', label: '更新', value: summary.updates, tone: 'text-sky-600 dark:text-sky-400' },
+    { key: 'deleted', label: '删除', value: summary.deletions, tone: 'text-rose-600 dark:text-rose-400' },
+  ];
+  const delta = formatDelta(summary.afterCount - summary.beforeCount);
+
+  return (
+    <div className="mt-3 flex flex-col gap-3">
+      <p className="text-[0.78rem] leading-5 text-slate-500 dark:text-slate-400">{modeDescription}</p>
+
+      <div className="grid grid-cols-3 gap-2">
+        {stats.map(stat => (
+          <div
+            key={stat.key}
+            className="flex min-w-0 flex-col items-center gap-0.5 rounded-xl border border-slate-100 bg-slate-50 px-2 py-2.5 dark:border-slate-700/60 dark:bg-slate-800/60"
+          >
+            <span className={`text-[0.7rem] font-medium ${stat.tone}`}>{stat.label}</span>
+            <span className="text-lg font-semibold leading-none tabular-nums text-slate-900 dark:text-slate-50">
+              {stat.value}
+            </span>
+          </div>
+        ))}
+      </div>
+
+      <div className="rounded-xl bg-slate-50/70 px-3 py-2 dark:bg-slate-800/40">
+        <div className="flex items-center justify-between gap-2 text-[0.76rem] leading-5 text-slate-500 dark:text-slate-400">
+          <span className="truncate">{targetLabel}会话</span>
+          <span className="flex shrink-0 items-center gap-1.5 tabular-nums">
+            <span className="text-slate-700 dark:text-slate-300">{summary.beforeCount}</span>
+            <span aria-hidden="true" className="text-slate-400 dark:text-slate-500">→</span>
+            <span className="font-medium text-slate-900 dark:text-slate-100">{summary.afterCount}</span>
+            <span className={`text-[0.72rem] font-medium ${delta.toneClass}`}>{delta.text}</span>
+          </span>
+        </div>
+        {summary.unchanged > 0 && (
+          <div className="mt-0.5 text-[0.7rem] leading-5 text-slate-400 dark:text-slate-500">
+            另有 {summary.unchanged} 个会话保持不变
+          </div>
+        )}
+      </div>
+
+      {(summary.addedNames.length > 0 || summary.updatedNames.length > 0 || summary.deletedNames.length > 0) && (
+        <div className="flex flex-col gap-0.5">
+          {renderPreviewNames('新增', summary.addedNames, 'text-emerald-600 dark:text-emerald-400')}
+          {renderPreviewNames('更新', summary.updatedNames, 'text-sky-600 dark:text-sky-400')}
+          {renderPreviewNames('删除', summary.deletedNames, 'text-rose-600 dark:text-rose-400')}
+        </div>
+      )}
+    </div>
+  );
+};
 
 /**
  * 本地进度模拟器工厂：SW 不回传 onProgress，用一组 setTimeout 推进进度条。
@@ -181,4 +213,3 @@ export const createSimulatedProgress = (onTick: (p: number) => void): ReturnType
   };
   return setTimeout(tick, 200);
 };
-

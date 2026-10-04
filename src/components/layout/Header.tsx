@@ -16,6 +16,7 @@ import { LayoutMode } from '@/types/tab';
 import { useDebouncedSearch } from '@/hooks/useDebouncedSearch';
 import { Tooltip } from '@/components/common/Tooltip';
 import { TapStackLogo } from '@/components/common/TapStackIcon';
+import { cleanDuplicatesResultMessage } from './cleanDuplicatesMessage';
 import { logError } from '../../utils/log';
 
 interface HeaderProps {
@@ -71,14 +72,17 @@ const SaveIcon = () => (
 
 export const Header: React.FC<HeaderProps> = ({ onSearch }) => {
   const dispatch = useAppDispatch();
-  const { showConfirm, showAlert } = useToast();
+  const { showConfirm, showAlert, showToast } = useToast();
   const settings = useAppSelector(state => state.settings);
+  // 清理重复标签的进行中标志：只用来禁点 + 转圈，不阻塞界面。
+  const [isCleaningDuplicates, setIsCleaningDuplicates] = React.useState(false);
 
   const { searchValue, debouncedValue, handleSearchChange, clearSearch, isSearching } = useDebouncedSearch();
   const searchInputRef = React.useRef<HTMLInputElement>(null);
   const [isSearchTransitionPending, startSearchTransition] = useTransition();
 
   const handleCleanDuplicateTabs = () => {
+    if (isCleaningDuplicates) return;
     showConfirm({
       title: '确认清理重复标签和空会话',
       message:
@@ -86,18 +90,33 @@ export const Header: React.FC<HeaderProps> = ({ onSearch }) => {
       type: 'warning',
       confirmText: '确认清理',
       cancelText: '取消',
-      onConfirm: async () => {
-        try {
-          await dispatch(cleanDuplicateTabs()).unwrap();
-        } catch (error) {
-          logError('清理重复标签失败:', error);
-          showAlert({
-            title: '清理失败',
-            message: '清理重复标签失败，请重试',
-            type: 'error',
-            onClose: () => { },
-          });
-        }
+      // 不要在确认弹窗里等清理跑完：大批量去重 + 成百上千条删除广播登记会有可见
+      // 耗时，挂着弹窗转圈就是用户说的「卡住」。确认即关窗，清理在后台进行，
+      // 完成时列表由 Redux 自然更新并报出清理结果；失败再弹提示。
+      onConfirm: () => {
+        void (async () => {
+          setIsCleaningDuplicates(true);
+          try {
+            const result = await dispatch(cleanDuplicateTabs()).unwrap();
+            // 清理是有成效的操作，结果必须让用户看见——静默会让「点了一下没反应」
+            // 与「真的没东西可清」无法区分。
+            showToast(
+              cleanDuplicatesResultMessage(result.removedTabsCount, result.removedGroupsCount),
+              'success',
+              4000,
+            );
+          } catch (error) {
+            logError('清理重复标签失败:', error);
+            showAlert({
+              title: '清理失败',
+              message: '清理重复标签失败，请重试',
+              type: 'error',
+              onClose: () => { },
+            });
+          } finally {
+            setIsCleaningDuplicates(false);
+          }
+        })();
       },
       onCancel: () => { },
     });
@@ -236,10 +255,12 @@ export const Header: React.FC<HeaderProps> = ({ onSearch }) => {
             <Tooltip content="清理重复标签" position="bottom">
               <button
                 onClick={handleCleanDuplicateTabs}
+                disabled={isCleaningDuplicates}
                 className="btn-icon flat-interaction"
                 aria-label="清理重复标签页"
+                aria-busy={isCleaningDuplicates}
               >
-                <CleanIcon />
+                {isCleaningDuplicates ? <LoadingIcon /> : <CleanIcon />}
               </button>
             </Tooltip>
 
