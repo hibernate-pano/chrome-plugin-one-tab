@@ -178,7 +178,7 @@ function project(row: CloudRow, cols: string[]): CloudRow {
  *
  * 迁移来源：
  *   - guard_tab_group_version：
- *     supabase/migrations/20260827_fix_version_guard_for_tombstones.sql
+ *     supabase/migrations/20260826064109_fix_version_guard_for_tombstones.sql
  *   - guard_tab_group_op_stamp：
  *     supabase/migrations/20260910_fix_op_stamp_guard_strict_lt.sql
  */

@@ -1,31 +1,43 @@
 -- ─────────────────────────────────────────────────────────────
--- D3 墓碑 7 天 · 服务端兜底清理（手动步骤，不随迁移自动启用）。
+-- 云端删除标记行 · 服务端兜底清理（手动步骤，不随迁移自动启用）。
+--
+-- 【先搞清楚这里删的是什么】v1.22.0 起是「无墓碑」模型：本地删除是物理移除，
+-- 跨设备删除靠云端那一行被标成 is_deleted = true（行保留，作为删除意图的载体）。
+-- 这个标记行必须留够久，让所有设备都看到；否则离线设备手里的活跃副本会在下次
+-- 合并时把已删的组复活。到期后物理删除整行。
+--
+-- 【当前 TTL 是 30 天，不是 7 天】现行语义写死在客户端
+-- `purgeExpiredCloudTombstones(maxAgeDays = 30)`（src/utils/supabase/upload.ts，
+-- 随上传执行），隐私政策与 docs/v2-plan.md 也都按 30 天表述。
+-- 旧文档里的「7 天」属于已废弃的「墓碑 7 天回收站」模型（v1.22.0 已移除）。
+-- ⚠️ 本脚本的天数必须与客户端保持一致，否则会出现「服务端提前删、客户端还没广播完
+--    → 离线设备复活已删会话」。改客户端 TTL 时，务必同步改这里。
 --
 -- 前置：先执行 supabase/migrations/20260926090000_tombstone_expiry.sql
 --     （pnpm supabase:migrate），确认 deleted_at 列已存在。
 -- 启用条件（负责人确认，三条缺一不可）：
---   1) 客户端 sweep 已上线 ≥1 个版本（本地主清理先生效，服务端只做兜底）；
+--   1) 客户端清理已上线 ≥1 个版本（客户端为主清理，服务端只兜底「再也没人登录」的账号）；
 --   2) 已在 staging 项目演练过本脚本（先 SELECT 计数，再 DELETE）；
 --   3) 明确 pg_cron 可用（Dashboard → Database → Extensions 勾选 pg_cron），
 --      不可用则改用 Supabase Scheduled Job / Vercel Cron 调同语义接口。
 --
--- 语义（与 src/core/tombstone.ts 对齐，偏保守）：
---   只删“已被 snapshot 覆盖的 log 前缀中的过期墓碑 update”——
---   绝不直接删未被 snapshot 覆盖的 log（防新设备恢复断链）。
+-- 【为什么还需要服务端兜底】客户端清理只在「有客户端上传时」才跑。若某账号再也
+-- 不用、设备再也不上线，它的标记行就永远没人清——本脚本就是给这种行兜底。
 -- ─────────────────────────────────────────────────────────────
 
--- 演练（只读）：先看 7 天后视角下有多少行会被清
+-- 演练（只读）：先看 30 天后视角下有多少行会被清
 -- SELECT count(*) FROM public.tab_groups
 --  WHERE is_deleted = true
---    AND COALESCE(deleted_at, updated_at) < now() - interval '7 days';
+--    AND COALESCE(deleted_at, updated_at) < now() - interval '30 days';
 
--- 每日清理（pg_cron；按项目时区调整 cron 表达式）
+-- 每日清理（pg_cron；按项目时区调整 cron 表达式）。
+-- ⚠️ 天数必须与客户端 purgeExpiredCloudTombstones(maxAgeDays) 一致（当前 30）。
 -- SELECT cron.schedule(
 --   'tapstack-tombstone-expiry',
 --   '0 3 * * *',
 --   $$
 --   DELETE FROM public.tab_groups
 --   WHERE is_deleted = true
---     AND COALESCE(deleted_at, updated_at) < now() - interval '7 days';
+--     AND COALESCE(deleted_at, updated_at) < now() - interval '30 days';
 --   $$
 -- );

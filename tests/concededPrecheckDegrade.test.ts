@@ -170,7 +170,7 @@ function project(row: CloudRow, cols: string[]): CloudRow {
  * 服务端两个 BEFORE UPDATE 守卫的逐条判定（照抄 migration 的 plpgsql）。
  * 迁移来源：
  *   - guard_tab_group_version：
- *     supabase/migrations/20260827_fix_version_guard_for_tombstones.sql
+ *     supabase/migrations/20260826064109_fix_version_guard_for_tombstones.sql
  *   - guard_tab_group_op_stamp：
  *     supabase/migrations/20260910_fix_op_stamp_guard_strict_lt.sql
  * 没有它，假云端会「老实接受」被守卫吞掉的写入，认输机制根本复现不出来。

@@ -3,7 +3,7 @@
 // 为什么必须用真 Postgres：触发器的行为（BEFORE UPDATE 返回 NULL → 该行被静默跳过、
 // 命令标记为 UPDATE 0、客户端收到 error=null）无法用纯函数单测覆盖，而这里恰好是
 // 历史上出过两次事故的地方：
-//   1. version 守卫用 `<=` 吞掉全部软删 → 幽灵复活（20260827_fix_version_guard_for_tombstones.sql）
+//   1. version 守卫用 `<=` 吞掉全部软删 → 幽灵复活（20260826064109_fix_version_guard_for_tombstones.sql）
 //   2. op-stamp 守卫重蹈覆辙：removeTab（§5.3 不盖组印记）重发时 NEW=OLD 被吞
 //      → tabs_data 里的标签墓碑永不上云 → 跨设备删除失效
 // 所以本文件跑真库，不是可选的锦上添花。
@@ -20,8 +20,8 @@ import { fileURLToPath } from 'node:url';
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const MIGRATIONS = [
   '20260825130248_add_is_deleted_tombstone.sql',
-  '20260827_add_tab_group_version_guard.sql',
-  '20260827_fix_version_guard_for_tombstones.sql',
+  '20260826061933_add_tab_group_version_guard.sql',
+  '20260826064109_fix_version_guard_for_tombstones.sql',
   '20260909_add_op_stamp_columns.sql',
   '20260910_fix_op_stamp_guard_strict_lt.sql',
 ];
