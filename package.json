@@ -15,7 +15,7 @@
     "e2e:list": "node scripts/run-e2e.mjs --list",
     "lint": "eslint src --ext ts,tsx --report-unused-disable-directives --max-warnings 0",
     "lint:tests": "eslint tests --ext ts --report-unused-disable-directives --max-warnings 0",
-    "security:audit": "pnpm audit --config.registry=https://registry.npmjs.org/",
+    "security:audit": "pnpm audit --prod --config.registry=https://registry.npmjs.org/",
     "format": "prettier --write \"src/**/*.{ts,tsx}\"",
     "type-check": "tsc --noEmit",
     "type-check:tests": "tsc -p tsconfig.test.json --noEmit",

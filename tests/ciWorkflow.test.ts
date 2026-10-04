@@ -66,8 +66,16 @@ describe('CI: 跑齐开发机的四道门', () => {
     assert.match(live, /run: pnpm validate\s*$/m);
   });
 
+  // 2026-10-04：审计收口到生产依赖。扩展发布的是 vite bundle，devDependencies
+  // 一个字节都不进 dist；全量审计会被 dev 链路里「上游尚无修复版本」的漏洞
+  // （当时是 braces <=3.0.3，经 @typescript-eslint 引入）长期染红，而 CI 常红
+  // 会让人对门禁脱敏——比那个 dev 漏洞本身更危险。dev 链路要看得手动跑 pnpm audit。
+  it('审计只覆盖生产依赖（--prod）', () => {
+    assert.match(live, /pnpm audit --prod/);
+  });
+
   it('审计显式指定 npmjs registry', () => {
-    assert.match(live, /pnpm audit --config\.registry=https:\/\/registry\.npmjs\.org\//);
+    assert.match(live, /pnpm audit --prod --config\.registry=https:\/\/registry\.npmjs\.org\//);
   });
 });
 

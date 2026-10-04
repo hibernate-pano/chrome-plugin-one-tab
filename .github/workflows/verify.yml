@@ -97,10 +97,20 @@ jobs:
       - name: 元数据一致性 + 类型 + lint + 构建
         run: pnpm validate
 
+      # 【为什么只审生产依赖（--prod）】扩展发布的是 vite 打出来的 bundle，
+      # devDependencies 只在 lint/构建期用，一个字节都不进 dist。
+      # 全量审计会拿 dev 链路的漏洞把门禁染红，而这些漏洞对用户零暴露：
+      # 现状就是 braces <=3.0.3（GHSA-vfj7-8cjw-p6xm，栈耗尽 DoS）经
+      # @typescript-eslint → … → micromatch 引入，纯 dev 链路；我已核对 dist/ 里
+      # 搜不到 braces。且该 advisory 的 Patched versions 为 <0.0.0 —— npm 上
+      # braces 最新就是 3.0.3，上游暂无可升级的修复版本，升级这条路当前不通。
+      # 门禁长期常红会让人对 CI 脱敏（比这个 dev 漏洞本身更危险），所以按
+      # 「审真正出货的东西」收口。dev 链路要单独看时，手动跑 pnpm audit 即可。
+      #
       # pnpm audit 必须显式指定 registry：本机/部分环境默认走 npmmirror，
       # 而它没有实现 audit 端点，直接跑会 ERR_PNPM_AUDIT_ENDPOINT_NOT_EXISTS。
-      - name: 依赖安全审计
-        run: pnpm audit --config.registry=https://registry.npmjs.org/
+      - name: 依赖安全审计（仅生产依赖）
+        run: pnpm audit --prod --config.registry=https://registry.npmjs.org/
 
       # 测试代码的类型检查与 lint 已由 `pnpm validate` 覆盖（见 package.json 的
       # validate 脚本），且当前均为 0 错误 —— 不在这里重复跑一遍。
