@@ -6,6 +6,8 @@ import { TabGroup as TabGroupType, Tab } from '@/types/tab';
 import { useToast } from '@/contexts/ToastContext';
 import { useEnhancedToast } from '@/utils/toastHelper';
 import { OpenGuard, OpenAllGuard } from '@/utils/openGuard';
+import { useNearViewport } from '@/hooks/useNearViewport';
+import { resolveRowWindow } from './lazyTabRows';
 import { trackProductEvent } from '@/utils/productEvents';
 import { logError } from '../../utils/log';
 
@@ -77,6 +79,15 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
   const openAllGuardRef = useRef<OpenAllGuard | null>(null);
   if (openGuardRef.current === null) openGuardRef.current = new OpenGuard();
   if (openAllGuardRef.current === null) openAllGuardRef.current = new OpenAllGuard();
+
+  // 标签行懒渲染（v1.22.9）：把「同一时刻存在于 DOM 的标签行数」从「数据总量」解耦。
+  //
+  // 观测挂在**卡片根节点**上，不是折叠容器上：折叠时容器高度为 0，若观测它，
+  // IO 会把折叠的卡判成「不可见」——对结果没影响（折叠态本来就不渲染行），
+  // 但一旦展开，判定依据会变成「展开前的位置」，语义混乱。挂在卡片上则始终
+  // 反映「这张卡在视口的什么位置」，展开后立刻按真实位置判定。
+  const [cardRef, isNearViewport] = useNearViewport<HTMLDivElement>();
+  const { renderRows, placeholderHeight } = resolveRowWindow(group.tabs.length, isNearViewport);
 
   // 只在“不处于编辑态”时把外部值同步进草稿。
   // 失败回滚会让 group.name/group.notes 短暂变回旧值（那正是我们要的），
@@ -310,6 +321,7 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
 
   return (
     <div
+      ref={cardRef}
       className="tab-group-card animate-in group/card micro-interaction-card"
       role="region"
       aria-labelledby={`tab-group-title-${group.id}`}
@@ -552,18 +564,31 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
             role="list"
             aria-label="会话内的标签页，可用上下方向键调整顺序"
           >
-            {group.tabs.map((tab, index) => (
-              <DraggableTab
-                key={tab.id}
-                tab={tab}
-                groupId={group.id}
-                index={index}
-                itemCount={group.tabs.length}
-                moveTab={handleMoveTab}
-                handleOpenTab={handleOpenTab}
-                handleDeleteTab={handleDeleteTab}
+            {renderRows ? (
+              group.tabs.map((tab, index) => (
+                <DraggableTab
+                  key={tab.id}
+                  tab={tab}
+                  groupId={group.id}
+                  index={index}
+                  itemCount={group.tabs.length}
+                  moveTab={handleMoveTab}
+                  handleOpenTab={handleOpenTab}
+                  handleDeleteTab={handleDeleteTab}
+                />
+              ))
+            ) : (
+              /* 远离视口：用等高占位撑住文档高度，不把上千个行节点放进 DOM。
+                 高度是**精确值**（行数 × 实测行高），不是估算，因此总高与全量渲染
+                 逐像素一致，滚动位置不会漂移（见 lazyTabRows.resolveRowWindow 单测）。
+                 role="presentation" 是必需的：否则读屏会在 role="list" 里念到一个
+                 没有 listitem 角色的空节点。 */
+              <div
+                role="presentation"
+                data-lazy-placeholder="true"
+                style={{ height: placeholderHeight }}
               />
-            ))}
+            )}
           </div>
         )}
       </div>
