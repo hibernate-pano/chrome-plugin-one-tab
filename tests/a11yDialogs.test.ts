@@ -192,6 +192,15 @@ test('同步弹窗在矮视口下可滚动，标题/关闭按钮不被顶出屏�
   assert.match(SYNC_BUTTON, /flex min-h-full items-center justify-center/, '必须用 min-h-full 居中包裹层');
 });
 
+// 回归（2026-10-04，浏览器实测）：两张模式卡是 <button>，浏览器对 button 内容
+// 默认垂直居中。覆盖卡多了红色风险提示、内容更高，合并卡更矮 → 合并卡内容被
+// 居中，顶部多出约 34px 空隙，绿色标题栏比红色标题栏低——用户看到的「框体没有
+// 对齐」。修法：卡片加 flex flex-col justify-start，内容一律顶对齐。
+test('两张模式卡内容顶对齐（修 button 默认居中导致的标题栏错位）', () => {
+  const topAligned = SYNC_BUTTON.match(/flex-col justify-start/g) ?? [];
+  assert.equal(topAligned.length, 4, `四张模式卡都要 flex-col justify-start，实际 ${topAligned.length} 处`);
+});
+
 test('四个同步动作收敛成按 (方向, 模式) 参数化的单一入口', () => {
   for (const key of ['upload.overwrite', 'upload.merge', 'download.overwrite', 'download.merge']) {
     assert.ok(SYNC_BUTTON.includes(`handleSyncActionClick('${key}')`), `缺少 handleSyncActionClick('${key}')`);

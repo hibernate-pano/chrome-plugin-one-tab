@@ -441,7 +441,7 @@ export const SyncButton: React.FC<SyncButtonProps> = () => {
                     onClick={() => void handleSyncActionClick('upload.overwrite')}
                     disabled={uploadOverwriteState.type === 'blocked'}
                     aria-disabled={uploadOverwriteState.type === 'blocked'}
-                    className="w-full overflow-hidden rounded-[24px] border border-rose-200/70 bg-white text-left shadow-sm transition-transform duration-200 hover:-translate-y-0.5 hover:shadow-lg focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-rose-500 disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:translate-y-0 disabled:hover:shadow-sm dark:border-rose-500/20 dark:bg-slate-900/80"
+                    className="flex w-full flex-col justify-start overflow-hidden rounded-[24px] border border-rose-200/70 bg-white text-left shadow-sm transition-transform duration-200 hover:-translate-y-0.5 hover:shadow-lg focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-rose-500 disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:translate-y-0 disabled:hover:shadow-sm dark:border-rose-500/20 dark:bg-slate-900/80"
                   >
                     <div className="flex items-center justify-center bg-rose-600 px-5 py-3.5 text-white">
                       <svg xmlns="http://www.w3.org/2000/svg" className="h-8 w-8" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -469,7 +469,7 @@ export const SyncButton: React.FC<SyncButtonProps> = () => {
                   <button
                     type="button"
                     onClick={() => void handleSyncActionClick('upload.merge')}
-                    className="w-full cursor-pointer overflow-hidden rounded-[24px] border border-emerald-200/70 bg-white text-left shadow-sm transition-transform duration-200 hover:-translate-y-0.5 hover:shadow-lg focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-500 dark:border-emerald-500/20 dark:bg-slate-900/80"
+                    className="flex w-full cursor-pointer flex-col justify-start overflow-hidden rounded-[24px] border border-emerald-200/70 bg-white text-left shadow-sm transition-transform duration-200 hover:-translate-y-0.5 hover:shadow-lg focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-500 dark:border-emerald-500/20 dark:bg-slate-900/80"
                   >
                     <div className="flex items-center justify-center bg-emerald-600 px-5 py-3.5 text-white">
                       <svg xmlns="http://www.w3.org/2000/svg" className="h-8 w-8" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -553,7 +553,7 @@ export const SyncButton: React.FC<SyncButtonProps> = () => {
                     onClick={() => void handleSyncActionClick('download.overwrite')}
                     disabled={downloadOverwriteState.type === 'blocked'}
                     aria-disabled={downloadOverwriteState.type === 'blocked'}
-                    className="w-full overflow-hidden rounded-[24px] border border-rose-200/70 bg-white text-left shadow-sm transition-transform duration-200 hover:-translate-y-0.5 hover:shadow-lg focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-rose-500 disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:translate-y-0 disabled:hover:shadow-sm dark:border-rose-500/20 dark:bg-slate-900/80"
+                    className="flex w-full flex-col justify-start overflow-hidden rounded-[24px] border border-rose-200/70 bg-white text-left shadow-sm transition-transform duration-200 hover:-translate-y-0.5 hover:shadow-lg focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-rose-500 disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:translate-y-0 disabled:hover:shadow-sm dark:border-rose-500/20 dark:bg-slate-900/80"
                   >
                     <div className="flex items-center justify-center bg-rose-600 px-5 py-3.5 text-white">
                       <svg xmlns="http://www.w3.org/2000/svg" className="h-8 w-8" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -580,7 +580,7 @@ export const SyncButton: React.FC<SyncButtonProps> = () => {
                   <button
                     type="button"
                     onClick={() => void handleSyncActionClick('download.merge')}
-                    className="w-full cursor-pointer overflow-hidden rounded-[24px] border border-sky-200/70 bg-white text-left shadow-sm transition-transform duration-200 hover:-translate-y-0.5 hover:shadow-lg focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sky-500 dark:border-sky-500/20 dark:bg-slate-900/80"
+                    className="flex w-full cursor-pointer flex-col justify-start overflow-hidden rounded-[24px] border border-sky-200/70 bg-white text-left shadow-sm transition-transform duration-200 hover:-translate-y-0.5 hover:shadow-lg focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sky-500 dark:border-sky-500/20 dark:bg-slate-900/80"
                   >
                     <div className="flex items-center justify-center bg-sky-600 px-5 py-3.5 text-white">
                       <svg xmlns="http://www.w3.org/2000/svg" className="h-8 w-8" fill="none" viewBox="0 0 24 24" stroke="currentColor">
