@@ -26,22 +26,78 @@ export interface MutationResult<P = unknown> {
 
 export type MessageSender = (msg: unknown) => Promise<unknown>;
 
+/**
+ * 默认等待上限（1.22.11）。
+ *
+ * 【为什么必须有上限】SW 侧没有一处超时：supabase client 没配 AbortSignal、
+ * 队列任务没有任务级上限、消息协议本身也只是裸 await。于是一旦 SW 忙（整库上传
+ * / 逐组加解密）或已被浏览器回收，popup 这边就是**无限期转圈**：没有任何信号告诉
+ * 用户「刚才那次点击没生效」，他只会以为界面死了。而 Chrome 的 popup 一失去焦点
+ * 就销毁——用户点别处的那一刻，所有在途 sendMessage 的 Promise 会以同一句
+ * "A listener indicated an asynchronous response by returning true, but the message
+ * channel closed before a response was received" 一起 reject，实测表现为三条不同
+ * 操作同时报这句错（自动下载 / 加载列表 / 清理重复）。
+ *
+ * 超时把「无限静默」换成「有界的、可归因的失败」：调用方拿到明确 reason，
+ * 界面能给出「操作耗时过长，后台可能仍在继续」的文案，而不是通用兜底。
+ *
+ * 【为什么给到 30s】手动整库同步几百会话实测在秒级，但弱网 + 大库会明显更久；
+ * 取值要能覆盖「慢但正常」，只在真正挂死时才触发。
+ * 【超时不等于回滚】SW 侧的任务会继续跑完（这里只是不等了）。所以文案必须说
+ * 「可能仍在继续」而不是「已取消」——对幂等的读/删除无所谓，对写操作若用户重试，
+ * 底层 mutation 本身就是幂等的（见 core/mutationOps）。
+ */
+const DEFAULT_TIMEOUT_MS = 30_000;
+
+/** 超时 reason 的稳定前缀：界面文案与测试都按它识别，不依赖具体耗时数字。 */
+export const TIMEOUT_REASON_PREFIX = '操作超时';
+
+/**
+ * 给 sender 的 Promise 套一层上限。
+ * 注意 Promise.race 不取消底层任务——这里要的就是「不等了」，不是「中止」。
+ */
+async function withTimeout<T>(
+  p: Promise<T>,
+  ms: number,
+  label: string
+): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      p,
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(
+          () => reject(new Error(`${TIMEOUT_REASON_PREFIX}（超过 ${Math.round(ms / 1000)} 秒无响应）：${label}`)),
+          ms
+        );
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
 function defaultSender(msg: unknown): Promise<unknown> {
   return chrome.runtime.sendMessage(msg);
 }
 
 export async function sendMutation<P = unknown>(
   cmd: MutationOp,
-  sender: MessageSender = defaultSender
+  sender: MessageSender = defaultSender,
+  opts?: { timeoutMs?: number }
 ): Promise<MutationResult<P>> {
   try {
     // originId：写方身份。SW 落盘广播时会带回它，本上下文据此忽略自己的回声
     //（避免「自己写 → 广播 → 自己全量重载」把拖拽中的列表整页刷掉）。
-    const res = (await sender({
-      type: 'MUTATE',
-      data: cmd,
-      originId: getContextOrigin(),
-    })) as MutationResult<P> | undefined;
+    const res = (await withTimeout(
+      sender({
+        type: 'MUTATE',
+        data: cmd,
+        originId: getContextOrigin(),
+      }),
+      opts?.timeoutMs ?? DEFAULT_TIMEOUT_MS,
+      cmd.op
+    )) as MutationResult<P> | undefined;
     if (!res) return { ok: false, error: 'SW 无响应' };
     return res;
   } catch (e) {
@@ -54,10 +110,15 @@ export type SyncOp = 'upload' | 'download' | 'scheduleUpload';
 export async function sendSyncCommand(
   op: SyncOp,
   extra: Record<string, unknown> = {},
-  sender: MessageSender = defaultSender
+  sender: MessageSender = defaultSender,
+  opts?: { timeoutMs?: number }
 ): Promise<MutationResult> {
   try {
-    const res = (await sender({ type: 'SYNC', data: { op, ...extra } })) as MutationResult | undefined;
+    const res = (await withTimeout(
+      sender({ type: 'SYNC', data: { op, ...extra } }),
+      opts?.timeoutMs ?? DEFAULT_TIMEOUT_MS,
+      op
+    )) as MutationResult | undefined;
     if (!res) return { ok: false, error: 'SW 无响应' };
     return res;
   } catch (e) {

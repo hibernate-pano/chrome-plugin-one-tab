@@ -146,7 +146,7 @@ export class TabManager {
             (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
           )
         );
-      });
+      }, { priority: 'high' });
 
       // ponytail: 自动上传承诺接入点。SW 保存路径完全绕过 Redux（直接 setGroups），
       // autoSyncMiddleware 永远监听不到 saveGroup.fulfilled——这里补上 scheduleUpload
@@ -251,7 +251,7 @@ export class TabManager {
         const existingGroups = await storage.getGroupsForWrite();
         const stamped: typeof safeGroup = { ...safeGroup, lastOp: await stampForNewEntity() };
         await storage.setGroupsImmediate([stamped, ...existingGroups]);
-      });
+      }, { priority: 'high' });
 
       // ponytail: 关闭单标签时也会触发数据变更（保存到当前会话）——同样需自动上传。
       syncEngine.scheduleUpload(3000);

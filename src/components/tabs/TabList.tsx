@@ -49,8 +49,13 @@ export const TabList: React.FC<TabListProps> = ({ searchQuery }) => {
       if (message.type === 'REFRESH_TAB_LIST') {
         invalidateGroupsCache();
         scheduleReload();
+        // 只对**确实要处理**的消息返回 true。返回 true = 告诉 Chrome「我会稍后
+        // 调 sendResponse」，于是发送方（SW 的 groupsChangedBus 广播）的 Promise
+        // 会一直挂到本页面销毁为止——而本监听器从不调用 sendResponse。对无关消息
+        // 也返回 true 会白白吊着对方的响应通道（1.22.11 修正）。
+        return true;
       }
-      return true;
+      return false;
     };
 
     chrome.runtime.onMessage.addListener(messageListener);

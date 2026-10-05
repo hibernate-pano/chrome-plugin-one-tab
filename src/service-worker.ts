@@ -389,7 +389,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         }
         // originId 由发起上下文提供，一路带到落盘广播，供发起方过滤自己的回声。
         const originId = typeof message.originId === 'string' ? message.originId : undefined;
-        enqueue(cmd.op, () => mutationService.handle(cmd, originId))
+        // high 车道：用户直接点的操作，不排在后台整库上传后面等（见 mutationQueue 注释）
+        enqueue(cmd.op, () => mutationService.handle(cmd, originId), { priority: 'high' })
           .then(res => sendResponse(res))
           .catch(err => sendResponse({ ok: false, error: err?.message || '命令执行失败' }));
         return true; // 异步响应
@@ -402,6 +403,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           sendResponse({ ok: true });
           return false;
         }
+        // 手动上传/下载也是用户点的（popup 里的按钮）→ high 车道，与语义命令同等待遇。
         enqueue(`sync:${data.op}`, async () => {
           // 统一包装为 MutationResult：ok=业务成败，error=原因码（already_syncing 等），
           // payload=完整原始结果（MergeResult/UploadResult，popup 按需取字段）
@@ -420,7 +422,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
             return { ok: r.success, error: r.reason, payload: r };
           }
           return { ok: false, error: `未知同步操作: ${data.op}` };
-        })
+        }, { priority: 'high' })
           .then(res => sendResponse(res))
           .catch(err => sendResponse({ ok: false, error: err?.message || '同步失败' }));
         return true;

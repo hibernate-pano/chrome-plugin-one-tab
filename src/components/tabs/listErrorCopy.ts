@@ -36,6 +36,16 @@ const FALLBACK: ListErrorCopy = {
  */
 const RULES: Rule[] = [
     {
+        // 本次新增的操作超时：SW 侧没有一处超时（消息协议、队列、supabase 客户端
+        // 全是裸 await），慢库 + 弱网会让点击迟迟没有回音。与下面的「连接断开」分开，
+        // 因为处置不同：这里后台**可能仍在继续**，不该让用户以为操作失败了去重做。
+        match: /操作超时/,
+        copy: {
+            title: '操作耗时过长',
+            description: '本次操作等待后台响应超时。会话较多或网络较慢时会出现——后台可能仍在继续处理，请稍等几秒后重新加载查看结果；若反复出现，重新加载扩展后再试。',
+        },
+    },
+    {
         // chrome.storage 写满：用户唯一能做的事是腾空间
         match: /quota|exceeded the storage quota/i,
         copy: {
@@ -44,11 +54,18 @@ const RULES: Rule[] = [
         },
     },
     {
-        // SW 休眠 / 扩展被重载：message-port 连不上后台
-        match: /receiving end does not exist|message port|extension context invalidated|could not establish connection/i,
+        // SW 休眠 / 扩展被重载 / popup 提前关闭：message 通道断了。
+        //
+        // 【文案以 Chrome 实际抛出的串为准】此前这里只认 `message port`，但扩展里
+        // 最常见的断连根本不含这个词——popup 失去焦点被销毁时，所有在途 sendMessage
+        // 抛的是 "A listener indicated an asynchronous response by returning true, but
+        // the message channel closed before a response was received"。它匹配不上任何
+        // 规则，于是这个最高频的瞬时错误全部落进通用兜底，用户看到「会话列表暂时
+        // 不可用」这种无从下手的说法，而正确的引导是「点重新加载即可」。
+        match: /receiving end does not exist|message port|message channel closed|extension context invalidated|could not establish connection|asynchronous response by returning true/i,
         copy: {
             title: '与后台的连接已断开',
-            description: '扩展后台刚刚被浏览器挂起或重载，本次没有取到数据。点「重新加载」重试通常即可恢复。',
+            description: '扩展后台刚刚被浏览器挂起、重载，或管理页在等待期间被关闭，本次没有取到数据。点「重新加载」重试通常即可恢复。',
         },
     },
     {
