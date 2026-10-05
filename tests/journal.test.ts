@@ -1,7 +1,17 @@
-// 钉死本地 journal write-ahead log（规格 §4.3）：
-// - appendEntry 追加并保持 FIFO 上限（默认 1000）
-// - appendEntry 写入前 seq 已先自增
-// - read 返回持久化的 entries
+// 钉死本地「命令轨迹」模块（2026-10-05 从 WAL 降级重写后）。
+//
+// ── 这次改了什么 ──────────────────────────────────────────────────────
+// 原实现自称 write-ahead log，文件头写着「SW 启动时若发现状态落后于 journal，
+// 重放规则与合并规则同一条——阶段二 Task 9 实现重放入口」。核实结果：
+//   - read() 在 src/ 内零调用方（只有本模块自己）；
+//   - markConfirmedUpTo() 同样零调用方；
+//   - 单写者队列 + 每步直写落盘已经保证不留「需要重放」的中间态。
+// 也就是说那个「WAL」**从未恢复过任何东西**，却每次点击都要全量读写
+// 1000 条数组（体检实测：这是单次 mutation 固定 I/O 链的一环）。
+//
+// 现在它只做一件事：**命令分布统计**（诊断导出读 type 与 seq）。
+// 所以：上限从 1000 降到 200（分布看最近 200 条足够），并删掉
+// markConfirmedUpTo —— 留着它就是「看起来有个确认机制其实没人调」。
 //
 // 文件样板与 tests/mutationOps.test.ts 一致：@/ 别名需在 register(loader) 之后动态 import。
 import { describe, it, before } from 'node:test';
@@ -24,59 +34,62 @@ before(async () => {
   register(LOADER_PATH);
 });
 
-describe('journal: write-ahead log（§4.3）', () => {
-  it('appendEntry 追加并保持 FIFO 上限 1000', async () => {
-    const { createJournal } = await import('@/utils/journal');
-    const stored: string[] = [];
-    const kv = new Map<string, unknown>();
-    const deps = {
+/** 造一份可控的 deps（kv 是内存 Map，seq 从 1 单调增） */
+function makeDeps(initial?: unknown) {
+  const kv = new Map<string, unknown>();
+  if (initial !== undefined) kv.set('journal', initial);
+  let seq = 0;
+  return {
+    kv,
+    deps: {
       kvGet: async <T>(k: string) => (kv.get(k) ?? null) as T | null,
-      kvSet: async (k: string, v: unknown) => { kv.set(k, v); },
+      kvSet: async (k: string, v: unknown) => {
+        kv.set(k, v);
+      },
       getDeviceId: async () => 'devA',
-      nextSeq: async () => { stored.push('seq'); return stored.length; },
-    };
-    const j = createJournal(deps as any);
-    for (let i = 0; i < 1001; i++) {
+      nextSeq: async () => ++seq,
+    },
+  };
+}
+
+describe('journal: 命令轨迹（不再是 WAL）', () => {
+  it('appendEntry 追加并保持环形上限 200（不是 1000）', async () => {
+    const { createJournal } = await import('@/utils/journal');
+    const { deps } = makeDeps();
+    const j = createJournal(deps as never);
+    for (let i = 0; i < 201; i++) {
       await j.appendEntry({ type: 'saveGroup', groupId: `g${i}` });
     }
     const log = await j.read();
-    assert.equal(log.length, 1000);
-    assert.equal(log[0].groupId, 'g1'); // 最早的被裁剪
-    assert.equal(log[999].groupId, 'g1000');
+    // 201 条写入、上限 200 ⇒ 最早的 g0 被挤掉，留 g1..g200
+    assert.equal(log.length, 200, '环形缓冲必须把长度钉在上限，否则序列化成本随时间增长');
+    assert.equal(log[0].groupId, 'g1');
+    assert.equal(log[199].groupId, 'g200');
   });
 
-  it('appendEntry 写入前 seq 已先自增', async () => {
+  it('appendEntry 取的是 seqRegistry 递增后的号', async () => {
     const { createJournal } = await import('@/utils/journal');
+    const kv = new Map<string, unknown>();
     let currentSeq = 5;
     const deps = {
-      // 恒返回 null 的 kvGet：泛型与键都不进返回值，但签名要和 JournalDeps 对得上
-      // （可核对），故写成完整泛型形态；未用到的名字按下划线前缀惯例豁免
-      // （.eslintrc.cjs 的 tests 覆盖层只放行 ^_ 开头）。
       kvGet: async <_T>(_k: string) => null,
-      // noop kvSet：参数只为与 JournalDeps 签名对齐而写出来，同样走下划线豁免。
       kvSet: async (_k: string, _v: unknown) => { /* noop */ },
       getDeviceId: async () => 'devA',
       nextSeq: async () => ++currentSeq,
     };
-    const j = createJournal(deps as any);
+    const j = createJournal(deps as never);
     const e = await j.appendEntry({ type: 'removeTab', groupId: 'g1', tabId: 't1' });
     assert.equal(e.s, 6);
     assert.equal(currentSeq, 6);
   });
 
-  it('read 返回持久化的 entries', async () => {
+  it('read 返回持久化的 entries（诊断导出靠它统计命令分布）', async () => {
     const { createJournal } = await import('@/utils/journal');
-    const kv = new Map<string, unknown>([['journal', [
+    const { deps } = makeDeps([
       { d: 'devA', s: 1, ts: '2026-01-01T00:00:00.000Z', type: 'saveGroup', groupId: 'g1' },
       { d: 'devA', s: 2, ts: '2026-01-01T00:00:01.000Z', type: 'removeTab', groupId: 'g1', tabId: 't1' },
-    ]]]);
-    const deps = {
-      kvGet: async <T>(k: string) => (kv.get(k) ?? null) as T | null,
-      kvSet: async (k: string, v: unknown) => { kv.set(k, v); },
-      getDeviceId: async () => 'devA',
-      nextSeq: async () => 99,
-    };
-    const j = createJournal(deps as any);
+    ]);
+    const j = createJournal(deps as never);
     const log = await j.read();
     assert.equal(log.length, 2);
     assert.equal(log[1].type, 'removeTab');
@@ -84,43 +97,49 @@ describe('journal: write-ahead log（§4.3）', () => {
 
   it('appendEntry 携带 payload 与默认 ts', async () => {
     const { createJournal } = await import('@/utils/journal');
-    let seq = 0;
-    const deps = {
-      // 同上：恒返回 null 的 kvGet 桩，泛型/键加下划线前缀走豁免。
-      kvGet: async <_T>(_k: string) => null,
-      // noop kvSet：同上，参数只为签名对齐。
-      kvSet: async (_k: string, _v: unknown) => { /* noop */ },
-      getDeviceId: async () => 'devB',
-      nextSeq: async () => ++seq,
-    };
-    const j = createJournal(deps as any);
+    const { deps } = makeDeps();
+    const j = createJournal(deps as never);
     const e = await j.appendEntry({ type: 'renameGroup', groupId: 'g1', payload: { name: '新名' } });
     assert.equal(e.s, 1);
-    assert.equal(e.d, 'devB');
+    assert.equal(e.d, 'devA');
     assert.equal(e.type, 'renameGroup');
     assert.equal(e.groupId, 'g1');
     assert.deepEqual(e.payload, { name: '新名' });
     assert.match(e.ts, /^\d{4}-\d{2}-\d{2}T/);
   });
 
-  it('markConfirmedUpTo 不物理裁剪——保留至 FIFO 上限淘汰', async () => {
+  it('markConfirmedUpTo 已删除——它零调用方，留着等于假装有确认机制', async () => {
     const { createJournal } = await import('@/utils/journal');
-    const entries = [
-      { d: 'devA', s: 1, ts: 't1', type: 'saveGroup' as const, groupId: 'g1' },
-      { d: 'devA', s: 2, ts: 't2', type: 'saveGroup' as const, groupId: 'g2' },
-      { d: 'devA', s: 3, ts: 't3', type: 'saveGroup' as const, groupId: 'g3' },
-    ];
-    const kv = new Map<string, unknown>([['journal', entries]]);
-    const deps = {
-      kvGet: async <T>(k: string) => (kv.get(k) ?? null) as T | null,
-      kvSet: async (k: string, v: unknown) => { kv.set(k, v); },
-      getDeviceId: async () => 'devA',
-      nextSeq: async () => 99,
-    };
-    const j = createJournal(deps as any);
-    const remaining = await j.markConfirmedUpTo(2);
-    assert.equal(remaining, 1); // s=3 未确认
+    const { deps } = makeDeps();
+    const j = createJournal(deps as never) as unknown as Record<string, unknown>;
+    assert.equal(
+      j.markConfirmedUpTo,
+      undefined,
+      'markConfirmedUpTo 从未有调用方（云端确认判定由 lastSyncedSeq 单独维护），已删除'
+    );
+    assert.equal(
+      j.append,
+      undefined,
+      '不应新增 append 之类的别名方法——需要就是 appendEntry'
+    );
+  });
+
+  it('磁盘上遗留的 1000 条旧数据会被自动收敛到 200（不必写迁移）', async () => {
+    const { createJournal } = await import('@/utils/journal');
+    // 模拟老版本留下的 1000 条
+    const legacy = Array.from({ length: 1000 }, (_, i) => ({
+      d: 'devA',
+      s: i + 1,
+      ts: '2026-01-01T00:00:00.000Z',
+      type: 'saveGroup' as const,
+      groupId: `legacy-${i}`,
+    }));
+    const { deps } = makeDeps(legacy);
+    const j = createJournal(deps as never);
+    // 一次 append 就顺带收敛（旧数据在第一次写入时被裁到上限）
+    await j.appendEntry({ type: 'saveGroup', groupId: 'new' });
     const log = await j.read();
-    assert.equal(log.length, 3); // 没有裁剪
+    assert.equal(log.length, 200, '旧数据必须被自动收敛，不需要写数据迁移');
+    assert.equal(log[199].groupId, 'new');
   });
 });
