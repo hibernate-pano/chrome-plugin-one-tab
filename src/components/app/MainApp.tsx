@@ -1,4 +1,4 @@
-import React, { useState, useEffect, lazy, Suspense, useDeferredValue } from 'react';
+import React, { useState, useEffect, Suspense, useDeferredValue } from 'react';
 import { Header } from '@/components/layout/Header';
 import { TabList } from '@/components/tabs/TabList';
 import { useAppDispatch } from '@/store/hooks';
@@ -6,9 +6,6 @@ import { loadSettings } from '@/store/slices/settingsSlice';
 import { OnboardingGuide } from '@/components/onboarding/OnboardingGuide';
 import { shouldShowOnboarding } from '@/utils/onboardingStorage';
 import { getAppVersionLabel } from '@/utils/runtimeInfo';
-
-// 使用动态导入懒加载性能测试组件
-const PerformanceTest = lazy(() => import('@/components/performance/PerformanceTest'));
 
 // 导入样式文件
 import '@/styles/drag-drop.css';
@@ -21,7 +18,6 @@ import '@/styles/animations.css';
 export const MainApp: React.FC = () => {
   const dispatch = useAppDispatch();
   const [searchQuery, setSearchQuery] = useState('');
-  const [showPerformanceTest, setShowPerformanceTest] = useState(false);
   const [showOnboarding, setShowOnboarding] = useState(false);
   const deferredSearchQuery = useDeferredValue(searchQuery);
 
@@ -39,11 +35,6 @@ export const MainApp: React.FC = () => {
     });
   }, []);
 
-  // 切换性能测试页面
-  const togglePerformanceTest = () => {
-    setShowPerformanceTest(!showPerformanceTest);
-  };
-
   // 统一使用相同宽度，单栏和双栏布局保持一致
   const getContainerWidthClass = () => {
     return 'layout-double-width';
@@ -58,33 +49,13 @@ export const MainApp: React.FC = () => {
       }
     >
       <div className="app-shell theme-shell min-h-screen dark:text-gray-100 flex flex-col">
-          {showPerformanceTest ? (
-            <>
-              <div className="bg-primary-600 text-white p-2">
-                <div className="w-full px-3 sm:px-4 md:px-6 lg:px-8 flex items-center justify-between">
-                  <h1 className="text-lg font-bold">性能测试</h1>
-                  <button
-                    onClick={togglePerformanceTest}
-                    className="px-3 py-1 bg-white text-primary-600 rounded hover:bg-gray-100 transition-colors flat-interaction"
-                  >
-                    返回主页
-                  </button>
-                </div>
-              </div>
-              <main className="flex-1 w-full py-2 px-3 sm:px-4 md:px-6 lg:px-8">
-                <Suspense fallback={<div className="p-4 text-center">加载性能测试组件...</div>}>
-                  <PerformanceTest />
-                </Suspense>
-              </main>
-            </>
-          ) : (
-            <>
-              <Header onSearch={setSearchQuery} />
-              <main className={`flex-1 w-full py-2 ${getContainerWidthClass()}`}>
-                <Suspense fallback={<div className="p-4 text-center">加载标签列表...</div>}>
-                  <TabList searchQuery={deferredSearchQuery} />
-                </Suspense>
-              </main>
+          <>
+            <Header onSearch={setSearchQuery} />
+            <main className={`flex-1 w-full py-2 ${getContainerWidthClass()}`}>
+              <Suspense fallback={<div className="p-4 text-center">加载标签列表...</div>}>
+                <TabList searchQuery={deferredSearchQuery} />
+              </Suspense>
+            </main>
               <footer className="app-shell theme-shell border-t theme-border-default text-xs text-gray-600 dark:text-gray-400">
                 {/* 版本 + slogan 一行居中：原左右分挂两头，弱信息占满整行宽 */}
                 <div className={`w-full py-2 ${getContainerWidthClass()} flex justify-center items-center gap-2`}>
@@ -107,19 +78,9 @@ export const MainApp: React.FC = () => {
                   </span>
                   <span aria-hidden="true">·</span>
                   <span>Save the session. Find it later.</span>
-                  {process.env.NODE_ENV === 'development' && (
-                    <button
-                      onClick={togglePerformanceTest}
-                      className="ml-2 px-2 py-1 bg-purple-500 text-white text-xs rounded hover:bg-purple-600 transition-colors flat-interaction"
-                      title="仅在开发环境可见"
-                    >
-                      性能测试
-                    </button>
-                  )}
                 </div>
               </footer>
             </>
-          )}
         </div>
 
       {/* 用户引导弹窗 */}

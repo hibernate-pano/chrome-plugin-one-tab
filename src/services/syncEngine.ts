@@ -21,8 +21,8 @@ import {
   decideDownloadPrecheck,
   hasRemoteChanges,
 } from '@/core/syncDecision';
-// 阶段二（§5 + §9）：合并语义已统一为 mergeOpStamped（OpStamp 全序决胜）。
-// 旧 LWW 合并 mergeTabGroups 已隔离至 @/utils/syncUtils.legacy（⛔禁接回生产）。
+// 合并语义已统一为 mergeOpStamped（OpStamp 全序决胜，组级 LWW 整组覆盖）。
+// 这是合并的唯一真相源；旧 LWW 实现已随 2026-10-05 瘦身删除。
 import { mergeOpStamped } from '@/core/opStampMerge';
 import { dropEmptyGroups, removedGroupIds } from '@/core/mutationOps';
 import { ensureOpStampMigrated } from '@/background/opStampMigratedGuard';

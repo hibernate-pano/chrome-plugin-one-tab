@@ -243,15 +243,6 @@ export function sanitizeTabUrl(url: unknown): string | null {
 }
 
 /**
- * 防止XSS的HTML编码
- */
-export function escapeHtml(text: string): string {
-  const div = document.createElement('div');
-  div.textContent = text;
-  return div.innerHTML;
-}
-
-/**
  * 验证会话名称
  */
 export function validateGroupName(name: string): ValidationResult {

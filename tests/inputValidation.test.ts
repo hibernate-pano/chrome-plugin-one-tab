@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { validateEmail, validatePassword, checkPasswordStrength, PasswordStrength, validateGroupName, sanitizeText, escapeHtml, validateForm } from '../src/utils/inputValidation.ts';
+import { validateEmail, validatePassword, checkPasswordStrength, PasswordStrength, validateGroupName, sanitizeText, validateForm } from '../src/utils/inputValidation.ts';
 
 describe('validateEmail', () => {
   it('accepts valid email addresses', () => {
@@ -82,11 +82,6 @@ describe('sanitizeText', () => {
   });
 });
 
-describe('escapeHtml (browser-only, skipped in Node)', () => {
-  it('is defined', () => {
-    assert.equal(typeof escapeHtml, 'function');
-  });
-});
 
 describe('validateForm', () => {
   it('validates multiple fields', () => {
