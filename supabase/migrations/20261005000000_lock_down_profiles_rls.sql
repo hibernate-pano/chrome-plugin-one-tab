@@ -33,9 +33,11 @@
 --     select count(*) from profiles;   -- 若能返回行数，说明确实可读，本迁移有必要
 -- 若表在本项目已不存在（表本身被删），本文件会全部跳过，不报错。
 
--- 用 $$ 而非 $tag$：supabase-migrate.mjs 的 --dry-run 预览切分器只认 $$
--- （注释必须独占整行：写在 `DO $$` 同行会落进 dollar-quoted 字符串内部）。
-DO $$
+-- 用 dollar-quote（`DO $body$ … $body$`）包裹整段：迁移执行器按 dollar-quote
+-- 成对切分语句，裸的 DO BEGIN … END 无法通过多语句预处理。
+-- ⚠️ 本文件（含注释）**绝不能出现定界符字面量**：切分器不看上下文，
+--    注释里写一次也会把语句腰斩。参见 tests/guards/migrationSqlSafety.test.ts。
+DO $body$
 BEGIN
   -- 0) 表不存在就整体跳过（Dashboard 默认 schema 随时可能变）
   IF NOT EXISTS (
@@ -92,7 +94,7 @@ BEGIN
     RAISE NOTICE '已重建 UPDATE 策略：补 WITH CHECK（行仍只属本人；列级限制见说明）';
   END IF;
 END
-$$;
+$body$;
 
 -- ─────────────────────────────────────────────────────────────
 -- 【关于「列级限制」——本文件刻意没有做，理由要写清楚】
