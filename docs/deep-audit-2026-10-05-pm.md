@@ -1,8 +1,8 @@
 # 深入体检报告（2026-10-05 下午）
 
 > 范围：P2 收尾 + 一轮深入体检（自查 + 两路并行只读审计）
-> HEAD：`cdfa821`（main，本轮 13 个提交）
-> 门禁：**831/831 单测通过**、`pnpm validate` 通过、首屏 192.6KB/240KB、生产依赖 0 漏洞
+> HEAD：`fcfcce3`（main，本轮 14 个提交）
+> 门禁：**843/843 单测通过**、`pnpm validate` 通过、首屏 192.6KB/240KB、生产依赖 0 漏洞
 
 ---
 
@@ -65,6 +65,50 @@ PostgreSQL 给新函数默认授予 `EXECUTE` 给 `PUBLIC`（含 anon/authentica
 两条迁移都改用 `$body$` / `$q$`。
 
 **这类错误人眼审不出来**（SQL 语法看着完全正常），所以我写了门禁：`tests/guards/migrationSqlSafety.test.ts` 5 例，核心断言是**每个语句片段里的单引号必须自闭合** —— 腰斩必然留下孤立引号。这个检查比"首 token 是不是 SQL 关键字"本质得多，也不受中文注释干扰。它在上线当天就抓出了我自己第二个同类 bug。
+
+---
+
+## 三之三、真实执行验证迁移（第三批，已完成）
+
+前两批的迁移我只做了静态检查（单引号配对、定界符配对）就提交了。这次起了
+本地 **PostgreSQL 16.15** 真连库执行 —— **连续炸了 5 次**，3 个在迁移里、
+2 个在 verify 脚本里，全部是静态检查与 `--dry-run` 放过的。
+
+### 迁移侧
+
+| # | 缺陷 | 后果 |
+|---|---|---|
+| M1 | `REVOKE … FROM anon` 在无 anon 角色的库上 ERROR | 单事务回滚 → 留下「函数建了但权限没收回」的半成品，**比不跑更危险**（看起来跑过了） |
+| M2 | `RAISE '已到期（>% 天）…'` | RAISE 把 % 当占位符，`>%` 被解析成「> 加一个参数」⇒ `too few parameters` |
+| M3 | `unnest(ARRAY[…]) AS r` 后在同层 WHERE 用 `r.oid` | 集合别名在同层不可见 ⇒ `missing FROM-clause entry` |
+
+M1 值得特别注意：**历史迁移 `20260913132928` 有同样写法**，Supabase 上角色恰好存在所以侥幸没暴露 —— 这类「在别的环境会炸」的代码最难找。
+
+### verify 脚本侧
+
+| # | 缺陷 | 后果 |
+|---|---|---|
+| **M4** | `pg_policy.polqual` **不是文本，是 pg_node_tree** | 我上一轮写的 `polqual === 'true'` **永远不成立** ⇒ 库里明明还有全放行策略，verify 却报「profiles ✓」。**漏检比报错危险得多** |
+| M5 | 三项检查里第一项失败就 `return`；且收尾**无条件** `console.log('VERIFY OK'); return true` | 后两项检查根本没跑；且验证脚本自己谎报成功 —— 正是本轮一直在修的那类缺陷 |
+
+M4 是这一轮最重要的发现："漏检"比"报错"危险得多 —— 报错会让人去查，漏检会让人以为已经收口。已改用 `pg_get_expr(pol.polqual, pol.polrelid)` 渲染回 SQL 文本。
+
+### 附带：让「执行前先本地验证」成为可能
+硬编码 `ssl: {rejectUnauthorized:false}` 让脚本连不上本地裸库
+（`server does not support SSL connections`），而那恰恰是执行生产迁移前最该做的事。
+加 `SUPABASE_DB_SSL=false` 逃生开关（默认仍开启，生产行为不变）。
+
+### 真实执行结果（临时库已清理）
+
+- 两条迁移在「有 Supabase 角色」与「无 Supabase 角色」两种库上均 **0 ERROR**
+- **P0 收口生效**：`USING(true)` 策略消失；`SET ROLE anon; SELECT * FROM profiles` → `permission denied`
+- **P0 REVOKE 生效**：两个函数 `anon_can=f, auth_can=f, svc_can=t`，purge 的 `prosecdef=t`
+- **verify 双向验证**：故意装回 `USING(true)` + `GRANT 回 anon` → 精确报出策略名与 `USING (true)`、exit 2；跑完迁移 → 三项全 ✓
+
+### 门禁
+新增 `tests/guards/migrationExecutionSafety.test.ts`（12 例），把这 5 个「只有连库才暴露」的坑固化：
+REVOKE 不得裸写 · RAISE 占位符数必须与参数匹配 · 不得同层引用集合别名 · verify 必须用
+`pg_get_expr` · 必须全部跑完再汇总 · VERIFY OK 必须受 ok 保护。
 
 ---
 
@@ -161,6 +205,6 @@ favicon 的 URL 本身就是浏览历史：`https://intranet.corp/internal/hr/sa
 
 ## 八、一句话
 
-**P2 全部收口，深入体检共挖出 7 个真实缺陷（4 个是自己引入的）并全部修掉，同时把 5 类"人眼审不出来"的错误变成了自动化门禁。** 净效果：831 个测试里有 35 个是这次新增的契约守卫，项目对"改错了但没人发现"这件事的抵抗力显著提升。
+**P2 全部收口，深入体检共挖出 12 个真实缺陷（4 个是自己引入的）并全部修掉，同时把 5 类"人眼审不出来"的错误变成了自动化门禁。** 净效果：843 个测试里有 47 个是这次新增的契约守卫，项目对"改错了但没人发现"这件事的抵抗力显著提升。
 
 *两路并行审计的完整明细保留在本轮会话记录中；本报告为核实、去重后的结论版。*
