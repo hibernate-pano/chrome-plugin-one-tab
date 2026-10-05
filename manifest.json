@@ -22,16 +22,6 @@
     "default_icon": "icons/icon16.png",
     "default_title": "TapStack - 工作会话保险箱"
   },
-  "web_accessible_resources": [
-    {
-      "resources": [
-        "src/auth/*.html"
-      ],
-      "matches": [
-        "https://*.supabase.co/*"
-      ]
-    }
-  ],
   "background": {
     "service_worker": "service-worker.js"
   },

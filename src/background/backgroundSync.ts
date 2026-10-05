@@ -71,7 +71,27 @@ async function performBackgroundSync(): Promise<boolean> {
   );
 
   // 2.5 载入用户设置（syncStrategy 决定合并策略；SW 的 store 是新实例，默认值会丢用户配置）
-  await store.dispatch(loadSettings()).unwrap().catch(() => undefined);
+  //
+  // ── 2026-10-05：读失败改为中止本轮，不再「用默认值继续」（P1）────────────
+  // syncStrategy 决定上传时用哪种合并策略，而 cloudOverwrite 那个默认值
+  // （conservative）恰好是**最危险**的一个：它假设「云端更新则丢弃本地」，
+  // 于是「本地其实有未上传的新状态」这个前提一旦不成立，用户的本地数据
+  // 就被云端旧数据覆盖。而设置读失败时，我们**恰恰不知道**这个前提成不成立
+  // —— 默认值不是「安全的兜底」，它是「在不确定时选了破坏性更强的那个」。
+  //
+  // 原来这里是 `.catch(() => undefined)`，读失败与「设置本来就是默认值」不可区分，
+  // 两者都会让流程继续 —— 这正是「静默用错策略」的来源。
+  try {
+    await store.dispatch(loadSettings()).unwrap();
+  } catch (e) {
+    logWarn(
+      '[BackgroundSync] 读不到用户设置，中止本轮同步（syncStrategy 决定合并策略，' +
+        '默认值 conservative 会在「本地领先云端」时覆盖本地数据 —— 与其赌一把，' +
+        '不如什么都不做）。下轮 alarm 重试。',
+      e
+    );
+    return true;
+  }
 
   // 3. ponytail: 先上传本地未推送变更。持久化标志 storage.getPendingUpload()
   // 跨进程跨 SW 重启保留：popup 失焦销毁后本地有变更 = true，下一次后台

@@ -75,7 +75,15 @@ export default defineConfig(({ mode }) => {
         input: {
           'src/popup/index': resolve(__dirname, 'src/popup/index.html'),
           'popup': resolve(__dirname, 'popup.html'),
-          'confirm': resolve(__dirname, 'src/auth/confirm.html'),
+          // 2026-10-05：删掉 confirm 入口（src/auth/confirm.html 一并删除）。
+          // 它是死代码：① supabase.auth.signUp 从未配置 redirectTo（auth.ts:13
+          // 只传 email+password），所以没有任何邮件会指向它；② 页面里的
+          // verifyUrl 算出来后从未使用（const 赋值后无引用），且 redirect_to=
+          // 是空值 —— 即使被访问也不会真正校验；③ 它是 manifest 里
+          // web_accessible_resources 唯一的存在理由，而那条规则把页面暴露给
+          // 任何 *.supabase.co 页面（钓鱼页可把它 iframe 进去）。
+          // 保留一个「看起来在处理邮箱验证、实则什么都不做」的页面，
+          // 风险（WAR 暴露 + 未来有人误以为它在用）大于价值。
           'service-worker': resolve(__dirname, 'src/service-worker.ts')
         },
         output: {

@@ -73,16 +73,36 @@ export function sanitizeFaviconUrl(faviconUrl: string | undefined | null): strin
   }
 
   // 不安全：区分「已知危险」与「未知协议」两类打日志，排查时能一眼看出是哪种
+  //
+  // ── 2026-10-05：日志里不再打完整 URL ──────────────────────────────────
+  // 原来把 cleanUrl 整个拼进日志（`危险协议: blob: - https://intranet.corp/…`）。
+  // 而生产构建只 drop 了 log/info/debug，**logWarn/logError 直通 console**
+  // （见 vite.config.ts 的 drop 配置）—— 也就是说用户报障时把控制台截图
+  // 贴到公开 issue，就等于公开了他访问过哪些站点。favicon 的 URL 列表
+  // 本身就是浏览历史的一部分，与隐私政策承诺的「不上传浏览记录」相悖
+  // （虽然它没出网，但用户会认为「日志里都是本地的话贴出来没关系」）。
+  //
+  // 只保留**定位所需的最小信息**：协议 + origin（域名，不含路径/查询串）。
+  // 路径与查询串才是真正的敏感部分（`/internal/hr/salary?...`），
+  // 而排障时「是哪个协议被拒」已经足够。
+  const safeLabel = (raw: string): string => {
+    try {
+      const u = new URL(raw);
+      return `${u.protocol}//${u.host}`;
+    } catch {
+      return '(无法解析)';
+    }
+  };
   try {
     const { protocol } = new URL(cleanUrl);
     if (DANGEROUS_FAVICON_PROTOCOLS.includes(protocol)) {
-      logWarn(`危险的 favicon 协议，已过滤: ${protocol} - ${cleanUrl}`);
+      logWarn(`危险的 favicon 协议，已过滤: ${safeLabel(cleanUrl)}`);
     } else {
-      logWarn(`未知的 favicon 协议，已过滤: ${protocol} - ${cleanUrl}`);
+      logWarn(`未知的 favicon 协议，已过滤: ${safeLabel(cleanUrl)}`);
     }
   } catch (error) {
     // URL 格式无效
-    logWarn(`无效的 favicon URL 格式，已过滤: ${cleanUrl}`, error);
+    logWarn(`无效的 favicon URL 格式，已过滤: ${safeLabel(cleanUrl)}`);
   }
   return '';
 }

@@ -32,7 +32,17 @@ export const SafeFavicon: React.FC<SafeFaviconProps> = ({
     } else {
       setShouldShowImage(false);
       if (src) {
-        logWarn('不安全的 favicon URL，已过滤:', src);
+        // 2026-10-05：只打 origin，不打完整 URL（与 utils/faviconUtils 同理由）。
+        // logWarn 直通生产构建的 console（vite 只 drop log/info/debug），
+        // 用户报障贴控制台截图就等于公开浏览过的站点；路径与查询串才是敏感部分。
+        let safeLabel = '(无法解析)';
+        try {
+          const u = new URL(src);
+          safeLabel = `${u.protocol}//${u.host}`;
+        } catch {
+          /* 保持占位 */
+        }
+        logWarn('不安全的 favicon URL，已过滤:', safeLabel);
       }
     }
   }, [src]);

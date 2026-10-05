@@ -287,13 +287,23 @@ export class TabManager {
    */
   async openTab(url: string): Promise<void> {
     if (!isOpenableTabUrl(url)) {
-      const shown = url.length > 80 ? `${url.slice(0, 77)}…` : url;
-      logWarn('[TabManager] 拒绝打开本设备无法导航的地址:', url);
+      // 2026-10-05：日志只打 origin（见 faviconUtils 的同类说明）——
+      // logWarn 直通生产 console，用户贴控制台截图就等于公开访问过的站点。
+      // 通知文案里也只展示 origin：路径/查询串对「为什么打不开」这个判断没有增量，
+      // 却可能带着 /internal/hr/salary 这样的路径。
+      let origin = '(无法解析)';
+      try {
+        const u = new URL(url);
+        origin = `${u.protocol}//${u.host}`;
+      } catch {
+        /* 保持占位 */
+      }
+      logWarn('[TabManager] 拒绝打开本设备无法导航的地址:', origin);
       await this.showNotification({
         type: 'basic',
         iconUrl: chrome.runtime.getURL('icons/icon128.png'),
         title: '无法打开此标签',
-        message: `「${shown}」是本机文件、临时链接或浏览器内部页面，无法在此设备上重新打开。该标签已保留在会话中。`,
+        message: `「${origin}」是本机文件、临时链接或浏览器内部页面，无法在此设备上重新打开。该标签已保留在会话中。`,
       });
       return;
     }
