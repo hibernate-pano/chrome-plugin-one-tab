@@ -84,6 +84,37 @@ describe('打开路径：service-worker 的消息分支', () => {
   });
 });
 
+describe('后台轮询：判据读不到时不下载（2026-10-05 fail-closed）', () => {
+  it('hasPendingUpload 抛错时中止本轮，不继续走下载', () => {
+    const src = code('src/background/backgroundSync.ts');
+    const start = src.indexOf('const hasPending = await syncEngine.hasPendingUpload()');
+    assert.ok(start !== -1, '应能找到 pending 判据的调用点');
+    // catch 块必须在 return 之前就结束本轮
+    const catchIdx = src.indexOf('} catch', start);
+    assert.ok(catchIdx !== -1 && catchIdx - start < 1200, '应有紧邻的 catch');
+    const catchBody = src.slice(catchIdx, catchIdx + 900);
+    assert.match(
+      catchBody,
+      /return true;/,
+      '读不到 pending_upload 时必须 return 中止本轮 —— 本地是否领先云端未知，' +
+        '继续下载可能用云端旧数据覆盖未推送的本地变更'
+    );
+    assert.ok(
+      !/logWarn\([^)]*失败（继续）/.test(catchBody),
+      '不得「记录警告后继续」：这与上传失败时的处理（中止下载）自相矛盾'
+    );
+  });
+
+  it('上传失败同样中止下载（原有的正确行为，不能被改回去）', () => {
+    const src = code('src/background/backgroundSync.ts');
+    const start = src.indexOf('const hasPending = await syncEngine.hasPendingUpload()');
+    const upIdx = src.indexOf('if (!upResult.success)', start);
+    assert.ok(upIdx !== -1, '应能找到上传结果判断');
+    const block = src.slice(upIdx, upIdx + 400);
+    assert.match(block, /return true;/, '上传未成功必须中止本轮下载（否则云端旧数据会覆盖本地）');
+  });
+});
+
 describe('打开路径：TabManager', () => {
   it('openTab 有「本设备打不开」的兜底提示', () => {
     const src = code('src/background/TabManager.ts');
