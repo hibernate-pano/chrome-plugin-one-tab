@@ -551,44 +551,61 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
           折叠态必须**不渲染**可交互子元素，而不是靠 CSS/aria 藏起来：
           `max-h-0 opacity-0` 只改视觉，`aria-hidden` 只改读屏曝光，两者都不影响 Tab 序列。
           1.22.0 起删除即物理移除（无回收站、无撤销），一旦 Tab 进看不见的折叠组、
-          误按 Enter 就是静默真删。React 18 尚无原生 inert 属性，条件渲染是唯一可靠手段。 */}
+          误按 Enter 就是静默真删。React 18 尚无原生 inert 属性，条件渲染是唯一可靠手段。
+
+          ── 2026-10-05 折叠动画改用 grid-rows，不再有高度上限 ──
+          旧实现是 max-height 在 0 与 2000px 之间切换。但 2000px 是个**硬编码魔数**：
+          行距 44px（lazyTabRows.TAB_ROW_STRIDE_PX）⇒ 2000/44 ≈ 45.5 行，
+          超过 45 个标签的会话展开后**尾部被裁掉且无法滚动到**
+          （本组件内没有任何 overflow-y-auto），对一个「一次收纳整窗标签」的
+          产品这是常见路径。lazyTabRows 的占位高度算的是「行数 × 44」精确值，
+          却被这同一个父级裁掉，两边承诺自相矛盾。
+
+          grid 方案：grid-template-rows 0fr → 1fr 由浏览器在两态间插值，
+          不需要任何具体像素上限（内容多高就展开到多高），折叠动画仍然保留。
+          （注：这里刻意不写出旧类名的完整字面量——Tailwind 的 content 扫描
+          会把注释里的类名也提取成规则，白白进产物。） */}
       <div
-        className={`transition-all duration-300 ease-out overflow-hidden ${
-          isCollapsed ? 'max-h-0 opacity-0' : 'max-h-[2000px] opacity-100'
+        className={`grid transition-all duration-300 ease-out ${
+          isCollapsed ? 'grid-rows-[0fr] opacity-0' : 'grid-rows-[1fr] opacity-100'
         }`}
         aria-hidden={isCollapsed}
       >
         {!isCollapsed && (
-          <div
-            className="tab-group-tabs-container"
-            role="list"
-            aria-label="会话内的标签页，可用上下方向键调整顺序"
-          >
-            {renderRows ? (
-              group.tabs.map((tab, index) => (
-                <DraggableTab
-                  key={tab.id}
-                  tab={tab}
-                  groupId={group.id}
-                  index={index}
-                  itemCount={group.tabs.length}
-                  moveTab={handleMoveTab}
-                  handleOpenTab={handleOpenTab}
-                  handleDeleteTab={handleDeleteTab}
+          /* grid 0fr→1fr 过渡要求直接子元素有 min-height:0 与 overflow:hidden，
+             否则内容会把轨道撑开、折叠失效（这层是动画必需，不是多余包装） */
+          <div className="min-h-0 overflow-hidden">
+            <div
+              className="tab-group-tabs-container"
+              role="list"
+              aria-label="会话内的标签页，可用上下方向键调整顺序"
+            >
+              {renderRows ? (
+                group.tabs.map((tab, index) => (
+                  <DraggableTab
+                    key={tab.id}
+                    tab={tab}
+                    groupId={group.id}
+                    index={index}
+                    itemCount={group.tabs.length}
+                    moveTab={handleMoveTab}
+                    handleOpenTab={handleOpenTab}
+                    handleDeleteTab={handleDeleteTab}
+                  />
+                ))
+              ) : (
+                /* 远离视口：用等高占位撑住文档高度，不把上千个行节点放进 DOM。
+                   高度是**精确值**（行数 × 实测行高），不是估算，因此总高与全量渲染
+                   逐像素一致，滚动位置不会漂移（见 lazyTabRows.resolveRowWindow 单测）。
+                   role="presentation" 是必需的：否则读屏会在 role="list" 里念到一个
+                   没有 listitem 角色的空节点。 */
+                <div
+                  role="presentation"
+                  data-lazy-placeholder="true"
+                  style={{ height: placeholderHeight }}
                 />
-              ))
-            ) : (
-              /* 远离视口：用等高占位撑住文档高度，不把上千个行节点放进 DOM。
-                 高度是**精确值**（行数 × 实测行高），不是估算，因此总高与全量渲染
-                 逐像素一致，滚动位置不会漂移（见 lazyTabRows.resolveRowWindow 单测）。
-                 role="presentation" 是必需的：否则读屏会在 role="list" 里念到一个
-                 没有 listitem 角色的空节点。 */
-              <div
-                role="presentation"
-                data-lazy-placeholder="true"
-                style={{ height: placeholderHeight }}
-              />
-            )}
+              )}
+            </div>
           </div>
         )}
       </div>

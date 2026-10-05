@@ -53,12 +53,16 @@ const GLOBAL_CSS = read('../src/styles/global.css');
 
 describe('折叠会话组：不可聚焦的隐藏内容', () => {
   it('标签列表容器在 isCollapsed 时不渲染子元素', () => {
-    // 根因：max-h-0/opacity-0 只改视觉，aria-hidden 只改读屏曝光，两者都不移出 Tab 序列。
-    // 折叠态必须走条件渲染（React 18 无原生 inert）。
+    // 根因：视觉收起（grid-rows-[0fr] / opacity-0）只改视觉，aria-hidden 只改读屏曝光，
+    // 两者都不移出 Tab 序列。折叠态必须走条件渲染（React 18 无原生 inert）。
     // 结构必须是「外层 CSS 收起 + 内层条件渲染」：
-    //   max-h-0/aria-hidden（外层 wrapper） → {!isCollapsed && ( → role="list" → 渲染
+    //   grid-rows-[0fr]/aria-hidden（外层 wrapper） → {!isCollapsed && ( → role="list" → 渲染
     // 少任何一环，键盘用户就能 Tab 进看不见的会话。
-    const collapseClassIndex = TAB_GROUP.indexOf("isCollapsed ? 'max-h-0 opacity-0'");
+    //
+    // 2026-10-05：折叠动画从 max-height 硬上限改为 grid-rows-[0fr] ↔ [1fr]
+    // （旧实现的 2000px 硬上限会裁掉 >45 标签的会话且无法滚动）。
+    // 本断言守的是「条件渲染」这条不变式，与用哪种收起 technique 无关。
+    const collapseClassIndex = TAB_GROUP.indexOf('grid-rows-[0fr]');
     const guardIndex = TAB_GROUP.indexOf('{!isCollapsed && (');
     const listIndex = TAB_GROUP.indexOf('role="list"');
     // 用带 index 参数的锚点，避免匹配到 openAllTabs 里的 group.tabs.map(tab => …)
@@ -71,6 +75,22 @@ describe('折叠会话组：不可聚焦的隐藏内容', () => {
     assert.ok(
       collapseClassIndex < guardIndex && guardIndex < listIndex && listIndex < mapIndex,
       `折叠容器结构错位（样式=${collapseClassIndex}, 守卫=${guardIndex}, list=${listIndex}, 渲染=${mapIndex}）`
+    );
+  });
+
+  it('展开态不再有硬编码高度上限（>45 标签的会话曾被裁掉且无法滚动）', () => {
+    // 旧实现 `max-h-[2000px]` ÷ 行距 44px ≈ 45.5 行 ⇒ 超过 45 个标签的会话
+    // 展开后尾部被 overflow-hidden 裁掉，而本组件内没有任何 overflow-y-auto，
+    // 那些标签**看不见也点不到**（不是数据丢失：「恢复整个会话」仍会打开全部）。
+    // 对「一次收纳整窗标签」的产品定位，50~100 标签的窗口很常见。
+    assert.ok(
+      !/max-h-\[\d+px\]/.test(TAB_GROUP),
+      'TabGroup 不该再有 max-h-[Npx] 硬上限——它会裁掉长会话。改用 grid-rows 折叠。'
+    );
+    // grid 过渡要求直接子元素 min-height:0 + overflow:hidden，否则折叠失效
+    assert.ok(
+      TAB_GROUP.includes('min-h-0 overflow-hidden'),
+      'grid-rows 折叠的直接子元素必须有 min-h-0 + overflow:hidden（动画才能生效）'
     );
   });
 
