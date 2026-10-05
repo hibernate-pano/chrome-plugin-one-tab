@@ -121,7 +121,77 @@ async function verify(client) {
     console.error('   期望: 20260910_fix_op_stamp_guard_strict_lt.sql');
     return false;
   }
-  console.log('\n✓ VERIFY OK: 列 + 触发器 + 守卫函数体（严格 <、NULL 清空防护）全部正确');
+  console.log('\n✓ op-stamp 守卫：列 + 触发器 + 函数体（严格 <、NULL 清空防护）全部正确');
+
+  // ── 2026-10-05：补验 profiles RLS 与墓碑清理函数 ──────────────────────
+  // 原来 verify 只看 op-stamp 守卫，于是我今天加的两条迁移「跑没跑过」都验不出来：
+  // ① profiles 的 USING(true) 还在不在（数据泄漏）；② purge 函数能不能被 anon 调。
+  // 「迁移脚本报告成功」必须覆盖它声称覆盖的全部对象。
+  const okRls = await verifyProfilesRls(client);
+  const okPurge = await verifyPurgeFunction(client);
+  if (!okRls || !okPurge) return false;
+
+  console.log('\n✓ VERIFY OK: 全部检查通过');
+  return true;
+}
+
+/**
+ * profiles 表的 RLS 收口是否真的生效。
+ * 判定：不存在任何对 PUBLIC / anon / authenticated 的全放行 SELECT 策略。
+ */
+async function verifyProfilesRls(client) {
+  const { rows } = await client.query(`
+    SELECT pol.polname,
+           pol.polqual,               -- USING 表达式（true = 全放行）
+           ARRAY(SELECT rolname FROM pg_roles WHERE r.oid = ANY(pol.polroles)) AS roles
+    FROM pg_catalog.pg_policy pol
+    JOIN pg_catalog.pg_class c ON c.oid = pol.polrelid
+    JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+    WHERE n.nspname='public' AND c.relname='profiles' AND pol.polcmd = 'r'
+  `);
+  if (rows.length === 0) {
+    console.log('  · profiles 表不存在或无 SELECT 策略 —— 跳过（Dashboard schema 可能已变化）');
+    return true;
+  }
+  // polqual 为 'true' 文本 = USING (true) 全放行
+  const open = rows.filter(r => String(r.polqual).trim() === 'true');
+  if (open.length > 0) {
+    console.error('\n✗ VERIFY FAILED: profiles 仍有全放行 SELECT 策略');
+    for (const r of open) {
+      console.error(`   策略 "${r.polname}" roles=[${(r.roles || []).join(',')}] USING (true)`);
+    }
+    console.error('   期望: 20261005000000_lock_down_profiles_rls.sql（该迁移会删掉这条策略）');
+    return false;
+  }
+  console.log('  · profiles：无全放行 SELECT 策略 ✓');
+  return true;
+}
+
+/** 墓碑清理函数：存在 + 已收回 PUBLIC/anon/authenticated 的 EXECUTE。 */
+async function verifyPurgeFunction(client) {
+  const { rows } = await client.query(`
+    SELECT p.proname,
+           has_function_privilege('anon', p.oid, 'EXECUTE')         AS anon_can,
+           has_function_privilege('authenticated', p.oid, 'EXECUTE') AS auth_can,
+           has_function_privilege('service_role', p.oid, 'EXECUTE')  AS svc_can
+    FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+    WHERE n.nspname='public'
+      AND p.proname IN ('purge_expired_cloud_tombstones','body_tombstone_expiry_days')
+  `);
+  if (rows.length === 0) {
+    console.log('  · 墓碑清理函数不存在（迁移 20261005000000b 尚未执行）—— 跳过');
+    return true;
+  }
+  for (const r of rows) {
+    // SECURITY DEFINER + 真 DELETE 的函数若对 anon 可执行 = 匿名可删全站数据
+    if (r.anon_can || r.auth_can) {
+      console.error(`\n✗ VERIFY FAILED: ${r.proname} 对 anon/authenticated 可执行`);
+      console.error(`   anon=${r.anon_can} authenticated=${r.auth_can} service_role=${r.svc_can}`);
+      console.error('   期望: 20261005000000b 里的 REVOKE EXECUTE … FROM PUBLIC, anon, authenticated');
+      return false;
+    }
+    console.log(`  · ${r.proname}：anon/authenticated 已无权调用，service_role=${r.svc_can} ✓`);
+  }
   return true;
 }
 
