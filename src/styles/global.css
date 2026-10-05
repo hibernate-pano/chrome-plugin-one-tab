@@ -698,6 +698,24 @@ html:not([data-theme]).dark {
     color: var(--color-text-muted);
   }
 
+  /* 打不开的标签（file: / blob: / devtools: 等，2026-10-05）：
+     数据保留、点击时给出明确说明，因此视觉上要「可辨识但明显弱于正常项」——
+     不能用隐藏表达（那会让人以为标签丢了），也不能与正常项同亮度
+     （那会让人以为点下去能打开）。 */
+  .tab-item-unopenable .tab-item-title,
+  .tab-item-unopenable .tab-item-url {
+    color: var(--color-text-muted);
+    opacity: 0.75;
+  }
+  .tab-item-unopenable .tab-item-title {
+    @apply line-through;
+    text-decoration-color: var(--color-text-muted);
+    text-decoration-thickness: 1px;
+  }
+  .tab-item-unopenable:hover {
+    background-color: var(--color-bg-tertiary);
+  }
+
   /* 标签项标题悬停效果 */
   .tab-item-title-hover:hover {
     color: var(--color-accent);

@@ -1,27 +1,29 @@
 import { logInfo } from '../../utils/log';
+import { isStorableTabUrl } from '../../utils/inputValidation';
 
 /**
  * 内部 URL = 浏览器 / 扩展自己的页面：保存下来没有意义（恢复时也开不出来），
  * 所以 filterValidTabs 直接丢掉。
  *
- * ── 这是本仓库第三套 URL 策略，也是唯一的内部 URL 判定（单源）──────────
- * 另外两套答的是不同问题，不要合并：
- * - utils/inputValidation.sanitizeTabUrl：「这个地址能不能被重新打开」
- * - utils/faviconUtils.isFaviconUrlSafe：「这个地址能不能当 <img src> 渲染」
+ * ── 这是本仓库的 URL 策略单源（2026-10-05 起）──────────────────────────
+ * 本表答的是「这是不是我们自己的页面」，按**前缀**拒；下面引用的
+ * isStorableTabUrl 答的是「这个 URL 能不能存进数据库」，按**协议**拒。
+ * 两道门串联：先过协议表（拒 javascript:/vbscript:/data: 这类危险 schema），
+ * 再过本表（拒 chrome:// / edge:// / chrome-extension:// / about:）。
  *
- * 本表答的是「这是不是我们自己的页面」。它与前两表正交且串联：前者按协议拒
- * （utils/inputValidation.sanitizeTabUrl），本表按前缀拒。about: 是唯一被两表
- * 同时点名、答案相反的协议——sanitizeTabUrl 放行它（合法可导航），本表判它
- * 内部（不保存）。这不是分叉事故，是两道门问的两个问题。
+ * ⚠️ 别再加第三套表。历史上这里是「两套表对 about: 给出相反答案」的根源：
+ * 本表判它内部（不保存）、旧版 sanitizeTabUrl 放行它（合法可导航）。
+ * 现在 sanitizeTabUrl 已拆成 isStorableTabUrl（存） / isOpenableTabUrl（开），
+ * about: 在**存储门**下不可存（about:blank 无内容），在本表下也判内部——
+ * 两个问题各自的答案都由唯一一处给出。
  *
- * ⚠️ 单源的直接后果：background/TabManager.saveCurrentTab 原先内联了一份残缺
- * 列表（只认 chrome:// 与 chrome-extension://，漏了 edge:// 与 about:），
- * 与本表对「什么算自己的页面」给出不同答案。已改为引用本函数。
- * 该改动**不改变任何可观测行为**（残余的那份其实已是死代码）：saveCurrentTab
- * 紧接着调用的 createTabGroupFromChromeTabs 内部先走 filterValidTabs →
- * isValidTab → 本函数，残缺列表拦不住的 edge:// / about: 在那里已被全部丢弃。
- * 改成单一真相源消除的是「同一判断两处不同答案」这个隐患（下次往本表加协议时，
- * 旧代码会静默漏掉 saveCurrentTab 这条路径），不是修一个正在漏的数据 bug。
+ * ⚠️ 2026-10-05 之前 isValidTab **只看本表**，于是 file: / blob: / devtools: /
+ * view-source: 全部放行并入库，而当时的还原侧（sanitizeTabUrl 等价于
+ * 「可打开」）会把它们滤掉——产生「存得下、回不来」的会话，且还原率判据
+ * 按整组生效会把同组正常标签一起隐藏。现在协议由 isStorableTabUrl 统一裁决，
+ * file:/blob: 这类「有保存价值但本设备打不开」的地址可以入库（打开与否由
+ * isOpenableTabUrl 在渲染/点击时判定），危险 schema 则在入库前就拒。
+ *
  * 若要增删内部协议，只改这里一处。
  */
 const INTERNAL_URL_PREFIXES = ['chrome://', 'chrome-extension://', 'edge://', 'about:'];
@@ -31,7 +33,8 @@ export const isInternalUrl = (url: string): boolean =>
 
 export const isValidTab = (tab: chrome.tabs.Tab): boolean => {
   if (tab.url) {
-    return !isInternalUrl(tab.url);
+    // 协议门 + 内部页门：任一不过即丢弃
+    return isStorableTabUrl(tab.url) && !isInternalUrl(tab.url);
   }
   return !!tab.title && tab.title.trim().length > 0;
 };

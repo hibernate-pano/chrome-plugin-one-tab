@@ -234,7 +234,7 @@ export const DraggableTab: React.FC<DraggableTabProps> = React.memo(({
       onDragEnter={handleDragEnter}
       onDragLeave={handleDragLeave}
       onDrop={handleDrop}
-      className={`tab-item group/tab micro-interaction-card ${isDragging ? 'dragging' : ''} ${isOver ? 'drag-over' : ''}`}
+      className={`tab-item group/tab micro-interaction-card ${isDragging ? 'dragging' : ''} ${isOver ? 'drag-over' : ''} ${tab.unopenable ? 'tab-item-unopenable' : ''}`}
       style={{ cursor: 'grab' }}
       // 父容器 TabGroup.tsx 同步提供 role="list"——此前全仓没有 role="list"，
       // 孤立的 listitem 是无效语义（读屏不播报"列表项 N/M"）。
@@ -251,7 +251,11 @@ export const DraggableTab: React.FC<DraggableTabProps> = React.memo(({
           className="tab-item-title tab-item-title-hover transition-colors flex items-center gap-1"
           onClick={handleTabClick}
           title={tabTitle}
-          aria-label={`打开标签页: ${tabTitle}${tab.pinned ? ' (固定)' : ''}，第 ${index + 1} / ${itemCount} 项，用上下方向键调整顺序`}
+          aria-label={
+            tab.unopenable
+              ? `${tabTitle}（此标签在当前设备无法打开，仍保留在会话中），第 ${index + 1} / ${itemCount} 项，用上下方向键调整顺序`
+              : `打开标签页: ${tabTitle}${tab.pinned ? ' (固定)' : ''}，第 ${index + 1} / ${itemCount} 项，用上下方向键调整顺序`
+          }
           aria-keyshortcuts="ArrowUp ArrowDown Home End"
           tabIndex={0}
           onKeyDown={handleTitleKeyDown}

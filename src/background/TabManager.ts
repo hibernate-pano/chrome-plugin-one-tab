@@ -3,7 +3,7 @@ import { createTabGroupFromChromeTabs, filterValidTabs, isInternalUrl } from '@/
 import { cacheManager } from '@/utils/performance';
 import { trackProductEvent } from '@/utils/productEvents';
 import { syncEngine } from '@/services/syncEngine';
-import { sanitizeTabUrl } from '@/utils/inputValidation';
+import { sanitizeTabUrl, isOpenableTabUrl } from '@/utils/inputValidation';
 import { enqueue } from './mutationQueue';
 import { createSeqRegistry } from '@/utils/seqRegistry';
 import { getDeviceId } from '@/utils/deviceUtils';
@@ -110,9 +110,11 @@ export class TabManager {
         includePinned: collectPinnedTabs,
       });
 
-      // URL 清洗：拒绝 javascript:/data:/file: 等危险协议（chrome.tabs.query
-      // 仍可能返回用户曾手动跳转过的 javascript: URL）。失败计数用日志告知，
-      // 不污染 storage，也不打断保存流程。
+      // URL 清洗（2026-10-05 起语义明确为「能不能存」）：拒绝 javascript:/
+      // data:/vbscript: 这类危险 schema。注意 **file: / blob: 现在会通过**——
+      // 它们能存进数据库（保存时用户确实打得开），只是在别的设备上未必打得开，
+      // 那种情况由读取侧的 unopenable 标记 + 打开时的兜底提示处理。
+      // 失败计数用日志告知，不污染 storage，也不打断保存流程。
       const sanitizedTabs: typeof tabGroup.tabs = [];
       let droppedTabs = 0;
       for (const t of tabGroup.tabs) {
@@ -277,8 +279,24 @@ export class TabManager {
 
   /**
    * 打开单个标签页，保留标签管理器页面
+   *
+   * 2026-10-05：这里原本直接 `chrome.tabs.create({ url })`，而调用方
+   * （popup 的 handleOpenTab）已在上游用 isOpenableTabUrl 判过；这里再加一道
+   * 是为了**兜住所有其它调用路径**（恢复整窗、键盘快捷键、消息入口）。
+   * 打不开时给用户一条明确通知，而不是静默失败或抛一个看不懂的错。
    */
   async openTab(url: string): Promise<void> {
+    if (!isOpenableTabUrl(url)) {
+      const shown = url.length > 80 ? `${url.slice(0, 77)}…` : url;
+      logWarn('[TabManager] 拒绝打开本设备无法导航的地址:', url);
+      await this.showNotification({
+        type: 'basic',
+        iconUrl: chrome.runtime.getURL('icons/icon128.png'),
+        title: '无法打开此标签',
+        message: `「${shown}」是本机文件、临时链接或浏览器内部页面，无法在此设备上重新打开。该标签已保留在会话中。`,
+      });
+      return;
+    }
     try {
       const existingTabs = await this.getExistingTabManagerTabs();
       const tabManagerId = existingTabs.length > 0 ? existingTabs[0].id : null;
