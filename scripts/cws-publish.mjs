@@ -107,4 +107,29 @@ if (cmd === 'status') {
 } else if (cmd === 'publish') {
   const res = http('POST', `${BASE}/items/${ITEM_ID}/publish`, { headers: auth });
   console.log('HTTP', res.status, res.body.slice(0, 400));
+  // ── 2026-10-05：publish 分支补状态校验（原来只有 upload 分支有）────────
+  // 原来这里只 console.log 就结束：非 2xx 也以 exit 0 退出，于是
+  // 「提交审核」这一步失败时 CI/脚本看起来是成功的 —— 这是发版流程里
+  // 最关键的一步（upload 只是更新草稿，publish 才真的提交审核）。
+  //
+  // 已知的两种「200 但没发出去」（见文件头踩坑记录）：
+  //   - 空草稿（uploadState NOT_FOUND）时 publish 返回 200 但是 no-op；
+  //   - crxVersion 没变（upload 没真正生效）时同样可能 200 no-op。
+  // 所以除了状态码，还要看响应体里有没有「已提交」的信号。
+  if (res.status < 200 || res.status >= 300) {
+    console.error(`提交审核失败（HTTP ${res.status}）——草稿仍是草稿，线上没有变化`);
+    process.exit(1);
+  }
+  // 200 不等于发出去：空草稿 publish 是 no-op。这里对「明显的 no-op 形状」
+  // 也失败退出，避免脚本给出「已发布」的错觉。
+  const body = res.body ?? '';
+  const looksLikeNoop = /"uploadState"\s*:\s*"NOT_FOUND"/.test(body);
+  if (looksLikeNoop) {
+    console.error(
+      'publish 返回 200，但 uploadState=NOT_FOUND —— 这是空草稿的静默 no-op，' +
+        '线上没有任何变化。通常是 upload 没成功或草稿被重置。绝不当作已发布。'
+    );
+    process.exit(1);
+  }
+  console.log('✓ 已提交审核。建议再跑一次 `status` 确认 PENDING_REVIEW。');
 }

@@ -94,8 +94,19 @@ jobs:
       - name: 单测（含真实 Postgres 触发器集成测试）
         run: pnpm test
 
-      - name: 元数据一致性 + 类型 + lint + 构建
+      - name: 元数据一致性 + 类型 + lint + 构建 + 首屏体积门
         run: pnpm validate
+
+      # 首屏体积门已串进 validate（pnpm check:bundle），这里单独再跑一次只为让
+      # CI 日志里出现那张逐文件清单 —— 超预算时 validate 会红，但那时日志里
+      # 混着类型/lint 输出，具体是哪几个 chunk 变肥了不好找。
+      #
+      # 为什么值得有一个真会红的门：docs/v2-plan.md 曾承诺「超预算阻断发布」，
+      # 而原 report-y-bundle.mjs 超了只打印 ALERT 并 exit 0，且从未被任何地方
+      # 调用 —— 一个没人调、也不拦人的门不是门。现已改写为测「用户点开弹窗时
+      # 必须下载的全部资源」，超预算 exit 1。
+      - name: popup 首屏体积门（逐文件清单）
+        run: pnpm check:bundle
 
       # 【为什么只审生产依赖（--prod）】扩展发布的是 vite 打出来的 bundle，
       # devDependencies 只在 lint/构建期用，一个字节都不进 dist。
