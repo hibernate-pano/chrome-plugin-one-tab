@@ -22,6 +22,21 @@ export interface MutationResult<P = unknown> {
   ok: boolean;
   error?: string;
   payload?: P;
+  /**
+   * 「本地已生效，但有后续步骤没做成」的如实告知（2026-10-05）。
+   *
+   * 用于无墓碑模型的删除广播：本地物理移除已经成功（不可回滚，UI 的乐观
+   * 更新是对的），但把 id 登记进 pendingDeleteIds 失败 ⇒ 云端行不会被标
+   * is_deleted ⇒ 对端下次合并会把它当 remote-only 复活。
+   *
+   * 为什么不是 `ok: false`：本地确实删掉了，报「失败」会让 UI 显示成
+   * 「删除失败」，而列表里那一组确实已经不见了 —— 那才是真的误导。
+   * 为什么不能只 logWarn：用户看到「删除成功」就不会再检查第二遍，
+   * 而实际结果是「本机删了、其它设备会复活」。
+   *
+   * 语义：**非空 ⇒ 调用方应当向用户表面提示**，但不得因此回滚本地状态。
+   */
+  broadcastWarn?: string;
 }
 
 export type MessageSender = (msg: unknown) => Promise<unknown>;

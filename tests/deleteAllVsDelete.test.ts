@@ -29,9 +29,9 @@ describe('deleteAllGroups 与在途 deleteGroup 并发', () => {
   it('FIFO 顺序（单删先落定 → 全删）：最终列表为空，备份不泄漏', async () => {
     const { store, mod } = await makeStore([mkGroup('g1'), mkGroup('g2')]);
     store.dispatch(mod.deleteGroup.pending('d1', 'g1'));
-    store.dispatch(mod.deleteGroup.fulfilled('g1', 'd1', 'g1'));
+    store.dispatch(mod.deleteGroup.fulfilled({ value: 'g1' }, 'd1', 'g1'));
     store.dispatch(mod.deleteAllGroups.pending('da', undefined));
-    store.dispatch(mod.deleteAllGroups.fulfilled({ count: 1 }, 'da', undefined));
+    store.dispatch(mod.deleteAllGroups.fulfilled({ value: { count: 1 } }, 'da', undefined));
     const st = store.getState().tabs;
     assert.deepEqual(st.groups, []);
     assert.deepEqual(st.deletedGroupBackups ?? {}, {}, '备份必须消费完，否则永久过滤掉磁盘上存在的组');
@@ -42,7 +42,7 @@ describe('deleteAllGroups 与在途 deleteGroup 并发', () => {
     // 单删在途（磁盘未落定），全删成功 → 磁盘上一个组都没有了
     store.dispatch(mod.deleteGroup.pending('d1', 'g1'));
     store.dispatch(mod.deleteAllGroups.pending('da', undefined));
-    store.dispatch(mod.deleteAllGroups.fulfilled({ count: 2 }, 'da', undefined));
+    store.dispatch(mod.deleteAllGroups.fulfilled({ value: { count: 2 } }, 'da', undefined));
     // 单删失败：它的备份还要求还原 g1，但 g1 在磁盘上已被全删干掉
     store.dispatch(mod.deleteGroup.rejected({ message: '失败' } as never, 'd1', 'g1'));
     const st = store.getState().tabs;
@@ -57,7 +57,7 @@ describe('deleteAllGroups 与在途 deleteGroup 并发', () => {
     const { store, mod } = await makeStore(groups);
     store.dispatch(mod.deleteGroup.pending('d1', 'g1'));
     // 单删落定（成功）
-    store.dispatch(mod.deleteGroup.fulfilled('g1', 'd1', 'g1'));
+    store.dispatch(mod.deleteGroup.fulfilled({ value: 'g1' }, 'd1', 'g1'));
     // 他端把 g1 又建回来了 → 回环带回 g1，此时备份已清，必须能显示
     store.dispatch(mod.loadGroups.pending('L', undefined));
     store.dispatch(mod.loadGroups.fulfilled(groups as never, 'L', undefined));
@@ -71,7 +71,7 @@ describe('deleteAllGroups 之后的回环不得复活列表', () => {
     const { store, mod } = await makeStore(groups);
     store.dispatch(mod.loadGroups.pending('L-old', undefined));   // 读到的是全删前的数据
     store.dispatch(mod.deleteAllGroups.pending('da', undefined));
-    store.dispatch(mod.deleteAllGroups.fulfilled({ count: 2 }, 'da', undefined));
+    store.dispatch(mod.deleteAllGroups.fulfilled({ value: { count: 2 } }, 'da', undefined));
     store.dispatch(mod.loadGroups.fulfilled(groups as never, 'L-old', undefined));
     assert.deepEqual(store.getState().tabs.groups, [], '旧代际回环不得把整份列表带回来');
   });
@@ -79,7 +79,7 @@ describe('deleteAllGroups 之后的回环不得复活列表', () => {
   it('全删后新发起的回环照常生效（不饿死：他端新建的会话可见）', async () => {
     const { store, mod } = await makeStore([mkGroup('g1')]);
     store.dispatch(mod.deleteAllGroups.pending('da', undefined));
-    store.dispatch(mod.deleteAllGroups.fulfilled({ count: 1 }, 'da', undefined));
+    store.dispatch(mod.deleteAllGroups.fulfilled({ value: { count: 1 } }, 'da', undefined));
     const fresh = [mkGroup('ext')];
     store.dispatch(mod.loadGroups.pending('L-new', undefined));   // 全删之后发起
     store.dispatch(mod.loadGroups.fulfilled(fresh as never, 'L-new', undefined));
@@ -90,7 +90,7 @@ describe('deleteAllGroups 之后的回环不得复活列表', () => {
     const { store, mod } = await makeStore([mkGroup('g1'), mkGroup('g2')]);
     store.dispatch(mod.deleteTabAndSync.pending('t1', { groupId: 'g2', tabId: 'g2-t1' }));
     store.dispatch(mod.deleteAllGroups.pending('da', undefined));
-    store.dispatch(mod.deleteAllGroups.fulfilled({ count: 2 }, 'da', undefined));
+    store.dispatch(mod.deleteAllGroups.fulfilled({ value: { count: 2 } }, 'da', undefined));
     store.dispatch(
       mod.deleteTabAndSync.rejected({ message: '网络失败' } as never, 't1', { groupId: 'g2', tabId: 'g2-t1' })
     );

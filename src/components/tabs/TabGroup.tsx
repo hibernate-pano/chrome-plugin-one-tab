@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useCallback, useRef } from 'react';
 import { useAppDispatch, useAppSelector } from '@/store/hooks';
-import { updateGroupNameAndSync, toggleGroupLockAndSync, deleteGroup, updateGroupFields, persistGroupFields, deleteTabAndSync, moveTabAndSync } from '@/store/slices/tabSlice';
+import { updateGroupNameAndSync, toggleGroupLockAndSync, deleteGroup, deleteBroadcastWarn, updateGroupFields, persistGroupFields, deleteTabAndSync, moveTabAndSync } from '@/store/slices/tabSlice';
 import { DraggableTab } from '@/components/dnd/DraggableTab';
 import { TabGroup as TabGroupType, Tab } from '@/types/tab';
 import { useToast } from '@/contexts/ToastContext';
@@ -142,6 +142,13 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
     const runDelete = () => {
       dispatch(deleteGroup(group.id))
         .unwrap()
+        .then(payload => {
+          // 本地删除已生效，但云端删除广播登记可能失败 ⇒ 对端会复活这一组。
+          // 这种情况**不是** ok:false（本地确实删了），必须单独 surface，
+          // 否则用户看到「删除成功」就不会再检查，而实际结果是「删了又回来」。
+          const warn = deleteBroadcastWarn(payload);
+          if (warn) showDeleteError(warn);
+        })
         .catch(error => {
           showDeleteError(`删除会话失败: ${error.message || '未知错误'}`);
         });

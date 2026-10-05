@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { useAppSelector, useAppDispatch } from '@/store/hooks';
 import { signOut } from '@/store/slices/authSlice';
-import { deleteAllGroups, loadGroups } from '@/store/slices/tabSlice';
+import { deleteAllGroups, deleteBroadcastWarn, loadGroups } from '@/store/slices/tabSlice';
 import { sendSyncCommand } from '@/shared/mutationProtocol';
 import { storage } from '@/utils/storage';
 import type { AuthTab } from '../auth/AuthModal';
@@ -212,7 +212,19 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({ onClose, onOpenA
       onClose();
 
       dispatch(deleteAllGroups())
-        .then(() => {
+        .unwrap()
+        .then(payload => {
+          // 广播登记失败时本地已删干净，但云端行不会被标 is_deleted ⇒
+          // 其它设备下次合并会把它当 remote-only 全部复活。必须如实告知。
+          const warn = deleteBroadcastWarn(payload);
+          if (warn) {
+            showAlert({
+              title: '删除未完全同步',
+              message: warn,
+              type: 'warning',
+              onClose: () => {}
+            });
+          }
           if (isAuthenticated) {
             sendSyncCommand('upload', {
               overwriteCloud: true,

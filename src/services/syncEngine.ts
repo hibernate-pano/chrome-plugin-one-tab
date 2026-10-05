@@ -113,13 +113,20 @@ export class SyncEngine {
    * storage 中的标志仍在——下一次后台 alarm 起来的 SW 能读到这个事实
    * 先上传。backgroundSync.performBackgroundSync 调用此方法决定是否
    * “先上传后下载”。
+   *
+   * ── 2026-10-05：读失败不再当“没有待上传” ────────────────────────────
+   * 原实现在这里 `catch { return false }`，而 false 的语义是「本地没有待上传
+   * 的变更」——读失败会被读成「一切正常」，于是后台轮询**跳过上传这一步**。
+   * 真实状态若是「有一堆本地变更等着上云」，结果就是它们静默不推送：
+   * 云端保持旧状态，下次下载再把本地覆盖回去，用户以为存了其实没存上。
+   *
+   * 改为向上抛：判据读不到时「先上传还是先下载」这个问题就没有答案，
+   * 静默替它答一个「不用传」是这类 bug 最常见的制造方式。
+   * backgroundSync 的处理是「读不到就跳过本轮同步并记日志」——
+   * 那是诚实的：什么都没做，而不是做了一半还声称做完了。
    */
   async hasPendingUpload(): Promise<boolean> {
-    try {
-      return await storage.getPendingUpload();
-    } catch {
-      return false;
-    }
+    return storage.getPendingUpload();
   }
 
   cancelPendingUpload(): void {
@@ -165,8 +172,25 @@ export class SyncEngine {
    * @param delayMs 延迟毫秒数（默认 3000ms）
    */
   scheduleUpload(delayMs: number = 3000): Promise<void> {
+    // ── 2026-10-05：置位失败不再只 logWarn ────────────────────────────────
+    // 原来这里是 `.catch(err => logWarn(...))`：置位失败后 alarm 照样创建、
+    // timer 照样跑，本次进程内的上传**会**发生。但 pending_upload 标志是
+    // 「SW 被杀后重启还能不能记得要上传」的唯一凭据 —— 置位失败意味着
+    // 这个凭据没写进磁盘。若这次上传途中 SW 被回收（MV3 常态），
+    // 新起的 SW 读到 false，后台轮询会跳过上传，那批本地变更就静默躺平了。
+    //
+    // 这里不改成 throw：scheduleUpload 是 fire-and-forget 的调度入口，
+    // 抛错会让调用方（mutationHandlers 的每个 case、以及 timer 快路径）
+    // 全部失败，而「调度本身」其实已经成功了。诚实的做法是：
+    //   记 error 级日志（不是 warn——这是会导致数据不上云的故障），
+    //   并说明后果，让排障的人能直接定位到这条。
     const marked = storage.setPendingUpload(true).catch(err => {
-      logWarn('[SyncEngine] 置位 pending_upload 失败:', err);
+      logError(
+        '[SyncEngine] 置位 pending_upload 失败——本次上传仍会执行，但若 SW 在此期间' +
+          '被回收，重启后的后台轮询读到的将是 false 并跳过上传，导致这批本地变更' +
+          '不上云（下次下载可能用云端旧数据覆盖本地）。原始错误：',
+        err
+      );
     });
     if (typeof chrome !== 'undefined' && chrome.alarms) {
       // ponytail: 双驱动——R6 修复。chrome.alarms 最小 delayInMinutes 是 0.5（30s），

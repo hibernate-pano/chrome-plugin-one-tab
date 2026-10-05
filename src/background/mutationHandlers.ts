@@ -29,7 +29,7 @@ import {
   applyMoveTab,
   applyCleanDuplicates,
 } from '@/core/mutationOps';
-import { logWarn } from '../utils/log';
+import { logError } from '../utils/log';
 import { perfTrace } from '@/utils/perfTrace';
 
 export interface MutationDeps {
@@ -61,19 +61,36 @@ const NORMAL_MS = 3000;
 
 /**
  * 物理删除的组登记云端删除广播队列。
- * 登记失败只告警不阻断（本地已删干净，残留风险写进日志）。
+ *
+ * ── 2026-10-05：失败改为「如实回报」，不再只告警 ────────────────────────
+ * 无墓碑模型下，删除分两段：本地物理移除（立即，用户看得见）+ 云端行标
+ * is_deleted（广播，让对端也删）。第二段的载体就是 pendingDeleteIds 队列。
+ * 登记失败时本地已经删干净、界面也已经少了那一组，但**云端行还在**——
+ * 对端下次合并会把它当 remote-only 复活（这正是 pendingDeleteIds 存在的理由）。
+ *
+ * 原来这里 catch 之后只 logWarn，handle 照常返回 `ok: true`，于是 UI 报成功、
+ * 用户以为删干净了，而实际是「本地删了、云端没删、对端会复活」。这类
+ * 「谎报成功」比直接失败更难排查：用户不会再去检查第二遍。
+ *
+ * 现在返回失败信息（本地已删的事实照旧，UI 会刷新列表——乐观更新已经生效），
+ * 让调用方能提示用户「本地已删除，但云端同步失败，可能在其它设备复活」。
+ * 不改成 throw：本地删除已经生效（不可回滚），抛错会让 UI 显示成
+ * 「删除失败」而实际本地已经没了，那才是真的误导。
  */
 async function noteDeletedGroups(
   deps: MutationDeps,
   ids: (string | null | undefined)[]
-): Promise<void> {
+): Promise<string | null> {
   const validIds = ids.filter((id): id is string => typeof id === 'string' && id.length > 0);
-  if (validIds.length === 0) return;
+  if (validIds.length === 0) return null;
   try {
     // 一次登记整批：逐条会造成 2N 次 KV 往返（大清理场景卡死的根因）。
     await deps.noteGroupDeleted?.(validIds);
+    return null;
   } catch (e) {
-    logWarn('[mutationHandlers] 登记删除广播队列失败（云端行可能残留复活）:', validIds, e);
+    logError('[mutationHandlers] 登记删除广播队列失败（云端行会残留、对端将复活）:', validIds, e);
+    return `${validIds.length} 个会话已从本机删除，但未能登记云端删除广播；` +
+      '它们可能在你的其它设备上重新出现（下次同步时会被带回来）。';
   }
 }
 
@@ -139,28 +156,28 @@ export function createMutationHandlers(deps: MutationDeps) {
         const groups = await d.getGroups();
         const r = applyRemoveTab(groups, cmd.groupId, cmd.tabId, now, stamp);
         await persist(r.groups);
-        await noteDeletedGroups(d, [r.removedGroupId]);
+        const delWarn = await noteDeletedGroups(d, [r.removedGroupId]);
         // 删除类必须 await 置位：组已从磁盘移除、广播队列已写入，但
         // pending_upload 还没落盘时 SW 被回收 → 后台看到 pendingUpload=false
         // 就不上传 → 云端行没标记删除，对端并集合并把已删的组拉回来。
         await d.scheduleUpload(DELETE_PRIORITY_MS);
-        return { ok: true, payload: { group: r.group } };
+        return { ok: true, payload: { group: r.group }, broadcastWarn: delWarn ?? undefined };
       }
       case 'deleteGroup': {
         const groups = await d.getGroups();
         const r = applyDeleteGroup(groups, cmd.groupId, now, stamp);
         await persist(r.groups);
-        await noteDeletedGroups(d, [r.removedGroupId]);
+        const delWarn = await noteDeletedGroups(d, [r.removedGroupId]);
         await d.scheduleUpload(DELETE_PRIORITY_MS);
-        return { ok: true, payload: cmd.groupId };
+        return { ok: true, payload: cmd.groupId, broadcastWarn: delWarn ?? undefined };
       }
       case 'deleteAllGroups': {
         const groups = await d.getGroups();
         const r = applyDeleteAllGroups(groups, now, stamp);
         await persist(r.groups);
-        await noteDeletedGroups(d, r.removedGroupIds);
+        const delWarn = await noteDeletedGroups(d, r.removedGroupIds);
         await d.scheduleUpload(DELETE_PRIORITY_MS);
-        return { ok: true, payload: { count: r.count } };
+        return { ok: true, payload: { count: r.count }, broadcastWarn: delWarn ?? undefined };
       }
       case 'importGroups': {
         const groups = await d.getGroups();
@@ -209,7 +226,7 @@ export function createMutationHandlers(deps: MutationDeps) {
         const groups = await d.getGroups();
         const r = applyMoveTab(groups, cmd, now, stamp);
         await persist(r.groups);
-        await noteDeletedGroups(d, [r.removedGroupId]);
+        const delWarn = await noteDeletedGroups(d, [r.removedGroupId]);
         // 搬空源组属删除类：置位必须落盘，否则那次删除广播不到云端
         await d.scheduleUpload(r.removedGroupId ? DELETE_PRIORITY_MS : NORMAL_MS);
         return {
@@ -221,13 +238,14 @@ export function createMutationHandlers(deps: MutationDeps) {
             targetIndex: cmd.targetIndex,
             removedGroupId: r.removedGroupId,
           },
+          broadcastWarn: delWarn ?? undefined,
         };
       }
       case 'cleanDuplicates': {
         const groups = await d.getGroups();
         const r = applyCleanDuplicates(groups, now, stamp);
         await persist(r.groups);
-        await noteDeletedGroups(d, r.plan.removedGroupIds);
+        const delWarn = await noteDeletedGroups(d, r.plan.removedGroupIds);
         // 清空产生的删除同样依赖广播队列 + 置位，别让删除停在半路
         await d.scheduleUpload(NORMAL_MS);
         return {
@@ -240,6 +258,7 @@ export function createMutationHandlers(deps: MutationDeps) {
             now,
             stamp,
           },
+          broadcastWarn: delWarn ?? undefined,
         };
       }
       default:

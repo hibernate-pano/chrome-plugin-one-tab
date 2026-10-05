@@ -623,15 +623,21 @@ class ChromeStorage {
     }
   }
 
-  // ponytail: 持久化的“本地有未上传变更”标志。
+  // ponytail: 持久化的"本地有未上传变更"标志。
   // scheduleUpload 置 true；upload 成功置 false；cancelPendingUpload 不动。
+  //
+  // ── 2026-10-05：读失败不再静默返回 false ──────────────────────────────
+  // 这个标志是「后台 alarm 要不要上传」的唯一判据，而 false 的语义是
+  // 「本地没有待上传的变更」——于是读失败会被读成「一切正常，不用了」，
+  // 而真实状态可能是「有一堆本地变更等着上云」。结果：本地变更**静默不推送**，
+  // 云端保持旧状态，下次下载再把本地覆盖回去，用户以为存了其实没存上。
+  //
+  // 之前这里 `catch { return false }`，与同文件 groups/settings 的
+  // fail-closed 纪律正好相反。改为抛错：让调用方显式决定「读不到时怎么办」，
+  // 而不是替它们编一个「没有待上传」的答案。
   async getPendingUpload(): Promise<boolean> {
-    try {
-      await this.ensureVersion();
-      return (await kvGet<boolean>(STORAGE_KEYS.PENDING_UPLOAD)) === true;
-    } catch {
-      return false;
-    }
+    await this.ensureVersion();
+    return (await kvGet<boolean>(STORAGE_KEYS.PENDING_UPLOAD)) === true;
   }
 
   /**

@@ -68,7 +68,7 @@ describe('显式删除会话后，在途标签删除失败不得复活该会话'
 
     // 2) 用户紧接着删掉整个 g1
     store.dispatch(mod.deleteGroup.pending('req-del', 'g1'));
-    store.dispatch(mod.deleteGroup.fulfilled('g1', 'req-del', 'g1'));
+    store.dispatch(mod.deleteGroup.fulfilled({ value: 'g1' }, 'req-del', 'g1'));
     assert.equal(
       store.getState().tabs.groups.some(g => g.id === 'g1'),
       false,
@@ -152,7 +152,7 @@ describe('备份作废时机：只在 fulfilled（磁盘确认）作废，不在
     const { store, mod } = await makeStore([mkGroup('g1', [mkTab('t1'), mkTab('t2')])]);
     store.dispatch(mod.deleteTabAndSync.pending('req-tab', { groupId: 'g1', tabId: 't1' }));
     store.dispatch(mod.deleteGroup.pending('req-del', 'g1'));
-    store.dispatch(mod.deleteGroup.fulfilled('g1', 'req-del', 'g1'));
+    store.dispatch(mod.deleteGroup.fulfilled({ value: 'g1' }, 'req-del', 'g1'));
     assert.deepEqual(
       store.getState().tabs.optimisticBackups ?? {},
       {},
@@ -225,7 +225,7 @@ describe('备份作废时机：只在 fulfilled（磁盘确认）作废，不在
     assert.equal(store.getState().tabs.groups.length, 0, '两组都乐观移除');
 
     // g1 成功、g2 失败 → 只有 g2 回来
-    store.dispatch(mod.deleteGroup.fulfilled('g1', 'req-1', 'g1'));
+    store.dispatch(mod.deleteGroup.fulfilled({ value: 'g1' }, 'req-1', 'g1'));
     store.dispatch(mod.deleteGroup.rejected({ message: '失败' } as never, 'req-2', 'g2'));
     assert.deepEqual(store.getState().tabs.groups.map(g => g.id), ['g2']);
     assert.deepEqual(

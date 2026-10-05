@@ -118,12 +118,55 @@ export const saveGroup = createAsyncThunk(
   }
 );
 
+/**
+ * 删除类 mutation 的成功载荷（2026-10-05）。
+ *
+ * `broadcastWarn` 非空表示：本地删除已经生效（列表里那一组确实不见了），
+ * 但「把 id 登记进云端删除广播队列」这一步失败了 ⇒ 云端行不会被标
+ * is_deleted ⇒ 对端下次合并会把它当 remote-only 复活。
+ *
+ * 为什么不并入 ok:false：本地确实删掉了，报「失败」会让 UI 显示成
+ * 「删除失败」而那一组已经不见了，那才是真的误导。
+ *
+ * ── 形状为什么是 `{ value, broadcastWarn }` 而不是「原 payload + 附加字段」──
+ * 试过后者（deleteGroup 的 payload 是 string groupId、deleteAllGroups 是
+ * {count}），但标量挂不上附加字段，deleteGroup 的警告会**静默丢失**——
+ * 那正是这次要消灭的「谎报成功」。所以改成显式包一层：
+ *   - value 保持原 payload，deleteGroup.fulfilled 的 reducer 改读 action.payload.value；
+ *   - broadcastWarn 一律可读，deleteBroadcastWarn() 取。
+ * 代价是那一个 reducer 要跟着改（本来就只在一处），换来「警告不会丢」。
+ */
+export interface DeleteOpResult<T> {
+  value: T;
+  broadcastWarn?: string;
+}
+
+/** 取删除类 thunk 载荷上的广播警告（无警告时返回 undefined）。 */
+export function deleteBroadcastWarn(payload: unknown): string | undefined {
+  if (payload && typeof payload === 'object') {
+    const w = (payload as { broadcastWarn?: unknown }).broadcastWarn;
+    return typeof w === 'string' ? w : undefined;
+  }
+  return undefined;
+}
+
+/**
+ * 统一处理删除类 mutation 的返回：本地失败 → 抛（走 rejected 回滚）；
+ * 本地成功但广播登记失败 → 把警告挂在载荷上交给 UI 表面提示。
+ */
+function unwrapDeleteResult<T>(
+  res: { ok: boolean; error?: string; payload?: T; broadcastWarn?: string },
+  fallbackError: string
+): DeleteOpResult<T> {
+  if (!res.ok) throw new Error(res.error ?? fallbackError);
+  return { value: res.payload as T, broadcastWarn: res.broadcastWarn };
+}
+
 export const deleteGroup = createAsyncThunk(
   'tabs/deleteGroup',
   async (groupId: string) => {
     const res = await sendMutation<string>({ op: 'deleteGroup', groupId });
-    if (!res.ok) throw new Error(res.error ?? '删除失败');
-    return res.payload!;
+    return unwrapDeleteResult(res, '删除失败');
   }
 );
 
@@ -131,8 +174,7 @@ export const deleteAllGroups = createAsyncThunk(
   'tabs/deleteAllGroups',
   async () => {
     const res = await sendMutation<{ count: number }>({ op: 'deleteAllGroups' });
-    if (!res.ok) throw new Error(res.error ?? '删除失败');
-    return res.payload!;
+    return unwrapDeleteResult(res, '删除失败');
   }
 );
 
@@ -540,7 +582,9 @@ export const tabSlice = createSlice({
         state.error = null;
       })
       .addCase(deleteGroup.fulfilled, (state, action) => {
-        const groupId = action.payload;
+        // 载荷是 { value, broadcastWarn }（见 DeleteOpResult 的说明）：
+        // groupId 藏在 value 里，广播警告另存——两者都不能丢。
+        const groupId = action.payload.value;
         // 磁盘已删：清掉回滚基线（乐观结果就是最终结果）。
         // 幂等——pending 时组已移除，这里再 filter 一次可覆盖「pending 未跑」的
         // 直接 dispatch（测试）与并发删除的极端情形。

@@ -87,7 +87,7 @@ describe('在途的组级删除不得被清理的重推复活', () => {
     const groups = [mkGroup('g1', [mkTab('t1')]), mkGroup('doomed', [mkTab('d1')])];
     const { store, mod } = await makeStore(groups);
     store.dispatch(mod.deleteGroup.pending('req-del', 'doomed'));
-    store.dispatch(mod.deleteGroup.fulfilled('doomed', 'req-del', 'doomed'));
+    store.dispatch(mod.deleteGroup.fulfilled({ value: 'doomed' }, 'req-del', 'doomed'));
     // 他端新增了一个会话，回环带回来（doomed 确实已删）
     store.dispatch(mod.loadGroups.pending('req-load', undefined));
     store.dispatch(
