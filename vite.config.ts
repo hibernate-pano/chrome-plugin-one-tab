@@ -84,19 +84,27 @@ export default defineConfig(({ mode }) => {
           // 手动配置代码分块策略
           manualChunks: (id) => {
             // React 相关库打包到一起
-            if (id.includes('node_modules/react') || id.includes('node_modules/react-dom') || id.includes('node_modules/react-redux')) {
+            //
+            // 【为什么要用精确路径而不是 includes('node_modules/react')】
+            // 旧规则用 `id.includes('node_modules/react')`，它会连带匹配
+            // `node_modules/react-dnd` / `react-redux` 之外的一切 react* 包，
+            // 于是懒加载 chunk 被强行并进 react-vendor，vite 的 dynamic import
+            // 失效（产物里 DndProvider chunk 只剩 143 字节的 re-export）。
+            // 这里改成「路径段精确匹配」，只认真正的 react / react-dom。
+            const nm = id.replace(/\\/g, '/');
+            if (/node_modules\/(react|react-dom)\//.test(nm)) {
               return 'react-vendor';
             }
             // Redux 相关库打包到一起
-            if (id.includes('node_modules/@reduxjs/toolkit')) {
+            if (nm.includes('node_modules/@reduxjs/toolkit') || nm.includes('node_modules/react-redux')) {
               return 'redux-vendor';
             }
             // Supabase 相关库打包到一起
-            if (id.includes('node_modules/@supabase/supabase-js')) {
+            if (nm.includes('node_modules/@supabase/supabase-js')) {
               return 'supabase-vendor';
             }
             // 工具函数打包到一起
-            if (id.includes('src/utils/')) {
+            if (nm.includes('src/utils/')) {
               return 'utils';
             }
           }

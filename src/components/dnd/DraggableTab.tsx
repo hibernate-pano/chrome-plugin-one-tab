@@ -1,7 +1,19 @@
-import React, { useRef, useCallback, useMemo } from 'react';
-import { useDrag, useDrop } from 'react-dnd';
+/**
+ * 会话内的标签行（原生 HTML5 拖拽 + 键盘重排）。
+ *
+ * ── 2026-10-05 瘦身：react-dnd → 原生 Drag and Drop ──
+ * 原实现用 react-dnd + HTML5Backend，只为「拖动一行换个位置」这一件事，
+ * 代价是 1.1 MB 依赖（react-dnd 784 KB + html5-backend 360 KB 源码），
+ * 而且懒加载被 vite 的 manualChunks 规则击穿（`id.includes('node_modules/react')`
+ * 同时匹配 `node_modules/react-dnd`），react-dnd 实际被打进 react-vendor 并被
+ * index.html 的 modulepreload 预加载——每次开 popup 都要同步下载这 ~30 KB gzip。
+ *
+ * 原生方案用同一个浏览器 API（HTML5 drag events），零依赖、零 chunk 增长。
+ * 行为保持一致：拖到目标行上、下方 1/5 与上方 1/5 不触发（避免抖动）、
+ * 100ms 节流、拖回原位播放回弹动画、键盘上下/Home/End 重排不变。
+ */
+import React, { useRef, useCallback, useMemo, useState } from 'react';
 import { Tab } from '@/types/tab';
-import { ItemTypes, TabDragItem } from './DndTypes';
 import { nextReorderIndex } from './keyboardReorder';
 import { SafeFavicon } from '@/components/common/SafeFavicon';
 
@@ -15,6 +27,15 @@ interface DraggableTabProps {
   handleOpenTab: (tab: Tab) => void;
   handleDeleteTab: (tabId: string) => void;
 }
+
+/** 内部拖拽载荷的 dataTransfer 类型（MIME）。私有前缀：不会与外部拖入冲突。 */
+const TAB_MIME = 'application/x-tapstack-tab';
+
+/** 拖到目标行上、下方超过这个比例不换位——否则行会抖动（与原实现同阈值）。 */
+const EDGE_THRESHOLD = 0.2;
+
+/** 节流间隔：hover 高频触发，限制落盘频率（与原实现一致）。 */
+const MOVE_THROTTLE_MS = 100;
 
 // 钉住图标
 const PinIcon = () => (
@@ -30,10 +51,26 @@ const CloseIcon = () => (
   </svg>
 );
 
-/**
- * 可拖拽的标签页组件
- * 使用React.memo优化渲染性能
- */
+/** 在 dataTransfer 里读写拖拽载荷（结构化克隆在此传输，跨文档也可用）。 */
+interface TabPayload {
+  tabId: string;
+  groupId: string;
+  index: number;
+}
+
+function readPayload(e: React.DragEvent): TabPayload | null {
+  const raw = e.dataTransfer.getData(TAB_MIME);
+  if (!raw) return null;
+  try {
+    const p = JSON.parse(raw) as TabPayload;
+    return typeof p?.tabId === 'string' && typeof p?.groupId === 'string' && typeof p?.index === 'number'
+      ? p
+      : null;
+  } catch {
+    return null;
+  }
+}
+
 export const DraggableTab: React.FC<DraggableTabProps> = React.memo(({
   tab,
   groupId,
@@ -45,9 +82,15 @@ export const DraggableTab: React.FC<DraggableTabProps> = React.memo(({
 }) => {
   const ref = useRef<HTMLDivElement>(null);
   const linkRef = useRef<HTMLAnchorElement>(null);
+  // 拖拽过程中把「当前所在下标」记在 ref 上：hover 事件里读它，
+  // 避免用闭包里的旧 index 反复换位（原实现靠可变 item 对象达到同效果）。
+  const dragIndexRef = useRef(index);
+  dragIndexRef.current = index;
+  const [isDragging, setIsDragging] = useState(false);
+  const [isOver, setIsOver] = useState(false);
 
   const throttledMoveTab = useMemo(() => {
-    // 手写节流（原 lodash.throttle，100ms leading+trailing）：
+    // 手写节流（原实现同款，100ms leading+trailing）：
     // 拖拽 hover 高频触发，限制 moveTab 调用频率，trailing 用最新参数
     let lastCall = 0;
     let timer: ReturnType<typeof setTimeout> | null = null;
@@ -55,7 +98,7 @@ export const DraggableTab: React.FC<DraggableTabProps> = React.memo(({
     return (sourceGroupId: string, sourceIndex: number, targetGroupId: string, targetIndex: number) => {
       lastArgs = [sourceGroupId, sourceIndex, targetGroupId, targetIndex];
       const now = Date.now();
-      const remaining = 100 - (now - lastCall);
+      const remaining = MOVE_THROTTLE_MS - (now - lastCall);
       if (remaining <= 0) {
         lastCall = now;
         if (timer) {
@@ -74,58 +117,67 @@ export const DraggableTab: React.FC<DraggableTabProps> = React.memo(({
     };
   }, [moveTab]);
 
-  const [{ isDragging }, drag] = useDrag({
-    type: ItemTypes.TAB,
-    item: { type: ItemTypes.TAB, id: tab.id, groupId, index } as TabDragItem,
-    collect: (monitor) => ({
-      isDragging: monitor.isDragging(),
-    }),
-    end: (_, monitor) => {
-      if (!monitor.didDrop()) {
-        const element = ref.current;
-        if (element) {
-          element.classList.add('tab-drag-return');
-          setTimeout(() => {
-            element.classList.remove('tab-drag-return');
-          }, 300);
-        }
-      }
+  const playReturnAnimation = useCallback(() => {
+    const el = ref.current;
+    if (!el) return;
+    el.classList.add('tab-drag-return');
+    setTimeout(() => el.classList.remove('tab-drag-return'), 300);
+  }, []);
+
+  const handleDragStart = useCallback((e: React.DragEvent<HTMLDivElement>) => {
+    dragIndexRef.current = index;
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData(TAB_MIME, JSON.stringify({ tabId: tab.id, groupId, index } satisfies TabPayload));
+    // Firefox 需要至少设置一样数据才会真正开始拖拽。
+    e.dataTransfer.setData('text/plain', tab.url);
+    setIsDragging(true);
+  }, [groupId, index, tab.id, tab.url]);
+
+  const handleDragEnd = useCallback(() => {
+    setIsDragging(false);
+    setIsOver(false);
+  }, []);
+
+  const handleDragOver = useCallback((e: React.DragEvent<HTMLDivElement>) => {
+    const payload = readPayload(e);
+    if (!payload || !ref.current) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+
+    const sourceGroupId = payload.groupId;
+    const sourceIndex = dragIndexRef.current;
+    if (sourceGroupId === groupId && sourceIndex === index) return;
+
+    const rect = ref.current.getBoundingClientRect();
+    const hoverMiddleY = (rect.bottom - rect.top) / 2;
+    const hoverPercentage = (e.clientY - rect.top - hoverMiddleY) / hoverMiddleY;
+
+    // 同组内：往下拖时，目标行上半区才换位；往上拖时反之。防止边界抖动。
+    if (sourceGroupId === groupId && sourceIndex < index && hoverPercentage < -EDGE_THRESHOLD) return;
+    if (sourceGroupId === groupId && sourceIndex > index && hoverPercentage > EDGE_THRESHOLD) return;
+
+    throttledMoveTab(sourceGroupId, sourceIndex, groupId, index);
+  }, [groupId, index, throttledMoveTab]);
+
+  const handleDragEnter = useCallback((e: React.DragEvent<HTMLDivElement>) => {
+    if (readPayload(e)) {
+      e.preventDefault();
+      setIsOver(true);
     }
-  });
+  }, []);
 
-  const [{ isOver, canDrop }, drop] = useDrop({
-    accept: ItemTypes.TAB,
-    hover: (item: TabDragItem, monitor) => {
-      if (!ref.current) return;
+  const handleDragLeave = useCallback((e: React.DragEvent<HTMLDivElement>) => {
+    // relatedTarget 为 null 时是拖出窗口（此时不该清高亮）；否则确实离开了本行。
+    if (e.currentTarget.contains(e.relatedTarget as Node | null)) return;
+    setIsOver(false);
+  }, []);
 
-      const sourceGroupId = item.groupId;
-      const sourceIndex = item.index;
-      const targetGroupId = groupId;
-      const targetIndex = index;
-
-      if (sourceGroupId === targetGroupId && sourceIndex === targetIndex) return;
-
-      const hoverBoundingRect = ref.current.getBoundingClientRect();
-      const hoverMiddleY = (hoverBoundingRect.bottom - hoverBoundingRect.top) / 2;
-      const clientOffset = monitor.getClientOffset();
-      const hoverClientY = clientOffset!.y - hoverBoundingRect.top;
-      const hoverPercentage = (hoverClientY - hoverMiddleY) / hoverMiddleY;
-      const threshold = 0.2;
-
-      if (sourceGroupId === targetGroupId && sourceIndex < targetIndex && hoverPercentage < -threshold) return;
-      if (sourceGroupId === targetGroupId && sourceIndex > targetIndex && hoverPercentage > threshold) return;
-
-      throttledMoveTab(sourceGroupId, sourceIndex, targetGroupId, targetIndex);
-      item.index = targetIndex;
-      item.groupId = targetGroupId;
-    },
-    collect: (monitor) => ({
-      isOver: monitor.isOver(),
-      canDrop: monitor.canDrop(),
-    }),
-  });
-
-  drag(drop(ref));
+  const handleDrop = useCallback((e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    setIsOver(false);
+    // 位置已经在 hover 阶段换过了；这里只负责收尾（没换过 = 拖回原位，回弹一下）。
+    if (dragIndexRef.current === index) playReturnAnimation();
+  }, [index, playReturnAnimation]);
 
   const tabTitle = useMemo(() => tab.title, [tab.title]);
 
@@ -139,7 +191,7 @@ export const DraggableTab: React.FC<DraggableTabProps> = React.memo(({
     handleDeleteTab(tab.id);
   }, [handleDeleteTab, tab.id]);
 
-  // 键盘重排：拖拽只有 HTML5Backend（鼠标）一条路，纯键盘用户此前完全无法改顺序。
+  // 键盘重排：拖拽只有鼠标一条路，纯键盘用户此前完全无法改顺序。
   // 挂在本就 Tab 可达的标题链接上——不再新增 tab stop（一行仍是 链接+删除 两个落点）。
   // 只认标题链接为触发源：焦点落在删除按钮上时按方向键不该顺手把整行挪走。
   const handleTitleKeyDown = useCallback((e: React.KeyboardEvent<HTMLAnchorElement>) => {
@@ -175,7 +227,14 @@ export const DraggableTab: React.FC<DraggableTabProps> = React.memo(({
   return (
     <div
       ref={ref}
-      className={`tab-item group/tab micro-interaction-card ${isDragging ? 'dragging' : ''} ${isOver && canDrop ? 'drag-over' : ''}`}
+      draggable
+      onDragStart={handleDragStart}
+      onDragEnd={handleDragEnd}
+      onDragOver={handleDragOver}
+      onDragEnter={handleDragEnter}
+      onDragLeave={handleDragLeave}
+      onDrop={handleDrop}
+      className={`tab-item group/tab micro-interaction-card ${isDragging ? 'dragging' : ''} ${isOver ? 'drag-over' : ''}`}
       style={{ cursor: 'grab' }}
       // 父容器 TabGroup.tsx 同步提供 role="list"——此前全仓没有 role="list"，
       // 孤立的 listitem 是无效语义（读屏不播报"列表项 N/M"）。
@@ -200,7 +259,7 @@ export const DraggableTab: React.FC<DraggableTabProps> = React.memo(({
           {tabTitle}
           {tab.pinned && <PinIcon />}
         </a>
-        <span 
+        <span
           className="tab-item-url hidden sm:block"
           aria-label={`网址: ${tab.url}`}
         >

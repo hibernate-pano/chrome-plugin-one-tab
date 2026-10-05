@@ -150,7 +150,6 @@ describe('页内快捷键层与「标签组拖拽 + 重排模式」已下线', (
     assert.ok(!code('src/core/mutationOps.ts').includes('applyMoveGroup'));
     // 协议 op 删了，docs 里的 op 清单也必须跟着改，否则下一个人会照着注释把它加回来
     assert.ok(!code('src/core/mutationProtocol.ts').includes('moveGroup'));
-    assert.ok(!/\bmoveGroup\b/.test(code('src/core/yTranslate.ts')));
     // versionHelper.updateDisplayOrder 只服务于 applyMoveGroup，一并退场
     assert.ok(!code('src/core/versionHelper.ts').includes('updateDisplayOrder'));
   });

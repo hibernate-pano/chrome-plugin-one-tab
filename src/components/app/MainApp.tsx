@@ -7,11 +7,6 @@ import { OnboardingGuide } from '@/components/onboarding/OnboardingGuide';
 import { shouldShowOnboarding } from '@/utils/onboardingStorage';
 import { getAppVersionLabel } from '@/utils/runtimeInfo';
 
-// 使用动态导入懒加载拖放功能
-const DndProvider = lazy(() =>
-  import('@/components/dnd/DndProvider').then(module => ({ default: module.DndProvider }))
-);
-
 // 使用动态导入懒加载性能测试组件
 const PerformanceTest = lazy(() => import('@/components/performance/PerformanceTest'));
 
@@ -58,12 +53,11 @@ export const MainApp: React.FC = () => {
     <Suspense
       fallback={
         <div className="app-shell theme-shell min-h-screen dark:text-gray-100 flex flex-col items-center justify-center">
-          加载拖放功能...
+          加载中...
         </div>
       }
     >
-      <DndProvider>
-        <div className="app-shell theme-shell min-h-screen dark:text-gray-100 flex flex-col">
+      <div className="app-shell theme-shell min-h-screen dark:text-gray-100 flex flex-col">
           {showPerformanceTest ? (
             <>
               <div className="bg-primary-600 text-white p-2">
@@ -127,7 +121,6 @@ export const MainApp: React.FC = () => {
             </>
           )}
         </div>
-      </DndProvider>
 
       {/* 用户引导弹窗 */}
       {showOnboarding && (

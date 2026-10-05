@@ -21,7 +21,7 @@ const read = (rel: string): string => readFileSync(resolve(ROOT, rel), 'utf8');
 
 const STORE = read('CHROMEWEBSTORE.md');
 const README = read('README.md');
-const PRIVACY = read('src/web/public/privacy.html');
+const PRIVACY = read('src/legal/privacy.html');
 const V2_PLAN = read('docs/v2-plan.md');
 const DEV_PLAN = read('docs/dev-plan-2026-09-27.md');
 const Y_SHADOW = read('docs/y-shadow-v2.md');

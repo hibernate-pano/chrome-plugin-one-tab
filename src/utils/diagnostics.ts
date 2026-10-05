@@ -38,25 +38,14 @@
  * log.ts 只把日志打到 console，errorHandler 只做 console 输出，本地没有任何
  * 持久化错误日志。凭空造一个「最近错误数」等于编数据，所以输出里没有这一项。
  *
- * 【影子/门禁数据：本文件里最需要小心的一块】
- * v3 起输出 gate 段（V3 门禁判定）与 shadow 段（影子写入结果分布），
- * 来源是 y_audit_log / y_audit_daily / y_shadow_log。这三个键比 journal 危险得多：
- *   - AuditMismatch.ySide / localSide 装的是**真实字段值**——url 与 title 就是
- *     用户的浏览历史，name 是会话名；而 mismatch 恰恰是「两边对不上」的记录，
- *     越有问题越会出现在这里。
- *   - AuditLogEntry.sampleKey 是 `${userId}:${seq}`，直接带用户 id。
- *   - ShadowLogEntry.stamp.d 是设备号，outcome.error 是异常 message
- *     （message 里可能嵌着 URL）。
- * 所以这三个键**一条原始记录都不进输出**：审计日志只按 scope/field 两张封闭词表
- * 计数（field 只说「哪个字段对不上」，不说值），影子日志只按 outcome 种类与
- * op 名计数，聚合上限全都是数字。门禁判定（gate 段）读的是 y_audit_daily，
- * 那份本来就是纯数字（见 core/yGate.ts）。判定结果刻意是四态而非布尔：
- * 「没数据」不允许被读成「通过」。
+ * ── 2026-10-05 瘦身：移除 gate / shadow / audit 三段 ──
+ * 这三段的来源（Y.Doc 影子双写与 V3 门禁）已整体删除：读路径一直是 blob，
+ * 影子数据从没有任何业务消费者，门禁判定的 evaluateShadowGate 全仓零引用。
+ * 与其留一套「采集了但没人看」的观测层，不如不留。诊断导出现在只回答两个
+ * 问题：本地有多少数据、同步链路各步花了多久。
  */
 
 import { storage } from '@/utils/storage';
-import { kvGet } from '@/storage/storageAdapter';
-import { logWarn } from '@/utils/log';
 import { getRuntimeVersion } from '@/utils/runtimeInfo';
 import { formatExportStamp } from '@/utils/exportStamp';
 import type { TabGroup, UserSettings } from '@/types/tab';
@@ -65,20 +54,6 @@ import type { ProductEventName } from '@/utils/productEvents';
 import type { MutationOp } from '@/shared/mutationProtocol';
 import type { PerfSpan, SpanStep } from '@/utils/perfTrace';
 import { PERF_SPAN_NAMES, SPAN_STEPS, perfTrace } from '@/utils/perfTrace';
-import {
-  evaluateShadowGate,
-  gateVerdictLabel,
-  isMismatchField,
-  isMismatchScope,
-  isShadowOutcomeKind,
-} from '@/core/yGate';
-import type {
-  MismatchField,
-  MismatchScope,
-  ShadowGateVerdict,
-  ShadowOutcomeKind,
-} from '@/core/yGate';
-import { Y_AUDIT_DAILY_KEY, Y_AUDIT_LOG_KEY, SHADOW_LOG_KEY } from '@/core/yShadowConfig';
 
 /** span 名 / step 名的封闭词表集合（输出键只可能来自这里，理由同 PRODUCT_EVENT_NAMES）。 */
 const PERF_SPAN_NAME_SET = new Set<string>(PERF_SPAN_NAMES);
@@ -194,21 +169,6 @@ export interface DiagnosticsSources {
    * 并让 spanCount=0 自己说明「没有观测数据」。
    */
   perfSpans: PerfSpan[];
-  /**
-   * 影子/对账三个 KV 键的**原始内容**，刻意声明为 unknown 而不是已解析类型。
-   *
-   * 类型断言的诱惑在这里必须挡住：断言成 AuditLogEntry[] 之后，序列化层就会
-   * 顺手 `entry.result.mismatches[0].ySide` —— 那个字段就是用户的 URL。
-   * 声明成 unknown 意味着任何读取都必须先过下面的词表校验，写错会在 tsc 阶段红。
-   *
-   * null = 读取失败（进 unavailable），与 groups/settings 同口径：这层能观测到失败，
-   * 就不该把它压成「没有数据」——没有数据会被读成「影子没跑」，是相反的结论。
-   */
-  shadowAudit: {
-    auditLog: unknown;
-    auditDaily: unknown;
-    shadowLog: unknown;
-  } | null;
   environment: DiagnosticsEnvironment;
 }
 
@@ -290,23 +250,6 @@ export async function readDiagnosticsSources(
   await requestSwPerfFlush();
   const perfSpans = await perfTrace().read();
 
-  // 影子/对账三键。键不存在（kvGet → null）是正常状态：影子开关关掉、或还没跑过
-  // 任何一条 mutation 时它们本来就不存在。但**读取抛错**是另一回事，两者对 V3 决策
-  // 的含义相反（「影子没跑」vs「影子跑了但诊断读不到」），所以整体一个 try，
-  // 抛错记成 null → 进 unavailable。
-  let shadowAudit: DiagnosticsSources['shadowAudit'] = null;
-  try {
-    const [auditLog, auditDaily, shadowLog] = await Promise.all([
-      kvGet(Y_AUDIT_LOG_KEY),
-      kvGet(Y_AUDIT_DAILY_KEY),
-      kvGet(SHADOW_LOG_KEY),
-    ]);
-    shadowAudit = { auditLog, auditDaily, shadowLog };
-  } catch (error) {
-    logWarn('[diagnostics] 影子/对账键读取失败（记入 unavailable）:', error);
-    shadowAudit = null;
-  }
-
   return {
     groups,
     settings,
@@ -318,7 +261,6 @@ export async function readDiagnosticsSources(
     pendingDeleteCount,
     pendingUpload,
     perfSpans: Array.isArray(perfSpans) ? perfSpans : [],
-    shadowAudit,
     environment: readEnvironment(),
   };
 }
@@ -391,22 +333,6 @@ export interface DiagnosticsReport {
      */
     clampedApplyNames: string[];
   };
-  /**
-   * V3 门禁判定（docs/v2-plan.md 的 P1 验收：对账差异率 < 0.1% 持续 7 天）。
-   *
-   * 这是「V3 该不该开工」这个决策的唯一依据。**四态而非布尔**：
-   * no_data / insufficient_coverage 都表示「还没测出来」，绝不能被读成「通过」。
-   * 判定读 y_audit_daily（按天聚合），不是逐条 y_audit_log —— 后者只留 50 条，
-   * 窗口比 7 天短，无法证明「持续」（见 core/yGate.ts）。
-   */
-  gate: ShadowGateVerdict;
-  /** 影子写入结果分布（来源 y_shadow_log）。 */
-  shadow: ShadowLogSummary;
-  /**
-   * 对账差异的形状分布（来源 y_audit_log）。**只有 scope/field 计数与条数**：
-   * 一条差异里的 url/title/name 真实值与 sampleKey 一律不进输出。
-   */
-  audit: AuditLogSummary;
   /** 本次采集里读取失败的源名。 */
   unavailable: UnavailableSource[];
 }
@@ -584,227 +510,6 @@ function round1(n: number): number {
   return Math.round(n * 10) / 10;
 }
 
-// ── 影子写入结果聚合（诊断导出用）───────────────────────────────────────
-
-/**
- * 影子日志（y_shadow_log）的聚合。
- *
- * 【为什么不是逐条输出】ShadowLogEntry 带 stamp.d（设备号）、outcome.error
- * （异常 message，可能嵌 URL）、以及 op 的完整参数。这三样都不进输出：
- * 只留 outcome 种类与 op 名的计数，加几个数字。要看单条形状请本机读 KV。
- */
-export interface ShadowLogSummary {
-  /** 能解析出 outcome 种类的条数（主计数轴；byOutcome 求和 === 它）。 */
-  entryCount: number;
-  /** 无法解析的条数：丢弃但记账，不静默。 */
-  malformedCount: number;
-  byOutcome: Array<{ outcome: ShadowOutcomeKind; count: number }>;
-  /**
-   * 按 op 名计数。**求和可能小于 entryCount**：op 名要过封闭词表，
-   * 词表外的条目计入 droppedUnknownOpCount 而不进这张表（差异由此字段解释）。
-   */
-  byOp: Array<{ op: MutationOp['op']; count: number }>;
-  droppedUnknownOpCount: number;
-  /** 成功写入 Y 的次数。 */
-  okCount: number;
-  /** Y update 增量字节累计/峰值：枷锁 #1 里「egress 爆炸」的直接观测值。 */
-  totalUpdateBytes: number;
-  maxUpdateBytes: number;
-  /** 触发 compact 阈值的次数（>0 说明本地 update 日志已需要快照回填）。 */
-  needsSnapshotCount: number;
-  /** 样本时间跨度（小时）。远小于门禁窗口时，说明 FIFO 200 条覆盖得比想象的短。 */
-  coverageHours: number | null;
-  /** 最新样本距今小时数。null = 无可用时间戳。 */
-  latestAgeHours: number | null;
-}
-
-function outcomeKindOf(outcome: unknown): ShadowOutcomeKind | null {
-  if (!outcome || typeof outcome !== 'object') return null;
-  const rec = outcome as { ok?: unknown; skipped?: unknown };
-  if (rec.ok === true) return 'ok';
-  if (rec.ok === false) return isShadowOutcomeKind(rec.skipped) ? rec.skipped : null;
-  return null;
-}
-
-/**
- * 影子日志 → 聚合。**纯函数**（无 IO、时间由 now 传入）。
- *
- * @param raw y_shadow_log 原始内容（声明 unknown，必须先过词表）
- * @param nowMs 计算时间跨度用的当前毫秒（不自己取当前时间，保证可测且输出可比对）
- */
-export function buildShadowSummary(raw: unknown, nowMs: number): ShadowLogSummary {
-  const list = Array.isArray(raw) ? raw : [];
-  const outcomeCounts = new Map<ShadowOutcomeKind, number>();
-  const opCounts = new Map<MutationOp['op'], number>();
-  let entryCount = 0;
-  let malformedCount = 0;
-  let droppedUnknownOpCount = 0;
-  let okCount = 0;
-  let totalUpdateBytes = 0;
-  let maxUpdateBytes = 0;
-  let needsSnapshotCount = 0;
-  let minTs = Number.POSITIVE_INFINITY;
-  let maxTs = Number.NEGATIVE_INFINITY;
-
-  for (const item of list) {
-    const raw = item as { ts?: unknown; op?: unknown; outcome?: unknown } | null;
-    if (!raw || typeof raw !== 'object') {
-      malformedCount += 1;
-      continue;
-    }
-    const kind = outcomeKindOf(raw.outcome);
-    if (kind === null) {
-      malformedCount += 1;
-      continue;
-    }
-    entryCount += 1;
-    outcomeCounts.set(kind, (outcomeCounts.get(kind) ?? 0) + 1);
-
-    // op 名单独校验：词表外只记账，不影响本条的 outcome 计数（见 byOp 说明）
-    if (isKnownJournalOpType(raw.op)) {
-      opCounts.set(raw.op, (opCounts.get(raw.op) ?? 0) + 1);
-    } else {
-      droppedUnknownOpCount += 1;
-    }
-
-    if (kind === 'ok') {
-      okCount += 1;
-      const o = raw.outcome as { updateBytes?: unknown; needsSnapshot?: unknown };
-      const bytes =
-        typeof o.updateBytes === 'number' && Number.isFinite(o.updateBytes) && o.updateBytes >= 0
-          ? o.updateBytes
-          : 0;
-      totalUpdateBytes += bytes;
-      maxUpdateBytes = Math.max(maxUpdateBytes, bytes);
-      if (o.needsSnapshot === true) needsSnapshotCount += 1;
-    }
-
-    const tsMs = parseTimestamp(raw.ts);
-    if (tsMs !== null) {
-      minTs = Math.min(minTs, tsMs);
-      maxTs = Math.max(maxTs, tsMs);
-    }
-  }
-
-  const hasTs = Number.isFinite(minTs) && Number.isFinite(maxTs);
-  return {
-    entryCount,
-    malformedCount,
-    // 按种类/名字排序，保证两次导出的 JSON 逐字节可比对
-    byOutcome: [...outcomeCounts.entries()]
-      .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
-      .map(([outcome, count]) => ({ outcome, count })),
-    byOp: [...opCounts.entries()]
-      .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
-      .map(([op, count]) => ({ op, count })),
-    droppedUnknownOpCount,
-    okCount,
-    totalUpdateBytes,
-    maxUpdateBytes,
-    needsSnapshotCount,
-    coverageHours: hasTs ? round1((maxTs - minTs) / (60 * 60 * 1000)) : null,
-    latestAgeHours: hasTs ? round1(Math.max(0, (nowMs - maxTs) / (60 * 60 * 1000))) : null,
-  };
-}
-
-// ── 对账差异聚合（诊断导出用）───────────────────────────────────────────
-
-/**
- * 对账逐条日志（y_audit_log）的差异形状聚合。
- *
- * 【这一段的脱敏边界】一条 AuditMismatch 长这样：
- *   { scope:'tab', id:'g1:t7', field:'url', ySide:'https://…', localSide:'https://…' }
- * 只有 `scope` 与 `field` 是代码常量，`id` 是记录 id，`ySide`/`localSide` 是
- * **真实字段值**（url/title/name —— 用户的浏览历史）。所以这里只对前两者计数：
- * 「有多少条差异出在 url 字段上」是排障要的信息，「那些 url 是什么」不是。
- * sampleKey（含 userId）同样不读。
- */
-export interface AuditLogSummary {
-  /** 样本条数（能解析出 result 的）。 */
-  entryCount: number;
-  malformedCount: number;
-  /** 有差异的样本数（result.match === false）。 */
-  mismatchedSampleCount: number;
-  byScope: Array<{ scope: MismatchScope; count: number }>;
-  /**
-   * 按差异字段名计数。求和 = 各样本 mismatches 之和，**但注意上游每条样本最多
-   * 记 20 条差异**（yAudit.MAX_MISMATCHES_DEFAULT），所以这是「至少这么多」。
-   */
-  byField: Array<{ field: MismatchField; count: number }>;
-  /** field/scope 不在封闭词表内的差异条数：丢弃但记账。 */
-  droppedUnknownFieldCount: number;
-  /** 逐条日志的时间跨度（小时）。用它判断 50 条 FIFO 实际覆盖多久。 */
-  coverageHours: number | null;
-  latestAgeHours: number | null;
-}
-
-export function buildAuditLogSummary(raw: unknown, nowMs: number): AuditLogSummary {
-  const list = Array.isArray(raw) ? raw : [];
-  const scopeCounts = new Map<MismatchScope, number>();
-  const fieldCounts = new Map<MismatchField, number>();
-  let entryCount = 0;
-  let malformedCount = 0;
-  let mismatchedSampleCount = 0;
-  let droppedUnknownFieldCount = 0;
-  let minTs = Number.POSITIVE_INFINITY;
-  let maxTs = Number.NEGATIVE_INFINITY;
-
-  for (const item of list) {
-    const raw = item as { ts?: unknown; result?: unknown } | null;
-    if (!raw || typeof raw !== 'object') {
-      malformedCount += 1;
-      continue;
-    }
-    const result = raw.result as { match?: unknown; mismatches?: unknown } | null;
-    if (!result || typeof result !== 'object') {
-      malformedCount += 1;
-      continue;
-    }
-    entryCount += 1;
-    if (result.match === false) mismatchedSampleCount += 1;
-
-    const mismatches = Array.isArray(result.mismatches) ? result.mismatches : [];
-    for (const m of mismatches) {
-      const item2 = m as { scope?: unknown; field?: unknown } | null;
-      if (!item2 || typeof item2 !== 'object') {
-        droppedUnknownFieldCount += 1;
-        continue;
-      }
-      const scope = item2.scope;
-      const field = item2.field;
-      // 先取到局部变量再判定：类型守卫收窄的是被守卫的那个**局部 const**，
-      // 直接写 `isMismatchScope(item2.scope)` 再在 if 里用 item2.scope，
-      // tsc 不会把收窄结果沿可选属性路径传下去（会报 unknown 不能作 Map 键）。
-      const scopeOk = isMismatchScope(scope);
-      const fieldOk = isMismatchField(field);
-      if (scopeOk) scopeCounts.set(scope, (scopeCounts.get(scope) ?? 0) + 1);
-      if (fieldOk) fieldCounts.set(field, (fieldCounts.get(field) ?? 0) + 1);
-      if (!scopeOk || !fieldOk) droppedUnknownFieldCount += 1;
-    }
-
-    const tsMs = parseTimestamp(raw.ts);
-    if (tsMs !== null) {
-      minTs = Math.min(minTs, tsMs);
-      maxTs = Math.max(maxTs, tsMs);
-    }
-  }
-
-  const hasTs = Number.isFinite(minTs) && Number.isFinite(maxTs);
-  return {
-    entryCount,
-    malformedCount,
-    mismatchedSampleCount,
-    byScope: [...scopeCounts.entries()]
-      .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
-      .map(([scope, count]) => ({ scope, count })),
-    byField: [...fieldCounts.entries()]
-      .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
-      .map(([field, count]) => ({ field, count })),
-    droppedUnknownFieldCount,
-    coverageHours: hasTs ? round1((maxTs - minTs) / (60 * 60 * 1000)) : null,
-    latestAgeHours: hasTs ? round1(Math.max(0, (nowMs - maxTs) / (60 * 60 * 1000))) : null,
-  };
-}
 
 export function bucketForTabCount(count: number): TabCountBucket {
   if (!(count > 0)) return '0';
@@ -900,19 +605,10 @@ export function buildDiagnosticsReport(
 
   const lastSyncMs = parseTimestamp(sources.lastSyncTime);
   const perf = buildPerfSummary(sources.perfSpans);
-  // 影子/对账：读失败（null）时按空处理，但**记入 unavailable**——
-  // 空日志与读不到日志在决策上是相反的证据，不能长得一样。
-  const shadowAudit = sources.shadowAudit;
-  const shadow = buildShadowSummary(shadowAudit?.shadowLog, nowMs);
-  const audit = buildAuditLogSummary(shadowAudit?.auditLog, nowMs);
-  const gate = evaluateShadowGate(shadowAudit?.auditDaily, now);
   const unavailable: UnavailableSource[] = [];
   if (groups === null) unavailable.push('groups');
   if (sources.settings === null) unavailable.push('settings');
   if (sources.pendingDeleteCount === null) unavailable.push('pendingDeleteIds');
-  // falsy 而不是 === null：undefined（老调用方构造的 sources、测试里的偏量对象）
-  // 同样意味着「这次没读到」，不该被当成「读到了且是空的」。
-  if (!shadowAudit) unavailable.push('shadowAudit');
 
   return {
     schema: DIAGNOSTICS_SCHEMA,
@@ -968,9 +664,6 @@ export function buildDiagnosticsReport(
       byName: perf.byName,
       clampedApplyNames: perf.clampedApplyNames,
     },
-    gate,
-    shadow,
-    audit,
     unavailable,
   };
 }
@@ -1060,14 +753,6 @@ export function diagnosticsSummaryText(report: DiagnosticsReport): string {
     }；上次同步 ${
       report.sync.lastSyncAgeHours === null ? '从未' : `${report.sync.lastSyncAgeHours} 小时前`
     }；待广播 ${report.sync.pendingDeleteCount ?? '未知'}`
-  );
-  // V3 门禁：摘要里给**判定 + 理由**，不只给数字。「覆盖不足」和「未达成」要修的
-  // 东西完全不同（补采样窗口 vs 查分叉），只丢一个 rate 出来等于让人自己猜。
-  lines.push(`V3 门禁（${gateVerdictLabel(report.gate.verdict)}）：${report.gate.reason}`);
-  lines.push(
-    `影子：${report.shadow.entryCount} 条写入记录（成功 ${report.shadow.okCount}，` +
-      `Y 增量累计 ${Math.round(report.shadow.totalUpdateBytes / 1024)}KB）；` +
-      `对账差异样本 ${report.audit.mismatchedSampleCount}/${report.audit.entryCount}`
   );
   lines.push('（本摘要只含规模与环境信息，不含任何标签 URL、标题或会话名）');
   return lines.join('\n');

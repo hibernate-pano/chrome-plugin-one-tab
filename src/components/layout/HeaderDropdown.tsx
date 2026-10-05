@@ -62,11 +62,6 @@ interface HeaderDropdownProps {
   onClose: () => void;
   /** 打开应用级登录/注册弹窗（由 Header 托管，portal 到 body）。 */
   onOpenAuth: (tab: AuthTab) => void;
-  /**
-   * 打开影子对账调试视图。同样由 Header 托管：本组件在菜单收起时**会被卸载**
-   * （见 Header 的 `{showDropdown && <HeaderDropdown/>}`），弹窗挂在这里会当场消失。
-   */
-  onOpenShadowGate: () => void;
 }
 
 /** 菜单行的统一 hover 反馈。菜单行不做位移（flat-interaction 的 -translate-y 会轻微跳动），只做背景色。 */
@@ -104,7 +99,7 @@ const DropdownToggleRow: React.FC<{
   </button>
 );
 
-export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({ onClose, onOpenAuth, onOpenShadowGate }) => {
+export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({ onClose, onOpenAuth }) => {
   const dispatch = useAppDispatch();
   const { isAuthenticated, user } = useAppSelector(state => state.auth);
   const { groups, lastSyncTime } = useAppSelector(state => state.tabs);
@@ -707,25 +702,6 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({ onClose, onOpenA
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8.625 12a.375.375 0 11-.75 0 .375.375 0 01.75 0zm0 0H8.25m4.125 0a.375.375 0 11-.75 0 .375.375 0 01.75 0zm0 0H12m4.125 0a.375.375 0 11-.75 0 .375.375 0 01.75 0zm0 0h-.375M21 12c0 4.556-4.03 8.25-9 8.25a9.764 9.764 0 01-2.555-.337A5.972 5.972 0 015.41 20.97a5.969 5.969 0 01-.474-.065 4.48 4.48 0 00.978-2.025c.09-.457-.133-.901-.467-1.226C3.93 16.178 3 14.189 3 12c0-4.556 4.03-8.25 9-8.25s9 3.694 9 8.25z" />
           </svg>
           问题反馈
-        </button>
-
-        {/* 影子对账（开发者）：V3 门禁的唯一可视化入口。数据与「导出 → 诊断信息」
-            同源（同一个 collectDiagnostics）。不按 NODE_ENV 隐藏——门禁要在**装好的
-            正式包里**可读，否则又回到「信号被采集但没人看得见」的老问题。
-            等 V3 落地、门禁退役后这一行可以连同面板一起删。 */}
-        <button
-          onClick={() => {
-            setOpenSubmenu(null);
-            onClose();
-            onOpenShadowGate();
-          }}
-          className={MENU_ROW}
-          type="button"
-        >
-          <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 mr-2 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-            <path strokeLinecap="round" strokeLinejoin="round" d="M3 13.125C3 12.504 3.504 12 4.125 12h2.25c.621 0 1.125.504 1.125 1.125v6.75C7.5 20.496 6.996 21 6.375 21h-2.25A1.125 1.125 0 013 19.875v-6.75zM9.75 8.625c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125v11.25c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 01-1.125-1.125V8.625zM16.5 4.125c0-.621.504-1.125 1.125-1.125h2.25C20.496 3 21 3.504 21 4.125v15.75c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 01-1.125-1.125V4.125z" />
-          </svg>
-          影子对账（开发者）
         </button>
 
         {/* 危险区：与菜单平面语言一致（rounded-lg + 留边），用色块与普通项区分防误触。
