@@ -23,7 +23,9 @@
     "test:supabase-smoke": "node scripts/supabase-smoke-test.mjs",
     "supabase:migrate": "node scripts/supabase-migrate.mjs",
     "supabase:migrate:dry-run": "node scripts/supabase-migrate.mjs --dry-run",
-    "supabase:verify": "node scripts/supabase-migrate.mjs --verify-only"
+    "supabase:verify": "node scripts/supabase-migrate.mjs --verify-only",
+    "probe:rls": "node scripts/anon-rls-probe.mjs",
+    "probe:rls:write": "node scripts/anon-rls-probe.mjs --write"
   },
   "keywords": [
     "chrome-extension",
