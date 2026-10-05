@@ -26,6 +26,7 @@ import {
 import { mergeOpStamped } from '@/core/opStampMerge';
 import { dropEmptyGroups, removedGroupIds } from '@/core/mutationOps';
 import { ensureOpStampMigrated } from '@/background/opStampMigratedGuard';
+import { enqueue } from '@/background/mutationQueue';
 import { ensureAuthenticated } from '@/core/authGuard';
 import { errorHandler } from '@/utils/errorHandler';
 import { validateThemeStyle, validateThemeMode } from '@/utils/storage';
@@ -146,6 +147,21 @@ export class SyncEngine {
    * 把已删的组拉回来——删除被静默撤销。此前 `void storage.setPendingUpload(true)`
    * 是 fire-and-forget，mutationHandlers 里 setGroups 之后紧接着就调度上传，
    * 正好落在这个窗口里。
+   *
+   * 【快路径必须经单写者队列（1.22.10）】timer 回调里的 upload() 此前直接执行，
+   * 绕过了 mutationQueue——而 upload() 内部有两组非原子读-改-写（读广播队列 →
+   * markCloudGroupsAsDeleted → 按确认清队；读 groups → 整组覆盖写），与队列内
+   * 正在执行的 mutation 交错时，删除广播意图可能被覆盖丢失 → 对端复活。四条上传
+   * 路径的 enqueue 分工（谁负责包裹，只有一处，双层包裹 = 内层等外层 settle、
+   * 外层 await 内层 = 死锁）：
+   *   - popup 手动上传/下载：service-worker 的 SYNC 分支 enqueue(`sync:${op}`)
+   *   - 后台轮询：backgroundSync enqueue('sync:upload' / 'sync:download')
+   *   - alarm 兜底：service-worker onAlarm enqueue('sync:upload') 包 runScheduledUpload
+   *   - timer 快路径：本方法 enqueue('sync:upload') 包 upload() ← 本处
+   *   ⛔ 因此 runScheduledUpload 内部绝不能再 enqueue——alarm 路径已经包过了。
+   * timer 回调是宏任务、不在任何队列 job 内，入队安全；同名 span 让诊断导出把
+   * 四条路径的耗时聚在同一桶里。
+   *
    * @param delayMs 延迟毫秒数（默认 3000ms）
    */
   scheduleUpload(delayMs: number = 3000): Promise<void> {
@@ -161,7 +177,8 @@ export class SyncEngine {
       if (this.uploadTimer) clearTimeout(this.uploadTimer);
       this.uploadTimer = setTimeout(() => {
         this.uploadTimer = null;
-        void this.upload().catch(err => logError('[SyncEngine] 快路径上传失败:', err));
+        void enqueue('sync:upload', () => this.upload())
+          .catch(err => logError('[SyncEngine] 快路径上传失败:', err));
       }, delayMs);
       // 兜底
       void chrome.alarms.clear(SYNC_UPLOAD_ALARM).catch(() => {});
@@ -169,11 +186,12 @@ export class SyncEngine {
       chrome.alarms.create(SYNC_UPLOAD_ALARM, { delayInMinutes: delayMinutes });
       return marked;
     }
-    // 非扩展运行时 fallback：单测走这里
+    // 非扩展运行时 fallback：单测走这里（同样经队列，与快路径保持同一语义）
     if (this.uploadTimer) clearTimeout(this.uploadTimer);
     this.uploadTimer = setTimeout(() => {
       this.uploadTimer = null;
-      void this.upload().catch(err => logError('[SyncEngine] 延迟上传失败:', err));
+      void enqueue('sync:upload', () => this.upload())
+        .catch(err => logError('[SyncEngine] 延迟上传失败:', err));
     }, delayMs);
     return marked;
   }

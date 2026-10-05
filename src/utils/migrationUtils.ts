@@ -105,8 +105,14 @@ export async function removeRecentRestoreHistory(): Promise<void> {
  *
  * 1. 清除本地组级墓碑（isDeleted 组，即旧「回收站」内容——含其中尚未恢复的标签）
  *    与组内标签级墓碑（历史单删/清理重复/合并去重累积的不可见死标签）。
- *    已删除组的删除意图不丢失：老模型上传时已写过云端 is_deleted 行；
- *    未上过云的残留由下一次 upload 的兜底标记覆盖（见 syncEngine.upload）。
+ *    墓碑组的删除意图**先登记进 pendingDeleteIds 再物理移除**（1.22.10 修复）：
+ *    旧注释假设「未上过云的残留由下一次 upload 的兜底标记覆盖」，但那个兜底
+ *    （syncEngine.upload 的 legacyTombstoneIds）读的是 storage 里的 isDeleted 组——
+ *    本迁移一旦把组从 storage 删掉，兜底就永远读不到它们。凡「离线删除 + 墓碑从未
+ *    上过云（上传失败/未登录/升级前从未同步）+ 升级到 1.22.x」的组，云端行仍是
+ *    活跃行，下次下载合并走 mergeOpStamped 的 cg && !lg 分支整组复活。登记顺序
+ *    也只能先登记后移除：崩溃窗口落在「已登记、未移除」侧顶多重广播一次（幂等），
+ *    反过来就是本缺陷本身。
  * 2. 旧 purge 队列（PENDING_PURGE_IDS，空壳硬删除遗留）转入删除广播队列
  *    PENDING_DELETE_IDS——标记删除（行保留）比物理删保守且语义正确。
  * 3. 删除旧「回收站列表」遗留键（DELETED_GROUPS / DELETED_TABS，早期实现，已死代码）。
@@ -120,6 +126,11 @@ export async function purgeTombstones(): Promise<void> {
     const hadTabTombstones = groups.some(g => g.tabs?.some(t => t.isDeleted));
 
     if (hadGroupTombstones || hadTabTombstones) {
+      // 墓碑组的删除意图登记进广播队列（幂等去重；addPendingDeleteIds 失败会抛错，
+      // 迁移整体中止、标志位不置位，下次启动重跑——绝不能在意图没落盘时就把组删掉）。
+      const tombstoneGroupIds = groups.filter(g => g.isDeleted).map(g => g.id);
+      await storage.addPendingDeleteIds(tombstoneGroupIds);
+
       const activeGroups = groups
         .filter(g => !g.isDeleted)
         .map(g =>
@@ -134,7 +145,8 @@ export async function purgeTombstones(): Promise<void> {
         (n, g) => n + (g.tabs?.filter(t => t.isDeleted).length ?? 0),
         0
       );
-      logInfo(`[迁移] 无墓碑清理：移除 ${removedGroups} 个墓碑组（回收站内容）、${removedTabs} 个墓碑标签`);
+      logInfo(`[迁移] 无墓碑清理：移除 ${removedGroups} 个墓碑组（回收站内容）、${removedTabs} 个墓碑标签；` +
+        `${tombstoneGroupIds.length} 条删除意图已登记进广播队列`);
     }
 
     // 旧 purge 队列 → 删除广播队列（标记删除语义，云端行保留广播删除意图）

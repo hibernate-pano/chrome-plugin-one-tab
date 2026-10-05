@@ -187,25 +187,43 @@ export async function verifyUploadReadback(
   logInfo(`[upload-verify] 读回校验通过（${expect.length} 组）`);
 }
 
-/** 软删读回：目标行必须存在且 is_deleted=true，否则删除意图没落盘 */
+/**
+ * 软删读回：存在的行必须 is_deleted=true，否则删除意图没落盘。
+ *
+ * 【缺失行怎么办是调用方的语义决定】云端没有这一行 = 无行可复活（本地新建从未上过云
+ * 就被删、或已被他端物理删），删除意图事实上已达成；但默认仍按缺失报错——因为 stamp
+ * 分支拿到的 touchedIds 本来就不含云端没有的 id，读回再缺行只能说明出了别的事，
+ * 保守报错是对的。只有 plain 模式（没有「先读现有行」这步、拿不到 touchedIds，只能
+ * 拿全量队列校验）才显式传 missingAsAchieved，见 upload.ts 的 plain 分支。
+ */
 export function compareTombstoneReadback(
   ids: string[],
-  rows: Array<{ id: string; is_deleted?: boolean | null }>
-): { ok: boolean; reason?: string } {
+  rows: Array<{ id: string; is_deleted?: boolean | null }>,
+  opts?: { missingAsAchieved?: boolean }
+): { ok: boolean; reason?: string; missing?: string[] } {
   const byId = new Map(rows.map(r => [r.id, r]));
+  const missing: string[] = [];
   for (const id of ids) {
     const row = byId.get(id);
     if (!row) {
-      return { ok: false, reason: `云端缺失组 ${id}（软删目标行不存在，删除意图未落盘）` };
+      missing.push(id);
+      continue;
     }
     if (row.is_deleted !== true) {
       return { ok: false, reason: `组 ${id} 读回 is_deleted=${String(row.is_deleted)}，期望 true` };
     }
   }
-  return { ok: true };
+  if (missing.length > 0 && !opts?.missingAsAchieved) {
+    return { ok: false, reason: `云端缺失组 ${missing[0]}（软删目标行不存在，删除意图未落盘）` };
+  }
+  return { ok: true, ...(missing.length > 0 ? { missing } : {}) };
 }
 
-export async function verifyTombstoneReadback(ids: string[], userId: string): Promise<void> {
+export async function verifyTombstoneReadback(
+  ids: string[],
+  userId: string,
+  opts?: { missingAsAchieved?: boolean }
+): Promise<void> {
   if (ids.length === 0) return;
   // 分批读：见 idBatches.ts（删除队列可能上千，整串 .in() 会 400）。
   const rows: Array<{ id: string; is_deleted?: boolean | null }> = [];
@@ -218,8 +236,14 @@ export async function verifyTombstoneReadback(ids: string[], userId: string): Pr
     if (error) throw error;
     rows.push(...((data ?? []) as unknown as Array<{ id: string; is_deleted?: boolean | null }>));
   }
-  const cmp = compareTombstoneReadback(ids, rows);
+  const cmp = compareTombstoneReadback(ids, rows, opts);
   if (!cmp.ok) throw new Error(`[tombstone-verify] ${cmp.reason}`);
+  if (cmp.missing?.length) {
+    logInfo(
+      `[tombstone-verify] ${cmp.missing.length} 个 id 云端无行（从未上过云即被删 / 已被他端物理删），` +
+      '无行可复活，视为删除意图已达成'
+    );
+  }
   logInfo(`[tombstone-verify] 软删读回校验通过（${ids.length} 组）`);
 }
 

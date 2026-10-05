@@ -752,7 +752,15 @@ export const uploadSync = {
         }
       }
       // P0-1：软删读回校验——局部 UPDATE 也可能被守卫吞写，读回确认墓碑落盘。
-      await verifyTombstoneReadback(deletedIds, userId);
+      // 但 plain 分支没有 stamp 分支那步「先读现有行」，拿不到 touchedIds，只能拿
+      // 全量队列校验；而 deletedIds 里混着「本地新建、从未上过云就被删」的 id
+      // （离线保存又离线删除是常见路径）——它们在云端没有行可写、也没有行可复活。
+      // 若严格校验，读回必抛「云端缺失组」→ upload 整体失败 → pending_upload 永不清
+      // → downloadAndMerge 永远撞 upload_first：该设备既传不上也下不来，且同队列
+      // 其他组的删除广播被连坐卡死（与文件头注释的「设备钉死」同一形态，只是搬到了
+      // plain 分支）。口径对齐 stamp 分支（只校验 touchedIds）：存在的行必须已标删
+      // （吞写照样现形），缺失的行视为意图已达成。
+      await verifyTombstoneReadback(deletedIds, userId, { missingAsAchieved: true });
       logInfo(`[markCloudGroupsAsDeleted] 已软删 ${deletedIds.length} 个云端组（云端无印记列，不带 stamp）`);
       return;
     }
