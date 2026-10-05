@@ -69,7 +69,6 @@ describe('journal: 命令轨迹（不再是 WAL）', () => {
 
   it('appendEntry 取的是 seqRegistry 递增后的号', async () => {
     const { createJournal } = await import('@/utils/journal');
-    const kv = new Map<string, unknown>();
     let currentSeq = 5;
     const deps = {
       kvGet: async <_T>(_k: string) => null,
