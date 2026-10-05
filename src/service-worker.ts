@@ -2,7 +2,7 @@ import { tabManager } from '@/background/TabManager';
 import { migrateToV2 } from '@/utils/migrationHelper';
 import { setupBackgroundSync } from '@/background/backgroundSync';
 import { syncEngine, SYNC_UPLOAD_ALARM } from '@/services/syncEngine';
-import { sanitizeTabUrl } from '@/utils/inputValidation';
+import { isOpenableTabUrl, isStorableTabUrl } from '@/utils/inputValidation';
 import { enqueue } from '@/background/mutationQueue';
 import { mutationService } from '@/background/mutationService';
 import { ensureOpStampMigrated } from '@/background/opStampMigratedGuard';
@@ -278,8 +278,12 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         const data = message.data || {};
         const rawUrl: string | undefined = data.url || data.tab?.url;
         const pinned: boolean | undefined = data.pinned ?? data.tab?.pinned;
-        // 防御性 sanitize：URL 来源不可信（云端同步 / 导入 / 跨设备）
-        const singleUrl = rawUrl ? sanitizeTabUrl(rawUrl) : null;
+        // ── 2026-10-05：用 isOpenableTabUrl（能不能**打开**），不是 sanitizeTabUrl ──
+        // URL 来源不可信（云端同步 / 导入 / 跨设备），但这两道门答的不是同一件事：
+        // sanitizeTabUrl 放行 file:/blob:（它们存得下、只是本设备打不开），
+        // 而这里要把 URL 交给 chrome.tabs.create —— 打不开就该在这里拒，
+        // 而不是丢给 Chrome 弹一个错误页（扩展无 file:// 访问权限时必然如此）。
+        const singleUrl = rawUrl && isOpenableTabUrl(rawUrl) ? String(rawUrl).trim() : null;
 
         if (singleUrl) {
           chrome.tabs.create({ url: singleUrl, active: false, pinned })
@@ -289,7 +293,12 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         }
         // 拒开时明确告知调用方（避免 UI 显示"已打开"但其实静默丢弃）
         if (rawUrl) {
-          sendResponse({ success: false, error: 'URL scheme not allowed' });
+          sendResponse({
+            success: false,
+            error: isStorableTabUrl(rawUrl)
+              ? '此标签在当前设备无法打开（本地文件/临时链接/浏览器内部页面），已保留在会话中'
+              : 'URL scheme not allowed',
+          });
           return false;
         }
         break;
@@ -299,32 +308,55 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         const data = message.data || {};
 
         if (Array.isArray(data.tabs)) {
-          // 过滤危险 URL 后再交给 TabManager（TabManager 内部也会 sanitize，这里
-          // 再加一层防御：哪怕 TabManager 跳过 sanitize，未来重构也不会立刻爆雷）
+          // ── 2026-10-05：这里必须用 isOpenableTabUrl，不是 sanitizeTabUrl ──
+          // sanitizeTabUrl 的语义是「能不能**存**」（放行 file:/blob:/view-source:，
+          // 见 utils/inputValidation.ts 的三道门说明），而这里是「能不能**打开**」。
+          // 修复前两处都用 sanitizeTabUrl，于是恢复一个含 file:// 的会话时：
+          //   file:///… 通过过滤 → chrome.tabs.create({url:'file:///…'})
+          // 而 Chrome 扩展在无 "Allow access to file URLs" 权限时会拒绝或打开
+          // 一个错误页，用户看到的是「恢复出来的会话里有几个标签是坏的」，
+          // 却查不出原因。单个 openTab 已有兜底（弹通知），批量路径当时没有。
           const safeTabs: Array<{ url: string; pinned?: boolean }> = [];
+          let skipped = 0;
           for (const t of data.tabs as Array<{ url?: string; pinned?: boolean }>) {
-            const url = sanitizeTabUrl(t.url);
-            if (url) safeTabs.push({ url, pinned: t.pinned });
+            if (isOpenableTabUrl(t.url)) {
+              safeTabs.push({ url: String(t.url).trim(), pinned: t.pinned });
+            } else if (typeof t.url === 'string' && t.url.trim()) {
+              skipped++;
+            }
           }
           if (safeTabs.length === 0) {
-            sendResponse({ success: false, error: 'no valid URLs' });
+            sendResponse({
+              success: false,
+              error: skipped > 0 ? '本设备无法打开这些标签（本地文件/临时链接/浏览器内部页面）' : 'no valid URLs',
+            });
             return false;
           }
           const opener = data.inCurrentWindow
             ? tabManager.openTabsInCurrentWindow(safeTabs)
             : tabManager.openTabsInNewWindow(safeTabs);
           opener
-            .then(() => sendResponse({ success: true }))
+            .then(() => {
+              // 跳过数 > 0 时**必须告知调用方**：UI 不能显示「已打开 N 个」而实际
+              // 少开了几个（与 docs 记录过的「对没发生的事报成功」同一类问题）。
+              if (skipped > 0) {
+                logWarn(
+                  `[SW] OPEN_TABS：${skipped} 个标签在本设备无法打开（本地文件/临时链接/` +
+                    `浏览器内部页面），已跳过；它们仍保留在会话中。`
+                );
+              }
+              sendResponse({
+                success: true,
+                ...(skipped > 0 ? { skippedUnopenable: skipped } : {}),
+              });
+            })
             .catch(error => sendResponse({ success: false, error: error.message }));
           return true;
         }
 
         if (Array.isArray(data.urls)) {
           const safeTabs = (data.urls as unknown[])
-            .map(u => {
-              const url = sanitizeTabUrl(u);
-              return url ? { url } : null;
-            })
+            .map(u => (isOpenableTabUrl(u) ? { url: String(u).trim() } : null))
             .filter((t): t is { url: string } => t !== null);
           if (safeTabs.length === 0) {
             sendResponse({ success: false, error: 'no valid URLs' });

@@ -259,10 +259,27 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
     }
 
     setTimeout(() => {
-      chrome.runtime.sendMessage({
-        type: 'OPEN_TABS',
-        data: { tabs: tabsPayload, inCurrentWindow }
-      });
+      chrome.runtime.sendMessage(
+        { type: 'OPEN_TABS', data: { tabs: tabsPayload, inCurrentWindow } },
+        // 2026-10-05：处理回包。过去是 fire-and-forget，于是 SW 跳过的标签
+        // （本地文件 / 临时链接 / 浏览器内部页面 —— 见 service-worker 的
+        // isOpenableTabUrl 过滤）用户完全不知情，看起来就是「恢复出来的会话
+        // 里有几个标签是坏的」。数据都在，只是打不开，必须说出来。
+        (res: unknown) => {
+          const r = res as { success?: boolean; skippedUnopenable?: number; error?: string } | undefined;
+          if (r && r.success === false) {
+            showDeleteError(r.error || '恢复会话失败');
+            return;
+          }
+          if (r && typeof r.skippedUnopenable === 'number' && r.skippedUnopenable > 0) {
+            showDeleteError(
+              `已恢复 ${tabsPayload.length - r.skippedUnopenable} 个标签；` +
+                `另有 ${r.skippedUnopenable} 个在当前设备无法打开（本地文件、临时链接或` +
+                '浏览器内部页面），它们仍保留在会话中。'
+            );
+          }
+        }
+      );
       // 锁定组不删本地项、无 dispatch 可挂 finally，随开窗消息发出即解锁
       if (group.isLocked) releaseAllOnce();
     }, 50);
