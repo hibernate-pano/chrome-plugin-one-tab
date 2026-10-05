@@ -88,17 +88,27 @@ describe('迁移 SQL：SECURITY DEFINER 函数必须收回 PUBLIC 的 EXECUTE', 
       join(MIGRATIONS, '20261005000000b_purge_expired_tombstones.sql'),
       'utf8'
     );
+    // 2026-10-05 晚更新：anon/authenticated 的 REVOKE 改用 **动态 EXECUTE**
+    // （包在 DO 块里、判角色存在性后执行）—— 因为裸写 `REVOKE … FROM anon`
+    // 在角色不存在的库上会 ERROR 并回滚整条迁移。所以这里匹配两种形态：
+    //   ① 裸写：REVOKE EXECUTE ON FUNCTION … FROM anon;
+    //   ② 动态：EXECUTE 'REVOKE EXECUTE ON FUNCTION … FROM anon'
     for (const role of ['PUBLIC', 'anon', 'authenticated']) {
-      assert.match(
-        src,
-        new RegExp(`REVOKE EXECUTE ON FUNCTION public\\.purge_expired_cloud_tombstones\\(\\) FROM ${role};`),
+      const bare = new RegExp(
+        `REVOKE EXECUTE ON FUNCTION public\\.purge_expired_cloud_tombstones\\(\\) FROM ${role};`
+      );
+      const dynamic = new RegExp(
+        `EXECUTE 'REVOKE EXECUTE ON FUNCTION public\\.purge_expired_cloud_tombstones\\(\\) FROM ${role}'`
+      );
+      assert.ok(
+        bare.test(src) || dynamic.test(src),
         `必须 REVOKE ${role} —— 否则公开的 anon key 就能调用这个 DEFINER 函数删数据`
       );
     }
     // 调度器仍要能调
     assert.match(
       src,
-      /GRANT EXECUTE ON FUNCTION public\.purge_expired_cloud_tombstones\(\) TO service_role;/,
+      /(GRANT EXECUTE ON FUNCTION public\.purge_expired_cloud_tombstones\(\) TO service_role;|EXECUTE 'GRANT EXECUTE ON FUNCTION public\.purge_expired_cloud_tombstones\(\) TO service_role')/,
       '必须给 service_role 授权，否则调度器调不动'
     );
   });
@@ -108,10 +118,20 @@ describe('迁移 SQL：SECURITY DEFINER 函数必须收回 PUBLIC 的 EXECUTE', 
     // 20260525151413_fix_security_definer_function.sql 与
     // 20260913132928_harden_guard_functions.sql 都补过 handle_new_user 的 REVOKE），
     // 所以必须扫描**全部**迁移文件，而不是只看定义所在那一个。
+    //
+    // 匹配两种形态（2026-10-05 晚）：① 裸写 `REVOKE … FROM x`；
+    // ② 包在 DO 块里的动态 `EXECUTE 'REVOKE … FROM x'`（角色存在性判断后执行）。
     const allSql = sqlFiles().map(f => ({ f, src: readFileSync(f, 'utf8') }));
     const revoked = new Set<string>();
     for (const { src } of allSql) {
+      // 形态 ①
       for (const m of src.matchAll(/REVOKE EXECUTE ON FUNCTION\s+([\w.]+)\s*\(\s*\)/gi)) {
+        revoked.add(m[1].toLowerCase());
+      }
+      // 形态 ②：EXECUTE 'REVOKE EXECUTE ON FUNCTION x() FROM ...'
+      for (const m of src.matchAll(
+        /EXECUTE\s+'REVOKE EXECUTE ON FUNCTION\s+([\w.]+)\s*\(\s*\)/gi
+      )) {
         revoked.add(m[1].toLowerCase());
       }
     }

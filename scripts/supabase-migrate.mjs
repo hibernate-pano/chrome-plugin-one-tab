@@ -111,17 +111,25 @@ async function verify(client) {
   const hasDevice = colRes.rows.some(r => r.column_name === 'last_op_device');
   const hasSeq = colRes.rows.some(r => r.column_name === 'last_op_seq');
   const hasTrig = trigRes.rows.some(r => r.trigger_name === 'tab_group_op_stamp_guard');
+  // 注意：**不要在这里 return**。三个检查相互独立，必须全部跑完再汇总 ——
+  // 否则 op-stamp 一失败，profiles/purge 的检查根本没执行，输出会让人以为
+  // 「只有 op-stamp 有问题」，而实际上可能是三个都坏了（或者只有另外两个坏了，
+  // 修完 op-stamp 才发现还有下一层）。这在 2026-10-05 的本地实测里就出现过：
+  // 最小 schema 没有 op-stamp 列 → 早退 → 新加的两项检查被跳过。
+  let ok = true;
   if (!hasDevice || !hasSeq || !hasTrig) {
     console.error('\n✗ VERIFY FAILED: missing columns or trigger');
-    return false;
+    ok = false;
   }
   if (!usesLt || usesLe || !blocksNullWipe) {
     console.error('\n✗ VERIFY FAILED: guard body 不是修复版');
     console.error(`   strict '<' : ${usesLt}   残留 '<=' : ${usesLe}   NULL 清空防护 : ${blocksNullWipe}`);
     console.error('   期望: 20260910_fix_op_stamp_guard_strict_lt.sql');
-    return false;
+    ok = false;
   }
-  console.log('\n✓ op-stamp 守卫：列 + 触发器 + 函数体（严格 <、NULL 清空防护）全部正确');
+  if (ok) {
+    console.log('\n✓ op-stamp 守卫：列 + 触发器 + 函数体（严格 <、NULL 清空防护）全部正确');
+  }
 
   // ── 2026-10-05：补验 profiles RLS 与墓碑清理函数 ──────────────────────
   // 原来 verify 只看 op-stamp 守卫，于是我今天加的两条迁移「跑没跑过」都验不出来：
@@ -129,8 +137,16 @@ async function verify(client) {
   // 「迁移脚本报告成功」必须覆盖它声称覆盖的全部对象。
   const okRls = await verifyProfilesRls(client);
   const okPurge = await verifyPurgeFunction(client);
-  if (!okRls || !okPurge) return false;
+  if (!okRls || !okPurge) ok = false;
 
+  // ⚠️ 这里必须按 ok 决定输出与返回值：写成无条件 `console.log('VERIFY OK');
+  // return true` 就是「对没发生的事报成功」—— 而这正是本轮修掉的那类缺陷
+  // （迁移失败却看起来成功、删除登记失败却回 ok:true）。验证脚本自己
+  // 谎报成功，会让所有依赖它的判断失效。
+  if (!ok) {
+    console.error('\n✗ VERIFY FAILED: 见上方各项失败原因');
+    return false;
+  }
   console.log('\n✓ VERIFY OK: 全部检查通过');
   return true;
 }
@@ -140,10 +156,25 @@ async function verify(client) {
  * 判定：不存在任何对 PUBLIC / anon / authenticated 的全放行 SELECT 策略。
  */
 async function verifyProfilesRls(client) {
+  // ⚠️⚠️ 两个踩过的坑，都只有真连库才暴露（静态检查与 --dry-run 一律放过）：
+  //
+  // 1) polroles 是 oid[]，要拿角色名得用 ARRAY(SELECT …)，而 ARRAY(SELECT …)
+  //    形式下**没有 FROM 别名可引用**：`WHERE r.oid = ANY(pol.polroles)` 会报
+  //    "missing FROM-clause entry for table r"。必须写全限定名 pg_roles.oid。
+  //
+  // 2) **pol.polqual 不是可读文本，是 pg_node_tree 的二进制表示**：
+  //      USING (true) 存成 {CONST :consttype 16 … :constvalue 1 [ 1 0 0 …]}
+  //    所以 `polqual === 'true'` 这个判定**永远不成立** —— 我第一版就这么写的，
+  //    结果库里明明还有全放行策略，verify 却报「profiles ✓」（漏检，
+  //    比报错危险得多：它让人以为已经收口）。
+  //    正确做法是用 pg_get_expr 把它渲染回 SQL 文本。
   const { rows } = await client.query(`
     SELECT pol.polname,
-           pol.polqual,               -- USING 表达式（true = 全放行）
-           ARRAY(SELECT rolname FROM pg_roles WHERE r.oid = ANY(pol.polroles)) AS roles
+           pg_get_expr(pol.polqual, pol.polrelid) AS qual,
+           ARRAY(
+             SELECT pg_roles.rolname FROM pg_roles
+             WHERE pg_roles.oid = ANY(pol.polroles)
+           ) AS roles
     FROM pg_catalog.pg_policy pol
     JOIN pg_catalog.pg_class c ON c.oid = pol.polrelid
     JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
@@ -153,12 +184,26 @@ async function verifyProfilesRls(client) {
     console.log('  · profiles 表不存在或无 SELECT 策略 —— 跳过（Dashboard schema 可能已变化）');
     return true;
   }
-  // polqual 为 'true' 文本 = USING (true) 全放行
-  const open = rows.filter(r => String(r.polqual).trim() === 'true');
+  // pg_get_expr 渲染出的文本：USING (true) → 'true'，USING (( SELECT auth.uid() …)) → 那一长串
+  const open = rows.filter(r => /^\s*true\s*$/i.test(String(r.qual)));
   if (open.length > 0) {
     console.error('\n✗ VERIFY FAILED: profiles 仍有全放行 SELECT 策略');
     for (const r of open) {
-      console.error(`   策略 "${r.polname}" roles=[${(r.roles || []).join(',')}] USING (true)`);
+      // 策略角色是 PUBLIC 时 polroles = {0}，pg_roles 里查不到 ⇒ 数组为空。
+      // 空数组恰好等价于「对所有人开放」，所以这里直接标成 PUBLIC。
+      // 注意 pg 驱动把 oid[]/text[] 解析成**字符串** '{a,b}' 或数组，
+      // 两种形态都要处理（直接 .join 会在字符串形态上报错）。
+      const rawRoles = r.roles;
+      let who;
+      if (Array.isArray(rawRoles)) {
+        who = rawRoles.length > 0 ? rawRoles.join(',') : 'PUBLIC(全体)';
+      } else if (typeof rawRoles === 'string') {
+        const inner = rawRoles.replace(/^\{|\}$/g, '').trim();
+        who = inner.length > 0 ? inner.split(',').join(',') : 'PUBLIC(全体)';
+      } else {
+        who = 'PUBLIC(全体)';
+      }
+      console.error(`   策略 "${r.polname}" 适用角色=[${who}]  USING (${r.qual})`);
     }
     console.error('   期望: 20261005000000_lock_down_profiles_rls.sql（该迁移会删掉这条策略）');
     return false;
@@ -216,7 +261,16 @@ async function main() {
     process.exit(1);
   }
 
-  const client = new pg.Client({ connectionString: url, ssl: { rejectUnauthorized: false } });
+  // Supabase 的连接串走 TLS（证书用 Supabase 自签根，故 rejectUnauthorized:false）。
+  // 但**本地/staging 的裸 Postgres 不支持 SSL**，硬编码 ssl 会让连接直接失败
+  // （"The server does not support SSL connections"），于是「在本地库上验证迁移」
+  // 这件事根本做不到 —— 而那恰恰是执行生产迁移前最该做的。
+  // 逃生开关：SUPABASE_DB_SSL=false 时不传 ssl。默认仍是开启，生产行为不变。
+  const sslEnabled = (env.SUPABASE_DB_SSL ?? 'true').toLowerCase() !== 'false';
+  const client = new pg.Client({
+    connectionString: url,
+    ...(sslEnabled ? { ssl: { rejectUnauthorized: false } } : {}),
+  });
   await client.connect();
   try {
     if (!verifyOnly) {

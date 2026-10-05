@@ -40,10 +40,45 @@ AS $body$ SELECT 30 $body$;
 -- 但仍收回 EXECUTE：① 默认 PUBLIC 可执行是 PostgreSQL 的经典坑，未来有人
 -- 给它加逻辑（比如读一张表）就会变成漏洞；② 零成本，无需为"看起来更安全"
 -- 找理由。真正需要它的是 purge 函数（表 owner）与调度器（service_role）。
+--
+-- ⚠️ 用 DO 块包起来、且逐个角色判断存在性（2026-10-05 真实执行才发现）：
+--   `REVOKE ... FROM anon` 在**该角色不存在**的库里会直接
+--   ERROR: role "anon" does not exist —— 而 supabase-migrate.mjs 是
+--   单次 multi-statement query（整文件隐式单事务），一报错**整条迁移回滚**，
+--   留下「函数建了但权限没收回」的半成品：比不跑更危险，因为它看起来跑过了。
+--   （本机复现：PostgreSQL 16 上无 anon 角色 → 迁移在第一条 REVOKE 就中断。）
+--   DO 块里用 pg_roles 判存在性，缺角色就跳过，两个环境都能安全执行。
+--   PUBLIC 是内建角色、恒存在，可以直接写。
 REVOKE EXECUTE ON FUNCTION public.body_tombstone_expiry_days() FROM PUBLIC;
-REVOKE EXECUTE ON FUNCTION public.body_tombstone_expiry_days() FROM anon;
-REVOKE EXECUTE ON FUNCTION public.body_tombstone_expiry_days() FROM authenticated;
-GRANT EXECUTE ON FUNCTION public.body_tombstone_expiry_days() TO service_role;
+
+DO $body$
+DECLARE
+  missing text[];
+  r_name text;
+BEGIN
+  -- ⚠️ 用显式 FOR 循环而不是 `unnest(...) AS r` + WHERE：
+  --    集合别名在 PG 里不能在同一层查询的 WHERE 中引用，会报
+  --    "missing FROM-clause entry for table r"（2026-10-05 本地实跑才发现）。
+  missing := ARRAY[]::text[];
+  FOREACH r_name IN ARRAY ARRAY['anon', 'authenticated', 'service_role'] LOOP
+    IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = r_name) THEN
+      missing := missing || r_name;
+    END IF;
+  END LOOP;
+
+  IF array_length(missing, 1) > 0 THEN
+    RAISE NOTICE '跳过不存在的角色：%', array_to_string(missing, ', ');
+  END IF;
+
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'anon') THEN
+    RETURN;
+  END IF;
+
+  EXECUTE 'REVOKE EXECUTE ON FUNCTION public.body_tombstone_expiry_days() FROM anon';
+  EXECUTE 'REVOKE EXECUTE ON FUNCTION public.body_tombstone_expiry_days() FROM authenticated';
+  EXECUTE 'GRANT EXECUTE ON FUNCTION public.body_tombstone_expiry_days() TO service_role';
+END
+$body$;
 
 -- 2) 清理函数本体。幂等：没有到期行时删 0 行。
 --    SECURITY DEFINER：执行者是调度器（不是表 owner），需要绕过 RLS
@@ -88,11 +123,25 @@ COMMENT ON FUNCTION public.purge_expired_cloud_tombstones() IS
 --
 -- 对照：本仓已有的 4 个 op-stamp 守卫触发器同样是 SECURITY DEFINER，
 -- 它们的 trigger 只能在写入时被动触发，攻击面比这个「可主动调用的函数」小。
+--
+-- ⚠️ 同样用 DO 块 + 角色存在性判断（理由见上面 TTL 常量处的注释）：
+--   角色不存在时直接 REVOKE 会 ERROR → 整条迁移回滚 → 留下半成品。
 REVOKE EXECUTE ON FUNCTION public.purge_expired_cloud_tombstones() FROM PUBLIC;
-REVOKE EXECUTE ON FUNCTION public.purge_expired_cloud_tombstones() FROM anon;
-REVOKE EXECUTE ON FUNCTION public.purge_expired_cloud_tombstones() FROM authenticated;
--- 调度器（Supabase Scheduled Job / pg_cron 以 postgres 角色跑）需要显式授权：
-GRANT EXECUTE ON FUNCTION public.purge_expired_cloud_tombstones() TO service_role;
+
+DO $body$
+DECLARE
+  missing text;
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'anon') THEN
+    RAISE NOTICE 'anon / authenticated / service_role 角色不存在（非 Supabase 环境），跳过 REVOKE/GRANT。';
+    RETURN;
+  END IF;
+
+  EXECUTE 'REVOKE EXECUTE ON FUNCTION public.purge_expired_cloud_tombstones() FROM anon';
+  EXECUTE 'REVOKE EXECUTE ON FUNCTION public.purge_expired_cloud_tombstones() FROM authenticated';
+  EXECUTE 'GRANT EXECUTE ON FUNCTION public.purge_expired_cloud_tombstones() TO service_role';
+END
+$body$;
 
 -- 3) 先跑一次看看有多少行会被清（只读，安全；结果直接打在迁移日志里）
 DO $$
@@ -114,7 +163,11 @@ BEGIN
   WHERE is_deleted = true
     AND COALESCE(deleted_at, updated_at) < now() - (v_ttl || ' days')::interval;
 
-  RAISE NOTICE '已到期（>% 天）的墓碑行：% 条（TTL=% 天，本次不自动执行删除）', v_ttl, v_count;
+  -- ⚠️ 文案里不能出现「>%」：RAISE 把 % 当占位符，`>%` 会被解析成
+  -- 「> 加一个参数」，而这里只传了 2 个参数 ⇒ ERROR: too few parameters。
+  -- （2026-10-05 真实执行才发现；静态检查与 dry-run 都不会暴露。）
+  -- 改用「超过 N 天」的中文表述，彻底避开 % 号。
+  RAISE NOTICE '已到期（超过 % 天）的墓碑行：% 条（TTL=% 天，本次不自动执行删除）', v_ttl, v_count, v_ttl;
 
   RAISE NOTICE E'\n'
     '── 清理函数已就绪，但**尚未挂调度器**（最后一步需要你手动做）──\n'
