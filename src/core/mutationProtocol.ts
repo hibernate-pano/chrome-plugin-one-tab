@@ -62,7 +62,11 @@ export type MessageSender = (msg: unknown) => Promise<unknown>;
  * 「可能仍在继续」而不是「已取消」——对幂等的读/删除无所谓，对写操作若用户重试，
  * 底层 mutation 本身就是幂等的（见 core/mutationOps）。
  */
-const DEFAULT_TIMEOUT_MS = 30_000;
+// 导出：与 Supabase 请求级上界（utils/supabase/client.ts 的 REQUEST_TIMEOUT_MS）
+// 构成一条跨模块不变量——请求上界必须大于本值，否则用户先看到 popup 报失败、
+// 随后又看到操作其实成功，比慢更让人困惑。该不变量由
+// tests/supabaseRequestTimeout.test.ts 钉住，改任一侧都会被它抓到。
+export const DEFAULT_TIMEOUT_MS = 30_000;
 
 /** 超时 reason 的稳定前缀：界面文案与测试都按它识别，不依赖具体耗时数字。 */
 export const TIMEOUT_REASON_PREFIX = '操作超时';

@@ -152,14 +152,16 @@ describe('cleanDuplicateTabs.fulfilled：不把墓碑形状数据灌入 Redux �
     store.dispatch(
       cleanDuplicateTabs.fulfilled(
         {
-          plan: {
-            removedTabsByGroup: [{ groupId: 'g1', tabIds: ['g1-t2'] }],
-            removedGroupIds: [],
-            removedTabsCount: 1,
-            removedGroupsCount: 0,
+          value: {
+            plan: {
+              removedTabsByGroup: [{ groupId: 'g1', tabIds: ['g1-t2'] }],
+              removedGroupIds: [],
+              removedTabsCount: 1,
+              removedGroupsCount: 0,
+            },
+            now: NOW,
+            stamp: STAMP,
           },
-          now: NOW,
-          stamp: STAMP,
         },
         'req-1',
         undefined

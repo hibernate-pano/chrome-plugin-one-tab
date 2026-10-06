@@ -21,6 +21,7 @@ import { createSlice, createAsyncThunk } from '@reduxjs/toolkit';
 import { TabState, TabGroup, OptimisticTabBackup } from '@/types/tab';
 import { storage, invalidateGroupsCache } from '@/utils/storage';
 import { sendMutation } from '@/shared/mutationProtocol';
+import { TIMEOUT_REASON_PREFIX } from '@/core/mutationProtocol';
 import { applyCleanPlanToActiveView, backupKeyOf, dropLoadGuard, GroupLocalFields, GroupMetaSnapshot, isStaleLoad, planOptimisticClean, restoreGroupLocalFields, restoreGroupLock, restoreGroupName, snapshotGroupLocalFields, snapshotGroupMeta, stripInFlightDeletions, stripTombstonedTabs, toActiveGroupsView, takeLoadGuard } from './tabSliceHelpers';
 import type { CleanDuplicatesPlan } from '@/core/mutationOps';
 import type { OpStamp } from '@/core/opStamp';
@@ -163,6 +164,29 @@ function unwrapDeleteResult<T>(
   return { value: res.payload as T, broadcastWarn: res.broadcastWarn };
 }
 
+/**
+ * 这次失败是「超时」吗？（2026-10-06）
+ *
+ * 【为什么它决定回滚还是保留】协议超时的语义是「popup 不再等了」，
+ * 而 SW 侧的任务**仍在继续**（见 core/mutationProtocol 的超时注释：
+ * 「超时不等于回滚」）。此刻磁盘可能已经改完、甚至正在改完。
+ *
+ * 所以对删除类操作：
+ *   - 超时 → **保留乐观结果**。把删掉的东西插回列表，比漏显示更糟：
+ *     用户看到「刚才明明删了，怎么又回来」，会去重试、会去质疑数据 integrity。
+ *     列表里少一个标签会在下一次 loadGroups 回环时自动补齐。
+ *   - 明确失败（SW 拒绝、存储抛错）→ 磁盘确实没变，整段还原才是正确的。
+ *
+ * 三处删除 reducer（deleteGroup / deleteTabAndSync / cleanDuplicateTabs）必须用
+ * 同一个判据，否则又是一处「只改了两处」的历史重演。
+ */
+const isTimeoutFailure = (error: { message?: string } | undefined): boolean =>
+  typeof error?.message === 'string' && error.message.startsWith(TIMEOUT_REASON_PREFIX);
+
+/** 超时时的用户提示：说清「可能仍在继续」，且不谎报失败。 */
+const timeoutCopy = (op: string): string =>
+  `${TIMEOUT_REASON_PREFIX}：后台可能仍在继续${op}，请稍等几秒后重新加载查看结果`;
+
 export const deleteGroup = createAsyncThunk(
   'tabs/deleteGroup',
   async (groupId: string) => {
@@ -269,10 +293,9 @@ export interface CleanDuplicatesResult {
  */
 export const cleanDuplicateTabs = createAsyncThunk(
   'tabs/cleanDuplicateTabs',
-  async (): Promise<CleanDuplicatesResult> => {
+  async (): Promise<DeleteOpResult<CleanDuplicatesResult>> => {
     const res = await sendMutation<CleanDuplicatesResult>({ op: 'cleanDuplicates' });
-    if (!res.ok) throw new Error(res.error ?? '清理失败');
-    return res.payload!;
+    return unwrapDeleteResult(res, '清理失败');
   }
 );
 
@@ -306,11 +329,13 @@ export const moveTabAndSync = createAsyncThunk(
     // 如果是在拖动过程中且不需要更新源，跳过存储操作
     if (!updateSourceInDrag) {
       return {
-        sourceGroupId,
-        sourceIndex,
-        targetGroupId,
-        targetIndex,
-        removedGroupId: null,
+        value: {
+          sourceGroupId,
+          sourceIndex,
+          targetGroupId,
+          targetIndex,
+          removedGroupId: null,
+        },
       };
     }
 
@@ -329,7 +354,9 @@ export const moveTabAndSync = createAsyncThunk(
     });
     if (!res.ok) throw new Error(res.error ?? '移动失败');
 
-    return res.payload!;
+    // 搬空源组属删除类：跨组移空会物理移除整组，广播登记失败同样要 surface
+    //（否则用户看到「移动成功」，但这一组会在其它设备上复活）。
+    return { value: res.payload!, broadcastWarn: res.broadcastWarn };
   }
 );
 
@@ -617,16 +644,20 @@ export const tabSlice = createSlice({
       })
       .addCase(deleteGroup.rejected, (state, action) => {
         const groupId = action.meta.arg;
+        // 超时 ≠ 删除没发生（2026-10-06）：SW 侧可能已删完，把整组插回列表
+        // 就是把「已删的会话」显示回来。保留乐观移除，只如实报错。
+        const isTimeout = isTimeoutFailure(action.error);
         const backup = state.deletedGroupBackups?.[groupId];
         if (state.deletedGroupBackups) delete state.deletedGroupBackups[groupId];
-        if (backup) {
+        if (backup && !isTimeout) {
           // 按原下标插回；下标越界（期间列表变短）则追加到末尾
           const at = Math.max(0, Math.min(backup.index, state.groups.length));
           if (!state.groups.some(g => g.id === groupId)) {
             state.groups.splice(at, 0, backup.group);
           }
         }
-        state.error = action.error.message || '删除会话失败';
+        // 超时时用统一文案覆盖原始串：原始串没有「可能仍在继续」这层指引。
+        state.error = isTimeout ? timeoutCopy('删除会话') : action.error.message || '删除会话失败';
         state.errorSource = 'action';
       })
       .addCase(deleteTabAndSync.pending, (state, action) => {
@@ -669,6 +700,18 @@ export const tabSlice = createSlice({
       .addCase(deleteTabAndSync.rejected, (state, action) => {
         // 只回滚对应项：其他在途删除的备份槽位原样保留，互不干扰
         const { groupId, tabId } = action.meta.arg;
+        // 超时 ≠ 删除没发生（2026-10-06）：超时只代表 popup 不再等了，SW 侧
+        // 仍可能已经删完。此刻把标签插回列表 = 把一个可能已不存在的标签
+        // 显示回来，用户会以为删除失败而重试。保留乐观结果 + 如实报错。
+        const isTimeout = isTimeoutFailure(action.error);
+        if (isTimeout) {
+          if (state.optimisticBackups) delete state.optimisticBackups[backupKeyOf(groupId, tabId)];
+          // 原始串（"操作超时（超过 30 秒无响应）：removeTab"）不含「可能仍在继续」
+          // 这层可行动信息，一律用 timeoutCopy 覆盖。
+          state.error = timeoutCopy('删除标签页');
+          state.errorSource = 'action';
+          return;
+        }
         const key = backupKeyOf(groupId, tabId);
         const backup: OptimisticTabBackup | undefined = state.optimisticBackups?.[key];
         if (state.optimisticBackups) delete state.optimisticBackups[key];
@@ -724,7 +767,7 @@ export const tabSlice = createSlice({
         // UI 只能等 onChanged→loadGroups 的回环（约 0.7s~数秒），表现为"点击后标签不消失"。
         const groupId = action.meta.arg.groupId;
         const tabId = action.meta.arg.tabId;
-        const { group } = action.payload;
+        const { group } = action.payload.value;
         // 只清对应项：在途的其他备份继续保留，等待各自的 settled
         if (state.optimisticBackups) delete state.optimisticBackups[backupKeyOf(groupId, tabId)];
         if (group === null) {
@@ -857,7 +900,9 @@ export const tabSlice = createSlice({
         //（TabList 只在 groups 为空时才整页 loading，但置位仍会引发多余重渲染）。
       })
       .addCase(cleanDuplicateTabs.fulfilled, (state, action) => {
-        const { plan, now, stamp } = action.payload;
+        // 载荷是 { value, broadcastWarn }（见 DeleteOpResult 的说明）：
+        // plan/now/stamp 藏在 value 里，广播警告另存——两者都不能丢。
+        const { plan, now, stamp } = action.payload.value;
         // 基线 = pending 抓的快照；缺失（如直接 dispatch fulfilled action 的测试、
         // 或 pending reducer 未跑）则退回当前值，保证不崩。
         const base = state.cleanDuplicatesSnapshot ?? state.groups;
@@ -875,9 +920,20 @@ export const tabSlice = createSlice({
       })
       .addCase(cleanDuplicateTabs.rejected, (state, action) => {
         state.isLoading = false;
-        // 乐观结果整段还原（清理失败时磁盘没变，UI 不能留着假象）。
-        // 同样要在还原后剥掉在途删除项，避免快照复活正在删的标签。
-        if (state.cleanDuplicatesSnapshot) {
+        // 超时 ≠ 清理没发生。这是 2026-10-06 修的一处自相矛盾：
+        //
+        // 超时的含义是「popup 不再等了」，而 SW 侧的任务**仍在继续**
+        // （mutationProtocol 的注释与 listErrorCopy 的文案都写着「后台可能仍在
+        // 继续」）。此时磁盘可能已经改完、甚至正在改完。原实现在这里把
+        // 乐观结果整段还原 —— 于是列表把重复标签和空会话**全部显示回来**，
+        // 而磁盘上它们可能已经没了。用户紧接着再点一次「清理」，看到的是
+        // 「刚才明明清掉了，怎么又回来了」。
+        //
+        // 处置：超时**保留乐观结果**（它更可能是磁盘真值），只如实报错；
+        // 真正的失败（SW 明确拒绝）才整段还原 —— 那时磁盘确实没变。
+        const isTimeout = isTimeoutFailure(action.error);
+
+        if (state.cleanDuplicatesSnapshot && !isTimeout) {
           state.groups = stripInFlightDeletions(
             state.cleanDuplicatesSnapshot,
             Object.values(state.optimisticBackups ?? {}),
@@ -885,7 +941,8 @@ export const tabSlice = createSlice({
           );
         }
         state.cleanDuplicatesSnapshot = null;
-        state.error = action.error.message || '清理重复标签和空标签组失败';
+        // 超时时用统一文案覆盖原始串：原始串没有「可能仍在继续」这层指引。
+        state.error = isTimeout ? timeoutCopy('清理') : action.error.message || '清理重复标签和空标签组失败';
         state.errorSource = 'action';
       });
   },
@@ -905,7 +962,7 @@ export const {
 // 删除单个标签页：物理移除，删除意图随整组上传广播到云端与其他设备。
 // 该 thunk 走 removeTab 语义命令（点开=移出、显式删除，同语义）。
 export const deleteTabAndSync = createAsyncThunk<
-  { group: TabGroup | null },
+  DeleteOpResult<{ group: TabGroup | null }>,
   { groupId: string; tabId: string },
   { state: any }
 >('tabs/deleteTabAndSync', async ({ groupId, tabId }: { groupId: string; tabId: string }) => {
@@ -914,10 +971,13 @@ export const deleteTabAndSync = createAsyncThunk<
     groupId,
     tabId,
   });
-  if (!res.ok) throw new Error(res.error ?? '删除失败');
-  const { group } = res.payload!;
+  const { value, broadcastWarn } = unwrapDeleteResult(res, '删除失败');
+  const { group } = value;
   // 出口防御：handler 返回的是 storage 原始组，老版本残留墓碑不进 Redux（与 loadGroups 口径一致）
-  return { group: group ? stripTombstonedTabs(group) : null };
+  return {
+    value: { group: group ? stripTombstonedTabs(group) : null },
+    broadcastWarn,
+  };
 });
 
 export default tabSlice.reducer;

@@ -304,6 +304,12 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
     if (!group.isLocked) {
       dispatch(deleteTabAndSync({ groupId: group.id, tabId: tab.id }))
         .unwrap()
+        .then(payload => {
+          // 删掉最后一个标签会整组物理移除。若云端删除广播登记失败，
+          // 这一组会在其它设备上复活——必须 surface，不能让用户以为删干净了。
+          const warn = deleteBroadcastWarn(payload);
+          if (warn) showDeleteError(warn);
+        })
         .catch(error => {
           guard.release(tab.id);
           logError('更新会话失败:', error);
@@ -318,12 +324,26 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
       sourceIndex,
       targetGroupId,
       targetIndex
-    }));
-  }, [dispatch]);
+    }))
+      .unwrap()
+      .then(payload => {
+        // 跨组拖拽搬空源组 = 整组物理移除，广播登记失败同样要 surface。
+        const warn = deleteBroadcastWarn(payload);
+        if (warn) showDeleteError(warn);
+      })
+      .catch(error => {
+        logError('移动标签失败:', error);
+        showDeleteError(`移动标签失败: ${error.message || '未知错误'}`);
+      });
+  }, [dispatch, showDeleteError]);
 
   const handleDeleteTab = useCallback((tabId: string) => {
     dispatch(deleteTabAndSync({ groupId: group.id, tabId }))
       .unwrap()
+      .then(payload => {
+        const warn = deleteBroadcastWarn(payload);
+        if (warn) showDeleteError(warn);
+      })
       .catch(error => {
         showDeleteError(`更新会话失败: ${error.message || '未知错误'}`);
       });

@@ -93,7 +93,7 @@ describe('回环代际 guard（mutationEpoch）', () => {
 
     store.dispatch(deleteTabAndSync.pending('D1', { groupId: 'g', tabId: 't1' }));
     store.dispatch(
-      deleteTabAndSync.fulfilled({ group: makeGroup('g', ['t2']) }, 'D1', {
+      deleteTabAndSync.fulfilled({ value: { group: makeGroup('g', ['t2']) } }, 'D1', {
         groupId: 'g',
         tabId: 't1',
       })
@@ -131,7 +131,7 @@ describe('回环代际 guard（mutationEpoch）', () => {
 
     // 删除落定后，新回环正常应用（不饿死）
     store.dispatch(
-      deleteTabAndSync.fulfilled({ group: null }, 'D1', { groupId: 'g', tabId: 't1' })
+      deleteTabAndSync.fulfilled({ value: { group: null } }, 'D1', { groupId: 'g', tabId: 't1' })
     );
     store.dispatch(loadGroups.pending('L-new', undefined));
     store.dispatch(loadGroups.fulfilled([makeGroup('g2', ['x1'])], 'L-new', undefined));
@@ -192,7 +192,7 @@ describe('乐观备份 key 化（groupId:tabId）', () => {
     const store = await makeStore([makeGroup('g', ['t1'])]);
     store.dispatch(deleteTabAndSync.pending('D1', { groupId: 'g', tabId: 't1' }));
     store.dispatch(
-      deleteTabAndSync.fulfilled({ group: null }, 'D1', { groupId: 'g', tabId: 't1' })
+      deleteTabAndSync.fulfilled({ value: { group: null } }, 'D1', { groupId: 'g', tabId: 't1' })
     );
     store.dispatch(loadGroups.pending('L-new', undefined));
     store.dispatch(loadGroups.fulfilled([makeGroup('g2', ['x1'])], 'L-new', undefined));
@@ -248,7 +248,7 @@ describe('乐观备份 key 化（groupId:tabId）', () => {
     // D1 的服务端回包（只删了 t1，还含 t2）先到 → 不得把 t2 复活回主列表
     // （组已被 D2 乐观拿空移除，stale 回包不得复活它）
     store.dispatch(
-      deleteTabAndSync.fulfilled({ group: makeGroup('g', ['t2']) }, 'D1', {
+      deleteTabAndSync.fulfilled({ value: { group: makeGroup('g', ['t2']) } }, 'D1', {
         groupId: 'g',
         tabId: 't1',
       })
@@ -262,7 +262,7 @@ describe('乐观备份 key 化（groupId:tabId）', () => {
     );
     // D2 落定（组空）→ 整组移除
     store.dispatch(
-      deleteTabAndSync.fulfilled({ group: null }, 'D2', { groupId: 'g', tabId: 't2' })
+      deleteTabAndSync.fulfilled({ value: { group: null } }, 'D2', { groupId: 'g', tabId: 't2' })
     );
     assert.equal(tabIdsOf(store.getState().tabs, 'g'), null);
     assert.deepEqual(store.getState().tabs.optimisticBackups ?? {}, {}, '全部落定后备份应清空');
@@ -277,7 +277,7 @@ describe('乐观备份 key 化（groupId:tabId）', () => {
     assert.deepEqual(tabIdsOf(store.getState().tabs, 'g'), ['t3']);
     // D1 回包（只删了 t1，还含 t2/t3）先到 → 回填后重放 D2 的在途删除
     store.dispatch(
-      deleteTabAndSync.fulfilled({ group: makeGroup('g', ['t2', 't3']) }, 'D1', {
+      deleteTabAndSync.fulfilled({ value: { group: makeGroup('g', ['t2', 't3']) } }, 'D1', {
         groupId: 'g',
         tabId: 't1',
       })
@@ -285,7 +285,7 @@ describe('乐观备份 key 化（groupId:tabId）', () => {
     assert.deepEqual(tabIdsOf(store.getState().tabs, 'g'), ['t3'], 't2 仍在途，不得被回填复活');
     // D2 回包（删了 t1/t2，剩 t3）后到 → 正常回填
     store.dispatch(
-      deleteTabAndSync.fulfilled({ group: makeGroup('g', ['t3']) }, 'D2', {
+      deleteTabAndSync.fulfilled({ value: { group: makeGroup('g', ['t3']) } }, 'D2', {
         groupId: 'g',
         tabId: 't2',
       })
@@ -332,6 +332,87 @@ describe('rejected 恢复分支反转修复 + pending 幽灵占位', () => {
     assert.ok(
       !store.getState().tabs.optimisticBackups?.['g:missing'],
       '不得创建幽灵备份槽位'
+    );
+  });
+});
+
+describe('【超时】不回滚：SW 可能已删完，还原就是谎报删除失败（2026-10-06）', () => {
+  it('deleteTabAndSync 超时：标签不得插回列表', async () => {
+    const { TIMEOUT_REASON_PREFIX } = await import('@/core/mutationProtocol');
+    const { deleteTabAndSync } = await slice();
+    const store = await makeStore([makeGroup('g', ['t1', 't2'])]);
+
+    store.dispatch(deleteTabAndSync.pending('D1', { groupId: 'g', tabId: 't1' }));
+    assert.deepEqual(tabIdsOf(store.getState().tabs, 'g'), ['t2'], '前置条件：乐观已移除');
+
+    store.dispatch(
+      deleteTabAndSync.rejected(
+        new Error(`${TIMEOUT_REASON_PREFIX}（超过 30 秒无响应）：removeTab`),
+        'D1',
+        { groupId: 'g', tabId: 't1' }
+      )
+    );
+    assert.deepEqual(
+      tabIdsOf(store.getState().tabs, 'g'),
+      ['t2'],
+      '超时不等于回滚：SW 可能已删完，插回列表会让用户以为删除失败并重试'
+    );
+    assert.match(String(store.getState().tabs.error), /可能仍在继续/);
+    assert.equal(store.getState().tabs.errorSource, 'action');
+    assert.ok(
+      !store.getState().tabs.optimisticBackups?.['g:t1'],
+      '超时后备份槽位必须释放（否则永久占用）'
+    );
+  });
+
+  it('明确失败（非超时）仍要整段还原：那时磁盘确实没变', async () => {
+    const { deleteTabAndSync } = await slice();
+    const store = await makeStore([makeGroup('g', ['t1', 't2'])]);
+
+    store.dispatch(deleteTabAndSync.pending('D1', { groupId: 'g', tabId: 't1' }));
+    store.dispatch(
+      deleteTabAndSync.rejected(new Error('SW 无响应'), 'D1', { groupId: 'g', tabId: 't1' })
+    );
+    assert.deepEqual(
+      tabIdsOf(store.getState().tabs, 'g'),
+      ['t1', 't2'],
+      '非超时的明确失败必须还原，且按原下标插回（SW 明确拒绝 ⇒ 磁盘没变）'
+    );
+  });
+
+  it('deleteGroup 超时：整组不得插回列表', async () => {
+    const { TIMEOUT_REASON_PREFIX } = await import('@/core/mutationProtocol');
+    const { deleteGroup } = await slice();
+    const store = await makeStore([makeGroup('g', ['t1']), makeGroup('g2', ['x'])] as never);
+
+    store.dispatch(deleteGroup.pending('DG1', 'g'));
+    assert.deepEqual(store.getState().tabs.groups.map(g => g.id), ['g2'], '前置条件：乐观已移除');
+
+    store.dispatch(
+      deleteGroup.rejected(
+        new Error(`${TIMEOUT_REASON_PREFIX}（超过 30 秒无响应）：deleteGroup`),
+        'DG1',
+        'g'
+      )
+    );
+    assert.deepEqual(
+      store.getState().tabs.groups.map(g => g.id),
+      ['g2'],
+      '超时不等于回滚：把可能已删的会话插回列表 = 用户看到「删了又回来」'
+    );
+    assert.match(String(store.getState().tabs.error), /可能仍在继续/);
+  });
+
+  it('deleteGroup 明确失败仍要还原整组', async () => {
+    const { deleteGroup } = await slice();
+    const store = await makeStore([makeGroup('g', ['t1']), makeGroup('g2', ['x'])] as never);
+
+    store.dispatch(deleteGroup.pending('DG1', 'g'));
+    store.dispatch(deleteGroup.rejected(new Error('SW 拒绝'), 'DG1', 'g'));
+    assert.deepEqual(
+      store.getState().tabs.groups.map(g => g.id).sort(),
+      ['g', 'g2'],
+      '非超时的明确失败必须还原整组'
     );
   });
 });

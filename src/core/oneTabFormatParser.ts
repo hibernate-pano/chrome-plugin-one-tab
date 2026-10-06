@@ -33,14 +33,21 @@ export function parseOneTabFormat(text: string): TabGroup[] {
     
     // 解析每一行为标签
     const tabs: Tab[] = lines.flatMap(line => {
-      // 使用管道符号(|)分割 URL 和标题
-      const parts = line.split('|');
-      const rawUrl = parts[0].trim();
+      // 用**第一个**管道符号切分 URL 与标题（2026-10-06 修）。
+      //
+      // 原实现 `line.split('|')` 会把标题里的 `|` 也切开：标题 "A | B" 被解析成
+      // 标题 "A"，后半截 "B" 直接丢弃。而 `formatToOneTabFormat` 导出时不做任何
+      // 转义 ⇒ 标题含 | 的标签在「导出 → 重新导入」往返里被静默改写。
+      // 真实的页面标题带 | 并不罕见（正则表达式、搜索查询串、面包屑分隔）。
+      //
+      // 只切第一个：URL 一定不含裸 | （会被编码），第一个 | 之后全部是标题。
+      const sep = line.indexOf('|');
+      const rawUrl = (sep === -1 ? line : line.slice(0, sep)).trim();
       // 拒绝危险协议（javascript:/data:/file: 等），整行丢弃而不是污染 storage
       const url = sanitizeTabUrl(rawUrl);
       if (!url) return [];
       // 如果没有标题部分，使用 URL 作为标题
-      const title = parts.length > 1 ? parts[1].trim() : url;
+      const title = sep === -1 ? url : line.slice(sep + 1).trim();
 
       return [{
         id: nanoid(),

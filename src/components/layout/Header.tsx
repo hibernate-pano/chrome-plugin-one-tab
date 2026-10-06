@@ -5,7 +5,7 @@ import {
   saveSettings,
   updateSettings,
 } from '@/store/slices/settingsSlice';
-import { cleanDuplicateTabs } from '@/store/slices/tabSlice';
+import { cleanDuplicateTabs, deleteBroadcastWarn } from '@/store/slices/tabSlice';
 import { HeaderDropdown } from './HeaderDropdown';
 import { AuthModal, AuthTab } from '@/components/auth/AuthModal';
 import { useToast } from '@/contexts/ToastContext';
@@ -106,12 +106,24 @@ export const Header: React.FC<HeaderProps> = ({ onSearch }) => {
             // 的 cleanDuplicateTabs 注释）。列表更新在 pending 阶段就已经发生了。
             showToast(
               cleanDuplicatesResultMessage(
-                result.plan.removedTabsCount,
-                result.plan.removedGroupsCount,
+                result.value.plan.removedTabsCount,
+                result.value.plan.removedGroupsCount,
               ),
               'success',
               4000,
             );
+            // 清理会物理移除整组（空会话）。本地已删干净，但若云端删除广播
+            // 登记失败，这些会话会在其它设备上复活——必须如实告知，不能让
+            // 「清理成功」的成功提示盖过去。
+            const warn = deleteBroadcastWarn(result);
+            if (warn) {
+              showAlert({
+                title: '清理未完全同步',
+                message: warn,
+                type: 'warning',
+                onClose: () => { },
+              });
+            }
           } catch (error) {
             logError('清理重复标签失败:', error);
             showAlert({

@@ -144,17 +144,173 @@ describe('P2-②：删除广播登记失败必须 surface，不能回 ok:true �
     );
   });
 
-  it('cleanDuplicates / moveTab 的删除分支同样接入（防止只改了三处）', async () => {
+  it('cleanDuplicates：批量清理移除整组，登记失败同样要 surface', async () => {
     const { handlers } = await makeDeps();
-    // 空组执行（会走 noteGroupDeleted 分支）
-    const res = await handlers.handle({ op: 'deleteAllGroups' } as never);
+    // 两个空组 + 一个有内容的组：清理会把两个空组整组移除
+    // ⇒ 走 noteGroupDeleted 分支。v1.22.5 之前这里正是静默 ok:true。
+    const res = await handlers.handle({ op: 'cleanDuplicates' } as never);
     assert.equal(res.ok, true);
-    // 未触发删除的命令不应凭空带警告
+    assert.equal(
+      typeof res.broadcastWarn,
+      'string',
+      '清理重复标签会物理移除空会话，登记失败必须 surface —— ' +
+        '静默 ok:true 就是「谎报成功」，用户在其它设备上仍会看到这些会话'
+    );
+    assert.match(res.broadcastWarn!, /2 个会话已从本机删除/);
+  });
+
+  it('moveTab：跨组搬空源组（整组物理移除）同样要 surface', async () => {
+    const { handlers } = await makeDeps({
+      getGroups: async () => [
+        {
+          id: 'g1',
+          name: 'A',
+          tabs: [
+            {
+              id: 't1',
+              url: 'https://a.example.com',
+              title: 'A',
+              favicon: '',
+              createdAt: 'x',
+              lastAccessed: 'x',
+              pinned: false,
+            },
+          ],
+          createdAt: 'x',
+          updatedAt: 'x',
+          pinned: false,
+        },
+        {
+          id: 'g2',
+          name: 'B',
+          tabs: [
+            {
+              id: 't2',
+              url: 'https://b.example.com',
+              title: 'B',
+              favicon: '',
+              createdAt: 'x',
+              lastAccessed: 'x',
+              pinned: false,
+            },
+          ],
+          createdAt: 'x',
+          updatedAt: 'x',
+          pinned: false,
+        },
+      ],
+    });
+    // 把 g1 唯一那个标签搬到 g2 ⇒ g1 被搬空 ⇒ 整组物理移除 ⇒ 走登记分支
+    const res = await handlers.handle({
+      op: 'moveTab',
+      sourceGroupId: 'g1',
+      sourceIndex: 0,
+      targetGroupId: 'g2',
+      targetIndex: 0,
+    } as never);
+    assert.equal(res.ok, true);
+    assert.equal(
+      typeof res.broadcastWarn,
+      'string',
+      '拖拽搬空源组是删除类操作，登记失败必须 surface'
+    );
+    assert.match(res.broadcastWarn!, /其它设备|复活/);
+  });
+
+  it('未触发删除的命令不应凭空带警告（防止过度告警）', async () => {
+    const { handlers } = await makeDeps();
     const noop = await handlers.handle({
       op: 'renameGroup',
       groupId: 'g1',
       name: 'B2',
     } as never);
     assert.equal(noop.broadcastWarn, undefined, 'renameGroup 不涉及删除广播，不该带警告');
+  });
+
+  // ── UI 侧接线：警告必须真的传到界面，否则「谎报成功」只是换了个地方 ──
+  //
+  // 上一组用例只证明 SW 如实返回了 broadcastWarn。2026-10-06 发现的三处
+  // 断链全在 UI 侧：cleanDuplicates / moveTab / deleteTab 的 thunk 直接
+  // `return res.payload!`，把警告连同整个 MutationResult 一起扔掉 ——
+  // SW 做得再对，用户看到的仍然是「成功」。
+  //
+  // 这几条用源码结构断言（与本文件既有惯例一致）：它们要防的是
+  // 「有人只改了两处」和「重构时把 unwrapDeleteResult 换回 res.payload!」，
+  // 而这两件事都很难用运行时 mock 稳定复现（真正的风险在
+  // 「有没有去读那个字段」，不在返回值的形状）。
+  describe('UI 侧：三条删除路径都必须把 broadcastWarn 读出来', () => {
+    const slice = () => read('src/store/slices/tabSlice.ts');
+    const header = () => read('src/components/layout/Header.tsx');
+    const tabGroup = () => read('src/components/tabs/TabGroup.tsx');
+
+    /**
+     * 取某个 thunk 的函数体。
+     *
+     * 边界用「下一个 createAsyncThunk 声明」而不是 `);` —— 类型标注
+     * （`async (): Promise<X> => {`）让 `);` 出现在函数体**内部**之前，
+     * 按 `);` 切会只拿到半个函数体，断言必然假失败（踩过一次）。
+     */
+    function thunkBody(src: string, name: string): string {
+      const start = src.indexOf(`'tabs/${name}'`);
+      assert.ok(start !== -1, `应能找到 ${name} thunk`);
+      const rest = src.slice(start + 1);
+      const next = rest.search(/\nexport const \w+ = createAsyncThunk/);
+      return next === -1 ? rest : rest.slice(0, next);
+    }
+
+    it('cleanDuplicateTabs 经 unwrapDeleteResult 取警告（不得裸 return res.payload!）', () => {
+      const src = stripComments(slice());
+      const body = thunkBody(src, 'cleanDuplicateTabs');
+      assert.match(
+        body,
+        /unwrapDeleteResult\(res,\s*'清理失败'\)/,
+        '清理必须经 unwrapDeleteResult —— 裸 return res.payload! 会把 broadcastWarn 丢掉'
+      );
+      assert.ok(
+        !/return res\.payload!/.test(body),
+        '清理路径不得出现裸 return res.payload!（那会把广播警告静默丢弃）'
+      );
+    });
+
+    it('deleteTabAndSync 经 unwrapDeleteResult 取警告', () => {
+      const src = stripComments(slice());
+      const body = thunkBody(src, 'deleteTabAndSync');
+      assert.match(
+        body,
+        /unwrapDeleteResult\(res,\s*'删除失败'\)/,
+        '单标签删除必须经 unwrapDeleteResult'
+      );
+      assert.ok(!/return res\.payload!/.test(body), '单标签删除不得出现裸 return res.payload!');
+    });
+
+    it('moveTabAndSync 把 broadcastWarn 带回载荷', () => {
+      const src = stripComments(slice());
+      const body = thunkBody(src, 'moveTabAndSync');
+      assert.match(
+        body,
+        /broadcastWarn:\s*res\.broadcastWarn/,
+        '拖拽搬空源组属删除类，必须把 broadcastWarn 带回载荷'
+      );
+    });
+
+    it('Header 的清理成功分支会 surface 该警告', () => {
+      const src = stripComments(header());
+      assert.match(src, /deleteBroadcastWarn\(result\)/, '清理成功分支必须检查广播警告');
+      assert.match(
+        src,
+        /if \(warn\)[\s\S]{0,200}showAlert\(/,
+        '警告必须以警示弹窗呈现（toast 会被下一次提示顶掉）'
+      );
+    });
+
+    it('TabGroup 的三条删除路径都会 surface 该警告', () => {
+      const src = stripComments(tabGroup());
+      const warnCalls = src.match(/deleteBroadcastWarn\(payload\)/g) ?? [];
+      assert.ok(
+        warnCalls.length >= 3,
+        `TabGroup 有三条删除路径（删会话 / 删标签 / 拖拽搬空），每条都要读警告，` +
+          `实际只有 ${warnCalls.length} 处`
+      );
+    });
   });
 });

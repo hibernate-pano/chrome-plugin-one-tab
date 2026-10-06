@@ -74,9 +74,14 @@ async function makeStore(groups: TabGroup[]) {
   return { store, mod };
 }
 
-/** 造一份 SW 风格的 fulfilled payload。 */
+/**
+ * 造一份 SW 风格的 fulfilled payload。
+ *
+ * 形状是 `{ value: { plan, now, stamp }, broadcastWarn? }`（见 DeleteOpResult）：
+ * 清理会物理移除整组，所以广播登记失败必须能随载荷一起传到 UI（2026-10-06 修）。
+ */
 function swResult(plan: Record<string, unknown>) {
-  return { plan, now: NOW, stamp: STAMP };
+  return { value: { plan, now: NOW, stamp: STAMP } };
 }
 
 describe('cleanDuplicateTabs.pending：立即见效，不等 SW', () => {
@@ -402,6 +407,37 @@ describe('cleanDuplicateTabs.rejected：整段还原乐观结果', () => {
     store.dispatch(mod.cleanDuplicateTabs.rejected({ message: 'x' } as never, 'req-1', undefined));
     assert.deepEqual(store.getState().tabs.groups.map(g => g.id), ['g1']);
     assert.equal(store.getState().tabs.error, 'x');
+  });
+
+  it('【超时】不得整段还原：SW 可能已删完，还原就是让用户看到「删了又回来」', async () => {
+    const { TIMEOUT_REASON_PREFIX } = await import('@/core/mutationProtocol');
+    const groups = [
+      mkGroup('g1', [
+        mkTab('newer', { url: 'https://dup.com', lastAccessed: NOW }),
+        mkTab('older', { url: 'https://dup.com', lastAccessed: OLD }),
+      ]),
+    ];
+    const { store, mod } = await makeStore(groups);
+    store.dispatch(mod.cleanDuplicateTabs.pending('req-1', undefined));
+    assert.equal(store.getState().tabs.groups[0].tabs.length, 1, '前置条件：乐观已生效');
+
+    store.dispatch(
+      mod.cleanDuplicateTabs.rejected(
+        { message: `${TIMEOUT_REASON_PREFIX}（超过 30 秒无响应）：cleanDuplicates` } as never,
+        'req-1',
+        undefined
+      )
+    );
+    const state = store.getState().tabs;
+    assert.deepEqual(
+      state.groups[0].tabs.map(t => t.id),
+      ['newer'],
+      '超时不等于回滚（core/mutationProtocol 明写「后台可能仍在继续」）—— ' +
+        '还原会把可能已删的重复标签显示回来，用户会重试、会质疑数据完整性'
+    );
+    assert.match(String(state.error), /可能仍在继续/, '必须说清后台可能仍在继续');
+    assert.equal(state.errorSource, 'action');
+    assert.equal(state.cleanDuplicatesSnapshot, null, '快照用完即清');
   });
 });
 

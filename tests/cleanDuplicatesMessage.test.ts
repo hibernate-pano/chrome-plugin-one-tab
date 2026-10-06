@@ -45,10 +45,27 @@ describe('Header：清理重复标签的成功反馈不得被静默', () => {
       HEADER,
       // v1.22.9 契约变更：计数改从 SW 回传的**权威计划**里取（result.plan.*），
       // 不再是 mutation 结果的顶层字段。原意不变——成功分支必须用真实计数生成文案。
-      /cleanDuplicatesResultMessage\(\s*result\.plan\.removedTabsCount,\s*result\.plan\.removedGroupsCount,?\s*\)/,
+      // 2026-10-06 再变一次：载荷包成 { value, broadcastWarn }（删除类统一形状，
+      // 见 DeleteOpResult），计数改从 result.value.plan.* 取。
+      /cleanDuplicatesResultMessage\(\s*result\.value\.plan\.removedTabsCount,\s*result\.value\.plan\.removedGroupsCount,?\s*\)/,
       '成功分支必须用清理结果计数生成文案',
     );
     assert.match(HEADER, /showToast\(\s*cleanDuplicatesResultMessage/, '文案必须经 showToast 展示给用户');
+  });
+
+  it('清理会物理移除整组：广播登记失败必须 surface（不得被成功提示盖掉）', () => {
+    // 无墓碑模型下清理重复标签会整组移除空会话。若把 id 登记进云端删除广播队列
+    // 失败，这些会话会在其它设备上复活——用户必须知道，而不只是看到「清理成功」。
+    assert.match(
+      HEADER,
+      /deleteBroadcastWarn\(result\)/,
+      '清理成功分支必须检查广播警告',
+    );
+    assert.match(
+      HEADER,
+      /if \(warn\)[\s\S]{0,200}showAlert\(/,
+      '广播警告必须以警示弹窗呈现（toast 会被下一次提示顶掉）',
+    );
   });
 
   it('清理期间按钮禁用并显示进行中（不当场卡住，但可感知）', () => {

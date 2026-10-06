@@ -44,7 +44,13 @@ describe('在途的组级删除不得被清理的重推复活', () => {
     // 3) 清理回包：用快照重推。快照里有 doomed，若不剥在途删除就会复活
     store.dispatch(
       mod.cleanDuplicateTabs.fulfilled(
-        { plan: { removedTabsByGroup: [], removedGroupIds: [], removedTabsCount: 0, removedGroupsCount: 0 }, now: NOW, stamp: { d: 'devSW', s: 1 } } as never,
+        {
+          value: {
+            plan: { removedTabsByGroup: [], removedGroupIds: [], removedTabsCount: 0, removedGroupsCount: 0 },
+            now: NOW,
+            stamp: { d: 'devSW', s: 1 },
+          },
+        } as never,
         'req-clean',
         undefined
       )

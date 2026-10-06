@@ -186,7 +186,18 @@ export function applyUpdateGroupFields(
 }
 
 /** importGroups 语义（= importGroups thunk）：新 id、URL 清洗、置顶按 createdAt DESC。
- * genId/sanitizeUrl 注入便于测试。所有导入组盖统一 stamp——它们属于同一次导入意图。 */
+ * genId/sanitizeUrl 注入便于测试。所有导入组盖统一 stamp——它们属于同一次导入意图。
+ *
+ * ── 2026-10-06：剔除「清洗后变空的组」——───────────────────────────────
+ * sanitizeUrl 会丢弃危险/不可存储的 tab（javascript:、data:，以及旧版
+ * sanitizeTabUrl 口径下的 file:/blob:）。一个组若**全部** tab 都被丢弃，
+ * 就会留下一个 tabs: [] 的空壳：它没有任何内容可恢复，却会在列表里渲染成
+ * 一张「空会话」卡并长期挂着。要等下一次云端下载的 dropEmptyGroups 才会被清掉，
+ * 于是用户刚导入完就看到凭空多出的空卡片 —— 表现为「导入出问题了」。
+ *
+ * 判据用 isEmptyGroup（不看锁定）：锁定保护的是会话内容，零标签的组没有
+ * 内容可保护（与 toActiveGroupsView 的空壳规则同一条，见其注释）。
+ */
 export function applyImportGroups(
   groups: TabGroup[],
   incoming: TabGroup[],
@@ -194,17 +205,19 @@ export function applyImportGroups(
   _now: string,
   stamp: OpStamp
 ): { groups: TabGroup[]; imported: TabGroup[] } {
-  const processed = incoming.map(group => ({
-    ...group,
-    id: deps.genId(),
-    lastOp: stamp,
-    tabs: group.tabs.reduce<Tab[]>((acc, tab) => {
-      const url = deps.sanitizeUrl(tab.url);
-      if (!url) return acc;
-      acc.push({ ...tab, url, id: deps.genId() });
-      return acc;
-    }, []),
-  }));
+  const processed = incoming
+    .map(group => ({
+      ...group,
+      id: deps.genId(),
+      lastOp: stamp,
+      tabs: group.tabs.reduce<Tab[]>((acc, tab) => {
+        const url = deps.sanitizeUrl(tab.url);
+        if (!url) return acc;
+        acc.push({ ...tab, url, id: deps.genId() });
+        return acc;
+      }, []),
+    }))
+    .filter(group => !isEmptyGroup(group));
   return {
     groups: [...processed, ...groups].sort(
       (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
