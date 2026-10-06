@@ -33,6 +33,7 @@ export const initialTabState: TabState = {
   activeGroupId: null,
   isLoading: false,
   error: null,
+  errorSource: null,
   searchQuery: '',
   syncStatus: 'idle',
   lastSyncTime: null,
@@ -509,6 +510,7 @@ export const tabSlice = createSlice({
       .addCase(loadGroups.pending, (state, action) => {
         state.isLoading = true;
         state.error = null;
+        state.errorSource = null;
         // 快照发起时代际：mutation 在途期读到的旧快照在 fulfilled 时被忽略
         takeLoadGuard(state, action.meta.requestId);
       })
@@ -542,6 +544,7 @@ export const tabSlice = createSlice({
         state.isLoading = false;
         if (stale) return;
         state.error = action.error.message || '加载标签组失败';
+        state.errorSource = 'load';
       })
       .addCase(saveGroup.fulfilled, (state, action) => {
         // 添加新标签组并按创建时间倒序排列
@@ -580,6 +583,7 @@ export const tabSlice = createSlice({
         // 若这次组删除失败，rejected 会把整组还原，那些备份还要用来把标签插回原位；
         // 作废的时机是 fulfilled（磁盘确认组已不存在），见那里的注释。
         state.error = null;
+        state.errorSource = null;
       })
       .addCase(deleteGroup.fulfilled, (state, action) => {
         // 载荷是 { value, broadcastWarn }（见 DeleteOpResult 的说明）：
@@ -623,6 +627,7 @@ export const tabSlice = createSlice({
           }
         }
         state.error = action.error.message || '删除会话失败';
+        state.errorSource = 'action';
       })
       .addCase(deleteTabAndSync.pending, (state, action) => {
         // 乐观更新：点击即从列表消失，不等 SW mutation + 云端回环（此前只在
@@ -712,6 +717,7 @@ export const tabSlice = createSlice({
           }
         }
         state.error = action.error.message || '更新会话失败';
+        state.errorSource = 'action';
       })
       .addCase(deleteTabAndSync.fulfilled, (state, action) => {
         // 即时 UI 反馈（旧行为：updateGroup.fulfilled 即时替换组）。没有这个 case，
@@ -746,6 +752,7 @@ export const tabSlice = createSlice({
       .addCase(deleteAllGroups.pending, state => {
         state.isLoading = true;
         state.error = null;
+        state.errorSource = null;
       })
       .addCase(deleteAllGroups.fulfilled, (state) => {
         state.isLoading = false;
@@ -770,6 +777,7 @@ export const tabSlice = createSlice({
       .addCase(deleteAllGroups.rejected, (state, action) => {
         state.isLoading = false;
         state.error = action.error.message || '删除所有标签组失败';
+        state.errorSource = 'action';
       })
 
       // 更新标签组名称并同步到云端
@@ -788,6 +796,7 @@ export const tabSlice = createSlice({
           if (group) restoreGroupName(group, snapshot);
         }
         state.error = action.error.message || '重命名失败，会话名称已恢复';
+        state.errorSource = 'action';
       })
 
       // 切换标签组锁定状态并同步到云端
@@ -806,6 +815,7 @@ export const tabSlice = createSlice({
           if (group) restoreGroupLock(group, snapshot);
         }
         state.error = action.error.message || '切换锁定失败，锁定状态已恢复';
+        state.errorSource = 'action';
       })
 
       // 收藏/备注（本地偏好，不进云端）：失败同样回滚，否则 UI 与 storage 永久不一致
@@ -816,6 +826,7 @@ export const tabSlice = createSlice({
           if (group) restoreGroupLocalFields(group, snapshot);
         }
         state.error = action.error.message || '保存失败，已恢复原值';
+        state.errorSource = 'action';
       })
 
       // 移动标签页并同步到云端
@@ -841,6 +852,7 @@ export const tabSlice = createSlice({
         // 刚清掉的重复标签整批复活。
         state.mutationEpoch = (state.mutationEpoch ?? 0) + 1;
         state.error = null;
+        state.errorSource = null;
         // 不再置 isLoading=true：清理已有乐观结果，列表不该整页转圈
         //（TabList 只在 groups 为空时才整页 loading，但置位仍会引发多余重渲染）。
       })
@@ -874,6 +886,7 @@ export const tabSlice = createSlice({
         }
         state.cleanDuplicatesSnapshot = null;
         state.error = action.error.message || '清理重复标签和空标签组失败';
+        state.errorSource = 'action';
       });
   },
 });

@@ -120,6 +120,13 @@ export interface TabState {
   activeGroupId: string | null;
   isLoading: boolean;
   error: string | null;
+  /**
+   * error 的来源标注（1.22.12）。error 是共享字段：loadGroups.rejected 与
+   * 列表内写操作（删除/重命名/清理…）的 rejected 都会写它，不标来源时
+   * 消费方只能猜 —— 线上日志里一次 removeTab 超时被打成「加载会话列表失败」
+   * 就是这么来的。'load'=读路径失败；'action'=列表内写操作失败；null/缺省=无错误。
+   */
+  errorSource?: 'load' | 'action' | null;
   searchQuery: string;
   syncStatus: 'idle' | 'syncing' | 'success' | 'error'; // 同步状态
   lastSyncTime: string | null; // 最后同步时间

@@ -2,7 +2,7 @@ import { store } from '@/store';
 import { getCurrentUser, setFromCache } from '@/store/slices/authSlice';
 import { loadSettings } from '@/store/slices/settingsSlice';
 import { syncEngine } from '@/services/syncEngine';
-import { enqueue } from './mutationQueue';
+import { enqueue, hasQueuedOrRunningJob } from './mutationQueue';
 import { logError, logInfo, logWarn } from '../utils/log';
 
 /**
@@ -58,6 +58,19 @@ async function handleAlarm(alarm: chrome.alarms.Alarm): Promise<void> {
  * @returns true 表示执行了同步（上传 / 下载任一）；false 表示未登录，跳过。
  */
 async function performBackgroundSync(): Promise<boolean> {
+  // 0. 同步任务去重闸门（1.22.12）：队列里已有 sync 任务在跑或在排（popup 的
+  // AutoSync 下载、上一轮 alarm 还没收尾、延迟上传……）时，本轮直接让路。
+  // 不让路的后果是同一条 FIFO 上叠两条整库管线：alarm 每 60s 一次，与每次开
+  // popup 的 AutoSync 相互叠加 —— 线上日志里 normalizeTabsData 告警成对出现
+  // （两轮全量下载）、用户点击的 removeTab 排在它们后面撞满 30s 协议超时。
+  // 让路是安全的：pending_upload 由 mutation 路径的 scheduleUpload 自驱、
+  // 下载路径末尾也有 stillPending 兜底重调度，本轮不传不丢任何上传意图；
+  // 数据新鲜度最多少等一个 alarm 周期（60s），下轮照常执行。
+  if (hasQueuedOrRunningJob('sync:')) {
+    logInfo('[BackgroundSync] 已有同步任务在途，跳过本轮轮询（不叠第二条整库管线，下轮 alarm 重试）');
+    return true;
+  }
+
   // 1. 恢复登录态（读取 chrome.storage.local 中的 session）
   const user = await store.dispatch(getCurrentUser()).unwrap().catch(() => null);
   if (!user) {

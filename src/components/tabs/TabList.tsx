@@ -18,7 +18,7 @@ interface TabListProps {
 
 export const TabList: React.FC<TabListProps> = ({ searchQuery }) => {
   const dispatch = useAppDispatch();
-  const { groups, isLoading, error } = useAppSelector(state => state.tabs);
+  const { groups, isLoading, error, errorSource } = useAppSelector(state => state.tabs);
   const { layoutMode } = useAppSelector(state => state.settings);
 
   useEffect(() => {
@@ -78,9 +78,20 @@ export const TabList: React.FC<TabListProps> = ({ searchQuery }) => {
   // 原始异常（PostgREST / message-port / chrome.storage 内部文本）只进日志，
   // 界面上给的是可行动文案——见 listErrorCopy。必须排在所有提前 return 之前，
   // 否则就是「条件 Hook」，渲染分支一变 hook 数量就变。
+  //
+  // state.error 是共享字段：loadGroups.rejected 与列表内写操作（删除/更新会话）的
+  // rejected 都写它。不看 errorSource 一律打「加载会话列表失败」时，一次 removeTab
+  // 30s 超时会被误报成加载失败（线上日志实锤），排障的人会往读路径上查——按来源分开。
   useEffect(() => {
-    if (error) logError('加载会话列表失败:', error);
-  }, [error]);
+    if (!error) return;
+    if (errorSource === 'load') {
+      logError('加载会话列表失败:', error);
+    } else if (errorSource === 'action') {
+      logError('列表内操作失败（非加载，如删除/更新会话）:', error);
+    } else {
+      logError('会话列表状态错误（来源未标注）:', error);
+    }
+  }, [error, errorSource]);
 
   const errorCopy = toListErrorCopy(error);
 

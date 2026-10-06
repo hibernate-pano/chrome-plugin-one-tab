@@ -63,7 +63,10 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
               if (user) {
                 logInfo('用户已自动登录:', user.email);
                 // 登录后自动从云端合并到本地（跨设备找回。失败不阻塞，静默处理）
-                sendSyncCommand('download')
+                // auto:true = 自动触发而非用户手点：SW 侧在已有 sync 任务在途时
+                // 直接回 already_syncing（见 service-worker SYNC 分支的去重闸门），
+                // 不再排第二条整库下载 —— 否则这条消息只能排队等满 30s 协议超时。
+                sendSyncCommand('download', { auto: true })
                   .then(res => {
                     if (res.ok) {
                       const payload = res.payload as { groups?: unknown[] } | undefined;

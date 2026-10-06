@@ -68,3 +68,55 @@ describe('mutationQueue: SW 单写者串行化', () => {
     assert.equal(getQueueDepth(), 0);
   });
 });
+
+// 1.22.12：同步任务去重闸门的判据（AutoSync / 后台轮询共用）。
+// 【要防的回归】isSyncing 守卫被队列串行化架空 —— 重复的整库下载一个接一个
+// 全量串跑，AutoSync 排队撞满 30s 协议超时（线上日志两轮 normalize 告警 + 超时）。
+describe('mutationQueue: hasQueuedOrRunningJob（同步任务在途查询）', () => {
+  it('空队列 → false', async () => {
+    const { hasQueuedOrRunningJob, resetQueue } = await import('@/background/mutationQueue');
+    resetQueue();
+    assert.equal(hasQueuedOrRunningJob('sync:'), false);
+  });
+
+  it('在跑的 sync 任务被识别；跑完后归位 false', async () => {
+    const { enqueue, hasQueuedOrRunningJob, resetQueue } = await import('@/background/mutationQueue');
+    resetQueue();
+    let release: () => void = () => {};
+    const gate = new Promise<void>(r => { release = r; });
+    const p = enqueue('sync:download', () => gate);
+    // enqueue 返回时 job 已同步开始执行（runLoop 在首个 await 前是同步的）
+    assert.equal(hasQueuedOrRunningJob('sync:'), true, '正在执行的 sync 任务必须算在途');
+    assert.equal(hasQueuedOrRunningJob('removeTab'), false, '前缀不匹配的任务不得误报');
+    release();
+    await p;
+    assert.equal(hasQueuedOrRunningJob('sync:'), false, '执行完必须归位，否则闸门会永久跳过同步');
+  });
+
+  it('排队中（尚未开始）的 sync 任务也被识别', async () => {
+    const { enqueue, hasQueuedOrRunningJob, resetQueue } = await import('@/background/mutationQueue');
+    resetQueue();
+    let release: () => void = () => {};
+    const gate = new Promise<void>(r => { release = r; });
+    // 在跑的是用户操作（非 sync），sync:upload 排在它后面
+    const blocker = enqueue('removeTab', () => gate);
+    const queued = enqueue('sync:upload', async () => undefined);
+    assert.equal(hasQueuedOrRunningJob('sync:'), true, '排队中的 sync 任务也算在途（入队前判重要看到它）');
+    release();
+    await Promise.all([blocker, queued]);
+    assert.equal(hasQueuedOrRunningJob('sync:'), false);
+  });
+
+  it('resetQueue 清掉 running 标记（跨用例不留残余）', async () => {
+    const { enqueue, hasQueuedOrRunningJob, resetQueue } = await import('@/background/mutationQueue');
+    resetQueue();
+    let release: () => void = () => {};
+    const gate = new Promise<void>(r => { release = r; });
+    const p = enqueue('sync:download', () => gate);
+    assert.equal(hasQueuedOrRunningJob('sync:'), true);
+    resetQueue();
+    assert.equal(hasQueuedOrRunningJob('sync:'), false);
+    release();
+    await p.catch(() => undefined);
+  });
+});

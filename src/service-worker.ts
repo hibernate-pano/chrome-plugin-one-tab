@@ -3,7 +3,7 @@ import { migrateToV2 } from '@/utils/migrationHelper';
 import { setupBackgroundSync } from '@/background/backgroundSync';
 import { syncEngine, SYNC_UPLOAD_ALARM } from '@/services/syncEngine';
 import { isOpenableTabUrl, isStorableTabUrl } from '@/utils/inputValidation';
-import { enqueue } from '@/background/mutationQueue';
+import { enqueue, hasQueuedOrRunningJob } from '@/background/mutationQueue';
 import { mutationService } from '@/background/mutationService';
 import { ensureOpStampMigrated } from '@/background/opStampMigratedGuard';
 import { logError, logInfo, logWarn } from './utils/log';
@@ -433,6 +433,20 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         if (data.op === 'scheduleUpload') {
           syncEngine.scheduleUpload(typeof data.delayMs === 'number' ? data.delayMs : 3000);
           sendResponse({ ok: true });
+          return false;
+        }
+        // 自动下载去重闸门（1.22.12）。【为什么不能靠 downloadAndMerge 里的
+        // isSyncing 守卫】那是任务**执行时**才跑的检查，而队列把并发串行化了：
+        // 轮到第二个下载时前一个必然已结束、isSyncing=false —— 守卫永远为假，
+        // 重复下载一个接一个全量串跑（每轮一轮整库解密 + normalizeTabsData 告警），
+        // AutoSync 还要为排队付满 30s 协议超时（线上日志的「操作超时：download」）。
+        // 去重必须发生在入队之前，用队列的在途状态当判据（见 hasQueuedOrRunningJob）。
+        // 只拦 auto（popup 打开自动触发）：用户手点的下载/上传是显式意图，照常排队执行。
+        if (data.op === 'download' && data.auto === true && hasQueuedOrRunningJob('sync:')) {
+          // already_syncing 是既有 reason：AuthProvider 对它静默（line 73 的白名单），
+          // 用户手点的下载不带 auto、永远不会收到闸门的这个 reason。
+          // false = 这次没有真的执行下载。
+          sendResponse({ ok: false, error: 'already_syncing' });
           return false;
         }
         // 手动上传/下载也是用户点的（popup 里的按钮）→ high 车道，与语义命令同等待遇。

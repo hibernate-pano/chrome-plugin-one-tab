@@ -48,6 +48,13 @@ interface QueueJob {
 /** 尚未开始的排队任务（正在执行的那个不在这里，它由 running 标记守住）。 */
 const pending: QueueJob[] = [];
 let running = false;
+/**
+ * 正在执行的 job 名（null = 空闲）（1.22.12）。
+ * 与 pending 一起构成 hasQueuedOrRunningJob 的判据：调用方（AutoSync 闸门、
+ * 后台轮询闸门）要回答的是「此刻是否已有某类任务在途」，只看 depth 分不出
+ * 「在跑的是不是同步任务」，只看 pending 又会漏掉正在执行的那个。
+ */
+let runningName: string | null = null;
 
 function takeNext(): QueueJob | undefined {
   // 先找第一条 high；没有则取队首（同车道 FIFO）。
@@ -62,6 +69,7 @@ async function runLoop(): Promise<void> {
   try {
     for (let next = takeNext(); next; next = takeNext()) {
       const { name, run, enqueuedAt, settle } = next;
+      runningName = name;
       perfTrace().recordSpan(name, 'wait', Date.now() - enqueuedAt);
       const startedAt = Date.now();
       try {
@@ -70,6 +78,7 @@ async function runLoop(): Promise<void> {
       } catch (err) {
         settle({ ok: false, error: err });
       } finally {
+        runningName = null;
         perfTrace().recordSpan(name, 'run', Date.now() - startedAt);
       }
     }
@@ -101,8 +110,30 @@ export function getQueueDepth(): number {
   return pending.length + (running ? 1 : 0);
 }
 
+/**
+ * 队列中是否有名字以 namePrefix 开头的任务在途（在跑 **或** 排队）（1.22.12）。
+ *
+ * 【为什么需要它】downloadAndMerge/upload 里的 `isSyncing` 去重守卫在单写者
+ * 队列下是**死守卫**：SYNC 消息先 enqueue、任务后执行，轮到第二个任务时前一个
+ * 早已跑完、isSyncing 已复位 —— 于是 AutoSync（每次开 popup）与 60s 后台 alarm
+ * 的下载会一个接一个地全量串跑（双倍整库下载），AutoSync 还要为排队多付 30s，
+ * 撞上协议超时（线上日志：两轮 normalizeTabsData 告警 + 「操作超时…download」）。
+ * 去重必须发生在**入队之前**，而只有队列自己知道「谁在途」。
+ *
+ * 判据只看名字前缀：同步任务统一叫 `sync:upload` / `sync:download`，
+ * 用户点击的语义命令（removeTab 等）不匹配 —— 自动下载只让位给同步任务，
+ * 不会被一次快速的用户操作误跳过。
+ *
+ * @param namePrefix 任务名前缀（如 'sync:'），按 startsWith 匹配
+ */
+export function hasQueuedOrRunningJob(namePrefix: string): boolean {
+  if (runningName !== null && runningName.startsWith(namePrefix)) return true;
+  return pending.some(j => j.name.startsWith(namePrefix));
+}
+
 /** 仅测试用：重置队列状态（模块级 pending 无法跨用例残留） */
 export function resetQueue(): void {
   pending.length = 0;
   running = false;
+  runningName = null;
 }

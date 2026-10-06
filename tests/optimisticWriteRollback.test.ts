@@ -240,14 +240,52 @@ describe('P1-5 收藏/备注写失败：只还原本次写过的字段', () => {
       updateGroupNameAndSync.rejected(null, 'E1', { groupId: 'g', name: 'x' }, undefined as never)
     );
     assert.ok(store.getState().tabs.error, '重命名失败必须留错误信号');
+    assert.equal(store.getState().tabs.errorSource, 'action', '写路径失败必须标 action 来源');
     store.dispatch(
       toggleGroupLockAndSync.rejected(null, 'E2', 'g', undefined as never)
     );
     assert.ok(store.getState().tabs.error, '锁定失败必须留错误信号');
+    assert.equal(store.getState().tabs.errorSource, 'action');
     store.dispatch(
       persistGroupFields.rejected(null, 'E3', { groupId: 'g', fields: { notes: 'x' } }, undefined as never)
     );
     assert.ok(store.getState().tabs.error, '本地偏好失败必须留错误信号');
+    assert.equal(store.getState().tabs.errorSource, 'action');
+  });
+});
+
+// 1.22.12：errorSource 来源标注。修的是线上日志的误导前缀 —— 一次 removeTab
+// 30s 超时被 TabList 打成「加载会话列表失败」，排障方向整个带偏（error 是
+// loadGroups 与列表内写操作共享的字段，此前无人标注来源）。
+describe('state.errorSource：错误来源标注（1.22.12）', () => {
+  it('loadGroups.rejected → load；removeTab 类写失败 → action；新一轮加载清空', async () => {
+    const { loadGroups, deleteTabAndSync } = await slice();
+    const store = await makeStore([makeGroup('g')]);
+
+    // 读路径失败
+    store.dispatch(loadGroups.pending('R1', undefined));
+    store.dispatch(loadGroups.rejected(new Error('读失败'), 'R1', undefined));
+    assert.equal(store.getState().tabs.error, '读失败');
+    assert.equal(store.getState().tabs.errorSource, 'load', '加载失败必须标 load');
+
+    // 写路径失败（线上日志场景：removeTab 30s 超时）
+    store.dispatch(
+      deleteTabAndSync.rejected(
+        new Error('操作超时（超过 30 秒无响应）：removeTab'),
+        'R2',
+        { groupId: 'g', tabId: 'g-t1' }
+      )
+    );
+    assert.equal(
+      store.getState().tabs.errorSource,
+      'action',
+      'removeTab 超时绝不能被当成加载失败消费（那正是误导日志的来源）'
+    );
+
+    // 新一轮加载 pending：error 与来源一起清空，不留下一环标注错位
+    store.dispatch(loadGroups.pending('R3', undefined));
+    assert.equal(store.getState().tabs.error, null);
+    assert.equal(store.getState().tabs.errorSource, null);
   });
 });
 

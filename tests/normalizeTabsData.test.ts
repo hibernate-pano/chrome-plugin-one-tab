@@ -73,3 +73,52 @@ describe('normalizeTabsData: 形状归一化', () => {
     assert.deepStrictEqual(normalizeTabsData('bad'), []);
   });
 });
+
+// 2026-10-06 降噪定性（docs/health-check-2026-10-05-v1.22.11.md §7.1）：
+// wrapper 恢复是**预期中的兼容路径在工作**，不是故障 —— 每 60s 一轮的全量下载
+// 反复打 warn 只会让真异常淹没在噪声里（线上日志 3 组 × 2 轮刷屏的正是它）。
+// 钉死：恢复成功不进 console.warn（生产静默）；「无法恢复」仍必须出声。
+describe('normalizeTabsData: 告警级别（降噪契约）', () => {
+  /** 捕获 console.warn：logWarn 唯一出口就是它。 */
+  async function captureWarns(run: () => void | Promise<unknown>): Promise<unknown[][]> {
+    const warns: unknown[][] = [];
+    const original = console.warn;
+    console.warn = (...args: unknown[]) => { warns.push(args); };
+    try {
+      await run();
+    } finally {
+      console.warn = original;
+    }
+    return warns;
+  }
+
+  it('wrapper 恢复成功：返回内层数组且不打 console.warn', async () => {
+    const { normalizeTabsData } = await import('@/core/normalizeTabsData');
+    const inner = [{ id: '1', url: 'https://a.com', title: 'A', created_at: '', last_accessed: '' }];
+    let result: unknown;
+    const warns = await captureWarns(() => {
+      result = normalizeTabsData({ tabs: inner }, 'group-warn-1');
+    });
+    assert.strictEqual(result, inner, '恢复结果本身不受降级影响');
+    assert.equal(warns.length, 0, '恢复成功是预期行为，生产控制台不应出现 warn');
+  });
+
+  it('无法恢复（形状彻底读不出）：仍必须打 console.warn', async () => {
+    const { normalizeTabsData } = await import('@/core/normalizeTabsData');
+    let result: unknown;
+    const warns = await captureWarns(() => {
+      result = normalizeTabsData({ foo: 'bar' }, 'group-warn-2');
+    });
+    assert.deepStrictEqual(result, [], '读不出来降级空数组的语义不变');
+    assert.equal(warns.length, 1, '真异常必须出声 —— 降噪只降成功路径');
+    assert.match(String(warns[0][0]), /无法恢复/);
+  });
+
+  it('标量/空形状降级：同样必须打 console.warn', async () => {
+    const { normalizeTabsData } = await import('@/core/normalizeTabsData');
+    const warns = await captureWarns(() => {
+      normalizeTabsData('not-json-shape', 'group-warn-3');
+    });
+    assert.equal(warns.length, 1);
+  });
+});
