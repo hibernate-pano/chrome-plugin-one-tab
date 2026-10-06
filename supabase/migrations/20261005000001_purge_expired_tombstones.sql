@@ -181,11 +181,11 @@ BEGIN
     -- 的切分器只认它作定界符（注释里也不行，切分不看上下文），
     -- 字符串或注释里再写一次会在那个位置把语句切成两半，迁移执行时直接
     -- 语法错误。改用 $q$…$q$（不同定界符，语义等价且不冲突）。
-    '     SELECT cron.schedule(''tapstack-tombstone-expiry'', ''0 3 * * *'',\n'
+    '     SELECT cron.schedule(''tapstack-tombstone-expiry'', ''0 3 * * 1'',\n'
     '                     $q$SELECT public.purge_expired_cloud_tombstones()$q$);\n'
     '  B) Supabase Scheduled Job / 任何外部调度器，定时执行（需 service_role）：\n'
     '     SELECT * FROM public.purge_expired_cloud_tombstones();\n'
-    '先干跑确认影响面（会真删，先在 staging 试）：\n'
+    '先干跑确认影响面（会真删，先在 staging 试，当前线上为每周一 03:00 UTC）：\n'
     '  SELECT * FROM public.purge_expired_cloud_tombstones();\n'
     '  或只读查看：\n'
     '  SELECT count(*) FROM public.tab_groups\n'
