@@ -9,6 +9,10 @@
 //    每个脚本各注册一个 e2e-*@test.tapstack.dev 测试账号。因此：
 //      - 不要在 CI 里无脑跑（需要 GUI 与网络，且会写线上库）
 //      - 跑之前先 `pnpm build`（脚本加载 dist/）
+//      - 含 e2e-deadhandle-supabase-timeout.mjs 时必须用**缩短上界**的构建：
+//        VITE_SYNC_REQUEST_TIMEOUT_MS=3000 pnpm build
+//        （它要验证「挂住的请求会被中止」，45s 的生产上界会让脚本整体超时；
+//          该脚本自己会 fail fast 说明这一点，不会静默假绿）
 //      - 跑完由本文件的收尾钩子统一删除本次产生的测试账号；没有 service_role 时
 //        打印待清理清单（不会静默吞掉）
 //    单脚本也可以直接 `node scripts/<name>.mjs` 跑，便于定位失败。
@@ -38,6 +42,7 @@ const ORDER = [
   // 11 个脚本里 9 个都要 Supabase 账号才能跑，本地缺陷反而长期无人实测。
   // （2026-10-06 首次加入，当天就靠它抓出 e2e 场景写错导致的假通过。）
   'e2e-clean-dup-import-fix.mjs',          // 清理重复标签不报错 + 导入往返不丢数据（纯本地）
+  'e2e-deadhandle-supabase-timeout.mjs',   // IDB 死句柄自愈 + 请求级超时真会触发（需登录 + 缩短上界构建）
   'e2e-sync-test.mjs',                      // 基础：A 保存上传 → B 登录下载
   'e2e-auto-upload-test.mjs',               // 保存后自动上传（云端直查）
   'e2e-hard-delete-empty-group.mjs',        // 硬删除空组：删最后一个 tab → 整组物理消失（1.22.0 核心语义）
@@ -58,6 +63,15 @@ const ORDER = [
  * 故这几个脚本额外挂 --import + --experimental-strip-types。
  */
 const NEEDS_TS_LOADER = new Set(['e2e-clean-dup-import-fix.mjs']);
+
+/**
+ * 需要「缩短的请求超时上界」的脚本。
+ *
+ * 它要验证的是「挂住的请求真的会被中止」——这个判据无法用 45s 的生产上界验证
+ * （等 45s 没有意义）。构建时注入 VITE_SYNC_REQUEST_TIMEOUT_MS=3000。
+ * 生产构建不带该变量 ⇒ 上界恒为 45s（client.ts 三元兜底，已由单测钉住）。
+ */
+const NEEDS_SHORT_TIMEOUT = new Set(['e2e-deadhandle-supabase-timeout.mjs']);
 
 /**
  * 收尾要清的表（service_role 直连，绕开 RLS）。

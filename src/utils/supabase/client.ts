@@ -143,7 +143,13 @@ function initSupabaseClient() {
  * 【不吞原始错误】AbortError 与普通网络错误一样向上抛，由各调用方原有的
  * fail-closed 分支处理（上传失败保留 pending_upload、下轮重试）。
  */
-const REQUEST_TIMEOUT_MS = 45_000;
+// 上界来源：构建期常量默认 45s；e2e 可用 VITE_SYNC_REQUEST_TIMEOUT_MS 缩短，
+// 否则「超时真的会触发」这件事在自动化里无法验证（等 45s 没有意义）。
+// 生产构建不带该变量 ⇒ 恒为 45_000，行为不变。
+const REQUEST_TIMEOUT_MS = (() => {
+  const override = Number(import.meta.env?.VITE_SYNC_REQUEST_TIMEOUT_MS);
+  return Number.isFinite(override) && override > 0 ? override : 45_000;
+})();
 
 const fetchWithTimeout: typeof fetch = (input, init) => {
   // 调用方自带 signal 时不覆盖：两个 signal 无法合并，而我们的超时是兜底

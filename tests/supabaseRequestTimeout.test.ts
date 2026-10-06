@@ -65,9 +65,17 @@ describe('Supabase 请求级超时：网络挂起不得占死单写者队列', (
     const src = (
       await import('node:fs')
     ).readFileSync(resolve(dirname(fileURLToPath(import.meta.url)), '../src/utils/supabase/client.ts'), 'utf8');
-    const m = src.match(/REQUEST_TIMEOUT_MS\s*=\s*([\d_]+)/);
-    assert.ok(m, '应能找到 REQUEST_TIMEOUT_MS 定义');
+    // 上界现在是 IIFE（可用 VITE_SYNC_REQUEST_TIMEOUT_MS 覆盖以便 e2e 验证
+    // 「超时真的会触发」），默认值 45_000 写在 IIFE 的三元里。
+    // 断言的是**默认兜底值** —— 生产构建不带该变量，走的就是这一支。
+    const m = src.match(/:\s*([\d_]+)\s*;\s*\}\)\(\)/);
+    assert.ok(m, '应能找到 REQUEST_TIMEOUT_MS 的默认值');
     const requestTimeout = Number(m![1].replace(/_/g, ''));
+    assert.equal(
+      requestTimeout,
+      45_000,
+      '生产默认值必须是 45s —— e2e 的 VITE_SYNC_REQUEST_TIMEOUT_MS 只影响测试构建'
+    );
     assert.ok(
       requestTimeout > DEFAULT_TIMEOUT_MS,
       `请求上界 ${requestTimeout}ms 必须大于 popup 协议上界 ${DEFAULT_TIMEOUT_MS}ms：` +
