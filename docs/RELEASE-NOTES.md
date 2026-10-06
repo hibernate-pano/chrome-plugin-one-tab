@@ -23,6 +23,74 @@
 
 ---
 
+## v1.22.12（2026-10-06，待提审）
+
+- **触发**：用户报三件事——清理重复标签报错无法清理、数据同步异常、导出数据重新导入有问题。
+  复查确认三类都真实存在，且**前两类的根因此前无人修复**（不是回归，是一直存在）。
+- **两条独立的死锁路径**（这是本版的核心）：
+  1. **IndexedDB 死句柄**：MV3 的 SW 空闲约 30s 被 Chrome 回收，浏览器**单方面**关闭
+     IndexedDB 连接，但 JS 变量仍指向死句柄；`db.transaction()` 在其上既不 resolve 也不
+     reject → Promise 永久挂起 → `mutationQueue` 的 `running` 永为 `true` → 之后所有语义
+     命令与同步任务都排在它后面。线上 `removeTab.wait 34939ms` 的量级与 SW 回收时长吻合。
+     `.workbuddy/memory/2026-10-06.md` 已把它记成「真 P0」，但代码里从未修过：
+     只有 `onblocked` / `onversionchange`，**没有看门狗**。
+     修法：5s 上限判失败 + 丢弃句柄 + 下次重新 open。死句柄无法被唤醒，一次失败可以
+     重试，永久挂起不能。顺带补 settle 门（请求成功后到达的 `onabort` 不得二次 reject）
+     与 `finally` 拆定时器（否则长会话累积定时器风暴）。
+  2. **Supabase 请求无上界**：`client.ts` 每次 PostgREST 都是裸 `fetch`，无 `AbortSignal`、
+     无上界。与 ① 是**两条独立路径**（本地存储 / 网络），此前只堵了 ①。
+     修法：`global.fetch` 包 `AbortController`，45s 上界。取 45s 而非更低是因为必须
+     **大于 popup 的 30s 协议上界**，否则用户先看到失败、再看到其实成功。`abort` 而非仅
+     `reject`：只 reject 不 abort 的话连接仍挂着，等于没超时。
+- **三处「谎报成功」**：无墓碑模型下删除分两段——本地物理移除 + 云端行标 `is_deleted`
+  （广播）。第二段失败时本地确实删掉了，但云端行还在 ⇒ 对端下次合并当 remote-only 复活。
+  SW 自 2026-10-05 起会如实返回 `broadcastWarn`，但只有 `deleteGroup` / `deleteAllGroups`
+  经 `unwrapDeleteResult` 接住；**清理重复、拖拽搬空、单标签删除**三条直接
+  `return res.payload!`，把警告连同 `MutationResult` 一起扔掉——用户看到「成功」，
+  而这些会话会在其它设备上复活。修法：三处统一走 `DeleteOpResult`，UI 三处调用点
+  surface 警告。
+- **一条假守卫**：`tests/noSilentFalseSuccess.test.ts` 里那条名叫「cleanDuplicates /
+  moveTab 同样接入（防止只改了三处）」的用例，调的实际是 `deleteAllGroups` +
+  `renameGroup`——**恰好绕开了真正有问题的两个 op**。正是它让 899 全绿掩盖了上面的漏洞。
+  已改成真调，并补了 UI 侧接线断言。
+- **超时后的假回滚**：`protocol` 超时的语义是「popup 不再等了，SW 侧仍在继续」
+  （`mutationProtocol` 与 `listErrorCopy` 的文案都这么写），但三个删除 reducer 一律整段
+  还原 UI。于是磁盘上可能已删的内容被显示回来，用户看到「刚才明明删了，怎么又回来」，
+  会去重试、会质疑数据完整性。超时现在**保留乐观结果**并给出可行动文案；明确的失败
+  （SW 拒绝、存储抛错）才整段还原——那时磁盘确实没变。判据抽成 `isTimeoutFailure`，
+  三处共用，避免「只改了两处」的重演。
+- **导入往返丢数据**（三处）：
+  1. **标题含 `|` 被静默改写**：解析器用 `split('|')` 全切，`A | B` 导入后变成 `A`，
+     而导出端不做任何转义 ⇒ 往返即丢。改为只切第一个分隔符。
+  2. **空壳组污染**：`sanitizeTabUrl` 丢弃危险/不可存储 tab 后，一个组可能全部 tab 被丢
+     而留下 `tabs: []` 的空壳卡（要等下次云端下载的 `dropEmptyGroups` 才清），用户刚
+     导入完就看到凭空多出的「空会话」。修法：`applyImportGroups` 过滤清洗后变空的组。
+  3. **往返链路此前零覆盖**：补 `tests/importRoundTrip.test.ts`（8 例），含 `file://`
+     往返契约——1.22.11 的 `sanitizeTabUrl` 只放行 http/https/ftp/about/loading，导出的
+     JSON 含 `file://` 会被静默丢弃，本地 PDF 永久丢失。当前版已改为「可存储即保留」，
+     用例钉住该契约。
+- **验证**：单测 899 → 926。全部 9 组修复都做了反向验证（逐个撤销确认对应用例变红）。
+  其中 2 组在反验中暴露「测试压根没覆盖」——超时豁免撤销后仍全绿 ⇒ 补 4 条超时用例；
+  `broadcastWarn` 传递撤销后仍全绿 ⇒ 补 5 条 UI 侧接线断言。
+- **e2e（真实 Chrome）**：新增 2 个脚本，共 22 条判据。
+  `e2e-clean-dup-import-fix.mjs`（13 条，不需登录）覆盖清理与导入；
+  `e2e-deadhandle-supabase-timeout.mjs`（9 条）覆盖死句柄自愈与请求超时真会触发。
+  **过程中两次 e2e 判据本身是假通过**，靠「验证验证手段是否有效」抓出来：
+  ① 第一版测的是页面里手写的原生 `fetch`，与本仓库实现无关；
+  ② 第二版断言「请求带上了 signal」，摘掉 `abort` 后依然全绿。唯一能区分「超时生效」
+  与「超时没接上」的判据是**把请求挂住够久、观察它是否被中止**——为此把上界改为
+  `VITE_SYNC_REQUEST_TIMEOUT_MS || 45_000`（生产构建不带该变量，已核对产物为 `45e3`，
+  并由单测钉住）。反向验证：摘掉 abort 后 3s 上界 vs 90s 挂死，对比清晰。
+- **顺手修掉的两个 P0 合规项**（2026-10-06 体检报告列为商店审核阻塞）：
+  README 宣传已删的「网页版 Dashboard」（`src/web/` 与 `vite.web.config.ts` 已删）；
+  「30 天自动清理」承诺此前无调度器——本次实测线上 pg_cron
+  `tapstack-tombstone-expiry` 已挂载（`0 3 * * 1`，active），承诺成立，无需改措辞。
+  另实测 anon 读 `profiles` / `tab_groups` / `user_settings` / `tabs` 均为 0 行，
+  上次体检的 PII 泄漏已止血。
+- **仍未验证（诚实边界）**：MV3 SW 空闲 ~30s 被 Chrome **真实回收**这条路径没有触发过
+  （不可控）；当前覆盖的是「句柄失效后队列自愈」，用真实 IDB 的 `close()` 构造等价故障。
+  弱网下的 45s 上界同样由注入缩短值验证机制本身，未等满 45s。
+
 ## v1.22.11（2026-10-05，待提审——待 1.22.9 过审后提交）
 
 - **诊断**：用户报控制台三连错，且三条**不同**操作报的是同一句
