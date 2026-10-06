@@ -34,6 +34,10 @@ const SCRIPTS_DIR = join(ROOT, 'scripts');
 
 /** 顺序即依赖关系：先验证基础同步，再验证派生行为 */
 const ORDER = [
+  // 不需要登录、不连云端 —— 放最前面：这三个缺陷全是本地语义，此前正因为
+  // 11 个脚本里 9 个都要 Supabase 账号才能跑，本地缺陷反而长期无人实测。
+  // （2026-10-06 首次加入，当天就靠它抓出 e2e 场景写错导致的假通过。）
+  'e2e-clean-dup-import-fix.mjs',          // 清理重复标签不报错 + 导入往返不丢数据（纯本地）
   'e2e-sync-test.mjs',                      // 基础：A 保存上传 → B 登录下载
   'e2e-auto-upload-test.mjs',               // 保存后自动上传（云端直查）
   'e2e-hard-delete-empty-group.mjs',        // 硬删除空组：删最后一个 tab → 整组物理消失（1.22.0 核心语义）
@@ -46,6 +50,14 @@ const ORDER = [
   'e2e-layout-column-split.mjs',            // 双栏左右按次序对分
   'e2e-web-dashboard-sync.mjs',             // Web 仪表盘跨端写入（需 SHIM_CHROME_STORAGE=1 才全绿，见脚本头）
 ];
+
+/**
+ * 需要 TS loader 的脚本：它们 `import('../src/....ts')` 直接跑真实源码
+ * （打包产物里 core 模块未导出到 window，页面上下文也拿不到）。
+ * run-e2e 默认用裸 `node <script>`，对 .ts 的 import 会 ERR_UNKNOWN_FILE_EXTENSION，
+ * 故这几个脚本额外挂 --import + --experimental-strip-types。
+ */
+const NEEDS_TS_LOADER = new Set(['e2e-clean-dup-import-fix.mjs']);
 
 /**
  * 收尾要清的表（service_role 直连，绕开 RLS）。
@@ -96,7 +108,16 @@ for (const file of selected) {
   const name = file.replace(/\.mjs$/, '');
   console.log(`\n${'='.repeat(72)}\n▶ ${file}  (${new Date().toISOString()})\n${'='.repeat(72)}`);
   const started = Date.now();
-  const r = spawnSync(process.execPath, [join(SCRIPTS_DIR, file)], {
+  // TS 脚本需要 loader（见 NEEDS_TS_LOADER）
+  const nodeArgs = NEEDS_TS_LOADER.has(file)
+    ? [
+        '--import',
+        join(ROOT, 'tests/_register-loader.mjs'),
+        '--experimental-strip-types',
+        join(SCRIPTS_DIR, file),
+      ]
+    : [join(SCRIPTS_DIR, file)];
+  const r = spawnSync(process.execPath, nodeArgs, {
     cwd: ROOT,
     encoding: 'utf8',
     maxBuffer: 1 << 28,
