@@ -1,6 +1,9 @@
 // 迁移 SQL 的机械安全性（2026-10-05）。
 //
-// 【本文件要防的那类 bug】20261005000000b 最初在 RAISE NOTICE 的字符串里写了
+// 【本文件要防的那类 bug】本文件的宿主迁移最初叫 `20261005000000b`（时间戳后多一个
+// 字母 b，不符合 `<timestamp>_name.sql`，被 supabase CLI **静默跳过**、从未执行；
+// 已于 2026-10-06 改名为 `20261005000001_purge_expired_tombstones.sql`，
+// 下文提到旧名的地方都是指它的历史）。它最初在 RAISE NOTICE 的字符串里写了
 // 一段带 dollar-quote 定界符的示例命令（`$$SELECT …$$`）。而
 // scripts/supabase-migrate.mjs 的切分器**只认 `$$` 作定界符、不看上下文**
 // —— 字符串里再出现一次，就会在那个位置把整条语句切成两半，迁移在
@@ -66,8 +69,8 @@ describe('迁移 SQL：dollar-quote 定界符必须配对', () => {
     }
   });
 
-  it('20261005000000b 的示例命令用 $q$ 而非 $$（回归本文件要防的具体那处）', () => {
-    const f = join(MIGRATIONS, '20261005000000b_purge_expired_tombstones.sql');
+  it('purge 迁移的示例命令用 $q$ 而非 $$（回归本文件要防的具体那处）', () => {
+    const f = join(MIGRATIONS, '20261005000001_purge_expired_tombstones.sql');
     const src = readFileSync(f, 'utf8');
     assert.ok(
       src.includes('$q$SELECT public.purge_expired_cloud_tombstones()$q$'),
@@ -83,9 +86,9 @@ describe('迁移 SQL：SECURITY DEFINER 函数必须收回 PUBLIC 的 EXECUTE', 
    * 所以一个 SECURITY DEFINER + 真 DELETE 的函数若不 REVOKE，
    * 任何人都能通过 PostgREST /rest/v1/rpc/<fn> 让它替**所有账号**删数据。
    */
-  it('20261005000000b 显式 REVOKE 了 PUBLIC / anon / authenticated', () => {
+  it('purge 迁移显式 REVOKE 了 PUBLIC / anon / authenticated', () => {
     const src = readFileSync(
-      join(MIGRATIONS, '20261005000000b_purge_expired_tombstones.sql'),
+      join(MIGRATIONS, '20261005000001_purge_expired_tombstones.sql'),
       'utf8'
     );
     // 2026-10-05 晚更新：anon/authenticated 的 REVOKE 改用 **动态 EXECUTE**

@@ -110,7 +110,7 @@ SW（无状态搬运工，可随时被杀，无常驻状态）
 > **（事实改正 2026-09-29：这两个文件在当前代码树中不存在——无墓碑重写时未落地，7 天常量随 1.22.0 一起消失）**；
 > audit 纳入 deletedAt 比对；服务端 additive 迁移 `20260926090000_tombstone_expiry.sql`（迁移脚本 dry-run 已识别）；
 > 定时清理：**2026-10-05 已从 `supabase/manual/tombstone_expiry_cron.sql`（整段注释、未启用）改为正式迁移
-> `supabase/migrations/20261005000000b_purge_expired_tombstones.sql`** —— 建 `purge_expired_cloud_tombstones()`
+> `supabase/migrations/20261005000001_purge_expired_tombstones.sql`** —— 建 `purge_expired_cloud_tombstones()`
 > 函数 + `body_tombstone_expiry_days()` TTL 常量（30 天，与客户端 `purgeExpiredCloudTombosomes(30)` 对齐），
 > 并在迁移日志里打印启用步骤。**仍不自动挂调度器**：pg_cron 需在 Dashboard 手动勾选，迁移里直接
 > `cron.schedule()` 会在未启用扩展的项目上整条报错。挂载步骤见该迁移的 RAISE NOTICE。

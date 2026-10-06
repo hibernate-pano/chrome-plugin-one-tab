@@ -25,12 +25,51 @@ import pg from 'pg';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(__dirname, '..');
 const MIGRATIONS_DIR = resolve(ROOT, 'supabase/migrations');
+/**
+ * 迁移文件名必须匹配 `<14位时间戳>_<snake_case>.sql`。
+ *
+ * 【为什么必须校验 —— 2026-10-06 的真实事故】
+ * `20261005000000b_purge_expired_tombstones.sql` 的时间戳后多了一个字母 `b`。
+ * 后果是**双重静默失败**：
+ *   ① `supabase migration list` 对它只打一行 `Skipping migration ...
+ *      (file name must match pattern)` 就略过——不报错、不中断、极易被刷屏冲掉；
+ *   ② 而**本脚本**（当时）用 readdirSync 读全部 .sql、不看文件名，照跑不误。
+ * 两者叠加的结果是：迁移文件躺在仓库里、测试全绿、`db push` 不报错，
+ * 而生产库上对应的函数**根本没建**——「迁移已提交」与「迁移已执行」之间
+ * 没有任何机制能证明一致（体检报告 P1-1 指的就是这个）。
+ *
+ * 现在两道闸：这里在**执行前**硬失败（fail fast，绝不带着非法文件去连库），
+ * tests/guards/migrationFileNaming.test.ts 在**提交前**拦住。
+ *
+ * 【为什么允许 8 位日期前缀】仓库里 `20260826_` / `20260909_` / `20260910_`
+ * 这三个历史文件用的是短版本号，CLI 接受、已执行、已在台账里，不是错误。
+ * 改名会让文件名与台账版本号失配，风险大于收益，所以放行。
+ */
+const MIGRATION_NAME_PATTERN = /^(\d{8,14})_([a-z0-9]+(?:_[a-z0-9]+)*)\.sql$/;
+
 /** 目录内全部 .sql 按文件名（= 时间戳前缀）升序——顺序即语义（add → fix） */
 function migrationFiles() {
-  return readdirSync(MIGRATIONS_DIR)
+  const files = readdirSync(MIGRATIONS_DIR)
     .filter(f => f.endsWith('.sql'))
-    .sort()
-    .map(f => resolve(MIGRATIONS_DIR, f));
+    .sort();
+
+  const invalid = files.filter(f => !MIGRATION_NAME_PATTERN.test(f));
+  if (invalid.length > 0) {
+    // 抛错而不是打日志继续：非法命名的文件**不会**被 supabase CLI 执行，
+    // 若本脚本却照跑，就制造出「本地跑了、线上没跑」的假象——
+    // 这正是本次事故的形态。宁可在这里失败。
+    throw new Error(
+      `迁移文件名不合法（${invalid.length} 个）：\n` +
+      invalid.map(f => `  · ${f}`).join('\n') +
+      `\n\n必须形如 <时间戳>_<snake_case>.sql，例如 20261005000001_purge_expired_tombstones.sql。\n` +
+      '时间戳后多一个字母（如 20261005000000b）会被 supabase CLI 静默跳过，\n' +
+      '该迁移永远不会执行，且不会报任何错。已跳过迁移可用\n' +
+      '  supabase migration repair --linked <version> --status applied\n' +
+      '补登记（仅在该迁移已被手工执行过、只是台账漏记时）。'
+    );
+  }
+
+  return files.map(f => resolve(MIGRATIONS_DIR, f));
 }
 
 function readEnvFile(path) {
@@ -224,7 +263,7 @@ async function verifyPurgeFunction(client) {
       AND p.proname IN ('purge_expired_cloud_tombstones','body_tombstone_expiry_days')
   `);
   if (rows.length === 0) {
-    console.log('  · 墓碑清理函数不存在（迁移 20261005000000b 尚未执行）—— 跳过');
+    console.log('  · 墓碑清理函数不存在（迁移 20261005000001 尚未执行）—— 跳过');
     return true;
   }
   for (const r of rows) {
@@ -232,7 +271,7 @@ async function verifyPurgeFunction(client) {
     if (r.anon_can || r.auth_can) {
       console.error(`\n✗ VERIFY FAILED: ${r.proname} 对 anon/authenticated 可执行`);
       console.error(`   anon=${r.anon_can} authenticated=${r.auth_can} service_role=${r.svc_can}`);
-      console.error('   期望: 20261005000000b 里的 REVOKE EXECUTE … FROM PUBLIC, anon, authenticated');
+      console.error('   期望: 20261005000001 里的 REVOKE EXECUTE … FROM PUBLIC, anon, authenticated');
       return false;
     }
     console.log(`  · ${r.proname}：anon/authenticated 已无权调用，service_role=${r.svc_can} ✓`);

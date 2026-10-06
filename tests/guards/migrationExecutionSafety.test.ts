@@ -39,7 +39,7 @@ function code(rel: string): string {
     .replace(/(^|[^:])\/\/.*$/gm, '$1');
 }
 
-const MIGRATION = 'supabase/migrations/20261005000000b_purge_expired_tombstones.sql';
+const MIGRATION = 'supabase/migrations/20261005000001_purge_expired_tombstones.sql';
 
 describe('迁移可执行性：REVOKE 必须容忍角色不存在', () => {
   it('不得对可能不存在的角色裸写 REVOKE/GRANT', () => {

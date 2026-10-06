@@ -5,8 +5,9 @@
 // （原 supabase/manual/tombstone_expiry_cron.sql）整段被注释、未启用
 // ⇒ is_deleted 行对休眠账号无限堆积（隐私政策承诺 30 天后删除）。
 //
-// 已改为正式迁移 20261005000000b：建 purge_expired_cloud_tombstones() 函数
-// + body_tombstone_expiry_days() TTL 常量，启用步骤打进迁移日志。
+// 已改为正式迁移 20261005000001_purge_expired_tombstones（原名 20261005000000b，
+// 文件名不合法被 CLI 静默跳过，2026-10-06 改名）：建 purge_expired_cloud_tombstones()
+// 函数 + body_tombstone_expiry_days() TTL 常量，启用步骤打进迁移日志。
 //
 // ⚠️ 本文件守的是那条**最危险的**约束：两边的 TTL 必须一致。
 // 服务端提前删 → 客户端还没广播完 → 离线设备把已删会话复活
@@ -41,7 +42,7 @@ describe('墓碑 TTL：客户端是权威，服务端跟随', () => {
   });
 
   it('服务端迁移里的 TTL 常量与客户端一致', () => {
-    const p = 'supabase/migrations/20261005000000b_purge_expired_tombstones.sql';
+    const p = 'supabase/migrations/20261005000001_purge_expired_tombstones.sql';
     assert.ok(existsSync(resolve(ROOT, p)), '服务端兜底清理迁移应存在');
     const sql = read(p);
     assert.match(
@@ -52,7 +53,7 @@ describe('墓碑 TTL：客户端是权威，服务端跟随', () => {
   });
 
   it('服务端函数里用的是这个常量，不是硬编码的另一个数', () => {
-    const sql = read('supabase/migrations/20261005000000b_purge_expired_tombstones.sql');
+    const sql = read('supabase/migrations/20261005000001_purge_expired_tombstones.sql');
     // 函数体内必须引用常量，否则改常量时不会生效（两处数字会悄悄分叉）
     const fnBody = sql.slice(sql.indexOf('CREATE OR REPLACE FUNCTION public.purge_expired_cloud_tombstones'));
     assert.match(
@@ -75,7 +76,7 @@ describe('墓碑 TTL：客户端是权威，服务端跟随', () => {
   });
 
   it('迁移不自动挂 cron（pg_cron 未启用时会整条报错），但打印了启用步骤', () => {
-    const sql = read('supabase/migrations/20261005000000b_purge_expired_tombstones.sql');
+    const sql = read('supabase/migrations/20261005000001_purge_expired_tombstones.sql');
     // 直接 cron.schedule 会在未启用扩展的项目上失败
     assert.ok(
       !/^\s*SELECT cron\.schedule\(/m.test(sql),
@@ -88,7 +89,7 @@ describe('墓碑 TTL：客户端是权威，服务端跟随', () => {
   });
 
   it('清理函数是 SECURITY DEFINER 且钉了 search_path', () => {
-    const sql = read('supabase/migrations/20261005000000b_purge_expired_tombstones.sql');
+    const sql = read('supabase/migrations/20261005000001_purge_expired_tombstones.sql');
     assert.match(sql, /SECURITY DEFINER/, '调度器不是表 owner，需要 DEFINER 才能删到行');
     assert.match(
       sql,
