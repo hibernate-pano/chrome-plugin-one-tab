@@ -26,14 +26,32 @@ const live = yaml
 /** 按 `- name:` / `- uses:` 切出来的步骤片段 */
 const steps = live.split(/\n {6}- (?:name|uses):/);
 
-describe('CI: verify.yml 存在且会被触发', () => {
-  it('工作流文件存在（没有 CI 就没有任何东西能拦住 main）', () => {
+describe('CI: verify.yml 存在且能被触发', () => {
+  it('工作流文件存在（想跑门禁时得有个入口）', () => {
     assert.ok(existsSync(WORKFLOW), '.github/workflows/verify.yml 不存在');
   });
 
-  it('push 到 main 与 PR 都会触发', () => {
-    assert.match(live, /push:\s*\n\s+branches:\s*\[main\]/);
+  it('保留手动触发与 PR 两个入口', () => {
+    // 2026-10-06 起触发器从 `push: branches:[main]` 降级为手动（pull_request +
+    // workflow_dispatch）。理由：这个仓库远端只有 main 一个分支、近 20 个提交
+    // 全部同一作者、历史 8 个 PR 都是自己开自己合 ⇒ 「PR 评审」这个 CI 原本
+    // 最有用的场景从未发生过；剩下唯一作用是「每次 push 替我跑一遍」，
+    // 而本机 pnpm test + pnpm validate 更快更直接。
+    //
+    // 但 workflow_dispatch 必须留着：它记录了「发布前该跑哪四道门」这份清单，
+    // 删掉文件等于连清单一起丢。想跑时：gh workflow run verify.yml
+    assert.match(live, /workflow_dispatch:/);
     assert.match(live, /pull_request:/);
+  });
+
+  it('不再有 push 自动触发（否则每次推送都要等一遍 CI）', () => {
+    // 这条是「降级」这个决定本身的守卫：将来若有人把 push 触发器加回来，
+    // 应当是深思熟虑后的选择，而不是顺手复制粘贴。
+    assert.doesNotMatch(
+      live,
+      /^\s*push:\s*$/m,
+      'push 触发器已按 2026-10-06 的决定移除；若要恢复请一并更新本用例的说明'
+    );
   });
 });
 
