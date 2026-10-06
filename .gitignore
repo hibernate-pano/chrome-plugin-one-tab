@@ -31,3 +31,4 @@ supabase/.temp/
 
 # 本地记忆目录（不入库）
 .memory/
+.workbuddy/
