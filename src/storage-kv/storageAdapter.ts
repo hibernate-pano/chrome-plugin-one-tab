@@ -1,7 +1,7 @@
 import { indexedDbDriver, isIndexedDbAvailable } from './indexedDbClient';
 import { localStorageDriver, isLocalStorageAvailable } from './localStorageFallback';
 import type { StorageBackend, StorageDriver } from './types';
-import { MIGRATION_KEYS } from './keys';
+import { MIGRATION_KEYS, MIGRATION_SCAN_KEYS } from './keys';
 import { hasExtensionStorage } from './env';
 import { logWarn } from '../utils/log';
 
@@ -22,8 +22,10 @@ async function migrateFromLocalStorage(target: StorageDriver) {
 
   // 迁移只执行一次（与 migrateFromChromeStorage 同语义）。
   // 无此标志时，每次冷启动（popup 每次打开都调 initStorage，见 AppContainer）
-  // 都会把 localStorage 里的旧值无条件覆盖回 IndexedDB —— 用户列表被无声回滚，
-  // 且 pending_upload 不在迁移键表内，回滚后的数据不会被重新上传。
+  // 都会把 localStorage 里的旧值无条件覆盖回 IndexedDB —— 用户列表被无声回滚。
+  //
+  // 2026-10-07 P1-7：白名单原先漏掉 pending_upload / device_seq 等键，
+  // 注释里「pending_upload 不在迁移键表内」正是这个 bug 的自述。现改为派生表。
   const flags = (await target.getItem<Record<string, boolean>>(MIGRATION_KEYS.migrationFlags)) || {};
   if (flags.localStorageMigrated) return;
 
@@ -33,15 +35,7 @@ async function migrateFromLocalStorage(target: StorageDriver) {
     const key = ls.key(i);
     if (!key) continue;
     const interested =
-      key === MIGRATION_KEYS.deviceId ||
-      key === MIGRATION_KEYS.tabGroups ||
-      key === MIGRATION_KEYS.legacyTabGroups ||
-      key === MIGRATION_KEYS.userSettings ||
-      key === MIGRATION_KEYS.deletedGroups ||
-      key === MIGRATION_KEYS.deletedTabs ||
-      key === MIGRATION_KEYS.lastSyncTime ||
-      key === MIGRATION_KEYS.migrationFlags ||
-      key.startsWith(MIGRATION_KEYS.tabGroupPrefix);
+      MIGRATION_SCAN_KEYS.includes(key) || key.startsWith(MIGRATION_KEYS.tabGroupPrefix);
 
     if (interested) {
       const raw = ls.getItem(key);
@@ -81,17 +75,12 @@ async function migrateFromChromeStorage(target: StorageDriver) {
   const flags = (await target.getItem<Record<string, boolean>>(MIGRATION_KEYS.migrationFlags)) || {};
   if (flags.chromeStorageMigrated) return;
 
-  const keys = [
-    MIGRATION_KEYS.deviceId,
-    MIGRATION_KEYS.legacyDeviceId,
-    MIGRATION_KEYS.tabGroups,
-    MIGRATION_KEYS.legacyTabGroups,
-    MIGRATION_KEYS.userSettings,
-    MIGRATION_KEYS.deletedGroups,
-    MIGRATION_KEYS.deletedTabs,
-    MIGRATION_KEYS.lastSyncTime,
-    MIGRATION_KEYS.migrationFlags
-  ];
+  // 2026-10-07 P1-7：改用派生表。原来这里是手抄的 9 项子集，漏掉了
+  // pending_delete_ids / device_seq / last_upload_time 等 5 个业务键 ——
+  // 对从 v1.21.x 直升的老用户是静默的数据丢失（删除广播队列 / Lamport 时钟 /
+  // 下载保护窗口）。MIGRATION_SCAN_KEYS 由 STORAGE_KEYS 全量派生，
+  // 新增业务键只改一处，扫描自动跟上。
+  const keys = [...MIGRATION_SCAN_KEYS];
 
   try {
     const result = await chrome.storage.local.get(keys);

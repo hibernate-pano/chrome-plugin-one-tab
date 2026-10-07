@@ -219,6 +219,14 @@ export class TabManager {
     // 页面，再按协议滤掉危险地址。about: 是唯一被两表同时点名的协议
     // （这里拒、sanitizeTabUrl 放行），必须靠这道门挡住。
     if (!tab.url || isInternalUrl(tab.url)) {
+      // 2026-10-07 P2（静默失败清单 #6）：原先直接 return，用户按了 Alt+S
+      // 什么都没发生、连通知都没有 —— 与「按了键没反应」无法区分。
+      await this.showNotification({
+        type: 'basic',
+        iconUrl: chrome.runtime.getURL('icons/icon128.png'),
+        title: '无法保存此页面',
+        message: '浏览器内部页面（设置、扩展商店等）无法保存为会话',
+      });
       return;
     }
 
@@ -228,6 +236,14 @@ export class TabManager {
       const collectPinnedTabs = settings.collectPinnedTabs ?? false;
 
       if (!collectPinnedTabs && tab.pinned) {
+        // 2026-10-07 P2（静默失败清单 #7）：原先静默 return，用户会以为
+        // 快捷键坏了。固定标签页默认不保存是产品决定，但必须说出来。
+        await this.showNotification({
+          type: 'basic',
+          iconUrl: chrome.runtime.getURL('icons/icon128.png'),
+          title: '未保存固定标签页',
+          message: '设置中未开启「保存固定标签页」，如需保存请在设置里开启',
+        });
         return;
       }
 
@@ -244,6 +260,14 @@ export class TabManager {
       const safeGroup = { ...tabGroup, tabs: sanitizedTabs };
 
       if (safeGroup.tabs.length === 0) {
+        // 2026-10-07 P2（静默失败清单 #8）：URL 清洗后全部被丢弃时，
+        // 至少要告诉用户为什么没保存成。
+        await this.showNotification({
+          type: 'basic',
+          iconUrl: chrome.runtime.getURL('icons/icon128.png'),
+          title: '无法保存此页面',
+          message: '此页面的地址无法安全保存（本地文件或危险协议）',
+        });
         return;
       }
 

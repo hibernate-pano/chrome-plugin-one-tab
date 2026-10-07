@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useCallback, useRef } from 'react';
 import { useAppDispatch, useAppSelector } from '@/store/hooks';
-import { updateGroupNameAndSync, toggleGroupLockAndSync, deleteGroup, deleteBroadcastWarn, updateGroupFields, persistGroupFields, deleteTabAndSync, moveTabAndSync } from '@/store/slices/tabSlice';
+import { updateGroupNameAndSync, toggleGroupLockAndSync, deleteGroup, deleteBroadcastWarn, updateGroupFields, persistGroupFields, deleteTabAndSync, moveTabAndSync, markTabOpened } from '@/store/slices/tabSlice';
 import { DraggableTab } from '@/components/dnd/DraggableTab';
 import { TabGroup as TabGroupType, Tab } from '@/types/tab';
 import { useToast } from '@/contexts/ToastContext';
@@ -294,28 +294,23 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
     // 锁定组不删本地项、恢复立即可见，只需防双击（见 openCooldownMs）；
     // 失败必须 release，否则该 tab 会被记住一整个冷却窗口、点重试无反应。
     const guard = openGuardRef.current as OpenGuard;
-    if (!guard.tryAcquire(tab.id, group.isLocked)) return;
-    // 先开标签再删本地项，两路并行：chrome.tabs.create 不依赖删除结果，
-    // 此前 setTimeout 50ms + 等 dispatch 发起，白白串行了 SW 唤醒和开标签。
+    // 【2026-10-07 P1-2】原先这里是 tryAcquire 失败就**静默 return**（用户点了
+    // 完全没反应），现在补上一句话解释 —— 项目自己的原则是「按了键没反应必须
+    // 有一句话解释」，否则「无感」会变成「无声」，和坏了无法区分。
+    if (!guard.tryAcquire(tab.id, group.isLocked)) {
+      showRestoreError('刚刚已打开这个标签，正在冷却中，请稍候再试');
+      return;
+    }
+    // 【2026-10-07 P1-2】原先此处会顺手 deleteTabAndSync ——「点开即从会话删除」。
+    // 这把一个不可撤销的破坏性操作挂在了看起来像导航的点击上：用户只是想打开
+    // 一个文档，回来发现记录没了，且与旁边的删除按钮撞形、都无法撤销。
+    // 现在改成两步：点开只标记 openedAt（该行灰化 + 出现显式「移除」按钮），
+    // 消费成为用户明确的第二次动作。
+    dispatch(markTabOpened({ groupId: group.id, tabId: tab.id }));
     chrome.runtime.sendMessage({
       type: 'OPEN_TAB',
       data: { url: tab.url, pinned: !!tab.pinned }
     });
-    if (!group.isLocked) {
-      dispatch(deleteTabAndSync({ groupId: group.id, tabId: tab.id }))
-        .unwrap()
-        .then(payload => {
-          // 删掉最后一个标签会整组物理移除。若云端删除广播登记失败，
-          // 这一组会在其它设备上复活——必须 surface，不能让用户以为删干净了。
-          const warn = deleteBroadcastWarn(payload);
-          if (warn) showDeleteError(warn);
-        })
-        .catch(error => {
-          guard.release(tab.id);
-          logError('更新会话失败:', error);
-          showRestoreError(`更新会话失败: ${error.message || '未知错误'}`);
-        });
-    }
   }, [dispatch, group, showRestoreError]);
 
   const handleMoveTab = useCallback((sourceGroupId: string, sourceIndex: number, targetGroupId: string, targetIndex: number) => {
@@ -631,10 +626,11 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
                     tab={tab}
                     groupId={group.id}
                     index={index}
-                    itemCount={group.tabs.length}
+                   itemCount={group.tabs.length}
                     moveTab={handleMoveTab}
                     handleOpenTab={handleOpenTab}
                     handleDeleteTab={handleDeleteTab}
+                    isLockedGroup={group.isLocked}
                   />
                 ))
               ) : (

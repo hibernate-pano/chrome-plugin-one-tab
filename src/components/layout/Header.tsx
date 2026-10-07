@@ -16,6 +16,7 @@ import { LayoutMode } from '@/types/tab';
 import { useDebouncedSearch } from '@/hooks/useDebouncedSearch';
 import { Tooltip } from '@/components/common/Tooltip';
 import { TapStackLogo } from '@/components/common/TapStackIcon';
+import { LoadingSpinner } from '@/components/common/LoadingSpinner';
 import { cleanDuplicatesResultMessage } from './cleanDuplicatesMessage';
 import { logError } from '../../utils/log';
 
@@ -166,12 +167,38 @@ export const Header: React.FC<HeaderProps> = ({ onSearch }) => {
   };
 
   const handleSaveAllTabs = async () => {
-    const tabs = await chrome.tabs.query({ currentWindow: true });
-    const windowId = tabs[0]?.windowId;
-    chrome.runtime.sendMessage({
-      type: 'SAVE_ALL_TABS',
-      data: { windowId },
-    });
+    // 2026-10-07 专家团体检 P1-3：原先只 sendMessage 不 await、不处理回包，
+    // 于是整个保存主流程在页内零反馈 —— 用户点了之后眼前一空（当前窗口标签被
+    // 全部关掉、另开一个标签页），无法判断是保存了、崩了、还是页面跳转了。
+    // 唯一的反馈是一条系统通知，而通知在部分系统上会被专注助手吞掉。
+    //
+    // 项目自己的原则是「用户按了键没反应必须有一句话解释」，这条正是它的反例。
+    // 现在：await 回包 + 按钮 inline 反馈 + 失败时明确出声。
+    if (isSaving) return;
+    setIsSaving(true);
+    setSaveFeedback(null);
+    try {
+      const tabs = await chrome.tabs.query({ currentWindow: true });
+      const windowId = tabs[0]?.windowId;
+      const response = await chrome.runtime.sendMessage({
+        type: 'SAVE_ALL_TABS',
+        data: { windowId },
+      });
+      if (response?.success) {
+        setSaveFeedback({ kind: 'success', text: '已保存' });
+      } else {
+        setSaveFeedback({
+          kind: 'error',
+          text: response?.error || '保存失败，请重试',
+        });
+      }
+    } catch (error) {
+      // sendMessage 在 SW 被回收 / 扩展重载时可能整体 reject
+      logError('保存会话失败:', error);
+      setSaveFeedback({ kind: 'error', text: '保存失败，请重试' });
+    } finally {
+      setIsSaving(false);
+    }
   };
 
   const getContainerWidthClass = () => {
@@ -200,6 +227,14 @@ export const Header: React.FC<HeaderProps> = ({ onSearch }) => {
   };
 
   const [showDropdown, setShowDropdown] = useState(false);
+
+  // 保存按钮的 in-flight 与结果反馈（2026-10-07 P1-3）。
+  // 保存是本页唯一会「摧毁用户当前工作现场」的动作（关掉整个窗口的标签），
+  // 必须让用户看得见结果 —— 哪怕标签已经关掉了。
+  const [isSaving, setIsSaving] = useState(false);
+  const [saveFeedback, setSaveFeedback] = useState<{ kind: 'success' | 'error'; text: string } | null>(
+    null
+  );
   // 账号弹窗是应用级关注点：挂在 Header 上、portal 到 body，
   // 不随菜单开关而卸载（菜单点完就关，弹窗独立存活）。
   const [authModal, setAuthModal] = useState<AuthTab | null>(null);
@@ -289,22 +324,36 @@ export const Header: React.FC<HeaderProps> = ({ onSearch }) => {
             {/* 同步按钮 */}
             <SyncButton />
 
-            {/* 保存按钮 */}
-            <Tooltip content="保存当前窗口为会话" position="bottom">
+            {/* 保存按钮。
+                tooltip 明说「并关闭它们」：这个动作会清空当前窗口（TabManager
+                saveAllTabs → chrome.tabs.remove），必须让用户在被清空前就知道。 */}
+            <Tooltip content="保存当前窗口的标签页为会话，并关闭这些标签页" position="bottom">
               <button
                 onClick={handleSaveAllTabs}
-                className="btn btn-primary flat-interaction hidden sm:flex whitespace-nowrap"
-                aria-label="保存当前窗口中的所有标签页为会话"
+                disabled={isSaving}
+                className="btn btn-primary flat-interaction hidden sm:flex whitespace-nowrap disabled:opacity-60 disabled:cursor-not-allowed"
+                aria-label="保存当前窗口中的所有标签页为会话，并关闭这些标签页"
+                aria-busy={isSaving}
               >
-                <SaveIcon />
-                <span>保存会话</span>
+                {isSaving ? <LoadingSpinner size="sm" /> : <SaveIcon />}
+                <span>
+                  {isSaving
+                    ? '保存中…'
+                    : saveFeedback?.kind === 'error'
+                      ? saveFeedback.text
+                      : saveFeedback?.kind === 'success'
+                        ? saveFeedback.text
+                        : '保存会话'}
+                </span>
               </button>
               <button
                 onClick={handleSaveAllTabs}
-                className="btn btn-primary flat-interaction sm:hidden p-2"
-                aria-label="保存当前窗口中的所有标签页为会话"
+                disabled={isSaving}
+                className="btn btn-primary flat-interaction sm:hidden p-2 disabled:opacity-60"
+                aria-label="保存当前窗口中的所有标签页为会话，并关闭这些标签页"
+                aria-busy={isSaving}
               >
-                <SaveIcon />
+                {isSaving ? <LoadingSpinner size="sm" /> : <SaveIcon />}
               </button>
             </Tooltip>
 

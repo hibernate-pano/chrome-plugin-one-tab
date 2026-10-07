@@ -259,8 +259,11 @@ export class SyncEngine {
 
     // 合并前兜底：本地实体没有印记时，合并会把它当成全序最小值，
     // 静默输给任何带印记的云端行（用户本地数据无声消失）。幂等，已迁移用户只多读一次标志位。
+    //
+    // inQueue=true：downloadAndMerge 自身跑在 sync:download 这个 job 内，
+    // 单写者队列已经保证了读-改-写串行；此刻再入队会死锁。
     try {
-      await ensureOpStampMigrated();
+      await ensureOpStampMigrated(true);
     } catch (err) {
       logWarn('[SyncEngine] 印记迁移兜底失败（不阻塞同步）:', err);
     }
@@ -305,8 +308,24 @@ export class SyncEngine {
           now: Date.now(),
         });
       } catch (e) {
-        // storage 读失败不阻塞主流程，走正常下载
-        decision = { action: 'proceed' };
+        // 2026-10-07 专家团体检 P0-3：这里原本是 fail-open（读不到判据却继续下载），
+        // 与同文件 backgroundSync.ts:126-142 对同一判据的 fail-closed 处置**方向相反**。
+        //
+        // 读不到 pending_upload 意味着「本地有没有未推送的变更」这个问题没有答案，
+        // 而下载会用云端数据覆盖本地。若本地其实有未推送的新状态（正是读失败最可能的
+        // 原因之一：死句柄看门狗刚 abort、quota 超限、事务 abort），这一轮下载就会把
+        // 它覆盖掉 —— 用户的修改静默丢失。
+        //
+        // backgroundSync 那侧的注释已把同一判据的处置写死为「与其赌一把，不如什么
+        // 都不做」（read-fail-closed）；两处必须同口径，否则同一个故障在后台轮询被
+        // 挡住、在 popup 手动/自动同步这条路径却放行。
+        logWarn(
+          '[SyncEngine] 读不到 pending_upload 判据，中止本次下载' +
+            '（fail-closed，不写入：本地是否领先云端未知，下载可能覆盖未推送的本地变更）。' +
+            '下次 alarm / 手动同步重试。',
+          e
+        );
+        return { success: false, groups: [], reason: 'precheck_unknown' };
       }
 
       if (decision.action === 'skip') {

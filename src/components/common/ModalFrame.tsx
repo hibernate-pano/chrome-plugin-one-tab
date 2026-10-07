@@ -36,31 +36,39 @@ export const ModalFrame: React.FC<ModalFrameProps> = ({
   }
 
   return createPortal(
-    <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
+    // 2026-10-07 P2-7：外层负责滚动、内层 min-h-full 居中。
+    // 原先是 `flex items-center` 且不可滚动：内容比视口高时（典型是
+    // 「删除全部 N 个会话」这种文案随数量变长的确认框）溢出部分在视口**上方**
+    // 且无法滚动 ——「删除」按钮可能根本点不到。
+    // 同一 bug 的正确写法见 AuthModal.tsx 与 SyncButton.tsx 的注释。
+    <div className="fixed inset-0 z-[100] overflow-y-auto">
       <div
         className="absolute inset-0 bg-slate-950/55 backdrop-blur-sm transition-opacity"
         onClick={onClose}
       />
 
       <div
-        ref={panelRef}
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby={titleId}
-        aria-describedby={description ? descriptionId : undefined}
-        tabIndex={-1}
-        className={`relative w-full ${maxWidthClassName} overflow-hidden rounded-[28px] border border-slate-200/80 bg-white/95 shadow-[0_28px_80px_rgba(15,23,42,0.28)] ring-1 ring-white/60 backdrop-blur focus:outline-none dark:border-slate-700/80 dark:bg-slate-900/95 dark:ring-slate-800/80`}
+        className="flex min-h-full items-center justify-center p-4"
       >
-        <button
-          type="button"
-          onClick={onClose}
-          className="absolute right-4 top-4 inline-flex h-9 w-9 items-center justify-center rounded-full border border-slate-200/80 bg-white/80 text-slate-500 transition-colors hover:border-slate-300 hover:text-slate-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-400 dark:border-slate-700/80 dark:bg-slate-900/80 dark:text-slate-400 dark:hover:border-slate-600 dark:hover:text-slate-200"
-          aria-label="关闭弹窗"
+        <div
+          ref={panelRef}
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby={titleId}
+          aria-describedby={description ? descriptionId : undefined}
+          tabIndex={-1}
+          className={`relative w-full ${maxWidthClassName} overflow-hidden rounded-[28px] border border-slate-200/80 bg-white/95 shadow-[0_28px_80px_rgba(15,23,42,0.28)] ring-1 ring-white/60 backdrop-blur focus:outline-none dark:border-slate-700/80 dark:bg-slate-900/95 dark:ring-slate-800/80`}
         >
-          <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-            <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-          </svg>
-        </button>
+          <button
+            type="button"
+            onClick={onClose}
+            className="absolute right-4 top-4 inline-flex h-9 w-9 items-center justify-center rounded-full border border-slate-200/80 bg-white/80 text-slate-500 transition-colors hover:border-slate-300 hover:text-slate-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-400 dark:border-slate-700/80 dark:bg-slate-900/80 dark:text-slate-400 dark:hover:border-slate-600 dark:hover:text-slate-200"
+            aria-label="关闭弹窗"
+          >
+            <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
 
         <div className="px-6 pb-6 pt-6 sm:px-7 sm:pb-7 sm:pt-7">
           <div className="flex items-start gap-4 pr-10">
@@ -86,6 +94,7 @@ export const ModalFrame: React.FC<ModalFrameProps> = ({
           {children && <div className="mt-5">{children}</div>}
           {footer && <div className="mt-5 flex justify-end gap-3">{footer}</div>}
         </div>
+      </div>
       </div>
     </div>,
     document.body

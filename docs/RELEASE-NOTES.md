@@ -8,6 +8,86 @@
 > 长期台账**（含根因、踩坑、修复顺序），不必翻译成英文、不必对齐商店审核口径。
 > 两边都会写「本版改了什么」，但只有本文件会记住「为什么」和「后来怎么验证的」。
 
+## v1.22.13（2026-10-07，待提审）
+
+**这版的由来**：1.22.12 提交商店审核后，Jasper 决定「先把所有问题修完再发」，
+于是组了一轮五方向专家团体检（定位价值 / 交互 / 数据一致性 / 安全合规 / 架构），
+报告在 `docs/expert-audit-2026-10-07.md`。本版修的是其中**会丢用户数据**和
+**用户可见的意外**那部分；纯工程债（死代码、大文件拆分）与产品定位决策未动。
+
+### 两个 P0（丢数据）
+
+1. **`downloadAndMerge` 的 precheck 从 fail-open 改为 fail-closed**
+   （`syncEngine.ts:307-310`）。同一个 `pending_upload` 判据，
+   `backgroundSync.ts:126-142` 读不到就中止下载，而 popup 手动/自动同步这条路径
+   读不到却**继续下载** → IndexedDB 瞬时读失败时用云端旧数据覆盖本地未推送的新状态。
+   两处现在同口径，中止原因 `precheck_unknown`。
+
+2. **`ensureOpStampMigrated` 不再用 `getQueueDepth()` 猜自己在不在队列内**
+   （`opStampMigratedGuard.ts`）。旧判据 `getQueueDepth() > 0` 表达的是
+   「队列里有别人的活」，却被当成「我在队列内」→ SW 冷启动时若恰有 `sync:download`
+   在跑，迁移会在**队列外**全量读-改-写 groups，与那条 job 的 `setGroupsImmediate`
+   交错，违反单写者不变量；被覆盖的一方已经报成功给用户，且 v1.22.0 起无回收站。
+   改为显式入参：`syncEngine.ts` 传 `true`（自己在 job 内）、`service-worker.ts` 传 `false`。
+   顺带把该路径从「缓存读 + 防抖写」改为 `getGroupsForWrite()` + `setGroupsImmediate()`。
+
+   **两个 P0 都躲过了全部 926 个测试** —— 前者的注入点不存在，后者要复现需构造
+   「队列里有别人的活 + 同时触发 onInstalled」。因此补了 `tests/p0DataSafetyGuards.test.ts`，
+   并按项目纪律做了**变异验证**（改坏实现必须变红）：5 条断言、3 次变异全部被捕获。
+
+### 交互诚实度
+
+3. **P1-2 点开标签不再删除记录**：原 `TabGroup.handleOpenTab` 与
+   `SearchResultList.handleOpenTab` 都会在开标签后顺手 `deleteTabAndSync`——
+   把不可撤销的破坏性操作挂在看起来像导航的点击上，且两处都与删除按钮撞形。
+   现在点开只置 `tab.openedAt`（纯内存 UI 态，不落盘、不同步），
+   该行灰化 + 显示「已打开」徽章，「从会话中移除」变成显式的独立按钮。
+   `Tab` 类型新增 `openedAt?: number`，锁定组不显示该态（锁定恢复不消费）。
+
+4. **P1-3 保存按钮给回包反馈**：原先只 `sendMessage` 不 await、不处理回包，
+   保存会关掉整个窗口的标签但页内零反馈。现在 await 回包 + `isSaving` 禁用态 +
+   「保存中…」/「已保存」/错误文案。tooltip 与 aria-label 补上「并关闭这些标签页」——
+   **onboarding 聚光灯锚点同步改了**，`a11yLists.test.ts` 的「选择器能命中真实元素」
+   守卫当场抓到了这个失配（改文案 → 第 4 步引导高亮静默消失）。这是该守卫存在的意义。
+
+5. **P2 静默失败补说明**：3 秒冷却期（`TabGroup.tsx:297` 原本裸 `return`）、
+   内部页面/固定标签页/不安全 URL 三处 `TabManager.saveCurrentTab` 静默 `return`、
+   搜索结果打开标签的 `sendMessage` 无 `.catch`。Toast 的英文大写
+   （`{type}` → `TYPE_LABEL[type]`）。`ModalFrame` 补 `overflow-y-auto` +
+   内层 `min-h-full`（长确认框的按钮此前可能点不到，对齐 `AuthModal` 的写法）。
+
+### 数据迁移
+
+6. **P1-7 `MIGRATION_KEYS` 漏 5 个键**（`keys.ts` / `storageAdapter.ts`）。
+   手抄的 9 项子集 vs `STORAGE_KEYS` 的 16 项，漏掉 `pending_delete_ids` /
+   `device_seq` / `last_upload_time` 等——对 v1.21.x 直升的老用户是真实数据丢失
+   （删除广播队列 / Lamport 时钟 / 下载保护窗口）。
+   注意 `storageAdapter.ts` 里 localStorage 迁移那段的注释**自己写着**
+   「pending_upload 不在迁移键表内」，就是这个 bug 的自述。
+   改为 `MIGRATION_SCAN_KEYS` 由 `STORAGE_KEYS` 全量派生，
+   `storageKvConvergence.test.ts` 的断言随之从「逐字相等」升级为「覆盖 STORAGE_KEYS 全集 + 反向无发明键」，
+   双向变异均验证。
+
+### 文档
+
+7. README 不再宣传已移除的「拖拽排序」，不再声称「Yjs 影子双写 100% 灰度」
+   （依赖与影子链 1.22.11 已物理删除，`package.json` 无 yjs/dexie）。
+
+### 验证
+
+`pnpm validate` 全绿：type-check(src/tests) / lint(src/tests, max-warnings 0) /
+build / 首屏体积 193.6KB ≤ 240KB。`pnpm test` **931/931 通过**
+（926 + 新增 5 条 P0 守卫）。
+
+### 本版没做（有意）
+
+- **专家团报告里的安全 P0-2（purge 函数 REVOKE 是否在线上执行）无法从代码侧判定**，
+  需 Dashboard 实查，本次未动迁移。若未执行，anon 仍可调 `purge_expired_cloud_tombstones` 删全站到期行。
+- P2 死代码（`hydrationDecision.ts` / `journal.ts` / `upload.ts:migrateToJsonb`）、大文件拆分、
+  ADR 体系均未动 —— 不是发版阻塞项，且删死代码需先确认三个测试文件里哪些断言只测死代码。
+- 产品定位（「保险箱」vs「无回收站」互斥、收藏/备注从不上云却与跨端同步并列宣传）属产品决策，
+  未擅自改动，等 Jasper 拍板。
+
 ## 如何追加一版
 
 1. 版本号五处同步：`package.json` / `manifest.json` / `.env.example` / `README.md` / `CHROMEWEBSTORE.md`

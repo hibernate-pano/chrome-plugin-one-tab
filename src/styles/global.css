@@ -716,6 +716,24 @@ html:not([data-theme]).dark {
     background-color: var(--color-bg-tertiary);
   }
 
+  /* 已打开的行（2026-10-07 P1-2）：
+     表达「这一轮你已经在本机打开过它，但记录仍在会话里」。
+     刻意**不用删除线**——删除线在本项目已被 .tab-item-unopenable 占用，
+     复用会让「打不开」和「已处理」两种完全不同的状态视觉撞车。
+     靠降透明度 + 一个常驻的「已打开」徽章区分，且标题仍可点击（可重复打开）。 */
+  .tab-item-opened .tab-item-title,
+  .tab-item-opened .tab-item-url {
+    opacity: 0.6;
+  }
+  .tab-item-opened:hover {
+    background-color: var(--color-bg-tertiary);
+  }
+  .tab-item-opened-badge {
+    @apply inline-flex items-center px-1.5 py-0.5 rounded text-xs whitespace-nowrap;
+    color: var(--color-text-muted);
+    background-color: var(--color-bg-tertiary);
+  }
+
   /* 标签项标题悬停效果 */
   .tab-item-title-hover:hover {
     color: var(--color-accent);

@@ -53,8 +53,11 @@ async function runMigrations() {
 
   // 阶段二·§7：存量实体补操作印记。必须在任何同步/写入之前跑完——
   // 没有印记的本地实体会被合并当成全序最小值，在首次与云端合并时静默输给云端。
+  //
+  // inQueue=false：runMigrations 由 SW 启动路径调用，此刻处在队列**外**，必须入队，
+  // 不能就地执行 —— 否则会与此刻正在跑的 sync:download 交错全量写 groups。
   try {
-    await ensureOpStampMigrated();
+    await ensureOpStampMigrated(false);
   } catch (error) {
     logError('[Migration] 操作印记迁移失败:', error);
   }

@@ -403,6 +403,26 @@ export const tabSlice = createSlice({
     setSearchQuery: (state, action) => {
       state.searchQuery = action.payload;
     },
+    /**
+     * 标记「这个标签本次已被打开过」（2026-10-07 P1-2）。
+     *
+     * 【纯 UI 态，不落盘、不同步】理由：
+     *  1. 不进云端载荷 —— 「我打开过」是本次编辑会话内的临时状态，下台设备
+     *     无从感知，硬同步只会污染 opStamp 合并决策（见 updateGroupFields 的注释）。
+     *  2. 不写 storage —— 刷新页面就重置，这是期望行为：它表达的是「这一轮你
+     *     已经处理过它了」，不是一个需要长期保存的事实。
+     *
+     * 存在的意义：让「打开」与「移除」在视觉与语义上彻底分开。原来点开即删除，
+     * 用户以为在导航，实际在不可撤销地销毁一条记录。
+     */
+    markTabOpened: (state, action) => {
+      const { groupId, tabId } = action.payload as { groupId: string; tabId: string };
+      const group = state.groups.find(g => g.id === groupId);
+      const tab = group?.tabs.find(t => t.id === tabId);
+      if (tab) {
+        tab.openedAt = Date.now();
+      }
+    },
     // 新增：设置同步状态
     setSyncStatus: (state, action) => {
       state.syncStatus = action.payload;
@@ -955,6 +975,7 @@ export const {
   toggleGroupLock,
   updateGroupFields,
   setSearchQuery,
+  markTabOpened,
   moveTab,
   setGroups,
 } = tabSlice.actions;

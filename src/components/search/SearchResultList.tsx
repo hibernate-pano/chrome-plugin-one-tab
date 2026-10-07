@@ -1,7 +1,7 @@
 import React, { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState, useTransition } from 'react';
 import { useAppDispatch, useAppSelector } from '@/store/hooks';
 import { Tab, TabGroup } from '@/types/tab';
-import { deleteGroup, deleteTabAndSync } from '@/store/slices/tabSlice';
+import { deleteGroup, deleteTabAndSync, markTabOpened } from '@/store/slices/tabSlice';
 import { useToast } from '@/contexts/ToastContext';
 import { useEnhancedToast } from '@/utils/toastHelper';
 import { trackProductEvent } from '@/utils/productEvents';
@@ -228,20 +228,25 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({ searchQuery 
   };
 
   const handleOpenTab = (tab: Tab, group: TabGroup) => {
+    // 【2026-10-07 P1-2】与 TabGroup.handleOpenTab 同一处修正：原先这里也会
+    // 顺手删掉本地记录（「点开即从会话删除」）。两处必须同口径，否则用户在
+    // 列表里点开不删、搜出来点开却删 —— 同一个产品在两个界面两种行为。
+    // 现在点开只标记 openedAt，消费改为行内的显式「移除」。
     if (!group.isLocked) {
-      dispatch(deleteTabAndSync({ groupId: group.id, tabId: tab.id }))
-        .unwrap()
-        .catch(error => {
-          logError('更新会话失败:', error);
-          showRestoreError(`更新会话失败: ${error.message || '未知错误'}`);
-        });
+      dispatch(markTabOpened({ groupId: group.id, tabId: tab.id }));
     }
 
     setTimeout(() => {
       chrome.runtime.sendMessage({
         type: 'OPEN_TAB',
         data: { url: tab.url, pinned: !!tab.pinned },
-      });
+      })
+        // 2026-10-07 P1-2 附带：原先 sendMessage 的失败无人处理 → SW 被回收 /
+        // 扩展重载时用户点了没反应且无任何提示。与「无感 → 无声」同罪。
+        .catch(error => {
+          logError('打开标签失败:', error);
+          showRestoreError(`打开失败：${error?.message || '未知错误'}`);
+        });
     }, 50);
   };
 

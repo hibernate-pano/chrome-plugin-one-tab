@@ -42,7 +42,13 @@ interface StepConfig {
  */
 const STEPS: StepConfig[] = [
     { title: '欢迎使用 TapStack' },
-    { title: '保存工作会话', spotlightTarget: '[aria-label="保存当前窗口中的所有标签页为会话"]' },
+    // 2026-10-07 P1-3：aria-label 补上了「并关闭这些标签页」（保存会清空当前
+    // 窗口，必须让用户在被清空前就知道）。锚点必须同步——a11yLists 有一条守卫
+    // 断言「选择器能命中真实元素」，正是为了拦住「改文案后引导高亮静默消失」。
+    {
+      title: '保存工作会话',
+      spotlightTarget: '[aria-label="保存当前窗口中的所有标签页为会话，并关闭这些标签页"]',
+    },
     { title: '搜索工作会话', spotlightTarget: '[aria-label="搜索会话、备注或标签页"]' },
     {
         title: '恢复整个会话',

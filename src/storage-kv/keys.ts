@@ -65,6 +65,20 @@ export const LEGACY_KEYS = {
 /**
  * storageAdapter 迁移扫描用的键表（形状与旧内联 MIGRATION_KEYS 完全一致，
  * 值全部引用 STORAGE_KEYS / LEGACY_KEYS，杜绝分叉）。
+ *
+ * 【2026-10-07 专家团体检 P1-7】原先这张表是**手抄**的子集，只有 9 项，而
+ * STORAGE_KEYS 已有 16 项。手抄的代价是：STORAGE_KEYS 每加一个业务键，这里
+ * 就会静默漏一个，而漏掉的后果**不是少迁一个键，是丢一整个语义**：
+ *   - PENDING_DELETE_IDS 漏 → 跨设备删除广播队列丢失，已删组在对端复活
+ *   - DEVICE_SEQ 漏        → Lamport 时钟归零，换机/清数据后「改什么都存不住」
+ *   - LAST_UPLOAD_TIME 漏  → downloadAndMerge 的保护窗口失效，刚上传完就下载
+ *                            → 用云端旧数据覆盖本地
+ * 这条路径只跑一次（flags.chromeStorageMigrated 为假时），所以对已经在用
+ * IndexedDB 的用户无影响；但对**从 v1.21.x 直升上来的老用户**是真实的数据丢失，
+ * 而仓库里有 13 个历史迁移文件证明这个升级路径是活的。
+ *
+ * 修法：不再手抄 —— 由 STORAGE_KEYS 全量派生（下方 migrationDerivedKeys），
+ * 再并上 LEGACY_KEYS 那几个只存在于 chrome.storage 的历史键。
  */
 export const MIGRATION_KEYS = {
   deviceId: LEGACY_KEYS.DEVICE_ID,
@@ -72,9 +86,24 @@ export const MIGRATION_KEYS = {
   tabGroupPrefix: LEGACY_KEYS.TAB_GROUP_PREFIX,
   tabGroups: STORAGE_KEYS.GROUPS,
   legacyTabGroups: LEGACY_KEYS.LEGACY_TAB_GROUPS,
-  userSettings: STORAGE_KEYS.SETTINGS,
-  deletedGroups: STORAGE_KEYS.DELETED_GROUPS,
-  deletedTabs: STORAGE_KEYS.DELETED_TABS,
-  lastSyncTime: STORAGE_KEYS.LAST_SYNC_TIME,
+  // 迁移幂等标志：没有它，每次冷启动都会把旧值重新覆盖回 KV（见 storageAdapter）。
+  // 它同时也在 STORAGE_KEYS 里，下面 MIGRATION_SCAN_KEYS 会一并扫到，
+  // 这里单列一个别名只为让「读标志」这个语义在调用点自解释。
   migrationFlags: STORAGE_KEYS.MIGRATION_FLAGS,
 } as const;
+
+/**
+ * 需要从 chrome.storage.local 扫进 KV 的**全部**键 = STORAGE_KEYS 的每个值
+ * + LEGACY_KEYS 里的历史键名。
+ *
+ * 为什么用派生而不是再手抄一张表：这张表是「所有会落盘的键」的单一事实来源，
+ * 新增业务键只改 STORAGE_KEYS 一处，迁移扫描自动跟上。守卫测试
+ * （tests/storageKvConvergence.test.ts 的差集断言）会钉住这个不变量。
+ */
+export const MIGRATION_SCAN_KEYS: readonly string[] = [
+  ...Object.values(STORAGE_KEYS),
+  LEGACY_KEYS.DEVICE_ID,
+  LEGACY_KEYS.LEGACY_DEVICE_ID,
+  LEGACY_KEYS.TAB_GROUP_PREFIX,
+  LEGACY_KEYS.LEGACY_TAB_GROUPS,
+];

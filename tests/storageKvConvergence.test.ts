@@ -147,25 +147,45 @@ describe('S2 键常量单源', () => {
   });
 
   it('MIGRATION_KEYS 与 STORAGE_KEYS/LEGACY_KEYS 同源（值相等且引用同一单源）', async () => {
-    const { STORAGE_KEYS, MIGRATION_KEYS, LEGACY_KEYS } = await import('@/storage-kv/keys');
-    assert.deepEqual({ ...MIGRATION_KEYS }, {
-      deviceId: 'tabvaultpro_device_id',
-      legacyDeviceId: 'deviceId',
-      tabGroupPrefix: 'tabGroup_',
-      tabGroups: 'tab_groups',
-      legacyTabGroups: 'tabGroups',
-      userSettings: 'user_settings',
-      deletedGroups: 'deleted_tab_groups',
-      deletedTabs: 'deleted_tabs',
-      lastSyncTime: 'last_sync_time',
-      migrationFlags: 'migration_flags',
-    });
-    // 同源引用（非各自手写字符串）
+    const { STORAGE_KEYS, MIGRATION_KEYS, MIGRATION_SCAN_KEYS, LEGACY_KEYS } =
+      await import('@/storage-kv/keys');
+
+    // 2026-10-07 P1-7：MIGRATION_KEYS 原本是一张**手抄的 9 项子集**，
+    // STORAGE_KEYS 当时已有 16 项 —— 漏掉的 pending_delete_ids / device_seq /
+    // last_upload_time 等键会让 v1.21.x 直升的老用户静默丢掉删除广播队列与
+    // Lamport 时钟。因此扫描键改为**由 STORAGE_KEYS 全量派生**，
+    // 本断言随之从「逐字相等」升级为「覆盖 STORAGE_KEYS 全集」。
+
+    // 迁移扫描必须覆盖每一个会落盘的 STORAGE_KEYS —— 这才是「不分叉」的可执行定义。
+    const storageKeyValues = Object.values(STORAGE_KEYS);
+    for (const key of storageKeyValues) {
+      assert.ok(
+        MIGRATION_SCAN_KEYS.includes(key),
+        `STORAGE_KEYS 的 ${key} 不在 MIGRATION_SCAN_KEYS 里 —— ` +
+          '该键在 chrome.storage → KV 迁移中会被漏掉。新增业务键后请确认派生表已跟上。'
+      );
+    }
+
+    // 且必须包含全部历史键名（只存在于 chrome.storage 的旧键）。
+    for (const key of Object.values(LEGACY_KEYS)) {
+      assert.ok(
+        MIGRATION_SCAN_KEYS.includes(key),
+        `LEGACY_KEYS 的 ${key} 不在 MIGRATION_SCAN_KEYS 里 —— 存量数据会变孤儿`
+      );
+    }
+
+    // 反向：扫描表不得凭空引入不存在的键（防止把无关键也搬一遍）。
+    const allKnown = new Set<string>([...storageKeyValues, ...Object.values(LEGACY_KEYS)]);
+    const invented = MIGRATION_SCAN_KEYS.filter(k => !allKnown.has(k));
+    assert.deepEqual(
+      invented,
+      [],
+      `MIGRATION_SCAN_KEYS 混入了未登记的键：${invented.join(', ')}。` +
+        '新增键必须先进 STORAGE_KEYS 或 LEGACY_KEYS。'
+    );
+
+    // 别名表本身仍须同源引用（非各自手写字符串）。
     assert.equal(MIGRATION_KEYS.tabGroups, STORAGE_KEYS.GROUPS);
-    assert.equal(MIGRATION_KEYS.userSettings, STORAGE_KEYS.SETTINGS);
-    assert.equal(MIGRATION_KEYS.deletedGroups, STORAGE_KEYS.DELETED_GROUPS);
-    assert.equal(MIGRATION_KEYS.deletedTabs, STORAGE_KEYS.DELETED_TABS);
-    assert.equal(MIGRATION_KEYS.lastSyncTime, STORAGE_KEYS.LAST_SYNC_TIME);
     assert.equal(MIGRATION_KEYS.migrationFlags, STORAGE_KEYS.MIGRATION_FLAGS);
     assert.equal(MIGRATION_KEYS.deviceId, LEGACY_KEYS.DEVICE_ID);
     assert.equal(MIGRATION_KEYS.legacyDeviceId, LEGACY_KEYS.LEGACY_DEVICE_ID);

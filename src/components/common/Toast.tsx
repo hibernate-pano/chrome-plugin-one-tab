@@ -3,6 +3,21 @@ import { createPortal } from 'react-dom';
 
 export type ToastType = 'success' | 'error' | 'info' | 'warning';
 
+/**
+ * Toast 类型的��文标签（2026-10-07 P2-3）。
+ *
+ * 原先直接把 `{type}` 渲染进界面，于是一个全中文的产品在每一条成功/失败/
+ * 提示上都会蹦出 SUCCESS / ERROR / WARNING 三个英文大写词（还带
+ * `uppercase tracking-[0.18em]` 的标签样式）。这是**所有反馈的唯一通道** ——
+ * 也就是说「每一条反馈都带一个英文单词」。
+ */
+const TYPE_LABEL: Record<ToastType, string> = {
+  success: '完成',
+  error: '出错',
+  info: '提示',
+  warning: '注意',
+};
+
 interface ToastProps {
   message: string;
   type?: ToastType;
@@ -161,8 +176,8 @@ export const Toast: React.FC<ToastProps> = ({
               {getIcon()}
             </div>
             <div className="min-w-0 flex-1">
-              <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-400 dark:text-slate-500">
-                {type}
+              <div className="text-xs font-semibold tracking-[0.18em] text-slate-400 dark:text-slate-500">
+                {TYPE_LABEL[type]}
               </div>
               <p className="mt-1 text-sm font-medium leading-6 text-current">{message}</p>
             </div>
