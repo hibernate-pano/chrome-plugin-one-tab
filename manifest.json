@@ -20,7 +20,7 @@
   ],
   "action": {
     "default_icon": "icons/icon16.png",
-    "default_title": "TapStack - 工作会话保险箱"
+    "default_title": "TapStack - 保存与恢复工作会话"
   },
   "background": {
     "service_worker": "service-worker.js"

@@ -9,7 +9,7 @@
  * saveGroup→saveGroup / deleteGroup→deleteGroup / deleteAllGroups→deleteAllGroups /
  * importGroups→importGroups / updateGroupNameAndSync→renameGroup /
  * toggleGroupLockAndSync→toggleGroupLock / moveTabAndSync→moveTab / cleanDuplicateTabs→cleanDuplicates /
- * deleteTabAndSync→removeTab / persistGroupFields→updateGroupFields
+ * deleteTabAndSync→removeTab
  *
  * ── 2026-09-29 无墓碑重写 ──
  * 删除一律物理移除（删除前由 UI 确认）；跨设备广播由云端 is_deleted 行承担。
@@ -22,7 +22,7 @@ import { TabState, TabGroup, OptimisticTabBackup } from '@/types/tab';
 import { storage, invalidateGroupsCache } from '@/utils/storage';
 import { sendMutation } from '@/shared/mutationProtocol';
 import { TIMEOUT_REASON_PREFIX } from '@/core/mutationProtocol';
-import { applyCleanPlanToActiveView, backupKeyOf, dropLoadGuard, GroupLocalFields, GroupMetaSnapshot, isStaleLoad, planOptimisticClean, restoreGroupLocalFields, restoreGroupLock, restoreGroupName, snapshotGroupLocalFields, snapshotGroupMeta, stripInFlightDeletions, stripTombstonedTabs, toActiveGroupsView, takeLoadGuard } from './tabSliceHelpers';
+import { applyCleanPlanToActiveView, backupKeyOf, dropLoadGuard, GroupMetaSnapshot, isStaleLoad, planOptimisticClean, restoreGroupLock, restoreGroupName, snapshotGroupMeta, stripInFlightDeletions, stripTombstonedTabs, toActiveGroupsView, takeLoadGuard } from './tabSliceHelpers';
 import type { CleanDuplicatesPlan } from '@/core/mutationOps';
 import type { OpStamp } from '@/core/opStamp';
 import { trackProductEvent } from '@/utils/productEvents';
@@ -55,40 +55,6 @@ export const initialTabState: TabState = {
 const inFlightDeletedGroupIds = (state: TabState): string[] =>
   Object.keys(state.deletedGroupBackups ?? {});
 
-
-/**
- * 本地 UI 偏好持久化（isFavorite/notes）：走 updateGroupFields 语义命令，
- * 经 mutationQueue 串行由 SW 单写者执行，符合阶段一单写者不变量。
- * 不 bump version/updatedAt——这些字段不在云端 sync 范围内。
- * Redux 端由 updateGroupFields 同步 reducer 立即乐观更新，存储端由此 thunk
- * 经 MUTATE 消息交 SW 落盘，避免 popup/SW 并发直写 storage 的 R1 race。
- */
-/**
- * P1-5：失败必须把乐观值收回去。快照在乐观更新之前抓，失败时随 rejectValue 带回来，
- * rejected reducer 还原（见 tabSliceHelpers 的回滚说明）。
- * 组件侧靠匹配 thunk 的 rejected action 弹错误 toast，不再静默。
- */
-export const persistGroupFields = createAsyncThunk<
-  { groupId: string; fields: GroupLocalFields },
-  { groupId: string; fields: GroupLocalFields },
-  { state: { tabs: TabState }; rejectValue: { groupId: string; snapshot: GroupLocalFields | null } }
->('tabs/persistGroupFields', async ({ groupId, fields }, { getState, rejectWithValue }) => {
-  const snapshot = snapshotGroupLocalFields(
-    (getState() as { tabs: TabState }).tabs.groups,
-    groupId,
-    fields
-  );
-  const res = await sendMutation<{ groupId: string; updated: TabGroup | null; fields: GroupLocalFields }>({
-    op: 'updateGroupFields',
-    groupId,
-    fields,
-  });
-  if (!res.ok) {
-    logError('[persistGroupFields] 本地偏好保存失败:', { groupId, fields, error: res.error });
-    return rejectWithValue({ groupId, snapshot });
-  }
-  return { groupId, fields };
-});
 
 export const loadGroups = createAsyncThunk('tabs/loadGroups', async () => {
   // 显式加载必须读存储真值：SW 侧同步合并只写 IndexedDB，不会触发
@@ -384,22 +350,6 @@ export const tabSlice = createSlice({
         group.updatedAt = new Date().toISOString();
       }
     },
-    /**
-     * 本地字段更新（isFavorite/notes 等不在云端同步范围内的字段）：
-     * 仅乐观更新 Redux 状态；持久化由 persistGroupFields thunk 走 updateGroupFields
-     * 语义命令完成（统一单写者管线）。【不】bump version/updatedAt——这些字段
-     * 不进入云端 sync 载荷，bump 会污染远端版本号与合并决策。
-     */
-    updateGroupFields: (state, action) => {
-      const { groupId, fields } = action.payload as {
-        groupId: string;
-        fields: { isFavorite?: boolean; notes?: string };
-      };
-      const group = state.groups.find(g => g.id === groupId);
-      if (group) {
-        Object.assign(group, fields);
-      }
-    },
     setSearchQuery: (state, action) => {
       state.searchQuery = action.payload;
     },
@@ -408,7 +358,7 @@ export const tabSlice = createSlice({
      *
      * 【纯 UI 态，不落盘、不同步】理由：
      *  1. 不进云端载荷 —— 「我打开过」是本次编辑会话内的临时状态，下台设备
-     *     无从感知，硬同步只会污染 opStamp 合并决策（见 updateGroupFields 的注释）。
+     *     无从感知，硬同步只会污染 opStamp 合并决策。
      *  2. 不写 storage —— 刷新页面就重置，这是期望行为：它表达的是「这一轮你
      *     已经处理过它了」，不是一个需要长期保存的事实。
      *
@@ -881,17 +831,6 @@ export const tabSlice = createSlice({
         state.errorSource = 'action';
       })
 
-      // 收藏/备注（本地偏好，不进云端）：失败同样回滚，否则 UI 与 storage 永久不一致
-      .addCase(persistGroupFields.rejected, (state, action) => {
-        const snapshot = action.payload?.snapshot;
-        if (snapshot) {
-          const group = state.groups.find(g => g.id === action.payload?.groupId);
-          if (group) restoreGroupLocalFields(group, snapshot);
-        }
-        state.error = action.error.message || '保存失败，已恢复原值';
-        state.errorSource = 'action';
-      })
-
       // 移动标签页并同步到云端
       .addCase(moveTabAndSync.pending, () => {
         // 不更新UI状态，因为已经在 reducer 中更新了
@@ -973,7 +912,6 @@ export const {
   setActiveGroup,
   updateGroupName,
   toggleGroupLock,
-  updateGroupFields,
   setSearchQuery,
   markTabOpened,
   moveTab,

@@ -176,7 +176,7 @@ describe('perfTrace: 封闭词表（诊断文件不外带来路不明的字符�
     const names = new Set<string>(PERF_SPAN_NAMES);
     const mutationOps = [
       'saveGroup', 'removeTab', 'deleteGroup', 'deleteAllGroups', 'importGroups',
-      'renameGroup', 'toggleGroupLock', 'updateGroupFields', 'moveTab', 'cleanDuplicates',
+      'renameGroup', 'toggleGroupLock', 'moveTab', 'cleanDuplicates',
     ];
     for (const op of mutationOps) {
       assert.ok(names.has(op), `语义命令 ${op} 不在 perf span 词表内（无法计时）`);

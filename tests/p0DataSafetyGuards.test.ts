@@ -138,3 +138,68 @@ describe('P0-4：ensureOpStampMigrated 不得靠 getQueueDepth 猜自己在不�
     );
   });
 });
+
+describe('减法（2026-10-07）：备注与收藏已下线，不得复活', () => {
+  // 负责人决定：这两项不是核心功能，做减法删掉，而不是让它们上云。
+  // 本仓库有「三道看起来有门禁、实际不拦人」的历史（见 verify.yml 注释），
+  // 所以这里用源码结构断言把「已删除」钉死 —— 否则将来某次「顺手优化」
+  // 会把它们连同 updateGroupFields 整条链路悄悄加回来。
+
+  it('TabGroup 类型不再有 notes / isFavorite', () => {
+    const src = code('src/types/tab.ts');
+    const groupIface = src.slice(src.indexOf('export interface TabGroup'));
+    assert.ok(
+      !/\bnotes\??:/.test(groupIface),
+      'TabGroup 又长出 notes 字段了 —— 备注已于 2026-10-07 下线'
+    );
+    assert.ok(
+      !/\bisFavorite\??:/.test(groupIface),
+      'TabGroup 又长出 isFavorite 字段了 —— 收藏已于 2026-10-07 下线'
+    );
+  });
+
+  it('updateGroupFields 语义命令已整条移除', () => {
+    assert.ok(
+      !/updateGroupFields/.test(code('src/core/mutationProtocol.ts')),
+      'mutation 协议又加回了 updateGroupFields —— 它只为备注/收藏服务'
+    );
+    assert.ok(
+      !/applyUpdateGroupFields/.test(code('src/core/mutationOps.ts')),
+      'mutationOps 又加回了 applyUpdateGroupFields'
+    );
+    assert.ok(
+      !/updateGroupFields/.test(code('src/background/mutationHandlers.ts')),
+      'SW 又加回了 updateGroupFields 分支'
+    );
+    assert.ok(
+      !/persistGroupFields/.test(code('src/store/slices/tabSlice.ts')),
+      'tabSlice 又加回了 persistGroupFields thunk'
+    );
+  });
+
+  it('UI 不再有收藏 / 备注入口，搜索也不再匹配备注', () => {
+    const tabGroup = code('src/components/tabs/TabGroup.tsx');
+    assert.ok(!/FavoriteIcon|NotesIcon/.test(tabGroup), '收藏/备注图标组件被加回来了');
+    assert.ok(!/handleToggleFavorite|handleSaveNotes/.test(tabGroup), '收藏/备注 handler 被加回来了');
+    assert.ok(!/isEditingNotes/.test(tabGroup), '备注编辑态被加回来了');
+
+    const search = code('src/utils/search.ts');
+    assert.ok(!/searchNotes|NOTES_EXACT|NOTES_PARTIAL/.test(search), '搜索又支持备注匹配了');
+    assert.ok(!/group\.notes/.test(search), '搜索又在读 group.notes 了');
+  });
+
+  it('文档不得再宣传这两项（商店审核会核对）', () => {
+    for (const doc of ['README.md', 'CHROMEWEBSTORE.md']) {
+      const src = read(doc);
+      // 历史 changelog 行允许出现（那是版本史），只查「当前能力」段落。
+      const capability = src.split('## 当前能力')[1]?.split('\n## ')[0] ?? '';
+      const listing = src.split('**Detailed Description**')[1]?.split('---')[0] ?? '';
+      for (const text of [capability, listing]) {
+        assert.ok(
+          !/备注|收藏/.test(text),
+          `${doc} 的能力介绍里还有「备注」或「收藏」—— 功能已下线，文案必须同步`
+        );
+      }
+    }
+  });
+});

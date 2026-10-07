@@ -73,20 +73,83 @@
 7. README 不再宣传已移除的「拖拽排序」，不再声称「Yjs 影子双写 100% 灰度」
    （依赖与影子链 1.22.11 已物理删除，`package.json` 无 yjs/dexie）。
 
+### 产品决策落地（Jasper 定，2026-10-07）
+
+8. **删除「备注」与「收藏」两项功能（减法，不是上云）**。
+
+   **决策过程值得记下来**：体检报告的 P1-5 建议「要么加上云，要么在文档里诚实标注
+   仅本机」，两条路都合理。我第一版选了「加上云」，给的理由是「文档把它们和跨设备
+   同步并列宣传了」——**这个理由是错的**，它把「文档承诺了」当成了「产品该有的
+   行为」。被追问「这两项是标签管理器本身的功能吗」后重新审视：收藏的全部作用只是
+   「列表排序时置顶」（`TabList.ts:134-136`）；备注是「给自己写一句话 + 参与搜索」，
+   而会话名已经在承担「给这组标签起名字」的职责，备注是它的弱重复。
+   负责人定：**「如果不是核心功能，就不要上去」** ⇒ 整条删除，不保留本地版。
+
+   删除范围（17 个文件）：
+   - 类型：`TabGroup.notes` / `TabGroup.isFavorite`
+   - mutation 全链：`updateGroupFields` op、`applyUpdateGroupFields`、SW 的
+     `case 'updateGroupFields'`、`persistGroupFields` thunk、`updateGroupFields`
+     reducer、`GroupLocalFields` / `snapshotGroupLocalFields` / `restoreGroupLocalFields`
+   - UI：收藏按钮、备注按钮、`FavoriteIcon` / `NotesIcon`、备注 textarea 编辑区、
+     卡片上的收藏星标、搜索结果里的收藏星标与备注高亮
+   - 搜索：`searchNotes` 选项、`NOTES_EXACT` / `NOTES_PARTIAL` 权重、
+     `MatchDetail.field` 的 `'notes'`、搜索建议词里的备注
+   - 列表排序：收藏置顶规则（现在纯按 createdAt 倒序）
+   - 诊断：`favoriteSessionCount`、`updateGroupFields` 白名单项、
+     `syncPreview` 指纹里的 notes/isFavorite
+   - 测试：5 个文件中 14 条直接测这两项的用例
+   - 文档：README 三处、商店文案中英各两处、截图脚本的演示数据注入
+   - 首屏体积 193.6KB → **192.0KB**
+
+   **遗留待办**：`store-assets/screenshot-1-main.png` 里**确实有收藏星标与备注块**
+   （`scripts/make-store-screenshots.mjs` 的演示数据注入了这两项）。商店审核会核对
+   截图与描述一致性，**提审前必须重拍**。已在 `CHROMEWEBSTORE.md` 的
+   Screenshot Notes 标注，并把状态从 ✅ Ready 改成 ⚠️ 需重拍。
+
+9. **去掉「保险箱」定位词**。产品自称「工作会话保险箱」，但 1.22.0 起删除即物理
+   清除、无回收站、不可恢复——保险箱的心理契约是「丢了能找回来」，定位词与实际
+   行为直接互斥。负责人明确「不需要回收站，也不需要保险箱」：
+   - `manifest.json` 的 `default_title` → 「TapStack - 保存与恢复工作会话」
+   - README 定位段 → 「工作会话收纳箱」，并加一段说明为何去掉该词（防止将来被加回来）
+   - 隐私政策与商店文案原本就写「不提供回收站」，现已一致
+
+### 线上验证（本版实测，非推断）
+
+10. **安全 P0-1 / P0-2 已闭环**（此前报告标为「需线上验证」）：
+    - `node scripts/anon-rls-probe.mjs` → profiles / tab_groups / user_settings / tabs
+      **anon 读到 0 行**。邮箱泄露确认止血。
+    - `POST /rest/v1/rpc/purge_expired_cloud_tombstones` → **HTTP 401 / 42501
+      permission denied**；`body_tombstone_expiry_days` 同。对照实验：一个确定不存在的
+      函数返回 **404 / PGRST202**，与此不同 —— 证明这两个函数**确实存在**
+      （不是「不存在所以报错」），而 anon 被正确拒绝。**迁移 `20261005000001` 的
+      REVOKE 已在线上生效。**
+
 ### 验证
 
 `pnpm validate` 全绿：type-check(src/tests) / lint(src/tests, max-warnings 0) /
-build / 首屏体积 193.6KB ≤ 240KB。`pnpm test` **931/931 通过**
-（926 + 新增 5 条 P0 守卫）。
+build / 首屏体积 192.0KB ≤ 240KB。`pnpm test` **927/927 通过**
+（926 + 新增 9 条守卫：5 条 P0 数据安全 + 4 条「备注/收藏不得复活」）。
+
+新守卫同样做了变异验证：把 `isFavorite` 加回 `TabGroup` 类型 → 红；在 README
+能力介绍里写回「备注」→ 红；把 precheck 改回 fail-open → 红；把 `inQueue` 改回
+`getQueueDepth` → 红；把真值读+直写改回缓存读+防抖写 → 红；迁移键表漏登记 /
+发明键 → 红。
+
+### 本版减法带来的用户可见变化
+
+- 会话卡片上少了两个图标按钮（收藏、备注），操作区从 5 个降到 3 个
+- 卡片不再显示备注块，所有会话的卡片高度变得一致
+- 搜索不再匹配备注内容（会话名 / 标签标题 / URL 不受影响）
+- 列表排序不再有收藏置顶，纯按保存时间倒序
+- 导入的旧数据若含 `notes` / `isFavorite`，会随组保留但界面不再展示
 
 ### 本版没做（有意）
 
-- **专家团报告里的安全 P0-2（purge 函数 REVOKE 是否在线上执行）无法从代码侧判定**，
-  需 Dashboard 实查，本次未动迁移。若未执行，anon 仍可调 `purge_expired_cloud_tombstones` 删全站到期行。
 - P2 死代码（`hydrationDecision.ts` / `journal.ts` / `upload.ts:migrateToJsonb`）、大文件拆分、
   ADR 体系均未动 —— 不是发版阻塞项，且删死代码需先确认三个测试文件里哪些断言只测死代码。
-- 产品定位（「保险箱」vs「无回收站」互斥、收藏/备注从不上云却与跨端同步并列宣传）属产品决策，
-  未擅自改动，等 Jasper 拍板。
+- P1-6（设置同步无冲突检测、整行覆盖）未动 —— 需要改 `user_settings` 表结构与合并
+  策略，工作量与风险高于本版其余各项，建议单独一版。
+- 商店截图需重拍（见上），这是提审前的阻塞项。
 
 ## 如何追加一版
 

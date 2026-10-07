@@ -79,8 +79,6 @@ export type GroupMetaSnapshot = {
   updatedAt: string;
 };
 
-export type GroupLocalFields = { isFavorite?: boolean; notes?: string };
-
 /** 写入前抓取组元信息快照；组不存在返回 null（无组可回滚） */
 export const snapshotGroupMeta = (
   groups: TabGroup[],
@@ -94,20 +92,6 @@ export const snapshotGroupMeta = (
     version: group.version || 1,
     updatedAt: group.updatedAt,
   };
-};
-
-/** 写入前抓取本地偏好字段快照：只取本次实际要写的键（不写 isFavorite 就不还原它） */
-export const snapshotGroupLocalFields = (
-  groups: TabGroup[],
-  groupId: string,
-  fields: GroupLocalFields
-): GroupLocalFields | null => {
-  const group = groups.find(g => g.id === groupId);
-  if (!group) return null;
-  const snapshot: GroupLocalFields = {};
-  if ('isFavorite' in fields) snapshot.isFavorite = !!group.isFavorite;
-  if ('notes' in fields) snapshot.notes = group.notes;
-  return snapshot;
 };
 
 /**
@@ -130,15 +114,6 @@ export const restoreGroupName = (group: TabGroup, snapshot: GroupMetaSnapshot): 
  */
 export const restoreGroupLock = (group: TabGroup, snapshot: GroupMetaSnapshot): void => {
   group.isLocked = snapshot.isLocked;
-};
-
-/** 收藏/备注回滚：只还原快照里出现过的键 */
-export const restoreGroupLocalFields = (
-  group: TabGroup,
-  snapshot: GroupLocalFields
-): void => {
-  if ('isFavorite' in snapshot) group.isFavorite = snapshot.isFavorite;
-  if ('notes' in snapshot) group.notes = snapshot.notes;
 };
 
 /** load 回环代际判定：在途 mutation（epoch 前进）之后发起的旧快照一律忽略 */

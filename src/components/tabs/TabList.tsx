@@ -131,10 +131,6 @@ export const TabList: React.FC<TabListProps> = ({ searchQuery }) => {
   }
 
   const sortedGroups = [...groups].sort((left, right) => {
-    if (!!left.isFavorite !== !!right.isFavorite) {
-      return left.isFavorite ? -1 : 1;
-    }
-
     return new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime();
   });
 

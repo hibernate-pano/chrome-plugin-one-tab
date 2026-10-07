@@ -108,7 +108,6 @@ const JOURNAL_OP_TYPES: Record<MutationOp['op'], true> = {
   importGroups: true,
   renameGroup: true,
   toggleGroupLock: true,
-  updateGroupFields: true,
   moveTab: true,
   cleanDuplicates: true,
 };
@@ -283,7 +282,6 @@ export interface DiagnosticsReport {
     tabCount: number | null;
     /** 各桶的会话数；所有桶相加 === sessionCount。 */
     tabCountHistogram: Record<TabCountBucket, number> | null;
-    favoriteSessionCount: number | null;
     lockedSessionCount: number | null;
   };
   productEvents: {
@@ -624,9 +622,6 @@ export function buildDiagnosticsReport(
       sessionCount: groups ? groups.length : null,
       tabCount: tabCounts ? tabCounts.reduce((sum, n) => sum + n, 0) : null,
       tabCountHistogram: tabCounts ? buildTabCountHistogram(tabCounts) : null,
-      favoriteSessionCount: groups
-        ? groups.filter(g => g?.isFavorite === true).length
-        : null,
       lockedSessionCount: groups ? groups.filter(g => g?.isLocked === true).length : null,
     },
     productEvents: {

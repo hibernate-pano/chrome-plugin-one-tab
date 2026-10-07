@@ -72,7 +72,6 @@ function makeGroup(id: string, tabCount: number, extra: Record<string, unknown> 
     createdAt: daysAgo(10),
     updatedAt: daysAgo(1),
     isLocked: false,
-    isFavorite: false,
     user_id: MARKERS.email,
     device_id: MARKERS.deviceId,
     ...extra,
@@ -85,7 +84,7 @@ function makeSources(overrides: Record<string, unknown> = {}) {
       makeGroup('g-empty', 0),
       makeGroup('g-small', 3),
       makeGroup('g-mid', 12),
-      makeGroup('g-big', 150, { isFavorite: true }),
+      makeGroup('g-big', 150),
       makeGroup('g-locked', 60, { isLocked: true }),
     ],
     settings: {
@@ -204,7 +203,6 @@ describe('诊断导出：输出结构与不变量', () => {
     assert.equal(report.generatedAt, NOW.toISOString());
     assert.equal(report.data.sessionCount, 5);
     assert.equal(report.data.tabCount, 0 + 3 + 12 + 150 + 60);
-    assert.equal(report.data.favoriteSessionCount, 1);
     assert.equal(report.data.lockedSessionCount, 1);
   });
 

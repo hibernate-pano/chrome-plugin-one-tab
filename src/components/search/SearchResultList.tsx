@@ -594,13 +594,6 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({ searchQuery 
             <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
               <div className="min-w-0">
                 <div className="flex items-center gap-2">
-                  {session.group.isFavorite && (
-                    <span className="flex-shrink-0 text-amber-500 dark:text-amber-400" title="已收藏会话" aria-label="已收藏会话">
-                      <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="currentColor">
-                        <path d="M11.48 3.499a.562.562 0 011.04 0l2.125 5.111a.563.563 0 00.475.345l5.518.442c.499.04.701.663.321.988l-4.204 3.602a.563.563 0 00-.182.557l1.285 5.385a.562.562 0 01-.84.61l-4.725-2.885a.563.563 0 00-.586 0L6.982 20.54a.562.562 0 01-.84-.61l1.285-5.386a.563.563 0 00-.182-.557l-4.204-3.602a.563.563 0 01.321-.988l5.518-.442a.563.563 0 00.475-.345L11.48 3.5z" />
-                      </svg>
-                    </span>
-                  )}
                   <h4 className="text-sm font-semibold text-gray-900 dark:text-gray-100 truncate">
                     {session.group.name}
                   </h4>
@@ -609,11 +602,6 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({ searchQuery 
                 <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
                   {getSessionResultSummary(session.group, session.matches.length)}
                 </p>
-                {session.group.notes && (
-                  <p className="mt-2 text-xs text-gray-600 dark:text-gray-300 line-clamp-2">
-                    <HighlightText text={session.group.notes} highlight={searchQuery} />
-                  </p>
-                )}
               </div>
 
               <button

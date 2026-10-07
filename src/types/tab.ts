@@ -16,7 +16,7 @@ export interface Tab {
    * 【为什么加这个字段 —— 2026-10-07 专家团体检 P1-2】
    * 原实现里「点开一个标签」会**顺手把这条记录从会话里删掉**（OneTab 式消费模型），
    * 但界面上零告知、没有撤销、且与旁边的「删除」按钮视觉语言完全一致（都是「这行会
-   * 消失」）。用户预期是「点开链接」，实际拿到的是「点开链接 + 保险箱少了一条记录」，
+   * 消失」）。用户预期是「点开链接」，实际拿到的是「点开链接 + 会话里少了一条记录」,
    * 而 v1.22.0 起删除不可恢复。
    *
    * 现在改成两步：点开只置 openedAt（该行灰化 + 出现显式的「移除」按钮），
@@ -96,8 +96,6 @@ export interface TabGroup {
   createdAt: string;
   updatedAt: string;
   isLocked: boolean;
-  notes?: string;
-  isFavorite?: boolean;
   user_id?: string; // 关联用户ID
   device_id?: string; // 创建设备ID
   last_sync?: string; // 最后同步时间

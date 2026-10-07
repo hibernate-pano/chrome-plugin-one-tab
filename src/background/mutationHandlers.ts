@@ -25,7 +25,6 @@ import {
   applyImportGroups,
   applyRenameGroup,
   applyToggleGroupLock,
-  applyUpdateGroupFields,
   applyMoveTab,
   applyCleanDuplicates,
 } from '@/core/mutationOps';
@@ -210,16 +209,6 @@ export function createMutationHandlers(deps: MutationDeps) {
         return {
           ok: true,
           payload: { groupId: cmd.groupId, isLocked: r.isLocked },
-        };
-      }
-      case 'updateGroupFields': {
-        const groups = await d.getGroups();
-        const r = applyUpdateGroupFields(groups, cmd.groupId, cmd.fields, now, stamp);
-        await persist(r.groups);
-        d.scheduleUpload(NORMAL_MS);
-        return {
-          ok: true,
-          payload: { groupId: cmd.groupId, updated: r.updated, fields: cmd.fields },
         };
       }
       case 'moveTab': {

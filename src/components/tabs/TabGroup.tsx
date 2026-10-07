@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useCallback, useRef } from 'react';
 import { useAppDispatch, useAppSelector } from '@/store/hooks';
-import { updateGroupNameAndSync, toggleGroupLockAndSync, deleteGroup, deleteBroadcastWarn, updateGroupFields, persistGroupFields, deleteTabAndSync, moveTabAndSync, markTabOpened } from '@/store/slices/tabSlice';
+import { updateGroupNameAndSync, toggleGroupLockAndSync, deleteGroup, deleteBroadcastWarn, deleteTabAndSync, moveTabAndSync, markTabOpened } from '@/store/slices/tabSlice';
 import { DraggableTab } from '@/components/dnd/DraggableTab';
 import { TabGroup as TabGroupType, Tab } from '@/types/tab';
 import { useToast } from '@/contexts/ToastContext';
@@ -50,18 +50,6 @@ const OpenAllInPlaceIcon = () => (
   </svg>
 );
 
-const FavoriteIcon = ({ filled }: { filled: boolean }) => (
-  <svg className="w-4 h-4" fill={filled ? 'currentColor' : 'none'} viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-    <path strokeLinecap="round" strokeLinejoin="round" d="M11.48 3.499a.563.563 0 011.04 0l2.125 5.111a.563.563 0 00.475.345l5.518.442c.499.04.701.663.321.988l-4.204 3.602a.563.563 0 00-.182.557l1.285 5.386a.562.562 0 01-.84.61l-4.725-2.885a.563.563 0 00-.586 0L6.982 20.54a.562.562 0 01-.84-.61l1.285-5.386a.563.563 0 00-.182-.557L3.041 10.385a.563.563 0 01.321-.988l5.518-.442a.563.563 0 00.475-.345L11.48 3.5z" />
-  </svg>
-);
-
-const NotesIcon = () => (
-  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-    <path strokeLinecap="round" strokeLinejoin="round" d="M16.862 3.487a2.625 2.625 0 113.712 3.712L7.5 20.273 3 21l.727-4.5L16.862 3.487z" />
-  </svg>
-);
-
 export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
   const dispatch = useAppDispatch();
   const confirmBeforeDelete = useAppSelector(state => state.settings.confirmBeforeDelete);
@@ -71,8 +59,6 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
   const [isEditing, setIsEditing] = useState(false);
   const [newName, setNewName] = useState(group.name);
   const [isCollapsed, setIsCollapsed] = useState(false);
-  const [isEditingNotes, setIsEditingNotes] = useState(false);
-  const [notesDraft, setNotesDraft] = useState(group.notes || '');
   // 复活去重守卫（逻辑见 @/utils/openGuard，可单测）：单 tab 按 tabId 冷却去重，
   // 整组恢复按 group.id 加同类在途锁。组件卸载即丢弃，无需额外清理。
   const openGuardRef = useRef<OpenGuard | null>(null);
@@ -90,13 +76,12 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
   const { renderRows, placeholderHeight } = resolveRowWindow(group.tabs.length, isNearViewport);
 
   // 只在“不处于编辑态”时把外部值同步进草稿。
-  // 失败回滚会让 group.name/group.notes 短暂变回旧值（那正是我们要的），
+  // 失败回滚会让 group.name 短暂变回旧值（那正是我们要的），
   // 但如果这里无条件回写，用户正在输入框里的草稿会被回滚值抹掉——保存失败后
   // 恰恰是最需要保留草稿让人重试的时刻。
   useEffect(() => {
     if (!isEditing) setNewName(group.name);
-    if (!isEditingNotes) setNotesDraft(group.notes || '');
-  }, [group.name, group.notes, isEditing, isEditingNotes]);
+  }, [group.name, isEditing]);
 
   const handleNameChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     setNewName(e.target.value);
@@ -180,46 +165,6 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
       })
       .catch(error => logError('切换锁定失败:', error));
   }, [dispatch, group.id, showToast]);
-
-  const handleToggleFavorite = useCallback(() => {
-    const nextFavorite = !group.isFavorite;
-    dispatch(updateGroupFields({ groupId: group.id, fields: { isFavorite: nextFavorite } }));
-    void dispatch(persistGroupFields({ groupId: group.id, fields: { isFavorite: nextFavorite } }))
-      .then(action => {
-        if (persistGroupFields.rejected.match(action)) {
-          logError('收藏状态保存失败，已恢复原状态:', action.error);
-          showToast('收藏保存失败，状态已恢复', 'error');
-        }
-      })
-      .catch(error => logError('收藏状态保存失败:', error));
-    void trackProductEvent('session_favorited', {
-      sessionId: group.id,
-      sessionName: group.name,
-      isFavorite: nextFavorite,
-    });
-  }, [dispatch, group, showToast]);
-
-  const handleSaveNotes = useCallback(() => {
-    const trimmed = notesDraft.trim() || undefined;
-    dispatch(updateGroupFields({ groupId: group.id, fields: { notes: trimmed } }));
-    void dispatch(persistGroupFields({ groupId: group.id, fields: { notes: trimmed } }))
-      .then(action => {
-        if (persistGroupFields.rejected.match(action)) {
-          logError('备注保存失败，已恢复原备注:', action.error);
-          showToast('备注保存失败，内容已恢复', 'error');
-          setIsEditingNotes(true);
-          return;
-        }
-        setIsEditingNotes(false);
-      })
-      .catch(error => logError('备注保存失败:', error));
-    void trackProductEvent('session_note_saved', {
-      sessionId: group.id,
-      sessionName: group.name,
-      hasNotes: !!trimmed,
-      noteLength: trimmed?.length ?? 0,
-    });
-  }, [dispatch, group, notesDraft]);
 
   const openAllTabs = useCallback((inCurrentWindow: boolean) => {
     const allGuard = openAllGuardRef.current as OpenAllGuard;
@@ -401,17 +346,6 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
             />
           ) : (
             <div className="min-w-0 flex items-center gap-2">
-              {group.isFavorite && (
-                <span
-                  className="flex-shrink-0 text-amber-500 dark:text-amber-400"
-                  title="已收藏会话"
-                  aria-label="已收藏会话"
-                >
-                  <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="currentColor">
-                    <path d="M11.48 3.499a.562.562 0 011.04 0l2.125 5.111a.563.563 0 00.475.345l5.518.442c.499.04.701.663.321.988l-4.204 3.602a.563.563 0 00-.182.557l1.285 5.385a.562.562 0 01-.84.61l-4.725-2.885a.563.563 0 00-.586 0L6.982 20.54a.562.562 0 01-.84-.61l1.285-5.386a.563.563 0 00-.182-.557l-4.204-3.602a.563.563 0 01.321-.988l5.518-.442a.563.563 0 00.475-.345L11.48 3.5z" />
-                  </svg>
-                </span>
-              )}
               <h3
                 id={`tab-group-title-${group.id}`}
                 className="tab-group-title truncate cursor-pointer tab-group-title-hover transition-colors flat-interaction min-w-0"
@@ -491,26 +425,6 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
             </button>
           )}
 
-          <button
-            onClick={handleToggleFavorite}
-            className={`btn-icon p-1.5 micro-interaction-button ${group.isFavorite ? 'text-amber-500 hover:text-amber-600' : ''}`}
-            title={group.isFavorite ? '取消收藏会话' : '收藏会话'}
-            aria-label={group.isFavorite ? '取消收藏会话' : '收藏会话'}
-          >
-            <FavoriteIcon filled={!!group.isFavorite} />
-          </button>
-
-          {!group.isLocked && (
-            <button
-              onClick={() => setIsEditingNotes(current => !current)}
-              className="btn-icon theme-btn-hover p-1.5 micro-interaction-button"
-              title={group.notes ? '编辑会话备注' : '添加会话备注'}
-              aria-label={group.notes ? '编辑会话备注' : '添加会话备注'}
-            >
-              <NotesIcon />
-            </button>
-          )}
-
           {/* 锁定/解锁 */}
           <button
             onClick={handleToggleLock}
@@ -534,57 +448,6 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
           )}
         </div>
       </div>
-
-      {(group.notes || isEditingNotes) && (
-        <div className="px-4 pb-3">
-          {isEditingNotes ? (
-            <div className="space-y-2 rounded-lg border theme-border-default theme-note-bg p-3">
-              <label
-                htmlFor={`group-notes-${group.id}`}
-                className="block text-xs font-medium text-gray-600 dark:text-gray-300"
-              >
-                会话备注
-              </label>
-              <textarea
-                id={`group-notes-${group.id}`}
-                value={notesDraft}
-                onChange={event => setNotesDraft(event.target.value)}
-                onKeyDown={event => {
-                  if (event.key === 'Escape') {
-                    event.stopPropagation();
-                    setNotesDraft(group.notes || '');
-                    setIsEditingNotes(false);
-                  }
-                }}
-                placeholder="给这个会话留一句备注，例如这批标签页是为哪个项目、客户或研究主题准备的。"
-                className="w-full theme-radius-control theme-bg-elevated theme-border-default theme-focus border px-3 py-2 text-sm text-gray-900 focus:outline-none dark:text-gray-100"
-                rows={3}
-              />
-              <div className="flex items-center justify-end gap-2">
-                <button
-                  onClick={() => {
-                    setNotesDraft(group.notes || '');
-                    setIsEditingNotes(false);
-                  }}
-                  className="rounded-lg border border-gray-300 px-3 py-1.5 text-xs font-medium text-gray-600 transition-colors hover:bg-gray-100 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-700"
-                >
-                  取消
-                </button>
-                <button
-                  onClick={handleSaveNotes}
-                  className="theme-cta px-3 py-1.5 text-xs font-medium text-white transition-colors"
-                >
-                  保存备注
-                </button>
-              </div>
-            </div>
-          ) : (
-            <div className="rounded-lg border theme-border-default theme-note-bg px-3 py-2 text-sm text-gray-600 dark:text-gray-300">
-              {group.notes}
-            </div>
-          )}
-        </div>
-      )}
 
       {/* 标签列表。
           折叠态必须**不渲染**可交互子元素，而不是靠 CSS/aria 藏起来：
@@ -655,8 +518,6 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
   const basicPropsEqual =
     prevProps.group.id === nextProps.group.id &&
     prevProps.group.name === nextProps.group.name &&
-    prevProps.group.notes === nextProps.group.notes &&
-    prevProps.group.isFavorite === nextProps.group.isFavorite &&
     prevProps.group.isLocked === nextProps.group.isLocked &&
     prevProps.group.tabs.length === nextProps.group.tabs.length &&
     prevProps.group.updatedAt === nextProps.group.updatedAt &&

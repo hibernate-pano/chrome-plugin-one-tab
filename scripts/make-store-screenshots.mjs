@@ -36,13 +36,11 @@ function tab(groupId, url, title, ageHours) {
   };
 }
 
-function group(name, { notes, favorite = false, locked = false, order, ageHours, tabs }) {
+function group(name, { locked = false, order, ageHours, tabs }) {
   const id = crypto.randomUUID();
   return {
     id,
     name,
-    notes,
-    isFavorite: favorite,
     isLocked: locked,
     tabs: tabs.map(([url, title, age]) => tab(id, url, title, age ?? ageHours)),
     createdAt: iso(now - ageHours * 3600e3),
@@ -54,12 +52,11 @@ function group(name, { notes, favorite = false, locked = false, order, ageHours,
   };
 }
 
-// 演示数据定位：产品目标用户（重度浏览器使用者）的真实一天。会话名 + 备注 + 收藏 + 锁定
-// 都要出现，但不要摆满——留白才像真实使用中的列表。
+// 演示数据定位：产品目标用户（重度浏览器使用者）的真实一天。
+// 1.22.13 起「收藏」与「会话备注」已下线（负责人决定：非核心功能做减法），
+// 演示数据里不再注入这两项——否则重拍的商店截图会出现已不存在的 UI。
 const groups = [
   group('V2 同步架构评审', {
-    notes: 'P1 对账观察期结论周五同步；重点看墓碑 sweep 接线方案',
-    favorite: true,
     order: 1,
     ageHours: 2,
     tabs: [
@@ -89,7 +86,6 @@ const groups = [
     ],
   }),
   group('面试准备（进行中）', {
-    notes: '周五下午 3 点，二面。系统设计 + 同步协议',
     locked: true,
     order: 4,
     ageHours: 40,

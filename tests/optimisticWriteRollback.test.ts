@@ -56,7 +56,6 @@ function makeGroup(id: string, overrides: Record<string, unknown> = {}) {
     createdAt: NOW,
     updatedAt: NOW,
     isLocked: false,
-    isFavorite: false,
     notes: '',
     version: 3,
     ...overrides,
@@ -76,7 +75,7 @@ const helpers = () => import('@/store/slices/tabSliceHelpers');
 
 const groupOf = (store: { getState: () => { tabs: { groups: { id: string }[] } } }, id: string) =>
   store.getState().tabs.groups.find(g => g.id === id) as
-    | { name: string; isLocked: boolean; isFavorite: boolean; notes?: string; version: number; updatedAt: string }
+    | { name: string; isLocked: boolean; version: number; updatedAt: string }
     | undefined;
 
 // ── 重命名 ────────────────────────────────────────────────────────────────
@@ -191,49 +190,9 @@ describe('P1-5 锁定写失败：UI 不得停留在“已锁定”而 storage �
 });
 
 // ── 收藏 / 备注 ───────────────────────────────────────────────────────────
-describe('P1-5 收藏/备注写失败：只还原本次写过的字段', () => {
-  it('收藏写失败 → isFavorite 还原，notes 不被顺手清掉', async () => {
-    const { persistGroupFields, updateGroupFields } = await slice();
-    const store = await makeStore([makeGroup('g', { isFavorite: false, notes: '原本的备注' })]);
-
-    store.dispatch(updateGroupFields({ groupId: 'g', fields: { isFavorite: true } }));
-    assert.equal(groupOf(store, 'g')?.isFavorite, true);
-
-    store.dispatch(
-      persistGroupFields.rejected(
-        null,
-        'F1',
-        { groupId: 'g', fields: { isFavorite: true } },
-        { groupId: 'g', snapshot: { isFavorite: false } }
-      )
-    );
-
-    const g = groupOf(store, 'g');
-    assert.equal(g?.isFavorite, false, '收藏必须回到 storage 真值');
-    assert.equal(g?.notes, '原本的备注', '回滚只碰 isFavorite，不得覆盖未参与本次写入的字段');
-  });
-
-  it('备注写失败 → notes 还原，isFavorite 不被顺手改掉', async () => {
-    const { persistGroupFields, updateGroupFields } = await slice();
-    const store = await makeStore([makeGroup('g', { isFavorite: true, notes: '旧备注' })]);
-
-    store.dispatch(updateGroupFields({ groupId: 'g', fields: { notes: '新备注' } }));
-    store.dispatch(
-      persistGroupFields.rejected(
-        null,
-        'F2',
-        { groupId: 'g', fields: { notes: '新备注' } },
-        { groupId: 'g', snapshot: { notes: '旧备注' } }
-      )
-    );
-
-    const g = groupOf(store, 'g');
-    assert.equal(g?.notes, '旧备注');
-    assert.equal(g?.isFavorite, true);
-  });
-
-  it('四条写路径的 rejected 都必须写 state.error（供 UI/诊断读）', async () => {
-    const { persistGroupFields, toggleGroupLockAndSync, updateGroupNameAndSync } = await slice();
+describe('P1-5 写路径失败的错误信号', () => {
+  it('两条写路径（重命名 / 锁定）的 rejected 都必须写 state.error（供 UI/诊断读）', async () => {
+    const { toggleGroupLockAndSync, updateGroupNameAndSync } = await slice();
     const store = await makeStore([makeGroup('g')]);
 
     store.dispatch(
@@ -245,11 +204,6 @@ describe('P1-5 收藏/备注写失败：只还原本次写过的字段', () => {
       toggleGroupLockAndSync.rejected(null, 'E2', 'g', undefined as never)
     );
     assert.ok(store.getState().tabs.error, '锁定失败必须留错误信号');
-    assert.equal(store.getState().tabs.errorSource, 'action');
-    store.dispatch(
-      persistGroupFields.rejected(null, 'E3', { groupId: 'g', fields: { notes: 'x' } }, undefined as never)
-    );
-    assert.ok(store.getState().tabs.error, '本地偏好失败必须留错误信号');
     assert.equal(store.getState().tabs.errorSource, 'action');
   });
 });
@@ -303,15 +257,6 @@ describe('P1-5 快照纯函数：写前抓取、按键回滚', () => {
     assert.equal(snapshotGroupMeta(groups as never, 'nope'), null);
   });
 
-  it('snapshotGroupLocalFields 只取本次写入的键', async () => {
-    const { snapshotGroupLocalFields } = await helpers();
-    const groups = [makeGroup('g', { isFavorite: true, notes: 'N' })];
-    assert.deepEqual(snapshotGroupLocalFields(groups as never, 'g', { isFavorite: false }), {
-      isFavorite: true,
-    });
-    assert.deepEqual(snapshotGroupLocalFields(groups as never, 'g', { notes: 'x' }), { notes: 'N' });
-  });
-
   it('restoreGroupName 还原 name+version+updatedAt 但不动 isLocked', async () => {
     const { restoreGroupName } = await helpers();
     const group = makeGroup('g', { name: '新', version: 4, isLocked: true });
@@ -333,17 +278,16 @@ describe('P1-5 快照纯函数：写前抓取、按键回滚', () => {
 });
 
 // ── 组件接线（源码静态断言：别让 catch 变成空函数）──────────────────────────
-describe('P1-5 TabGroup 接线：四条写路径都必须有失败出口', () => {
+describe('P1-5 TabGroup 接线：写路径必须有失败出口', () => {
   const TAB_GROUP_SOURCE = readFileSync(
     resolve(dirname(fileURLToPath(import.meta.url)), '../src/components/tabs/TabGroup.tsx'),
     'utf8'
   );
 
-  it('重命名/锁定/收藏/备注都匹配了各自的 rejected action', () => {
+  it('重命名/锁定都匹配了各自的 rejected action', () => {
     for (const thunk of [
       'updateGroupNameAndSync',
       'toggleGroupLockAndSync',
-      'persistGroupFields',
     ]) {
       assert.match(
         TAB_GROUP_SOURCE,
@@ -355,16 +299,14 @@ describe('P1-5 TabGroup 接线：四条写路径都必须有失败出口', () =>
 
   it('失败必须提示用户（静默回滚 = 用户以为改成功了）', () => {
     const toasts = TAB_GROUP_SOURCE.match(/showToast\('[^']*失败[^']*', 'error'\)/g) ?? [];
-    assert.equal(toasts.length, 4, `期望 4 条失败提示，实际 ${toasts.length}：${toasts.join(',')}`);
+    assert.equal(toasts.length, 2, `期望 2 条失败提示，实际 ${toasts.length}：${toasts.join(',')}`);
   });
 
   it('保存失败后保持编辑态（用户能直接重试，而不是丢掉刚输入的内容）', () => {
     assert.match(TAB_GROUP_SOURCE, /重命名失败[\s\S]{0,200}setIsEditing\(true\)/);
-    assert.match(TAB_GROUP_SOURCE, /备注保存失败[\s\S]{0,300}setIsEditingNotes\(true\)/);
   });
 
   it('草稿只在非编辑态才被外部值覆盖（回滚不得抹掉用户正在输入的内容）', () => {
     assert.match(TAB_GROUP_SOURCE, /if \(!isEditing\) setNewName\(group\.name\)/);
-    assert.match(TAB_GROUP_SOURCE, /if \(!isEditingNotes\) setNotesDraft\(group\.notes/);
   });
 });

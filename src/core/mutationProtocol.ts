@@ -14,7 +14,6 @@ export type MutationOp =
   | { op: 'importGroups'; groups: TabGroup[] }
   | { op: 'renameGroup'; groupId: string; name: string }
   | { op: 'toggleGroupLock'; groupId: string }
-  | { op: 'updateGroupFields'; groupId: string; fields: { isFavorite?: boolean; notes?: string } }
   | { op: 'moveTab'; sourceGroupId: string; sourceIndex: number; targetGroupId: string; targetIndex: number; updateSourceInDrag?: boolean }
   | { op: 'cleanDuplicates' };
 

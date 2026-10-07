@@ -7,8 +7,6 @@ export const SCORE_WEIGHTS = {
   URL_PARTIAL: 30,
   GROUP_NAME_EXACT: 75,
   GROUP_NAME_PARTIAL: 40,
-  NOTES_EXACT: 60,
-  NOTES_PARTIAL: 30,
   PINNED_BONUS: 10,
 } as const;
 
@@ -18,7 +16,6 @@ export interface SearchOptions {
   exactMatch?: boolean;
   searchUrls?: boolean;
   searchTitles?: boolean;
-  searchNotes?: boolean;
   searchPinned?: boolean;
   domainFilter?: string;
   groupNameFilter?: string;
@@ -27,7 +24,7 @@ export interface SearchOptions {
 }
 
 export interface MatchDetail {
-  field: 'title' | 'url' | 'groupName' | 'notes';
+  field: 'title' | 'url' | 'groupName';
   matchedText: string;
   startIndex: number;
 }
@@ -109,7 +106,6 @@ export class AdvancedSearch {
       exactMatch = false,
       searchUrls = true,
       searchTitles = true,
-      searchNotes = true,
       searchPinned = true,
       domainFilter,
       groupNameFilter,
@@ -126,15 +122,9 @@ export class AdvancedSearch {
 
     groups.forEach(group => {
       const normalizedGroupName = normalizeText(group.name, caseSensitive);
-      const normalizedNotes = normalizeText(group.notes || '', caseSensitive);
       const groupNameMatchesQuery = exactMatch
         ? normalizedGroupName === searchTerm
         : normalizedGroupName.includes(searchTerm);
-      const notesMatchQuery = searchNotes && normalizedNotes
-        ? exactMatch
-          ? normalizedNotes === searchTerm
-          : normalizedNotes.includes(searchTerm)
-        : false;
 
       if (groupNameFilter) {
         const normalizedFilter = normalizeText(groupNameFilter, caseSensitive);
@@ -191,11 +181,6 @@ export class AdvancedSearch {
           score += exactMatch ? SCORE_WEIGHTS.GROUP_NAME_EXACT : SCORE_WEIGHTS.GROUP_NAME_PARTIAL;
         }
 
-        if (notesMatchQuery && group.notes) {
-          matches.push(buildMatchDetail('notes', group.notes, searchTerm, exactMatch, caseSensitive));
-          score += exactMatch ? SCORE_WEIGHTS.NOTES_EXACT : SCORE_WEIGHTS.NOTES_PARTIAL;
-        }
-
         if (matches.length === 0) {
           return;
         }
@@ -233,10 +218,6 @@ export class AdvancedSearch {
     groups.forEach(group => {
       if (group.name.toLowerCase().includes(normalizedInput)) {
         suggestions.add(group.name);
-      }
-
-      if (group.notes?.toLowerCase().includes(normalizedInput)) {
-        suggestions.add(group.notes);
       }
 
       group.tabs.forEach(tab => {

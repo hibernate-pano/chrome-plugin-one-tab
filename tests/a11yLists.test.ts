@@ -183,17 +183,6 @@ describe('表单控件：label 关联', () => {
     }
   });
 
-  it('会话备注 textarea 有 id，且 label 用 htmlFor 指过去', () => {
-    assert.ok(
-      /htmlFor=\{`group-notes-\$\{group\.id\}`\}/.test(TAB_GROUP),
-      '会话备注的 label 缺 htmlFor'
-    );
-    assert.ok(
-      /id=\{`group-notes-\$\{group\.id\}`\}/.test(TAB_GROUP),
-      '会话备注的 textarea 缺 id'
-    );
-  });
-
   it('搜索结果里的删除按钮有含标签标题的 aria-label', () => {
     assert.ok(
       /aria-label=\{`删除标签页: \$\{tab\.title\}`\}/.test(SEARCH_RESULT_LIST),
