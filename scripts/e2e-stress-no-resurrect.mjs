@@ -60,7 +60,7 @@ try {
     return ps;
   };
   let tabs = await openTabs(4);
-  await pageA.locator('[aria-label="保存当前窗口中的所有标签页为会话"]').first().click();
+  await pageA.locator('[aria-label="保存当前窗口中的所有标签页为会话，并关闭这些标签页"]').first().click();
   await pageA.waitForTimeout(2500);
   for (const p of tabs) await p.close();
   await manualUpload(pageA);
@@ -111,7 +111,7 @@ try {
 
   // ── A 再上传一个新会话（制造云端新数据）─────────────────────────
   tabs = await openTabs(2);
-  await pageA.locator('[aria-label="保存当前窗口中的所有标签页为会话"]').first().click();
+  await pageA.locator('[aria-label="保存当前窗口中的所有标签页为会话，并关闭这些标签页"]').first().click();
   await pageA.waitForTimeout(2500);
   for (const p of tabs) await p.close();
   await manualUpload(pageA);

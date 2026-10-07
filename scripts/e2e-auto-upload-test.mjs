@@ -86,7 +86,7 @@ try {
   }
 
   // 保存会话（关键：永远不点手动上传按钮）
-  await page.locator('[aria-label="保存当前窗口中的所有标签页为会话"]').first().click();
+  await page.locator('[aria-label="保存当前窗口中的所有标签页为会话，并关闭这些标签页"]').first().click();
   console.log('✅ saved (no manual upload clicked)');
 
   // 等 scheduleUpload(3000ms) 防抖 + 网络往返

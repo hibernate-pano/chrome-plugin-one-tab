@@ -171,7 +171,7 @@ export const readKvFromSW = ctx => withTimeout(swEval(ctx, async () => new Promi
 export async function manualUpload(page, settleMs = 5000) {
   await page.click('button[title="手动上传本地会话到云端"]', { timeout: 20_000 });
   await page.waitForSelector('.fixed h3:has-text("上传到云端")', { timeout: 20_000 });
-  await page.locator('.fixed h4:has-text("合并模式"), .fixed h4:has-text("覆盖模式")').first().click({ timeout: 20_000 });
+  await page.locator('.fixed h4:has-text("合并模式")').first().click({ timeout: 20_000 });
   await page.waitForTimeout(settleMs);
 }
 
@@ -179,7 +179,7 @@ export async function manualUpload(page, settleMs = 5000) {
 export async function manualDownload(page, settleMs = 5000) {
   await page.click('button[title="手动从云端下载会话到本地"]', { timeout: 20_000 });
   await page.waitForSelector('.fixed h3:has-text("下载到本地")', { timeout: 20_000 });
-  await page.locator('.fixed h4:has-text("合并模式"), .fixed h4:has-text("覆盖模式")').first().click({ timeout: 20_000 });
+  await page.locator('.fixed h4:has-text("合并模式")').first().click({ timeout: 20_000 });
   await page.waitForTimeout(settleMs);
 }
 

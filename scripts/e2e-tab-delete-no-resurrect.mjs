@@ -59,7 +59,7 @@ try {
     await p.waitForSelector('h1');
     opened.push(p);
   }
-  await pageA.locator('[aria-label="保存当前窗口中的所有标签页为会话"]').first().click();
+  await pageA.locator('[aria-label="保存当前窗口中的所有标签页为会话，并关闭这些标签页"]').first().click();
   await pageA.waitForTimeout(2500);
   for (const p of opened) await p.close(); // 关掉内容页，避免后续保存/打开被干扰
   await manualUpload(pageA);

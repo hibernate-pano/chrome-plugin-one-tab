@@ -102,13 +102,13 @@ async function waitOutUploadGuard(page, gapMs = 36000) {
 async function manualUpload(page) {
   await page.click('button[title="手动上传本地会话到云端"]');
   await page.waitForSelector('.fixed h3:has-text("上传到云端")');
-  await page.locator('.fixed h4:has-text("合并模式"), .fixed h4:has-text("覆盖模式")').first().click();
+  await page.locator('.fixed h4:has-text("合并模式")').first().click();
   await page.waitForTimeout(5000);
 }
 async function manualDownload(page) {
   await page.click('button[title="手动从云端下载会话到本地"]');
   await page.waitForSelector('.fixed h3:has-text("下载到本地")');
-  await page.locator('.fixed h4:has-text("合并模式"), .fixed h4:has-text("覆盖模式")').first().click();
+  await page.locator('.fixed h4:has-text("合并模式")').first().click();
   await page.waitForTimeout(5000);
 }
 
@@ -196,9 +196,9 @@ try {
     const pg = await ctxA.newPage(); await pg.goto(`${base}${p}`); await pg.waitForSelector('h1');
   }
   // 保存两次（新建两个会话）+ 重命名一次 = 让 A 的 seq 走到 ≥3
-  await pageA.locator('[aria-label="保存当前窗口中的所有标签页为会话"]').first().click();
+  await pageA.locator('[aria-label="保存当前窗口中的所有标签页为会话，并关闭这些标签页"]').first().click();
   await pageA.waitForTimeout(2500);
-  await pageA.locator('[aria-label="保存当前窗口中的所有标签页为会话"]').first().click();
+  await pageA.locator('[aria-label="保存当前窗口中的所有标签页为会话，并关闭这些标签页"]').first().click();
   await pageA.waitForTimeout(2500);
   for (const pg of ctxA.pages()) {
     if (pg !== pageA && !pg.url().startsWith('chrome-extension://')) await pg.close().catch(() => {});

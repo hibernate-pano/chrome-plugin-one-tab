@@ -44,6 +44,7 @@ const ORDER = [
   'e2e-clean-dup-import-fix.mjs',          // 清理重复标签不报错 + 导入往返不丢数据（纯本地）
   'e2e-deadhandle-supabase-timeout.mjs',   // IDB 死句柄自愈 + 请求级超时真会触发（需登录 + 缩短上界构建）
   'e2e-sync-test.mjs',                      // 基础：A 保存上传 → B 登录下载
+  'e2e-batched-sync-roundtrip.mjs',         // 1.22.14：分批上传 + 分页下载的真实后端往返（130 会话）
   'e2e-auto-upload-test.mjs',               // 保存后自动上传（云端直查）
   'e2e-hard-delete-empty-group.mjs',        // 硬删除空组：删最后一个 tab → 整组物理消失（1.22.0 核心语义）
   'e2e-tab-delete-no-resurrect.mjs',        // 标签级删除跨设备传播（组级 LWW 整组覆盖）
@@ -62,7 +63,10 @@ const ORDER = [
  * run-e2e 默认用裸 `node <script>`，对 .ts 的 import 会 ERR_UNKNOWN_FILE_EXTENSION，
  * 故这几个脚本额外挂 --import + --experimental-strip-types。
  */
-const NEEDS_TS_LOADER = new Set(['e2e-clean-dup-import-fix.mjs']);
+const NEEDS_TS_LOADER = new Set([
+  'e2e-clean-dup-import-fix.mjs',
+  'e2e-batched-sync-roundtrip.mjs', // 直接 import src 的 uploadTabGroups/downloadTabGroups
+]);
 
 /**
  * 需要「缩短的请求超时上界」的脚本。

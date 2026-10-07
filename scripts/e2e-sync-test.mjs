@@ -156,10 +156,19 @@ async function main() {
   const cleanupDirs = [deviceA.userDataDir, deviceB.userDataDir];
   const site = await startLocalSite();
 
+  const attachCapture = (page, label) => {
+    page.on('console', m => {
+      const t = m.text();
+      if (/error|失败|超时|exception|uncaught/i.test(t)) console.log(`[${label}][console.${m.type()}] ${t.slice(0, 300)}`);
+    });
+    page.on('pageerror', e => console.log(`[${label}][pageerror] ${String(e).slice(0, 300)}`));
+  };
+
   try {
     // ── 设备 A：注册 + 保存会话 + 上传 ──
     console.log('\n══ 设备 A：注册测试账号 ══');
     const pageA = await openPopup(deviceA.context, 'A');
+    attachCapture(pageA, 'A');
     await login(pageA, TEST_EMAIL, TEST_PASSWORD, { register: true });
     console.log('✅ A 已注册并登录');
 
@@ -174,7 +183,7 @@ async function main() {
 
     console.log('══ 设备 A：保存当前窗口为会话 ══');
     // 在真实标签页点击扩展 action 会打开 popup——直接在 popup 页面点保存按钮
-    const saveBtn = pageA.locator('[aria-label="保存当前窗口中的所有标签页为会话"]').first();
+    const saveBtn = pageA.locator('[aria-label="保存当前窗口中的所有标签页为会话，并关闭这些标签页"]').first();
     await saveBtn.click();
     // 等待群组数 ≥1
     await waitForSessionCount(pageA, 1);
@@ -189,7 +198,8 @@ async function main() {
     await pageA.locator('button[title="手动上传本地会话到云端"]').click({ timeout: 10000 });
     await pageA.waitForSelector('.fixed h3:has-text("上传到云端")', { timeout: 10000 });
     // 预览卡片是 div onClick（非 button）
-    await pageA.locator('.fixed h4:has-text("合并模式"), .fixed h4:has-text("覆盖模式")').first().click({ timeout: 10000 });
+    // 合并模式单击即执行；覆盖模式自 1.22.4 起需双击确认（单击只武装），脚本不选它
+    await pageA.locator('.fixed h4:has-text("合并模式")').first().click({ timeout: 10000 });
     console.log('✅ A 已完成上传（预览弹窗→确认）');
 
     // 等等上传完成：UI 弹窗关闭或出现提示
@@ -202,6 +212,7 @@ async function main() {
     // ── 设备 B：登录 + 下载 + 验证 ──
     console.log('\n══ 设备 B：登录同一账号 ══');
     const pageB = await openPopup(deviceB.context, 'B');
+    attachCapture(pageB, 'B');
     await login(pageB, TEST_EMAIL, TEST_PASSWORD);
     console.log('✅ B 已登录');
 
@@ -209,11 +220,22 @@ async function main() {
     await pageB.locator('button[title="手动从云端下载会话到本地"]').click({ timeout: 10000 });
     await pageB.waitForSelector('.fixed h3:has-text("下载到本地")', { timeout: 10000 });
     // 预览卡片是 div onClick（非 button）
-    await pageB.locator('.fixed h4:has-text("合并模式"), .fixed h4:has-text("覆盖模式")').first().click({ timeout: 10000 });
+    await pageB.locator('.fixed h4:has-text("合并模式")').first().click({ timeout: 10000 });
     console.log('✅ B 已确认下载');
     // 等等下载完成弹窗关闭
     await pageB.waitForSelector('.fixed h3:has-text("下载到本地")', { state: 'detached', timeout: 20000 }).catch(() => {});
     await pageB.waitForTimeout(3000);
+
+    // 调试探针：弹窗状态 + 错误横幅 + SW 日志
+    const dlg = await pageB.locator('.fixed h3').allInnerTexts().catch(() => []);
+    console.log(`[probe] B 弹窗 h3: ${dlg.join(' | ') || '(无弹窗)'}`);
+    const errBanner = await pageB.locator('[role="alert"], .text-red-500, .text-red-600').allInnerTexts().catch(() => []);
+    console.log(`[probe] B 错误提示: ${errBanner.map(t => t.slice(0, 120)).join(' | ') || '(无)'}`);
+    const bCountProbe = await pageB.evaluate(() => {
+      const m = document.body.innerText.match(/(\d+)\s*会话/);
+      return m ? m[1] : '(无匹配)';
+    });
+    console.log(`[probe] B 当前会话数文本: ${bCountProbe}`);
 
     console.log('══ 验证：B 本地数据应包含 A 保存的会话 ══');
     const bCount = await waitForSessionCount(pageB, 1);

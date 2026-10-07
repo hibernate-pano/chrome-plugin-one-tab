@@ -62,7 +62,7 @@ try {
   };
   for (let s = 0; s < 2; s++) {
     const pages = await mkTabs(2);
-    await pageA.locator('[aria-label="保存当前窗口中的所有标签页为会话"]').first().click();
+    await pageA.locator('[aria-label="保存当前窗口中的所有标签页为会话，并关闭这些标签页"]').first().click();
     await pageA.waitForTimeout(2500);
     for (const p of pages) await p.close();
   }

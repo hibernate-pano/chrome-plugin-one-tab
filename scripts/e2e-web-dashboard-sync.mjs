@@ -130,7 +130,7 @@ try {
   for (const p of ['/s1', '/s2']) {
     const pg = await extCtx.newPage(); await pg.goto(`${cbase}${p}`); await pg.waitForSelector('h1');
   }
-  await pageE.locator('[aria-label="保存当前窗口中的所有标签页为会话"]').first().click();
+  await pageE.locator('[aria-label="保存当前窗口中的所有标签页为会话，并关闭这些标签页"]').first().click();
   await pageE.waitForTimeout(2500);
   for (const pg of extCtx.pages()) if (pg !== pageE && !pg.url().startsWith('chrome-extension://')) await pg.close().catch(() => {});
   // 重命名成固定名字，便于网页版定位
@@ -145,7 +145,7 @@ try {
   await pageE.waitForTimeout(1500);
   await pageE.click('button[title="手动上传本地会话到云端"]');
   await pageE.waitForSelector('.fixed h3:has-text("上传到云端")');
-  await pageE.locator('.fixed h4:has-text("合并模式"), .fixed h4:has-text("覆盖模式")').first().click();
+  await pageE.locator('.fixed h4:has-text("合并模式")').first().click();
   await pageE.waitForTimeout(5000);
   console.log('✅ 扩展已播种并上传:', SEED_NAME);
 
@@ -249,7 +249,7 @@ try {
   // ── 6. 扩展下载 → 该会话在本地物理消失 ──────────────────────────────
   await pageE.click('button[title="手动从云端下载会话到本地"]');
   await pageE.waitForSelector('.fixed h3:has-text("下载到本地")');
-  await pageE.locator('.fixed h4:has-text("合并模式"), .fixed h4:has-text("覆盖模式")').first().click();
+  await pageE.locator('.fixed h4:has-text("合并模式")').first().click();
   await pageE.waitForTimeout(5000);
   step('断言⑤ 网页版删除后，扩展端活跃列表不再出现该会话');
   const activeNames = await pageE.locator('.tab-group-card h3').allTextContents().catch(() => []);
