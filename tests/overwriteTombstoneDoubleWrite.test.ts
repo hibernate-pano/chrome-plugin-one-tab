@@ -127,7 +127,7 @@ function missingColumnRes(col: string) {
 
 function matches(row: CloudRow, params: URLSearchParams): boolean {
   for (const [key, raw] of params.entries()) {
-    if (key === 'select' || key === 'limit' || key === 'on_conflict') continue;
+    if (key === 'select' || key === 'limit' || key === 'offset' || key === 'on_conflict') continue;
     if (raw.startsWith('eq.')) {
       if (String(row[key]) !== raw.slice(3)) return false;
     } else if (raw.startsWith('in.(')) {
@@ -178,10 +178,12 @@ globalThis.fetch = (async (input: any, init: RequestInit = {}) => {
       if (c === 'last_op_seq' && !cloud.columns.last_op_seq) return missingColumnRes(c);
     }
     const limitRaw = params.get('limit');
+    const offsetRaw = params.get('offset');
     const limit = limitRaw ? Number(limitRaw) : Number.POSITIVE_INFINITY;
+    const offset = offsetRaw ? Number(offsetRaw) : 0;
     const data = [...cloud.rows.values()]
       .filter(r => matches(r, params))
-      .slice(0, limit)
+      .slice(offset, offset + limit)
       .map(r => project(r, cols));
     return jsonRes(data);
   }

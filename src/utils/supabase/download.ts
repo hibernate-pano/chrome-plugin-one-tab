@@ -14,6 +14,7 @@ import { normalizeTabsData } from '@/core/normalizeTabsData';
 import { deserializeTab } from '@/core/tabDataCodec';
 import { supabase, checkSupabaseConfig } from './client';
 import { supportsOpStamp } from './probe';
+import { DOWNLOAD_PAGE_SIZE } from './idBatches';
 import { logError, logInfo, logWarn } from '../log';
 import { CRYPTO_CONCURRENCY, mapWithConcurrency } from '../concurrency';
 
@@ -184,21 +185,40 @@ export const downloadSync = {
       const selectColumns = (await supportsOpStamp())
         ? '*, last_op_device, last_op_seq, version'
         : '*';
-      const { data: groups, error } = await supabase
-        .from('tab_groups')
-        .select(selectColumns)
-        .eq('user_id', user.id)
-        .order('created_at', { ascending: false });
+      // 分页下载（1.22.14）。
+      //
+      // 此前是单次全表 select：每组带加密后的 tabs_data，几百组的响应体可以到
+      // 几 MB 甚至更大 —— 与上传整包 upsert 是同一类「大库同步永远超时」的根因。
+      // DOWNLOAD_PAGE_SIZE 行/页让单响应体回到安全量级；任一页失败即整体失败
+      // （fail-closed），绝不用半份数据继续合并 —— 半份下载 = 半库覆盖，那才是
+      // 真正的数据丢失。
+      //
+      // 排序保持 created_at DESC 与旧单次查询一致：分页窗口基于稳定排序，页间
+      // 无重叠/无遗漏。
+      const groups: any[] = [];
+      for (;;) {
+        const { data: page, error } = await supabase
+          .from('tab_groups')
+          .select(selectColumns)
+          .eq('user_id', user.id)
+          .order('created_at', { ascending: false })
+          .range(groups.length, groups.length + DOWNLOAD_PAGE_SIZE - 1);
 
-      if (error) {
-        logError('获取标签组失败:', error);
-        logError('错误详情:', {
-          code: error.code,
-          message: error.message,
-          details: error.details,
-          hint: error.hint
-        });
-        throw error;
+        if (error) {
+          logError('获取标签组失败:', error);
+          logError('错误详情:', {
+            code: error.code,
+            message: error.message,
+            details: error.details,
+            hint: error.hint
+          });
+          throw error;
+        }
+
+        groups.push(...(page ?? []));
+
+        // 短页 = 已取完：最后一页不足 PAGE_SIZE（或恰好为 0）时结束。
+        if (!page || page.length < DOWNLOAD_PAGE_SIZE) break;
       }
 
       logInfo(`从云端获取到 ${groups.length} 个标签组`);

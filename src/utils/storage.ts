@@ -13,7 +13,7 @@ import { applyImportGroups } from '@/core/mutationOps';
 import { sanitizeTabUrl } from './inputValidation';
 import { createSeqRegistry } from './seqRegistry';
 import { getDeviceId } from './deviceUtils';
-import { sendMutation } from '@/shared/mutationProtocol';
+import { sendMutation, TIMEOUT_REASON_PREFIX } from '@/shared/mutationProtocol';
 import type { OpStamp } from '@/core/opStamp';
 import { nanoid } from '@reduxjs/toolkit';
 
@@ -706,7 +706,17 @@ class ChromeStorage {
     if (hasMutationSender()) {
       const res = await sendMutation<TabGroup[]>({ op: 'importGroups', groups: incoming });
       if (!res.ok) {
-        // 明确失败就如实失败：不退回本地直写——那正是本方法要消灭的竞态路径。
+        // 超时 ≠ 未受理（1.22.14）：sendMutation 把超时折成 { ok:false,
+        // error:'操作超时…' }（它内部吞掉一切异常）。但超时的真实语义只是
+        // 「popup 不再等了」，命令已进入 SW 单写者队列且后台会继续执行完。
+        // 此时若报「导入失败」，用户重试同一份文件会导入出整份副本
+        // （applyImportGroups 永远新建组）。按「已受理」处理：让 reload 后的
+        // 列表展示真实结果；极端情况下列表短暂未含导入内容，等 SW 跑完再开即见。
+        if (typeof res.error === 'string' && res.error.startsWith(TIMEOUT_REASON_PREFIX)) {
+          logWarn('[Storage] 导入等待超时，命令已受理并在后台继续执行（不报失败，避免重复导入整份副本）');
+          return;
+        }
+        // 其余明确失败如实失败：不退回本地直写——那正是本方法要消灭的竞态路径。
         throw new Error(res.error ?? 'Service Worker 未接受导入');
       }
       return;
@@ -943,28 +953,44 @@ class ChromeStorage {
   /**
    * 从 OneTab 格式导入数据
    * @param text OneTab 格式的文本
-   * @returns 是否导入成功
+   * @returns ok=是否导入成功；失败时 reason=面向用户的原因说明（1.22.14 诚实化：
+   *   「解析失败」不再笼统一刀切——0 组与全无效 URL 是两种不同的失败，文案分开说）。
    */
-  async importFromOneTabFormat(text: string): Promise<boolean> {
+  async importFromOneTabFormat(text: string): Promise<{ ok: boolean; reason?: string }> {
     try {
       if (!text || typeof text !== 'string') {
-        throw new Error('无效的 OneTab 导入数据');
+        return { ok: false, reason: '导入内容为空，请重新选择 OneTab 导出的文本文件' };
       }
 
       // 解析 OneTab 格式的文本
       const parsedGroups = parseOneTabFormat(text);
 
-      if (parsedGroups.length === 0) {
-        throw new Error('解析失败或没有有效的标签组');
+      // 诚实化（1.22.14）：「解析出 N 个组」不等于「能导入 N 个组」。
+      // parseOneTabFormat 会为每个空行分隔块建组，URL 清洗不合格的行整行丢弃；
+      // applyImportGroups 再过滤空组。全部行无效时旧实现有两条坏路径：
+      //   - parsedGroups 为空 → 报「解析失败或没有有效的标签组」，用户不知道为什么；
+      //   - parsedGroups 非空但组内标签全被清洗掉 → 一路走到 SW 返回 ok，
+      //     弹「成功」并 reload，列表却什么都没多 —— 假成功比失败更误导。
+      // 现在在发送前判明「可导入组数」，为 0 时说明原因。
+      const importableGroups = parsedGroups.filter(group => group.tabs.length > 0);
+      if (importableGroups.length === 0) {
+        return {
+          ok: false,
+          reason:
+            parsedGroups.length === 0
+              ? '没有解析出任何标签组：请确认这是 OneTab 导出的文本（空行分隔会话，每行一个网址）'
+              : `解析出 ${parsedGroups.length} 个会话，但没有任何可导入的网址：全部行都不是可存储的 URL（如 chrome://、edge://、file:// 等内部或本地地址会被跳过）`,
+        };
       }
 
-      // 同 importData：交单写者串行化执行读-改-写（真值读 + 盖印记 + 上传调度）
-      await this.mergeImportedGroups(parsedGroups);
+      // 同 importData：交单写者串行化执行读-改-写（真值读 + 盖印记 + 上传调度）。
+      // 只发可导入组，全空的壳不必让 SW 再过滤一遍。
+      await this.mergeImportedGroups(importableGroups);
 
-      return true;
+      return { ok: true };
     } catch (error) {
       logError('从 OneTab 格式导入数据失败:', error);
-      return false;
+      return { ok: false, reason: error instanceof Error ? error.message : '导入失败，请重试' };
     }
   }
 

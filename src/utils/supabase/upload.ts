@@ -11,7 +11,7 @@ import { supabase, checkSupabaseConfig, getDeviceId } from './client';
 import { requireSessionUserId } from './session';
 import { logError, logInfo, logWarn } from '../log';
 import { supportsCloudTombstone, supportsDeletedAt, supportsOpStamp } from './probe';
-import { chunkIds } from './idBatches';
+import { chunkIds, UPSERT_ROW_BATCH_SIZE } from './idBatches';
 import { CRYPTO_CONCURRENCY, mapWithConcurrency } from '../concurrency';
 import {
   verifyUploadReadback,
@@ -167,6 +167,35 @@ export async function findConcededGroupIds(
     }
   }
   return conceded;
+}
+
+/**
+ * 分批 upsert（1.22.14）。
+ *
+ * 为什么不是单个 upsert：每组带加密后的 tabs_data，几百组的整包请求体可以到
+ * 几 MB 甚至更大，直接撞网关体积/超时上限 —— 这是「大库同步永远超时、失败后
+ * 60s alarm 无限整库重传」的直接元凶。50 行/批让单请求体回到安全量级，
+ * 且失败按批可归因（读回校验仍兜底整批一致性）。
+ *
+ * 语义与原单次 upsert 逐字段一致：onConflict=id、按顺序写、空数组不发请求
+ * （PostgREST 不接受空体）、返回最后一批的 data 与首个 error。
+ * 逐批串行而非并发：单写者队列里并发 upsert 只会加大内存峰值，收益趋零。
+ */
+async function upsertRowsInBatches(rows: SupabaseTabGroup[]): Promise<{
+  data: unknown;
+  error: { code?: string; message?: string; details?: unknown; hint?: unknown } | null;
+}> {
+  let data: unknown = null;
+  for (const batch of chunkIds(rows, UPSERT_ROW_BATCH_SIZE)) {
+    const { data: batchData, error } = await supabase
+      .from('tab_groups')
+      .upsert(batch as any, { onConflict: 'id' });
+    if (error) {
+      return { data, error };
+    }
+    data = batchData;
+  }
+  return { data, error: null };
 }
 
 export const uploadSync = {
@@ -591,11 +620,7 @@ export const uploadSync = {
           tabsDataLength: uniqueGroups[0]?.tabs_data?.length
         });
 
-        const result = uniqueGroups.length > 0
-          ? await supabase
-            .from('tab_groups')
-            .upsert(uniqueGroups as any, { onConflict: 'id' })
-          : { data: null, error: null };
+        const result = await upsertRowsInBatches(uniqueGroups);
 
         data = result.data;
         error = result.error;
@@ -604,11 +629,7 @@ export const uploadSync = {
         // 使用合并模式
         // 空批（全部组都在预检里认输给更新的云端墓碑）不发 upsert：
         // PostgREST 不接受空数组体，凭空造一个 400 只会把一次正常的收敛变成失败。
-        const result = uniqueGroups.length > 0
-          ? await supabase
-            .from('tab_groups')
-            .upsert(uniqueGroups as any, { onConflict: 'id' })
-          : { data: null, error: null };
+        const result = await upsertRowsInBatches(uniqueGroups);
 
         data = result.data;
         error = result.error;
@@ -642,10 +663,8 @@ export const uploadSync = {
                 group.user_id = refreshedSession.session!.user.id;
               });
 
-              // 重试上传
-              const retryResult = await supabase
-                .from('tab_groups')
-                .upsert(uniqueGroups as any, { onConflict: 'id' });
+              // 重试上传（同样分批：RLS 修复不改变请求体体积风险）
+              const retryResult = await upsertRowsInBatches(uniqueGroups);
 
               if (retryResult.error) {
                 logError('重试上传仍然失败:', retryResult.error);

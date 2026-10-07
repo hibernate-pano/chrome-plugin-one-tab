@@ -15,6 +15,26 @@
  */
 export const ID_BATCH_SIZE = 150;
 
+/**
+ * upsert 每批的行数上限（1.22.14）。
+ *
+ * 【为什么 upsert 也要切】ID_BATCH_SIZE 解决的是 `.in()` 过滤器的 URL 长度，
+ * 而 upsert 的风险在**请求体**：每组带一份加密后的 tabs_data，几十组就可能
+ * 到几 MB。此前整库塞进单个 upsert，大库直接撞网关体积/超时上限 —— 用户
+ * 看到的就是「清理重复后同步卡死报错、60s alarm 无限重传」。
+ * 50 行/批保证单请求体在正常库规模下远低于网关限制，同时请求数不至于碎。
+ * 失败按批隔离：某一批失败只重试该批，不再整库重来。
+ */
+export const UPSERT_ROW_BATCH_SIZE = 50;
+
+/**
+ * 下载分页的行数上限（1.22.14）。
+ *
+ * 与 UPSERT_ROW_BATCH_SIZE 对称：单响应体里的每组都带加密后的 tabs_data，
+ * 200 行/页让单页响应稳定在安全量级，同时不会把请求数打碎到无谓的开销。
+ */
+export const DOWNLOAD_PAGE_SIZE = 200;
+
 export function chunkIds<T>(ids: readonly T[], size: number = ID_BATCH_SIZE): T[][] {
   if (size <= 0) throw new Error('chunkIds: size must be > 0');
   const out: T[][] = [];

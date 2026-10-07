@@ -665,9 +665,9 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({ onClose, onOpenA
                     reader.onload = async (event) => {
                       try {
                         const text = event.target?.result as string;
-                        const success = await storage.importFromOneTabFormat(text);
+                        const importResult = await storage.importFromOneTabFormat(text);
                         e.target.value = '';
-                        if (success) {
+                        if (importResult.ok) {
                           void trackProductEvent('onetab_import_completed', {
                             importSource: 'onetab',
                             importedSessions: text.split('\n\n').filter(Boolean).length,
@@ -677,7 +677,7 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({ onClose, onOpenA
                         } else {
                           showAlert({
                             title: '导入失败',
-                            message: 'OneTab 数据导入失败',
+                            message: importResult.reason ?? 'OneTab 数据导入失败',
                             type: 'error',
                             onClose: () => { }
                           });

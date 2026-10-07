@@ -398,11 +398,71 @@ describe('P0-1 导入与后台同步合并的竞态', () => {
     ].join('\n');
 
     const ok = await storage.importFromOneTabFormat(text);
-    assert.equal(ok, true);
+    assert.equal(ok.ok, true, `导入应成功，实际 ${JSON.stringify(ok)}`);
     const ids = rawGroups().map(x => x.id);
     assert.ok(ids.includes('written-during'), 'OneTab 导入同样不得用陈旧缓存');
     const imported = rawGroups().find(x => x.tabs.some((t: any) => t.url === 'https://a.example.com'));
     assert.ok(imported?.lastOp, 'OneTab 导入的组必须带印记');
+  });
+
+  // ── 1.22.14 导入诚实化 ────────────────────────────────────────────────
+
+  it('导入等待超时不谎报失败：命令已受理，返回成功且不再发第二次 importGroups（重试会导入出整份副本）', async () => {
+    installChrome(true);
+    putRawGroups([mkGroup('existing')]);
+    // 模拟 popup 30s 协议超时：sendMessage 抛「操作超时…」
+    messageResponder = () => {
+      throw new Error('操作超时（超过 30 秒无响应）：importGroups');
+    };
+
+    const ok = await storage.importData({
+      version: '1.0.0',
+      timestamp: NOW,
+      data: { groups: [mkGroup('imported')], settings: undefined as any },
+    });
+
+    assert.equal(ok, true, '超时 ≠ 未受理：命令已进 SW 队列，报失败会诱导用户重试出重复副本');
+    const mutateCount = sentMessages.filter(m => m?.type === 'MUTATE' && m.data?.op === 'importGroups').length;
+    assert.equal(mutateCount, 1, '只应发出一次导入命令');
+  });
+
+  it('导入 SW 明确拒绝（非超时错误）仍如实报失败', async () => {
+    installChrome(true);
+    putRawGroups([mkGroup('existing')]);
+    messageResponder = () => {
+      throw new Error('SW 通道已关闭');
+    };
+
+    const ok = await storage.importData({
+      version: '1.0.0',
+      timestamp: NOW,
+      data: { groups: [mkGroup('imported')], settings: undefined as any },
+    });
+
+    assert.equal(ok, false);
+  });
+
+  it('OneTab 文件全是内部地址（chrome:// 等）时如实失败并说明原因，而不是假成功后列表空空', async () => {
+    installChrome(false);
+    backing.delete('tab_groups');
+    const text = 'chrome://version | Version\ncustom-tab://inapp-1 | 内部页\ncustom-tab://inapp-2 | 内部页2';
+
+    const result = await storage.importFromOneTabFormat(text);
+
+    assert.equal(result.ok, false);
+    assert.match(result.reason ?? '', /chrome:\/\/|可存储的 URL/, '失败原因必须解释 URL 清洗规则');
+    assert.equal(rawGroups().length, 0, '不得落盘任何空壳组');
+  });
+
+  it('OneTab 文件混有有效与无效 URL 时，有效部分照常导入', async () => {
+    installChrome(false);
+    const text = 'https://keep.example.com | 保留\ncustom-tab://inapp-1 | 丢弃';
+
+    const result = await storage.importFromOneTabFormat(text);
+
+    assert.equal(result.ok, true);
+    const imported = rawGroups().find(x => x.tabs.some((t: any) => t.url === 'https://keep.example.com'));
+    assert.ok(imported, '有效 URL 的行必须正常导入');
   });
 });
 

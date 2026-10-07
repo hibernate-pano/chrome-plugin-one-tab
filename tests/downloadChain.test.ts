@@ -141,7 +141,7 @@ function missingColumnRes(col: string) {
 /** 极简 PostgREST 过滤：user_id=eq.X、group_id=eq.X、id=in.(a,b)、deleted_at=lt.X */
 function matches(row: CloudRow, params: URLSearchParams): boolean {
   for (const [key, raw] of params.entries()) {
-    if (key === 'select' || key === 'limit' || key === 'on_conflict' || key === 'order') continue;
+    if (key === 'select' || key === 'limit' || key === 'offset' || key === 'on_conflict' || key === 'order') continue;
     if (raw.startsWith('eq.')) {
       if (String(row[key]) !== raw.slice(3)) return false;
     } else if (raw.startsWith('in.(')) {
@@ -235,11 +235,13 @@ globalThis.fetch = (async (input: any, init: RequestInit = {}) => {
       if (c !== '*' && cloud.columns[c] === false) return missingColumnRes(c);
     }
     const limitRaw = params.get('limit');
+    const offsetRaw = params.get('offset');
     const limit = limitRaw ? Number(limitRaw) : Number.POSITIVE_INFINITY;
+    const offset = offsetRaw ? Number(offsetRaw) : 0;
     const data = [...cloud.rows.values()]
       .filter(r => matches(r, params))
       .sort((a, b) => String(b.created_at ?? '').localeCompare(String(a.created_at ?? '')))
-      .slice(0, limit)
+      .slice(offset, offset + limit)
       .map(r => project(r, cols));
     return jsonRes(data);
   }
