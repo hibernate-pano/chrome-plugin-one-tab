@@ -9,13 +9,20 @@
 // 所以本文件跑真库，不是可选的锦上添花。
 //
 // 无 initdb/pg_ctl/psql 时整组 skip（并在报告里说明），不阻塞无 PG 的环境。
+// 这是 SKIP_REASON 唯一允许出现的情形。**装了二进制但库起不来**必须判红：
+// 起停器只抛错（带 pg.log 尾部），由 gate() 把失败翻译成每个用例的 fail ——
+// 从 before hook 直接抛会让整组变 cancelled，报告里 fail 0 看起来一切正常。
 import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
-import { mkdtempSync, mkdirSync, rmSync, readFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { readFileSync } from 'node:fs';
 import { join, resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import {
+  PG_BINARIES_PRESENT,
+  PG_MISSING_BINARIES_REASON,
+  startPostgres,
+  type RunningPg,
+} from './_helpers/pgHarness.ts';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const MIGRATIONS = [
@@ -26,34 +33,35 @@ const MIGRATIONS = [
   '20260910_fix_op_stamp_guard_strict_lt.sql',
 ];
 
-function findBinary(name: string): string | null {
-  try {
-    return execFileSync('which', [name], { encoding: 'utf8' }).trim() || null;
-  } catch {
-    return null;
-  }
-}
-
-const INITDB = findBinary('initdb');
-const PG_CTL = findBinary('pg_ctl');
-const PSQL = findBinary('psql');
-const PG_AVAILABLE = Boolean(INITDB && PG_CTL && PSQL);
-const SKIP_REASON = '未找到 initdb/pg_ctl/psql，跳过真实触发器集成测试（SQL 文本护栏仍会执行）';
+const SKIP_REASON = `${PG_MISSING_BINARIES_REASON}，跳过真实触发器集成测试`;
 
 const GID = '11111111-1111-1111-1111-111111111111';
 const USR = '22222222-2222-2222-2222-222222222222';
-const SOCKET_PORT = '5599';
+/** 首选端口；被占用时起停器向后探测（连续 20 个都占满则显式失败）。 */
+const PREFERRED_PORT = 5599;
 
-let workDir = '';
-let socketDir = '';
-let dataDir = '';
+let pg: RunningPg | null = null;
+let setupError: Error | null = null;
+
+/** 真库没起来时把每个用例判成 fail —— 不是 cancelled，也不是 skip。 */
+function ready(): RunningPg {
+  const err = setupError;
+  if (err) assert.fail(`Postgres 门禁启动/初始化失败，本用例不能算通过：\n${err.message}`);
+  const inst = pg;
+  assert.ok(inst, 'Postgres 门禁既没成功启动、也没留下失败原因（setup 逻辑有洞）');
+  return inst;
+}
+
+/** 门禁版 it：先确认真库可用，再跑用例；起不来 ⇒ 每个用例都红。 */
+function gate(name: string, fn: () => void): void {
+  it(name, () => {
+    ready();
+    fn();
+  });
+}
 
 function psql(sql: string): string {
-  return execFileSync(
-    PSQL as string,
-    ['-h', socketDir, '-p', SOCKET_PORT, '-U', 'postgres', '-d', 'postgres', '-tA', '-c', sql],
-    { encoding: 'utf8' }
-  ).trim();
+  return ready().psql(sql);
 }
 
 /** 执行一条 UPDATE，返回实际落库行数（BEFORE 触发器返回 NULL 时为 0 = 静默跳过） */
@@ -120,47 +128,42 @@ describe('op-stamp 守卫 SQL 文本护栏', () => {
 });
 
 // ── 真实 Postgres：触发器行为 ───────────────────────────────────────────────
-describe('op-stamp 守卫触发器（真实 Postgres）', { skip: PG_AVAILABLE ? false : SKIP_REASON }, () => {
-  before(() => {
-    workDir = mkdtempSync(join(tmpdir(), 'tapstack-pg-'));
-    dataDir = join(workDir, 'data');
-    socketDir = join(workDir, 'sock');
-    mkdirSync(socketDir);
+describe('op-stamp 守卫触发器（真实 Postgres）', { skip: PG_BINARIES_PRESENT ? false : SKIP_REASON }, () => {
+  before(async () => {
+    // 起库/初始化失败**不从 hook 抛**：node:test 会把整组标成 cancelled（fail 0 看起来全绿）。
+    // 记进 setupError，由 gate() 在每个用例里 assert.fail —— 库起不来必须是红的。
+    let inst: RunningPg | null = null;
+    try {
+      inst = await startPostgres({
+        label: 'op-stamp 守卫',
+        preferredPort: PREFERRED_PORT,
+        filePrefix: 'tapstack-pg-',
+      });
 
-    execFileSync(INITDB as string, ['-D', dataDir, '-U', 'postgres', '--auth=trust', '--encoding=UTF8', '--locale=C'], {
-      stdio: 'pipe',
-    });
-    execFileSync(
-      PG_CTL as string,
-      ['-D', dataDir, '-w', '-o', `-k ${socketDir} -c listen_addresses= -p ${SOCKET_PORT}`, '-l', join(workDir, 'pg.log'), 'start'],
-      { stdio: 'pipe' }
-    );
-
-    // 最小 fixtures：只保留迁移用到的列（真实库由 dashboard 建表，仓库无基线 schema）
-    psql(`CREATE TABLE public.tab_groups (
+      // 最小 fixtures：只保留迁移用到的列（真实库由 dashboard 建表，仓库无基线 schema）
+      inst.psql(`CREATE TABLE public.tab_groups (
             id uuid PRIMARY KEY, user_id uuid NOT NULL, name text,
             is_deleted boolean NOT NULL DEFAULT false,
             version integer NOT NULL DEFAULT 1,
             tabs_data jsonb, updated_at timestamptz,
             device_id text, last_sync timestamptz);`);
 
-    for (const file of MIGRATIONS) {
-      execFileSync(PSQL as string, ['-h', socketDir, '-p', SOCKET_PORT, '-U', 'postgres', '-d', 'postgres', '-q', '-f', join(ROOT, 'supabase/migrations', file)], {
-        stdio: 'pipe',
-      });
+      for (const file of MIGRATIONS) {
+        inst.psqlFile(join(ROOT, 'supabase/migrations', file));
+      }
+      pg = inst;
+    } catch (e) {
+      setupError = e instanceof Error ? e : new Error(String(e));
+      inst?.stop();
+      pg = null;
     }
   });
 
   after(() => {
-    try {
-      if (dataDir) execFileSync(PG_CTL as string, ['-D', dataDir, '-m', 'immediate', 'stop'], { stdio: 'pipe' });
-    } catch {
-      /* 清理失败不掩盖测试结论 */
-    }
-    if (workDir) rmSync(workDir, { recursive: true, force: true });
+    pg?.stop();
   });
 
-  it('两个触发器都挂上了', () => {
+  gate('两个触发器都挂上了', () => {
     const names = psql(
       `SELECT string_agg(tgname, ',' ORDER BY tgname) FROM pg_trigger
        WHERE tgrelid='public.tab_groups'::regclass AND NOT tgisinternal;`
@@ -170,7 +173,7 @@ describe('op-stamp 守卫触发器（真实 Postgres）', { skip: PG_AVAILABLE ?
 
   // P0-1 核心回归：removeTab 不盖组印记（规格 §5.3），重发时 NEW.last_op_seq = OLD.last_op_seq。
   // 用 <= 时这一行被整行吞掉 → tabs_data 里的标签墓碑永不上云。
-  it('同印记的标签级更新（removeTab 语义）必须落库', () => {
+  gate('同印记的标签级更新（removeTab 语义）必须落库', () => {
     resetRow();
     const rows = updateRows(
       `UPDATE tab_groups
@@ -181,12 +184,12 @@ describe('op-stamp 守卫触发器（真实 Postgres）', { skip: PG_AVAILABLE ?
     assert.deepEqual(currentRow().tabs_data, ['2:true']);
   });
 
-  it('更新的组级印记落库', () => {
+  gate('更新的组级印记落库', () => {
     resetRow();
     assert.equal(updateRows(`UPDATE tab_groups SET last_op_seq=101, version=2 WHERE id='${GID}';`), 1);
   });
 
-  it('严格更旧的印记被静默跳过，且数据不变（不报错）', () => {
+  gate('严格更旧的印记被静默跳过，且数据不变（不报错）', () => {
     resetRow();
     assert.equal(updateRows(`UPDATE tab_groups SET last_op_seq=50, version=2 WHERE id='${GID}';`), 0);
     assert.equal(currentRow().last_op_seq, 100, '被拒绝的写入不应改动行内容');
@@ -194,7 +197,7 @@ describe('op-stamp 守卫触发器（真实 Postgres）', { skip: PG_AVAILABLE ?
 
   // 墓碑翻转不豁免（规格 §5：墓碑同样参与比印记）。相等放行即可覆盖真实删除路径：
   // 客户端 deleteGroup 盖新印记、Web 局部 UPDATE = OLD、markCloudGroupsAsDeleted = OLD+1。
-  it('墓碑翻转：同印记放行、更新印记放行、更旧印记拒收', () => {
+  gate('墓碑翻转：同印记放行、更新印记放行、更旧印记拒收', () => {
     // 同印记（Web 控制台软删：局部 UPDATE）→ 放行
     resetRow();
     assert.equal(updateRows(`UPDATE tab_groups SET is_deleted=true, updated_at=now() WHERE id='${GID}';`), 1);
@@ -210,7 +213,7 @@ describe('op-stamp 守卫触发器（真实 Postgres）', { skip: PG_AVAILABLE ?
     assert.equal(currentRow().is_deleted, false);
   });
 
-  it('恢复墓碑：盖更新印记才生效（规格 §5：恢复天然赢过旧墓碑）', () => {
+  gate('恢复墓碑：盖更新印记才生效（规格 §5：恢复天然赢过旧墓碑）', () => {
     resetRow({ isDeleted: true });
     assert.equal(updateRows(`UPDATE tab_groups SET is_deleted=false, last_op_seq=101, version=3 WHERE id='${GID}';`), 1);
     assert.equal(currentRow().is_deleted, false);
@@ -221,7 +224,7 @@ describe('op-stamp 守卫触发器（真实 Postgres）', { skip: PG_AVAILABLE ?
     assert.equal(currentRow().is_deleted, true);
   });
 
-  it('OLD 无印记时放行（新客户端接管老行 / 两侧都无印记）', () => {
+  gate('OLD 无印记时放行（新客户端接管老行 / 两侧都无印记）', () => {
     resetRow({ stamp: null });
     assert.equal(updateRows(`UPDATE tab_groups SET last_op_seq=7, version=2 WHERE id='${GID}';`), 1, '新客户端接管老行被吞');
     resetRow({ stamp: null });
@@ -230,7 +233,7 @@ describe('op-stamp 守卫触发器（真实 Postgres）', { skip: PG_AVAILABLE ?
 
   // 复核发现的漏洞：客户端对「无印记实体」发送显式 NULL，会把云端印记清空（守卫从此失效）
   // 并把旧副本内容盖上去。故 OLD 有值 + NEW NULL 必须拒收。
-  it('OLD 有印记而 NEW 显式 NULL：拒收，不得清空印记、不得覆盖内容', () => {
+  gate('OLD 有印记而 NEW 显式 NULL：拒收，不得清空印记、不得覆盖内容', () => {
     resetRow();
     assert.equal(
       updateRows(`UPDATE tab_groups SET name='旧备份名字', last_op_seq=NULL, version=2 WHERE id='${GID}';`),
@@ -241,7 +244,7 @@ describe('op-stamp 守卫触发器（真实 Postgres）', { skip: PG_AVAILABLE ?
     assert.equal(row.last_op_seq, 100, '云端印记不得被 NULL 覆盖');
   });
 
-  it('同印记原样重发是幂等成功的（不再报错也不丢行）', () => {
+  gate('同印记原样重发是幂等成功的（不再报错也不丢行）', () => {
     resetRow();
     assert.equal(updateRows(`UPDATE tab_groups SET tabs_data=tabs_data, version=2 WHERE id='${GID}';`), 1);
     assert.equal(updateRows(`UPDATE tab_groups SET tabs_data=tabs_data, version=2 WHERE id='${GID}';`), 1);
@@ -249,7 +252,7 @@ describe('op-stamp 守卫触发器（真实 Postgres）', { skip: PG_AVAILABLE ?
 
   // Web 控制台（webApi.ts）的重命名/软删/恢复都是「局部 UPDATE」：payload 不带印记列，
   // 于是 NEW.last_op_seq 等于 OLD（而不是 NULL）。用 <= 时整条 Web 写入路径静默失效。
-  it('Web 控制台的局部 UPDATE（不带印记列）必须生效', () => {
+  gate('Web 控制台的局部 UPDATE（不带印记列）必须生效', () => {
     resetRow();
     assert.equal(updateRows(`UPDATE tab_groups SET name='Web 改名', updated_at=now() WHERE id='${GID}';`), 1);
     assert.equal(updateRows(`UPDATE tab_groups SET is_deleted=true, updated_at=now() WHERE id='${GID}';`), 1);
