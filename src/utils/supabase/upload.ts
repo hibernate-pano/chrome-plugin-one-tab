@@ -214,10 +214,14 @@ export const uploadSync = {
         throw new Error('会话已过期，请重新登录');
       }
 
-      // 获取用户的所有标签组
-      const { data: groups, error } = await supabase
+      // 获取用户的所有标签组。
+      // 1.22.15：{ count: 'exact' } 拿总行数交叉校验 —— 该查询没有分页，超过
+      // 网关 db-max-rows（默认 1000）时响应被静默截断，静默截断 = 静默漏迁。
+      // 与 download/probe 同一手法的 fail-closed：总数对不上就整体失败重试，
+      // 绝不把截断结果当完整数据继续迁移。
+      const { data: groups, error, count: groupsCount } = await supabase
         .from('tab_groups')
-        .select('*')
+        .select('*', { count: 'exact' })
         .eq('user_id', userId);
 
       if (error) {
@@ -229,6 +233,13 @@ export const uploadSync = {
           hint: error.hint
         });
         throw error;
+      }
+
+      if (groupsCount !== null && groups.length !== groupsCount) {
+        throw new Error(
+          `[migrateToJsonb] 读取结果不完整：取回 ${groups.length} 行 != 云端总行数 ${groupsCount}，` +
+            `疑似被网关 db-max-rows 截断。已中止迁移以避免静默漏迁（fail-closed）。`
+        );
       }
 
       logInfo(`找到 ${groups.length} 个标签组需要迁移`);

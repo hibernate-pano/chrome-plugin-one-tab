@@ -193,15 +193,39 @@ export const downloadSync = {
       // （fail-closed），绝不用半份数据继续合并 —— 半份下载 = 半库覆盖，那才是
       // 真正的数据丢失。
       //
-      // 排序保持 created_at DESC 与旧单次查询一致：分页窗口基于稳定排序，页间
-      // 无重叠/无遗漏。
+      // 排序：created_at DESC + id DESC。
+      //
+      // 【为什么必须有 id 这个 tiebreaker】（2026-10-07 实测的数据丢失）
+      // created_at 不是唯一键：OneTab 导入会给同一批所有组盖上同一个 `now`
+      // （oneTabFormatParser），快速连续保存也会撞在同一毫秒。当并列行数超过
+      // 一页时，Postgres 对「并列行之间」的跨查询顺序不给任何保证，offset 窗口
+      // 会重叠/跳过 —— 实测 450 行同 created_at 时，三次下载分别漏掉
+      // 113 / 114 / 105 个不同 id，而且因为是短页退出（page.length < PAGE_SIZE），
+      // 没有任何报错。漏掉的行会被当成「云端不存在」，本地旧副本随后上传覆盖
+      // 掉更新的云端版本 = 真丢失。
+      //
+      // 【id tiebreaker 消除的是什么、不消除的是什么】（1.22.15 如实化）
+      // tiebreaker 消除的只是「并列行跨查询顺序不稳定」：id 唯一 → 排序成为全序，
+      // 同一份冻结快照上反复执行同一窗口必然取到同一批行。
+      // 它**不**消除 offset 窗口本身的漂移：云端不是冻结快照，分页期间若有行
+      // 被并发写入/删除，窗口会整体平移，短页推断照样可能漏行或重行 —— 这类
+      // 漂移无法在 offset 分页内自证，所以下面用首个请求带回的 count(exact)
+      // 做交叉校验兜底：分页结束后累计行数 != 总行数即整体抛错（fail-closed），
+      // 绝不拿半份数据继续合并。
       const groups: any[] = [];
+      let totalCount: number | null = null;
       for (;;) {
-        const { data: page, error } = await supabase
+        const isFirstPage = groups.length === 0;
+        // 首个请求带 { count: 'exact' }：supabase-js 会在**同一个请求**里经
+        // PostgREST 的 Content-Range 带回总行数（零额外请求）。分页结束后拿它
+        // 与累计行数交叉校验 —— 这是 offset 窗口漂移（分页期间云端行数变化）
+        // 唯一能从客户端观测到的信号，见上面的注释。
+        const { data: page, error, count } = await supabase
           .from('tab_groups')
-          .select(selectColumns)
+          .select(selectColumns, isFirstPage ? { count: 'exact' } : {})
           .eq('user_id', user.id)
           .order('created_at', { ascending: false })
+          .order('id', { ascending: false })
           .range(groups.length, groups.length + DOWNLOAD_PAGE_SIZE - 1);
 
         if (error) {
@@ -215,11 +239,23 @@ export const downloadSync = {
           throw error;
         }
 
+        if (isFirstPage) totalCount = count ?? null;
         groups.push(...(page ?? []));
 
         // 短页 = 已取完：最后一页不足 PAGE_SIZE（或恰好为 0）时结束。
         if (!page || page.length < DOWNLOAD_PAGE_SIZE) break;
       }
+
+        // 分页截断交叉校验（1.22.15）：tiebreaker 只保证「同一冻结快照上窗口
+        // 稳定」，挡不住分页期间云端行数变化或网关 db-max-rows 截断。两者都
+        // 会表现为「累计行数 != 首个请求带回的总行数」——此时绝不能把半份数据
+        // 交给合并（半份下载 = 半库覆盖，后续回写即真丢失），整体失败重试。
+        if (totalCount !== null && groups.length !== totalCount) {
+          throw new Error(
+            `[download] 分页结果不完整：累计 ${groups.length} 行 != 云端总行数 ${totalCount}，` +
+              `分页期间云端行数发生变化或响应被网关截断。已中止本次下载（fail-closed）。`
+          );
+        }
 
       logInfo(`从云端获取到 ${groups.length} 个标签组`);
 
@@ -356,12 +392,25 @@ export const downloadSync = {
       for (const group of tabGroups) {
         if (group.tabs.length === 0) {
           try {
-            const { data: tabs, error: tabError } = await supabase
+            // { count: 'exact' } 同样在这里拿总行数：网关 db-max-rows（默认
+            // 1000）会静默截断这个响应 —— 拿**截断后**的 tabs.length 当分母，
+            // 还原率恒为 1.0，判据被架空，截断组会被接受并回写云端。用云端
+            // 自报的总行数交叉校验，截断的组并入 truncatedByTabsTable 整个拿掉
+            // （与上面的「截断的组整组跳过」同一策略）。
+            const { data: tabs, error: tabError, count: tabsCount } = await supabase
               .from('tabs')
-              .select('*')
+              .select('*', { count: 'exact' })
               .eq('group_id', group.id as string);
 
             if (!tabError && tabs && tabs.length > 0) {
+              if (tabsCount !== null && tabs.length !== tabsCount) {
+                logError(
+                  `标签组 ${group.id} 的 tabs 表回填被截断：取回 ${tabs.length} 行 != 云端总行数 ${tabsCount}` +
+                    `（疑似网关 db-max-rows 截断）。已跳过该组以保护云端数据不被截断回写`
+                );
+                truncatedByTabsTable.add(group.id);
+                continue;
+              }
               // 同上：拒绝危险 URL
               const safeTabs: typeof group.tabs = [];
               for (const tab of tabs as any[]) {
@@ -378,10 +427,13 @@ export const downloadSync = {
                   pinned: tab.pinned ?? false,
                 });
               }
-              if (!isRestoreRateAcceptable(safeTabs.length, tabs.length)) {
+              // 分母用云端自报的真实总行数（tabsCount），不是被截断后的
+              // tabs.length —— 否则截断会把比值抬高到 1.0，判据形同虚设。
+              const totalRows = tabsCount ?? tabs.length;
+              if (!isRestoreRateAcceptable(safeTabs.length, totalRows)) {
                 logError(
-                  `标签组 ${group.id} 从 tabs 表回填时 ${tabs.length} 行有 ${tabs.length - safeTabs.length} 行无法还原` +
-                    `（URL 未通过安全校验），还原率 ${(safeTabs.length / tabs.length).toFixed(2)} ` +
+                  `标签组 ${group.id} 从 tabs 表回填时 ${totalRows} 行有 ${totalRows - safeTabs.length} 行无法还原` +
+                    `（URL 未通过安全校验），还原率 ${(safeTabs.length / totalRows).toFixed(2)} ` +
                     `低于阈值 ${MIN_RESTORABLE_TAB_RATIO}，已跳过该组以保护云端数据不被截断回写`
                 );
                 truncatedByTabsTable.add(group.id);

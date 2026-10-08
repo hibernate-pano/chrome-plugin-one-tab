@@ -152,6 +152,15 @@ export async function supportsOpStamp(): Promise<boolean> {
 // 列集合按 supportsOpStamp / supportsCloudTombstone 探测结果组装：
 // 未迁移的云端带上不存在的列会报 42703 / PGRST204，失败时回退最小列。
 
+/**
+ * digest 分页的每页行数。
+ *
+ * 必须严格小于网关 db-max-rows（PostgREST 默认 1000）：页内行数一旦触及上限，
+ * 网关会**静默截断**响应（不报错），单页内部没有短页信号可用 —— 这是分页
+ * 本身防不住的洞，由 queryAll 里的 count 交叉校验兜底。500 留一倍余量。
+ */
+export const DIGEST_PAGE_SIZE = 500;
+
 export interface TabGroupDigest {
   id: string;
   updated_at: string;
@@ -177,19 +186,63 @@ export async function fetchTabGroupsDigest(): Promise<TabGroupDigest[]> {
   if (tombstoneSupported) columns += ', is_deleted';
   if (stampSupported) columns += ', last_op_device, last_op_seq';
 
-  const query = async (cols: string) =>
-    supabase.from('tab_groups').select(cols).eq('user_id', uid);
+  /**
+   * 按固定顺序分页拉取全部指纹行（主路径与 42703 回退路径共用）。
+   *
+   * 【为什么要分页】此前是单次无序 select：行数超过网关 db-max-rows（默认
+   * 1000）时响应被**静默截断**（不报错）。截断后的 digest 若恰好与本地快照
+   * 一致，hasRemoteChanges（syncDecision.ts）返回 false → SyncEngine 判
+   * up_to_date，本该修复差异的那次全量下载永远不会发生 —— 探活必须自己
+   * 先保证完整性。
+   *
+   * 顺序固定为 id ASC（唯一键 → 全序），offset 窗口才能跨请求稳定拼接。
+   *
+   * 【为什么要 count 交叉校验】首个请求带 { count: 'exact' }：supabase-js
+   * 会在**同一个请求**里经 PostgREST 的 Content-Range 带回总行数（零额外
+   * 请求）。分页结束后若累计行数 ≠ 总行数，说明有响应仍被截断（或分页期间
+   * 云端行数变化）——此时 digest 不可信，必须 throw。方向是安全的：
+   * fetchTabGroupsDigest 的调用契约就是「失败 → fail-open 走全量下载」，
+   * 宁可多一次全量，也绝不交出一份可能漏行的 digest 让引擎误判 up_to_date。
+   */
+  const queryAll = async (cols: string): Promise<TabGroupDigest[]> => {
+    const out: TabGroupDigest[] = [];
+    let count: number | null = null;
+    for (let from = 0; ; from += DIGEST_PAGE_SIZE) {
+      const isFirstPage = from === 0;
+      // 首个请求带 count=exact 拿总行数；后续页不再要（同一份数据里 count
+      // 若中途变化，短页推断与最终交叉校验都无法自洽，只能整体重试）。
+      const req = supabase
+        .from('tab_groups')
+        .select(cols, isFirstPage ? { count: 'exact' } : {})
+        .eq('user_id', uid)
+        .order('id', { ascending: true })
+        .range(from, from + DIGEST_PAGE_SIZE - 1);
+      const { data, error, count: c } = await req;
+      if (error) throw error;
+      if (isFirstPage) count = c ?? null;
+      out.push(...((data ?? []) as unknown as TabGroupDigest[]));
+      if (!data || data.length < DIGEST_PAGE_SIZE) break; // 短页 = 已取完
+    }
+    if (count !== null && out.length !== count) {
+      throw new Error(
+        `[digest] 分页结果不完整：累计 ${out.length} 行 != 云端总行数 ${count}，` +
+          `疑似被网关 db-max-rows 截断（或分页期间行数变化）。fail-open：抛错走全量下载。`
+      );
+    }
+    return out;
+  };
 
-  const { data, error } = await query(columns);
-  if (!error) return ((data ?? []) as unknown) as TabGroupDigest[];
-
-  // 未迁移 schema（42703 / PGRST204）→ 回退最小列；其他错误直接抛出
-  const msg = `${error.code ?? ''} ${error.message ?? ''}`;
-  if (/42703|PGRST204|column/i.test(msg) && columns !== 'id, updated_at') {
-    logWarn(`[digest] 指纹列查询失败，回退最小列重试: ${msg}`);
-    const fallback = await query('id, updated_at');
-    if (fallback.error) throw fallback.error;
-    return ((fallback.data ?? []) as unknown) as TabGroupDigest[];
+  // 未迁移 schema（42703 / PGRST204）→ 回退最小列整段重拉；其他错误直接抛出。
+  // 回退与主路径共用 queryAll：同样的排序、分页与 count 截断检测，两条路径
+  // 都不会被 db-max-rows 静默截断。
+  try {
+    return await queryAll(columns);
+  } catch (error: any) {
+    const msg = `${error?.code ?? ''} ${error?.message ?? ''}`;
+    if (/42703|PGRST204|column/i.test(msg) && columns !== 'id, updated_at') {
+      logWarn(`[digest] 指纹列查询失败，回退最小列重试: ${msg}`);
+      return await queryAll('id, updated_at');
+    }
+    throw error;
   }
-  throw error;
 }
