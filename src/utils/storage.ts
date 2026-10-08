@@ -10,6 +10,7 @@ import { logError, logWarn } from './log';
 // 纯函数在 @/core/mutationOps，与 mutationHandlers 走的是同一份实现，
 // 本地兜底（无 SW 语境）与 SW 语义不可能漂移。
 import { applyImportGroups } from '@/core/mutationOps';
+import { normalizeImportedGroup } from '@/core/normalizeTabsData';
 import { sanitizeTabUrl } from './inputValidation';
 import { createSeqRegistry } from './seqRegistry';
 import { getDeviceId } from './deviceUtils';
@@ -746,13 +747,20 @@ class ChromeStorage {
     return { d: await getDeviceId(), s: await seq.nextSeq() };
   }
 
+  /**
+   * 上次上传时间。
+   *
+   * 【为什么读失败必须抛】（2026-10-07 审查）它和 getPendingUpload 在**同一个
+   * Promise.all** 里被 downloadAndMerge 读取，用来决定「能不能安全下载」。
+   * 之前这里是 `catch { return null }`，而 null 的语义是「从未上传过」——
+   * 于是一次瞬时读失败（死句柄看门狗 abort / quota / 事务 abort）会被当成
+   * 「保护窗口不存在」，35s 的 recent_upload_guard 静默失效，下载就能覆盖掉
+   * 本地未推送的新状态。同一表达式里的另一个判据已经改成 fail-closed（抛错），
+   * 这一个必须同口径，否则同一个故障在半个表达式上被挡住、在另一半上放行。
+   */
   async getLastUploadTime(): Promise<string | null> {
-    try {
-      await this.ensureVersion();
-      return (await kvGet<string>(STORAGE_KEYS.LAST_UPLOAD_TIME)) || null;
-    } catch {
-      return null;
-    }
+    await this.ensureVersion();
+    return (await kvGet<string>(STORAGE_KEYS.LAST_UPLOAD_TIME)) || null;
   }
 
   async setLastUploadTime(time: string): Promise<void> {
@@ -928,7 +936,38 @@ class ChromeStorage {
         throw new Error('无效的导入数据格式');
       }
 
-      await this.mergeImportedGroups(data.data.groups);
+      // 归一化（2026-10-07）：JSON 备份是**用户手上的文件**，形状不可信 ——
+      // 旧版本/云端导出可能用 `tabs_data` 而不是 `tabs`，而下游
+      // applyImportGroups 会直接 group.tabs.reduce(...)，一旦缺失就整次导入抛异常
+      // （用户看到「导入失败」却不知道原因，而文件其实是好的）。
+      // 下载路径早就在用 normalizeTabsData 处理同一类形状，导入路径此前没有。
+      const groups = data.data.groups.map(normalizeImportedGroup);
+
+      // 诚实化（2026-10-07 补漏）：与 importFromOneTabFormat 同一处判据 ——
+      // 「有 N 个组」不等于「能导入 N 个组」。applyImportGroups 会把 sanitizeTabUrl
+      // 不通过的标签整条丢弃、并滤掉因此变空的组；若所有组都这样，旧实现一路
+      // 返回 true，UI 弹「成功」并 reload，列表却什么都没多 —— 假成功比失败更误导。
+      // 1.22.14 只修了 OneTab 那条路，JSON 备份这条路漏了。
+      const hasImportableGroup = groups.some(
+        group =>
+          Array.isArray(group?.tabs) &&
+          group.tabs.some(tab => sanitizeTabUrl(tab?.url) !== null)
+      );
+      if (!hasImportableGroup) {
+        logWarn(
+          `[Storage] 导入数据里没有可导入的标签组：${groups.length} 个组全部为空或只含不可存储的 URL`
+        );
+        // 这里的 early return（false）**有意不合并 settings**：全不可导入时
+        // 导入判定为「失败」，若仍悄悄改写设置，用户会看到「导入失败」的提示、
+        // 设置却已经变了 —— 报失败的同时改状态比不改更糟（与整次导入的原子
+        // 期望一致：失败 = 什么都没动）。
+        // 注意这是 1.22.15 引入的行为变化：旧版本在这条路径上仍会合并 settings。
+        // 若要恢复旧行为，把这段 early return 移到 settings 合并之后即可，
+        // 但需要先重新论证「失败提示 + 设置被改」的组合是否可接受。
+        return false;
+      }
+
+      await this.mergeImportedGroups(groups);
 
       // 如果有设置数据，则合并设置
       if (data.data.settings) {

@@ -682,3 +682,275 @@ describe('P1-4 删除广播队列：写失败不得被静默吞掉', () => {
     assert.deepEqual(await kvGet<string[]>('pending_purge_ids'), ['legacy-1'], '旧队列键未被销毁');
   });
 });
+
+// ════════════════════════════════════════════════════════════════════════
+// 读取失败必须 fail-closed：不得把「读不到」翻译成「没有」（2026-10-07 审查）
+//
+// 这两条都在同一类缺陷上：一个 try/catch 把「我读不出来」悄悄变成
+// 「答案是：不存在/没做过」，于是下游的**保护性**分支被静默关掉。
+// 与 getPendingUpload 的既定纪律保持一致（那里已改成抛错并有守卫）。
+// ════════════════════════════════════════════════════════════════════════
+describe('getLastUploadTime：读失败必须抛，不得返回 null', () => {
+  it('read 失败时抛出，而不是把「读不到」当成「从未上传过」', async () => {
+    installChrome(true);
+    failReadKeys = new Set(['last_upload_time']);
+    try {
+      await assert.rejects(
+        () => storage.getLastUploadTime(),
+        /simulated read failure/,
+        'null 的语义是「从未上传过」—— 它会把 35 秒的 recent_upload_guard 静默关掉。' +
+          'downloadAndMerge 在同一个 Promise.all 里读这个判据，读不到必须让 precheck 走 fail-closed。'
+      );
+    } finally {
+      failReadKeys = new Set();
+    }
+  });
+
+  it('正常路径仍返回已记录的时间（改成抛错不得破坏 happy path）', async () => {
+    installChrome(true);
+    await storage.setLastUploadTime(NOW);
+    assert.equal(await storage.getLastUploadTime(), NOW);
+  });
+
+  it('从未设置过时返回 null（合法值，必须与「读失败」区分开）', async () => {
+    installChrome(true);
+    // 本文件的内存 IDB 不随用例重置，前一条用例写过这个键 —— 显式清掉再断言。
+    backing.delete('last_upload_time');
+    assert.equal(await storage.getLastUploadTime(), null);
+  });
+});
+
+describe('importData：全不可导入时必须如实失败（不得假成功）', () => {
+  function mkAllUnstorable(id: string) {
+    return mkGroup(id, {
+      tabs: [
+        { id: `${id}-t1`, url: 'chrome://settings', title: 'x', pinned: false },
+        { id: `${id}-t2`, url: 'javascript:void(0)', title: 'y', pinned: false },
+      ],
+    });
+  }
+
+  it('JSON 备份里所有标签都是不可存储 URL 时返回 false，而不是「成功但列表没变」', async () => {
+    installChrome(true);
+    putRawGroups([mkGroup('existing')]);
+    messageResponder = () => ({ ok: true, payload: [] });
+
+    const ok = await storage.importData({
+      version: '1.0.0',
+      timestamp: NOW,
+      data: {
+        groups: [mkAllUnstorable('bad1'), mkAllUnstorable('bad2')],
+        settings: undefined as any,
+      },
+    });
+
+    assert.equal(
+      ok,
+      false,
+      '全部组都不可导入时必须如实失败 —— 1.22.14 只修了 OneTab 那条路，JSON 备份这条漏了，' +
+        '表现为弹「成功」+ reload 后列表什么都没多'
+    );
+  });
+
+  it('只要有一个可导入组就照常成功（门不能收得过紧）', async () => {
+    installChrome(true);
+    putRawGroups([mkGroup('existing')]);
+    messageResponder = () => ({ ok: true, payload: [] });
+
+    const ok = await storage.importData({
+      version: '1.0.0',
+      timestamp: NOW,
+      data: {
+        groups: [mkAllUnstorable('bad1'), mkGroup('good')],
+        settings: undefined as any,
+      },
+    });
+
+    assert.equal(ok, true, '混有可导入组时不得整体判失败');
+  });
+});
+
+// ════════════════════════════════════════════════════════════════════════
+// 旧备份文件的形状容错（2026-10-07）
+//
+// 【本文件要防的那类 bug】JSON 备份是**用户手上的文件**，可能来自旧版本、
+// 手工编辑、或别的工具。而 applyImportGroups 直接 group.tabs.reduce(...) ——
+// 只要组里没有 `tabs`（旧版本/云端导出用的是 `tabs_data`），整次导入就抛
+// "Cannot read properties of undefined (reading 'reduce')"，importData 返回
+// false，用户看到「导入失败」却无从得知原因，**而他的文件其实是好的**。
+// 下载路径早就用 normalizeTabsData 处理同一类形状，导入路径此前没有。
+// ════════════════════════════════════════════════════════════════════════
+describe('导入旧备份：形状不可信，但必须能进得来', () => {
+  /** 断言「发往 SW 的 importGroups 载荷」里第 n 组的标签 URL 集合 */
+  function sentImportUrls(): string[][] {
+    const mutate = sentMessages.filter(m => m?.type === 'MUTATE' && m.data?.op === 'importGroups');
+    assert.equal(mutate.length, 1, `应恰好发出 1 条 importGroups（实际 ${mutate.length}）`);
+    return (mutate[0].data.groups as any[]).map(g => g.tabs.map((t: any) => t.url));
+  }
+
+  it('旧形状 {tabs_data:[...]} 不再抛异常，标签完整送达（此前整次导入失败）', async () => {
+    installChrome(true);
+    putRawGroups([mkGroup('existing')]);
+    messageResponder = () => ({ ok: true, payload: [] });
+
+    const ok = await storage.importData({
+      version: '1.0.0',
+      timestamp: NOW,
+      data: {
+        groups: [
+          {
+            id: 'legacy',
+            name: '旧版备份',
+            tabs_data: [
+              { id: 't1', url: 'https://legacy.example.com', title: 'L', created_at: NOW, last_accessed: NOW },
+            ],
+          } as any,
+        ],
+        settings: undefined as any,
+      },
+    });
+
+    assert.equal(ok, true, 'tabs_data 形状必须能导入（此前抛 reduce of undefined）');
+    assert.deepEqual(sentImportUrls(), [['https://legacy.example.com']]);
+  });
+
+  it('标签元素是云端 snake_case 时，时间戳映射到本地 camelCase（不再丢）', async () => {
+    installChrome(true);
+    putRawGroups([mkGroup('existing')]);
+    messageResponder = () => ({ ok: true, payload: [] });
+
+    await storage.importData({
+      version: '1.0.0',
+      timestamp: NOW,
+      data: {
+        groups: [
+          {
+            id: 'snake',
+            name: 'S',
+            created_at: NOW,
+            tabs: [
+              {
+                id: 't1',
+                url: 'https://snake.example.com',
+                title: 'S',
+                created_at: NOW,
+                last_accessed: LATER,
+              },
+            ],
+          } as any,
+        ],
+        settings: undefined as any,
+      },
+    });
+
+    const mutate = sentMessages.filter(m => m?.type === 'MUTATE' && m.data?.op === 'importGroups');
+    const tab = (mutate[0].data.groups as any[])[0].tabs[0];
+    assert.equal(tab.createdAt, NOW, 'created_at 必须映射成 createdAt');
+    assert.equal(tab.lastAccessed, LATER, 'last_accessed 必须映射成 lastAccessed');
+  });
+
+  it('嵌套 wrapper {tabs_data:{tabs:[...]}} 也能恢复出标签', async () => {
+    installChrome(true);
+    putRawGroups([mkGroup('existing')]);
+    messageResponder = () => ({ ok: true, payload: [] });
+
+    const ok = await storage.importData({
+      version: '1.0.0',
+      timestamp: NOW,
+      data: {
+        groups: [
+          {
+            id: 'wrap',
+            name: 'W',
+            tabs_data: {
+              tabs: [{ id: 't1', url: 'https://wrapped.example.com', title: 'W', created_at: NOW, last_accessed: NOW }],
+            },
+          } as any,
+        ],
+        settings: undefined as any,
+      },
+    });
+
+    assert.equal(ok, true);
+    assert.deepEqual(sentImportUrls(), [['https://wrapped.example.com']]);
+  });
+
+  it('缺 name 的组给可读回退，不留空标题卡片', async () => {
+    installChrome(true);
+    putRawGroups([mkGroup('existing')]);
+    messageResponder = () => ({ ok: true, payload: [] });
+
+    await storage.importData({
+      version: '1.0.0',
+      timestamp: NOW,
+      data: {
+        groups: [{ id: 'noname', tabs: [{ id: 't1', url: 'https://a.example.com', title: 'A', created_at: NOW, last_accessed: NOW }] } as any],
+        settings: undefined as any,
+      },
+    });
+
+    const mutate = sentMessages.filter(m => m?.type === 'MUTATE' && m.data?.op === 'importGroups');
+    assert.equal((mutate[0].data.groups as any[])[0].name, '导入的会话');
+  });
+
+  it('chrome:// / edge:// / javascript: 在落库前被丢弃，file:// 与 blob: 保留', async () => {
+    // 【分层提醒】popup 侧把**原始**标签交给 SW —— 过滤是 SW 侧 applyImportGroups
+    // 的职责，也正是安全边界所在（危险协议必须在落库前就没）。所以这里验证的是
+    // 落库函数本身，而不是发出去的消息载荷（载荷里仍然是未过滤的原始值，这是
+    // 有意的：popup 的 sanitizeTabUrl 只用来回答「有没有东西可导入」）。
+    const { applyImportGroups } = await import('@/core/mutationOps');
+    const { normalizeImportedGroup } = await import('@/core/normalizeTabsData');
+    const { sanitizeTabUrl } = await import('@/utils/inputValidation');
+
+    const norm = normalizeImportedGroup({
+      id: 'mix',
+      name: 'M',
+      tabs: [
+        { id: 't1', url: 'https://keep.example.com', title: 'k' },
+        { id: 't2', url: 'file:///Users/me/doc.pdf', title: 'f' },
+        { id: 't3', url: 'blob:https://x/abc', title: 'b' },
+        { id: 't4', url: 'chrome://settings/', title: 'c' },
+        { id: 't5', url: 'edge://favorites/', title: 'e' },
+        { id: 't6', url: 'javascript:void(0)', title: 'j' },
+      ],
+    });
+
+    const r = applyImportGroups(
+      [],
+      [norm],
+      { genId: () => 'g', sanitizeUrl: sanitizeTabUrl },
+      NOW,
+      { d: 'dev', s: 1 }
+    );
+
+    assert.deepEqual(
+      r.imported[0].tabs.map(t => t.url),
+      ['https://keep.example.com', 'file:///Users/me/doc.pdf', 'blob:https://x/abc'],
+      'chrome:// / edge:// / javascript: 必须落库前丢弃；file:// 与 blob: 是可存储的，必须保留'
+    );
+  });
+
+  it('整份备份只含 chrome:// 时如实失败（不假成功，也不抛异常）', async () => {
+    installChrome(true);
+    putRawGroups([mkGroup('existing')]);
+    messageResponder = () => ({ ok: true, payload: [] });
+
+    const ok = await storage.importData({
+      version: '1.0.0',
+      timestamp: NOW,
+      data: {
+        groups: [
+          { id: 'c1', name: 'C', tabs: [{ id: 't1', url: 'chrome://settings/', title: 'c', created_at: NOW, last_accessed: NOW }] } as any,
+        ],
+        settings: undefined as any,
+      },
+    });
+
+    assert.equal(ok, false, '没有可导入的地址时必须如实失败');
+    assert.equal(
+      sentMessages.filter(m => m?.type === 'MUTATE').length,
+      0,
+      '不可导入时不应向 SW 发命令'
+    );
+  });
+});
