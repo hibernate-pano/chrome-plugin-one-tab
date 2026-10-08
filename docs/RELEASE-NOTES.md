@@ -8,6 +8,119 @@
 > 长期台账**（含根因、踩坑、修复顺序），不必翻译成英文、不必对齐商店审核口径。
 > 两边都会写「本版改了什么」，但只有本文件会记住「为什么」和「后来怎么验证的」。
 
+## v1.22.15（2026-10-07，待提审）
+
+**这版的由来**：1.22.14 提交后做了一轮五方向并行审查（1.22.12 / 1.22.13 / 1.22.14 各一，加上迁移与商店文案、测试质量两条横向）。结论是：**代码层面两个 P0 修复是真的关上了**，但「修复被守卫住」这件事没做到，而且商店面还挂着已下线功能的宣传。本版修的是审查确认的问题，并把「守卫本身不会红」这一类也补上。
+
+### P0 —— 会丢会话的分页缺陷
+
+1. **下载分页的排序键不允许并列**（`src/utils/supabase/download.ts`）。分页是 offset/limit，排序只给了 `created_at`。而 `created_at` **不是唯一键**：`oneTabFormatParser` 给同一批导入的每个组盖同一个 `now`，`factory` 用 `new Date().toISOString()`，连续快存会撞在同一毫秒。Postgres 对并列行不给跨查询顺序保证 ⇒ 页窗口重叠/跳过。
+
+   **实测量级**（真 PG 16，450 行同一 `created_at`）：三次连续下载分别漏掉 **113 / 114 / 105** 个不同 id，而且因为是短页退出（`page.length < PAGE_SIZE`），**没有任何报错**。
+
+   **后果是真丢数据**：漏掉的行被 `mergeOpStamped` 当作「云端不存在」，本地旧副本随后上传，覆盖掉更新的云端版本。
+
+   **原注释还写着错的结论**：「分页窗口基于稳定排序，页间无重叠/无遗漏」——这句话在非唯一排序键上不成立。
+
+   修法：`.order('created_at', {ascending:false}).order('id', {ascending:false})`，排序成为全序。
+
+   **为什么原测试抓不到**：`upsertDownloadBatching.test.ts` 的 fixture 用 `new Date(2026,0,1,0,0,0,i)` 造**严格递增**的 created_at，假云端又按插入顺序 slice —— **并列这个维度根本没被建模**。那是 fixture 的产物，不是现实。
+
+### P1 —— 读不到就必须说读不到，而不是编一个答案
+
+2. **`getLastUploadTime` 的 `catch { return null }`**（`src/utils/storage.ts`）。`null` 的语义是「从未上传过」，于是瞬时读失败（死句柄看门狗 abort / quota / 事务 abort）会把 35 秒的 `recent_upload_guard` 静默关掉。它与 `getPendingUpload` 在**同一个 `Promise.all`** 里被 `downloadAndMerge` 读取 —— 1.22.13 只把其中一个改成了 fail-closed。现在改为抛错，与兄弟函数同口径（调用方的 catch 已经会返回 `precheck_unknown`）。
+
+3. **JSON 备份导入的假成功**（`src/utils/storage.ts`）。全部标签都是不可存储 URL 时，`applyImportGroups` 过滤后返回空，但 `importData` 一路返回 `true` ⇒ 弹「成功」+ reload，列表什么都没多。1.22.14 把 `importFromOneTabFormat` 修好了，**JSON 这条路漏了**。现在发送前判「可导入组数」，为 0 时如实失败。
+
+3b. **旧备份文件的形状容错**（`src/core/normalizeTabsData.ts` 新增 `normalizeImportedGroup`）。这是用户报的「导入之前下载的标签失败」的**直接根因之一**：JSON 备份是用户手上的文件、形状不可信，而 `applyImportGroups` 直接 `group.tabs.reduce(...)` —— 组里没有 `tabs`（旧版本/云端导出用的是 `tabs_data`）就抛 `Cannot read properties of undefined (reading 'reduce')` 并让 `importData` 返回 false：用户看到「导入失败」却无从得知原因，**而他的文件其实是好的**。
+
+   下载路径早就用 `normalizeTabsData` 处理同一类形状（云端历史坏行），**导入路径此前没有** —— 这个不对称就是缺陷本身。现在两处同口径，并顺带补了**元素级**归一化（本地 `Tab` 是 camelCase `createdAt`/`lastAccessed`，云端 `TabData` 是 snake_case `created_at`/`last_accessed`；`normalizeTabsData` 只管容器形状、不管元素，所以从旧文件导入会丢时间戳 —— 该缺口在 `docs/dev-plan-2026-10-05.md` 的 A3 里已登记过）。容错清单：`tabs_data`/`tabsData`/`groups` 键名、嵌套 wrapper（`tabs_data:{tabs:[…]}`）、组与标签两级的 snake_case、缺 `name` 的可读回退、旧键 `is_locked`。
+
+   **验证**：6 条新用例走真实 `importData` 路径（断言发往 SW 的载荷）；另验证了分层不变 —— popup 交给 SW 的是**原始**标签，`chrome://` / `edge://` / `javascript:` 仍由 SW 侧 `applyImportGroups` 在落库前丢弃（安全边界未被放宽），`file://` 与 `blob:` 保留。
+
+4. **恢复会话路径把广播警告丢掉了**（`TabGroup.openAllTabs` + `SearchResultList` 三处）。删除类操作的第二步（云端删除标记登记）失败时 SW 会带 `broadcastWarn` 回来；UI 不读它，用户就以为删除/恢复成功，而云端行还活着 ⇒ 对端下次合并把会话复活（v1.22.0 起无回收站）。这两个调用点恰好是**最常用的「恢复整个会话」**。
+
+   **为什么原守卫抓不到**：`tests/noSilentFalseSuccess.test.ts` 断言的是 `deleteBroadcastWarn` 出现次数 `>= 3`。那是**计数**不是不变量 —— 实测再加一个不读警告的 `dispatch(deleteGroup(...))`，14 个用例依然全绿；而搜索列表那条路径里它出现 **0** 次却一路绿灯。已改成「每个删除类调用点的链上都必须读」，并对 4 个组件文件逐个调用点校验。
+
+5. **`precheck_unknown` 等内部代号直接弹给用户**（`src/components/sync/SyncButton.tsx`）。增补中文文案映射（`precheck_unknown` / `pending_upload_failed` / `snapshot_failed` / `already_syncing`）。
+
+### 商店面 —— 提审阻塞
+
+6. **新手引导仍在宣传已下线功能**（`src/components/onboarding/OnboardingSteps.tsx`）：还有整张「备注与收藏」卡、「⭐ 收藏重要会话」卡，以及三处提到「备注」的句子。**这是每个新用户的第一屏**。
+   顺带发现审查报告没提到的第六处：一张 **「Web 仪表盘」**卡（网页版在 1.22.11 已物理删除，README 已不再宣传），以及卡片文案里的「保存、重命名、备注都自动备份」。
+7. **搜索框 placeholder / aria-label 与空态提示**（`Header.tsx` / `SearchResultList.tsx`），并同步了 `OnboardingGuide` 的聚光灯锚点（`a11yLists.test.ts` 的「选择器能命中真实元素」守卫就是为这种失配准备的）。
+8. **商店 listing 仍在写「点开标签会自动从会话中移除」**（中英各一处）—— 正是 1.22.13 宣告反转的行为，与同一份提交的 changelog 自相矛盾。
+9. **搜索结果的「已打开」态从不渲染**：`markTabOpened` 一直在跑，但 `SearchResultList` 的行没有条件类也没有徽章（`DraggableTab` 有）。点开搜索命中后界面毫无变化，用户分不清「已标记」与「没生效」。已补齐，并统一了删除按钮文案。
+10. **两张商店截图已于 2026-10-08 重拍**（页脚 v1.22.15），两行状态 ✅ Ready。
+
+### 迁移重放 —— 静默跳过后面的安全迁移
+
+11. **全量重放会在第 2 个文件中止，后面 22 个文件从未尝试**。5 个历史文件是裸语句（真 PG 16 两遍重放实测）：
+    - `20251014063149` 2 条 `ALTER PUBLICATION … ADD TABLE`（**排在最前，所以一挂就断掉全部后续**）
+    - `20251014063156` 8 条裸 `CREATE POLICY`
+    - `20260303044037` 3 条、`20260303044048` 2 条（审查报告漏了这个文件）、`20260326034522` 4 条（小写 `create policy`，grep 大小写敏感时容易漏）
+
+    而 `scripts/supabase-migrate.mjs` 用一个 try 包住整个 for 循环、出错即 `process.exit(1)` ⇒ 后面的 `20261005000000`（profiles PII 收口）与 `20261005000001`（REVOKE）**从未被尝试**，`verify()` 也不跑。
+
+    修法：每条 DDL 先查存在性（`pg_catalog.pg_policy` **基表**，不用按 `polroles` 过滤的 `pg_policies` 视图）。另把 `20260924090000` 的 5 条也从不稳定的视图判定改成基表判定（它重放能过只因为迁移器以 owner 身份连接）。
+
+12. **verify 把「迁移未执行」报成通过**：缺 purge 函数时旧实现打印「尚未执行 —— 跳过」并 `return true`，实测在那种库上确实输出 `VERIFY OK`。现改为失败（缺哪个函数都报），并补上「profiles 存在但 RLS 关闭」这条此前也没检的路径。
+
+### 真库门禁本身（P0 —— 门禁在开发机上根本没跑起来）
+
+13. **两个 `*.pg.test.ts` 起的 Postgres 在本机必挂，而挂法是「cancelled」不是「fail」**。
+    Homebrew PG 16.15 在 `LC_ALL` 为空/未设时拒绝启动，真原因只写在 pg.log 里：
+    `FATAL: postmaster became multithreaded during startup` / `HINT: Set the LC_ALL environment variable to a valid locale.`，
+    而 pg_ctl 自己只回一句「无法启动服务器进程」。实测：`LC_ALL`+`LANG` 全无 → 起不来；
+    `LC_ALL=` `LANG=` → 起不来；`LC_ALL=C`（或 `LANG=C`）→ 正常。
+    测试用 `execFileSync` 原样继承宿主环境，于是本机（以及任何 locale 不完整的环境）上
+    **13 条真库用例全部 cancelled、fail 0** —— 报告看起来一切正常，门禁等于不存在。
+
+    修法（新共享起停器 `tests/_helpers/pgHarness.ts`，两份门禁共用）：
+    - 所有 initdb/pg_ctl/psql 子进程统一注入 `env: { ...process.env, LC_ALL: 'C', LANG: 'C' }`；
+    - 起库/初始化失败**不再从 `before` hook 抛**（那会让 node:test 把整组标成 cancelled），
+      而是记进 `setupError`，由 `gate()` 在每个用例里 `assert.fail`，并把 pg.log 尾部
+      带进失败信息 —— 「装了二进制但库起不来」一定是红的；
+    - `SKIP_REASON` 只留给「`initdb`/`pg_ctl`/`psql` 根本不存在」一种情形；
+    - 启动前探测端口：首选端口被占就向后换（每份门禁 20 个的窗口），全占满则显式失败
+      并列出占用端口，不静默 skip；两份门禁的首选端口仍为 5599 / 5601，互不冲突。
+
+### 验证
+
+- `pnpm test` **935 → 992**（1.22.15 收尾实测：pass 992 / fail 0 / **cancelled 0**，退出码 0），`pnpm validate` 全绿，首屏 **193.6KB**（预算 240KB）。
+  cancelled 从 13 归零就是上面第 13 条的直接结果：真库门禁此前在开发机上整组 cancelled，现在真的在跑。
+- **新增端到端同步走查** `tests/syncRoundTripWalkthrough.test.ts`（按时间顺序走完一条旅程，而不是拆成不变量）：A 建 3 个会话 → 上传 → B（全新设备）下载（逐字段一致）→ A 改名 → B 看到新名字 → A 删除 → 上传广播 → B 下载**不复活**；另加规模走查（260 个会话、`created_at` 故意全并列）验证分批上传（6 个 UPSERT 请求）与分页下载（每页 200）零丢失。假云端与 `syncNoResurrectInvariants` 同一套 PostgREST 子集契约（不另造方言），另加两个 BEFORE UPDATE 守卫的逐条判定。变异验证：把上传路径的 `markCloudGroupsAsDeleted` 改成 no-op ⇒ 走查转红。
+- **每个修复都做了变异验证**（改回缺陷 ⇒ 必须变红），逐条结果见下节。
+- **迁移用真 PG 16 两遍/三遍重放**验证，并做了**终态等价性对比**：把 HEAD 的原始迁移跑在「对象事先不存在」的库上取参考快照，与加守卫后的版本对比 `pg_policies`（含 qual / with_check）/ `pg_publication_tables` / `regrowsecurity` / 触发器 / 函数（含 SECURITY DEFINER 与 ACL）/ 列定义 —— **89 行快照逐字相同**，证明守卫只把「重复创建」变成 no-op，没有改变终态。
+- **新增杀菌门禁**：`tests/guards/migrationReplay.pg.test.ts`（文本护栏 + 真库两遍重放，无 PG 时 skip）、`tests/downloadPaginationStability.test.ts`（在假云端里建模「并列行顺序不稳定」，并断言 id 集合完整性 + 任一页失败必须整体失败）。
+
+### 变异验证结果（改回缺陷 ⇒ 红）
+
+| 变异 | 结果 |
+|---|---|
+| 去掉下载的 `id` tiebreaker | 5 条中 3 条红 |
+| 恢复 `getLastUploadTime` 的 `catch { return null }` | 红 |
+| 关掉 importData 的「全不可导入」守卫 | 红 |
+| 去掉 `importData` 里的 `normalizeImportedGroup` | 红（4 条） |
+| 在 TabGroup 加一个不读 broadcastWarn 的第 4 个删除点 | 红（**旧的计数断言在这个变异下是全绿的**） |
+| 去掉恢复路径的 broadcastWarn 读取 | 红 |
+| 引导文案写回「备注」 | 红 |
+| listing 写回「自动从会话中移除」 | 红 |
+| listing 写回「收藏」 | 红 |
+| 迁移里写回一条裸 `CREATE POLICY` | 红（文本护栏 + 真库重放同时红） |
+| 迁移里写回裸 `ALTER PUBLICATION` | 红 |
+| `20260924090000` 退回 `pg_policies` 视图判定 | 红 |
+| 去掉起 PG 子进程的 `LC_ALL`+`LANG` 注入（回到修复前） | 红（**真库用例全部 fail、cancelled 0**；只去掉其中一个键不够，另一个会补位，所以反向验证要两个一起去） |
+
+### 本版没做（有意）
+
+- **商店截图已在本版内完成重拍**：`scripts/make-store-screenshots.mjs` 在 1.22.13 已经改好（不再注入备注/收藏），2026-10-08 执行并生成两张新图（页脚 v1.22.15），状态 ✅ Ready。
+- **1.23 的治本项未动**：增量上传（本地 dirty 标记）、导入幂等、同步失败退避 —— 1.22.14 已把范围限定在止血，本版延续。
+- **测试基建的其余缺口**（审查发现，未在本版关闭）：`purgeExpiredCloudTombstones` 仍无覆盖（它是唯一物理 DELETE 云端行的代码）；`backgroundSync` 的 fail-closed 守卫仍无运行时测试（删掉它 935 全绿）；`downloadSettings` 的 snake_case→camelCase 映射无测试；原生拖拽的边界与节流无行为测试；`upsertRowsInBatches` 的「按批失败」注释与实现不符（实现是幂等全量重跑收敛，不是按批隔离）。建议单独一版做。
+- **agent 侧发现但未修的小项**：`productEvents.ts` / `diagnostics.ts` 里还留着 `session_favorited` 这个死事件名（英文标识符，用户不可见）；`downloadTabGroups` 以 PostgREST 错误对象（非 `Error` 实例）拒绝，调用方都取 `.message` 所以不影响行为。
+
+---
+
 ## v1.22.14（2026-10-07，待提审）
 
 **这版的由来**：Jasper 实测三个症状——导入之前下载的标签失败、清理重复标签

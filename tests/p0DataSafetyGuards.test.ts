@@ -10,7 +10,8 @@
 
 import { describe, it, before } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 
 const ROOT = new URL('..', import.meta.url);
 const read = (rel: string) => readFileSync(new URL(rel, ROOT), 'utf8');
@@ -20,6 +21,18 @@ function code(rel: string): string {
   return read(rel)
     .replace(/\/\*[\s\S]*?\*\//g, '')
     .replace(/(^|[^:])\/\/.*$/gm, '$1');
+}
+
+/**
+ * 抽出商店 listing 的正文（中英两段）。
+ *
+ * 【为什么不能用 '---' 切】历史版本写的是 .split('---')[0]，而第一个 '---' 出现在
+ * listing 上方第 20 行的 **HTML 注释**里（「中英双语用 --- 分隔」）—— 于是断言只扫到
+ * 65 个字符的注释碎片，永远读不到正文。后果是 1.22.13 删了功能、listing 却继续宣传
+ * 旧行为，而「本该拦住它的守卫」一直是绿的。'## ' 标题只出现在文档骨架里，安全。
+ */
+function listingBody(): string {
+  return read('CHROMEWEBSTORE.md').split('**Detailed Description**')[1]?.split('\n## ')[0] ?? '';
 }
 
 before(() => {
@@ -189,17 +202,80 @@ describe('减法（2026-10-07）：备注与收藏已下线，不得复活', () 
   });
 
   it('文档不得再宣传这两项（商店审核会核对）', () => {
-    for (const doc of ['README.md', 'CHROMEWEBSTORE.md']) {
-      const src = read(doc);
-      // 历史 changelog 行允许出现（那是版本史），只查「当前能力」段落。
-      const capability = src.split('## 当前能力')[1]?.split('\n## ')[0] ?? '';
-      const listing = src.split('**Detailed Description**')[1]?.split('---')[0] ?? '';
-      for (const text of [capability, listing]) {
-        assert.ok(
-          !/备注|收藏/.test(text),
-          `${doc} 的能力介绍里还有「备注」或「收藏」—— 功能已下线，文案必须同步`
-        );
-      }
+    // 商店 listing 正文 —— 审核员读的就是这一段。
+    const listing = listingBody();
+    assert.ok(
+      listing.length > 400,
+      `CHROMEWEBSTORE.md 的 listing 正文只抽到 ${listing.length} 字符，抽取逻辑退化了（应能读到中英两段正文）`
+    );
+
+    // README 用的是另一套骨架，没有 Detailed Description，抽「当前能力」段。
+    const capability = read('README.md').split('## 当前能力')[1]?.split('\n## ')[0] ?? '';
+    assert.ok(
+      capability.length > 100,
+      `README.md 的「当前能力」段只抽到 ${capability.length} 字符，抽取逻辑退化了`
+    );
+
+    for (const [name, text] of [
+      ['CHROMEWEBSTORE.md listing', listing],
+      ['README.md 当前能力', capability],
+    ] as const) {
+      assert.ok(
+        !/备注|收藏/.test(text),
+        `${name} 里还有「备注」或「收藏」—— 功能已下线，文案必须同步`
+      );
     }
+  });
+
+  it('商店 listing 不得声称「点开标签会自动从会话移除」（1.22.13 已反转）', () => {
+    // 这条是审核员会读的正文。1.22.13 把「点开即删」改成两步（先标记已打开，
+    // 再用独立按钮移除），但同一份提交的 listing 第 27/46 行仍在写旧行为 ——
+    // 描述与实现相反，且与自己的 changelog 自相矛盾。
+    const listing = listingBody();
+    assert.ok(listing.length > 400, 'listing 抽取失败，无法判断（见上一条的抽取断言）');
+    assert.ok(
+      !/自动从会话中移除/.test(listing),
+      '中文 listing 仍写「点开单个标签…它会自动从会话中移除」—— 该行为已于 1.22.13 移除'
+    );
+    assert.ok(
+      !/it is then removed from the session/.test(listing),
+      'English listing still promises the tab is removed from the session on click — reversed in 1.22.13'
+    );
+  });
+
+  it('新手引导与搜索框等用户可见文案里不得再出现「备注 / 收藏」', () => {
+    // 【为什么单独加这一条】前一版守卫只扫标识符（FavoriteIcon / searchNotes /
+    // group.notes）与两份文档的「当前能力」段，于是 1.22.13 把功能删干净了、
+    // 文案却一处没动：OnboardingSteps 还有整张「备注与收藏」「⭐ 收藏重要会话」
+    // 特性卡，Header 的搜索框 placeholder/aria-label 也还在写「备注」。
+    // 新手引导是**每个新用户的第一屏**。标识符守卫防「功能复活」，
+    // 文本守卫防「宣传没删」—— 两个不同的问题。
+    const offenders: string[] = [];
+    const walk = (dir: URL): string[] => {
+      const entries = readdirSync(dir, { withFileTypes: true });
+      const files: string[] = [];
+      for (const e of entries) {
+        const child = new URL(e.name + (e.isDirectory() ? '/' : ''), dir);
+        if (e.isDirectory()) files.push(...walk(child));
+        else if (/\.(ts|tsx)$/.test(e.name)) files.push(fileURLToPath(child));
+      }
+      return files;
+    };
+
+    for (const file of walk(new URL('src/', ROOT))) {
+      const stripped = readFileSync(file, 'utf8')
+        .replace(/\/\*[\s\S]*?\*\//g, ' ')
+        .replace(/(^|[^:])\/\/[^\n]*/g, '$1');
+      stripped.split('\n').forEach((line, i) => {
+        if (/备注|收藏/.test(line)) {
+          offenders.push(`${file.replace(fileURLToPath(ROOT), '')}:${i + 1}  ${line.trim().slice(0, 90)}`);
+        }
+      });
+    }
+    assert.deepEqual(
+      offenders,
+      [],
+      `以下 src 文件仍有用户可见的「备注 / 收藏」文案（功能已于 1.22.13 下线，新手引导与搜索框是最常漏的两处）：\n  ${offenders.join('\n  ')}`
+    );
   });
 });

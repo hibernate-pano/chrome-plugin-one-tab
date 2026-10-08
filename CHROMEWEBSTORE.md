@@ -1,6 +1,6 @@
 # Chrome Web Store Listing — TapStack
 
-> Last Updated: 2026-10-07
+> Last Updated: 2026-10-08
 > 本文件是 Chrome Web Store 上架信息的单一事实来源（chrome-extensions skill 约定）。
 > 标注 ⚠️ 的字段需要发布者确认后才能提交。
 
@@ -24,8 +24,8 @@ TapStack 把你当前浏览器窗口里的所有标签页保存为一个命名�
 · 一键保存：把当前窗口的全部标签页存为会话；快捷键 Ctrl+Shift+S 打开管理器、Alt+Shift+S 保存全部、Alt+S 保存当前页
 · 右键菜单：不打开管理界面，也能保存当前标签页或窗口里的其他标签页
 · 会话整理：每个会话可重命名、锁定防误删
-· 快速恢复：一键在新窗口打开整组标签，不打乱当前窗口；点开单个标签直接继续工作，它会自动从会话中移除
-· 会话搜索：按会话名、标签标题/网址查找，支持按域名过滤，并提供按域名等维度的排序视图
+· 快速恢复：一键在新窗口打开整组标签，不打乱当前窗口；恢复后该会话会从列表移除（标签已在浏览器打开，无需手动清理）；点开单个标签直接继续工作，该条会被标记为「已打开」，需要清理时再点单独的移除按钮
+· 会话搜索：按会话名、标签标题/网址查找，支持按域名过滤
 · 误删保护：删除前二次确认（「删除全部会话」强制确认并显示数量），删除后彻底清除
 · 一键清理：清除重复标签页和空会话
 · 导入导出：支持 OneTab 文本格式导入导出，以及 JSON 备份
@@ -43,8 +43,8 @@ Key features:
 · One-click save: store all tabs of the current window as a session. Shortcuts: Ctrl+Shift+S opens the manager, Alt+Shift+S saves all tabs, Alt+S saves the current tab
 · Right-click menu: save the current tab — or all other tabs — without opening the manager
 · Session tools: rename, lock against accidental deletion
-· Fast restore: reopen the whole session in a new window without disturbing the current one; click a single tab to jump straight back into work — it is then removed from the session
-· Search: find sessions by name, tab title or URL, filter by domain, and sort by domain and more
+· Fast restore: reopen the whole session in a new window without disturbing the current one; once restored, the session is removed from the list (its tabs are open in the browser); click a single tab to jump straight back into work — the entry is then marked as opened, and you remove it with a separate button when you want to
+· Search: find sessions by name, tab title or URL, filter by domain
 · Deletion protection: you confirm before anything is deleted (deleting all sessions always asks and shows the count), and a deleted session is permanently removed — there is no recycle bin and no undo
 · One-click cleanup: remove duplicate tabs and empty sessions
 · Import/export: OneTab text format, plus JSON backup
@@ -71,8 +71,8 @@ Productivity
 | Asset | Dimensions | Status | Filename |
 |-------|-----------|--------|----------|
 | Store Icon [REQUIRED] | 128×128 PNG | ✅ Ready | icons/icon128.png |
-| Screenshot 1 [REQUIRED] | 1280×800 | ⚠️ **需重拍** | store-assets/screenshot-1-main.png —— 旧图含已下线的收藏星标与备注块，**1.22.13 前必须重拍**（重拍后改回 Ready） |
-| Screenshot 2 [RECOMMENDED] | 1280×800 | ✅ Ready | store-assets/screenshot-2-search.png（搜索命中高亮） |
+| Screenshot 1 [REQUIRED] | 1280×800 | ✅ Ready | store-assets/screenshot-1-main.png（2026-10-08 针对 1.22.15 重拍：已无收藏星标/备注块，操作区 5 个按钮） |
+| Screenshot 2 [RECOMMENDED] | 1280×800 | ✅ Ready | store-assets/screenshot-2-search.png（2026-10-08 重拍，页脚为 v1.22.15） |
 | Small Promo Tile [RECOMMENDED] | 440×280 | ⬜ Not created | |
 
 ### Screenshot Notes
@@ -164,6 +164,7 @@ https://github.com/hibernate-pano/chrome-plugin-one-tab
 
 | Version | Date | Changes | Status |
 |---------|------|---------|--------|
+| 1.22.15 | 2026-10-07 | 一次针对商店提审与数据完整性的收口，重点修掉「会话多、创建时间又相同」时会丢会话的问题，并把「引导与商店文案仍在宣传已下线功能」清干净：① **修复会丢会话的同步缺陷**：云端下载的分页排序只用「创建时间」——而同一个文件一次性导入的会话、或连续快速保存的会话，创建时间会完全相同。当这些「同一时刻的会话」多于一页时，分页窗口之间会出现重叠与跳过，导致部分会话**没有被下载下来却没有任何报错**；漏掉的会话会被当成云端不存在，本机的旧副本随后上传，把云端更新的版本覆盖掉。现在排序补上了唯一标识作为并列时的稳定次序，实测 450 条同一时刻的会话已能完整取回。② **JSON 备份导入不再「报成功但列表没变」**：备份里若只含无法存储的地址（如 chrome://、本地文件），此前会提示成功却什么也没导入（同类问题在 1.22.14 只修了 OneTab 文本导入）。③ **同步中止时会说明原因**：此前界面会直接显示内部代号（如 precheck_unknown），现在会说「本地存储读取失败，已中止同步以保护你的未上传内容」。④ **恢复会话时若云端同步登记失败会明确提示**（此前只有删除会话时才提示），避免「本机恢复了、但会话在其他设备上又冒出来」。⑤ **清理新手引导与搜索框里过时的文案**：引导页还有整张「备注与收藏」特性卡、搜索框提示仍在写「备注」、商店介绍也还在说「点开标签会自动从会话中移除」——这三处都在向新用户和审核员描述已经下线的行为，现全部改为与实现一致。⑥ 修正了数据库迁移脚本的两处问题：完整重放迁移时会在中途出错并**静默跳过后面的安全迁移**（包括一处隐私数据访问收口），现在可以反复重放；且校验步骤此前在迁移未执行时会报「通过」，现如实报错。新增 27 条自动化回归测试 | 待提审 |
 | 1.22.14 | 2026-10-07 | 大量会话时同步不再超时、清理重复标签后不再长时间卡住：① 会话数量多时，上传此前把全部会话装进**单个**网络请求（请求体可达数 MB，容易撞上网关的体积与超时上限），失败后每 60 秒整库重传一遍，表现为同步一直报错、期间点击清理或删除长时间无响应。现在上传按每批 50 个会话分批发送，单个请求恢复到安全体积，且某一批失败不再连累其他批次。② 云端下载此前也是一次性拉取全部数据，现改为分页拉取（每页 200 个会话）。③ 导入反馈更诚实：备份导入在界面 30 秒无响应时，此前会报「导入失败」，但后台其实仍在继续处理——此时重新导入同一份文件会产生整份重复的会话；现在这种情况不再报失败。OneTab 格式导入的文件若全部是无法存储的地址（如 chrome:// 等内部页面），此前会提示「导入失败」或假报成功但列表毫无变化，现在会明确说明原因。新增 8 条自动化回归测试防复发 | 待提审 |
 | 1.22.13 | 2026-10-07 | 一次专家团全面体检（产品定位 / 交互 / 数据一致性 / 安全合规 / 架构五方向并行审查）后的修复，重点是**用户数据安全**与**交互诚实度**：① **点开单个标签不再顺手删掉这条记录**——原先点开即从会话移除，界面上没有任何提示、无法撤销，且与旁边的删除按钮外观一致，用户以为在打开链接、实际在不可撤销地销毁一条记录。现在点开只标记「已打开」（该行变灰并显示「已打开」徽章），「从会话中移除」变成需要主动点击的独立按钮。② **保存按钮不再毫无反馈**：保存会关掉当前窗口的全部标签，此前点击后页面里没有任何变化、无法判断是保存成功还是出故障；现在按钮会显示「保存中…」并给出成功或失败的结果。保存按钮的说明也补上了「并关闭这些标签页」，让你在标签被关掉之前就知道会发生什么。③ **两处会在特定时机丢数据的同步缺陷**：一是「读不到本地是否有待上传变更」时，后台自动同步会稳妥地中止（此前已修），但手动/自动下载这条路径会**继续下载并覆盖本地未上传的新内容**——现已统一为同样稳妥的处理；二是浏览器启动时的「补印记迁移」此前用「队列里还有没有别人的活」来误判自己是否在队列内，可能与正在进行的同步交错并覆盖刚写入的会话——现改为由调用方明确声明，不再猜测。④ **从旧版本升级的老用户不再丢数据**：从浏览器存储迁移到本地数据库时，扫描的键位清单此前是手工抄写且已过时，漏掉了删除广播队列、本机序号、下载保护时间戳等 5 个键——现改为从单一事实来源自动派生，以后新增键位不会再漏。⑤ **精简了两个功能**：会话备注与收藏已下线。它们的用途很窄（收藏只是把会话排到最前、备注只是给自己写一句话并参与搜索），而会话命名已经覆盖了「给这组标签起个名字」这个需求——我们选择把这两个按钮连同相关的排序与搜索逻辑一并移除，让界面更短、搜索更快。如果你一直在用备注或收藏，说明你需要的其实是「会话命名」或更多分组方式，欢迎告诉我们。⑥ 多处「点了没反应」补上了明确说明：标签打开的 3 秒冷却期、内部页面/固定标签页无法保存、打开标签失败等情形都会给出可读的提示；全中文界面里每条提示原本都带一个英文大写词（SUCCESS / ERROR），已改为中文。⑦ 不再使用「保险箱」这一称呼：产品删除后不可恢复，而「保险箱」容易让人以为存进去的东西一定能找回来。⑧ 修正了两处文档与实现不符：README 不再宣传早已移除的「拖拽排序」，也不再声称仍在进行「Yjs 影子双写」 | 待提审（建议等 1.22.12 过审后再提） |
 | 1.22.12 | 2026-10-06 | 修复「点了没反应、稍后控制台报错」的三类问题：① **清理重复标签 / 删除 / 拖拽移出标签点了没反应**：会话较多时浏览器可能中途休眠，把后台的存储句柄和网络请求一起挂住，导致后续所有操作排队等待、约 30 秒后报「操作耗时过长」。现在浏览器休眠后第一次操作会在几秒内自行恢复并正常执行；后台确实长时间无响应时，界面也不再把可能已经完成的操作回滚成「没成功」——已删除的内容不会又冒出来。② **数据同步迟迟不动或提示失败**：删除等操作在「本机已删、云端同步未登记」这种半完成状态下，此前会静默报告成功。现在这类情况会明确提示「本机已删除但未同步到云端，其他设备上可能重新出现」，涉及清理重复标签、拖拽移空会话、单标签删除三条路径。③ **导出数据重新导入后内容异常**：标题里含竖线（如「A | B」）的标签页重新导入后会被截断；只含无效地址的会话会变成凭空多出的「空会话」卡；本地文件（PDF 等）的地址会在导入时被丢弃。这三种情况均已修复 | 未发布（本次提交审核） |
