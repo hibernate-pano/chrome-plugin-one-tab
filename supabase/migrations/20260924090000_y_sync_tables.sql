@@ -43,11 +43,23 @@ ALTER TABLE public.sync_updates ENABLE ROW LEVEL SECURITY;
 
 DO $$
 BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE schemaname = 'public' AND tablename = 'sync_updates' AND policyname = 'Users can view own sync updates') THEN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_catalog.pg_policy pol
+    JOIN pg_catalog.pg_class c ON c.oid = pol.polrelid
+    JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+    WHERE n.nspname = 'public' AND c.relname = 'sync_updates'
+      AND pol.polname = 'Users can view own sync updates'
+  ) THEN
     CREATE POLICY "Users can view own sync updates" ON public.sync_updates
       FOR SELECT USING ((select auth.uid()) = user_id);
   END IF;
-  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE schemaname = 'public' AND tablename = 'sync_updates' AND policyname = 'Users can insert own sync updates') THEN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_catalog.pg_policy pol
+    JOIN pg_catalog.pg_class c ON c.oid = pol.polrelid
+    JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+    WHERE n.nspname = 'public' AND c.relname = 'sync_updates'
+      AND pol.polname = 'Users can insert own sync updates'
+  ) THEN
     CREATE POLICY "Users can insert own sync updates" ON public.sync_updates
       FOR INSERT WITH CHECK ((select auth.uid()) = user_id);
   END IF;
@@ -79,15 +91,33 @@ ALTER TABLE public.sync_snapshots ENABLE ROW LEVEL SECURITY;
 
 DO $$
 BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE schemaname = 'public' AND tablename = 'sync_snapshots' AND policyname = 'Users can view own sync snapshots') THEN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_catalog.pg_policy pol
+    JOIN pg_catalog.pg_class c ON c.oid = pol.polrelid
+    JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+    WHERE n.nspname = 'public' AND c.relname = 'sync_snapshots'
+      AND pol.polname = 'Users can view own sync snapshots'
+  ) THEN
     CREATE POLICY "Users can view own sync snapshots" ON public.sync_snapshots
       FOR SELECT USING ((select auth.uid()) = user_id);
   END IF;
-  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE schemaname = 'public' AND tablename = 'sync_snapshots' AND policyname = 'Users can upsert own sync snapshots') THEN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_catalog.pg_policy pol
+    JOIN pg_catalog.pg_class c ON c.oid = pol.polrelid
+    JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+    WHERE n.nspname = 'public' AND c.relname = 'sync_snapshots'
+      AND pol.polname = 'Users can upsert own sync snapshots'
+  ) THEN
     CREATE POLICY "Users can upsert own sync snapshots" ON public.sync_snapshots
       FOR INSERT WITH CHECK ((select auth.uid()) = user_id);
   END IF;
-  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE schemaname = 'public' AND tablename = 'sync_snapshots' AND policyname = 'Users can update own sync snapshots') THEN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_catalog.pg_policy pol
+    JOIN pg_catalog.pg_class c ON c.oid = pol.polrelid
+    JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+    WHERE n.nspname = 'public' AND c.relname = 'sync_snapshots'
+      AND pol.polname = 'Users can update own sync snapshots'
+  ) THEN
     CREATE POLICY "Users can update own sync snapshots" ON public.sync_snapshots
       FOR UPDATE USING ((select auth.uid()) = user_id) WITH CHECK ((select auth.uid()) = user_id);
   END IF;

@@ -20,8 +20,32 @@ CREATE INDEX IF NOT EXISTS idx_ai_usage_logs_created_at ON ai_usage_logs(created
 -- RLS
 ALTER TABLE ai_usage_logs ENABLE ROW LEVEL SECURITY;
 
-CREATE POLICY "Users can view own AI usage" ON ai_usage_logs
-  FOR SELECT USING (auth.uid() = user_id);
+-- 幂等性（2026-10-07 新增，真库 PG 16 两遍重放实测）：旧版本是 2 条裸 CREATE POLICY，
+-- 在 ai_usage_logs 表与策略都已存在的库上重放必抛 42710 duplicate_object。
+-- 守卫查 pg_catalog.pg_policy 基表，不存在才创建；存在即跳过，终态不变。
+-- dollar-quote 块分隔符：提到它的说明文字必须独占整行（见 20251014063149 的注释）。
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_catalog.pg_policy pol
+    JOIN pg_catalog.pg_class c ON c.oid = pol.polrelid
+    JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+    WHERE n.nspname = 'public' AND c.relname = 'ai_usage_logs'
+      AND pol.polname = 'Users can view own AI usage'
+  ) THEN
+    CREATE POLICY "Users can view own AI usage" ON ai_usage_logs
+      FOR SELECT USING (auth.uid() = user_id);
+  END IF;
 
-CREATE POLICY "Users can insert own AI usage" ON ai_usage_logs
-  FOR INSERT WITH CHECK (auth.uid() = user_id);
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_catalog.pg_policy pol
+    JOIN pg_catalog.pg_class c ON c.oid = pol.polrelid
+    JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+    WHERE n.nspname = 'public' AND c.relname = 'ai_usage_logs'
+      AND pol.polname = 'Users can insert own AI usage'
+  ) THEN
+    CREATE POLICY "Users can insert own AI usage" ON ai_usage_logs
+      FOR INSERT WITH CHECK (auth.uid() = user_id);
+  END IF;
+END
+$$;

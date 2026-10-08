@@ -219,8 +219,39 @@ async function verifyProfilesRls(client) {
     JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
     WHERE n.nspname='public' AND c.relname='profiles' AND pol.polcmd = 'r'
   `);
+  // 先分清「表不存在」与「表存在但没有 SELECT 策略」——两者的结论完全不同：
+  //   表不存在  → 20260303044037 从未生效（CREATE TABLE IF NOT EXISTS 本该建成它），
+  //               安全迁移链路从未在此库跑过 → 失败（见下方分支）。
+  //   表存在但 RLS 关闭 → 任何策略都不生效，表对所有人全开 —— 必须失败。
+  //               旧实现把这种情况与「表不存在」一起 "跳过并返回通过"。
+  const { rows: tbl } = await client.query(`
+    SELECT c.relrowsecurity
+    FROM pg_catalog.pg_class c
+    JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+    WHERE n.nspname='public' AND c.relname='profiles' AND c.relkind='r'
+  `);
+  // ⚠️ 「表不存在」**不是**「无从检查」，而是「安全迁移从未在此库执行」：
+  // profiles 由 20260303044037_create_profiles.sql 创建（其 CREATE TABLE IF NOT EXISTS
+  // 在任何库上都会执行）。若这里连表都没有，说明 20260303044037 之后的迁移
+  // （含 20261005000000 的 PII 收口、20261005000001 的 purge REVOKE）从未生效 ——
+  // 与下方 purge 分支同一口径：缺失 = 失败，绝不允许「跳过并报成功」。
+  // 旧实现在这里 return true，正好复活了「安全迁移从未执行却 VERIFY OK」的老 P0。
+  if (tbl.length === 0) {
+    console.error('\n✗ VERIFY FAILED: public.profiles 表不存在 —— profiles 由本仓迁移\n' +
+      '   20260303044037_create_profiles.sql 创建（CREATE TABLE IF NOT EXISTS，任何库都会执行）。\n' +
+      '   表不存在 = 安全迁移从未在此库执行：20261005000000（profiles PII 收口）与\n' +
+      '   20261005000001（purge 函数对 anon 的 REVOKE）也很可能从未生效。\n' +
+      '   提示: 若重放在前面某个文件就 process.exit(1) 了，那个文件才是根因。');
+    return false;
+  }
+  if (!tbl[0].relrowsecurity) {
+    console.error('\n✗ VERIFY FAILED: profiles 存在但未启用 RLS —— 此时策略一律不生效，表对所有角色全开');
+    return false;
+  }
+
   if (rows.length === 0) {
-    console.log('  · profiles 表不存在或无 SELECT 策略 —— 跳过（Dashboard schema 可能已变化）');
+    // RLS 已启用且没有任何 SELECT 策略 = 默认拒绝（查询返回 0 行），是安全终态。
+    console.log('  · profiles 已启用 RLS 且无 SELECT 策略 —— 默认拒绝 ✓');
     return true;
   }
   // pg_get_expr 渲染出的文本：USING (true) → 'true'，USING (( SELECT auth.uid() …)) → 那一长串
@@ -262,9 +293,18 @@ async function verifyPurgeFunction(client) {
     WHERE n.nspname='public'
       AND p.proname IN ('purge_expired_cloud_tombstones','body_tombstone_expiry_days')
   `);
-  if (rows.length === 0) {
-    console.log('  · 墓碑清理函数不存在（迁移 20261005000001 尚未执行）—— 跳过');
-    return true;
+  // 旧实现在这里 `return true`（"跳过"），于是「迁移从未执行」被报成通过 ——
+  // 而重放链路恰好在第一个文件就 process.exit(1) 了，两者叠加正好形成
+  // 「仓库里有安全迁移 + 线上没跑 + verify 说 OK」的静默失效，
+  // 20261005000000/0001 就这样存在了很久却没生效。
+  // 「函数不存在」不是「无从检查」，就是「没应用」，必须失败。
+  const EXPECTED_PURGE_FUNCS = ['purge_expired_cloud_tombstones', 'body_tombstone_expiry_days'];
+  const missing = EXPECTED_PURGE_FUNCS.filter(name => !rows.some(r => r.proname === name));
+  if (missing.length > 0) {
+    console.error('\n✗ VERIFY FAILED: 缺函数 ' + missing.join(', '));
+    console.error('   期望: 20261005000001_purge_expired_tombstones.sql 已执行（并在其中 REVOKE 掉 PUBLIC/anon/authenticated）');
+    console.error('   提示: 若刚改过迁移，先跑全量重放；若重放在前面某个文件就退出了，那个文件才是根因。');
+    return false;
   }
   for (const r of rows) {
     // SECURITY DEFINER + 真 DELETE 的函数若对 anon 可执行 = 匿名可删全站数据
