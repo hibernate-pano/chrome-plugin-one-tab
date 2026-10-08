@@ -245,6 +245,59 @@ function stripSqlComments(text: string): string {
     .replace(/(?<!:)--.*/g, '');
 }
 
+/** 读脚本源码并剥注释 —— 与 stripSqlComments 同口径，防「注释里写样例骗过检查」。 */
+function scriptCode(rel: string): string {
+  return stripSqlComments(readFileSync(join(ROOT, rel), 'utf8'));
+}
+
+describe('migrate.mjs 的 verify：缺失 = 失败，绝不「跳过并报成功」', () => {
+  // 【这段历史】2026-10-05 的 verifyProfilesRls 在 profiles 表不存在时打印「跳过」
+  // 并 return true —— 而「profiles 不存在」的唯一解释是 20260303044037（建表，
+  // CREATE TABLE IF NOT EXISTS 在任何库上都会生效）之后的迁移从未在此库执行，
+  // 含 20261005000000 的 PII 收口与 20261005000001 的 REVOKE。于是形成
+  // 「安全迁移从未执行却 VERIFY OK」的假成功。purge 分支同日已改成缺失即失败，
+  // profiles 分支迟至 2026-10-08 才关上 —— 本测试钉死这两处，防止再改回去。
+  const SRC = 'scripts/supabase-migrate.mjs';
+
+  it('verifyProfilesRls：profiles 表不存在必须失败（缺失 ≠ 可跳过）', () => {
+    const body = scriptCode(SRC);
+    const start = body.indexOf('async function verifyProfilesRls');
+    const end = body.indexOf('async function verifyPurgeFunction');
+    assert.ok(start !== -1 && end !== -1 && end > start, 'verifyProfilesRls 函数不见了（脚本结构变了？）');
+    const fn = body.slice(start, end);
+    // 失败分支必须同时有：点破本质的错误文案 + return false。只改文案不改返回值不算数。
+    assert.ok(
+      fn.includes('安全迁移从未在此库执行') && fn.includes('return false;'),
+      'verifyProfilesRls 在 profiles 表不存在时必须报「表不存在 = 安全迁移从未在此库执行」并 return false。' +
+        '写「跳过 + return true」就是复活「安全迁移从未执行却 VERIFY OK」的老 P0。'
+    );
+    // 紧邻的 tbl.length === 0 分支里不允许 return true —— 把「跳过成功」按死在分支里。
+    const branch = fn.match(/if \(tbl\.length === 0\) \{[\s\S]*?\n {2}\}/);
+    assert.ok(branch, 'tbl.length === 0 分支不见了（脚本结构变了？）');
+    assert.ok(
+      !branch[0].includes('return true'),
+      'profiles 表不存在的分支里出现了 return true —— 这就是「跳过并报成功」本尊'
+    );
+  });
+
+  it('verifyPurgeFunction：purge 函数缺失必须失败（与 profiles 同一口径）', () => {
+    const body = scriptCode(SRC);
+    const start = body.indexOf('async function verifyPurgeFunction');
+    const end = body.indexOf('async function main');
+    assert.ok(start !== -1 && end !== -1 && end > start, 'verifyPurgeFunction 函数不见了（脚本结构变了？）');
+    const fn = body.slice(start, end);
+    assert.ok(
+      /missing/.test(fn) && fn.includes('return false;'),
+      'verifyPurgeFunction 在 purge 函数缺失时必须 return false（缺失 = 没应用，不是无从检查）'
+    );
+    // 「函数不存在」的唯一合法出路是失败：不得有「查完行数为 0 就 return true」的分支。
+    assert.ok(
+      !/rows\.length === 0\)\s*\{[\s\S]{0,200}?return true;/.test(fn),
+      'verifyPurgeFunction 里存在「rows.length === 0 → return true」—— 缺函数被报成通过'
+    );
+  });
+});
+
 describe('迁移幂等：SQL 结构护栏', () => {
   it('每条 create policy 都必须落在 dollar-quote 守卫块里', () => {
     const offenders: string[] = [];
