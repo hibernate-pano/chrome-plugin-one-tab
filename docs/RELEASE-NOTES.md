@@ -87,7 +87,7 @@
 
 ### 验证
 
-- `pnpm test` **935 → 992**（1.22.15 收尾实测：pass 992 / fail 0 / **cancelled 0**，退出码 0），`pnpm validate` 全绿，首屏 **193.6KB**（预算 240KB）。
+- `pnpm test` **935 → 995**（1.22.15 收尾实测：pass 995 / fail 0 / **cancelled 0** / skipped 0，退出码 0），`pnpm validate` 全绿，首屏 **193.6KB**（预算 240KB）。
   cancelled 从 13 归零就是上面第 13 条的直接结果：真库门禁此前在开发机上整组 cancelled，现在真的在跑。
 - **新增端到端同步走查** `tests/syncRoundTripWalkthrough.test.ts`（按时间顺序走完一条旅程，而不是拆成不变量）：A 建 3 个会话 → 上传 → B（全新设备）下载（逐字段一致）→ A 改名 → B 看到新名字 → A 删除 → 上传广播 → B 下载**不复活**；另加规模走查（260 个会话、`created_at` 故意全并列）验证分批上传（6 个 UPSERT 请求）与分页下载（每页 200）零丢失。假云端与 `syncNoResurrectInvariants` 同一套 PostgREST 子集契约（不另造方言），另加两个 BEFORE UPDATE 守卫的逐条判定。变异验证：把上传路径的 `markCloudGroupsAsDeleted` 改成 no-op ⇒ 走查转红。
 - **每个修复都做了变异验证**（改回缺陷 ⇒ 必须变红），逐条结果见下节。
@@ -96,9 +96,11 @@
 
 ### 变异验证结果（改回缺陷 ⇒ 红）
 
+> 2026-10-08 收尾时逐条复跑的实测结果（括号里是变红的用例条数）；每条都已恢复并复验全绿。
+
 | 变异 | 结果 |
 |---|---|
-| 去掉下载的 `id` tiebreaker | 5 条中 3 条红 |
+| 去掉下载的 `id` tiebreaker | 红 5 条（`downloadPaginationStability` 4 + 端到端走查 1；同批的 `upsertDownloadBatching` 不红——它建模的是分批不是排序） |
 | 恢复 `getLastUploadTime` 的 `catch { return null }` | 红 |
 | 关掉 importData 的「全不可导入」守卫 | 红 |
 | 去掉 `importData` 里的 `normalizeImportedGroup` | 红（4 条） |
@@ -111,6 +113,7 @@
 | 迁移里写回裸 `ALTER PUBLICATION` | 红 |
 | `20260924090000` 退回 `pg_policies` 视图判定 | 红 |
 | 去掉起 PG 子进程的 `LC_ALL`+`LANG` 注入（回到修复前） | 红（**真库用例全部 fail、cancelled 0**；只去掉其中一个键不够，另一个会补位，所以反向验证要两个一起去） |
+| `verifyProfilesRls` 的「profiles 不存在」改回「跳过 + return true」 | 红（1 条，cancelled 0） |
 
 ### 本版没做（有意）
 
