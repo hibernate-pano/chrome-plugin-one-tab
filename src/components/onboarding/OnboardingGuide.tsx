@@ -49,7 +49,7 @@ const STEPS: StepConfig[] = [
       title: '保存工作会话',
       spotlightTarget: '[aria-label="保存当前窗口中的所有标签页为会话，并关闭这些标签页"]',
     },
-    { title: '搜索工作会话', spotlightTarget: '[aria-label="搜索会话、备注或标签页"]' },
+    { title: '搜索工作会话', spotlightTarget: '[aria-label="搜索会话或标签页"]' },
     {
         title: '恢复整个会话',
         spotlightTarget:

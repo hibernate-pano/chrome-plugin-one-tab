@@ -184,8 +184,13 @@ describe('表单控件：label 关联', () => {
   });
 
   it('搜索结果里的删除按钮有含标签标题的 aria-label', () => {
+    // 断言「aria-label 模板里插了 tab.title」这个**不变量**，而不是某一个具体
+    // 文案：此前这里钉的是字面量 `删除标签页: ${tab.title}`，于是 2026-10-07 把
+    // 两处删除按钮的文案统一成「从会话中移除」时，重命名本身是正确的、守卫却
+    // 先红了；更糟的是它当时代替了真正的检查 —— 只要文案相符就通过，缺了
+    // tab.title 插值也能被“改文案”这件事掩盖过去。
     assert.ok(
-      /aria-label=\{`删除标签页: \$\{tab\.title\}`\}/.test(SEARCH_RESULT_LIST),
+      /aria-label=\{`[^`]*\$\{tab\.title\}`\}/.test(SEARCH_RESULT_LIST),
       '搜索结果行的删除按钮缺 aria-label（只有 title 时读屏只能念到泛化文案）'
     );
   });

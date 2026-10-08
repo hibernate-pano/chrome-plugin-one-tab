@@ -267,11 +267,11 @@ export const Header: React.FC<HeaderProps> = ({ onSearch }) => {
               <input
                 ref={searchInputRef}
                 type="text"
-                placeholder="搜索会话、备注或标签..."
+                placeholder="搜索会话或标签..."
                 className={`input search-input theme-focus w-full py-2 text-sm ${isSearchBusy ? 'pl-10' : 'pl-3'}`}
                 onChange={handleSearch}
                 value={searchValue}
-                aria-label="搜索会话、备注或标签页"
+                aria-label="搜索会话或标签页"
                 role="searchbox"
                 autoComplete="off"
                 aria-busy={isSearchBusy}

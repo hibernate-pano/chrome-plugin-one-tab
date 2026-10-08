@@ -30,7 +30,7 @@ export const WelcomeStep: React.FC<{ version: string }> = ({ version }) => (
       <div className="onboarding-feature-card">
         <div className="onboarding-feature-icon">🔍</div>
         <div className="onboarding-feature-title">搜索</div>
-        <div className="onboarding-feature-desc">按会话、备注或标签找回</div>
+        <div className="onboarding-feature-desc">按会话名或标签找回</div>
       </div>
       <div className="onboarding-feature-card">
         <div className="onboarding-feature-icon">🚀</div>
@@ -64,9 +64,9 @@ export const SaveTabsStep: React.FC = () => (
         <div className="onboarding-feature-desc">固定标签页可保留，也可一并保存</div>
       </div>
       <div className="onboarding-feature-card">
-        <div className="onboarding-feature-icon">✍️</div>
-        <div className="onboarding-feature-title">备注与收藏</div>
-        <div className="onboarding-feature-desc">给重要会话补一句上下文说明</div>
+        <div className="onboarding-feature-icon">🔒</div>
+        <div className="onboarding-feature-title">锁定保护</div>
+        <div className="onboarding-feature-desc">重要会话可锁定，避免误删</div>
       </div>
     </div>
   </div>
@@ -79,7 +79,7 @@ export const SearchStep: React.FC = () => (
     </div>
     <h2 tabIndex={-1} className="onboarding-title">需要时快速找回</h2>
     <p className="onboarding-description">
-      搜索会话名、备注、标签标题或 URL
+      搜索会话名、标签标题或 URL
       <br />
       结果会先按会话归组，再展开具体标签
     </p>
@@ -95,9 +95,9 @@ export const SearchStep: React.FC = () => (
         <div className="onboarding-feature-desc">快速收敛到较新的会话或更久之前</div>
       </div>
       <div className="onboarding-feature-card">
-        <div className="onboarding-feature-icon">⭐</div>
-        <div className="onboarding-feature-title">收藏重要会话</div>
-        <div className="onboarding-feature-desc">关键上下文更容易二次定位</div>
+        <div className="onboarding-feature-icon">🌐</div>
+        <div className="onboarding-feature-title">按域名过滤</div>
+        <div className="onboarding-feature-desc">同一站点的标签更容易聚到一起</div>
       </div>
     </div>
   </div>
@@ -149,12 +149,12 @@ export const SyncStep: React.FC = () => (
       <div className="onboarding-feature-card">
         <div className="onboarding-feature-icon">🔄</div>
         <div className="onboarding-feature-title">自动同步</div>
-        <div className="onboarding-feature-desc">保存、重命名、备注都自动备份</div>
+        <div className="onboarding-feature-desc">保存和重命名都会自动备份</div>
       </div>
       <div className="onboarding-feature-card">
-        <div className="onboarding-feature-icon">💻</div>
-        <div className="onboarding-feature-title">Web 仪表盘</div>
-        <div className="onboarding-feature-desc">在任何浏览器里查看和管理会话</div>
+        <div className="onboarding-feature-icon">📤</div>
+        <div className="onboarding-feature-title">导入导出</div>
+        <div className="onboarding-feature-desc">支持 OneTab 文本格式与 JSON 备份</div>
       </div>
       <div className="onboarding-feature-card">
         <div className="onboarding-feature-icon">🛟</div>
