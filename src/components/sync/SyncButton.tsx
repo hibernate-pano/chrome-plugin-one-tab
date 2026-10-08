@@ -284,10 +284,28 @@ export const SyncButton: React.FC<SyncButtonProps> = () => {
         );
       } else {
         const reason = res.error;
+        // 2026-10-07：reason 是内部枚举，不该原样弹给用户 —— `precheck_unknown`
+        // 这种直接显示等于没说。逐条翻译；未登记的**纯 snake_case 枚举**退回到
+        // spec.failureMessage（裸枚举对用户同样没说）；带人类可读文本的 reason
+        //（如 `validation_failed: ...`、error.message）原样显示，便于定位。
+        const REASON_COPY: Record<string, string> = {
+          already_syncing: '同步正在进行中，请稍候',
+          precheck_unknown:
+            '本地存储读取失败，已中止同步以保护你的未上传内容，请稍后重试',
+          // 上传后 UPLOAD_GUARD_MS（35s，见 syncDecision.ts）内的手动下载被跳过：
+          // 云端已是本地新状态，再拉只会用旧数据覆盖（或与在途上传竞态）。
+          recent_upload_guard: '刚完成上传，云端已是最新状态，无需下载',
+          pending_upload_failed:
+            '还有未上传的本地改动，已中止下载以免覆盖它们，请先完成上传',
+          snapshot_failed: '本地快照创建失败，已中止同步以保护现有数据',
+        };
+        const mapped = reason != null ? REASON_COPY[reason] : undefined;
         const shown =
-          direction === 'download' && reason === 'not_authenticated'
+          reason === 'not_authenticated' && direction === 'download'
             ? '未登录'
-            : (reason || spec.failureMessage);
+            : mapped ||
+              (reason && !/^[a-z_]+$/.test(reason) ? reason : undefined) ||
+              spec.failureMessage;
         showToast(shown, 'error');
       }
     } catch (error) {

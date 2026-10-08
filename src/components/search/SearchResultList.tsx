@@ -1,7 +1,7 @@
 import React, { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState, useTransition } from 'react';
 import { useAppDispatch, useAppSelector } from '@/store/hooks';
 import { Tab, TabGroup } from '@/types/tab';
-import { deleteGroup, deleteTabAndSync, markTabOpened } from '@/store/slices/tabSlice';
+import { deleteGroup, deleteTabAndSync, markTabOpened, deleteBroadcastWarn } from '@/store/slices/tabSlice';
 import { useToast } from '@/contexts/ToastContext';
 import { useEnhancedToast } from '@/utils/toastHelper';
 import { trackProductEvent } from '@/utils/productEvents';
@@ -213,6 +213,12 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({ searchQuery 
       // ponytail: 去掉 fake dispatch，依赖真实 thunk fulfilled 触发 reducer + middleware
       dispatch(deleteGroup(group.id))
         .unwrap()
+        .then(payload => {
+          // 与 TabGroup.openAllTabs 同口径：恢复会整组物理移除，广播登记失败
+          // 必须 surface，否则对端复活而用户以为恢复成功。
+          const warn = deleteBroadcastWarn(payload);
+          if (warn) showDeleteError(warn);
+        })
         .catch(error => {
           logError('恢复会话后清理原会话失败:', error);
           showDeleteError(`恢复会话后清理原会话失败: ${error.message || '未知错误'}`);
@@ -253,6 +259,11 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({ searchQuery 
   const handleDeleteTab = (tab: Tab, group: TabGroup) => {
     dispatch(deleteTabAndSync({ groupId: group.id, tabId: tab.id }))
       .unwrap()
+      .then(payload => {
+        // 删掉组内最后一个标签会变成「整组物理移除」，广播登记失败同样要 surface。
+        const warn = deleteBroadcastWarn(payload);
+        if (warn) showDeleteError(warn);
+      })
       .catch(error => {
         showDeleteError(`更新会话失败: ${error.message || '未知错误'}`);
       });
@@ -274,7 +285,9 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({ searchQuery 
       for (const { tab, group } of matchingTabs) {
         if (group.isLocked) continue;
         try {
-          await dispatch(deleteTabAndSync({ groupId: group.id, tabId: tab.id })).unwrap();
+          const res = await dispatch(deleteTabAndSync({ groupId: group.id, tabId: tab.id })).unwrap();
+          const warn = deleteBroadcastWarn(res);
+          if (warn) showDeleteError(warn);
         } catch (error) {
           logError('批量恢复后删除会话失败:', error);
           showDeleteError(`批量恢复后清理原会话失败: ${(error as { message?: string })?.message || '未知错误'}`);
@@ -298,7 +311,9 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({ searchQuery 
     try {
       for (const { tab, group } of matchingTabs) {
         if (group.isLocked) continue;
-        await dispatch(deleteTabAndSync({ groupId: group.id, tabId: tab.id })).unwrap();
+        const res = await dispatch(deleteTabAndSync({ groupId: group.id, tabId: tab.id })).unwrap();
+        const warn = deleteBroadcastWarn(res);
+        if (warn) showDeleteError(warn);
       }
     } catch (error) {
       logError('批量删除搜索结果失败:', error);
@@ -323,8 +338,12 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({ searchQuery 
     });
   };
 
-  const renderTabItem = ({ tab, group }: { tab: Tab; group: TabGroup }) => (
-    <div className="tab-item group/tab">
+  const renderTabItem = ({ tab, group }: { tab: Tab; group: TabGroup }) => {
+    // 与 DraggableTab 同口径：锁定组恢复不消费（不删本地项），所以不显示「已打开」
+    // 态 —— 否则会给用户一个「我明明没消费，凭什么说已打开」的假信号。
+    const showOpenedState = !group.isLocked && tab.openedAt !== undefined;
+    return (
+    <div className={`tab-item group/tab ${showOpenedState ? 'tab-item-opened' : ''}`}>
       <SafeFavicon src={tab.favicon} alt="" className="tab-item-favicon" />
 
       <div className="flex-1 min-w-0 flex items-center gap-3">
@@ -344,11 +363,22 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({ searchQuery 
       </div>
 
       <div className="tab-item-actions">
+        {/* 2026-10-07 P1-2：与 DraggableTab 一致 —— 搜索里点开同样只标记不删除，
+            但此前这一侧从不渲染该状态，于是「点开没反应、也不清记录」，用户无法
+            分辨「已标记」与「没生效」。 */}
+        {showOpenedState && (
+          <span
+            className="tab-item-opened-badge"
+            title="已在本机打开过这条记录，它仍保留在会话里"
+          >
+            已打开
+          </span>
+        )}
         <button
           onClick={() => handleDeleteTab(tab, group)}
           className="btn-icon p-1 tab-item-delete-btn flat-interaction"
-          title="删除标签页"
-          aria-label={`删除标签页: ${tab.title}`}
+          title={showOpenedState ? '从会话中移除这条记录（不影响已打开的标签页）' : '从会话中移除这条记录'}
+          aria-label={`从会话中移除: ${tab.title}`}
         >
           <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
             <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
@@ -356,7 +386,8 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({ searchQuery 
         </button>
       </div>
     </div>
-  );
+    );
+  };
 
   const FiltersPanel = ({ withOuterMargin }: { withOuterMargin?: boolean }) => (
     <>
@@ -525,7 +556,7 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({ searchQuery 
               <div className="space-y-1">
                 <div>小提示：</div>
                 <ul className="list-disc list-inside space-y-0.5 text-left">
-                  <li>支持搜索会话名称、备注、标签标题或 URL</li>
+                  <li>支持搜索会话名称、标签标题或 URL</li>
                   <li>可结合域名、保存时间和固定标签筛选</li>
                   <li>如果刚换设备，可先登录后手动同步一次</li>
                 </ul>

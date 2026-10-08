@@ -196,6 +196,12 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
       // fulfilled action 触发 scheduleUpload，无需骗一次
       dispatch(deleteGroup(group.id))
         .unwrap()
+        .then(payload => {
+          // 恢复 = 整组物理移除，广播登记失败同样要 surface：本地卡片没了，
+          // 云端行还活着，对端下次合并会把它复活。用户以为恢复成功就不会再查。
+          const warn = deleteBroadcastWarn(payload);
+          if (warn) showDeleteError(warn);
+        })
         .catch(error => {
           logError('恢复会话后删除原会话失败:', error);
           showDeleteError(`恢复会话后清理原会话失败: ${error.message || '未知错误'}`);

@@ -311,16 +311,29 @@ export class SyncEngine {
         // 2026-10-07 专家团体检 P0-3：这里原本是 fail-open（读不到判据却继续下载），
         // 与同文件 backgroundSync.ts:126-142 对同一判据的 fail-closed 处置**方向相反**。
         //
-        // 读不到 pending_upload 意味着「本地有没有未推送的变更」这个问题没有答案，
-        // 而下载会用云端数据覆盖本地。若本地其实有未推送的新状态（正是读失败最可能的
-        // 原因之一：死句柄看门狗刚 abort、quota 超限、事务 abort），这一轮下载就会把
-        // 它覆盖掉 —— 用户的修改静默丢失。
+        // 判据有两个来源：storage.getLastUploadTime()（last_upload_time）与
+        // hasPendingUpload()（pending_upload）。两者任何一个读失败，
+        // 「本地是否领先云端」这个问题都没有答案，而下载会用云端数据覆盖本地。
+        // 若本地其实有未推送的新状态（正是读失败最可能的原因之一：死句柄看门狗
+        // 刚 abort、quota 超限、事务 abort），这一轮下载就会把它覆盖掉 ——
+        // 用户的修改静默丢失。
+        //
+        // 日志按实际抛错来源区分，不再写死「读不到 pending_upload 判据」——
+        // 运维按文案去查 pending_upload 而实际挂的是 last_upload_time 时，
+        // 会被误导到错误的方向。
         //
         // backgroundSync 那侧的注释已把同一判据的处置写死为「与其赌一把，不如什么
         // 都不做」（read-fail-closed）；两处必须同口径，否则同一个故障在后台轮询被
         // 挡住、在 popup 手动/自动同步这条路径却放行。
+        const isLastUploadRead =
+          e instanceof Error && /last_upload_time/i.test(String(e.message ?? ''));
+        const which = isLastUploadRead
+          ? '读不到 last_upload_time 判据'
+          : e instanceof Error && /pending_upload/i.test(String(e.message ?? ''))
+            ? '读不到 pending_upload 判据'
+            : '本地同步判据读取失败';
         logWarn(
-          '[SyncEngine] 读不到 pending_upload 判据，中止本次下载' +
+          `[SyncEngine] ${which}，中止本次下载` +
             '（fail-closed，不写入：本地是否领先云端未知，下载可能覆盖未推送的本地变更）。' +
             '下次 alarm / 手动同步重试。',
           e

@@ -242,6 +242,8 @@ describe('P2-②：删除广播登记失败必须 surface，不能回 ok:true �
     const slice = () => read('src/store/slices/tabSlice.ts');
     const header = () => read('src/components/layout/Header.tsx');
     const tabGroup = () => read('src/components/tabs/TabGroup.tsx');
+    const searchList = () => read('src/components/search/SearchResultList.tsx');
+    const headerDropdown = () => read('src/components/layout/HeaderDropdown.tsx');
 
     /**
      * 取某个 thunk 的函数体。
@@ -303,13 +305,50 @@ describe('P2-②：删除广播登记失败必须 surface，不能回 ok:true �
       );
     });
 
-    it('TabGroup 的三条删除路径都会 surface 该警告', () => {
-      const src = stripComments(tabGroup());
-      const warnCalls = src.match(/deleteBroadcastWarn\(payload\)/g) ?? [];
-      assert.ok(
-        warnCalls.length >= 3,
-        `TabGroup 有三条删除路径（删会话 / 删标签 / 拖拽搬空），每条都要读警告，` +
-          `实际只有 ${warnCalls.length} 处`
+    it('每条删除类调用点都必须读 broadcastWarn（这是不变量，不是计数）', () => {
+      // 【为什么改掉旧断言】原来写的是 `deleteBroadcastWarn 出现 >= 3 次`。
+      // 那是**计数**：实测（2026-10-07）在 TabGroup.tsx 里再加一个不读警告的
+      // `dispatch(deleteGroup(...))`，本文件 14 个用例依然全绿 —— 因为计数只证明
+      // 「历史上出现过 3 处」，证明不了「每一处都有」。而当时搜索列表那条
+      // 恢复路径里 deleteBroadcastWarn 出现 **0** 次，却一路绿灯。
+      // 计数只能防「全删了」，防不住「漏了一处」。
+      const DELETE_THUNKS = [
+        'deleteGroup',
+        'deleteAllGroups',
+        'deleteTabAndSync',
+        'moveTabAndSync',
+      ];
+      const targets = [
+        ['TabGroup.tsx', tabGroup()],
+        ['SearchResultList.tsx', searchList()],
+        ['HeaderDropdown.tsx', headerDropdown()],
+      ] as const;
+      const offenders: string[] = [];
+
+      for (const [name, raw] of targets) {
+        const text = stripComments(raw);
+        const callRe = new RegExp(`dispatch\\(\\s*(${DELETE_THUNKS.join('|')})\\(`, 'g');
+        let m: RegExpExecArray | null;
+        while ((m = callRe.exec(text)) !== null) {
+          const at = m.index;
+          // 只看「本次调用」的链：截到下一个 dispatch( 为止，避免下一处的
+          // 警告被算到这一处头上（否则删掉中间一处的警告依然会绿）。
+          const next = text.indexOf('dispatch(', at + m[0].length);
+          const end = next === -1 ? at + 800 : Math.min(next, at + 800);
+          const chain = text.slice(at, end);
+          if (!/deleteBroadcastWarn\(/.test(chain)) {
+            const line = text.slice(0, at).split('\n').length;
+            offenders.push(`${name}:${line}  dispatch(${m[1]}(…) 的链上没读 broadcastWarn`);
+          }
+        }
+      }
+
+      assert.deepEqual(
+        offenders,
+        [],
+        '以下调用点把 SW 如实回报的广播警告丢掉了：本地已删、云端行还在 ⇒ 对端下次合并会把会话复活，' +
+          '而用户看到的是「删除成功」，不会再检查（v1.22.0 起无回收站）：\n  ' +
+          offenders.join('\n  ')
       );
     });
   });
