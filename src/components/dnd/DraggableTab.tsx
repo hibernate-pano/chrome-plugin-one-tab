@@ -294,8 +294,16 @@ export const DraggableTab: React.FC<DraggableTabProps> = React.memo(({
         <button
           onClick={handleDelete}
           className="btn-icon theme-btn-hover p-1 tab-item-delete-btn micro-interaction-button"
-          title={showOpenedState ? '从会话中移除这条记录（不影响已打开的标签页）' : '从会话中移除这条记录'}
-          aria-label={`从会话中移除: ${tabTitle}`}
+          // 2026-10-09 UX P1-7：X 不受「删除会话前确认」开关保护、且无回收站，
+          // 原 tooltip 只说「移除这条记录」，没说不可恢复 —— 这是本产品最贵的
+          // 一件事（v1.22.0 起删除即物理清除），必须在点之前说出来。
+          // title 与 aria-label 同步改：读屏用户与视觉用户要拿到同一句契约。
+          title={
+            showOpenedState
+              ? '从会话中移除这条记录（无法恢复；不影响已打开的标签页）'
+              : '从会话中移除这条记录（无法恢复）'
+          }
+          aria-label={`从会话中移除（无法恢复）: ${tabTitle}`}
         >
           <CloseIcon />
         </button>

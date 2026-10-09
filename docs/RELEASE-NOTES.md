@@ -8,6 +8,160 @@
 > 长期台账**（含根因、踩坑、修复顺序），不必翻译成英文、不必对齐商店审核口径。
 > 两边都会写「本版改了什么」，但只有本文件会记住「为什么」和「后来怎么验证的」。
 
+## v1.22.16（2026-10-09，待提审）
+
+**这版的由来**：一次**六方向并行专家体检**（数据安全 / 交互诚实度 / 安全合规 / 架构 / 测试门禁 / 产品定位）。
+起点是「995 个测试全绿」，终点是**发现 5 个 P0** —— 其中两条是**六位专家从不同方向独立命中的同一根因**。
+本版把 P0 与无争议的 P1/P2 全部修掉，每条都做了「故意改坏实现、确认测试会红」的变异验证。
+
+### P0 —— 迁移绕过单写者队列（会静默丢会话）
+
+`service-worker.ts:49` 的 `migrateToV2()` 是**裸调用**，而紧挨它下方 10 行的注释就写着
+「此刻处在队列外，必须入队」—— 规则在同一个函数里已知，只是没套到它身上。
+`TabList.tsx:27` 的 popup 侧迁移同样直写。后果：与正在跑的 `sync:download` / mutation 交错时，
+迁移拿 t0 快照覆盖 t1 刚写入的会话；被覆盖的一方**已经报成功给用户了**，而 v1.22.0 起无回收站。
+
+**为什么 getGroupsForWrite() 救不了它**：那个函数只解决「本 realm 缓存陈旧」，
+不提供任何跨任务/跨 realm 互斥。单写者队列才是互斥。而且 `mutationQueue` 的
+`pending/running` 是模块级变量，popup 与 SW **各持一份实例** —— 就算在 popup 里调 `enqueue`
+也串行不了 SW 的写入（`navigator.locks` 全仓零命中，已双复核）。
+
+修法：三件迁移整体进 `enqueue('storageMigrations', …)`；popup 改发 `RUN_MIGRATIONS`
+消息委托 SW 队列（与 `importGroups` 走 `sendMutation` 同一条先例），并**显式检查回包**
+（`sendMessage` 对 `{success:false}` 是 resolve 不是 reject，不查就是失败静默通过）。
+
+### P0 —— 三张浏览历史表的 RLS 从未启用
+
+`tab_groups` / `tabs` / `user_settings` 的 12 条策略（3 表 × 4 类操作）一直在建，
+但**全仓没有任何迁移 `ENABLE ROW LEVEL SECURITY`** —— PostgreSQL 的策略只在
+`relrowsecurity = t` 时参与判定，**策略行存在 ≠ 策略生效**。
+真库实测（24 条迁移按字典序全量重放）：三表 `relrowsecurity=f`，
+匿名身份 `select` 读到全站行、`delete` 返回 `DELETE 1`。
+
+**加重情节：门禁「查了但不判断」**。`migrationReplay.pg.test.ts:148` 的快照 SQL
+确实带了 `relrowsecurity`，但 golden 比对的是 **policy 名字集合** ——
+两库都不开 RLS 时名字完全一致，照样全绿。
+
+修法：新增 `20261009120000_enable_rls_browser_history_tables.sql`，
+**先确认四类策略齐备再启用**（缺任何一条 `RAISE EXCEPTION` 中止 ——
+「RLS 开了但没策略」是默认拒绝，会当场锁死产品，比漏洞更严重）；
+`verify()` 从「只查 profiles」扩到 7 张表查 `relrowsecurity` 并参与 ok 判定；
+新增**行为验证**（插真数据 → anon 读必须 0 行、owner 正控必须 2 行、
+匿名 UPDATE 后数据必须一字未改）。
+
+顺带修了 fixture 失真：`DASHBOARD_FIXTURE` / `GOLDEN_SEED` 缺 `GRANT`，
+anon 先被 `permission denied` 挡住，「表权限」与「行级策略」两道门混在一起，
+RLS 行为验证根本跑不起来。
+
+### P0 —— 迁移标志被覆盖（旧数据回滚覆盖新数据）
+
+`storageAdapter.ts` 的 `migrateFromChromeStorage` / `migrateFromLocalStorage`：
+`MIGRATION_SCAN_KEYS` 由 `Object.values(STORAGE_KEYS)` 全量派生、**包含 `migration_flags` 自己**，
+于是搬运清单里出现这个键。流程是「① 开头读 flags（KV 可能为空 → `{}`）→
+② 批量搬运（把源里的 flags 写进 KV）→ ③ 置位时用 ① 那个旧对象盖回去」——
+源带来的其它迁移标志被抹掉。标志一丢，那个迁移就**重跑**，把更旧的数据再覆盖一次。
+
+**第一版修复是错的**：我只做了「置位前重新读」，但批量写已经把 KV 原值覆盖了，
+重新读读到的是被覆盖的那份。**是新加的测试把它抓出来的**（第二个用例红）。
+改成三路合并（KV 现值 + 源现值 + 本次置位）才对。
+
+### P0 —— 恢复会话的假承诺
+
+`TabGroup.tsx` 先 `deleteGroup`、50ms 后才发 `OPEN_TABS`（恢复=消费原会话，产品负责人已确认此语义），
+但回包文案写「打不开的标签**仍保留在会话中**」—— 那时会话已物理删除，是**假承诺**，
+且与该语义自相矛盾。
+
+**修法只改文案、不动顺序**：按锁定态分流（未锁定 →「原会话已从列表移除」；
+已锁定 →「仍保留在会话中」，锁定组确实不走删除分支）。
+SW 侧日志去掉它无权判断的那句（SW 不知道调用方锁没锁定）。
+搜索侧两处 **fire-and-forget 补上回包** —— 它们原先完全看不见打开结果，而记录已被移除。
+
+### P0 —— 保存预检失败仍报成功
+
+`TabManager.saveCurrentTab` 有 3 条预检早退（内部页 / 固定页开关关闭 / URL 清洗后为空），
+每条都自己弹了失败通知然后 `return` —— 而调用方**不看返回值**，无条件再弹
+「当前标签页已保存」。用户连收两条互相矛盾的通知。
+
+修法：返回 `Promise<boolean>`，两处调用方改 `if (saved)` 才发成功通知。
+顺带修 P1：右键外层 catch 原只 `logError`（与快捷键同动作却零反馈），补「操作失败，请重试」。
+
+### P1/P2 —— 诚实度与数据安全
+
+- **设置读失败后用默认值覆盖真值**：`loadSettings.rejected` 无 reducer → Redux 停在
+  `DEFAULT_SETTINGS` → `saveSettings` 盲写整份默认值覆盖真实设置，全程无声。
+  修：`settingsReadFailed` 标记 + 写前拒绝 + `dispatchSaveSettings()` helper
+  （判据只写一处，6 个调用点走它）+ 各处出声。
+- **删除链路印记探测 fail-open**：新增 `supportsOpStampStrict()`（只供删除广播）。
+  **第一版修法被现有测试证否过** —— 直接让宽松版抛错会打红
+  `downloadChain.test.ts:783`「宁可少选列，不可让整次下载失败」（有意且正确）。
+  正确方向是按调用方分流：上传/下载/digest 继续宽松，删除广播严格。
+- **敏感键清单漂移**：原清单 5 项里只有 `migration_flags` 真正双向经 SecureStorage 落盘；
+  `user_preferences` / `sync_tokens` 零写入方，`deviceId` 只有 get 无 set。
+  收敛为 2 项 + 守卫（清单每个键必须有真实调用方；`auth_cache` 不在清单时源码必须
+  有「为何暂不加密」的显式说明）。
+- **键名与主题集合的第二份来源**：`journal` / `device_seq` / `tabvaultpro_device_id`
+  三处手抄改引用权威表；`THEME_STYLES` 成为主题的唯一真相源（`ThemeStyle` 由它派生）。
+- **上传节奏常量收敛**：防抖 3000ms 原先散在 5 处，收敛到 `src/core/syncTiming.ts`。
+  刻意不合并 30s 协议超时 / 35s 保护窗口 / Toast duration（语义不同，数值接近是巧合）。
+- **导入结果报数量**：新增 `importDetailed()`（`importData` 保留为 boolean 薄包装，
+  9 处既有测试零改动），UI 改报「共 N 个、导入 X 个、跳过 Y 个」，并改用
+  `dispatch(loadGroups())` 不再 `window.location.reload()`（reload 会把提示一起刷掉）。
+- **新手引导文案**：遮罩是全屏且无点击处理器，文案却让用户「点击顶部按钮」→ 照做没反应。
+  改为「关闭本引导后…」。
+- **`「删除前确认」改名「删除会话前确认」**：该开关只接进整组删除与批量删除，
+  单标签 X 完全不受控 —— 代码注释自己写着「该开关只应管单组删除」，只有 UI 标签在撒谎。
+  同时给 X 的 title/aria-label 补「无法恢复」。
+
+### 文档与线上
+
+- **商店文案自相矛盾**：中文段先写「数据传输到你的云端账户」、后写「不上传你的浏览历史」；
+  `Web history` 行与 `Website content` 行直接冲突。改为与 `privacy.html` 同口径，中英 + 数据表三处同改。
+- **README「30 天后自动清理」**：与 `privacy.html` 的「随同步上传执行、不再登录则推迟」不同口径，
+  README 单点夸大。改为同口径。
+- **`docs/rebuild-plan.md` 说谎**：顶部称「影子双写上线，灰度 100%」且「本文档是重构唯一指导源」，
+  而 `yjs` / `dexie` 在 `package.json` 与 `src/` 全量零残留。加逐条状态表横幅作废，
+  保留决策痕迹但封死「照此实施」。
+- **线上下线旧网页版**：`tapstack-two.vercel.app` 的项目 build 仍写着 `pnpm build:web`
+  （该脚本已随 `src/web/` 删除）⇒ **最近 11 次生产部署全部 Error**。改为只托管
+  `privacy.html` 的静态部署：SPA 下线（`/` 404）、隐私政策保留（200，内容更新）。
+
+### 死代码与测试假绿
+
+- 删除 4 个确认零引用的文件（`webTombstone.ts` / `UserProfile.tsx` / `background.ts` /
+  `hydrationDecision.ts`）+ 其纯函数测试。**关键：删实现不连安全不变式一起丢** ——
+  `hydrationDecision` 守护的「空读不得被固化」改挂到活代码上
+  （断言 TabList 不得出现 `if (lastLoadedAt) return`、popup 不得重建水合路径）。
+- **测试假绿两条**：① glob 退化时 65 个子目录测试静默消失、全绿零 skip
+  （新增**顶层**外部锚点 `globRecursionAnchor.test.ts`）；② 商店文案抽取的长度阈值
+  `> 400` 放行 440 字符的坏抽取（改为与独立推导逐字比对）。
+- **推翻一条专家结论**：专家称「删掉 `map(normalizeImportedGroup)` 后 32 个导入测试全绿」，
+  实测 **6 红（4 个既有）** —— 接线一直有守护。教训写进测试注释：
+  引用外部结论前必须自己跑一遍变异。
+
+### 我犯的错（记录在案，因为它们决定哪些修复可信）
+
+1. **守卫写在被变异的函数体内** —— 变异把整个函数替换掉，守卫跟着消失、14/14 全绿。
+   这正是我刚修的 glob P0-1 同一类自我指涉错误。
+2. **变异验证两次无效**（基线本身红 / 变异脚本没写入），看到「全绿」差点当成守卫生效。
+3. **差点造成双重导入**：给 `importFromOneTabFormat` 加统计时没删原有 `await`，
+   会静默导入两份副本 —— **30 个既有导入测试全绿**，靠读 diff 自查发现。
+4. **差点把不可达路径报成 P0**：P2-2「危险 URL 丢弃不告知」实测 9 个边界用例
+   `droppedTabs > 0` 的用例数 = **0**，判为非缺陷、未改代码。
+5. **猜导出名去搜引用，全猜错**（实际是 `applyWebRemoveTab` / `mintWebStamp`）。
+   零引用结论必须基于真实标识符。
+
+### 门禁
+
+| 项目 | 结果 |
+|---|---|
+| `node --test "tests/**/*.test.ts"` | **1025 pass / 0 fail / 0 skipped** |
+| `pnpm validate` | PASS（type-check + tests + lint + tests + build + bundle） |
+| PG 真库门禁 | 67 pass / 0 skipped（含迁移两遍重放 + golden 双库 + RLS 行为验证） |
+| 变异验证 | 11+ 组，全部「改坏 → 红 → 还原 → sha256 一致」 |
+| 测试数 | 995 → **1025**（+30） |
+
+---
+
 ## v1.22.15（2026-10-07，待提审）
 
 **这版的由来**：1.22.14 提交后做了一轮五方向并行审查（1.22.12 / 1.22.13 / 1.22.14 各一，加上迁移与商店文案、测试质量两条横向）。结论是：**代码层面两个 P0 修复是真的关上了**，但「修复被守卫住」这件事没做到，而且商店面还挂着已下线功能的宣传。本版修的是审查确认的问题，并把「守卫本身不会红」这一类也补上。

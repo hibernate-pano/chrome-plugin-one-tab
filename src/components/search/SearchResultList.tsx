@@ -226,10 +226,36 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({ searchQuery 
     }
 
     setTimeout(() => {
-      chrome.runtime.sendMessage({
-        type: 'OPEN_TABS',
-        data: { tabs: tabsPayload },
-      });
+      // ── 2026-10-09 UX P0-3：必须看回包 ────────────────────────────────
+      // 原先是 fire-and-forget：打开失败、跳过多少、SW 已死全都不可见，
+      // 而本函数**已经删掉了本地记录**（先删后开）—— 用户以为只是打开没反应，
+      // 实际会话已经从列表消失且不可恢复。
+      // 与 TabGroup.openAllTabs 同口径：按锁定态分流说明记录还在不在。
+      chrome.runtime.sendMessage(
+        {
+          type: 'OPEN_TABS',
+          data: { tabs: tabsPayload },
+        },
+        (res: unknown) => {
+          const r = res as
+            | { success?: boolean; skippedUnopenable?: number; error?: string }
+            | undefined;
+          const removedNote = group.isLocked
+            ? '（该会话已锁定，记录仍在列表中）'
+            : '原会话已从列表移除（恢复即消费原会话，无回收站）。';
+          if (r && r.success === false) {
+            showDeleteError(`${r.error || '恢复会话失败'}。${removedNote}`);
+            return;
+          }
+          if (r && typeof r.skippedUnopenable === 'number' && r.skippedUnopenable > 0) {
+            showDeleteError(
+              `已恢复 ${tabsPayload.length - r.skippedUnopenable} 个标签；另有 ` +
+                `${r.skippedUnopenable} 个在当前设备无法打开（本地文件、临时链接或浏览器内部页面）。` +
+                removedNote
+            );
+          }
+        }
+      );
     }, 100);
   };
 
@@ -296,10 +322,37 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({ searchQuery 
     })();
 
     setTimeout(() => {
-      chrome.runtime.sendMessage({
-        type: 'OPEN_TABS',
-        data: { tabs: tabsPayload },
-      });
+      // ── 2026-10-09 UX P0-3：批量恢复同样要看回包 ──────────────────────
+      // 这条比单组那条更隐蔽：上面的 for 循环**跨多个组**删记录，本函数
+      // fire-and-forget 发完就结束。打开失败/跳过一律不可见，而部分记录
+      // 已经被移除且不可恢复。
+      // 批量会话里锁定态可能混杂，所以按「是否真的删了记录」分流：
+      const anyRemoved = matchingTabs.some(t => !t.group.isLocked);
+      const removedNote = anyRemoved
+        ? '未锁定的会话已从列表移除（恢复即消费原会话，无回收站）。'
+        : '所涉会话均已锁定，记录仍在列表中。';
+      chrome.runtime.sendMessage(
+        {
+          type: 'OPEN_TABS',
+          data: { tabs: tabsPayload },
+        },
+        (res: unknown) => {
+          const r = res as
+            | { success?: boolean; skippedUnopenable?: number; error?: string }
+            | undefined;
+          if (r && r.success === false) {
+            showDeleteError(`${r.error || '恢复失败'}。${removedNote}`);
+            return;
+          }
+          if (r && typeof r.skippedUnopenable === 'number' && r.skippedUnopenable > 0) {
+            showDeleteError(
+              `已恢复 ${tabsPayload.length - r.skippedUnopenable} 个标签；另有 ` +
+                `${r.skippedUnopenable} 个在当前设备无法打开（本地文件、临时链接或浏览器内部页面）。` +
+                removedNote
+            );
+          }
+        }
+      );
     }, 100);
   };
 

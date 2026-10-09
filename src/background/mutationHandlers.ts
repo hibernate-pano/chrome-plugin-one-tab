@@ -12,6 +12,7 @@
  */
 import type { TabGroup } from '@/types/tab';
 import type { MutationOp, MutationResult } from '@/shared/mutationProtocol';
+import { DELETE_PRIORITY_UPLOAD_MS, UPLOAD_DEBOUNCE_MS } from '@/core/syncTiming';
 import type { Journal } from '@/utils/journal';
 import type { SeqRegistry } from '@/utils/seqRegistry';
 import type { OpStamp } from '@/core/opStamp';
@@ -55,8 +56,12 @@ export interface MutationDeps {
   noteGroupDeleted?: (groupIds: readonly string[]) => Promise<void> | void;
 }
 
-const DELETE_PRIORITY_MS = 1500; // 删除/新建类（对齐原 autoSyncMiddleware 优先级 ≥8）
-const NORMAL_MS = 3000;
+// 2026-10-09 架构 P2-4：数值改引用单一事实来源（core/syncTiming.ts），
+// 不再手抄。原先这两个值与 syncEngine 的默认参数、TabManager 的调用参数
+// 各写一份，调上传节奏时必然漏改一处。此处本文件仍是纯模块（不 import
+// syncEngine），常量放在 core/ 正是为此。
+const DELETE_PRIORITY_MS = DELETE_PRIORITY_UPLOAD_MS; // 删除/新建类（对齐原 autoSyncMiddleware 优先级 ≥8）
+const NORMAL_MS = UPLOAD_DEBOUNCE_MS;
 
 /**
  * 物理删除的组登记云端删除广播队列。

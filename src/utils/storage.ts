@@ -1,4 +1,4 @@
-import { TabGroup, UserSettings, LayoutMode, ThemeStyle } from '@/types/tab';
+import { TabGroup, UserSettings, LayoutMode, ThemeStyle, THEME_STYLES } from '@/types/tab';
 import { parseOneTabFormat, formatToOneTabFormat } from '@/core/oneTabFormatParser';
 import { secureStorage } from './secureStorage';
 import { kvGet, kvSet, kvRemove } from '@/storage/storageAdapter';
@@ -87,8 +87,11 @@ export function onGroupsChanged(cb: (originId?: string) => void): () => void {
   });
 }
 
-// 有效的主题风格值
-const VALID_THEME_STYLES: ThemeStyle[] = ['legacy', 'creamy', 'prism', 'apple', 'chrome', 'claude'];
+// 有效的主题风格值 —— 直接引用权威常量（2026-10-09 架构 P2-3）。
+// 原先这里手抄一份数组、types/tab.ts 又手抄一份联合类型，两份之间没有编译期
+// 关联：给类型加成员而忘了这里 ⇒ 合法主题被判无效、静默回落 legacy。
+// 现在 THEME_STYLES 是唯一真相源（types/tab.ts 里 ThemeStyle 由它派生）。
+const VALID_THEME_STYLES: readonly ThemeStyle[] = THEME_STYLES;
 
 /**
  * 主题收敛迁移映射（2026-09-28：8 → 4）。
@@ -173,6 +176,24 @@ interface ExportData {
   };
 }
 
+/**
+ * 导入的真实结果（2026-10-09 UX P1-6）。
+ *
+ * UI 必须用这三个数字把结果说清楚，而不是只回一个「成功」：
+ *   · source   文件里有几个组
+ *   · imported 实际落盘了几个（applyImportGroups 会丢掉全空/全无效 URL 的组）
+ *   · pending  true = 超时但命令已受理、正在后台执行（此时 imported 无意义）
+ *
+ * 「导入了 3 个、跳过 7 个」和「导入了 10 个」对用户是两回事 —— 前者意味着
+ * 有 7 个得回文件里自己对，静默跳过等于让他以为全都在。
+ */
+export interface ImportDetailedResult {
+  ok: boolean;
+  imported: number;
+  source: number;
+  pending: boolean;
+}
+
 class ChromeStorage {
   private async ensureVersion() {
     const version = await kvGet<number>(STORAGE_KEYS.VERSION);
@@ -192,7 +213,33 @@ class ChromeStorage {
     return cachedAsyncFn('storage', 'groups', async () => {
       await this.ensureVersion();
       const groups = await kvGet<unknown>(STORAGE_KEYS.GROUPS);
-      return Array.isArray(groups) ? (groups as TabGroup[]) : [];
+      // ── 2026-10-09 P1-10：读失败不得与「键不存在」同形 ────────────────
+      //
+      // 原实现是一行三元 `Array.isArray(groups) ? … : []`，与上方注释承诺的
+      // 「fail-closed：读失败抛错，不返回 []」**直接冲突**（注释与实现不一致）。
+      // 后果有两层：
+      //   ① UI 层：形状损坏被归一成空数组 ⇒ loadGroups 走 fulfilled、不置 error
+      //      ⇒ 界面显示「先保存一个工作会话」，与**真的首次使用完全同形**。
+      //      用户看不出「数据还在但读出来是坏的」，只会以为自己的会话没了。
+      //   ② 写路径：所有读-改-写拿这个 `[]` 当真值 ⇒ 下一次写入把整组用户会话
+      //      截断成单个元素并回报成功 —— 这正是上方注释想防的那个 P0。
+      //
+      // 现在分成三种语义，不再共用一个 `[]`：
+      //   · 读不到键（undefined/null）= 首次使用，真的没有数据 → 返回 []
+      //   · 键在但形状不对 = 数据损坏 → 抛错（fail-closed）
+      //   · kvGet 本身抛错 = 读失败 → 原样向上抛（既有行为，未改）
+      if (groups === undefined || groups === null) {
+        return [];
+      }
+      if (!Array.isArray(groups)) {
+        // 不把原始内容拼进错误消息：错误会进 Redux state 并可能被上层日志携带，
+        // 而它可能含用户数据。只报类型，够定位、不泄露。
+        throw new Error(
+          `本地会话数据形状异常：tab_groups 期望数组，实得 ${typeof groups}，` +
+            '已中止本次读取（不按空列表处理，避免数据被误认为不存在）'
+        );
+      }
+      return groups as TabGroup[];
     }, CACHE_TTL.GROUPS);
   }
 
@@ -280,10 +327,21 @@ class ChromeStorage {
    * 写路径专用读：先落盘 pending 的防抖写、失效 30s 缓存，再读真值。
    *
    * 【为什么读-改-写必须用它，而不是 getGroups()】
-   * getGroups() 有 30s 进程内缓存，而 groups 并非只有 SW 一个上下文会写：
-   * popup 的 runMigrations（migrateFaviconUrls）会在 TabList 挂载时调
-   * setGroups() 写 GROUPS key。SW 侧没有注册 onGroupsChanged，感知不到这次写入，
-   * 缓存就此陈旧。
+   * getGroups() 有 30s 进程内缓存，拿它做读-改-写的快照，可能比实际磁盘状态旧。
+   * 防抖窗口期内由本进程写入的 pending 值也可能还没落盘 —— 先 flush 才能读到
+   * 「含 pending 写的真值」，否则紧接着的写会把 pending 覆盖掉。
+   *
+   * 【2026-10-09 修订：popup 已不再自行写 groups】本注释原先写的是
+   * 「popup 的 runMigrations（migrateFaviconUrls）会在 TabList 挂载时调
+   * setGroups()，SW 侧没有 onGroupsChanged，感知不到这次写入」—— 那是**修复前**
+   * 的世界。P0 修复后 TabList 改发 RUN_MIGRATIONS 消息，三件迁移全部搬进
+   * SW 的单写者队列执行（见 service-worker 的 RUN_MIGRATIONS 分支），
+   * popup realm 不再直接整表写 GROUPS key。
+   *
+   * **但 getGroupsForWrite() 仍然不可替代**：它解决的是「本 realm 缓存陈旧 +
+   * pending 未落盘」，与跨 realm 队列互斥是**两件不同的事**，两者都需要 ——
+   * 进队列解决并发，fresh read 解决自己的陈旧。不要因为「已入队」就改回
+   * getGroups()：入队保证的是没有并发写，保证不了自己读到的是最新快照。
    *
    * 后果不是"读到旧数据"这么轻——所有 mutation 都是「读-改-写」：拿陈旧快照
    * 改完再写回，期间由别的上下文写入的数据被整段抹掉，且回报成功
@@ -703,7 +761,13 @@ class ChromeStorage {
    * 无 SW（网页版 / node:test）时走本地兜底：同样的语义、同样的纯函数，
    * 只是由本进程串行执行（此语境下没有并发同步合并，竞态不成立）。
    */
-  private async mergeImportedGroups(incoming: TabGroup[]): Promise<void> {
+  /**
+   * @returns 实际导入的组数；**-1 = 超时、命令已受理但在后台继续**（数量未知）。
+   *   两条路径都有真实数量可拿：SW 路径是 `res.payload`（applyImportGroups
+   *   返回的 imported 数组），本地路径是 `merged.imported`。原先两条都丢掉，
+   *   UI 只拿到一个 boolean，于是「导入了 3 个、跳过 7 个」无从告知。
+   */
+  private async mergeImportedGroups(incoming: TabGroup[]): Promise<number> {
     if (hasMutationSender()) {
       const res = await sendMutation<TabGroup[]>({ op: 'importGroups', groups: incoming });
       if (!res.ok) {
@@ -715,12 +779,12 @@ class ChromeStorage {
         // 列表展示真实结果；极端情况下列表短暂未含导入内容，等 SW 跑完再开即见。
         if (typeof res.error === 'string' && res.error.startsWith(TIMEOUT_REASON_PREFIX)) {
           logWarn('[Storage] 导入等待超时，命令已受理并在后台继续执行（不报失败，避免重复导入整份副本）');
-          return;
+          return -1;
         }
         // 其余明确失败如实失败：不退回本地直写——那正是本方法要消灭的竞态路径。
         throw new Error(res.error ?? 'Service Worker 未接受导入');
       }
-      return;
+      return Array.isArray(res.payload) ? res.payload.length : -1;
     }
 
     const existing = await this.getGroupsForWrite();
@@ -734,6 +798,7 @@ class ChromeStorage {
     );
     await this.setGroupsImmediate(merged.groups);
     await this.markGroupsChangedByImport();
+    return merged.imported.length;
   }
 
   /**
@@ -930,7 +995,21 @@ class ChromeStorage {
    * 设置合并单独兜错：设置读失败（fail-closed）不得把**已经落盘**的组导入
    * 判成整体失败，用户看到「导入失败」却发现会话其实已经进来了。
    */
-  async importData(data: ExportData): Promise<boolean> {
+  /**
+   * 导入 JSON 备份，并给出**真实结果**（2026-10-09 UX P1-6）。
+   *
+   * 为什么不再只回一个 boolean：`applyImportGroups` 会把 sanitizeTabUrl 不通过的
+   * 标签整条丢弃、并滤掉因此变空的组 —— 所以「文件里有 10 个组」不等于「导入了
+   * 10 个组」。只回 boolean 时 UI 要么弹「导入失败」、要么 reload 后什么也不说，
+   * 用户无从知道「导入了 3 个、跳过 7 个」，也没法把跳过的去文件里对。
+   *
+   * 这是诚实化的**下一层**：1.22.14/15 已修掉「全跳过却报成功」，
+   * 这里补的是「部分成功也必须说出来」。
+   *
+   * `importData` 保留为薄包装（返回 boolean）——9 处既有测试与调用方依赖该形状；
+   * 新 UI 改用本方法拿数量。
+   */
+  async importDetailed(data: ExportData): Promise<ImportDetailedResult> {
     try {
       if (!data || !data.data || !Array.isArray(data.data.groups)) {
         throw new Error('无效的导入数据格式');
@@ -964,10 +1043,10 @@ class ChromeStorage {
         // 注意这是 1.22.15 引入的行为变化：旧版本在这条路径上仍会合并 settings。
         // 若要恢复旧行为，把这段 early return 移到 settings 合并之后即可，
         // 但需要先重新论证「失败提示 + 设置被改」的组合是否可接受。
-        return false;
+        return { ok: false, imported: 0, source: groups.length, pending: false };
       }
 
-      await this.mergeImportedGroups(groups);
+      const importedCount = await this.mergeImportedGroups(groups);
 
       // 如果有设置数据，则合并设置
       if (data.data.settings) {
@@ -982,11 +1061,22 @@ class ChromeStorage {
         }
       }
 
-      return true;
+      return {
+        ok: true,
+        // importedCount === -1 表示超时但命令已受理（后台继续跑，真实数量未知）
+        imported: importedCount < 0 ? 0 : importedCount,
+        source: groups.length,
+        pending: importedCount < 0,
+      };
     } catch (error) {
       logError('导入数据失败:', error);
-      return false;
+      return { ok: false, imported: 0, source: 0, pending: false };
     }
+  }
+
+  /** {@link importDetailed} 的 boolean 薄包装（既有调用方与测试依赖这个形状）。 */
+  async importData(data: ExportData): Promise<boolean> {
+    return (await this.importDetailed(data)).ok;
   }
 
   /**
@@ -994,8 +1084,17 @@ class ChromeStorage {
    * @param text OneTab 格式的文本
    * @returns ok=是否导入成功；失败时 reason=面向用户的原因说明（1.22.14 诚实化：
    *   「解析失败」不再笼统一刀切——0 组与全无效 URL 是两种不同的失败，文案分开说）。
+   *   imported/source 为**可选**（2026-10-09 UX P1-6）：成功时给实际落盘数与
+   *   解析出的组数，供 UI 报「导入 N 个、跳过 M 个」。既有调用方只读 ok/reason，
+   *   不传也不依赖这两个字段，所以保持可选以免牵动 3 处测试。
    */
-  async importFromOneTabFormat(text: string): Promise<{ ok: boolean; reason?: string }> {
+  async importFromOneTabFormat(text: string): Promise<{
+    ok: boolean;
+    reason?: string;
+    imported?: number;
+    source?: number;
+    pending?: boolean;
+  }> {
     try {
       if (!text || typeof text !== 'string') {
         return { ok: false, reason: '导入内容为空，请重新选择 OneTab 导出的文本文件' };
@@ -1024,9 +1123,17 @@ class ChromeStorage {
 
       // 同 importData：交单写者串行化执行读-改-写（真值读 + 盖印记 + 上传调度）。
       // 只发可导入组，全空的壳不必让 SW 再过滤一遍。
-      await this.mergeImportedGroups(importableGroups);
-
-      return { ok: true };
+      //
+      // ⚠️ 这里**只调用一次**：mergeImportedGroups 会真的写盘，
+      // 调两次 = 导入两份副本（applyImportGroups 每次都新建 id，没有去重）。
+      // 2026-10-09 我给它加返回值统计时差点留了重复调用，靠自查发现。
+      const importedCount = await this.mergeImportedGroups(importableGroups);
+      return {
+        ok: true,
+        imported: importedCount < 0 ? 0 : importedCount,
+        source: parsedGroups.length,
+        pending: importedCount < 0,
+      };
     } catch (error) {
       logError('从 OneTab 格式导入数据失败:', error);
       return { ok: false, reason: error instanceof Error ? error.message : '导入失败，请重试' };

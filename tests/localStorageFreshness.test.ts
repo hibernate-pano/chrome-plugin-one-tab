@@ -25,6 +25,7 @@ import assert from 'node:assert/strict';
 import { register } from 'node:module';
 import { pathToFileURL, fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
+import { readFileSync } from 'node:fs';
 import { stubSessionJson } from './_helpers/stubSession.ts';
 
 globalThis.__TABSTACK_META_ENV__ = {
@@ -139,6 +140,9 @@ g.indexedDB = makeFakeIndexedDb(backing);
 // requireSessionUserId 一律判定「未登录」。
 const chromeStore = new Map<string, unknown>();
 chromeStore.set(SESSION_KEY, stubSessionJson(USER_ID));
+
+/** 仓库根（源码接线断言用）。 */
+const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
 const sentMessages: any[] = [];
 let messageResponder: ((msg: any) => unknown) | null = null;
@@ -952,5 +956,113 @@ describe('导入旧备份：形状不可信，但必须能进得来', () => {
       0,
       '不可导入时不应向 SW 发命令'
     );
+  });
+});
+
+describe('importData 的旧备份形状接线（2026-10-09）', () => {
+  // ── 先纠正一条误判（我实测推翻了专家结论）──────────────────────────────
+  //
+  // 专家报告（测试门禁方向 P1）称：「把 `data.data.groups.map(normalizeImportedGroup)`
+  // 删掉，32 个导入相关测试全绿 —— 调用点无人测」。
+  //
+  // **实测不成立。** 我做了这个变异，结果是 **6 个测试红**，其中 4 个是既有测试：
+  //   · 旧形状 {tabs_data:[...]} 不再抛异常，标签完整送达
+  //   · 标签元素是云端 snake_case 时，时间戳映射到本地 camelCase（不再丢）
+  //   · 嵌套 wrapper {tabs_data:{tabs:[...]}} 也能恢复出标签
+  //   · 缺 name 的组给可读回退，不留空标题卡片
+  // 接线**一直有守护**。专家的结论与本 checkout 的实际行为不符（可能其变异
+  // 形态不同，或基于更早的代码状态）。
+  //
+  // 所以下面两条不是「填补空白」，而是**加强**：
+  //   ① 源码接线断言：直接锁 `map(normalizeImportedGroup)` 这一行，
+  //      不依赖任何行为用例（行为用例可能因别的原因红，定位不如它直接）；
+  //   ② 端到端 URL 断言：确认旧文件的 2 个标签**逐条**送达 SW（既有用例
+  //      多为单标签或只断言 ok）。
+  //
+  // ⚠️ 教训记在这里：引用外部结论前必须自己跑一遍变异。
+  // 「32 个测试全绿」这句话如果直接写进注释并被下一个人采信，
+  // 会让他去「修」一个不存在的问题，甚至删掉真实有效的守护。
+  const read = (rel: string) => readFileSync(resolve(ROOT, rel), 'utf8');
+
+  it('importData 必须对每个组调用 normalizeImportedGroup（源码接线断言）', () => {
+    const src = read('src/utils/storage.ts')
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .replace(/(^|[^:])\/\/.*$/gm, '$1');
+    assert.match(
+      src,
+      /data\.data\.groups\.map\(\s*normalizeImportedGroup\s*\)/,
+      'importData 不再对导入的组做归一化 —— 旧版本备份（tabs_data 键）会变成空组仍报成功，' +
+        '而既有良构用例测不出来（它们全用 tabs: 形状）'
+    );
+    assert.match(
+      src,
+      /import\s*\{[^}]*normalizeImportedGroup[^}]*\}\s*from\s*'@\/core\/normalizeTabsData'/,
+      'normalizeImportedGroup 的 import 缺失 —— 接线断了'
+    );
+  });
+
+  it('tabs_data 旧形状的备份必须导入出真实标签（端到端，不只是函数单测）', async () => {
+    installChrome(true);
+    putRawGroups([]);
+    messageResponder = () => ({ ok: true, payload: [] });
+
+    // 旧版本导出的备份：组用 `tabs_data`（snake_case）而不是 `tabs`；
+    // 标签也用 snake_case 字段，模拟真实的历史文件形状。
+    const legacyBackup = {
+      version: '1.0.0',
+      timestamp: NOW,
+      data: {
+        groups: [
+          {
+            id: 'legacy-1',
+            name: '旧备份的会话',
+            tabs_data: [
+              {
+                id: 'legacy-1-t1',
+                url: 'https://legacy.example.com/one',
+                title: '旧标签一',
+                created_at: NOW,
+                last_accessed: NOW,
+                pinned: false,
+              },
+              {
+                id: 'legacy-1-t2',
+                url: 'https://legacy.example.com/two',
+                title: '旧标签二',
+                created_at: NOW,
+                last_accessed: NOW,
+                pinned: false,
+              },
+            ],
+            created_at: NOW,
+            updated_at: NOW,
+            is_locked: false,
+          },
+        ],
+        settings: undefined,
+      },
+    };
+
+    // 用 unknown 绕过 ExportData 的形状约束：这里刻意喂**旧形状**，
+    // 正是模拟「用户手上的历史备份文件」。
+    const ok = await storage.importData(legacyBackup as never);
+    assert.equal(ok, true, '旧形状备份应当导入成功');
+
+    const mutate = sentMessages.filter(m => m?.type === 'MUTATE');
+    assert.equal(mutate.length, 1, '应发出一条 importGroups 命令');
+    const sentGroups = mutate[0].data.groups as Array<{ id: string; tabs: unknown[] }>;
+    assert.equal(sentGroups.length, 1, `应导入 1 个组，实到 ${sentGroups.length}`);
+
+    // ★ 核心断言：标签必须被归一化出来。
+    // 若 importData 少了 map(normalizeImportedGroup)，这里的 tabs 会是空数组
+    //（`tabs_data` 不被识别）→ 组被 applyImportGroups 当空组丢弃或产出空会话。
+    assert.equal(
+      sentGroups[0].tabs.length,
+      2,
+      `旧备份的 2 个标签必须被读出（实到 ${sentGroups[0].tabs.length}）—— ` +
+        '为 0 说明归一化调用点被移除：导入会“成功”但组内什么都没有，而文件本身是好的'
+    );
+    const urls = (sentGroups[0].tabs as Array<{ url: string }>).map(t => t.url);
+    assert.deepEqual(urls, ['https://legacy.example.com/one', 'https://legacy.example.com/two']);
   });
 });

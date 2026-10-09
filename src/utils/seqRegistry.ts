@@ -21,8 +21,10 @@
  */
 import type { TabGroup } from '@/types/tab';
 import type { OpStamp } from '@/core/opStamp';
+// 2026-10-09 架构 P2-2：键名改引用权威表，不再手抄（详见 journal.ts 同项注释）。
+import { STORAGE_KEYS } from '@/storage-kv/keys';
 
-const DEVICE_SEQ_KEY = 'device_seq';
+const DEVICE_SEQ_KEY = STORAGE_KEYS.DEVICE_SEQ;
 
 export interface SeqRegistryDeps {
   kvGet<T>(key: string): Promise<T | null>;

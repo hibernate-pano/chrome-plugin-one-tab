@@ -12,9 +12,22 @@ import { logError, logInfo } from './log';
 /**
  * 迁移现有数据中的 favicon URLs，确保符合 CSP 策略
  *
- * 读路径必须用 getGroupsForWrite()：本迁移在 TabList 挂载时于 popup 上下文跑，
- * 而 getGroups() 有 30s 进程内缓存、且 SW 侧不感知本上下文的写入——拿陈旧快照
- * 整表写回会把同期由 SW/后台写入的会话整段抹掉（详见 storage.getGroupsForWrite）。
+ * 读路径必须用 getGroupsForWrite()，理由分两层（2026-10-09 修订）：
+ *
+ * 【跨 realm 互斥 —— 由调用方保证】本文件的三个迁移原先由 TabList 在 popup
+ * realm 直接跑，与 SW 的 mutation / sync:download 零互斥，用陈旧快照整表写回
+ * 会抹掉同期刚保存的会话（P0）。现在全部搬进 SW 单写者队列执行：
+ * TabList 发 RUN_MIGRATIONS → service-worker 的 RUN_MIGRATIONS 分支
+ * `enqueue('storageMigrations', () => runStorageMigrations())`。
+ *
+ * 【本进程陈旧 —— 由 getGroupsForWrite() 保证】进了队列只保证「没有并发写」，
+ * **不保证自己读到的是最新快照**：getGroups() 有 30s 进程内缓存，且防抖窗口
+ * 里 pending 的写可能还没落盘。所以读-改-写仍然必须走 getGroupsForWrite()
+ * （先 flush 再失效缓存）。
+ *
+ * 两层缺一不可：只有入队没有 fresh read ⇒ 拿自己的旧快照覆盖掉自己的 pending；
+ * 只有 fresh read 没有入队 ⇒ 与其它 realm 并发，拿快照覆盖别人刚写的。
+ * 详见 storage.getGroupsForWrite 的注释。
  */
 export async function migrateFaviconUrls(): Promise<void> {
   try {
@@ -170,26 +183,38 @@ export async function purgeTombstones(): Promise<void> {
  * 运行所有必要的数据迁移
  */
 export async function runMigrations(): Promise<void> {
-  try {
-    logInfo('开始检查数据迁移...');
+  logInfo('开始检查数据迁移...');
 
-    // 检查并运行 favicon URLs 迁移
-    if (await shouldRunMigration('favicon_urls_v1')) {
-      await migrateFaviconUrls();
-    }
-
-    if (await shouldRunMigration('recent_restore_history_removed_v1')) {
-      await removeRecentRestoreHistory();
-    }
-
-    if (await shouldRunMigration('tombstones_removed_v1')) {
-      await purgeTombstones();
-    }
-
-    logInfo('数据迁移检查完成');
-
-  } catch (error) {
-    logError('数据迁移失败:', error);
-    // 不抛出错误，避免影响应用启动
+  // 检查并运行 favicon URLs 迁移
+  if (await shouldRunMigration('favicon_urls_v1')) {
+    await migrateFaviconUrls();
   }
+
+  if (await shouldRunMigration('recent_restore_history_removed_v1')) {
+    await removeRecentRestoreHistory();
+  }
+
+  if (await shouldRunMigration('tombstones_removed_v1')) {
+    await purgeTombstones();
+  }
+
+  logInfo('数据迁移检查完成');
 }
+
+// ── 2026-10-09：错误不再在这里吞掉 ──────────────────────────────────────
+//
+// 旧实现 `catch { logError(...) }` 并注释「不抛出错误，避免影响应用启动」。
+// 在**当前调用结构**下这条理由已经不成立，且吞错会制造新的谎报成功：
+//   - 调用方只剩 service-worker 的 RUN_MIGRATIONS 分支（单写者队列内）；
+//   - 那里靠返回值把成败回给 TabList，若本函数吞掉错误，它永远回
+//     `{success:true}` —— 迁移失败与成功在 UI 和日志里完全同形；
+//   - 「不抛出 = 应用能启动」的保护现在由**调用方**负责：TabList 的 catch
+//     照常 dispatch(loadGroups())，SW 的 runMigrations 也各自 try/catch。
+//     应用启动与迁移失败已解耦，不需要这一层再吞一次。
+//
+// 【为什么子函数的 try/catch 仍然保留】migrateFaviconUrls / purgeTombstones /
+// removeRecentRestoreHistory 各自的 catch 是为了**就地打日志再 rethrow**，
+// 与这里不是同一层；这里原先的 catch 只吞不抛，才是谎报成功的源头。
+//
+// 迁移失败的后果（子函数已按幂等设计）：标志位不置位 ⇒ 下次启动重跑。
+// 三件迁移都在 try 里、逐个短路，失败即中止本轮，绝不带着半成品继续。

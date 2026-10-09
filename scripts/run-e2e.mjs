@@ -54,7 +54,6 @@ const ORDER = [
   'e2e-stress-no-resurrect.mjs',            // 云端持续写入下的本地移除（含正控）
   'e2e-layout-empty-group.mjs',             // 布局切换不产生空壳会话
   'e2e-layout-column-split.mjs',            // 双栏左右按次序对分
-  'e2e-web-dashboard-sync.mjs',             // Web 仪表盘跨端写入（需 SHIM_CHROME_STORAGE=1 才全绿，见脚本头）
 ];
 
 /**

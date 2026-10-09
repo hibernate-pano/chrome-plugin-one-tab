@@ -2,7 +2,7 @@ import React, { useState, useTransition } from 'react';
 import { useAppDispatch, useAppSelector } from '@/store/hooks';
 import {
   toggleLayoutMode,
-  saveSettings,
+  dispatchSaveSettings,
   updateSettings,
 } from '@/store/slices/settingsSlice';
 import { cleanDuplicateTabs, deleteBroadcastWarn } from '@/store/slices/tabSlice';
@@ -142,7 +142,8 @@ export const Header: React.FC<HeaderProps> = ({ onSearch }) => {
     });
   };
 
-  const handleToggleLayout = () => {
+  // async：末尾要 await 保存结果并出声（React 对事件处理器返回 Promise 无要求）
+  const handleToggleLayout = async () => {
     dispatch(toggleLayoutMode());
 
     let nextLayoutMode: LayoutMode;
@@ -162,8 +163,9 @@ export const Header: React.FC<HeaderProps> = ({ onSearch }) => {
       layoutMode: nextLayoutMode,
     }));
     
-    // 然后保存到存储
-    dispatch(saveSettings() as any);
+    // 然后保存到存储；失败必须出声（否则开关保持新状态、刷新后回退，全程无声）
+    const saveError = await dispatchSaveSettings(dispatch);
+    if (saveError) showToast(saveError, 'error');
   };
 
   const handleSaveAllTabs = async () => {

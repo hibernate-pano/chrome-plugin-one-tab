@@ -161,12 +161,33 @@ describe('verify 脚本：必须真的能检出问题（不能漏检）', () => 
 
   it('VERIFY OK 必须取决于实际检查结果（不得无条件报成功）', () => {
     const src = code('scripts/supabase-migrate.mjs');
-    const tail = src.slice(src.lastIndexOf('if (!okRls || !okPurge)'));
-    assert.ok(
-      /if\s*\(\s*!ok\s*\)/.test(tail),
-      'VERIFY OK 的打印与 return 必须受 ok 保护 —— 无条件报成功就是「对没发生的事报成功」，' +
-        '而这正是本轮修掉的同类缺陷'
+    // 【2026-10-09 修正：不要绑死在具体检查项的字符串上】
+    // 旧写法是 `src.slice(src.lastIndexOf('if (!okRls || !okPurge)'))`，把定位
+    // 钉死在那三个变量的**拼写**上。给 verify 加一项检查（okRlsTables）后，
+    // lastIndexOf 返回 -1 ⇒ slice(-1) 取到最后一个字符 ⇒ 断言失配报假红。
+    // 变量怎么变都该不影响这条守卫 —— 它要守的是「VERIFY OK 受 ok 保护」
+    // 这个**意图**，不是那行的字面量。
+    //
+    // 按意图断言：从最后一个 `if (!ok)` 开始到函数结束，必须是
+    //   if (!ok) { …; return false; }
+    //   console.log('…VERIFY OK…');
+    //   return true;
+    // 三件事缺一不可：有保护、保护里会 return false、成功文案在保护之后。
+    const guardIdx = src.lastIndexOf('if (!ok)');
+    assert.ok(guardIdx > -1, 'verify 里找不到 `if (!ok)` 保护 —— VERIFY OK 可能已无条件打印');
+    const tail = src.slice(guardIdx);
+
+    assert.match(
+      tail,
+      /if\s*\(\s*!ok\s*\)\s*\{/,
+      'VERIFY OK 的打印必须在 `if (!ok)` 保护块之后 —— 无条件报成功就是「对没发生的事报成功」'
     );
+    // 保护块内必须真的 return false（只判断不返回 = 检查了照样往下打印成功）
+    const guardEnd = tail.indexOf('return false;');
+    assert.ok(guardEnd > -1, '`if (!ok)` 保护块里没有 return false —— 查了但不影响结论');
+    // 成功文案必须出现在保护之后（同一个 if 块之后，而不是之前）
+    const okLogIdx = tail.indexOf('VERIFY OK');
+    assert.ok(okLogIdx > guardEnd, 'VERIFY OK 出现在 `if (!ok)` 的 return false 之前 —— 无条件报成功');
   });
 
   it('连接串支持关闭 SSL（本地裸库才能验证迁移）', () => {

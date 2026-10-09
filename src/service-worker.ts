@@ -6,6 +6,9 @@ import { isOpenableTabUrl, isStorableTabUrl } from '@/utils/inputValidation';
 import { enqueue, hasQueuedOrRunningJob } from '@/background/mutationQueue';
 import { mutationService } from '@/background/mutationService';
 import { ensureOpStampMigrated } from '@/background/opStampMigratedGuard';
+import { runMigrations as runStorageMigrations } from '@/utils/migrationUtils';
+import { LEGACY_KEYS, STORAGE_KEYS } from '@/storage-kv/keys';
+import { UPLOAD_DEBOUNCE_MS } from '@/core/syncTiming';
 import { logError, logInfo, logWarn } from './utils/log';
 // 诊断导出前落盘性能 span 用（见 PERF_FLUSH 消息分支）。
 import { perfTrace } from './utils/perfTrace';
@@ -25,17 +28,23 @@ logInfo('- chrome.storage:', !!chrome.storage);
 logInfo('=====================================');
 
 // 迁移旧的存储键到新的统一键名
+// 2026-10-09 架构 P2-2：键名改引用权威表，不再手抄。
+// tabGroups 是历史键名（归在 LEGACY_KEYS），tab_groups 是现行键（STORAGE_KEYS）。
+// 这里改的是 chrome.storage.local 里的键，而权威表本身正是为「键名只在一处定义」
+// 建立的 —— 手抄副本的代价是：改名时漏改一处，旧数据静默读不到（不报错）。
 async function migrateStorageKeys() {
   try {
-    const { tabGroups } = await chrome.storage.local.get(['tabGroups']);
-    const { tab_groups } = await chrome.storage.local.get(['tab_groups']);
+    const legacyKey = LEGACY_KEYS.LEGACY_TAB_GROUPS;
+    const currentKey = STORAGE_KEYS.GROUPS;
+    const { [legacyKey]: tabGroups } = await chrome.storage.local.get([legacyKey]);
+    const { [currentKey]: tab_groups } = await chrome.storage.local.get([currentKey]);
 
     // 如果存在旧键且新键不存在或为空，则迁移
     if (Array.isArray(tabGroups) && (!Array.isArray(tab_groups) || tab_groups.length === 0)) {
-      await chrome.storage.local.set({ tab_groups: tabGroups });
+      await chrome.storage.local.set({ [currentKey]: tabGroups });
       // 迁移完成后可选择清理旧键（可选）
-      await chrome.storage.local.remove('tabGroups');
-      logInfo('已将旧键 tabGroups 迁移为 tab_groups');
+      await chrome.storage.local.remove(legacyKey);
+      logInfo(`已将旧键 ${legacyKey} 迁移为 ${currentKey}`);
     }
   } catch (error) {
     logWarn('迁移存储键失败（可忽略）:', error);
@@ -43,23 +52,34 @@ async function migrateStorageKeys() {
 }
 
 async function runMigrations() {
+  // chrome.storage.local 旧键只碰迁移自身的旧键，不碰 GROUPS —— 可留在队列外。
   await migrateStorageKeys();
 
+  // ── 2026-10-09 专家团体检 P0：以下三件都是「全量读 → 改 → 写 groups」──
+  //
+  // runMigrations 由 onInstalled / onStartup 调用，此刻处在队列**外**。原先
+  // migrateToV2() 是**裸调用**，而紧挨它下方 10 行的注释就写着「此刻处在队列外，
+  // 必须入队」—— 规则在同一个函数里已知，只是没套到它身上。与正在跑的
+  // sync:download / mutation 交错时，迁移会拿 t0 快照覆盖 t1 刚写入的会话：
+  // 被覆盖的一方已经报成功给用户了，而 v1.22.0 起无回收站，用户找不回来。
+  // 下一轮 upload 读的是被抹掉后的状态 ⇒ 本地与云端一起丢。
+  //
+  // 三件合并成一个 job（同一个单写者任务内串行），不要拆成三次入队：
+  // 中途插一个 mutation 会让「迁移中途的半成品」暴露给用户可见的列表。
   try {
-    await migrateToV2();
+    await enqueue('storageMigrations', async () => {
+      await migrateToV2();
+      // 阶段二·§7：存量实体补操作印记。必须在任何同步/写入之前跑完——
+      // 没有印记的本地实体会被合并当成全序最小值，在首次与云端合并时静默输给云端。
+      //
+      // true = 此刻已在 storageMigrations 这个 job 内，就地串行（再入队会死锁）。
+      await ensureOpStampMigrated(true);
+      // popup 侧的三件迁移（favicon 清洗 / 无墓碑清理 / 最近恢复历史）
+      // 原先由 TabList 在自己的 realm 直写 —— 见 RUN_MIGRATIONS 分支的说明。
+      await runStorageMigrations();
+    });
   } catch (error) {
     logError('[Migration] 数据迁移失败:', error);
-  }
-
-  // 阶段二·§7：存量实体补操作印记。必须在任何同步/写入之前跑完——
-  // 没有印记的本地实体会被合并当成全序最小值，在首次与云端合并时静默输给云端。
-  //
-  // inQueue=false：runMigrations 由 SW 启动路径调用，此刻处在队列**外**，必须入队，
-  // 不能就地执行 —— 否则会与此刻正在跑的 sync:download 交错全量写 groups。
-  try {
-    await ensureOpStampMigrated(false);
-  } catch (error) {
-    logError('[Migration] 操作印记迁移失败:', error);
   }
 }
 
@@ -90,13 +110,16 @@ async function setupContextMenus() {
 
   chrome.contextMenus.create({
     id: 'saveCurrentTab',
-    title: '保存当前标签',
+    // 2026-10-09 P1-1：定位不变（保存 = 剪切，产品负责人已确认保持现状），
+    // 但同一动作的每个入口都必须把「会关闭」说出来 —— 否则用户按右键菜单
+    // 时以为只是存个副本，标签却被关掉了。
+    title: '保存当前标签并关闭',
     contexts: ['action']
   });
 
   chrome.contextMenus.create({
     id: 'saveOtherTabs',
-    title: '保存除当前标签以外的所有标签',
+    title: '保存其他标签并关闭',
     contexts: ['action']
   });
 }
@@ -202,9 +225,14 @@ chrome.commands.onCommand.addListener(async (command) => {
           currentWindow: true
         });
         if (activeTab) {
-          // 简化的保存当前标签页逻辑
-          await tabManager.saveCurrentTab(activeTab);
-          await showNotification('当前标签页已保存');
+          // ── 2026-10-09 P0：只在真保存了才报成功 ──────────────────────
+          // saveCurrentTab 有 3 条预检早退（内部页 / 固定页开关 / URL 清洗后为空），
+          // 每条都自己弹了具体失败通知。原先这里**不看结果**、无条件再弹
+          // 「当前标签页已保存」，用户连收两条互相矛盾的通知。
+          const saved = await tabManager.saveCurrentTab(activeTab);
+          if (saved) {
+            await showNotification('当前标签页已保存');
+          }
         } else {
           logWarn('未找到活跃标签页');
         }
@@ -232,9 +260,11 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
       await tabManager.openTabManager();
     } else if (info.menuItemId === 'saveCurrentTab' && tab) {
       logInfo('点击右键菜单，保存当前标签页');
-      // 简化的保存当前标签页逻辑
-      await tabManager.saveCurrentTab(tab);
-      await showNotification('当前标签页已保存');
+      // 同快捷键：只在真保存了才报成功（失败原因由 saveCurrentTab 就地弹出）
+      const saved = await tabManager.saveCurrentTab(tab);
+      if (saved) {
+        await showNotification('当前标签页已保存');
+      }
       await tabManager.openTabManager(true);
     } else if (info.menuItemId === 'saveOtherTabs') {
       logInfo('点击右键菜单，保存除当前标签以外的所有标签');
@@ -262,6 +292,12 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
     }
   } catch (error) {
     logError('处理右键菜单点击失败:', error);
+    // ── 顺带修 P1-8：同一动作的两个入口必须同一种诚实度 ────────────────
+    // 快捷键保存失败走的是外层 catch → 「快捷键操作失败，请重试」；
+    // 右键的 catch 原先只 logError，用户点完毫无反应，与「没点上」无法区分。
+    // 文案不写「保存失败」：本 catch 同时兜着打开管理器与保存其他标签两个分支，
+    // 对它们说「保存失败」反而是新的不准确。用与快捷键同构的泛化文案。
+    await showNotification('操作失败，请重试');
   }
 });
 
@@ -342,10 +378,15 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
             .then(() => {
               // 跳过数 > 0 时**必须告知调用方**：UI 不能显示「已打开 N 个」而实际
               // 少开了几个（与 docs 记录过的「对没发生的事报成功」同一类问题）。
+              //
+              // 2026-10-09：日志**不判断会话状态**。原日志写「它们仍保留在会话中」——
+              // 但 SW 并不知道调用方有没有删掉原会话（未锁定组先删后开、已锁定组不删），
+              // 这句话对其中一半是假的。SW 只报它确知的事实（跳过几个），
+              // 「会话还在不在」由真正知道的 UI 层说（见 TabGroup 的分流文案）。
               if (skipped > 0) {
                 logWarn(
                   `[SW] OPEN_TABS：${skipped} 个标签在本设备无法打开（本地文件/临时链接/` +
-                    `浏览器内部页面），已跳过；它们仍保留在会话中。`
+                    '浏览器内部页面），已跳过未打开。'
                 );
               }
               sendResponse({
@@ -401,6 +442,30 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         sendResponse({ success: true });
         return false;
 
+      // ── 2026-10-09 专家团体检 P0：popup 侧迁移委托给 SW 的单写者队列 ──
+      //
+      // 修复前：TabList 在自己的 realm 直接 await runMigrations()（内部三件全量
+      // 读-改-写 groups），与 SW 的 mutation / sync:download **零互斥** ——
+      // 因为 mutationQueue 的 pending/running 是模块级变量，popup 与 SW 是两个
+      // JS realm，各持一份实例，就算在 popup 里调 enqueue 也保护不了 SW 的写入。
+      //
+      // 时序即丢数据：t0 popup 迁移读快照 → t1 SW 的 mutation 写入刚保存的会话
+      // → t2 popup 用 t0 快照整表写回 → 刚保存的会话当场消失，而它已报「已保存」。
+      //
+      // 【为什么不能只靠 getGroupsForWrite()】那解决的是**本 realm 的缓存陈旧**，
+      // 不是跨 realm 互斥。importGroups 当初就是用同一条 sendMutation 路径解决
+      // 同类竞态的（见 storage.mergeImportedGroups 注释），这里复用同一条先例。
+      //
+      // 【为什么 enqueue 而不是就地执行】本分支跑在消息处理上下文（仍是 SW 进程，
+      // 但不在队列内），就地执行会与正在跑的 job 交错。入队后 SW 内一切数据写
+      // （语义命令 / 上传 / 下载合并 / 迁移）严格串行。
+      case 'RUN_MIGRATIONS': {
+        enqueue('storageMigrations', () => runStorageMigrations())
+          .then(() => sendResponse({ success: true }))
+          .catch(err => sendResponse({ success: false, error: err?.message || '迁移失败' }));
+        return true; // 异步响应
+      }
+
       // 诊断导出前请求 SW 落盘性能 span（见 @/utils/perfTrace）。
       //
       // 【为什么不入 mutationQueue】入队就会排在正在执行的慢任务后面，而我们要看的
@@ -434,7 +499,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       case 'SYNC': {
         const data = message.data || {};
         if (data.op === 'scheduleUpload') {
-          syncEngine.scheduleUpload(typeof data.delayMs === 'number' ? data.delayMs : 3000);
+          syncEngine.scheduleUpload(typeof data.delayMs === 'number' ? data.delayMs : UPLOAD_DEBOUNCE_MS);
           sendResponse({ ok: true });
           return false;
         }

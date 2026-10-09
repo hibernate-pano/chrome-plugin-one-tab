@@ -14,12 +14,38 @@ const KEY_LENGTH = 256;
 // V3 使用首次生成的随机密钥，持久化存储，扩展 ID 变化不影响。
 const LOCAL_KEY_STORAGE_KEY = 'ts_local_encryption_key_v3';
 
+/**
+ * 需要**加密存储**的键（2026-10-09 架构 P2-1 修正）。
+ *
+ * 【修正前的问题】清单是 `['deviceId','migration_flags','auth_cache',
+ * 'user_preferences','sync_tokens']`，与实际写入路径全面漂移：
+ *   · user_preferences / sync_tokens —— **零生产写入方**（python 全仓扫描，
+ *     两处命中都在本文件这份清单自己里）。它们是预留名，不是既成事实。
+ *   · deviceId —— 只有 **get**（encryptionUtils.ts:24 读旧值），没有 set。
+ *     真正的写入方是 deviceUtils，走 KV 层。列在这里只让「读」路径走解密，
+ *     而写入方压根不经过本模块。
+ *   · auth_cache —— 真实且敏感（含用户 email 与登录态），但 authCache.ts 直接
+ *     `chrome.storage.local.set()`，**绕过**本模块（清单里列了它也没用）。
+ *
+ * 【为什么只留 migration_flags】它是唯一真正经由 SecureStorage **双向**落盘的键
+ * （storage.ts:1159 get / :1177 set，且值字面与本清单一致 ⇒ isSensitiveKey 生效）。
+ * 其余各项要么零写入方、要么只读、要么绕过本模块。
+ *
+ * 【auth_cache 为什么暂不列入】让它改走 SecureStorage 需要设计迁移路径
+ * （旧明文值如何过渡、失败时是否降级明文），属安全/产品边界决策，尚未拍板。
+ * 在那之前**不加进清单** —— 加了会给「它已加密」一个假印象，比不列更糟。
+ *
+ * 【怎么防止再次漂移】tests/guards/storageKvConvergence.test.ts 有断言：
+ * 清单里的每个键都必须有真实写入方（防止再塞预留名进来）。
+ */
 const SENSITIVE_KEYS: readonly string[] = [
-  'deviceId',
   'migration_flags',
-  'auth_cache',
-  'user_preferences',
-  'sync_tokens',
+  // deviceId 只有读、没有写（写入方 deviceUtils 走 KV）。但历史数据可能已经
+  // 被加密过，encryptionUtils.ts:24 仍需要走解密才能读出来 —— 所以必须留在
+  // 清单里让 **get** 尝试解密。get 侧本来就有明文回退（decrypt 失败原样返回），
+  // 因此「本来没加密」也不会因此出错：这条是**只读兼容**，不是加密承诺。
+  // 守卫只要求「键有真实调用方」，不区分读写。
+  'deviceId',
 ];
 
 async function deriveKeyPBKDF2(extensionId: string, salt: Uint8Array): Promise<CryptoKey> {

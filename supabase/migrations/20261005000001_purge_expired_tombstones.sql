@@ -30,10 +30,18 @@
 -- ─────────────────────────────────────────────────────────────────────
 
 -- 1) TTL 常量：放在函数里而不是散在两处，客户端迁移时可直接对齐这个数字
+--
+-- 2026-10-09（安全 P2-2）：补 `SET search_path = public`。
+-- 同一文件下方的 purge 函数（:92）早就钉了，本函数是唯一漏掉的 ⇒
+-- Supabase Advisor 会报，且**将来有人给它加读表逻辑就立刻升级为高危**
+-- （mutable search_path + 未受限 EXECUTE 是经典组合）。现在补上，与同文件同口径。
+-- 现状风险确实低：它是 IMMUTABLE 常量函数、非 SECURITY DEFINER，
+-- 且下方已 REVOKE 掉 PUBLIC/anon/authenticated 的 EXECUTE。
 CREATE OR REPLACE FUNCTION public.body_tombstone_expiry_days()
 RETURNS integer
 LANGUAGE sql
 IMMUTABLE
+SET search_path = public
 AS $body$ SELECT 30 $body$;
 
 -- 它是 IMMUTABLE 纯函数（无副作用、只返回一个数字），理论上被匿名调用无害。

@@ -102,7 +102,15 @@ export const SyncButton: React.FC<SyncButtonProps> = () => {
 
     try {
       const [localGroups, remoteGroups] = await Promise.all([
-        storage.getGroups(),
+        // 2026-10-09 数据安全 P2-5：预览必须读真值。
+        // 这里是**破坏性操作的确认闸门** —— 用户正是核对「本地 N / 云端 M」之后
+        // 才按下「覆盖」。原先用 getGroups()（30s 进程内缓存），而 groupsChangedBus
+        // 的通知是尽力而为（明写「丢了通知最坏是列表晚一次刷新」）：
+        // 通知丢失 + 缓存未到 TTL ⇒ 弹窗显示陈旧的 N/M，用户在错误前提下确认覆盖。
+        // 实际执行侧（syncEngine）本来就 invalidateGroupsCache + 真值读，不会照着
+        // 错数字去写 —— 但确认信息失真就足以让用户做出错误决策。
+        // getGroupsForWrite() 正是「要读真值」的语义入口，代价只是一次 flush + 失效。
+        storage.getGroupsForWrite(),
         downloadTabGroups(),
       ]);
 
@@ -125,7 +133,15 @@ export const SyncButton: React.FC<SyncButtonProps> = () => {
 
     try {
       const [localGroups, remoteGroups] = await Promise.all([
-        storage.getGroups(),
+        // 2026-10-09 数据安全 P2-5：预览必须读真值。
+        // 这里是**破坏性操作的确认闸门** —— 用户正是核对「本地 N / 云端 M」之后
+        // 才按下「覆盖」。原先用 getGroups()（30s 进程内缓存），而 groupsChangedBus
+        // 的通知是尽力而为（明写「丢了通知最坏是列表晚一次刷新」）：
+        // 通知丢失 + 缓存未到 TTL ⇒ 弹窗显示陈旧的 N/M，用户在错误前提下确认覆盖。
+        // 实际执行侧（syncEngine）本来就 invalidateGroupsCache + 真值读，不会照着
+        // 错数字去写 —— 但确认信息失真就足以让用户做出错误决策。
+        // getGroupsForWrite() 正是「要读真值」的语义入口，代价只是一次 flush + 失效。
+        storage.getGroupsForWrite(),
         downloadTabGroups(),
       ]);
 

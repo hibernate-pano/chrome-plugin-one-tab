@@ -143,6 +143,68 @@ export async function supportsOpStamp(): Promise<boolean> {
     return false;
   }
 }
+
+/**
+ * 删除链路专用的**严格版**列探测（2026-10-09 数据安全 P1-4）。
+ *
+ * ── 为什么不能直接改 supportsOpStamp() ────────────────────────────────
+ * 同一个探测结果被四条链路消费，**只有删除链路不能 fail-open**：
+ *   · 上传（upload.ts:364）  → 少带一列，退化但仍能上传    → fail-open 正确
+ *   · 下载（download.ts:185）→ 退化成 select('*')，照常成功 → fail-open 正确
+ *   · digest（probe.ts:182） → 退化成最小列集              → fail-open 正确
+ *   · **删除广播（upload.ts:761）→ 「不知道有没有列」被翻译成「按没有来写墓碑」**
+ *
+ * 2026-10-09 实测证否过第一版修法：直接让 supportsOpStamp() 在非确定性失败时
+ * 抛错，守卫绿了但全量 fail 7 —— 正好打红 downloadChain.test.ts:783，
+ * 那条断言「宁可少选列，不可让整次下载失败」是**有意且正确**的。
+ * 正确方向是按调用方分流严格度，而不是改探测本身。
+ *
+ * ── 严格在哪 ──────────────────────────────────────────────────────────
+ *   · 确定性缺列（PGRST204 / 错误文案含 last_op_seq）→ 返回 false
+ *     （真没有列，走 plain 是对的，且结果可缓存）
+ *   · 非确定性失败（网络抖动、权限、异常）→ **抛错**
+ *     不知道就拒绝执行，让 markCloudGroupsAsDeleted 整体失败 →
+ *     pendingDeleteIds 保留 → 下轮 alarm 重试
+ *   · 成功 → true（复用同一份缓存：cache 里的 false 只可能来自确定性缺列）
+ *
+ * ── 后果差在哪 ────────────────────────────────────────────────────────
+ * fail-open 时 plain 墓碑不带 last_op_seq，云端印记停在旧值；
+ * 对端合并要求云端墓碑印记**严格大于**本地才服从，印记持平则判本地赢
+ *（见 opStampMerge）→ 对端保留该会话，之后一编辑就把它复活。
+ * 用户看到「已删除」，实际是「删除意图被静默吞掉」，且会被撤销。
+ */
+export async function supportsOpStampStrict(): Promise<boolean> {
+  if (opStampSupportCache !== null) return opStampSupportCache;
+  if (!isSupabaseConfigured()) {
+    // 没有配置就没法回答「列在不在」——删除广播不该在未知状态下动云端行
+    throw new Error('[op-stamp-strict] Supabase 未配置，无法确定 last_op_seq 列状态，拒绝执行删除广播');
+  }
+
+  let probe: Awaited<ReturnType<ReturnType<typeof supabase.from>['select']>>;
+  try {
+    probe = await supabase.from('tab_groups').select('last_op_seq').limit(1);
+  } catch (err) {
+    // 网络层异常：非确定性，不知道就不能当「没有列」
+    throw new Error(
+      `[op-stamp-strict] 印记列探测异常（非确定性），拒绝在未知状态下写删除墓碑: ${(err as Error).message}`
+    );
+  }
+
+  if (probe.error) {
+    if (probe.error.code === 'PGRST204' || /last_op_seq/i.test(probe.error.message)) {
+      // 确定性「列不存在」→ 这是真的没有列，走 plain 是对的，且可以缓存
+      opStampSupportCache = false;
+      return false;
+    }
+    // 网络/权限等非确定性失败 → 抛错，交由调用方保留 pending 重试
+    throw new Error(
+      `[op-stamp-strict] 印记列探测失败（非确定性），拒绝在未知状态下写删除墓碑: ${probe.error.message}`
+    );
+  }
+
+  opStampSupportCache = true;
+  return true;
+}
 // ── 轻量变更探活（降 egress） ──────────────────────────────────────────
 //
 // 背景：后台每 60s 一次 downloadAndMerge 轮询，绝大多数时候云端无变化，

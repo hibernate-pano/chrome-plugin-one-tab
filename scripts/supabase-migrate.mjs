@@ -170,13 +170,21 @@ async function verify(client) {
     console.log('\n✓ op-stamp 守卫：列 + 触发器 + 函数体（严格 <、NULL 清空防护）全部正确');
   }
 
-  // ── 2026-10-05：补验 profiles RLS 与墓碑清理函数 ──────────────────────
+  // ── 2026-10-05 补验 profiles RLS / 墓碑清理；2026-10-09 扩到全部 7 张表 ──
   // 原来 verify 只看 op-stamp 守卫，于是我今天加的两条迁移「跑没跑过」都验不出来：
   // ① profiles 的 USING(true) 还在不在（数据泄漏）；② purge 函数能不能被 anon 调。
   // 「迁移脚本报告成功」必须覆盖它声称覆盖的全部对象。
+  //
+  // 【2026-10-09：为什么必须从「只查 profiles」扩到逐表】
+  // 三张浏览历史表 tab_groups / tabs / user_settings 的 RLS **从来没被任何迁移
+  // ENABLE 过** —— 12 条策略一直在建，但 PostgreSQL 只在 relrowsecurity=t 时才
+  // 参与判定，策略行存在 ≠ 策略生效。而 verifyProfilesRls 函数名就写着它只查
+  // profiles，这三张表不在它的视野里，于是「线上是否安全」长期无人检查。
+  // 只修迁移不扩 verify ⇒ 下次同类漂移照样全绿放行。
+  const okRlsTables = await verifyRlsEnabled(client);
   const okRls = await verifyProfilesRls(client);
   const okPurge = await verifyPurgeFunction(client);
-  if (!okRls || !okPurge) ok = false;
+  if (!okRlsTables || !okRls || !okPurge) ok = false;
 
   // ⚠️ 这里必须按 ok 决定输出与返回值：写成无条件 `console.log('VERIFY OK');
   // return true` 就是「对没发生的事报成功」—— 而这正是本轮修掉的那类缺陷
@@ -187,6 +195,76 @@ async function verify(client) {
     return false;
   }
   console.log('\n✓ VERIFY OK: 全部检查通过');
+  return true;
+}
+
+/**
+ * 必须启用 RLS 的表清单。
+ *
+ * 分两组的原因是「谁负责建表」不同，但结论相同 —— 缺任一条即 verify 失败：
+ *   · 浏览历史（Dashboard 建，本仓只补 ENABLE）：tab_groups / tabs / user_settings
+ *     → 20261009120000_enable_rls_browser_history_tables.sql
+ *   · 由本仓迁移 CREATE TABLE 的（缺 = 迁移没跑）：
+ *     profiles / ai_usage_logs / sync_updates / sync_snapshots
+ *
+ * tabs 存 url / title / favicon 明文浏览历史；tab_groups 存会话结构；
+ * 这两张表是整个扩展最敏感的暴露面。
+ */
+const RLS_REQUIRED_TABLES = [
+  'tab_groups', 'tabs', 'user_settings',
+  'profiles', 'ai_usage_logs', 'sync_updates', 'sync_snapshots',
+];
+
+/**
+ * 逐表校验 `relrowsecurity` 真的被打开。
+ *
+ * 【为什么不能只查 profiles】历史上 verifyProfilesRls 只覆盖一张表，而
+ * tab_groups / tabs / user_settings 三张表的 RLS 从建立到今天都没开过，
+ * 策略却一直存在 —— 「策略在」与「策略生效」是两件事，只看前者会误判为安全。
+ *
+ * 【为什么查 pg_class.relrowsecurity 而不是 pg_policies】
+ * relrowsecurity 是**开关本身**；pg_policy 只是「策略是否被定义」。
+ * 本函数回答的正是开关问题。查 pg_policies 还会被角色过滤（非 owner 看不见）
+ * 导致静默漏检，pg_class 基表无此问题。
+ *
+ * 【表不存在 = 失败，不跳过】按本仓纪律「缺失 = 失败」：这些表要么由 Dashboard
+ * 建（tab_groups/tabs/user_settings，产品核心，不存在说明库是坏的），
+ * 要么由本仓迁移 CREATE TABLE（profiles/ai_usage_logs/sync_*，不存在说明迁移没跑）。
+ * 两种情况都不允许「跳过并报 VERIFY OK」—— 那正是 202605 那次静默失效的形态。
+ */
+async function verifyRlsEnabled(client) {
+  const { rows } = await client.query(`
+    SELECT c.relname, c.relrowsecurity
+    FROM pg_catalog.pg_class c
+    JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+    WHERE n.nspname = 'public' AND c.relkind = 'r'
+      AND c.relname = ANY($1)
+    ORDER BY c.relname
+  `, [RLS_REQUIRED_TABLES]);
+
+  const present = new Set(rows.map(r => r.relname));
+  const missing = RLS_REQUIRED_TABLES.filter(t => !present.has(t));
+  if (missing.length > 0) {
+    console.error('\n✗ VERIFY FAILED: 缺表 ' + missing.join(', '));
+    console.error('   这些表要么由 Dashboard 建（tab_groups/tabs/user_settings），');
+    console.error('   要么由本仓迁移 CREATE TABLE（profiles/ai_usage_logs/sync_*）。');
+    console.error('   表不存在 = 迁移链没跑完，不允许按「无从检查」放行。');
+    return false;
+  }
+
+  const disabled = rows.filter(r => !r.relrowsecurity).map(r => r.relname);
+  if (disabled.length > 0) {
+    console.error('\n✗ VERIFY FAILED: 以下表存在但未启用 RLS —— 策略一律不生效，表对所有角色全开:');
+    console.error('   ' + disabled.join(', '));
+    console.error('   （PostgreSQL 的策略只在 relrowsecurity=t 时参与判定；');
+    console.error('    「有策略」不等于「策略生效」。）');
+    if (disabled.some(t => ['tab_groups', 'tabs', 'user_settings'].includes(t))) {
+      console.error('   浏览历史表未开 RLS = 持有 anon key 的人可拉走全站会话。');
+      console.error('   期望: supabase/migrations/20261009120000_enable_rls_browser_history_tables.sql');
+    }
+    return false;
+  }
+  console.log(`  · ${RLS_REQUIRED_TABLES.length} 张表已全部启用 RLS ✓`);
   return true;
 }
 

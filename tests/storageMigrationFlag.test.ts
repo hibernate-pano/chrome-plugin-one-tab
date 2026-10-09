@@ -130,3 +130,66 @@ describe('localStorage → IndexedDB 迁移只做一次', () => {
     assert.equal(settings.themeMode, 'dark', '已迁移过就整体不再搬运任何键');
   });
 });
+
+describe('P0（2026-10-09）：置位迁移标志时不得丢失源里带过来的其它标志', () => {
+  // ── 这条守的是什么 ────────────────────────────────────────────────────
+  //
+  // `MIGRATION_SCAN_KEYS` 是 `Object.values(STORAGE_KEYS)` 全量派生，**包含
+  // migration_flags 自己**。于是迁移的搬运清单里会出现 migration_flags：
+  //
+  //   1. 本函数开头读 flags（此时 KV 可能是空的 → `{}`）
+  //   2. 搬运 candidates —— 这一步把**源里的** migration_flags 写进 KV
+  //   3. 置位时若仍拿步骤 1 那个旧对象盖回去 → 源带来的其它标志被抹掉
+  //
+  // 旧实现正是第 3 步：`flags.localStorageMigrated = true; setItem(flags)`。
+  // 丢掉的标志一旦是另一个迁移的完成标记，那个迁移就会**重新执行** ——
+  // 它会把更旧的数据再覆盖一次，而用户当前会话无声消失（v1.22.0 起无回收站）。
+  //
+  // 修法：置位前重新读 KV 当前真值再合并（见 storageAdapter.ts 内注释）。
+  const readFlags = (out: ReturnType<typeof coldStart>): Record<string, boolean> => {
+    const rec = out.indexedDb.migration_flags as { value: Record<string, boolean> } | undefined;
+    return rec?.value ?? {};
+  };
+
+  it('源 migration_flags 里的其它标志必须与 localStorageMigrated 同时保留', () => {
+    const out = coldStart({
+      localStorage: {
+        tab_groups: JSON.stringify(LEGACY_GROUPS),
+        // 源里带着另一个迁移的完成标记（现实中来自上一次 chrome.storage 迁移）
+        migration_flags: JSON.stringify({ chromeStorageMigrated: true }),
+      },
+      indexedDb: {},
+    });
+
+    const flags = readFlags(out);
+    assert.equal(
+      flags.localStorageMigrated,
+      true,
+      '本次迁移必须置位 localStorageMigrated'
+    );
+    assert.equal(
+      flags.chromeStorageMigrated,
+      true,
+      '源里带过来的 chromeStorageMigrated 被置位操作覆盖丢了 —— ' +
+        '它一旦丢失，chrome.storage 迁移会在下次冷启动重跑，把更旧的数据再覆盖一次（真丢数据）'
+    );
+  });
+
+  it('KV 侧已有的标志也不能被源覆盖（合并是双向的）', () => {
+    const out = coldStart({
+      localStorage: {
+        tab_groups: JSON.stringify(LEGACY_GROUPS),
+        migration_flags: JSON.stringify({ chromeStorageMigrated: true }),
+      },
+      // KV 侧已有另一个标志：source 与 target 各持一半，必须两边都留下
+      indexedDb: {
+        migration_flags: { key: 'migration_flags', value: { tombstonesRemovedV1: true } },
+      },
+    });
+
+    const flags = readFlags(out);
+    assert.equal(flags.chromeStorageMigrated, true, '源侧标志丢了');
+    assert.equal(flags.tombstonesRemovedV1, true, 'KV 侧标志被源覆盖丢了');
+    assert.equal(flags.localStorageMigrated, true, '本次标志没置上');
+  });
+});

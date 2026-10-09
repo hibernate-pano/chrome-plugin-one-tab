@@ -1,9 +1,16 @@
 // 回归：读-改-写路径不得用陈旧缓存，否则抹掉别的上下文刚写入的数据。
 //
 // 真实隐患（2026-09-28 在 e2e 中实测到整组数据被抹掉，顺藤摸瓜确认的生产路径）：
-// storage.getGroups() 有 30s 进程内缓存，但 groups 并非只有 SW 一个上下文会写——
-// popup 的 runMigrations（migrateFaviconUrls，TabList 挂载时跑）会调 setGroups()
-// 写 GROUPS key，而 SW 侧没有注册 onGroupsChanged，感知不到这次写入。
+// storage.getGroups() 有 30s 进程内缓存，而 groups 并非只有当前上下文会写——
+// 别的 realm（另一个窗口、另一个扩展页）写入 GROUPS key 后，本进程的缓存
+// 未必感知得到（当时最典型的写入方是 popup 里跑的 runMigrations）。
+//
+// 【2026-10-09 修订：迁移已搬进 SW 队列，但本测试的断言不变】
+// TabList 现在发 RUN_MIGRATIONS 把三件迁移交给 SW 的单写者队列执行，
+// popup realm 不再自行整表写 groups（P0 修复）。但**跨上下文写入**这个场景
+// 依然成立 —— 多窗口、多扩展页、以及任何不经 notifyGroupsChanged 的写都会复现，
+// 所以下面「getGroupsForWrite 能看到、getGroups 看不到」的行为断言继续有效。
+// 本文件锁的是 fresh read 这一层；「迁移进队列」由 p0DataSafetyGuards 另行锁。
 //
 // 所有 mutation 都是「读-改-写」：拿陈旧快照改完再写回，期间由别的上下文写入的
 // 数据被整段抹掉，且回报成功。触发窗口窄（升级后首次打开 popup 的那一瞬），
@@ -82,14 +89,14 @@ beforeEach(() => {
 });
 
 describe('storage.getGroupsForWrite：写路径必须读真值', () => {
-  it('别的上下文（popup 迁移）写入后，getGroupsForWrite 能看到，getGroups 看不到', async () => {
+  it('别的上下文写入后，getGroupsForWrite 能看到，getGroups 看不到', async () => {
     await kvSet('tab_groups', [group('a')]);
 
     // 模拟 SW 侧先读一次（填充 30s 缓存）
     const cachedFirst = await storage.getGroups();
     assert.deepEqual(cachedFirst.map(g => g.id), ['a']);
 
-    // 模拟 popup 上下文写入（runMigrations 路径）：缓存感知不到
+    // 模拟另一个上下文的写入：缓存感知不到（与通知丢失/跨 realm 无关）
     await kvSet('tab_groups', [group('a'), group('from-popup')]);
 
     // 陈旧缓存仍返回旧值 —— 这正是隐患的来源

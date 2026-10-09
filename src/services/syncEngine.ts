@@ -1,4 +1,5 @@
 import { store } from '@/store';
+import { UPLOAD_DEBOUNCE_MS } from '@/core/syncTiming';
 import { getCurrentUser, setFromCache } from '@/store/slices/authSlice';
 
 /** MV3 SW 中由 chrome.alarms 驱动的延迟上传 alarm。 */
@@ -171,7 +172,7 @@ export class SyncEngine {
    *
    * @param delayMs 延迟毫秒数（默认 3000ms）
    */
-  scheduleUpload(delayMs: number = 3000): Promise<void> {
+  scheduleUpload(delayMs: number = UPLOAD_DEBOUNCE_MS): Promise<void> {
     // ── 2026-10-05：置位失败不再只 logWarn ────────────────────────────────
     // 原来这里是 `.catch(err => logWarn(...))`：置位失败后 alarm 照样创建、
     // timer 照样跑，本次进程内的上传**会**发生。但 pending_upload 标志是

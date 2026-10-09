@@ -181,9 +181,25 @@ export interface TabState {
 // 布局模式枚举
 export type LayoutMode = 'single' | 'double';
 
-// 主题风格类型（2026-09-28 收敛：8 → 4，砍 classic/mint/pink/cyberpunk；
+// 主题风格（2026-09-28 收敛：8 → 6，砍 classic/mint/pink/cyberpunk；
 // 存量用户由 storage.validateThemeStyle 的迁移映射归入气质最近的保留主题）
-export type ThemeStyle = 'legacy' | 'creamy' | 'prism' | 'apple' | 'chrome' | 'claude';
+//
+// ── 2026-10-09 架构 P2-3：类型从常量派生，不再手抄 ──────────────────────
+// 原先这里是 `export type ThemeStyle = 'legacy' | … | 'claude'`，而
+// storage.ts 的 VALID_THEME_STYLES 另抄一份同样的数组。两份手抄清单之间
+// **没有编译期关联**：给联合类型加一个新成员，运行时校验数组不会跟着更新，
+// 于是合法值被判为无效并静默回落 legacy —— 一个不报错的坑。
+// 现在方向反过来了：常量是唯一真相源，类型由它派生，加主题只改一处。
+export const THEME_STYLES = [
+  'legacy',
+  'creamy',
+  'prism',
+  'apple',
+  'chrome',
+  'claude',
+] as const;
+
+export type ThemeStyle = (typeof THEME_STYLES)[number];
 
 export interface UserSettings {
   groupNameTemplate: string;

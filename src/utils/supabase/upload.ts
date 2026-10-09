@@ -10,7 +10,9 @@ import { decideCloudTombstoneWrite } from '@/core/syncDecision';
 import { supabase, checkSupabaseConfig, getDeviceId } from './client';
 import { requireSessionUserId } from './session';
 import { logError, logInfo, logWarn } from '../log';
-import { supportsCloudTombstone, supportsDeletedAt, supportsOpStamp } from './probe';
+// supportsOpStamp      → 上传路径（fail-open 正确：少带一列，退化但仍能上传）
+// supportsOpStampStrict → 删除广播（fail-open 错误：见 supportsOpStampStrict 注释）
+import { supportsCloudTombstone, supportsDeletedAt, supportsOpStamp, supportsOpStampStrict } from './probe';
 import { chunkIds, UPSERT_ROW_BATCH_SIZE } from './idBatches';
 import { CRYPTO_CONCURRENCY, mapWithConcurrency } from '../concurrency';
 import {
@@ -199,7 +201,27 @@ async function upsertRowsInBatches(rows: SupabaseTabGroup[]): Promise<{
 }
 
 export const uploadSync = {
-  // 迁移数据到 JSONB 格式
+  /**
+   * 把云端 tab_groups 的旧格式列迁移到 JSONB（历史一次性迁移工具）。
+   *
+   * ── 2026-10-09 专家团体检：标注当前状态，不删 ──────────────────────────
+   *
+   * **本方法没有自动调用方**（全仓 python + rg 双复核：只有本实现、
+   * `ports.ts` 的接口声明、以及注释里的提及）。它不会在启动/同步/上传时被触发，
+   * 现在是纯**手动运维工具**：需要时由维护者显式调用，用于修复云端旧格式数据。
+   *
+   * 【为什么不删】它是目前唯一能把云端旧格式行迁到 JSONB 的代码。
+   * 删掉它不减少任何常驻负担（不是 UI、不进主路径），却会在真的需要修数据时
+   * 要求重写一遍 —— 而重写必然要重新推导「分页 count 交叉校验」「fail-closed
+   * 中止」这些已经写在里面的教训（见本方法内的 db-max-rows 截断保护）。
+   * 按「减法减的是常驻界面与维护负担，不是运维能力」，保留 + 标注是更划算的。
+   *
+   * 【为什么必须标注】不标的话，读代码的人会以为「有个自动迁移在跑」，
+   * 从而误判线上数据的格式状态；也可能据此认为它已被测试覆盖。
+   * 它的行为**没有专测**（只有 ports.ts 的类型声明），调用前请自行核对。
+   *
+   * @returns success=是否迁移完成；migratedGroups=本次迁移的组数
+   */
   async migrateToJsonb() {
     checkSupabaseConfig();
     const userId = await requireSessionUserId();
@@ -758,7 +780,16 @@ export const uploadSync = {
 
     const [tombstoneColumn, stampColumn, deletedAtColumn] = await Promise.all([
       supportsCloudTombstone(),
-      supportsOpStamp(),
+      // ── 2026-10-09 数据安全 P1-4：删除链路必须严格 ──────────────────────
+      // 这里用 strict 版（同目录 probe.ts 的 supportsOpStampStrict）：
+      // 「不知道有没有印记列」不能翻译成「按没有来写墓碑」。fail-open 的后果是
+      // plain 墓碑不带 last_op_seq、云端印记停在旧值，而对端合并要求云端墓碑
+      // **严格大于**本地才服从（持平判本地赢）→ 删除被静默吞掉、之后还会复活。
+      //
+      // 严格版在非确定性失败时抛错 ⇒ 本方法整体失败 ⇒ pendingDeleteIds 保留
+      // ⇒ 下轮 alarm 重试。只有**确定性缺列**（PGRST204）才走 plain。
+      // 另外两个探测仍 fail-open，它们的退化是安全的（少一列/省一列，照常工作）。
+      supportsOpStampStrict(),
       supportsDeletedAt(),
     ]);
     const mode = decideCloudTombstoneWrite(tombstoneColumn, stampColumn);

@@ -11,7 +11,8 @@ import { describe, it, before } from 'node:test';
 import assert from 'node:assert/strict';
 import { register } from 'node:module';
 import { pathToFileURL, fileURLToPath } from 'node:url';
-import { dirname, resolve } from 'node:path';
+import { dirname, resolve, join } from 'node:path';
+import { readFileSync, readdirSync, statSync } from 'node:fs';
 
 globalThis.__TABSTACK_META_ENV__ = {
   VITE_SUPABASE_URL: 'https://stub.supabase.co',
@@ -23,6 +24,28 @@ globalThis.__TABSTACK_META_ENV__ = {
 const LOADER_PATH = pathToFileURL(
   resolve(dirname(fileURLToPath(import.meta.url)), '_alias-loader.mjs')
 ).href;
+
+/** 仓库根与 src 根（源码断言用，路径相对本文件位置）。 */
+const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+const SRC_ROOT = resolve(ROOT, 'src');
+
+/**
+ * STORAGE_KEYS 的 名字→值 映射（从源码**解析**得到，不手抄）。
+ *
+ * 为什么要它：调用方常常写 `secureStorage.set(STORAGE_KEYS.MIGRATION_FLAGS, …)`
+ * 而不是字面量 —— 只按字面量找调用方会把真实调用误判成「零写入方」。
+ * 而手抄这张表又会引入新的漂移面（这正是本次修掉的那个问题本身）。
+ * 解析出来 = 与被测对象同源，不存在第二份真相。
+ */
+const STORAGE_KEY_LITERALS: { name: string; value: string }[] = (() => {
+  const keysSrc = readFileSync(resolve(SRC_ROOT, 'storage-kv/keys.ts'), 'utf8');
+  const body = keysSrc.match(/export const STORAGE_KEYS[^=]*=\s*\{([\s\S]*?)\n\} as const;/);
+  if (!body) return [];
+  return (body[1].match(/(\w+):\s*'([^']+)'/g) || []).map(pair => {
+    const m = pair.match(/(\w+):\s*'([^']+)'/);
+    return { name: m![1], value: m![2] };
+  });
+})();
 
 // ── 最小浏览器存储环境 ──────────────────────────────────────────────
 // storageAdapter 在无 indexedDB 时回退 window.localStorage，用 Map 模拟。
@@ -330,5 +353,196 @@ describe('S2 supabase 改线冒烟', () => {
     assert.equal(typeof mod.isSupabaseConfigured, 'function');
     assert.equal(typeof mod.supportsOpStamp, 'function');
     assert.equal(typeof mod.supportsCloudTombstone, 'function');
+  });
+});
+
+describe('SecureStorage 的敏感键清单不得漂移（2026-10-09 架构 P2-1）', () => {
+  // 修正前的清单：['deviceId','migration_flags','auth_cache','user_preferences','sync_tokens']
+  // 五项里只有 deviceId 真的经由 SecureStorage 落盘；另四项分别是「零写入方的预留名」
+  // 与「走别的存储层」，等于承诺一个不会发生的加密。
+  //
+  // 这条守卫防的是**两种漂移方向**：
+  //   ① 往清单里塞没有写入方的键（预留名）→ 清单假装在保护其实不存在的东西
+  //   ② 清单与真实写入路径脱节 → 读代码的人以为某键已加密
+  const read = (rel: string) => readFileSync(resolve(ROOT, rel), 'utf8');
+
+  it('清单里的每个键都必须有真实写入方（不许塞预留名）', () => {
+    const src = read('src/utils/secureStorage.ts');
+    const m = src.match(/const SENSITIVE_KEYS: readonly string\[\] = \[([\s\S]*?)\];/);
+    assert.ok(m, '找不到 SENSITIVE_KEYS 字面量');
+    const keys = (m[1].match(/'([^']+)'/g) || []).map(s => s.replace(/'/g, ''));
+    assert.ok(keys.length > 0, 'SENSITIVE_KEYS 是空数组 —— 那 secureStorage 就是明文存储');
+
+    // 逐个键在 src/ 下找真实调用方（本文件自己的清单不算）。
+    //
+    // 【为什么不逐目录 walk】第一版用递归 walk + return，结果 `hasWriter` 置位后
+    // 只退出递归的当前层，外层 for 继续跑；而更糟的是它把 deviceId 也判成
+    // 「有写入方」——因为 STORAGE_KEYS 里并没有 deviceId，我却在 viaConst 分支
+    // 里对**任意** key 都去试 MIGRATION_FLAGS 那个正则。逻辑本身是错的。
+    //
+    // 现在改成：一次性把所有 .ts/.tsx 拼成一个大文本，再逐键匹配两种形态。
+    // 简单、无递归状态、也不会把一个键的证据错记给另一个。
+    const allSrc = join(SRC_ROOT, '..');
+    const collectTs = (dir: string): { path: string; text: string }[] => {
+      const out: { path: string; text: string }[] = [];
+      for (const entry of readdirSync(dir)) {
+        if (entry === 'node_modules' || entry === '.git' || entry === 'dist') continue;
+        const full = join(dir, entry);
+        if (statSync(full).isDirectory()) {
+          out.push(...collectTs(full));
+        } else if (/\.tsx?$/.test(entry) && !full.endsWith('secureStorage.ts')) {
+          out.push({ path: full, text: readFileSync(full, 'utf8') });
+        }
+      }
+      return out;
+    };
+    void allSrc;
+    const files = collectTs(ROOT).filter(f => f.path.includes('/src/'));
+
+    // 判据分两类：**写**必须存在（否则是预留名在假装保护）；
+    // **只读兼容**可以没有写方 —— deviceId 就是这种：写入方 deviceUtils 走 KV，
+    // 但历史数据可能已加密，encryptionUtils 仍需走解密才能读出（get 侧有明文回退，
+    // 所以本来没加密也不会出错）。
+    const READ_ONLY_COMPAT: Record<string, string> = {
+      deviceId: 'encryptionUtils.ts 的 secureStorage.get<string>(\'deviceId\') —— 只读解密兼容',
+    };
+    const orphans = keys.filter(key => {
+      // 形态①：字面量 —— secureStorage.set('deviceId', …)
+      const literal = new RegExp(
+        `secureStorage\\.(set|get|remove)\\s*\\(\\s*['"]${key}['"]`
+      );
+      if (files.some(f => literal.test(f.text))) return false;
+      // 形态②：常量引用 —— secureStorage.set(STORAGE_KEYS.XXX, …)
+      //        只有当该常量的**值**恰好等于本键时才算证据。
+      const constName = STORAGE_KEY_LITERALS.find(e => e.value === key)?.name;
+      if (!constName) return !READ_ONLY_COMPAT[key];
+      const viaConst = new RegExp(
+        `secureStorage\\.(set|get|remove)\\s*\\(\\s*STORAGE_KEYS\\.${constName}\\b`
+      );
+      if (files.some(f => viaConst.test(f.text))) return false;
+      // 无写入方时，只读兼容是合法的（必须在 READ_ONLY_COMPAT 里登记理由）
+      return !READ_ONLY_COMPAT[key];
+    });
+
+    assert.deepEqual(
+      orphans,
+      [],
+      `SENSITIVE_KEYS 里的键没有真实写入方：${orphans.join('、')} —— ` +
+        '零写入方的键让清单看起来在保护什么，实际什么都不保护；下一个人会据此误判某键已加密'
+    );
+  });
+
+  it('auth_cache 的处置必须是「显式待决」，不能靠清单里列着它假装已加密', () => {
+    const src = read('src/utils/secureStorage.ts');
+    const m = src.match(/const SENSITIVE_KEYS: readonly string\[\] = \[([\s\S]*?)\];/);
+    const keys = (m?.[1] ?? '').match(/'([^']+)'/g) || [];
+
+    if (!keys.some(k => k.includes('auth_cache'))) {
+      // 当前状态：auth_cache 走明文 chrome.storage（authCache.ts 直接 set）。
+      // 这是**已知待决项**，必须在 secureStorage.ts 里有对应说明，
+      // 否则下一个人看到「auth_cache 不在清单」会以为它不需要保护。
+      assert.match(
+        src,
+        /auth_cache/,
+        'auth_cache 不在 SENSITIVE_KEYS 里，但源码没有任何说明 —— ' +
+          '它真实存在且敏感（含 email 与登录态），必须留下「为何暂不加密」的显式说明，' +
+          '不能靠沉默'
+      );
+    }
+  });
+});
+
+describe('键名与主题集合不得有第二份来源（2026-10-09 架构 P2-2 / P2-3）', () => {
+  // ⚠️ 注意：本 describe 里所有源码断言都**先剥注释再匹配**。
+  // 注释本身就是知识资产，会引用旧写法（例如「原先这里是手抄联合类型 'legacy'」），
+  // 不剥注释就断言会把「解释历史的注释」误判成「旧实现回来了」——
+  // 这是子串断言必须剥注释的同一条纪律（见 tests/deadCodeGuards）。
+  const strip = (text: string) =>
+    text.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/.*$/gm, '$1');
+  const readCode = (rel: string) => strip(read(rel));
+
+
+  // 这些值此前在多个文件里各手抄一份。它们之间**没有编译期关联**：
+  // 改键名漏改一处 ⇒ 旧数据静默读不到（不报错）；给主题加成员漏改数组 ⇒
+  // 合法值被判无效、静默回落 legacy。两类都属于「不报错的坑」。
+  const read = (rel: string) => readFileSync(resolve(ROOT, rel), 'utf8');
+
+  it('journal / device_seq / 设备键不得手抄字面量', () => {
+    const cases: { file: string; literal: string; via: string }[] = [
+      { file: 'src/utils/journal.ts', literal: "'journal'", via: 'STORAGE_KEYS.JOURNAL' },
+      { file: 'src/utils/seqRegistry.ts', literal: "'device_seq'", via: 'STORAGE_KEYS.DEVICE_SEQ' },
+      { file: 'src/utils/deviceUtils.ts', literal: "'tabvaultpro_device_id'", via: 'LEGACY_KEYS.DEVICE_ID' },
+    ];
+    for (const c of cases) {
+      const src = read(c.file);
+      // 允许注释里提到字面量（那是解释），禁止出现在赋值右侧
+      const assignment = new RegExp(
+        `=\\s*${c.literal.replace(/'/g, "['\"]")}\\s*;`
+      );
+      assert.ok(
+        !assignment.test(src),
+        `${c.file} 又手抄了 ${c.literal} 作为键名 —— 改用 ${c.via}` +
+          '（键名两份 = 改名时必然漏改一处，旧数据静默丢失且不报错）'
+      );
+      assert.match(src, new RegExp(c.via.replace(/\./g, '\\.')), `${c.file} 应引用 ${c.via}`);
+    }
+  });
+
+  it('service-worker 的旧键迁移不得手抄键名', () => {
+    const src = readCode('src/service-worker.ts');
+    // chrome.storage.local.get(['tabGroups']) / ['tab_groups'] 这类字面量数组
+    assert.ok(
+      !/chrome\.storage\.local\.get\(\s*\[\s*['"]tabGroups['"]/.test(src),
+      'service-worker 又手抄了旧键 tabGroups —— 改用 LEGACY_KEYS.LEGACY_TAB_GROUPS'
+    );
+    assert.ok(
+      !/chrome\.storage\.local\.get\(\s*\[\s*['"]tab_groups['"]/.test(src),
+      'service-worker 又手抄了现行键 tab_groups —— 改用 STORAGE_KEYS.GROUPS'
+    );
+    assert.match(src, /LEGACY_KEYS\.LEGACY_TAB_GROUPS/, '应引用权威键表');
+    assert.match(src, /STORAGE_KEYS\.GROUPS/, '应引用权威键表');
+  });
+
+  it('VALID_THEME_STYLES 不得是手抄数组（必须引用 THEME_STYLES）', () => {
+    const src = readCode('src/utils/storage.ts');
+    assert.match(
+      src,
+      /VALID_THEME_STYLES[^=]*=\s*THEME_STYLES/,
+      'VALID_THEME_STYLES 应直接引用 THEME_STYLES 常量，而不是再抄一份字面量'
+    );
+    assert.ok(
+      !/VALID_THEME_STYLES[^=]*=\s*\[\s*['"]legacy['"]/.test(src),
+      'VALID_THEME_STYLES 又变回手抄数组 —— 加主题时会被漏掉，合法值静默回落 legacy'
+    );
+    // 【2026-10-09 变异验证记录】单向防护的诚实说明：
+    // 把类型手工加成 `(typeof THEME_STYLES)[number] | 'neon'`（数组不加），
+    // tsc **不报错** —— 联合类型加成员本来就是合法 TS。派生方案解决的是反方向：
+    // 给**数组**加成员时类型自动包含（无需手动同步）；数组漏加时运行期校验数组
+    // 仍然是权威（VALID_THEME_STYLES 直接引用它），且「不得手抄」断言会红。
+    // 「类型多加、数组没加」这一方向派生方案确实防不住 —— 但它不是危险方向：
+    // 类型多一个成员只会让**类型检查变宽**（accept 更多的值），不会让合法值
+    // 被运行时判无效；反过来（数组漏加）才会静默回落 legacy。
+    // 不要在这里追求双向穷尽性断言：它的维护成本高于它防的那个坑。
+    // 主题类型必须由常量派生（而不是手抄联合类型）
+    const types = readCode('src/types/tab.ts');
+    assert.match(
+      types,
+      /export\s+type\s+ThemeStyle\s*=\s*\(\s*typeof\s+THEME_STYLES\s*\)\s*\[\s*number\s*\]/,
+      'ThemeStyle 必须由 THEME_STYLES 派生 —— 手抄联合类型与运行时数组没有编译期关联'
+    );
+    assert.ok(
+      !/export\s+type\s+ThemeStyle\s*=\s*['"]legacy['"]/.test(types),
+      'ThemeStyle 又变回手抄联合类型 —— 常量加了成员而类型没加，tsc 不报错，运行期静默失效'
+    );
+  });
+
+  it('主题数量与 README 声明一致（6 套）', async () => {
+    const { THEME_STYLES } = await import('@/types/tab');
+    assert.equal(
+      THEME_STYLES.length,
+      6,
+      `THEME_STYLES 实到 ${THEME_STYLES.length} 项：README / 商店文案都写「6 套主题风格」，` +
+        '改动主题集合时必须同步那两处（tests/docsAlignment.test.ts 另有断言）'
+    );
   });
 });

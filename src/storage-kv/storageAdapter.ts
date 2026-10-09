@@ -52,12 +52,46 @@ async function migrateFromLocalStorage(target: StorageDriver) {
   if (!candidates.length) return;
 
   try {
-    await Promise.all(candidates.map(entry => target.setItem(entry.key, entry.value)));
+    // ── 2026-10-09 P0：migration_flags 不参与批量搬运 ────────────────────
+    //
+    // MIGRATION_SCAN_KEYS 由 Object.values(STORAGE_KEYS) 全量派生，**包含
+    // migration_flags 自己**，于是候选清单里会出现这个键。它是**三份要合并的
+    // 值**，不是普通数据：
+    //   ① KV 侧现值 —— 本函数开头读的 flags
+    //   ② 源侧现值 —— candidates 里可能带过来的值
+    //   ③ 本次要置的 localStorageMigrated
+    // 让它混进批量写，② 会先盖掉 ①；随后无论怎么「重新读」都救不回来，
+    // 读到的已经是被覆盖的那份（第一版修复只做了重新读，变异测试当场抓到）。
+    //
+    // 丢掉其中任何一份都不是「少一个标志」而是**丢数据**：那个迁移的完成标记
+    // 一旦丢失，判定重新变 false，它就把更旧的数据整批覆盖回 IndexedDB ——
+    // 用户当前会话无声回滚，v1.22.0 起无回收站。
+    const FLAGS_KEY = MIGRATION_KEYS.migrationFlags;
+    const sourceFlagsEntry = candidates.find(entry => entry.key === FLAGS_KEY);
+    const sourceFlags =
+      sourceFlagsEntry &&
+      sourceFlagsEntry.value !== null &&
+      typeof sourceFlagsEntry.value === 'object' &&
+      !Array.isArray(sourceFlagsEntry.value)
+        ? (sourceFlagsEntry.value as Record<string, boolean>)
+        : {};
+
+    await Promise.all(
+      candidates
+        .filter(entry => entry.key !== FLAGS_KEY)
+        .map(entry => target.setItem(entry.key, entry.value))
+    );
 
     // 全部落盘成功后才标记已迁移，并清理源键（顺序与 migrateFromChromeStorage 一致）：
     // 写回中断时标志不置位，下次冷启动会重试而不是半迁移卡死。
-    flags.localStorageMigrated = true;
-    await target.setItem(MIGRATION_KEYS.migrationFlags, flags);
+    //
+    // ① flags 现在仍是真值（批量写绕开了它），与 ② 源值、③ 本次标志三路合并。
+    // 源里没有该键时 ② 为 {}，不影响其余两份 —— 不存在"依赖源里一定有"的假设。
+    await target.setItem(FLAGS_KEY, {
+      ...flags,
+      ...sourceFlags,
+      localStorageMigrated: true,
+    });
     for (const entry of candidates) {
       ls.removeItem(entry.key);
     }
@@ -87,11 +121,31 @@ async function migrateFromChromeStorage(target: StorageDriver) {
     const entries = Object.entries(result).filter(([, value]) => value !== undefined);
     if (!entries.length) return;
 
-    await Promise.all(entries.map(([key, value]) => target.setItem(key, value)));
+    // 同 migrateFromLocalStorage：migration_flags 要三路合并，不能混进批量写
+    //（批量写会用 chrome.storage 的值盖掉 KV 侧现值，之后再"重新读"也救不回）。
+    const FLAGS_KEY = MIGRATION_KEYS.migrationFlags;
+    const sourceFlagsEntry = entries.find(([key]) => key === FLAGS_KEY);
+    const sourceFlags =
+      sourceFlagsEntry &&
+      sourceFlagsEntry[1] !== null &&
+      typeof sourceFlagsEntry[1] === 'object' &&
+      !Array.isArray(sourceFlagsEntry[1])
+        ? (sourceFlagsEntry[1] as Record<string, boolean>)
+        : {};
+    await Promise.all(
+      entries
+        .filter(([key]) => key !== FLAGS_KEY)
+        .map(([key, value]) => target.setItem(key, value))
+    );
 
     // 标记已迁移，并清理旧键，避免后续刷新重新写回旧数据
-    flags.chromeStorageMigrated = true;
-    await target.setItem(MIGRATION_KEYS.migrationFlags, flags);
+    // 三路合并：① KV 现值（批量写已绕开，仍是真值）② chrome.storage 现值
+    // ③ 本次置位。丢任何一份 = 那个迁移会重跑 = 用更旧的数据覆盖当前数据。
+    await target.setItem(FLAGS_KEY, {
+      ...flags,
+      ...sourceFlags,
+      chromeStorageMigrated: true,
+    });
     await chrome.storage.local.remove(keys);
   } catch (error) {
     logWarn('[storage] migrateFromChromeStorage failed, skip migration', error);

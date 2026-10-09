@@ -71,6 +71,19 @@ const DEAD_FILES = [
   // 页内快捷键层 + 标签组拖拽排序/重排模式（1.22.x 第二轮清理）
   'src/hooks/useKeyboardShortcuts.ts',
   'src/components/tabs/ReorderView/index.tsx',
+  // 2026-10-09 专家团体检：确认零引用后删除（导出名逐个复核过，不只按文件名搜）。
+  // - webTombstone.ts：网页版已于 db09f10 删除，applyWebRemoveTab / mintWebStamp
+  //   / WebRemoveTabResult 三个导出全仓零引用
+  // - UserProfile.tsx：UserProfile 导出零引用
+  // - background.ts：文件首行自述 DEPRECATED，只有一个 `export {}`
+  // - hydrationDecision.ts：decideTabsHydration / buildTabsPreloadedState 零生产
+  //   调用方（popup 已无 bootstrap/preloadedState 路径）。**它的安全不变式
+  //   「空读不得被固化」没有随之消失**——改由 TabList 每次挂载无条件
+  //   dispatch(loadGroups()) 守护，见本目录 storeHydration 的新断言。
+  'src/core/webTombstone.ts',
+  'src/components/auth/UserProfile.tsx',
+  'src/background.ts',
+  'src/core/hydrationDecision.ts',
 ];
 
 describe('转发垫片已物理删除，不得复活', () => {
@@ -204,4 +217,3 @@ describe('supabase 门面/目录同名歧义已消除', () => {
     assert.deepEqual(offenders, [], `仍有代码 import 已删除的 supabase 门面：${offenders.join('、')}`);
   });
 });
-

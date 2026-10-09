@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useEffect, useState, useCallback } from 'react';
 import { useAppSelector, useAppDispatch } from '@/store/hooks';
-import { updateSettings, saveSettings, loadSettings } from '@/store/slices/settingsSlice';
+import { updateSettings, dispatchSaveSettings, loadSettings } from '@/store/slices/settingsSlice';
+import { useToast } from '@/contexts/ToastContext';
 import { ThemeStyle } from '@/types/tab';
 import { logWarn } from '../utils/log';
 
@@ -30,9 +31,26 @@ export const ThemeProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const [currentTheme, setCurrentTheme] = useState<Theme>('light');
   const [isTransitioning, setIsTransitioning] = useState(false);
   const [settingsReady, setSettingsReady] = useState(false);
-  
+  // ThemeProvider 嵌在 ToastProvider 内（见 AppContainer），所以这里可用 toast。
+  // 加载失败与保存失败都要出声：否则「读失败 → Redux 停在默认值 →
+   // 用户改动后默认值被写盘覆盖真实设置」这条链路用户全程看不见。
+  const { showToast } = useToast();
+
   // 主题风格状态，默认为 'legacy'
   const themeStyle: ThemeStyle = themeStyleFromStore || 'legacy';
+
+  /**
+   * 保存设置并把失败说出来（2026-10-09 P1-3 / P2-1）。
+   *
+   * 两处主题回调都在同步路径里，原来直接 `dispatch(saveSettings())` 就走人——
+   * dispatch 永远 resolve，所以写失败时**没有任何人知道**：开关停在新状态、
+   * 刷新后回退，用户以为已经保存。这里统一走 helper，判据只写一处。
+   */
+  const persistSettings = useCallback(() => {
+    void dispatchSaveSettings(dispatch).then(saveError => {
+      if (saveError) showToast(saveError, 'error');
+    });
+  }, [dispatch, showToast]);
 
   // 确保刷新后优先加载已保存的主题设置，避免短暂回退到默认主题
   useEffect(() => {
@@ -40,6 +58,10 @@ export const ThemeProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       .unwrap?.()
       .catch((err: unknown) => {
         logWarn('loadSettings failed in ThemeProvider', err);
+        // 读失败必须出声：沉默会让用户以为「我本来就没有设置」，
+        // 而真实情况是「读不到，界面此刻显示的是出厂默认值」。
+        // 这正是后续 saveSettings 用默认值覆盖真值那条链路的起点。
+        showToast('设置读取失败，当前显示的是默认值；本次改动可能无法保存', 'error');
       })
       .finally(() => setSettingsReady(true));
   }, [dispatch]);
@@ -110,8 +132,8 @@ export const ThemeProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     dispatch(updateSettings({ themeMode: mode }));
     
     // 保存到存储 - 使用 thunk 从 store 获取最新状态
-    dispatch(saveSettings() as any);
-  }, [dispatch]);
+    persistSettings();
+  }, [dispatch, persistSettings]);
 
   // 更新主题风格（保留当前明暗模式）
   const setThemeStyle = useCallback((style: ThemeStyle) => {
@@ -128,14 +150,14 @@ export const ThemeProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     dispatch(updateSettings({ themeStyle: style }));
     
     // 保存到存储 - 使用 thunk 从 store 获取最新状态
-    dispatch(saveSettings() as any);
+    persistSettings();
     
     // 移除过渡类
     setTimeout(() => {
       root.classList.remove('theme-transitioning');
       setIsTransitioning(false);
     }, THEME_TRANSITION_DURATION);
-  }, [dispatch]);
+  }, [dispatch, persistSettings]);
 
   return (
     <ThemeContext.Provider value={{ 

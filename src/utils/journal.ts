@@ -61,7 +61,12 @@ export interface Journal {
   read(): Promise<JournalEntry[]>;
 }
 
-const JOURNAL_KEY = 'journal';
+// 2026-10-09 架构 P2-2：原先手抄 'journal'，与权威表 STORAGE_KEYS.JOURNAL
+// 各留一份。值当前一致，但改键名时会分叉（旧数据读不到，且这类分叉不报错）。
+// 键名只在一处定义（@/storage-kv/keys 是唯一真相源）。
+import { STORAGE_KEYS } from '@/storage-kv/keys';
+
+const JOURNAL_KEY = STORAGE_KEYS.JOURNAL;
 /**
  * 环形缓冲上限。
  *

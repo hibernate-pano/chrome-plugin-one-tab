@@ -1,4 +1,5 @@
 import { storage } from '@/utils/storage';
+import { UPLOAD_DEBOUNCE_MS } from '@/core/syncTiming';
 import { createTabGroupFromChromeTabs, filterValidTabs, isInternalUrl } from '@/domain/tabGroup';
 import { cacheManager } from '@/utils/performance';
 import { trackProductEvent } from '@/utils/productEvents';
@@ -153,7 +154,7 @@ export class TabManager {
       // ponytail: 自动上传承诺接入点。SW 保存路径完全绕过 Redux（直接 setGroups），
       // autoSyncMiddleware 永远监听不到 saveGroup.fulfilled——这里补上 scheduleUpload
       // 让"保存后自动同步云端"实际生效（未登录时 syncEngine 安全跳过）。
-      syncEngine.scheduleUpload(3000);
+      syncEngine.scheduleUpload(UPLOAD_DEBOUNCE_MS);
 
       await this.showNotification({
         type: 'basic',
@@ -204,8 +205,22 @@ export class TabManager {
 
   /**
    * 保存当前标签页
+   *
+   * @returns 是否**真的保存了**。
+   *
+   * ── 2026-10-09 专家团体检 P0：不许对没发生的事报成功 ──────────────────
+   * 本函数有 3 条预检早退（内部页 / 固定页开关关闭 / URL 清洗后为空），
+   * 每条都自己弹了失败通知然后 `return` —— 而调用方原先**不看返回值**，
+   * 无条件再弹一条「当前标签页已保存」。用户于是连收两条互相矛盾的通知：
+   *   ① 「无法保存此页面」  ② 「当前标签页已保存」
+   * 这正是「预检失败但仍继续执行并报成功」。
+   *
+   * 现在返回 boolean：只有走到 `chrome.tabs.remove` 之后才算 true。
+   * 调用方（快捷键 / 右键菜单）据此决定要不要发成功通知。
+   * 失败通知仍由本函数在**判定失败的那一刻**发（原因更具体），
+   * 调用方不得再补发一条泛化的成功文案。
    */
-  async saveCurrentTab(tab: chrome.tabs.Tab): Promise<void> {
+  async saveCurrentTab(tab: chrome.tabs.Tab): Promise<boolean> {
     logInfo('保存当前标签页:', tab.url);
 
     // 内部 URL 判定收敛到 domain/tabGroup/filters.isInternalUrl（唯一真相源）。
@@ -227,7 +242,7 @@ export class TabManager {
         title: '无法保存此页面',
         message: '浏览器内部页面（设置、扩展商店等）无法保存为会话',
       });
-      return;
+      return false;
     }
 
     try {
@@ -244,7 +259,7 @@ export class TabManager {
           title: '未保存固定标签页',
           message: '设置中未开启「保存固定标签页」，如需保存请在设置里开启',
         });
-        return;
+        return false;
       }
 
       const tabGroup = createTabGroupFromChromeTabs([tab], {
@@ -268,7 +283,7 @@ export class TabManager {
           title: '无法保存此页面',
           message: '此页面的地址无法安全保存（本地文件或危险协议）',
         });
-        return;
+        return false;
       }
 
       // 单写者 + 盖印记：与 saveAllTabs 同一语义（原先连 enqueue 都没有，属丢更新路径）。
@@ -280,7 +295,7 @@ export class TabManager {
       }, { priority: 'high' });
 
       // ponytail: 关闭单标签时也会触发数据变更（保存到当前会话）——同样需自动上传。
-      syncEngine.scheduleUpload(3000);
+      syncEngine.scheduleUpload(UPLOAD_DEBOUNCE_MS);
 
       await trackProductEvent('session_saved', {
         sessionId: safeGroup.id,
@@ -294,6 +309,7 @@ export class TabManager {
       if (tab.id) {
         await chrome.tabs.remove(tab.id);
       }
+      return true;
 
     } catch (error) {
       logError('保存当前标签页失败:', error);

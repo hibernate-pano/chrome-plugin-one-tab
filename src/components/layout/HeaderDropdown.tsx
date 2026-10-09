@@ -10,7 +10,7 @@ import {
   toggleShowNotifications, 
   toggleConfirmBeforeDelete,
   toggleCollectPinnedTabs,
-  saveSettings 
+  dispatchSaveSettings
 } from '@/store/slices/settingsSlice';
 import { ThemeStyleSelector } from './ThemeStyleSelector';
 import { trackProductEvent } from '@/utils/productEvents';
@@ -105,6 +105,11 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({ onClose, onOpenA
   const { groups, lastSyncTime } = useAppSelector(state => state.tabs);
   const settings = useAppSelector(state => state.settings);
   const [openSubmenu, setOpenSubmenu] = useState<'export' | 'import' | null>(null);
+  // ── 2026-10-09 P1-5：从云端刷新必须有「进行中 / 成功 / 失败」三态 ──
+  // 原先无 isRefreshing、成功也不给任何反馈：点一下如果云端没有新数据，
+  // 页面**毫无变化**，用户完全无法区分「已经是最新」「没点上」「坏了」。
+  // 同步按钮本体有进度条和 toast，这个刷新快捷入口一条都没有。
+  const [isRefreshing, setIsRefreshing] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
   const { showConfirm, showAlert, showToast } = useToast();
 
@@ -112,25 +117,29 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({ onClose, onOpenA
   const handleToggleNotifications = async () => {
     dispatch(toggleShowNotifications());
     // toggleShowNotifications 已经更新了 Redux state，现在保存到存储
-    await dispatch(saveSettings() as any);
+    const saveError = await dispatchSaveSettings(dispatch);
+    if (saveError) showToast(saveError, 'error');
   };
 
   // 处理删除确认开关
   const handleToggleConfirmDelete = async () => {
     dispatch(toggleConfirmBeforeDelete());
     // toggleConfirmBeforeDelete 已经更新了 Redux state，现在保存到存储
-    await dispatch(saveSettings() as any);
+    const saveError = await dispatchSaveSettings(dispatch);
+    if (saveError) showToast(saveError, 'error');
   };
 
   // 处理“收集固定页”开关
   const handleToggleCollectPinnedTabs = async () => {
     dispatch(toggleCollectPinnedTabs());
     await new Promise(resolve => setTimeout(resolve, 0));
-    await dispatch(saveSettings() as any);
+    const saveError = await dispatchSaveSettings(dispatch);
+    if (saveError) showToast(saveError, 'error');
   };
 
   // 处理快速刷新（从云端下载并合并）
   const handleQuickRefresh = async () => {
+    if (isRefreshing) return;
     if (!isAuthenticated) {
       showAlert({
         title: '未登录',
@@ -141,6 +150,7 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({ onClose, onOpenA
       return;
     }
 
+    setIsRefreshing(true);
     try {
       const res = await sendSyncCommand('download', {
         forceRemote: false,
@@ -150,10 +160,17 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({ onClose, onOpenA
       if (res.ok) {
         try {
           await dispatch(loadGroups()).unwrap();
+          // 成功也要说话：云端无变化时页面不会有任何视觉差异，
+          // 不给一句「已是最新」就等于「点了没反应」。
+          showToast('云端已是最新', 'success');
         } catch (err) {
+          // 本地列表没刷出来 —— 这是「云端成功了但你没看见」的中间态，
+          // 必须说清楚，否则用户以为同步失败（或反过来以为成功了）。
           logWarn('同步后刷新本地会话失败:', err);
+          showToast('已同步，但本地列表刷新失败，请稍后重试', 'error');
         }
       } else {
+        // 这里的弹窗是**明确的失败**（已登录但拉取失败）
         showAlert({
           title: '手动同步失败',
           message: res.error === 'not_authenticated' ? '未登录' : (res.error || '无法从云端拉取数据'),
@@ -169,6 +186,8 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({ onClose, onOpenA
         type: 'error',
         onClose: () => {}
       });
+    } finally {
+      setIsRefreshing(false);
     }
   };
 
@@ -194,15 +213,20 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({ onClose, onOpenA
     dispatch(signOut())
       .then(() => {
         logInfo('登出成功');
+        showToast('已退出登录', 'success');
       })
       .catch(error => {
         logError('登出失败:', error);
+        // ── 2026-10-09 P2-4：失败必须出声 ──────────────────────────────
+        // 菜单已经关了、界面无任何变化，只有一行 console —— 用户无法区分
+        // 「没点上」与「坏了」，会以为自己已登出，而实际上仍是登录态。
+        showToast('退出登录失败，请重试', 'error');
       });
   };
 
   // 移除同步功能，简化逻辑
 
-  // 处理删除所有标签组。核弹级操作：不受「删除前确认」开关控制，永远弹确认
+  // 处理删除所有标签组。核弹级操作：不受「删除会话前确认」开关控制，永远弹确认
   // （该开关只应管单组删除；关闭后一键删光全部曾造成误操作事故 2026-09-26）。
   // 无墓碑模型（2026-09-29）：删除即物理移除，跨设备广播由云端 is_deleted 行承担。
   const handleDeleteAllGroups = () => {
@@ -429,10 +453,19 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({ onClose, onOpenA
                 <p className="text-sm font-medium text-gray-900 dark:text-gray-100">{user.email}</p>
                 <button
                   onClick={handleQuickRefresh}
-                  className="p-1.5 rounded-full flat-interaction transition-colors"
-                  title="从云端刷新数据"
+                  disabled={isRefreshing}
+                  aria-label={isRefreshing ? '正在从云端刷新' : '从云端刷新数据'}
+                  className="p-1.5 rounded-full flat-interaction transition-colors disabled:cursor-not-allowed disabled:opacity-60"
+                  title={isRefreshing ? '正在从云端刷新…' : '从云端刷新数据'}
                 >
-                  <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 text-primary-600 dark:text-primary-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  {/* 进行中的可视信号：转圈。只 disabled 不转，用户仍看不出「在动」 */}
+                  <svg
+                    xmlns="http://www.w3.org/2000/svg"
+                    className={`h-4 w-4 text-primary-600 dark:text-primary-400${isRefreshing ? ' animate-spin' : ''}`}
+                    fill="none"
+                    viewBox="0 0 24 24"
+                    stroke="currentColor"
+                  >
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
                   </svg>
                 </button>
@@ -494,13 +527,21 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({ onClose, onOpenA
           onToggle={handleToggleNotifications}
         />
 
+                  {/* 2026-10-09 UX P1-7：文案必须等于开关的真实作用域。
+          该开关只接进 TabGroup 的**整组删除**与 SearchResultList 的**批量删除**
+          （见两处 confirmBeforeDelete 调用点），单标签行的 X 永远直接物理删除。
+          原文案「删除前确认」不带范围限定，用户的合理理解是全局保护 —— 以为
+          每次删除都会问，实际单标签那条没有任何确认。
+          判定：改文案对齐现状，而不是扩大开关范围 —— 后者会让每次点 X 都弹框，
+          违背「不打扰」，且单标签移除本来就是刻意的快捷操作。
+          不可恢复这件事由 X 自己的 tooltip 说明（见 DraggableTab）。 */}
         <DropdownToggleRow
           icon={
             <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 mr-2 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
             </svg>
           }
-          label="删除前确认"
+          label="删除会话前确认"
           checked={settings.confirmBeforeDelete}
           onToggle={handleToggleConfirmDelete}
         />
@@ -617,11 +658,39 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({ onClose, onOpenA
                     reader.onload = async (event) => {
                       try {
                         const data = JSON.parse(event.target?.result as string);
-                        const success = await storage.importData(data);
+                        const result = await storage.importDetailed(data);
                         e.target.value = '';
-                        if (success) {
-                          // 成功不弹提示（Unix 哲学）：直接刷新展示导入结果
-                          window.location.reload();
+                        if (result.ok) {
+                          // ── 2026-10-09 P1-6：导入结果必须报数量 ──────────
+                          // 原先「成功不弹提示（Unix 哲学）」直接 reload ——
+                          // 用户无从知道导入了几个、跳过几个。跳过的组会静默
+                          // 消失，他还以为全都在，要等自己回文件里核对才发现。
+                          //
+                          // 为什么不再 reload：reload 会把 toast/alert 一起刷掉，
+                          // 报了数量等于没报。loadGroups thunk 内部已有
+                          // invalidateGroupsCache()，够拿到导入后的新列表。
+                          if (result.pending) {
+                            showAlert({
+                              title: '正在导入',
+                              message: `文件较大，导入仍在后台继续，稍后列表会自行更新（文件内共 ${result.source} 个会话）`,
+                              type: 'warning',
+                              onClose: () => {},
+                            });
+                          } else if (result.imported < result.source) {
+                            showAlert({
+                              title: '部分导入完成',
+                              message:
+                                `文件内共 ${result.source} 个会话，成功导入 ${result.imported} 个；` +
+                                `其余 ${result.source - result.imported} 个为空会话或只含无法保存的网址，已被跳过。` +
+                                '请回备份文件里核对这几项。',
+                              type: 'warning',
+                              onClose: () => {},
+                            });
+                          } else {
+                            showToast(`已导入 ${result.imported} 个会话`, 'success');
+                          }
+                          // 只刷新列表，不 reload 整页：提示能完整显示完
+                          dispatch(loadGroups());
                         } else {
                           showAlert({
                             title: '导入失败',
@@ -672,8 +741,31 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({ onClose, onOpenA
                             importSource: 'onetab',
                             importedSessions: text.split('\n\n').filter(Boolean).length,
                           });
-                          // 成功不弹提示（Unix 哲学）：直接刷新展示导入结果
-                          window.location.reload();
+                          // ── 2026-10-09 P1-6：与 JSON 导入同口径报数量 ──
+                          // 原先「成功不弹提示」直接 reload，用户不知道导入了几个、
+                          // 跳过几个；reload 还会把提示一起刷掉。改 dispatch(loadGroups)。
+                          const total = importResult.source ?? text.split('\n\n').filter(Boolean).length;
+                          const done = importResult.imported ?? 0;
+                          if (importResult.pending) {
+                            showAlert({
+                              title: '正在导入',
+                              message: `文件较大，导入仍在后台继续，稍后列表会自行更新（文件内共 ${total} 个会话）`,
+                              type: 'warning',
+                              onClose: () => {},
+                            });
+                          } else if (done < total) {
+                            showAlert({
+                              title: '部分导入完成',
+                              message:
+                                `文件内共 ${total} 个会话，成功导入 ${done} 个；其余 ${total - done} 个` +
+                                '为空会话或只含无法保存的网址，已被跳过。请回原文件里核对。',
+                              type: 'warning',
+                              onClose: () => {},
+                            });
+                          } else {
+                            showToast(`已导入 ${done} 个会话`, 'success');
+                          }
+                          dispatch(loadGroups());
                         } else {
                           showAlert({
                             title: '导入失败',
@@ -717,7 +809,7 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({ onClose, onOpenA
         </button>
 
         {/* 危险区：与菜单平面语言一致（rounded-lg + 留边），用色块与普通项区分防误触。
-            核弹级操作：强制确认不受「删除前确认」开关控制；无组时隐藏；描述带数量。 */}
+            核弹级操作：强制确认不受「删除会话前确认」开关控制；无组时隐藏；描述带数量。 */}
         {groups.length > 0 && (
           <div className="px-2 pt-1.5 pb-0.5">
             <button

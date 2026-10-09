@@ -71,6 +71,15 @@ CREATE TABLE IF NOT EXISTS public.user_settings (
   user_id uuid PRIMARY KEY, use_double_column_layout boolean DEFAULT false);
 CREATE TABLE IF NOT EXISTS public.tabs (id text PRIMARY KEY, group_id text, user_id uuid);
 
+-- 2026-10-09：Supabase 默认给 anon / authenticated 开表权限（alter default
+-- privileges ... grant all on tables），**RLS 才是隔离手段**。fixture 之前漏了
+-- 这一步，于是 anon 读表先被 permission denied 挡住 —— 「表权限」与「行级策略」
+-- 两道门混在一起，任何 RLS 行为验证都跑不起来（典型 fixture 失真）。
+-- 补上后：RLS 关着 ⇒ anon 能读全站；RLS 开着 ⇒ 读 0 行。这才可判。
+GRANT USAGE ON SCHEMA public TO anon, authenticated, service_role;
+GRANT ALL ON ALL TABLES IN SCHEMA public TO anon, authenticated, service_role;
+GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO anon, authenticated, service_role;
+
 DROP POLICY IF EXISTS "Allow all operations for authenticated users" ON public.tab_groups;
 CREATE POLICY "Allow all operations for authenticated users" ON public.tab_groups FOR ALL USING (auth.uid() = user_id);
 DROP POLICY IF EXISTS "Allow all operations for authenticated users" ON public.user_settings;
@@ -133,6 +142,12 @@ CREATE TABLE IF NOT EXISTS public.tab_groups (
 CREATE TABLE IF NOT EXISTS public.user_settings (
   user_id uuid PRIMARY KEY, use_double_column_layout boolean DEFAULT false);
 CREATE TABLE IF NOT EXISTS public.tabs (id text PRIMARY KEY, group_id text, user_id uuid);
+
+-- 同 DASHBOARD_FIXTURE：补 Supabase 默认表权限，保证 golden 库与 fixture 库
+-- 的形态一致（否则「两库 policy 集合相同」之外还藏着 ACL 差异）。
+GRANT USAGE ON SCHEMA public TO anon, authenticated, service_role;
+GRANT ALL ON ALL TABLES IN SCHEMA public TO anon, authenticated, service_role;
+GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO anon, authenticated, service_role;
 `;
 
 /**
@@ -180,6 +195,19 @@ function gate(name: string, fn: () => void): void {
 
 function psql(sql: string): string {
   return ready().psql(sql);
+}
+
+/**
+ * 取 psql 输出的最后一个非空行。
+ *
+ * 用在 `SET ROLE x; SELECT …` 这类**多语句**调用上：`-tA` 会把 SET 的回显
+ * `SET` 也打印出来，整段输出形如 "SET\n0"。拿全文与 '0' 比较会把「0 行」
+ * 误判成「读到了 SET 这一行」—— 2026-10-09 加 RLS 行为验证时就踩了这一步，
+ * 且错误信息长得像「anon 读到了数据」，极易被当成真缺陷继续追。
+ */
+function lastLine(out: string): string {
+  const lines = out.split('\n').map(l => l.trim()).filter(Boolean);
+  return lines.length ? lines[lines.length - 1] : '';
 }
 
 /** 按顺序跑完整个迁移目录；返回失败清单而不是第一个错误就中断（要的是全景）。 */
@@ -296,6 +324,72 @@ describe('migrate.mjs 的 verify：缺失 = 失败，绝不「跳过并报成功
       'verifyPurgeFunction 里存在「rows.length === 0 → return true」—— 缺函数被报成通过'
     );
   });
+
+  it('verifyRlsEnabled：必须覆盖三张浏览历史表，且缺失/未启用都判红', () => {
+    const body = scriptCode(SRC);
+    const start = body.indexOf('const RLS_REQUIRED_TABLES');
+    const fnStart = body.indexOf('async function verifyRlsEnabled');
+    const end = body.indexOf('async function verifyProfilesRls');
+    assert.ok(
+      start !== -1 && fnStart !== -1 && end !== -1 && end > fnStart,
+      'verifyRlsEnabled / RLS_REQUIRED_TABLES 不见了（脚本结构变了？）'
+    );
+    const fn = body.slice(start, end);
+
+    // 【必须限定在数组字面量内检查】第一版写的是 fn.includes("'tab_groups'")，
+    // 而 fn 同时覆盖了「常量定义」与「函数体」—— 函数体里恰好还有一处
+    // `disabled.some(t => ['tab_groups','tabs','user_settings'].includes(t))`，
+    // 于是把常量里的 tab_groups 删掉、变异依然全绿。变异验证当场抓出这个盲区：
+    // 断言看起来在查清单，实际查的是整个切片。只认 `const RLS_REQUIRED_TABLES
+    // = [ … ];` 这段。
+    const tableList = fn.match(/const RLS_REQUIRED_TABLES = \[([\s\S]*?)\];/);
+    assert.ok(tableList, '找不到 RLS_REQUIRED_TABLES 数组字面量');
+    const tableLiteral = tableList[1];
+
+    // ① 三张浏览历史表必须在清单里 —— 这正是历史盲区（策略一直在、开关从没开）
+    for (const t of ['tab_groups', 'tabs', 'user_settings']) {
+      assert.ok(
+        tableLiteral.includes(`'${t}'`),
+        `RLS_REQUIRED_TABLES 缺 ${t} —— 它曾长期 relrowsecurity=f 而 verify 从不检查，` +
+          '扩了函数却不扩表清单 = 换个名字继续盲区'
+      );
+    }
+    // 另外四张由本仓迁移建的表（缺 = 迁移没跑）
+    for (const t of ['profiles', 'ai_usage_logs', 'sync_updates', 'sync_snapshots']) {
+      assert.ok(tableLiteral.includes(`'${t}'`), `RLS_REQUIRED_TABLES 缺 ${t}`);
+    }
+
+    // ② 必须查 relrowsecurity（开关本身），不是只数策略行
+    assert.ok(
+      /relrowsecurity/.test(fn),
+      'verifyRlsEnabled 必须查 relrowsecurity —— 「有策略」不等于「策略生效」，' +
+        '查 pg_policy 只会重演「12 条策略都在、开关从没开」的盲区'
+    );
+
+    // ③ 两条失败路径都必须 return false，且不允许「rows 为空 → return true」
+    assert.ok(
+      /missing\.length > 0/.test(fn) && /return false;/.test(fn),
+      '表缺失必须 return false（缺失 = 迁移没跑，不是无从检查）'
+    );
+    assert.ok(
+      /disabled\.length > 0/.test(fn),
+      '存在 relrowsecurity=f 的表必须进入失败分支'
+    );
+    assert.ok(
+      !/rows\.length\s*===\s*0\)\s*\{[\s\S]{0,300}?return true;/.test(fn),
+      '出现「查询 0 行 → return true」—— 缺表被报成通过'
+    );
+
+    // ④ 必须真的接进 verify 流程（定义了但没人调 = 等于没写）
+    assert.ok(
+      /const okRlsTables = await verifyRlsEnabled\(client\)/.test(body),
+      'verifyRlsEnabled 定义了但没接进 verify 流程'
+    );
+    assert.ok(
+      /!okRlsTables/.test(body),
+      'okRlsTables 未参与 ok 判定 —— 查了但不影响通过与否（查了不判断）'
+    );
+  });
 });
 
 describe('迁移幂等：SQL 结构护栏', () => {
@@ -321,6 +415,7 @@ describe('迁移幂等：SQL 结构护栏', () => {
       `以下 create policy 是裸语句：重放第二遍会抛 42710，而迁移器在第一个失败文件处就 process.exit(1)，后续迁移（含安全迁移）永不执行：\n  ${offenders.join('\n  ')}`
     );
   });
+
 
   it('每条 alter publication … add table 都必须落在 dollar-quote 守卫块里', () => {
     const offenders: string[] = [];
@@ -488,6 +583,102 @@ describe('迁移全量重放两遍（真实 Postgres）', { skip: PG_BINARIES_PR
       assert.equal(anon, 'false', `${name} 对 anon 可执行（REVOKE 未生效）`);
       assert.equal(auth, 'false', `${name} 对 authenticated 可执行（REVOKE 未生效）`);
     }
+  });
+
+  gate('第二遍重放后 三张浏览历史表的 RLS 真正生效（行为验证，不只查开关）', () => {
+    // ── 2026-10-09 专家团体检 P0-1 ──────────────────────────────────────
+    //
+    // 【为什么必须是行为断言】上面的快照 SQL 确实带了 relrowsecurity（见
+    // SNAPSHOT_SQL 的 RLS| 行），但它**只参与「两遍是否相同」的比较，不判断值**：
+    // 两遍都开 = 相等，两遍都不开 = 也相等，照样全绿。这正是「查了但不判断」。
+    // 本用例改成：往表里塞真数据，再以 **anon 身份**（auth.uid() 返回 NULL）
+    // 去读 —— RLS 生效则一条也读不到；关着就全量返回 → 红。
+    //
+    // 【为什么用 anon】anon key 随扩展产物公开（Supabase 设计如此），它是
+    // 真实的攻击者身份。authenticated 还要先注册，anon 不需要。
+    const fixture = `
+      DELETE FROM public.tabs WHERE id IN ('rls_probe_tab');
+      DELETE FROM public.tab_groups WHERE id IN ('rls_probe_g_own','rls_probe_g_other');
+      INSERT INTO public.tab_groups (id, user_id, name) VALUES
+        ('rls_probe_g_own',  gen_random_uuid(), 'own'),
+        ('rls_probe_g_other',gen_random_uuid(), 'other');
+      INSERT INTO public.tabs (id, group_id, user_id)
+      SELECT 'rls_probe_tab', 'rls_probe_g_other', user_id
+      FROM public.tab_groups WHERE id = 'rls_probe_g_other';
+    `;
+    psql(fixture);
+
+    // 正控：owner（postgres）看得到自己插入的行 —— 证明数据确实在，不是"表空所以读 0"。
+    const ownerRows = psql(
+      `SELECT count(*) FROM public.tab_groups WHERE id IN ('rls_probe_g_own','rls_probe_g_other')`
+    );
+    assert.equal(
+      ownerRows.trim(),
+      '2',
+      `正控失败：owner 应看到 2 行，实到 ${ownerRows}。数据没插进去，下面的 anon 读 0 行就不是 RLS 的功劳（假绿）。`
+    );
+
+    // 攻击者视角：anon 没有 JWT ⇒ auth.uid() 为 NULL ⇒ 所有 `auth.uid() = user_id`
+    // 判定为 NULL ⇒ 一行都不通过。RLS 关着时这里会返回 2 → 红。
+    //
+    // 【为什么取最后一行】`psql -tA -c "SET ROLE …; SELECT …"` 会把 SET 的
+    // 回显 `SET` 一并打出来，输出是 "SET\n0"。直接拿全文比较会误判成读到了数据
+    // —— 第一版就这么错了，实际 RLS 已生效（真实值 0）。取最后非空行才是计数。
+    const anonGroups = lastLine(psql(`SET ROLE anon; SELECT count(*) FROM public.tab_groups;`));
+    assert.equal(
+      anonGroups.trim(),
+      '0',
+      `anon 能读到 tab_groups ${anonGroups.trim()} 行 —— RLS 未启用或策略失效，` +
+        '任何持有 anon key 的人都能拉走全站会话（tabs 表存 url/title/favicon 明文浏览历史）'
+    );
+
+    // tabs 走 group_id 关联策略，单独验一次（它的 USING 是 exists 子查询，不是直接比较）
+    const anonTabs = lastLine(psql(`SET ROLE anon; SELECT count(*) FROM public.tabs;`));
+    assert.equal(
+      anonTabs.trim(),
+      '0',
+      `anon 能读到 tabs ${anonTabs.trim()} 行 —— 浏览历史明文对匿名开放`
+    );
+
+    // user_settings 一并验（同一迁移文件启用三张表，不能只验两张）。
+    // 用固定探针 id：收尾只删这一行，绝不误伤 fixture 里其它数据。
+    psql(`
+      DELETE FROM public.user_settings WHERE user_id = '00000000-0000-4000-8000-000000009151';
+      INSERT INTO public.user_settings (user_id)
+      VALUES ('00000000-0000-4000-8000-000000009151');
+    `);
+    const anonSettings = lastLine(psql(`SET ROLE anon; SELECT count(*) FROM public.user_settings;`));
+    assert.equal(
+      anonSettings.trim(),
+      '0',
+      `anon 能读到 user_settings ${anonSettings.trim()} 行`
+    );
+
+    // 写路径同样要被挡住 —— 抓的是「SELECT 关了但 UPDATE 仍开」的半开状态。
+    //
+    // 【第一版断言写错了，已修】原本断言「UPDATE 必须抛 42501」。但 PostgreSQL
+    // 的语义是：`USING` 不匹配的行被**过滤掉**，UPDATE 影响 0 行、**不报错**；
+    // 42501 只在 `WITH CHECK` 失败（新行不满足策略）时抛。所以「不抛错」
+    // 本来就是安全的表现，把不抛错当成漏洞是误判。
+    //
+    // 正确判据 = 行有没有被篡改：匿名 UPDATE 之后数据必须一字未变。
+    // 这既覆盖「完全没挡住」（值被改 → 红），也覆盖「挡住了但影响行数非 0」。
+    psql(`SET ROLE anon; UPDATE public.tab_groups SET name='pwned' WHERE id='rls_probe_g_other';`);
+    const afterAnonUpdate = psql(
+      `SELECT name FROM public.tab_groups WHERE id='rls_probe_g_other'`
+    ).trim();
+    assert.equal(
+      afterAnonUpdate,
+      'other',
+      `匿名 UPDATE 竟改写了他人会话（name 由 other 变成 ${afterAnonUpdate}）—— 写路径未被 RLS 隔离`
+    );
+
+    // 收尾：只清掉本用例自己的探针数据（fixture 库是共享的，后续断言还要读它）
+    psql(`
+      DELETE FROM public.tabs WHERE id IN ('rls_probe_tab');
+      DELETE FROM public.tab_groups WHERE id IN ('rls_probe_g_own','rls_probe_g_other');
+      DELETE FROM public.user_settings WHERE user_id = '00000000-0000-4000-8000-000000009151';
+    `);
   });
 
   gate('golden 双库比对：fixture 库与全新空库重放后的 policy 名字集合与 realtime 成员集合一致', () => {

@@ -353,3 +353,166 @@ describe('P2-②：删除广播登记失败必须 surface，不能回 ok:true �
     });
   });
 });
+
+describe('P0：预检失败后不得报成功（保存当前标签的两条入口）', () => {
+  // ── 2026-10-09 专家团体检 P0 ──────────────────────────────────────────
+  //
+  // saveCurrentTab 有 3 条预检早退（内部页 / 固定页开关关闭 / URL 清洗后为空），
+  // 每条都自己弹了具体失败通知，然后 return —— 而调用方原先**不看返回值**，
+  // 无条件再弹一条「当前标签页已保存」。用户连收两条互相矛盾的通知：
+  //   ①「无法保存此页面」  ②「当前标签页已保存」
+  // 这是典型的「预检查失败但仍继续执行并报成功」。
+  //
+  // 【为什么用源码结构断言】SW 顶层即绑 chrome.*/tabManager，node:test 无法
+  // 加载真实 listener；沿用本文件既有的源码断言惯例（deadCodeGuards / a11yLists）。
+  const SW = stripComments(read('src/service-worker.ts'));
+  const TM = stripComments(read('src/background/TabManager.ts'));
+
+  it('saveCurrentTab 必须回报「是否真的保存了」（boolean，不是 void）', () => {
+    assert.match(
+      TM,
+      /async saveCurrentTab\(tab: chrome\.tabs\.Tab\):\s*Promise<boolean>/,
+      'saveCurrentTab 必须返回 Promise<boolean> —— 返回 void 时调用方无从判断成败，' +
+        '只能无条件报成功（回到 P0 原态）'
+    );
+    const start = TM.indexOf('async saveCurrentTab(');
+    assert.ok(start > -1, '找不到 saveCurrentTab');
+    const body = TM.slice(start, TM.indexOf('\n  /**', start + 10));
+    // 成功路径必须有 return true；否则「保存了」无法被上报
+    assert.ok(
+      /return true;/.test(body),
+      'saveCurrentTab 没有 return true —— 成功路径无法告知调用方'
+    );
+    // 三条预检早退都要显式 return false（数一下，防止改了一条漏两条）
+    const falseReturns = (body.match(/return false;/g) || []).length;
+    assert.ok(
+      falseReturns >= 3,
+      `saveCurrentTab 应有至少 3 处 return false（内部页/固定页/URL 清洗后为空），实到 ${falseReturns} 处 —— ` +
+        '漏一处 = 那条预检失败仍会被当成成功'
+    );
+  });
+
+  it('两个调用点都必须检查 saved 才发成功通知', () => {
+    // 「当前标签页已保存」这条文案出现 2 次（快捷键 + 右键菜单）。
+    // 每一处前面必须紧跟着 if (saved) 的条件块 —— 直接数出现次数不够，
+    // 要确认它确实被包在条件里。
+    const successNotice = "showNotification('当前标签页已保存')";
+    const occurrences = SW.split(successNotice).length - 1;
+    assert.equal(
+      occurrences,
+      2,
+      `「当前标签页已保存」应出现 2 次（快捷键 + 右键菜单），实到 ${occurrences} 次`
+    );
+
+    let idx = -1;
+    let checked = 0;
+    while ((idx = SW.indexOf(successNotice, idx + 1)) !== -1) {
+      // 往前看 300 字符，确认落在 if (saved) { ... } 块内
+      const before = SW.slice(Math.max(0, idx - 300), idx);
+      assert.match(
+        before,
+        /if\s*\(\s*saved\s*\)\s*\{/,
+        '有一处「当前标签页已保存」不在 if (saved) 内 —— 预检失败时它照样会发，' +
+          '用户会连收「无法保存此页面」与「已保存」两条矛盾通知（P0 原态）'
+      );
+      assert.match(
+        before,
+        /await\s+tabManager\.saveCurrentTab\(/,
+        '该通知前方找不到 saveCurrentTab 调用 —— 断言可能命中了别的文案'
+      );
+      checked++;
+    }
+    assert.equal(checked, 2, `应核对 2 处成功通知，实到 ${checked} 处`);
+  });
+});
+
+describe('P1：设置读失败后，不得用默认值覆盖真实设置，也不得静默失败', () => {
+  // ── 2026-10-09 数据安全 P1-3 + UX P2-1 ────────────────────────────────
+  //
+  // storage.getSettings() 是 fail-closed 的（读失败抛错），但调用方把它 fail-open
+  // 架空了：loadSettings rejected → extraReducers 只有 fulfilled → Redux 停在
+  // DEFAULT_SETTINGS → ThemeContext catch 后照常放行 → 用户改任意设置
+  // → saveSettings 盲写整份 state = 一整份出厂默认值覆盖真实设置，全程无声。
+  // 若之后手动上传，还会把默认值 upsert 到云端、扩散到其它设备。
+  //
+  // 同一判据、两个调用方、相反口径：backgroundSync 拿到读失败会中止本轮同步，
+  // UI 侧却继续放行 —— 这正是本仓历史上被判为 P0 的那类模式。
+  const SLICE = 'src/store/slices/settingsSlice.ts';
+  const slice = stripComments(read(SLICE));
+
+  it('saveSettings 必须先问「我读到过真值吗」，没读到就拒绝写', () => {
+    const start = slice.indexOf("saveSettings = createAsyncThunk");
+    assert.ok(start > -1, '找不到 saveSettings thunk');
+    const fn = slice.slice(start, slice.indexOf('\n);', start));
+    assert.match(
+      fn,
+      /if\s*\(\s*settingsReadFailed\s*\)/,
+      'saveSettings 没有检查 settingsReadFailed —— 读失败后仍会把 DEFAULT_SETTINGS ' +
+        '整份写盘覆盖真实设置（用户设置无声丢失，且可能被手动上传扩散到云端）'
+    );
+    assert.match(
+      fn,
+      /throw new Error\(/,
+      '检查到读失败后必须抛错（拒绝写）；静默 return 又是一次「没写成功却当没事」'
+    );
+    // 抛错必须在实际写盘之前
+    const guardAt = fn.indexOf('settingsReadFailed');
+    const writeAt = fn.indexOf('storage.setSettings');
+    assert.ok(writeAt > guardAt, '拒绝写的检查必须排在 setSettings 之前');
+  });
+
+  it('loadSettings 读失败必须置位标记（否则上面那道检查永远为假）', () => {
+    const start = slice.indexOf("loadSettings = createAsyncThunk");
+    assert.ok(start > -1, '找不到 loadSettings thunk');
+    const fn = slice.slice(start, slice.indexOf('\n);', start));
+    assert.match(
+      fn,
+      /settingsReadFailed\s*=\s*true/,
+      'loadSettings 读失败时没有置位 settingsReadFailed —— 标记永远为 false，' +
+        'saveSettings 的 fail-closed 检查形同虚设'
+    );
+    assert.match(
+      fn,
+      /settingsReadFailed\s*=\s*false/,
+      'loadSettings 成功时没有复位 —— 一次失败会让此后所有保存永久被拒'
+    );
+    // 失败必须重新抛给 rejected：吞掉就无法区分「读到默认值」与「读失败」
+    assert.match(fn, /throw error/, 'loadSettings 吞掉错误会让 rejected 永不触发');
+  });
+
+  it('六个调用点都必须走 dispatchSaveSettings 并把失败说出来', () => {
+    const sites: Array<{ file: string; expect: number }> = [
+      { file: 'src/contexts/ThemeContext.tsx', expect: 1 }, // persistSettings 集中处理两处
+      { file: 'src/components/layout/Header.tsx', expect: 1 },
+      { file: 'src/components/layout/HeaderDropdown.tsx', expect: 3 },
+    ];
+    for (const site of sites) {
+      const code = stripComments(read(site.file));
+      const direct = (code.match(/dispatch\(\s*saveSettings\(\)/g) || []).length;
+      assert.equal(
+        direct,
+        0,
+        `${site.file} 还有 ${direct} 处直接 dispatch(saveSettings()) —— ` +
+          '它永远 resolve，写失败会静默（dispatch thunk 不会 reject，只有 .unwrap 才会）'
+      );
+      const viaHelper = (code.match(/dispatchSaveSettings\(/g) || []).length;
+      assert.ok(
+        viaHelper >= site.expect,
+        `${site.file} 应有至少 ${site.expect} 处 dispatchSaveSettings，实到 ${viaHelper}`
+      );
+    }
+  });
+
+  it('ThemeContext 加载失败必须出声（否则用户以为「本来就没有设置」）', () => {
+    const code = stripComments(read('src/contexts/ThemeContext.tsx'));
+    const catchStart = code.indexOf("loadSettings failed in ThemeProvider");
+    assert.ok(catchStart > -1, '找不到 loadSettings 的 catch');
+    const catchBlock = code.slice(catchStart, catchStart + 600);
+    assert.match(
+      catchBlock,
+      /showToast\(/,
+      'loadSettings 失败只有 logWarn，没有用户可见提示 —— ' +
+        '用户看到默认值会以为自己没设置过，而真实情况是「读不到」'
+    );
+  });
+});

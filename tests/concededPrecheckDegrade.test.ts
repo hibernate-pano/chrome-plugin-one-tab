@@ -29,6 +29,7 @@ import assert from 'node:assert/strict';
 import { register } from 'node:module';
 import { pathToFileURL, fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
+import { readFileSync } from 'node:fs';
 import { stubSessionJson } from './_helpers/stubSession.ts';
 // 纯类型导入：编译期擦除，运行时零依赖，故不受「@/ 必须 register(loader) 后动态 import」的约束。
 import type { TabGroup } from '@/types/tab';
@@ -42,6 +43,12 @@ globalThis.__TABSTACK_META_ENV__ = {
 const LOADER_PATH = pathToFileURL(
   resolve(dirname(fileURLToPath(import.meta.url)), '_alias-loader.mjs')
 ).href;
+
+/** 源码断言用：读文件。路径相对仓库根（本文件在 tests/ 下）。 */
+const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+function read(rel: string): string {
+  return readFileSync(resolve(REPO_ROOT, rel), 'utf8');
+}
 
 if (!process.env.VERBOSE) {
   console.log = () => {};
@@ -510,5 +517,113 @@ describe('正常路径：认输判定照旧生效', () => {
     assert.equal(cloud.rows.get('dead-1')?.is_deleted, true, '云端墓碑必须仍是墓碑');
     assert.equal(cloud.rows.get('dead-1')?.last_op_seq, 9, '云端墓碑的印记不该被本地旧值覆盖');
     assert.equal(await storage.getPendingUpload(), false, '成功才清 pending_upload');
+  });
+});
+
+describe('删除链路必须用严格列探测（2026-10-09 数据安全 P1-4）', () => {
+  // ── 为什么这是独立的一条，而不是「统一改成 fail-closed」 ────────────────
+  //
+  // supportsOpStamp() 的结果被四条链路消费，**只有删除链路不能 fail-open**：
+  //   上传（upload.ts:364）  → 少带一列，退化但仍能上传     → fail-open 正确
+  //   下载（download.ts:185）→ 退化成 select('*')，照常成功 → fail-open 正确
+  //   digest（probe.ts:182） → 退化成最小列集              → fail-open 正确
+  //   删除广播（upload.ts:761）→ 「不知道有没有列」被翻译成「按没有来写墓碑」
+  //
+  // 删除广播 fail-open 的具体后果：plain 墓碑不带 last_op_seq，云端印记停在旧值；
+  // 对端合并要求云端墓碑印记**严格大于**本地才服从（持平 → compareStamps>=0 → 本地赢），
+  // 于是删除被静默吞掉、对端保留该组，之后任一编辑就把它复活。
+  //
+  // 【第一版修法已被现有测试证否】直接让 supportsOpStamp() 抛错：守卫绿，
+  // 但全量 fail 7 —— 打红的正是 downloadChain.test.ts:783「宁可少选列，不可让
+  // 整次下载失败」，那条断言有意且正确。所以正确方向是**按调用方分流**。
+  const PROBE = 'src/utils/supabase/probe.ts';
+  const UPLOAD = 'src/utils/supabase/upload.ts';
+  const src = read(PROBE);
+  const upload = read(UPLOAD);
+
+  it('supportsOpStampStrict 必须存在，且只在确定性缺列时返回 false', () => {
+    assert.match(
+      src,
+      /export async function supportsOpStampStrict\(\):\s*Promise<boolean>/,
+      '缺少 supportsOpStampStrict —— 删除链路没有严格版探测可用'
+    );
+
+    const start = src.indexOf('export async function supportsOpStampStrict');
+    assert.ok(start > -1, '找不到 supportsOpStampStrict');
+    // 切到下一个顶层定义为止
+    const rest = src.slice(start + 10);
+    const next = rest.search(/\n\/\*\*|\nexport (?:async )?function|\nexport const/);
+    const fn = next === -1 ? rest : rest.slice(0, next);
+
+    // 严格版的全部 return false 只能来自「确定性缺列」这一条路径
+    const falseReturns = (fn.match(/return false;/g) || []).length;
+    assert.equal(
+      falseReturns,
+      1,
+      `supportsOpStampStrict 里有 ${falseReturns} 处 return false，应恰好 1 处 —— ` +
+        '多出来的必然是把「非确定性失败」也当成「没有列」，那等于没改成严格版'
+    );
+    // 那唯一一处必须紧跟 PGRST204 / last_op_seq 判定
+    assert.match(
+      fn,
+      /PGRST204[\s\S]{0,400}return false;/,
+      '唯一的 return false 必须由 PGRST204 / last_op_seq（确定性缺列）守卫'
+    );
+    // 非确定性失败必须抛错，且要说清「拒绝执行」
+    assert.match(
+      fn,
+      /throw new Error\(\s*`?\[op-stamp-strict\][\s\S]{0,200}?拒绝/,
+      '非确定性失败必须抛错并明说「拒绝」—— 返回 false 就是 fail-open，删除会被静默吞掉'
+    );
+    // 未配置时同样不能当「没有列」
+    assert.match(
+      fn,
+      /!isSupabaseConfigured\(\)[\s\S]{0,300}?throw new Error/,
+      '未配置 Supabase 时必须抛错（无法回答列在不在），不能返回 false'
+    );
+  });
+
+  it('markCloudGroupsAsDeleted 必须调 strict 版，不能调宽松版', () => {
+    // 【第一版切片写错了】用 'async function markCloudGroupsAsDeleted' 定位，
+    // 但它是**类方法**（`  async markCloudGroupsAsDeleted(deletedIds)`），
+    // indexOf 返回 -1 → 我用 `slice(-1)` 拿到文件最后一个字符，
+    // 断言于是对着一段无意义文本运行 —— 守卫看着在，其实在测空气。
+    const start = upload.indexOf('async markCloudGroupsAsDeleted');
+    assert.ok(start > -1, '找不到 markCloudGroupsAsDeleted（注意它是类方法，不是 async function）');
+    const rest = upload.slice(start);
+    const next = rest.search(/\n {2}(?:async |private |public )?\w+\s*\(/);
+    const fn = next === -1 ? rest : rest.slice(0, next);
+
+    assert.match(
+      fn,
+      /supportsOpStampStrict\(\)/,
+      '删除广播必须用 supportsOpStampStrict() —— 宽松版会把网络抖动翻译成「按没有印记列写墓碑」。' +
+        '（注意它在 Promise.all 里，没有 await 前缀；断言按调用形态写，别绑 await）'
+    );
+    assert.ok(
+      // 负向断言要排除 strict 版，否则 /supportsOpStamp\(\)/ 不会匹配到 strict（括号不紧邻）
+      !/(?<!Strict)supportsOpStamp\(\)/.test(fn),
+      '删除广播仍在调宽松版 supportsOpStamp() —— 那是 P1-4 的原始缺陷形态'
+    );
+  });
+
+  it('另外三条链路必须继续用宽松版（不能一刀切改成严格）', () => {
+    // 一刀切的代价是实测过的：会让「宁可少选列，不可让整次下载失败」失效，
+    // 一次网络抖动就可能让整次下载失败。分流是有意的，不是遗漏。
+    for (const file of ['src/utils/supabase/download.ts', 'src/utils/supabase/probe.ts']) {
+      const code = read(file);
+      assert.match(
+        code,
+        /supportsOpStamp\(\)/,
+        `${file} 应继续使用宽松版 supportsOpStamp() —— ` +
+          '它们的 fail-open 退化是安全的（少选一列 / 最小列集），改成严格会造成真实可用性回退'
+      );
+    }
+    // 上传路径同理
+    assert.match(
+      upload,
+      /await supportsOpStamp\(\)/,
+      '上传路径应继续使用宽松版（少带一列仍能上传）'
+    );
   });
 });
