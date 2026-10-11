@@ -153,6 +153,24 @@ const settingsSlice = createSlice({
           state.layoutMode = 'single';
       }
     },
+    /**
+     * 自动同步总开关（2026-10-11，1.23.0：默认关闭）。
+     *
+     * 只改 Redux state，落盘走 dispatchSaveSettings（fail-closed：没读到真值
+     * 就拒绝写，见文件头）。alarm 的实际启停由调用方在保存成功后发
+     * SYNC/resyncAlarm 消息让 SW 重建 —— 本 reducer 不碰 chrome.*，
+     * SW 与 popup 是两个执行上下文，这里直接调 alarms 只改了其中一边的世界。
+     */
+    setSyncEnabled: (state, action: PayloadAction<boolean>) => {
+      state.syncEnabled = action.payload;
+    },
+    /**
+     * 自动同步间隔档位（分钟）。只认 validateSyncIntervalMinutes 的四档：
+     * UI 只提供四档选项，此处不再二次校验（单点判据在 storage 层，读路径兜底）。
+     */
+    setSyncIntervalMinutes: (state, action: PayloadAction<number>) => {
+      state.syncIntervalMinutes = action.payload;
+    },
   },
   extraReducers: (builder) => {
     builder
@@ -181,6 +199,8 @@ export const {
    toggleCollectPinnedTabs,
   setLayoutMode,
   toggleLayoutMode,
+  setSyncEnabled,
+  setSyncIntervalMinutes,
 } = settingsSlice.actions;
 
 export default settingsSlice.reducer;

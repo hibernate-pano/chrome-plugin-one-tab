@@ -10,8 +10,12 @@ import {
   toggleShowNotifications, 
   toggleConfirmBeforeDelete,
   toggleCollectPinnedTabs,
+  setSyncEnabled,
+  setSyncIntervalMinutes,
   dispatchSaveSettings
 } from '@/store/slices/settingsSlice';
+// 档位单点在 storage 层（四档白名单 + 默认值），UI 只负责摆出来，不手抄数字。
+import { SYNC_INTERVAL_CHOICES } from '@/utils/storage';
 import { ThemeStyleSelector } from './ThemeStyleSelector';
 import { trackProductEvent } from '@/utils/productEvents';
 import {
@@ -135,6 +139,60 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({ onClose, onOpenA
     await new Promise(resolve => setTimeout(resolve, 0));
     const saveError = await dispatchSaveSettings(dispatch);
     if (saveError) showToast(saveError, 'error');
+  };
+
+  // ── 2026-10-11（1.23.0）：自动同步总开关 + 档位 ───────────────────────
+  // 开关只写设置（Redux + 落盘），alarm 的启停/周期统一由 SW 侧重建：
+  // popup 与 SW 是两个执行上下文，popup 直接调 chrome.alarms 只改了其中一边的世界。
+  // SW 重启本来就会读最新设置重建，所以 resyncAlarm 消息即使丢失也自愈 ——
+  // 发完不管回执（失败只记日志），不弹 toast（不打扰；开关行本身已显示新状态）。
+  const notifySwResyncAlarm = () => {
+    sendSyncCommand('resyncAlarm')
+      .then(res => {
+        if (!res.ok) logWarn('[HeaderDropdown] 通知 SW 重建同步 alarm 未成功，下次启动自愈:', res.error);
+      })
+      .catch(err => logWarn('[HeaderDropdown] 通知 SW 重建同步 alarm 异常，下次启动自愈:', err));
+  };
+
+  // 处理自动同步开关
+  const handleToggleAutoSync = async () => {
+    const nextEnabled = !settings.syncEnabled;
+    dispatch(setSyncEnabled(nextEnabled));
+    const saveError = await dispatchSaveSettings(dispatch);
+    if (saveError) {
+      // ── 2026-10-11（审查修复 P1）：保存失败必须把 UI 收回磁盘真值 ──
+      // reducer 已经改了 Redux，但 storage.setSettings 抛错 ⇒ 磁盘仍是旧值。
+      // 此时若不回滚，界面显示「已关闭」而后台 alarm 仍按「开启」跑 ——
+      // 用户以为省了流量，实际还在出站，且**没有任何提示说「其实没关掉」**。
+      // 既有开关（通知/确认删除）也有同款问题，但它们不控制任何后台行为，
+      // 代价只是「刷新后回退」；本开关直接决定「是否出流量」，必须当场收敛。
+      // 手法与其它开关相反：回滚 UI + **一条**说清全部的 toast（原实现是先
+      // showToast(saveError) 再 return，那只有「保存失败」没有「现在是什么状态」，
+      // 用户仍需自己猜开关有没有生效）。
+      dispatch(setSyncEnabled(settings.syncEnabled));
+      showToast(`${saveError}（自动同步开关已恢复为${settings.syncEnabled ? '开启' : '关闭'}）`, 'error');
+      return;
+    }
+    notifySwResyncAlarm();
+    if (nextEnabled) {
+      // 刚从关 → 开：告诉用户当前档位（档位行随后可见，但 toast 先说一句，
+      // 否则用户不知道「开了之后多久跑一次」—— 这是开了之后唯一的疑问）。
+      showToast(`已开启自动同步，每 ${settings.syncIntervalMinutes} 分钟同步一次`, 'success');
+    }
+  };
+
+  // 处理自动同步档位（5/10/30/60 分钟四选一）
+  const handleSetSyncInterval = async (minutes: number) => {
+    if (minutes === settings.syncIntervalMinutes) return;
+    dispatch(setSyncIntervalMinutes(minutes));
+    const saveError = await dispatchSaveSettings(dispatch);
+    if (saveError) {
+      // 同上：档位保存失败时把 UI 收回旧值，否则「显示 30 分钟、实际 5 分钟」。
+      dispatch(setSyncIntervalMinutes(settings.syncIntervalMinutes));
+      showToast(`${saveError}（同步间隔已恢复为 ${settings.syncIntervalMinutes} 分钟）`, 'error');
+      return;
+    }
+    notifySwResyncAlarm();
   };
 
   // 处理快速刷新（从云端下载并合并）
@@ -556,6 +614,49 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({ onClose, onOpenA
           checked={settings.collectPinnedTabs}
           onToggle={handleToggleCollectPinnedTabs}
         />
+
+        {/* ── 2026-10-11（1.23.0）：自动同步总开关 + 档位 ────────────────
+            默认关闭（省 Supabase egress 配额）：关时后台不轮询、打开页面
+            不自动拉取，点「同步」手动获取；本地改动的上传保持事件驱动，
+            不受本开关影响。文案必须等于开关的真实作用域（UX P1-7 纪律）：
+            它管的是「自动拉取」，不是「同步功能本身」—— 手动同步永远可用。 */}
+        <DropdownToggleRow
+          icon={
+            <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 mr-2 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+            </svg>
+          }
+          label="自动同步"
+          checked={settings.syncEnabled}
+          onToggle={handleToggleAutoSync}
+        />
+        {settings.syncEnabled ? (
+          <div className="px-3 py-2" role="radiogroup" aria-label="自动同步间隔">
+            <div className="mb-1 text-xs text-gray-500 dark:text-gray-400">每隔多久自动同步一次</div>
+            <div className="flex gap-1.5">
+              {SYNC_INTERVAL_CHOICES.map(minutes => (
+                <button
+                  key={minutes}
+                  type="button"
+                  role="radio"
+                  aria-checked={settings.syncIntervalMinutes === minutes}
+                  onClick={() => handleSetSyncInterval(minutes)}
+                  className={`flex-1 rounded-md px-2 py-1.5 text-xs font-medium transition-colors ${
+                    settings.syncIntervalMinutes === minutes
+                      ? 'theme-toggle-on text-white'
+                      : 'bg-gray-100 text-gray-600 hover:bg-gray-200 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600'
+                  }`}
+                >
+                  {minutes % 60 === 0 ? `${minutes / 60}小时` : `${minutes}分钟`}
+                </button>
+              ))}
+            </div>
+          </div>
+        ) : (
+          <div className="px-3 pb-2 text-xs text-gray-500 dark:text-gray-400">
+            已关闭：打开页面不会自动拉取云端，点「同步」手动获取最新。
+          </div>
+        )}
 
         <div className="border-t border-gray-200 dark:border-gray-700 my-1"></div>
 

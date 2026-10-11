@@ -73,7 +73,13 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
                       logInfo(`[AutoSync] 自动下载合并完成: ${payload?.groups?.length ?? 0} 个组`);
                       // 合并结果写进了 storage，需刷新 Redux 让 UI 更新
                       dispatch(loadGroups());
-                    } else if (res.error && res.error !== 'already_syncing' && res.error !== 'recent_upload_guard' && res.error !== 'pending_upload_failed') {
+                  } else if (res.error && res.error !== 'already_syncing' && res.error !== 'recent_upload_guard' && res.error !== 'pending_upload_failed' && res.error !== 'auto_sync_disabled') {
+                    // ── 2026-10-11（1.23.0）：auto_sync_disabled 是稳态，不是故障 ──
+                    // 用户关了自动同步，SW 侧门禁拦下本轮自动下载。白名单静默它
+                    // （与 already_syncing 同待遇）：「关」是用户显式选择，
+                    // 每次打开页面弹一句 warn 等于为正常状态制造噪声。
+                    // 「数据可能过期」这层信息由菜单里的开关行与提示行承担，
+                    // 不在这里出声 —— 出声的位置必须离控制越近越好。
                       logWarn('[AutoSync] 自动下载未成功:', res.error);
                     }
                   })

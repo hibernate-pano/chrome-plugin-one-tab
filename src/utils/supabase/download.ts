@@ -541,6 +541,10 @@ export const downloadSync = {
         'show_tab_count': 'showTabCount',
         'confirm_before_delete': 'confirmBeforeDelete',
         'allow_duplicate_tabs': 'allowDuplicateTabs',
+        // 2026-10-11（1.23.0 自动同步档位）：云端列尚不存在时整行映射不受影响 ——
+        // 未知列只是不会出现在 data 里，对应设置走 DEFAULT 合并（见 getSettings）。
+        // 上传侧有 42703 降级（缺列则忽略该字段重试），所以迁移前后都不阻塞同步。
+        'sync_interval_minutes': 'syncIntervalMinutes',
         'sync_enabled': 'syncEnabled',
         'layout_mode': 'layoutMode',
         'show_notifications': 'showNotifications',

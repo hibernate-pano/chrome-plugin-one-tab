@@ -8,7 +8,88 @@
 > 长期台账**（含根因、踩坑、修复顺序），不必翻译成英文、不必对齐商店审核口径。
 > 两边都会写「本版改了什么」，但只有本文件会记住「为什么」和「后来怎么验证的」。
 
-## v1.22.17（2026-10-11，待提审）
+## v1.23.0（2026-10-11，待提审）
+
+**这版的由来**：产品负责人拍板的大版本变更 —— **自动同步默认关闭 + 用户四档间隔**。
+动机是 Supabase egress 配额见底，而 60s 全量轮询是主因。
+
+**决策留痕（重要）**：我在分析阶段明确反对过这个方案，理由是 ① 烧配额的是「全量」
+不是「60 秒」，而 1.22.17 已修 F2 增量 + 缺陷 1 探活短路；② 默认关会撞上 LWW 合并
+模型依赖副本新鲜度的数据安全前提；③ 建议「先发版量 3 天 egress 曲线再决定」。
+Jasper 读过之后回复：「No，我现在坚持我的想法。数据默认自动同步关闭，用户可以手动开启。
+选择时间有四档：五分钟、十分钟、半小时、一小时。」⇒ 产品负责人拍板，我执行。
+**这一版的取舍与我的建议不同，记录在此以备复盘**（复盘时先看 Supabase egress 曲线，
+再看有没有用户报告「数据过期」）。
+
+### 实现
+
+- `UserSettings` 加 `syncIntervalMinutes`（四档 5/10/30/60，默认 10）；
+  `syncEnabled` 默认值改 `false`。**存量用户已存的 `true` 予以保留**
+  （`{...DEFAULT_SETTINGS, ...stored}`），绝不静默翻转 —— 那是 1.22.16「设置被静默
+  重置」修掉的那类 bug。
+- 档位校验单点在 storage 层（`validateSyncIntervalMinutes`，非法值 fail-safe 回落 10，
+  不抛错），UI 与 backgroundSync 都复用它，不各写一份白名单。
+- `backgroundSync`：导出 `readAutoSyncConfig()` 作单点判据；`setupBackgroundSync`
+  先读配置再决定建不建 alarm（关态清孤儿 alarm）；`handleAlarm` 每轮重读开关，
+  关则自杀；`rescheduleAlarm` 改双参数 `(delay, period)`，period 取用户档位
+  （写死 1 分钟等于「用户选了 1 小时、实际每分钟跑一次」）。
+- `service-worker`：SYNC 分支加 `resyncAlarm`（popup 改设置后重建 alarm）+
+  `auto:true` 下载的总开关门禁；门禁放行后走同一条 `runSyncOp()`，不复制第二份 enqueue。
+- 菜单：「自动同步」开关 + 四档选择器；关态显示一行说明（点「同步」手动获取）。
+- **本地改动的上传保持事件驱动**，不受本开关影响：走独立的 `SYNC_UPLOAD_ALARM`
+  + setTimeout 双驱动。关掉上传省不下什么（F2 增量后量极小），反而把编辑困在本机
+  且无声 —— 违反「失败要出声」。
+
+### 全面审查后修的 2 个 P1（详见 .ai-logs/2026-10-11-223000）
+
+- **P1 「关掉自动同步」关不掉**：`readAutoSyncConfig` 原走 `loadSettings()` →
+  `cachedAsyncFn` 的 **60s 进程内缓存**。popup 与 SW 各有独立 cacheManager，
+  popup 落盘后 SW 读到自己的旧值 `enabled:true` ⇒ 把 alarm 又建出来；
+  `handleAlarm` 的「关则自杀」同样读到旧值 ⇒ 用户显式关掉的意图最长 60 秒内无效。
+  修法：直接读盘绕过缓存。顺带把读失败的 fail 方向从 open（按开）改成
+  closed（按关）+ `logError` —— 撤销用户显式关掉的意图，比多跑一轮更糟。
+- **P1 保存失败时 UI 谎报状态**：reducer 已改、磁盘没改 ⇒ 显示「已关闭」而后台照跑，
+  且提示只说「保存失败」。修法：失败分支回滚 reducer + 一条说清全部的 toast。
+
+### 旧守卫契约更新（三处变红，逐条更新而非绕过）
+
+`newFeatures`「注册 interval=1 分钟 alarm」、`syncBackoff`「period 恒为 1」、
+`syncBackoff`「setupBackgroundSync 同步创建 alarm（不 await）」—— 三条钉的都是
+1.22 只有一档时的契约，前提在「无 alarm 是合法稳态」后已消失。更新时**保留了各自
+的真正意图**（listener 必须无条件注册；退避只改 delay 绝不改 period）。
+顺带补齐 `newFeatures` 的 chrome mock（缺 `alarms.clear`）。
+
+### 验证
+
+- 单测 **1117 全绿**（1.22.17 基线 1097 → +20：`autoSyncDefaultOff.test.ts` 20 条）
+- 双 type-check / 双 lint / build / 体积门控（197.7KB/240KB）全绿
+- 纯本地 E2E `e2e-tab-reorder.mjs` 8/8
+- **本轮 7 处守卫全部做过变异验证**（setup 总开关 / period 写死 1 / handleAlarm 自杀
+  门禁 / SW 门禁恒放行 / 缓存回归 / fail-open 方向 / UI 不回滚），确认改坏实现会红。
+  其中两处第一版是**假绿**，被变异验证抓出来后补强（详见下方「踩坑」）。
+
+### 本版踩坑（留档免得重犯）
+
+1. **结构断言被自己的注释误判为红**：`doesNotMatch(/loadSettings/)` 命中了函数注释里
+   「为什么不能走 loadSettings」的说明文字。修法：切片时先滤注释行。这个坑在 P0 的
+   `getData` 守卫那里已踩过一次，这是第二次。
+2. **观测量与被测代码不在同一个对象上 ⇒ 绿是必然的**：`installChromeMock` 重挂
+   `globalThis.chrome` 后，早先注册的 alarm listener 闭包里仍是**第一次那个 mock**，
+   派发事件时被清的是旧 mock 的 clear，而断言查的是当前 handles ⇒ 删掉实现也全绿。
+3. **一个被证伪的根因假设**：档位用例串味，我一度认定是 Redux 单例被
+   `loadSettings.fulfilled` 污染；写探针验证后发现真凶是**我的批量替换脚本漏了一个
+   调用点**。教训：先写探针复现再改，别用「看起来应该对」的猜测当根因。
+
+### 待办
+
+- 云端列迁移 `supabase/migrations/20261011190000_add_sync_interval_minutes_to_user_settings.sql`
+  已写好未执行（客户端有 42703 降级，发版先行安全；要让档位跨设备漫游才需跑
+  `pnpm supabase:migrate`）。
+- `diagnostics.ts` 的 `autoSyncEnabled` 现在有了真实行为支撑，档位尚未上报（可选增强）。
+- 需云端的 E2E 仍因 Supabase `exceed_egress_quota` 失败（环境问题，已在 1.22.17
+  干净 HEAD 对照确认）。
+
+## v1.22.17（2026-10-11，未单独提审 —— 随 v1.23.0 一并上架）
 
 **这版的由来**：1.22.16 发版后的一轮 bug 修复 + 会话内标签拖拽转正 + 质量门禁，
 随后做了一次对抗性审查（1081 单测全绿为起点，先对新增守卫做变异验证确认是真红，

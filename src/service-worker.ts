@@ -1,6 +1,10 @@
 import { tabManager } from '@/background/TabManager';
 import { migrateToV2 } from '@/utils/migrationHelper';
-import { setupBackgroundSync } from '@/background/backgroundSync';
+import {
+  AUTO_SYNC_DISABLED_REASON,
+  readAutoSyncConfig,
+  setupBackgroundSync,
+} from '@/background/backgroundSync';
 import { syncEngine, SYNC_UPLOAD_ALARM } from '@/services/syncEngine';
 import { isOpenableTabUrl, isStorableTabUrl } from '@/utils/inputValidation';
 import { enqueue, hasQueuedOrRunningJob } from '@/background/mutationQueue';
@@ -503,6 +507,53 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           sendResponse({ ok: true });
           return false;
         }
+        // ── 2026-10-11（1.23.0）：菜单开关/档位变化后重建 alarm ──────────
+        // popup 与 SW 是两个执行上下文：popup 只写设置（Redux + 落盘），
+        // alarm 的启停/周期统一由 SW 侧 setupBackgroundSync 重建 —— 单点。
+        // SW 重启（onStartup/模块顶层）本来就会调 setup 读最新设置，所以这条
+        // 消息即使丢失（如 SW 正忙），下次启动也会收敛到正确状态，不存在
+        // 「开关改了但 alarm 没跟上」的永久分叉。
+        if (data.op === 'resyncAlarm') {
+          try {
+            setupBackgroundSync();
+            sendResponse({ ok: true });
+          } catch (err) {
+            logWarn('[SW] 重建后台同步 alarm 失败:', err);
+            sendResponse({ ok: false, error: err instanceof Error ? err.message : String(err) });
+          }
+          return false;
+        }
+        // ── 2026-10-11（1.23.0）：自动下载受总开关门禁 ───────────────────
+        // popup 打开时的 AutoSync 带 auto:true（显式意图的证据），用户手点的
+        // 下载/上传不带 —— 门禁只看 auto 位，不看调用方是谁。以后新增自动触发
+        // 方只要带上 auto:true 就自动被管住，不用每个调用点各写一次。
+        // 判据复用 readAutoSyncConfig（与 alarm 循环同一单点）。
+        // 读失败 → 跳过本轮（省流量方向；瞬时错误下次打开重试）+ 告警，不抛。
+        // 【为什么是 promise 链而不是 await】本 listener 是同步函数（Chrome 要求
+        // 同步返回 true 保活异步 sendResponse 通道，全文件统一用这个模式）。
+        // 门禁先行、放行后走下面同一条入队路径 —— 不复制第二份 enqueue。
+        if (data.op === 'download' && data.auto === true) {
+          void readAutoSyncConfig().then(
+            cfg => {
+              if (!cfg.enabled) {
+                logInfo('[SW] 自动同步已关闭，跳过本次自动下载（用户可点「同步」手动获取）');
+                sendResponse({ ok: false, error: AUTO_SYNC_DISABLED_REASON });
+                return;
+              }
+              runSyncOp();
+            },
+            err => {
+              logWarn('[SW] 读不到自动同步配置，跳过本次自动下载:', err);
+              sendResponse({ ok: false, error: AUTO_SYNC_DISABLED_REASON });
+            }
+          );
+          return true; // 异步响应（sendResponse 在上面的链里调）
+        }
+        // 【为什么把下面整段包进 runSyncOp 而不是复制一份 enqueue】门禁放行后
+        // 必须走**同一条**入队路径（含在途去重门禁 + high 车道 + 结果包装），
+        // 复制第二份 enqueue 等于两份「下载到底怎么入队」的真相，改一条漏一条。
+        // 三道门顺序：总开关（否决性，最便宜）→ 在途去重（并发保护）→ 入队执行。
+        const runSyncOp = (): boolean => {
         // 自动下载去重闸门（1.22.12）。【为什么不能靠 downloadAndMerge 里的
         // isSyncing 守卫】那是任务**执行时**才跑的检查，而队列把并发串行化了：
         // 轮到第二个下载时前一个必然已结束、isSyncing=false —— 守卫永远为假，
@@ -540,6 +591,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           .then(res => sendResponse(res))
           .catch(err => sendResponse({ ok: false, error: err?.message || '同步失败' }));
         return true;
+        };
+        return runSyncOp();
       }
 
       default:

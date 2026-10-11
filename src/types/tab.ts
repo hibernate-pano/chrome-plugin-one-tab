@@ -208,6 +208,16 @@ export interface UserSettings {
   confirmBeforeDelete: boolean;
   allowDuplicateTabs: boolean;
   syncEnabled: boolean; // 是否启用同步
+  /**
+   * 自动同步轮询间隔（分钟）。仅 syncEnabled=true 时生效。
+   *
+   * 2026-10-11（1.23.0）：自动同步默认关闭，用户在菜单中开启后四选一。
+   * 取值收敛到 SYNC_INTERVAL_CHOICES（5/10/30/60），非法值由 storage 层
+   * validateSyncIntervalMinutes 回落到默认 10 —— 与 themeMode 的校验同纪律：
+   * 云端/手工编辑可能带回任意值，读路径必须 fail-safe（回落），不能抛错
+   * （抛错会让 getSettings 整条失败，进而阻塞所有读设置的路径）。
+   */
+  syncIntervalMinutes: number;
   layoutMode: LayoutMode; // 布局模式：单栏、双栏、三栏
   showNotifications: boolean; // 是否显示通知
 

@@ -143,6 +143,27 @@ export function validateThemeMode(value: unknown): 'light' | 'dark' | 'auto' {
   return 'auto';
 }
 
+/**
+ * 自动同步间隔档位（分钟）。2026-10-11（1.23.0）：用户在菜单中四选一。
+ *
+ * 【为什么收敛到固定四档而不是任意数字】alarm 的 periodInMinutes 是 Chrome
+ * 侧的调度承诺：任意数字（如 7）会让「用户选了什么」与「实际跑什么」之间
+ * 多一层解释成本，且排障时无法一眼判断间隔是否合法。 illegal 值一律回落
+ * 默认档（fail-safe，不抛错 —— 见 UserSettings.syncIntervalMinutes 注释）。
+ */
+export const SYNC_INTERVAL_CHOICES = [5, 10, 30, 60] as const;
+
+/** 开启自动同步时的默认档位（四档居中偏低：比 60s 省 10 倍，跨端延迟仍可接受）。 */
+export const DEFAULT_SYNC_INTERVAL_MINUTES = 10;
+
+export function validateSyncIntervalMinutes(value: unknown): number {
+  if (typeof value === 'number' && (SYNC_INTERVAL_CHOICES as readonly number[]).includes(value)) {
+    return value;
+  }
+  logWarn('无效的自动同步间隔，使用默认值:', value);
+  return DEFAULT_SYNC_INTERVAL_MINUTES;
+}
+
 // 默认设置
 export const DEFAULT_SETTINGS: UserSettings = {
   groupNameTemplate: 'Group %d',
@@ -150,7 +171,20 @@ export const DEFAULT_SETTINGS: UserSettings = {
   showTabCount: true,
   confirmBeforeDelete: true,
   allowDuplicateTabs: false, // 默认不允许重复标签页
-  syncEnabled: true, // 默认启用同步
+  // ── 2026-10-11（1.23.0）：自动同步默认关闭 ──────────────────────────
+  // 自动同步每轮都是出站流量（Supabase egress 配额），而 60s 全量轮询是配额
+  // 见底的主因。默认关闭后：后台 alarm 不注册、打开 popup 不再自动拉取，
+  // 用户点「同步」按钮手动获取；本地改动的上传保持事件驱动（只在真有改动时
+  // 才传，F2 增量后极小），不受本开关影响 —— 关掉上传省不下什么，反而会把
+  // 编辑困在本机且无声（失败要出声：困住必须有信号，而上传路径没有）。
+  //
+  // 【存量用户不受影响】getSettings 是 {...DEFAULT_SETTINGS, ...stored}，
+  // 已存过设置的用户 stored 里自带 syncEnabled:true（保存时整份落盘），
+  // 合并后仍是 true。只有从未存过（新用户）或键缺失才落到 false。
+  // 绝不在此做「把存量 true 强制改 false」的迁移 —— 那是静默改用户设置，
+  // 正是 1.22.16「设置被静默重置」修掉的那类 bug。
+  syncEnabled: false, // 默认关闭自动同步（用户在菜单中开启）
+  syncIntervalMinutes: DEFAULT_SYNC_INTERVAL_MINUTES, // 默认 10 分钟档
   layoutMode: 'single' as LayoutMode, // 默认使用单栏布局
   showNotifications: false, // 默认关闭通知
   syncStrategy: 'newest', // 默认使用最新版本
@@ -407,17 +441,25 @@ class ChromeStorage {
         // 验证并修正主题相关设置
         const validatedThemeStyle = validateThemeStyle(normalizedSettings.themeStyle);
         const validatedThemeMode = validateThemeMode(normalizedSettings.themeMode);
+        // 2026-10-11（1.23.0）：自动同步间隔只认四档，非法值回落默认档。
+        // 与主题校验同纪律：fail-safe 回落，不抛错（抛错会让整条 getSettings
+        // 失败，进而阻塞所有读设置的路径 —— 间隔值不值得这个代价）。
+        const validatedSyncInterval = validateSyncIntervalMinutes(
+          normalizedSettings.syncIntervalMinutes
+        );
 
         // 如果验证后的值与原值不同，说明存储中有无效值，需要更新
         const needsUpdate =
           normalizedSettings.themeStyle !== validatedThemeStyle ||
-          normalizedSettings.themeMode !== validatedThemeMode;
+          normalizedSettings.themeMode !== validatedThemeMode ||
+          normalizedSettings.syncIntervalMinutes !== validatedSyncInterval;
 
         const mergedSettings: UserSettings = {
           ...DEFAULT_SETTINGS,
           ...normalizedSettings,
           themeStyle: validatedThemeStyle,
           themeMode: validatedThemeMode,
+          syncIntervalMinutes: validatedSyncInterval,
         };
 
         // 如果有无效值被修正，保存修正后的设置

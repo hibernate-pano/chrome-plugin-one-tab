@@ -15,6 +15,12 @@ import {
   type BackoffKv,
   type BackoffState,
 } from './syncBackoff';
+// 档位校验单点在 storage 层（读路径兜底也在那里），这里只复用，不另写一份
+// [5,10,30,60] 白名单 —— 两处各写一份，半年后就是一次口径漂移。
+import { DEFAULT_SETTINGS, validateSyncIntervalMinutes } from '../utils/storage';
+import { STORAGE_KEYS } from '../storage-kv/keys';
+import { kvGet } from '../storage-kv/storageAdapter';
+import type { UserSettings } from '../types/tab';
 
 /**
  * 后台定时同步（chrome.alarms 驱动，Service Worker 常驻时每 60s 触发）。
@@ -42,9 +48,31 @@ import {
  * 【为什么状态必须落 chrome.storage.local 而不是模块变量】MV3 SW 随时被系统杀，
  * 模块变量在下一轮唤醒就是 0 ⇒ 退避等于没做。chrome.storage.local 与
  * chrome.alarms 都是持久的，SW 回收后照样读得到。这是整个修复的关键约束。
+ *
+ * ── 2026-10-11（1.23.0）：自动同步默认关闭 + 用户四档间隔 ────────────────
+ * 自动同步每轮都是出站流量（Supabase egress 配额），60s 全量轮询是配额见底的主因。
+ * 新语义（产品拍板）：
+ *   · 默认关闭：后台 alarm 不注册、打开 popup 不再自动拉取，用户点「同步」手动获取；
+ *   · 用户在菜单中开启后四选一：5 / 10 / 30 / 60 分钟（默认 10）；
+ *   · 本地改动的上传保持事件驱动（只在真有改动时才传，F2 增量后极小），
+ *     不受本开关影响 —— 关掉上传省不下什么，反而把编辑困在本机且无声。
+ * 本文件的三处改动：
+ *   1) setupBackgroundSync 读设置：关 → 清 alarm 直接返回（无 alarm = 零成本，
+ *      顺带自愈关掉开关前残留的孤儿 alarm）；开 → 按用户档位注册；
+ *   2) handleAlarm 每次触发重读设置：开关在 alarm 待发期间被关掉时，
+ *      本轮自杀（清 alarm + 返回），不跑管线、不计退避；
+ *   3) rescheduleAlarm 改取双参数（delay + period）：退避重排时 period
+ *      必须沿用用户档位，不能写死 1 分钟，否则一次失败就把用户档位洗掉。
  */
 
-const SYNC_ALARM = 'tapstack-background-sync';
+/** 后台轮询 alarm 名。popup 不直接碰 alarms（SW 侧单点拥有），这里导出只供测试断言。 */
+export const SYNC_ALARM = 'tapstack-background-sync';
+
+/** 用户关掉自动同步后 popup 发来重建 alarm 的 SYNC 操作名（见 service-worker SYNC 分支）。 */
+export const RESYNC_ALARM_OP = 'resyncAlarm';
+
+/** popup 自动下载（打开触发）被总开关拦下时的原因码（AuthProvider 对它静默，见那里的白名单）。 */
+export const AUTO_SYNC_DISABLED_REASON = 'auto_sync_disabled';
 
 /** chrome.storage.local 的最小适配：退避状态是本模块唯一的持久化需求。 */
 const backoffKv: BackoffKv = {
@@ -61,67 +89,161 @@ const backoffKv: BackoffKv = {
 };
 
 /**
+ * 自动同步的生效配置（总开关 + 档位）。setup 与 handleAlarm 共用、
+ * service-worker 的自动下载门禁也复用它（单点判据，不各写一份）。
+ *
+ * 【读失败的方向】fail-open 回今天的行为（开/1分钟）+ 告警。
+ * 注意与 performBackgroundSync §2.5 的区别：那里读失败必须中止整轮
+ * （syncStrategy 选错会覆盖本地数据）；这里读失败只是「不知道用户想几分钟
+ * 跑一次」—— 用旧行为继续是最不坏的选择，且瞬时错误下轮自动纠正。
+ * 两个地方方向相反，各自的理由写在各自的注释里，不要统一。
+ */
+export interface AutoSyncConfig {
+  enabled: boolean;
+  intervalMinutes: number;
+}
+
+/**
+ * 读自动同步配置。
+ *
+ * ── 2026-10-11（1.23.0 审查修复 P1）：必须绕过 settings 的进程内缓存 ──
+ * 修复前这里走 `store.dispatch(loadSettings())`，而 getSettings 走
+ * `cachedAsyncFn('storage','settings')` —— **60 秒进程内缓存**。popup 与 SW 是
+ * 两个执行上下文、各有独立的 cacheManager，所以：
+ *
+ *   用户点「关闭自动同步」→ popup 落盘（自己进程内缓存已更新）
+ *                        → 发 resyncAlarm 叫 SW 重建 alarm
+ *                        → SW 的 readAutoSyncConfig 读到**自己那份 60s 旧缓存**
+ *                        → 判定「还开着」→ 按旧档位把 alarm 重建出来
+ *
+ * 后果分两层，第二层才致命：
+ *   1) 关态下 popup 的自动下载门禁也读同一缓存 → 关了仍自动拉一次（浪费流量）；
+ *   2) 真正的问题是**关不掉**：handleAlarm 的「关则自杀」每轮都读到旧值 true，
+ *      于是「关」这个用户显式意图在最长 60 秒内**完全无效**，后台继续按用户
+ *      已拒绝的节奏出站流量。
+ *
+ * 已用探针实证（tests/autoSyncDefaultOff.test.ts「缓存旁路」那条用例钉住）：
+ * popup 改盘后立刻再读，拿到的仍是 enabled:true。
+ *
+ * 【修法与为什么不直接清缓存】清 SW 进程的 cacheManager 也可以，但那是
+ * 「从外面捅穿别人的缓存」—— cacheManager 是 storage 模块的私有实现，
+ * backgroundSync 去 clear 它等于建立一条新的跨模块耦合，且下一个有缓存的
+ * 设置字段会再犯一次。直接读盘（绕过 cachedAsyncFn）语义更准：
+ * 「这次问的是**当前真实配置**」而不是「本进程 60 秒前见过什么」。
+ * 一轮同步多一次 KV 读（几 KB 的 settings 键），相对它后面要跑的整库管线
+ * 可以忽略；而在手动同步按钮那条路上它同样是「读一次真值」，并不更贵。
+ *
+ * 【为什么不用 storage.getSettings 再比对】那正是有缓存的那个入口，
+ * 绕一圈等于没修。
+ */
+export async function readAutoSyncConfig(): Promise<AutoSyncConfig> {
+  try {
+    // 直接读盘：见上方「必须绕过进程内缓存」的完整论证。
+    // 读失败与之前一致（fail-open 回旧行为 + 告警），缓存不是失败原因，
+    // 但真读失败时不能把用户「关掉了自动同步」当成「开着」——那正是本缺陷的形态。
+    // 方向选择：读失败 → 保守按「关」处理（不出流量），并在日志出声。
+    // 与 loadSettings 那条路的 fail-open（旧行为=开）相反，理由是：
+    // 用户显式关掉自动同步的意图**不该被一次瞬时读错误撤销**（撤销用户意图
+    // 比多跑一轮更糟）；而「开」是默认值，不需要保护。
+    // 代价：读失败时自动同步会停到下一轮（瞬时错误下轮自愈），可接受。
+    const raw = await kvGet<unknown>(STORAGE_KEYS.SETTINGS);
+    const stored = raw && typeof raw === 'object' ? (raw as Partial<UserSettings>) : {};
+    const settings = { ...DEFAULT_SETTINGS, ...stored };
+    if (settings.syncEnabled === true) {
+      return {
+        enabled: true,
+        intervalMinutes: validateSyncIntervalMinutes(settings.syncIntervalMinutes),
+      };
+    }
+    return { enabled: false, intervalMinutes: validateSyncIntervalMinutes(settings.syncIntervalMinutes) };
+  } catch (err) {
+    // fail-closed（按「关」）：见上方注释——撤销用户显式关掉的意图比多跑一轮更糟。
+    // 读失败一律出声（logError 而非 warn）：它会让自动同步静默停摆，
+    // 用户看到的现象是「我开了自动同步但它不动了」，没有提示就无从排查。
+    logError('[BackgroundSync] 读不到自动同步配置，按「关闭」处理（保守不出流量），下轮重试:', err);
+    return { enabled: false, intervalMinutes: NORMAL_INTERVAL_MINUTES };
+  }
+}
+
+/**
  * 把 alarm 重排到指定间隔。
  *
  * `chrome.alarms.create` 同名会覆盖旧 alarm（MV3 文档明确），所以「重排」就是
  * 再 create 一次同一个名字。delayInMinutes < 1 会被 Chrome 抬到 1 分钟并告警，
  * 而我们的阶梯最小值正好是 1 分钟，不触发该限制。
+ *
+ * @param delayMinutes 下一次触发在几分钟后（退避用它推迟，非退避传 period 即可）
+ * @param periodMinutes 周期。必须传用户档位 —— 写死常量等于一次失败就把
+ * 用户选的 30/60 分钟洗成 1 分钟（1.23.0 前就是这么写的，那时只有一档）。
  */
-function rescheduleAlarm(minutes: number): void {
-  // ⚠️ periodInMinutes 必须**恒等于** NORMAL_INTERVAL_MINUTES（固定 60s 轮询），
-  // 而 delayInMinutes 才是退避那一拍到点的时刻。两者混用（我第一版的错）会让
-  // 「退避中」直接变成「周期变成 5 分钟」——语义完全错了：
-  //   · 退避只该推迟**下一次**尝试；故障恢复后必须立刻回到 60s 节奏，
+function rescheduleAlarm(delayMinutes: number, periodMinutes: number): void {
+  // ⚠️ delay 与 period 是两个正交语义，不可混用（第一版把退避 delay 当成
+  // period 传，等于「退避中直接把周期改成 5 分钟」的 bug）：
+  //   · delayInMinutes 只推迟**下一次**尝试；故障恢复后必须立刻回到用户档位，
   //     否则一次网络抖动就把用户永久留在慢速同步里（拍板要求「成功必须复位」
   //     在这里同样成立：退避是「什么时候再试一次」，不是「轮询变慢」）。
-  //   · tests/newFeatures.test.ts 钉着 periodInMinutes === 1，那是原实现的
-  //     公开契约（SW 每次 onInstalled/onStartup 都用它恢复正常节奏）。
+  //   · periodInMinutes 恒等于用户档位（1.23.0 前是写死的 1 分钟常量，那时只有一档；
+  //     tests/autoSyncDefaultOff.test.ts 按新契约钉住「周期 = 用户档位」，
+  //     读不到配置才回落 NORMAL_INTERVAL_MINUTES）。
   chrome.alarms.create(SYNC_ALARM, {
-    delayInMinutes: minutes,
-    periodInMinutes: NORMAL_INTERVAL_MINUTES,
+    delayInMinutes: delayMinutes,
+    periodInMinutes: periodMinutes,
   });
-  logInfo(`[BackgroundSync] 下轮同步安排在 ${minutes} 分钟后（周期恒为 ${NORMAL_INTERVAL_MINUTES} 分钟）`);
+  logInfo(`[BackgroundSync] 下轮同步安排在 ${delayMinutes} 分钟后（周期 ${periodMinutes} 分钟）`);
 }
 
 /**
  * 注册后台同步 alarm。在 service-worker 启动时调用一次。
  *
- * 【为什么 alarm 必须**同步**创建，而退避校正异步做】
- * `chrome.alarms.create` 必须在本函数返回前发生（同步），否则 SW 刚起来的
- * 那一小段窗口里 alarm 还不存在 —— Chrome 只保证已存在的 alarm 会唤醒 SW。
- * 更实际的理由：这是三处（onInstalled / onStartup / 模块顶层）都会调的入口，
- * 同步创建让「注册成功」这件事本身没有时序依赖，调用方与测试都能确定地看到它。
- * 退避校正（读持久化状态 → 若在退避中则把 delayInMinutes 往后推）随后异步进行；
- * 它只是**推迟**下一次触发，不会让 alarm 消失。
+ * ── 2026-10-11（1.23.0）：先读配置再决定建不建 alarm ───────────────────
+ * 旧实现「同步创建 alarm、异步校正退避」，理由是 SW 刚起来时 alarm 必须已存在。
+ * 新语义下「无 alarm」是合法稳态（用户关了自动同步），所以顺序反过来：
+ * 先异步读配置，关 → 清 alarm 返回（顺带清掉关开关前残留的孤儿 alarm），
+ * 开 → 按档位注册 + 原有的退避校正。
+ * 代价是 SW 启动到读完配置之间有几毫秒没有 alarm：若 SW 恰好在这几毫秒内被杀，
+ * alarm 要等下次启动才注册 —— SW 刚启动的最小存活远超一次 storage 读，
+ * 这个窗口在实践中不存在，为它加复杂度不值得。
  *
  * 【幂等】onInstalled / onStartup / 模块顶层三处都会调它，chrome.alarms.create
  * 同名覆盖，不会叠加出多个 alarm。已处于退避中时不能用固定 60s 覆盖退避节奏
  * （否则每次 SW 唤醒都把退避抹平），所以异步段里读持久化状态：退避未到点就按
  * 剩余时间排，否则保持 60s 并**复位**（跨过完整退避窗口且期间无失败 ⇒ 已恢复）。
+ * （1.23.0 起「保持 60s」改为「保持用户档位」，退避 delay 仍走 1/2/5 阶梯。）
  */
 export function setupBackgroundSync(): void {
-  // 1) 同步：先把 alarm 排上（正常节奏）。这一步不做任何 await。
-  rescheduleAlarm(NORMAL_INTERVAL_MINUTES);
+  // listener 注册保持无条件：同一函数引用重复 addListener 无害（Chrome 去重），
+  // 而关状态下跳过注册会导致「用户从菜单开启后」收不到 alarm —— 开启路径
+  // 经 resyncAlarm 消息重进本函数，届时 listener 必须已在位。
+  chrome.alarms.onAlarm.addListener(handleAlarm);
   // 2) 异步：按持久化退避状态校正首次 delay（退避中则往后推；否则复位）。
   void (async () => {
+    // 1.23.0：先问总开关。关 → 清 alarm 返回（零成本 + 自愈孤儿 alarm）。
+    const cfg = await readAutoSyncConfig();
+    if (!cfg.enabled) {
+      await chrome.alarms.clear(SYNC_ALARM).catch(() => undefined);
+      logInfo('[BackgroundSync] 自动同步已关闭，不注册后台 alarm（打开 popup 不会自动拉取，点「同步」手动获取）');
+      return;
+    }
     let state: BackoffState;
     try {
       state = await readBackoffState(backoffKv);
     } catch (err) {
       // 读不到退避状态不该阻止同步（退避只是省流量）→ 保持已排好的正常节奏。
       logWarn('[BackgroundSync] 读不到退避状态，保持正常周期:', err);
+      rescheduleAlarm(cfg.intervalMinutes, cfg.intervalMinutes);
       return;
     }
     if (state.consecutiveFailures === 0) {
       // 未处于退避：清掉可能残留的键（跨过完整退避窗口且期间无失败 ⇒ 已恢复）。
       await recordSyncSuccess(backoffKv, Date.now()).catch(() => undefined);
-      logInfo(`[BackgroundSync] 已注册后台同步 alarm（每 ${NORMAL_INTERVAL_MINUTES} 分钟）`);
+      rescheduleAlarm(cfg.intervalMinutes, cfg.intervalMinutes);
+      logInfo(`[BackgroundSync] 已注册后台同步 alarm（每 ${cfg.intervalMinutes} 分钟）`);
       return;
     }
     const waitMs = state.nextAllowedAt - Date.now();
     if (waitMs > 0) {
       const delayMinutes = Math.max(1, Math.ceil(waitMs / 60_000));
-      rescheduleAlarm(delayMinutes);
+      rescheduleAlarm(delayMinutes, cfg.intervalMinutes);
       logInfo(
         `[BackgroundSync] 已注册后台同步 alarm（退避中：连续失败 ${state.consecutiveFailures} 次，` +
           `${delayMinutes} 分钟后重试）`
@@ -129,10 +251,10 @@ export function setupBackgroundSync(): void {
     } else {
       // 退避窗口已过但计数还在（如 SW 曾被杀）→ 复位，让本轮正常跑并在成功后再清。
       await recordSyncSuccess(backoffKv, Date.now()).catch(() => undefined);
-      logInfo(`[BackgroundSync] 退避窗口已过，退避复位（每 ${NORMAL_INTERVAL_MINUTES} 分钟）`);
+      rescheduleAlarm(cfg.intervalMinutes, cfg.intervalMinutes);
+      logInfo(`[BackgroundSync] 退避窗口已过，退避复位（每 ${cfg.intervalMinutes} 分钟）`);
     }
   })();
-  chrome.alarms.onAlarm.addListener(handleAlarm);
 }
 
 /**
@@ -162,10 +284,22 @@ export async function runBackgroundSyncOnce(): Promise<boolean> {
  * （省掉整条管线的构造与入队），后者是「跑了但没做完」。两者对退避的含义不同：
  * 被门禁拦下的轮次**不算失败**（不推进 consecutiveFailures），否则一次长时间
  * 不登录/长退避会把失败次数推到上限，白白停掉自动同步。
+ *
+ * ── 2026-10-11（1.23.0）：总开关是第一道门禁 ────────────────────────────
+ * 开关在 alarm 待发期间被关掉时，本轮自杀（清 alarm + 返回）：不跑管线、
+ * 不计退避、不报错 —— 关是稳态，不是故障。清 alarm 是自愈：关开关前已排好的
+ * 那一次 pending alarm 靠这一轮把它清掉，之后再无唤醒（零成本）。
  */
 async function handleAlarm(alarm: chrome.alarms.Alarm): Promise<void> {
   if (alarm.name !== SYNC_ALARM) return;
   try {
+    // 1.23.0：先问总开关（每轮重读：开关可能在两次触发之间被改掉）。
+    const cfg = await readAutoSyncConfig();
+    if (!cfg.enabled) {
+      await chrome.alarms.clear(SYNC_ALARM).catch(() => undefined);
+      logInfo('[BackgroundSync] 自动同步已关闭，本轮跳过并清除 alarm');
+      return;
+    }
     const state = await readBackoffState(backoffKv);
     if (shouldSkipDueToBackoff(state, Date.now())) {
       const waitMs = state.nextAllowedAt - Date.now();
@@ -173,7 +307,7 @@ async function handleAlarm(alarm: chrome.alarms.Alarm): Promise<void> {
         `[BackgroundSync] 退避窗口内（连续失败 ${state.consecutiveFailures} 次），` +
           `本轮跳过，约 ${Math.ceil(waitMs / 1000)}s 后重试`
       );
-      rescheduleAlarm(Math.max(1, Math.ceil(waitMs / 60_000)));
+      rescheduleAlarm(Math.max(1, Math.ceil(waitMs / 60_000)), cfg.intervalMinutes);
       return;
     }
     const outcome = await performBackgroundSync();
@@ -181,8 +315,8 @@ async function handleAlarm(alarm: chrome.alarms.Alarm): Promise<void> {
       const before = state.consecutiveFailures;
       await recordSyncSuccess(backoffKv, Date.now());
       if (before > 0) {
-        logInfo(`[BackgroundSync] 同步成功，退避复位（此前连续失败 ${before} 次）→ 回到 ${NORMAL_INTERVAL_MINUTES} 分钟节奏`);
-        rescheduleAlarm(NORMAL_INTERVAL_MINUTES);
+        logInfo(`[BackgroundSync] 同步成功，退避复位（此前连续失败 ${before} 次）→ 回到 ${cfg.intervalMinutes} 分钟节奏`);
+        rescheduleAlarm(cfg.intervalMinutes, cfg.intervalMinutes);
       } else {
         logInfo(`[BackgroundSync] 同步成功（${outcome.detail}）`);
       }
@@ -200,7 +334,7 @@ async function handleAlarm(alarm: chrome.alarms.Alarm): Promise<void> {
           `[BackgroundSync] 同步失败（${outcome.detail}），第 ${next.consecutiveFailures} 次：` +
             `下次重试间隔 ${minutes} 分钟`
         );
-        rescheduleAlarm(minutes);
+        rescheduleAlarm(minutes, cfg.intervalMinutes);
       }
     }
   } catch (err) {
@@ -209,7 +343,9 @@ async function handleAlarm(alarm: chrome.alarms.Alarm): Promise<void> {
     try {
       const next = await recordSyncFailure(backoffKv, Date.now(), `unexpected: ${String(err)}`);
       if (!isBackoffExhausted(next.consecutiveFailures)) {
-        rescheduleAlarm(backoffMinutesFor(next.consecutiveFailures));
+        // 异常路径拿不到用户档位（读配置本身可能就是异常源）：delay 沿用退避阶梯，
+        // period 回落常量。成功/常规失败路径都有 cfg，不要把这条也抄过去。
+        rescheduleAlarm(backoffMinutesFor(next.consecutiveFailures), NORMAL_INTERVAL_MINUTES);
       }
     } catch {
       /* 退避记账本身失败：下一轮照常按持久化状态判定，不阻塞 */

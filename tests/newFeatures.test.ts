@@ -33,12 +33,22 @@ before(async () => {
  */
 function installChromeMock(overrides: Record<string, unknown> = {}) {
   const createCalls: Array<{ name: string; opts: chrome.alarms.AlarmCreateInfo }> = [];
+  const clearedAlarms: string[] = [];
   const alarmListeners: Array<(alarm: chrome.alarms.Alarm) => void> = [];
 
   const chromeMock = {
     alarms: {
       create(name: string, opts: chrome.alarms.AlarmCreateInfo) {
         createCalls.push({ name, opts });
+      },
+      // 1.23.0：自动同步默认关闭后，setupBackgroundSync 的关态分支会调
+      // alarms.clear（自愈关开关前排的那一次）。mock 缺这个方法时，
+      // 异步段的 .catch(() => undefined) 抓不到 TypeError（那不是 Promise 拒绝，
+      // 是同步抛错），直接变成 unhandledRejection 并让整份测试文件判红。
+      // 补齐它，让 mock 与真实 chrome API 面保持一致。
+      clear(name: string) {
+        clearedAlarms.push(name);
+        return Promise.resolve(true);
       },
       onAlarm: {
         addListener(fn: (alarm: chrome.alarms.Alarm) => void) {
@@ -82,22 +92,34 @@ function installChromeMock(overrides: Record<string, unknown> = {}) {
   Object.assign(chromeMock, overrides);
 
   (globalThis as Record<string, unknown>).chrome = chromeMock;
-  return { createCalls, alarmListeners, mockStore, chromeMock };
+  return { createCalls, clearedAlarms, alarmListeners, mockStore, chromeMock };
 }
 
 // ── 1. 后台定时同步 ────────────────────────────────────────────────
 
 describe('背景同步 chrome.alarms 注册', () => {
-  it('注册 interval=1 分钟的 background-sync alarm', async () => {
+  // ── 2026-10-11（1.23.0）契约更新 ────────────────────────────────────────
+  // 原用例钉的是「注册 interval=1 分钟的 alarm」——那是 1.22 的**唯一档位**。
+  // 1.23.0 起自动同步默认关闭、且周期由用户选（5/10/30/60），这条断言的前提
+  // （空存储 ⇒ 建 1 分钟 alarm）已不成立：空存储现在对应「关 ⇒ 不建 alarm」。
+  //
+  // 保留的真正约束（这才是本文件当初要防的东西）：
+  //   1) 无论开关状态，alarm listener 必须注册（手动同步与将来重排都要它）；
+  //   2) 非本 alarm 名称的事件必须静默返回（不抛错、不误触发同步）。
+  // 「开态按档位建 alarm」的断言移到 tests/autoSyncDefaultOff.test.ts
+  // ——那里有可控的设置种子，测的是同一个实现但带完整上下文。
+  it('注册 listener；空存储（自动同步默认关）下不建 alarm', async () => {
     const { createCalls, alarmListeners } = installChromeMock();
     const { setupBackgroundSync } = await import('@/background/backgroundSync');
 
     setupBackgroundSync();
 
-    assert.equal(createCalls.length, 1);
-    assert.equal(createCalls[0].name, 'tapstack-background-sync');
-    assert.equal(createCalls[0].opts.periodInMinutes, 1);
-    assert.equal(alarmListeners.length, 1);
+    // listener 必须无条件注册（1.23.0 起与开关无关）
+    assert.equal(alarmListeners.length, 1, 'alarm listener 必须注册');
+    // 默认关闭 ⇒ 不建 alarm（具体「关态清孤儿 alarm」等断言见 autoSyncDefaultOff）
+    await new Promise(r => setTimeout(r, 30));
+    assert.equal(createCalls.length, 0,
+      `默认关闭时不得创建 alarm（实得 ${JSON.stringify(createCalls)}）`);
 
     // listener 收到非本 alarm 名称时静默返回（不抛错）
     await alarmListeners[0]({ name: 'other-alarm' } as chrome.alarms.Alarm);

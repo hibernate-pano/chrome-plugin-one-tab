@@ -123,7 +123,10 @@ export async function sendMutation<P = unknown>(
   }
 }
 
-export type SyncOp = 'upload' | 'download' | 'scheduleUpload';
+// 2026-10-11（1.23.0）：resyncAlarm = 菜单开关/档位变化后通知 SW 重建 alarm。
+// 它不是同步任务（不进 mutationQueue、不跑管线），service-worker 里早于 enqueue
+// 直接处理 —— 与 scheduleUpload 同模式（SyncOp 里已有先例）。
+export type SyncOp = 'upload' | 'download' | 'scheduleUpload' | 'resyncAlarm';
 
 export async function sendSyncCommand(
   op: SyncOp,

@@ -1237,6 +1237,7 @@ export const uploadSync = {
       'confirmBeforeDelete',   // -> confirm_before_delete
       'allowDuplicateTabs',    // -> allow_duplicate_tabs
       // 'syncInterval',          // -> sync_interval (UserSettings中不存在，已注释)
+      'syncIntervalMinutes',   // -> sync_interval_minutes（2026-10-11，1.23.0 自动同步档位）
       'syncEnabled',           // -> sync_enabled
       'layoutMode',            // -> layout_mode
       'showNotifications',     // -> show_notifications

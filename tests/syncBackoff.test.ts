@@ -248,33 +248,62 @@ describe('F3 · 结构层：退避必须活过 SW 回收（不得依赖内存计
     );
   });
 
-  it('重排走 chrome.alarms.create（同名覆盖），周期恒为 60s、退避只改 delay', () => {
+  it('重排走 chrome.alarms.create（同名覆盖），周期取用户档位、退避只改 delay', () => {
+    // ── 2026-10-11（1.23.0）契约更新 ────────────────────────────────────
+    // 原断言「periodInMinutes 恒等于 NORMAL_INTERVAL_MINUTES(=1)」在只有一档时成立；
+    // 用户可选 5/10/30/60 分钟后，period 的正确值是**用户档位**，写死 1 等于
+    // 「用户选了 1 小时、实际每分钟跑一次」——比退避混用更离谱。
+    // **本守卫的真正意图没变**：退避只推迟下一次触发（改 delay），绝不改 period。
+    // 「period = 用户档位」这个值由 tests/autoSyncDefaultOff.test.ts 的行为用例钉住，
+    // 这里只钉结构：period 来自参数而不是常量，delay 来自参数而不是常量。
     const src = readSrc('src/background/backgroundSync.ts');
     const start = src.indexOf('function rescheduleAlarm');
     assert.ok(start !== -1, '应能找到 rescheduleAlarm');
     const body = src.slice(start, src.indexOf('\n}', start));
     assert.match(body, /chrome\.alarms\.create\(SYNC_ALARM, \{/,
       '重排必须用 chrome.alarms.create（同名覆盖旧 alarm）');
-    assert.match(body, /periodInMinutes: NORMAL_INTERVAL_MINUTES/,
-      'periodInMinutes 必须恒等于正常周期：退避只推迟**下一次**触发，' +
-      '把它写成 period 会让故障恢复后仍停在慢速节奏（违反「成功必须复位」）');
-    assert.match(body, /delayInMinutes: minutes/,
-      '退避的那一拍由 delayInMinutes 表达');
+    assert.match(body, /periodInMinutes: periodMinutes/,
+      'periodInMinutes 必须取用户档位参数：写死常量等于用户选了 30 分钟却每分钟跑一次');
+    assert.match(body, /delayInMinutes: delayMinutes/,
+      '退避的那一拍由 delayInMinutes 表达（不得与 period 混用）');
+    assert.doesNotMatch(body, /periodInMinutes: NORMAL_INTERVAL_MINUTES/,
+      'rescheduleAlarm 内不得再写死 1 分钟（1.23.0 前只有一档时才成立）');
   });
 
-  it('setupBackgroundSync 同步创建 alarm（不 await），退避校正异步进行', () => {
-    // 若整个注册都塞进 async IIFE，SW 刚起来的那段窗口里 alarm 根本不存在，
-    // 而 Chrome 只保证「已存在的 alarm」会唤醒 SW。
+  it('setupBackgroundSync：先问总开关，关态清 alarm、开态按档位注册（1.23.0 契约）', () => {
+    // ── 2026-10-11（1.23.0）契约更新 ────────────────────────────────────
+    // 原守卫钉的是「同步创建 alarm（不 await）」，理由是「SW 刚起来时 alarm 必须
+    // 已存在」。1.23.0 自动同步默认关闭后，**「无 alarm」成了合法稳态**，
+    // 于是顺序反过来：必须先异步读配置，才知道该不该建。旧断言的前提已消失，
+    // 继续钉它等于钉一个不再成立的理由。
+    //
+    // 保留的真正约束（仍然重要）：
+    //   1) listener 注册必须**无条件**（用户从菜单开启后经 resyncAlarm 重建时要用）；
+    //   2) 关态必须 clear alarm（自愈关开关前排的那一次，之后零唤醒）；
+    //   3) 开态必须把「用户档位」传进 rescheduleAlarm（不写死 1）。
+    // 代价如实记：SW 启动到读完配置之间有几毫秒无 alarm；若 SW 恰好在这几毫秒内
+    // 被杀，alarm 要等下次启动才注册。SW 刚启动的最小存活远超一次 storage 读，
+    // 这个窗口在实践中不存在 —— 为它加复杂度不值得。
     const src = readSrc('src/background/backgroundSync.ts');
     const start = src.indexOf('export function setupBackgroundSync');
     const body = src.slice(start, src.indexOf('\n/**', start + 10));
-    const syncCreate = body.indexOf('rescheduleAlarm(NORMAL_INTERVAL_MINUTES)');
-    const firstAwait = body.indexOf('await ');
-    assert.ok(syncCreate !== -1, '必须先同步排一次正常节奏');
-    assert.ok(
-      syncCreate < firstAwait,
-      '同步创建必须排在任何 await 之前（否则注册完成时 alarm 可能还不存在）'
-    );
+
+    // 1) listener 无条件注册（在读配置之前）
+    const listenerAt = body.indexOf('chrome.alarms.onAlarm.addListener(handleAlarm)');
+    const firstRead = body.indexOf('readAutoSyncConfig');
+    assert.ok(listenerAt !== -1, 'alarm listener 必须注册');
+    assert.ok(firstRead !== -1, '必须读自动同步配置（1.23.0 起开关决定要不要建 alarm）');
+    assert.ok(listenerAt < firstRead, 'listener 注册必须无条件（早于读配置），否则开启路径收不到 alarm');
+
+    // 2) 关态清 alarm
+    assert.match(body, /if \(!cfg\.enabled\)/, '关态必须 early-return');
+    assert.match(body, /alarms\.clear\(SYNC_ALARM\)/, '关态必须清掉可能残留的孤儿 alarm');
+
+    // 3) 开态按档位注册（不得写死 1 分钟）
+    assert.match(body, /rescheduleAlarm\(cfg\.intervalMinutes, cfg\.intervalMinutes\)/,
+      '开态必须按用户档位注册（周期与首次 delay 同档位）');
+    assert.doesNotMatch(body, /rescheduleAlarm\(NORMAL_INTERVAL_MINUTES\)/,
+      'setup 路径不得写死 1 分钟');
   });
 
   it('readBackoffState 读失败时 fail-open（读不到不该阻塞同步）', async () => {
