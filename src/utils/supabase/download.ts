@@ -218,8 +218,8 @@ export const downloadSync = {
         const isFirstPage = groups.length === 0;
         // 首个请求带 { count: 'exact' }：supabase-js 会在**同一个请求**里经
         // PostgREST 的 Content-Range 带回总行数（零额外请求）。分页结束后拿它
-        // 与累计行数交叉校验 —— 这是 offset 窗口漂移（分页期间云端行数变化）
-        // 唯一能从客户端观测到的信号，见上面的注释。
+        // 与累计行数交叉校验 —— 它**只能检测净行数变化**（下方注释与上面
+        // 「它不消除 offset 漂移」那段说清了盲区）。
         const { data: page, error, count } = await supabase
           .from('tab_groups')
           .select(selectColumns, isFirstPage ? { count: 'exact' } : {})
@@ -250,6 +250,24 @@ export const downloadSync = {
         // 稳定」，挡不住分页期间云端行数变化或网关 db-max-rows 截断。两者都
         // 会表现为「累计行数 != 首个请求带回的总行数」——此时绝不能把半份数据
         // 交给合并（半份下载 = 半库覆盖，后续回写即真丢失），整体失败重试。
+        //
+        // ── 2026-10-10 注释如实化：它**只检测净行数变化**，不是漂移的全网兜底 ──
+        // 上一版注释声称这条校验是「offset 窗口漂移唯一能从客户端观测到的信号」，
+        // 排障的人会据此以为任何漂移都能被挡住。**实测证否**（6 组漂移模型跑完，
+        // 见 tests/downloadPaginationStability.test.ts 的「净零漂移」describe）：
+        // 分页期间**净行数不变**的漂移一律放行。最典型的是「另一台设备新建 k 个组 +
+        // 删除 k 个组」—— 首请求 count(exact) 的总行数与末页累计恰好相等，恒通过。
+        // 反向漂移（先删后建、等量）同理。
+        //
+        // 【净零漂移的真实后果：延迟一轮可见，不是丢数据】
+        // offset 窗口在净零漂移下仍可能重叠/跳过，但被跳过的**存量行**不会被静默
+        // 吞掉：mergeOpStamped 按 id 归并幂等，「这轮没看到」只意味着本轮合并保留
+        // 本地旧副本，下一轮同步（窗口重建）仍会拉到那个 id；本地旧副本也不会立刻
+        // 覆盖云端（下载路径末尾会检查 pending_upload 并重调度上传，
+        // 见 syncEngine.downloadAndMerge 的 stillPending 分支）。净结果 =
+        // 并发新建的行延迟一轮可见（≤60s）+ 一次额外全量，**没有数据丢失**。
+        // 这正是这条校验值得留着的理由：它真正拦住的是「网关静默截断」与「净行数
+        // 变化了的漂移」这两个高危形态，而不是所有漂移。
         if (totalCount !== null && groups.length !== totalCount) {
           throw new Error(
             `[download] 分页结果不完整：累计 ${groups.length} 行 != 云端总行数 ${totalCount}，` +

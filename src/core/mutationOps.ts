@@ -21,6 +21,7 @@
 import type { TabGroup, Tab } from '../types/tab';
 import type { OpStamp } from './opStamp';
 import { shouldAutoDeleteAfterTabRemoval } from './tabGroupUtils';
+import { groupContentFingerprint } from './normalizeTabsData';
 import { updateGroupWithVersion } from './versionHelper';
 
 /**
@@ -38,9 +39,50 @@ import { updateGroupWithVersion } from './versionHelper';
 export const isEmptyGroup = (group: TabGroup): boolean =>
   group.tabs.filter(tab => !tab.isDeleted).length === 0;
 
-/** 合并/导入结果的统一兜底：剔除空组（无内容可恢复，物理移除）。 */
+/**
+ * 合并/导入结果的兜底：**无保护**剔除空组（无内容可恢复，物理移除）。
+ *
+ * ⚠️ 这是**清理语义**（「这个组还有没有东西」），不是**用户意图语义**
+ * （「用户刚动完手，这个组该不该消失」）。锁定豁免属于后者，见
+ * shouldAutoDeleteAfterTabRemoval / planCleanDuplicates。
+ *
+ * 【为什么同步合并路径不能用它（2026-10-10 缺陷 2 修复）】
+ * 合并剔除的组会被 syncEngine 登记进 pendingDeleteIds → 云端行打 is_deleted
+ * 墓碑 → **所有设备上永久消失**（v1.22.0 起无回收站）。而锁定组的用户意图
+ * 是「这个会话我留着，别给我自动清掉」——清掉最后一个标签后本地就留下
+ * 「0 标签 + isLocked=true」的组（applyRemoveTab 走锁定豁免），它是**合法的、
+ * 正在等待被再次填充的状态**，不是垃圾。下一次后台同步（≤60s）若用 dropEmptyGroups
+ * 剔掉它，等于把用户「锁定」翻译成「永久删除」，跨设备且不可撤销。
+ *
+ * 所以同步落盘路径改用 dropSyncMergedGroups（锁定豁免）；dropEmptyGroups 保留给
+ * 导入与本地视图过滤等**纯本地**清理场景——那条路径不碰云端，误删最坏只丢一份
+ * 本地空壳，而导入场景里空壳本来就是刚被 sanitizeUrl 剔空的产物。
+ *
+ * 【锁定豁免会不会让空壳永久堆积】会，但只限**锁定**的空壳，且必须保留：
+ * 未锁定的空壳仍然照旧剔除（自动清理的主要收益不变）。锁定空壳在 UI 上另有
+ * 视图层过滤（toActiveGroupsView / isEmptyGroup），不会渲染成空卡；用户想要
+ * 彻底删掉它，只需在它的菜单里点删除（deleteGroup 走用户显式意图，不豁免）。
+ */
 export const dropEmptyGroups = (groups: TabGroup[]): TabGroup[] =>
   groups.filter(g => !isEmptyGroup(g));
+
+/**
+ * 同步合并落盘前的空组剔除（**锁定豁免**）。
+ *
+ * 与 dropEmptyGroups 的唯一差别就是 isLocked：本地「锁定 + 零标签」的组在这里
+ * 留下，等着被重新填充标签，而不是被判成垃圾连带云端行一起删掉。
+ *
+ * 【判据为什么用 shouldAutoDeleteAfterTabRemoval(g, '') 而不自己写】
+ * 用户当场动作（applyMoveTab 拖走最后一个标签、applyCleanDuplicates 手动清理）
+ * 已经统一用那个「锁定豁免」判据，语义是同一个问题：「这个组空了，还要不要它」。
+ * 复用它而不是复制一份 if (isLocked) 是为了让三条路径的口径永远同源——
+ * 复制一份，半年后就又是一次「同判据两处漂移」（见 mutationOps.ts 里
+ * shouldAutoDeleteAfterTabRemoval 注释记录的那次事故）。
+ * tabIdToDelete 传空串：它只会把「空串等于某个 tab id」从计数里排除，
+ * 而 tab id 恒非空 ⇒ 计数仍是「全部活跃 tab」，与 isEmptyGroup 口径一致。
+ */
+export const dropSyncMergedGroups = (groups: TabGroup[]): TabGroup[] =>
+  groups.filter(g => !shouldAutoDeleteAfterTabRemoval(g, ''));
 
 /** 本次操作中被物理删除的组 id（供调用方登记云端删除广播队列）。 */
 export const removedGroupIds = (before: TabGroup[], after: TabGroup[]): string[] => {
@@ -170,14 +212,43 @@ export function applyToggleGroupLock(
  * genId/sanitizeUrl 注入便于测试。所有导入组盖统一 stamp——它们属于同一次导入意图。
  *
  * ── 2026-10-06：剔除「清洗后变空的组」——───────────────────────────────
- * sanitizeUrl 会丢弃危险/不可存储的 tab（javascript:、data:，以及旧版
- * sanitizeTabUrl 口径下的 file:/blob:）。一个组若**全部** tab 都被丢弃，
- * 就会留下一个 tabs: [] 的空壳：它没有任何内容可恢复，却会在列表里渲染成
- * 一张「空会话」卡并长期挂着。要等下一次云端下载的 dropEmptyGroups 才会被清掉，
- * 于是用户刚导入完就看到凭空多出的空卡片 —— 表现为「导入出问题了」。
+ * sanitizeUrl 会丢弃不可存储的 tab（javascript:、data:、chrome:/edge: 等）。
+ * 一个组若**全部** tab 都被丢弃，就会留下一个 tabs: [] 的空壳：它没有任何内容
+ * 可恢复，却会在列表里渲染成一张「空会话」卡并长期挂着。要等下一次云端下载的
+ * dropEmptyGroups 才会被清掉，于是用户刚导入完就看到凭空多出的空卡片 ——
+ * 表现为「导入出问题了」。
  *
  * 判据用 isEmptyGroup（不看锁定）：锁定保护的是会话内容，零标签的组没有
  * 内容可保护（与 toActiveGroupsView 的空壳规则同一条，见其注释）。
+ *
+ * ── 2026-10-10 缺陷 2 附注 ──────────────────────────────────────────────
+ * 「要等下一次云端下载的 dropEmptyGroups 才会被清掉」这句话**已不成立**：
+ * 同步合并落盘路径已改用锁定豁免版 dropSyncMergedGroups（见 dropEmptyGroups
+ * 头注释）。空壳由本函数当场剔除，仍不依赖任何后续同步轮次。
+ *
+ * ── 2026-10-10 P1-3：入口不再假设「incoming 已经是 TabGroup[]」——─────────
+ * 本函数有三个入口（SW mutationHandlers / storage 本地兜底 / 未来的 UI thunk），
+ * 而载荷来自**用户手上的文件**（旧版本、云端导出、手工编辑）或跨进程消息 ——
+ * 形状不可信。修复前直接 `group.tabs.reduce(...)`：手工编辑的备份里
+ * `groups:[null]` 或 `tabs_data` 是字符串化 JSON 时抛 TypeError，被 handle 的
+ * catch 折成 ok:false「导入失败」——**整批全废**，而同一份文件走 storage 导入
+ * 却能成功（storage 侧先过了 normalizeImportedGroup）。两条路对同一份文件给出
+ * 相反结果，比任何一种单独行为都糟。
+ * 现在**逐组隔离**：组本身不是对象 → 跳过；tabs 不是数组 → 按空组处理（最终被
+ * isEmptyGroup 滤掉）。一个坏组不再拖垮整次导入（与下面「清洗后变空」同一处置
+ * 口径：坏形状 = 没有内容可恢复 = 跳过）。
+ *
+ * （P1-2 一并说明：本函数原先还有第三个入口 —— tabSlice 的 importGroups thunk，
+ * 原样转发零归一化的载荷。零调用方、已删除，见该文件头；协议 op 保留。）
+ *
+ * ── 2026-10-10 F1 导入幂等：同名 + 同内容指纹的组跳过——──────────────────
+ * 判据与理由写在 @/core/normalizeTabsData 的 groupContentFingerprint 头注释
+ * （口径决策集中在一处）。要点重述：
+ *   · 指纹是**内容哈希**（组名 + 组内 URL 集合），不是仅组名；
+ *   · **同名但内容不同 → 新增**（安全边界：绝不能因重名吞掉用户的真实数据）；
+ *   · 指纹对顺序/重复 URL 不敏感，对 title/时间戳/favicon 不敏感。
+ * 跳过只发生在「磁盘上已有一模一样的一份」，这是**收敛**不是丢弃：用户第一次
+ * 导入得到的内容仍完整落盘，第二次导入只是不再翻倍。
  */
 export function applyImportGroups(
   groups: TabGroup[],
@@ -186,18 +257,43 @@ export function applyImportGroups(
   _now: string,
   stamp: OpStamp
 ): { groups: TabGroup[]; imported: TabGroup[] } {
+  // 幂等前置：先按「组名 + 内容指纹」建立已有组索引，判重只读它。
+  // 指纹计算对未知形状是确定性的（见 groupContentFingerprint 注释）。
+  const existingFingerprints = new Set(groups.map(g => groupContentFingerprint(g)));
+
   const processed = incoming
-    .map(group => ({
-      ...group,
-      id: deps.genId(),
-      lastOp: stamp,
-      tabs: group.tabs.reduce<Tab[]>((acc, tab) => {
-        const url = deps.sanitizeUrl(tab.url);
-        if (!url) return acc;
-        acc.push({ ...tab, url, id: deps.genId() });
-        return acc;
-      }, []),
-    }))
+    // 组级容错：null / 字符串 / 数字等非对象条目直接跳过，不再让整批抛
+    // "Cannot read properties of null (reading 'tabs')"。
+    .filter((group): group is TabGroup => !!group && typeof group === 'object')
+    // 幂等判重必须发生在清洗**之后**？不——发生在建组之前：
+    // 指纹算的是「组名 + 组内 URL 集合」，清洗只会删掉危险 URL。
+    // 若在这里判重，磁盘上那份（含危险 URL 的原始备份）指纹与文件里那份不同，
+    // 重复导入仍会造副本；而清洗后判重则要求先花 genId 取号再丢弃。
+    // 口径取「按文件原样判重」：同一份文件导两次 → 判重成立；用户改过文件内容
+    // （哪怕只是删掉一条本就会被清洗掉的危险 URL）→ 判不中，导入一份新组，
+    // 这是保守方向（可能多一份），不是危险方向（不会少数据）。
+    .filter(group => {
+      const fp = groupContentFingerprint(group);
+      if (!existingFingerprints.has(fp)) return true;
+      existingFingerprints.add(fp);
+      return false;
+    })
+    .map(group => {
+      // 组级容错：tabs 缺失/非数组（字符串化 JSON、嵌套对象、旧版 `tabs_data`
+      // 未被上游归一化）→ 空数组 → 该组随后被 isEmptyGroup 剔除。
+      const sourceTabs = Array.isArray(group.tabs) ? group.tabs : [];
+      return {
+        ...group,
+        id: deps.genId(),
+        lastOp: stamp,
+        tabs: sourceTabs.reduce<Tab[]>((acc, tab) => {
+          const url = deps.sanitizeUrl(tab?.url as string);
+          if (!url) return acc;
+          acc.push({ ...tab, url, id: deps.genId() });
+          return acc;
+        }, []),
+      };
+    })
     .filter(group => !isEmptyGroup(group));
   return {
     groups: [...processed, ...groups].sort(

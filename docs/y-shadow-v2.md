@@ -8,9 +8,16 @@
 > 因此 §3 翻译表里列的 `restoreGroup` 与 `purgeGroup` 两行不再成立；组删除现在走
 > `deleteGroup` / `deleteAllGroups` 的物理移除路径。**翻译表以 `src/core/yTranslate.ts` 的头注释为准**
 > （该表已随 1.22.0 更新）。§4 Dexie 索引里的 `is_deleted` 字段在记录结构上仍保留（云端
-> `tab_groups.is_deleted` 列也在），但本地不再产生墓碑数据。§1 体积数据、§5 同步表结构仍然有效。
+> `tab_groups.is_deleted` 列也在），但本地不再产生墓碑数据。~~§1 体积数据、§5 同步表结构仍然有效。~~
+> ⚠️ **更正（2026-10-11）**：§1 与 §5 也不再有「仍然有效」的余地 —— 体积报告脚本已改名（`report-y-bundle.mjs` 不存在），
+> §5 的同步表虽已在生产库但通道已放弃（零读写，见 `docs/v2-plan.md` §4.3 与 §6 P2 的作废标注）。
 
 ## 1. 新增依赖与体积
+
+> ⛔ **本文整体已作废（2026-10-05 瘦身，2026-10-11 补记）**：`yjs` / `y-indexeddb` / `dexie` 三个包已从 `package.json` 移除，
+> 影子双写整链删除（`db09f10`，净删 5678 行）。本文描述的「状态：影子模式」**不再是现状**（影子链不存在，读路径一直就是 blob）。
+> ⚠️ 体积报告脚本已改名为 `scripts/report-bundle-size.mjs`（`pnpm check:bundle`），`scripts/report-y-bundle.mjs` **已不存在**——按本文原命令执行会失败。
+> 决策记录见 `docs/slim-down-plan.md`；作废声明见 `docs/v2-plan.md` / `docs/rebuild-plan.md` 文首。
 
 `pnpm add yjs y-indexeddb dexie`（`package.json` dependencies）：
 

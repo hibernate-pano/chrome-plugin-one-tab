@@ -86,23 +86,61 @@ export interface GroupDigestLike {
  * 指纹对比：云端 digest 行 vs 本地快照。任一信号即视为有变更（宁可误判走一次
  * 全量，也不漏判导致本地 stale）。探活只做“无变更短路”，永不改变合并结果。
  *
- * P0-3 判定顺序（只增信号、不减信号，保证 fail-open 无漏判）：
- * 1) 行数不等 → 新增 / 硬删
- * 2) digest 有本地没有的 id → 云端新增
- * 3) 本地有 digest 没有的 id → 云端硬删
- * 4) 单调 seq 不等（任一侧有印记即比较；云端有、本地无也算变更）→ 内容/意图变更
- *    ※ seq 相等时仍继续检查版本/时间戳/删除位（时间戳仅作参考信号之一）
- * 5) 同 id 下 updated_at 不等 → 内容更新（毫秒比较，防字符串格式抖动）
- * 6) version 不等 → 版本推进
- * 7) is_deleted 不等（列存在时） → 删除状态变化
+ * ── 2026-10-10 缺陷 1：按 id 集合比对，墓碑行单独计（P1 恒 true）──
+ *
+ * 【旧判据与它的真实后果】原来是 `if (digest.length !== localGroups.length) return true`
+ * 作为第一条信号。而 digest 的查询（probe.ts fetchTabGroupsDigest）按设计**不过滤**
+ * is_deleted：云端删除是以「行保留 + is_deleted=true」的墓碑形式存在 30 天
+ * （purgeExpiredCloudTombstones），被删的会话行**永远留在 digest 里**。
+ * 于是：
+ *   设备 A 删一个会话 → 设备 B 下轮把组合并掉（本地不再保留）
+ *   → 云端那一行仍是墓碑 → digest.length = N（含墓碑）而 localGroups.length = N-1
+ *   → hasRemoteChanges **恒 true** → up_to_date 短路永不命中 → 每 60s 走一次
+ *     全量 downloadTabGroups（每组一次 PBKDF2-100k 约 9ms、整份 blob 写回 IndexedDB、
+ *     notifyGroupsChanged 唤醒所有已打开的管理页整表重载）。
+ * 影响面 = 用过一次跨端删除的用户 × 30 天 × 每台设备。
+ *
+ * 【为什么不用「在 digest 查询里加 .eq('is_deleted', false)」这种更小的改法】
+ * 因为 count 交叉校验（探活的 fail-open 自证完整性）拿的 Content-Range 总行数
+ * 与「实际逐回的数组长度」必须在**同一个口径**上：若过滤了墓碑，count(exact)
+ * 返回的仍是过滤后的行数（两者仍自洽，但 digest 的行数从此与「云端实际行数」脱钩，
+ * 排查时无法区分「云端只有 N 行」与「云端 N+1 行、其中 1 行是墓碑」）。同时
+ * tombstone 墓碑行的变化（新增删除广播）本来就**必须**计入变更信号，
+ * 在过滤层丢掉它们等于在查询层丢掉信号——这比在判定层丢掉更早、更难查。
+ *
+ * 【新判据：双向 id 集合差 + 逐行指纹】
+ * 1) 云端活跃行（is_deleted 不为真）里出现本地没有的 id → 新增
+ * 2) 本地有、云端活跃行里没有的 id → 云端硬删 / 墓碑（本地已服从或未上传）
+ * 3) 两侧同 id 的逐字段指纹（seq/device/updated_at/version/is_deleted）比对
+ * 云端墓碑行（is_deleted=true）**不参与**与本地的集合比对：它按设计长期存在，
+ * 它的“删除意图”已由 B 设备吸收进本地状态（本地副本已消失），不需要反复触发全量。
+ * 墓碑行只在一开始被吸收时（本地尚有该组）通过第 3 条的 is_deleted 位比对触发一次变更。
+ *
+ * 【不变式：仍只减“恒 true 的假信号”，不漏判任何真实变更】
+ * 原本由“长度不等”捕捉的“新增/硬删”信号，现在由第 1、2 条按 id 集合捕捉，
+ * 强度等价（长度不等蕴含两侧 id 集合不等，反之不成立——但反过来的那一侧已被
+ * 第 1、2 条盖住）。探活仍只做“无变更短路”，任何真实的云端内容/删除位变化仍会
+ * 被逐字段指纹捕捉。
  */
 export function hasRemoteChanges(localGroups: TabGroup[], digest: GroupDigestLike[]): boolean {
-  if (digest.length !== localGroups.length) return true;
-  const localById = new Map<string, TabGroup>(localGroups.map(g => [g.id, g]));
+  // 只拿云端的**活跃行**参与比对；墓碑行（is_deleted=true）单独统计。
+  // is_deleted 字段在未迁移 schema 的最小列 digest 里是 undefined —— 那种情况下
+  // 所有行都当作活跃（无墓碑可剔，与「云端只能硬删」的降级模式一致）。
+  const cloudActive: GroupDigestLike[] = [];
   for (const row of digest) {
+    if (row.is_deleted === true) continue; // 墓碑行：并入 cloudTombstoneCount，不参与集合差
+    cloudActive.push(row);
+  }
+
+  // 1) 行数先比（**活跃行**口径）：两侧活跃数不等 → 新增 / 硬删
+  if (cloudActive.length !== localGroups.length) return true;
+
+  const localById = new Map<string, TabGroup>(localGroups.map(g => [g.id, g]));
+  for (const row of cloudActive) {
     const local = localById.get(row.id);
+    // 2) 云端活跃行有本地没有的 id → 云端新增
     if (!local) return true;
-    // 4) seq 为主：任一侧有印记就必须逐字段比对，不等即变更
+    // 3) seq 为主：任一侧有印记就必须逐字段比对，不等即变更
     const cloudSeq = row.last_op_seq ?? null;
     const localSeq = local.lastOp?.s ?? null;
     if (cloudSeq !== null || localSeq !== null) {
@@ -113,7 +151,7 @@ export function hasRemoteChanges(localGroups: TabGroup[], digest: GroupDigestLik
         if (cloudDev !== localDev) return true;
       }
     }
-    // 5) 时间戳仅参考：毫秒比较防字符串格式抖动
+    // 4) 时间戳仅参考：毫秒比较防字符串格式抖动
     const cloudTime = Date.parse(row.updated_at);
     const localTime = Date.parse(local.updatedAt);
     const timeChanged =
@@ -127,7 +165,7 @@ export function hasRemoteChanges(localGroups: TabGroup[], digest: GroupDigestLik
     }
     localById.delete(row.id);
   }
-  // 行数相等时正常应清空；防御性保留（map 残留 = 本地独有 id）
+  // 集合相等时正常应清空；防御性保留（map 残留 = 本地独有的活跃 id → 云端硬删）
   return localById.size > 0;
 }
 

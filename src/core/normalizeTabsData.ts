@@ -110,6 +110,11 @@ function normalizeImportedTab(raw: unknown): Tab | null {
     id: typeof t.id === 'string' ? t.id : '',
     url,
     title: typeof t.title === 'string' && t.title ? t.title : url,
+    // 2026-10-10 P2：旧版云端导出/第三方备份里 favicon 的键名是 `favIconUrl`
+    // （历史命名）。修复前只透传原字段，camelCase 键从不映射 ⇒ 从这类文件导入的
+    // 标签全部丢图标（列表里一片默认占位图）。与本函数已有的 pinned / 时间戳
+    // 双写同口径：认旧键、不认旧键再回退空串（favicon 是可选字段）。
+    favicon: typeof t.favicon === 'string' ? t.favicon : (t.favIconUrl as string | undefined),
     pinned: isLegacyTruthy(t.pinned),
     createdAt: createdAt ?? new Date().toISOString(),
     lastAccessed: asIso(t.lastAccessed ?? t.last_accessed) ?? createdAt ?? new Date().toISOString(),
@@ -138,6 +143,9 @@ const IMPORT_CONTAINER_KEYS = ['tabs', 'tabs_data', 'tabsData', 'groups'] as con
  *   · `is_locked` 旧键 → 映射；pinned/isLocked 接受旧版真值（1 / "true" 等）
  *   · `tabs_data` 是**字符串化 JSON**（而非数组/对象）→ 诚实失败：产出空组，
  *     不做二次 JSON.parse 恢复（与下载路径 normalizeTabsData 同口径）
+ *
+ * 元素级容错还有一条：**旧版 favicon 键名** `favIconUrl` → `favicon`
+ * （见 normalizeImportedTab 内的注释）。
  */
 export function normalizeImportedGroup(raw: unknown): TabGroup {
   const g = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>;
@@ -170,4 +178,72 @@ export function normalizeImportedGroup(raw: unknown): TabGroup {
     updatedAt: asIso(g.updatedAt ?? g.updated_at) ?? createdAt,
     isLocked: isLegacyTruthy(g.isLocked) || isLegacyTruthy(g.is_locked),
   } as TabGroup;
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// F1 导入幂等：重复导入同一份文件不再产生整份副本
+//
+// 【缺陷】修复前 applyImportGroups 每次都无条件新建组 id（storage.ts 里那段
+// 「applyImportGroups 永远新建组」的注释就是它）。于是用户**重复导入同一份
+// JSON 备份**两次 = 列表里多出一整份副本（组名相同、标签相同、id 全新）。
+// 用户对「备份文件」的心智模型是「点两次结果一样」，拿到的是「数据凭空翻倍」；
+// 而且本地空壳清理、云端下载合并都不会自动消掉它们（它们有内容、不是空壳）。
+//
+// 【口径决策（2026-10-10，本仓拍板）】
+// 判据 = **组名 + 标签指纹**，指纹是**内容哈希**（组内每个标签的 URL 归一化后
+// 去重排序，join 成串再取 32 位 FNV-1a）：
+//
+//   1. 同名 **且** 指纹相同 → **跳过**（不新建组）。
+//   2. 同名但指纹不同 → **新增**（用户的真实新数据，绝不因重名被吞）。
+//      这一条是安全边界，不是可选优化：口径若写成「按组名跳过」，用户在同名会话
+//      里加过任何一条标签，再导入一次就会丢数据 —— 而本仓 v1.22.0 起无回收站。
+//   3. 指纹**不含** createdAt / lastAccessed / title / favicon / pinned：
+//      只取「这个会话装了哪些网址」。改个标题、favicon 抓取时好时坏、时间戳因
+//      导出-导入往返被重写，都不该把同一份会话判成两份（那等于没修）。
+//   4. 指纹**对标签顺序不敏感**（URL 排序后去重）：导出顺序变化不该造副本；
+//      同时它对「组内多了一条重复 URL」不敏感 —— 那本来就是同一份数据。
+//
+// 【为什么不做「按 group id 去重」】导入永远换新 id（避免与现有会话撞 id 覆盖数据，
+// 见 importRoundTrip.test.ts 钉住的契约），文件里的 id 必然与磁盘上的不同。
+//
+// 【为什么指纹不含 op stamp / version】本地既有组盖着当前操作印记与版本号，
+// 备份文件里的组没有；把它们纳入比对会让「第一次导入的组」与「第二次导入的组」
+// 指纹不同，第二次永远判不出重复 —— 修复等于没做。
+//
+// 【算法选择】FNV-1a 32 位、逐字符累加：同步、零依赖、跨设备可复现（同样的组在
+// 两台设备上算出同样的指纹），且 32 位对「单次文件内几百个会话」的碰撞概率足够低
+// （生日界约 7.7 万组才有 ~50%，而一次导入最多产生用户文件里那么多组）。
+// ────────────────────────────────────────────────────────────────────────────
+
+/** 标签 URL 的指纹素材：trim 后再参与哈希（导入路径的 URL 已由 sanitizeTabUrl 规范化）。 */
+function fingerprintUrl(url: string): string {
+  return url.trim();
+}
+
+/** FNV-1a 32 位（Math.imul 保证与位运算一致的 32 位溢出）。 */
+function fnv1a(input: string): string {
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < input.length; i++) {
+    hash ^= input.charCodeAt(i);
+    hash = Math.imul(hash, 0x01000193) >>> 0;
+  }
+  return hash.toString(16).padStart(8, '0');
+}
+
+/**
+ * 一个组的「内容指纹」：组名 + 标签 URL 集合（顺序无关、重复无关）。
+ *
+ * 未知形状（tabs 缺失/非数组）按「零标签」算 —— 空组在 applyImportGroups 里本来
+ * 就会被剔除，指纹相同与否不影响最终落盘结果，按确定性算即可。
+ */
+export function groupContentFingerprint(group: Pick<TabGroup, 'name' | 'tabs'>): string {
+  const tabs = Array.isArray(group?.tabs) ? group.tabs : [];
+  const urls = [
+    ...new Set(
+      tabs
+        .map(t => (typeof t?.url === 'string' ? fingerprintUrl(t.url) : ''))
+        .filter(u => u !== '')
+    ),
+  ].sort();
+  return `${group?.name ?? ''} ${fnv1a(urls.join(' '))} ${urls.length}`;
 }

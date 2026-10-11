@@ -43,7 +43,15 @@ export function parseOneTabFormat(text: string): TabGroup[] {
       // 只切第一个：URL 一定不含裸 | （会被编码），第一个 | 之后全部是标题。
       const sep = line.indexOf('|');
       const rawUrl = (sep === -1 ? line : line.slice(0, sep)).trim();
-      // 拒绝危险协议（javascript:/data:/file: 等），整行丢弃而不是污染 storage
+      // 按 sanitizeTabUrl 丢弃不可存储的行（整行丢弃而不是污染 storage）
+      //
+      // ⚠️ 2026-10-10 文案订正：原注释写「拒绝危险协议（javascript:/data:/file: 等）」，
+      // 但 file: **不被拒绝** —— STORABLE_TAB_PROTOCOLS 含 file:/blob:/devtools:
+      // （sanitizeTabUrl 自 2026-10-05 起答的是「能不能存」而不是「能不能打开」：
+      // 本地 PDF、blob: 站内临时链接是开发者与研究者的常态，丢掉就是永久数据丢失）。
+      // 真正被丢的是：javascript:/vbscript:/data:（危险，安全边界）与
+      // chrome:/edge:/about:blank 等不可存储的内部地址。
+      // 往返契约见 tests/importRoundTrip.test.ts（file: 必须原样保留）。
       const url = sanitizeTabUrl(rawUrl);
       if (!url) return [];
       // 如果没有标题部分，使用 URL 作为标题

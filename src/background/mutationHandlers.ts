@@ -17,6 +17,7 @@ import type { Journal } from '@/utils/journal';
 import type { SeqRegistry } from '@/utils/seqRegistry';
 import type { OpStamp } from '@/core/opStamp';
 import { sanitizeTabUrl } from '@/utils/inputValidation';
+import { normalizeImportedGroup } from '@/core/normalizeTabsData';
 import { nanoid } from '@reduxjs/toolkit';
 import {
   applySaveGroup,
@@ -96,6 +97,34 @@ async function noteDeletedGroups(
     return `${validIds.length} 个会话已从本机删除，但未能登记云端删除广播；` +
       '它们可能在你的其它设备上重新出现（下次同步时会被带回来）。';
   }
+}
+
+/**
+ * importGroups 载荷的**边界归一化**（2026-10-10 P1-1）。
+ *
+ * 为什么放在这里而不是靠调用方：载荷要过 chrome.runtime 消息（结构化克隆，
+ * 任何进程/任何扩展页都能构造），本分支是它进入落盘路径的唯一收口点。
+ * 「让每个调用方都记得先调 normalizeImportedGroup」正是这条暗门当初的成因
+ * ——popup 侧的 storage 路径记得，redux thunk 路径不记得，SW 于是两头都不信。
+ *
+ * 三条容错各自对应一种真实存在的坏形状（都不是理论情况）：
+ *   · 非数组载荷（旧文件/构造出来的 `{}`）→ 空数组。调用方拿到的 `imported: []`
+ *     与「文件里没有可导入组」同语义，属**诚实空导入**（ok:true + 零组），
+ *     而不是抛错。抛错会让 handle 报 ok:false「导入失败」，而实际上用户手上的
+ *     文件里本来就没有能导入的会话 —— 谎报方向正好相反。
+ *   · 数组里的 null/字符串（手工编辑过的备份）→ 跳过这些条目，其余组照常导入。
+ *     逐组隔离（见 applyImportGroups 头注释的 P1-3 段）。
+ *   · 组内 `tabs_data` / 字符串化 tabs → normalizeImportedGroup 负责恢复。
+ *
+ * 已归一化的输入二次过**不变**：容器选择「第一个持有非空数组的键」在 tabs 已
+ * 存在时仍命中 tabs；元素级映射对 camelCase 已是真值的字段是恒等变换。
+ * （normalizeImportedGroup 会补 title/时间戳回退值，不改已有值。）
+ */
+function normalizeImportedGroupsForImport(raw: unknown): TabGroup[] {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .filter((g): g is unknown => !!g && typeof g === 'object')
+    .map(g => normalizeImportedGroup(g));
 }
 
 export function createMutationHandlers(deps: MutationDeps) {
@@ -187,7 +216,17 @@ export function createMutationHandlers(deps: MutationDeps) {
         const groups = await d.getGroups();
         const r = applyImportGroups(
           groups,
-          cmd.groups,
+          // 2026-10-10 P1-1：这里曾经对 cmd.groups **零归一化**，直接透传给
+          // applyImportGroups ⇒ 载荷里用旧键 `tabs_data` 的备份（旧版本/云端导出）
+          // 走进本分支就抛 "group.tabs.reduce is not a function"，被 handle 的 catch
+          // 折成 ok:false「导入失败」—— 而**同一份文件走 storage.importData 却能成功**
+          //（那边先过了 normalizeImportedGroup）。同一个文件、两条路、相反结果。
+        //
+        // 修法按「边界处归一化」而非「信任调用方」：载荷要过 chrome.runtime 消息
+        // （结构化克隆、任何进程可构造），本分支是这条数据的唯一收口点。归一化只做
+        // 容器/元素字段映射、**不改 id 与顺序**，已归一化的输入二次过不变
+        // （幂等前置见 normalizeImportedGroup 的容器选择逻辑）。
+          normalizeImportedGroupsForImport(cmd.groups),
           { genId: () => nanoid(), sanitizeUrl: sanitizeTabUrl },
           now,
           stamp

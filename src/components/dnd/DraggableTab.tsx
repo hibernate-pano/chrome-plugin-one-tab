@@ -1,20 +1,63 @@
 /**
  * 会话内的标签行（原生 HTML5 拖拽 + 键盘重排）。
  *
- * ── 2026-10-05 瘦身：react-dnd → 原生 Drag and Drop ──
- * 原实现用 react-dnd + HTML5Backend，只为「拖动一行换个位置」这一件事，
- * 代价是 1.1 MB 依赖（react-dnd 784 KB + html5-backend 360 KB 源码），
- * 而且懒加载被 vite 的 manualChunks 规则击穿（`id.includes('node_modules/react')`
- * 同时匹配 `node_modules/react-dnd`），react-dnd 实际被打进 react-vendor 并被
- * index.html 的 modulepreload 预加载——每次开 popup 都要同步下载这 ~30 KB gzip。
+ * ── 瘦身史（背景，不是当前行为说明）──
+ * 2026-10-05 曾把 react-dnd + HTML5Backend 换成原生 Drag and Drop，理由是省
+ * 1.1 MB 依赖与 chunk 增长（详见 git show db09f10）。
  *
- * 原生方案用同一个浏览器 API（HTML5 drag events），零依赖、零 chunk 增长。
- * 行为保持一致：拖到目标行上、下方 1/5 与上方 1/5 不触发（避免抖动）、
- * 100ms 节流、拖回原位播放回弹动画、键盘上下/Home/End 重排不变。
+ * 【史实纠正：死的是组级，不是标签级】此前注释曾写「v1.22.3 标签拖拽被下线、
+ * 从未可用」—— 与事实冲突，特此纠正。git 历史为准：
+ *  · 下线的是**会话组级**拖拽排序（moveGroup / ReorderView / reorderMode 全链路，
+ *    提交 545f67d，CHROMEWEBSTORE 1.22.3/1.22.4「从未可用的会话拖拽排序」指的就是它）；
+ *  · **会话内标签级**拖拽（moveTab）在同一提交被明确保留
+ *    （提交信息原话：「会话内标签排序 moveTab 有真实调用方，保留」），
+ *    瘦身前的 react-dnd 实现（git show db09f10^:src/components/dnd/DraggableTab.tsx）
+ *    是多版本验证过的可用实现。本次转正即以那版为基准恢复，而非从零重写。
+ *
+ * ── 2026-10-10 转正：以瘦身前 react-dnd 实现为基准恢复 ───────────────────
+ * 瘦身迁移（db09f10）自称「行为保持一致」，实则丢了两处语义（reviewer 在真实
+ * Chromium 复现），本次按原语义逐条恢复：
+ *  · P0 整个拖拽是死的：迁移后载荷靠 dataTransfer.getData 在 dragover 里读，而
+ *    HTML5 DnD 规范规定 dragover 处于**受保护模式**，getData 必须返回空串
+ *    （实测 dragstart 返回载荷、dragover 连续 10 次全返回 ""、drop 才恢复）。
+ *    于是 dragover 第一行就 return，连 preventDefault 都没做，浏览器连落下都不允许。
+ *    —— 原实现根本不走这条路：react-dnd 的拖拽载荷经 backend 的内存 item 传递，
+ *    从不在 dragover 里读 dataTransfer。恢复即回到「载荷只走同源 JS 变量」。
+ *  · P1 跨组拖拽搬错行：源下标被存在**行级 ref** 上（dragIndexRef.current = index
+ *    无条件覆写），dragover 读到的是**落点行**的下标。「拖 b 到 g2 的 e」实测发出
+ *    moveTab(g1, 0, g2, 0) ⇒ 搬走的是 a，结果 g1=[bc]、g2=[aef] —— 经
+ *    applyMoveTab 正常落盘并上传云端的静默数据损坏（无回收站、无撤销）。
+ *    —— 原实现（db09f10^:110-120）把源下标存在**拖拽会话级**的可变 item 里
+ *    （hover 读 item.index/item.groupId，每次换位后回写 item.index = targetIndex、
+ *    item.groupId = targetGroupId），语义天然跨行；迁移把它降级成了行级 ref。
+ *    恢复即回到会话级：源下标只有拖拽会话（dragSession.ts）一个来源。
+ *    两缺陷根因不同（P0 是「输入不可得」，P1 是「输入错误」），修好一个不会
+ *    自动修好另一个，反之亦然。
+ *
+ * 现在两处都收敛到 src/components/dnd/dragSession.ts：**源下标只有拖拽会话一个
+ * 来源**（行组件不再持有任何"我是源"的判断 —— 对应原实现的 TabDragItem 会话对象），
+ * **载荷也只有同源 JS 变量一个来源**（对应原实现经 backend 内存传递、
+ * dataTransfer 只保留 text/plain）。决策逻辑（要不要换位、四个参数是什么）在
+ * 那边是纯函数（对应原 hover 函数体：自环判定、0.2 边缘阈值、100ms 节流同值），
+ * 有脏形状 fixture 直接单测。
+ * 与原实现相比唯一有意的改进：锚点回写只跟随**真实派发**的移动（节流 trailing
+ * 落定同样回写，被吞掉的轮次不推进锚点）—— 原实现是换位即回写，
+ * 在节流窗口内会把锚点推到一次尚未发生的移动上，一次拖拽搬两行
+ * （e2e tabreorder8 实测：g1=[c]、g2=[e,a,b,f]）。其余行为与原实现一致：
+ * 拖回原位播放回弹动画（对应原 end 里 didDrop 为假时）、边缘 1/5 不换位、
+ * 100ms 节流、键盘上下/Home/End 重排不变。
  */
 import React, { useRef, useCallback, useMemo, useState } from 'react';
 import { Tab } from '@/types/tab';
 import { nextReorderIndex } from './keyboardReorder';
+import {
+  MOVE_THROTTLE_MS,
+  advanceDragAnchor,
+  beginDragSession,
+  endDragSession,
+  getDragSession,
+  resolveHover,
+} from './dragSession';
 import { SafeFavicon } from '@/components/common/SafeFavicon';
 
 interface DraggableTabProps {
@@ -30,14 +73,15 @@ interface DraggableTabProps {
   isLockedGroup?: boolean;
 }
 
-/** 内部拖拽载荷的 dataTransfer 类型（MIME）。私有前缀：不会与外部拖入冲突。 */
-const TAB_MIME = 'application/x-tapstack-tab';
-
-/** 拖到目标行上、下方超过这个比例不换位——否则行会抖动（与原实现同阈值）。 */
-const EDGE_THRESHOLD = 0.2;
-
-/** 节流间隔：hover 高频触发，限制落盘频率（与原实现一致）。 */
-const MOVE_THROTTLE_MS = 100;
+/**
+ * dragover 处于受保护模式时 getData 必须返回空串（见文件头 P0），
+ * 所以私有载荷一律不靠 dataTransfer 传输，只经 dragSession 这一个 JS 变量。
+ * text/plain 只用于拖出到外部时的可读文本（且 Firefox 需要至少设置一样数据
+ * 才会真正开始拖拽）。生产代码里没有任何测试探针：受保护模式是浏览器语义，
+ * 对照实验在 e2e 自建的最小页面上做，不依赖被测组件配合
+ * （见 scripts/e2e-tab-reorder.mjs 第 0 节）。
+ */
+const DRAG_TEXT_TYPE = 'text/plain';
 
 // 钉住图标
 const PinIcon = () => (
@@ -53,26 +97,6 @@ const CloseIcon = () => (
   </svg>
 );
 
-/** 在 dataTransfer 里读写拖拽载荷（结构化克隆在此传输，跨文档也可用）。 */
-interface TabPayload {
-  tabId: string;
-  groupId: string;
-  index: number;
-}
-
-function readPayload(e: React.DragEvent): TabPayload | null {
-  const raw = e.dataTransfer.getData(TAB_MIME);
-  if (!raw) return null;
-  try {
-    const p = JSON.parse(raw) as TabPayload;
-    return typeof p?.tabId === 'string' && typeof p?.groupId === 'string' && typeof p?.index === 'number'
-      ? p
-      : null;
-  } catch {
-    return null;
-  }
-}
-
 export const DraggableTab: React.FC<DraggableTabProps> = React.memo(({
   tab,
   groupId,
@@ -85,38 +109,54 @@ export const DraggableTab: React.FC<DraggableTabProps> = React.memo(({
 }) => {
   const ref = useRef<HTMLDivElement>(null);
   const linkRef = useRef<HTMLAnchorElement>(null);
-  // 拖拽过程中把「当前所在下标」记在 ref 上：hover 事件里读它，
-  // 避免用闭包里的旧 index 反复换位（原实现靠可变 item 对象达到同效果）。
-  const dragIndexRef = useRef(index);
-  dragIndexRef.current = index;
+  // 拖拽源下标**不在这里**：它属于拖拽会话（dragSession.ts 的模块级单例）。
+  // 曾经放在这个行级 ref 上（dragIndexRef.current = index 无条件覆写），
+  // 于是 dragover 在落点行读到的是落点自己 —— 跨组拖拽搬错行（P1，见文件头）。
   const [isDragging, setIsDragging] = useState(false);
   const [isOver, setIsOver] = useState(false);
 
+  // 换位节流：hover 高频触发，落盘限频 100ms（与原实现同一间隔）。
+  //
+  // 【为什么节流不能只包 moveTab，锚点回写必须等 trailing 落定】
+  // 旧写法（连同本次转正第一版）是「调了 moveTab 就算换位成立、立刻回写锚点」。
+  // 但节流会吞掉调用：leading 派发 (g1,1→g2,0)，100ms 内的 trailing (g1,0→g2,0)
+  // 被定时器吞掉 —— 若锚点在 leading 就已推进，被吞的 trailing 用的还是旧源下标，
+  // 落定时机又晚于后续 hover，于是「拖 b」先搬 b、再按旧下标搬 a：一次拖拽搬两行。
+  // 修法：节流器收敛到**一次换位意图**（回调只在真正派发 moveTab 时触发），
+  // trailing 落定后同样触发回调 —— 锚点只跟随真实发生的移动。
   const throttledMoveTab = useMemo(() => {
-    // 手写节流（原实现同款，100ms leading+trailing）：
-    // 拖拽 hover 高频触发，限制 moveTab 调用频率，trailing 用最新参数
     let lastCall = 0;
     let timer: ReturnType<typeof setTimeout> | null = null;
     let lastArgs: [string, number, string, number] | null = null;
-    return (sourceGroupId: string, sourceIndex: number, targetGroupId: string, targetIndex: number) => {
-      lastArgs = [sourceGroupId, sourceIndex, targetGroupId, targetIndex];
-      const now = Date.now();
-      const remaining = MOVE_THROTTLE_MS - (now - lastCall);
-      if (remaining <= 0) {
-        lastCall = now;
-        if (timer) {
-          clearTimeout(timer);
-          timer = null;
+    let onDispatch: ((args: [string, number, string, number]) => void) | null = null;
+    const fire = (args: [string, number, string, number]) => {
+      moveTab(args[0], args[1], args[2], args[3]);
+      onDispatch?.(args);
+    };
+    return {
+      setOnDispatch(fn: ((args: [string, number, string, number]) => void) | null) {
+        onDispatch = fn;
+      },
+      request(sourceGroupId: string, sourceIndex: number, targetGroupId: string, targetIndex: number) {
+        lastArgs = [sourceGroupId, sourceIndex, targetGroupId, targetIndex];
+        const now = Date.now();
+        const remaining = MOVE_THROTTLE_MS - (now - lastCall);
+        if (remaining <= 0) {
+          lastCall = now;
+          if (timer) {
+            clearTimeout(timer);
+            timer = null;
+          }
+          fire(lastArgs);
+          return;
         }
-        moveTab(sourceGroupId, sourceIndex, targetGroupId, targetIndex);
-        return;
-      }
-      if (timer) return;
-      timer = setTimeout(() => {
-        timer = null;
-        lastCall = Date.now();
-        if (lastArgs) moveTab(...lastArgs);
-      }, remaining);
+        if (timer) return;
+        timer = setTimeout(() => {
+          timer = null;
+          lastCall = Date.now();
+          if (lastArgs) fire(lastArgs);
+        }, remaining);
+      },
     };
   }, [moveTab]);
 
@@ -128,45 +168,56 @@ export const DraggableTab: React.FC<DraggableTabProps> = React.memo(({
   }, []);
 
   const handleDragStart = useCallback((e: React.DragEvent<HTMLDivElement>) => {
-    dragIndexRef.current = index;
+    // 会话级状态只写这里：源下标从这里开始跟随被拖行（每次换位后由 dragover 回写）
+    beginDragSession({ groupId, index, tabId: tab.id });
     e.dataTransfer.effectAllowed = 'move';
-    e.dataTransfer.setData(TAB_MIME, JSON.stringify({ tabId: tab.id, groupId, index } satisfies TabPayload));
-    // Firefox 需要至少设置一样数据才会真正开始拖拽。
-    e.dataTransfer.setData('text/plain', tab.url);
+    // 私有载荷**不写 dataTransfer**：dragover 是受保护模式，写进去也读不回来
+    // （文件头 P0）。只留 text/plain：拖到外部（另一个窗口/标签页）时可读，
+    // 且 Firefox 需要至少设置一样数据才会真正开始拖拽。
+    e.dataTransfer.setData(DRAG_TEXT_TYPE, tab.url);
     setIsDragging(true);
   }, [groupId, index, tab.id, tab.url]);
 
   const handleDragEnd = useCallback(() => {
+    // 会话必须无条件关闭：漏掉就等于把这次的源下标带进下一次拖拽（又是搬错行）
+    endDragSession();
     setIsDragging(false);
     setIsOver(false);
   }, []);
 
   const handleDragOver = useCallback((e: React.DragEvent<HTMLDivElement>) => {
-    const payload = readPayload(e);
-    if (!payload || !ref.current) return;
+    // 载荷与源下标都只来自拖拽会话（dragSession.ts），这里没有第二份。
+    // 注意：这里**没有任何 getData** —— 受保护模式下读不到（文件头 P0），
+    // 换位决策只读会话锚点。守卫见 tests/dragSession.test.ts「载荷来源单一化」。
+    const session = getDragSession();
+    const el = ref.current;
+    const decision = resolveHover(session, { groupId, index }, {
+      rect: el ? el.getBoundingClientRect() : null,
+      clientY: e.clientY,
+    });
+    if (!decision) return;
+    // 只有真正要落在这里才 preventDefault：不 preventDefault，浏览器不允许落下，
+    // 也就不会有 drop/dragend 的收尾事件（整条路都是死的）。
     e.preventDefault();
     e.dataTransfer.dropEffect = 'move';
-
-    const sourceGroupId = payload.groupId;
-    const sourceIndex = dragIndexRef.current;
-    if (sourceGroupId === groupId && sourceIndex === index) return;
-
-    const rect = ref.current.getBoundingClientRect();
-    const hoverMiddleY = (rect.bottom - rect.top) / 2;
-    const hoverPercentage = (e.clientY - rect.top - hoverMiddleY) / hoverMiddleY;
-
-    // 同组内：往下拖时，目标行上半区才换位；往上拖时反之。防止边界抖动。
-    if (sourceGroupId === groupId && sourceIndex < index && hoverPercentage < -EDGE_THRESHOLD) return;
-    if (sourceGroupId === groupId && sourceIndex > index && hoverPercentage > EDGE_THRESHOLD) return;
-
-    throttledMoveTab(sourceGroupId, sourceIndex, groupId, index);
+    // 锚点回写挂在节流器的真实派发回调上（leading 与 trailing 落定都触发）：
+    // 锚点只跟随真实发生的移动，被节流吞掉的轮次不推进锚点。
+    throttledMoveTab.setOnDispatch((args) => {
+      advanceDragAnchor({ groupId: args[2], index: args[3] });
+    });
+    throttledMoveTab.request(
+      decision.sourceGroupId,
+      decision.sourceIndex,
+      decision.targetGroupId,
+      decision.targetIndex
+    );
   }, [groupId, index, throttledMoveTab]);
 
   const handleDragEnter = useCallback((e: React.DragEvent<HTMLDivElement>) => {
-    if (readPayload(e)) {
-      e.preventDefault();
-      setIsOver(true);
-    }
+    // 高亮不读载荷：受保护模式下读不到（见文件头 P0），只认「本次拖拽会话在册」。
+    if (!getDragSession()) return;
+    e.preventDefault();
+    setIsOver(true);
   }, []);
 
   const handleDragLeave = useCallback((e: React.DragEvent<HTMLDivElement>) => {
@@ -179,8 +230,13 @@ export const DraggableTab: React.FC<DraggableTabProps> = React.memo(({
     e.preventDefault();
     setIsOver(false);
     // 位置已经在 hover 阶段换过了；这里只负责收尾（没换过 = 拖回原位，回弹一下）。
-    if (dragIndexRef.current === index) playReturnAnimation();
-  }, [index, playReturnAnimation]);
+    // 锚点 = 被拖行的当前位置（它就是本行时说明被拖回了原处）。
+    // dragend 是兜底：拖到空白/窗口外时不会有 drop，只有它能关掉会话。
+    const session = getDragSession();
+    const movedBack = !!session && session.anchor.groupId === groupId && session.anchor.index === index;
+    endDragSession();
+    if (movedBack) playReturnAnimation();
+  }, [groupId, index, playReturnAnimation]);
 
   const tabTitle = useMemo(() => tab.title, [tab.title]);
 

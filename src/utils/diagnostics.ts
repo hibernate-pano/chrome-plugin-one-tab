@@ -62,8 +62,10 @@ const SPAN_STEP_SET = new Set<string>(SPAN_STEPS);
 /** 诊断报告的 schema 标识。改动输出结构时同时 +1，老报告仍可被识别。 */
 export const DIAGNOSTICS_SCHEMA = 'tapstack-diagnostics' as const;
 // v2：新增 perf 段（性能 span 归因）。老报告仍可被 schemaVersion 识别。
-// v3：新增 gate 段（V3 门禁判定）与 shadow 段（影子写入结果分布），
+// v3：曾新增 gate 段（V3 门禁判定）与 shadow 段（影子写入结果分布），
 //     并新增 unavailable 取值 'shadowAudit'。
+//     2026-10-05 瘦身已整体移除上述三段；2026-10-11 进一步删除 'shadowAudit' 取值
+//     （该取值自三段移除起已不可能再被 push）。版本号不再 +1：输出结构只缩小不扩张。
 export const DIAGNOSTICS_SCHEMA_VERSION = 3;
 
 /** 功能事件统计窗口（天）。 */
@@ -87,14 +89,15 @@ const PRODUCT_EVENT_NAMES: Record<ProductEventName, true> = {
   session_restored_again: true,
   search_performed: true,
   search_filtered: true,
-  session_favorited: true,
-  session_note_saved: true,
   sync_upload_started: true,
   sync_upload_completed: true,
   sync_download_started: true,
   sync_download_completed: true,
   onetab_import_completed: true,
 };
+
+// 2026-10-11 移除 `session_favorited` / `session_note_saved`（收藏与备注 1.22.13 下线）。
+// 与 ProductEventName 联合的删除同理 —— Record 要求与联合逐字对应，漏/多写 tsc 会红。
 
 /**
  * journal op 名白名单，来源 src/core/mutationProtocol.ts 的 MutationOp['op']。
@@ -127,8 +130,12 @@ const SYNC_STRATEGIES: Record<UserSettings['syncStrategy'], true> = {
 export const TAB_COUNT_BUCKETS = ['0', '1-5', '6-20', '21-100', '>100'] as const;
 export type TabCountBucket = (typeof TAB_COUNT_BUCKETS)[number];
 
-/** 读失败的源名（封闭词表，不含任何来自存储的内容）。 */
-export type UnavailableSource = 'groups' | 'settings' | 'pendingDeleteIds' | 'shadowAudit';
+/** 读失败的源名（封闭词表，不含任何来自存储的内容）。
+ *
+ * 2026-10-11 移除 `'shadowAudit'`：影子/对账三段已于 2026-10-05 整链删除，
+ * 若留着它等于在接口上宣称「这里可能出 shadowAudit 失败」—— 一个永远不会亮的指示灯
+ * 会让排障的人对真正亮起的灯也不再信任（见 readDiagnosticsSources 中「假指示灯」注释）。 */
+export type UnavailableSource = 'groups' | 'settings' | 'pendingDeleteIds';
 
 // ── 采集层：原始结构（含敏感数据，脱敏不在这里做）──────────────────────────
 

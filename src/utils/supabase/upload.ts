@@ -28,12 +28,61 @@ import {
 import { createSeqRegistry } from '@/utils/seqRegistry';
 import { kvGet, kvSet } from '@/storage/storageAdapter';
 import { storage } from '@/utils/storage';
+import { syncWatermarkKey, type SyncWatermark } from './syncWatermark';
 
 const tombstoneSeq = createSeqRegistry({
   kvGet,
   kvSet,
   getGroups: () => storage.getGroups(),
 });
+
+/**
+ * 读增量上传水位（fail-closed，丢失/损坏/时钟回退 → 0 = 全量）。
+ *
+ * 水位不是「内存 dirty 标记」：它是**由云端实际落盘行反推**的持久事实，
+ * 所以 KV 丢了只能多传，不能漏传（见 selectDirtyGroupsForUpload 的口径段）。
+ *
+ * ── 2026-10-11 P0：水位必须校验 seq 时钟是否回退 ──────────────────────
+ * 原实现存的是裸整数，于是「清本地数据（DEVICE_SEQ 被清零，水位存活）→
+ * 新组 seq 从 1 重启 → 永远被旧水位遮蔽 → 新会话静默丢失」这条路成立。
+ * 现在水位带 `deviceSeq` 基线：当前 seq 计数器低于它 = 时钟回退 → 水位作废。
+ * 完整论证见 ./syncWatermark.ts 头注释。
+ *
+ * @param userId 账号（键按账号寻址，换账号自动失效）
+ * @param currentDeviceSeq 当前本设备 seq 计数器（用于回退校验）
+ */
+async function loadSyncWatermark(userId: string, currentDeviceSeq: number): Promise<number> {
+  try {
+    const raw = await kvGet<unknown>(syncWatermarkKey(userId));
+    // 旧版裸整数（LEGACY_SYNC_WATERMARK_KEY 形状）走不到这里：键名已带账号后缀，
+    // 旧值留在旧键上无人读 → 读作未设置 → 全量一次（自动迁移到新格式）。
+    if (!raw || typeof raw !== 'object') return 0;
+    const wm = raw as Partial<SyncWatermark>;
+    const seq = Number(wm.seq);
+    const deviceSeq = Number(wm.deviceSeq);
+    if (!Number.isFinite(seq) || seq < 0) return 0;
+    // seq 时钟回退 ⇒ 旧水位的比较基准已不成立 ⇒ 弃用（宁可多传一次全量）。
+    if (Number.isFinite(deviceSeq) && currentDeviceSeq < deviceSeq) {
+      logWarn(
+        `[upload] 同步水位因 seq 时钟回退而作废（水位基线 deviceSeq=${deviceSeq} > ` +
+          `当前 ${currentDeviceSeq}），本次按全量上行`
+      );
+      return 0;
+    }
+    return Number.isFinite(seq) && seq > 0 ? Math.floor(seq) : 0;
+  } catch (error) {
+    // 与 pending_upload / last_upload_time 同纪律：读失败不能被当成
+    // 「没有未同步的东西」。但这里**不能抛**——抛会让上传整体失败，
+    // 而水位缺失的安全退路（全量）已经足够：下次成功上传会重建它。
+    logWarn('[upload] 读取同步水位失败，按「首次同步」处理（本次全量上行）:', error);
+    return 0;
+  }
+}
+
+/** 写入增量上传水位。失败抛错（保守方向 = 下轮全量重传，绝不谎报已同步）。 */
+async function saveSyncWatermark(userId: string, seq: number, deviceSeq: number): Promise<void> {
+  await kvSet(syncWatermarkKey(userId), { seq, deviceSeq } satisfies SyncWatermark);
+}
 
 /**
  * 选定本次实际上云的组。
@@ -200,6 +249,99 @@ async function upsertRowsInBatches(rows: SupabaseTabGroup[]): Promise<{
   return { data, error: null };
 }
 
+/**
+ * ── F2 增量上传：选出「本次真的需要上云」的组 ────────────────────────────
+ *
+ * 【缺陷】修复前每次同步都把**全部**组整批 upsert：几百个会话时每组一次
+ * PBKDF2-100k 密钥派生（并发下仍是几百次）+ 整份加密 blob 的传输，而绝大多数
+ * 组自上次同步以来根本没变过。用户体感的「同步一下要等好几秒」与全库大小成正比，
+ * 而真正要传的可能只有一两个新会话。
+ *
+ * 【增量判据：lastOp 印记，而不是 updatedAt 时间戳或内存 dirty 标记】
+ * 三种候选及其被否掉的原因：
+ *
+ *   1) **内存 / 易失存储的 dirty 标记**（每次本地改动置位、上传后清位）：
+ *      **丢失 = 漏传**，而漏传不是「多传一次」的代价 —— 无墓碑模型下下一次
+ *      下载合并会把云端旧版本当赢家（mergeOpStamped 的 LWW 口径下，
+ *      updated_at 更旧但 stamp 相同的行会被判成「本地赢」而被原样保留，
+ *      于是本地修改在**任何设备上都不会恢复**，且用户看到的是「同步成功」）。
+ *      MV3 SW 随时可被杀、IndexedDB 写失败、跨进程标志位都是丢失的现成路径 ——
+ *      所以 dirty 标记不能是「唯一判据」。它可以作为**加速器**（有标记直接全量），
+ *      不能作为**闸门**。
+ *
+ *   2) **updatedAt 与上次成功上传时间比较**（本批最初考虑的口径）：
+ *      否掉的理由是**有真实漏判路径**。印记迁移（opStampMigration）与恢复状态
+ *      落盘（restoreGroup / restoreSnapshot）都会**改写实体内容却不盖新 stamp**：
+ *      那种实体的 updatedAt 早于上次上传时间，但内容确实变了（至少一次恢复可能被
+ *      上一次上传的时间覆盖）。用时间戳就是拿「漏传」换「少传」——
+ *      本批明确不接受。
+ *
+ *   3) **本设备最后确认上云的 stamp**（采用）：每个实体的 lastOp 是
+ *      Lamport 单调号，写它的同一个入口也负责盖号；只要把「本设备上传成功的
+ *      最后一个本地序号」持久化下来，它就是**可重建**的闸门。
+ *
+ * 【闸门的可重建性：syncWaterMark = 上次上传成功的组 stamp seq 之 max】
+ * 由**云端实际落盘的那批行**（数据回读已确认）算出，不依赖任何内存标记：
+ *   - KV 里的 sync_water_mark 丢了 → 读出 null → 上界为 0 → 所有组上行（收敛方向）；
+ *   - KV 写失败 → 抛错 → 本次 upload 整体失败、pending_upload 不清 → 下轮重试；
+ *   - MV3 SW 被杀 → 下次冷启动从 KV 读回，标记本来就在磁盘上（它不是易失态）。
+ *
+ * 【逐组闸门的方向：宁可多传，不可漏传】
+ * 判据 = `组有印记 ? 组 stamp.seq > 水位 : 一律上行`。
+ * 唯一的「跳过」是「有本设备印记、且序号不大于上一次成功上传的最大序号」——
+ * 即「这一次（或上一次）上传里，它已经被本机确认写上云了」。于是：
+ *   - 序号水位回退（写坏/被手改）→ 更多组上行 → 安全方向；
+ *   - 同设备的组互相覆盖（seq 相同）不会被误跳过，因为它是「与上一次同源」；
+ *   - 云端被**别处**改坏的行（外部 SQL / 换账号）本机无法感知 → 该行会一直
+ *     被跳过，直到本地改动它为止。这是本判据已知且接受的边界（前提：云端只被
+ *     本扩展的客户端写，RLS 按 user_id 隔离）；**显式覆盖（overwriteCloud）与
+ *     首次同步始终走全量**，那两条路径就是它的逃生舱。
+ * 墓碑行（isDeleted）**不参与**闸门：删除意图由 markCloudGroupsAsDeleted 走
+ * 独立的队列 + 读回确认路径，本函数只负责上行未删除的组。
+ *
+ * 【与 probe.ts 的 digest 口径不冲突】
+ * 上行判据读的是**本地实体的印记**与**本地水位**（水印从本次上行后回读云端行得出），
+ * 不依赖云端 digest 的列集合，因此 probe 在未迁移 schema 下回退到最小列
+ * （丢掉 is_deleted / 印记）时，增量闸门的行为不变。
+ *
+ * @returns 本次应当上云的组（调用方仍会再过滤墓碑 / 认输组）。
+ */
+export function selectDirtyGroupsForUpload(
+  groups: TabGroup[],
+  /** 本设备上次确认上云的最大 stamp seq；0 = 从未确认过（首次同步） */
+  seqWatermark: number
+): TabGroup[] {
+  // 判据 = `组有印记 ? 组 stamp.seq > 水位 : 一律上行`。
+  // 无印记实体（老数据、迁移前的组、测试种子、导入备份里没盖号的组）一律上行：
+  // 「无印记」在合并里等于全序最小值（随时可能被云端行合法取代），拿它做闸门
+  // 就是把「不知道」当成「已同步」。向后兼容的硬性要求：新字段的引入绝不能
+  // 让旧数据/旧路径在本轮上传里凭空消失。
+  return groups.filter(g => {
+    const s = g?.lastOp?.s;
+    if (typeof s !== 'number') return true;
+    return s > seqWatermark;
+  });
+}
+
+/**
+ * 上行成功后的**新水位**：本次真正写上云的组 stamp seq 之 max（无则 null = 不更新）。
+ *
+ * 只认**本次落盘**的行：认输预检被过滤掉的组（云端已是更新的墓碑）没有写，
+ * 把它们的水位抬上去等于宣布「它们已同步」—— 那种情况下它们的本地副本本轮
+ * 就会被下载合并物理移除，影响有限，但口径上仍应与实际上行集合严格一致。
+ */
+export function nextSyncWatermark(
+  uploadRows: TabGroup[],
+  previousWatermark: number
+): number {
+  let max = previousWatermark;
+  for (const g of uploadRows) {
+    const s = typeof g?.lastOp?.s === 'number' ? g.lastOp.s : null;
+    if (s !== null && s > max) max = s;
+  }
+  return max;
+}
+
 export const uploadSync = {
   /**
    * 把云端 tab_groups 的旧格式列迁移到 JSONB（历史一次性迁移工具）。
@@ -344,6 +486,7 @@ export const uploadSync = {
       throw error;
     }
   },
+
   // 上传标签组
   async uploadTabGroups(groups: TabGroup[], overwriteCloud: boolean = false) {
     checkSupabaseConfig();
@@ -352,15 +495,42 @@ export const uploadSync = {
     const userId = await requireSessionUserId();
 
     logInfo('准备上传标签组，用户ID:', userId, '设备ID:', deviceId);
-    logInfo(`要上传的数据: ${groups.length} 个标签组`);
+    logInfo(`本地共有 ${groups.length} 个标签组（实际上行数由下方增量闸门决定）`);
 
-    // 详细记录每个要上传的标签组
-    groups.forEach((group, index) => {
+    // ── F2 增量上传 ─────────────────────────────────────────────────────
+    // 水位读**必须 fail-closed**（与同文件 getPendingUpload 同纪律）：读不到水位
+    // 就退化成全量，而不是「当没有未同步的东西」——后者会把本地尚未上云的修改
+    // 永远不上传，且下一次下载合并直接覆盖本地（无墓碑模型，无回收站）。
+    // 丢失/损坏/被手改成非数字/seq 时钟回退 → 一律按 0（首次同步口径）处理。
+    //
+    // deviceSeq 取自与写入同一个 seqRegistry（同 key、同推导规则），用于校验
+    // 「水位基准是否还成立」——清本地数据后计数器归零而水位存活时必须弃用。
+    const currentDeviceSeq = await tombstoneSeq.peekDeviceSeq();
+    const watermark = overwriteCloud ? 0 : await loadSyncWatermark(userId, currentDeviceSeq);
+    const dirtyGroups = selectDirtyGroupsForUpload(groups, watermark);
+    if (dirtyGroups.length < groups.length) {
+      logInfo(
+        `[upload] 增量上传：本次 ${dirtyGroups.length}/${groups.length} 个组需要上行` +
+          `（水位 seq=${watermark}${watermark === 0 ? '，首次/水位丢失 → 全量' : ''}）`
+      );
+    }
+    // 覆盖模式与空组都由调用方决定是否传；这里只做「哪些组脏」的收敛。
+    // 注意：即使 dirtyGroups 为空，下方仍会跑到 verifyUploadReadback（空名单）
+    // 与 markCloudGroupsAsDeleted —— 删除广播不依赖增量判据。
+    const candidateGroups = dirtyGroups;
+
+    // 详细记录每个要上传的标签组。
+    //
+    // 2026-10-11 P2：原循环遍历的是 `groups`（全量）而不是 `candidateGroups`
+    // （增量后真正上行的集合）。这不只是「多打几行日志」的浪费 —— 它让控制台
+    // 出现「要上传 N 个组」而分母是全量数，日志与实际行为分叉，排障时会据此
+    // 误判「增量判据没生效」。遍历对象必须与 selectRowsForUpload 的入参同源。
+    candidateGroups.forEach((group, index) => {
       const safeTabs = Array.isArray(group.tabs) ? group.tabs : [];
       if (!Array.isArray(group.tabs)) {
         logWarn(`标签组 ${group.id} 的 tabs 字段不是数组，日志统计将按空数据处理`);
       }
-      logInfo(`要上传的标签组 ${index + 1}/${groups.length}:`, {
+      logInfo(`要上传的标签组 ${index + 1}/${candidateGroups.length}:`, {
         id: group.id,
         name: group.name,
         tabCount: safeTabs.length,
@@ -396,7 +566,7 @@ export const uploadSync = {
     // 覆盖被跳过的路径成立；这里仍有活跃组要写上去，另一端持有活跃副本的组
     // 会被重新 INSERT —— 也就是 upload.ts 里 markCloudGroupsAsDeleted 已注释的
     // 「幽灵复活」。绝不在这条分支假装删除意图已达成。
-    const rowsToUpload = selectRowsForUpload(groups, { overwriteCloud, tombstoneColumn: tombstoneSupported });
+    const rowsToUpload = selectRowsForUpload(candidateGroups, { overwriteCloud, tombstoneColumn: tombstoneSupported });
     const tombstonesDropped = overwriteCloud && !tombstoneSupported
       ? groups.filter(g => g.isDeleted === true).map(g => g.id)
       : [];
@@ -746,6 +916,26 @@ export const uploadSync = {
       userId,
       { checkStamp: opStampSupported, checkTombstone: await supportsCloudTombstone() }
     );
+
+    // F2：只有「真的写上云了」（upsert 无错 + 读回校验通过）才抬水位。
+    // 顺序很关键：放在 verifyUploadReadback **之后**，于是
+    //   - 被守卫静默吞写 → 抛错 → 水位不动 → 下轮重试仍会上行那批组；
+    //   - 抛错上浮 → syncEngine.upload 失败 → pending_upload 保留 → 下轮重试。
+    // 水位来自**上行集合**而非本地全部实体：认输组（云端已是更新的墓碑）没写，
+    // 不能计入，否则等于宣布「它们已同步」。
+    // KV 写失败 → 抛错 → 本次 upload 整体失败（保守方向：下轮全量重传），
+    // 与 getLastUploadTime「读失败必须抛」的纪律同口径。
+    if (!overwriteCloud && uploadRows.length > 0) {
+      const nextWatermark = nextSyncWatermark(uploadRows, watermark);
+      // deviceSeq 必须取**写入这一刻**的计数器值，不能复用读取时的旧快照 ——
+      // 本次上行本身可能推进了计数器（墓碑 seq 走同一个 registry）。
+      const deviceSeqAtWrite = await tombstoneSeq.peekDeviceSeq();
+      await saveSyncWatermark(userId, nextWatermark, deviceSeqAtWrite);
+      logInfo(
+        `[upload] 同步水位推进到 seq=${nextWatermark}（本次上行 ${uploadRows.length} 个组，` +
+          `deviceSeq 基线=${deviceSeqAtWrite}，账号 ${userId}）`
+      );
+    }
     // 本次 upsert 真正写上云的墓碑 id。调用方（syncEngine.upload）必须用它把
     // 这些 id 从 markCloudGroupsAsDeleted 的输入里剔除：这些行已经带着本机的
     // lastOp 印记落盘了，再让 markCloudGroupsAsDeleted 走一遍 stamp 分支，

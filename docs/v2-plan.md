@@ -1,10 +1,48 @@
-# TapStack V2 执行计划（唯一指导源）
+# TapStack V2 执行计划（**已整体作废，禁止照此实现**）
 
-> ⚠️ **部分作废声明（2026-09-29，v1.22.0 起）**
+> ⛔ **总作废声明（2026-10-05 瘦身起；2026-10-11 补全）**
+>
+> **本文不是任何东西的「唯一指导源」。文首原句「Yjs 同步重构的规划大部分仍然有效」是错的 —— 现在没有一项仍然有效。**
+> 本次补全的原因是：下面那条 2026-09-29（**v1.22.0** 废除墓碑体系 / 回收站）的作废声明**写在瘦身之前**，所以它写下时是真的，
+> 现在是假的，却没人更新它 —— 一份**带着过期有效性声明的文档，比没有文档更危险**。
+> 这与 1.22.16 修掉的「`docs/rebuild-plan.md` 说谎」是同一类错误的残留实例（那一处已修，这一处漏了）。
+>
+> **触发它全面失效的事实**（2026-10-05，提交 `db09f10`，净删 5678 行）：
+> `yjs` / `dexie` / `y-indexeddb` 已从 `package.json` 移除，`src/` 全量零引用（实测）；
+> `src/core/{ydoc,yShadow,yTranslate,yMaterialize,yAudit,yShadowConfig}.ts`、`ShadowGatePanel.tsx` 已删除；
+> `diagnostics.ts` 记录「2026-10-05 瘦身：移除 gate / shadow / audit 三段」。
+> **谁按下面 §4.1 的 Y-Schema 去写代码，就是在重新引入刚被删掉的 5678 行子系统。**
+>
+> | 章节 / 对象 | 状态（2026-10-11 复核） | 说明 |
+> |---|---|---|
+> | 文首「本文是唯一指导源」 | ❌ 作废 | 唯一有效的指导源是**代码本身 + `docs/RELEASE-NOTES.md` 台账**；计划类文档全部处于作废状态（`docs/rebuild-plan.md` 同样已作废，两份互不指向） |
+> | §3 目标架构图（图内 Y.Doc / Dexie 物化视图 / op log 三段） | ❌ 整图作废 | 实际架构是「单引擎 + 整组 JSONB 快照 + 组级 LWW」，无 Y.Doc、无物化视图、无 op log |
+> | §4.1 Y-Schema（`src/core/ydoc.ts`） | ❌ 整节作废 | 该文件**不存在**；`groups/tabs/order` 三个 Y 容器一个都没有 |
+> | §4.2 Dexie 物化视图（`src/core/yMaterialize.ts`） | ❌ 整节作废 | 该文件**不存在**；库名 `tapstack-y-mv` 零引用，`dexie` 依赖已移除 |
+> | §5 墓碑 7 天生命周期（§5.1–§5.4、T1–T4） | ❌ 整节作废 | v1.22.0 已废除墓碑体系（见下方 2026-09-29 声明） |
+> | §6 P1 影子转正 | ❌ 整节作废 | 影子链已于 2026-10-05 整链删除；`yAudit` / `yGate` / `y_audit_daily` 均不存在，对账门禁无实现 |
+> | §6 P2 日志管道（`sync_updates` / `sync_snapshots`） | ❌ **已放弃，不再推进** | 通道从未接线：`grep 'sync_updates\|encodeStateAsUpdate' src/` **零命中**。两张表已在生产库（`supabase/migrations/20260924090000_y_sync_tables.sql`，含 RLS 与索引），属**待清理的空转资产**，去留待单独决策 |
+> | §6 P3 瘦身下线 / §6 P4 打磨 | ⛔ 已由 2026-10-05 瘦身**以另一种方式**达成 | legacy 已删、`react-dnd` 已换原生；本文描述的「删 legacy」不是待办，是已发生的事实 |
+> | §7 测试策略 | ❌ 大部分作废 | 所列回归文件 `yShadow` / `ydocDelta` / `reviveHardening` / `overwriteTombstone*` 等随对应子系统删除或已随 v1.22.0 改写；`scripts/report-y-bundle.mjs` **已不存在**，体积门现为 `scripts/report-bundle-size.mjs`（`pnpm check:bundle`，已接进 `pnpm validate` 与 CI，超预算 `exit 1`） |
+> | §8 文件清单 | ❌ 整节作废 | 所列 `src/core/{ydoc,yTranslate,yMaterialize,yShadow,yShadowConfig}.ts`、`supabase/migrations/2026xxxxxx_tombstone_expiry.sql`、`src/utils/syncUtils.legacy.ts` 全部**不存在** |
+> | §9 风险表「Y DeleteSet 膨胀」/「pg_cron 不可用」/「体积超门」 | ❌ 作废 | 对应机制都不存在了；云端 30 天清理由客户端随上传调 `purgeExpiredCloudTombstones` 承担 |
+> | §10 V2-Backlog | ⛔ 需重新立项才能动 | 恢复码 UX / 实时 presence 在作废状态下**不是待办**；如要恢复必须先由负责人重新拍板 |
+> | §11 M1–M3 里程碑 | ❌ 作废 | M1 已在文末「事实改正」里被推翻；M2（M2 = P2 日志管道上线 `v2.0.0`）**不会发生**，M3 同理 |
+> | §1 决策锁定（D1 / D2 / D3） | ⚠️ D3 已被 v1.22.0 推翻；D1 / D2 保留为**历史决策记录** | 不得据此「继续实施」 |
+>
+> **为什么本文件不直接删除**：它是判断过程的记录，删除会丢掉「当时为什么这么选、后来为什么推翻」的知识。
+> 但**知识资产必须标明自己的时效**，否则就是误导 —— 这一条是 1.22.16 在 `rebuild-plan.md` 上刚付过学费的。
+>
+> 为什么不给它一个「后继文档」：`rebuild-plan.md` 的作废横幅曾把读者指向本文（两边互相指认对方有效，实际都失效）。
+> **该指向已在 2026-10-11 一并删掉**：两份作废文档互不指向，谁也不再是「有效指导源」。
+
+> ⚠️ **部分作废声明（2026-09-29，v1.22.0 起）—— 本文最早的一条声明，已被上方 2026-10-05 总作废声明全面覆盖****
 >
 > 本文成文于「墓碑 7 天生命周期 / 回收站」模型之下。`v1.22.0`（提交 `bdad42d`，2026-09-29）**彻底移除了墓碑体系**：删除即物理移除，无回收站、不可恢复。因此凡以「墓碑 7 天可恢复」为前提的内容已失效。
 >
-> **本文不重写**——Yjs 同步重构的规划大部分仍然有效。下表只划掉失效部分，未列出者按有效对待。
+> **本文不重写**——⚠️ **此处原文写「Yjs 同步重构的规划大部分仍然有效。下表只划掉失效部分，未列出者按有效对待。」该句已于 2026-10-05 失效**：瘦身删掉了影子链后，**未列出的部分同样全部失效**（见文首 2026-10-05 总作废声明的逐条表）。
+>
+> 下面这张表保留的是**v1.22.0 那一刀**的记录，它仍是有效的历史；判断「现在能做什么」请读文首总作废声明。
 >
 > | 章节 | 状态 | 说明 |
 > |---|---|---|
@@ -29,7 +67,9 @@
 > - §11 M1 原写「`v1.22.0`，Y 对账全绿，灰度 100%」——实际 `v1.22.0` 发布的是**废除墓碑体系**（见 `CHROMEWEBSTORE.md` 版本历史表的 1.22.0 行），不是 P1 转正。P1 对账仍在观察窗内。
 
 > 版本：v1.1 / 日期：2026-09-29（v1.0 成文 2026-09-26，基线 `v1.21.0`） / D3 决策已被 v1.22.0 推翻，其余决策仍锁定
-> 与 `docs/rebuild-plan.md` 的关系：rebuild-plan 是方向文档，本文是可执行计划。本文与之冲突处以本文为准。
+>
+> ⚠️ **2026-10-11 更正**：上面「其余决策仍锁定」已随文首总作废声明失效——D1 / D2 只是历史决策记录，不是「锁定待实施」。
+> 与 `docs/rebuild-plan.md` 的关系：~~rebuild-plan 是方向文档，本文是可执行计划。本文与之冲突处以本文为准。~~ ❌ **该关系已作废**：两份文档现在**都处于作废状态且互不指向**，任何一份都不能作为实施依据。
 > 原则：绞杀式演进，每期独立可发版；Spec-First，先验收标准后实现；不搞大爆炸重写；UI 交互冻结。
 
 ## 1. 决策锁定（Jasper 已拍板，不再讨论）
@@ -53,6 +93,10 @@
 - 已知债：`tabSlice.ts(943行)`、`upload.ts(864行)`、`storage.ts(792行)`、`SyncButton.tsx(682行)` 四个上帝文件；`upload.ts` 内 79 处 `console.*`；`syncUtils.legacy.ts(439行)` 未下线；目录 `core/services/utils/supabase/storage-kv` 职责交叉。
 
 ## 3. 目标架构（V2 完成态）
+
+> ⛔ **整节作废（2026-10-05 瘦身）**：下面这张图描述的是一个**从未成为现状**的架构。
+> 实际架构：UI → `sendMutation` → SW 单写者队列 → `storage`（IndexedDB）→ `syncEngine`（整组 JSONB 快照 + `opStamp` 组级 LWW）。
+> **无 Y.Doc、无 Dexie 物化视图、无 op log**；图里三段对应代码已全部删除。保留仅供回顾。
 
 ```
 popup / Web（只读本地 Dexie 视图，瞬间响应）
@@ -80,6 +124,9 @@ SW（无状态搬运工，可随时被杀，无常驻状态）
 
 ### 4.1 Y-Schema（`src/core/ydoc.ts`，doc 名 `tapstack-y-v2`）
 
+> ⛔ **整节作废（2026-10-05 瘦身）**：`src/core/ydoc.ts` **不存在**，doc `tapstack-y-v2` 零引用，`yjs` 依赖已移除。
+> 下面这套 `groups/tabs/order` 三容器 schema 是**已删除子系统**的设计稿，不是待实现项。
+
 - `groups: Y.Map`：`groupId → {id,name,createdAt,updatedAt,isLocked,is_deleted,deletedAt?,version,last_op_device,last_op_seq,notes?,isFavorite?}`
 - `tabs: Y.Map`：`` `${groupId}:${tabId}` → {id,groupId,url,title,lastAccessed,is_deleted,deletedAt?,last_op_*} ``
 - `order: Y.Array<string>`：组 id 序列，快照顺序重建。
@@ -87,10 +134,18 @@ SW（无状态搬运工，可随时被杀，无常驻状态）
 
 ### 4.2 Dexie 物化视图（`src/core/yMaterialize.ts`，库 `tapstack-y-mv`）
 
+> ⛔ **整节作废（2026-10-05 瘦身）**：`src/core/yMaterialize.ts` **不存在**，库 `tapstack-y-mv` 零引用，`dexie` 依赖已移除。
+> 当前查询 / 排序 / 搜索直接读 `storage` 的整组快照，不经物化视图。
+
 - `tab_groups('id, updatedAt, is_deleted')`、`tabs('id, groupId, updatedAt, is_deleted')`，主键 tabs 为 `` `${groupId}:${tabId}` ``。
 - `snapshotToRows()` 保持纯函数；`writeMaterializedView()` 幂等 `bulkPut`；indexedDB 不可用 → 内存兜底且永不抛错（fail-closed 反向：读失败不准降级成零个组清空列表，见 66ed9fc 教训）。
 
 ### 4.3 服务端表
+
+> ⛔ **本节描述的同步协议已放弃（不是待办）**：`sync_updates` / `sync_snapshots` 两张表**已在生产库**
+> （`supabase/migrations/20260924090000_y_sync_tables.sql`，含 RLS 与索引），但代码**零读写**
+> （`grep 'sync_updates\|encodeStateAsUpdate' src/` 实测零命中）。**生产库里的两张空转表属待清理资产，去留待负责人单独决策。**
+> ⚠️ 本节还提到一个从未落地的迁移 `2026xxxxxx_tombstone_expiry.sql`（`tombstone_expires_at` 列 + pg_cron）——它不存在；30 天云端删除标记清理现行由客户端随上传调 `purgeExpiredCloudTombstones` 承担。
 
 沿用 `20260924090000` 两表，V2 新增一次 additive-only 迁移（见 §6 P2）：
 
@@ -151,6 +206,10 @@ SW（无状态搬运工，可随时被杀，无常驻状态）
 
 ### P0 手术：上帝文件拆分 + 日志收口 + legacy 冻结（0.5–1 周）
 
+> ℹ️ 本节是**唯一还站得住的 P 期**（它确实是已发生的事实：`tabSlice.ts` 已瘦身、日志已收口到 `@/utils/log`），
+> 但**验收行里的两个数字都过期了**：当时的「334 单测」快照已失效（下文「356+」同理）→ 当前基线 **695 单测**（2026-10-02 实测）；
+> 门禁 `no-restricted-imports(syncUtils.legacy)` **已随 `syncUtils.legacy.ts` 删除而移除**（无对象可限制），不是被「关掉」。
+
 > ✅ 已完成（2026-09-26，负责人执行）：
 > - `upload.ts` 864行→会话收口 `session.requireSessionUserId` + 日志收口 `@/utils/log`；新建 `src/utils/supabase/session.ts`、`src/utils/log.ts`（logInfo 仅 DEV 输出）
 > - 全仓 50 文件 339 处 `console.*` 收口；eslint 新增 `no-console` + `no-restricted-imports(syncUtils.legacy)` 双门禁
@@ -167,6 +226,10 @@ SW（无状态搬运工，可随时被杀，无常驻状态）
 - 回滚：纯重命名与搬运，直接 revert。
 
 ### P1 影子转正：Y.Doc 升为主真相源候选（1–2 周）
+
+> ⛔ **整节作废（2026-10-05 瘦身）**：影子链（`ydoc` / `yShadow` / `yTranslate` / `yMaterialize` / `yAudit` / `yGate` / `yShadowConfig`、`ShadowGatePanel.tsx`）已整链删除，净删 5678 行（`db09f10`）。
+> 下面描述的 `SHADOW_ROLLOUT_PERCENT` 阶梯、抽样对账 job、`y_audit_daily` 门禁**在当前代码树里一个都不存在**。
+> **决策记录见 `docs/slim-down-plan.md`（影子链是纯成本、零业务消费者）。**
 
 > 🟡 代码完成（2026-09-26）：新建 `src/core/yAudit.ts`（纯函数对账 + 5% 采样执行器，
 > 结果进 `y_audit_log` FIFO 50），`mutationService.shadowWrite` 后链式触发（同 fire-and-forget、
@@ -187,6 +250,11 @@ SW（无状态搬运工，可随时被杀，无常驻状态）
 
 ### P2 日志管道：云端切到 sync_updates/sync_snapshots（2–3 周，风险最高，单独发版）
 
+> ⛔ **已放弃，不再推进（2026-10-11 登记）**：op log 通道**从未接线**，也没有任何代码读或写 `sync_updates` / `sync_snapshots`
+> （实测 `src/` 零命中，`encodeStateAsUpdate` 零命中）。
+> **两张表 + RLS + 索引已在生产库且已进迁移历史，是空转的待清理资产**——是否 `DROP TABLE` 由负责人单独决策（详见 `docs/RELEASE-NOTES.md` v1.22.16 节「云端空转资产」）。
+> ⚠️ 下面这份 2–3 周的实施计划**读不得当成排期**：它没有负责人、没有里程碑、也没有人会在它到期时被提醒。
+
 - 目标：同步从传快照变传操作；触发器仲裁下线。
 - 改动：
   - 新迁移 `supabase/migrations/2026xxxxxx_tombstone_expiry.sql`（additive-only：只加 `tombstone_expires_at` 列 + pg_cron job + 索引；无 DROP/ALTER COLUMN/DELETE）。
@@ -198,6 +266,9 @@ SW（无状态搬运工，可随时被杀，无常驻状态）
 
 ### P3 瘦身下线：删 legacy 与快照代偿（1 周）
 
+> ⛔ **已由 2026-10-05 瘦身达成**（`docs/slim-down-plan.md`）：`syncUtils.legacy.ts`、`mergeTabGroupsLegacy`、digest 探活等已删。
+> **不是待办。**
+
 - 目标：代码量净减少，语义只剩一份。
 - 改动：删 `syncUtils.legacy.ts`、`mergeTabGroupsLegacy`、digest 探活、防抖落盘、pending 标志、双驱动调度中已失效的分支；`storage.ts` 收敛为 Dexie 视图薄封装；文档 `rebuild-plan.md` 状态更新为“V2 完成”。
 - 验收：`grep -rn legacy/mergeTabGroupsLegacy/digest探活` 零命中（除 CHANGELOG）；测试数不减（删代码不删用例，迁移到 Y 路径）；包体积下降。
@@ -205,11 +276,19 @@ SW（无状态搬运工，可随时被杀，无常驻状态）
 
 ### P4 打磨（Polish，0.5 周）
 
+> ⛔ 本期所依据的 V2 上下文已作废。「超大组分页与虚拟列表」部分**仍可作为独立议题**，但已不属于本文档，勿在本节下排期。
+> 其中「删除 7 天文案三处一致」在 v1.22.0 废除墓碑后已无对象。
+
 - 边缘：IndexedDB 不可用、SW 被杀中途、Supabase 限流、超大组（>1000 tabs）的分页与虚拟列表。
 - 体验：保持成功静默、失败可解释（InlineNotice + journal 可查）；删除 7 天文案在回收站、设置页、Web 仪表盘三处一致。
 - 门：Lighthouse / popup 打开 <300ms（M2 机器）；多设备一致性 e2e 全绿。
 
 ## 7. 测试策略（每期门禁）
+
+> ⛔ **大部分作废（2026-10-05 瘦身）**：所列回归文件 `yShadow` / `ydocDelta` / `reviveHardening` / `overwriteTombstone*` / `syncMergeSafety` 中，
+> 随对应子系统删除或已随 v1.22.0 改写；`overwriteTombstone*` 类用例针对的是**已废除的墓碑模型**。
+> **体积门脚本已改名**：`scripts/report-y-bundle.mjs` 不存在了（它测的三个包已删），现为
+> `scripts/report-bundle-size.mjs`（`pnpm check:bundle`，已接进 `pnpm validate` 与 CI，超预算 `exit 1`）。
 
 - 单元（`node --test` 现状延续）：Y 翻译表、物化视图、墓碑状态机、expires 计算、cryptoSlot 透传。
 - 回归（必跑）：`overwriteTombstone*`、`storageFailClosed`、`syncMergeSafety`、`yShadow`、`ydocDelta`、`reviveHardening`。
@@ -218,6 +297,11 @@ SW（无状态搬运工，可随时被杀，无常驻状态）
 - 体积门：`scripts/report-y-bundle.mjs`，新增依赖 gzip >120KB 告警阻断发布。
 
 ## 8. 文件清单（预计触及）
+
+> ⛔ **整节作废（2026-10-05 瘦身）**：下面所列**没有一个文件存在**。
+> 已删除：`src/core/ydoc.ts` / `yTranslate.ts` / `yMaterialize.ts` / `yShadow.ts` / `yShadowConfig.ts` / `webTombstone.ts`、
+> `supabase/migrations/2026xxxxxx_tombstone_expiry.sql`（从未落地）；已随 v1.22.0 删除：`src/utils/syncUtils.legacy.ts`。
+> 仍存在：`src/background/mutationHandlers.ts` / `mutationService.ts` / `src/services/syncEngine.ts` / `src/utils/supabase/{upload,download}.ts` / `src/store/slices/tabSlice.ts` / `src/components/sync/SyncButton.tsx`。
 
 - 核心：`src/core/ydoc.ts`、`src/core/yTranslate.ts`、`src/core/yMaterialize.ts`、`src/core/yShadow.ts`、`src/core/yShadowConfig.ts`、`src/core/mutationOps.ts`、`src/core/webTombstone.ts`。
 - 后台：`src/background/mutationHandlers.ts`、`src/background/mutationService.ts`、`src/services/syncEngine.ts`。
@@ -243,6 +327,9 @@ SW（无状态搬运工，可随时被杀，无常驻状态）
 - 墓碑保留时长可配置（当前写死 7 天，服务端与客户端同常量，不做 per-user 配置）。
 
 ## 11. 里程碑与发版
+
+> ⛔ **M1–M3 全部作废**：M1 已在文末「事实改正」里被推翻；**M2（P2 完成 → `v2.0.0` 日志管道上线）不会发生**——P2 已放弃；
+> M3（P3+P4 → `v2.1.0`）同理。**不存在「排到 2.0.0」这件事**，读到这一节的人不要据此认为同步重构还在推进中。
 
 - M0（P0 完成）：`v1.21.x` 补丁版，零行为变更。
 - M1（P1 完成）：~~`v1.22.0`，Y 对账全绿，灰度 100%~~ ❌ **事实改正（2026-09-29）**：版本号被实际发布内容抢占——`v1.22.0` 发的是**废除墓碑体系**（`bdad42d`），P1 转正尚未发生。Y 对账仍在观察窗（对账差异率 <0.1% 持续 7 天）。P1 转正的下一个版本号由发版时再定。

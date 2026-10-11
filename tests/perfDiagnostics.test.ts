@@ -284,10 +284,10 @@ describe('诊断报告：perf 段接线与摘要文本', () => {
       pendingDeleteCount: 0,
       pendingUpload: false,
       perfSpans: [],
-      // v3 起 DiagnosticsSources 多了影子/对账三键。这里给「读到了但是空的」形态
-      // （键不存在 → kvGet 返回 null 是正常态，**不进 unavailable**）。
-      // 读**抛错**才会 null → unavailable，那条路径由 diagnostics.test.ts 覆盖。
-      shadowAudit: { auditLog: null, auditDaily: null, shadowLog: null },
+      // 2026-10-11 删除三段：影子/对账数据已于 2026-10-05 整链随影子链删除。
+      // `shadowAudit` 键曾在 v3 起给「读到了但是空的」形态（键不存在 → kvGet 返回 null
+      // 是正常态，**不进 unavailable**；读抛错才会 null → unavailable）。
+      // 现已无此键 —— `buildDiagnosticsReport` 不读它，fixture 里也不再需要给它。
       environment: {
         extensionVersion: '1.22.9',
         userAgent: 'Mozilla/5.0',

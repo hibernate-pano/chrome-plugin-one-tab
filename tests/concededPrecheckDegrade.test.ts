@@ -31,6 +31,10 @@ import { pathToFileURL, fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
 import { readFileSync } from 'node:fs';
 import { stubSessionJson } from './_helpers/stubSession.ts';
+// 水位键名（单一真相在 src/utils/supabase/syncWatermark.ts）。这里直接取构造器而
+// 不写字符串：改名时两边一起变，避免测试里藏一个不再生效的副本键名。
+// 2026-10-11 起水位**按 userId 寻址**（syncWatermarkKey(USER_ID)），不再是全局常量键。
+import { syncWatermarkKey } from '../src/utils/supabase/syncWatermark.ts';
 // 纯类型导入：编译期擦除，运行时零依赖，故不受「@/ 必须 register(loader) 后动态 import」的约束。
 import type { TabGroup } from '@/types/tab';
 
@@ -377,6 +381,19 @@ beforeEach(async () => {
   await storage.setPendingUpload(false);
   await storage.setLastUploadTime(new Date(Date.now() - 60_000).toISOString());
   invalidateGroupsCache();
+  // 增量上传的水位键必须逐用例清零（2026-10-10 F2）。
+  //
+  // 【为什么这条必需】水位是「本设备已确认上云的最大 stamp seq」，存 kvGet/kvSet
+  // 指向的本地 KV（本文件无 indexedDB ⇒ 落 localStorage，即下面的 lsData）。
+  // 它**跨用例存活**，而本文件每条用例都按「种子组 stamp s:2、预期本次上行」
+  // 写断：第 1 条用例上传成功后水位被抬到 seq=3，于是后续用例里 s:2 的种子组
+  // 全部被增量闸门判为「已同步」跳过 ⇒ 认输预检那一次 GET 根本不会发出
+  // （实测报 `precheckHits()` 为 []），本文件考的两条 fail-closed 断言与
+  // 「正常路径认输照旧生效」全部因此假红。
+  //
+  // 判据是「前置条件没成立」而非产品行为错了：预检的代码路径压根没被走到。
+  // 清键方向也安全 —— 水位清零 = 退化成全量上行，正是本文件每条用例的前提。
+  lsData.delete(syncWatermarkKey(USER_ID));
   // 列探测结果是进程内单例缓存，重置后才能让每条用例都重新探一次
   const probe = await import('@/utils/supabase/probe');
   probe.__resetCloudColumnProbeCacheForTests();

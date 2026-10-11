@@ -1,18 +1,17 @@
 // 标签重排（拖拽 + 键盘）的纯逻辑单测。
 //
-// 【为什么现在补这层测试】拖拽功能**一直都在**（2026-10-05 瘦身只是把 react-dnd
-// 换成原生 HTML5 drag events，行为一致），但全仓**零测试覆盖**：
-//   grep 'DraggableTab|moveTab|keyboardReorder' tests/ → 无结果。
-// 被测对象是三块纯逻辑，全部无 DOM 依赖，可以直接钉死：
-//   1. keyboardReorder —— 键盘重排的决策表（纯函数）；
-//   2. applyMoveTab —— 跨进程共用的重排核心语义（SW 与 popup 必须一致）；
-//   3. 接线守卫 —— 组件别被改到「文件还在、实际不调用」的死代码状态。
-//
-// 第 3 条尤其重要：本次核查发现 DraggableTabGroup 是个**只包一层、不做拖拽**
-// 的空壳（内部注释「禁用标签组拖拽功能 - 标签组应该保持固定位置」），
-// 而 grep 极易只看它就误判「拖拽已下线」。真正生效的是 TabGroup.tsx 里直接渲染的
-// <DraggableTab>。一旦哪天有人把 TabGroup 的 import 删了，仓库里仍然留着一个
-// 叫 DraggableTabGroup 的文件，非常容易误判成「功能还在」。
+// 【历史注：2026-10-10 之前本文件头写着「拖拽功能一直都在」与「v1.22.3 标签拖拽
+// 被下线」—— 前半句对标签级成立、后半句错了对象】以 git 历史为准纠正：
+// 下线的是**会话组级**拖拽排序（moveGroup / ReorderView / reorderMode 全链路，
+// 提交 545f67d，CHROMEWEBSTORE 1.22.3/1.22.4「从未可用的会话拖拽排序」指的就是它）；
+// **会话内标签级**拖拽（moveTab）在同一提交被明确保留
+// （提交信息原话：「会话内标签排序 moveTab 有真实调用方，保留」）。
+// 2026-10-10 转正即以瘦身前 react-dnd 实现为基准恢复：源下标收敛到拖拽会话
+// （src/components/dnd/dragSession.ts，单测见 tests/dragSession.test.ts）、
+// 载荷不再走 dataTransfer、moveTab 写失败回滚（tests/moveTabRollback.test.ts）、
+// 真实浏览器拖拽 e2e（scripts/e2e-tab-reorder.mjs）。
+// 本文件保留 keyboardReorder 决策表、applyMoveTab 语义与接线守卫三层；
+// 拖拽决策本身的脏形状覆盖在新文件里。
 
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';

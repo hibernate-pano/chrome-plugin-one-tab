@@ -186,12 +186,19 @@ interface ExportData {
  *
  * 「导入了 3 个、跳过 7 个」和「导入了 10 个」对用户是两回事 —— 前者意味着
  * 有 7 个得回文件里自己对，静默跳过等于让他以为全都在。
+ *
+ * `reason`（可选，2026-10-10 P2-3）：失败时给面向用户的原因，与 OneTab 的
+ * importFromOneTabFormat 同口径 —— 否则 JSON 导入失败只能弹一句静态的
+ * 「数据导入失败」，用户完全不知道是文件格式不对、组全不可存储、还是
+ * 存盘那一层出错（同一句文案覆盖三种完全不同的原因 = 没法排查）。
  */
 export interface ImportDetailedResult {
   ok: boolean;
   imported: number;
   source: number;
   pending: boolean;
+  /** 仅失败时存在：面向用户的原因说明（不直接展示内部堆栈/错误类名）。 */
+  reason?: string;
 }
 
 class ChromeStorage {
@@ -768,14 +775,25 @@ class ChromeStorage {
    *   UI 只拿到一个 boolean，于是「导入了 3 个、跳过 7 个」无从告知。
    */
   private async mergeImportedGroups(incoming: TabGroup[]): Promise<number> {
+    // 2026-10-10 P2-4：幂等前置 —— 不再信任调用方「已归一化」。
+    // 本方法此前只有两个调用方（两条路径都已经过 normalizeImportedGroup），
+    // 所以这一行当下是恒等变换；它防的是**下一个**调用方（或被改回原样的
+    // 调用方）绕过归一化：SW 侧 importGroups 分支已有自己的边界归一化（P1-1），
+    // 本地兜底路径若直接拿脏形状喂 applyImportGroups，就会退化成
+    // 「同一份文件走 SW 成功 / 走本地兜底失败」。
+    // 二次归一化对已归一化的输入不变（容器选择命中 tabs、元素映射恒等），
+    // 代价是一趟数组映射（几百组的规模下远小于一次落盘往返）。
+    const safeIncoming = incoming.map(normalizeImportedGroup);
     if (hasMutationSender()) {
-      const res = await sendMutation<TabGroup[]>({ op: 'importGroups', groups: incoming });
+      const res = await sendMutation<TabGroup[]>({ op: 'importGroups', groups: safeIncoming });
       if (!res.ok) {
         // 超时 ≠ 未受理（1.22.14）：sendMutation 把超时折成 { ok:false,
         // error:'操作超时…' }（它内部吞掉一切异常）。但超时的真实语义只是
         // 「popup 不再等了」，命令已进入 SW 单写者队列且后台会继续执行完。
         // 此时若报「导入失败」，用户重试同一份文件会导入出整份副本
-        // （applyImportGroups 永远新建组）。按「已受理」处理：让 reload 后的
+        // （1.22.17 起 applyImportGroups 会跳过「同名 + 同内容指纹」的组，见
+        // core/normalizeTabsData.groupContentFingerprint；但幂等是收敛机制，
+        // 不是「可以随便重试」的许可）。按「已受理」处理：让 reload 后的
         // 列表展示真实结果；极端情况下列表短暂未含导入内容，等 SW 跑完再开即见。
         if (typeof res.error === 'string' && res.error.startsWith(TIMEOUT_REASON_PREFIX)) {
           logWarn('[Storage] 导入等待超时，命令已受理并在后台继续执行（不报失败，避免重复导入整份副本）');
@@ -791,7 +809,7 @@ class ChromeStorage {
     const stamp = await this.nextLocalOpStamp(existing);
     const merged = applyImportGroups(
       existing,
-      incoming,
+      safeIncoming,
       { genId: () => nanoid(), sanitizeUrl: sanitizeTabUrl },
       new Date().toISOString(),
       stamp
@@ -1010,6 +1028,15 @@ class ChromeStorage {
    * 新 UI 改用本方法拿数量。
    */
   async importDetailed(data: ExportData): Promise<ImportDetailedResult> {
+    // 【2026-10-10 P2-3】文件里的组数在 try 之外先行取出：原先只有 try 内的两个
+    // return 分支带 `source: groups.length`，而 catch 分支直接归零，于是
+    // 「文件里有 N 个组、却因任何原因（设置读炸、SW 明确拒绝、归一化抛错）
+    // 一个都没落盘」时，UI 拿到 source:0 → 用户看到「导入失败」却不知道
+    // 文件里到底有什么，无从判断是文件坏还是导入坏。
+    // source 的语义是「文件里有多少个组」——这是**读文件**的事实，
+    // 不该因为后续步骤失败而归零。格式完全不对（data.data.groups 非数组）
+    // 时它就是 0，仍然诚实。
+    const sourceGroupsCount = Array.isArray(data?.data?.groups) ? data.data.groups.length : 0;
     try {
       if (!data || !data.data || !Array.isArray(data.data.groups)) {
         throw new Error('无效的导入数据格式');
@@ -1043,7 +1070,10 @@ class ChromeStorage {
         // 注意这是 1.22.15 引入的行为变化：旧版本在这条路径上仍会合并 settings。
         // 若要恢复旧行为，把这段 early return 移到 settings 合并之后即可，
         // 但需要先重新论证「失败提示 + 设置被改」的组合是否可接受。
-        return { ok: false, imported: 0, source: groups.length, pending: false };
+        return { ok: false, imported: 0, source: groups.length, pending: false,
+          reason: `文件内共 ${groups.length} 个会话，但没有任何可导入的网址：` +
+            '全部为空会话，或只含无法保存的网址（javascript:、data: 等危险协议，' +
+            '以及 chrome://、edge:// 等浏览器内部地址会被跳过）' };
       }
 
       const importedCount = await this.mergeImportedGroups(groups);
@@ -1070,7 +1100,19 @@ class ChromeStorage {
       };
     } catch (error) {
       logError('导入数据失败:', error);
-      return { ok: false, imported: 0, source: 0, pending: false };
+      // source 保持「文件里的组数」（见方法开头注释），不归零。
+      return {
+        ok: false,
+        imported: 0,
+        source: sourceGroupsCount,
+        pending: false,
+        // 格式不对（最高频，且用户自己能判断）与写盘失败（用户处理不了）
+        // 必须分开说 —— 原先 UI 只有一句静态的「数据导入失败」，三种原因同一句。
+        reason:
+          sourceGroupsCount === 0
+            ? '这个文件里没有可导入的会话：请确认选中的是本扩展导出的 JSON 备份文件'
+            : `导入未能完成（文件内共 ${sourceGroupsCount} 个会话，本次一个都没落盘）。请稍后重试；若反复失败，可能是浏览器存储空间不足或扩展无写入权限。`,
+      };
     }
   }
 
@@ -1117,15 +1159,18 @@ class ChromeStorage {
           reason:
             parsedGroups.length === 0
               ? '没有解析出任何标签组：请确认这是 OneTab 导出的文本（空行分隔会话，每行一个网址）'
-              : `解析出 ${parsedGroups.length} 个会话，但没有任何可导入的网址：全部行都不是可存储的 URL（如 chrome://、edge://、file:// 等内部或本地地址会被跳过）`,
+              : `解析出 ${parsedGroups.length} 个会话，但没有任何可导入的网址：全部行都不是可存储的 URL（javascript:、data: 等危险协议，以及 chrome://、edge:// 等浏览器内部地址会被跳过）`,
         };
       }
 
       // 同 importData：交单写者串行化执行读-改-写（真值读 + 盖印记 + 上传调度）。
       // 只发可导入组，全空的壳不必让 SW 再过滤一遍。
       //
-      // ⚠️ 这里**只调用一次**：mergeImportedGroups 会真的写盘，
-      // 调两次 = 导入两份副本（applyImportGroups 每次都新建 id，没有去重）。
+      // ⚠️ 这里**只调用一次**：mergeImportedGroups 会真的写盘。
+      // 2026-10-10：applyImportGroups 已具备导入幂等（同名 + 同内容指纹 → 跳过），
+      // 但幂等是**收敛**机制，不是「可以随便调两次」的许可 —— 它按内容判重，
+      // 不保证任意两次调用的副作用可交换。回归锁（每次入口恰好调 1 次）在
+      // tests/p0DataSafetyGuards.test.ts。
       // 2026-10-09 我给它加返回值统计时差点留了重复调用，靠自查发现。
       const importedCount = await this.mergeImportedGroups(importableGroups);
       return {
@@ -1150,6 +1195,18 @@ class ChromeStorage {
       // 还有一份平行的清单要同步改。
       const keys = Object.values(STORAGE_KEYS);
       await Promise.all(keys.map(key => kvRemove(key)));
+      //
+      // 2026-10-11 补充：增量上传水位**故意不在**这张表里（它是按账号寻址的
+      // 推导量，理由见 storage-kv/keys.ts 末尾）。这里刻意**不**顺带清它：
+      // 水位按 userId 分键，而本方法拿不到当前 userId（storage 层不持有会话态），
+      // 要清就得引入「按前缀枚举删除」这种 KV 层未承诺的能力 —— 那是为一个
+      // **已不存在的风险**加复杂度。
+      //
+      // 风险为什么不复存在：水位值带 deviceSeq 基线，上传时若发现 seq 时钟已回退
+      // （清数据把 DEVICE_SEQ 清零 ⇒ 新组 seq 从 1 重启 ⇒ 当前计数器 < 基线）
+      // 就**自动作废水位**走全量上行（见 supabase/syncWatermark.ts 头注释 P0 段）。
+      // 残留的只是一个无害的孤儿推导量，代价是清数据后的首轮多传一次全量。
+      // 正确性由水位自身保证，不依赖这里补一刀。
     } catch (error) {
       logError('清除存储失败:', error);
     }

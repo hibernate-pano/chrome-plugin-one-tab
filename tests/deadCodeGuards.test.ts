@@ -168,6 +168,9 @@ describe('页内快捷键层与「标签组拖拽 + 重排模式」已下线', (
   });
 
   it('会话内标签排序（moveTab）仍在：那条路是有真实调用方的', () => {
+    // 容易被「顺手一起删」误伤的是 moveTab —— TabGroup 拖拽 / DraggableTab 键盘重排都在用。
+    // 注：会话**组**级拖拽（moveGroup）保持下线，只有**标签**级（moveTab）可用 ——
+    // DraggableTabGroup 仍是明确不做拖拽的空壳（见其文件头注释），不要动它。
     // 容易被「顺手一起删」误伤的是 moveTab —— TabGroup 拖拽 / DraggableTab 键盘重排都在用
     assert.ok(existsSync(p('src/components/dnd/keyboardReorder.ts')));
     assert.ok(code('src/components/tabs/TabGroup.tsx').includes('moveTabAndSync'));

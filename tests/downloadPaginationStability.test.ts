@@ -555,3 +555,103 @@ describe('1.22.15 截断检测：downloadTabGroups 的 count 交叉校验', () =
     );
   });
 });
+
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 2026-10-10 注释如实化：count 交叉校验**只检测净行数变化**（不是漂移的全网兜底）
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// 【为什么要有这个 describe】download.ts 的 count 交叉校验曾被注释描述成
+// 「offset 窗口漂移唯一能从客户端观测到的信号」，读的人会据此以为**任何**漂移
+// 都能被它挡住。reviewer 实测 6 组漂移模型证否了这个说法：净行数不变的漂移
+// 一律放行。本 describe 把这条**已知盲区**钉成断言，防止下一个排障的人再次
+// 误信它——同时把「后果仅是延迟一轮可见、无数据丢失」写进断言，避免后人
+// 因为「它有盲区」就把整条校验删掉（它真正拦的是网关静默截断，删了会回真丢失）。
+//
+// 【为什么这类漂移不丢数据（断言里逐条钉住）】
+// offset 窗口在净零漂移下仍可能重叠/跳过，但：
+//   · 被跳过的**存量行**不会被静默吞掉 —— mergeOpStamped 按 id 归并幂等，
+//     「这轮没看到」只意味着本轮保留本地旧副本，下一轮窗口重建后仍会拉到；
+//   · 并发新建的行延迟一轮可见（≤60s）。
+// 真正危险的是「半份数据继续合并 + 随后整库回写」（= 本文件上半部分的
+// 截断用例），那条仍由 count 校验 fail-closed 挡住。
+describe('count 交叉校验的已知盲区：净零漂移一律放行（如实记录，别误信它能兜住所有漂移）', () => {
+  it('分页期间「新建 k 个 + 删除 k 个」（净行数不变）→ count 校验放行，不抛错', async () => {
+    const downloadTabGroups = await loadDownload();
+    seedTiedRows(450); // 跨 2 页（DOWNLOAD_PAGE_SIZE），且 created_at 全并列
+
+    const originalFetch = globalThis.fetch;
+    let pageGets = 0;
+    globalThis.fetch = (async (input: any, init: RequestInit & { headers?: Record<string, string> } = {}) => {
+      const url = new URL(typeof input === 'string' ? input : input.url);
+      const isPageGet =
+        url.pathname.endsWith('/rest/v1/tab_groups') &&
+        (init?.method ?? 'GET').toUpperCase() === 'GET' &&
+        url.searchParams.has('offset');
+      if (isPageGet) {
+        pageGets += 1;
+        // 第一页取回后、翻第二页前：删 5 个已取回的行，同时新建 5 个行。
+        // 净行数 450 → 450，count(exact) 与末页累计再次相等 ⇒ 校验必然放行。
+        if (pageGets === 2) {
+          for (let i = 0; i < 5; i++) cloud.rows.delete(`g-${i}`);
+          for (let i = 0; i < 5; i++) {
+            cloud.rows.set(`new-${i}`, {
+              id: `new-${i}`,
+              user_id: USER_ID,
+              name: `new-${i}`,
+              tabs_data: [],
+              created_at: '2026-10-07T00:00:00.000Z',
+              updated_at: '2026-10-07T00:00:00.000Z',
+            });
+          }
+        }
+      }
+      return originalFetch(input, init);
+    }) as typeof fetch;
+
+    try {
+      // 不抛错 —— 这就是本用例要记录的「已知行为」，不是缺陷。
+      const groups = await downloadTabGroups();
+      assert.ok(Array.isArray(groups), '净零漂移下校验放行（本用例记录该行为）');
+      assert.ok(
+        cloud.getPages.length >= 2,
+        `应确实翻到了第 2 页（否则本用例没建模到漂移窗口），实际 ${cloud.getPages.length} 页`
+      );
+      assert.ok(
+        !groups.some(g => /^new-/.test(g.id)),
+        '并发新建的行本轮可能取不到（延迟一轮可见），但它们**不会**造成任何既有行丢失；' +
+          '下一轮窗口重建后仍会被拉到。这条断言只钉「新建行延迟可见」这个已知后果。'
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it('净漂移（只删不加）仍然 fail-closed —— 盲区只在「净行数不变」时存在', async () => {
+    const downloadTabGroups = await loadDownload();
+    seedTiedRows(450);
+
+    const originalFetch = globalThis.fetch;
+    let pageGets = 0;
+    globalThis.fetch = (async (input: any, init: RequestInit & { headers?: Record<string, string> } = {}) => {
+      const url = new URL(typeof input === 'string' ? input : input.url);
+      const isPageGet =
+        url.pathname.endsWith('/rest/v1/tab_groups') &&
+        (init?.method ?? 'GET').toUpperCase() === 'GET' &&
+        url.searchParams.has('offset');
+      if (isPageGet) {
+        pageGets += 1;
+        if (pageGets === 2) cloud.rows.delete('g-0'); // 只删不加 → 净行数变化
+      }
+      return originalFetch(input, init);
+    }) as typeof fetch;
+
+    try {
+      // 这条对照很重要：它证明校验**不是形同虚设**，只是有盲区。
+      // 若哪天这条也放行了，说明校验被误改成 fail-open，必须恢复。
+      await assert.rejects(() => downloadTabGroups(), /!=/, '净行数变化必须仍然被 count 校验挡住');
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});

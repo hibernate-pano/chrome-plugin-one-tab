@@ -35,6 +35,21 @@ export interface SeqRegistryDeps {
 export interface SeqRegistry {
   nextSeq(): Promise<number>;
   getDeviceSeq(): Promise<number>;
+  /**
+   * **只读**地看当前号位，不把修复后的下限写回。
+   *
+   * 与 getDeviceSeq 的区别只有一处，但那一处是硬要求：getDeviceSeq 走 current()，
+   * 而 current() 在「观察到的全网最大印记 > 持久化值」时会 `kvSet` 把下限**写回**。
+   * 于是「我只是看一眼计数器」这个纯读意图，会在磁盘上留下一次持久化副作用 ——
+   * 提前把 device_seq 钉到观察最大值。
+   *
+   * 2026-10-11 实测的后果：增量上传水位为做「seq 时钟是否回退」的自洽性校验而
+   * 调了 getDeviceSeq()，结果每次上传都提前钉一次下限，令紧随其后的墓碑取号
+   * 多跳一级（tests/overwriteTombstoneDoubleWrite 的见证用例从 6 变 7）。
+   * 语义上不算错（Lamport 只要求单调），但它让「观测」变成了「变更」，
+   * 而一个只需要读数的调用方没有资格改计数器 —— 故拆出这个 peek。
+   */
+  peekDeviceSeq(): Promise<number>;
   bumpSeqIfLower(candidate: number): Promise<number>;
 }
 
@@ -77,6 +92,11 @@ export function createSeqRegistry(deps: SeqRegistryDeps): SeqRegistry {
   return {
     async getDeviceSeq(): Promise<number> {
       return current();
+    },
+    async peekDeviceSeq(): Promise<number> {
+      const persisted = (await deps.kvGet<number>(DEVICE_SEQ_KEY)) ?? 0;
+      const observed = maxObservedSeq(await deps.getGroups());
+      return observed === null ? persisted : Math.max(persisted, observed);
     },
     async nextSeq(): Promise<number> {
       const next = (await current()) + 1;

@@ -22,6 +22,10 @@
 // 3. **端口/套接字占用**：启动前探测端口，被占用就换一个（最多连续 20 个），
 //    全占满则显式失败并列出原因 —— 不允许静默 skip，也不允许留一个看不出原因的
 //    pg_ctl 报错。
+// 4. **socket 路径长度**：PG 的 Unix socket 路径硬上限 103 字节，超了只在 pg.log
+//    里留一句「could not create any Unix-domain sockets」，与真实原因毫无关联。
+//    macOS 的 tmpdir() 形如 /var/folders/q6/<25 字符 hash>/T/<沙箱前缀>，叠加
+//    mkdtemp 随机段与 sock/.s.PGSQL.<port> 后很容易越界（2026-10-11 实测）。
 import { execFileSync } from 'node:child_process';
 import { createServer } from 'node:net';
 import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync } from 'node:fs';
@@ -59,6 +63,18 @@ export const PG_MISSING_BINARIES_REASON =
 
 /** 首选端口被占时向后探测的窗口大小。 */
 const PORT_SCAN_SPAN = 20;
+
+/** PG 的 Unix socket 路径上限 103 字节；留几字节余量给 mkdtemp 随机段的波动。 */
+const SOCKET_PATH_MAX = 96;
+
+/**
+ * mkdtemp 的父目录。tmpdir() 会长到越界，那就退到 /tmp（短路径）。
+ * 估算用固定的「XXXXXX + 五位端口」，够判断会不会越界，不必等建完再补救。
+ */
+function pickWorkRoot(prefix: string, port: number): string {
+  const suffix = `/${prefix}XXXXXX/sock/.s.PGSQL.${port}`;
+  return tmpdir().length + suffix.length >= SOCKET_PATH_MAX ? '/tmp' : tmpdir();
+}
 
 function errText(e: unknown): string {
   const err = e as { stderr?: unknown; message?: string };
@@ -141,11 +157,20 @@ export async function startPostgres(opts: StartPostgresOptions): Promise<Running
     throw new Error(`Postgres 二进制缺失：${PG_MISSING_BINARIES_REASON}`);
   }
 
-  const workDir = mkdtempSync(join(tmpdir(), opts.filePrefix ?? 'tapstack-pg-'));
+  const prefix = opts.filePrefix ?? 'tapstack-pg-';
+  const workDir = mkdtempSync(join(pickWorkRoot(prefix, opts.preferredPort), prefix));
   const dataDir = join(workDir, 'data');
   const socketDir = join(workDir, 'sock');
   const logPath = join(workDir, 'pg.log');
   mkdirSync(socketDir);
+  if (join(socketDir, `.s.PGSQL.${opts.preferredPort}`).length >= SOCKET_PATH_MAX) {
+    rmSync(workDir, { recursive: true, force: true });
+    throw new Error(
+      `${opts.label} 的套接字路径仍过长（${join(socketDir, `.s.PGSQL.${opts.preferredPort}`).length} 字节，` +
+        `上限 ${SOCKET_PATH_MAX}）：${workDir} —— 这是环境路径问题，不是迁移缺陷，` +
+        `请设一个较短的 TMPDIR 后重试`
+    );
+  }
   let port = opts.preferredPort;
 
   try {

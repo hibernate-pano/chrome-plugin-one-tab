@@ -85,6 +85,24 @@ describe('打开路径：service-worker 的消息分支', () => {
 });
 
 describe('后台轮询：判据读不到时不下载（2026-10-05 fail-closed）', () => {
+  // ── 2026-10-10 F3：这两条断言从 `return true;` 改成钉「中止 outcome」——
+  //
+  // 【为什么必须改断言而不是改代码】F3（同步失败退避）要求 handleAlarm 能区分
+  // 「本轮成功」与「本轮真故障」，于是 performBackgroundSync 的返回值从单一
+  // boolean 变成结构化 outcome（ok + kind + detail）。原来的 `/return true;/`
+  // 正则钉的是**字面形状**，不是**语义**——它想表达的是「必须中止本轮、绝不
+  // 继续走下载」。语义（fail-closed 中止）**一个字都没变**，变的是返回值的形状，
+  // 而 shape 变化后断言仍然匹配不到 = 断言在钉实现细节，不在钉语义。
+  //
+  // 【为什么不能为了保住正则而退回 boolean】那正是 F3 的根因：单一 boolean 无法
+  // 区分「让路/未登录（不算故障）」与「上传失败/读不到判据（真故障）」，于是退避
+  // 要么把让路也推进阶梯（失败次数被推爆、误停自动同步），要么把失败当让路
+  // （退避永不生效，F3 等于没修）。保住这条正则 = 把 F3 改回去。
+  //
+  // 【新的钉法钉住什么】仍是同两件事，且比原来的正则更强：
+  //   1) catch 块必须**立刻 return**（不落到下面的 downloadAndMerge）；
+  //   2) 返回的 outcome 必须是 failed（= 真故障，进退避阶梯），而不是 ok。
+  // 这正是「中止本轮」在退避语境下的完整含义：不下载 + 计一次失败。
   it('hasPendingUpload 抛错时中止本轮，不继续走下载', () => {
     const src = code('src/background/backgroundSync.ts');
     const start = src.indexOf('const hasPending = await syncEngine.hasPendingUpload()');
@@ -95,9 +113,10 @@ describe('后台轮询：判据读不到时不下载（2026-10-05 fail-closed）
     const catchBody = src.slice(catchIdx, catchIdx + 900);
     assert.match(
       catchBody,
-      /return true;/,
+      /return\s*\{[^}]*ok:\s*false[^}]*\}/,
       '读不到 pending_upload 时必须 return 中止本轮 —— 本地是否领先云端未知，' +
-        '继续下载可能用云端旧数据覆盖未推送的本地变更'
+        '继续下载可能用云端旧数据覆盖未推送的本地变更。' +
+        'F3 起返回结构化 outcome，判据从「字面 return true」改为「ok:false 的中止返回」。'
     );
     assert.ok(
       !/logWarn\([^)]*失败（继续）/.test(catchBody),
@@ -111,7 +130,11 @@ describe('后台轮询：判据读不到时不下载（2026-10-05 fail-closed）
     const upIdx = src.indexOf('if (!upResult.success)', start);
     assert.ok(upIdx !== -1, '应能找到上传结果判断');
     const block = src.slice(upIdx, upIdx + 400);
-    assert.match(block, /return true;/, '上传未成功必须中止本轮下载（否则云端旧数据会覆盖本地）');
+    assert.match(
+      block,
+      /return\s*\{[^}]*ok:\s*false/,
+      '上传未成功必须中止本轮下载（否则云端旧数据会覆盖本地）—— F3 起为 ok:false 的中止返回'
+    );
   });
 });
 

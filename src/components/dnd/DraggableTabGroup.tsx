@@ -9,7 +9,8 @@ interface DraggableTabGroupProps {
 export const DraggableTabGroup: React.FC<DraggableTabGroupProps> = ({ group }) => {
   const ref = useRef<HTMLDivElement>(null);
 
-  // 禁用标签组拖拽功能 - 标签组应该保持固定位置
+  // 会话组级拖拽保持禁用（产品决策：组固定位置，只允许组内标签重排）。
+  // 标签级拖拽见 DraggableTab（2026-10-10 已转正为真实可用）。
 
   return (
     <div

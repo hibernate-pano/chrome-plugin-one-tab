@@ -54,6 +54,7 @@ const ORDER = [
   'e2e-stress-no-resurrect.mjs',            // 云端持续写入下的本地移除（含正控）
   'e2e-layout-empty-group.mjs',             // 布局切换不产生空壳会话
   'e2e-layout-column-split.mjs',            // 双栏左右按次序对分
+  'e2e-tab-reorder.mjs',                    // 会话内标签拖拽转正：真实 mouse 拖拽（P0 受保护模式对照 + P1 跨组搬对行），纯本地',
 ];
 
 /**

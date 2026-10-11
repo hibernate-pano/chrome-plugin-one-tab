@@ -25,7 +25,7 @@ import {
 // 合并语义已统一为 mergeOpStamped（OpStamp 全序决胜，组级 LWW 整组覆盖）。
 // 这是合并的唯一真相源；旧 LWW 实现已随 2026-10-05 瘦身删除。
 import { mergeOpStamped } from '@/core/opStampMerge';
-import { dropEmptyGroups, removedGroupIds } from '@/core/mutationOps';
+import { dropSyncMergedGroups, removedGroupIds } from '@/core/mutationOps';
 import { ensureOpStampMigrated } from '@/background/opStampMigratedGuard';
 import { enqueue } from '@/background/mutationQueue';
 import { ensureAuthenticated } from '@/core/authGuard';
@@ -444,14 +444,23 @@ export class SyncEngine {
       }
       // 6. 写入（P1-4：直写落盘，不经过防抖窗口）
       //
-      // 【空组统一规则】合并结果剔除空组（无内容可恢复；锁定组豁免）。
+      // 【空组规则：同步合并路径锁定豁免】（2026-10-10 缺陷 2 修复）
       // 物理模型下正常合并不产生空组（组是整体进出的），此处仅兜底：
       // 老版本设备写入的空壳/导入的空组随 LWW 赢家到达时不再落地。
-      // 被剔除的组登记删除广播队列，云端行由 upload 标记 is_deleted。
-      // 【空组统一规则】合并结果剔除空组（无内容可恢复；锁定组豁免）。
-      // 物理模型下正常合并不产生空组（组是整体进出的），此处仅兜底：
-      // 老版本设备写入的空壳/导入的空组随 LWW 赢家到达时不再落地。
-      const finalGroups = dropEmptyGroups(mergedGroups);
+      // 未锁定的空组照旧剔除；**锁定但零标签的组一律留下**——它不是垃圾，
+      // 而是用户「清空最后一个标签后留着、等着再填」的合法状态（applyRemoveTab
+      // 走锁定豁免就会留下这种组）。
+      //
+      // 【为什么这里必须锁定豁免，而不能用 dropEmptyGroups 的无保护判据】
+      // 下面被剔除的 id 会进 pendingDeleteIds → 云端行打 is_deleted 墓碑 →
+      // 所有设备上永久消失（v1.22.0 起无回收站）。用户锁定 = 「别自动清掉我」，
+      // 若同步合并把锁定的 0 标签组剔掉，等于把「锁定」翻译成「跨设备永久删除」，
+      // 下一个 60s 同步周期就发生，用户毫不知情。
+      //
+      // 【副作用与取舍】锁定空壳会因此在 storage 里留更久。视图层另有过滤
+      // （toActiveGroupsView 仍用 isEmptyGroup，不看锁定），所以不会渲染成空卡；
+      // 想彻底删掉它的用户走 deleteGroup（用户显式意图，不豁免）。
+      const finalGroups = dropSyncMergedGroups(mergedGroups);
       await storage.setGroupsImmediate(finalGroups);
       // 广播队列必须伴随 pending_upload 置位，否则入队了也没人执行：
       // backgroundSync 只在 hasPendingUpload() 为真时才上传，而下载路径

@@ -7,9 +7,28 @@
  *
  * 旧路径 → mutation op 代理清单：
  * saveGroup→saveGroup / deleteGroup→deleteGroup / deleteAllGroups→deleteAllGroups /
- * importGroups→importGroups / updateGroupNameAndSync→renameGroup /
+ * updateGroupNameAndSync→renameGroup /
  * toggleGroupLockAndSync→toggleGroupLock / moveTabAndSync→moveTab / cleanDuplicateTabs→cleanDuplicates /
  * deleteTabAndSync→removeTab
+ *
+ * ── 2026-10-10 P1-2：importGroups thunk 已删除（零调用方的未归一化暗门）——─
+ * 修复前这里有一个 `importGroups` thunk，**原样转发** sendMutation({op:'importGroups',
+ * groups})，既不 normalizeImportedGroup、也无 hasImportableGroup 预检 —— 与
+ * storage.importData（会先归一化 + 预检）是第二条未归一化入口。全仓零 UI 调用
+ * dispatch(importGroups)（已逐处核实），即一条「没人走但随时可走」的暗门：哪天有人
+ * 从旧文档/旧分支把它接上 UI，用户就会遇到「同一份文件，走这个入口报导入失败、
+ * 走导入菜单却成功」。
+ *
+ * 按「删除优于添加」处理：**收敛掉这个无调用 thunk**，而不是给它补一份归一化
+ * 让它变成第二条正式通路。理由：
+ *   1) 导入的真实入口只有一个（HeaderDropdown 的文件选择器 → storage.importDetailed
+ *      / importFromOneTabFormat），它已经做了归一化、预检与数量回报；
+ *   2) 保留它 = 保留一个「形状不可信的入口」，而这条链路上出过的每一个 P1
+ *      都源于「多一条不归一化的入口」；
+ *   3) SW 侧 importGroups 分支已在 2026-10-10 加上边界归一化（P1-1），即使将来
+ *      再有人从别的进程发这条语义命令，也不会拿到与 storage 路径不同的结果。
+ * 唯一要保留的是协议 op 本身（storage.mergeImportedGroups 走的正是它）。
+ * 回归锁见 tests/importIdempotency.test.ts（thunk 与其 dispatch 均不得复活）。
  *
  * ── 2026-09-29 无墓碑重写 ──
  * 删除一律物理移除（删除前由 UI 确认）；跨设备广播由云端 is_deleted 行承担。
@@ -169,14 +188,9 @@ export const deleteAllGroups = createAsyncThunk(
   }
 );
 
-export const importGroups = createAsyncThunk(
-  'tabs/importGroups',
-  async (groups: TabGroup[]) => {
-    const res = await sendMutation<TabGroup[]>({ op: 'importGroups', groups });
-    if (!res.ok) throw new Error(res.error ?? '导入失败');
-    return res.payload!;
-  }
-);
+// ── 2026-10-10 P1-2：原 export const importGroups = createAsyncThunk(...) 已删除。
+// 理由与口径见文件头「importGroups thunk 已删除」段：零调用方 + 第二条未归一化入口。
+// 导入唯一入口是 storage.importDetailed / importFromOneTabFormat（经 SW 串行化）。
 
 // 更新标签组名称并同步到云端
 export const updateGroupNameAndSync = createAsyncThunk<
@@ -270,8 +284,52 @@ export const cleanDuplicateTabs = createAsyncThunk(
  * Redux 乐观更新由 moveTab 同步 reducer 承担；存储写由 mutationQueue 异步完成。
  * handler 返回 removedGroupId 时（跨组移空源组被物理移除），dispatch(deleteGroup)
  * 同步语义队列（deleteGroup 幂等，广播队列由 SW 侧登记，这里只为 UI 收口）。
+ *
+ * ── P3（2026-10-10）：写失败 UI 必须回滚 ────────────────────────────────
+ * 原先 thunk 先乐观 dispatch(moveTab(...))，而 moveTabAndSync.rejected 是空实现：
+ * SW 忙/被回收 → sendMutation 30s 超时 → 报错但列表顺序已变，磁盘仍是旧顺序，
+ * 下次 loadGroups 回环把列表打回（写失败 + UI 不回滚 + 静默分叉三连）。
+ * 照抄同文件 deleteTabAndSync.rejected 的写法（:693-717 用 deletedGroupBackups）：
+ * 同一进程内 `updateSourceInDrag=true` 的移动是同步连续的 reducer 调用——
+ * 写入前抓一份 state.groups 整体快照，失败时无条件换回（这正好就是备份的那份）。
+ *
+ * ── 与 deleteTabAndSync 的区别（为什么这里可以「整体换回」）────────────
+ * deleteTab 是指针操作：传 (groupId, tabId)，并发在途的多条不共享下标，
+ * 所以备份是 key 化的（groupId:tabId）和「只插回这一项」的精确手术。
+ * moveTab 是**下标**操作：传 (sourceIndex, targetIndex)，两次并发移动的下标
+ * 语义互相污染（第一次移动后第二次的下标已经指向别的行），精确到项的回滚
+ * 本来就不成立。与其做「精确但是错的」局部还原，不如整体换回写入前的快照。
+ *
+ * ── 两类失败的处置（照抄 delete 数据安全规矩）──────────────────────────
+ *  · 超时（SW 忙/被回收）：SW 侧任务仍可能继续（「超时不等于回滚」，见
+ *    core/mutationProtocol）。此刻把顺序换回 = 把「可能已落盘的新顺序」显示成
+ *    旧顺序——但与 deleteTab 相反的方向是安全的：deleteTab 保留乐观（怕复活已删），
+ *    moveTab 回滚乐观（怕把已搬走的顺序停在错误位置）。两者统一原则是「按磁盘
+ *    真值收敛」：deleteTab 超时后磁盘大概率已删（保留乐观更接近真值），
+ *    moveTab 超时后磁盘**未知**——而下一次 loadGroups 回环会读真值自动收敛，
+ *    回滚 + 报错 + 回环收敛三件齐。
+ *  · 明确失败（SW 拒绝、存储抛错）：磁盘确实没变，整体换回即收敛。
+ *
+ * ── 与 deleteGroup 的交叉（「删了又回来」回归）─────────────────────────
+ * 失败回滚只换回**本次 thunk 抓的快照**（写入前那一刻），不读 deletedGroupBackups、
+ * 也不碰 optimisticBackups：两类备份各管各的槽位，快照是本次写入前的完整真值。
+ * 但若回滚时某组已被并发的 deleteGroup 整组移除（组 id 已不在当前列表），
+ * 按快照整体换回会把它带回来 —— 「删了又回来」回归。所以换回前过滤：
+ * 只还原「当前仍在列表里」的组；快照里有、当前没有的组**不恢复**
+ * （它的删除意图在途，磁盘上大概率已删；若组删除随后也失败，
+ * 那次 rejected 会按自己的备份把它带回来，不丢）。
  */
-export const moveTabAndSync = createAsyncThunk(
+export const moveTabAndSync = createAsyncThunk<
+  { value: { sourceGroupId: string; sourceIndex: number; targetGroupId: string; targetIndex: number; removedGroupId: string | null }; broadcastWarn?: string },
+  {
+    sourceGroupId: string;
+    sourceIndex: number;
+    targetGroupId: string;
+    targetIndex: number;
+    updateSourceInDrag?: boolean;
+  },
+  { state: { tabs: TabState }; rejectValue: { snapshot: TabGroup[] } }
+>(
   'tabs/moveTabAndSync',
   async (
     {
@@ -280,15 +338,13 @@ export const moveTabAndSync = createAsyncThunk(
       targetGroupId,
       targetIndex,
       updateSourceInDrag = true,
-    }: {
-      sourceGroupId: string;
-      sourceIndex: number;
-      targetGroupId: string;
-      targetIndex: number;
-      updateSourceInDrag?: boolean;
     },
-    { dispatch }
+    { dispatch, getState, rejectWithValue }
   ) => {
+    // 写入前抓快照（必须在乐观 dispatch 之前，否则抓到的是移动后的顺序）。
+    // 只备份 groups（不备份 error/isLoading 等 UI 态）：还原只碰数据，不碰信号。
+    const snapshot = (getState() as { tabs: TabState }).tabs.groups;
+
     // 在 Redux 中移动标签页 - 立即更新UI（同步 reducer，已含空源组自动移除）
     dispatch(moveTab({ sourceGroupId, sourceIndex, targetGroupId, targetIndex }));
 
@@ -318,7 +374,12 @@ export const moveTabAndSync = createAsyncThunk(
       targetGroupId,
       targetIndex,
     });
-    if (!res.ok) throw new Error(res.error ?? '移动失败');
+    if (!res.ok) {
+      // 不 throw：抛错会丢掉快照，rejected reducer 拿不到还原所需的数据
+      //（与 updateGroupNameAndSync / toggleGroupLockAndSync 同一写法）。
+      logError('[moveTabAndSync] 移动标签失败:', { sourceGroupId, sourceIndex, targetGroupId, targetIndex, error: res.error });
+      return rejectWithValue({ snapshot });
+    }
 
     // 搬空源组属删除类：跨组移空会物理移除整组，广播登记失败同样要 surface
     //（否则用户看到「移动成功」，但这一组会在其它设备上复活）。
@@ -838,8 +899,47 @@ export const tabSlice = createSlice({
       .addCase(moveTabAndSync.fulfilled, () => {
         // 不更新UI状态，因为已经在 reducer 中更新了
       })
-      .addCase(moveTabAndSync.rejected, () => {
-        // 不更新UI状态，因为已经在 reducer 中更新了
+      .addCase(moveTabAndSync.rejected, (state, action) => {
+        // P3：存储写失败 → 把乐观移动换回去（否则 UI 顺序与磁盘永久分叉）。
+        //
+        // 【与 deleteGroup 的交叉：只还原「当前仍在列表里」的组】
+        // 快照是写入前那一刻的完整真值；但若回滚时某组已被并发的 deleteGroup
+        // 拿掉（组 id 已不在当前列表），按快照整体换回会把它带回来 ——
+        // 「删了又回来」回归（deleteTabAndSync.rejected :693-717 为防它，
+        // 甚至把标签并回了组删除的备份）。所以只还原当前仍在的组：
+        // 快照里有、当前没有的组一律不恢复（它的删除意图在途，磁盘上大概率已删；
+        // 若组删除随后也失败，那次 rejected 会按自己的备份把它带回来，不丢）。
+        //
+        // ── 2026-10-11 P1：交叉不止组级，tab 级同样会被复活 ──────────────
+        // 上面的过滤只挡「组」这一层。同一次拖拽在途时用户又删了组里的某个标签
+        // （deleteTabAndSync.pending 已乐观移除、并登记了 optimisticBackups）：
+        // 按快照整体换回会把那个标签**一起带回来**。实测（探针已复现）：
+        //   g1=[a,b]、g2=[e,f]；拖 b 到 g2[0] → g2=[b,e,f]；在途删掉 e → g2=[b,f]；
+        //   moveTab 写失败整体换回 → g2=[e,f]、g1=[a,b]
+        // —— 标签 e 复活，且整个拖拽白做。v1.22.0 起无回收站、无撤销，这就是
+        // 「删了又回来」在 tab 粒度上的同一次事故。
+        //
+        // 修法：换回后再走一遍 stripInFlightDeletions —— 它正是为「快照/回环里
+        // 不得让在途删除项复活」写的（见 tabSliceHelpers 头注释），且已同时覆盖
+        // tab 级（optimisticBackups）与组级（deletedGroupBackups 的在途键）两层。
+        // 于是本 reducer 只负责「换回本次写入前的顺序」，在途意图交给那个单点
+        // 判据，两处不必各写一份过滤。
+        const snapshot = action.payload?.snapshot;
+        if (snapshot) {
+          const liveIds = new Set(state.groups.map(g => g.id));
+          const restored = snapshot.filter(g => liveIds.has(g.id));
+          const inFlightTabBackups = Object.values(state.optimisticBackups ?? {});
+          const inFlightGroupIds = Object.values(state.deletedGroupBackups ?? {}).map(b => b.group.id);
+          state.groups = stripInFlightDeletions(
+            restored,
+            inFlightTabBackups,
+            inFlightGroupIds
+          );
+        }
+        state.error = isTimeoutFailure(action.error)
+          ? timeoutCopy('移动标签页')
+          : action.error.message || '移动标签页失败，顺序已恢复';
+        state.errorSource = 'action';
       })
 
       // 清理重复标签和空会话：pending 乐观应用，fulfilled 从快照重推收敛，

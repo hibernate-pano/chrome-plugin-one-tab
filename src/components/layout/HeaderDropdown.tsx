@@ -692,9 +692,16 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({ onClose, onOpenA
                           // 只刷新列表，不 reload 整页：提示能完整显示完
                           dispatch(loadGroups());
                         } else {
+                          // 2026-10-10 P2-3：与 OneTab 分支（下方）对齐 —— 那边用
+                          // importResult.reason，这里原先是静态的「数据导入失败」，
+                          // 把三种完全不同的原因（格式不对 / 组全不可存储 / 写盘失败）
+                          // 压成同一句，用户无从判断该重选文件还是该等一等。
+                          // reason 由 storage.importDetailed 提供（可选字段）。
                           showAlert({
                             title: '导入失败',
-                            message: '数据导入失败',
+                            message:
+                              result.reason ??
+                              `数据导入失败${result.source > 0 ? `（文件内共 ${result.source} 个会话，本次一个都没落盘）` : ''}`,
                             type: 'error',
                             onClose: () => { }
                           });

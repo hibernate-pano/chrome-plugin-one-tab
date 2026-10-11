@@ -251,6 +251,13 @@ export async function fetchTabGroupsDigest(): Promise<TabGroupDigest[]> {
   /**
    * 按固定顺序分页拉取全部指纹行（主路径与 42703 回退路径共用）。
    *
+   * 【口径：与 download 的 count 校验必须一致】两条链路的 count(exact) 都取
+   * **未过滤的云端总行数**，逐回的数组也都不加 is_deleted 过滤（墓碑行两边都
+   * 计入），因此交叉校验的自洽性成立。`hasRemoteChanges`（syncDecision.ts）在
+   * **判定层**才把墓碑行分出去（见其头注释：2026-10-10 缺陷 1）。
+   * 绝不能在这里加 `.eq('is_deleted', false)`：那会让 digest 的行数与 count
+   * 的总行数脱钩，而 count 正是下面「网关静默截断」的唯一自证信号。
+   *
    * 【为什么要分页】此前是单次无序 select：行数超过网关 db-max-rows（默认
    * 1000）时响应被**静默截断**（不报错）。截断后的 digest 若恰好与本地快照
    * 一致，hasRemoteChanges（syncDecision.ts）返回 false → SyncEngine 判
@@ -262,9 +269,13 @@ export async function fetchTabGroupsDigest(): Promise<TabGroupDigest[]> {
    * 【为什么要 count 交叉校验】首个请求带 { count: 'exact' }：supabase-js
    * 会在**同一个请求**里经 PostgREST 的 Content-Range 带回总行数（零额外
    * 请求）。分页结束后若累计行数 ≠ 总行数，说明有响应仍被截断（或分页期间
-   * 云端行数变化）——此时 digest 不可信，必须 throw。方向是安全的：
+   * 云端行数净变化）——此时 digest 不可信，必须 throw。方向是安全的：
    * fetchTabGroupsDigest 的调用契约就是「失败 → fail-open 走全量下载」，
    * 宁可多一次全量，也绝不交出一份可能漏行的 digest 让引擎误判 up_to_date。
+   *
+   * 与 download.ts 同一条校验的**盲区**（净零漂移检测不到）同样适用于本函数，
+   * 后果更轻（digest 漏判只会多一次全量，download 漏判才是半库覆盖）。
+   * 详见 download.ts 里 2026-10-10 如实化的注释。
    */
   const queryAll = async (cols: string): Promise<TabGroupDigest[]> => {
     const out: TabGroupDigest[] = [];

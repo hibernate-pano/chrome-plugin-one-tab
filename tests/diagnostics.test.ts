@@ -109,6 +109,9 @@ function makeSources(overrides: Record<string, unknown> = {}) {
       { name: 'session_saved', payload: { query: MARKERS.eventPayload }, createdAt: daysAgo(200) },
       // 词表外的事件名 + 缺 createdAt
       { name: MARKERS.eventPayload, payload: {}, createdAt: daysAgo(1) },
+      // 2026-10-11：下线的收藏/备注事件名已从词表删除，现在走「词表外 → droppedUnknownNameCount」。
+      // 下面这行保持 fixture 形状不变（缺 createdAt 也会被丢，只是记账列不同）；
+      // 显式覆盖两条路径：`session_note_saved`（缺 createdAt）与 eventPayload（未知名字）。
       { name: 'session_note_saved' },
     ],
     journal: [
@@ -238,10 +241,13 @@ describe('诊断导出：输出结构与不变量', () => {
     const byName = Object.fromEntries(report.productEvents.byName.map(e => [e.name, e.count]));
     assert.equal(byName.session_saved, 2); // 窗口内两条；200 天前那条不计
     assert.equal(byName.search_performed, 1);
-    assert.equal(byName['session_note_saved'], undefined); // 缺 createdAt → 不计
+    // 2026-10-11：session_note_saved 已从 ProductEventName 移除（收藏/备注 1.22.13 下线），
+    // 现在这条 fixture 因「词表外名字」被丢弃（以前是因「缺 createdAt」被丢）。
+    // 记账列也随之变化：droppedUnknownNameCount 1（未知名字）→ 2，outOfWindowCount 2 → 1。
+    assert.equal(byName['session_note_saved' as never], undefined); // 词表外 → 不计
     assert.equal(report.productEvents.totalCount, 3);
-    assert.equal(report.productEvents.outOfWindowCount, 2); // 200 天前 + 缺时间
-    assert.equal(report.productEvents.droppedUnknownNameCount, 1); // 词表外名字
+    assert.equal(report.productEvents.outOfWindowCount, 1); // 200 天前
+    assert.equal(report.productEvents.droppedUnknownNameCount, 2); // 未知名字 + 缺 createdAt
     // 事件条目只有 name/count 两个键——没有 payload 字段可漏
     for (const entry of report.productEvents.byName) {
       assert.deepEqual(Object.keys(entry).sort(), ['count', 'name']);

@@ -174,3 +174,57 @@ describe('跨设备端到端：新设备的编辑必须能胜出', () => {
     assert.equal(merged[0].name, 'A 的名', '后写者印记更大 → 合并必须判 A 赢');
   });
 });
+
+// ── 2026-10-11：peekDeviceSeq —— 「只读看一眼」不得改计数器 ────────────────
+// 缺陷：水位为做「seq 时钟是否回退」的自洽性校验而调了 getDeviceSeq()，
+// 而 getDeviceSeq → current() 在「观察到的全网最大印记 > 持久化值」时会
+// kvSet 把下限**写回**。于是「只是看一眼」的纯读意图在磁盘上留下持久化副作用：
+// 提前把 device_seq 钉到观察最大值，紧随其后的墓碑取号多跳一级
+// （实测 tests/overwriteTombstoneDoubleWrite 的见证用例 6 → 7）。
+// 语义上不算错（Lamport 只要求单调），但**观测不该变成变更** —— 一个只需要
+// 读数的调用方没有资格改计数器。
+describe('peekDeviceSeq：只读，不写回下限', () => {
+  it('持久化值落后于观察值时，peek 不写回 device_seq', async () => {
+    const { createSeqRegistry } = await import('@/utils/seqRegistry');
+    const kv = new Map<string, unknown>([['device_seq', 10]]);
+    const groups = [{ id: 'g1', name: 'g', tabs: [], lastOp: { s: 300, d: 'devB' } }];
+    const reg = createSeqRegistry({
+      kvGet: async <T,>(k: string) => (kv.get(k) ?? null) as T | null,
+      kvSet: async (k: string, v: unknown) => { kv.set(k, v); },
+      getGroups: async () => groups as never,
+    });
+
+    const peeked = await reg.peekDeviceSeq();
+    assert.equal(peeked, 300, 'peek 必须返回修复后的读数（max(持久化, 观察)）');
+    assert.equal(kv.get('device_seq'), 10, '❌ peek 不得把下限写回 device_seq');
+
+    // 对照：getDeviceSeq 仍保留原有的修复写回行为（不是被改掉了）
+    const got = await reg.getDeviceSeq();
+    assert.equal(got, 300, 'getDeviceSeq 读数相同');
+    assert.equal(kv.get('device_seq'), 300, 'getDeviceSeq 维持原有「修复并写回」语义');
+  });
+
+  it('无任何印记时 peek 读持久化值，且不写', async () => {
+    const { createSeqRegistry } = await import('@/utils/seqRegistry');
+    const kv = new Map<string, unknown>([['device_seq', 42]]);
+    const reg = createSeqRegistry({
+      kvGet: async <T,>(k: string) => (kv.get(k) ?? null) as T | null,
+      kvSet: async (k: string, v: unknown) => { kv.set(k, v); },
+      getGroups: async () => [] as never,
+    });
+    assert.equal(await reg.peekDeviceSeq(), 42);
+    assert.equal(kv.get('device_seq'), 42);
+  });
+
+  it('键不存在时 peek 返回 0，且不凭空写入', async () => {
+    const { createSeqRegistry } = await import('@/utils/seqRegistry');
+    const kv = new Map<string, unknown>();
+    const reg = createSeqRegistry({
+      kvGet: async <T,>(k: string) => (kv.get(k) ?? null) as T | null,
+      kvSet: async (k: string, v: unknown) => { kv.set(k, v); },
+      getGroups: async () => [] as never,
+    });
+    assert.equal(await reg.peekDeviceSeq(), 0);
+    assert.equal(kv.has('device_seq'), false, 'peek 不得凭空创建 device_seq');
+  });
+});
