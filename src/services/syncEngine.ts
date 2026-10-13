@@ -25,6 +25,7 @@ import {
 // 合并语义已统一为 mergeOpStamped（OpStamp 全序决胜，组级 LWW 整组覆盖）。
 // 这是合并的唯一真相源；旧 LWW 实现已随 2026-10-05 瘦身删除。
 import { mergeOpStamped } from '@/core/opStampMerge';
+import { checkDeleteFailsafe } from '@/sync-backend/failsafe';
 import { dropSyncMergedGroups, removedGroupIds } from '@/core/mutationOps';
 import { ensureOpStampMigrated } from '@/background/opStampMigratedGuard';
 import { enqueue } from '@/background/mutationQueue';
@@ -45,6 +46,13 @@ export interface MergeResult {
     conflicts: number;
   };
   reason?: string;
+  /**
+   * 失败原因（用户可读）。与 `reason` 分开的原因：
+   * `reason` 是**稳定的机器码**（测试、诊断面板按它识别分支），
+   * 而这里放的是「云端看起来是空的，已中止以免清空你的数据」这类人话。
+   * 两者混在一个字段里，UI 就只能去解析代码字符串来做展示。
+   */
+  error?: string;
   /** 轻量探活命中（云端无变更，直接返回本地快照）时为 true */
   upToDate?: boolean;
 }
@@ -461,6 +469,49 @@ export class SyncEngine {
       // （toActiveGroupsView 仍用 isEmptyGroup，不看锁定），所以不会渲染成空卡；
       // 想彻底删掉它的用户走 deleteGroup（用户显式意图，不豁免）。
       const finalGroups = dropSyncMergedGroups(mergedGroups);
+
+      // ── 删除熔断（2026-10-13，WebDAV 阶段 3）────────────────────────────
+      // 位置在**写入之前**：熔断的语义是「这一次同步不许造成这么大的删除」，
+      // 所以必须发生在 setGroupsImmediate 之前 —— 之后就已经写完了。
+      //
+      // 【为什么现在才补，它防的是什么】
+      // 本项目此前没有这道防线，因为 Supabase 模型下它用不上：本地是 master，
+      // 远端读回空/少一半时，合并结果仍以本地为准，不会清空本地。
+      // 但文件后端引入两条新的「静默清空」路径：
+      //   1) 用户手动在云盘里清空/移动了 groups/ 目录；
+      //   2) 服务端分页/限流导致只读到一部分（坚果云单次 750 条上限，
+      //      官方文档明确警告「未实现按分页多次加载会出现文件同步不完整」）。
+      // 这两条在「下载覆盖本地」的语义下会直接清空用户本机会话，
+      // 而本项目 v1.22.0 起**无回收站、删除即物理清除**，不可逆。
+      //
+      // 【判据用 Floccus 原式】（调研报告 §4.4）：
+      //   一次删除 > 总数 20%（且总数 > 5）或 > 1000 条 ⇒ 中止本轮并报错。
+      // 判定对象是「本轮相比合并结果被丢弃的会话数」，与
+      // dropSyncMergedGroups / removedGroupIds 用同一口径 ——
+      // 熔断管的是「合并剔除」，不是「云端删除广播」（后者是用户显式删除，
+      // 不该被熔断拦下，那会让用户删不掉）。
+      const mergeDropped = removedGroupIds(mergedGroups, finalGroups);
+      if (mergeDropped.length > 0) {
+        const verdict = checkDeleteFailsafe(
+          mergedGroups.filter(g => !g.isDeleted).length,
+          mergeDropped.length
+        );
+        if (!verdict.allowed) {
+          logError('[SyncEngine] 删除熔断触发，本轮下载已中止（未写入任何数据）:', verdict.reason);
+          this.isSyncing = false;
+          // 不回滚也不重排：本地数据**根本没被动过**（熔断在写入之前），
+          // 所以不需要 restoreSnapshot。保留 pending_upload 让下轮重试。
+          await this.rescheduleUploadIfPending();
+          return {
+            success: false,
+            groups: snapshot,
+            reason: 'failsafe_triggered',
+            // reason 字段是给 UI/日志看的可读原因，测试与诊断都按它识别
+            error: verdict.reason,
+          };
+        }
+      }
+
       await storage.setGroupsImmediate(finalGroups);
       // 广播队列必须伴随 pending_upload 置位，否则入队了也没人执行：
       // backgroundSync 只在 hasPendingUpload() 为真时才上传，而下载路径
