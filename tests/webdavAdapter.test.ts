@@ -37,6 +37,17 @@ class FakeDav {
   calls: Array<{ method: string; path: string; headers: Record<string, string> }> = [];
   /** 置 true 后，下一次写返回 412（模拟另一台设备抢先改了）。 */
   forcedConflicts = 0;
+  /**
+   * 置 true 后**忽略** If-Match / If-None-Match（模拟真实世界里存在的服务端）。
+   *
+   * 这不是假想：2026-10-13 真机实测 dufs 0.46 就是这样 —— PUT 不返回 ETag、
+   * PROPFIND 不返回 getetag、三种条件头（If-Match / If-None-Match /
+   * If-Unmodified-Since）全部被忽略，一律 201 并照写。
+   * 协议定义了这些语义，但**没有任何东西强制服务端实现它**。
+   */
+  ignoreConditionalWrites = false;
+  /** 非 null 时，所有 PUT 都返回该状态码（模拟 5xx 等服务端故障）。 */
+  putStatusOverride: number | null = null;
   etagSeq = 0;
 
   private key(path: string): string {
@@ -88,6 +99,7 @@ class FakeDav {
       return respond(200, f.body, { ETag: f.etag });
     }
     if (method === 'PUT') {
+      if (this.putStatusOverride !== null) return respond(this.putStatusOverride);
       // 强制冲突：模拟「读到之后、写之前，别人改了」这个并发窗口。
       if (this.forcedConflicts > 0) {
         this.forcedConflicts--;
@@ -96,8 +108,10 @@ class FakeDav {
       const existing = this.files.get(path);
       const ifMatch = headers['if-match'];
       const ifNoneMatch = headers['if-none-match'];
-      if (ifMatch && (!existing || existing.etag !== ifMatch)) return respond(412);
-      if (ifNoneMatch === '*' && existing) return respond(412);
+      if (!this.ignoreConditionalWrites) {
+        if (ifMatch && (!existing || existing.etag !== ifMatch)) return respond(412);
+        if (ifNoneMatch === '*' && existing) return respond(412);
+      }
       const etag = `"e${++this.etagSeq}"`;
       this.files.set(path, { body: String(init?.body ?? ''), etag });
       // 目录按路径推断（真实服务端会隐式建）
@@ -405,6 +419,72 @@ describe('目录与路径安全', () => {
   it('根目录含 .. → 拒绝（防越出用户配置的目录）', () => {
     const dav = new FakeDav();
     assert.throws(() => makeAdapter(dav, { rootPath: '../escape' }), /不合法/);
+  });
+});
+
+describe('能力探测：条件写到底有没有真的生效', () => {
+  // 2026-10-13 真机实测逼出来的一层。dufs 0.46 完全忽略条件写头，
+  // 于是「乐观锁」在那类服务端上**根本不存在**。最坏的形态不是「没有锁」，
+  // 是**以为有锁**——代码不提醒，用户以为有并发保护。所以能力必须被探测。
+  it('服务端实现条件写 → 探测返回 true', async () => {
+    const dav = new FakeDav();
+    const { adapter } = makeAdapter(dav);
+    assert.equal(await adapter.probeConditionalWrites(), true);
+  });
+
+  it('服务端忽略条件写 → 探测返回 false（不谎报有保护）', async () => {
+    const dav = new FakeDav();
+    dav.ignoreConditionalWrites = true;
+    const { adapter } = makeAdapter(dav);
+    assert.equal(await adapter.probeConditionalWrites(), false);
+  });
+
+  it('探测后不留下探针文件（否则每轮同步都堆垃圾）', async () => {
+    const dav = new FakeDav();
+    const { adapter } = makeAdapter(dav);
+    await adapter.probeConditionalWrites();
+    assert.equal(dav.read('TapStack/.tapstack-probe'), undefined);
+  });
+
+  it('探测本身失败（5xx）→ 返回 false，按「无保护」处理', async () => {
+    // fail-safe 的方向必须钉住：把「未知」当成「有保护」，用户会在
+    // 完全没有并发保护的情况下被静默；当成「无保护」最坏只多一条提示。
+    // 这条用例是变异验证补出来的——彼时「探测失败返回 true」没有被任何测试抓到。
+    const dav = new FakeDav();
+    dav.putStatusOverride = 503;
+    const { adapter } = makeAdapter(dav);
+    assert.equal(await adapter.probeConditionalWrites(), false);
+    dav.putStatusOverride = null;
+  });
+
+  it('checkConnection 把能力与库信息一起报出来', async () => {
+    const dav = new FakeDav();
+    dav.ignoreConditionalWrites = true;
+    const { adapter } = makeAdapter(dav);
+    await adapter.uploadGroups([makeGroup('aa1')]);
+
+    const info = await adapter.checkConnection();
+    assert.equal(info.conditionalWrites, false);
+    assert.equal(info.encrypted, true);
+    assert.equal(info.groups, 1);
+  });
+
+  it('服务端忽略条件写时，整套往返仍然可用（降级但不崩）', async () => {
+    // 这是关键：能力缺失不是致命错误。并发保护退化为「认输预检」
+    //（stamp 比较，与服务端无关），功能照常。
+    const dav = new FakeDav();
+    dav.ignoreConditionalWrites = true;
+    const { adapter: a } = makeAdapter(dav);
+    await a.uploadGroups([makeGroup('aa1', { name: 'v1', lastOp: { d: 'dev-A', s: 5 } })]);
+
+    const { adapter: b } = makeAdapter(dav, { kv: makeKv({ device_id: 'dev-B' }) });
+    const got = await b.downloadGroups();
+    assert.equal(got[0]?.name, 'v1');
+
+    // 认输预检不依赖服务端能力：旧副本仍然压不过新版本
+    const stale = await b.uploadGroups([makeGroup('aa1', { name: '旧', lastOp: { d: 'dev-B', s: 1 } })]);
+    assert.equal(stale.writtenIds.length, 0);
+    assert.equal((await a.downloadGroups())[0]?.name, 'v1');
   });
 });
 

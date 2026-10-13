@@ -611,15 +611,80 @@ export class WebDavBackendAdapter implements SyncBackendPort {
   // ── 供上层与测试使用 ────────────────────────────────────────────────
 
   /** 连同连通性一起自检（配置页的「测试连接」用）。 */
-  async checkConnection(): Promise<{ groups: number }> {
+  async checkConnection(): Promise<{
+    groups: number;
+    encrypted: boolean;
+    /**
+     * 服务端是否**真的实现**了条件写（If-Match / If-None-Match）。
+     *
+     * ⚠️ 这个字段不是锦上添花，它是 2026-10-13 真机实测逼出来的（见下）。
+     */
+    conditionalWrites: boolean;
+  }> {
     await this.client.checkConnection();
     const loaded = await this.loadManifest();
-    if (!loaded) return { groups: 0 };
+    const conditionalWrites = await this.probeConditionalWrites();
+    if (!loaded) return { groups: 0, encrypted: false, conditionalWrites };
+
+    let encrypted = false;
     if (loaded.manifest.encrypted) {
       // 口令必须真的能解开这个库，否则「连接成功」是假象。
       await this.unlock(loaded.manifest);
+      encrypted = true;
     }
-    return { groups: loaded.manifest.shards.filter(s => s.isDeleted !== true).length };
+    return {
+      groups: loaded.manifest.shards.filter(s => s.isDeleted !== true).length,
+      encrypted,
+      conditionalWrites,
+    };
+  }
+
+  /**
+   * 探测服务端是否真的实现条件写。
+   *
+   * ── 为什么必须实测而不是「协议规定了就算数」（2026-10-13 真机实测）─────
+   * RFC 4918 / 9110 定义了 `If-Match` 与 412，但**没有任何东西强制实现它**。
+   * 真机验证（dufs 0.46，独立实现）结果：
+   *   · PUT 响应**不返回 ETag**
+   *   · PROPFIND 只返回 getlastmodified，**不返回 getetag**
+   *   · `If-Match: "过期值"` → **返回 201 并照样写入**
+   *   · `If-None-Match: *`（对已存在资源）→ **返回 201 并照样写入**
+   *   · `If-Unmodified-Since`（过去时间）→ **返回 201 并照样写入**
+   *
+   * 也就是说：在这类服务端上，我原本以为的「乐观锁」**根本不存在**。
+   * 而最坏的形态不是「没有锁」，是**以为有锁** —— 代码不做任何提醒，
+   * 用户以为有并发保护。所以这里把能力变成**可观测的事实**。
+   *
+   * ── 探测方法 ────────────────────────────────────────────────────────────
+   * 对一个探针文件发一次**必然失败**的条件写（If-Match 给一个不存在的 ETag）：
+   *   · 返回 412 → 服务端实现了条件写 ✅
+   *   · 返回 2xx → 服务端忽略条件头 ❌
+   * 探针文件用完即删，且用固定名字（可重复探测，不会越积越多）。
+   *
+   * ── 探测失败（网络抖动等）怎么办 ────────────────────────────────────────
+   * 返回 false（按「无保护」处理）。方向选择：把「未知」当成「有保护」会让
+   * 用户在无保护的情况下被静默；当成「无保护」最坏只是多一条提示。
+   */
+  async probeConditionalWrites(): Promise<boolean> {
+    const probePath = this.p('.tapstack-probe');
+    try {
+      await this.client.put(probePath, 'probe', { contentType: 'text/plain' });
+      await this.client.put(probePath, 'probe2', {
+        ifMatch: '"tapstack-probe-deliberately-stale"',
+      });
+      // 条件写没被拒绝 ⇒ 服务端忽略 If-Match。
+      return false;
+    } catch (err) {
+      if (err instanceof WebDavError && err.isPreconditionFailed) return true;
+      return false;
+    } finally {
+      // 探针文件不该留在用户目录里。删除失败不抛错（这只是个探针）。
+      try {
+        await this.client.delete(probePath);
+      } catch {
+        /* 忽略 */
+      }
+    }
   }
 
   /** 删除前的熔断检查（上层在真正执行删除前调用）。 */
