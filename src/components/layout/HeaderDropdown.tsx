@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { useAppSelector, useAppDispatch } from '@/store/hooks';
 import { signOut } from '@/store/slices/authSlice';
 import { deleteAllGroups, deleteBroadcastWarn, loadGroups } from '@/store/slices/tabSlice';
@@ -12,11 +12,13 @@ import {
   toggleCollectPinnedTabs,
   setSyncEnabled,
   setSyncIntervalMinutes,
+  updateSettings,
   dispatchSaveSettings
 } from '@/store/slices/settingsSlice';
 // 档位单点在 storage 层（四档白名单 + 默认值），UI 只负责摆出来，不手抄数字。
 import { SYNC_INTERVAL_CHOICES } from '@/utils/storage';
 import { ThemeStyleSelector } from './ThemeStyleSelector';
+import { WebDavSettings } from '@/components/sync/WebDavSettings';
 import { trackProductEvent } from '@/utils/productEvents';
 import {
   collectDiagnostics,
@@ -153,6 +155,33 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({ onClose, onOpenA
       })
       .catch(err => logWarn('[HeaderDropdown] 通知 SW 重建同步 alarm 异常，下次启动自愈:', err));
   };
+
+  // ── 2026-10-13：切回 TapStack 云端 ──────────────────────────────────────
+  // 语义与 WebDavSettings 里的同名按钮**必须一致**（同一件事两个入口，
+  // 行为不同会让用户不知道自己实际处于哪个后端）。要点：
+  //   · 切回时同时关掉自动同步 —— Supabase 路径的自动同步有 egress 成本，
+  //     而用户切回来多半不是为了立刻开轮询；
+  //   · 保存失败要回滚 UI + 说清当前实际状态（沿用本文件既有纪律）。
+  const handleSelectSupabaseBackend = useCallback(async () => {
+    if (settings.syncBackend === 'supabase') return;
+    const prevBackend = settings.syncBackend;
+    dispatch(updateSettings({ syncBackend: 'supabase', syncEnabled: false }));
+    const saveError = await dispatchSaveSettings(dispatch);
+    if (saveError) {
+      dispatch(updateSettings({ syncBackend: prevBackend }));
+      showToast(`${saveError}（同步方式已恢复为「自带存储」）`, 'error');
+      return;
+    }
+    notifySwResyncAlarm();
+    showToast('已切回 TapStack 云端，自动同步已关闭。云盘上的文件不会被删除。', 'success');
+  }, [dispatch, settings.syncBackend, showToast]);
+
+  // 选「自带存储」时展开配置面板（不直接切换设置——
+  // 必须先填好地址并测试通过，否则「切了但用不了」比「没切」更糟）。
+  const handleOpenWebDavPanel = useCallback(() => {
+    if (settings.syncBackend === 'webdav') return;
+    showToast('请在展开的面板里填写云服务信息并测试连接，测试通过后再保存启用', 'info');
+  }, [settings.syncBackend, showToast]);
 
   // 处理自动同步开关
   const handleToggleAutoSync = async () => {
@@ -573,6 +602,43 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({ onClose, onOpenA
         <div className="px-4 pt-1.5 pb-1">
           <p className="text-xs font-medium text-gray-400 dark:text-gray-500">设置</p>
         </div>
+
+        {/* ── 2026-10-13：同步后端选择（TapStack 云端 / 自带存储 WebDAV）──
+            放在「自动同步」开关**之前**：先决定跟谁同步，再决定要不要自动。
+            顺序反了的话，用户会先打开一个「对未知后端的自动同步」开关。 */}
+        <div className="px-3 py-2" role="radiogroup" aria-label="同步方式">
+          <div className="mb-1 text-xs text-gray-500 dark:text-gray-400">数据同步到哪里</div>
+          <div className="flex gap-1.5">
+            <button
+              type="button"
+              role="radio"
+              aria-checked={settings.syncBackend === 'supabase'}
+              onClick={handleSelectSupabaseBackend}
+              className={`flex-1 rounded-md px-2 py-1.5 text-xs font-medium transition-colors ${
+                settings.syncBackend === 'supabase'
+                  ? 'theme-toggle-on text-white'
+                  : 'bg-gray-100 text-gray-600 hover:bg-gray-200 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600'
+              }`}
+            >
+              TapStack 云端
+            </button>
+            <button
+              type="button"
+              role="radio"
+              aria-checked={settings.syncBackend === 'webdav'}
+              onClick={handleOpenWebDavPanel}
+              className={`flex-1 rounded-md px-2 py-1.5 text-xs font-medium transition-colors ${
+                settings.syncBackend === 'webdav'
+                  ? 'theme-toggle-on text-white'
+                  : 'bg-gray-100 text-gray-600 hover:bg-gray-200 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600'
+              }`}
+            >
+              自带存储
+            </button>
+          </div>
+        </div>
+
+        {settings.syncBackend === 'webdav' ? <WebDavSettings /> : null}
 
         <DropdownToggleRow
           icon={
