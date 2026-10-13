@@ -16,6 +16,7 @@ import { UPLOAD_DEBOUNCE_MS } from '@/core/syncTiming';
 import { logError, logInfo, logWarn } from './utils/log';
 // 诊断导出前落盘性能 span 用（见 PERF_FLUSH 消息分支）。
 import { perfTrace } from './utils/perfTrace';
+import { primeSyncBackend } from '@/sync-backend';
 
 // Chrome 扩展的 Service Worker
 // 为了避免模块导入问题，早期版本内联了存储逻辑；现统一使用 utils/storage 以与前端页面共享同一数据源（IndexedDB）
@@ -178,6 +179,24 @@ chrome.runtime.onStartup.addListener(async () => {
 // Service Worker 激活时也初始化一次，防止遗漏
 setupContextMenus().catch(error => {
   logError('初始化右键菜单失败:', error);
+});
+
+// ── 2026-10-13（WebDAV 阶段 2）：SW 启动即预解析同步后端 ──────────────
+// 为什么必须在模块顶层做：SW 每次被唤醒都是全新执行上下文，
+// 后端解析结果不跨唤醒存活。而 `getActiveSyncBackend()` 必须保持**同步**
+// （20 处调用方都在同步链路里，见 sync-backend/index.ts 的论证），
+// 所以解析只能提前 await 好，同步调用方直接取结果。
+//
+// 不 await 的后果不是报错，而是 `getActiveSyncBackend()` 走 fail-safe 分支
+// 返回 Supabase 并告警 —— 于是「配了 WebDAV 却一直同步到 Supabase」。
+primeSyncBackend().then(outcome => {
+  if (outcome.resolvedId !== outcome.requestedId) {
+    // 回落必须出声：静默把用户切回旧后端 = 他的新配置无声失效。
+    logWarn(
+      `[ServiceWorker] 同步后端回落：期望 ${outcome.requestedId}，实际 ${outcome.resolvedId}` +
+        (outcome.fallbackReason ? ` —— ${outcome.fallbackReason}` : '')
+    );
+  }
 });
 
 // 后台同步 alarm（SW 被唤醒时重新注册，防遗漏）

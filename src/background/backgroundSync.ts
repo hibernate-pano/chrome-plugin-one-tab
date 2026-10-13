@@ -21,6 +21,7 @@ import { DEFAULT_SETTINGS, validateSyncIntervalMinutes } from '../utils/storage'
 import { STORAGE_KEYS } from '../storage-kv/keys';
 import { kvGet } from '../storage-kv/storageAdapter';
 import type { UserSettings } from '../types/tab';
+import { primeSyncBackend } from '@/sync-backend';
 
 /**
  * 后台定时同步（chrome.alarms 驱动，Service Worker 常驻时每 60s 触发）。
@@ -339,6 +340,13 @@ export async function runBackgroundSyncOnce(): Promise<boolean> {
  */
 async function handleAlarm(alarm: chrome.alarms.Alarm): Promise<void> {
   if (alarm.name !== SYNC_ALARM) return;
+  // ── 2026-10-13（WebDAV 阶段 2）：每轮重读后端配置 ────────────────────
+  // 为什么必须在 alarm 里重读而不是只在 SW 启动时读一次：
+  // 用户改「同步方式 / 云服务配置 / 解锁状态」时 SW **不一定**被重启
+  // （最常见的路径是 popup 直接改盘），于是缓存的后端实例会停留在旧配置上。
+  // 表现是「我明明切换了设置却没生效」—— 极难自查。
+  // 代价只有一次 settings 读（几 KB）+ 一次配置读，相对后面整库管线可忽略。
+  await primeSyncBackend();
   // 提到 try 外：catch 分支也要用它拿用户档位（见该分支内注释）。
   // cfg 在绝大多数轮次都能读到；只有 readAutoSyncConfig 自己抛错才是 null，
   // 那时下面 catch 里的兜底常量才生效。

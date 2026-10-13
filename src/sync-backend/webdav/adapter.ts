@@ -56,6 +56,17 @@ export interface WebDavBackendConfig {
   rootPath?: string;
   /** 加密口令。null / 空字符串 = 不加密（**会在隐私说明里如实告知**）。 */
   passphrase?: string | null;
+  /**
+   * 加密是否**必须**（用户没在「不加密」上明确勾选）。
+   *
+   * 与 `passphrase` 的分工：`passphrase` 回答「这次有没有口令」，
+   * 本字段回答「没口令时该怎么办」。分开是因为「本次忘了输口令」与
+   * 「用户压根不要加密」是两种完全不同的状态：
+   *   · 前者必须**报错**（否则数据会**明文**上云，且用户毫不知情）；
+   *   · 后者是合法选择（界面已展示风险）。
+   * 只用一个字段表达两者，必然漏掉其中一种 —— 而漏掉的正是危险的那种。
+   */
+  requireEncryption?: boolean;
 }
 
 /** 本地状态存储（水位）。抽成接口是为了测试能注入内存实现。 */
@@ -156,6 +167,13 @@ export class WebDavBackendAdapter implements SyncBackendPort {
       const pass = this.config.passphrase;
       if (pass) {
         this.vault = await createVault(pass);
+      } else if (this.config.requireEncryption) {
+        // ⚠️ 这一条挡的是「静默明文上云」：用户选择了加密，但本次没给口令。
+        // 继续走下去会把标签页明文写进他自己的云盘，而界面一路绿灯。
+        throw new Error(
+          '已选择启用加密，但本次没有提供口令，已中止以免数据以明文上传。' +
+            '请重新输入口令，或在设置里改为「不加密」。'
+        );
       }
       return this.vault;
     }

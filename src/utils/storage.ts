@@ -164,6 +164,33 @@ export function validateSyncIntervalMinutes(value: unknown): number {
   return DEFAULT_SYNC_INTERVAL_MINUTES;
 }
 
+/**
+ * 同步后端标识的校验单点（2026-10-13，WebDAV 自带存储改造）。
+ *
+ * 与 `validateSyncIntervalMinutes` 同一纪律：**非法值 fail-safe 回落，不抛错**。
+ * 抛错会让 `getSettings` 整条失败，进而阻塞所有读设置的路径
+ * （主题、布局、通知……全部读不出来），代价与收益完全不成比例。
+ *
+ * ── 回落方向为什么是 `supabase` 而不是 `webdav` ────────────────────────
+ * 存量用户的存储里**没有**这个键（它是新增字段），合并 `{...DEFAULT_SETTINGS, ...stored}`
+ * 之后落到默认值。若默认是 `webdav`，则所有升级用户会在**没配过任何 WebDAV**
+ * 的情况下被切到新后端 ⇒ 打开扩展就报「请先配置云盘」，而他们本来在用的
+ * Supabase 同步被无声停掉。这是「升级即失能」。
+ * 默认 `supabase` ⇒ 老用户零行为变化，只有主动去设置里切换的人才走 WebDAV。
+ *
+ * 反过来「新增用户默认 WebDAV」这个诉求由别处满足（首次安装引导），
+ * 不该由「存量数据的回落值」承担——回落值必须对存量用户最安全。
+ */
+export const VALID_SYNC_BACKENDS = ['supabase', 'webdav'] as const;
+
+export function validateSyncBackend(value: unknown): 'supabase' | 'webdav' {
+  if (typeof value === 'string' && (VALID_SYNC_BACKENDS as readonly string[]).includes(value)) {
+    return value as 'supabase' | 'webdav';
+  }
+  logWarn('无效的同步后端标识，使用默认值:', value);
+  return 'supabase';
+}
+
 // 默认设置
 export const DEFAULT_SETTINGS: UserSettings = {
   groupNameTemplate: 'Group %d',
@@ -185,6 +212,9 @@ export const DEFAULT_SETTINGS: UserSettings = {
   // 正是 1.22.16「设置被静默重置」修掉的那类 bug。
   syncEnabled: false, // 默认关闭自动同步（用户在菜单中开启）
   syncIntervalMinutes: DEFAULT_SYNC_INTERVAL_MINUTES, // 默认 10 分钟档
+  // 默认走 Supabase：存量用户零行为变化（见 validateSyncBackend 的完整论证）。
+  // 新用户想用 WebDAV 由首次安装引导 / 设置页显式切换，而不是靠这个默认值。
+  syncBackend: 'supabase',
   layoutMode: 'single' as LayoutMode, // 默认使用单栏布局
   showNotifications: false, // 默认关闭通知
   syncStrategy: 'newest', // 默认使用最新版本

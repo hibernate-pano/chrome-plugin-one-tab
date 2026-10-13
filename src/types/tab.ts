@@ -209,6 +209,23 @@ export interface UserSettings {
   allowDuplicateTabs: boolean;
   syncEnabled: boolean; // 是否启用同步
   /**
+   * 用哪个后端做同步（2026-10-13，WebDAV 自带存储改造）。
+   *
+   * 【为什么与 syncEnabled 分开而不是合并成一个枚举】
+   * `syncEnabled` 回答「要不要自动同步」，`syncBackend` 回答「跟谁同步」。
+   * 合成一个字段（`'off' | 'supabase' | 'webdav'`）看起来更干净，
+   * 但会造成一次**静默语义迁移**：存量用户的 `syncEnabled: true` 该映射成
+   * `'supabase'` 还是 `'webdav'`？两个都「合理」，而选错的后果是老用户
+   * 突然被指向一个没配过的后端。分开后，`syncEnabled` 的语义一个字没变，
+   * 存量值天然落回 `supabase`（见 storage 层的 validateSyncBackend）。
+   *
+   * 【这个字段会被上传到云端吗】会（它在 UserSettings 里）。
+   * 所以 **WebDAV 的凭据绝不能放进 UserSettings** —— 那会把应用密码
+   * 上传到 Supabase / 用户自己的云盘。凭据走独立的本地键，见
+   * `sync-backend/webdav/config.ts` 的文件头。
+   */
+  syncBackend: 'supabase' | 'webdav';
+  /**
    * 自动同步轮询间隔（分钟）。仅 syncEnabled=true 时生效。
    *
    * 2026-10-11（1.23.0）：自动同步默认关闭，用户在菜单中开启后四选一。
