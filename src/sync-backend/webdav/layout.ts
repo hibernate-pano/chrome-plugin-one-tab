@@ -66,6 +66,18 @@ export interface Manifest {
   generatedAt: string;
   /** 加密是否启用。false 时分片是明文 JSON（用户选了「不加密」）。 */
   encrypted: boolean;
+  /**
+   * 本库的 PBKDF2 salt（base64）。仅 `encrypted: true` 时有值。
+   *
+   * ── 为什么 salt 放在**明文**的 manifest 里 ─────────────────────────────
+   * salt 不是秘密（它的作用是防跨库预计算，不是保密），且必须能被读到 ——
+   * 否则每次同步都无法重新派生密钥。真正要保密的是口令与 IV，前者只在内存，
+   * 后者随密文一起存在分片文件里。
+   *
+   * 让 salt 与密文分离存放的另一个好处：换口令时只需重写分片（换 salt + 重加密），
+   * 不必让 manifest 参与解密链路。
+   */
+  salt?: string;
   shards: ShardFingerprint[];
 }
 
@@ -221,6 +233,23 @@ export function decodeGroup(raw: unknown): TabGroup | null {
     return null;
   }
 
+  // 墓碑：删除广播的载体。它必须能被解码成一条「已删除的会话」而不是被丢弃——
+  // mergeOpStamped 靠 `cloud.isDeleted === true` 判断「云端要我删掉这条」，
+  // 把它当垃圾过滤掉等于删除意图从未传达（本地副本永不消失）。
+  if (o.isDeleted === true) {
+    return {
+      id,
+      name: '',
+      createdAt: typeof o.createdAt === 'string' ? o.createdAt : new Date(0).toISOString(),
+      updatedAt: typeof o.updatedAt === 'string' ? o.updatedAt : new Date(0).toISOString(),
+      isLocked: false,
+      isDeleted: true,
+      ...(typeof o.deletedAt === 'string' ? { deletedAt: o.deletedAt } : {}),
+      ...(isStamp(o.lastOp) ? { lastOp: o.lastOp } : {}),
+      tabs: [],
+    };
+  }
+
   const tabsRaw = Array.isArray(o.tabs) ? o.tabs : [];
   const tabs = tabsRaw
     .map(t => {
@@ -259,6 +288,31 @@ function isStamp(v: unknown): v is { d: string; s: number } {
     typeof (v as { d?: unknown }).d === 'string' &&
     typeof (v as { s?: unknown }).s === 'number'
   );
+}
+
+/**
+ * 生成墓碑载荷。
+ *
+ * 删除在 WebDAV 侧是**覆盖同一个分片文件**（而不是删文件）：
+ * 删文件会让对端无法区分「这条被删了」与「这条我还没同步过」，
+ * 后者会被合并成「本地新增 → 推回云端」——删除被静默撤销。
+ * 用墓碑覆盖则保留了 stamp，让 mergeOpStamped 能按全序裁决
+ * （云端墓碑 vs 本地更新 → 本地赢；本地更旧 → 服从删除）。
+ */
+export function encodeTombstone(
+  id: string,
+  deletedAt: string,
+  lastOp?: { d: string; s: number }
+): Record<string, unknown> {
+  assertSafeId(id);
+  return {
+    id,
+    isDeleted: true,
+    deletedAt,
+    createdAt: deletedAt,
+    updatedAt: deletedAt,
+    ...(lastOp ? { lastOp } : {}),
+  };
 }
 
 /** 生成一份新的空 manifest。 */
@@ -315,8 +369,20 @@ export function parseManifest(text: string): Manifest | null {
     v: MANIFEST_VERSION,
     generatedAt: o.generatedAt,
     encrypted: o.encrypted === true,
+    ...(typeof o.salt === 'string' ? { salt: o.salt } : {}),
     shards,
   };
+}
+
+/**
+ * 加密开着但没有 salt ⇒ 这份 manifest 自相矛盾，不可用。
+ *
+ * 单独检查而不是塞进 parseManifest：`decrypted` 与 `salt` 的一致性属于
+ * **语义**问题（要报给用户「这个库缺少密钥参数」），而 parseManifest 只负责
+ * **形状**问题（报「文件损坏」）。两者对用户的下一步动作不同，不该混成一条错误。
+ */
+export function isManifestUsable(m: Manifest): boolean {
+  return !m.encrypted || typeof m.salt === 'string';
 }
 
 export function serializeManifest(m: Manifest): string {
