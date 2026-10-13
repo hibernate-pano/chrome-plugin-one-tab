@@ -278,6 +278,32 @@ describe('诊断导出：输出结构与不变量', () => {
     assert.equal(report.sync.pendingUpload, false);
   });
 
+  it('pendingUpload 读失败必须是 null 并进 unavailable，不得谎报成 false（2026-10-12）', async () => {
+    const { buildDiagnosticsReport } = await import('@/utils/diagnostics');
+    // 修复前：DiagnosticsSources.pendingUpload 是 boolean，
+    // 序列化时写 `sources.pendingUpload === true` —— 读失败被写成 false，
+    // 排障的人会得到「没有待上传」这个**假的结论**并据此下判断。
+    const sources = makeSources({ pendingUpload: null });
+    const report = buildDiagnosticsReport(sources as never, NOW);
+    assert.equal(
+      report.sync.pendingUpload,
+      null,
+      '❌ 读失败被写成了 false（谎报「没有待上传」）'
+    );
+    assert.ok(
+      report.unavailable.includes('pendingUpload'),
+      '❌ pendingUpload 读失败必须进 unavailable，否则它就是一个不会亮的指示灯'
+    );
+    // 反向防线：真值 true / false 都不得被误伤
+    assert.equal(buildDiagnosticsReport(makeSources({ pendingUpload: true }) as never, NOW).sync.pendingUpload, true);
+    assert.equal(buildDiagnosticsReport(makeSources({ pendingUpload: false }) as never, NOW).sync.pendingUpload, false);
+    assert.equal(
+      buildDiagnosticsReport(makeSources() as never, NOW).unavailable.includes('pendingUpload'),
+      false,
+      '正常读到值时不得进 unavailable'
+    );
+  });
+
   it('设置里的同步策略不在词表内时记成 null，不原样透传存储内容', async () => {
     const { buildDiagnosticsReport, serializeDiagnosticsReport } = await import('@/utils/diagnostics');
     const sources = makeSources();

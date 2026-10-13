@@ -126,3 +126,77 @@ describe('getSettings 的 fail-closed 只约束上云路径', () => {
     assert.equal(settings.collectPinnedTabs, true);
   });
 });
+
+describe('settingsSlice 的 fail-closed 门禁必须覆盖 pending 窗口（2026-10-12 P0-2）', () => {
+  it('读请求在途（pending）时拒绝写入，真实设置不被 DEFAULT_SETTINGS 覆盖', async () => {
+    // 缺陷链（修复前）：标记是 boolean 且只在 catch 置位 ⇒ 冷启动那段时间它恒为 false
+    //   t0 冷启动 → loadSettings 发出（IndexedDB 冷读 / 死句柄看门狗 5s）
+    //   t1 用户点任意设置项 → reducer 改了 Redux（state 此刻是 DEFAULT_SETTINGS）
+    //   t2 dispatchSaveSettings → 门禁判 false → 放行
+    //   t3 storage.setSettings(DEFAULT_SETTINGS 全量) → 用户真实设置被整份覆盖
+    // 这里不模拟 timing，而是直接验**不变量**：模块刚被 import、loadSettings 还没跑过时
+    // （= pending 态），saveSettings 必须抛错，且一个字节都不许落到盘上。
+    const { configureStore } = await import('@reduxjs/toolkit');
+    const settingsSlice = await import('../src/store/slices/settingsSlice.ts');
+    const settingsReducer = settingsSlice.default;
+
+    // 先把「用户真实设置」写进盘上，随后 pending 态下的写入尝试必须不碰它。
+    const real: Record<string, unknown> = {
+      ...(await storage.getSettingsForLocalUse()),
+      syncEnabled: true,
+      syncIntervalMinutes: 60,
+      themeStyle: 'claude',
+    };
+    await storage.setSettings(real as never);
+
+    // 真实 store，settings 停在 initialState（即 DEFAULT_SETTINGS —— 冷启动时的真实状态）。
+    // autoSyncMiddleware 不挂：它只在有 chrome.runtime 时才发消息，本用例不关心调度。
+    const testStore = configureStore({ reducer: { settings: settingsReducer } });
+
+    // 用户点开关：reducer 照常改 Redux（用户意图不丢，调用方会回滚 + toast），
+    // 但真正落盘的那一步必须在 pending 态失败。
+    testStore.dispatch({ type: 'settings/setSyncEnabled', payload: false });
+    assert.equal(
+      testStore.getState().settings.syncEnabled,
+      false,
+      '前置：reducer 应当已改 Redux（这正是 pending 窗口的真实形状）',
+    );
+    // dispatch(thunk) 永远 resolve（这正是 dispatchSaveSettings 存在的理由），
+    // 所以断言走那个把失败原因交出来的 helper —— 与 6 个真实调用点同一条路径。
+    const saveError = await settingsSlice.dispatchSaveSettings(
+      testStore.dispatch as never,
+    );
+    assert.ok(
+      saveError && /设置还在读取中|设置读取失败/.test(saveError),
+      `❌ pending 态下 saveSettings 放行了（saveError=${String(saveError)}）—— ` +
+        'DEFAULT_SETTINGS 会整份覆盖用户真实设置',
+    );
+
+    // 落盘内容必须原封不动
+    const after = await storage.getSettingsForLocalUse();
+    assert.equal(after.syncEnabled, true, '❌ 用户的自动同步开关被默认值覆盖了');
+    assert.equal(after.syncIntervalMinutes, 60, '❌ 用户的同步档位被默认值覆盖了');
+    assert.equal(after.themeStyle, 'claude', '❌ 用户的主题被默认值覆盖了');
+  });
+
+  it('读到真值（ok）后写入恢复正常（不得把闸门整个关死）', async () => {
+    const { configureStore } = await import('@reduxjs/toolkit');
+    const settingsSlice = await import('../src/store/slices/settingsSlice.ts');
+    const settingsReducer = settingsSlice.default;
+    await storage.setSettings({ ...(await storage.getSettingsForLocalUse()), syncEnabled: false } as never);
+
+    const testStore = configureStore({ reducer: { settings: settingsReducer } });
+    // 先跑一次 loadSettings 把标记推进到 ok（= 真实世界「已读到真值」）
+    await testStore.dispatch(settingsSlice.loadSettings());
+    assert.equal(
+      testStore.getState().settings.syncEnabled,
+      false,
+      '前置：loadSettings 应把真实设置水合进 Redux',
+    );
+
+    testStore.dispatch({ type: 'settings/setSyncEnabled', payload: true });
+    await testStore.dispatch(settingsSlice.saveSettings());
+    const after = await storage.getSettingsForLocalUse();
+    assert.equal(after.syncEnabled, true, 'ok 态下用户意图必须真的落盘');
+  });
+});

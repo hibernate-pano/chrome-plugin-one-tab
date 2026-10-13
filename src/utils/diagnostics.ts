@@ -135,7 +135,7 @@ export type TabCountBucket = (typeof TAB_COUNT_BUCKETS)[number];
  * 2026-10-11 移除 `'shadowAudit'`：影子/对账三段已于 2026-10-05 整链删除，
  * 若留着它等于在接口上宣称「这里可能出 shadowAudit 失败」—— 一个永远不会亮的指示灯
  * 会让排障的人对真正亮起的灯也不再信任（见 readDiagnosticsSources 中「假指示灯」注释）。 */
-export type UnavailableSource = 'groups' | 'settings' | 'pendingDeleteIds';
+export type UnavailableSource = 'groups' | 'settings' | 'pendingDeleteIds' | 'pendingUpload';
 
 // ── 采集层：原始结构（含敏感数据，脱敏不在这里做）──────────────────────────
 
@@ -161,7 +161,8 @@ export interface DiagnosticsSources {
   lastSyncedSeq: number;
   /** 待广播删除队列长度。null = 读取失败。 */
   pendingDeleteCount: number | null;
-  pendingUpload: boolean;
+  /** null = 读取失败（**不是**「没有待上传」——那会把排障的人引向错误结论）。 */
+  pendingUpload: boolean | null;
   /**
    * 性能 span 原始记录（见 @/utils/perfTrace）。
    *
@@ -234,20 +235,25 @@ async function requestSwPerfFlush(): Promise<void> {
 export async function readDiagnosticsSources(
   isAuthenticated = false
 ): Promise<DiagnosticsSources> {
-  const [groups, settings, pendingDeleteCount] = await Promise.all([
+  const [groups, settings, pendingDeleteCount, pendingUpload] = await Promise.all([
     storage.getGroups().catch(() => null),
     storage.getSettings().catch(() => null),
     storage.getPendingDeleteIds().then(ids => ids.length).catch(() => null),
+    // ── 2026-10-12：读失败必须与「没有待上传」区分开 ──────────────────
+    // 修复前这一项不在 catch 里，于是两层静默：getPendingUpload 抛错时整个
+    // Promise.all 一起 reject（导出通道挂掉，用户排障时连文件都导不出）；
+    // 而假如上层把它兜成 false，报告里就会写着 pendingUpload: false ——
+    // 「读不到」被写成「没有」，正是本仓明令禁止的谎报。null 才诚实。
+    storage.getPendingUpload().catch(() => null),
   ]);
 
-  // 这四个 getter 自身已把读失败降级成空值/0/null（见 storage.ts 的实现），
+  // 这三个 getter 自身已把读失败降级成空值/0/null（见 storage.ts 的实现），
   // 本层无法区分「本来就没有」与「读失败」，要区分得改 storage 的读取契约。
-  const [productEvents, journal, lastSyncTime, lastSyncedSeq, pendingUpload] = await Promise.all([
+  const [productEvents, journal, lastSyncTime, lastSyncedSeq] = await Promise.all([
     storage.getProductEvents(),
     storage.getJournal() as Promise<JournalEntry[]>,
     storage.getLastSyncTime(),
     storage.getLastSyncedSeq(),
-    storage.getPendingUpload(),
   ]);
 
   // 顺序有依赖：先让 SW 落盘，再读共享键（read() 同时会 flush 本进程缓冲）。
@@ -316,7 +322,8 @@ export interface DiagnosticsReport {
     /** 距上次同步的小时数（下取整）。从未同步过 = null。 */
     lastSyncAgeHours: number | null;
     pendingDeleteCount: number | null;
-    pendingUpload: boolean;
+    /** null = 读取失败（见 DiagnosticsSources.pendingUpload）。 */
+    pendingUpload: boolean | null;
   };
   /**
    * 性能归因：时间到底花在哪一段。
@@ -614,6 +621,7 @@ export function buildDiagnosticsReport(
   if (groups === null) unavailable.push('groups');
   if (sources.settings === null) unavailable.push('settings');
   if (sources.pendingDeleteCount === null) unavailable.push('pendingDeleteIds');
+  if (sources.pendingUpload === null) unavailable.push('pendingUpload');
 
   return {
     schema: DIAGNOSTICS_SCHEMA,
@@ -658,7 +666,8 @@ export function buildDiagnosticsReport(
       lastSyncAgeHours:
         lastSyncMs === null ? null : Math.max(0, Math.floor((nowMs - lastSyncMs) / (60 * 60 * 1000))),
       pendingDeleteCount: sources.pendingDeleteCount,
-      pendingUpload: sources.pendingUpload === true,
+      // null 透传，不做 `=== true`：读失败写成 false 就是谎报「没有待上传」。
+      pendingUpload: sources.pendingUpload,
     },
     perf: {
       spanCount: perf.spanCount,

@@ -20,8 +20,25 @@ import { storage, DEFAULT_SETTINGS as defaultSettings } from '@/utils/storage';
  *
  * 放模块级而不是塞进 Redux state：state 的类型就是 UserSettings，混进元数据字段
  * 会让 `setSettings(state)` 把标记本身也写进存储，制造新的污染面。
+ *
+ * ── 2026-10-12 P0-2：boolean → 三态，堵住 pending 窗口 ──────────────────
+ * 原实现是 `let settingsReadFailed = false`，即「读过失败吗」。但门禁真正要回答的
+ * 是「**读到过**真值吗」——两者之间有一段 pending 真空，而它恰是 IndexedDB 冷启动
+ * 的**常态窗口**（冷读 / 死句柄看门狗 5s），不是边缘情况：
+ *   t0 冷启动 → loadSettings 发出，Redux 停在 DEFAULT_SETTINGS
+ *   t1 用户点任意设置项 → dispatch(setX) 改了 Redux
+ *   t2 dispatchSaveSettings → 门禁判 `settingsReadFailed === false` → **放行**
+ *   t3 storage.setSettings(DEFAULT_SETTINGS 全量) → 真实设置被整份覆盖
+ * 原实现的门禁只在 catch 里置位，pending 期间它一直是 false，等于没有门禁。
+ *
+ * 为什么用「pending 时拒绝写」而不是「saveSettings 内部改成读-改-写」：
+ * 后者虽然也能保住数据，但它要求把「用户刚点的那一下」与「磁盘真值」合并，
+ * 而调用方（HeaderDropdown 的两个 handler）已经**各自实现了回滚 + toast**
+ * （见其 saveError 分支）。三态门禁与这套已有机制天然吻合：**零调用方改动**，
+ * 且拒绝发生在写入之前 —— 比「先写再补救」少一次危险的落盘。
  */
-let settingsReadFailed = false;
+type SettingsReadState = 'pending' | 'ok' | 'failed';
+let settingsReadState: SettingsReadState = 'pending';
 
 // 更新默认设置
 const updatedDefaultSettings = {
@@ -35,10 +52,10 @@ const initialState: UserSettings = {
 export const loadSettings = createAsyncThunk('settings/loadSettings', async () => {
   try {
     const settings = await storage.getSettings();
-    settingsReadFailed = false;
+    settingsReadState = 'ok';
     return settings;
   } catch (error) {
-    settingsReadFailed = true;
+    settingsReadState = 'failed';
     throw error; // 原样抛给 rejected：调用方要能看到真实失败原因
   }
 });
@@ -50,9 +67,11 @@ export const saveSettings = createAsyncThunk<UserSettings, void, { state: { sett
     // 此时 state 里是 DEFAULT_SETTINGS（不是用户的设置）。盲写等于把整份
     // 出厂默认值覆盖上去 —— 用户设置无声丢失，手动上传还会扩散到云端。
     // 抛错而不是静默 return：写失败与写成功必须可区分，否则又是一个谎报成功。
-    if (settingsReadFailed) {
+    if (settingsReadState !== 'ok') {
       throw new Error(
-        '设置读取失败，已拒绝写入（避免用默认值覆盖真实设置）。读路径恢复后重试即可。'
+        settingsReadState === 'pending'
+          ? '设置还在读取中，已拒绝写入（避免用默认值覆盖真实设置）。稍等片刻重试即可。'
+          : '设置读取失败，已拒绝写入（避免用默认值覆盖真实设置）。读路径恢复后重试即可。'
       );
     }
     const { settings } = getState();

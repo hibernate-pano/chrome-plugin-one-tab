@@ -8,6 +8,65 @@
 > 长期台账**（含根因、踩坑、修复顺序），不必翻译成英文、不必对齐商店审核口径。
 > 两边都会写「本版改了什么」，但只有本文件会记住「为什么」和「后来怎么验证的」。
 
+## v1.23.1（2026-10-13，未提审）
+
+**这版的由来**：1.23.0 发版后的深度体检（`docs/health-check-2026-10-12-expert-team.html`）
+挖出两条会真丢数据的活路径与两条违反不变式的缺陷。本版只做修复，**无新功能**，
+故按项目惯例走 patch。
+
+**修掉的（每条都带守卫 + 变异验证）**
+
+- **P0-1 localStorage 回退驱动 fail-open**（`src/storage-kv/localStorageFallback.ts`）：
+  存储存在但操作失败（配额满 / 无痕 / 站点数据被清）时，`getItem` 此前返回 `null`，
+  与「键不存在」同形 ⇒ `getGroups()` 判成「首次使用」返回 `[]` ⇒ 所有写路径都是
+  读-改-写，下一次保存就把整组会话覆盖成刚保存的那一条，**且回报成功、无回收站**。
+  修法：区分「环境根本没有 localStorage」（MV3 SW，无 window ⇒ 返回 null，是事实）
+  与「存储存在但故障」（⇒ 抛错）。修驱动而不是修调用方——「读失败长成没有数据」
+  这件事只该在一个地方被拒绝。
+- **P0-2 settings 三态门禁**（`src/store/slices/settingsSlice.ts`）：
+  标记从 `boolean settingsReadFailed` 改为 `pending / ok / failed` 三态、初值 `pending`。
+  原实现只有 catch 里置位，而冷启动那几秒（IndexedDB 冷读 / 死句柄看门狗 5s）标记恒为
+  false ⇒ 门禁放行 ⇒ `setSettings(DEFAULT_SETTINGS 全量)` 覆盖用户真实设置（还可能上云）。
+  选「pending 时拒绝写」而非「saveSettings 改读-改-写」：调用方（HeaderDropdown 两个
+  handler）已各自实现回滚 + toast，三态门禁零调用方改动，且拒绝发生在写入之前。
+- **P1 读失败 ≠ 用户关闭**（`src/background/backgroundSync.ts`）：
+  `readAutoSyncConfig` 此前只返回 `{enabled:false}`，调用方分不清「用户关了」与「读故障」，
+  两者都走 `alarms.clear`。修法：读失败时置模块级标记，改重排 1 分钟后的 alarm
+  （方向仍是不出流量，只是不再把「本轮不跑」与「终态清 alarm」混为一谈）。
+- **P1 异常分支洗回 60s**：catch 分支写死 `NORMAL_INTERVAL_MINUTES`，
+  现改为 `cfg?.intervalMinutes ?? NORMAL_INTERVAL_MINUTES`。
+- **diagnostics `pendingUpload`**（`src/utils/diagnostics.ts`）：
+  移入带catch 的 `Promise.all`（此前一次读失败会让整个 `Promise.all` reject，导出通道挂掉），
+  类型改 `boolean | null` 并进 `unavailable`——读失败写成 `false` 是谎报「没有待上传」。
+
+**验证（第二轮：把上一轮的结论重新证一遍）**
+
+11 次变异验证，改坏即红。其中抓到**一条假绿守卫**：上一轮新增的
+`tests/localStorageFallbackFailClosed.test.ts` 里那条被注释称作「核心」的端到端用例，
+在破坏它声称守护的读侧不变量时依然通过——因为 `getGroupsForWrite()` 先写
+`storage_version`，写侧抛错先命中了断言正则。已收紧为只认读侧报错，重做变异后 3 条红。
+
+**结论层面的更正（自我审计）**
+
+- 「一次瞬时读错误就**永久**停掉自动同步」→ 实为停摆到**下一次 SW 唤醒**
+  （`service-worker.ts:184` 模块顶层每次唤醒重进 setup），时长不可控但非永久。
+- 「原注释『异常路径拿不到用户档位』的前提是错的」→ **撤回**：原注释作用域判断正确
+  （当时 `cfg` 在 try 内，catch 引用不到），提到 try 外是改进而非纠错。
+- 「`dff8582` 删notification.ts 时没搬判据」→ 根因归属更正：判据在更早的
+  `d558d91`（2026-01-25 refactor）就被绕过，`dff8582` 只是删死文件。
+
+**AI 错误总账**
+
+`.ai-logs/2026-10-13-181215-verification-and-error-index.md` 固化了 11 条跨轮次错误模式
+（假绿测试、幻觉式根因、夸大严重度、曲解原注释、注释计数漂移、未取证即怀疑……），
+每条配具体案例与防线，供后续不重犯。
+
+**本版没做（有意）**
+
+- 体检报告里剩余的 P1/P2（含通知开关死接线、`RootState` 两份定义、设置字段两张手抄表、
+  隐私邮箱无 MX）均未修——按减法与优先级，先收口会丢数据的。
+- 商店提审未做（`v1.23.1` 状态为「未提审」）。
+
 ## v1.23.0（2026-10-11，待提审）
 
 **这版的由来**：产品负责人拍板的大版本变更 —— **自动同步默认关闭 + 用户四档间隔**。

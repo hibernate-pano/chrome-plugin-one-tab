@@ -484,3 +484,147 @@ describe('G. 保存失败必须让 UI 收敛到磁盘真值（2026-10-11 审查 
     assert.match(intervalFail, /已恢复为/, 'toast 必须说清恢复后的档位');
   });
 });
+
+// ── 2026-10-12 P1：读失败 ≠ 用户关闭，两者收尾动作相反 ──────────────────────
+//
+// 修复前 readAutoSyncConfig 的返回类型只有 `{enabled:false}`，而 false 有两种含义：
+//   (a) 设置里明确写着 syncEnabled !== true  → 用户真的关了 → 该**清 alarm**
+//   (b) kvGet 抛错（死句柄看门狗 / 事务 abort）→ 故障       → **不该清 alarm**
+// 调用方分不清，于是走 (b) 时也 `alarms.clear(SYNC_ALARM)`，而「本轮不再排下一轮」
+// 正是清 alarm 的含义 ⇒ 同步停摆到下一次 SW 唤醒（无事件就无唤醒，时长不可控），
+// 且 UI 毫无提示。（日志承诺的「下轮重试」并不可靠：没有 alarm 就没有确定性的下一轮。）
+describe('H. 读配置失败时不得清 alarm（否则同步停摆到下次 SW 唤醒，时长不可控）', () => {
+  it('handleAlarm：kvGet 抛错 → 不得 clear alarm，必须重排一次', async () => {
+    const handles = installChromeMock({ syncEnabled: true, syncIntervalMinutes: 60 });
+    const mod = await import('@/background/backgroundSync');
+    await invalidateSettingsCache();
+
+    // 让 user_settings 的读抛错 —— 模拟死句柄看门狗 / 事务 abort 这类瞬时故障
+    const ls = (globalThis as Record<string, unknown>).localStorage as {
+      getItem(k: string): string | null;
+      setItem(k: string, v: string): void;
+    };
+    const innerGet = ls.getItem.bind(ls);
+    ls.getItem = (k: string) => {
+      if (k === 'user_settings') throw new Error('模拟 IndexedDB 读错误');
+      return innerGet(k);
+    };
+
+    try {
+      mod.setupBackgroundSync();
+      await waitForSetup(handles);
+      // 【为什么不能在 setup 之后取快照当基线】waitForSetup 的等待条件是
+      // 「create 或 clear 任一发生」—— 而 setup 自己在「开 + 档位」时走的是
+      // create 分支，读失败那次走的是 reschedule（也是 create），
+      // 所以基线必须取在 setup **之前**，否则会把 setup 的动作算进本用例。
+      const clearedBeforeDispatch = handles.clearedAlarms.length;
+      const createsBeforeDispatch = handles.createCalls.length;
+      await handles.alarmListeners[0]({ name: 'tapstack-background-sync' } as chrome.alarms.Alarm);
+      assert.equal(
+        handles.clearedAlarms.length,
+        clearedBeforeDispatch,
+        '❌ 读失败被当成「用户关闭」而清掉了 alarm —— 同步停摆到下一次 SW 唤醒、时长不可控（且 UI 无提示）'
+      );
+      assert.ok(
+        handles.createCalls.length > createsBeforeDispatch,
+        '❌ 读失败后必须重排一个 alarm（瞬时错误下轮自愈），实测没排'
+      );
+    } finally {
+      ls.getItem = innerGet;
+    }
+    assert.equal(
+      handles.createCalls.at(-1)?.opts.delayInMinutes,
+      1,
+      '❌ 读失败后必须重排一个短延迟的 alarm（瞬时错误下轮自愈），实测没排'
+    );
+  });
+
+  it('setupBackgroundSync：启动时读失败 → 不得 clear alarm，必须排一次重试', async () => {
+    // SYNC_ALARM 的创建点全在本模块；本函数每次 SW 唤醒都会经模块顶层重进，
+    // 所以清 alarm 不是「一次性永久」，但重建依赖 SW 再次被唤醒 ——
+    // 无事件就无唤醒，停摆时长不可控（且期间无 UI 提示）。
+    const handles = installChromeMock({ syncEnabled: true, syncIntervalMinutes: 60 });
+    const mod = await import('@/background/backgroundSync');
+    await invalidateSettingsCache();
+
+    const ls = (globalThis as Record<string, unknown>).localStorage as {
+      getItem(k: string): string | null;
+    };
+    const innerGet = ls.getItem.bind(ls);
+    ls.getItem = (k: string) => {
+      if (k === 'user_settings') throw new Error('模拟 IndexedDB 读错误');
+      return innerGet(k);
+    };
+
+    try {
+      mod.setupBackgroundSync();
+      await waitForSetup(handles);
+    } finally {
+      ls.getItem = innerGet;
+    }
+
+    assert.equal(
+      handles.clearedAlarms.length,
+      0,
+      '❌ 启动时读失败被当成「用户关闭」而清了 alarm'
+    );
+    assert.equal(
+      handles.createCalls.at(-1)?.opts.delayInMinutes,
+      1,
+      '❌ 启动读失败后必须排一次重试 alarm，实测没排'
+    );
+  });
+
+  it('反向：真读到用户关闭时仍然必须清 alarm（不得把闸门整个废掉）', async () => {
+    const handles = installChromeMock({ syncEnabled: false });
+    const mod = await import('@/background/backgroundSync');
+    await invalidateSettingsCache();
+    mod.setupBackgroundSync();
+    await waitForSetup(handles);
+    assert.ok(
+      handles.clearedAlarms.length > 0,
+      '❌ 真的读到用户关闭时仍必须清 alarm —— 否则关开关前排的那次会一直白醒'
+    );
+  });
+});
+
+// ── 2026-10-12 P1：异常分支不得把用户档位洗回 60s ──────────────────────────
+describe('I. 异常重排必须沿用用户档位（不得写死 60s）', () => {
+  it('结构层：handleAlarm 的 catch 分支 period 不得恒为 NORMAL_INTERVAL_MINUTES', async () => {
+    // 修复前无条件写死 NORMAL_INTERVAL_MINUTES（=1 即 60s），旧注释的理由是
+    // 「异常路径拿不到用户档位」—— 作用域层面没错：当时 cfg 在 try 内首行声明，
+    // catch 引用不到。但不是硬约束：提到 try 外即可让异常路径也用上真档位。
+    // 影响窗口有限：写死的 period 只持续到下一次重排（下一轮 alarm 触发 / SW
+    // 唤醒都会用 cfg 重排回档位）。修掉是为了维持「period 恒 = 用户档位」。
+    const { readFileSync } = await import('node:fs');
+    const { fileURLToPath: f2p } = await import('node:url');
+    const { dirname: dn, resolve: rs } = await import('node:path');
+    const src = readFileSync(
+      rs(dn(f2p(import.meta.url)), '../src/background/backgroundSync.ts'),
+      'utf8',
+    );
+    const start = src.indexOf('async function handleAlarm');
+    assert.ok(start > -1, '找不到 handleAlarm');
+    const fn = src.slice(start, src.indexOf('\n}\n', start));
+    const catchIdx = fn.indexOf('catch (err)');
+    assert.ok(catchIdx > -1, 'handleAlarm 必须有 catch 分支');
+    const catchBody = fn.slice(catchIdx);
+
+    assert.match(
+      catchBody,
+      /cfg\?\.intervalMinutes\s*\?\?\s*NORMAL_INTERVAL_MINUTES/,
+      '异常重排的 period 必须优先用用户档位（cfg?.intervalMinutes），只有拿不到才回落常量'
+    );
+    assert.doesNotMatch(
+      catchBody,
+      /rescheduleAlarm\(\s*backoffMinutesFor\([^)]*\)\s*,\s*NORMAL_INTERVAL_MINUTES\s*\)/,
+      '❌ 异常分支把 period 写死成 60s —— 一次异常就把用户档位退回 1 分钟'
+    );
+    // cfg 必须提到 try 外声明，否则 catch 分支根本拿不到它
+    assert.match(
+      fn,
+      /let\s+cfg\s*:\s*AutoSyncConfig\s*\|\s*null\s*=\s*null/,
+      'cfg 必须提到 try 外声明（catch 分支要靠它拿用户档位）'
+    );
+  });
+});

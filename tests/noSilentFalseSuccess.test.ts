@@ -446,8 +446,8 @@ describe('P1：设置读失败后，不得用默认值覆盖真实设置，也�
     const fn = slice.slice(start, slice.indexOf('\n);', start));
     assert.match(
       fn,
-      /if\s*\(\s*settingsReadFailed\s*\)/,
-      'saveSettings 没有检查 settingsReadFailed —— 读失败后仍会把 DEFAULT_SETTINGS ' +
+      /if\s*\(\s*settingsReadState\s*!==\s*'ok'\s*\)/,
+      'saveSettings 没有检查 settingsReadState !== "ok" —— 读失败后仍会把 DEFAULT_SETTINGS ' +
         '整份写盘覆盖真实设置（用户设置无声丢失，且可能被手动上传扩散到云端）'
     );
     assert.match(
@@ -456,7 +456,7 @@ describe('P1：设置读失败后，不得用默认值覆盖真实设置，也�
       '检查到读失败后必须抛错（拒绝写）；静默 return 又是一次「没写成功却当没事」'
     );
     // 抛错必须在实际写盘之前
-    const guardAt = fn.indexOf('settingsReadFailed');
+    const guardAt = fn.indexOf('settingsReadState');
     const writeAt = fn.indexOf('storage.setSettings');
     assert.ok(writeAt > guardAt, '拒绝写的检查必须排在 setSettings 之前');
   });
@@ -467,18 +467,44 @@ describe('P1：设置读失败后，不得用默认值覆盖真实设置，也�
     const fn = slice.slice(start, slice.indexOf('\n);', start));
     assert.match(
       fn,
-      /settingsReadFailed\s*=\s*true/,
-      'loadSettings 读失败时没有置位 settingsReadFailed —— 标记永远为 false，' +
+      /settingsReadState\s*=\s*'failed'/,
+      'loadSettings 读失败时没有置位 settingsReadState = "failed" —— 标记会停在 pending/ok，' +
         'saveSettings 的 fail-closed 检查形同虚设'
     );
     assert.match(
       fn,
-      /settingsReadFailed\s*=\s*false/,
+      /settingsReadState\s*=\s*'ok'/,
       'loadSettings 成功时没有复位 —— 一次失败会让此后所有保存永久被拒'
     );
     // 失败必须重新抛给 rejected：吞掉就无法区分「读到默认值」与「读失败」
     assert.match(fn, /throw error/, 'loadSettings 吞掉错误会让 rejected 永不触发');
   });
+
+  it('标记必须是三态且初值为 pending —— 两态覆盖不了冷启动窗口（2026-10-12 P0-2）', () => {
+    // 这条守卫的存在理由：原实现是 `let settingsReadFailed = false`，
+    // 语义是「读过失败吗」，而门禁要问的是「读到过真值吗」。两者之间有一段
+    // pending 真空 —— 冷启动时 loadSettings 在途（IndexedDB 冷读 / 死句柄
+    // 看门狗 5s），标记仍是 false，门禁放行 → DEFAULT_SETTINGS 整份覆盖真值。
+    // 变异验证：初值改回 false 后，改坏实现仍能通过上面两条断言，
+    // 只有这条会红 —— 它守的正是「初值」这个从未被验证过的点。
+    assert.match(
+      slice,
+      /let\s+settingsReadState\s*:\s*SettingsReadState\s*=\s*'pending'/,
+      'settingsReadState 初值必须是 pending —— 冷启动读请求在途期间必须拒绝写入，' +
+        '否则会把 DEFAULT_SETTINGS 整份写盘覆盖用户的真实设置'
+    );
+    // 三态必须真的存在三个取值（两态就是旧缺陷的形状）
+    assert.match(
+      slice,
+      /type\s+SettingsReadState\s*=\s*'pending'\s*\|\s*'ok'\s*\|\s*'failed'/,
+      'SettingsReadState 必须是 pending/ok/failed 三态'
+    );
+    // pending 与 failed 的拒绝理由必须不同：用户要知道是「等一下」还是「读坏了」
+    const start = slice.indexOf('saveSettings = createAsyncThunk');
+    const fn = slice.slice(start, slice.indexOf('\n);', start));
+    assert.match(fn, /settingsReadState\s*===\s*'pending'/, 'pending 态必须给出可区分的拒绝理由');
+  });
+
 
   it('六个调用点都必须走 dispatchSaveSettings 并把失败说出来', () => {
     const sites: Array<{ file: string; expect: number }> = [

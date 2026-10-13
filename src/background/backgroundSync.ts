@@ -74,6 +74,23 @@ export const RESYNC_ALARM_OP = 'resyncAlarm';
 /** popup 自动下载（打开触发）被总开关拦下时的原因码（AuthProvider 对它静默，见那里的白名单）。 */
 export const AUTO_SYNC_DISABLED_REASON = 'auto_sync_disabled';
 
+/**
+ * 最近一次 readAutoSyncConfig 是否因**读失败**而返回 false（2026-10-12 P1）。
+ *
+ * 「自动同步没跑」有两种完全不同的成因，而它们需要的收尾动作正好相反：
+ *   · 用户真的关了        → 清 alarm（终态，不需要下一轮）
+ *   · 读配置失败（故障）  → **重排一个短延迟再试**（清 alarm 不是永久停摆：
+ *                          每次 SW 唤醒都会经模块顶层重进 setupBackgroundSync，
+ *                          但唤醒时刻不可控 —— 重排把自愈收缩到 1 分钟内）
+ * readAutoSyncConfig 的返回类型只有 `{enabled:false}`，无法表达这个区别，
+ * 所以用模块级标记把「读失败」这一事实带到调用方。
+ *
+ * 放模块级而不是塞进返回值：返回形状被 service-worker 的门禁分支等调用方消费，
+ * 改形状会波及它们；而这个标记只需要 handleAlarm 一处读。
+ * 每次 readAutoSyncConfig 开头重置 —— 它是「最近一次读」的快照，不是历史累计。
+ */
+let autoSyncConfigReadFailed = false;
+
 /** chrome.storage.local 的最小适配：退避状态是本模块唯一的持久化需求。 */
 const backoffKv: BackoffKv = {
   async get(key) {
@@ -137,6 +154,7 @@ export interface AutoSyncConfig {
  * 绕一圈等于没修。
  */
 export async function readAutoSyncConfig(): Promise<AutoSyncConfig> {
+  autoSyncConfigReadFailed = false;
   try {
     // 直接读盘：见上方「必须绕过进程内缓存」的完整论证。
     // 读失败与之前一致（fail-open 回旧行为 + 告警），缓存不是失败原因，
@@ -160,6 +178,21 @@ export async function readAutoSyncConfig(): Promise<AutoSyncConfig> {
     // fail-closed（按「关」）：见上方注释——撤销用户显式关掉的意图比多跑一轮更糟。
     // 读失败一律出声（logError 而非 warn）：它会让自动同步静默停摆，
     // 用户看到的现象是「我开了自动同步但它不动了」，没有提示就无从排查。
+    //
+    // ── 2026-10-12 P1：把「读失败」标记出来，别让它冒充「用户关闭」 ──────
+    // 修复前本函数只返回 `{enabled:false}`，而 false 有两种含义：
+    //   (a) 设置里明确写着 syncEnabled !== true  → 用户真的关了 → **该清 alarm**
+    //   (b) kvGet 抛错（死句柄看门狗 / 事务 abort）→ 故障       → **不该清 alarm**
+    // 调用方（handleAlarm）无法区分，于是走 (b) 这条路时也会
+    // `alarms.clear(SYNC_ALARM)` —— 「本轮不再排下一轮」：同步停摆到下一次
+    // SW 被唤醒（service-worker 模块顶层会重进 setupBackgroundSync 重建 alarm，
+    // 但无事件就无唤醒，停摆时长不可控），且无任何 UI 提示。
+    // （日志承诺的「下轮重试」并不可靠：清掉 alarm 就没有确定性的下一轮。）
+    //
+    // 修法：读失败时 configReadFailed=true。**方向仍是不出流量**（这一点不变，
+    // 且是对的），但「本轮不跑管线」与「把 alarm 清掉」必须分开：
+    // 前者是本轮的取舍，后者是终态，只有真读到用户关闭才做。
+    autoSyncConfigReadFailed = true;
     logError('[BackgroundSync] 读不到自动同步配置，按「关闭」处理（保守不出流量），下轮重试:', err);
     return { enabled: false, intervalMinutes: NORMAL_INTERVAL_MINUTES };
   }
@@ -220,6 +253,20 @@ export function setupBackgroundSync(): void {
     // 1.23.0：先问总开关。关 → 清 alarm 返回（零成本 + 自愈孤儿 alarm）。
     const cfg = await readAutoSyncConfig();
     if (!cfg.enabled) {
+      // ── 2026-10-12 P1：读失败 ≠ 用户关闭（同 handleAlarm 的修法）──────
+      // SYNC_ALARM 的创建点全在本模块（rescheduleAlarm）；本函数每次 SW 唤醒
+      // 都会经 service-worker 模块顶层重进 —— 所以这里清 alarm 不是
+      // 「一次性永久」，但重建依赖 SW 再次被唤醒：无事件就无唤醒，停摆时长
+      // 不可控，且期间无任何 UI 提示。读失败时改为排一个 1 分钟后的 alarm：
+      // 仍然不跑管线（不出流量），但自愈不再依赖用户下次交互。
+      if (autoSyncConfigReadFailed) {
+        logWarn(
+          '[BackgroundSync] 启动时读不到自动同步配置（故障，非用户关闭）：' +
+            '暂不注册常驻 alarm，1 分钟后再试一次。自动同步未被关闭。'
+        );
+        rescheduleAlarm(1, NORMAL_INTERVAL_MINUTES);
+        return;
+      }
       await chrome.alarms.clear(SYNC_ALARM).catch(() => undefined);
       logInfo('[BackgroundSync] 自动同步已关闭，不注册后台 alarm（打开 popup 不会自动拉取，点「同步」手动获取）');
       return;
@@ -292,10 +339,28 @@ export async function runBackgroundSyncOnce(): Promise<boolean> {
  */
 async function handleAlarm(alarm: chrome.alarms.Alarm): Promise<void> {
   if (alarm.name !== SYNC_ALARM) return;
+  // 提到 try 外：catch 分支也要用它拿用户档位（见该分支内注释）。
+  // cfg 在绝大多数轮次都能读到；只有 readAutoSyncConfig 自己抛错才是 null，
+  // 那时下面 catch 里的兜底常量才生效。
+  let cfg: AutoSyncConfig | null = null;
   try {
     // 1.23.0：先问总开关（每轮重读：开关可能在两次触发之间被改掉）。
-    const cfg = await readAutoSyncConfig();
+    cfg = await readAutoSyncConfig();
     if (!cfg.enabled) {
+      // ── 2026-10-12 P1：读失败 ≠ 用户关闭，两者收尾动作相反 ────────────
+      // 修复前这里对两种「enabled=false」一律清 alarm。读失败时清 alarm =
+      // 「不再排下一轮」：同步停摆到下一次 SW 唤醒（无事件就无唤醒，时长
+      // 不可控），且用户界面毫无提示（现象是「我开着自动同步但它不动了」）。
+      // 修复后：读失败仍然**不出流量**（本轮不跑管线，方向不变且正确），
+      // 但改成重排一个 1 分钟后的 alarm —— 瞬时错误下轮自愈。
+      if (autoSyncConfigReadFailed) {
+        logWarn(
+          '[BackgroundSync] 读不到自动同步配置（故障，非用户关闭）：本轮不跑管线，' +
+            '1 分钟后重试。自动同步未被关闭。'
+        );
+        rescheduleAlarm(1, NORMAL_INTERVAL_MINUTES);
+        return;
+      }
       await chrome.alarms.clear(SYNC_ALARM).catch(() => undefined);
       logInfo('[BackgroundSync] 自动同步已关闭，本轮跳过并清除 alarm');
       return;
@@ -343,9 +408,23 @@ async function handleAlarm(alarm: chrome.alarms.Alarm): Promise<void> {
     try {
       const next = await recordSyncFailure(backoffKv, Date.now(), `unexpected: ${String(err)}`);
       if (!isBackoffExhausted(next.consecutiveFailures)) {
-        // 异常路径拿不到用户档位（读配置本身可能就是异常源）：delay 沿用退避阶梯，
-        // period 回落常量。成功/常规失败路径都有 cfg，不要把这条也抄过去。
-        rescheduleAlarm(backoffMinutesFor(next.consecutiveFailures), NORMAL_INTERVAL_MINUTES);
+        // ── 2026-10-12 P1：别把用户档位洗回 60s ──────────────────────────
+        // 修复前这里无条件写死 NORMAL_INTERVAL_MINUTES（=1，即 60s），旧注释
+        // 的理由是「异常路径拿不到用户档位」—— 作用域层面没错：当时 cfg 在
+        // try 内首行声明，catch 引用不到。但它不是硬约束：把声明提到 try 外
+        // 即可让异常路径也用上真档位（readAutoSyncConfig 整段在 try/catch 里，
+        // 几乎不会抛，cfg 几乎总是已读到；null 只是理论兜底）。
+        //
+        // 影响窗口（如实）：写死的 period 只持续到下一次重排 —— 下一轮 alarm
+        // 触发（退避阶梯 ≤ 5 分钟）或下一次 SW 唤醒都会用 cfg 重排回用户档位。
+        // 所以不是「永久退回每分钟」，但 1 小时档位的用户在那段窗口里确实
+        // 退了每分钟节奏；修掉是为了维持不变量「period 恒 = 用户档位」。
+        // delay 仍走退避阶梯（那是「隔多久再试」），period 才是「常态节奏」，
+        // 两者语义不同，不该共用同一个常量。
+        rescheduleAlarm(
+          backoffMinutesFor(next.consecutiveFailures),
+          cfg?.intervalMinutes ?? NORMAL_INTERVAL_MINUTES
+        );
       }
     } catch {
       /* 退避记账本身失败：下一轮照常按持久化状态判定，不阻塞 */
