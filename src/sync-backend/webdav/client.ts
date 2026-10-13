@@ -235,6 +235,21 @@ export class WebDavClient {
    * @param opts.ifMatch 条件写：只有远端 ETag 与它相等时才允许覆盖；不等 → 412。
    *                    这是并发安全的**唯一**来源（不是锁文件，见调研报告 §1.3/§2.2）。
    * @param opts.ifNoneMatch `*` = 仅当远端不存在时创建；已存在 → 412。
+   *
+   * ── 为什么只发 HTTP `If-Match`，**不加** WebDAV 的 `If:` 头（2026-10-13 实测）──
+   * WebDAV 世界里有两套互不相同的条件机制：
+   *   · HTTP `If-Match: "<etag>"`  —— RFC 9110
+   *   · WebDAV `If: (["<etag>"])`  —— RFC 4918 §10.4（原生机制）
+   * 「两个都发更稳妥」是**错的**。实测三个独立实现：
+   *   · wsgidav：两套都正确实现
+   *   · dufs 0.46：两套都忽略（写入成功但不校验）
+   *   · **rclone 1.75.2：对任何 `If:` 头一律 412** —— 多带一个头会让
+   *     所有写入在那类服务端上直接失败
+   * 只发 `If-Match` 的结果：在 rclone 上退化为「无锁但能正常写」，
+   * 在 wsgidav 上拿到真正的乐观锁。**可用比不可用重要。**
+   *
+   * 能力差异由 `probeConditionalWrites()` 探测并如实上报；
+   * 真正保底的并发保护是客户端侧的「认输预检」（stamp 比较，与服务端无关）。
    */
   async put(
     path: string,
