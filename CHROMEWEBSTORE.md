@@ -130,7 +130,7 @@ Productivity
 
 https://tapstack-two.vercel.app/privacy.html
 
-<!-- 隐私政策页面源码：src/legal/privacy.html（最后更新 2026-09-29）。
+<!-- 隐私政策页面源码：src/legal/privacy.html（最后更新 2026-10-13）。
      2026-10-02 与线上商店页核对：商店 Privacy 区展示的就是该 URL。 -->
 
 ## Distribution
