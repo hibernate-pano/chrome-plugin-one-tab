@@ -130,7 +130,9 @@ export class WebDavClient {
   readonly baseUrl: string;
 
   constructor(
-    private readonly config: WebDavConfig,
+    // 注意：只读构造参数、不保存为字段 —— 凭据只在这一层的 authHeader 里存在，
+    // 不留一个 `this.config` 的引用（少一处可能被打日志/被序列化的位置）。
+    config: WebDavConfig,
     private readonly fetchImpl: typeof fetch = fetch
   ) {
     this.baseUrl = normalizeBaseUrl(config.baseUrl);
