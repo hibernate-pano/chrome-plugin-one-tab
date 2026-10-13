@@ -1,50 +1,85 @@
 import type { TabGroup } from '@/types/tab';
-import { sync as supabaseSync, type TabGroupDigest, type SupabaseSyncPort } from '@/utils/supabaseFacade';
-
-export type { TabGroupDigest };
-export type { SupabaseSyncPort };
+import { getActiveSyncBackend } from '@/sync-backend';
+import type { RemoteGroupFingerprint } from '@/sync-backend';
+import type { GroupDigestLike } from '@/core/syncDecision';
 
 /**
- * S3：透传层依赖 SupabaseSyncPort 接口而非具体实现。
- * 默认绑定真实 sync（行为零变化）；测试或未来多实现可经 setSyncPort 注入替身。
+ * 透传层：调用方（SyncEngine / SyncButton）与「当前生效的同步后端」之间的唯一接缝。
+ *
+ * ── 2026-10-13 改造（WebDAV 自带存储 · 阶段 0）──────────────────────────
+ * 改造前：本文件用 `let activeSyncPort: SupabaseSyncPort = supabaseSync` 直接绑死
+ * 实现，并用 `setSyncPort()` 预留替换点。但 **setSyncPort 是全仓零调用**
+ * （2026-10-13 全仓检索复核）——那条「未来多实现」的接缝从未接上，
+ * Supabase 之外没有任何东西真的走过它。
+ *
+ * 现在：后端解析统一交给 `@/sync-backend`（默认仍解析为 Supabase，
+ * **行为零变化**）。WebDAV 适配器接入后，只要在 sync-backend 里改解析结果，
+ * 本文件与全部调用方一行都不用动 —— 这才是这条接缝本来该有的样子。
+ *
+ * ── 对外函数签名刻意逐字保留 ────────────────────────────────────────────
+ * 调用方（SyncEngine 5 个 + SyncButton 1 个 + 测试）依赖这些名字与返回形状。
+ * 例如 `uploadTabGroups` 的返回值仍带 `writtenTombstoneIds` ——
+ * 那不是 Supabase 泄漏，而是 syncEngine 用来避免「同一 id 被二次写墓碑」的
+ * 必要信息（见 syncEngine.upload 内该字段的完整论证），改名会波及那段逻辑。
  */
-let activeSyncPort: SupabaseSyncPort = supabaseSync;
+/**
+ * 探活指纹的对外形状 = `GroupDigestLike`（snake_case）。
+ *
+ * ── 为什么对外用 snake_case，而端口内部用 camelCase ────────────────────
+ * 消费方 `syncDecision.hasRemoteChanges()` 的全部判据都建立在
+ * `updated_at` / `is_deleted` / `last_op_seq` 这些字段名上，且那段逻辑
+ * 被 2026-10-10 缺陷 1 的完整论证与多个测试钉住（digestTombstoneProbe 等）。
+ * 为了「统一命名」去改它会波及探活语义 + 测试，收益为零、风险非零。
+ *
+ * 反过来，端口内部必须用后端无关的命名（`updatedAt` / `etag`），
+ * 否则 WebDAV 适配器被迫伪装成 Supabase 列名 —— 那正是这次改造要消灭的东西。
+ *
+ * 因此映射发生在本文件（接缝处），两侧各自保持自己的语言。
+ */
+export type TabGroupDigest = GroupDigestLike;
 
-export function setSyncPort(port: SupabaseSyncPort): void {
-  activeSyncPort = port;
-}
-
-export function resetSyncPort(): void {
-  activeSyncPort = supabaseSync;
+/** 端口指纹（camelCase）→ 探活消费方形状（snake_case）。 */
+function toDigestLike(f: RemoteGroupFingerprint): GroupDigestLike {
+  return {
+    id: f.id,
+    updated_at: f.updatedAt,
+    // version 原样透传（Supabase 独有）。**不要**用 etag 顶替：
+    // 见 ports.ts 里 RemoteGroupFingerprint.version 的完整论证。
+    version: f.version,
+    is_deleted: f.isDeleted ?? undefined,
+    last_op_device: f.lastOp?.d ?? undefined,
+    last_op_seq: f.lastOp?.s ?? undefined,
+  };
 }
 
 export async function uploadTabGroups(
   groups: TabGroup[],
   overwriteCloud: boolean = false
-) {
-  return activeSyncPort.uploadTabGroups(groups, overwriteCloud);
+): Promise<{ writtenTombstoneIds: string[] }> {
+  const result = await getActiveSyncBackend().uploadGroups(groups, {
+    overwriteRemote: overwriteCloud,
+  });
+  // 契约映射：SyncBackendPort.uploadGroups 的 `writtenIds` → 调用方熟悉的
+  // `writtenTombstoneIds`。Supabase 适配器只报告真实写上的墓碑 id
+  // （覆盖模式才可能非空），不做扩大解释 —— 见 supabaseAdapter 文件头。
+  return { writtenTombstoneIds: result.writtenIds };
 }
 
 export async function downloadTabGroups(): Promise<TabGroup[]> {
-  const result = await activeSyncPort.downloadTabGroups();
-  return result as TabGroup[];
+  return getActiveSyncBackend().downloadGroups();
 }
 
 export async function markCloudGroupsAsDeleted(deletedIds: string[]): Promise<void> {
-  return activeSyncPort.markCloudGroupsAsDeleted(deletedIds);
+  return getActiveSyncBackend().broadcastDeletes(deletedIds);
 }
 
-/** P1-6（历史）：按 id 彻底删除云端行（含读回确认无残留）。 */
-export async function purgeCloudGroups(purgedIds: string[]): Promise<void> {
-  return activeSyncPort.purgeCloudGroups(purgedIds);
-}
-
-/** 无墓碑模型：物理删除超过龄期的云端墓碑行（is_deleted=true），返回删除行数。 */
+/** 物理删除超过龄期的删除广播载体（Supabase 侧 = is_deleted 行），返回删除行数。 */
 export async function purgeExpiredCloudTombstones(maxAgeDays: number = 30): Promise<number> {
-  return activeSyncPort.purgeExpiredCloudTombstones(maxAgeDays);
+  return getActiveSyncBackend().purgeExpiredDeletes(maxAgeDays);
 }
 
 /** 轻量探活：只拉 (id, updated_at, version, is_deleted[, 印记列]) 指纹，无大字段。 */
 export async function downloadTabGroupsDigest(): Promise<TabGroupDigest[]> {
-  return activeSyncPort.fetchTabGroupsDigest();
+  const fingerprints = await getActiveSyncBackend().fetchFingerprints();
+  return fingerprints.map(toDigestLike);
 }
