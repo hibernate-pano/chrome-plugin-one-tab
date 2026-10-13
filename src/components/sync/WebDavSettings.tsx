@@ -41,6 +41,7 @@ import { WebDavClient } from '@/sync-backend/webdav/client';
 import { WebDavBackendAdapter } from '@/sync-backend/webdav/adapter';
 import { chromeKvAdapter } from '@/sync-backend/webdav/config';
 import { primeSyncBackend } from '@/sync-backend';
+import { ensureHostPermission, PERMISSION_DENIED_MESSAGE } from '@/sync-backend/webdav/permission';
 import { logWarn } from '@/utils/log';
 
 type CheckState =
@@ -120,6 +121,20 @@ export const WebDavSettings: React.FC = () => {
     }
     setCheck({ kind: 'checking' });
     try {
+      // ⚠️ 必须先拿到主机权限，否则 fetch 会被浏览器**在本地拦下**，
+      // 表现成「连接失败」——而用户完全看不出原因是「没给权限」。
+      // request 必须发生在用户手势里，这里正是按钮点击的回调。
+      const permitted = await ensureHostPermission(baseUrl, { request: true });
+      if (!permitted) {
+        setCheck({
+          kind: 'done',
+          ok: false,
+          groups: 0,
+          conditionalWrites: false,
+          message: PERMISSION_DENIED_MESSAGE,
+        });
+        return;
+      }
       const client = new WebDavClient({ baseUrl, username, password });
       const adapter = new WebDavBackendAdapter({
         client,
