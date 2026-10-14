@@ -605,3 +605,84 @@ describe('2026-10-14 修 P2：建库前先传设置', () => {
     assert.deepEqual(back, { theme: 'dark' }, '设置必须能往返读回');
   });
 });
+
+// ── 2026-10-14 坚果云真机实测发现 ─────────────────────────────────────────
+//
+// 实测（https://dav.jianguoyun.com/dav/，2026-10-14）：
+//   · PUT **响应不带 ETag**（putEtag = null）
+//   · PROPFIND 不返回 getetag（只返回 getlastmodified）
+//   · GET **带** ETag，且该 ETag 可直接用于 If-Match
+//     （正确 ETag 写 → 204；过期 ETag 写 → 412 ⇒ 真乐观锁成立）
+//   · If-None-Match / WebDAV If 头 / If-Unmodified-Since 一律忽略
+//
+// 「PUT 不返回 ETag」这一条曾让适配器把 null 存进 manifest，
+// 而那个 etag 就是**下一次写该分片的 If-Match 条件** ⇒ 退化成无条件覆盖 ⇒
+// 坚果云明明支持乐观锁，我们却在裸写。这是「以为有锁」而非「没有锁」。
+
+describe('2026-10-14 坚果云形态：PUT 不返 ETag 时读回一个', () => {
+  /**
+   * 模拟坚果云：PUT 响应无 ETag，但 GET / PROPFIND 都给 ETag，且 If-Match 真生效。
+   *
+   * ⚠️ 为什么是「包装实例」而不是继承：FakeDav 的 `fetch` 是**字段**，
+   * 子类里 `super.fetch` 在字段初始化阶段拿到 undefined（第一版就这么写，
+   * 3 条用例全红报 "fetch is not a function" —— 看着像实现坏了，
+   * 其实是测试的继承写法错了，方向搞反会引入真 bug）。
+   * 直接在实例上包一层：语义相同，且没有字段初始化顺序坑。
+   */
+  function jiuGuoLike(): FakeDav {
+    const dav = new FakeDav();
+    const base = dav.fetch;
+    dav.fetch = (async (url: string | URL, init?: RequestInit) => {
+      const res = await base(url, init);
+      if (String(init?.method ?? 'GET') === 'PUT') {
+        // 抹掉 PUT 响应的 ETag，但保留状态码（坚果云真实行为）
+        return {
+          status: res.status,
+          ok: res.ok,
+          headers: { get: () => null },
+          text: async () => '',
+        } as unknown as Response;
+      }
+      return res;
+    }) as unknown as typeof fetch;
+    return dav;
+  }
+
+  it('写分片后 manifest 里的 etag 非空（否则下次写退化成无条件覆盖）', async () => {
+    const dav = jiuGuoLike();
+    const { adapter } = makeAdapter(dav);
+    await adapter.uploadGroups([makeGroup('aa1', { lastOp: { d: 'dev-A', s: 5 } })]);
+
+    const manifest = JSON.parse(dav.read(M)!.body) as { shards: Array<{ id: string; etag?: string }> };
+    const entry = manifest.shards.find(s => s.id === 'aa1');
+    assert.ok(entry, '条目必须在');
+    assert.ok(
+      typeof entry!.etag === 'string' && entry!.etag.length > 0,
+      `manifest 必须存到 ETag（PUT 不返回时要读回），实际 ${JSON.stringify(entry!.etag)}`
+    );
+  });
+
+  it('读回的 ETag 能被下一次写真正用上（If-Match 真生效，不是摆设）', async () => {
+    const dav = jiuGuoLike();
+    const { adapter } = makeAdapter(dav);
+    await adapter.uploadGroups([makeGroup('aa1', { lastOp: { d: 'dev-A', s: 5 } })]);
+
+    // 第二次改同一会话：必须带 If-Match（老版本无 etag 时不会带）
+    const out = await adapter.uploadGroups([makeGroup('aa1', { name: 'v2', lastOp: { d: 'dev-A', s: 9 } })]);
+    assert.equal(out.writtenIds.length, 1, '应写入成功');
+    const usedIfMatch = dav.calls.some(
+      c => c.method === 'PUT' && c.path.includes('/aa1.json') && c.headers['if-match']
+    );
+    assert.ok(usedIfMatch, '第二次写必须带 If-Match —— 缺它等于没有并发保护');
+  });
+
+  it('服务端忽略 If-Match 时（dufs 形态）往返仍可用（降级不崩）', async () => {
+    const dav = jiuGuoLike();
+    dav.ignoreConditionalWrites = true;
+    const { adapter } = makeAdapter(dav);
+    await adapter.uploadGroups([makeGroup('aa1', { lastOp: { d: 'dev-A', s: 5 } })]);
+    const out = await adapter.uploadGroups([makeGroup('aa1', { name: 'v2', lastOp: { d: 'dev-A', s: 9 } })]);
+    assert.equal(out.writtenIds.length, 1);
+    assert.equal((await adapter.downloadGroups())[0]?.name, 'v2');
+  });
+});

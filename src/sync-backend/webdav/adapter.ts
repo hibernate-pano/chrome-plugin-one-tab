@@ -269,10 +269,27 @@ export class WebDavBackendAdapter implements SyncBackendPort {
 
     const path = this.p(shardPath(id));
     await this.client.mkdirp(this.p(`${GROUPS_DIR}/${id.slice(0, 2)}`));
-    return this.client.put(path, serializeEnvelope(envelope), {
+    const out = await this.client.put(path, serializeEnvelope(envelope), {
       ...(opts.ifMatch ? { ifMatch: opts.ifMatch } : {}),
       ...(opts.ifNoneMatch ? { ifNoneMatch: opts.ifNoneMatch } : {}),
     });
+    // ── 服务端不返回 ETag 时，读回一个（2026-10-14 坚果云真机实测）────────
+    // 坚果云实测：PUT **响应**不带 ETag，但 GET 带，且该 ETag 可直接用于
+    // If-Match（正确 ETag 写 → 204、过期 ETag 写 → 412，真乐观锁成立）。
+    //
+    // 为什么必须补：manifest 条目里的 etag 是**下一次写这个分片的 If-Match 条件**。
+    // 若这里存 null，下次 `existing?.etag` 为 undefined ⇒ 不带条件 ⇒
+    // 无条件覆盖 ⇒ 坚果云明明支持乐观锁，我们却在用裸写。
+    // 表现是「以为有锁」，比「没有锁」更糟。
+    if (out.etag) return out;
+    try {
+      const readBack = await this.client.stat(path);
+      return { etag: readBack.etag };
+    } catch {
+      // 读不回 ETag 不阻断本轮写入（数据已落盘），只是这次没有乐观锁条件。
+      // 认输预检（stamp 比较）仍然有效，它是与服务端能力无关的那一层。
+      return { etag: null };
+    }
   }
 
   /** 读一个分片并解码成会话。返回 null = 文件缺失或不可解析（计入统计，不静默丢）。 */
