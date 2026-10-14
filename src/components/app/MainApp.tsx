@@ -60,27 +60,9 @@ export const MainApp: React.FC = () => {
               </Suspense>
             </main>
               <footer className="app-shell theme-shell border-t theme-border-default text-xs text-gray-600 dark:text-gray-400">
-                {/* 版本 + slogan 一行居中：原左右分挂两头，弱信息占满整行宽 */}
-                <div className={`w-full py-2 ${getContainerWidthClass()} flex justify-center items-center gap-2`}>
-                  <span className="flex items-center gap-1.5">
-                    <svg
-                      xmlns="http://www.w3.org/2000/svg"
-                      className="h-4 w-4 text-primary-600"
-                      fill="none"
-                      viewBox="0 0 24 24"
-                      stroke="currentColor"
-                    >
-                      <path
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        strokeWidth={2}
-                        d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"
-                      />
-                    </svg>
-                    TapStack {getAppVersionLabel()}
-                  </span>
-                  <span aria-hidden="true">·</span>
-                  <span>Save the session. Find it later.</span>
+                {/* 弱信息收进右下小字：版本号低优先级，不占整行居中 */}
+                <div className={`w-full py-1.5 ${getContainerWidthClass()} flex justify-end items-center`}>
+                  <span className="tab-group-time" title="TapStack 版本">TapStack {getAppVersionLabel()}</span>
                 </div>
               </footer>
             </>

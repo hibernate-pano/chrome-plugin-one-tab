@@ -67,24 +67,22 @@
   z-index: 100;
 }
 
-/* 搜索结果高亮动画 */
-@keyframes highlight-pulse {
-  0% {
-    background-color: rgba(59, 130, 246, 0.2);
+/* 搜索结果高亮 —— 静态底色，首帧一次淡入，不再整屏“呼吸”。
+   长时间找会话不眼疲劳；prefers-reduced-motion 下由 global.css 统一关闭动画。 */
+@keyframes highlight-enter {
+  from {
+    background-color: rgba(37, 99, 235, 0.32);
   }
-  50% {
-    background-color: rgba(59, 130, 246, 0.3);
-  }
-  100% {
-    background-color: rgba(59, 130, 246, 0.2);
+  to {
+    background-color: rgba(37, 99, 235, 0.18);
   }
 }
 
 .search-highlight {
-  background-color: rgba(59, 130, 246, 0.2);
-  border-radius: 2px;
+  background-color: rgba(37, 99, 235, 0.18);
+  border-radius: 4px;
   padding: 0 2px;
-  animation: highlight-pulse 1.5s infinite;
+  animation: highlight-enter 0.4s ease-out 1;
 }
 
 .dark .search-highlight {

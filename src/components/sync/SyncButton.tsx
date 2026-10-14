@@ -4,7 +4,7 @@ import { useAppSelector, useAppDispatch } from '@/store/hooks';
 import { loadGroups } from '@/store/slices/tabSlice';
 import { downloadTabGroups } from '@/services/tabGroupSyncService';
 import { sendSyncCommand } from '@/shared/mutationProtocol';
-import { createSimulatedProgress, decideOverwriteClick, getSyncStrategyLabel, isOverwriteGateOpen, renderPreviewSummary, syncModeOf } from './syncPreviewView';
+import { decideOverwriteClick, getSyncStrategyLabel, isOverwriteGateOpen, renderPreviewSummary, syncModeOf } from './syncPreviewView';
 
 // 与 syncEngine.SyncOperation 同语义（仅 UI 进度条用），本文件不再 import syncEngine。
 type SyncOperation = 'upload' | 'download' | 'none';
@@ -76,7 +76,6 @@ export const SyncButton: React.FC<SyncButtonProps> = () => {
   const settings = useAppSelector(state => state.settings);
   const [isWorking, setIsWorking] = useState(false);
   const [workingOperation, setWorkingOperation] = useState<SyncOperation>('none');
-  const [workingProgress, setWorkingProgress] = useState(0);
   const [showUploadModal, setShowUploadModal] = useState(false);
   const [showDownloadModal, setShowDownloadModal] = useState(false);
   const [modalAnimation, setModalAnimation] = useState('');
@@ -272,12 +271,9 @@ export const SyncButton: React.FC<SyncButtonProps> = () => {
       );
       setIsWorking(true);
       setWorkingOperation(direction);
-      // 进度条本地模拟：跨消息边界 SW 端的 onProgress 不会回传到 popup，
-      // 此处驱动本地进度条 UI；真实结果经 sendSyncCommand 消息回传。
-      const progressTimer = createSimulatedProgress(setWorkingProgress);
+      // 真实进度在 SW 侧，跨消息边界不会回传到 popup：
+      // 顶栏用不定式条表达“进行中”，真实结果经 sendSyncCommand 消息回传。
       const res = await sendSyncCommand(direction, spec.command);
-      clearTimeout(progressTimer);
-      setWorkingProgress(100);
 
       if (res.ok) {
         if (spec.refreshLocal) {
@@ -330,7 +326,6 @@ export const SyncButton: React.FC<SyncButtonProps> = () => {
     } finally {
       setIsWorking(false);
       setWorkingOperation('none');
-      setWorkingProgress(0);
     }
   };
 
@@ -342,11 +337,14 @@ export const SyncButton: React.FC<SyncButtonProps> = () => {
     <>
       <div className="sync-button flex items-center gap-2">
         {workingOperation !== 'none' && isWorking && (
-          <div className="w-16 bg-gray-200 rounded-full h-1.5">
-            <div
-              className={`h-1.5 rounded-full ${workingOperation === 'upload' ? 'bg-green-600' : 'bg-primary-600'}`}
-              style={{ width: `${workingProgress}%` }}
-            ></div>
+          <div
+            className="h-1.5 w-16 overflow-hidden rounded-full bg-gray-200 dark:bg-slate-700"
+            role="progressbar"
+            aria-label={workingOperation === 'upload' ? '正在上传' : '正在下载'}
+          >
+            {/* 不定式进度：真实进度在 SW 侧，popup 拿不到回传；
+                用匀速假百分比会给虚假安全感，改为来回扫动的条 + 文字说明 */}
+            <div className="h-full w-1/2 animate-pulse rounded-full bg-current text-green-600 motion-safe:animate-[tapstack-indeterminate_1.2s_ease-in-out_infinite]" />
           </div>
         )}
 
@@ -430,7 +428,7 @@ export const SyncButton: React.FC<SyncButtonProps> = () => {
               aria-labelledby={uploadTitleId}
               aria-describedby={uploadDescriptionId}
               tabIndex={-1}
-              className={`relative w-full max-w-5xl overflow-hidden rounded-[28px] border border-slate-200/80 bg-white/95 shadow-[0_28px_80px_rgba(15,23,42,0.28)] ring-1 ring-white/60 backdrop-blur focus:outline-none dark:border-slate-700/80 dark:bg-slate-900/95 dark:ring-slate-800/80 ${modalAnimation}`}
+              className={`relative w-full max-w-lg overflow-hidden theme-radius-panel border border-slate-200/80 bg-white/95 shadow-[0_28px_80px_rgba(15,23,42,0.28)] ring-1 ring-white/60 backdrop-blur focus:outline-none dark:border-slate-700/80 dark:bg-slate-900/95 dark:ring-slate-800/80 ${modalAnimation}`}
               onClick={(e) => e.stopPropagation()}
             >
               <button
@@ -439,14 +437,12 @@ export const SyncButton: React.FC<SyncButtonProps> = () => {
                 className="absolute right-4 top-4 inline-flex h-9 w-9 items-center justify-center rounded-full border border-slate-200/80 bg-white/80 text-slate-500 transition-colors hover:border-slate-300 hover:text-slate-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-400 dark:border-slate-700/80 dark:bg-slate-900/80 dark:text-slate-400 dark:hover:border-slate-600 dark:hover:text-slate-200"
                 aria-label="关闭同步弹窗"
               >
-                <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
                   <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
                 </svg>
               </button>
 
               <div className="px-6 pb-6 pt-6 sm:px-7 sm:pb-7 sm:pt-7">
-                {/* 描述区固定最小高度：上传弹窗没有「当前合并策略」那行，下载有；
-                    不固定的话两个弹窗高度不同，看起来「大小不一」。 */}
                 <div className="mb-4 min-h-[4.5rem] text-center">
                   <h3 id={uploadTitleId} className="text-xl font-semibold tracking-tight text-slate-900 dark:text-slate-50">上传到云端</h3>
                   <p id={uploadDescriptionId} className="mt-2 text-sm leading-6 text-slate-600 dark:text-slate-300">先看这次会怎么改动云端会话，再决定覆盖还是合并</p>
@@ -469,13 +465,13 @@ export const SyncButton: React.FC<SyncButtonProps> = () => {
                   )}
                 </div>
 
-                <div className="grid gap-4 lg:grid-cols-2">
+                <div className="grid grid-cols-1 gap-4">
                   <button
                     type="button"
                     onClick={() => void handleSyncActionClick('upload.overwrite')}
                     disabled={uploadOverwriteState.type === 'blocked'}
                     aria-disabled={uploadOverwriteState.type === 'blocked'}
-                    className="flex w-full flex-col justify-start overflow-hidden rounded-[24px] border border-rose-200/70 bg-white text-left shadow-sm transition-transform duration-200 hover:-translate-y-0.5 hover:shadow-lg focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-rose-500 disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:translate-y-0 disabled:hover:shadow-sm dark:border-rose-500/20 dark:bg-slate-900/80"
+                    className="flex w-full flex-col justify-start overflow-hidden theme-radius-card border border-rose-200/70 bg-white text-left shadow-sm transition-transform duration-200 hover:-translate-y-0.5 hover:shadow-lg focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-rose-500 disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:translate-y-0 disabled:hover:shadow-sm dark:border-rose-500/20 dark:bg-slate-900/80"
                   >
                     <div className="flex items-center justify-center bg-rose-600 px-5 py-3.5 text-white">
                       <svg xmlns="http://www.w3.org/2000/svg" className="h-8 w-8" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -503,7 +499,7 @@ export const SyncButton: React.FC<SyncButtonProps> = () => {
                   <button
                     type="button"
                     onClick={() => void handleSyncActionClick('upload.merge')}
-                    className="flex w-full cursor-pointer flex-col justify-start overflow-hidden rounded-[24px] border border-emerald-200/70 bg-white text-left shadow-sm transition-transform duration-200 hover:-translate-y-0.5 hover:shadow-lg focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-500 dark:border-emerald-500/20 dark:bg-slate-900/80"
+                    className="flex w-full cursor-pointer flex-col justify-start overflow-hidden theme-radius-card border border-emerald-200/70 bg-white text-left shadow-sm transition-transform duration-200 hover:-translate-y-0.5 hover:shadow-lg focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-500 dark:border-emerald-500/20 dark:bg-slate-900/80"
                   >
                     <div className="flex items-center justify-center bg-emerald-600 px-5 py-3.5 text-white">
                       <svg xmlns="http://www.w3.org/2000/svg" className="h-8 w-8" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -542,7 +538,7 @@ export const SyncButton: React.FC<SyncButtonProps> = () => {
               aria-labelledby={downloadTitleId}
               aria-describedby={downloadDescriptionId}
               tabIndex={-1}
-              className={`relative w-full max-w-5xl overflow-hidden rounded-[28px] border border-slate-200/80 bg-white/95 shadow-[0_28px_80px_rgba(15,23,42,0.28)] ring-1 ring-white/60 backdrop-blur focus:outline-none dark:border-slate-700/80 dark:bg-slate-900/95 dark:ring-slate-800/80 ${modalAnimation}`}
+              className={`relative w-full max-w-lg overflow-hidden theme-radius-panel border border-slate-200/80 bg-white/95 shadow-[0_28px_80px_rgba(15,23,42,0.28)] ring-1 ring-white/60 backdrop-blur focus:outline-none dark:border-slate-700/80 dark:bg-slate-900/95 dark:ring-slate-800/80 ${modalAnimation}`}
               onClick={(e) => e.stopPropagation()}
             >
               <button
@@ -551,7 +547,7 @@ export const SyncButton: React.FC<SyncButtonProps> = () => {
                 className="absolute right-4 top-4 inline-flex h-9 w-9 items-center justify-center rounded-full border border-slate-200/80 bg-white/80 text-slate-500 transition-colors hover:border-slate-300 hover:text-slate-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-400 dark:border-slate-700/80 dark:bg-slate-900/80 dark:text-slate-400 dark:hover:border-slate-600 dark:hover:text-slate-200"
                 aria-label="关闭同步弹窗"
               >
-                <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
                   <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
                 </svg>
               </button>
@@ -581,13 +577,13 @@ export const SyncButton: React.FC<SyncButtonProps> = () => {
                   )}
                 </div>
 
-                <div className="grid gap-4 lg:grid-cols-2">
+                <div className="grid grid-cols-1 gap-4">
                   <button
                     type="button"
                     onClick={() => void handleSyncActionClick('download.overwrite')}
                     disabled={downloadOverwriteState.type === 'blocked'}
                     aria-disabled={downloadOverwriteState.type === 'blocked'}
-                    className="flex w-full flex-col justify-start overflow-hidden rounded-[24px] border border-rose-200/70 bg-white text-left shadow-sm transition-transform duration-200 hover:-translate-y-0.5 hover:shadow-lg focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-rose-500 disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:translate-y-0 disabled:hover:shadow-sm dark:border-rose-500/20 dark:bg-slate-900/80"
+                    className="flex w-full flex-col justify-start overflow-hidden theme-radius-card border border-rose-200/70 bg-white text-left shadow-sm transition-transform duration-200 hover:-translate-y-0.5 hover:shadow-lg focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-rose-500 disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:translate-y-0 disabled:hover:shadow-sm dark:border-rose-500/20 dark:bg-slate-900/80"
                   >
                     <div className="flex items-center justify-center bg-rose-600 px-5 py-3.5 text-white">
                       <svg xmlns="http://www.w3.org/2000/svg" className="h-8 w-8" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -614,7 +610,7 @@ export const SyncButton: React.FC<SyncButtonProps> = () => {
                   <button
                     type="button"
                     onClick={() => void handleSyncActionClick('download.merge')}
-                    className="flex w-full cursor-pointer flex-col justify-start overflow-hidden rounded-[24px] border border-sky-200/70 bg-white text-left shadow-sm transition-transform duration-200 hover:-translate-y-0.5 hover:shadow-lg focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sky-500 dark:border-sky-500/20 dark:bg-slate-900/80"
+                    className="flex w-full cursor-pointer flex-col justify-start overflow-hidden theme-radius-card border border-sky-200/70 bg-white text-left shadow-sm transition-transform duration-200 hover:-translate-y-0.5 hover:shadow-lg focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sky-500 dark:border-sky-500/20 dark:bg-slate-900/80"
                   >
                     <div className="flex items-center justify-center bg-sky-600 px-5 py-3.5 text-white">
                       <svg xmlns="http://www.w3.org/2000/svg" className="h-8 w-8" fill="none" viewBox="0 0 24 24" stroke="currentColor">

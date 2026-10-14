@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, ReactNode, useEffect } from 'react';
+import React, { createContext, useContext, useState, ReactNode, useEffect, useCallback } from 'react';
 import Toast, { ToastType } from '../components/common/Toast';
 import ConfirmDialog, { ConfirmDialogProps } from '../components/common/ConfirmDialog';
 import AlertDialog, { AlertDialogProps } from '../components/common/AlertDialog';
@@ -25,13 +25,23 @@ interface ToastProviderProps {
   children: ReactNode;
 }
 
+interface QueuedToast {
+  id: number;
+  visible: boolean;
+  message: string;
+  type: ToastType;
+  duration: number;
+}
+
+let toastSeq = 0;
+
+/**
+ * Toast 队列（2026-10-14 UI 打磨）：
+ * 原先单例存一条，删除广播警告 + 成功提示连发时互相顶掉。
+ * 现最多同时堆叠 3 条：error 常驻（duration 0 = 不自动消失）、其余 3s 自动退场。
+ */
 export const ToastProvider: React.FC<ToastProviderProps> = ({ children }) => {
-  const [toast, setToast] = useState({
-    visible: false,
-    message: '',
-    type: 'success' as ToastType,
-    duration: 3000,
-  });
+  const [queue, setQueue] = useState<QueuedToast[]>([]);
 
   const [confirmDialog, setConfirmDialog] = useState<ConfirmDialogProps>({
     visible: false,
@@ -48,14 +58,16 @@ export const ToastProvider: React.FC<ToastProviderProps> = ({ children }) => {
     onClose: () => { },
   });
 
-  const showToast = (message: string, type: ToastType = 'success', duration: number = 3000) => {
-    setToast({
-      visible: true,
-      message,
-      type,
-      duration,
-    });
-  };
+  const showToast = useCallback((message: string, type: ToastType = 'success', duration: number = 3000) => {
+    const id = ++toastSeq;
+    // error 默认常驻，需用户手动关闭，避免关键失败一闪而过
+    const effectiveDuration = type === 'error' && duration === 3000 ? 0 : duration;
+    setQueue(prev => [...prev.slice(-2), { id, visible: true, message, type, duration: effectiveDuration }]);
+  }, []);
+
+  const dismissToast = useCallback((id: number) => {
+    setQueue(prev => prev.filter(t => t.id !== id));
+  }, []);
 
   const showConfirm = (options: Omit<ConfirmDialogProps, 'visible'>) => {
     setConfirmDialog({
@@ -71,10 +83,6 @@ export const ToastProvider: React.FC<ToastProviderProps> = ({ children }) => {
     });
   };
 
-  const handleToastClose = () => {
-    setToast(prev => ({ ...prev, visible: false }));
-  };
-
   const handleConfirmClose = () => {
     setConfirmDialog(prev => ({ ...prev, visible: false }));
   };
@@ -88,18 +96,22 @@ export const ToastProvider: React.FC<ToastProviderProps> = ({ children }) => {
     errorHandler.setToastCallback((message: string, type: 'error' | 'warning') => {
       showToast(message, type);
     });
-  }, []);
+  }, [showToast]);
 
   return (
     <ToastContext.Provider value={{ showToast, showConfirm, showAlert }}>
       {children}
-      <Toast
-        visible={toast.visible}
-        message={toast.message}
-        type={toast.type}
-        duration={toast.duration}
-        onClose={handleToastClose}
-      />
+      {queue.map((item, index) => (
+        <Toast
+          key={item.id}
+          visible={item.visible}
+          message={item.message}
+          type={item.type}
+          duration={item.duration}
+          stackIndex={queue.length - 1 - index}
+          onClose={() => dismissToast(item.id)}
+        />
+      ))}
       <ConfirmDialog
         {...confirmDialog}
         onConfirm={async () => {

@@ -1,11 +1,12 @@
 import React, { useEffect, useState, useCallback, useRef } from 'react';
 import { useAppDispatch, useAppSelector } from '@/store/hooks';
-import { updateGroupNameAndSync, toggleGroupLockAndSync, deleteGroup, deleteBroadcastWarn, deleteTabAndSync, moveTabAndSync, markTabOpened } from '@/store/slices/tabSlice';
+import { updateGroupNameAndSync, toggleGroupLockAndSync, deleteGroup, deleteBroadcastWarn, deleteTabAndSync, moveTabAndSync } from '@/store/slices/tabSlice';
 import { DraggableTab } from '@/components/dnd/DraggableTab';
 import { TabGroup as TabGroupType, Tab } from '@/types/tab';
 import { useToast } from '@/contexts/ToastContext';
 import { useEnhancedToast } from '@/utils/toastHelper';
 import { OpenGuard, OpenAllGuard } from '@/utils/openGuard';
+import { isOpenableTabUrl } from '@/utils/inputValidation';
 import { useNearViewport } from '@/hooks/useNearViewport';
 import { resolveRowWindow } from './lazyTabRows';
 import { trackProductEvent } from '@/utils/productEvents';
@@ -145,8 +146,8 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
     }
 
     showConfirm({
-      title: '删除确认',
-      message: '确定要删除这个会话吗？删除后无法恢复。',
+      title: `删除「${group.name}」？`,
+      message: `将永久删除该会话内的 ${group.tabs.length} 个标签记录，删除后无法恢复。确认继续吗？`,
       type: 'danger',
       confirmText: '删除',
       cancelText: '取消',
@@ -271,24 +272,66 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
     // 锁定组不删本地项、恢复立即可见，只需防双击（见 openCooldownMs）；
     // 失败必须 release，否则该 tab 会被记住一整个冷却窗口、点重试无反应。
     const guard = openGuardRef.current as OpenGuard;
-    // 【2026-10-07 P1-2】原先这里是 tryAcquire 失败就**静默 return**（用户点了
-    // 完全没反应），现在补上一句话解释 —— 项目自己的原则是「按了键没反应必须
-    // 有一句话解释」，否则「无感」会变成「无声」，和坏了无法区分。
+    // 【冷却命中必须出声】tryAcquire 失败就静默 return 等于「点了没反应」——
+    // 项目原则是「按了键没反应必须有一句话解释」，否则「无感」变成「无声」。
     if (!guard.tryAcquire(tab.id, group.isLocked)) {
       showRestoreError('刚刚已打开这个标签，正在冷却中，请稍候再试');
       return;
     }
-    // 【2026-10-07 P1-2】原先此处会顺手 deleteTabAndSync ——「点开即从会话删除」。
-    // 这把一个不可撤销的破坏性操作挂在了看起来像导航的点击上：用户只是想打开
-    // 一个文档，回来发现记录没了，且与旁边的删除按钮撞形、都无法撤销。
-    // 现在改成两步：点开只标记 openedAt（该行灰化 + 出现显式「移除」按钮），
-    // 消费成为用户明确的第二次动作。
-    dispatch(markTabOpened({ groupId: group.id, tabId: tab.id }));
-    chrome.runtime.sendMessage({
-      type: 'OPEN_TAB',
-      data: { url: tab.url, pinned: !!tab.pinned }
-    });
-  }, [dispatch, group, showRestoreError]);
+    const releaseOnFailure = () => guard.release(tab.id);
+    // ── 点开即消费（2026-10-14，用户决策反转 1.22.13 的两步语义） ──────────
+    // 顺序：先开后删，SW 回包 success 才删 —— 比 1.22.12 原版多一道成功门。
+    // 原版是无条件删（SW 拒开也照删：开了没看到页面，记录也没了，两头空）。
+    // 锁定组从不消费（与整组恢复语义一致：锁定会话恢复后保留、可反复用）。
+    if (group.isLocked) {
+      chrome.runtime.sendMessage({
+        type: 'OPEN_TAB',
+        data: { url: tab.url, pinned: !!tab.pinned }
+      }).catch(error => {
+        logError('打开标签失败:', error);
+        showRestoreError(`打开失败：${error?.message || '未知错误'}`);
+      });
+      return;
+    }
+    // popup 侧前置拦截：本设备打不开的地址（file:/blob:/内部页面）连 SW 都不问，
+    // 直接提示并保留记录 —— SW 的拒开文案同样是「已保留在会话中」，两处同口径。
+    if (!isOpenableTabUrl(tab.url)) {
+      releaseOnFailure();
+      showRestoreError('此标签在当前设备无法打开，已保留在会话中');
+      return;
+    }
+    chrome.runtime.sendMessage(
+      {
+        type: 'OPEN_TAB',
+        data: { url: tab.url, pinned: !!tab.pinned }
+      },
+      (res: unknown) => {
+        const r = res as { success?: boolean; error?: string } | undefined;
+        if (r && r.success === false) {
+          // SW 明确拒开：开了没看到页面，记录保留（用户批复：拒开不删）。
+          releaseOnFailure();
+          showRestoreError(r.error || '打开失败，已保留在会话中');
+          return;
+        }
+        // SW 无回包（无 URL 的 break 分支）同样不删：没证据证明打开了。
+        if (!r || r.success !== true) {
+          releaseOnFailure();
+          showRestoreError('打开失败，已保留在会话中');
+          return;
+        }
+        dispatch(deleteTabAndSync({ groupId: group.id, tabId: tab.id }))
+          .unwrap()
+          .then(payload => {
+            const warn = deleteBroadcastWarn(payload);
+            if (warn) showDeleteError(warn);
+          })
+          .catch(error => {
+            logError('打开后从会话移除失败:', error);
+            showDeleteError(`标签已打开，但从会话移除失败: ${error.message || '未知错误'}`);
+          });
+      }
+    );
+  }, [dispatch, group, showRestoreError, showDeleteError]);
 
   const handleMoveTab = useCallback((sourceGroupId: string, sourceIndex: number, targetGroupId: string, targetIndex: number) => {
     dispatch(moveTabAndSync({
@@ -382,7 +425,7 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
                 id={`tab-group-title-${group.id}`}
                 className="tab-group-title truncate cursor-pointer tab-group-title-hover transition-colors flat-interaction min-w-0"
                 onClick={() => !group.isLocked && setIsEditing(true)}
-                title={group.isLocked ? group.name : '点击编辑会话名称'}
+                title={group.isLocked ? '会话已锁定，先解锁才能重命名' : '点击编辑会话名称'}
                 tabIndex={0}
                 onKeyDown={(e) => {
                   if (e.key === 'Enter' || e.key === ' ') {
@@ -421,11 +464,10 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
           </span>
         </div>
 
-        {/* 操作按钮。group-focus-within/card 是键盘可达的等价态：
-            此前只有 group-hover/card 显形，纯键盘用户 Tab 进来看到的是一片空白，
-            按 Enter 等于对「看不见的按钮」盲操作。
-            触屏没有 hover：在窄屏常驻显示，避免关键操作藏到看不见的地方。 */}
-        <div className="flex items-center gap-0.5 sm:gap-1 opacity-100 md:opacity-0 md:group-hover/card:opacity-100 md:group-focus-within/card:opacity-100 group-focus-within/card:opacity-100 transition-all duration-200 ease-out flex-shrink-0">
+        {/* 操作按钮：恢复常驻，其余 hover 显。
+            恢复是核心“找回”动作，零学习成本；触屏无 hover 窄屏常驻；
+            键盘 focus-within 同样显形，避免对不可见控件盲操作。 */}
+        <div className="flex items-center gap-0.5 sm:gap-1 opacity-100 transition-all duration-200 ease-out flex-shrink-0">
           {/* 恢复全部（新窗口） */}
           <button
             onClick={handleOpenAllTabs}
@@ -526,7 +568,6 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
                     moveTab={handleMoveTab}
                     handleOpenTab={handleOpenTab}
                     handleDeleteTab={handleDeleteTab}
-                    isLockedGroup={group.isLocked}
                   />
                 ))
               ) : (

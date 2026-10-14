@@ -24,6 +24,8 @@ interface ToastProps {
   duration?: number;
   onClose?: () => void;
   visible: boolean;
+  /** 在队列中的堆叠序号，用于错开底部位置，避免多条互相遮挡 */
+  stackIndex?: number;
 }
 
 /**
@@ -39,7 +41,8 @@ export const Toast: React.FC<ToastProps> = ({
   type = 'success',
   duration = 3000,
   onClose,
-  visible
+  visible,
+  stackIndex = 0,
 }) => {
   const [isVisible, setIsVisible] = useState(visible);
   const [animation, setAnimation] = useState('animate-fadeIn');
@@ -57,6 +60,9 @@ export const Toast: React.FC<ToastProps> = ({
     if (!visible) return;
 
     setAnimation('animate-fadeIn');
+
+    // duration <= 0 表示常驻（error 默认），需用户手动关闭
+    if (duration <= 0) return;
 
     let fadeOutTimer: ReturnType<typeof setTimeout> | undefined = undefined;
 
@@ -154,21 +160,23 @@ export const Toast: React.FC<ToastProps> = ({
       role={isAssertive ? 'alert' : 'status'}
       aria-live={isAssertive ? 'assertive' : 'polite'}
       aria-atomic="true"
-      className={`pointer-events-none fixed right-4 top-4 z-[110] ${isVisible ? animation : ''}`}
+      className={`pointer-events-none fixed bottom-4 left-1/2 z-[110] -translate-x-1/2 ${isVisible ? animation : ''}`}
+      style={{ marginBottom: stackIndex * 76 }}
     >
       <style>{PROGRESS_KEYFRAMES}</style>
 
       {isVisible && (
         <div
-          className={`pointer-events-auto relative min-w-0 max-w-[calc(100vw-2rem)] overflow-hidden rounded-2xl border shadow-[0_20px_60px_rgba(15,23,42,0.18)] backdrop-blur ${typeStyles.shell}`}
+          className={`pointer-events-auto relative min-w-0 max-w-[calc(100vw-2rem)] overflow-hidden theme-radius-card border shadow-[0_20px_60px_rgba(15,23,42,0.18)] backdrop-blur ${typeStyles.shell}`}
         >
           <div
             className={`h-1 w-full ${typeStyles.accent}`}
             style={{
               transformOrigin: 'left',
-              animation: isVisible
+              animation: duration > 0 && isVisible
                 ? `tapstack-toast-progress ${duration}ms linear forwards`
                 : 'none',
+              opacity: duration > 0 ? 1 : 0,
             }}
           />
           <div className="flex items-start gap-3 px-4 py-4">

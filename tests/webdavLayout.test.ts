@@ -174,11 +174,12 @@ describe('会话编解码', () => {
     assert.equal(decodeGroup(encoded)?.tabs[0].unopenable, undefined);
   });
 
-  it('纯 UI 态字段（openedAt / syncStatus）不进远端', () => {
+  it('纯 UI 态字段（syncStatus）不进远端', () => {
+    // openedAt 已随 1.24.1「点开即消费」删除（字段本身不存在，无需再断言排除）。
     const g = makeGroup();
-    g.tabs[0].openedAt = 123;
+    g.tabs[0].syncStatus = 'synced';
     const tabs = encodeGroup(g).tabs as Array<Record<string, unknown>>;
-    assert.ok(!('openedAt' in tabs[0]));
+    assert.ok(!('syncStatus' in tabs[0]));
   });
 
   it('宽容解析：tabs 不是数组时保留会话（会话丢失比标签少更糟）', () => {

@@ -1,7 +1,8 @@
 import React, { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState, useTransition } from 'react';
 import { useAppDispatch, useAppSelector } from '@/store/hooks';
 import { Tab, TabGroup } from '@/types/tab';
-import { deleteGroup, deleteTabAndSync, markTabOpened, deleteBroadcastWarn } from '@/store/slices/tabSlice';
+import { deleteGroup, deleteTabAndSync, deleteBroadcastWarn } from '@/store/slices/tabSlice';
+import { isOpenableTabUrl } from '@/utils/inputValidation';
 import { useToast } from '@/contexts/ToastContext';
 import { useEnhancedToast } from '@/utils/toastHelper';
 import { trackProductEvent } from '@/utils/productEvents';
@@ -260,26 +261,47 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({ searchQuery 
   };
 
   const handleOpenTab = (tab: Tab, group: TabGroup) => {
-    // 【2026-10-07 P1-2】与 TabGroup.handleOpenTab 同一处修正：原先这里也会
-    // 顺手删掉本地记录（「点开即从会话删除」）。两处必须同口径，否则用户在
-    // 列表里点开不删、搜出来点开却删 —— 同一个产品在两个界面两种行为。
-    // 现在点开只标记 openedAt，消费改为行内的显式「移除」。
-    if (!group.isLocked) {
-      dispatch(markTabOpened({ groupId: group.id, tabId: tab.id }));
-    }
-
-    setTimeout(() => {
+    // ── 点开即消费（2026-10-14，与 TabGroup.handleOpenTab 同口径） ─────────
+    // 先开后删，SW 回包 success 才删；SW 拒开 / 前置不可开 → 提示 + 记录保留。
+    // 锁定组从不消费（与整组恢复语义一致）。两处必须同口径，否则同一个产品
+    // 在两个界面两种行为。
+    if (group.isLocked) {
       chrome.runtime.sendMessage({
         type: 'OPEN_TAB',
         data: { url: tab.url, pinned: !!tab.pinned },
-      })
-        // 2026-10-07 P1-2 附带：原先 sendMessage 的失败无人处理 → SW 被回收 /
-        // 扩展重载时用户点了没反应且无任何提示。与「无感 → 无声」同罪。
-        .catch(error => {
-          logError('打开标签失败:', error);
-          showRestoreError(`打开失败：${error?.message || '未知错误'}`);
-        });
-    }, 50);
+      }).catch(error => {
+        logError('打开标签失败:', error);
+        showRestoreError(`打开失败：${error?.message || '未知错误'}`);
+      });
+      return;
+    }
+    if (!isOpenableTabUrl(tab.url)) {
+      showRestoreError('此标签在当前设备无法打开，已保留在会话中');
+      return;
+    }
+    chrome.runtime.sendMessage(
+      {
+        type: 'OPEN_TAB',
+        data: { url: tab.url, pinned: !!tab.pinned },
+      },
+      (res: unknown) => {
+        const r = res as { success?: boolean; error?: string } | undefined;
+        if (!r || r.success !== true) {
+          showRestoreError(r?.error || '打开失败，已保留在会话中');
+          return;
+        }
+        dispatch(deleteTabAndSync({ groupId: group.id, tabId: tab.id }))
+          .unwrap()
+          .then(payload => {
+            const warn = deleteBroadcastWarn(payload);
+            if (warn) showDeleteError(warn);
+          })
+          .catch(error => {
+            logError('打开后从会话移除失败:', error);
+            showDeleteError(`标签已打开，但从会话移除失败: ${error.message || '未知错误'}`);
+          });
+      }
+    );
   };
 
   const handleDeleteTab = (tab: Tab, group: TabGroup) => {
@@ -299,6 +321,20 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({ searchQuery 
     if (matchingTabs.length === 0) {
       return;
     }
+
+    const sessionCount = sessionResults.length;
+    showConfirm({
+      title: `恢复搜索结果中的 ${matchingTabs.length} 个标签？`,
+      message: `将在新窗口打开 ${sessionCount} 个会话中的 ${matchingTabs.length} 个标签；未锁定的会话将从列表移除（恢复即消费原会话，无回收站）。确认继续吗？`,
+      type: 'info',
+      confirmText: '全部恢复',
+      cancelText: '取消',
+      onConfirm: () => runRestoreAllSearchResults(),
+      onCancel: () => {},
+    });
+  };
+
+  const runRestoreAllSearchResults = () => {
 
     const tabsPayload = matchingTabs.map(({ tab }) => ({
       url: tab.url,
@@ -381,8 +417,8 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({ searchQuery 
     }
 
     showConfirm({
-      title: '删除确认',
-      message: `确定要删除所有搜索结果中的 ${matchingTabs.length} 个标签页吗？此操作不可撤销。`,
+      title: `删除搜索结果中的 ${matchingTabs.length} 个标签？`,
+      message: `将从所属会话中永久移除这 ${matchingTabs.length} 条标签记录（锁定会话除外），删除后无法恢复。确认继续吗？`,
       type: 'danger',
       confirmText: '删除',
       cancelText: '取消',
@@ -392,11 +428,8 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({ searchQuery 
   };
 
   const renderTabItem = ({ tab, group }: { tab: Tab; group: TabGroup }) => {
-    // 与 DraggableTab 同口径：锁定组恢复不消费（不删本地项），所以不显示「已打开」
-    // 态 —— 否则会给用户一个「我明明没消费，凭什么说已打开」的假信号。
-    const showOpenedState = !group.isLocked && tab.openedAt !== undefined;
     return (
-    <div className={`tab-item group/tab ${showOpenedState ? 'tab-item-opened' : ''}`}>
+    <div className="tab-item group/tab">
       <SafeFavicon src={tab.favicon} alt="" className="tab-item-favicon" />
 
       <div className="flex-1 min-w-0 flex items-center gap-3">
@@ -416,22 +449,11 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({ searchQuery 
       </div>
 
       <div className="tab-item-actions">
-        {/* 2026-10-07 P1-2：与 DraggableTab 一致 —— 搜索里点开同样只标记不删除，
-            但此前这一侧从不渲染该状态，于是「点开没反应、也不清记录」，用户无法
-            分辨「已标记」与「没生效」。 */}
-        {showOpenedState && (
-          <span
-            className="tab-item-opened-badge"
-            title="已在本机打开过这条记录，它仍保留在会话里"
-          >
-            已打开
-          </span>
-        )}
         <button
           onClick={() => handleDeleteTab(tab, group)}
           className="btn-icon p-1 tab-item-delete-btn flat-interaction"
-          title={showOpenedState ? '从会话中移除这条记录（不影响已打开的标签页）' : '从会话中移除这条记录'}
-          aria-label={`从会话中移除: ${tab.title}`}
+          title="从会话中移除这条记录（无法恢复）"
+          aria-label={`从会话中移除（无法恢复）: ${tab.title}`}
         >
           <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
             <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />

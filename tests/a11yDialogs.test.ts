@@ -251,7 +251,8 @@ test('Toast 的 live region 常驻挂载：不再有提前 return null 把区域
   assert.ok(!TOAST.includes('if (!isVisible) return null;'));
   assert.ok(!TOAST.includes('{isVisible && (\n        <div className="pointer-events-auto'));
   // 外壳保留在 DOM 里，靠 pointer-events-none 保证不可见时不可点
-  assert.ok(TOAST.includes('pointer-events-none fixed right-4 top-4'));
+  // 2026-10-14：Toast 从右上移到底部居中，避免盖住顶栏搜索框
+  assert.ok(TOAST.includes('pointer-events-none fixed bottom-4 left-1/2'));
 });
 
 test('Toast 进度条改成 CSS 动画，不再用 setInterval 驱动 React state', () => {

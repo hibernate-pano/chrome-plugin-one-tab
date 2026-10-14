@@ -69,8 +69,6 @@ interface DraggableTabProps {
   moveTab: (sourceGroupId: string, sourceIndex: number, targetGroupId: string, targetIndex: number) => void;
   handleOpenTab: (tab: Tab) => void;
   handleDeleteTab: (tabId: string) => void;
-  /** 锁定组恢复时不消费（不删本地项），因此不显示「已打开」态与移除按钮 */
-  isLockedGroup?: boolean;
 }
 
 /**
@@ -104,8 +102,7 @@ export const DraggableTab: React.FC<DraggableTabProps> = React.memo(({
   itemCount,
   moveTab,
   handleOpenTab,
-  handleDeleteTab,
-  isLockedGroup
+  handleDeleteTab
 }) => {
   const ref = useRef<HTMLDivElement>(null);
   const linkRef = useRef<HTMLAnchorElement>(null);
@@ -240,10 +237,6 @@ export const DraggableTab: React.FC<DraggableTabProps> = React.memo(({
 
   const tabTitle = useMemo(() => tab.title, [tab.title]);
 
-  // 2026-10-07 P1-2：锁定组恢复不消费（不删本地项），所以不显示「已打开」态 ——
-  // 否则会给用户一个「我明明没消费，凭什么说已打开」的假信号。
-  const showOpenedState = !isLockedGroup && tab.openedAt !== undefined;
-
   const handleTabClick = useCallback((e: React.MouseEvent) => {
     e.preventDefault();
     handleOpenTab(tab);
@@ -297,7 +290,7 @@ export const DraggableTab: React.FC<DraggableTabProps> = React.memo(({
       onDragEnter={handleDragEnter}
       onDragLeave={handleDragLeave}
       onDrop={handleDrop}
-      className={`tab-item group/tab micro-interaction-card ${isDragging ? 'dragging' : ''} ${isOver ? 'drag-over' : ''} ${tab.unopenable ? 'tab-item-unopenable' : ''} ${showOpenedState ? 'tab-item-opened' : ''}`}
+      className={`tab-item group/tab micro-interaction-card ${isDragging ? 'dragging' : ''} ${isOver ? 'drag-over' : ''} ${tab.unopenable ? 'tab-item-unopenable' : ''}`}
       style={{ cursor: 'grab' }}
       // 父容器 TabGroup.tsx 同步提供 role="list"——此前全仓没有 role="list"，
       // 孤立的 listitem 是无效语义（读屏不播报"列表项 N/M"）。
@@ -313,11 +306,11 @@ export const DraggableTab: React.FC<DraggableTabProps> = React.memo(({
           href="#"
           className="tab-item-title tab-item-title-hover transition-colors flex items-center gap-1"
           onClick={handleTabClick}
-          title={tabTitle}
+          title={`${tabTitle}（聚焦后可用上下方向键调整顺序）`}
           aria-label={
             tab.unopenable
               ? `${tabTitle}（此标签在当前设备无法打开，仍保留在会话中），第 ${index + 1} / ${itemCount} 项，用上下方向键调整顺序`
-              : `${showOpenedState ? '已打开，可再次打开' : '打开标签页'}: ${tabTitle}${tab.pinned ? ' (固定)' : ''}，第 ${index + 1} / ${itemCount} 项，用上下方向键调整顺序`
+              : `打开标签页: ${tabTitle}${tab.pinned ? ' (固定)' : ''}，第 ${index + 1} / ${itemCount} 项，用上下方向键调整顺序`
           }
           aria-keyshortcuts="ArrowUp ArrowDown Home End"
           tabIndex={0}
@@ -336,29 +329,14 @@ export const DraggableTab: React.FC<DraggableTabProps> = React.memo(({
 
       {/* 操作按钮 */}
       <div className="tab-item-actions">
-        {/* 2026-10-07 P1-2：已打开的行显式呈现「已打开」+ 一个明确的「移除」。
-            原来点开即从会话删除，且与删除按钮撞形 —— 用户以为在导航，实际在
-            不可撤销地销毁一条记录。现在消费是显式的第二步动作。 */}
-        {showOpenedState && (
-          <span
-            className="tab-item-opened-badge"
-            title="已在本机打开过这条记录，它仍保留在会话里"
-          >
-            已打开
-          </span>
-        )}
         <button
           onClick={handleDelete}
           className="btn-icon theme-btn-hover p-1 tab-item-delete-btn micro-interaction-button"
-          // 2026-10-09 UX P1-7：X 不受「删除会话前确认」开关保护、且无回收站，
+          // UX P1-7：X 不受「删除会话前确认」开关保护、且无回收站，
           // 原 tooltip 只说「移除这条记录」，没说不可恢复 —— 这是本产品最贵的
           // 一件事（v1.22.0 起删除即物理清除），必须在点之前说出来。
           // title 与 aria-label 同步改：读屏用户与视觉用户要拿到同一句契约。
-          title={
-            showOpenedState
-              ? '从会话中移除这条记录（无法恢复；不影响已打开的标签页）'
-              : '从会话中移除这条记录（无法恢复）'
-          }
+          title="从会话中移除这条记录（无法恢复）"
           aria-label={`从会话中移除（无法恢复）: ${tabTitle}`}
         >
           <CloseIcon />

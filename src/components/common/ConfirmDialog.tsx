@@ -49,13 +49,13 @@ export const ConfirmDialog: React.FC<ConfirmDialogProps> = ({
       case 'info':
         return {
           icon: (
-            <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-sky-100 text-sky-600 dark:bg-sky-500/15 dark:text-sky-300">
+            <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-primary-100 text-primary-600 dark:bg-primary-500/15 dark:text-primary-300">
               <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
               </svg>
             </div>
           ),
-          confirmButton: 'bg-sky-600 hover:bg-sky-700 focus-visible:outline-sky-500 text-white'
+          confirmButton: 'bg-primary-600 hover:bg-primary-700 focus-visible:outline-primary-500 text-white'
         };
       default:
         return {

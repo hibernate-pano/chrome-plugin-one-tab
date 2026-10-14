@@ -236,7 +236,7 @@ export const TabList: React.FC<TabListProps> = ({ searchQuery }) => {
           // 那条待负责人拍板，此处只修指代，不改承诺。）
           // 2026-10-09 P1-1：定位不变（保存 = 剪切），但新用户第一屏的 CTA
           // 必须在动手前把「标签会被关闭」说出来 —— 不能等它关了才发现。
-          description="点击下方按钮，把当前窗口保存成可稍后找回的工作会话；当前标签随后会被关闭。"
+          description="点击下方按钮，把当前窗口保存成可稍后找回的工作会话；当前标签随后会被关闭。固定标签默认不保存，可在设置中更改。快捷键 Alt+Shift+S 也可快速保存。"
           action={
             <div className="flex flex-col items-center gap-2">
               <button
@@ -245,6 +245,7 @@ export const TabList: React.FC<TabListProps> = ({ searchQuery }) => {
                 disabled={isSavingFromEmpty}
                 className="btn btn-primary flat-interaction px-5 py-2.5 text-sm disabled:cursor-not-allowed disabled:opacity-60"
                 aria-busy={isSavingFromEmpty}
+                title="保存当前窗口为会话并关闭这些标签（快捷键 Alt+Shift+S）"
               >
                 {isSavingFromEmpty ? '保存中…' : '保存当前窗口'}
               </button>
@@ -316,12 +317,15 @@ export const TabList: React.FC<TabListProps> = ({ searchQuery }) => {
       ) : layoutMode === 'double' ? (
         <div className="session-grid">
           {(() => {
-            // 按次序左右对分：前半进左栏、后半进右栏，读序与单栏一致。
-            // 历史实现用奇偶交替（index % 2），导致阅读顺序错乱（1,3,5… 后 2,4,6…），
-            // 且总数为奇数时左栏恒好多出一个——用户观感就是「左边多一个、右边不匀」。
-            // 奇数时把多出的一项放左栏：左栏是读序起点，视觉与语义都更自然。
-            const mid = Math.ceil(filteredGroups.length / 2);
-            const columns = [filteredGroups.slice(0, mid), filteredGroups.slice(mid)];
+            // 按标签数均衡分栏：贪心把下一组放进当前标签总数更少的一栏，
+            // 避免“前半进左栏”时高卡全堆一侧的高低脚。读序仍按保存时间倒序。
+            const columns: typeof filteredGroups[] = [[], []];
+            const counts = [0, 0];
+            for (const group of filteredGroups) {
+              const target = counts[0] <= counts[1] ? 0 : 1;
+              columns[target].push(group);
+              counts[target] += group.tabs.length;
+            }
             return columns.map((column, columnIndex) => (
               <div key={columnIndex} className="session-grid-column transition-all duration-300 ease-out">
                 {column.map(group => (

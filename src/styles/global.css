@@ -124,12 +124,12 @@ html:not([data-theme]).dark {
     --color-note-bg: #f9fafb;
 
     /* 二级界面 token（legacy 默认值 = 现网观感）：
-       圆角三档（卡片/弹层/控件）、强调文字/描边/淡染、井底（well） */
-    --radius-card: 0.75rem;
-    --radius-panel: 1.75rem;
-    --radius-control: 0.5rem;
-    --radius-input: 1rem;
-    --radius-input-sm: 0.25rem;
+       圆角三档（卡片 16 / 弹窗 20 / 控件 10），全站统一 */
+    --radius-card: 1rem;
+    --radius-panel: 1.25rem;
+    --radius-control: 0.625rem;
+    --radius-input: 0.625rem;
+    --radius-input-sm: 0.5rem;
     --radius-search: 9999px;
     --color-accent-text: #1d4ed8;
     --color-accent-strong: #2563eb;
@@ -719,24 +719,6 @@ html:not([data-theme]).dark {
     text-decoration-thickness: 1px;
   }
   .tab-item-unopenable:hover {
-    background-color: var(--color-bg-tertiary);
-  }
-
-  /* 已打开的行（2026-10-07 P1-2）：
-     表达「这一轮你已经在本机打开过它，但记录仍在会话里」。
-     刻意**不用删除线**——删除线在本项目已被 .tab-item-unopenable 占用，
-     复用会让「打不开」和「已处理」两种完全不同的状态视觉撞车。
-     靠降透明度 + 一个常驻的「已打开」徽章区分，且标题仍可点击（可重复打开）。 */
-  .tab-item-opened .tab-item-title,
-  .tab-item-opened .tab-item-url {
-    opacity: 0.6;
-  }
-  .tab-item-opened:hover {
-    background-color: var(--color-bg-tertiary);
-  }
-  .tab-item-opened-badge {
-    @apply inline-flex items-center px-1.5 py-0.5 rounded text-xs whitespace-nowrap;
-    color: var(--color-text-muted);
     background-color: var(--color-bg-tertiary);
   }
 
@@ -1374,6 +1356,16 @@ button:disabled:not(.btn-primary) {
   100% {
     transform: translateX(100%);
   }
+}
+
+/* 不定式进度条：真实进度在 SW 侧、popup 拿不到回传时用，
+   避免用匀速假百分比给虚假安全感 */
+@keyframes tapstack-indeterminate {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(320%); }
+}
+.animate-indeterminate {
+  animation: tapstack-indeterminate 1.2s ease-in-out infinite;
 }
 
 /* 跳过导航：键盘用户直达主内容 */

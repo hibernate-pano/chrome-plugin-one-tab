@@ -233,6 +233,7 @@ export const Header: React.FC<HeaderProps> = ({ onSearch }) => {
   // 保存按钮的 in-flight 与结果反馈（2026-10-07 P1-3）。
   // 保存是本页唯一会「摧毁用户当前工作现场」的动作（关掉整个窗口的标签），
   // 必须让用户看得见结果 —— 哪怕标签已经关掉了。
+  // 成功轻提示 3s 自动退场，失败常驻到下次操作（与 TabList 空态 CTA 同口径）。
   const [isSaving, setIsSaving] = useState(false);
   const [saveFeedback, setSaveFeedback] = useState<{ kind: 'success' | 'error'; text: string } | null>(
     null
@@ -240,6 +241,13 @@ export const Header: React.FC<HeaderProps> = ({ onSearch }) => {
   // 账号弹窗是应用级关注点：挂在 Header 上、portal 到 body，
   // 不随菜单开关而卸载（菜单点完就关，弹窗独立存活）。
   const [authModal, setAuthModal] = useState<AuthTab | null>(null);
+
+  // 成功是轻提示：3 秒后自动退场；失败常驻到下次保存（与空态 CTA 同口径）
+  React.useEffect(() => {
+    if (saveFeedback?.kind !== 'success') return;
+    const timer = setTimeout(() => setSaveFeedback(null), 3000);
+    return () => clearTimeout(timer);
+  }, [saveFeedback]);
 
   return (
     <header className="header">
@@ -260,19 +268,21 @@ export const Header: React.FC<HeaderProps> = ({ onSearch }) => {
             </div>
           </button>
 
-          {/* 搜索框 */}
+          {/* 搜索框：图标位常驻占位，spinner 原位替换，避免输入中 pl-3→pl-10 整行跳动 */}
           <div className="app-header-search">
             <div className="relative" role="search">
-              {isSearchBusy && (
-                <div className="absolute left-3 top-1/2 -translate-y-1/2 search-icon">
-                  <LoadingIcon />
-                </div>
-              )}
+              <div className="absolute left-3 top-1/2 -translate-y-1/2 search-icon" aria-hidden="true">
+                {isSearchBusy ? <LoadingIcon /> : (
+                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                  </svg>
+                )}
+              </div>
               <input
                 ref={searchInputRef}
                 type="text"
                 placeholder="搜索会话或标签..."
-                className={`input search-input theme-focus w-full py-2 text-sm ${isSearchBusy ? 'pl-10' : 'pl-3'}`}
+                className="input search-input theme-focus w-full py-2 pl-10 text-sm"
                 onChange={handleSearch}
                 value={searchValue}
                 aria-label="搜索会话或标签页"

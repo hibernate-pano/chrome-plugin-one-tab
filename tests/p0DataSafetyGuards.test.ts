@@ -369,20 +369,20 @@ describe('减法（2026-10-07）：备注与收藏已下线，不得复活', () 
     }
   });
 
-  it('商店 listing 不得声称「点开标签会自动从会话移除」（1.22.13 已反转）', () => {
-    // 这条是审核员会读的正文。1.22.13 把「点开即删」改成两步（先标记已打开，
-    // 再用独立按钮移除），但同一份提交的 listing 第 27/46 行仍在写旧行为 ——
-    // 描述与实现相反，且与自己的 changelog 自相矛盾。
+  it('商店 listing 必须声称「点开标签会从会话移除」（1.24.1 改回点开即消费）', () => {
+    // 这条是审核员会读的正文。1.22.13 曾把「点开即删」改成两步（先标记已打开，
+    // 再用独立按钮移除）；2026-10-14 用户决策改回点开即消费（先开后删，SW
+    // 回包 success 才删）。listing 必须与当前实现同口径，否则描述与实现相反。
     // 抽取正确性由「抽取器自检」独立保证（listingBody 与独立推导逐字相等），
     // 这里只断言业务内容。
     const listing = listingBody();
     assert.ok(
-      !/自动从会话中移除/.test(listing),
-      '中文 listing 仍写「点开单个标签…它会自动从会话中移除」—— 该行为已于 1.22.13 移除'
+      /自动从会话中移除/.test(listing),
+      '中文 listing 必须写清「点开单个标签…它会自动从会话中移除」—— 1.24.1 起点开即消费'
     );
     assert.ok(
-      !/it is then removed from the session/.test(listing),
-      'English listing still promises the tab is removed from the session on click — reversed in 1.22.13'
+      /it is then removed from the session/.test(listing),
+      'English listing must promise the tab is removed from the session on click — open-consume since 1.24.1'
     );
   });
 

@@ -171,16 +171,17 @@ describe('操作条：hover 之外的键盘显形', () => {
     assert.match(focusWithinRule![0], /opacity-100/, 'focus-within 时必须显形（opacity-100）');
   });
 
-  it('会话卡片头部的操作条带 group-focus-within', () => {
-    // ⚠️ 响应前缀必须逐个接受（2026-10-14）：窄屏操作条改为常驻显示
-    // （触屏没有 hover），于是类名加了 `md:` 变体。行为没退化 ——
-    // 基底 `group-focus-within/card:opacity-100` 仍在，键盘聚焦照样显形。
-    // 之前这条正则只认无前缀写法，UI 一改响应式就假红。
-    const hasFocusReveal = (s: string) =>
-      /(?:^|\s)(?:[a-z]+:)*group-focus-within\/card:opacity-100/.test(s);
+  it('会话卡片头部的操作条常驻可见（恢复是核心动作，零学习成本）', () => {
+    // 2026-10-14 UI 打磨：恢复常驻，其余不再靠 hover 藏。
+    // hover 藏在桌面新用户找不到恢复/锁定/删除，触屏本就无 hover。
+    // 常驻 = 键盘/触屏/鼠标三端天然可达，不再需要 group-focus-within 兜底。
     assert.ok(
-      hasFocusReveal(TAB_GROUP),
-      'TabGroup 的操作条缺少 group-focus-within/card:opacity-100（可带响应前缀）'
+      TAB_GROUP.includes('opacity-100 transition-all duration-200 ease-out flex-shrink-0'),
+      'TabGroup 的操作条应常驻可见（opacity-100）'
+    );
+    assert.ok(
+      !TAB_GROUP.includes('group-hover/card:opacity-100'),
+      'TabGroup 的操作条不应再靠 hover 藏显'
     );
   });
 
