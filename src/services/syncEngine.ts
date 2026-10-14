@@ -26,6 +26,7 @@ import {
 // 这是合并的唯一真相源；旧 LWW 实现已随 2026-10-05 瘦身删除。
 import { mergeOpStamped } from '@/core/opStampMerge';
 import { checkDeleteFailsafe } from '@/sync-backend/failsafe';
+import { readConfiguredBackendId } from '@/sync-backend';
 import { dropSyncMergedGroups, removedGroupIds } from '@/core/mutationOps';
 import { ensureOpStampMigrated } from '@/background/opStampMigratedGuard';
 import { enqueue } from '@/background/mutationQueue';
@@ -254,10 +255,15 @@ export class SyncEngine {
     // ponytail: 冷 SW 的 store 未恢复登录态（SW 是独立执行上下文）——
     // 先尝试从持久化 session 恢复一次，否则 popup 发起的下载会一律
     // not_authenticated（upload 已有同等恢复，download 曾缺失）。
+    //
+    // backendId 必须显式传（2026-10-14）：门禁要按后端决定查不查 Supabase 账号。
+    // 自带存储的用户没有 Supabase 账号，漏传会让他看到「用户未登录」，
+    // 且永远走不到锁定后端那句「去重新解锁」（真机 E2E 抓到的）。
     const authed = await ensureAuthenticated({
       isAuthenticated: () =>
         (store.getState() as { auth: { isAuthenticated: boolean } }).auth.isAuthenticated,
       restoreAuth: () => this.restoreAuth(),
+      backendId: await readConfiguredBackendId(),
     });
     if (!authed) {
       return { success: false, groups: [], reason: 'not_authenticated' };
@@ -599,10 +605,12 @@ export class SyncEngine {
   }): Promise<UploadResult> {
     // ponytail: SW 进程是独立执行上下文，store 是新实例——先恢复登录态
     // （与 downloadAndMerge 共用 ensureAuthenticated 守卫）。
+    // backendId 必须显式传，理由同上。
     const authed = await ensureAuthenticated({
       isAuthenticated: () =>
         (store.getState() as { auth: { isAuthenticated: boolean } }).auth.isAuthenticated,
       restoreAuth: () => this.restoreAuth(),
+      backendId: await readConfiguredBackendId(),
     });
     if (!authed) {
       return { success: false, error: '用户未登录' };

@@ -16,7 +16,7 @@ import { UPLOAD_DEBOUNCE_MS } from '@/core/syncTiming';
 import { logError, logInfo, logWarn } from './utils/log';
 // 诊断导出前落盘性能 span 用（见 PERF_FLUSH 消息分支）。
 import { perfTrace } from './utils/perfTrace';
-import { primeSyncBackend } from '@/sync-backend';
+import { invalidateActiveSyncBackend, primeSyncBackend } from '@/sync-backend';
 
 // Chrome 扩展的 Service Worker
 // 为了避免模块导入问题，早期版本内联了存储逻辑；现统一使用 utils/storage 以与前端页面共享同一数据源（IndexedDB）
@@ -533,6 +533,25 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         // 消息即使丢失（如 SW 正忙），下次启动也会收敛到正确状态，不存在
         // 「开关改了但 alarm 没跟上」的永久分叉。
         if (data.op === 'resyncAlarm') {
+          // ── 2026-10-14：顺带刷新本上下文的**后端解析缓存** ────────────────
+          // 为什么必须加这一步（真机 E2E 抓到的，不是推演）：
+          //   · 后端解析结果是模块级缓存（sync-backend/index.ts 的 activeBackend），
+          //     SW 启动时在模块顶层解析一次就固定了。
+          //   · 设置页保存后调的是**它自己上下文**的 primeSyncBackend ——
+          //     popup/options/SW 是三个独立 JS 世界，页面刷新了 SW 那份没动。
+          //   · 于是用户配好 WebDAV、不重启浏览器，SW 仍按旧后端同步；
+          //     ensureBackendPrimed() 见缓存非空就直接返回，永远不自愈。
+          // 表现是「我明明切换了设置却没生效」，极难自查。
+          //
+          // 放在 resyncAlarm 里而不是新增命令：它的语义本就是
+          //「设置变了，SW 侧重新读一遍」，alarm 与后端缓存是同一件事。
+          // 代价只有一次 settings 读 + 一次配置读。
+          //
+          // ⚠️ 必须用 promise 链而不是把 listener 改成 async：
+          // 本 listener 是同步函数，Chrome 靠它同步 return true 保活 sendResponse 通道
+          // （全文件统一用这个模式）。在同步函数里写 await 会让响应通道在
+          // 第一个 await 处就关闭，调用方拿到「消息端口已关闭」。
+          invalidateActiveSyncBackend();
           try {
             setupBackgroundSync();
             sendResponse({ ok: true });
@@ -540,6 +559,18 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
             logWarn('[SW] 重建后台同步 alarm 失败:', err);
             sendResponse({ ok: false, error: err instanceof Error ? err.message : String(err) });
           }
+          // 后端重解析失败**不**影响 alarm 已重建的结果（那是两件事），
+          // 只告警：下次 SW 启动会重新解析。
+          void primeSyncBackend()
+            .then(outcome => {
+              if (outcome.resolvedId !== outcome.requestedId) {
+                logWarn(
+                  `[SW] 同步后端回落：期望 ${outcome.requestedId}，实际 ${outcome.resolvedId}` +
+                    (outcome.lockedReason ? ` —— ${outcome.lockedReason}` : '')
+                );
+              }
+            })
+            .catch(err => logWarn('[SW] 重解析同步后端失败（下次启动自愈）:', err));
           return false;
         }
         // ── 2026-10-11（1.23.0）：自动下载受总开关门禁 ───────────────────

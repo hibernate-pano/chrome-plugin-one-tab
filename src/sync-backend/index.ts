@@ -23,6 +23,7 @@
 import type { SyncBackendId, SyncBackendPort } from './ports';
 import { SupabaseBackendAdapter } from './supabaseAdapter';
 import { logWarn } from '@/utils/log';
+import { kvGet } from '@/storage-kv/storageAdapter';
 import { WebDavClient } from './webdav/client';
 import { WebDavBackendAdapter } from './webdav/adapter';
 import { hasHostPermission } from './webdav/permission';
@@ -93,6 +94,33 @@ export function resetActiveSyncBackend(): void {
 /** 当前后端标识（UI 展示与「换后端 ⇒ 水位作废」判据用）。 */
 export function getActiveSyncBackendId(): SyncBackendId {
   return getActiveSyncBackend().id;
+}
+
+/**
+ * 用户**当前设置**里选的后端（直读设置，不经缓存）。
+ *
+ * ── 为什么需要它（2026-10-14 真机 E2E 挖到的）────────────────────────
+ * `getActiveSyncBackendId()` 读的是模块级缓存 `activeBackend`，而它的值
+ * 是 SW 启动那一刻解析出来的。用户改完设置、SW 未重启时，**缓存是旧的**。
+ *
+ *   典型场景：用户刚在设置页配好 WebDAV 就点同步。页面自己刷新了缓存，
+ *   SW 那份仍是 Supabase ⇒ 门禁问「你有没有 Supabase 账号」⇒ 返回
+ *   not_authenticated ⇒ WebDAV 用户永远看不到「去重新解锁」那句提示。
+ *
+ * 门禁要回答的是「用户现在选了什么」，这是个**设置事实**，不该绕道缓存。
+ * 读一次 IndexedDB 的代价远低于「用户被卡在无法同步」的后果。
+ *
+ * 读失败按 supabase 处理：读不到设置时最安全的假设是老用户的既有路径。
+ * （与 `resolveBackendOutcome` 里 kvGet 失败的回落方向一致。）
+ */
+export async function readConfiguredBackendId(): Promise<SyncBackendId> {
+  try {
+    const raw = await kvGet<unknown>('user_settings');
+    const settings = raw && typeof raw === 'object' ? (raw as Record<string, unknown>) : {};
+    return settings.syncBackend === 'webdav' ? 'webdav' : 'supabase';
+  } catch {
+    return 'supabase';
+  }
 }
 
 export type { SyncBackendPort, SyncBackendId, RemoteGroupFingerprint, UploadGroupsResult } from './ports';
@@ -234,7 +262,6 @@ class LockedWebDavBackend implements SyncBackendPort {
 }
 
 async function resolveBackendOutcome(): Promise<ResolutionOutcome> {
-  const { kvGet } = await import('@/storage-kv/storageAdapter');
   const raw = await kvGet<unknown>('user_settings');
   const settings = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>;
   const requestedId: SyncBackendId = settings.syncBackend === 'webdav' ? 'webdav' : 'supabase';
