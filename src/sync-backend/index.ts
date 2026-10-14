@@ -118,7 +118,21 @@ export async function readConfiguredBackendId(): Promise<SyncBackendId> {
     const raw = await kvGet<unknown>('user_settings');
     const settings = raw && typeof raw === 'object' ? (raw as Record<string, unknown>) : {};
     return settings.syncBackend === 'webdav' ? 'webdav' : 'supabase';
-  } catch {
+  } catch (err) {
+    // ⚠️ 这里的兜底**不能**等于「修复前的行为」——见
+    // .memory/fallback-catch-must-not-equal-pre-fix-behavior.md。
+    //
+    // 2026-10-14 踩过一次：兜底写成 `return 'supabase'`（恰好等于修复前），
+    // 于是动态 import 在 SW 里抛 `document is not defined` 时被吞掉，
+    // 症状与「根本没修」一模一样，从症状上不可区分。
+    //
+    // 现在已改静态 import，那条触发路径没了；但**形态**仍在：
+    // 任何未来的读取失败都会把 WebDAV 用户悄悄变成「查 Supabase 账号」，
+    // 于是他又被挡在门外 —— 正是这次修掉的 bug。
+    //
+    // 因此这里**出声**：读不到设置就说读不到，让上层和日志能区分
+    // 「读失败」与「用户真的选了 supabase」。
+    logWarn('[sync-backend] 读取设置失败，本轮按 Supabase 处理（若你选了自带存储，请检查设置存储）:', err);
     return 'supabase';
   }
 }
