@@ -55,6 +55,12 @@ const ORDER = [
   'e2e-layout-empty-group.mjs',             // 布局切换不产生空壳会话
   'e2e-layout-column-split.mjs',            // 双栏左右按次序对分
   'e2e-tab-reorder.mjs',                    // 会话内标签拖拽转正：真实 mouse 拖拽（P0 受保护模式对照 + P1 跨组搬对行），纯本地',
+  // WebDAV 后端三件套（2026-10-14 补登记：写入时漏登 ORDER，门禁抓到后补齐）。
+  // 纯本地 —— 对 dufs（Rust 独立实现）跑协议往返，不连 Supabase。
+  // 顺序即依赖：先协议事实（local），再跨上下文锁语义（lock），最后主机权限 + CSP（permission）。
+  'e2e-webdav-local.mjs',                   // PROPFIND/PUT-If-Match 等协议事实 + 适配器完整往返（dufs + TS loader）
+  'e2e-webdav-lock.mjs',                    // 锁定占位后端不回落 + 会话口令 options→SW 跨上下文镜像（真机）
+  'e2e-webdav-permission.mjs',              // optional host 权限授予/拦截 + CSP connect-src 放行（真机）
 ];
 
 /**
@@ -66,6 +72,7 @@ const ORDER = [
 const NEEDS_TS_LOADER = new Set([
   'e2e-clean-dup-import-fix.mjs',
   'e2e-batched-sync-roundtrip.mjs', // 直接 import src 的 uploadTabGroups/downloadTabGroups
+  'e2e-webdav-local.mjs',           // 直接 import src 的 WebDAV 适配器（见其头部「运行」说明）
 ]);
 
 /**
