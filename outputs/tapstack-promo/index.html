@@ -1,0 +1,447 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>TapStack — 工作会话收纳箱 · 保存、找回、恢复你的浏览器现场</title>
+<meta name="description" content="TapStack 是一个 Chrome 扩展：把当前窗口的全部标签页保存为命名会话，随时搜回、一键恢复。本地优先、跨设备同步可选、删除即物理清除——诚实承诺。" />
+<style>
+:root{
+  --brand-50:#EFF6FF; --brand-100:#DBEAFE; --brand-200:#BFDBFE; --brand-300:#93C5FD;
+  --brand-400:#60A5FA; --brand-500:#3B82F6; --brand-600:#2563EB; --brand-700:#1D4ED8; --brand-800:#1E3A8A;
+  --ink-900:#1C1917; --ink-800:#292524; --ink-700:#44403C; --ink-600:#57534E; --ink-500:#78716C;
+  --ink-400:#A8A29E; --ink-300:#D6D3D1; --ink-200:#E7E5E4; --ink-100:#F5F5F4; --ink-50:#FAFAF9;
+  --paper:#FAFAF9; --card:#FFFFFF; --warm:#D97757;
+  --radius:16px; --radius-lg:24px;
+  --font:"Plus Jakarta Sans","SF Pro Display",-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Hiragino Sans GB","Microsoft YaHei",system-ui,sans-serif;
+  --mono:"SF Mono","Geist Mono",ui-monospace,"Cascadia Code",Menlo,Monaco,Consolas,monospace;
+  --expo:cubic-bezier(.19,1,.22,1); --quart:cubic-bezier(.25,1,.5,1);
+}
+*{box-sizing:border-box} html{scroll-behavior:smooth} body{margin:0;background:var(--paper);color:var(--ink-900);font-family:var(--font);font-size:16px;line-height:1.7;-webkit-font-smoothing:antialiased;overflow-x:hidden}
+img{max-width:100%} a{color:inherit} ::selection{background:var(--brand-200)}
+.wrap{width:100%;max-width:1200px;margin-inline:auto;padding-inline:24px}
+:focus-visible{outline:2px solid var(--brand-600);outline-offset:3px;border-radius:4px}
+/* topbar */
+.topbar{position:fixed;inset:0 0 auto 0;z-index:60;display:flex;align-items:center;justify-content:space-between;gap:20px;padding:13px 28px;background:rgba(250,250,249,.82);backdrop-filter:blur(14px) saturate(1.4);-webkit-backdrop-filter:blur(14px) saturate(1.4);border-bottom:1px solid transparent;transition:.3s}
+.topbar[data-scrolled="true"]{border-bottom-color:var(--ink-200);background:rgba(250,250,249,.94)}
+.brand{display:flex;align-items:center;gap:11px;font-weight:800;font-size:16px;letter-spacing:-.01em;text-decoration:none}
+.logo{width:30px;height:30px;border-radius:9px;background:linear-gradient(135deg,var(--brand-500),var(--brand-700));display:grid;place-items:center;color:#fff;font-weight:800;font-size:15px;box-shadow:0 4px 12px -4px rgba(37,99,235,.5)}
+.topnav{display:flex;align-items:center;gap:26px}
+.topnav a{font-size:14px;font-weight:500;color:var(--ink-600);text-decoration:none}
+.topnav a:hover{color:var(--ink-900)}
+.ver{font-family:var(--mono);font-size:11.5px;color:var(--ink-500);background:var(--ink-100);border:1px solid var(--ink-200);border-radius:6px;padding:2px 8px}
+/* buttons */
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:9px;font-family:inherit;font-size:14.5px;font-weight:600;line-height:1;padding:13px 22px;border-radius:11px;border:1px solid transparent;text-decoration:none;cursor:pointer;transition:transform .18s var(--quart),box-shadow .18s,background .18s,border-color .18s}
+.btn:active{transform:scale(.975)}
+.btn-primary{background:var(--brand-600);color:#fff;box-shadow:0 1px 2px rgba(28,25,23,.09)}
+.btn-primary:hover{background:var(--brand-700);box-shadow:0 6px 18px -6px rgba(37,99,235,.55)}
+.btn-ghost{background:transparent;color:var(--ink-800);border-color:var(--ink-200)}
+.btn-ghost:hover{background:var(--card);border-color:var(--ink-300)}
+.btn-sm{padding:10px 16px;font-size:13.5px;border-radius:9px}
+/* hero */
+.hero{position:relative;padding:150px 0 90px;overflow:hidden}
+.hero::before{content:"";position:absolute;inset:0;background-image:linear-gradient(to right,var(--ink-200) 1px,transparent 1px),linear-gradient(to bottom,var(--ink-200) 1px,transparent 1px);background-size:56px 56px;opacity:.5;mask-image:radial-gradient(ellipse 92% 62% at 50% 0%,#000 22%,transparent 78%);-webkit-mask-image:radial-gradient(ellipse 92% 62% at 50% 0%,#000 22%,transparent 78%);pointer-events:none}
+.hero::after{content:"";position:absolute;top:-320px;left:50%;transform:translateX(-50%);width:980px;height:620px;background:radial-gradient(ellipse at center,rgba(96,165,250,.30) 0%,transparent 66%);filter:blur(28px);pointer-events:none}
+.hero>.wrap{position:relative;z-index:1}
+.hero-grid{display:grid;grid-template-columns:1.05fr .95fr;gap:56px;align-items:center}
+.eyebrow{font-size:12px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--brand-600);margin:0 0 16px;display:flex;align-items:center;gap:10px}
+.eyebrow::before{content:"";width:22px;height:1px;background:var(--brand-600);opacity:.55}
+.hero h1{font-size:clamp(38px,5.2vw,64px);font-weight:800;letter-spacing:-.025em;line-height:1.12;margin:0 0 22px;text-wrap:balance}
+.hero h1 em{font-style:normal;color:var(--brand-600);position:relative;white-space:nowrap}
+.hero h1 em::after{content:"";position:absolute;left:0;right:0;bottom:.07em;height:.32em;background:rgba(147,197,253,.45);border-radius:3px;z-index:-1}
+.hero-sub{font-size:clamp(16px,1.55vw,18.5px);color:var(--ink-600);max-width:52ch;margin:0 0 32px}
+.hero-sub strong{color:var(--ink-900);font-weight:600}
+.hero-cta{display:flex;flex-wrap:wrap;gap:12px;align-items:center}
+.hero-note{margin:20px 0 0;font-size:13px;color:var(--ink-500);display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.dot{width:6px;height:6px;border-radius:50%;background:#22C55E;flex:none;box-shadow:0 0 0 3px rgba(34,197,94,.22)}
+/* browser mock */
+.mock{background:#fff;border:1px solid var(--ink-200);border-radius:18px;overflow:hidden;box-shadow:0 30px 70px -30px rgba(28,25,23,.35),0 3px 10px -4px rgba(28,25,23,.12)}
+.mock-bar{display:flex;align-items:center;gap:8px;padding:12px 16px;background:var(--ink-100);border-bottom:1px solid var(--ink-200)}
+.mock-bar i{width:10px;height:10px;border-radius:50%;display:block}
+.mock-url{flex:1;margin-left:8px;background:#fff;border:1px solid var(--ink-200);border-radius:8px;font-family:var(--mono);font-size:11.5px;color:var(--ink-500);padding:5px 12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.mock-body{padding:18px}
+.mock-search{display:flex;align-items:center;gap:10px;background:var(--ink-50);border:1px solid var(--ink-200);border-radius:10px;padding:10px 14px;font-size:13.5px;color:var(--ink-500);margin-bottom:14px}
+.mock-search b{color:var(--ink-800);font-weight:600}
+.session{border:1px solid var(--ink-200);border-radius:12px;padding:13px 15px;margin-bottom:10px;background:#fff}
+.session.top{border-color:var(--brand-200);box-shadow:0 6px 18px -10px rgba(37,99,235,.35)}
+.session-head{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:9px}
+.session-head b{font-size:13.5px}
+.pill{font-size:11px;font-weight:700;padding:2px 9px;border-radius:99px;background:var(--brand-50);color:var(--brand-700);border:1px solid var(--brand-100)}
+.pill.gray{background:var(--ink-100);color:var(--ink-500);border-color:var(--ink-200)}
+.tab{display:flex;align-items:center;gap:9px;font-size:12.5px;color:var(--ink-600);padding:5px 2px}
+.tab .fav{width:16px;height:16px;border-radius:5px;flex:none;display:grid;place-items:center;font-size:9px;font-weight:800;color:#fff}
+.tab mark{background:rgba(147,197,253,.55);border-radius:3px;padding:0 3px;color:inherit}
+.mock-foot{display:flex;gap:8px;padding:0 18px 18px}
+.chipbtn{flex:1;text-align:center;font-size:12.5px;font-weight:700;border-radius:9px;padding:9px;border:1px solid var(--ink-200);color:var(--ink-700);background:#fff}
+.chipbtn.primary{background:var(--brand-600);border-color:var(--brand-600);color:#fff}
+/* sections */
+.section{padding:100px 0}.section-alt{background:var(--card);border-block:1px solid var(--ink-200)}
+.section-head{max-width:730px;margin-bottom:52px}
+.section-title{font-size:clamp(28px,4vw,42px);font-weight:800;letter-spacing:-.022em;line-height:1.15;margin:0}
+.section-lede{font-size:clamp(15px,1.4vw,17.5px);color:var(--ink-600);max-width:64ch;margin:16px 0 0}
+/* trust strip */
+.strip{display:flex;flex-wrap:wrap;gap:10px 12px;align-items:center;margin-top:30px}
+.strip span{font-family:var(--mono);font-size:12px;color:var(--ink-600);background:var(--card);border:1px solid var(--ink-200);border-radius:7px;padding:4px 11px}
+/* axis */
+.axis{display:grid;grid-template-columns:repeat(3,1fr);border-top:1px solid var(--ink-200)}
+.axis-item{padding:34px 30px 38px;border-right:1px solid var(--ink-200)}
+.axis-item:last-child{border-right:0}.axis-item:first-child{padding-left:0}
+.axis-num{font-family:var(--mono);font-size:12px;color:var(--brand-600);letter-spacing:.1em;margin:0 0 12px}
+.axis-item h3{font-size:20px;font-weight:800;margin:0 0 10px;letter-spacing:-.01em}
+.axis-item p{margin:0;font-size:14.5px;color:var(--ink-600)}
+/* steps */
+.steps{display:grid;grid-template-columns:repeat(4,1fr);gap:18px}
+.step{background:var(--paper);border:1px solid var(--ink-200);border-radius:var(--radius);padding:24px 22px;position:relative}
+.step .n{font-family:var(--mono);font-size:12px;font-weight:700;color:#fff;background:var(--brand-600);width:26px;height:26px;border-radius:8px;display:grid;place-items:center;margin-bottom:14px}
+.step h3{font-size:15.5px;margin:0 0 8px}
+.step p{margin:0;font-size:13.5px;color:var(--ink-600)}
+.step kbd{font-family:var(--mono);font-size:11.5px;background:var(--ink-100);border:1px solid var(--ink-200);border-bottom-width:2px;border-radius:6px;padding:2px 7px}
+/* features */
+.feat-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:20px}
+.feat{background:var(--paper);border:1px solid var(--ink-200);border-radius:var(--radius);padding:26px 24px 28px;transition:transform .25s var(--quart),box-shadow .25s,border-color .25s}
+.feat:hover{transform:translateY(-3px);border-color:var(--ink-300);box-shadow:0 14px 32px -18px rgba(28,25,23,.22)}
+.feat-ico{width:40px;height:40px;border-radius:11px;display:grid;place-items:center;background:var(--brand-50);color:var(--brand-600);margin-bottom:16px;font-size:19px;font-weight:800}
+.feat h3{font-size:16px;font-weight:800;margin:0 0 8px}
+.feat p{margin:0;font-size:13.8px;color:var(--ink-600)}
+.feat code{font-family:var(--mono);font-size:12px;background:var(--ink-100);padding:1px 6px;border-radius:5px;color:var(--ink-800)}
+/* sync */
+.sync-paths{display:grid;grid-template-columns:1fr 1fr;gap:24px}
+.path{position:relative;border-radius:var(--radius-lg);padding:34px 32px;border:1px solid var(--ink-200);background:var(--card);overflow:hidden}
+.path::before{content:"";position:absolute;inset:0 0 auto 0;height:3px}
+.path.a::before{background:linear-gradient(90deg,var(--brand-500),var(--brand-700))}
+.path.b::before{background:linear-gradient(90deg,var(--warm),#C2410C)}
+.path .role{font-size:11.5px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--ink-400);margin:0 0 8px}
+.path h3{font-size:22px;margin:0 0 10px}
+.path p{margin:0 0 16px;font-size:14.5px;color:var(--ink-600)}
+.spec{list-style:none;margin:0;padding:0;display:grid;gap:10px}
+.spec li{font-size:13.5px;color:var(--ink-700);display:flex;gap:10px;align-items:flex-start}
+.tick{width:17px;height:17px;flex:none;margin-top:3px;border-radius:50%;display:grid;place-items:center;font-size:10px;font-weight:800;color:#fff;background:var(--brand-600)}
+.path.b .tick{background:var(--warm)}
+.spec code{font-family:var(--mono);font-size:12px;background:var(--ink-100);padding:1px 6px;border-radius:5px}
+/* honest */
+.honest{background:var(--ink-900);color:var(--ink-100)}
+.honest .eyebrow{color:var(--brand-300)}.honest .eyebrow::before{background:var(--brand-300)}
+.honest .section-lede{color:var(--ink-400)}.honest .section-title{color:#fff}
+.honest-quote{margin:0 0 50px;padding:28px 32px;border-left:3px solid var(--warm);background:rgba(255,255,255,.05);border-radius:0 var(--radius) var(--radius) 0;max-width:800px}
+.honest-quote p{margin:0;font-size:clamp(16px,1.9vw,20px);line-height:1.65;color:#fff;font-weight:500}
+.honest-quote cite{display:block;margin-top:14px;font-style:normal;font-size:13px;color:var(--ink-400)}
+.limit-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:20px}
+.limit{border:1px solid rgba(255,255,255,.13);border-radius:var(--radius);padding:24px 22px 26px;background:rgba(255,255,255,.04)}
+.limit h3{font-size:15px;color:#fff;margin:0 0 10px;display:flex;align-items:center;gap:9px}
+.limit h3 i{font-style:normal;width:22px;height:22px;flex:none;border-radius:7px;background:rgba(217,119,87,.2);color:var(--warm);display:grid;place-items:center;font-size:13px;font-weight:800}
+.limit p{margin:0;font-size:13.5px;color:var(--ink-400);line-height:1.7}
+/* metrics */
+.metrics{display:grid;grid-template-columns:repeat(4,1fr);gap:1px;background:var(--ink-200);border:1px solid var(--ink-200);border-radius:var(--radius);overflow:hidden}
+.metric{background:var(--card);padding:28px 24px 30px}
+.metric b{display:block;font-size:clamp(26px,3.2vw,36px);font-weight:800;letter-spacing:-.03em;line-height:1;margin-bottom:10px}
+.metric b i{font-style:normal;color:var(--brand-600)}
+.metric span{font-size:13.5px;color:var(--ink-500)}
+.metrics-foot{margin:16px 0 0;font-size:12.5px;color:var(--ink-400);text-align:center}
+.metrics-foot code{font-family:var(--mono);background:var(--ink-100);padding:1px 6px;border-radius:5px}
+/* personas */
+.personas{display:grid;grid-template-columns:repeat(4,1fr);gap:20px}
+.persona{border-top:2px solid var(--brand-600);padding-top:18px}
+.persona:nth-child(2){border-top-color:var(--brand-500)}.persona:nth-child(3){border-top-color:var(--brand-400)}.persona:nth-child(4){border-top-color:var(--warm)}
+.persona .who{font-size:12px;font-weight:700;color:var(--brand-600);letter-spacing:.06em;margin-bottom:6px}
+.persona h3{font-size:16px;margin:0 0 8px}
+.persona p{margin:0;font-size:13.5px;color:var(--ink-600)}
+.keys{display:flex;flex-wrap:wrap;gap:12px;margin-top:32px}
+.key{display:flex;align-items:center;gap:12px;background:var(--card);border:1px solid var(--ink-200);border-radius:12px;padding:11px 15px}
+.key .combo{display:flex;gap:5px}
+.key kbd{font-family:var(--mono);font-size:12px;font-weight:600;color:var(--ink-800);background:var(--ink-100);border:1px solid var(--ink-200);border-bottom-width:2px;border-radius:6px;padding:4px 8px;line-height:1}
+.key .desc{font-size:13px;color:var(--ink-600)}
+/* faq */
+.faq{display:grid;gap:12px;max-width:820px}
+.faq details{border:1px solid var(--ink-200);border-radius:12px;background:var(--card);padding:16px 20px}
+.faq summary{cursor:pointer;font-weight:700;font-size:15px;list-style:none;display:flex;justify-content:space-between;gap:12px;align-items:center}
+.faq summary::-webkit-details-marker{display:none}
+.faq summary::after{content:"+";font-size:18px;color:var(--brand-600);font-weight:800}
+.faq details[open] summary::after{content:"–"}
+.faq p{margin:12px 0 2px;font-size:14px;color:var(--ink-600)}
+/* final */
+.final{text-align:center;padding:110px 0 116px;position:relative;overflow:hidden}
+.final::after{content:"";position:absolute;bottom:-280px;left:50%;transform:translateX(-50%);width:900px;height:560px;background:radial-gradient(ellipse at center,rgba(96,165,250,.25) 0%,transparent 66%);filter:blur(28px);pointer-events:none}
+.final h2{font-size:clamp(30px,4.4vw,50px);font-weight:800;margin:0 0 18px;letter-spacing:-.025em}
+.final h2 em{font-style:normal;color:var(--brand-600)}
+.final p{font-size:16.5px;color:var(--ink-600);max-width:52ch;margin:0 auto 34px}
+.final .hero-cta{justify-content:center;position:relative;z-index:1}
+/* footer */
+.footer{border-top:1px solid var(--ink-200);background:var(--card);padding:42px 0 50px}
+.footer-grid{display:flex;flex-wrap:wrap;gap:24px 48px;align-items:center;justify-content:space-between}
+.footer-links{display:flex;flex-wrap:wrap;gap:10px 26px;font-size:13.5px}
+.footer-links a{color:var(--ink-600);text-decoration:none}.footer-links a:hover{color:var(--ink-900)}
+.footer-meta{font-size:12.5px;color:var(--ink-400);line-height:1.9;margin:12px 0 0}
+/* reveal */
+.reveal{opacity:0;transform:translateY(22px);transition:opacity .7s var(--expo),transform .7s var(--expo)}
+.reveal.is-in{opacity:1;transform:none}
+@media (prefers-reduced-motion:reduce){html{scroll-behavior:auto}.reveal{opacity:1;transform:none}}
+@media (max-width:1020px){
+  .hero{padding:128px 0 70px}.hero-grid{grid-template-columns:1fr;gap:42px}
+  .axis{grid-template-columns:1fr}.axis-item{border-right:0;border-bottom:1px solid var(--ink-200);padding:26px 0}.axis-item:last-child{border-bottom:0}
+  .sync-paths{grid-template-columns:1fr}.steps{grid-template-columns:repeat(2,1fr)}
+  .feat-grid{grid-template-columns:repeat(2,1fr)}.limit-grid{grid-template-columns:repeat(2,1fr)}
+  .metrics{grid-template-columns:repeat(2,1fr)}.personas{grid-template-columns:repeat(2,1fr)}
+  .section{padding:74px 0}.topnav{display:none}
+}
+@media (max-width:620px){
+  body{font-size:15px}.wrap{padding-inline:20px}
+  .feat-grid,.limit-grid,.metrics,.personas,.steps{grid-template-columns:1fr}
+  .topbar{padding:12px 18px}.hero{padding:110px 0 54px}.hero h1 em{white-space:normal}
+  .btn{width:100%}.hero-cta{flex-direction:column;align-items:stretch}.final{padding:80px 0 84px}
+  .honest-quote{padding:22px}
+}
+</style>
+</head>
+<body>
+
+<header class="topbar" id="topbar">
+  <a class="brand" href="#top"><span class="logo">TS</span>TapStack <span class="ver">v1.23.1</span></a>
+  <nav class="topnav" aria-label="页面导航">
+    <a href="#capability">能力</a>
+    <a href="#how">用法</a>
+    <a href="#sync">同步</a>
+    <a href="#tech">技术</a>
+    <a href="#honest">诚实边界</a>
+    <a href="#faq">问答</a>
+  </nav>
+  <a class="btn btn-primary btn-sm" href="#install">添加到 Chrome</a>
+</header>
+
+<main id="top">
+<!-- Hero -->
+<section class="hero">
+  <div class="wrap hero-grid">
+    <div>
+      <p class="eyebrow">Save the session · Find it later · Restore it</p>
+      <h1>把此刻这一屏<br />工作现场<em>原样冻结</em></h1>
+      <p class="hero-sub">文档、PR、Issue、控制台、监控同时开着二十几个标签？<strong>TapStack 一键把整窗收成一个命名会话</strong>，标签随之关闭、窗口还给你。下次需要时按名字、标题或网址搜到它，<strong>一键在新窗口整组展开继续干</strong>。</p>
+      <div class="hero-cta">
+        <a class="btn btn-primary" href="#install">免费添加到 Chrome →</a>
+        <a class="btn btn-ghost" href="#capability">看它怎么工作</a>
+      </div>
+      <p class="hero-note"><span class="dot"></span>免费 · MIT 开源 · 无需注册即可用本地功能 · 当前版本 v1.23.1</p>
+      <div class="strip">
+        <span>Chrome MV3</span><span>React 18 + TypeScript</span><span>本地优先</span><span>Supabase 云同步</span><span>WebDAV 自带存储</span><span>MIT License</span>
+      </div>
+    </div>
+    <div class="mock" aria-hidden="true">
+      <div class="mock-bar"><i style="background:#F87171"></i><i style="background:#FBBF24"></i><i style="background:#34D399"></i><span class="mock-url">chrome-extension://tapstack/manager.html</span></div>
+      <div class="mock-body">
+        <div class="mock-search">⌕&nbsp; <b>支付网关</b>&nbsp;· 3 个会话 · 11 个标签命中</div>
+        <div class="session top">
+          <div class="session-head"><b>支付网关联调 · 10-14</b><span class="pill">12 个标签</span></div>
+          <div class="tab"><span class="fav" style="background:#2563EB">G</span>github.com · <mark>支付网关</mark> PR #482 <span class="pill gray" style="margin-left:auto">已打开</span></div>
+          <div class="tab"><span class="fav" style="background:#D97757">S</span>supabase.com · dashboard · logs</div>
+          <div class="tab"><span class="fav" style="background:#16A34A">N</span>notion.so · 联调 checklist</div>
+        </div>
+        <div class="session">
+          <div class="session-head"><b>V2 执行计划审查</b><span class="pill gray">8 个标签</span></div>
+          <div class="tab"><span class="fav" style="background:#7C3AED">D</span>docs.google.com · 评审纪要</div>
+          <div class="tab"><span class="fav" style="background:#0EA5E9">H</span>news.ycombinator.com · CRDTs</div>
+        </div>
+      </div>
+      <div class="mock-foot"><span class="chipbtn primary">＋ 保存当前窗口</span><span class="chipbtn">同步 ⟳</span></div>
+    </div>
+  </div>
+</section>
+
+<!-- 核心能力 -->
+<section class="section section-alt" id="capability">
+  <div class="wrap">
+    <div class="section-head reveal">
+      <p class="eyebrow">它只做一件事，但做到底</p>
+      <h2 class="section-title">不是「又一个标签管理器」</h2>
+      <p class="section-lede">目标是把当前窗口保存成<strong>可找回、可恢复的工作现场</strong>。保存、找回、恢复三个动作构成完整闭环，不掺别的。</p>
+    </div>
+    <div class="axis reveal">
+      <div class="axis-item"><p class="axis-num">01 / SAVE</p><h3>一键把整个窗口收成会话</h3><p>扩展图标、工具栏按钮、快捷键、右键菜单四条入口走同一条保存链路。保存后当前窗口标签随之关闭，屏幕立刻干净。可配是否保留固定标签。</p></div>
+      <div class="axis-item"><p class="axis-num">02 / FIND</p><h3>搜得到，才叫真的存住了</h3><p>会话名、标签标题、网址三字段全文检索，多档权重排序、命中词高亮，再按域名、固定标签、保存时间筛选。上千会话里也能翻出三周前那一屏。</p></div>
+      <div class="axis-item"><p class="axis-num">03 / RESTORE</p><h3>整组展开，不打乱手头的事</h3><p>一键在新窗口恢复整个会话；也可就地打开。未锁定会话恢复后自动从列表移除；锁定会话保留、可反复用。单个标签点开即标「已打开」，清理要单独确认。</p></div>
+    </div>
+  </div>
+</section>
+
+<!-- 用法 -->
+<section class="section" id="how">
+  <div class="wrap">
+    <div class="section-head reveal">
+      <p class="eyebrow">四步上手</p>
+      <h2 class="section-title">从标签灾难到一屏清爽</h2>
+    </div>
+    <div class="steps reveal">
+      <div class="step"><div class="n">1</div><h3>攒一屏工作现场</h3><p>像往常一样开着文档、PR、监控、表格——不用提前整理。</p></div>
+      <div class="step"><div class="n">2</div><h3>一键保存并关闭</h3><p>点图标或按 <kbd>Alt+Shift+S</kbd>，整窗收成「标签组 + 时间」命名的会话。</p></div>
+      <div class="step"><div class="n">3</div><h3>重命名方便搜回</h3><p>改成「支付联调」「竞品调研」这样人话的名字，锁定重要的。</p></div>
+      <div class="step"><div class="n">4</div><h3>搜到即整组恢复</h3><p>按 <kbd>Ctrl+Shift+S</kbd> 打开管理器，搜索、一键在新窗口展开。</p></div>
+    </div>
+  </div>
+</section>
+
+<!-- 功能 -->
+<section class="section section-alt" id="features">
+  <div class="wrap">
+    <div class="section-head reveal">
+      <p class="eyebrow">功能细节</p>
+      <h2 class="section-title">重度浏览器用户会用到的那部分</h2>
+    </div>
+    <div class="feat-grid reveal">
+      <article class="feat"><div class="feat-ico">⌕</div><h3>三字段全文检索</h3><p>会话名、标题、网址都能搜，按会话归组再展开命中标签，可只恢复其中一条。</p></article>
+      <article class="feat"><div class="feat-ico">⚿</div><h3>锁定会话</h3><p>锁定的会话恢复后不消失、不被清理误伤。它是「收藏夹」与「剪切」的分界线。</p></article>
+      <article class="feat"><div class="feat-ico">⧉</div><h3>清理重复标签</h3><p>同一网址散在多个会话里时一键清理，每组保留最近一条，顺带收走空会话。锁定自动豁免。</p></article>
+      <article class="feat"><div class="feat-ico">⇅</div><h3>导入导出不锁人</h3><p>OneTab 文本双向互通 + JSON 全量备份。导入会如实报告「共 N 个、成功 X 个、跳过 Y 个」。</p></article>
+      <article class="feat"><div class="feat-ico">☰</div><h3>拖拽排序 + 键盘重排</h3><p>会话内标签可跨会话拖拽，也支持 <code>↑↓ / Home / End</code> 键盘整理，折叠与相对时间帮你定位。</p></article>
+      <article class="feat"><div class="feat-ico">⌨</div><h3>右键与快捷键</h3><p>不打开管理页也能存：右键「保存当前 / 其他标签」。<code>Ctrl+Shift+S</code> 开管理器，<code>Alt+Shift+S</code> 存全部，<code>Alt+S</code> 存当前页。</p></article>
+    </div>
+  </div>
+</section>
+
+<!-- 同步 -->
+<section class="section" id="sync">
+  <div class="wrap">
+    <div class="section-head reveal">
+      <p class="eyebrow">数据去哪，你选</p>
+      <h2 class="section-title">两条同步路径，你自己挑</h2>
+      <p class="section-lede">默认不强制注册。不登录，数据只留在浏览器本地。要跨设备找回时，有两条路——云端的，或你自己的。</p>
+    </div>
+    <div class="sync-paths reveal">
+      <div class="path a">
+        <p class="role">默认路径</p><h3>TapStack 云端</h3>
+        <p>登录后同步到托管服务（Supabase），换设备、换浏览器都能找回。本地改动自动防抖上传，打开时自动合并下载；合并异常自动回滚，不覆盖丢数据。</p>
+        <ul class="spec">
+          <li><span class="tick">✓</span><span>上传前在<strong>你的设备上</strong>加密，云端存密文，传输另有 HTTPS</span></li>
+          <li><span class="tick">✓</span><span>行级安全策略（RLS）限定每行只能被自己读写，27 个迁移文件可审计</span></li>
+          <li><span class="tick">✓</span><span>增量同步：只传改动过的会话，分批 50 / 页拉 200，不整库重传</span></li>
+        </ul>
+      </div>
+      <div class="path b">
+        <p class="role">自带存储</p><h3>你的 WebDAV 云盘</h3>
+        <p>同步到你自己的云盘（坚果云、自建 Nextcloud 等），不经过我们的服务器。离开浏览器前用你的口令加密，口令只在内存、不落盘。</p>
+        <ul class="spec">
+          <li><span class="tick">✓</span><span><code>PBKDF2-SHA256 250k</code> + <code>AES-256-GCM</code>，条件写防并发覆盖</span></li>
+          <li><span class="tick">✓</span><span>口令<strong>无法找回</strong>——忘了就得重新开始，这一点提前说清楚</span></li>
+          <li><span class="tick">✓</span><span>目录清单为明文（可见数量与修改时间，不含名称网址）；选「不加密」则全可见</span></li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- 技术 -->
+<section class="section section-alt" id="tech">
+  <div class="wrap">
+    <div class="section-head reveal">
+      <p class="eyebrow">可验证的部分</p>
+      <h2 class="section-title">一个独立开发者写到了什么程度</h2>
+      <p class="section-lede">不靠「相信我」，靠能数的东西：测试、迁移、代码行数全部来自仓库实测口径，开源可审计。</p>
+    </div>
+    <div class="metrics reveal">
+      <div class="metric"><b>1300<i>+</i></b><span>自动化测试用例（105 个测试文件），覆盖保存、同步、合并与冲突</span></div>
+      <div class="metric"><b>36k<i>+</i></b><span>行测试与脚本代码，超过产品代码本身——关键修复必配回归用例</span></div>
+      <div class="metric"><b>27</b><span>个数据库迁移文件，含行级安全策略的启用与校验硬检查</span></div>
+      <div class="metric"><b>MIT</b><span>开源许可，仓库、Issue、构建脚本全部公开</span></div>
+    </div>
+    <p class="metrics-foot reveal">统计口径：<code>tests/</code> 内 <code>it()</code> 计数约 1315 · <code>src/</code> 约 29k 行 · 含 20+ 个 Playwright 端到端脚本（跑真实浏览器与真实云端）。</p>
+  </div>
+</section>
+
+<!-- 诚实 -->
+<section class="section honest" id="honest">
+  <div class="wrap">
+    <div class="section-head reveal">
+      <p class="eyebrow">我们不承诺的东西</p>
+      <h2 class="section-title">这一节比上面所有功能都重要</h2>
+      <p class="section-lede">如果只看一节，请看这节。下面是这个扩展现在做不到的事——写在这里，好让你带着准确的预期安装。</p>
+    </div>
+    <blockquote class="honest-quote reveal">
+      <p>早期文档曾把 TapStack 称作「工作会话保险箱」。现已去掉「保险箱」——保险箱的心理契约是「东西丢了能找回来」，而本产品<strong>删除即物理清除、无回收站、不可恢复</strong>。定位词与实际行为必须一致。</p>
+      <cite>—— TapStack README，关于命名</cite>
+    </blockquote>
+    <div class="limit-grid reveal">
+      <div class="limit"><h3><i>!</i>删除即物理清除</h3><p>没有回收站，没有撤销。删除前二次确认、「删除全部」强制确认并显示数量——但确认之后就是真的没了。</p></div>
+      <div class="limit"><h3><i>!</i>不是端到端加密</h3><p>云端存密文，但密钥由账号 ID 派生，而账号 ID 是公开标识。准确说法是「传输加密 + 服务端静态加密」，请不要当作「只有你能看见」。</p></div>
+      <div class="limit"><h3><i>!</i>不是实时协同</h3><p>两台设备同时编辑同一会话，以最后保存一方为准。错峰使用不受影响。自动同步默认关闭，可选 5 / 10 / 30 / 60 分钟四档。</p></div>
+      <div class="limit"><h3><i>!</i>只传你主动保存的</h3><p>上传到云端的只有你<strong>主动保存过</strong>的标签页。不读浏览历史、不收集分析数据、不出售给第三方。</p></div>
+      <div class="limit"><h3><i>!</i>云盘清单是明文的</h3><p>用 WebDAV 时会话内容加密，但目录清单明文：服务商可见「多少会话、何时改过」，不含名称网址。</p></div>
+      <div class="limit"><h3><i>!</i>OneTab 导入不含图标</h3><p>OneTab 格式本身不含 favicon 与固定状态，导入后这两栏为空。其余内容有往返测试兜底，不截断不丢失。</p></div>
+    </div>
+  </div>
+</section>
+
+<!-- 用户 -->
+<section class="section" id="users">
+  <div class="wrap">
+    <div class="section-head reveal">
+      <p class="eyebrow">为谁做的</p>
+      <h2 class="section-title">四类需要长时间保持上下文的人</h2>
+    </div>
+    <div class="personas reveal">
+      <div class="persona"><div class="who">FOR DEVELOPERS</div><h3>开发者</h3><p>文档、PR、Issue、控制台、监控、后台同时开很多页，切回去再切回来是一整片上下文。</p></div>
+      <div class="persona"><div class="who">FOR RESEARCHERS</div><h3>研究型用户</h3><p>论文、论坛、竞品、视频、资料长时间并行打开，需要整体收起、整体取回的地方。</p></div>
+      <div class="persona"><div class="who">FOR CREATORS</div><h3>内容作者</h3><p>选题、草稿、引用、素材、后台反复切换，一屏参考不该关掉后一块块翻回来。</p></div>
+      <div class="persona"><div class="who">FOR CLOSERS</div><h3>销售 / 招聘 / 投资</h3><p>CRM、表格、邮件、公司页、Notion 长时间保持上下文，跟进多个对象时各自一摞。</p></div>
+    </div>
+    <div class="keys reveal">
+      <div class="key"><span class="combo"><kbd>Ctrl</kbd><kbd>Shift</kbd><kbd>S</kbd></span><span class="desc">打开标签管理器</span></div>
+      <div class="key"><span class="combo"><kbd>Alt</kbd><kbd>Shift</kbd><kbd>S</kbd></span><span class="desc">保存全部标签并关闭</span></div>
+      <div class="key"><span class="combo"><kbd>Alt</kbd><kbd>S</kbd></span><span class="desc">保存当前标签并关闭</span></div>
+    </div>
+  </div>
+</section>
+
+<!-- FAQ -->
+<section class="section section-alt" id="faq">
+  <div class="wrap">
+    <div class="section-head reveal">
+      <p class="eyebrow">安装前先问清楚</p>
+      <h2 class="section-title">常见问题</h2>
+    </div>
+    <div class="faq reveal">
+      <details open><summary>不登录能用吗？数据存哪？</summary><p>能。全部本地功能无需注册，数据默认只保存在浏览器扩展存储中（并申请了 unlimitedStorage 以容纳重度用户）。只有登录并开启同步后，数据才会传到你自己的云端账户。</p></details>
+      <details><summary>删除的会话能找回来吗？</summary><p>不能。v1.22.0 起删除即物理清除，没有回收站、不可恢复。删除前会有二次确认，「删除全部」强制确认并显示数量。请把删除当作不可逆操作。</p></details>
+      <details><summary>和 OneTab 是什么关系？</summary><p>支持 OneTab 文本格式双向导入导出，可以带着历史过来、也可以随时带着数据离开，不锁人。标题含竖线、本地文件地址等边界情况都有往返测试兜底。</p></details>
+      <details><summary>两台电脑会互相覆盖吗？</summary><p>下载采用「快照 → 下载 → 合并 → 校验 → 写入」，异常自动回滚；同一会话两边同时编辑时以最后保存一方整组为准。错峰使用不受影响。自动同步默认关闭，本地改动仍会照常上传。</p></details>
+      <details><summary>6 套主题是什么？</summary><p>legacy / creamy / prism / apple / chrome / claude 六套风格，每套都有独立设计的浅色与深色（共 12 种观感），另有单 / 双栏布局与跟随系统三档。</p></details>
+    </div>
+  </div>
+</section>
+
+<!-- CTA -->
+<section class="final" id="install">
+  <div class="wrap">
+    <h2 class="reveal">下一次<em>工作现场</em>要收起来时，别再一屏一屏地关。</h2>
+    <p class="reveal">免费安装，不注册也能用本地功能。数据默认只留在你的浏览器里——要不要跨设备，由你决定。</p>
+    <div class="hero-cta reveal">
+      <a class="btn btn-primary" href="https://chrome.google.com/webstore" target="_blank" rel="noopener">在 Chrome 应用商店安装 →</a>
+      <a class="btn btn-ghost" href="https://github.com/hibernate-pano/chrome-plugin-one-tab" target="_blank" rel="noopener">在 GitHub 上读源码</a>
+    </div>
+  </div>
+</section>
+</main>
+
+<footer class="footer">
+  <div class="wrap footer-grid">
+    <div>
+      <a class="brand" href="#top"><span class="logo">TS</span>TapStack</a>
+      <p class="footer-meta">保存浏览器工作会话，稍后快速找回与恢复。<br />MIT License · 独立开发项目 · 当前版本 v1.23.1</p>
+    </div>
+    <nav class="footer-links" aria-label="页脚链接">
+      <a href="https://github.com/hibernate-pano/chrome-plugin-one-tab" target="_blank" rel="noopener">GitHub 仓库</a>
+      <a href="https://github.com/hibernate-pano/chrome-plugin-one-tab/issues" target="_blank" rel="noopener">问题反馈</a>
+      <a href="https://tapstack-two.vercel.app/privacy.html" target="_blank" rel="noopener">隐私政策</a>
+    </nav>
+  </div>
+</footer>
+
+<script>
+(function(){
+  var topbar=document.getElementById('topbar');
+  function onScroll(){topbar.setAttribute('data-scrolled',window.scrollY>8?'true':'false')}
+  window.addEventListener('scroll',onScroll,{passive:true});onScroll();
+  var targets=Array.prototype.slice.call(document.querySelectorAll('.reveal'));
+  if(!('IntersectionObserver' in window)){targets.forEach(function(el){el.classList.add('is-in')});return}
+  var io=new IntersectionObserver(function(es){es.forEach(function(e){if(e.isIntersecting){e.target.classList.add('is-in');io.unobserve(e.target)}})},{rootMargin:'0px 0px -10% 0px',threshold:.08});
+  targets.forEach(function(el){io.observe(el)});
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,468 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>TapStack — 把此刻这一屏工作现场原样冻结，稍后搜回来、整组展开继续干</title>
+<meta name="description" content="TapStack 是一个 Chrome 扩展，把当前窗口的全部标签页保存为命名会话，随时找回与恢复。数据默认只在本地，跨设备同步可选自有云盘。删除即物理清除、无回收站 —— 我们如实承诺这一条。" />
+<link rel="icon" type="image/png" href="assets/img/icon128.png" />
+<link rel="stylesheet" href="assets/css/styles.css" />
+</head>
+<body>
+
+<!-- ============ 导航 ============ -->
+<header class="topbar" id="topbar">
+  <a class="brand" href="#top">
+    <img src="assets/img/logo.svg" alt="TapStack 图标" width="30" height="30" />
+    TapStack
+  </a>
+  <nav class="topnav" aria-label="页面导航">
+    <a href="#capability">能力</a>
+    <a href="#themes">主题</a>
+    <a href="#sync">同步</a>
+    <a href="#honest">诚实边界</a>
+    <a href="#install">安装</a>
+  </nav>
+  <a class="btn btn-primary btn-sm" href="#install">添加到 Chrome</a>
+</header>
+
+<main id="top">
+
+<!-- ============ Hero ============ -->
+<section class="hero">
+  <div class="wrap hero-grid">
+    <div>
+      <p class="eyebrow">Save the session · Find it later · Restore it</p>
+      <h1>把此刻这一屏工作现场<br /><em>原样冻结</em>，稍后搜回来。</h1>
+      <p class="hero-sub">
+        一个窗口同时开着文档、PR、Issue、控制台、监控、后台。
+        TapStack 把它们<strong>整组保存成一个命名会话</strong>，标签随之关闭，
+        窗口还给你。下次需要时，按名字、标题或网址搜到它，
+        一键在新窗口里<strong>整组展开继续干</strong>。
+      </p>
+      <div class="hero-cta">
+        <a class="btn btn-primary" href="#install">
+          添加到 Chrome
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+        </a>
+        <a class="btn btn-ghost" href="#capability">看它怎么工作</a>
+      </div>
+      <p class="hero-note"><span class="dot" aria-hidden="true"></span>免费 · MIT 开源 · 无需注册即可使用本地功能</p>
+    </div>
+
+    <!-- 三层卡片：品牌图标语汇的延伸 -->
+    <div class="stack-stage" aria-hidden="true">
+      <div class="stack-card sc-3">
+        <div class="bar"><span></span><span></span><span></span></div>
+        <div class="body">
+          <div class="line w50"></div><div class="line w70"></div>
+        </div>
+      </div>
+      <div class="stack-card sc-2">
+        <div class="bar"><span></span><span></span><span></span></div>
+        <div class="body">
+          <div class="line w70"></div><div class="line w50"></div>
+        </div>
+      </div>
+      <div class="stack-card sc-1">
+        <div class="bar"><span></span><span></span><span></span></div>
+        <div class="body">
+          <div class="line w85 accent"></div>
+          <div class="line w70"></div>
+          <div class="line w50"></div>
+          <span class="save-chip">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><path d="M17 21v-8H7v8M7 3v5h8"/></svg>
+            保存会话
+          </span>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ 三条主轴 ============ -->
+<section class="section section-alt" id="capability">
+  <div class="wrap">
+    <div class="section-head reveal">
+      <p class="eyebrow">它只做一件事，但做到底</p>
+      <h2 class="section-title">不是「又一个标签管理器」</h2>
+      <p class="section-lede">
+        目标是帮你把当前窗口保存成可找回、可恢复的工作现场。
+        保存、找回、恢复 —— 三个动作构成完整闭环，不掺别的。
+      </p>
+    </div>
+
+    <div class="axis reveal">
+      <div class="axis-item">
+        <p class="axis-num">01 / SAVE</p>
+        <h3>一键把整个窗口收成会话</h3>
+        <p>点扩展图标、按工具栏按钮、用快捷键或右键菜单，四条入口走同一条保存链路。保存后当前窗口的标签随之关闭，屏幕立刻干净。</p>
+      </div>
+      <div class="axis-item">
+        <p class="axis-num">02 / FIND</p>
+        <h3>搜得到，才叫真的存住了</h3>
+        <p>会话名、标签标题、网址三个字段全文检索，七档权重排序，命中词高亮。再加域名、固定标签、保存时间筛选。上千个会话里也能翻出三周前那一屏。</p>
+      </div>
+      <div class="axis-item">
+        <p class="axis-num">03 / RESTORE</p>
+        <h3>整组展开，不打乱你手头的事</h3>
+        <p>一键在新窗口恢复整个会话；也可以就地打开到当前窗口。未锁定的会话恢复后从列表移除（标签已在浏览器里，无需再清理）；锁定的会话保留着，可以反复用。</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ 产品实拍 ============ -->
+<section class="section">
+  <div class="wrap">
+    <div class="section-head reveal">
+      <p class="eyebrow">真实界面</p>
+      <h2 class="section-title">这是它本来的样子</h2>
+      <p class="section-lede">不是概念图，是当前版本的实际界面截图。</p>
+    </div>
+
+    <div class="showcase reveal">
+      <figure class="shot">
+        <span class="shot-tag">管理器 · 会话列表</span>
+        <img src="assets/img/ui-main.png" alt="TapStack 管理器主界面：顶部为会话与标签计数、搜索框与保存按钮，下方为多张会话卡片" width="1280" height="800" loading="lazy" />
+        <figcaption><b>多会话列表</b>· 每张卡片显示标签数量与相对保存时间</figcaption>
+      </figure>
+      <figure class="shot">
+        <span class="shot-tag">搜索 · 按标题与网址</span>
+        <img src="assets/img/ui-search.png" alt="TapStack 搜索结果界面：关键词命中词高亮，搜索结果先按会话归组再展开具体标签" width="1280" height="800" loading="lazy" />
+        <figcaption><b>全文检索</b>· 会话优先归组，再展开命中的具体标签</figcaption>
+      </figure>
+    </div>
+  </div>
+</section>
+
+<!-- ============ 功能细节 ============ -->
+<section class="section section-alt">
+  <div class="wrap">
+    <div class="section-head reveal">
+      <p class="eyebrow">功能细节</p>
+      <h2 class="section-title">重度浏览器用户会用到的那部分</h2>
+    </div>
+
+    <div class="feat-grid reveal">
+      <article class="feat">
+        <div class="feat-ico" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
+        </div>
+        <h3>三字段全文检索</h3>
+        <p>会话名、标签标题、网址都能搜，七档权重排序，固定标签加权。搜索结果按会话归组后展开命中标签，可以只恢复其中一条。</p>
+      </article>
+
+      <article class="feat">
+        <div class="feat-ico" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+        </div>
+        <h3>锁定会话</h3>
+        <p>锁定的会话恢复后不会从列表里消失，也不会被清理重复标签误伤，重命名与删除按钮一并隐藏。它是「收藏夹」与「剪切」之间的分界线。</p>
+      </article>
+
+      <article class="feat">
+        <div class="feat-ico" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 8v13H3V8M1 3h22v5H1zM10 12h4"/></svg>
+        </div>
+        <h3>清理重复标签</h3>
+        <p>同一个网址在多个会话里反复出现时，一键清理：每组保留最近一次打开的那一条，清完顺带收走空会话。锁定的会话自动豁免。</p>
+      </article>
+
+      <article class="feat">
+        <div class="feat-ico" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12M8 11l4 4 4-4M3 19h18"/></svg>
+        </div>
+        <h3>导入导出</h3>
+        <p>OneTab 文本格式双向互通，外加 JSON 全量备份导出。导入后会告诉你「文件内共 N 个、成功 X 个、跳过 Y 个」——不报假的成功。</p>
+      </article>
+
+      <article class="feat">
+        <div class="feat-ico" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6h16M4 12h10M4 18h6"/></svg>
+        </div>
+        <h3>会整理会话的人</h3>
+        <p>会话内标签可拖拽排序（跨会话、组内都行），也支持键盘重排：上下键移动、Home/End 到首尾。折叠展开、相对时间（今天/昨天/N 天前）帮你找到位置。</p>
+      </article>
+
+      <article class="feat">
+        <div class="feat-ico" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2 2 7l10 5 10-5z"/><path d="m2 17 10 5 10-5M2 12l10 5 10-5"/></svg>
+        </div>
+        <h3>右键与快捷键</h3>
+        <p>不打开管理界面也能保存：右键「保存当前标签」「保存其他标签」。<code>Ctrl+Shift+S</code> 打开管理器，<code>Alt+Shift+S</code> 存全部，<code>Alt+S</code> 存当前页。</p>
+      </article>
+    </div>
+  </div>
+</section>
+
+<!-- ============ 主题 ============ -->
+<section class="section" id="themes">
+  <div class="wrap">
+    <div class="section-head reveal">
+      <p class="eyebrow">6 套主题 · 明暗两态</p>
+      <h2 class="section-title">一个工具，十二种长相</h2>
+      <p class="section-lede">
+        每套主题都有独立的浅色与深色两套配色，不是简单反转。
+        圆角、质感、强调色随主题整体变化——从 Apple 原生到 Anthropic 暖调。
+      </p>
+    </div>
+
+    <div class="theme-wall reveal">
+      <figure class="theme-card">
+        <img src="assets/img/theme-apple-light.png" alt="Apple 主题浅色模式界面" width="1280" height="800" loading="lazy" />
+        <div class="theme-meta"><b>Apple</b><span>大圆角 · 毛玻璃质感</span></div>
+      </figure>
+      <figure class="theme-card">
+        <img src="assets/img/theme-chrome-light.png" alt="Chrome 主题浅色模式界面" width="1280" height="800" loading="lazy" />
+        <div class="theme-meta"><b>Chrome</b><span>纯白底 · 最小圆角</span></div>
+      </figure>
+      <figure class="theme-card">
+        <img src="assets/img/theme-creamy-light.png" alt="Creamy 主题浅色模式界面" width="1280" height="800" loading="lazy" />
+        <div class="theme-meta"><b>Creamy</b><span>暖米白 · 纸感琥珀</span></div>
+      </figure>
+      <figure class="theme-card">
+        <img src="assets/img/theme-prism-dark.png" alt="Prism 主题深色模式界面" width="1280" height="800" loading="lazy" />
+        <div class="theme-meta"><b>Prism</b><span>棱镜半透明 · 紫调</span></div>
+      </figure>
+      <figure class="theme-card">
+        <img src="assets/img/theme-claude-dark.png" alt="Claude 主题深色模式界面" width="1280" height="800" loading="lazy" />
+        <div class="theme-meta"><b>Claude</b><span>赤陶橙 · 米灰底</span></div>
+      </figure>
+      <figure class="theme-card">
+        <img src="assets/img/theme-legacy-dark.png" alt="Legacy 主题深色模式界面" width="1280" height="800" loading="lazy" />
+        <div class="theme-meta"><b>Legacy</b><span>中性灰蓝 · 经典</span></div>
+      </figure>
+    </div>
+
+    <p class="theme-aside reveal">
+      <span>另有单栏 / 双栏布局切换、明 / 暗 / 跟随系统三档</span>
+      <span class="k">darkMode</span>
+      <span class="k">compact</span>
+      <span class="k">12 palettes</span>
+    </p>
+  </div>
+</section>
+
+<!-- ============ 同步 ============ -->
+<section class="section section-alt" id="sync">
+  <div class="wrap">
+    <div class="section-head reveal">
+      <p class="eyebrow">数据去哪，你选</p>
+      <h2 class="section-title">两条同步路径，你自己挑</h2>
+      <p class="section-lede">
+        默认不强制你注册。不登录，数据只留在浏览器本地。
+        要跨设备找回时，有两条路可选——云端的或你自己的。
+      </p>
+    </div>
+
+    <div class="sync-paths reveal">
+      <div class="path a">
+        <p class="role">默认路径</p>
+        <h3>TapStack 云端</h3>
+        <p>登录后同步到托管服务，换设备、换浏览器都能找回工作现场。本地改动自动防抖上传，登录时自动合并下载。</p>
+        <ul class="spec">
+          <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg><span>上传前在<strong>你的设备上</strong>加密，云端数据库里存的是密文</span></li>
+          <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg><span>行级安全策略（RLS）限定每行只能被自己读写</span></li>
+          <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg><span>增量同步：只传改动过的会话，不整库重传</span></li>
+        </ul>
+      </div>
+
+      <div class="path b">
+        <p class="role">自带存储</p>
+        <h3>你的 WebDAV 云盘</h3>
+        <p>数据同步到你自己的云盘（坚果云、自建 Nextcloud 等），不经过我们的服务器。离开浏览器前用你的口令加密。</p>
+        <ul class="spec">
+          <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg><span><code>PBKDF2-SHA256 250k</code> 迭代派生密钥 + <code>AES-256-GCM</code></span></li>
+          <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg><span>口令只存在于内存，不落盘、不上传</span></li>
+          <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg><span>口令<strong>无法找回</strong>——忘了就得重新开始，这一点我们提前说</span></li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ 诚实边界 ============ -->
+<section class="section honest" id="honest">
+  <div class="wrap">
+    <div class="section-head reveal">
+      <p class="eyebrow">我们不承诺的东西</p>
+      <h2 class="section-title">这一节比上面所有功能都重要</h2>
+      <p class="section-lede">
+        如果只看一节，请你看这节。下面是这个扩展现在做不到的事——
+        写在这里，好让你带着准确的预期安装。
+      </p>
+    </div>
+
+    <blockquote class="honest-quote reveal">
+      <p>
+        早期文档曾把 TapStack 称作「工作会话保险箱」。现已去掉「保险箱」——
+        保险箱的心理契约是「东西丢了能找回来」，而本产品<strong>删除即物理清除、无回收站、不可恢复</strong>。
+        定位词与实际行为必须一致，否则用户会带着「存进来应该安全」的预期点删除，然后真的丢数据。
+      </p>
+      <cite>—— TapStack README，关于命名</cite>
+    </blockquote>
+
+    <div class="limit-grid reveal">
+      <div class="limit">
+        <h3><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><path d="M12 9v4M12 17h.01"/></svg>删除即物理清除</h3>
+        <p>没有回收站，没有撤销。删除前会二次确认，「删除全部会话」强制确认并显示数量——但确认之后就是真的没了。所以删除按钮永远比恢复按钮更谨慎。</p>
+      </div>
+
+      <div class="limit">
+        <h3><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><path d="M12 9v4M12 17h.01"/></svg>不是端到端加密</h3>
+        <p>云端存的是密文，但密钥由账号 ID 派生，而账号 ID 是公开标识、且与密文存在同一张表。准确的说法是「传输加密 + 服务端静态加密」。要真正的 E2E，需要口令派生密钥加一套恢复码机制——那是一次独立的大改。在那之前，请不要把云端数据当作「只有你能看见」。</p>
+      </div>
+
+      <div class="limit">
+        <h3><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><path d="M12 9v4M12 17h.01"/></svg>不是实时协同编辑</h3>
+        <p>两台设备同时编辑同一个会话时，以最后保存的一方为准，先保存方那部分新增会丢失。错峰使用不受影响。自动同步默认关闭，要开的话有 5 / 10 / 30 / 60 分钟四档可选。</p>
+      </div>
+
+      <div class="limit">
+        <h3><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><path d="M12 9v4M12 17h.01"/></svg>云盘明细是明文的</h3>
+        <p>选自带存储（WebDAV）时，会话内容用你的口令加密，但目录清单是明文的——云盘服务商能看到「有多少个会话、各自何时改过」。不含名称与网址。选「不加密」则名称与网址也会可见。</p>
+      </div>
+
+      <div class="limit">
+        <h3><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><path d="M12 9v4M12 17h.01"/></svg>不读你的浏览历史</h3>
+        <p>上传到云端的，只有你<strong>主动保存过</strong>的那些标签页——也就是会话数据本身。不自动收集浏览历史，不收集任何分析数据，不出售给第三方。</p>
+      </div>
+
+      <div class="limit">
+        <h3><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><path d="M12 9v4M12 17h.01"/></svg>OneTab 导入不含图标</h3>
+        <p>OneTab 文本格式本身不含 favicon 和固定标签状态，所以导入后这两栏是空的。其余内容双向互通有往返测试兜底，不会截断或丢失。</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ 迁移 ============ -->
+<section class="section">
+  <div class="wrap migrate">
+    <div class="migrate-visual reveal" aria-hidden="true">
+      <div class="row"><span>›</span>github.com/hibernate-pano · Pull requests</div>
+      <div class="row"><span>›</span>docs.google.com · V2 执行计划审查</div>
+      <div class="row"><span>›</span>news.ycombinator.com · CRDTs and the cost of consistency</div>
+      <div class="divider"></div>
+      <div class="row"><span>›</span>react.dev · React 19 Upgrade Guide</div>
+      <div class="row"><span>›</span>go.dev · Effective Go</div>
+      <div class="row"><span>›</span>web.dev · Core Web Vitals</div>
+      <div class="arrow" aria-hidden="true">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+      </div>
+    </div>
+
+    <div class="migrate-side reveal">
+      <span class="badge">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg>
+        OneTab 兼容
+      </span>
+      <h2 class="section-title">带着你的历史过来</h2>
+      <p class="section-lede">
+        已经在用 OneTab？直接导入它的文本格式，一条条会话原样进来；
+        想走也能原样导出，不锁人。格式解析有专门的往返测试兜底——
+        标题里带竖线、网址是本地文件的，都不会被截断或丢弃。
+      </p>
+    </div>
+  </div>
+</section>
+
+<!-- ============ 信任数据 ============ -->
+<section class="section section-alt">
+  <div class="wrap">
+    <div class="section-head reveal">
+      <p class="eyebrow">可验证的部分</p>
+      <h2 class="section-title">一个独立开发者写到了什么程度</h2>
+    </div>
+
+    <div class="metrics reveal">
+      <div class="metric"><b>1,296<i>+</i></b><span>自动化测试用例覆盖保存、同步、合并、导入导出与冲突处理</span></div>
+      <div class="metric"><b>30k<i>+</i></b><span>行测试代码，超过产品代码本身——每个关键修复都配回归用例</span></div>
+      <div class="metric"><b>26</b><span>数据库迁移文件，含行级安全策略的启用与校验硬检查</span></div>
+      <div class="metric"><b>MIT</b><span>开源许可，代码可自行审计，不靠「相信我」</span></div>
+    </div>
+    <p class="metrics-foot reveal">统计口径：<code>tests/</code> 目录 <span class="mono">it()</span> 用例计数与 <code>src/</code> 代码行数，含 29 个 Playwright 端到端脚本（跑真实浏览器与真实云端）。</p>
+  </div>
+</section>
+
+<!-- ============ 用户 ============ -->
+<section class="section">
+  <div class="wrap">
+    <div class="section-head reveal">
+      <p class="eyebrow">为谁做的</p>
+      <h2 class="section-title">四类需要长时间保持上下文的人</h2>
+    </div>
+
+    <div class="personas reveal">
+      <div class="persona">
+        <h3>开发者</h3>
+        <p>文档、PR、Issue、控制台、监控、后台同时开很多页，切回去再切回来是一整片上下文。</p>
+      </div>
+      <div class="persona">
+        <h3>研究型用户</h3>
+        <p>论文、论坛、竞品、视频、资料长时间并行打开，需要一个可以把它们整体收起来再整体取回的地方。</p>
+      </div>
+      <div class="persona">
+        <h3>内容作者</h3>
+        <p>选题、草稿、引用、素材、后台需要反复切换，一屏的参考不该被关掉之后再一块块翻回来。</p>
+      </div>
+      <div class="persona">
+        <h3>销售 / 招聘 / 投资</h3>
+        <p>CRM、表格、邮件、公司页、Notion 长时间保持上下文，跟进多个对象时各自一摞。</p>
+      </div>
+    </div>
+
+    <div class="keys reveal">
+      <div class="key"><span class="combo"><kbd>Ctrl</kbd><kbd>Shift</kbd><kbd>S</kbd></span><span class="desc">打开标签管理器</span></div>
+      <div class="key"><span class="combo"><kbd>Alt</kbd><kbd>Shift</kbd><kbd>S</kbd></span><span class="desc">保存全部标签并关闭</span></div>
+      <div class="key"><span class="combo"><kbd>Alt</kbd><kbd>S</kbd></span><span class="desc">保存当前标签并关闭</span></div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ 最终 CTA ============ -->
+<section class="final" id="install">
+  <div class="wrap">
+    <h2 class="reveal">下一次 <em>工作现场</em> 要收起来时，<br />别再一屏一屏地关。</h2>
+    <p class="reveal">
+      免费安装，不注册也能用本地功能。数据默认只留在你的浏览器里——
+      要不要跨设备，由你决定。
+    </p>
+    <div class="hero-cta reveal">
+      <a class="btn btn-primary" href="https://chrome.google.com/webstore/detail/tapstack" target="_blank" rel="noopener">
+        在 Chrome 应用商店安装
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><path d="M15 3h6v6M10 14 21 3"/></svg>
+      </a>
+      <a class="btn btn-ghost" href="https://github.com/hibernate-pano/chrome-plugin-one-tab" target="_blank" rel="noopener">在 GitHub 上读源码</a>
+    </div>
+  </div>
+</section>
+
+</main>
+
+<!-- ============ 页脚 ============ -->
+<footer class="footer">
+  <div class="wrap footer-grid">
+    <div>
+      <a class="brand" href="#top" style="margin-bottom:12px;">
+        <img src="assets/img/logo.svg" alt="TapStack 图标" width="26" height="26" />
+        TapStack
+      </a>
+      <p class="footer-meta" style="margin:12px 0 0;">
+        保存浏览器工作会话，稍后快速找回与恢复。<br />
+        MIT License · 独立开发项目
+      </p>
+    </div>
+    <nav class="footer-links" aria-label="页脚链接">
+      <a href="https://github.com/hibernate-pano/chrome-plugin-one-tab" target="_blank" rel="noopener">GitHub 仓库</a>
+      <a href="https://github.com/hibernate-pano/chrome-plugin-one-tab/issues" target="_blank" rel="noopener">问题反馈</a>
+      <a href="https://tapstack-two.vercel.app/privacy.html" target="_blank" rel="noopener">隐私政策</a>
+      <a href="https://github.com/hibernate-pano/chrome-plugin-one-tab#readme" target="_blank" rel="noopener">README</a>
+    </nav>
+  </div>
+</footer>
+
+<script src="assets/js/main.js" defer></script>
+</body>
+</html>
