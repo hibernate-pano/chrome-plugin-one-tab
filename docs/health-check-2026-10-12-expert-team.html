@@ -1,0 +1,793 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TapStack 深度体检报告 · 2026-10-12</title>
+<style>
+  :root{
+    --bg:#0e1116; --bg-2:#151a21; --bg-3:#1c232c;
+    --line:#2a323d; --line-2:#3a4552;
+    --fg:#e6edf3; --fg-2:#9fb0c0; --fg-3:#6b7d8f;
+    --p0:#ff5c5c; --p1:#ff9f43; --p2:#4dabf7; --ok:#3ddc97; --info:#74c0fc;
+    --mono:"SF Mono",ui-monospace,Menlo,Consolas,monospace;
+    --serif:"Iowan Old Style","Palatino Linotype",Palatino,Georgia,serif;
+  }
+  @media (prefers-color-scheme: light){
+    :root{
+      --bg:#fbfaf7; --bg-2:#f4f2ec; --bg-3:#ece9e1;
+      --line:#ddd8cc; --line-2:#c9c2b2;
+      --fg:#1d232b; --fg-2:#4d5a68; --fg-3:#7b8794;
+      --p0:#c92a2a; --p1:#d97706; --p2:#1971c2; --ok:#0f9d58; --info:#1971c2;
+    }
+  }
+  *{box-sizing:border-box}
+  html{scroll-behavior:smooth; scroll-padding-top:76px}
+  body{
+    margin:0; background:var(--bg); color:var(--fg);
+    font:16px/1.75 -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;
+    -webkit-font-smoothing:antialiased;
+  }
+  .wrap{max-width:1080px; margin:0 auto; padding:0 24px}
+  header{
+    border-bottom:1px solid var(--line);
+    background:
+      radial-gradient(1100px 380px at 12% -12%, rgba(255,92,92,.10), transparent 62%),
+      radial-gradient(900px 340px at 88% -18%, rgba(77,171,247,.10), transparent 60%),
+      var(--bg);
+    padding:56px 0 40px; position:relative; overflow:hidden;
+  }
+  header::after{
+    content:""; position:absolute; inset:0; pointer-events:none; opacity:.03;
+    background-image:repeating-linear-gradient(0deg,transparent 0 2px,var(--fg) 2px 3px);
+  }
+  .kicker{
+    font:600 11px/1 var(--mono); letter-spacing:.22em; text-transform:uppercase;
+    color:var(--fg-3); display:flex; gap:10px; align-items:center; flex-wrap:wrap;
+  }
+  .kicker .sep{width:4px;height:4px;border-radius:50%;background:var(--line-2)}
+  h1{
+    font-family:var(--serif); font-size:clamp(34px,5.6vw,58px); line-height:1.08;
+    margin:20px 0 14px; letter-spacing:-.018em; font-weight:600;
+  }
+  h1 em{font-style:italic; color:var(--p0)}
+  .sub{color:var(--fg-2); font-size:17px; max-width:72ch; margin:0 0 26px}
+  .sub b{color:var(--fg)}
+  .meta{display:flex; gap:26px; flex-wrap:wrap; font:13px/1.5 var(--mono); color:var(--fg-3)}
+  .meta b{color:var(--fg-2); font-weight:600}
+  .scores{display:grid; grid-template-columns:repeat(auto-fit,minmax(148px,1fr)); gap:1px;
+    background:var(--line); border:1px solid var(--line); border-radius:12px; overflow:hidden; margin:34px 0 0}
+  .score{background:var(--bg-2); padding:16px 18px}
+  .score .n{font:700 30px/1 var(--mono); letter-spacing:-.02em}
+  .score .l{font-size:12.5px; color:var(--fg-3); margin-top:7px}
+  .score.p0 .n{color:var(--p0)} .score.p1 .n{color:var(--p1)}
+  .score.p2 .n{color:var(--p2)} .score.ok .n{color:var(--ok)}
+  section{padding:52px 0; border-bottom:1px solid var(--line)}
+  h2{font-family:var(--serif); font-size:clamp(24px,3vw,31px); margin:0 0 8px;
+    letter-spacing:-.01em; font-weight:600; display:flex; align-items:baseline; gap:14px}
+  h2 .num{font:700 13px/1 var(--mono); color:var(--fg-3); letter-spacing:.1em}
+  .lede{color:var(--fg-2); max-width:76ch; margin:0 0 30px; font-size:16.5px}
+  h3{font-size:17px; margin:34px 0 12px; letter-spacing:-.005em}
+  h3:first-of-type{margin-top:0}
+  .verdict{
+    border:1px solid var(--line-2); border-left:4px solid var(--p0);
+    background:linear-gradient(180deg,rgba(255,92,92,.07),transparent 70%),var(--bg-2);
+    border-radius:10px; padding:26px 28px; margin:0 0 30px;
+  }
+  .verdict h3{margin:0 0 12px; font-size:19px}
+  .verdict p{margin:0 0 12px; color:var(--fg-2)}
+  .verdict p:last-child{margin:0}
+  .verdict strong{color:var(--fg)}
+  .finding{border:1px solid var(--line); border-radius:11px; background:var(--bg-2); margin:0 0 16px; overflow:hidden}
+  .finding > summary{list-style:none; cursor:pointer; padding:17px 20px; display:flex; gap:14px;
+    align-items:flex-start; transition:background .14s}
+  .finding > summary:hover{background:var(--bg-3)}
+  .finding > summary::-webkit-details-marker{display:none}
+  .finding[open] > summary{border-bottom:1px solid var(--line); background:var(--bg-3)}
+  .badge{flex:0 0 auto; font:700 11px/1 var(--mono); letter-spacing:.06em; padding:5px 8px;
+    border-radius:5px; margin-top:2px; white-space:nowrap}
+  .b-p0{background:rgba(255,92,92,.15); color:var(--p0); border:1px solid rgba(255,92,92,.35)}
+  .b-p1{background:rgba(255,159,67,.14); color:var(--p1); border:1px solid rgba(255,159,67,.33)}
+  .b-p2{background:rgba(77,171,247,.13); color:var(--p2); border:1px solid rgba(77,171,247,.3)}
+  .b-ok{background:rgba(61,220,151,.13); color:var(--ok); border:1px solid rgba(61,220,151,.3)}
+  .ftitle{font-weight:600; font-size:15.5px; line-height:1.5; flex:1}
+  .fbody{padding:20px 22px 22px; font-size:15px; color:var(--fg-2)}
+  .fbody p{margin:0 0 12px}
+  .fbody p:last-child{margin:0}
+  .fbody strong{color:var(--fg)}
+  code{font:13px/1.5 var(--mono); background:var(--bg-3); padding:1.5px 5px;
+    border-radius:4px; color:var(--info); white-space:nowrap}
+  pre{background:var(--bg-3); border:1px solid var(--line); border-radius:8px;
+    padding:14px 16px; overflow-x:auto; margin:12px 0; font:12.5px/1.65 var(--mono)}
+  pre code{background:none; padding:0; white-space:pre; color:var(--fg-2)}
+  .chain{font:12.5px/1.85 var(--mono); background:var(--bg-3); border:1px solid var(--line);
+    border-left:3px solid var(--p0); border-radius:8px; padding:14px 16px; margin:12px 0;
+    overflow-x:auto; white-space:pre; color:var(--fg-2)}
+  .chain .hl{color:var(--p0); font-weight:600}
+  .tbl-wrap{overflow-x:auto; margin:16px 0; border:1px solid var(--line); border-radius:9px}
+  table{width:100%; border-collapse:collapse; font-size:14px}
+  th{text-align:left; padding:11px 14px; background:var(--bg-3); font-weight:600;
+    font-size:12.5px; letter-spacing:.04em; text-transform:uppercase; color:var(--fg-3);
+    border-bottom:1px solid var(--line); white-space:nowrap}
+  td{padding:11px 14px; border-bottom:1px solid var(--line); vertical-align:top; color:var(--fg-2)}
+  tr:last-child td{border-bottom:none}
+  td.mono,th.mono{font-family:var(--mono); font-size:12.5px}
+  .yes{color:var(--ok); font-weight:600} .no{color:var(--p0); font-weight:600}
+  .note{border-left:3px solid var(--p2); background:rgba(77,171,247,.06);
+    padding:13px 16px; border-radius:0 8px 8px 0; margin:14px 0; font-size:14.5px; color:var(--fg-2)}
+  .note.warn{border-left-color:var(--p1); background:rgba(255,159,67,.06)}
+  .note.good{border-left-color:var(--ok); background:rgba(61,220,151,.06)}
+  .note.danger{border-left-color:var(--p0); background:rgba(255,92,92,.06)}
+  .note b{color:var(--fg)}
+  .grid2{display:grid; grid-template-columns:repeat(auto-fit,minmax(320px,1fr)); gap:16px}
+  .panel{border:1px solid var(--line); border-radius:11px; background:var(--bg-2); padding:20px 22px}
+  .panel h4{margin:0 0 12px; font-size:13px; letter-spacing:.05em; text-transform:uppercase; color:var(--fg-3)}
+  .expert{border:1px solid var(--line); border-radius:11px; background:var(--bg-2); padding:20px 22px; margin:0 0 14px}
+  .expert h4{margin:0 0 4px; font-size:16px; display:flex; align-items:center; gap:10px; flex-wrap:wrap}
+  .expert .role{font:11px/1 var(--mono); color:var(--fg-3); letter-spacing:.06em; text-transform:uppercase}
+  .expert p{margin:10px 0 0; font-size:14.5px; color:var(--fg-2)}
+  .expert b{color:var(--fg)}
+  nav{position:sticky; top:0; z-index:50; background:color-mix(in srgb,var(--bg) 88%,transparent);
+    backdrop-filter:blur(14px); border-bottom:1px solid var(--line)}
+  nav .wrap{display:flex; gap:4px; overflow-x:auto; padding:11px 24px; scrollbar-width:none}
+  nav .wrap::-webkit-scrollbar{display:none}
+  nav a{color:var(--fg-3); text-decoration:none; font-size:13px; white-space:nowrap;
+    padding:6px 11px; border-radius:6px; transition:.14s}
+  nav a:hover{color:var(--fg); background:var(--bg-3)}
+  .decide{border:1px solid var(--line-2); border-radius:12px; background:var(--bg-2); padding:24px 26px; margin:0 0 18px}
+  .decide h4{margin:0 0 8px; font-size:16.5px; display:flex; gap:10px; align-items:baseline; flex-wrap:wrap}
+  .decide .q{font:11px/1 var(--mono); color:var(--p1); letter-spacing:.08em; text-transform:uppercase; flex:0 0 auto}
+  .decide p{margin:10px 0 0; font-size:14.5px; color:var(--fg-2)}
+  .opts{display:flex; gap:10px; flex-wrap:wrap; margin:14px 0 0}
+  .opt{border:1px solid var(--line); border-radius:8px; padding:12px 15px; font-size:13.5px;
+    background:var(--bg-3); flex:1 1 210px; color:var(--fg-2)}
+  .opt.rec{border-color:rgba(61,220,151,.4); background:rgba(61,220,151,.06)}
+  .opt .tag{font:10.5px/1 var(--mono); letter-spacing:.06em; text-transform:uppercase; display:block; margin-bottom:6px; color:var(--fg-3)}
+  .opt.rec .tag{color:var(--ok)}
+  .opt b{color:var(--fg)}
+  footer{padding:44px 0 70px; color:var(--fg-3); font-size:13.5px}
+  footer p{margin:0 0 9px; max-width:80ch}
+  footer b{color:var(--fg-2)}
+  kbd{font:12px/1 var(--mono); background:var(--bg-3); border:1px solid var(--line-2);
+    border-bottom-width:2px; border-radius:4px; padding:2px 5px}
+  @media (max-width:640px){
+    .wrap{padding:0 16px}
+    header{padding:38px 0 30px}
+    section{padding:38px 0}
+    .fbody{padding:16px}
+  }
+  @media print{
+    nav{display:none}
+    .finding{break-inside:avoid}
+    body{background:#fff; color:#000}
+  }
+</style>
+</head>
+<body>
+<nav><div class="wrap">
+  <a href="#verdict">结论</a>
+  <a href="#p0">P0</a>
+  <a href="#p1">P1</a>
+  <a href="#p2">P2</a>
+  <a href="#gates">门禁实测</a>
+  <a href="#experts">专家团</a>
+  <a href="#withdrawn">误判记录</a>
+  <a href="#unverified">未能验证</a>
+  <a href="#decide">待决断</a>
+</div></nav>
+<header><div class="wrap">
+  <div class="kicker">
+    <span>TapStack</span><span class="sep"></span>
+    <span>Expert Health Check</span><span class="sep"></span>
+    <span>2026-10-12</span>
+  </div>
+  <h1>六位专家的一次深度体检：<br>守住的，和<em>没守住的</em></h1>
+  <p class="sub">
+    TapStack（v1.23.0）的工程质量比大多数独立项目高出一个量级——它的测试门禁是真的，
+    注释是知识资产级别的，历史事故被逐条钉进了可执行守卫。
+    但这一轮挖出来的东西恰恰是：<b>1117 个测试全绿的同时，仍有 2 条会真丢数据的活路径、
+    1 个线上已实测的自助提权面，和 3 处「守卫守的是旧契约」的系统性盲区。</b>
+    这不是本轮新增的问题，而是既有工程质量与 1.23.0 一次行为契约变更之间的真实张力。
+  </p>
+  <div class="meta">
+    <span>提交 <b>0b9a66e</b></span>
+    <span>版本 <b>1.23.0</b></span>
+    <span>规模 <b>25,418 行 src / 104 测试文件</b></span>
+    <span>审查 <b>6 位专家并行 + 主线程复核</b></span>
+    <span>线上库 <b>已实测只读</b></span>
+  </div>
+  <div class="scores">
+    <div class="score p0"><div class="n">2</div><div class="l">P0 · 会真丢数据</div></div>
+    <div class="score p1"><div class="n">7</div><div class="l">P1 · 违反不变式</div></div>
+    <div class="score p2"><div class="n">10</div><div class="l">P2 · 口径与债务</div></div>
+    <div class="score ok"><div class="n">21</div><div class="l">变异：改坏会红</div></div>
+    <div class="score p0"><div class="n">5</div><div class="l">改坏仍绿 · 假绿</div></div>
+  </div>
+</div></header>
+<section id="verdict"><div class="wrap">
+  <h2><span class="num">01</span>结论先行</h2>
+  <p class="lede">
+    先说好消息，因为它是真的：这一轮<b>没有任何一位专家推翻过既有架构</b>。
+    历史上最贵的几类缺陷——跨 realm 单写者失效、静默空读固化、分页丢数据、水位单调性——
+    都已有可执行守卫钉死，且经得起变异验证。
+  </p>
+  <div class="verdict">
+    <h3>但 1117 全绿掩盖了三类问题，其中两类会真丢数据</h3>
+    <p>
+      <strong>第一类：不变式只做了一半。</strong>
+      <code>indexedDbClient.getItem</code> 早已改成 fail-closed，但 <code>localStorageFallback.getItem</code>
+      从项目第一天起就是 fail-open，而 <code>pickBackend()</code> 让它一直是可达路径。
+      两个 P0 都属于这一类：<b>它们不是「守卫失效」，是「守卫从没覆盖到那条路」</b>。
+    </p>
+    <p>
+      <strong>第二类：守卫守的是 1.22 的契约，而 1.23.0 改了产品行为。</strong>
+      自动同步默认关闭是一次行为契约变更，却只改了 changelog 行。README、商店 listing、
+      新手引导、权限理由、隐私政策<b>五处文案全部停在旧契约上</b>，
+      而 <code>docsAlignment.test.ts</code> 里没有任何一条断言涉及
+      <code>自动同步 / syncEnabled / 60s</code>——所以漂移一片全绿。
+      UX 专家本轮 3 个 P0 全部落在这一类。
+    </p>
+    <p>
+      <strong>第三类：探测与判定的工具本身会假绿。</strong>
+      <code>anon-rls-probe.mjs</code> 把 HTTP 402 判成「✓ 安全」；
+      <code>migrationReplay.pg</code> 的 golden 双库比对在「守卫永远跳过」时恒真。
+      这两个工具都是用来回答「线上安全吗」的——它们在服务异常时会给出与安全完全相同的绿色输出。
+    </p>
+  </div>
+  <div class="note good">
+    <b>一个必须记住的正面结论：</b>安全专家这次拿到了 <code>supabase db query --linked</code> 的只读访问，
+    <b>线上实测推翻了上一轮报告的三条 P0</b>——三张浏览历史表 RLS 确实已启用、
+    <code>profiles</code> 的 <code>USING(true)</code> 已消失、purge 函数对 anon 已无 EXECUTE。
+    仓库里的「上一轮报告」在这一点上是错的，<b>这一轮有直接证据</b>。
+  </div>
+</div></section>
+<section id="p0"><div class="wrap">
+  <h2><span class="num">02</span>P0 · 会真丢数据</h2>
+  <p class="lede">两条独立验证过的路径。共同特征：<b>读失败被当成「没有数据」，然后整库覆盖，界面报成功，且没有回收站</b>。</p>
+  <details class="finding" open>
+    <summary>
+      <span class="badge b-p0">P0</span>
+      <span class="ftitle">localStorage 回退驱动是 fail-open：一次存储不可用可把全部会话覆盖成一条，且回报成功</span>
+    </summary>
+    <div class="fbody">
+      <p><strong>现象：</strong>用户所有会话消失，列表只剩刚保存的那一条，全程没有任何报错。v1.22.0 起无回收站，找不回来。</p>
+      <div class="chain">localStorage 整体不可用（配额满 / 隐私模式 / 站点数据被清）
+  ↓ <span class="hl">localStorageFallback.getItem → 探测失败 return null</span>
+  ↓ storage.ts:272 把 null 判成「键不存在」→ 返回 <span class="hl">[]</span>（不抛错）
+  ↓ getGroupsForWrite() 不抛错（它只 flush + 失效缓存）
+  ↓ applySaveGroup([], newGroup)
+  ↓ setGroupsImmediate 真写成功  →  <span class="hl">磁盘被整表覆盖，UI 报「已保存」</span></div>
+      <p><strong>根因：</strong>fail-closed 不变式只做在 IndexedDB 驱动上，没有做在<b>驱动选择</b>上。
+      <code>localStorageFallback.ts:16</code> 从初始提交起就是 fail-open，此后所有 fail-closed 收口
+      （<code>storageFailClosed</code>、<code>localStorageFreshness</code>）测的都是 IndexedDB 桩，
+      从没测过这个回退驱动。而 <code>storageAdapter.ts:12</code> 的 <code>pickBackend()</code> 让它一直可达。</p>
+      <p><strong>主线程独立验证：</strong>我用真实模块跑了探针——</p>
+      <pre><code>available(before) = true
+available(after)= false
+getItem -&gt; null   ← fail-OPEN：读错误长得和「没有数据」一模一样
+setItem resolved without throwing  ← 写路径同样静默 no-op（谎报成功）</code></pre>
+      <div class="note danger">
+        <b>附带发现：</b><code>setItem</code> / <code>removeItem</code> 在存储不可用时是<b>静默 return</b>，
+        调用方以为写成功了。这本身就是「谎报成功」，与读侧 fail-open 是同一根因的两面。
+      </div>
+      <p><strong>修法：</strong>方向 fail-open → fail-closed。<code>getItem</code> 探测失败时<b>抛错</b>
+      （与 <code>indexedDbClient.getItem</code> 同口径），写侧同样抛错而非静默 return。
+      更根本的做法是让 <code>pickBackend</code> 在两个后端都不可用时<b>拒绝初始化并出声</b>，
+      而不是降级到最弱的存储。</p>
+      <p class="note warn"><b>变异验证：</b>把该行改成 <code>throw</code> 后全套 <b>9 个测试转红</b>——
+      说明这个改动会被既有网接住，新写行为测试时可用同样手法确认。</p>
+    </div>
+  </details>
+  <details class="finding" open>
+    <summary>
+      <span class="badge b-p0">P0</span>
+      <span class="ftitle">设置水合门禁漏掉 pending 窗口：冷启动那一瞬改任何设置，会把出厂默认值整份写盘</span>
+    </summary>
+    <div class="fbody">
+      <p><strong>现象：</strong>用户双栏变单栏、主题被改回 legacy、1.23.0 新加的同步档位被重置，全程无提示。若随后手动上传，默认值会扩散到其它设备。</p>
+      <div class="chain">冷启动 → <code>loadSettings</code> 仍在途（IndexedDB 冷读 / 死句柄看门狗 5s）
+  ↓ settingsSlice.ts:24  <span class="hl">let settingsReadFailed = false</span>  ← 初值「没失败过」
+  ↓ 用户点任意设置项 → dispatchSaveSettings
+  ↓ settingsSlice.ts:53 判 <span class="hl">if (settingsReadFailed)</span> = false → <span class="hl">放行</span>
+  ↓ storage.setSettings(DEFAULT_SETTINGS 全量) 整份覆盖真实设置</div>
+      <p><strong>根因：</strong>门禁的语义是「<b>读到过</b>真值吗」，实现却建模成「<b>读过失败</b>吗」（只在 <code>catch</code> 置位）。
+      这两者之间有一段 <code>pending</code> 真空——而它恰好是 IndexedDB 冷启动的<b>常态窗口</b>，不是边缘情况。</p>
+      <p><strong>为什么它特别难被发现：</strong>既有的 <code>noSilentFalseSuccess.test.ts:443</code> 验证了「置位」与「检查」两个环节，
+      但<b>没有验证初值</b>。变异测试证明了这一点：把初值改成 <code>true</code>（等价于「永远拒绝写」）
+      后，<b>全套 1117 个测试依然全绿</b>——这说明该场景不是「守卫漏网」，而是<b>压根没有守卫</b>。两者修法不同。</p>
+      <p><strong>修法（两个方向，需拍板）：</strong></p>
+      <div class="opts">
+        <div class="opt rec"><span class="tag">推荐 (b)</span><code>saveSettings</code> 改成「先读真值 → 合并 → 写」，不依赖 Redux state。用户意图永不丢，且符合本仓「读-改-写一律走真值」的既有纪律。</div>
+        <div class="opt"><span class="tag">(a) 三态标记</span>标记建模为 <code>pending / ok / failed</code>，非 <code>ok</code> 一律拒绝写。语义最准，但冷启动那一瞬所有设置项「点不动」。</div>
+      </div>
+    </div>
+  </details>
+</div></section>
+<section id="p1"><div class="wrap">
+  <h2><span class="num">03</span>P1 · 违反不变式 / 已造成错误</h2>
+  <p class="lede">按「是否已经造成用户可见的错误」排序，不按修复难度排序。</p>
+  <details class="finding" open>
+    <summary>
+      <span class="badge b-p1">P1 · 线上已实测</span>
+      <span class="ftitle">authenticated 可自助提权：改自己的 plan / subscription_status / stripe_customer_id</span>
+    </summary>
+    <div class="fbody">
+      <p>这是本轮<b>唯一一个已在线上实测确认</b>的安全问题，也是唯一一条连评审员都可能追问的。</p>
+      <div class="tbl-wrap"><table>
+        <thead><tr><th>检查项</th><th>线上实测值</th><th>应然</th></tr></thead>
+        <tbody>
+          <tr><td class="mono">profiles 表级 ACL</td><td class="mono">authenticated=<b>ardDxt</b>（含 UPDATE）</td><td class="no">应剔除 w</td></tr>
+          <tr><td class="mono">UPDATE 策略 WITH CHECK</td><td class="mono">(<code>auth.uid()</code>) = <b>id</b></td><td>只约束了 id</td></tr>
+          <tr><td class="mono">列级 UPDATE 授权</td><td class="mono"><code>plan</code> / <code>subscription_status</code> / <code>subscription_id</code> / <code>stripe_customer_id</code> 对 authenticated 全部可写</td><td class="no">应全部 REVOKE</td></tr>
+          <tr><td>客户端是否依赖</td><td class="mono"><b>src/ 零引用 profiles</b>（rg + python 双复核）</td><td class="yes">收紧零业务影响</td></tr>
+        </tbody>
+      </table></div>
+      <p><strong>为什么成立：</strong>策略的 <code>WITH CHECK</code> 只验证 <code>id = auth.uid()</code>，
+      而表级 GRANT UPDATE 覆盖了整张表的<b>所有列</b>。于是任何登录用户都能
+      <code>UPDATE profiles SET plan='pro', subscription_status='active' WHERE id=auth.uid()</code>。
+      当前客户端不读这些列，<b>所以现在没有业务影响——但这是一个等着被踩的地雷</b>。</p>
+      <div class="note good">
+        <b>修法已经写好了：</b><code>docs/fix-profiles-rls-urgent.sql:141-165</code> 里有正确的收口块，
+        而且注释记录了一个真实踩坑：「<b>表级 GRANT UPDATE 会覆盖列级 REVOKE</b>」——
+        必须先 <code>REVOKE UPDATE ON profiles FROM authenticated</code> 再逐列 REVOKE，顺序反了无效。
+        <b>建议直接从 <code>docs/</code> 提升为正式迁移</b>：它现在躺在文档目录，没有任何门禁会在它没执行时报警。
+      </div>
+    </div>
+  </details>
+  <details class="finding" open>
+    <summary>
+      <span class="badge b-p1">P1</span>
+      <span class="ftitle">最贵的不可逆动作，挂在一个名字叫「打开管理器」的快捷键上</span>
+    </summary>
+    <div class="fbody">
+      <p><strong>现象：</strong>用户按 <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>S</kbd>（登记名「Open tab manager」），
+      预期只是把管理页调出来看看。实际发生的是：<b>保存整个窗口为会话 + 关闭全部标签 + 新开 chrome://newtab + 打开管理页</b>。</p>
+      <p><strong>主线程独立验证：</strong></p>
+      <pre><code>$ python3 -c "import json; m=json.load(open('manifest.json'))..."
+action keys: ['default_icon', 'default_title']
+default_popup present: False          ← 没有 popup，所以 _execute_action 走 action.onClicked
+default_title: TapStack - 保存当前窗口并关闭这些标签   ← 图标标题是诚实的，快捷键这条路漏了
+_execute_action -&gt; Open tab manager</code></pre>
+      <div class="chain"><span class="hl">_execute_action（Ctrl+Shift+S）</span>
+  ↓ 无 default_popup ⇒ 触发 <code>chrome.action.onClicked</code>
+  ↓ service-worker.ts:200  →  <span class="hl">saveAllTabs(tabs)</span>  →  chrome.tabs.remove 全部
+  ↓ openTabManager(true)  →  整个过程<b>没有任何确认</b></div>
+      <p><strong>为什么这是 P1 而不是 P3：</strong>这是本产品<b>最贵的一次不可逆动作</b>（剪切整窗），
+      挂在了一个动机完全不同的入口上。用户按它的理由是「我想看看我存了什么」，
+      而且<b>快捷键的名字里没有「保存」二字</b>——他甚至不会意识到刚才发生了一次保存。
+      标签关掉后，他唯一的后悔药是「从刚建的会话里恢复」，而那正是这条快捷键刚替他做的决定。</p>
+      <p><strong>附带发现：</strong><code>service-worker.ts</code> 里的 <code>case '_execute_action'</code>
+      是<b>不可达代码</b>——Chrome 文档明文说这类命令「不派发 <code>command.onCommand</code> 事件」。两处行为分叉。</p>
+      <div class="note warn">
+        <b>这是产品取舍，不是我能替你定的：</b>二选一——
+        <b>(a)</b> 改文案承认它是保存动作（与 <code>default_title</code> 拉齐）；
+        <b>(b)</b> 把快捷键重新分配给真正的「打开管理器」，另给保存一个名字里带「保存」的键。
+        <b>我倾向 (a)</b>：改文案零风险，而 (b) 会改变用户已经记住的肌肉记忆。
+      </div>
+    </div>
+  </details>
+  <details class="finding">
+    <summary>
+      <span class="badge b-p1">P1</span>
+      <span class="ftitle">读一次设置就凭空调度一次上传：自动同步已默认关闭，打开页面仍出网</span>
+    </summary>
+    <div class="fbody">
+      <p>架构专家用探针实测：<b>3 条 settings action → 3 次 <code>SYNC scheduleUpload</code></b>。</p>
+      <pre><code>// src/store/middleware/autoSyncMiddleware.ts
+if (typeof a.type === 'string' &amp;&amp; !a.error &amp;&amp; <span class="hl">a.type.startsWith('settings/')</span>) {
+  void sendSyncCommand('scheduleUpload', { delayMs: 3000 });
+}</code></pre>
+      <p>前缀匹配把「<b>读</b>设置」（<code>loadSettings/pending</code>、<code>/fulfilled</code>）
+      也当成了「本地有改动」。触发点是 <code>MainApp.tsx:26</code> 与 <code>ThemeContext.tsx:57</code>——
+      也就是说<b>每次打开页面</b>都会凭空调度一次上传。</p>
+      <div class="note danger">
+        <b>两条后果，第二条才致命：</b>
+        <br>① 自动同步已默认关闭，但打开页面仍创建上传 alarm 并出一次网——<b>与 1.23.0 的产品承诺直接冲突</b>。
+        <br>② <code>upload()</code> 结尾<b>无条件</b>写 <code>last_upload_time</code>，
+        于是打开页面后 35 秒内点「手动同步」会被 <code>recent_upload_guard</code> 挡掉，
+        界面显示「<b>刚完成上传，云端已是最新状态，无需下载</b>」——<b>而用户明明是想拉取别人的改动</b>。
+        <br><span style="color:var(--ok)">（我已独立复核这条链路：<code>SyncButton.tsx:313</code> 的 <code>REASON_COPY</code> 确实把它渲染成这句话。）</span>
+      </div>
+      <p><strong>修法：</strong>判据从「前缀」改成<b>显式白名单</b>——只认真正改了设置并落盘的 action。改动约 1 行谓词 + 1 条守卫测试。</p>
+    </div>
+  </details>
+  <details class="finding">
+    <summary>
+      <span class="badge b-p1">P1</span>
+      <span class="ftitle">「通知提醒」开关是空接线：关掉照弹，打开不会有任何变化</span>
+    </summary>
+    <div class="fbody">
+      <p><strong>主线程独立验证（按 <code>_shared.md</code> 陷阱 2 用 python 换工具复核）：</strong></p>
+      <pre><code>src/types/tab.ts:222               showNotifications: boolean;      // 类型
+src/utils/storage.ts:189          showNotifications: false,          // 默认值
+src/utils/supabase/download.ts:550  'show_notifications': ...         // 云端映射
+src/utils/supabase/upload.ts:1243  'showNotifications',              // 云端映射
+src/components/layout/HeaderDropdown.tsx:584  checked={settings.showNotifications}  // 开关 UI
+src/store/slices/settingsSlice.ts:133/151    // reducer（工作区行号；HEAD 为 114/132）
+← 没有任何消费者</code></pre>
+      <p>而 <code>TabManager.ts:453</code> 的 <code>chrome.notifications.create</code> 是<b>无条件调用</b>，
+      没有任何 settings 判据。</p>
+      <p><strong>根因（git 考古确认）：</strong>判据在 <code>d558d91</code>（2026-01-25
+      「chore: refactor background sync layer」）就被绕过：该提交删掉了
+      <code>src/background.ts</code> 对 <code>./utils/notification</code> 的 import，
+      在 <code>src/service-worker.ts:46</code> 换成直连 <code>tabManager.showNotification</code>
+      的无判据 wrapper（<code>if (!settings.showNotifications) return null</code> 没被搬过来）。
+      此后 <code>utils/notification</code> 再无引用；<code>dff8582</code>（2026-09-29）
+      只是删掉这个早已死掉的文件，<b>不是根因</b>。</p>
+      <p><strong>为什么比文案不一致严重：</strong>这是<b>开关撒谎</b>。用户是基于「我关掉了它」这个前提做决策的
+      （例如此时正在专注工作）。同一个文件里 <code>handleToggleAutoSync</code> 已经为
+      「保存失败要把 UI 收回真值」付出了 P1 级代价，同类问题在通知开关上却是长期的。</p>
+      <p><strong>修法：</strong>按减法原则<b>删掉这个开关行</b>并清理字段最干净；
+      代价是要连带评估 <code>download.ts:550</code> / <code>upload.ts:1243</code> 两处云端映射。</p>
+    </div>
+  </details>
+  <details class="finding">
+    <summary>
+      <span class="badge b-p1">P1</span>
+      <span class="ftitle">读失败时日志承诺「下轮重试」，实现却清掉了 alarm —— 同步停摆到下一次 SW 唤醒（修复后 1 分钟自愈）</span>
+    </summary>
+    <div class="fbody">
+      <p><strong>现象：</strong>用户明确开启了自动同步并选了 1 小时，某次网络抖动后<b>同步停摆</b>——
+      直到扩展恰好因别的事件被唤醒才可能恢复（无事件就无唤醒，时长不可控），期间没有任何 UI 提示。</p>
+      <div class="chain">alarm 触发 → <code>kvGet(SETTINGS)</code> 抛错
+  ↓ backgroundSync.ts:163 日志写「按关闭处理，<span class="hl">下轮重试</span>」
+  ↓ backgroundSync.ts:298  <span class="hl">chrome.alarms.clear(SYNC_ALARM)</span> → return
+  ↓ 没有 alarm ⇒ <span class="hl">没有确定性的下一轮</span>。重建依赖下一次 SW 唤醒
+    （<code>service-worker.ts:184</code> 模块顶层会重进 setupBackgroundSync；无事件就无唤醒，时长不可控）</div>
+      <p><strong>根因：</strong>把「读失败」与「用户关掉了」映射进同一个分支，
+      而两者需要的收尾动作<b>正好相反</b>——用户关闭该<em>停</em>，读失败该<em>重排一个短延迟再试</em>。</p>
+      <p><strong>探针实测：</strong><code>cleared = ["tapstack-background-sync"]</code>，本轮未重建。</p>
+      <p><strong>修法：</strong>fail-closed 方向不变（不出流量仍然正确），但分两个出口：
+      读失败时 <code>rescheduleAlarm(1, cfg.intervalMinutes)</code> 而不是 <code>clear</code>；
+      只有真读到 <code>cfg.enabled === false</code> 才清。日志也要把两者分开——
+      <b>现在它们打同一句「自动同步已关闭」，排障会直接跑偏。</b></p>
+    </div>
+  </details>
+  <details class="finding">
+    <summary>
+      <span class="badge b-p1">P1</span>
+      <span class="ftitle">「同步策略」展示给用户，但合并引擎从来不读它</span>
+    </summary>
+    <div class="fbody">
+      <p><code>SyncButton.tsx:565</code> 用 <code>getSyncStrategyLabel</code> 把
+      「本地优先 / 云端优先 / 检测冲突后询问 / 较新版本优先」渲染给用户。
+      但 <code>downloadAndMerge</code> 走的是 <code>mergeOpStamped</code> <b>无条件 LWW</b>，
+      全仓<b>没有一处</b>把 <code>syncStrategy</code> 喂给合并决策。</p>
+      <p>用户选了「云端优先」而实际行为是「较新优先」——<b>这是谎报</b>，而且违反本仓核心纪律：
+      行为必须出声、不得谎报。<code>deleteStrategy</code> 更彻底：零消费者。</p>
+      <p><strong>修法（我建议前者）：</strong>① <b>诚实化</b>——删掉那行展示，把 <code>syncStrategy</code> 标
+      <code>@deprecated</code>，保留上云字段仅为兼容旧数据。
+      ② <b>彻底</b>——让合并真的按策略走，但那是<b>重开合并语义</b>的产品决策，
+      而整组 LWW 是你此前拍板过的模型，<b>不建议在没有重新定义「本地优先」在无墓碑模型下是什么意思之前动</b>。</p>
+    </div>
+  </details>
+  <details class="finding">
+    <summary>
+      <span class="badge b-p1">P1</span>
+      <span class="ftitle">恢复会话时收不到回包 = 完全静默，而记录已经被删除了</span>
+    </summary>
+    <div class="fbody">
+      <p><strong>形状：</strong>三处恢复路径（<code>TabGroup.tsx:245</code>、
+      <code>SearchResultList.tsx:248</code> 与 <code>:345</code>）都长这样：</p>
+      <pre><code>(res: unknown) =&gt; {
+  const r = res as {...} | undefined;
+  <span class="hl">if (r &amp;&amp;</span> r.success === false) { showDeleteError(...); return; }
+  <span class="hl">if (r &amp;&amp;</span> typeof r.skippedUnopenable === 'number') { ... }
+}</code></pre>
+      <p><code>r &amp;&amp;</code> 这个守卫把<b>「没收到回包」和「收到回包且成功」当成了同一件事</b>。
+      前者是通道断了（SW 被回收 / 扩展重载），后者是成功——两者对用户的意义完全相反。</p>
+      <p><strong>后果：</strong>恢复流程是 <code>dispatch(deleteGroup)</code> <b>先跑</b>、50ms 后才
+      <code>sendMessage(OPEN_TABS)</code>。若此时 SW 已死，用户得到的是：
+      <b>列表少了一张卡、浏览器没有新窗口、零 toast、零通知</b>。而记录已经物理删除。</p>
+      <div class="note good">
+        <b>这是本仓已知模式，只是这三处漏了：</b><code>SearchResultList.tsx:278</code> 的单标签打开路径<b>加了</b>
+        <code>.catch</code>；<code>Header.tsx:185</code> 与 <code>TabList.tsx:49</code> 的保存路径<b>都查了</b>
+        <code>response?.success</code>。<b>修法照抄它们即可</b>：先判「没有回包」，并把「原会话已从列表移除」无条件说出来。
+      </div>
+    </div>
+  </details>
+</div></section>
+<section id="p2"><div class="wrap">
+  <h2><span class="num">04</span>P2 · 口径不齐与工程债务</h2>
+  <p class="lede">这些不会立刻造成损失，但它们是<b>下一次事故的原材料</b>——尤其第一组，因为它们是本仓历史上反复付过的学费。</p>
+  <h3>第一组：1.23.0 的文案漂移（<b>本轮最系统性的问题</b>）</h3>
+  <p>1.23.0 改了自动同步的默认行为，只改了 changelog 行。下列六处仍在承诺旧契约，而
+  <code>docsAlignment.test.ts</code> 里<b>没有任何一条断言涉及</b> <code>自动同步 / syncEnabled / 60s</code>。</p>
+  <div class="tbl-wrap"><table>
+    <thead><tr><th>位置</th><th>文档说的</th><th>代码实际</th></tr></thead>
+    <tbody>
+      <tr><td class="mono">README.md:47,54</td><td>登录时自动从云端合并下载</td><td class="no">被 <code>service-worker.ts:538</code> 门禁拦下</td></tr>
+      <tr><td class="mono">README.md:147</td><td>后台 alarm <b>每 60s</b> 自动拉取</td><td class="no">默认关闭；开启后是 5/10/30/60 四档</td></tr>
+      <tr><td class="mono">CHROMEWEBSTORE.md:37,56</td><td>登录后会话<b>自动同步</b>云端（中英各一处）</td><td class="no">需手动开开关</td></tr>
+      <tr><td class="mono">CHROMEWEBSTORE.md:101</td><td><code>alarms</code> 理由：<b>定期（约每分钟）</b>检查云端</td><td class="no">默认不注册；开启后 ≥5 分钟<br><span style="color:var(--p1)">↑ 审核员逐项核对权限理由，这是拒审风险</span></td></tr>
+      <tr><td class="mono">OnboardingSteps.tsx:157</td><td>保存后自动备份，<b>新设备登录即恢复</b></td><td class="no">新设备登录<b>不会</b>自动拉取<br><span style="color:var(--p0)">↑ 新用户第一屏就承诺了默认配置下不发生的行为</span></td></tr>
+      <tr><td class="mono">HeaderDropdown.tsx:657</td><td>点「<b>同步</b>」手动获取</td><td class="no">界面上<b>没有</b>叫「同步」的按钮（只有「上传」「下载」）</td></tr>
+    </tbody>
+  </table></div>
+  <div class="note warn">
+    <b>主线程独立复核：</b><code>grep -n "自动同步|60" README.md</code> 命中 47/51/54/147 四行；
+    <code>grep -n "自动同步|syncEnabled|60" tests/docsAlignment.test.ts</code> <b>零命中</b>。
+    守卫确实对这块契约<b>完全失明</b>——这解释了为什么它能一片全绿。
+  </div>
+  <p><strong>为什么「审核员逐项核对」这一条值得单独说：</strong>商店 listing 的标题/描述/截图
+  <b>从来就不能用 API 改</b>（对 item PUT 会被静默忽略返回 304），只能逐字段粘到 Developer Dashboard。
+  而 <code>alarms</code> 的权限理由与实际用途不符，是审核员会直接核对的那一栏。
+  <b>1.23.0 已在 PENDING_REVIEW——要决定是撤回重提，还是过审后立刻改。</b></p>
+  <h3>第二组：零消费者的僵尸设置字段</h3>
+  <p>1.23.0 过程中发现「<code>syncEnabled</code> 一直被存/传/诊读，却没有任何行为消费它」，
+  并为此自豪地接上了真行为。<b>同一类问题还剩 6 个字段</b>：</p>
+  <div class="tbl-wrap"><table>
+    <thead><tr><th>字段</th><th>现状</th><th>备注</th></tr></thead>
+    <tbody>
+      <tr><td class="mono">showNotifications</td><td class="no">有 UI 开关但无消费者</td><td>见 P1，开关在撒谎</td></tr>
+      <tr><td class="mono">showTabCount / showFavicons / allowDuplicateTabs</td><td>无 UI、无消费者</td><td>仍在云端往返</td></tr>
+      <tr><td class="mono">groupNameTemplate</td><td>默认 <code>'Group %d'</code></td><td>模板语法暴露在类型和云端列里，<b>而实际命名走 <code>deriveSessionNameFromChromeTabs</code></b>，没有任何代码解释它</td></tr>
+      <tr><td class="mono">reorderMode</td><td class="no"><code>deadCodeGuards</code> 已判「全链路消失」，<b>但类型声明和云端列还在</b></td><td>这是守卫的口径漏洞——它守了组件/Redux，漏了类型与上云</td></tr>
+    </tbody>
+  </table></div>
+  <h3>第三组：探针与守卫本身会假绿</h3>
+  <div class="grid2">
+    <div class="panel">
+      <h4>anon-rls-probe.mjs · 402 假绿</h4>
+      <p style="font-size:14px;margin:0">把任何非 200 都记为「被拒」并推入 <code>rows: 0</code>，
+      汇总只看 <code>status===200 &amp;&amp; rows&gt;0</code>，于是打印「✓ 没有表对 anon 暴露任何行」。
+      但 402 的真实含义是<b>「根本没查成」</b>——如果线上服务异常，这个脚本会给出<b>与安全完全相同的绿色输出</b>。</p>
+      <p style="font-size:14px;margin:10px 0 0">它就躺在专门用来回答「线上安全吗」的工具里。
+      修法：把非 200 且非 401/403/42501 判成 <code>UNKNOWN</code>，汇总在存在 UNKNOWN 时明确输出「本次探测未完成」。</p>
+    </div>
+    <div class="panel">
+      <h4>migrationReplay.pg · golden 比对恒真</h4>
+      <p style="font-size:14px;margin:0">期望值取自<b>同一个变异后的迁移</b>在空库上的重放结果，
+      所以它只能发现「两库分歧」——当某条守卫的谓词错到「在夹具库与空库上同样跳过」时，两库终态一致，断言恒真。</p>
+      <p style="font-size:14px;margin:10px 0 0"><b>实测：</b>把 5 条 RLS 策略守卫改成 <code>IF false</code>、
+      profiles 的 <code>UPDATE WITH CHECK</code> 补建整段改成永远跳过 →
+      <b>全仓 1117 个测试 0 fail，真库里对应策略确实从未创建。</b></p>
+      <p style="font-size:14px;margin:10px 0 0">修法：改成<b>硬编码的策略名清单</b>比对，而不是空库重放。</p>
+    </div>
+  </div>
+  <h3>第四组：其它</h3>
+  <div class="tbl-wrap"><table>
+    <thead><tr><th>项</th><th>位置</th><th>说明</th></tr></thead>
+    <tbody>
+      <tr><td>RootState 两个定义</td><td class="mono">types/tab.ts:254 vs store/index.ts:13</td><td>UI 用的是<b>手写那份</b>。将来加第 4 个 slice，<code>store/index.ts</code> 自动跟上而手写版不会，<b>tsc 不会红</b></td></tr>
+      <tr><td>设置字段两张手抄表</td><td class="mono">upload.ts:1230 / download.ts:538</td><td>无守卫钉住一致，「加字段只改一边」不会被任何门禁抓到</td></tr>
+      <tr><td>异常分支洗回 60s</td><td class="mono">backgroundSync.ts:349</td><td>catch 分支写死 <code>NORMAL_INTERVAL_MINUTES</code>；<code>cfg</code> 当时在 try 内首行声明、catch 引用不到（修复时提到 try 外 + null 兜底）。影响窗口有限：下一轮 alarm（退避阶梯 ≤ 5 分钟）或 SW 唤醒都会用 cfg 重排回档位；修掉以维持不变量「period 恒 = 用户档位」</td></tr>
+      <tr><td>隐私邮箱无 MX</td><td class="mono">legal/privacy.html:73</td><td><code>privacy@tapstack.app</code> <b>无 MX 记录</b>（权威 NS + Google/Cloudflare DoH 双确认）。审核员会照着它发 GDPR/删除请求函</td></tr>
+      <tr><td>过时注释被测试钉死</td><td class="mono">backgroundSync.ts:26,95 / syncBackoff.ts:33</td><td>还写着「每 60s」「fail-open 回旧行为」，实现早已改成 fail-closed；<code>syncBackoff.test.ts:79</code> 还把过时描述<b>断言住了</b></td></tr>
+      <tr><td>恢复按钮两套形态</td><td class="mono">SearchResultList.tsx:691</td><td>纯文字按钮、无 title/aria-label/确认，且<b>永远不被新手引导高亮</b>（聚光灯锚在 <code>TabGroup</code> 的 aria-label 上）</td></tr>
+      <tr><td>搜索页删除缺「无法恢复」</td><td class="mono">SearchResultList.tsx:433</td><td><code>DraggableTab.tsx:357</code> 写了「（无法恢复）」，搜索页漏了 → 两处撞形不同口径</td></tr>
+      <tr><td>注册后「正在自动登录」不查返回值</td><td class="mono">RegisterForm.tsx:60-66</td><td><code>signIn</code> 失败时登录态没建立，用户却以为已登录</td></tr>
+      <tr><td><code>.env</code> 版本漂移</td><td class="mono">.env:9</td><td><code>VITE_APP_VERSION=1.22.15</code>（零引用、无用户影响，但<b>同类漂移第二次出现</b>）</td></tr>
+      <tr><td>tag 停在 feat 提交</td><td class="mono">v1.23.0 → f547147</td><td>HEAD <code>0b9a66e</code>（含台账线上版本实证）不在 tag 内。按「绝不 force 移动 tag」纪律只能补新 tag</td></tr>
+    </tbody>
+  </table></div>
+</div></section>
+<section id="gates"><div class="wrap">
+  <h2><span class="num">05</span>门禁实测表</h2>
+  <p class="lede">本机真实执行，非引用文档。<code>skipped 0</code> 是关键一栏——它证明真库门禁这次是真跑了。</p>
+  <div class="tbl-wrap"><table>
+    <thead><tr><th>门禁</th><th>结果</th><th>解读</th></tr></thead>
+    <tbody>
+      <tr><td>全量单测</td><td class="mono"><b>1117 pass / 0 fail / 0 skipped</b></td><td class="yes">PG 真库组真跑了</td></tr>
+      <tr><td>真库守卫（<code>tests/guards/*</code>）</td><td class="mono">67 pass / 0 skipped</td><td class="yes">initdb/pg_ctl/psql 齐备</td></tr>
+      <tr><td><code>pnpm type-check</code> + <code>type-check:tests</code></td><td class="mono">exit 0</td><td class="yes">—</td></tr>
+      <tr><td><code>pnpm lint</code> + <code>lint:tests</code></td><td class="mono">exit 0（零输出）</td><td class="yes">见下方负向验证</td></tr>
+      <tr><td><code>pnpm validate</code>（元数据+类型+lint+构建+体积）</td><td class="mono">exit 0</td><td class="yes">—</td></tr>
+      <tr><td>首屏体积门</td><td class="mono"><b>197.7KB ≤ 240KB</b></td><td class="yes">有显式比较，会 exit 1</td></tr>
+      <tr><td>变异验证</td><td class="mono"><b>21 项改坏变红 / 5 项改坏仍绿</b></td><td class="no">5 项全是真缺陷，见下</td></tr>
+      <tr><td>文件级循环依赖（Tarjan SCC）</td><td class="mono">0 个 size&gt;1 的 SCC，0 自环</td><td class="yes">骨架健康</td></tr>
+      <tr><td>线上库（<code>supabase db query --linked</code>，只读）</td><td class="mono">7 张表 RLS 全 true；profiles 仅 2 条策略</td><td class="yes">上一轮 P0 已收口</td></tr>
+    </tbody>
+  </table></div>
+  <h3>变异验证：5 项「改坏仍绿」——这些是真缺陷，不是噪音</h3>
+  <div class="tbl-wrap"><table>
+    <thead><tr><th>守卫</th><th>变异内容</th><th>结果</th></tr></thead>
+    <tbody>
+      <tr><td class="mono">migrationReplay.pg</td><td>5 条 RLS 策略守卫 → <code>IF false</code></td><td class="no">全仓 1117 绿，真库策略确实不存在</td></tr>
+      <tr><td class="mono">migrationReplay.pg</td><td>profiles <code>UPDATE WITH CHECK</code> 补建 → <code>IF false</code></td><td class="no">全仓绿，真库 with_check 为空</td></tr>
+      <tr><td class="mono">migrationReplay.pg</td><td>守卫谓词 <code>polname</code> 拼错</td><td class="no">13 pass / 0 fail</td></tr>
+      <tr><td class="mono">syncWatermarkClockRegression</td><td>时钟回退时返回旧 <code>seq</code> 而非 0（<b>正是要防的 bug</b>）</td><td class="no">10 pass / 0 fail</td></tr>
+      <tr><td class="mono">settingsSlice</td><td><code>settingsReadFailed</code> 初值改 <code>true</code></td><td class="no">全套 1117 绿 ⇒ 该缺陷零守卫</td></tr>
+    </tbody>
+  </table></div>
+  <div class="note">
+    <b>为什么「同步水位」那条最值得注意：</b>它本轮<b>已经是一次真实事故的回归守卫</b>
+    （清本地数据 → seq 从 1 重启 → 被旧水位永久遮蔽 → 静默丢会话）。
+    但守卫里的运行时用例用的是<b>测试内复刻</b>的 <code>effectiveWatermark</code>，
+    对真实 <code>upload.ts</code> 的断言只是<b>正则文本匹配</b>——
+    我把实现改成「回退时返回旧 seq」（行为完全相反），正则照样匹配（<code>return 0</code> 出现在另一个分支）。
+    <b>修法：</b>导出 <code>loadSyncWatermark</code> 或注入 <code>kvGet</code>，让测试直接对真实函数断言，删掉复刻。
+  </div>
+  <h3>我做的负向验证（证明门禁本身是真的）</h3>
+  <p>「全绿」本身需要证据。所以我故意把 <code>src/lib/utils.ts</code> 改成含 <code>console.log</code> 与未使用变量：</p>
+  <pre><code>$ npx eslint src --ext ts,tsx --max-warnings 0
+PROBE_EXIT=1
+  13:9  error  'unusedVar' is assigned a value but never used
+  14:3  error  Unexpected console statement
+✖ 2 problems (2 errors, 0 warnings)
+$ cp 还原 → git diff 为空，lint 恢复 exit 0</code></pre>
+  <p class="note good">门禁会真的变红，所以「全绿」是有意义的信号。</p>
+</div></section>
+<section id="experts"><div class="wrap">
+  <h2><span class="num">06</span>专家团与交叉验证</h2>
+  <p class="lede">6 位常驻专家并行审查（<code>.codex/agents/</code>），主线程对每条高危结论<b>独立复核后才采信</b>。</p>
+  <div class="expert">
+    <h4>数据安全 <span class="role">data-safety-expert</span></h4>
+    <p>发现 <b>2 个 P0</b>（localStorage 回退 fail-open、设置水合 pending 窗口）+ 2 个 P1。
+    探针实测：读失败 + 写成功 → 磁盘 <code>['a','b','c']</code> → <code>['new']</code>，<b>真丢 3 条，回报成功</b>。</p>
+    <p>同时<b>复核为已正确</b>：读-改-写真值读取、分页 tiebreaker、水位时钟回退、单写者队列、硬删降级读回。
+    <b>避免了把已修好的问题重复上报。</b></p>
+  </div>
+  <div class="expert">
+    <h4>交互诚实度 <span class="role">ux-honesty-expert</span></h4>
+    <p>发现 <b>3 个 P0</b>——<b>全部落在 1.23.0 的文案漂移与快捷键语义上</b>，没有一条是代码没修。
+    关键判断：<b>根因不是没写守卫，是守卫守的是 1.22 的契约，而 1.23.0 改了产品行为却只改了 changelog 行。</b></p>
+    <p>撤回 5 条自己的误判，包括「Toast 还是英文大写」「点开标签会顺手删除」——后者是已修的两步交互。</p>
+  </div>
+  <div class="expert">
+    <h4>安全合规 <span class="role">security-compliance-expert</span></h4>
+    <p><b>本轮唯一拿到线上只读访问的专家。</b>实测<b>推翻了上一轮报告的三条 P0</b>（RLS、purge 权限、profiles 策略）
+    ——这是最有价值的一条纠正：<b>上一轮在同一台机器上得出了相反结论</b>，
+    因为当时只能读代码 + 跑本地库，而本项目没有 ledger。</p>
+    <p>新查出 <b>1 个已实测的线上自助提权面</b>（P1）+ 探针 402 假绿 + 隐私邮箱无 MX。
+    <b>14/15 条隐私声明经核对为真</b>，包括「不是端到端加密」这条主动披露。</p>
+  </div>
+  <div class="expert">
+    <h4>架构质量 <span class="role">architecture-expert</span></h4>
+    <p><b>「没有 P0」</b>，并给出骨架健康的正面证据：文件级零循环依赖（Tarjan 实测）、
+    <code>MIGRATION_KEYS</code> 已收敛为派生表、<code>getGroups()</code> 已改三分语义、
+    跨 realm 队列风险<b>结构性消除</b>（popup bundle 不含 mutationQueue，迁移改走 <code>RUN_MIGRATIONS</code> 消息）。</p>
+    <p>真实问题集中在<b>一处新引入的耦合</b>（读设置触发幽灵上传）与<b>三类「同一语义两个来源」</b>。
+    撤回 6 条误判，其中「mutationQueue 跨 realm 失效」是<b>方向反了</b>——架构上已不成立。</p>
+  </div>
+  <div class="expert">
+    <h4>测试与门禁 <span class="role">test-gate-expert</span></h4>
+    <p>做了 <b>26 组变异</b>，是本轮变异验证的主要来源。三档统计：21 红 / <b>5 绿（全是真缺陷）</b> / 纸面推理 0。</p>
+    <p>额外发现 CI 已 <b>29 个提交没跑过</b>（push 触发被移除，最后一次是 10-06），
+    而<b>干净环境的 lockfile 校验只有 CI 有</b>——本机 <code>node_modules</code> 已存在，永远发现不了漂移。
+    撤回 4 条误判，包括<b>自己踩了一次陷阱 2</b>（字符串替换没命中就以为守卫变了）。</p>
+  </div>
+  <div class="expert">
+    <h4>产品定位 <span class="role">product-strategy-expert</span></h4>
+    <p>给出本轮<b>最尖锐的一个产品级发现</b>：1.23.0 把 LWW 合并模型所依赖的「副本新鲜度」拿走了。
+    设备 A 更新 → 设备 B 的上传被触发器 <code>RETURN NULL</code> 静默吞写 →
+    <code>isSupersededByCloud()</code> 判为「合法取代，不计失败」→ <b>回报成功并清 pending</b> →
+    而 1.22.x 的自动下载本会收敛，<b>1.23.0 默认配置下永远不会自动发生</b>。</p>
+    <p>因此商店说明②「不会出现『改了却留在本机』的情况」<b>在一条路径上恰好说反了</b>。</p>
+    <p><b>用户信号仍然是零：</b>10-07 定调「停下来拿信号」之后，是 1.22.13→1.23.0 六个版本、
+    约 1400 行测试、两次云端迁移、一次提审。<b>方向没变，动作没发生。</b></p>
+  </div>
+  <div class="note good">
+    <b>交叉验证：</b>两位专家独立命中同一区域——架构专家的「迁移已结构性解决跨 realm」与数据安全专家的「popup 无锁」并不矛盾：
+    前者说的是<b>当前结构已正确</b>，后者说的是<b>历史缺陷的形状</b>。
+    <b>架构专家明确撤回了沿用历史结论的判断，并给出打包可达性作为反证</b>——这正是本项目最需要的那种自我纠正。
+  </div>
+</div></section>
+<section id="withdrawn"><div class="wrap">
+  <h2><span class="num">07</span>误判记录</h2>
+  <p class="lede">
+    这份清单和缺陷一样重要：<b>它证明我们没有为了凑数硬找问题。</b>
+    本轮累计撤回 <b>31 条</b>判断，其中主线程 4 条（含发布后自我审计 3 条）、各专家 27 条。
+  </p>
+  <div class="tbl-wrap"><table>
+    <thead><tr><th>曾判</th><th>实际</th><th>怎么发现的</th></tr></thead>
+    <tbody>
+      <tr><td><span class="badge b-ok">撤回</span> 「<code>pnpm lint</code> 报 353 个错误」</td><td><b>完全干净</b>，exit 0 零输出</td><td>那是输出包装层的陈旧缓存；按其恢复路径重跑后为 0，并用<b>故意植入违规的负向验证</b>证明门禁会红</td></tr>
+      <tr><td><span class="badge b-ok">撤回</span> 「三张浏览历史表 RLS 未启用」（上一轮 P0）</td><td><b>线上已启用</b></td><td>安全专家拿到 <code>supabase db query --linked</code> 只读实测；主线程复核 7 张表 <code>relrowsecurity</code> 全 true</td></tr>
+      <tr><td><span class="badge b-ok">撤回</span> 「<code>mutationQueue</code> 跨 realm 各持实例 ⇒ 单写者失效」</td><td>架构上<b>已不成立</b></td><td>打包可达性实测：popup bundle 129 文件<b>不含</b> mutationQueue，迁移改走 <code>RUN_MIGRATIONS</code> 消息</td></tr>
+      <tr><td><span class="badge b-ok">撤回</span> 「<code>getGroups()</code> 有静默返回 <code>[]</code> 的路径」</td><td>已改<b>三分语义</b>（键不存在→[]；形状错→抛；读失败→上抛）</td><td>逐行读 <code>storage.ts:266-278</code></td></tr>
+      <tr><td><span class="badge b-ok">撤回</span> 「<code>hydrationDecision.ts</code> 是死代码」</td><td><b>文件已被删除</b>，且守卫钉死不得复活</td><td>按历史记忆上报就会报一个不存在的缺陷</td></tr>
+      <tr><td><span class="badge b-ok">撤回</span> 「硬删降级是幽灵复活漏洞」</td><td>有告警 + 删后读回 + 数量比对，<b>安全</b></td><td>数据安全专家两轮复核后主动撤回</td></tr>
+      <tr><td><span class="badge b-ok">撤回</span> 「<code>syncEnabled</code> 是摆设 / 60s 轮询还在跑」</td><td>消费是<b>真实的</b></td><td>逐行读 <code>setupBackgroundSync</code> + <code>handleAlarm</code> + <code>service-worker.ts:535</code></td></tr>
+      <tr><td><span class="badge b-ok">撤回</span> 「1.22.16 的 RLS 文案对用户撒谎」</td><td>改为<b>台账漂移</b></td><td>库里早已启用、只是没记账；文案与事实一致</td></tr>
+      <tr><td><span class="badge b-ok">撤回</span> 「隐私政策链接失效」</td><td><code>/privacy.html</code> → <b>200</b></td><td>实测推翻自己的推测（根路径 404 不影响 listing）</td></tr>
+      <tr><td><span class="badge b-ok">撤回</span> 「Toast 把 type 渲染成英文大写」</td><td>早已是中文（<code>完成/出错/提示/注意</code>）</td><td>UX 专家读实现后撤回</td></tr>
+      <tr><td><span class="badge b-ok">撤回</span> 「点开单个标签会顺手从会话移除」</td><td>已是<b>两步</b>（点开只标记，移除是独立按钮）</td><td>把注释里的共用 op 误读成残留描述</td></tr>
+      <tr><td><span class="badge b-ok">撤回</span> 「<code>syncBackoff</code> 守卫完全漏掉 60s 洗回」</td><td>降级为「<b>守卫位置错</b>」——<code>syncBackoff.test.ts:200</code> 会抓</td><td>下结论前先跑了全仓，发现间接守卫</td></tr>
+      <tr><td><span class="badge b-ok">撤回</span> 「原注释『异常路径拿不到用户档位』的前提是<b>错的</b>」</td><td>原注释<b>作用域判断正确</b>：当时 <code>cfg</code> 在 try 内声明，catch 引用不到。提到 try 外是<b>改进</b>而非纠错</td><td>发布后自我审计，重读 HEAD 版源码结构</td></tr>
+      <tr><td><span class="badge b-ok">撤回</span> 「一次瞬时读错误就<b>永久</b>停掉自动同步」</td><td>停摆到<b>下一次 SW 唤醒</b>（<code>service-worker.ts:184</code> 模块顶层重建）；时长不定但非永久。修复把自愈收缩到 1 分钟</td><td>发布后自我审计，复核 MV3 唤醒路径</td></tr>
+      <tr><td><span class="badge b-ok">撤回</span> 「<code>dff8582</code> 删 <code>notification.ts</code> 时没搬判据」</td><td>判据在更早的 <code>d558d91</code>（2026-01）重构时就被绕过；<code>dff8582</code> 只是删死文件</td><td>发布后自我审计，逐提交核对 import 历史</td></tr>
+    </tbody>
+  </table></div>
+  <div class="note warn">
+    <b>有一条值得单独点名：</b>测试专家自己踩了本项目的<b>陷阱 2</b>（零命中可能是假阴性）——
+    它用字符串替换想改 <code>package.json</code> 的 glob，但因为 JSON 转义没命中，
+    脚本根本没变。它据此以为「glob 锚点失效」，改用解析 JSON 重写后立刻精确变红。
+    <b>这条记录的价值在于：它证明这个陷阱不是文档里的传说，是每个审查者都会真踩的东西。</b>
+  </div>
+</div></section>
+<section id="unverified"><div class="wrap">
+  <h2><span class="num">08</span>未能验证项</h2>
+  <p class="lede">受环境限制，<b>非遗漏</b>。逐项列出来，是为了让「已验证」的部分有边界。</p>
+  <div class="tbl-wrap"><table>
+    <thead><tr><th>项</th><th>为什么没验 / 需要什么</th></tr></thead>
+    <tbody>
+      <tr><td><b>localStorage 不可用的线上触发频率</b></td><td>代码侧「读失败=空」已用真实模块实测确认；但 Chrome 里究竟哪些场景会触发（配额满？隐私模式？）需要真实浏览器 profile 复现</td></tr>
+      <tr><td><b>设置水合 pending 窗口的实际毫秒数</b></td><td>代码路径已实测可达；窗口大小需真浏览器 trace</td></tr>
+      <tr><td><b>「静默让路」路径（LWW + 默认关闭）</b></td><td>纯代码路径推理（触发器 SQL + <code>isSupersededByCloud</code> + 门禁三处逐行读），
+      <b>未做两设备真机复现</b>。需云端的 E2E 目前因 <code>exceed_egress_quota</code> 失败。
+      <span class="no">建议按「高置信度待复现」处理，不要按「已确认缺陷」处理。</span></td></tr>
+      <tr><td><b>Ctrl+Shift+S 的 Chrome 实际行为</b></td><td>依据是<b>官方文档明文</b>（这类命令不派发 <code>onCommand</code>），但本机未装包实测。<b>验证路径：装 <code>dist/</code> → 按键 → 看是否收到「已将 N 个标签页保存为新会话」</b></td></tr>
+      <tr><td><b>提权面的实际写入</b></td><td>按只读纪律未跑 <code>--write</code> 探针，且线上正处 <code>exceed_egress_quota</code> 限流。P1 是<b>从 ACL 推断</b>（表级 <code>ardDxt</code> 含 w + 无列级 REVOKE + WITH CHECK 只约束 id）</td></tr>
+      <tr><td><b>线上结论的单点依赖</b></td><td>Dashboard 独立复核 SQL 已在安全专家报告中给出（4 组只读 SELECT），<b>建议自己再跑一遍对账</b>——这类结论不该只有一个人看过</td></tr>
+      <tr><td>16 个 E2E 脚本</td><td>需 headed Chrome + 真实 Supabase 凭据，且<b>会写线上库</b>。明确不进 CI 是有理由的设计决定</td></tr>
+      <tr><td>CI 实跑</td><td>未触发（会对远端产生副作用）。已确认<b>最后绿是 10-06，之后 29 个提交未跑</b></td></tr>
+      <tr><td>线上商店审核状态</td><td>需 CWS OAuth 凭证（本机 <code>.env</code> 无相关键）。采信台账记录：线上 1.22.12、待审 1.23.0。<b>这是约 22 小时前的快照</b></td></tr>
+      <tr><td>竞品现状</td><td>未联网核实，来自记忆 + 10-07 记录，<b>很可能已过期</b></td></tr>
+      <tr><td>真实用户信号</td><td>本次是纯代码/文案审查。<b>仓库内零记录</b>：商店安装量、评分、评论、GitHub issues、用户反馈——全部为 0。埋点只存本地、从不报，<b>即使有用户你也看不见</b></td></tr>
+    </tbody>
+  </table></div>
+</div></section>
+<section id="decide"><div class="wrap">
+  <h2><span class="num">09</span>需要你亲自决断</h2>
+  <p class="lede">按「什么时候必须回答」排序。前三条有真实的时间压力，后面的可以排期。</p>
+  <div class="decide">
+    <h4><span class="q">过审前</span>1.23.0 的文案漂移怎么处理？</h4>
+    <p>1.23.0 已在 <code>PENDING_REVIEW</code>。商店说明②「不会出现『改了却留在本机』」在一条路径上<b>恰好说反了</b>
+    （设备 B 的上传被触发器静默吞写、判为「合法取代」、回报成功、pending 被清，
+    而 1.23.0 默认配置下自动下载永不发生）。这是本轮<b>唯一可能被审核员或用户读成虚假承诺</b>的地方。</p>
+    <div class="opts">
+      <div class="opt rec"><span class="tag">推荐 乙 + 甲</span><b>乙：</b>给「本机改动未上云」一个可见信号——<code>superseded</code> 列表<b>已经在 <code>compareUploadReadback</code> 里返回了</b>，只是只进日志不上 UI（我已复核：全仓无任何 UI 消费）。加一个徽标 + 一条 toast，复用已有真值。<br><b>甲：</b>把说明②改成有条件表述。</div>
+      <div class="opt"><span class="tag">丙</span>接受它，赌「两台设备同时编辑同一会话」概率极低。<b>但这条要写进台账并设复盘判据</b>——比如「收到 1 起『换设备后改动不见了』的反馈即推翻」。</div>
+    </div>
+    <p><b>另外必须同时决定：</b>listing 正文与权限理由<b>API 改不了</b>，只能去 Developer Dashboard 逐字段粘。
+    现在改可能触发重审，等过审改就是审核员先看到不实文案。<b>这两个选项没有「无成本」的第三种。</b></p>
+  </div>
+  <div class="decide">
+    <h4><span class="q">合规 · 10-07 起挂账</span>隐私邮箱 <code>privacy@tapstack.app</code> 收不到信</h4>
+    <p>无 MX 记录（权威 NS + Google/Cloudflare DoH 双向确认）。审核员会照着隐私政策发 GDPR/删除请求函，
+    <b>一个收不到信的删除请求入口在监管口径下等于「未提供删除渠道」</b>。三个选项：配邮件转发 / 换成商店页已公开的那个 Gmail / 加表单入口。
+    我倾向第二个（成本最低），<b>但需要你确认那个 Gmail 是你想对外公开的</b>。</p>
+  </div>
+  <div class="decide">
+    <h4><span class="q">发版纪律</span>补 tag 还是接受现状？</h4>
+    <p><code>v1.23.0</code> 指向 <code>f547147</code>，HEAD <code>0b9a66e</code>（含台账线上版本实证）不在 tag 内。
+    按「<b>绝不 force 移动已存在 tag</b>」的纪律，只能补一个新 tag。这是纪律问题，不是我能替你定的。</p>
+  </div>
+  <div class="decide">
+    <h4><span class="q">技术方向</span>四个 P0/P1 的修法取舍</h4>
+    <div class="opts" style="margin-bottom:0">
+      <div class="opt"><span class="tag">localStorage 回退</span>改成 fail-closed（用户可能在隐私模式下完全用不了，但不会丢数据），还是让 <code>pickBackend</code> 在双后端都不可用时<b>拒绝初始化并出声</b>？<b>这是产品取舍不是技术取舍。</b></div>
+      <div class="opt rec"><span class="tag">设置水合 · 推荐 (b)</span><code>saveSettings</code> 改成「先读真值 → 合并 → 写」，不依赖 Redux state。符合本仓既有纪律，且消除「Redux 是否已水合」这个状态依赖。</div>
+      <div class="opt"><span class="tag">同步策略</span><b>诚实化（删 UI 展示 + deprecated）</b>还是让合并真按策略走？后者是重开合并语义——整组 LWW 是你拍板过的模型，<b>不建议在没重新定义「本地优先」含义前动</b>.</div>
+      <div class="opt"><span class="tag">快捷键</span>改文案承认它是保存动作，还是重新分配给真正的「打开管理器」？<b>我倾向改文案</b>：零风险，且不改变用户已记住的肌肉记忆。</div>
+    </div>
+  </div>
+  <div class="decide">
+    <h4><span class="q">最方向性的问题</span>下一件事是第四个版本，还是信号？</h4>
+    <p>本轮最重要的一句话不是任何一个技术发现，而是这条时间线：</p>
+    <div class="tbl-wrap"><table style="margin:12px 0 0">
+      <thead><tr><th>日期</th><th>动作</th><th>性质</th></tr></thead>
+      <tbody>
+        <tr><td class="mono">10-07</td><td>写下「先发版 → 修 P0 → <b>然后停下来拿信号</b>」，给出三问与判据</td><td>定调</td></tr>
+        <tr><td class="mono">10-09</td><td>1.22.13–1.22.16 四版，约 150 条回归测试</td><td>减法 + 修 bug（可辩护）</td></tr>
+        <tr><td class="mono">10-11</td><td>1.22.17 拖拽转正 + 增量同步</td><td>功能</td></tr>
+        <tr><td class="mono">10-11</td><td><b>1.23.0 自动同步默认关闭（+1367/−63）</b></td><td><b>产品契约变更</b></td></tr>
+        <tr><td class="mono">全程</td><td>推广 / 用户访谈 / 三问</td><td class="no">仓库内零记录</td></tr>
+      </tbody>
+    </table></div>
+    <p><b>我的建议不是「回去修 bug」，也不是「加功能」，而是：</b>
+    把上面 P0 修掉、把文案对齐、把邮箱关洞——然后<b>停 4 周，只做一件事：拿信号</b>。</p>
+    <p><b>并且需要你明确接受这个判据会真的导致「停止做这个东西」</b>：
+    无论多少点赞、下载、Star，只要没人回答那三个问题，这次推广就是无效的。
+    <b>4 周后按分叉判据真做决定，不许继续拖。</b></p>
+  </div>
+  <div class="note">
+    <b>还有一件事需要说清楚：</b>埋点只写本地、从不报。
+    <b>即使已经有了用户，你也看不见他们</b>——所以「先看看有没有人用再决定」这个思路在当前基础设施下<b>不成立</b>。
+    要拿信号，要么靠反馈渠道的主动询问，要么先补一条能上报的最简埋点。<b>这是一个产品决定，不是我能替你判断的。</b>
+  </div>
+</div></section>
+<footer><div class="wrap">
+  <p><b>TapStack 深度体检报告</b> · 2026-10-12 · 审查对象 <code>0b9a66e</code> / v1.23.0</p>
+  <p>6 位专家并行（data-safety / ux-honesty / security-compliance / architecture / test-gate / product-strategy）
+    + 主线程对每条高危结论独立复核。产品代码<b>零改动</b>，工作区干净。</p>
+  <p>变异验证一律 <code>cp</code> 备份 / 还原，<b>未使用 <code>git checkout --</code></b>（它会抹掉未提交的修复）。
+    探针脚本全部写在 <code>/tmp</code>，不在仓库内。</p>
+  <p style="margin-top:16px;color:var(--fg-3)">本报告区分三件事，请勿混读：
+    <b>①已实测</b>（本机跑过命令、线上只读查询、独立探针）；
+    <b>②代码路径成立但未复现</b>（如 LWW 静默让路）；
+    <b>③需要产品决断</b>（如快捷键语义、方向选择）。</p>
+</div></footer>
+</body>
+</html>

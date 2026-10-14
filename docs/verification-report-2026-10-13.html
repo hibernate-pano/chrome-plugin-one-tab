@@ -1,0 +1,343 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TapStack 修复验证报告 · 2026-10-13</title>
+<style>
+  :root{
+    --bg:#0e1116; --bg-2:#151a21; --bg-3:#1c232c;
+    --line:#2a323d; --line-2:#3a4552;
+    --fg:#e6edf3; --fg-2:#9fb0c0; --fg-3:#6b7d8f;
+    --p0:#ff5c5c; --p1:#ff9f43; --p2:#4dabf7; --ok:#3ddc97; --info:#74c0fc;
+    --mono:"SF Mono",ui-monospace,Menlo,Consolas,monospace;
+    --serif:"Iowan Old Style","Palatino Linotype",Palatino,Georgia,serif;
+  }
+  @media (prefers-color-scheme: light){
+    :root{
+      --bg:#fbfaf7; --bg-2:#f4f2ec; --bg-3:#ece9e1;
+      --line:#ddd8cc; --line-2:#c9c2b2;
+      --fg:#1d232b; --fg-2:#4d5a68; --fg-3:#7b8794;
+      --p0:#c92a2a; --p1:#d97706; --p2:#1971c2; --ok:#0f9d58; --info:#1971c2;
+    }
+  }
+  *{box-sizing:border-box}
+  html{scroll-behavior:smooth; scroll-padding-top:76px}
+  body{
+    margin:0; background:var(--bg); color:var(--fg);
+    font:16px/1.75 -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;
+    -webkit-font-smoothing:antialiased;
+  }
+  .wrap{max-width:1080px; margin:0 auto; padding:0 24px}
+  header{
+    border-bottom:1px solid var(--line);
+    background:
+      radial-gradient(1100px 380px at 12% -12%, rgba(61,220,151,.10), transparent 62%),
+      radial-gradient(900px 340px at 88% -18%, rgba(255,159,67,.10), transparent 60%),
+      var(--bg);
+    padding:56px 0 40px; position:relative; overflow:hidden;
+  }
+  header::after{
+    content:""; position:absolute; inset:0; pointer-events:none; opacity:.03;
+    background-image:repeating-linear-gradient(0deg,transparent 0 2px,var(--fg) 2px 3px);
+  }
+  .kicker{
+    font:600 11px/1 var(--mono); letter-spacing:.22em; text-transform:uppercase;
+    color:var(--fg-3); display:flex; gap:10px; align-items:center; flex-wrap:wrap;
+  }
+  .kicker .sep{width:4px;height:4px;border-radius:50%;background:var(--line-2)}
+  h1{
+    font-family:var(--serif); font-size:clamp(32px,5.2vw,54px); line-height:1.1;
+    margin:20px 0 14px; letter-spacing:-.018em; font-weight:600;
+  }
+  h1 em{font-style:italic; color:var(--ok)}
+  .sub{color:var(--fg-2); font-size:17px; max-width:74ch; margin:0 0 26px}
+  .sub b{color:var(--fg)}
+  .meta{display:flex; gap:26px; flex-wrap:wrap; font:13px/1.5 var(--mono); color:var(--fg-3)}
+  .meta b{color:var(--fg-2); font-weight:600}
+  .scores{display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:1px;
+    background:var(--line); border:1px solid var(--line); border-radius:12px; overflow:hidden; margin:34px 0 0}
+  .score{background:var(--bg-2); padding:16px 18px}
+  .score .n{font:700 30px/1 var(--mono); letter-spacing:-.02em}
+  .score .l{font-size:12.5px; color:var(--fg-3); margin-top:7px}
+  .score.ok .n{color:var(--ok)} .score.p0 .n{color:var(--p0)}
+  .score.p1 .n{color:var(--p1)} .score.p2 .n{color:var(--p2)}
+  section{padding:52px 0; border-bottom:1px solid var(--line)}
+  h2{font-family:var(--serif); font-size:clamp(24px,3vw,31px); margin:0 0 8px;
+    letter-spacing:-.01em; font-weight:600; display:flex; align-items:baseline; gap:14px}
+  h2 .num{font:700 13px/1 var(--mono); color:var(--fg-3); letter-spacing:.1em}
+  .lede{color:var(--fg-2); max-width:76ch; margin:0 0 30px; font-size:16.5px}
+  h3{font-size:17px; margin:34px 0 12px; letter-spacing:-.005em}
+  h3:first-of-type{margin-top:0}
+  code{font:13px/1.5 var(--mono); background:var(--bg-3); padding:1.5px 5px;
+    border-radius:4px; color:var(--info); white-space:nowrap}
+  pre{background:var(--bg-3); border:1px solid var(--line); border-radius:8px;
+    padding:14px 16px; overflow-x:auto; margin:12px 0; font:12.5px/1.65 var(--mono)}
+  pre code{background:none; padding:0; white-space:pre; color:var(--fg-2)}
+  .chain{font:12.5px/1.85 var(--mono); background:var(--bg-3); border:1px solid var(--line);
+    border-left:3px solid var(--p1); border-radius:8px; padding:14px 16px; margin:12px 0;
+    overflow-x:auto; white-space:pre; color:var(--fg-2)}
+  .chain .hl{color:var(--p1); font-weight:600}
+  .tbl-wrap{overflow-x:auto; margin:16px 0; border:1px solid var(--line); border-radius:9px}
+  table{width:100%; border-collapse:collapse; font-size:14px}
+  th{text-align:left; padding:11px 14px; background:var(--bg-3); font-weight:600;
+    font-size:12.5px; letter-spacing:.04em; text-transform:uppercase; color:var(--fg-3);
+    border-bottom:1px solid var(--line); white-space:nowrap}
+  td{padding:11px 14px; border-bottom:1px solid var(--line); vertical-align:top; color:var(--fg-2)}
+  tr:last-child td{border-bottom:none}
+  td.mono{font-family:var(--mono); font-size:12.5px}
+  .yes{color:var(--ok); font-weight:600} .no{color:var(--p0); font-weight:600}
+  .note{border-left:3px solid var(--p2); background:rgba(77,171,247,.06);
+    padding:13px 16px; border-radius:0 8px 8px 0; margin:14px 0; font-size:14.5px; color:var(--fg-2)}
+  .note.warn{border-left-color:var(--p1); background:rgba(255,159,67,.06)}
+  .note.good{border-left-color:var(--ok); background:rgba(61,220,151,.06)}
+  .note.danger{border-left-color:var(--p0); background:rgba(255,92,92,.06)}
+  .note b{color:var(--fg)}
+  .finding{border:1px solid var(--line); border-radius:11px; background:var(--bg-2); margin:0 0 16px; overflow:hidden}
+  .finding > summary{list-style:none; cursor:pointer; padding:17px 20px; display:flex; gap:14px;
+    align-items:flex-start; transition:background .14s}
+  .finding > summary:hover{background:var(--bg-3)}
+  .finding > summary::-webkit-details-marker{display:none}
+  .finding[open] > summary{border-bottom:1px solid var(--line); background:var(--bg-3)}
+  .badge{flex:0 0 auto; font:700 11px/1 var(--mono); letter-spacing:.06em; padding:5px 8px;
+    border-radius:5px; margin-top:2px; white-space:nowrap}
+  .b-p0{background:rgba(255,92,92,.15); color:var(--p0); border:1px solid rgba(255,92,92,.35)}
+  .b-p1{background:rgba(255,159,67,.14); color:var(--p1); border:1px solid rgba(255,159,67,.33)}
+  .b-p2{background:rgba(77,171,247,.13); color:var(--p2); border:1px solid rgba(77,171,247,.3)}
+  .b-ok{background:rgba(61,220,151,.13); color:var(--ok); border:1px solid rgba(61,220,151,.3)}
+  .ftitle{font-weight:600; font-size:15.5px; line-height:1.5; flex:1}
+  .fbody{padding:20px 22px 22px; font-size:15px; color:var(--fg-2)}
+  .fbody p{margin:0 0 12px}
+  .fbody p:last-child{margin:0}
+  .fbody strong{color:var(--fg)}
+  .verdict{
+    border:1px solid var(--line-2); border-left:4px solid var(--ok);
+    background:linear-gradient(180deg,rgba(61,220,151,.07),transparent 70%),var(--bg-2);
+    border-radius:10px; padding:26px 28px; margin:0 0 30px;
+  }
+  .verdict h3{margin:0 0 12px; font-size:19px}
+  .verdict p{margin:0 0 12px; color:var(--fg-2)}
+  .verdict p:last-child{margin:0}
+  .verdict strong{color:var(--fg)}
+  nav{position:sticky; top:0; z-index:50; background:color-mix(in srgb,var(--bg) 88%,transparent);
+    backdrop-filter:blur(14px); border-bottom:1px solid var(--line);
+  nav .wrap{display:flex; gap:4px; overflow-x:auto; padding:11px 24px; scrollbar-width:none}
+  nav .wrap::-webkit-scrollbar{display:none}
+  nav a{color:var(--fg-3); text-decoration:none; font-size:13px; white-space:nowrap;
+    padding:6px 11px; border-radius:6px; transition:.14s}
+  nav a:hover{color:var(--fg); background:var(--bg-3)}
+  footer{padding:44px 0 70px; color:var(--fg-3); font-size:13.5px}
+  footer p{margin:0 0 9px; max-width:80ch}
+  footer b{color:var(--fg-2)}
+  @media (max-width:640px){
+    .wrap{padding:0 16px}
+    header{padding:38px 0 30px}
+    section{padding:38px 0}
+    .fbody{padding:16px}
+  }
+  @media print{nav{display:none} .finding{break-inside:avoid}}
+</style>
+</head>
+<body>
+<nav><div class="wrap">
+  <a href="#verdict">结论</a>
+  <a href="#mutation">变异验证</a>
+  <a href="#falsegreen">假绿实录</a>
+  <a href="#claims">逐条对账</a>
+  <a href="#fixes">本轮修正</a>
+  <a href="#residual">遗留观察</a>
+</div></nav>
+<header><div class="wrap">
+  <div class="kicker">
+    <span>TapStack</span><span class="sep"></span>
+    <span>Verification Report</span><span class="sep"></span>
+    <span>2026-10-13</span>
+  </div>
+  <h1>把上一轮的结论<em>逐条重新证一遍</em></h1>
+  <p class="sub">
+    上一轮体检得出 P0/P1 结论并完成修复，同时自我审计撤回了 3 条判断。
+    本轮的任务是更严格的那一个：<b>不信任任何结论（包括刚撤回的那 3 条），
+    拿探针、变异和 git 考古把它们重新证一遍。</b>
+    结果：绝大多数结论站得住，但<b>有一条被当作「核心守卫」的测试是假绿</b>——
+    它在真正破坏它声称守护的不变量时，依然通过。
+  </p>
+  <div class="meta">
+    <span>验证对象 <b>8 个改动文件 + 1 份 HTML 报告</b></span>
+    <span>方法 <b>变异验证 + 运行时探针 + git 考古</b></span>
+    <span>门禁 <b>1129 pass / 0 fail</b></span>
+    <span>日期 <b>2026-10-13</b></span>
+  </div>
+  <div class="scores">
+    <div class="score ok"><div class="n">11</div><div class="l">变异 · 改坏确实变红</div></div>
+    <div class="score p0"><div class="n">1</div><div class="l">假绿守卫（本轮已修）</div></div>
+    <div class="score ok"><div class="n">10</div><div class="l">事实断言独立复核通过</div></div>
+    <div class="score p2"><div class="n">1</div><div class="l">注释漂移（本轮已修）</div></div>
+    <div class="score p1"><div class="n">3</div><div class="l">低危遗留观察项</div></div>
+  </div>
+</div></header>
+
+<section id="verdict"><div class="wrap">
+  <h2><span class="num">01</span>结论先行</h2>
+  <p class="lede">
+    先说最要紧的：<b>四个修复本身都是对的，缺陷判断全部成立，没有新的 P0。</b>
+    门禁 1129 全绿、<code>pnpm validate</code> exit 0。
+    但验证过程本身抓到了一个真实问题——
+    <b>新增的 P0 守卫文件里，那条被注释称为「核心」的端到端用例是假绿。</b>
+  </p>
+  <div class="verdict">
+    <h3>假绿是怎么发生的</h3>
+    <p>
+      <code>tests/localStorageFallbackFailClosed.test.ts</code> 的第 4 条用例注释写着
+      「这一条是本文件的核心……只要『读失败 ⇒ 落盘被整表覆盖』这条路还通，这里就会红」。
+      我按承诺做了变异：把驱动的<b>读侧</b>改回 <code>return null</code>（即 P0 的原始形状），
+      期望它变红——<b>它通过了</b>。
+    </p>
+    <p>
+      根因不是猜测，是探针实测出来的：<code>getGroupsForWrite()</code> 内部先写
+      <code>storage_version</code>，于是<b>写侧</b>的抛错先命中了断言的正则
+      <code>/localStorage.*不可用|无法读取/</code>。这条用例测的其实是写侧修复，
+      而写侧与它声称要守的读侧不变式<b>毫无关系</b>。
+    </p>
+    <p>
+      已修：断言收紧为只匹配读侧的「无法读取」，并把这段变异验证过程写进注释。
+      修复后重做同一变异，<b>3 条变红</b>（含这条端到端用例）。
+    </p>
+  </div>
+  <div class="note danger">
+    <b>为什么这条比「注释写错」严重：</b>假绿的守卫比没有守卫更危险——
+    它会让人以为 P0 的数据丢失路径已经有测试兜底，从而不去想「如果它其实没被守住呢」。
+    这正是本项目反复强调的「对假绿零容忍」，而它这次出现在我自己上一轮的交付里。
+  </div>
+</div></section>
+
+<section id="mutation"><div class="wrap">
+  <h2><span class="num">02</span>变异验证实测</h2>
+  <p class="lede">
+    守卫是否真的在守，不能靠「测试通过」判断，必须靠「改坏实现后测试变红」。
+    本轮对全部 4 组守卫逐条做了负向验证，绿了不算数。
+  </p>
+  <div class="tbl-wrap"><table>
+    <thead><tr><th>守卫</th><th>变异内容</th><th>结果</th></tr></thead>
+    <tbody>
+      <tr><td class="mono">localStorageFallbackFailClosed</td><td>读侧改回 <code>return null</code></td><td class="no">3 条红（含端到端）</td></tr>
+      <tr><td class="mono">同上</td><td>写侧改回静默 no-op</td><td class="yes">1 条红</td></tr>
+      <tr><td class="mono">同上</td><td><code>hasLocalStorage</code> 恒 true（三态混淆）</td><td class="yes">1 条红</td></tr>
+      <tr><td class="mono">settingsReadScoping</td><td>门禁废掉（<code>if (false)</code>）</td><td class="no">2 条红</td></tr>
+      <tr><td class="mono">noSilentFalseSuccess</td><td>三态初值改回 <code>'failed'</code></td><td class="yes">1 条红</td></tr>
+      <tr><td class="mono">autoSyncDefaultOff（H）</td><td><code>handleAlarm</code> 读失败分支删除（改回 clear alarm）</td><td class="no">1 条红</td></tr>
+      <tr><td class="mono">autoSyncDefaultOff（H）</td><td>只删 <code>setupBackgroundSync</code> 那条（验证非「连带变红」）</td><td class="no">1 条红（独立有效）</td></tr>
+      <tr><td class="mono">autoSyncDefaultOff（I）</td><td>catch 分支 period 改回写死 60s</td><td class="no">1 条红</td></tr>
+      <tr><td class="mono">autoSyncDefaultOff（I）</td><td><code>cfg</code> 声明从 try 外移回 try 内</td><td class="no">1 条红</td></tr>
+      <tr><td class="mono">diagnostics</td><td><code>pendingUpload</code> 改回 <code>=== true</code>（谎报 false）</td><td class="no">1 条红</td></tr>
+      <tr><td class="mono">diagnostics</td><td><code>unavailable</code> 不记 <code>pendingUpload</code></td><td class="no">1 条红</td></tr>
+    </tbody>
+  </table></div>
+  <div class="note good">
+    <b>值得单独记一笔：</b>变异「只删 setup 那条分支」确认了 H 段两条用例
+    <b>各自独立</b>，不是「一条红带着另一条一起红」。这类验证比变异总量更有意义——
+    它排除的是「一条守卫顺带覆盖了另一条」的假象。
+  </div>
+</div></section>
+
+<section id="falsegreen"><div class="wrap">
+  <h2><span class="num">03</span>假绿实录与修复</h2>
+  <details class="finding" open>
+    <summary>
+      <span class="badge b-p0">假绿</span>
+      <span class="ftitle">端到端「整库覆盖不得发生」用例：靠写侧抛错通过，与读侧无关</span>
+    </summary>
+    <div class="fbody">
+      <p><strong>承诺：</strong>注释原文写「即便有人把驱动改回 fail-open、或给 storage 层加了个兜底把错误吞成 []，只要『读失败 ⇒ 落盘被整表覆盖』这条路还通，这里就会红」。</p>
+      <p><strong>实测：</strong>变异读侧（<code>getItem</code> 改回 <code>return null</code>）后，这条用例<em>依然通过</em>；另外两条驱动契约用例变红。</p>
+      <div class="chain">变异：读侧 <code>return null</code>
+  ↓ 探针打印 <code>getGroupsForWrite()</code> 的真实报错：
+  ↓ <span class="hl">「本地存储（localStorage）不可用：无法写入，已中止本次写入。」</span>  ← 写侧，不是读侧
+  ↓ 断言正则 <code>/localStorage.*不可用|无法读取/</code> 命中写侧消息 ⇒ <span class="hl">误判为通过</span></div>
+      <p><strong>根因：</strong><code>getGroupsForWrite()</code> 内部先调 <code>ensureVersion()</code> 写 <code>storage_version</code>，写侧抛错发生在读之前。而断言的正则同时覆盖了读、写两种消息，无法区分。</p>
+      <p><strong>修复：</strong>把端到端断言收紧为只认读侧的「无法读取」，写侧报错不再算通过。修复后重做同一变异 → <b>3 条红</b>。</p>
+      <p><strong>附带价值：</strong>注释里补上了这次变异验证的完整过程与它的教训，作为项目知识资产保留。</p>
+    </div>
+  </details>
+</div></section>
+<section id="claims"><div class="wrap">
+  <h2><span class="num">04</span>事实断言逐条对账</h2>
+  <p class="lede">
+    上一轮报告里的每个可核实断言，本轮都重新取证。结果全部成立——
+    包括那 3 条自我审计已经撤回了的结论，它们的新表述同样站得住。
+  </p>
+  <div class="tbl-wrap"><table>
+    <thead><tr><th>断言</th><th>验证方式</th><th>结论</th></tr></thead>
+    <tbody>
+      <tr><td>快捷键路径无 badge 通道，通知是唯一反馈渠道</td><td class="mono"><code>rg setBadgeText|setBadgeBackgroundColor|action.setBadge</code> 零命中</td><td class="yes">成立</td></tr>
+      <tr><td>通知开关是死接线（<code>showNotifications</code> 无消费者）</td><td>全仓 7 处出现点均为类型/默认值/reducer/UI/云端映射；<code>TabManager.ts:453</code> 无条件 <code>notifications.create</code></td><td class="yes">成立</td></tr>
+      <tr><td>通知默认 <code>false</code> 自引入之日即如此</td><td class="mono"><code>git show 4488974</code>（2025-04-11）</td><td class="yes">成立</td></tr>
+      <tr><td>「永久停摆」实为「停摆到下一次 SW 唤醒」</td><td class="mono"><code>service-worker.ts:184</code> 模块顶层每次 SW 唤醒重进 setup</td><td class="yes">成立（已更正表述）</td></tr>
+      <tr><td>通知判据绕过点是 <code>d558d91</code>（2026-01），<code>dff8582</code> 只删死文件</td><td class="mono">git 考古：<code>git grep utils/notification d558d91^</code> 命中；d558d91 删 import 并加无判据 wrapper</td><td class="yes">成立（已更正归属）</td></tr>
+      <tr><td>catch 分支写死 <code>NORMAL_INTERVAL_MINUTES</code></td><td class="mono">git show HEAD:src/background/backgroundSync.ts</td><td class="yes">成立（HEAD 版）</td></tr>
+      <tr><td>「原注释作用域前提错误」已撤回 → 实为「作用域正确，提到 try 外是改进」</td><td>HEAD 版 <code>cfg</code> 在 try 内首行、catch 引用不到</td><td class="yes">更正后成立</td></tr>
+      <tr><td>隐私邮箱 <code>privacy@tapstack.app</code> 无 MX</td><td>权威 NS <code>launch1.spaceship.net</code> 实测 MX 条数 = 0</td><td class="yes">成立</td></tr>
+      <tr><td><code>.env:9</code> 版本漂移 <code>VITE_APP_VERSION=1.22.15</code></td><td class="mono"><code>sed -n 9p .env</code></td><td class="yes">成立</td></tr>
+      <tr><td>HTML 报告引用的全部行号（TabManager / settingsSlice / service-worker 等）</td><td class="mono">逐条 <code>sed -n</code> 回查命中</td><td class="yes">成立（本轮又修 1 处漂移）</td></tr>
+    </tbody>
+  </table></div>
+  <div class="note">
+    <b>方法说明：</b>报告里的行号引用容易被后续改动漂移，所以本轮对工作区实际行号重新核对了一遍。
+    引用代码位置时以 <code>HEAD</code> 还是工作区为准，必须说清楚——这本身就是一处曾经的认知陷阱。
+  </div>
+</div></section>
+
+<section id="fixes"><div class="wrap">
+  <h2><span class="num">05</span>本轮修改清单</h2>
+  <div class="tbl-wrap"><table>
+    <thead><tr><th>文件</th><th>改动</th><th>性质</th></tr></thead>
+    <tbody>
+      <tr><td class="mono">tests/localStorageFallbackFailClosed.test.ts</td><td>端到端断言收紧为只认读侧报错；补记变异验证过程</td><td class="no">修假绿守卫</td></tr>
+      <tr><td class="mono">src/utils/diagnostics.ts</td><td>「这四个 getter」→「这三个」（pendingUpload 移段后计数漂移）</td><td>修注释漂移</td></tr>
+      <tr><td class="mono">.ai-logs/2026-10-13-180907-verification-report.md</td><td>本轮验证过程、四组变异、假绿实录</td><td>知识资产</td></tr>
+    </tbody>
+  </table></div>
+  <h3>门禁证据（修复后重跑）</h3>
+  <pre><code>$ pnpm test
+ℹ tests 1129   ℹ pass 1129   ℹ fail 0   ℹ skipped 0
+
+$ pnpm validate   # validate-extension + type-check×2 + lint×2 + build + bundle
+✅ 体积门控通过：197.9KB ≤ 240KB
+exit 0</code></pre>
+</div></section>
+
+<section id="residual"><div class="wrap">
+  <h2><span class="num">06</span>遗留观察项（非缺陷）</h2>
+  <p class="lede">
+    以下三条是本轮验证中注意到、但<b>经核实不构成缺陷</b>的现象，记录下来以备后续参考，
+    不是待修清单。
+  </p>
+  <div class="tbl-wrap"><table>
+    <thead><tr><th>现象</th><th>核实结论</th></tr></thead>
+    <tbody>
+      <tr>
+        <td>P1 的 <code>autoSyncConfigReadFailed</code> 是模块级标记，理论上两条并发 <code>readAutoSyncConfig()</code>（setup 异步段 + SW 消息 listener）可能互相覆盖</td>
+        <td>探针实测<b>当前不会串味</b>：所有消费点都在 <code>await</code> 返回后<b>同步</b>读标记，而两次读的 settle 不重叠。属隐式依赖，非当前缺陷；将来若引入并发读需重新评估</td>
+      </tr>
+      <tr>
+        <td><code>getPendingUpload</code> 从第二个 <code>Promise.all</code> 移到第一个（<code>requestSwPerfFlush</code> 之前）</td>
+        <td>核实 <code>kvGet</code> 不做进程缓冲 flush（只有 perfSpan 的 read 会），移动不引入读值回归</td>
+      </tr>
+      <tr>
+        <td><code>storage.ts</code> 注释「与 getPendingUpload 在同一个 Promise.all」</td>
+        <td>该表述<b>正确</b>——指 <code>syncEngine.ts:301</code> 的 <code>getLastUploadTime + hasPendingUpload</code>，本次改动未破坏它。本轮一度误判为陈旧，核实后撤回该怀疑</td>
+      </tr>
+    </tbody>
+  </table></div>
+  <div class="note good">
+    <b>本轮的一条元教训：</b>除了「改坏实现看测试红」这类变异验证，<b>「把自己的怀疑也拿去变异」</b>同样有效——
+    假绿用例和一处误判注释都是在「认真质疑上一轮结论」的过程中被抓住的，而不是靠重跑全绿测试。
+  </div>
+</div></section>
+
+<footer><div class="wrap">
+  <p><b>范围：</b>验证上一轮（P0-1 localStorage fail-closed、P0-2 settings pending 门禁、P1 读失败重排、P1 异常分支档位、diagnostics pendingUpload）的修复与其守卫，以及 HTML 体检报告中可核实的断言。</p>
+  <p><b>不在范围：</b>未重新审计各修复方向本身的取舍是否最优（上一轮已定，本轮只验「是否如描述般生效且被守住」）；未做跨浏览器与线上环境验证。</p>
+  <p><b>复现命令：</b><code>pnpm test</code>（1129 pass）、<code>pnpm validate</code>（exit 0）。变异验证需手动改坏源码后重跑对应测试文件，本轮过程记录在 <code>.ai-logs/2026-10-13-180907-verification-report.md</code>。</p>
+</div></footer>
+</body>
+</html>
