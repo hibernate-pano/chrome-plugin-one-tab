@@ -243,24 +243,26 @@ export const Header: React.FC<HeaderProps> = ({ onSearch }) => {
 
   return (
     <header className="header">
-      <div className={`w-full py-3 px-4 sm:px-6 ${getContainerWidthClass()}`}>
-        <div className="flex items-center justify-between gap-4">
+      <div className={`w-full py-2.5 sm:py-3 px-3 sm:px-6 ${getContainerWidthClass()}`}>
+        <div className="app-header-grid">
           {/* Logo 区域 */}
           <button
             onClick={handleResetToDefaultView}
-            className="flex items-center gap-3 group flat-interaction"
+            className="app-header-brand flex items-center gap-2 sm:gap-3 group flat-interaction min-w-0"
             title="回到默认视图"
             aria-label="回到默认视图"
           >
-            <TapStackLogo size="sm" showIcon={true} />
-            <div className="hidden sm:block">
+            <span className="flex-shrink-0">
+              <TapStackLogo size="sm" showIcon={true} />
+            </span>
+            <div className="app-header-brand-meta hidden sm:block">
               <TabCounter />
             </div>
           </button>
 
           {/* 搜索框 */}
-          <div className="flex-1 max-w-md mx-4">
-            <div className="relative">
+          <div className="app-header-search">
+            <div className="relative" role="search">
               {isSearchBusy && (
                 <div className="absolute left-3 top-1/2 -translate-y-1/2 search-icon">
                   <LoadingIcon />
@@ -292,33 +294,38 @@ export const Header: React.FC<HeaderProps> = ({ onSearch }) => {
           </div>
 
           {/* 操作按钮组 */}
-          <div className="flex items-center gap-1 sm:gap-2 flex-shrink-0">
-            {/* 布局切换 */}
-            <Tooltip
-              content={settings.layoutMode === 'single' ? '切换双栏布局' : '切换单栏布局'}
-              position="bottom"
-            >
-              <button
-                onClick={handleToggleLayout}
-                className="btn-icon flat-interaction"
-                aria-label={settings.layoutMode === 'single' ? '切换为双栏布局' : '切换为单栏布局'}
+          <nav className="app-header-actions" aria-label="会话操作">
+            {/* 布局切换。窄屏收进菜单：顶栏宽度优先给搜索，
+                布局切换是低频偏好设置，不值得占掉信息获取入口的位置。 */}
+            <div className="hidden sm:block">
+              <Tooltip
+                content={settings.layoutMode === 'single' ? '切换双栏布局' : '切换单栏布局'}
+                position="bottom"
               >
-                {settings.layoutMode === 'single' ? <LayoutSingleIcon /> : <LayoutDoubleIcon />}
-              </button>
-            </Tooltip>
+                <button
+                  onClick={handleToggleLayout}
+                  className="btn-icon flat-interaction"
+                  aria-label={settings.layoutMode === 'single' ? '切换为双栏布局' : '切换为单栏布局'}
+                >
+                  {settings.layoutMode === 'single' ? <LayoutSingleIcon /> : <LayoutDoubleIcon />}
+                </button>
+              </Tooltip>
+            </div>
 
-            {/* 清理重复 */}
-            <Tooltip content="清理重复标签" position="bottom">
-              <button
-                onClick={handleCleanDuplicateTabs}
-                disabled={isCleaningDuplicates}
-                className="btn-icon flat-interaction"
-                aria-label="清理重复标签页"
-                aria-busy={isCleaningDuplicates}
-              >
-                {isCleaningDuplicates ? <LoadingIcon /> : <CleanIcon />}
-              </button>
-            </Tooltip>
+            {/* 清理重复。同上：低频、破坏性，收进菜单更合适。 */}
+            <div className="hidden sm:block">
+              <Tooltip content="清理重复标签" position="bottom">
+                <button
+                  onClick={handleCleanDuplicateTabs}
+                  disabled={isCleaningDuplicates}
+                  className="btn-icon flat-interaction"
+                  aria-label="清理重复标签页"
+                  aria-busy={isCleaningDuplicates}
+                >
+                  {isCleaningDuplicates ? <LoadingIcon /> : <CleanIcon />}
+                </button>
+              </Tooltip>
+            </div>
 
             {/* 主题切换 */}
             <SimpleThemeToggle />
@@ -328,17 +335,18 @@ export const Header: React.FC<HeaderProps> = ({ onSearch }) => {
 
             {/* 保存按钮。
                 tooltip 明说「并关闭它们」：这个动作会清空当前窗口（TabManager
-                saveAllTabs → chrome.tabs.remove），必须让用户在被清空前就知道。 */}
+                saveAllTabs → chrome.tabs.remove），必须让用户在被清空前就知道。
+                移动端只留图标但保留完整可访问名称，关键操作不藏进菜单。 */}
             <Tooltip content="保存当前窗口的标签页为会话，并关闭这些标签页" position="bottom">
               <button
                 onClick={handleSaveAllTabs}
                 disabled={isSaving}
-                className="btn btn-primary flat-interaction hidden sm:flex whitespace-nowrap disabled:opacity-60 disabled:cursor-not-allowed"
+                className="btn btn-primary flat-interaction whitespace-nowrap px-3 sm:px-4 disabled:opacity-60 disabled:cursor-not-allowed"
                 aria-label="保存当前窗口中的所有标签页为会话，并关闭这些标签页"
                 aria-busy={isSaving}
               >
-                {isSaving ? <LoadingSpinner size="sm" /> : <SaveIcon />}
-                <span>
+                {isSaving ? <LoadingSpinner size="sm" color="white" /> : <SaveIcon />}
+                <span className="hidden sm:inline">
                   {isSaving
                     ? '保存中…'
                     : saveFeedback?.kind === 'error'
@@ -347,15 +355,9 @@ export const Header: React.FC<HeaderProps> = ({ onSearch }) => {
                         ? saveFeedback.text
                         : '保存会话'}
                 </span>
-              </button>
-              <button
-                onClick={handleSaveAllTabs}
-                disabled={isSaving}
-                className="btn btn-primary flat-interaction sm:hidden p-2 disabled:opacity-60"
-                aria-label="保存当前窗口中的所有标签页为会话，并关闭这些标签页"
-                aria-busy={isSaving}
-              >
-                {isSaving ? <LoadingSpinner size="sm" /> : <SaveIcon />}
+                <span className="sm:hidden" aria-hidden="true">
+                  {isSaving ? '保存中' : saveFeedback?.kind === 'success' ? '已保存' : '保存'}
+                </span>
               </button>
             </Tooltip>
 
@@ -379,10 +381,16 @@ export const Header: React.FC<HeaderProps> = ({ onSearch }) => {
                     setShowDropdown(false);
                     setAuthModal(tab);
                   }}
+                  onToggleLayout={() => {
+                    void handleToggleLayout();
+                  }}
+                  onRequestCleanDuplicates={() => {
+                    handleCleanDuplicateTabs();
+                  }}
                 />
               )}
             </div>
-          </div>
+          </nav>
         </div>
       </div>
 

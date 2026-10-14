@@ -14,12 +14,18 @@
  * **变异必须用 `cp` 备份 + `cp` 恢复，绝不能用 `git checkout`**
  * （它会把同一文件上其它人的未提交改动一起抹掉）。
  * 本文件因此被完整重写一遍，恢复到被抹掉之前的状态。
+ *
+ * **2026-10-14 修 P0**：选了 WebDAV 但未配置/未解锁时，旧逻辑回落 Supabase。
+ * 用户重启一次浏览器（会话口令清空是常态）⇒ 自动同步把标签页传到 TapStack 云端，
+ * 而他以为数据只在自己盘上。现在 fail-closed：返回锁定占位后端，所有操作抛可读错。
+ * 另见 `webdav/config.ts` 的 session 存储镜像（跨 SW/popup/options 上下文）。
  */
 import type { SyncBackendId, SyncBackendPort } from './ports';
 import { SupabaseBackendAdapter } from './supabaseAdapter';
 import { logWarn } from '@/utils/log';
 import { WebDavClient } from './webdav/client';
 import { WebDavBackendAdapter } from './webdav/adapter';
+import { hasHostPermission } from './webdav/permission';
 import {
   chromeKvAdapter,
   getSessionSecrets,
@@ -50,6 +56,9 @@ let overrideBackend: SyncBackendPort | null = null;
  * 折中（**预解析 + 同步读取**）：
  *   · SW 启动 / 设置变更 / 后台轮询前，由 `primeSyncBackend()` 异步完成解析；
  *   · 之后所有同步调用方继续用同步的 `getActiveSyncBackend()`。
+ *   · 异步透传层（`tabGroupSyncService` / `settingsSyncService`）在调用前先
+ *     `await ensureBackendPrimed()`：同一上下文首次调用时补一次解析，
+ *     之后复用缓存（不重复建适配器，也就不重复跑 250k 轮 PBKDF2）。
  * 未预解析过时返回 Supabase（fail-safe：老用户路径永远可用），并**出声告警** ——
  * 因为「配了 WebDAV 却静默走 Supabase」如果不提示，就是一次无声的后端回退。
  */
@@ -110,7 +119,21 @@ function defaultFactory(
   secrets: { password: string; passphrase: string | null }
 ): SyncBackendPort {
   return new WebDavBackendAdapter({
-    client: new WebDavClient({ baseUrl: cfg.baseUrl, username: cfg.username, password: secrets.password }),
+    client: new WebDavClient(
+      { baseUrl: cfg.baseUrl, username: cfg.username, password: secrets.password },
+      // 第二个参数留空 = 用全局 fetch（真实运行路径）。
+      fetch,
+      // ── 权限预检接线（2026-10-14 补 P1）────────────────────────────────
+      // 为什么在这里注入而不在 client.ts 里直接调 permission.ts：
+      // 传输层要能在 Node 测试环境独立跑（那里没有 chrome.permissions），
+      // 注入的方式让「不注入 = 不检查」成为显式选择。
+      //
+      // 用 `hasHostPermission`（只 contains、不 request）而非
+      // `ensureHostPermission`：后者会调 `chrome.permissions.request()`，
+      // 而该调用**必须有用户手势**，在 service worker 的定时任务里会直接失败
+      // （permission.ts:52-54已注明）。授权只发生在配置面板的按钮点击里。
+      () => hasHostPermission(cfg.baseUrl)
+    ),
     config: {
       baseUrl: cfg.baseUrl,
       username: cfg.username,
@@ -129,13 +152,14 @@ function defaultFactory(
 /**
  * 读设置，决定用哪个后端。
  *
- * ── 失败一律回落 Supabase，绝不抛错 ──────────────────────────────────────
- * 「同步配置读不到」不该让整个扩展打不开——同步只是附加功能。
- * 回落方向是 Supabase：老用户配置异常时，至少他原来的同步路径还在。
+ * ── 失败语义（2026-10-14 修 P0 后的最终口径）────────────────────────────
+ * 「连用户想要哪个后端都读不到」（存储异常）⇒ 回落 Supabase，绝不抛错：
+ * 同步只是附加功能，不该让整个扩展打不开；且读不到时默认 supabase 对存量用户最安全。
  *
- * ⚠️ **回落 = 静默把用户切回 Supabase**，这在「用户明明选了 WebDAV」时很糟。
- * 所以调用方（primeSyncBackend）会把「回落发生且用户选的是 webdav」
- * 记进 `lastResolution`，由 UI/日志显式说出来 —— 不允许无声降级。
+ * 「用户明确选了 webdav，但配置缺失/未解锁/配置读失败」⇒ 返回锁定占位后端，
+ * **绝不回落 Supabase**。回落等于把用户数据传到他没选的后端，且毫无提示 ——
+ * 重启浏览器（会话口令清空）是常态，回落会让每次重启后都发生一次无声的后端切换。
+ * 锁定后端的每个方法都抛同一句可读错（去设置页解锁），调用方据此中止本轮。
  */
 export async function resolveConfiguredBackend(): Promise<SyncBackendPort> {
   try {
@@ -150,12 +174,63 @@ export async function resolveConfiguredBackend(): Promise<SyncBackendPort> {
 
 interface ResolutionOutcome {
   backend: SyncBackendPort;
-  /** 实际解析到的后端 id（可能与用户选择不同 —— 那就意味着发生了回落）。 */
+  /** 实际解析到的后端 id（锁定占位后端的 id 也是 'webdav'，不算回落）。 */
   resolvedId: SyncBackendId;
   /** 用户想要的后端 id。 */
   requestedId: SyncBackendId;
-  /** 回落原因（仅当 resolvedId !== requestedId）。给用户看的中文说明。 */
+  /** 回落原因（仅当 resolvedId !== requestedId 且非锁定）。给用户看的中文说明。 */
   fallbackReason?: string;
+  /**
+   * 锁定原因（仅当 requestedId === resolvedId === 'webdav' 但后端被锁定）。
+   * 有它 ⇒ 后端是占位，任何同步操作都会抛这句错。UI 据此展示「去解锁」。
+   */
+  lockedReason?: string;
+}
+
+/**
+ * 锁定占位后端（2026-10-14 修 P0）。
+ *
+ * 用户选了 WebDAV 但本会话不可用（没配好 / 没解锁 / 配置读失败）时的返回值。
+ * id 仍是 'webdav'：水位键、UI 展示都不会把它当成 Supabase。
+ * 每个方法都抛同一句错 —— 「失败要出声」，且出的是用户能行动的话。
+ */
+class LockedWebDavBackend implements SyncBackendPort {
+  readonly id = 'webdav' as const;
+  readonly label = '自带存储（WebDAV）';
+
+  constructor(private readonly reason: string) {}
+
+  private fail(): never {
+    throw new Error(this.reason);
+  }
+
+  async fetchFingerprints(): Promise<never> {
+    this.fail();
+  }
+
+  async downloadGroups(): Promise<never> {
+    this.fail();
+  }
+
+  async uploadGroups(): Promise<never> {
+    this.fail();
+  }
+
+  async broadcastDeletes(): Promise<never> {
+    this.fail();
+  }
+
+  async purgeExpiredDeletes(): Promise<never> {
+    this.fail();
+  }
+
+  async uploadSettings(): Promise<never> {
+    this.fail();
+  }
+
+  async downloadSettings(): Promise<never> {
+    this.fail();
+  }
 }
 
 async function resolveBackendOutcome(): Promise<ResolutionOutcome> {
@@ -167,19 +242,30 @@ async function resolveBackendOutcome(): Promise<ResolutionOutcome> {
 
   if (requestedId === 'supabase') return supabase();
 
-  const cfg = await loadWebDavConfig();
-  if (!cfg) {
-    return {
-      ...supabase(),
-      fallbackReason: '你选择了「自带存储」，但还没有填写云服务信息。请到设置里完成配置。',
-    };
+  const locked = (lockedReason: string): ResolutionOutcome => ({
+    backend: new LockedWebDavBackend(lockedReason),
+    resolvedId: 'webdav',
+    requestedId,
+    lockedReason,
+  });
+
+  let cfg: StoredWebDavConfig | null;
+  try {
+    cfg = await loadWebDavConfig();
+  } catch {
+    return locked('自带存储的配置读取失败，已中止本次同步以免数据传到错误的后端。请稍后重试。');
   }
-  const secrets = getSessionSecrets(cfg.username);
+  if (!cfg) {
+    return locked('你选择了「自带存储」，但还没有填写云服务信息。请到设置里完成配置。');
+  }
+  let secrets: { password: string; passphrase: string | null } | null;
+  try {
+    secrets = await getSessionSecrets(cfg.username);
+  } catch {
+    return locked('自带存储的解锁状态读取失败，已中止本次同步。请重新输入应用密码与加密口令。');
+  }
   if (!secrets) {
-    return {
-      ...supabase(),
-      fallbackReason: '你选择了「自带存储」，但本次还没有解锁云服务（需要重新输入应用密码与加密口令）。',
-    };
+    return locked('你选择了「自带存储」，但本次还没有解锁云服务。请到设置里重新输入应用密码与加密口令。');
   }
 
   return {
@@ -207,6 +293,7 @@ export function invalidateActiveSyncBackend(): void {
  *   · SW 启动（service-worker.ts 模块顶层）
  *   · 用户改完同步设置（HeaderDropdown 保存成功之后）
  *   · 后台轮询闹钟触发时（backgroundSync.handleAlarm 开头）
+ *   · 异步透传层首调用（`ensureBackendPrimed`，覆盖 popup/options 上下文首次调用）
  */
 let lastResolution: (ResolutionOutcome & { at: string }) | null = null;
 
@@ -219,6 +306,19 @@ export async function primeSyncBackend(): Promise<ResolutionOutcome> {
   if (!overrideBackend) activeBackend = outcome.backend;
   lastResolution = { ...outcome, at: new Date().toISOString() };
   return outcome;
+}
+
+/**
+ * 异步透传层的统一预解析（2026-10-14 修 P0 时加）。
+ *
+ * 每个执行上下文（SW / popup / options）的 `activeBackend` 是独立的：
+ * SW 启动时的 prime 管不到 popup 里第一次点同步。透传层在真正调用后端之前
+ * 先调它：已有缓存 ⇒ 直接返回（零开销，不重建适配器、不重跑 PBKDF2）；
+ * 无缓存 ⇒ 补一次 `primeSyncBackend()`。
+ */
+export async function ensureBackendPrimed(): Promise<void> {
+  if (overrideBackend || activeBackend) return;
+  await primeSyncBackend();
 }
 
 /**

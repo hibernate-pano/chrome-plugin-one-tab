@@ -29,9 +29,19 @@
  */
 import { kvGet, kvSet, kvRemove } from '@/storage-kv/storageAdapter';
 import type { AdapterKv } from './adapter';
+import { logWarn } from '@/utils/log';
 
 /** 配置键（独立于 STORAGE_KEYS：它不是「用户设置」，是连接凭据）。 */
 const CONFIG_KEY = 'webdav_sync_config_v1';
+
+/**
+ * 会话凭据在浏览器会话存储里的键。
+ *
+ * `chrome.storage.session` 是内存态、绑定浏览器会话、重启浏览器即清空、
+ * 且 popup / options / SW 三个执行上下文**共享同一份**。
+ * 这正是会话口令需要的语义（磁盘上不留密钥，关浏览器后需重新解锁）。
+ */
+const SESSION_SECRETS_KEY = 'webdav_session_secrets_v1';
 
 export interface WebDavConnectionConfig {
   /** 服务器根地址，例如 `https://dav.jianguoyun.com/dav/`。 */
@@ -151,8 +161,15 @@ export async function clearWebDavConfig(kv: AdapterKv = chromeKvAdapter): Promis
 /**
  * 内存态的会话凭据。
  *
- * 存在模块级变量里，**不落盘**。Service Worker 被回收即失效——
- * 这是有意的（见文件头「每次由浏览器会话内存持有」）。
+ * 存在模块级变量里，**不落盘**。模块内存是本执行上下文的快取：
+ * popup 里解锁只 living 在 popup 的 JS 世界里，SW 根本看不到它。
+ *
+ * ── 为什么还要镜像一份到 `chrome.storage.session`（2026-10-14 修 P0 时加）──
+ * MV3 里 popup / options / SW 是三个独立的 JS 上下文，各自的模块内存互不相通。
+ * 只放模块内存 ⇒ 用户在设置页输完密码，后台 SW 的定时同步永远是「未解锁」。
+ * `chrome.storage.session` 是内存态（不写磁盘，重启浏览器即清空），
+ * 且三个上下文共享 —— 它才是「浏览器会话内存」的正确载体。
+ * 模块变量保留为快取（同步读），session 存储是跨上下文的真相源（异步读）。
  *
  * 用对象而非两个独立变量：应用密码与加密口令必须**成对**才有意义，
  * 分开存会出现「拿了旧口令配新密码」这种静默错配，而错配的表现是
@@ -165,40 +182,107 @@ interface SessionSecrets {
 
 let sessionSecrets: SessionSecrets | null = null;
 
+let sessionUser = '';
+
+interface SessionStore {
+  get: (key: string) => Promise<Record<string, unknown>>;
+  set: (items: Record<string, unknown>) => Promise<void>;
+  remove: (key: string) => Promise<void>;
+}
+
+/** 浏览器会话存储（扩展环境才有；Node 测试环境返回 null 走纯内存）。 */
+function sessionStore(): SessionStore | null {
+  try {
+    const c = (globalThis as { chrome?: { storage?: { session?: SessionStore } } }).chrome;
+    return c?.storage?.session ?? null;
+  } catch {
+    return null;
+  }
+}
+
+function isSessionSecretsRaw(v: unknown): v is { username: string; password: string; passphrase: string | null } {
+  if (!v || typeof v !== 'object') return false;
+  const o = v as Record<string, unknown>;
+  return (
+    typeof o.username === 'string' &&
+    typeof o.password === 'string' &&
+    (o.passphrase === null || typeof o.passphrase === 'string')
+  );
+}
+
 /**
  * 设置会话凭据。
  *
  * 与已保存配置**不一致**时直接抛错：把 A 目录的密码配到 B 目录上，
  * 表现是 401 或解密失败，而用户完全看不出是自己配串了。
+ *
+ * 同时写模块内存与 `chrome.storage.session`：前者是本上下文的快取，
+ * 后者让 SW / popup / options 三端共享。session 写失败只告警不抛错 ——
+ * 本上下文的内存已生效，同步仍可工作；下次跨上下文读取时再报未解锁。
  */
-export function setSessionSecrets(
+export async function setSessionSecrets(
   username: string,
   password: string,
   passphrase: string | null
-): void {
+): Promise<void> {
   if (!password) throw new Error('应用密码不能为空');
   sessionSecrets = { password, passphrase };
   sessionUser = username;
+  const store = sessionStore();
+  if (!store) return;
+  try {
+    await store.set({ [SESSION_SECRETS_KEY]: { username, password, passphrase } });
+  } catch (err) {
+    logWarn('[webdav-config] 会话凭据未能共享到浏览器会话存储（本页仍可用，后台同步可能需重新解锁）:', err);
+  }
 }
 
-let sessionUser = '';
-
-/** 读会话凭据。null = 本次 SW 生命周期内还没有解锁。 */
-export function getSessionSecrets(username: string): SessionSecrets | null {
+/**
+ * 读会话凭据。null = 本次浏览器会话内还没有解锁。
+ *
+ * 先读模块快取， miss 再读 `chrome.storage.session`（跨上下文）。
+ * 命中后回填模块快取，因此同一上下文内第二次是同步命中。
+ */
+export async function getSessionSecrets(username: string): Promise<SessionSecrets | null> {
   // 用户名变了但凭据没重新输入 ⇒ 视为未解锁。
   // 静默复用旧密码只会得到一个莫名 401。
-  if (!sessionSecrets || sessionUser !== username) return null;
-  return sessionSecrets;
+  if (sessionSecrets && sessionUser === username) return sessionSecrets;
+  if (sessionSecrets && sessionUser !== username) return null;
+  const store = sessionStore();
+  if (!store) return null;
+  try {
+    const got = await store.get(SESSION_SECRETS_KEY);
+    const raw = got?.[SESSION_SECRETS_KEY];
+    if (!isSessionSecretsRaw(raw) || raw.username !== username || !raw.password) return null;
+    sessionSecrets = { password: raw.password, passphrase: raw.passphrase };
+    sessionUser = raw.username;
+    return sessionSecrets;
+  } catch {
+    return null;
+  }
 }
 
-/** 清除会话凭据（切换后端 / 用户主动锁定时用）。 */
-export function clearSessionSecrets(): void {
+/**
+ * 清除会话凭据（切换后端 / 用户主动锁定时用）。
+ *
+ * 注意：它只清凭据本身，不清 `activeBackend` 缓存 —— 调用方必须随后调
+ * `invalidateActiveSyncBackend()`（见 `@/sync-backend`），否则旧适配器实例
+ * 里缓存的 Vault（已派生的密钥）还会继续生效，「锁定」等于没锁。
+ */
+export async function clearSessionSecrets(): Promise<void> {
   sessionSecrets = null;
   sessionUser = '';
+  const store = sessionStore();
+  if (!store) return;
+  try {
+    await store.remove(SESSION_SECRETS_KEY);
+  } catch (err) {
+    logWarn('[webdav-config] 清除会话凭据时未能同步清除浏览器会话存储:', err);
+  }
 }
 
 /** 供测试用：把模块级状态复位，避免测试之间串味。 */
-export function __resetSessionSecretsForTests(): void {
-  clearSessionSecrets();
+export async function __resetSessionSecretsForTests(): Promise<void> {
+  await clearSessionSecrets();
 }
 

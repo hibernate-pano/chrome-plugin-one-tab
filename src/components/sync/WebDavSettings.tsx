@@ -32,6 +32,7 @@ import { dispatchSaveSettings, updateSettings } from '@/store/slices/settingsSli
 import { sendSyncCommand } from '@/shared/mutationProtocol';
 import { useToast } from '@/contexts/ToastContext';
 import {
+  clearSessionSecrets,
   clearWebDavConfig,
   loadWebDavConfig,
   saveWebDavConfig,
@@ -40,7 +41,7 @@ import {
 import { WebDavClient } from '@/sync-backend/webdav/client';
 import { WebDavBackendAdapter } from '@/sync-backend/webdav/adapter';
 import { chromeKvAdapter } from '@/sync-backend/webdav/config';
-import { primeSyncBackend } from '@/sync-backend';
+import { invalidateActiveSyncBackend, primeSyncBackend } from '@/sync-backend';
 import { ensureHostPermission, PERMISSION_DENIED_MESSAGE } from '@/sync-backend/webdav/permission';
 import { logWarn } from '@/utils/log';
 
@@ -56,15 +57,15 @@ type CheckState =
     };
 
 const inputCls =
-  'w-full rounded-md border border-gray-300 bg-white px-2.5 py-1.5 text-sm text-gray-800 ' +
-  'placeholder-gray-400 focus:border-blue-500 focus:outline-none ' +
-  'dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100';
-const labelCls = 'mb-1 block text-xs text-gray-600 dark:text-gray-300';
+  'w-full theme-radius-input-sm theme-bg-elevated border theme-border-default px-2.5 py-2 text-sm ' +
+  'theme-focus text-gray-800 placeholder-gray-400 ' +
+  'dark:text-gray-100 min-h-[2.5rem]';
+const labelCls = 'mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300';
 const btnPrimary =
-  'rounded-md bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-700 disabled:opacity-50';
+  'btn btn-primary theme-radius-input-sm px-3 py-2 text-xs font-medium disabled:opacity-50 min-h-[2.5rem]';
 const btnGhost =
-  'rounded-md border border-gray-300 px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50 ' +
-  'dark:border-gray-600 dark:text-gray-200 dark:hover:bg-gray-700';
+  'rounded-md border theme-border-default px-3 py-2 text-xs font-medium text-gray-700 theme-btn-hover min-h-[2.5rem] ' +
+  'dark:text-gray-200';
 
 export const WebDavSettings: React.FC = () => {
   const dispatch = useAppDispatch();
@@ -174,8 +175,9 @@ export const WebDavSettings: React.FC = () => {
         return;
       }
       await saveWebDavConfig({ baseUrl, username, rootPath, encryption });
-      // 口令只在内存里给本次会话用：SW 被回收后需要重新输入。
-      setSessionSecrets(username, password, encryption === 'required' ? passphrase || null : null);
+      // 口令只给本次浏览器会话用（内存 + chrome.storage.session，不写磁盘）：
+      // 关闭浏览器后需要重新输入。session 存储三端共享，SW 的定时同步也能用。
+      await setSessionSecrets(username, password, encryption === 'required' ? passphrase || null : null);
 
       dispatch(updateSettings({ syncBackend: 'webdav' }));
       const saveError = await dispatchSaveSettings(dispatch);
@@ -231,14 +233,46 @@ export const WebDavSettings: React.FC = () => {
   const handleForget = useCallback(async () => {
     try {
       await clearWebDavConfig();
+      // 配置清了，内存/会话里的口令必须一起清 —— 否则旧口令配新地址，
+      // 下次同步报 401，用户完全看不出是配串了（见 config.ts 的注释）。
+      // 不切后端：syncBackend 仍是 webdav 时解析会进入「锁定」态并明确提示去配置，
+      // 绝不静默切回 Supabase（那正是 P0 修掉的失败模式）。
+      await clearSessionSecrets();
+      invalidateActiveSyncBackend();
+      try {
+        await primeSyncBackend();
+      } catch (err) {
+        logWarn('[WebDavSettings] 清除后重解析后端失败（下次启动自愈）:', err);
+      }
       setBaseUrl('');
       setUsername('');
       setPassword('');
       setPassphrase('');
       setCheck({ kind: 'idle' });
-      showToast('已清除本机保存的云服务信息', 'success');
+      showToast('已清除本机保存的云服务信息与本次会话口令', 'success');
     } catch (err) {
       showToast(err instanceof Error ? err.message : '清除失败', 'error');
+    }
+  }, [showToast]);
+
+  // ── 锁定（2026-10-14 修 P0 时加）────────────────────────────────────────
+  // 只清口令、不清地址：用户离开电脑前点一下，后台同步即停并明确提示未解锁，
+  // 而不是拿旧口令继续传。invalidate 是关键 —— 不清 activeBackend 缓存的话，
+  // 旧适配器里的 Vault（已派生的密钥）还会继续生效，「锁定」等于没锁。
+  const handleLock = useCallback(async () => {
+    try {
+      await clearSessionSecrets();
+      invalidateActiveSyncBackend();
+      try {
+        await primeSyncBackend();
+      } catch (err) {
+        logWarn('[WebDavSettings] 锁定后重解析后端失败（下次启动自愈）:', err);
+      }
+      setPassword('');
+      setPassphrase('');
+      showToast('已锁定：后台同步已停止，需要重新输入应用密码与加密口令才能继续', 'success');
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : '锁定失败', 'error');
     }
   }, [showToast]);
 
@@ -361,6 +395,9 @@ export const WebDavSettings: React.FC = () => {
         </button>
         <button type="button" className={btnGhost} onClick={handleForget}>
           清除配置
+        </button>
+        <button type="button" className={btnGhost} onClick={handleLock}>
+          锁定
         </button>
       </div>
 

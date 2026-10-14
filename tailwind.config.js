@@ -87,10 +87,10 @@ module.exports = {
         },
 
         // 语义化别名
-        background: '#F0FDFA',
+        background: '#F8FAFC',
         surface: '#FFFFFF',
         'on-primary': '#FFFFFF',
-        'on-background': '#134E4A',
+        'on-background': '#0F172A',
         'on-surface': '#1C1917',
       },
 
@@ -134,16 +134,16 @@ module.exports = {
       },
 
       boxShadow: {
-        // 微交互式阴影系统 - 轻盈、快速响应
-        'subtle': '0 1px 2px 0 rgb(13 148 136 / 0.04)',
-        'soft': '0 1px 3px 0 rgb(13 148 136 / 0.06), 0 1px 2px -1px rgb(0 0 0 / 0.04)',
-        'medium': '0 4px 6px -1px rgb(13 148 136 / 0.08), 0 2px 4px -2px rgb(0 0 0 / 0.05)',
-        'elevated': '0 10px 15px -3px rgb(13 148 136 / 0.1), 0 4px 6px -4px rgb(0 0 0 / 0.05)',
-        'floating': '0 20px 25px -5px rgb(13 148 136 / 0.12), 0 8px 10px -6px rgb(0 0 0 / 0.08)',
-        'glow': '0 0 20px -5px rgb(13 148 136 / 0.3)',
-        'glow-sm': '0 0 10px -3px rgb(13 148 136 / 0.2)',
-        'hover': '0 4px 12px -2px rgb(13 148 136 / 0.15), 0 2px 6px -1px rgb(0 0 0 / 0.08)',
-        'active': '0 2px 4px -1px rgb(13 148 136 / 0.1), 0 1px 2px -1px rgb(0 0 0 / 0.06)',
+        // 微交互式阴影系统 - 轻盈、快速响应（品牌蓝 37 99 235，与 --color-accent 同源）
+        'subtle': '0 1px 2px 0 rgb(37 99 235 / 0.04)',
+        'soft': '0 1px 3px 0 rgb(37 99 235 / 0.06), 0 1px 2px -1px rgb(0 0 0 / 0.04)',
+        'medium': '0 4px 6px -1px rgb(37 99 235 / 0.08), 0 2px 4px -2px rgb(0 0 0 / 0.05)',
+        'elevated': '0 10px 15px -3px rgb(37 99 235 / 0.1), 0 4px 6px -4px rgb(0 0 0 / 0.05)',
+        'floating': '0 20px 25px -5px rgb(37 99 235 / 0.12), 0 8px 10px -6px rgb(0 0 0 / 0.08)',
+        'glow': '0 0 20px -5px rgb(37 99 235 / 0.3)',
+        'glow-sm': '0 0 10px -3px rgb(37 99 235 / 0.2)',
+        'hover': '0 4px 12px -2px rgb(37 99 235 / 0.15), 0 2px 6px -1px rgb(0 0 0 / 0.08)',
+        'active': '0 2px 4px -1px rgb(37 99 235 / 0.1), 0 1px 2px -1px rgb(0 0 0 / 0.06)',
         // 深色模式阴影
         'dark-subtle': '0 1px 2px 0 rgb(0 0 0 / 0.2)',
         'dark-soft': '0 1px 3px 0 rgb(0 0 0 / 0.3), 0 1px 2px -1px rgb(0 0 0 / 0.2)',
@@ -152,7 +152,7 @@ module.exports = {
         'dark-hover': '0 4px 12px -2px rgb(0 0 0 / 0.4), 0 2px 6px -1px rgb(0 0 0 / 0.3)',
         // 内阴影
         'inner-soft': 'inset 0 2px 4px 0 rgb(0 0 0 / 0.04)',
-        'inner-glow': 'inset 0 0 0 1px rgb(13 148 136 / 0.1)',
+        'inner-glow': 'inset 0 0 0 1px rgb(37 99 235 / 0.1)',
       },
 
       backdropBlur: {

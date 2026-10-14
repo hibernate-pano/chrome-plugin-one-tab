@@ -506,11 +506,15 @@ describe('P1：设置读失败后，不得用默认值覆盖真实设置，也�
   });
 
 
-  it('六个调用点都必须走 dispatchSaveSettings 并把失败说出来', () => {
+  it('所有调用点都必须走 dispatchSaveSettings 并把失败说出来', () => {
     const sites: Array<{ file: string; expect: number }> = [
       { file: 'src/contexts/ThemeContext.tsx', expect: 1 }, // persistSettings 集中处理两处
       { file: 'src/components/layout/Header.tsx', expect: 1 },
-      { file: 'src/components/layout/HeaderDropdown.tsx', expect: 3 },
+      // 2026-10-14：设置全部搬进独立选项页，这 4 处调用随之搬到 OptionsPage。
+      // HeaderDropdown 里现在 0 处 —— 因为它不再改任何设置，只剩导出/导入/登录。
+      // 把 0 处也列进来是刻意的：**「这个文件不该再出现 dispatchSaveSettings」**
+      // 本身就是要守住的事实，否则将来有人在菜单里加回一个开关就直接绕过 fail-closed。
+      { file: 'src/options/OptionsPage.tsx', expect: 4 },
     ];
     for (const site of sites) {
       const code = stripComments(read(site.file));

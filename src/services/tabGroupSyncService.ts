@@ -1,5 +1,5 @@
 import type { TabGroup } from '@/types/tab';
-import { getActiveSyncBackend } from '@/sync-backend';
+import { ensureBackendPrimed, getActiveSyncBackend } from '@/sync-backend';
 import type { RemoteGroupFingerprint } from '@/sync-backend';
 import type { GroupDigestLike } from '@/core/syncDecision';
 
@@ -56,6 +56,11 @@ export async function uploadTabGroups(
   groups: TabGroup[],
   overwriteCloud: boolean = false
 ): Promise<{ writtenTombstoneIds: string[] }> {
+  // 每个上下文（SW / popup / options）首次调用时补一次解析：
+  // SW 启动时的 prime 管不到 popup，popup 里第一次点同步若直接读缓存，
+  // 拿到的是「未预解析 fail-safe 的 Supabase」，用户配的 WebDAV 被无声绕过。
+  // 已有缓存时零开销（不重建适配器、不重跑 PBKDF2）。
+  await ensureBackendPrimed();
   const result = await getActiveSyncBackend().uploadGroups(groups, {
     overwriteRemote: overwriteCloud,
   });
@@ -66,20 +71,24 @@ export async function uploadTabGroups(
 }
 
 export async function downloadTabGroups(): Promise<TabGroup[]> {
+  await ensureBackendPrimed();
   return getActiveSyncBackend().downloadGroups();
 }
 
 export async function markCloudGroupsAsDeleted(deletedIds: string[]): Promise<void> {
+  await ensureBackendPrimed();
   return getActiveSyncBackend().broadcastDeletes(deletedIds);
 }
 
 /** 物理删除超过龄期的删除广播载体（Supabase 侧 = is_deleted 行），返回删除行数。 */
 export async function purgeExpiredCloudTombstones(maxAgeDays: number = 30): Promise<number> {
+  await ensureBackendPrimed();
   return getActiveSyncBackend().purgeExpiredDeletes(maxAgeDays);
 }
 
 /** 轻量探活：只拉 (id, updated_at, version, is_deleted[, 印记列]) 指纹，无大字段。 */
 export async function downloadTabGroupsDigest(): Promise<TabGroupDigest[]> {
+  await ensureBackendPrimed();
   const fingerprints = await getActiveSyncBackend().fetchFingerprints();
   return fingerprints.map(toDigestLike);
 }

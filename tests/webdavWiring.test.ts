@@ -182,7 +182,7 @@ describe('syncBackend 设置的校验单点', () => {
 
 describe('后端解析：老用户零行为变化', () => {
   beforeEach(async () => {
-    clearSessionSecrets();
+    await clearSessionSecrets();
     resetActiveSyncBackend();
     setBackendFactory(null);
     await resetStorage();
@@ -207,28 +207,38 @@ describe('后端解析：老用户零行为变化', () => {
 
 describe('后端解析：选了 webdav 时的回落都必须出声', () => {
   beforeEach(async () => {
-    clearSessionSecrets();
+    await clearSessionSecrets();
     resetActiveSyncBackend();
     setBackendFactory(null);
     await resetStorage();
     await seed('user_settings', { ...DEFAULT_SETTINGS, syncBackend: 'webdav' });
   });
 
-  it('选了 webdav 但没填云服务 → 回落 + 给出可读原因', async () => {
+  it('选了 webdav 但没填云服务 → 锁定（不回落 Supabase）+ 给出可读原因', async () => {
     const out = await primeSyncBackend();
     assert.equal(out.requestedId, 'webdav');
-    assert.equal(out.resolvedId, 'supabase');
-    assert.match(out.fallbackReason ?? '', /云服务信息/);
+    // 2026-10-14 修 P0：锁定占位，后端 id 仍是 webdav，绝不切回 supabase。
+    // 否则重启浏览器（口令清空是常态）后自动同步把数据传到用户没选的后端。
+    assert.equal(out.resolvedId, 'webdav');
+    assert.match(out.lockedReason ?? '', /云服务信息/);
+    assert.equal(out.fallbackReason, undefined);
+    // 占位后端的任何操作都必须抛同一句可读错（失败要出声）。
+    await assert.rejects(() => out.backend.fetchFingerprints(), /云服务信息/);
+    await assert.rejects(() => out.backend.downloadGroups(), /云服务信息/);
   });
 
-  it('填了但未解锁 → 回落 + 说明是「需要重新输入」', async () => {
+  it('填了但未解锁 → 锁定（不回落 Supabase）+ 说明是「需要重新输入」', async () => {
     await saveWebDavConfig(
       { baseUrl: 'https://dav.example.com/dav/', username: 'u', rootPath: 'TapStack', encryption: 'plain' },
       realKv
     );
     const out = await primeSyncBackend();
-    assert.equal(out.resolvedId, 'supabase');
-    assert.match(out.fallbackReason ?? '', /解锁/);
+    assert.equal(out.requestedId, 'webdav');
+    assert.equal(out.resolvedId, 'webdav');
+    assert.match(out.lockedReason ?? '', /解锁/);
+    assert.equal(out.fallbackReason, undefined);
+    await assert.rejects(() => out.backend.uploadGroups([]), /解锁/);
+    await assert.rejects(() => out.backend.downloadSettings(), /解锁/);
   });
 
   it('配好并解锁 → 解析为 webdav，无回落，且凭据确实传到了工厂', async () => {
@@ -236,7 +246,7 @@ describe('后端解析：选了 webdav 时的回落都必须出声', () => {
       { baseUrl: 'https://dav.example.com/dav/', username: 'u', rootPath: 'TapStack', encryption: 'plain' },
       realKv
     );
-    setSessionSecrets('u', 'app-password', null);
+    await setSessionSecrets('u', 'app-password', null);
     // 用数组而不是 `let x: T | null`：TS 会把「只在闭包里赋值」的变量
     // 收窄成 null（访问属性时报 Property does not exist on type 'never'）——
     // 它假定闭包不会被调用。而这里正是要验证「闭包被调用且参数正确」。
@@ -255,19 +265,64 @@ describe('后端解析：选了 webdav 时的回落都必须出声', () => {
     assert.equal(factoryCalls[0].secrets.password, 'app-password');
   });
 
-  it('回落信息可被 UI 读取（否则就只是日志里的一句话）', async () => {
-    await primeSyncBackend(); // 未配置 → 回落
+  it('锁定信息可被 UI 读取（否则就只是日志里的一句话）', async () => {
+    await primeSyncBackend(); // 未配置 → 锁定
     const last = getLastBackendResolution();
     assert.ok(last, '必须记录最近一次解析结果');
     assert.equal(last?.requestedId, 'webdav');
-    assert.equal(last?.resolvedId, 'supabase');
-    assert.ok((last?.fallbackReason ?? '').length > 0);
+    assert.equal(last?.resolvedId, 'webdav');
+    assert.ok((last?.lockedReason ?? '').length > 0);
+  });
+});
+
+describe('生产接线：defaultFactory 必须注入权限守卫（2026-10-14 P1，变异4）', () => {
+  // 背景：变异验证发现，删掉 defaultFactory 里 guard 那行（index.ts 的第 3 参数）
+  // 后 1291 个测试照样全绿 —— 机制层（client.ts 的预检 + 测试）钉住了，
+  // 但「生产构造到底传没传 guard」没有任何测试断言。
+  // 这条钉的是**接线本身**：走真实 defaultFactory，不注入任何 fake factory。
+  beforeEach(async () => {
+    await clearSessionSecrets();
+    resetActiveSyncBackend();
+    setBackendFactory(null); // 必须走真实 defaultFactory，否则测的就不是生产接线
+    await resetStorage();
+    await seed('user_settings', { ...DEFAULT_SETTINGS, syncBackend: 'webdav' });
+    await saveWebDavConfig(
+      { baseUrl: 'https://dav.example.com/dav/', username: 'u', rootPath: 'TapStack', encryption: 'plain' },
+      realKv
+    );
+    await setSessionSecrets('u', 'app-password', null);
+  });
+
+  // 清理统一走用例内的 finally（chrome 全局 + 会话密钥 + 后端缓存），
+// 不用 afterEach 钩子：本文件既有风格是各用例自带 beforeEach 做隔离。
+  it('未授权时生产构造的后端必须抛权限文案（而不是静默发请求）', async () => {
+    // 只否认 contains 即可：同步路径只查 contains，不调 request。
+    (globalThis as Record<string, unknown>).chrome = {
+      permissions: { contains: async () => false },
+    };
+    try {
+      const out = await primeSyncBackend();
+      // 若回落说明测试 setup 错（配置/解锁没接上），不是实现错 —— 先钉住这个前提。
+      assert.equal(out.resolvedId, 'webdav', '生产必须解析为 webdav 而不是回落');
+      // fetchFingerprints 第一件事就是 loadManifest → client.get，必经 guard。
+      // 只断言「用户看到什么」（文案），不断言 guard 的实现细节（status 0 / 标记）。
+      await assert.rejects(
+        () => out.backend.fetchFingerprints(),
+        (err: unknown) => {
+          assert.ok(err instanceof Error);
+          assert.match(err.message, /权限|测试连接/, '必须抛可指导操作的权限文案');
+          return true;
+        }
+      );
+    } finally {
+      delete (globalThis as Record<string, unknown>).chrome;
+    }
   });
 });
 
 describe('凭据存储：绝不落盘', () => {
   beforeEach(async () => {
-    clearSessionSecrets();
+    await clearSessionSecrets();
     await resetStorage();
   });
 

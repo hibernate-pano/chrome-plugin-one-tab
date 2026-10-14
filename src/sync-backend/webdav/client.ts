@@ -21,6 +21,10 @@
  * 覆盖坚果云 / Nextcloud / 自建。Digest 需要自己实现 challenge 计算，V2 再说。
  */
 
+// 只取文案常量，不引入 permission 模块的行为：client 侧的权限语义由注入的
+// guard 决定（见下方 PermissionGuard），这里import 的是「用户该看到什么」。
+import { PERMISSION_DENIED_MESSAGE } from './permission';
+
 /** 传输层错误。`status` 为 HTTP 状态码；网络层失败时为 0。 */
 export class WebDavError extends Error {
   constructor(
@@ -29,7 +33,17 @@ export class WebDavError extends Error {
     readonly method: string,
     readonly url: string,
     /** 412 = 乐观锁失败（If-Match/If-None-Match 未命中），调用方据此走冲突路径。 */
-    readonly isPreconditionFailed: boolean = status === 412
+    readonly isPreconditionFailed: boolean = status === 412,
+    /**
+     * 浏览器**没有授予**该主机的访问权限（2026-10-14 补 P1）。
+     *
+     * 为什么需要这个标记而不是靠 `status === 0` 推断：status 0 同时表示
+     * 「网络断了」「被重定向」「没权限」三种完全不同的情况。能力探测
+     * （probeConditionalWrites）必须把「没权限」与「服务端不支持条件写」
+     * 区分开——否则会把一个「点一次授权就能解决」的问题，
+     * 如实上报成「你的服务器配置不对」。
+     */
+    readonly isPermissionDenied: boolean = false
   ) {
     super(message);
     this.name = 'WebDavError';
@@ -43,6 +57,20 @@ export interface WebDavConfig {
   /** 应用密码（坚果云是「第三方应用密码」，不是账号登录密码）。 */
   password: string;
 }
+
+/**
+ * 请求前的权限守卫（2026-10-14 补P1 接线，见 permission.ts）。
+ *
+ * ── 为什么是「可注入的函数」而不是直接 import permission.ts ────────────
+ * 传输层要能在**Node 测试环境**里独立跑（那里没有 chrome.permissions）。
+ * 直接 import 并在 request() 里调用，会让所有单测要么拿到 false、
+ * 要么依赖全局 mock —— 两种都会把「传输层行为」与「浏览器权限」耦死。
+ * 注入一个函数后：生产路径由 resolve 层注入真实实现（index.ts 的 defaultFactory），
+ * 测试不注入 = 不检查（等价于 permission.ts:61 的 `if (!api) return true`）。
+ *
+ * 返回 false 时 request() 抛错，**不进网络**。
+ */
+export type PermissionGuard = () => Promise<boolean>;
 
 /** 单个资源的元信息（PROPFIND Depth:0 的结果）。 */
 export interface ResourceMeta {
@@ -133,7 +161,14 @@ export class WebDavClient {
     // 注意：只读构造参数、不保存为字段 —— 凭据只在这一层的 authHeader 里存在，
     // 不留一个 `this.config` 的引用（少一处可能被打日志/被序列化的位置）。
     config: WebDavConfig,
-    private readonly fetchImpl: typeof fetch = fetch
+    private readonly fetchImpl: typeof fetch = fetch,
+    /**
+     * 请求前的权限守卫（可选）。
+     *
+     * 未注入 = 不做权限检查（Node 测试环境正是这种情况）。
+     * 生产路径注入 `() => hasHostPermission(baseUrl)`，见 index.ts 的 defaultFactory。
+     */
+    private readonly permissionGuard?: PermissionGuard
   ) {
     this.baseUrl = normalizeBaseUrl(config.baseUrl);
     // btoa 在 Node 22+ 与浏览器都有；用 TextEncoder + btoa 处理非 ASCII 账号名。
@@ -159,6 +194,29 @@ export class WebDavClient {
     init?: { headers?: Record<string, string>; body?: BodyInit }
   ): Promise<Response> {
     const url = this.resolve(path);
+
+    // ── 权限预检（2026-10-14 补P1：见permission.ts 的文件头）──────────────
+    // 必须在 fetch **之前**：没有 host 权限时 Chrome 会在本地把请求拦掉，
+    // 表现为 `TypeError: Failed to fetch` ⇒ WebDavError(status 0) ⇒
+    // 用户只看到「连接失败」，完全无从得知真正原因是「没授权」。
+    // 在这里拦下来，就能把原因换成 permission.ts 里那句可指导操作的话。
+    //
+    // 为什么用 try/catch 包成「不拦」：权限 API 自身故障（极端情况下的
+    // chrome.permissions 抛错）不该阻断同步——真正的网络请求会给出更准确的判断。
+    // 这个取舍与 permission.ts:61「非扩展环境不拦」是同一个原则：
+    // **预检是改善诊断，不是安全边界**，绝不因为它挡住本可以成功的同步。
+    if (this.permissionGuard) {
+      let granted = true;
+      try {
+        granted = await this.permissionGuard();
+      } catch {
+        granted = true;
+      }
+      if (!granted) {
+        throw new WebDavError(PERMISSION_DENIED_MESSAGE, 0, method, url, false, true);
+      }
+    }
+
     let res: Response;
     try {
       res = await this.fetchImpl(url, {

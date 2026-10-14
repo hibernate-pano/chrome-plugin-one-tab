@@ -5,7 +5,6 @@ import { invalidateGroupsCache, onGroupsChanged } from '@/utils/storage';
 import { DraggableTabGroup } from '@/components/dnd/DraggableTabGroup';
 import { SearchResultList } from '@/components/search/SearchResultList';
 import { EmptyState } from '@/components/common/EmptyState';
-import { LoadingSpinner } from '@/components/common/LoadingSpinner';
 import { PersonalizedWelcome } from '@/components/common/PersonalizedWelcome';
 import { toListErrorCopy } from './listErrorCopy';
 import { getContextOrigin } from '@/core/contextOrigin';
@@ -169,8 +168,24 @@ export const TabList: React.FC<TabListProps> = ({ searchQuery }) => {
   // 「整个标签管理器页面都刷新了」。有数据时让刷新静默进行。
   if (isLoading && groups.length === 0) {
     return (
-      <div className="flex items-center justify-center h-64">
-        <LoadingSpinner size="lg" />
+      <div
+        className="session-list-stack"
+        role="status"
+        aria-live="polite"
+        aria-label="正在加载会话列表"
+      >
+        <div className="tab-group-card p-4 space-y-3" aria-hidden="true">
+          <div className="skeleton-block h-5 w-2/5" />
+          <div className="skeleton-block h-4 w-full" />
+          <div className="skeleton-block h-4 w-11/12" />
+          <div className="skeleton-block h-4 w-4/5" />
+        </div>
+        <div className="tab-group-card p-4 space-y-3" aria-hidden="true">
+          <div className="skeleton-block h-5 w-1/3" />
+          <div className="skeleton-block h-4 w-full" />
+          <div className="skeleton-block h-4 w-3/5" />
+        </div>
+        <span className="sr-only">正在加载会话列表…</span>
       </div>
     );
   }
@@ -207,51 +222,54 @@ export const TabList: React.FC<TabListProps> = ({ searchQuery }) => {
 
   if (filteredGroups.length === 0 && !searchQuery) {
     return (
-      <div className="space-y-4">
-        <PersonalizedWelcome tabCount={totalTabCount} className="flat-card p-6" />
-        <div className="flat-card p-6">
-          <EmptyState
-            tone="default"
-            title="先保存一个工作会话"
-            // 指代修正：空态自己就有这个按钮，原文案却指「右上角」，
-            // 用户会不确定该点哪个。（保存是否会关闭标签属 P1-1 定位决策，
-            // 那条待负责人拍板，此处只修指代，不改承诺。）
-            // 2026-10-09 P1-1：定位不变（保存 = 剪切），但新用户第一屏的 CTA
-            // 必须在动手前把「标签会被关闭」说出来 —— 不能等它关了才发现。
-            description="点击下方按钮，把当前窗口保存成可稍后找回的工作会话；当前标签随后会被关闭。"
-            action={
-              <div className="flex flex-col items-center gap-2">
-                <button
-                  type="button"
-                  onClick={handleSaveFromEmpty}
-                  disabled={isSavingFromEmpty}
-                  className="px-6 py-2 text-sm font-medium flat-button-primary flat-interaction disabled:cursor-not-allowed disabled:opacity-60"
+      <div className="session-list-stack">
+        {/* 欢迎语与主 CTA 各自成卡，但**不再套第三层卡片**：
+            EmptyState 自带边框 + 圆角 + 阴影，外面再包 flat-card 就是
+            「卡片套卡片」的双层描边（探针实测 inner/outer 各 1px 边框各带阴影）。
+            这里让两块内容各自独立，视觉层级更干净。 */}
+        <PersonalizedWelcome tabCount={totalTabCount} className="tab-group-card p-6" />
+        <EmptyState
+          tone="default"
+          title="先保存一个工作会话"
+          // 指代修正：空态自己就有这个按钮，原文案却指「右上角」，
+          // 用户会不确定该点哪个。（保存是否会关闭标签属 P1-1 定位决策，
+          // 那条待负责人拍板，此处只修指代，不改承诺。）
+          // 2026-10-09 P1-1：定位不变（保存 = 剪切），但新用户第一屏的 CTA
+          // 必须在动手前把「标签会被关闭」说出来 —— 不能等它关了才发现。
+          description="点击下方按钮，把当前窗口保存成可稍后找回的工作会话；当前标签随后会被关闭。"
+          action={
+            <div className="flex flex-col items-center gap-2">
+              <button
+                type="button"
+                onClick={handleSaveFromEmpty}
+                disabled={isSavingFromEmpty}
+                className="btn btn-primary flat-interaction px-5 py-2.5 text-sm disabled:cursor-not-allowed disabled:opacity-60"
+                aria-busy={isSavingFromEmpty}
+              >
+                {isSavingFromEmpty ? '保存中…' : '保存当前窗口'}
+              </button>
+              {/* 成功 3 秒后消失（见上方 useEffect）；失败常驻到下次操作 */}
+              {emptySaveFeedback && (
+                <p
+                  role={emptySaveFeedback.kind === 'error' ? 'alert' : 'status'}
+                  className={
+                    emptySaveFeedback.kind === 'error'
+                      ? 'text-sm text-red-600 dark:text-red-400'
+                      : 'text-sm text-green-700 dark:text-green-400'
+                  }
                 >
-                  {isSavingFromEmpty ? '保存中…' : '保存当前窗口'}
-                </button>
-                {/* 成功 3 秒后消失（见上方 useEffect）；失败常驻到下次操作 */}
-                {emptySaveFeedback && (
-                  <p
-                    role={emptySaveFeedback.kind === 'error' ? 'alert' : 'status'}
-                    className={
-                      emptySaveFeedback.kind === 'error'
-                        ? 'text-sm text-red-600 dark:text-red-400'
-                        : 'text-sm text-green-700 dark:text-green-400'
-                    }
-                  >
-                    {emptySaveFeedback.text}
-                  </p>
-                )}
-              </div>
-            }
-          />
-        </div>
+                  {emptySaveFeedback.text}
+                </p>
+              )}
+            </div>
+          }
+        />
       </div>
     );
   }
 
   return (
-    <div className="space-y-3 micro-interaction-container">
+    <div className="session-list-stack micro-interaction-container">
       {/* ── 2026-10-09 P1-9：已有数据时的后台刷新失败必须出声 ─────────────
        * 下面的错误页只覆盖 `error && groups.length === 0`（冷启动无数据）。
        * 而**列表里已经有数据**时再发生一次 loadGroups 失败，原先完全没有任何
@@ -296,7 +314,7 @@ export const TabList: React.FC<TabListProps> = ({ searchQuery }) => {
       {searchQuery ? (
         <SearchResultList searchQuery={searchQuery} />
       ) : layoutMode === 'double' ? (
-        <div className="grid grid-cols-1 sm:grid-cols-1 md:grid-cols-2 gap-2 sm:gap-3 md:gap-4">
+        <div className="session-grid">
           {(() => {
             // 按次序左右对分：前半进左栏、后半进右栏，读序与单栏一致。
             // 历史实现用奇偶交替（index % 2），导致阅读顺序错乱（1,3,5… 后 2,4,6…），
@@ -305,7 +323,7 @@ export const TabList: React.FC<TabListProps> = ({ searchQuery }) => {
             const mid = Math.ceil(filteredGroups.length / 2);
             const columns = [filteredGroups.slice(0, mid), filteredGroups.slice(mid)];
             return columns.map((column, columnIndex) => (
-              <div key={columnIndex} className="space-y-2 transition-all duration-300 ease-out">
+              <div key={columnIndex} className="session-grid-column transition-all duration-300 ease-out">
                 {column.map(group => (
                   <DraggableTabGroup key={group.id} group={group} />
                 ))}
@@ -314,7 +332,7 @@ export const TabList: React.FC<TabListProps> = ({ searchQuery }) => {
           })()}
         </div>
       ) : (
-        <div className="space-y-2 transition-all duration-300 ease-out">
+        <div className="session-list-stack transition-all duration-300 ease-out">
           {filteredGroups.map(group => (
             <DraggableTabGroup key={group.id} group={group} />
           ))}

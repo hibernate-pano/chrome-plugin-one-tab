@@ -160,7 +160,7 @@ export const Toast: React.FC<ToastProps> = ({
 
       {isVisible && (
         <div
-          className={`pointer-events-auto relative min-w-[320px] max-w-[420px] overflow-hidden rounded-2xl border shadow-[0_20px_60px_rgba(15,23,42,0.18)] backdrop-blur ${typeStyles.shell}`}
+          className={`pointer-events-auto relative min-w-0 max-w-[calc(100vw-2rem)] overflow-hidden rounded-2xl border shadow-[0_20px_60px_rgba(15,23,42,0.18)] backdrop-blur ${typeStyles.shell}`}
         >
           <div
             className={`h-1 w-full ${typeStyles.accent}`}

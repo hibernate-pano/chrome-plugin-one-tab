@@ -597,6 +597,7 @@ html:not([data-theme]).dark {
     border-radius: var(--radius-card);
     background: var(--color-bg-secondary);
     border: 1px solid var(--color-border-subtle);
+    box-shadow: var(--shadow-card);
     transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
   }
 
@@ -605,8 +606,12 @@ html:not([data-theme]).dark {
     box-shadow: var(--shadow-card-hover);
   }
 
+  .tab-group-card:focus-within {
+    border-color: var(--color-accent-border);
+  }
+
   .tab-group-header {
-    @apply flex items-center justify-between px-4 py-3;
+    @apply flex items-center justify-between px-3 py-2.5 sm:px-4 sm:py-3;
     background: var(--color-bg-tertiary);
     border-bottom: 1px solid var(--color-border-subtle);
   }
@@ -666,9 +671,10 @@ html:not([data-theme]).dark {
      标签项组件
      ========================================== */
   .tab-item {
-    @apply flex items-center gap-3 px-4 py-2.5;
+    @apply flex items-center gap-2 sm:gap-3 px-3 py-2.5 sm:px-4;
     @apply cursor-pointer transition-all duration-150;
     border-bottom: 1px solid var(--color-border-subtle);
+    min-height: 2.75rem;
   }
 
   .tab-item:last-child {
@@ -745,7 +751,8 @@ html:not([data-theme]).dark {
   }
 
   .tab-item-actions {
-    @apply flex items-center gap-1 opacity-0 transition-opacity duration-150;
+    @apply flex items-center gap-1 transition-opacity duration-150;
+    @apply opacity-100 md:opacity-0;
   }
 
   .tab-item:hover .tab-item-actions {
@@ -1221,4 +1228,169 @@ html:not([data-theme]).dark {
 /* 字体工具类 */
 .theme-font-sans {
   font-family: var(--font-family-sans);
+}
+
+/* ==========================================
+   UI 打磨统一层（2026-10-14）：布局 / 状态 / 响应式 / 可访问性
+   只收口样式与标注，不改数据流与业务逻辑
+   ========================================== */
+
+/* ---- 顶栏三段栅格：品牌 | 搜索 | 操作 ---- */
+.app-header-grid {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.app-header-search {
+  min-width: 0;
+  max-width: 32rem;
+  margin-inline: auto;
+  width: 100%;
+}
+
+.app-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  flex-shrink: 0;
+}
+
+@media (max-width: 640px) {
+  .app-header-grid {
+    gap: 0.5rem;
+  }
+
+  .app-header-actions {
+    gap: 0.125rem;
+  }
+
+  /* 窄屏顶栏塞不下三段：品牌区与操作区各让一步，
+     搜索框才不会被压到 0 宽而彻底消失（390px 实测曾整框消失）。
+     优先级：搜索 > 品牌文案 > 操作按钮，搜索是唯一的信息获取入口。 */
+  .app-header-grid {
+    grid-template-columns: auto minmax(0, 1fr) auto;
+  }
+
+  .app-header-brand {
+    min-width: 0;
+  }
+
+  .app-header-brand .app-header-brand-meta {
+    display: none;
+  }
+}
+
+/* ---- 会话列表统一节奏：卡片间距 / 网格断点 ---- */
+.session-list-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.session-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 0.75rem;
+  align-items: start;
+}
+
+@media (min-width: 768px) {
+  .session-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 1rem;
+  }
+}
+
+.session-grid-column {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  min-width: 0;
+}
+
+@media (min-width: 768px) {
+  .session-grid-column {
+    gap: 1rem;
+  }
+}
+
+/* ---- 统一交互状态：禁用 / 骨架 / 焦点 ---- */
+.btn:disabled,
+button:disabled {
+  cursor: not-allowed;
+}
+
+.btn:disabled:not(.btn-primary),
+button:disabled:not(.btn-primary) {
+  opacity: 0.55;
+}
+
+.btn-primary:disabled {
+  opacity: 0.65;
+}
+
+/* 触控目标下限：图标按钮在窄屏保持可点击 */
+@media (max-width: 640px) {
+  .btn-icon {
+    min-width: 2.25rem;
+    min-height: 2.25rem;
+  }
+}
+
+/* 骨架屏：加载态统一质感 */
+.skeleton-block {
+  position: relative;
+  overflow: hidden;
+  border-radius: 0.5rem;
+  background: var(--color-bg-tertiary);
+}
+
+.skeleton-block::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  transform: translateX(-100%);
+  background: linear-gradient(
+    90deg,
+    transparent,
+    rgba(255, 255, 255, 0.55),
+    transparent
+  );
+  animation: tapstack-skeleton 1.4s ease-in-out infinite;
+}
+
+.dark .skeleton-block::after {
+  background: linear-gradient(
+    90deg,
+    transparent,
+    rgba(255, 255, 255, 0.08),
+    transparent
+  );
+}
+
+@keyframes tapstack-skeleton {
+  100% {
+    transform: translateX(100%);
+  }
+}
+
+/* 跳过导航：键盘用户直达主内容 */
+.skip-to-content {
+  position: absolute;
+  left: 1rem;
+  top: -4rem;
+  z-index: 120;
+  border-radius: 0.75rem;
+  padding: 0.5rem 1rem;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  background: var(--color-accent);
+  color: #fff;
+  transition: top 0.15s ease-out;
+}
+
+.skip-to-content:focus-visible {
+  top: 0.75rem;
 }

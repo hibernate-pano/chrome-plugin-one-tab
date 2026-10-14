@@ -115,11 +115,16 @@ describe('折叠会话组：不可聚焦的隐藏内容', () => {
   it('主题选择器收起时同样不把 option 留在 Tab 序列里', () => {
     // 与会话组折叠同一个根因：max-h-0/opacity-0 不影响可聚焦性。
     // 收起的面板里 4 个主题选项按钮此前仍可 Tab 进去盲按 Enter 改主题。
+    //
+    // 2026-10-14：断言里的 `isExpanded` 改成了 `expanded` ——
+    // ThemeStyleSelector 新增 alwaysExpanded（设置页里常驻展开），
+    // 于是展开态变成 `alwaysExpanded || isExpanded`，变量随之改名。
+    // **纪律本身没变**：收起时仍必须把 option 移出可交互树。
     const option = THEME_SELECTOR.indexOf('role="option"');
     assert.ok(option !== -1, '应能找到主题 option');
     // 两种合规手段任选其一：条件渲染包住 option，或在容器上加 hidden。
-    const guard = THEME_SELECTOR.indexOf('{isExpanded && (');
-    const hidden = THEME_SELECTOR.indexOf('hidden={!isExpanded}');
+    const guard = THEME_SELECTOR.indexOf('{expanded && (');
+    const hidden = THEME_SELECTOR.indexOf('hidden={!expanded}');
     const removesFromTabOrder =
       (guard !== -1 && guard < option) || (hidden !== -1 && hidden < option);
     assert.ok(
@@ -127,8 +132,30 @@ describe('折叠会话组：不可聚焦的隐藏内容', () => {
       '收起时必须条件渲染或 hidden 主题选项，不能只靠 opacity-0'
     );
     assert.ok(
-      /aria-hidden=\{!isExpanded\}/.test(THEME_SELECTOR),
+      /aria-hidden=\{!expanded\}/.test(THEME_SELECTOR),
       '收起时应同步对读屏隐藏'
+    );
+  });
+
+  it('alwaysExpanded 时必须常驻展开且不渲染那个「点了没反应」的切换按钮', () => {
+    // 设置页整页都是空白，把主题列表收起来等于让用户先点一下才知道能换主题。
+    // 而常驻展开下若还留着切换按钮，它没有任何可收起的状态 —— 一个骗人的控件。
+    const start = THEME_SELECTOR.indexOf('alwaysExpanded = false');
+    assert.ok(start !== -1, 'ThemeStyleSelector 应有 alwaysExpanded 开关');
+    const tail = THEME_SELECTOR.slice(start);
+    assert.ok(
+      /const expanded = alwaysExpanded \|\| isExpanded/.test(tail),
+      '展开态必须含 alwaysExpanded 分支（否则设置页里仍是折叠的）'
+    );
+    assert.ok(
+      /\{alwaysExpanded \? \(/.test(tail),
+      'alwaysExpanded 时应走「不渲染切换按钮」那一支'
+    );
+    // 常驻分支里不能还留着 aria-expanded 的切换按钮
+    const alwaysBlock = tail.slice(tail.indexOf('{alwaysExpanded ? ('), tail.indexOf(') : ('));
+    assert.ok(
+      !/aria-expanded/.test(alwaysBlock),
+      '常驻展开那一支里不得渲染 aria-expanded 切换按钮'
     );
   });
 });
@@ -145,9 +172,15 @@ describe('操作条：hover 之外的键盘显形', () => {
   });
 
   it('会话卡片头部的操作条带 group-focus-within', () => {
+    // ⚠️ 响应前缀必须逐个接受（2026-10-14）：窄屏操作条改为常驻显示
+    // （触屏没有 hover），于是类名加了 `md:` 变体。行为没退化 ——
+    // 基底 `group-focus-within/card:opacity-100` 仍在，键盘聚焦照样显形。
+    // 之前这条正则只认无前缀写法，UI 一改响应式就假红。
+    const hasFocusReveal = (s: string) =>
+      /(?:^|\s)(?:[a-z]+:)*group-focus-within\/card:opacity-100/.test(s);
     assert.ok(
-      /group-hover\/card:opacity-100 group-focus-within\/card:opacity-100/.test(TAB_GROUP),
-      'TabGroup 的操作条缺少 group-focus-within/card:opacity-100'
+      hasFocusReveal(TAB_GROUP),
+      'TabGroup 的操作条缺少 group-focus-within/card:opacity-100（可带响应前缀）'
     );
   });
 

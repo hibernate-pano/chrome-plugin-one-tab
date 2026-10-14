@@ -373,10 +373,16 @@ describe('E. resyncAlarm / 原因码导出（SW 与 popup 的握手面）', () =
     assert.doesNotMatch(gateBlock, /enqueue\(/, '门禁块内不得复制 enqueue（改一条漏一条）');
   });
 
-  it('结构层：HeaderDropdown 必须发 resyncAlarm 通知 SW（popup 不能自己碰 alarms）', async () => {
+  it('结构层：设置页必须发 resyncAlarm 通知 SW（UI 不能自己碰 alarms）', async () => {
     const { readFileSync } = await import('node:fs');
     const here = dirname(fileURLToPath(import.meta.url));
-    const ui = readFileSync(resolve(here, '../src/components/layout/HeaderDropdown.tsx'), 'utf8');
+    // ── 2026-10-14：这两个断言原本指向 HeaderDropdown.tsx ────────────────
+    // 设置全部搬进独立选项页（菜单只有 256px 且是瞬态的，托不住 WebDAV 表单），
+    // 于是「开关/档位变化必须通知 SW 重建 alarm」这条契约跟着搬到了 OptionsPage。
+    // **断言不能跟着删** —— 它守的是「UI 不直接碰 chrome.alarms」这条纪律，
+    // 删了就等于允许将来有人在新页面里直接调 alarms（popup 与 SW 是两个执行
+    // 上下文，那样只改了其中一边的世界）。
+    const ui = readFileSync(resolve(here, '../src/options/OptionsPage.tsx'), 'utf8');
     assert.match(ui, /sendSyncCommand\('resyncAlarm'\)/, '开关/档位变化必须通知 SW 重建 alarm');
     assert.match(ui, /SYNC_INTERVAL_CHOICES/, '档位选项必须引用 storage 单点，不得手抄 [5,10,30,60]');
   });
@@ -460,7 +466,9 @@ describe('G. 保存失败必须让 UI 收敛到磁盘真值（2026-10-11 审查 
     const { fileURLToPath: f2p } = await import('node:url');
     const { dirname: dn, resolve: rs } = await import('node:path');
     const here = dn(f2p(import.meta.url));
-    const ui = readFileSync(rs(here, '../src/components/layout/HeaderDropdown.tsx'), 'utf8');
+    // 2026-10-14：设置搬进独立选项页，这两个 handler 随之搬到 OptionsPage.tsx。
+    // 回滚纪律本身一条没减，所以断言照旧，只是换了被读的文件。
+    const ui = readFileSync(rs(here, '../src/options/OptionsPage.tsx'), 'utf8');
 
     const grab = (name: string) => {
       const start = ui.indexOf(`const ${name}`);

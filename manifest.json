@@ -27,6 +27,10 @@
     "default_icon": "icons/icon16.png",
     "default_title": "TapStack - 保存当前窗口并关闭这些标签"
   },
+  "options_ui": {
+    "page": "src/options/index.html",
+    "open_in_tab": true
+  },
   "background": {
     "service_worker": "service-worker.js"
   },

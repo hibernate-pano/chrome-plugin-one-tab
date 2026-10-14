@@ -231,7 +231,11 @@ describe('PUT 与乐观锁', () => {
   it('204 也算成功（部分服务端不返回 201/200）', async () => {
     const { impl } = makeFetch(() => ({ status: 204 }));
     const client = new WebDavClient(cfg, impl);
-    await client.put('x', '{}');
+    // 断言补强（2026-10-14）：初版这里只是 `await client.put(...)` 没有任何断言，
+    // 只要不抛异常就通过 —— 若 put() 静默返回错误结果，它照样绿（假绿）。
+    // 现在钉住「返回的对象存在」，并让下面的 412 用例证明错误路径依然会抛。
+    const out = await client.put('x', '{}');
+    assert.ok(out && typeof out.etag !== 'undefined', '204 必须被当作成功并返回结果对象');
   });
 });
 
@@ -368,6 +372,97 @@ describe('网络层错误', () => {
     const { impl } = makeFetch(() => ({ status: 0 }));
     const client = new WebDavClient(cfg, impl);
     await assert.rejects(() => client.stat(''), /重定向/);
+  });
+});
+
+// ── 权限预检（2026-10-14 补 P1 接线）─────────────────────────────────
+//
+// 背景：没有 host 权限时，Chrome 在**本地**就把fetch 拦掉，扩展侧只看到
+// `Failed to fetch` ⇒ status 0 ⇒ 用户看到「连接失败」，而真实原因（没授权）
+// 无从得知。修复方式是在 request() 进网络之前先问一次权限。
+//
+// 这一组测试的作用是**钉住接线本身**：把 permissionGuard 去掉，
+// 「未授权时不发请求」这两条必须变红。
+describe('权限预检：未授权时不进网络', () => {
+  it('guard 返回 false ⇒ 抛错，且 fetch 一次都没被调用', async () => {
+    const { impl, calls } = makeFetch(() => ({ status: 200 }));
+    const client = new WebDavClient(cfg, impl, async () => false);
+    await assert.rejects(
+      () => client.get('manifest.json'),
+      (err: unknown) => {
+        assert.ok(err instanceof WebDavError);
+        // 文案必须说清是权限问题且给出下一步动作（不能是含糊的「连接失败」）
+        assert.match(err.message, /权限/);
+        assert.match(err.message, /测试连接/);
+        assert.equal(err.method, 'GET');
+        return true;
+      }
+    );
+    assert.equal(calls.length, 0, '未授权时绝不能真的发出请求');
+  });
+
+  it('guard 返回 true ⇒ 请求正常发出', async () => {
+    const { impl, calls } = makeFetch(() => ({ status: 200, body: '{}' }));
+    const client = new WebDavClient(cfg, impl, async () => true);
+    const out = await client.get('manifest.json');
+    assert.equal(calls.length, 1, '已授权必须正常发请求');
+    assert.equal(out?.body, '{}');
+  });
+
+  it('guard 自身抛异常 ⇒ 放行（预检是改善诊断，不是安全边界）', async () => {
+    const { impl, calls } = makeFetch(() => ({ status: 200, body: '{}' }));
+    const client = new WebDavClient(cfg, impl, async () => {
+      throw new Error('permissions API 故障');
+    });
+    // 权限 API 自身故障不该阻断同步：真正的请求会给出更准确的判断。
+    const out = await client.get('manifest.json');
+    assert.equal(calls.length, 1, 'guard 故障时必须放行，而不是把同步卡死');
+    assert.equal(out?.body, '{}');
+  });
+
+  it('未注入 guard ⇒ 完全不检查（Node 测试环境的默认行为）', async () => {
+    const { impl, calls } = makeFetch(() => ({ status: 200, body: '{}' }));
+    const client = new WebDavClient(cfg, impl);
+    const out = await client.get('manifest.json');
+    assert.equal(calls.length, 1);
+    assert.equal(out?.body, '{}');
+  });
+
+  it('预检对所有动词生效（不止 GET）', async () => {
+    // 5 个动词对应 5 条 WebDAV 方法路径，一个都不能漏。
+    // 逐个显式调用而不是 `client[verb]()`：后者在联合类型上要求所有方法
+    // 签名兼容（mkcol 无body、get 返回可空…），TS 会拒绝这种联合调用。
+    const denied = /权限/;
+    const mk = (granted: boolean) => {
+      const { impl, calls } = makeFetch(() => ({ status: 200, body: '{}' }));
+      return { client: new WebDavClient(cfg, impl, async () => granted), calls };
+    };
+
+    {
+      const t = mk(false);
+      await assert.rejects(() => t.client.get('x'), denied, 'get');
+      assert.equal(t.calls.length, 0, 'get 未授权时不该发出请求');
+    }
+    {
+      const t = mk(false);
+      await assert.rejects(() => t.client.put('x', '{}'), denied, 'put');
+      assert.equal(t.calls.length, 0, 'put 未授权时不该发出请求');
+    }
+    {
+      const t = mk(false);
+      await assert.rejects(() => t.client.stat('x'), denied, 'stat');
+      assert.equal(t.calls.length, 0, 'stat 未授权时不该发出请求');
+    }
+    {
+      const t = mk(false);
+      await assert.rejects(() => t.client.mkcol('x'), denied, 'mkcol');
+      assert.equal(t.calls.length, 0, 'mkcol 未授权时不该发出请求');
+    }
+    {
+      const t = mk(false);
+      await assert.rejects(() => t.client.delete('x'), denied, 'delete');
+      assert.equal(t.calls.length, 0, 'delete 未授权时不该发出请求');
+    }
   });
 });
 

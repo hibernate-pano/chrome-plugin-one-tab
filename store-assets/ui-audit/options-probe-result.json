@@ -1,0 +1,55 @@
+{
+  "results": [
+    {
+      "name": "① 设置页能打开并渲染",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "② WebDAV 表单在真实宽度下不横向溢出",
+      "pass": true,
+      "detail": "面板宽 678px，溢出按钮 0 个，文档横向滚动 无"
+    },
+    {
+      "name": "③a 主题点击后立即生效（data-theme 变化）",
+      "pass": true,
+      "detail": "data-theme=claude"
+    },
+    {
+      "name": "③b 自动同步开关可切换",
+      "pass": true,
+      "detail": "aria-checked=true"
+    },
+    {
+      "name": "③c 设置跨窗口持久化（重开仍是新值）",
+      "pass": true,
+      "detail": "重开后 theme=claude syncEnabled=true"
+    },
+    {
+      "name": "④a 菜单里有「设置…」入口",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "④b 菜单里不再有设置项（已搬走）",
+      "pass": true,
+      "detail": "通知提醒/自动同步/主题风格都不该再出现"
+    },
+    {
+      "name": "④c 点「设置…」真的打开了设置页",
+      "pass": true,
+      "detail": "页面数 3 → 3，命中 options URL: true"
+    },
+    {
+      "name": "⑤ 深色模式切换生效",
+      "pass": true,
+      "detail": "html.dark=true"
+    },
+    {
+      "name": "⑥ 设置页无控制台错误",
+      "pass": true,
+      "detail": ""
+    }
+  ],
+  "consoleErrors": []
+}

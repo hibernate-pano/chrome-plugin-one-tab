@@ -54,12 +54,18 @@ export const EmptyState: React.FC<EmptyStateProps> = ({
   }[tone];
 
   return (
-    <div className={`animate-in theme-radius-panel theme-shadow-panel theme-panel-blur border px-6 py-8 text-center ${toneStyles.shell} ${className}`}>
-      <div className={`mx-auto inline-flex h-16 w-16 items-center justify-center rounded-2xl ${toneStyles.icon}`}>
+    <div className={`animate-in theme-radius-panel theme-shadow-panel theme-panel-blur border px-4 sm:px-6 py-6 sm:py-8 text-center ${toneStyles.shell} ${className}`}>
+      <div
+        className={`mx-auto inline-flex h-14 w-14 sm:h-16 sm:w-16 items-center justify-center rounded-2xl ${toneStyles.icon}`}
+        role="img"
+        aria-label={title}
+      >
         {icon || <DefaultIcon />}
       </div>
 
-      <h3 className="mt-5 text-lg font-semibold tracking-tight text-gray-950 dark:text-gray-50">{title}</h3>
+      <h3 className="mt-4 sm:mt-5 text-base sm:text-lg font-semibold tracking-tight text-gray-950 dark:text-gray-50">
+        {title}
+      </h3>
 
       {description && (
         <p className="mx-auto mt-2 max-w-md text-sm leading-6 text-gray-600 dark:text-gray-300">

@@ -444,7 +444,7 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({ searchQuery 
 
   const FiltersPanel = ({ withOuterMargin }: { withOuterMargin?: boolean }) => (
     <>
-      <div className="flex items-center justify-between mb-2 px-2">
+      <div className="flex flex-wrap items-center justify-between gap-2 mb-2 px-2">
         <div className="flex items-center gap-2">
           <h3 className="text-sm font-medium text-gray-700 dark:text-gray-300">会话搜索结果</h3>
           {activeFilterCount > 0 && (
@@ -478,8 +478,8 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({ searchQuery 
       </div>
 
       {showFilters && (
-        <div className={`theme-well theme-radius-control p-3 mb-3 ${withOuterMargin ? 'mx-2' : ''}`}>
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-2">
+        <div className={`theme-well theme-radius-control p-3 sm:p-4 mb-3 ${withOuterMargin ? 'mx-2' : ''}`}>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2.5 sm:gap-3">
             <div>
               <label
                 htmlFor={FILTER_IDS.pinned}
@@ -623,9 +623,13 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({ searchQuery 
   }
 
   return (
-    <div className="tab-group-card animate-in group/card">
-      <div className="tab-group-header">
-        <div className="flex items-center gap-3 flex-1 min-w-0">
+    <div
+      className="tab-group-card animate-in group/card"
+      role="region"
+      aria-label={`搜索结果，共 ${sessionResults.length} 个匹配会话`}
+    >
+      <div className="tab-group-header gap-2">
+        <div className="flex items-center gap-2 sm:gap-3 flex-1 min-w-0">
           <div className="p-1 -ml-1">
             <svg className="w-4 h-4 theme-text-muted" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
@@ -640,7 +644,8 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({ searchQuery 
         {matchingTabs.length > 0 && (
           // group-focus-within/card：只有 group-hover 时，纯键盘用户 Tab 到这两个
           // 「恢复全部 / 删除全部」按钮时它们仍是透明的——其中删除全部是不可撤销的批量操作。
-          <div className="flex items-center gap-1 opacity-0 group-hover/card:opacity-100 group-focus-within/card:opacity-100 transition-opacity duration-150">
+          // 触屏无 hover，窄屏常驻显示。
+          <div className="flex items-center gap-0.5 sm:gap-1 opacity-100 md:opacity-0 md:group-hover/card:opacity-100 group-focus-within/card:opacity-100 md:group-focus-within/card:opacity-100 transition-opacity duration-150 flex-shrink-0">
             <button
               onClick={handleRestoreAllSearchResults}
               className="btn-icon p-1.5 tab-group-action-accent flat-interaction"
@@ -675,7 +680,7 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({ searchQuery 
             className="theme-radius-card theme-border-default theme-bg-elevated border p-3"
             style={{ contentVisibility: 'auto', containIntrinsicSize: '240px' }}
           >
-            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+            <div className="flex flex-col gap-2 sm:gap-3 sm:flex-row sm:items-start sm:justify-between">
               <div className="min-w-0">
                 <div className="flex items-center gap-2">
                   <h4 className="text-sm font-semibold text-gray-900 dark:text-gray-100 truncate">

@@ -343,8 +343,8 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
       aria-labelledby={`tab-group-title-${group.id}`}
     >
       {/* 标签组头部 */}
-      <div className="tab-group-header">
-        <div className="flex items-center gap-3 flex-1 min-w-0">
+      <div className="tab-group-header gap-2">
+        <div className="flex items-center gap-2 sm:gap-3 flex-1 min-w-0">
           {/* 折叠按钮 */}
           <button
             onClick={() => setIsCollapsed(!isCollapsed)}
@@ -423,8 +423,9 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
 
         {/* 操作按钮。group-focus-within/card 是键盘可达的等价态：
             此前只有 group-hover/card 显形，纯键盘用户 Tab 进来看到的是一片空白，
-            按 Enter 等于对「看不见的按钮」盲操作。 */}
-        <div className="flex items-center gap-1 opacity-0 group-hover/card:opacity-100 group-focus-within/card:opacity-100 transition-all duration-200 ease-out">
+            按 Enter 等于对「看不见的按钮」盲操作。
+            触屏没有 hover：在窄屏常驻显示，避免关键操作藏到看不见的地方。 */}
+        <div className="flex items-center gap-0.5 sm:gap-1 opacity-100 md:opacity-0 md:group-hover/card:opacity-100 md:group-focus-within/card:opacity-100 group-focus-within/card:opacity-100 transition-all duration-200 ease-out flex-shrink-0">
           {/* 恢复全部（新窗口） */}
           <button
             onClick={handleOpenAllTabs}

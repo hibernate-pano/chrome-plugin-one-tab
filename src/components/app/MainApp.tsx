@@ -50,8 +50,11 @@ export const MainApp: React.FC = () => {
     >
       <div className="app-shell theme-shell min-h-screen dark:text-gray-100 flex flex-col">
           <>
+            <a href="#tapstack-main" className="skip-to-content">
+              跳到会话列表
+            </a>
             <Header onSearch={setSearchQuery} />
-            <main className={`flex-1 w-full py-2 ${getContainerWidthClass()}`}>
+            <main id="tapstack-main" className={`flex-1 w-full py-3 sm:py-4 ${getContainerWidthClass()}`} tabIndex={-1}>
               <Suspense fallback={<div className="p-4 text-center">加载标签列表...</div>}>
                 <TabList searchQuery={deferredSearchQuery} />
               </Suspense>

@@ -15,10 +15,11 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { WebDavClient } from '@/sync-backend/webdav/client';
+import { WebDavClient, WebDavError } from '@/sync-backend/webdav/client';
 import { WebDavBackendAdapter, type AdapterKv } from '@/sync-backend/webdav/adapter';
 import { shardPath } from '@/sync-backend/webdav/layout';
 import type { TabGroup } from '@/types/tab';
+import type { UserSettings } from '@/types/tab';
 
 const BASE = 'https://dav.example.com/dav/';
 const NOW = '2026-10-13T10:00:00.000Z';
@@ -457,6 +458,35 @@ describe('能力探测：条件写到底有没有真的生效', () => {
     dav.putStatusOverride = null;
   });
 
+  it('没授权时必须抛出权限错，**不得**误判成「服务端不支持条件写」（2026-10-14 P1）', async () => {
+    // 这条是补 P1 时发现的真实误判：权限预检抛的是 status 0，
+    // 而上面那条「探测失败 → false」的兜底会把它吞成 false，
+    // 于是「浏览器没给这个域名的权限」被上报成「你的服务器配置不对」——
+    // 一个把用户引向错误方向（去查服务器）的结论。
+    // 真实原因只需要点一次「测试连接」授权就能解决。
+    // 守卫直接拒绝权限，请求根本不会打到 FakeDav，所以不需要 dav 实例。
+    const guardedClient = new WebDavClient(
+      { baseUrl: BASE, username: 'u', password: 'p' },
+      fetch,
+      async () => false
+    );
+    const adapter = new WebDavBackendAdapter({
+      client: guardedClient,
+      config: { baseUrl: BASE, username: 'u', password: 'p' },
+      kv: makeKv(),
+      peekDeviceSeq: async () => 0,
+    });
+    await assert.rejects(
+      () => adapter.probeConditionalWrites(),
+      (err: unknown) => {
+        assert.ok(err instanceof WebDavError);
+        assert.equal(err.isPermissionDenied, true, '必须带权限标记');
+        assert.match(err.message, /权限|测试连接/);
+        return true;
+      }
+    );
+  });
+
   it('checkConnection 把能力与库信息一起报出来', async () => {
     const dav = new FakeDav();
     dav.ignoreConditionalWrites = true;
@@ -488,3 +518,90 @@ describe('能力探测：条件写到底有没有真的生效', () => {
   });
 });
 
+
+// ── 2026-10-14 修 P0/P1/P2 的回归 ─────────────────────────────────────────
+// 每条都是「修之前红、修之后绿」的行为断言（变异口径：把对应的实现改回去，
+// 测试必须变红 —— 已逐条用 cp 备份/恢复验证过）。
+
+describe('2026-10-14 修 P1：并发写不丢对端条目', () => {
+  it('对端在中途写入的会话，manifest 重试时必须保留', async () => {
+    // 场景：A 读完 manifest（只有 aa1）→ 写分片前对端 B 写入 bb2 并更新了
+    // manifest → A 写 manifest 时 etag 已过期（412）→ 重试。
+    // 旧实现用关闭时的旧快照整体覆盖，重试后 bb2 从清单里消失
+    // （文件还在，但 manifest 是真相源 ⇒ 对端会话隐形丢失）。
+    const dav = new FakeDav();
+    const { adapter: first } = makeAdapter(dav);
+    await first.uploadGroups([makeGroup('aa1', { lastOp: { d: 'dev-A', s: 5 } })]);
+
+    const { adapter: b } = makeAdapter(dav, { kv: makeKv({ device_id: 'dev-B' }) });
+    const rawFetch = dav.fetch;
+    let injected = false;
+    dav.fetch = (async (url: string | URL, init?: RequestInit) => {
+      const u = String(url);
+      // A 写 cc3 分片的那一刻，对端 B 先完成一整轮上传（读新 manifest 写回）。
+      if (!injected && String(init?.method ?? 'GET') === 'PUT' && u.includes('/cc3.json')) {
+        injected = true;
+        await b.uploadGroups([makeGroup('bb2', { name: '对端', lastOp: { d: 'dev-B', s: 6 } })]);
+      }
+      return rawFetch(url, init);
+    }) as unknown as typeof fetch;
+
+    // a2 在包装备注之后构造：它的 client 拿到的是包装备注后的 fetch。
+    const clientA = new WebDavClient({ baseUrl: BASE, username: 'u', password: 'p' }, dav.fetch);
+    const a2 = new WebDavBackendAdapter({
+      client: clientA,
+      config: { baseUrl: BASE, username: 'u', password: 'p', rootPath: 'TapStack', passphrase: 'pw' },
+      kv: makeKv({ device_id: 'dev-A' }),
+      now: () => NOW,
+      peekDeviceSeq: async () => 0,
+    });
+    await a2.uploadGroups([makeGroup('cc3', { name: '本端', lastOp: { d: 'dev-A', s: 7 } })]);
+
+    assert.equal(injected, true, '并发注入必须发生，否则这条测的就不是并发');
+    const manifest = JSON.parse(dav.read(M)!.body) as { shards: Array<{ id: string }> };
+    const ids = manifest.shards.map(s => s.id).sort();
+    assert.deepEqual(ids, ['aa1', 'bb2', 'cc3'], '三方的条目必须都在，重试不得覆盖对端');
+    const groups = await a2.downloadGroups();
+    assert.equal(groups.length, 3, '内容与清单一致，不只是条目名');
+  });
+});
+
+describe('2026-10-14 修 P1：删除墓碑 stamp 压过云端', () => {
+  it('云端 stamp 更大时，墓碑 seq 取云端 +1（否则删除会复活）', async () => {
+    const dav = new FakeDav();
+    const { adapter: seeder } = makeAdapter(dav, { kv: makeKv({ device_id: 'dev-B' }) });
+    await seeder.uploadGroups([makeGroup('xx1', { lastOp: { d: 'dev-B', s: 100 } })]);
+
+    // 本设备 seq 时钟很小（久未同步的设备）：旧实现只用 deviceSeq + 1 = 1，
+    // 墓碑 stamp 反而小于云端副本 ⇒ 对端合并时删除输给旧副本 ⇒ 删掉的组复活。
+    const { adapter: a } = makeAdapter(dav, { kv: makeKv({ device_id: 'dev-A' }), deviceSeq: 0 });
+    await a.broadcastDeletes(['xx1']);
+
+    const groups = await a.downloadGroups();
+    assert.equal(groups.length, 1);
+    assert.equal(groups[0]?.isDeleted, true);
+    assert.ok(
+      (groups[0]?.lastOp?.s ?? 0) > 100,
+      `墓碑 stamp 必须大于云端 100，实际 ${String(groups[0]?.lastOp?.s)}`
+    );
+  });
+});
+
+describe('2026-10-14 修 P2：建库前先传设置', () => {
+  it('salt 必须落进 manifest，否则设置写完就读不回', async () => {
+    // 旧实现：unlock(null) 新建随机 salt 的 Vault，加密完不写 manifest。
+    // 下次下载按 manifest 的 salt 派生出另一个密钥 ⇒ salt 不一致 ⇒ 设置永久不可读。
+    const dav = new FakeDav();
+    const { adapter } = makeAdapter(dav);
+    assert.equal(dav.read(M), undefined, '前提：还没有建库');
+
+    await adapter.uploadSettings({ theme: 'dark' } as unknown as UserSettings);
+
+    const manifest = JSON.parse(dav.read(M)!.body) as { encrypted: boolean; salt?: string };
+    assert.equal(manifest.encrypted, true, '写加密设置时必须把库标记为加密态');
+    assert.ok(typeof manifest.salt === 'string' && manifest.salt.length > 0, 'salt 必须持久化');
+
+    const back = await adapter.downloadSettings();
+    assert.deepEqual(back, { theme: 'dark' }, '设置必须能往返读回');
+  });
+});

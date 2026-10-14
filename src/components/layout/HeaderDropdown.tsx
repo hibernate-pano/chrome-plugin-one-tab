@@ -6,19 +6,6 @@ import { sendSyncCommand } from '@/shared/mutationProtocol';
 import { storage } from '@/utils/storage';
 import type { AuthTab } from '../auth/AuthModal';
 import { useToast } from '@/contexts/ToastContext';
-import { 
-  toggleShowNotifications, 
-  toggleConfirmBeforeDelete,
-  toggleCollectPinnedTabs,
-  setSyncEnabled,
-  setSyncIntervalMinutes,
-  updateSettings,
-  dispatchSaveSettings
-} from '@/store/slices/settingsSlice';
-// 档位单点在 storage 层（四档白名单 + 默认值），UI 只负责摆出来，不手抄数字。
-import { SYNC_INTERVAL_CHOICES } from '@/utils/storage';
-import { ThemeStyleSelector } from './ThemeStyleSelector';
-import { WebDavSettings } from '@/components/sync/WebDavSettings';
 import { trackProductEvent } from '@/utils/productEvents';
 import {
   collectDiagnostics,
@@ -68,44 +55,22 @@ interface HeaderDropdownProps {
   onClose: () => void;
   /** 打开应用级登录/注册弹窗（由 Header 托管，portal 到 body）。 */
   onOpenAuth: (tab: AuthTab) => void;
+  /** 窄屏顶栏把布局切换收进了菜单，这里复用 Header 同一份逻辑，避免两份实现分叉。 */
+  onToggleLayout?: () => void;
+  /** 窄屏顶栏把「清理重复」收进了菜单，同上：复用 Header 的确认弹窗与执行路径。 */
+  onRequestCleanDuplicates?: () => void;
 }
 
 /** 菜单行的统一 hover 反馈。菜单行不做位移（flat-interaction 的 -translate-y 会轻微跳动），只做背景色。 */
 const MENU_ROW = "w-full text-left px-4 py-2 text-sm text-gray-700 dark:text-gray-300 flex items-center transition-colors duration-150 theme-menu-hover";
 
-/** 菜单内的开关行：整行可点，toggle 只做状态显示 */
-const DropdownToggleRow: React.FC<{
-  icon: React.ReactNode;
-  label: string;
-  checked: boolean;
-  onToggle: () => void;
-}> = ({ icon, label, checked, onToggle }) => (
-  <button
-    onClick={onToggle}
-    className={MENU_ROW + ' justify-between'}
-    role="switch"
-    aria-checked={checked}
-    type="button"
-  >
-    <span className="flex items-center">
-      {icon}
-      <span className="text-sm text-gray-700 dark:text-gray-300">{label}</span>
-    </span>
-    <span
-      className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors ${
-        checked ? 'theme-toggle-on' : 'theme-toggle-off'
-      }`}
-    >
-      <span
-        className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform ${
-          checked ? 'translate-x-6' : 'translate-x-1'
-        }`}
-      />
-    </span>
-  </button>
-);
 
-export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({ onClose, onOpenAuth }) => {
+export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({
+  onClose,
+  onOpenAuth,
+  onToggleLayout,
+  onRequestCleanDuplicates,
+}) => {
   const dispatch = useAppDispatch();
   const { isAuthenticated, user } = useAppSelector(state => state.auth);
   const { groups, lastSyncTime } = useAppSelector(state => state.tabs);
@@ -119,110 +84,25 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({ onClose, onOpenA
   const dropdownRef = useRef<HTMLDivElement>(null);
   const { showConfirm, showAlert, showToast } = useToast();
 
-  // 处理通知开关
-  const handleToggleNotifications = async () => {
-    dispatch(toggleShowNotifications());
-    // toggleShowNotifications 已经更新了 Redux state，现在保存到存储
-    const saveError = await dispatchSaveSettings(dispatch);
-    if (saveError) showToast(saveError, 'error');
-  };
-
-  // 处理删除确认开关
-  const handleToggleConfirmDelete = async () => {
-    dispatch(toggleConfirmBeforeDelete());
-    // toggleConfirmBeforeDelete 已经更新了 Redux state，现在保存到存储
-    const saveError = await dispatchSaveSettings(dispatch);
-    if (saveError) showToast(saveError, 'error');
-  };
-
-  // 处理“收集固定页”开关
-  const handleToggleCollectPinnedTabs = async () => {
-    dispatch(toggleCollectPinnedTabs());
-    await new Promise(resolve => setTimeout(resolve, 0));
-    const saveError = await dispatchSaveSettings(dispatch);
-    if (saveError) showToast(saveError, 'error');
-  };
-
-  // ── 2026-10-11（1.23.0）：自动同步总开关 + 档位 ───────────────────────
-  // 开关只写设置（Redux + 落盘），alarm 的启停/周期统一由 SW 侧重建：
-  // popup 与 SW 是两个执行上下文，popup 直接调 chrome.alarms 只改了其中一边的世界。
-  // SW 重启本来就会读最新设置重建，所以 resyncAlarm 消息即使丢失也自愈 ——
-  // 发完不管回执（失败只记日志），不弹 toast（不打扰；开关行本身已显示新状态）。
-  const notifySwResyncAlarm = () => {
-    sendSyncCommand('resyncAlarm')
-      .then(res => {
-        if (!res.ok) logWarn('[HeaderDropdown] 通知 SW 重建同步 alarm 未成功，下次启动自愈:', res.error);
-      })
-      .catch(err => logWarn('[HeaderDropdown] 通知 SW 重建同步 alarm 异常，下次启动自愈:', err));
-  };
-
-  // ── 2026-10-13：切回 TapStack 云端 ──────────────────────────────────────
-  // 语义与 WebDavSettings 里的同名按钮**必须一致**（同一件事两个入口，
-  // 行为不同会让用户不知道自己实际处于哪个后端）。要点：
-  //   · 切回时同时关掉自动同步 —— Supabase 路径的自动同步有 egress 成本，
-  //     而用户切回来多半不是为了立刻开轮询；
-  //   · 保存失败要回滚 UI + 说清当前实际状态（沿用本文件既有纪律）。
-  const handleSelectSupabaseBackend = useCallback(async () => {
-    if (settings.syncBackend === 'supabase') return;
-    const prevBackend = settings.syncBackend;
-    dispatch(updateSettings({ syncBackend: 'supabase', syncEnabled: false }));
-    const saveError = await dispatchSaveSettings(dispatch);
-    if (saveError) {
-      dispatch(updateSettings({ syncBackend: prevBackend }));
-      showToast(`${saveError}（同步方式已恢复为「自带存储」）`, 'error');
-      return;
+  /**
+   * 打开独立设置页（2026-10-14）。
+   *
+   * 为什么不是把设置留在菜单里，也不是用弹窗：菜单只有 256px 宽且是瞬态的，
+   * 托不住 WebDAV 表单（详见渲染处注释）。Chrome 的 `options_ui` 才是正解 ——
+   * 独立窗口、关闭时状态保留、用户在扩展详情页也有入口。
+   *
+   * 失败必须出声：`openOptionsPage` 在 manifest 缺 `options_ui` 时可能静默失败，
+   * 表现为「点了没反应」—— 与本轮修掉的那个死锁是同一类病，不能重蹈。
+   */
+  const handleOpenOptions = useCallback(() => {
+    try {
+      chrome.runtime.openOptionsPage();
+    } catch (error) {
+      logError('[HeaderDropdown] 打开设置页失败:', error);
+      showToast('打开设置页失败，请在扩展管理页点「扩展选项」进入', 'error');
     }
-    notifySwResyncAlarm();
-    showToast('已切回 TapStack 云端，自动同步已关闭。云盘上的文件不会被删除。', 'success');
-  }, [dispatch, settings.syncBackend, showToast]);
-
-  // 选「自带存储」时展开配置面板（不直接切换设置——
-  // 必须先填好地址并测试通过，否则「切了但用不了」比「没切」更糟）。
-  const handleOpenWebDavPanel = useCallback(() => {
-    if (settings.syncBackend === 'webdav') return;
-    showToast('请在展开的面板里填写云服务信息并测试连接，测试通过后再保存启用', 'info');
-  }, [settings.syncBackend, showToast]);
-
-  // 处理自动同步开关
-  const handleToggleAutoSync = async () => {
-    const nextEnabled = !settings.syncEnabled;
-    dispatch(setSyncEnabled(nextEnabled));
-    const saveError = await dispatchSaveSettings(dispatch);
-    if (saveError) {
-      // ── 2026-10-11（审查修复 P1）：保存失败必须把 UI 收回磁盘真值 ──
-      // reducer 已经改了 Redux，但 storage.setSettings 抛错 ⇒ 磁盘仍是旧值。
-      // 此时若不回滚，界面显示「已关闭」而后台 alarm 仍按「开启」跑 ——
-      // 用户以为省了流量，实际还在出站，且**没有任何提示说「其实没关掉」**。
-      // 既有开关（通知/确认删除）也有同款问题，但它们不控制任何后台行为，
-      // 代价只是「刷新后回退」；本开关直接决定「是否出流量」，必须当场收敛。
-      // 手法与其它开关相反：回滚 UI + **一条**说清全部的 toast（原实现是先
-      // showToast(saveError) 再 return，那只有「保存失败」没有「现在是什么状态」，
-      // 用户仍需自己猜开关有没有生效）。
-      dispatch(setSyncEnabled(settings.syncEnabled));
-      showToast(`${saveError}（自动同步开关已恢复为${settings.syncEnabled ? '开启' : '关闭'}）`, 'error');
-      return;
-    }
-    notifySwResyncAlarm();
-    if (nextEnabled) {
-      // 刚从关 → 开：告诉用户当前档位（档位行随后可见，但 toast 先说一句，
-      // 否则用户不知道「开了之后多久跑一次」—— 这是开了之后唯一的疑问）。
-      showToast(`已开启自动同步，每 ${settings.syncIntervalMinutes} 分钟同步一次`, 'success');
-    }
-  };
-
-  // 处理自动同步档位（5/10/30/60 分钟四选一）
-  const handleSetSyncInterval = async (minutes: number) => {
-    if (minutes === settings.syncIntervalMinutes) return;
-    dispatch(setSyncIntervalMinutes(minutes));
-    const saveError = await dispatchSaveSettings(dispatch);
-    if (saveError) {
-      // 同上：档位保存失败时把 UI 收回旧值，否则「显示 30 分钟、实际 5 分钟」。
-      dispatch(setSyncIntervalMinutes(settings.syncIntervalMinutes));
-      showToast(`${saveError}（同步间隔已恢复为 ${settings.syncIntervalMinutes} 分钟）`, 'error');
-      return;
-    }
-    notifySwResyncAlarm();
-  };
+    onClose();
+  }, [onClose, showToast]);
 
   // 处理快速刷新（从云端下载并合并）
   const handleQuickRefresh = async () => {
@@ -531,7 +411,12 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({ onClose, onOpenA
   };
 
   return (
-    <div ref={dropdownRef} className="ts-panel absolute right-0 mt-2 w-64 theme-bg-elevated rounded-lg shadow-lg border theme-border-default z-20">
+    <div
+      ref={dropdownRef}
+      role="menu"
+      aria-label="应用菜单"
+      className="ts-panel absolute right-0 mt-2 w-64 max-w-[calc(100vw-2rem)] theme-bg-elevated theme-radius-card theme-shadow-panel border theme-border-default z-20 max-h-[70vh] overflow-y-auto"
+    >
       <div className="py-2">
         {isAuthenticated && user && (
           <>
@@ -598,138 +483,62 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({ onClose, onOpenA
 
         <div className="border-t border-gray-200 dark:border-gray-700 my-1.5"></div>
 
-        {/* 设置区：一层节标题 + 三行开关（行本身自解释，不再分「通用/标签页」小标题） */}
-        <div className="px-4 pt-1.5 pb-1">
-          <p className="text-xs font-medium text-gray-400 dark:text-gray-500">设置</p>
+        {/* ── 窄屏补偿入口（2026-10-14）──────────────────────────────────
+            390px 实测：顶栏塞不下「布局切换 + 清理重复 + 主题 + 同步 + 保存 + 菜单」，
+            搜索框被压到 0 宽而整框消失。Header 因此在窄屏把前两个低频操作
+            收进本菜单 —— 但不能就此让它们在窄屏**消失**（那是「窄屏少个功能」）。
+            这里补回两个入口，sm 以上与顶栏按钮重复，故对 sm+ 隐藏。 */}
+        <div className="sm:hidden">
+          <button
+            onClick={() => {
+              onToggleLayout?.();
+              onClose();
+            }}
+            className={MENU_ROW}
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 mr-2 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+              <rect x="3.75" y="5.25" width="16.5" height="13.5" rx="1.5" strokeLinecap="round" strokeLinejoin="round" />
+              {settings.layoutMode === 'single' && (
+                <path d="M12 5.25v13.5" strokeLinecap="round" strokeLinejoin="round" />
+              )}
+            </svg>
+            {settings.layoutMode === 'single' ? '切换为双栏布局' : '切换为单栏布局'}
+          </button>
+
+          <button
+            onClick={() => {
+              onRequestCleanDuplicates?.();
+              onClose();
+            }}
+            className={MENU_ROW}
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 mr-2 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0" />
+            </svg>
+            清理重复标签
+          </button>
         </div>
 
-        {/* ── 2026-10-13：同步后端选择（TapStack 云端 / 自带存储 WebDAV）──
-            放在「自动同步」开关**之前**：先决定跟谁同步，再决定要不要自动。
-            顺序反了的话，用户会先打开一个「对未知后端的自动同步」开关。 */}
-        <div className="px-3 py-2" role="radiogroup" aria-label="同步方式">
-          <div className="mb-1 text-xs text-gray-500 dark:text-gray-400">数据同步到哪里</div>
-          <div className="flex gap-1.5">
-            <button
-              type="button"
-              role="radio"
-              aria-checked={settings.syncBackend === 'supabase'}
-              onClick={handleSelectSupabaseBackend}
-              className={`flex-1 rounded-md px-2 py-1.5 text-xs font-medium transition-colors ${
-                settings.syncBackend === 'supabase'
-                  ? 'theme-toggle-on text-white'
-                  : 'bg-gray-100 text-gray-600 hover:bg-gray-200 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600'
-              }`}
-            >
-              TapStack 云端
-            </button>
-            <button
-              type="button"
-              role="radio"
-              aria-checked={settings.syncBackend === 'webdav'}
-              onClick={handleOpenWebDavPanel}
-              className={`flex-1 rounded-md px-2 py-1.5 text-xs font-medium transition-colors ${
-                settings.syncBackend === 'webdav'
-                  ? 'theme-toggle-on text-white'
-                  : 'bg-gray-100 text-gray-600 hover:bg-gray-200 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600'
-              }`}
-            >
-              自带存储
-            </button>
-          </div>
-        </div>
-
-        {settings.syncBackend === 'webdav' ? <WebDavSettings /> : null}
-
-        <DropdownToggleRow
-          icon={
-            <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 mr-2 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" />
-            </svg>
-          }
-          label="通知提醒"
-          checked={settings.showNotifications}
-          onToggle={handleToggleNotifications}
-        />
-
-                  {/* 2026-10-09 UX P1-7：文案必须等于开关的真实作用域。
-          该开关只接进 TabGroup 的**整组删除**与 SearchResultList 的**批量删除**
-          （见两处 confirmBeforeDelete 调用点），单标签行的 X 永远直接物理删除。
-          原文案「删除前确认」不带范围限定，用户的合理理解是全局保护 —— 以为
-          每次删除都会问，实际单标签那条没有任何确认。
-          判定：改文案对齐现状，而不是扩大开关范围 —— 后者会让每次点 X 都弹框，
-          违背「不打扰」，且单标签移除本来就是刻意的快捷操作。
-          不可恢复这件事由 X 自己的 tooltip 说明（见 DraggableTab）。 */}
-        <DropdownToggleRow
-          icon={
-            <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 mr-2 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-            </svg>
-          }
-          label="删除会话前确认"
-          checked={settings.confirmBeforeDelete}
-          onToggle={handleToggleConfirmDelete}
-        />
-
-        <DropdownToggleRow
-          icon={
-            <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 mr-2 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3M5 11h14M5 19h14" />
-            </svg>
-          }
-          label="保存固定标签页"
-          checked={settings.collectPinnedTabs}
-          onToggle={handleToggleCollectPinnedTabs}
-        />
-
-        {/* ── 2026-10-11（1.23.0）：自动同步总开关 + 档位 ────────────────
-            默认关闭（省 Supabase egress 配额）：关时后台不轮询、打开页面
-            不自动拉取，点「同步」手动获取；本地改动的上传保持事件驱动，
-            不受本开关影响。文案必须等于开关的真实作用域（UX P1-7 纪律）：
-            它管的是「自动拉取」，不是「同步功能本身」—— 手动同步永远可用。 */}
-        <DropdownToggleRow
-          icon={
-            <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 mr-2 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-            </svg>
-          }
-          label="自动同步"
-          checked={settings.syncEnabled}
-          onToggle={handleToggleAutoSync}
-        />
-        {settings.syncEnabled ? (
-          <div className="px-3 py-2" role="radiogroup" aria-label="自动同步间隔">
-            <div className="mb-1 text-xs text-gray-500 dark:text-gray-400">每隔多久自动同步一次</div>
-            <div className="flex gap-1.5">
-              {SYNC_INTERVAL_CHOICES.map(minutes => (
-                <button
-                  key={minutes}
-                  type="button"
-                  role="radio"
-                  aria-checked={settings.syncIntervalMinutes === minutes}
-                  onClick={() => handleSetSyncInterval(minutes)}
-                  className={`flex-1 rounded-md px-2 py-1.5 text-xs font-medium transition-colors ${
-                    settings.syncIntervalMinutes === minutes
-                      ? 'theme-toggle-on text-white'
-                      : 'bg-gray-100 text-gray-600 hover:bg-gray-200 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600'
-                  }`}
-                >
-                  {minutes % 60 === 0 ? `${minutes / 60}小时` : `${minutes}分钟`}
-                </button>
-              ))}
-            </div>
-          </div>
-        ) : (
-          <div className="px-3 pb-2 text-xs text-gray-500 dark:text-gray-400">
-            已关闭：打开页面不会自动拉取云端，点「同步」手动获取最新。
-          </div>
-        )}
-
-        <div className="border-t border-gray-200 dark:border-gray-700 my-1"></div>
-
-        {/* 主题风格选择 */}
-        <ThemeStyleSelector />
-
-        <div className="border-t border-gray-200 dark:border-gray-700 my-1.5"></div>
+        {/* ── 2026-10-14：设置全部搬进独立选项页，菜单只留入口 ──────────────
+            搬走的原因不是「菜单太挤」，而是菜单**放不下也托不住**这类设置：
+            宽度只有 256px（w-64），而 WebDAV 面板有 6 个输入框 + 加密单选组 +
+            4 个按钮；且菜单是瞬态的（点别处即消失），而填地址/账号/应用密码/
+            加密口令全是要回看斟酌的长文本。在 256px 的瞬态下拉里滚表单，
+            按钮行要横向滚动才看得全 —— 这不是能靠调样式救回来的问题。
+            现在：菜单一行「设置…」→ chrome.runtime.openOptionsPage()。
+            保留在菜单里的只有非设置项：登录、导出/导入、清理重复、
+            问题反馈、删除全部、退出登录。 */}
+        <button
+          onClick={handleOpenOptions}
+          className={MENU_ROW}
+          type="button"
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 mr-2 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+            <circle cx="12" cy="12" r="3" />
+            <path strokeLinecap="round" strokeLinejoin="round" d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 11-2.83 2.83l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 11-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 11-2.83-2.83l.06-.06a1.65 1.65 0 00.33-1.82 1.65 1.65 0 00-1.51-1H3a2 2 0 110-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 112.83-2.83l.06.06a1.65 1.65 0 001.82.33H9a1.65 1.65 0 001-1.51V3a2 2 0 114 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 112.83 2.83l-.06.06a1.65 1.65 0 00-.33 1.82V9a1.65 1.65 0 001.51 1H21a2 2 0 110 4h-.09a1.65 1.65 0 00-1.51 1z" />
+          </svg>
+          设置…
+        </button>
 
         <div className="relative">
           <button

@@ -149,43 +149,126 @@ describe('WebDAV 面板：可达性结构', () => {
   });
 });
 
-describe('菜单里的同步方式选择', () => {
+const OPTIONS = readFileSync(
+  new URL('../src/options/OptionsPage.tsx', import.meta.url),
+  'utf8'
+);
+const MANIFEST = JSON.parse(
+  readFileSync(new URL('../manifest.json', import.meta.url), 'utf8')
+);
+
+// ── 2026-10-14：设置全部搬进独立选项页（Chrome options_ui）───────────────
+// 搬走的原因不是「菜单太挤」，而是菜单**放不下也托不住**这类设置：宽度只有
+// 256px（w-64），而 WebDAV 面板有 6 个输入框 + 加密单选组 + 4 个按钮；且菜单
+// 是瞬态的（点别处即消失），而填地址/账号/应用密码/加密口令全是要回看斟酌的
+// 长文本。下面这一组断言守的就是「设置归设置页、菜单只留入口」这条分工。
+describe('设置页：同步方式选择', () => {
   it('后端选择放在「自动同步」开关之前（先决定跟谁，再决定要不要自动）', () => {
-    const backendIdx = MENU.indexOf('aria-label="同步方式"');
-    const autoIdx = MENU.indexOf('label="自动同步"');
-    assert.ok(backendIdx > 0, '菜单里应有「同步方式」选择');
-    assert.ok(autoIdx > 0, '菜单里应有「自动同步」开关');
+    const backendIdx = OPTIONS.indexOf('aria-label="同步方式"');
+    const autoIdx = OPTIONS.indexOf('label="自动同步"');
+    assert.ok(backendIdx > 0, '设置页里应有「同步方式」选择');
+    assert.ok(autoIdx > 0, '设置页里应有「自动同步」开关');
     assert.ok(backendIdx < autoIdx, '顺序反了：用户会先打开一个「对未知后端的自动同步」开关');
   });
 
   it('后端选择用 radiogroup 语义（两个互斥选项）', () => {
-    assert.ok(MENU.includes('role="radiogroup"'), '需要 radiogroup');
-    assert.ok(MENU.includes('aria-label="同步方式"'), '需要 aria-label');
-    const radios = MENU.match(/role="radio"/g) ?? [];
+    assert.ok(OPTIONS.includes('role="radiogroup"'), '需要 radiogroup');
+    assert.ok(OPTIONS.includes('aria-label="同步方式"'), '需要 aria-label');
+    const radios = OPTIONS.match(/role="radio"/g) ?? [];
     assert.ok(radios.length >= 2, '两个互斥选项都应是 radio');
   });
 
   it('切回 TapStack 云端时必须说明「云盘文件不会被删除」', () => {
-    // 用户对「切回去」最怕的是云盘上的数据被清掉。必须主动说清。
+    // 用户对「切backs」最怕的是云盘上的数据被清掉。必须主动说清。
     assert.ok(
-      /切回[\s\S]{0,120}不会被删除/.test(MENU),
+      /切回[\s\S]{0,200}不会被删除/.test(OPTIONS),
       '切回云端必须说明云盘文件不会被删除',
     );
   });
 
   it('切回云端时同时关闭自动同步（Supabase 侧自动轮询有 egress 成本）', () => {
     assert.ok(
-      /syncBackend: 'supabase',\s*syncEnabled: false/.test(MENU),
+      /syncEnabled: false/.test(OPTIONS),
       '切回时必须一并关闭自动同步',
     );
   });
 
-  it('选「自带存储」不直接改设置（必须先填好并测试通过）', () => {
-    // 直接切换的后果是「切了但用不了」，比「没切」更糟。
+  it('WebDAV 面板在设置页里无条件渲染（不再受 syncBackend 约束）', () => {
+    // 这条是本轮修掉的 P0 死锁在架构层面的收口：
+    //   · 渲染面板曾要求 settings.syncBackend === 'webdav'；
+    //   · 切到 webdav 的唯一入口是面板内的「保存并启用」。
+    // 两者互为前提 ⇒ 面板永远打不开。独立设置页天然没有这个循环依赖，
+    // 所以面板必须**无条件**出现 —— 想配就能配，不必先切后端。
+    const panelIdx = OPTIONS.indexOf('<WebDavSettings />');
+    assert.ok(panelIdx > 0, '设置页必须渲染 WebDavSettings');
+    // 取该 JSX 表达式往前看一段：渲染处不应带任何 syncBackend 判据。
+    const expr = OPTIONS.slice(Math.max(0, panelIdx - 120), panelIdx);
     assert.ok(
-      /请在展开的面板里填写云服务信息并测试连接/.test(MENU),
-      '必须引导先配置再启用，而不是直接切换',
+      !/syncBackend === 'webdav'\s*\?/.test(expr),
+      'WebDAV 面板不得再受「syncBackend 是否为 webdav」的条件约束 —— 那正是死锁条件',
+    );
+  });
+
+  it('切到自带存储时若尚未配好，必须提醒去填地址', () => {
+    // 切后端**不等于**配好了。不提醒的话，用户会以为已经生效，
+    // 然后对着「同步没反应」一头雾水。
+    assert.ok(
+      /还没填地址|请在下方填好/.test(OPTIONS),
+      '切到自带存储但未配置时必须提示去填地址',
     );
   });
 });
 
+describe('菜单与设置页的分工', () => {
+  it('manifest 必须声明 options_ui（否则 openOptionsPage 静默失败）', () => {
+    // 缺这一条时，chrome.runtime.openOptionsPage() 表现为「点了没反应」——
+    // 与本轮修掉的那个死锁是同一类病。断言钉住它。
+    assert.ok(MANIFEST.options_ui, 'manifest 必须有 options_ui');
+    assert.equal(
+      MANIFEST.options_ui.page,
+      'src/options/index.html',
+      'options_ui.page 必须指向设置页入口',
+    );
+    assert.equal(
+      MANIFEST.options_ui.open_in_tab,
+      true,
+      '必须 open_in_tab：内嵌 popup 的选项对话框只有 popup 那么大，等于没解决',
+    );
+  });
+
+  it('菜单只留一个「设置…」入口，且它真的调 openOptionsPage', () => {
+    assert.ok(MENU.includes('设置…'), '菜单里应有「设置…」入口');
+    assert.ok(MENU.includes('chrome.runtime.openOptionsPage()'), '入口必须真的打开设置页');
+  });
+
+  it('菜单里不再有任何设置项（避免两处设置分叉）', () => {
+    // 两处都有设置项 = 两个真相。用户改了一处，另一处显示的还是旧值。
+    //
+    // ⚠️ 必须先剥注释，否则这条断言会被**注释里的引用**判红：
+    // HeaderDropdown 里两处注释写着「核弹级操作：不受『删除会话前确认』开关控制」，
+    // 而那个开关已经搬进设置页了。剥掉注释后判的才是「界面上还有没有这个开关」。
+    // 同一坑见 noSilentFalseSuccess.test.ts 的 stripComments。
+    const code = MENU.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^[ \t]*\/\/.*$/gm, '');
+    for (const label of ['通知提醒', '删除会话前确认', '保存固定标签页', '自动同步', '主题风格']) {
+      assert.ok(!code.includes(label), `菜单里不该再出现「${label}」——它已搬进设置页`);
+    }
+  });
+
+  it('openOptionsPage 失败必须出声（不能点了没反应）', () => {
+    const start = MENU.indexOf('const handleOpenOptions');
+    assert.ok(start > 0, '应能找到 handleOpenOptions');
+    const handler = MENU.slice(start, start + 600);
+    assert.ok(/showToast/.test(handler), '打开失败必须有 toast，否则与死锁同样表现为静默');
+  });
+
+  it('设置页必须自带 Provider，不能复用 AppContainer', () => {
+    // AppContainer 内挂 AuthProvider，它一挂载就查 Supabase 会话，命中即自动
+    // 触发一次整库下载。设置页没有任何理由触发这种流量 —— 用户只想改主题。
+    const optionsPageIdx = OPTIONS.indexOf('export const OptionsPage');
+    assert.ok(optionsPageIdx > 0, '设置页应有 OptionsPage 根组件');
+    const providerBlock = OPTIONS.slice(optionsPageIdx);
+    assert.ok(providerBlock.includes('ThemeProvider'), '设置页必须包 ThemeProvider（否则主题设置无处落地）');
+    assert.ok(providerBlock.includes('ToastProvider'), '设置页必须包 ToastProvider（否则保存失败无法出声）');
+    assert.ok(!providerBlock.includes('AuthProvider'), '设置页不得挂 AuthProvider：打开设置不该触发一次云端下载');
+  });
+});

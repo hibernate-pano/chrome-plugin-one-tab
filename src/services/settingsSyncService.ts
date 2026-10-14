@@ -13,12 +13,14 @@
  * 「数据型返回值刻意保持 any……避免收紧后击穿既有调用方」）。
  */
 import type { UserSettings } from '@/types/tab';
-import { getActiveSyncBackend } from '@/sync-backend';
+import { ensureBackendPrimed, getActiveSyncBackend } from '@/sync-backend';
 
 export async function uploadSettings(settings: UserSettings): Promise<void> {
+  await ensureBackendPrimed();
   return getActiveSyncBackend().uploadSettings(settings);
 }
 
 export async function downloadSettings(): Promise<Record<string, any> | null> {
+  await ensureBackendPrimed();
   return getActiveSyncBackend().downloadSettings() as Promise<Record<string, any> | null>;
 }

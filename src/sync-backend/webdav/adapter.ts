@@ -46,6 +46,7 @@ import {
 } from './layout';
 import { createVault, openVault, type Vault } from '../crypto';
 import { checkDeleteFailsafe } from '../failsafe';
+import { compareStampsLoose } from '@/core/opStamp';
 
 /** 适配器配置。口令为 null/undefined 表示用户选了「不加密」（明文存云盘）。 */
 export interface WebDavBackendConfig {
@@ -361,7 +362,10 @@ export class WebDavBackendAdapter implements SyncBackendPort {
       (loaded?.manifest.shards ?? []).map(s => [s.id, s])
     );
     const writtenIds: string[] = [];
-    const nextEntries: ShardFingerprint[] = [];
+    // 本批真正写上远端的条目（只含 PUT 成功的，不含认输跳过的）。
+    // manifest 的最终合并发生在 `writeManifest` 的 apply 里（基于最新 base），
+    // 而不是这里 —— 否则冲突重试时会用旧快照覆盖对端刚写入的条目（2026-10-14 修 P1）。
+    const writtenEntries: ShardFingerprint[] = [];
     let maxSeq = watermark;
 
     for (const g of toUpload) {
@@ -380,7 +384,9 @@ export class WebDavBackendAdapter implements SyncBackendPort {
       //
       // 只比 `lastOp`，不请求网络：manifest 条目里已经带着它。
       if (existing && compareStamps(existing.lastOp, g.lastOp) > 0) {
-        nextEntries.push(existing);
+        // 认输：不碰远端，本地副本等下次下载合并时被替换。
+        // 注意这里**不**记入 writtenEntries —— apply 时以 base（最新远端）为准，
+        // 记进去反而会用旧条目覆盖对端的新条目。
         continue;
       }
 
@@ -394,13 +400,13 @@ export class WebDavBackendAdapter implements SyncBackendPort {
       const result = await this.putShardResolvingConflict(g, existing, payload);
       if (result.skipped) {
         // 远端版本更新（认输）：保留云端条目，本地副本等下次下载合并时被替换。
-        if (existing) nextEntries.push(existing);
+        // 同上：不记入，apply 时以最新 base 为准。
         continue;
       }
 
       writtenIds.push(g.id);
       if (typeof g.lastOp?.s === 'number' && g.lastOp.s > maxSeq) maxSeq = g.lastOp.s;
-      nextEntries.push({
+      writtenEntries.push({
         id: g.id,
         ...(result.etag ? { etag: result.etag } : {}),
         updatedAt: g.updatedAt || this.now(),
@@ -408,15 +414,17 @@ export class WebDavBackendAdapter implements SyncBackendPort {
       });
     }
 
-    // 未被本批触及的分片条目原样保留（增量上传的关键：不碰别的会话）。
-    const touched = new Set(nextEntries.map(e => e.id));
-    for (const s of loaded?.manifest.shards ?? []) {
-      if (!touched.has(s.id)) nextEntries.push(s);
-    }
-
     if (writtenIds.length > 0 || firstSync) {
       await this.writeManifest(
-        base => ({ ...base, generatedAt: this.now(), shards: nextEntries }),
+        // 以最新 base 为底，只覆盖本批真正写过的条目，其余原样保留。
+        // 这是并发安全的关键：重试时 base 里已有对端刚写入的条目，
+        // 若用关闭时的旧快照整体覆盖，对端条目会被静默抹掉
+        // （文件还在，但 manifest 是真相源 ⇒ 对端会话隐形丢失）。
+        base => {
+          const merged = new Map<string, ShardFingerprint>(base.shards.map(s => [s.id, s]));
+          for (const e of writtenEntries) merged.set(e.id, e);
+          return { ...base, generatedAt: this.now(), shards: [...merged.values()] };
+        },
         Boolean(vault),
         vault?.salt
       );
@@ -487,7 +495,9 @@ export class WebDavBackendAdapter implements SyncBackendPort {
     const entryById = new Map<string, ShardFingerprint>(
       (loaded?.manifest.shards ?? []).map(s => [s.id, s])
     );
-    const nextEntries: ShardFingerprint[] = [...(loaded?.manifest.shards ?? [])];
+    // 本批新产生的墓碑条目。最终合并在 apply 里基于最新 base 做，
+    // 未触及的条目以 base 为准（与 uploadGroups 同一纪律，见该处注释）。
+    const tombstoneEntries: ShardFingerprint[] = [];
     const now = this.now();
 
     for (const id of ids) {
@@ -495,7 +505,9 @@ export class WebDavBackendAdapter implements SyncBackendPort {
       // 删除意图自带新 stamp 才能在对端赢过旧副本。这里沿用云端已有的 stamp
       // 就会输给「对端离线期间改过、stamp 更大」的活跃副本（与 Supabase 侧
       // markCloudGroupsAsDeleted 的 seq+1 语义一致，见该实现）。
-      const tombstone = encodeTombstone(id, now, await this.nextDeleteStamp());
+      // 取 max(设备 seq + 1, 云端已知 stamp + 1)：压过另一台设备写过的更大 seq，
+      // 否则墓碑反而更小，对端合并时删除输给旧副本而「复活」（2026-10-14 修 P1）。
+      const tombstone = encodeTombstone(id, now, await this.nextDeleteStamp(existing?.lastOp));
       const out = await this.writeShard(id, tombstone, {
         ...(existing?.etag ? { ifMatch: existing.etag } : {}),
         ...(existing?.etag ? {} : { ifNoneMatch: '*' } as object),
@@ -508,13 +520,17 @@ export class WebDavBackendAdapter implements SyncBackendPort {
         isDeleted: true,
         ...(tombstone.lastOp ? { lastOp: tombstone.lastOp as { d: string; s: number } } : {}),
       };
-      const idx = nextEntries.findIndex(e => e.id === id);
-      if (idx >= 0) nextEntries[idx] = entry;
-      else nextEntries.push(entry);
+      const idx = tombstoneEntries.findIndex(e => e.id === id);
+      if (idx >= 0) tombstoneEntries[idx] = entry;
+      else tombstoneEntries.push(entry);
     }
 
     await this.writeManifest(
-      base => ({ ...base, generatedAt: now, shards: nextEntries }),
+      base => {
+        const merged = new Map<string, ShardFingerprint>(base.shards.map(s => [s.id, s]));
+        for (const e of tombstoneEntries) merged.set(e.id, e);
+        return { ...base, generatedAt: now, shards: [...merged.values()] };
+      },
       Boolean(vault),
       vault?.salt
     );
@@ -527,10 +543,16 @@ export class WebDavBackendAdapter implements SyncBackendPort {
    * 取 `max(设备 seq + 1, 云端已知 stamp + 1)`：这样既保持本设备单调，
    * 也能压过「另一台设备写了更大 seq」的云端副本。
    */
-  private async nextDeleteStamp(): Promise<{ d: string; s: number }> {
+  private async nextDeleteStamp(
+    cloudLastOp?: { d: string; s: number }
+  ): Promise<{ d: string; s: number }> {
     const deviceSeq = await this.peekDeviceSeq();
     const device = await this.kv.get<string>('device_id');
-    return { d: typeof device === 'string' && device ? device : 'unknown', s: deviceSeq + 1 };
+    const cloudSeq = typeof cloudLastOp?.s === 'number' && Number.isFinite(cloudLastOp.s) ? cloudLastOp.s : -1;
+    return {
+      d: typeof device === 'string' && device ? device : 'unknown',
+      s: Math.max(deviceSeq + 1, cloudSeq + 1),
+    };
   }
 
   async purgeExpiredDeletes(maxAgeDays = 30): Promise<number> {
@@ -538,6 +560,15 @@ export class WebDavBackendAdapter implements SyncBackendPort {
     if (!loaded) return 0;
     const vault = await this.unlock(loaded.manifest);
 
+    // ── 墙上时钟不可信（2026-10-14 复核时如实记录）────────────────────────
+    // manifest 头上写着「多设备时钟不可信」，墓碑的 updatedAt 却是各设备墙上时间。
+    // 写墓碑的设备时钟偏慢 ⇒ 墓碑看起来更老 ⇒ 被提前清掉 ⇒ 已删会话在久未同步
+    // （离线超过 maxAge）的设备上复活。这个残余风险**修不掉**（没有逻辑时钟），
+    // 只能收敛：默认 30 天足够长，复活窗口只影响离线超 30 天的设备，且复活出的
+    // 是旧会话（可再删），不是丢数据。曾考虑过加「未来时间戳永不清」的守卫，
+    // 但 `t < cutoff` 本来就排除未来时间 —— 守卫永不触发，是死代码，已删掉。
+    // 不要在这里加宽松度（如 +7 天 grace）：那只是把阈值挪一下，风险形状不变，
+    // 却让「过期墓碑被清理」这条现有测试的语义变模糊。
     const cutoff = Date.now() - maxAgeDays * 24 * 60 * 60 * 1000;
     const expired = loaded.manifest.shards.filter(
       s => s.isDeleted === true && Date.parse(s.updatedAt) > 0 && Date.parse(s.updatedAt) < cutoff
@@ -564,12 +595,25 @@ export class WebDavBackendAdapter implements SyncBackendPort {
   }
 
   async uploadSettings(settings: UserSettings): Promise<void> {
-    const loaded = await this.loadManifest();
+    let loaded = await this.loadManifest();
     const vault = await this.unlock(loaded?.manifest ?? null);
     const payload = { v: 1 as const, settings: settings as unknown as Record<string, unknown>, updatedAt: this.now() };
     const envelope = vault
       ? makeEncryptedEnvelope(await vault.encrypt(payload))
       : makePlainEnvelope(payload);
+    // ── 加密库的 salt 必须落进 manifest（2026-10-14 修 P2）─────────────────
+    // 建库前（manifest 还不存在）就上传设置时，`unlock(null)` 会新建随机 salt 的
+    // Vault，加密完若不把 salt 写进 manifest，下次下载时按 manifest 的 salt 派生
+    // 出另一个密钥 ⇒ 解不开 ⇒ 设置永久不可读。同理，已有明文库第一次用口令写设置
+    // 时，也必须把 manifest 翻成加密态。明文模式（vault 为 null）不碰 manifest。
+    if (vault && (!loaded || !loaded.manifest.encrypted || loaded.manifest.salt !== vault.salt)) {
+      await this.writeManifest(
+        base => ({ ...base, generatedAt: this.now(), encrypted: true, salt: vault.salt }),
+        true,
+        vault.salt
+      );
+      loaded = await this.loadManifest();
+    }
     await this.client.put(this.p(SETTINGS_PATH), serializeEnvelope(envelope));
   }
 
@@ -694,6 +738,12 @@ export class WebDavBackendAdapter implements SyncBackendPort {
       return false;
     } catch (err) {
       if (err instanceof WebDavError && err.isPreconditionFailed) return true;
+      // 「没授权」必须与「服务端不支持条件写」区分开（2026-10-14补 P1 时加）。
+      // 权限预检抛的是 status 0 + 权限文案；若不在这里拦一道，它会被下面的
+      // 兜底吞成 `false`，于是「浏览器没给这个域名的权限」会被如实上报成
+      // 「你的服务端不支持条件写」——一个会让用户去检查服务器配置的**错误结论**。
+      // 而真实原因只需要点一次「测试连接」授权就能解决。
+      if (err instanceof WebDavError && err.isPermissionDenied) throw err;
       return false;
     } finally {
       // 探针文件不该留在用户目录里。删除失败不抛错（这只是个探针）。
@@ -734,16 +784,12 @@ function selectDirty(groups: TabGroup[], watermark: number): TabGroup[] {
   });
 }
 
-/** stamp 全序比较：seq 优先，seq 相同比设备 id（与 core/opStamp 同口径）。 */
+/** stamp 全序比较。委托给 core/opStamp，避免口径漂移（见该函数注释）。 */
 function compareStamps(
   a: { d: string; s: number } | undefined,
   b: { d: string; s: number } | undefined
 ): number {
-  const sa = a ?? { d: '', s: -Infinity };
-  const sb = b ?? { d: '', s: -Infinity };
-  if (sa.s !== sb.s) return sa.s > sb.s ? 1 : -1;
-  if (sa.d === sb.d) return 0;
-  return sa.d > sb.d ? 1 : -1;
+  return compareStampsLoose(a, b);
 }
 
 /** 稳定短哈希（FNV-1a，32 位十六进制）。只用于生成 KV 键名，不用于安全用途。 */

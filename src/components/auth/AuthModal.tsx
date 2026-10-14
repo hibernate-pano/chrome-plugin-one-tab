@@ -49,11 +49,17 @@ export const AuthModal: React.FC<AuthModalProps> = ({ visible, initialTab = 'log
           aria-modal="true"
           aria-label="登录或注册账号"
           tabIndex={-1}
-          className="ts-modal theme-bg-elevated rounded-lg shadow-xl w-full max-w-md focus:outline-none"
+          className="ts-modal theme-bg-elevated theme-radius-card theme-shadow-panel border theme-border-default w-full max-w-md focus:outline-none"
         >
-          <div className="flex border-b border-gray-300 dark:border-gray-700">
+          <div
+            className="flex border-b theme-border-default"
+            role="tablist"
+            aria-label="登录或注册"
+          >
             <button
               type="button"
+              role="tab"
+              aria-selected={activeTab === 'login'}
               className={`flex-1 py-3 transition-all font-medium ${activeTab === 'login' ? 'text-primary-600 border-b-2 border-primary-600' : 'text-gray-600 dark:text-gray-300 hover:text-primary-600 dark:hover:text-primary-400'}`}
               onClick={() => setActiveTab('login')}
             >
@@ -61,6 +67,8 @@ export const AuthModal: React.FC<AuthModalProps> = ({ visible, initialTab = 'log
             </button>
             <button
               type="button"
+              role="tab"
+              aria-selected={activeTab === 'register'}
               className={`flex-1 py-3 transition-all font-medium ${activeTab === 'register' ? 'text-primary-600 border-b-2 border-primary-600' : 'text-gray-600 dark:text-gray-300 hover:text-primary-600 dark:hover:text-primary-400'}`}
               onClick={() => setActiveTab('register')}
             >

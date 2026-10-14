@@ -74,6 +74,9 @@ export default defineConfig(({ mode }) => {
       rollupOptions: {
         input: {
           'src/popup/index': resolve(__dirname, 'src/popup/index.html'),
+          // 2026-10-14：设置页。独立窗口的原因见 OptionsPage.tsx 文件头 ——
+          // popup 菜单只有 256px 宽且是瞬态的，塞不下 WebDAV 表单。
+          'src/options/index': resolve(__dirname, 'src/options/index.html'),
           'popup': resolve(__dirname, 'popup.html'),
           // 2026-10-05：删掉 confirm 入口（src/auth/confirm.html 一并删除）。
           // 它是死代码：① supabase.auth.signUp 从未配置 redirectTo（auth.ts:13

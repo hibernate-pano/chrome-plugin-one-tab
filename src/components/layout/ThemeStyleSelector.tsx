@@ -5,6 +5,18 @@ import { cn } from '@/lib/utils';
 
 interface ThemeStyleSelectorProps {
   className?: string;
+  /**
+   * 2026-10-14：在独立设置页里**常驻展开**。
+   *
+   * 原本只有「展开/收起」一种形态，是为 256px 的下拉菜单设计的：菜单里放不下
+   * 6 个主题卡片，必须收起。搬到独立设置页后整页都是空白，收起就成了
+   * 「用户要先点一下才知道能换主题」的无谓一步 —— 而且 Playwright 实测发现
+   * 折叠态下卡片带 `hidden`，对自动化与键盘用户都是不可见的死区。
+   *
+   * 常驻展开时不再渲染那个切换按钮（没有可收起的状态，留一个点了没反应的
+   * 按钮比不给按钮更糟）。
+   */
+  alwaysExpanded?: boolean;
 }
 
 // Legacy 主题图标 - 原始简约风格
@@ -253,10 +265,16 @@ const ThemePreviewCard: React.FC<{
   );
 };
 
-export const ThemeStyleSelector: React.FC<ThemeStyleSelectorProps> = ({ className = '' }) => {
+export const ThemeStyleSelector: React.FC<ThemeStyleSelectorProps> = ({
+  className = '',
+  alwaysExpanded = false,
+}) => {
   const { themeStyle, setThemeStyle, isTransitioning } = useTheme();
   const [isExpanded, setIsExpanded] = useState(false);
   const [hoveredTheme, setHoveredTheme] = useState<ThemeStyle | null>(null);
+
+  // alwaysExpanded 时展开态是恒定的，不能被内部 toggle 改回去。
+  const expanded = alwaysExpanded || isExpanded;
 
   const handleThemeChange = useCallback((style: ThemeStyle) => {
     if (style !== themeStyle && !isTransitioning) {
@@ -265,8 +283,9 @@ export const ThemeStyleSelector: React.FC<ThemeStyleSelectorProps> = ({ classNam
   }, [themeStyle, setThemeStyle, isTransitioning]);
 
   const toggleExpanded = useCallback(() => {
+    if (alwaysExpanded) return;
     setIsExpanded(prev => !prev);
-  }, []);
+  }, [alwaysExpanded]);
 
   const currentTheme = useMemo(() =>
     themeOptions.find(t => t.value === themeStyle) || themeOptions[0],
@@ -275,7 +294,27 @@ export const ThemeStyleSelector: React.FC<ThemeStyleSelectorProps> = ({ classNam
 
   return (
     <div className={cn("theme-style-selector", className)}>
-      {/* 主题入口按钮 */}
+      {/* 主题入口按钮。alwaysExpanded 时不渲染：常驻展开下这个按钮没有可
+          收起的状态，点了不响应 = 一个骗人的控件。 */}
+      {alwaysExpanded ? (
+        <div className="mb-1 flex items-center gap-2">
+          <span className="text-gray-500 dark:text-gray-400 flex-shrink-0">
+            <PaletteIcon />
+          </span>
+          <span
+            className={cn(
+              "inline-flex items-center gap-1.5 px-2 py-0.5 text-xs font-medium rounded-full",
+              "bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-300"
+            )}
+          >
+            <span
+              className="w-2 h-2 rounded-full shrink-0"
+              style={{ backgroundColor: currentTheme.primaryColor }}
+            />
+            当前：{currentTheme.label}
+          </span>
+        </div>
+      ) : (
       <button
         onClick={toggleExpanded}
         className={cn(
@@ -285,7 +324,7 @@ export const ThemeStyleSelector: React.FC<ThemeStyleSelectorProps> = ({ classNam
           "transition-colors duration-150",
           "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-1"
         )}
-        aria-expanded={isExpanded}
+        aria-expanded={expanded}
         aria-controls="theme-options-panel"
         aria-label="选择主题风格"
       >
@@ -308,8 +347,9 @@ export const ThemeStyleSelector: React.FC<ThemeStyleSelectorProps> = ({ classNam
             {currentTheme.label}
           </span>
         </div>
-        <ChevronIcon isExpanded={isExpanded} />
+        <ChevronIcon isExpanded={expanded} />
       </button>
+      )}
 
       {/* 展开的主题列表 - 内容可滚动以确保所有主题（含生产力）可见。
           与 TabGroup 的折叠会话组同一个根因：max-h-0/opacity-0 只改视觉，
@@ -320,14 +360,14 @@ export const ThemeStyleSelector: React.FC<ThemeStyleSelectorProps> = ({ classNam
         id="theme-options-panel"
         className={cn(
           "overflow-hidden transition-all duration-200 ease-out",
-          isExpanded ? "max-h-[400px] opacity-100 overflow-y-auto" : "max-h-0 opacity-0"
+          expanded ? "max-h-[400px] opacity-100 overflow-y-auto" : "max-h-0 opacity-0"
         )}
         role="listbox"
         aria-label="可用主题列表"
-        aria-hidden={!isExpanded}
+        aria-hidden={!expanded}
       >
         <div
-          hidden={!isExpanded}
+          hidden={!expanded}
           className="bg-gray-50/50 dark:bg-gray-800/30 border-y border-gray-200/50 dark:border-gray-700/50"
         >
           <div className="grid grid-cols-2 gap-1.5 p-2">
