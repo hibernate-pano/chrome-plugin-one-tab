@@ -64,7 +64,11 @@ try {
   async function readColumns() {
     return page.evaluate(() => {
       const name = el => (el.querySelector('h3.tab-group-title')?.textContent || '').trim();
-      const cols = [...document.querySelectorAll('.md\\:grid-cols-2 > div')];
+      // 2026-10-16：双栏容器已从 Tailwind 的 `md:grid-cols-2` 重构为自研
+      // `.session-grid` + `.session-grid-column`（TabList.tsx 按标签数贪心均衡分栏，
+      // 见那里的注释）。旧选择器 `.md\:grid-cols-2 > div` 永远匹配不到，于是
+      // 无论功能好坏都报 mode=single —— 一个只会假失败的判据。
+      const cols = [...document.querySelectorAll('.session-grid > .session-grid-column')];
       if (cols.length === 2) {
         return {
           mode: 'double',
@@ -91,7 +95,14 @@ try {
   let prevCards = first.single.length;
   for (let round = 1; round <= 3; round++) {
     const toDouble = page.locator('button[aria-label*="切换为双栏"]').first();
-    if (await toDouble.count()) { await toDouble.click(); await page.waitForTimeout(1800); }
+    // 必须点得到：原来的 `if (count())` 会在按钮消失时静默跳过，
+    // 后续 mode 断言于是变成「什么都没做也报错」的假失败，
+    // 分不清「按钮没了」与「切了没用」——见
+    // .memory/e2e-assertion-must-distinguish-failure-modes.md
+    gate.check(`第${round}轮：双栏切换按钮存在且可见`, (await toDouble.count()) > 0,
+      '找不到 aria-label*=切换为双栏 的按钮（窄屏会把它收进菜单，或按钮被移除）');
+    await toDouble.click();
+    await page.waitForTimeout(1800);
     const d = await readColumns();
     const stored = await readGroupsFromSW(ctx);
     const shells = stored.filter(g => !(g.tabs || []).length).length;
@@ -100,23 +111,35 @@ try {
     console.log(`        UI 合计=${(d.left?.length ?? 0) + (d.right?.length ?? 0)} | 存储组=${stored.length} | 存储空壳组=${shells}`);
 
     const total = (d.left?.length ?? 0) + (d.right?.length ?? 0);
-    const expectLeft = Math.ceil(prevCards / 2);
-    const expectOrder = EXPECTED_ORDER.slice(0, expectLeft).concat(EXPECTED_ORDER.slice(expectLeft));
     gate.check(`第${round}轮：双栏容器真的分成两栏`, d.mode === 'double', `mode=${d.mode}`);
-    gate.check(`第${round}轮：左栏 ${expectLeft} 张、右栏 ${prevCards - expectLeft} 张（按次序对分）`,
-      d.left?.length === expectLeft && d.right?.length === prevCards - expectLeft,
-      `实际左 ${d.left?.length ?? '-'} / 右 ${d.right?.length ?? '-'}`);
-    gate.check(`第${round}轮：两栏合起来不多不少（无渲染重复、无丢卡）`, total === prevCards,
-      `合计 ${total}，单栏时 ${prevCards}`);
-    gate.check(`第${round}轮：左栏是读序的前半段、右栏是后半段（不是奇偶交替）`,
-      (d.left || []).join() === expectOrder.slice(0, expectLeft).join() &&
-      (d.right || []).join() === expectOrder.slice(expectLeft).join(),
-      `左=[${(d.left || []).join(' | ')}] 右=[${(d.right || []).join(' | ')}] 期望=[${expectOrder.join(' | ')}]`);
+    // 2026-10-16：分栏算法已从「读序前半段进左栏」改为「按标签数贪心均衡」
+    // （TabList.tsx 的注释写明是为了避免高卡全堆一侧）。所以这里不再钉住
+    // 「第几张在哪一栏」——那是在守护一个被有意替换的启发式，实现一变就假红；
+    // 改为守护真会出事故的东西：卡片不丢不重，且分栏大致均衡。
+    // 丢弃「左=前半段」这条时已确认：功能本身在（两栏存在、卡片数守恒、三轮不漂），
+    // 旧断言只是盯住了旧算法。详见 .memory/e2e-assertion-must-distinguish-failure-modes.md
+    const tabsByName = new Map(stored.map(g => [g.name, (g.tabs || []).length]));
+    const sumTabs = names => (names || []).reduce((n, name) => n + (tabsByName.get(name) ?? 0), 0);
+    const leftTabs = sumTabs(d.left);
+    const rightTabs = sumTabs(d.right);
+    const maxGroupTabs = Math.max(0, ...tabsByName.values());
+    gate.check(`第${round}轮：卡片不丢不重（${total} 张 = 单栏时 ${prevCards} 张）且两栏标签数均衡`,
+      total === prevCards && Math.abs(leftTabs - rightTabs) <= maxGroupTabs,
+      `合计 ${total}，单栏时 ${prevCards}；标签数 左 ${leftTabs} / 右 ${rightTabs}，容差 ${maxGroupTabs}`);
+    const union = [...(d.left || []), ...(d.right || [])];
+    const missing = EXPECTED_ORDER.filter(n => !union.includes(n));
+    const dupes = [...new Set(union.filter((n, i) => union.indexOf(n) !== i))];
+    gate.check(`第${round}轮：每个会话恰好出现一次`,
+      union.length === EXPECTED_ORDER.length && missing.length === 0 && dupes.length === 0,
+      `缺=[${missing.join(' | ')}] 重=[${dupes.join(' | ')}] 实得 ${union.length} / 期望 ${EXPECTED_ORDER.length}`);
     gate.check(`第${round}轮：storage 组数不变（切布局不写数据、不长空壳）`,
       stored.length === SEED.length, `${SEED.length} → ${stored.length}`);
 
     const toSingle = page.locator('button[aria-label*="切换为单栏"]').first();
-    if (await toSingle.count()) { await toSingle.click(); await page.waitForTimeout(1800); }
+    gate.check(`第${round}轮：单栏切换按钮存在且可见`, (await toSingle.count()) > 0,
+      '找不到 aria-label*=切换为单栏 的按钮');
+    await toSingle.click();
+    await page.waitForTimeout(1800);
     const s = await readColumns();
     console.log(`        单栏 UI 合计=${s.single?.length ?? 0}`);
     gate.check(`第${round}轮：切回单栏后卡片数不变（空壳不累积）`, s.single?.length === prevCards,

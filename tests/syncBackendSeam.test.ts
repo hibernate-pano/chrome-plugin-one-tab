@@ -11,7 +11,7 @@
 // 直到真的去换才发现处处是硬编码。所以本文件把「接缝真的通电」钉住：
 //
 //   1. 注入替身后，**调用方走的是替身**（不是默认实现）；
-//   2. 不注入时，默认仍解析为 Supabase（零行为变化）；
+//   2. 不注入时，默认落到自带存储（未就绪则是锁定占位后端，绝不落到云端）；
 //   3. 接缝两侧的**形状映射**正确 —— 特别是 version 与 etag 不得互相冒充。
 //
 // 变异验证口径（改坏实现它必须变红）：
@@ -191,20 +191,34 @@ describe('同步后端接缝：形状映射不得失真', () => {
   });
 });
 
-describe('同步后端接缝：默认解析仍是 Supabase（阶段 0 零行为变化）', () => {
+describe('同步后端接缝：默认解析恒为自带存储（云端下线后没有第二个候选）', () => {
   beforeEach(() => resetActiveSyncBackend());
   afterEach(() => resetActiveSyncBackend());
 
-  it('不注入时解析为 supabase，而不是别的什么', () => {
-    assert.equal(getActiveSyncBackend().id, 'supabase');
+  it('不注入、也没有预解析时返回锁定占位后端（id 仍是 webdav）', async () => {
+    // 反转自「不注入时解析为 supabase」（2026-10-16）。云端后端删除后
+    // 没有第二个可回落的对象，唯一正确的终态是「WebDAV，但可能未配置/未解锁」——
+    // 而未预解析时正是那个状态的代表：返回 **LockedWebDavBackend**，
+    // 每次操作抛一句用户能行动的话，而不是静默用空配置发请求。
+    const backend = getActiveSyncBackend();
+    assert.equal(backend.id, 'webdav');
+    // 占位后端必须真的出声：静默成功才是那次 P0 的形态。
+    // 必须 await：assert.rejects 返回 Promise，不 await 时测试会在拒绝校验完成前收尾，
+    // 成为一个「无论如何都绿」的空断言（V3 假绿，2026-10-16 修复）。
+    await assert.rejects(
+      () => backend.fetchFingerprints(),
+      /已中止|重新填写/,
+      '未预解析时不得返回真适配器，也不得静默成功'
+    );
   });
 
-  it('reset 之后回到 supabase（测试之间不串味）', () => {
+  it('reset 之后回到同一个占位后端（测试之间不串味）', async () => {
     const { fake } = makeFakeBackend();
     setActiveSyncBackend(fake);
     assert.equal(getActiveSyncBackend().id, 'webdav');
     resetActiveSyncBackend();
-    assert.equal(getActiveSyncBackend().id, 'supabase');
+    assert.equal(getActiveSyncBackend().id, 'webdav');
+    await assert.rejects(() => getActiveSyncBackend().downloadGroups(), /已中止|重新填写/);
   });
 });
 

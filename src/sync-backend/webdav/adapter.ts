@@ -11,10 +11,10 @@
  *    把后者当空库会让云端「看起来被清空」→ 合并清空本地 → 无回收站不可逆。
  * 2. **乐观锁失败（412）不降级为无条件覆盖**。按分片做组级 LWW 裁决：
  *    本地 stamp 更新 → 用新 ETag 重试；远端更新 → 认输跳过（等下次下载合并）。
- *    这与 Supabase 侧的 `findConcededGroupIds` 认输预检是同一个语义。
+ *    这与任何后端都应有的「认输预检」是同一个语义。
  * 3. **水位的比较基准是「本设备 seq 时钟」**，不是墙上时间。
  *    seq 时钟回退（用户清了本地数据）时旧水位必须作废，否则新会话会被
- *    旧水位永久遮蔽、永不上云（Supabase 侧踩过这个 P0，见 syncWatermark.ts）。
+ *    旧水位永久遮蔽、永不上云（这个 P0 踩过，见历史记录）。
  */
 import type { TabGroup, UserSettings } from '@/types/tab';
 import type {
@@ -92,7 +92,7 @@ export interface WebDavAdapterDeps {
   peekDeviceSeq?: () => Promise<number>;
 }
 
-/** 水位值形状。与 Supabase 侧同构（含 deviceSeq 基线）。 */
+/** 水位值形状。含 deviceSeq 基线（防止清数据后 seq 时钟回退）。 */
 interface SyncWatermark {
   seq: number;
   deviceSeq: number;
@@ -138,6 +138,42 @@ export class WebDavBackendAdapter implements SyncBackendPort {
 
   private p(rel: string): string {
     return this.root ? `${this.root}/${rel}` : rel;
+  }
+
+  /**
+   * 确保配置的根目录在远端存在（2026-10-15 补 P0 修复）。
+   *
+   * ── 为什么需要它 ────────────────────────────────────────────────────────
+   * 「子目录还不存在」时，WebDAV 服务端按 RFC 4918 对该目录下的**读**请求
+   * 返回 **409 Conflict**（而不是 404）。坚果云实测如此，Nextcloud 同理。
+   * 于是首次配置自带存储时：
+   *   loadManifest() → GET /dav/TapStack/manifest.json → 409
+   * 而旧代码只把 404 当作「远端为空」，409 被如实报成 `GET 失败（HTTP 409）`，
+   * **测试连接与首次同步一起挂死**，用户怎么配都走不通。
+   *
+   * 修法是双管齐下（缺一不可）：
+   *   1. `client.get()` 把 409 也归入「不存在」（传输层，见 NotFoundReason）
+   *      —— 保证任何服务端、任何路径下都不会再因此报错；
+   *   2. 本方法在读之前**把目录建出来** —— 因为首次同步本来就要往里写，
+   *      目录迟早要存在。与其每次读都靠「409 当不存在」的兜底，
+   *      不如让它名副其实地存在。
+   *
+   * ── 为什么幂等且不需要额外错误处理 ──────────────────────────────────────
+   * `client.mkdirp()` 逐级 MKCOL 且「已存在（405）」视为成功，
+   * 所以重复调用零成本、零副作用。
+   *
+   * ⚠️ 为什么失败要静默：这里**不是**安全边界，只是一个「让读路径可用」的
+   * 兜底。真正的错误信号由随后的 `client.get()` 给出（403 权限、
+   * 401 认证、其它 5xx 都会如实抛出）。若连目录都建不出来，
+   * 那时 get 必然也失败并报出真正的原因 —— 不该在这里猜。
+   */
+  private async ensureRootDir(): Promise<void> {
+    if (!this.root) return; // 未配置子目录 = 直接用服务器根，无需创建
+    try {
+      await this.client.mkdirp(this.root);
+    } catch {
+      // 见上方说明：预建失败不阻断，让随后的 get() 报出真实原因。
+    }
   }
 
   private get watermarkKey(): string {
@@ -198,8 +234,14 @@ export class WebDavBackendAdapter implements SyncBackendPort {
    * @throws 文件存在但解析不了 / 加密库缺 salt —— 「坏了」必须与「空」分开
    */
   private async loadManifest(): Promise<{ manifest: Manifest; etag: string | null } | null> {
+    // 先确保根目录存在（2026-10-15 P0）：否则首次配置时读一个尚不存在的
+    // 子目录，服务端按 RFC 4918 回 409 而非 404。详见 ensureRootDir 的注释。
+    await this.ensureRootDir();
+
     const got = await this.client.get(this.p(MANIFEST_PATH));
-    if (!got) return null;
+    // 三种「没有」：404（资源不存在）、409（父目录不存在，已在上面尽力预建）、
+    // null（304 If-None-Match 命中 = 内容没变，本轮跳过重读）。
+    if (!got || 'notFound' in got) return null;
 
     const parsed = parseManifest(got.body);
     if (!parsed) {
@@ -295,7 +337,8 @@ export class WebDavBackendAdapter implements SyncBackendPort {
   /** 读一个分片并解码成会话。返回 null = 文件缺失或不可解析（计入统计，不静默丢）。 */
   private async readShard(id: string): Promise<{ group: TabGroup | null; etag: string | null }> {
     const got = await this.client.get(this.p(shardPath(id)));
-    if (!got) return { group: null, etag: null };
+    // 'notFound' in got = 404/409，即这个分片在远端不存在（首次同步的常态）。
+    if (!got || 'notFound' in got) return { group: null, etag: null };
 
     const env = parseEnvelope(got.body);
     if (!env) return { group: null, etag: got.etag };
@@ -395,8 +438,7 @@ export class WebDavBackendAdapter implements SyncBackendPort {
       // 它手里的组 stamp 比云端小，但因为它读到 manifest 后没有任何人再改，
       // 条件写会**成功**——于是用旧内容覆盖掉云端的新版本，静默丢数据。
       //
-      // Supabase 侧的对应防线是 `findConcededGroupIds`（upload.ts:595-611），
-      // 语义逐字相同：云端 stamp 严格更大 ⇒ 本次认输、不上行，
+      // 这道防线的语义是：云端 stamp 严格更大 ⇒ 本次认输、不上行，
       // 本地副本交给下一次下载合并物理替换（那条路径有回滚与校验）。
       //
       // 只比 `lastOp`，不请求网络：manifest 条目里已经带着它。
@@ -449,7 +491,7 @@ export class WebDavBackendAdapter implements SyncBackendPort {
 
     if (writtenIds.length > 0) {
       // 水位必须用**写入这一刻**的计数器值，不能复用读取时的旧值 ——
-      // 本批上行本身可能推进了计数器（Supabase 侧 upload.ts 的同款注释）。
+      // 本批上行本身可能推进了计数器。
       await this.saveWatermark(maxSeq, await this.peekDeviceSeq());
     }
 
@@ -520,8 +562,7 @@ export class WebDavBackendAdapter implements SyncBackendPort {
     for (const id of ids) {
       const existing = entryById.get(id);
       // 删除意图自带新 stamp 才能在对端赢过旧副本。这里沿用云端已有的 stamp
-      // 就会输给「对端离线期间改过、stamp 更大」的活跃副本（与 Supabase 侧
-      // markCloudGroupsAsDeleted 的 seq+1 语义一致，见该实现）。
+      // 就会输给「对端离线期间改过、stamp 更大」的活跃副本，所以上行时
       // 取 max(设备 seq + 1, 云端已知 stamp + 1)：压过另一台设备写过的更大 seq，
       // 否则墓碑反而更小，对端合并时删除输给旧副本而「复活」（2026-10-14 修 P1）。
       const tombstone = encodeTombstone(id, now, await this.nextDeleteStamp(existing?.lastOp));
@@ -636,7 +677,8 @@ export class WebDavBackendAdapter implements SyncBackendPort {
 
   async downloadSettings(): Promise<DownloadSettingsResult> {
     const got = await this.client.get(this.p(SETTINGS_PATH));
-    if (!got) return null;
+    // 404/409 都表示「远端还没有这份设置」，是合法的首次状态。
+    if (!got || 'notFound' in got) return null;
     const env = parseEnvelope(got.body);
     if (!env) return null;
 
@@ -669,7 +711,7 @@ export class WebDavBackendAdapter implements SyncBackendPort {
       const deviceSeq = Number(wm.deviceSeq);
       if (!Number.isFinite(seq) || seq < 0) return 0;
 
-      // seq 时钟回退自检（Supabase 侧同款 P0 防线）：用户清本地数据后
+      // seq 时钟回退自检（历史版本踩过的 P0）：用户清本地数据后
       // DEVICE_SEQ 被清零、新会话 seq 从 1 重启，而旧水位还在（比如 5000）
       // ⇒ 新会话永远 `1 > 5000` 为假 ⇒ 永不上云 ⇒ 下次合并被云端旧版覆盖消失。
       const current = await this.peekDeviceSeq();

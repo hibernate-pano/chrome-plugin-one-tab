@@ -102,7 +102,7 @@ async function migrateFromLocalStorage(target: StorageDriver) {
 
 // 将 chrome.storage.local 中的旧数据迁移到统一的 kv 存储
 async function migrateFromChromeStorage(target: StorageDriver) {
-  // S2 同源：chrome 可用性判断走共享 env（与 supabase session 层同一函数）
+  // S2 同源：chrome 可用性判断走共享 env（与所有持久层同一函数）
   if (!hasExtensionStorage()) return;
 
   // 迁移只执行一次，避免刷新后旧数据反复覆盖

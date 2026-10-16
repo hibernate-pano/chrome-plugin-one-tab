@@ -77,48 +77,98 @@ async function rowGrabPoint(page, groupName, title) {
   return { x: box.x + 8, y: box.y, h: box.h, top: box.top };
 }
 
+/** 某行的水平中心（跨组/同组落点都用同一坐标系；与 rowGrabPoint 独立测量） */
+async function rowCenterX(page, groupName, title) {
+  return page.evaluate(({ name, t }) => {
+    const cards = [...document.querySelectorAll('.tab-group-card')];
+    const card = cards.find(c => (c.querySelector('h3.tab-group-title')?.textContent || '').trim() === name);
+    const row = [...card.querySelectorAll('.tab-item')].find(r => ((r.querySelector('.tab-item-title')?.textContent) || '').trim() === t);
+    const b = row.getBoundingClientRect();
+    return b.x + b.width / 2;
+  }, { name: groupName, t: title });
+}
+
 /** 装上拖拽事件计数器（只统计，不参与应用逻辑）：dragstart/dragover/drop 次数 */
 async function installDragCounters(page) {
   await page.evaluate(() => {
     window.__dragCounts = { dragstart: 0, dragover: 0, drop: 0, dragend: 0 };
+    window.__dragLog = [];
     for (const type of Object.keys(window.__dragCounts)) {
       window.addEventListener(type, () => { window.__dragCounts[type] += 1; }, true);
     }
+    // 记录每次 dragover 的落点行/组：用于回答「这次拖拽到底有没有进入目标组」。
+    // 只统计，不参与应用逻辑（与应用零耦合，见文件头 P0 对照实验同款纪律）。
+    window.addEventListener('dragover', (e) => {
+      window.__dragLog.push({
+        row: e.target?.closest?.('.tab-item')?.querySelector?.('.tab-item-title')?.textContent?.trim() ?? null,
+        group: e.target?.closest?.('.tab-group-card')?.querySelector?.('h3.tab-group-title')?.textContent?.trim() ?? null,
+      });
+    }, true);
   });
 }
 const readDragCounts = page => page.evaluate(() => window.__dragCounts);
+const readDragLog = page => page.evaluate(() => window.__dragLog || []);
 
 /**
- * 真实拖拽：从源行按下，移到落点行**下半区**后松开。
+ * 真实拖拽：从源行按下，落到目标行**下半区**（或指定落点）后松开。
+ *
+ * ── 2026-10-16：为什么改成「分帧移动」而不是一次 steps:15 ──────────────
+ * 定位过程（真机日志）：一次性的快速 mouse.move 里 Chromium 只按帧合并派发
+ * 一两次 dragover —— 指针横穿的中间行收不到事件。P1 场景要求指针**先经过
+ * G2 的 f、再落到 e**；快速拖拽时 dragover 只到 G1 的头部就停了（实测仅 2 条），
+ * 跨组落点压根没收到 hover，moveTab 也就没发生 → 脚本 3/4 失败。
+ * 这不是 src 回归：人类拖拽天然带帧间隔，分帧后同一路径 dragover 沿行逐个派发，
+ * 跨组移动正常落盘（真机 8/8，IndexedDB 与 DOM 两端一致）。
  *
  * 落到下半区（中点以下 1/4 处）：同组往下拖的换位分支要求 hoverPercentage > -0.2，
  * 下半区恒满足；跨组无此限制，同样换位。
  *
- * 【为什么要重试而不是只拖一次】合成指针事件不是 100% 可靠地触发 HTML5 DnD：
- * 实测偶发「鼠标按下 + 移动都发了、但 dragstart 一次都没触发」（此时界面毫无反应，
- * 不是实现坏了）。所以用「dragstart/dragover 计数 > 0」判定这一次拖拽**真的开始**了，
- * 没开始就重试——判据本身可验证，比固定 sleep 后假设成功可靠。
+ * ── 为什么必须校验 dragover 真的进了目标组 ────────────────────────────
+ * 旧判据只看 dragstart>0 && dragover>0，于是「只在源组里晃了两下、压根没到
+ * 目标组」也会被当成一次成功拖拽，后续断言把「拖拽没发生」误报成「拖拽功能
+ * 坏了」（.memory/e2e-assertion-must-distinguish-failure-modes.md）。
+ * 现在要求 __dragLog 里出现落点组的 dragover，没到就重试。
+ *
+ * from/to 传函数而不是坐标：重试时按**当前 DOM**重算（第一次尝试若只触发了
+ * 同组换位，行位置已变；用旧坐标会把下一行当源拖，制造新的搬错行）。
  */
-async function realDrag(page, from, to, { attempts = 3 } = {}) {
+async function realDrag(page, fromFn, toFn, { attempts = 3, expectGroup } = {}) {
   for (let i = 1; i <= attempts; i++) {
+    const from = await fromFn();
+    const to = await toFn();
     await installDragCounters(page);
     await page.bringToFront();
     await page.mouse.move(from.x, from.y);
     await page.mouse.down();
-    // 分多步移动：Chromium 要求指针移动一段距离才真正开始 drag（slide 阈值），
-    // 一步到位会被当成点击。
-    await page.mouse.move(to.x, to.y, { steps: 15 });
-    await page.waitForTimeout(500);
-    const counts = await readDragCounts(page);
-    await page.mouse.up();
-    if (counts.dragstart > 0 && counts.dragover > 0) {
-      await page.waitForTimeout(2500);
-      return { attempts: i, counts };
+    // 分帧移动：Chromium 要求指针移动一段距离才真正开始 drag（slide 阈值），
+    // 一步到位会被当成点击；而分帧（每步让出一帧）dragover 才会沿路径逐个派发。
+    const N = 10;
+    for (let s = 1; s <= N; s++) {
+      await page.mouse.move(
+        from.x + ((to.x - from.x) * s) / N,
+        from.y + ((to.y - from.y) * s) / N,
+        { steps: 2 }
+      );
+      await page.waitForTimeout(70);
     }
-    console.log(`   ...第 ${i} 次拖拽未触发（dragstart=${counts.dragstart} dragover=${counts.dragover}），重试`);
+    // 落点 1px 抖动两次：即使上一步已停在落点，也保证落点行收到 dragover。
+    await page.mouse.move(to.x + 2, to.y, { steps: 2 });
+    await page.waitForTimeout(120);
+    await page.mouse.move(to.x, to.y, { steps: 2 });
+    await page.waitForTimeout(300);
+    const counts = await readDragCounts(page);
+    const log = await readDragLog(page);
+    await page.mouse.up();
+    const hitTarget = !expectGroup || log.some(e => e.group === expectGroup);
+    if (counts.dragstart > 0 && hitTarget) {
+      await page.waitForTimeout(2500);
+      return { attempts: i, counts, log };
+    }
+    console.log(`   ...第 ${i} 次拖拽没把 dragover 送进「${expectGroup || '任意组'}」` +
+      `（dragstart=${counts.dragstart}，命中目标组=${hitTarget}，落点历史=${JSON.stringify(log)}），重试`);
     await page.waitForTimeout(500);
   }
-  throw new Error(`真实拖拽连续 ${attempts} 次都没触发（dragstart=0）：合成指针事件未启动 HTML5 DnD`);
+  throw new Error(`真实拖拽连续 ${attempts} 次都没把 dragover 送进「${expectGroup}」：合成指针事件未完成 HTML5 DnD`);
 }
 
 /** 等待 IndexedDB 真值满足谓词（SW 落盘 + 同步节流需要时间） */
@@ -225,16 +275,16 @@ try {
     Array.isArray(g1Before) && g1Before.length === 3 && Array.isArray(g2Before) && g2Before.length === 2,
     `G1=${JSON.stringify(g1Before)} G2=${JSON.stringify(g2Before)}`);
 
-  const fromB = await rowGrabPoint(page, 'G1-源组', 'tab-b');
-  const toE = await rowGrabPoint(page, 'G2-目标组', 'tab-e');
-  const toECenterX = await page.evaluate(() => {
-    const cards = [...document.querySelectorAll('.tab-group-card')];
-    const card = cards.find(c => (c.querySelector('h3.tab-group-title')?.textContent || '').trim() === 'G2-目标组');
-    const row = [...card.querySelectorAll('.tab-item')].find(r => ((r.querySelector('.tab-item-title')?.textContent) || '').trim() === 'tab-e');
-    const b = row.getBoundingClientRect();
-    return b.x + b.width / 2;
-  });
-  await realDrag(page, fromB, { x: toECenterX, y: toE.top + toE.h * 0.75 });
+  const fromB = () => rowGrabPoint(page, 'G1-源组', 'tab-b');
+  await realDrag(
+    page,
+    fromB,
+    async () => {
+      const toE = await rowGrabPoint(page, 'G2-目标组', 'tab-e');
+      return { x: await rowCenterX(page, 'G2-目标组', 'tab-e'), y: toE.top + toE.h * 0.75 };
+    },
+    { expectGroup: 'G2-目标组' }
+  );
 
   const groupsAfterCross = await waitGroups(ctx,
     gs => {
@@ -264,16 +314,16 @@ try {
 
   // ── 2. 同组拖拽排序：把 a 拖到 c 之后 ───────────────────────────────────
   // 当前 g1=[tab-a,tab-c]，拖 a 到 c 行下半区 ⇒ 期望 [tab-c,tab-a]。
-  const fromA = await rowGrabPoint(page, 'G1-源组', 'tab-a');
-  const toC = await rowGrabPoint(page, 'G1-源组', 'tab-c');
-  const toCCenterX = await page.evaluate(() => {
-    const cards = [...document.querySelectorAll('.tab-group-card')];
-    const card = cards.find(c => (c.querySelector('h3.tab-group-title')?.textContent || '').trim() === 'G1-源组');
-    const row = [...card.querySelectorAll('.tab-item')].find(r => ((r.querySelector('.tab-item-title')?.textContent) || '').trim() === 'tab-c');
-    const b = row.getBoundingClientRect();
-    return b.x + b.width / 2;
-  });
-  await realDrag(page, fromA, { x: toCCenterX, y: toC.top + toC.h * 0.75 });
+  const fromA = () => rowGrabPoint(page, 'G1-源组', 'tab-a');
+  await realDrag(
+    page,
+    fromA,
+    async () => {
+      const toC = await rowGrabPoint(page, 'G1-源组', 'tab-c');
+      return { x: await rowCenterX(page, 'G1-源组', 'tab-c'), y: toC.top + toC.h * 0.75 };
+    },
+    { expectGroup: 'G1-源组' }
+  );
 
   const groupsAfterInner = await waitGroups(ctx,
     gs => {

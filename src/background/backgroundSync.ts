@@ -1,5 +1,4 @@
 import { store } from '@/store';
-import { getCurrentUser, setFromCache } from '@/store/slices/authSlice';
 import { loadSettings } from '@/store/slices/settingsSlice';
 import { syncEngine } from '@/services/syncEngine';
 import { enqueue, hasQueuedOrRunningJob } from './mutationQueue';
@@ -32,10 +31,9 @@ import { primeSyncBackend } from '@/sync-backend';
  *
  * 设计约束（MV3）：
  * - Service Worker 是事件驱动、可随时被系统杀掉；alarms 触发会重新唤醒 SW。
- * - SW 无 localStorage；supabase 客户端已改用 chrome.storage.local 持久化 session
- *   （见 src/utils/supabase.ts），因此这里能安全恢复登录态。
- * - 每次唤醒都是全新执行上下文，store 也是新实例——先 getCurrentUser 注入登录态，
- *   再走 SyncEngine 下载合并（快照→下载→合并→验证→写入，失败自动回滚）。
+ * - 每次唤醒都是全新执行上下文，store 也是新实例——先载入用户设置
+ *   （syncStrategy 决定合并策略），再走 SyncEngine 下载合并
+ *   （快照→下载→合并→验证→写入，失败自动回滚）。
  *
  * ── 2026-10-10 F3：失败退避 ────────────────────────────────────────────────
  * 修复前这个 alarm 是固定 periodInMinutes:1，失败无退避、无 maxRetries：网络断着
@@ -51,7 +49,7 @@ import { primeSyncBackend } from '@/sync-backend';
  * chrome.alarms 都是持久的，SW 回收后照样读得到。这是整个修复的关键约束。
  *
  * ── 2026-10-11（1.23.0）：自动同步默认关闭 + 用户四档间隔 ────────────────
- * 自动同步每轮都是出站流量（Supabase egress 配额），60s 全量轮询是配额见底的主因。
+ * 自动同步每轮都是出站流量（云盘请求），60s 全量轮询是把流量耗尽的主因。
  * 新语义（产品拍板）：
  *   · 默认关闭：后台 alarm 不注册、打开 popup 不再自动拉取，用户点「同步」手动获取；
  *   · 用户在菜单中开启后四选一：5 / 10 / 30 / 60 分钟（默认 10）；
@@ -72,7 +70,11 @@ export const SYNC_ALARM = 'tapstack-background-sync';
 /** 用户关掉自动同步后 popup 发来重建 alarm 的 SYNC 操作名（见 service-worker SYNC 分支）。 */
 export const RESYNC_ALARM_OP = 'resyncAlarm';
 
-/** popup 自动下载（打开触发）被总开关拦下时的原因码（AuthProvider 对它静默，见那里的白名单）。 */
+/** popup 自动下载（打开触发）被总开关拦下时的原因码。
+ *
+ *  2026-10-16：原先这里写着「AuthProvider 对它静默」——那层已经删除。
+ *  现在没有任何 UI 静默它，popup 侧的自动下载入口已随账号弹窗一同消失。
+ *  保留这个常量是因为 SW 仍要把它作为失败原因码回给调用方（可区分于真故障）。 */
 export const AUTO_SYNC_DISABLED_REASON = 'auto_sync_disabled';
 
 /**
@@ -105,6 +107,61 @@ const backoffKv: BackoffKv = {
     await chrome.storage.local.remove(key);
   },
 };
+
+/**
+ * 「未配置/未解锁已经提醒过」的一次性标志（Wave 2A）。
+ *
+ * 为什么需要它：未配置/未解锁是**持续存在**的用户状态，而 alarm 每 N 分钟
+ * 醒一次。没有这个标志，用户会每 10 分钟收到一条同样的通知（比静默更糟）。
+ *
+ * 存在 chrome.storage.local 而不是模块变量 —— 同退避状态的理由：MV3 SW
+ * 随时被回收，模块变量在下一轮唤醒就是 undefined。
+ */
+const LOCKED_BACKEND_NOTICE_KEY = 'background_sync_locked_notice_shown';
+
+/**
+ * 发一次「同步需要配置/解锁」的可见提醒（Wave 2A）。
+ *
+ * ── 为什么必须可见（修复前的形态）──────────────────────────────────────
+ * 修复前锁定后端只打一行 logWarn，用户侧零感知：设置页宣称「每 N 分钟后台
+ * 同步一次」，实际连续 8 次后 alarm 被清掉、自动同步静默停摆。
+ * 通知是这条链路上唯一能主动触达用户的通道。
+ *
+ * 【一次性】发送成功才置标志：同一锁定状态连续多轮只打扰一次；
+ * 发送失败不置标志，下一轮重试。成功同步一轮后 handleAlarm 清掉标志
+ * （见那里），于是「解锁又锁上」这类新一季问题会重新提醒一次，
+ * 而不会变成永久静默。
+ *
+ * 通知 API 不可用时（测试环境 / 未来移除 notifications 权限）静默返回：
+ * 提醒是附加的，绝不能因为它反把同步让路这条路弄失败。
+ */
+async function notifyLockedBackendOnce(): Promise<void> {
+  const api = (globalThis as { chrome?: typeof chrome }).chrome;
+  // API 不可用（测试环境 / 权限被移除）时**不置标志**直接返回：
+  // 「发不出去」不等于「已提醒过」。修复前这里先置位再发现没有 API，
+  // 标志就此留下，同一锁定季后续轮次连尝试都不再做（2026-10-16 审查 L3）。
+  if (!api?.notifications?.create) return;
+  try {
+    const already = await backoffKv.get(LOCKED_BACKEND_NOTICE_KEY);
+    if (already) return;
+    await api.notifications.create({
+      type: 'basic',
+      iconUrl: api.runtime?.getURL?.('icons/icon128.png'),
+      title: 'TapStack 同步需要配置或解锁',
+      message:
+        '后台自动同步已停在「让路」状态：云盘尚未配置，或本次会话尚未解锁。' +
+        '请打开设置完成配置，或重新输入应用密码与加密口令。',
+    });
+    // 只在 create **成功返回之后**置标志。修复前的顺序是先置位再发：
+    // create 抛错时标志已留下，catch 只打一行日志，用户这一季再也收不到
+    // 提醒（与注释里承诺的「下一季会再次提醒」不符）。并发的两轮 alarm
+    // 至多多弹一次通知，远比永久静默轻。
+    await backoffKv.set(LOCKED_BACKEND_NOTICE_KEY, Date.now());
+  } catch (err) {
+    // 提醒失败不影响本轮让路（标志未置位，下一轮锁定状态会再次尝试提醒）。
+    logWarn('[BackgroundSync] 未配置提醒发送失败（不影响本轮让路，下轮重试）:', err);
+  }
+}
 
 /**
  * 自动同步的生效配置（总开关 + 档位）。setup 与 handleAlarm 共用、
@@ -309,20 +366,24 @@ export function setupBackgroundSync(): void {
  * 供手动触发一次（测试/调试）。用户显式触发 = 绕过退避窗口（他刚点了菜单）。
  *
  * 【返回值维持历史 boolean 契约（不能改）】
- *   true  = 执行了同步，或「有同步在途所以让路」（两者都表示「这一轮已被处理」）
- *   false = 未登录，本轮什么也没做
- * tests/syncBusyGate.test.ts 正是靠这个三元语义区分「让路」与「未登录」：
- * 空存储下走未登录分支必须拿到 false，而队列被占时必须拿到 true。
- * 如果这里改成 return outcome.ok，未登录会变成 true（因为「未登录」不算故障），
- * 那条守卫就失去了区分能力 —— 于是退避需要的 ok/fail 语义另开一个出口给
- * handleAlarm 用，**不让一个返回值同时承担两套语义**。
+ *   true  = 执行了同步，或「让路」（有同步在途 / 未配置未解锁云盘 / 保护性跳过）
+ *   false = 本轮没有完成（真实故障）
+ *
+ * 2026-10-16：账号体系删除后不再有「未登录」这一跳。
+ * 2026-10-16（Wave 2A）：未配置/未解锁云盘从 false 改为 true —— 它现在与
+ * 「有同步在途」同为让路（见 lockedBackendError.ts）。**副作用必须知道**：
+ * 布尔返回值不再能区分「在途让路」与「未配置让路」（两者都是 true）。
+ * tests/syncBusyGate.test.ts 的在途闸门判别力因此转移到同文件的**结构断言**
+ * （闸门必须排在两次入队之前）；未配置让路的后果由
+ * tests/backgroundSyncLockedBackendOutcome.test.ts 逐条钉住。
+ * 退避需要的 ok/fail 语义另开一个出口给 handleAlarm 用（outcome.locked），
+ * **不让一个返回值同时承担两套语义**。
  *
  * ⚠️ 这条路径**不记账退避**：用户显式点击不代表轮询健康，且它同时服务 popup 手动同步。
  */
 export async function runBackgroundSyncOnce(): Promise<boolean> {
   const outcome = await performBackgroundSync();
-  if (outcome.kind === 'not_logged_in') return false;
-  return true;
+  return outcome.ok;
 }
 
 /**
@@ -387,10 +448,39 @@ async function handleAlarm(alarm: chrome.alarms.Alarm): Promise<void> {
     if (outcome.ok) {
       const before = state.consecutiveFailures;
       await recordSyncSuccess(backoffKv, Date.now());
-      if (before > 0) {
+      if (outcome.locked) {
+        // ── Wave 2A：未配置/未解锁 = 正常用户状态，按「让路」收尾 ─────────
+        // recordSyncSuccess 的复位已在上方执行（与所有 ok 分支同形）：本轮
+        // 根本没碰网络，留着旧失败计数只会在用户解锁后的下一次真实故障时
+        // 提前撞上 8 次上限。
+        //   剩下的两条动作：
+        //   1) 一次性可见提醒 —— 修复前这里只有 logWarn，用户零感知；
+        //   2) **显式按用户档位重排 alarm** —— 不是 1 分钟的退避档。
+        //      为什么不是「什么都不做」：锁定时 alarm 必须保持活着，否则用户
+        //      配置好后没有任何自动路径把它救回来；而 delay 写退避档会把
+        //      「让路」伪装成「失败」。
+        // 注意：这里不会走到下面的 recordSyncFailure，更不会走到
+        // isBackoffExhausted 的清 alarm 分支 —— 那正是这次修复的核心。
+        await notifyLockedBackendOnce();
+        rescheduleAlarm(cfg.intervalMinutes, cfg.intervalMinutes);
+        logInfo(
+          `[BackgroundSync] 未配置/未解锁云盘，本轮让路（不进退避、不清 alarm，` +
+            `保持 ${cfg.intervalMinutes} 分钟节奏）: ${outcome.detail}`
+        );
+      } else if (before > 0) {
+        // 真正跑通一轮（done）才有资格清掉「未配置已提醒」标志：
+        // 下一季锁定状态需要重新提醒，而不是被第一次永久静默。
+        // ⚠️ 不能对保护性让路（kind='yielded'，如 already_syncing）也清：
+        // 那会让「锁定 → 队列忙让路 → 再锁定」多发一次提醒（标志被误清）。
+        if (outcome.kind === 'done') {
+          await backoffKv.remove(LOCKED_BACKEND_NOTICE_KEY).catch(() => undefined);
+        }
         logInfo(`[BackgroundSync] 同步成功，退避复位（此前连续失败 ${before} 次）→ 回到 ${cfg.intervalMinutes} 分钟节奏`);
         rescheduleAlarm(cfg.intervalMinutes, cfg.intervalMinutes);
       } else {
+        if (outcome.kind === 'done') {
+          await backoffKv.remove(LOCKED_BACKEND_NOTICE_KEY).catch(() => undefined);
+        }
         logInfo(`[BackgroundSync] 同步成功（${outcome.detail}）`);
       }
     } else {
@@ -441,7 +531,8 @@ async function handleAlarm(alarm: chrome.alarms.Alarm): Promise<void> {
 }
 
 /**
- * 执行一次后台同步：恢复登录态 → 先推送本地未上传变更 → 再下载合并。
+ * 执行一次后台同步：先推送本地未上传变更 → 再下载合并。
+ * （2026-10-16：账号体系已删，「恢复登录态 → 无 user 则跳过」那一步随之消失。）
  *
  * ponytail: 原实现只下载不上传，是“复活”问题的核心后台表现——MV3 popup
  * 失焦销毁后任何本地变更都不可能再上云，但后台轮询仍然在拉云端，会把
@@ -450,32 +541,53 @@ async function handleAlarm(alarm: chrome.alarms.Alarm): Promise<void> {
  * downloadAndMerge。这保证“下载”不会反着覆盖“刚改但还没上传完”的本地状态。
  *
  * ── 2026-10-10 F3：返回值改为结构化 outcome，让退避能区分「成功 / 失败 / 让路」──
- * 修复前只有一个 boolean，无法判断「失败」与「让路」（有同步在途、未登录），
+ * 修复前只有一个 boolean，无法判断「失败」与「让路」（有同步在途），
  * 于是退避无处可挂：要么把让路也算成失败（失败次数被推爆、误停自动同步），
  * 要么把失败也算成让路（退避永不生效，F3 等于没修）。
  *
- * 三类的语义与对退避的影响：
- *   · ok    —— 本轮真的跑完了同步（或者让路成功 / 未登录 / 手动强制）。
- *              让路与未登录**不算失败**：前者下轮正常 60s 就跑，后者用户没登录
- *              时网络多半也没开，算失败会白推退避次数。
+ * 两类的语义与对退避的影响：
+ *   · ok    —— 本轮真的跑完了同步（或者成功让路）。
+ *              让路**不算失败**：下轮 alarm 正常就到了。
  *   · fail  —— 本轮因为真实故障中止（设置读失败、上传失败、下载失败）。
  *              这些正是修复前「每 60s 无限重试」的场景，现在逐级退避。
  *   · 失败原因随 outcome.detail 落进持久化状态，日志/诊断可追。
+ *
+ * 2026-10-16：'not_logged_in' 随账号体系删除（它唯一的生产者已删）。
+ *   联合类型里不再保留这个零生产者成员（保留它就是一条「看起来在分类、
+ *   实际永远走不到」的分支）。
+ *
+ * 2026-10-16（Wave 2A）：未配置/未解锁不再算 failed。
+ *   '未配置云盘' 是**正常的用户状态**，不是故障。修复前的分类把它交给
+ *   'failed'（当时的理由是「需要用户去设置里处理一次」），后果是：
+ *   连续 8 次后退避上限触发、alarm 被清掉、自动同步静默停摆，而设置页
+ *   仍宣称「每 N 分钟后台同步一次」。现在同步后端把「锁定占位后端」抛出
+ *   的错误标记为 LockedBackendError，syncEngine 把它翻成结果上的
+ *   `locked: true`，本模块据此返回 { ok:true, kind:'yielded', locked:true }：
+ *   不推进退避、不清 alarm，并给用户一次性可见提醒。
+ *   真实网络/服务端故障**不受影响**，仍走 'failed' 与退避阶梯。
  */
-export type BackgroundSyncOutcomeKind = 'done' | 'yielded' | 'not_logged_in' | 'failed';
+export type BackgroundSyncOutcomeKind = 'done' | 'yielded' | 'failed';
 
 export interface BackgroundSyncOutcome {
   /**
-   * 本轮是否成功完成同步（含让路 / 未登录这类非故障跳过）。
+   * 本轮是否成功完成同步（含让路这类非故障跳过）。
    * handleAlarm 用它决定「复位」还是「推进阶梯」。
    */
   ok: boolean;
   /**
    * 更细的分类。存在的理由：runBackgroundSyncOnce 的历史 boolean 契约必须能区分
-   * 「让路」(true) 与「未登录」(false)，而 handleAlarm 只关心 ok —— 两套语义不能
+   * 「让路」与「真故障」，而 handleAlarm 只关心 ok —— 两套语义不能
    * 挤在一个字段里，否则不是把守卫改坏就是把退避改坏。
    */
   kind: BackgroundSyncOutcomeKind;
+  /**
+   * 本轮让路的根因是「云盘未配置/未解锁」（锁定占位后端）。
+   *
+   * 不塞进 kind 的理由：kind='yielded' 还有保护性跳过（already_syncing 等）
+   * 这些**不该**发配置提醒的情形；而 locked=true 需要额外动作
+   * （一次性通知 + 显式按用户档位重排 alarm）。
+   */
+  locked?: boolean;
   /** 一句话原因，落日志与退避状态；成功时是进度摘要。 */
   detail: string;
 }
@@ -495,20 +607,15 @@ async function performBackgroundSync(): Promise<BackgroundSyncOutcome> {
     return { ok: true, kind: 'yielded', detail: '让路：已有同步任务在途' };
   }
 
-  // 1. 恢复登录态（读取 chrome.storage.local 中的 session）
-  const user = await store.dispatch(getCurrentUser()).unwrap().catch(() => null);
-  if (!user) {
-    logInfo('[BackgroundSync] 未登录，跳过后台同步');
-    // 未登录不是同步故障（此时大概也没联网），不推进退避。
-    return { ok: true, kind: 'not_logged_in', detail: '未登录，跳过' };
-  }
+  // 1. 2026-10-16：原先这里的「恢复登录态 → 无 user 则 not_logged_in」
+  //    整段删除。账号体系已不存在，没有「未登录」这回事。
+  //    未配置/未解锁云盘由 sync-backend 的锁定占位后端兜住（它抛的是
+  //    可读错，文案会原样进 outcome.detail），不在这里再重复一道门禁。
+  //    ★ 这不是「同步只在开关打开时」那条退避契约里唯一的 skip 分支：
+  //    'auto_sync_disabled' 仍会走到这里（它在 SW 侧拦截），本轮只是
+  //    没有可跑的管线而已。
 
-  // 2. 登录态写入 store（SyncEngine 检查 store.auth.isAuthenticated 才放行）
-  store.dispatch(
-    setFromCache({ user, isAuthenticated: true })
-  );
-
-  // 2.5 载入用户设置（syncStrategy 决定合并策略；SW 的 store 是新实例，默认值会丢用户配置）
+  // 2. 载入用户设置（syncStrategy 决定合并策略；SW 的 store 是新实例，默认值会丢用户配置）
   //
   // ── 2026-10-05：读失败改为中止本轮，不再「用默认值继续」（P1）────────────
   // syncStrategy 决定上传时用哪种合并策略，而 cloudOverwrite 那个默认值
@@ -544,6 +651,20 @@ async function performBackgroundSync(): Promise<BackgroundSyncOutcome> {
       // 单写者队列（与 service-worker.ts 的 SYNC upload handler 同名 'sync:upload'），
       // 后台轮询上传与 popup SYNC 消息上传串行执行，避免并发 upload/download 撞车。
       const upResult = await enqueue('sync:upload', () => syncEngine.upload({ forcePending: true }));
+      if (upResult.locked) {
+        // 未配置/未解锁：上传这一步就得让路（不进退避）。这与下面下载侧的
+        // locked 分支同语义 —— 两条路都必须覆盖，否则「本地有未上传变更」
+        // 的用户会从上传口子重新掉回退避阶梯。
+        logInfo(
+          `[BackgroundSync] 未配置/未解锁云盘，本地上传让路（不进退避）: ${upResult.error ?? 'unknown'}`
+        );
+        return {
+          ok: true,
+          kind: 'yielded',
+          locked: true,
+          detail: `未配置/未解锁云盘：${upResult.error ?? '请到设置里完成配置或解锁'}`,
+        };
+      }
       if (!upResult.success) {
         logWarn(`[BackgroundSync] 上传未成功，跳过本次下载: ${upResult.error}（下轮 alarm 重试）`);
         // 修复前这里 return true（当成功），于是「上传一直失败」会每 60s 无限重试。
@@ -573,6 +694,18 @@ async function performBackgroundSync(): Promise<BackgroundSyncOutcome> {
   const result = await enqueue('sync:download', () => syncEngine.downloadAndMerge());
   if (!result.success) {
     const reason = result.reason ?? 'unknown';
+    if (result.locked) {
+      // ── Wave 2A：未配置/未解锁 ⇒ 让路，不是失败 ──────────────────────
+      // 关键判据来自 syncEngine 的 locked 标记（根因是 LockedBackendError），
+      // 不用文案匹配：文案一改就静默失效，正是 fallback 纪律防的那类假修复。
+      logInfo(`[BackgroundSync] 未配置/未解锁云盘，本轮让路（不进退避、不清 alarm）: ${reason}`);
+      return {
+        ok: true,
+        kind: 'yielded',
+        locked: true,
+        detail: `未配置/未解锁云盘：${reason}`,
+      };
+    }
     // already_syncing / recent_upload_guard / pending_upload_failed 属正常并发或保护性跳过，
     // **不算故障**（上轮刚上传过、下轮就正常跑），不进退避。
     // up_to_date 走的是 success 分支（见 syncEngine 的探活短路）。

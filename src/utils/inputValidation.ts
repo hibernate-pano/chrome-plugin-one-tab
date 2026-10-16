@@ -26,6 +26,14 @@ export interface PasswordStrengthResult {
 }
 
 /**
+ * 【零生产调用方 · 审计 A 缺陷 3 决策：保留】
+ * validateEmail / validatePassword / validateForm 的唯一调用方曾是已删除的
+ * Login/Register 账号表单。保留它们（而不是连测试一起删）是因为
+ * tests/inputValidation.test.ts 仍在守护其校验语义，而 tests/ 归另一条 lane，
+ * 删除函数必须与那组用例同步进行。登记见 tests/deadCodeGuards.test.ts。
+ */
+
+/**
  * 邮箱验证
  */
 export function validateEmail(email: string): ValidationResult {

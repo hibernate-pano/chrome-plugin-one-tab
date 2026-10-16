@@ -36,9 +36,10 @@ const FALLBACK: ListErrorCopy = {
  */
 const RULES: Rule[] = [
     {
-        // 本次新增的操作超时：SW 侧没有一处超时（消息协议、队列、supabase 客户端
-        // 全是裸 await），慢库 + 弱网会让点击迟迟没有回音。与下面的「连接断开」分开，
-        // 因为处置不同：这里后台**可能仍在继续**，不该让用户以为操作失败了去重做。
+        // 本次新增的操作超时：SW 侧没有一处超时（消息协议、队列、WebDAV fetch
+        // 都没配 AbortSignal），全是裸 await，慢盘 + 弱网会让点击迟迟没有回音。
+        // 与下面的「连接断开」分开，因为处置不同：这里后台**可能仍在继续**，
+        // 不该让用户以为操作失败了去重做。
         match: /操作超时/,
         copy: {
             title: '操作耗时过长',
@@ -69,8 +70,8 @@ const RULES: Rule[] = [
         },
     },
     {
-        // 云端唯一键冲突：写并发落到了同一条行上，重试即可自愈
-        match: /duplicate key|unique constraint|pkey/i,
+        // 云端写入冲突：并发写落到了同一份数据上，重试即可自愈
+        match: /duplicate key|unique constraint|pkey|conflict|precondition failed/i,
         copy: {
             title: '会话数据写入冲突',
             description: '同一份会话被并发写入了多次，导致本次读取被中止。点「重新加载」重试；持续出现请重新加载扩展。',
@@ -85,13 +86,16 @@ const RULES: Rule[] = [
         },
     },
     {
-        // 登录态失效：只有重新登录这一条路。
-        // 刻意不写裸 `token` / `session`：「Unexpected token < in JSON」这类解析错误
-        // 里也含 token，裸关键词会把数据损坏误报成登录问题。
-        match: /jwt|unauthorized|not authenticated|auth |invalid[^\n]*token|token[^\n]*(expired|invalid)/i,
+        // 2026-10-16：原标题是「登录状态已失效 —— 云端会话的登录凭证已过期，
+        //   请重新登录」。账号体系删除后不存在「登录」，也不存在 JWT 过期。
+        //   自带存储唯一的凭据失败形态是 **WebDAV 返回 401**（应用密码错 /
+        //   服务端把它撤销了），所以判据与文案同时换成这个形态。
+        //   刻意不写裸 `token` / `session`：JSON 解析错误里也含这些词，
+        //   裸关键词会把数据损坏误报成凭据问题（这条纪律不变）。
+        match: /401|unauthorized|not authenticated|invalid[^\n]*token|token[^\n]*(expired|invalid)/i,
         copy: {
-            title: '登录状态已失效',
-            description: '云端会话的登录凭证已过期。本地会话不受影响，可以继续使用；需要跨设备同步时，请重新登录后手动同步一次。',
+            title: '云盘凭据无效',
+            description: '云盘拒绝了本次请求（应用密码不正确或已被撤销）。本地会话不受影响，可以继续使用；需要跨设备同步时，请到设置里重新输入应用密码。',
         },
     },
 ];

@@ -94,6 +94,38 @@ try {
   }, SEED_GROUPS);
   console.log(`已写入存储: ${written} 组（含老版本墓碑形状与 1 个真空组）`);
 
+  // ── 2026-10-16：把「无墓碑清理」迁移打回未执行状态（本脚本的真实前提）────
+  // 本脚本模拟的是「升级：旧版本墓碑数据已经在盘上、新版迁移尚未跑」。
+  // 但 SW 在 onInstalled/onStartup（随浏览器一起）就会先跑一次 runMigrations，
+  // 那一刻盘上还没有我们种的数据 → 它把 tombstones_removed_v1 置位后结束。
+  // 之后 popup 挂载发 RUN_MIGRATIONS 时，shouldRunMigration 看到 flag 已置位
+  // 直接跳过 purgeTombstones，于是种子里的老墓碑永远留在 storage —— 旧脚本把
+  // 「迁移已经跑过」误判成「迁移不再清理」的假红（真机 15/16，C1/E1 残留）。
+  // 这不是 src 回归：剥离逻辑在 src/utils/migrationUtils.ts:133 原样存在；
+  // 显式清掉 flag 后走 popup 的真实 RUN_MIGRATIONS，C1/E1 会被物理剥离
+  // （下方「迁移前 seed 在盘 + 迁移后归零」两条一起构成非空转判据）。
+  // 迁移标志经 src/storage-kv/storageAdapter.ts 的 migrateFromChromeStorage
+  // 从 chrome.storage.local 搬进 IDB kv（key: migration_flags）并删除旧键，
+  // 两处都清，保证 getMigrationFlags() 一定读到「未跑」。
+  await sw.evaluate(async () => {
+    await chrome.storage.local.remove('migration_flags');
+    const r = indexedDB.open('tabvaultpro', 1);
+    const db = await new Promise((res, rej) => { r.onsuccess = () => res(r.result); r.onerror = () => rej(new Error('open')); });
+    await new Promise((res, rej) => {
+      const tx = db.transaction('kv', 'readwrite');
+      tx.objectStore('kv').delete('migration_flags');
+      tx.oncomplete = res; tx.onerror = () => rej(new Error('清迁移标志失败'));
+    });
+    db.close();
+  });
+  console.log('已把无墓碑迁移标志清为未执行（模拟升级时旧数据已在盘、迁移待跑）');
+
+  // 非空转前置：墓碑必须在迁移前真的在盘上（否则「迁移后为 0」是空断言）。
+  const seededTombs = (await readGroupsFromSW(ctx)).flatMap(g => g.tabs || [])
+    .filter(t => t.isDeleted === true);
+  gate.check('前置：老版本墓碑形状确实在迁移前落盘（C1/E1 各 1，否则剥离判据空转）',
+    seededTombs.length === 2, `实际 ${seededTombs.length} 个：${seededTombs.map(t => t.title).join(', ')}`);
+
   const page = await openPopup(ctx, id);
   await dismissOnboarding(page);
 
@@ -115,6 +147,14 @@ try {
     `仍残留 ${tabTombs.length} 个：${tabTombs.map(t => t.title).join(', ')}`);
   gate.check('老版本组级墓碑已从 storage 物理剥离', groupTombs.length === 0,
     `仍残留 ${groupTombs.length} 个`);
+
+  // 非空转判据只到「迁移前 seed 的 C1/E1 确实在盘 + 迁移后为 0」为止：
+  // purgeTombstones 是全仓唯一在写路径上过滤 isDeleted tab 的地方（本用例没有
+  // 任何后端，download 归一化不会跑）。不再断言迁移完成 flag 落在哪：
+  // migration_flags 经 secureStorage（chrome.storage.local）与 IDB kv 两套
+  // 存储/回退路径，SW 重启时的 storageAdapter.migrateFromChromeStorage 会把
+  // 它搬家并可能只留下 chromeStorageMigrated —— 那是测试环境的存储搬迁，
+  // 与「迁移本体是否跑过」正交（旧脚本那版按这个 flag 判「没跑」就是误判）。
 
   async function probe(tag) {
     const cards = await page.locator('.tab-group-card').count();

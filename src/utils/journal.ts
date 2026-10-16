@@ -16,23 +16,25 @@
  * 体检实测这是单次 mutation 固定 I/O 链里的一环（1000 条数组的两次序列化）。
  *
  * ── 那它现在还有什么用 ────────────────────────────────────────────────
- * 一件事：**命令分布统计**。诊断导出（utils/diagnostics.ts）读它来回答
- * 「用户最近在做哪类操作」，且刻意只取 `type` 与 `seq`
- * （d / groupId / tabId / payload / ts 一律不读——那些是用户数据）。
+ * 一件事：**OpStamp 来源**。mutationHandlers 的每条语义命令在 apply* 之前
+ * 先 appendEntry 一次，取回条目上的 d（设备）与 s（seq）作为本次写的盖印记；
+ * 盖印记是全仓库的唯一写序事实来源（见 @/core/opStamp）。此外它还留一条
+ * 最近命令的环形轨迹（只写不读，200 条上限）。
  *
  * 保留这个能力，但不再假装自己是 WAL：
- *   - 定长环形缓冲（默认 200 条，从 1000 降下来：这个量级足够看出分布，
+ *   - 定长环形缓冲（默认 200 条，从 1000 降下来：200 条足够作盖印记，
  *     而 1000 条的每次全量读写是纯开销）；
  *   - append 时若新旧无关，**只写一次**（原实现也是一次，但数组更大）；
- *   - 删掉 read() / markConfirmedUpTo() 两个零调用方的方法 ——
- *     留着它们就是「看起来有个恢复机制其实没有」，比没有更危险。
+ *   - 删掉 markConfirmedUpTo()（零调用方）：留着它就是「看起来有个恢复机制
+ *     其实没有」，比没有更危险。read() 保留：appendEntry 取环形缓冲现值要用，
+ *     tests/journal.test.ts 也仍用它读回轨迹做断言；它依然**不是重放入口**。
  *
  * 取号职责已完全由 utils/seqRegistry.ts 承担（Lamport 时钟 + 持久化下限），
  * 本模块不再参与 stamp 生成。
  */
 import type { MutationOp } from '@/shared/mutationProtocol';
 
-/** 诊断导出只读 type 与 seq；其余字段保留在类型里是因为历史数据可能带它们。 */
+/** 单条命令轨迹。d/s 是盖印记；groupId/tabId/payload 等字段保留在类型里是因为历史数据可能带它们。 */
 export interface JournalEntry {
   d: string;
   s: number;
@@ -52,11 +54,11 @@ export interface JournalDeps {
 }
 
 export interface Journal {
-  /** 记一条命令轨迹，返回落盘的条目（诊断导出需要它的 type/seq）。 */
+  /** 记一条命令轨迹，返回落盘的条目（mutationHandlers 取它的 d/s 当 OpStamp）。 */
   appendEntry(partial: Omit<JournalEntry, 'd' | 's' | 'ts'> & { ts?: string }): Promise<JournalEntry>;
   /**
-   * 读回轨迹。**仅供诊断导出使用** —— 这不是重放入口：
-   * 读到的条目不代表「需要恢复的状态」，只代表「最近发生过这些命令」。
+   * 读回轨迹。**不是重放入口**：读到的条目不代表「需要恢复的状态」，
+   * 只代表「最近发生过这些命令」。
    */
   read(): Promise<JournalEntry[]>;
 }
@@ -70,8 +72,8 @@ const JOURNAL_KEY = STORAGE_KEYS.JOURNAL;
 /**
  * 环形缓冲上限。
  *
- * 从原实现的 1000 降下来：这个模块唯一的消费者是诊断导出的「命令分布统计」，
- * 而分布看最近 200 条已经足够（再多只是让每次点击多搬一坨数据）。
+ * 从原实现的 1000 降下来：journal 每条命令写一次，200 条足够作盖印记，
+ * 而 1000 条的每次全量读写是纯开销。
  * 200 条 × 单条约 120B ≈ 24KB，一次序列化成本可忽略。
  */
 const JOURNAL_MAX = 200;

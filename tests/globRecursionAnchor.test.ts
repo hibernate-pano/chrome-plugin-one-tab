@@ -70,13 +70,24 @@ describe('外部锚点：单测 glob 必须递归（本文件住在顶层，退�
       'tests/ 下已无子目录测试文件 —— 递归 glob 的守卫失去意义。' +
         '若确实拍平了目录结构，请连同本断言一起更新并说明理由。'
     );
-    // guards 子目录是这条锚点的直接受益者（globRecursion / migrationReplay.pg /
-    // gateWiring 全在里面）。点名断言，避免「子目录还在但 guards 被挪走」。
-    const guards = nested.filter(f => f.startsWith('guards/'));
-    assert.ok(
-      guards.length >= 5,
-      `tests/guards/ 下应至少有 5 个测试文件，实到 ${guards.length}：${guards.join('、')}`
-    );
+    // guards 子目录是这条锚点的直接受益者。点名断言，避免「子目录还在但 guards 被挪走」。
+    // 2026-10-16：原先从 >=5 放宽到 >=1 的计数断言是空洞的（任何 1 个文件都能满足），
+    // 且删除正是围绕 guards/ 发生的（迁移门禁随 supabase/migrations 删除）。
+    // 改为点名必须存在的守卫文件——它们各自守的规则（去重门禁接线、glob 自证、
+    // 告警日志脱敏、URL 门禁一致性）不会因为文件被删而消失。
+    const REQUIRED_GUARDS = [
+      'guards/gateWiring.test.ts',
+      'guards/globRecursion.test.ts',
+      'guards/noUrlInWarnLogs.test.ts',
+      'guards/openUrlGateConsistency.test.ts',
+    ];
+    for (const required of REQUIRED_GUARDS) {
+      assert.ok(
+        nested.includes(required),
+        `tests/${required} 不在递归收集里 —— 它守的规则仍在生效，文件却被删/挪走了。` +
+          `实到 guards: ${nested.filter(f => f.startsWith('guards/')).join('、') || '（空）'}`
+      );
+    }
   });
 
   it('顶层与递归收集的文件数不同 —— 退化必然丢测试', () => {

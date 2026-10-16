@@ -33,7 +33,7 @@ export function normalizeTabsData(value: unknown, contextId?: string): TabData[]
       if (Array.isArray(candidate)) {
         // 2026-10-06 降级为 logInfo（生产静默）：这条路径是**预期中的兼容行为**，
         // 不是故障 —— 云端历史上确实存在 wrapper 形状的行，恢复成功恰恰说明防线
-        // 在工作（详见 docs/health-check-2026-10-05-v1.22.11.md §7.1 的定性）。
+        // 在工作（详见 docs/archive/health-check-2026-10-05-v1.22.11.md §7.1 的定性）。
         // 此前用 logWarn 造成的实际效果是「永不收敛的噪声」：这几行 wrapper 不被
         // 改写（下载只旁路恢复、上传只在有 pending 变更时才覆盖），而全量下载
         // 每 60s 一轮（后台 alarm）+ 每次开 popup 一轮（AutoSync），用户控制台

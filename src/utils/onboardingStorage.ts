@@ -1,5 +1,4 @@
 import { getRuntimeVersion } from '@/utils/runtimeInfo';
-import { trackProductEvent } from '@/utils/productEvents';
 import { logError, logInfo, logWarn } from './log';
 
 /**
@@ -66,7 +65,6 @@ export async function setOnboardingCompleted(version: string): Promise<void> {
         await chrome.storage.local.set({ [STORAGE_KEY]: state });
         // 完成后清除触发信息
         await clearOnboardingTrigger();
-        await trackProductEvent('onboarding_completed', { version });
         logInfo('[Onboarding] 引导已完成，版本:', version);
     } catch (error) {
         logError('[Onboarding] 保存引导完成状态失败:', error);
@@ -86,7 +84,6 @@ export async function setOnboardingSkipped(version: string): Promise<void> {
         await chrome.storage.local.set({ [STORAGE_KEY]: state });
         // 跳过后也清除触发信息
         await clearOnboardingTrigger();
-        await trackProductEvent('onboarding_skipped', { version });
         logInfo('[Onboarding] 引导已跳过，版本:', version);
     } catch (error) {
         logError('[Onboarding] 保存引导跳过状态失败:', error);

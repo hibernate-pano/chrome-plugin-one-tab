@@ -21,6 +21,7 @@ import {
   computeRegistryDiff,
   createGate,
   extractTestAccounts,
+  findDeadLoginImports,
   loadEnv,
   parseDotEnv,
   requireEnv,
@@ -94,17 +95,27 @@ test('loadEnv：.env.local 覆盖 .env，且两者都缺时只靠 process.env �
 });
 
 test('requireEnv 在缺键时报出缺哪个、怎么给，而不是让脚本带着 undefined 跑', () => {
+  // 2026-10-16：断言原本借 REQUIRED_ENV 的缺键文案验证（缺的恰好是
+  // VITE_SUPABASE_ANON_KEY）。Supabase 下线后 REQUIRED_ENV 清空、那 4 支
+  // 凭据脚本也删了，所以这里改用**显式清单**验同一件事：requireEnv 的职责
+  // 是「报出缺哪个键、怎么给」，它与键名是谁无关 —— 清单为空时不得拦任何环境
+  // （那是当前没有任何必需凭据的如实表达）。
+  const KEYS = ['E2E_BASE_URL', 'E2E_ACCESS_TOKEN'];
   assert.throws(
-    () => requireEnv({ VITE_SUPABASE_URL: 'https://x.supabase.co' }, REQUIRED_ENV),
+    () => requireEnv({ E2E_BASE_URL: 'http://localhost:8080' }, KEYS),
     (err: unknown) => {
       assert.ok(err instanceof Error, `requireEnv 必须抛 Error，实得：${String(err)}`);
-      assert.match(err.message, /VITE_SUPABASE_ANON_KEY/);
+      assert.match(err.message, /E2E_ACCESS_TOKEN/);
       assert.match(err.message, /process\.env/);
       return true;
     },
   );
-  const okEnv = { VITE_SUPABASE_URL: 'https://x.supabase.co', VITE_SUPABASE_ANON_KEY: 'anon' };
-  assert.equal(requireEnv(okEnv), okEnv);
+  const okEnv = { E2E_BASE_URL: 'http://localhost:8080', E2E_ACCESS_TOKEN: 'tok' };
+  assert.equal(requireEnv(okEnv, KEYS), okEnv);
+  // 清单为空 = 没有必需凭据：不得因为「环境里什么都没有」就报错。
+  const empty: EnvBag = {};
+  assert.equal(requireEnv(empty, REQUIRED_ENV), empty);
+  assert.deepEqual(REQUIRED_ENV, [], 'REQUIRED_ENV 现在应当是空清单（云端后端已下线）');
 });
 
 // ── 测试账号提取：跑完能统一清理，不留残号 ─────────────────────────
@@ -154,6 +165,34 @@ test('computeRegistryDiff 同时报出陈旧登记（ORDER 里有、磁盘上没
   const { missing, extra } = computeRegistryDiff(['e2e-a.mjs'], ['e2e-a.mjs', 'e2e-gone.mjs']);
   assert.deepEqual(missing, ['e2e-gone.mjs']);
   assert.deepEqual(extra, []);
+});
+
+// ── 登记表门禁：ORDER 里登记但 import 已死 login() 的脚本必须被点名 ──────
+//
+// 背景：2026-10-16 账号体系删除后，4 支仍在 ORDER 的脚本继续 import login()
+//（点的是全仓已无处渲染的「登录 / 注册」UI），pnpm e2e 却仍报它们可跑。
+// 这个纯函数就是 run-e2e 里那道门禁的判定核心；它必须能变红（见 mutation 验证）。
+test('findDeadLoginImports 只报「登记在 ORDER 且 import 了已死 login()」的脚本', () => {
+  const files: Record<string, string> = {
+    'e2e-good.mjs': "import { launchCtx } from './e2e-helpers.mjs';",
+    'e2e-dead.mjs': "import { login } from './e2e-helpers.mjs';",
+    'e2e-alias.mjs': "import { login as signIn } from './e2e-helpers.mjs';",
+    'e2e-ns.mjs': "import * as h from './e2e-helpers.mjs';\nawait h.login(page, email, pw);",
+    'e2e-other-module.mjs': "import { login } from './somewhere-else.mjs';",
+    'e2e-dynamic.mjs': "import { launchCtx, seedWebDav } from './e2e-helpers.mjs';",
+  };
+  const read = (f: string) => files[f] ?? null;
+  assert.deepEqual(
+    findDeadLoginImports(
+      ['e2e-good.mjs', 'e2e-dead.mjs', 'e2e-alias.mjs', 'e2e-ns.mjs', 'e2e-other-module.mjs', 'e2e-dynamic.mjs'],
+      read,
+    ),
+    ['e2e-dead.mjs', 'e2e-alias.mjs', 'e2e-ns.mjs'],
+  );
+  // 未登记在 ORDER 的脚本不在本门禁范围（computeRegistryDiff 的 extra 会单独拦）
+  assert.deepEqual(findDeadLoginImports(['e2e-good.mjs'], read), []);
+  // 文件不存在时不因读不到内容而点名（陈旧登记由 missing 判）
+  assert.deepEqual(findDeadLoginImports(['e2e-gone.mjs'], read), []);
 });
 
 // ── 判据 gate：只有 PASS/FAIL 日志、退出码恒 0 的脚本是假防线 ─────────

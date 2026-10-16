@@ -17,14 +17,13 @@ export const STORAGE_KEYS = {
   DELETED_TABS: 'deleted_tabs',
   LAST_SYNC_TIME: 'last_sync_time',
   SYNC_SNAPSHOT: 'sync_snapshot',
-  PRODUCT_EVENTS: 'product_events',
   MIGRATION_FLAGS: 'migration_flags',
   // ponytail: 本地是否有未上传变更。跨进程持久化——MV3 popup 失焦销毁后
   // 依然能从 chrome.storage / IndexedDB 读回。后续轮询 / 上传 alarm 唤醒 SW
   // 时检查此标志，未上传则先上传，避免云端旧版本覆盖本地新版本。
   PENDING_UPLOAD: 'pending_upload',
   // 最近一次成功上传的时间戳（独立于 last_sync_time，后者下载也会更新）。
-  // 用于：1）downloadAndMerge 保护窗口 2）调试 / product_event 上报
+  // 用于：downloadAndMerge 保护窗口。
   LAST_UPLOAD_TIME: 'last_upload_time',
   // P1-6（历史）：本地 purge（物理移除）未同步的组 id 队列。无墓碑重写后废弃，
   // 残留值由迁移 purge_tombstones_v1 转入 PENDING_DELETE_IDS 后删除本键。
@@ -42,10 +41,6 @@ export const STORAGE_KEYS = {
   LAST_SYNCED_SEQ: 'last_synced_seq',
   // 阶段二·§7：存量数据迁移完成标记。
   OP_STAMP_MIGRATED: 'op_stamp_migrated',
-  // 性能 span 环形缓冲（诊断观测用，见 @/utils/perfTrace）。
-  // 不参与任何业务判定，因此不属于「数据键」；但同样必须走键常量单源，
-  // 否则改名时新旧两份 trace 会各自累积、诊断导出只看到其中一份。
-  PERF_SPANS: 'perf_spans',
   // ── 2026-10-10 F2 增量上传 ──────────────────────────────────────────────
   // **为什么这个键不在本文件**（打破「STORAGE_KEYS 是所有落盘键的唯一事实来源」
   // 的惯例，并且这是一次经过论证的打破，不是遗忘）：
@@ -54,21 +49,21 @@ export const STORAGE_KEYS = {
   //    重建的推导量。把它当成用户数据会带来一个硬性代价：`storage.clear()`
   //    （清除本地数据）与 runMigrations 都按 `Object.values(STORAGE_KEYS)` 派生
   //    键清单；把推导量塞进去，用户「清除本地数据」后它也该清（没问题），但
-  //    **换账号**时它也必须清 —— 而 STORAGE_KEYS 没有任何账号维度的概念，
-  //    放进键表就等于让「按 user_id 隔离」的 RLS 语义与一个本地单值键纠缠。
-  //    放在按账号寻址的 supabase 子目录里，用户隔离与失效语义都自洽。
+  //    **换存储目的地**（换云盘/换子目录）时它也必须清 —— 而 STORAGE_KEYS
+  //    没有任何存储维度的概念，放进键表就等于让「按存储隔离」的语义与一个
+  //    本地单值键纠缠。放在按目的地寻址的子键里，隔离与失效语义都自洽。
   //
-  // 2) 漏传的**方向性**要求（见 supabase/upload.ts selectDirtyGroupsForUpload）：
+  // 2) 漏传的**方向性**要求（见 webdav/adapter.ts 的上行水位写入）：
   //    水位丢失必须退化为全量上传。水位**只有**在「上行成功 + 读回校验通过」后
   //    才写，写失败抛错 ⇒ 下轮重试；读失败按 0 处理 ⇒ 全量。这三条纪律要求
-  //    它由使用它的链路自己持有（上传.ts），而不是一个「谁都能清、谁都能改」
+  //    它由使用它的链路自己持有（适配器），而不是一个「谁都能清、谁都能改」
   //    的共享键表项。
   //
-  // 3) 键名集中定义在 utils/supabase/syncWatermark.ts（单一真相），
+  // 3) 键名集中定义在 sync-backend/webdav/adapter.ts（单一真相），
   //    storageKvConvergence 的「MIGRATION_SCAN_KEYS 必须覆盖全部键」断言按
   //    STORAGE_KEYS 派生，这个键**故意不参与 chrome.storage → IndexedDB 的
-  //    一次性迁移扫描**：它只在本机产生、只需跟随账号失效，从 chrome.storage
-  //    迁进来一个旧账号的水位才是 bug（会把新账号的第一轮上传跳过整库）。
+  //    一次性迁移扫描**：它只在本机产生、只需随目的地失效，从 chrome.storage
+  //    迁进来一个旧目的地的水位才是 bug（会把新目的地的第一轮上传跳过整库）。
   //
   // 代价（如实记下）：「键单源」从此有一个显式例外，新增其它推导量时评审需要
   // 知道这条规则；本注释就是那条规则的载体。

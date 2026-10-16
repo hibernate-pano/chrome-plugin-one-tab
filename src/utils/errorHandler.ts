@@ -29,8 +29,8 @@ export const ErrorCodes = {
   NETWORK_ERROR: 'NETWORK_ERROR',
   TIMEOUT_ERROR: 'TIMEOUT_ERROR',
 
-  // 认证错误
-  AUTH_ERROR: 'AUTH_ERROR',
+  // 权限错误（AUTH_ERROR 条目已随账号体系删除：'认证失败，请重新登录'
+  // 属于本轮清除的账号时代用户可见文案，不得复活）
   PERMISSION_DENIED: 'PERMISSION_DENIED',
 
   // 数据错误
@@ -61,7 +61,6 @@ export const ErrorCodes = {
 const ErrorMessages: Record<string, string> = {
   [ErrorCodes.NETWORK_ERROR]: '网络连接失败，请检查网络设置',
   [ErrorCodes.TIMEOUT_ERROR]: '操作超时，请重试',
-  [ErrorCodes.AUTH_ERROR]: '认证失败，请重新登录',
   [ErrorCodes.PERMISSION_DENIED]: '权限不足，无法执行此操作',
   [ErrorCodes.DATA_VALIDATION_ERROR]: '数据格式错误',
   [ErrorCodes.DATA_NOT_FOUND]: '未找到相关数据',

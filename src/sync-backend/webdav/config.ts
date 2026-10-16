@@ -7,8 +7,9 @@
  * 他自己的 WebDAV 目录里——虽是「自己的盘」，但那份文件一旦被同步客户端
  * 多端同步、或目录被别人共享，凭据就跟着走了。
  *
- * 更糟的情况：老用户的设置还在 Supabase 上。把 WebDAV 凭据放进
- * UserSettings ⇒ 切换后端的那一次同步会把凭据上传到**我的**数据库。
+ * 更糟的情况：历史版本曾允许把后端切回云端，那样一次同步就会把凭据
+ * 上传到**我们的**数据库。2026-10-16 云端已下线，这条风险随之消失，
+ * 但**「凭据不参与任何同步」这条纪律继续有效**（设置本身仍会被上传到云盘）。
  *
  * 所以凭据走**独立的本地键**，永远不参与任何同步。
  *
@@ -153,7 +154,9 @@ export async function saveLastCheck(
   await kv.set(CONFIG_KEY, { ...current, lastCheck } satisfies StoredWebDavConfig);
 }
 
-/** 清除配置（用户要切回 Supabase 后端时用）。 */
+/** 清除配置（用户点「清除配置」或换一个云盘时用）。
+ *
+ *  清完配置后解析会进入「锁定」态并明确提示去配置，绝不静默落到别处。 */
 export async function clearWebDavConfig(kv: AdapterKv = chromeKvAdapter): Promise<void> {
   await kv.remove(CONFIG_KEY);
 }
@@ -238,10 +241,15 @@ export async function setSessionSecrets(
 }
 
 /**
- * 读会话凭据。null = 本次浏览器会话内还没有解锁。
+ * 读会话凭据。null = 本次浏览器会话内**确认**还没有解锁。
  *
  * 先读模块快取， miss 再读 `chrome.storage.session`（跨上下文）。
  * 命中后回填模块快取，因此同一上下文内第二次是同步命中。
+ *
+ * @throws 会话存储本身读失败时**原样抛出**（不返回 null）。
+ *   「读失败」与「确认没凭据」是两种不同的下一步动作：前者要排查存储故障
+ *   （调用方 logError），后者去重新解锁（调用方 logWarn）。返回 null 会把
+ *   两者压成同形，使「解锁状态存储不可读」永远分不出来。
  */
 export async function getSessionSecrets(username: string): Promise<SessionSecrets | null> {
   // 用户名变了但凭据没重新输入 ⇒ 视为未解锁。
@@ -250,16 +258,12 @@ export async function getSessionSecrets(username: string): Promise<SessionSecret
   if (sessionSecrets && sessionUser !== username) return null;
   const store = sessionStore();
   if (!store) return null;
-  try {
-    const got = await store.get(SESSION_SECRETS_KEY);
-    const raw = got?.[SESSION_SECRETS_KEY];
-    if (!isSessionSecretsRaw(raw) || raw.username !== username || !raw.password) return null;
-    sessionSecrets = { password: raw.password, passphrase: raw.passphrase };
-    sessionUser = raw.username;
-    return sessionSecrets;
-  } catch {
-    return null;
-  }
+  const got = await store.get(SESSION_SECRETS_KEY);
+  const raw = got?.[SESSION_SECRETS_KEY];
+  if (!isSessionSecretsRaw(raw) || raw.username !== username || !raw.password) return null;
+  sessionSecrets = { password: raw.password, passphrase: raw.passphrase };
+  sessionUser = raw.username;
+  return sessionSecrets;
 }
 
 /**

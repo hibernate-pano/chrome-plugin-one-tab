@@ -20,13 +20,16 @@
 //      修法：读写一律抛错（不再谎报成功）+ 内存兜底保住同上下文内的广播意图。
 //
 // 环境桩（IndexedDB / chrome.runtime / fetch）必须在 import 被测模块之前就位。
-import { describe, it, before, beforeEach } from 'node:test';
+import { describe, it, before, beforeEach, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { register } from 'node:module';
 import { pathToFileURL, fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
 import { readFileSync } from 'node:fs';
-import { stubSessionJson } from './_helpers/stubSession.ts';
+import {
+  installFakeSyncBackend,
+  resetFakeSyncBackend,
+} from './_helpers/fakeSyncBackend.ts';
 
 globalThis.__TABSTACK_META_ENV__ = {
   VITE_SUPABASE_URL: 'https://stub.supabase.co',
@@ -43,9 +46,8 @@ const g = globalThis as Record<string, unknown>;
 const NOW = '2026-09-29T08:00:00.000Z';
 const LATER = '2026-09-29T09:00:00.000Z';
 const USER_ID = 'user-under-test';
-const SESSION_KEY = 'sb-stub-auth-token';
 
-// ── 环境桩 1：localStorage（supabase session + 无 IndexedDB 时的 KV 回退）──
+// ── 环境桩 1：localStorage（无 IndexedDB 时的 KV 回退）──
 const lsData = new Map<string, string>();
 const localStorageStub = {
   get length() {
@@ -63,7 +65,6 @@ const localStorageStub = {
 };
 g.window = { localStorage: localStorageStub };
 g.localStorage = localStorageStub;
-lsData.set(SESSION_KEY, stubSessionJson(USER_ID));
 
 // ── 环境桩 2：内存版 IndexedDB（可注入读失败 / 写失败的键）────────────────
 type Backing = Map<string, unknown>;
@@ -135,11 +136,9 @@ function makeFakeIndexedDb(store: Backing) {
 g.indexedDB = makeFakeIndexedDb(backing);
 
 // ── 环境桩 3：chrome（runtime.sendMessage 可开关 = 模拟「有 SW / 无 SW」）──
-// chrome.storage.local 必须是真内存实现：扩展运行时下 supabase-js 的 session
-// 存放在这里（sharedStringStorage 优先 chrome.storage），空壳 get 会让
-// requireSessionUserId 一律判定「未登录」。
+// chrome.storage.local 必须是真内存实现：扩展运行时下 settings / groups 走
+// 这里（sharedStringStorage 优先 chrome.storage），空壳 get 会让读设置恒失败。
 const chromeStore = new Map<string, unknown>();
-chromeStore.set(SESSION_KEY, stubSessionJson(USER_ID));
 
 /** 仓库根（源码接线断言用）。 */
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -294,6 +293,11 @@ beforeEach(() => {
   installChrome(true);
   // 跨用例清干净两个缓存键（groups 30s / settings 60s，测试里不等待真实时间）
   cacheManager.getCache('storage').clear();
+});
+
+// 后端替身是进程级 override：不泄出去，同进程里下一个文件会读到它。
+after(async () => {
+  await resetFakeSyncBackend();
 });
 
 // ════════════════════════════════════════════════════════════════════════
@@ -545,19 +549,25 @@ describe('P1-3 设置读失败 fail-closed：降级值会被无条件覆盖到�
     assert.equal(outcome, 'rejected', '读失败必须抛错（修复前返回 DEFAULT_SETTINGS 并冒充真值）');
   });
 
-  it('读失败时上传路径不会把默认值写进云端', async () => {
+  // 2026-10-16：原来这条用「假 PostgREST 的 user_settings 表」接住上传请求。
+  // 云端后端删除后 SyncEngine 的网络出口只剩 `@/sync-backend`，所以改成注入
+  // 后端替身（见 _helpers/fakeSyncBackend.ts），断言的**实质**不变：
+  // 一次读失败 ⇒ 一个字节都不许发到远端，远端那份真实设置必须原封不动。
+  it('读失败时上传路径不会把默认值写进远端', async () => {
     const { uploadSettings } = await import('@/services/settingsSyncService');
+    const backend = await installFakeSyncBackend();
     await kvSet('user_settings', { groupNameTemplate: '真实模板 %d', themeStyle: 'prism' });
 
-    // 对照组先证明「假云端 + 真实 uploadSettings 这条路确实能写进去」
+    // 对照组先证明「后端替身 + 真实 uploadSettings 这条路确实能写进去」
     await uploadSettings(await storage.getSettings());
-    assert.equal(cloud.settingsWrites.length, 1, '对照组：读成功时上传照常发生');
-    assert.equal(cloud.settings?.group_name_template, '真实模板 %d');
-    assert.equal(cloud.settings?.theme_style, 'prism');
+    assert.equal(backend.calls.uploadSettings.length, 1, '对照组：读成功时上传照常发生');
+    assert.equal(backend.uploadedSettings[0]?.groupNameTemplate, '真实模板 %d');
+    assert.equal(backend.uploadedSettings[0]?.themeStyle, 'prism');
 
     // 现在制造一次读失败，走 syncEngine.upload 尾部的同一道闸门（原样三行）
     cacheManager.getCache('storage').delete('settings');
-    cloud.settingsWrites.length = 0;
+    backend.calls.uploadSettings.length = 0;
+    backend.uploadedSettings.length = 0;
     failReadKeys = new Set(['user_settings']);
     let blocked = false;
     try {
@@ -572,12 +582,10 @@ describe('P1-3 设置读失败 fail-closed：降级值会被无条件覆盖到�
 
     assert.equal(blocked, true, '降级读必须被上传闸门拦下');
     assert.deepEqual(
-      cloud.settingsWrites,
+      backend.calls.uploadSettings,
       [],
-      '读失败时不得发出任何 user_settings 写请求（一次读错误就能把云端真实设置覆盖成默认值）'
+      '读失败时不得发出任何设置写请求（一次读错误就能把远端真实设置覆盖成默认值）'
     );
-    assert.equal(cloud.settings?.group_name_template, '真实模板 %d', '云端设置保持原样');
-    assert.equal(cloud.settings?.theme_style, 'prism', '云端设置保持原样');
   });
 });
 

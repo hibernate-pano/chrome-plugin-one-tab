@@ -2,7 +2,6 @@ import React, { useEffect } from 'react';
 import { ToastProvider } from '@/contexts/ToastContext';
 import { ThemeProvider } from '@/contexts/ThemeContext';
 import ErrorBoundary from '@/components/common/ErrorBoundary';
-import { AuthProvider } from './AuthProvider';
 import { MainApp } from './MainApp';
 import { initStorage, getActiveBackend } from '@/storage/storageAdapter';
 import { logError, logInfo } from '../../utils/log';
@@ -26,13 +25,15 @@ export const AppContainer: React.FC = () => {
       });
   }, []);
 
+  // 2026-10-16：原先这里包了一层 <AuthProvider>，它在挂载后会**立刻**
+  // 向云端查会话，命中就自动触发一次整库下载。账号体系已删除，该层没了；
+  // 同步现在完全由用户点「同步」或后台 alarm 驱动，不会因为打开 popup
+  // 就产生出站流量。
   return (
     <ErrorBoundary>
       <ToastProvider>
         <ThemeProvider>
-          <AuthProvider>
-            <MainApp />
-          </AuthProvider>
+          <MainApp />
         </ThemeProvider>
       </ToastProvider>
     </ErrorBoundary>

@@ -64,20 +64,43 @@ export const decideOverwriteClick = (input: OverwriteClickInput): OverwriteClick
         : '预览数据尚未就绪，覆盖模式已锁定',
     };
   }
+  // ── 用空覆盖非空：直接锁死（2026-10-15）────────────────────────────────
+  // before = 被覆盖的那一侧现有数，after = 覆盖后的数（两个方向同一口径：
+  // 上传覆盖：before=云端 / after=本地；下载覆盖：before=本地 / after=云端）。
+  // before>0 且 after=0 =「拿什么都没有去替换掉现有的东西」。
+  // 这几乎不可能是用户真正想要的（真想清空可以手动删除会话），
+  // 而在无回收站模型下不可逆，所以**连 armed 都不给** —— 预览数字摆在
+  // 那里，用户点了「确认」也只是确认了一个误操作。
+  //
+  // 与引擎闸门（decideForceRemoteOverwrite）的分工：
+  // 这里拦的是「预览已经算出来、对面确实是空」的确定情况；
+  // 引擎拦的是「执行时刻对面是空」的最终事实（含预览与执行之间的 TOCTOU）。
+  if (input.summary.beforeCount > 0 && input.summary.afterCount === 0) {
+    return {
+      type: 'blocked',
+      reason: `对方没有任何会话，用空数据覆盖会清空${input.targetLabel}现有的 ${input.summary.beforeCount} 个会话且无法恢复，覆盖模式已锁定；如需清空请手动删除会话，或改用合并模式`,
+    };
+  }
   if (input.isArmed) {
     return { type: 'run' };
   }
   return { type: 'armed', reason: describeOverwriteRisk(input.summary, input.targetLabel) };
 };
 
-/** runSyncAction 的硬闸门：覆盖模式必须带已确认标记，否则直接拒跑（合并模式不拦） */
+/**
+ * runSyncAction 的硬闸门：覆盖模式必须带已确认标记，否则直接拒跑（合并模式不拦）。
+ *
+ * 2026-10-16：原先入参有 `isAuthenticated`，未登录时整个函数返回 false
+ * （连合并模式一起拒）。账号体系已删除，那道判据恒为假 —— 留着它等于
+ * 「同步永远跑不了」。**只删这一条**：`isBusy` 与「覆盖需确认」两道
+ * 才是数据安全闸门，职责不同，一并删掉会让「点一下清空对面」重新可发生。
+ */
 export const isOverwriteGateOpen = (input: {
   mode: SyncMode;
   isConfirmed: boolean;
   isBusy: boolean;
-  isAuthenticated: boolean;
 }): boolean => {
-  if (input.isBusy || !input.isAuthenticated) return false;
+  if (input.isBusy) return false;
   if (input.mode === 'overwrite' && !input.isConfirmed) return false;
   return true;
 };

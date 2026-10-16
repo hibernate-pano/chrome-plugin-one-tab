@@ -197,17 +197,31 @@ describe('F3 · 让路不算失败（回归：不能把「有任务在途」推�
   // 「让路」（队列里有 sync 任务 / 未登录 / 保护性跳过）都是**正常**的，
   // 它们下轮照常 60s 就跑到。若把它们计成失败，一次「用户正好在开 popup」的
   // 时序就能把失败次数推爆、最终停掉自动同步 —— 那比不做退避更糟。
-  it('structure：performBackgroundSync 的三类返回各自标注了 ok 与 kind', () => {
+  it('structure：performBackgroundSync 的各类返回各自标注了 ok 与 kind', () => {
     const src = readSrc('src/background/backgroundSync.ts');
     assert.match(src, /return \{ ok: true, kind: 'yielded', detail: '让路：已有同步任务在途' \};/,
       '让路必须是 ok（不进退避）');
-    assert.match(src, /return \{ ok: true, kind: 'not_logged_in',/,
-      '未登录不是同步故障');
     assert.match(src, /kind: 'yielded'/, '保护性跳过（recent_upload_guard 等）同样不是故障');
     assert.match(src, /return \{ ok: false, kind: 'failed', detail: '读不到 pending_upload 判据/,
       '真故障（fail-closed 中止）必须 ok:false —— 进退避阶梯');
     assert.match(src, /return \{ ok: false, kind: 'failed', detail: `上传未成功:/,
       '上传失败是真故障（修复前它 return true，于是每 60s 无限重试）');
+  });
+
+  it("2026-10-16：'not_logged_in' 已无生产者，不得从结构里凭空长出来", () => {
+    // 原用例在这里断言 `return { ok: true, kind: 'not_logged_in', ... }` 存在，
+    // 因为「未登录」是三类让路之一。账号体系删除后那个分支被删了，
+    // 于是断言反过来： BackgroundSyncOutcomeKind 里虽然还留着这个成员
+    // （见 backgroundSync.ts 的留痕注释），但**没有任何 return 产出它**。
+    // 一个零生产者的枚举成员就是一条「看起来在分类、实际永远走不到」的分支——
+    // 断言把它钉住，避免下一个人以为它在承担什么。
+    const src = readSrc('src/background/backgroundSync.ts');
+    const producers = src.match(/kind:\s*'not_logged_in'/g) ?? [];
+    assert.deepEqual(
+      producers,
+      [],
+      '又出现了 not_logged_in 的生产者：账号体系已删除，若要复活必须先回答「谁在登录」'
+    );
   });
 
   it('behavior：handleAlarm 只在 outcome.ok === false 时推进阶梯', () => {

@@ -5,7 +5,7 @@
  * 也不允许为了这一个文件去装依赖。所以分两类断言：
  *
  *   (a) 纯函数：从组件里抽出来的不依赖 DOM 的决策逻辑（键盘重排、引导键盘映射、
- *       错误文案映射、埋点节流），直接跑行为断言。
+ *       错误文案映射），直接跑行为断言。
  *   (b) 结构断言：.tsx 无法被 node --experimental-strip-types 加载
  *       （tests/_alias-loader.mjs 的 ts.transpileModule 不转 JSX），所以用 node:fs
  *       读源码断言。守卫的是「折叠容器不能只靠 aria-hidden」「操作条必须有
@@ -28,14 +28,6 @@ import {
   resolveTabCycleTarget,
 } from '../src/components/onboarding/onboardingKeymap.ts';
 import { toListErrorCopy } from '../src/components/tabs/listErrorCopy.ts';
-import {
-  SEARCH_EVENT_THROTTLE_MS,
-  buildSearchEventSignature,
-  hasActiveSearchFilters,
-  remainingMsUntilAllowed,
-  searchEventNames,
-  shouldEmitSearchEvents,
-} from '../src/components/search/searchAnalytics.ts';
 
 const read = (relative: string) => readFileSync(new URL(relative, import.meta.url), 'utf8');
 
@@ -443,7 +435,7 @@ describe('引导聚光灯：选择器与真实 aria-label 一致', () => {
 describe('会话列表加载失败：用户可见文案', () => {
   const noisyErrors = [
     'duplicate key value violates unique constraint "tab_groups_pkey"',
-    'JWT expired',
+    'HTTP 401 Unauthorized',
     'Could not establish connection. Receiving end does not exist.',
     'message port closed before a response was received',
     'QUOTA_BYTES quota exceeded',
@@ -493,8 +485,26 @@ describe('会话列表加载失败：用户可见文案', () => {
     assert.match(toListErrorCopy('QUOTA_BYTES quota exceeded').title, /存储/);
     assert.match(toListErrorCopy('Receiving end does not exist.').title, /连接|后台/);
     assert.match(toListErrorCopy('duplicate key value violates unique constraint "tab_groups_pkey"').title, /冲突/);
-    assert.match(toListErrorCopy('JWT expired').title, /登录/);
+    // 2026-10-16：原断言是 `JWT expired ⇒ /登录/`。账号体系删除后不存在
+    // 「登录」，也不存在 JWT；自带存储唯一的凭据失败形态是 WebDAV 的 401，
+    // 所以断言与文案同时换成这个形态（见 listErrorCopy.ts 的同名注释）。
+    assert.match(toListErrorCopy('HTTP 401 Unauthorized').title, /凭据/);
     assert.match(toListErrorCopy('Unexpected token < in JSON').title, /解析|格式/);
+  });
+
+  it('会话数据里出现「token / JWT」字样不得被误报成凭据问题', () => {
+    // 裸关键词 `token` / `JWT` 曾经会把「本地数据损坏」报成「登录失效」。
+    // 判据必须只认 401 / unauthorized 这类真实凭据失败形态。
+    for (const raw of [
+      'Unexpected token < in JSON at position 0',
+      'JSON token 列解析失败',
+    ]) {
+      const copy = toListErrorCopy(raw);
+      assert.ok(
+        !copy.title.includes('凭据'),
+        `「${raw}」不该被报成凭据问题，实际给出：${copy.title}`
+      );
+    }
   });
 
   it('TabList 不再把 error 直接塞进 EmptyState', () => {
@@ -515,116 +525,9 @@ describe('会话列表加载失败：用户可见文案', () => {
   });
 });
 
-// ── 【9 · P2】搜索重算与埋点节流 ──────────────────────────────────────────────
+// ── 【9 · P2】搜索重算收敛 ────────────────────────────────────────────────
 
-describe('搜索结果：重算收敛与埋点节流', () => {
-  const snapshot = {
-    query: 'gith',
-    domain: null,
-    groupName: null,
-    pinned: 'all' as const,
-    savedWithin: null,
-    resultCount: 12,
-  };
-
-  it('同内容签名稳定，任一维变化签名必变', () => {
-    assert.equal(buildSearchEventSignature(snapshot), buildSearchEventSignature({ ...snapshot }));
-    assert.notEqual(
-      buildSearchEventSignature(snapshot),
-      buildSearchEventSignature({ ...snapshot, query: 'githu' }),
-      '每敲一个字符都应视为一次新快照'
-    );
-    assert.notEqual(
-      buildSearchEventSignature(snapshot),
-      buildSearchEventSignature({ ...snapshot, resultCount: 13 })
-    );
-    assert.notEqual(
-      buildSearchEventSignature(snapshot),
-      buildSearchEventSignature({ ...snapshot, domain: 'github.com' })
-    );
-    // 拼接无歧义：字段挪位不能撞出同一个签名
-    assert.notEqual(
-      buildSearchEventSignature({ ...snapshot, query: 'a', domain: 'b' }),
-      buildSearchEventSignature({ ...snapshot, query: 'b', domain: 'a' })
-    );
-  });
-
-  it('首次搜索立即上报，窗口内的连续输入不重复上报', () => {
-    const first = shouldEmitSearchEvents({
-      lastSignature: '',
-      nextSignature: 'sig-1',
-      lastEmitAt: 0,
-      now: 1000,
-    });
-    assert.equal(first, true, '首个事件必须立即发，保证「搜过」这一事实被记录');
-
-    // 同一批按键的后续快照：落在节流窗口内 → 不发（改由 trailing 补发）
-    for (const suffix of ['2', '3', '4', '5']) {
-      assert.equal(
-        shouldEmitSearchEvents({
-          lastSignature: 'sig-1',
-          nextSignature: `sig-${suffix}`,
-          lastEmitAt: 1000,
-          now: 1000 + Number(suffix),
-        }),
-        false,
-        `第 ${suffix} 次击键不该立即上报`
-      );
-    }
-  });
-
-  it('窗口过后允许再发；签名未变则永不重复', () => {
-    assert.equal(
-      shouldEmitSearchEvents({
-        lastSignature: 'sig-1',
-        nextSignature: 'sig-2',
-        lastEmitAt: 1000,
-        now: 1000 + SEARCH_EVENT_THROTTLE_MS,
-      }),
-      true
-    );
-    assert.equal(
-      shouldEmitSearchEvents({
-        lastSignature: 'sig-1',
-        nextSignature: 'sig-1',
-        lastEmitAt: 1000,
-        now: 1000 + SEARCH_EVENT_THROTTLE_MS * 10,
-      }),
-      false,
-      '签名没变 = 结果集没动，重复上报没有信息量'
-    );
-  });
-
-  it('remainingMsUntilAllowed 决定 trailing 何时补发', () => {
-    assert.equal(remainingMsUntilAllowed(0, 9999), 0, '从未发过 → 立即可发');
-    assert.equal(remainingMsUntilAllowed(1000, 1000), SEARCH_EVENT_THROTTLE_MS);
-    assert.equal(remainingMsUntilAllowed(1000, 1000 + SEARCH_EVENT_THROTTLE_MS / 2), SEARCH_EVENT_THROTTLE_MS / 2);
-    assert.equal(remainingMsUntilAllowed(1000, 1000 + SEARCH_EVENT_THROTTLE_MS * 5), 0, '已过窗口 → 0');
-  });
-
-  it('只在有筛选时额外发 search_filtered', () => {
-    assert.deepEqual(searchEventNames(snapshot), ['search_performed']);
-    assert.deepEqual(
-      searchEventNames({ ...snapshot, domain: 'github.com' }),
-      ['search_performed', 'search_filtered']
-    );
-    assert.deepEqual(
-      searchEventNames({ ...snapshot, pinned: 'only' }),
-      ['search_performed', 'search_filtered']
-    );
-  });
-
-  it('hasActiveSearchFilters 与组件内判空一致（纯空格不算生效）', () => {
-    assert.equal(hasActiveSearchFilters({}), false);
-    assert.equal(hasActiveSearchFilters({ domain: '   ', groupName: '' }), false);
-    assert.equal(hasActiveSearchFilters({ domain: 'github.com' }), true);
-    assert.equal(hasActiveSearchFilters({ groupName: '调研' }), true);
-    assert.equal(hasActiveSearchFilters({ savedWithin: '7d' }), true);
-    assert.equal(hasActiveSearchFilters({ pinned: 'only' }), true);
-    assert.equal(hasActiveSearchFilters({ pinned: 'exclude' }), true);
-    assert.equal(hasActiveSearchFilters({ pinned: 'all' }), false, "'all' 不是生效的筛选");
-  });
-
+describe('搜索结果：重算收敛', () => {
   it('搜索管线被 useMemo 包住，不再每次渲染全量重跑', () => {
     const searchIndex = SEARCH_RESULT_LIST.indexOf('AdvancedSearch.search');
     const nearestUseMemo = SEARCH_RESULT_LIST.lastIndexOf('useMemo(', searchIndex);
@@ -640,42 +543,13 @@ describe('搜索结果：重算收敛与埋点节流', () => {
     }
   });
 
-  it('埋点 effect 走节流函数，而不是每次 filters 变化都发', () => {
-    assert.ok(
-      SEARCH_RESULT_LIST.includes('shouldEmitSearchEvents('),
-      '埋点 effect 必须经过节流决策'
-    );
-    assert.ok(
-      SEARCH_RESULT_LIST.includes('remainingMsUntilAllowed('),
-      '需要 trailing 补发，否则用户停下后的最终状态会丢'
-    );
-    assert.ok(
-      !/void trackProductEvent\('search_performed'/.test(SEARCH_RESULT_LIST.slice(0, SEARCH_RESULT_LIST.indexOf('const restoreSession'))),
-      'search_performed 不应再在 effect 体里无条件直发'
-    );
-  });
-
-  it('leading + trailing 节流下，连续输入的事件数被收敛到 2 条以内', () => {
-    // 模拟一次连续输入：7 次击键，首发 1 条 + 窗口末 trailing 1 条
-    let lastSignature = '';
-    let lastEmitAt = 0;
-    let emitted = 0;
-    const now = 10_000;
-    for (let i = 0; i < 7; i += 1) {
-      const signature = `sig-${i}`;
-      if (
-        shouldEmitSearchEvents({ lastSignature, nextSignature: signature, lastEmitAt, now: now + i * 100 })
-      ) {
-        emitted += 1;
-        lastSignature = signature;
-        lastEmitAt = now + i * 100;
-      }
+  it('搜索埋点层已下线：组件里不再有任何上报调用或节流辅助', () => {
+    for (const gone of ['trackProductEvent', 'shouldEmitSearchEvents', 'searchAnalytics']) {
+      assert.ok(
+        !SEARCH_RESULT_LIST.includes(gone),
+        `${gone} 已随埋点层删除，不得在 SearchResultList 里复活`
+      );
     }
-    assert.equal(emitted, 1, '连续输入期间只应首发 1 条');
-    const remaining = remainingMsUntilAllowed(lastEmitAt, now + 6 * 100);
-    assert.ok(remaining > 0);
-    // trailing 在窗口结束时补发最终状态 → 全程 2 条
-    assert.equal(emitted + 1, 2);
   });
 });
 

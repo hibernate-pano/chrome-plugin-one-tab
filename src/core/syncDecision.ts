@@ -10,7 +10,10 @@ import type { TabGroup } from '../types/tab';
 export const UPLOAD_GUARD_MS = 35_000;
 
 export interface DownloadPrecheckInput {
-  /** forceRemote = 用户显式要求云端覆盖本地，跳过一切保护 */
+  /**
+   * forceRemote = 用户显式要求云端覆盖本地，跳过**本函数**的一切保护。
+   * 它有自己的闸门（decideForceRemoteOverwrite），不在这里。
+   */
   forceRemote: boolean;
   /** 最近一次成功上传时间戳（ISO），null 表示从未上传 */
   lastUploadTime: string | null;
@@ -55,7 +58,56 @@ export function decideDownloadPrecheck(input: DownloadPrecheckInput): DownloadPr
 }
 
 /**
+ * 覆盖下载（forceRemote）的空云端闸门（2026-10-15）。
+ *
+ * ── 为什么需要它，而 validateMergeResult 不够 ───────────────────────────
+ * 覆盖模式在合并前把 `localGroups` 置空（syncEngine.downloadAndMerge），
+ * 于是 validateMergeResult 看到的是 local=0 / cloud=0 / merged=0，
+ * 它的规则 2（「本地有活跃数据但合并后为空」）**永远触发不了**。
+ * 删除熔断同样看不见：它的判定对象是「合并结果里被丢弃的数」，
+ * 而覆盖模式下 merged 本来就是空集，dropped=0，自然放行。
+ * 实测：local=3 / cloud=0 / merged=0 → validateMergeResult 返回 valid:true，
+ * 本地被清空且不可逆（v1.22.0 起无回收站）。
+ *
+ * ── 判据为什么是「云端完全没有行」，而不是「云端没有活跃行」 ───────────
+ * 云端只有墓碑行（别的设备上把会话全删了）是**合法状态**：
+ * stamp 决胜本来就该服从那些删除，拦下来等于跨设备删除永远传不过来。
+ * 只有「云端一行都没有」（连墓碑都没有）才是「拿什么都没有来镜像」，
+ * 此时无论如何都不该继续 —— 用户真想清空本机可以手动删除会话。
+ */
+export interface ForceRemoteOverwriteInput {
+  /** 本地快照里的活跃组数（注意：必须是**置空前**的 snapshot 真值） */
+  localActiveCount: number;
+  /** 云端返回的总行数（活跃 + 墓碑，不过滤） */
+  cloudTotalCount: number;
+}
+
+export type ForceRemoteOverwriteDecision =
+  | { action: 'proceed' }
+  | { action: 'refuse'; reason: string };
+
+export function decideForceRemoteOverwrite(
+  input: ForceRemoteOverwriteInput
+): ForceRemoteOverwriteDecision {
+  if (input.localActiveCount > 0 && input.cloudTotalCount === 0) {
+    return {
+      action: 'refuse',
+      reason:
+        `云端没有任何数据，用空云端覆盖会清空本机 ${input.localActiveCount} 个会话且无法恢复，` +
+        '已中止。如需清空本机请手动删除会话。',
+    };
+  }
+  return { action: 'proceed' };
+}
+
+/**
  * 云端软删（墓碑）写入方式决策——纯函数，便于单测钉住降级行为。
+ *
+ * 【零生产调用方 · 审计 A 缺陷 3 决策：保留】WebDAV 布局没有 is_deleted 列
+ * （墓碑列是 Supabase 时代 schema），生产链路不再消费它；唯一消费者是
+ * tests/syncMergeSafety.test.ts。保留理由是那段测试钉住的不变式不依赖后端：
+ * 「印记列探测失败/缺失时不得降级成硬删」适用于任何旧 schema 降级场景。
+ * 删除时应连同该测试用例一起决策。登记见 tests/deadCodeGuards.test.ts。
  *
  * 关键不变式：**只有云端连 is_deleted 列都没有时才允许硬删**。
  * 印记列（last_op_seq）缺失或探测失败时，软删必须仍走「不带印记的局部 UPDATE」，
@@ -198,13 +250,30 @@ export function validateMergeResult(
     return { valid: true };
   }
 
-  // 规则 2：本地有活跃数据但合并后为空，异常
-  if (activeLocalCount > 0 && mergedGroups.length === 0) {
-    return {
-      valid: false,
-      reason: `本地有 ${activeLocalCount} 个活跃组，但合并后为 0（可能云端覆盖了所有本地数据）`,
-    };
-  }
+  // ── 2026-10-16：原「规则 2」已删除（论证留档，防止有人凭直觉加回来）──────
+  // 旧规则 2：`activeLocalCount > 0 && mergedGroups.length === 0` ⇒ 判异常，
+  // 理由写的是「可能云端覆盖了所有本地数据」。
+  //
+  // 在 2026-09-29 重写后的 whole-group LWW 语义（见 opStampMerge.ts 头注释）
+  // 下，这条规则**只会命中一个合法场景**：本地每个活跃组都被云端**严格更新
+  // 的墓碑**覆盖 —— 也就是「另一台设备把这些会话全删了，本机必须收敛」。
+  // 推导：合并结果为空要求每个本地活跃 id 都在云端有同 id 行且该行赢；
+  // 若赢家是云端活跃行，它会以活跃身份进 merged（merged 非空）；本地独有
+  // id 永远保留。所以 merged=0 ⟺ 每个本地活跃组都输给了云端墓碑行。
+  //
+  // 实测后果（tests/syncNoResurrectConvergence.test.ts 的探针先红后绿）：
+  // 本地仅存的会话永远收不到「另一端已删除」，每轮下载都以
+  // `validation_failed` 中止，用户侧持续看到同步失败，且该会话成为
+  // 永不收敛的僵尸副本。规则 2 把合法传播当故障拦，属「防线方向错了」
+  // ——比没有防线更坏（没有它时合并语义本身就是对的）。
+  //
+  // 它当初要防的「云端覆盖所有本地数据」现在由两处分别覆盖，都不依赖本函数：
+  //   · 覆盖下载（forceRemote）：decideForceRemoteOverwrite 的空云端闸门
+  //     （本地活跃 > 0 且云端一行都没有 ⇒ refuse）；且该路径在合并前把
+  //     localGroups 置空，旧规则 2 在此同样不可达；
+  //   · 常规下载：云端活跃行只会以活跃身份进 merged，不可能把本地「覆盖
+  //     成空」；能让本地组消失的只有墓碑行，而墓碑 = 用户显式删除，
+  //     正是必须传播的东西（删除熔闸管的是合并剔除量，不管删除广播）。
 
   // 规则 3：合并后组数不应低于 活跃本地组数 减去云端明确删除的组数
   const cloudDeletedCount = cloudGroups.filter(g => g.isDeleted).length;

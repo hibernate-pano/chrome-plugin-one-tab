@@ -79,7 +79,7 @@ try {
   console.log(`删后: ${after.length} 组 ->`, after.map(g => `${g.name}(${(g.tabs||[]).length}tab)`).join(', '));
 
   // 云端删除广播队列（v1.22.0：本地删了还不够，云端行必须登记待标记）
-  const purge = await sw.evaluate(async () => new Promise((resolve, reject) => {
+  const readPendingDeleteIds = () => sw.evaluate(async () => new Promise((resolve, reject) => {
     const r = indexedDB.open('tabvaultpro', 1);
     r.onsuccess = () => {
       const db = r.result;
@@ -101,12 +101,48 @@ try {
   gate.check('单页会话彻底消失（不留墓碑）', !single,
     single ? `仍在存储，tabs=${JSON.stringify(single.tabs)}` : '');
   gate.check('多页会话保留', Boolean(multi), '存储里找不到「多页会话」');
-  gate.check('多页会话仍剩 1 个标签（只删了一个）', multi?.tabs.length === 1,
-    `实际 ${multi?.tabs.length ?? '组不存在'}`);
-  gate.check('云端删除广播队列已登记（pending_delete_ids）',
-    Array.isArray(purge) && purge.includes(singleGroup.id),
-    `队列=${JSON.stringify(purge)}，目标=${singleGroup.id}`);
+  gate.check('别组删除不影响多页会话（本次未动它，仍 2 个标签）',
+    multi?.tabs.length === 2, `实际 ${multi?.tabs.length ?? '组不存在'}`);
   gate.check('写路径不产出任何墓碑 tab', tombs.length === 0, `发现 ${tombs.length} 个`);
+
+  // ── 第二段：对「多页会话」删掉一个标签（非最后一个）—— 组必须保留 ──────
+  // 2026-10-16：seed 注释与本段判据「只删了一个」原本就要求这一步；旧脚本
+  // 漏发了这条 removeTab，却断言「仍剩 1 个标签」，于是把「什么都没删」报成
+  // 失败（5/6，实际 2）。补上真实动作后，硬删除规则的另一半才被验证：
+  // 删最后一个 tab 才删组，删非最后一个 tab 只删 tab、组留下。
+  if (!multi || multi.tabs.length < 2) {
+    gate.check('前置：多页会话有 2 个标签可删', false,
+      `多页会话=${multi ? `${multi.tabs.length} 个标签` : '不存在'}`);
+    throw new Error('setup failed: 多页会话标签数不足');
+  }
+  const multiTab = multi.tabs[0];
+  const keepTab = multi.tabs[1];
+  console.log(`发送 removeTab: group=${multi.id} tab=${multiTab.id}`);
+  const res2 = await page.evaluate(async ({ groupId, tid }) => {
+    return await chrome.runtime.sendMessage({
+      type: 'MUTATE',
+      data: { op: 'removeTab', groupId, tabId: tid },
+    });
+  }, { groupId: multi.id, tid: multiTab.id });
+  console.log('SW 返回:', JSON.stringify(res2));
+  await page.waitForTimeout(3000);
+
+  const after2 = await readGroupsFromSW(ctx);
+  const multi2 = after2.find(g => g.name === '多页会话');
+  const tombs2 = after2.flatMap(g => g.tabs || []).filter(t => t.isDeleted === true);
+  const purge = await readPendingDeleteIds();
+
+  gate.check('多页会话保留（删掉一个非最后标签 ≠ 删组）', Boolean(multi2),
+    '连多页会话一起删了');
+  gate.check('多页会话仍剩 1 个标签（只删了一个）', multi2?.tabs.length === 1,
+    `实际 ${multi2?.tabs.length ?? '组不存在'}`);
+  gate.check('剩下的是未被删的那一个（删错行判据）',
+    multi2?.tabs.length === 1 && multi2.tabs[0]?.id === keepTab.id,
+    `剩=[${(multi2?.tabs || []).map(t => t.title).join(',')}]，期望=${keepTab.title}`);
+  gate.check('云端删除广播队列只登记整组消失的单页会话（多页会话不在队列）',
+    Array.isArray(purge) && purge.includes(singleGroup.id) && !purge.includes(multi.id),
+    `队列=${JSON.stringify(purge)}，应含=${singleGroup.id} 不应含=${multi.id}`);
+  gate.check('第二段删除同样不产出墓碑 tab', tombs2.length === 0, `发现 ${tombs2.length} 个`);
 
   const cards = await page.locator('.tab-group-card').count();
   gate.check('UI 只剩 1 张卡片（只剩多页会话）', cards === 1, `实际 ${cards} 张`);

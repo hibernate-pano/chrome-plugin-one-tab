@@ -138,7 +138,7 @@ async function resetStorage() {
   await kvSet('user_settings', undefined);
 }
 
-const fakeBackend = (id: 'supabase' | 'webdav'): SyncBackendPort =>
+const fakeBackend = (id: 'webdav'): SyncBackendPort =>
   ({
     id,
     label: id,
@@ -164,23 +164,27 @@ const fakeBackend = (id: 'supabase' | 'webdav'): SyncBackendPort =>
 describe('syncBackend 设置的校验单点', () => {
   it('合法值原样通过', () => {
     assert.equal(validateSyncBackend('webdav'), 'webdav');
-    assert.equal(validateSyncBackend('supabase'), 'supabase');
   });
 
-  it('非法值回落 supabase（老用户路径永远可用）', () => {
-    for (const bad of [undefined, null, 'dropbox', 42, {}, 'WebDAV']) {
-      assert.equal(validateSyncBackend(bad), 'supabase', `应回落：${String(bad)}`);
+  it('非法值（含已废弃的 supabase）回落 webdav', () => {
+    // 2026-10-16 反转：原先这里断言「非法值回落 supabase（老用户路径永远可用）」。
+    // 云端后端已删除，`'supabase'` 不再是任何合法值，而是一个指向**已不存在后端**
+    // 的历史值——把它当回落目标，就等于让老用户的同步静默走向死路。
+    // 回落方向此时不是产品选择，而是唯一合法答案。
+    for (const bad of [undefined, null, 'dropbox', 42, {}, 'WebDAV', 'supabase']) {
+      assert.equal(validateSyncBackend(bad), 'webdav', `应回落：${String(bad)}`);
     }
   });
 
-  it('默认值是 supabase —— 存量用户零行为变化，不得默认 webdav', () => {
-    // 「升级即失能」的唯一防线：默认若是 webdav，所有升级用户会在
-    // 没配过任何云服务的情况下被切到新后端，打开扩展就要求配置。
-    assert.equal(DEFAULT_SETTINGS.syncBackend, 'supabase');
+  it('默认值是 webdav —— 唯一后端，不存在「升级即失能」', () => {
+    // 原断言是「默认值是 supabase —— 存量用户零行为变化，不得默认 webdav」。
+    // 云端下线后没有第二个值可选：默认仍是 'supabase' 会指向一个不存在的后端，
+    // 那才是真的失能。改动这条必须同时看 resolveConfiguredBackend() 的口径。
+    assert.equal(DEFAULT_SETTINGS.syncBackend, 'webdav');
   });
 });
 
-describe('后端解析：老用户零行为变化', () => {
+describe('后端解析：没有第二个候选可回落', () => {
   beforeEach(async () => {
     await clearSessionSecrets();
     resetActiveSyncBackend();
@@ -188,20 +192,27 @@ describe('后端解析：老用户零行为变化', () => {
     await resetStorage();
   });
 
-  it('存储里没有 syncBackend 字段（存量用户）→ 解析为 supabase', async () => {
+  it('存储里没有 syncBackend 字段（存量用户）→ 解析为 webdav', async () => {
     const stored = { ...DEFAULT_SETTINGS } as Record<string, unknown>;
     delete stored.syncBackend;
     await seed('user_settings', stored);
     const out = await primeSyncBackend();
-    assert.equal(out.requestedId, 'supabase');
-    assert.equal(out.resolvedId, 'supabase');
+    assert.equal(out.requestedId, 'webdav');
+    assert.equal(out.resolvedId, 'webdav');
     assert.equal(out.fallbackReason, undefined, '正常路径不该有回落原因');
   });
 
-  it('存储里是脏数据 → 仍解析为 supabase，不抛错', async () => {
+  it('存储里是脏数据 → 仍解析为 webdav，不抛错', async () => {
     await seed('user_settings', '这不是对象');
     const out = await primeSyncBackend();
-    assert.equal(out.resolvedId, 'supabase');
+    assert.equal(out.resolvedId, 'webdav');
+  });
+
+  it("存量用户的旧值 'supabase' 不再切到别处（它指向的后端已删除）", async () => {
+    await seed('user_settings', { ...DEFAULT_SETTINGS, syncBackend: 'supabase' });
+    const out = await primeSyncBackend();
+    assert.equal(out.requestedId, 'webdav', '已废弃的值不得再被当成用户的选择');
+    assert.equal(out.resolvedId, 'webdav');
   });
 });
 

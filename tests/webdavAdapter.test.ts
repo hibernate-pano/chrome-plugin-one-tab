@@ -49,10 +49,28 @@ class FakeDav {
   ignoreConditionalWrites = false;
   /** 非 null 时，所有 PUT 都返回该状态码（模拟 5xx 等服务端故障）。 */
   putStatusOverride: number | null = null;
+  /**
+   * 置 true 后模拟**坚果云 / Nextcloud 的真实语义**（2026-10-15 补 P0）：
+   * 读一个**父目录不存在**的路径时返回 **409 Conflict** 而不是 404。
+   *
+   * 这不是挑刺，是 RFC 4918 的规定用法（同规范里 MKCOL 也用 409 表示
+   * 「父目录不存在」）。上一轮用户实测撞到的正是它：
+   *   GET /dav/TapStack/manifest.json → 409
+   * 而旧实现只认 404，于是「远端还是空的」被报成「GET 失败」，
+   * 测试连接与首次同步一起挂死。
+   */
+  conflictOnMissingParent = false;
   etagSeq = 0;
 
   private key(path: string): string {
     return path.replace(BASE, '').replace(/\/+$/, '');
+  }
+
+  /** 父目录是否已存在（用于 conflictOnMissingParent 模式）。 */
+  private parentExists(path: string): boolean {
+    const idx = path.lastIndexOf('/');
+    if (idx <= 0) return true; // 顶层，其父就是 baseUrl 本身
+    return this.dirs.has(path.slice(0, idx));
   }
 
   fetch = (async (url: string | URL, init?: RequestInit) => {
@@ -77,6 +95,9 @@ class FakeDav {
     };
 
     if (method === 'PROPFIND') {
+      if (this.conflictOnMissingParent && !this.files.has(path) && !this.parentExists(path)) {
+        return respond(409);
+      }
       const f = this.files.get(path);
       if (!f) return respond(404);
       return respond(
@@ -94,6 +115,9 @@ class FakeDav {
       return respond(204);
     }
     if (method === 'GET') {
+      if (this.conflictOnMissingParent && !this.files.has(path) && !this.parentExists(path)) {
+        return respond(409);
+      }
       const f = this.files.get(path);
       if (!f) return respond(404);
       if (headers['if-none-match'] && headers['if-none-match'] === f.etag) return respond(304);
@@ -194,6 +218,93 @@ function makeGroup(id: string, over: Partial<TabGroup> = {}): TabGroup {
 }
 
 const M = 'TapStack/manifest.json';
+
+// ── 首次配置：子目录还不存在（2026-10-15 补 P0）────────────────────────
+//
+// 用户实测报 `GET 失败（HTTP 409）`，根因是「父目录不存在时服务端回 409
+// 而非 404」，而首次配置时子目录 TapStack 必然还不存在。
+// 本组用 conflictOnMissingParent 模式复现坚果云语义，守护两件事：
+//   1. client.get / stat 把 409 归入「不存在」（不报错）
+//   2. 适配器在读之前把根目录建出来（根治，不只靠兜底）
+describe('首次配置：子目录尚不存在（坚果云 409 语义）', () => {
+  it('checkConnection 在目录不存在时必须成功，而不是报 409', async () => {
+    const dav = new FakeDav();
+    dav.conflictOnMissingParent = true; // 一个文件、一个目录都没有
+    const { adapter } = makeAdapter(dav);
+
+    const info = await adapter.checkConnection();
+    assert.equal(info.groups, 0, '空库应报告 0 个会话');
+    // 根治证据：在**第一次读**之前目录就已存在。
+    // ⚠️ 不能只看 dav.dirs.has('TapStack') —— PUT 分片时 FakeDav 会按路径隐式
+    // 建父目录（真实服务端也常这样），那样即使 ensureRootDir 被删掉断言照样通过。
+    // 变异验证实测：删掉 ensureRootDir 的调用后，只有这个断言能变红。
+    // 参照点必须是**读 manifest**（会撞 409 的那次），而不是 checkConnection
+    // 第一步对 baseUrl 的连通性探测 —— 那次请求打的是服务器根，本来就该先发生。
+    const firstRead = dav.calls.findIndex(
+      c => (c.method === 'GET' || c.method === 'PROPFIND') && c.path.includes('manifest.json')
+    );
+    const mkcolBefore = dav.calls.findIndex(
+      (c, i) => c.method === 'MKCOL' && c.path === 'TapStack' && i < firstRead
+    );
+    assert.ok(dav.dirs.has('TapStack'), '应在读取前 MKCOL 出根目录');
+    assert.ok(
+      firstRead === -1 || mkcolBefore !== -1,
+      'MKCOL 根目录必须发生在第一次读之前（否则只是靠 409 兜底，没根治）'
+    );
+  });
+
+  it('首次 uploadGroups 必须成功（不报 409）', async () => {
+    const dav = new FakeDav();
+    dav.conflictOnMissingParent = true;
+    const { adapter } = makeAdapter(dav);
+
+    const groups = [makeGroup('g1'), makeGroup('g2')];
+    const res = await adapter.uploadGroups(groups);
+    assert.deepEqual(res.writtenIds.sort(), ['g1', 'g2']);
+    assert.ok(dav.read(M), 'manifest 必须真的写上远端');
+    assert.ok(dav.read(`TapStack/${shardPath('g1')}`), '分片必须真的写上远端');
+  });
+
+  it('downloadGroups / downloadSettings 在目录不存在时返回空，不是报错', async () => {
+    const dav = new FakeDav();
+    dav.conflictOnMissingParent = true;
+    const { adapter } = makeAdapter(dav);
+
+    assert.deepEqual(await adapter.downloadGroups(), []);
+    assert.equal(await adapter.downloadSettings(), null);
+  });
+
+  it('探测条件写（读回 ETag）在目录不存在时不得抛错', async () => {
+    // probeConditionalWrites 会 PUT 探针文件再读回 —— 旧实现两处都会撞 409。
+    const dav = new FakeDav();
+    dav.conflictOnMissingParent = true;
+    const { adapter } = makeAdapter(dav);
+    await adapter.checkConnection();
+  });
+
+  it('403 仍必须报认证/权限错误（不得被 409 的兜底逻辑吞掉）', async () => {
+    // 反向防线：兜底只能放过「不存在」，不能放过「没权限」——
+    // 否则用户会看到「连接成功」而实际什么都传不上去。
+    const dav = new FakeDav();
+    dav.conflictOnMissingParent = true;
+    const origFetch = dav.fetch;
+    (dav as unknown as { fetch: typeof fetch }).fetch = (async (url: string | URL, init?: RequestInit) => {
+      const method = String(init?.method ?? 'GET');
+      if (method === 'GET' || method === 'PROPFIND') {
+        return {
+          status: 403,
+          ok: false,
+          headers: { get: () => null },
+          text: async () => '',
+        } as unknown as Response;
+      }
+      return origFetch(url, init);
+    }) as unknown as typeof fetch;
+
+    const { adapter } = makeAdapter(dav);
+    await assert.rejects(() => adapter.checkConnection(), /认证失败|无读取权限/);
+  });
+});
 
 // ── 「不可用」≠「空」 ──────────────────────────────────────────────────
 

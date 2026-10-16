@@ -1,11 +1,10 @@
-import React, { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState, useTransition } from 'react';
+import React, { useCallback, useDeferredValue, useMemo, useState, useTransition } from 'react';
 import { useAppDispatch, useAppSelector } from '@/store/hooks';
 import { Tab, TabGroup } from '@/types/tab';
 import { deleteGroup, deleteTabAndSync, deleteBroadcastWarn } from '@/store/slices/tabSlice';
 import { isOpenableTabUrl } from '@/utils/inputValidation';
 import { useToast } from '@/contexts/ToastContext';
 import { useEnhancedToast } from '@/utils/toastHelper';
-import { trackProductEvent } from '@/utils/productEvents';
 import {
   AdvancedSearch,
   SearchFilters,
@@ -13,14 +12,6 @@ import {
   applySearchFilters,
   buildSessionSearchResults,
 } from '@/utils/search';
-import {
-  SEARCH_EVENT_THROTTLE_MS,
-  SearchEventSnapshot,
-  buildSearchEventSignature,
-  remainingMsUntilAllowed,
-  searchEventNames,
-  shouldEmitSearchEvents,
-} from './searchAnalytics';
 import HighlightText from './HighlightText';
 import { SafeFavicon } from '@/components/common/SafeFavicon';
 import { EmptyState } from '@/components/common/EmptyState';
@@ -87,96 +78,6 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({ searchQuery 
     [filters.domain, filters.groupName, filters.savedWithin, filters.pinned]
   );
 
-  // ── 埋点：leading + trailing 节流（见 ./searchAnalytics） ────────────────
-  // 依赖 filters 对象时每敲一个字符就会重跑；节流后连续输入只在窗口首尾各发一次，
-  // 且保证「用户停下时的最终状态」一定被记录（trailing 补发）。
-  const analyticsStateRef = useRef({ lastSignature: '', lastEmitAt: 0 });
-  const latestSnapshotRef = useRef<SearchEventSnapshot>({
-    query: normalizedSearchQuery,
-    domain: null,
-    groupName: null,
-    pinned: 'all',
-    savedWithin: null,
-    resultCount: 0,
-  });
-  const trailingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  const emitSearchEvents = useCallback((snapshot: SearchEventSnapshot) => {
-    const names = searchEventNames(snapshot);
-    for (const name of names) {
-      void trackProductEvent(name, {
-        query: snapshot.query,
-        resultCount: snapshot.resultCount,
-        ...(name === 'search_filtered'
-          ? {
-              domain: snapshot.domain,
-              groupName: snapshot.groupName,
-              pinned: snapshot.pinned,
-              savedWithin: snapshot.savedWithin,
-            }
-          : {
-              hasDomainFilter: !!snapshot.domain,
-              hasSavedWithinFilter: !!snapshot.savedWithin,
-            }),
-      });
-    }
-    analyticsStateRef.current = {
-      lastSignature: buildSearchEventSignature(snapshot),
-      lastEmitAt: Date.now(),
-    };
-  }, []);
-
-  useEffect(() => {
-    const snapshot: SearchEventSnapshot = {
-      query: normalizedSearchQuery,
-      domain: filters.domain || null,
-      groupName: filters.groupName || null,
-      pinned: filters.pinned || 'all',
-      savedWithin: filters.savedWithin || null,
-      resultCount: searchResults.length,
-    };
-    latestSnapshotRef.current = snapshot;
-
-    if (!snapshot.query) return;
-
-    const state = analyticsStateRef.current;
-    const now = Date.now();
-    if (
-      shouldEmitSearchEvents({
-        lastSignature: state.lastSignature,
-        lastEmitAt: state.lastEmitAt,
-        nextSignature: buildSearchEventSignature(snapshot),
-        now,
-      })
-    ) {
-      if (trailingTimerRef.current) {
-        clearTimeout(trailingTimerRef.current);
-        trailingTimerRef.current = null;
-      }
-      emitSearchEvents(snapshot);
-      return;
-    }
-
-    // 窗口内：重排 trailing 定时器（每次输入都把补发时间推到窗口末尾），
-    // 补发的是 latestSnapshotRef 里的最新快照，不是触发本次 effect 的旧快照。
-    if (trailingTimerRef.current) clearTimeout(trailingTimerRef.current);
-    const wait = remainingMsUntilAllowed(state.lastEmitAt, now, SEARCH_EVENT_THROTTLE_MS);
-    trailingTimerRef.current = setTimeout(() => {
-      trailingTimerRef.current = null;
-      const latest = latestSnapshotRef.current;
-      if (!latest.query) return;
-      if (buildSearchEventSignature(latest) === analyticsStateRef.current.lastSignature) return;
-      emitSearchEvents(latest);
-    }, wait);
-  }, [emitSearchEvents, filters, normalizedSearchQuery, searchResults.length]);
-
-  useEffect(
-    () => () => {
-      if (trailingTimerRef.current) clearTimeout(trailingTimerRef.current);
-    },
-    []
-  );
-
   const updateFilters = useCallback((updater: (current: SearchFilters) => SearchFilters) => {
     startFilterTransition(() => {
       setFilters(current => updater(current));
@@ -202,13 +103,6 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({ searchQuery 
       url: tab.url,
       pinned: !!tab.pinned,
     }));
-
-    void trackProductEvent('session_restored', {
-      sessionId: group.id,
-      sessionName: group.name,
-      source: 'search',
-      tabCount: group.tabs.length,
-    });
 
     if (!group.isLocked) {
       // ponytail: 去掉 fake dispatch，依赖真实 thunk fulfilled 触发 reducer + middleware
@@ -633,7 +527,7 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({ searchQuery 
                 <ul className="list-disc list-inside space-y-0.5 text-left">
                   <li>支持搜索会话名称、标签标题或 URL</li>
                   <li>可结合域名、保存时间和固定标签筛选</li>
-                  <li>如果刚换设备，可先登录后手动同步一次</li>
+                  <li>如果刚换设备，可先在设置里连接 WebDAV 云盘，然后手动同步一次</li>
                 </ul>
               </div>
             </div>

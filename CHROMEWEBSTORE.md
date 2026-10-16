@@ -1,6 +1,32 @@
 # Chrome Web Store Listing — TapStack
 
-> Last Updated: 2026-10-14
+> Last Updated: 2026-10-16
+>
+> **2026-10-16 云端后端下线（未上架，仅仓库变更）**：TapStack 不再提供服务端账户体系。
+> ① **删除了唯一的必选主机权限** `https://*.supabase.co/*`，现在 `host_permissions` 为**空** ——
+>    安装时不再向你索要任何网站访问权。② WebDAV「自带存储」从「可选」变为**唯一**的跨设备
+>    同步方式：它走**运行时按需申请**的可选主机权限（点「测试连接」或
+>    「检查并推送到云端」时浏览器才弹窗），且不经过我们的服务器。③ 商店文案与数据使用表已随之改写（删掉「登录同步 /
+>    TapStack 云端账户」，鉴权信息改为「不收集」）。
+>    ⚠️ **版本号未动（仍是 1.24.1）、未提审**：本条记录的是仓库与待发布文案的变更，
+>    上架前需重新走一次 `pnpm package` + upload。已上架的 1.24.1 是**旧构建（账户版）**，
+>    不是本仓库当前状态；本次改动**尚未构建、未上传、未提审**（见下一条线上核对）。
+>
+> **2026-10-16 线上核对：线上 = `1.24.1`（账户版）**：公开 `update2/crx` 实测返回
+> `BBBPNCCBCLNNPHCHGHPFMCJJFHIGEPBK_1_24_1_0.crx`，说明 2026-10-15 提交的 1.24.1
+> 已过审上架（该提交仍是 Supabase/账户构建）。**这直接决定「回退导出」的窗口**：现在从
+> 商店安装 TapStack 得到的仍是能登录旧后端的账户版；一旦 WebDAV-only 版本上架，新用户只会
+> 拿到无账户版，老用户会被自动升级。面向 1.24.1 及更早账户用户的**回退导出说明见下方
+> 「账户用户回退导出」**（上架时需并入商店的版本更新说明）。
+>
+> **2026-10-15 发布 1.24.1（含 1.24.0 / 1.23.1）**：提交前核实线上 = `1.23.0`
+> （公开商店页实测，非本表推断）。`pnpm package` 后 upload 返回 `uploadState=SUCCESS`、
+> 草稿 `crxVersion=1.24.1`，publish 返回 `status=OK` 且草稿被重置为 `NOT_FOUND`
+> —— 这是「已提交审核」的形态，**线上仍是 1.23.0**，过审后自动切换。
+> ⚠️ 本次 OAuth refresh token 已失效并重新授权过；新 token 落在 `/Users/panbo/Code/.env`
+> （仓库外）。`~/.config/mcp/mcp.json` 里的 `CWS_CLIENT_SECRET` 是**另一份配对关系**
+> （用 `Code/.env` 的 secret 换 token 会 `invalid_client`）—— 授权脚本读 `CLIENT_SECRET`
+> 环境变量，不要只导出 `CWS_` 前缀的变量，否则会静默回退到坏的那份。
 >
 > **2026-10-11 线上状态核对（v2 API fetchStatus 实证）**：线上已发布 = `1.22.12`（deployPercentage=100）。
 > 本表此前把 1.22.13–1.22.16 标为「待提审」，但核对时它们**既不在线上、也无待审记录**
@@ -34,10 +60,10 @@ TapStack 把你当前浏览器窗口里的所有标签页保存为一个命名�
 · 误删保护：删除前二次确认（「删除全部会话」强制确认并显示数量），删除后彻底清除
 · 一键清理：清除重复标签页和空会话
 · 导入导出：支持 OneTab 文本格式导入导出，以及 JSON 备份
-· 登录同步：登录后会话自动同步云端，换设备、换浏览器也能找回你的工作现场
-· 自带存储：也可以不同步到我们的服务器——选择「自带存储」，数据只同步到你自己的云盘（坚果云、自建 Nextcloud 等 WebDAV 服务），会话内容在离开浏览器前就用你的口令加密
+· 自带存储：数据只同步到**你自己的云盘**（坚果云、自建 Nextcloud 等 WebDAV 服务），不经过我们的服务器——会话内容在离开浏览器前就用你的口令加密
+· 跨设备同步：换设备、换浏览器也能找回你的工作现场（**需要你自备一个 WebDAV 云盘**，扩展不再提供注册登录）
 
-隐私说明：会话数据默认只保存在你的浏览器本地；开启同步后，数据只会传输到你自己选择的云端——登录 TapStack 云端账户，或选择「自带存储」同步到你自己的云盘（**不经过我们的服务器**）。扩展不收集任何分析数据，也不读取你的浏览器自动浏览历史——**同步时上传的网址与标题，正是你主动保存的标签页本身**（会话数据），见下方数据使用表。
+隐私说明：会话数据默认只保存在你的浏览器本地；开启同步后，数据只会传输到**你自己选择的云盘**（WebDAV），**不经过我们的服务器**。扩展不设账户体系、不收集任何分析数据，也不读取你的浏览器自动浏览历史——**同步时上传的网址与标题，正是你主动保存的标签页本身**（会话数据），见下方数据使用表。
 
 反馈与问题：https://github.com/hibernate-pano/chrome-plugin-one-tab/issues
 
@@ -54,10 +80,9 @@ Key features:
 · Deletion protection: you confirm before anything is deleted (deleting all sessions always asks and shows the count), and a deleted session is permanently removed — there is no recycle bin and no undo
 · One-click cleanup: remove duplicate tabs and empty sessions
 · Import/export: OneTab text format, plus JSON backup
-· Cloud sync: sign in and your sessions sync automatically, so you can pick up your work on any device or browser
-· Own-cloud sync (optional): skip our servers entirely — choose "self-hosted storage" and your sessions sync to your own WebDAV storage (JianGuoCloud, a self-hosted Nextcloud, and similar), encrypted with your passphrase before anything leaves your browser
+· Cross-device sync: set up your own WebDAV storage (JianGuoCloud, a self-hosted Nextcloud, and similar) and your sessions sync there, encrypted with your passphrase before anything leaves your browser — so you can pick up your work on any device or browser. There is no TapStack account; the extension never contacts our servers.
 
-Privacy: session data stays in your browser by default; once sync is on it goes only to a cloud you choose yourself — your TapStack account, or your own storage via "self-hosted storage" (**it never passes through our servers**). The extension collects no analytics and does not read your browser's automatic browsing history — **the URLs and titles uploaded during sync are the tabs you deliberately saved** (the session data itself); see the data-use table below.
+Privacy: session data stays in your browser by default; once sync is on it goes only to **your own WebDAV storage that you choose** (**it never passes through our servers**). The extension has no sign-in and collects no analytics, and does not read your browser's automatic browsing history — **the URLs and titles uploaded during sync are the tabs you deliberately saved** (the session data itself); see the data-use table below.
 
 Issues: https://github.com/hibernate-pano/chrome-plugin-one-tab/issues
 
@@ -96,31 +121,31 @@ Productivity
 | Permission | Type | Justification |
 |------------|------|---------------|
 | `tabs` | permissions | 读取当前窗口的标签页标题与网址，用于把标签页保存为会话；恢复会话时按保存的网址重新打开标签页。扩展功能的核心依赖。 |
-| `storage` | permissions | 在本地保存用户的会话数据、设置与登录状态，保证离线可用。 |
+| `storage` | permissions | 在本地保存用户的会话数据、设置与云盘配置（不含应用密码与加密口令），保证离线可用。 |
 | `unlimitedStorage` | permissions | 重度用户可能保存数百个会话、每个含几十个标签页（每条含网址、标题、favicon URL），默认存储配额（`chrome.storage.local` 约 10MB）可能不足；解除本地存储上限。<br>**为什么代码里搜不到配额探测**：本扩展不做主动空间管理（无 `getBytesInUse` / `QUOTA_BYTES` 调用）——超配额由 Chrome 抛出，`errorHandler.ts` 的 `STORAGE_QUOTA_EXCEEDED` 文案负责告知用户。本权限是**预防性**的，不是某段探测代码的依赖。 |
 | `notifications` | permissions | 保存成功/失败时给予确认（如"已将 N 个标签页保存为新会话"、"当前窗口没有可保存的标签页"），避免静默操作。 |
 | `contextMenus` | permissions | 提供右键菜单项"保存当前标签页 / 保存其他标签页"，让用户不打开管理页也能保存。 |
-| `alarms` | permissions | 定期（约每分钟）检查云端是否有其他设备保存的新会话并合并到本地；以及保存后延迟上传，保证多设备同步。 |
-| `https://*.supabase.co/*` | host_permissions | 仅当用户登录 TapStack 云端账户时，用于登录鉴权与会话数据的跨设备同步。不访问其他任何网站。 |
-| `https://*/*`、`http://localhost/*`、`http://127.0.0.1/*` | optional_host_permissions | **仅当用户主动选择「自带存储」并点击「测试连接」时**，浏览器才会弹窗请求访问用户填写的云盘地址；宽匹配是为了兼容各类自建 WebDAV 服务与本地调试地址。未使用该功能时不会申请、也不会获得该权限，可在 Chrome 扩展详情页随时撤销。不使用「自带存储」的用户与此权限完全无关。 |
+| `alarms` | permissions | 在你开启自动同步后，按你设置的间隔（5 / 10 / 30 / 60 分钟）检查云盘上是否有其他设备保存的新会话并合并到本地；以及保存后延迟上传，保证多设备同步。 |
+| **（无）** | host_permissions | **本扩展不声明任何必选主机权限。** 唯一需要访问网络主机的场景是「自带存储（WebDAV）」，它走**运行时按需申请**：只有你在设置里点击「测试连接」或「检查并推送到云端」并授予那个地址时，浏览器才会弹窗。安装时不会向你索要「读取和更改您在所有网站上的数据」。 |
+| `https://*/*`、`http://localhost/*`、`http://127.0.0.1/*` | optional_host_permissions | **仅当用户主动使用「自带存储」并点击「测试连接」或「检查并推送到云端」时**，浏览器才会弹窗请求访问用户填写的云盘地址；宽匹配是为了兼容各类自建 WebDAV 服务与本地调试地址。未使用该功能时不会申请、也不会获得该权限，可在 Chrome 扩展详情页随时撤销。不使用「自带存储」的用户与此权限完全无关。 |
 
 ## Privacy & Data Use
 
 ### Data Collection
 
-**Does the extension collect user data?** Yes（仅登录同步场景；未登录时所有数据只留在本地）
+**Does the extension collect user data?** Yes（仅 WebDAV 自带存储场景；未开启同步时所有数据只留在本地）
 
 | Data Type | Collected? | Transmitted Off-Device? | Purpose | Shared with Third Parties? |
 |-----------|-----------|------------------------|---------|---------------------------|
 | Personally identifiable info | No | No | — | No |
 | Health info | No | No | — | No |
 | Financial info | No | No | — | No |
-| Authentication info | Yes（登录邮箱/会话令牌） | Yes（仅传输到用户自己的云端账户） | 登录鉴权；标识数据归属 | No |
+| Authentication info | No（扩展不设账户体系，**不收集邮箱、会话令牌或任何登录凭据**。云盘的应用密码与加密口令只存在你本次浏览器会话的内存里，不写入磁盘） | No（应用密码仅随请求发往**你自己填写的**那个云盘地址） | 向你的云盘证明身份 | No（仅该云盘服务商，见上行） |
 | Personal communications | No | No | — | No |
 | Location | No | No | — | No |
 | Web history | No（不自动收集浏览历史；主动保存的标签页单列于 Website content） | No | — | No |
-| User activity | 仅本地记录（产品事件仅存本地，不上传） | No | 改进功能参考 | No |
-| Website content | Yes（用户主动保存的标签页网址与标题） | Yes（仅同步到用户自己选择的云端：TapStack 云端账户，或「自带存储」下用户自己的云盘） | 跨设备恢复会话 | No |
+| User activity | 不记录（本版本没有产品事件或使用统计：无埋点、无分析 SDK） | No | — | No |
+| Website content | Yes（用户主动保存的标签页网址与标题） | Yes（仅同步到**用户自己选择并授权的** WebDAV 云盘，**不经过 TapStack 服务器**） | 跨设备恢复会话 | No（仅该云盘服务商，见上行） |
 
 ### Data Use Certification
 - [x] Data is NOT sold to third parties
@@ -133,7 +158,7 @@ Productivity
 
 https://tapstack-two.vercel.app/privacy.html
 
-<!-- 隐私政策页面源码：src/legal/privacy.html（最后更新 2026-10-13）。
+<!-- 隐私政策页面源码：src/legal/privacy.html（最后更新 2026-10-16）。
      2026-10-02 与线上商店页核对：商店 Privacy 区展示的就是该 URL。 -->
 
 ## Distribution
@@ -165,6 +190,55 @@ https://github.com/hibernate-pano/chrome-plugin-one-tab
 
 ## Version History
 
+> ⚠️ **历史条目**：下表 1.23.1 及更早版本里提到的「TapStack 云端 / 登录 / Supabase」描述的是 2026-10-16 云端下线前的产品形态，仅作历史记录，不代表本文改写后的待发布版本——待发布版本只支持自带存储（WebDAV），无账户体系（**当前线上 1.24.1 仍是账户版，见上方「2026-10-16 线上核对」**）。
+
+### 账户用户回退导出（仅 1.24.1 及更早、用过账户登录的用户；上架时并入商店 changelog）
+
+> **结论先说**：新版本没有「登录 TapStack 云端」入口，也读不到托管后端的数据。托管后端里的
+> 历史数据仍然存在，但只有旧版（1.24.1 及更早）能读。**请在新版自动升级到你之前，用旧版把
+> 云端数据导出成 JSON 备份。** Chrome 应用商店**不提供旧版本下载或回退**——能走通的路只有
+> 「升级前保留一份已安装的旧版」和「在新版上架前从商店安装（当前商店版仍是账户版）」。
+
+**怎么导出（在旧版里做，顺序不要颠倒）**
+
+1. 打开 TapStack，用你原来的邮箱与密码登录。
+2. 点同步按钮 →「下载」→ 选「合并」（不会覆盖本地会话），把云端会话拉到本地。
+3. 核对列表里有你需要的会话，尤其只存在于云端、本机没有的那些。
+4. 右上角菜单 →「导出数据 → JSON 格式」，保存 `.json` 文件；打开文件确认能看到会话名与网址。
+5. 确认备份可用之后，再升级或卸载。升级不会删除本机已有的会话，但会移除账户登录入口。
+
+**怎么「装回旧版本」——可行的和不可行的**
+
+- **可行（最省事）**：在新版上架前，直接从商店安装 / 更新 TapStack（截至 2026-10-16 线上 `1.24.1` 仍是账户版），登录后按上面导出。**这是一条有期限的窗口**：新版上架后，商店只给新版。
+- **可行（升级后仍要取回）**：升级前复制已安装的旧版目录留档：
+  `~/Library/Application Support/Google/Chrome/<配置文件>/Extensions/bbbpnccbclnnphchghpfmcjjfhigepbk/1.24.1/`
+  （Windows：`%LOCALAPPDATA%\Google\Chrome\User Data\<配置文件>\Extensions\bbbpnccbclnnphchghpfmcjjfhigepbk\1.24.1\`；
+  Linux：`~/.config/google-chrome/<配置文件>/Extensions/bbbpnccbclnnphchghpfmcjjfhigepbk/1.24.1/`），
+  之后在 `chrome://extensions` 打开「开发者模式」→「加载已解压的扩展程序」加载它。副本扩展 ID 与商店版不同，
+  看不到本机旧会话，但登录后云端数据会照常下载、可正常导出；副本不会自动更新，导出完请删掉。
+- **不可行**：从仓库源码本地构建 v1.24.1。旧版构建需要当时只存在于构建环境 `.env` 中的 Supabase 地址与 anon key，仓库里没有，照 tag 构建出来的包登录不了。
+- **已经升级且没有旧副本**：目前**没有自助办法**。请发邮件到 `privacy@tapstack.app`（注明账户邮箱）或到 GitHub Issues 留言，我们会确认托管后端状态并尽力协助——前提是后端尚未关停。
+
+**跳过会丢什么、期限到什么时候**
+
+- 只存在于托管后端、没有落到本机的会话：后端关停后**永久无法恢复**（本产品没有回收站、没有撤销）。
+- 托管后端目前仍然在线，但关停日期尚未确定；一旦确定，我们会提前在隐私政策页、README 与商店更新说明中公告。实际可用的截止日 = 「移除账户体系的新版本上架、你的扩展被自动升级」与「托管后端关停」两者中较早的那个，而 Chrome 的自动升级可能在你不注意时发生。一旦自动升级完成，扩展内的导出入口就不存在了；此后唯一可能的取回途径是一份旧版本构建副本（你在升级前从 Chrome 配置目录复制的那份；自行从 v1.24.1 tag 构建因旧后端地址与密钥未进仓库而行不通），而已经自动升级且从未保留副本的用户，目前没有可自助执行的路径，这个情形不可恢复，请联系 privacy@tapstack.app（能否协助取决于后端是否尚未关停）。跳过导出的会话将永久无法恢复——请现在导出，不要等公告。
+
+<details>
+<summary>English summary（给英文用户）</summary>
+
+Only for users who signed in with a TapStack account **before 2026-10-16**. The WebDAV-only build
+removes the sign-in entry and cannot read the hosted backend, but your hosted data still exists.
+Export it with the old version (1.24.1 or earlier) **before the new build auto-updates**: sign in,
+click sync → Download → Merge (not Overwrite), check the list, then menu → Export data → JSON and
+verify the file. The Chrome Web Store does **not** offer previous versions; copying the installed
+extension folder before the update is the only self-serve way back (details above). The hosted
+backend is still online, but its shutdown date is not yet set and we will announce it in advance.
+Any sessions that exist only on the hosted side are unrecoverable once it is retired. Questions:
+privacy@tapstack.app.
+
+</details>
+
 <!-- 每次提交到商店的版本都要加一条。 -->
 <!-- ⚠️ 1.21.1 的发布状态是本表唯一的空洞：它夹在「1.21.0 已上架」与「1.22.0 已提审」之间，
      历史 changelog 写的是回收站功能（该功能已被 1.22.0 废除）。是否真的上传过需向 Chrome
@@ -172,9 +246,9 @@ https://github.com/hibernate-pano/chrome-plugin-one-tab
 
 | Version | Date | Changes | Status |
 |---------|------|---------|--------|
-| 1.24.1 | 2026-10-14 | **点开单个标签改回「打开即从会话移除」**：1.22.13 曾把点开改成两步（先标记「已打开」、再用独立按钮移除），本次按产品定位改回——标签管理器是未读标签的暂存，点击继续浏览的同时该条即从会话移除（锁定会话除外，可反复打开）。比 1.22.13 之前多一道成功门：只有浏览器真正打开了页面才移除；本设备打不开的地址（本地文件、浏览器内部页面等）会明确提示并保留记录，不会出现「页面没看到、记录也没了」。 | 未提审 |
-| 1.24.0 | 2026-10-14 | **自带存储：同步到你自己的云盘（WebDAV）**。① 新增可选后端「自带存储」：数据同步到你自己的云盘（坚果云、自建 Nextcloud 等），**不经过我们的服务器**；会话内容在离开浏览器前用你的口令加密（口令只存在本次浏览器会话的内存中、不落盘）。两点如实说明：目录清单以明文存放，云盘服务商能看到「有多少会话、何时改过」（不含名称与网址）；在设置里选「不加密」则会话名称与网址也可见。忘记口令无法找回，云盘上的数据将无法解密。② **默认行为零变化**：存量用户仍走 TapStack 云端，不配置不会被切到任何没选过的后端。③ **权限按需申请**：只有你主动选择「自带存储」并点击「测试连接」时，浏览器才会弹窗请求该地址的访问权限；不使用就永远不会申请。④ 对真实服务端做了协议实测与三套真机端到端验证，覆盖并发写保护、未解锁时给出可读错误且绝不静默改传其他后端、权限与内容安全策略放行。 | 未提审 |
-| 1.23.1 | 2026-10-13 | **一次针对数据丢失风险的深度体检收口**（六方向并行审查 + 逐条变异验证）：① **修掉一条会静默覆盖你全部会话的路径**：当浏览器本地存储不可用（配额满、无痕窗口、站点数据被清）时，此前代码会把「读不到」当成「你没有会话」返回空列表——而保存、改名、删除、移动标签走的都是「读出-改回写」，于是下一次保存就会把你所有会话替换成刚保存的那一条，界面还提示「已保存」，且**没有回收站可以找回**。现在读取失败会明确中止并保住原有数据，不再伪装成空列表。② **修掉一处设置被默认值覆盖**：扩展刚打开、设置还在读取的那几秒里（冷启动读取较慢时），你若改动任意设置项并保存，可能把整份出厂默认值写回去、覆盖你原本的设置（还可能同步到云端）。现在在真正读到你的设置之前会拒绝写入并提示你重试。③ **自动同步不再「读不到就当关掉」**：读取设置失败时，此前会直接清除定时任务，表现为「我明明开着自动同步却不动了」，且没有任何提示。现在改为 1 分钟后自动重试，期间不出流量、也不会动你的上传。④ **一处同步异常不再把你的同步节奏退回每分钟**：你选了 1 小时同步，某次异常后扩展会退回每分钟反复拉取，白耗流量与电量；现在沿用你选的节奏。⑤ **诊断导出不再谎报**：导出诊断文件时若某项读取失败，此前会被写成「没有待上传」，导致排障时被引向错误结论；现在如实标记为「读取失败」。本次新增并强化了自动化回归测试，每条关键修复都做了「故意改坏实现、确认测试会红」的变异验证；其中一条原有测试被发现是**假绿**（实际测的是另一处修复），已修正为真正守护它声称的不变量。另修正 3 处结论性错误（把「依赖扩展唤醒」说成「永久停摆」、误判一处注释的作用域、把缺陷根因归到错误的提交）。 | 未提审 |
+| 1.24.1 | 2026-10-14 | **点开单个标签改回「打开即从会话移除」**：1.22.13 曾把点开改成两步（先标记「已打开」、再用独立按钮移除），本次按产品定位改回——标签管理器是未读标签的暂存，点击继续浏览的同时该条即从会话移除（锁定会话除外，可反复打开）。比 1.22.13 之前多一道成功门：只有浏览器真正打开了页面才移除；本设备打不开的地址（本地文件、浏览器内部页面等）会明确提示并保留记录，不会出现「页面没看到、记录也没了」。 | 已上架（2026-10-15 提交、2026-10-16 复核线上 crx = `..._1_24_1_0.crx`；该构建为账户版，不含 WebDAV-only 改动） |
+| 1.24.0 | 2026-10-14 | **自带存储：同步到你自己的云盘（WebDAV）**。① 新增可选后端「自带存储」：数据同步到你自己的云盘（坚果云、自建 Nextcloud 等），**不经过我们的服务器**；会话内容在离开浏览器前用你的口令加密（口令只存在本次浏览器会话的内存中、不落盘）。两点如实说明：目录清单以明文存放，云盘服务商能看到「有多少会话、何时改过」（不含名称与网址）；在设置里选「不加密」则会话名称与网址也可见。忘记口令无法找回，云盘上的数据将无法解密。② **默认行为零变化**：存量用户仍走 TapStack 云端，不配置不会被切到任何没选过的后端。③ **权限按需申请**：只有你主动选择「自带存储」并点击「测试连接」时，浏览器才会弹窗请求该地址的访问权限；不使用就永远不会申请。④ 对真实服务端做了协议实测与三套真机端到端验证，覆盖并发写保护、未解锁时给出可读错误且绝不静默改传其他后端、权限与内容安全策略放行。 | 未单独提审，随 1.24.1 一并上架 |
+| 1.23.1 | 2026-10-13 | **一次针对数据丢失风险的深度体检收口**（六方向并行审查 + 逐条变异验证）：① **修掉一条会静默覆盖你全部会话的路径**：当浏览器本地存储不可用（配额满、无痕窗口、站点数据被清）时，此前代码会把「读不到」当成「你没有会话」返回空列表——而保存、改名、删除、移动标签走的都是「读出-改回写」，于是下一次保存就会把你所有会话替换成刚保存的那一条，界面还提示「已保存」，且**没有回收站可以找回**。现在读取失败会明确中止并保住原有数据，不再伪装成空列表。② **修掉一处设置被默认值覆盖**：扩展刚打开、设置还在读取的那几秒里（冷启动读取较慢时），你若改动任意设置项并保存，可能把整份出厂默认值写回去、覆盖你原本的设置（还可能同步到云端）。现在在真正读到你的设置之前会拒绝写入并提示你重试。③ **自动同步不再「读不到就当关掉」**：读取设置失败时，此前会直接清除定时任务，表现为「我明明开着自动同步却不动了」，且没有任何提示。现在改为 1 分钟后自动重试，期间不出流量、也不会动你的上传。④ **一处同步异常不再把你的同步节奏退回每分钟**：你选了 1 小时同步，某次异常后扩展会退回每分钟反复拉取，白耗流量与电量；现在沿用你选的节奏。⑤ **诊断导出不再谎报**：导出诊断文件时若某项读取失败，此前会被写成「没有待上传」，导致排障时被引向错误结论；现在如实标记为「读取失败」。本次新增并强化了自动化回归测试，每条关键修复都做了「故意改坏实现、确认测试会红」的变异验证；其中一条原有测试被发现是**假绿**（实际测的是另一处修复），已修正为真正守护它声称的不变量。另修正 3 处结论性错误（把「依赖扩展唤醒」说成「永久停摆」、误判一处注释的作用域、把缺陷根因归到错误的提交）。 | 未单独提审，随 1.24.1 一并上架 |
 | 1.23.0 | 2026-10-11 | **自动同步改为默认关闭，并由你决定多久同步一次**：此前扩展每 60 秒自动连一次云端、且每次都把全部会话重新下载一遍，会话多时这会持续消耗流量与电量。现在默认不再自动同步——打开页面不会自动拉取云端，需要更新时点「同步」按钮手动获取即可。想要自动同步的话，在菜单里打开「自动同步」开关，然后从 **5 分钟 / 10 分钟 / 30 分钟 / 1 小时** 四档里选一个节奏（默认 10 分钟）。**三件需要知道的事**：① 已经在用自动同步的老用户，你的开关状态保持不变，不会被偷偷关掉；② 关掉自动同步**不影响你本地改动的上传**——你保存、改名、删除、移动标签仍会照常上传到云端（只是不再自动去「拉」别人的改动），所以不会出现「改了却留在本机」的情况；③ 自动同步关闭期间，本页显示的是本机数据，可能不是云端最新，需要时点「同步」。本版同时包含 1.22.17 的全部内容（该版本未单独提审）：会话内标签拖拽排序恢复可用、同步只传改动过的会话（不再整库重传）、网络故障时自动拉开重试间隔、移动标签失败会自动恢复原顺序并提示、导入同一份备份两次不再产生重复会话。新增自动化回归测试，关键修复均做了「故意改坏实现、确认测试会红」的变异验证 | 已提交审核（2026-10-11，publish 返回 status=OK；fetchStatus 确认 submittedItemRevisionStatus=PENDING_REVIEW / crxVersion=1.23.0；线上仍 1.22.12 待过审后自动切换） |
 | 1.22.17 | 2026-10-11 | 会话内标签拖拽排序恢复可用：此前版本拖动会话里的标签没有反应，现在可以把标签拖到本会话或别的会话的目标位置（拖动时目标行高亮，松手即落定；键盘上下/Home/End 重排不变）。同步更快、更省流量：没变化时不再整库重传（此前每次同步都把全部会话重新上传下载一遍），只有真正改动过的会话才上传；网络故障时会自动拉开重试间隔、不再每分钟空转消耗流量与电量，网络恢复后自动回到正常节奏。移动标签失败不再「看起来动了、实际没存住」：存储写入失败时列表会自动恢复原顺序并给出明确提示。导入同一份备份文件两次不再产生整份重复会话。新增 40 余条自动化回归测试，每条关键修复都做了「故意改坏实现、确认测试会红」的变异验证 | 未单独提审，随 1.23.0 一并上架 |
 | 1.22.16 | 2026-10-09 | 一次针对**数据安全与诚实度**的深度体检收口（六方向并行审查 + 逐条实测验证）：① **修掉一条会静默丢会话的迁移竞态**：浏览器启动与首次打开管理页时的数据迁移是「整表读出-改完-写回」，此前它们**不在写入队列内**——若此刻后台同步或你的某次保存正在写入，迁移会用旧快照把刚写入的会话整段覆盖掉，而界面已经提示「已保存」，云端也不会再有这条记录（本机与云端一起丢）。现在迁移统一进写入队列串行执行。② **修掉一处会让旧数据回滚覆盖新数据的缺陷**：从旧版本升级时，「已迁移」标志位可能被覆盖丢失，导致残留的旧数据在下次启动时**再次覆盖**你当前的会话列表。现在标志位合并时不再互相覆盖。③ **设置被静默重置**：读取设置失败时，此前界面会静默改用出厂默认值，你随后改任何一项设置都会把整份默认值写回、覆盖你原本的设置（还可能同步到云端）。现在读不到设置时会明确告知，并拒绝用默认值覆盖。④ **数据库安全收口**：三张存有浏览历史与会话的表此前**没有启用行级安全策略**（策略写了但开关没打开，等于没生效）。现已启用，并在迁移与校验脚本里都加了「启用前必须确认策略齐备」的硬检查，避免反过来把产品锁死。⑤ **删除操作更可靠**：删除时若无法确认云端字段状态（网络抖动），此前会按「降级写入」处理，导致删除在其他设备上被静默撤销、已删内容重新出现；现在这种情况会明确失败并稍后重试。⑥ **恢复会话的说明更准确**：恢复会消费原会话（这是设计），但此前提示写「打不开的标签仍保留在会话中」——实际那时会话已移除，是错误承诺。现在按会话是否锁定如实说明。⑦ **导入结果不再含糊**：导入备份现在会告诉你「文件内共 N 个会话、成功导入 X 个、跳过 Y 个」，而不是只报成功或直接刷新页面。⑧ **保存入口全部标注「会关闭标签」**：右键菜单、快捷键、新手引导、空列表提示此前都没说保存会关掉当前窗口的标签，现在每个入口都写明。⑨ **「删除前确认」改名「删除会话前确认」**，并给单标签删除按钮补上「无法恢复」说明——该开关此前只管整组删除，文案却让人以为全局生效。⑩ 线上下线了早已不再维护的旧版网页界面（其代码已删除），隐私政策页保持可用并更新。新增 30 条自动化回归测试，并对每条修复做了「故意改坏实现看测试是否变红」的变异验证 | 未单独提审，随 1.23.0 一并上架 |
@@ -209,7 +283,7 @@ https://github.com/hibernate-pano/chrome-plugin-one-tab
 ## Review Notes
 
 ### Known Issues / Limitations
-- 多设备同步要求登录；未登录用户仅使用本地功能。
+- 多设备同步需要先配置你自己的 WebDAV 云盘（坚果云、自建 Nextcloud 等）；未配置时仅使用本地功能。扩展不设账户体系，无需登录。
 - 删除的会话会从本设备彻底移除且无法恢复，因此每次删除前都会弹出确认框；
-  为避免其他设备把已删除内容重新同步回来，云端会保留一条轻量的「已删除」标记 30 天后自动清除。
+  为避免其他设备把已删除内容重新同步回来，云盘上会保留一条轻量的「已删除」标记（墓碑分片）约 30 天后由同步任务自动清除。
 - 多设备同时编辑同一会话时，以最后保存的一方为准（错峰使用不受影响）。

@@ -19,13 +19,7 @@
     "format": "prettier --write \"src/**/*.{ts,tsx}\"",
     "type-check": "tsc --noEmit",
     "type-check:tests": "tsc -p tsconfig.test.json --noEmit",
-    "validate": "node scripts/validate-extension.mjs && pnpm type-check && pnpm type-check:tests && pnpm lint && pnpm lint:tests && pnpm build && pnpm check:bundle",
-    "test:supabase-smoke": "node scripts/supabase-smoke-test.mjs",
-    "supabase:migrate": "node scripts/supabase-migrate.mjs",
-    "supabase:migrate:dry-run": "node scripts/supabase-migrate.mjs --dry-run",
-    "supabase:verify": "node scripts/supabase-migrate.mjs --verify-only",
-    "probe:rls": "node scripts/anon-rls-probe.mjs",
-    "probe:rls:write": "node scripts/anon-rls-probe.mjs --write"
+    "validate": "node scripts/validate-extension.mjs && pnpm type-check && pnpm type-check:tests && pnpm lint && pnpm lint:tests && pnpm build && pnpm check:bundle"
   },
   "keywords": [
     "chrome-extension",
@@ -38,7 +32,6 @@
   "packageManager": "pnpm@10.24.0",
   "dependencies": {
     "@reduxjs/toolkit": "^2.2.1",
-    "@supabase/supabase-js": "^2.49.4",
     "clsx": "^2.1.1",
     "lz-string": "^1.5.0",
     "react": "^18.2.0",
@@ -51,7 +44,6 @@
     "@types/chrome": "^0.0.262",
     "@types/lz-string": "^1.5.0",
     "@types/node": "^22.14.0",
-    "@types/pg": "^8.23.1",
     "@types/react": "^18.2.64",
     "@types/react-dom": "^18.2.21",
     "@typescript-eslint/eslint-plugin": "^7.1.1",
@@ -62,7 +54,6 @@
     "eslint-config-prettier": "^9.1.0",
     "eslint-plugin-react": "^7.34.0",
     "eslint-plugin-react-hooks": "^4.6.0",
-    "pg": "^8.23.0",
     "playwright": "1.61.0",
     "postcss": "^8.5.28",
     "prettier": "^3.2.5",
@@ -72,7 +63,6 @@
   },
   "pnpm": {
     "overrides": {
-      "@supabase/auth-js": "2.70.0",
       "glob@>=10.2.0 <10.5.0": "10.5.0",
       "minimatch@<3.1.4": "3.1.5",
       "minimatch@>=9.0.0 <9.0.7": "9.0.9",

@@ -43,10 +43,9 @@ export type MessageSender = (msg: unknown) => Promise<unknown>;
 /**
  * 默认等待上限（1.22.11）。
  *
- * 【为什么必须有上限】SW 侧没有一处超时：supabase client 没配 AbortSignal、
- * 队列任务没有任务级上限、消息协议本身也只是裸 await。于是一旦 SW 忙（整库上传
- * / 逐组加解密）或已被浏览器回收，popup 这边就是**无限期转圈**：没有任何信号告诉
- * 用户「刚才那次点击没生效」，他只会以为界面死了。而 Chrome 的 popup 一失去焦点
+ * 【为什么必须有上限】SW 侧的**消息协议与队列任务**没有上界（裸 await）：
+ * 于是一旦 SW 忙（整库上传 / 逐组加解密）或已被浏览器回收，popup 这边就是
+ * **无限期转圈**：没有任何信号告诉用户「刚才那次点击没生效」，他只会以为界面死了。而 Chrome 的 popup 一失去焦点
  * 就销毁——用户点别处的那一刻，所有在途 sendMessage 的 Promise 会以同一句
  * "A listener indicated an asynchronous response by returning true, but the message
  * channel closed before a response was received" 一起 reject，实测表现为三条不同
@@ -61,10 +60,10 @@ export type MessageSender = (msg: unknown) => Promise<unknown>;
  * 「可能仍在继续」而不是「已取消」——对幂等的读/删除无所谓，对写操作若用户重试，
  * 底层 mutation 本身就是幂等的（见 core/mutationOps）。
  */
-// 导出：与 Supabase 请求级上界（utils/supabase/client.ts 的 REQUEST_TIMEOUT_MS）
-// 构成一条跨模块不变量——请求上界必须大于本值，否则用户先看到 popup 报失败、
-// 随后又看到操作其实成功，比慢更让人困惑。该不变量由
-// tests/supabaseRequestTimeout.test.ts 钉住，改任一侧都会被它抓到。
+// 上界不变量：WebDAV 侧已有请求级超时（AbortController，DEFAULT_REQUEST_TIMEOUT_MS，
+// 见 sync-backend/webdav/client.ts）。它**必须大于本值**，否则用户先看到 popup 报
+// 失败、随后又看到操作其实成功，比慢更让人困惑。该不变量由
+// tests/timeoutUpperBoundInvariant.test.ts 钉住，改任一侧都会被它抓到。
 export const DEFAULT_TIMEOUT_MS = 30_000;
 
 /** 超时 reason 的稳定前缀：界面文案与测试都按它识别，不依赖具体耗时数字。 */

@@ -1,6 +1,5 @@
 import { store } from '@/store';
 import { UPLOAD_DEBOUNCE_MS } from '@/core/syncTiming';
-import { getCurrentUser, setFromCache } from '@/store/slices/authSlice';
 
 /** MV3 SW 中由 chrome.alarms 驱动的延迟上传 alarm。 */
 export const SYNC_UPLOAD_ALARM = 'tapstack-scheduled-upload';
@@ -20,17 +19,19 @@ import { uploadSettings, downloadSettings } from '@/services/settingsSyncService
 import {
   validateMergeResult,
   decideDownloadPrecheck,
+  decideForceRemoteOverwrite,
   hasRemoteChanges,
 } from '@/core/syncDecision';
 // 合并语义已统一为 mergeOpStamped（OpStamp 全序决胜，组级 LWW 整组覆盖）。
 // 这是合并的唯一真相源；旧 LWW 实现已随 2026-10-05 瘦身删除。
 import { mergeOpStamped } from '@/core/opStampMerge';
 import { checkDeleteFailsafe } from '@/sync-backend/failsafe';
-import { readConfiguredBackendId } from '@/sync-backend';
+// 2026-10-16（Wave 2A）：把「未配置/未解锁」与真实网络故障分机器识别。
+// 见 sync-backend/lockedBackendError.ts 的完整论证。
+import { isLockedBackendError } from '@/sync-backend/lockedBackendError';
 import { dropSyncMergedGroups, removedGroupIds } from '@/core/mutationOps';
 import { ensureOpStampMigrated } from '@/background/opStampMigratedGuard';
 import { enqueue } from '@/background/mutationQueue';
-import { ensureAuthenticated } from '@/core/authGuard';
 import { errorHandler } from '@/utils/errorHandler';
 import { validateThemeStyle, validateThemeMode } from '@/utils/storage';
 import { logError, logInfo, logWarn } from '../utils/log';
@@ -48,6 +49,16 @@ export interface MergeResult {
   };
   reason?: string;
   /**
+   * 本轮失败的根因是「自带存储未配置/未解锁」（锁定占位后端抛出）。
+   *
+   * ── 为什么要与 `reason` 分开 ────────────────────────────────────────
+   * `reason` 仍保留**人话**（锁定后端的提示就是用户下一步），UI 原样展示；
+   * 而 `locked` 是给后台分类用的机器标记：它是正常用户状态，不是故障，
+   * backgroundSync 据此把本轮算作 `yielded`（不进退避、不清 alarm）。
+   * 把两者混成「reason === 'backend_locked'」会让人话从 toast 里消失。
+   */
+  locked?: boolean;
+  /**
    * 失败原因（用户可读）。与 `reason` 分开的原因：
    * `reason` 是**稳定的机器码**（测试、诊断面板按它识别分支），
    * 而这里放的是「云端看起来是空的，已中止以免清空你的数据」这类人话。
@@ -61,6 +72,11 @@ export interface MergeResult {
 export interface UploadResult {
   success: boolean;
   error?: string;
+  /**
+   * 失败根因是「自带存储未配置/未解锁」（锁定占位后端抛出）。
+   * 语义与 MergeResult.locked 相同：正常用户状态，后台应让路而不是退避。
+   */
+  locked?: boolean;
   /**
    * 本次确实没有执行的操作（success 仍为 true：墓碑/purge/设置等其他环节照常完成）。
    * 上传入口据此区分「已覆盖云端」与「空本地保护跳过覆盖」，避免给用户报假的成功。
@@ -252,22 +268,11 @@ export class SyncEngine {
     syncSettings?: boolean;
     onProgress?: SyncProgressCallback;
   }): Promise<MergeResult> {
-    // ponytail: 冷 SW 的 store 未恢复登录态（SW 是独立执行上下文）——
-    // 先尝试从持久化 session 恢复一次，否则 popup 发起的下载会一律
-    // not_authenticated（upload 已有同等恢复，download 曾缺失）。
-    //
-    // backendId 必须显式传（2026-10-14）：门禁要按后端决定查不查 Supabase 账号。
-    // 自带存储的用户没有 Supabase 账号，漏传会让他看到「用户未登录」，
-    // 且永远走不到锁定后端那句「去重新解锁」（真机 E2E 抓到的）。
-    const authed = await ensureAuthenticated({
-      isAuthenticated: () =>
-        (store.getState() as { auth: { isAuthenticated: boolean } }).auth.isAuthenticated,
-      restoreAuth: () => this.restoreAuth(),
-      backendId: await readConfiguredBackendId(),
-    });
-    if (!authed) {
-      return { success: false, groups: [], reason: 'not_authenticated' };
-    }
+    // ponytail: 2026-10-16 删除了原先的 ensureAuthenticated 门禁。
+    //   它问的是「你有没有账号」——账号体系已不存在，该门禁恒为假，
+    //   每个下载都在返回 not_authenticated 之前先去读一次 session。
+    //   现在唯一的「不可用」形态是自带存储未配置/未解锁，
+    //   由 sync-backend 的锁定占位后端抛出可读错（文案会原样透出）。
     if (this.isSyncing) {
       return { success: false, groups: [], reason: 'already_syncing' };
     }
@@ -368,7 +373,12 @@ export class SyncEngine {
           // 上传失败（如网络断开）时中止下载：此时拉云端只会用旧数据覆盖
           // 本地未推送的新状态。pending flag 已保留，下轮 alarm / 手动同步重试。
           logWarn(`[SyncEngine] 上传未成功，跳过本次下载: ${upResult.error}`);
-          return { success: false, groups: [], reason: 'pending_upload_failed' };
+          return {
+            success: false,
+            groups: [],
+            reason: 'pending_upload_failed',
+            ...(upResult.locked ? { locked: true } : {}),
+          };
         }
       }
     }
@@ -427,6 +437,23 @@ export class SyncEngine {
       // 2. 下载云端
       const cloudGroups = await downloadTabGroups();
       report(55, 'download');
+      // ── 覆盖模式的空云端闸门（2026-10-15，见 decideForceRemoteOverwrite 的注释）
+      // 位置必须在「本地置空」之前：闸门要看的是 snapshot 真值，一旦 localGroups
+      // 被置空，任何下游检查（validateMergeResult、删除熔断）都看不到真实本地。
+      // 拒绝时不写任何东西：本地数据**根本没被动过**，所以不需要 restoreSnapshot；
+      // pending_upload 保留，让未上传的变更在下轮重试（与 validation_failed 同口径）。
+      if (opts?.forceRemote) {
+        const gate = decideForceRemoteOverwrite({
+          localActiveCount: snapshot.filter(g => !g.isDeleted).length,
+          cloudTotalCount: cloudGroups.length,
+        });
+        if (gate.action === 'refuse') {
+          logError('[SyncEngine] 覆盖下载被拒绝（未写入任何数据）:', gate.reason);
+          this.isSyncing = false;
+          await this.rescheduleUploadIfPending();
+          return { success: false, groups: snapshot, reason: 'overwrite_empty_cloud_refused' };
+        }
+      }
       // 3.5 覆盖模式：同步设置（与旧 smartSyncService 的 overwriteLocal 行为一致）
       if (opts?.forceRemote && opts?.syncSettings) {
         try {
@@ -481,7 +508,7 @@ export class SyncEngine {
       // 所以必须发生在 setGroupsImmediate 之前 —— 之后就已经写完了。
       //
       // 【为什么现在才补，它防的是什么】
-      // 本项目此前没有这道防线，因为 Supabase 模型下它用不上：本地是 master，
+      // 本项目此前没有这道防线，因为关系数据库模型下它用不上：本地是 master，
       // 远端读回空/少一半时，合并结果仍以本地为准，不会清空本地。
       // 但文件后端引入两条新的「静默清空」路径：
       //   1) 用户手动在云盘里清空/移动了 groups/ 目录；
@@ -579,10 +606,13 @@ export class SyncEngine {
       this.isSyncing = false;
       // P1-5：下载抛错/回滚后，若 pending 仍 true 必须重调度上传。
       await this.rescheduleUploadIfPending();
+      // locked 标记必须保留：reason 保持人话（UI 原样展示），
+      // 机器分类走 locked（backgroundSync 据此把「未配置/未解锁」算让路）。
       return {
         success: false,
         groups: snapshot,
         reason: error instanceof Error ? error.message : 'download_merge_failed',
+        ...(isLockedBackendError(error) ? { locked: true } : {}),
       };
     }
   }
@@ -603,18 +633,9 @@ export class SyncEngine {
     // isSyncing 检查（backgroundSync 路径互不冲突）。常规 UI 调用无需此参数。
     forcePending?: boolean;
   }): Promise<UploadResult> {
-    // ponytail: SW 进程是独立执行上下文，store 是新实例——先恢复登录态
-    // （与 downloadAndMerge 共用 ensureAuthenticated 守卫）。
-    // backendId 必须显式传，理由同上。
-    const authed = await ensureAuthenticated({
-      isAuthenticated: () =>
-        (store.getState() as { auth: { isAuthenticated: boolean } }).auth.isAuthenticated,
-      restoreAuth: () => this.restoreAuth(),
-      backendId: await readConfiguredBackendId(),
-    });
-    if (!authed) {
-      return { success: false, error: '用户未登录' };
-    }
+    // ponytail: 2026-10-16 与 downloadAndMerge 一同删除了 ensureAuthenticated
+    //   门禁（理由同上）。上传/下载现在共用同一条 fail-closed 路径：
+    //   后端不可用 ⇒ 锁定占位后端抛错 ⇒ 本轮中止，文案即用户下一步。
     // ponytail: 后台轮询路径可带 forcePending 绕过 isSyncing 检查；
     // 但仅在不与当前下载合并冲突时调用（backgroundSync 已先检查）。
     if (this.isSyncing && !opts?.forcePending) {
@@ -642,14 +663,17 @@ export class SyncEngine {
       // 本次 upsert 已经写上云的墓碑 id（覆盖模式才可能非空）。
       let writtenTombstoneIds: Set<string> = new Set();
       if (activeGroups.length > 0) {
-        // 覆盖模式把残留墓碑一起交给 uploadTabGroups：覆盖会先删空云端，墓碑必须
-        // 随同一次 upsert 写上云（selectRowsForUpload 决定实际写入哪些行），
+        // 覆盖模式把残留墓碑一起交给 uploadTabGroups：覆盖是**整库 upsert**，
+        // 墓碑必须随同一次 upsert 写上云（selectRowsForUpload 决定实际写入哪些行），
         // 否则删除意图随覆盖一起丢失，另一端的活跃副本下次合并即复活。
+        // ⚠️ 2026-10-16 更正旧注释：WebDAV 的覆盖**不是「先删空云端再插」**，
+        // 它只跳过了增量水位筛选（selectDirty→全量），云端独有会话与
+        // stamp 更新的远端条目都不动（后者走适配器的认输预检）。
         const up = await uploadTabGroups(overwriteCloud ? allGroups : activeGroups, overwriteCloud);
         writtenTombstoneIds = new Set(up?.writtenTombstoneIds ?? []);
       } else if (overwriteCloud) {
         // ponytail: 与旧 uploadTabsToCloudFlow 的空本地保护一致——本地没有任何活跃组时
-        // 绝不执行覆盖模式（覆盖 = 先删云端全部再插），否则会把云端数据清空。
+        // 绝不执行覆盖模式，否则全量上传会没有可写内容、还要白跑一轮网络。
         // 该保护本身是对的，但结果必须让调用方看得见（见 UploadResult.skippedOverwrite）：
         // 继续走到 report(70) 并 success 只会让 SyncButton 弹「上传成功」，
         // 而这次覆盖根本没发生。
@@ -665,7 +689,7 @@ export class SyncEngine {
       //       写入的印记互相打架 → verifyUploadReadback 的 checkStamp 永远对不上
       //       → 抛错、pending_upload 保留 → 上传永久卡在重试循环。
       // 未被 upsert 写到的墓碑仍然要交回 markCloudGroupsAsDeleted，删除意图一条都不能漏。
-      // P0-2：markCloudGroupsAsDeleted 抛错（写失败、读回不一致、未登录跳过）直接
+      // P0-2：markCloudGroupsAsDeleted 抛错（写失败、读回不一致）直接
       // 上浮到外层 catch → 本次 upload 整体失败，pending_upload 与删除队列保留，
       // 下轮 alarm 重试。禁止吞错假装成功（云端没标记、下次下载直接复活）。
       const pendingDeleteIds = await storage.getPendingDeleteIds();
@@ -731,7 +755,11 @@ export class SyncEngine {
         severity: 'medium',
         fallbackMessage: '数据上传失败',
       });
-      return { success: false, error: error instanceof Error ? error.message : '上传失败' };
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : '上传失败',
+        ...(isLockedBackendError(error) ? { locked: true } : {}),
+      };
     }
   }
 
@@ -757,14 +785,6 @@ export class SyncEngine {
   }
 
   // ── 私有 ─────────────────────────────────────────────────────────
-
-  /** 从 chrome.storage.local 里的持久化 supabase session 恢复 SW store 登录态。 */
-  private async restoreAuth(): Promise<boolean> {
-    const user = await store.dispatch(getCurrentUser()).unwrap().catch(() => null);
-    if (!user) return false;
-    store.dispatch(setFromCache({ user, isAuthenticated: true }));
-    return true;
-  }
 
   private async restoreSnapshot(snapshot: TabGroup[]): Promise<void> {
     if (snapshot.length === 0) {

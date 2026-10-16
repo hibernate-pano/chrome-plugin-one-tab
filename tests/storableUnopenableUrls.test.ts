@@ -153,11 +153,10 @@ describe('不变量 4：保存链路的总门（filters）不再丢本地文件'
   });
 });
 
-describe('回归：这组修复不能把「结构性坏行」也放进来', () => {
-  it('整行是 chrome:// 内部页时，deserializeTab 全部拒收 → 交给还原率判据整组跳过', async () => {
+describe('回归：还原侧的「打不开标签」不得在同步时整组消失', () => {
+  it('整行是 chrome:// 内部页时，deserializeTab 全部拒收', async () => {
     const { deserializeTab } = await import('@/core/tabDataCodec');
-    // 模拟「有人绕过 isInternalUrl 把整行写成内部页」的历史坏行：
-    // 它们的还原率会趋近 0，仍应被 MIN_RESTORABLE_TAB_RATIO 拦下整组跳过。
+    // 模拟「有人绕过 isInternalUrl 把整行写成内部页」的历史坏行。
     const rows = [
       { id: 'a', url: 'chrome://settings', title: '', created_at: '', last_accessed: '' },
       { id: 'b', url: 'edge://flags', title: '', created_at: '', last_accessed: '' },
@@ -168,9 +167,15 @@ describe('回归：这组修复不能把「结构性坏行」也放进来', () =
     assert.equal(restored.length, 0, '内部页不该被还原出来（那会引入一条打不开的假标签）');
   });
 
-  it('混合行（1 个正常 + 3 个内部页）还原率 0.25 < 0.5，仍会被整组跳过', async () => {
+  it('混合行（1 个正常 + 3 个内部页）：内部页拒收，正常标签仍可还原', async () => {
+    // 2026-10-16：原断言是「还原率 0.25 < 0.5 ⇒ 整组跳过（保护云端不被截断回写）」，
+    // 判据 `MIN_RESTORABLE_TAB_RATIO` 来自 `src/utils/supabase/download.ts`。
+    // 云端后端删除后那个判据及其所属模块已不存在，整组跳过的防线也不复存在 ——
+    // WebDAV 同步是「整组 JSON 上下传」，没有「截断回写」这条路径（那是
+    // PostgREST 分页 + count 校验体系里的产物）。
+    // 留下来的可验证真相是：还原侧对每条行仍然逐行判，内部页逐行拒收、
+    // 正常标签逐行保留，且拒收的行不得变成一条假标签（那是会污染远端的数据）。
     const { deserializeTab } = await import('@/core/tabDataCodec');
-    const { MIN_RESTORABLE_TAB_RATIO } = await import('@/utils/supabase/download');
     const rows = [
       { id: 'ok', url: OPENABLE, title: '', created_at: '', last_accessed: '' },
       { id: 'a', url: 'chrome://settings', title: '', created_at: '', last_accessed: '' },
@@ -180,11 +185,11 @@ describe('回归：这组修复不能把「结构性坏行」也放进来', () =
     const restored = rows
       .map(r => deserializeTab(r, 'g1'))
       .filter((t): t is NonNullable<typeof t> => t !== null);
-    const ratio = restored.length / rows.length;
-    assert.ok(
-      ratio < MIN_RESTORABLE_TAB_RATIO,
-      `还原率 ${ratio} 应低于阈值 ${MIN_RESTORABLE_TAB_RATIO}，从而整组跳过（保护云端不被截断回写）`
-    );
+    // 唯一能还原的必须是那条 https 行，且它就是 OPENABLE 本身 ——
+    // 修复前这里是 0 条可还原（连正常标签一起跳过），修复后是逐行判：
+    // 坏的拒掉，好的留下。
+    assert.equal(restored.length, 1, '内部页逐行拒收，正常标签必须留下');
+    assert.equal(restored[0]?.url, OPENABLE);
   });
 
   it('对照组：3 个标签里 2 个是 file: 时，还原率 1.0 —— 不再被误伤整组跳过', async () => {

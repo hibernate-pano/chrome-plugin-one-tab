@@ -77,6 +77,19 @@ function makeResponse(status: number, headers: Record<string, string> = {}, body
 const BASE = 'https://dav.jianguoyun.com/dav/';
 const cfg = { baseUrl: BASE, username: 'me@example.com', password: 'app-pass' };
 
+/**
+ * 断言「确实读到了内容」并窄化掉 notFound 分支。
+ *
+ * get() 现在返回三种形态（内容 / notFound / null-304），直接访问 `.body`
+ * 过不了类型检查。这不是给测试放水 —— 它逼每个用例明确声明
+ * 「我这条路径拿到的必须是内容」，而不是靠 `?.` 静默跳过。
+ */
+function assertHasBody(
+  out: Awaited<ReturnType<WebDavClient['get']>>
+): asserts out is { body: string; etag: string | null } {
+  assert.ok(out && !('notFound' in out), '期望读到内容，实际是 notFound / null');
+}
+
 // ── 地址规范化 ─────────────────────────────────────────────────────────
 
 describe('WebDAV 地址规范化', () => {
@@ -147,10 +160,29 @@ describe('Basic 认证头', () => {
 // ── GET ────────────────────────────────────────────────────────────────
 
 describe('GET', () => {
-  it('404 返回 null（文件不存在是正常状态，不是错误）', async () => {
+  it('404 返回 notFound（文件不存在是正常状态，不是错误）', async () => {
     const { impl } = makeFetch(() => ({ status: 404 }));
     const client = new WebDavClient(cfg, impl);
-    assert.equal(await client.get('manifest.json'), null);
+    const out = await client.get('manifest.json');
+    assert.ok(out && 'notFound' in out, '404 应返回 notFound 标记而不是 null');
+    assert.equal(out.reason, 'no-such-resource');
+  });
+
+  it('409 也算 notFound：父目录不存在（RFC 4918，坚果云实测）', async () => {
+    // 这是 2026-10-15 修的 P0：首次配置时子目录还不存在，服务端对
+    // GET /dav/TapStack/manifest.json 回 409 而非 404，旧实现把它当真错误抛，
+    // 于是「测试连接」与「首次同步」一起挂死（用户报 HTTP 409）。
+    const { impl } = makeFetch(() => ({ status: 409 }));
+    const client = new WebDavClient(cfg, impl);
+    const out = await client.get('TapStack/manifest.json');
+    assert.ok(out && 'notFound' in out, '409 必须归入 notFound，否则首次配置必失败');
+    assert.equal(out.reason, 'missing-parent');
+  });
+
+  it('401/403 在 409 之后仍优先报认证失败（权限问题不能被吞成「不存在」）', async () => {
+    const { impl } = makeFetch(() => ({ status: 403 }));
+    const client = new WebDavClient(cfg, impl);
+    await assert.rejects(() => client.get('TapStack/manifest.json'), /认证失败/);
   });
 
   it('200 返回内容与 ETag', async () => {
@@ -161,8 +193,9 @@ describe('GET', () => {
     }));
     const client = new WebDavClient(cfg, impl);
     const out = await client.get('manifest.json');
-    assert.equal(out?.body, '{"v":1}');
-    assert.equal(out?.etag, '"abc123"');
+    assertHasBody(out);
+    assert.equal(out.body, '{"v":1}');
+    assert.equal(out.etag, '"abc123"');
   });
 
   it('401/403 报「认证失败」而不是通用失败（用户要知道去改密码）', async () => {
@@ -331,6 +364,14 @@ describe('PROPFIND 元信息解析', () => {
     assert.equal(meta.exists, false);
   });
 
+  it('409 → exists:false（父目录不存在，对「在不在」是同一个答案）', async () => {
+    // 不修的话首次同步在「读回 ETag」与「探测条件写」两处都会撞 409。
+    const { impl } = makeFetch(() => ({ status: 409 }));
+    const client = new WebDavClient(cfg, impl);
+    const meta = await client.stat('TapStack/manifest.json');
+    assert.equal(meta.exists, false);
+  });
+
   it('Depth:0 与 XML body 必须发出去（漏了会被当成目录列举）', async () => {
     const { impl, calls } = makeFetch(() => ({ status: 207, body: propfind('') }));
     const client = new WebDavClient(cfg, impl);
@@ -406,7 +447,8 @@ describe('权限预检：未授权时不进网络', () => {
     const client = new WebDavClient(cfg, impl, async () => true);
     const out = await client.get('manifest.json');
     assert.equal(calls.length, 1, '已授权必须正常发请求');
-    assert.equal(out?.body, '{}');
+    assertHasBody(out);
+    assert.equal(out.body, '{}');
   });
 
   it('guard 自身抛异常 ⇒ 放行（预检是改善诊断，不是安全边界）', async () => {
@@ -417,7 +459,8 @@ describe('权限预检：未授权时不进网络', () => {
     // 权限 API 自身故障不该阻断同步：真正的请求会给出更准确的判断。
     const out = await client.get('manifest.json');
     assert.equal(calls.length, 1, 'guard 故障时必须放行，而不是把同步卡死');
-    assert.equal(out?.body, '{}');
+    assertHasBody(out);
+    assert.equal(out.body, '{}');
   });
 
   it('未注入 guard ⇒ 完全不检查（Node 测试环境的默认行为）', async () => {
@@ -425,7 +468,8 @@ describe('权限预检：未授权时不进网络', () => {
     const client = new WebDavClient(cfg, impl);
     const out = await client.get('manifest.json');
     assert.equal(calls.length, 1);
-    assert.equal(out?.body, '{}');
+    assertHasBody(out);
+    assert.equal(out.body, '{}');
   });
 
   it('预检对所有动词生效（不止 GET）', async () => {
@@ -466,3 +510,82 @@ describe('权限预检：未授权时不进网络', () => {
   });
 });
 
+
+// ── fetch 调用形态（2026-10-15 补 P0 回归）─────────────────────────────
+//
+// 背景：用户点「测试连接」永远失败，提示
+//   连接失败：PROPFIND 请求失败：Failed to execute 'fetch' on 'Window': Illegal invocation
+// 真机（Chromium + MV3 options 页）复现确认：WebDavClient.request 写的是
+// `this.fetchImpl(url, ...)`，receiver 成了 WebDavClient 实例，而 fetch 是
+// Window 上的 WebIDL 方法 ⇒ brand check 失败 ⇒ 请求根本没发出去。
+//
+// ⚠️ 为什么这个测试必须自己模拟 brand check：
+//   Node 的 fetch 是 undici 实现的普通函数，**不做 receiver 校验**，
+//   所以「直接把 fetch 注入进来」在单测里永远测不出这个 bug
+//   （这正是原实现 1314 条测试全绿、真机却 100% 失败的原因）。
+//   下面的 brandCheckFetch 就是那个「会红的探针」。
+//
+// 变异验证（改坏实现必须变红）：
+//   · 把 `const doFetch = this.fetchImpl;` 改回 `this.fetchImpl(...)` ⇒ 本组红
+
+/** 模拟浏览器原生方法的 brand check：receiver 不是 globalThis 就抛 Illegal invocation。 */
+function brandCheckFetch() {
+  return (async function brandedFetch(this: unknown) {
+    // 判据必须是 `this === undefined`，不能是 `this !== globalThis`：
+    // 模块作用域里裸调用原生方法时 this 就是 undefined（严格模式），
+    // 而属性调用（holder.f()）this 才是宿主对象。前者会把两种情况都判错。
+    // 实测过 `this !== globalThis` 的版本：detached 调用也会被误判为非法。
+    if (this !== undefined) {
+      throw new TypeError("Failed to execute 'fetch' on 'Window': Illegal invocation");
+    }
+    return makeResponse(207, {}, '<x/>');
+  }) as unknown as typeof fetch;
+}
+
+describe('fetch 调用形态：不得把 WebDavClient 当 receiver', () => {
+  it('默认 fetch（UI「测试连接」路径）必须以 Window 为 receiver 发出请求', async () => {
+    // 不能真用 globalThis.fetch（Node 的不校验 receiver，等于没测），
+    // 也不能注入普通 stub（同样不校验）。必须用上面那个带 brand check 的替身。
+    const branded = brandCheckFetch();
+    const original = globalThis.fetch;
+    (globalThis as { fetch: typeof fetch }).fetch = branded;
+    try {
+      const client = new WebDavClient({ baseUrl: 'http://127.0.0.1:1/dav/', username: 'u', password: 'p' });
+      // 不抛错 = receiver 正确。若实现写成 this.fetchImpl(...)，
+      // 这里会抛 WebDavError: PROPFIND 请求失败：...Illegal invocation
+      await client.stat('');
+    } finally {
+      (globalThis as { fetch: typeof fetch }).fetch = original;
+    }
+  });
+
+  it('显式注入 fetch（service worker 同步路径）同样必须以 Window 为 receiver', async () => {
+    const client = new WebDavClient(
+      { baseUrl: 'http://127.0.0.1:1/dav/', username: 'u', password: 'p' },
+      brandCheckFetch()
+    );
+    await client.stat('');
+  });
+
+  it('receiver 错误时的报错必须保留可诊断信息，而不是被吞成「连接失败」', async () => {
+    // 反向确认探针本身有效：同一个函数以属性调用（错误的 receiver）必须抛，
+    // 以裸调用（正确）必须不抛。探针本身坏掉的话，这个断言会先红。
+    // 刻意不经过 `typeof fetch` 断言（那会把无参调用判成类型错误）：
+    // 这里要的就是「直接调用这个函数」这个动作本身。
+    const branded = brandCheckFetch() as unknown as (
+      url?: string | URL,
+      init?: RequestInit
+    ) => Promise<Response>;
+    const holder = { f: branded };
+    await assert.rejects(() => holder.f(), /Illegal invocation/);
+    // 正确形态：detached 调用不抛
+    await branded();
+
+    // 而生产路径必须落在「不抛」这一侧
+    const client = new WebDavClient(
+      { baseUrl: 'http://127.0.0.1:1/dav/', username: 'u', password: 'p' },
+      brandCheckFetch()
+    );
+    await client.stat('');
+  });
+});

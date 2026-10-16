@@ -1,60 +1,26 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { useAppSelector, useAppDispatch } from '@/store/hooks';
-import { signOut } from '@/store/slices/authSlice';
 import { deleteAllGroups, deleteBroadcastWarn, loadGroups } from '@/store/slices/tabSlice';
 import { sendSyncCommand } from '@/shared/mutationProtocol';
 import { storage } from '@/utils/storage';
-import type { AuthTab } from '../auth/AuthModal';
 import { useToast } from '@/contexts/ToastContext';
-import { trackProductEvent } from '@/utils/productEvents';
 import {
-  collectDiagnostics,
-  diagnosticsFileName,
-  diagnosticsSummaryText,
-  serializeDiagnosticsReport,
-} from '@/utils/diagnostics';
-import { logError, logInfo, logWarn } from '../../utils/log';
-
-/** 问题反馈落点：GitHub issues 新建页。用户自己决定粘不粘诊断摘要。 */
-const FEEDBACK_ISSUE_URL = 'https://github.com/hibernate-pano/chrome-plugin-one-tab/issues/new';
-
-/**
- * 复制文本到剪贴板，两级降级，返回是否真的写进去了。
- *
- * 为什么不静默：用户点了「问题反馈」却在 issue 里发现没有摘要，只能自己去翻
- * 扩展目录找文件——那等于这个功能没做。所以失败必须让用户看见，且要给他一条
- * 还能拿到内容的路（把摘要原文摆在弹窗里，手动复制）。
- * 第一级用 Clipboard API；它在非安全上下文或权限被拒时抛错，此时退回
- * execCommand（老但可用），再失败就交给调用方弹窗。
- */
-const copyTextToClipboard = async (text: string): Promise<boolean> => {
-  try {
-    await navigator.clipboard.writeText(text);
-    return true;
-  } catch (error) {
-    logWarn('Clipboard API 写入失败，降级到 execCommand:', error);
-  }
-  try {
-    const textarea = document.createElement('textarea');
-    textarea.value = text;
-    textarea.setAttribute('readonly', '');
-    textarea.style.position = 'fixed';
-    textarea.style.opacity = '0';
-    document.body.appendChild(textarea);
-    textarea.select();
-    const ok = document.execCommand('copy');
-    document.body.removeChild(textarea);
-    return ok;
-  } catch (error) {
-    logError('剪贴板降级路径也失败:', error);
-    return false;
-  }
-};
+  getLastBackendResolution,
+  invalidateActiveSyncBackend,
+  primeSyncBackend,
+} from '@/sync-backend';
+import {
+  BACKEND_STATUS_DOT_CLASS,
+  BACKEND_STATUS_TITLE,
+  classifyBackendResolution,
+  formatLastSyncTime,
+  UNKNOWN_BACKEND_STATUS,
+  type BackendStatus,
+} from './backendStatus';
+import { logError, logWarn } from '../../utils/log';
 
 interface HeaderDropdownProps {
   onClose: () => void;
-  /** 打开应用级登录/注册弹窗（由 Header 托管，portal 到 body）。 */
-  onOpenAuth: (tab: AuthTab) => void;
   /** 窄屏顶栏把布局切换收进了菜单，这里复用 Header 同一份逻辑，避免两份实现分叉。 */
   onToggleLayout?: () => void;
   /** 窄屏顶栏把「清理重复」收进了菜单，同上：复用 Header 的确认弹窗与执行路径。 */
@@ -64,18 +30,41 @@ interface HeaderDropdownProps {
 /** 菜单行的统一 hover 反馈。菜单行不做位移（flat-interaction 的 -translate-y 会轻微跳动），只做背景色。 */
 const MENU_ROW = "w-full text-left px-4 py-2 text-sm text-gray-700 dark:text-gray-300 flex items-center transition-colors duration-150 theme-menu-hover";
 
+/**
+ * 读一次**真实**的后端状态（2026-10-16，Wave 2B 缺陷 1）。
+ *
+ * 为什么每次打开菜单都强制重解析（`invalidateActiveSyncBackend` + `primeSyncBackend`）：
+ * `activeBackend` 是**本执行上下文**的进程内缓存，用户在另一个窗口的设置页
+ * 改完配置后，popup 这边不会收到任何通知。状态行要回答的是「现在到底能不能
+ * 同步」，不是「这个页面半分钟前解析出了什么」，所以必须重新读设置与解锁状态。
+ * 解析本身不碰网络（构造适配器不发请求），代价只有一次本地存储读。
+ */
+async function readBackendStatus(): Promise<BackendStatus> {
+  try {
+    invalidateActiveSyncBackend();
+    await primeSyncBackend();
+    return classifyBackendResolution(getLastBackendResolution());
+  } catch (error) {
+    logWarn('[HeaderDropdown] 同步状态解析失败，按「状态未知」展示:', error);
+    return classifyBackendResolution(null);
+  }
+}
 
 export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({
   onClose,
-  onOpenAuth,
   onToggleLayout,
   onRequestCleanDuplicates,
 }) => {
   const dispatch = useAppDispatch();
-  const { isAuthenticated, user } = useAppSelector(state => state.auth);
-  const { groups, lastSyncTime } = useAppSelector(state => state.tabs);
+  const { groups } = useAppSelector(state => state.tabs);
   const settings = useAppSelector(state => state.settings);
   const [openSubmenu, setOpenSubmenu] = useState<'export' | 'import' | null>(null);
+  // 同步状态行的两个真值（2026-10-16，Wave 2B 缺陷 1 / 2）：
+  //   · backendStatus ← getLastBackendResolution()，不再是一颗写死的绿点；
+  //   · lastSyncAt    ← storage.getLastSyncTime()。Redux 的 tabs.lastSyncTime
+  //     没有任何 reducer / thunk 写过，读它等于这一行永远不渲染。
+  const [backendStatus, setBackendStatus] = useState<BackendStatus>(UNKNOWN_BACKEND_STATUS);
+  const [lastSyncAt, setLastSyncAt] = useState<string | null>(null);
   // ── 2026-10-09 P1-5：从云端刷新必须有「进行中 / 成功 / 失败」三态 ──
   // 原先无 isRefreshing、成功也不给任何反馈：点一下如果云端没有新数据，
   // 页面**毫无变化**，用户完全无法区分「已经是最新」「没点上」「坏了」。
@@ -104,18 +93,13 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({
     onClose();
   }, [onClose, showToast]);
 
-  // 处理快速刷新（从云端下载并合并）
+  // 处理快速刷新（从云盘下载并合并）
+  //
+  // 2026-10-16：原先开头有一道 `if (!isAuthenticated) { 弹「请先登录」 }` 门禁，
+  // 现在没有任何登录概念，所以这道门禁删掉——未配置/未解锁云盘由 SW 侧的
+  // 锁定占位后端处理，它抛的是可读错，文案原样进下面的错误弹窗。
   const handleQuickRefresh = async () => {
     if (isRefreshing) return;
-    if (!isAuthenticated) {
-      showAlert({
-        title: '未登录',
-        message: '请先登录以使用同步功能',
-        type: 'warning',
-        onClose: () => {}
-      });
-      return;
-    }
 
     setIsRefreshing(true);
     try {
@@ -127,20 +111,22 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({
       if (res.ok) {
         try {
           await dispatch(loadGroups()).unwrap();
-          // 成功也要说话：云端无变化时页面不会有任何视觉差异，
+          // 成功也要说话：云盘无变化时页面不会有任何视觉差异，
           // 不给一句「已是最新」就等于「点了没反应」。
-          showToast('云端已是最新', 'success');
+          showToast('云盘已是最新', 'success');
         } catch (err) {
-          // 本地列表没刷出来 —— 这是「云端成功了但你没看见」的中间态，
+          // 本地列表没刷出来 —— 这是「云盘成功了但你没看见」的中间态，
           // 必须说清楚，否则用户以为同步失败（或反过来以为成功了）。
           logWarn('同步后刷新本地会话失败:', err);
           showToast('已同步，但本地列表刷新失败，请稍后重试', 'error');
         }
       } else {
-        // 这里的弹窗是**明确的失败**（已登录但拉取失败）
+        // 这里的弹窗是**明确的失败**（云盘已解锁但拉取失败）。
+        // 引擎回传的可能文案里，最常见的是「未配置 / 未解锁」—— 那是设置问题，
+        // 区别于「拉取失败」很重要：前者要去设置页，后者可以重试。
         showAlert({
           title: '手动同步失败',
-          message: res.error === 'not_authenticated' ? '未登录' : (res.error || '无法从云端拉取数据'),
+          message: res.error || '无法从云盘拉取数据',
           type: 'error',
           onClose: () => {}
         });
@@ -155,8 +141,38 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({
       });
     } finally {
       setIsRefreshing(false);
+      // 这次尝试可能改变了解锁 / 配置状态（例如口令缺失导致后端解析成锁定），
+      // 重查一次，让状态行与刚刚发生的事一致。
+      setBackendStatus(await readBackendStatus());
+      try {
+        setLastSyncAt(await storage.getLastSyncTime());
+      } catch (error) {
+        logWarn('[HeaderDropdown] 刷新后读取最后同步时间失败:', error);
+      }
     }
   };
+
+  // 菜单每次打开都会挂载本组件（Header 里是条件渲染），所以这条 effect 就是
+  // 「每次打开菜单做一次真实检查」——不是组件生命周期里只跑一次的装饰。
+  useEffect(() => {
+    let alive = true;
+    const run = async () => {
+      const status = await readBackendStatus();
+      if (!alive) return;
+      setBackendStatus(status);
+      try {
+        const time = await storage.getLastSyncTime();
+        if (alive) setLastSyncAt(time);
+      } catch (error) {
+        // 读不到时间就不渲染那一行 —— 不拿编出来的值冒充「上次同步」。
+        logWarn('[HeaderDropdown] 读取最后同步时间失败:', error);
+      }
+    };
+    void run();
+    return () => {
+      alive = false;
+    };
+  }, []);
 
   // 处理点击外部关闭下拉菜单
   useEffect(() => {
@@ -171,25 +187,6 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({
       document.removeEventListener('mousedown', handleClickOutside);
     };
   }, [onClose]);
-
-  const handleSignOut = () => {
-    // 先关闭下拉菜单，提高用户体验
-    onClose();
-
-    // 异步登出，不阻塞用户界面
-    dispatch(signOut())
-      .then(() => {
-        logInfo('登出成功');
-        showToast('已退出登录', 'success');
-      })
-      .catch(error => {
-        logError('登出失败:', error);
-        // ── 2026-10-09 P2-4：失败必须出声 ──────────────────────────────
-        // 菜单已经关了、界面无任何变化，只有一行 console —— 用户无法区分
-        // 「没点上」与「坏了」，会以为自己已登出，而实际上仍是登录态。
-        showToast('退出登录失败，请重试', 'error');
-      });
-  };
 
   // 移除同步功能，简化逻辑
 
@@ -216,43 +213,43 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({
               onClose: () => {}
             });
           }
-          if (isAuthenticated) {
-            sendSyncCommand('upload', {
-              overwriteCloud: true,
-              syncSettings: true,
+          // 2026-10-16：原先这里包在 `if (isAuthenticated)` 里，
+          // 未登录时不推送。现在没有登录概念 —— 删光本机会话后把删除
+          // 意图广播到云盘，是唯一保证其它设备不复活的途径，所以**无条件**推送。
+          // 后端不可用（未配置/未解锁）时 res.ok 为 false，下面会出声。
+          sendSyncCommand('upload', {
+            overwriteCloud: true,
+            syncSettings: true,
+          })
+            .then(raw => {
+              const res = raw as { ok: boolean; error?: string; payload?: { skippedOverwrite?: string } };
+              // 「删光本机全部会话」之后本地没有活跃组 → 上传侧的
+              // 空本地保护必然跳过 overwriteCloud（宁可不清空云盘）。也就是说
+              // 这条命令的覆盖上传几乎总是被跳过，此前无条件打印
+              // 「删除操作已同步到云端」是在对没发生的事报成功。
+              // 只有 res.ok 且 payload 里没有 skippedOverwrite，才算真的覆盖了云盘。
+              if (!res.ok) {
+                logError('删除操作同步到云盘失败:', res.error);
+                showAlert({
+                  title: '同步失败',
+                  message: `本机会话已删除，但云盘同步失败：${res.error || '未知错误'}`,
+                  type: 'error',
+                  onClose: () => {}
+                });
+                return;
+              }
+              if (res.payload?.skippedOverwrite) {
+                // 删光后本地无活跃组 → 覆盖被跳过是预期路径；删除意图已由
+                // 上传内的 markCloudGroupsAsDeleted（pendingDeleteIds 队列）
+                // 广播到云盘，无需报警。
+                logWarn('[HeaderDropdown] 覆盖上传被跳过（本地无活跃组），删除意图已按队列广播:', res.payload.skippedOverwrite);
+                return;
+              }
+              logWarn('[HeaderDropdown] 删除操作已同步到云盘');
             })
-              .then(raw => {
-                const res = raw as { ok: boolean; error?: string; payload?: { skippedOverwrite?: string } };
-                // 「删光本机全部会话」之后本地没有活跃组 → uploadTabGroups 的
-                // 空本地保护必然跳过 overwriteCloud（宁可不清空云端）。也就是说
-                // 这条命令的覆盖上传几乎总是被跳过，此前无条件打印
-                // 「删除操作已同步到云端」是在对没发生的事报成功。
-                // 只有 res.ok 且 payload 里没有 skippedOverwrite，才算真的覆盖了云端。
-                if (!res.ok) {
-                  logError('删除操作同步到云端失败:', res.error);
-                  showAlert({
-                    title: '同步失败',
-                    message: `本机会话已删除，但云端同步失败：${res.error || '未知错误'}`,
-                    type: 'error',
-                    onClose: () => {}
-                  });
-                  return;
-                }
-                if (res.payload?.skippedOverwrite) {
-                  // 删光后本地无活跃组 → 覆盖被跳过是预期路径；删除意图已由
-                  // upload 内的 markCloudGroupsAsDeleted（pendingDeleteIds 队列）
-                  // 广播到云端，无需报警。
-                  logInfo('[HeaderDropdown] 覆盖上传被跳过（本地无活跃组），删除意图已按队列广播:', res.payload.skippedOverwrite);
-                  return;
-                }
-                logInfo('删除操作已同步到云端');
-              })
-              .catch(error => {
-                logError('同步到云端失败:', error);
-              });
-          } else {
-            logInfo('用户未登录，跳过同步到云端');
-          }
+            .catch(error => {
+              logError('同步到云盘失败:', error);
+            });
         })
         .catch(error => {
           logError('删除所有标签组失败:', error);
@@ -267,7 +264,10 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({
 
     showConfirm({
       title: `删除全部 ${groups.length} 个会话`,
-      message: `将删除本地全部 ${groups.length} 个会话，删除后无法恢复${isAuthenticated ? '，其他登录设备将同步删除' : ''}。确认继续吗？`,
+      // 2026-10-16：原先这里是 `${isAuthenticated ? '，其他登录设备将同步删除' : ''}`。
+      // 现在没有登录状态可判，而删除意图**总是**会广播到云盘，所以直接写死：
+      // 告诉用户会发生什么，比按一个已不存在的状态分支更诚实。
+      message: `将删除本地全部 ${groups.length} 个会话，删除后无法恢复，其他设备下次同步时也会删除。确认继续吗？`,
       type: 'danger',
       confirmText: '全部删除',
       cancelText: '取消',
@@ -346,69 +346,10 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({
     }
   };
 
-  // 导出脱敏诊断信息（B1）。只传登录态布尔值：user 对象里有邮箱与 id，
-  // 诊断文件里不允许出现任何一个（见 src/utils/diagnostics.ts 的白名单说明）。
-  const handleExportDiagnostics = async () => {
-    try {
-      setOpenSubmenu(null);
-      // 载荷与文件名共用同一个 Date：跨零点时两者才对得上（见 exportStamp.ts）。
-      const now = new Date();
-      const report = await collectDiagnostics({ isAuthenticated, now });
-      const blob = new Blob([serializeDiagnosticsReport(report)], {
-        type: 'application/json'
-      });
-
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = diagnosticsFileName(report.environment.extensionVersion, now);
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(url);
-
-      onClose();
-    } catch (error) {
-      logError('导出诊断信息失败:', error);
-      showAlert({
-        title: '导出失败',
-        message: '收集诊断信息失败，请重试；若反复失败请到「问题反馈」里说明',
-        type: 'error',
-        onClose: () => { }
-      });
-    }
-  };
-
-  // 问题反馈（B2）：打开 GitHub issues 新建页，并把脱敏摘要放进剪贴板。
-  // 先开页面再收集：window.open 必须落在用户手势的同步路径里，等 await 之后再开
-  // 可能被弹窗拦截；而收集失败也不该把用户已经打开的反馈页关掉。
-  const handleReportIssue = async () => {
-    onClose();
-    window.open(FEEDBACK_ISSUE_URL, '_blank', 'noopener,noreferrer');
-    try {
-      const report = await collectDiagnostics({ isAuthenticated });
-      const summary = diagnosticsSummaryText(report);
-      if (await copyTextToClipboard(summary)) {
-        showToast('诊断摘要已复制，请在 issue 正文里粘贴', 'success');
-      } else {
-        // 复制不了就把原文摆出来让用户手动拿，不静默吞掉
-        showAlert({
-          title: '诊断摘要未复制',
-          message: `浏览器拒绝了剪贴板写入，请手动复制以下内容：\n\n${summary}`,
-          type: 'warning',
-          onClose: () => { }
-        });
-      }
-    } catch (error) {
-      logError('生成诊断摘要失败:', error);
-      showAlert({
-        title: '诊断摘要生成失败',
-        message: '已为你打开反馈页，但收集诊断信息失败，请在 issue 里补充复现步骤',
-        type: 'error',
-        onClose: () => { }
-      });
-    }
-  };
+  // 坏时间戳 → null → 整行不渲染（formatLastSyncTime 里对 NaN 的处理）。
+  const lastSyncLabel = lastSyncAt ? formatLastSyncTime(lastSyncAt) : null;
+  const lastSyncTitle =
+    lastSyncAt && lastSyncLabel ? `上次成功同步：${new Date(lastSyncAt).toLocaleString()}` : null;
 
   return (
     <div
@@ -418,68 +359,64 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({
       className="ts-panel absolute right-0 mt-2 w-64 max-w-[calc(100vw-2rem)] theme-bg-elevated theme-radius-card theme-shadow-panel border theme-border-default z-20 max-h-[70vh] overflow-y-auto"
     >
       <div className="py-2">
-        {isAuthenticated && user && (
-          <>
-            <div className="px-4 py-3 border-b border-gray-200 dark:border-gray-700">
-              <div className="flex items-center justify-between mb-2">
-                <p className="text-sm font-medium text-gray-900 dark:text-gray-100">{user.email}</p>
-                <button
-                  onClick={handleQuickRefresh}
-                  disabled={isRefreshing}
-                  aria-label={isRefreshing ? '正在从云端刷新' : '从云端刷新数据'}
-                  className="p-1.5 rounded-full flat-interaction transition-colors disabled:cursor-not-allowed disabled:opacity-60"
-                  title={isRefreshing ? '正在从云端刷新…' : '从云端刷新数据'}
-                >
-                  {/* 进行中的可视信号：转圈。只 disabled 不转，用户仍看不出「在动」 */}
-                  <svg
-                    xmlns="http://www.w3.org/2000/svg"
-                    className={`h-4 w-4 text-primary-600 dark:text-primary-400${isRefreshing ? ' animate-spin' : ''}`}
-                    fill="none"
-                    viewBox="0 0 24 24"
-                    stroke="currentColor"
-                  >
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-                  </svg>
-                </button>
-              </div>
-              <div className="flex items-center justify-between">
-                  <p className="text-xs text-gray-500 dark:text-gray-400 flex items-center">
-                    <span className="inline-block w-2 h-2 rounded-full bg-green-500 mr-1"></span>
-                    已登录
-                  </p>
-                {lastSyncTime && (
-                  <p className="text-xs text-gray-400 dark:text-gray-500" title={`最后手动同步: ${new Date(lastSyncTime).toLocaleString()}`}>
-                    {(() => {
-                      const now = new Date();
-                      const syncDate = new Date(lastSyncTime);
-                      const diffMs = now.getTime() - syncDate.getTime();
-                      const diffMins = Math.floor(diffMs / 60000);
-                      
-                      if (diffMins < 1) return '刚刚同步';
-                      if (diffMins < 60) return `${diffMins}分钟前`;
-                      const diffHours = Math.floor(diffMins / 60);
-                      if (diffHours < 24) return `${diffHours}小时前`;
-                      const diffDays = Math.floor(diffHours / 24);
-                      return `${diffDays}天前`;
-                    })()}
-                  </p>
-                )}
-              </div>
-            </div>
-          </>
-        )}
-
-        {!isAuthenticated && (
-          <button
-            onClick={() => onOpenAuth('login')}
-            className={MENU_ROW}
-          >
-            <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 mr-2 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 16l-4-4m0 0l4-4m-4 4h14m-5 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h7a3 3 0 013 3v1" />
-            </svg>
-            登录 / 注册
-          </button>
-        )}
+        {/* 2026-10-16：原先这里是一块「只有已登录才渲染」的用户卡片
+            （邮箱 + 已登录圆点 + 刷新按钮 + 上次同步时间）。登录不存在后
+            改成无条件渲染的同步状态卡——但旧注释声称「判据从登录态换成
+            有没有云盘配置」，代码里却根本没有那个检查，只有一颗写死的绿点
+            （Wave 2B 缺陷 1）。现在状态来自 getLastBackendResolution()：
+            已配置并解锁 / 未解锁 / 未配置 / 状态不可读四态可辨，未就绪时
+            提供「去设置」入口；上次同步时间来自 storage.getLastSyncTime()，
+            由 syncEngine 的成功路径写入（缺陷 2）。
+            ⚠️ 不能删掉整个块：那会让刷新入口与上次同步时间一并消失，
+            而两者都在 2026-09-26 误操作事故后被当作必要反馈保留过。 */}
+        <div className="px-4 py-3 border-b border-gray-200 dark:border-gray-700">
+          <div className="flex items-center justify-between mb-2">
+            <p className="text-sm font-medium text-gray-900 dark:text-gray-100">同步</p>
+            <button
+              onClick={handleQuickRefresh}
+              disabled={isRefreshing}
+              aria-label={isRefreshing ? '正在从云盘刷新' : '从云盘刷新数据'}
+              className="p-1.5 rounded-full flat-interaction transition-colors disabled:cursor-not-allowed disabled:opacity-60"
+              title={isRefreshing ? '正在从云盘刷新…' : '从云盘刷新数据'}
+            >
+              {/* 进行中的可视信号：转圈。只 disabled 不转，用户仍看不出「在动」 */}
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                className={`h-4 w-4 text-primary-600 dark:text-primary-400${isRefreshing ? ' animate-spin' : ''}`}
+                fill="none"
+                viewBox="0 0 24 24"
+                stroke="currentColor"
+              >
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+              </svg>
+            </button>
+          </div>
+          <div className="flex items-center justify-between gap-2">
+            <p
+              className="min-w-0 text-xs text-gray-500 dark:text-gray-400 flex items-center"
+              title={backendStatus.lockedReason ?? BACKEND_STATUS_TITLE[backendStatus.kind]}
+            >
+              <span
+                className={`inline-block w-2 h-2 rounded-full mr-1 shrink-0 ${BACKEND_STATUS_DOT_CLASS[backendStatus.tone]}`}
+              ></span>
+              <span className="truncate">自带存储 · {backendStatus.label}</span>
+            </p>
+            {backendStatus.actionable && (
+              <button
+                type="button"
+                onClick={handleOpenOptions}
+                className="shrink-0 text-xs font-medium text-primary-600 underline hover:text-primary-700 dark:text-primary-400 dark:hover:text-primary-300"
+              >
+                去设置
+              </button>
+            )}
+          </div>
+          {lastSyncLabel && lastSyncTitle && (
+            <p className="mt-1 text-xs text-gray-400 dark:text-gray-500" title={lastSyncTitle}>
+              上次成功同步 · {lastSyncLabel}
+            </p>
+          )}
+        </div>
 
         <div className="border-t border-gray-200 dark:border-gray-700 my-1.5"></div>
 
@@ -526,8 +463,9 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({
             加密口令全是要回看斟酌的长文本。在 256px 的瞬态下拉里滚表单，
             按钮行要横向滚动才看得全 —— 这不是能靠调样式救回来的问题。
             现在：菜单一行「设置…」→ chrome.runtime.openOptionsPage()。
-            保留在菜单里的只有非设置项：登录、导出/导入、清理重复、
-            问题反馈、删除全部、退出登录。 */}
+            2026-10-16：删掉「登录 / 注册」与「退出登录」两行（账号体系已删除）。
+            保留在菜单里的只有非账号项：设置、导出/导入、布局切换、
+            清理重复、删除全部。 */}
         <button
           onClick={handleOpenOptions}
           className={MENU_ROW}
@@ -579,18 +517,6 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
               </svg>
               OneTab 格式
-            </button>
-            {/* 诊断信息：同样是一次导出，但内容是脱敏后的规模与环境快照
-                （不含任何标签 URL、标题、会话名），用于反馈问题时贴 issue。 */}
-            <button
-              onClick={handleExportDiagnostics}
-              className={MENU_ROW}
-              type="button"
-            >
-              <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 mr-2 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3.75 12h16.5m-16.5 0a3 3 0 013-3m13.5 0a3 3 0 013 3m-16.5 0a3 3 0 003 3m13.5 0a3 3 0 003-3m-16.5 0a9 9 0 0118 0m-18 0a9 9 0 018 9m-8-9a9 9 0 00-8 9m0-9v9m18-9v9" />
-              </svg>
-              诊断信息
             </button>
             </div>
           )}
@@ -720,10 +646,6 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({
                         const importResult = await storage.importFromOneTabFormat(text);
                         e.target.value = '';
                         if (importResult.ok) {
-                          void trackProductEvent('onetab_import_completed', {
-                            importSource: 'onetab',
-                            importedSessions: text.split('\n\n').filter(Boolean).length,
-                          });
                           // ── 2026-10-09 P1-6：与 JSON 导入同口径报数量 ──
                           // 原先「成功不弹提示」直接 reload，用户不知道导入了几个、
                           // 跳过几个；reload 还会把提示一起刷掉。改 dispatch(loadGroups)。
@@ -778,19 +700,6 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({
           )}
         </div>
 
-        {/* 问题反馈：与导出/导入同一层的普通菜单行（真 button + 可见文字，
-            读屏有名字；不是图标按钮，所以不需要 aria-label）。 */}
-        <button
-          onClick={handleReportIssue}
-          className={MENU_ROW}
-          type="button"
-        >
-          <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 mr-2 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8.625 12a.375.375 0 11-.75 0 .375.375 0 01.75 0zm0 0H8.25m4.125 0a.375.375 0 11-.75 0 .375.375 0 01.75 0zm0 0H12m4.125 0a.375.375 0 11-.75 0 .375.375 0 01.75 0zm0 0h-.375M21 12c0 4.556-4.03 8.25-9 8.25a9.764 9.764 0 01-2.555-.337A5.972 5.972 0 015.41 20.97a5.969 5.969 0 01-.474-.065 4.48 4.48 0 00.978-2.025c.09-.457-.133-.901-.467-1.226C3.93 16.178 3 14.189 3 12c0-4.556 4.03-8.25 9-8.25s9 3.694 9 8.25z" />
-          </svg>
-          问题反馈
-        </button>
-
         {/* 危险区：与菜单平面语言一致（rounded-lg + 留边），用色块与普通项区分防误触。
             核弹级操作：强制确认不受「删除会话前确认」开关控制；无组时隐藏；描述带数量。 */}
         {groups.length > 0 && (
@@ -805,29 +714,13 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({
               <span className="flex-1">
                 <span className="block">删除所有会话（{groups.length}）</span>
                 <span className="mt-0.5 block text-xs font-normal text-rose-600/80 dark:text-rose-300/80">
-                  将清空本地全部会话，删除后无法恢复（其他登录设备同步删除）。
+                  将清空本地全部会话，删除后无法恢复（其他设备下次同步时也会删除）。
                 </span>
               </span>
             </button>
           </div>
         )}
-
-        {isAuthenticated && (
-          <>
-            <div className="border-t border-gray-200 dark:border-gray-700 my-1.5"></div>
-            <button
-              onClick={handleSignOut}
-              className={MENU_ROW}
-            >
-              <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 mr-2 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
-              </svg>
-              退出登录
-            </button>
-          </>
-        )}
       </div>
-
     </div>
   );
 };

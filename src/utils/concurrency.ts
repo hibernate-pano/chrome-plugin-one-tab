@@ -2,7 +2,7 @@
  * 有界并发工具。
  *
  * 【为什么需要它】上传/下载要给**每个会话**各做一次 AES-GCM 加解密，而密钥派生是
- * PBKDF2-SHA256 / 100k 迭代（见 @/utils/encryptionUtils）—— 单次约 9ms 纯 CPU，
+ * PBKDF2-SHA256 / 100k 迭代（见 @/sync-backend/crypto）—— 单次约 9ms 纯 CPU，
  * 串行跑 N 个会话就是 N×9ms。300 个会话实测约 2.8s，且这段时间全在 Service Worker
  * 的单写者队列里，用户此刻点「删除会话 / 清理重复」必须排在它后面。
  *
@@ -12,8 +12,13 @@
  *
  * 【为什么不用 Promise.all 直接铺开】Promise.all 的语义是「全部并发」，
  * 没有并发度概念；而且它 fail-fast（第一个 reject 就返回），
- * 会让其余仍在跑的加密结果无人认领 —— 而这里的调用方需要**全部**结果
- * （加密失败的组 id 要一次性报全，见 upload.ts 的 encryptionFailedIds）。
+ * 会让其余仍在跑的加密结果无人认领。
+ *
+ * ── 2026-10-16（审计 A 缺陷 3）：当前零生产调用方，仅测试消费 ──────────
+ * WebDAV 适配器改为串行逐组处理后，本模块全仓只剩 tests/concurrency.test.ts
+ * 在跑语义回归。保留它（而不是连同测试一起删）是因为「保序 + 有界并发 +
+ * 不 fail-fast」三条语义有独立测试锚定，未来若恢复并发加解密可直接复用；
+ * 删除时应连同该测试文件一起决策。登记见 tests/deadCodeGuards.test.ts。
  */
 
 /**

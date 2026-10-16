@@ -105,7 +105,7 @@ img{max-width:100%} a{color:inherit} ::selection{background:var(--brand-200)}
 .feat p{margin:0;font-size:13.8px;color:var(--ink-600)}
 .feat code{font-family:var(--mono);font-size:12px;background:var(--ink-100);padding:1px 6px;border-radius:5px;color:var(--ink-800)}
 /* sync */
-.sync-paths{display:grid;grid-template-columns:1fr 1fr;gap:24px}
+.sync-paths{display:grid;grid-template-columns:1fr;gap:24px}
 .path{position:relative;border-radius:var(--radius-lg);padding:34px 32px;border:1px solid var(--ink-200);background:var(--card);overflow:hidden}
 .path::before{content:"";position:absolute;inset:0 0 auto 0;height:3px}
 .path.a::before{background:linear-gradient(90deg,var(--brand-500),var(--brand-700))}
@@ -219,9 +219,9 @@ img{max-width:100%} a{color:inherit} ::selection{background:var(--brand-200)}
         <a class="btn btn-primary" href="#install">免费添加到 Chrome →</a>
         <a class="btn btn-ghost" href="#capability">看它怎么工作</a>
       </div>
-      <p class="hero-note"><span class="dot"></span>免费 · MIT 开源 · 无需注册即可用本地功能 · 当前版本 v1.23.1</p>
+      <p class="hero-note"><span class="dot"></span>免费 · MIT 开源 · 不设账号 · 当前版本 v1.24.1</p>
       <div class="strip">
-        <span>Chrome MV3</span><span>React 18 + TypeScript</span><span>本地优先</span><span>Supabase 云同步</span><span>WebDAV 自带存储</span><span>MIT License</span>
+        <span>Chrome MV3</span><span>React 18 + TypeScript</span><span>本地优先</span><span>WebDAV 自带存储</span><span>口令加密 · E2E</span><span>MIT License</span>
       </div>
     </div>
     <div class="mock" aria-hidden="true">
@@ -231,7 +231,7 @@ img{max-width:100%} a{color:inherit} ::selection{background:var(--brand-200)}
         <div class="session top">
           <div class="session-head"><b>支付网关联调 · 10-14</b><span class="pill">12 个标签</span></div>
           <div class="tab"><span class="fav" style="background:#2563EB">G</span>github.com · <mark>支付网关</mark> PR #482</div>
-          <div class="tab"><span class="fav" style="background:#D97757">S</span>supabase.com · dashboard · logs</div>
+          <div class="tab"><span class="fav" style="background:#D97757">V</span>vercel.com · dashboard · logs</div>
           <div class="tab"><span class="fav" style="background:#16A34A">N</span>notion.so · 联调 checklist</div>
         </div>
         <div class="session">
@@ -300,22 +300,13 @@ img{max-width:100%} a{color:inherit} ::selection{background:var(--brand-200)}
   <div class="wrap">
     <div class="section-head reveal">
       <p class="eyebrow">数据去哪，你选</p>
-      <h2 class="section-title">两条同步路径，你自己挑</h2>
-      <p class="section-lede">默认不强制注册。不登录，数据只留在浏览器本地。要跨设备找回时，有两条路——云端的，或你自己的。</p>
+      <h2 class="section-title">唯一的同步路径：你自己的云盘</h2>
+      <p class="section-lede">不设账户、没有我们的服务器。数据默认只留在浏览器本地；要跨设备找回时，同步到<strong>你自己的 WebDAV 云盘</strong>。</p>
     </div>
     <div class="sync-paths reveal">
-      <div class="path a">
-        <p class="role">默认路径</p><h3>TapStack 云端</h3>
-        <p>登录后同步到托管服务（Supabase），换设备、换浏览器都能找回。本地改动自动防抖上传，打开时自动合并下载；合并异常自动回滚，不覆盖丢数据。</p>
-        <ul class="spec">
-          <li><span class="tick">✓</span><span>上传前在<strong>你的设备上</strong>加密，云端存密文，传输另有 HTTPS</span></li>
-          <li><span class="tick">✓</span><span>行级安全策略（RLS）限定每行只能被自己读写，27 个迁移文件可审计</span></li>
-          <li><span class="tick">✓</span><span>增量同步：只传改动过的会话，分批 50 / 页拉 200，不整库重传</span></li>
-        </ul>
-      </div>
       <div class="path b">
-        <p class="role">自带存储</p><h3>你的 WebDAV 云盘</h3>
-        <p>同步到你自己的云盘（坚果云、自建 Nextcloud 等），不经过我们的服务器。离开浏览器前用你的口令加密，口令只在内存、不落盘。</p>
+        <p class="role">唯一同步路径</p><h3>你的 WebDAV 云盘</h3>
+        <p>同步到你自己的云盘（坚果云、自建 Nextcloud 等），不经过我们的服务器。离开浏览器前用你的口令加密，口令只在内存、不落盘；地址默认预填坚果云。</p>
         <ul class="spec">
           <li><span class="tick">✓</span><span><code>PBKDF2-SHA256 250k</code> + <code>AES-256-GCM</code>，条件写防并发覆盖</span></li>
           <li><span class="tick">✓</span><span>口令<strong>无法找回</strong>——忘了就得重新开始，这一点提前说清楚</span></li>
@@ -332,15 +323,15 @@ img{max-width:100%} a{color:inherit} ::selection{background:var(--brand-200)}
     <div class="section-head reveal">
       <p class="eyebrow">可验证的部分</p>
       <h2 class="section-title">一个独立开发者写到了什么程度</h2>
-      <p class="section-lede">不靠「相信我」，靠能数的东西：测试、迁移、代码行数全部来自仓库实测口径，开源可审计。</p>
+      <p class="section-lede">不靠「相信我」，靠能数的东西：测试与代码统计全部来自仓库实测口径，开源可审计。</p>
     </div>
     <div class="metrics reveal">
-      <div class="metric"><b>1300<i>+</i></b><span>自动化测试用例（105 个测试文件），覆盖保存、同步、合并与冲突</span></div>
-      <div class="metric"><b>36k<i>+</i></b><span>行测试与脚本代码，超过产品代码本身——关键修复必配回归用例</span></div>
-      <div class="metric"><b>27</b><span>个数据库迁移文件，含行级安全策略的启用与校验硬检查</span></div>
+      <div class="metric"><b>1000<i>+</i></b><span>自动化测试用例（86 个测试文件），覆盖保存、同步、合并与冲突</span></div>
+      <div class="metric"><b>25k<i>+</i></b><span>行测试与脚本代码，关键修复必配回归用例</span></div>
+      <div class="metric"><b>0</b><span>项必选主机权限——安装时不索要网站访问权，WebDAV 地址在点「测试连接」时才按需授权</span></div>
       <div class="metric"><b>MIT</b><span>开源许可，仓库、Issue、构建脚本全部公开</span></div>
     </div>
-    <p class="metrics-foot reveal">统计口径：<code>tests/</code> 内 <code>it()</code> 计数约 1315 · <code>src/</code> 约 29k 行 · 含 20+ 个 Playwright 端到端脚本（跑真实浏览器与真实云端）。</p>
+    <p class="metrics-foot reveal">统计口径：<code>pnpm test</code> 报出的用例总数 1046 · 含 12 个 Playwright 端到端脚本（跑真实浏览器）。</p>
   </div>
 </section>
 
@@ -358,7 +349,7 @@ img{max-width:100%} a{color:inherit} ::selection{background:var(--brand-200)}
     </blockquote>
     <div class="limit-grid reveal">
       <div class="limit"><h3><i>!</i>删除即物理清除</h3><p>没有回收站，没有撤销。删除前二次确认、「删除全部」强制确认并显示数量——但确认之后就是真的没了。</p></div>
-      <div class="limit"><h3><i>!</i>不是端到端加密</h3><p>云端存密文，但密钥由账号 ID 派生，而账号 ID 是公开标识。准确说法是「传输加密 + 服务端静态加密」，请不要当作「只有你能看见」。</p></div>
+      <div class="limit"><h3><i>!</i>口令丢了就解不开</h3><p>WebDAV 加密是真的端到端：密钥由你的口令派生，我们和云盘服务商都拿不到。代价是口令没有找回入口——忘记后云盘上的数据将无法解密。</p></div>
       <div class="limit"><h3><i>!</i>不是实时协同</h3><p>两台设备同时编辑同一会话，以最后保存一方为准。错峰使用不受影响。自动同步默认关闭，可选 5 / 10 / 30 / 60 分钟四档。</p></div>
       <div class="limit"><h3><i>!</i>只传你主动保存的</h3><p>上传到云端的只有你<strong>主动保存过</strong>的标签页。不读浏览历史、不收集分析数据、不出售给第三方。</p></div>
       <div class="limit"><h3><i>!</i>云盘清单是明文的</h3><p>用 WebDAV 时会话内容加密，但目录清单明文：服务商可见「多少会话、何时改过」，不含名称网址。</p></div>
@@ -396,7 +387,7 @@ img{max-width:100%} a{color:inherit} ::selection{background:var(--brand-200)}
       <h2 class="section-title">常见问题</h2>
     </div>
     <div class="faq reveal">
-      <details open><summary>不登录能用吗？数据存哪？</summary><p>能。全部本地功能无需注册，数据默认只保存在浏览器扩展存储中（并申请了 unlimitedStorage 以容纳重度用户）。只有登录并开启同步后，数据才会传到你自己的云端账户。</p></details>
+      <details open><summary>需要账号吗？数据存哪？</summary><p>不需要。扩展没有账户体系，全部本地功能开箱即用；数据默认只保存在浏览器扩展存储中（并申请了 unlimitedStorage 以容纳重度用户）。要跨设备时，在设置里填你自己的 WebDAV 云盘地址，数据加密后只去那里，不经过我们的服务器。</p></details>
       <details><summary>删除的会话能找回来吗？</summary><p>不能。v1.22.0 起删除即物理清除，没有回收站、不可恢复。删除前会有二次确认，「删除全部」强制确认并显示数量。请把删除当作不可逆操作。</p></details>
       <details><summary>和 OneTab 是什么关系？</summary><p>支持 OneTab 文本格式双向导入导出，可以带着历史过来、也可以随时带着数据离开，不锁人。标题含竖线、本地文件地址等边界情况都有往返测试兜底。</p></details>
       <details><summary>两台电脑会互相覆盖吗？</summary><p>下载采用「快照 → 下载 → 合并 → 校验 → 写入」，异常自动回滚；同一会话两边同时编辑时以最后保存一方整组为准。错峰使用不受影响。自动同步默认关闭，本地改动仍会照常上传。</p></details>
@@ -409,7 +400,7 @@ img{max-width:100%} a{color:inherit} ::selection{background:var(--brand-200)}
 <section class="final" id="install">
   <div class="wrap">
     <h2 class="reveal">下一次<em>工作现场</em>要收起来时，别再一屏一屏地关。</h2>
-    <p class="reveal">免费安装，不注册也能用本地功能。数据默认只留在你的浏览器里——要不要跨设备，由你决定。</p>
+    <p class="reveal">免费安装，无需账号。数据默认只留在你的浏览器里——要不要跨设备，由你自己决定：同步到你的云盘。</p>
     <div class="hero-cta reveal">
       <a class="btn btn-primary" href="https://chrome.google.com/webstore" target="_blank" rel="noopener">在 Chrome 应用商店安装 →</a>
       <a class="btn btn-ghost" href="https://github.com/hibernate-pano/chrome-plugin-one-tab" target="_blank" rel="noopener">在 GitHub 上读源码</a>

@@ -2,7 +2,6 @@ import { storage } from '@/utils/storage';
 import { UPLOAD_DEBOUNCE_MS } from '@/core/syncTiming';
 import { createTabGroupFromChromeTabs, filterValidTabs, isInternalUrl } from '@/domain/tabGroup';
 import { cacheManager } from '@/utils/performance';
-import { trackProductEvent } from '@/utils/productEvents';
 import { syncEngine } from '@/services/syncEngine';
 import { sanitizeTabUrl, isOpenableTabUrl } from '@/utils/inputValidation';
 import { enqueue } from './mutationQueue';
@@ -153,7 +152,7 @@ export class TabManager {
 
       // ponytail: 自动上传承诺接入点。SW 保存路径完全绕过 Redux（直接 setGroups），
       // autoSyncMiddleware 永远监听不到 saveGroup.fulfilled——这里补上 scheduleUpload
-      // 让"保存后自动同步云端"实际生效（未登录时 syncEngine 安全跳过）。
+      // 让"保存后自动同步云端"实际生效（未配置/未解锁时 syncEngine 会以锁定后端中止，不静默）。
       syncEngine.scheduleUpload(UPLOAD_DEBOUNCE_MS);
 
       await this.showNotification({
@@ -161,13 +160,6 @@ export class TabManager {
         iconUrl: chrome.runtime.getURL('icons/icon128.png'),
         title: 'TapStack',
         message: `已将 ${safeGroup.tabs.length} 个标签页保存为新会话`
-      });
-
-      await trackProductEvent('session_saved', {
-        sessionId: safeGroup.id,
-        sessionName: safeGroup.name,
-        tabCount: safeGroup.tabs.length,
-        pinnedCount: safeGroup.tabs.filter(tab => tab.pinned).length,
       });
 
       this.notifyTabManagerRefresh();
@@ -296,13 +288,6 @@ export class TabManager {
 
       // ponytail: 关闭单标签时也会触发数据变更（保存到当前会话）——同样需自动上传。
       syncEngine.scheduleUpload(UPLOAD_DEBOUNCE_MS);
-
-      await trackProductEvent('session_saved', {
-        sessionId: safeGroup.id,
-        sessionName: safeGroup.name,
-        tabCount: safeGroup.tabs.length,
-        pinnedCount: safeGroup.tabs.filter(item => item.pinned).length,
-      });
 
       this.notifyTabManagerRefresh();
 

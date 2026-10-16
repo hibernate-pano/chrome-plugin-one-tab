@@ -16,11 +16,24 @@ import { join } from 'node:path';
 /** 回退读取的环境文件，按顺序后者覆盖前者（.env.local 覆盖 .env，与 Vite 一致） */
 export const ENV_FILES = ['.env', '.env.local'];
 
-/** 跑 e2e 必需的凭据（匿名 key，公开可读；缺失时不该报出 Supabase 的天书错误码） */
-export const REQUIRED_ENV = ['VITE_SUPABASE_URL', 'VITE_SUPABASE_ANON_KEY'];
-
-/** 清理测试账号用的管理凭据。有它就真删，没有就打印待清理清单（见 run-e2e.mjs） */
-export const SERVICE_ROLE_ENV = 'SUPABASE_SERVICE_ROLE_KEY';
+/**
+ * 必需的环境变量清单。
+ *
+ * 2026-10-16 Supabase 下线后**清空**：云端后端唯一需要凭据的 4 支 e2e 脚本
+ * （e2e-sync-test / e2e-batched-sync-roundtrip / e2e-auto-upload-test /
+ * e2e-fresh-device-edit-wins）随 `@supabase/supabase-js` 与 `src/utils/supabase/*`
+ * 一起删除。当时仍登记在 ORDER 里、驱动已删登录 UI 的 4 支本地数据安全脚本
+ * （tab-delete / background-sync / local-delete / stress）已改为**本机 dufs + WebDAV**
+ * （配置/凭据在脚本内播种，不来自环境变量）。因此现在「登记表里不需要环境凭据」
+ * 是一句真话；且这不是靠自觉：`login()` helper 随账号 UI 一起失效，任何重新登记
+ * 它的脚本会被 run-e2e 的登记表门禁 `findDeadLoginImports` 挡下
+ * （tests/e2eScriptHelpers.test.ts 钉住该门禁能变红）。
+ * 保留导出而不是删掉它：将来接入需要凭据的后端时，这里加回键名即可，
+ * `requireEnv(env, REQUIRED_ENV)` 的调用形态不变；而清单为空时
+ * 默认不拦任何环境 —— 这是「当前没有必需凭据」的如实表达，不是假绿
+ * （tests/e2eScriptHelpers.test.ts 用显式清单断言缺键文案）。
+ */
+export const REQUIRED_ENV = [];
 
 /**
  * 解析 dotenv 文本。
@@ -74,14 +87,13 @@ export function loadEnv({
   return { ...out, ...processEnv };
 }
 
-/** 缺凭据时立刻报「缺哪个键、怎么给」，而不是让脚本跑到一半抛出 Supabase 错误码 */
+/** 缺凭据时立刻报「缺哪个键、怎么给」，而不是让脚本跑到一半报出无法定位的错误 */
 export function requireEnv(env, names = REQUIRED_ENV) {
   const missing = names.filter(n => !env[n]);
   if (missing.length) {
     throw new Error(
       `缺少环境变量: ${missing.join(', ')}。` +
-      `请用 process.env 注入（如 VITE_SUPABASE_URL=https://xxx.supabase.co），` +
-      `或在仓库根目录放 .env（变量名不变：${names.join(' / ')}）。`
+      `请用 process.env 注入，或在仓库根目录放 .env（变量名不变：${names.join(' / ')}）。`
     );
   }
   return env;
@@ -118,6 +130,50 @@ export function computeRegistryDiff(available, order) {
     missing: order.filter(f => !set.has(f)),
     extra: available.filter(f => !order.includes(f)),
   };
+}
+
+/**
+ * 登记表门禁：找出「登记在 ORDER 里、却还 import 已死的 login() helper」的脚本。
+ *
+ * 为什么必须有：2026-10-16 账号体系删除后，曾有 4 支仍登记在 ORDER 的脚本继续
+ * import `login()`（它点击 `登录 / 注册`，全仓已无处渲染），于是 `pnpm e2e` 仍把
+ * 它们算作「可跑」，实际每支都会在 20s 超时里失败。登记表说它们能跑 = 登记表在
+ * 说谎，比没有登记表更坏（.memory 的「登记表即门禁」纪律）。
+ *
+ * 识别口径（只认真正会让脚本失效的形态）：
+ *   · 具名 import：`import { ..., login, ... } from './e2e-helpers.mjs'`（含 `as` 别名）
+ *   · 命名空间 import 后再 `helpers.login(...)`
+ * 只扫**登记在 ORDER 里**的脚本：未登记的脚本本来就过不了 computeRegistryDiff 那关。
+ *
+ * @param registered ORDER 里的脚本文件名数组
+ * @param readScript (file) => string | null；null = 文件不存在（registry diff 另有门禁）
+ * @returns 违规脚本文件名数组（顺序同 registered）
+ */
+export function findDeadLoginImports(registered, readScript) {
+  const offenders = [];
+  for (const file of registered) {
+    const src = readScript(file);
+    if (typeof src !== 'string') continue;
+    const withoutLineComments = src.replace(/\/\/[^\n]*/g, '');
+    const namedLogin = [...withoutLineComments.matchAll(
+      /import\s*\{([^}]*)\}\s*from\s*['"]\.\/e2e-helpers\.mjs['"]/g
+    )].some(m =>
+      m[1]
+        .split(',')
+        .some(spec => spec.trim().replace(/^type\s+/, '').split(/\s+as\s+/)[0].trim() === 'login')
+    );
+    if (namedLogin) {
+      offenders.push(file);
+      continue;
+    }
+    const namespaces = [...withoutLineComments.matchAll(
+      /import\s*\*\s*as\s+([A-Za-z_$][\w$]*)\s+from\s*['"]\.\/e2e-helpers\.mjs['"]/g
+    )].map(m => m[1]);
+    if (namespaces.some(ns => new RegExp(`\\b${ns}\\.login\\s*\\(`).test(withoutLineComments))) {
+      offenders.push(file);
+    }
+  }
+  return offenders;
 }
 
 /**

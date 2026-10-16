@@ -173,27 +173,42 @@ describe('P1-6 覆盖模式两段式确认', () => {
     assert.equal(syncModeOf('download.merge'), 'merge');
 
     assert.equal(
-      isOverwriteGateOpen({ mode: 'overwrite', isConfirmed: false, isBusy: false, isAuthenticated: true }),
+      isOverwriteGateOpen({ mode: 'overwrite', isConfirmed: false, isBusy: false }),
       false,
       '覆盖模式未确认 → 拒跑（这是绕过 UI 时的最后一道）'
     );
     assert.equal(
-      isOverwriteGateOpen({ mode: 'overwrite', isConfirmed: true, isBusy: false, isAuthenticated: true }),
+      isOverwriteGateOpen({ mode: 'overwrite', isConfirmed: true, isBusy: false }),
       true
     );
     assert.equal(
-      isOverwriteGateOpen({ mode: 'merge', isConfirmed: false, isBusy: false, isAuthenticated: true }),
+      isOverwriteGateOpen({ mode: 'merge', isConfirmed: false, isBusy: false }),
       true,
       '合并模式无破坏性，不拦'
     );
     assert.equal(
-      isOverwriteGateOpen({ mode: 'merge', isConfirmed: false, isBusy: true, isAuthenticated: true }),
+      isOverwriteGateOpen({ mode: 'merge', isConfirmed: false, isBusy: true }),
       false,
       '进行中一律拒跑'
     );
-    assert.equal(
-      isOverwriteGateOpen({ mode: 'overwrite', isConfirmed: true, isBusy: false, isAuthenticated: false }),
-      false
+    // 2026-10-16：原用例还有一条
+    //   `{ mode: 'overwrite', isConfirmed: true, isAuthenticated: false } ⇒ false`
+    //   （未登录不许发覆盖写）。账号体系删除后 syncPreviewView 的
+    //   isOverwriteGateOpen 不再收 isAuthenticated 形参——
+    //   「未解锁云盘」不是这一层能判的，它由 sync-backend 的锁定占位后端
+    //   抛可读错（见 webdavWiring.test.ts）。所以改成钉住那个真实形状，
+    //   并额外钉住「形参里不得再出现登录判据」：
+    //   留一个恒为真的 isAuthenticated 检查，就是一道永远为真的假防线。
+    const gateSource = (
+      await import('node:fs')
+    ).readFileSync(
+      new URL('../src/components/sync/syncPreviewView.tsx', import.meta.url),
+      'utf8'
+    );
+    const gateBody = gateSource.slice(gateSource.indexOf('export const isOverwriteGateOpen'));
+    assert.ok(
+      !/isAuthenticated/.test(gateBody.split('\n\n')[0]),
+      'isOverwriteGateOpen 不得再收 isAuthenticated —— 账号体系已删除，这是一道永远为真的假防线'
     );
   });
 });
@@ -234,5 +249,64 @@ describe('P1-6 SyncButton 接线：闸门不能只活在纯函数里', () => {
     const src = syncButtonSource();
     assert.doesNotMatch(src, /仍可继续手动上传|仍可继续手动下载/);
     assert.match(src, /覆盖模式需预览就绪后才会解锁/);
+  });
+});
+
+// ── 闸门 3：用空覆盖非空 → 直接锁死，连 armed 都不给（2026-10-15）───────
+describe('P1-6 扩展：空覆盖非空必须锁死', () => {
+  it('下载覆盖：本地 3 / 云端 0 ⇒ blocked（armed 了也 blocked）', async () => {
+    const { decideOverwriteClick } = await view();
+    for (const isArmed of [false, true]) {
+      const d = decideOverwriteClick({
+        summary: summary({ beforeCount: 3, afterCount: 0, deletions: 3 }),
+        isPreviewLoading: false,
+        hasPreviewError: false,
+        isArmed,
+        isBusy: false,
+        targetLabel: '本地',
+      });
+      assert.equal(d.type, 'blocked', `armed=${isArmed} 时也必须 blocked`);
+      assert.match(d.type === 'blocked' ? d.reason : '', /清空/);
+      assert.match(d.type === 'blocked' ? d.reason : '', /3/);
+    }
+  });
+
+  it('上传覆盖：云端 5 / 本地 0 ⇒ blocked（同一口径，方向无关）', async () => {
+    const { decideOverwriteClick } = await view();
+    const d = decideOverwriteClick({
+      summary: summary({ beforeCount: 5, afterCount: 0, deletions: 5 }),
+      isPreviewLoading: false,
+      hasPreviewError: false,
+      isArmed: true,
+      isBusy: false,
+      targetLabel: '云端',
+    });
+    assert.equal(d.type, 'blocked');
+  });
+
+  it('非空覆盖非空 ⇒ 不受影响（正常覆盖流程照旧）', async () => {
+    const { decideOverwriteClick } = await view();
+    const d = decideOverwriteClick({
+      summary: summary({ beforeCount: 10, afterCount: 3 }),
+      isPreviewLoading: false,
+      hasPreviewError: false,
+      isArmed: false,
+      isBusy: false,
+      targetLabel: '本地',
+    });
+    assert.equal(d.type, 'armed');
+  });
+
+  it('空覆盖空 ⇒ 不受影响（无事发生，不打扰）', async () => {
+    const { decideOverwriteClick } = await view();
+    const d = decideOverwriteClick({
+      summary: summary({ beforeCount: 0, afterCount: 0, deletions: 0 }),
+      isPreviewLoading: false,
+      hasPreviewError: false,
+      isArmed: false,
+      isBusy: false,
+      targetLabel: '本地',
+    });
+    assert.equal(d.type, 'armed');
   });
 });

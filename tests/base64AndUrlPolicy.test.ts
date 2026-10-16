@@ -16,12 +16,12 @@
 //    它们答的是三个不同问题，**故意不同**。测试钉死的是这些差异本身，而不是
 //    把它们抹平成一张表——抹平会改变 ftp: 与 data: 的实际行为。
 //
-// 3) 导出日期戳：formatExportStamp 必须是「给定瞬间的纯函数」。用 mock.timers
-//    把系统时钟停在本地午夜前 1ms 再推过去 1ms，模拟 webApi.exportJsonBackup
-//    曾经的「两次 new Date()」窗口：文件名与载荷时间戳必须仍然指同一天。
+//    （原第 3 组「导出日期戳 formatExportStamp」随诊断导出栈下线移除：
+//     formatExportStamp 的最后一个生产调用方是 diagnostics.ts 的导出文件名，
+//     删除后该函数零调用方，连同模块一并退场。）
 //
 // 说明：每个 test 文件是独立进程，可以在 import 被测模块前安全定义 globalThis 桩。
-import { describe, it, before, mock } from 'node:test';
+import { describe, it, before } from 'node:test';
 import assert from 'node:assert/strict';
 import { register } from 'node:module';
 import { pathToFileURL, fileURLToPath } from 'node:url';
@@ -226,9 +226,16 @@ describe('base64：v1.15.5/v1.15.6 历史分块坏数据仍能救回（legacy �
   });
 });
 
-describe('base64：两个原调用点（secureStorage / encryptionUtils）行为未变', () => {
+describe('base64：存活的调用点（secureStorage）行为未变', () => {
   // secureStorage 需要 chrome.storage.local：V3 密钥持久化在那儿。
   // 这是「真实调用点」的往返证明——共享原语接上去之后，端到端仍然通。
+  //
+  // 2026-10-16：原 describe 还有两条用例挂在 src/utils/encryptionUtils.ts 上
+  // （encryptData/decryptData 往返 + 两个模块互相可解）。云端后端与
+  // encryptionUtils 一起删除，现在存活的调用点只剩 secureStorage，
+  // 于是「两套方言」那条命题在代码层已无第二个实例可对：
+  // 单源 @/utils/base64 由 tests/base64AndUrlPolicy.test.ts 的第一组
+  // （对照实现逐字节比对）继续守着，而互解性改由下面的结构断言守住。
   function installChromeStorageStub() {
     const map = new Map<string, unknown>();
     (globalThis as any).chrome = {
@@ -275,41 +282,22 @@ describe('base64：两个原调用点（secureStorage / encryptionUtils）行为
     assert.deepStrictEqual(await decryptLocalBlob(blob), payload);
   });
 
-  it('encryptionUtils.encryptData/decryptData 往返（含跨块大载荷）', async () => {
-    installChromeStorageStub();
-    const { encryptData, decryptData } = await import('../src/utils/encryptionUtils.ts');
-
-    const payload = {
-      id: 'group-2',
-      name: '加密往返',
-      tabs: Array.from({ length: 900 }, (_, i) => ({
-        title: `T${i}`,
-        url: `https://example.com/${i}?q=${'y'.repeat(40)}`,
-      })),
-    };
-    const json = JSON.stringify(payload);
-    assert.ok(new TextEncoder().encode(json).length > 24576, '载荷必须大于一个编码块');
-
-    const enc = await encryptData(payload, 'user-under-test');
-    assert.ok(enc.startsWith('ENCRYPTED_V2_S:'), '应产出标准 V2 前缀密文');
-    assert.deepStrictEqual(await decryptData(enc, 'user-under-test'), payload);
-  });
-
-  it('两个模块的编码结果互相可解（同一份原语，不存在两套方言）', async () => {
-    installChromeStorageStub();
-    const { encryptData, decryptData } = await import('../src/utils/encryptionUtils.ts');
-    const { encryptLocalBlob, decryptLocalBlob, __resetKeyCacheForTesting } =
-      await import('../src/utils/secureStorage.ts');
-    __resetKeyCacheForTesting();
-
-    // 两种密文结构不同（密钥派生不同），但都由同一对 base64 原语承载。
-    // 这里断言的是「前缀/结构不串味」——共用原语后最容易犯的错。
-    const payload = { id: 'g', name: 'n', tabs: [] };
-    const viaStorage = await encryptLocalBlob(payload);
-    const viaEncryption = await encryptData(payload, 'u');
-    assert.notStrictEqual(viaStorage.slice(0, 12), viaEncryption.slice(0, 12));
-    assert.deepStrictEqual(await decryptLocalBlob(viaStorage), payload);
-    assert.deepStrictEqual(await decryptData(viaEncryption, 'u'), payload);
+  it('encryptionUtils 已随云端下线退场，不得复活第二套 base64 方言', async () => {
+    const { existsSync } = await import('node:fs');
+    assert.equal(
+      existsSync(new URL('../src/utils/encryptionUtils.ts', import.meta.url)),
+      false,
+      'encryptionUtils.ts 已删除；若它复活就意味着又出现了一份逐字节相同的 base64 原语'
+    );
+    // 剩下唯一的消费者必须真的从单源取原语，而不是自己再抄一份。
+    const secureStorage = await import('node:fs').then(fs =>
+      fs.readFileSync(new URL('../src/utils/secureStorage.ts', import.meta.url), 'utf8')
+    );
+    const code = secureStorage
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .replace(/^[ \t]*\/\/.*$/gm, '');
+    assert.match(code, /from '@\/utils\/base64'|from '\.\/base64/, 'secureStorage 必须从单源 base64 取原语');
+    assert.ok(!/function concatArrays/.test(code), '不得在 secureStorage 里重新手抄一份 base64 原语');
   });
 });
 
@@ -485,81 +473,3 @@ describe('URL 策略：内部 URL 单一实现（补齐 edge:// / about:// 后�
   });
 });
 
-// ══════════════════════════════════════════════════════════════════════
-// 3 · 导出文件名日期戳：跨零点不与载荷时间戳打架
-// ══════════════════════════════════════════════════════════════════════
-
-describe('formatExportStamp：文件名日期与载荷时间戳永不打架', () => {
-  it('基本形态：两位补零的本地年月日', async () => {
-    const { formatExportStamp } = await import('../src/utils/exportStamp.ts');
-    assert.strictEqual(formatExportStamp(new Date(2026, 0, 2, 3, 5)), '2026-01-02');
-    assert.strictEqual(formatExportStamp(new Date(2026, 8, 30, 23, 59)), '2026-09-30');
-    assert.strictEqual(formatExportStamp(new Date(2026, 11, 31, 12, 0)), '2026-12-31');
-  });
-
-  it('非法输入返回空串而不是 NaN-NaN-NaN', async () => {
-    const { formatExportStamp } = await import('../src/utils/exportStamp.ts');
-    assert.strictEqual(formatExportStamp(new Date('not-a-date')), '');
-  });
-
-  it('跨零点：文件名用载荷那个 Date，日期不随调用时刻漂移', async () => {
-    const { formatExportStamp } = await import('../src/utils/exportStamp.ts');
-    // 把系统时钟停在 2026-09-30 本地午夜前 1ms（= 9-29 23:59:59.999）
-    const localMidnight = new Date(2026, 8, 30, 0, 0, 0, 0);
-    mock.timers.enable({ apis: ['Date'], now: new Date(localMidnight.getTime() - 1) });
-    try {
-      // ── 正确的调用形态：整个导出共用这一个 Date ──
-      const shared = new Date();                       // 9-29 23:59:59.999 本地
-      const payload = { timestamp: shared.toISOString() };
-      const filenameDate = formatExportStamp(shared);
-
-      // 时钟跨过午夜
-      mock.timers.tick(2);
-
-      // 断言：文件名日期 == 载荷时间戳所指瞬间的本地日期
-      assert.strictEqual(filenameDate, '2026-09-29', '文件名应锁定在载荷那一刻的日期');
-      assert.strictEqual(
-        filenameDate,
-        formatExportStamp(new Date(payload.timestamp)),
-        '文件名日期必须与 payload.timestamp 指向同一天'
-      );
-      // 此刻系统时钟已经是新的一天了 —— 证明这个断言不是恒真的
-      assert.strictEqual(formatExportStamp(new Date()), '2026-09-30');
-    } finally {
-      mock.timers.reset();
-    }
-  });
-
-  it('反例对照：两次 new Date() 的旧形态确实会跨零点打架（这就是要防的 bug）', async () => {
-    const { formatExportStamp } = await import('../src/utils/exportStamp.ts');
-    const localMidnight = new Date(2026, 8, 30, 0, 0, 0, 0);
-    mock.timers.enable({ apis: ['Date'], now: new Date(localMidnight.getTime() - 1) });
-    try {
-      // 旧代码形态（webApi.exportJsonBackup 重构前）：载荷用第一次 new Date()，
-      // 文件名用第二次 new Date()。中间跨过零点 → 两者指向不同的天。
-      const first = new Date();                  // 9-29 23:59:59.999
-      const payloadTimestamp = first.toISOString();
-      mock.timers.tick(2);
-      const second = new Date();                 // 9-30 00:00:00.001
-      const oldFilenameDate = formatExportStamp(second);
-
-      assert.strictEqual(formatExportStamp(new Date(payloadTimestamp)), '2026-09-29');
-      assert.strictEqual(oldFilenameDate, '2026-09-30');
-      assert.notStrictEqual(
-        oldFilenameDate,
-        formatExportStamp(new Date(payloadTimestamp)),
-        '若这条断言不成立，说明「两次 new Date()」并非本函数要防的问题'
-      );
-    } finally {
-      mock.timers.reset();
-    }
-  });
-
-  it('纯函数性：同一瞬间重复求值恒等（调用点可以放心多次求值）', async () => {
-    const { formatExportStamp } = await import('../src/utils/exportStamp.ts');
-    const d = new Date(2026, 4, 11, 8, 9);
-    const first = formatExportStamp(d);
-    assert.strictEqual(formatExportStamp(d), first);
-    assert.strictEqual(formatExportStamp(new Date(d.getTime())), first);
-  });
-});

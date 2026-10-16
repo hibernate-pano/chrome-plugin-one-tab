@@ -4,7 +4,7 @@
 //
 //   1. 体积门从未接线：report-y-bundle.mjs 超预算只打印 ALERT 并 exit 0，
 //      而且没有出现在 package.json / validate / CI 的任何一环。
-//      docs/v2-plan.md 却写着「超预算阻断发布」——承诺与实现不符。
+//      docs/archive/v2-plan.md 却写着「超预算阻断发布」——承诺与实现不符。
 //   2. 单测 glob 只覆盖顶层：tests/*.test.ts 会**静默跳过**子目录里的测试，
 //      没有任何报警。往子目录放测试 → 看起来有测试，实际没跑。
 //   3. cws-publish 的 publish 分支不校验 HTTP 状态（upload 分支校验了）：

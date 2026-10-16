@@ -20,6 +20,14 @@
 import type { Tab, TabData } from '../types/tab';
 import { isStorableTabUrl, isOpenableTabUrl } from '../utils/inputValidation';
 
+/**
+ * 【零生产调用方 · 审计 A 缺陷 3 决策：保留】
+ * WebDAV 布局走 webdav/layout.ts 自己的 encodeGroup/decodeGroup，本模块只剩
+ * 测试消费（tests/tabDataCodec.test.ts、tests/storableUnopenableUrls.test.ts、
+ * tests/guards/openUrlGateConsistency.test.ts）。保留原因是这几组测试守护的
+ * 「存得下就要回得来」语义（危险 schema 拒收、unopenable 标记）仍是有价值的
+ * 独立契约表达；删除应连同它们一起决策。登记见 tests/deadCodeGuards.test.ts。
+ */
 export function serializeTab(tab: Tab): TabData {
   return {
     id: tab.id,

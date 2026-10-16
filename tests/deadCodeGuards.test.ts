@@ -84,6 +84,26 @@ const DEAD_FILES = [
   'src/components/auth/UserProfile.tsx',
   'src/background.ts',
   'src/core/hydrationDecision.ts',
+  // 2026-10-15：整个埋点 / 诊断 / 性能观测栈下线。
+  // **零读者**：diagnostics 的唯一调用方是 HeaderDropdown 的「导出诊断信息」+
+  // 「问题反馈」两个菜单项，已随栈一并删除；productEvents 只往本地 KV 写，
+  // 唯一读者就是 diagnostics（14 个写入点零读取）；perfTrace 的读者
+  // （mutationQueue 的 span 计时、mutationHandlers 的 timedDeps、SW 的 PERF_FLUSH）
+  // 全部只服务于诊断导出；performanceTest 只被 popup/index.tsx 的 dev 基准块使用；
+  // searchAnalytics 是 SearchResultList 埋点节流的纯函数实现。
+  'src/utils/diagnostics.ts',
+  'src/utils/perfTrace.ts',
+  'src/utils/performanceTest.ts',
+  'src/utils/productEvents.ts',
+  'src/components/search/searchAnalytics.ts',
+  // 2026-10-16 云端下线后逐文件核实零引用：
+  // - InlineNotice.tsx：toneStyles + 四档图标齐全，但导出名 InlineNotice /
+  //   InlineNoticeTone 全仓零引用（ui 早就不走它了），属于「写好了没人接」的组件
+  // - stringStore.ts：sharedStringStorage / StringStorage 零引用；它自述的
+  //   「KV 层与 chrome 迁移层同源引用」随着那个 SDK 封装一起消失，
+  //   唯一剩下的外部出现是 localStorageFreshness.test.ts 里一句注释
+  'src/components/common/InlineNotice.tsx',
+  'src/storage-kv/stringStore.ts',
 ];
 
 describe('转发垫片已物理删除，不得复活', () => {
@@ -178,25 +198,79 @@ describe('页内快捷键层与「标签组拖拽 + 重排模式」已下线', (
   });
 });
 
-describe('supabase 门面/目录同名歧义已消除', () => {
-  it('门面文件叫 supabaseFacade.ts，不再与实现目录同名', () => {
-    assert.ok(
-      existsSync(p('src/utils/supabaseFacade.ts')),
-      '门面应改名为 supabaseFacade.ts',
-    );
-    assert.ok(
-      !existsSync(p('src/utils/supabase.ts')),
-      'src/utils/supabase.ts 必须不存在：它与 src/utils/supabase/ 目录同名，import 解析到谁取决于解析器顺序',
-    );
+describe('埋点 / 诊断 / 性能观测栈已下线', () => {
+  it('全仓不再 import 已删模块（别名与相对路径都算）', () => {
+    const patterns = [
+      /from\s+['"][^'"]*\/utils\/diagnostics['"]/,
+      /from\s+['"][^'"]*\/utils\/perfTrace['"]/,
+      /from\s+['"][^'"]*\/utils\/performanceTest['"]/,
+      /from\s+['"][^'"]*\/utils\/productEvents['"]/,
+      /from\s+['"]\.\/searchAnalytics['"]/,
+      /from\s+['"][^'"]*productEvents['"]/,
+    ];
+    const offenders: string[] = [];
+    const walk = (dir: string) => {
+      for (const entry of readdirSync(dir, { withFileTypes: true })) {
+        const full = join(dir, entry.name);
+        if (entry.isDirectory()) {
+          walk(full);
+        } else if (/\.(ts|tsx)$/.test(entry.name)) {
+          const src = stripComments(readFileSync(full, 'utf8'));
+          if (patterns.some(re => re.test(src))) offenders.push(full.slice(ROOT.length + 1));
+        }
+      }
+    };
+    walk(p('src'));
+    walk(p('tests'));
+    assert.deepEqual(offenders, [], `仍有代码 import 已删除的观测栈模块：${offenders.join('、')}`);
   });
 
-  it('src/utils/supabase/ 目录下不得出现 index.ts（否则会抢走门面路径的解析）', () => {
-    assert.ok(existsSync(p('src/utils/supabase')), '实现目录应保留');
-    const barrel = p('src/utils/supabase/index.ts');
-    assert.ok(
-      !existsSync(barrel),
-      '给实现目录加 index.ts 会让「文件 vs 目录」解析产生歧义：门面路径的 import 可能被解析到 barrel 上。',
-    );
+  it('生产代码不再出现 trackProductEvent 调用点', () => {
+    const offenders: string[] = [];
+    const walk = (dir: string) => {
+      for (const entry of readdirSync(dir, { withFileTypes: true })) {
+        const full = join(dir, entry.name);
+        if (entry.isDirectory()) walk(full);
+        else if (/\.(ts|tsx)$/.test(entry.name)) {
+          const src = stripComments(readFileSync(full, 'utf8'));
+          if (src.includes('trackProductEvent')) offenders.push(full.slice(ROOT.length + 1));
+        }
+      }
+    };
+    walk(p('src'));
+    assert.deepEqual(offenders, [], `埋点写入点应全部退场：${offenders.join('、')}`);
+  });
+
+  it('SW 消息分支与键表不再有观测专用通道（PERF_FLUSH / PERF_SPANS）', () => {
+    const sw = stripComments(readFileSync(p('src/service-worker.ts'), 'utf8'));
+    assert.ok(!sw.includes('PERF_FLUSH'), 'PERF_FLUSH 消息分支随 perfTrace 一并删除');
+    const keys = readFileSync(p('src/storage-kv/keys.ts'), 'utf8');
+    assert.ok(!keys.includes('PERF_SPANS'), 'PERF_SPANS 键随 perfTrace 一并删除');
+    assert.ok(!keys.includes('PRODUCT_EVENTS'), 'PRODUCT_EVENTS 键随埋点栈一并删除');
+  });
+
+  it('journal 保留：它是 mutationHandlers 的唯一 OpStamp 来源，不得跟着删', () => {
+    assert.ok(existsSync(p('src/utils/journal.ts')), 'journal.ts 必须保留');
+    const handlers = stripComments(readFileSync(p('src/background/mutationHandlers.ts'), 'utf8'));
+    assert.ok(handlers.includes('d.journal.appendEntry('), 'mutationHandlers 必须仍经 journal 取 OpStamp');
+  });
+});
+
+// 2026-10-16：Supabase 后端整体下线后，「门面 vs 目录同名」这个歧义已经
+// 不存在——**两个都不存在了**。本组从「断言门面存在」反转为「断言它们不回来」：
+// 旧的 `src/utils/supabaseFacade.ts` / `src/utils/supabase/` 任何一侧复活，
+// 都会重新引入一个「同名的文件与目录」解析歧义（import 结果取决于解析器顺序），
+// 而且会复活一个已被产品决策删除的云端同步路径。
+describe('supabase 门面/目录：已随云端下线整体退场', () => {
+  it('门面文件与实现目录都不存在', () => {
+    for (const gone of [
+      'src/utils/supabaseFacade.ts',
+      'src/utils/supabase.ts',
+      'src/utils/supabase',
+      'src/sync-backend/supabaseAdapter.ts',
+    ]) {
+      assert.ok(!existsSync(p(gone)), `${gone} 必须不存在：云端后端已下线，它复活就是另一条同步路径复活`);
+    }
   });
 
   it('仓库里已经没有任何 import 指向被删掉的面具路径', () => {
@@ -212,11 +286,91 @@ describe('supabase 门面/目录同名歧义已消除', () => {
           if (/from\s+['"]@\/utils\/supabase['"]/.test(src)) {
             offenders.push(full.slice(ROOT.length + 1));
           }
+          // 目录内任一深路径（@/utils/supabase/upload 之类）同样不得复活：
+          // 它会让「目录不存在」这条守卫变成空转，而下一个人会照着它继续写。
+          if (/from\s+['"]@\/utils\/supabase\//.test(src)) {
+            offenders.push(full.slice(ROOT.length + 1));
+          }
+          if (/from\s+['"]@\/sync-backend\/supabaseAdapter/.test(src)) {
+            offenders.push(full.slice(ROOT.length + 1));
+          }
         }
       }
     };
     walk(p('src'));
     walk(p('tests'));
-    assert.deepEqual(offenders, [], `仍有代码 import 已删除的 supabase 门面：${offenders.join('、')}`);
+    assert.deepEqual(offenders, [], `仍有代码 import 已删除的 supabase 路径：${[...new Set(offenders)].join('、')}`);
+  });
+});
+
+// ── 2026-10-16（审计 A 缺陷 3）：零生产调用方的导出逐项决策登记 ──────────────
+//
+// 删除项已从源码消失（上面的 DEAD_FILES 管整文件）；这一组管的是**有意保留**
+// 的孤儿导出：它们在生产链路里没有调用方，只在测试 / 待办 UI 修复里被消费
+// （或作为类型骨架）。保留理由写在 src 注释里，这里只做两件事：
+//   1. 登记项必须仍然存在 —— 谁要删除，先处理 reason 里的配套项并更新本清单；
+//   2. 除定义文件（与显式允许的初始化点）外，src 里不得出现新调用方 ——
+//      出现即说明它不再是孤儿，应把它从本清单移走（而不是继续挂着假标签）。
+const KEPT_ORPHANS: Array<{
+  file: string;
+  needle: string;
+  reason: string;
+  /** 除定义文件外允许出现的文件（初始化/类型声明等，不是调用）。 */
+  allowedRefs?: string[];
+}> = [
+  { file: 'src/core/tabDataCodec.ts', needle: 'serializeTab', reason: 'tests/tabDataCodec.test.ts 等三组测试守护 tab 级编解码' },
+  { file: 'src/core/tabDataCodec.ts', needle: 'deserializeTab', reason: '危险 schema 拒收 / unopenable 标记的测试锚点' },
+  { file: 'src/utils/concurrency.ts', needle: 'mapWithConcurrency', reason: 'tests/concurrency.test.ts 守护保序/有界并发/不 fail-fast' },
+  { file: 'src/utils/concurrency.ts', needle: 'CRYPTO_CONCURRENCY', reason: 'tests/concurrency.test.ts 守护并发上界收敛' },
+  { file: 'src/core/syncDecision.ts', needle: 'decideCloudTombstoneWrite', reason: 'tests/syncMergeSafety.test.ts 守护「印记列缺失不得硬删」' },
+  { file: 'src/utils/inputValidation.ts', needle: 'validateEmail', reason: 'tests/inputValidation.test.ts 仍消费；tests/ 归另一条 lane' },
+  { file: 'src/utils/inputValidation.ts', needle: 'validatePassword', reason: '同上' },
+  { file: 'src/utils/inputValidation.ts', needle: 'validateForm', reason: '同上' },
+  {
+    file: 'src/types/tab.ts',
+    needle: 'lastSyncStatus',
+    reason: 'tests/storeHydration.test.ts 的 preloadedState 注入样本；tests/ 归另一条 lane',
+    allowedRefs: ['src/store/slices/tabSlice.ts'],
+  },
+  { file: 'src/utils/journal.ts', needle: 'async read()', reason: 'appendEntry 内部取环形缓冲现值 + tests/journal.test.ts 读回轨迹；不是重放入口' },
+];
+
+describe('零生产调用方的导出：保留项已逐项登记（2026-10-16 审计 A 缺陷 3）', () => {
+  it('登记在案的保留项仍然存在（删除必须先把 reason 里的配套项处理掉）', () => {
+    for (const { file, needle, reason } of KEPT_ORPHANS) {
+      const src = readFileSync(p(file), 'utf8');
+      assert.ok(
+        src.includes(needle),
+        `${file} 的 ${needle} 消失了。若确要删除，请先处理配套项后更新本清单：${reason}`
+      );
+    }
+  });
+
+  it('保留项在生产代码里没有新增调用方（新增 = 不再是孤儿，应从本清单移走）', () => {
+    const srcFiles: string[] = [];
+    const walk = (dir: string) => {
+      for (const entry of readdirSync(dir, { withFileTypes: true })) {
+        const full = join(dir, entry.name);
+        if (entry.isDirectory()) walk(full);
+        else if (/\.(ts|tsx)$/.test(entry.name)) srcFiles.push(full.slice(ROOT.length + 1));
+      }
+    };
+    walk(p('src'));
+
+    const offenders: string[] = [];
+    for (const { file, needle, allowedRefs = [] } of KEPT_ORPHANS) {
+      for (const rel of srcFiles) {
+        if (rel === file || allowedRefs.includes(rel)) continue;
+        if (stripComments(readFileSync(p(rel), 'utf8')).includes(needle)) {
+          offenders.push(`${rel} 引用了 ${needle}（登记在 ${file}）`);
+        }
+      }
+    }
+    assert.deepEqual(
+      offenders,
+      [],
+      `孤儿导出出现了新调用方：\n${offenders.join('\n')}\n` +
+        '若这是真实接线，把它从 KEPT_ORPHANS 移走；若是误改，请撤销引用。'
+    );
   });
 });

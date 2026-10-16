@@ -1,6 +1,6 @@
 // 快路径上传必须经单写者队列——1.22.10 修复的回归钉。
 //
-// 【为什么有这份文件】体检（docs/health-check-2026-10-05.md）P1：syncEngine.scheduleUpload
+// 【为什么有这份文件】体检（docs/archive/health-check-2026-10-05.md）P1：syncEngine.scheduleUpload
 // 的 setTimeout 快路径此前直接 `void this.upload()`，绕过 mutationQueue。上传路径有四条，
 // 其余三条（popup 手动 SYNC、后台轮询 backgroundSync、alarm 兜底）都已在调用方 enqueue，
 // 唯独快路径漏了。upload() 内部有两组非原子读-改-写（读广播队列 → markCloudGroupsAsDeleted
@@ -13,12 +13,15 @@
 //
 // 【反向验证】在修复前的代码上跑红过：队列被 test:slow 占住时，timer 直调的 upload()
 // 已经跑完并把 pending_upload 清成 false（第一条断言失败）。
-import { describe, it, before } from 'node:test';
+import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { register } from 'node:module';
 import { pathToFileURL, fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
-import { stubSessionJson } from './_helpers/stubSession.ts';
+import {
+  installFakeSyncBackend,
+  resetFakeSyncBackend,
+} from './_helpers/fakeSyncBackend.ts';
 
 globalThis.__TABSTACK_META_ENV__ = {
   VITE_SUPABASE_URL: 'https://stub.supabase.co',
@@ -36,8 +39,6 @@ if (!process.env.VERBOSE) {
   console.error = () => {};
 }
 
-const USER_ID = 'user-under-test';
-const SESSION_KEY = 'sb-stub-auth-token';
 
 // 本地存储底座（KV 驱动在无 indexedDB 时回退 localStorage）
 const base = new Map<string, string>();
@@ -77,39 +78,25 @@ const chromeData = new Map<string, unknown>();
   alarms: { create: () => undefined, clear: async () => true, onAlarm: { addListener: () => undefined } },
 };
 
-// 极简假云端：本用例只考察「上传有没有抢跑」，不考察上传内容。
-// upload() 在空本地时不会 upsert，只有 purgeExpiredCloudTombstones 的 GET（失败也被
-// syncEngine 吞掉不阻断），因此 GET 返回空集即可。
-globalThis.fetch = (async (input: any) => {
-  const url = new URL(typeof input === 'string' ? input : input.url);
-  if (url.pathname.endsWith('/auth/v1/user')) {
-    return new Response(JSON.stringify({ id: USER_ID, aud: 'authenticated', role: 'authenticated' }), {
-      status: 200,
-      headers: { 'content-type': 'application/json' },
-    });
-  }
-  if (url.pathname.endsWith('/rest/v1/tab_groups')) {
-    return new Response(JSON.stringify([]), {
-      status: 200,
-      headers: { 'content-type': 'application/json' },
-    });
-  }
-  return new Response(JSON.stringify({ message: 'not found' }), { status: 404 });
-}) as typeof fetch;
 
 const tick = (ms: number) => new Promise(r => setTimeout(r, ms));
 
 before(async () => {
   register(LOADER_PATH);
-  chromeData.set(SESSION_KEY, stubSessionJson(USER_ID));
-
-  const { store } = await import('@/store');
-  const { setFromCache } = await import('@/store/slices/authSlice');
-  store.dispatch(setFromCache({ user: { id: USER_ID } as never, isAuthenticated: true }));
+  // 2026-10-16：原先这里 dispatch `setFromCache` 造假登录态，好让
+  // ensureAuthenticated 门禁放行，再用「假 PostgREST」接住上传请求。
+  // 账号体系删除后那道门禁不存在了，SyncEngine 的网络出口只剩 `@/sync-backend`
+  // —— 直接注入后端替身（远端恒空：本用例只考察「上传有没有抢跑」，
+  // 不考察上传内容，替身的上传本身是空操作）。
+  await installFakeSyncBackend();
 
   base.set('storage_version', JSON.stringify(5));
   base.set('tabvaultpro_device_id', JSON.stringify('devA'));
   base.set('op_stamp_migrated', JSON.stringify(true));
+});
+
+after(async () => {
+  await resetFakeSyncBackend();
 });
 
 describe('scheduleUpload 快路径：timer 回调必须经单写者队列（不绕过 mutationQueue）', () => {

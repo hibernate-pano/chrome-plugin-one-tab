@@ -551,7 +551,7 @@ h1, h2, h3 {
 /* ---------- 同步双路径 ---------- */
 .sync-paths {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: 1fr;
   gap: 24px;
 }
 .path {

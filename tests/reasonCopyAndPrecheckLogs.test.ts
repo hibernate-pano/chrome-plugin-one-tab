@@ -23,13 +23,16 @@
 // SyncButton 是 .tsx 组件，采用与 syncOverwriteGuard.test.ts 相同的
 // 「readFileSync 源码结构断言」；syncEngine 部分跑真实引擎 + console.warn 捕获
 // （该测试文件自身已静音 console，这里只监听不动全局）。
-import { describe, it, before } from 'node:test';
+import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { register } from 'node:module';
 import { readFileSync } from 'node:fs';
 import { pathToFileURL, fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
-import { stubSessionJson } from './_helpers/stubSession.ts';
+import {
+  installFakeSyncBackend,
+  resetFakeSyncBackend,
+} from './_helpers/fakeSyncBackend.ts';
 
 globalThis.__TABSTACK_META_ENV__ = {
   VITE_SUPABASE_URL: 'https://stub.supabase.co',
@@ -40,9 +43,6 @@ globalThis.__TABSTACK_META_ENV__ = {
 const LOADER_PATH = pathToFileURL(
   resolve(dirname(fileURLToPath(import.meta.url)), '_alias-loader.mjs')
 ).href;
-
-const USER_ID = 'user-reason-copy';
-const SESSION_KEY = 'sb-stub-auth-token';
 
 // ── localStorage 桩（无 indexedDB 时 storageAdapter 回退到它）────────
 const lsData = new Map<string, string>();
@@ -81,10 +81,6 @@ const chromeData = new Map<string, unknown>();
   alarms: { create: () => undefined, clear: async () => true, onAlarm: { addListener: () => undefined } },
 };
 
-// 云端恒空：这几条用例只考 precheck 读失败，不需要云端数据。
-globalThis.fetch = (async () =>
-  new Response('[]', { status: 200, headers: { 'content-type': 'application/json' } })) as typeof fetch;
-
 const SYNC_BUTTON_PATH = resolve(
   dirname(fileURLToPath(import.meta.url)),
   '../src/components/sync/SyncButton.tsx'
@@ -95,11 +91,15 @@ before(async () => {
   register(LOADER_PATH);
   lsData.set('tab_groups', JSON.stringify([]));
   lsData.set('storage_version', JSON.stringify(5));
-  chromeData.set(SESSION_KEY, stubSessionJson(USER_ID));
-  lsData.set(SESSION_KEY, stubSessionJson(USER_ID));
-  const { store } = await import('@/store');
-  const { setFromCache } = await import('@/store/slices/authSlice');
-  store.dispatch(setFromCache({ user: { id: USER_ID } as never, isAuthenticated: true }));
+  // 2026-10-16：原先这里 dispatch `setFromCache` 造一个假登录态，好让
+  // `ensureAuthenticated` 门禁放行。那道门禁与 session fixture 已随账号体系
+  // 删除 —— SyncEngine 的网络出口现在只有 `@/sync-backend`，所以改成注入后端
+  // 替身（远端恒空：这些用例考的是本地 precheck 读失败，不是远端数据）。
+  await installFakeSyncBackend();
+});
+
+after(async () => {
+  await resetFakeSyncBackend();
 });
 
 // ── 1. SyncButton REASON_COPY ──────────────────────────────────────────────
@@ -111,6 +111,20 @@ describe('SyncButton 错误文案：REASON_COPY 补全（1.22.15）', () => {
       /recent_upload_guard:\s*'[^']+'/,
       'REASON_COPY 缺少 recent_upload_guard：该 reason 会落到裸枚举回退路径，' +
         '用户看到的是 `recent_upload_guard` 原文，等于没说'
+    );
+  });
+
+  it('REASON_COPY 必须登记 overwrite_empty_cloud_refused（空云端覆盖闸门的文案）', () => {
+    // 2026-10-16 审查 L1：该 reason 由 syncEngine 的空云端闸门产出
+    // （decideForceRemoteOverwrite refuse）。不登记的话它是纯 snake_case，
+    // 过不了「非纯枚举原样显示」分支，用户只看到通用失败文案，而闸门那句
+    // 「已中止以免清空本机、如需清空请手动删除」恰好是他此刻最需要的。
+    const src = syncButtonSource();
+    assert.match(
+      src,
+      /overwrite_empty_cloud_refused:\s*'[^']+'/,
+      'REASON_COPY 缺少 overwrite_empty_cloud_refused：覆盖下载撞空云端闸门时，' +
+        '用户看不到「已中止以免清空本机」的定向说明，只有通用失败文案'
     );
   });
 

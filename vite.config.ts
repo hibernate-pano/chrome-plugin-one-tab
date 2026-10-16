@@ -110,10 +110,6 @@ export default defineConfig(({ mode }) => {
             if (nm.includes('node_modules/@reduxjs/toolkit') || nm.includes('node_modules/react-redux')) {
               return 'redux-vendor';
             }
-            // Supabase 相关库打包到一起
-            if (nm.includes('node_modules/@supabase/supabase-js')) {
-              return 'supabase-vendor';
-            }
             // 工具函数打包到一起
             if (nm.includes('src/utils/')) {
               return 'utils';

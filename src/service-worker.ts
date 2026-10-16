@@ -14,8 +14,6 @@ import { runMigrations as runStorageMigrations } from '@/utils/migrationUtils';
 import { LEGACY_KEYS, STORAGE_KEYS } from '@/storage-kv/keys';
 import { UPLOAD_DEBOUNCE_MS } from '@/core/syncTiming';
 import { logError, logInfo, logWarn } from './utils/log';
-// 诊断导出前落盘性能 span 用（见 PERF_FLUSH 消息分支）。
-import { perfTrace } from './utils/perfTrace';
 import { invalidateActiveSyncBackend, primeSyncBackend } from '@/sync-backend';
 
 // Chrome 扩展的 Service Worker
@@ -188,16 +186,13 @@ setupContextMenus().catch(error => {
 // 所以解析只能提前 await 好，同步调用方直接取结果。
 //
 // 不 await 的后果不是报错，而是 `getActiveSyncBackend()` 走 fail-safe 分支
-// 返回 Supabase 并告警 —— 于是「配了 WebDAV 却一直同步到 Supabase」。
-primeSyncBackend().then(outcome => {
-  if (outcome.resolvedId !== outcome.requestedId) {
-    // 回落必须出声：静默把用户切回旧后端 = 他的新配置无声失效。
-    logWarn(
-      `[ServiceWorker] 同步后端回落：期望 ${outcome.requestedId}，实际 ${outcome.resolvedId}` +
-        (outcome.fallbackReason ? ` —— ${outcome.fallbackReason}` : '')
-    );
-  }
-});
+// 本会话尚未预解析时会返回锁定占位后端并告警 —— 于是调用方能第一时间发现
+// 「忘了 await primeSyncBackend()」。
+// 2026-10-16：云端后端删除后没有第二个可回落的目标，resolvedId 与
+// requestedId 恒为 'webdav'，原来的「回落必须出声」分支是静态不可达死代码，
+// 已删除（保留它等于继续宣称这里还有一个回落决策）。锁定态的出声由
+// resolveBackendOutcome() 按起因分级（logError / logWarn）负责。
+void primeSyncBackend();
 
 // 后台同步 alarm（SW 被唤醒时重新注册，防遗漏）
 setupBackgroundSync();
@@ -489,21 +484,6 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         return true; // 异步响应
       }
 
-      // 诊断导出前请求 SW 落盘性能 span（见 @/utils/perfTrace）。
-      //
-      // 【为什么不入 mutationQueue】入队就会排在正在执行的慢任务后面，而我们要看的
-      // 恰恰是那次慢操作的计时——等它排队，现场已经过期。这里只写 PERF_SPANS 这一个
-      // 与业务数据无关的键，不参与「读-改-写」，绕过队列是安全的。
-      //
-      // 【为什么必须显式请求】span 记在 SW 进程，落盘有节流窗口；诊断导出跑在 UI 进程，
-      // 读不到 SW 的内存缓冲。不主动 flush 就会丢掉最近几秒——通常正是复现的那几秒。
-      case 'PERF_FLUSH': {
-        void perfTrace().flush()
-          .then(() => sendResponse({ success: true }))
-          .catch(() => sendResponse({ success: true }));
-        return true; // 异步响应
-      }
-
       case 'MUTATE': {
         const cmd = message.data;
         if (!cmd || typeof cmd.op !== 'string') {
@@ -612,8 +592,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         // 去重必须发生在入队之前，用队列的在途状态当判据（见 hasQueuedOrRunningJob）。
         // 只拦 auto（popup 打开自动触发）：用户手点的下载/上传是显式意图，照常排队执行。
         if (data.op === 'download' && data.auto === true && hasQueuedOrRunningJob('sync:')) {
-          // already_syncing 是既有 reason：AuthProvider 对它静默（line 73 的白名单），
-          // 用户手点的下载不带 auto、永远不会收到闸门的这个 reason。
+          // already_syncing 是既有 reason：用户手点的下载不带 auto、
+          // 永远不会收到闸门的这个 reason。
           // false = 这次没有真的执行下载。
           sendResponse({ ok: false, error: 'already_syncing' });
           return false;

@@ -15,7 +15,7 @@
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 
 import {
   FOCUSABLE_SELECTOR,
@@ -28,7 +28,6 @@ const ALERT_DIALOG = readFileSync(new URL('../src/components/common/AlertDialog.
 const TOAST = readFileSync(new URL('../src/components/common/Toast.tsx', import.meta.url), 'utf8');
 const SYNC_BUTTON = readFileSync(new URL('../src/components/sync/SyncButton.tsx', import.meta.url), 'utf8');
 const HEADER_DROPDOWN = readFileSync(new URL('../src/components/layout/HeaderDropdown.tsx', import.meta.url), 'utf8');
-const AUTH_MODAL = readFileSync(new URL('../src/components/auth/AuthModal.tsx', import.meta.url), 'utf8');
 const KEYBOARD_HOOKS = readFileSync(new URL('../src/hooks/useKeyboardNavigation.ts', import.meta.url), 'utf8');
 
 /** 取一段 JSX 文本开头到第一个分隔符之前的标签名。 */
@@ -272,28 +271,37 @@ test('Toast 的消失计时器不再依赖每次渲染都变的 onClose', () => 
   assert.ok(TOAST.includes('onCloseRef.current?.();'));
 });
 
-// ---------------------------------------------------------------------------
-// (b) 结构断言：账号弹窗
-// ---------------------------------------------------------------------------
+// ── 结构断言：账号弹窗已下线（2026-10-16） ─────────────────────────────────
+// 登录/注册弹窗（src/components/auth/*）随账号体系整体删除。留下的守卫改成
+// 「不得复活」方向：账号入口不得以任何形式回到界面上，否则就是一个打不开、
+// 或把用户数据交给已删除后端的死控件。
 
-test('账号弹窗的关闭按钮有无障碍名称', () => {
-  assert.ok(AUTH_MODAL.includes('aria-label="关闭登录弹窗"'));
+test('账号体系已下线：auth 目录与 AuthProvider 都不得复活', () => {
+  assert.equal(
+    existsSync(new URL('../src/components/auth/', import.meta.url)),
+    false,
+    '登录/注册组件已删除；若该目录复活必须有新的架构理由，不能无声回来'
+  );
+  assert.equal(
+    existsSync(new URL('../src/components/app/AuthProvider.tsx', import.meta.url)),
+    false,
+    'AuthProvider 随账号体系删除'
+  );
+  for (const src of [HEADER_DROPDOWN, SYNC_BUTTON]) {
+    assert.ok(!stripComments(src).includes('AuthProvider'), '有组件仍在引用 AuthProvider');
+  }
 });
 
-test('账号弹窗补齐对话框语义与焦点管理', () => {
-  assert.ok(AUTH_MODAL.includes('role="dialog"'));
-  assert.ok(AUTH_MODAL.includes('aria-modal="true"'));
-  assert.ok(AUTH_MODAL.includes('aria-label="登录或注册账号"'));
-  assert.ok(AUTH_MODAL.includes('tabIndex={-1}'));
-  assert.ok(AUTH_MODAL.includes('useDialogA11y(panelRef, visible, onClose)'));
-});
-
-// 2026-10-03：登录页「像在另一个图层」的根因是弹窗渲染在 `.header`
-// （backdrop-filter 会让它成为 fixed 后代的包含块）里。防线：必须 portal 到 body。
-test('账号弹窗 portal 到 body，不受 header 的 backdrop-filter 包含块影响', () => {
-  assert.ok(AUTH_MODAL.includes('createPortal('));
-  assert.ok(AUTH_MODAL.includes('document.body'));
-  assert.ok(!HEADER_DROPDOWN.includes('showAuthModal'), '弹窗不得再寄生在菜单内');
+test('菜单里不得再有账号入口（登录/登出）', () => {
+  // 必须先剥注释：HeaderDropdown 的删改留痕里大量引用「登录 / 注册」
+  // 「已登录」这些旧词，不剥就会把自己判成违规（同坑见 noSilentFalseSuccess）。
+  const code = stripComments(HEADER_DROPDOWN);
+  for (const label of ['showAuthModal', '登录', '登出', '退出登录', 'AuthProvider']) {
+    assert.ok(
+      !code.includes(label),
+      `HeaderDropdown 里出现「${label}」——账号入口已下线，点了必然无路可走`
+    );
+  }
 });
 
 test('HeaderDropdown 里所有 onClick 都落在真控件上', () => {

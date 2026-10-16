@@ -7,7 +7,6 @@ import {
 } from '@/store/slices/settingsSlice';
 import { cleanDuplicateTabs, deleteBroadcastWarn } from '@/store/slices/tabSlice';
 import { HeaderDropdown } from './HeaderDropdown';
-import { AuthModal, AuthTab } from '@/components/auth/AuthModal';
 import { useToast } from '@/contexts/ToastContext';
 import { TabCounter } from './TabCounter';
 import SyncButton from '@/components/sync/SyncButton';
@@ -238,9 +237,9 @@ export const Header: React.FC<HeaderProps> = ({ onSearch }) => {
   const [saveFeedback, setSaveFeedback] = useState<{ kind: 'success' | 'error'; text: string } | null>(
     null
   );
-  // 账号弹窗是应用级关注点：挂在 Header 上、portal 到 body，
-  // 不随菜单开关而卸载（菜单点完就关，弹窗独立存活）。
-  const [authModal, setAuthModal] = useState<AuthTab | null>(null);
+  // 2026-10-16：原先这里有 authModal 状态 + 挂在 header 尾部的 <AuthModal>，
+  //   以及把 AuthTab 类型传给 HeaderDropdown 的 onOpenAuth。账号体系已删除，
+  //   两者一同删除。
 
   // 成功是轻提示：3 秒后自动退场；失败常驻到下次保存（与空态 CTA 同口径）
   React.useEffect(() => {
@@ -387,10 +386,6 @@ export const Header: React.FC<HeaderProps> = ({ onSearch }) => {
               {showDropdown && (
                 <HeaderDropdown
                   onClose={() => setShowDropdown(false)}
-                  onOpenAuth={(tab) => {
-                    setShowDropdown(false);
-                    setAuthModal(tab);
-                  }}
                   onToggleLayout={() => {
                     void handleToggleLayout();
                   }}
@@ -403,12 +398,6 @@ export const Header: React.FC<HeaderProps> = ({ onSearch }) => {
           </nav>
         </div>
       </div>
-
-      <AuthModal
-        visible={authModal !== null}
-        initialTab={authModal ?? 'login'}
-        onClose={() => setAuthModal(null)}
-      />
     </header>
   );
 };

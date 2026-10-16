@@ -31,7 +31,6 @@ import {
   toggleCollectPinnedTabs,
   toggleConfirmBeforeDelete,
   toggleShowNotifications,
-  updateSettings,
 } from '@/store/slices/settingsSlice';
 import { SYNC_INTERVAL_CHOICES } from '@/utils/storage';
 import { sendSyncCommand } from '@/shared/mutationProtocol';
@@ -40,8 +39,18 @@ import { ThemeProvider, useTheme } from '@/contexts/ThemeContext';
 import ErrorBoundary from '@/components/common/ErrorBoundary';
 import { ThemeStyleSelector } from '@/components/layout/ThemeStyleSelector';
 import { WebDavSettings } from '@/components/sync/WebDavSettings';
+import {
+  getLastBackendResolution,
+  invalidateActiveSyncBackend,
+  primeSyncBackend,
+} from '@/sync-backend';
+import {
+  canEnableAutoSync,
+  classifyBackendResolution,
+  UNKNOWN_BACKEND_STATUS,
+  type BackendStatus,
+} from '@/components/layout/backendStatus';
 import { logWarn } from '@/utils/log';
-import { invalidateActiveSyncBackend, primeSyncBackend } from '@/sync-backend';
 
 /** 明暗模式。ThemeContext 的 setThemeMode 收这个联合类型，
  *  但没导出它 —— 这里就地声明，避免为了一个类型去改 context 的公共面。 */
@@ -99,6 +108,22 @@ const ToggleRow: React.FC<{
   </div>
 );
 
+/**
+ * 「不能开启自动同步」时按真实状态给出的原因（2026-10-16，Wave 2B 缺陷 3）。
+ *
+ * 每一条都必须指向正确的下一步动作：用户开的这个开关在未配置 / 未解锁时
+ * 永远不会跑，拒绝开启的同时要告诉他到底缺哪一步，而不是笼统的「操作失败」。
+ */
+const AUTO_SYNC_BLOCKED_TOAST: Record<BackendStatus['kind'], string> = {
+  // ready 不会走到拒绝分支（canEnableAutoSync 为真时不取这条）；
+  // 保留键是为了让索引类型是完整的 kind 联合，编译器能抓到错位的 kind。
+  ready: '',
+  unconfigured: '还没有配置云盘：先在下方「自带存储配置」填写地址并点「保存并启用」，再开启自动同步',
+  locked: '云盘本次会话还没有解锁：先重新输入应用密码与加密口令，再开启自动同步',
+  error: '读不到云盘配置或解锁状态，暂时无法开启自动同步；请到下方重新保存配置',
+  unknown: '还没有确认云盘状态，暂时无法开启自动同步；请先完成下方云盘配置',
+};
+
 const OptionsContent: React.FC = () => {
   const dispatch = useAppDispatch();
   const settings = useAppSelector(state => state.settings);
@@ -113,6 +138,12 @@ const OptionsContent: React.FC = () => {
   // 「开关翻不动 / 刷新后又变回去」。
   const [settingsReady, setSettingsReady] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
+
+  // 同步后端的真实状态（2026-10-16，Wave 2B 缺陷 3）。
+  // 「自动同步」开关不能只读 settings.syncEnabled —— 开着不等于会跑：
+  // 未配置 / 未解锁时后台每轮都会在锁定占位后端上失败。这里存最近一次
+  // 真实解析结果，用来在开关旁如实说明它现在到底会不会运行。
+  const [backendStatus, setBackendStatus] = useState<BackendStatus>(UNKNOWN_BACKEND_STATUS);
 
   useEffect(() => {
     let alive = true;
@@ -152,6 +183,38 @@ const OptionsContent: React.FC = () => {
       .catch(err => logWarn('[OptionsPage] 通知 SW 重建同步 alarm 异常，下次启动自愈:', err));
   }, []);
 
+  /**
+   * 重新解析后端并更新本页状态（2026-10-16，Wave 2B 缺陷 3）。
+   *
+   * 强制重解析（invalidate + prime）而不是复用进程内缓存：用户可能刚在下方
+   * 「保存并启用」保存了配置，也可能在另一个窗口改过 —— 缓存里的旧答案
+   * 会让这里继续显示「未配置」。不碰网络：只读本地配置与本次会话的解锁状态。
+   */
+  const refreshBackendStatus = useCallback(async (): Promise<BackendStatus> => {
+    let status: BackendStatus;
+    try {
+      invalidateActiveSyncBackend();
+      await primeSyncBackend();
+      status = classifyBackendResolution(getLastBackendResolution());
+    } catch (err) {
+      logWarn('[OptionsPage] 同步后端状态解析失败，按「状态未知」展示:', err);
+      status = classifyBackendResolution(null);
+    }
+    setBackendStatus(status);
+    return status;
+  }, []);
+
+  // 页面打开与每次回到本页（另一个窗口配置完切回来）都重查一次。
+  // 同一页面内保存配置由开关点击前的那次 refreshBackendStatus() 补上。
+  useEffect(() => {
+    void refreshBackendStatus();
+    const onFocus = () => {
+      void refreshBackendStatus();
+    };
+    window.addEventListener('focus', onFocus);
+    return () => window.removeEventListener('focus', onFocus);
+  }, [refreshBackendStatus]);
+
   const handleToggleNotifications = useCallback(async () => {
     dispatch(toggleShowNotifications());
     const saveError = await dispatchSaveSettings(dispatch);
@@ -172,6 +235,18 @@ const OptionsContent: React.FC = () => {
 
   const handleToggleAutoSync = useCallback(async () => {
     const nextEnabled = !settings.syncEnabled;
+
+    if (nextEnabled) {
+      // 开启前必须重新做一次真实解析：mount 时的答案可能已经过期
+      //（用户刚在下方保存了配置，或在另一个窗口改过）。未就绪时**拒绝开启**——
+      // 让它开着却永远不会跑，就等于用一个不可能发生的频率欺骗用户。
+      const fresh = await refreshBackendStatus();
+      if (!canEnableAutoSync(fresh)) {
+        showToast(AUTO_SYNC_BLOCKED_TOAST[fresh.kind], 'error');
+        return;
+      }
+    }
+
     dispatch(setSyncEnabled(nextEnabled));
     const saveError = await dispatchSaveSettings(dispatch);
     if (saveError) {
@@ -185,9 +260,14 @@ const OptionsContent: React.FC = () => {
     }
     notifySwResyncAlarm();
     if (nextEnabled) {
-      showToast(`已开启自动同步，每 ${settings.syncIntervalMinutes} 分钟同步一次`, 'success');
+      // 重启后的后果必须写在这句话里：服务端口令只存在于本次浏览器会话的
+      // 内存中，重启浏览器后自动同步会停在「未解锁」，直到重新输入应用密码。
+      showToast(
+        `已开启自动同步，每 ${settings.syncIntervalMinutes} 分钟同步一次；关闭浏览器后需重新输入应用密码才会继续`,
+        'success'
+      );
     }
-  }, [dispatch, settings.syncEnabled, settings.syncIntervalMinutes, notifySwResyncAlarm, showToast]);
+  }, [dispatch, settings.syncEnabled, settings.syncIntervalMinutes, notifySwResyncAlarm, showToast, refreshBackendStatus]);
 
   const handleSetSyncInterval = useCallback(async (minutes: number) => {
     if (minutes === settings.syncIntervalMinutes) return;
@@ -201,33 +281,30 @@ const OptionsContent: React.FC = () => {
     notifySwResyncAlarm();
   }, [dispatch, settings.syncIntervalMinutes, notifySwResyncAlarm, showToast]);
 
-  const handleSelectBackend = useCallback(async (next: 'supabase' | 'webdav') => {
-    if (next === settings.syncBackend) return;
-    const prevBackend = settings.syncBackend;
-    dispatch(updateSettings({ syncBackend: next, syncEnabled: false }));
-    const saveError = await dispatchSaveSettings(dispatch);
-    if (saveError) {
-      dispatch(updateSettings({ syncBackend: prevBackend }));
-      showToast(`${saveError}（同步方式已恢复为「${prevBackend === 'webdav' ? '自带存储' : 'TapStack 云端'}」）`, 'error');
-      return;
+  // 2026-10-16：原先这里是 handleSelectBackend —— 双后端选择器（TapStack 云端 /
+  // 自带存储），连带它的两个分支函数。
+  // 云端后端下线后没有第二个可选项，所以整个 handler 删除。
+  // 「用户改了后端要重解析」这件事仍然要做，它已经归 WebDavSettings 的
+  // 「保存并启用」负责（那里 invalidates + primes），不在本页重复。
+
+  // 自动同步的说明必须等于真实行为（2026-10-16，Wave 2B 缺陷 3）：
+  //   · 未配置 / 未解锁 / 状态不可读时，先说清「现在开了也不会跑」；
+  //   · 就绪时说明频率，并点明重启浏览器后需要重新输入应用密码
+  //     （webdav/config.ts:31-34 要求这个后果必须出现在 UI 上）。
+  const autoSyncHint = (() => {
+    if (backendStatus.kind === 'unconfigured') {
+      return '云盘尚未配置：自动同步即使打开也不会运行。请先在下方「自带存储配置」填写并点「保存并启用」。';
     }
-    notifySwResyncAlarm();
-    if (next === 'supabase') {
-      showToast('已切回 TapStack 云端，自动同步已关闭。云盘上的文件不会被删除。', 'success');
-    } else {
-      // 切到自带存储但**可能还没配好**：这时若不提醒，用户会以为已经生效。
-      showToast('已切到自带存储。若还没填地址，请在下方填好后点「保存并启用」并测试连接。', 'info');
+    if (backendStatus.kind === 'locked') {
+      return '云盘本次会话尚未解锁：重新输入应用密码与加密口令之前，自动同步不会运行。';
     }
-    // 本页的后端缓存也要失效 + 重解析：notifySwResyncAlarm 只管 SW 那边，
-    // 不管本页。下次在本页点同步/预览时透传层会复用本页缓存，旧后端就阴魂不散。
-    // 切到 webdav 但还没解锁时，解析结果是锁定占位（明确报错，不静默走 Supabase）。
-    invalidateActiveSyncBackend();
-    try {
-      await primeSyncBackend();
-    } catch (err) {
-      logWarn('[OptionsPage] 切换后端后重解析失败（下次调用自愈）:', err);
+    if (backendStatus.kind === 'error' || backendStatus.kind === 'unknown') {
+      return '云盘状态读取失败：暂时无法确认自动同步能否运行，请在下方重新保存配置。';
     }
-  }, [dispatch, settings.syncBackend, notifySwResyncAlarm, showToast]);
+    return settings.syncEnabled
+      ? `已开启：每 ${settings.syncIntervalMinutes} 分钟在后台自动同步一次。关闭浏览器后需要重新输入应用密码，自动同步才会继续。`
+      : '打开后，TapStack 会按下面的间隔在后台自动同步；关闭浏览器后需要重新输入应用密码才会继续。';
+  })();
 
   return (
     <div className="app-shell theme-shell min-h-screen dark:text-gray-100">
@@ -350,57 +427,31 @@ const OptionsContent: React.FC = () => {
             </h3>
             <SectionTitle
               title="数据同步"
-              hint="会话内容同步到哪里。先决定跟谁同步，再决定要不要自动。"
+              hint="会话内容存放在你自己的云盘（WebDAV）。先把下方云盘信息填好，再决定要不要自动同步。"
             />
 
-            <div className="mb-4" role="radiogroup" aria-label="同步方式">
-              <label className={labelCls}>同步方式</label>
-              <div className="mt-1.5 flex gap-2">
-                <button
-                  type="button"
-                  role="radio"
-                  aria-checked={settings.syncBackend === 'supabase'}
-                  onClick={() => handleSelectBackend('supabase')}
-                  className={`flex-1 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors border ${
-                    settings.syncBackend === 'supabase'
-                      ? 'theme-toggle-on text-white border-transparent'
-                      : 'bg-gray-100 text-gray-600 border-transparent hover:bg-gray-200 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600'
-                  }`}
-                >
-                  TapStack 云端
-                  <div className="mt-0.5 text-xs font-normal opacity-90">
-                    需要登录，跨设备自动同步
-                  </div>
-                </button>
-                <button
-                  type="button"
-                  role="radio"
-                  aria-checked={settings.syncBackend === 'webdav'}
-                  onClick={() => handleSelectBackend('webdav')}
-                  className={`flex-1 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors border ${
-                    settings.syncBackend === 'webdav'
-                      ? 'theme-toggle-on text-white border-transparent'
-                      : 'bg-gray-100 text-gray-600 border-transparent hover:bg-gray-200 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600'
-                  }`}
-                >
-                  自带存储（WebDAV）
-                  <div className="mt-0.5 text-xs font-normal opacity-90">
-                    数据只存你自己的云盘，不经过 TapStack
-                  </div>
-                </button>
+            {/* 2026-10-16：原先这里是一组双选单选钮（TapStack 云端 / 自带存储）
+                + handleSelectBackend。云端后端下线后没有第二个选项，
+                一个「只能选它」的开关是噪声而不是控制，所以整块删除。
+                真正的主表面是下方的 WebDavSettings 面板（首次进入即展开）。 */}
+            <div className="mb-4 rounded-lg border theme-border-default px-3 py-2.5">
+              <div className="text-sm font-medium text-gray-800 dark:text-gray-200">
+                同步方式：自带存储（WebDAV）
               </div>
+              <p className={`mt-0.5 ${hintCls}`}>
+                会话内容加密后存到你自己的云盘，不经过 TapStack 的服务器。
+                请在下方「自带存储配置」里填写地址并点「保存并启用」。
+              </p>
             </div>
 
-            {/* 档位行：只在自动同步开着时显示 ——
-                关着的时候「多久跑一次」没有意义，显示它只会让人以为
-                改了档位就会生效。 */}
+            {/* 档位行：**始终渲染**（2026-10-16 与代码对齐）。
+                旧注释声称「只在自动同步开着时显示」，但下面是无条件渲染。
+                保留常显是有意的：关闭时上一行提示已写明「打开后按下面的
+                间隔同步」，先选好档位再开启是常见顺序；藏起来反而让用户在
+                开启前看不到可选档位。 */}
             <ToggleRow
               label="自动同步"
-              hint={
-                settings.syncEnabled
-                  ? `已开启：每 ${settings.syncIntervalMinutes} 分钟在后台自动同步一次。关闭浏览器后不再运行。`
-                  : '打开后，TapStack 会按下面的间隔在后台自动同步。'
-              }
+              hint={autoSyncHint}
               checked={settings.syncEnabled}
               onToggle={handleToggleAutoSync}
             />
@@ -440,13 +491,15 @@ const OptionsContent: React.FC = () => {
             </h3>
             <SectionTitle
               title="自带存储配置"
-              hint="填好后点「保存并启用」并先测试连接 —— 切换同步方式不会替你验证地址是否可用。"
+              hint="填好后点「保存并启用」并先测试连接 —— 保存并启用不会替你验证地址可用性。"
             />
 
             {/* 这里**无条件**渲染：WebDAV 表单在设置页里不再受
                 「syncBackend 是不是 webdav」约束（那正是上一轮修掉的死锁 ——
                 面板要切过去才出现，切换入口又在面板里）。
-                独立页面天然没有这个循环依赖：用户想配就能配。 */}
+                独立页面天然没有这个循环依赖：用户想配就能配。
+                2026-10-16：云端下线后它同时也是**唯一**的主表面，
+                不再是一个「可选面板」。 */}
             <WebDavSettings />
           </section>
         </div>
@@ -459,10 +512,11 @@ const OptionsContent: React.FC = () => {
  * 设置页根组件：包齐 popup 侧那三层 Provider。
  *
  * 为什么这里必须自己包一遍，而不是复用 AppContainer：
- * AppContainer 内部挂了 AuthProvider，而 AuthProvider 在挂载后**立刻**
- * 向 Supabase 查会话，命中就自动触发一次整库下载（跨设备找回）。
- * 设置页没有任何理由触发这种流量 —— 用户只是想改个主题。
- * 直接复用 AppContainer 会让「打开设置」变成一次后台同步。
+ * AppContainer 额外做了 localStorage → IndexedDB 迁移预热（initStorage），
+ * 而设置页不需要那一步；且它多了一层 context（Toast/Theme/ErrorBoundary），
+ * 本页有自己的一套包装。2026-10-16 删除了原先那一条理由 ——
+ * 「AppContainer 挂着 AuthProvider，打开设置就会触发一次整库下载」——
+ * AuthProvider 已随账号体系删除，那句话描述的是一个不存在的入口。
  */
 export const OptionsPage: React.FC = () => (
   <ErrorBoundary>

@@ -31,7 +31,6 @@ import {
   applyCleanDuplicates,
 } from '@/core/mutationOps';
 import { logError } from '../utils/log';
-import { perfTrace } from '@/utils/perfTrace';
 
 export interface MutationDeps {
   getGroups(): Promise<TabGroup[]>;
@@ -129,48 +128,16 @@ function normalizeImportedGroupsForImport(raw: unknown): TabGroup[] {
 
 export function createMutationHandlers(deps: MutationDeps) {
 
-  /**
-   * 阶段计时包装（诊断观测，见 @/utils/perfTrace）。
-   *
-   * 为什么包 deps 而不是改 10 个 case：每个 case 的 IO 骨架都是同一条
-   * 「journal → 读全量 → 纯计算 → 写全量 → 登记删除 → 调度上传」。在依赖注入
-   * 边界上计时，一处覆盖全部命令，且新增 op 自动获得计时（漏不掉）。
-   * 纯计算段没有 IO 可包，由诊断聚合时用 run 总时长减去各 IO 段推出
-   * （见 buildDiagnosticsReport 的 applyMs）。
-   *
-   * 计时不改变行为：measure 只多记一次时间，异常原样向上抛。
-   */
-  function timedDeps(op: string): MutationDeps {
-    return {
-      ...deps,
-      journal: {
-        ...deps.journal,
-        appendEntry: p => perfTrace().measure(op, 'journal', () => deps.journal.appendEntry(p)),
-      },
-      getGroups: () => perfTrace().measure(op, 'read', () => deps.getGroups()),
-      setGroups: (g, originId) => perfTrace().measure(op, 'write', () => deps.setGroups(g, originId)),
-      scheduleUpload: ms => perfTrace().measure(op, 'scheduleUpload', () => deps.scheduleUpload(ms)),
-      // 可选依赖：缺失时保持缺失（noteDeletedGroups 用 `?.` 判定，不能把
-      // undefined 包成一个函数，否则「没注入」会被误判成「注入了但很慢」）。
-      ...(deps.noteGroupDeleted
-        ? {
-            noteGroupDeleted: (ids: readonly string[]) =>
-              perfTrace().measure(op, 'noteDeleted', () => deps.noteGroupDeleted!(ids)),
-          }
-        : {}),
-    };
-  }
-
   async function run(cmd: MutationOp, originId?: string): Promise<MutationResult> {
-    const d = timedDeps(cmd.op);
+    const d = deps;
     const now = d.now();
     // 本次命令的统一落盘出口：把 originId 透传给写路径（广播过滤用）。
     const persist = (groups: TabGroup[]) => d.setGroups(groups, originId);
 
     // 阶段二·§4.3 写序：journal + seq 一次性落盘先于 apply* 状态写。
-    // journal 在这里的作用是「取号 + 留一条命令轨迹」（诊断导出读它统计命令分布）；
-    // 它声明的 WAL 重放从未实现，也不打算实现——单写者队列 + 每步直写落盘
-    // 已经保证不会留下「需要重放」的中间态。
+    // journal 在这里的作用是「取号」：它是 mutationHandlers 唯一的 OpStamp 来源
+    // （d / s 两字段）；它声明的 WAL 重放从未实现，也不打算实现——单写者队列 +
+    // 每步直写落盘已经保证不会留下「需要重放」的中间态。
     const entry = await d.journal.appendEntry({
       type: cmd.op,
       groupId: 'groupId' in cmd ? (cmd as { groupId?: string }).groupId : undefined,

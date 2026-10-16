@@ -11,31 +11,30 @@
  * 的假抽象。因此这里定义**后端无关的最小面**，各后端各自实现，
  * SyncEngine 只认这个面。
  *
- * ── 与 SupabaseSyncPort 的关系（重要，别删错）───────────────────────────
- * 本文件**不替换** `utils/supabase/ports.ts`。两者的差别：
- *   · `SupabaseSyncPort` = Supabase 实现的**技术细节面**（读回校验、JSONB 迁移…）
- *     仍被 `utils/supabase/*` 内部与测试使用，删除会波及一大片。
- *   · `SyncBackendPort`（本文件）= SyncEngine 真正需要的**语义面**。
- * `services/tabGroupSyncService.ts` 是这两者之间的**适配器**（见
- * `src/sync-backend/resolve.ts`）。
+ * ── 与 SupabaseSyncPort 的关系（2026-10-16：该层已随之删除）────────────
+ * 本文件当年**不替换** `utils/supabase/ports.ts`：后者是 Supabase 实现的
+ * 技术细节面，而 `SyncBackendPort`（本文件）是 SyncEngine 真正需要的语义面。
+ * 2026-10-16 Supabase 后端整体下线，两者同批删除，本文件成为唯一端口面。
  *
- * ── 这一版（阶段 0）只做「加接缝」，不切流量 ────────────────────────────
- * 本阶段结束时 SyncEngine 的行为必须与改造前**逐字一致**：
- * 默认解析出的后端仍是 Supabase，调用序列、错误语义、退避行为都不变。
- * 「什么时候切到 WebDAV」是后续阶段的事（settings.syncBackend）。
+ * ── 这一版只定义端口，流量只有自带存储一种（2026-10-16）───────────────
+ * WebDAV 自带存储是唯一后端：`SyncBackendId` 已收窄为 `'webdav'`，
+ * 不再存在「按设置在两个后端之间选」的分支。保留这一层的原因不变：
+ * SyncEngine 只认语义面，将来接入新后端仍然从这里长。
  */
 import type { TabGroup, UserSettings } from '@/types/tab';
 
-/** 后端标识。写进同步水位键名与设置持久化，用于「换后端 ⇒ 水位作废」。 */
-export type SyncBackendId = 'supabase' | 'webdav';
+/** 后端标识。写进同步水位键名与设置持久化，用于「换后端 ⇒ 水位作废」。
+ *
+ *  2026-10-16：TapStack 云端（Supabase）下线后只剩自带存储一种，
+ *  所以这里的联合类型收窄为单成员。保留 type 而不是直接写 `'webdav'`，
+ *  是为了让「后端 id」在代码里仍然是一个具名概念。 */
+export type SyncBackendId = 'webdav';
 
 /**
  * 远端一条会话的**指纹**（探活与增量选组的依据）。
  *
  * 对应 Supabase 侧的 `TabGroupDigest`，但抽掉了一切 Supabase 专有的列
  * （`version`、`is_deleted` 的列名形态、`last_op_device`/`last_op_seq`）。
- * 文件后端给不出 `version`（那是数据库的自增/触发器概念），
- * 所以它是**可选**字段而不是 required。
  */
 export interface RemoteGroupFingerprint {
   id: string;

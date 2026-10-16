@@ -10,7 +10,6 @@ import { decideOverwriteClick, getSyncStrategyLabel, isOverwriteGateOpen, render
 type SyncOperation = 'upload' | 'download' | 'none';
 import { useToast } from '@/contexts/ToastContext';
 import { useDialogA11y } from '@/hooks/useKeyboardNavigation';
-import { trackProductEvent } from '@/utils/productEvents';
 import { storage } from '@/utils/storage';
 import {
   buildDownloadPreviewSummary,
@@ -72,7 +71,6 @@ type SyncActionKey = keyof typeof SYNC_ACTIONS;
 
 export const SyncButton: React.FC<SyncButtonProps> = () => {
   const dispatch = useAppDispatch();
-  const { isAuthenticated } = useAppSelector(state => state.auth);
   const settings = useAppSelector(state => state.settings);
   const [isWorking, setIsWorking] = useState(false);
   const [workingOperation, setWorkingOperation] = useState<SyncOperation>('none');
@@ -159,7 +157,7 @@ export const SyncButton: React.FC<SyncButtonProps> = () => {
 
   // 处理上传按钮点击
   const handleUpload = async () => {
-    if (!isWorking && isAuthenticated) {
+    if (!isWorking) {
       setModalAnimation('animate-fadeIn');
       setArmedOverwrite(null);
       setShowUploadModal(true);
@@ -169,7 +167,7 @@ export const SyncButton: React.FC<SyncButtonProps> = () => {
 
   // 处理下载按钮点击
   const handleDownload = async () => {
-    if (!isWorking && isAuthenticated) {
+    if (!isWorking) {
       setModalAnimation('animate-fadeIn');
       setArmedOverwrite(null);
       setShowDownloadModal(true);
@@ -247,7 +245,7 @@ export const SyncButton: React.FC<SyncButtonProps> = () => {
     const mode = syncModeOf(actionKey);
 
     // 硬闸门：覆盖模式没有确认标记就拒跑（UI 侧已双闸门，这里是绕过 UI 时的兵底）
-    if (!isOverwriteGateOpen({ mode, isConfirmed: isOverwriteConfirmed, isBusy: isWorking, isAuthenticated })) {
+    if (!isOverwriteGateOpen({ mode, isConfirmed: isOverwriteConfirmed, isBusy: isWorking })) {
       return;
     }
 
@@ -259,16 +257,8 @@ export const SyncButton: React.FC<SyncButtonProps> = () => {
       }
     };
 
-    // 下载侧的埋点额外带 directRestore（下载按钮走的是菜单，不是直接恢复）。
-    const trackingPayload = () =>
-      direction === 'download' ? { mode, directRestore: false } : { mode };
-
     try {
       closeModals();
-      void trackProductEvent(
-        direction === 'upload' ? 'sync_upload_started' : 'sync_download_started',
-        trackingPayload()
-      );
       setIsWorking(true);
       setWorkingOperation(direction);
       // 真实进度在 SW 侧，跨消息边界不会回传到 popup：
@@ -289,11 +279,6 @@ export const SyncButton: React.FC<SyncButtonProps> = () => {
             return;
           }
         }
-
-        void trackProductEvent(
-          direction === 'upload' ? 'sync_upload_completed' : 'sync_download_completed',
-          trackingPayload()
-        );
       } else {
         const reason = res.error;
         // 2026-10-07：reason 是内部枚举，不该原样弹给用户 —— `precheck_unknown`
@@ -310,14 +295,24 @@ export const SyncButton: React.FC<SyncButtonProps> = () => {
           pending_upload_failed:
             '还有未上传的本地改动，已中止下载以免覆盖它们，请先完成上传',
           snapshot_failed: '本地快照创建失败，已中止同步以保护现有数据',
+          // 2026-10-16（审查 L1）：覆盖下载撞上「云端一行都没有」闸门时，
+          // 引擎回传的是这个机器码。不映射的话它过不了下面的「非纯枚举」分支
+          // （纯 snake_case），用户只会看到通用失败文案，而闸门那句
+          // 「已中止以免清空本机、如需清空请手动删除」恰好是他此刻最需要的。
+          overwrite_empty_cloud_refused:
+            '云端没有任何数据，已中止覆盖下载以免清空本机会话；如需清空本机请手动删除会话',
         };
         const mapped = reason != null ? REASON_COPY[reason] : undefined;
+        // 2026-10-16：原先这里先判 `reason === 'not_authenticated' ? '未登录'`。
+        //   该 reason 来自 syncEngine 里已被删除的 ensureAuthenticated 门禁，
+        //   现在**任何代码路径都不再产出它** —— 留著就是一个永远不命中、
+        //   却让读者以为「还有登录概念」的分支。删除。
+        //   「未配置/未解锁」的真实文案走另一条路：锁定占位后端抛的是
+        //   普通 Error，其 message 含中文 ⇒ 命中下面的「非纯枚举原样显示」。
         const shown =
-          reason === 'not_authenticated' && direction === 'download'
-            ? '未登录'
-            : mapped ||
-              (reason && !/^[a-z_]+$/.test(reason) ? reason : undefined) ||
-              spec.failureMessage;
+          mapped ||
+          (reason && !/^[a-z_]+$/.test(reason) ? reason : undefined) ||
+          spec.failureMessage;
         showToast(shown, 'error');
       }
     } catch (error) {
@@ -329,9 +324,11 @@ export const SyncButton: React.FC<SyncButtonProps> = () => {
     }
   };
 
-  if (!isAuthenticated) {
-    return null; // 未登录时不显示同步按钮
-  }
+  // 2026-10-16：原先这里有一句 `if (!isAuthenticated) return null`——
+  //   未登录时整个同步按钮不渲染。账号体系已删除，那道门禁恒为假，
+  //   后果是**同步按钮永远不出现**，而它正是自带存储用户的唯一手动同步入口。
+  //   现在无条件渲染：未配置/未解锁的反馈由弹窗与 toast 承担（文案来自
+  //   sync-backend 的锁定占位后端），而不是把入口整个藏起来。
 
   return (
     <>
@@ -483,7 +480,7 @@ export const SyncButton: React.FC<SyncButtonProps> = () => {
                       {renderPreviewSummary(
                         uploadPreview?.overwrite ?? null,
                         '云端',
-                        '用当前本地会话直接替换云端现状。',
+                        '用本机会话覆盖云端同 id 的旧版本；云端独有会话不会被删除。',
                       )}
                       {/* 闸门提示：blocked 说清为何点不动；armed 说清再点一次会发生什么 */}
                       <div className="mt-3 rounded-xl bg-rose-50 px-3 py-2 text-xs leading-5 text-rose-700 dark:bg-rose-500/10 dark:text-rose-300">

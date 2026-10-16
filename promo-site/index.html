@@ -47,7 +47,7 @@
         </a>
         <a class="btn btn-ghost" href="#capability">看它怎么工作</a>
       </div>
-      <p class="hero-note"><span class="dot" aria-hidden="true"></span>免费 · MIT 开源 · 无需注册即可使用本地功能</p>
+      <p class="hero-note"><span class="dot" aria-hidden="true"></span>免费 · MIT 开源 · 不设账户</p>
     </div>
 
     <!-- 三层卡片：品牌图标语汇的延伸 -->
@@ -249,29 +249,18 @@
   <div class="wrap">
     <div class="section-head reveal">
       <p class="eyebrow">数据去哪，你选</p>
-      <h2 class="section-title">两条同步路径，你自己挑</h2>
+      <h2 class="section-title">唯一的同步路径：你自己的云盘</h2>
       <p class="section-lede">
-        默认不强制你注册。不登录，数据只留在浏览器本地。
-        要跨设备找回时，有两条路可选——云端的或你自己的。
+        不设账户、没有我们的服务器。数据默认只留在浏览器本地；
+        要跨设备找回时，同步到<strong>你自己的 WebDAV 云盘</strong>。
       </p>
     </div>
 
     <div class="sync-paths reveal">
-      <div class="path a">
-        <p class="role">默认路径</p>
-        <h3>TapStack 云端</h3>
-        <p>登录后同步到托管服务，换设备、换浏览器都能找回工作现场。本地改动自动防抖上传，登录时自动合并下载。</p>
-        <ul class="spec">
-          <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg><span>上传前在<strong>你的设备上</strong>加密，云端数据库里存的是密文</span></li>
-          <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg><span>行级安全策略（RLS）限定每行只能被自己读写</span></li>
-          <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg><span>增量同步：只传改动过的会话，不整库重传</span></li>
-        </ul>
-      </div>
-
       <div class="path b">
-        <p class="role">自带存储</p>
+        <p class="role">唯一同步路径</p>
         <h3>你的 WebDAV 云盘</h3>
-        <p>数据同步到你自己的云盘（坚果云、自建 Nextcloud 等），不经过我们的服务器。离开浏览器前用你的口令加密。</p>
+        <p>数据同步到你自己的云盘（坚果云、自建 Nextcloud 等），不经过我们的服务器。离开浏览器前用你的口令加密；地址默认预填坚果云。</p>
         <ul class="spec">
           <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg><span><code>PBKDF2-SHA256 250k</code> 迭代派生密钥 + <code>AES-256-GCM</code></span></li>
           <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg><span>口令只存在于内存，不落盘、不上传</span></li>
@@ -310,8 +299,8 @@
       </div>
 
       <div class="limit">
-        <h3><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><path d="M12 9v4M12 17h.01"/></svg>不是端到端加密</h3>
-        <p>云端存的是密文，但密钥由账号 ID 派生，而账号 ID 是公开标识、且与密文存在同一张表。准确的说法是「传输加密 + 服务端静态加密」。要真正的 E2E，需要口令派生密钥加一套恢复码机制——那是一次独立的大改。在那之前，请不要把云端数据当作「只有你能看见」。</p>
+        <h3><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><path d="M12 9v4M12 17h.01"/></svg>口令丢了就解不开</h3>
+        <p>WebDAV 加密是真的端到端：密钥由你的口令派生，我们和云盘服务商都拿不到。代价是口令没有找回入口——忘记后云盘上的数据将无法解密。</p>
       </div>
 
       <div class="limit">
@@ -377,12 +366,12 @@
     </div>
 
     <div class="metrics reveal">
-      <div class="metric"><b>1,296<i>+</i></b><span>自动化测试用例覆盖保存、同步、合并、导入导出与冲突处理</span></div>
-      <div class="metric"><b>30k<i>+</i></b><span>行测试代码，超过产品代码本身——每个关键修复都配回归用例</span></div>
-      <div class="metric"><b>26</b><span>数据库迁移文件，含行级安全策略的启用与校验硬检查</span></div>
+      <div class="metric"><b>1,000<i>+</i></b><span>自动化测试用例覆盖保存、同步、合并、导入导出与冲突处理</span></div>
+      <div class="metric"><b>25k<i>+</i></b><span>行测试与脚本代码，关键修复必配回归用例</span></div>
+      <div class="metric"><b>0</b><span>项必选主机权限——安装时不索要网站访问权，WebDAV 地址在点「测试连接」时才按需授权</span></div>
       <div class="metric"><b>MIT</b><span>开源许可，代码可自行审计，不靠「相信我」</span></div>
     </div>
-    <p class="metrics-foot reveal">统计口径：<code>tests/</code> 目录 <span class="mono">it()</span> 用例计数与 <code>src/</code> 代码行数，含 29 个 Playwright 端到端脚本（跑真实浏览器与真实云端）。</p>
+    <p class="metrics-foot reveal">统计口径：<code>pnpm test</code> 报出的用例总数 1046 · 含 12 个 Playwright 端到端脚本（跑真实浏览器）。</p>
   </div>
 </section>
 
@@ -426,8 +415,8 @@
   <div class="wrap">
     <h2 class="reveal">下一次 <em>工作现场</em> 要收起来时，<br />别再一屏一屏地关。</h2>
     <p class="reveal">
-      免费安装，不注册也能用本地功能。数据默认只留在你的浏览器里——
-      要不要跨设备，由你决定。
+      免费安装，无需账号。数据默认只留在你的浏览器里——
+      要不要跨设备，由你自己决定：同步到你的云盘。
     </p>
     <div class="hero-cta reveal">
       <a class="btn btn-primary" href="https://chrome.google.com/webstore/detail/tapstack" target="_blank" rel="noopener">

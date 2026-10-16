@@ -60,57 +60,12 @@ jobs:
       - name: 安装依赖（锁文件必须与 package.json 一致）
         run: pnpm install --frozen-lockfile
 
-      # ── Postgres：不是给测试用的服务，是给 opStampGuard.pg.test.ts 用的二进制 ──
-      # 该文件用 initdb/pg_ctl/psql 自己拉起一个临时库。三个二进制缺任意一个，
-      # PG_AVAILABLE 就是 false，整组 10 个用例会被 { skip } 静默跳过——一次历史
-      # 上出过两次事故的守卫，会在一片全绿里变成一片空洞。所以这里不仅要装，
-      # 还要在下一步显式验证装上了。
-      # 2026-10-02：原 supercharge/setup-postgres@v1 的仓库已从 GitHub 下架
-      # （action 解析失败，CI 在 Set up job 就红 5s，单测一次都没跑过）。
-      # 改为在 ubuntu-24.04 runner 上显式 apt 安装 postgresql-16：来源是 runner
-      # 镜像自带 apt，不再依赖任何第三方 action 的存活。
-      - name: 安装 PostgreSQL 16 二进制
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y postgresql-16 postgresql-client-16
+      # 2026-10-16：随云端后端下线删除整段 Postgres 门禁（apt 安装 postgresql-16 +
+      # initdb/pg_ctl/psql 可用性校验）。它只服务于 opStampGuard.pg.test.ts /
+      # migrationReplay.pg.test.ts 这类真库集成测试，而那些文件连同
+      # supabase/migrations/*.sql 一起被删了 —— 留着等于给一个不存在的守卫装 30s CI 依赖。
 
-      - name: 校验 initdb/pg_ctl/psql 真的可用（缺了就必须红，不许静默跳过）
-        shell: bash
-        run: |
-          set -euo pipefail
-          # setup-postgres 的安装目录随版本/镜像而变（本地实测、runner 镜像、pg_config 都可能），
-          # 逐个探测后追加到 PATH；既补上后继步骤，也补上本步骤后面的探测。
-          candidates=(
-            "${RUNNER_TEMP:-/tmp}/postgresql/bin"
-            /usr/local/opt/postgresql@16/bin
-            /usr/lib/postgresql/16/bin
-          )
-          if command -v pg_config >/dev/null 2>&1; then
-            candidates+=("$(pg_config --bindir)")
-          fi
-          for d in "${candidates[@]}"; do
-            if [ -d "$d" ]; then
-              echo "found postgres bin dir: $d"
-              export PATH="$PATH:$d"
-              # GITHUB_PATH 在 GitHub runner 上恒存在；本地复跑这一步时跳过，
-              # 这样这段脚本不必只能在 CI 里验证。
-              if [ -n "${GITHUB_PATH:-}" ]; then
-                echo "$d" >> "$GITHUB_PATH"
-              fi
-            fi
-          done
-          missing=()
-          for b in initdb pg_ctl psql; do
-            command -v "$b" >/dev/null 2>&1 || missing+=("$b")
-          done
-          if [ ${#missing[@]} -gt 0 ]; then
-            echo "::error::缺少 PostgreSQL 二进制：${missing[*]} —— tests/opStampGuard.pg.test.ts 会整组静默 skip，门禁形同虚设"
-            echo "上一步 apt 安装的 postgresql-16 二进制没进 PATH：检查安装步骤输出与 runner 镜像变更。"
-            exit 1
-          fi
-          initdb --version && pg_ctl --version && psql --version
-
-      - name: 单测（含真实 Postgres 触发器集成测试）
+      - name: 单测
         run: pnpm test
 
       - name: 元数据一致性 + 类型 + lint + 构建 + 首屏体积门
@@ -120,7 +75,7 @@ jobs:
       # CI 日志里出现那张逐文件清单 —— 超预算时 validate 会红，但那时日志里
       # 混着类型/lint 输出，具体是哪几个 chunk 变肥了不好找。
       #
-      # 为什么值得有一个真会红的门：docs/v2-plan.md 曾承诺「超预算阻断发布」，
+      # 为什么值得有一个真会红的门：docs/archive/v2-plan.md 曾承诺「超预算阻断发布」，
       # 而原 report-y-bundle.mjs 超了只打印 ALERT 并 exit 0，且从未被任何地方
       # 调用 —— 一个没人调、也不拦人的门不是门。现已改写为测「用户点开弹窗时
       # 必须下载的全部资源」，超预算 exit 1。

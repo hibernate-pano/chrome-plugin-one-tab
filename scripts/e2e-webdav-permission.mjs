@@ -76,7 +76,7 @@ try {
     // ⚠️ 必须 headless:false。MV3 的 service worker 在 headless 模式下不会被
     // 启动，于是 `serviceWorkers()` 永远为空 —— 表现为「未找到扩展 SW」，
     // 看起来像构建没产出，实际是启动模式选错。本仓库既有的 e2e 脚本
-    // （scripts/e2e-sync-test.mjs:88）用的也是 headless:false。
+    // （scripts/e2e-webdav-lock.mjs 的 launchPersistentContext）用的也是 headless:false。
     headless: false,
     args: [`--disable-extensions-except=${DIST}`, `--load-extension=${DIST}`],
   });
@@ -149,10 +149,13 @@ try {
         manifest.optional_host_permissions.includes('https://*/*'),
       JSON.stringify(manifest.optional_host_permissions ?? null),
     );
+    // 2026-10-16：原先这条断言是「supabase 仍在必选 host 权限里」。
+    // 云端后端已删除，必选 host 权限表必须**为空** —— 留着它会让安装时就
+    // 索要一个用不到的域名（全仓零调用），也正是商店审核会问的那类权限。
+    // WebDAV 不靠它：optional + 运行时申请（见上方第 1、2 条实测）。
     check(
-      'supabase 仍是必选 host 权限（默认后端不能因为改造而失效）',
-      Array.isArray(manifest.host_permissions) &&
-        manifest.host_permissions.includes('https://*.supabase.co/*'),
+      '必选 host_permissions 已空（云端下线后不再安装即索要全网权限）',
+      Array.isArray(manifest.host_permissions) && manifest.host_permissions.length === 0,
       JSON.stringify(manifest.host_permissions ?? null),
     );
   } else {

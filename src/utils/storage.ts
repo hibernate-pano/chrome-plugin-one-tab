@@ -99,7 +99,7 @@ const VALID_THEME_STYLES: readonly ThemeStyle[] = THEME_STYLES;
  * classic（蓝系生产力）→ legacy；mint（冷调清新）→ apple（同为冷调系统感）；
  * pink（粉调柔和）→ creamy（同为暖调柔和）；cyberpunk（个性暗色）→ prism（个性渐变）。
  * 2026-10-02 二次收敛（7 → 6）：aurora（极光渐变/毛玻璃）→ prism（同为渐变玻璃系）。
- * 升级 supabase-js 等场景无关；下一次用户设置落盘时自动持久化为新值。
+ * 升级 SDK 等场景无关；下一次用户设置落盘时自动持久化为新值。
  */
 const RETIRED_THEME_STYLES: Record<string, ThemeStyle> = {
   classic: 'legacy',
@@ -165,30 +165,33 @@ export function validateSyncIntervalMinutes(value: unknown): number {
 }
 
 /**
- * 同步后端标识的校验单点（2026-10-13，WebDAV 自带存储改造）。
+ * 同步后端标识的校验单点（2026-10-13；2026-10-16 收窄为单后端）。
  *
  * 与 `validateSyncIntervalMinutes` 同一纪律：**非法值 fail-safe 回落，不抛错**。
  * 抛错会让 `getSettings` 整条失败，进而阻塞所有读设置的路径
  * （主题、布局、通知……全部读不出来），代价与收益完全不成比例。
  *
- * ── 回落方向为什么是 `supabase` 而不是 `webdav` ────────────────────────
- * 存量用户的存储里**没有**这个键（它是新增字段），合并 `{...DEFAULT_SETTINGS, ...stored}`
- * 之后落到默认值。若默认是 `webdav`，则所有升级用户会在**没配过任何 WebDAV**
- * 的情况下被切到新后端 ⇒ 打开扩展就报「请先配置云盘」，而他们本来在用的
- * Supabase 同步被无声停掉。这是「升级即失能」。
- * 默认 `supabase` ⇒ 老用户零行为变化，只有主动去设置里切换的人才走 WebDAV。
+ * 调用点（2026-10-16 审计 A 缺陷 1 补齐读路径接线）：`getSettings`（读路径
+ * 归一，并进 needsUpdate 保证归一值落盘）、`setSettings` /
+ * `debouncedPersistSettings`（写路径，含 JSON 导入合并）。
  *
- * 反过来「新增用户默认 WebDAV」这个诉求由别处满足（首次安装引导），
- * 不该由「存量数据的回落值」承担——回落值必须对存量用户最安全。
+ * ── 2026-10-16：TapStack 云端下线，WebDAV 是唯一后端 ────────────────────
+ * 这里曾经要回答「存量用户的值缺键时回落哪个」。现在没有可回落的对象了：
+ * `'supabase'` 这个值可能仍躺在老用户的存储里，它指向一个**已删除**的后端，
+ * 所以它和 `null` / `'乱写'` 一样属于「非法值」，统一回落 `'webdav'`。
+ * 回落方向此时**不是**产品选择，而是唯一合法答案。
  */
-export const VALID_SYNC_BACKENDS = ['supabase', 'webdav'] as const;
-
-export function validateSyncBackend(value: unknown): 'supabase' | 'webdav' {
-  if (typeof value === 'string' && (VALID_SYNC_BACKENDS as readonly string[]).includes(value)) {
-    return value as 'supabase' | 'webdav';
+export function validateSyncBackend(value: unknown): 'webdav' {
+  if (value === 'webdav') {
+    return 'webdav';
   }
-  logWarn('无效的同步后端标识，使用默认值:', value);
-  return 'supabase';
+  // 只在值**看起来像是真的选过某个后端**时出声：老用户存储里躺着 'supabase'
+  // 是预期内的事实，每秒刷一条警告只会把真正的异常淹没。null/缺失（从未存过
+  // 该键的新用户）静默回落即可。
+  if (value === 'supabase') {
+    logWarn('同步后端标识已废弃（云端同步已下线），已回落到自带存储:', value);
+  }
+  return 'webdav';
 }
 
 // 默认设置
@@ -199,8 +202,8 @@ export const DEFAULT_SETTINGS: UserSettings = {
   confirmBeforeDelete: true,
   allowDuplicateTabs: false, // 默认不允许重复标签页
   // ── 2026-10-11（1.23.0）：自动同步默认关闭 ──────────────────────────
-  // 自动同步每轮都是出站流量（Supabase egress 配额），而 60s 全量轮询是配额
-  // 见底的主因。默认关闭后：后台 alarm 不注册、打开 popup 不再自动拉取，
+  // 自动同步每轮都是出站流量，而 60s 全量轮询会把流量耗尽（服务端配额）。
+  // 默认关闭后：后台 alarm 不注册、打开 popup 不再自动拉取，
   // 用户点「同步」按钮手动获取；本地改动的上传保持事件驱动（只在真有改动时
   // 才传，F2 增量后极小），不受本开关影响 —— 关掉上传省不下什么，反而会把
   // 编辑困在本机且无声（失败要出声：困住必须有信号，而上传路径没有）。
@@ -212,9 +215,8 @@ export const DEFAULT_SETTINGS: UserSettings = {
   // 正是 1.22.16「设置被静默重置」修掉的那类 bug。
   syncEnabled: false, // 默认关闭自动同步（用户在菜单中开启）
   syncIntervalMinutes: DEFAULT_SYNC_INTERVAL_MINUTES, // 默认 10 分钟档
-  // 默认走 Supabase：存量用户零行为变化（见 validateSyncBackend 的完整论证）。
-  // 新用户想用 WebDAV 由首次安装引导 / 设置页显式切换，而不是靠这个默认值。
-  syncBackend: 'supabase',
+  // 自带存储是唯一后端：WebDAV 是唯一合法值。
+  syncBackend: 'webdav',
   layoutMode: 'single' as LayoutMode, // 默认使用单栏布局
   showNotifications: false, // 默认关闭通知
   syncStrategy: 'newest', // 默认使用最新版本
@@ -442,8 +444,8 @@ class ChromeStorage {
    * **看起来完全合法的设置对象**，调用方无法区分「读到了默认值」与「用户就是
    * 默认值」。而 getSettings 的调用方里有一条直通云端写的路径：
    * syncEngine.upload 末尾 `uploadSettings(await storage.getSettings())`，
-   * uploadSettings 是**无条件 upsert**（无 stamp / 无 version / 无 LWW，
-   * 见 @/utils/supabase/upload.ts）——一次偶发 IndexedDB 读错误就能把用户
+   * uploadSettings 是**无条件覆盖写**（无 stamp / 无 version / 无 LWW，
+   * 见 sync-backend/ports.ts 的契约）——一次偶发 IndexedDB 读错误就能把用户
    * 真实的云端设置整行覆盖成默认值，其他设备下次下载再复制一遍。
    *
    * 抛错后该上传路径已有的 try/catch 只记一行日志、不发请求；本地设置原样保留，
@@ -477,12 +479,20 @@ class ChromeStorage {
         const validatedSyncInterval = validateSyncIntervalMinutes(
           normalizedSettings.syncIntervalMinutes
         );
+        // ── 2026-10-16（审计 A 缺陷 1）：后端标识也必须在读路径归一 ──────
+        // 修复前 validateSyncBackend 全仓只有测试调用方：'supabase' 会原样
+        // 通过 getSettings，而返回类型写着 'webdav' —— 返回值在对自己的类型
+        // 撒谎；随后 uploadSettings 会把这个陈旧键传上云端设置文件，扩散到
+        // 用户的所有设备。这里补上真正的读路径接线，needsUpdate 保证归一后
+        // 的值落盘（否则同一次读只是口头修正，下次冷启动又读到旧值）。
+        const validatedSyncBackend = validateSyncBackend(normalizedSettings.syncBackend);
 
         // 如果验证后的值与原值不同，说明存储中有无效值，需要更新
         const needsUpdate =
           normalizedSettings.themeStyle !== validatedThemeStyle ||
           normalizedSettings.themeMode !== validatedThemeMode ||
-          normalizedSettings.syncIntervalMinutes !== validatedSyncInterval;
+          normalizedSettings.syncIntervalMinutes !== validatedSyncInterval ||
+          normalizedSettings.syncBackend !== validatedSyncBackend;
 
         const mergedSettings: UserSettings = {
           ...DEFAULT_SETTINGS,
@@ -490,6 +500,7 @@ class ChromeStorage {
           themeStyle: validatedThemeStyle,
           themeMode: validatedThemeMode,
           syncIntervalMinutes: validatedSyncInterval,
+          syncBackend: validatedSyncBackend,
         };
 
         // 如果有无效值被修正，保存修正后的设置
@@ -535,11 +546,15 @@ class ChromeStorage {
   private debouncedPersistSettings = debounceAsync(async (settings: UserSettings) => {
     await this.ensureVersion();
 
-    // 验证主题相关设置，确保保存的值是有效的
+    // 验证主题与后端设置，确保保存的值是有效的
     const validatedSettings: UserSettings = {
       ...settings,
       themeStyle: validateThemeStyle(settings.themeStyle),
       themeMode: validateThemeMode(settings.themeMode),
+      // 写路径同样归一：JSON 导入合并（importDetailed）会把旧文件里的
+      // `syncBackend: 'supabase'` 直接 spread 进来，若不在落盘前拦下，
+      // 归一就只发生在下一次读（多一次落盘 + 一次告警）。
+      syncBackend: validateSyncBackend(settings.syncBackend),
     };
 
     await kvSet(STORAGE_KEYS.SETTINGS, validatedSettings);
@@ -554,6 +569,8 @@ class ChromeStorage {
       ...settings,
       themeStyle: validateThemeStyle(settings.themeStyle),
       themeMode: validateThemeMode(settings.themeMode),
+      // 见 debouncedPersistSettings：导入合并等写路径都在这里统一归一。
+      syncBackend: validateSyncBackend(settings.syncBackend),
     };
 
     const cache = cacheManager.getCache('storage');
@@ -570,19 +587,6 @@ class ChromeStorage {
       // 清除可能不一致的缓存
       cache.delete('settings');
       throw error;
-    }
-  }
-
-  // 新增：获取已删除的标签组
-  // ⚠️ 无墓碑重写（2026-09-29）后已无写入方；保留仅为迁移期读取旧键（迁移后删除）。
-  async getDeletedGroups(): Promise<TabGroup[]> {
-    try {
-      await this.ensureVersion();
-      const groups = await kvGet<unknown>(STORAGE_KEYS.DELETED_GROUPS);
-      return Array.isArray(groups) ? (groups as TabGroup[]) : [];
-    } catch (error) {
-      logError('获取已删除标签组失败:', error);
-      return [];
     }
   }
 
@@ -740,7 +744,13 @@ class ChromeStorage {
     for (const id of confirmed) unsyncedDeleteIds.delete(id);
   }
 
-  // 获取最后同步时间
+  /**
+   * 获取最后同步时间（syncEngine 的三处 setLastSyncTime 是唯一写方，当前零读者）。
+   *
+   * 【为什么保留而不删（审计 A 缺陷 3 决策）】待办 UI 修复要用它给同步状态行
+   * 显示「最后同步于 xx:xx」——那一行现在是一个写死的绿点。删掉这个 getter
+   * 等于让那个修复重新造一个读法（还可能绕过同一把键）。
+   */
   async getLastSyncTime(): Promise<string | null> {
     try {
       await this.ensureVersion();
@@ -947,43 +957,6 @@ class ChromeStorage {
     }
   }
 
-  // 阶段二·§4.3：journal 读写（mutationHandlers 通过 createJournal 工厂间接访问）
-  async getJournal(): Promise<unknown[]> {
-    try {
-      await this.ensureVersion();
-      return (await kvGet<unknown[]>(STORAGE_KEYS.JOURNAL)) ?? [];
-    } catch {
-      return [];
-    }
-  }
-
-  async setJournal(entries: unknown[]): Promise<void> {
-    try {
-      await this.ensureVersion();
-      await kvSet(STORAGE_KEYS.JOURNAL, entries);
-    } catch (error) {
-      logError('写 journal 失败:', error);
-    }
-  }
-
-  async getLastSyncedSeq(): Promise<number> {
-    try {
-      await this.ensureVersion();
-      return (await kvGet<number>(STORAGE_KEYS.LAST_SYNCED_SEQ)) ?? 0;
-    } catch {
-      return 0;
-    }
-  }
-
-  async setLastSyncedSeq(s: number): Promise<void> {
-    try {
-      await this.ensureVersion();
-      await kvSet(STORAGE_KEYS.LAST_SYNCED_SEQ, s);
-    } catch (error) {
-      logError('设置 last_synced_seq 失败:', error);
-    }
-  }
-
   // 阶段二·§7：迁移标志位
   async getOpStampMigrated(): Promise<boolean> {
     try {
@@ -1027,27 +1000,6 @@ class ChromeStorage {
     } catch (error) {
       logError('清除同步快照失败:', error);
     }
-  }
-
-  async getProductEvents(): Promise<Array<Record<string, unknown>>> {
-    try {
-      await this.ensureVersion();
-      const events = await kvGet<unknown>(STORAGE_KEYS.PRODUCT_EVENTS);
-      return Array.isArray(events) ? (events as Array<Record<string, unknown>>) : [];
-    } catch (error) {
-      logError('获取产品事件失败:', error);
-      return [];
-    }
-  }
-
-  async appendProductEvent(event: Record<string, unknown>): Promise<void> {
-    const events = await this.getProductEvents();
-    const nextEvents = [...events, event].slice(-200);
-    await kvSet(STORAGE_KEYS.PRODUCT_EVENTS, nextEvents);
-  }
-
-  async clearProductEvents(): Promise<void> {
-    await kvRemove(STORAGE_KEYS.PRODUCT_EVENTS);
   }
 
   async exportData(): Promise<ExportData> {
@@ -1276,7 +1228,7 @@ class ChromeStorage {
       //
       // 风险为什么不复存在：水位值带 deviceSeq 基线，上传时若发现 seq 时钟已回退
       // （清数据把 DEVICE_SEQ 清零 ⇒ 新组 seq 从 1 重启 ⇒ 当前计数器 < 基线）
-      // 就**自动作废水位**走全量上行（见 supabase/syncWatermark.ts 头注释 P0 段）。
+      // 就**自动作废水位**走全量上行（见 webdav/adapter.ts 头注释 P0 段）。
       // 残留的只是一个无害的孤儿推导量，代价是清数据后的首轮多传一次全量。
       // 正确性由水位自身保证，不依赖这里补一刀。
     } catch (error) {

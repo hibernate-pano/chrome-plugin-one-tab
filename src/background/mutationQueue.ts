@@ -2,11 +2,10 @@
  * 单写者队列（规格 §3.3）：SW 内所有数据变更（语义命令、上传、下载合并）
  * 串行执行，保证任何"读-改-写"期间没有并发写。
  *
- * 【为什么在这里计时】慢操作的归因只有两种可能：这条任务自己慢，或它在等前面的
- * 任务（头阻塞——用户点击的命令与后台同步排同一条 FIFO）。两者的修法完全不同，
- * 而只有队列这一层能同时看见「入队时刻」与「开始执行时刻」。
- * 于是 wait / run 分开记（见 @/utils/perfTrace），诊断导出按这一层聚合。
- * 计时永不影响调度：记录调用不 await、不抛错。
+ * 【为什么单写者落在这一层】队列是 SW 内所有写操作（语义命令、上传、下载合并）
+ * 的唯一串行点：入队、排优先级、依次执行都在本文件完成。任何「读-改-写」都
+ * 不可能与其他写交错，调用方不必各自实现互斥；调度策略（用户操作优先、后台
+ * 任务让路）也只在这里调整，不会散落到各个调用点。
  *
  * 【为什么有优先级（1.22.11）】纯 FIFO 会让「用户点删除」排在「后台正在做的
  * 整库上传」后面等它跑完。上传是网络 + 逐组加解密（几百会话实测秒级），
@@ -27,8 +26,6 @@
  * 反过来说，**去掉优先级会拿回原来那个竞态**（上传不进队列时它与 mutation 交错，
  * 1.22.10 已修），两条一起才成立，不要只回退其中一条。
  */
-import { perfTrace } from '@/utils/perfTrace';
-
 /**
  * 任务优先级。默认 'normal'。
  * - 'high'   用户直接发起的操作，插到未开始的 normal 任务之前
@@ -40,7 +37,6 @@ interface QueueJob {
   name: string;
   priority: QueuePriority;
   run: () => Promise<unknown>;
-  enqueuedAt: number;
   /** 成功/失败合流成一个回调：泛型 T 在入队时擦除、settle 时按调用点还原。 */
   settle: (result: { ok: true; value: unknown } | { ok: false; error: unknown }) => void;
 }
@@ -68,10 +64,8 @@ async function runLoop(): Promise<void> {
   running = true;
   try {
     for (let next = takeNext(); next; next = takeNext()) {
-      const { name, run, enqueuedAt, settle } = next;
+      const { name, run, settle } = next;
       runningName = name;
-      perfTrace().recordSpan(name, 'wait', Date.now() - enqueuedAt);
-      const startedAt = Date.now();
       try {
         // 单个 job 失败不阻断后续：错误由该调用方的 promise 承载。
         settle({ ok: true, value: await run() });
@@ -79,7 +73,6 @@ async function runLoop(): Promise<void> {
         settle({ ok: false, error: err });
       } finally {
         runningName = null;
-        perfTrace().recordSpan(name, 'run', Date.now() - startedAt);
       }
     }
   } finally {
@@ -97,7 +90,6 @@ export function enqueue<T>(
       name,
       priority: opts?.priority ?? 'normal',
       run: job,
-      enqueuedAt: Date.now(),
       settle: r => (r.ok ? resolve(r.value as T) : reject(r.error)),
     });
     // 同步调用（不 await）：队列已经在跑时由循环末尾继续消化新入队的任务。

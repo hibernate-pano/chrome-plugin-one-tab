@@ -68,6 +68,27 @@ describe('syncMergeSafety: 同步合并不丢本地数据（真实生产路径�
     assert.equal(r.valid, false, '本地非空却合并为空必须被拦截');
   });
 
+  it('⚠️ 本地每个活跃组都被云端更新的墓碑覆盖 → 必须 valid（2026-10-16 删规则 2）', async () => {
+    // 旧「规则 2」（本地有活跃但合并为空即 invalid）在此误拦：当前
+    // whole-group LWW 语义下 merged=0 ⟺ 每个本地活跃组都输给了云端墓碑，
+    // 这正是「另一端把这些会话全删了，本机必须收敛」的合法终点。
+    // 拦它的实测后果见 tests/syncNoResurrectConvergence.test.ts：
+    // 本地唯一会话永远收不到删除，每轮下载 validation_failed。
+    // 注意本用例的兜底：cloudDeletedCount=2 ⇒ expectedMin=0 ⇒ 规则 3 放行；
+    // 而「云端为空却说合并为空」（无解释的缩水）仍被上一条用例的规则 3 拦死。
+    const { validateMergeResult } = await import('@/core/syncDecision');
+    const local = [makeGroup('a', 'A'), makeGroup('b', 'B')];
+    const cloud = [
+      makeGroup('a', 'A', { isDeleted: true }),
+      makeGroup('b', 'B', { isDeleted: true }),
+    ];
+    assert.equal(
+      validateMergeResult(local, cloud, []).valid,
+      true,
+      '本地全量输给云端墓碑是合法收敛，不得触发回滚'
+    );
+  });
+
   it('两边都空 + 合并空 → valid', async () => {
     const { validateMergeResult } = await import('@/core/syncDecision');
     assert.equal(validateMergeResult([], [], []).valid, true);
@@ -212,5 +233,50 @@ describe('decideCloudTombstoneWrite: 只有连 is_deleted 列都没有才允许�
     const { decideCloudTombstoneWrite } = await import('@/core/syncDecision');
     assert.equal(decideCloudTombstoneWrite(false, false), 'hard-delete');
     assert.equal(decideCloudTombstoneWrite(false, true), 'hard-delete');
+  });
+});
+
+describe('decideForceRemoteOverwrite：覆盖下载的空云端闸门（2026-10-15）', () => {
+  it('本地有数据 + 云端完全没有行 ⇒ refuse（且文案带出会丢几个）', async () => {
+    const { decideForceRemoteOverwrite } = await import('@/core/syncDecision');
+    const d = decideForceRemoteOverwrite({ localActiveCount: 3, cloudTotalCount: 0 });
+    assert.equal(d.action, 'refuse');
+    if (d.action !== 'refuse') throw new Error('unreachable');
+    assert.match(d.reason, /3/);
+    assert.match(d.reason, /无法恢复/);
+  });
+
+  it('本地 1 个 + 云端 0 ⇒ 也 refuse（1 个也丢不起）', async () => {
+    const { decideForceRemoteOverwrite } = await import('@/core/syncDecision');
+    const d = decideForceRemoteOverwrite({ localActiveCount: 1, cloudTotalCount: 0 });
+    assert.equal(d.action, 'refuse');
+  });
+
+  it('本地空 ⇒ proceed（没东西可丢）', async () => {
+    const { decideForceRemoteOverwrite } = await import('@/core/syncDecision');
+    assert.deepEqual(decideForceRemoteOverwrite({ localActiveCount: 0, cloudTotalCount: 0 }), {
+      action: 'proceed',
+    });
+  });
+
+  it('云端有活跃行 ⇒ proceed（正常覆盖语义，用户已在预览里确认过数字）', async () => {
+    const { decideForceRemoteOverwrite } = await import('@/core/syncDecision');
+    assert.deepEqual(decideForceRemoteOverwrite({ localActiveCount: 3, cloudTotalCount: 2 }), {
+      action: 'proceed',
+    });
+  });
+
+  // 2026-10-16：删除了 '云端只有墓碑行 ⇒ proceed' 那条 —— 它与上一条传入的是
+  // **逐字相同**的 {localActiveCount:3, cloudTotalCount:2}，而本函数只接收计数，
+  // 天然区分不了「云端 2 行活跃」与「云端 2 行全墓碑」。标题在讲墓碑，断言却在
+  // 验证上一条已覆盖的输入，是假绿。两个终态真正互斥的验证在调用点：
+  // tests/forceRemoteEmptyCloudGate.test.ts（只有墓碑 → proceed；一行都没有 → refuse，
+  // 用真 SyncEngine + 后端替身，计数前过滤墓碑会让墓碑侧误判 refusal）。
+
+  it('两边都空 ⇒ proceed（无事发生）', async () => {
+    const { decideForceRemoteOverwrite } = await import('@/core/syncDecision');
+    assert.deepEqual(decideForceRemoteOverwrite({ localActiveCount: 0, cloudTotalCount: 5 }), {
+      action: 'proceed',
+    });
   });
 });

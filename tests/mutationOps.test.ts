@@ -175,7 +175,8 @@ describe('mutationOps 移动与清理', () => {
   it('applyMoveGroup 已随标签组拖拽排序下线', async () => {
     // 钉住「不是忘了删，是有意删的」：一旦有人把 applyMoveGroup 加回来，这里立刻红。
     // 协议侧（MutationOp 里不再有 'moveGroup'）由 tsc 拦：
-    // src/utils/diagnostics.ts 的 Record<MutationOp['op'], true> 会报缺少属性。
+    // 组写入入口已不再有 Record<MutationOp['op'], true> 这类全枚举映射，
+    // 少一个 op 只会安静地落到 default 分支。
     const ops = await import('@/core/mutationOps');
     assert.equal((ops as Record<string, unknown>).applyMoveGroup, undefined);
   });

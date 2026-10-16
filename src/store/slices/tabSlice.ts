@@ -1,5 +1,5 @@
 /**
- * S4 单写者收口：本文件不直接写 storage/supabase。所有写语义均为 sendMutation
+ * S4 单写者收口：本文件不直接写 storage。所有写语义均为 sendMutation
  * 薄代理（语义与 @/core/mutationOps 对齐），唯一写者是 SW 侧 mutationHandlers
  *（journal→stamp→apply→setGroups→scheduleUpload），唯一同步入口是 syncEngine。
  * UI 侧乐观更新 / rejected 回滚保留；读路径（loadGroups 经
@@ -44,7 +44,6 @@ import { TIMEOUT_REASON_PREFIX } from '@/core/mutationProtocol';
 import { applyCleanPlanToActiveView, backupKeyOf, dropLoadGuard, GroupMetaSnapshot, isStaleLoad, planOptimisticClean, restoreGroupLock, restoreGroupName, snapshotGroupMeta, stripInFlightDeletions, stripTombstonedTabs, toActiveGroupsView, takeLoadGuard } from './tabSliceHelpers';
 import type { CleanDuplicatesPlan } from '@/core/mutationOps';
 import type { OpStamp } from '@/core/opStamp';
-import { trackProductEvent } from '@/utils/productEvents';
 import { logError, logInfo } from '../../utils/log';
 
 
@@ -55,7 +54,6 @@ export const initialTabState: TabState = {
   error: null,
   errorSource: null,
   searchQuery: '',
-  syncStatus: 'idle',
   lastSyncTime: null,
   lastLoadedAt: null,
   lastSyncStatus: null,
@@ -215,15 +213,6 @@ export const updateGroupNameAndSync = createAsyncThunk<
       // 不 throw：抛错会丢掉快照，rejected reducer 拿不到还原所需的数据
       logError('[updateGroupNameAndSync] 重命名失败:', { groupId, name, error: res.error });
       return rejectWithValue({ groupId, snapshot });
-    }
-
-    const state = getState() as { tabs: TabState };
-    const renamedGroup = state.tabs.groups.find(group => group.id === groupId);
-    if (renamedGroup) {
-      void trackProductEvent('session_renamed', {
-        sessionId: renamedGroup.id,
-        sessionName: renamedGroup.name,
-      });
     }
 
     return res.payload!;
@@ -413,10 +402,6 @@ export const tabSlice = createSlice({
     },
     setSearchQuery: (state, action) => {
       state.searchQuery = action.payload;
-    },
-    // 新增：设置同步状态
-    setSyncStatus: (state, action) => {
-      state.syncStatus = action.payload;
     },
     /**
      * 移动标签页 - 优化版本（immer 不可变更新）。

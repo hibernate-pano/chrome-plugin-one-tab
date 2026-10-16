@@ -153,25 +153,25 @@ export const SyncStep: React.FC = () => (
     </div>
     <h2 tabIndex={-1} className="onboarding-title">换台设备也能找回</h2>
     <p className="onboarding-description">
-      通过右上角菜单「登录 / 注册」开启同步
+      在设置里填入你自己的 WebDAV 云盘（坚果云、自建 Nextcloud 等）
       <br />
-      保存后会自动备份到云端，新设备登录即恢复
+      会话在离开浏览器前用你的口令加密，只同步到<strong>你自己的云盘</strong>
     </p>
     <div className="onboarding-feature-grid">
       <div className="onboarding-feature-card">
-        <div className="onboarding-feature-icon">🔄</div>
-        <div className="onboarding-feature-title">自动同步</div>
-        <div className="onboarding-feature-desc">保存和重命名都会自动备份</div>
+        <div className="onboarding-feature-icon">🔐</div>
+        <div className="onboarding-feature-title">口令加密</div>
+        <div className="onboarding-feature-desc">密钥由你的口令派生，云盘上只有密文</div>
       </div>
       <div className="onboarding-feature-card">
-        <div className="onboarding-feature-icon">📤</div>
-        <div className="onboarding-feature-title">导入导出</div>
-        <div className="onboarding-feature-desc">支持 OneTab 文本格式与 JSON 备份</div>
+        <div className="onboarding-feature-icon">🙈</div>
+        <div className="onboarding-feature-title">没有账户体系</div>
+        <div className="onboarding-feature-desc">不经过我们的服务器，数据只去你自己的云盘</div>
       </div>
       <div className="onboarding-feature-card">
-        <div className="onboarding-feature-icon">🛟</div>
-        <div className="onboarding-feature-title">误删保护</div>
-        <div className="onboarding-feature-desc">删除前二次确认，防手滑清空工作现场</div>
+        <div className="onboarding-feature-icon">🔑</div>
+        <div className="onboarding-feature-title">口令无法找回</div>
+        <div className="onboarding-feature-desc">忘记后云盘上的数据将无法解密</div>
       </div>
     </div>
   </div>
@@ -186,7 +186,7 @@ export const ReadyStep: React.FC = () => (
     <p className="onboarding-description">
       现在开始保存、搜索、恢复你的工作会话
       <br />
-      需要跨设备时，再按需手动同步
+      需要跨设备时，在设置里连接你自己的 WebDAV 云盘
     </p>
   </div>
 );

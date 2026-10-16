@@ -43,12 +43,73 @@ export class WebDavError extends Error {
      * 区分开——否则会把一个「点一次授权就能解决」的问题，
      * 如实上报成「你的服务器配置不对」。
      */
-    readonly isPermissionDenied: boolean = false
+    readonly isPermissionDenied: boolean = false,
+    /**
+     * 请求被**超时上界**中止（Wave 2A）。
+     *
+     * status 同为 0，但语义与「网络层失败」（DNS/断网/被浏览器拦）不同：
+     * 超时是**我们主动中止**，说明服务器在预算内没有响应。
+     * 它必须可机器识别，否则 UI/日志只能看到一句「请求失败」——
+     * 用户与排查者都无法知道「是不是又挂死了」。
+     */
+    readonly isTimeout: boolean = false
   ) {
     super(message);
     this.name = 'WebDavError';
   }
 }
+
+/**
+ * 请求超时（Wave 2A）——**必须可区分于普通网络失败**。
+ *
+ * ── 为什么必须有超时上界（缺陷描述）───────────────────────────────
+ * 修复前 WebDAV 客户端的每次 `fetch` 都没有 AbortSignal、没有上界。
+ * 一个挂死的 DAV 服务器会让请求永远 pending；而所有同步都走
+ * mutationQueue 的单写者队列 ⇒ 那条请求把整条队列钉死，
+ * 后续的保存/删除/上传全部排在它后面（用户看到「点了没反应」）。
+ * 删除的 Supabase 路径曾有 45s 请求上界（其守卫测试已随云端一起删除），
+ * WebDAV 适配器从未有过 —— 这是迁移时漏搬的一条保护。
+ *
+ * ── 为什么继承 WebDavError 而不是另起一个平行类 ───────────────────
+ * 调用方已有 `err instanceof WebDavError` 的分类（adapter 的 412 / 权限分支）。
+ * 继承让它们不改变行为（超时仍然是一种传输层失败，该走重试/退避），
+ * 同时 `isTimeout` 与子类 `instanceof` 让需要区分的地方能区分。
+ */
+export class WebDavRequestTimeoutError extends WebDavError {
+  constructor(method: string, url: string, timeoutMs: number) {
+    // 生产默认是 45s（“超过 45 秒”），测试注入毫秒级预算时也不要出现
+    // “超过 0 秒”这种自相矛盾的文案。
+    const budget = timeoutMs >= 1000 ? `${Math.round(timeoutMs / 1000)} 秒` : `${timeoutMs} 毫秒`;
+    super(
+      `请求超时（超过 ${budget}无响应）：${method} 未能完成。` +
+        `已主动中止以免占死同步队列；请检查云盘地址与网络后重试。`,
+      0,
+      method,
+      url,
+      false,
+      false,
+      true
+    );
+    this.name = 'WebDavRequestTimeoutError';
+  }
+}
+
+/**
+ * 默认请求超时（毫秒）。
+ *
+ * ── 为什么是 45s（与已删除的 Supabase 路径同口径）──────────────────
+ * popup 侧的协议上界是 30s（`DEFAULT_TIMEOUT_MS`）：请求上界必须**大于**它，
+ * 否则用户先看到「操作超时」、随后又看到操作其实成功——比慢更困惑。
+ * 同时 45s 相对「几分钟的挂起」已经把队列钉死窗口缩到可忍受范围。
+ * 不设更大：真正的长传输（大分片）单请求体仍是小 JSON；挂起必须**有头**。
+ *
+ * ── 读写是否需要不同预算（Wave 2A 的考虑结论：不需要）────────────
+ * 读（GET/PROPFIND）与写（PUT/MKCOL/DELETE）的**单请求体都很小**，
+ * 分档只会多一个没人验证的常量；真正的上界意义是「吊死必须有头」，
+ * 而不是区分传输量。若将来出现大文件 PUT，可在单个请求上用
+ * `init.timeoutMs` 覆盖（保留的细粒度旋钮）。
+ */
+export const DEFAULT_REQUEST_TIMEOUT_MS = 45_000;
 
 export interface WebDavConfig {
   /** 服务器根地址，例如 `https://dav.jianguoyun.com/dav/`。必须以 / 结尾。 */
@@ -71,6 +132,25 @@ export interface WebDavConfig {
  * 返回 false 时 request() 抛错，**不进网络**。
  */
 export type PermissionGuard = () => Promise<boolean>;
+
+/**
+ * 「读不到这个资源」的原因（2026-10-15 补 P0 修复时新增）。
+ *
+ * ── 为什么 404 和 409 都算「不存在」，但必须区分来源 ──────────────────────
+ * WebDAV 服务端对「路径不存在」的响应码有两个（同一份 RFC 4918 里就有两处）：
+ *   · **404** —— 目标资源本身不存在（父目录在）
+ *   · **409** —— **父目录不存在**（坚果云、Nextcloud 都这样实现；
+ *               MKCOL 也用 409 表示「父目录不存在」，见本文件 mkcol）
+ *
+ * 对「读一个可能还不存在的文件」这件事，两者对调用方的含义是同一个：
+ * **远端没有这个东西**。区别只在「为什么没有」，而那对用户是有用的诊断信息。
+ *
+ * ⚠️ 为什么不能笼统地把 409 静默当 404：
+ * 409 在别的语境下**是**真冲突信号（如条件写场景）。所以本枚举**只**服务于
+ * `get()` 这一个「读单个资源」的调用点；PUT / MKCOL 的 409 语义**一字未改**
+ * （mkcol 仍明确报「父目录不存在」并提示逐级创建）。
+ */
+export type NotFoundReason = 'no-such-resource' | 'missing-parent';
 
 /** 单个资源的元信息（PROPFIND Depth:0 的结果）。 */
 export interface ResourceMeta {
@@ -155,6 +235,8 @@ export function encodePathSegments(path: string): string {
  */
 export class WebDavClient {
   private readonly authHeader: string;
+  /** 单请求超时上界（可用构造参数覆盖，测试用它把 45s 缩到毫秒级）。 */
+  private readonly requestTimeoutMs: number;
   readonly baseUrl: string;
 
   constructor(
@@ -168,9 +250,12 @@ export class WebDavClient {
      * 未注入 = 不做权限检查（Node 测试环境正是这种情况）。
      * 生产路径注入 `() => hasHostPermission(baseUrl)`，见 index.ts 的 defaultFactory。
      */
-    private readonly permissionGuard?: PermissionGuard
+    private readonly permissionGuard?: PermissionGuard,
+    /** 超时等传输层旋钮（可选；不传 = DEFAULT_REQUEST_TIMEOUT_MS）。 */
+    opts?: { timeoutMs?: number }
   ) {
     this.baseUrl = normalizeBaseUrl(config.baseUrl);
+    this.requestTimeoutMs = opts?.timeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
     // btoa 在 Node 22+ 与浏览器都有；用 TextEncoder + btoa 处理非 ASCII 账号名。
     this.authHeader = `Basic ${base64OfUtf8(`${config.username}:${config.password}`)}`;
   }
@@ -191,9 +276,27 @@ export class WebDavClient {
   private async request(
     method: string,
     path: string,
-    init?: { headers?: Record<string, string>; body?: BodyInit }
+    init?: { headers?: Record<string, string>; body?: BodyInit; timeoutMs?: number }
   ): Promise<Response> {
     const url = this.resolve(path);
+
+    // ⚠️ 必须先摘出 receiver 再调，不能写 `this.fetchImpl(url, ...)`
+    //    （2026-10-15 真机实测抓到的 P0）
+    //
+    // 为什么不写成一行：Chrome 的 fetch 是 Window 上的 WebIDL 方法，调用时
+    // receiver 必须是 Window 本身。写成方法调用会把 receiver 设成 WebDavClient
+    // 实例，Chrome 立刻抛
+    //   TypeError: Failed to execute 'fetch' on 'Window': Illegal invocation
+    // —— 请求根本没发出去，用户点「测试连接」无论地址密码怎么填都失败。
+    //
+    // 为什么 Node 单测抓不到：注入的 stub 不校验 receiver，且 Node 的 fetch
+    // 本身不做 brand check。**只有真机 WebIDL 方法会暴露这个 bug**，
+    // 所以本文件的一切「传输层行为」断言都不能替代真机验证。
+    //
+    // 构造参数 `fetchImpl = fetch` 那一步已经是 detached（存的是裸函数），
+    // 但一旦以 `this.fetchImpl(...)` 形式调用，receiver 就又变回实例 ——
+    // 赋值时摘干净不够，**调用点**必须摘。
+    const doFetch = this.fetchImpl;
 
     // ── 权限预检（2026-10-14 补P1：见permission.ts 的文件头）──────────────
     // 必须在 fetch **之前**：没有 host 权限时 Chrome 会在本地把请求拦掉，
@@ -218,16 +321,32 @@ export class WebDavClient {
     }
 
     let res: Response;
+    // ── 请求级超时（Wave 2A）──────────────────────────────────────────────
+    // 挂死的 DAV 服务器会让 fetch 永远 pending，而单写者队列会把整条同步
+    // （包括后续保存）钉在它后面。AbortController 是唯一能让 fetch 提前
+    // 失败的正规手段；超时错误走 WebDavRequestTimeoutError，与普通网络
+    // 失败（DNS/断网）在机器与文案上都可区分。
+    // 定时器必须在 finally 里清掉：否则一轮几百个分片请求会留下几百个
+    // 待触发的 timer（SW 里白耗电，且 abort 会在请求已完成后再次触发）。
+    const timeoutMs = init?.timeoutMs ?? this.requestTimeoutMs;
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
     try {
-      res = await this.fetchImpl(url, {
+      res = await doFetch(url, {
         method,
         headers: this.headers(init?.headers),
         body: init?.body,
         // 不要跟随重定向：某些服务器会把未带尾斜杠的 PROPFIND 301 到带斜杠版本，
         // 而重定向后 Authorization 可能被剥掉，表现为「明明密码对却 401」。
         redirect: 'manual',
+        signal: controller.signal,
       });
     } catch (err) {
+      // 先判「是不是我们自己 abort 的」：AbortError 也是 fetch 的 rejection，
+      // 若不先判就会与「网络层失败」混成同一句文案（可区分性丢失）。
+      if (controller.signal.aborted) {
+        throw new WebDavRequestTimeoutError(method, url, timeoutMs);
+      }
       // 网络层失败（DNS / 断网 / 被浏览器拦截）。status=0 便于调用方区分
       // 「没连上」与「服务器明确拒绝」——两者的用户提示与重试策略不同。
       throw new WebDavError(
@@ -236,6 +355,8 @@ export class WebDavClient {
         method,
         url
       );
+    } finally {
+      clearTimeout(timer);
     }
 
     if (res.status === 0) {
@@ -252,19 +373,34 @@ export class WebDavClient {
 
   /**
    * GET 一个文件。
-   * @returns 文件内容；404 时返回 null（**不抛错**——「文件不存在」是正常状态，
-   *          例如首次同步时 manifest 还没建）
+   *
+   * @returns 文件内容；**404 与 409 时返回 `{ notFound, ... }`**
+   *          （**不抛错**——「文件不存在」是正常状态，例如首次同步时
+   *          manifest 还没建、连子目录都还没建 —— 两者都是「远端没有」）。
+   *
+   * ⚠️ 409 归入 notFound 是 2026-10-15 修的 P0：首次配置自带存储时子目录
+   * `TapStack` 尚不存在，坚果云按 RFC 4918 对「父目录不存在」返回 **409**
+   * 而非 404。旧实现只认 404，于是把「远端还是空的」如实报成
+   * `GET 失败（HTTP 409）`，**测试连接与首次同步一起挂死**（见 .ai-logs）。
+   * 详见 NotFoundReason 的注释。
    */
   async get(
     path: string,
     opts?: { ifNoneMatch?: string }
-  ): Promise<{ body: string; etag: string | null } | null> {
+  ): Promise<
+    | { body: string; etag: string | null }
+    | { notFound: true; reason: NotFoundReason }
+    | null
+  > {
     const headers: Record<string, string> = {};
     if (opts?.ifNoneMatch) headers['If-None-Match'] = opts.ifNoneMatch;
 
     const res = await this.request('GET', path, { headers });
 
-    if (res.status === 404) return null;
+    // 404 = 资源不存在；409 = 父目录不存在（RFC 4918，坚果云等如此实现）。
+    // 两者对「读一个可能还不存在的文件」等价，详见 NotFoundReason。
+    if (res.status === 404) return { notFound: true, reason: 'no-such-resource' };
+    if (res.status === 409) return { notFound: true, reason: 'missing-parent' };
     if (res.status === 304) {
       // If-None-Match 命中 = 内容没变。用「抛一个可识别的错」表达太绕，
       // 交给调用方传 etag 判定；这里返回 null 会与 404 混淆，
@@ -417,7 +553,10 @@ export class WebDavClient {
       body,
     });
 
-    if (res.status === 404) {
+    // 409 与 404 同义（父目录不存在 / 资源不存在，见 NotFoundReason）：
+    // 对「这个东西在不在」这个问题，两者的答案都是「不在」。
+    // 不修的话首次同步会在读回 ETag / 探测条件写时撞 409 而失败。
+    if (res.status === 404 || res.status === 409) {
       return { exists: false, etag: null, lastModified: null, contentLength: null };
     }
     if (res.status === 401 || res.status === 403) {

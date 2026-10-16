@@ -9,6 +9,9 @@
 //
 // 形状统一为「改坏一个文档文件就必须被列成错误」：每条断言都从代码或 manifest 反推事实，
 // 再拿文档去对，而不是把期望字符串硬编码在测试里。
+//
+// 2026-10-16：三份被本文件守卫的计划文档已随「WebDAV-only」整理移入 docs/archive/
+//（归档不是删除：顶部的作废声明仍必须成立，故意改坏它们依旧要让本文件变红）。
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -22,9 +25,9 @@ const read = (rel: string): string => readFileSync(resolve(ROOT, rel), 'utf8');
 const STORE = read('CHROMEWEBSTORE.md');
 const README = read('README.md');
 const PRIVACY = read('src/legal/privacy.html');
-const V2_PLAN = read('docs/v2-plan.md');
-const DEV_PLAN = read('docs/dev-plan-2026-09-27.md');
-const Y_SHADOW = read('docs/y-shadow-v2.md');
+const V2_PLAN = read('docs/archive/v2-plan.md');
+const DEV_PLAN = read('docs/archive/dev-plan-2026-09-27.md');
+const Y_SHADOW = read('docs/archive/y-shadow-v2.md');
 
 /** 取出 `> Last Updated: YYYY-MM-DD` 的日期。 */
 function lastUpdatedDate(md: string): string {
@@ -87,23 +90,60 @@ describe('src/web/public/privacy.html：不得夸大云端删除时效', () => {
     assert.match(PRIVACY, /没有撤销入口|无撤销/, '必须写明没有回收站/撤销');
   });
 
-  it('如实披露云端加密不是端到端加密', () => {
-    // 密钥由 userId 派生（src/utils/encryptionUtils.ts:18-25），userId 是公开标识，
-    // 所以 README 明确声明这不是 E2E；隐私政策不能读起来像 E2E。
-    assert.match(PRIVACY, /并非端到端加密|不是端到端加密/, '必须澄清不是端到端加密');
+  it('如实披露云端加密的性质：口令派生 ⇒ 端到端加密（WebDAV 形态）', () => {
+    // 2026-10-16 反转：原断言要求隐私政策写「并非端到端加密」，因为当时密钥
+    // 由 userId 派生（src/utils/encryptionUtils.ts）—— userId 是公开标识，
+    // 任何人都能推出同一把密钥，那确实不是 E2E。
+    //
+    // 云端后端与 encryptionUtils 删除后，唯一的云端形态是 WebDAV 自带存储：
+    // 密钥由**用户自己的口令**派生（src/sync-backend/crypto.ts 的
+    // PBKDF2-SHA256 250k + AES-256-GCM，口令只存在本次浏览器会话内存中）。
+    // 密钥材料从不出现在扩展的任何持久存储里，云盘服务商与 TapStack 都拿不到，
+    // 所以端到端加密的描述是**真的**——privacy.html 里那句「属于端到端加密」
+    // 才是与实现一致的口径。本断言改为盯住这条不变量的两个支点：
+    //   1) 声明端到端加密时必须点名「口令派生」（否则说不清凭什么）；
+    //   2) 必须如实点名 manifest 明文这个已知缺口（否则就是过度承诺）。
+    assert.match(
+      PRIVACY,
+      /由[^<]*<strong>您的口令<\/strong>[^<]*派生/,
+      '声称端到端加密时必须点名密钥由用户口令派生（否则「凭什么 E2E」无从核对）'
+    );
+    assert.match(PRIVACY, /端到端加密/, 'WebDAV 形态的加密必须如实标为端到端加密');
+    // 过度承诺的另一头：manifest 以明文存放这件事必须披露。
+    assert.match(
+      PRIVACY,
+      /<strong>明文<\/strong>/,
+      '必须如实披露目录清单以明文存放（云盘服务商能看到会话数量与修改时间）'
+    );
   });
 
   it('权限披露覆盖 manifest 声明的每一个权限', () => {
     const manifest = JSON.parse(read('manifest.json')) as {
       permissions: string[];
       host_permissions: string[];
+      optional_host_permissions?: string[];
     };
+    // 2026-10-16：`https://*.supabase.co/*` 这个必选主机权限随云端下线删除，
+    // 所以「每个权限都必须逐字出现在隐私政策里」对**必选**权限仍然成立，
+    // 而可选主机权限（https://*/* 等）是**通配模式**，隐私政策按中文说明披露
+    // （「默认申请整个 https 域与本地地址」），逐字匹配没有意义——把通配符
+    // 拆成具体主机名去断言，会逼出一份和实现脱节的清单。
     for (const perm of [...manifest.permissions, ...manifest.host_permissions]) {
       assert.ok(
         PRIVACY.includes(perm),
         `隐私政策未披露 manifest 里的权限「${perm}」——商店「权限说明」要求逐项披露`
       );
     }
+    // 反向：manifest 里不得再有指向已删除云端的必选主机权限。
+    assert.deepEqual(
+      manifest.host_permissions,
+      [],
+      '云端下线后 host_permissions 必须为空——安装时不该索要任何网站访问权'
+    );
+    assert.ok(
+      (manifest.optional_host_permissions ?? []).includes('https://*/*'),
+      'WebDAV 主机权限必须降级为「可选 / 运行时按需申请」，不能回到必选'
+    );
   });
 
   it('最后更新日期不是过期的 2026-02-13', () => {
@@ -132,7 +172,7 @@ describe('README.md：主题数量必须与选择器实际选项一致', () => {
   });
 });
 
-describe('docs/v2-plan.md：作废声明 + 不引用不存在的文件', () => {
+describe('docs/archive/v2-plan.md：作废声明 + 不引用不存在的文件', () => {
   it('文件顶部有指向 v1.22.0 的作废声明', () => {
     const head = V2_PLAN.split('\n').slice(0, 8).join('\n');
     assert.match(head, /作废声明/, '顶部必须有显式作废声明');
@@ -151,11 +191,11 @@ describe('docs/v2-plan.md：作废声明 + 不引用不存在的文件', () => {
         assert.match(
           corrected,
           /不存在|作废|事实改正/,
-          `docs/v2-plan.md:${i + 1} 提到 ${ghost} 却没说它不存在——读者会以为该文件可用`
+          `docs/archive/v2-plan.md:${i + 1} 提到 ${ghost} 却没说它不存在——读者会以为该文件可用`
         );
         assert.ok(
           retracted || /不存在|作废|事实改正/.test(corrected),
-          `docs/v2-plan.md:${i + 1} 提到 ${ghost} 必须划掉或标注为不存在`
+          `docs/archive/v2-plan.md:${i + 1} 提到 ${ghost} 必须划掉或标注为不存在`
         );
       }
     }
@@ -164,7 +204,7 @@ describe('docs/v2-plan.md：作废声明 + 不引用不存在的文件', () => {
   it('提到旧测试数的地方必须同时给出当前基线', () => {
     for (const [i, line] of V2_PLAN.split('\n').entries()) {
       if (!/\b334\b/.test(line)) continue;
-      assert.match(line, /695/, `docs/v2-plan.md:${i + 1} 提到 334 单测但没给当前基线 695`);
+      assert.match(line, /695/, `docs/archive/v2-plan.md:${i + 1} 提到 334 单测但没给当前基线 695`);
     }
   });
 
@@ -174,13 +214,13 @@ describe('docs/v2-plan.md：作废声明 + 不引用不存在的文件', () => {
       assert.match(
         line,
         /~~|作废|事实改正|原写|实际/,
-        `docs/v2-plan.md:${i + 1} 仍把 M1 说成 v1.22.0，但 1.22.0 实际发的是废除墓碑体系`
+        `docs/archive/v2-plan.md:${i + 1} 仍把 M1 说成 v1.22.0，但 1.22.0 实际发的是废除墓碑体系`
       );
     }
   });
 });
 
-describe('docs/dev-plan-2026-09-27.md：顶部状态声明 + 版本/测试数已就地改正', () => {
+describe('docs/archive/dev-plan-2026-09-27.md：顶部状态声明 + 版本/测试数已就地改正', () => {
   it('顶部有指向 v1.22.0 的状态声明', () => {
     const head = DEV_PLAN.split('\n').slice(0, 10).join('\n');
     assert.match(head, /状态声明/, '顶部必须有显式状态声明');
@@ -190,19 +230,19 @@ describe('docs/dev-plan-2026-09-27.md：顶部状态声明 + 版本/测试数已
   it('提到旧测试数的地方必须同时给出当前基线', () => {
     for (const [i, line] of DEV_PLAN.split('\n').entries()) {
       if (!/\b356\b/.test(line)) continue;
-      assert.match(line, /695/, `docs/dev-plan-2026-09-27.md:${i + 1} 提到 356 但没给当前基线 695`);
+      assert.match(line, /695/, `docs/archive/dev-plan-2026-09-27.md:${i + 1} 提到 356 但没给当前基线 695`);
     }
   });
 
   it('「1.21.1 在 Google 审核中」的旧事实必须被划掉', () => {
     for (const [i, line] of DEV_PLAN.split('\n').entries()) {
       if (!line.includes('1.21.1 在 Google 审核中')) continue;
-      assert.match(line, /事实已变|作废/, `docs/dev-plan-2026-09-27.md:${i + 1} 仍在拿 1.21.1 当现状`);
+      assert.match(line, /事实已变|作废/, `docs/archive/dev-plan-2026-09-27.md:${i + 1} 仍在拿 1.21.1 当现状`);
     }
   });
 });
 
-describe('docs/y-shadow-v2.md：翻译表不得无声地列已删除的 MutationOp', () => {
+describe('docs/archive/y-shadow-v2.md：翻译表不得无声地列已删除的 MutationOp', () => {
   it('顶部声明 restoreGroup / purgeGroup 已被 v1.22.0 删除', () => {
     // v1.22.0 随墓碑体系一起删掉了 restoreGroup / purgeGroup（tabSlice.ts 头注释），
     // 但本文 §3 的翻译表还在按它们推导 Y 计划。修法同 v2-plan：顶部划掉失效部分，
@@ -232,12 +272,20 @@ describe('CHROMEWEBSTORE.md：自身不矛盾', () => {
     );
   });
 
-  it('隐私政策源码注释里的日期与 privacy.html 实际日期一致', () => {
+  it('隐私政策源码注释里的日期不得早于 privacy.html 实际日期', () => {
     const m = STORE.match(/privacy\.html（最后更新 (\d{4}-\d{2}-\d{2})）/);
     assert.ok(m, 'CHROMEWEBSTORE.md 必须标注 privacy.html 的最后更新日期');
     const actual = PRIVACY.match(/最后更新：(\d{4}-\d{2}-\d{2})/);
     assert.ok(actual, 'privacy.html 必须标注最后更新日期');
-    assert.equal(m[1], actual[1], 'CHROMEWEBSTORE.md 与 privacy.html 对「最后更新」的日期不一致');
+    // 方向是有意的（2026-10-16）：商店文案标一个**更早**的隐私政策日期，
+    // 会让审核员与用户拿到一份已被改写过的隐私政策却以为它是现行版本——
+    // 这是实质风险。反过来（STORE 标得比 privacy.html 更新）只是保守，
+    // 不会让任何人拿到错误信息。
+    assert.ok(
+      m[1] >= actual[1],
+      `CHROMEWEBSTORE.md 标注的隐私政策日期（${m[1]}）早于 privacy.html 实际日期（${actual[1]}）——` +
+        '商店文案必须跟着隐私政策一起更新'
+    );
   });
 
   it('对 1.21.1 发布状态不作断言（未知就是未知）', () => {

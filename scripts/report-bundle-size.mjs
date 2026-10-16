@@ -8,7 +8,7 @@
  * 于是这个脚本变成了「为一个已不存在的东西服务的门」——它测的量不存在，
  * 也没有任何地方（package.json / validate / CI）调用它。
  *
- * docs/v2-plan.md 曾承诺「超预算阻断发布」，实际从未接线。现在把它改成
+ * docs/archive/v2-plan.md 曾承诺「超预算阻断发布」，实际从未接线。现在把它改成
  * 一个**真的会被拦下**的门，且测的量是用户真正在等的那个：**popup 首屏
  * 打开时必须下载的全部资源**（entry 的 modulepreload 清单 + 自身 + CSS）。
  *
@@ -37,6 +37,10 @@ const DIST = join(ROOT, 'dist');
  * 引进首屏」时立刻变红。参照值（2026-10-05 实测 gzip）：
  *   supabase-vendor 31.4 / react-vendor 46.0 / utils 35.5 /
  *   popup entry 44.0 / tabGroupSync 5.5 / 两条 CSS 20.7 ≈ 205KB
+ *
+ * 2026-10-16 Supabase 依赖退场后 supabase-vendor chunk 本身已消失（约 -31KB gzip），
+ * 预算 **不下调**：它是「防止再引进一个大依赖」的哨兵，不是「记录当前大小」的抄本。
+ * 提前下调只会让门禁在真正超支前失去作用。
  */
 const BUDGET_KB = 240;
 

@@ -70,16 +70,15 @@ export function base64Decode(b64: string): Uint8Array {
 /*
  * 反面样板（已删除，注释留档以防重建）：
  *
- * 被删掉的死导出 encryptionUtils.encryptSupabaseTabGroup 开头是这样的——
+ * 被删掉的死导出 encryptTabGroup 开头是这样的——
  *
  *   if (!group.tabs_data || group.tabs_data.length === 0) return group;
  *
- * 「空数据就不加密，原样返回」。这让同一张表里混着明文行和密文行，读侧只能靠
- * 猜（typeof === 'string' 到底是 base64 还是 JSON），而任何解密失败的处理
- * （返回空数组 / 返回明文）都会静默吞掉用户的会话。对照真正的 live 路径
- * src/utils/supabase/upload.ts 的做法：空/异常数据一律 fail-closed 抛错，绝不
- * 产出明文。
+ * 「空数据就不加密，原样返回」。这让同一个库里混着明文文件和密文文件，
+ * 读侧只能靠猜，而任何解密失败的处理（返回空数组 / 返回明文）都会静默吞掉
+ * 用户的会话。对照真正的 live 路径（sync-backend/crypto.ts 现在的做法）：
+ * 空/异常数据一律 fail-closed 抛错，绝不产出明文。
  *
  * 教训：任何「跳过加密」的早退分支都是把明文推进持久层的入口，不是优化。
- * 加密与否是数据形状的属性（有没有 rows 就写不写 row），不是「值恰好为空」的函数。
+ * 加密与否是数据形状的属性（有没有内容就写不写文件），不是「值恰好为空」的函数。
  */

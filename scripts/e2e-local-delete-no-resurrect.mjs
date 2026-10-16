@@ -8,7 +8,7 @@
 // 原断言②写的是「会话 1 删除后应成为 isDeleted 墓碑」、断言③写的是「点开的标签应墓碑化」——
 // 旧世界语义。新模型下（src/core/mutationOps.ts）：
 //   删除会话 → 本地物理删 + pendingDeleteIds 队列；上传时 markCloudGroupsAsDeleted
-//              把云端行 UPDATE is_deleted=true（行保留 = 对端服从删除的唯一载体），
+//              广播删除（WebDAV 后端把 isDeleted 墓碑写进分片；旧云端后端 UPDATE 行），
 //              读回确认后清队。对端下载合并时按 stamp 决胜服从删除
 //              （src/core/opStampMerge.ts）。
 //   点开标签 → 物理移除该 tab + 组 stamp 提升，整组行上传覆盖。
@@ -20,35 +20,61 @@
 //   ④ 负控：90s 后台同步 + 重开 popup，会话 1 与被点开的标签都没有回来
 //
 // 运行：node scripts/e2e-local-delete-no-resurrect.mjs（需先 pnpm build）
+// 需要 dufs 与 playwright。2026-10-16 账号体系删除后云盘改成本机 dufs + WebDAV：
+// 配置/凭据直种解析层（e2e-helpers 的 WebDAV 段）。
 
-import { randomUUID } from 'node:crypto';
+import { readFileSync, rmSync } from 'node:fs';
+import { join } from 'node:path';
 import {
   launchCtx, extId, readLocalGroups, readKvAll, readKvFromSW, kvValue,
   manualUpload, manualDownload, downloadUntil, waitOutUploadGuard,
-  login, startContentSite,
+  startContentSite, prepareDavDist, startDufs, seedWebDav, resyncAlarm,
+  dismissOnboarding, nudgeSyncAlarm, pollUntil,
 } from './e2e-helpers.mjs';
-import { accountMarker, createGate } from './e2e-support.mjs';
-
-const EMAIL = `e2e-nr-${randomUUID().slice(0, 6)}@test.tapstack.dev`;
-const PWD = 'SyncTest#2026!';
-console.log(accountMarker(EMAIL)); // 供 run-e2e 收尾统一清理
+import { createGate } from './e2e-support.mjs';
 
 const gate = createGate();
 
 const urlsInStorage = (groups, url) => groups.flatMap(g => g.tabs || []).filter(t => t.url === url);
 const idsInStorage = (groups, id) => groups.filter(g => g.id === id);
+/**
+ * 云端 manifest 里是否已有该 id 的墓碑。
+ *
+ * 为什么要读它而不是只看 pending_delete_ids：本地删除会先登记队列，随后
+ * scheduleUpload 的 1.5~3s 快路径就把墓碑写上云并**清空队列**。本地 dufs 比
+ * 旧版云端快，脚本读队列时可能刚好落在「已广播、已清队」之后 —— 此时队列为空
+ * 不代表删除意图没登记，而是已经完成。只看队列 = 拿时间竞态当断言。
+ * manifest 是明文（适配器设计如此，探活需要），可直接判定。
+ */
+const cloudHasTombstone = id => {
+  try {
+    const manifest = JSON.parse(readFileSync(join(dav.dir, 'TapStack', 'manifest.json'), 'utf8'));
+    return (manifest.shards || []).some(s => s.id === id && s.isDeleted === true);
+  } catch {
+    return false; // 还没写过 manifest = 未广播
+  }
+};
 
-const ctxA = await launchCtx('A');
-const ctxB = await launchCtx('B');
+const dav = await startDufs('nr-dav');
+const davDist = prepareDavDist();
+const ctxA = await launchCtx('A', davDist);
+const ctxB = await launchCtx('B', davDist);
 const site = await startContentSite('NR-标签');
 try {
-  // ── A：注册 + 保存 2 个会话（各 2 个标签）+ 上传 ──────────────────
+  // ── A：配置本地 WebDAV + 保存 2 个会话（各 2 个标签）+ 上传 ────────
   await ctxA.waitForEvent('serviceworker', { timeout: 20000 }).catch(() => {});
   const id = await extId(ctxA);
   const pageA = await ctxA.newPage();
   await pageA.goto(`chrome-extension://${id}/src/popup/index.html`);
-  await login(pageA, EMAIL, PWD, { register: true });
-  console.log('✅ A 注册并登录');
+  await dismissOnboarding(pageA);
+  const seededA = await seedWebDav(pageA, { origin: dav.origin, autoSync: true });
+  await resyncAlarm(pageA);
+  gate.check(
+    '前置：A 已种入 WebDAV 配置且已解锁（自动同步开启）',
+    seededA.backend === 'webdav' && seededA.baseUrl === `${dav.origin}/` && seededA.unlocked && seededA.syncEnabled,
+    JSON.stringify(seededA)
+  );
+  console.log(`✅ A 已配置本地 WebDAV（${dav.origin}）并解锁`);
 
   const mkTabs = async n => {
     const pages = [];
@@ -69,11 +95,18 @@ try {
   await manualUpload(pageA);
   console.log('✅ A 保存并上传 2 个会话');
 
-  // ── B：登录 + 下载（正控①：真的拿到 2 个双标签活跃会话）──────────
+  // ── B：配置同一云盘 + 下载（正控①：真的拿到 2 个双标签活跃会话）──
   await ctxB.waitForEvent('serviceworker', { timeout: 20000 }).catch(() => {});
   const pageB = await ctxB.newPage();
   await pageB.goto(`chrome-extension://${id}/src/popup/index.html`);
-  await login(pageB, EMAIL, PWD);
+  await dismissOnboarding(pageB);
+  const seededB = await seedWebDav(pageB, { origin: dav.origin, autoSync: true });
+  await resyncAlarm(pageB);
+  gate.check(
+    '前置：B 已种入同一云盘配置且已解锁（自动同步开启）',
+    seededB.backend === 'webdav' && seededB.baseUrl === `${dav.origin}/` && seededB.unlocked && seededB.syncEnabled,
+    JSON.stringify(seededB)
+  );
   const { groups: bInit, downloaded } = await downloadUntil(
     pageB,
     gs => gs.filter(g => g.tabs.length === 2).length >= 2,
@@ -104,16 +137,17 @@ try {
   if (await confirm.count()) await confirm.click({ timeout: 8000 }).catch(() => {});
   await pageB.waitForTimeout(2500);
 
-  // 判据②：会话 1 物理消失 + 删除意图进入广播队列
+  // 判据②：会话 1 物理消失 + 删除意图已被登记或已广播上云
   const afterDelete = await readLocalGroups(pageB);
   const stillThere = idsInStorage(afterDelete, session1.id);
   const pendingDeletes = kvValue(await readKvFromSW(ctxB), 'pending_delete_ids') || [];
-  console.log(`📊 判据② 会话 1 本地残留=${stillThere.length}，pending_delete_ids=${JSON.stringify(pendingDeletes)}`);
+  const broadcasted = cloudHasTombstone(session1.id);
+  console.log(`📊 判据② 会话 1 本地残留=${stillThere.length}，pending_delete_ids=${JSON.stringify(pendingDeletes)}，云端墓碑=${broadcasted}`);
   gate.check('判据②：已删除的会话 1 在 B 本地物理消失（不进回收站）', stillThere.length === 0,
     `仍存在于 storage：${stillThere.map(g => g.name).join(', ')}`);
-  gate.check('判据②：删除意图已登记 pending_delete_ids（新模型唯一的跨端广播载体）',
-    Array.isArray(pendingDeletes) && pendingDeletes.includes(session1.id),
-    `队列=${JSON.stringify(pendingDeletes)}，目标=${session1.id}`);
+  gate.check('判据②：删除意图已登记（pending_delete_ids）或已广播上云（云端墓碑）',
+    (Array.isArray(pendingDeletes) && pendingDeletes.includes(session1.id)) || broadcasted,
+    `队列=${JSON.stringify(pendingDeletes)}，云端墓碑=${broadcasted}，目标=${session1.id}`);
 
   // ── B 点开「会话 2」的第一个标签（打开即移除）───────────────────
   const card2 = pageB.locator('.tab-group-card').filter({ hasText: anchor2 }).first();
@@ -143,13 +177,13 @@ try {
   await pageB.waitForTimeout(2000);
   const pendingAfterUpload = kvValue(await readKvFromSW(ctxB), 'pending_delete_ids') || [];
   console.log(`📊 判据④ 上传后 pending_delete_ids=${JSON.stringify(pendingAfterUpload)}`);
-  gate.check('判据④：上传后删除队列已清空（= 云端 is_deleted 行已写入并读回确认）',
+  gate.check('判据④：上传后删除队列已清空（= 云端墓碑已写入并读回确认）',
     !pendingAfterUpload.includes(session1.id),
     `队列仍含目标 id：${JSON.stringify(pendingAfterUpload)}`);
 
-  // ── 判据⑤：完全不知情的一端（A）下载后必须服从云端 is_deleted 行 ──
+  // ── 判据⑤：完全不知情的一端（A）下载后必须服从云端墓碑 ──
   // 这是组删除在新模型下的核心防线：A 本地还留着会话 1 的活跃副本，只有云端那行
-  // is_deleted=true + 更大的 stamp 能让它在合并时消失（opStampMerge 的「云端墓碑 vs
+  // isDeleted 墓碑 + 更大的 stamp 能让它在合并时消失（opStampMerge 的「云端墓碑 vs
   // 本地活跃」分支）。没有这一步，这个脚本只测了删除端自己。
   const aSyncBefore = kvValue(await readKvAll(pageA), 'last_sync_time');
   // A 的上次上传在脚本开头，间隔未必够 35s：窗口内的下载会被
@@ -173,11 +207,27 @@ try {
   gate.check('判据⑤：A 端会话 2 剩 1 个标签（其余数据没被误删）', aS2?.tabs.length === 1,
     `实际 ${aS2?.tabs.length ?? '组不存在'}`);
 
-  // ── 关闭 B popup，等 90s（30s 上传 alarm + 60s 同步 alarm）──────
+  // ── 关闭 B popup；提前触发后台同步 alarm ──────────────────────
+  // 2026-10-16 口径：自动同步档位最小 5 分钟，不能等「30s 上传 alarm + 60s 同步
+  // alarm」那种旧节奏。改为在 popup 关闭后主动把同一个 alarm 的触发时间拨到最近
+  // （chrome.alarms 最小 0.5 分钟 ≈ 30s），验的是 onAlarm 处理链确实跑完
+  //「先上传本地意图，再下载合并」；档位本身由设置与单测负责。
   const syncBefore = kvValue(await readKvFromSW(ctxB), 'last_sync_time');
   await pageB.close();
-  console.log('⏳ B popup 已关闭，等 90s 让后台 alarm 跑完（先上传本地意图，再下载合并）');
-  await pageA.waitForTimeout(90_000);
+  const nudgePage = await ctxB.newPage();
+  await nudgePage.goto(`chrome-extension://${id}/src/options/index.html`).catch(() => {});
+  // 先越过 35s 上传保护窗口：否则 decideDownloadPrecheck 会因「刚上传过」静默
+  // 跳过下载（负控会因为「下载没跑」而假绿，这比失败更坏）。
+  await waitOutUploadGuard(nudgePage);
+  await nudgeSyncAlarm(nudgePage);
+  await nudgePage.close();
+  console.log('⏳ B popup 已关闭；已提前触发后台同步 alarm（约 30s 后执行），轮询等待...');
+  const polledSync = await pollUntil(
+    async () => kvValue(await readKvFromSW(ctxB), 'last_sync_time'),
+    v => Boolean(v) && v !== syncBefore,
+    { timeoutMs: 90_000, gapMs: 3000 }
+  );
+  console.log(`   ...轮询到后台同步：last_sync_time ${syncBefore || '-'} → ${polledSync || '-'}`);
 
   // ── 负控：重开 popup，两条意图都不该被云端覆盖回来 ──────────────
   const pageB2 = await ctxB.newPage();
@@ -195,7 +245,7 @@ try {
   console.log(`📊 90s 后: last_sync_time ${syncBefore || '-'} → ${syncAfter || '-'}` +
     ` | 会话1 残留=${f1.length} | 会话2 标签数=${f2?.tabs.length ?? '-'} | 目标标签残留=${victimLeft.length}`);
 
-  gate.check('正控④：90s 内后台同步确实执行过（last_sync_time 前进）', didSync,
+  gate.check('正控④：后台同步确实执行过（last_sync_time 前进）', didSync,
     '后台没跑同步 → 负控无意义');
   gate.check('负控①：已删除的会话 1 未被云端复活', f1.length === 0,
     `复活了 ${f1.length} 个`);
@@ -230,4 +280,8 @@ try {
   try { site.server.close(); } catch { /* 关不掉不影响判定 */ }
   try { await ctxA.close(); } catch { /* 同上 */ }
   try { await ctxB.close(); } catch { /* 同上 */ }
+  const dufsGone = await dav.stop();
+  try { rmSync(davDist, { recursive: true, force: true }); } catch { /* 同上 */ }
+  console.log(`清理：dufs 已退出=${dufsGone}`);
+  if (!dufsGone) process.exitCode = 1;
 }

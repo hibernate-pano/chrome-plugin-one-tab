@@ -1,32 +1,26 @@
 // 缺陷 1（P1）回归：云端墓碑行把 hasRemoteChanges 永久打成 true，
 // up_to_date 短路永不命中 → 每 60s 一次全量下载（PBKDF2-100k × N + 整表写回
-// + notifyGroupsChanged 唤醒所有管理页整表重载）。
+// + notifyGroupsChanged 唤醒所有已管理页整表重载）。
 //
-// ── 失效链条（修复前）───────────────────────────────────────────────────────
-//   probe.ts fetchTabGroupsDigest 只 .eq('user_id', uid)，**不过滤 is_deleted**
-//   （按设计：云端删除是「行保留 + is_deleted=true」的墓碑，30 天后才 purge）
-//   → syncDecision.ts hasRemoteChanges 第一行 `digest.length !== localGroups.length`
+// 【本文件是恢复的守卫】2026-10-16 瘦身把整份 tests/digestTombstoneProbe.test.ts
+// 删除时，这批纯函数用例一起被删。而 src/core/syncDecision.ts 的 hasRemoteChanges
+// 仍在生产路径上（src/services/syncEngine.ts:389 的 up_to_date 短路消费它）。
+// 审计用变异证明：在 hasRemoteChanges 顶部加 `return false;`，全量 1046 个测试
+// 依旧 1046/1046 全绿 —— 即删除后没有任何测试钉住这条路径。
+//
+// 原文件末尾的「count 口径」结构断言指向 src/utils/supabase/probe.ts 与
+// download.ts；这两个模块已随账号体系/云端后端删除，无法恢复其对象。
+// 本文件恢复的是不依赖网络与存储的判定层用例。
+//
+// 失效链条（修复前）：
+//   digest 的查询**不过滤 is_deleted**（云端删除是「行保留 + is_deleted=true」
+//   的墓碑，30 天后才 purge）→ hasRemoteChanges 第一行按长度比对
 //   → 设备 A 删一个会话，B 设备下轮把组合并掉（本地 N-1 行）
-//   → 云端那一行仍是墓碑 ⇒ digest.length = N（含墓碑）vs local = N-1
-//   ⇒ 恒 true。影响面 = 用过一次跨端删除的用户 × 30 天 × 每台设备。
+//   → 云端那一行仍是墓碑 ⇒ digest.length = N（含墓碑）vs local = N-1 ⇒ 恒 true。
 //
-// ── 为什么这个分支在旧测试里是死代码 ────────────────────────────────────────
-// tests/syncReliabilityP0P1.test.ts 的 9 条 hasRemoteChanges 用例**全是单组 fixture**，
-// 两侧行数天然相等，那条长度短路永远命中不了「不等」分支，也就没有任何一条用例
-// 建模「digest 里多出一行墓碑」这个真实形状。本文件专门补它。
-//
-// ── 同一失效模式的新变体（历史对照，见 tests/syncAuditFixes.test.ts 文件头）──
-// 2026-09-28 的 #2：purge 队列不置 pending_upload → 云端多出行 → 行数比对恒不等
-// → 探活永久失效。那次只修了 purge 队列那一侧；本次是**同一根因的另一个来源**
-// （墓碑是**设计内的常驻行**，不是 bug 产生的多余行），方向与 1.22.15 那次相反：
-//   1.22.15 的 digest 截断 = digest 少取 → 漏判 false（该修的不修）
-//   本次          = digest 取全但含墓碑 → 恒判 true（不该修的照修）
-//
-// 修法：hasRemoteChanges 在**判定层**把墓碑行分出去（改判据），不在查询层
-// 加 .eq('is_deleted', false) —— 后者会让 digest 行数与 count(exact) 总行数
-// 脱钩，而 count 是探活自证「没被网关静默截断」的唯一信号。两处口径必须一致：
-// probe 与 download 的 count 校验都在**未过滤**的行集上取数（见本文件末尾的
-// 结构层用例 + download.ts 的注释）。
+// 修法：hasRemoteChanges 在**判定层**把墓碑行分出去（改判据），不在查询层过滤
+// —— 后者会让 digest 行数与 count(exact) 总行数脱钩，而 count 是探活自证
+// 「没被网关静默截断」的唯一信号。两处口径必须一致。
 import { describe, it, before } from 'node:test';
 import assert from 'node:assert/strict';
 import { register } from 'node:module';
@@ -247,38 +241,11 @@ describe('缺陷 1：端到端 —— 吸收一次跨端删除后，下一轮探
   });
 });
 
-describe('缺陷 1：count 口径 —— 探活与全量必须在同一口径上', () => {
-  // 结构层：把「不要在查询层加 is_deleted 过滤」这条约束钉住。
-  // 它的理由不是洁癖：count(exact) 是探活自证「没被网关静默截断」的唯一信号，
-  // digest 的逐回行数必须与 count 的总行数同口径，否则分页完整性自证失效。
-  it('fetchTabGroupsDigest 不得对 digest 查询加 is_deleted 过滤', () => {
-    const src = code('src/utils/supabase/probe.ts');
-    // queryAll 是主路径与 42703 回退共用的分页体：任何 .eq('is_deleted' ...)
-    // 都会让 digest 行数与 count 的未过滤总行数脱钩。
-    const start = src.indexOf('const queryAll');
-    assert.ok(start !== -1, '应能找到 queryAll');
-    const body = src.slice(start, src.indexOf('// 未迁移 schema', start));
-    assert.doesNotMatch(
-      body,
-      /is_deleted['"]\s*,\s*(false|'false'|"false")/,
-      'digest 查询禁止过滤墓碑：过滤后 count(exact) 与逐回行数不同口径，' +
-        '分页截断检测（唯一自证信号）随之失效。墓碑要在判定层分出去（hasRemoteChanges）。'
-    );
-  });
-
-  it('download.ts 的 count 校验同样不加 is_deleted 过滤（两处口径一致）', () => {
-    const src = code('src/utils/supabase/download.ts');
-    const start = src.indexOf('const selectColumns');
-    assert.ok(start !== -1, '应能找到 selectColumns');
-    const body = src.slice(start, src.indexOf('// 下载用户设置', start));
-    assert.doesNotMatch(
-      body,
-      /is_deleted['"]\s*,\s*(false|'false'|"false")/,
-      'download 的 count 交叉校验必须与 probe 同口径（未过滤行集），否则两处校验互相打架'
-    );
-  });
-
-  it('hasRemoteChanges 里墓碑被显式分出（判定层分口径）', () => {
+// 结构层：把「墓碑在判定层被显式分出」这条约束钉住（原文件同项守卫的保留部分）。
+// 它防的是把墓碑过滤挪回查询层/直接删掉的那类改动 —— 那种改动会让测试夹具
+// 里的 digest 行数口径与真实网关脱钩。
+describe('缺陷 1：墓碑口径落在判定层', () => {
+  it('hasRemoteChanges 里墓碑被显式分出', () => {
     const src = code('src/core/syncDecision.ts');
     assert.match(
       src,

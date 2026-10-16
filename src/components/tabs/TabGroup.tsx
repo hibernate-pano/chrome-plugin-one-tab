@@ -9,7 +9,6 @@ import { OpenGuard, OpenAllGuard } from '@/utils/openGuard';
 import { isOpenableTabUrl } from '@/utils/inputValidation';
 import { useNearViewport } from '@/hooks/useNearViewport';
 import { resolveRowWindow } from './lazyTabRows';
-import { trackProductEvent } from '@/utils/productEvents';
 import { logError } from '../../utils/log';
 
 interface TabGroupProps {
@@ -193,13 +192,6 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
       url: tab.url,
       pinned: !!tab.pinned,
     }));
-
-    void trackProductEvent('session_restored', {
-      sessionId: group.id,
-      sessionName: group.name,
-      source: inCurrentWindow ? 'list-current-window' : 'list',
-      tabCount: group.tabs.length,
-    });
 
     if (!group.isLocked) {
       // ponytail: 去掉 fake dispatch — autoSyncMiddleware 会通过真实 thunk 的

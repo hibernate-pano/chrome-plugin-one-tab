@@ -35,7 +35,7 @@ export interface Tab {
   unopenable?: true;
 }
 
-// 用于存储到 Supabase 的标签数据格式
+// 用于存储到远端（云盘）的标签数据格式
 export interface TabData {
   id: string;
   url: string;
@@ -54,25 +54,7 @@ export interface TabData {
   last_op_seq?: number | null;
 }
 
-// 用于 Supabase 中的 tab_groups 表结构
-export interface SupabaseTabGroup {
-  id: string;
-  name: string;
-  created_at: string;
-  updated_at: string;
-  is_locked: boolean;
-  user_id: string;
-  device_id: string;
-  last_sync: string;
-  tabs_data?: TabData[];
-  // 阶段二·§6.1：操作印记列。客户端带 stamp 上传；老客户端不带时为 NULL（视为最小值）。
-  last_op_device?: string | null;
-  last_op_seq?: number | null;
-  // 保留兼容（阶段二·§11 冻结 version 字段）；不再用于冲突裁决。
-  version?: number | null;
-  /** D3：组级删除时刻（需云端 deleted_at 列，见迁移；缺失回退 updated_at） */
-  deleted_at?: string | null;
-}
+// 用于存储到远端的标签数据格式
 
 export interface TabGroup {
   id: string;
@@ -126,9 +108,17 @@ export interface TabState {
    */
   errorSource?: 'load' | 'action' | null;
   searchQuery: string;
-  syncStatus: 'idle' | 'syncing' | 'success' | 'error'; // 同步状态
-  lastSyncTime: string | null; // 最后同步时间
+  lastSyncTime: string | null; // 最后同步时间（HeaderDropdown 读它展示「最后手动同步」）
   lastLoadedAt: string | null; // 本地数据最近一次成功加载时间（hydration 判断）
+  /**
+   * 最近一次数据来源。
+   *
+   * 【零生产写/读者 · 审计 A 缺陷 7 决策：保留】同期的 TabState.syncStatus
+   * 与 setSyncStatus reducer 已删（没有任何 dispatch 点）；这个字段保留是因为
+   * tests/storeHydration.test.ts 仍用它作为「preloadedState 能注入字段」的
+   * 样本。tests/ 归另一条 lane，删除需与那组用例同步；登记见
+   * tests/deadCodeGuards.test.ts。
+   */
   lastSyncStatus: 'local' | 'cloud' | null; // 最近一次数据来源
 
   // 定义压缩统计信息类型（虽然已废弃，但保留类型定义以保持向后兼容）
@@ -194,22 +184,20 @@ export interface UserSettings {
   allowDuplicateTabs: boolean;
   syncEnabled: boolean; // 是否启用同步
   /**
-   * 用哪个后端做同步（2026-10-13，WebDAV 自带存储改造）。
+   * 用哪个后端做同步。2026-10-16 云端同步下线后收窄为单值：
+   * 自带存储（WebDAV）是唯一后端，这个字段只可能是 `'webdav'`。
    *
-   * 【为什么与 syncEnabled 分开而不是合并成一个枚举】
-   * `syncEnabled` 回答「要不要自动同步」，`syncBackend` 回答「跟谁同步」。
-   * 合成一个字段（`'off' | 'supabase' | 'webdav'`）看起来更干净，
-   * 但会造成一次**静默语义迁移**：存量用户的 `syncEnabled: true` 该映射成
-   * `'supabase'` 还是 `'webdav'`？两个都「合理」，而选错的后果是老用户
-   * 突然被指向一个没配过的后端。分开后，`syncEnabled` 的语义一个字没变，
-   * 存量值天然落回 `supabase`（见 storage 层的 validateSyncBackend）。
+   * 为什么保留它而不删掉：历史设置文件（导出/导入）里带着这个键，
+   * 且读路径的校验单点在 storage 层（`validateSyncBackend`，它会把老值
+   * `'supabase'` 当非法值回落）。删掉会让旧设置文件里这个键变成无人解释的
+   * 残留；保留它能明确回答「这一版只会是 webdav」。
    *
-   * 【这个字段会被上传到云端吗】会（它在 UserSettings 里）。
+   * 【这个字段会被上传到云盘吗】会（它在 UserSettings 里）。
    * 所以 **WebDAV 的凭据绝不能放进 UserSettings** —— 那会把应用密码
-   * 上传到 Supabase / 用户自己的云盘。凭据走独立的本地键，见
+   * 上传到用户自己的云盘。凭据走独立的本地键，见
    * `sync-backend/webdav/config.ts` 的文件头。
    */
-  syncBackend: 'supabase' | 'webdav';
+  syncBackend: 'webdav';
   /**
    * 自动同步轮询间隔（分钟）。仅 syncEnabled=true 时生效。
    *
@@ -238,23 +226,4 @@ export interface UserSettings {
 
   // 保持向后兼容性的字段（已废弃，但保留以支持旧版本）
   useDoubleColumnLayout?: boolean;
-}
-
-export interface User {
-  id: string;
-  email: string;
-  lastLogin: string;
-}
-
-export interface AuthState {
-  user: User | null;
-  isAuthenticated: boolean;
-  isLoading: boolean;
-  error: string | null;
-}
-
-export interface RootState {
-  tabs: TabState;
-  settings: UserSettings;
-  auth: AuthState; // 新增：认证状态
 }

@@ -162,39 +162,41 @@ const MANIFEST = JSON.parse(
 // 256px（w-64），而 WebDAV 面板有 6 个输入框 + 加密单选组 + 4 个按钮；且菜单
 // 是瞬态的（点别处即消失），而填地址/账号/应用密码/加密口令全是要回看斟酌的
 // 长文本。下面这一组断言守的就是「设置归设置页、菜单只留入口」这条分工。
-describe('设置页：同步方式选择', () => {
-  it('后端选择放在「自动同步」开关之前（先决定跟谁，再决定要不要自动）', () => {
-    const backendIdx = OPTIONS.indexOf('aria-label="同步方式"');
+// 2026-10-16：云端后端下线后，「同步方式选择」不再是两个互斥选项，
+// 而是一段说明文字（自带存储是唯一后端，选项本身就是噪声而不是控制）。
+// 所以本组从「双选单选钮的结构」反转为「不得复活一个只能选它的假开关」。
+describe('设置页：同步方式（唯一后端）', () => {
+  it('同步方式出现在「自动同步」开关之前（先知道跟谁，再决定要不要自动）', () => {
+    const backendIdx = OPTIONS.indexOf('同步方式：自带存储');
     const autoIdx = OPTIONS.indexOf('label="自动同步"');
-    assert.ok(backendIdx > 0, '设置页里应有「同步方式」选择');
+    assert.ok(backendIdx > 0, '设置页里应说明同步方式');
     assert.ok(autoIdx > 0, '设置页里应有「自动同步」开关');
     assert.ok(backendIdx < autoIdx, '顺序反了：用户会先打开一个「对未知后端的自动同步」开关');
   });
 
-  it('后端选择用 radiogroup 语义（两个互斥选项）', () => {
-    assert.ok(OPTIONS.includes('role="radiogroup"'), '需要 radiogroup');
-    assert.ok(OPTIONS.includes('aria-label="同步方式"'), '需要 aria-label');
-    const radios = OPTIONS.match(/role="radio"/g) ?? [];
-    assert.ok(radios.length >= 2, '两个互斥选项都应是 radio');
-  });
-
-  it('切回 TapStack 云端时必须说明「云盘文件不会被删除」', () => {
-    // 用户对「切backs」最怕的是云盘上的数据被清掉。必须主动说清。
+  it('不得再有「同步方式」单选组（一个只能选它的开关是噪声，不是控制）', () => {
+    assert.ok(!OPTIONS.includes('aria-label="同步方式"'), '不得有「同步方式」radiogroup：只有一个可选项');
+    // 剩下的 radiogroup 只有「明暗模式」与「同步间隔」两组，各有多个选项；
+    // radio 语义整体不该消失（那是主题与间隔两个真实选择的可达性基础）。
     assert.ok(
-      /切回[\s\S]{0,200}不会被删除/.test(OPTIONS),
-      '切回云端必须说明云盘文件不会被删除',
+      (OPTIONS.match(/role="radio"/g) ?? []).length > 0,
+      'radio 语义仍在（主题 / 同步间隔），不应整体消失'
     );
   });
 
-  it('切回云端时同时关闭自动同步（Supabase 侧自动轮询有 egress 成本）', () => {
+  it('必须点名真正的生效动作是面板里的「保存并启用」（配好 ≠ 生效）', () => {
+    // 原断言钉的是「切到自带存储但未配置时必须提示去填地址」。
+    // 选择动作消失后，提示的职责转给同步方式说明本身：
+    // 「先把下方云盘信息填好，再决定要不要自动同步」。
     assert.ok(
-      /syncEnabled: false/.test(OPTIONS),
-      '切回时必须一并关闭自动同步',
+      /先把下方云盘信息填好/.test(OPTIONS) || /请在下方/.test(OPTIONS),
+      '设置页必须提醒先填好云盘地址（未配置时自动同步只会静默失败）'
     );
+    assert.ok(/保存并启用/.test(OPTIONS), '必须点名真正的生效动作是「保存并启用」');
   });
 
   it('WebDAV 面板在设置页里无条件渲染（不再受 syncBackend 约束）', () => {
-    // 这条是本轮修掉的 P0 死锁在架构层面的收口：
+    // 这条是修掉的 P0 死锁在架构层面的收口：
     //   · 渲染面板曾要求 settings.syncBackend === 'webdav'；
     //   · 切到 webdav 的唯一入口是面板内的「保存并启用」。
     // 两者互为前提 ⇒ 面板永远打不开。独立设置页天然没有这个循环依赖，
@@ -205,16 +207,21 @@ describe('设置页：同步方式选择', () => {
     const expr = OPTIONS.slice(Math.max(0, panelIdx - 120), panelIdx);
     assert.ok(
       !/syncBackend === 'webdav'\s*\?/.test(expr),
-      'WebDAV 面板不得再受「syncBackend 是否为 webdav」的条件约束 —— 那正是死锁条件',
+      'WebDAV 面板不得再受「syncBackend 是否为 webdav」的条件约束 —— 那正是死锁条件'
     );
   });
 
-  it('切到自带存储时若尚未配好，必须提醒去填地址', () => {
-    // 切后端**不等于**配好了。不提醒的话，用户会以为已经生效，
-    // 然后对着「同步没反应」一头雾水。
+  it('不得复活 handleSelectBackend（云端下线后没有第二个可选项）', () => {
+    // 曾经的 handleSelectBackend 干的是「在两个后端之间切 + 顺带关掉自动同步」。
+    // 现在没有第二个选项，切回去既无对象、也无必要 —— 复活它只会让人以为
+    // 存在一个「切走」的选项，而那个选项指向已删除的后端。
+    const code = OPTIONS
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .replace(/^[ \t]*\/\/.*$/gm, '');
+    assert.ok(!code.includes('handleSelectBackend'), 'handleSelectBackend 不得复活');
     assert.ok(
-      /还没填地址|请在下方填好/.test(OPTIONS),
-      '切到自带存储但未配置时必须提示去填地址',
+      !/selectBackend/.test(code),
+      '不得有 selectBackend 派发（那是双后端选择的遗留 dispatch）'
     );
   });
 });
@@ -261,14 +268,20 @@ describe('菜单与设置页的分工', () => {
     assert.ok(/showToast/.test(handler), '打开失败必须有 toast，否则与死锁同样表现为静默');
   });
 
-  it('设置页必须自带 Provider，不能复用 AppContainer', () => {
-    // AppContainer 内挂 AuthProvider，它一挂载就查 Supabase 会话，命中即自动
-    // 触发一次整库下载。设置页没有任何理由触发这种流量 —— 用户只想改主题。
+  it('设置页必须自带 Provider（不挂任何账号层）', () => {
+    // 原断言：设置页不得挂 AuthProvider，否则打开设置会触发一次整库下载。
+    // 账号体系删除后 AuthProvider 已不存在，所以断言从「不得引用」升级为
+    // 「文件正文里不得再出现它」—— 不剥注释的话 OptionsPage 的留痕注释
+    // 写着「AuthProvider 已随账号体系删除」，会把自己判成违规
+    // （同坑见 noSilentFalseSuccess 的 stripComments）。
     const optionsPageIdx = OPTIONS.indexOf('export const OptionsPage');
     assert.ok(optionsPageIdx > 0, '设置页应有 OptionsPage 根组件');
     const providerBlock = OPTIONS.slice(optionsPageIdx);
     assert.ok(providerBlock.includes('ThemeProvider'), '设置页必须包 ThemeProvider（否则主题设置无处落地）');
     assert.ok(providerBlock.includes('ToastProvider'), '设置页必须包 ToastProvider（否则保存失败无法出声）');
-    assert.ok(!providerBlock.includes('AuthProvider'), '设置页不得挂 AuthProvider：打开设置不该触发一次云端下载');
+    const code = providerBlock
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .replace(/^[ \t]*\/\/.*$/gm, '');
+    assert.ok(!code.includes('AuthProvider'), '设置页不得再挂 AuthProvider：账号体系已删除');
   });
 });

@@ -1,13 +1,13 @@
 import { configureStore, combineReducers } from '@reduxjs/toolkit';
 import tabReducer from './slices/tabSlice';
 import settingsReducer from './slices/settingsSlice';
-import authReducer from './slices/authSlice';
 import { autoSyncMiddleware } from './middleware/autoSyncMiddleware';
 
+// 2026-10-16：`auth` 分片随账号体系删除。同步不可用的唯一形态（自带存储
+// 未配置/未解锁）不再走 Redux，而是由 sync-backend 的锁定占位后端抛出。
 const rootReducer = combineReducers({
   tabs: tabReducer,
   settings: settingsReducer,
-  auth: authReducer,
 });
 
 export type RootState = ReturnType<typeof rootReducer>;

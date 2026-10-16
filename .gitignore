@@ -8,7 +8,6 @@ node_modules/
 .claude/
 .codex/
 dist/
-dist-web/
 **.zip
 
 # 环境变量文件
@@ -27,7 +26,6 @@ dist-web/
 .mimosa/
 .v2c/
 .video_agent/
-supabase/.temp/
 
 # 本地记忆目录（不入库）
 .memory/

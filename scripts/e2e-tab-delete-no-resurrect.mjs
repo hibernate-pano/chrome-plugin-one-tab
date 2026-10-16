@@ -17,18 +17,16 @@
 //   ③ A 上传 → B 下载后仍不复活（组级 LWW 幂等，无回弹）
 //
 // 运行：node scripts/e2e-tab-delete-no-resurrect.mjs（需先 pnpm build）
+// 需要 dufs（brew install dufs）与 playwright。2026-10-16 账号体系删除后，
+// 云盘改为本机 dufs + WebDAV（配置/凭据直种解析层，见 e2e-helpers 的 WebDAV 段）。
 
-import { randomUUID } from 'node:crypto';
+import { rmSync } from 'node:fs';
 import {
   launchCtx, extId, readLocalGroups, readKvAll, kvValue,
   manualUpload, manualDownload, downloadUntil, waitOutUploadGuard,
-  login, startContentSite,
+  startContentSite, prepareDavDist, startDufs, seedWebDav, resyncAlarm, dismissOnboarding,
 } from './e2e-helpers.mjs';
-import { accountMarker, createGate } from './e2e-support.mjs';
-
-const EMAIL = `e2e-tb-${randomUUID().slice(0, 6)}@test.tapstack.dev`;
-const PWD = 'SyncTest#2026!';
-console.log(accountMarker(EMAIL)); // 供 run-e2e 收尾统一清理
+import { createGate } from './e2e-support.mjs';
 
 const gate = createGate();
 
@@ -40,17 +38,26 @@ const urlsInStorage = (groups, url) =>
 const tombstonesInStorage = groups =>
   groups.flatMap(g => g.tabs || []).filter(t => t.isDeleted === true);
 
-const ctxA = await launchCtx('A');
-const ctxB = await launchCtx('B');
+const dav = await startDufs('tb-dav');
+const davDist = prepareDavDist();
+const ctxA = await launchCtx('A', davDist);
+const ctxB = await launchCtx('B', davDist);
 const site = await startContentSite('TB-标签');
 try {
-  // ── A：注册 + 保存 3-tab 会话 + 上传 ─────────────────────────────
+  // ── A：配置本地 WebDAV + 保存 3-tab 会话 + 上传 ─────────────────
   await ctxA.waitForEvent('serviceworker', { timeout: 20000 }).catch(() => {});
   const id = await extId(ctxA);
   const pageA = await ctxA.newPage();
   await pageA.goto(`chrome-extension://${id}/src/popup/index.html`);
-  await login(pageA, EMAIL, PWD, { register: true });
-  console.log('✅ A 注册并登录');
+  await dismissOnboarding(pageA);
+  const seededA = await seedWebDav(pageA, { origin: dav.origin });
+  await resyncAlarm(pageA);
+  gate.check(
+    '前置：A 已种入 WebDAV 配置且已解锁（种到解析层真正读取的位置）',
+    seededA.backend === 'webdav' && seededA.baseUrl === `${dav.origin}/` && seededA.unlocked,
+    JSON.stringify(seededA)
+  );
+  console.log(`✅ A 已配置本地 WebDAV（${dav.origin}）并解锁`);
 
   const opened = [];
   for (let i = 0; i < 3; i++) {
@@ -73,11 +80,18 @@ try {
   }
   console.log(`📊 A 保存的会话: ${aSession.name} (${aSession.tabs.length} tabs)`);
 
-  // ── B：登录 + 下载（正控：真的拿到了 3 个标签）────────────────────
+  // ── B：配置同一云盘 + 下载（正控：真的拿到了 3 个标签）────────────
   await ctxB.waitForEvent('serviceworker', { timeout: 20000 }).catch(() => {});
   const pageB = await ctxB.newPage();
   await pageB.goto(`chrome-extension://${id}/src/popup/index.html`);
-  await login(pageB, EMAIL, PWD);
+  await dismissOnboarding(pageB);
+  const seededB = await seedWebDav(pageB, { origin: dav.origin });
+  await resyncAlarm(pageB);
+  gate.check(
+    '前置：B 已种入同一云盘配置且已解锁',
+    seededB.backend === 'webdav' && seededB.baseUrl === `${dav.origin}/` && seededB.unlocked,
+    JSON.stringify(seededB)
+  );
   const { groups: bInit, downloaded } = await downloadUntil(
     pageB,
     gs => gs.some(g => g.tabs.length === 3),
@@ -106,7 +120,7 @@ try {
       `页面卡片数=${await pageB.locator('.tab-group-card').count()}`);
     throw new Error('card not found');
   }
-  await card.locator(`button[aria-label="删除标签页: ${victim.title}"]`).first().click({ timeout: 15000 });
+  await card.locator(`button[aria-label="从会话中移除（无法恢复）: ${victim.title}"]`).first().click({ timeout: 15000 });
   await pageB.waitForTimeout(800);
   const confirmBtn = pageB.locator('.fixed button:has-text("确认"), .fixed button:has-text("删除")').last();
   if (await confirmBtn.count()) await confirmBtn.click({ timeout: 8000 }).catch(() => {});
@@ -176,4 +190,8 @@ try {
   try { site.server.close(); } catch { /* 关不掉不影响判定 */ }
   try { await ctxA.close(); } catch { /* 同上 */ }
   try { await ctxB.close(); } catch { /* 同上 */ }
+  const dufsGone = await dav.stop();
+  try { rmSync(davDist, { recursive: true, force: true }); } catch { /* 同上 */ }
+  console.log(`清理：dufs 已退出=${dufsGone}`);
+  if (!dufsGone) process.exitCode = 1;
 }
