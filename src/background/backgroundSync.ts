@@ -2,6 +2,7 @@ import { store } from '@/store';
 import { getCurrentUser, setFromCache } from '@/store/slices/authSlice';
 import { loadSettings } from '@/store/slices/settingsSlice';
 import { syncEngine } from '@/services/syncEngine';
+import { readConfiguredBackendId } from '@/sync-backend';
 import { enqueue, hasQueuedOrRunningJob } from './mutationQueue';
 import { logError, logInfo, logWarn } from '../utils/log';
 import {
@@ -578,17 +579,39 @@ async function performBackgroundSync(): Promise<BackgroundSyncOutcome> {
   }
 
   // 1. 恢复登录态（读取 chrome.storage.local 中的 session）
-  const user = await store.dispatch(getCurrentUser()).unwrap().catch(() => null);
-  if (!user) {
-    logInfo('[BackgroundSync] 未登录，跳过后台同步');
-    // 未登录不是同步故障（此时大概也没联网），不推进退避。
-    return { ok: true, kind: 'not_logged_in', detail: '未登录，跳过' };
-  }
+  //
+  // ── 2026-10-17：门禁必须按后端分流，与 syncEngine 同口径 ────────────────
+  // 修复前这里无条件问「有没有 Supabase session」。而自带存储（WebDAV）
+  // **没有账号体系**，用户永远没有 session ⇒ getCurrentUser() 恒返回 null
+  // ⇒ 每轮后台同步在第 1 步就返回 not_logged_in 自杀。
+  //
+  // 后果不是「少跑一轮」，而是**B1 的锁定让路整条链路不可达**：locked 分支、
+  // 一次性通知、按档位重排全部走不到。表现即设置页宣称「每 N 分钟同步一次」、
+  // B8 的门禁也显示「已配置并解锁」，而 WebDAV 用户的后台自动同步从不执行
+  // —— 比 B1 要修的那个「连续 8 次后静默停摆」更彻底、更不可见。
+  //
+  // 这是**同一处漏改**的第二次出现：2026-10-14 真机 E2E 抓到「WebDAV 用户点
+  // 同步一律得到『用户未登录』」，当时把门禁改成按 backendId 分流（见
+  // core/authGuard.ts:34 `if (deps.backendId === 'webdav') return true;`），
+  // 但只修了 syncEngine 那条链，**SW 专属的这个入口没跟着改**。
+  // 判据必须与 authGuard 一致，否则两处口径漂移又是一次静默失效。
+  //
+  // WebDAV 分支不注入登录态：没有 user 可写，SyncEngine 侧也已由 authGuard
+  // 对 webdav 直接放行，不依赖 store.auth.isAuthenticated。
+  const backendId = await readConfiguredBackendId();
+  if (backendId !== 'webdav') {
+    const user = await store.dispatch(getCurrentUser()).unwrap().catch(() => null);
+    if (!user) {
+      logInfo('[BackgroundSync] 未登录，跳过后台同步');
+      // 未登录不是同步故障（此时大概也没联网），不推进退避。
+      return { ok: true, kind: 'not_logged_in', detail: '未登录，跳过' };
+    }
 
-  // 2. 登录态写入 store（SyncEngine 检查 store.auth.isAuthenticated 才放行）
-  store.dispatch(
-    setFromCache({ user, isAuthenticated: true })
-  );
+    // 2. 登录态写入 store（SyncEngine 检查 store.auth.isAuthenticated 才放行）
+    store.dispatch(
+      setFromCache({ user, isAuthenticated: true })
+    );
+  }
 
   // 2.5 载入用户设置（syncStrategy 决定合并策略；SW 的 store 是新实例，默认值会丢用户配置）
   //

@@ -49,11 +49,16 @@ if (!process.env.VERBOSE) {
 }
 
 type CreateCall = { name: string; opts: chrome.alarms.AlarmCreateInfo };
+type NotificationCall = { id?: string; options: { title?: string; message?: string } };
 
 function installChromeMock(seedSettings: Record<string, unknown> | null = null) {
   const createCalls: CreateCall[] = [];
   const clearedAlarms: string[] = [];
   const alarmListeners: Array<(alarm: chrome.alarms.Alarm) => void> = [];
+  // 2026-10-17：通知记录。notifyLockedBackendOnce 需要 chrome.notifications.create
+  // 才不发早退（它「API 不可用 ⇒ 静默返回且不置标志」是刻意设计）。
+  // 没有这个 mock，通知链路根本无法被测试 —— 那正是它此前零覆盖的原因。
+  const notificationCalls: NotificationCall[] = [];
   // 退避状态写这里（backoffKv = chrome.storage.local）。
   const mockStore: Record<string, unknown> = {};
 
@@ -104,9 +109,25 @@ function installChromeMock(seedSettings: Record<string, unknown> | null = null) 
         },
       },
     },
-    runtime: { getManifest: () => ({ version: 'test' }) },
+    runtime: {
+      getManifest: () => ({ version: 'test' }),
+      // notifyLockedBackendOnce 用 runtime.getURL('icons/icon128.png') 作图标。
+      getURL: (p: string) => `chrome-extension://test/${p}`,
+    },
+    // 通知：只记录调用，不模拟渲染。传 id 时按 Chrome 语义「同 id 覆盖」，
+    // 但本文件断的是**调用次数**（一次性语义），不依赖 id 去重行为。
+    notifications: {
+      create(idOrOptions: string | NotificationCall['options'], maybeOptions?: NotificationCall['options']) {
+        const options = (typeof idOrOptions === 'string' ? maybeOptions : idOrOptions) ?? {};
+        notificationCalls.push({
+          id: typeof idOrOptions === 'string' ? idOrOptions : undefined,
+          options,
+        });
+        return Promise.resolve(typeof idOrOptions === 'string' ? idOrOptions : 'generated-id');
+      },
+    },
   };
-  return { createCalls, clearedAlarms, alarmListeners, mockStore };
+  return { createCalls, clearedAlarms, alarmListeners, mockStore, notificationCalls };
 }
 
 /** 等 setupBackgroundSync 的异步段跑完（与 autoSyncDefaultOff.test.ts 同一等待式）。 */
@@ -129,57 +150,21 @@ const clearedSyncAlarms = () =>
 before(async () => {
   register(LOADER_PATH);
   // 自动同步开启（否则 handleAlarm 第一步就是「关则自杀」，根本走不到管线）。
-  // ⚠️ 必须同时种 syncBackend:'webdav'（2026-10-17 双模式适配）：
-  // main 上 performBackgroundSync 第 1 步是「恢复登录态」，而 authGuard
-  // 会按 readConfiguredBackendId 决定查不查账号。没种 syncBackend 时
-  // 回落 'supabase' —— 但测试环境没有登录 session，于是本文件在走到
-  // 锁定后端之前就被 not_logged_in 截走，两条用例都在断言没走到的一步。
-  // slim 上没有这个门禁，所以它的原版不需要这个种子。
+  // syncBackend:'webdav' 是本文件的**被测前提**，不是绕过门禁的手段。
   handles = installChromeMock({ syncEnabled: true, syncIntervalMinutes: 10, syncBackend: 'webdav' });
-  // 登录态（2026-10-17 双模式适配 + 三次踩坑）。
-  //
-  // 踩坑 1：没种登录态时，performBackgroundSync 第 1 步 getCurrentUser() → null
-  // ⇒ not_logged_in ⇒ 两条用例断言的都是「没走到」的一步（slim 无此门禁）。
-  // 踩坑 2：session 键名必须是 sb-<project-ref>-auth-token（supabase-js 构造规则；
-  // 本用例 URL 是 stub.supabase.co ⇒ 'sb-stub-auth-token'），种在 sharedStringStorage
-  // 读的那一层（扩展环境 = chrome.storage.local = 本文件的 mockStore）。
-  // 踩坑 3：光有 session 还不够 —— getCurrentUser 后面还会调
-  // supabase.auth.getUser() 打一次真网络（/auth/v1/user），测试里必抛。
-  // 解法：往全局 fetch 加一条分支，把 /auth/v1/user  answered 在本地
-  // （返回 session 里的那个 user），与 concededPrecheckDegrade 的做法一致。
-  // 这不伪造行为：stub 下的 getUser 本来就该返回 session user。
-  const { stubSessionJson } = await import('./_helpers/stubSession.ts');
-  handles.mockStore['sb-stub-auth-token'] = stubSessionJson('test-user-id');
-  const realFetch = (globalThis as Record<string, unknown>).fetch;
-  (globalThis as Record<string, unknown>).fetch = async (input: unknown, init?: { method?: string }) => {
-    const url = new URL(typeof input === 'string' ? input : (input as { url: string }).url);
-    if (url.pathname.endsWith('/auth/v1/user')) {
-      return new Response(
-        JSON.stringify({ id: 'test-user-id', aud: 'authenticated', role: 'authenticated', email: 'ext@test.dev' }),
-        { status: 200, headers: { 'Content-Type': 'application/json' } }
-      );
-    }
-    if (typeof realFetch === 'function') return (realFetch as typeof fetch)(input as never, init as never);
-    throw new Error('no network in test');
-  };
-  // 登录态（2026-10-17 双模式适配 + 两次踩坑）。
-  //
-  // 踩坑 1：本用例第一版没种登录态。main 上账户体系仍在，
-  // performBackgroundSync 第 1 步「恢复登录态」getCurrentUser() → null 时
-  // 直接返回 not_logged_in（ok:true），根本走不到锁定后端 ——
-  // 于是两条用例都在断言「没走到」的那一步（slim 上没有这个门禁）。
-  //
-  // 踩坑 2：登录 session 种的键名必须精确为 sb-<project-ref>-auth-token
-  //（supabase-js 用 `sb-${baseUrl.hostname.split(".")[0]}-auth-token` 构造
-  // storageKey；本用例 VITE_SUPABASE_URL='https://stub.supabase.co' ⇒
-  // project-ref='stub'）。写错键名时 getSession 读不到，同样 not_logged_in。
-  //
-  // 踩坑 3：种了 session 还不够 —— getCurrentUser 后面还会调
-  // supabase.auth.getUser() **打一次真网络**（auth/v1/user）。
-  // 测试环境没网络，该请求必失败 ⇒ getCurrentUser 抛 ⇒ .unwrap() 抛 ⇒
-  // performBackgroundSync 的 try 兜底吞掉？—— 看下面 getUser 的桩。
-  //
 
+  // ── 2026-10-17：本文件**故意不种任何 Supabase session** ─────────────────
+  // 这是核心前提，不是遗漏。自带存储用户没有 TapStack 账号，真机上
+  // supabaseAuth.getSession() 恒空 —— 若测试必须先伪造 session 才能走到
+  // 锁定后端，那它测的就是一个现实中不存在的场景（「已登录用户配了 WebDAV」）。
+  //
+  // 历史：本文件此前在此处写 `mockStore['sb-stub-auth-token'] = stubSessionJson(...)`
+  // 并 monkey-patch 全局 fetch 去 mock `/auth/v1/user`，还配了一大段「三次踩坑」
+  // 注释讲解如何骗过门禁。那正是这套假绿的根源：它把
+  //   「performBackgroundSync 第 1 步无条件 getCurrentUser ⇒ not_logged_in」
+  // 这件**缺陷**当成了测试环境限制来解释，于是缺陷被测试注释合法化了。
+  // 2026-10-17 已在 backgroundSync 按 backendId 分流（webdav 跳过登录门禁），
+  // 零 session 下可直达锁定后端 —— 因此这里不再需要任何伪造。
   const mod = await import('@/background/backgroundSync');
   ({ BACKOFF_STATE_KEY } = await import('@/background/syncBackoff'));
 
@@ -195,8 +180,15 @@ before(async () => {
 
 const SYNC_ALARM_EVENT = { name: 'tapstack-background-sync' } as chrome.alarms.Alarm;
 
+/** 与 backgroundSync 的 LOCKED_BACKEND_NOTICE_KEY 同值（一次性提醒的去重标志）。 */
+const LOCKED_NOTICE_KEY = 'background_sync_locked_notice_shown';
+
 beforeEach(() => {
   delete handles.mockStore[BACKOFF_STATE_KEY];
+  // 一次性提醒标志必须逐用例复位：它是「同一锁定季只提醒一次」的去重依据，
+  // 跨用例残留会让后续用例看到「已提醒过」而一次通知都不发（假绿的反面：
+  // 断言 0 条通知也能过）。这是状态型断言必须显式复位的原因。
+  delete handles.mockStore[LOCKED_NOTICE_KEY];
 });
 
 describe('未配置/未解锁云盘 = 让路（不推进退避；不清 alarm）', () => {
@@ -290,6 +282,70 @@ describe('未配置/未解锁云盘 = 让路（不推进退避；不清 alarm）
       handles.createCalls.at(-1)?.opts.delayInMinutes,
       10,
       'delay = 用户档位 10 分钟'
+    );
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// 一次性可见提醒（2026-10-17 补）
+//
+// 【为什么单独一组】此前这条链路**零覆盖**：把 handleAlarm 里的
+// `await notifyLockedBackendOnce()` 整行删掉，全量 1369 条测试仍然全绿。
+// 而它正是 B1 要修的核心之一 —— 修复前只有 logWarn，用户零感知；
+// 设置页却宣称「每 N 分钟后台同步一次」，实际静默停摆。
+//
+// 【一次性语义为什么重要】每 10 分钟弹一条「请配置云盘」是骚扰，用户会
+// 直接关掉整个扩展的通知权限，反而让真正的失败提醒也被关掉。所以
+// 同一锁定季只提醒一次，跑通一轮（kind='done'）后才清标志、允许下一季再提醒。
+// ─────────────────────────────────────────────────────────────────────────
+describe('锁定态：一次性可见提醒', () => {
+  it('锁定让路 ⇒ 发一条通知；第二轮不再发（一次性）', async () => {
+    // 通知记录跨用例共享（同一份 chrome mock），所以断**增量**而不是绝对数。
+    // 注意：本组必须排在锁定让路用例之后运行才符合真实顺序；但即使单独跑，
+    // 增量断言同样成立（基数为 0）。
+    const before = handles.notificationCalls.length;
+
+    // 第一轮：未配置云盘 ⇒ 锁定 ⇒ 让路 + 提醒
+    await alarmListener(SYNC_ALARM_EVENT);
+    assert.equal(
+      handles.notificationCalls.length - before,
+      1,
+      '锁定让路必须发**恰好一条**通知：用户此前零感知，而设置页在承诺自动同步'
+    );
+    const sent = handles.notificationCalls.at(-1);
+    assert.match(
+      sent?.options.title ?? '',
+      /TapStack/,
+      '通知标题要能让用户认出是哪个扩展'
+    );
+    assert.match(
+      sent?.options.message ?? '',
+      /配置|解锁/,
+      '正文要告诉用户下一步做什么（配置或解锁），不能只说「同步失败」'
+    );
+
+    // 第二轮：仍是锁定态 ⇒ 不得再发（一次性）
+    await alarmListener(SYNC_ALARM_EVENT);
+    assert.equal(
+      handles.notificationCalls.length - before,
+      1,
+      '同一锁定季只提醒一次：重复弹窗会让用户关掉整个扩展的通知权限，' +
+        '连带把真正的失败提醒一起关掉'
+    );
+  });
+
+  it('连续多轮锁定只发一次（标志不被保护性让路误清）', async () => {
+    const before = handles.notificationCalls.length;
+    await alarmListener(SYNC_ALARM_EVENT);
+    const afterFirst = handles.notificationCalls.length - before;
+
+    // 连续多轮锁定：标志一直在，通知数不增
+    await alarmListener(SYNC_ALARM_EVENT);
+    await alarmListener(SYNC_ALARM_EVENT);
+    assert.equal(
+      handles.notificationCalls.length - before,
+      afterFirst,
+      '连续多轮锁定只发一次：标志不得被保护性让路（already_syncing 等）误清'
     );
   });
 });
