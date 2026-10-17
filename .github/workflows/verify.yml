@@ -27,8 +27,28 @@ name: Verify
 # 还会往线上库写测试账号（见该文件头部注释），放进 CI 等于用生产数据做冒烟。
 
 on:
-  # 只保留手动触发 + PR。push 到 main 不再自动跑（见上方原因）。
-  # PR 保留是因为万一将来真有人开分支，评审前跑一遍仍是应该的。
+  # ── 2026-10-17 加回 push 触发器（推翻 2026-10-06 的降级）──────────────
+  # 降级的理由是「单人项目、不开 PR、push 门禁是仪式性开销」。这条理由在
+  # 2026-10-17 被现实证伪了：正因为 push 不跑门禁，以下两件事**全程无人察觉**
+  # 直到一次专门的代码体检才被发现：
+  #
+  #   1. 磁盘上的 chrome-extension.zip 其实是另一个分支（slim/webdav-primary）
+  #      的构建产物 —— manifest 的 host_permissions 为空、代码里没有 Supabase，
+  #      与 main 源码、商店权限说明三者全不一致。而发布流程
+  #      （pnpm package → cws-publish.mjs upload）上传的正是这个 zip。
+  #   2. pnpm-lock.yaml 缺 @supabase/supabase-js 与 pg，干净环境
+  #      --frozen-lockfile 装不上依赖（CI 2026-10-02 抓到过一次，本机永远
+  #      不会发现，因为 node_modules 已经存在）。
+  #
+  # 两件事的共同点：**它们都不影响本机 `pnpm test` / `pnpm validate` 的结果**，
+  # 只有「从干净环境重建一次」或「对着产物本身」才暴露。而这恰恰就是 CI
+  # 存在的唯一理由 —— 本机门禁再全，也覆盖不了「产物是否对得上源码」。
+  #
+  # runner 开销实测：整套约 2-3 分钟，单人项目每天推送几次，成本可忽略；
+  # 相比之下，「发布前才发现产物是别的分支的」是没法用 runner 分钟换的。
+  push:
+    branches: [main]
+  # PR 保留：万一将来真有人开分支，评审前跑一遍仍是应该的。
   pull_request:
   workflow_dispatch:
 

@@ -202,7 +202,9 @@ export class WebDavBackendAdapter implements SyncBackendPort {
    */
   private async loadManifest(): Promise<{ manifest: Manifest; etag: string | null } | null> {
     const got = await this.client.get(this.p(MANIFEST_PATH));
-    if (!got) return null;
+    // 'notFound' in got = 404 或 409（父目录不存在）。两者对「清单还不存在」等价：
+    // 坚果云等按 RFC 4918 对不存在的父目录回 409 而不是 404，语义上仍是「没有」。
+    if (!got || 'notFound' in got) return null;
 
     const parsed = parseManifest(got.body);
     if (!parsed) {
@@ -298,7 +300,8 @@ export class WebDavBackendAdapter implements SyncBackendPort {
   /** 读一个分片并解码成会话。返回 null = 文件缺失或不可解析（计入统计，不静默丢）。 */
   private async readShard(id: string): Promise<{ group: TabGroup | null; etag: string | null }> {
     const got = await this.client.get(this.p(shardPath(id)));
-    if (!got) return { group: null, etag: null };
+    // 'notFound' in got = 404/409，即这个分片在远端不存在（首次同步的常态）。
+    if (!got || 'notFound' in got) return { group: null, etag: null };
 
     const env = parseEnvelope(got.body);
     if (!env) return { group: null, etag: got.etag };
@@ -655,7 +658,8 @@ export class WebDavBackendAdapter implements SyncBackendPort {
 
   async downloadSettings(): Promise<DownloadSettingsResult> {
     const got = await this.client.get(this.p(SETTINGS_PATH));
-    if (!got) return null;
+    // 404/409 都表示「远端还没有这份设置」，是合法的首次状态。
+    if (!got || 'notFound' in got) return null;
     const env = parseEnvelope(got.body);
     if (!env) return null;
 

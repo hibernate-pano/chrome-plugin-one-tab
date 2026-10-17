@@ -236,3 +236,111 @@ describe('supabase 客户端共享 storage adapter', () => {
     void mockStore;
   });
 });
+// ── 2026-10-17：WebDAV 请求级超时（挂死服务器不得钉死单写者队列）──────────
+//
+// 【为什么需要】WebDAV 请求走 mutationQueue 的**单写者**队列。一个挂死的
+// 请求会把之后所有保存 / 删除 / 上传全堵在它后面，用户看到的是「点了没反应」。
+// Supabase 侧本来就有同款保护（supabase/client.ts 的 fetchWithTimeout，45s），
+// WebDAV 迁移时漏搬了这条 —— 这里补上。
+//
+// 【为什么超时必须是可 abort 的、而不是只 reject Promise】
+// 只 reject 不 abort 的话，底层连接仍挂着、SW 仍被这次请求占住，等于没超时。
+// abort 才真正断开发送/接收，让连接与 SW 上下文一起释放。
+//
+// 上界与 popup 协议上界的关系由 tests/timeoutUpperBoundInvariant.test.ts 钉住。
+
+describe('WebDAV 请求超时：可中止、可区分、不挂起', () => {
+  it('挂死的服务器 ⇒ 在预算内抛出专属超时错误（isTimeout），而不是永远挂起', async () => {
+    const { WebDavClient, WebDavError, WebDavRequestTimeoutError } = await import(
+      '@/sync-backend/webdav/client'
+    );
+    let capturedSignal: AbortSignal | null | undefined;
+    const hungFetch = ((_input: unknown, init?: { signal?: AbortSignal | null }) => {
+      capturedSignal = init?.signal;
+      return new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener('abort', () =>
+          reject(new DOMException('This operation was aborted', 'AbortError'))
+        );
+      });
+    }) as unknown as typeof fetch;
+
+    const client = new WebDavClient(
+      { baseUrl: 'https://dav.example.com/', username: 'u', password: 'p' },
+      hungFetch,
+      undefined,
+      { timeoutMs: 40 }
+    );
+
+    const started = Date.now();
+    await assert.rejects(
+      () => client.get('groups.json'),
+      (err: unknown) => {
+        assert.ok(
+          err instanceof WebDavRequestTimeoutError,
+          `必须是专属超时错误，实得 ${err instanceof Error ? err.name : String(err)}`
+        );
+        assert.ok(
+          err instanceof WebDavError,
+          '仍继承 WebDavError（调用方既有 instanceof WebDavError 分类不被打断）'
+        );
+        assert.equal((err as { isTimeout?: boolean }).isTimeout, true, 'isTimeout 标记必须为真');
+        assert.equal((err as { status?: number }).status, 0, 'status 仍是传输层失败的 0');
+        assert.match((err as Error).message, /请求超时/, '文案必须明确是超时而不是普通请求失败');
+        return true;
+      }
+    );
+    assert.ok(capturedSignal, 'fetch 必须收到 AbortSignal（可中止是超时的前提）');
+    assert.ok(Date.now() - started < 2000, '必须在毫秒级返回，证明没有真的挂住');
+  });
+
+  it('写请求（PUT）同样有超时 —— 不会把单写者队列钉死到用户操作后面', async () => {
+    const { WebDavClient, WebDavRequestTimeoutError } = await import('@/sync-backend/webdav/client');
+    const hungFetch = ((_input: unknown, init?: { signal?: AbortSignal | null }) =>
+      new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener('abort', () =>
+          reject(new DOMException('This operation was aborted', 'AbortError'))
+        );
+      })) as unknown as typeof fetch;
+
+    const client = new WebDavClient(
+      { baseUrl: 'https://dav.example.com/', username: 'u', password: 'p' },
+      hungFetch,
+      undefined,
+      { timeoutMs: 40 }
+    );
+
+    await assert.rejects(
+      () => client.put('shard.json', '{}'),
+      (err: unknown) => {
+        assert.ok(err instanceof WebDavRequestTimeoutError, 'PUT 也必须是专属超时错误');
+        assert.equal((err as { method?: string }).method, 'PUT');
+        assert.equal((err as { isTimeout?: boolean }).isTimeout, true);
+        return true;
+      }
+    );
+  });
+
+  it('对比：普通网络失败不是超时（同一分类体系里可区分）', async () => {
+    const { WebDavClient, WebDavError, WebDavRequestTimeoutError } = await import(
+      '@/sync-backend/webdav/client'
+    );
+    const failingFetch = (() => Promise.reject(new TypeError('Failed to fetch'))) as unknown as typeof fetch;
+    const client = new WebDavClient(
+      { baseUrl: 'https://dav.example.com/', username: 'u', password: 'p' },
+      failingFetch,
+      undefined,
+      { timeoutMs: 5000 }
+    );
+
+    await assert.rejects(
+      () => client.get('groups.json'),
+      (err: unknown) => {
+        assert.ok(err instanceof WebDavError, '网络失败仍是 WebDavError');
+        assert.ok(!(err instanceof WebDavRequestTimeoutError), '网络失败不得被误判成超时');
+        assert.equal((err as { isTimeout?: boolean }).isTimeout, false, 'isTimeout 必须为 false');
+        assert.match((err as Error).message, /GET 请求失败/, '文案必须保留原始失败信息');
+        return true;
+      }
+    );
+  });
+});
