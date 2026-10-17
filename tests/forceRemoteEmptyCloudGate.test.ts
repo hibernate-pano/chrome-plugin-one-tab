@@ -85,7 +85,6 @@ describe('覆盖下载空云端闸门（调用点）：只有墓碑 ≠ 为空',
     backend.groups = [];
 
     const result = await syncEngine.downloadAndMerge({ forceRemote: true });
-
     assert.equal(result.success, false, '空云端覆盖必须被拒绝（v1.22.0 起无回收站，不可逆）');
     assert.equal(result.reason, 'overwrite_empty_cloud_refused');
     assert.deepEqual(
@@ -99,6 +98,47 @@ describe('覆盖下载空云端闸门（调用点）：只有墓碑 ≠ 为空',
       (await storage.getGroups()).map(g => g.id),
       ['local-1'],
       '本地数据根本没被动过（闸门在置空 localGroups 之前）'
+    );
+  });
+
+  it('refuse 时**设置**也不得被覆写（闸门必须排在 mergeCloudSettingsIntoLocal 之前）', async () => {
+    // 2026-10-17 独立复核发现的真缺陷：mergeCloudSettingsIntoLocal 原本排在
+    // 闸门**之前**，于是「拒绝空云端覆盖」时用户的设置（布局/主题/排序/通知
+    // 开关/同步间隔）已经从云端覆写进本地了 —— 而闸门的注释写着「不动本地
+    // 一个字节」，REASON_COPY 也在对用户说「你的本地数据没有变化」。
+    // 那句话当时是假的。顺序即语义：先判定该不该覆写，发生了才轮到附带动作。
+    const { syncEngine } = await import('@/services/syncEngine');
+    backend.groups = [];
+
+    // 本地设一个与默认值明显不同的值，便于断言「没被动过」。
+    // ⚠️ 必须带上 syncBackend:'webdav'：setSettings 是整份覆盖，而
+    // readConfiguredBackendId 靠这个字段决定查不查 Supabase 账号 ——
+    // 漏掉它会重新落回 'supabase'，于是本用例在闸门之前就被
+    // not_authenticated 挡掉、变成假绿。
+    const { storage } = await import('@/utils/storage');
+    const { DEFAULT_SETTINGS } = await import('@/utils/storage');
+    await storage.setSettings({
+      ...DEFAULT_SETTINGS,
+      syncBackend: 'webdav',
+      layoutMode: 'double',
+      showNotifications: true,
+    });
+
+    // ⚠️ 必须让云端**真的带着设置**（默认 remoteSettings 为 null，那样
+    // mergeCloudSettingsIntoLocal 会 early-return，无论顺序如何都不写 ——
+    // 用例就成了永远为绿的假通过，正是它第一版的毛病）。
+    backend.remoteSettings = { layoutMode: 'single', showNotifications: false };
+
+    const result = await syncEngine.downloadAndMerge({ forceRemote: true, syncSettings: true });
+
+    assert.equal(result.reason, 'overwrite_empty_cloud_refused', '前提：这一轮确实被拒绝了');
+
+    const after = await storage.getSettings();
+    assert.equal(after.layoutMode, 'double', '设置必须保持本地值 —— refuse 的语义是「什么都不做」');
+    assert.equal(
+      after.showNotifications,
+      true,
+      '设置不得被云端覆写；REASON_COPY 正在对用户承诺「你的本地数据没有变化」'
     );
   });
 

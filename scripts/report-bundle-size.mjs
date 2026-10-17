@@ -33,12 +33,24 @@ const DIST = join(ROOT, 'dist');
  * 首屏预算（gzip KB）。
  *
  * 数字来自本次瘦身后的实测：747KB → 674KB raw / 约 205KB gzip。
- * 取 240KB 留约 15% 余量：既能容纳正常增长，又能在「不小心把一个大依赖
- * 引进首屏」时立刻变红。参照值（2026-10-05 实测 gzip）：
+ * 参照值（2026-10-05 实测 gzip）：
  *   supabase-vendor 31.4 / react-vendor 46.0 / utils 35.5 /
  *   popup entry 44.0 / tabGroupSync 5.5 / 两条 CSS 20.7 ≈ 205KB
+ *
+ * 2026-10-17：240 → 260，理由与代价都写在这里，别只改数字：
+ *   · 起因是解除 @supabase/auth-js 的 18 个月死 pin（安全债，见 commit
+ *     545b633），supabase-js 随之从 2.49.4 升到 2.118.0。
+ *   · supabase-vendor 的 gzip 因此 31.4KB → 57.5KB（+26KB）。涨的不只是
+ *     bug 修复，还有新版的请求内自动重试（fetchWithRetry）——而我们用
+ *     `db: { retry: false }` 把它关掉了（理由：最坏 4×45s≈3 分钟会把
+ *     mutationQueue 单写队列钉死，而项目已有 syncBackoff 那层更适合 MV3）。
+ *     ⚠️ 关掉不等于 tree-shake：那段代码仍然打包、只是永不执行。
+ *     所以这 26KB 里有一部分是「明知不用仍然付钱」。
+ *   · 换来的：auth 从 2025-05 的版本到了当前版，audit 之外的上游修复
+ *     与兼容性修复都能拿到（旧 pin 对 audit 是不可见的）。
+ *   · 取 260 是留约 13% 余量。若将来首屏再进大依赖，这道门仍会红。
  */
-const BUDGET_KB = 240;
+const BUDGET_KB = 260;
 
 function gzipKb(path) {
   if (!existsSync(path)) return null;

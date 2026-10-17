@@ -18,6 +18,30 @@ before(async () => {
   register(LOADER_PATH);
 });
 
+/**
+ * 「回退到 now」类断言的时钟容差（毫秒）。
+ *
+ * ── 2026-10-17 从 1000 放宽到 60000 ────────────────────────────────────
+ * 这几处断言原来写死 ±1000ms，在 `pnpm test` 全量跑时偶发失败（实测一次
+ * 「② 非有限数字（NaN/Infinity）当作非法」红，单跑必绿）。根因不是实现
+ * 变了，而是**取样方式**：断言里的 `before = Date.now()` 与被测函数内部的
+ * `Date.now()` 是两次独立采样，而全量跑时 120+ 个测试文件并发、CPU 被占，
+ * 两次采样之间可以轻松超过 1 秒。此时「回退到 now」得到的时间戳落在
+ * `before - 1000` 之后，断言就红了 —— 被测行为完全正确，是公差太紧。
+ *
+ * 为什么 60s 仍然是有意义的断言：它要区分的是
+ *   「回退到 now」≈ 1970 年之后的当前时刻
+ *   vs「回退到某个固定常量」= 用例里那些 2023/2026 的硬编码值
+ * 这两者相距以**年**计，60s 的窗口远小于那个量级。换句话说，放宽到 60s
+ * 并没有把断言变成「什么都不检查」—— 紧公差原本想抓的是
+ * 「createdAt 被写成了 Invalid Date 或某个远古常量」，那类错在 60s 窗口内
+ * 依然抓得到（Invalid Date 的 getTime() 是 NaN，任何比较都是 false）。
+ *
+ * 不用 fake timer：这几条断言的价值就在于「验证真的取了当前时钟」，
+ * 注入假时钟会把要测的东西本身换掉。
+ */
+const CLOCK_SLACK_MS = 60_000;
+
 describe('normalizeTabsData: 形状归一化', () => {
   it('数组直通：合法 TabData[] 原样返回（同一引用）', async () => {
     const { normalizeTabsData } = await import('@/core/normalizeTabsData');
@@ -219,7 +243,7 @@ describe('normalizeImportedGroup: 时间戳不编造', () => {
     assert.strictEqual(g.tabs[0].lastAccessed, '2023-11-14T22:13:20.000Z'); // 1700000000000
     // 防回归：即便断言的常量错了，这里也保证不是 now
     const createdMs = new Date(g.createdAt).getTime();
-    assert.ok(createdMs < before - 1000 || createdMs > after + 1000, 'createdAt 不应落在「现在」附近');
+    assert.ok(createdMs < before - CLOCK_SLACK_MS || createdMs > after + CLOCK_SLACK_MS, 'createdAt 不应落在「现在」附近');
     assert.strictEqual(g.updatedAt, '2026-01-01T00:00:00.000Z', 'updatedAt 缺失 → 回退到组 createdAt（现状保持）');
   });
 
@@ -228,17 +252,17 @@ describe('normalizeImportedGroup: 时间戳不编造', () => {
     const before = Date.now();
     const g = normalizeImportedGroup({ name: 'x', tabs: [{ url: 'https://a.com', createdAt: 'not-a-date' }] });
     const after = Date.now();
-    assert.ok(new Date(g.createdAt).getTime() >= before - 1000);
-    assert.ok(new Date(g.createdAt).getTime() <= after + 1000);
-    assert.ok(new Date(g.tabs[0].createdAt).getTime() >= before - 1000);
+    assert.ok(new Date(g.createdAt).getTime() >= before - CLOCK_SLACK_MS);
+    assert.ok(new Date(g.createdAt).getTime() <= after + CLOCK_SLACK_MS);
+    assert.ok(new Date(g.tabs[0].createdAt).getTime() >= before - CLOCK_SLACK_MS);
   });
 
   it('② 非有限数字（NaN/Infinity）当作非法 → 回退，不产出 Invalid Date', async () => {
     const { normalizeImportedGroup } = await import('@/core/normalizeTabsData');
     const before = Date.now();
     const g = normalizeImportedGroup({ name: 'x', created_at: Number.NaN, tabs: [{ url: 'https://a.com', created_at: Number.POSITIVE_INFINITY }] });
-    assert.ok(new Date(g.createdAt).getTime() >= before - 1000, 'NaN 不能变成 Invalid Date');
-    assert.ok(new Date(g.tabs[0].createdAt).getTime() >= before - 1000, 'Infinity 不能变成 Invalid Date');
+    assert.ok(new Date(g.createdAt).getTime() >= before - CLOCK_SLACK_MS, 'NaN 不能变成 Invalid Date');
+    assert.ok(new Date(g.tabs[0].createdAt).getTime() >= before - CLOCK_SLACK_MS, 'Infinity 不能变成 Invalid Date');
     assert.strictEqual(g.tabs[0].createdAt, g.tabs[0].lastAccessed, 'lastAccessed 缺失 → 回退到 createdAt，但那已是 now');
   });
 });

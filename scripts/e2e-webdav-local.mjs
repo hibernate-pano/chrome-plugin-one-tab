@@ -164,7 +164,17 @@ try {
 
   const meta1 = await client.stat('TapStack/probe.txt');
   const got1 = await client.get('TapStack/probe.txt');
-  check('PROPFIND / GET 能读到内容', got1?.body === 'v1' && meta1.exists);
+  // get() 自 2026-10-17 起有三态：内容 / { notFound } / null(304)。
+  // 用 `?.` 会在「读不到」时静默变成 undefined，断言失败的原因会被
+  // 指向「内容不对」而不是「文件没找到」——排错方向直接被带偏。
+  const got1Body = got1 && !('notFound' in got1) ? got1.body : undefined;
+  check(
+    'PROPFIND / GET 能读到内容',
+    got1Body === 'v1' && meta1.exists,
+    got1 && 'notFound' in got1
+      ? `读到的是 notFound（${got1.reason}）而非内容 —— 这是「文件不存在」，不是「内容不符」`
+      : undefined
+  );
 
   // ── 能力探测：这些是**事实记录**，不是断言 ────────────────────────────
   // 2026-10-13 实测发现：dufs **完全忽略**条件请求头。协议（RFC 4918/9110）
@@ -173,7 +183,9 @@ try {
   // 才是真正要断言的（见下）。
   finding('PUT 响应是否带 ETag', put1.etag ? '带' : '不带');
   finding('PROPFIND 是否返回 getetag', meta1.etag ? '返回' : '不返回（只返回 getlastmodified）');
-  finding('GET 响应是否带 ETag', got1?.etag ? `带（${got1.etag}）` : '不带');
+  // 同上：三态返回必须先排除 notFound，否则「没读到」会被记成「服务器不发 ETag」。
+  const got1Etag = got1 && !('notFound' in got1) ? got1.etag : null;
+  finding('GET 响应是否带 ETag', got1Etag ? `带（${got1Etag}）` : got1 && 'notFound' in got1 ? `未读到内容（${got1.reason}）` : '不带');
 
   let conditionalWritesHonored = false;
   try {
@@ -208,7 +220,14 @@ try {
 
   await client.mkdirp('我的备份 目录/子层');
   await client.put('我的备份 目录/子层/文件.json', '{"中文":"内容"}');
-  check('中文 + 空格路径可读写', (await client.get('我的备份 目录/子层/文件.json'))?.body === '{"中文":"内容"}');
+  // 同上：读到 notFound 时要说「文件不存在」，而不是含糊地判成「内容不符」。
+  const cnGot = await client.get('我的备份 目录/子层/文件.json');
+  const cnBody = cnGot && !('notFound' in cnGot) ? cnGot.body : undefined;
+  check(
+    '中文 + 空格路径可读写',
+    cnBody === '{"中文":"内容"}',
+    cnGot && 'notFound' in cnGot ? `读到的是 notFound（${cnGot.reason}）而非内容` : undefined
+  );
 
   await client.delete('TapStack/probe.txt');
   check('DELETE 后资源不存在', (await client.stat('TapStack/probe.txt')).exists === false);

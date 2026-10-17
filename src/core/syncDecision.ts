@@ -211,6 +211,10 @@ export interface ForceRemoteOverwriteInput {
 }
 export type ForceRemoteOverwriteDecision =
   | { action: 'proceed' }
+  // ⚠️ reason 只进日志（syncEngine logError），**不给用户看**：用户文案由
+  // SyncButton 的 REASON_COPY['overwrite_empty_cloud_refused'] 提供。
+  // 这里保留一句完整表述是为了日志能独立说明「拒绝了什么」，但它与
+  // REASON_COPY 是两处文案 —— 改文案时别只改一处。
   | { action: 'refuse'; reason: string };
 
 export function decideForceRemoteOverwrite(

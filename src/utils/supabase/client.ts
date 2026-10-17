@@ -113,23 +113,33 @@ function initSupabaseClient() {
     // `fetch?: Fetch` 是 auth-js 的选项，PostgREST 读不到）。
     global: { fetch: fetchWithTimeout },
     // ── 2026-10-17 关掉 PostgREST 的请求内自动重试 ────────────────────────
-    // postgrest-js ≥ 2.118 对幂等方法（GET/HEAD/OPTIONS）在**网络错误**与
-    // 503/520 上默认重试 3 次（DEFAULT_MAX_RETRIES=3）。而 fetchWithTimeout
-    // 每次调用各给一个 45s 定时器 ⇒ 最坏 4 × 45s ≈ **3 分钟**，且整个过程
-    // mutationQueue 的单写者标志一直为 true —— 正好是 fetchWithTimeout 上方
-    // 注释要治的「点了没反应」。也就是说：仅仅升级依赖，就把 45s 的保护
-    // 悄悄放大成 3 分钟，而代码里完全看不出来。
+    // postgrest-js ≥ 2.118 对**幂等方法**（GET/HEAD/OPTIONS，见它的
+    // RETRYABLE_METHODS）在网络错误与 503/520 上默认重试 3 次
+    //（DEFAULT_MAX_RETRIES=3）。写操作（POST/PATCH/DELETE，即 upsert /
+    // 删标记）**从不重试**，所以这条与「写重不重」无关、也不影响写幂等性。
     //
-    // 为什么不需要它：本项目**已经有**一层更适合 MV3 的重试 ——
+    // 【为什么不留这层重试】fetchWithTimeout 每次调用各给一个 45s 定时器，
+    // 而重试是**重新调用**自定义 fetch（新的 init、新的 controller），
+    // 于是最坏 4 × 45s ≈ 3 分钟。这段时间里 mutationQueue 的单写者标志
+    // 一直为 true，之后所有保存/删除/上传都排在它后面 —— 正是
+    // fetchWithTimeout 上方注释要治的「点了没反应」。而且这一放大在代码里
+    // 完全看不出来：每次调用看起来都还是 45s。
+    //
+    // 准确地说，受影响的是同步流程里的**读**那一半（拉云端、探活、预检）：
+    // 它们变慢到 3 分钟，期间用户点别的操作全都排队；而写路径本就不重试。
+    //
+    // 【为什么不需要它】本项目**已经有**一层更适合 MV3 的重试 ——
     // background/syncBackoff.ts 的 60s→120s→300s 指数退避，状态持久化在
     // chrome.storage.local（活过 SW 回收），8 次失败后停手等人工介入。
-    // 那层是按「整个同步操作」重试的，重试之间 SW 可以被回收、可以省电、
-    // 失败状态可见；postgrest 这层是在**一次**请求里原地重试，重试期间
-    // 单写队列一直被占着，且 MV3 SW 随时可能被杀，白重试。
+    // 那层是按「整个同步操作」重试的：重试之间 SW 可以被回收、可以省电、
+    // 失败状态对用户可见；postgrest 这层是在**一次**请求里原地重试，
+    // 重试期间单写队列一直被占着，而 MV3 SW 随时可能被杀 —— 白重试。
     //
-    // 代价与取舍：关掉后，503（PostgREST schema cache 未预热）这类瞬时故障
-    // 不再由 SDK 就地消化，而是落到 syncBackoff 的下一轮（1 分钟后）。
-    // 对本项目这是可接受的 —— 一次同步多等 1 分钟，好过 UI 冻结 3 分钟。
+    // 【代价，如实说】关掉后，503（PostgREST schema cache 未预热）这类瞬时
+    // 故障不再由 SDK 就地消化，而是落到 syncBackoff 的下一轮（1 分钟后）。
+    // 对本项目可接受：一次同步多等 1 分钟，好过 UI 冻结 3 分钟。
+    // 另注：`retry: false` 只是运行时不重试，fetchWithRetry 那段代码**仍然
+    // 打包进产物**（supabase-vendor gzip 31.4→57.5KB 里有它的一部分）。
     db: { retry: false },
   });
 

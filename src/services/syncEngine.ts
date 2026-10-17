@@ -428,17 +428,9 @@ export class SyncEngine {
       // 2. 下载云端
       const cloudGroups = await downloadTabGroups();
       report(55, 'download');
-      // 3.5 覆盖模式：同步设置（与旧 smartSyncService 的 overwriteLocal 行为一致）
-      if (opts?.forceRemote && opts?.syncSettings) {
-        try {
-          await mergeCloudSettingsIntoLocal();
-        } catch (err) {
-          logWarn('[SyncEngine] 覆盖下载时同步设置失败（不阻塞主流程）:', err);
-        }
-      }
       // 3. 空云端闸门（2026-10-17 修 P0）：覆盖下载必须先过这一关。
       //
-      // 【为什么这一关不能省】下面第 3 步会把 localGroups 置空（覆盖语义），
+      // 【为什么这一关不能省】下面第 4 步会把 localGroups 置空（覆盖语义），
       // 于是 validateMergeResult 的规则 2「本地有活跃数据但合并后为空」在
       // 覆盖路径上**恒不可达** —— 那条防线在这里形同不存在。
       // 而「本地有会话 + 云端一个字节都没有」时继续覆盖，等于用空库把本机
@@ -461,17 +453,33 @@ export class SyncEngine {
           return { success: false, groups: snapshot, reason: 'overwrite_empty_cloud_refused' };
         }
       }
-      // 3. 确定本地。覆盖模式（forceRemote）= 云端完全镜像本地：本地置空，
+      // 3.5 覆盖模式：同步设置（与旧 smartSyncService 的 overwriteLocal 行为一致）
+      //
+      // ⚠️ 这一步必须排在空云端闸门**之后**（2026-10-17 修正）。原先它在闸门
+      // 之前，于是「拒绝空云端覆盖」时 mergeCloudSettingsIntoLocal 已经把用户
+      // 的设置（布局/主题/排序/通知开关/同步间隔）从云端覆写进本地了 ——
+      // 而闸门承诺的是「不动本地一个字节」，REASON_COPY 也在对用户说
+      // 「你的本地数据没有变化」。那句话当时是假的。
+      //
+      // 顺序即是语义：先判定这一轮覆写该不该发生，发生了才轮到附带动作。
+      if (opts?.forceRemote && opts?.syncSettings) {
+        try {
+          await mergeCloudSettingsIntoLocal();
+        } catch (err) {
+          logWarn('[SyncEngine] 覆盖下载时同步设置失败（不阻塞主流程）:', err);
+        }
+      }
+      // 4. 确定本地。覆盖模式（forceRemote）= 云端完全镜像本地：本地置空，
       //    merge 退化为「云端活跃行直通」（云端墓碑行被 merge 跳过，永不入库）。
       //    正常模式剥掉本地残留的组级墓碑（老版本写入形状，见上）。
       const localGroups = opts?.forceRemote ? [] : snapshot.filter(g => !g.isDeleted);
-      // 4. 合并
+      // 5. 合并
       // 无墓碑模型（2026-09-29）：组级 LWW 整组覆盖（语义见 mergeOpStamped 头注释）。
       // 云端 is_deleted 行 = 删除广播：对端活跃副本 stamp 更旧则服从删除；
       // 本地离线修改更新则保留。合并不产生新实体、不铸 mergeStamp。
       const mergedGroups = mergeOpStamped(localGroups, cloudGroups);
       report(80, 'download');
-      // 5. 验证
+      // 6. 验证
       const validation = validateMergeResult(localGroups, cloudGroups, mergedGroups);
       if (!validation.valid) {
         logError(`[SyncEngine] 合并验证失败: ${validation.reason}`);
@@ -482,7 +490,7 @@ export class SyncEngine {
         await this.rescheduleUploadIfPending();
         return { success: false, groups: snapshot, reason: `validation_failed: ${validation.reason}` };
       }
-      // 6. 写入（P1-4：直写落盘，不经过防抖窗口）
+      // 7. 写入（P1-4：直写落盘，不经过防抖窗口）
       //
       // 【空组规则：同步合并路径锁定豁免】（2026-10-10 缺陷 2 修复）
       // 物理模型下正常合并不产生空组（组是整体进出的），此处仅兜底：
@@ -569,9 +577,9 @@ export class SyncEngine {
           logWarn('[SyncEngine] 置位 pending_upload 失败（删除广播可能滞留）:', e);
         }
       }
-      // 7. 更新同步时间
+      // 8. 更新同步时间
       await storage.setLastSyncTime(new Date().toISOString());
-      // 8. 清除快照
+      // 9. 清除快照
       await storage.clearSyncSnapshot();
       // ponytail: 下载可能掩盖本地未上传变更（合并出“新增”项）。检查持久化
       // pending_upload：若仍 true，表明本地有未传云端的意图，重新调度一次上传
