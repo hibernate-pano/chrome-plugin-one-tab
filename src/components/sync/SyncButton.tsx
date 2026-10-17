@@ -310,6 +310,12 @@ export const SyncButton: React.FC<SyncButtonProps> = () => {
           pending_upload_failed:
             '还有未上传的本地改动，已中止下载以免覆盖它们，请先完成上传',
           snapshot_failed: '本地快照创建失败，已中止同步以保护现有数据',
+          // 2026-10-17：用**空云端**覆盖会把本机会话整体清空且不可逆
+          // （1.22.0 起无回收站），syncDecision.decideForceRemoteOverwrite
+          // 在覆盖路径上拦下了它。必须把「本机数据没动」说出来 ——
+          // 否则用户看到一次失败的同步，却不知道自己刚差点丢掉全部会话。
+          overwrite_empty_cloud_refused:
+            '云端没有任何数据，已中止覆盖以免清空本机会话（你的本地数据没有变化）。如需清空请手动删除会话',
         };
         const mapped = reason != null ? REASON_COPY[reason] : undefined;
         const shown =

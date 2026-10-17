@@ -20,6 +20,7 @@ import { uploadSettings, downloadSettings } from '@/services/settingsSyncService
 import {
   validateMergeResult,
   decideDownloadPrecheck,
+  decideForceRemoteOverwrite,
   hasRemoteChanges,
 } from '@/core/syncDecision';
 // 合并语义已统一为 mergeOpStamped（OpStamp 全序决胜，组级 LWW 整组覆盖）。
@@ -433,6 +434,31 @@ export class SyncEngine {
           await mergeCloudSettingsIntoLocal();
         } catch (err) {
           logWarn('[SyncEngine] 覆盖下载时同步设置失败（不阻塞主流程）:', err);
+        }
+      }
+      // 3. 空云端闸门（2026-10-17 修 P0）：覆盖下载必须先过这一关。
+      //
+      // 【为什么这一关不能省】下面第 3 步会把 localGroups 置空（覆盖语义），
+      // 于是 validateMergeResult 的规则 2「本地有活跃数据但合并后为空」在
+      // 覆盖路径上**恒不可达** —— 那条防线在这里形同不存在。
+      // 而「本地有会话 + 云端一个字节都没有」时继续覆盖，等于用空库把本机
+      // 全清空且不可逆（1.22.0 起无回收站），UI 还会显示覆盖成功。
+      //
+      // 【放在哪一步】必须在 cloudGroups 拿到之后、localGroups 置空之前：
+      // 判据需要「云端到底有没有行」，而覆盖模式下合并阶段已经看不到本地了。
+      //
+      // 【为什么不看活跃行】云端只有墓碑行时收敛到空是**合法**的 —— 那正是
+      // 「另一台设备把会话都删了」，必须传播。判据用总行数（含墓碑）。
+      if (opts?.forceRemote) {
+        const gate = decideForceRemoteOverwrite({
+          localActiveCount: snapshot.filter(g => !g.isDeleted).length,
+          cloudTotalCount: cloudGroups.length,
+        });
+        if (gate.action === 'refuse') {
+          logError('[SyncEngine] 拒绝空云端覆盖:', gate.reason);
+          this.isSyncing = false;
+          // 不动本地一个字节：refuse 的全部意义就是「什么都不做」。
+          return { success: false, groups: snapshot, reason: 'overwrite_empty_cloud_refused' };
         }
       }
       // 3. 确定本地。覆盖模式（forceRemote）= 云端完全镜像本地：本地置空，

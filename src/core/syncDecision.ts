@@ -180,11 +180,63 @@ export const getGroupsToSync = (groups: TabGroup[]): TabGroup[] => {
 };
 
 /**
+ * 覆盖下载（forceRemote）的**空云端闸门**。
+ *
+ * ── 为什么需要它：覆盖路径绕过 validateMergeResult 的规则 2 ────────────
+ * syncEngine.downloadAndMerge 在 forceRemote 下于合并**前**把 localGroups
+ * 置成 `[]`（云端完全镜像本地的语义），于是 validateMergeResult 看到的
+ * activeLocalCount 恒为 0，规则 2「本地有活跃数据但合并后为空」永远不会
+ * 触发 —— 覆盖路径下那条防线形同不存在。
+ *
+ * 后果就是最坏的那种：用户在 1.24.0+ 点「从云端下载（覆盖）」，而云端恰好
+ * 是空的（还没配好 / 库被清空 / 换个库地址连上了空盘 / 刚清过云端数据），
+ * 本机会话被**整体清空**，而 UI 显示覆盖成功。
+ * 1.22.0 起删除即物理清除、无回收站 —— 这不可逆。
+ *
+ * ── 判据为什么不含「云端只有墓碑」────────────────────────────────────
+ * 云端只有 is_deleted 行（没有活跃行）时，那正是「另一台设备把会话都删了」，
+ * 收敛到空是**必须传播的合法结果**。用 cloudGroups.length 当判据会把它
+ * 也拦下来，于是删除永远传不过来、对端留一份永不收敛的僵尸副本。
+ * 所以判据用 cloudTotalCount（行数，含墓碑）而非活跃数。
+ *
+ * ── 为什么放在 syncDecision 而不是 syncEngine ──────────────────────────
+ * 与 decideDownloadPrecheck 同构：纯函数、可在 node:test 直测、不碰 chrome.*。
+ * 引擎那侧只负责「调用点 + 落用户文案」，判据本身不留在 IO 交错里。
+ */
+export interface ForceRemoteOverwriteInput {
+  /** 本地活跃（未删除）会话数 */
+  localActiveCount: number;
+  /** 云端行数（含墓碑行）：0 = 云端一个字节都没有 */
+  cloudTotalCount: number;
+}
+export type ForceRemoteOverwriteDecision =
+  | { action: 'proceed' }
+  | { action: 'refuse'; reason: string };
+
+export function decideForceRemoteOverwrite(
+  input: ForceRemoteOverwriteInput
+): ForceRemoteOverwriteDecision {
+  if (input.localActiveCount > 0 && input.cloudTotalCount === 0) {
+    return {
+      action: 'refuse',
+      reason:
+        `云端没有任何数据，用空云端覆盖会清空本机 ${input.localActiveCount} 个会话且无法恢复，` +
+        '已中止。如需清空本机请手动删除会话。',
+    };
+  }
+  return { action: 'proceed' };
+}
+
+/**
  * 校验合并结果，防止「同步覆盖导致本地数据丢失」时自动回滚。
  *
  * ⚠️ 基线只算本地「活跃」组（isDeleted=false）：legacy 的 mergeTabGroups 第一步会跳过软删组，
  * 而 storage.getGroups() 返回的数组含软删组。若用 localGroups.length（含软删）当基线，
  * 累积的软删组会抬高 expectedMin，导致正常合并被误判为非法 → 触发回滚 → 云端变更永远同步不进来。
+ *
+ * ⚠️ 覆盖下载（forceRemote）的空云端保护**不在这里**，而是上游的
+ * decideForceRemoteOverwrite：那条路径在合并前就把 localGroups 置空，
+ * 本函数的规则 2 在它上面恒不可达。两处必须分工明确，改一处要想到另一处。
  */
 export function validateMergeResult(
   localGroups: TabGroup[],
