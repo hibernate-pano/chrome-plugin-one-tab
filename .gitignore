@@ -30,5 +30,12 @@ dist-web/
 supabase/.temp/
 
 # 本地记忆目录（不入库）
+# ⚠️ .workbuddy/ 曾只有一条忽略规则，但该目录里已有 1 个文件被跟踪
+# （.workbuddy/memory/2026-10-05.md，commit aa05b98，早于忽略规则加入）。
+# 已 `git rm --cached` 移出，使规则与现实一致 —— 否则按 .gitignore 建立的
+# 心智模型（"这些目录一定没进仓库"）会在将来的 git clean / 重扫时出错。
+#
+# .ai-logs/ **刻意入库**：它不是工具 scratch，而是关键修复的工程决策留痕
+# （踩坑、根因、修复顺序），与 docs/ 同级，刻意保留。
 .memory/
 .workbuddy/

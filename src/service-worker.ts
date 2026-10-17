@@ -88,12 +88,27 @@ async function runMigrations() {
   }
 }
 
-const showNotification = async (message: string, title = 'TapStack'): Promise<void> => {
+/**
+ * SW 侧的通知出口。
+ *
+ * ── 2026-10-17 接上「显示通知提醒」开关 ─────────────────────────────────
+ * 本函数原先无脑转发，于是 service-worker.ts 里 8 个通知点全部不受设置约束
+ * （选项页关掉开关照样弹）。kind 透传给 tabManager.showNotification，由那一层
+ * 统一裁决：'success' / 'info' 受开关控制，'error' 永远发。
+ *
+ * 未传 kind 时默认 'success'（受控制）—— 新增通知默认不该打扰用户。
+ */
+const showNotification = async (
+  message: string,
+  title = 'TapStack',
+  kind: 'success' | 'info' | 'error' = 'success'
+): Promise<void> => {
   await tabManager.showNotification({
     type: 'basic',
     iconUrl: chrome.runtime.getURL('icons/icon128.png'),
     title,
     message,
+    kind,
   });
 };
 
@@ -224,7 +239,7 @@ chrome.action.onClicked.addListener(async () => {
     await tabManager.openTabManager(true);
   } catch (error) {
     logError('处理扩展图标点击失败:', error);
-    await showNotification('无法保存当前窗口，请重试。如果问题持续，请重启浏览器。');
+    await showNotification('无法保存当前窗口，请重试。如果问题持续，请重启浏览器。', 'TapStack', 'error');
   }
 });
 
@@ -269,7 +284,7 @@ chrome.commands.onCommand.addListener(async (command) => {
     }
   } catch (error) {
     logError('处理快捷键命令失败:', error);
-    await showNotification('快捷键操作失败，请重试');
+    await showNotification('快捷键操作失败，请重试', 'TapStack', 'error');
   }
 });
 
@@ -306,7 +321,7 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
         : allTabs;
 
       if (otherTabs.length === 0) {
-        await showNotification('没有其他标签页需要保存');
+        await showNotification('没有其他标签页需要保存', 'TapStack', 'info');
         return;
       }
 
@@ -320,7 +335,7 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
     // 右键的 catch 原先只 logError，用户点完毫无反应，与「没点上」无法区分。
     // 文案不写「保存失败」：本 catch 同时兜着打开管理器与保存其他标签两个分支，
     // 对它们说「保存失败」反而是新的不准确。用与快捷键同构的泛化文案。
-    await showNotification('操作失败，请重试');
+    await showNotification('操作失败，请重试', 'TapStack', 'error');
   }
 });
 

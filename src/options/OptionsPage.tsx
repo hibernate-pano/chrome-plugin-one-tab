@@ -324,7 +324,7 @@ const OptionsContent: React.FC = () => {
             <div className="divide-y divide-gray-200 dark:divide-gray-700">
               <ToggleRow
                 label="显示通知提醒"
-                hint="保存会话成功、同步完成时发浏览器通知。需要扩展的「通知」权限。"
+                hint="保存会话成功时发浏览器通知。失败提示不受此开关影响，始终会通知。需要扩展的「通知」权限。"
                 checked={settings.showNotifications}
                 onToggle={handleToggleNotifications}
               />

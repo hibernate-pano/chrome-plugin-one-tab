@@ -133,7 +133,8 @@ export class TabManager {
           type: 'basic',
           iconUrl: chrome.runtime.getURL('icons/icon128.png'),
           title: 'TapStack',
-          message: '当前窗口里没有可保存的标签页'
+          message: '当前窗口里没有可保存的标签页',
+          kind: 'info',
         });
         return;
       }
@@ -196,7 +197,8 @@ export class TabManager {
         type: 'basic',
           iconUrl: chrome.runtime.getURL('icons/icon128.png'),
           title: 'TapStack - 保存失败',
-          message: '保存标签页时发生错误，请重试'
+          message: '保存标签页时发生错误，请重试',
+          kind: 'error',
         });
 
       throw error;
@@ -241,6 +243,7 @@ export class TabManager {
         iconUrl: chrome.runtime.getURL('icons/icon128.png'),
         title: '无法保存此页面',
         message: '浏览器内部页面（设置、扩展商店等）无法保存为会话',
+        kind: 'error',
       });
       return false;
     }
@@ -258,6 +261,7 @@ export class TabManager {
           iconUrl: chrome.runtime.getURL('icons/icon128.png'),
           title: '未保存固定标签页',
           message: '设置中未开启「保存固定标签页」，如需保存请在设置里开启',
+          kind: 'error',
         });
         return false;
       }
@@ -282,6 +286,7 @@ export class TabManager {
           iconUrl: chrome.runtime.getURL('icons/icon128.png'),
           title: '无法保存此页面',
           message: '此页面的地址无法安全保存（本地文件或危险协议）',
+          kind: 'error',
         });
         return false;
       }
@@ -344,6 +349,7 @@ export class TabManager {
         iconUrl: chrome.runtime.getURL('icons/icon128.png'),
         title: '无法打开此标签',
         message: `「${origin}」是本机文件、临时链接或浏览器内部页面，无法在此设备上重新打开。该标签已保留在会话中。`,
+        kind: 'error',
       });
       return;
     }
@@ -441,14 +447,54 @@ export class TabManager {
   }
 
   /**
-   * 显示通知
+   * 显示通知。
+   *
+   * ── 2026-10-17 接上「显示通知提醒」开关（此前是空接线）───────────────
+   * 体检发现：全仓 7 处引用 `showNotifications` **零处读取**，15 个通知点
+   * 无一检查设置 ⇒ 选项页把开关关掉，用户照样弹通知。这是一个**关于用户
+   * 隐私的假陈述**，且是 2026-10-12 体检的 P1、连续三轮评审都没拦住。
+   *
+   * ── 为什么按 kind 分流，而不是一刀切读设置 ───────────────────────────
+   * 这里有个必须守住的不变式：**失败通知不能被开关关掉**。2026-10-07 那一轮
+   * 修的正是「静默失败清单」：原先 Alt+S 按了没反应、内部页面不保存、
+   * URL 被清洗掉，全都直接 return，用户无从分辨「按了没反应」和「坏了」。
+   * 若在这里统一按设置拦掉，等于把刚修好的静默失败重新装回去 ——
+   * 「关掉通知」不该变成「操作失败但用户不知道」。
+   *
+   * 因此语义分两类：
+   *   · kind: 'success' —— 例行确认（「已保存 N 个标签页」）。默认关，符合
+   *     DEFAULT_SETTINGS.showNotifications = false，也符合多数人不要弹窗的偏好。
+   *   · kind: 'info'    —— 用户**主动操作后**的即时反馈（快捷键失败、
+   *     页面无法保存）。同样受设置控制：它是操作的一部分，不是打扰。
+   *   · kind: 'error'   —— 失败与异常。**永远发**，不受设置影响。
+   *
+   * ⚠️ 未标注 kind 的调用点默认按 'success' 处理（即受设置控制）。
+   * 这是刻意选的方向：新加的通知默认不该打扰用户；要「无论设置都发」必须
+   * 显式写 kind: 'error'，让这个选择可见、可评审。
    */
   async showNotification(options: {
     type: 'basic';
     iconUrl: string;
     title: string;
     message: string;
+    /**
+     * 通知性质。决定是否受「显示通知提醒」开关约束：
+     * 'success' / 'info' 受控；'error' 永远发（失败不能静默）。
+     */
+    kind?: 'success' | 'info' | 'error';
   }): Promise<void> {
+    if (options.kind !== 'error') {
+      try {
+        const settings = await storage.getSettings();
+        if (settings.showNotifications !== true) return;
+      } catch (error) {
+        // 读不到设置时**按开启处理**（发通知）：读失败不是用户的意图，
+        // 而通知发不出去的后果远小于「本该告诉用户的失败没告诉」。
+        // 与 storage.getSettings 自身的 fail-closed 方向相反且刻意：
+        // 那条保护的是「别用默认值覆盖真实云端设置」，这里保护的是「别漏报失败」。
+        logWarn('[TabManager] 读取通知设置失败，按开启处理:', error);
+      }
+    }
     try {
       await chrome.notifications.create({
         type: options.type,

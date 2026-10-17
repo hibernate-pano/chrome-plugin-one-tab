@@ -5,6 +5,7 @@
 import { createClient } from '@supabase/supabase-js';
 import { hasExtensionStorage } from '@/storage-kv/env';
 import { sharedStringStorage } from '@/storage-kv/stringStore';
+import type { Database } from './database.types';
 
 // 安全的配置管理
 function getSecureConfig() {
@@ -47,7 +48,10 @@ function getSecureConfig() {
 }
 
 // 延迟初始化 Supabase 客户端
-let supabaseClient: ReturnType<typeof createClient> | null = null;
+// 类型参数 Database 是纯类型标注：不传时 createClient 的 Database 落到 any，
+// SupabaseClient 的 Schema 压成 never，.update()/.upsert() 只收 never（见
+// database.types.ts 头注）。运行时不读取它，产物字节不变。
+let supabaseClient: ReturnType<typeof createClient<Database>> | null = null;
 
 // S2 收敛：跨上下文 session 存储与环境探测已下沉为共享单源
 // （@/storage-kv/env + @/storage-kv/stringStore，与 KV 迁移层同源），
@@ -92,11 +96,11 @@ function initSupabaseClient() {
     // 配置缺失时，创建一个占位符客户端
     // 使用占位符 URL 和 key，避免后续调用时出错
     logWarn('Supabase 配置缺失。同步功能将不可用。如需使用同步功能，请在 .env 文件中设置 VITE_SUPABASE_URL 和 VITE_SUPABASE_ANON_KEY。');
-    supabaseClient = createClient('https://placeholder.supabase.co', 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InBsYWNlaG9sZGVyIiwicm9sZSI6ImFub24iLCJpYXQiOjE2NDUxOTIwMDAsImV4cCI6MTk2MDc2ODAwMH0.placeholder');
+    supabaseClient = createClient<Database>('https://placeholder.supabase.co', 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InBsYWNlaG9sZGVyIiwicm9sZSI6ImFub24iLCJpYXQiOjE2NDUxOTIwMDAsImV4cCI6MTk2MDc2ODAwMH0.placeholder');
     return supabaseClient;
   }
 
-  supabaseClient = createClient(config.url, config.anonKey, {
+  supabaseClient = createClient<Database>(config.url, config.anonKey, {
     auth: {
       // service-worker 无 localStorage，统一用 chrome.storage.local 持久化 session
       storage: supabaseSharedStorage,
@@ -108,6 +112,25 @@ function initSupabaseClient() {
     // SupabaseClientOptions 把自定义 fetch 放在 global 下（顶层那个
     // `fetch?: Fetch` 是 auth-js 的选项，PostgREST 读不到）。
     global: { fetch: fetchWithTimeout },
+    // ── 2026-10-17 关掉 PostgREST 的请求内自动重试 ────────────────────────
+    // postgrest-js ≥ 2.118 对幂等方法（GET/HEAD/OPTIONS）在**网络错误**与
+    // 503/520 上默认重试 3 次（DEFAULT_MAX_RETRIES=3）。而 fetchWithTimeout
+    // 每次调用各给一个 45s 定时器 ⇒ 最坏 4 × 45s ≈ **3 分钟**，且整个过程
+    // mutationQueue 的单写者标志一直为 true —— 正好是 fetchWithTimeout 上方
+    // 注释要治的「点了没反应」。也就是说：仅仅升级依赖，就把 45s 的保护
+    // 悄悄放大成 3 分钟，而代码里完全看不出来。
+    //
+    // 为什么不需要它：本项目**已经有**一层更适合 MV3 的重试 ——
+    // background/syncBackoff.ts 的 60s→120s→300s 指数退避，状态持久化在
+    // chrome.storage.local（活过 SW 回收），8 次失败后停手等人工介入。
+    // 那层是按「整个同步操作」重试的，重试之间 SW 可以被回收、可以省电、
+    // 失败状态可见；postgrest 这层是在**一次**请求里原地重试，重试期间
+    // 单写队列一直被占着，且 MV3 SW 随时可能被杀，白重试。
+    //
+    // 代价与取舍：关掉后，503（PostgREST schema cache 未预热）这类瞬时故障
+    // 不再由 SDK 就地消化，而是落到 syncBackoff 的下一轮（1 分钟后）。
+    // 对本项目这是可接受的 —— 一次同步多等 1 分钟，好过 UI 冻结 3 分钟。
+    db: { retry: false },
   });
 
   // 旧 session 迁移（幂等：只搬一次，搬完即删 localStorage 源）
