@@ -339,6 +339,17 @@ describe('锁定态：一次性可见提醒', () => {
     await alarmListener(SYNC_ALARM_EVENT);
     const afterFirst = handles.notificationCalls.length - before;
 
+    // ── 前提断言（2026-10-17 QA 复验抓到的假绿）────────────────────────
+    // 没有这一句时，若通知链路整个坏掉（notifyLockedBackendOnce 未被调用），
+    // afterFirst 会是 0，下面的「不增」就退化成 assert.equal(0, 0) —— 恒真。
+    // 即：这条用例会替一条根本不发通知的实现作证。断言「0 不增」之前，
+    // 必须先证明「第一轮真的发过」。
+    assert.equal(
+      afterFirst,
+      1,
+      '前提：第一轮必须真的发了通知，否则下面的「不增」是恒真断言（假绿）'
+    );
+
     // 连续多轮锁定：标志一直在，通知数不增
     await alarmListener(SYNC_ALARM_EVENT);
     await alarmListener(SYNC_ALARM_EVENT);
