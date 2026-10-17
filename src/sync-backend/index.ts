@@ -23,10 +23,12 @@
 import type { SyncBackendId, SyncBackendPort } from './ports';
 import { SupabaseBackendAdapter } from './supabaseAdapter';
 import { logWarn } from '@/utils/log';
-import { kvGet } from '@/storage-kv/storageAdapter';
+import { kvGet, kvSet } from '@/storage-kv/storageAdapter';
 import { WebDavClient } from './webdav/client';
 import { WebDavBackendAdapter } from './webdav/adapter';
 import { hasHostPermission } from './webdav/permission';
+import { createSeqRegistry } from '@/utils/seqRegistry';
+import { storage } from '@/utils/storage';
 import {
   chromeKvAdapter,
   getSessionSecrets,
@@ -188,8 +190,38 @@ function defaultFactory(
       requireEncryption: cfg.encryption === 'required',
     },
     kv: chromeKvAdapter,
+    // ── 2026-10-17 补 P0：注入本设备 seq 计数器 ──────────────────────────
+    // 为什么必须在这里注入：适配器的 `peekDeviceSeq ?? (() => 0)` 兜底会让
+    // 「水位线的 seq 时钟回退自检」永远拿到 0，`current < deviceSeq` 恒假，
+    // 于是 loadWatermark 的守卫在生产环境是死代码。后果就是 Supabase 侧
+    // 已经修过的那个 P0（utils/supabase/syncWatermark.ts 头注释）：本地
+    // device_seq 被清零（换机 / 清数据 / IndexedDB 被回收）而水位线存活时，
+    // 新会话 lastOp.s 从 1 重新起算，永远低于旧水位 → **新会话静默永不上传**；
+    // 下一拍下载合并又以云端大 seq 赢 → **新会话被静默删除，而 UI 报「同步成功」**。
+    // 1.22.0 起删除即物理清除、无回收站，这一条不可逆。
+    //
+    // 为什么用 `createSeqRegistry` 而不是直接 import 单例：registry 头注释
+    // 说明各处各持一实例但无 memo，共用同一持久化 key 与同一推导规则，
+    // 因此彼此一致（与 utils/supabase/upload.ts 的 tombstoneSeq 同一范式）。
+    //
+    // 为什么用 `peekDeviceSeq` 而不是 `getDeviceSeq`：前者是纯读。getDeviceSeq
+    // 会在「观察到的全网最大印记 > 持久化值」时写回下限，把「看一眼」变成
+    // 「改计数器」——同步后端没有取号的资格（seqRegistry.ts:peekDeviceSeq 注释）。
+    peekDeviceSeq: () => webDavSeqRegistry.peekDeviceSeq(),
   });
 }
+
+/**
+ * 本设备 seq 计数器的只读视图，供 WebDAV 适配器做水位线自检。
+ *
+ * 与 utils/supabase/upload.ts 的 tombstoneSeq 同构：同一持久化 key、同一推导
+ * 规则、不 memo，因此与写作路径（mutationService / TabManager）看到同一个号位。
+ */
+const webDavSeqRegistry = createSeqRegistry({
+  kvGet,
+  kvSet,
+  getGroups: () => storage.getGroups(),
+});
 
 /**
  * 读设置，决定用哪个后端。

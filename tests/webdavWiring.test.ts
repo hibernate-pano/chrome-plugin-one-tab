@@ -320,12 +320,111 @@ describe('生产接线：defaultFactory 必须注入权限守卫（2026-10-14 P1
   });
 });
 
+describe(
+  '生产接线：defaultFactory 必须注入 peekDeviceSeq（2026-10-17 P0，变异验证）',
+  () => {
+    // 背景：适配器的 `peekDeviceSeq ?? (() => 0)` 兜底，会让「水位线的 seq 时钟
+    // 回退自检」永远拿到 0，`current < deviceSeq` 恒假 ⇒ loadWatermark 的守卫
+    // 在生产环境是死代码。而 defaultFactory 此前**恰好没注入**它。
+    //
+    // 后果就是 Supabase 侧早已修过的那个 P0（utils/supabase/syncWatermark.ts
+    // 头注释）：本地 device_seq 被清零（换机 / 清数据 / IndexedDB 被回收）而
+    // 水位线存活时，新会话 lastOp.s 从 1 重新起算，永远低于旧水位 ⇒
+    // **新会话静默永不上传**；下一拍下载合并又以云端大 seq 赢 ⇒
+    // **新会话被静默删除，而 UI 报「同步成功」**。1.22.0 起无回收站。
+    //
+    // 为什么机制层测试抓不到：webdavAdapter.test.ts 一直显式注入
+    // `peekDeviceSeq: async () => opts.deviceSeq ?? 0`，测的是「注入了以后的行为」，
+    // 而生产走的是「不注入」那条分支 —— 两者从未交叉验证。
+    // 这条钉的正是**接线本身**，与上面那条权限守卫测试同一范式：
+    // 走真实 defaultFactory（setBackendFactory(null)），不注入任何 fake factory。
+    beforeEach(async () => {
+      await clearSessionSecrets();
+      resetActiveSyncBackend();
+      setBackendFactory(null); // 必须走真实 defaultFactory，否则测的就不是生产接线
+      await resetStorage();
+      await seed('user_settings', { ...DEFAULT_SETTINGS, syncBackend: 'webdav' });
+      await saveWebDavConfig(
+        { baseUrl: 'https://dav.example.com/dav/', username: 'u', rootPath: 'TapStack', encryption: 'plain' },
+        realKv
+      );
+      await setSessionSecrets('u', 'app-password', null);
+    });
+
+    it('生产构造的后端必须把真实 seq 计数器接进水位自检', async () => {
+      // 造一条「时钟已推进」的基线：device_seq = 99。
+      // 若 defaultFactory 漏注入，适配器里的 peekDeviceSeq() 恒返回 0，
+      // 水位里记下的 deviceSeq 基线就会是 0 而不是 99 —— 时钟回退自检随之失效。
+      await realKv.set('device_seq', 99);
+
+      // 走真实 defaultFactory ⇒ client 用的是全局 fetch，所以必须铺一个
+      // 假的 DAV 服务端（否则会真的去请求 https://dav.example.com）。
+      const files = new Map<string, string>();
+      const fakeFetch: typeof fetch = async (input, init) => {
+        const url = String(input);
+        const method = (init?.method ?? 'GET').toUpperCase();
+        if (method === 'GET') {
+          const body = files.get(url);
+          if (body === undefined) return new Response(null, { status: 404 });
+          return new Response(body, { status: 200 });
+        }
+        files.set(url, String(init?.body ?? ''));
+        // PUT 必须回 ETag，否则会走「不返 ETag 时读回」的补偿路径。
+        return new Response(null, { status: method === 'MKCOL' ? 201 : 200, headers: { ETag: '"x1"' } });
+      };
+
+      (globalThis as Record<string, unknown>).chrome = {
+        permissions: { contains: async () => true },
+      };
+      (globalThis as Record<string, unknown>).fetch = fakeFetch;
+      try {
+        const out = await primeSyncBackend();
+        assert.equal(out.resolvedId, 'webdav', '生产必须解析为 webdav（前提钉住，否则测的不是本条）');
+
+        // 走一次真实上传，让适配器自己把水位写进它自己的 kv。
+        // 之后把水位读回来，断言 deviceSeq 基线 = 99。
+        // 漏注入时这个值会是 0 —— 这就是本条的可观测判据。
+        const uploaded = await out.backend.uploadGroups([
+          {
+            id: 'w1',
+            name: '会话',
+            createdAt: '2026-01-01T00:00:00.000Z',
+            updatedAt: '2026-01-01T00:00:00.000Z',
+            isLocked: false,
+            lastOp: { d: 'dev-A', s: 100 },
+            tabs: [],
+          } as never,
+        ]);
+        assert.ok(uploaded, '上传必须成功，否则水位不会被写入');
+
+        // 水位键按 baseUrl|username|root 哈希寻址（adapter.watermarkKey），
+        // 不能凭空拼字面量 —— 遍历底层 store 找唯一的 webdav_sync_watermark:* 条目。
+        let wm: { seq: number; deviceSeq: number } | null = null;
+        for (const k of [...store.keys()]) {
+          if (k.startsWith('webdav_sync_watermark:')) {
+            wm = (await realKv.get<{ seq: number; deviceSeq: number }>(k)) ?? null;
+          }
+        }
+        assert.ok(wm, '上传后必须落下水位，否则增量上传无法收敛');
+        assert.equal(
+          wm.deviceSeq,
+          99,
+          '水位里的 deviceSeq 基线必须来自真实 seq 计数器；等于 0 说明 defaultFactory ' +
+            '漏注入 peekDeviceSeq，时钟回退自检在生产环境是死代码'
+        );
+      } finally {
+        delete (globalThis as Record<string, unknown>).chrome;
+        delete (globalThis as Record<string, unknown>).fetch;
+      }
+    });
+  }
+);
+
 describe('凭据存储：绝不落盘', () => {
   beforeEach(async () => {
     await clearSessionSecrets();
     await resetStorage();
   });
-
   it('保存的配置里只有地址/账号/目录/加密选择，没有口令', async () => {
     await saveWebDavConfig(
       {

@@ -24,6 +24,9 @@ import type {
   UploadGroupsResult,
 } from '../ports';
 import { WebDavClient, WebDavError } from './client';
+// 设备 id 的权威键名（2026-10-17）：见 nextDeleteStamp 的说明。
+// 手抄字面量导致删除广播全部盖成 d:'unknown'，是本文件修掉的一个 P0。
+import { LEGACY_KEYS } from '@/storage-kv/keys';
 import {
   GROUPS_DIR,
   MANIFEST_PATH,
@@ -564,9 +567,25 @@ export class WebDavBackendAdapter implements SyncBackendPort {
     cloudLastOp?: { d: string; s: number }
   ): Promise<{ d: string; s: number }> {
     const deviceSeq = await this.peekDeviceSeq();
-    const device = await this.kv.get<string>('device_id');
+    // ── 2026-10-17 修 P0：键名此前是手抄的 'device_id' ─────────────────────
+    // 权威键是 LEGACY_KEYS.DEVICE_ID（'tabvaultpro_device_id'），唯一写入方是
+    // deviceUtils.getDeviceId()；kvGet 不做键名别名（storageAdapter 直接透传
+    // driver.getItem(key)），所以手抄的那个键**全仓从未被写过** ⇒ device 恒为
+    // null ⇒ 每一次删除广播都盖上 d:'unknown'。
+    //
+    // 后果：两台设备都删除时，按 compareStamps（s 相同则比 d 字典序）
+    // 得到 "unknown" === "unknown" → 返回 0 → 平局判**本地赢**
+    // （opStampMerge.pickByStamp）→ 云端墓碑输给本地活跃副本并被重新上传，
+    // **删除在对端设备被静默撤销、会话复活**。1.22.0 起无回收站，不可恢复。
+    //
+    // 这里引用常量而非再抄一遍字面量，正是为了杜绝同类分叉
+    // （storage-kv/keys.ts 的 MIGRATION_SCAN_KEYS 当初就因为手抄漏了
+    // DEVICE_SEQ，导致换机后「改什么都存不住」）。
+    const device = await this.kv.get<string>(LEGACY_KEYS.DEVICE_ID);
     const cloudSeq = typeof cloudLastOp?.s === 'number' && Number.isFinite(cloudLastOp.s) ? cloudLastOp.s : -1;
     return {
+      // 拿不到设备 id 时仍留 'unknown' 兜底（老存储可能确实没写过），
+      // 但生产路径现在能拿到真实 id —— 兜底不再是被常态掩盖的死分支。
       d: typeof device === 'string' && device ? device : 'unknown',
       s: Math.max(deviceSeq + 1, cloudSeq + 1),
     };

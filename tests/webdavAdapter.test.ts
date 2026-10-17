@@ -18,6 +18,7 @@ import assert from 'node:assert/strict';
 import { WebDavClient, WebDavError } from '@/sync-backend/webdav/client';
 import { WebDavBackendAdapter, type AdapterKv } from '@/sync-backend/webdav/adapter';
 import { shardPath } from '@/sync-backend/webdav/layout';
+import { LEGACY_KEYS } from '@/storage-kv/keys';
 import type { TabGroup } from '@/types/tab';
 import type { UserSettings } from '@/types/tab';
 
@@ -155,7 +156,7 @@ function makeAdapter(dav: FakeDav, opts: {
   deviceSeq?: number;
   rootPath?: string;
 } = {}) {
-  const kv = opts.kv ?? makeKv({ device_id: 'dev-A' });
+  const kv = opts.kv ?? makeKv({ [LEGACY_KEYS.DEVICE_ID]: 'dev-A' });
   const client = new WebDavClient(
     { baseUrl: BASE, username: 'u', password: 'p' },
     dav.fetch
@@ -251,7 +252,7 @@ describe('以本地为准：首次全量，之后增量', () => {
     await adapter.uploadGroups([makeGroup('aa1', { lastOp: { d: 'dev-A', s: 100 } })]);
 
     // 新设备（水位为 0）用较低 stamp 的组上行：不应重传已有会话，也不应丢它
-    const { adapter: fresh } = makeAdapter(dav, { kv: makeKv({ device_id: 'dev-B' }) });
+    const { adapter: fresh } = makeAdapter(dav, { kv: makeKv({ [LEGACY_KEYS.DEVICE_ID]: 'dev-B' }) });
     const out = await fresh.uploadGroups([makeGroup('aa1', { lastOp: { d: 'dev-B', s: 1 } })]);
     assert.equal(out.writtenIds.length, 0, '低 stamp 的组不应被写（云端更新）');
 
@@ -276,7 +277,7 @@ describe('以本地为准：首次全量，之后增量', () => {
 
   it('水位时钟回退（用户清了本地数据）→ 作废水位、走全量', async () => {
     const dav = new FakeDav();
-    const kv = makeKv({ device_id: 'dev-A' });
+    const kv = makeKv({ [LEGACY_KEYS.DEVICE_ID]: 'dev-A' });
     // 模拟旧水位：seq=5000 且基线 deviceSeq=5000，而当前计数器已回退到 5
     const { adapter: first } = makeAdapter(dav, { kv, deviceSeq: 5000 });
     await first.uploadGroups([makeGroup('aa1', { lastOp: { d: 'dev-A', s: 4999 } })]);
@@ -319,7 +320,7 @@ describe('412 冲突按组级 LWW 裁决', () => {
     const before = dav.read(`TapStack/${shardPath('aa1')}`)!.body;
 
     // 另一台设备的旧改动（seq=3）撞 412 后应认输
-    const { adapter: other } = makeAdapter(dav, { kv: makeKv({ device_id: 'dev-B' }), deviceSeq: 3 });
+    const { adapter: other } = makeAdapter(dav, { kv: makeKv({ [LEGACY_KEYS.DEVICE_ID]: 'dev-B' }), deviceSeq: 3 });
     dav.forcedConflicts = 1;
     const out = await other.uploadGroups([makeGroup('aa1', { name: '我的旧版', lastOp: { d: 'dev-B', s: 3 } })]);
 
@@ -507,7 +508,7 @@ describe('能力探测：条件写到底有没有真的生效', () => {
     const { adapter: a } = makeAdapter(dav);
     await a.uploadGroups([makeGroup('aa1', { name: 'v1', lastOp: { d: 'dev-A', s: 5 } })]);
 
-    const { adapter: b } = makeAdapter(dav, { kv: makeKv({ device_id: 'dev-B' }) });
+    const { adapter: b } = makeAdapter(dav, { kv: makeKv({ [LEGACY_KEYS.DEVICE_ID]: 'dev-B' }) });
     const got = await b.downloadGroups();
     assert.equal(got[0]?.name, 'v1');
 
@@ -533,7 +534,7 @@ describe('2026-10-14 修 P1：并发写不丢对端条目', () => {
     const { adapter: first } = makeAdapter(dav);
     await first.uploadGroups([makeGroup('aa1', { lastOp: { d: 'dev-A', s: 5 } })]);
 
-    const { adapter: b } = makeAdapter(dav, { kv: makeKv({ device_id: 'dev-B' }) });
+    const { adapter: b } = makeAdapter(dav, { kv: makeKv({ [LEGACY_KEYS.DEVICE_ID]: 'dev-B' }) });
     const rawFetch = dav.fetch;
     let injected = false;
     dav.fetch = (async (url: string | URL, init?: RequestInit) => {
@@ -551,7 +552,7 @@ describe('2026-10-14 修 P1：并发写不丢对端条目', () => {
     const a2 = new WebDavBackendAdapter({
       client: clientA,
       config: { baseUrl: BASE, username: 'u', password: 'p', rootPath: 'TapStack', passphrase: 'pw' },
-      kv: makeKv({ device_id: 'dev-A' }),
+      kv: makeKv({ [LEGACY_KEYS.DEVICE_ID]: 'dev-A' }),
       now: () => NOW,
       peekDeviceSeq: async () => 0,
     });
@@ -569,12 +570,12 @@ describe('2026-10-14 修 P1：并发写不丢对端条目', () => {
 describe('2026-10-14 修 P1：删除墓碑 stamp 压过云端', () => {
   it('云端 stamp 更大时，墓碑 seq 取云端 +1（否则删除会复活）', async () => {
     const dav = new FakeDav();
-    const { adapter: seeder } = makeAdapter(dav, { kv: makeKv({ device_id: 'dev-B' }) });
+    const { adapter: seeder } = makeAdapter(dav, { kv: makeKv({ [LEGACY_KEYS.DEVICE_ID]: 'dev-B' }) });
     await seeder.uploadGroups([makeGroup('xx1', { lastOp: { d: 'dev-B', s: 100 } })]);
 
     // 本设备 seq 时钟很小（久未同步的设备）：旧实现只用 deviceSeq + 1 = 1，
     // 墓碑 stamp 反而小于云端副本 ⇒ 对端合并时删除输给旧副本 ⇒ 删掉的组复活。
-    const { adapter: a } = makeAdapter(dav, { kv: makeKv({ device_id: 'dev-A' }), deviceSeq: 0 });
+    const { adapter: a } = makeAdapter(dav, { kv: makeKv({ [LEGACY_KEYS.DEVICE_ID]: 'dev-A' }), deviceSeq: 0 });
     await a.broadcastDeletes(['xx1']);
 
     const groups = await a.downloadGroups();
@@ -583,6 +584,82 @@ describe('2026-10-14 修 P1：删除墓碑 stamp 压过云端', () => {
     assert.ok(
       (groups[0]?.lastOp?.s ?? 0) > 100,
       `墓碑 stamp 必须大于云端 100，实际 ${String(groups[0]?.lastOp?.s)}`
+    );
+  });
+});
+
+/**
+ * 2026-10-17 修 P0：删除广播的设备 id 此前读的是手抄键 'device_id'，
+ * 而全仓唯一的写入方 deviceUtils.getDeviceId() 写的是
+ * LEGACY_KEYS.DEVICE_ID（'tabvaultpro_device_id'），kvGet 不做键名别名
+ * ⇒ device 恒为 null ⇒ **每一次删除广播都盖上 d:'unknown'**。
+ *
+ * 后果（为什么这条必须钉死）：两台设备都删除时，compareStamps 先比 s、
+ * s 相同再比 d 字典序，于是 "unknown" === "unknown" → 返回 0 → 平局判
+ * **本地赢**（opStampMerge.pickByStamp）→ 云端墓碑输给本地活跃副本并被重新
+ * 上传，**删除在对端被静默撤销、会话复活**。1.22.0 起无回收站，不可逆。
+ *
+ * 【为什么这条测试以前抓不到】原 fixture 用 `makeKv({ device_id: 'dev-A' })`
+ * 播种的**正是那个错误字面量**，于是 fixture 与 bug 互相镜像、测试恒绿。
+ * 现在 fixture 引用权威常量 LEGACY_KEYS.DEVICE_ID，本用例再断言读回来的
+ * lastOp.d —— 把「键名」这个曾经无人覆盖的属性变成 CI 可见的护栏。
+ *
+ * 变异验证：把 adapter.ts 的 `LEGACY_KEYS.DEVICE_ID` 改回 `'device_id'`
+ * ⇒ 本用例的 lastOp.d 断言红。
+ */
+describe('2026-10-17 修 P0：删除广播盖上真实设备 id', () => {
+  it('墓碑 lastOp.d 必须是本设备真实 id，而不是兜底的 unknown', async () => {
+    const dav = new FakeDav();
+    const { adapter } = makeAdapter(dav, {
+      kv: makeKv({ [LEGACY_KEYS.DEVICE_ID]: 'dev-A' }),
+      deviceSeq: 7,
+    });
+    await adapter.uploadGroups([makeGroup('dd1')]);
+    await adapter.broadcastDeletes(['dd1']);
+
+    const groups = await adapter.downloadGroups();
+    assert.equal(groups.length, 1);
+    assert.equal(
+      groups[0]?.lastOp?.d,
+      'dev-A',
+      '墓碑必须盖本设备真实 id；盖成 unknown 会让两台设备的删除在 LWW 里打成平局，' +
+        '平局判本地赢 ⇒ 删除在对端被静默撤销、会话复活'
+    );
+    assert.notEqual(
+      groups[0]?.lastOp?.d,
+      'unknown',
+      '生产环境读不到设备 id 说明键名又与写入方分叉了（权威键是 LEGACY_KEYS.DEVICE_ID）'
+    );
+  });
+
+  it('两台设备的删除必须能分出胜负（d 不同 ⇒ 不会打成平局）', async () => {
+    const dav = new FakeDav();
+    // A 先删，墓碑落盘
+    const { adapter: a } = makeAdapter(dav, {
+      kv: makeKv({ [LEGACY_KEYS.DEVICE_ID]: 'dev-A' }),
+      deviceSeq: 1,
+    });
+    await a.uploadGroups([makeGroup('ee1')]);
+    await a.broadcastDeletes(['ee1']);
+
+    // B 在**同一个 seq** 上删除另一个组：若 d 都是 'unknown'，
+    // 两条墓碑会在 compareStamps 里返回 0，跨设备的删除顺序就变成任意的。
+    const { adapter: b } = makeAdapter(dav, {
+      kv: makeKv({ [LEGACY_KEYS.DEVICE_ID]: 'dev-B' }),
+      deviceSeq: 1,
+    });
+    await b.uploadGroups([makeGroup('ff1')]);
+    await b.broadcastDeletes(['ff1']);
+
+    const groups = await b.downloadGroups();
+    const ee = groups.find((g) => g.id === 'ee1');
+    const ff = groups.find((g) => g.id === 'ff1');
+    assert.equal(ee?.lastOp?.d, 'dev-A');
+    assert.equal(ff?.lastOp?.d, 'dev-B');
+    assert.notEqual(
+      ee?.lastOp?.d,
+      ff?.lastOp?.d,
+      '跨设备的两条墓碑必须靠 d 区分开；同为 unknown 时 LWW 退化为任意裁决'
     );
   });
 });
