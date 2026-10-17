@@ -41,7 +41,19 @@ import ErrorBoundary from '@/components/common/ErrorBoundary';
 import { ThemeStyleSelector } from '@/components/layout/ThemeStyleSelector';
 import { WebDavSettings } from '@/components/sync/WebDavSettings';
 import { logWarn } from '@/utils/log';
-import { invalidateActiveSyncBackend, primeSyncBackend } from '@/sync-backend';
+import {
+  getLastBackendResolution,
+  invalidateActiveSyncBackend,
+  primeSyncBackend,
+} from '@/sync-backend';
+// B8 缺陷 3（2026-10-17，从 slim 适配双模式）：自动同步在「配置 + 解锁」前
+// 不得被打开。修复前开关可以先亮、再报错，而它会永远不跑 ——
+// 等于用一个不可能发生的频率欺骗用户。
+import {
+  canEnableAutoSync,
+  classifyBackendResolution,
+  type BackendStatus,
+} from '@/components/layout/backendStatus';
 
 /** 明暗模式。ThemeContext 的 setThemeMode 收这个联合类型，
  *  但没导出它 —— 这里就地声明，避免为了一个类型去改 context 的公共面。 */
@@ -99,6 +111,26 @@ const ToggleRow: React.FC<{
   </div>
 );
 
+/**
+ * 「自动同步开启被拒绝」的提示文案（2026-10-17 B8 缺陷 3）。
+ *
+ * 每一种未就绪状态给一条**可操作**的话，而不是笼统的「无法开启」。
+ * ready 不会走到拒绝分支（canEnableAutoSync 为真时不取这条）；保留键是为了
+ * 让索引类型是完整的 kind 联合，编译器能抓到错位的 kind。
+ *
+ * ⚠️ 双模式：这些文案描述的是**自带存储（WebDAV）**未就绪。
+ * 选了 TapStack 云端时解析出的是 supabase 适配器、没有 lockedReason，
+ * 分类为 ready ⇒ 根本不会走到这里（云端用户的门禁是登录态，另有其路径）。
+ */
+const AUTO_SYNC_BLOCKED_TOAST: Record<BackendStatus['kind'], string> = {
+  ready: '',
+  unconfigured:
+    '还没有配置云盘：先在下方「自带存储配置」填写地址并点「保存并启用」，再开启自动同步',
+  locked: '云盘本次会话还没有解锁：先重新输入应用密码与加密口令，再开启自动同步',
+  error: '读不到云盘配置或解锁状态，暂时无法开启自动同步；请到下方重新保存配置',
+  unknown: '还没有确认云盘状态，暂时无法开启自动同步；请先完成下方云盘配置',
+};
+
 const OptionsContent: React.FC = () => {
   const dispatch = useAppDispatch();
   const settings = useAppSelector(state => state.settings);
@@ -113,6 +145,12 @@ const OptionsContent: React.FC = () => {
   // 「开关翻不动 / 刷新后又变回去」。
   const [settingsReady, setSettingsReady] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
+
+  // 同步后端状态（2026-10-17 B8 缺陷 3）：自动同步开关的放行判据，
+  // 以及「未就绪」提示文案的真值来源。默认 unknown = 保守（不放行、不说就绪）。
+  const [backendStatus, setBackendStatus] = useState<BackendStatus>(() =>
+    classifyBackendResolution(null)
+  );
 
   useEffect(() => {
     let alive = true;
@@ -152,6 +190,38 @@ const OptionsContent: React.FC = () => {
       .catch(err => logWarn('[OptionsPage] 通知 SW 重建同步 alarm 异常，下次启动自愈:', err));
   }, []);
 
+  /**
+   * 读一次**真实**的后端状态（2026-10-17 B8 缺陷 3）。
+   *
+   * 为什么必须按需重解析而不是复用 mount 时的答案：用户可能刚在下方点过
+   * 「保存并启用」保存了配置，也可能在另一个窗口改过 —— 缓存里的旧答案
+   * 会让这里继续显示「未配置」。不碰网络：只读本地配置与本次会话的解锁状态。
+   */
+  const refreshBackendStatus = useCallback(async (): Promise<BackendStatus> => {
+    let status: BackendStatus;
+    try {
+      invalidateActiveSyncBackend();
+      await primeSyncBackend();
+      status = classifyBackendResolution(getLastBackendResolution());
+    } catch (err) {
+      logWarn('[OptionsPage] 同步后端状态解析失败，按「状态未知」展示:', err);
+      status = classifyBackendResolution(null);
+    }
+    setBackendStatus(status);
+    return status;
+  }, []);
+
+  // 页面打开与每次回到本页（另一个窗口配置完切回来）都重查一次。
+  // 同一页面内保存配置由开关点击前的那次 refreshBackendStatus() 补上。
+  useEffect(() => {
+    void refreshBackendStatus();
+    const onFocus = () => {
+      void refreshBackendStatus();
+    };
+    window.addEventListener('focus', onFocus);
+    return () => window.removeEventListener('focus', onFocus);
+  }, [refreshBackendStatus]);
+
   const handleToggleNotifications = useCallback(async () => {
     dispatch(toggleShowNotifications());
     const saveError = await dispatchSaveSettings(dispatch);
@@ -172,6 +242,23 @@ const OptionsContent: React.FC = () => {
 
   const handleToggleAutoSync = useCallback(async () => {
     const nextEnabled = !settings.syncEnabled;
+
+    if (nextEnabled) {
+      // 开启前必须重新做一次真实解析（2026-10-17 B8 缺陷 3）：mount 时的答案
+      // 可能已经过期（用户刚在下方保存了配置，或在另一个窗口改过）。
+      // 未就绪时**拒绝开启** —— 让它开着却永远不会跑，就等于用一个不可能
+      // 发生的频率欺骗用户。判据必须排在 dispatch(setSyncEnabled) **之前**：
+      // 先开后拒 = 开关闪一下又弹错。
+      //
+      // 双模式：云端用户解析出的状态是 ready（supabase 适配器无 lockedReason），
+      // canEnableAutoSync 为真 ⇒ 直接放行，云端路径行为不变。
+      const fresh = await refreshBackendStatus();
+      if (!canEnableAutoSync(fresh)) {
+        showToast(AUTO_SYNC_BLOCKED_TOAST[fresh.kind], 'error');
+        return;
+      }
+    }
+
     dispatch(setSyncEnabled(nextEnabled));
     const saveError = await dispatchSaveSettings(dispatch);
     if (saveError) {
@@ -185,9 +272,41 @@ const OptionsContent: React.FC = () => {
     }
     notifySwResyncAlarm();
     if (nextEnabled) {
-      showToast(`已开启自动同步，每 ${settings.syncIntervalMinutes} 分钟同步一次`, 'success');
+      showToast(
+        `已开启自动同步，每 ${settings.syncIntervalMinutes} 分钟同步一次。` +
+          // config.ts 明确要求 UI 把「重启后要重新输密码」说出来：
+          // MV3 的会话密钥不落盘，浏览器一关就没了，自动同步会停在锁定态。
+          '关闭浏览器后需重新输入应用密码才会继续。',
+        'success'
+      );
     }
   }, [dispatch, settings.syncEnabled, settings.syncIntervalMinutes, notifySwResyncAlarm, showToast]);
+
+  /**
+   * 自动同步开关的说明文案（2026-10-17 B8 缺陷 3）。
+   *
+   * 为什么要按后端状态分支：修复前这里只按 settings.syncEnabled 二选一，
+   * 于是「没配云盘」的用户也看到「每 10 分钟同步一次」—— 而它永远不会跑。
+   * 未就绪时必须说清「开了也不会运行」以及**怎么才能运行**。
+   *
+   * ⚠️ 双模式：上面的未就绪分支描述的是自带存储（WebDAV）。选了 TapStack
+   * 云端时 backendStatus 是 ready，会落到下面的正常分支 —— 云端不涉及
+   * 「应用密码 / 云盘」这些概念，所以正常分支的措辞用中性的「同步」。
+   */
+  const autoSyncHint = (() => {
+    if (backendStatus.kind === 'unconfigured') {
+      return '云盘尚未配置：自动同步即使打开也不会运行。请先在下方「自带存储配置」填写并点「保存并启用」。';
+    }
+    if (backendStatus.kind === 'locked') {
+      return '云盘本次会话尚未解锁：重新输入应用密码与加密口令之前，自动同步不会运行。';
+    }
+    if (backendStatus.kind === 'error' || backendStatus.kind === 'unknown') {
+      return '云盘状态读取失败：暂时无法确认自动同步能否运行，请在下方重新保存配置。';
+    }
+    return settings.syncEnabled
+      ? `已开启：每 ${settings.syncIntervalMinutes} 分钟在后台自动同步一次。关闭浏览器后需要重新输入应用密码，自动同步才会继续。`
+      : '打开后，TapStack 会按下面的间隔在后台自动同步；关闭浏览器后需要重新输入应用密码才会继续。';
+  })();
 
   const handleSetSyncInterval = useCallback(async (minutes: number) => {
     if (minutes === settings.syncIntervalMinutes) return;
@@ -227,7 +346,21 @@ const OptionsContent: React.FC = () => {
     } catch (err) {
       logWarn('[OptionsPage] 切换后端后重解析失败（下次调用自愈）:', err);
     }
-  }, [dispatch, settings.syncBackend, notifySwResyncAlarm, showToast]);
+    // 2026-10-17 B8（浏览器实测抓到）：切换后端后必须刷新**本页显示的**
+    // 后端状态。原先这里只做了 invalidate + prime（为了缓存与 SW 一致性），
+    // 没有 setBackendStatus —— 于是 backendsStatus 仍是改动前的值，
+    // 「自动同步」的 hint 继续显示旧后端的结论。
+    //
+    // 实测症状：默认（TapStack 云端）时 hint 是「打开后…会按间隔同步」，
+    // 用户切到未配置的「自带存储」后 hint **不变**，仍在承诺会自动同步 ——
+    // 而实际上点开关会被拒绝（闸门是好的）。承诺与行为不一致，正是本组
+    // 缺陷要消灭的那类「假绿灯」。
+    //
+    // 注：refreshBackendStatus 自带 invalidate + prime，所以上面那次
+    // prime 只是为了让本页缓存预热（切完立刻点同步也不用再解析一次）；
+    // 这里再调一次拿分类结果，代价是一次本地存储读。
+    await refreshBackendStatus();
+  }, [dispatch, settings.syncBackend, notifySwResyncAlarm, showToast, refreshBackendStatus]);
 
   return (
     <div className="app-shell theme-shell min-h-screen dark:text-gray-100">
@@ -391,16 +524,17 @@ const OptionsContent: React.FC = () => {
               </div>
             </div>
 
-            {/* 档位行：只在自动同步开着时显示 ——
-                关着的时候「多久跑一次」没有意义，显示它只会让人以为
-                改了档位就会生效。 */}
+            {/* 档位行：**始终渲染** ——
+                注释原先写「只在自动同步开着时显示」，但下方 radiogroup 是
+                无条件渲染的（2026-10-17 B8 缺陷 4 对齐注释与代码）。
+
+                为什么保留常显：把「多久跑一次」藏起来，用户想设的时候找不到；
+                而它本身没有副作用 —— 真正决定跑不跑的是上面的开关与后端的
+                就绪状态。档位行下方有 hint 说清「未就绪时开了也不会运行」，
+                所以常显不会让人误以为改了档位就生效。 */}
             <ToggleRow
               label="自动同步"
-              hint={
-                settings.syncEnabled
-                  ? `已开启：每 ${settings.syncIntervalMinutes} 分钟在后台自动同步一次。关闭浏览器后不再运行。`
-                  : '打开后，TapStack 会按下面的间隔在后台自动同步。'
-              }
+              hint={autoSyncHint}
               checked={settings.syncEnabled}
               onToggle={handleToggleAutoSync}
             />

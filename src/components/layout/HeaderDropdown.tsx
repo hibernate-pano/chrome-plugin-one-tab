@@ -14,6 +14,20 @@ import {
   serializeDiagnosticsReport,
 } from '@/utils/diagnostics';
 import { logError, logInfo, logWarn } from '../../utils/log';
+// B8（2026-10-17，从 slim 适配双模式）：同步状态行的两个真值来源。
+import {
+  getLastBackendResolution,
+  invalidateActiveSyncBackend,
+  primeSyncBackend,
+} from '@/sync-backend';
+import {
+  BACKEND_STATUS_DOT_CLASS,
+  BACKEND_STATUS_TITLE,
+  classifyBackendResolution,
+  formatLastSyncTime,
+  UNKNOWN_BACKEND_STATUS,
+  type BackendStatus,
+} from './backendStatus';
 
 /** 问题反馈落点：GitHub issues 新建页。用户自己决定粘不粘诊断摘要。 */
 const FEEDBACK_ISSUE_URL = 'https://github.com/hibernate-pano/chrome-plugin-one-tab/issues/new';
@@ -64,6 +78,30 @@ interface HeaderDropdownProps {
 /** 菜单行的统一 hover 反馈。菜单行不做位移（flat-interaction 的 -translate-y 会轻微跳动），只做背景色。 */
 const MENU_ROW = "w-full text-left px-4 py-2 text-sm text-gray-700 dark:text-gray-300 flex items-center transition-colors duration-150 theme-menu-hover";
 
+/**
+ * 读一次**真实**的后端状态（2026-10-17 B8，从 slim 适配双模式）。
+ *
+ * 为什么每次打开菜单都强制重解析（`invalidateActiveSyncBackend` + `primeSyncBackend`）：
+ * `activeBackend` 是**本执行上下文**的进程内缓存，用户在另一个窗口的设置页
+ * 改完配置后，popup 这边不会收到任何通知。状态行要回答的是「现在到底能不能
+ * 同步」，不是「这个页面半分钟前解析出了什么」，所以必须重新读设置与解锁状态。
+ * 解析本身不碰网络（构造适配器不发请求），代价只有一次本地存储读。
+ *
+ * 双模式说明：分类结果里「未配置/未解锁」指的是**自带存储（WebDAV）**；
+ * 用户选了 TapStack 云端时解析出的是 supabase 适配器、没有 lockedReason，
+ * 分类为 ready。状态行的前缀（下方 JSX）按 settings.syncBackend 区分两者。
+ */
+async function readBackendStatus(): Promise<BackendStatus> {
+  try {
+    invalidateActiveSyncBackend();
+    await primeSyncBackend();
+    return classifyBackendResolution(getLastBackendResolution());
+  } catch (error) {
+    logWarn('[HeaderDropdown] 同步状态解析失败，按「状态未知」展示:', error);
+    return classifyBackendResolution(null);
+  }
+}
+
 
 export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({
   onClose,
@@ -73,7 +111,10 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({
 }) => {
   const dispatch = useAppDispatch();
   const { isAuthenticated, user } = useAppSelector(state => state.auth);
-  const { groups, lastSyncTime } = useAppSelector(state => state.tabs);
+  // 2026-10-17 B8：不再从 tabs 取 lastSyncTime。
+  // 该字段全仓没有任何 reducer / thunk 写入（零写方），读它等于
+  // 「上次同步」这一行永远不渲染。真值在 storage.getLastSyncTime()。
+  const { groups } = useAppSelector(state => state.tabs);
   const settings = useAppSelector(state => state.settings);
   const [openSubmenu, setOpenSubmenu] = useState<'export' | 'import' | null>(null);
   // ── 2026-10-09 P1-5：从云端刷新必须有「进行中 / 成功 / 失败」三态 ──
@@ -81,6 +122,12 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({
   // 页面**毫无变化**，用户完全无法区分「已经是最新」「没点上」「坏了」。
   // 同步按钮本体有进度条和 toast，这个刷新快捷入口一条都没有。
   const [isRefreshing, setIsRefreshing] = useState(false);
+  // 同步状态行的两个真值（2026-10-17 B8，从 slim 适配）：
+  //   · backendStatus ← getLastBackendResolution()，不再是一颗写死的绿点；
+  //   · lastSyncAt    ← storage.getLastSyncTime()。Redux 的 tabs.lastSyncTime
+  //     没有任何 reducer / thunk 写过，读它等于这一行永远不渲染。
+  const [backendStatus, setBackendStatus] = useState<BackendStatus>(UNKNOWN_BACKEND_STATUS);
+  const [lastSyncAt, setLastSyncAt] = useState<string | null>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
   const { showConfirm, showAlert, showToast } = useToast();
 
@@ -155,8 +202,39 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({
       });
     } finally {
       setIsRefreshing(false);
+      // 这次尝试可能改变了解锁 / 配置状态（例如口令缺失导致后端解析成锁定），
+      // 重查一次，让状态行与刚刚发生的事一致。
+      setBackendStatus(await readBackendStatus());
+      try {
+        setLastSyncAt(await storage.getLastSyncTime());
+      } catch (error) {
+        logWarn('[HeaderDropdown] 刷新后读取最后同步时间失败:', error);
+      }
     }
   };
+
+  // 菜单每次打开都会挂载本组件（Header 里是条件渲染），所以这条 effect 就是
+  // 「每次打开菜单做一次真实检查」——不是组件生命周期里只跑一次的装饰。
+  // 2026-10-17 B8：修复前这里是写死的绿点 + 读 Redux 里零写方的字段。
+  useEffect(() => {
+    let alive = true;
+    const run = async () => {
+      const status = await readBackendStatus();
+      if (!alive) return;
+      setBackendStatus(status);
+      try {
+        const time = await storage.getLastSyncTime();
+        if (alive) setLastSyncAt(time);
+      } catch (error) {
+        // 读不到时间就不渲染那一行 —— 不拿编出来的值冒充「上次同步」。
+        logWarn('[HeaderDropdown] 读取最后同步时间失败:', error);
+      }
+    };
+    void run();
+    return () => {
+      alive = false;
+    };
+  }, []);
 
   // 处理点击外部关闭下拉菜单
   useEffect(() => {
@@ -410,6 +488,11 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({
     }
   };
 
+  // 坏时间戳 → null → 整行不渲染（formatLastSyncTime 里对 NaN 的处理）。
+  const lastSyncLabel = lastSyncAt ? formatLastSyncTime(lastSyncAt) : null;
+  const lastSyncTitle =
+    lastSyncAt && lastSyncLabel ? `上次成功同步：${new Date(lastSyncAt).toLocaleString()}` : null;
+
   return (
     <div
       ref={dropdownRef}
@@ -418,11 +501,23 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({
       className="ts-panel absolute right-0 mt-2 w-64 max-w-[calc(100vw-2rem)] theme-bg-elevated theme-radius-card theme-shadow-panel border theme-border-default z-20 max-h-[70vh] overflow-y-auto"
     >
       <div className="py-2">
-        {isAuthenticated && user && (
+        {/* 2026-10-17 B8（浏览器实测抓到）：这个条件原先只有 `isAuthenticated && user`。
+            ⚠️ 双模式下那是个真缺陷：自带存储（WebDAV）用户**没有 TapStack 账号**，
+            isAuthenticated 恒为 false ⇒ 他们只看到「登录 / 注册」，永远看不到
+            自己的同步状态（已配置/未解锁/去设置）—— 而登录对他们毫无意义。
+            现改为「已登录 或 选了自带存储」都渲染这张卡。
+            下面的登录按钮则反过来：只在**未登录且用云端**时才提示登录。 */}
+        {((isAuthenticated && user) || settings.syncBackend === 'webdav') && (
           <>
             <div className="px-4 py-3 border-b border-gray-200 dark:border-gray-700">
               <div className="flex items-center justify-between mb-2">
-                <p className="text-sm font-medium text-gray-900 dark:text-gray-100">{user.email}</p>
+                <p className="text-sm font-medium text-gray-900 dark:text-gray-100">
+                  {isAuthenticated && user
+                    ? user.email
+                    : settings.syncBackend === 'webdav'
+                      ? '自带存储'
+                      : '未登录'}
+                </p>
                 <button
                   onClick={handleQuickRefresh}
                   disabled={isRefreshing}
@@ -443,33 +538,52 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({
                 </button>
               </div>
               <div className="flex items-center justify-between">
-                  <p className="text-xs text-gray-500 dark:text-gray-400 flex items-center">
-                    <span className="inline-block w-2 h-2 rounded-full bg-green-500 mr-1"></span>
-                    已登录
+                {/* 2026-10-17 B8（从 slim 适配双模式）：
+                    原先这里是**写死的绿点 + 「已登录」**，没有任何判据 ——
+                    未配置 / 未解锁 / 后端解析失败的用户也看到「已登录」。
+                    现在状态来自 getLastBackendResolution()：
+                    已配置并解锁 / 未解锁 / 未配置 / 状态不可读 四态可辨，
+                    未就绪时提供「去设置」入口。
+
+                    ⚠️ 双模式：前缀按 settings.syncBackend 区分 —— 末尾存储
+                    用「自带存储」，TapStack 云端用「TapStack 云端」。
+                    slim 上是写死的「自带存储 · 」，照抄会在云端模式下撒谎。 */}
+                  <p
+                    className="min-w-0 text-xs text-gray-500 dark:text-gray-400 flex items-center"
+                    title={backendStatus.lockedReason ?? BACKEND_STATUS_TITLE[backendStatus.kind]}
+                  >
+                    <span
+                      className={`inline-block w-2 h-2 rounded-full mr-1 shrink-0 ${BACKEND_STATUS_DOT_CLASS[backendStatus.tone]}`}
+                    ></span>
+                    <span className="truncate">
+                      {settings.syncBackend === 'webdav' ? '自带存储' : 'TapStack 云端'} ·{' '}
+                      {backendStatus.label}
+                    </span>
                   </p>
-                {lastSyncTime && (
-                  <p className="text-xs text-gray-400 dark:text-gray-500" title={`最后手动同步: ${new Date(lastSyncTime).toLocaleString()}`}>
-                    {(() => {
-                      const now = new Date();
-                      const syncDate = new Date(lastSyncTime);
-                      const diffMs = now.getTime() - syncDate.getTime();
-                      const diffMins = Math.floor(diffMs / 60000);
-                      
-                      if (diffMins < 1) return '刚刚同步';
-                      if (diffMins < 60) return `${diffMins}分钟前`;
-                      const diffHours = Math.floor(diffMins / 60);
-                      if (diffHours < 24) return `${diffHours}小时前`;
-                      const diffDays = Math.floor(diffHours / 24);
-                      return `${diffDays}天前`;
-                    })()}
-                  </p>
+                {backendStatus.actionable && (
+                  <button
+                    type="button"
+                    onClick={handleOpenOptions}
+                    className="shrink-0 text-xs font-medium text-primary-600 underline hover:text-primary-700 dark:text-primary-400 dark:hover:text-primary-300"
+                  >
+                    去设置
+                  </button>
                 )}
               </div>
+              {/* 上次同步时间：真值来自 storage.getLastSyncTime()（由 syncEngine
+                  的成功路径写入），而不是 Redux 的 tabs.lastSyncTime ——
+                  后者全仓零写方，读它等于这一行永远不渲染（缺陷 2）。
+                  坏时间戳 → formatLastSyncTime 返回 null → 整行不渲染。 */}
+              {lastSyncLabel && lastSyncTitle && (
+                <p className="mt-1 text-xs text-gray-400 dark:text-gray-500" title={lastSyncTitle}>
+                  上次成功同步 · {lastSyncLabel}
+                </p>
+              )}
             </div>
           </>
         )}
 
-        {!isAuthenticated && (
+        {!isAuthenticated && settings.syncBackend !== 'webdav' && (
           <button
             onClick={() => onOpenAuth('login')}
             className={MENU_ROW}

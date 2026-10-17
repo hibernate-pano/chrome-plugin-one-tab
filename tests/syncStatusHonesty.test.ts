@@ -285,6 +285,26 @@ describe('缺陷 1：同步状态由真实解析决定，三种状态互相可�
     assert.match(MENU, /去设置/);
     assert.match(MENU, /handleOpenOptions/, '入口应复用已有 openOptionsPage handler');
   });
+
+  // 2026-10-17 浏览器实测抓到的真缺陷（双模式特有，slim 上不存在）：
+  // 状态卡原先只在 `isAuthenticated && user` 时渲染，而**自带存储用户没有
+  // TapStack 账号**，isAuthenticated 恒为 false ⇒ 他们只看到「登录 / 注册」，
+  // 永远看不到自己的同步状态（已配置 / 未解锁 / 去设置）—— 而登录对他们
+  // 毫无意义。Playwright 实测确认过这个形态。
+  it('自带存储用户即使未登录也必须看到同步状态卡（而不是「登录 / 注册」）', () => {
+    // 卡片容器的渲染条件必须把 webdav 也算进去。
+    assert.match(
+      MENU,
+      /settings\.syncBackend === 'webdav'\)\s*&&\s*\(/,
+      '状态卡条件必须包含「选了自带存储」，否则没有账号的 WebDAV 用户看不到状态'
+    );
+    // 登录按钮必须反过来：未登录**且不是**自带存储时才提示。
+    assert.match(
+      MENU,
+      /!isAuthenticated\s*&&\s*settings\.syncBackend !== 'webdav'/,
+      '登录按钮不应出现在自带存储用户的菜单里 —— 他们不需要 TapStack 账号'
+    );
+  });
 });
 
 describe('缺陷 2：上次同步时间读真值，坏数据不渲染', () => {
@@ -373,18 +393,65 @@ describe('缺陷 3：自动同步在配置 + 解锁前不得被打开', () => {
     assert.match(CODE, /getLastBackendResolution\(\)/);
     assert.match(CODE, /classifyBackendResolution\(/);
   });
+
+  // 2026-10-17 浏览器实测抓到的真缺陷（单测原本覆盖不到）：
+  // 切换同步方式后 hint 不刷新，仍在承诺「会自动同步」。
+  //
+  // 症状（Playwright 实测）：默认 TapStack 云端时 hint 是「打开后…会按间隔
+  // 同步」；点「自带存储（WebDAV）」切到未配置状态后 hint **不变**，仍在承诺
+  // 会自动同步 —— 而点开关其实会被拒绝（闸门本身是好的）。承诺与行为不一致，
+  // 正是本组要消灭的那类「假绿灯」。
+  //
+  // 根因：handleSelectBackend 只做了 invalidateActiveSyncBackend +
+  // primeSyncBackend（那是为缓存与 SW 一致性），没有 setBackendStatus，
+  // 于是本页显示的状态仍是改动前的值。
+  it('切后端后必须刷新本页状态（否则 hint 会继续承诺自动同步）', () => {
+    const start = CODE.indexOf('const handleSelectBackend');
+    assert.ok(start > 0, '应能找到 handleSelectBackend');
+    const end = CODE.indexOf('return (', start);
+    const body = CODE.slice(start, end === -1 ? CODE.length : end);
+    assert.match(
+      body,
+      /refreshBackendStatus\(\)/,
+      '切换后端后必须调 refreshBackendStatus —— 只 invalidate + prime 不会更新本页显示的状态'
+    );
+    // 反证：primeSyncBackend 单独存在不够（那正是修复前的形态）。
+    assert.match(body, /primeSyncBackend\(\)/, '前提：此处确实在重解析后端（修复前只有这一步）');
+  });
+
 });
 
 describe('缺陷 4：文案与注释不得指向已删除的后端切换控件', () => {
-  it('不再说「切换同步方式不会替你验证」——切换控件已删除', () => {
+  // ⚠️ 2026-10-17 双模式适配说明（与 slim 的分歧，刻意保留）：
+  //
+  // slim 分支删除了后端切换器（云端下线），所以它断言两件事：
+  //   · 「切换同步方式不会替你验证」必须消失（那句话在讲一个不存在的控件）；
+  //   · 改为「保存并启用不会替你验证地址可用性」。
+  //
+  // 本项目**保留** TapStack 云端后端，切换器仍然存在（handleSelectBackend
+  // + 双 radiogroup），所以旧句子描述的是真实存在的动作、且是有用的警告 ——
+  // 按 slim 的断言删掉它，会让切换控件失去那句提醒。
+  //
+  // 因此本组改为断言双模式的真相：**两句都应在**（两个动作都存在，各自
+  // 都该有警告）。这不是给测试放水 —— 它比 slim 的版本多钉一条。
+  it('两个真实存在的动作都要有「不会替你验证」的警告（双模式：切换器仍在）', () => {
     const code = stripComments(read('src/options/OptionsPage.tsx'));
     assert.ok(
-      !code.includes('切换同步方式不会替你验证'),
-      '后端切换控件已删除，这句话在讲一个不存在的东西'
+      code.includes('切换同步方式不会替你验证'),
+      '双模式下切换器仍存在（handleSelectBackend + 双 radiogroup），' +
+        '这句话讲的是真实动作，删掉会让切换控件失去警告'
+    );
+    // 双模式下用户的实际动作是「保存并启用」（而不是先切后端再配）——
+    // 警告必须点名这个动作，否则用户不知道该做什么。
+    // 不要求 slim 的那个精确措辞：文案有多个等价写法，钉死字面量会把
+    // 「改一句更好读的话」变成测试红灯。
+    assert.ok(
+      code.includes('保存并启用'),
+      '警告必须点名用户的实际动作「保存并启用」，不能只说「不会替你验证」'
     );
     assert.ok(
-      code.includes('保存并启用不会替你验证地址可用性'),
-      '应改为指向页面上真实存在的动作「保存并启用」'
+      code.includes('测试连接'),
+      '警告应指出「先测试连接」这条可执行的路径'
     );
   });
 
@@ -400,18 +467,45 @@ describe('缺陷 4：文案与注释不得指向已删除的后端切换控件',
   });
 });
 
-describe('缺陷 6：隐私 / 商店披露不得再描述已删除的产品事件', () => {
-  it('privacy.html 明确写出「不记录产品事件或使用统计」', () => {
+describe('缺陷 6：隐私 / 商店披露必须与真实的埋点行为一致', () => {
+  // ⚠️ 2026-10-17 双模式适配说明（与 slim 的分歧，刻意保留）：
+  //
+  // slim 分支把 productEvents / 诊断 / 反馈能力整体删除了，所以它的断言是
+  // 「必须声明**不记录**任何产品事件或使用统计」。
+  //
+  // 本项目保留了这些能力（src/utils/productEvents.ts 仍在，
+  // TabManager.ts:167/305 仍在 trackProductEvent('session_saved')），
+  // 所以正确的不变式**不是**「声明不记录」，而是
+  // **「披露与行为一致」**：
+  //   · 真的在采集 ⇒ 就必须如实说采集了什么、存在哪里、上不上传；
+  //   · 谎称「不记录」才是真正的合规问题。
+  //
+  // 本组改为钉住「如实披露」：既不羞辱埋点（那是产品决策），也不允许
+  // 披露与代码脱节。这比 slim 版本更贴合本项目的实际。
+  it('privacy.html 如实披露产品事件的范围：仅本地、不上传', () => {
     const privacy = read('src/legal/privacy.html');
-    assert.ok(!privacy.includes('产品事件仅保存在'), '旧的「仅保存在设备本地」仍在暗示采集');
-    assert.match(privacy, /不记录任何产品事件或使用统计/, '应正面声明不记录');
+    assert.match(
+      privacy,
+      /产品事件仅保存在您的设备本地，不会上传/,
+      '本项目仍采集产品事件（productEvents），必须如实说明「仅本地、不上传」'
+    );
+    assert.ok(
+      !privacy.includes('不记录任何产品事件或使用统计'),
+      '代码仍在采集却声明「不记录」= 披露与行为脱节，那才是真的合规问题'
+    );
   });
 
-  it('CHROMEWEBSTORE.md 的 User activity 行不再声称记录', () => {
+  it('CHROMEWEBSTORE.md 的 User activity 行与埋点行为一致（本地记录、不上传）', () => {
     const storeText = read('CHROMEWEBSTORE.md');
-    assert.ok(!storeText.includes('产品事件仅存本地'), '被删除的采集不得还挂在审核披露表里');
     const row = storeText.split('\n').find(l => l.startsWith('| User activity |'));
     assert.ok(row, '披露表必须有 User activity 行');
-    assert.ok(row?.includes('不记录'), '应正面声明「不记录」');
+    assert.ok(
+      row?.includes('仅本地') && row?.includes('不上传'),
+      'User activity 行必须说清「仅本地记录、不上传」，与实际埋点行为一致'
+    );
+    assert.ok(
+      !row?.includes('不记录'),
+      '本项目确实在本地记录产品事件，声称「不记录」与行为脱节'
+    );
   });
 });
