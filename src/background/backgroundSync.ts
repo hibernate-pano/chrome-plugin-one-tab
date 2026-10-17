@@ -107,6 +107,47 @@ const backoffKv: BackoffKv = {
 };
 
 /**
+ * 「同步需要配置/解锁」的一次性可见提醒。
+ *
+ * ── 为什么必须可见 ────────────────────────────────────────────────────
+ * 修复前锁定后端只打一行 logWarn，用户侧零感知：设置页宣称「每 N 分钟后台
+ * 同步一次」，实际连续 8 次后 alarm 被清掉、自动同步静默停摆。
+ * 通知是这条链路上唯一能主动触达用户的通道。
+ *
+ * 【一次性】发送成功才置标志（backoffKv = chrome.storage.local，活过 SW
+ * 回收）：同一锁定状态连续多轮只打扰一次；发送失败不置标志，下一轮重试。
+ * 真正跑通一轮（done）后清掉标志 ——「解锁又锁上」这类新一季问题会重新
+ * 提醒一次，而不是被第一次永久静默。
+ *
+ * 通知 API 不可用时（测试环境 / 未来移除 notifications 权限）静默返回：
+ * 提醒是附加的，绝不能因为它反把同步让路这条路弄失败。
+ */
+const LOCKED_BACKEND_NOTICE_KEY = 'background_sync_locked_notice_shown';
+
+async function notifyLockedBackendOnce(): Promise<void> {
+  const api = (globalThis as { chrome?: typeof chrome }).chrome;
+  // API 不可用（测试环境 / 权限被移除）时**不置标志**直接返回：
+  // 「发不出去」不等于「已提醒过」。修复前这里先置位再发现没有 API，
+  // 标志就此留下，同一锁定季后续轮次连尝试都不再做。
+  if (!api?.notifications?.create) return;
+  try {
+    const already = await backoffKv.get(LOCKED_BACKEND_NOTICE_KEY);
+    if (already) return;
+    await api.notifications.create({
+      type: 'basic',
+      iconUrl: api.runtime?.getURL?.('icons/icon128.png'),
+      title: 'TapStack 同步需要配置或解锁',
+      message:
+        '后台自动同步已停在「让路」状态：云盘尚未配置，或本次会话尚未解锁。' +
+        '配置好并解锁后会自动继续，不用做什么。',
+    });
+    await backoffKv.set(LOCKED_BACKEND_NOTICE_KEY, true);
+  } catch {
+    // 发不出去就下轮再试，不置标志，不抛错。
+  }
+}
+
+/**
  * 自动同步的生效配置（总开关 + 档位）。setup 与 handleAlarm 共用、
  * service-worker 的自动下载门禁也复用它（单点判据，不各写一份）。
  *
@@ -387,10 +428,43 @@ async function handleAlarm(alarm: chrome.alarms.Alarm): Promise<void> {
     if (outcome.ok) {
       const before = state.consecutiveFailures;
       await recordSyncSuccess(backoffKv, Date.now());
-      if (before > 0) {
+      if (outcome.locked) {
+        // ── 2026-10-17 B1：未配置/未解锁 = 正常用户状态，按「让路」收尾 ──
+        // recordSyncSuccess 的复位已在上方执行（与所有 ok 分支同形）：本轮
+        // 根本没碰网络，留着旧失败计数只会在用户解锁后的下一次真实故障时
+        // 提前撞上 8 次上限。
+        //
+        // 剩下的两条动作：
+        //   1) 一次性可见提醒 —— 修复前这里只有 logWarn，用户零感知；
+        //      而设置页仍宣称「每 N 分钟后台同步一次」，实际连续 8 次后
+        //      alarm 被清掉、自动同步静默停摆。那正是这次修复的核心。
+        //   2) **显式按用户档位重排 alarm** —— 不是 1 分钟的退避档，也不是
+        //      「什么都不做」。为什么不是什么都不做：锁定时 alarm 必须保持
+        //      活着，否则用户配置好后没有任何自动路径把它救回来；而 delay
+        //      写退避档会把「让路」伪装成「失败」。
+        //
+        // 注意：这里不会走到下面的 recordSyncFailure，更不会走到
+        // isBackoffExhausted 的清 alarm 分支。
+        await notifyLockedBackendOnce();
+        rescheduleAlarm(cfg.intervalMinutes, cfg.intervalMinutes);
+        logInfo(
+          `[BackgroundSync] 未配置/未解锁云盘，本轮让路（不进退避、不清 alarm，` +
+            `保持 ${cfg.intervalMinutes} 分钟节奏）: ${outcome.detail}`
+        );
+      } else if (before > 0) {
+        // 真正跑通一轮（done）才有资格清掉「未配置已提醒」标志：
+        // 下一季锁定状态需要重新提醒，而不是被第一次永久静默。
+        // ⚠️ 不能对保护性让路（kind='yielded'，如 already_syncing）也清：
+        // 那会让「锁定 → 队列忙让路 → 再锁定」多发一次提醒（标志被误清）。
+        if (outcome.kind === 'done') {
+          await backoffKv.remove(LOCKED_BACKEND_NOTICE_KEY).catch(() => undefined);
+        }
         logInfo(`[BackgroundSync] 同步成功，退避复位（此前连续失败 ${before} 次）→ 回到 ${cfg.intervalMinutes} 分钟节奏`);
         rescheduleAlarm(cfg.intervalMinutes, cfg.intervalMinutes);
       } else {
+        if (outcome.kind === 'done') {
+          await backoffKv.remove(LOCKED_BACKEND_NOTICE_KEY).catch(() => undefined);
+        }
         logInfo(`[BackgroundSync] 同步成功（${outcome.detail}）`);
       }
     } else {
@@ -478,6 +552,14 @@ export interface BackgroundSyncOutcome {
   kind: BackgroundSyncOutcomeKind;
   /** 一句话原因，落日志与退避状态；成功时是进度摘要。 */
   detail: string;
+  /**
+   * 本轮让路的根因是「自带存储未配置/未解锁」（锁定占位后端抛出）。
+   *
+   * 不塞进 kind 的理由：kind='yielded' 还有保护性跳过（already_syncing 等）
+   * 这些**不该**发配置提醒的情形；而 locked=true 需要额外动作
+   * （一次性通知 + 显式按用户档位重排 alarm）。两套语义不能挤在一个字段。
+   */
+  locked?: boolean;
 }
 
 async function performBackgroundSync(): Promise<BackgroundSyncOutcome> {
@@ -544,6 +626,21 @@ async function performBackgroundSync(): Promise<BackgroundSyncOutcome> {
       // 单写者队列（与 service-worker.ts 的 SYNC upload handler 同名 'sync:upload'），
       // 后台轮询上传与 popup SYNC 消息上传串行执行，避免并发 upload/download 撞车。
       const upResult = await enqueue('sync:upload', () => syncEngine.upload({ forcePending: true }));
+      if (upResult.locked) {
+        // ── 2026-10-17 B1：未配置/未解锁 = 正常用户状态，按「让路」收尾 ──
+        // 关键判据来自 syncEngine 的 locked 标记（根因是 LockedBackendError），
+        // 不用文案匹配。两条路都必须覆盖（上传口与下载口），否则「本地有未
+        // 上传变更」的用户会从上传口子重新掉回退避阶梯。
+        logInfo(
+          `[BackgroundSync] 未配置/未解锁云盘，本地上传让路（不进退避）: ${upResult.error ?? 'unknown'}`
+        );
+        return {
+          ok: true,
+          kind: 'yielded',
+          locked: true,
+          detail: `未配置/未解锁云盘：${upResult.error ?? '请到设置里完成配置或解锁'}`,
+        };
+      }
       if (!upResult.success) {
         logWarn(`[BackgroundSync] 上传未成功，跳过本次下载: ${upResult.error}（下轮 alarm 重试）`);
         // 修复前这里 return true（当成功），于是「上传一直失败」会每 60s 无限重试。
@@ -573,6 +670,18 @@ async function performBackgroundSync(): Promise<BackgroundSyncOutcome> {
   const result = await enqueue('sync:download', () => syncEngine.downloadAndMerge());
   if (!result.success) {
     const reason = result.reason ?? 'unknown';
+    if (result.locked) {
+      // ── 2026-10-17 B1：未配置/未解锁 ⇒ 让路，不是失败 ─────────────────
+      // 关键判据来自 syncEngine 的 locked 标记（根因是 LockedBackendError），
+      // 不用文案匹配：文案一改就静默失效。
+      logInfo(`[BackgroundSync] 未配置/未解锁云盘，本轮让路（不进退避、不清 alarm）: ${reason}`);
+      return {
+        ok: true,
+        kind: 'yielded',
+        locked: true,
+        detail: `未配置/未解锁云盘：${reason}`,
+      };
+    }
     // already_syncing / recent_upload_guard / pending_upload_failed 属正常并发或保护性跳过，
     // **不算故障**（上轮刚上传过、下轮就正常跑），不进退避。
     // up_to_date 走的是 success 分支（见 syncEngine 的探活短路）。

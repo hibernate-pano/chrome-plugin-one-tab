@@ -28,6 +28,7 @@ import {
 import { mergeOpStamped } from '@/core/opStampMerge';
 import { checkDeleteFailsafe } from '@/sync-backend/failsafe';
 import { readConfiguredBackendId } from '@/sync-backend';
+import { isLockedBackendError } from '@/sync-backend/lockedBackendError';
 import { dropSyncMergedGroups, removedGroupIds } from '@/core/mutationOps';
 import { ensureOpStampMigrated } from '@/background/opStampMigratedGuard';
 import { enqueue } from '@/background/mutationQueue';
@@ -57,6 +58,16 @@ export interface MergeResult {
   error?: string;
   /** 轻量探活命中（云端无变更，直接返回本地快照）时为 true */
   upToDate?: boolean;
+  /**
+   * 本轮失败的根因是「自带存储未配置/未解锁」（锁定占位后端抛出）。
+   *
+   * ── 为什么要与 `reason` 分开 ────────────────────────────────────────
+   * `reason` 仍保留**人话**（锁定后端的提示就是用户下一步），UI 原样展示；
+   * 而 `locked` 是给后台分类用的机器标记：它是正常用户状态，不是故障，
+   * backgroundSync 据此把本轮算作 `yielded`（不进退避、不清 alarm）。
+   * 把两者混成「reason === 'backend_locked'」会让人话从 toast 里消失。
+   */
+  locked?: boolean;
 }
 
 export interface UploadResult {
@@ -68,6 +79,11 @@ export interface UploadResult {
    * 目前只有一种：本地无活跃组时跳过覆盖上传（绝不拿空本地清空云端）。
    */
   skippedOverwrite?: 'no-active-groups';
+  /**
+   * 失败根因是「自带存储未配置/未解锁」（锁定占位后端抛出）。
+   * 语义与 MergeResult.locked 相同：正常用户状态，后台应让路而不是退避。
+   */
+  locked?: boolean;
 }
 
 export type SyncOperation = 'upload' | 'download' | 'none';
@@ -613,10 +629,13 @@ export class SyncEngine {
       this.isSyncing = false;
       // P1-5：下载抛错/回滚后，若 pending 仍 true 必须重调度上传。
       await this.rescheduleUploadIfPending();
+      // locked 标记必须保留：reason 保持人话（UI 原样展示），
+      // 机器分类走 locked（backgroundSync 据此把「未配置/未解锁」算让路）。
       return {
         success: false,
         groups: snapshot,
         reason: error instanceof Error ? error.message : 'download_merge_failed',
+        ...(isLockedBackendError(error) ? { locked: true } : {}),
       };
     }
   }
@@ -765,7 +784,11 @@ export class SyncEngine {
         severity: 'medium',
         fallbackMessage: '数据上传失败',
       });
-      return { success: false, error: error instanceof Error ? error.message : '上传失败' };
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : '上传失败',
+        ...(isLockedBackendError(error) ? { locked: true } : {}),
+      };
     }
   }
 

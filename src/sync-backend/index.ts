@@ -27,6 +27,7 @@ import { kvGet, kvSet } from '@/storage-kv/storageAdapter';
 import { WebDavClient } from './webdav/client';
 import { WebDavBackendAdapter } from './webdav/adapter';
 import { hasHostPermission } from './webdav/permission';
+import { LockedBackendError } from './lockedBackendError';
 import { createSeqRegistry } from '@/utils/seqRegistry';
 import { storage } from '@/utils/storage';
 import {
@@ -141,6 +142,19 @@ export async function readConfiguredBackendId(): Promise<SyncBackendId> {
 
 export type { SyncBackendPort, SyncBackendId, RemoteGroupFingerprint, UploadGroupsResult } from './ports';
 export { SupabaseBackendAdapter } from './supabaseAdapter';
+export { LockedBackendError, isLockedBackendError } from './lockedBackendError';
+
+/**
+ * 锁定态的机器可读分类（与 lockedReason 成对出现）。
+ *   · unconfigured —— 确认没配（用户去设置里填地址）；
+ *   · locked      —— 配了但本次会话未解锁（重新输入应用密码与口令）；
+ *   · error       —— 读不到配置/解锁状态（存储故障，重试或重新保存）。
+ *
+ * 定义位置：slim 上放在 index.ts（与 ResolutionOutcome 相关）；本文件沿用。
+ * 注意它不是 lockedBackendError.ts 的成员 —— 那两个成员是错误类与判据，
+ * 这个类型是解析结果的分类。
+ */
+export type LockedKind = 'unconfigured' | 'locked' | 'error';
 
 // ── 阶段 2：按设置解析后端 ─────────────────────────────────────────────
 
@@ -259,6 +273,14 @@ interface ResolutionOutcome {
    * 有它 ⇒ 后端是占位，任何同步操作都会抛这句错。UI 据此展示「去解锁」。
    */
   lockedReason?: string;
+  /**
+   * 锁定的机器可读分类（2026-10-17 从 slim 适配，双模式）。
+   *  · unconfigured —— 确认没配（用户去设置里填地址）；
+   *  · locked      —— 配了但本次会话未解锁（重新输入应用密码与口令）；
+   *  · error       —— 读不到配置/解锁状态（存储故障，重试或重新保存）。
+   * 与 lockedReason 成对出现；UI（backendStatus.ts）优先读它，文案只作兜底。
+   */
+  lockedKind?: 'unconfigured' | 'locked' | 'error';
 }
 
 /**
@@ -275,7 +297,10 @@ class LockedWebDavBackend implements SyncBackendPort {
   constructor(private readonly reason: string) {}
 
   private fail(): never {
-    throw new Error(this.reason);
+    // LockedBackendError 而不是普通 Error：下游据此把「未配置/未解锁」
+    // 与真实网络/服务端故障分机器识别，避免把用户还没配置的正常状态
+    // 计入失败退避阶梯（连续 8 次后自动同步被静默停掉）。
+    throw new LockedBackendError(this.reason);
   }
 
   async fetchFingerprints(): Promise<never> {
@@ -315,30 +340,31 @@ async function resolveBackendOutcome(): Promise<ResolutionOutcome> {
 
   if (requestedId === 'supabase') return supabase();
 
-  const locked = (lockedReason: string): ResolutionOutcome => ({
+  const locked = (lockedReason: string, lockedKind: 'unconfigured' | 'locked' | 'error'): ResolutionOutcome => ({
     backend: new LockedWebDavBackend(lockedReason),
     resolvedId: 'webdav',
     requestedId,
     lockedReason,
+    lockedKind,
   });
 
   let cfg: StoredWebDavConfig | null;
   try {
     cfg = await loadWebDavConfig();
   } catch {
-    return locked('自带存储的配置读取失败，已中止本次同步以免数据传到错误的后端。请稍后重试。');
+    return locked('自带存储的配置读取失败，已中止本次同步以免数据传到错误的后端。请稍后重试。', 'error');
   }
   if (!cfg) {
-    return locked('你选择了「自带存储」，但还没有填写云服务信息。请到设置里完成配置。');
+    return locked('你选择了「自带存储」，但还没有填写云服务信息。请到设置里完成配置。', 'unconfigured');
   }
   let secrets: { password: string; passphrase: string | null } | null;
   try {
     secrets = await getSessionSecrets(cfg.username);
   } catch {
-    return locked('自带存储的解锁状态读取失败，已中止本次同步。请重新输入应用密码与加密口令。');
+    return locked('自带存储的解锁状态读取失败，已中止本次同步。请重新输入应用密码与加密口令。', 'error');
   }
   if (!secrets) {
-    return locked('你选择了「自带存储」，但本次还没有解锁云服务。请到设置里重新输入应用密码与加密口令。');
+    return locked('你选择了「自带存储」，但本次还没有解锁云服务。请到设置里重新输入应用密码与加密口令。', 'locked');
   }
 
   return {
@@ -371,10 +397,21 @@ export function invalidateActiveSyncBackend(): void {
 let lastResolution: (ResolutionOutcome & { at: string }) | null = null;
 
 export async function primeSyncBackend(): Promise<ResolutionOutcome> {
+  // 2026-10-17（B1 连带修复，原为 slim 的 L4 修复）：catch 必须留下
+  // lockedReason/lockedKind，否则 UI 读到「无锁定原因」会判成 ready 绿点 ——
+  // 存储故障时面板宣称「已配置并解锁」。
+  //
+  // 双模式适配点：slim 上没有第二个后端可回落，这里的 catch 是
+  // lockedBackend('读不到同步设置…')。main 上保留 Supabase 回落语义的
+  // 前提是「已知用户要 Supabase」；但 catch 住的是**预期外异常**，连
+  // requestedId 是谁都读不出来，回落 Supabase 等于在「不知道用户要哪」
+  // 的情况下猜一个 —— 显式失败（锁定占位 + error）比猜更诚实。
   const outcome = await resolveBackendOutcome().catch(() => ({
-    backend: new SupabaseBackendAdapter(),
-    resolvedId: 'supabase' as SyncBackendId,
-    requestedId: 'supabase' as SyncBackendId,
+    backend: new LockedWebDavBackend('读不到同步设置，已中止本次同步。请关闭扩展后重试，或到设置里重新填写云盘信息。'),
+    resolvedId: 'webdav' as SyncBackendId,
+    requestedId: 'webdav' as SyncBackendId,
+    lockedReason: '读不到同步设置，已中止本次同步。请关闭扩展后重试，或到设置里重新填写云盘信息。',
+    lockedKind: 'error' as LockedKind,
   }));
   if (!overrideBackend) activeBackend = outcome.backend;
   lastResolution = { ...outcome, at: new Date().toISOString() };
