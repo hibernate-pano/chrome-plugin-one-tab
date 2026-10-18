@@ -105,17 +105,33 @@ const buildPreviewFromBeforeAndAfter = (
   };
 };
 
+export interface UploadPreviewOptions {
+  /**
+   * 覆盖模式下**目标侧的独有会话会不会被删掉**。
+   *
+   * 自带存储（WebDAV）的覆盖不是「替换」而是「全量上行 + 清单并集」：
+   * `webdav/adapter.ts` 的 uploadGroups 把本地全部组写上去，写清单时以最新 base 为底
+   * 只覆盖本批写过的条目（其余原样保留）⇒ 云端独有会话**一个都不会删**。
+   * 于是预览若照 Supabase 的「替换」口径算，会报出一个不存在的删除数
+   * （用户被吓得不敢用覆盖），还与同一后端的设置页口径（`WebDavSettings`：
+   * 「云端独有会话未被删除」）互相矛盾。判据必须按后端分流。
+   */
+  preserveRemoteOnly?: boolean;
+}
+
 export const buildUploadPreviewSummary = (
   localGroups: TabGroup[],
   remoteGroups: TabGroup[],
-  mode: SyncPreviewMode
+  mode: SyncPreviewMode,
+  options?: UploadPreviewOptions
 ) => {
   const activeLocalGroups = toActiveGroups(localGroups);
   const activeRemoteGroups = toActiveGroups(remoteGroups);
-  const afterGroups =
-    mode === 'overwrite'
-      ? activeLocalGroups
-      : applySourceUpsertToTarget(activeRemoteGroups, activeLocalGroups);
+  // 合并模式本来就是 upsert 并集；覆盖模式只在「替换」型后端（Supabase）才是替换。
+  const upsertOnly = mode === 'merge' || options?.preserveRemoteOnly === true;
+  const afterGroups = upsertOnly
+    ? applySourceUpsertToTarget(activeRemoteGroups, activeLocalGroups)
+    : activeLocalGroups;
 
   return buildPreviewFromBeforeAndAfter(activeRemoteGroups, afterGroups);
 };

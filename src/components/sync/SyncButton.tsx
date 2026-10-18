@@ -98,6 +98,13 @@ export const SyncButton: React.FC<SyncButtonProps> = () => {
    * 判据与 authGuard / backgroundSync 的门禁同口径：**按后端分流**。
    */
   const canSync = settings.syncBackend === 'webdav' || isAuthenticated;
+  /**
+   * 上传覆盖在自带存储（WebDAV）上**不删云端独有会话**（全量上行 + 清单并集，
+   * 见 `syncPreview.buildUploadPreviewSummary` 的 preserveRemoteOnly）。
+   * 预览与说明文案都必须按后端分流，否则用户会被一个不存在的删除数吓住，
+   * 而同一后端的设置页口径恰恰写着「云端独有会话未被删除」。
+   */
+  const uploadOverwritePreservesRemote = settings.syncBackend === 'webdav';
   const [isWorking, setIsWorking] = useState(false);
   const [workingOperation, setWorkingOperation] = useState<SyncOperation>('none');
   const [showUploadModal, setShowUploadModal] = useState(false);
@@ -138,7 +145,9 @@ export const SyncButton: React.FC<SyncButtonProps> = () => {
       ]);
 
       setUploadPreview({
-        overwrite: buildUploadPreviewSummary(localGroups, remoteGroups, 'overwrite'),
+        overwrite: buildUploadPreviewSummary(localGroups, remoteGroups, 'overwrite', {
+          preserveRemoteOnly: uploadOverwritePreservesRemote,
+        }),
         merge: buildUploadPreviewSummary(localGroups, remoteGroups, 'merge'),
       });
     } catch (error) {
@@ -524,7 +533,9 @@ export const SyncButton: React.FC<SyncButtonProps> = () => {
                       {renderPreviewSummary(
                         uploadPreview?.overwrite ?? null,
                         '云端',
-                        '用当前本地会话直接替换云端现状。',
+                        uploadOverwritePreservesRemote
+                          ? '把本机全部会话写入云端；云端独有会话保留，同 id 冲突按版本新旧裁决。'
+                          : '用当前本地会话直接替换云端现状。',
                       )}
                       {/* 闸门提示：blocked 说清为何点不动；armed 说清再点一次会发生什么 */}
                       <div className="mt-3 rounded-xl bg-rose-50 px-3 py-2 text-xs leading-5 text-rose-700 dark:bg-rose-500/10 dark:text-rose-300">

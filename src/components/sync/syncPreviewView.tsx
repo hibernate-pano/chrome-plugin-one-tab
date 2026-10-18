@@ -29,7 +29,12 @@ export const describeOverwriteRisk = (
   summary: SyncPreviewSummary,
   targetLabel: OverwriteTargetLabel
 ): string =>
-  `覆盖模式会用本次数据直接替换${targetLabel}现状：预计删除 ${summary.deletions} 个会话、更新 ${summary.updates} 个会话，操作不可撤销。再点一次确认执行。`;
+  // 「一个都不删」时不能说成「直接替换现状：预计删除 0 个会话」——
+  // 自带存储（WebDAV）的覆盖是全量上行 + 清单并集，云端独有会话确实原样保留
+  //（见 syncPreview.buildUploadPreviewSummary 的 preserveRemoteOnly）。
+  summary.deletions === 0
+    ? `覆盖模式会把本次数据写入${targetLabel}现状：不会删除${targetLabel}上的任何会话、更新 ${summary.updates} 个会话，操作不可撤销。再点一次确认执行。`
+    : `覆盖模式会用本次数据直接替换${targetLabel}现状：预计删除 ${summary.deletions} 个会话、更新 ${summary.updates} 个会话，操作不可撤销。再点一次确认执行。`;
 
 export type OverwriteClickDecision =
   | { type: 'blocked'; reason: string }
