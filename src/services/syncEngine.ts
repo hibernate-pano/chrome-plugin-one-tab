@@ -491,22 +491,6 @@ export class SyncEngine {
           return { success: false, groups: snapshot, reason: 'overwrite_empty_cloud_refused' };
         }
       }
-      // 3.5 覆盖模式：同步设置（与旧 smartSyncService 的 overwriteLocal 行为一致）
-      //
-      // ⚠️ 这一步必须排在空云端闸门**之后**（2026-10-17 修正）。原先它在闸门
-      // 之前，于是「拒绝空云端覆盖」时 mergeCloudSettingsIntoLocal 已经把用户
-      // 的设置（布局/主题/排序/通知开关/同步间隔）从云端覆写进本地了 ——
-      // 而闸门承诺的是「不动本地一个字节」，REASON_COPY 也在对用户说
-      // 「你的本地数据没有变化」。那句话当时是假的。
-      //
-      // 顺序即是语义：先判定这一轮覆写该不该发生，发生了才轮到附带动作。
-      if (opts?.forceRemote && opts?.syncSettings) {
-        try {
-          await mergeCloudSettingsIntoLocal();
-        } catch (err) {
-          logWarn('[SyncEngine] 覆盖下载时同步设置失败（不阻塞主流程）:', err);
-        }
-      }
       // 4. 确定本地。覆盖模式（forceRemote）= 云端完全镜像本地：本地置空，
       //    merge 退化为「云端活跃行直通」（云端墓碑行被 merge 跳过，永不入库）。
       //    正常模式剥掉本地残留的组级墓碑（老版本写入形状，见上）。
@@ -587,6 +571,24 @@ export class SyncEngine {
             // reason 字段是给 UI/日志看的可读原因，测试与诊断都按它识别
             error: verdict.reason,
           };
+        }
+      }
+
+      // 3.5 覆盖模式：同步设置（与旧 smartSyncService 的 overwriteLocal 行为一致）
+      //
+      // ⚠️ 这一步必须排在**全部**中止闸门之后（2026-10-17 修了空云端闸门，
+      // 2026-10-18 补上删除熔断与合并验证）。原先它只排在空云端闸门之后，
+      // 于是熔断／验证失败时 mergeCloudSettingsIntoLocal 已经把用户的设置
+      // （布局/主题/排序/通知开关）从云端覆写进本地了 —— 而熔断的日志写着
+      // 「本轮下载已中止（未写入任何数据）」、注释写着「本地数据根本没被动过」，
+      // 且 restoreSnapshot 只回滚会话、不回滚设置。那两句话当时是假的。
+      //
+      // 顺序即是语义：先判定这一轮覆写该不该发生，发生了才轮到附带动作。
+      if (opts?.forceRemote && opts?.syncSettings) {
+        try {
+          await mergeCloudSettingsIntoLocal();
+        } catch (err) {
+          logWarn('[SyncEngine] 覆盖下载时同步设置失败（不阻塞主流程）:', err);
         }
       }
 
