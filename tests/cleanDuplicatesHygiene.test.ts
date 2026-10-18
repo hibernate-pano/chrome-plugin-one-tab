@@ -1,6 +1,7 @@
 // 清理重复标签（cleanDuplicates）卫生回归（无墓碑模型，2026-09-29）：
 // 1) core 语义 —— applyCleanDuplicates 同 URL 留最新，败者**物理移除**（无墓碑）；
-//    被清空且未锁定的组整组物理移除。去重范围 = 全部组（物理模型下不存在墓碑组）。
+//    被清空且未锁定的组整组物理移除。去重范围 = 全部**未锁定**组
+//    （r27 起锁定会话整组豁免，见 tests/cleanDuplicatesSkipsLocked.test.ts）。
 // 2) UI 不变量 —— Redux 主状态 state.groups 只含活跃视图（loadGroups 建立的不变量）。
 //    cleanDuplicateTabs.fulfilled 曾把 SW 返回的 storage 全量直接赋给 state.groups，
 //    出现"223/994 → 230/1106"的反增。老版本设备仍可能写入墓碑形状数据，
@@ -93,7 +94,7 @@ describe('applyCleanDuplicates：物理移除语义（无墓碑）', () => {
     assert.deepEqual(plan.removedGroupIds, ['g2']);
   });
 
-  it('锁定组被清空后保留空壳（锁定豁免自动删除）', async () => {
+  it('锁定组整组不参与去重：标签原样保留，也不整组移除', async () => {
     const { applyCleanDuplicates } = await import('@/core/mutationOps');
     const stale = mkTab('stale', { url: 'https://dup.com', lastAccessed: OLD });
     const fresh = mkTab('fresh', { url: 'https://dup.com', lastAccessed: NOW });
@@ -102,9 +103,10 @@ describe('applyCleanDuplicates：物理移除语义（无墓碑）', () => {
 
     const { groups, plan } = applyCleanDuplicates([g1, gLocked], NOW, STAMP);
 
+    assert.equal(plan.removedTabsCount, 0, '锁定组里的败者不许被删');
     assert.equal(plan.removedGroupsCount, 0);
     const out = groups.find(g => g.id === 'gLocked')!;
-    assert.equal(out.tabs.length, 0);
+    assert.deepEqual(out.tabs.map(t => t.id), ['stale']);
     assert.equal(out.isLocked, true);
   });
 });

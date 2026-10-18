@@ -116,10 +116,12 @@ describe('cleanDuplicateTabs.pending：立即见效，不等 SW', () => {
     );
   });
 
-  it('锁定组被清空后不在主状态留空卡（活跃视图不变量）', async () => {
+  it('锁定空壳不在主状态留空卡（活跃视图不变量）', async () => {
+    // 锁定组不再被去重清空（r27：锁定会话整组不参与去重），所以这里直接
+    // 造一个锁定空壳 —— 钉的是「主状态只含活跃视图」这条不变量本身。
     const groups = [
       mkGroup('keep', [mkTab('k1', { url: 'https://dup.com', lastAccessed: NOW })]),
-      mkGroup('locked', [mkTab('l1', { url: 'https://dup.com', lastAccessed: OLD })], { isLocked: true }),
+      mkGroup('locked', [], { isLocked: true }),
     ];
     const { store, mod } = await makeStore(groups);
     store.dispatch(mod.cleanDuplicateTabs.pending('req-1', undefined));

@@ -382,6 +382,12 @@ export interface CleanDuplicatesPlan {
  * 规则：同 URL 留最新（lastAccessed 最大），余者物理移除；被清空且未锁定的组
  * 整组移除。`loading://` 的同 URL 不同标题视为不同 tab（占位 URL，标题才是身份）。
  *
+ * 【锁定会话整组不参与去重】手动清理按钮的确认文案写着「（锁定的会话除外）」，
+ * 而锁定在本产品里已统一意味着「会话内的删除一律不发生」（r4 不渲染逐条删除、
+ * r22 删最后一条要确认）。去重就是一次会话内删除、一次点击且不可撤销，
+ * 所以判据取**实现服从文案**：锁定的组连 urlMap 都不进。
+ * 残留的重复标签是可接受的残局，解锁后再点一次清理即可。
+ *
  * 【为什么单独成函数】计划是 SW 与 popup 共用的唯一真相：SW 用它决定落盘内容，
  * popup 用它做乐观更新。两边跑同一个函数 ⇒ 规则不可能漂移；
  * 若各写一份，「本地显示删了、磁盘上没删」这类不一致迟早会出现。
@@ -389,6 +395,8 @@ export interface CleanDuplicatesPlan {
 export function planCleanDuplicates(groups: TabGroup[]): CleanDuplicatesPlan {
   const urlMap = new Map<string, { tab: Tab; groupId: string }[]>();
   groups.forEach(group => {
+    // 锁定豁免的唯一落点：构造 urlMap 时整组跳过（多写一处就是两套口径的开始）。
+    if (group.isLocked) return;
     group.tabs.forEach(tab => {
       if (!tab.url) return;
       const key = tab.url.startsWith('loading://') ? `${tab.url}|${tab.title}` : tab.url;
