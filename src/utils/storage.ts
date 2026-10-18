@@ -160,6 +160,35 @@ export function validateThemeMode(value: unknown): 'light' | 'dark' | 'auto' {
 }
 
 /**
+ * 布局模式的校验单点（2026-10-18）。
+ *
+ * 与 `validateThemeMode` / `validateSyncIntervalMinutes` 同一纪律：**非法值 fail-safe
+ * 回落，不抛错**（抛错会让 `getSettings` 整条失败，阻塞所有读设置的路径）。
+ *
+ * 【为什么它值得补】`layoutMode` 是唯一**被当作开关语义**使用却没校验的枚举字段：
+ * 顶栏那个按钮读它来决定「点了会变成什么」（`Header.handleToggleLayout` 的 switch，
+ * 以及图标的 aria-label / title），列表则只认 `'double'`（`TabList`）。
+ * 值一旦落在 `'single' | 'double'` 之外（老版本写下的 `'triple'`、手改过的存储、
+ * 另一台设备同步过来的旧行、导入的旧备份），后果是一组自相矛盾的表现：
+ * 列表按单栏渲染、顶栏却显示「切换为单栏布局」（等于说现在是双栏），
+ * 而点一下按钮走 switch 的 default 分支又落回 `'single'` —— 列表毫无变化。
+ * 用户看到的是「布局开关第一下没反应，得再点一次」。
+ *
+ * 回落方向取 `'single'`（= DEFAULT_SETTINGS.layoutMode）：与其它校验一致，
+ * 回落值必须对「存储里已有脏值」的用户最安全 —— 单栏是列表的默认呈现，
+ * 不会因为一次校验就把用户的布局放大成双栏。
+ */
+export const VALID_LAYOUT_MODES = ['single', 'double'] as const;
+
+export function validateLayoutMode(value: unknown): LayoutMode {
+  if (typeof value === 'string' && (VALID_LAYOUT_MODES as readonly string[]).includes(value)) {
+    return value as LayoutMode;
+  }
+  logWarn('无效的布局模式，使用默认值:', value);
+  return 'single';
+}
+
+/**
  * 自动同步间隔档位（分钟）。2026-10-11（1.23.0）：用户在菜单中四选一。
  *
  * 【为什么收敛到固定四档而不是任意数字】alarm 的 periodInMinutes 是 Chrome
@@ -493,12 +522,17 @@ class ChromeStorage {
         const validatedSyncInterval = validateSyncIntervalMinutes(
           normalizedSettings.syncIntervalMinutes
         );
+        // 2026-10-18：布局模式同样只认枚举内的值。它是唯一被当作「开关语义」用
+        // 却没校验的字段 —— 脏值会让顶栏文案与列表呈现互相矛盾，且点一次按钮
+        // 落回 default 分支后列表毫无变化（详见 validateLayoutMode 的注释）。
+        const validatedLayoutMode = validateLayoutMode(normalizedSettings.layoutMode);
 
         // 如果验证后的值与原值不同，说明存储中有无效值，需要更新
         const needsUpdate =
           normalizedSettings.themeStyle !== validatedThemeStyle ||
           normalizedSettings.themeMode !== validatedThemeMode ||
-          normalizedSettings.syncIntervalMinutes !== validatedSyncInterval;
+          normalizedSettings.syncIntervalMinutes !== validatedSyncInterval ||
+          normalizedSettings.layoutMode !== validatedLayoutMode;
 
         const mergedSettings: UserSettings = {
           ...DEFAULT_SETTINGS,
@@ -506,6 +540,7 @@ class ChromeStorage {
           themeStyle: validatedThemeStyle,
           themeMode: validatedThemeMode,
           syncIntervalMinutes: validatedSyncInterval,
+          layoutMode: validatedLayoutMode,
         };
 
         // 如果有无效值被修正，保存修正后的设置
@@ -585,6 +620,9 @@ class ChromeStorage {
       ...settings,
       themeStyle: validateThemeStyle(settings.themeStyle),
       themeMode: validateThemeMode(settings.themeMode),
+      // 这里是真正落盘的那一步，与 setSettings 保持同一份字段清单
+      // （2026-10-18 补 layoutMode：两个外部来源带进来的值没有别处兜底）
+      layoutMode: validateLayoutMode(settings.layoutMode),
     };
 
     await kvSet(STORAGE_KEYS.SETTINGS, validatedSettings);
@@ -599,6 +637,10 @@ class ChromeStorage {
       ...settings,
       themeStyle: validateThemeStyle(settings.themeStyle),
       themeMode: validateThemeMode(settings.themeMode),
+      // 2026-10-18：写路径同样收敛布局模式。两个外部来源会带着任意值进来
+      // ——导入的备份文件与云端行的合并（见 importDetailed / syncEngine 的
+      // mergeCloudSettingsIntoLocal），它们都没有字段级校验。
+      layoutMode: validateLayoutMode(settings.layoutMode),
     };
 
     const cache = cacheManager.getCache('storage');
