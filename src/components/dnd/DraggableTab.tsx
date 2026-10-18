@@ -59,6 +59,7 @@ import {
   resolveHover,
 } from './dragSession';
 import { isOpenableTabUrl } from '@/utils/inputValidation';
+import { getDisplayUrl } from '@/utils/sessionPresentation';
 import { SafeFavicon } from '@/components/common/SafeFavicon';
 
 interface DraggableTabProps {
@@ -279,15 +280,8 @@ export const DraggableTab: React.FC<DraggableTabProps> = React.memo(({
     });
   }, [handleOpenTab, index, itemCount, moveTab, groupId, tab]);
 
-  // 提取域名显示
-  const displayUrl = useMemo(() => {
-    try {
-      const url = new URL(tab.url);
-      return url.hostname.replace('www.', '');
-    } catch {
-      return tab.url;
-    }
-  }, [tab.url]);
+  // 显示形态统一走 @/utils/sessionPresentation（与搜索页同一个函数，别再各写一份）
+  const displayUrl = useMemo(() => getDisplayUrl(tab.url), [tab.url]);
 
   // 「本设备打不开」按 **URL 现算**，不读 `tab.unopenable` 标记。
   //

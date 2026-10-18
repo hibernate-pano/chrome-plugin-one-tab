@@ -25,7 +25,7 @@ import {
 import HighlightText from './HighlightText';
 import { SafeFavicon } from '@/components/common/SafeFavicon';
 import { EmptyState } from '@/components/common/EmptyState';
-import { getSessionResultSummary } from '@/utils/sessionPresentation';
+import { getSessionResultSummary, getDisplayUrl } from '@/utils/sessionPresentation';
 import { logError } from '../../utils/log';
 
 const PinIcon = () => (
@@ -188,14 +188,6 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({ searchQuery 
     startFilterTransition(() => {
       setFilters({});
     });
-  }, []);
-
-  const getDisplayUrl = useCallback((url: string) => {
-    try {
-      return new URL(url).hostname.replace('www.', '');
-    } catch {
-      return url;
-    }
   }, []);
 
   // 复活去重守卫（逻辑见 @/utils/openGuard，可单测）：与 TabGroup 同一对类、同一套语义 ——
@@ -510,6 +502,7 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({ searchQuery 
           <HighlightText text={tab.title} highlight={searchQuery} />
           {tab.pinned && <PinIcon />}
         </a>
+        {/* URL 显示形态统一走 @/utils/sessionPresentation（与列表页同一个函数，别再各写一份） */}
         <span className="tab-item-url hidden sm:block">{getDisplayUrl(tab.url)}</span>
       </div>
 
