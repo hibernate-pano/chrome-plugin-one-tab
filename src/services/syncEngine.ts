@@ -95,10 +95,21 @@ async function mergeCloudSettingsIntoLocal(): Promise<void> {
   const cloudSettings = await downloadSettings();
   if (!cloudSettings) return;
 
-  const state = store.getState() as { settings: UserSettings };
-  const updatedDefault = state.settings;
+  // 合并基准取**存储真值**，不是 store.settings：本函数跑在 SW 里，SW 冷启动时
+  // Redux 的 settings 就是代码默认值（同一坑见下面 upload 分支的备注），
+  // 云端没有的字段（老版本行、本机新增项）会被整份写成默认值 —— 而这是覆盖
+  // 下载，用户以为「以云端为准」，实际连本机偏好一起丢。
+  // 读失败才回退 Redux 现值：宁可少合一项，也不把代码默认值写进存储。
+  let localSettings: UserSettings;
+  try {
+    localSettings = await storage.getSettingsForWrite();
+  } catch (error) {
+    logWarn('[SyncEngine] 覆盖下载前读取本机设置失败，合并基准回退 Redux 现值:', error);
+    localSettings = (store.getState() as { settings: UserSettings }).settings;
+  }
+
   const convertedSettings: UserSettings = {
-    ...updatedDefault,
+    ...localSettings,
     ...cloudSettings,
     themeStyle: validateThemeStyle(cloudSettings.themeStyle),
     themeMode: validateThemeMode(cloudSettings.themeMode),
@@ -792,7 +803,13 @@ export class SyncEngine {
       // 直接上传会把用户云端设置覆盖成默认值（2026-09-12 审计发现）。
       if (opts?.syncSettings) {
         try {
-          await uploadSettings(await storage.getSettings());
+          // 必须读**真值**（getSettingsForWrite）：settings 读路径带 60s 进程内
+          // 缓存，而写方在另一个执行上下文（设置页 / popup），SW 那份可能是用户
+          // 改设置之前的快照。这条值的下一站是云端，且 uploadSettings 是无条件
+          // upsert（无 stamp / 无 version / 无 LWW）—— 一次陈旧读就把用户云端设置
+          // 整行覆盖成旧值（2026-10-18 实测：设置页切成 WebDAV 后推送到云端，
+          // 云端 syncBackend 仍是 supabase）。
+          await uploadSettings(await storage.getSettingsForWrite());
         } catch (err) {
           logWarn('[SyncEngine] 上传设置失败（不阻塞主流程）:', err);
         }

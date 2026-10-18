@@ -544,6 +544,35 @@ class ChromeStorage {
   }
 
   /**
+   * 需要真值的设置读：先落盘 pending 的防抖写、失效 60s 缓存，再读。
+   *
+   * 【为什么 getSettings() 不够（不是"读到旧数据"这么轻）】
+   * 设置写方在**另一个执行上下文**（设置页 / popup），写完后不会让本进程的
+   * 缓存失效；SW 又是长活上下文，缓存能活满 60s。而 SW 这条读路径的下一站是
+   * **云端**：`uploadSettings` 是无 stamp / 无 version / 无 LWW 的**无条件 upsert**
+   * （见 @/utils/supabase/upload），一次陈旧读就把用户云端设置整行覆盖成旧值，
+   * 其他设备下次下载再复制一遍。
+   *
+   * 2026-10-18 实测：在设置页切成「自带存储（WebDAV）」后点「检查并推送到云端」，
+   * 云端 settings.json 里 syncBackend 仍是 supabase；随后覆盖下载把本机也改回
+   * supabase ⇒ WebDAV 用户的同步静默失效，顶栏按钮还反过来提示「请先登录」。
+   *
+   * 同一根因的先例：@/sync-backend 的 readConfiguredBackendId —— 那里 2026-10-14
+   * 就把「用户现在选了什么」当设置事实直读存储，不走缓存。
+   *
+   * 【先 flush 再失效，顺序不能反】失效之后读的是**磁盘**值：本进程防抖窗口内
+   * 刚写的设置若还没落盘，就会被读成旧值并推上云端。与 getGroupsForWrite 同一纪律。
+   *
+   * 用途：读-改-写（mergeCloudSettingsIntoLocal）与上云两条路径。纯本地行为判断
+   * 仍用 getSettingsForLocalUse()（它允许降级，且降级值不参与上传）。
+   */
+  async getSettingsForWrite(): Promise<UserSettings> {
+    await this.debouncedPersistSettings.flush();
+    invalidateSettingsCache();
+    return this.getSettings();
+  }
+
+  /**
    * 防抖批量写入 settings（可 await）
    * - 窗口期内多次 setSettings 会合并为一次落盘（使用最后一次 settings）
    * - 每次调用都可以 await，保证返回时已真正写入
