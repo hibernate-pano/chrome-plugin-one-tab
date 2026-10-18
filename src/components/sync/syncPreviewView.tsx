@@ -4,6 +4,7 @@
  * SyncButton 只保留状态装配与 sendSyncCommand 调度。
  */
 import type { SyncPreviewSummary } from '@/utils/syncPreview';
+import type { BackendStatusKind } from '@/components/layout/backendStatus';
 
 /* ── P1-6 · 覆盖模式的双闸门（纯函数，SyncButton 只做状态装配）─────────────
  *
@@ -80,11 +81,266 @@ export const isOverwriteGateOpen = (input: {
   mode: SyncMode;
   isConfirmed: boolean;
   isBusy: boolean;
+  /** 见 syncGateInput：承载「当前身份能否真的完成一次同步」的判定，不是「登录了没」。 */
   isAuthenticated: boolean;
 }): boolean => {
   if (input.isBusy || !input.isAuthenticated) return false;
   if (input.mode === 'overwrite' && !input.isConfirmed) return false;
   return true;
+};
+
+/* ── C 组：同步入口的可见性与「可执行失败文案」（2026-10-18）─────────────
+ *
+ * 根因（三个同源的「不可发现 / 说谎」缺陷）：
+ * 1. 工具栏同步按钮整组按 `if (!canSync) return null` 隐藏 ⇒ 云端未登录的新用户
+ *    **完全看不到同步存在**（顶栏空一格），而 README 承诺「工具栏同步按钮仍可
+ *    手动上传/下载」。
+ * 2. `isOverwriteGateOpen` 的 `isAuthenticated` 形参被塞进了 `canSync`
+ *    （后端或已登录）这个**混合语义**；只放宽渲染而不动它，未登录用户就能开弹窗、
+ *    点覆盖、点两下毫无反应 —— 正是本仓库反复消灭的那类缺陷。
+ * 3. 未登录时 `reason='not_authenticated'` 只有 download 方向有特判，upload
+ *    方向落到 `spec.failureMessage`（「上传失败，请重试」）这种无信息量的话。
+ *
+ * 下面三个纯函数把这三件事各自定死，组件只做状态装配。
+ */
+
+/** 身份判定的两种来源（`syncBackend === 'supabase'` 时登录是必须的）。 */
+export interface SyncGateInput {
+  syncBackend: 'supabase' | 'webdav';
+  isAuthenticated: boolean;
+}
+
+/**
+ * 「当前身份能不能真的完成一次同步」。
+ *
+ * 为什么不直接用 isAuthenticated：自带存储（WebDAV）用户没有 TapStack 账号，
+ * isAuthenticated 恒为 false；判据必须按后端分流（与 authGuard / backgroundSync
+ * 同口径）。
+ */
+export const syncIdentityCanRun = (input: SyncGateInput): boolean =>
+  input.syncBackend === 'webdav' || input.isAuthenticated;
+
+/**
+ * 工具栏同步按钮组**是否渲染**。
+ *
+ * 刻意写成一张**数据表**而不是「按身份判断」（2026-10-18 C 组）：
+ * 原缺陷是 `if (!canSync) return null`，而 canSync 混着登录态，于
+ * 云端未登录的新用户整组按钮凭空消失（顶栏空格），连「有同步」都不知道，
+ * 与 README「工具栏同步按钮仍可手动上传/下载」直接冲突。
+ *
+ * 现在这张表只回答「这个后端有没有手动同步功能」——当前两个后端都有
+ *（WebDAV 不需要登录，云端由下面的入口闸门说清缺登录）。将来若真的
+ * 出现不支持手动同步的后端，必须**特意把它从这里删掉**，而不是默认继承。
+ */
+const BACKENDS_WITH_MANUAL_SYNC: ReadonlyArray<SyncGateInput['syncBackend']> = [
+  'supabase',
+  'webdav',
+];
+
+export const shouldRenderSyncControls = (
+  syncBackend: SyncGateInput['syncBackend']
+): boolean => BACKENDS_WITH_MANUAL_SYNC.includes(syncBackend);
+
+/**
+ * 身份不足时，第一时间（在用户点上传/下载的瞬间）给出的提示。
+ * 返回 null 表示身份够用，不必打断。
+ *
+ * 为什么必须在这一刻出声：放宽渲染后，未登录用户能开弹窗、能点覆盖两下；
+ * 若这里也静默，他就得到「点了完全没反应」。
+ */
+export const syncIdentityBlockedCopy = (input: SyncGateInput): string | null =>
+  syncIdentityCanRun(input)
+    ? null
+    : '还没有登录 TapStack 云端，登录后同步才能使用。请先点右上角「⋯」菜单里的「登录 / 注册」。';
+
+/**
+ * 点上传/下载时是否允许开弹窗。
+ *
+ * 为什么必须在**入口**拦：放宽了渲染门禁后，若入口静默放行，未登录用户会经历
+ * 「按钮出现 → 弹窗能开 → 点覆盖两下 → 毫无反应」。缺身份就当场说清缺什么。
+ */
+export type SyncEntryDecision =
+  | { type: 'open' }
+  | { type: 'blocked'; reason: string };
+
+export const decideSyncEntry = (
+  input: SyncGateInput & { isBusy: boolean }
+): SyncEntryDecision => {
+  if (input.isBusy) return { type: 'blocked', reason: '同步进行中，请稍候' };
+  const missing = syncIdentityBlockedCopy(input);
+  if (missing) return { type: 'blocked', reason: missing };
+  return { type: 'open' };
+};
+
+/** 同步失败时 reason（内部枚举）→ 用户可执行文案的翻译表。 */
+export const SYNC_REASON_COPY: Record<string, string> = {
+  already_syncing: '同步正在进行中，请稍候',
+  precheck_unknown:
+    '本地存储读取失败，已中止同步以保护你的未上传内容，请稍后重试',
+  // 上传后 UPLOAD_GUARD_MS（35s，见 syncDecision.ts）内的手动下载被跳过：
+  // 云端已是本地新状态，再拉只会用旧数据覆盖（或与在途上传竞态）。
+  recent_upload_guard: '刚完成上传，云端已是最新状态，无需下载',
+  pending_upload_failed:
+    '还有未上传的本地改动，已中止下载以免覆盖它们，请先完成上传',
+  snapshot_failed: '本地快照创建失败，已中止同步以保护现有数据',
+  // 2026-10-17：用**空云端**覆盖会把本机会话整体清空且不可逆
+  // （1.22.0 起无回收站），syncDecision.decideForceRemoteOverwrite
+  // 在覆盖路径上拦下了它。必须把「本机数据没动」说出来 ——
+  // 否则用户看到一次失败的同步，却不知道自己刚差点丢掉全部会话。
+  overwrite_empty_cloud_refused:
+    '云端没有任何数据，已中止覆盖以免清空本机会话（你的本地数据没有变化）。如需清空请手动删除会话',
+  // 2026-10-18 B 组：readConfiguredBackendId() 读不到本机设置 ⇒
+  // 这一轮**不知道该往哪个后端同步**。这不是「没登录」，措辞必须分开，
+  // 否则会把一个存储/设置读取故障说成「请去登录」。
+  backend_unknown: '读不到同步设置，本轮不知道该用哪个后端，已中止以免写错地方。请重新打开设置页确认后端选择',
+  // 2026-10-18 C 组：未登录在 upload 方向原先没有任何条目，会落到
+  // spec.failureMessage（「上传失败，请重试」）—— 一句既没说是没登录、
+  // 也没说下一步的话。口径对齐 HeaderDropdown 的「请先登录以使用同步功能」。
+  not_authenticated: '未登录：同步需要 TapStack 云端账号，请先点「⋯」菜单里的「登录 / 注册」',
+};
+
+/** 纯 snake_case 枚举（如 `precheck_unknown`）不该原样弹给用户。 */
+const isBareEnum = (reason: string): boolean => /^[a-z_]+$/.test(reason);
+
+/**
+ * 一次同步失败的最终文案（三个来源，优先级从高到低）：
+ * 1. reason 已登记 ⇒ SYNC_REASON_COPY（逐条翻译，不退化成裸枚举）；
+ * 2. reason 带人类可读文本（`validation_failed: ...`、error.message）⇒ 原样显示；
+ * 3. 都没有 ⇒ spec.failureMessage。
+ *
+ * 方向无关：未登录在上传方向同样要说人话（2026-10-18 C 组）。
+ */
+export const resolveSyncFailureCopy = (input: {
+  reason?: string | null;
+  fallbackMessage: string;
+}): string => {
+  const reason = input.reason;
+  if (reason == null || reason === '') return input.fallbackMessage;
+  const mapped = SYNC_REASON_COPY[reason];
+  if (mapped) return mapped;
+  if (!isBareEnum(reason)) return reason;
+  return input.fallbackMessage;
+};
+
+/* ── C2：设置页 WebDAV banner 的状态文案（2026-10-18）─────────────────────
+ *
+ * 原缺陷：banner 的判据只有 `settings.syncBackend === 'webdav'` —— 它回答的是
+ * 「用户选了哪个后端」，却输出「已启用：数据同步到你自己的云盘」。于是
+ * 「已配好但本次会话未解锁」（重开浏览器 / 刚点过面板里的「锁定」）的用户
+ * 看到的是「已启用」，而同步实际一次都不会跑。banner 与同页上方的 hint 互相矛盾，
+ * 用户据此以为数据正在备份到自己的云盘。
+ *
+ * 判据必须是真的解析结果（backendStatus.classifyBackendResolution 的完整三态，
+ * 含 lockedKind），不是「再写一个只看 syncBackend 的判断」——那等于把原缺陷
+ * 换个写法。
+ */
+export type WebDavBannerKind = 'unconfigured' | 'locked' | 'unreadable' | 'ready';
+
+/**
+ * 分类结果 → banner 形态。
+ *
+ * `error` / `unknown` 一律不得落到 `ready`：那两种意味着**读不到**配置或解锁态，
+ * 此时宣称「已启用」与原来的谎话同类。它们有自己的 `unreadable` 形态。
+ */
+export const webDavBannerKindOf = (status: BackendStatusKind): WebDavBannerKind => {
+  switch (status) {
+    case 'ready':
+      return 'ready';
+    case 'unconfigured':
+      return 'unconfigured';
+    case 'locked':
+      return 'locked';
+    case 'error':
+    case 'unknown':
+    default:
+      return 'unreadable';
+  }
+};
+
+/** banner 文案。只有 `ready` 允许说「已启用」。 */
+export const WEB_DAV_BANNER_COPY: Record<WebDavBannerKind, string> = {
+  unconfigured: '还没有配置云盘。填好地址与账号并点「保存并启用」后才会开始同步。',
+  locked: '已配置，但本次会话尚未解锁：重新输入应用密码后同步才会恢复。',
+  unreadable: '读不到云盘的配置或解锁状态，同步暂不可用：请重新保存一次配置。',
+  ready: '已启用：数据同步到你自己的云盘。',
+};
+
+export const webDavBannerCopy = (status: BackendStatusKind): string =>
+  WEB_DAV_BANNER_COPY[webDavBannerKindOf(status)];
+
+/**
+ * 色档与文案同表维护：颜色是「这件事是否正常」的第二个信号，
+ * 只有 `ready` 允许用「一切正常」的蓝底 —— 否则未解锁 banner 配上蓝色
+ * 依旧会让人一眼当成绿灯。
+ */
+export const WEB_DAV_BANNER_TONE: Record<WebDavBannerKind, string> = {
+  unconfigured: 'bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-300',
+  locked: 'bg-amber-50 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300',
+  unreadable: 'bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-300',
+  ready: 'bg-blue-50 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300',
+};
+
+/* ── C1 另一半：菜单里的同步状态卡（2026-10-18）────────────────────────────
+ *
+ * 根因：卡片条件是 `(isAuthenticated && user) || settings.syncBackend === 'webdav'`，
+ * 云端**未登录**用户菜单里既看不到后端配置状态，也看不到上次成功同步时间，
+ * 连「去设置」入口都没有 —— 与工具栏同步按钮被藏起来是同一个病：同步对新用户
+ * 不存在。
+ *
+ * 但简单把条件放宽还不够：Supabase 分支永远没有 lockedReason，
+ * classifyBackendResolution 会返回 `ready / 已配置并解锁` —— 未登录时直接
+ * 把这句渲染出来就是新的谎话。所以状态行文案必须由本函数统一决定：
+ * 云端 + 未登录 ⇒ `未登录`，不说任何「已配置/已解锁」。
+ */
+export interface MenuSyncStatusView {
+  /** 卡片抬头：邮箱 / 「自带存储」/ 「未登录」。 */
+  headline: string;
+  /** 状态行前缀，按后端分流（照抄「自带存储」到云端就会撒谎）。 */
+  prefix: 'TapStack 云端' | '自带存储';
+  /** 状态短语。云端未登录时恒为「未登录」，不转述后端的 ready。 */
+  label: string;
+  /** 圆点色档。 */
+  tone: 'ok' | 'warn' | 'muted' | 'error';
+  /** 是否给「去设置」入口。 */
+  actionable: boolean;
+  /** 是否给「去登录」入口（云端未登录时唯一的下一步）。 */
+  needsLogin: boolean;
+}
+
+export const resolveMenuSyncStatus = (input: {
+  syncBackend: 'supabase' | 'webdav';
+  isAuthenticated: boolean;
+  userEmail: string | null | undefined;
+  backend: { label: string; tone: MenuSyncStatusView['tone']; actionable: boolean };
+}): MenuSyncStatusView => {
+  const isWebdav = input.syncBackend === 'webdav';
+  const prefix = isWebdav ? '自带存储' : 'TapStack 云端';
+  const headline = input.userEmail
+    ? input.userEmail
+    : isWebdav
+      ? '自带存储'
+      : '未登录';
+
+  // 云端 + 未登录：后端解析再「ready」也不代表能同步（Supabase 分支不检查登录态）。
+  if (!isWebdav && !input.isAuthenticated) {
+    return {
+      headline,
+      prefix,
+      label: '未登录',
+      tone: 'warn',
+      actionable: false,
+      needsLogin: true,
+    };
+  }
+
+  return {
+    headline,
+    prefix,
+    label: input.backend.label,
+    tone: input.backend.tone,
+    actionable: input.backend.actionable,
+    needsLogin: false,
+  };
 };
 
 export const getSyncStrategyLabel = (strategy: string) => {

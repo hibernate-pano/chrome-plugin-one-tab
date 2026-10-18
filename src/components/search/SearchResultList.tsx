@@ -52,7 +52,7 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({ searchQuery 
   const { groups } = useAppSelector(state => state.tabs);
   const confirmBeforeDelete = useAppSelector(state => state.settings.confirmBeforeDelete);
   const { showConfirm } = useToast();
-  const { showDeleteError, showRestoreError } = useEnhancedToast();
+  const { showDeleteError, showRestoreError, showRestoreSuccess } = useEnhancedToast();
   const [filters, setFilters] = useState<SearchFilters>({});
   const [showFilters, setShowFilters] = useState(false);
   const [isFilterPending, startFilterTransition] = useTransition();
@@ -459,7 +459,12 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({ searchQuery 
               `${r.skippedUnopenable} 个在当前设备无法打开（本地文件、临时链接或浏览器内部页面）。` +
               removedNote
           );
+          return;
         }
+        // 2026-10-18 C 组：全成功时原先**零反馈** —— 对话框关掉、窗口开了、
+        // 列表少几行；命中标签分散在多个会话且每会话只中 1 条时，视觉上只是
+        // 几行消失，用户无法确证「恢复了几个」。与列表页整组恢复同口径报条数。
+        showRestoreSuccess(matchingTabs.length);
       }
     );
   };

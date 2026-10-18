@@ -98,7 +98,7 @@ function isLegacyTruthy(value: unknown): boolean {
 }
 
 /** 云端/旧版本形状的单个标签 → 本地 Tab 形状（无法救回时返回 null）。 */
-function normalizeImportedTab(raw: unknown): Tab | null {
+function normalizeImportedTab(raw: unknown, nowIso: string): Tab | null {
   if (!raw || typeof raw !== 'object') return null;
   const t = raw as Record<string, unknown>;
   const url = typeof t.url === 'string' ? t.url.trim() : '';
@@ -116,8 +116,8 @@ function normalizeImportedTab(raw: unknown): Tab | null {
     // 双写同口径：认旧键、不认旧键再回退空串（favicon 是可选字段）。
     favicon: typeof t.favicon === 'string' ? t.favicon : (t.favIconUrl as string | undefined),
     pinned: isLegacyTruthy(t.pinned),
-    createdAt: createdAt ?? new Date().toISOString(),
-    lastAccessed: asIso(t.lastAccessed ?? t.last_accessed) ?? createdAt ?? new Date().toISOString(),
+    createdAt: createdAt ?? nowIso,
+    lastAccessed: asIso(t.lastAccessed ?? t.last_accessed) ?? createdAt ?? nowIso,
   } as Tab;
 }
 
@@ -165,10 +165,16 @@ export function normalizeImportedGroup(raw: unknown): TabGroup {
       break;
     }
   }
+  // 2026-10-18：整个组只读一次钟。修复前每个缺时间戳的标签各自调一次
+  // new Date().toISOString()，同一标签的 createdAt 与 lastAccessed 因此会
+  // 差 1ms —— 文件里根本没有时间戳，却产出了「建于 T1、最后访问 T2」的假精度。
+  // 导入是单一瞬间，整组共用一个 now 才是诚实的答案（也让「无时间戳 ⇒ 两值
+  // 相等」成为可断言的事实，而不是靠运气）。
+  const nowIso = new Date().toISOString();
   const tabs = normalizeTabsData(firstNonEmpty ?? firstPresent)
-    .map(normalizeImportedTab)
+    .map(rawTab => normalizeImportedTab(rawTab, nowIso))
     .filter((t): t is Tab => t !== null);
-  const createdAt = asIso(g.createdAt ?? g.created_at) ?? new Date().toISOString();
+  const createdAt = asIso(g.createdAt ?? g.created_at) ?? nowIso;
   return {
     ...(g as object),
     id: typeof g.id === 'string' ? g.id : '',

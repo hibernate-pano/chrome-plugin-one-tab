@@ -103,47 +103,59 @@ before(async () => {
 });
 
 // ── 1. SyncButton REASON_COPY ──────────────────────────────────────────────
+// 2026-10-18 C 组：翻译表从 SyncButton.tsx 的内联常量搬到了
+// syncPreviewView.ts（纯函数，可不依赖 DOM 直接做行为断言）。断言随之改为
+// **行为断言优先**（真调 resolveSyncFailureCopy），源码结构断言只作补充。
 describe('SyncButton 错误文案：REASON_COPY 补全（1.22.15）', () => {
-  it('REASON_COPY 必须登记 recent_upload_guard（35s 保护窗内下载被跳过的文案）', () => {
-    const src = syncButtonSource();
-    assert.match(
-      src,
-      /recent_upload_guard:\s*'[^']+'/,
-      'REASON_COPY 缺少 recent_upload_guard：该 reason 会落到裸枚举回退路径，' +
-        '用户看到的是 `recent_upload_guard` 原文，等于没说'
+  it('REASON_COPY 必须登记 recent_upload_guard（35s 保护窗内下载被跳过的文案）', async () => {
+    const { resolveSyncFailureCopy } = await import('@/components/sync/syncPreviewView');
+    const shown = resolveSyncFailureCopy({
+      reason: 'recent_upload_guard',
+      fallbackMessage: '下载失败，请重试',
+    });
+    assert.notEqual(shown, 'recent_upload_guard', '未登记时用户看到的就是枚举原文，等于没说');
+    assert.notEqual(shown, '下载失败，请重试', '未登记时会落到无信息量的 failureMessage');
+    assert.match(shown, /刚完成上传/);
+  });
+
+  it('纯 snake_case 的未登记枚举回退到 spec.failureMessage，而不是裸枚举', async () => {
+    const { resolveSyncFailureCopy } = await import('@/components/sync/syncPreviewView');
+    assert.equal(
+      resolveSyncFailureCopy({ reason: 'brand_new_reason', fallbackMessage: '上传失败，请重试' }),
+      '上传失败，请重试',
+      '未登记的纯枚举必须退到 failureMessage，不能把枚举原文给用户看'
     );
   });
 
-  it('纯 snake_case 的未登记枚举回退到 spec.failureMessage，而不是裸枚举', () => {
-    const src = syncButtonSource();
-    // 修法（已定）：mapped || (reason && !/^[a-z_]+$/.test(reason) ? reason : undefined) || spec.failureMessage
-    assert.match(
-      src,
-      /\^\[a-z_\]\+\$\/\.test\(reason\)/,
-      '缺少纯 snake_case 判定：未登记枚举会原样展示给用户'
-    );
-    assert.match(
-      src,
-      /\|\s*spec\.failureMessage;/,
-      '回退终点必须是 spec.failureMessage'
+  it('带人类可读文本的 reason（如 error.message）必须原样显示', async () => {
+    const { resolveSyncFailureCopy } = await import('@/components/sync/syncPreviewView');
+    const human = 'validation_failed: 会话名称过长';
+    assert.equal(
+      resolveSyncFailureCopy({ reason: human, fallbackMessage: '上传失败，请重试' }),
+      human,
+      '带文本的 reason 要吃透原样透传，便于定位'
     );
   });
 
-  it('带人类可读文本的 reason（如 error.message）必须原样显示', () => {
-    const src = syncButtonSource();
-    assert.match(
-      src,
-      /reason && !\/\^\[a-z_\]\+\$\/\.test\(reason\) \? reason : undefined/,
-      '带文本的 reason 原样透传的表达式丢失'
+  it('reason 可能为 undefined：读取 REASON_COPY 前必须做空值防护', async () => {
+    const { resolveSyncFailureCopy } = await import('@/components/sync/syncPreviewView');
+    // undefined/null 直接索引会抛 TypeError（或把 undefined 传播进 || 链）。
+    assert.equal(
+      resolveSyncFailureCopy({ reason: undefined, fallbackMessage: '下载失败，请重试' }),
+      '下载失败，请重试'
+    );
+    assert.equal(
+      resolveSyncFailureCopy({ reason: null, fallbackMessage: '下载失败，请重试' }),
+      '下载失败，请重试'
     );
   });
 
-  it('reason 可能为 undefined：读取 REASON_COPY 前必须做空值防护', () => {
+  it('接线：SyncButton 必须走该纯函数（不得再自己复制一份翻译表）', () => {
     const src = syncButtonSource();
-    assert.match(
-      src,
-      /reason != null \? REASON_COPY\[reason\] : undefined/,
-      'reason 为 undefined 时直接索引会把 undefined 传播进后续 || 链'
+    assert.match(src, /resolveSyncFailureCopy\(/, '组件必须调用纯函数，否则表与断言会各改各的');
+    assert.ok(
+      !/const REASON_COPY: Record<string, string> = \{/.test(src),
+      '组件内不得再内联一份翻译表（两份真值必然漂移）'
     );
   });
 });

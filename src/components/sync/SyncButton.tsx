@@ -5,7 +5,7 @@ import { loadGroups } from '@/store/slices/tabSlice';
 import { dispatchReloadSettings } from '@/store/slices/settingsSlice';
 import { downloadTabGroups } from '@/services/tabGroupSyncService';
 import { sendSyncCommand } from '@/shared/mutationProtocol';
-import { decideOverwriteClick, getSyncStrategyLabel, isOverwriteGateOpen, renderPreviewSummary, syncModeOf } from './syncPreviewView';
+import { decideOverwriteClick, decideSyncEntry, getSyncStrategyLabel, isOverwriteGateOpen, renderPreviewSummary, resolveSyncFailureCopy, shouldRenderSyncControls, syncIdentityCanRun, syncModeOf } from './syncPreviewView';
 
 // 与 syncEngine.SyncOperation 同语义（仅 UI 进度条用），本文件不再 import syncEngine。
 type SyncOperation = 'upload' | 'download' | 'none';
@@ -87,17 +87,20 @@ export const SyncButton: React.FC<SyncButtonProps> = () => {
   const { isAuthenticated } = useAppSelector(state => state.auth);
   const settings = useAppSelector(state => state.settings);
   /**
-   * 「当前是否具备可同步的身份」（2026-10-18 P2-7）。
+   * 「当前身份能不能真的跑一次同步」（与 authGuard / backgroundSync 同口径，按后端分流）。
    *
-   * 自带存储（WebDAV）用户没有 TapStack 账号，isAuthenticated 恒为 false。
-   * 原先工具栏按钮直接 `if (!isAuthenticated) return null`，于是这类用户
-   * **完全没有手动同步入口** —— 只能去设置页操作，与 B8「WebDAV 用户不需要
-   * 账号」的叙事直接矛盾，也和 README 承诺的「工具栏同步按钮可手动上传/下载」
-   * 对不上。
-   *
-   * 判据与 authGuard / backgroundSync 的门禁同口径：**按后端分流**。
+   * 2026-10-18 C 组修正：原先是 `canSync = webdav || isAuthenticated`，而它同时被
+   * 用来**隐藏整组按钮**和**给 isOverwriteGateOpen 传 isAuthenticated**。拆开之后：
+   *   · 渲染不再看身份（见下方 shouldRenderSyncControls），未登录用户也看得见同步；
+   *   · 身份只决定「点下去能不能真跑」，不能跑时由入口闸门当场给出下一步。
+   * 自带存储（WebDAV）用户没有 TapStack 账号，isAuthenticated 恒为 false，
+   * 所以判据必须按后端分流而不是直接读 isAuthenticated。
    */
-  const canSync = settings.syncBackend === 'webdav' || isAuthenticated;
+  const identityCanRun = syncIdentityCanRun({
+    syncBackend: settings.syncBackend,
+    isAuthenticated,
+  });
+  const identityGate = { syncBackend: settings.syncBackend, isAuthenticated };
   /**
    * 上传覆盖在自带存储（WebDAV）上**不删云端独有会话**（全量上行 + 清单并集，
    * 见 `syncPreview.buildUploadPreviewSummary` 的 preserveRemoteOnly）。
@@ -190,25 +193,35 @@ export const SyncButton: React.FC<SyncButtonProps> = () => {
     }
   };
 
-  // 处理上传按钮点击
-  const handleUpload = async () => {
-    if (!isWorking && canSync) {
-      setModalAnimation('animate-fadeIn');
-      setArmedOverwrite(null);
+  /**
+   * 打开任一同步弹窗前的统一入口：身份不足就不开，并**当场**说清缺什么、去哪补。
+   *
+   * 这一条是 C 组的关键：放宽渲染门禁后，若入口仍静默放行，未登录用户会经历
+   * 「按钮出现 → 弹窗能开 → 点覆盖两下 → 毫无反应」。所以缺身份时不开弹窗，
+   * 而是立刻给出可执行提示（不是编辑弹窗里那句「上传失败，请重试」）。
+   */
+  const openSyncModal = (direction: SyncOperation) => {
+    const decision = decideSyncEntry({ ...identityGate, isBusy: isWorking });
+    if (decision.type === 'blocked') {
+      showToast(decision.reason, 'warning');
+      return;
+    }
+    setModalAnimation('animate-fadeIn');
+    setArmedOverwrite(null);
+    if (direction === 'upload') {
       setShowUploadModal(true);
       void loadUploadPreview();
-    }
-  };
-
-  // 处理下载按钮点击
-  const handleDownload = async () => {
-    if (!isWorking && canSync) {
-      setModalAnimation('animate-fadeIn');
-      setArmedOverwrite(null);
+    } else {
       setShowDownloadModal(true);
       void loadDownloadPreview();
     }
   };
+
+  // 处理上传按钮点击
+  const handleUpload = () => openSyncModal('upload');
+
+  // 处理下载按钮点击
+  const handleDownload = () => openSyncModal('download');
 
   // 关闭模态框
   const closeModals = () => {
@@ -248,6 +261,13 @@ export const SyncButton: React.FC<SyncButtonProps> = () => {
    * 合并模式无破坏性，直接执行（但同样会清掉 armed 状态，避免跨模式误触发）。
    */
   const handleSyncActionClick = async (actionKey: SyncActionKey) => {
+    // 兵底：入口闸门已拦住缺身份的情况，这里再拦一次，保证**不可能**通过
+    // 任何路径走到「点了两下毫无反应」。
+    const entry = decideSyncEntry({ ...identityGate, isBusy: isWorking });
+    if (entry.type === 'blocked') {
+      showToast(entry.reason, 'warning');
+      return;
+    }
     if (syncModeOf(actionKey) !== 'overwrite') {
       setArmedOverwrite(null);
       await runSyncAction(actionKey, false);
@@ -280,7 +300,9 @@ export const SyncButton: React.FC<SyncButtonProps> = () => {
     const mode = syncModeOf(actionKey);
 
     // 硬闸门：覆盖模式没有确认标记就拒跑（UI 侧已双闸门，这里是绕过 UI 时的兵底）
-    if (!isOverwriteGateOpen({ mode, isConfirmed: isOverwriteConfirmed, isBusy: isWorking, isAuthenticated: canSync })) {
+    // 形参沿用 isOverwriteGateOpen 的 isAuthenticated 命名，但传的是**身份能否真跑**
+    // 的判定（按后端分流）——WebDAV 用户没有账号，传裸 isAuthenticated 会把他拦死。
+    if (!isOverwriteGateOpen({ mode, isConfirmed: isOverwriteConfirmed, isBusy: isWorking, isAuthenticated: identityCanRun })) {
       return;
     }
 
@@ -340,34 +362,12 @@ export const SyncButton: React.FC<SyncButtonProps> = () => {
       } else {
         const reason = res.error;
         // 2026-10-07：reason 是内部枚举，不该原样弹给用户 —— `precheck_unknown`
-        // 这种直接显示等于没说。逐条翻译；未登记的**纯 snake_case 枚举**退回到
-        // spec.failureMessage（裸枚举对用户同样没说）；带人类可读文本的 reason
-        //（如 `validation_failed: ...`、error.message）原样显示，便于定位。
-        const REASON_COPY: Record<string, string> = {
-          already_syncing: '同步正在进行中，请稍候',
-          precheck_unknown:
-            '本地存储读取失败，已中止同步以保护你的未上传内容，请稍后重试',
-          // 上传后 UPLOAD_GUARD_MS（35s，见 syncDecision.ts）内的手动下载被跳过：
-          // 云端已是本地新状态，再拉只会用旧数据覆盖（或与在途上传竞态）。
-          recent_upload_guard: '刚完成上传，云端已是最新状态，无需下载',
-          pending_upload_failed:
-            '还有未上传的本地改动，已中止下载以免覆盖它们，请先完成上传',
-          snapshot_failed: '本地快照创建失败，已中止同步以保护现有数据',
-          // 2026-10-17：用**空云端**覆盖会把本机会话整体清空且不可逆
-          // （1.22.0 起无回收站），syncDecision.decideForceRemoteOverwrite
-          // 在覆盖路径上拦下了它。必须把「本机数据没动」说出来 ——
-          // 否则用户看到一次失败的同步，却不知道自己刚差点丢掉全部会话。
-          overwrite_empty_cloud_refused:
-            '云端没有任何数据，已中止覆盖以免清空本机会话（你的本地数据没有变化）。如需清空请手动删除会话',
-        };
-        const mapped = reason != null ? REASON_COPY[reason] : undefined;
-        const shown =
-          reason === 'not_authenticated' && direction === 'download'
-            ? '未登录'
-            : mapped ||
-              (reason && !/^[a-z_]+$/.test(reason) ? reason : undefined) ||
-              spec.failureMessage;
-        showToast(shown, 'error');
+        // 这种直接显示等于没说。翻译表与兜底规则集中在 syncPreviewView
+        //（纯函数，可直接单测）；未登录在**两个方向**都有可执行文案。
+        showToast(
+          resolveSyncFailureCopy({ reason, fallbackMessage: spec.failureMessage }),
+          'error'
+        );
       }
     } catch (error) {
       logError(spec.failureLogLabel, error);
@@ -378,8 +378,10 @@ export const SyncButton: React.FC<SyncButtonProps> = () => {
     }
   };
 
-  if (!canSync) {
-    // 云端未登录才隐藏；WebDAV 用户没有账号，但完全可用同步。
+  if (!shouldRenderSyncControls(settings.syncBackend)) {
+    // 2026-10-18 C 组：不再按登录态隐藏整组按钮。云端未登录用户也要看得见同步，
+    // 点下去由 decideSyncEntry 说清「未登录 + 去菜单登录」，而不是凭空消失
+    //（新装扩展默认后端是 supabase，隐藏等于新用户完全不知道有同步这回事）。
     return null;
   }
 

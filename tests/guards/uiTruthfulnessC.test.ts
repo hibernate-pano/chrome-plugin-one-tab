@@ -1,0 +1,486 @@
+// C 组：UI 层「说谎 / 不可发现」缺陷的回归守卫（2026-10-18）。
+//
+// 【本文件要防的回归类别】五条缺陷同属一类：界面要么**声称**了一件没发生的事，
+// 要么把功能**藏**到用户无从发现，要么把一次成功的操作做成静默。
+//   C1 同步入口：新装扩展默认后端是 supabase，未登录 ⇒ 工具栏整组按钮 return null
+//      + 菜单状态卡整块不渲染 ⇒ 新用户完全不知道有同步这回事。
+//      ⚠️ 最危险的连带项：放宽渲染而不同步处理 isOverwriteGateOpen 的入参，
+//      未登录用户会经历「按钮出现 → 弹窗能开 → 点覆盖两下 → 毫无反应」。
+//   C2 设置页 banner：判据只有 `syncBackend === 'webdav'` ⇒ 「已配置但本次会话
+//      未解锁」也显示「已启用：数据同步到你自己的云盘」，而同步实际一次都不跑。
+//   C3 设置页页首：把「9 项设置在菜单里都有对应入口」写成事实，实际菜单里只有
+//      一行「设置…」（2026-10-14 设置已全部搬进独立选项页）。
+//   C4 搜索页「恢复所有匹配标签」：全成功时**零反馈**，用户无法确证恢复了几个。
+//   C5 PersonalizedWelcome：`{tabCount > 0 && (...)}` 与三条分档文案永不渲染
+//      （唯一调用点只在空列表分支，tabCount 恒为 0）。
+//
+// 【测试形态的现实约束】本仓库没有 jsdom/happy-dom/@testing-library，也不为此装
+// 依赖（见 tests/a11yDialogs.test.ts 顶部注释）。所以「行为级测试」的可行形态是：
+// 把决策逻辑抽成不依赖 DOM 的**纯函数**（src/components/sync/syncPreviewView.ts、
+// src/components/search/restoreAllFeedback.ts）并对其做行为断言；
+// 源码字符串断言只作补充护栏，用来钉住「组件真的调用了这些纯函数」。
+import { describe, it } from 'node:test';
+import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+import {
+  WEB_DAV_BANNER_COPY,
+  WEB_DAV_BANNER_TONE,
+  decideSyncEntry,
+  resolveMenuSyncStatus,
+  resolveSyncFailureCopy,
+  shouldRenderSyncControls,
+  syncIdentityCanRun,
+  webDavBannerKindOf,
+  webDavBannerCopy,
+} from '@/components/sync/syncPreviewView';
+import type { BackendStatusKind } from '@/components/layout/backendStatus';
+
+const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
+const read = (rel: string): string => readFileSync(resolve(ROOT, rel), 'utf8');
+/** 剥注释再断言：注释里提到旧文案不算「界面还这么写」。 */
+const stripComments = (src: string): string =>
+  src.replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/(^|[^:])\/\/.*$/gm, '$1');
+
+const SYNC_BUTTON = 'src/components/sync/SyncButton.tsx';
+const HEADER_DROPDOWN = 'src/components/layout/HeaderDropdown.tsx';
+const WEBDAV_SETTINGS = 'src/components/sync/WebDavSettings.tsx';
+const OPTIONS_PAGE = 'src/options/OptionsPage.tsx';
+const SEARCH_LIST = 'src/components/search/SearchResultList.tsx';
+const WELCOME = 'src/components/common/PersonalizedWelcome.tsx';
+const TAB_LIST = 'src/components/tabs/TabList.tsx';
+
+const ALL_STATUS_KINDS: BackendStatusKind[] = [
+  'ready',
+  'locked',
+  'unconfigured',
+  'error',
+  'unknown',
+];
+
+// ══════════════════════════════════════════════════════════════════════════
+// C1（一）：工具栏同步按钮不再按登录态消失
+// ══════════════════════════════════════════════════════════════════════════
+describe('C1 同步入口可发现：渲染门禁只看后端，不看登录态', () => {
+  it('云端未登录也要渲染（挡住「新装扩展顶栏空一格、不知道有同步」）', () => {
+    assert.equal(shouldRenderSyncControls('supabase'), true);
+  });
+
+  it('自带存储照旧渲染（挡住「WebDAV 用户没有手动同步入口」的旧缺陷复活）', () => {
+    assert.equal(shouldRenderSyncControls('webdav'), true);
+  });
+
+  it('身份判定按后端分流：WebDAV 不需要登录，云端需要', () => {
+    assert.equal(syncIdentityCanRun({ syncBackend: 'webdav', isAuthenticated: false }), true);
+    assert.equal(syncIdentityCanRun({ syncBackend: 'supabase', isAuthenticated: false }), false);
+    assert.equal(syncIdentityCanRun({ syncBackend: 'supabase', isAuthenticated: true }), true);
+  });
+
+  it('组件里不再有 `if (!canSync) return null` 这种按身份隐藏整组按钮的写法', () => {
+    const src = stripComments(read(SYNC_BUTTON));
+    assert.ok(
+      !/if \(!canSync\)\s*\{/.test(src),
+      '按身份隐藏整组按钮 = 新用户完全看不到同步（README 的手动入口承诺随之落空）'
+    );
+    assert.match(src, /if \(!shouldRenderSyncControls\(settings\.syncBackend\)\)/);
+  });
+});
+
+// ══════════════════════════════════════════════════════════════════════════
+// C1（二）：身份不足时**入口**就得说清下一步
+//   这条是本组唯一的真实回归风险点：放宽渲染后若入口静默放行，未登录用户会
+//   经历「按钮出现 → 弹窗能开 → 点覆盖两下 → 毫无反应」。
+// ══════════════════════════════════════════════════════════════════════════
+describe('C1 入口闸门：缺身份时不得静默放行', () => {
+  it('云端未登录点上传/下载 ⇒ blocked，且文案指向登录', () => {
+    const decision = decideSyncEntry({
+      syncBackend: 'supabase',
+      isAuthenticated: false,
+      isBusy: false,
+    });
+    assert.equal(decision.type, 'blocked', '不得放行到弹窗：否则覆盖按钮点两下毫无反应');
+    if (decision.type !== 'blocked') return;
+    assert.match(decision.reason, /登录/, '必须指向下一步动作');
+    assert.match(decision.reason, /登录 \/ 注册|菜单/, '必须告诉用户去哪儿登录');
+  });
+
+  it('自带存储未登录 ⇒ 放行（没有 TapStack 账号也能同步）', () => {
+    assert.deepEqual(
+      decideSyncEntry({ syncBackend: 'webdav', isAuthenticated: false, isBusy: false }),
+      { type: 'open' }
+    );
+  });
+
+  it('云端已登录 ⇒ 放行', () => {
+    assert.deepEqual(
+      decideSyncEntry({ syncBackend: 'supabase', isAuthenticated: true, isBusy: false }),
+      { type: 'open' }
+    );
+  });
+
+  it('同步进行中 ⇒ blocked（与旧行为一致：进行中不开新弹窗）', () => {
+    const decision = decideSyncEntry({
+      syncBackend: 'supabase',
+      isAuthenticated: true,
+      isBusy: true,
+    });
+    assert.equal(decision.type, 'blocked');
+  });
+
+  it('接线：两个按钮都走 openSyncModal，且闸门真的在它里面', () => {
+    const src = stripComments(read(SYNC_BUTTON));
+    assert.match(src, /const handleUpload = \(\) => openSyncModal\('upload'\)/);
+    assert.match(src, /const handleDownload = \(\) => openSyncModal\('download'\)/);
+    assert.match(
+      src,
+      /const decision = decideSyncEntry\(\{ \.\.\.identityGate, isBusy: isWorking \}\)/,
+      '闸门入参必须来自按后端分流的身份判定'
+    );
+    // 模式卡片点击也要有兵底，否则「弹窗开着时登录态失效」这条路仍会静默。
+    assert.match(
+      src,
+      /const entry = decideSyncEntry\(\{ \.\.\.identityGate, isBusy: isWorking \}\)/,
+      'handleSyncActionClick 也要拦一次，保证没有任何路径能静默无反应'
+    );
+  });
+});
+
+// ══════════════════════════════════════════════════════════════════════════
+// C1（三）：isOverwriteGateOpen 的入参语义
+// ══════════════════════════════════════════════════════════════════════════
+describe('C1 覆盖硬闸门：入参是「身份能否真跑」，不是「登录了没」', () => {
+  it('组件传的是 identityCanRun（按后端分流），不是裸 isAuthenticated', () => {
+    const src = stripComments(read(SYNC_BUTTON));
+    assert.match(
+      src,
+      /isOverwriteGateOpen\(\{ mode, isConfirmed: isOverwriteConfirmed, isBusy: isWorking, isAuthenticated: identityCanRun \}\)/,
+      '形参名沿用 isAuthenticated，但语义必须是 syncIdentityCanRun 的结果'
+    );
+    assert.ok(
+      !/isAuthenticated: isAuthenticated\b/.test(src),
+      '不得把裸登录态灌进这道闸门：WebDAV 用户没有账号会被整条拦死'
+    );
+  });
+
+  it('identityCanRun 真值随后端变化（证伪「恒真/恒假」的实现）', () => {
+    // 这个变量的两个来源都必须可达：若实现退化成常量，下面两条必有一条红。
+    const src = stripComments(read(SYNC_BUTTON));
+    assert.match(src, /const identityCanRun = syncIdentityCanRun\(\{/);
+    assert.match(src, /syncBackend: settings\.syncBackend/);
+    assert.match(src, /isAuthenticated,/);
+  });
+});
+
+// ══════════════════════════════════════════════════════════════════════════
+// C1（四）：失败文案 —— upload 方向也必须说「未登录」，并登记 backend_unknown
+// ══════════════════════════════════════════════════════════════════════════
+describe('C1 失败文案：两个方向都要可执行', () => {
+  it('not_authenticated 在 upload 方向不得落到「上传失败，请重试」', () => {
+    const shown = resolveSyncFailureCopy({
+      reason: 'not_authenticated',
+      fallbackMessage: '上传失败，请重试',
+    });
+    assert.notEqual(shown, '上传失败，请重试', '这句既没说是没登录、也没说下一步');
+    assert.match(shown, /未登录/);
+    assert.match(shown, /登录/, '必须给出可执行文案');
+  });
+
+  it('not_authenticated 在 download 方向同样可执行（不再只有两个字「未登录」）', () => {
+    const shown = resolveSyncFailureCopy({
+      reason: 'not_authenticated',
+      fallbackMessage: '下载失败，请重试',
+    });
+    assert.match(shown, /登录 \/ 注册|菜单/, '要告诉用户去哪儿登录');
+  });
+
+  it('backend_unknown 已登记（B 组新增枚举不得退化成裸枚举）', () => {
+    const shown = resolveSyncFailureCopy({
+      reason: 'backend_unknown',
+      fallbackMessage: '下载失败，请重试',
+    });
+    assert.notEqual(shown, 'backend_unknown', '裸枚举对用户等于没说');
+    assert.notEqual(shown, '下载失败，请重试', '这不是「重试就好」，是设置读不到');
+    assert.match(shown, /读不到同步设置/);
+    assert.match(shown, /设置页/, '必须指向可执行的下一步');
+  });
+
+  it('backend_unknown 与「未登录」是两句话（不得混成一句）', () => {
+    // B 组在 syncEngine 里显式把 null 从门禁里摘出来，就是为了不把「不知道传向哪儿」
+    // 说成「没登录」。文案层不能又把它合回去。
+    const unknown = resolveSyncFailureCopy({ reason: 'backend_unknown', fallbackMessage: 'x' });
+    const anon = resolveSyncFailureCopy({ reason: 'not_authenticated', fallbackMessage: 'x' });
+    assert.notEqual(unknown, anon);
+  });
+
+  it('原有条目一条不少（already_syncing / precheck_unknown / 空云端保护…）', () => {
+    const cases: Array<[string, RegExp]> = [
+      ['already_syncing', /正在进行中/],
+      ['precheck_unknown', /本地存储读取失败/],
+      ['recent_upload_guard', /刚完成上传/],
+      ['pending_upload_failed', /未上传的本地改动/],
+      ['snapshot_failed', /快照创建失败/],
+      ['overwrite_empty_cloud_refused', /本地数据没有变化/],
+    ];
+    for (const [reason, pattern] of cases) {
+      assert.match(
+        resolveSyncFailureCopy({ reason, fallbackMessage: '兜底' }),
+        pattern,
+        `${reason} 的文案丢了`
+      );
+    }
+  });
+});
+
+// ══════════════════════════════════════════════════════════════════════════
+// C1（五）：菜单状态卡不再藏起云端未登录用户
+// ══════════════════════════════════════════════════════════════════════════
+describe('C1 菜单状态卡：云端未登录也看得到，且不说谎', () => {
+  const readyLike = { label: '已配置并解锁', tone: 'ok' as const, actionable: false };
+
+  it('云端未登录：显示「未登录 · 去登录」，不转述后端的 ready', () => {
+    const view = resolveMenuSyncStatus({
+      syncBackend: 'supabase',
+      isAuthenticated: false,
+      userEmail: null,
+      backend: readyLike,
+    });
+    assert.equal(view.headline, '未登录');
+    assert.equal(view.label, '未登录');
+    assert.equal(view.needsLogin, true);
+    assert.equal(view.actionable, false, '未登录时「去设置」不是正确的下一步');
+    // Supabase 分支永远没有 lockedReason ⇒ classifyBackendResolution 返回 ready。
+    // 直接转述就是新的谎话（这是本条最容易写错的地方）。
+    assert.ok(!view.label.includes('已配置'), '不得把 ready 转述给未登录用户');
+  });
+
+  it('云端已登录：抬头是邮箱，状态行按后端前缀 + 真实分类', () => {
+    const view = resolveMenuSyncStatus({
+      syncBackend: 'supabase',
+      isAuthenticated: true,
+      userEmail: 'a@b.c',
+      backend: readyLike,
+    });
+    assert.equal(view.headline, 'a@b.c');
+    assert.equal(view.prefix, 'TapStack 云端');
+    assert.equal(view.label, '已配置并解锁');
+    assert.equal(view.needsLogin, false);
+    assert.equal(view.tone, 'ok');
+  });
+
+  it('自带存储未登录：不提示登录（没有 TapStack 账号），状态如实转述', () => {
+    const view = resolveMenuSyncStatus({
+      syncBackend: 'webdav',
+      isAuthenticated: false,
+      userEmail: null,
+      backend: { label: '未解锁', tone: 'warn' as const, actionable: true },
+    });
+    assert.equal(view.headline, '自带存储');
+    assert.equal(view.prefix, '自带存储');
+    assert.equal(view.label, '未解锁');
+    assert.equal(view.needsLogin, false);
+    assert.equal(view.actionable, true, '未解锁时「去设置」才是正确的下一步');
+  });
+
+  it('云端未登录 + 后端锁定态：仍然只说「未登录」（登录才是第一位的）', () => {
+    const view = resolveMenuSyncStatus({
+      syncBackend: 'supabase',
+      isAuthenticated: false,
+      userEmail: null,
+      backend: { label: '未解锁', tone: 'warn' as const, actionable: true },
+    });
+    assert.equal(view.label, '未登录');
+    assert.equal(view.needsLogin, true);
+  });
+
+  it('组件接线：卡片无条件渲染 + 状态行来自 resolveMenuSyncStatus', () => {
+    const src = stripComments(read(HEADER_DROPDOWN));
+    assert.ok(
+      !/\(\(isAuthenticated && user\) \|\| settings\.syncBackend === 'webdav'\)/.test(src),
+      '旧条件会把云端未登录用户的整块状态藏掉'
+    );
+    assert.match(src, /const syncStatusView = resolveMenuSyncStatus\(\{/);
+    assert.match(src, /\{syncStatusView\.headline\}/);
+    assert.match(src, /去登录/, '未登录时缺的唯一入口');
+    // handleQuickRefresh 已经是后端分流（:180 needsAccount），不该被改。
+    assert.match(
+      src,
+      /const needsAccount = settings\.syncBackend !== 'webdav';/,
+      '快速刷新门禁必须保持后端分流'
+    );
+  });
+});
+
+// ══════════════════════════════════════════════════════════════════════════
+// C2：设置页 banner 不再「已配置就宣称已启用」
+// ══════════════════════════════════════════════════════════════════════════
+describe('C2 WebDAV banner：只有 ready 才允许说「已启用」', () => {
+  it('locked（已配置但本次会话未解锁）⇒ 说「尚未解锁」，不说「已启用」', () => {
+    const kind = webDavBannerKindOf('locked');
+    assert.equal(kind, 'locked');
+    const copy = webDavBannerCopy('locked');
+    assert.ok(!copy.includes('已启用'), '未解锁时同步一次都不会跑，这条 banner 就是在说谎');
+    assert.match(copy, /尚未解锁/);
+    assert.match(copy, /应用密码/, '必须给出可执行的下一步（重新输入应用密码）');
+  });
+
+  it('unconfigured ⇒ 说「还没有配置云盘」', () => {
+    assert.equal(webDavBannerKindOf('unconfigured'), 'unconfigured');
+    assert.match(webDavBannerCopy('unconfigured'), /还没有配置云盘/);
+    assert.ok(!webDavBannerCopy('unconfigured').includes('已启用'));
+  });
+
+  it('error / unknown ⇒ 不得落进 ready（读不到 ≠ 已启用）', () => {
+    assert.notEqual(webDavBannerKindOf('error'), 'ready');
+    assert.notEqual(webDavBannerKindOf('unknown'), 'ready');
+    assert.ok(!webDavBannerCopy('error').includes('已启用'));
+    assert.ok(!webDavBannerCopy('unknown').includes('已启用'));
+  });
+
+  it('只有 ready 的文案含「已启用」——五种分类逐一核对', () => {
+    const sayingEnabled = ALL_STATUS_KINDS.filter(kind =>
+      webDavBannerCopy(kind).includes('已启用')
+    );
+    assert.deepEqual(sayingEnabled, ['ready'], '「已启用」必须唯一对应 ready 态');
+  });
+
+  it('色档与文案同源：只有 ready 用「一切正常」的蓝底', () => {
+    const blue = ALL_STATUS_KINDS.filter(kind =>
+      WEB_DAV_BANNER_TONE[webDavBannerKindOf(kind)].includes('blue')
+    );
+    assert.deepEqual(blue, ['ready']);
+    for (const kind of ALL_STATUS_KINDS) {
+      assert.ok(
+        WEB_DAV_BANNER_COPY[webDavBannerKindOf(kind)].length > 0,
+        `${kind} 缺少文案`
+      );
+    }
+  });
+
+  it('组件接线：判据来自 classifyBackendResolution 的完整结果，不是只看 syncBackend', () => {
+    const src = stripComments(read(WEBDAV_SETTINGS));
+    assert.match(
+      src,
+      /setBackendKind\(classifyBackendResolution\(getLastBackendResolution\(\)\)\.kind\)/,
+      'banner 必须读真实解析结果（含 lockedKind 的三态），不能自己再判一次 syncBackend'
+    );
+    assert.match(src, /webDavBannerKindOf\(backendKind \?\? 'unknown'\)/);
+    assert.match(src, /WEB_DAV_BANNER_COPY\[webdavBannerKind\]/);
+    // 反向：写死的「已启用」句子不得再出现在 JSX 里（那正是原缺陷）。
+    assert.ok(
+      !src.includes('已启用：数据同步到你自己的云盘。'),
+      'banner 里不得再写死「已启用」——它必须由状态决定'
+    );
+  });
+});
+
+// ══════════════════════════════════════════════════════════════════════════
+// C3：设置页页首不再声称「菜单里每项都有入口」
+// ══════════════════════════════════════════════════════════════════════════
+describe('C3 设置页页首文案：指向「设置…」入口，不谎称逐项对应', () => {
+  const src = stripComments(read(OPTIONS_PAGE));
+
+  it('不再声称「这里改的每一项都能在扩展图标菜单里找到对应入口」', () => {
+    assert.ok(
+      !src.includes('都能在') || !src.includes('里找到对应入口'),
+      '菜单里与本页对应的只有一行「设置…」，9 项设置 0 项对应地点（2026-10-14 已全部搬走）'
+    );
+  });
+
+  it('改为指向「设置…」入口（可再次进入本页）', () => {
+    assert.match(src, /「设置…」/, '必须给出真实存在的那一个入口');
+    assert.match(src, /可再次进入本页/);
+  });
+
+  it('反方向护栏：设置项没有被搬回 HeaderDropdown（256px 瞬态下拉放不下 WebDAV 表单）', () => {
+    const menu = stripComments(read(HEADER_DROPDOWN));
+    assert.match(menu, /设置…/, '菜单里必须保留「设置…」这一行');
+    assert.match(menu, /handleOpenOptions/, '入口必须真的打开选项页');
+    // WebDAV 表单的字段不该出现在菜单里。
+    assert.ok(!menu.includes('应用密码'), 'WebDAV 表单不得被搬回 256px 的瞬态菜单');
+  });
+});
+
+// ══════════════════════════════════════════════════════════════════════════
+// C4：搜索页「恢复所有匹配标签」全成功时也要出声
+// ══════════════════════════════════════════════════════════════════════════
+describe('C4 批量恢复成功反馈：条数用 matchingTabs.length', () => {
+  const src = stripComments(read(SEARCH_LIST));
+
+  it('全成功分支必须播报成功（挡住「对话框关了、窗口开了、只是几行消失」）', () => {
+    assert.match(
+      src,
+      /showRestoreSuccess\(matchingTabs\.length\)/,
+      '缺成功 toast：命中标签分散在多个会话时用户看不出恢复了几个'
+    );
+  });
+
+  it('播报发生在 success:true 与 consume 之后（失败分支不得播报成功）', () => {
+    const start = src.indexOf('const runRestoreAllSearchResults = () =>');
+    assert.ok(start > 0, '应能找到 runRestoreAllSearchResults');
+    const end = src.indexOf('const handleDeleteAllSearchResults', start);
+    const body = src.slice(start, end === -1 ? src.length : end);
+
+    const guardAt = body.indexOf('r.success !== true');
+    const toastAt = body.indexOf('showRestoreSuccess(matchingTabs.length)');
+    assert.ok(guardAt !== -1 && toastAt !== -1);
+    assert.ok(guardAt < toastAt, '成功播报必须排在失败出口之后');
+
+    // 失败出口与「部分不可打开」出口都要 return，否则会出现成功+失败双 toast。
+    const failBranch = body.slice(guardAt, toastAt);
+    assert.match(failBranch, /return;/, '失败出口必须 return，不能继续往下播成功');
+    // 「部分不可打开」那一分支也是部分失败出口：它自己已经报了条数，
+    // 再往下走就会同时播「已恢复 N 个」与「另有 M 个打不开」（自相矛盾）。
+    // ⚠️ 先断言子串确实存在，否则 -1 会让下一条比较恒真。
+    const partialAt = failBranch.indexOf('skippedUnopenable');
+    assert.ok(partialAt !== -1, '应能找到「部分不可打开」分支');
+    const lastReturnAt = failBranch.lastIndexOf('return;');
+    assert.ok(lastReturnAt !== -1, '应能找到 return');
+    assert.ok(
+      lastReturnAt > partialAt,
+      '「部分不可打开」分支也要 return，否则会同时播报「已恢复 N 个」和「另有 M 个打不开」'
+    );
+  });
+
+  it('toastHelper 的成功文案带条数（不是一句「操作完成」）', () => {
+    const helper = read('src/utils/toastHelper.ts');
+    assert.match(helper, /已成功恢复 \$\{params\?\.count \|\| 0\} 个标签页/);
+  });
+});
+
+// ══════════════════════════════════════════════════════════════════════════
+// C5：PersonalizedWelcome 的死分支与死 DOM 已删除
+// ══════════════════════════════════════════════════════════════════════════
+describe('C5 PersonalizedWelcome：不可达的统计块与分档文案已删除', () => {
+  const src = stripComments(read(WELCOME));
+
+  it('`{tabCount > 0 && (...)}` 整块已删除（唯一调用点只在空列表分支 ⇒ 恒不渲染）', () => {
+    assert.ok(!/tabCount\s*>\s*0/.test(src), '这条条件永远不会成立：DOM 从来不存在');
+    assert.ok(!src.includes('个标签页'), '统计块的内容也随块删除');
+    assert.ok(!src.includes('可恢复'), '绿点「可恢复」是一句未经任何数据检查的断言');
+  });
+
+  it('tabCount 分档的三条不可达分支已删除', () => {
+    assert.ok(!/getMotivationalMessage/.test(src), 'tabCount<10 / <50 / 其它三条分支不可达');
+    assert.ok(!/getEmoji/.test(src), '同上：emoji 也只有 tabCount===0 那档会走到');
+    assert.ok(!/tabCount/.test(src), 'prop 与内部分档都不该保留（保留 = 诱导后人再接一次死数据）');
+  });
+
+  it('唯一的欢迎语仍然存在（删的是死分支，不是整个功能）', () => {
+    assert.match(src, /先保存一个工作会话/);
+    assert.match(src, /早上好|下午好|晚上好/, '问候语按时间分档是真可达的分支');
+    assert.match(src, /TapStackLogo/);
+  });
+
+  it('调用点不再传 tabCount，且当处标签总数恒为 0', () => {
+    const list = stripComments(read(TAB_LIST));
+    assert.ok(
+      !/<PersonalizedWelcome tabCount=/.test(list),
+      '传 tabCount 会让人以为统计块还在工作'
+    );
+    assert.match(list, /<PersonalizedWelcome className="tab-group-card p-6" \/>/);
+    // 反过来确认「恒为 0」这个前提仍然成立：组件只在 filteredGroups.length === 0 分支渲染。
+    assert.match(list, /if \(filteredGroups\.length === 0 && !searchQuery\) \{/);
+  });
+});

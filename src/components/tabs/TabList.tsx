@@ -218,7 +218,6 @@ export const TabList: React.FC<TabListProps> = ({ searchQuery }) => {
   });
 
   const filteredGroups = sortedGroups;
-  const totalTabCount = filteredGroups.reduce((count, group) => count + group.tabs.length, 0);
 
   if (filteredGroups.length === 0 && !searchQuery) {
     return (
@@ -227,7 +226,9 @@ export const TabList: React.FC<TabListProps> = ({ searchQuery }) => {
             EmptyState 自带边框 + 圆角 + 阴影，外面再包 flat-card 就是
             「卡片套卡片」的双层描边（探针实测 inner/outer 各 1px 边框各带阴影）。
             这里让两块内容各自独立，视觉层级更干净。 */}
-        <PersonalizedWelcome tabCount={totalTabCount} className="tab-group-card p-6" />
+        {/* 空态欢迎卡。⚠️ 不要给它传 tabCount：本分支的标签总数恒为 0，
+            统计块由此永远不会渲染（2026-10-18 C 组删除了一条永不成立的分支）。 */}
+        <PersonalizedWelcome className="tab-group-card p-6" />
         <EmptyState
           tone="default"
           title="先保存一个工作会话"

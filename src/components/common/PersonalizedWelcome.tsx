@@ -3,18 +3,24 @@ import { TapStackLogo } from './TapStackIcon';
 
 interface PersonalizedWelcomeProps {
   userName?: string;
-  tabCount?: number;
   className?: string;
 }
 
 /**
  * 个性化欢迎组件
  * 提供温暖的情感化设计
+ *
+ * ── 2026-10-18 C 组：只剩空态形态，`tabCount` 已移除 ────────────────────
+ * 唯一调用方（TabList.tsx）只在 `filteredGroups.length === 0` 时渲染本组件，
+ * 此时标签总数**恒为 0**。于是原先的 `{tabCount > 0 && (...)}` 统计块 DOM
+ * 根本不存在，`getMotivationalMessage` / `getEmoji` 里 `tabCount < 10` / `< 50`
+ * / 其它三个分支同样不可达 —— 一条永远走不到的分支比没有更糟：它看起来像
+ * 一个已实现的功能（「N 个标签页 · 绿点 可恢复」），而绿点从来没有被任何数据
+ * 检查过。整块删除；如果将来要在有数据的分支里显示统计，必须重新接真值。
  */
-export const PersonalizedWelcome: React.FC<PersonalizedWelcomeProps> = ({ 
-  userName, 
-  tabCount = 0,
-  className = '' 
+export const PersonalizedWelcome: React.FC<PersonalizedWelcomeProps> = ({
+  userName,
+  className = ''
 }) => {
   const getGreeting = () => {
     const hour = new Date().getHours();
@@ -23,31 +29,12 @@ export const PersonalizedWelcome: React.FC<PersonalizedWelcomeProps> = ({
     return '晚上好';
   };
 
-  const getMotivationalMessage = () => {
-    if (tabCount === 0) {
-      return '先保存一个工作会话，让稍后找回变得轻松';
-    } else if (tabCount < 10) {
-      return '继续保持，您的工作会话已经开始变得清晰有序';
-    } else if (tabCount < 50) {
-      return '管理得很好，您已经在稳定积累可恢复的工作现场';
-    } else {
-      return '会话管理专家，随时都能从上次中断的位置继续工作';
-    }
-  };
-
-  const getEmoji = () => {
-    if (tabCount === 0) return '🚀';
-    if (tabCount < 10) return '✨';
-    if (tabCount < 50) return '🎯';
-    return '🏆';
-  };
-
   return (
     <div className={`text-center py-8 px-4 ${className}`}>
       {/* 欢迎图标 */}
       <div className="mb-4">
         <div className="theme-accent-soft inline-flex items-center justify-center w-16 h-16 rounded-full mb-3">
-          <span className="text-2xl">{getEmoji()}</span>
+          <span className="text-2xl">🚀</span>
         </div>
       </div>
 
@@ -57,28 +44,9 @@ export const PersonalizedWelcome: React.FC<PersonalizedWelcomeProps> = ({
           {getGreeting()}，{userName ? `${userName}！` : '欢迎使用 TapStack！'}
         </h1>
         <p className="flat-text-tertiary text-sm max-w-md mx-auto">
-          {getMotivationalMessage()}
+          先保存一个工作会话，让稍后找回变得轻松
         </p>
       </div>
-
-      {/* 统计信息 */}
-      {tabCount > 0 && (
-        <div className="theme-well theme-radius-control theme-border-default inline-flex items-center space-x-4 px-4 py-2 border">
-          <div className="flex items-center space-x-1">
-            <div className="w-2 h-2 bg-blue-500 rounded-full"></div>
-            <span className="text-sm text-gray-600 dark:text-gray-300">
-              {tabCount} 个标签页
-            </span>
-          </div>
-          <div className="w-px h-4 bg-gray-300 dark:bg-gray-600"></div>
-          <div className="flex items-center space-x-1">
-            <div className="w-2 h-2 bg-green-500 rounded-full"></div>
-            <span className="text-sm text-gray-600 dark:text-gray-300">
-              可恢复
-            </span>
-          </div>
-        </div>
-      )}
 
       {/* 品牌标识 */}
       <div className="mt-6 flex justify-center">

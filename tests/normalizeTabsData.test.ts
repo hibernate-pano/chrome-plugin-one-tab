@@ -265,6 +265,52 @@ describe('normalizeImportedGroup: 时间戳不编造', () => {
     assert.ok(new Date(g.tabs[0].createdAt).getTime() >= before - CLOCK_SLACK_MS, 'Infinity 不能变成 Invalid Date');
     assert.strictEqual(g.tabs[0].createdAt, g.tabs[0].lastAccessed, 'lastAccessed 缺失 → 回退到 createdAt，但那已是 now');
   });
+
+  // 2026-10-18：上一条断言（createdAt === lastAccessed）曾经是**巧合探测器**——
+  // 实现里每个缺时间戳的标签各自调一次 new Date()，两次读钟相距 1ms 时就红，
+  // 同一毫秒内就绿。全量并发跑时偶发变红（实测 4 轮×4 并发出现 1 次）。
+  // 根因是实现产出了假精度：文件里没有任何时间戳，却给出「建于 T1、最后访问 T2」。
+  //
+  // 断言「整组只有一个时间戳」在真实时钟下**同样抓不到**这个缺陷（两次读钟
+  // 通常落在同一毫秒）。所以这里注入一个「每次读钟前进 1ms」的假时钟：
+  // 实现只要读了两次，两值必然不同 —— 确定性变红，不靠运气。
+  it('② 一个组内所有回退时间戳出自同一次读钟（不产出假精度）', async () => {
+    const { normalizeImportedGroup } = await import('@/core/normalizeTabsData');
+    const RealDate = globalThis.Date;
+    let ticks = 0;
+    const BASE = RealDate.UTC(2026, 0, 1, 0, 0, 0);
+    class TickingDate extends RealDate {
+      constructor(...args: unknown[]) {
+        // 无参构造 = 「读当前时钟」，每次都让它前进 1ms。
+        // 带参构造（asIso 里的 new Date(ms)）走原行为，不能被搅乱。
+        if (args.length === 0) super(BASE + ticks++);
+        else super(...(args as [number]));
+      }
+    }
+    globalThis.Date = TickingDate as DateConstructor;
+    let g: ReturnType<typeof normalizeImportedGroup>;
+    try {
+      // 两个标签都缺时间戳 ⇒ 全部走回退路径，取样点最多。
+      g = normalizeImportedGroup({
+        name: 'x',
+        tabs: [{ url: 'https://a.com' }, { url: 'https://b.com' }],
+      });
+    } finally {
+      globalThis.Date = RealDate;
+    }
+    assert.equal(g.tabs.length, 2, '前提：两个标签都存活');
+    const stamps = new Set([
+      g.createdAt,
+      g.updatedAt,
+      ...g.tabs.flatMap(t => [t.createdAt, t.lastAccessed]),
+    ]);
+    assert.equal(
+      stamps.size,
+      1,
+      `整组应只有一个时间戳（文件里没有时间戳，导入是单一瞬间），实际得到 ${[...stamps].join(', ')}`
+    );
+    assert.equal(g.createdAt, new RealDate(BASE).toISOString(), '回退值应来自那唯一一次读钟');
+  });
 });
 
 describe('normalizeImportedGroup: 旧版真值标志', () => {

@@ -292,11 +292,17 @@ describe('缺陷 1：同步状态由真实解析决定，三种状态互相可�
 
   it('写死的绿点已删除：颜色来自状态档位映射', () => {
     assert.ok(!MENU.includes('bg-green-500'), '菜单里不得再出现写死的绿点');
-    assert.match(MENU, /BACKEND_STATUS_DOT_CLASS\[backendStatus\.tone\]/, '颜色必须跟状态走');
+    // 2026-10-18 C 组：色档仍然来自状态，但取值改由 resolveMenuSyncStatus
+    // 统一决定（云端未登录恒为 warn，不得转述后端的 ready）。
+    assert.match(
+      MENU,
+      /BACKEND_STATUS_DOT_CLASS\[syncStatusView\.tone\]/,
+      '颜色必须跟状态走'
+    );
   });
 
   it('未就绪状态渲染「去设置」入口（复用 openOptionsPage 路径）', () => {
-    assert.match(MENU, /backendStatus\.actionable/, '可行动状态必须驱动入口渲染');
+    assert.match(MENU, /syncStatusView\.actionable/, '可行动状态必须驱动入口渲染');
     assert.match(MENU, /去设置/);
     assert.match(MENU, /handleOpenOptions/, '入口应复用已有 openOptionsPage handler');
   });
@@ -307,18 +313,62 @@ describe('缺陷 1：同步状态由真实解析决定，三种状态互相可�
   // 永远看不到自己的同步状态（已配置 / 未解锁 / 去设置）—— 而登录对他们
   // 毫无意义。Playwright 实测确认过这个形态。
   it('自带存储用户即使未登录也必须看到同步状态卡（而不是「登录 / 注册」）', () => {
-    // 卡片容器的渲染条件必须把 webdav 也算进去。
-    assert.match(
-      MENU,
-      /settings\.syncBackend === 'webdav'\)\s*&&\s*\(/,
-      '状态卡条件必须包含「选了自带存储」，否则没有账号的 WebDAV 用户看不到状态'
+    // 2026-10-18 C 组：条件不再写在 JSX 里，而是**无条件渲染** + 由
+    // resolveMenuSyncStatus 按后端（和登录态）算出整行状态。断言分两层：
+    // （a）行为：webdav / supabase 两种后端、登录与否的四种组合都有头衔与前缀，
+    //      manifest 永不说「未登录」以外的话；
+    // （b）结构：卡片无条件渲染（旧条件已删）。
+    assert.ok(
+      !/isAuthenticated && user\) \|\| settings\.syncBackend === 'webdav'/.test(MENU),
+      '不得再按「已登录 或 自带存储」隐藏状态卡（云端未登录同样需要看到同步）'
     );
-    // 登录按钮必须反过来：未登录**且不是**自带存储时才提示。
+    assert.match(MENU, /resolveMenuSyncStatus\(/, '状态行必须走统一函数，不在 JSX 里各写一份');
+    // 登录按钮必须保留：未登录**且不是**自带存储时才提示。
     assert.match(
       MENU,
       /!isAuthenticated\s*&&\s*settings\.syncBackend !== 'webdav'/,
       '登录按钮不应出现在自带存储用户的菜单里 —— 他们不需要 TapStack 账号'
     );
+  });
+
+  // 行为断言：四种组合的头衔/前缀/可行动入口。只做源码结构断言的话，
+  // 一个恒返回同一个视图的 resolveMenuSyncStatus 也能全绿。
+  it('菜单状态卡：四种后端×登录态组合各自成立，云端未登录不说任何「就绪」', async () => {
+    const { resolveMenuSyncStatus } = await import('@/components/sync/syncPreviewView');
+    const ready = { label: '已配置并解锁', tone: 'ok' as const, actionable: false };
+    const locked = { label: '未解锁', tone: 'warn' as const, actionable: true };
+
+    const webdavAnon = resolveMenuSyncStatus({
+      syncBackend: 'webdav',
+      isAuthenticated: false,
+      userEmail: null,
+      backend: locked,
+    });
+    assert.equal(webdavAnon.headline, '自带存储');
+    assert.equal(webdavAnon.needsLogin, false, '自带存储用户不需要 TapStack 账号');
+    assert.ok(!webdavAnon.label.includes('登录'), '不带账号的后端不该提示登录');
+
+    const cloudAuthed = resolveMenuSyncStatus({
+      syncBackend: 'supabase',
+      isAuthenticated: true,
+      userEmail: 'a@b.c',
+      backend: ready,
+    });
+    assert.equal(cloudAuthed.headline, 'a@b.c');
+    assert.equal(cloudAuthed.label, '已配置并解锁');
+    assert.equal(cloudAuthed.prefix, 'TapStack 云端');
+    assert.equal(cloudAuthed.needsLogin, false);
+
+    const cloudAnon = resolveMenuSyncStatus({
+      syncBackend: 'supabase',
+      isAuthenticated: false,
+      userEmail: null,
+      backend: ready,
+    });
+    assert.equal(cloudAnon.headline, '未登录');
+    assert.equal(cloudAnon.label, '未登录', 'Supabase 分支永远没 lockedReason，ready 不代表能同步');
+    assert.equal(cloudAnon.needsLogin, true, '未登录时唯一可行动的事就是去登录');
+    assert.ok(!cloudAnon.label.includes('已配置'), '不得把 ready 转述给未登录用户');
   });
 });
 

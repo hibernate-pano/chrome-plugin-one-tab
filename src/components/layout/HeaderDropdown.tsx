@@ -29,6 +29,7 @@ import {
   type BackendStatus,
 } from './backendStatus';
 import { deleteAllConfirmMessage, deleteAllMenuWarning } from './deleteAllMessages';
+import { resolveMenuSyncStatus } from '@/components/sync/syncPreviewView';
 
 /** 问题反馈落点：GitHub issues 新建页。用户自己决定粘不粘诊断摘要。 */
 const FEEDBACK_ISSUE_URL = 'https://github.com/hibernate-pano/chrome-plugin-one-tab/issues/new';
@@ -517,6 +518,16 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({
   const lastSyncTitle =
     lastSyncAt && lastSyncLabel ? `上次成功同步：${new Date(lastSyncAt).toLocaleString()}` : null;
 
+  // 2026-10-18 C 组：状态卡不再按登录态隐藏，且状态文案由统一函数决定 ——
+  // 云端未登录时 parse 出来的是 supabase 适配器的 `ready / 已配置并解锁`，
+  // 直接渲染就是新的谎话（Supabase 分支不检查登录态）。
+  const syncStatusView = resolveMenuSyncStatus({
+    syncBackend: settings.syncBackend,
+    isAuthenticated,
+    userEmail: user?.email,
+    backend: backendStatus,
+  });
+
   return (
     <div
       ref={dropdownRef}
@@ -529,83 +540,90 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({
             ⚠️ 双模式下那是个真缺陷：自带存储（WebDAV）用户**没有 TapStack 账号**，
             isAuthenticated 恒为 false ⇒ 他们只看到「登录 / 注册」，永远看不到
             自己的同步状态（已配置/未解锁/去设置）—— 而登录对他们毫无意义。
-            现改为「已登录 或 选了自带存储」都渲染这张卡。
-            下面的登录按钮则反过来：只在**未登录且用云端**时才提示登录。 */}
-        {((isAuthenticated && user) || settings.syncBackend === 'webdav') && (
-          <>
-            <div className="px-4 py-3 border-b border-gray-200 dark:border-gray-700">
-              <div className="flex items-center justify-between mb-2">
-                <p className="text-sm font-medium text-gray-900 dark:text-gray-100">
-                  {isAuthenticated && user
-                    ? user.email
-                    : settings.syncBackend === 'webdav'
-                      ? '自带存储'
-                      : '未登录'}
-                </p>
-                <button
-                  onClick={handleQuickRefresh}
-                  disabled={isRefreshing}
-                  aria-label={isRefreshing ? '正在从云端刷新' : '从云端刷新数据'}
-                  className="p-1.5 rounded-full flat-interaction transition-colors disabled:cursor-not-allowed disabled:opacity-60"
-                  title={isRefreshing ? '正在从云端刷新…' : '从云端刷新数据'}
-                >
-                  {/* 进行中的可视信号：转圈。只 disabled 不转，用户仍看不出「在动」 */}
-                  <svg
-                    xmlns="http://www.w3.org/2000/svg"
-                    className={`h-4 w-4 text-primary-600 dark:text-primary-400${isRefreshing ? ' animate-spin' : ''}`}
-                    fill="none"
-                    viewBox="0 0 24 24"
-                    stroke="currentColor"
-                  >
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-                  </svg>
-                </button>
-              </div>
-              <div className="flex items-center justify-between">
-                {/* 2026-10-17 B8（从 slim 适配双模式）：
-                    原先这里是**写死的绿点 + 「已登录」**，没有任何判据 ——
-                    未配置 / 未解锁 / 后端解析失败的用户也看到「已登录」。
-                    现在状态来自 getLastBackendResolution()：
-                    已配置并解锁 / 未解锁 / 未配置 / 状态不可读 四态可辨，
-                    未就绪时提供「去设置」入口。
+            2026-10-18 C 组：**云端未登录**同样被藏了 —— 新装扩展默认后端是
+            supabase，菜单里连同步存在都看不到。现改为无条件渲染（两种后端的
+            未就绪态各自有话说），状态文案由 resolveMenuSyncStatus 统一决定，
+            云端未登录时显示「未登录 · 去登录」而不是转述后端的 ready。 */}
+        <div className="px-4 py-3 border-b border-gray-200 dark:border-gray-700">
+          <div className="flex items-center justify-between mb-2">
+            <p className="text-sm font-medium text-gray-900 dark:text-gray-100">
+              {syncStatusView.headline}
+            </p>
+            <button
+              onClick={handleQuickRefresh}
+              disabled={isRefreshing}
+              aria-label={isRefreshing ? '正在从云端刷新' : '从云端刷新数据'}
+              className="p-1.5 rounded-full flat-interaction transition-colors disabled:cursor-not-allowed disabled:opacity-60"
+              title={isRefreshing ? '正在从云端刷新…' : '从云端刷新数据'}
+            >
+              {/* 进行中的可视信号：转圈。只 disabled 不转，用户仍看不出「在动」 */}
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                className={`h-4 w-4 text-primary-600 dark:text-primary-400${isRefreshing ? ' animate-spin' : ''}`}
+                fill="none"
+                viewBox="0 0 24 24"
+                stroke="currentColor"
+              >
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+              </svg>
+            </button>
+          </div>
+          <div className="flex items-center justify-between">
+            {/* 2026-10-17 B8（从 slim 适配双模式）：
+                原先这里是**写死的绿点 + 「已登录」**，没有任何判据 ——
+                未配置 / 未解锁 / 后端解析失败的用户也看到「已登录」。
+                现在状态来自 getLastBackendResolution()：
+                已配置并解锁 / 未解锁 / 未配置 / 状态不可读 四态可辨，
+                未就绪时提供「去设置」入口。
 
-                    ⚠️ 双模式：前缀按 settings.syncBackend 区分 —— 末尾存储
-                    用「自带存储」，TapStack 云端用「TapStack 云端」。
-                    slim 上是写死的「自带存储 · 」，照抄会在云端模式下撒谎。 */}
-                  <p
-                    className="min-w-0 text-xs text-gray-500 dark:text-gray-400 flex items-center"
-                    title={backendStatus.lockedReason ?? BACKEND_STATUS_TITLE[backendStatus.kind]}
-                  >
-                    <span
-                      className={`inline-block w-2 h-2 rounded-full mr-1 shrink-0 ${BACKEND_STATUS_DOT_CLASS[backendStatus.tone]}`}
-                    ></span>
-                    <span className="truncate">
-                      {settings.syncBackend === 'webdav' ? '自带存储' : 'TapStack 云端'} ·{' '}
-                      {backendStatus.label}
-                    </span>
-                  </p>
-                {backendStatus.actionable && (
-                  <button
-                    type="button"
-                    onClick={handleOpenOptions}
-                    className="shrink-0 text-xs font-medium text-primary-600 underline hover:text-primary-700 dark:text-primary-400 dark:hover:text-primary-300"
-                  >
-                    去设置
-                  </button>
-                )}
-              </div>
-              {/* 上次同步时间：真值来自 storage.getLastSyncTime()（由 syncEngine
-                  的成功路径写入），而不是 Redux 的 tabs.lastSyncTime ——
-                  后者全仓零写方，读它等于这一行永远不渲染（缺陷 2）。
-                  坏时间戳 → formatLastSyncTime 返回 null → 整行不渲染。 */}
-              {lastSyncLabel && lastSyncTitle && (
-                <p className="mt-1 text-xs text-gray-400 dark:text-gray-500" title={lastSyncTitle}>
-                  上次成功同步 · {lastSyncLabel}
-                </p>
-              )}
-            </div>
-          </>
-        )}
+                ⚠️ 双模式：前缀按 settings.syncBackend 区分 —— 末尾存储
+                用「自带存储」，TapStack 云端用「TapStack 云端」。
+                slim 上是写死的「自带存储 · 」，照抄会在云端模式下撒谎。
+                2026-10-18 C 组：前缀、短语、圆点色、行动入口全部来自
+                resolveMenuSyncStatus（云端未登录恒为「未登录 + 去登录」）。 */}
+            <p
+              className="min-w-0 text-xs text-gray-500 dark:text-gray-400 flex items-center"
+              title={backendStatus.lockedReason ?? BACKEND_STATUS_TITLE[backendStatus.kind]}
+            >
+              <span
+                className={`inline-block w-2 h-2 rounded-full mr-1 shrink-0 ${BACKEND_STATUS_DOT_CLASS[syncStatusView.tone]}`}
+              ></span>
+              <span className="truncate">
+                {syncStatusView.prefix} · {syncStatusView.label}
+              </span>
+            </p>
+            {syncStatusView.needsLogin && (
+              <button
+                type="button"
+                onClick={() => {
+                  onClose();
+                  onOpenAuth('login');
+                }}
+                className="shrink-0 text-xs font-medium text-primary-600 underline hover:text-primary-700 dark:text-primary-400 dark:hover:text-primary-300"
+              >
+                去登录
+              </button>
+            )}
+            {!syncStatusView.needsLogin && syncStatusView.actionable && (
+              <button
+                type="button"
+                onClick={handleOpenOptions}
+                className="shrink-0 text-xs font-medium text-primary-600 underline hover:text-primary-700 dark:text-primary-400 dark:hover:text-primary-300"
+              >
+                去设置
+              </button>
+            )}
+          </div>
+          {/* 上次同步时间：真值来自 storage.getLastSyncTime()（由 syncEngine
+              的成功路径写入），而不是 Redux 的 tabs.lastSyncTime ——
+              后者全仓零写方，读它等于这一行永远不渲染（缺陷 2）。
+              坏时间戳 → formatLastSyncTime 返回 null → 整行不渲染。 */}
+          {lastSyncLabel && lastSyncTitle && (
+            <p className="mt-1 text-xs text-gray-400 dark:text-gray-500" title={lastSyncTitle}>
+              上次成功同步 · {lastSyncLabel}
+            </p>
+          )}
+        </div>
 
         {!isAuthenticated && settings.syncBackend !== 'webdav' && (
           <button
