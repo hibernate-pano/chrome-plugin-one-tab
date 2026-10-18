@@ -197,6 +197,42 @@ export function validateWebDavForm(
   return { ok: true };
 }
 
+/**
+ * 「已保存配置」与「表单里正在编辑的内容」是否指向**同一个**云端库
+ * （2026-10-18 round 39 P0）。
+ *
+ * 【这个 bug 的形状】首次推送的探测与执行走的是**两套数据源**：
+ *   · 探测（`probeRemote`）用表单里的 baseUrl/username/password 现造一个
+ *     `WebDavBackendAdapter`，于是确认框里报的数字是 **B 库**的；
+ *   · 执行（`sendSyncCommand('upload'/'download')）在 service worker 里走
+ *     `getActiveSyncBackend()`，读的是**已保存配置**，也就是 **A 库**。
+ * 于是「把表单改成 B 库 → 点检查并推送」会拿 B 库的数字换取用户点确认，
+ * 再把数据写进 A 库。用户全程看到的是 B 库的界面，磁盘上动的是 A 库。
+ *
+ * 这不是文案瑕疵，是让用户在一个他并未同意的写入上点了「确定」——
+ * 与 round 38 修的「谎报已关闭」同级，都属于「界面说的 ≠ 实际发生的」。
+ *
+ * 【为什么只在 push/pull 入口拦，而不是让执行侧改用表单】应用密码只活在会话
+ * 内存，service worker 侧拿不到用户刚输入的密码；让 SW 改用表单等于把口令送进
+ * 后台进程，代价远大于收益。正确方向是**要求用户先把表单落盘**：
+ * 落盘后 SW 读到的就是同一个库，两套数据源自然对齐。
+ *
+ * 【比什么】只比**库的身份**，不比应用密码：口令每次会话都可能不同，
+ * 它不同不代表指向不同的库。加密态（encryption）**要**比 —— 同一地址同一账号，
+ * 明文与加密是两套布局，按明文探测加密库会拿到一个不实的计数。
+ */
+export function webdavFormMatchesSavedConfig(
+  form: Pick<WebDavFormInput, 'baseUrl' | 'username' | 'encryption'>,
+  saved: StoredWebDavConfig | null
+): boolean {
+  if (!saved) return false;
+  return (
+    form.baseUrl === saved.baseUrl &&
+    form.username === saved.username &&
+    form.encryption === saved.encryption
+  );
+}
+
 /** 上次「测试连接」结果的可展示快照（与存储形状解耦，UI 直接渲染）。 */
 export interface CheckResultSnapshot {
   ok: boolean;

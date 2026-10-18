@@ -41,6 +41,7 @@ import {
   saveWebDavConfig,
   setSessionSecrets,
   validateWebDavForm,
+  webdavFormMatchesSavedConfig,
   WEBDAV_CONFIG_CHANGED_EVENT,
   type StoredWebDavConfig,
 } from '@/sync-backend/webdav/config';
@@ -598,6 +599,25 @@ export const WebDavSettings: React.FC = () => {
   > => {
     if (!baseUrl || !username || !password) {
       return { ok: false, reason: '请先填写地址、账号与密码。' };
+    }
+    // ── 2026-10-18 round 39 P0：探测与执行必须指向同一个库 ──────────────
+    // 本函数用**表单**现造 adapter，而执行侧（sendSyncCommand）在 service
+    // worker 里读的是**已保存配置**。两者不一致时，用户看到的数字属于表单
+    // 那个库，实际写入的却是已保存那个库 —— 拿 A 库的界面换来对 B 库的
+    // 同意，再把数据落进 B 库之外的地方。
+    //
+    // 这里直读磁盘（而不是用组件里的 savedCfg 状态）：执行侧读的就是磁盘，
+    // 两边必须用同一份真值比对，state 的时序差异会让闸门形同虚设。
+    // 拉取路径同样经过本函数，所以 push 与 pull 一次拦住。
+    const onDisk = await loadWebDavConfig();
+    if (!webdavFormMatchesSavedConfig({ baseUrl, username, encryption }, onDisk)) {
+      const reason = onDisk
+        ? '已中止：你正在编辑的地址/账号与「保存并启用」里的配置不是同一个云端库。' +
+          '探测显示的数字属于你填的地址，但推送/下载会作用在**已保存的那个库**上。' +
+          '请先点「保存并启用」让它生效，再做推送或下载。（本次未读写任何数据。）'
+        : '已中止：还没有「保存并启用」过任何云端库配置，推送/下载无法确定要作用在哪个库上。' +
+          '请先点「保存并启用」。（本次未读写任何数据。）';
+      return { ok: false, reason };
     }
     // 探测也要在权限就绪之后，否则 fetch 会被浏览器本地拦掉，
     // 表现出来的是「读不到云端」而不是「没授权」。
