@@ -19,6 +19,7 @@ import {
 // 档位校验单点在 storage 层（读路径兜底也在那里），这里只复用，不另写一份
 // [5,10,30,60] 白名单 —— 两处各写一份，半年后就是一次口径漂移。
 import { DEFAULT_SETTINGS, validateSyncIntervalMinutes } from '../utils/storage';
+import { storage } from '../utils/storage';
 import { STORAGE_KEYS } from '../storage-kv/keys';
 import { kvGet } from '../storage-kv/storageAdapter';
 import type { UserSettings } from '../types/tab';
@@ -134,6 +135,25 @@ async function notifyLockedBackendOnce(): Promise<void> {
   try {
     const already = await backoffKv.get(LOCKED_BACKEND_NOTICE_KEY);
     if (already) return;
+
+    // ── 2026-10-18 P2-5：受「显示通知提醒」开关约束 ────────────────────────
+    // 这条通知是 info 性质（「去配置/解锁」的建议），按 2026-10-17 定的
+    // 分流策略（success/info 受控、error 必发）应当受开关控制。
+    //
+    // 为什么必须一致：全仓唯一尊重该开关的地方是 TabManager.showNotification，
+    // 这里直接 chrome.notifications.create 意味着用户在设置里关掉通知后，
+    // 每隔 10 分钟仍会收到这一条 —— 用户唯一能做的反应是关掉整个扩展的
+    // 通知权限，连带把真正的失败提醒也一起关掉。
+    //
+    // 读不到设置时按**开启**处理，与 TabManager 同口径：漏报一条建议的代价
+    // 小于「让用户以为已经提醒过了」。
+    try {
+      const settings = await storage.getSettings();
+      if (settings.showNotifications !== true) return;
+    } catch (err) {
+      logWarn('[BackgroundSync] 读取通知设置失败，按开启处理:', err);
+    }
+
     await api.notifications.create({
       type: 'basic',
       iconUrl: api.runtime?.getURL?.('icons/icon128.png'),

@@ -250,12 +250,22 @@ const webDavSeqRegistry = createSeqRegistry({
  * 锁定后端的每个方法都抛同一句可读错（去设置页解锁），调用方据此中止本轮。
  */
 export async function resolveConfiguredBackend(): Promise<SyncBackendPort> {
+  // 2026-10-18（后置项-1）：原先这里 catch 里回落 `SupabaseBackendAdapter`，
+  // 与本文件其余部分 fail-closed 的方向**相反** —— 在「连用户选了哪个后端都
+  // 读不出来」的情况下猜一个，等于把数据传到他没选的地方且毫无提示。
+  // 与 primeSyncBackend 保持同一口径：显式失败比猜更诚实。
+  //
+  // ⚠️ 本函数目前**没有生产调用方**（生产走 primeSyncBackend / ensureBackendPrimed）。
+  // 保留它是因为它是公开导出，而删除公开导出属于破坏性变更；改它的行为是为了
+  // 让「将来有人用了它」时不会踩同一个坑。
   try {
     const outcome = await resolveBackendOutcome();
     activeBackend = outcome.backend;
     return outcome.backend;
   } catch {
-    activeBackend = new SupabaseBackendAdapter();
+    activeBackend = new LockedWebDavBackend(
+      '读不到同步设置，已中止本次同步。请关闭扩展后重试，或到设置里重新选择同步方式。'
+    );
     return activeBackend;
   }
 }
@@ -414,6 +424,40 @@ export async function primeSyncBackend(): Promise<ResolutionOutcome> {
     lockedKind: 'error' as LockedKind,
   }));
   if (!overrideBackend) activeBackend = outcome.backend;
+  lastResolution = { ...outcome, at: new Date().toISOString() };
+  return outcome;
+}
+
+/**
+ * 只重算「解析状态」，**不重建后端实例**（2026-10-18 P2-6）。
+ *
+ * ── 为什么需要它 ────────────────────────────────────────────────────────
+ * UI 要回答的是「现在到底能不能同步」，而 `lastResolution` 是进程内缓存：
+ * 用户在另一个窗口改完配置后，本窗口读到的是旧答案。原先 UI 的做法是
+ * `invalidateActiveSyncBackend()` + `primeSyncBackend()` 两者都调 ——
+ * 但后者会**重新构造适配器**，WebDAV 适配器的 `unlock()` 因此要重跑
+ * PBKDF2 密钥派生（250k 轮，见 adapter.ts）。
+ *
+ * 「每次打开菜单 / 每次窗口聚焦」触发一次可测的密钥派生，是纯开销：
+ * 注释原先写「代价只有一次本地存储读」，那**不成立**。
+ *
+ * ── 语义边界（重要）──────────────────────────────────────────────────────
+ * 本函数**只用于 UI 读状态**。任何**要真的同步**的路径仍必须走
+ * `invalidateActiveSyncBackend()` + `primeSyncBackend()` 或
+ * `ensureBackendPrimed()` —— 因为设置真的变了（地址/账号/目录）时，
+ * 旧实例持有的 Vault 与连接就是错的，必须重建。
+ *
+ * 一句话：**读状态可以偷懒，写数据不能。**
+ */
+export async function refreshBackendResolutionOnly(): Promise<ResolutionOutcome> {
+  const outcome = await resolveBackendOutcome().catch(() => ({
+    backend: new LockedWebDavBackend('读不到同步设置。请关闭扩展后重试，或到设置里重新填写云盘信息。'),
+    resolvedId: 'webdav' as SyncBackendId,
+    requestedId: 'webdav' as SyncBackendId,
+    lockedReason: '读不到同步设置。请关闭扩展后重试，或到设置里重新填写云盘信息。',
+    lockedKind: 'error' as LockedKind,
+  }));
+  // 刻意**不写** activeBackend：这里只是重算状态，实例保持不变。
   lastResolution = { ...outcome, at: new Date().toISOString() };
   return outcome;
 }

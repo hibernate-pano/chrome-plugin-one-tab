@@ -74,6 +74,18 @@ export const SyncButton: React.FC<SyncButtonProps> = () => {
   const dispatch = useAppDispatch();
   const { isAuthenticated } = useAppSelector(state => state.auth);
   const settings = useAppSelector(state => state.settings);
+  /**
+   * 「当前是否具备可同步的身份」（2026-10-18 P2-7）。
+   *
+   * 自带存储（WebDAV）用户没有 TapStack 账号，isAuthenticated 恒为 false。
+   * 原先工具栏按钮直接 `if (!isAuthenticated) return null`，于是这类用户
+   * **完全没有手动同步入口** —— 只能去设置页操作，与 B8「WebDAV 用户不需要
+   * 账号」的叙事直接矛盾，也和 README 承诺的「工具栏同步按钮可手动上传/下载」
+   * 对不上。
+   *
+   * 判据与 authGuard / backgroundSync 的门禁同口径：**按后端分流**。
+   */
+  const canSync = settings.syncBackend === 'webdav' || isAuthenticated;
   const [isWorking, setIsWorking] = useState(false);
   const [workingOperation, setWorkingOperation] = useState<SyncOperation>('none');
   const [showUploadModal, setShowUploadModal] = useState(false);
@@ -159,7 +171,7 @@ export const SyncButton: React.FC<SyncButtonProps> = () => {
 
   // 处理上传按钮点击
   const handleUpload = async () => {
-    if (!isWorking && isAuthenticated) {
+    if (!isWorking && canSync) {
       setModalAnimation('animate-fadeIn');
       setArmedOverwrite(null);
       setShowUploadModal(true);
@@ -169,7 +181,7 @@ export const SyncButton: React.FC<SyncButtonProps> = () => {
 
   // 处理下载按钮点击
   const handleDownload = async () => {
-    if (!isWorking && isAuthenticated) {
+    if (!isWorking && canSync) {
       setModalAnimation('animate-fadeIn');
       setArmedOverwrite(null);
       setShowDownloadModal(true);
@@ -247,7 +259,7 @@ export const SyncButton: React.FC<SyncButtonProps> = () => {
     const mode = syncModeOf(actionKey);
 
     // 硬闸门：覆盖模式没有确认标记就拒跑（UI 侧已双闸门，这里是绕过 UI 时的兵底）
-    if (!isOverwriteGateOpen({ mode, isConfirmed: isOverwriteConfirmed, isBusy: isWorking, isAuthenticated })) {
+    if (!isOverwriteGateOpen({ mode, isConfirmed: isOverwriteConfirmed, isBusy: isWorking, isAuthenticated: canSync })) {
       return;
     }
 
@@ -335,8 +347,9 @@ export const SyncButton: React.FC<SyncButtonProps> = () => {
     }
   };
 
-  if (!isAuthenticated) {
-    return null; // 未登录时不显示同步按钮
+  if (!canSync) {
+    // 云端未登录才隐藏；WebDAV 用户没有账号，但完全可用同步。
+    return null;
   }
 
   return (

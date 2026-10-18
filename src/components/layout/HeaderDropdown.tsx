@@ -17,8 +17,7 @@ import { logError, logInfo, logWarn } from '../../utils/log';
 // B8（2026-10-17，从 slim 适配双模式）：同步状态行的两个真值来源。
 import {
   getLastBackendResolution,
-  invalidateActiveSyncBackend,
-  primeSyncBackend,
+  refreshBackendResolutionOnly,
 } from '@/sync-backend';
 import {
   BACKEND_STATUS_DOT_CLASS,
@@ -93,8 +92,11 @@ const MENU_ROW = "w-full text-left px-4 py-2 text-sm text-gray-700 dark:text-gra
  */
 async function readBackendStatus(): Promise<BackendStatus> {
   try {
-    invalidateActiveSyncBackend();
-    await primeSyncBackend();
+    // 2026-10-18 P2-6：只重算解析状态，**不** invalidate + prime。
+    // 原先每次打开菜单都重建适配器 ⇒ WebDAV 的 Vault 被丢弃 ⇒ 下一次同步
+    // 要重跑 250k 轮 PBKDF2。「打开菜单看看状态」不该付这个代价。
+    // 真正要同步时仍走 ensureBackendPrimed / primeSyncBackend（那里才重建）。
+    await refreshBackendResolutionOnly();
     return classifyBackendResolution(getLastBackendResolution());
   } catch (error) {
     logWarn('[HeaderDropdown] 同步状态解析失败，按「状态未知」展示:', error);
@@ -154,7 +156,14 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({
   // 处理快速刷新（从云端下载并合并）
   const handleQuickRefresh = async () => {
     if (isRefreshing) return;
-    if (!isAuthenticated) {
+    // ⚠️ 2026-10-18 P2-1：门禁必须按后端分流，不能一刀切「未登录」。
+    // 自带存储（WebDAV）用户**没有 TapStack 账号**，而下方状态卡恰恰对
+    // 他们显示（`已登录 或 选了自带存储`）。原先这里只看 isAuthenticated，
+    // 于是 WebDAV 用户点刷新得到「请先登录以使用同步功能」—— 一句指向
+    // 一个他不需要、也永远不存在的账号的话。
+    // 判据与 syncEngine 的 authGuard、backgroundSync 的门禁同口径。
+    const needsAccount = settings.syncBackend !== 'webdav';
+    if (needsAccount && !isAuthenticated) {
       showAlert({
         title: '未登录',
         message: '请先登录以使用同步功能',

@@ -286,3 +286,29 @@ export async function __resetSessionSecretsForTests(): Promise<void> {
   await clearSessionSecrets();
 }
 
+/**
+ * 「WebDAV 配置 / 解锁状态变了」事件名（2026-10-18 P2#4）。
+ *
+ * 背景：设置页的自动同步提示（`autoSyncHint`）与推送区块的可用性都读
+ * `getLastBackendResolution()`，而那个结果是**进程内缓存**。子组件
+ * （WebDavSettings）保存 / 锁定 / 清除配置后，父页面的提示不会自动更新 ——
+ * 用户点完「锁定」仍看到「已配置并解锁」。
+ *
+ * 为什么是 window 事件而不是回调 props：两个组件都要因它刷新
+ * （父组件刷 hint，子组件刷自己的 resolvedBackend），而它们是父子关系；
+ * 用事件让双方各自订阅，避免把刷新逻辑在父子间来回传。
+ */
+export const WEBDAV_CONFIG_CHANGED_EVENT = 'tapstack:webdav-config-changed';
+
+/**
+ * 广播「配置或解锁状态已变」。
+ *
+ * 为什么包一层而不是让调用方直接 dispatchEvent：调用点散布在三个 handler 里，
+ * 各自 `new CustomEvent(...)` 会在改事件名时漏改一处 —— 而漏改的表现是
+ * 「某一处操作后 UI 不刷新」，极难自查。
+ */
+export function notifyWebDavConfigChanged(): void {
+  if (typeof window === 'undefined' || typeof window.dispatchEvent !== 'function') return;
+  window.dispatchEvent(new Event(WEBDAV_CONFIG_CHANGED_EVENT));
+}
+

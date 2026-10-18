@@ -43,17 +43,22 @@ import { WebDavSettings } from '@/components/sync/WebDavSettings';
 import { logWarn } from '@/utils/log';
 import {
   getLastBackendResolution,
+  // 切换后端是**真实的设置变更**：旧适配器持有的 Vault 与连接已经不对，
+  // 必须重建（与 refreshBackendResolutionOnly 的「只读状态」语义相反）。
   invalidateActiveSyncBackend,
   primeSyncBackend,
+  refreshBackendResolutionOnly,
 } from '@/sync-backend';
 // B8 缺陷 3（2026-10-17，从 slim 适配双模式）：自动同步在「配置 + 解锁」前
 // 不得被打开。修复前开关可以先亮、再报错，而它会永远不跑 ——
 // 等于用一个不可能发生的频率欺骗用户。
 import {
+  autoSyncBlockedCopy,
   canEnableAutoSync,
   classifyBackendResolution,
   type BackendStatus,
 } from '@/components/layout/backendStatus';
+import { WEBDAV_CONFIG_CHANGED_EVENT } from '@/sync-backend/webdav/config';
 
 /** 明暗模式。ThemeContext 的 setThemeMode 收这个联合类型，
  *  但没导出它 —— 这里就地声明，避免为了一个类型去改 context 的公共面。 */
@@ -112,28 +117,21 @@ const ToggleRow: React.FC<{
 );
 
 /**
- * 「自动同步开启被拒绝」的提示文案（2026-10-17 B8 缺陷 3）。
+ * 「自动同步开启被拒绝」的提示文案已移入 backendStatus.autoSyncBlockedCopy
+ * （2026-10-18 P1#1）。
  *
- * 每一种未就绪状态给一条**可操作**的话，而不是笼统的「无法开启」。
- * ready 不会走到拒绝分支（canEnableAutoSync 为真时不取这条）；保留键是为了
- * 让索引类型是完整的 kind 联合，编译器能抓到错位的 kind。
- *
- * ⚠️ 双模式：这些文案描述的是**自带存储（WebDAV）**未就绪。
- * 选了 TapStack 云端时解析出的是 supabase 适配器、没有 lockedReason，
- * 分类为 ready ⇒ 根本不会走到这里（云端用户的门禁是登录态，另有其路径）。
+ * 移出去的理由：原先这张表挂在 OptionsPage 里、只按 `kind` 取值，于是它
+ * **无法表达云端未登录** —— 那是 kind='ready' 落在表外的一条路径，也是
+ * 「云端假绿灯」的根因。文案与判据必须同处一个模块、共享同一份后端信息，
+ * 否则改判据的人看不到文案、改正文的人碰不到判据。
  */
-const AUTO_SYNC_BLOCKED_TOAST: Record<BackendStatus['kind'], string> = {
-  ready: '',
-  unconfigured:
-    '还没有配置云盘：先在下方「自带存储配置」填写地址并点「保存并启用」，再开启自动同步',
-  locked: '云盘本次会话还没有解锁：先重新输入应用密码与加密口令，再开启自动同步',
-  error: '读不到云盘配置或解锁状态，暂时无法开启自动同步；请到下方重新保存配置',
-  unknown: '还没有确认云盘状态，暂时无法开启自动同步；请先完成下方云盘配置',
-};
 
 const OptionsContent: React.FC = () => {
   const dispatch = useAppDispatch();
   const settings = useAppSelector(state => state.settings);
+  // 2026-10-18 P1#1：云端的就绪判据必须看登录态 —— Supabase 解析永远没有
+  // lockedReason，不看它就分不出「已登录」与「从未登录」。
+  const isAuthenticated = useAppSelector(state => state.auth.isAuthenticated);
   const { themeMode, setThemeMode } = useTheme();
   const { showToast } = useToast();
 
@@ -200,8 +198,9 @@ const OptionsContent: React.FC = () => {
   const refreshBackendStatus = useCallback(async (): Promise<BackendStatus> => {
     let status: BackendStatus;
     try {
-      invalidateActiveSyncBackend();
-      await primeSyncBackend();
+      // 2026-10-18 P2-6：同 HeaderDropdown —— 只重算状态，不重建适配器。
+      // 每次窗口聚焦都重建 ⇒ 每次都丢弃已派生的 Vault（PBKDF2 250k 轮）。
+      await refreshBackendResolutionOnly();
       status = classifyBackendResolution(getLastBackendResolution());
     } catch (err) {
       logWarn('[OptionsPage] 同步后端状态解析失败，按「状态未知」展示:', err);
@@ -212,14 +211,29 @@ const OptionsContent: React.FC = () => {
   }, []);
 
   // 页面打开与每次回到本页（另一个窗口配置完切回来）都重查一次。
-  // 同一页面内保存配置由开关点击前的那次 refreshBackendStatus() 补上。
+  //
+  // 2026-10-18 P2-4：同页面内的子组件（WebDavSettings）保存 / 锁定 / 清除配置后
+  // 也要刷新。此前只靠「开关点击前的那一次」补，而子组件的三条路径
+  // （handleSave / handleLock / handleForget）都不经过开关 ⇒ 用户点完「锁定」
+  // 仍看到「已配置并解锁」，直到窗口重新聚焦。
+  //
+  // 为什么用 window 事件而不是 props 回调：WebDavSettings 自己也订阅了
+  // 同一个事件（用它刷新本组件的 resolvedBackend），父子各自订阅一份。
+  // 代价是多一次 DOM 事件，收益是没有单向数据流与渲染顺序的耦合。
   useEffect(() => {
     void refreshBackendStatus();
     const onFocus = () => {
       void refreshBackendStatus();
     };
+    const onBackendChanged = () => {
+      void refreshBackendStatus();
+    };
     window.addEventListener('focus', onFocus);
-    return () => window.removeEventListener('focus', onFocus);
+    window.addEventListener(WEBDAV_CONFIG_CHANGED_EVENT, onBackendChanged);
+    return () => {
+      window.removeEventListener('focus', onFocus);
+      window.removeEventListener(WEBDAV_CONFIG_CHANGED_EVENT, onBackendChanged);
+    };
   }, [refreshBackendStatus]);
 
   const handleToggleNotifications = useCallback(async () => {
@@ -250,11 +264,14 @@ const OptionsContent: React.FC = () => {
       // 发生的频率欺骗用户。判据必须排在 dispatch(setSyncEnabled) **之前**：
       // 先开后拒 = 开关闪一下又弹错。
       //
-      // 双模式：云端用户解析出的状态是 ready（supabase 适配器无 lockedReason），
-      // canEnableAutoSync 为真 ⇒ 直接放行，云端路径行为不变。
+      // ── 2026-10-18 P1#1：门禁纳入登录态 ────────────────────────────────
+      // 云端解析出的状态恒为 ready（supabase 分支不检查登录态），所以只判
+      // kind 会给「从未登录的云端用户」放行 —— 那正是 B8 之前的假绿灯换个
+      // 方向又出现了一次：开关亮着、toast 承诺会跑、后台每轮 not_logged_in。
+      // WebDAV 不需要登录（账号自带），由 canEnableAutoSync 按后端分流。
       const fresh = await refreshBackendStatus();
-      if (!canEnableAutoSync(fresh)) {
-        showToast(AUTO_SYNC_BLOCKED_TOAST[fresh.kind], 'error');
+      if (!canEnableAutoSync(fresh, isAuthenticated)) {
+        showToast(autoSyncBlockedCopy(fresh, isAuthenticated), 'error');
         return;
       }
     }
@@ -302,6 +319,18 @@ const OptionsContent: React.FC = () => {
     }
     if (backendStatus.kind === 'error' || backendStatus.kind === 'unknown') {
       return '云盘状态读取失败：暂时无法确认自动同步能否运行，请在下方重新保存配置。';
+    }
+    // ── 2026-10-18 P1#1：走到这里说明后端就绪，但「就绪」对两个后端含义不同 ──
+    // 云端适配器不检查登录态 ⇒ ready 只说明「对象造出来了」。未登录时若照旧
+    // 说「打开后会每 N 分钟同步」，就是 B8 修掉的那种假绿灯。
+    // 措辞也必须按后端分开：云端要的是**登录**，不是「重新输入应用密码」。
+    if (backendStatus.backendId === 'supabase') {
+      if (!isAuthenticated) {
+        return '尚未登录 TapStack 云端：自动同步即使打开也不会运行（后台每轮都会因未登录跳过）。请先在右上角菜单登录。';
+      }
+      return settings.syncEnabled
+        ? `已开启：每 ${settings.syncIntervalMinutes} 分钟在后台自动同步一次。`
+        : `打开后，TapStack 会按下面的间隔在后台自动同步（需保持登录状态）。`;
     }
     return settings.syncEnabled
       ? `已开启：每 ${settings.syncIntervalMinutes} 分钟在后台自动同步一次。关闭浏览器后需要重新输入应用密码，自动同步才会继续。`

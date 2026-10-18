@@ -37,6 +37,16 @@ export interface BackendStatus {
   actionable: boolean;
   /** 原始锁定原因（排查用；不要整段当用户文案渲染）。 */
   lockedReason?: string;
+  /**
+   * 这次解析出来的**后端 id**（2026-10-18 P1#1）。
+   *
+   * 为什么必须带上：解析成功只说明「后端对象构造出来了」，而
+   * Supabase 分支**永远没有 lockedReason** —— 它不检查登录态。所以
+   * 「已解析」对云端而言完全不代表「可以同步」。没有这个字段，
+   * 调用方无法区分「云端未登录」与「WebDAV 未解锁」，而这两者需要的
+   * 下一步动作完全不同（前者去登录，后者去输应用密码）。
+   */
+  backendId?: 'supabase' | 'webdav';
 }
 
 /** 未解析时的保守值：不显示绿点、不声称任何状态。 */
@@ -85,35 +95,40 @@ export function classifyBackendResolution(res: BackendResolution): BackendStatus
   const reason = res.lockedReason;
   if (!reason) {
     // 有解析结果且没有锁定原因 ⇒ 解析出了真实适配器（配置在 + 已解锁）。
+    //
+    // ⚠️ 对云端而言这只意味着「适配器造出来了」，**不代表已登录**
+    // （Supabase 分支不检查登录态，见 P1#1）。所以这里一并带上后端 id，
+    // 「能不能同步」的最终判断交给 canEnableAutoSync —— 它知道登录态。
     return {
       kind: 'ready',
       tone: 'ok',
       label: '已配置并解锁',
       actionable: false,
+      backendId: res.resolvedId,
     };
   }
 
   // ── 机器字段优先（2026-10-16 L4）─────────────────────────────────────
   // lockedKind 由 sync-backend 在锁定原因的产生点标注，不经过文案，是稳的。
   if (res.lockedKind === 'unconfigured') {
-    return { kind: 'unconfigured', tone: 'muted', label: '未配置', actionable: true, lockedReason: reason };
+    return { kind: 'unconfigured', tone: 'muted', label: '未配置', actionable: true, lockedReason: reason, backendId: res.resolvedId };
   }
   if (res.lockedKind === 'locked') {
-    return { kind: 'locked', tone: 'warn', label: '未解锁', actionable: true, lockedReason: reason };
+    return { kind: 'locked', tone: 'warn', label: '未解锁', actionable: true, lockedReason: reason, backendId: res.resolvedId };
   }
   if (res.lockedKind === 'error') {
-    return { kind: 'error', tone: 'error', label: '状态不可读', actionable: true, lockedReason: reason };
+    return { kind: 'error', tone: 'error', label: '状态不可读', actionable: true, lockedReason: reason, backendId: res.resolvedId };
   }
 
   // ── 兜底：没有机器字段时才匹配文案（顺序：先读失败，再未配置，再解锁）──
   if (/读取失败|读不到|尚未就绪/.test(reason)) {
-    return { kind: 'error', tone: 'error', label: '状态不可读', actionable: true, lockedReason: reason };
+    return { kind: 'error', tone: 'error', label: '状态不可读', actionable: true, lockedReason: reason, backendId: res.resolvedId };
   }
   if (/还没有填写|未配置/.test(reason)) {
-    return { kind: 'unconfigured', tone: 'muted', label: '未配置', actionable: true, lockedReason: reason };
+    return { kind: 'unconfigured', tone: 'muted', label: '未配置', actionable: true, lockedReason: reason, backendId: res.resolvedId };
   }
   if (/解锁|应用密码|口令/.test(reason)) {
-    return { kind: 'locked', tone: 'warn', label: '未解锁', actionable: true, lockedReason: reason };
+    return { kind: 'locked', tone: 'warn', label: '未解锁', actionable: true, lockedReason: reason, backendId: res.resolvedId };
   }
   // 没见过的原因：如实说「不可读」，不猜。
   return { kind: 'error', tone: 'error', label: '状态不可读', actionable: true, lockedReason: reason };
@@ -126,9 +141,45 @@ export function classifyBackendResolution(res: BackendResolution): BackendStatus
  * 环境，内联判断只能在源码里「看着对」；把判据抽出来后，测试可以拿真实的
  * `primeSyncBackend()` 结果（未配置 / 未解锁 / 已解锁）直接验证三种状态
  * 下放行与否——证伪「无论后端怎样都放行」的常量实现。
+ *
+ * ── 2026-10-18 P1#1：云端模式必须额外要求已登录 ──────────────────────────
+ * 原实现只看 `status.kind === 'ready'`。但 **Supabase 分支永远没有
+ * `lockedReason`**（它不检查登录态，见 sync-backend/index.ts 的 supabase()），
+ * 所以云端用户哪怕从没登录过，解析结果也是 ready ⇒ 开关放行 ⇒ toast 承诺
+ * 「每 N 分钟同步一次」，而后台每轮都在 `not_logged_in` 处返回。
+ * 这是 B8 自己新造的假绿灯：诚实化了 WebDAV，却给云端开了个口子。
+ *
+ * WebDAV 不需要登录（账号由用户自带），所以只对云端加这条要求 ——
+ * 这正是「按后端分流」的必要之处：一个 kind 值覆盖不了两个后端的就绪条件。
  */
-export function canEnableAutoSync(status: BackendStatus): boolean {
-  return status.kind === 'ready';
+export function canEnableAutoSync(status: BackendStatus, isAuthenticated: boolean): boolean {
+  if (status.kind !== 'ready') return false;
+  // 后端 id 未知时按最保守处理：不放行。
+  // （unknown 已经是 kind !== 'ready'，这里是防御 resolvedId 缺失的构造形状。）
+  if (status.backendId === 'supabase') return isAuthenticated;
+  return true;
+}
+
+/**
+ * 自动同步被拒绝时的**可操作提示**（2026-10-18 P1#1）。
+ *
+ * 为什么文案必须按后端分开：云端缺的是**登录**，自带存储缺的是**解锁**。
+ * 合并成一句「请先解锁或登录」会让两类用户都去猜自己该做哪一个。
+ */
+export function autoSyncBlockedCopy(status: BackendStatus, isAuthenticated: boolean): string {
+  if (status.backendId === 'supabase' && !isAuthenticated) {
+    return '还没有登录 TapStack 云端，登录后自动同步才能运行。请先在菜单里登录。';
+  }
+  if (status.kind === 'unconfigured') {
+    return '还没有配置云盘：先在下方「自带存储配置」填写地址并点「保存并启用」，再开启自动同步';
+  }
+  if (status.kind === 'locked') {
+    return '云盘已配置，但本次浏览器会话还没有解锁：重新输入应用密码与加密口令后，自动同步才能运行';
+  }
+  if (status.kind === 'error') {
+    return '读不到云盘的配置或解锁状态，同步暂不可用：请到下方重新保存一次配置';
+  }
+  return '同步后端状态尚未确认，自动同步即使打开也不会运行。请稍候重试，或到下方重新保存一次配置';
 }
 
 /**

@@ -151,7 +151,16 @@ before(async () => {
   register(LOADER_PATH);
   // 自动同步开启（否则 handleAlarm 第一步就是「关则自杀」，根本走不到管线）。
   // syncBackend:'webdav' 是本文件的**被测前提**，不是绕过门禁的手段。
-  handles = installChromeMock({ syncEnabled: true, syncIntervalMinutes: 10, syncBackend: 'webdav' });
+  handles = installChromeMock({
+    syncEnabled: true,
+    syncIntervalMinutes: 10,
+    syncBackend: 'webdav',
+    // 2026-10-18 P2-5：锁定提醒是 info 性质，**受「显示通知提醒」开关约束**
+    // （与 TabManager.showNotification 同一分流策略）。默认设置里该开关是
+    // false，所以本文件必须显式打开，否则通知不发 —— 而那正是修好之后的
+    // 正确行为。「开关关掉 ⇒ 不发」另有对应用例在下方。
+    showNotifications: true,
+  });
 
   // ── 2026-10-17：本文件**故意不种任何 Supabase session** ─────────────────
   // 这是核心前提，不是遗漏。自带存储用户没有 TapStack 账号，真机上
@@ -358,5 +367,44 @@ describe('锁定态：一次性可见提醒', () => {
       afterFirst,
       '连续多轮锁定只发一次：标志不得被保护性让路（already_syncing 等）误清'
     );
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// P2-5：锁定提醒受「显示通知提醒」开关约束
+//
+// 修复前 `notifyLockedBackendOnce` 直接 chrome.notifications.create，
+// 绕过开关 —— 用户在设置里关掉通知后，每 10 分钟仍会收到这一条。
+// 唯一能做的反应是关掉整个扩展的通知权限，连带把真正的失败提醒也关掉。
+//
+// 判别力：把开关关掉后必须**一条都不发**。若实现不读开关（修复前），
+// 本用例会红。
+// ─────────────────────────────────────────────────────────────────────────
+describe('P2-5：通知开关关闭时不发锁定提醒', () => {
+  it('showNotifications=false ⇒ 锁定让路也不发通知', async () => {
+    // 前置：先证明「开着的时候确实会发」，否则本用例会因为「它压根不发」
+    // 而恒绿 —— 那正是恒真断言的形状。
+    const before = handles.notificationCalls.length;
+
+    // 模拟「用户在另一个窗口关掉了通知开关」：直接改种子写进的那份 settings。
+    const { storage } = await import('@/utils/storage');
+    const current = await storage.getSettings();
+    await storage.setSettings({ ...current, showNotifications: false });
+    // getSettings 有 60s 进程内缓存，绕开它，让下一次读取看到新值。
+    const { cacheManager } = await import('@/utils/performance');
+    cacheManager.getCache('storage').delete('settings');
+
+    try {
+      await alarmListener(SYNC_ALARM_EVENT);
+      assert.equal(
+        handles.notificationCalls.length - before,
+        0,
+        '通知开关关闭时不得发送锁定提醒 —— 否则用户会直接关掉整个扩展的通知权限'
+      );
+    } finally {
+      // 复位：后续用例不得受这条影响
+      await storage.setSettings({ ...current, showNotifications: true });
+      cacheManager.getCache('storage').delete('settings');
+    }
   });
 });
