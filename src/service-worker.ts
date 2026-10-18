@@ -321,7 +321,9 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
         : allTabs;
 
       if (otherTabs.length === 0) {
-        await showNotification('没有其他标签页需要保存', 'TapStack', 'info');
+        // 失败（用户点了「保存其他标签」，结果一个都没保存）⇒ 必须 'error'：
+        // 这条通知不能被默认关闭的「显示通知提醒」吞掉，否则点了毫无反应。
+        await showNotification('没有其他标签页需要保存', 'TapStack', 'error');
         return;
       }
 
