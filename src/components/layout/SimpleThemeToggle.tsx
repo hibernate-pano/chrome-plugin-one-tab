@@ -17,25 +17,37 @@ const MoonIcon = () => (
 );
 
 export const SimpleThemeToggle: React.FC = () => {
-  const { themeMode, setThemeMode } = useTheme();
+  const { currentTheme, setThemeMode } = useTheme();
+
+  // 判定一律基于 currentTheme（**屏幕上实际生效的配色**），不基于 themeMode 字符串。
+  //
+  // 2026-10-18 修。themeMode 有三个取值（light / dark / auto），拿它做二元判断必然把
+  // auto 归错边，于是同一处冒出两个用户可见的毛病：
+  //   ① 默认设置就是 auto（见 DEFAULT_SETTINGS.themeMode），系统为浅色时点第一下算出的
+  //      newMode 仍是 'light'：配色不变、图标不变、tooltip 不变 —— 屏幕上一个像素都没动，
+  //      用户以为按钮坏了；而设置已经从「跟随系统」被静默改成「浅色」，此后系统切深色
+  //      它也不再跟随。
+  //   ② 系统为深色 + auto 时图标是太阳（因为 themeMode !== 'dark'），宣称「点了变深色」，
+  //      可屏幕现在就是深色。
+  // 取反「你看到的那套配色」、按「你看到的配色」画图标，三处声明与行为才对得上
+  // （tooltip 原写法恰好已经是「看屏幕」，正好说明分歧就在另外两处）。
+  const isDark = currentTheme === 'dark';
+  const nextModeLabel = isDark ? '切换浅色模式' : '切换深色模式';
+  const nextModeAriaLabel = isDark ? '切换到浅色模式' : '切换到深色模式';
 
   const toggleTheme = () => {
-    const newMode = themeMode === 'light' ? 'dark' : 'light';
-    setThemeMode(newMode);
+    setThemeMode(isDark ? 'light' : 'dark');
     // setThemeMode 内部已经处理了保存，不需要再次调用 saveSettings
   };
 
   return (
-    <Tooltip
-      content={themeMode === 'light' ? '切换深色模式' : '切换浅色模式'}
-      position="bottom"
-    >
+    <Tooltip content={nextModeLabel} position="bottom">
       <button
         onClick={toggleTheme}
         className="btn-icon flat-interaction"
-        aria-label={themeMode === 'light' ? '切换到深色模式' : '切换到浅色模式'}
+        aria-label={nextModeAriaLabel}
       >
-        {themeMode === 'dark' ? <MoonIcon /> : <SunIcon />}
+        {isDark ? <MoonIcon /> : <SunIcon />}
       </button>
     </Tooltip>
   );
