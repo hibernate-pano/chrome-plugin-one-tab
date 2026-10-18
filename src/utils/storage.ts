@@ -55,6 +55,22 @@ export function invalidateGroupsCache(): void {
   cacheManager.getCache('storage').delete('groups');
 }
 
+/**
+ * 使设置缓存失效，下次 getSettings() 会从存储重新读取。
+ *
+ * 【为什么需要它】设置读路径带 60s 进程内缓存，而**写方可能在另一个执行上下文**：
+ * 覆盖下载会在 SW 里把云端设置合并进存储（syncEngine.mergeCloudSettingsIntoLocal），
+ * popup / options 各自的缓存副本不会因此失效。留在缓存里的旧值有两个后果：
+ *   ① 界面继续显示旧主题 / 旧布局，用户以为覆盖下载没生效；
+ *   ② 更贵的一条：popup 的 saveSettings 是**整份 state 盲写**，用户接下来随便改
+ *      一项设置，就会把这份旧设置整份写回存储（并随自动上传推到云端），
+ *      刚刚从云端落下来的那批值被静默回滚。
+ * 因此覆盖下载成功后，本上下文必须「先失效、再重读」。
+ */
+export function invalidateSettingsCache(): void {
+  cacheManager.getCache('storage').delete('settings');
+}
+
 // S2 收敛：STORAGE_KEYS / STORAGE_VERSION 已下沉至 @/storage-kv/keys（见文件顶部 import + re-export）。
 // 门面双路径语义（防抖 setGroups / 直写 setGroupsImmediate）保持原地不动，行为零变化。
 

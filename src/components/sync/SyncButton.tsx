@@ -2,6 +2,7 @@ import React, { useId, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useAppSelector, useAppDispatch } from '@/store/hooks';
 import { loadGroups } from '@/store/slices/tabSlice';
+import { dispatchReloadSettings } from '@/store/slices/settingsSlice';
 import { downloadTabGroups } from '@/services/tabGroupSyncService';
 import { sendSyncCommand } from '@/shared/mutationProtocol';
 import { decideOverwriteClick, getSyncStrategyLabel, isOverwriteGateOpen, renderPreviewSummary, syncModeOf } from './syncPreviewView';
@@ -41,6 +42,9 @@ const SYNC_ACTIONS = {
     failureLogLabel: '上传数据到云端失败:',
     // 上传不改动本地会话，成功后无需重载。
     refreshLocal: false,
+    // 上传只是把设置**读出去**（syncEngine.upload → uploadSettings(storage.getSettings())），
+    // 存储里的设置没被改写，本上下文无需重读。
+    refreshSettings: false,
     // 空本地保护：覆盖上传被跳过时不能当成「上传成功」上报/提示。
     reportSkippedOverwrite: true,
   },
@@ -49,6 +53,8 @@ const SYNC_ACTIONS = {
     failureMessage: '上传失败，请重试',
     failureLogLabel: '上传数据到云端失败:',
     refreshLocal: false,
+    // 同 upload.overwrite：上传不改本地设置。
+    refreshSettings: false,
     reportSkippedOverwrite: false,
   },
   'download.overwrite': {
@@ -57,6 +63,10 @@ const SYNC_ACTIONS = {
     failureLogLabel: '从云端下载数据失败:',
     // 下载会改写本地会话，必须重载。
     refreshLocal: true,
+    // 这一动作会在 SW 里把**云端设置**合并进存储（syncEngine.mergeCloudSettingsIntoLocal，
+    // 由 syncSettings:true 触发）⇒ 本上下文的 settings state 与缓存都成了旧值。
+    // 不重读的代价见 dispatchReloadSettings 注释：用户下一次改设置会把旧值整份回写。
+    refreshSettings: true,
     reportSkippedOverwrite: false,
   },
   'download.merge': {
@@ -64,6 +74,8 @@ const SYNC_ACTIONS = {
     failureMessage: '下载失败，请重试',
     failureLogLabel: '从云端下载数据失败:',
     refreshLocal: true,
+    // 合并下载不带 syncSettings ⇒ 存储里的设置没被动过，无需重读。
+    refreshSettings: false,
     reportSkippedOverwrite: false,
   },
 } as const;
@@ -290,6 +302,16 @@ export const SyncButton: React.FC<SyncButtonProps> = () => {
       if (res.ok) {
         if (spec.refreshLocal) {
           await refreshLocal();
+        }
+        if (spec.refreshSettings) {
+          // 覆盖下载在 SW 里改写了存储中的设置，本上下文手里的是旧值（缓存也没失效）。
+          // 重读失败必须出声：此时界面显示旧设置，而用户接着改任何一项都会把旧值
+          // 整份回写（saveSettings 是盲写）并上传 —— 静默的话没人会知道。
+          const reloadError = await dispatchReloadSettings(dispatch);
+          if (reloadError) {
+            logWarn('同步后重读设置失败，界面可能显示旧值:', reloadError);
+            showToast('设置已从云端更新，但界面没能重新读取；请重新打开本窗口，期间先别改设置', 'warning');
+          }
         }
 
         if (direction === 'upload' && spec.reportSkippedOverwrite) {

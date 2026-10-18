@@ -1,6 +1,6 @@
 import { createSlice, createAsyncThunk, PayloadAction } from '@reduxjs/toolkit';
 import { UserSettings, LayoutMode, ThemeStyle } from '@/types/tab';
-import { storage, DEFAULT_SETTINGS as defaultSettings } from '@/utils/storage';
+import { storage, DEFAULT_SETTINGS as defaultSettings, invalidateSettingsCache } from '@/utils/storage';
 
 /**
  * 本会话是否成功读到过真实设置（2026-10-09 数据安全 P1-3）。
@@ -100,6 +100,36 @@ export async function dispatchSaveSettings(
   const rejectedAction = action as { type?: string; error?: { message?: string } } | undefined;
   if (rejectedAction?.type?.endsWith('/rejected')) {
     return rejectedAction.error?.message ?? '保存设置失败，请重试';
+  }
+  return null;
+}
+
+/**
+ * 重新从存储读取设置并写回 Redux（供「别的执行上下文改过设置」之后调用）。
+ *
+ * 【为什么必须与 loadSettings 分开】`loadSettings` 走 `storage.getSettings()`，
+ * 那条路带 **60s 进程内缓存**；而覆盖下载（syncEngine.mergeCloudSettingsIntoLocal）
+ * 是在 **SW** 里把云端设置合并进存储的，popup / options 各自的缓存副本不会因此
+ * 失效。直接 dispatch(loadSettings()) 会在缓存窗口内读回旧值 —— 看起来像修了，
+ * 其实没修。所以固定顺序：**先失效缓存，再读**（与 getGroupsForWrite 同一思路）。
+ *
+ * 【为什么这件事值得单独一个 helper】留着一份过期的 settings state 不只是「显示旧」：
+ * saveSettings 是**整份 state 盲写**（不是读-改-写），用户接下来随便改一项设置，
+ * 就会把这份旧设置整份写回存储，并随自动上传推到云端 —— 刚从云端落下来的那批值
+ * 被静默回滚，其它设备下次下载再复制一遍。两个入口（popup 同步按钮 / 设置页
+ * 归属决策的「以云端为准」）必须同一口径，否则同一个产品两种行为。
+ *
+ * @returns null = 重读成功；否则是用户可读的失败原因
+ */
+export async function dispatchReloadSettings(
+  dispatch: (action: ReturnType<typeof loadSettings>) => unknown
+): Promise<string | null> {
+  // 顺序即语义：先失效，再读（见上方注释）。
+  invalidateSettingsCache();
+  const action = await dispatch(loadSettings());
+  const rejectedAction = action as { type?: string; error?: { message?: string } } | undefined;
+  if (rejectedAction?.type?.endsWith('/rejected')) {
+    return rejectedAction.error?.message ?? '重读设置失败，请重新打开本页面';
   }
   return null;
 }

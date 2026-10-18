@@ -28,7 +28,7 @@
  */
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useAppDispatch, useAppSelector } from '@/store/hooks';
-import { dispatchSaveSettings, updateSettings } from '@/store/slices/settingsSlice';
+import { dispatchReloadSettings, dispatchSaveSettings, updateSettings } from '@/store/slices/settingsSlice';
 import { sendSyncCommand } from '@/shared/mutationProtocol';
 import { useToast } from '@/contexts/ToastContext';
 import {
@@ -580,6 +580,15 @@ export const WebDavSettings: React.FC = () => {
               reason: `已保留云端数据，但把云端拉回本机失败：${dl.error ?? '未知原因'}。`,
             });
             return;
+          }
+          // 本次下载带 syncSettings ⇒ SW 已把云端设置合并进存储，本页手里的
+          // settings 成了旧值。不重读的话，用户接着在**这一页**改任一开关都会把
+          // 旧设置整份写回（saveSettings 是盲写）并上传，刚拉下来的设置被回滚。
+          // 与 popup 同步按钮同一口径（见 dispatchReloadSettings 注释）。
+          const reloadError = await dispatchReloadSettings(dispatch);
+          if (reloadError) {
+            logWarn('以云端为准后重读设置失败:', reloadError);
+            showToast('云端设置已生效，但本页没能重新读取；请重新打开设置页，期间先别改设置', 'warning');
           }
         }
 
