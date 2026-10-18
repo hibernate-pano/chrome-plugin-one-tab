@@ -340,3 +340,59 @@ describe('WebDAV 配置层：应用密码为空确实会抛（面板的校验不
     );
   });
 });
+
+describe('设置页：切换同步方式失败必须成对回滚', () => {
+  // 2026-10-18 round 33。handleSelectBackend 的乐观更新一次改两个字段
+  // （syncBackend: next, syncEnabled: false），所以失败回滚也必须还原两个。
+  // 只还原 syncBackend 会留下「界面显示自动同步已关、磁盘上还开着」的分叉：
+  // 用户接下来改任何一项设置都会把 syncEnabled:false 整份盲写回去（saveSettings
+  // 是盲写），静默关掉他的自动同步。对照 handleToggleAutoSync 的完整回滚写法。
+  //
+  // ⚠️ 先剥注释：本文件的说明与被测源码里的注释都会提到这些标识符。
+  const CODE = OPTIONS.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^[ \t]*\/\/.*$/gm, '');
+  const start = CODE.indexOf('const handleSelectBackend = useCallback(');
+  const end = CODE.indexOf('invalidateActiveSyncBackend();', start);
+  const handler = start > -1 && end > start ? CODE.slice(start, end) : '';
+
+  it('切片锚点没漂', () => {
+    assert.ok(handler.length > 0, '找不到 handleSelectBackend 的函数体（锚点漂了）');
+    assert.ok(handler.includes('dispatchSaveSettings('), '应能在函数体里看到保存调用');
+  });
+
+  it('乐观更新改了 syncEnabled:false，回滚就必须还原它', () => {
+    assert.match(
+      handler,
+      /dispatch\(updateSettings\(\{ syncBackend: next, syncEnabled: false \}\)\)/,
+      '乐观更新的形状变了，本组断言的推理链需要重写'
+    );
+    assert.match(
+      handler,
+      /dispatch\(updateSettings\(\{ syncBackend: prevBackend, syncEnabled: prevSyncEnabled \}\)\)/,
+      '回滚只还原了 syncBackend：界面会显示「自动同步已关」而磁盘上还开着'
+    );
+  });
+
+  it('旧值必须在乐观更新之前取（否则取到的是刚改过的新值）', () => {
+    const captureAt = handler.indexOf('const prevSyncEnabled = settings.syncEnabled;');
+    const optimisticAt = handler.indexOf('dispatch(updateSettings({ syncBackend: next, syncEnabled: false }))');
+    assert.ok(captureAt > -1, '没有保存 prevSyncEnabled');
+    assert.ok(captureAt < optimisticAt, 'prevSyncEnabled 取晚了，回滚会还原成错的值');
+  });
+
+  it('settings.syncEnabled 必须进依赖数组（否则回滚会闭包在旧值上）', () => {
+    // 这个回调只在依赖变化时重建；syncBackend 很少变，syncEnabled 却常变
+    // （用户开/关自动同步）。漏进 deps ⇒ prevSyncEnabled 永远是首帧那个 false，
+    // 回滚等于把「原本开着」的自动同步按成关 —— 修复形同虚设。
+    const tail = CODE.slice(start, CODE.indexOf('return (', start));
+    const deps = tail.match(/\}, \[([^\]]*)\]\);/);
+    assert.ok(deps, '找不到 handleSelectBackend 的依赖数组');
+    assert.ok(
+      deps[1].includes('settings.syncEnabled'),
+      `依赖数组里缺少 settings.syncEnabled：${deps[1]}`
+    );
+  });
+
+  it('失败提示要如实说出两个字段都恢复了', () => {
+    assert.match(handler, /自动同步开关已恢复为/, '提示只说了同步方式，没说自动同步开关的下场');
+  });
+});

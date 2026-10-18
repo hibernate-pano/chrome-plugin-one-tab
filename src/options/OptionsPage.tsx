@@ -377,11 +377,20 @@ const OptionsContent: React.FC = () => {
   const handleSelectBackend = useCallback(async (next: 'supabase' | 'webdav') => {
     if (next === settings.syncBackend) return;
     const prevBackend = settings.syncBackend;
+    // 2026-10-18 round 33：这次 dispatch 同时改了两个字段，回滚就必须**成对**。
+    // 只还原 syncBackend 会留下「界面显示自动同步已关、磁盘上还开着」的分叉：
+    // 用户接下来改任何一项设置都会把 syncEnabled:false 整份盲写回去，
+    // 静默关掉他的自动同步（对照 handleToggleAutoSync 的完整回滚写法）。
+    const prevSyncEnabled = settings.syncEnabled;
     dispatch(updateSettings({ syncBackend: next, syncEnabled: false }));
     const saveError = await dispatchSaveSettings(dispatch);
     if (saveError) {
-      dispatch(updateSettings({ syncBackend: prevBackend }));
-      showToast(`${saveError}（同步方式已恢复为「${prevBackend === 'webdav' ? '自带存储' : 'TapStack 云端'}」）`, 'error');
+      dispatch(updateSettings({ syncBackend: prevBackend, syncEnabled: prevSyncEnabled }));
+      showToast(
+        `${saveError}（同步方式已恢复为「${prevBackend === 'webdav' ? '自带存储' : 'TapStack 云端'}」，` +
+          `自动同步开关已恢复为${prevSyncEnabled ? '开启' : '关闭'}）`,
+        'error'
+      );
       return;
     }
     notifySwResyncAlarm();
@@ -414,7 +423,7 @@ const OptionsContent: React.FC = () => {
     // prime 只是为了让本页缓存预热（切完立刻点同步也不用再解析一次）；
     // 这里再调一次拿分类结果，代价是一次本地存储读。
     await refreshBackendStatus();
-  }, [dispatch, settings.syncBackend, notifySwResyncAlarm, showToast, refreshBackendStatus]);
+  }, [dispatch, settings.syncBackend, settings.syncEnabled, notifySwResyncAlarm, showToast, refreshBackendStatus]);
 
   return (
     <div className="app-shell theme-shell min-h-screen dark:text-gray-100">

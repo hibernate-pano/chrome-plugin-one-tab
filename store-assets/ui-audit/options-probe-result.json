@@ -17,13 +17,13 @@
     },
     {
       "name": "③b 自动同步开关可切换",
-      "pass": true,
-      "detail": "aria-checked=true"
+      "pass": false,
+      "detail": "aria-checked=false"
     },
     {
       "name": "③c 设置跨窗口持久化（重开仍是新值）",
-      "pass": true,
-      "detail": "重开后 theme=claude syncEnabled=true"
+      "pass": false,
+      "detail": "重开后 theme=claude syncEnabled=false"
     },
     {
       "name": "④a 菜单里有「设置…」入口",
