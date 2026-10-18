@@ -389,6 +389,25 @@ describe('缺陷 3：自动同步在配置 + 解锁前不得被打开', () => {
       CODE.includes('重新输入应用密码与加密口令之前，自动同步不会运行'),
       '未解锁时必须说清恢复条件'
     );
+    // ── 2026-10-18 P2-8 收口：WebDAV 专属文案不得与云端共用同一条 return ──
+    // 原先 hint 是一条共享的 return 链，云端用户也会走过讲「应用密码」那段：
+    // 改一句云端文案就会误报红，反之改坏了 WebDAV 文案也可能被云端的某句话
+    // 顶着看不出来。
+    //
+    // 现在判据是：云端分支必须**先 early return**，WebDAV 的那两句必须排在它
+    // **之后**。顺序即语义 —— 只要云端先返回，两者就不会互相污染。
+    //
+    // ⚠️ 锚点要选**后端专属**文案（「关闭浏览器后需要重新输入应用密码」），
+    // 不能选 locked 分支那句：那是 WebDAV 未解锁态，排在云端判断之前是对的
+    //（云端没有 locked 态，走不到那里）。
+    const cloudGuard = CODE.indexOf("backendStatus.backendId === 'supabase'");
+    const webdavOnlyCopy = CODE.indexOf('关闭浏览器后需要重新输入应用密码');
+    assert.ok(cloudGuard > 0, 'hint 必须有云端分支');
+    assert.ok(webdavOnlyCopy > 0, 'hint 必须保留 WebDAV 的重启说明');
+    assert.ok(
+      cloudGuard < webdavOnlyCopy,
+      '云端分支必须排在前并 early return：否则 WebDAV 专属文案会被云端用户看到'
+    );
   });
 
   it('开启成功的 toast 与就绪提示都写明「重启浏览器后要重新输密码」', () => {
