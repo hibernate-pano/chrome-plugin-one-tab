@@ -2,6 +2,7 @@ import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { useAppSelector, useAppDispatch } from '@/store/hooks';
 import { signOut } from '@/store/slices/authSlice';
 import { deleteAllGroups, deleteBroadcastWarn, loadGroups } from '@/store/slices/tabSlice';
+import { dispatchReloadSettings } from '@/store/slices/settingsSlice';
 import { sendSyncCommand } from '@/shared/mutationProtocol';
 import { storage } from '@/utils/storage';
 import type { AuthTab } from '../auth/AuthModal';
@@ -813,6 +814,20 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({
                           }
                           // 只刷新列表，不 reload 整页：提示能完整显示完
                           dispatch(loadGroups());
+                          // 2026-10-18 round 31：备份里带 settings 时 importDetailed 已经把它
+                          // 合并进存储，但**本上下文手里的 Redux 还是旧值**（60s 设置缓存 + 各自
+                          // 一份 state）。用户接着改任何一项设置都会把旧值整份盲写回去
+                          // （saveSettings 不是读-改-写）—— 刚导入的设置被静默回滚，界面也
+                          // 一直显示旧主题/旧布局，看起来像「设置没导进来」。
+                          // 与同步按钮 / 设置页「以云端为准」同一口径：先失效缓存，再读。
+                          const reloadError = await dispatchReloadSettings(dispatch);
+                          if (reloadError) {
+                            logWarn('导入后重读设置失败，界面可能显示旧值:', reloadError);
+                            showToast(
+                              '数据已导入，但界面没能重新读取设置；请重新打开本窗口，期间先别改设置',
+                              'warning'
+                            );
+                          }
                         } else {
                           // 2026-10-10 P2-3：与 OneTab 分支（下方）对齐 —— 那边用
                           // importResult.reason，这里原先是静态的「数据导入失败」，
