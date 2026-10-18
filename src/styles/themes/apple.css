@@ -30,6 +30,8 @@ html[data-theme="apple"] {
   /* 强调 */
   --color-accent: #0071e3;
   --color-accent-hover: #0077ed;
+  /* accent 实底上的墨色：白字 4.7:1 达标 ⇒ 白 */
+  --color-accent-fg: #ffffff;
   --color-accent-subtle: #e8f2fd;
 
   /* 语义色 */
@@ -94,6 +96,7 @@ html[data-theme="apple"].dark {
 
   --color-accent: #0a84ff;
   --color-accent-hover: #409cff;
+  --color-accent-fg: #0f172a;   /* 深色下 accent 变亮，白字 1.4–3.7:1 */
   --color-accent-subtle: rgba(10, 132, 255, 0.18);
 
   --color-warning: #ff9f0a;

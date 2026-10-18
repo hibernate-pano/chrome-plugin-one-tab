@@ -24,6 +24,8 @@ html[data-theme='creamy'] {
 
   --color-accent: #d97706;
   --color-accent-hover: #b45309;
+  /* accent 实底上的墨色：白字只有 3.2:1（深色下 1.7:1） ⇒ 深墨 */
+  --color-accent-fg: #0f172a;
   --color-accent-subtle: #fef3c7;
 
   /* 状态颜色 */
@@ -79,6 +81,7 @@ html[data-theme='creamy'].dark {
 
   --color-accent: #fbbf24;
   --color-accent-hover: #fcd34d;
+  --color-accent-fg: #0f172a;   /* 深色下 accent 变亮，白字 1.4–3.7:1 */
   --color-accent-subtle: rgba(251, 191, 36, 0.15);
 
   /* 状态颜色 */

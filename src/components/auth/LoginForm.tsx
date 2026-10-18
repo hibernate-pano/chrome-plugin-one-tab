@@ -114,7 +114,7 @@ export const LoginForm: React.FC<LoginFormProps> = ({ onSuccess }) => {
         </div>
         <button
           type="submit"
-          className="theme-cta theme-radius-input w-full py-3 text-sm font-semibold text-white shadow-sm transition disabled:cursor-not-allowed disabled:opacity-50"
+          className="theme-cta theme-radius-input w-full py-3 text-sm font-semibold shadow-sm transition disabled:cursor-not-allowed disabled:opacity-50"
           disabled={isLoading}
         >
           {isLoading ? (

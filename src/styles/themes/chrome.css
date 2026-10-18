@@ -30,6 +30,8 @@ html[data-theme="chrome"] {
   /* 强调 */
   --color-accent: #1a73e8;
   --color-accent-hover: #1765cc;
+  /* accent 实底上的墨色：白字 4.5:1 达标 ⇒ 白 */
+  --color-accent-fg: #ffffff;
   --color-accent-subtle: #e8f0fe;
 
   /* 语义色 */
@@ -94,6 +96,7 @@ html[data-theme="chrome"].dark {
 
   --color-accent: #8ab4f8;
   --color-accent-hover: #aecbfa;
+  --color-accent-fg: #0f172a;   /* 深色下 accent 变亮，白字 1.4–3.7:1 */
   --color-accent-subtle: rgba(138, 180, 248, 0.16);
 
   --color-warning: #fdd663;

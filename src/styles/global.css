@@ -50,6 +50,7 @@ html:not([data-theme]) {
   --color-accent: #2563eb;
   --color-accent-hover: #1d4ed8;
   --color-accent-subtle: #dbeafe;
+  --color-accent-fg: #ffffff;
   --color-warning: #f59e0b;
   --color-danger: #ef4444;
   --color-success: #22c55e;
@@ -74,6 +75,7 @@ html:not([data-theme]).dark {
   --color-accent: #3b82f6;
   --color-accent-hover: #60a5fa;
   --color-accent-subtle: #1e3a8a;
+  --color-accent-fg: #0f172a;
   --color-warning: #fbbf24;
   --color-danger: #f87171;
   --color-success: #4ade80;
@@ -135,6 +137,10 @@ html:not([data-theme]).dark {
     --color-accent-strong: #2563eb;
     --color-accent-border: #93c5fd;
     --color-accent-wash: rgba(59, 130, 246, 0.1);
+    /* accent **实底**上的墨色（按钮/CTA 标签）。与 --color-accent-text 不是一回事：
+       那个是「当墨色用的 accent」，落在页面底色上；这个落在 accent 实底上。
+       深色主题里 accent 会变亮（白字只剩 1.4–3.7:1），主题文件各自覆盖自己的值。 */
+    --color-accent-fg: #ffffff;
     --color-well: #f9fafb;
     /* 按钮 hover / 强调实底淡色 / 半透明弹层 / 焦点环 / 弹层投影与模糊
        （legacy 默认值逐处取自现网类：white/95+blur(4px)+24/60/-40@0.55 等） */
@@ -180,6 +186,7 @@ html:not([data-theme]).dark {
     --color-accent-text: #93c5fd;
     --color-accent-border: rgba(59, 130, 246, 0.4);
     --color-accent-wash: rgba(96, 165, 250, 0.1);
+    --color-accent-fg: #0f172a;
     --color-well: #1f2937;
     --color-btn-hover: #1f2937;
     --color-accent-soft: #1e3a8a;
@@ -408,7 +415,9 @@ html:not([data-theme]).dark {
 
   .btn-primary {
     background-color: var(--color-accent);
-    color: white;
+    /* 墨色随主题走：深色主题里 accent 是亮色，白字只有 1.4–3.7:1（奶油深色 1.7:1）。
+       写死 white 时「保存/确定」这类主按钮的字在深色下几乎看不见。 */
+    color: var(--color-accent-fg);
     @apply shadow-soft hover:shadow-medium;
   }
 
@@ -988,7 +997,7 @@ html:not([data-theme]).dark {
     @apply px-4 py-2 rounded-lg font-medium text-sm;
     @apply transition-all duration-150;
     background-color: var(--color-accent);
-    color: white;
+    color: var(--color-accent-fg);
     @apply shadow-soft hover:shadow-medium;
   }
 
@@ -1164,11 +1173,14 @@ html:not([data-theme]).dark {
 .theme-accent-outline:hover {
   background: var(--color-accent);
   border-color: var(--color-accent);
-  color: #ffffff;
+  color: var(--color-accent-fg);
 }
 .theme-cta {
   border-radius: var(--radius-control);
   background-color: var(--color-accent);
+  /* 登录/注册的主 CTA 也压在 accent 实底上：墨色同样随主题走，
+     原先由调用方写死 Tailwind 的 text-white（深色下与 .btn-primary 同一个问题）。 */
+  color: var(--color-accent-fg);
 }
 .theme-cta:hover { background-color: var(--color-accent-hover); }
 
@@ -1407,7 +1419,7 @@ button:disabled:not(.btn-primary) {
   font-size: 0.8125rem;
   font-weight: 600;
   background: var(--color-accent);
-  color: #fff;
+  color: var(--color-accent-fg);
   transition: top 0.15s ease-out;
 }
 

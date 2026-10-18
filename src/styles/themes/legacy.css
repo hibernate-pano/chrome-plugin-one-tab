@@ -27,6 +27,8 @@ html[data-theme="legacy"] {
   /* 原始蓝色强调色 */
   --color-accent: #2563eb;           /* blue-600 */
   --color-accent-hover: #1d4ed8;     /* blue-700 */
+  /* accent 实底上的墨色：白字 5.2:1 达标 ⇒ 白 */
+  --color-accent-fg: #ffffff;
   --color-accent-subtle: #dbeafe;    /* blue-100 */
 
   /* 状态颜色 */
@@ -81,6 +83,7 @@ html[data-theme="legacy"].dark {
 
   --color-accent: #3b82f6;           /* blue-500 */
   --color-accent-hover: #60a5fa;     /* blue-400 */
+  --color-accent-fg: #0f172a;   /* 深色下 accent 变亮，白字 1.4–3.7:1 */
   --color-accent-subtle: #1e3a8a;    /* blue-900 */
 
   /* 状态颜色 */
