@@ -66,9 +66,30 @@ function assertOpenTabGuarded(body: string, label: string): void {
     `${label}：命中守卫必须给一句话解释，不能静默 return`
   );
 
-  // 失败分支必须 release：前置不可开 / SW 拒开都要能立刻重试
-  const releases = body.split('releaseOnFailure()').length - 1;
-  assert.ok(releases >= 2, `${label}：失败分支（不可开地址 + SW 拒开）各需 release，实得 ${releases}`);
+  // 确定性前置拦截（本设备打不开的地址）必须排在取守卫**之前**，且必须出声：
+  // 它拒的是一次**从未发生**的打开，排到守卫后面就会白占一个冷却档位 —— 紧接着的
+  // 第二次点击会谎报「刚刚已打开这个标签」；排到锁定分支后面则会被锁定分支的
+  // `.catch`（只看 promise reject）吞掉 SW 的 success:false，变成点了没反应。
+  const preCheckAt = body.indexOf('isOpenableTabUrl(');
+  assert.ok(preCheckAt !== -1, `${label}：必须先判「本设备能不能打开」`);
+  assert.ok(preCheckAt < acquireAt, `${label}：不可开地址要在取守卫之前拦下，不该消耗冷却档位`);
+  const preReturnAt = body.indexOf('return;', preCheckAt);
+  assert.ok(
+    preReturnAt !== -1 && preReturnAt < acquireAt,
+    `${label}：拦下后要立刻返回，不能继续去发消息`
+  );
+  assert.ok(
+    /show\w*Error\(/.test(body.slice(preCheckAt, preReturnAt)),
+    `${label}：拦下时必须有一句话解释，不能静默 return`
+  );
+
+  // 取到守卫之后失败的分支必须 release，否则该 tab 被记住一整个冷却窗口、点重试没反应
+  const swFailAt = body.search(/r\.success === false|r\.success !== true/);
+  assert.ok(swFailAt !== -1, `${label}：回包必须显式判断成功与否`);
+  assert.ok(
+    /releaseOnFailure\(\)/.test(body.slice(swFailAt, body.indexOf('show', swFailAt))),
+    `${label}：SW 拒开 / 无回包的分支必须 release`
+  );
 }
 
 /** 恢复整组路径的四条不变式。 */

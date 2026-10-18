@@ -262,6 +262,18 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
   const handleOpenAllTabsInCurrentWindow = useCallback(() => openAllTabs(true), [openAllTabs]);
 
   const handleOpenTab = useCallback((tab: Tab) => {
+    // ── popup 侧前置拦截：本设备打不开的地址（file:/blob:/内部页面）──────
+    // 这条**必须排在去重守卫与锁定分支之前**，它拒的是「一次从未发生的打开」：
+    //  · 排在锁定分支之后：锁定组会把 OPEN_TAB 发给 SW，而锁定分支只看 promise 的
+    //    reject（.catch），SW 的 success:false 回包被丢掉 ⇒ 点了完全没反应；
+    //  · 排在守卫之后：第一次点击先占住冷却档位，紧接着的第二次点击文案变成
+    //    「刚刚已打开这个标签，正在冷却中」——可它从来没被打开过（文案撒谎）。
+    // 拒开一次确定性失败的动作不该消耗任何去重额度，所以两支守卫都在它下面。
+    // 文案与 SW 的拒开口径一致：已保留在会话中。
+    if (!isOpenableTabUrl(tab.url)) {
+      showRestoreError('此标签在当前设备无法打开，已保留在会话中');
+      return;
+    }
     // 在途+冷却去重：mutation 回包前的重复点击直接忽略；回包后冷却期内同样忽略，
     // 防止“复活项”被二次点开导致同一 URL 打开多个浏览器标签。
     // 锁定组不删本地项、恢复立即可见，只需防双击（见 openCooldownMs）；
@@ -286,13 +298,6 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
         logError('打开标签失败:', error);
         showRestoreError(`打开失败：${error?.message || '未知错误'}`);
       });
-      return;
-    }
-    // popup 侧前置拦截：本设备打不开的地址（file:/blob:/内部页面）连 SW 都不问，
-    // 直接提示并保留记录 —— SW 的拒开文案同样是「已保留在会话中」，两处同口径。
-    if (!isOpenableTabUrl(tab.url)) {
-      releaseOnFailure();
-      showRestoreError('此标签在当前设备无法打开，已保留在会话中');
       return;
     }
     chrome.runtime.sendMessage(

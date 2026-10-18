@@ -298,6 +298,13 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({ searchQuery 
   };
 
   const handleOpenTab = (tab: Tab, group: TabGroup) => {
+    // ── 不可开的地址先于一切拦下（与 TabGroup.handleOpenTab 同口径）─────────
+    // 顺序理由见 TabGroup：排在锁定分支之后 ⇒ 锁定组的 success:false 回包被丢弃、
+    // 点了没反应；排在去重守卫之后 ⇒ 第二次点击的文案会谎报「刚刚已打开」。
+    if (!isOpenableTabUrl(tab.url)) {
+      showRestoreError('此标签在当前设备无法打开，已保留在会话中');
+      return;
+    }
     // ── 在途+冷却去重（与 TabGroup.handleOpenTab 同口径，见 @/utils/openGuard）──
     // mutation 回包前的重复点击直接忽略；回包后冷却期内同样忽略，防止同一 URL
     // 被二次点开导致开出多个浏览器标签（SW 的 OPEN_TAB 不做去重）。
@@ -322,11 +329,6 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({ searchQuery 
         logError('打开标签失败:', error);
         showRestoreError(`打开失败：${error?.message || '未知错误'}`);
       });
-      return;
-    }
-    if (!isOpenableTabUrl(tab.url)) {
-      releaseOnFailure();
-      showRestoreError('此标签在当前设备无法打开，已保留在会话中');
       return;
     }
     chrome.runtime.sendMessage(
