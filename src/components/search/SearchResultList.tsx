@@ -3,6 +3,7 @@ import { useAppDispatch, useAppSelector } from '@/store/hooks';
 import { Tab, TabGroup } from '@/types/tab';
 import { deleteGroup, deleteTabAndSync, deleteBroadcastWarn } from '@/store/slices/tabSlice';
 import { isOpenableTabUrl } from '@/utils/inputValidation';
+import { OpenGuard, OpenAllGuard } from '@/utils/openGuard';
 import { useToast } from '@/contexts/ToastContext';
 import { useEnhancedToast } from '@/utils/toastHelper';
 import { trackProductEvent } from '@/utils/productEvents';
@@ -197,7 +198,37 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({ searchQuery 
     }
   }, []);
 
+  // 复活去重守卫（逻辑见 @/utils/openGuard，可单测）：与 TabGroup 同一对类、同一套语义 ——
+  // 单 tab 按 tabId 冷却去重，整组恢复按 group.id 加同类在途锁。组件卸载即丢弃，无需额外清理。
+  //
+  // 【为什么搜索页必须有】搜索页的「打开标签 / 恢复整个会话」原先不经过任何守卫，
+  // 而 SW 的 OPEN_TAB / OPEN_TABS **不做去重**（service-worker.ts）⇒ 双击一个结果标题
+  // 就是同一 URL 开出两个浏览器标签；双击「恢复整个会话」就是两个装满同一批标签的窗口。
+  // 同样的动作在列表页只会执行一次 —— 同一个产品两个界面两种行为。
+  const openGuardRef = useRef<OpenGuard | null>(null);
+  const openAllGuardRef = useRef<OpenAllGuard | null>(null);
+  if (openGuardRef.current === null) openGuardRef.current = new OpenGuard();
+  if (openAllGuardRef.current === null) openAllGuardRef.current = new OpenAllGuard();
+
   const restoreSession = (group: TabGroup) => {
+    const allGuard = openAllGuardRef.current as OpenAllGuard;
+    // 在途锁（与 TabGroup.openAllTabs 同口径）：恢复流程（SW 开窗口 + 删本地组）结束前，
+    // 同一会话的重复点击直接忽略。
+    //
+    // 【命中锁不能一声不吭】静默 return 等于「点了没反应」，用户只能自己猜
+    // 「没点上」还是「坏了」——「按了键没反应必须有一句话解释」是本项目的第一性原则。
+    if (!allGuard.tryAcquire(group.id)) {
+      showRestoreError('正在恢复该会话，请稍候…');
+      return;
+    }
+    const releaseAll = () => allGuard.release(group.id);
+    // 兜底：dispatch 悬挂时不永久锁死该会话的恢复入口
+    const safetyTimer = setTimeout(releaseAll, 10000);
+    const releaseAllOnce = () => {
+      clearTimeout(safetyTimer);
+      releaseAll();
+    };
+
     const tabsPayload = group.tabs.map(tab => ({
       url: tab.url,
       pinned: !!tab.pinned,
@@ -214,7 +245,11 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({ searchQuery 
     // 原顺序是先 dispatch(deleteGroup) 再发 OPEN_TABS：SW 拒开或页面关闭导致无回包
     // 时，会话已被物理删除而无回收站。现在只有 success:true 才消费原会话。
     const consumeSession = () => {
-      if (group.isLocked) return;
+      if (group.isLocked) {
+        // 锁定组恢复后保留，可反复用；无 dispatch 可挂 finally，此处即解锁
+        releaseAllOnce();
+        return;
+      }
       // ponytail: 去掉 fake dispatch，依赖真实 thunk fulfilled 触发 reducer + middleware
       dispatch(deleteGroup(group.id))
         .unwrap()
@@ -227,7 +262,8 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({ searchQuery 
         .catch(error => {
           logError('恢复会话后清理原会话失败:', error);
           showDeleteError(`恢复会话后清理原会话失败: ${error.message || '未知错误'}`);
-        });
+        })
+        .finally(releaseAllOnce);
     };
 
     chrome.runtime.sendMessage(
@@ -242,6 +278,7 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({ searchQuery 
         // 与 TabGroup.openAllTabs 同口径：没有 success:true 就没有证据证明标签
         // 打开了，记录原样保留（可重试），不能先删后开。
         if (!r || r.success !== true) {
+          releaseAllOnce();
           showDeleteError(`${r?.error || '恢复会话失败'}。原会话仍保留在列表中。`);
           return;
         }
@@ -261,6 +298,18 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({ searchQuery 
   };
 
   const handleOpenTab = (tab: Tab, group: TabGroup) => {
+    // ── 在途+冷却去重（与 TabGroup.handleOpenTab 同口径，见 @/utils/openGuard）──
+    // mutation 回包前的重复点击直接忽略；回包后冷却期内同样忽略，防止同一 URL
+    // 被二次点开导致开出多个浏览器标签（SW 的 OPEN_TAB 不做去重）。
+    // 锁定组不删本地项、恢复立即可见，只需防双击（见 openCooldownMs）；
+    // 失败必须 release，否则该 tab 会被记住一整个冷却窗口、点重试无反应。
+    const guard = openGuardRef.current as OpenGuard;
+    // 【冷却命中必须出声】tryAcquire 失败就静默 return 等于「点了没反应」。
+    if (!guard.tryAcquire(tab.id, group.isLocked)) {
+      showRestoreError('刚刚已打开这个标签，正在冷却中，请稍候再试');
+      return;
+    }
+    const releaseOnFailure = () => guard.release(tab.id);
     // ── 点开即消费（2026-10-14，与 TabGroup.handleOpenTab 同口径） ─────────
     // 先开后删，SW 回包 success 才删；SW 拒开 / 前置不可开 → 提示 + 记录保留。
     // 锁定组从不消费（与整组恢复语义一致）。两处必须同口径，否则同一个产品
@@ -276,6 +325,7 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({ searchQuery 
       return;
     }
     if (!isOpenableTabUrl(tab.url)) {
+      releaseOnFailure();
       showRestoreError('此标签在当前设备无法打开，已保留在会话中');
       return;
     }
@@ -287,6 +337,7 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({ searchQuery 
       (res: unknown) => {
         const r = res as { success?: boolean; error?: string } | undefined;
         if (!r || r.success !== true) {
+          releaseOnFailure();
           showRestoreError(r?.error || '打开失败，已保留在会话中');
           return;
         }
