@@ -326,6 +326,17 @@ export const WebDavSettings: React.FC = () => {
       // 于是口令校验失败时配置**已经写进磁盘**，而 toast 说「保存失败」——
       // 用户以为没保存，下次打开面板却看到旧地址已经填好了。
       // 校验必须在任何写入之前做完。
+      //
+      // 2026-10-18 round 32：当初这段只覆盖了「加密口令」，漏了**应用密码**——
+      // 它同样是 `setSessionSecrets` 抛错的来源（`webdav/config.ts` 的
+      // `if (!password) throw new Error('应用密码不能为空')`）。于是「填了地址和账号、
+      // 忘了填密码」这条最常见的漏填，仍然先落盘再报错：toast 说「应用密码不能为空」，
+      // 用户重开面板却发现地址已经填好了，自相矛盾。密码只进浏览器会话内存、不进磁盘，
+      // 所以它没有「先写后校验」的余地。
+      if (!password) {
+        showToast('请填写应用密码，未保存任何改动。', 'error');
+        return;
+      }
       if (encryption === 'required' && !passphrase.trim()) {
         showToast('选择了加密但没有填写加密口令，未保存任何改动。', 'error');
         return;

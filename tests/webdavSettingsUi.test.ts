@@ -272,3 +272,71 @@ describe('菜单与设置页的分工', () => {
     assert.ok(!providerBlock.includes('AuthProvider'), '设置页不得挂 AuthProvider：打开设置不该触发一次云端下载');
   });
 });
+describe('WebDAV 面板：保存前必须校验完（不许先落盘再报错）', () => {
+  // 2026-10-18 round 32。handleSave 的写入顺序是
+  //   saveWebDavConfig（地址/账号/加密选择落盘）→ setSessionSecrets（密码为空则抛）
+  // 所以**任何一项校验漏了**都会造出「toast 说保存失败、磁盘上却已经写好」：
+  // 用户重开面板发现地址已经填好了，与提示自相矛盾。
+  // 应用密码是唯一只进内存、不进磁盘的字段，也最容易从校验里漏掉 —— 最初的注释
+  // 只写了加密口令。这条把三项一起钉住，顺序也钉住。
+  //
+  // ⚠️ 必须先剥注释再找锚点：上面这些说明本身就在函数里，`indexOf('if (!password)')`
+  // 会先命中注释里那句引用（同 webdavSettingsUi 的其它用例，坑一样）。
+  const UI_CODE = UI.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^[ \t]*\/\/.*$/gm, '');
+  const start = UI_CODE.indexOf('const handleSave = useCallback(');
+  const end = UI_CODE.indexOf('const probeRemote = useCallback(', start);
+  const save = start > -1 && end > start ? UI_CODE.slice(start, end) : '';
+
+  it('切片锚点没漂', () => {
+    assert.ok(save.length > 0, '找不到 handleSave 的函数体（锚点漂了）');
+    assert.ok(save.includes('saveWebDavConfig('), 'handleSave 里应有落盘点');
+  });
+
+  it('三项校验都排在落盘之前：地址/账号、应用密码、加密口令', () => {
+    const writeAt = save.indexOf('saveWebDavConfig(');
+    const guards: Array<{ name: string; needle: string }> = [
+      { name: '地址/账号', needle: 'if (!baseUrl || !username)' },
+      { name: '应用密码', needle: 'if (!password)' },
+      { name: '加密口令', needle: "if (encryption === 'required' && !passphrase.trim())" },
+    ];
+    for (const { name, needle } of guards) {
+      const at = save.indexOf(needle);
+      assert.ok(at > -1, `缺少「${name}」校验`);
+      assert.ok(
+        at < writeAt,
+        `「${name}」校验排在落盘之后：会出现「报保存失败但配置已写盘」`
+      );
+    }
+  });
+
+  it('应用密码为空时的提示必须说清「未保存任何改动」', () => {
+    const at = save.indexOf('if (!password)');
+    const branch = save.slice(at, at + 200);
+    assert.match(branch, /未保存任何改动/, '提示要与真实行为一致：这条分支确实什么都没写');
+  });
+
+  it('setSessionSecrets 排在落盘之后（它是抛错源，所以密码必须在它之前拦下）', () => {
+    assert.ok(
+      save.indexOf('setSessionSecrets(') > save.indexOf('saveWebDavConfig('),
+      '若顺序变了，本组断言的推理链需要重写'
+    );
+  });
+});
+
+describe('WebDAV 配置层：应用密码为空确实会抛（面板的校验不能撤）', () => {
+  const CONFIG = readFileSync(
+    new URL('../src/sync-backend/webdav/config.ts', import.meta.url),
+    'utf8'
+  );
+
+  it('setSessionSecrets 对空密码抛错', () => {
+    const at = CONFIG.indexOf('export async function setSessionSecrets');
+    assert.ok(at > -1, '应能找到 setSessionSecrets');
+    const body = CONFIG.slice(at, at + 400);
+    assert.match(
+      body,
+      /if \(!password\) throw/,
+      '若这里不再抛错，面板里的「应用密码必填」校验需要重新论证'
+    );
+  });
+});
