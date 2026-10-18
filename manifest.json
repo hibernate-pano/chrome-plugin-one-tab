@@ -45,7 +45,7 @@
         "default": "Ctrl+Shift+S",
         "mac": "Command+Shift+S"
       },
-      "description": "Open tab manager"
+      "description": "Save all tabs in this window and close them (same as clicking the icon)"
     },
     "save_all_tabs": {
       "suggested_key": {

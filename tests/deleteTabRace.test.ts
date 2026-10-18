@@ -4,6 +4,9 @@
 //    无在途 mutation 时的新回环（含外部/他端同步变更）必须正常应用，不饿死。
 // 2) 备份 key 化 —— optimisticBackup 单槽位时快速连点不同 tab 会互相覆盖，
 //    rejected 错位回滚；改为按 `${groupId}:${tabId}` key 化后 rejected 只回滚对应项。
+// 3) 重复 removeTab 的幂等空操作（tab 已不在磁盘、组还在）回包必须携带组真值：
+//    group===null 在 fulfilled 里被定义为「整组已物理移除」，空操作回 null 会把
+//    仍然存在的会话整张从列表抹掉（搜索页双击结果、两个管理页窗口先后删同一 tab）。
 //
 // 说明：直接 dispatch 各 thunk 的 pending/fulfilled/rejected action creator
 // （不执行 thunk 体，无需 mock sendMutation），只锁定 reducer 竞态语义。
@@ -414,5 +417,60 @@ describe('【超时】不回滚：SW 可能已删完，还原就是谎报删除�
       ['g', 'g2'],
       '非超时的明确失败必须还原整组'
     );
+  });
+});
+
+describe('重复 removeTab 的幂等空操作（回包语义 = 该组现在的磁盘真值）', () => {
+  // SW 侧的 removeTab 是幂等的：tab 已经不在磁盘上时原样返回、不 bump version。
+  // 但这条空操作此前回包 group:null，而 fulfilled 把 group===null 当成
+  // 「组内最后一个 tab 被删、整组物理移除」——于是磁盘上还活着的会话从列表整张
+  // 消失（用户看到「点一下标签，整个会话没了」，重新加载才回来）。
+  // 复现路径：搜索页双击同一条结果标题（该入口没有 OpenGuard）→ 两次 OPEN_TAB
+  // 各带一次 removeTab，第二次必命中空操作。
+  it('第二次 removeTab（tab 已不在）→ 会话仍在列表里，只少被删的那条', async () => {
+    const { applyRemoveTab } = await import('@/core/mutationOps');
+    const { deleteTabAndSync } = await slice();
+    const store = await makeStore([makeGroup('g', ['t1', 't2'])] as never);
+
+    const STAMP = { d: 'devTest', s: 1 };
+    const disk = [makeGroup('g', ['t1', 't2'])];
+    // 第一次请求：SW 移除 t1 并落盘
+    const first = applyRemoveTab(disk as never, 'g', 't1', NOW, STAMP);
+    // 第二次（重复）请求：SW 读到的磁盘已无 t1 → 幂等空操作
+    const second = applyRemoveTab(first.groups as never, 'g', 't1', NOW, STAMP);
+
+    store.dispatch(deleteTabAndSync.pending('D2', { groupId: 'g', tabId: 't1' }));
+    store.dispatch(
+      deleteTabAndSync.fulfilled({ value: { group: second.group } }, 'D2', {
+        groupId: 'g',
+        tabId: 't1',
+      })
+    );
+
+    assert.deepEqual(
+      store.getState().tabs.groups.map(g => g.id),
+      ['g'],
+      '空操作不得被当成「整组已删」：磁盘上还在的会话不能从列表消失'
+    );
+    assert.deepEqual(tabIdsOf(store.getState().tabs, 'g'), ['t2'], '回包即磁盘真值');
+  });
+
+  it('组真的不存在 → 仍然整组移除（null 的合法含义不变）', async () => {
+    const { applyRemoveTab } = await import('@/core/mutationOps');
+    const { deleteTabAndSync } = await slice();
+    const store = await makeStore([makeGroup('g', ['t1'])] as never);
+
+    const STAMP = { d: 'devTest', s: 1 };
+    const gone = applyRemoveTab([], 'g', 't1', NOW, STAMP);
+    assert.equal(gone.group, null, '前置：组不在磁盘上');
+
+    store.dispatch(deleteTabAndSync.pending('D3', { groupId: 'g', tabId: 't1' }));
+    store.dispatch(
+      deleteTabAndSync.fulfilled({ value: { group: gone.group } }, 'D3', {
+        groupId: 'g',
+        tabId: 't1',
+      })
+    );
+    assert.deepEqual(store.getState().tabs.groups.map(g => g.id), [], '组确实没了才移除');
   });
 });

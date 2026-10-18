@@ -66,6 +66,13 @@ interface DraggableTabProps {
   index: number;
   /** 同组标签总数：键盘重排的边界与「第几项」播报都要用 */
   itemCount: number;
+  /**
+   * 所属会话是否锁定。锁定后不渲染逐条删除按钮 ——
+   * 锁定承诺的是「防误删」，而删除本产品不可撤销（无回收站）。
+   * 与同卡片的重命名 / 删除整组按钮同一口径：锁定时直接不渲染，而不是
+   * 渲染出来再拦住（后者是「按了没反应」，用户会重复点）。
+   */
+  locked: boolean;
   moveTab: (sourceGroupId: string, sourceIndex: number, targetGroupId: string, targetIndex: number) => void;
   handleOpenTab: (tab: Tab) => void;
   handleDeleteTab: (tabId: string) => void;
@@ -100,6 +107,7 @@ export const DraggableTab: React.FC<DraggableTabProps> = React.memo(({
   groupId,
   index,
   itemCount,
+  locked,
   moveTab,
   handleOpenTab,
   handleDeleteTab
@@ -327,21 +335,24 @@ export const DraggableTab: React.FC<DraggableTabProps> = React.memo(({
         </span>
       </div>
 
-      {/* 操作按钮 */}
-      <div className="tab-item-actions">
-        <button
-          onClick={handleDelete}
-          className="btn-icon theme-btn-hover p-1 tab-item-delete-btn micro-interaction-button"
-          // UX P1-7：X 不受「删除会话前确认」开关保护、且无回收站，
-          // 原 tooltip 只说「移除这条记录」，没说不可恢复 —— 这是本产品最贵的
-          // 一件事（v1.22.0 起删除即物理清除），必须在点之前说出来。
-          // title 与 aria-label 同步改：读屏用户与视觉用户要拿到同一句契约。
-          title="从会话中移除这条记录（无法恢复）"
-          aria-label={`从会话中移除（无法恢复）: ${tabTitle}`}
-        >
-          <CloseIcon />
-        </button>
-      </div>
+      {/* 操作按钮。锁定会话不渲染删除：锁定承诺「防误删」，而删除不可撤销；
+          与同卡片的重命名 / 删除整组按钮同口径（锁定时不渲染，而非渲染后拦截）。 */}
+      {!locked && (
+        <div className="tab-item-actions">
+          <button
+            onClick={handleDelete}
+            className="btn-icon theme-btn-hover p-1 tab-item-delete-btn micro-interaction-button"
+            // UX P1-7：X 不受「删除会话前确认」开关保护、且无回收站，
+            // 原 tooltip 只说「移除这条记录」，没说不可恢复 —— 这是本产品最贵的
+            // 一件事（v1.22.0 起删除即物理清除），必须在点之前说出来。
+            // title 与 aria-label 同步改：读屏用户与视觉用户要拿到同一句契约。
+            title="从会话中移除这条记录（无法恢复）"
+            aria-label={`从会话中移除（无法恢复）: ${tabTitle}`}
+          >
+            <CloseIcon />
+          </button>
+        </div>
+      )}
     </div>
   );
 }, (prevProps, nextProps) => {
@@ -349,7 +360,8 @@ export const DraggableTab: React.FC<DraggableTabProps> = React.memo(({
     prevProps.tab.id === nextProps.tab.id &&
     prevProps.groupId === nextProps.groupId &&
     prevProps.index === nextProps.index &&
-    prevProps.itemCount === nextProps.itemCount;
+    prevProps.itemCount === nextProps.itemCount &&
+    prevProps.locked === nextProps.locked;
 
   if (!basicPropsEqual) return false;
 

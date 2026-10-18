@@ -99,11 +99,14 @@ describe('mutationOps.applyRemoveTab（物理移除语义，2026-09-29 无墓碑
     assert.equal(r.groups.some(x => x.id === 'g1'), false, '按活跃计数判空并物理移除');
     assert.equal(r.removedGroupId, 'g1');
   });
-  it('tab 不存在 → group 返回 null，数组原样（幂等，不 bump version）', async () => {
+  it('tab 不存在 → 回包携带组真值（幂等，不 bump version）', async () => {
     const { applyRemoveTab } = await import('@/core/mutationOps');
     const g = mkGroup('g1', [mkTab('t1')]);
     const { groups, group } = applyRemoveTab([g], 'g1', 'nope', NOW, STAMP);
-    assert.equal(group, null);
+    // group 的语义是「该组现在的磁盘真值，null 仅代表组已不存在」：消费方
+    // （tabSlice.fulfilled）按 group===null 判定整组移除，空操作回 null 会把
+    // 仍然存在的会话从列表抹掉（见 tests/deleteTabRace.test.ts 的重复 removeTab 用例）。
+    assert.equal(group, g, '组还在就必须回组真值，不得回 null');
     assert.equal(groups[0].version, 1, '幂等命中不膨胀 version');
   });
   it('组不存在 → group 返回 null，数组原样', async () => {

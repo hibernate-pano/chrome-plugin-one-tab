@@ -244,6 +244,11 @@ chrome.action.onClicked.addListener(async () => {
 });
 
 // 监听快捷键命令
+//
+// 这里**没有** `_execute_action` 分支：Chrome 对 action 命令不派发
+// commands.onCommand，按下 Ctrl+Shift+S 等同于点击扩展图标，走的是上面
+// chrome.action.onClicked（保存整窗并关闭，随后打开管理器）。曾经写在这里的
+// 那条分支是死代码，而它的文案（「打开标签管理器」）与真实行为相反。
 chrome.commands.onCommand.addListener(async (command) => {
   logInfo('收到快捷键命令:', command);
 
@@ -276,11 +281,6 @@ chrome.commands.onCommand.addListener(async (command) => {
         }
         break;
       }
-
-      case '_execute_action':
-        logInfo('快捷键打开标签管理器');
-        await tabManager.openTabManager();
-        break;
     }
   } catch (error) {
     logError('处理快捷键命令失败:', error);
@@ -418,7 +418,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
               // 少开了几个（与 docs 记录过的「对没发生的事报成功」同一类问题）。
               //
               // 2026-10-09：日志**不判断会话状态**。原日志写「它们仍保留在会话中」——
-              // 但 SW 并不知道调用方有没有删掉原会话（未锁定组先删后开、已锁定组不删），
+              // 但 SW 并不知道调用方有没有删掉原会话（先开后删，失败时调用方不删），
               // 这句话对其中一半是假的。SW 只报它确知的事实（跳过几个），
               // 「会话还在不在」由真正知道的 UI 层说（见 TabGroup 的分流文案）。
               if (skipped > 0) {
@@ -467,7 +467,18 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
             logInfo('[Service Worker] SAVE_ALL_TABS 查询到标签页:', tabs.length);
 
-            await tabManager.saveAllTabs(tabs);
+            // ── 2026-10-18：只在真的保存了才回 success ───────────────────
+            // saveAllTabs 在「清洗后一个标签都不剩」时弹通知并返回 false
+            // （整窗都是内部页 / 危险 schema，或固定标签页开关关闭把它们全滤掉）。
+            // 原先这里不看结果、无条件回 success:true ⇒ popup 的保存按钮显示
+            // 「已保存」，而列表里根本没有新会话 —— 与 1.22.16 修掉的
+            // saveCurrentTab 是同一类「预检失败仍报成功」。
+            const saved = await tabManager.saveAllTabs(tabs);
+            if (!saved) {
+              // 文案与 TabManager 就地弹的通知同口径（那条说原因，这条进按钮）。
+              sendResponse({ success: false, error: '没有可保存的标签页' });
+              return;
+            }
             sendResponse({ success: true });
           } catch (e: any) {
             logError('[Service Worker] SAVE_ALL_TABS 失败:', e);

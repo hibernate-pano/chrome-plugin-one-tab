@@ -107,6 +107,17 @@ export function applySaveGroup(
  * 物理**移除该 tab**；组内无剩余标签且未锁定 → 整组物理移除
  * （删除意图由调用方经 pendingDeleteIds 广播，见文件头）。
  * 幂等：tab 不存在时原样返回（version 不膨胀）。
+ *
+ * ── 回报的 group 字段语义（2026-10-18 修正）──────────────────────────
+ * `group` = **该组现在的磁盘真值**，`null` 只有一个含义：这个组已不在磁盘上。
+ * 消费方 `tabSlice` 的 deleteTabAndSync.fulfilled 正是按这个语义写的
+ * （`group === null` → 整组从列表移除）。
+ *
+ * 修正前，幂等分支（组在、tab 不在）也回 `null`，与「拿空最后一个标签」共用
+ * 同一个哨兵值 ⇒ 一次重复/陈旧的 removeTab 会让磁盘上仍然存在的会话**整张从
+ * 列表消失**（搜索页双击同一条结果标题 = 两次 OPEN_TAB + 两次 removeTab，
+ * 第二次必命中空操作；两个管理页窗口先后删同一 tab 同理）。用户看到的是
+ * 「点一下标签，整个会话没了」，只能靠重新加载找回显示。
  */
 export function applyRemoveTab(
   groups: TabGroup[],
@@ -119,7 +130,8 @@ export function applyRemoveTab(
   if (idx === -1) return { groups, group: null, removedGroupId: null };
   const current = groups[idx];
   const tabIndex = current.tabs.findIndex(t => t.id === tabId);
-  if (tabIndex === -1) return { groups, group: null, removedGroupId: null };
+  // 空操作也必须回组真值（不是 null）：组还在，只是这条 tab 已经不在。
+  if (tabIndex === -1) return { groups, group: current, removedGroupId: null };
 
   const remainingTabs = current.tabs.filter(t => t.id !== tabId);
   if (shouldAutoDeleteAfterTabRemoval(current, tabId)) {

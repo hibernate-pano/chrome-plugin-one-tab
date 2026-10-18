@@ -546,3 +546,55 @@ describe('P1：设置读失败后，不得用默认值覆盖真实设置，也�
     );
   });
 });
+
+describe('P0：整窗保存同样不得对「一个标签都没存下」报成功（2026-10-18）', () => {
+  // ── 与上一组同源，只是入口换成整窗保存 ────────────────────────────────
+  //
+  // saveAllTabs 在「清洗后一个标签都不剩」时弹通知并 `return`（整窗都是
+  // chrome:// / 扩展页 / javascript: 之类，或固定标签页开关关闭把它们全滤掉）。
+  // 原先它返回 void，`SAVE_ALL_TABS` 分支不看结果、无条件回 success:true ⇒
+  // popup 顶部保存按钮与空态 CTA 就地显示「已保存」，而列表里没有新会话。
+  // 用户下次找不到那个会话，只会怀疑自己记错了。
+  //
+  // 【为什么用源码结构断言】SW 顶层即绑 chrome.*，node:test 无法加载真实
+  // listener；沿用本文件既有惯例（与上面 saveCurrentTab 一组同形）。
+  const SW = stripComments(read('src/service-worker.ts'));
+  const TM = stripComments(read('src/background/TabManager.ts'));
+
+  it('saveAllTabs 必须回报「是否真的保存了」（boolean，不是 void）', () => {
+    assert.match(
+      TM,
+      /async saveAllTabs\(inputTabs\?: chrome\.tabs\.Tab\[\]\):\s*Promise<boolean>/,
+      'saveAllTabs 必须返回 Promise<boolean> —— 返回 void 时调用方无从判断成败，' +
+        '只能无条件报成功（谎报「已保存」）'
+    );
+    const start = TM.indexOf('async saveAllTabs(');
+    assert.ok(start > -1, '找不到 saveAllTabs');
+    const body = TM.slice(start, TM.indexOf('\n  /**', start + 10));
+    assert.ok(/return false;/.test(body), '空窗早退分支必须显式 return false');
+    assert.ok(/return true;/.test(body), '成功路径必须显式 return true');
+  });
+
+  it('SAVE_ALL_TABS 分支必须先看返回值再回 success:true', () => {
+    const start = SW.indexOf("case 'SAVE_ALL_TABS':");
+    assert.ok(start > -1, '找不到 SAVE_ALL_TABS 分支');
+    const body = SW.slice(start, SW.indexOf('// 异步响应', start));
+    assert.match(
+      body,
+      /const saved = await tabManager\.saveAllTabs\(/,
+      '必须接住 saveAllTabs 的返回值 —— 不接就是「不看回包」的老毛病'
+    );
+    const checksAt = body.indexOf('if (!saved)');
+    const successAt = body.indexOf('success: true');
+    assert.ok(checksAt > -1, '必须显式判断 !saved');
+    assert.ok(
+      checksAt < successAt,
+      '!saved 判断必须排在 success:true 之前 —— 顺序反了等于没拦'
+    );
+    assert.match(
+      body.slice(checksAt, successAt),
+      /success: false/,
+      '!saved 分支必须回 success:false，否则界面拿不到失败信号'
+    );
+  });
+});

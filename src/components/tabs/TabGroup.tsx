@@ -201,7 +201,16 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
       tabCount: group.tabs.length,
     });
 
-    if (!group.isLocked) {
+    // ── 先开后删（与单标签 handleOpenTab 同口径）─────────────────────────
+    // 原顺序是先 dispatch(deleteGroup) 再发 OPEN_TABS：SW 拒开（全部不可打开 /
+    // 无 URL）、建窗抛错、或页面已关闭导致无回包时，会话早已被物理删除且无回收站
+    // —— 标签没开出来，记录也没了。现在只有 SW 明确回 success:true 才消费原会话。
+    const consumeSession = () => {
+      if (group.isLocked) {
+        // 锁定组恢复后保留，可反复用；无 dispatch 可挂 finally，此处即解锁
+        releaseAllOnce();
+        return;
+      }
       // ponytail: 去掉 fake dispatch — autoSyncMiddleware 会通过真实 thunk 的
       // fulfilled action 触发 scheduleUpload，无需骗一次
       dispatch(deleteGroup(group.id))
@@ -217,50 +226,36 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
           showDeleteError(`恢复会话后清理原会话失败: ${error.message || '未知错误'}`);
         })
         .finally(releaseAllOnce);
-    }
+    };
 
-    setTimeout(() => {
-      chrome.runtime.sendMessage(
-        { type: 'OPEN_TABS', data: { tabs: tabsPayload, inCurrentWindow } },
-        // 2026-10-05：处理回包。过去是 fire-and-forget，于是 SW 跳过的标签
-        //（本地文件 / 临时链接 / 浏览器内部页面 —— 见 service-worker 的
-        // isOpenableTabUrl 过滤）用户完全不知情，看起来就是「恢复出来的会话
-        // 里有几个标签是坏的」。
-        //
-        // 2026-10-09：文案改为与**已确认的产品语义**一致。
-        // 恢复 = 消费原会话（先删后开），未锁定的会话在发 OPEN_TABS 之前就已
-        // 物理删除（见上方 dispatch(deleteGroup)），v1.22.0 起无回收站。
-        // 原文案写「它们仍保留在会话中」——**那时会话已经没了**，是假承诺，
-        // 而且与这个语义自相矛盾。现在如实说明会话已移除。
-        //
-        // ⚠️ 但**锁定组不走删除分支**（见上方 `if (!group.isLocked)`），
-        // 对它说「已移除」同样是假话。所以按锁定态分流：
-        //   未锁定 → 会话已移除，这些地址不再保存在列表中
-        //   已锁定 → 会话还在，打不开的那几个仍留在里面
-        (res: unknown) => {
-          const r = res as { success?: boolean; skippedUnopenable?: number; error?: string } | undefined;
-          const removedNote = group.isLocked
-            ? ''
-            : '原会话已从列表移除（恢复即消费原会话，无回收站）。';
-          const keptNote = group.isLocked ? '它们仍保留在会话中。' : '这几个地址不再保存在列表中。';
-          if (r && r.success === false) {
-            showDeleteError(
-              `${r.error || '恢复会话失败'}。${removedNote}`.trim()
-            );
-            return;
-          }
-          if (r && typeof r.skippedUnopenable === 'number' && r.skippedUnopenable > 0) {
-            showDeleteError(
-              `已恢复 ${tabsPayload.length - r.skippedUnopenable} 个标签；` +
-                `另有 ${r.skippedUnopenable} 个在当前设备无法打开（本地文件、临时链接或` +
-                `浏览器内部页面）。${removedNote}${keptNote}`
-            );
-          }
+    chrome.runtime.sendMessage(
+      { type: 'OPEN_TABS', data: { tabs: tabsPayload, inCurrentWindow } },
+      // 2026-10-05：处理回包。过去是 fire-and-forget，于是 SW 跳过的标签
+      //（本地文件 / 临时链接 / 浏览器内部页面 —— 见 service-worker 的
+      // isOpenableTabUrl 过滤）用户完全不知情，看起来就是「恢复出来的会话
+      // 里有几个标签是坏的」。
+      //
+      // 未锁定 → 打开成功后会话已移除，打不开的地址不再保存在列表中
+      // 已锁定 → 会话还在，打不开的那几个仍留在里面
+      (res: unknown) => {
+        const r = res as { success?: boolean; skippedUnopenable?: number; error?: string } | undefined;
+        // 没有 success:true 就没有证据证明标签打开了：记录原样保留，可重试。
+        if (!r || r.success !== true) {
+          releaseAllOnce();
+          showDeleteError(`${r?.error || '恢复会话失败'}。原会话仍保留在列表中。`);
+          return;
         }
-      );
-      // 锁定组不删本地项、无 dispatch 可挂 finally，随开窗消息发出即解锁
-      if (group.isLocked) releaseAllOnce();
-    }, 50);
+        consumeSession();
+        if (typeof r.skippedUnopenable === 'number' && r.skippedUnopenable > 0) {
+          const keptNote = group.isLocked ? '它们仍保留在会话中。' : '这几个地址不再保存在列表中。';
+          showDeleteError(
+            `已恢复 ${tabsPayload.length - r.skippedUnopenable} 个标签；` +
+              `另有 ${r.skippedUnopenable} 个在当前设备无法打开（本地文件、临时链接或` +
+              `浏览器内部页面）。${keptNote}`
+          );
+        }
+      }
+    );
   }, [dispatch, group, showDeleteError, showRestoreError]);
 
   const handleOpenAllTabs = useCallback(() => openAllTabs(false), [openAllTabs]);
@@ -353,6 +348,12 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
   }, [dispatch, showDeleteError]);
 
   const handleDeleteTab = useCallback((tabId: string) => {
+    // 按钮在锁定组里已不渲染（见 DraggableTab 的 locked），这里是兵底：
+    // 任何绕过 UI 的调用同样不许逐条删 —— 与整组删除按钮「锁定时不渲染」同口径。
+    if (group.isLocked) {
+      showDeleteError('会话已锁定，解锁后才能删除其中的标签');
+      return;
+    }
     dispatch(deleteTabAndSync({ groupId: group.id, tabId }))
       .unwrap()
       .then(payload => {
@@ -362,7 +363,7 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
       .catch(error => {
         showDeleteError(`更新会话失败: ${error.message || '未知错误'}`);
       });
-  }, [dispatch, group, showDeleteError]);
+  }, [dispatch, group.id, group.isLocked, showDeleteError]);
 
   // 格式化时间
   const formatTime = (dateString: string) => {
@@ -565,6 +566,7 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
                     groupId={group.id}
                     index={index}
                    itemCount={group.tabs.length}
+                    locked={group.isLocked}
                     moveTab={handleMoveTab}
                     handleOpenTab={handleOpenTab}
                     handleDeleteTab={handleDeleteTab}

@@ -79,8 +79,20 @@ export class TabManager {
 
   /**
    * 保存所有标签页
+   *
+   * @returns 是否**真的保存了**。
+   *
+   * ── 2026-10-18：不许对没发生的事报成功 ───────────────────────────────
+   * 本函数在「清洗后一个标签都不剩」（整窗都是内部页 / 危险 schema，或固定标签页
+   * 开关关闭导致全被过滤）时弹一条通知然后 `return` —— 而调用方原先**不看返回值**，
+   * `SAVE_ALL_TABS` 照样回 `success:true`，popup 的保存按钮就地显示「已保存」。
+   * 用户看到「已保存」，实际列表里没有新会话（与 1.22.16 修掉的 saveCurrentTab
+   * 是同一类缺陷：预检失败仍报成功）。
+   *
+   * 现在返回 boolean：只有走完 setGroupsImmediate 才算 true。调用方据此决定
+   * 要不要报成功；失败通知仍由本函数在**判定失败的那一刻**发（原因更具体）。
    */
-  async saveAllTabs(inputTabs?: chrome.tabs.Tab[]): Promise<void> {
+  async saveAllTabs(inputTabs?: chrome.tabs.Tab[]): Promise<boolean> {
     try {
       let tabs = inputTabs ?? [];
 
@@ -136,7 +148,8 @@ export class TabManager {
           message: '当前窗口里没有可保存的标签页',
           kind: 'info',
         });
-        return;
+        // 一个标签都没存下 ⇒ 不是成功。调用方据此不得报「已保存」。
+        return false;
       }
 
       // 单写者：读-改-写必须整体在队列内（只把读放进队列、写在队列外 =
@@ -188,6 +201,9 @@ export class TabManager {
           logWarn('关闭标签页时出错:', error);
         }
       }
+
+      // 走到这里 = 会话已落盘（关标签失败只影响便利性，不影响保存本身）。
+      return true;
 
     } catch (error) {
       logError('保存标签页失败:', error);

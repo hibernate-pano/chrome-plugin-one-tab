@@ -210,7 +210,11 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({ searchQuery 
       tabCount: group.tabs.length,
     });
 
-    if (!group.isLocked) {
+    // ── 先开后删（与 TabGroup.openAllTabs 同口径）────────────────────────
+    // 原顺序是先 dispatch(deleteGroup) 再发 OPEN_TABS：SW 拒开或页面关闭导致无回包
+    // 时，会话已被物理删除而无回收站。现在只有 success:true 才消费原会话。
+    const consumeSession = () => {
+      if (group.isLocked) return;
       // ponytail: 去掉 fake dispatch，依赖真实 thunk fulfilled 触发 reducer + middleware
       dispatch(deleteGroup(group.id))
         .unwrap()
@@ -224,40 +228,36 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({ searchQuery 
           logError('恢复会话后清理原会话失败:', error);
           showDeleteError(`恢复会话后清理原会话失败: ${error.message || '未知错误'}`);
         });
-    }
+    };
 
-    setTimeout(() => {
-      // ── 2026-10-09 UX P0-3：必须看回包 ────────────────────────────────
-      // 原先是 fire-and-forget：打开失败、跳过多少、SW 已死全都不可见，
-      // 而本函数**已经删掉了本地记录**（先删后开）—— 用户以为只是打开没反应，
-      // 实际会话已经从列表消失且不可恢复。
-      // 与 TabGroup.openAllTabs 同口径：按锁定态分流说明记录还在不在。
-      chrome.runtime.sendMessage(
-        {
-          type: 'OPEN_TABS',
-          data: { tabs: tabsPayload },
-        },
-        (res: unknown) => {
-          const r = res as
-            | { success?: boolean; skippedUnopenable?: number; error?: string }
-            | undefined;
-          const removedNote = group.isLocked
-            ? '（该会话已锁定，记录仍在列表中）'
-            : '原会话已从列表移除（恢复即消费原会话，无回收站）。';
-          if (r && r.success === false) {
-            showDeleteError(`${r.error || '恢复会话失败'}。${removedNote}`);
-            return;
-          }
-          if (r && typeof r.skippedUnopenable === 'number' && r.skippedUnopenable > 0) {
-            showDeleteError(
-              `已恢复 ${tabsPayload.length - r.skippedUnopenable} 个标签；另有 ` +
-                `${r.skippedUnopenable} 个在当前设备无法打开（本地文件、临时链接或浏览器内部页面）。` +
-                removedNote
-            );
-          }
+    chrome.runtime.sendMessage(
+      {
+        type: 'OPEN_TABS',
+        data: { tabs: tabsPayload },
+      },
+      (res: unknown) => {
+        const r = res as
+          | { success?: boolean; skippedUnopenable?: number; error?: string }
+          | undefined;
+        // 与 TabGroup.openAllTabs 同口径：没有 success:true 就没有证据证明标签
+        // 打开了，记录原样保留（可重试），不能先删后开。
+        if (!r || r.success !== true) {
+          showDeleteError(`${r?.error || '恢复会话失败'}。原会话仍保留在列表中。`);
+          return;
         }
-      );
-    }, 100);
+        consumeSession();
+        if (typeof r.skippedUnopenable === 'number' && r.skippedUnopenable > 0) {
+          const keptNote = group.isLocked
+            ? '该会话已锁定，记录仍在列表中。'
+            : '这几个地址不再保存在列表中。';
+          showDeleteError(
+            `已恢复 ${tabsPayload.length - r.skippedUnopenable} 个标签；另有 ` +
+              `${r.skippedUnopenable} 个在当前设备无法打开（本地文件、临时链接或浏览器内部页面）。` +
+              keptNote
+          );
+        }
+      }
+    );
   };
 
   const handleOpenTab = (tab: Tab, group: TabGroup) => {
@@ -305,6 +305,13 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({ searchQuery 
   };
 
   const handleDeleteTab = (tab: Tab, group: TabGroup) => {
+    // 锁定会话不逐条删除：锁定承诺「防误删」，而删除不可撤销（无回收站）。
+    // 按钮在锁定组里已不渲染（见 renderTabItem），这里是绕过 UI 时的兵底 ——
+    // 与批量删除 / 恢复两条路径的 `if (group.isLocked) continue` 同一口径。
+    if (group.isLocked) {
+      showDeleteError('该会话已锁定，解锁后才能删除其中的标签');
+      return;
+    }
     dispatch(deleteTabAndSync({ groupId: group.id, tabId: tab.id }))
       .unwrap()
       .then(payload => {
@@ -343,53 +350,52 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({ searchQuery 
 
     // 串行删除每枚 tab：deleteTabAndSync 内部处理"删到组空→自动整组删除"。
     // 旧版用 updateGroup(filter) 走 diff 通道，存在 UI 状态陈旧时误伤的风险（根因 R3）。
-    void (async () => {
-      for (const { tab, group } of matchingTabs) {
-        if (group.isLocked) continue;
-        try {
-          const res = await dispatch(deleteTabAndSync({ groupId: group.id, tabId: tab.id })).unwrap();
-          const warn = deleteBroadcastWarn(res);
-          if (warn) showDeleteError(warn);
-        } catch (error) {
-          logError('批量恢复后删除会话失败:', error);
-          showDeleteError(`批量恢复后清理原会话失败: ${(error as { message?: string })?.message || '未知错误'}`);
+    // 只在 OPEN_TABS 回 success:true 后执行（先开后删，失败时记录原样保留）。
+    const consumeMatchedTabs = () => {
+      void (async () => {
+        for (const { tab, group } of matchingTabs) {
+          if (group.isLocked) continue;
+          try {
+            const res = await dispatch(deleteTabAndSync({ groupId: group.id, tabId: tab.id })).unwrap();
+            const warn = deleteBroadcastWarn(res);
+            if (warn) showDeleteError(warn);
+          } catch (error) {
+            logError('批量恢复后删除会话失败:', error);
+            showDeleteError(`批量恢复后清理原会话失败: ${(error as { message?: string })?.message || '未知错误'}`);
+          }
+        }
+      })();
+    };
+
+    chrome.runtime.sendMessage(
+      {
+        type: 'OPEN_TABS',
+        data: { tabs: tabsPayload },
+      },
+      (res: unknown) => {
+        const r = res as
+          | { success?: boolean; skippedUnopenable?: number; error?: string }
+          | undefined;
+        // 批量恢复同样先开后删：没有 success:true 就没有证据证明标签打开了，
+        // 一条记录都不消费（原实现是发送前就跨多个组删，失败时全丢）。
+        if (!r || r.success !== true) {
+          showDeleteError(`${r?.error || '恢复失败'}。所涉记录仍保留在列表中。`);
+          return;
+        }
+        consumeMatchedTabs();
+        if (typeof r.skippedUnopenable === 'number' && r.skippedUnopenable > 0) {
+          // 批量会话里锁定态可能混杂，按「是否真的删了记录」分流：
+          const removedNote = matchingTabs.some(t => !t.group.isLocked)
+            ? '未锁定的会话已从列表移除（恢复即消费原会话，无回收站）。'
+            : '所涉会话均已锁定，记录仍在列表中。';
+          showDeleteError(
+            `已恢复 ${tabsPayload.length - r.skippedUnopenable} 个标签；另有 ` +
+              `${r.skippedUnopenable} 个在当前设备无法打开（本地文件、临时链接或浏览器内部页面）。` +
+              removedNote
+          );
         }
       }
-    })();
-
-    setTimeout(() => {
-      // ── 2026-10-09 UX P0-3：批量恢复同样要看回包 ──────────────────────
-      // 这条比单组那条更隐蔽：上面的 for 循环**跨多个组**删记录，本函数
-      // fire-and-forget 发完就结束。打开失败/跳过一律不可见，而部分记录
-      // 已经被移除且不可恢复。
-      // 批量会话里锁定态可能混杂，所以按「是否真的删了记录」分流：
-      const anyRemoved = matchingTabs.some(t => !t.group.isLocked);
-      const removedNote = anyRemoved
-        ? '未锁定的会话已从列表移除（恢复即消费原会话，无回收站）。'
-        : '所涉会话均已锁定，记录仍在列表中。';
-      chrome.runtime.sendMessage(
-        {
-          type: 'OPEN_TABS',
-          data: { tabs: tabsPayload },
-        },
-        (res: unknown) => {
-          const r = res as
-            | { success?: boolean; skippedUnopenable?: number; error?: string }
-            | undefined;
-          if (r && r.success === false) {
-            showDeleteError(`${r.error || '恢复失败'}。${removedNote}`);
-            return;
-          }
-          if (r && typeof r.skippedUnopenable === 'number' && r.skippedUnopenable > 0) {
-            showDeleteError(
-              `已恢复 ${tabsPayload.length - r.skippedUnopenable} 个标签；另有 ` +
-                `${r.skippedUnopenable} 个在当前设备无法打开（本地文件、临时链接或浏览器内部页面）。` +
-                removedNote
-            );
-          }
-        }
-      );
-    }, 100);
+    );
   };
 
   const handleDeleteAllSearchResults = async () => {
@@ -448,18 +454,22 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({ searchQuery 
         <span className="tab-item-url hidden sm:block">{getDisplayUrl(tab.url)}</span>
       </div>
 
-      <div className="tab-item-actions">
-        <button
-          onClick={() => handleDeleteTab(tab, group)}
-          className="btn-icon p-1 tab-item-delete-btn flat-interaction"
-          title="从会话中移除这条记录（无法恢复）"
-          aria-label={`从会话中移除（无法恢复）: ${tab.title}`}
-        >
-          <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-            <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-          </svg>
-        </button>
-      </div>
+      {/* 锁定会话不渲染删除：锁定承诺「防误删」，而删除不可撤销（无回收站）。
+          与批量删除按钮的文案「锁定会话除外」同一口径，只是这里直接不给落点。 */}
+      {!group.isLocked && (
+        <div className="tab-item-actions">
+          <button
+            onClick={() => handleDeleteTab(tab, group)}
+            className="btn-icon p-1 tab-item-delete-btn flat-interaction"
+            title="从会话中移除这条记录（无法恢复）"
+            aria-label={`从会话中移除（无法恢复）: ${tab.title}`}
+          >
+            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+        </div>
+      )}
     </div>
     );
   };
@@ -708,6 +718,20 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({ searchQuery 
                   <h4 className="text-sm font-semibold text-gray-900 dark:text-gray-100 truncate">
                     {session.group.name}
                   </h4>
+                  {/* 锁标记：搜索结果里没有逐条删除按钮（锁定会话），必须给用户
+                      一个可见的解释，否则「少了一个 X」看起来像渲染残缺。
+                      与 TabGroup 卡片头部同一图标、同一 class、同一份 aria。 */}
+                  {session.group.isLocked && (
+                    <span
+                      className="tab-group-lock-icon flex-shrink-0"
+                      title="会话已锁定，不会逐条移除其中的标签"
+                      aria-label="会话已锁定"
+                    >
+                      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M16.5 10.5V6.75a4.5 4.5 0 10-9 0v3.75m-.75 11.25h10.5a2.25 2.25 0 002.25-2.25v-6.75a2.25 2.25 0 00-2.25-2.25H6.75a2.25 2.25 0 00-2.25 2.25v6.75a2.25 2.25 0 002.25 2.25z" />
+                      </svg>
+                    </span>
+                  )}
                 </div>
                 {/* 命中数已并入摘要行（匹配 n/m 个标签），不再单列徽章 */}
                 <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">

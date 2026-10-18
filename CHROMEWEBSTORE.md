@@ -26,9 +26,9 @@ TapStack
 TapStack 把你当前浏览器窗口里的所有标签页保存为一个命名会话，随时找回、随时恢复，不让标签页堆积成灾难。
 
 主要功能：
-· 一键保存：把当前窗口的全部标签页存为会话；快捷键 Ctrl+Shift+S 打开管理器、Alt+Shift+S 保存全部、Alt+S 保存当前页
+· 一键保存：把当前窗口的全部标签页存为会话；快捷键 Ctrl+Shift+S 保存整窗并关闭（等同点击扩展图标）、Alt+Shift+S 保存全部、Alt+S 保存当前页
 · 右键菜单：不打开管理界面，也能保存当前标签页或窗口里的其他标签页
-· 会话整理：每个会话可重命名、锁定防误删
+· 会话整理：每个会话可重命名、锁定防误删（锁定后不可重命名、不可逐个删除其中的标签，需先解锁）
 · 快速恢复：一键在新窗口打开整组标签，不打乱当前窗口；恢复后该会话会从列表移除（标签已在浏览器打开，无需手动清理）；点开单个标签直接继续工作，它会自动从会话中移除（锁定会话除外）
 · 会话搜索：按会话名、标签标题/网址查找，支持按域名过滤
 · 误删保护：删除前二次确认（「删除全部会话」强制确认并显示数量），删除后彻底清除
@@ -46,9 +46,9 @@ TapStack 把你当前浏览器窗口里的所有标签页保存为一个命名�
 TapStack saves every tab in your current window as a named session, so you can find and restore your work later — no more tab pileups.
 
 Key features:
-· One-click save: store all tabs of the current window as a session. Shortcuts: Ctrl+Shift+S opens the manager, Alt+Shift+S saves all tabs, Alt+S saves the current tab
+· One-click save: store all tabs of the current window as a session. Shortcuts: Ctrl+Shift+S saves the whole window and closes it (same as clicking the icon), Alt+Shift+S saves all tabs, Alt+S saves the current tab
 · Right-click menu: save the current tab — or all other tabs — without opening the manager
-· Session tools: rename, lock against accidental deletion
+· Session tools: rename, lock against accidental deletion (a locked session cannot be renamed, and its tabs cannot be deleted one by one — unlock first)
 · Fast restore: reopen the whole session in a new window without disturbing the current one; once restored, the session is removed from the list (its tabs are open in the browser); click a single tab to jump straight back into work — it is then removed from the session (locked sessions excepted)
 · Search: find sessions by name, tab title or URL, filter by domain
 · Deletion protection: you confirm before anything is deleted (deleting all sessions always asks and shows the count), and a deleted session is permanently removed — there is no recycle bin and no undo
