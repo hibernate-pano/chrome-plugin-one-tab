@@ -240,6 +240,31 @@ export interface UserSettings {
   useDoubleColumnLayout?: boolean;
 }
 
+/**
+ * 设备级字段：不上云、不被云端覆盖，也不随备份文件跨设备（2026-10-18 产品定稿）。
+ *
+ * 这三个字段描述的是「**这台设备**拿哪个后端同步、要不要自动同步、多久一次」，
+ * 而不是「用户长什么样、怎么用」：
+ *   - `syncBackend`：WebDAV 的地址与口令本来就不进 UserSettings
+ *     （见 sync-backend/webdav/config.ts 文件头）。把它带到别的设备，对端会指向
+ *     一个它没有凭据的后端 ⇒ 同步直接坏掉，而用户只看到「同步失败/请先登录」，
+ *     根本无从判断是自己的后端被换了。
+ *   - `syncEnabled` / `syncIntervalMinutes`：描述本机的后台行为，alarm 与解锁态
+ *     都是设备级的。在 A 机关掉自动同步、B 机开着，B 一次同步就把 A 的选择改回去。
+ *
+ * 云端与备份文件只承载外观与操作偏好（主题、布局、命名模板、通知、固定标签等）。
+ * 三条外来的设置路径都要剔除这三个键（只做一侧不够，另一侧会把值带回来）：
+ *   - 上云：`settingsSyncService.toCloudSettings`
+ *   - 云端合并：`syncEngine.mergeCloudSettingsIntoLocal`
+ *   - 导入备份：`storage.importDetailed`
+ * 键仍然留在本地存储与 UI 里 —— 它们只是「不跨设备」。
+ */
+export const DEVICE_LEVEL_SETTING_KEYS = [
+  'syncBackend',
+  'syncEnabled',
+  'syncIntervalMinutes',
+] as const;
+
 export interface User {
   id: string;
   email: string;

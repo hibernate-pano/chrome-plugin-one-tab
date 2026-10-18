@@ -1,4 +1,4 @@
-import { TabGroup, UserSettings, LayoutMode, ThemeStyle, THEME_STYLES } from '@/types/tab';
+import { TabGroup, UserSettings, LayoutMode, ThemeStyle, THEME_STYLES, DEVICE_LEVEL_SETTING_KEYS } from '@/types/tab';
 import { parseOneTabFormat, formatToOneTabFormat } from '@/core/oneTabFormatParser';
 import { secureStorage } from './secureStorage';
 import { kvGet, kvSet, kvRemove } from '@/storage/storageAdapter';
@@ -1230,9 +1230,18 @@ class ChromeStorage {
       if (data.data.settings) {
         try {
           const currentSettings = await this.getSettings();
+          // 设备级字段不跟着备份跨设备（2026-10-18 产品定稿，同一个
+          // DEVICE_LEVEL_SETTING_KEYS 也用在「上云」与「云端合并」两条路径上）。
+          // 备份文件是**用户手上的外来文件**：B 机导入 A 机的备份后，本机的
+          // syncBackend 会变成 A 机那个后端 —— 而 WebDAV 凭据不进 UserSettings，
+          // 本机没有 ⇒ 同步立刻坏掉，用户只看到「同步失败/请先登录」，
+          // 无从判断是自己的后端被换了。syncEnabled/syncIntervalMinutes 同理，
+          // 它们描述的是本机的后台行为。
+          const importedSettings = { ...data.data.settings };
+          for (const key of DEVICE_LEVEL_SETTING_KEYS) delete importedSettings[key];
           await this.setSettings({
             ...currentSettings,
-            ...data.data.settings
+            ...importedSettings
           });
         } catch (settingsError) {
           logWarn('[Storage] 导入的设置未合并（标签组已导入成功，设置保持原样）:', settingsError);
