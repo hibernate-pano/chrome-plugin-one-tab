@@ -392,6 +392,21 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
     });
   }, [confirmBeforeDelete, dispatch, group, showConfirm, showDeleteError]);
 
+  /**
+   * 「拖走最后一条标签会整组删掉这个会话」时的拦截提示（主 agent 已定的产品口味 #5）。
+   *
+   * 拖动是连续手势：拖动中途弹确认框、或拖完再回滚，都是新交互且体验更差。
+   * 判据取**拒绝这次拖拽 + 说出替代路径**，判据本身复用 ✕ 那条路的同一份语义
+   * （`confirmBeforeDelete` + `shouldAutoDeleteAfterTabRemoval`，锁定会话本就豁免）。
+   * 用 showDeleteError 而不是普通 toast：后果属于「删除」，与同卡片
+   * 「会话已锁定，解锁后才能删除其中的标签」同一口径（r24：用户要求的动作没发生必须出声）。
+   */
+  const refuseDragDeleteGroup = useCallback(() => {
+    showDeleteError(
+      '这是该会话的最后一条标签，拖动会删除整个会话；请改用该行右侧的删除按钮（那里会先确认）'
+    );
+  }, [showDeleteError]);
+
   // 格式化时间
   const formatTime = (dateString: string) => {
     const date = new Date(dateString);
@@ -592,8 +607,15 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
                     tab={tab}
                     groupId={group.id}
                     index={index}
-                   itemCount={group.tabs.length}
+                    itemCount={group.tabs.length}
                     locked={group.isLocked}
+                    // 拖动会搬空未锁定会话 ⇒ 不让拖（判据与 ✕ 删最后一条同一份语义）。
+                    // confirmBeforeDelete 关闭时维持现状：用户已明示不要确认。
+                    onDragBlocked={
+                      confirmBeforeDelete && shouldAutoDeleteAfterTabRemoval(group, tab.id)
+                        ? refuseDragDeleteGroup
+                        : undefined
+                    }
                     moveTab={handleMoveTab}
                     handleOpenTab={handleOpenTab}
                     handleDeleteTab={handleDeleteTab}

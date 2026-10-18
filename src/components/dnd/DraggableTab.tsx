@@ -75,6 +75,14 @@ interface DraggableTabProps {
    * 渲染出来再拦住（后者是「按了没反应」，用户会重复点）。
    */
   locked: boolean;
+  /**
+   * 拖动这一行会**整组删除**所属会话时的拦截回调（undefined = 可以正常拖）。
+   *
+   * 传值即代表拦截，条件由 TabGroup 算完（`confirmBeforeDelete` 打开 &&
+   * `shouldAutoDeleteAfterTabRemoval`，与 ✕ 删最后一条同一份语义）——本组件
+   * 不重复这套判据，避免「两处判据各自漂移」。回调负责出声说明替代路径。
+   */
+  onDragBlocked?: () => void;
   moveTab: (sourceGroupId: string, sourceIndex: number, targetGroupId: string, targetIndex: number) => void;
   handleOpenTab: (tab: Tab) => void;
   handleDeleteTab: (tabId: string) => void;
@@ -110,6 +118,7 @@ export const DraggableTab: React.FC<DraggableTabProps> = React.memo(({
   index,
   itemCount,
   locked,
+  onDragBlocked,
   moveTab,
   handleOpenTab,
   handleDeleteTab
@@ -175,6 +184,19 @@ export const DraggableTab: React.FC<DraggableTabProps> = React.memo(({
   }, []);
 
   const handleDragStart = useCallback((e: React.DragEvent<HTMLDivElement>) => {
+    // ── 拖走未锁定会话的最后一条活跃标签 = 整组物理删除（无回收站） ──────────
+    // 口径（主 agent 已定的产品口味 #5）：**拒绝这次拖拽 + 说明替代路径**，
+    // 不在拖动中途弹确认框（拖动是连续手势，弹框与「拖后回滚」都是新交互且更差）。
+    // 判据由 TabGroup 算好（confirmBeforeDelete + shouldAutoDeleteAfterTabRemoval，
+    // 与 ✕ 删最后一条走同一份语义），本组件只负责「不让它开始 + 出声」：
+    // preventDefault 取消拖拽是标准做法；但**不能静默**——不出声就是「按了没反应」。
+    // 注意顺序：拦截必须排在 beginDragSession **之前**，否则会留下一个没有 dragend
+    // 收尾的拖拽会话（下一次拖拽会带着它的源下标）。
+    if (onDragBlocked) {
+      e.preventDefault();
+      onDragBlocked();
+      return;
+    }
     // 会话级状态只写这里：源下标从这里开始跟随被拖行（每次换位后由 dragover 回写）
     beginDragSession({ groupId, index, tabId: tab.id });
     e.dataTransfer.effectAllowed = 'move';
@@ -183,7 +205,7 @@ export const DraggableTab: React.FC<DraggableTabProps> = React.memo(({
     // 且 Firefox 需要至少设置一样数据才会真正开始拖拽。
     e.dataTransfer.setData(DRAG_TEXT_TYPE, tab.url);
     setIsDragging(true);
-  }, [groupId, index, tab.id, tab.url]);
+  }, [groupId, index, tab.id, tab.url, onDragBlocked]);
 
   const handleDragEnd = useCallback(() => {
     // 会话必须无条件关闭：漏掉就等于把这次的源下标带进下一次拖拽（又是搬错行）
@@ -381,7 +403,8 @@ export const DraggableTab: React.FC<DraggableTabProps> = React.memo(({
   const callbacksEqual =
     prevProps.moveTab === nextProps.moveTab &&
     prevProps.handleOpenTab === nextProps.handleOpenTab &&
-    prevProps.handleDeleteTab === nextProps.handleDeleteTab;
+    prevProps.handleDeleteTab === nextProps.handleDeleteTab &&
+    prevProps.onDragBlocked === nextProps.onDragBlocked;
 
   return callbacksEqual;
 });
