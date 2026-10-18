@@ -341,7 +341,12 @@ async function resolveBackendOutcome(): Promise<ResolutionOutcome> {
   let cfg: StoredWebDavConfig | null;
   try {
     cfg = await loadWebDavConfig();
-  } catch {
+  } catch (err) {
+    // 2026-10-18：这两条 catch 原先**不打任何日志**，只返锁定占位。
+    // 分档口径是「存储读不出来 ⇒ logError」，此处正是该档；不出声等于把
+    // 最严重的一类失败降成静默——用户报「同步不动」时日志里空无一物。
+    // err 原样带上，否则只剩一句无法归因的中文文案。
+    logError('[sync-backend] 自带存储配置读取失败，已中止本轮同步:', err);
     return locked('自带存储的配置读取失败，已中止本次同步以免数据传到错误的后端。请稍后重试。', 'error');
   }
   if (!cfg) {
@@ -350,7 +355,8 @@ async function resolveBackendOutcome(): Promise<ResolutionOutcome> {
   let secrets: { password: string; passphrase: string | null } | null;
   try {
     secrets = await getSessionSecrets(cfg.username);
-  } catch {
+  } catch (err) {
+    logError('[sync-backend] 自带存储解锁状态读取失败，已中止本轮同步:', err);
     return locked('自带存储的解锁状态读取失败，已中止本次同步。请重新输入应用密码与加密口令。', 'error');
   }
   if (!secrets) {

@@ -29,7 +29,7 @@ import {
   type BackendStatus,
 } from './backendStatus';
 import { deleteAllConfirmMessage, deleteAllMenuWarning } from './deleteAllMessages';
-import { resolveMenuSyncStatus } from '@/components/sync/syncPreviewView';
+import { resolveMenuSyncStatus, resolveSyncFailureCopy } from '@/components/sync/syncPreviewView';
 
 /** 问题反馈落点：GitHub issues 新建页。用户自己决定粘不粘诊断摘要。 */
 const FEEDBACK_ISSUE_URL = 'https://github.com/hibernate-pano/chrome-plugin-one-tab/issues/new';
@@ -206,7 +206,14 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({
         // 这里的弹窗是**明确的失败**（已登录但拉取失败）
         showAlert({
           title: '手动同步失败',
-          message: res.error === 'not_authenticated' ? '未登录' : (res.error || '无法从云端拉取数据'),
+          // 2026-10-18：原先只特判 not_authenticated，其余原样透出 ——
+          // backend_unknown / precheck_unknown 这类机器码会以裸枚举弹给用户。
+          // resolveSyncFailureCopy 已就绪（含全部已登记条目的中文文案与
+          // 「纯蛇形枚举不得直接展示」的兜底），这里接上即可，不再自维护第二条映射。
+          message: resolveSyncFailureCopy({
+            reason: res.error,
+            fallbackMessage: '无法从云端拉取数据',
+          }),
           type: 'error',
           onClose: () => {}
         });

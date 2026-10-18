@@ -35,6 +35,7 @@ import {
   syncIdentityCanRun,
   webDavBannerKindOf,
   webDavBannerCopy,
+  SYNC_REASON_COPY,
 } from '@/components/sync/syncPreviewView';
 import type { BackendStatusKind } from '@/components/layout/backendStatus';
 
@@ -482,5 +483,42 @@ describe('C5 PersonalizedWelcome：不可达的统计块与分档文案已删除
     assert.match(list, /<PersonalizedWelcome className="tab-group-card p-6" \/>/);
     // 反过来确认「恒为 0」这个前提仍然成立：组件只在 filteredGroups.length === 0 分支渲染。
     assert.match(list, /if \(filteredGroups\.length === 0 && !searchQuery\) \{/);
+  });
+});
+
+// ── C1（五）：快速刷新的失败弹窗必须复用同一张 reason 表 ──────────────────
+// 原先这里写的是 `res.error === 'not_authenticated' ? '未登录' : (res.error || …)`，
+// 只特判了一个枚举，其余原样透出 —— backend_unknown / precheck_unknown 这些
+// 机器码会以裸枚举弹给用户（downloadReasonCopy 与 SyncButton 早已改成走
+// resolveSyncFailureCopy，这里是最后一条没接上的路径）。
+describe('C1（五）：菜单「从云端刷新」的失败弹窗不得透出裸枚举', () => {
+  const src = stripComments(read(HEADER_DROPDOWN));
+
+  it('快速刷新的失败弹窗接的是 resolveSyncFailureCopy', () => {
+    assert.match(
+      src,
+      /message:\s*resolveSyncFailureCopy\(\{/,
+      '这里若退回手写三元，新增的 reason 会以裸枚举透出'
+    );
+    assert.ok(
+      !/res\.error === 'not_authenticated' \?/.test(src),
+      '只剩一个枚举特判的旧写法：其余机器码会原样弹给用户'
+    );
+  });
+
+  it('该路径的兜底文案是给人看的中文，不是枚举', () => {
+    const idx = src.indexOf('message: resolveSyncFailureCopy({');
+    assert.ok(idx > -1, '找不到接线点（锚点漂了）');
+    const window = src.slice(idx, idx + 260);
+    assert.match(window, /fallbackMessage:\s*'[^']*[\u4e00-\u9fa5]/, `兜底文案应含中文：${window}`);
+  });
+
+  it('反向：backend_unknown 经这条路径得到的不是它自己', () => {
+    // 纯函数层面已经测过（见上方 C1 四），这里确认组件确实在用它 ——
+    // 两条一起才排除「纯函数写对了但组件没接」。
+    assert.equal(
+      resolveSyncFailureCopy({ reason: 'backend_unknown', fallbackMessage: '无法从云端拉取数据' }),
+      SYNC_REASON_COPY.backend_unknown
+    );
   });
 });
