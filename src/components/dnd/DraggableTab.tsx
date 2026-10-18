@@ -58,6 +58,7 @@ import {
   getDragSession,
   resolveHover,
 } from './dragSession';
+import { isOpenableTabUrl } from '@/utils/inputValidation';
 import { SafeFavicon } from '@/components/common/SafeFavicon';
 
 interface DraggableTabProps {
@@ -288,6 +289,15 @@ export const DraggableTab: React.FC<DraggableTabProps> = React.memo(({
     }
   }, [tab.url]);
 
+  // 「本设备打不开」按 **URL 现算**，不读 `tab.unopenable` 标记。
+  //
+  // 【为什么不读那个标记】它是「能不能打开」这个纯函数的缓存，而只有云端读取路径
+  // （deserializeTab）会盖章：本地保存的 file: / blob: / view-source: 标签与 WebDAV
+  // 还原的标签都不盖。于是本机存下的本地 PDF 在列表里长得完全正常——aria 还宣称
+  // 「打开标签页: xxx」——点下去却被 TabGroup 按打开门拒掉（声明与行为分歧），
+  // 且同一个标签换个后端（云/WebDAV/本地）就换一种长相。现算则三条路径必然一致。
+  const isUnopenable = !isOpenableTabUrl(tab.url);
+
   return (
     <div
       ref={ref}
@@ -298,7 +308,7 @@ export const DraggableTab: React.FC<DraggableTabProps> = React.memo(({
       onDragEnter={handleDragEnter}
       onDragLeave={handleDragLeave}
       onDrop={handleDrop}
-      className={`tab-item group/tab micro-interaction-card ${isDragging ? 'dragging' : ''} ${isOver ? 'drag-over' : ''} ${tab.unopenable ? 'tab-item-unopenable' : ''}`}
+      className={`tab-item group/tab micro-interaction-card ${isDragging ? 'dragging' : ''} ${isOver ? 'drag-over' : ''} ${isUnopenable ? 'tab-item-unopenable' : ''}`}
       style={{ cursor: 'grab' }}
       // 父容器 TabGroup.tsx 同步提供 role="list"——此前全仓没有 role="list"，
       // 孤立的 listitem 是无效语义（读屏不播报"列表项 N/M"）。
@@ -316,7 +326,7 @@ export const DraggableTab: React.FC<DraggableTabProps> = React.memo(({
           onClick={handleTabClick}
           title={`${tabTitle}（聚焦后可用上下方向键调整顺序）`}
           aria-label={
-            tab.unopenable
+            isUnopenable
               ? `${tabTitle}（此标签在当前设备无法打开，仍保留在会话中），第 ${index + 1} / ${itemCount} 项，用上下方向键调整顺序`
               : `打开标签页: ${tabTitle}${tab.pinned ? ' (固定)' : ''}，第 ${index + 1} / ${itemCount} 项，用上下方向键调整顺序`
           }

@@ -485,8 +485,13 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({ searchQuery 
   };
 
   const renderTabItem = ({ tab, group }: { tab: Tab; group: TabGroup }) => {
+    // 「本设备打不开」按 **URL 现算**，不读 `tab.unopenable` 标记（理由见 DraggableTab：
+    // 那个标记只有云端读取路径会盖章）。列表页会把这一行灰掉并划掉标题，搜索页此前
+    // 不标 —— 同一个标签两个界面两种长相，搜索页那一行看起来是能点开的，点下去只会
+    // 弹一句「此标签在当前设备无法打开」。现算后两处口径一致。
+    const isUnopenable = !isOpenableTabUrl(tab.url);
     return (
-    <div className="tab-item group/tab">
+    <div className={`tab-item group/tab${isUnopenable ? ' tab-item-unopenable' : ''}`}>
       <SafeFavicon src={tab.favicon} alt="" className="tab-item-favicon" />
 
       <div className="flex-1 min-w-0 flex items-center gap-3">
@@ -498,6 +503,7 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({ searchQuery 
             handleOpenTab(tab, group);
           }}
           title={tab.title}
+          aria-label={isUnopenable ? `${tab.title}（此标签在当前设备无法打开，仍保留在会话中）` : undefined}
         >
           <HighlightText text={tab.title} highlight={searchQuery} />
           {tab.pinned && <PinIcon />}
