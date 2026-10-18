@@ -375,12 +375,35 @@ html:not([data-theme]).dark {
     @apply inline-flex items-center justify-center gap-2;
     @apply px-4 py-2 rounded-lg font-medium text-sm;
     @apply transition-all duration-150 ease-smooth;
-    @apply focus-visible:outline-none focus-visible:ring-offset-2;
+    /* 这里原先还有 `focus-visible:outline-none`（Tailwind 会展开成
+       `outline: 2px solid transparent`）。它与下面这条焦点环同特异性、靠源码顺序
+       决定胜负 —— 一旦有人调整顺序，焦点环就会变回透明。既然下面显式定义了
+       outline，这里就不再需要它（UA 默认轮廓也不会漏出来，因为那条规则总是生效）。 */
   }
 
+  /*
+   * 焦点环必须**画在按钮外面**（outline + 正 offset），不能贴边当描边用。
+   *
+   * 2026-10-18 修：原先是 `outline: none; box-shadow: 0 0 0 2px var(--color-accent)`
+   * —— 而 `.btn-primary` 的底色**就是** var(--color-accent)，环与底同色 ⇒ 对比度 1:1，
+   * 主按钮聚焦时看不出任何变化（WCAG 2.4.7 焦点可见）。legacy / creamy / prism
+   * 三套主题各自在 `:focus-visible` 里用 outline + outline-offset 覆盖过，所以它们没露出
+   * 这个毛病；claude / apple / chrome 三套新主题没有覆盖，于是落到这条兜底上。
+   * 兜底本身必须是安全边界 —— 覆盖是可选的，兜底不是。
+   *
+   * 环色取 `--color-accent-text` 而不是 `--color-accent`：后者与 .btn-primary 的填充
+   * 同色（这正是原写法失效的根因），而且它作为「画在页面底色上的墨色」对比度不够 ——
+   * claude 浅色主题下 accent 对页面底色只有 2.69:1，低于 WCAG 2.2 非文本对比的 3:1。
+   * `--color-accent-text` 正是本仓「当墨色用的 accent」令牌（三套新主题都定义了它，
+   * 全局也有默认），语义与这里完全一致。
+   *
+   * 为什么不改用 `var(--focus-ring)`：那是给输入框这类浅色控件用的**半透明**光环
+   * （如 rgba(217,119,87,0.22)），叠在页面上只有 1.1:1 左右；而 chrome 主题的
+   * --focus-ring 干脆就等于 accent（#1a73e8），换过去等于没修。
+   */
   .btn:focus-visible {
-    outline: none;
-    box-shadow: 0 0 0 2px var(--color-accent);
+    outline: 2px solid var(--color-accent-text);
+    outline-offset: 2px;
   }
 
   .btn-primary {
