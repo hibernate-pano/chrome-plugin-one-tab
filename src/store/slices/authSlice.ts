@@ -173,7 +173,11 @@ const authSlice = createSlice({
       .addCase(signUp.fulfilled, (state, action) => {
         state.isLoading = false;
         state.user = action.payload;
-        state.isAuthenticated = !!action.payload;
+        // ⚠️ **注册不等于登录**：signUp 只回一个账号记录（data.user），本机并没有会话。
+        // 原先这里把 isAuthenticated 一起置真 ⇒ 邮箱待确认（或自动登录失败）时，顶栏立刻
+        // 显示「退出登录」、同步按钮解锁，而注册表单那边正说「自动登录失败，请手动登录」——
+        // 同一屏两种事实。登录态只由 signIn.fulfilled 建立（它还会写 authCache；
+        // signUp 这条路径从来没写过缓存，所以那个假的「已登录」刷新后又会自己消失）。
       })
       .addCase(signUp.rejected, (state, action) => {
         state.isLoading = false;

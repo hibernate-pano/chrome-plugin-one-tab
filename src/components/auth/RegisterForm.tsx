@@ -26,6 +26,7 @@ export const RegisterForm: React.FC<RegisterFormProps> = ({ onSuccess }) => {
 
   const [isRegistering, setIsRegistering] = useState(false);
   const [registrationSuccess, setRegistrationSuccess] = useState(false);
+  const [autoLoginFailed, setAutoLoginFailed] = useState(false);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -58,11 +59,24 @@ export const RegisterForm: React.FC<RegisterFormProps> = ({ onSuccess }) => {
 
         if (result) {
           setRegistrationSuccess(true);
-          // 自动登录
-          await dispatch(signIn({ email, password }));
-
-          if (onSuccess) {
-            onSuccess();
+          // 自动登录。
+          //
+          // 【为什么必须 .unwrap()】`await dispatch(thunk)` 在 thunk 抛错时**不抛**，
+          // 只 resolve 成一个 rejected action（RTK 的行为）。所以原先那句
+          // `await dispatch(signIn(...))` 等于**把自动登录的失败当成成功**：
+          // onSuccess 照样执行（= AuthModal 的 onClose），弹窗关闭、用户以为已登录，
+          // 而 authSlice 写下的 error 随组件卸载永远看不到；此后点同步才收到「请先登录」，
+          // 想重试注册又只会得到「已注册」。LoginForm 一直是 .unwrap() 的，两处口径必须一致。
+          try {
+            await dispatch(signIn({ email, password })).unwrap();
+            if (onSuccess) {
+              onSuccess();
+            }
+          } catch (autoLoginError) {
+            logError('注册成功但自动登录失败:', autoLoginError);
+            // 账号**已经建好**了，所以不是「注册失败」：留住弹窗并说清下一步。
+            setRegistrationSuccess(false);
+            setAutoLoginFailed(true);
           }
         }
       }
@@ -85,7 +99,23 @@ export const RegisterForm: React.FC<RegisterFormProps> = ({ onSuccess }) => {
           className="mb-6"
         />
       )}
-      {error && (
+      {/* 账号建好了但没登进去：不能再报「注册失败」（那是假话），也不能就这么关窗 */}
+      {autoLoginFailed && (
+        <InlineNotice
+          tone="warning"
+          title="账号已创建，但自动登录失败"
+          message={error
+            ? `请用同一个邮箱和密码在「登录」页签手动登录。（原因：${error}）`
+            : '请用同一个邮箱和密码在「登录」页签手动登录。'}
+          onDismiss={() => {
+            setAutoLoginFailed(false);
+            dispatch(clearError());
+          }}
+          className="mb-6"
+        />
+      )}
+      {/* 自动登录失败时 store 里的 error 是**登录**错误，不能再挂「注册失败」的标题 */}
+      {error && !autoLoginFailed && (
         <InlineNotice
           tone="error"
           title="注册失败"
