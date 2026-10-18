@@ -27,6 +27,7 @@ import {
   UNKNOWN_BACKEND_STATUS,
   type BackendStatus,
 } from './backendStatus';
+import { deleteAllConfirmMessage, deleteAllMenuWarning } from './deleteAllMessages';
 
 /** 问题反馈落点：GitHub issues 新建页。用户自己决定粘不粘诊断摘要。 */
 const FEEDBACK_ISSUE_URL = 'https://github.com/hibernate-pano/chrome-plugin-one-tab/issues/new';
@@ -361,7 +362,13 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({
 
     showConfirm({
       title: `删除全部 ${groups.length} 个会话`,
-      message: `将删除本地全部 ${groups.length} 个会话，删除后无法恢复${isAuthenticated ? '，其他登录设备将同步删除' : ''}。确认继续吗？`,
+      // 跨设备删除的披露判据是「有没有可用的同步后端」，不是「有没有账号」——
+      // 自带存储（WebDAV）用户的删除意图同样以墓碑广播（见 deleteAllMessages 文件头）。
+      message: deleteAllConfirmMessage({
+        groupCount: groups.length,
+        isAuthenticated,
+        syncBackend: settings.syncBackend,
+      }),
       type: 'danger',
       confirmText: '全部删除',
       cancelText: '取消',
@@ -944,7 +951,7 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({
               <span className="flex-1">
                 <span className="block">删除所有会话（{groups.length}）</span>
                 <span className="mt-0.5 block text-xs font-normal text-rose-600/80 dark:text-rose-300/80">
-                  将清空本地全部会话，删除后无法恢复（其他登录设备同步删除）。
+                  {deleteAllMenuWarning({ isAuthenticated, syncBackend: settings.syncBackend })}
                 </span>
               </span>
             </button>
