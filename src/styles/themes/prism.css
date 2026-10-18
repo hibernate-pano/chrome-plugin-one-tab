@@ -412,7 +412,9 @@ html[data-theme="prism"] .search-result-item:hover {
 
 html[data-theme="prism"] .search-highlight {
     background-color: rgba(102, 126, 234, 0.15);
-    color: var(--color-accent);
+    /* 墨色不用 --color-accent：与底色同色系，实测 3.1:1（< 4.5:1）。
+       与 legacy / creamy 一样取深色墨，强调交给底色。 */
+    color: #1e1b4b;
 }
 
 html[data-theme="prism"].dark .search-highlight {

@@ -580,10 +580,15 @@ html:not([data-theme]).dark {
     opacity: 0.8;
   }
 
-  /* 搜索高亮样式 */
+  /* 搜索高亮（基础形态）。
+     墨色用 text-primary，**不能**用 --color-accent：accent 压在 accent-subtle 上本身
+     就是低对比的一对（legacy 3.9:1、prism 3.1:1，都在 4.5:1 线下）。claude / apple /
+     chrome 三套主题没有自己的高亮覆盖，直接落到这条基础规则上 —— 2026-10-18 真机实测
+     命中词只有 2.31:1（claude 浅色）、2.61:1（apple 深色），用户看不出命中的是哪几个字。
+     强调交给底色，文字保持可读；要更强的表达由主题自己覆盖（legacy / creamy 就是这样）。 */
   .search-highlight {
     background-color: var(--color-accent-subtle);
-    color: var(--color-accent);
+    color: var(--color-text-primary);
     padding: 0 2px;
     border-radius: 2px;
     font-weight: 500;
