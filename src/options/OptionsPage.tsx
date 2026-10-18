@@ -33,6 +33,7 @@ import {
   toggleShowNotifications,
   updateSettings,
 } from '@/store/slices/settingsSlice';
+import { getCurrentUser } from '@/store/slices/authSlice';
 import { SYNC_INTERVAL_CHOICES } from '@/utils/storage';
 import { sendSyncCommand } from '@/shared/mutationProtocol';
 import { ToastProvider, useToast } from '@/contexts/ToastContext';
@@ -174,6 +175,26 @@ const OptionsContent: React.FC = () => {
   }, [dispatch]);
 
   /**
+   * 补一次登录态注入（2026-10-18 round 28）。
+   *
+   * 【为什么本页必须自己来】`state.auth.isAuthenticated` 只由 `getCurrentUser` / `signIn`
+   * 建立，而 Redux store 是**每个执行上下文各一份**。popup 由 AuthProvider 负责这一步，
+   * 本页刻意不挂 AuthProvider —— 它登录成功后会顺手发一次整库自动下载，那是 popup 专属行为。
+   * 于是这里的登录态**恒为 false**，而它现在是一门开关的唯一判据：
+   * 自动同步的闸门 `canEnableAutoSync` 对云端后端要求 isAuthenticated
+   * （见 components/layout/backendStatus.ts）⇒ 云端用户（默认后端）永远开不了自动同步，
+   * 还被告知「尚未登录 TapStack 云端」，而他们本来就是登录状态。
+   *
+   * 【为什么直接 dispatch getCurrentUser 而不是先 getSession】那个 thunk 内部已经先查会话、
+   * 无会话时直接返回 null（不会抛错），所以这一次调用对未登录用户是零网络开销的。
+   *
+   * 结果只写 Redux，不改任何设置 —— 与「登录后自动下载」是两件事，不要合并。
+   */
+  useEffect(() => {
+    void dispatch(getCurrentUser());
+  }, [dispatch]);
+
+  /**
    * 通知 SW 重建自动同步 alarm。
    *
    * popup 与 options 页是两个执行上下文，这里改了 settings 只改了**本页**的
@@ -269,6 +290,10 @@ const OptionsContent: React.FC = () => {
       // kind 会给「从未登录的云端用户」放行 —— 那正是 B8 之前的假绿灯换个
       // 方向又出现了一次：开关亮着、toast 承诺会跑、后台每轮 not_logged_in。
       // WebDAV 不需要登录（账号自带），由 canEnableAutoSync 按后端分流。
+      //
+      // ⚠️ `isAuthenticated` 必须进本回调的依赖数组（round 28）：它是**异步注入**的
+      // （见上面的 getCurrentUser effect），漏进 deps 会让这个回调永远闭包在首帧的
+      // `false` 上 —— 页面提示行已经改口说「已登录」，点开关却仍被按「未登录」拒绝。
       const fresh = await refreshBackendStatus();
       if (!canEnableAutoSync(fresh, isAuthenticated)) {
         showToast(autoSyncBlockedCopy(fresh, isAuthenticated), 'error');
@@ -297,7 +322,7 @@ const OptionsContent: React.FC = () => {
         'success'
       );
     }
-  }, [dispatch, settings.syncEnabled, settings.syncIntervalMinutes, notifySwResyncAlarm, showToast]);
+  }, [dispatch, isAuthenticated, settings.syncEnabled, settings.syncIntervalMinutes, notifySwResyncAlarm, showToast]);
 
   /**
    * 自动同步开关的说明文案（2026-10-17 B8 缺陷 3）。
