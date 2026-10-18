@@ -956,10 +956,21 @@ export const WebDavSettings: React.FC = () => {
   // 「显式切换」与「隐式回落」是两件事，纪律就在这条线上。
   const handleSwitchBack = useCallback(async () => {
     try {
+      // 2026-10-18 round 38：这次 dispatch 同时改两个字段，回滚必须**成对**。
+      // 只回滚 syncBackend 会留下「界面说还留在自带存储、磁盘上 syncEnabled 已变 false」
+      // 的分叉：用户下一次改任何设置都会把 false 整份盲写回去，静默关掉自动同步。
+      // 口径对齐 OptionsPage.handleSelectBackend（round 33）。
+      const prevBackend = settings.syncBackend;
+      const prevEnabled = settings.syncEnabled;
       dispatch(updateSettings({ syncBackend: 'supabase', syncEnabled: false }));
       const saveError = await dispatchSaveSettings(dispatch);
       if (saveError) {
-        showToast(`${saveError}（同步方式未保存）`, 'error');
+        dispatch(updateSettings({ syncBackend: prevBackend, syncEnabled: prevEnabled }));
+        showToast(
+          `${saveError}（同步方式已恢复为「${prevBackend === 'webdav' ? '自带存储' : 'TapStack 云端'}」，` +
+            `自动同步开关已恢复为${prevEnabled ? '开启' : '关闭'}）`,
+          'error'
+        );
         return;
       }
       // 2026-10-18（后置-2）：切走时一并清掉本次会话的 WebDAV 口令。
@@ -994,7 +1005,7 @@ export const WebDavSettings: React.FC = () => {
     } catch (err) {
       showToast(err instanceof Error ? err.message : '切换失败', 'error');
     }
-  }, [dispatch, showToast]);
+  }, [dispatch, showToast, settings.syncBackend, settings.syncEnabled]);
 
   // 2026-10-17（双模式适配）：保留 slim 分支删掉的 handleSwitchBack
   //   ——「切回 TapStack 云端」按钮在 WebDAV-only 分支上确实无对象，
@@ -1035,9 +1046,22 @@ export const WebDavSettings: React.FC = () => {
       // B1 修好之后这不再表现为「静默停摆」（有一次性提醒、alarm 保持活着），
       // 但它仍是无意义的唤醒，且设置页会一直显示「已开启」。
       // 「关掉自动同步」是 fail-closed 方向的选择：宁可少同步，不可假装在同步。
+      // 2026-10-18 round 38：保存结果以前被丢弃，末尾无条件报「自动同步已关闭」。
+      // 写盘失败时那就是假的 —— 开关仍是 true，后台会继续按间隔醒来。
+      // 失败就把 Redux 回滚成磁盘上的真值，并在 toast 里如实说明。
+      let autoSyncOffFailed = false;
       if (settings.syncEnabled) {
         dispatch(updateSettings({ syncEnabled: false }));
-        await dispatchSaveSettings(dispatch);
+        const saveError = await dispatchSaveSettings(dispatch);
+        if (saveError) {
+          autoSyncOffFailed = true;
+          dispatch(updateSettings({ syncEnabled: true }));
+          showToast(
+            `云服务信息与本次会话口令已清除，但${saveError}：自动同步开关未能关闭（仍为开启），` +
+              '后台会继续按间隔尝试并停在「未解锁」。请回设置页手动关闭',
+            'error'
+          );
+        }
       }
       // 2026-10-18 A3：配置已被清空，待决标志所描述的「首次归属决策」已无对象 ——
       // 留着它只会在用户重新配好后直接生效，把历史会话静默排除在上传之外。
@@ -1049,7 +1073,10 @@ export const WebDavSettings: React.FC = () => {
       setCheck({ kind: 'idle' });
       // P2-4：清除配置后父页面的「已配置并解锁」必须失效
       notifyWebDavConfigChanged();
-      showToast('已清除本机保存的云服务信息与本次会话口令，自动同步已关闭', 'success');
+      // 失败路径已经报过一条更准确的 error toast，不能再覆盖成「已关闭」。
+      if (!autoSyncOffFailed) {
+        showToast('已清除本机保存的云服务信息与本次会话口令，自动同步已关闭', 'success');
+      }
     } catch (err) {
       showToast(err instanceof Error ? err.message : '清除失败', 'error');
     }

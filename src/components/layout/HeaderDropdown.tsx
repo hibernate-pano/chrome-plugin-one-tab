@@ -262,18 +262,42 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({
     };
   }, []);
 
-  // 处理点击外部关闭下拉菜单
+  // 2026-10-18 round 38：监听用 `click` 而不是 `mousedown`。
+  // mousedown 会先于同一次点击的 React onClick 关掉菜单，随后 Header 汉堡按钮的
+  // `setShowDropdown(!showDropdown)` 又把（已经变 false 的）状态翻回 true ——
+  // 用户看到「再点一次没反应」。
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
-      if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
+      const target = event.target as Element | null;
+      // 2026-10-18 round 38：触发按钮自己发起的那次 click 必须跳过。
+      // React 的 discrete 事件在 root 上同步 flush ⇒ onClick 先跑、菜单刚挂载，
+      // 同一个 click 继续冒泡到 document ⇒ 这里若不跳过，target 是触发按钮、
+      // 不在 dropdownRef 内，菜单会被**同一次点击**立刻关掉（真机表现为「打不开」）。
+      // 跳过之后开/关都由按钮自己的 onClick 负责，本处理器只处理真正的外部点击。
+      // 判据只认触发按钮自己（data-menu-trigger，全仓唯一），不是排除任意 aria-label；
+      // 也不用 aria-haspopup 选择器 —— 本面板是就地展开的 disclosure，字符串里出现
+      // `aria-haspopup` 会被「面板不得宣称 popup menu」的既有守卫判成违规。
+      if (target?.closest?.('[data-menu-trigger]')) return;
+      if (target && dropdownRef.current && !dropdownRef.current.contains(target)) {
         onClose();
       }
     };
 
-    document.addEventListener('mousedown', handleClickOutside);
+    document.addEventListener('click', handleClickOutside);
     return () => {
-      document.removeEventListener('mousedown', handleClickOutside);
+      document.removeEventListener('click', handleClickOutside);
     };
+  }, [onClose]);
+
+  // 2026-10-18 round 38：键盘用户没有外点可点，缺这条就只剩鼠标能关菜单。
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return;
+      // 菜单里有文件输入与子菜单；Escape 在它们身上没有别的语义，直接关不冲突。
+      onClose();
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
   }, [onClose]);
 
   const handleSignOut = () => {

@@ -373,7 +373,10 @@ export const Header: React.FC<HeaderProps> = ({ onSearch }) => {
 
             {/* 更多菜单。aria-expanded/haspopup 是菜单按钮的最低契约：
                 读屏要能播报「已折叠/已展开，菜单按钮」，
-                引导第 5 步的聚光灯也锚在这个 aria-label 上。 */}
+                引导第 5 步的聚光灯也锚在这个 aria-label 上。
+                2026-10-18 round 38：data-menu-trigger 给菜单的「外部点击关闭」
+                一个可跳过本按钮的判据 —— 同一个 click 里 onClick 先开菜单、
+                事件继续冒泡到 document，不跳过就会把刚打开的菜单立刻关掉。 */}
             <div className="relative">
               <button
                 onClick={() => setShowDropdown(!showDropdown)}
@@ -381,6 +384,7 @@ export const Header: React.FC<HeaderProps> = ({ onSearch }) => {
                 aria-label="菜单"
                 aria-haspopup="menu"
                 aria-expanded={showDropdown}
+                data-menu-trigger
               >
                 <MenuIcon />
               </button>

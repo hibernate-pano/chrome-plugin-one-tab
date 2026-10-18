@@ -18,6 +18,9 @@ export const AlertDialog: React.FC<AlertDialogProps> = ({
   type = 'info',
   onClose
 }) => {
+  // 2026-10-18 round 38：这是弹窗唯一出口，14px 白字对底色要 ≥4.5:1。
+  // amber-500 只有 2.15:1、emerald-600 3.77:1、sky-600 4.10:1，统一下移到 700 档。
+  // 焦点环画在 offset-2 的外侧、落在弹窗白底上，改用 slate-600（7.58:1）。
   const getTypeStyles = () => {
     switch (type) {
       case 'success':
@@ -29,7 +32,7 @@ export const AlertDialog: React.FC<AlertDialogProps> = ({
               </svg>
             </div>
           ),
-          button: 'bg-emerald-600 hover:bg-emerald-700 focus-visible:outline-emerald-500 text-white'
+          button: 'bg-emerald-700 hover:bg-emerald-800 focus-visible:outline-slate-600 dark:focus-visible:outline-slate-300 text-white'
         };
       case 'error':
         return {
@@ -40,7 +43,7 @@ export const AlertDialog: React.FC<AlertDialogProps> = ({
               </svg>
             </div>
           ),
-          button: 'bg-rose-600 hover:bg-rose-700 focus-visible:outline-rose-500 text-white'
+          button: 'bg-rose-600 hover:bg-rose-700 focus-visible:outline-slate-600 dark:focus-visible:outline-slate-300 text-white'
         };
       case 'warning':
         return {
@@ -51,7 +54,7 @@ export const AlertDialog: React.FC<AlertDialogProps> = ({
               </svg>
             </div>
           ),
-          button: 'bg-amber-500 hover:bg-amber-600 focus-visible:outline-amber-500 text-white'
+          button: 'bg-amber-700 hover:bg-amber-800 focus-visible:outline-slate-600 dark:focus-visible:outline-slate-300 text-white'
         };
       case 'info':
         return {
@@ -62,12 +65,12 @@ export const AlertDialog: React.FC<AlertDialogProps> = ({
               </svg>
             </div>
           ),
-          button: 'bg-sky-600 hover:bg-sky-700 focus-visible:outline-sky-500 text-white'
+          button: 'bg-sky-700 hover:bg-sky-800 focus-visible:outline-slate-600 dark:focus-visible:outline-slate-300 text-white'
         };
       default:
         return {
           icon: null,
-          button: 'bg-sky-600 hover:bg-sky-700 focus-visible:outline-sky-500 text-white'
+          button: 'bg-sky-700 hover:bg-sky-800 focus-visible:outline-slate-600 dark:focus-visible:outline-slate-300 text-white'
         };
     }
   };

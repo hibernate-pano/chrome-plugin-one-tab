@@ -22,6 +22,9 @@ export const ConfirmDialog: React.FC<ConfirmDialogProps> = ({
   onConfirm,
   onCancel
 }) => {
+  // 2026-10-18 round 38：确认/取消是弹窗唯一出口，14px 白字对底色要 ≥4.5:1。
+  // amber-500 只有 2.15:1、sky-600 4.10:1，统一下移到 700 档；rose-600 的 4.70:1 已达标，保持。
+  // primary 是主题变量（主题侧已有 --color-accent-fg 的对比契约），这里不动。
   const getTypeStyles = () => {
     switch (type) {
       case 'danger':
@@ -33,7 +36,7 @@ export const ConfirmDialog: React.FC<ConfirmDialogProps> = ({
               </svg>
             </div>
           ),
-          confirmButton: 'bg-rose-600 hover:bg-rose-700 focus-visible:outline-rose-500 text-white'
+          confirmButton: 'bg-rose-600 hover:bg-rose-700 focus-visible:outline-slate-600 dark:focus-visible:outline-slate-300 text-white'
         };
       case 'warning':
         return {
@@ -44,7 +47,7 @@ export const ConfirmDialog: React.FC<ConfirmDialogProps> = ({
               </svg>
             </div>
           ),
-          confirmButton: 'bg-amber-500 hover:bg-amber-600 focus-visible:outline-amber-500 text-white'
+          confirmButton: 'bg-amber-700 hover:bg-amber-800 focus-visible:outline-slate-600 dark:focus-visible:outline-slate-300 text-white'
         };
       case 'info':
         return {
@@ -60,7 +63,7 @@ export const ConfirmDialog: React.FC<ConfirmDialogProps> = ({
       default:
         return {
           icon: null,
-          confirmButton: 'bg-sky-600 hover:bg-sky-700 focus-visible:outline-sky-500 text-white'
+          confirmButton: 'bg-sky-700 hover:bg-sky-800 focus-visible:outline-slate-600 dark:focus-visible:outline-slate-300 text-white'
         };
     }
   };
@@ -78,7 +81,7 @@ export const ConfirmDialog: React.FC<ConfirmDialogProps> = ({
         <>
           <button
             onClick={onCancel}
-            className="inline-flex items-center justify-center rounded-xl border border-slate-200 bg-slate-100 px-4 py-2.5 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-200 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-400 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700"
+            className="inline-flex items-center justify-center rounded-xl border border-slate-200 bg-slate-100 px-4 py-2.5 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-200 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-600 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700 dark:focus-visible:outline-slate-300"
           >
             {cancelText}
           </button>
