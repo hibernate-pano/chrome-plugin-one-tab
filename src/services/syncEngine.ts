@@ -16,7 +16,11 @@ import {
   markCloudGroupsAsDeleted,
   purgeExpiredCloudTombstones,
 } from '@/services/tabGroupSyncService';
-import { uploadSettings, downloadSettings } from '@/services/settingsSyncService';
+import {
+  uploadSettings,
+  downloadSettings,
+  DEVICE_LEVEL_SETTING_KEYS,
+} from '@/services/settingsSyncService';
 import {
   validateMergeResult,
   decideDownloadPrecheck,
@@ -108,9 +112,16 @@ async function mergeCloudSettingsIntoLocal(): Promise<void> {
     localSettings = (store.getState() as { settings: UserSettings }).settings;
   }
 
+  // 云端只承载外观与操作偏好；设备级字段（syncBackend / syncEnabled /
+  // syncIntervalMinutes）以本机为准，忽略云端给它们的值 —— 云端行里可能
+  // 仍留着上传前的老版本写下的这些键（存量行、改设置前推上去的行）。
+  // 这与 uploadSettings 侧剔除同一份 DEVICE_LEVEL_SETTING_KEYS，两侧成对。
+  const cloudPreferences = { ...cloudSettings };
+  for (const key of DEVICE_LEVEL_SETTING_KEYS) delete cloudPreferences[key];
+
   const convertedSettings: UserSettings = {
     ...localSettings,
-    ...cloudSettings,
+    ...cloudPreferences,
     themeStyle: validateThemeStyle(cloudSettings.themeStyle),
     themeMode: validateThemeMode(cloudSettings.themeMode),
   } as UserSettings;
