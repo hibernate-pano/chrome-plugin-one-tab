@@ -22,7 +22,7 @@
  */
 import type { SyncBackendId, SyncBackendPort } from './ports';
 import { SupabaseBackendAdapter } from './supabaseAdapter';
-import { logWarn } from '@/utils/log';
+import { logError, logWarn } from '@/utils/log';
 import { kvGet, kvSet } from '@/storage-kv/storageAdapter';
 import { WebDavClient } from './webdav/client';
 import { WebDavBackendAdapter } from './webdav/adapter';
@@ -44,7 +44,7 @@ let activeBackend: SyncBackendPort | null = null;
  *
  * 阶段 0 时它是唯一入口（且全仓零调用）；阶段 2 起它多了一个用途：
  * 「忽略设置强制用某个后端」，供测试替身与排查用。
- * 生产路径**不该**调它——生产走 `resolveConfiguredBackend()` 读设置。
+ * 生产路径**不该**调它——生产走 `primeSyncBackend()` / `ensureBackendPrimed()` 读设置。
  */
 let overrideBackend: SyncBackendPort | null = null;
 
@@ -113,30 +113,43 @@ export function getActiveSyncBackendId(): SyncBackendId {
  * 门禁要回答的是「用户现在选了什么」，这是个**设置事实**，不该绕道缓存。
  * 读一次 IndexedDB 的代价远低于「用户被卡在无法同步」的后果。
  *
- * 读失败按 supabase 处理：读不到设置时最安全的假设是老用户的既有路径。
- * （与 `resolveBackendOutcome` 里 kvGet 失败的回落方向一致。）
+ * ── 返回值契约（三态，2026-10-18 B 组）──────────────────────────────
+ * `'supabase' | 'webdav'` = **读到了**，用户现在确实选的是这个后端。
+ *   「键缺失」也落在这里：raw 取不到对象时 settings = {}，syncBackend
+ *   取不到 ⇒ 读成 `DEFAULT_SETTINGS.syncBackend = 'supabase'`
+ *   （storage.ts 的默认值）—— 那是**合法的默认值、不是故障**，
+ *   新用户从未存过设置时就是它。
+ * `null` = **读不到**，本轮无法回答「用户选了什么」。唯一来源是下面
+ *   的 catch：死句柄看门狗 abort / 事务 abort / quota。
+ *
+ * 为什么 null 不能伪装成 'supabase'：调用点据此决定「查不查 Supabase
+ * 账号」与「要不要保守抑制全量上传」，两个猜错方向都出过事故 ——
+ * 猜成 supabase 会让自带存储用户去查他根本没有的账号（2026-10-14 症状：
+ * 「用户未登录」，且永远走不到锁定后端那句「去重新解锁」）；
+ * 猜成 webdav 会把本机数据传到用户没选的盘上。读不到就**回答不了**，
+ * 上层据此中止本轮，而不是替用户猜一个。
  */
-export async function readConfiguredBackendId(): Promise<SyncBackendId> {
+export async function readConfiguredBackendId(): Promise<SyncBackendId | null> {
   try {
     const raw = await kvGet<unknown>('user_settings');
     const settings = raw && typeof raw === 'object' ? (raw as Record<string, unknown>) : {};
     return settings.syncBackend === 'webdav' ? 'webdav' : 'supabase';
   } catch (err) {
-    // ⚠️ 这里的兜底**不能**等于「修复前的行为」——见
+    // ⚠️ 兜底**不能**等于「修复前的行为」——见
     // .memory/fallback-catch-must-not-equal-pre-fix-behavior.md。
     //
     // 2026-10-14 踩过一次：兜底写成 `return 'supabase'`（恰好等于修复前），
     // 于是动态 import 在 SW 里抛 `document is not defined` 时被吞掉，
     // 症状与「根本没修」一模一样，从症状上不可区分。
+    // 2026-10-18 再修一次：同一行改成「本轮按 Supabase 处理」，
+    // 仍然是拿**猜**冒充**读到了** —— 读失败与「用户选了 supabase」
+    // 从此不可区分，而这两者的正确动作正好相反（一个该中止，一个该查账号）。
     //
-    // 现在已改静态 import，那条触发路径没了；但**形态**仍在：
-    // 任何未来的读取失败都会把 WebDAV 用户悄悄变成「查 Supabase 账号」，
-    // 于是他又被挡在门外 —— 正是这次修掉的 bug。
-    //
-    // 因此这里**出声**：读不到设置就说读不到，让上层和日志能区分
-    // 「读失败」与「用户真的选了 supabase」。
-    logWarn('[sync-backend] 读取设置失败，本轮按 Supabase 处理（若你选了自带存储，请检查设置存储）:', err);
-    return 'supabase';
+    // 现在的兜底值是「无法回答」（null）：它不等于任何一种「读到了」的值，
+    // 调用点必须显式判它并中止本轮（syncEngine 的 download/upload、
+    // backgroundSync 的轮询、设置页的推送闸门）。
+    logError('[sync-backend] 读不到本机设置，本轮无法判断同步后端（上层应中止本轮）:', err);
+    return null;
   }
 }
 
@@ -236,39 +249,6 @@ const webDavSeqRegistry = createSeqRegistry({
   kvSet,
   getGroups: () => storage.getGroups(),
 });
-
-/**
- * 读设置，决定用哪个后端。
- *
- * ── 失败语义（2026-10-14 修 P0 后的最终口径）────────────────────────────
- * 「连用户想要哪个后端都读不到」（存储异常）⇒ 回落 Supabase，绝不抛错：
- * 同步只是附加功能，不该让整个扩展打不开；且读不到时默认 supabase 对存量用户最安全。
- *
- * 「用户明确选了 webdav，但配置缺失/未解锁/配置读失败」⇒ 返回锁定占位后端，
- * **绝不回落 Supabase**。回落等于把用户数据传到他没选的后端，且毫无提示 ——
- * 重启浏览器（会话口令清空）是常态，回落会让每次重启后都发生一次无声的后端切换。
- * 锁定后端的每个方法都抛同一句可读错（去设置页解锁），调用方据此中止本轮。
- */
-export async function resolveConfiguredBackend(): Promise<SyncBackendPort> {
-  // 2026-10-18（后置项-1）：原先这里 catch 里回落 `SupabaseBackendAdapter`，
-  // 与本文件其余部分 fail-closed 的方向**相反** —— 在「连用户选了哪个后端都
-  // 读不出来」的情况下猜一个，等于把数据传到他没选的地方且毫无提示。
-  // 与 primeSyncBackend 保持同一口径：显式失败比猜更诚实。
-  //
-  // ⚠️ 本函数目前**没有生产调用方**（生产走 primeSyncBackend / ensureBackendPrimed）。
-  // 保留它是因为它是公开导出，而删除公开导出属于破坏性变更；改它的行为是为了
-  // 让「将来有人用了它」时不会踩同一个坑。
-  try {
-    const outcome = await resolveBackendOutcome();
-    activeBackend = outcome.backend;
-    return outcome.backend;
-  } catch {
-    activeBackend = new LockedWebDavBackend(
-      '读不到同步设置，已中止本次同步。请关闭扩展后重试，或到设置里重新选择同步方式。'
-    );
-    return activeBackend;
-  }
-}
 
 interface ResolutionOutcome {
   backend: SyncBackendPort;

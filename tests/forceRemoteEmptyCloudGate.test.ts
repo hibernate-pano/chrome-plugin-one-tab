@@ -61,14 +61,19 @@ after(async () => {
 beforeEach(async () => {
   env.failReadKeys.clear();
   const { storage, invalidateGroupsCache } = await import('@/utils/storage');
-  // ⚠️ 必须显式种下 syncBackend: 'webdav'（2026-10-17 补）。
+  // ⚠️ 必须显式种下 syncBackend: 'webdav'（2026-10-17 补，2026-10-18 理由升级）。
   //
   // main 上还存在账户体系，downloadAndMerge 开头要过 ensureAuthenticated，
-  // 它按 readConfiguredBackendId() 的结果决定查不查 Supabase 账号；而
-  // readConfiguredBackendId 直接读 KV 里的 user_settings，读不到就回落
-  // 'supabase'。于是本文件若不种设置，会在**闸门之前**就被
-  // not_authenticated 挡掉 —— 两条用例都变成假绿（它们断言的
-  // overwrite_empty_cloud_refused 永远不会被执行到）。
+  // 它按 readConfiguredBackendId() 的结果决定查不查 Supabase 账号。
+  //
+  // 【2026-10-18 B 组修正上一句的旧说法】原来这里写的是「读不到就回落
+  // 'supabase'」—— 那是**修复前的行为**，已不再是契约。现在
+  // readConfiguredBackendId 读不到时返回 null，downloadAndMerge 显式判它并
+  // 提前 return `reason: 'backend_unknown'`（不再伪装成「用户选了云端」）。
+  // 因此本文件**必须**显式种设置：不种的话，这一轮的结局是
+  // backend_unknown，它在闸门**之前**就返回了，两条用例断言的
+  // overwrite_empty_cloud_refused 永远不会被执行到 —— 假绿。
+  // （旧版的假绿成因是 not_authenticated，机制不同、结论相同。）
   //
   // 这一点是 main 与 slim 的真实差异：slim 上账户体系已删、该门禁不存在。
   const { kvSet } = await import('@/storage-kv/storageAdapter');
@@ -112,9 +117,9 @@ describe('覆盖下载空云端闸门（调用点）：只有墓碑 ≠ 为空',
 
     // 本地设一个与默认值明显不同的值，便于断言「没被动过」。
     // ⚠️ 必须带上 syncBackend:'webdav'：setSettings 是整份覆盖，而
-    // readConfiguredBackendId 靠这个字段决定查不查 Supabase 账号 ——
-    // 漏掉它会重新落回 'supabase'，于是本用例在闸门之前就被
-    // not_authenticated 挡掉、变成假绿。
+    // readConfiguredBackendId 靠这个字段决定查不查 Supabase 账号
+    // （2026-10-18 起读不到会返回 null ⇒ downloadAndMerge 提前返回
+    // backend_unknown，本用例同样会在闸门之前结束）。
     const { storage } = await import('@/utils/storage');
     const { DEFAULT_SETTINGS } = await import('@/utils/storage');
     await storage.setSettings({

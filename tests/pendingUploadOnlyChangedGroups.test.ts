@@ -97,7 +97,16 @@ describe('写方把 id 一路传下来（保存路径 + mutation）', () => {
 describe('syncEngine：待决期按 id 过滤，且 fail-closed', () => {
   it('抑制生效时用记下来的 id 过滤，而不是交给适配器按水位猜', async () => {
     const src = await read('src/services/syncEngine.ts');
-    assert.match(src, /const suppressFullUpload =\s*\n?\s*firstSyncPending && !explicitFirstSync && !overwriteCloud/);
+    // 判据 2026-10-18 归入 decideSuppressFullUpload（纯函数，为的是能对它
+    // 的每种后端组合打行为断言）；这里继续钉「那个判据存在且被用上」。
+    const fnStart = src.indexOf('export function decideSuppressFullUpload');
+    assert.ok(fnStart > 0, '找不到 decideSuppressFullUpload');
+    assert.match(
+      src.slice(fnStart),
+      /args\.firstSyncPending &&\s*!args\.explicitFirstSync &&\s*!args\.overwriteCloud/,
+      '三个前提缺一不可（待决 + 非显式 + 非覆盖）'
+    );
+    assert.match(src, /const suppressFullUpload = decideSuppressFullUpload\(\{/);
     assert.match(src, /new Set\(await storage\.getPendingUploadGroupIds\(\)\)/);
     assert.match(src, /activeGroups\.filter\(g => changedGroupIds\.has\(g\.id\)\)/);
     assert.match(src, /uploadTabGroups\(\s*groupsForUpload,/, '上传的必须是过滤后的清单');
@@ -125,7 +134,20 @@ describe('syncEngine：待决期按 id 过滤，且 fail-closed', () => {
 
   it('抑制只对自带存储生效（残留标志不许把云端上传也按白名单过滤）', async () => {
     const src = await read('src/services/syncEngine.ts');
-    assert.match(src, /configuredBackendId === 'webdav'/, '必须显式判后端');
+    // 2026-10-18 B 组：判据必须是 `!== 'supabase'` 而不是 `=== 'webdav'`。
+    // 两个都对「读到了 supabase」成立（抑制关闭），但在**读不到设置**时反了：
+    // `=== 'webdav'` 对 null 为 false ⇒ 抑制关闭 ⇒ 清单退回全量；而 `!== supabase`
+    // 对 null 为 true ⇒ 保持抑制。后者才是安全方向（多传不可回滚）。
+    assert.match(
+      src,
+      /configuredBackendId\s*!==\s*'supabase'/,
+      '必须显式判后端，且写成 !==\'supabase\'（读不到设置时保持抑制）'
+    );
+    assert.doesNotMatch(
+      src.slice(src.indexOf('export function decideSuppressFullUpload')),
+      /configuredBackendId\s*===\s*'webdav'/,
+      '不得写成 ===\'webdav\'：读不到设置时它会关掉抑制，让待决期历史会话整批上云'
+    );
   });
 
   it('切到自带存储时，待决标志必须排在 resyncAlarm 之前落盘', async () => {

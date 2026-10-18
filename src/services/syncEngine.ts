@@ -32,6 +32,7 @@ import {
 import { mergeOpStamped } from '@/core/opStampMerge';
 import { checkDeleteFailsafe } from '@/sync-backend/failsafe';
 import { readConfiguredBackendId } from '@/sync-backend';
+import type { SyncBackendId } from '@/sync-backend';
 import { isLockedBackendError } from '@/sync-backend/lockedBackendError';
 import { dropSyncMergedGroups, removedGroupIds } from '@/core/mutationOps';
 import { ensureOpStampMigrated } from '@/background/opStampMigratedGuard';
@@ -91,6 +92,34 @@ export interface UploadResult {
 }
 
 export type SyncOperation = 'upload' | 'download' | 'none';
+
+/**
+ * 「首次同步归属待决期是否抑制全量上传」的判据（纯函数）。
+ *
+ * 抽成纯函数的原因：`upload()` 在读到 null 时会提前 return，所以
+ * 「读不到设置时抑制仍然生效」这一态**在运行时不可达**，只能对这个判据
+ * 直接打行为断言（本仓库没有 DOM 测试环境，也禁止为此装依赖）。
+ *
+ * ⚠️ 最后一项必须是「不等于 supabase」而不是「等于 webdav」（2026-10-18 B 组）：
+ * configuredBackendId 为 null（读不到设置）时，「等于 webdav」为 false ⇒
+ * 抑制关闭 ⇒ changedGroupIds 变 null ⇒ 上传清单退回全量 activeGroups。
+ * 若此刻后端确实是自带存储、远端又恰好没有 manifest，归属待决期的历史会话
+ * 会被整批推上用户的云盘 —— 2026-10-18 P1#4 明令禁止的「多传」，不可回滚。
+ * 反过来（读不到 ⇒ 保守抑制）错的代价只是「少传」：会话留在本机等用户决定。
+ */
+export function decideSuppressFullUpload(args: {
+  firstSyncPending: boolean;
+  explicitFirstSync: boolean;
+  overwriteCloud: boolean;
+  configuredBackendId: SyncBackendId | null;
+}): boolean {
+  return (
+    args.firstSyncPending &&
+    !args.explicitFirstSync &&
+    !args.overwriteCloud &&
+    args.configuredBackendId !== 'supabase'
+  );
+}
 
 export type SyncProgressCallback = (progress: number, operation: SyncOperation) => void;
 
@@ -321,11 +350,22 @@ export class SyncEngine {
     // backendId 必须显式传（2026-10-14）：门禁要按后端决定查不查 Supabase 账号。
     // 自带存储的用户没有 Supabase 账号，漏传会让他看到「用户未登录」，
     // 且永远走不到锁定后端那句「去重新解锁」（真机 E2E 抓到的）。
+    //
+    // ⚠️ null（读不到设置）必须**在这里**判掉，不能流进门禁（2026-10-18 B 组）。
+    // 门禁里 `backendId === 'webdav'` 对 null 为 false ⇒ 走 restoreAuth() 查
+    // Supabase session ⇒ 恰好复现 2026-10-14 那个症状（自带存储用户看到
+    // 「用户未登录」，且到不了锁定后端那句提示）。「本轮不知道传向哪儿」
+    // 不是「没登录」，所以它有自己的机器码 backend_unknown。
+    const gateBackendId = await readConfiguredBackendId();
+    if (gateBackendId === null) {
+      logError('[SyncEngine] 读不到本机设置，本轮无法判断同步后端，已中止下载');
+      return { success: false, groups: [], reason: 'backend_unknown' };
+    }
     const authed = await ensureAuthenticated({
       isAuthenticated: () =>
         (store.getState() as { auth: { isAuthenticated: boolean } }).auth.isAuthenticated,
       restoreAuth: () => this.restoreAuth(),
-      backendId: await readConfiguredBackendId(),
+      backendId: gateBackendId,
     });
     if (!authed) {
       return { success: false, groups: [], reason: 'not_authenticated' };
@@ -713,12 +753,18 @@ export class SyncEngine {
   }): Promise<UploadResult> {
     // ponytail: SW 进程是独立执行上下文，store 是新实例——先恢复登录态
     // （与 downloadAndMerge 共用 ensureAuthenticated 守卫）。
-    // backendId 必须显式传，理由同上。
+    // backendId 必须显式传，理由同上；null（同上）也必须在这里判掉：
+    // 让它流进门禁 = 去查 Supabase session = 自带存储用户看到「用户未登录」。
+    const gateBackendId = await readConfiguredBackendId();
+    if (gateBackendId === null) {
+      logError('[SyncEngine] 读不到本机设置，本轮无法判断同步后端，已中止上传');
+      return { success: false, error: '读不到本机设置，已中止同步以免把数据传到错误的后端' };
+    }
     const authed = await ensureAuthenticated({
       isAuthenticated: () =>
         (store.getState() as { auth: { isAuthenticated: boolean } }).auth.isAuthenticated,
       restoreAuth: () => this.restoreAuth(),
-      backendId: await readConfiguredBackendId(),
+      backendId: gateBackendId,
     });
     if (!authed) {
       return { success: false, error: '用户未登录' };
@@ -768,9 +814,16 @@ export class SyncEngine {
       // 那条路）。这里显式判一次后端：一个残留的待决标志（用户切回 TapStack 云端后
       // 没人清它）不该让云端上传也按白名单过滤 —— 那份白名单早被清空了，
       // 结果是「什么都传不上去」，而用户以为在同步。
+      //
+      // 判据本身在 decideSuppressFullUpload（纯函数）：读不到设置时它保持
+      // 抑制，理由与变异判据见那里的注释（M1）。
       const configuredBackendId = await readConfiguredBackendId();
-      const suppressFullUpload =
-        firstSyncPending && !explicitFirstSync && !overwriteCloud && configuredBackendId === 'webdav';
+      const suppressFullUpload = decideSuppressFullUpload({
+        firstSyncPending,
+        explicitFirstSync,
+        overwriteCloud,
+        configuredBackendId,
+      });
 
       // ── 2026-10-18 P1#4 第二半：待决期只上传**本次操作改动过的会话** ────────
       // 光靠适配器的 `selectDirty(groups, 水位)` 拦不住：远端还没有 manifest 时

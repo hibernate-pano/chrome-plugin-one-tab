@@ -619,6 +619,15 @@ async function performBackgroundSync(): Promise<BackgroundSyncOutcome> {
   // WebDAV 分支不注入登录态：没有 user 可写，SyncEngine 侧也已由 authGuard
   // 对 webdav 直接放行，不依赖 store.auth.isAuthenticated。
   const backendId = await readConfiguredBackendId();
+  // null = 读不到设置，本轮**无法回答**用户选了什么（2026-10-18 B 组）。
+  // 不能让它落进下面的 `!== 'webdav'` 分支：那会去查 Supabase 账号，
+  // 自带存储用户永远没有它 ⇒ 每轮都得到 not_logged_in（2026-10-17 B1 那条
+  // 链路再次不可达）。而若反过来放行，就等于替用户猜一个后端开跑。
+  if (backendId === null) {
+    logError('[BackgroundSync] 读不到同步设置，本轮无法判断后端，已中止');
+    // 真实故障（fail-closed 中止）→ 计入退避，下轮 alarm 重试。
+    return { ok: false, kind: 'failed', detail: '读不到同步设置，已中止本轮' };
+  }
   if (backendId !== 'webdav') {
     const user = await store.dispatch(getCurrentUser()).unwrap().catch(() => null);
     if (!user) {

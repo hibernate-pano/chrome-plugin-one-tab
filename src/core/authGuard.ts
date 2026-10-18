@@ -24,8 +24,14 @@ export interface AuthGuardDeps {
    * **为什么默认 'supabase' 而非必填**：调用方若忘了传，走既有语义（查账号）。
    * 对 WebDAV 用户而言，漏传的后果是「回到未登录」——即修掉的那个 bug。
    * 所以它可选但**每个生产调用点都必须显式传**，新增调用点也要传。
+   *
+   * `null` = **读不到设置，本轮无法回答**（2026-10-18 B 组）。它落在
+   * 「不等于 webdav」这一侧 ⇒ 查 Supabase 账号。这是刻意的保守方向：
+   * 查账号最多得到一句「未登录」，而放行会让不知道传向哪儿的一轮同步
+   * 直接跑起来。**生产调用点必须在传进来之前就判掉 null 并中止本轮**
+   * ——门禁这一层只能兜住症状（把它读成「未登录」）。
    */
-  backendId?: 'supabase' | 'webdav';
+  backendId?: 'supabase' | 'webdav' | null;
 }
 
 export async function ensureAuthenticated(deps: AuthGuardDeps): Promise<boolean> {
