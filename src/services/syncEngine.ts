@@ -219,8 +219,15 @@ export class SyncEngine {
    * 四条路径的耗时聚在同一桶里。
    *
    * @param delayMs 延迟毫秒数（默认 3000ms）
+   * @param changedGroupIds 本次操作改动过的会话 id（2026-10-18 P1#4 第二半）。
+   *   WebDAV 归属待决期只允许上传这些会话 —— 保存路径知道它刚写了哪个组，
+   *   mutation 命令也带着受影响的 id（见 core/mutationAffectedGroups）。
+   *   不传 = 本次没有会话被改动（只置 pending_upload，不改增量白名单）。
    */
-  scheduleUpload(delayMs: number = UPLOAD_DEBOUNCE_MS): Promise<void> {
+  scheduleUpload(
+    delayMs: number = UPLOAD_DEBOUNCE_MS,
+    changedGroupIds?: readonly string[]
+  ): Promise<void> {
     // ── 2026-10-05：置位失败不再只 logWarn ────────────────────────────────
     // 原来这里是 `.catch(err => logWarn(...))`：置位失败后 alarm 照样创建、
     // timer 照样跑，本次进程内的上传**会**发生。但 pending_upload 标志是
@@ -241,6 +248,19 @@ export class SyncEngine {
         err
       );
     });
+    // 增量白名单必须与 pending_upload 一起落盘（同样 await）：待决期的上传靠它
+    // 决定「允许传哪些会话」，漏写就等于这次改动在待决期传不上去（fail-closed，
+    // 不会多传；但用户会以为已同步）。与置位同样只记 error 级日志、不抛 ——
+    // scheduleUpload 是 fire-and-forget 的调度入口。
+    const noted = changedGroupIds && changedGroupIds.length > 0
+      ? storage.noteGroupsChanged(changedGroupIds).catch(err => {
+          logError(
+            '[SyncEngine] 登记「本次改动的会话 id」失败——若此刻正处于 WebDAV 归属待决期，' +
+              '这批改动本轮不会被上传（不会多传，只会留在本机等你完成归属决策）。原始错误：',
+            err
+          );
+        })
+      : Promise.resolve();
     if (typeof chrome !== 'undefined' && chrome.alarms) {
       // ponytail: 双驱动——R6 修复。chrome.alarms 最小 delayInMinutes 是 0.5（30s），
       // 仅靠 alarm 会把“点开一个标签”这种 1.5~3s 意图拉伸到 ≥30s，期间本地变更
@@ -250,23 +270,26 @@ export class SyncEngine {
       if (this.uploadTimer) clearTimeout(this.uploadTimer);
       this.uploadTimer = setTimeout(() => {
         this.uploadTimer = null;
-        void enqueue('sync:upload', () => this.upload())
+        // 等增量白名单落盘再上传：否则待决期的上传可能读到还没写全的 id 列表。
+        void noted
+          .then(() => enqueue('sync:upload', () => this.upload()))
           .catch(err => logError('[SyncEngine] 快路径上传失败:', err));
       }, delayMs);
       // 兜底
       void chrome.alarms.clear(SYNC_UPLOAD_ALARM).catch(() => {});
       const delayMinutes = Math.max(0.5, delayMs / 60000);
       chrome.alarms.create(SYNC_UPLOAD_ALARM, { delayInMinutes: delayMinutes });
-      return marked;
+      return Promise.all([marked, noted]).then(() => undefined);
     }
     // 非扩展运行时 fallback：单测走这里（同样经队列，与快路径保持同一语义）
     if (this.uploadTimer) clearTimeout(this.uploadTimer);
     this.uploadTimer = setTimeout(() => {
       this.uploadTimer = null;
-      void enqueue('sync:upload', () => this.upload())
+      void noted
+        .then(() => enqueue('sync:upload', () => this.upload()))
         .catch(err => logError('[SyncEngine] 延迟上传失败:', err));
     }, delayMs);
-    return marked;
+    return Promise.all([marked, noted]).then(() => undefined);
   }
 
   /**
@@ -741,19 +764,47 @@ export class SyncEngine {
       // 静默留在本机，而用户以为它已经同步了 —— 那是另一种撒谎。
       const firstSyncPending = await storage.getFirstSyncPending();
       const explicitFirstSync = firstSyncPending ? !!opts?.explicitFirstSync : true;
-      if (firstSyncPending && !explicitFirstSync && !overwriteCloud) {
+      // 抑制是**自带存储专属**的概念（只有 webdav 适配器会走「远端无 manifest ⇒ 全量」
+      // 那条路）。这里显式判一次后端：一个残留的待决标志（用户切回 TapStack 云端后
+      // 没人清它）不该让云端上传也按白名单过滤 —— 那份白名单早被清空了，
+      // 结果是「什么都传不上去」，而用户以为在同步。
+      const configuredBackendId = await readConfiguredBackendId();
+      const suppressFullUpload =
+        firstSyncPending && !explicitFirstSync && !overwriteCloud && configuredBackendId === 'webdav';
+
+      // ── 2026-10-18 P1#4 第二半：待决期只上传**本次操作改动过的会话** ────────
+      // 光靠适配器的 `selectDirty(groups, 水位)` 拦不住：远端还没有 manifest 时
+      // 水位恒为 0，全部历史会话都被判成脏，于是「只保存一个标签页」照样把
+      // 全部历史推上用户的云盘（抑制是死代码，2026-10-18 实测抑制前后内容逐字相同）。
+      // 判据因此换成写方一路记下来的 id（保存路径 + mutation 命令，见
+      // core/mutationAffectedGroups）；读不到 ⇒ 空集 ⇒ 什么都不传（fail-closed：
+      // 待决期少传只是「留在本机等用户决定」，多传才是违约）。
+      const changedGroupIds = suppressFullUpload
+        ? new Set(await storage.getPendingUploadGroupIds())
+        : null;
+      const groupsForUpload = overwriteCloud
+        ? allGroups
+        : changedGroupIds
+          ? activeGroups.filter(g => changedGroupIds.has(g.id))
+          : activeGroups;
+      if (suppressFullUpload) {
         logInfo(
-          '[SyncEngine] WebDAV 首次同步归属决策未完成：本次只走增量上传，' +
-            '已有会话等你到设置里点「检查并推送」后再决定归属'
+          '[SyncEngine] WebDAV 首次同步归属决策未完成：本次只上传本次操作改动过的 ' +
+            `${groupsForUpload.length} 个会话（本机共 ${activeGroups.length} 个），` +
+            '其余会话等你到设置里点「检查并推送」后再决定归属'
         );
       }
 
-      if (activeGroups.length > 0) {
+      // 闸门仍按**活跃组**判（不是按过滤后的清单）：覆盖模式下的「本地一个活跃组都没有
+      // ⇒ 绝不覆盖」是既有保护，不能因为待决期把清单过滤空了就改判成「跳过覆盖」。
+      // 清单为空时连适配器都不必调（省一次读 manifest + 解锁，也避免在空远端上写出
+      // 一份「零会话」的 manifest）。
+      if (activeGroups.length > 0 && groupsForUpload.length > 0) {
         // 覆盖模式把残留墓碑一起交给 uploadTabGroups：覆盖会先删空云端，墓碑必须
         // 随同一次 upsert 写上云（selectRowsForUpload 决定实际写入哪些行），
         // 否则删除意图随覆盖一起丢失，另一端的活跃副本下次合并即复活。
         const up = await uploadTabGroups(
-          overwriteCloud ? allGroups : activeGroups,
+          groupsForUpload,
           overwriteCloud,
           explicitFirstSync
         );
@@ -766,6 +817,10 @@ export class SyncEngine {
         // 而这次覆盖根本没发生。
         logWarn('[SyncEngine] 覆盖上传被跳过：本地没有活跃组（保留云端数据）');
         skippedOverwrite = 'no-active-groups';
+      } else if (suppressFullUpload) {
+        // 待决期本次没有任何「本次改动过的会话」可传（例如刚保存的会话又被删了）。
+        // 什么都不传是正确行为；删除意图走 pendingDeleteIds 那条独立广播路径。
+        logInfo('[SyncEngine] 待决期本次没有改动过的会话需要上传');
       }
       report(70, 'upload');
       // P1：覆盖 upsert 已经把墓碑按「本机印记」写上云了，这些 id 绝不能再来一次
@@ -836,6 +891,11 @@ export class SyncEngine {
       // alarm / 后台轮询重新尝试。cancelPendingUpload 不清这个标志——
       // “本地有变更”这个事实在 upload 真正成功前都成立。
       await storage.setPendingUpload(false);
+      // 增量白名单同批清理：这批改动已经上去了（或被如实跳过），留着只会在
+      // 下一次进入待决态时误导筛选。失败不阻断（下一轮成功时再清）。
+      await storage.clearPendingUploadGroupIds().catch(err =>
+        logWarn('[SyncEngine] 清理「本次改动的会话 id」失败（下轮上传再清）:', err)
+      );
       report(100, 'none');
       this.isSyncing = false;
       return { success: true, ...(skippedOverwrite ? { skippedOverwrite } : {}) };

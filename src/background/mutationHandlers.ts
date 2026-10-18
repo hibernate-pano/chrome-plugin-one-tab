@@ -32,6 +32,7 @@ import {
 } from '@/core/mutationOps';
 import { logError } from '../utils/log';
 import { perfTrace } from '@/utils/perfTrace';
+import { affectedGroupIdsOf } from '@/core/mutationAffectedGroups';
 
 export interface MutationDeps {
   getGroups(): Promise<TabGroup[]>;
@@ -40,7 +41,13 @@ export interface MutationDeps {
    * 落盘广播时原样带回，供发起方忽略自己的回声；缺失（SW 自身写入）则广播给所有人。
    */
   setGroups(groups: TabGroup[], originId?: string): Promise<void>;
-  scheduleUpload(delayMs: number): void | Promise<void>;
+  /**
+   * `changedGroupIds`：本次命令改动过的会话 id（2026-10-18 P1#4 第二半）。
+   * 一路传到 syncEngine 落盘成「待决期允许上传的 id」—— 用户在设置页做完归属
+   * 决策之前，自动上传只能传这些，不能把全部历史会话推上他的云盘。
+   * 见 core/mutationAffectedGroups 与 storage.getPendingUploadGroupIds。
+   */
+  scheduleUpload(delayMs: number, changedGroupIds?: readonly string[]): void | Promise<void>;
   now(): string;
   journal: Journal;
   seq: SeqRegistry;
@@ -149,7 +156,8 @@ export function createMutationHandlers(deps: MutationDeps) {
       },
       getGroups: () => perfTrace().measure(op, 'read', () => deps.getGroups()),
       setGroups: (g, originId) => perfTrace().measure(op, 'write', () => deps.setGroups(g, originId)),
-      scheduleUpload: ms => perfTrace().measure(op, 'scheduleUpload', () => deps.scheduleUpload(ms)),
+      scheduleUpload: (ms, ids) =>
+        perfTrace().measure(op, 'scheduleUpload', () => deps.scheduleUpload(ms, ids)),
       // 可选依赖：缺失时保持缺失（noteDeletedGroups 用 `?.` 判定，不能把
       // undefined 包成一个函数，否则「没注入」会被误判成「注入了但很慢」）。
       ...(deps.noteGroupDeleted
@@ -167,6 +175,16 @@ export function createMutationHandlers(deps: MutationDeps) {
     // 本次命令的统一落盘出口：把 originId 透传给写路径（广播过滤用）。
     const persist = (groups: TabGroup[]) => d.setGroups(groups, originId);
 
+    // 本次命令改动过的会话 id（2026-10-18 P1#4 第二半）：一路传到 syncEngine，
+    // 落盘成「待决期允许上传的 id」。提取放在这里（一处）而不是各分支里 ——
+    // 命令本身带着 id，集中提取就不会出现「某个分支忘了记」。
+    // cleanDuplicates 是例外：受影响集合只有计划知道，它那条分支显式覆盖。
+    const changedIds = affectedGroupIdsOf(cmd);
+    const scheduleUpload = (
+      delayMs: number,
+      ids: readonly string[] = changedIds
+    ): void | Promise<void> => d.scheduleUpload(delayMs, ids);
+
     // 阶段二·§4.3 写序：journal + seq 一次性落盘先于 apply* 状态写。
     // journal 在这里的作用是「取号 + 留一条命令轨迹」（诊断导出读它统计命令分布）；
     // 它声明的 WAL 重放从未实现，也不打算实现——单写者队列 + 每步直写落盘
@@ -182,7 +200,7 @@ export function createMutationHandlers(deps: MutationDeps) {
       case 'saveGroup': {
         const groups = await d.getGroups();
         await persist(applySaveGroup(groups, cmd.group, now, stamp));
-        d.scheduleUpload(DELETE_PRIORITY_MS);
+        scheduleUpload(DELETE_PRIORITY_MS);
         return { ok: true, payload: cmd.group };
       }
       case 'removeTab': {
@@ -193,7 +211,7 @@ export function createMutationHandlers(deps: MutationDeps) {
         // 删除类必须 await 置位：组已从磁盘移除、广播队列已写入，但
         // pending_upload 还没落盘时 SW 被回收 → 后台看到 pendingUpload=false
         // 就不上传 → 云端行没标记删除，对端并集合并把已删的组拉回来。
-        await d.scheduleUpload(DELETE_PRIORITY_MS);
+        await scheduleUpload(DELETE_PRIORITY_MS);
         return { ok: true, payload: { group: r.group }, broadcastWarn: delWarn ?? undefined };
       }
       case 'deleteGroup': {
@@ -201,7 +219,7 @@ export function createMutationHandlers(deps: MutationDeps) {
         const r = applyDeleteGroup(groups, cmd.groupId, now, stamp);
         await persist(r.groups);
         const delWarn = await noteDeletedGroups(d, [r.removedGroupId]);
-        await d.scheduleUpload(DELETE_PRIORITY_MS);
+        await scheduleUpload(DELETE_PRIORITY_MS);
         return { ok: true, payload: cmd.groupId, broadcastWarn: delWarn ?? undefined };
       }
       case 'deleteAllGroups': {
@@ -209,7 +227,7 @@ export function createMutationHandlers(deps: MutationDeps) {
         const r = applyDeleteAllGroups(groups, now, stamp);
         await persist(r.groups);
         const delWarn = await noteDeletedGroups(d, r.removedGroupIds);
-        await d.scheduleUpload(DELETE_PRIORITY_MS);
+        await scheduleUpload(DELETE_PRIORITY_MS);
         return { ok: true, payload: { count: r.count }, broadcastWarn: delWarn ?? undefined };
       }
       case 'importGroups': {
@@ -232,14 +250,14 @@ export function createMutationHandlers(deps: MutationDeps) {
           stamp
         );
         await persist(r.groups);
-        d.scheduleUpload(DELETE_PRIORITY_MS);
+        scheduleUpload(DELETE_PRIORITY_MS);
         return { ok: true, payload: r.imported };
       }
       case 'renameGroup': {
         const groups = await d.getGroups();
         const r = applyRenameGroup(groups, cmd.groupId, cmd.name, now, stamp);
         await persist(r.groups);
-        d.scheduleUpload(NORMAL_MS);
+        scheduleUpload(NORMAL_MS);
         return {
           ok: true,
           payload: { groupId: cmd.groupId, name: cmd.name },
@@ -249,7 +267,7 @@ export function createMutationHandlers(deps: MutationDeps) {
         const groups = await d.getGroups();
         const r = applyToggleGroupLock(groups, cmd.groupId, now, stamp);
         await persist(r.groups);
-        d.scheduleUpload(NORMAL_MS);
+        scheduleUpload(NORMAL_MS);
         return {
           ok: true,
           payload: { groupId: cmd.groupId, isLocked: r.isLocked },
@@ -261,7 +279,7 @@ export function createMutationHandlers(deps: MutationDeps) {
         await persist(r.groups);
         const delWarn = await noteDeletedGroups(d, [r.removedGroupId]);
         // 搬空源组属删除类：置位必须落盘，否则那次删除广播不到云端
-        await d.scheduleUpload(r.removedGroupId ? DELETE_PRIORITY_MS : NORMAL_MS);
+        await scheduleUpload(r.removedGroupId ? DELETE_PRIORITY_MS : NORMAL_MS);
         return {
           ok: true,
           payload: {
@@ -279,8 +297,14 @@ export function createMutationHandlers(deps: MutationDeps) {
         const r = applyCleanDuplicates(groups, now, stamp);
         await persist(r.groups);
         const delWarn = await noteDeletedGroups(d, r.plan.removedGroupIds);
-        // 清空产生的删除同样依赖广播队列 + 置位，别让删除停在半路
-        await d.scheduleUpload(NORMAL_MS);
+        // 清空产生的删除同样依赖广播队列 + 置位，别让删除停在半路。
+        // 改动集只有计划知道（命令里没有 id）：显式覆盖，别让待决期误传全部历史会话。
+        await scheduleUpload(NORMAL_MS, [
+          ...new Set([
+            ...r.plan.removedTabsByGroup.map(e => e.groupId),
+            ...r.plan.removedGroupIds,
+          ]),
+        ]);
         return {
           ok: true,
           payload: {

@@ -463,9 +463,17 @@ export class WebDavBackendAdapter implements SyncBackendPort {
       );
     }
 
-    if (writtenIds.length > 0) {
+    if (writtenIds.length > 0 && !opts?.suppressFirstSyncFullUpload) {
       // 水位必须用**写入这一刻**的计数器值，不能复用读取时的旧值 ——
       // 本批上行本身可能推进了计数器（Supabase 侧 upload.ts 的同款注释）。
+      //
+      // ── 2026-10-18 P1#4 第二半：待决期的上传**不推进水位** ──────────────
+      // 待决期只上传「本次改动过的会话」，而那些会话还没得到用户对**归属**的确认。
+      // 若这里照旧把水位推到它们的 stamp，等用户到设置页选「合并（推荐）」时，
+      // 适配器会因为「远端已经有 manifest」而退化成增量（selectDirty 只挑
+      // stamp > 水位的组）⇒ 历史会话永远上不去，而那张选择卡片上明明写着
+      // 「把本机 N 个会话上传到云端」。不推进水位 = 下一次非抑制的上传仍会把
+      // 本机全部会话走一遍，代价只是那几个组被重复 PUT（幂等，且有认输预检兜底）。
       await this.saveWatermark(maxSeq, await this.peekDeviceSeq());
     }
 

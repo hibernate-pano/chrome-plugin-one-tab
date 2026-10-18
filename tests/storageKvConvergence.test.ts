@@ -154,9 +154,12 @@ describe('S2 键常量单源', () => {
    * 显式登记一行，代码评审看得见。
    *
    * - PERF_SPANS：性能 span 环形缓冲（v1.22.9 起，诊断观测用，不含用户会话数据）。
+   * - PENDING_UPLOAD_GROUP_IDS：WebDAV 归属待决期「本次改动过的会话 id」队列
+   *   （2026-10-18 P1#4 第二半；不传就是「待决期不知道该传哪些」，只会少传、不会多传）。
    */
   const ADDED_KEYS: Record<string, string> = {
     PERF_SPANS: 'perf_spans',
+    PENDING_UPLOAD_GROUP_IDS: 'pending_upload_group_ids',
   };
 
   it('STORAGE_KEYS 字面值与搬迁前逐字一致', async () => {

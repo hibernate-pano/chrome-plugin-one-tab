@@ -172,7 +172,9 @@ export class TabManager {
       // ponytail: 自动上传承诺接入点。SW 保存路径完全绕过 Redux（直接 setGroups），
       // autoSyncMiddleware 永远监听不到 saveGroup.fulfilled——这里补上 scheduleUpload
       // 让"保存后自动同步云端"实际生效（未登录时 syncEngine 安全跳过）。
-      syncEngine.scheduleUpload(UPLOAD_DEBOUNCE_MS);
+      // 第二个参数＝本次改动过的会话 id：WebDAV 归属待决期只允许上传这些，
+      // 否则「保存一个标签页」会把全部历史会话推上用户的云盘（P1#4 第二半）。
+      syncEngine.scheduleUpload(UPLOAD_DEBOUNCE_MS, [safeGroup.id]);
 
       await this.showNotification({
         type: 'basic',
@@ -320,7 +322,7 @@ export class TabManager {
       }, { priority: 'high' });
 
       // ponytail: 关闭单标签时也会触发数据变更（保存到当前会话）——同样需自动上传。
-      syncEngine.scheduleUpload(UPLOAD_DEBOUNCE_MS);
+      syncEngine.scheduleUpload(UPLOAD_DEBOUNCE_MS, [safeGroup.id]);
 
       await trackProductEvent('session_saved', {
         sessionId: safeGroup.id,

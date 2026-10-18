@@ -908,6 +908,60 @@ class ChromeStorage {
   async setFirstSyncPending(pending: boolean): Promise<void> {
     await this.ensureVersion();
     await kvSet(STORAGE_KEYS.FIRST_SYNC_PENDING, pending);
+    // 两个方向都要清「本次改动过的会话 id」队列：
+    //   · pending=true（刚切到自带存储）：队列的语义是「**进入待决态之后**改动过的会话」，
+    //     此前攒下的 id（那时还没有待决态，上传也没配好）全都属于「历史会话」——
+    //     留着它们等于让历史会话照样被自动推上去，抑制又成了死代码；
+    //   · pending=false（归属决策完成）：此后不再有抑制，留着只会在下一次进入
+    //     待决态时误导增量筛选。
+    await this.clearPendingUploadGroupIds();
+  }
+
+  /**
+   * 待决期允许上传的会话 id 队列（2026-10-18 P1#4 第二半）。
+   *
+   * 为什么需要它：`FIRST_SYNC_PENDING` 期间自动上传必须只传本次改动，而适配器
+   * 降级后用的判据是 `selectDirty(groups, 水位)` —— 远端没有 manifest 时水位恒为 0，
+   * 全部历史会话都被判成脏 ⇒ 抑制前后上传内容逐字相同（死代码）。判据改成**写方
+   * 一路记下来的 id**（保存路径知道它刚写了哪个组；mutation 命令本身也带着受影响的
+   * id，见 core/mutationAffectedGroups），而不是靠 stamp 与水位比较去猜。
+   *
+   * 【失败方向】读不到就返回空数组 ⇒ 待决期什么都不上传（fail-closed）。这个方向是
+   * 安全的：该期间**少传**只是「数据留在本机等用户决定」，**多传**才是违约
+   * （用户还没决定归属，历史会话就已经上了他的云盘）。
+   */
+  async getPendingUploadGroupIds(): Promise<string[]> {
+    try {
+      await this.ensureVersion();
+      const raw = await kvGet<unknown>(STORAGE_KEYS.PENDING_UPLOAD_GROUP_IDS);
+      if (!Array.isArray(raw)) return [];
+      return [...new Set(raw.filter((x): x is string => typeof x === 'string' && x.length > 0))];
+    } catch {
+      return [];
+    }
+  }
+
+  /**
+   * 登记「本次操作改动过的会话 id」（并集，不去重即不覆盖前一轮的登记）。
+   *
+   * 为什么是并集而不是覆盖：防抖窗口内可能连着几次操作（保存一个会话、又删掉一条
+   * 标签），每一次的改动都要在待决期上传出去；覆盖会把前一次登记抹掉。
+   *
+   * 失败即抛：调用方（scheduleUpload）必须知道这次登记没落盘 —— 静默失败会让
+   * 待决期的增量上传**漏掉这次改动**，而用户以为它已经同步了。
+   */
+  async noteGroupsChanged(ids: readonly string[]): Promise<void> {
+    const clean = ids.filter((id): id is string => typeof id === 'string' && id.length > 0);
+    if (clean.length === 0) return;
+    await this.ensureVersion();
+    const existing = await this.getPendingUploadGroupIds();
+    await kvSet(STORAGE_KEYS.PENDING_UPLOAD_GROUP_IDS, [...new Set([...existing, ...clean])]);
+  }
+
+  /** 清空待决期的增量 id 队列（上传成功后、或归属决策完成时）。 */
+  async clearPendingUploadGroupIds(): Promise<void> {
+    await this.ensureVersion();
+    await kvRemove(STORAGE_KEYS.PENDING_UPLOAD_GROUP_IDS);
   }
 
   /**

@@ -335,6 +335,31 @@ export const WebDavSettings: React.FC = () => {
       // 原先在 dispatch 之后读 settings.syncBackend，读到的已是新值 ⇒
       // 「是不是首次切换」永远算错。
       const wasWebdav = settings.syncBackend === 'webdav';
+      // 「首次配置」的判据取**本机此前有没有配过自带存储**，而不是「当前后端是不是
+      // webdav」：用户在「同步方式」里先点一下「自带存储（WebDAV）」就会把
+      // syncBackend 置成 webdav（OptionsPage.handleSelectBackend 立即落盘），
+      // 之后再点「保存并启用」时看后端就永远是「已经切过了」⇒ 待决标志一次都不会
+      // 置位，整条「归属待决」保护形同虚设（round 30 真机实测：历史会话照样被自动推上云）。
+      // 而「配过」才是「老用户重设密码」的真实特征 —— 那种情况不该被重新拦住。
+      const wasConfigured = !!(await loadWebDavConfig())?.baseUrl;
+
+      // ── 2026-10-18 P1#4：进入「归属待决」状态 ────────────────────────────
+      // 自带存储切过去这一刻，本地通常已有会话，而「它们归谁」是用户的决定。
+      // 在他点「检查并推送」之前，自动上传必须被降级为增量（syncEngine 读本标志）。
+      //
+      // 为什么只在**首次配置**时置位（wasConfigured 为假）：已经在用自带存储的
+      // 老用户重设密码时不该被重新拦住（那会让他们的同步莫名停摆，且没有任何提示）。
+      //
+      // ⚠️ 必须排在本方法**最前面**（round 30 真机抓到的顺序缺陷）：本机此前攒下的
+      // pending_upload 还是 true（没配同步后端时的保存都会置位），而**保存设置这个动作
+      // 本身**就会让 autoSyncMiddleware 排一次上传（防抖 3s）。标志若晚一步落盘，
+      // 那次上传就是**无抑制**的全量 ⇒ 刚切到自带存储、历史会话已经上了云盘，
+      // 「归属待决」形同虚设。放最前面还有一层好处：置位同时会清掉此前攒下的
+      // 「改动过的会话 id」（那时它们全属于历史会话），这正是待决期该有的白名单起点。
+      // 若下面保存失败：标志留着也无害 —— syncEngine 只在后端真的是 webdav 时才认它。
+      if (!wasConfigured) {
+        await storage.setFirstSyncPending(true);
+      }
 
       await saveWebDavConfig({ baseUrl, username, rootPath, encryption });
       // 口令只给本次浏览器会话用（内存 + chrome.storage.session，不写磁盘）：
@@ -358,16 +383,6 @@ export const WebDavSettings: React.FC = () => {
         await primeSyncBackend();
       } catch (err) {
         logWarn('[WebDavSettings] 重建 alarm / 重解析后端失败（下次启动自愈）:', err);
-      }
-
-      // ── 2026-10-18 P1#4：进入「归属待决」状态 ────────────────────────────
-      // 自带存储切过去这一刻，本地通常已有会话，而「它们归谁」是用户的决定。
-      // 在他点「检查并推送」之前，自动上传必须被降级为增量（syncEngine 读本标志）。
-      //
-      // 为什么只在**切到 webdav** 时置位：已经在用自带存储的老用户重设密码
-      // 时不该被重新拦住（那会让他们的同步莫名停摆，且没有任何提示）。
-      if (!wasWebdav) {
-        await storage.setFirstSyncPending(true);
       }
 
       // P2-4：保存后父页面（自动同步提示）与本组件（推送区块可用性）都要刷新

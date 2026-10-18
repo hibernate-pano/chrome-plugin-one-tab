@@ -73,9 +73,11 @@ describe('P2-①：pending_upload 读失败不再被读成「没有待上传」'
 
   it('scheduleUpload 置位失败必须是 error 级（会导致数据不上云），不是 warn', () => {
     const src = read('src/services/syncEngine.ts');
-    const start = src.indexOf('scheduleUpload(delayMs');
-    assert.ok(start !== -1);
-    const body = src.slice(start, start + 2000);
+    // 锚点用正则而不是字面量 `scheduleUpload(delayMs`：签名后来加了第二个参数、
+    // 换行排布，字面量锚点会假红（锚点必须盯语义，不盯排版）。
+    const anchor = src.match(/scheduleUpload\(\s*delayMs/);
+    assert.ok(anchor && anchor.index !== undefined, '应能找到 scheduleUpload');
+    const body = src.slice(anchor.index, anchor.index + 2600);
     assert.match(
       body,
       /setPendingUpload\(true\)[\s\S]*?\.catch\([\s\S]*?logError\(/,

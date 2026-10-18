@@ -36,7 +36,7 @@ export const mutationService = createMutationHandlers({
   // 详见 storage.getGroupsForWrite 的注释。
   getGroups: () => storage.getGroupsForWrite(),
   setGroups: (g, originId) => storage.setGroupsImmediate(g, originId),
-  scheduleUpload: ms => syncEngine.scheduleUpload(ms),
+  scheduleUpload: (ms, changedGroupIds) => syncEngine.scheduleUpload(ms, changedGroupIds),
   now: () => new Date().toISOString(),
   journal,
   seq,

@@ -38,6 +38,17 @@ export const STORAGE_KEYS = {
   //       `false`/缺失 = 决策已完成（或从未进入 WebDAV），恢复正常自动上传。
   // 不存在 = 已完成：这样老用户升级后不会被无端挡住同步。
   FIRST_SYNC_PENDING: 'webdav_first_sync_pending',
+  // ── 2026-10-18 P1#4 第二半：「本次操作改动过的会话 id」队列 ──────────────
+  // 上面那个标志只说了「待决期不许全量」，而适配器降级后用的判据是
+  // `selectDirty(groups, 水位)` —— 远端还没有 manifest 时水位恒为 0，
+  // 于是**全部历史会话**都被判成脏，「抑制」成了死代码（实测抑制前后上传内容逐字相同）。
+  // 判据改成写方一路记下来的 id：保存路径知道它刚写了哪个组，mutation 命令本身
+  // 也带着受影响的 id（见 core/mutationAffectedGroups）。
+  //
+  // 语义：`string[]` = 待决期唯一允许上传的会话 id；读不到 ⇒ 空数组 ⇒ 什么都
+  // 不上传（fail-closed —— 待决期少传只是「留在本机等用户决定」，多传才是违约）。
+  // 清队时机：上传成功之后、或归属决策完成时（setFirstSyncPending(false)）。
+  PENDING_UPLOAD_GROUP_IDS: 'pending_upload_group_ids',
   // P1-6（历史）：本地 purge（物理移除）未同步的组 id 队列。无墓碑重写后废弃，
   // 残留值由迁移 purge_tombstones_v1 转入 PENDING_DELETE_IDS 后删除本键。
   PENDING_PURGE_IDS: 'pending_purge_ids',
