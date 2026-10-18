@@ -171,6 +171,90 @@ B8 的 UI 部分用 Playwright 装真实扩展实测过（`--headless=new`）—
 （删执行侧闸门 ⇒ 2 红；墓碑态合回空 ⇒ 2 红；抑制参数恒 false ⇒ 1 红；
 云端判据恒 true ⇒ 2 红）。
 
+### 追加（2026-10-18 晚）：三路并行审计后的 13 项修复（含 2 个 P0）
+
+> 同样并入 v1.24.2（仍未提审）。审计方式：3 条只读 lane 分别扫
+> WebDAV 设置失败路径 / 双后端判断一致性 / UI 真实性，逐条要求 file:line
+> 与调用链证据；我复核后派 3 条 fixer lane 并行修，最后由我独立复核 + 变异验证。
+> 全部 1754 个测试、`validate`（含 build 与体积门控）通过。
+
+**P0 · 「读不到设置」被伪装成「用户选了云端」**
+`readConfiguredBackendId` 的 catch 原本返回 `'supabase'`，于是「读不出来」与
+「用户确实选云端」是同一个值。存储故障 / 事务 abort 时，WebDAV 用户会被送去
+查 Supabase 账号——正是 2026-10-14 修过的那个 P0 的形状，只是起因换成了存储读失败。
+现返回 `SyncBackendId | null`，5 个调用点显式判 `null`。两条禁令写进了回归锁：
+`suppressFullUpload` 必须是 `!== 'supabase'`（写成 `=== 'webdav'` 时 null ⇒ 抑制关闭
+⇒ 归属待决期的历史会话被整批推上云盘）；`null` 不得流进 `authGuard`（那会落进
+`=== 'webdav'` 为 false 的分支 ⇒ 查 Supabase session ⇒ 复现「用户未登录」且永远
+走不到「去重新解锁」）。变异验证：删掉 null 前置 return 后，断言实际拿到
+`'not_authenticated'`——精确复现原症状。
+
+**P0 · 下载中断后两个推送按钮永久禁用**
+`handlePullFromCloud` 的 `sendSyncCommand('download')` 完全没有 try/catch
+（姊妹函数 `runPush` 有完整三件套）。MV3 SW 在下载途中被 30 秒空闲回收 ⇒ reject
+⇒ `firstPush` 永远停在 `'pulling'` ⇒ 两个按钮永久禁用，用户只能重开页面。
+同时它泄漏「首次同步归属待决」令牌，导致此后**每次**自动上传都把历史会话
+排除在外（方向 fail-closed，但界面零提示）。三处一并修：下载路径加兜底、
+令牌在 saveError/switchBack/forget 上清（**成功保存时不清**——那会打开
+round 30 记录的竞态）；`handleSwitchBack` 补 `invalidateActiveSyncBackend()`
+（此前 resyncAlarm 超时后 SW 里旧 adapter 存活，下次手动同步仍写向 WebDAV，
+而 banner 说「当前仍在使用 TapStack 云端」）。
+
+**P0 · 设置页的键盘用户能操作「还没加载完」的开关**
+`settingsReady` 之前只有 `pointer-events-none`，它**不阻止键盘聚焦**，全文件也没有
+`aria-disabled`/`inert`/`disabled`。键盘用户 Tab 到「自动同步」按 Enter 会触发一次
+他没做的操作 + 弹报错。改用 `inert`。注意 `inert={true}` 会被 React 18 **静默丢弃**
+（实测：`render(inert={true})` 输出里没有该属性，`render(inert="")` 才有），
+所以属性形状抽成 `formContainerGateProps` 并有 `react-dom/server` 真渲染断言——
+源码里有这个词不算过。
+
+**P1 · 「测试连接」绿灯但加密口令没填**
+`handleTest` 用未校验口令的表单状态构造 adapter 就报 `ok:true`；
+`adapter.checkConnection` 在远端无 manifest 时提前返回 `{groups:0}`，`unlock()`
+根本没跑 ⇒ 缺口令无从检测。真错（「已选择启用加密，但本次没有提供口令」）要到
+**第一次上传**才炸。抽出共享纯函数 `validateWebDavForm`，两个入口都先过它。
+
+**其余 9 项（用户可见的「界面在说谎」为主）**
+同步按钮按登录态而非后端渲染（README 承诺过该按钮）⇒ 新用户顶栏空一格、
+菜单状态卡同源被吞；**连带项**：只放宽渲染门禁会把缺陷换个位置——
+`isOverwriteGateOpen` 的形参名叫 `isAuthenticated`，承载的却已是「能不能同步」，
+不同步改会出现「按钮出现→弹窗能开→点两次毫无反应」；WebDAV banner 只判
+`syncBackend === 'webdav'`、不看解锁态 ⇒ 上方说「自动同步不会运行」、下方说
+「已启用」，用户以为数据正在备份；设置页首行「每项都能在菜单里找到入口」而
+9 项设置 0 项对应；搜索页「恢复所有匹配标签」全成功时零 toast；
+`saveLastCheck` 是死代码（成功的绿灯每次重开都丢）；`PersonalizedWelcome` 的
+统计块与三档激励文案永不渲染（唯一调用方只在列表为空时渲染它，`tabCount` 恒 0）。
+
+**顺手删掉 `resolveConfiguredBackend()`**：零调用的 `primeSyncBackend` 劣化副本
+（catch 静默、不写 `lastResolution`、缺 `lockedKind`），docblock 还写着
+「存储异常 ⇒ 回落 Supabase」，与函数体方向相反——文档在指挥下一个人犯已修过的错。
+补它（4 处改动 + 1 个新测试）比删它代码更多、用户可见收益为 0。
+
+**一个真缺陷是被 flake 暴露的**
+全量测试 4 轮 × 4 并发时偶发 1 红，报错是两个时间戳差 **1 毫秒**。
+该文件顶部原有一句「上次同类 flake 是公差太紧」的注释，但这次不是容差问题——
+是 `normalizeImportedGroup` 里同一个标签的 `createdAt` 与 `lastAccessed`
+**各自读了一次钟**。备份文件里根本没有时间戳，导入后却得到「建于 T1、最后访问
+T1+1ms」的假精度。改为整组读一次钟。
+第一版修复的测试**抓不到它**（真实时钟下两次读钟通常落在同一毫秒，变异仍绿），
+改成注入「每次读钟前进 1ms」的 `Date` 子类后才确定性变红。
+
+**验证**：1754/1754（0 失败 0 跳过）；`validate` 全绿（含 build、体积 230.8KB≤260KB）；
+关键修复逐条变异验证（本轮共 30+ 个变异，全部 cp 备份/恢复，未用 `git checkout`）。
+flake 修复后用**同样的 4×4 并发负载**复跑 16 次全量，0 失败。
+
+<details><summary>过程失误留档（两条，都是「差点把正确的断言改坏」）</summary>
+
+1. **变异没应用上也报「全绿」**。第二次是 heredoc 里替换字符串含引号，脚本没报错
+   也没改写。若当时接受「测试太弱」的结论，就会去修改一条本来正确的断言，
+   而真正的漏洞（`.catch(() => ({...}))` 这条唯一的回落路径完全没守护）被掩盖。
+   改为替换后 `print("APPLIED")` + `grep` 回显，四个变异才一次变红。
+2. **源码窗口断言只认一种形态**。第一版 T4 的窗口正则只认 `catch {…}`，
+   认不出 `.catch(() => …)`。补齐两种形态 + 括号配平 + 「样本数下限」自证后
+   （`bodies.length >= 4`）才不是空断言。
+
+</details>
+
 ## v1.24.1（2026-10-14，未提审）
 
 **这版的由来**：你拍板把点开语义改回「点开即消费」——标签管理器的定位是
