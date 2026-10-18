@@ -7,6 +7,7 @@ import { useToast } from '@/contexts/ToastContext';
 import { useEnhancedToast } from '@/utils/toastHelper';
 import { OpenGuard, OpenAllGuard } from '@/utils/openGuard';
 import { isOpenableTabUrl } from '@/utils/inputValidation';
+import { shouldAutoDeleteAfterTabRemoval } from '@/core/tabGroupUtils';
 import { useNearViewport } from '@/hooks/useNearViewport';
 import { resolveRowWindow } from './lazyTabRows';
 import { trackProductEvent } from '@/utils/productEvents';
@@ -359,16 +360,37 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
       showDeleteError('会话已锁定，解锁后才能删除其中的标签');
       return;
     }
-    dispatch(deleteTabAndSync({ groupId: group.id, tabId }))
-      .unwrap()
-      .then(payload => {
-        const warn = deleteBroadcastWarn(payload);
-        if (warn) showDeleteError(warn);
-      })
-      .catch(error => {
-        showDeleteError(`更新会话失败: ${error.message || '未知错误'}`);
-      });
-  }, [dispatch, group.id, group.isLocked, showDeleteError]);
+
+    const runDelete = () => {
+      dispatch(deleteTabAndSync({ groupId: group.id, tabId }))
+        .unwrap()
+        .then(payload => {
+          const warn = deleteBroadcastWarn(payload);
+          if (warn) showDeleteError(warn);
+        })
+        .catch(error => {
+          showDeleteError(`更新会话失败: ${error.message || '未知错误'}`);
+        });
+    };
+
+    // 删掉最后一条活跃标签 = 整组物理移除（判据复用 applyRemoveTab 的同一份语义）。
+    // 后果与「删除整个会话」等价，而删除整个会话本来就有确认开关 ⇒ 同口径走确认；
+    // 其余逐条删除保持即时（✕ 已带「无法恢复」提示，给日常单删加确认只会变噪音）。
+    if (!confirmBeforeDelete || !shouldAutoDeleteAfterTabRemoval(group, tabId)) {
+      runDelete();
+      return;
+    }
+
+    showConfirm({
+      title: `删除「${group.name}」？`,
+      message: '这是该会话的最后一条标签记录，删除后整个会话会从列表消失，无法恢复。确认继续吗？',
+      type: 'danger',
+      confirmText: '删除',
+      cancelText: '取消',
+      onConfirm: runDelete,
+      onCancel: () => { }
+    });
+  }, [confirmBeforeDelete, dispatch, group, showConfirm, showDeleteError]);
 
   // 格式化时间
   const formatTime = (dateString: string) => {

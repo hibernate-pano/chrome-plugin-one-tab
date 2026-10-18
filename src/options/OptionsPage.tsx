@@ -492,7 +492,7 @@ const OptionsContent: React.FC = () => {
               />
               <ToggleRow
                 label="删除前确认"
-                hint="删除整个会话、批量删除时先弹确认。单个标签页的 ✕ 永远直接删。"
+                hint="删除整个会话、批量删除时先弹确认；删掉会话里最后一条标签（等于删掉整个会话）也会先确认。其余单个标签页的 ✕ 直接删。"
                 checked={settings.confirmBeforeDelete}
                 onToggle={handleToggleConfirmDelete}
               />

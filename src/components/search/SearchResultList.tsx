@@ -3,6 +3,7 @@ import { useAppDispatch, useAppSelector } from '@/store/hooks';
 import { Tab, TabGroup } from '@/types/tab';
 import { deleteGroup, deleteTabAndSync, deleteBroadcastWarn } from '@/store/slices/tabSlice';
 import { isOpenableTabUrl } from '@/utils/inputValidation';
+import { shouldAutoDeleteAfterTabRemoval } from '@/core/tabGroupUtils';
 import { OpenGuard, OpenAllGuard } from '@/utils/openGuard';
 import { useToast } from '@/contexts/ToastContext';
 import { useEnhancedToast } from '@/utils/toastHelper';
@@ -357,16 +358,36 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({ searchQuery 
       showDeleteError('该会话已锁定，解锁后才能删除其中的标签');
       return;
     }
-    dispatch(deleteTabAndSync({ groupId: group.id, tabId: tab.id }))
-      .unwrap()
-      .then(payload => {
-        // 删掉组内最后一个标签会变成「整组物理移除」，广播登记失败同样要 surface。
-        const warn = deleteBroadcastWarn(payload);
-        if (warn) showDeleteError(warn);
-      })
-      .catch(error => {
-        showDeleteError(`更新会话失败: ${error.message || '未知错误'}`);
-      });
+
+    const runDelete = () => {
+      dispatch(deleteTabAndSync({ groupId: group.id, tabId: tab.id }))
+        .unwrap()
+        .then(payload => {
+          // 删掉组内最后一个标签会变成「整组物理移除」，广播登记失败同样要 surface。
+          const warn = deleteBroadcastWarn(payload);
+          if (warn) showDeleteError(warn);
+        })
+        .catch(error => {
+          showDeleteError(`更新会话失败: ${error.message || '未知错误'}`);
+        });
+    };
+
+    // 删掉最后一条活跃标签 = 整组物理移除（判据复用 applyRemoveTab 的同一份语义）：
+    // 后果与「删除整个会话」等价 ⇒ 与列表页、与整组删除同口径走确认开关。
+    if (!confirmBeforeDelete || !shouldAutoDeleteAfterTabRemoval(group, tab.id)) {
+      runDelete();
+      return;
+    }
+
+    showConfirm({
+      title: `删除「${group.name}」？`,
+      message: '这是该会话的最后一条标签记录，删除后整个会话会从列表消失，无法恢复。确认继续吗？',
+      type: 'danger',
+      confirmText: '删除',
+      cancelText: '取消',
+      onConfirm: runDelete,
+      onCancel: () => {},
+    });
   };
 
   const handleRestoreAllSearchResults = () => {
