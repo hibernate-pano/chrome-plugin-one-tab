@@ -736,23 +736,30 @@ html:not([data-theme]).dark {
     color: var(--color-text-primary);
   }
 
+  /* URL 是**内容**不是提示：两个标签标题相同时只能靠它区分。
+     因此取二级内容墨色，**不能**取 --color-text-muted —— 那是「提示色」的亮度，
+     2026-10-18 真机实测 12 个主题×明暗组合里 11 个低于 AA 4.5:1
+     （prism 浅色 1.99、legacy 深色 2.13、legacy 浅色 2.31、奶油浅色 2.52、prism 深色 3.13）。 */
   .tab-item-url {
     @apply text-xs truncate max-w-[200px];
-    color: var(--color-text-muted);
+    color: var(--color-text-secondary);
   }
 
   /* 打不开的标签（file: / blob: / devtools: 等，2026-10-05）：
      数据保留、点击时给出明确说明，因此视觉上要「可辨识但明显弱于正常项」——
      不能用隐藏表达（那会让人以为标签丢了），也不能与正常项同亮度
-     （那会让人以为点下去能打开）。 */
+     （那会让人以为点下去能打开）。
+     弱化交给标题的删除线 + 这里的透明度，不能靠「换成提示色」：那样最差组合
+     （prism 浅色）只剩 1.68:1，不是「可辨识」而是看不见。0.85 是让最差组合
+     （奶油浅色 hover）仍留在 4.5:1 之上的上限。 */
   .tab-item-unopenable .tab-item-title,
   .tab-item-unopenable .tab-item-url {
-    color: var(--color-text-muted);
-    opacity: 0.75;
+    color: var(--color-text-secondary);
+    opacity: 0.85;
   }
   .tab-item-unopenable .tab-item-title {
     @apply line-through;
-    text-decoration-color: var(--color-text-muted);
+    text-decoration-color: var(--color-text-secondary);
     text-decoration-thickness: 1px;
   }
   .tab-item-unopenable:hover {

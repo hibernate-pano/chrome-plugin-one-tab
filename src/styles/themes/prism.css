@@ -290,9 +290,8 @@ html[data-theme="prism"] .tab-item-title-hover:hover {
     color: var(--color-accent);
 }
 
-html[data-theme="prism"] .tab-item-url {
-    color: var(--color-text-muted);
-}
+/* .tab-item-url 的墨色由 global.css 兜底持有，这里不要重新声明：
+   同值重复声明会以更高的特异性绕过兜底（2026-10-18 修 URL 对比度时删掉的那条即是）。 */
 
 html[data-theme="prism"] .tab-item-delete-btn:hover {
     color: var(--color-danger);
