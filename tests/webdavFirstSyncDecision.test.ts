@@ -14,6 +14,7 @@ import assert from 'node:assert/strict';
 
 import {
   countActive,
+  classifyRemoteShape,
   decideFirstSync,
   isFirstPushBusy,
   previewOutcome,
@@ -40,10 +41,48 @@ describe('首次配置：远端状态 → 该做什么', () => {
     assert.deepEqual(d, { action: 'upload-all' });
   });
 
-  it('远端只有墓碑 ⇒ 视为空（墓碑不是用户的数据）', () => {
+  it('远端只有墓碑 ⇒ **不得**当空（2026-10-18 P1#3 反转）', () => {
+    // 旧断言是「视为空 ⇒ upload-all」。它是**错的**，而且方向错得很严重：
+    // 墓碑是「另一台设备删除了这些会话」的意图。当成空 → upload-all →
+    // 本地那些已被删除的旧会话被重新上传 → **跨设备删除被撤销、会话复活**。
+    //
+    // 更要命的是它与 B3 直接矛盾：B3 刚在 syncEngine 定下「只有墓碑 ≠ 云端为空」
+    // （空云端闸门正是为此而生），B7 却用 countActive 把它合了回去。
+    // 同一件事在两个模块里得到相反结论 —— 现在按 B3 的口径统一。
     const tombstone = mk('x', '', { isDeleted: true, tabs: [] });
     const d = decideFirstSync({ localGroups: [mk('a', 'A')], remoteGroups: [tombstone] });
-    assert.deepEqual(d, { action: 'upload-all' });
+    assert.equal(
+      d.action,
+      'tombstones-only',
+      '远端只有墓碑时必须停下来问用户，不能替他决定上传'
+    );
+    if (d.action !== 'tombstones-only') throw new Error('unreachable');
+    assert.equal(d.tombstoneCount, 1, '必须告诉用户有几条删除记录');
+    assert.equal(d.localCount, 1);
+  });
+
+  it('三态互斥：no-rows / only-tombstones / has-active', () => {
+    const t = mk('x', '', { isDeleted: true, tabs: [] });
+    const a = mk('a', 'A');
+
+    // 前置：确认 classifyRemoteShape 真的在区分三者（否则下面的断言会因
+    // 「全都返回同一个值」而恒真）。
+    assert.equal(classifyRemoteShape([]), 'no-rows');
+    assert.equal(classifyRemoteShape([t]), 'only-tombstones');
+    assert.equal(classifyRemoteShape([t, a]), 'has-active');
+
+    assert.equal(decideFirstSync({ localGroups: [a], remoteGroups: [] }).action, 'upload-all');
+    assert.equal(decideFirstSync({ localGroups: [a], remoteGroups: [t] }).action, 'tombstones-only');
+    assert.equal(decideFirstSync({ localGroups: [a], remoteGroups: [t, a] }).action, 'ask-user');
+  });
+
+  it('本地为空时优先级不变（没有东西要归属）', () => {
+    // 本机 0 个会话时无论远端是什么形态都无事可做 ——
+    // 墓碑那一态是「你要不要撤销删除」，前提是你手上确实有那些会话。
+    const t = mk('x', '', { isDeleted: true, tabs: [] });
+    assert.deepEqual(decideFirstSync({ localGroups: [], remoteGroups: [t] }), {
+      action: 'nothing-to-do',
+    });
   });
 
   it('远端有数据 ⇒ 必须让用户显式选择，不得自动上传', () => {

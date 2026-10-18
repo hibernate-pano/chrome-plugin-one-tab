@@ -26,6 +26,18 @@ export const STORAGE_KEYS = {
   // 最近一次成功上传的时间戳（独立于 last_sync_time，后者下载也会更新）。
   // 用于：1）downloadAndMerge 保护窗口 2）调试 / product_event 上报
   LAST_UPLOAD_TIME: 'last_upload_time',
+  // ── 2026-10-18 P1#4：WebDAV 首次同步归属决策是否仍未完成 ──────────────
+  // 问题：切到自带存储后，本地已有会话不会自动上传（正确，由用户决定归属），
+  // 但 `TabManager` 保存新会话时的 `scheduleUpload` 仍会置 pending_upload，
+  // 而适配器在「远端还没有 manifest」时走 firstSync = 全量上传
+  // （adapter.uploadGroups：`firstSync || overwriteRemote` ⇒ 全量）。
+  // 于是「配好但没点检查并推送，随后保存一个标签页」⇒ **全部旧会话被自动推上去**，
+  // B7 的三选一归属决策被完全绕过 —— 用户从没问过，决策替他做了。
+  //
+  // 语义：`true` = 归属未定，自动上传必须被挡住（只允许显式的首次推送走全量）；
+  //       `false`/缺失 = 决策已完成（或从未进入 WebDAV），恢复正常自动上传。
+  // 不存在 = 已完成：这样老用户升级后不会被无端挡住同步。
+  FIRST_SYNC_PENDING: 'webdav_first_sync_pending',
   // P1-6（历史）：本地 purge（物理移除）未同步的组 id 队列。无墓碑重写后废弃，
   // 残留值由迁移 purge_tombstones_v1 转入 PENDING_DELETE_IDS 后删除本键。
   PENDING_PURGE_IDS: 'pending_purge_ids',

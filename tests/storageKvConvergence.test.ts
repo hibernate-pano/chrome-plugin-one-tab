@@ -133,6 +133,10 @@ describe('S2 键常量单源', () => {
     MIGRATION_FLAGS: 'migration_flags',
     PENDING_UPLOAD: 'pending_upload',
     LAST_UPLOAD_TIME: 'last_upload_time',
+    // 2026-10-18 P1#4：WebDAV 首次同步归属待决标志。
+    // 缺了它就是「改了键常量没登记」—— 而键名分叉的后果是旧数据读不到、
+    // 迁移扫描漏键，属于极难自查的一类。逐字登记是这个文件存在的意义。
+    FIRST_SYNC_PENDING: 'webdav_first_sync_pending',
     PENDING_PURGE_IDS: 'pending_purge_ids',
     PENDING_DELETE_IDS: 'pending_delete_ids',
     DEVICE_SEQ: 'device_seq',

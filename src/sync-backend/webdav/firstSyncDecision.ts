@@ -55,9 +55,22 @@ export function isFirstPushBusy(kind: FirstPushKind): boolean {
 
 /** 探测结果 → 该走哪条路。 */
 export type FirstSyncDecision =
-  /** 远端空：直接全量上传，无需打扰用户。 */
+  /** 远端一行都没有：直接全量上传，无需打扰用户。 */
   | { action: 'upload-all' }
-  /** 远端有数据：必须让用户显式选择归属方式。 */
+  /**
+   * 远端**只有墓碑**（2026-10-18 P1#3）。
+   *
+   * ⚠️ 为什么必须与「远端空」分开：墓碑是「另一台设备删除了这些会话」的意图。
+   * 原实现用 `countActive` 统计活跃数，于是「远端只有墓碑」被算成 0 → 直接
+   * `upload-all`，本地那些已被删除的旧会话会被**重新上传** ⇒ 跨设备删除被
+   * 撤销、用户以为删掉的会话又回来了。而 B3 刚刚在 syncEngine 定下
+   * 「只有墓碑 ≠ 云端为空」（空云端闸门正为此而生），B7 却把它合了回去 ——
+   * 同一件事在两个模块里得到相反的结论，必须在这里按 B3 的口径改正。
+   *
+   * 这一态要停下来问，而不是替用户决定。
+   */
+  | { action: 'tombstones-only'; tombstoneCount: number; localCount: number }
+  /** 远端有活跃数据：必须让用户显式选择归属方式。 */
   | { action: 'ask-user'; remoteCount: number; localCount: number }
   /** 本地也没有数据：无事可做，但也不能说「成功」。 */
   | { action: 'nothing-to-do' }
@@ -69,13 +82,37 @@ export function countActive(groups: TabGroup[]): number {
   return groups.filter(g => !g.isDeleted).length;
 }
 
+/** 墓碑数（已被删除、但删除意图仍在远端的会话）。 */
+export function countTombstones(groups: TabGroup[]): number {
+  return groups.filter(g => g.isDeleted).length;
+}
+
+/**
+ * 远端是什么形态：空 / 只有墓碑 / 有活跃数据（2026-10-18 P1#3）。
+ *
+ * 为什么要显式建模而不是让调用方数两遍再比较：判据散到调用方就会漂移 ——
+ * 这正是原 bug 的成因（`countActive` 在决策里与 UI 里各用一次，
+ * B3 又在 syncEngine 用第三种口径）。
+ */
+export type RemoteShape = 'no-rows' | 'only-tombstones' | 'has-active';
+
+export function classifyRemoteShape(groups: TabGroup[]): RemoteShape {
+  if (groups.length === 0) return 'no-rows';
+  if (groups.every(g => g.isDeleted)) return 'only-tombstones';
+  return 'has-active';
+}
+
 /**
  * 探测远端后决定下一步。
  *
- * ⚠️ 关键取舍：`unreachable` 一律 `blocked`，**绝不**默认上传。
+ * ⚠️ 关键取舍 1：`unreachable` 一律 `blocked`，**绝不**默认上传。
  * 探测失败时如果默认上传，就会在「用户配了个已有数据的云盘、
  * 但这次网络不通」的情况下，探测失败 → 上传 → 覆盖掉那些数据。
  * 「不知道」必须停下来问，不能当成「空」。
+ *
+ * ⚠️ 关键取舍 2（2026-10-18 P1#3）：`only-tombstones` **不能**当成空。
+ * 墓碑是别的设备发出的删除意图。把它当空 → upload-all → 那些会话被重新
+ * 上传 → **跨设备删除被撤销、已删会话复活**。所以这一态必须停下来问。
  */
 export function decideFirstSync(input: {
   localGroups: TabGroup[];
@@ -90,15 +127,22 @@ export function decideFirstSync(input: {
       reason: '无法读取云端状态，为避免覆盖云端上已有的数据，已中止本次推送。请检查网络后重试。',
     };
   }
-  const remoteCount = countActive(remote);
+  const shape = classifyRemoteShape(remote);
 
   if (localCount === 0) {
     return { action: 'nothing-to-do' };
   }
-  if (remoteCount === 0) {
+  if (shape === 'no-rows') {
     return { action: 'upload-all' };
   }
-  return { action: 'ask-user', remoteCount, localCount };
+  if (shape === 'only-tombstones') {
+    return {
+      action: 'tombstones-only',
+      tombstoneCount: remote.length,
+      localCount,
+    };
+  }
+  return { action: 'ask-user', remoteCount: countActive(remote), localCount };
 }
 
 /**

@@ -54,7 +54,12 @@ function toDigestLike(f: RemoteGroupFingerprint): GroupDigestLike {
 
 export async function uploadTabGroups(
   groups: TabGroup[],
-  overwriteCloud: boolean = false
+  overwriteCloud: boolean = false,
+  // 2026-10-18 P1#4：本次上传是否属于「用户已确认归属的首次全量」。
+  // 默认 false = 不认定 —— 认定是危险的默认值：WebDAV 适配器在远端还没有
+  // manifest 时会全量上传，而保存新会话触发的自动上传也会走到这里，
+  // 于是用户的归属决策被绕过。设置页三选一的那一次显式传 true。
+  explicitFirstSync: boolean = false
 ): Promise<{ writtenTombstoneIds: string[] }> {
   // 每个上下文（SW / popup / options）首次调用时补一次解析：
   // SW 启动时的 prime 管不到 popup，popup 里第一次点同步若直接读缓存，
@@ -63,6 +68,7 @@ export async function uploadTabGroups(
   await ensureBackendPrimed();
   const result = await getActiveSyncBackend().uploadGroups(groups, {
     overwriteRemote: overwriteCloud,
+    suppressFirstSyncFullUpload: !explicitFirstSync,
   });
   // 契约映射：SyncBackendPort.uploadGroups 的 `writtenIds` → 调用方熟悉的
   // `writtenTombstoneIds`。Supabase 适配器只报告真实写上的墓碑 id

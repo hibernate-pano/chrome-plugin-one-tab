@@ -370,7 +370,7 @@ export class WebDavBackendAdapter implements SyncBackendPort {
 
   async uploadGroups(
     groups: TabGroup[],
-    opts?: { overwriteRemote?: boolean }
+    opts?: { overwriteRemote?: boolean; suppressFirstSyncFullUpload?: boolean }
   ): Promise<UploadGroupsResult> {
     const loaded = await this.loadManifest();
     const vault = await this.unlock(loaded?.manifest ?? null);
@@ -378,8 +378,18 @@ export class WebDavBackendAdapter implements SyncBackendPort {
     const watermark = loaded ? await this.loadWatermark() : 0;
     // 「以本地为准」的落点（计划书 §0.3）：首次配置（远端还没有 manifest）
     // 或显式覆盖时全量上行；此后只传 stamp 大于水位的组。
-    const firstSync = loaded === null;
-    const toUpload = firstSync || opts?.overwriteRemote ? groups : selectDirty(groups, watermark);
+    //
+    // ⚠️ 2026-10-18 P1#4：`suppressFirstSyncFullUpload` 会在「远端还没有
+    // manifest」时把全量降级为增量。原因是 firstSync 分支只应服务于
+    // 「用户已在设置页完成归属决策」的那一次上传；保存新会话触发的自动上传
+    // 也会走到这里，若一并全量，等于替用户做了他还没做的决定。
+    //
+    // 降级后按「只有本地印记、没有远端水位」计算：selectDirty 用 stamp 比较，
+    // 无水位时全部通过 ⇒ 本次新增/本机改过的组照常上传，而 firstSync 的
+    // 「把历史数据全量搬上云」被跳过。
+    const firstSync = loaded === null && !opts?.suppressFirstSyncFullUpload;
+    const toUpload =
+      firstSync || opts?.overwriteRemote ? groups : selectDirty(groups, watermark);
 
     const entryById = new Map<string, ShardFingerprint>(
       (loaded?.manifest.shards ?? []).map(s => [s.id, s])

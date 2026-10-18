@@ -642,6 +642,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
               forcePending: true,
               overwriteCloud: !!data.overwriteCloud,
               syncSettings: data.syncSettings !== false,
+              // 2026-10-18 P1#4：只有设置页三选一会传 true，其余调用方
+              // （含 scheduleUpload 与这里的默认路径）都算「用户尚未确认归属」。
+              explicitFirstSync: data.explicitFirstSync === true,
             });
             return { ok: r.success, error: r.error, payload: r };
           }

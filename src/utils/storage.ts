@@ -793,6 +793,37 @@ class ChromeStorage {
   }
 
   /**
+   * WebDAV 首次同步的归属决策是否仍未完成（2026-10-18 P1#4）。
+   *
+   * `true` 期间：自动上传（保存会话触发的 scheduleUpload、后台 alarm）
+   * 不得走「远端无 manifest ⇒ 全量」那条路，否则用户在设置页的三选一
+   * 还没做，历史会话就已经全被推上云了 —— 决策被替他做了。
+   *
+   * 缺失 = 已完成：老用户升级后不会被无端挡住同步（缺省方向必须是「放行」，
+   * 因为误挡的代价是「数据传不上去」而非「多传一次」）。
+   */
+  async getFirstSyncPending(): Promise<boolean> {
+    try {
+      // ⚠️ `ensureVersion()` 不能省：KV 层要先完成版本初始化，否则首次读
+      // （尤其 SW 冷启动）会读在未就绪的存储上，写进去的值读不回来。
+      // 这与 getPendingUpload 的前置步骤一致 —— 我第一版漏了它，
+      // 表现为「set 成功但 get 恒 false」，而那是**最难查**的一类：
+      // 代码看起来完全正确，只有真跑才暴露。
+      await this.ensureVersion();
+      const raw = await kvGet<unknown>(STORAGE_KEYS.FIRST_SYNC_PENDING);
+      return raw === true;
+    } catch {
+      // 读不到就当「没有待决」：挡住的代价（数据传不上去）比放过的代价大。
+      return false;
+    }
+  }
+
+  async setFirstSyncPending(pending: boolean): Promise<void> {
+    await this.ensureVersion();
+    await kvSet(STORAGE_KEYS.FIRST_SYNC_PENDING, pending);
+  }
+
+  /**
    * 导入后把变更标记为待上传并请求一次调度上传（**仅无 SW 兜底路径**）。
    *
    * SW 路径不需要它：mutationHandlers 的 importGroups 分支自己会

@@ -114,7 +114,27 @@ export interface SyncBackendPort {
    *  删除广播由 `broadcastDeletes` 单独负责——两件事的失败语义不同
    *  （上传失败可以整体重试，删除广播失败必须保留队列），混在一个方法里
    *  会让「清队」与「写成功」之间出现无法原子化的缝隙。 */
-  uploadGroups(groups: TabGroup[], opts?: { overwriteRemote?: boolean }): Promise<UploadGroupsResult>;
+  /**
+   * 上传会话组。
+   *
+   * `opts.suppressFirstSyncFullUpload`（2026-10-18 P1#4）：
+   * 调用方明确表示「本次**不是**用户已确认归属的首次全量」，请按增量处理。
+   *
+   * 背景：WebDAV 适配器在「远端还没有 manifest」时走 firstSync = 上传**全部**
+   * 本地组（首次配置，这是对的）。但用户切到自带存储后，归属决策由设置页的
+   * 三选一决定，而保存一个新会话触发的自动上传也会走进这里 —— 于是决策没做，
+   * 数据却已经全量上去了。调用方通过本参数把那类「用户没点头」的上传
+   * 降级为增量，避免替用户做决定。
+   *
+   * 只有自带存储适配器需要实现它；云端后端忽略即可（它的上传语义与
+   * firstSync 无关）。选 `opts` 而不是新方法，是为了让「忘了传」在类型上
+   * 仍合法、在行为上退回现状 —— 而不是让所有后端实现都被迫改签名。
+   */
+  uploadGroups(
+    groups: TabGroup[],
+    opts?: { overwriteRemote?: boolean; suppressFirstSyncFullUpload?: boolean }
+  ): Promise<UploadGroupsResult>;
+
 
   /** 广播删除意图（跨设备删除的唯一载体）。
    *  失败**必须抛错**——吞掉它等于让已删的组在对端复活

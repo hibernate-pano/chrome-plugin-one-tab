@@ -655,6 +655,14 @@ export class SyncEngine {
     // ponytail: 后台轮询同步路径专用——跳过 cancelPendingUpload 短路、跳过
     // isSyncing 检查（backgroundSync 路径互不冲突）。常规 UI 调用无需此参数。
     forcePending?: boolean;
+    /**
+     * 本次上传是「用户在设置页明确确认了归属之后的首次全量」（2026-10-18 P1#4）。
+     *
+     * 只有 WebDavSettings 的三选一会传 true。默认 false 的含义是「用户还没
+     * 对归属表态」，此时若远端尚无 manifest，全量上传会被降级为增量 ——
+     * 见 uploadGroups 的 `suppressFirstSyncFullUpload`。
+     */
+    explicitFirstSync?: boolean;
   }): Promise<UploadResult> {
     // ponytail: SW 进程是独立执行上下文，store 是新实例——先恢复登录态
     // （与 downloadAndMerge 共用 ensureAuthenticated 守卫）。
@@ -694,11 +702,37 @@ export class SyncEngine {
       let skippedOverwrite: UploadResult['skippedOverwrite'];
       // 本次 upsert 已经写上云的墓碑 id（覆盖模式才可能非空）。
       let writtenTombstoneIds: Set<string> = new Set();
+
+      // ── 2026-10-18 P1#4：首次同步归属未决时，自动上传不得走全量 ──────────
+      // 背景：切到自带存储后，WebDavSettings 的三选一是**唯一**决定「本地已有
+      // 数据怎么上云」的入口。它完成前，用户保存一个新会话会让 TabManager 的
+      // scheduleUpload 置 pending_upload，而适配器在远端还没有 manifest 时
+      // 走 firstSync = 全量上传 ⇒ **全部旧会话被自动推上去，三选一被绕过**。
+      //
+      // 为什么拦在 syncEngine 而不是 UI：scheduleUpload / 后台 alarm 两条自动
+      // 路径都不经过 WebDavSettings，只有这里是所有上传的必经关口。
+      //
+      // 为什么只挡「首次全量」而不挡增量：用户没做的决定是「已有的那些会话
+      // 归谁」，不是「他刚保存的会话要不要传」。挡住增量会让新保存的会话
+      // 静默留在本机，而用户以为它已经同步了 —— 那是另一种撒谎。
+      const firstSyncPending = await storage.getFirstSyncPending();
+      const explicitFirstSync = firstSyncPending ? !!opts?.explicitFirstSync : true;
+      if (firstSyncPending && !explicitFirstSync && !overwriteCloud) {
+        logInfo(
+          '[SyncEngine] WebDAV 首次同步归属决策未完成：本次只走增量上传，' +
+            '已有会话等你到设置里点「检查并推送」后再决定归属'
+        );
+      }
+
       if (activeGroups.length > 0) {
         // 覆盖模式把残留墓碑一起交给 uploadTabGroups：覆盖会先删空云端，墓碑必须
         // 随同一次 upsert 写上云（selectRowsForUpload 决定实际写入哪些行），
         // 否则删除意图随覆盖一起丢失，另一端的活跃副本下次合并即复活。
-        const up = await uploadTabGroups(overwriteCloud ? allGroups : activeGroups, overwriteCloud);
+        const up = await uploadTabGroups(
+          overwriteCloud ? allGroups : activeGroups,
+          overwriteCloud,
+          explicitFirstSync
+        );
         writtenTombstoneIds = new Set(up?.writtenTombstoneIds ?? []);
       } else if (overwriteCloud) {
         // ponytail: 与旧 uploadTabsToCloudFlow 的空本地保护一致——本地没有任何活跃组时
