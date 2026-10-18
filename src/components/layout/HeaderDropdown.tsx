@@ -119,6 +119,13 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({
   const { groups } = useAppSelector(state => state.tabs);
   const settings = useAppSelector(state => state.settings);
   const [openSubmenu, setOpenSubmenu] = useState<'export' | 'import' | null>(null);
+  // 就地展开的那块面板。菜单本身可能是个滚动容器（`max-h-[70vh]`），展开出来的两三行
+  // 若落在可视区之外，用户看到的仍然是「点了没反应」—— 展开即把它带进视野
+  // （block:'nearest' 只在需要时才滚动，不会把整份菜单跳走）。
+  const submenuRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    if (openSubmenu) submenuRef.current?.scrollIntoView({ block: 'nearest' });
+  }, [openSubmenu]);
   // ── 2026-10-09 P1-5：从云端刷新必须有「进行中 / 成功 / 失败」三态 ──
   // 原先无 isRefreshing、成功也不给任何反馈：点一下如果云端没有新数据，
   // 页面**毫无变化**，用户完全无法区分「已经是最新」「没点上」「坏了」。
@@ -663,12 +670,11 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({
           设置…
         </button>
 
-        <div className="relative">
+        <div>
           <button
             onClick={() => setOpenSubmenu(current => current === 'export' ? null : 'export')}
             className={MENU_ROW + ' justify-between'}
             aria-expanded={openSubmenu === 'export'}
-            aria-haspopup="menu"
             type="button"
           >
             <div className="flex items-center">
@@ -677,12 +683,14 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({
               </svg>
               导出数据
             </div>
-            <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            {/* 方向指示要与实际展开方向一致：面板现在开在下方，箭头随之转 90°。 */}
+            <svg xmlns="http://www.w3.org/2000/svg" className={`h-4 w-4 text-gray-500 transition-transform duration-150 ${openSubmenu === 'export' ? 'rotate-90' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
             </svg>
           </button>
+          {/* 同上：就地展开，避免被菜单的滚动容器横向裁掉（唯一入口，不可达即功能缺失）。 */}
           {openSubmenu === 'export' && (
-            <div className="ts-panel absolute left-full top-0 ml-1 w-48 rounded-lg border theme-border-default theme-bg-elevated shadow-lg">
+            <div ref={submenuRef} className="ts-panel mb-1 ml-3 rounded-lg border theme-border-default theme-bg-elevated shadow-lg">
             <button
               onClick={handleExportData}
               className={MENU_ROW}
@@ -719,12 +727,11 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({
           )}
         </div>
 
-        <div className="relative">
+        <div>
           <button
             onClick={() => setOpenSubmenu(current => current === 'import' ? null : 'import')}
             className={MENU_ROW + ' justify-between'}
             aria-expanded={openSubmenu === 'import'}
-            aria-haspopup="menu"
             type="button"
           >
             <div className="flex items-center">
@@ -733,12 +740,21 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({
               </svg>
               导入数据
             </div>
-            <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            {/* 同「导出数据」：箭头方向跟随实际展开方向。 */}
+            <svg xmlns="http://www.w3.org/2000/svg" className={`h-4 w-4 text-gray-500 transition-transform duration-150 ${openSubmenu === 'import' ? 'rotate-90' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
             </svg>
           </button>
+          {/* 子项**就地展开**，不做向右的浮层。
+              2026-10-18 修：原先是 `absolute left-full top-0 ml-1 w-48`，而菜单容器是
+              `max-h-[70vh] overflow-y-auto` —— 按 CSS 规范，单轴设为 auto 会让另一轴的
+              `visible` 也计算成 auto（实测 overflow 计算值 auto/auto），容器因此成了横向
+              裁剪盒：子菜单整个落在菜单右边界之外（实测菜单盒 [152,408]、子菜单 [411,603]），
+              在子菜单中心做命中测试 elementFromPoint 返回 null。用户点「导出数据」屏幕毫无
+              变化，而全仓 grep 确认这里是导出/导入的**唯一**入口 ⇒ 备份与恢复双双不可达。
+              展开放在父行下方的流内，就不会被任何祖先裁剪，也不需要横向滚动。 */}
           {openSubmenu === 'import' && (
-            <div className="ts-panel absolute left-full top-0 ml-1 w-48 rounded-lg border theme-border-default theme-bg-elevated shadow-lg">
+            <div ref={submenuRef} className="ts-panel mb-1 ml-3 rounded-lg border theme-border-default theme-bg-elevated shadow-lg">
             <label
               className={MENU_ROW + ' cursor-pointer'}
             >
