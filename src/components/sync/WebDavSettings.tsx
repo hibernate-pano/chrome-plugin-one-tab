@@ -35,16 +35,19 @@ import {
   clearSessionSecrets,
   clearWebDavConfig,
   loadWebDavConfig,
+  notifyWebDavConfigChanged,
   saveWebDavConfig,
   setSessionSecrets,
+  WEBDAV_CONFIG_CHANGED_EVENT,
 } from '@/sync-backend/webdav/config';
 import { WebDavClient } from '@/sync-backend/webdav/client';
 import { WebDavBackendAdapter } from '@/sync-backend/webdav/adapter';
 import { chromeKvAdapter } from '@/sync-backend/webdav/config';
-import { invalidateActiveSyncBackend, primeSyncBackend } from '@/sync-backend';
+import { invalidateActiveSyncBackend, getLastBackendResolution, primeSyncBackend, readConfiguredBackendId } from '@/sync-backend';
 import { ensureHostPermission, PERMISSION_DENIED_MESSAGE } from '@/sync-backend/webdav/permission';
 import {
   countActive,
+  countTombstones,
   decideFirstSync,
   previewOutcome,
   projectedCloudCount,
@@ -138,8 +141,20 @@ export const WebDavSettings: React.FC = () => {
     | { kind: 'done'; message: string }
     /** 本机 0 个会话：不能再推送，但要告诉用户云端有多少、怎么下载。 */
     | { kind: 'nothing-local'; remoteCount: number }
-    /** 需要用户显式选择归属方式（远端已有数据）。 */
-    | { kind: 'choose'; localCount: number; remoteCount: number; localGroups: TabGroup[]; remoteGroups: TabGroup[] }
+    /** 需要用户显式选择归属方式（远端已有数据，或远端只有删除记录）。 */
+    | {
+        kind: 'choose';
+        localCount: number;
+        remoteCount: number;
+        /**
+         * 远端墓碑数（2026-10-18 P1#3）。
+         * >0 表示「远端没有活跃会话，但有别的设备留下的删除记录」——
+         * 这是必须让用户知情的一态，不能被 `remoteCount: 0` 掩盖成「云端是空的」。
+         */
+        tombstoneCount?: number;
+        localGroups: TabGroup[];
+        remoteGroups: TabGroup[];
+      }
     | { kind: 'blocked'; reason: string }
   >({ kind: 'idle' });
 
@@ -154,6 +169,68 @@ export const WebDavSettings: React.FC = () => {
    * 第二次调用直接返回。
    */
   const pushInFlightRef = useRef(false);
+
+  // ─────────────────────────────────────────────────────────────────────
+  // 首次推送的后端前提（2026-10-18 P0#1）
+  //
+  // 【为什么这是 P0】本区块原先**无条件渲染**，而 `sendSyncCommand('upload')`
+  // 执行时用的是**已持久化的后端**（service-worker → syncEngine 解析后端），
+  // 与「你在表单里刚填了什么」无关。runPush 只带 overwriteCloud，不带地址。
+  //
+  // 于是有一条真实的删数据路径：
+  //   填好 WebDAV 地址 → 忘了点「保存并启用」→ 点「以本机为准」
+  //   → 生效后端仍是默认的 supabase → upload.ts 的 overwriteCloud 分支
+  //     先 `delete().eq('user_id', userId)` 删光该账号全部行，再插入本机数据。
+  // 无回收站，不可逆。而同一区块的文案还承诺「三种方式都不会删除另一方的会话」。
+  //
+  // 【为什么做两层】UI 条件会被未来的重构绕过（条件一多就有人漏看），
+  // 执行侧才是最后一道闸。P0 级缺陷不允许只有一层。
+  //
+  // 【判据为什么是 resolvedId】`settings.syncBackend` 只是用户**选**了哪个，
+  // 而「真正会写到哪里」由解析层决定。两者的差集正是这条 P0 的窗口。
+  // ─────────────────────────────────────────────────────────────────────
+  const [resolvedBackend, setResolvedBackend] = useState<'supabase' | 'webdav' | null>(null);
+  useEffect(() => {
+    let alive = true;
+    const reprime = async () => {
+      try {
+        await primeSyncBackend();
+        if (!alive) return;
+        setResolvedBackend(getLastBackendResolution()?.resolvedId ?? null);
+      } catch {
+        if (alive) setResolvedBackend(null);
+      }
+    };
+    void reprime();
+    // P2-4：保存 / 锁定 / 清除配置后，本组件的推送区块可用性也必须跟着变。
+    // 事件由本组件自己的 handler 派发，这里只订阅（同一窗口内的往返）。
+    window.addEventListener(WEBDAV_CONFIG_CHANGED_EVENT, reprime);
+    return () => {
+      alive = false;
+      window.removeEventListener(WEBDAV_CONFIG_CHANGED_EVENT, reprime);
+    };
+  }, [settings.syncBackend]);
+
+  /**
+   * 首次推送不可以发起时的原因；`null` 表示**可以**发起。
+   *
+   * 两条都要满足：
+   *   1. 用户选择的同步方式是自带存储（否则那个区块在讲一个不生效的动作）；
+   *   2. **真正生效的后端**已解析为 webdav（表单填了 ≠ 已保存生效）。
+   *
+   * 为什么第 2 条不能用「已保存配置」判断：配置保存了但
+   * settings.syncBackend 仍是 supabase 时，同样会走错后端。判据必须是
+   * 「解析结果」，那是 syncEngine 真正会用的那一个。
+   *
+   * 单一判据、单一出口：不给「能不能点」和「为什么不能点」各留一份真值，
+   * 否则将来改一处就会让提示与实际按钮状态对不上（这正是 P0-3 的成因）。
+   */
+  const firstPushBlockedReason =
+    settings.syncBackend !== 'webdav'
+      ? '当前生效的同步方式不是「自带存储」。请先点上方「保存并启用」，让它真正生效后再推送已有会话。'
+      : resolvedBackend !== 'webdav'
+        ? '自带存储尚未生效（可能配置未保存，或本次会话还没解锁）。请先完成「保存并启用」再推送。'
+        : null;
 
   // 首屏读一次已保存的配置（只读地址/账号/目录；口令从不落盘，读不到是正常的）。
   useEffect(() => {
@@ -244,6 +321,21 @@ export const WebDavSettings: React.FC = () => {
         showToast('地址与账号不能为空', 'error');
         return;
       }
+      // ⚠️ 2026-10-18 P2-3：**先校验、后落盘**。
+      // 原序是「先 saveWebDavConfig → 再 setSessionSecrets（口令为空则抛）」，
+      // 于是口令校验失败时配置**已经写进磁盘**，而 toast 说「保存失败」——
+      // 用户以为没保存，下次打开面板却看到旧地址已经填好了。
+      // 校验必须在任何写入之前做完。
+      if (encryption === 'required' && !passphrase.trim()) {
+        showToast('选择了加密但没有填写加密口令，未保存任何改动。', 'error');
+        return;
+      }
+
+      // 2026-10-18 P2-3：读旧值必须在 dispatch **之前**。
+      // 原先在 dispatch 之后读 settings.syncBackend，读到的已是新值 ⇒
+      // 「是不是首次切换」永远算错。
+      const wasWebdav = settings.syncBackend === 'webdav';
+
       await saveWebDavConfig({ baseUrl, username, rootPath, encryption });
       // 口令只给本次浏览器会话用（内存 + chrome.storage.session，不写磁盘）：
       // 关闭浏览器后需要重新输入。session 存储三端共享，SW 的定时同步也能用。
@@ -252,6 +344,10 @@ export const WebDavSettings: React.FC = () => {
       dispatch(updateSettings({ syncBackend: 'webdav' }));
       const saveError = await dispatchSaveSettings(dispatch);
       if (saveError) {
+        // P2-3：必须把 Redux 收回磁盘真值。对照 OptionsPage.handleSelectBackend
+        // 的既有写法（记 prevBackend → 失败时回滚）。不回滚的话界面显示
+        // 「已切到自带存储」而磁盘仍是云端，数据会流向用户以为没在用的后端。
+        dispatch(updateSettings({ syncBackend: wasWebdav ? 'webdav' : 'supabase' }));
         showToast(`${saveError}（同步方式未保存）`, 'error');
         return;
       }
@@ -263,7 +359,26 @@ export const WebDavSettings: React.FC = () => {
       } catch (err) {
         logWarn('[WebDavSettings] 重建 alarm / 重解析后端失败（下次启动自愈）:', err);
       }
-      showToast('已保存，同步方式已切换为「自带存储」', 'success');
+
+      // ── 2026-10-18 P1#4：进入「归属待决」状态 ────────────────────────────
+      // 自带存储切过去这一刻，本地通常已有会话，而「它们归谁」是用户的决定。
+      // 在他点「检查并推送」之前，自动上传必须被降级为增量（syncEngine 读本标志）。
+      //
+      // 为什么只在**切到 webdav** 时置位：已经在用自带存储的老用户重设密码
+      // 时不该被重新拦住（那会让他们的同步莫名停摆，且没有任何提示）。
+      if (!wasWebdav) {
+        await storage.setFirstSyncPending(true);
+      }
+
+      // P2-4：保存后父页面（自动同步提示）与本组件（推送区块可用性）都要刷新
+      notifyWebDavConfigChanged();
+
+      showToast(
+        wasWebdav
+          ? '已保存'
+          : '已保存，同步方式已切换为「自带存储」。别忘了点下方「检查并推送」把本机已有会话推上去。',
+        'success'
+      );
     } catch (err) {
       showToast(err instanceof Error ? err.message : '保存失败', 'error');
     } finally {
@@ -278,6 +393,7 @@ export const WebDavSettings: React.FC = () => {
     passphrase,
     dispatch,
     showToast,
+    settings.syncBackend,
   ]);
 
   /**
@@ -298,11 +414,20 @@ export const WebDavSettings: React.FC = () => {
     const permitted = await ensureHostPermission(baseUrl, { request: true });
     if (!permitted) return { ok: false, reason: PERMISSION_DENIED_MESSAGE };
 
-    // 读真值：这里要做「把本地推上去还是合并」的决策，
-    // 30s 缓存里的旧快照会让数字与实际不符（syncPreview.ts 同一纪律）。
-    const localGroups = await storage.getGroupsForWrite();
-
+    // ⚠️ 2026-10-18 P2-2：本地读取必须与网络读取**在同一个 try 内**。
+    // 原先 `storage.getGroupsForWrite()` 写在 try 上面，于是它在存储读失败时
+    // （配额满、无痕窗口、IndexedDB 被回收）直接 reject：
+    //   · probeRemote 返回的是一个 rejected Promise，**不是** { ok:false }；
+    //   · 调用方 await 时抛出 ⇒ handleFirstPush / handlePullFromCloud 没有
+    //     catch ⇒ firstPush 永远停在 'probing' / 'pulling'，按钮永久禁用，
+    //     用户只能刷新页面。
+    // 「读不到本地」和「读不到云端」是同一类失败：都必须变成一句可读的话，
+    // 而不是把 UI 卡在忙状态。
     try {
+      // 读真值：这里要做「把本地推上去还是合并」的决策，
+      // 30s 缓存里的旧快照会让数字与实际不符（syncPreview.ts 同一纪律）。
+      const localGroups = await storage.getGroupsForWrite();
+
       const client = new WebDavClient({ baseUrl, username, password });
       const adapter = new WebDavBackendAdapter({
         client,
@@ -332,7 +457,19 @@ export const WebDavSettings: React.FC = () => {
   /** 「检查并推送」的入口按钮。 */
   const handleFirstPush = useCallback(async () => {
     setFirstPush({ kind: 'probing' });
-    const probed = await probeRemote();
+    // P2-2：任何抛出都必须落回一个可读状态，绝不能让 UI 停在 'probing'。
+    // 判据用 try/catch 而非依赖 probeRemote 内部全包：未来有人往里加一段
+    // 未包住的 await，这里就是最后一道兜底。
+    let probed: Awaited<ReturnType<typeof probeRemote>>;
+    try {
+      probed = await probeRemote();
+    } catch (err) {
+      setFirstPush({
+        kind: 'blocked',
+        reason: `检查失败：${err instanceof Error ? err.message : String(err)}。请重试。`,
+      });
+      return;
+    }
     if (!probed.ok) {
       setFirstPush({ kind: 'blocked', reason: probed.reason });
       return;
@@ -342,6 +479,19 @@ export const WebDavSettings: React.FC = () => {
       case 'upload-all':
         setFirstPush({ kind: 'pushing' });
         await runPush('merge', localGroups, remoteGroups ?? []);
+        return;
+      case 'tombstones-only':
+        // 2026-10-18 P1#3：远端只有墓碑 ≠ 远端为空。墓碑是别的设备发出的
+        // 删除意图，直接 upload-all 会把那些会话重新推上去、撤销删除。
+        // 这里复用 choose 态：把墓碑数与活跃数都摆给用户，由他决定。
+        setFirstPush({
+          kind: 'choose',
+          localCount: decision.localCount,
+          remoteCount: 0,
+          tombstoneCount: decision.tombstoneCount,
+          localGroups,
+          remoteGroups: remoteGroups ?? [],
+        });
         return;
       case 'ask-user':
         setFirstPush({
@@ -382,12 +532,37 @@ export const WebDavSettings: React.FC = () => {
       pushInFlightRef.current = true;
       setFirstPush({ kind: 'pushing' });
       try {
+        // ── 执行侧第二道闸（2026-10-18 P0#1）────────────────────────────
+        // UI 的渲染前提只是提示，真正的闸门在这里：`upload` 走的是**已解析的**
+        // 后端，若它不是 webdav，「以本机为准」的 overwriteCloud 会作用在
+        // **别的后端**上（supabase 路径是先删光该账号全部行再插入）。
+        //
+        // 为什么必须在这里再查一遍：UI 条件会被重构绕过、也可能因时序而
+        // 与执行瞬间不一致（用户点了「保存」但 Redux/settings 尚未落盘）。
+        // 凡是「不可逆删除」的执行点，都要有自己的后端校验。
+        const effective = await readConfiguredBackendId();
+        if (effective !== 'webdav') {
+          setFirstPush({
+            kind: 'blocked',
+            reason:
+              '已中止：当前生效的同步方式不是「自带存储」，推送会作用在' +
+              `${effective === 'supabase' ? ' TapStack 云端' : '未知后端'}` +
+              '上而不是你的云盘。请先点「保存并启用」让它真正生效。' +
+              '（本次未推送，本地与云端数据均未改动。）',
+          });
+          return;
+        }
+
         // 合并与「以本地为准」都走上传；后者加 overwriteCloud 清掉云端多余会话。
         const isLocalWins = choice === 'local-wins';
         const res = await sendSyncCommand('upload', {
           overwriteCloud: isLocalWins,
           syncSettings: true,
           forcePending: true,
+          // 2026-10-18 P1#4：这是**唯一**一处有资格声明「用户已确认归属」的
+          // 上传。自动上传（scheduleUpload / 后台 alarm）不传，syncEngine 会
+          // 据此把首次全量降级为增量。
+          explicitFirstSync: true,
         });
         if (!res.ok) {
           setFirstPush({
@@ -414,16 +589,29 @@ export const WebDavSettings: React.FC = () => {
         // 旧文案用 p.localCount 报「已用云端数据替换本机 N 个」：当本机有新增
         // 会话时 N 会偏小（少了并集里本机独有的那部分）。
         const afterCloud = projectedCloudCount(localGroups, remoteGroups);
+        // 2026-10-18（后置-3）：**不报「已推送 N 个」**。
+        // 原先报的是本地活跃数，而适配器在「同 id 且云端版本更新」时会认输跳过
+        // （compareStamps），那部分并没有真的被推送 —— 于是「已推送 12 个」里
+        // 可能有 3 个其实没动。用户拿这个数字对不上时会怀疑同步坏了。
+        //
+        // 为什么不去取真实的 writtenIds：那是 tombstone 维度（墓碑 id），
+        // 与「活跃会话写了几个」不是同一口径，要报准得改 SyncBackendPort →
+        // tabGroupSyncService → syncEngine → SW 协议四处签名。
+        // 报一个说不准的数字，比多改四个签名更糟。改成只报可确证的事实：
+        // 云端现在共多少个（本机持有云端全量视图，算得准）。
         setFirstPush({
           kind: 'done',
           message:
             choice === 'merge'
-              ? `已把本机 ${localActive} 个会话推送到云端，云端现在共 ${afterCloud} 个会话（云端独有会话保留在云端，本机可用「从云端下载到本机」拉取）。`
+              ? `已把本机 ${localActive} 个会话合并到云端，云端现在共 ${afterCloud} 个会话（云端独有会话保留在云端，本机可用「从云端下载到本机」拉取）。`
               : choice === 'local-wins'
                 ? `已用本机 ${localActive} 个会话覆盖云端同 id 的旧版本；云端现在共 ${afterCloud} 个会话，云端独有会话未被删除。`
                 : `已把本机 ${localActive} 个会话并入云端，并从云端拉回 ${afterCloud} 个会话到本机。`,
         });
         showToast('推送完成', 'success');
+        // 归属决策已完成（2026-10-18 P1#4）：解除自动上传的全量降级，
+        // 此后保存会话恢复正常的增量同步。
+        await storage.setFirstSyncPending(false);
       } catch (err) {
         setFirstPush({
           kind: 'blocked',
@@ -464,17 +652,41 @@ export const WebDavSettings: React.FC = () => {
   }, []);
 
   const handlePullFromCloud = useCallback(async () => {
-    const probed = await probeRemote();
+    // P2-2：与 handleFirstPush 同理，probe 抛出会把 UI 卡在忙状态。
+    let probed: Awaited<ReturnType<typeof probeRemote>>;
+    try {
+      probed = await probeRemote();
+    } catch (err) {
+      setFirstPush({
+        kind: 'blocked',
+        reason: `检查失败：${err instanceof Error ? err.message : String(err)}。请重试。`,
+      });
+      return;
+    }
     if (!probed.ok) {
       setFirstPush({ kind: 'blocked', reason: `无法读取云端状态：${probed.reason}` });
       return;
     }
-    const remoteCount = countActive(probed.remoteGroups ?? []);
+    const remoteActive = countActive(probed.remoteGroups ?? []);
+    const remoteTombstones = countTombstones(probed.remoteGroups ?? []);
     const localCount = countActive(probed.localGroups);
+    // 2026-10-18 P1#2：确认框原先只报活跃数并承诺「不会删除本机或云端的会话」，
+    // 但 downloadAndMerge 会**服从云端墓碑** —— 云端只有墓碑时，确认框显示
+    // 「云端有 0 个会话」，点下去本机对应会话却会消失。那不是文案瑕疵，
+    // 是让用户在一个他不知道自己同意的删除操作上点了「确定」。
+    // 现在把墓碑数一并摆出来，并只对「不删云端」这一半保留承诺。
+    const remoteDesc =
+      remoteTombstones > 0
+        ? `云端有 ${remoteActive} 个会话，另有 ${remoteTombstones} 条删除记录`
+        : `云端有 ${remoteActive} 个会话`;
+    const tombstoneWarning =
+      remoteTombstones > 0
+        ? `\n\n注意：云端有 ${remoteTombstones} 条删除记录，被其它设备删掉的会话，下载后本机也会移除。`
+        : '';
     if (
       !window.confirm(
-        `云端有 ${remoteCount} 个会话，本机有 ${localCount} 个。\n\n` +
-          `下载会与本地合并（不会删除本机或云端的会话）。\n\n确定继续吗？`
+        `${remoteDesc}，本机有 ${localCount} 个。\n\n` +
+          `下载会与本地合并，不会删除云端的会话。${tombstoneWarning}\n\n确定继续吗？`
       )
     ) {
       return;
@@ -488,8 +700,16 @@ export const WebDavSettings: React.FC = () => {
       });
       return;
     }
-    setFirstPush({ kind: 'done', message: `已从云端下载并合并（云端 ${remoteCount} 个会话）。` });
+    setFirstPush({
+      kind: 'done',
+      message:
+        `已从云端下载并合并（云端 ${remoteActive} 个会话` +
+        `${remoteTombstones > 0 ? `，并服从了 ${remoteTombstones} 条删除记录` : ''}）。`,
+    });
+
     showToast('已从云端下载到本机', 'success');
+    // 归属决策已完成：用户已把云端数据取回本机，此后自动上传恢复全量能力。
+    await storage.setFirstSyncPending(false);
   }, [probeRemote, showToast, downloadReasonCopy]);
 
   // 2026-10-17（双模式适配）：恢复 slim 分支删掉的「切回 TapStack 云端」。
@@ -513,12 +733,21 @@ export const WebDavSettings: React.FC = () => {
         showToast(`${saveError}（同步方式未保存）`, 'error');
         return;
       }
+      // 2026-10-18（后置-2）：切走时一并清掉本次会话的 WebDAV 口令。
+      // 不清的后果：用户过几天又切回自带存储，旧的（可能已轮换的）应用密码
+      // 仍留在 chrome.storage.session 里，被自动当成有效凭据使用 ——
+      // 而他可能已经在服务商那边改过密码，届时报的是 401，
+      // 与「密码填错」完全不同的现象，极难自查。
+      // 口令本就不落盘（只在 session），所以这是唯一的清理时机。
+      await clearSessionSecrets();
       try {
         await sendSyncCommand('resyncAlarm');
         await primeSyncBackend();
       } catch (err) {
         logWarn('[WebDavSettings] 重建 alarm 失败（下次启动自愈）:', err);
       }
+      // P2-4：通知父页面刷新自动同步提示（切回云端后「已配置并解锁」不再成立）
+      notifyWebDavConfigChanged();
       showToast('已切回 TapStack 云端。云盘上的文件不会被删除。', 'success');
     } catch (err) {
       showToast(err instanceof Error ? err.message : '切换失败', 'error');
@@ -559,11 +788,22 @@ export const WebDavSettings: React.FC = () => {
       setPassword('');
       setPassphrase('');
       setCheck({ kind: 'idle' });
-      showToast('已清除本机保存的云服务信息与本次会话口令', 'success');
+      // 2026-10-18（后置-2）：配置已清空，自动同步就没有可同步的对象了 ——
+      // 留着它只会让 alarm 按档位反复醒来、每轮都撞上锁定占位后端。
+      // B1 修好之后这不再表现为「静默停摆」（有一次性提醒、alarm 保持活着），
+      // 但它仍是无意义的唤醒，且设置页会一直显示「已开启」。
+      // 「关掉自动同步」是 fail-closed 方向的选择：宁可少同步，不可假装在同步。
+      if (settings.syncEnabled) {
+        dispatch(updateSettings({ syncEnabled: false }));
+        await dispatchSaveSettings(dispatch);
+      }
+      // P2-4：清除配置后父页面的「已配置并解锁」必须失效
+      notifyWebDavConfigChanged();
+      showToast('已清除本机保存的云服务信息与本次会话口令，自动同步已关闭', 'success');
     } catch (err) {
       showToast(err instanceof Error ? err.message : '清除失败', 'error');
     }
-  }, [showToast]);
+  }, [dispatch, showToast, settings.syncEnabled]);
 
   // ── 锁定（2026-10-14 修 P0 时加）────────────────────────────────────────
   // 只清口令、不清地址：用户离开电脑前点一下，后台同步即停并明确提示未解锁，
@@ -580,6 +820,8 @@ export const WebDavSettings: React.FC = () => {
       }
       setPassword('');
       setPassphrase('');
+      // P2-4：锁定后父页面的「已配置并解锁」必须失效
+      notifyWebDavConfigChanged();
       showToast('已锁定：后台同步已停止，需要重新输入应用密码与加密口令才能继续', 'success');
     } catch (err) {
       showToast(err instanceof Error ? err.message : '锁定失败', 'error');
@@ -744,7 +986,24 @@ export const WebDavSettings: React.FC = () => {
           （新保存的会话），而「是否已把全部数据推上云」是一个会随时间
           变化的事实。用一个常驻入口 + 用户点了才探测，
           既不制造打扰，也不会出现「提示过了就以为再也不用管」。
-          真正的自动推送由「保存会话 → scheduleUpload」负责（既有机制）。 */}
+          真正的自动推送由「保存会话 → scheduleUpload」负责（既有机制）。
+
+          ⚠️ 2026-10-18 P0#1：整个区块现在以「自带存储真正生效」为前提。
+          原先无条件渲染，而上传走的是**已持久化的**后端 —— 用户填完表单
+          没点「保存并启用」就点「以本机为准」，删除会作用在 TapStack 云端上
+          （overwriteCloud 会先删光该账号全部行）。现在不满足前提时只显示
+          一条可操作提示，不给可点的推送入口。
+          runPush 内部还有第二道执行侧校验（纵深防御：UI 条件会被重构绕过）。 */}
+      {firstPushBlockedReason ? (
+        <div className="mt-2 rounded-md border theme-border-default px-2 py-2">
+          <div className="mb-1.5 text-xs font-medium text-gray-700 dark:text-gray-200">
+            推送已有会话
+          </div>
+          <p className="text-[11px] leading-relaxed text-amber-700 dark:text-amber-300">
+            {firstPushBlockedReason}
+          </p>
+        </div>
+      ) : (
       <div className="mt-2 rounded-md border theme-border-default px-2 py-2">
           <div className="mb-1.5 text-xs font-medium text-gray-700 dark:text-gray-200">
             首次配置后需把本机会话推送到云端
@@ -801,11 +1060,33 @@ export const WebDavSettings: React.FC = () => {
           {firstPush.kind === 'choose' ? (
             <div className="mt-2 rounded-md border border-amber-300 bg-amber-50 px-2 py-2 dark:border-amber-700 dark:bg-amber-900/20">
               <div className="mb-1.5 text-xs font-medium text-amber-900 dark:text-amber-100">
-                云端已经有 {firstPush.remoteCount} 个会话，本机有 {firstPush.localCount} 个
+                {firstPush.tombstoneCount ? (
+                  // 2026-10-18 P1#3：这一态原先被显示成「云端已经有 0 个会话」，
+                  // 用户完全看不出云端其实有删除记录。墓碑是别的设备的删除意图，
+                  // 继续推送会撤销那些删除 —— 必须说出来。
+                  <>
+                    云端没有活跃会话，但有 {firstPush.tombstoneCount} 条删除记录；本机有{' '}
+                    {firstPush.localCount} 个
+                  </>
+                ) : (
+                  <>
+                    云端已经有 {firstPush.remoteCount} 个会话，本机有 {firstPush.localCount} 个
+                  </>
+                )}
               </div>
               <p className="mb-2 text-[11px] leading-relaxed text-amber-800 dark:text-amber-200">
-                请选择数据归属方式。三种方式都不会删除另一方的会话；
-                只有「以本机为准」会用本机版本覆盖云端同 id 的旧版本，那一刻的旧内容无法恢复。
+                {firstPush.tombstoneCount ? (
+                  <>
+                    云端这些会话已被其它设备删除。若继续推送本机版本，
+                    <strong>会撤销那些删除、让已删的会话重新出现</strong>。
+                    只上传新增会话、或先确认那些删除记录是否还需要，都由你决定。
+                  </>
+                ) : (
+                  <>
+                    请选择数据归属方式。三种方式都不会删除另一方的会话；
+                    只有「以本机为准」会用本机版本覆盖云端同 id 的旧版本，那一刻的旧内容无法恢复。
+                  </>
+                )}
               </p>
               <div className="flex flex-col gap-1.5">
                 {(
@@ -847,6 +1128,7 @@ export const WebDavSettings: React.FC = () => {
             </div>
           ) : null}
         </div>
+      )}
 
       {check.kind === 'done' ? (
         <div
