@@ -187,6 +187,112 @@ export function projectedCloudCount(localGroups: TabGroup[], remoteGroups: TabGr
   return mergeOpStamped(localGroups, remoteGroups).filter(g => !g.isDeleted).length;
 }
 
+/* ════════════════════════════════════════════════════════════════════════
+ * 归属待决令牌（`FIRST_SYNC_PENDING`）的生命周期（2026-10-18 A 组）
+ *
+ * 【为什么这几条要放在本模块并导出】令牌的置/清时机决定了「历史会话会
+ * 不会被自动上传」：令牌为 true 时，syncEngine 把所有非显式上传降级为“只传本次
+ * 改动过的会话”（suppressFullUpload），于是**历史会话被排除在上传之外**。
+ * 方向上是 fail-closed（宁可少传），但用户没有任何路径能发现它 ——
+ * 那正是本组缺陷的形状：令牌泄漏只需一行错位的 `return`。
+ *
+ * 把它们做成不碰 DOM、写入器可注入的纯异步函数，才能对“哪个分支该写、
+ * 写失败时该怎样”做**行为断言**，而不是只对着源码字符串数行。
+ * ════════════════════════════════════════════════════════════════════════ */
+
+/** 令牌写入器（生产为 `storage.setFirstSyncPending`；测试注入假货）。 */
+export type FirstSyncPendingWriter = (pending: boolean) => Promise<void>;
+
+/** 一次令牌写入的结果（`attempted:false` = 按规则根本不该写）。 */
+export interface PendingWriteOutcome {
+  attempted: boolean;
+  /** `attempted` 为 false 时无意义（固定 true，避免调用方误读为「写成功」）。 */
+  ok: boolean;
+}
+
+/**
+ * 「保存失败」分支的令牌回滚（2026-10-18 A3）。
+ *
+ * 【为什么要回滚】`handleSave` 在写入之前会先把令牌置 true（round 30：必须排在
+ * 最前面，否则设置保存后的那次自动上传就是无抑制全量）。但若随后保存失败，
+ * 令牌就留在了盘上：此后**每一次**自动上传都被降级为增量，历史会话永久不传，
+ * 界面上零提示。
+ *
+ * 【为什么要 `setHere` 这个参数】只退**本次**置的位。用户上一轮就处于待决态、
+ * 这一次重设密码又保存失败时，那个位是**真实未完成的归属决策**，退掉它意味着
+ * 下一次自动上传把历史会话整批推上云 —— 比令牌泄漏更糟。
+ *
+ * 【写失败为什么不抛】抛了会把一次「保存失败」变成一条看不出原因的报错，
+ * 而且外层 catch 会把两个不相干的失败报成一件事。写失败只是回到了本缺陷
+ * 修前的状态，打一条日志让用户能重试即可。
+ */
+export async function releaseFirstSyncPendingOnSaveFailure(args: {
+  /** 本次操作有没有新置待决位（false ⇒ 本函数**一次写入都不做**）。 */
+  setHere: boolean;
+  write: FirstSyncPendingWriter;
+  onError?: (err: unknown) => void;
+}): Promise<PendingWriteOutcome> {
+  if (!args.setHere) return { attempted: false, ok: true };
+  try {
+    await args.write(false);
+    return { attempted: true, ok: true };
+  } catch (err) {
+    args.onError?.(err);
+    return { attempted: true, ok: false };
+  }
+}
+
+/**
+ * 一次成功的首次归属动作（推送 / 下载）完成后的收尾（2026-10-18 A4）。
+ *
+ * 【顺序不是风格问题】解除待决是一次 KV 写。原先它排在成功 toast **之后**
+ * 且裸 `await` 在外层 try 内，于是写失败时被报成「推送失败：<存储错误>。
+ * 本地数据未受影响。」—— 而合并其实**已经成功了**。用户看到一句与事实相反的
+ * 话，只能自己去查云端到底传没传。
+ *
+ * 现在的契约：
+ *   1. 先尝试清令牌，无论成败**都**报成功（数据确实已经合了）；
+ *   2. 清失败只走 onError（生产里是 logWarn），绝不向外抛。
+ * 代价极小：写不进去的后果是「下次自动上传仍按增量」，不丢也不重传。
+ */
+export async function completeFirstSyncSuccess(args: {
+  write: FirstSyncPendingWriter;
+  notifySuccess: () => void;
+  onError?: (err: unknown) => void;
+}): Promise<{ pendingCleared: boolean }> {
+  let pendingCleared = false;
+  try {
+    await args.write(false);
+    pendingCleared = true;
+  } catch (err) {
+    args.onError?.(err);
+  }
+  // 无论上面成没成，本次数据动作已经成功 —— 这句必须说。
+  args.notifySuccess();
+  return { pendingCleared };
+}
+
+/**
+ * 「后端/配置已变」或「本次动作已完成」时的静默清除（2026-10-18 A3/A4）。
+ *
+ * 与 `releaseFirstSyncPendingOnSaveFailure` 的区别：**不看** `setHere`，
+ * 因为切回云端 / 清除配置 / 归属已完成这三条路径上，令牌描述的待决态已经
+ * 无对象（后端变了，或决策已经做完了），无条件退掉才是对的。
+ * 写失败同样只走 onError。
+ */
+export async function clearFirstSyncPendingBestEffort(args: {
+  write: FirstSyncPendingWriter;
+  onError?: (err: unknown) => void;
+}): Promise<{ ok: boolean }> {
+  try {
+    await args.write(false);
+    return { ok: true };
+  } catch (err) {
+    args.onError?.(err);
+    return { ok: false };
+  }
+}
+
 export function previewOutcome(
   localGroups: TabGroup[],
   remoteGroups: TabGroup[],
@@ -270,4 +376,71 @@ function countLocalWinsEffects(
     if (compareStampsLoose(r.lastOp, l.lastOp) <= 0) overlapOlder += 1;
   }
   return { overlapOlder, remoteOnly };
+}
+
+/* ════════════════════════════════════════════════════════════════════════
+ * 「从云端下载到本机」的失败收敛（2026-10-18 A2）
+ *
+ * 【缺陷形状】原实现是：
+ *     setFirstPush({ kind: 'pulling' });
+ *     const dl = await sendSyncCommand('download', ...);   // ← 没有 try/catch
+ * `sendSyncCommand` 在 MV3 SW 被回收（30s 空闲）后会 **reject**（message channel
+ * closed），而不是返回 `{ok:false}`。于是：
+ *   · rejected Promise 从 onClick 里漂出去（unhandled rejection）；
+ *   · firstPush 永远停在 'pulling' ⇒ `isFirstPushBusy('pulling')` 恒真 ⇒
+ *     **两个推送按钮永久禁用**，用户只能重开页面；
+ *   · 后续的「解除归属待决」永远跑不到（令牌泄漏，A3 的另一条来源）。
+ *
+ * 【为什么抽成函数】姊妹函数 runPush 有完整的 try/catch/finally，而这条路径
+ * 一行都没有 —— 这种「两个对称入口一个有一个没有」的缺陷，只有把「命令抛出/
+ * 返回失败/成功」三种结果都变成可断言的输出，才能真正钉住。
+ * ════════════════════════════════════════════════════════════════════════ */
+
+/** 下载命令的返回形状（只取本函数需要的两个字段，便于注入）。 */
+export type DownloadCommandResult = { ok: boolean; error?: string };
+
+/** 下载流程的收敛结果：UI 状态 + 是否成功 + 成功后才写的收尾。 */
+export type PullOutcome =
+  | { kind: 'blocked'; reason: string }
+  | { kind: 'done'; pendingCleared: boolean };
+
+/**
+ * 跑一次下载命令并把三种结果收敛成一个可渲染的状态（绝不抛出）。
+ *
+ * 调用方只需：先 `setFirstPush({kind:'pulling'})`，然后按返回的 `kind` 渲染。
+ * **本函数保证不抛** —— 这正是缺陷的修法本身（否则 UI 会卡在忙态）。
+ */
+export async function runPullCommand(args: {
+  run: () => Promise<DownloadCommandResult>;
+  /** 命令 ok 之后的收尾（解除归属待决）。它自己失败不会影响 `kind: 'done'`。 */
+  complete: () => Promise<{ pendingCleared: boolean }>;
+  /** reason 机器码 → 用户文案（生产里是 resolveSyncFailureCopy）。 */
+  copyOf: (reason: string | undefined) => string;
+  onError?: (err: unknown) => void;
+}): Promise<PullOutcome> {
+  let dl: DownloadCommandResult;
+  try {
+    dl = await args.run();
+  } catch (err) {
+    args.onError?.(err);
+    // ⚠️ 不敢说「本机数据未受影响」：SW 是在下载途中被杀的，合并到底落没落盘
+    // 本页无从得知。说错方向会让用户白白重复一次或误以为已经拉全了。
+    const detail = err instanceof Error ? err.message : String(err);
+    return {
+      kind: 'blocked',
+      reason:
+        `从云端下载失败：${detail}。` +
+        '后台同步进程可能已中断，本机是否已合并**无法确认** —— ' +
+        '请重新点一次「从云端下载到本机」并核对两边数量后再继续。',
+    };
+  }
+  if (!dl.ok) {
+    return {
+      kind: 'blocked',
+      reason: `从云端下载失败：${args.copyOf(dl.error)}。本机数据未受影响。`,
+    };
+  }
+  // 走到这里数据已经真的合了：收尾失败不得把结果改写成失败。
+  const { pendingCleared } = await args.complete();
+  return { kind: 'done', pendingCleared };
 }

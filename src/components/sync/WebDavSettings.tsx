@@ -32,13 +32,17 @@ import { dispatchReloadSettings, dispatchSaveSettings, updateSettings } from '@/
 import { sendSyncCommand } from '@/shared/mutationProtocol';
 import { useToast } from '@/contexts/ToastContext';
 import {
+  checkResultFromLastCheck,
   clearSessionSecrets,
   clearWebDavConfig,
   loadWebDavConfig,
   notifyWebDavConfigChanged,
+  saveLastCheck,
   saveWebDavConfig,
   setSessionSecrets,
+  validateWebDavForm,
   WEBDAV_CONFIG_CHANGED_EVENT,
+  type StoredWebDavConfig,
 } from '@/sync-backend/webdav/config';
 import { WebDavClient } from '@/sync-backend/webdav/client';
 import { WebDavBackendAdapter } from '@/sync-backend/webdav/adapter';
@@ -46,17 +50,23 @@ import { chromeKvAdapter } from '@/sync-backend/webdav/config';
 import { invalidateActiveSyncBackend, getLastBackendResolution, primeSyncBackend, readConfiguredBackendId } from '@/sync-backend';
 import { ensureHostPermission, PERMISSION_DENIED_MESSAGE } from '@/sync-backend/webdav/permission';
 import {
+  clearFirstSyncPendingBestEffort,
+  completeFirstSyncSuccess,
   countActive,
   countTombstones,
   decideFirstSync,
+  isFirstPushBusy,
   previewOutcome,
   projectedCloudCount,
-  isFirstPushBusy,
+  releaseFirstSyncPendingOnSaveFailure,
+  runPullCommand,
   type OwnershipChoice,
 } from '@/sync-backend/webdav/firstSyncDecision';
 import { storage } from '@/utils/storage';
 import type { TabGroup } from '@/types/tab';
 import { logWarn } from '@/utils/log';
+import { classifyBackendResolution, type BackendStatusKind } from '@/components/layout/backendStatus';
+import { webDavBannerKindOf, WEB_DAV_BANNER_COPY, WEB_DAV_BANNER_TONE, resolveSyncFailureCopy } from './syncPreviewView';
 
 type CheckState =
   | { kind: 'idle' }
@@ -67,6 +77,14 @@ type CheckState =
       groups: number;
       conditionalWrites: boolean;
       message?: string;
+      /**
+       * 这条结论来自**上次**（已落盘的 lastCheck）而不是刚刚那一次点击。
+       *
+       * 为什么要区分（2026-10-18 A6）：不区分的话，重开页面看到绿灯的用户
+       * 会以为「刚才已经验证过这个地址」。实际它可能是几天前另一个地址的结果，
+       * 而面板全程不提 —— 那是又一个假绿灯。
+       */
+      fromStorage?: boolean;
     };
 
 const inputCls =
@@ -93,6 +111,41 @@ const btnGhost =
  * Nextcloud 的地址刷成坚果云 —— 那是一次静默改用户配置）。
  */
 const JIANGUOYUN_TEMPLATE_URL = 'https://dav.jianguoyun.com/dav/';
+
+/**
+ * 把纯函数的「写令牌」契约接到真实存储上（2026-10-18 A3/A4）。
+ *
+ * 判定与错误处理都在 `firstSyncDecision` 的三个纯函数里（可做行为断言）；
+ * 这里只负责注入真实写入器与日志出口 —— 组件里不留第二份规则。
+ */
+const firstSyncPendingWriter = (pending: boolean): Promise<void> => storage.setFirstSyncPending(pending);
+
+/** 「本次置的位」在保存失败时的回滚（见 releaseFirstSyncPendingOnSaveFailure）。 */
+async function releaseFirstSyncPendingIfSetHere(setHere: boolean, context: string): Promise<void> {
+  await releaseFirstSyncPendingOnSaveFailure({
+    setHere,
+    write: firstSyncPendingWriter,
+    onError: err =>
+      logWarn(
+        `[WebDavSettings] ${context}：清除待决标志失败。待决标志（webdav 首次归属决策未完成）` +
+          '留着会把此后每一次自动上传降级为增量，历史会话将不再上传，请重新保存一次以重试:',
+        err
+      ),
+  });
+}
+
+/** 归属已完成 / 后端已变时的无条件解除（见 clearFirstSyncPendingBestEffort 纯函数）。 */
+async function clearPendingToken(context: string): Promise<void> {
+  await clearFirstSyncPendingBestEffort({
+    write: firstSyncPendingWriter,
+    onError: err =>
+      logWarn(
+        `[WebDavSettings] ${context}：解除归属待决标志失败（不影响本次结果）。` +
+          '下次自动上传仍会按增量进行，重新推送或下载一次即可恢复:',
+        err
+      ),
+  });
+}
 
 export const WebDavSettings: React.FC = () => {
   const dispatch = useAppDispatch();
@@ -121,6 +174,14 @@ export const WebDavSettings: React.FC = () => {
   const [encryption, setEncryption] = useState<'required' | 'plain'>('required');
   const [loaded, setLoaded] = useState(false);
   const [check, setCheck] = useState<CheckState>({ kind: 'idle' });
+  /**
+   * 磁盘上的那份配置（2026-10-18 A6）。
+   *
+   * 与四个表单字段分开存：表单是「用户正在输入的」，这份是「已落盘的」。
+   * validateWebDavForm 用它选措辞（已按加密配置过的用户看到的是
+   * 「云端库按加密配置，但本次没给口令」），而判定本身不依赖它。
+   */
+  const [savedCfg, setSavedCfg] = useState<StoredWebDavConfig | null>(null);
   const [saving, setSaving] = useState(false);
   /**
    * 首次推送状态（2026-10-15）。
@@ -190,6 +251,13 @@ export const WebDavSettings: React.FC = () => {
   // 而「真正会写到哪里」由解析层决定。两者的差集正是这条 P0 的窗口。
   // ─────────────────────────────────────────────────────────────────────
   const [resolvedBackend, setResolvedBackend] = useState<'supabase' | 'webdav' | null>(null);
+  /**
+   * 2026-10-18 C 组：banner 需要的是**完整**分类结果（含 lockedKind），
+   * 仅 resolvedId 不够用 —— 后端对象造出来了不等于「已解锁」。
+   * 复用 backendStatus.classifyBackendResolution，不在这里重写一份判定。
+   * `null` = 尚未解析，banner 按「读不到」出口（不说「已启用」）。
+   */
+  const [backendKind, setBackendKind] = useState<BackendStatusKind | null>(null);
   useEffect(() => {
     let alive = true;
     const reprime = async () => {
@@ -197,8 +265,12 @@ export const WebDavSettings: React.FC = () => {
         await primeSyncBackend();
         if (!alive) return;
         setResolvedBackend(getLastBackendResolution()?.resolvedId ?? null);
+        setBackendKind(classifyBackendResolution(getLastBackendResolution()).kind);
       } catch {
-        if (alive) setResolvedBackend(null);
+        if (alive) {
+          setResolvedBackend(null);
+          setBackendKind('error');
+        }
       }
     };
     void reprime();
@@ -210,6 +282,14 @@ export const WebDavSettings: React.FC = () => {
       window.removeEventListener(WEBDAV_CONFIG_CHANGED_EVENT, reprime);
     };
   }, [settings.syncBackend]);
+
+  /**
+   * banner 的形态与色档（2026-10-18 C 组）。
+   *
+   * 尚未解析（backendKind === null）按 `unreadable` 出口：在拿到真实解析结果之前
+   * 说「已启用」就是猜，而猜错的代价是用户以为数据正在上云。
+   */
+  const webdavBannerKind = webDavBannerKindOf(backendKind ?? 'unknown');
 
   /**
    * 首次推送不可以发起时的原因；`null` 表示**可以**发起。
@@ -233,22 +313,60 @@ export const WebDavSettings: React.FC = () => {
         : null;
 
   // 首屏读一次已保存的配置（只读地址/账号/目录；口令从不落盘，读不到是正常的）。
+  //
+  // 2026-10-18 A6：同时把上次「测试连接」的结果播种到 check —— 否则一次绿灯
+  // 在每次重开页面时都会丢（`lastCheck` 存了却没人读，是死代码），用户只能
+  // 反复重新测。播种仍受 `checkResultFromLastCheck` 的有效期约束：旧结果不播。
   useEffect(() => {
     let alive = true;
     loadWebDavConfig()
       .then(cfg => {
         if (!alive || !cfg) return;
+        setSavedCfg(cfg);
         setBaseUrl(cfg.baseUrl);
         setUsername(cfg.username);
         setRootPath(cfg.rootPath);
         setEncryption(cfg.encryption);
+        const seeded = checkResultFromLastCheck(cfg.lastCheck);
+        if (seeded) {
+          setCheck({
+            kind: 'done',
+            ok: seeded.ok,
+            groups: seeded.groups,
+            conditionalWrites: seeded.conditionalWrites,
+            ...(seeded.message ? { message: seeded.message } : {}),
+            fromStorage: true,
+          });
+        }
       })
-      .catch(() => undefined)
+      .catch(err => logWarn('[WebDavSettings] 读取已保存配置失败（表单停在模板值，不播种上次测试）:', err))
       .finally(() => alive && setLoaded(true));
     return () => {
       alive = false;
     };
   }, []);
+
+  /**
+   * 持久化一次「测试连接」的结果（fire-and-forget，2026-10-18 A6）。
+   *
+   * 失败只打日志：本次测试的结论已经真实发生了，存储写不进去不该把它报成
+   * 「测试失败」—— 那会把一个成功的验证变成一条误导消息。
+   */
+  const persistLastCheck = useCallback(
+    async (result: { ok: boolean; groups: number; conditionalWrites: boolean; message?: string }) => {
+      await saveLastCheck({
+        at: new Date().toISOString(),
+        ok: result.ok,
+        groups: result.groups,
+        conditionalWrites: result.conditionalWrites,
+        ...(result.message ? { message: result.message } : {}),
+      });
+      // 本组件手上的 savedCfg 也要跟上：validateWebDavForm 用它选措辞。
+      const fresh = await loadWebDavConfig();
+      if (fresh) setSavedCfg(fresh);
+    },
+    []
+  );
 
   /**
    * 测试连接。
@@ -257,13 +375,18 @@ export const WebDavSettings: React.FC = () => {
    * 服务端的频率限制（坚果云 600 次/30 分钟）。用户点了才测，测了给结论。
    */
   const handleTest = useCallback(async () => {
-    if (!baseUrl || !username || !password) {
+    // 2026-10-18 A1：与 handleSave 共用同一份校验（见 validateWebDavForm 的注释）。
+    // 原先这里只查「地址/账号/密码非空」，缺的正是**加密口令** —— 而 adapter 的
+    // checkConnection 在远端还没有 manifest 时会提前返回，unlock() 一次都不会被调用，
+    // 于是缺失的口令在「测试连接」这一步根本无从暴露，用户拿到一个假绿灯。
+    const formCheck = validateWebDavForm({ baseUrl, username, password, encryption, passphrase }, savedCfg);
+    if (!formCheck.ok) {
       setCheck({
         kind: 'done',
         ok: false,
         groups: 0,
         conditionalWrites: false,
-        message: '请先填写地址、账号与密码。',
+        message: formCheck.message,
       });
       return;
     }
@@ -281,6 +404,14 @@ export const WebDavSettings: React.FC = () => {
           conditionalWrites: false,
           message: PERMISSION_DENIED_MESSAGE,
         });
+        // 2026-10-18 A6：这条也是「测试的结论」（没测成也是结论）。不写回的话，
+        // 重开页面会把上一次的绿灯播种回来 —— 而用户刚刚才被拒过权限。
+        persistLastCheck({
+          ok: false,
+          groups: 0,
+          conditionalWrites: false,
+          message: PERMISSION_DENIED_MESSAGE,
+        }).catch(err => logWarn('[WebDavSettings] 记录测试连接结果失败（不影响本次结论）:', err));
         return;
       }
       const client = new WebDavClient({ baseUrl, username, password });
@@ -303,22 +434,44 @@ export const WebDavSettings: React.FC = () => {
         groups: info.groups,
         conditionalWrites: info.conditionalWrites,
       });
+      // 2026-10-18 A6：绿灯要**活过重开页面**，否则本面板的诚实度纪律
+      //（每句话都必须等于真实行为）在跨会话时就断了：用户上次看到「连接正常」，
+      // 重开面板却什么都看不到，只能重新点一次测试。
+      // fire-and-forget：这次测试本身已经成功了，落盘失败只影响下次开页的
+      // 「上次结果」展示，不该把它报成「测试失败」（那是另一种谎）。
+      persistLastCheck({ ok: true, groups: info.groups, conditionalWrites: info.conditionalWrites }).catch(err =>
+        logWarn('[WebDavSettings] 记录测试连接结果失败（不影响本次结论）:', err)
+      );
     } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
       setCheck({
         kind: 'done',
         ok: false,
         groups: 0,
         conditionalWrites: false,
-        message: err instanceof Error ? err.message : String(err),
+        message,
       });
+      // 失败结论同样要持久化：否则「上次还是绿灯」会在重开后误导用户。
+      persistLastCheck({ ok: false, groups: 0, conditionalWrites: false, message }).catch(logErr =>
+        logWarn('[WebDavSettings] 记录测试连接结果失败（不影响本次结论）:', logErr)
+      );
     }
-  }, [baseUrl, username, password, rootPath, passphrase, encryption]);
+  }, [baseUrl, username, password, rootPath, passphrase, encryption, savedCfg, persistLastCheck]);
 
   const handleSave = useCallback(async () => {
     setSaving(true);
+    // 2026-10-18 A3：本次有没有**新置**待决位。失败回滚只看它 ——
+    // 用户上轮就处于待决态时那个位是「真实未完成的归属决策」，退掉它会让
+    // 历史会话在下一次自动上传时被整批推上云（比泄漏更糟）。
+    let firstSyncPendingSetHere = false;
     try {
-      if (!baseUrl || !username) {
-        showToast('地址与账号不能为空', 'error');
+      // 2026-10-18 A1：校验抽成 validateWebDavForm，与 handleTest 共用一份。
+      // ⚠️ 顺序逐字保留（round 32 修的「先校验后落盘」）：这一步仍然排在任何
+      // 写入之前，只是判定与措辞搬到了纯函数里。三条判据（地址/账号、应用密码、
+      // 加密口令）与它们的先后顺序都没变。
+      const formCheck = validateWebDavForm({ baseUrl, username, password, encryption, passphrase }, savedCfg);
+      if (!formCheck.ok) {
+        showToast(formCheck.message, 'error');
         return;
       }
       // ⚠️ 2026-10-18 P2-3：**先校验、后落盘**。
@@ -333,14 +486,9 @@ export const WebDavSettings: React.FC = () => {
       // 忘了填密码」这条最常见的漏填，仍然先落盘再报错：toast 说「应用密码不能为空」，
       // 用户重开面板却发现地址已经填好了，自相矛盾。密码只进浏览器会话内存、不进磁盘，
       // 所以它没有「先写后校验」的余地。
-      if (!password) {
-        showToast('请填写应用密码，未保存任何改动。', 'error');
-        return;
-      }
-      if (encryption === 'required' && !passphrase.trim()) {
-        showToast('选择了加密但没有填写加密口令，未保存任何改动。', 'error');
-        return;
-      }
+      //
+      // 上述三条判据现在位于 validateWebDavForm（与 handleTest 共用一份），
+      // 上面那次调用就是它们的落地点 —— 删那段旧代码没有放松任何一条。
 
       // 2026-10-18 P2-3：读旧值必须在 dispatch **之前**。
       // 原先在 dispatch 之后读 settings.syncBackend，读到的已是新值 ⇒
@@ -367,9 +515,10 @@ export const WebDavSettings: React.FC = () => {
       // 那次上传就是**无抑制**的全量 ⇒ 刚切到自带存储、历史会话已经上了云盘，
       // 「归属待决」形同虚设。放最前面还有一层好处：置位同时会清掉此前攒下的
       // 「改动过的会话 id」（那时它们全属于历史会话），这正是待决期该有的白名单起点。
-      // 若下面保存失败：标志留着也无害 —— syncEngine 只在后端真的是 webdav 时才认它。
+      // 若下面保存失败：本次置的位要退回去（见 saveError 分支与 catch 的注释）。
       if (!wasConfigured) {
         await storage.setFirstSyncPending(true);
+        firstSyncPendingSetHere = true;
       }
 
       await saveWebDavConfig({ baseUrl, username, rootPath, encryption });
@@ -385,6 +534,18 @@ export const WebDavSettings: React.FC = () => {
         // 「已切到自带存储」而磁盘仍是云端，数据会流向用户以为没在用的后端。
         dispatch(updateSettings({ syncBackend: wasWebdav ? 'webdav' : 'supabase' }));
         showToast(`${saveError}（同步方式未保存）`, 'error');
+        // 2026-10-18 A3：本次置的待决位必须退回。
+        // 保留它的后果：此后每一次自动上传都命中 syncEngine 的 suppressFullUpload
+        //（历史会话被永久排除在上传之外），而界面零提示 —— 用户只看到「新会话
+        // 同步了」，不知道旧会话早就不传了。方向上是 fail-closed，但没有**任何
+        // 路径**能让他发现它。
+        //
+        // ⚠️ 两个方向上的边界都不能让：
+        //   · 只退**本次**置的位（firstSyncPendingSetHere）—— 用户上轮就已经处于
+        //     待决态、这次重设密码又保存失败时，那个位是真实未完成的归属决策（见上面 wasConfigured 的论证）。
+        //   · 成功保存时**绝不清**（那是 round 30 记录的竞态：设置一旦保存成功，
+        //     3 秒后 autoSyncMiddleware 就会排一次上传，清掉之后那次就是无抑制全量）。
+        await releaseFirstSyncPendingIfSetHere(firstSyncPendingSetHere, 'save-error');
         return;
       }
 
@@ -406,6 +567,8 @@ export const WebDavSettings: React.FC = () => {
         'success'
       );
     } catch (err) {
+      // 同 saveError 分支：抛出（落盘失败 / 会话凭据写失败）也不能把待决位留在盘上。
+      await releaseFirstSyncPendingIfSetHere(firstSyncPendingSetHere, 'save-throw');
       showToast(err instanceof Error ? err.message : '保存失败', 'error');
     } finally {
       setSaving(false);
@@ -420,6 +583,7 @@ export const WebDavSettings: React.FC = () => {
     dispatch,
     showToast,
     settings.syncBackend,
+    savedCfg,
   ]);
 
   /**
@@ -567,6 +731,18 @@ export const WebDavSettings: React.FC = () => {
         // 与执行瞬间不一致（用户点了「保存」但 Redux/settings 尚未落盘）。
         // 凡是「不可逆删除」的执行点，都要有自己的后端校验。
         const effective = await readConfiguredBackendId();
+        // null = 读不到本机设置，本轮无法判断生效后端（2026-10-18 B 组）。
+        // 与「读到了但不是自带存储」分开说：前者是存储故障（重试就好），
+        // 后者是用户没保存设置（要去点保存）。混成一句会让用户做无用功。
+        if (effective === null) {
+          setFirstPush({
+            kind: 'blocked',
+            reason:
+              '已中止：读不到同步设置，无法判断当前生效的后端。' +
+              '（本次未推送，本地与云端数据均未改动。）请稍后重试。',
+          });
+          return;
+        }
         if (effective !== 'webdav') {
           setFirstPush({
             kind: 'blocked',
@@ -643,10 +819,15 @@ export const WebDavSettings: React.FC = () => {
                 ? `已用本机 ${localActive} 个会话覆盖云端同 id 的旧版本；云端现在共 ${afterCloud} 个会话，云端独有会话未被删除。`
                 : `已把本机 ${localActive} 个会话并入云端，并从云端拉回 ${afterCloud} 个会话到本机。`,
         });
-        showToast('推送完成', 'success');
-        // 归属决策已完成（2026-10-18 P1#4）：解除自动上传的全量降级，
-        // 此后保存会话恢复正常的增量同步。
-        await storage.setFirstSyncPending(false);
+        // 2026-10-18 A4：解除待决必须排在成功 toast **之前**，且自带 try/catch。
+        // 排在后面时，一次 KV 写失败会被下面的 catch 报成「推送失败…本地数据未
+        // 受影响」——而合并其实已经成功了（见 completeFirstSyncSuccess 的注释）。
+        await completeFirstSyncSuccess({
+          write: firstSyncPendingWriter,
+          notifySuccess: () => showToast('推送完成', 'success'),
+          onError: err =>
+            logWarn('[WebDavSettings] 推送完成：解除归属待决标志失败（不影响本次结果）:', err),
+        });
       } catch (err) {
         setFirstPush({
           kind: 'blocked',
@@ -674,17 +855,22 @@ export const WebDavSettings: React.FC = () => {
    * 与 SyncButton 的同名表有一小段重复；本次 Wave 中 SyncButton 属另一条 lane，
    * 不从这里去改它。重复的只有 4 条保护性原因码（锁定/网络错误都是人话直传）。
    */
-  const downloadReasonCopy = useCallback((reason: string | undefined): string => {
-    if (!reason) return '未知原因';
-    const map: Record<string, string> = {
-      already_syncing: '同步正在进行中，请稍候',
-      recent_upload_guard: '刚完成上传，云端已是最新状态，无需下载',
-      pending_upload_failed: '还有未上传的本地改动，已中止下载以免覆盖它们，请先完成上传',
-      precheck_unknown: '本地存储读取失败，已中止同步以保护你的未上传内容，请稍后重试',
-      snapshot_failed: '本地快照创建失败，已中止同步以保护现有数据',
-    };
-    return map[reason] ?? reason;
-  }, []);
+  /**
+   * 下载保护性跳过（reason 是机器码）的用户文案。
+   *
+   * 2026-10-18 A8：不再自己维护一份表，改为委托 `resolveSyncFailureCopy`
+   * （`syncPreviewView.ts` 的 SYNC_REASON_COPY 是同一批 reason 的唯一真源）。
+   * 【为什么必须共用】本面板与 SyncButton 各自一张表时，B 组新增的 `backend_unknown`
+   * 只登记了一边 —— 面板这边就退化成**裸枚举**（用户看到 `backend_unknown` 这几个
+   * 字母），而两张表只有在“有人同时改两处”时才能保持一致（那个人不会总在）。
+   * 另：未登记的**纯 snake_case** reason 现在会回退到一句人话，而不是把枚举原文
+   * 弹给用户。
+   */
+  const downloadReasonCopy = useCallback(
+    (reason: string | undefined): string =>
+      resolveSyncFailureCopy({ reason, fallbackMessage: '同步未成功，原因未如实报出；请稍后重试' }),
+    []
+  );
 
   const handlePullFromCloud = useCallback(async () => {
     // P2-2：与 handleFirstPush 同理，probe 抛出会把 UI 卡在忙状态。
@@ -727,12 +913,24 @@ export const WebDavSettings: React.FC = () => {
       return;
     }
     setFirstPush({ kind: 'pulling' });
-    const dl = await sendSyncCommand('download', { forceRemote: false, syncSettings: false });
-    if (!dl.ok) {
-      setFirstPush({
-        kind: 'blocked',
-        reason: `从云端下载失败：${downloadReasonCopy(dl.error)}。本机数据未受影响。`,
-      });
+    // 2026-10-18 A2：`sendSyncCommand` 会 **reject**（SW 被回收时 message channel
+    // closed），而这条路径原先一行 try/catch 都没有 —— 见 runPullCommand 的注释。
+    // 现在三种结果（抛出 / {ok:false} / 成功）都收敛成一个可渲染状态。
+    const outcome = await runPullCommand({
+      run: () => sendSyncCommand('download', { forceRemote: false, syncSettings: false }),
+      // 2026-10-18 A4：解除待决排在成功 toast **之前**，且自带 try/catch ——
+      // 否则一次 KV 写失败就会被报成「下载失败」，而合并其实已经成功了。
+      complete: () =>
+        completeFirstSyncSuccess({
+          write: firstSyncPendingWriter,
+          notifySuccess: () => showToast('已从云端下载到本机', 'success'),
+          onError: err => logWarn('[WebDavSettings] 下载完成：解除归属待决标志失败（不影响本次结果）:', err),
+        }),
+      copyOf: downloadReasonCopy,
+      onError: err => logWarn('[WebDavSettings] 下载命令未返回结果（后台进程可能已中断）:', err),
+    });
+    if (outcome.kind === 'blocked') {
+      setFirstPush({ kind: 'blocked', reason: outcome.reason });
       return;
     }
     setFirstPush({
@@ -741,10 +939,6 @@ export const WebDavSettings: React.FC = () => {
         `已从云端下载并合并（云端 ${remoteActive} 个会话` +
         `${remoteTombstones > 0 ? `，并服从了 ${remoteTombstones} 条删除记录` : ''}）。`,
     });
-
-    showToast('已从云端下载到本机', 'success');
-    // 归属决策已完成：用户已把云端数据取回本机，此后自动上传恢复全量能力。
-    await storage.setFirstSyncPending(false);
   }, [probeRemote, showToast, downloadReasonCopy]);
 
   // 2026-10-17（双模式适配）：恢复 slim 分支删掉的「切回 TapStack 云端」。
@@ -775,12 +969,25 @@ export const WebDavSettings: React.FC = () => {
       // 与「密码填错」完全不同的现象，极难自查。
       // 口令本就不落盘（只在 session），所以这是唯一的清理时机。
       await clearSessionSecrets();
+      // 2026-10-18 A5：唯独这一处漏了 invalidate（handleForget / handleLock 都有）。
+      // 不清的后果：`resyncAlarm` 那条消息超时（core/mutationProtocol.ts 的
+      // withTimeout **不会取消**已发出的请求）时，SW 里那个活着的 WebDAV adapter
+      // 不会被清；而 ensureBackendPrimed（sync-backend/index.ts）对非空缓存直接早退，
+      // 于是下一次手动同步仍然写向 WebDAV —— 而 banner 说「当前仍在使用 TapStack 云端」。
+      // 清口令不够：旧 adapter 里缓存的 Vault（已派生的密钥）跟着活下来。
+      invalidateActiveSyncBackend();
       try {
         await sendSyncCommand('resyncAlarm');
         await primeSyncBackend();
       } catch (err) {
         logWarn('[WebDavSettings] 重建 alarm 失败（下次启动自愈）:', err);
       }
+      // 2026-10-18 A3：后端已切到云端，待决标志描述的「webdav 首次归属决策」
+      // 已无对象。留着它的后果：syncEngine 的 suppressFullUpload 虽然后端侧
+      // 判了 `!== 'supabase'`，但用户之后又切回 webdav 时那个**陈旧**的待决位
+      // 会直接生效 —— 没人在这中间清过它，历史会话就再也上传不了。
+      // 清它是安全的：切回云端是用户显式选择，不再存在「本地已有数据归谁」的问题。
+      await clearPendingToken('切回 TapStack 云端');
       // P2-4：通知父页面刷新自动同步提示（切回云端后「已配置并解锁」不再成立）
       notifyWebDavConfigChanged();
       showToast('已切回 TapStack 云端。云盘上的文件不会被删除。', 'success');
@@ -832,6 +1039,14 @@ export const WebDavSettings: React.FC = () => {
         dispatch(updateSettings({ syncEnabled: false }));
         await dispatchSaveSettings(dispatch);
       }
+      // 2026-10-18 A3：配置已被清空，待决标志所描述的「首次归属决策」已无对象 ——
+      // 留着它只会在用户重新配好后直接生效，把历史会话静默排除在上传之外。
+      // 与 handleSwitchBack 同理：这是一条「后端/配置已变」的路径，清它是安全的。
+      await clearPendingToken('清除配置');
+      // 2026-10-18 A6：配置没了，上次测试结果也必须一起失效（否则重开面板
+      // 会把一个不属于任何现有配置的绿灯播种回来 —— 本缺陷修法自己造的新假绿灯）。
+      setSavedCfg(null);
+      setCheck({ kind: 'idle' });
       // P2-4：清除配置后父页面的「已配置并解锁」必须失效
       notifyWebDavConfigChanged();
       showToast('已清除本机保存的云服务信息与本次会话口令，自动同步已关闭', 'success');
@@ -844,6 +1059,11 @@ export const WebDavSettings: React.FC = () => {
   // 只清口令、不清地址：用户离开电脑前点一下，后台同步即停并明确提示未解锁，
   // 而不是拿旧口令继续传。invalidate 是关键 —— 不清 activeBackend 缓存的话，
   // 旧适配器里的 Vault（已派生的密钥）还会继续生效，「锁定」等于没锁。
+  //
+  // 2026-10-18 A3：**刻意不在这里清待决标志**（其他三处都清，这一处例外）。
+  // 锁定是临时的：配置、后端都没变，用户重新输口令就接着用。若锁定时把待决位
+  // 退掉，重新解锁后他保存一个标签页就会触发**无抑制的全量上传** —— 历史会话
+  // 在归属还没决定的情况下整批上云，那正是 P1#4 要防的事。
   const handleLock = useCallback(async () => {
     try {
       await clearSessionSecrets();
@@ -994,12 +1214,18 @@ export const WebDavSettings: React.FC = () => {
           而且这条提示是用户判断「我的数据现在到底传到哪」的唯一入口 ——
           它不显示，「静默回落」类 P0 就没有用户可见的对应面了。
 
-          ⚠️ 与后端解析的真实状态保持一致：这里只回答「选了哪个后端」，
-          「配没配好 / 解锁没有」由 sync-backend 的锁定占位后端在同步时报出来
-          （文案原样进 toast）—— 面板不自己推测一个可能与实际不符的状态。 */}
+          ⚠️ 2026-10-18 C 组修正：原判据只有 `settings.syncBackend === 'webdav'`
+          —— 那只回答「用户选了哪个后端」，却输出「已启用：数据同步到你自己
+          的云盘」。于是「已配好但本次会话未解锁」（重开浏览器 / 刚点过下方
+          「锁定」）的用户看到「已启用」，而同步实际一次都不会跑（同一页上方
+          的 hint 还在说自动同步不会运行，两句互相矛盾）。
+
+          现判据来自**真实解析结果**（backendKind ←
+          classifyBackendResolution(getLastBackendResolution())），只有
+          `ready` 才允许说「已启用」。未解析完成同样不说「已启用」。 */}
       {settings.syncBackend === 'webdav' ? (
-        <div className="mt-2 rounded-md bg-blue-50 px-2 py-1.5 text-xs text-blue-700 dark:bg-blue-900/30 dark:text-blue-300">
-          已启用：数据同步到你自己的云盘。
+        <div className={`mt-2 rounded-md px-2 py-1.5 text-xs ${WEB_DAV_BANNER_TONE[webdavBannerKind]}`} data-banner-kind={webdavBannerKind}>
+          {WEB_DAV_BANNER_COPY[webdavBannerKind]}
         </div>
       ) : (
         <div className="mt-2 rounded-md bg-gray-100 px-2 py-1.5 text-xs text-gray-600 dark:bg-gray-800 dark:text-gray-300">
@@ -1007,14 +1233,10 @@ export const WebDavSettings: React.FC = () => {
         </div>
       )}
 
-      {/* slim 原注释（保留其对「谁负责报状态」的判断，措辞已按双模式更正）：
-          slim 版注释——原先这里是
-          `settings.syncBackend === 'webdav' ? 「已启用」 : 「当前仍在使用 TapStack 云端」`
-          的二分 banner，以及下方首次推送区块同款条件。
-          slim 版注释——syncBackend 现在只有 'webdav' 一个合法值 ⇒ 两个分支恒相等 ⇒ 删除。
-          「已启用」这句话没有对应分支可挂了：未配置/未解锁的真实状态由
-          sync-backend 的锁定占位后端在**同步时报出来**（文案会原样进 toast），
-          面板不再自己推测一个可能与实际不符的状态显示。 */}
+      {/* 2026-10-18 C 组：下面这段 slim 遗留注释描述的「未配置/未解锁的真实状态
+          只由同步时的 toast 报出，面板不显示」已不再成立 —— banner 现在直接用
+          classifyBackendResolution 的完整结果，四种形态各自有话说。
+          保留这句是为了防止有人按旧注释把 banner 退回二分判断。 */}
 
       {/* ── 首次推送（2026-10-15）─────────────────────────────────────────
           为什么常驻而不是只在保存后弹一次：本地数据是持续产生的
@@ -1175,7 +1397,10 @@ export const WebDavSettings: React.FC = () => {
         >
           {check.ok ? (
             <>
-              连接正常，云端已有 {check.groups} 个会话。
+              {/* 2026-10-18 A6：来自已落盘的 lastCheck 时必须标明「上次」，
+                  否则重开页面的用户会把几天前（甚至是另一个地址）的绿灯
+                  当成「刚刚验证过这个地址」。 */}
+              {check.fromStorage ? '上次测试通过：' : ''}连接正常，云端已有 {check.groups} 个会话。
               {!check.conditionalWrites ? (
                 <div className="mt-1 leading-relaxed">
                   注意：这个云盘不支持「写入前校验」，并发保护较弱。
@@ -1184,7 +1409,10 @@ export const WebDavSettings: React.FC = () => {
               ) : null}
             </>
           ) : (
-            <>连接失败：{check.message ?? '未知原因'}</>
+            <>
+              {check.fromStorage ? '上次测试失败：' : '连接失败：'}
+              {check.message ?? '未知原因'}
+            </>
           )}
         </div>
       ) : null}

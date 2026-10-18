@@ -143,6 +143,110 @@ export async function saveWebDavConfig(
   } satisfies WebDavConnectionConfig);
 }
 
+/** 「保存并启用」与「测试连接」共用的表单输入（口令类字段只在内存里）。 */
+export interface WebDavFormInput {
+  baseUrl: string;
+  username: string;
+  password: string;
+  encryption: 'required' | 'plain';
+  passphrase: string;
+}
+
+export type WebDavFormValidation = { ok: true } | { ok: false; message: string };
+
+/**
+ * 「保存并启用」与「测试连接」共用的表单校验（2026-10-18 A 组）。
+ *
+ * 【为什么必须共用】这两条入口原先各有一套判断，而「测试连接」那套**不校验口令**：
+ * 它把未校验的表单状态直接塞进 adapter，而 `checkConnection` 在远端还没有
+ * manifest 时提前返回 `{groups: 0, encrypted: false}`（见 adapter.ts 的
+ * `if (!loaded) return`），`unlock()` 根本没被调用 —— 缺失的口令无从检测。
+ * 于是「只填应用密码 → 测试连接 → 绿灯『连接正常，云端已有 0 个会话』
+ * → 保存并启用 → 成功」，真正的报错（adapter.ts 的「已选择启用加密，
+ * 但本次没有提供口令」）要等到第一次上传才炸，而那时用户已经离开设置页。
+ *
+ * 【为什么口令是必填，而不是「有就校验」】口令只存在浏览器会话内存里
+ * （见本文件 SessionSecrets 的论证），重开页面后必然为空。配置写着
+ * `encryption: 'required'` 而本次没给口令时，同步**一定**跑不起来 ——
+ * 唯一诚实的答案是当场说清，而不是先给绿灯再让用户去撞墙。
+ *
+ * @param cfg 已保存的配置（可为 null）。它只影响措辞，**不影响判定**：
+ *   同一份表单在「配过」与「没配过」下的接受/拒绝结论必须一致，
+ *   否则两条入口又会因 cfg 的读取时机不同而给出不同答案。
+ */
+export function validateWebDavForm(
+  form: WebDavFormInput,
+  cfg: StoredWebDavConfig | null = null
+): WebDavFormValidation {
+  if (!form.baseUrl || !form.username) {
+    return { ok: false, message: '请填写地址与账号，未保存任何改动。' };
+  }
+  if (!form.password) {
+    return { ok: false, message: '请填写应用密码，未保存任何改动。' };
+  }
+  if (form.encryption === 'required' && !form.passphrase.trim()) {
+    return {
+      ok: false,
+      message:
+        cfg?.encryption === 'required'
+          ? '这个云端库按「加密」配置，但本次没有提供加密口令 —— 口令只保存在浏览器会话内存里，' +
+            '重开页面后需要重新输入。未保存任何改动。'
+          : '选择了加密但没有填写加密口令，未保存任何改动。',
+    };
+  }
+  return { ok: true };
+}
+
+/** 上次「测试连接」结果的可展示快照（与存储形状解耦，UI 直接渲染）。 */
+export interface CheckResultSnapshot {
+  ok: boolean;
+  groups: number;
+  conditionalWrites: boolean;
+  message?: string;
+  /** 那次测试发生的时间（ISO），供 UI 如实标注「上次测试」。 */
+  at: string;
+}
+
+/**
+ * 「上次测试连接」的有效期（2026-10-18 A6）。
+ *
+ * 【为什么要有期限】没有期限的话，半年前的一次绿灯会被当成「现在的连接状态」
+ * 显示出来 —— 那是另一种假绿灯。一周内的结果还算是近期证据；更旧的只说明
+ * 「上次测的时候是通的」，而面板没有路径表达这种弱语气，只能不显示。
+ */
+export const LAST_CHECK_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+
+/**
+ * 存储里的 lastCheck → 可展示的快照（2026-10-18 A6）。
+ *
+ * 【为什么需要它】`saveLastCheck` 与本函数成对存在：原先只写不读，`lastCheck`
+ * 是死代码，于是一次成功的「测试连接」绿灯活不过重开页面 —— 与该面板自己
+ * 的诚实度纪律矛盾（它承诺的每一句话都要等于真实行为，而「刚才测过是通的」
+ * 是真实事实，却被丢掉了）。
+ *
+ * 返回 null 的情形（全部是 fail-honest：宁可不显示，也不说一句无根据的话）：
+ *   · 没有记录；· 时间解析不出来；· 结果太旧（超过 TTL）；· 时钟异常（未来时间）；
+ *   · groups 不是合法的非负数（`isLastCheck` 只校验了三个字段，没管 groups）。
+ */
+export function checkResultFromLastCheck(
+  lastCheck: StoredWebDavConfig['lastCheck'] | null | undefined,
+  now: number = Date.now()
+): CheckResultSnapshot | null {
+  if (!lastCheck) return null;
+  const atMs = Date.parse(lastCheck.at);
+  if (!Number.isFinite(atMs)) return null;
+  // 用绝对值：时钟被拨到过去/未来都会让「多久以前」失真，两种都不可信。
+  if (Math.abs(now - atMs) > LAST_CHECK_TTL_MS) return null;
+  if (!Number.isFinite(lastCheck.groups) || lastCheck.groups < 0) return null;
+  return {
+    ok: lastCheck.ok,
+    groups: Math.floor(lastCheck.groups),
+    conditionalWrites: lastCheck.conditionalWrites,
+    ...(typeof lastCheck.message === 'string' ? { message: lastCheck.message } : {}),
+    at: lastCheck.at,
+  };
+}
+
 /** 记录「测试连接」结果（供设置页展示；不含凭据）。 */
 export async function saveLastCheck(
   lastCheck: NonNullable<StoredWebDavConfig['lastCheck']>,

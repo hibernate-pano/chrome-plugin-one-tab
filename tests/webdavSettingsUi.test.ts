@@ -294,25 +294,29 @@ describe('WebDAV 面板：保存前必须校验完（不许先落盘再报错）
 
   it('三项校验都排在落盘之前：地址/账号、应用密码、加密口令', () => {
     const writeAt = save.indexOf('saveWebDavConfig(');
-    const guards: Array<{ name: string; needle: string }> = [
-      { name: '地址/账号', needle: 'if (!baseUrl || !username)' },
-      { name: '应用密码', needle: 'if (!password)' },
-      { name: '加密口令', needle: "if (encryption === 'required' && !passphrase.trim())" },
-    ];
-    for (const { name, needle } of guards) {
-      const at = save.indexOf(needle);
-      assert.ok(at > -1, `缺少「${name}」校验`);
-      assert.ok(
-        at < writeAt,
-        `「${name}」校验排在落盘之后：会出现「报保存失败但配置已写盘」`
-      );
-    }
+    // 2026-10-18 A 组：三项判定搬进了纯函数 validateWebDavForm（让 handleTest
+    // 与 handleSave 共用同一份，见 tests/webdavFormValidation.test.ts 的行为断言）。
+    // 这里只钉「handleSave 真的先过它、而且过它排在任何写入之前」——
+    // 校验内容的逐条行为断言已经不在源码字符串层面做了。
+    assert.ok(writeAt > 0, 'handleSave 里应有落盘点');
+    const checkAt = save.indexOf('const formCheck = validateWebDavForm(');
+    assert.ok(checkAt > -1, '缺少共享校验 validateWebDavForm 的调用');
+    assert.ok(
+      checkAt < writeAt,
+      '共享校验排在落盘之后：会出现「报保存失败但配置已写盘」'
+    );
+    const branch = save.slice(checkAt, checkAt + 260);
+    assert.match(branch, /if \(!formCheck\.ok\)/, '校验结果必须真的被判断');
+    assert.match(branch, /return;/, '不通过必须 return（不得继续写入）');
   });
 
   it('应用密码为空时的提示必须说清「未保存任何改动」', () => {
-    const at = save.indexOf('if (!password)');
-    const branch = save.slice(at, at + 200);
-    assert.match(branch, /未保存任何改动/, '提示要与真实行为一致：这条分支确实什么都没写');
+    // 提示文本随校验一起搬进了 validateWebDavForm；它的行为断言在
+    // webdavFormValidation.test.ts（含空密码的逐字断言），这里只确认
+    // handleSave 用的是它的 message，而不是自己再写一套文案。
+    const at = save.indexOf('const formCheck = validateWebDavForm(');
+    const branch = save.slice(at, at + 400);
+    assert.match(branch, /showToast\(formCheck\.message/, '提示必须来自同一份校验（两处文案不得分叉）');
   });
 
   it('setSessionSecrets 排在落盘之后（它是抛错源，所以密码必须在它之前拦下）', () => {

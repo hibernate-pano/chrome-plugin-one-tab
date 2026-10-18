@@ -65,6 +65,38 @@ import { WEBDAV_CONFIG_CHANGED_EVENT } from '@/sync-backend/webdav/config';
  *  但没导出它 —— 这里就地声明，避免为了一个类型去改 context 的公共面。 */
 type ThemeMode = 'light' | 'dark' | 'auto';
 
+/**
+ * 设置表单容器的属性（2026-10-18 A7）。
+ *
+ * 【为什么不直接写在 JSX 里】这条属性是**唯一的键盘闸门**，而它的正确形状很挑：
+ *   · `pointer-events-none` 只拦**指针**，不拦**键盘** —— 容器里的控件本来就是
+ *     原生可聚焦的（`role="switch"` 的按钮、四个 `role="radio"`、select），
+ *     所以键盘用户 Tab 到「自动同步」按 Enter 仍会触到 onToggle ⇒ 乐观 dispatch
+ *     + fail-closed 拒写 + 弹一条他从未触发的错误 toast。
+ *   · 必须用 `inert` 而不是 `disabled`：disabled 会改变灰态语义（控件不再被读屏
+ *     当作「存在的项」），而这里是「正在加载」不是「此项禁用」。
+ *   · React 18 不认 `inert={true}`（会报 non-boolean attribute 且**真的不落到
+ *     DOM**），`inert={'' | undefined}` 又被 @types/react 拒 —— 只能用展开对象。
+ * 抽成纯函数后，它的输出可以被真的渲染成 HTML 来断言（见
+ * tests/optionsInertGate.test.ts）。
+ *
+ * 就绪时**不输出该属性**（不是输出 false）：`inert={false}` 在 React 18 下同样
+ * 是一个警告源，而且 `inert="false"` 在 HTML 里是**真值**（字符串非空）——
+ * 那会把就绪后的表单永久锁死。
+ */
+export function formContainerGateProps(settingsReady: boolean): {
+  'aria-busy': boolean;
+  inert?: '';
+  className: string;
+} {
+  return {
+    'aria-busy': !settingsReady,
+    ...(settingsReady ? {} : { inert: '' as const }),
+    // pointer-events-none / opacity-50 保留：视觉与指针语义没变，只是补上键盘那道闸。
+    className: `space-y-6 ${settingsReady ? '' : 'pointer-events-none opacity-50'}`,
+  };
+}
+
 // ── 视觉基础（对齐 popup 的设计变量，不另起一套） ─────────────────────────
 const card =
   'rounded-xl border theme-border-default theme-bg-elevated p-5';
@@ -433,9 +465,7 @@ const OptionsContent: React.FC = () => {
             TapStack 设置
           </h1>
           <p className={`mt-2 ${hintCls}`}>
-            设置保存在本机浏览器中，改动即时生效。这里改的每一项都能在
-            <span className="mx-1 font-medium text-gray-700 dark:text-gray-300">扩展图标菜单</span>
-            里找到对应入口。
+            设置保存在本机浏览器中，改动即时生效。「⋯」菜单里的「设置…」可再次进入本页。
           </p>
         </header>
 
@@ -455,11 +485,25 @@ const OptionsContent: React.FC = () => {
         ) : null}
 
         {/* 读取完成前禁用整个表单。disabled 的理由写在这里而不是散落各处：
-            saveSettings 的三态门禁（pending/ok/failed）——「读到过真值吗」。 */}
-        <div
-          aria-busy={!settingsReady}
-          className={`space-y-6 ${settingsReady ? '' : 'pointer-events-none opacity-50'}`}
-        >
+            saveSettings 的三态门禁（pending/ok/failed）——「读到过真值吗」。
+
+            2026-10-18 A7：光靠 `pointer-events-none` 不够 —— 它只拦**指针**，
+            不拦**键盘**。里边的控件本身就是原生可聚焦的（role="switch" 的按钮、
+            四个 role="radio"、select），于是 settingsReady===false 的那个窗口
+            （挂载 → loadSettings resolve；存储坏了则是永久）里，键盘用户 Tab 到
+            「自动同步」按 Enter 仍然会触到 onToggle ⇒ 乐观 dispatch + fail-closed
+            拒写 + 弹一条他从未触发的错误 toast。
+
+            用 `inert` 而不是 `disabled`：disabled 会改变灰态语义（disabled 控件
+            不被读屏朗读为「不可用但存在」，也不会被辅助技术当作占位）—— 而这里是
+            「正在加载」，不是「此项对本用户禁用」。inert 同时接管聚焦、点击、
+            辅助技术可见性三件事，与现有的 pointer-events-none / opacity-50 叠用不冲突。
+            manifest.json 已声明 minimum_chrome_version=120（inert 需 Chrome 102+）。
+
+            ⚠️ React 18 不认由 `inert` 绑定的布尔值（会报 non-boolean attribute 且
+            真的不落到 DOM），而 `inert={'' | undefined}` 又被 @types/react 拒绝 ——
+            因此属性形状抽到了 formContainerGateProps（见那里的注释与行为断言）。 */}
+        <div {...formContainerGateProps(settingsReady)}>
           {/* ── 外观 ─────────────────────────────────────────────────── */}
           <section className={card} aria-labelledby="sec-appearance">
             <SectionTitle
