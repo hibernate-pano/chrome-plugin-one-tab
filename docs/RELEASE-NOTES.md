@@ -8,6 +8,102 @@
 > 长期台账**（含根因、踩坑、修复顺序），不必翻译成英文、不必对齐商店审核口径。
 > 两边都会写「本版改了什么」，但只有本文件会记住「为什么」和「后来怎么验证的」。
 
+## v1.24.3（2026-10-19，未提审）
+
+**这版的由来**：用户的核心诉求是「这个插件我用了很久，云端是后来加的，好像把原有功能
+体系破坏了」。核心闭环（保存 → 找回 → 恢复）此前**没有任何真机证据**——既有 18 个 e2e
+脚本里 11 个要 Supabase 账号，纯本地的那几个也都不覆盖保存/恢复主路径。于是先补证据、
+再按证据修。
+
+### 先证明核心闭环是好的（这一条决定了后面的取舍）
+
+新增 `scripts/e2e-core-loop.mjs`（已登记进 `run-e2e.mjs` 的 ORDER，纯本地、不登录、
+不连云端），用有头 Chromium 加载 `dist`：
+造种子会话 → 点顶栏「保存会话」→ 断言列表计数 +1 **且从 SW 侧读回存储确认落盘** →
+点「恢复整个会话」→ **用 `context.pages()` 读回真实 URL** 断言标签真的打开了 →
+确认未锁定会话被消费。连续两次运行结果逐条一致（11/11）。
+`headless: true` 不注册 MV3 service worker（实测 30s 超时），故沿用仓库既有的有头约定。
+
+结论：**核心闭环本身没有被云端破坏**。`TabManager` 的保存/恢复路径对同步层只有一处
+fire-and-forget 的 `scheduleUpload`，不 await、不影响返回值。真正被破坏的是「说法」——
+下面三处都长在同步层，且都会删数据。
+
+### ① 删除全部：承诺跨设备删除，自带存储用户实际被跳过
+
+`HeaderDropdown` 的确认框走 `deleteReachesOtherDevices`（webdav → true，文案写
+「其他设备将同步删除」），紧随其后的云同步却用裸 `isAuthenticated` 判据。WebDAV 用户
+没有 TapStack 账号、该值恒 false ⇒ 一路走到 `else` 分支打一句「用户未登录，跳过同步」。
+后果：删光本机后云端旧会话仍在，换台设备连回来被原样拉回。
+修法：新增 `deleteAllShouldPushOverwrite = deleteReachesOtherDevices`，让「说」与「做」
+共用一个判据；`else` 分支的日志改成如实描述（没有可用后端）。
+
+### ② 首次推送：墓碑态下三个选项都在说反话
+
+`previewOutcome` 开头就把远端过滤成「非墓碑」，于是 `tombstones-only` 这一态里
+`merge` 的 hint 写着「云端独有的 0 个会话」且**完全没有 warning**；而 UI 的确认判据是
+`choice !== 'merge' && d.warning` ⇒ 标着「推荐」的那个选项零确认就能撤销别的设备的删除。
+同一块面板的抬头正警告「会撤销那些删除、让已删的会话重新出现」。
+修法：`countRevivedTombstones` 单独统计会被复活的墓碑（同 id 时按 `compareStampsLoose`
+与 `mergeOpStamped` 同口径决胜），三个选项的 hint 都带上；墓碑态下 `merge` 也带
+`warning`。UI 的确认判据统一成「有 warning 就确认」。
+
+### ③ 清理重复标签：唯一一个不报波及范围的破坏性动作
+
+五个破坏性动作里，只有它在确认时不告诉你会删掉多少，而 1.22.0 起删除即物理清除、
+无回收站。修法：确认前用 `planCleanDuplicates`（与 SW 执行同一份纯函数判据）算真实
+计划，文案写明「本次预计清除 N 个重复标签页、M 个空会话」；没有可清的东西时直接
+提示，不再摆一道破坏性确认框。输入取 `storage.getGroupsForWrite()`（真值）而非 Redux。
+
+### ④ 回退：拖走会话最后一条标签 = 整组删除，恢复原规则
+
+**触发**：产品负责人指出「标签组内最后一个标签是可以拖动走的，拖动的时候同时删除空的标签组，
+这是最核心的规则之一」——而他用了很多年的这条交互，在 round 29（commit `4837492`）被
+UI 层拦掉了：拖动被 `preventDefault` 拒绝，提示「请改用该行右侧的删除按钮」。
+
+**核实**：数据层从没改过。`mutationOps.applyMoveTab` 里「源组被搬空
+⇒ 整组物理移除」一直都在，`shouldAutoDeleteAfterTabRemoval` 也还在给 ✕ 删除按钮用。
+round 29 只是在 `TabGroup` 的 JSX 里架了一道墙（`onDragBlocked` prop + 拒绝提示）。
+
+**为什么这是错的**：拖拽是连续手势。被拒绝之后，用户要做的是「换个入口把同一个移动重做一遍」——
+而「搬空即消失」正是让拖拽有意义的那条规则。判据本身算得对（`confirmBeforeDelete &&
+shouldAutoDeleteAfterTabRemoval`），错的是**它拦的东西是产品核心，不是一个可以再商量的偏好**。
+连续几轮评审都没把这条翻回来，因为它看起来像一次"体验改进"。
+
+**修法**：不再给 `DraggableTab` 传 `onDragBlocked`，恢复 round 29 之前的行为。
+**直接删除，不加确认**（产品负责人 2026-10-19 明确选择）。
+`onDragBlocked` 这个可选 prop 保留在 `DraggableTab` 上（机制不删，只是没人传），
+将来若要临时加保护，接上即可。锁定组的豁免不变。
+
+**测试**：`tests/dragLastTabRefused.test.ts` **改写而非删除** —— 把断言反过来，
+继续守「这条路必须走得通」，并新增 `applyMoveTab` 的行为断言
+（搬空 ⇒ 源组从结果里消失、目标组收到标签、结果点名 `removedGroupId`）。
+变异验证：把拦截砌回去 → 1 红；还原 → 全绿。
+
+**真机**：`scripts/_verify-drag-last-tab.mjs`（一次性验证脚本，未入库）用真实
+鼠标拖拽把源组唯一那条标签拖进目标组，断言会话从磁盘整组消失、标签内容完整、
+且全程没有出现拦截提示。9/9 通过。
+
+### 验证
+
+- `pnpm test` **1828 pass / 0 fail**（基线 1799，+29）。
+- 新增 `tests/destructiveActionHonesty.test.ts`（17 条，准则 4）与
+  `tests/restoreConsumeStorageOutcome.test.ts`（9 条，准则 3 的存储落盘结局）。
+- **逐条变异验证**（cp 备份 → 改坏 → 跑 → 还原，不用 `git checkout`）：
+  M1 删除全部退回裸 `isAuthenticated` → 2 红；M2 预览丢弃墓碑 → 4 红；
+  M3 确认文案退回不含范围 → 2 红；M4 墓碑行写入 merged → 2 红；
+  M5 `applyRemoveTab` 不移除标签 → 1 红。还原后全绿。
+- 真机 UI 复核：未登录时「上传」按钮仍在、点下去给出「去登录」提示且不开弹窗；
+  清理确认框显示「本次预计清除 1 个重复标签页、1 个空会话」，执行后磁盘上确实清干净。
+- 干净 worktree 重建：`pnpm install --frozen-lockfile && pnpm package`，校验 zip 内
+  `manifest.json` 的 version / name / host_permissions / commands / permissions 与源码
+  及 `package.json` 逐项一致（zip 已替换为本轮干净产物），`pnpm validate` 退出码 0。
+
+### 刻意没做的事
+
+- 没动 `backgroundSync` 的「锁定提醒受通知开关约束」：那是 2026-10-18 P2-5 的显式决定，
+  且已有变异验证的用例守着。改它会推翻一条已评审的产品决定。
+- 没做多端实时协同、没做 E2E 加密、没动 Supabase 库结构（越界）。
+
 ## v1.24.2（2026-10-17，未提审）
 
 **这版的由来**：一次针对性的代码体检（以 main 为基准）。体检发现**磁盘上那个
