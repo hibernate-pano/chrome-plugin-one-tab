@@ -1,11 +1,18 @@
-// 拖走会话里最后一条标签＝整组删除，必须先被拦下（2026-10-18 round 29）。
+// 拖走会话里最后一条标签 = 整组删除，**这是核心规则，不许拦截**（2026-10-19）。
 //
-// 口径（「主 agent 已定的产品口味」#5）：`applyMoveTab` 在源组被搬空且未锁定时整组物理
-// 删除（无回收站），而删除整组本来就有 `confirmBeforeDelete` 开关 ⇒ 拖动是连续手势，
-// 判据取**拒绝这次拖拽 + 说出替代路径**（不在拖动中途弹确认框、也不做拖后回滚）。
-// 判据复用 ✕ 那条路的同一份语义（`shouldAutoDeleteAfterTabRemoval`）。
+// ── 这个文件为什么被改写而不是删掉 ──────────────────────────────────────
+// round 29（commit 4837492）曾在这里钉住相反的口径：「拖动会整组删除 ⇒ 拒绝这次拖拽，
+// 提示改用右侧删除按钮」。判据本身算得对，但它**拦掉了产品最核心的一条交互**：
+// 拖拽是连续手势，被拒绝后用户要做的是「换个入口重做同一个移动」。用了很多年的行为
+// 被一轮评审收走，此后几轮都没人翻回来。
 //
-// 真机复现见 /tmp/one-tab-loop/verify-round29.mjs。
+// 产品负责人 2026-10-19 明确要求恢复原规则：**直接删除，不加确认**。
+//
+// 所以这个文件不删——把它的断言反过来，继续守着「这条路必须走得通」。
+// 若将来有人又想加拦截，这里会立刻变红，迫使他先回答产品负责人的那句话。
+//
+// 数据层从未变过：`applyMoveTab` 在源组被搬空且未锁定时整组物理移除；锁定组豁免。
+// 被删掉的只是 UI 层那道墙。
 
 import { describe, it, before } from 'node:test';
 import assert from 'node:assert/strict';
@@ -45,65 +52,124 @@ function mkGroup(id: string, tabs: Tab[], over: Partial<TabGroup> = {}): TabGrou
   };
 }
 
+// ─────────────────────────────────────────────────────────────────────────
+// 第一部分：数据层语义（从未变过，这两条是回退的**依据**）
+// ─────────────────────────────────────────────────────────────────────────
+
 describe('判据：哪些行「拖走就会删掉整个会话」', () => {
-  it('未锁定 + 只有这一条活跃标签 ⇒ 会删组（拦）', async () => {
+  it('未锁定 + 只有这一条活跃标签 ⇒ 搬走即整组删除（核心规则）', async () => {
     const { shouldAutoDeleteAfterTabRemoval } = await import('@/core/tabGroupUtils');
     const g = mkGroup('g1', [mkTab('only')]);
-    assert.equal(shouldAutoDeleteAfterTabRemoval(g, 'only'), true);
+    assert.equal(
+      shouldAutoDeleteAfterTabRemoval(g, 'only'),
+      true,
+      '会话是容器：搬空最后一条内容，容器随之消失（这是被恢复的那条规则）',
+    );
   });
 
-  it('未锁定 + 还有别的活跃标签 ⇒ 不会删组（不拦）', async () => {
+  it('未锁定 + 还有别的活跃标签 ⇒ 不删组', async () => {
     const { shouldAutoDeleteAfterTabRemoval } = await import('@/core/tabGroupUtils');
     const g = mkGroup('g1', [mkTab('a'), mkTab('b')]);
     assert.equal(shouldAutoDeleteAfterTabRemoval(g, 'a'), false);
   });
 
-  it('锁定 ⇒ 永不删组（不拦；锁定本就豁免）', async () => {
+  it('锁定 ⇒ 永不删组（锁定 = 组内不发生删除，与本次回退无关）', async () => {
     const { shouldAutoDeleteAfterTabRemoval } = await import('@/core/tabGroupUtils');
     const g = mkGroup('g1', [mkTab('only')], { isLocked: true });
     assert.equal(shouldAutoDeleteAfterTabRemoval(g, 'only'), false);
   });
 });
 
-describe('DraggableTab：拦截排在开拖之前', () => {
-  it('handleDragStart 先判 onDragBlocked 并 preventDefault，再 beginDragSession', async () => {
+describe('数据层：移走最后一条标签真的会整组物理移除', () => {
+  it('applyMoveTab 把源组搬空 ⇒ 源组从结果里消失，目标组收到那条标签', async () => {
+    const { applyMoveTab } = await import('@/core/mutationOps');
+    const tab = mkTab('only');
+    const groups = [mkGroup('src', [tab]), mkGroup('dst', [mkTab('d1')])];
+
+    const r = applyMoveTab(
+      groups,
+      { sourceGroupId: 'src', sourceIndex: 0, targetGroupId: 'dst', targetIndex: 1 },
+      ISO,
+      { d: 'devTest', s: 9 },
+    );
+
+    assert.equal(
+      r.groups.some(g => g.id === 'src'),
+      false,
+      '源组被搬空 ⇒ 必须整组物理移除（无回收站、不可逆）',
+    );
+    const dst = r.groups.find(g => g.id === 'dst');
+    assert.ok(dst, '目标组必须保留');
+    assert.deepEqual(dst!.tabs.map(t => t.id), ['d1', 'only'], '标签必须真的落到目标位置');
+    assert.equal(
+      r.removedGroupId,
+      'src',
+      '结果必须点名被删掉的源组（调用方据此决定是否提示广播失败）',
+    );
+  });
+
+  it('锁定源组被搬空时保留（锁定豁免，不是本次回退带来的行为）', async () => {
+    const { applyMoveTab } = await import('@/core/mutationOps');
+    const groups = [mkGroup('locked', [mkTab('only')], { isLocked: true }), mkGroup('dst', [mkTab('d1')])];
+    const r = applyMoveTab(
+      groups,
+      { sourceGroupId: 'locked', sourceIndex: 0, targetGroupId: 'dst', targetIndex: 1 },
+      ISO,
+      { d: 'devTest', s: 10 },
+    );
+    assert.ok(r.groups.some(g => g.id === 'locked'), '锁定会话不得被搬空删除');
+    assert.equal(r.removedGroupId, null, '锁定组没有整组删除');
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// 第二部分：UI 层**不得**再拦这条路（这是 round 29 被回退掉的东西）
+// ─────────────────────────────────────────────────────────────────────────
+
+describe('TabGroup：不得再拦「拖走最后一条标签」', () => {
+  it('不给 DraggableTab 传 onDragBlocked（传了就等于拒绝这次拖拽）', async () => {
+    const src = await read('src/components/tabs/TabGroup.tsx');
+    // 只允许注释里提到它；JSX 属性里出现就是拦截回来了
+    const jsxUse = /onDragBlocked=\{/.test(src);
+    assert.equal(
+      jsxUse,
+      false,
+      'TabGroup 又给 DraggableTab 传了 onDragBlocked —— 这会禁止拖走会话的最后一条标签，' +
+        '而那是产品负责人 2026-10-19 明确要求保留的核心规则。要做拦截请先回去问。',
+    );
+  });
+
+  it('旧的拦截回调 refuseDragDeleteGroup 已移除', async () => {
+    const src = await read('src/components/tabs/TabGroup.tsx');
+    assert.doesNotMatch(
+      src,
+      /const refuseDragDeleteGroup = useCallback/,
+      '拦截提示函数仍在 = 拦截逻辑还在（即使没接上也不该留死代码）',
+    );
+  });
+
+  it('注释里写清了为什么允许这条路（防止下一次「改进」又把墙砌回去）', async () => {
+    const src = await read('src/components/tabs/TabGroup.tsx');
+    assert.match(src, /不拦|不再传 `onDragBlocked`/, '必须留下「为什么不拦」的说明');
+    assert.match(src, /核心/, '必须点明这是核心规则，而不是一个可以再商量的偏好');
+  });
+});
+
+describe('DraggableTab：机制保留，但默认不启用', () => {
+  it('onDragBlocked 仍是可选 prop，且 onDragStart 里仍有分支（留着以便将来按需接）', async () => {
+    const src = await read('src/components/dnd/DraggableTab.tsx');
+    assert.match(src, /onDragBlocked\?:/, '机制本身保留（不删），只是没人传');
+    const start = src.indexOf('const handleDragStart = useCallback');
+    const body = src.slice(start, src.indexOf('const handleDragEnd', start));
+    assert.match(body, /if \(onDragBlocked\)/, '分支保留：不传时自然跳过');
+  });
+
+  it('拦截分支仍排在 beginDragSession 之前（将来若启用，顺序必须正确）', async () => {
     const src = await read('src/components/dnd/DraggableTab.tsx');
     const start = src.indexOf('const handleDragStart = useCallback');
     const body = src.slice(start, src.indexOf('const handleDragEnd', start));
     const blockIdx = body.indexOf('if (onDragBlocked)');
     const beginIdx = body.indexOf('beginDragSession({');
-    assert.ok(blockIdx > 0, '必须有 onDragBlocked 分支');
-    assert.ok(beginIdx > blockIdx, '拦截必须排在 beginDragSession 之前（否则会留下没有 dragend 收尾的会话）');
-    const branch = body.slice(blockIdx, beginIdx);
-    assert.match(branch, /e\.preventDefault\(\)/, '必须 preventDefault 取消这次拖拽');
-    assert.match(branch, /onDragBlocked\(\)/, '必须出声说明替代路径（静默 = 按了没反应）');
-    assert.match(branch, /return;/, '拦截后不得继续走开拖流程');
-  });
-
-  it('memo 比较函数把 onDragBlocked 算进去（否则拦截开关变化不重渲染）', async () => {
-    const src = await read('src/components/dnd/DraggableTab.tsx');
-    const tail = src.slice(src.indexOf('}, (prevProps, nextProps) => {'));
-    assert.match(tail, /prevProps\.onDragBlocked === nextProps\.onDragBlocked/);
-  });
-});
-
-describe('TabGroup：拦截条件与文案接线', () => {
-  it('条件 = confirmBeforeDelete && shouldAutoDeleteAfterTabRemoval（与 ✕ 同一份语义）', async () => {
-    const src = await read('src/components/tabs/TabGroup.tsx');
-    assert.match(
-      src,
-      /onDragBlocked=\{\s*confirmBeforeDelete && shouldAutoDeleteAfterTabRemoval\(group, tab\.id\)/,
-      '判据必须复用 shouldAutoDeleteAfterTabRemoval，不许另写一套'
-    );
-  });
-
-  it('提示说明后果与替代路径（指向会先确认的删除按钮）', async () => {
-    const src = await read('src/components/tabs/TabGroup.tsx');
-    const start = src.indexOf('const refuseDragDeleteGroup = useCallback');
-    const body = src.slice(start, src.indexOf('}, [showDeleteError]);', start));
-    assert.match(body, /showDeleteError\(/, '用删除口径的提示（与「会话已锁定…」同款）');
-    assert.match(body, /最后一条标签/, '必须说清为什么拖不动');
-    assert.match(body, /删除按钮/, '必须给出替代路径');
-    assert.match(body, /会先确认/, '必须说明替代路径里有确认');
+    assert.ok(blockIdx > 0 && beginIdx > blockIdx, '拦截必须排在开拖之前，否则会留下没有 dragend 收尾的会话');
   });
 });

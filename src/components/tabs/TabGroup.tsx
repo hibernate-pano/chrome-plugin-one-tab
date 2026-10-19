@@ -393,19 +393,28 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
   }, [confirmBeforeDelete, dispatch, group, showConfirm, showDeleteError]);
 
   /**
-   * 「拖走最后一条标签会整组删掉这个会话」时的拦截提示（主 agent 已定的产品口味 #5）。
+   * 「拖走最后一条标签会整组删掉这个会话」——**不拦**（2026-10-19 回退）。
    *
-   * 拖动是连续手势：拖动中途弹确认框、或拖完再回滚，都是新交互且体验更差。
-   * 判据取**拒绝这次拖拽 + 说出替代路径**，判据本身复用 ✕ 那条路的同一份语义
-   * （`confirmBeforeDelete` + `shouldAutoDeleteAfterTabRemoval`，锁定会话本就豁免）。
-   * 用 showDeleteError 而不是普通 toast：后果属于「删除」，与同卡片
-   * 「会话已锁定，解锁后才能删除其中的标签」同一口径（r24：用户要求的动作没发生必须出声）。
+   * 这条规则一直是产品的核心：会话是活的容器，搬走最后一条标签就意味着这个容器
+   * 已经没有内容，随之消失。数据层从来没改过（`mutationOps.moveTab` 里「源组被搬空
+   * ⇒ 整组物理移除」一直都在）。
+   *
+   * round 29（commit 4837492）曾在 UI 层架一道拦截：判据是
+   * `confirmBeforeDelete && shouldAutoDeleteAfterTabRemoval`，然后拒绝这次拖拽并提示
+   * 「请改用右侧删除按钮」。问题不在于那条判据算错了——它算得对——而在于它**拦掉了
+   * 产品最核心的一条交互**：拖拽是连续手势，被拒绝之后用户要做的是「换个入口重做一遍
+   * 同一个移动」。用了很多年的行为被一轮评审收走、且此后几轮都没被翻回来。
+   *
+   * 产品负责人 2026-10-19 明确要求恢复：**直接删除，不加确认**。
+   * 因此这里不再传 `onDragBlocked`，恢复 round 29 之前的行为。
+   *
+   * `onDragBlocked` 这个可选 prop 本身保留在 DraggableTab 上（不删机制），
+   * 将来若要临时加回某种「拖拽前的保护」，接上这个 prop 即可，不必再改一次组件。
+   *
+   * 锁定会话仍不走这条路：锁定组的标签渲染层不提供删除/拖出（DraggableTab 的 locked），
+   * 数据层 `shouldAutoDeleteAfterTabRemoval` 也对锁定组豁免 —— 这两条与本次回退无关，
+   * 一直是「锁定 = 组内不发生删除」的产品语义。
    */
-  const refuseDragDeleteGroup = useCallback(() => {
-    showDeleteError(
-      '这是该会话的最后一条标签，拖动会删除整个会话；请改用该行右侧的删除按钮（那里会先确认）'
-    );
-  }, [showDeleteError]);
 
   // 格式化时间
   const formatTime = (dateString: string) => {
@@ -609,13 +618,6 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
                     index={index}
                     itemCount={group.tabs.length}
                     locked={group.isLocked}
-                    // 拖动会搬空未锁定会话 ⇒ 不让拖（判据与 ✕ 删最后一条同一份语义）。
-                    // confirmBeforeDelete 关闭时维持现状：用户已明示不要确认。
-                    onDragBlocked={
-                      confirmBeforeDelete && shouldAutoDeleteAfterTabRemoval(group, tab.id)
-                        ? refuseDragDeleteGroup
-                        : undefined
-                    }
                     moveTab={handleMoveTab}
                     handleOpenTab={handleOpenTab}
                     handleDeleteTab={handleDeleteTab}
