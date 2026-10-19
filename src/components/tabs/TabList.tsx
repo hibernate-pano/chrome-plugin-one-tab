@@ -5,7 +5,8 @@ import { invalidateGroupsCache, onGroupsChanged } from '@/utils/storage';
 import { DraggableTabGroup } from '@/components/dnd/DraggableTabGroup';
 import { SearchResultList } from '@/components/search/SearchResultList';
 import { EmptyState } from '@/components/common/EmptyState';
-import { PersonalizedWelcome } from '@/components/common/PersonalizedWelcome';
+import { getEmptyStateGreeting } from '@/components/common/emptyStateGreeting';
+import { saveAndCloseLabel } from '@/components/layout/saveActionCopy';
 import { toListErrorCopy } from './listErrorCopy';
 import { getContextOrigin } from '@/core/contextOrigin';
 import { logError } from '../../utils/log';
@@ -222,22 +223,28 @@ export const TabList: React.FC<TabListProps> = ({ searchQuery }) => {
   if (filteredGroups.length === 0 && !searchQuery) {
     return (
       <div className="session-list-stack">
-        {/* 欢迎语与主 CTA 各自成卡，但**不再套第三层卡片**：
-            EmptyState 自带边框 + 圆角 + 阴影，外面再包 flat-card 就是
-            「卡片套卡片」的双层描边（探针实测 inner/outer 各 1px 边框各带阴影）。
-            这里让两块内容各自独立，视觉层级更干净。 */}
-        {/* 空态欢迎卡。⚠️ 不要给它传 tabCount：本分支的标签总数恒为 0，
-            统计块由此永远不会渲染（2026-10-18 C 组删除了一条永不成立的分支）。 */}
-        <PersonalizedWelcome className="tab-group-card p-6" />
+        {/* ── 2026-10-19 审计 I-1：空态收敛成**一张**卡 ──────────────────────
+         *
+         * 修复前这里上下叠着两张满宽大卡：
+         *   · PersonalizedWelcome（258px）—— 问候 + 一句没有行动价值的话 + 又一次 logo
+         *   · EmptyState（282px）—— 唯一有用的「先保存一个工作会话」+ 主 CTA
+         * 主审真机复现（400×600）：卡1 占视口 43% 却零操作；卡2 的主 CTA 距
+         * 视口底只有 4px（卡片下沿被切掉）。同一屏里「TapStack」出现 3 次。
+         *
+         * 收成一张卡：问候降为标题上的一行小字，情绪文案（「让稍后找回变得
+         * 轻松」）删掉 —— 它没有告诉用户任何可执行的事。品牌 logo 已经在顶栏，
+         * 空态再放一次是第三次重复。
+         */}
         <EmptyState
           tone="default"
-          title="先保存一个工作会话"
+          title={`${getEmptyStateGreeting()}，先保存一个工作会话`}
           // 指代修正：空态自己就有这个按钮，原文案却指「右上角」，
-          // 用户会不确定该点哪个。（保存是否会关闭标签属 P1-1 定位决策，
-          // 那条待负责人拍板，此处只修指代，不改承诺。）
+          // 用户会不确定该点哪个。
           // 2026-10-09 P1-1：定位不变（保存 = 剪切），但新用户第一屏的 CTA
           // 必须在动手前把「标签会被关闭」说出来 —— 不能等它关了才发现。
-          description="点击下方按钮，把当前窗口保存成可稍后找回的工作会话；当前标签随后会被关闭。固定标签默认不保存，可在设置中更改。快捷键 Alt+Shift+S 也可快速保存。"
+          // 2026-10-19 I-3：措辞与顶栏按钮**逐字同源**（saveAndCloseLabel），
+          // 两处各写一遍文案，迟早会漂移成「一个说关闭、一个不说」。
+          description={`${saveAndCloseLabel}：把当前窗口收成可稍后找回的工作会话，当前标签随后会被关闭。固定标签默认不保存，可在设置中更改。快捷键 Alt+Shift+S 也可快速保存。`}
           action={
             <div className="flex flex-col items-center gap-2">
               <button
@@ -246,9 +253,9 @@ export const TabList: React.FC<TabListProps> = ({ searchQuery }) => {
                 disabled={isSavingFromEmpty}
                 className="btn btn-primary flat-interaction px-5 py-2.5 text-sm disabled:cursor-not-allowed disabled:opacity-60"
                 aria-busy={isSavingFromEmpty}
-                title="保存当前窗口为会话并关闭这些标签（快捷键 Alt+Shift+S）"
+                title={`${saveAndCloseLabel}（快捷键 Alt+Shift+S）`}
               >
-                {isSavingFromEmpty ? '保存中…' : '保存当前窗口'}
+                {isSavingFromEmpty ? '保存中…' : saveAndCloseLabel}
               </button>
               {/* 成功 3 秒后消失（见上方 useEffect）；失败常驻到下次操作 */}
               {emptySaveFeedback && (

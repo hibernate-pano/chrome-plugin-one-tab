@@ -5,6 +5,7 @@ import { loadGroups } from '@/store/slices/tabSlice';
 import { auth as supabaseAuth } from '@/utils/supabaseFacade';
 import { authCache } from '@/utils/authCache';
 import { sendSyncCommand } from '@/shared/mutationProtocol';
+import { hasLoginRestoreTriggered } from '@/components/auth/restoreAfterLogin';
 import { logError, logInfo, logWarn } from '../../utils/log';
 
 interface AuthProviderProps {
@@ -63,6 +64,14 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
               if (user) {
                 logInfo('用户已自动登录:', user.email);
                 // 登录后自动从云端合并到本地（跨设备找回。失败不阻塞，静默处理）
+                //
+                // 2026-10-19 审计 P1-4：若用户在本次页面会话里**已经登录过**，
+                // 那次恢复已经由 restoreAfterLogin 触发过了（显式意图）——
+                // 这里再发一次就是「登录一次跑两遍整库下载 + 两遍 merge 写盘」。
+                // 判据：hasLoginRestoreTriggered()。
+                if (hasLoginRestoreTriggered()) {
+                  logInfo('[AutoSync] 本次登录已触发过恢复，跳过重复下载');
+                } else {
                 // auto:true = 自动触发而非用户手点：SW 侧在已有 sync 任务在途时
                 // 直接回 already_syncing（见 service-worker SYNC 分支的去重闸门），
                 // 不再排第二条整库下载 —— 否则这条消息只能排队等满 30s 协议超时。
@@ -84,6 +93,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
                     }
                   })
                   .catch(err => logWarn('[AutoSync] 自动下载异常:', err));
+                }
               }
             })
             .catch(() => {

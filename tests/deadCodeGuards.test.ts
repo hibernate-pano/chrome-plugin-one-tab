@@ -127,7 +127,12 @@ describe('页内快捷键层与「标签组拖拽 + 重排模式」已下线', (
     assert.ok(!header.includes('useKeyboardShortcuts'));
     assert.ok(!header.includes('COMMON_SHORTCUTS'));
     // 快捷键提示卡片一并消失（QuickActionTips 只讲 Ctrl+S / Ctrl+F / Ctrl+L）
-    assert.ok(!code('src/components/common/PersonalizedWelcome.tsx').includes('QuickActionTips'));
+    // 2026-10-19 审计 I-1：PersonalizedWelcome 整卡已删（它占 43% 视口高度
+    // 却零操作价值），空态收敛成一张卡。
+    assert.ok(
+      !existsSync(p('src/components/common/PersonalizedWelcome.tsx')),
+      '欢迎卡整卡已删（空态只有一张卡）'
+    );
     assert.ok(!code('src/components/tabs/TabList.tsx').includes('QuickActionTips'));
   });
 

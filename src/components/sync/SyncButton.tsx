@@ -5,7 +5,7 @@ import { loadGroups } from '@/store/slices/tabSlice';
 import { dispatchReloadSettings } from '@/store/slices/settingsSlice';
 import { downloadTabGroups } from '@/services/tabGroupSyncService';
 import { sendSyncCommand } from '@/shared/mutationProtocol';
-import { decideOverwriteClick, decideSyncEntry, getSyncStrategyLabel, isOverwriteGateOpen, renderPreviewSummary, resolveSyncFailureCopy, shouldRenderSyncControls, syncIdentityCanRun, syncModeOf } from './syncPreviewView';
+import { decideOverwriteClick, decideSyncEntry, isOverwriteGateOpen, renderPreviewSummary, resolveSyncFailureCopy, shouldRenderSyncControls, syncIdentityCanRun, syncModeOf } from './syncPreviewView';
 
 // 与 syncEngine.SyncOperation 同语义（仅 UI 进度条用），本文件不再 import syncEngine。
 type SyncOperation = 'upload' | 'download' | 'none';
@@ -400,17 +400,36 @@ export const SyncButton: React.FC<SyncButtonProps> = () => {
           </div>
         )}
 
-        <div className="flex items-center gap-2">
+        {/* ── 2026-10-19 审计 F-1（P0）：窄屏下这两颗按钮必须收成图标 ────────
+         *
+         * 修复前它们是**带文字**的「上传」「下载」，合计 148px；而顶栏操作区
+         * `flex-shrink: 0`，搜索框那一列是 `minmax(0, 1fr)` —— 于是 400px 的
+         * popup（Chrome 扩展 popup 的真实宽度）里搜索框被压成 **0 宽**，
+         * 「找回会话」这个核心入口整框消失。
+         *
+         * 主审真机复现（400×700）：`.app-header-search w=0`、
+         * `.search-input w=26`、`.app-header-actions w=308`（占可用 376px 的 82%）。
+         *
+         * 修法：`lg`（1024px）以下只留图标（`hidden lg:inline` 收掉文字），
+         * `lg` 以上恢复文字标签。图标与文字都保留可访问名称 —— 读屏用户
+         * 拿到的名字和视觉用户看到的一致，不因断点而失真。
+         *
+         * 断点取 `lg` 而不是 `sm`：641–1024px 这段操作区最宽 421px，
+         * 而顶栏在该区间让搜索独占一行（见 global.css 的 grid-template-areas），
+         * 两颗带文字的同步按钮仍会把首行挤爆。
+         */}
+        <div className="flex items-center gap-1 lg:gap-2">
           <button
             type="button"
             onClick={handleUpload}
             disabled={isWorking}
-            className={`flex items-center whitespace-nowrap px-3 py-1.5 rounded-md text-sm flat-interaction ${
+            className={`flex items-center whitespace-nowrap px-2 lg:px-3 py-1.5 rounded-md text-sm flat-interaction ${
               isWorking
                 ? 'bg-green-100 text-green-600'
                 : 'bg-green-100 text-green-600 hover:bg-green-200'
               } transition-colors`}
             title="手动上传本地会话到云端"
+            aria-label="上传本地会话到云端"
           >
             {isWorking && workingOperation === 'upload' ? (
               <>
@@ -422,10 +441,10 @@ export const SyncButton: React.FC<SyncButtonProps> = () => {
               </>
             ) : (
               <>
-                <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 lg:mr-1 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
                 </svg>
-                上传
+                <span className="hidden lg:inline">上传</span>
               </>
             )}
           </button>
@@ -433,12 +452,13 @@ export const SyncButton: React.FC<SyncButtonProps> = () => {
           <button
             onClick={handleDownload}
             disabled={isWorking}
-            className={`flex items-center whitespace-nowrap px-3 py-1.5 rounded-md text-sm flat-interaction ${
+            className={`flex items-center whitespace-nowrap px-2 lg:px-3 py-1.5 rounded-md text-sm flat-interaction ${
               isWorking
                 ? 'bg-primary-100 text-primary-600'
                 : 'bg-primary-100 text-primary-600 hover:bg-primary-200'
               } transition-colors`}
             title="手动从云端下载会话到本地"
+            aria-label="从云端下载会话到本地"
           >
             {isWorking && workingOperation === 'download' ? (
               <>
@@ -450,10 +470,10 @@ export const SyncButton: React.FC<SyncButtonProps> = () => {
               </>
             ) : (
               <>
-                <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 lg:mr-1 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
                 </svg>
-                下载
+                <span className="hidden lg:inline">下载</span>
               </>
             )}
           </button>
@@ -611,8 +631,20 @@ export const SyncButton: React.FC<SyncButtonProps> = () => {
                 <div className="mb-4 min-h-[4.5rem] text-center">
                   <h3 id={downloadTitleId} className="text-xl font-semibold tracking-tight text-slate-900 dark:text-slate-50">下载到本地</h3>
                   <p id={downloadDescriptionId} className="mt-2 text-sm leading-6 text-slate-600 dark:text-slate-300">先看这次会怎么改动本地会话，再决定覆盖还是合并</p>
+                  {/* ── 2026-10-19 审计 C-6：删掉「当前合并策略」这行 ──────────
+                   * 它展示的是 settings.syncStrategy，但那个设置**没有任何入口**
+                   * （grep 全仓：除默认值、上/下行字段映射、诊断导出与这一行
+                   * 之外没有读取方），而合并**固定**走 mergeOpStamped
+                   * （组级 LWW 整组覆盖，见 src/services/syncEngine.ts）。
+                   *
+                   * 也就是说这行在陈述一个用户改不了、且**根本没被执行**的策略。
+                   * 若存量设置是 local / remote / ask，弹窗会显示一个从未发生
+                   * 的合并行为 —— 这是本仓库最不该出现的一类谎报。
+                   *
+                   * 下面这行说的是**真实**行为：同一会话在两台设备上都改过时，
+                   * 以最后一次保存的一方为准。 */}
                   <p className="mt-2 text-xs font-medium text-sky-600 dark:text-sky-300">
-                    当前合并策略：{getSyncStrategyLabel(settings.syncStrategy)}
+                    同一会话在两台设备上都改过时，以最后一次保存的一方为准
                   </p>
                 </div>
 

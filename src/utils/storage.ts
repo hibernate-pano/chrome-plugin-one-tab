@@ -308,6 +308,14 @@ export interface ImportDetailedResult {
   pending: boolean;
   /** 仅失败时存在：面向用户的原因说明（不直接展示内部堆栈/错误类名）。 */
   reason?: string;
+  /**
+   * 「已存在而跳过」的会话数（2026-10-19 审计 F-5）。
+   *
+   * 与「为空会话 / 只含不可保存网址」是**两种完全不同的跳过**：
+   * 前者是幂等（正常，用户重复导入同一份备份），后者说明文件内容有问题。
+   * UI 必须分开说，否则用户重复导入一次就以为自己的备份坏了。
+   */
+  skippedExisting?: number;
 }
 
 class ChromeStorage {
@@ -1018,7 +1026,7 @@ class ChromeStorage {
    *   返回的 imported 数组），本地路径是 `merged.imported`。原先两条都丢掉，
    *   UI 只拿到一个 boolean，于是「导入了 3 个、跳过 7 个」无从告知。
    */
-  private async mergeImportedGroups(incoming: TabGroup[]): Promise<number> {
+  private async mergeImportedGroups(incoming: TabGroup[]): Promise<{ imported: number; skippedExisting: number }> {
     // 2026-10-10 P2-4：幂等前置 —— 不再信任调用方「已归一化」。
     // 本方法此前只有两个调用方（两条路径都已经过 normalizeImportedGroup），
     // 所以这一行当下是恒等变换；它防的是**下一个**调用方（或被改回原样的
@@ -1029,7 +1037,7 @@ class ChromeStorage {
     // 代价是一趟数组映射（几百组的规模下远小于一次落盘往返）。
     const safeIncoming = incoming.map(normalizeImportedGroup);
     if (hasMutationSender()) {
-      const res = await sendMutation<TabGroup[]>({ op: 'importGroups', groups: safeIncoming });
+      const res = await sendMutation<{ imported: number; skippedExisting: number }>({ op: 'importGroups', groups: safeIncoming });
       if (!res.ok) {
         // 超时 ≠ 未受理（1.22.14）：sendMutation 把超时折成 { ok:false,
         // error:'操作超时…' }（它内部吞掉一切异常）。但超时的真实语义只是
@@ -1041,12 +1049,17 @@ class ChromeStorage {
         // 列表展示真实结果；极端情况下列表短暂未含导入内容，等 SW 跑完再开即见。
         if (typeof res.error === 'string' && res.error.startsWith(TIMEOUT_REASON_PREFIX)) {
           logWarn('[Storage] 导入等待超时，命令已受理并在后台继续执行（不报失败，避免重复导入整份副本）');
-          return -1;
+          return { imported: -1, skippedExisting: 0 };
         }
         // 其余明确失败如实失败：不退回本地直写——那正是本方法要消灭的竞态路径。
         throw new Error(res.error ?? 'Service Worker 未接受导入');
       }
-      return Array.isArray(res.payload) ? res.payload.length : -1;
+      const payload = res.payload;
+      if (payload && typeof payload === 'object' && typeof payload.imported === 'number') {
+        return { imported: payload.imported, skippedExisting: payload.skippedExisting ?? 0 };
+      }
+      // 旧形状（数组）兜底：SW 版本比本仓旧时按数组长度算。
+      return { imported: Array.isArray(payload) ? payload.length : -1, skippedExisting: 0 };
     }
 
     const existing = await this.getGroupsForWrite();
@@ -1060,7 +1073,7 @@ class ChromeStorage {
     );
     await this.setGroupsImmediate(merged.groups);
     await this.markGroupsChangedByImport();
-    return merged.imported.length;
+    return { imported: merged.imported.length, skippedExisting: merged.skippedExisting };
   }
 
   /**
@@ -1320,7 +1333,7 @@ class ChromeStorage {
             '以及 chrome://、edge:// 等浏览器内部地址会被跳过）' };
       }
 
-      const importedCount = await this.mergeImportedGroups(groups);
+      const merged = await this.mergeImportedGroups(groups);
 
       // 如果有设置数据，则合并设置
       if (data.data.settings) {
@@ -1347,9 +1360,14 @@ class ChromeStorage {
       return {
         ok: true,
         // importedCount === -1 表示超时但命令已受理（后台继续跑，真实数量未知）
-        imported: importedCount < 0 ? 0 : importedCount,
+        imported: merged.imported < 0 ? 0 : merged.imported,
         source: groups.length,
-        pending: importedCount < 0,
+        pending: merged.imported < 0,
+        // 2026-10-19 审计 F-5：「已存在而跳过」的个数。
+        // UI 据此把「幂等跳过」与「文件内容有问题」分开说 —— 原先两者共用
+        // 一句「为空会话或只含无法保存的网址」，用户重复导入同一份备份时
+        // 看到的是「你的备份文件坏了」。
+        skippedExisting: merged.skippedExisting,
       };
     } catch (error) {
       logError('导入数据失败:', error);
@@ -1389,6 +1407,8 @@ class ChromeStorage {
     imported?: number;
     source?: number;
     pending?: boolean;
+    /** 「已存在而跳过」的会话数（2026-10-19 审计 F-5，语义同 ImportDetailedResult）。 */
+    skippedExisting?: number;
   }> {
     try {
       if (!text || typeof text !== 'string') {
@@ -1425,12 +1445,15 @@ class ChromeStorage {
       // 不保证任意两次调用的副作用可交换。回归锁（每次入口恰好调 1 次）在
       // tests/p0DataSafetyGuards.test.ts。
       // 2026-10-09 我给它加返回值统计时差点留了重复调用，靠自查发现。
-      const importedCount = await this.mergeImportedGroups(importableGroups);
+      const merged = await this.mergeImportedGroups(importableGroups);
       return {
         ok: true,
-        imported: importedCount < 0 ? 0 : importedCount,
+        imported: merged.imported < 0 ? 0 : merged.imported,
         source: parsedGroups.length,
-        pending: importedCount < 0,
+        pending: merged.imported < 0,
+        // 2026-10-19 审计 F-5：与 JSON 路径同一口径，UI 才能分开说
+        // 「已存在（幂等）」与「内容有问题」。
+        skippedExisting: merged.skippedExisting,
       };
     } catch (error) {
       logError('从 OneTab 格式导入数据失败:', error);

@@ -96,16 +96,24 @@ describe('handleSwitchBack：保存失败必须成对回滚 Redux', () => {
   });
 
   it('两个字段进 useCallback 依赖数组（否则回滚会还原成陈旧值）', () => {
-    const deps = body.slice(body.lastIndexOf('}, ['));
+    // 依赖数组取 **handleSwitchBack 自己的** 那个：body 现在一路延伸到
+    // runForget（因为 handleForget 拆成了包装 + 执行体），若还用
+    // lastIndexOf 找 `}, [`，会落到 runForget 的依赖上 —— 守卫断言的
+    // 就不再是被测的那个函数了。
+    const depsStart = body.indexOf('}, [');
+    assert.ok(depsStart > -1, '找不到 handleSwitchBack 的依赖数组');
+    const deps = body.slice(depsStart, body.indexOf(']);', depsStart) + 2);
     assert.match(deps, /settings\.syncBackend/, 'prevBackend 的取值来源必须进依赖');
     assert.match(deps, /settings\.syncEnabled/, 'prevEnabled 的取值来源必须进依赖');
   });
 });
 
 describe('handleForget：关自动同步失败时不得假装关掉了', () => {
+  // 2026-10-19 审计 V-4：handleForget 现在是「确认框包装」，
+  // 真正的执行体（会写盘、可能失败的那段）是 runForget —— 断言落在它身上。
   const body = sliceOf(
     SETTINGS,
-    'const handleForget = useCallback(',
+    'const runForget = useCallback(',
     'const handleLock = useCallback('
   );
 
@@ -175,7 +183,11 @@ describe('HeaderDropdown：外点用 click、Escape 可关闭', () => {
   it('Escape 走 keydown 监听并完整清理', () => {
     const at = MENU.indexOf("addEventListener('keydown'");
     assert.ok(at > -1, '必须有键盘关闭路径（否则只剩鼠标能关）');
-    const effect = MENU.slice(Math.max(0, at - 600), at + 400);
+    // 2026-10-19 审计 C-7：这段监听里现在还多了方向键处理（菜单的
+    // roving tabindex），代码变长了 —— 取整个 effect 而不是固定窗口，
+    // 否则「Escape 判定」会被挤出取样范围，守卫自己先瞎了。
+    const effectStart = MENU.lastIndexOf('useEffect(', at);
+    const effect = MENU.slice(Math.max(0, effectStart), at + 400);
     assert.match(effect, /'Escape'/, '监听要判定 Escape');
     assert.match(effect, /onClose\(\)/, 'Escape 必须真的关菜单');
     assert.match(MENU, /removeEventListener\('keydown'/, '卸载时必须移除监听');

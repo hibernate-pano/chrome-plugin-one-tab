@@ -79,9 +79,18 @@ export const ConfirmDialog: React.FC<ConfirmDialogProps> = ({
       onClose={onCancel}
       footer={
         <>
+          {/* ── 2026-10-19 审计 P1-5：描边用 border-strong ──────────────────
+           * 修复前是 `border theme-border-default`：在 legacy / creamy / apple 的
+           * **深色**主题里，--color-border-default 与 --color-bg-tertiary 是
+           * 同一个值 —— 描边与底色一起塌成一块，「取消」按钮融进面板里，
+           * 看不出这是个按钮（实测底色与描边都是 rgb(55,65,81) / rgb(63,58,54)）。
+           * border-strong 在这些主题里都明显更亮（#4b5563 / #57534e / #48484a）。
+           */}
           <button
             onClick={onCancel}
-            className="inline-flex items-center justify-center rounded-xl border border-slate-200 bg-slate-100 px-4 py-2.5 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-200 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-600 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700 dark:focus-visible:outline-slate-300"
+            // 2026-10-19 审计 V-6：取消按钮也跟主题（原先写死 slate 系，
+            // 在暖色主题下是一块冷灰补丁）。
+            className="inline-flex items-center justify-center rounded-xl border theme-border-strong theme-bg-tertiary px-4 py-2.5 text-sm font-medium theme-text-primary transition-colors hover:theme-btn-hover focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary-600"
           >
             {cancelText}
           </button>

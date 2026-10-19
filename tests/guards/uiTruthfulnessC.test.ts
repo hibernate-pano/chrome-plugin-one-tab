@@ -21,7 +21,7 @@
 // 源码字符串断言只作补充护栏，用来钉住「组件真的调用了这些纯函数」。
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -45,12 +45,14 @@ const read = (rel: string): string => readFileSync(resolve(ROOT, rel), 'utf8');
 const stripComments = (src: string): string =>
   src.replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/(^|[^:])\/\/.*$/gm, '$1');
 
+/** 拼出仓库内绝对路径（用于存在性断言）。 */
+const p = (...parts: string[]): string => resolve(ROOT, ...parts);
+
 const SYNC_BUTTON = 'src/components/sync/SyncButton.tsx';
 const HEADER_DROPDOWN = 'src/components/layout/HeaderDropdown.tsx';
 const WEBDAV_SETTINGS = 'src/components/sync/WebDavSettings.tsx';
 const OPTIONS_PAGE = 'src/options/OptionsPage.tsx';
 const SEARCH_LIST = 'src/components/search/SearchResultList.tsx';
-const WELCOME = 'src/components/common/PersonalizedWelcome.tsx';
 const TAB_LIST = 'src/components/tabs/TabList.tsx';
 
 const ALL_STATUS_KINDS: BackendStatusKind[] = [
@@ -451,38 +453,45 @@ describe('C4 批量恢复成功反馈：条数用 matchingTabs.length', () => {
 });
 
 // ══════════════════════════════════════════════════════════════════════════
-// C5：PersonalizedWelcome 的死分支与死 DOM 已删除
+// C5：空态的欢迎语与统计块
+//
+// 2026-10-19 审计 I-1：原先 PersonalizedWelcome 是一张独立的满宽大卡
+// （主审真机实测 400×600 下高 258px，占视口 43%，却零操作价值），
+// 与下面那张真正有 CTA 的空态卡上下叠成「两层大卡」。它已被整卡删除，
+// 问候语降级为标题上的一行字（getEmptyStateGreeting）。
+//
+// 本组断言随之改成钉住**新结构的不变式**：
+//   · 统计块（tabCount 分档文案、绿点「可恢复」）永久不得回来
+//   · 空态只有一张卡
+//   · 问候语仍然存在（功能没丢，只是换了位置）
 // ══════════════════════════════════════════════════════════════════════════
-describe('C5 PersonalizedWelcome：不可达的统计块与分档文案已删除', () => {
-  const src = stripComments(read(WELCOME));
-
-  it('`{tabCount > 0 && (...)}` 整块已删除（唯一调用点只在空列表分支 ⇒ 恒不渲染）', () => {
-    assert.ok(!/tabCount\s*>\s*0/.test(src), '这条条件永远不会成立：DOM 从来不存在');
-    assert.ok(!src.includes('个标签页'), '统计块的内容也随块删除');
-    assert.ok(!src.includes('可恢复'), '绿点「可恢复」是一句未经任何数据检查的断言');
-  });
-
-  it('tabCount 分档的三条不可达分支已删除', () => {
-    assert.ok(!/getMotivationalMessage/.test(src), 'tabCount<10 / <50 / 其它三条分支不可达');
-    assert.ok(!/getEmoji/.test(src), '同上：emoji 也只有 tabCount===0 那档会走到');
-    assert.ok(!/tabCount/.test(src), 'prop 与内部分档都不该保留（保留 = 诱导后人再接一次死数据）');
-  });
-
-  it('唯一的欢迎语仍然存在（删的是死分支，不是整个功能）', () => {
-    assert.match(src, /先保存一个工作会话/);
-    assert.match(src, /早上好|下午好|晚上好/, '问候语按时间分档是真可达的分支');
-    assert.match(src, /TapStackLogo/);
-  });
-
-  it('调用点不再传 tabCount，且当处标签总数恒为 0', () => {
+describe('C5 空态：只有一张卡，问候语降级为标题的一部分', () => {
+  it('统计块与分档文案永久不得回来', () => {
+    assert.ok(!existsSync(p('src/components/common/PersonalizedWelcome.tsx')),
+      '欢迎卡整卡已删（它占了 43% 视口高度却零操作价值）');
     const list = stripComments(read(TAB_LIST));
-    assert.ok(
-      !/<PersonalizedWelcome tabCount=/.test(list),
-      '传 tabCount 会让人以为统计块还在工作'
-    );
-    assert.match(list, /<PersonalizedWelcome className="tab-group-card p-6" \/>/);
-    // 反过来确认「恒为 0」这个前提仍然成立：组件只在 filteredGroups.length === 0 分支渲染。
-    assert.match(list, /if \(filteredGroups\.length === 0 && !searchQuery\) \{/);
+    assert.ok(!/PersonalizedWelcome/.test(list), '空态不再叠第二张欢迎卡');
+    assert.ok(!/tabCount\s*>\s*0/.test(list), '统计块的条件永远不成立');
+    assert.ok(!list.includes('个标签页'), '统计块的内容也随块删除');
+    assert.ok(!list.includes('可恢复'), '绿点「可恢复」是一句未经任何数据检查的断言');
+  });
+
+  it('问候语仍然存在（删的是那张卡，不是问候这件事）', () => {
+    const greeting = stripComments(read('src/components/common/emptyStateGreeting.ts'));
+    assert.match(greeting, /早上好|下午好|晚上好/, '问候语按时间分档是真可达的分支');
+    const list = stripComments(read(TAB_LIST));
+    assert.match(list, /getEmptyStateGreeting/, '空态标题用问候语');
+    assert.match(list, /先保存一个工作会话/, '标题仍要说清第一步要做什么');
+  });
+
+  it('空态分支只渲染一张卡', () => {
+    const list = stripComments(read(TAB_LIST));
+    const branchAt = list.indexOf('if (filteredGroups.length === 0 && !searchQuery) {');
+    assert.ok(branchAt !== -1, '空态分支必须存在');
+    const body = list.slice(branchAt, list.indexOf('if (error && groups.length === 0)', branchAt));
+    // 一张卡 = 一个 EmptyState；不允许多个并排的大卡
+    const emptyStateCount = (body.match(/<EmptyState/g) ?? []).length;
+    assert.equal(emptyStateCount, 1, `空态只允许一张 EmptyState 卡，实际 ${emptyStateCount} 张`);
   });
 });
 

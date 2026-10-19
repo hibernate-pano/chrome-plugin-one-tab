@@ -83,6 +83,16 @@ interface DraggableTabProps {
    * 不重复这套判据，避免「两处判据各自漂移」。回调负责出声说明替代路径。
    */
   onDragBlocked?: () => void;
+  /**
+   * 锁定会话里的标签被尝试拖走时的回调（2026-10-19 审计 F-3）。
+   *
+   * 锁定承诺「组内不发生删除」，而把标签拖到**别的**会话 = 从本组移除，
+   * 拖走最后一条更是整组物理移除。所以锁定组的行一律不可拖。
+   *
+   * 回调负责出声：拦下却不出声，用户会以为是自己没拖动成功，反复试。
+   * 可选（undefined = 不出声），但 TabGroup 与搜索页都传了。
+   */
+  onLockedDragBlocked?: () => void;
   moveTab: (sourceGroupId: string, sourceIndex: number, targetGroupId: string, targetIndex: number) => void;
   handleOpenTab: (tab: Tab) => void;
   handleDeleteTab: (tabId: string) => void;
@@ -119,6 +129,7 @@ export const DraggableTab: React.FC<DraggableTabProps> = React.memo(({
   itemCount,
   locked,
   onDragBlocked,
+  onLockedDragBlocked,
   moveTab,
   handleOpenTab,
   handleDeleteTab
@@ -184,6 +195,23 @@ export const DraggableTab: React.FC<DraggableTabProps> = React.memo(({
   }, []);
 
   const handleDragStart = useCallback((e: React.DragEvent<HTMLDivElement>) => {
+    // ── 锁定会话的标签不得被拖走（2026-10-19 审计 F-3）────────────────────
+    // 锁定承诺的是「组内不发生删除」，而拖走**最后一条**标签 = 整组物理移除
+    // （applyMoveTab 的既有语义，见 src/core/mutationOps.ts）。
+    //
+    // 修复前 DraggableTab 的 `draggable={!locked}` 是无条件的，locked 只用来隐藏 ✕
+    // 按钮：于是锁定会话照样能被拖空，卡片从列表消失（磁盘上仍留着 0 标签的
+    // 组并继续同步），而 src/components/tabs/TabGroup.tsx 的注释却写着
+    // 「锁定组的标签渲染层不提供删除/拖出」—— 说法与行为相反。
+    //
+    // 判据与 ✕ 删除按钮同源（同一个 locked 标记），不另立一套。
+    // 拦在这里而不是在数据层：数据层 moveTab 对锁定组是允许的（组内换序），
+    // 但**拖出**组外就等于删除，必须在交互入口拒绝。
+    if (locked) {
+      e.preventDefault();
+      onLockedDragBlocked?.();
+      return;
+    }
     // ── 拖走未锁定会话的最后一条活跃标签 = 整组物理删除（无回收站） ──────────
     // 口径（主 agent 已定的产品口味 #5）：**拒绝这次拖拽 + 说明替代路径**，
     // 不在拖动中途弹确认框（拖动是连续手势，弹框与「拖后回滚」都是新交互且更差）。
@@ -205,7 +233,7 @@ export const DraggableTab: React.FC<DraggableTabProps> = React.memo(({
     // 且 Firefox 需要至少设置一样数据才会真正开始拖拽。
     e.dataTransfer.setData(DRAG_TEXT_TYPE, tab.url);
     setIsDragging(true);
-  }, [groupId, index, tab.id, tab.url, onDragBlocked]);
+  }, [groupId, index, tab.id, tab.url, onDragBlocked, locked, onLockedDragBlocked]);
 
   const handleDragEnd = useCallback(() => {
     // 会话必须无条件关闭：漏掉就等于把这次的源下标带进下一次拖拽（又是搬错行）
@@ -317,7 +345,15 @@ export const DraggableTab: React.FC<DraggableTabProps> = React.memo(({
   return (
     <div
       ref={ref}
-      draggable
+      // ── 锁定会话的标签不可拖（2026-10-19 审计 F-3）────────────────────
+      // 拖出组 = 从本组移除，拖走最后一条 = 整组物理移除。锁定承诺的是
+      // 「组内不发生删除」，所以锁定组的行根本不该能进入拖拽态 ——
+      // 与 ✕ 删除按钮「锁定时不渲染」同一口径：不渲染 / 不可用，而不是
+      // 渲染出来再拦（后者是「按了没反应」）。
+      //
+      // handleDragStart 里也有一道同样的闸（拖拽被脚本触发时的兜底），
+      // 两处同源：draggable 决定「能不能开始」，dragStart 决定「一定不开始」。
+      draggable={!locked}
       onDragStart={handleDragStart}
       onDragEnd={handleDragEnd}
       onDragOver={handleDragOver}
@@ -404,7 +440,8 @@ export const DraggableTab: React.FC<DraggableTabProps> = React.memo(({
     prevProps.moveTab === nextProps.moveTab &&
     prevProps.handleOpenTab === nextProps.handleOpenTab &&
     prevProps.handleDeleteTab === nextProps.handleDeleteTab &&
-    prevProps.onDragBlocked === nextProps.onDragBlocked;
+    prevProps.onDragBlocked === nextProps.onDragBlocked &&
+    prevProps.onLockedDragBlocked === nextProps.onLockedDragBlocked;
 
   return callbacksEqual;
 });

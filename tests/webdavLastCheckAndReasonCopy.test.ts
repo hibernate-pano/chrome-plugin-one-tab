@@ -126,8 +126,9 @@ describe('A6 接线：mount 播种 + 测试后持久化（源码护栏）', () =
   });
 
   it('清除配置时一并失效上次结果（否则会播种一个不属于任何配置的绿灯）', () => {
+    // 2026-10-19 审计 V-4：handleForget 是「确认框包装」，执行体是 runForget。
     const forget = CODE.slice(
-      CODE.indexOf('const handleForget = useCallback('),
+      CODE.indexOf('const runForget = useCallback('),
       CODE.indexOf('const handleLock = useCallback(')
     );
     assert.match(forget, /setSavedCfg\(null\)/, '磁盘配置已无，本组件手上的 cfg 也要清');

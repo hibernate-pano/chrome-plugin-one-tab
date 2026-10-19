@@ -28,6 +28,8 @@ import { SafeFavicon } from '@/components/common/SafeFavicon';
 import { EmptyState } from '@/components/common/EmptyState';
 import { getSessionResultSummary, getDisplayUrl } from '@/utils/sessionPresentation';
 import { logError } from '../../utils/log';
+import { toServiceWorkerErrorCopy } from '@/utils/serviceWorkerErrorCopy';
+import { mutationErrorMessage } from '@/components/tabs/mutationErrorCopy';
 
 const PinIcon = () => (
   <svg className="w-3 h-3 text-blue-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
@@ -254,7 +256,7 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({ searchQuery 
         })
         .catch(error => {
           logError('恢复会话后清理原会话失败:', error);
-          showDeleteError(`恢复会话后清理原会话失败: ${error.message || '未知错误'}`);
+          showDeleteError(mutationErrorMessage('恢复会话后清理原会话', error));
         })
         .finally(releaseAllOnce);
     };
@@ -272,7 +274,10 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({ searchQuery 
         // 打开了，记录原样保留（可重试），不能先删后开。
         if (!r || r.success !== true) {
           releaseAllOnce();
-          showDeleteError(`${r?.error || '恢复会话失败'}。原会话仍保留在列表中。`);
+          // 2026-10-19 审计 F-7：同 TabGroup，SW 的机器码要先翻译成中文。
+          showDeleteError(
+            `${toServiceWorkerErrorCopy(r?.error, '恢复会话失败')}。原会话仍保留在列表中。`
+          );
           return;
         }
         consumeSession();
@@ -320,7 +325,7 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({ searchQuery 
         data: { url: tab.url, pinned: !!tab.pinned },
       }).catch(error => {
         logError('打开标签失败:', error);
-        showRestoreError(`打开失败：${error?.message || '未知错误'}`);
+        showRestoreError(mutationErrorMessage('打开标签', error));
       });
       return;
     }
@@ -333,7 +338,7 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({ searchQuery 
         const r = res as { success?: boolean; error?: string } | undefined;
         if (!r || r.success !== true) {
           releaseOnFailure();
-          showRestoreError(r?.error || '打开失败，已保留在会话中');
+          showRestoreError(toServiceWorkerErrorCopy(r?.error, '打开失败，已保留在会话中'));
           return;
         }
         dispatch(deleteTabAndSync({ groupId: group.id, tabId: tab.id }))
@@ -344,7 +349,7 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({ searchQuery 
           })
           .catch(error => {
             logError('打开后从会话移除失败:', error);
-            showDeleteError(`标签已打开，但从会话移除失败: ${error.message || '未知错误'}`);
+            showDeleteError(mutationErrorMessage('标签已打开，但从会话移除', error));
           });
       }
     );
@@ -368,7 +373,7 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({ searchQuery 
           if (warn) showDeleteError(warn);
         })
         .catch(error => {
-          showDeleteError(`更新会话失败: ${error.message || '未知错误'}`);
+          showDeleteError(mutationErrorMessage('更新会话', error));
         });
     };
 
@@ -398,7 +403,17 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({ searchQuery 
     const sessionCount = sessionResults.length;
     showConfirm({
       title: `恢复搜索结果中的 ${matchingTabs.length} 个标签？`,
-      message: `将在新窗口打开 ${sessionCount} 个会话中的 ${matchingTabs.length} 个标签；未锁定的会话将从列表移除（恢复即消费原会话，无回收站）。确认继续吗？`,
+      // ── 2026-10-19 审计 F-4：文案必须等于真实行为 ──────────────────────
+      // 原先这里写「未锁定的会话将从列表移除」，而实际执行的只是
+      // consumeMatchedTabs —— 对**命中的标签**逐条 deleteTabAndSync。
+      // 一个会话有 10 条标签、只中 1 条时，恢复后该会话仍在列表里（剩 9 条），
+      // 而确认框与结果提示都说「会话从列表移除」：两处都在说一件没发生的事。
+      //
+      // 真实语义：会话内**只有命中的那些标签**被移除；某会话若因此被清空，
+      // 它会随「删掉最后一条」一并消失（那是有条件的一句话说清，不是承诺）。
+      message: `将在新窗口打开 ${sessionCount} 个会话中的 ${matchingTabs.length} 个标签；` +
+        `命中的标签会从所属会话中移除，会话内其余标签保留。` +
+        `（某会话若因此被清空，会一并从列表消失；删除不可恢复。）确认继续吗？`,
       type: 'info',
       confirmText: '全部恢复',
       cancelText: '取消',
@@ -427,7 +442,7 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({ searchQuery 
             if (warn) showDeleteError(warn);
           } catch (error) {
             logError('批量恢复后删除会话失败:', error);
-            showDeleteError(`批量恢复后清理原会话失败: ${(error as { message?: string })?.message || '未知错误'}`);
+            showDeleteError(mutationErrorMessage('批量恢复后清理原会话', error));
           }
         }
       })();
@@ -445,14 +460,16 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({ searchQuery 
         // 批量恢复同样先开后删：没有 success:true 就没有证据证明标签打开了，
         // 一条记录都不消费（原实现是发送前就跨多个组删，失败时全丢）。
         if (!r || r.success !== true) {
-          showDeleteError(`${r?.error || '恢复失败'}。所涉记录仍保留在列表中。`);
+          showDeleteError(
+            `${toServiceWorkerErrorCopy(r?.error, '恢复失败')}。所涉记录仍保留在列表中。`
+          );
           return;
         }
         consumeMatchedTabs();
         if (typeof r.skippedUnopenable === 'number' && r.skippedUnopenable > 0) {
-          // 批量会话里锁定态可能混杂，按「是否真的删了记录」分流：
+          // 同 F-4：只说真实发生的事 —— 移除的是**命中的标签**，不是整个会话。
           const removedNote = matchingTabs.some(t => !t.group.isLocked)
-            ? '未锁定的会话已从列表移除（恢复即消费原会话，无回收站）。'
+            ? '命中的标签已从所属会话移除，会话内其余标签保留。'
             : '所涉会话均已锁定，记录仍在列表中。';
           showDeleteError(
             `已恢复 ${tabsPayload.length - r.skippedUnopenable} 个标签；另有 ` +

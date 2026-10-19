@@ -74,6 +74,7 @@ html[data-theme="chrome"] {
   --shadow-elevation-1: 0 1px 2px rgba(60, 64, 67, 0.3);
   --shadow-elevation-2: 0 1px 2px rgba(60, 64, 67, 0.3), 0 2px 6px 2px rgba(60, 64, 67, 0.15);
   --shadow-elevation-3: 0 4px 8px 3px rgba(60, 64, 67, 0.15), 0 1px 3px rgba(60, 64, 67, 0.3);
+  --color-toggle-on-fg: #ffffff;
 }
 
 html[data-theme="chrome"].dark {
@@ -123,6 +124,7 @@ html[data-theme="chrome"].dark {
 
   --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.5), 0 1px 3px 1px rgba(0, 0, 0, 0.3);
   --shadow-card-hover: 0 1px 3px rgba(0, 0, 0, 0.5), 0 4px 8px 3px rgba(0, 0, 0, 0.3);
+  --color-toggle-on-fg: #0f172a;
 }
 
 /* ── 结构性覆盖 ─────────────────────────────────────────────── */

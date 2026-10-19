@@ -99,15 +99,11 @@ const groups = [
       ['https://juejin.cn/post/2026-react-ecosystem', '2026 前端年度报告：React 生态盘点 - 掘金', 90],
     ],
   }),
-  // 墓碑组：验证回收站视图
-  group('过期的旧调研', {
-    isDeleted: true,
-    order: 6,
-    ageHours: 200,
-    tabs: [
-      ['https://example.com/old-research', '过期的调研资料'],
-    ],
-  }),
+  // ── 2026-10-19 审计 C-5：墓碑组已删 ──────────────────────────────────
+  // 回收站 / 墓碑体系在 v1.22.0 就被整体移除了（README「不承诺的能力」）。
+  // 这个脚本此前仍在注入一条 isDeleted 的「墓碑组：验证回收站视图」——
+  // 它验证的是一个**不存在的功能**，产出的截图里那张卡在真实界面上根本
+  // 不会出现。留着它 = 审计证据与产品现实脱节。
 ];
 
 async function injectGroups(page, data) {

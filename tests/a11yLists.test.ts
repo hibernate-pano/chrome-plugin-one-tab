@@ -28,6 +28,7 @@ import {
   resolveTabCycleTarget,
 } from '../src/components/onboarding/onboardingKeymap.ts';
 import { toListErrorCopy } from '../src/components/tabs/listErrorCopy.ts';
+import { saveAndCloseDescription } from '../src/components/layout/saveActionCopy.ts';
 import {
   SEARCH_EVENT_THROTTLE_MS,
   buildSearchEventSignature,
@@ -387,18 +388,63 @@ describe('引导弹层：键盘与焦点', () => {
 // ── 【7 · P1】聚光灯选择器必须真的命中元素 ────────────────────────────────────
 
 /** 抽出源码里所有 aria-label 的字面值（模板串把 ${…} 归一成 N，便于做前缀比较）。 */
+/**
+ * 已知的「文案常量 → 实际值」映射。
+ *
+ * 2026-10-19 审计 I-3 之后，保存按钮的 aria-label 不再是字面量，而是
+ * `aria-label={saveAndCloseDescription}`（指向共享常量，避免「说法与行为」
+ * 在两处漂移）。守卫必须能把它**求值**出来 —— 否则这条断言会因为
+ * 「源码里没有字面量」而静默失效：它本该拦住「改文案后引导高亮消失」，
+ * 自己却先瞎了。
+ */
+const KNOWN_LABEL_CONSTANTS: Record<string, string> = {
+  saveAndCloseDescription,
+};
+
+/** 把 `${常量名}` 替换成真实值；未知常量原样留下（后续断言会因此失败）。 */
+function resolveInterpolations(text: string): string {
+  return text.replace(/\$\{([^}]+)\}/g, (_m, name: string) => {
+    const key = name.trim();
+    return KNOWN_LABEL_CONSTANTS[key] ?? `\u0000UNKNOWN:${key}\u0000`;
+  });
+}
+
 function ariaLabelValuesIn(source: string): string[] {
   const values: string[] = [];
   for (const match of source.matchAll(/aria-label="([^"]*)"/g)) values.push(match[1]);
   for (const match of source.matchAll(/aria-label=\{`([^`]*)`\}/g)) {
     values.push(match[1].replace(/\$\{[^}]*\}/g, 'N'));
   }
+  // 表达式形态：aria-label={常量名} 或 aria-label={常量名 + ' 后缀'}
+  for (const match of source.matchAll(/aria-label=\{([A-Za-z_][A-Za-z0-9_]*)\}/g)) {
+    const key = match[1];
+    if (KNOWN_LABEL_CONSTANTS[key] !== undefined) {
+      values.push(KNOWN_LABEL_CONSTANTS[key]);
+    }
+  }
   return values;
 }
 
-/** 抽出 OnboardingGuide 里配置的全部 spotlightTarget。 */
+/**
+ * 抽出 OnboardingGuide 里配置的全部 spotlightTarget。
+ *
+ * 同时接受单引号与模板字符串两种写法：2026-10-19 审计 I-3 之后，保存按钮的
+ * 锚点改成了模板串（`` `[aria-label="${saveAndCloseDescription}"]` ``），
+ * 因为它的值来自共享常量。只有单引号一种写法时，**模板串里的目标会被整条
+ * 漏掉** —— 守卫反而看不见它，于是「选择器命中不了真实元素」这类回归
+ * 又能悄悄溜过去。
+ */
 function spotlightTargetsIn(source: string): string[] {
-  return [...source.matchAll(/spotlightTarget:\s*'([^']+)'/g)].map(m => m[1]);
+  const targets: string[] = [];
+  const single = /spotlightTarget:\s*'([^']+)'/g;
+  for (const m of source.matchAll(single)) targets.push(m[1]);
+  // 模板串：spotlightTarget: `...`
+  const templated = /spotlightTarget:\s*`([^`]+)`/g;
+  for (const m of source.matchAll(templated)) {
+    // 模板串里的 ${…} 用已知的文案常量求值（见 resolveInterpolations）。
+    targets.push(resolveInterpolations(m[1]));
+  }
+  return targets;
 }
 
 describe('引导聚光灯：选择器与真实 aria-label 一致', () => {

@@ -343,19 +343,14 @@ export const resolveMenuSyncStatus = (input: {
   };
 };
 
-export const getSyncStrategyLabel = (strategy: string) => {
-  switch (strategy) {
-    case 'local':
-      return '本地优先';
-    case 'remote':
-      return '云端优先';
-    case 'ask':
-      return '检测冲突后询问';
-    case 'newest':
-    default:
-      return '较新版本优先';
-  }
-};
+/**
+ * （2026-10-19 审计 C-6：原 getSyncStrategyLabel 已删除）
+ *
+ * 它把 settings.syncStrategy 翻译成「本地优先 / 云端优先 / 检测冲突后询问」，
+ * 而那个设置**没有任何入口**，合并也固定走 mergeOpStamped（组级 LWW）——
+ * 也就是说这个函数在陈述一个从未被执行的策略。留着它，早晚会有人再把它
+ * 接到界面上，重新引入一条谎报。
+ */
 
 const MAX_VISIBLE_NAMES = 2;
 

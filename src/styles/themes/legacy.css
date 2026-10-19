@@ -60,6 +60,45 @@ html[data-theme="legacy"] {
   --spacing-md: 16px;
   --spacing-lg: 24px;
   --spacing-xl: 32px;
+
+  /* ── 2026-10-19 审计 V-1：补齐二级 token ─────────────────────────────
+     修复前本主题缺 21 个二级 token（accent-text / strong / border / wash /
+     soft / toggle-on / toggle-off / well / note-bg / btn-hover /
+     panel-translucent / border-translucent / focus-ring / shadow-panel /
+     panel-blur / color-shell / 5 个 radius），于是 global.css 的全局兜底
+     生效 —— 而那些兜底值写死纯蓝 #2563eb。结果：切到暖色主题后，
+     空态图标底座、设置页选中态仍是纯蓝，同一个「强调」在一个主题里是
+     暖棕、另一个里是蓝，主题看起来像半成品。
+     这里的值全部从本主题自己的 --color-accent 派生。 */
+  --color-accent-text: #1d4ed8;
+  --color-accent-strong: #1d4ed8;
+  --color-accent-border: rgba(37, 99, 235, 0.45);
+  --color-accent-wash: rgba(37, 99, 235, 0.1);
+  --color-accent-soft: #dbeafe;
+  --color-toggle-on: #2563eb;
+  --color-toggle-off: #e5e7eb;
+  --color-well: #f3f4f6;
+  --color-note-bg: #f9fafb;
+  --color-btn-hover: rgba(37, 99, 235, 0.08);
+  --color-panel-translucent: rgba(255, 255, 255, 0.92);
+  --color-border-translucent: rgba(229, 231, 235, 0.9);
+  
+  --shadow-panel: 0 2px 8px rgba(17, 24, 39, 0.08);
+  --panel-blur: saturate(140%) blur(16px);
+  --color-shell: #f9fafb;
+  --radius-card: 0.5rem;
+  --radius-panel: 0.75rem;
+  --radius-control: 0.375rem;
+  --radius-input: 0.375rem;
+  --radius-input-sm: 0.25rem;
+  --color-toggle-on-fg: #ffffff;
+  --focus-ring: 0 0 0 3px rgba(37, 99, 235, 0.22);
+  --panel-blur: saturate(140%) blur(16px);
+  --radius-card: 0.5rem;
+  --radius-panel: 0.75rem;
+  --radius-control: 0.375rem;
+  --radius-input: 0.375rem;
+  --radius-input-sm: 0.25rem;
 }
 
 /* ==========================================
@@ -97,6 +136,26 @@ html[data-theme="legacy"].dark {
   --shadow-elevation-1: 0 1px 2px rgba(0, 0, 0, 0.2);
   --shadow-elevation-2: 0 4px 6px rgba(0, 0, 0, 0.3);
   --shadow-elevation-3: 0 10px 15px rgba(0, 0, 0, 0.4);
+
+  /* 深色模式：同一组 token 的深色取值（强调色更亮，文字色更沉） */
+  --color-accent-text: #93c5fd;
+  --color-accent-strong: #60a5fa;
+  --color-accent-border: rgba(96, 165, 250, 0.45);
+  --color-accent-wash: rgba(96, 165, 250, 0.14);
+  --color-accent-soft: #1e3a8a;
+  --color-toggle-on: #3b82f6;
+  --color-toggle-off: #374151;
+  --color-well: #1f2937;
+  --color-note-bg: #111827;
+  --color-btn-hover: rgba(96, 165, 250, 0.1);
+  --color-panel-translucent: rgba(31, 41, 55, 0.92);
+  --color-border-translucent: rgba(55, 65, 81, 0.9);
+  
+  --shadow-panel: 0 2px 8px rgba(0, 0, 0, 0.4);
+  --color-shell: #111827;
+  --color-toggle-on-fg: #1a1512;
+  --focus-ring: 0 0 0 3px rgba(37, 99, 235, 0.28);
+  --panel-blur: saturate(140%) blur(16px);
 }
 
 /* ==========================================

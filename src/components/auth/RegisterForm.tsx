@@ -3,6 +3,7 @@ import { useAppDispatch, useAppSelector } from '@/store/hooks';
 import { signUp, signIn, clearError } from '@/store/slices/authSlice';
 import { InlineNotice } from '@/components/common/InlineNotice';
 import { validateEmail, validatePassword } from '@/utils/inputValidation';
+import { restoreAfterLogin } from './restoreAfterLogin';
 import { logError } from '../../utils/log';
 
 interface RegisterFormProps {
@@ -69,6 +70,10 @@ export const RegisterForm: React.FC<RegisterFormProps> = ({ onSuccess }) => {
           // 想重试注册又只会得到「已注册」。LoginForm 一直是 .unwrap() 的，两处口径必须一致。
           try {
             await dispatch(signIn({ email, password })).unwrap();
+            // ── 2026-10-19 审计 F-6：注册后自动登录 ⇒ 同样拉一次云端 ────────
+            // 「注册」与「登录」是同一个意图：我要开始用这个账号。
+            // 走同一条路（restoreAfterLogin），两处行为不分裂。
+            void restoreAfterLogin(dispatch);
             if (onSuccess) {
               onSuccess();
             }

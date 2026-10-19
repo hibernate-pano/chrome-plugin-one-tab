@@ -66,7 +66,7 @@
     <li><code>storage</code>、<code>unlimitedStorage</code>：在本地保存会话数据、设置与登录状态；后者用于解除默认存储配额上限（重度用户可能保存数百个会话）。</li>
     <li><code>notifications</code>：保存成功或失败时给出系统通知，避免静默操作。</li>
     <li><code>contextMenus</code>：提供「保存当前标签页 / 保存其他标签页」右键菜单项。</li>
-    <li><code>alarms</code>：在您未打开扩展时，定时在后台检查云端是否有其他设备的新变更并合并到本地。</li>
+    <li><code>alarms</code>：<strong>仅在您开启「自动同步」后</strong>，在您未打开扩展时，按您选择的 5 / 10 / 30 / 60 分钟节奏在后台检查云端是否有其他设备的新变更并合并到本地。自动同步默认关闭，此时不会创建任何定时任务。</li>
     <li>主机权限 <code>https://*.supabase.co/*</code>：仅在您登录后用于鉴权与会话数据的跨设备同步，不访问其他任何网站。</li>
     <li>可选主机权限：仅当您<strong>主动选择「自带存储」并填写自己的云盘地址</strong>时，扩展才会请求访问该地址的权限（默认申请整个 <code>https</code> 域与本地地址，以便兼容各类自建服务）。<strong>未使用该功能时不会申请、也不会获得这项权限</strong>。可随时在 Chrome 的扩展详情页撤销。</li>
   </ul>

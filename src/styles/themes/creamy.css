@@ -58,6 +58,37 @@ html[data-theme='creamy'] {
   --spacing-md: 1rem;
   --spacing-lg: 1.5rem;
   --spacing-xl: 2rem;
+
+  /* ── 2026-10-19 审计 V-1：补齐二级 token（从本主题的暖棕 accent 派生） ──
+     修复前本主题缺 21 个二级 token，于是 global.css 的全局兜底生效 ——
+     而那些兜底值写死纯蓝 #2563eb。结果：切到暖色主题后，空态图标底座、
+     设置页选中态仍是纯蓝，同一个「强调」在一个主题里是暖棕、另一个里是蓝。 */
+  
+
+  /* 深色模式 */
+  --color-accent-text: #b45309;
+  --color-accent-strong: #d97706;
+  --color-accent-border: rgba(217, 119, 6, 0.45);
+  --color-accent-wash: rgba(217, 119, 6, 0.12);
+  --color-accent-soft: #fef3c7;
+  --color-toggle-on: #d97706;
+  --color-toggle-off: #f5e6d3;
+  --color-well: #fdf8ee;
+  --color-note-bg: #fefcf3;
+  --color-btn-hover: rgba(217, 119, 6, 0.08);
+  --color-panel-translucent: rgba(255, 253, 247, 0.92);
+  --color-border-translucent: rgba(245, 230, 211, 0.9);
+  
+  --shadow-panel: 0 2px 8px rgba(120, 53, 15, 0.08);
+  --color-shell: #fefcf3;
+  --color-toggle-on-fg: #1a1512;
+  --focus-ring: 0 0 0 3px rgba(217, 119, 6, 0.22);
+  --panel-blur: saturate(140%) blur(16px);
+  --radius-card: 0.75rem;
+  --radius-panel: 1rem;
+  --radius-control: 0.5rem;
+  --radius-input: 0.5rem;
+  --radius-input-sm: 0.375rem;
 }
 
 /* ==========================================
@@ -93,6 +124,28 @@ html[data-theme='creamy'].dark {
   --shadow-card: 0 2px 8px -2px rgb(0 0 0 / 0.4), 0 0 1px rgb(251 191 36 / 0.1);
   --shadow-card-hover: 0 12px 28px -8px rgb(0 0 0 / 0.5), 0 0 20px -4px rgb(251 191 36 / 0.15);
   --shadow-glow: 0 0 24px -4px rgb(251 191 36 / 0.4);
+  --color-toggle-on-fg: #0f172a;
+  --focus-ring: 0 0 0 3px rgba(217, 119, 6, 0.28);
+  --color-accent-text: #f59e0b;
+  --color-accent-strong: #fbbf24;
+  --color-accent-border: rgba(251, 191, 36, 0.45);
+  --color-accent-wash: rgba(251, 191, 36, 0.14);
+  --color-accent-soft: #451a03;
+  --color-toggle-on: #d97706;
+  --color-toggle-off: #3f3a36;
+  --color-well: #292524;
+  --color-note-bg: #1c1917;
+  --color-btn-hover: rgba(251, 191, 36, 0.1);
+  --color-panel-translucent: rgba(63, 58, 54, 0.92);
+  --color-border-translucent: rgba(63, 58, 54, 0.9);
+  --shadow-panel: 0 2px 8px rgba(0, 0, 0, 0.4);
+  --panel-blur: saturate(140%) blur(16px);
+  --color-shell: #1c1917;
+  --radius-card: 0.75rem;
+  --radius-panel: 1rem;
+  --radius-control: 0.5rem;
+  --radius-input: 0.5rem;
+  --radius-input-sm: 0.375rem;
 }
 
 /* ==========================================

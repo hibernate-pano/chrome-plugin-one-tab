@@ -98,6 +98,11 @@ const btnPrimary =
 const btnGhost =
   'rounded-md border theme-border-default px-3 py-2 text-xs font-medium text-gray-700 theme-btn-hover min-h-[2.5rem] ' +
   'dark:text-gray-200';
+/** 次级按钮（2026-10-19 审计 V-4）：描边 + 中性色。
+ *  与主按钮的差别必须在**视觉层级**上看得出来，而不只是少一个实心底。 */
+const btnSecondary =
+  'rounded-md border theme-border-default theme-bg-elevated px-3 py-2 text-xs font-medium theme-text-secondary ' +
+  'theme-btn-hover min-h-[2.5rem] disabled:opacity-50';
 
 /**
  * 坚果云模板地址（2026-10-16）。
@@ -165,7 +170,8 @@ export const WebDavSettings: React.FC = () => {
   // useToast() 返回的是**对象**（{ showToast, showConfirm, showAlert }），
   // 不是函数本身。写成 `const showToast = useToast()` 会得到
   // 「This expression is not callable」—— 类型系统当场抓住的错。
-  const { showToast } = useToast();
+  // 2026-10-19 审计 V-4：清除配置是不可逆且影响后台行为的动作，需要 showConfirm。
+  const { showToast, showConfirm } = useToast();
 
   const [baseUrl, setBaseUrl] = useState(JIANGUOYUN_TEMPLATE_URL);
   const [username, setUsername] = useState('');
@@ -1041,7 +1047,10 @@ export const WebDavSettings: React.FC = () => {
   //   · syncBackend 已是 supabase ⇒ 清除 WebDAV 配置本就不该影响它，
   //     解析会自然落回云端。
 
-  const handleForget = useCallback(async () => {
+  /**
+   * 清除配置的真实执行体（handleForget 确认通过后调用）。
+   */
+  const runForget = useCallback(async () => {
     try {
       await clearWebDavConfig();
       // 配置清了，内存/会话里的口令必须一起清 —— 否则旧口令配新地址，
@@ -1101,6 +1110,35 @@ export const WebDavSettings: React.FC = () => {
       showToast(err instanceof Error ? err.message : '清除失败', 'error');
     }
   }, [dispatch, showToast, settings.syncEnabled]);
+
+  /**
+   * 「清除配置」入口（2026-10-19 审计 V-4）。
+   *
+   * 【为什么要确认】这一颗按钮会：
+   *   · 清掉地址 / 账号 / 应用密码
+   *   · 清掉本次会话的加密口令
+   *   · **关掉自动同步**（影响后台行为）
+   * 而它此前和「锁定」长得一模一样（都是同款描边按钮），且**一次点击就生效**。
+   * 同产品的「删除会话」永远弹确认 —— 安全契约不一致。
+   *
+   * 确认框必须写清后果，否则用户是在盲点。
+   */
+  const handleForget = useCallback(() => {
+    showConfirm({
+      title: '清除云服务信息？',
+      message:
+        '将清空本机保存的地址、账号与应用密码，并清除本次会话的加密口令。' +
+        '同时会关闭自动同步（后台不再定时同步）。' +
+        '云盘上的文件不会被删除，之后需要重新填写才能继续同步。',
+      type: 'danger',
+      confirmText: '清除',
+      cancelText: '取消',
+      onConfirm: () => {
+        void runForget();
+      },
+      onCancel: () => { },
+    });
+  }, [showConfirm, runForget]);
 
   // ── 锁定（2026-10-14 修 P0 时加）────────────────────────────────────────
   // 只清口令、不清地址：用户离开电脑前点一下，后台同步即停并明确提示未解锁，
@@ -1237,22 +1275,71 @@ export const WebDavSettings: React.FC = () => {
         各自在何时被修改」，云盘服务商能看到这些信息，但不包含会话名称与网址。
       </div>
 
-      <div className="flex flex-wrap gap-2">
-        <button type="button" className={btnPrimary} onClick={handleTest} disabled={check.kind === 'checking'}>
-          {check.kind === 'checking' ? '测试中…' : '测试连接'}
-        </button>
+      {/* ── 2026-10-19 审计 V-4：按钮层级 ────────────────────────────────
+       * 修复前这里平铺 5 颗按钮，其中「测试连接」和「保存并启用」**都是实心
+       * 主按钮** —— 用户无法判断该先点哪个。而这两个的顺序恰恰是反的：
+       * 「测试连接」是**可选的预检**（不写盘），「保存并启用」才是让配置
+       * 真正生效的那一步。
+       *
+       * 现在：主色唯一给「保存并启用」（唯一让配置生效的动作），
+       * 「测试连接」降为次级描边，其余三颗收进「更多操作」里 ——
+       * 它们是低频且有副作用的动作，不该和「保存」平级。
+       */}
+      <div className="flex flex-wrap items-center gap-2">
         <button type="button" className={btnPrimary} onClick={handleSave} disabled={saving}>
           {saving ? '保存中…' : '保存并启用'}
         </button>
-        <button type="button" className={btnGhost} onClick={handleSwitchBack}>
-          切回 TapStack 云端
+        <button type="button" className={btnSecondary} onClick={handleTest} disabled={check.kind === 'checking'}>
+          {check.kind === 'checking' ? '测试中…' : '测试连接'}
         </button>
-        <button type="button" className={btnGhost} onClick={handleForget}>
-          清除配置
-        </button>
-        <button type="button" className={btnGhost} onClick={handleLock}>
-          锁定
-        </button>
+
+        {/* 更多操作：低频 + 有副作用的三颗 */}
+        <details className="relative">
+          <summary
+            className={`${btnGhost} list-none cursor-pointer inline-flex items-center`}
+            aria-label="更多自带存储操作"
+          >
+            更多操作
+            <svg
+              className="ml-1 h-3 w-3"
+              fill="none"
+              viewBox="0 0 24 24"
+              stroke="currentColor"
+              strokeWidth={2}
+              aria-hidden="true"
+            >
+              <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+            </svg>
+          </summary>
+          {/* ── 2026-10-19 审计 P2-7：靠右对齐 + 视口内收边 ──────────────
+           * 原先是 `left-0 top-full w-52`：设置页窗口宽 400px 时，菜单右缘
+           * 超出视口 40px，页面出现横向滚动条（实测 docW 440 vs winW 400）。
+           * 改为靠右对齐（right-0）+ max-w 跟着视口走。
+           */}
+          <div className="absolute right-0 top-full z-30 mt-1 w-52 max-w-[calc(100vw-2rem)] rounded-lg border theme-border-default theme-bg-elevated theme-shadow-panel py-1">
+            <button
+              type="button"
+              className="w-full px-3 py-2 text-left text-sm theme-text-secondary theme-btn-hover"
+              onClick={handleSwitchBack}
+            >
+              切回 TapStack 云端
+            </button>
+            <button
+              type="button"
+              className="w-full px-3 py-2 text-left text-sm theme-text-secondary theme-btn-hover"
+              onClick={handleLock}
+            >
+              锁定（停用同步并清除本次会话口令）
+            </button>
+            <button
+              type="button"
+              className="w-full px-3 py-2 text-left text-sm theme-text-danger theme-btn-hover"
+              onClick={handleForget}
+            >
+              清除配置
+            </button>
+          </div>
+        </details>
       </div>
 
       {/* 2026-10-17（双模式适配）：恢复 slim 分支删掉的二分 banner。

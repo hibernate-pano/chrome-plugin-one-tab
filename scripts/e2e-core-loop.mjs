@@ -69,9 +69,12 @@ try {
   await page.screenshot({ path: process.env.SHOT_PREFIX ? `${process.env.SHOT_PREFIX}-before.png` : undefined });
 
   // ── (c) 点顶栏「保存会话」——
-  await page.click('button[aria-label="保存当前窗口中的所有标签页为会话，并关闭这些标签页"]', { timeout: 20_000 });
+  await page.click('button[aria-label="把当前窗口的标签页保存为一个工作会话，并关闭这些标签页（删除不可撤销）"]', { timeout: 20_000 });
   await page.waitForFunction(
-    () => !!document.querySelector('button[aria-label^="保存当前窗口中的所有标签页"]')?.textContent?.includes('已保存'),
+    // 2026-10-19 审计 I-3：保存按钮的 aria-label 改用共享常量
+    // saveAndCloseDescription（可见文案也变成「保存并关闭标签」）。
+    // 这里用 aria-label 的**前缀**匹配，避免把整句写死（它会随文案变）。
+    () => !!document.querySelector('button[aria-label^="把当前窗口的标签页保存为一个工作会话"]')?.textContent?.includes('已保存'),
     undefined, { timeout: 20_000 }
   );
   await page.waitForTimeout(2000);

@@ -504,86 +504,7 @@ const OptionsContent: React.FC = () => {
             真的不落到 DOM），而 `inert={'' | undefined}` 又被 @types/react 拒绝 ——
             因此属性形状抽到了 formContainerGateProps（见那里的注释与行为断言）。 */}
         <div {...formContainerGateProps(settingsReady)}>
-          {/* ── 外观 ─────────────────────────────────────────────────── */}
-          <section className={card} aria-labelledby="sec-appearance">
-            <SectionTitle
-              title="外观"
-              hint="主题风格影响全局配色；明暗模式跟随系统或由你指定。"
-            />
-            <h3 className="sr-only" id="sec-appearance">
-              外观
-            </h3>
-
-            <div className="mb-4">
-              <label className={labelCls} htmlFor="opt-theme-mode">
-                明暗模式
-              </label>
-              <div className="flex gap-2" role="radiogroup" aria-label="明暗模式">
-                {([
-                  ['auto', '跟随系统'],
-                  ['light', '始终浅色'],
-                  ['dark', '始终深色'],
-                ] as const).map(([value, text]) => (
-                  <button
-                    key={value}
-                    type="button"
-                    role="radio"
-                    aria-checked={themeMode === value}
-                    onClick={() => setThemeMode(value as ThemeMode)}
-                    className={`flex-1 rounded-lg px-3 py-2 text-sm font-medium transition-colors border ${
-                      themeMode === value
-                        ? 'theme-toggle-on text-white border-transparent'
-                        : 'bg-gray-100 text-gray-600 border-transparent hover:bg-gray-200 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600'
-                    }`}
-                  >
-                    {text}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            <div className="mb-2">
-              <span className={labelCls}>主题风格</span>
-              <p className={`mb-2 ${hintCls}`}>
-                点下面任意一个预览即时切换，全局配色（含这个页面）立刻跟随。
-              </p>
-              {/* alwaysExpanded：设置页整页都是空白，收起主题列表等于让用户
-                  先点一下才知道能换主题。Playwright 实测过折叠态下卡片带
-                  `hidden`，是自动化与键盘用户的死区。 */}
-              <ThemeStyleSelector alwaysExpanded />
-            </div>
-          </section>
-
-          {/* ── 标签页 ────────────────────────────────────────────────── */}
-          <section className={card} aria-labelledby="sec-tabs">
-            <h3 className="sr-only" id="sec-tabs">
-              标签页
-            </h3>
-            <SectionTitle title="标签页" />
-
-            <div className="divide-y divide-gray-200 dark:divide-gray-700">
-              <ToggleRow
-                label="显示通知提醒"
-                hint="保存会话成功时发浏览器通知。失败提示不受此开关影响，始终会通知。需要扩展的「通知」权限。"
-                checked={settings.showNotifications}
-                onToggle={handleToggleNotifications}
-              />
-              <ToggleRow
-                label="删除前确认"
-                hint="删除整个会话、批量删除时先弹确认；删掉会话里最后一条标签（等于删掉整个会话）也会先确认。其余单个标签页的 ✕ 直接删。"
-                checked={settings.confirmBeforeDelete}
-                onToggle={handleToggleConfirmDelete}
-              />
-              <ToggleRow
-                label="保存时收集固定标签页"
-                hint="把浏览器里钉住的标签页也一并存进会话，方便回来时恢复现场。"
-                checked={settings.collectPinnedTabs}
-                onToggle={handleToggleCollectPinnedTabs}
-              />
-            </div>
-          </section>
-
-          {/* ── 同步 ──────────────────────────────────────────────────── */}
+          {/* ── 数据同步 ─────────────────────────────────────────────── */}
           <section className={card} aria-labelledby="sec-sync">
             <h3 className="sr-only" id="sec-sync">
               数据同步
@@ -603,7 +524,7 @@ const OptionsContent: React.FC = () => {
                   onClick={() => handleSelectBackend('supabase')}
                   className={`flex-1 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors border ${
                     settings.syncBackend === 'supabase'
-                      ? 'theme-toggle-on text-white border-transparent'
+                      ? 'theme-toggle-on border-transparent'
                       : 'bg-gray-100 text-gray-600 border-transparent hover:bg-gray-200 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600'
                   }`}
                 >
@@ -619,7 +540,7 @@ const OptionsContent: React.FC = () => {
                   onClick={() => handleSelectBackend('webdav')}
                   className={`flex-1 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors border ${
                     settings.syncBackend === 'webdav'
-                      ? 'theme-toggle-on text-white border-transparent'
+                      ? 'theme-toggle-on border-transparent'
                       : 'bg-gray-100 text-gray-600 border-transparent hover:bg-gray-200 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600'
                   }`}
                 >
@@ -660,7 +581,7 @@ const OptionsContent: React.FC = () => {
                     onClick={() => handleSetSyncInterval(minutes)}
                     className={`rounded-lg px-3 py-2 text-sm font-medium transition-colors border ${
                       settings.syncIntervalMinutes === minutes
-                        ? 'theme-toggle-on text-white border-transparent'
+                        ? 'theme-toggle-on border-transparent'
                         : 'bg-gray-100 text-gray-600 border-transparent hover:bg-gray-200 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600'
                     }`}
                   >
@@ -675,6 +596,7 @@ const OptionsContent: React.FC = () => {
           </section>
 
           {/* ── WebDAV 配置 ───────────────────────────────────────────── */}
+          {/* ── 自带存储配置 ───────────────────────────────────────── */}
           <section className={card} aria-labelledby="sec-webdav">
             <h3 className="sr-only" id="sec-webdav">
               自带存储配置
@@ -690,6 +612,93 @@ const OptionsContent: React.FC = () => {
                 独立页面天然没有这个循环依赖：用户想配就能配。 */}
             <WebDavSettings />
           </section>
+          {/* ── 标签页 ────────────────────────────────────────────────── */}
+          <section className={card} aria-labelledby="sec-tabs">
+            <h3 className="sr-only" id="sec-tabs">
+              标签页
+            </h3>
+            <SectionTitle title="标签页" />
+
+            <div className="divide-y divide-gray-200 dark:divide-gray-700">
+              <ToggleRow
+                label="显示通知提醒"
+                hint="保存会话成功时发浏览器通知。失败提示不受此开关影响，始终会通知。需要扩展的「通知」权限。"
+                checked={settings.showNotifications}
+                onToggle={handleToggleNotifications}
+              />
+              <ToggleRow
+                label="删除前确认"
+                // ── 2026-10-19 审计 R-2：承诺必须覆盖真实的手势 ────────────
+                // 原文只说「删掉会话里最后一条标签（等于删掉整个会话）也会先确认」，
+                // 而用户最常用的手势是**拖**（把最后一条标签拖到别的会话）——
+                // 那条路直接让整个会话消失，无确认（2026-10-19 产品决定：
+                // 拖拽是连续手势，弹框与拖后回滚都是新交互且更差）。
+                // 设置页写「会先确认」而实际不确认，用户按「我开了保护」的
+                // 预期行事 ⇒ 真的丢了一组会话。
+                hint="删除整个会话、批量删除时先弹确认；用 ✕ 删掉会话里最后一条标签（等于删掉整个会话）也会先确认。单个标签页的 ✕ 直接删；把最后一条标签拖到别的会话会直接让整个会话消失，不受本开关保护。"
+                checked={settings.confirmBeforeDelete}
+                onToggle={handleToggleConfirmDelete}
+              />
+              <ToggleRow
+                label="保存时收集固定标签页"
+                hint="把浏览器里钉住的标签页也一并存进会话，方便回来时恢复现场。"
+                checked={settings.collectPinnedTabs}
+                onToggle={handleToggleCollectPinnedTabs}
+              />
+            </div>
+          </section>
+
+          {/* ── 同步 ──────────────────────────────────────────────────── */}
+          {/* ── 外观 ─────────────────────────────────────────────────── */}
+          <section className={card} aria-labelledby="sec-appearance">
+            <SectionTitle
+              title="外观"
+              hint="主题风格影响全局配色；明暗模式跟随系统或由你指定。"
+            />
+            <h3 className="sr-only" id="sec-appearance">
+              外观
+            </h3>
+
+            <div className="mb-4">
+              <label className={labelCls} htmlFor="opt-theme-mode">
+                明暗模式
+              </label>
+              <div className="flex gap-2" role="radiogroup" aria-label="明暗模式">
+                {([
+                  ['auto', '跟随系统'],
+                  ['light', '始终浅色'],
+                  ['dark', '始终深色'],
+                ] as const).map(([value, text]) => (
+                  <button
+                    key={value}
+                    type="button"
+                    role="radio"
+                    aria-checked={themeMode === value}
+                    onClick={() => setThemeMode(value as ThemeMode)}
+                    className={`flex-1 rounded-lg px-3 py-2 text-sm font-medium transition-colors border ${
+                      themeMode === value
+                        ? 'theme-toggle-on border-transparent'
+                        : 'bg-gray-100 text-gray-600 border-transparent hover:bg-gray-200 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600'
+                    }`}
+                  >
+                    {text}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="mb-2">
+              <span className={labelCls}>主题风格</span>
+              <p className={`mb-2 ${hintCls}`}>
+                点下面任意一个预览即时切换，全局配色（含这个页面）立刻跟随。
+              </p>
+              {/* alwaysExpanded：设置页整页都是空白，收起主题列表等于让用户
+                  先点一下才知道能换主题。Playwright 实测过折叠态下卡片带
+                  `hidden`，是自动化与键盘用户的死区。 */}
+              <ThemeStyleSelector alwaysExpanded />
+            </div>
+          </section>
+
         </div>
       </div>
     </div>

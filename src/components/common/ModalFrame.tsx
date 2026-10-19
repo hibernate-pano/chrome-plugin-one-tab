@@ -57,12 +57,18 @@ export const ModalFrame: React.FC<ModalFrameProps> = ({
           aria-labelledby={titleId}
           aria-describedby={description ? descriptionId : undefined}
           tabIndex={-1}
-          className={`relative w-full ${maxWidthClassName} overflow-hidden rounded-[28px] border border-slate-200/80 bg-white/95 shadow-[0_28px_80px_rgba(15,23,42,0.28)] ring-1 ring-white/60 backdrop-blur focus:outline-none dark:border-slate-700/80 dark:bg-slate-900/95 dark:ring-slate-800/80`}
+          // ── 2026-10-19 审计 V-6：弹层必须跟主题 ──────────────────────────
+          // 修复前这里写死 slate 系（bg-slate-900/95、border-slate-200/80、
+          // text-slate-900、rounded-[28px]）：Claude 深色主题下页面是
+          // #191817 暖黑，弹层却是一块 rgba(15,23,42,.95) 的冷蓝黑 ——
+          // 一个暖色产品里弹出一块冷蓝面板，主题看起来像半成品。
+          // 现在全部走 theme-* 工具类（与 AuthModal 同一写法）。
+          className={`relative w-full ${maxWidthClassName} overflow-hidden theme-radius-panel border theme-border-default theme-bg-elevated theme-shadow-panel backdrop-blur focus:outline-none`}
         >
           <button
             type="button"
             onClick={onClose}
-            className="absolute right-4 top-4 inline-flex h-9 w-9 items-center justify-center rounded-full border border-slate-200/80 bg-white/80 text-slate-500 transition-colors hover:border-slate-300 hover:text-slate-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-600 dark:border-slate-700/80 dark:bg-slate-900/80 dark:text-slate-400 dark:hover:border-slate-600 dark:hover:text-slate-200 dark:focus-visible:outline-slate-300"
+            className="absolute right-4 top-4 inline-flex h-9 w-9 items-center justify-center rounded-full border theme-border-strong theme-bg-elevated theme-text-secondary transition-colors hover:theme-btn-hover focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary-600"
             aria-label="关闭弹窗"
           >
             <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
@@ -76,14 +82,14 @@ export const ModalFrame: React.FC<ModalFrameProps> = ({
             <div className="min-w-0">
               <h3
                 id={titleId}
-                className="text-lg font-semibold tracking-tight text-slate-900 dark:text-slate-50"
+                className="text-lg font-semibold tracking-tight theme-text-primary"
               >
                 {title}
               </h3>
               {description && (
                 <p
                   id={descriptionId}
-                  className="mt-2 whitespace-pre-line text-sm leading-6 text-slate-600 dark:text-slate-300"
+                  className="mt-2 whitespace-pre-line text-sm leading-6 theme-text-secondary"
                 >
                   {description}
                 </p>

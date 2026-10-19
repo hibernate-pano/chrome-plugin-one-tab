@@ -29,6 +29,7 @@ import {
   type BackendStatus,
 } from './backendStatus';
 import { deleteAllConfirmMessage, deleteAllMenuWarning, deleteAllShouldPushOverwrite } from './deleteAllMessages';
+import { importPartialMessage, importSuccessMessage } from './importResultCopy';
 import { resolveMenuSyncStatus, resolveSyncFailureCopy } from '@/components/sync/syncPreviewView';
 
 /** 问题反馈落点：GitHub issues 新建页。用户自己决定粘不粘诊断摘要。 */
@@ -290,11 +291,60 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({
   }, [onClose]);
 
   // 2026-10-18 round 38：键盘用户没有外点可点，缺这条就只剩鼠标能关菜单。
+  //
+  // ── 2026-10-19 审计 C-7：补上菜单的**方向键**模型 ──────────────────────
+  // 容器声明了 role="menu"，但子项既没有 menuitem 角色、方向键也不工作：
+  // 读屏播报「应用菜单」，用户按上下键却毫无反应，只能用 Tab 逐个走 ——
+  // 与「菜单」这个名字承诺的交互模型相反。
+  //
+  // 现在补齐 APG 的菜单键盘约定：
+  //   ↑/↓ 在菜单项之间移动（roving tabindex：只有当前项在 Tab 序列里）
+  //   Home/End 跳到首/末项
+  //   Esc 关闭并把焦点还给触发按钮
+  // 方向键只在**焦点已经在菜单里**时才接管 —— 菜单刚打开时焦点在触发按钮上，
+  // 按 ↓ 应当「进入菜单并落到第一项」。
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key !== 'Escape') return;
-      // 菜单里有文件输入与子菜单；Escape 在它们身上没有别的语义，直接关不冲突。
-      onClose();
+      if (event.key === 'Escape') {
+        // 菜单里有文件输入与子菜单；Escape 在它们身上没有别的语义，直接关不冲突。
+        onClose();
+        return;
+      }
+      if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) return;
+
+      const root = dropdownRef.current;
+      if (!root) return;
+      const items = Array.from(
+        root.querySelectorAll<HTMLElement>('[role="menuitem"]:not([disabled])')
+      );
+      if (items.length === 0) return;
+
+      const active = document.activeElement as HTMLElement | null;
+      const currentIndex = active ? items.indexOf(active) : -1;
+      // 焦点不在菜单内（例如还停在触发按钮上）→ 上下键进入菜单的第一/最后一项。
+      if (currentIndex === -1) {
+        event.preventDefault();
+        const target = event.key === 'ArrowUp' || event.key === 'End' ? items.length - 1 : 0;
+        items[target].focus();
+        return;
+      }
+      event.preventDefault();
+      let nextIndex: number;
+      switch (event.key) {
+        case 'ArrowDown':
+          nextIndex = (currentIndex + 1) % items.length;
+          break;
+        case 'ArrowUp':
+          nextIndex = (currentIndex - 1 + items.length) % items.length;
+          break;
+        case 'Home':
+          nextIndex = 0;
+          break;
+        default:
+          nextIndex = items.length - 1;
+          break;
+      }
+      items[nextIndex].focus();
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
@@ -364,7 +414,12 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({
                   logError('删除操作同步到云端失败:', res.error);
                   showAlert({
                     title: '同步失败',
-                    message: `本机会话已删除，但云端同步失败：${res.error || '未知错误'}`,
+                    // 2026-10-19 审计 F-8：同步 reason 走同一张中文映射表，
+                    // 不把机器码（如 backend_unknown）原样弹给用户。
+                    message: `本机会话已删除，但云端同步失败：${resolveSyncFailureCopy({
+                      reason: res.error,
+                      fallbackMessage: '请稍后重试',
+                    })}`,
                     type: 'error',
                     onClose: () => {}
                   });
@@ -587,6 +642,7 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({
               {syncStatusView.headline}
             </p>
             <button
+              role="menuitem"
               onClick={handleQuickRefresh}
               disabled={isRefreshing}
               aria-label={isRefreshing ? '正在从云端刷新' : '从云端刷新数据'}
@@ -663,7 +719,7 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({
         </div>
 
         {!isAuthenticated && settings.syncBackend !== 'webdav' && (
-          <button
+          <button role="menuitem"
             onClick={() => onOpenAuth('login')}
             className={MENU_ROW}
           >
@@ -682,7 +738,7 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({
             收进本菜单 —— 但不能就此让它们在窄屏**消失**（那是「窄屏少个功能」）。
             这里补回两个入口，sm 以上与顶栏按钮重复，故对 sm+ 隐藏。 */}
         <div className="sm:hidden">
-          <button
+          <button role="menuitem"
             onClick={() => {
               onToggleLayout?.();
               onClose();
@@ -698,7 +754,7 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({
             {settings.layoutMode === 'single' ? '切换为双栏布局' : '切换为单栏布局'}
           </button>
 
-          <button
+          <button role="menuitem"
             onClick={() => {
               onRequestCleanDuplicates?.();
               onClose();
@@ -721,7 +777,7 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({
             现在：菜单一行「设置…」→ chrome.runtime.openOptionsPage()。
             保留在菜单里的只有非设置项：登录、导出/导入、清理重复、
             问题反馈、删除全部、退出登录。 */}
-        <button
+        <button role="menuitem"
           onClick={handleOpenOptions}
           className={MENU_ROW}
           type="button"
@@ -734,7 +790,7 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({
         </button>
 
         <div>
-          <button
+          <button role="menuitem"
             onClick={() => setOpenSubmenu(current => current === 'export' ? null : 'export')}
             className={MENU_ROW + ' justify-between'}
             aria-expanded={openSubmenu === 'export'}
@@ -754,7 +810,7 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({
           {/* 同上：就地展开，避免被菜单的滚动容器横向裁掉（唯一入口，不可达即功能缺失）。 */}
           {openSubmenu === 'export' && (
             <div ref={submenuRef} className="ts-panel mb-1 ml-3 rounded-lg border theme-border-default theme-bg-elevated shadow-lg">
-            <button
+            <button role="menuitem"
               onClick={handleExportData}
               className={MENU_ROW}
               type="button"
@@ -764,7 +820,7 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({
               </svg>
               JSON 格式
             </button>
-            <button
+            <button role="menuitem"
               onClick={handleExportOneTabFormat}
               className={MENU_ROW}
               type="button"
@@ -776,7 +832,7 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({
             </button>
             {/* 诊断信息：同样是一次导出，但内容是脱敏后的规模与环境快照
                 （不含任何标签 URL、标题、会话名），用于反馈问题时贴 issue。 */}
-            <button
+            <button role="menuitem"
               onClick={handleExportDiagnostics}
               className={MENU_ROW}
               type="button"
@@ -791,7 +847,7 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({
         </div>
 
         <div>
-          <button
+          <button role="menuitem"
             onClick={() => setOpenSubmenu(current => current === 'import' ? null : 'import')}
             className={MENU_ROW + ' justify-between'}
             aria-expanded={openSubmenu === 'import'}
@@ -818,7 +874,7 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({
               展开放在父行下方的流内，就不会被任何祖先裁剪，也不需要横向滚动。 */}
           {openSubmenu === 'import' && (
             <div ref={submenuRef} className="ts-panel mb-1 ml-3 rounded-lg border theme-border-default theme-bg-elevated shadow-lg">
-            <label
+            <label role="menuitem"
               className={MENU_ROW + ' cursor-pointer'}
             >
               <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 mr-2 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -857,15 +913,23 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({
                           } else if (result.imported < result.source) {
                             showAlert({
                               title: '部分导入完成',
-                              message:
-                                `文件内共 ${result.source} 个会话，成功导入 ${result.imported} 个；` +
-                                `其余 ${result.source - result.imported} 个为空会话或只含无法保存的网址，已被跳过。` +
-                                '请回备份文件里核对这几项。',
+                              // 2026-10-19 审计 F-5：「已存在而跳过」与
+                              // 「内容有问题而跳过」必须分开说 —— 原先共用一句
+                              // 「为空会话或只含无法保存的网址」，用户重复导入
+                              // 自己的备份时看到的是「你的备份文件坏了」。
+                              message: importPartialMessage({
+                                source: result.source,
+                                imported: result.imported,
+                                skippedExisting: result.skippedExisting,
+                              }),
                               type: 'warning',
                               onClose: () => {},
                             });
                           } else {
-                            showToast(`已导入 ${result.imported} 个会话`, 'success');
+                            showToast(importSuccessMessage({
+                              source: result.source,
+                              imported: result.imported,
+                            }), 'success');
                           }
                           // 只刷新列表，不 reload 整页：提示能完整显示完
                           dispatch(loadGroups());
@@ -915,7 +979,7 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({
                 }}
               />
             </label>
-            <label
+            <label role="menuitem"
               className={MENU_ROW + ' cursor-pointer'}
             >
               <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 mr-2 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -955,14 +1019,21 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({
                           } else if (done < total) {
                             showAlert({
                               title: '部分导入完成',
-                              message:
-                                `文件内共 ${total} 个会话，成功导入 ${done} 个；其余 ${total - done} 个` +
-                                '为空会话或只含无法保存的网址，已被跳过。请回原文件里核对。',
+                              // 2026-10-19 审计 F-5：与 JSON 导入路径同一口径 ——
+                              // 「已存在而跳过」与「内容有问题而跳过」分开说。
+                              message: importPartialMessage({
+                                source: total,
+                                imported: done,
+                                skippedExisting: importResult.skippedExisting,
+                              }),
                               type: 'warning',
                               onClose: () => {},
                             });
                           } else {
-                            showToast(`已导入 ${done} 个会话`, 'success');
+                            showToast(importSuccessMessage({
+                              source: total,
+                              imported: done,
+                            }), 'success');
                           }
                           dispatch(loadGroups());
                         } else {
@@ -996,7 +1067,7 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({
 
         {/* 问题反馈：与导出/导入同一层的普通菜单行（真 button + 可见文字，
             读屏有名字；不是图标按钮，所以不需要 aria-label）。 */}
-        <button
+        <button role="menuitem"
           onClick={handleReportIssue}
           className={MENU_ROW}
           type="button"
@@ -1012,6 +1083,7 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({
         {groups.length > 0 && (
           <div className="px-2 pt-1.5 pb-0.5">
             <button
+              role="menuitem"
               onClick={handleDeleteAllGroups}
               className="flex w-full items-center gap-2 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2.5 text-left text-sm font-medium text-rose-700 transition-colors hover:bg-rose-100 dark:border-rose-900/40 dark:bg-rose-950/30 dark:text-rose-300 dark:hover:bg-rose-950/50"
             >
@@ -1031,7 +1103,7 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({
         {isAuthenticated && (
           <>
             <div className="border-t border-gray-200 dark:border-gray-700 my-1.5"></div>
-            <button
+            <button role="menuitem"
               onClick={handleSignOut}
               className={MENU_ROW}
             >

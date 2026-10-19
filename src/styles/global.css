@@ -36,6 +36,11 @@
 /* 默认主题回退 - 当 data-theme 未设置时使用 legacy 主题的值 */
 html:not([data-theme]) {
   --color-bg-primary: #f9fafb;
+  /* 兜底也必须自洽：--color-toggle-on-fg 是选中态的文字色（2026-10-19 审计 V-2）。
+     缺了它，选中态就会退回浏览器默认文字色 —— 在深色兜底上几乎读不出。
+     值与 legacy 主题一致（#2563eb 底 + 白字 = 5.17:1）。 */
+  --color-toggle-on: #2563eb;
+  --color-toggle-on-fg: #ffffff;
   --color-bg-secondary: #ffffff;
   --color-bg-tertiary: #f3f4f6;
   --color-bg-elevated: #ffffff;
@@ -61,6 +66,9 @@ html:not([data-theme]) {
 
 html:not([data-theme]).dark {
   --color-bg-primary: #111827;
+  /* 深色兜底：accent 变亮（#3b82f6），白字对它只有 3.68:1 ⇒ 改用深墨（4.85:1）。 */
+  --color-toggle-on: #3b82f6;
+  --color-toggle-on-fg: #0f172a;
   --color-bg-secondary: #1f2937;
   --color-bg-tertiary: #374151;
   --color-bg-elevated: #1f2937;
@@ -119,6 +127,8 @@ html:not([data-theme]).dark {
     --color-row-hover: #f9fafb;
     --color-menu-hover: #f9fafb;
     --color-toggle-on: #2563eb;
+    /* 选中态文字色（2026-10-19 审计 V-2）：#2563eb 底 + 白字 = 5.17:1 */
+    --color-toggle-on-fg: #ffffff;
     --color-toggle-off: #e5e7eb;
     /* 页面外壳（legacy 原值：亮白 / 暗 gray-900） */
     --color-shell: #ffffff;
@@ -180,6 +190,8 @@ html:not([data-theme]).dark {
     --color-row-hover: #374151;
     --color-menu-hover: rgba(55, 65, 81, 0.5);
     --color-toggle-on: #2563eb;
+    /* 深色下 accent 实底不变（仍是 #2563eb），白字 5.17:1 依旧达标。 */
+    --color-toggle-on-fg: #ffffff;
     --color-toggle-off: #4b5563;
     --color-shell: #111827;
     --color-note-bg: rgba(31, 41, 55, 0.6);
@@ -630,7 +642,21 @@ html:not([data-theme]).dark {
      标签组组件
      ========================================== */
   .tab-group-card {
-    @apply overflow-hidden;
+    /* ── 2026-10-19 审计 P0-2：卡片的圆角裁剪不能吃掉「更多」菜单 ──────
+     *
+     * `overflow-hidden` 原本是为了让**折叠动画**（grid 0fr→1fr）在圆角内
+     * 正确裁剪子内容。但它同时把窄屏「更多」菜单（absolute 定位在卡内）
+     * 也裁了：1 个标签的会话里，「锁定会话」「删除会话」两行落在卡片
+     * 边界之外 ⇒ 被切掉且**完全点不到**（实测 400px：裁掉 90px，
+     * elementFromPoint 命中的是背后的列表）。
+     *
+     * 而那恰恰是「刚保存完、马上想删掉」的新手最常见的场景 ——
+     * 窄屏下**删不掉**一个会话。
+     *
+     * 修法：折叠动画自己负责裁剪（见 TabGroup.tsx 里 grid 轨道的
+     * `min-h-0 overflow-hidden` 包装层），卡片本身不再需要 overflow-hidden。
+     * 圆角仍由 `border-radius` + 子元素的 overflow 处理，视觉不变。
+     */
     border-radius: var(--radius-card);
     background: var(--color-bg-secondary);
     border: 1px solid var(--color-border-subtle);
@@ -917,6 +943,23 @@ html:not([data-theme]).dark {
     animation: fadeInUp 0.3s ease-out forwards;
   }
 
+  /* ── 2026-10-19 审计 P0-2（补）：展开的卡必须能盖住后面的卡 ────────────
+   *
+   * `fadeInUp` 的 to 帧是 `transform: translateY(0)`，而 `forwards` 让这个
+   * transform **永久保留** —— 于是每张会话卡都成了一个 stacking context。
+   * 后果：卡内 `position: absolute` 的「更多」菜单（z-30）被**困在**自己
+   * 那张卡的层叠上下文里，画在下一张卡之下 ⇒ 菜单下半截点不到
+   * （实测 400px：1 个标签的会话里「锁定会话」「删除会话」两行
+   * elementFromPoint 命中的是背后的列表）。
+   *
+   * 修法：给「有展开菜单的卡」一个高于兄弟卡的 z-index。
+   * 判据用 `:has()`（Chrome 105+；manifest 的 minimum_chrome_version 是
+   * 120，安全）：卡里有展开的 <details> 时，这张卡升到列表最上层。
+   */
+  .tab-group-card:has(details[open]) {
+    z-index: 20;
+  }
+
   .animate-out {
     animation: fadeOut 0.2s ease-out forwards;
   }
@@ -1133,6 +1176,13 @@ html:not([data-theme]).dark {
   color: var(--color-text-muted);
 }
 
+/* 危险色工具类（2026-10-19 审计 V-3：窄屏「更多」菜单里的删除项）。
+   用主题的 --color-danger，而不是写死 rose —— 写死的那一套在暖色主题下
+   与底色不搭。 */
+.theme-text-danger {
+  color: var(--color-danger);
+}
+
 /* 边框色工具类 */
 .theme-border-default {
   border-color: var(--color-border-default);
@@ -1170,6 +1220,18 @@ html:not([data-theme]).dark {
 
 /* 二级界面工具类：圆角三档 / 强调族 / 井底 / 弹层 / 焦点 / CTA / 衬线标题 */
 .theme-btn-hover:hover { background: var(--color-btn-hover); }
+
+/* ── 2026-10-19 审计 P1-3：补上 `hover:` 变体 ────────────────────────────
+ *
+ * `theme-btn-hover` 是**手写**的工具类（不是 Tailwind 配置里的颜色），
+ * 所以 Tailwind 不会为它生成 `hover:theme-btn-hover` 变体 —— 产物 CSS 里
+ * 根本没有这条规则，所有用它做 hover 的元素**零反馈**（实测 hover 前后
+ * 背景色都是 rgba(0,0,0,0)）。
+ *
+ * 两种写法都可以，但既然 `theme-menu-hover` / `theme-row-hover` 已经存在
+ * 且实测有效，这里补一条同形的变体，让 `hover:theme-btn-hover` 能用。
+ */
+.hover\:theme-btn-hover:hover { background: var(--color-btn-hover); }
 .theme-accent-soft { background: var(--color-accent-soft); }
 .theme-panel-translucent { background: var(--color-panel-translucent); }
 .theme-focus:focus { box-shadow: var(--focus-ring); }
@@ -1222,6 +1284,18 @@ html:not([data-theme]).dark {
 
 .theme-toggle-on {
   background-color: var(--color-toggle-on);
+  /* ── 2026-10-19 审计 V-2：选中态的文字色由主题给，不再写死 text-white ──
+   *
+   * 修复前设置页的四处「选中态」是 `theme-toggle-on text-white`：白字压在
+   * 主题强调色上。实测对比度：Apple 浅色 **2.22:1**、Apple 深色 2.02:1、
+   * Claude 深色 2.60:1、Claude 浅色 3.12:1 —— 全部远低于 4.5:1，
+   * 「选中了哪一项」几乎读不出来。
+   *
+   * 同一文件里 `.btn-primary` 早就改用 `--color-accent-fg`（深墨，6.87:1），
+   * 这四处是漏网的。现在用 `--color-toggle-on-fg`：每个主题按自己强调色
+   * 实测后取更优的一侧（见各主题 css 里的取值注释）。
+   */
+  color: var(--color-toggle-on-fg);
 }
 
 .theme-toggle-off {
@@ -1286,28 +1360,99 @@ html:not([data-theme]).dark {
   flex-shrink: 0;
 }
 
+/* ── 2026-10-19 审计 F-1（P0）：搜索框不许塌陷到 0 宽 ────────────────────
+ *
+ * 根因：顶栏是三段栅格 `auto | minmax(0, 1fr) | auto`，而操作区是
+ * `flex-shrink: 0`。只要操作区变宽，搜索那一列就被压到 0 宽 ——
+ * 「找回会话」这个核心入口整框消失，且**没有任何报错**。
+ *
+ * 修复前实测（主审真机，1280 视口下逐档量）：
+ *   640px → 搜索 112px（勉强） 700px → **搜索 0px** 800px → 96px
+ * 也就是说 640–900px 这段（半屏分屏、平板、窄窗口）都在丢搜索框。
+ *
+ * 三道防线，缺一不可：
+ *   ① 操作区在窄屏收成图标（SyncButton 的「上传/下载」文字 `hidden lg:inline`）
+ *   ② ≤640px 时搜索**独占一行**（grid-template-areas），不再与品牌/操作区抢宽度
+ *   ③ 搜索轨道的下限（minmax）设在**轨道**上，而不是元素上 ——
+ *      设在元素上时，元素会溢出自己的格子并**压到右边的操作区上**
+ *      （第一版修复就是这么做的：400px 下搜索框与上传按钮叠在一起）。
+ */
 @media (max-width: 640px) {
+  /* 窄屏：品牌与操作区一行，搜索独占第二行整宽。
+     「找回」是核心入口，值得一整行；挤在同一行里它永远是输家。 */
   .app-header-grid {
+    /* 第二列用 `auto` 而不是 `1fr`：1fr 会把操作区的**盒子**拉满整列宽度，
+       即使内容靠右（justify-self:end），盒子本身仍与品牌区相交 ——
+       实测 320px 下 brand∩actions 的相交面积 288px²（虽然视觉上不重叠，
+       但命中测试与焦点顺序都会受影响）。
+       `auto` + `margin-left: auto` 让操作区只占自己的宽度并靠右。 */
+    grid-template-columns: auto auto;
+    grid-template-areas:
+      'brand actions'
+      'search search';
     gap: 0.5rem;
   }
 
-  .app-header-actions {
-    gap: 0.125rem;
-  }
-
-  /* 窄屏顶栏塞不下三段：品牌区与操作区各让一步，
-     搜索框才不会被压到 0 宽而彻底消失（390px 实测曾整框消失）。
-     优先级：搜索 > 品牌文案 > 操作按钮，搜索是唯一的信息获取入口。 */
-  .app-header-grid {
-    grid-template-columns: auto minmax(0, 1fr) auto;
-  }
-
   .app-header-brand {
+    grid-area: brand;
     min-width: 0;
+    /* 极窄时品牌名让位：品牌只是标识，操作区是功能。
+       320px 实测两者会重叠（品牌 118px + 操作区 228px > 320px 可用宽）。 */
+    overflow: hidden;
+  }
+
+  .app-header-search {
+    grid-area: search;
+    /* 轨道下限设在轨道上（minmax），元素不再溢出格子。 */
+    min-width: 0;
+    width: 100%;
+  }
+
+  .app-header-actions {
+    grid-area: actions;
+    gap: 0.125rem;
+    /* 第二列是 auto（内容宽），靠右对齐靠 margin-left:auto。 */
+    margin-left: auto;
   }
 
   .app-header-brand .app-header-brand-meta {
     display: none;
+  }
+}
+
+/* ≤380px：品牌只留图标。320px 下「TapStack」文字 + 操作区 228px 会超出，
+   两者重叠（主审真机实测：brand∩actions 面积 479px²）。 */
+@media (max-width: 380px) {
+  .app-header-brand .app-header-brand-name {
+    display: none;
+  }
+}
+
+/* 641–1024px：单行三段仍然太挤（操作区最宽 421px，其中同步按钮带文字）。
+   这里让搜索也独占一行 —— 但保留品牌与操作区同行，视觉层次不变。 */
+@media (min-width: 641px) and (max-width: 1024px) {
+  .app-header-grid {
+    grid-template-columns: auto minmax(0, 1fr);
+    grid-template-areas:
+      'brand actions'
+      'search search';
+    gap: 0.5rem;
+  }
+
+  .app-header-brand {
+    grid-area: brand;
+    min-width: 0;
+  }
+
+  .app-header-search {
+    grid-area: search;
+    min-width: 0;
+    width: 100%;
+  }
+
+  .app-header-actions {
+    grid-area: actions;
+    margin-left: auto;
   }
 }
 

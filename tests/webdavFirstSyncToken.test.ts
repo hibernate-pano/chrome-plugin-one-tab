@@ -272,8 +272,10 @@ describe('A2/A3/A4 组件接线', () => {
   });
 
   it('切回云端与清除配置都要解除令牌；锁定**刻意不清**', () => {
-    const switchBack = sliceOf('const handleSwitchBack = useCallback(', 'const handleForget = useCallback(');
-    const forget = sliceOf('const handleForget = useCallback(', 'const handleLock = useCallback(');
+    // 2026-10-19 审计 V-4：handleForget 现在是「确认框包装」，
+    // 真正的执行体叫 runForget —— 下面断言的是**执行体**的行为。
+    const switchBack = sliceOf('const handleSwitchBack = useCallback(', 'const runForget = useCallback(');
+    const forget = sliceOf('const runForget = useCallback(', 'const handleLock = useCallback(');
     const lock = sliceOf('const handleLock = useCallback(', 'data-testid="webdav-settings"');
     assert.match(switchBack, /clearPendingToken\(/, '切回云端后待决态已无对象');
     assert.match(forget, /clearPendingToken\(/, '配置清空后待决态已无对象');
@@ -307,7 +309,7 @@ describe('A5 handleSwitchBack 必须 invalidateActiveSyncBackend', () => {
   const CODE = UI.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^[ \t]*\/\/.*$/gm, '');
   const body = CODE.slice(
     CODE.indexOf('const handleSwitchBack = useCallback('),
-    CODE.indexOf('const handleForget = useCallback(')
+    CODE.indexOf('const runForget = useCallback(')
   );
 
   it('clearSessionSecrets 之后必须 invalidate（清口令不够：旧 adapter 里的 Vault 还活着）', () => {
@@ -322,8 +324,8 @@ describe('A5 handleSwitchBack 必须 invalidateActiveSyncBackend', () => {
 
   it('三个「后端已变」的 handler 都调了 invalidate（不留特例）', () => {
     for (const [name, from, to] of [
-      ['handleSwitchBack', 'const handleSwitchBack = useCallback(', 'const handleForget = useCallback('],
-      ['handleForget', 'const handleForget = useCallback(', 'const handleLock = useCallback('],
+      ['handleSwitchBack', 'const handleSwitchBack = useCallback(', 'const runForget = useCallback('],
+      ['handleForget', 'const runForget = useCallback(', 'const handleLock = useCallback('],
       ['handleLock', 'const handleLock = useCallback(', 'data-testid="webdav-settings"'],
     ] as const) {
       const slice = CODE.slice(CODE.indexOf(from), CODE.indexOf(to));

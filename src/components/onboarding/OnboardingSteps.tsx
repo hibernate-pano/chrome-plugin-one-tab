@@ -124,7 +124,12 @@ export const RestoreStep: React.FC = () => (
     <p className="onboarding-description">
       恢复整个会话时，会默认在新窗口中打开
       <br />
-      需要时也可以从会话列表里再次打开刚刚整理过的内容
+      {/* ── 2026-10-19 审计 I-6：原文与真实行为相反 ──────────────────────
+       * 原文「需要时也可以从会话列表里再次打开刚刚整理过的内容」承诺了
+       * 「恢复后还能再打开一次」。而未锁定会话恢复后**即被消费**（从列表
+       * 消失，无回收站）—— 用户回头找不到那组东西。
+       * 真实的重复使用方式是「先锁定」。 */}
+      想反复使用同一组，请先锁定该会话；未锁定的会话恢复后即从列表移除
     </p>
     <div className="onboarding-feature-grid">
       <div className="onboarding-feature-card">
@@ -155,13 +160,23 @@ export const SyncStep: React.FC = () => (
     <p className="onboarding-description">
       通过右上角菜单「登录 / 注册」开启同步
       <br />
-      保存后会自动备份到云端，新设备登录即恢复
+      {/* ── 2026-10-19 审计 I-4：「备份」这个词必须去掉 ────────────────
+       * 云端不是备份，而是**同一份数据的镜像**：你在本机删除，云端那份
+       * 也会被删（删除广播）。README 专门论证过必须弃用「保险箱」隐喻，
+       * 理由正是「存进来应该安全」的预期会害用户删数据 —— 「自动备份」
+       * 是同一个陷阱：用户会以为「云端有备份，删了能找回」。
+       *
+       * 另一个改动：原文写「保存后会自动同步到云端；新设备登录后会自动拉回云端的会话」，
+       * 而自动同步自 1.23.0 起**默认关闭**（间隔也是用户自己选的），
+       * 且「登录即恢复」是本轮 F-6 修好后才成立的（登录成功会主动拉一次）。
+       * 现在说的是用户真正会遇到的流程。 */}
+      保存后会自动同步到云端；新设备登录后会自动拉回云端的会话
     </p>
     <div className="onboarding-feature-grid">
       <div className="onboarding-feature-card">
         <div className="onboarding-feature-icon">🔄</div>
         <div className="onboarding-feature-title">自动同步</div>
-        <div className="onboarding-feature-desc">保存和重命名都会自动备份</div>
+        <div className="onboarding-feature-desc">保存和重命名都会同步到云端</div>
       </div>
       <div className="onboarding-feature-card">
         <div className="onboarding-feature-icon">📤</div>
@@ -171,7 +186,14 @@ export const SyncStep: React.FC = () => (
       <div className="onboarding-feature-card">
         <div className="onboarding-feature-icon">🛟</div>
         <div className="onboarding-feature-title">误删保护</div>
-        <div className="onboarding-feature-desc">删除前二次确认，防手滑清空工作现场</div>
+        {/* ── 2026-10-19 审计 I-5：承诺必须收窄到真实行为 ────────────────
+         * 原文「删除整个会话会先确认；单条删除直接生效」让人以为**任何**删除
+         * 都会先问。实际：单条标签的 ✕ 直接删、把最后一条标签拖到别的会话
+         * 会让整个会话当场消失（这两条都不经过确认）。
+         *
+         * 锁定会话也不防「删除所有会话」—— 那个操作对所有会话一视同仁。
+         * 如实说清比说得好听重要：用户据此决定要不要开「删除前确认」。 */}
+        <div className="onboarding-feature-desc">删除整个会话会先确认；单条删除直接生效</div>
       </div>
     </div>
   </div>

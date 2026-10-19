@@ -268,10 +268,19 @@ export function applyImportGroups(
   deps: { genId: () => string; sanitizeUrl: (url: string) => string | null },
   _now: string,
   stamp: OpStamp
-): { groups: TabGroup[]; imported: TabGroup[] } {
+): { groups: TabGroup[]; imported: TabGroup[]; skippedExisting: number } {
   // 幂等前置：先按「组名 + 内容指纹」建立已有组索引，判重只读它。
   // 指纹计算对未知形状是确定性的（见 groupContentFingerprint 注释）。
   const existingFingerprints = new Set(groups.map(g => groupContentFingerprint(g)));
+
+  // ── 2026-10-19 审计 F-5：两种「跳过」必须分开计数 ──────────────────────
+  // 跳过原因有两个，性质完全相反：
+  //   · skippedExisting —— 「这份会话你已经导入过了」（幂等，**正常**）
+  //   · 空会话 / 全部 URL 被清洗掉 —— 「文件里这条没有可恢复的内容」（**异常**）
+  // 原先 UI 只有一句「其余 N 个为空会话或只含无法保存的网址」覆盖两者，
+  // 于是用户把同一份备份再导一次，看到的是「你的备份文件坏了」——
+  // 而真实原因只是幂等跳过。UI 必须能分开说（见 HeaderDropdown 的导入提示）。
+  let skippedExisting = 0;
 
   const processed = incoming
     // 组级容错：null / 字符串 / 数字等非对象条目直接跳过，不再让整批抛
@@ -288,6 +297,7 @@ export function applyImportGroups(
       const fp = groupContentFingerprint(group);
       if (!existingFingerprints.has(fp)) return true;
       existingFingerprints.add(fp);
+      skippedExisting += 1;
       return false;
     })
     .map(group => {
@@ -312,6 +322,7 @@ export function applyImportGroups(
       (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
     ),
     imported: processed,
+    skippedExisting,
   };
 }
 

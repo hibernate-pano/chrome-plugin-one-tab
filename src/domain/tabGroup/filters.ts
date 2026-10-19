@@ -36,7 +36,45 @@ export const isValidTab = (tab: chrome.tabs.Tab): boolean => {
     // 协议门 + 内部页门：任一不过即丢弃
     return isStorableTabUrl(tab.url) && !isInternalUrl(tab.url);
   }
+  // 加载中的标签：url 为空但 pendingUrl 有值 —— 保留它，让 factory 用
+  // pendingUrl 落盘（见 resolveStorableUrl）。两者都空才靠 title 兜底。
+  if (tab.pendingUrl) {
+    return isStorableTabUrl(tab.pendingUrl) && !isInternalUrl(tab.pendingUrl);
+  }
   return !!tab.title && tab.title.trim().length > 0;
+};
+
+/**
+ * 这个标签**真正**的网址是什么（2026-10-19 审计 F-2）。
+ *
+ * 【为什么需要这个函数】Chrome 在标签仍在加载时给出 `url: ''` +
+ * `pendingUrl: 'https://…'`。原先 factory 写死 `tab.url || 'about:blank'`，
+ * 于是恢复出来的会话里躺着一条空白页，真实网址**永久丢失** —— 而保存动作
+ * 同时把原标签关掉了，用户连「那个页面是什么」都无从得知。
+ *
+ * 判据顺序（唯一口径，两个调用方共用）：
+ *   1. `tab.url`  —— 正式地址
+ *   2. `tab.pendingUrl` —— 加载中的目标地址
+ *   3. 都没有 → **返回空串**，由调用方丢弃这条标签
+ *
+ * 【为什么第 3 步不兜底成 about:blank】about:blank 是能存、能同步、能恢复的
+ * 假地址：它会出现在会话里、恢复时开出一个空白页，让用户以为那个网页还在。
+ * 「这条标签没存下来」比「存了一条空的」诚实得多 —— 前者会少一条记录，
+ * 后者会让用户反复去找一个已经找不到的页面。
+ *
+ * pendingUrl 也要过协议门：它是浏览器即将导航到的地址，与 url 同一套策略
+ * （危险 schema / 内部页同样不存）。
+ */
+export const resolveStorableUrl = (tab: chrome.tabs.Tab): string => {
+  const candidates = [tab.url, tab.pendingUrl].filter(
+    (value): value is string => typeof value === 'string' && value.length > 0
+  );
+  for (const candidate of candidates) {
+    if (isStorableTabUrl(candidate) && !isInternalUrl(candidate)) {
+      return candidate;
+    }
+  }
+  return '';
 };
 
 export interface FilterTabsOptions {

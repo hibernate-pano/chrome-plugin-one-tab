@@ -3,6 +3,8 @@ import { useAppDispatch, useAppSelector } from '@/store/hooks';
 import { signIn, clearError } from '@/store/slices/authSlice';
 import { InlineNotice } from '@/components/common/InlineNotice';
 import { validateEmail, validatePassword, validateForm } from '@/utils/inputValidation';
+import { useToast } from '@/contexts/ToastContext';
+import { restoreAfterLogin } from './restoreAfterLogin';
 import { logError } from '../../utils/log';
 
 interface LoginFormProps {
@@ -12,6 +14,7 @@ interface LoginFormProps {
 export const LoginForm: React.FC<LoginFormProps> = ({ onSuccess }) => {
   const dispatch = useAppDispatch();
   const { isLoading, error } = useAppSelector(state => state.auth);
+  const { showToast } = useToast();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [validationErrors, setValidationErrors] = useState<Record<string, string>>({});
@@ -49,6 +52,22 @@ export const LoginForm: React.FC<LoginFormProps> = ({ onSuccess }) => {
         email: validation.sanitized.email,
         password: validation.sanitized.password
       })).unwrap();
+
+      // ── 2026-10-19 审计 F-6：登录成功 = 拉回云端会话 ────────────────────
+      // 修复前登录成功只关弹窗，什么都不拉。新设备上用户登录后列表仍然是
+      // 空的 —— 而引导写着「新设备登录即恢复」。用户会以为云端数据丢了。
+      //
+      // 为什么不靠 popup 打开时的自动下载：那条路被 `syncEnabled` 门禁拦下
+      // （默认 false），且 AuthProvider 的 effect 不会因登录而重跑。
+      // 登录是**显式意图**（我刚敲了账号密码，就是想看到另一台设备上的会话），
+      // 不该被「后台定时轮询的开关」拦下 —— 那是拿错判据。
+      //
+      // 失败不阻断登录：同步失败不该把用户踢回登录页，手动「下载」入口仍在。
+      void restoreAfterLogin(dispatch).then(count => {
+        if (count > 0) {
+          showToast(`已从云端恢复 ${count} 个会话`, 'success');
+        }
+      });
 
       if (onSuccess) {
         onSuccess();

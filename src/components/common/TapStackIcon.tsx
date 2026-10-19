@@ -54,10 +54,19 @@ export const TapStackLogo: React.FC<{
   size?: 'sm' | 'md' | 'lg';
   className?: string;
   showIcon?: boolean;
+  /**
+   * 品牌**文字**的附加类名（2026-10-19 审计 F-1）。
+   *
+   * 极窄屏（≤380px）时顶栏只留图标：320px 实测「TapStack」文字 + 操作区
+   * 228px 会超出并**重叠**（品牌区与操作区相交面积 479px²）。
+   * 品牌是标识、操作区是功能 —— 该让位的是标识。
+   */
+  nameClassName?: string;
 }> = ({
   size = 'md',
   className = '',
-  showIcon = true
+  showIcon = true,
+  nameClassName = '',
 }) => {
   const getSizeClasses = () => {
     switch (size) {
@@ -92,7 +101,7 @@ export const TapStackLogo: React.FC<{
       )}
       <div className="flex items-baseline gap-0.5">
         <span
-          className={`font-semibold tracking-tight ${getSizeClasses()}`}
+          className={`font-semibold tracking-tight ${getSizeClasses()} ${nameClassName}`}
           style={{ color: 'var(--color-text-primary)' }}
         >
           TapStack

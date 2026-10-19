@@ -194,28 +194,59 @@ describe('焦点环：按钮环色必须是 600 档石板灰，不是 400/500 �
     });
   }
 
-  it('ConfirmDialog 的取消按钮（同一弹窗的第二个出口）也是 slate-600 环', () => {
+  // ── 2026-10-19 审计 V-6：弹层的环色与配色都改为主题令牌 ──────────────
+  //
+  // 修复前 ModalFrame / ConfirmDialog 写死 slate 系（bg-slate-900/95、
+  // text-slate-900、focus-visible:outline-slate-600）：在 Claude 这类暖色
+  // 主题下，弹层是一块冷蓝补丁。现在改用主题令牌（theme-bg-elevated /
+  // theme-text-primary / focus-visible:outline-primary-600）。
+  //
+  // 契约没变：**焦点环必须能被看清**。原先钉「slate-600 / 深色 slate-300」，
+  // 现在钉「primary-600 档或 slate-600 档」——两者在各自底色上 ≥3:1
+  // （2px 图形的要求，见 WCAG 1.4.11）。
+  const RING_PATTERN = /focus-visible:outline-(?:primary-600|slate-600)/;
+
+  it('ConfirmDialog 的取消按钮（同一弹窗的第二个出口）也有能看清的焦点环', () => {
     const src = read('src/components/common/ConfirmDialog.tsx');
     const cancel = src.match(/onClick=\{onCancel\}[\s\S]*?className="([^"]+)"/);
     assert.ok(cancel, '找不到取消按钮的 className，守卫前提变了（onClick={onCancel} 的写法被改？）');
-    assert.match(cancel[1], /focus-visible:outline-slate-600/);
-    assert.match(cancel[1], /dark:focus-visible:outline-slate-300/);
-    assert.doesNotMatch(cancel[1], /outline-slate-400/);
+    assert.match(cancel[1], RING_PATTERN, '取消按钮必须有 focus-visible 环（600 档）');
+    assert.doesNotMatch(cancel[1], /outline-slate-400/, 'slate-400 对白只有 2.56:1');
+    assert.doesNotMatch(cancel[1], /outline-slate-500/, '500 档当环色对白底只有 2.5–4.1:1');
   });
 
   for (const [file, label] of [
     ['src/components/common/ModalFrame.tsx', '关闭弹窗'],
     ['src/components/common/Toast.tsx', '关闭提示'],
   ] as const) {
-    it(`${file}：右上角「${label}」按钮的环是 slate-600 / 深色 slate-300`, () => {
+    it(`${file}：右上角「${label}」按钮的环能被看清`, () => {
       const src = read(file);
       const close = src.match(/className="([^"]+)"[\s\S]{0,240}?aria-label="[^"]+"/);
       assert.ok(close, `${file}：找不到关闭按钮的 className，守卫前提变了`);
-      assert.match(close[1], /focus-visible:outline-slate-600/);
-      assert.match(close[1], /dark:focus-visible:outline-slate-300/);
-      assert.doesNotMatch(close[1], /outline-slate-400/);
+      assert.match(close[1], RING_PATTERN, '关闭按钮必须有 focus-visible 环（600 档）');
+      assert.doesNotMatch(close[1], /outline-slate-400/, 'slate-400 对白只有 2.56:1');
+      assert.doesNotMatch(close[1], /outline-slate-500/, '500 档当环色对白底只有 2.5–4.1:1');
     });
   }
+
+  // 弹层本体必须跟主题（V-6）：写死的 slate 系在暖色主题下是冷蓝补丁。
+  it('ModalFrame 的弹层本体不写死 slate 配色', () => {
+    const src = read('src/components/common/ModalFrame.tsx');
+    // 弹层的 className 在 tabIndex={-1} 之后的那一处。
+    // 用 tabIndex={-1} 锚定，避免匹配到「关闭按钮」那一条 className；
+    // 匹配前先剥注释（弹层的 className 上方有一大段说明性注释）。
+    const srcNoComments = src.replace(/\/\*[\s\S]*?\*\//g, ' ');
+    // 弹层本体带 `overflow-hidden`（面板内容滚动由内层负责），关闭按钮没有 ——
+    // 用它当锚点可以唯一命中弹层，而不是匹配到后面那条「关闭按钮」的 className。
+    // 注意 className 是**模板字符串**（内含 ${maxWidthClassName}），所以不能
+    // 用 [^`"]* 一口气吃到引号 —— 改成非贪婪的 .*? 加终止符。
+    const panel = srcNoComments.match(/className=\{?`(.+?overflow-hidden.+?)`\}?/);
+    assert.ok(panel, '找不到弹层 className，守卫前提变了');
+    assert.match(panel[1], /theme-bg-elevated/, '弹层底色必须走主题令牌');
+    assert.match(panel[1], /theme-border-default/, '弹层边框必须走主题令牌');
+    assert.match(panel[1], /theme-radius-panel/, '弹层圆角必须走主题令牌');
+    assert.doesNotMatch(panel[1], /bg-slate-|text-slate-|border-slate-/, '弹层不得写死 slate 系');
+  });
 });
 
 describe('破坏性操作仍是最重的那一档色', () => {

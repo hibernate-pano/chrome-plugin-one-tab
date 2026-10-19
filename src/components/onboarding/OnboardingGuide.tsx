@@ -14,6 +14,7 @@ import {
     getCurrentVersion,
 } from '@/utils/onboardingStorage';
 import { FOCUSABLE_SELECTOR, resolveOnboardingAction, resolveTabCycleTarget } from './onboardingKeymap';
+import { saveAndCloseDescription } from '@/components/layout/saveActionCopy';
 
 // 导入样式
 import '@/styles/onboarding.css';
@@ -47,7 +48,11 @@ const STEPS: StepConfig[] = [
     // 断言「选择器能命中真实元素」，正是为了拦住「改文案后引导高亮静默消失」。
     {
       title: '保存工作会话',
-      spotlightTarget: '[aria-label="保存当前窗口中的所有标签页为会话，并关闭这些标签页"]',
+      // 2026-10-19 审计 I-3：保存按钮的 aria-label 改用共享常量
+      // saveAndCloseDescription（可见文案也同步变成「保存并关闭标签」）。
+      // 这里的锚点必须跟着变 —— a11yLists 有一条守卫断言「选择器能命中真实
+      // 元素」，正是为了拦住「改文案后引导高亮静默消失」。
+      spotlightTarget: `[aria-label="${saveAndCloseDescription}"]`,
     },
     { title: '搜索工作会话', spotlightTarget: '[aria-label="搜索会话或标签页"]' },
     {

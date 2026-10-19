@@ -18,6 +18,7 @@ import { Tooltip } from '@/components/common/Tooltip';
 import { TapStackLogo } from '@/components/common/TapStackIcon';
 import { LoadingSpinner } from '@/components/common/LoadingSpinner';
 import { cleanDuplicatesConfirmMessage, cleanDuplicatesResultMessage } from './cleanDuplicatesMessage';
+import { saveAndCloseDescription, saveAndCloseLabel, saveAndCloseShortLabel } from './saveActionCopy';
 import { planCleanDuplicates } from '@/core/mutationOps';
 import { storage } from '@/utils/storage';
 import { logError, logWarn } from '../../utils/log';
@@ -116,7 +117,12 @@ export const Header: React.FC<HeaderProps> = ({ onSearch }) => {
     showConfirm({
       title: '确认清理重复标签和空会话',
       message: cleanDuplicatesConfirmMessage(plan.removedTabsCount, plan.removedGroupsCount),
-      type: 'warning',
+      // ── 2026-10-19 审计 V-5：这个动作是不可撤销的删除，确认按钮必须是 danger ──
+      // 确认文案里已经明写「此操作无法撤销」，而按钮却是 warning 琥珀色
+      // （bg-amber-700）—— 与「删除所有会话」的 rose 红不是同一套语言。
+      // 用户会把琥珀读成「提醒一下」而不是「要真删」。
+      // 破坏性动作的按钮语言必须与它的后果一致：不可撤销 ⇒ danger。
+      type: 'danger',
       confirmText: '确认清理',
       cancelText: '取消',
       // 不要在确认弹窗里等清理跑完：大批量去重 + 成百上千条删除广播登记会有可见
@@ -289,7 +295,7 @@ export const Header: React.FC<HeaderProps> = ({ onSearch }) => {
             aria-label="回到默认视图"
           >
             <span className="flex-shrink-0">
-              <TapStackLogo size="sm" showIcon={true} />
+              <TapStackLogo size="sm" showIcon={true} nameClassName="app-header-brand-name" />
             </span>
             <div className="app-header-brand-meta hidden sm:block">
               <TabCounter />
@@ -372,29 +378,40 @@ export const Header: React.FC<HeaderProps> = ({ onSearch }) => {
             <SyncButton />
 
             {/* 保存按钮。
-                tooltip 明说「并关闭它们」：这个动作会清空当前窗口（TabManager
-                saveAllTabs → chrome.tabs.remove），必须让用户在被清空前就知道。
-                移动端只留图标但保留完整可访问名称，关键操作不藏进菜单。 */}
-            <Tooltip content="保存当前窗口的标签页为会话，并关闭这些标签页" position="bottom">
+                **可见文字本身就带「关闭」**（2026-10-19 审计 I-3）：原先可见文字
+                只有「保存会话」，「并关闭这些标签页」只写在 hover 300ms 才出现的
+                tooltip 和 aria-label 里 —— 鼠标快速点击、触屏、窄屏用户全程
+                看不到，而点下去当前窗口就被清空了。
+                现在可见文案 = saveAndCloseLabel（与空态 CTA 逐字同源，
+                见 components/layout/saveActionCopy.ts），文案与行为不可能漂移。
+
+                ── 2026-10-19 审计 I-1：空态时降为次级按钮 ──────────────────
+                新用户第一屏上，顶栏「保存并关闭标签」与空态卡里的主 CTA
+                做的是**同一件事**（同一个 SAVE_ALL_TABS + 关闭标签），却是两个
+                同色主按钮 —— 用户要在两个蓝色按钮之间猜哪一个是真的。
+                空态时顶栏这一颗降为次级样式（.btn-secondary），让空态卡的
+                CTA 成为**唯一**的主操作；有会话之后（空态卡不渲染）顶栏恢复
+                主按钮样式。 */}
+            <Tooltip content={saveAndCloseDescription} position="bottom">
               <button
                 onClick={handleSaveAllTabs}
                 disabled={isSaving}
-                className="btn btn-primary flat-interaction whitespace-nowrap px-3 sm:px-4 disabled:opacity-60 disabled:cursor-not-allowed"
-                aria-label="保存当前窗口中的所有标签页为会话，并关闭这些标签页"
+                className={`btn ${groups.length === 0 ? 'btn-secondary' : 'btn-primary'} flat-interaction whitespace-nowrap shrink-0 px-3 sm:px-4 disabled:opacity-60 disabled:cursor-not-allowed`}
+                aria-label={saveAndCloseDescription}
                 aria-busy={isSaving}
               >
-                {isSaving ? <LoadingSpinner size="sm" color="white" /> : <SaveIcon />}
-                <span className="hidden sm:inline">
+                {isSaving ? <LoadingSpinner size="sm" className="text-current" /> : <SaveIcon />}
+                <span className="hidden sm:inline whitespace-nowrap">
                   {isSaving
                     ? '保存中…'
                     : saveFeedback?.kind === 'error'
                       ? saveFeedback.text
                       : saveFeedback?.kind === 'success'
                         ? saveFeedback.text
-                        : '保存会话'}
+                        : saveAndCloseLabel}
                 </span>
                 <span className="sm:hidden" aria-hidden="true">
-                  {isSaving ? '保存中' : saveFeedback?.kind === 'success' ? '已保存' : '保存'}
+                  {isSaving ? '保存中' : saveFeedback?.kind === 'success' ? '已保存' : saveAndCloseShortLabel}
                 </span>
               </button>
             </Tooltip>

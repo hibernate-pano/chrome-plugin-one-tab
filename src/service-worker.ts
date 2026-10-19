@@ -376,7 +376,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
             success: false,
             error: isStorableTabUrl(rawUrl)
               ? '此标签在当前设备无法打开（本地文件/临时链接/浏览器内部页面），已保留在会话中'
-              : 'URL scheme not allowed',
+              // 2026-10-19 审计 F-7：回**稳定 reason 码**而不是英文原文。
+              // 原文会被 UI 原样弹给全中文界面的用户（"URL scheme not allowed"），
+              // 用户无从行动。reason 码 → 中文的映射见 utils/serviceWorkerErrorCopy.ts。
+              : 'url_scheme_not_allowed',
           });
           return false;
         }
@@ -407,7 +410,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           if (safeTabs.length === 0) {
             sendResponse({
               success: false,
-              error: skipped > 0 ? '本设备无法打开这些标签（本地文件/临时链接/浏览器内部页面）' : 'no valid URLs',
+              error: skipped > 0 ? '本设备无法打开这些标签（本地文件/临时链接/浏览器内部页面）' : 'no_valid_urls',
             });
             return false;
           }
@@ -443,7 +446,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
             .map(u => (isOpenableTabUrl(u) ? { url: String(u).trim() } : null))
             .filter((t): t is { url: string } => t !== null);
           if (safeTabs.length === 0) {
-            sendResponse({ success: false, error: 'no valid URLs' });
+            sendResponse({ success: false, error: 'no_valid_urls' });
             return false;
           }
           const opener = data.inCurrentWindow

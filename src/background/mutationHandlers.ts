@@ -251,7 +251,12 @@ export function createMutationHandlers(deps: MutationDeps) {
         );
         await persist(r.groups);
         scheduleUpload(DELETE_PRIORITY_MS);
-        return { ok: true, payload: r.imported };
+        // 2026-10-19 审计 F-5：把「已存在而跳过」的计数一并回传。
+        // UI 需要区分两种跳过：「这份会话你已导入过」（幂等，正常）与
+        // 「文件里这条没有可恢复的内容」（异常）。原先只回 imported，
+        // UI 只能把两者都报成「为空会话或只含无法保存的网址」——
+        // 用户重复导入同一份备份时看到的是「你的备份文件坏了」。
+        return { ok: true, payload: { imported: r.imported.length, skippedExisting: r.skippedExisting } };
       }
       case 'renameGroup': {
         const groups = await d.getGroups();

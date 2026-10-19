@@ -1,4 +1,5 @@
 import React, { useEffect, useState, useCallback, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import { useAppDispatch, useAppSelector } from '@/store/hooks';
 import { updateGroupNameAndSync, toggleGroupLockAndSync, deleteGroup, deleteBroadcastWarn, deleteTabAndSync, moveTabAndSync } from '@/store/slices/tabSlice';
 import { DraggableTab } from '@/components/dnd/DraggableTab';
@@ -12,6 +13,8 @@ import { useNearViewport } from '@/hooks/useNearViewport';
 import { resolveRowWindow } from './lazyTabRows';
 import { trackProductEvent } from '@/utils/productEvents';
 import { logError } from '../../utils/log';
+import { toServiceWorkerErrorCopy } from '@/utils/serviceWorkerErrorCopy';
+import { mutationErrorMessage } from '@/components/tabs/mutationErrorCopy';
 
 interface TabGroupProps {
   group: TabGroupType;
@@ -65,6 +68,11 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
   // 整组恢复按 group.id 加同类在途锁。组件卸载即丢弃，无需额外清理。
   const openGuardRef = useRef<OpenGuard | null>(null);
   const openAllGuardRef = useRef<OpenAllGuard | null>(null);
+  // 窄屏「更多」菜单（2026-10-19 审计 P0-2 / P2-9）
+  const moreMenuRef = useRef<HTMLDetailsElement | null>(null);
+  const moreMenuButtonRef = useRef<HTMLDivElement | null>(null);
+  // 菜单面板的固定定位坐标（相对视口）。
+  const [moreMenuPos, setMoreMenuPos] = useState<{ top: number; left: number } | null>(null);
   if (openGuardRef.current === null) openGuardRef.current = new OpenGuard();
   if (openAllGuardRef.current === null) openAllGuardRef.current = new OpenAllGuard();
 
@@ -137,7 +145,8 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
           if (warn) showDeleteError(warn);
         })
         .catch(error => {
-          showDeleteError(`删除会话失败: ${error.message || '未知错误'}`);
+          // 2026-10-19 审计 F-8：原始异常只进日志，界面只说可行动的话。
+          showDeleteError(mutationErrorMessage('删除会话', error));
         });
     };
 
@@ -224,7 +233,7 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
         })
         .catch(error => {
           logError('恢复会话后删除原会话失败:', error);
-          showDeleteError(`恢复会话后清理原会话失败: ${error.message || '未知错误'}`);
+          showDeleteError(mutationErrorMessage('恢复会话后清理原会话', error));
         })
         .finally(releaseAllOnce);
     };
@@ -243,7 +252,12 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
         // 没有 success:true 就没有证据证明标签打开了：记录原样保留，可重试。
         if (!r || r.success !== true) {
           releaseAllOnce();
-          showDeleteError(`${r?.error || '恢复会话失败'}。原会话仍保留在列表中。`);
+          // 2026-10-19 审计 F-7：SW 的 error 可能是一句中文，也可能是机器码
+          // （如 no_valid_urls）。统一走 toServiceWorkerErrorCopy 翻译，
+          // 别把英文原文弹给全中文界面的用户。
+          showDeleteError(
+            `${toServiceWorkerErrorCopy(r?.error, '恢复会话失败')}。原会话仍保留在列表中。`
+          );
           return;
         }
         consumeSession();
@@ -297,7 +311,7 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
         data: { url: tab.url, pinned: !!tab.pinned }
       }).catch(error => {
         logError('打开标签失败:', error);
-        showRestoreError(`打开失败：${error?.message || '未知错误'}`);
+        showRestoreError(mutationErrorMessage('打开标签', error));
       });
       return;
     }
@@ -311,7 +325,7 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
         if (r && r.success === false) {
           // SW 明确拒开：开了没看到页面，记录保留（用户批复：拒开不删）。
           releaseOnFailure();
-          showRestoreError(r.error || '打开失败，已保留在会话中');
+          showRestoreError(toServiceWorkerErrorCopy(r.error, '打开失败，已保留在会话中'));
           return;
         }
         // SW 无回包（无 URL 的 break 分支）同样不删：没证据证明打开了。
@@ -328,7 +342,7 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
           })
           .catch(error => {
             logError('打开后从会话移除失败:', error);
-            showDeleteError(`标签已打开，但从会话移除失败: ${error.message || '未知错误'}`);
+            showDeleteError(mutationErrorMessage('标签已打开，但从会话移除', error));
           });
       }
     );
@@ -349,7 +363,7 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
       })
       .catch(error => {
         logError('移动标签失败:', error);
-        showDeleteError(`移动标签失败: ${error.message || '未知错误'}`);
+        showDeleteError(mutationErrorMessage('移动标签', error));
       });
   }, [dispatch, showDeleteError]);
 
@@ -369,7 +383,7 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
           if (warn) showDeleteError(warn);
         })
         .catch(error => {
-          showDeleteError(`更新会话失败: ${error.message || '未知错误'}`);
+          showDeleteError(mutationErrorMessage('更新会话', error));
         });
     };
 
@@ -393,6 +407,87 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
   }, [confirmBeforeDelete, dispatch, group, showConfirm, showDeleteError]);
 
   /**
+   * 锁定会话里的标签被尝试拖走（2026-10-19 审计 F-3）。
+   *
+   * 锁定承诺「组内不发生删除」，而拖到别的会话 = 从本组移除，拖走最后一条
+   * = 整组物理移除。所以锁定组的标签不可拖（DraggableTab 的 draggable={!locked}）。
+   *
+   * 这里只负责**出声**：拦下却不出声，用户会以为是自己没拖动成功。
+   * 放在 TabGroup（而不是 DraggableTab）是因为这一层才知道「锁定」这件事
+   * 对用户的意义 —— 组件行只知道 locked 布尔值。
+   */
+  /**
+   * 窄屏「更多」菜单的开合（2026-10-19 审计 P0-2 / P2-9）。
+   *
+   * 原生 <details> 的两个缺口：
+   *   · 点菜单项后**不自动收起** —— 「重命名会话」点完，菜单还浮在输入框上面；
+   *   · **外部点击不关闭、Esc 不关闭** —— 键盘用户没有任何方式收起它。
+   *
+   * 这里补上：菜单项被点 → 收起；点菜单外 → 收起；Esc → 收起。
+   */
+  const handleMoreMenuToggle = useCallback((e: React.MouseEvent) => {
+    // summary 的默认行为是切换 open —— 我们的处理只管「何时关」，
+    // 不干预展开本身。
+    e.preventDefault();
+    const el = moreMenuRef.current;
+    if (!el) return;
+    const nextOpen = !el.open;
+    el.open = nextOpen;
+    if (!nextOpen) {
+      setMoreMenuPos(null);
+      return;
+    }
+    // 面板用 position: fixed + portal 渲染到 body（见下方 createPortal）。
+    // 坐标按 summary 按钮的视口位置算，并做**视口内收边**：
+    // 窄屏时按钮靠右，面板宽 176px，若不收边会横向溢出视口。
+    const btn = moreMenuButtonRef.current;
+    if (!btn) return;
+    const r = btn.getBoundingClientRect();
+    const PANEL_W = 176;
+    const MARGIN = 8;
+    const left = Math.max(MARGIN, Math.min(r.right - PANEL_W, window.innerWidth - PANEL_W - MARGIN));
+    // 优先向下；下方不够就向上。
+    const estimatedH = 160;
+    const top = r.bottom + 4 + estimatedH <= window.innerHeight
+      ? r.bottom + 4
+      : Math.max(MARGIN, r.top - 4 - estimatedH);
+    setMoreMenuPos({ top, left });
+  }, []);
+
+  const closeMoreMenu = useCallback(() => {
+    const el = moreMenuRef.current;
+    if (el?.open) el.open = false;
+    setMoreMenuPos(null);
+  }, []);
+
+  // 外部点击 / Esc 关闭（挂在 document 上，只在菜单打开时监听）。
+  useEffect(() => {
+    const el = moreMenuRef.current;
+    if (!el) return;
+    const onDocClick = (e: MouseEvent) => {
+      if (!el.open) return;
+      const target = e.target as Node | null;
+      if (target && !el.contains(target)) closeMoreMenu();
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && el.open) {
+        e.stopPropagation();
+        closeMoreMenu();
+      }
+    };
+    document.addEventListener('click', onDocClick);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('click', onDocClick);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [closeMoreMenu]);
+
+  const handleLockedDragBlocked = useCallback(() => {
+    showRestoreError('会话已锁定，解锁后才能移动其中的标签');
+  }, [showRestoreError]);
+
+  /**
    * 「拖走最后一条标签会整组删掉这个会话」——**不拦**（2026-10-19 回退）。
    *
    * 这条规则一直是产品的核心：会话是活的容器，搬走最后一条标签就意味着这个容器
@@ -411,7 +506,10 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
    * `onDragBlocked` 这个可选 prop 本身保留在 DraggableTab 上（不删机制），
    * 将来若要临时加回某种「拖拽前的保护」，接上这个 prop 即可，不必再改一次组件。
    *
-   * 锁定会话仍不走这条路：锁定组的标签渲染层不提供删除/拖出（DraggableTab 的 locked），
+   * 锁定会话仍不走这条路：锁定组的标签渲染层不提供删除/拖出
+   * （DraggableTab 的 `draggable={!locked}` + 拖拽入口的锁定闸，见
+   * handleLockedDragBlocked；2026-10-19 审计 F-3 之前这里是**只挡住了删除、
+   * 没挡住拖出**，与本段注释相反），
    * 数据层 `shouldAutoDeleteAfterTabRemoval` 也对锁定组豁免 —— 这两条与本次回退无关，
    * 一直是「锁定 = 组内不发生删除」的产品语义。
    */
@@ -516,11 +614,32 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
           </span>
         </div>
 
-        {/* 操作按钮：恢复常驻，其余 hover 显。
-            恢复是核心“找回”动作，零学习成本；触屏无 hover 窄屏常驻；
-            键盘 focus-within 同样显形，避免对不可见控件盲操作。 */}
-        <div className="flex items-center gap-0.5 sm:gap-1 opacity-100 transition-all duration-200 ease-out flex-shrink-0">
-          {/* 恢复全部（新窗口） */}
+        {/* 操作按钮。
+            ── 2026-10-19 审计 V-3：窄屏降级 ──────────────────────────────
+            修复前这里是 6 颗 36px 的图标按钮（折叠 + 恢复×2 + 重命名 + 锁定 +
+            删除），在 400px 的 popup 里占掉 216px / 366px 的卡宽，
+            标题被压到只剩 74px（截断到 5 个汉字），而两个「打开」图标在
+            16px 下几乎同形（用户分不清「新窗口恢复」与「当前窗口打开」）。
+
+            窄屏（<640px）只留两颗最常用的：**恢复整个会话** 与 **更多**
+            （一个 ⋯ 菜单承载重命名 / 锁定 / 删除）。恢复是零学习成本的
+            核心「找回」动作，必须常驻；其余是低频操作，收进菜单是
+            桌面端软件的标准做法。
+
+            宽屏（≥640px）保持 5 颗全平铺 —— 桌面上横向空间充足，
+            平铺的「一眼看全」比菜单更好。 */}
+        {/* ── 2026-10-19 审计 P0-2：操作区必须能浮到标签列表之上 ──────────
+         *
+         * 卡内 DOM 顺序是「卡头（含操作区）→ 标签列表」，而标签列表**在后面**。
+         * 两者都非定位元素时，后者画在上层；于是「更多」菜单（absolute 定位）
+         * 虽然 z-30，仍被紧随其后的标签行盖住 —— 实测窄屏下「删除会话」
+         * 那一行 elementFromPoint 命中的是背后的标签行，**完全点不到**。
+         *
+         * 给操作区 `relative z-30`：它成为卡内的定位上下文，菜单从中溢出
+         * 到卡片之外，且层级高于标签列表。
+         */}
+        <div className="relative z-30 flex items-center gap-0.5 sm:gap-1 opacity-100 transition-all duration-200 ease-out flex-shrink-0">
+          {/* 恢复全部（新窗口）—— 核心动作，窄屏也常驻 */}
           <button
             onClick={handleOpenAllTabs}
             className="btn-icon theme-btn-hover p-1.5 tab-group-action-accent micro-interaction-button"
@@ -530,21 +649,21 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
             <OpenAllIcon />
           </button>
 
-          {/* 在当前窗口打开 */}
+          {/* 在当前窗口打开 —— 宽屏常驻，窄屏收进「更多」 */}
           <button
             onClick={handleOpenAllTabsInCurrentWindow}
-            className="btn-icon theme-btn-hover p-1.5 micro-interaction-button"
+            className="btn-icon theme-btn-hover p-1.5 micro-interaction-button hidden sm:inline-flex"
             title="在当前窗口打开整个会话"
             aria-label={`在当前窗口打开整个会话，共 ${group.tabs.length} 个标签页`}
           >
             <OpenAllInPlaceIcon />
           </button>
 
-          {/* 编辑 */}
+          {/* 编辑 —— 宽屏常驻，窄屏收进「更多」 */}
           {!group.isLocked && (
             <button
               onClick={() => setIsEditing(true)}
-              className="btn-icon theme-btn-hover p-1.5 micro-interaction-button"
+              className="btn-icon theme-btn-hover p-1.5 micro-interaction-button hidden sm:inline-flex"
               title="重命名会话"
               aria-label="重命名会话"
             >
@@ -552,29 +671,122 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
             </button>
           )}
 
-          {/* 锁定/解锁 */}
+          {/* 锁定/解锁 —— 宽屏常驻，窄屏收进「更多」 */}
           <button
             onClick={handleToggleLock}
-            className={`btn-icon p-1.5 micro-interaction-button ${group.isLocked ? 'tab-group-lock-icon' : ''}`}
+            className={`btn-icon p-1.5 micro-interaction-button hidden sm:inline-flex ${group.isLocked ? 'tab-group-lock-icon' : ''}`}
             title={group.isLocked ? '解锁会话' : '锁定会话'}
             aria-label={group.isLocked ? '解锁会话' : '锁定会话'}
           >
             <LockIcon locked={group.isLocked} />
           </button>
 
-          {/* 删除 */}
+          {/* 删除 —— 宽屏常驻，窄屏收进「更多」 */}
           {!group.isLocked && (
             <button
               onClick={handleDelete}
-              className="btn-icon p-1.5 tab-group-action-danger micro-interaction-button"
+              className="btn-icon p-1.5 tab-group-action-danger micro-interaction-button hidden sm:inline-flex"
               title="删除会话"
               aria-label="删除会话"
             >
               <DeleteIcon />
             </button>
           )}
+
+          {/* 窄屏「更多」菜单：承载上面收起来的那几项。
+              用原生 <details> 而不是自造弹层 —— 它自带键盘可达性
+              （Enter 展开、Esc 关闭、Tab 可进），不引入新的焦点管理负担。 */}
+          <details className="sm:hidden relative" ref={moreMenuRef}>
+            <summary
+              ref={moreMenuButtonRef as never}
+              className="btn-icon theme-btn-hover p-1.5 micro-interaction-button list-none cursor-pointer"
+              aria-label={`${group.name} 的更多操作`}
+              onClick={handleMoreMenuToggle}
+            >
+              <svg
+                className="w-4 h-4"
+                fill="none"
+                viewBox="0 0 24 24"
+                stroke="currentColor"
+                strokeWidth={1.5}
+                aria-hidden="true"
+              >
+                <path strokeLinecap="round" strokeLinejoin="round" d="M12 6.75a.75.75 0 110-1.5.75.75 0 010 1.5zM12 12.75a.75.75 0 110-1.5.75.75 0 010 1.5zM12 18.75a.75.75 0 110-1.5.75.75 0 010 1.5z" />
+              </svg>
+            </summary>
+          </details>
         </div>
       </div>
+
+      {/* 窄屏「更多」菜单面板（2026-10-19 审计 P0-2）：portal 到 body ──────
+       *
+       * 为什么必须 portal：会话卡的 `animate-in` 动画带 `transform`
+       * （fadeInUp 的 to 帧是 translateY(0)，`forwards` 让它永久保留），
+       * 于是**每张卡都是一个 stacking context**。面板若是卡的子元素，
+       * 它的 z-index 只在卡内有效 —— 无论 z-30 还是 z-40，都压不过
+       * 后面那张卡（实测窄屏下「删除会话」那一行 elementFromPoint 命中的是
+       * 背后的标签行，完全点不到）。
+       *
+       * portal 到 body + position: fixed 让它脱离所有卡的层叠上下文，
+       * 由 z-index 直接与页面内容比较 —— 这才是真正可靠的解法。
+       */}
+      {moreMenuPos &&
+        createPortal(
+          <div
+            role="menu"
+            aria-label={`${group.name} 的更多操作`}
+            style={{
+              position: 'fixed',
+              top: moreMenuPos.top,
+              left: moreMenuPos.left,
+              zIndex: 9999,
+            }}
+            className="w-44 rounded-lg border theme-border-default theme-bg-elevated theme-shadow-panel py-1"
+            onClick={e => e.stopPropagation()}
+          >
+            <button
+              onClick={() => {
+                closeMoreMenu();
+                handleOpenAllTabsInCurrentWindow();
+              }}
+              className="w-full px-3 py-2 text-left text-sm theme-text-secondary transition-colors hover:theme-btn-hover"
+            >
+              在当前窗口打开
+            </button>
+            {!group.isLocked && (
+              <button
+                onClick={() => {
+                  closeMoreMenu();
+                  setIsEditing(true);
+                }}
+                className="w-full px-3 py-2 text-left text-sm theme-text-secondary transition-colors hover:theme-btn-hover"
+              >
+                重命名会话
+              </button>
+            )}
+            <button
+              onClick={() => {
+                closeMoreMenu();
+                handleToggleLock();
+              }}
+              className="w-full px-3 py-2 text-left text-sm theme-text-secondary transition-colors hover:theme-btn-hover"
+            >
+              {group.isLocked ? '解锁会话' : '锁定会话'}
+            </button>
+            {!group.isLocked && (
+              <button
+                onClick={() => {
+                  closeMoreMenu();
+                  handleDelete();
+                }}
+                className="w-full px-3 py-2 text-left text-sm theme-text-danger transition-colors hover:theme-btn-hover"
+              >
+                删除会话
+              </button>
+            )}
+          </div>,
+          document.body
+        )}
 
       {/* 标签列表。
           折叠态必须**不渲染**可交互子元素，而不是靠 CSS/aria 藏起来：
@@ -621,6 +833,7 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
                     moveTab={handleMoveTab}
                     handleOpenTab={handleOpenTab}
                     handleDeleteTab={handleDeleteTab}
+                    onLockedDragBlocked={handleLockedDragBlocked}
                   />
                 ))
               ) : (
