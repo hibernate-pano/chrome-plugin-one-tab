@@ -28,7 +28,7 @@ import {
   UNKNOWN_BACKEND_STATUS,
   type BackendStatus,
 } from './backendStatus';
-import { deleteAllConfirmMessage, deleteAllMenuWarning } from './deleteAllMessages';
+import { deleteAllConfirmMessage, deleteAllMenuWarning, deleteAllShouldPushOverwrite } from './deleteAllMessages';
 import { resolveMenuSyncStatus, resolveSyncFailureCopy } from '@/components/sync/syncPreviewView';
 
 /** 问题反馈落点：GitHub issues 新建页。用户自己决定粘不粘诊断摘要。 */
@@ -344,7 +344,11 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({
               onClose: () => {}
             });
           }
-          if (isAuthenticated) {
+          // 判据与确认框那句话**必须同源**（deleteAllMessages.deleteAllShouldPushOverwrite）：
+          // 原先这里读 isAuthenticated，于是自带存储（WebDAV）用户被告知
+          // 「其他设备将同步删除」，实际却因恒 false 走了下面的「跳过」分支 ——
+          // 云端旧会话留在原地，换台设备连回来就被原样拉回。承诺与行为分裂。
+          if (deleteAllShouldPushOverwrite({ isAuthenticated, syncBackend: settings.syncBackend })) {
             sendSyncCommand('upload', {
               overwriteCloud: true,
               syncSettings: true,
@@ -379,7 +383,9 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({
                 logError('同步到云端失败:', error);
               });
           } else {
-            logInfo('用户未登录，跳过同步到云端');
+            // 措辞必须与判据一致：走到这里说明**没有可用的同步后端**
+            // （纯本地用户），不是「你本来有账号却没登录」。
+            logInfo('[HeaderDropdown] 没有可用的同步后端，删除只在本机生效（云端无副本需要清理）');
           }
         })
         .catch(error => {

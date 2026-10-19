@@ -23,6 +23,21 @@ export interface DeleteAllDisclosure {
 export const deleteReachesOtherDevices = (input: DeleteAllDisclosure): boolean =>
   input.isAuthenticated || input.syncBackend === 'webdav';
 
+/**
+ * 「删完全部之后，要不要立刻发一次覆盖上传」——**必须与
+ * `deleteReachesOtherDevices` 同源**（2026-10-19 修真实缺陷）。
+ *
+ * 原实现直接读 `isAuthenticated`，而自带存储（WebDAV）用户没有 TapStack 账号、
+ * 该值恒为 false ⇒ 确认框里写着「其他设备将同步删除」，实际却走了
+ * 「用户未登录，跳过同步到云端」的分支：承诺与行为分裂，且跳过的恰是
+ * 最需要这次加固的那个后端。删光本机后云端仍留着全部旧会话，
+ * 换台设备登录/连盘就把它们原样拉回来。
+ *
+ * 判据取「有没有可用的同步后端」而非「有没有账号」，与本文件其余声明、
+ * `syncIdentityCanRun`、backgroundSync 的门禁同一口径。
+ */
+export const deleteAllShouldPushOverwrite = deleteReachesOtherDevices;
+
 /** 自带存储用户没有账号，说「登录设备」会指向一个他不需要也不存在的东西。 */
 const otherDevicesLabel = (input: DeleteAllDisclosure): string =>
   input.syncBackend === 'webdav' ? '其他设备' : '其他登录设备';

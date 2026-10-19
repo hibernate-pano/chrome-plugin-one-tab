@@ -1406,10 +1406,14 @@ export const WebDavSettings: React.FC = () => {
                     className={btnGhost}
                     onClick={() => {
                       const d = previewOutcome(firstPush.localGroups, firstPush.remoteGroups, choice);
-                      // 只有真的存在不可恢复后果（warning）才二次确认；
-                      // 「以云端为准」的 warning 现在说明的是「不会丢数据」，
-                      // 但同 id 的旧版本仍不可恢复，所以保留确认。
-                      if (choice !== 'merge' && d.warning) {
+                      // 什么时候弹二次确认：**这一步真有不可逆后果**。
+                      // 墓碑态下三个选项都会让已删会话复活（previewOutcome 会给
+                      // merge 也带上 warning），原先「choice !== 'merge'」那个
+                      // 例外正好把标着「推荐」的那一个排除在确认之外 ——
+                      // 2026-10-19 修：判据统一成「有 warning 就确认」。
+                      // 「以云端为准」的 warning 说明的是「不会丢数据」，但同 id 的
+                      // 旧版本仍不可恢复，所以保留确认。
+                      if (d.warning) {
                         if (!window.confirm(`${label}\n\n${d.warning}\n\n确定继续吗？`)) return;
                       }
                       void runPush(choice, firstPush.localGroups, firstPush.remoteGroups);

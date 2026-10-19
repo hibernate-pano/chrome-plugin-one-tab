@@ -17,8 +17,10 @@ import { useDebouncedSearch } from '@/hooks/useDebouncedSearch';
 import { Tooltip } from '@/components/common/Tooltip';
 import { TapStackLogo } from '@/components/common/TapStackIcon';
 import { LoadingSpinner } from '@/components/common/LoadingSpinner';
-import { cleanDuplicatesResultMessage } from './cleanDuplicatesMessage';
-import { logError } from '../../utils/log';
+import { cleanDuplicatesConfirmMessage, cleanDuplicatesResultMessage } from './cleanDuplicatesMessage';
+import { planCleanDuplicates } from '@/core/mutationOps';
+import { storage } from '@/utils/storage';
+import { logError, logWarn } from '../../utils/log';
 
 interface HeaderProps {
   onSearch: (query: string) => void;
@@ -75,6 +77,7 @@ export const Header: React.FC<HeaderProps> = ({ onSearch }) => {
   const dispatch = useAppDispatch();
   const { showConfirm, showAlert, showToast } = useToast();
   const settings = useAppSelector(state => state.settings);
+  const groups = useAppSelector(state => state.tabs.groups);
   // 清理重复标签的进行中标志：只用来禁点 + 转圈，不阻塞界面。
   const [isCleaningDuplicates, setIsCleaningDuplicates] = React.useState(false);
 
@@ -82,12 +85,37 @@ export const Header: React.FC<HeaderProps> = ({ onSearch }) => {
   const searchInputRef = React.useRef<HTMLInputElement>(null);
   const [isSearchTransitionPending, startSearchTransition] = useTransition();
 
-  const handleCleanDuplicateTabs = () => {
+  const handleCleanDuplicateTabs = async () => {
     if (isCleaningDuplicates) return;
+    // ── 2026-10-19：确认前算真实波及范围 ─────────────────────────────────
+    // 五个破坏性动作里，只有清理重复标签此前是「不告诉你会删掉多少」就让你点确认。
+    // 而 1.22.0 起删除即物理清除、无回收站 —— 同意的那一刻看不到范围。
+    //
+    // 计数用 planCleanDuplicates（纯函数）：SW 执行时用的是**同一份**判据
+    // （mutationHandlers → applyCleanDuplicates → planCleanDuplicates），
+    // 所以这里的数字就是真实会发生的，不是估算。
+    //
+    // 输入取 storage 真值而不是 Redux：Redux 可能落后于磁盘（外部写入 /
+    // 尚未回环），而确认框报错数字比不报更糟。读失败时退回 Redux 现值 ——
+    // 至少还有一份可用的快照，且确认文案会如实反映它。
+    let localGroups = groups;
+    try {
+      localGroups = await storage.getGroupsForWrite();
+    } catch (error) {
+      logWarn('[Header] 清理前读取真实会话失败，改用界面当前快照计算清理范围:', error);
+    }
+    const plan = planCleanDuplicates(localGroups);
+
+    // 没东西可清时不该摆一道「确认清理」的破坏性弹窗：让用户点一次「确认清理」
+    // 才告诉他其实什么都没删，与「点了没反应」同类。直接说清即可。
+    if (plan.removedTabsCount === 0 && plan.removedGroupsCount === 0) {
+      showToast(cleanDuplicatesConfirmMessage(0, 0), 'info', 4000);
+      return;
+    }
+
     showConfirm({
       title: '确认清理重复标签和空会话',
-      message:
-        '将清理所有会话中 URL 相同的重复标签页（每个 URL 只保留最新的一个），并删除没有任何标签页的空会话（锁定的会话除外）。\n此操作无法撤销。',
+      message: cleanDuplicatesConfirmMessage(plan.removedTabsCount, plan.removedGroupsCount),
       type: 'warning',
       confirmText: '确认清理',
       cancelText: '取消',

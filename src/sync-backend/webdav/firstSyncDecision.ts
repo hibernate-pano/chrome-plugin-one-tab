@@ -293,6 +293,20 @@ export async function clearFirstSyncPendingBestEffort(args: {
   }
 }
 
+/**
+ * 三个选项各自的后果预览。
+ *
+ * ── 2026-10-19 修：墓碑必须进后果，不能被 filter 静默吞掉 ──────────────
+ * 原实现在函数开头就把 `remoteGroups` 过滤成「非墓碑」，于是**远端只有墓碑**
+ * 这一态下，三个选项的 hint 全都说「云端独有的 0 个会话」、`merge` 更是
+ * **完全没有 warning**。而同一块面板的抬头正在警告
+ * 「继续推送会撤销那些删除、让已删的会话重新出现」——按钮紧挨着抬头，
+ * 却说着相反的话；标着「推荐」的那一个连二次确认都不弹（UI 只对有 warning
+ * 的选项弹）。方向都错：唯一真的不可逆的那一项被描述成零风险。
+ *
+ * 现在墓碑单独统计：凡是本机会让它「复活」的（有同 id 活跃会话，或本机
+ * 带印记 ⇒ stamp 决胜时胜出），都计入 `revived` 并让**所有**选项带上 warning。
+ */
 export function previewOutcome(
   localGroups: TabGroup[],
   remoteGroups: TabGroup[],
@@ -300,6 +314,19 @@ export function previewOutcome(
 ): OwnershipPreview {
   const local = localGroups.filter(g => !g.isDeleted);
   const remote = remoteGroups.filter(g => !g.isDeleted);
+  const tombstones = remoteGroups.filter(g => g.isDeleted);
+  /**
+   * 这次操作会让多少条「云端已删除」的记录重新变成活跃会话。
+   *
+   * 判据与 `mergeOpStamped` 的「云端墓碑 vs 本地活跃」分支同口径：
+   * 有本机同 id 副本时由 stamp 决胜（本机赢 ⇒ 删除被撤销），
+   * 本机没有同 id 副本时上传会把它写回活跃行（同样是复活）。
+   * 两种情况用户都要知道，所以这里一律计为「会复活」。
+   */
+  const revived = countRevivedTombstones(local, tombstones);
+  const tombstoneNote = revived > 0
+    ? `另有云端 ${revived} 条已删除的会话记录会因本次推送重新出现（撤销了那些删除）`
+    : '';
 
   switch (choice) {
     case 'merge': {
@@ -310,7 +337,13 @@ export function previewOutcome(
         cloudCount: merged.length,
         hint:
           `把本机 ${local.length} 个会话上传到云端（共 ${merged.length} 个）；` +
-          `云端独有的 ${remoteOnly} 个会话保留在云端，本机暂不会收到`,
+          `云端独有的 ${remoteOnly} 个会话保留在云端，本机暂不会收到` +
+          (tombstoneNote ? `；${tombstoneNote}` : ''),
+        // merge 此前恒无 warning，于是 UI 不弹二次确认。墓碑态下这正是
+        // 不可逆的那一步，必须与其他选项一样先确认（见 UI 的确认判据）。
+        ...(revived > 0
+          ? { warning: `${tombstoneNote}，且这一步无法撤销。确认继续吗？` }
+          : {}),
       };
     }
     case 'local-wins': {
@@ -320,10 +353,12 @@ export function previewOutcome(
         cloudCount: local.length,
         hint:
           `本机 ${local.length} 个会话上传覆盖云端同 id 的旧版本；` +
-          `云端独有的 ${remoteOnly} 个会话不会被删除`,
+          `云端独有的 ${remoteOnly} 个会话不会被删除` +
+          (tombstoneNote ? `；${tombstoneNote}` : ''),
         warning:
           `云端同 id 且版本较旧的 ${overlapOlder} 个会话会被本机版本覆盖，无法恢复；` +
-          `云端独有的 ${remoteOnly} 个会话会保留在云端，不会被删除。`,
+          `云端独有的 ${remoteOnly} 个会话会保留在云端，不会被删除。` +
+          (tombstoneNote ? ` ${tombstoneNote}，也无法撤销。` : ''),
       };
     }
     case 'cloud-wins': {
@@ -334,14 +369,36 @@ export function previewOutcome(
         cloudCount: remote.length,
         hint:
           `本机 ${local.length} 个会话先并入云端，再与云端独有的 ${remoteOnly} 个会话` +
-          `一起拉回本机（不会丢失）`,
+          `一起拉回本机（不会丢失）` +
+          (tombstoneNote ? `；${tombstoneNote}` : ''),
         warning:
           `本机现有的 ${local.length} 个会话会先并入云端，再与云端数据一起拉回本机，` +
           `本机独有会话不会丢失；同 id 且云端版本更新的会话按云端版本合并，` +
-          `本机旧版本无法恢复。最终两边各 ${union} 个会话。`,
+          `本机旧版本无法恢复。最终两边各 ${union} 个会话。` +
+          (tombstoneNote ? ` ${tombstoneNote}，也无法撤销。` : ''),
       };
     }
   }
+}
+
+/**
+ * 本次推送会「复活」多少条云端墓碑。
+ *
+ * 分两种，都会让已删的会话重新出现：
+ *   · 本机有同 id 活跃会话且本机 stamp 不更旧 → mergeOpStamped 让本机赢，墓碑失效；
+ *   · 本机没有同 id 副本 → 上传把该行写回活跃形态，墓碑消失。
+ * 本机更旧的同 id 副本会服从删除（不算复活），故按 compareStampsLoose 判。
+ */
+function countRevivedTombstones(local: TabGroup[], tombstones: TabGroup[]): number {
+  if (tombstones.length === 0) return 0;
+  const localById = new Map(local.map(g => [g.id, g]));
+  let revived = 0;
+  for (const t of tombstones) {
+    const l = localById.get(t.id);
+    if (!l) { revived += 1; continue; }
+    if (compareStampsLoose(t.lastOp, l.lastOp) <= 0) revived += 1;
+  }
+  return revived;
 }
 
 /** 云端独有（本机没有同 id 活跃会话）的会话数。 */
