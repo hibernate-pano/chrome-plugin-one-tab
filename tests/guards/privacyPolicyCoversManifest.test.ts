@@ -27,18 +27,29 @@
 // 于是有一条**没人守的接缝**：本地改对了 ⇒ 守卫全绿 ⇒ **线上仍然是错的**。
 // 「文档 = 行为」这条纪律此前只覆盖了「仓库内部」，没覆盖「仓库 → 线上」。
 //
-// ── 这个文件守两半 ────────────────────────────────────────────────────────
+// ── 这个文件守四半 ────────────────────────────────────────────────────────
 //
 // ① **静态半**：本地隐私政策必须覆盖 manifest 的**当前**权限集合
 //    （含「已移除的权限不得再出现」这一条**反向**断言）。
 //    这半不需要网络，任何时候都能跑。
 //
-// ② **在线半**（可选、有网络才跑）：线上那份必须与仓库里的**关键事实**一致。
-//    没网就跳过，**不假装通过**。
+// ② **在线半**（有网络才跑）：线上那份必须与仓库里的**关键事实**一致。
+//    没网就跳过，**不假装通过**；但**404 是事故、不是「没网」** ——
+//    服务器明确回答「没有」必须判红（2026-10-21 线上真 404 时，
+//    旧写法把它当没网静默 skip，事故当时没有任何东西报警）。
+//
+// ③ **离线半**：同一套判据对**真实旧版快照**必须变红 ——
+//    用来验证判据本身的检测力（「现在绿」不等于「它能变红」）。
+//
+// ④ **产物半**（L-13d）：**真的跑一遍** scripts/build-legal-site.mjs，
+//    断言「部署产物 = 仓库里的隐私政策」且「产物里只有它一个文件」。
+//    这半守的是「仓库 → 线上」那一段接缝的**前半**（构建这一步）；
+//    在线的②守后半。缺了它，构建脚本写错了要等下一次部署才发现。
 
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -179,33 +190,66 @@ describe('L-13b 线上隐私政策必须与仓库一致（在线半，没网就�
   const LIVE_URL = 'https://tapstack-two.vercel.app/privacy.html';
 
   /**
-   * 抓线上那份。没网 / 超时 / 非 200 ⇒ 返回 null。
+   * 抓线上那份，**区分三种结果**。
    *
-   * 【为什么不 fail】这条断言依赖外网，而 CI 与本地都可能没有网。
-   * 把「没网」判成失败会制造**假红**，而假红会让人习惯性忽略红 ⇒
-   * 真出事那天没人看。
-   * 但「没网」也不能算**通过** —— 所以用 `t.skip()` 显式标成 skipped，
-   * 输出里看得到「这条没验」，而不是混在 pass 里。
+   * 【为什么必须区分「拿不到」与「拿到了但是坏的」】───���─────────────────────
+   * 2026-10-21 实测踩到的：线上 404（部署被 Git 联动的自动部署顶掉了）
+   * 时，这个函数返回 null（因为 `!res.ok`），于是测试**静默 skip** ——
+   * 线上已经整个打不开，输出里却只有一行 skip，看着像「环境问题，算了」。
+   *
+   * 而线上这个地址**不是可选的**：商店的 Privacy Policy URL 指向它，
+   * 审核员点开的就是它。它 404 ⇒ 商店页面里那个链接是死的。
+   * 这属于**必须报警**，不能归入「没网」。
+   *
+   * 三态：
+   *   · `ok`      —— 拿到了正文，继续逐条核对事实
+   *   · `notFound`—— 服务器明确回答「没有」⇒ **判红**（线上坏了）
+   *   · `offline` —— 真的连不上（DNS/网络/超时）⇒ 跳过（环境问题）
+   *
+   * 「拿不到」与「拿到了但是坏的」必须分开 —— 前者是环境，后者是事故。
    */
-  const fetchLive = async (): Promise<string | null> => {
+  const fetchLive = async (): Promise<
+    { kind: 'ok'; body: string } | { kind: 'notFound'; status: number } | { kind: 'offline' }
+  > => {
     try {
       const ctrl = new AbortController();
       const timer = setTimeout(() => ctrl.abort(), 8000);
       const res = await fetch(LIVE_URL, { signal: ctrl.signal });
       clearTimeout(timer);
-      if (!res.ok) return null;
-      return await res.text();
+      if (res.status === 404) return { kind: 'notFound', status: 404 };
+      if (!res.ok) return { kind: 'notFound', status: res.status };
+      return { kind: 'ok', body: await res.text() };
     } catch {
-      return null;
+      return { kind: 'offline' };
     }
   };
 
-  it('线上那份不得落后于仓库（关键事实逐条核对）', async t => {
-    const live = await fetchLive();
-    if (live === null) {
-      t.skip('拿不到线上隐私政策（无网络或非 200）—— 本条未验证');
+  it('线上那份必须存在（404 = 商店的隐私政策链接是死的）', async t => {
+    const r = await fetchLive();
+    if (r.kind === 'offline') {
+      t.skip('连不上线上（无网络）—— 本条未验证');
       return;
     }
+    assert.notEqual(
+      r.kind,
+      'notFound',
+      `线上隐私政策（${LIVE_URL}）返回 HTTP ${r.kind === 'notFound' ? r.status : ''} —— ` +
+        '商店的 Privacy Policy URL 指向这个地址，它打不开 ⇒ 商店页面上的链接是死的，' +
+        '审核员点开会看到 404。' +
+        '常见原因：Vercel 项目的 Git 集成在 push 后自动部署，' +
+        '把生产 alias 抢给了别的东西（2026-10-21 就发生过：自动部署服务的是扩展产物 dist/，' +
+        '里面没有 privacy.html）。'
+    );
+  });
+
+  it('线上那份不得落后于仓库（关键事实逐条核对）', async t => {
+    const r = await fetchLive();
+    if (r.kind === 'offline') {
+      t.skip('连不上线上（无网络）—— 本条未验证');
+      return;
+    }
+    assert.equal(r.kind, 'ok', `线上隐私政策（${LIVE_URL}）不可用 —— 详见上一条断言`);
+    const live = r.body;
     const missing = facts().filter(f => !live.includes(f.needle)).map(f => f.label);
     assert.deepEqual(
       missing,
@@ -225,13 +269,14 @@ describe('L-13b 线上隐私政策必须与仓库一致（在线半，没网就�
   });
 
   it('线上那份不得出现「不共享」与商店数据表（Shared with Third Parties: Yes）矛盾的口径', async t => {
-    const live = await fetchLive();
-    if (live === null) {
-      t.skip('拿不到线上隐私政策（无网络或非 200）—— 本条未验证');
+    const r = await fetchLive();
+    if (r.kind === 'offline') {
+      t.skip('连不上线上（无网络）—— 本条未验证');
       return;
     }
+    assert.equal(r.kind, 'ok', `线上隐私政策（${LIVE_URL}）不可用 —— 详见「线上那份必须存在」那条`);
     assert.doesNotMatch(
-      live,
+      r.body,
       /不向任何第三方出售、出租或共享/,
       '线上那份说「不出租或共享」，而商店数据表如实写了接收方 Supabase —— ' +
         '两处口径必须一致（详见 docsAlignment 的 C-12）。'
@@ -281,6 +326,87 @@ describe('L-13c 在线判据的检测力本身必须被验证（离线，用真�
       STALE,
       /不向任何第三方出售、出租或共享/,
       '快照里应当含「不共享」那句矛盾口径 —— 否则那条断言没被验证过'
+    );
+  });
+});
+
+/**
+ * ── 离线也能验的那一段：仓库 → 部署产物 ──────────────────────────────────
+ *
+ * 【为什么需要这一段】──────────────────────────────────────────────────────
+ * 上面 L-13b 守的是「**线上**那份 = 仓库那份」。但线上那份是从哪来的？
+ * 2026-10-21 实测发现真相：Vercel 项目**连着 Git 集成**，每次 push 都会
+ * 自动部署 —— 而自动部署服务的是**扩展的构建产物 dist/**（含 manifest.json、
+ * popup.html，却没有 privacy.html）⇒ 线上 /privacy.html 直接 404，
+ * **商店登记的隐私政策 URL 打不开**。
+ *
+ * ⇒ 「仓库 → 线上」这段接缝上，需要有东西守着「部署产物是什么」。
+ * 本段**真的跑一遍** scripts/build-legal-site.mjs，然后断言：
+ *   ① 产物里的 privacy.html 与 src/legal/privacy.html **逐字一致**；
+ *   ② 产物里**只有**这一个文件（多出来的文件 = 线上多了一页没人知道）。
+ *
+ * 【为什么能离线跑】不碰网络、不碰 Vercel —— 只跑本地构建脚本。
+ * 于是「构建脚本写错了」在 CI 里就会变红，而不是等下一次部署才发现线上是错的。
+ */
+describe('L-13d 部署产物必须与仓库逐字一致（离线：真的跑一遍构建脚本）', () => {
+  const OUT_DIR = resolve(ROOT, 'dist-legal-site');
+
+  it('跑一遍构建脚本，产物必须与 src/legal/privacy.html 逐字一致', () => {
+    // 用子进程跑，而不是 import —— 脚本里有顶层副作用（重建产物目录），
+    // import 会让「跑脚本」这件事发生在测试模块加载期，顺序不可控。
+    const res = spawnSync(process.execPath, [resolve(ROOT, 'scripts/build-legal-site.mjs')], {
+      cwd: ROOT,
+      encoding: 'utf8',
+    });
+    assert.equal(
+      res.status,
+      0,
+      `构建脚本跑失败了：\n${res.stdout ?? ''}\n${res.stderr ?? ''}`
+    );
+
+    const built = readFileSync(resolve(OUT_DIR, 'privacy.html'), 'utf8');
+    assert.equal(
+      built,
+      PRIVACY,
+      '部署产物里的 privacy.html 与 src/legal/privacy.html 不一致 —— ' +
+        '线上那份会与仓库不同 ⇒ 本地改对了但线上没改。'
+    );
+  });
+
+  it('部署产物里**只有** privacy.html（多出来的文件 = 线上多了一页没人知道）', () => {
+    // 先确保产物存在（上一条已经跑过脚本；这里再跑一次以免依赖测试顺序）
+    spawnSync(process.execPath, [resolve(ROOT, 'scripts/build-legal-site.mjs')], {
+      cwd: ROOT,
+      encoding: 'utf8',
+    });
+    const files = readdirSync(OUT_DIR).sort();
+    assert.deepEqual(
+      files,
+      ['privacy.html'],
+      `部署产物里应当只有 privacy.html，实际是：${files.join('、')} —— ` +
+        '多出来的文件会被一起发布到线上（审核员看得到），' +
+        '而扩展的构建产物（manifest.json / popup.html）绝不该出现在这里。'
+    );
+  });
+
+  it('vercel.json 必须指向这个构建脚本（否则线上服务的是别的东西）', () => {
+    const vcfg = JSON.parse(read('vercel.json')) as {
+      buildCommand?: string;
+      outputDirectory?: string;
+    };
+    assert.match(
+      vcfg.buildCommand ?? '',
+      /build-legal-site\.mjs/,
+      'vercel.json 的 buildCommand 必须跑 scripts/build-legal-site.mjs —— ' +
+        '这正是 2026-10-21 线上 404 的根因：Vercel 项目连着 Git 集成，' +
+        'push 后自动部署会去跑项目配置里的构建命令；' +
+        '那个命令曾经指向已删除的 build:web，后来被清空成「跑默认构建」⇒ ' +
+        '服务的是扩展产物 dist/，里面没有 privacy.html。'
+    );
+    assert.equal(
+      vcfg.outputDirectory,
+      'dist-legal-site',
+      'vercel.json 的 outputDirectory 必须是 dist-legal-site（构建脚本的产物目录）'
     );
   });
 });

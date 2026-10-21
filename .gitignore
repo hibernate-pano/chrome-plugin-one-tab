@@ -9,6 +9,8 @@ node_modules/
 .codex/
 dist/
 dist-web/
+# Vercel 生产部署的产物（scripts/build-legal-site.mjs 生成，不入库）
+dist-legal-site/
 **.zip
 
 # 环境变量文件
