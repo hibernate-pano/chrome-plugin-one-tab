@@ -161,7 +161,7 @@ Productivity
 | Personal communications | No | No | — | No |
 | Location | No | No | — | No |
 | Web history | No（不自动收集浏览历史；主动保存的标签页单列于 Website content） | No | — | No |
-| User activity | 仅本地记录（产品事件仅存本地，不上传） | No | 改进功能参考 | No |
+| User activity | 仅本地记录（产品事件仅存本地，不上传） | No（扩展**不会自动上传**；仅「导出诊断信息」由用户主动生成本地 JSON 文件供其自行决定是否分享，该文件默认白名单脱敏，只含会话数量、标签数量分布等规模信息，不含网址、标题、会话名或设备标识） | 改进功能参考 | No |
 | User settings | Yes（主题风格、界面布局、删除前确认、保存固定标签页、通知提醒等界面偏好） | Yes（仅同步到用户自己的云端：TapStack 云端账户，或「自带存储」下用户自己的云盘） | 让同一账号在多台设备上看到一致的界面偏好 | Yes（TapStack 云端由 Supabase 托管；选「自带存储」时只有用户自己的云盘服务商接触数据） |
 | Website content | Yes（用户主动保存的标签页网址与标题） | Yes（仅同步到用户自己选择的云端：TapStack 云端账户，或「自带存储」下用户自己的云盘） | 跨设备恢复会话 | Yes（TapStack 云端由 Supabase 托管；选「自带存储」时只有用户自己的云盘服务商接触数据） |
 
@@ -182,7 +182,7 @@ Productivity
 
 https://tapstack-two.vercel.app/privacy.html
 
-<!-- 隐私政策页面源码：src/legal/privacy.html（最后更新 2026-10-20）。
+<!-- 隐私政策页面源码：src/legal/privacy.html（最后更新 2026-10-21）。
      2026-10-02 与线上商店页核对：商店 Privacy 区展示的就是该 URL。
 
      ⚠️ 2026-10-20：实测发现线上那份**停在 2026-09-29**（本地早已更新到

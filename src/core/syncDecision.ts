@@ -182,11 +182,11 @@ export const getGroupsToSync = (groups: TabGroup[]): TabGroup[] => {
 /**
  * 覆盖下载（forceRemote）的**空云端闸门**。
  *
- * ── 为什么需要它：覆盖路径绕过 validateMergeResult 的规则 2 ────────────
+ * ── 为什么需要它：覆盖路径绕过 validateMergeResult 的规则 3 ────────────
  * syncEngine.downloadAndMerge 在 forceRemote 下于合并**前**把 localGroups
  * 置成 `[]`（云端完全镜像本地的语义），于是 validateMergeResult 看到的
- * activeLocalCount 恒为 0，规则 2「本地有活跃数据但合并后为空」永远不会
- * 触发 —— 覆盖路径下那条防线形同不存在。
+ * activeLocalCount 恒为 0，规则 3「合并后组数不得低于预期最小值」永远
+ * 不会触发 —— 覆盖路径下那条防线形同不存在。
  *
  * 后果就是最坏的那种：用户在 1.24.0+ 点「从云端下载（覆盖）」，而云端恰好
  * 是空的（还没配好 / 库被清空 / 换个库地址连上了空盘 / 刚清过云端数据），

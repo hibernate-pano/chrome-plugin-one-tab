@@ -1,4 +1,9 @@
 # TapStack「自带存储」同步方案（Web3 / BYOK 存储）
+<!-- doc-status:已实现（方案文档） -->
+>
+> **文档状态：已实现（方案文档）**
+> 阶段 0–3 已实现并提交（v1.25.1）。本文是**方案与决策依据**的留档，不是当前实现的描述 —— 实现细节以代码为准。
+
 
 - 状态：**✅ 阶段 0–3 全部实现并提交（2026-10-13）**。
   决策见 §0.1 / §0.3；实施结果见 §13。
@@ -120,10 +125,21 @@
 2. **我原来的安全论证是假的。** 初稿的理由是「双向失败代价是用户不可逆丢数据，
    试用版不该承担」。但读码发现**这些防线现在就已经存在**：
    - 下载走「快照 → 下载 → 合并 → 验证 → 写入」，`validateMergeResult`
-     规则 2：本地有活跃组但合并后为 0 ⇒ `invalid` ⇒ 回滚
-     （`src/core/syncDecision.ts:202`，`syncEngine.ts:437-446`）
+     规则 3：合并后组数不应低于「活跃本地组数 − 云端明确删除的组数」，
+     低于即 `invalid` ⇒ 回滚
+     （`src/core/syncDecision.ts` 的 `validateMergeResult`，
+     调用点在 `src/services/syncEngine.ts` 的 `downloadAndMerge`）
+     > ⚠️ **2026-10-21 更正**：此处原先写的是「规则 2：本地有活跃组但合并后为
+     > 0 ⇒ invalid ⇒ 回滚」。**规则 2 已删除** —— 它在整组 LWW 语义下只命中
+     > 「远端删除传播」这一个合法场景（方向是错的：把合法删除当故障拦，
+     > 导致另一台设备删了本机却永远收不到）。现由**规则 3** 承担这道防线，
+     > 另有 `decideForceRemoteOverwrite` 专门守覆盖路径的空云端清空。
+     > 详见 `docs/RELEASE-NOTES.md` 的 v1.25.1 段「追加（2026-10-21）：
+     > 跨设备删除传播的 P0」。
    - 下载前置 `decideDownloadPrecheck` fail-closed：读不到「本地是否领先云端」
-     就**中止本轮**，不赌（`syncEngine.ts:315-345`）
+     就**中止本轮**，不赌（`src/core/syncDecision.ts` 的
+     `decideDownloadPrecheck`，调用点在 `src/services/syncEngine.ts`
+     的 `downloadAndMerge`）
    - 同步失败退避 1/2/5 分钟、封顶 8 次，状态落 `chrome.storage.local`
      （`backgroundSync.ts` / `syncBackoff.ts`）
 
