@@ -202,7 +202,42 @@ https://tapstack-two.vercel.app/privacy.html
      部署提示「成功」、deployment 是 Ready，**但生产 alias 根本没变**。
      ⇒ 正确做法：`vercel link --project tapstack --scope hibernatepanos-projects`
      （让 CLI 自己生成绑定，别手写），且**部署完必须 curl 生产 URL 复测内容**，
-     不能信「部署成功」的提示。误建的项目与部署已清理。 -->
+     不能信「部署成功」的提示。误建的项目与部署已清理。
+
+     ⚠️ 2026-10-21 第三次部署（补「导出诊断信息」的披露）：
+     这次又踩到**同一个坑**，而且是从一个更隐蔽的角度 ——
+     **构建命令配置早就坏了**：`vercel project inspect` 显示 Build Command
+     是 `pnpm install && pnpm build:web`，而 `build:web` 这个 script 在
+     2026-10-05 的瘦身 commit（db09f10「砍掉影子双写 / 网页版」）里
+     **已经删掉了** ⇒ 任何走正常构建的部署都必然失败
+     （`ERR_PNPM_RECURSIVE_EXEC_FIRST_FAIL Command "build:web" not found`）。
+     线上那份之所以还能更新，是因为它一直是**单文件直接上传**
+     （部署目录里只有 privacy.html，构建耗时 0ms）。
+     ⇒ 本轮已把项目的构建配置改回通用静态托管（Framework Preset = Other，
+     清空 Build/Output/Install Command）⇒ 以后不必再依赖「零构建」这个巧合。
+
+     【本次的操作顺序（下次照抄）】
+     1. `vercel api /v9/projects/prj_ols7E2qk1rXu6a2vGOOY8G1p7EjW --method PATCH`
+        清除失效的 buildCommand / outputDirectory / framework
+     2. 在**部署目录内**（不是仓库根）执行
+        `vercel link --project tapstack --scope hibernatepanos-projects --yes`
+        —— 这一步必须先做：直接从临时目录 `vercel deploy` 会让 Vercel
+        **另建一个项目**（本轮又复现了一次：误建 `tapstack-privacy-dnu5kr`，
+        部署提示成功、Ready，但生产 alias 纹丝不动）
+     3. `vercel deploy --prod --yes`，然后**必须**：
+        `curl -s https://tapstack-two.vercel.app/privacy.html` 与
+        `src/legal/privacy.html` 逐字 diff —— 只有这个能证明生产真的变了
+     4. 清理误建的项目
+
+     【本次的实测结果】线上与仓库**逐字一致**（11204 字节），
+     含新增的「导出诊断信息」披露与 2026-10-21 日期。
+
+     【顺带修掉一个守卫缺陷】`privacyPolicyCoversManifest.test.ts` 的
+     「关键事实」清单里把日期**写死**成 `最后更新：2026-10-20` ——
+     日期一改，那条针脚就失配，整个在线断言退化成「查某个特定日子」，
+     其余 7 条事实的检查也就跟着失去意义。已改为**从仓库动态取日期**
+     （守的是「线上日期 = 仓库日期」）。改后实测：真实旧版快照仍缺 8 项
+     （门槛 ≥6），检测力未被削弱。 -->
 
 ## Distribution
 

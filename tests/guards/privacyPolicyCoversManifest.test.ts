@@ -46,6 +46,7 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 const read = (rel: string): string => readFileSync(resolve(ROOT, rel), 'utf8');
 
 const PRIVACY = read('src/legal/privacy.html');
+const STORE = read('CHROMEWEBSTORE.md');
 const MANIFEST = JSON.parse(read('manifest.json')) as {
   version: string;
   permissions: string[];
@@ -113,10 +114,25 @@ describe('L-13a 隐私政策必须覆盖 manifest 的当前权限（静态半）
   it('隐私政策里的「最后更新」不得早于本轮改动过的日期', () => {
     const m = PRIVACY.match(/最后更新：(\d{4}-\d{2}-\d{2})/);
     assert.ok(m, '隐私政策必须写「最后更新：YYYY-MM-DD」');
+
+    // 【下限不写死某一天，也不去查 git 历史】
+    // 写死的下限（如 '2026-10-20'）有个隐蔽的失效模式：它只会在**改小**时报警，
+    // 日期往前走之后它就永远成立、逐渐变成一句废话 —— 于是「这次改了隐私政策
+    // 却忘了更新日期」这个真正要拦的失误，反而没人拦。
+    // 也不查 git 历史：CI 是浅克隆（actions/checkout@v4 默认 depth=1），
+    // 「最近一次改过该文件的日期」在浅克隆里取不到 —— 判据不能依赖它拿得到。
+    //
+    // 改用**仓库内的第二个记录点**：CHROMEWEBSTORE.md 的注释里标注了
+    // 「privacy.html（最后更新 YYYY-MM-DD）」，那处标注是**独立写下的第二份记录**
+    // （改了 privacy.html 却忘了改它，也是一种漂移，下面另有断言守）。
+    // 用它当下限 ⇒ 两处日期必须同时推进，且不依赖任何外部环境。
+    const store = STORE.match(/privacy\.html（最后更新 (\d{4}-\d{2}-\d{2})）/);
+    assert.ok(store, 'CHROMEWEBSTORE.md 必须标注 privacy.html 的最后更新日期');
     assert.ok(
-      m[1] >= '2026-10-20',
-      `隐私政策的最后更新日期是 ${m[1]}，但本轮（2026-10-20）实质改过它 —— ` +
-        '日期不更新，读者会以为看到的是最新版本。'
+      m[1] >= store[1],
+      `privacy.html 写「最后更新：${m[1]}」，而 CHROMEWEBSTORE.md 把它标成 ` +
+        `${store[1]} —— 两处对不上，说明这次改动没有同步更新日期，` +
+        '读者会以为看到的是最新版本。'
     );
   });
 });
@@ -132,9 +148,24 @@ describe('L-13a 隐私政策必须覆盖 manifest 的当前权限（静态半）
  * 【为什么提到模块级】下面的 L-13c 要用**同一套**判据去验「判据本身的检测力」
  * —— 两处各写一份清单，就可能出现「在线那条用 8 条、离线那条用 5 条」，
  * 于是离线那条验的不是在线那条 ⇒ 验证了个寂寞。
+ *
+ * 【「最后更新日期」为什么是动态的，而不是写死某一天】
+ * 它守的是「**线上那份的日期 = 仓库那份的日期**」，不是「线上必须是某一天」。
+ * 写死日期会有两个后果：① 每次改隐私政策都要手动改这个针脚，忘了就红；
+ * ② 更糟的是**日期一改，线上与仓库的其余 7 条事实全部不再被检查** ——
+ * 因为 `missing` 是用 `live.includes(needle)` 算的，日期针脚失配只说明
+ * 「这一条缺」，但若哪天有人把整份清单重写成只剩日期那条，
+ * 守卫照样绿 ⇒ 事实检查被偷换成日期检查。
+ * ⇒ 从仓库动态取，日期改了自动跟上，且其余事实始终在查。
  */
+const repoLastUpdated = (): string => {
+  const m = PRIVACY.match(/最后更新：(\d{4}-\d{2}-\d{2})/);
+  assert.ok(m, 'privacy.html 必须标注「最后更新：YYYY-MM-DD」');
+  return m[1];
+};
+
 const facts = (): Array<{ label: string; needle: string }> => [
-  { label: '最后更新日期', needle: '最后更新：2026-10-20' },
+  { label: '最后更新日期', needle: `最后更新：${repoLastUpdated()}` },
   { label: '会话数据在 IndexedDB（不是 chrome.storage）', needle: 'IndexedDB' },
   { label: '自带存储（WebDAV）这一节', needle: '自带存储（WebDAV）' },
   { label: 'manifest 的明文面', needle: '明文头部' },
