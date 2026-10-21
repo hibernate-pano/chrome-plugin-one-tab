@@ -24,7 +24,7 @@
  * 默认解析出的后端仍是 Supabase，调用序列、错误语义、退避行为都不变。
  * 「什么时候切到 WebDAV」是后续阶段的事（settings.syncBackend）。
  */
-import type { TabGroup, UserSettings } from '@/types/tab';
+import type { DownloadSkippedGroup, TabGroup, UserSettings } from '@/types/tab';
 
 /** 后端标识。写进同步水位键名与设置持久化，用于「换后端 ⇒ 水位作废」。 */
 export type SyncBackendId = 'supabase' | 'webdav';
@@ -86,10 +86,58 @@ export interface UploadGroupsResult {
   writtenIds: string[];
   /** 覆盖模式是否真的执行了（false = 因本地无活跃组而跳过）。 */
   overwroteRemote?: boolean;
+  /**
+   * 本轮**补传（找回）**的会话 id —— 2026-10-20 修 P0「索引丢了被当成空库」新增。
+   *
+   * 非空 = 云端索引曾与实际内容脱节：这些会话被本机水位线误判成「已上传」
+   * （于是被增量逻辑跳过、永远补不回去），本轮是**揪出来强制补传**的。
+   *
+   * 之所以要把它带出端口：这是一次**需要用户知道**的异常（不是常规增量），
+   * 上层要能如实上报，而不是让修复悄悄发生、用户毫不知情。
+   * 云端后端（Supabase）没有这个场景，永远不填。
+   */
+  recoveredIds?: string[];
+  /**
+   * 本轮是否**重建**过云端索引（manifest 丢失后从分片目录找回）。
+   * true = 云端索引曾经丢过，本轮是恢复态；上层可据此提示用户。
+   */
+  indexRebuilt?: boolean;
 }
 
 /** 远端设置的读取结果。null = 远端没有设置（不是「读失败」）。 */
 export type DownloadSettingsResult = Record<string, unknown> | null;
+
+/**
+ * 端口层 re-export「读不出来的那几组」的类型（2026-10-20 D-6）。
+ *
+ * 为什么在端口层再导出一次：这两个类型的**定义**住在 `@/types/tab`
+ * （那个文件零 import ⇒ 放共享类型不会造成循环依赖），但**端口的消费者**
+ * 只应该 import 端口。让他们为了描述「端口方法返回什么」而去 import
+ * 一个业务类型模块，是分层泄漏。
+ *
+ * 注意这不是「另立一份定义」—— re-export 的是**同一个**类型
+ * （`@/types/tab` 里那一份），两侧永远同形。
+ */
+export type { DownloadSkippedGroup, DownloadSkipReason } from '@/types/tab';
+
+/**
+ * 端口上的「读不出来的那几组」清单（2026-10-20 D-6）。
+ *
+ * 「这一组存在于远端，但本轮**没能把它还原成可用的会话**」。远端那一行
+ * **原封保留**（不写不删）—— 不是数据丢了，是「这一轮读不到」。
+ *
+ * 危险的不是「读不到」，而是「读不到」在返回值里**消失**：
+ * 调用方拿到的是一个「少了几组」的数组，无法区分
+ * 「云端本来就只有这几组」与「云端还有几组，但这一轮读不出来」。
+ *
+ * 覆盖下载（forceRemote）的语义是「云端完全镜像本地」：本地整体被云端替换。
+ * 读不出来的那组不在结果里 ⇒ 它也不在合并结果里 ⇒ 本机那份被物理清除，
+ * 而云端那一行原封保留 —— 用户以为云端是权威源，结果**云端的数据被他自己的
+ * 下载吃掉了**，UI 还报「下载成功」。1.22.0 起删除即物理清除、无回收站 ⇒ 不可逆。
+ *
+ * （清单的**类型**就是 `DownloadSkippedGroup[]`，见本文件上方的 re-export ——
+ * 不另立别名：别名只会让人多记一个名字，形状完全一样。）
+ */
 
 /**
  * 同步后端的最小语义面 —— SyncEngine 依赖的全部能力。
@@ -106,8 +154,34 @@ export interface SyncBackendPort {
    *  失败必须抛错（调用方据此决定是否降级走全量），不得静默返回 []。 */
   fetchFingerprints(): Promise<RemoteGroupFingerprint[]>;
 
-  /** 全量下载会话。失败抛错。 */
+  /**
+   * 全量下载会话。失败抛错。
+   *
+   * ⚠️ 这个方法**只给成功还原的那些** —— 「读不出来的那几组」不在返回值里。
+   * 调用方若**用下载结果替换本地**（覆盖下载），必须同时拿到
+   * `downloadSkippedGroups()` 的清单，否则会把「这轮没读到」误当成「云端没有」
+   * ⇒ 本机那份被物理清除，而云端那一行原封保留 ⇒
+   * 用户以为云端是权威源，结果**云端的数据被他自己的下载吃掉了**，UI 还报成功。
+   * 1.22.0 起删除即物理清除、无回收站、无撤销 ⇒ 这一条不可逆。
+   *
+   * 两条读取必须来自**同一轮**下载（不能分两次调用），因此它们由
+   * `services/downloadWithSkippedGroups.ts` 一起编排。
+   */
   downloadGroups(): Promise<TabGroup[]>;
+
+  /**
+   * 本轮**读不出来**而被整组跳过的会话（2026-10-20 D-6）。
+   *
+   * **可选能力**：不是每个后端都产生跳过。
+   *   · 云端后端（Supabase）：会 —— 解密失败 / 形状不可恢复 / 还原率不达标 /
+   *     tabs 表回填被截断 / 单组处理异常，那几组被整组跳过（云端行仍在）。
+   *   · 自带存储（WebDAV）：**不会** —— 它是 fail-closed 的，读不出来的分片
+   *     直接让整轮抛错中止（见 webdav/adapter.ts 的 downloadGroups）。
+   *
+   * 方法不存在 ⇒ 该后端本轮没有跳过任何会话（**这是事实，不是「不知道」**）。
+   * 方法存在却抛错 ⇒ 事实未知 ⇒ 调用方必须中止（fail-closed）。
+   */
+  downloadSkippedGroups?(): Promise<DownloadSkippedGroup[]>;
 
   /** 上传一批会话（**不负责**删除广播、不负责墓碑 TTL 清理）。
    *
@@ -136,9 +210,37 @@ export interface SyncBackendPort {
   ): Promise<UploadGroupsResult>;
 
 
-  /** 广播删除意图（跨设备删除的唯一载体）。
-   *  失败**必须抛错**——吞掉它等于让已删的组在对端复活
-   *  （见 utils/storage.ts pendingDeleteIds 段的 fail-closed 论证）。 */
+  /**
+   * 广播删除意图（跨设备删除的唯一载体）。
+   *
+   * 失败**必须抛错**——吞掉它等于让已删的组在对端复活
+   * （见 utils/storage.ts pendingDeleteIds 段的 fail-closed 论证）。
+   *
+   * ── 「广播成功」的定义（2026-10-20 D-5）：**读回确认** ─────────────────
+   * 写完**不算**成功。返回（resolve）必须意味着：
+   *   「远端**确实**已经是墓碑，且印记就是本次要写的那一个」——
+   *   而不只是「PUT 返回了 2xx」。
+   *
+   * 为什么这条必须写在**端口**上（而不是各后端各自实现）：
+   * 调用方（syncEngine.upload）会**照着这个定义**消费删除队列
+   * （`clearPendingDeleteIds`）。若某个后端把「写完」当成成功，
+   * 而服务端其实没落盘（PUT 被接受却没持久化、被同步客户端改写），
+   * 那么云端那条记录仍然是活跃的 → 下次下载合并走「云端有、本地无」分支
+   * → **整组在所有设备上复活**。而 1.22.0 起没有回收站，用户连「再删一次」
+   * 都得先找到它在哪。
+   *
+   * 读回不可能时（内容读不到、连 ETag 都拿不到）**不许**当作成功：
+   * 抛错，让调用方**不消费**队列，下一轮重播（重播幂等，
+   * 丢掉删除意图不可逆）。
+   *
+   * 各后端的实现：
+   *   · Supabase —— `markCloudGroupsAsDeleted` + `verifyTombstoneReadback`
+   *     （utils/supabase/upload.ts、utils/supabase/readback.ts）；
+   *   · 自带存储 —— `broadcastDeletes` + `verifyTombstoneReadback`
+   *     （sync-backend/webdav/adapter.ts）。
+   * 两侧共用同一套**判据**（core/remoteAdjudication 的
+   * compareTombstoneReadback），不允许各写一份。
+   */
   broadcastDeletes(ids: string[]): Promise<void>;
 
   /** 物理清理超过龄期的删除广播载体。失败抛错（调用方降级为下轮重试）。 */

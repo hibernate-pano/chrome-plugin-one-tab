@@ -40,10 +40,29 @@ const SRC = code('src/components/layout/HeaderDropdown.tsx');
 
 describe('下拉菜单的子菜单可达', () => {
   it('前提：菜单容器仍是滚动盒（两轴裁剪的成立条件）', () => {
+    // 要守的是**横向裁剪仍然成立**这条前提，不是「高度恰好用 70vh 写的」。
+    //
+    // 2026-10-20：限高从 `max-h-[70vh]` 改成了按「视口高 − 菜单顶边 − 12px」
+    // 实算的 inline `maxHeight`（真机实测 70vh 在 400×600 下会把「删除所有会话」
+    // 裁掉 13px）。滚动盒本身**没变** —— 它仍是 `overflow-y-auto`（单轴），
+    // 按 CSS 规范另一轴因此计算成 auto ⇒ 横向裁剪照旧成立，
+    // 本文件的对策（子菜单放流内、不绝对定位）依然是对的那一条。
+    //
+    // 所以断言改成钉「容器是一个纵向滚动盒」这个事实，而不是某个高度写法。
+    const container = SRC.match(/className="([^"]*overflow-y-auto[^"]*)"/)?.[1] ?? '';
     assert.ok(
-      /max-h-\[70vh\] overflow-y-auto/.test(SRC),
-      '菜单容器的滚动盒一旦改掉，本文件的对策要重新论证（横向裁剪来自 overflow-y-auto）'
+      container.includes('overflow-y-auto'),
+      '菜单容器必须仍是 overflow-y-auto（横向裁剪来自它，本文件的对策以此为前提）'
     );
+    // 反向：不得出现两轴都 visible —— 那样裁剪就不成立了，本文件的前提也就变了。
+    assert.ok(
+      !/overflow-visible/.test(container),
+      `菜单容器不得改成 overflow-visible：${container}`
+    );
+    // 高度必须被限制住（否则菜单会超出视口底边 —— 这正是 2026-10-20 修掉的那条）。
+    const hasHeightLimit =
+      /max-h-\[/.test(container) || /menuMaxHeight/.test(SRC);
+    assert.ok(hasHeightLimit, '菜单容器必须有高度上限（class 里的 max-h-[…] 或 inline maxHeight）');
   });
 
   it('不得再用会落到裁剪盒之外的浮层锚点', () => {

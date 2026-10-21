@@ -1,4 +1,5 @@
 import { TabGroup } from '@/types/tab';
+import { normalizeHostForDisplay } from '@/core/hostName';
 
 /**
  * 标签行里显示的 URL 短形态：域名（去掉 `www.`）。
@@ -10,11 +11,17 @@ import { TabGroup } from '@/types/tab';
  *
  * 2026-10-18 修：改前 `view-source:` / `file:` / `blob:` / `about:blank` 的 URL 列
  * 真机实测全是空串（两处调用方各写了一份同样的实现，故一并收到这里）。
+ *
+ * 2026-10-20 修：去 `www.` 的写法从 `replace('www.','')` 改成锚定的
+ * `/^www\./`（见 `@/core/hostName` 的 `normalizeHostForDisplay`）。
+ * 旧写法会命中域名**中间**的 `www.` —— `mywww.example.com` 被显示成
+ * `myexample.com`，那是一个**不存在的域名**，用户照着它记忆/搜索/转述
+ * 都会落空。归一化口径也统一到了 `core/hostName` 单源。
  */
 export const getDisplayUrl = (url: string): string => {
   try {
     const parsed = new URL(url);
-    return parsed.hostname ? parsed.hostname.replace('www.', '') : url;
+    return parsed.hostname ? normalizeHostForDisplay(parsed.hostname) : url;
   } catch {
     return url;
   }

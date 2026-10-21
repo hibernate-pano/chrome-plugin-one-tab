@@ -164,6 +164,31 @@ export interface ResourceMeta {
 }
 
 /**
+ * PROPFIND Depth:1 列目录的结果项（子资源）。
+ *
+ * ── 为什么需要它（2026-10-20 修 P0「manifest 丢了被当成空库」）────────────
+ * `manifest.json` 是**派生数据**：它只是 `groups/` 目录的索引。
+ * 一旦索引丢了（第三方同步客户端冲突 / 用户整理目录 / 分片写成功但索引写失败），
+ * 唯一能把「云端到底有哪些会话」还原出来的办法就是**列目录**。
+ * 传输层此前只有 Depth:0（stat 一个已知路径），没有列目录的能力 ——
+ * 于是上层只能把「索引不在」当成「远端是空库」，把本地子集整体覆盖上去。
+ */
+export interface DavEntry {
+  /** 最后一段名字（不含目录，已 URL 解码）。 */
+  name: string;
+  /** 相对 baseUrl 的路径（已 URL 解码，无前后斜杠）。例如 `TapStack/groups/aa`。 */
+  path: string;
+  /** 是否是子目录（集合）。文件为 false。 */
+  isCollection: boolean;
+  /** 原始 ETag（**含引号**）。服务端不返回时为 null。 */
+  etag: string | null;
+  /** RFC1123 Last-Modified。服务端不返回时为 null。 */
+  lastModified: string | null;
+  /** 字节数。服务端不返回时为 null。 */
+  contentLength: number | null;
+}
+
+/**
  * 把用户输入的任意地址规范化成可拼接的 base URL。
  *
  * 刻意不接受 http://（除 localhost/127.0.0.1）—— 明文传口令 + 明文传标签页数据，
@@ -581,6 +606,97 @@ export class WebDavClient {
     };
   }
 
+  /**
+   * 列目录（PROPFIND Depth:1）。
+   *
+   * ── 语义 ────────────────────────────────────────────────────────────────
+   * · `listed: true`  → 服务端真的列了，`entries` 就是这个目录下的全部子资源
+   *   （**可能是空的**：目录存在但里面没有文件）。
+   * · `listed: false` → **列不出来**（目录不存在 404/409、服务器不支持
+   *   Depth:1 405/501、或父目录缺失）。此时 `entries` 恒为空。
+   *
+   * ⚠️ 为什么必须区分「列了但是空的」与「列不出来」：
+   * 上层用它来判断「云端到底有哪些会话」。把「列不出来」当成「云端是空的」
+   * 就是本次要修的那个 P0（索引丢了 + 列不出来 ⇒ 判成空库 ⇒ 覆盖云端）。
+   * 两个都必须如实区分，**空 ≠ 不知道**。
+   *
+   * · 401 / 403 → 抛错（认证/权限问题，绝不静默当成空目录）。
+   * · 其它非 2xx/207 → 抛错。
+   *
+   * ── 为什么用 Depth:1 而不是 Depth:infinity ───────────────────────────────
+   * RFC 4918 允许服务端拒绝 Depth:infinity（507），而且**截断**的 infinity
+   * 结果比报错更危险：坚果云官方文档明确警告「未实现按分页多次加载会出现
+   * 文件同步不完整」—— 一份少了几条目的目录清单，会让上层以为那些分片不存在。
+   * 「少列」= 静默丢数据，所以这里坚持逐目录 Depth:1。
+   */
+  async listDir(path: string): Promise<{ entries: DavEntry[]; listed: boolean }> {
+    const body = `<?xml version="1.0" encoding="utf-8"?>
+<D:propfind xmlns:D="DAV:">
+  <D:prop>
+    <D:resourcetype/>
+    <D:getetag/>
+    <D:getlastmodified/>
+    <D:getcontentlength/>
+  </D:prop>
+</D:propfind>`;
+
+    const res = await this.request('PROPFIND', path, {
+      headers: { Depth: '1', 'Content-Type': 'application/xml; charset=utf-8' },
+      body,
+    });
+
+    // 404 = 目录不存在；409 = 父目录不存在（见 NotFoundReason）。
+    // 405/501 = 服务器不支持 Depth:1（RFC 4918 允许拒绝）。
+    // 这三种都是「列不出来」，**不是「列出来是空的」**。
+    if (res.status === 404 || res.status === 409 || res.status === 405 || res.status === 501) {
+      return { entries: [], listed: false };
+    }
+    if (res.status === 401 || res.status === 403) {
+      throw new WebDavError('认证失败或无读取权限', res.status, 'PROPFIND', this.resolve(path));
+    }
+    if (res.status !== 207 && !res.ok) {
+      throw new WebDavError(
+        `PROPFIND 失败（HTTP ${res.status}）`,
+        res.status,
+        'PROPFIND',
+        this.resolve(path)
+      );
+    }
+
+    const xml = await res.text();
+    const blocks = trustedResponseBlocks(xml);
+    // 「列出来是空的」与「列不出来」必须分开 —— 这一步就是分界。
+    // 正文读不出任何 <response>（网关塞的 HTML 错误页、正文被截断、返回的
+    // 根本不是 multistatus）⇒ 我们**不知道**云端有什么 ⇒ 列不出来。
+    // 上层拿到 listed:false 会 fail-closed（中止并如实报错），
+    // 绝不会把它当成「云端是空的」⇒ 那会把云端的数据覆盖掉。
+    if (!blocks) {
+      return { entries: [], listed: false };
+    }
+    const self = normalizeRelPath(path);
+    const entries: DavEntry[] = [];
+    for (const block of blocks) {
+      const href = extractTag(block, 'href');
+      // RFC 4918 规定 DAV:response **必须**带 DAV:href。缺 href 的块我们
+      // 不知道它指向谁 ⇒ 静默丢掉它就等于「少列 = 静默丢数据」⇒ 判成列不出来。
+      if (!href) {
+        return { entries: [], listed: false };
+      }
+      const rel = hrefToRelPath(href, this.baseUrl);
+      // 目录自身（Depth:1 的响应里包含被查目录自己）不算子资源。
+      if (!rel || rel === self) continue;
+      entries.push({
+        name: rel.split('/').pop() ?? '',
+        path: rel,
+        isCollection: isCollectionResource(block),
+        etag: extractTag(block, 'getetag'),
+        lastModified: extractTag(block, 'getlastmodified'),
+        contentLength: toNumberOrNull(extractTag(block, 'getcontentlength')),
+      });
+    }
+    return { entries, listed: true };
+  }
+
   /** 连通性与鉴权自检：对 base URL 发一次 Depth:0 的 PROPFIND。 */
   async checkConnection(): Promise<void> {
     await this.stat('');
@@ -629,5 +745,126 @@ function toNumberOrNull(s: string | null): number | null {
   if (s === null) return null;
   const n = Number(s);
   return Number.isFinite(n) ? n : null;
+}
+
+/**
+ * 把 207 Multi-Status 的响应体拆成一个个 `<response>` 块。
+ *
+ * 与 `extractTag` 同源的取舍：继续用正则而不是引 XML 解析器。
+ * 这次要拆的是**重复元素**，正则仍然够用（每个块内部再走 extractTag 取叶子值）。
+ * 命名空间前缀不固定（`D:response` / `d:response` / 无前缀都合法），按可选前缀匹配。
+ */
+function splitResponses(xml: string): string[] {
+  const re = /<(?:[A-Za-z0-9_-]+:)?response\b[^>]*>([\s\S]*?)<\/(?:[A-Za-z0-9_-]+:)?response>/gi;
+  const out: string[] = [];
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(xml)) !== null) out.push(m[1]);
+  return out;
+}
+
+/**
+ * 这个 `<response>` 描述的是不是一个**目录**（collection）。
+ *
+ * ── 为什么不能用「`<collection` 后面紧跟空白或 `/>`」判 ──────────────────
+ * 2026-10-20 真机实测（`scripts/prod-webdav-depth1.mjs` 对 rclone serve webdav）
+ * 抓到的 P0：真实服务端回的是
+ *
+ *     <D:resourcetype><D:collection xmlns:D="DAV:"/></D:resourcetype>
+ *
+ * —— 元素上**带命名空间声明属性**。而旧判据
+ * `/<(?:[A-Za-z0-9_-]+:)?collection\s*\/?>/` 要求 `collection` 后面只能是
+ * 空白或 `/>`，遇到 ` xmlns:D="DAV:"` 直接**不匹配** ⇒ 目录被判成文件。
+ *
+ * 后果不是「显示得难看」，是**静默丢数据**：
+ *   · `scanRemoteShards` 里 `prefixDirs = entries.filter(e => e.isCollection)`
+ *     ⇒ 前缀子目录一个都不认 ⇒ 分片目录被当成「无法识别的散落文件」⇒
+ *     重建索引直接中止（"目录结构与本版本不符"）；
+ *   · 反过来，**文件**若被误判成目录，就会被当成子目录去 listDir ⇒
+ *     同样进不了分片列表。
+ *
+ * 也就是说：在 rclone / 坚果云 / Nextcloud 这类会带命名空间声明的服务端上，
+ * 「索引丢了 ⇒ 从目录重建」这条路**根本走不通**，而单测全绿 ——
+ * 因为**每一条**测试造的都是 `<D:collection/>`（恰好是旧正则唯一认得的形态）。
+ * 这就是「用自己解析器认得的形状去测自己」的自证式盲区。
+ *
+ * ── 现在的判据 ──────────────────────────────────────────────────────────
+ * 允许 `<collection>` 与 `</collection>` 之间带**任意属性**
+ * （`xmlns:D="DAV:"`、`xmlns="DAV:"` 等都是合法的），并要求标签名**精确**是
+ * `collection` —— 避免 `<collectionfoo>` 这类名字被误判。
+ */
+function isCollectionResource(block: string): boolean {
+  return /<(?:[A-Za-z0-9_-]+:)?collection(?:\s[^>]*)?\/?>/i.test(block);
+}
+
+/**
+ * 把 207 正文里**我们能信的** `<response>` 块拆出来；不可信就返回 null。
+ *
+ * ── 为什么需要这道闸 ────────────────────────────────────────────────────
+ * 「列不出来」与「列出来是空的」必须分开（见 listDir 的注释）。但光看
+ * HTTP 状态码不够：**207 只说明服务端认为这是多状态响应，不保证正文里
+ * 真的有我们认得的清单**。三种现实场景会给出 207 + 一份我们读不懂的正文：
+ *   · 反向代理/网关在链路上塞了 HTML 错误页（状态码仍是上游的 207）；
+ *   · 正文被截断（连接被重置、超长响应被切掉）—— **少列 = 静默丢数据**；
+ *   · 服务端返回了非 multistatus 的 2xx 正文。
+ * 这三种如果被当成「目录里没有子资源」，上层就会把云端判成**空库**，
+ * 于是首次同步把本地子集写上去 ⇒ **云端原有的会话对所有设备隐形**。
+ * 这正是「索引丢了不等于远端空了」那条不变量的另一条漏进来的路。
+ *
+ * ── 判据（三条都要成立）────────────────────────────────────────────────
+ *   1. 正文里有 `<multistatus>` 根元素 —— 否则它根本不是一份 DAV 清单；
+ *   2. 根元素**闭合了** —— 没闭合说明正文被截断（少列 = 静默丢数据）；
+ *   3. 至少能数出一个完整的 `<response>` 块 —— RFC 4918 要求 Depth:1 的
+ *      响应**至少包含被查目录自身**，所以合规服务端永远 ≥1 块；
+ *      数出 0 块 = 正文不是我们认得的清单（哪怕它自称 multistatus）。
+ *
+ * 宁可中止（上层会如实报错），也不要「静默按空库处理」。
+ */
+function trustedResponseBlocks(xml: string): string[] | null {
+  if (!/<(?:[A-Za-z0-9_-]+:)?multistatus\b[^>]*>/i.test(xml)) return null;
+  if (!/<\/(?:[A-Za-z0-9_-]+:)?multistatus\s*>/i.test(xml)) return null;
+  const blocks = splitResponses(xml);
+  if (blocks.length === 0) return null;
+  return blocks;
+}
+
+/** 去掉路径的前后斜杠，得到「相对 baseUrl 的目录路径」。 */
+function normalizeRelPath(path: string): string {
+  return path.replace(/^\/+/, '').replace(/\/+$/, '');
+}
+
+/**
+ * 把 PROPFIND 里的 `<href>` 换算成「相对 baseUrl 的路径」。
+ *
+ * 服务端可能给绝对 URL（`https://host/dav/TapStack/groups/aa/`），
+ * 也可能给绝对路径（`/dav/TapStack/groups/aa/`），还可能带百分号编码
+ * （中文目录名）。三种都要归一到同一个形状，否则上层没法把它和
+ * 「自己拼出来的路径」比对 —— 而比对正是「这个分片是不是躺在它该在的
+ * 目录里」这条判据的基础。
+ */
+function hrefToRelPath(href: string, baseUrl: string): string {
+  let p = href.trim();
+  const cut = p.search(/[?#]/);
+  if (cut >= 0) p = p.slice(0, cut);
+
+  let decoded = p;
+  try {
+    decoded = decodeURIComponent(p);
+  } catch {
+    decoded = p; // 非法百分号编码：保留原样，别让一次坏 href 毁掉整次列目录
+  }
+
+  if (/^https?:\/\//i.test(decoded)) {
+    try {
+      decoded = new URL(decoded).pathname;
+    } catch {
+      /* 保持原样 */
+    }
+  }
+
+  const basePath = new URL(baseUrl).pathname;
+  if (basePath && basePath !== '/' && decoded.startsWith(basePath)) {
+    decoded = decoded.slice(basePath.length);
+  }
+  return normalizeRelPath(decoded);
 }
 

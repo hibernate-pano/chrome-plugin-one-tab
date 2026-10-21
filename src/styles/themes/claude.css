@@ -20,7 +20,8 @@ html[data-theme="claude"] {
   --color-text-primary: #141413;
   --color-text-secondary: #3d3929;
   --color-text-tertiary: #6c675c;
-  --color-text-muted: #9a948a;
+  /* 2026-10-20：原值在 tertiary 底上仅 3.2:1，低于 AA。抬到 #6c675c。 */
+  --color-text-muted: #6c675c;
 
   /* 分割线 */
   --color-border-default: #d9d5c9;
@@ -35,8 +36,9 @@ html[data-theme="claude"] {
   --color-accent-subtle: #f6e8e0;
 
   /* 语义色 */
-  --color-warning: #b98a2f;
-  --color-danger: #c04b3b;
+  /* 2026-10-20：警告/危险色在本仓只当文字色用 ⇒ 浅底要 ≥4.5:1。 */
+  --color-warning: #7d5a1a;
+  --color-danger: #b0402f;
   --color-success: #6a8f5f;
 
   /* 开关 */
@@ -59,7 +61,11 @@ html[data-theme="claude"] {
   --color-accent-soft: #f3ddd2;
   --color-panel-translucent: rgba(250, 249, 245, 0.92);
   --color-border-translucent: rgba(229, 226, 214, 0.9);
-  --focus-ring: 0 0 0 3px rgba(217, 119, 87, 0.22);
+  /* 2026-10-20 审计 P1-1：原先 22% 透明度（叠在底上仅 1.24–1.65:1）。
+     改成不透明描边 + 白内芯把环与输入框底色隔开。 */
+  --focus-ring: 0 0 0 2px #b4552f, 0 0 0 4px #ffffff;
+  /* 焦点环墨色（2026-10-20 新增）：全局 :focus-visible 读它。 */
+  --color-focus-ring: #b4552f;
   --shadow-panel: 0 2px 8px rgba(20, 20, 19, 0.08);
   --panel-blur: saturate(140%) blur(16px);
   --color-shell: #f0eee6;
@@ -89,7 +95,8 @@ html[data-theme="claude"].dark {
   --color-text-primary: #f0eee6;
   --color-text-secondary: #d9d5c9;
   --color-text-tertiary: #a8a294;
-  --color-text-muted: #7d776b;
+  /* 2026-10-20：深色下原值在 tertiary 底上仅 3.3:1。抬到 #a8a294。 */
+  --color-text-muted: #a8a294;
 
   --color-border-default: #45423c;
   --color-border-subtle: #383632;
@@ -117,7 +124,8 @@ html[data-theme="claude"].dark {
   --color-accent-soft: rgba(224, 139, 109, 0.2);
   --color-panel-translucent: rgba(38, 37, 35, 0.92);
   --color-border-translucent: rgba(69, 66, 60, 0.8);
-  --focus-ring: 0 0 0 3px rgba(224, 139, 109, 0.28);
+  --focus-ring: 0 0 0 2px #e08b6d, 0 0 0 4px #262523;
+  --color-focus-ring: #e08b6d;  /* 深色下焦点环墨色 */
   --shadow-panel: 0 2px 8px rgba(0, 0, 0, 0.5);
   --panel-blur: saturate(140%) blur(16px);
   --color-shell: #191817;

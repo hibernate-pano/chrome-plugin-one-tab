@@ -29,7 +29,7 @@ const mkTab = (id: string, isDeleted?: true): Tab =>
   ({ id, url: `https://example.com/${id}`, title: id, createdAt: '2026-10-18T00:00:00.000Z', lastAccessed: '2026-10-18T00:00:00.000Z', ...(isDeleted ? { isDeleted } : {}) }) as Tab;
 
 const mkGroup = (tabs: Tab[], isLocked = false): TabGroup =>
-  ({ id: 'g-1', name: '会话', tabs, createdAt: '2026-10-18T00:00:00.000Z', updatedAt: '2026-10-18T00:00:00.000Z', isLocked, displayOrder: 0 }) as TabGroup;
+  ({ id: 'g-1', name: '会话', tabs, createdAt: '2026-10-18T00:00:00.000Z', updatedAt: '2026-10-18T00:00:00.000Z', isLocked }) as TabGroup;
 
 /** 取出某个 handler 的函数体（从 `const handleDeleteTab` 到下一个顶层 `const` / `//` 注释）。 */
 function handlerBody(source: string, marker: string): string {

@@ -4,9 +4,13 @@ import { loadGroups } from '@/store/slices/tabSlice';
 import { invalidateGroupsCache, onGroupsChanged } from '@/utils/storage';
 import { DraggableTabGroup } from '@/components/dnd/DraggableTabGroup';
 import { SearchResultList } from '@/components/search/SearchResultList';
+import { SearchFilterSection } from '@/components/search/SearchFilterPanel';
+import { useSearchFilters } from '@/components/search/useSearchFilters';
+import { resolveSearchViewMode } from '@/components/search/searchBrowseMode';
 import { EmptyState } from '@/components/common/EmptyState';
 import { getEmptyStateGreeting } from '@/components/common/emptyStateGreeting';
 import { saveAndCloseLabel } from '@/components/layout/saveActionCopy';
+import { saveAllSuccessShortMessage } from '@/domain/tabGroup/saveFeedbackCopy';
 import { toListErrorCopy } from './listErrorCopy';
 import { getContextOrigin } from '@/core/contextOrigin';
 import { logError } from '../../utils/log';
@@ -19,6 +23,15 @@ export const TabList: React.FC<TabListProps> = ({ searchQuery }) => {
   const dispatch = useAppDispatch();
   const { groups, isLoading, error, errorSource } = useAppSelector(state => state.tabs);
   const { layoutMode } = useAppSelector(state => state.settings);
+  // ── 2026-10-20 审计 A-14：筛选状态住在**列表层** ────────────────────────
+  // 修复前筛选条件是 SearchResultList 的内部 useState，而该组件只在有搜索词时
+  // 才挂载 ⇒ 清空搜索词就把用户设好的筛选条件一起清掉，「换个关键词继续筛」
+  // 这个搜索主用法被迫每次重设。
+  //
+  // 状态提到这里之后：结果视图卸载**不影响**筛选条件；筛选面板也在这里渲染，
+  // 于是**没有搜索词时筛选器依然可达**（按域名 / 会话名 / 保存时间都能当检索入口用）。
+  const filterControls = useSearchFilters();
+  const collectPinnedTabs = useAppSelector(state => state.settings.collectPinnedTabs);
   // ── 2026-10-09 P1-4：空态主 CTA 不得 fire-and-forget ──────────────────
   // 这是**新用户第一屏**的主 CTA。原先 query 后直接 sendMessage、不 await、
   // 不看回包、无 loading、无禁点 —— SW 挂了或保存失败时界面零变化，
@@ -49,11 +62,24 @@ export const TabList: React.FC<TabListProps> = ({ searchQuery }) => {
       const response = (await chrome.runtime.sendMessage({
         type: 'SAVE_ALL_TABS',
         data: { windowId },
-      })) as { success?: boolean; error?: string } | undefined;
+      })) as
+        | { success?: boolean; error?: string; savedCount?: number; droppedPinnedCount?: number }
+        | undefined;
       // sendMessage 对 {success:false} 是 resolve 不是 reject —— 不查回包
       // 就是「保存失败了却什么都不说」，与本仓修掉的谎报成功同一类。
       if (response?.success) {
-        setEmptySaveFeedback({ kind: 'success', text: '已保存' });
+        // ── 2026-10-20 审计 A-4：与顶栏按钮同一口径 ────────────────────
+        // 固定标签页既没保存也没关闭时，必须说出来。空态 CTA 与顶栏按钮
+        // 做的是同一件事（同一个 SAVE_ALL_TABS），反馈口径必须一致 ——
+        // 否则用户在哪个入口点、看到哪种说法，就是随机行为。
+        const summary = {
+          savedCount: response.savedCount ?? 0,
+          droppedPinnedCount: response.droppedPinnedCount ?? 0,
+        };
+        setEmptySaveFeedback({
+          kind: 'success',
+          text: saveAllSuccessShortMessage(summary),
+        });
       } else {
         setEmptySaveFeedback({ kind: 'error', text: response?.error || '保存失败，请重试' });
       }
@@ -220,7 +246,15 @@ export const TabList: React.FC<TabListProps> = ({ searchQuery }) => {
 
   const filteredGroups = sortedGroups;
 
-  if (filteredGroups.length === 0 && !searchQuery) {
+  /**
+   * 界面形态（见下方渲染分支的注释）。
+   *
+   * 「有搜索词」优先于「有筛选条件」：用户正在搜的时候，给他看搜索结果 ——
+   * 筛选面板仍在结果区里（既有形态不变），条件也照常生效。
+   */
+  const viewMode = resolveSearchViewMode(searchQuery, filterControls.activeFilterCount > 0);
+
+  if (filteredGroups.length === 0 && viewMode === 'list') {
     return (
       <div className="session-list-stack">
         {/* ── 2026-10-19 审计 I-1：空态收敛成**一张**卡 ──────────────────────
@@ -320,8 +354,25 @@ export const TabList: React.FC<TabListProps> = ({ searchQuery }) => {
         </div>
       )}
 
-      {searchQuery ? (
-        <SearchResultList searchQuery={searchQuery} />
+      {/* ── 2026-10-20 审计 A-14：筛选器是**独立入口**，不依赖搜索词 ────────
+          三种形态由 resolveSearchViewMode 决定：
+            · list   —— 没有搜索词、也没有生效的筛选条件 ⇒ 主列表（首页形态不变）
+            · browse —— 没有搜索词、但有筛选条件 ⇒ 筛选浏览视图
+            · search —— 有搜索词 ⇒ 搜索结果（既有形态不变）
+
+          筛选面板在 list / browse 两种形态下都渲染在列表上方 ⇒
+          「按域名 / 会话名 / 保存时间找」不需要先输入一个搜索词。 */}
+      {viewMode === 'list' && (
+        <SearchFilterSection
+          controls={filterControls}
+          title="筛选会话"
+          collectPinnedTabs={collectPinnedTabs}
+          variant="flush"
+        />
+      )}
+
+      {viewMode !== 'list' ? (
+        <SearchResultList searchQuery={searchQuery} filterControls={filterControls} />
       ) : layoutMode === 'double' ? (
         <div className="session-grid">
           {(() => {

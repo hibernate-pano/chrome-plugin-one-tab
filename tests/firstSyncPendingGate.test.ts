@@ -119,9 +119,24 @@ describe('P1#4 首次同步标志：接线（结构）', () => {
 
   it('适配器确实按 suppress 参数降级 firstSync', async () => {
     const src = await readSrc('src/sync-backend/webdav/adapter.ts');
+    // ⚠️ 这里钉的是**不变量**，不是某个字面量。
+    //
+    // 2026-10-20 修 P0「云端索引丢了被当成空库」时，firstSync 的判据从
+    // 「manifest 读不到」（`loaded === null`）改成了「**远端确实一个分片都没有**」
+    // （`index.kind === 'empty'`）—— 因为「索引读不到」有两种含义
+    // （远端真是空的 / 索引丢了但分片还在），只有后者不能走全量。
+    // 改判据不改变本条要守的东西：**suppress 时绝不能走 firstSync 全量**。
+    //
+    // 所以断言写成「suppress 出现在 firstSync 的判据里」，而不是钉住
+    // 判据左边那个具体表达式 —— 后者会在每次重构判据时误报，
+    // 逼着人把断言改成「照抄实现」，那正是结构化断言最坏的退化形态。
+    const firstSyncLine = src
+      .split('\n')
+      .find(l => /const firstSync\s*=/.test(l));
+    assert.ok(firstSyncLine, '必须能看出 firstSync 是怎么算出来的');
     assert.match(
-      src,
-      /loaded === null && !opts\?\.suppressFirstSyncFullUpload/,
+      firstSyncLine,
+      /!opts\?\.suppressFirstSyncFullUpload/,
       'firstSync 必须排除 suppress 情形 —— 这是「不替用户做决定」的落点'
     );
   });

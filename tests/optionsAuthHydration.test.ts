@@ -35,8 +35,22 @@ const read = (rel: string) =>
 describe('options 页：登录态必须自己注入一次', () => {
   it('OptionsPage 挂载时 dispatch(getCurrentUser())', async () => {
     const src = await read('src/options/OptionsPage.tsx');
-    assert.match(src, /import \{ getCurrentUser \} from '@\/store\/slices\/authSlice'/,
-      '必须显式 import getCurrentUser');
+    // 断言的是「getCurrentUser 从 authSlice 被显式引入」这条**事实**，
+    // 而不是「import 语句恰好长这样」。
+    //
+    // 2026-10-20：原来钉的是 `import { getCurrentUser } from '...'` 这一行**逐字**。
+    // 本轮给设置页加了退出登录入口，于是这一行变成
+    // `import { getCurrentUser, signOut } from '...'` —— 事实没变（两个都从
+    // authSlice 来），但逐字断言红了。而逐字断言会把「多引一个同源的符号」
+    // 变成红灯，这正是本仓文档守卫被审计批评过的毛病。
+    //
+    // 改钉不变量：**同一个 import 语句里必须同时出现 getCurrentUser**，
+    // 且它来自 authSlice。别处再 import 也行（多一次引用不改变语义）。
+    assert.match(
+      src,
+      /import\s*\{[^}]*\bgetCurrentUser\b[^}]*\}\s*from\s*'@\/store\/slices\/authSlice'/,
+      '必须显式 import getCurrentUser（与它同行的其它符号不限）'
+    );
     // 必须是「挂载即跑」的一次性注入，而不是只在某个点击分支里
     assert.match(src, /useEffect\(\(\) => \{\s*void dispatch\(getCurrentUser\(\)\);\s*\}, \[dispatch\]\);/,
       '必须有 useEffect(() => { void dispatch(getCurrentUser()); }, [dispatch])');

@@ -96,7 +96,15 @@ describe('分流规则：error 永远发，success / info 受设置控制', () =
 
     const saved = await tabManager.saveAllTabs(tabs);
 
-    assert.equal(saved, false, '一个标签都没存下 ⇒ 不得报成功（round 5 的不变式）');
+    // 2026-10-20 审计 A-4：saveAllTabs 的返回类型从 boolean 改成了
+    // `SaveAllSummary | null` —— 为了把「丢了几个固定标签」带回 popup
+    // （boolean 表达不了这个信息）。
+    //
+    // 但**不变量没变**：失败时必须返回「没有摘要」，绝不能返回一个
+    // 看起来像成功的对象。断言因此改成「必须是 null / falsy」而不是
+    // 「必须等于 false」—— 后者会把返回值钉死在一个具体字面量上，
+    // 任何合法的重构（比如改成 {ok:false}）都会变成红灯。
+    assert.ok(!saved, '一个标签都没存下 ⇒ 不得报成功（round 5 的不变式）');
     assert.equal(handles.notificationCalls.length, 1, '这条失败解释必须发得出来，否则用户按了没反应');
     assert.match(
       handles.notificationCalls[0].options.message ?? '',

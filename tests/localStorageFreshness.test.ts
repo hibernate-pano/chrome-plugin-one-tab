@@ -504,17 +504,53 @@ describe('P1-2 迁移必须读真值', () => {
 
   it('migrateToV2：v2 字段迁移基于真值', async () => {
     const { migrateToV2 } = await import('@/utils/migrationHelper');
-    putRawGroups([mkGroup('a', { version: undefined, displayOrder: undefined })]);
+    putRawGroups([mkGroup('a', { version: undefined })]);
     await storage.getGroups(); // 预热缓存
     putRawGroups([
-      mkGroup('a', { version: undefined, displayOrder: undefined }),
-      mkGroup('written-during', { version: undefined, displayOrder: undefined }),
+      mkGroup('a', { version: undefined }),
+      mkGroup('written-during', { version: undefined }),
     ]);
 
     await migrateToV2();
 
     const ids = rawGroups().map(x => x.id).sort();
     assert.deepEqual(ids, ['a', 'written-during']);
+  });
+
+  it('migrateToV2：只补 version，不给会话凭空加字段（2026-10-20 审计 A-10）', async () => {
+    const { migrateToV2 } = await import('@/utils/migrationHelper');
+    // 老用户存量数据里可能还留着 `displayOrder`（类型已删、数据还在）。
+    // 迁移**不许**把它当成「缺字段」而去补，也**不许**把别的字段塞进来。
+    putRawGroups([mkGroup('a', { version: undefined, displayOrder: 3 })]);
+
+    await migrateToV2();
+
+    const group = rawGroups().find(x => x.id === 'a');
+    assert.ok(group, '会话必须还在');
+    assert.equal(group.version, 1, 'version 必须被补上（它是真的在用）');
+    // 老数据里那个键允许原样留着（没人读它，无害），但迁移不得引入**新**字段
+    const injected = Object.keys(group).filter(
+      k => !['id', 'name', 'tabs', 'createdAt', 'updatedAt', 'isLocked', 'version', 'displayOrder'].includes(k)
+    );
+    assert.deepEqual(injected, [], `迁移不得往会话里塞新字段：${injected.join('、')}`);
+  });
+
+  it('migrateToV2：已经迁过的数据不得被反复重写（退役字段不得再进判据）', async () => {
+    const { migrateToV2 } = await import('@/utils/migrationHelper');
+    // 这条会话 version 在、那个退役键**不在**（老数据里本来就没有它）。
+    // 若迁移判据还要求那个键，这条会话就会被判成「需要迁移」⇒ 每次启动都
+    // 把整表重写一遍（无谓的写放大，且会把并发写入的窗口拉长）。
+    const already = mkGroup('a', { version: 1 });
+    putRawGroups([already]);
+    const before = rawGroups();
+
+    await migrateToV2();
+
+    assert.equal(
+      rawGroups(),
+      before,
+      '已经迁过的数据不得被整表重写（迁移判据里不许再出现退役字段）'
+    );
   });
 });
 
@@ -523,11 +559,11 @@ describe('P1-2 迁移必须读真值', () => {
 // ════════════════════════════════════════════════════════════════════════
 describe('P1-3 设置读失败 fail-closed：降级值会被无条件覆盖到云端', () => {
   it('getSettings 读失败抛错，不返回 DEFAULT_SETTINGS', async () => {
-    await kvSet('user_settings', { groupNameTemplate: '会话 %d', themeStyle: 'prism' });
+    await kvSet('user_settings', { showFavicons: false, themeStyle: 'prism' });
 
     // 先成功读一次，让缓存里有真实设置（证明后面失败的是读，不是"本来就没设置"）
     const ok = await storage.getSettings();
-    assert.equal(ok.groupNameTemplate, '会话 %d');
+    assert.equal(ok.showFavicons, false);
 
     // 失效 settings 缓存（60s TTL），再制造读失败
     cacheManager.getCache('storage').delete('settings');
@@ -547,12 +583,12 @@ describe('P1-3 设置读失败 fail-closed：降级值会被无条件覆盖到�
 
   it('读失败时上传路径不会把默认值写进云端', async () => {
     const { uploadSettings } = await import('@/services/settingsSyncService');
-    await kvSet('user_settings', { groupNameTemplate: '真实模板 %d', themeStyle: 'prism' });
+    await kvSet('user_settings', { showFavicons: false, themeStyle: 'prism' });
 
     // 对照组先证明「假云端 + 真实 uploadSettings 这条路确实能写进去」
     await uploadSettings(await storage.getSettings());
     assert.equal(cloud.settingsWrites.length, 1, '对照组：读成功时上传照常发生');
-    assert.equal(cloud.settings?.group_name_template, '真实模板 %d');
+    assert.equal(cloud.settings?.show_favicons, false);
     assert.equal(cloud.settings?.theme_style, 'prism');
 
     // 现在制造一次读失败，走 syncEngine.upload 尾部的同一道闸门（原样三行）
@@ -576,7 +612,7 @@ describe('P1-3 设置读失败 fail-closed：降级值会被无条件覆盖到�
       [],
       '读失败时不得发出任何 user_settings 写请求（一次读错误就能把云端真实设置覆盖成默认值）'
     );
-    assert.equal(cloud.settings?.group_name_template, '真实模板 %d', '云端设置保持原样');
+    assert.equal(cloud.settings?.show_favicons, false, '云端设置保持原样');
     assert.equal(cloud.settings?.theme_style, 'prism', '云端设置保持原样');
   });
 });

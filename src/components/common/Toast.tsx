@@ -4,7 +4,7 @@ import { createPortal } from 'react-dom';
 export type ToastType = 'success' | 'error' | 'info' | 'warning';
 
 /**
- * Toast 类型的��文标签（2026-10-07 P2-3）。
+ * Toast 类型的中文标签（2026-10-07 P2-3）。
  *
  * 原先直接把 `{type}` 渲染进界面，于是一个全中文的产品在每一条成功/失败/
  * 提示上都会蹦出 SUCCESS / ERROR / WARNING 三个英文大写词（还带
@@ -105,7 +105,7 @@ export const Toast: React.FC<ToastProps> = ({
         return {
           shell: 'border-amber-200/80 bg-white/95 text-slate-800 dark:border-amber-500/20 dark:bg-slate-900/95 dark:text-slate-100',
           accent: 'bg-amber-500',
-          iconWrap: 'bg-amber-100 text-amber-600 dark:bg-amber-500/15 dark:text-amber-300',
+          iconWrap: 'bg-amber-100 text-amber-800 dark:bg-amber-500/15 dark:text-amber-300',
         };
       default:
         return {
@@ -184,7 +184,7 @@ export const Toast: React.FC<ToastProps> = ({
               {getIcon()}
             </div>
             <div className="min-w-0 flex-1">
-              <div className="text-xs font-semibold tracking-[0.18em] text-slate-400 dark:text-slate-500">
+              <div className="text-xs font-semibold tracking-[0.18em] theme-text-muted">
                 {TYPE_LABEL[type]}
               </div>
               <p className="mt-1 text-sm font-medium leading-6 text-current">{message}</p>
@@ -198,7 +198,7 @@ export const Toast: React.FC<ToastProps> = ({
                   onCloseRef.current?.();
                 }, 220);
               }}
-              className="inline-flex h-8 w-8 items-center justify-center rounded-full text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-600 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-600 dark:hover:bg-slate-800 dark:hover:text-slate-200 dark:focus-visible:outline-slate-300"
+              className="inline-flex h-8 w-8 items-center justify-center rounded-full theme-text-muted transition-colors hover:bg-slate-100 hover:text-slate-600 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-600 dark:hover:bg-slate-800 dark:hover:text-slate-200 dark:focus-visible:outline-slate-300"
               aria-label="关闭提示"
             >
               <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>

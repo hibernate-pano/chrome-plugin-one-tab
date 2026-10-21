@@ -151,6 +151,68 @@ describe('mergeOpStamped: 无 tab 级合并 / 无 URL 去重（无墓碑模型�
   });
 });
 
+// ── 平局（两侧印记完全相同）时本地赢 —— 这是**刻意**的设计 ─────────────────
+//
+// pickByStamp 的实现是 `compareStamps(sa, sb) >= 0 ? a : b`：**相等时取第一个参数**。
+// mergeOpStamped 的第一个参数恒为「本地」，所以「印记完全相同」= 本地赢。
+//
+// 为什么刻意这样（不要当成 bug 改掉）：
+//   1. 方向性是安全属性。平局时让**云端**赢，等于允许一份「看起来一样新」的云端副本
+//      覆盖本地改动；本地用户刚做的修改会静默消失。让本地赢 = 本地改动优先保留，
+//      下次上传时再整组盖回云端，语义与「离线编辑优先」一致。
+//   2. 代价：**交换律在这个平局下不成立** —— merge(A,B) 得 A，merge(B,A) 得 B。
+//      上面的性质测试之所以全绿，是因为它用的两组印记不同（devA/devB，s 相同但 d 不同），
+//      d 字典序让结果仍然确定。平局是唯一会打破交换律的输入组合。
+//   3. 现实里平局极少出现（seq 单调递增 + d 是设备 id），但「极少见 + 方向错 = 丢数据」
+//      正是需要钉死的组合：所以这里用「破坏交换律」的方式显式记录它。
+describe('mergeOpStamped: 印记完全相同（平局）时本地赢 —— 刻意的非交换律', () => {
+  const TIE = { d: 'devX', s: 42 };
+
+  it('两侧印记完全相同 → 本地整组赢（云端不得覆盖本地）', async () => {
+    const { mergeOpStamped } = await import('@/core/opStampMerge');
+    const local = [mkG('g1', [mkT('tLocal', 'https://local')], { lastOp: TIE, name: '本地名' })];
+    const cloud = [mkG('g1', [mkT('tCloud', 'https://cloud')], { lastOp: { d: 'devX', s: 42 }, name: '云端名' })];
+    const out = mergeOpStamped(local, cloud);
+    assert.equal(out.length, 1);
+    assert.equal(out[0].name, '本地名', '平局必须由本地赢：云端赢会让本地刚做的修改静默消失');
+    assert.deepEqual(out[0].tabs.map(t => t.id), ['tLocal'], '整组覆盖：tabs 也跟本地');
+  });
+
+  it('平局下交换律**不成立**：merge(A,B) 得 A、merge(B,A) 得 B（刻意为之，不是 bug）', async () => {
+    const { mergeOpStamped } = await import('@/core/opStampMerge');
+    const a = [mkG('g1', [mkT('t1', 'https://a')], { lastOp: TIE, name: 'A名' })];
+    const b = [mkG('g1', [mkT('t1', 'https://a')], { lastOp: { d: 'devX', s: 42 }, name: 'B名' })];
+    // 第一次调用里 a 是「本地」、b 是「云端」；第二次调用里对调了角色。
+    const ab = mergeOpStamped(a, b);
+    const ba = mergeOpStamped(b, a);
+    assert.equal(ab[0].name, 'A名', '第一个参数（本地）赢');
+    assert.equal(ba[0].name, 'B名', '第一个参数（本地）赢 —— 规则是「首个参数赢」，与它来自本地还是云端无关');
+    // 交换律在这里被刻意打破：这两者必须不相等，否则说明实现已经改成对称决胜（那会丢掉本地改动）
+    assert.notDeepEqual(ab, ba, '平局下 merge 不再满足交换律 —— 这是刻意的方向性，勿改');
+  });
+
+  it('平局下「首个参数赢」是一条通用规则（不只是本地赢）', async () => {
+    const { mergeOpStamped } = await import('@/core/opStampMerge');
+    // 三个完全同印记的组，逐一验证：无论谁在首位，首位拿整组。
+    for (const winner of ['x', 'y', 'z'] as const) {
+      const first = [mkG('g1', [], { lastOp: TIE, name: `首个:${winner}` })];
+      const other = [mkG('g1', [], { lastOp: { d: 'devX', s: 42 }, name: '非首个' })];
+      const out = mergeOpStamped(first, other);
+      assert.equal(out[0].name, `首个:${winner}`, '平局恒由第一个参数拿下');
+    }
+  });
+
+  it('云端墓碑 vs 本地活跃、平局 → 本地保留（删除不生效）', async () => {
+    const { mergeOpStamped } = await import('@/core/opStampMerge');
+    const local = [mkG('g1', [], { lastOp: TIE, name: '本地名' })];
+    const cloud = [mkG('g1', [], { lastOp: { d: 'devX', s: 42 }, name: '云端名', isDeleted: true })];
+    const out = mergeOpStamped(local, cloud);
+    assert.equal(out.length, 1, '平局时本地赢 → 墓碑不生效，本地组保留');
+    assert.equal(out[0].name, '本地名');
+    assert.notEqual(out[0].isDeleted, true);
+  });
+});
+
 // ── 客户端决胜 与 服务端守卫放行 的一致性契约 ─────────────────────────────
 // 这两个规则一个在 TS（谁赢）、一个在 SQL（谁能写）。两者不一致时会出现最糟的
 // 静默状态：客户端认为「本地赢」，于是不上传（或上传后被丢弃），然后下次下载

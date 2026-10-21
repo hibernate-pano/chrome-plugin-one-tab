@@ -53,6 +53,10 @@ const REQUIRED_TOKENS = [
   'radius-control',
   'radius-input',
   'radius-input-sm',
+  // 2026-10-20 审计 D-3：焦点环墨色。此前这个令牌压根没定义过 ——
+  // 焦点环要么退回浏览器默认近黑色（claude 深色上几乎看不见），
+  // 要么被写成填充色 accent（与主按钮底同色 ⇒ 环看不见）。
+  'color-focus-ring',
 ] as const;
 
 // ══════════════════════════════════════════════════════════════════════════

@@ -116,15 +116,13 @@ const JOURNAL_OP_TYPES: Record<MutationOp['op'], true> = {
 };
 
 /**
- * 同步策略白名单。与上面两张表同一个理由：这个值原样来自 storage，
- * 直接透传等于让存储内容决定输出内容。词表外一律记成 null（未知），不外带。
+ * 同步策略白名单已随 `syncStrategy` 一起退役（2026-10-20 审计 A-9）。
+ *
+ * 原因：这个设置**没有任何读取方** —— 合并固定走组级 LWW（`mergeOpStamped`），
+ * backgroundSync 里只有注释提到它、代码从不读它；2026-10-19 审计 C-6 已经
+ * 删掉了设置页里那行假的「当前合并策略」展示。留着它只是在诊断文件里
+ * 放一个「看起来有意义、实际不控制任何行为」的字段。
  */
-const SYNC_STRATEGIES: Record<UserSettings['syncStrategy'], true> = {
-  newest: true,
-  local: true,
-  remote: true,
-  ask: true,
-};
 
 /** 标签数分布的分桶。上界闭区间，'21-100' 收了 100，'>100' 从 101 起，两桶不重叠。 */
 export const TAB_COUNT_BUCKETS = ['0', '1-5', '6-20', '21-100', '>100'] as const;
@@ -318,7 +316,6 @@ export interface DiagnosticsReport {
   sync: {
     authenticated: boolean;
     autoSyncEnabled: boolean | null;
-    syncStrategy: string | null;
     /** 距上次同步的小时数（下取整）。从未同步过 = null。 */
     lastSyncAgeHours: number | null;
     pendingDeleteCount: number | null;
@@ -548,10 +545,6 @@ function isKnownJournalOpType(type: unknown): type is MutationOp['op'] {
   return typeof type === 'string' && type in JOURNAL_OP_TYPES;
 }
 
-function isKnownSyncStrategy(value: unknown): value is UserSettings['syncStrategy'] {
-  return typeof value === 'string' && value in SYNC_STRATEGIES;
-}
-
 /** ISO 时间 → 毫秒；不可解析返回 null（不返回 NaN，避免污染比较）。 */
 function parseTimestamp(value: unknown): number | null {
   if (typeof value !== 'string' || value === '') return null;
@@ -659,10 +652,6 @@ export function buildDiagnosticsReport(
     sync: {
       authenticated: sources.isAuthenticated === true,
       autoSyncEnabled: sources.settings ? sources.settings.syncEnabled === true : null,
-      syncStrategy:
-        sources.settings && isKnownSyncStrategy(sources.settings.syncStrategy)
-          ? sources.settings.syncStrategy
-          : null,
       lastSyncAgeHours:
         lastSyncMs === null ? null : Math.max(0, Math.floor((nowMs - lastSyncMs) / (60 * 60 * 1000))),
       pendingDeleteCount: sources.pendingDeleteCount,

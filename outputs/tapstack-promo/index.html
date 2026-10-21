@@ -396,7 +396,7 @@ img{max-width:100%} a{color:inherit} ::selection{background:var(--brand-200)}
       <h2 class="section-title">常见问题</h2>
     </div>
     <div class="faq reveal">
-      <details open><summary>不登录能用吗？数据存哪？</summary><p>能。全部本地功能无需注册，数据默认只保存在浏览器扩展存储中（并申请了 unlimitedStorage 以容纳重度用户）。只有登录并开启同步后，数据才会传到你自己的云端账户。</p></details>
+      <details open><summary>不登录能用吗？数据存哪？</summary><p>能。全部本地功能无需注册，数据默认只保存在浏览器的扩展本地数据库（IndexedDB）里，不受容量配额限制。只有登录并开启同步后，数据才会传到你自己的云端账户。</p></details>
       <details><summary>删除的会话能找回来吗？</summary><p>不能。v1.22.0 起删除即物理清除，没有回收站、不可恢复。删除前会有二次确认，「删除全部」强制确认并显示数量。请把删除当作不可逆操作。</p></details>
       <details><summary>和 OneTab 是什么关系？</summary><p>支持 OneTab 文本格式双向导入导出，可以带着历史过来、也可以随时带着数据离开，不锁人。标题含竖线、本地文件地址等边界情况都有往返测试兜底。</p></details>
       <details><summary>两台电脑会互相覆盖吗？</summary><p>下载采用「快照 → 下载 → 合并 → 校验 → 写入」，异常自动回滚；同一会话两边同时编辑时以最后保存一方整组为准。错峰使用不受影响。自动同步默认关闭，本地改动仍会照常上传。</p></details>

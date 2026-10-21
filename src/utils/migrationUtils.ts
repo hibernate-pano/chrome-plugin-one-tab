@@ -8,6 +8,10 @@ import { sanitizeFaviconUrl } from './faviconUtils';
 import { kvRemove } from '@/storage/storageAdapter';
 import { TabGroup } from '@/types/tab';
 import { logError, logInfo } from './log';
+import {
+  hasOrphanedGroupFields,
+  migrateOrphanedGroupFields,
+} from '@/core/orphanedGroupFields';
 
 /**
  * 迁移现有数据中的 favicon URLs，确保符合 CSP 策略
@@ -180,6 +184,72 @@ export async function purgeTombstones(): Promise<void> {
 }
 
 /**
+ * 收敛 1.22.13 下线的「会话备注 / 收藏」残留字段（2026-10-20 审计 U-1）。
+ *
+ * ── 为什么必须有这条迁移 ────────────────────────────────────────────────
+ * 1.22.13 把那两项功能整条下线（提交 `a7671ef`），但**用户磁盘上的数据没人管**：
+ * 存储层不裁字段 ⇒ 数据还在；产品里却**没有任何入口能看见、编辑、搜到它**
+ * ⇒ 变成孤儿数据。一次跨端合并（`core/opStampMerge.ts` 的「活跃 vs 活跃：整组
+ * 覆盖，赢家通吃」）会把本地那份换成云端版本 ⇒ **字段物理消失，不可恢复**
+ * （v1.22.0 起无回收站、删除即物理清除）。
+ *
+ * ── 处置口径（产品负责人 2026-10-20 拍板）────────────────────────────────
+ * · **用户写下的文字**（备注）→ 并进 `name`（`原名 · 原文`）：
+ *   name 是唯一既看得见、又编辑得了、还导得出的会话级文本字段 ⇒
+ *   这是把用户的话救回「可见 + 可编辑 + 可导出」的唯一路径。
+ *   用明确分隔符并进去 ⇒ 原名与原文都**原样可辨认**、可反向拆出。
+ * · **布尔开关**（收藏标记）→ **丢弃**：它的全部功能（列表置顶）已随
+ *   1.22.13 下线，剩下的信息量只有「用户标记过」这一个布尔位；把它编码进
+ *   name 等于**把已下线的功能换个形状复活**（且会让纯本机偏好跟着上云、
+ *   在别的设备上产生语义漂移）。
+ * · **不复活功能**：类型 / UI / 搜索一律不加回去 —— 那是 1.22.13 的产品决定，
+ *   本仓有 4 条守卫钉死（`tests/p0DataSafetyGuards.test.ts`）。
+ *
+ * ── 四条硬约束（与本文件另外两个迁移同口径）─────────────────────────────
+ * 1. **无残留 ⇒ 一个字都不改、不写盘**（连 `setGroupsImmediate` 都不调）。
+ *    「顺手统一格式」是数据安全的敌人 —— 那会让每一次启动都整表重写。
+ * 2. **不改 `lastOp`**：它是跨端整组覆盖的**裁决依据**，动它 = 改仲裁结果。
+ * 3. **不改 `updatedAt`**：它参与变更判定与排序。
+ * 4. **不触发上传**：这是**本机**整理，不该把整理结果推上云
+ *    （所以不调 `scheduleUpload`、不置 `pending_upload`）。
+ *
+ * 幂等：只摘字段、不加字段 ⇒ 第二遍检测不到残留 ⇒ 不再改动、不再写盘。
+ */
+export async function migrateOrphanedGroupFieldsOnce(): Promise<void> {
+  try {
+    // 写路径新鲜读：与同文件另外两个迁移同口径（先 flush pending 防抖写、
+    // 失效 30s 缓存，再读真值）。读-改-写拿陈旧快照会把同期刚保存的会话抹掉。
+    const groups = await storage.getGroupsForWrite();
+
+    // 判据只看「有没有会话带这两个键」，不看别的 —— 危害在**形状**上。
+    if (!groups.some(hasOrphanedGroupFields)) {
+      // 无残留 ⇒ **不写盘**（连直写都不调）。这是本迁移最重要的一条：
+      // 无残留的用户（绝大多数）升级时磁盘上一个字节都不该变。
+      logInfo('[迁移] 无 1.22.13 遗留的旧字段，无需处理');
+      return;
+    }
+
+    const result = migrateOrphanedGroupFields(groups);
+
+    // 直写落盘（与 purgeTombstones / migrateFaviconUrls 同一写路径）：
+    // 迁移是整表重写，不该挤在 500ms 防抖窗口里等定时器 —— SW 随时可能被回收。
+    await storage.setGroupsImmediate(result.groups as TabGroup[]);
+
+    // ⚠️ 文案里刻意**不出现**那两个已下线功能的名称：产品侧的「不得复活」
+    // 守卫（tests/p0DataSafetyGuards.test.ts）会扫 src/ 里所有出现这些词的
+    // 代码行。日志是开发者看的，不该让已下线功能的字样重新出现在源码里。
+    logInfo(
+      `[迁移] 已收敛 1.22.13 遗留字段：${result.migrated} 个会话带残留，` +
+        `其中 ${result.notesMerged} 条用户手写内容已并入会话名、` +
+        `${result.favoritesDropped} 个旧版标记位已丢弃`
+    );
+  } catch (error) {
+    logError('收敛 1.22.13 遗留字段失败:', error);
+    throw error;
+  }
+}
+
+/**
  * 运行所有必要的数据迁移
  */
 export async function runMigrations(): Promise<void> {
@@ -197,6 +267,23 @@ export async function runMigrations(): Promise<void> {
   if (await shouldRunMigration('tombstones_removed_v1')) {
     await purgeTombstones();
   }
+
+  // 2026-10-20 审计 U-1：收敛 1.22.13 下线的「备注 / 收藏」残留字段。
+  //
+  // ⚠️ 这一条**刻意不用迁移标志位**（shouldRunMigration）—— 与前三条不同：
+  // 前三条是「做一次性的全局清理」，标志位是它们的幂等闸门；而本条是
+  // 「**按数据形状**判断要不要动」：残留字段可能因为「用户导入了一份旧备份」
+  // 而在标志位已置位之后**重新出现** ⇒ 用标志位会永久漏掉那部分。
+  //
+  // 幂等由**数据形状**保证（跑完就没有那两个键了 ⇒ 下次检测不到 ⇒ 不动），
+  // 而不是由标志位保证。这也让「无残留 ⇒ 不写盘」这条硬约束天然成立：
+  // 检测不到就不写，不需要额外的标志位来提醒自己「已经跑过了」。
+  //
+  // ⚠️ **请不要"顺手"给它加一个标志位** —— 完整理由见
+  // `src/core/orphanedGroupFields.ts` 的文件头（"为什么刻意不用迁移标志位"）。
+  // 简版：标志位与磁盘真实形状可能不一致（丢键 / 清数据 / 手改），
+  // 冲突时必须信**用户的数据**而不是我们的记账。
+  await migrateOrphanedGroupFieldsOnce();
 
   logInfo('数据迁移检查完成');
 }

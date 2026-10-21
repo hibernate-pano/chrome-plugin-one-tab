@@ -103,7 +103,7 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
             {/* 开发环境下显示错误详情 */}
             {process.env.NODE_ENV === 'development' && this.state.error && (
               <details className="mb-4 text-left">
-                <summary className="cursor-pointer text-sm text-gray-500 dark:text-gray-400 mb-2 flat-interaction">
+                <summary className="cursor-pointer text-sm theme-text-muted mb-2 flat-interaction">
                   错误详情 (仅开发环境显示)
                 </summary>
                 <div className="bg-gray-100 dark:bg-gray-700 p-3 rounded text-xs font-mono text-gray-800 dark:text-gray-200 overflow-auto max-h-32">
@@ -126,7 +126,11 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
             <div className="flex flex-col sm:flex-row gap-3 justify-center">
               <button
                 onClick={this.handleRetry}
-                className="px-4 py-2 bg-primary-500 text-white rounded-md hover:bg-primary-600 transition-colors flat-interaction"
+                // 2026-10-20 审计 P2-5：原先写死 `bg-primary-500 text-white`
+                // —— 白字压 #3b82f6 只有 3.68:1，低于 AA 的 4.5:1。
+                // 改用主题 CTA（accent 实底 + --color-accent-fg 墨色），
+                // 墨色随主题走，各主题实测都 ≥4.5:1。
+                className="px-4 py-2 theme-cta rounded-md transition-colors flat-interaction"
               >
                 重试
               </button>

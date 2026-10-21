@@ -20,7 +20,8 @@ html[data-theme="apple"] {
   --color-text-primary: #1d1d1f;
   --color-text-secondary: #424245;
   --color-text-tertiary: #6e6e73;
-  --color-text-muted: #86868b;
+  /* 2026-10-20：原值在 tertiary 底上仅 3.4:1，低于 AA。抬到 #6e6e73。 */
+  --color-text-muted: #6e6e73;
 
   /* 分割线 */
   --color-border-default: #d2d2d7;
@@ -35,8 +36,9 @@ html[data-theme="apple"] {
   --color-accent-subtle: #e8f2fd;
 
   /* 语义色 */
-  --color-warning: #ff9f0a;
-  --color-danger: #ff3b30;
+  /* 2026-10-20：警告/危险色在本仓只当文字色用 ⇒ 浅底要 ≥4.5:1。 */
+  --color-warning: #b25000;
+  --color-danger: #d70015;
   --color-success: #34c759;
 
   /* 开关 */
@@ -59,7 +61,12 @@ html[data-theme="apple"] {
   --color-accent-soft: rgba(0, 113, 227, 0.12);
   --color-panel-translucent: rgba(255, 255, 255, 0.72);
   --color-border-translucent: rgba(0, 0, 0, 0.08);
-  --focus-ring: 0 0 0 4px rgba(0, 113, 227, 0.22);
+  /* 2026-10-20 审计 P1-1：原先是 22% 透明度的一圈柔光，叠在底上只有
+     1.24–1.65:1 —— 键盘用户看不到焦点在哪。改成**不透明**的描边：
+     外圈用 accent（对白底 3.7:1），内芯用白把 accent 与输入框底色隔开。 */
+  --focus-ring: 0 0 0 2px #0071e3, 0 0 0 4px #ffffff;
+  /* 焦点环墨色（2026-10-20 新增）：全局 :focus-visible 读它。 */
+  --color-focus-ring: #0071e3;
   --shadow-panel: 0 12px 32px rgba(0, 0, 0, 0.12);
   --panel-blur: saturate(180%) blur(20px);
   --color-shell: #f5f5f7;
@@ -89,7 +96,8 @@ html[data-theme="apple"].dark {
   --color-text-primary: #f5f5f7;
   --color-text-secondary: #d6d6db;
   --color-text-tertiary: #98989d;
-  --color-text-muted: #6e6e73;
+  /* 2026-10-20：深色下原值在 tertiary 底上仅 3.5:1。抬到 #98989d。 */
+  --color-text-muted: #98989d;
 
   --color-border-default: #38383a;
   --color-border-subtle: rgba(255, 255, 255, 0.08);
@@ -100,8 +108,8 @@ html[data-theme="apple"].dark {
   --color-accent-fg: #0f172a;   /* 深色下 accent 变亮，白字 1.4–3.7:1 */
   --color-accent-subtle: rgba(10, 132, 255, 0.18);
 
-  --color-warning: #ff9f0a;
-  --color-danger: #ff453a;
+  --color-warning: #ff9f0a;   /* 深色底 8.13:1 */
+  --color-danger: #ff6961;   /* 深色底 6.72:1 */
   --color-success: #30d158;
 
   --color-toggle-on: #30d158;
@@ -117,7 +125,9 @@ html[data-theme="apple"].dark {
   --color-accent-soft: rgba(10, 132, 255, 0.2);
   --color-panel-translucent: rgba(28, 28, 30, 0.72);
   --color-border-translucent: rgba(255, 255, 255, 0.1);
-  --focus-ring: 0 0 0 4px rgba(10, 132, 255, 0.32);
+  /* 深色下同理：不透明描边 + 深色内芯把环与输入框底色隔开。 */
+  --focus-ring: 0 0 0 2px #7ab8f5, 0 0 0 4px #1c1c1e;
+  --color-focus-ring: #7ab8f5;  /* 深色下焦点环墨色 */
   --shadow-panel: 0 12px 32px rgba(0, 0, 0, 0.5);
   --panel-blur: saturate(180%) blur(20px);
   --color-shell: #000000;

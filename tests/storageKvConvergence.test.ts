@@ -160,6 +160,10 @@ describe('S2 键常量单源', () => {
   const ADDED_KEYS: Record<string, string> = {
     PERF_SPANS: 'perf_spans',
     PENDING_UPLOAD_GROUP_IDS: 'pending_upload_group_ids',
+    // 2026-10-20 D-3：增量白名单的登记曾经失败过 ⇒ 「队列与上行集合对得上账」
+    // 不再能作为清 pending_upload 的依据。新键由 STORAGE_KEYS 全量派生，
+    // MIGRATION_SCAN_KEYS 会自动带上它（见 keys.ts 的派生表）。
+    PENDING_UPLOAD_REGISTRY_UNRELIABLE: 'pending_upload_registry_unreliable',
   };
 
   it('STORAGE_KEYS 字面值与搬迁前逐字一致', async () => {
@@ -495,19 +499,38 @@ describe('键名与主题集合不得有第二份来源（2026-10-09 架构 P2-2
     }
   });
 
-  it('service-worker 的旧键迁移不得手抄键名', () => {
+  it('service-worker 不得自己做键名迁移（改名已下沉到 KV 层的单一来源）', () => {
     const src = readCode('src/service-worker.ts');
-    // chrome.storage.local.get(['tabGroups']) / ['tab_groups'] 这类字面量数组
+    // 2026-10-20 审计 A-15：service-worker 里的 migrateStorageKeys() 已删除。
+    // 它会把会话数据**写回 chrome.storage.local**（改名）—— 那是唯一会撞
+    // 10MB 配额的一步，而它的 catch 是静默吞掉 ⇒ 用户看不到自己的会话。
+    // 改名已下沉到 KV 层（storage-kv/keys.ts 的 MIGRATION_KEY_RENAMES +
+    // storageAdapter.ts 的 planMigrationWrites），那里失败会**显式失败**。
+    //
+    // 键名仍然**只有一份来源**（KV 层），所以这条守卫要改成断言
+    // 「service-worker 不再碰键名」而不是「它必须引用键表」——
+    // 后者只在一个已经不存在的行为上成立。
     assert.ok(
       !/chrome\.storage\.local\.get\(\s*\[\s*['"]tabGroups['"]/.test(src),
-      'service-worker 又手抄了旧键 tabGroups —— 改用 LEGACY_KEYS.LEGACY_TAB_GROUPS'
+      'service-worker 又手抄了旧键 tabGroups —— 改名只应在 KV 层做'
     );
     assert.ok(
       !/chrome\.storage\.local\.get\(\s*\[\s*['"]tab_groups['"]/.test(src),
-      'service-worker 又手抄了现行键 tab_groups —— 改用 STORAGE_KEYS.GROUPS'
+      'service-worker 又手抄了现行键 tab_groups —— 改名只应在 KV 层做'
     );
-    assert.match(src, /LEGACY_KEYS\.LEGACY_TAB_GROUPS/, '应引用权威键表');
-    assert.match(src, /STORAGE_KEYS\.GROUPS/, '应引用权威键表');
+    assert.doesNotMatch(
+      src,
+      /migrateStorageKeys/,
+      'service-worker 不得再做键名迁移（它是唯一会撞 10MB 配额的一步，且失败被静默吞掉）'
+    );
+
+    // 键名仍然只有一份来源：改名表在 KV 层，且包含这两个键
+    const keys = read('src/storage-kv/keys.ts');
+    assert.match(
+      keys,
+      /MIGRATION_KEY_RENAMES[\s\S]*?LEGACY_KEYS\.LEGACY_TAB_GROUPS[\s\S]*?STORAGE_KEYS\.GROUPS/,
+      '键名改名的权威表必须在 KV 层，且覆盖 tabGroups → tab_groups'
+    );
   });
 
   it('VALID_THEME_STYLES 不得是手抄数组（必须引用 THEME_STYLES）', () => {
@@ -550,6 +573,76 @@ describe('键名与主题集合不得有第二份来源（2026-10-09 架构 P2-2
       6,
       `THEME_STYLES 实到 ${THEME_STYLES.length} 项：README / 商店文案都写「6 套主题风格」，` +
         '改动主题集合时必须同步那两处（tests/docsAlignment.test.ts 另有断言）'
+    );
+  });
+});
+
+/**
+ * `STORAGE_VERSION` 的**真实身份**守卫（2026-10-20 升级路径审计 U-3）。
+ *
+ * ── 为什么要有这一条 ────────────────────────────────────────────────────
+ * 升级路径审计发现：`STORAGE_VERSION` 读起来像「按版本迁移的闸门」
+ * （名字里有 VERSION、键叫 `storage_version`），实际是**只写不读的标记字段** ——
+ * 唯一使用点（utils/storage.ts 的 ensureVersion）只做「读出来 → 不等就写回去」，
+ * **从不**比较 `stored < current`，也**从不**据此分支到任何迁移。
+ *
+ * 「看起来有个闸门、实际没有」比「明确没有闸门」更危险：后来的开发者会以为
+ * 「数据形状变了只要 bump 版本号就有地方挂迁移」，而那里什么都没挂 ——
+ * 于是真正的迁移会被悄悄漏掉，而**没有任何测试会变红**。
+ *
+ * 本仓真正的迁移机制是**逐项迁移标志**（utils/migrationUtils.ts 的
+ * `shouldRunMigration('favicon_urls_v1')` 那种形态），它天然幂等、逐项独立，
+ * 不需要版本号 diff。U-3 采纳的处置正是「把这个假闸门的身份说清楚」。
+ *
+ * ── 判据 ────────────────────────────────────────────────────────────────
+ * 钉**身份**（它是什么），不钉实现细节：
+ *   1. 源码里**没有**任何「按版本号分支到迁移」的代码路径
+ *      （即：不存在 `version < N` / `version > N` 这样的比较）；
+ *   2. 迁移的记账单位是**迁移项标志**，不是版本号。
+ * 将来若真的要改成真正的版本闸门，这条会红 —— 那正是它该红的时候
+ * （那时必须同时改掉逐项标志制，理由见 keys.ts 的注释）。
+ */
+describe('STORAGE_VERSION 是标记字段，不是迁移闸门（身份必须说清楚）', () => {
+  const storageSrc = readFileSync(resolve(SRC_ROOT, 'utils/storage.ts'), 'utf8');
+  const migrationSrc = readFileSync(resolve(SRC_ROOT, 'utils/migrationUtils.ts'), 'utf8');
+
+  it('源码里没有「按版本号比较来分支」的迁移路径', () => {
+    // 盯的是「拿版本号做大小比较」这个**动作**，不是某个具体数字 ——
+    // 数字会变，比较的形态才是「闸门」的本质。
+    const versionComparisons = [
+      /version\s*<\s*\w/,
+      /version\s*>\s*\w/,
+      /\w+\s*<\s*STORAGE_VERSION/,
+      /\w+\s*>\s*STORAGE_VERSION/,
+      /STORAGE_VERSION\s*<=/,
+      /STORAGE_VERSION\s*>=/,
+    ];
+    const hits = versionComparisons.filter(re => re.test(storageSrc) || re.test(migrationSrc));
+    assert.deepEqual(
+      hits.map(String),
+      [],
+      '出现了「拿 STORAGE_VERSION 做大小比较」的代码 —— ' +
+        '那意味着它已经被当成迁移闸门在用了：' +
+        '必须同时改掉 utils/migrationUtils.ts 的逐项标志制（两套记账并存必然漏迁移）'
+    );
+  });
+
+  it('迁移的记账单位是「迁移项标志」，不是版本号', () => {
+    assert.match(
+      migrationSrc,
+      /shouldRunMigration/,
+      '迁移必须靠逐项标志记账（每个迁移独立幂等）—— ' +
+        '版本号模型要求「从 vN 依次跑到 vN+1」，任何一次跳过都会把后面的迁移永久错过'
+    );
+  });
+
+  it('版本号的定义处必须写明它「不是迁移闸门」（否则下一个人会误读）', () => {
+    const keysSrc = readFileSync(resolve(SRC_ROOT, 'storage-kv/keys.ts'), 'utf8');
+    assert.match(
+      keysSrc,
+      /不是迁移闸门/,
+      'src/storage-kv/keys.ts 里 STORAGE_VERSION 的注释必须明说它不是迁移闸门 —— ' +
+        '名字带 VERSION 而实际不是，是这类缺陷的温床'
     );
   });
 });

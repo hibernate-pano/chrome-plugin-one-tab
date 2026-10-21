@@ -75,7 +75,18 @@ export interface StoredWebDavConfig extends WebDavConnectionConfig {
   };
 }
 
-const DEFAULT_ROOT = 'TapStack';
+/**
+ * 库内的默认子目录（2026-10-20 起**导出**）。
+ *
+ * 为什么导出：库的「身份」由 地址 + 账号 + 目录 三者决定
+ * （见 `libraryIdentity.ts`），而身份计算必须知道「目录留空」等于哪个目录 ——
+ * 否则表单里空着与磁盘上写着 `TapStack` 会被当成**两个库** ⇒
+ * 用户只是重填了一次密码就被重新拦住（那正是本次要消灭的误拦）。
+ *
+ * 这份默认值此前是本模块私有的，于是身份模块只能自己抄一份字面量 ——
+ * 两份默认值迟早分叉，而分叉的后果是「同一个库被当成两个」。
+ */
+export const DEFAULT_ROOT = 'TapStack';
 
 /** chrome.storage / IndexedDB 适配层 → AdapterKv（形状正好对得上）。 */
 export const chromeKvAdapter: AdapterKv = {

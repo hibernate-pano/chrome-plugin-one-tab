@@ -35,6 +35,7 @@ import {
   checkResultFromLastCheck,
   clearSessionSecrets,
   clearWebDavConfig,
+  DEFAULT_ROOT,
   loadWebDavConfig,
   notifyWebDavConfigChanged,
   saveLastCheck,
@@ -57,12 +58,19 @@ import {
   countTombstones,
   decideFirstSync,
   isFirstPushBusy,
+  ownershipPendingNotice,
   previewOutcome,
   projectedCloudCount,
   releaseFirstSyncPendingOnSaveFailure,
   runPullCommand,
+  shouldEnterOwnershipPending,
   type OwnershipChoice,
 } from '@/sync-backend/webdav/firstSyncDecision';
+import {
+  libraryScopeKey,
+  NO_LIBRARY_SCOPE,
+  sameLibrary,
+} from '@/sync-backend/webdav/libraryIdentity';
 import { storage } from '@/utils/storage';
 import type { TabGroup } from '@/types/tab';
 import { logWarn } from '@/utils/log';
@@ -123,14 +131,28 @@ const JIANGUOYUN_TEMPLATE_URL = 'https://dav.jianguoyun.com/dav/';
  *
  * 判定与错误处理都在 `firstSyncDecision` 的三个纯函数里（可做行为断言）；
  * 这里只负责注入真实写入器与日志出口 —— 组件里不留第二份规则。
+ *
+ * ⚠️ 2026-10-20：写入**按库寻址**（scope = 目标库的身份串）。
+ * 待决位的语义是「这些会话归**这个库**吗」—— 换云盘就是另一个库、
+ * 另一个决定，所以标志必须跟着库走（见 `libraryIdentity.ts`）。
+ *
+ * ⚠️ 作用域是**显式传进来的**，不是隐式读全局：写方（设置页）知道自己
+ * 正在处理**哪个库**（表单里的目标 / 磁盘上的当前），而读方（后台引擎）
+ * 读的是「本机当前指向的库」。两边在**同一次保存**之后必须指向同一个库，
+ * 而「保存」这件事会**改变**磁盘上的当前库 —— 所以写方必须显式说清
+ * 「我写的是哪个库」，否则会出现「写到了旧库、读的是新库」的分叉。
  */
-const firstSyncPendingWriter = (pending: boolean): Promise<void> => storage.setFirstSyncPending(pending);
+type FirstSyncPendingWriter = (pending: boolean) => Promise<void>;
 
 /** 「本次置的位」在保存失败时的回滚（见 releaseFirstSyncPendingOnSaveFailure）。 */
-async function releaseFirstSyncPendingIfSetHere(setHere: boolean, context: string): Promise<void> {
+async function releaseFirstSyncPendingIfSetHere(
+  setHere: boolean,
+  context: string,
+  write: FirstSyncPendingWriter
+): Promise<void> {
   await releaseFirstSyncPendingOnSaveFailure({
     setHere,
-    write: firstSyncPendingWriter,
+    write,
     onError: err =>
       logWarn(
         `[WebDavSettings] ${context}：清除待决标志失败。待决标志（webdav 首次归属决策未完成）` +
@@ -141,9 +163,9 @@ async function releaseFirstSyncPendingIfSetHere(setHere: boolean, context: strin
 }
 
 /** 归属已完成 / 后端已变时的无条件解除（见 clearFirstSyncPendingBestEffort 纯函数）。 */
-async function clearPendingToken(context: string): Promise<void> {
+async function clearPendingToken(context: string, write: FirstSyncPendingWriter): Promise<void> {
   await clearFirstSyncPendingBestEffort({
-    write: firstSyncPendingWriter,
+    write,
     onError: err =>
       logWarn(
         `[WebDavSettings] ${context}：解除归属待决标志失败（不影响本次结果）。` +
@@ -189,6 +211,50 @@ export const WebDavSettings: React.FC = () => {
    * 「云端库按加密配置，但本次没给口令」），而判定本身不依赖它。
    */
   const [savedCfg, setSavedCfg] = useState<StoredWebDavConfig | null>(null);
+  /**
+   * 磁盘上那份配置的**同步镜像**（2026-10-20）。
+   *
+   * 为什么需要 ref 而不是直接用 `savedCfg` state：作用域键要在**渲染期**
+   * 同步算出来（`libraryScopeKey` 是纯函数），而 state 在渲染期读到的是
+   * 上一次提交的值。ref 的写法保证读到的是**最新一次提交**的那份。
+   *
+   * 它与 `savedCfg` 永远是同一份内容（每次 setSavedCfg 都同步更新它），
+   * 区别只在读的时候不触发 React 的重渲染。
+   */
+  const lastSavedConfigRef = useRef<StoredWebDavConfig | null>(null);
+  // 同步写 ref（不只靠 useEffect）：保存配置后必须**立刻**让 ref 跟上 ——
+  // 否则「归属决策完成」那条清除路径会写到**上一个库**的作用域上
+  // （saveWebDavConfig 已经把磁盘上的当前库换掉了，而 ref 还指着旧的）。
+  useEffect(() => {
+    lastSavedConfigRef.current = savedCfg;
+  }, [savedCfg]);
+
+  /**
+   * 「本机当前指向的库」的作用域键（**同步**，可在渲染期算）。
+   *
+   * 读的是**磁盘上已保存的配置**（`savedCfg` 就是它的镜像），不是表单里
+   * 正在编辑的内容 —— 待决位的读取方（后台的 syncEngine）也在读磁盘，
+   * 两边必须用同一份真值。拿表单值去比会得出「同一个库」的假结论
+   * （表单被改成新地址时，表单 ≠ 磁盘 ⇒ 恰恰是**不同**的库）。
+   */
+  const currentScope = useCallback((): string => {
+    const cfg = lastSavedConfigRef.current;
+    return cfg ? libraryScopeKey(cfg) : NO_LIBRARY_SCOPE;
+  }, []);
+
+  /**
+   * 待决位的写入器（绑定到**当前库**）。
+   *
+   * 「归属决策完成」与「后端/配置已变」这两条清除路径写的是**当前库**的
+   * 作用域 —— 它们都在「本机还指着这个库」的时刻发生。
+   * 「保存配置」那条置位路径写的是**目标库**的作用域（显式传入，
+   * 见 handleSave）—— 因为保存动作本身会改变磁盘上的当前库。
+   */
+  const writeCurrentScope = useCallback(
+    (pending: boolean): Promise<void> => storage.setFirstSyncPending(pending, currentScope()),
+    [currentScope]
+  );
+
   const [saving, setSaving] = useState(false);
   /**
    * 首次推送状态（2026-10-15）。
@@ -318,6 +384,51 @@ export const WebDavSettings: React.FC = () => {
       : resolvedBackend !== 'webdav'
         ? '自带存储尚未生效（可能配置未保存，或本次会话还没解锁）。请先完成「保存并启用」再推送。'
         : null;
+
+  /**
+   * 「归属待决」状态（2026-10-20）。
+   *
+   * ── 为什么面板必须显示它 ────────────────────────────────────────────────
+   * 待决期里，自动上传**只传本次改动过的会话**，历史会话被排除在外。
+   * 于是用户会看到「本机有 N 个会话，云端只有刚改的那几个」——
+   * 若面板对此**只字不提**，用户只会得出「同步坏了」的结论，
+   * 而真正缺的是**一个决定**（这些会话归不归这个云盘）。
+   *
+   * 本仓的诚实度纪律是「界面说的每一句都必须等于真实行为」，
+   * 所以这里必须说清三件事：**发生了什么**、**为什么**、**下一步做什么**
+   * （见 `ownershipPendingNotice`）。
+   */
+  const [ownershipPending, setOwnershipPending] = useState(false);
+  /**
+   * 本机**活跃**会话数（横幅里要如实报出「多少个会话被按住了」）。
+   *
+   * 为什么必须报真数：横幅若说「本机还有 0 个会话没传上去」，那是**谎话**
+   * （而谎话正是本仓要消灭的那类缺陷）。读不到就报 `null`，
+   * 横幅便**不报数字**（只说清机制与下一步），而不是编一个。
+   */
+  const [localActiveCount, setLocalActiveCount] = useState<number | null>(null);
+  /** 读一次「本机当前指向的库」的待决状态（首屏 + 每次配置变化后刷新）。 */
+  const refreshOwnershipPending = useCallback(async () => {
+    try {
+      setOwnershipPending(await storage.getFirstSyncPending());
+    } catch (err) {
+      // 读不到就当「没有待决」——与存储层同一方向（少挡一次，
+      // 而「多传」不可回滚）。界面上不显示横幅 = 不谎报。
+      logWarn('[WebDavSettings] 读取归属待决状态失败（不显示提示）:', err);
+      setOwnershipPending(false);
+    }
+    try {
+      const groups = await storage.getGroups();
+      setLocalActiveCount(groups.filter(g => !g.isDeleted).length);
+    } catch (err) {
+      // 读不到会话数 ⇒ 不报数字（横幅会省掉那句「N 个会话」）。
+      logWarn('[WebDavSettings] 读取本机会话数失败（提示里不报数字）:', err);
+      setLocalActiveCount(null);
+    }
+  }, []);
+  useEffect(() => {
+    void refreshOwnershipPending();
+  }, [refreshOwnershipPending, savedCfg]);
 
   // 首屏读一次已保存的配置（只读地址/账号/目录；口令从不落盘，读不到是正常的）。
   //
@@ -471,6 +582,13 @@ export const WebDavSettings: React.FC = () => {
     // 用户上轮就处于待决态时那个位是「真实未完成的归属决策」，退掉它会让
     // 历史会话在下一次自动上传时被整批推上云（比泄漏更糟）。
     let firstSyncPendingSetHere = false;
+    // 待决位的写入器（绑定到**目标库**的作用域）。
+    //
+    // ⚠️ 声明在 try **外面**：catch 分支要拿它回滚本次置的位。
+    // 作用域取**表单里的目标库**（这次保存要往哪儿传），而不是「写完之后
+    // 磁盘上是谁」—— 保存动作本身会改变磁盘上的当前库，读-改-写的时序
+    // 必须与「这一次保存的目标」一致，否则会出现「写到了旧库、读的是新库」。
+    let writePending: FirstSyncPendingWriter = pending => storage.setFirstSyncPending(pending);
     try {
       // 2026-10-18 A1：校验抽成 validateWebDavForm，与 handleTest 共用一份。
       // ⚠️ 顺序逐字保留（round 32 修的「先校验后落盘」）：这一步仍然排在任何
@@ -501,19 +619,54 @@ export const WebDavSettings: React.FC = () => {
       // 原先在 dispatch 之后读 settings.syncBackend，读到的已是新值 ⇒
       // 「是不是首次切换」永远算错。
       const wasWebdav = settings.syncBackend === 'webdav';
-      // 「首次配置」的判据取**本机此前有没有配过自带存储**，而不是「当前后端是不是
-      // webdav」：用户在「同步方式」里先点一下「自带存储（WebDAV）」就会把
-      // syncBackend 置成 webdav（OptionsPage.handleSelectBackend 立即落盘），
-      // 之后再点「保存并启用」时看后端就永远是「已经切过了」⇒ 待决标志一次都不会
-      // 置位，整条「归属待决」保护形同虚设（round 30 真机实测：历史会话照样被自动推上云）。
-      // 而「配过」才是「老用户重设密码」的真实特征 —— 那种情况不该被重新拦住。
-      const wasConfigured = !!(await loadWebDavConfig())?.baseUrl;
+      // 「本机此前配过哪个库」必须在 dispatch **之前**读：dispatch 之后读到的
+      // 已是新值 ⇒ 「是不是首次切换」永远算错。
+      //
+      // 判据取**磁盘上已保存的配置**（库的身份），而不是「当前后端是不是 webdav」：
+      // 用户在「同步方式」里先点一下「自带存储（WebDAV）」就会把 syncBackend
+      // 置成 webdav（OptionsPage.handleSelectBackend 立即落盘），之后再点
+      // 「保存并启用」时看后端就永远是「已经切过了」⇒ 待决标志一次都不会置位，
+      // 整条「归属待决」保护形同虚设（round 30 真机实测：历史会话照样被自动推上云）。
+      const savedBefore = await loadWebDavConfig();
+
+      // ── 2026-10-20：判据从「配没配过」升级为「**库的身份变了没有**」──────
+      // 旧判据（`!wasConfigured`）让「**换云盘**」与「**同一个云盘重设密码**」
+      // 长得一模一样 —— 两者都是 `wasConfigured === true` ⇒ 两者都不置位。
+      // 但它们的**后果完全不同**：重设密码还是同一个库，换云盘是**另一个库**
+      // （那里存的是另一批会话，归属是**另一个决定**）。
+      //
+      // 后果（实测过的缺陷形态）：换到云盘 B 时，本机的历史会话被**全量推上 B**
+      // （适配器见远端为空 ⇒ `firstSync = true` ⇒ 全量），而用户从来没有被
+      // 问过「这些会话归 B 吗」—— 2026-10-18 P1#4 明令禁止的「多传」，不可回滚。
+      //
+      // 新的判据（三条都覆盖，且每条都有测试钉住）：
+      //   · 从没配过 ⇒ 首次配置 ⇒ 置位（2026-10-18 真机实测的那条，别动）；
+      //   · 配过、库的身份变了（地址/账号/目录任一变化）⇒ 换云盘 ⇒ **重新置位**；
+      //   · 配过、库的身份没变 ⇒ 重设密码/改加密口令 ⇒ **不**重新置位
+      //     （拦了会让同步莫名停摆且零提示 —— 那是老用户重设密码的既有行为）。
+      //
+      // 口径与同步水位线一致（`baseUrl | username | rootPath` 三者任一变化都
+      // 意味着「另一个库」，见 `webdav/adapter.ts` 的 `watermarkKey`）。
+      const targetLibrary = { baseUrl, username, rootPath };
+      const savedLibrary = savedBefore
+        ? { baseUrl: savedBefore.baseUrl, username: savedBefore.username, rootPath: savedBefore.rootPath }
+        : null;
+      /** 本机此前配过自带存储（用于区分「首次配置」与「换云盘」的措辞）。 */
+      const wasConfigured = !!savedBefore?.baseUrl;
+      /** 库的身份变了没有（换云盘）—— 决定置位与提示措辞。 */
+      const libraryChanged = !sameLibrary(savedLibrary, targetLibrary);
+      // 写入的作用域 = **目标库**（这次保存之后要往哪儿传）。
+      // 显式传，不依赖「写完之后磁盘上是谁」—— 保存动作本身会改变磁盘上的
+      // 当前库，读-改-写的时序必须与「这一次保存的目标」一致。
+      const targetScope = libraryScopeKey(targetLibrary);
+      writePending = (pending: boolean): Promise<void> =>
+        storage.setFirstSyncPending(pending, targetScope);
 
       // ── 2026-10-18 P1#4：进入「归属待决」状态 ────────────────────────────
       // 自带存储切过去这一刻，本地通常已有会话，而「它们归谁」是用户的决定。
       // 在他点「检查并推送」之前，自动上传必须被降级为增量（syncEngine 读本标志）。
       //
-      // 为什么只在**首次配置**时置位（wasConfigured 为假）：已经在用自带存储的
+      // 为什么只在「首次配置 / 换云盘」时置位：已经在用**同一个**自带存储库的
       // 老用户重设密码时不该被重新拦住（那会让他们的同步莫名停摆，且没有任何提示）。
       //
       // ⚠️ 必须排在本方法**最前面**（round 30 真机抓到的顺序缺陷）：本机此前攒下的
@@ -523,12 +676,28 @@ export const WebDavSettings: React.FC = () => {
       // 「归属待决」形同虚设。放最前面还有一层好处：置位同时会清掉此前攒下的
       // 「改动过的会话 id」（那时它们全属于历史会话），这正是待决期该有的白名单起点。
       // 若下面保存失败：本次置的位要退回去（见 saveError 分支与 catch 的注释）。
-      if (!wasConfigured) {
-        await storage.setFirstSyncPending(true);
+      if (shouldEnterOwnershipPending({ saved: savedLibrary, target: targetLibrary })) {
+        await writePending(true);
         firstSyncPendingSetHere = true;
       }
 
       await saveWebDavConfig({ baseUrl, username, rootPath, encryption });
+      // ⚠️ 2026-10-20：磁盘上的「当前库」刚刚变了（保存动作换掉了它）。
+      // 本组件手里的 `savedCfg` 镜像必须**立刻**跟上 ——
+      // 否则「归属决策完成」那条清除路径会写到**上一个库**的作用域上
+      // （用户刚做完三选一，决定却记在别的库的名下 ⇒ 下次又被重新拦住）。
+      // 这里写的是**刚保存成功**的那份（磁盘真值），不是表单的原样回显。
+      setSavedCfg(prev => {
+        const next: StoredWebDavConfig = {
+          baseUrl,
+          username,
+          rootPath: rootPath || DEFAULT_ROOT,
+          encryption,
+          ...(prev?.lastCheck ? { lastCheck: prev.lastCheck } : {}),
+        };
+        lastSavedConfigRef.current = next;
+        return next;
+      });
       // 口令只给本次浏览器会话用（内存 + chrome.storage.session，不写磁盘）：
       // 关闭浏览器后需要重新输入。session 存储三端共享，SW 的定时同步也能用。
       await setSessionSecrets(username, password, encryption === 'required' ? passphrase || null : null);
@@ -552,7 +721,7 @@ export const WebDavSettings: React.FC = () => {
         //     待决态、这次重设密码又保存失败时，那个位是真实未完成的归属决策（见上面 wasConfigured 的论证）。
         //   · 成功保存时**绝不清**（那是 round 30 记录的竞态：设置一旦保存成功，
         //     3 秒后 autoSyncMiddleware 就会排一次上传，清掉之后那次就是无抑制全量）。
-        await releaseFirstSyncPendingIfSetHere(firstSyncPendingSetHere, 'save-error');
+        await releaseFirstSyncPendingIfSetHere(firstSyncPendingSetHere, 'save-error', writePending);
         return;
       }
 
@@ -567,15 +736,27 @@ export const WebDavSettings: React.FC = () => {
       // P2-4：保存后父页面（自动同步提示）与本组件（推送区块可用性）都要刷新
       notifyWebDavConfigChanged();
 
+      // 2026-10-20：保存可能**新置**了待决位（首次配置 / 换云盘）⇒
+      // 横幅必须立刻出现，否则用户看不到「为什么历史会话没上去」。
+      await refreshOwnershipPending();
+
+      // 2026-10-20：**换云盘**时要说清「历史会话没有自动上传」——
+      // 这正是本缺陷的用户可见形态（用户以为「已保存」= 「已经传上去了」）。
+      // 换云盘时那句「别忘了点检查并推送」还不够：它没说明**为什么**现在
+      // 需要做这个决定、以及**不做**会怎样（历史会话会一直留在这台设备上）。
+      const switchedLibrary = wasConfigured && libraryChanged;
       showToast(
-        wasWebdav
-          ? '已保存'
-          : '已保存，同步方式已切换为「自带存储」。别忘了点下方「检查并推送」把本机已有会话推上去。',
+        switchedLibrary
+          ? '已保存，已切换到新的云盘。为避免把本机历史会话未经你同意就传上去，' +
+            '这些会话暂未上传；请点下方「检查并推送到云端」选择归属方式。'
+          : wasWebdav
+            ? '已保存'
+            : '已保存，同步方式已切换为「自带存储」。别忘了点下方「检查并推送」把本机已有会话推上去。',
         'success'
       );
     } catch (err) {
       // 同 saveError 分支：抛出（落盘失败 / 会话凭据写失败）也不能把待决位留在盘上。
-      await releaseFirstSyncPendingIfSetHere(firstSyncPendingSetHere, 'save-throw');
+      await releaseFirstSyncPendingIfSetHere(firstSyncPendingSetHere, 'save-throw', writePending);
       showToast(err instanceof Error ? err.message : '保存失败', 'error');
     } finally {
       setSaving(false);
@@ -849,11 +1030,14 @@ export const WebDavSettings: React.FC = () => {
         // 排在后面时，一次 KV 写失败会被下面的 catch 报成「推送失败…本地数据未
         // 受影响」——而合并其实已经成功了（见 completeFirstSyncSuccess 的注释）。
         await completeFirstSyncSuccess({
-          write: firstSyncPendingWriter,
+          write: writeCurrentScope,
           notifySuccess: () => showToast('推送完成', 'success'),
           onError: err =>
             logWarn('[WebDavSettings] 推送完成：解除归属待决标志失败（不影响本次结果）:', err),
         });
+        // 归属决策做完了 ⇒ 横幅必须立刻消失（否则界面还在说「等你决定」，
+        // 而决定已经做完了 —— 那又是一句不成立的话）。
+        await refreshOwnershipPending();
       } catch (err) {
         setFirstPush({
           kind: 'blocked',
@@ -948,7 +1132,7 @@ export const WebDavSettings: React.FC = () => {
       // 否则一次 KV 写失败就会被报成「下载失败」，而合并其实已经成功了。
       complete: () =>
         completeFirstSyncSuccess({
-          write: firstSyncPendingWriter,
+          write: writeCurrentScope,
           notifySuccess: () => showToast('已从云端下载到本机', 'success'),
           onError: err => logWarn('[WebDavSettings] 下载完成：解除归属待决标志失败（不影响本次结果）:', err),
         }),
@@ -965,7 +1149,9 @@ export const WebDavSettings: React.FC = () => {
         `已从云端下载并合并（云端 ${remoteActive} 个会话` +
         `${remoteTombstones > 0 ? `，并服从了 ${remoteTombstones} 条删除记录` : ''}）。`,
     });
-  }, [probeRemote, showToast, downloadReasonCopy]);
+    // 归属决策做完了 ⇒ 横幅必须立刻消失（理由同推送那条）。
+    await refreshOwnershipPending();
+  }, [probeRemote, showToast, downloadReasonCopy, refreshOwnershipPending]);
 
   // 2026-10-17（双模式适配）：恢复 slim 分支删掉的「切回 TapStack 云端」。
   //
@@ -1024,7 +1210,7 @@ export const WebDavSettings: React.FC = () => {
       // 判了 `!== 'supabase'`，但用户之后又切回 webdav 时那个**陈旧**的待决位
       // 会直接生效 —— 没人在这中间清过它，历史会话就再也上传不了。
       // 清它是安全的：切回云端是用户显式选择，不再存在「本地已有数据归谁」的问题。
-      await clearPendingToken('切回 TapStack 云端');
+      await clearPendingToken('切回 TapStack 云端', writeCurrentScope);
       // P2-4：通知父页面刷新自动同步提示（切回云端后「已配置并解锁」不再成立）
       notifyWebDavConfigChanged();
       showToast('已切回 TapStack 云端。云盘上的文件不会被删除。', 'success');
@@ -1095,7 +1281,7 @@ export const WebDavSettings: React.FC = () => {
       // 2026-10-18 A3：配置已被清空，待决标志所描述的「首次归属决策」已无对象 ——
       // 留着它只会在用户重新配好后直接生效，把历史会话静默排除在上传之外。
       // 与 handleSwitchBack 同理：这是一条「后端/配置已变」的路径，清它是安全的。
-      await clearPendingToken('清除配置');
+      await clearPendingToken('清除配置', writeCurrentScope);
       // 2026-10-18 A6：配置没了，上次测试结果也必须一起失效（否则重开面板
       // 会把一个不属于任何现有配置的绿灯播种回来 —— 本缺陷修法自己造的新假绿灯）。
       setSavedCfg(null);
@@ -1170,7 +1356,10 @@ export const WebDavSettings: React.FC = () => {
 
   return (
     <div className="px-3 py-2" data-testid="webdav-settings">
-      <div className="mb-2 text-xs text-gray-500 dark:text-gray-400">
+      {/* 2026-10-20 审计 D-2：这段说明原先写死 text-gray-500 / dark:text-gray-400，
+          不跟主题走（legacy 浅色实测仅 2.54:1）。改用主题令牌 theme-text-muted
+          （6 套主题实测均 ≥4.5:1）。下面的几处 11px 小字同理。 */}
+      <div className="mb-2 text-xs theme-text-muted">
         数据存在你自己的云盘上，不经过 TapStack 服务器。
       </div>
 
@@ -1185,7 +1374,7 @@ export const WebDavSettings: React.FC = () => {
         onChange={e => setBaseUrl(e.target.value)}
         disabled={!loaded}
       />
-      <div className="mb-2 text-[11px] leading-relaxed text-gray-400 dark:text-gray-500">
+      <div className="mb-2 text-[11px] leading-relaxed theme-text-muted">
         已预填坚果云地址，直接用即可。坚果云：账户信息 → 安全选项 → 第三方应用管理 → 添加应用密码。
         自建 Nextcloud 请把地址改成你的 WebDAV 根目录，必须以 <code>/</code> 结尾。
       </div>
@@ -1229,7 +1418,7 @@ export const WebDavSettings: React.FC = () => {
         onChange={e => setPassword(e.target.value)}
         disabled={!loaded}
       />
-      <div className="mb-2 text-[11px] text-gray-400 dark:text-gray-500">
+      <div className="mb-2 text-[11px] theme-text-muted">
         仅保存在内存中，关闭浏览器后需要重新输入。这是刻意的：磁盘上不留任何能解开数据的密钥。
       </div>
 
@@ -1263,14 +1452,17 @@ export const WebDavSettings: React.FC = () => {
               onChange={e => setPassphrase(e.target.value)}
               disabled={!loaded}
             />
-            <div className="mt-1 text-[11px] leading-relaxed text-amber-600 dark:text-amber-500">
+            {/* 2026-10-20 审计 D-2：写死的 text-amber-600 / dark:text-amber-500
+                在浅底上只有 3.19:1 —— 而这句恰恰是最需要看清的一句（安全告警）。
+                改用主题令牌 theme-text-warning（各主题实测 ≥4.5:1）。 */}
+            <div className="mt-1 text-[11px] leading-relaxed theme-text-warning">
               口令没有找回入口。请务必自己记牢 —— 忘记后云盘上的数据将无法解密，也没有我们能做的补救。
             </div>
           </>
         ) : null}
       </fieldset>
 
-      <div className="mb-2 text-[11px] leading-relaxed text-gray-400 dark:text-gray-500">
+      <div className="mb-2 text-[11px] leading-relaxed theme-text-muted">
         隐私说明：会话内容加密后存放，但目录清单文件（manifest）以明文记录「有多少个会话、
         各自在何时被修改」，云盘服务商能看到这些信息，但不包含会话名称与网址。
       </div>
@@ -1390,7 +1582,7 @@ export const WebDavSettings: React.FC = () => {
           <div className="mb-1.5 text-xs font-medium text-gray-700 dark:text-gray-200">
             推送已有会话
           </div>
-          <p className="text-[11px] leading-relaxed text-amber-700 dark:text-amber-300">
+          <p className="text-[11px] leading-relaxed theme-text-warning">
             {firstPushBlockedReason}
           </p>
         </div>
@@ -1399,10 +1591,23 @@ export const WebDavSettings: React.FC = () => {
           <div className="mb-1.5 text-xs font-medium text-gray-700 dark:text-gray-200">
             首次配置后需把本机会话推送到云端
           </div>
-          <p className="mb-2 text-[11px] leading-relaxed text-gray-500 dark:text-gray-400">
+          <p className="mb-2 text-[11px] leading-relaxed theme-text-muted">
             切换到自带存储不会自动上传已有会话。若不推送，这些会话只存在于这台设备上，
             换设备或换浏览器将无法找回。
           </p>
+          {/* ── 2026-10-20：归属待决的**如实说明** ───────────────────────────
+           * 待决期里自动上传只传「本次改动过的会话」，历史会话被排除在外。
+           * 界面若对此只字不提，用户只会看到「本机有 N 个会话、云端只有几个」
+           * ⇒ 只能得出「同步坏了」的结论，而真正缺的是**一个决定**。
+           * 这条横幅说清三件事：发生了什么 / 为什么 / 下一步做什么。 */}
+          {ownershipPending ? (
+            <div className="mb-2 rounded-md border border-amber-300 bg-amber-50 px-2 py-1.5 text-[11px] leading-relaxed text-amber-800 dark:border-amber-700 dark:bg-amber-900/20 dark:text-amber-200">
+              {ownershipPendingNotice({
+                localCount: localActiveCount,
+                scopeLabel: savedCfg ? `${savedCfg.baseUrl}` : '当前云盘',
+              })}
+            </div>
+          ) : null}
           <button
             type="button"
             className={btnPrimary}

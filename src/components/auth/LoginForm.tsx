@@ -19,7 +19,13 @@ export const LoginForm: React.FC<LoginFormProps> = ({ onSuccess }) => {
   const [password, setPassword] = useState('');
   const [validationErrors, setValidationErrors] = useState<Record<string, string>>({});
   const inputClassName = (hasError: boolean) =>
-    `w-full theme-radius-input theme-bg-elevated border px-4 py-3 text-sm shadow-sm transition focus:outline-none text-gray-900 dark:text-gray-100 ${
+    // 2026-10-20 审计 P1-1：原先带 `focus:outline-none`（Tailwind 展开成
+    // `outline: 2px solid transparent`，同特异性靠后）—— 它把全局 :focus-visible
+    // 的焦点环整条吃掉。而 apple/chrome/claude 三套主题的 --focus-ring 只是
+    // 22% 透明度的一圈柔光（叠在底上 1.24–1.65:1）⇒ 键盘用户完全看不到焦点在哪。
+    // 现在不声明 outline ⇒ 全局 :focus-visible 的 2px 环（读 --color-focus-ring，
+    // 各主题实测 ≥3:1）照常画出来。theme-focus 的柔光保留为第二通道。
+    `w-full theme-radius-input theme-bg-elevated border px-4 py-3 text-sm shadow-sm transition text-gray-900 dark:text-gray-100 ${
       hasError
         ? 'border-rose-300 focus:ring-4 focus:ring-rose-100 dark:border-rose-700 dark:focus:ring-rose-950/60'
         : 'theme-border-default theme-focus'
@@ -138,7 +144,7 @@ export const LoginForm: React.FC<LoginFormProps> = ({ onSuccess }) => {
         >
           {isLoading ? (
             <span className="flex items-center justify-center">
-              <svg className="animate-spin -ml-1 mr-2 h-4 w-4 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+              <svg className="animate-spin -ml-1 mr-2 h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
                 <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
                 <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
               </svg>

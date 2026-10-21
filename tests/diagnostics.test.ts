@@ -88,17 +88,17 @@ function makeSources(overrides: Record<string, unknown> = {}) {
       makeGroup('g-locked', 60, { isLocked: true }),
     ],
     settings: {
-      groupNameTemplate: '会话',
+      // 2026-10-20 审计 A-9：已退役的设置（groupNameTemplate /
+      // allowDuplicateTabs / deleteStrategy / syncStrategy）已从 UserSettings
+      // 删除 —— 它们没有任何读取方，留在 fixture 里只会让「死设置」
+      // 看起来还活着。
       showFavicons: true,
       showTabCount: true,
       confirmBeforeDelete: true,
-      allowDuplicateTabs: false,
       syncEnabled: true,
       layoutMode: 'single',
       showNotifications: false,
       collectPinnedTabs: false,
-      syncStrategy: 'newest',
-      deleteStrategy: 'everywhere',
       themeMode: 'auto',
     },
     productEvents: [
@@ -272,7 +272,6 @@ describe('诊断导出：输出结构与不变量', () => {
     const report = buildDiagnosticsReport(makeSources() as never, NOW);
     assert.equal(report.sync.authenticated, true);
     assert.equal(report.sync.autoSyncEnabled, true);
-    assert.equal(report.sync.syncStrategy, 'newest');
     assert.equal(report.sync.lastSyncAgeHours, 6);
     assert.equal(report.sync.pendingDeleteCount, 0);
     assert.equal(report.sync.pendingUpload, false);
@@ -304,12 +303,21 @@ describe('诊断导出：输出结构与不变量', () => {
     );
   });
 
-  it('设置里的同步策略不在词表内时记成 null，不原样透传存储内容', async () => {
+  it('已退役的设置（syncStrategy 等）不得出现在诊断报告里', async () => {
+    // 2026-10-20 审计 A-9：syncStrategy 没有任何读取方（合并固定走组级
+    // LWW），已从 UserSettings 与诊断报告里一并删除。
+    // 这里钉住「存储里若还留着旧键，诊断报告也不许把它带出来」——
+    // 诊断文件是用户贴给排障方的，它不该出现「看起来有意义、实际不控制
+    // 任何行为」的字段。
     const { buildDiagnosticsReport, serializeDiagnosticsReport } = await import('@/utils/diagnostics');
     const sources = makeSources();
     (sources.settings as Record<string, unknown>).syncStrategy = MARKERS.groupName;
     const report = buildDiagnosticsReport(sources as never, NOW);
-    assert.equal(report.sync.syncStrategy, null);
+    assert.equal(
+      (report.sync as Record<string, unknown>).syncStrategy,
+      undefined,
+      'syncStrategy 已退役，报告里不该再有这个字段'
+    );
     assert.ok(!serializeDiagnosticsReport(report).includes(MARKERS.groupName));
   });
 });

@@ -7,7 +7,8 @@
  * 原则不变：读不出来的一行绝不降级成「零标签的组」，因为 v1.22.0 起空组即物理
  * 删除、降级即等于删掉用户仅存于云端的那份数据。
  */
-import type { TabGroup, TabData } from '@/types/tab';
+import type { TabGroup, TabData, DownloadSkippedGroup, DownloadSkipReason } from '@/types/tab';
+import { RETIRED_SETTING_COLUMNS } from '@/types/tab';
 import { decryptData, isEncrypted } from '../encryptionUtils';
 import { sanitizeTabUrl } from '../inputValidation';
 import { normalizeTabsData } from '@/core/normalizeTabsData';
@@ -122,9 +123,81 @@ async function resolveTabsShape(groupAny: any, userId: string): Promise<unknown>
   }
 }
 
+/**
+ * 最近一次 downloadTabGroups() 里「读不出来而被整组跳过」的会话。
+ *
+ * 跨方法传递「同一轮的结果」用的单一来源：downloadTabGroups 写它，
+ * downloadSkippedGroups 读它。这样「读到了什么」与「哪些读不出来」
+ * **必然来自同一轮**（见 supabaseAdapter.lastDownload 的同类论证）。
+ *
+ * null = 本进程还没下载过（此时 downloadSkippedGroups 返回空清单 ——
+ * 「本轮没跳过任何会话」是**事实**，不是「不知道」）。
+ *
+ * ── 为什么下载**开始时**就要清空它（2026-10-20 D-6 复核补）───────────────
+ * 原先只在下载**成功结束**时赋值（`lastDownloadSkipped = skipped`），
+ * 于是「下载失败」这条路上它**保留着上一轮的值**：
+ *   第 1 轮：云端有组 A 读不出来 ⇒ 清单 = [A]，下载成功
+ *   第 2 轮：网络断了 ⇒ 下载抛错 ⇒ 清单**仍是 [A]**（上一轮的）
+ *
+ * 今天的调用顺序让这个坑踩不到（`downloadGroups()` 先跑、失败就整轮中止，
+ * 清单压根不会被读），但那是**顺序的巧合**，不是结构上的保证 ——
+ * 以后任何人调换顺序、或者加一条「先取清单」的路径，就会静默拿到上一轮的
+ * 清单 ⇒ 覆盖下载会拿「上一轮读不出来的组」去保护本机 ⇒ 保护错了对象。
+ *
+ * 在下载**开始时**清空 ⇒ 「清单要么是本轮的，要么是空的」永远成立。
+ *
+ * ── 已知理论窗口：同一 realm 内的并发下载（2026-10-20 D-6 裁决 B）────────
+ *
+ * 这个模块级变量**不是**按调用方隔离的。若**同一个 JS realm** 里两次
+ * `downloadTabGroups()` **并发**跑（而不是串行），后一轮开始时的清空会
+ * 把前一轮还没被读走的清单抹掉 ⇒ 前一轮的调用方随后读到的清单**属于后一轮**
+ * ⇒ 覆盖下载会拿「后一轮读不出来的组」去保护本机 ⇒ **保护错了对象**。
+ *
+ * ── 为什么今天**不可达**（三条理由，缺一不可）─────────────────────────
+ *   1. **单写者锁**：`SyncEngine.downloadAndMerge` 全程持 `isSyncing`，
+ *      同一 realm 里的第二轮下载会被拒（`syncEngine.ts` 的 isSyncing 检查）。
+ *   2. **紧邻调用**：`downloadGroups()` → `downloadSkippedGroups()` 是
+ *      `services/downloadWithSkippedGroups.ts` 里**紧邻的两次 await**，
+ *      中间没有让出给另一轮下载的 await 间隙。
+ *   3. **跨 realm 不共享**：引擎跑在 **service worker**、下载预览跑在
+ *      **popup 页面** —— 两个**不同的 JS realm**，各有各的模块实例，
+ *      **不共享**这个模块级变量。
+ *
+ * ── 一旦出现第二个并发调用方，该做什么 ────────────────────────────────
+ * 加**轮次序号**防护：`downloadTabGroups()` 开头把 `lastDownloadRound` 自增，
+ * 把本轮序号与清单一起存下；`downloadSkippedGroups()` 只接受**本轮**的清单
+ * （序号不匹配 ⇒ 返回空清单 = 事实「本轮没跳过任何组」）。
+ * 之所以**现在不加**：端口上还没有第二个并发使用方，加了等于为假想的未来
+ * 付费（还让端口多出一个「轮次」概念）。真出现并发调用方时**必须**加 ——
+ * 别以为这里没坑。
+ */
+let lastDownloadSkipped: DownloadSkippedGroup[] | null = null;
+
 export const downloadSync = {
+  /**
+   * 本轮（或最近一轮）下载里**读不出来**而被整组跳过的会话（2026-10-20 D-6）。
+   *
+   * 「这一组存在于云端，但这一轮没能把它还原成可用的会话」：
+   * 形状不可恢复 / 还原率不达标 / tabs 表回填被网关截断 / 单组处理异常。
+   * 那些**云端行原封保留**（一个字节都没被动过）。
+   *
+   * 为什么必须把它报出去（而不是让它在返回值里消失）：
+   * 覆盖下载（forceRemote）会用云端**替换**本地。若「这轮没读到」与
+   * 「云端没有」无法区分，引擎就会把本机那一份物理清除 ⇒
+   * 云端的数据被用户自己的下载吃掉，界面还报「下载成功」。
+   */
+  async downloadSkippedGroups(): Promise<DownloadSkippedGroup[]> {
+    // 返回**副本**（不是内部数组的引用）：调用方若把返回的数组 push/splice 了，
+    // 就会改掉这份模块级状态 ⇒ 下一轮读到的清单被上一轮的调用方污染。
+    // 「清单是事实」⇒ 事实不该被读它的人改写。
+    return (lastDownloadSkipped ?? []).map(s => ({ ...s }));
+  },
+
   // 下载标签组
   async downloadTabGroups() {
+    // 本轮的清单从零开始（见上面 lastDownloadSkipped 的注释）：
+    // 下载失败时它必须是空的，不能是上一轮的残留。
+    lastDownloadSkipped = [];
     checkSupabaseConfig();
     // 先检查会话是否有效
     const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
@@ -292,6 +365,27 @@ export const downloadSync = {
 
       // 将数据转换为应用格式
       const tabGroups: TabGroup[] = [];
+      // ── 2026-10-20 D-6：读不出来的那几组必须**被说出来** ─────────────────
+      //
+      // 修复前「读不出来」只体现在两处：continue（不进结果）与一条 console 日志。
+      // 于是调用方看到的是一个「少了几组」的数组，**无法区分**：
+      //   · 云端本来就只有这几组；
+      //   · 云端还有几组，但这一轮读不出来（内容坏了 / 还原率不达标 / 回填被截断）。
+      //
+      // 覆盖下载（forceRemote）的语义是「云端完全镜像本地」：本地被整体替换。
+      // 读不出来的那组不在结果里 ⇒ 它也不在合并结果里 ⇒ 本机那份**被物理清除**，
+      // 而云端那一行原封保留 —— 云端的数据被用户自己的下载吃掉了，UI 还报成功。
+      //
+      // 现在把它们的 id 如实带出去（`skipped`），让上层据此决定：
+      // 合并模式保留本地那份（现状，本来就是对的），覆盖模式**整体中止**。
+      // 云端行本身**原封保留**（不写不删）—— 这不是丢数据，是「这一轮拿不到」。
+      const skipped: DownloadSkippedGroup[] = [];
+      /** 登记一个「读不出来」的组（同一 id 只登记一次，保留最先出现的原因）。 */
+      const noteSkipped = (id: unknown, reason: DownloadSkipReason): void => {
+        const key = String(id);
+        if (skipped.some(s => s.id === key)) return;
+        skipped.push({ id: key, reason });
+      };
 
       // 并发解密预处理（见 resolveTabsShape 的说明）。
       //
@@ -339,6 +433,7 @@ export const downloadSync = {
             `标签组 ${groupAny.id} 的内容无法读取（解密与明文解析均失败，或形状不可恢复），` +
               `已跳过该组以保护云端数据不被误删`
           );
+          noteSkipped(groupAny.id, 'unreadable_shape');
           continue;
         }
 
@@ -366,6 +461,7 @@ export const downloadSync = {
               `（URL 未通过安全校验），还原率 ${(formattedTabs.length / tabsData.length).toFixed(2)} ` +
               `低于阈值 ${MIN_RESTORABLE_TAB_RATIO}，已跳过该组以保护云端数据不被截断回写`
           );
+          noteSkipped(groupAny.id, 'restore_ratio');
           continue;
         }
 
@@ -398,6 +494,8 @@ export const downloadSync = {
             `处理标签组 ${(group as any)?.id} 失败，已跳过该组:`,
             groupError
           );
+          // D-6：这一组同样「读不出来」—— 必须让上层知道它存在过。
+          noteSkipped((group as any)?.id, 'processing_error');
         }
       }
 
@@ -427,6 +525,7 @@ export const downloadSync = {
                     `（疑似网关 db-max-rows 截断）。已跳过该组以保护云端数据不被截断回写`
                 );
                 truncatedByTabsTable.add(group.id);
+                noteSkipped(group.id, 'tabs_table_truncated');
                 continue;
               }
               // 同上：拒绝危险 URL
@@ -455,19 +554,35 @@ export const downloadSync = {
                     `低于阈值 ${MIN_RESTORABLE_TAB_RATIO}，已跳过该组以保护云端数据不被截断回写`
                 );
                 truncatedByTabsTable.add(group.id);
+                noteSkipped(group.id, 'tabs_table_ratio');
                 continue;
               }
               group.tabs = safeTabs;
             }
           } catch (e) {
             logWarn(`从 tabs 表获取标签失败，忽略错误:`, e);
+            // D-6：回填失败 = 这一组这一轮拿不到 ⇒ 如实登记。
+            // 注意这里**不能**把它当「真的空组」放行：空组会被下游硬删并登记 purge。
+            noteSkipped(group.id, 'tabs_table_ratio');
           }
         }
       }
 
-      return truncatedByTabsTable.size > 0
+      const downloaded = truncatedByTabsTable.size > 0
         ? tabGroups.filter(g => !truncatedByTabsTable.has(g.id))
         : tabGroups;
+      // ── D-6：把「读不出来的那几组」记在本轮上，供 downloadSkippedGroups 取 ──
+      //
+      // 为什么单独一个方法而不是把返回值改成 { groups, skipped }：
+      // downloadTabGroups() 是被大量既有代码与测试当「数组」用的（15 处调用点），
+      // 改它的返回形状是一次纯机械的大面积改动，而**语义增量只有一行清单**。
+      // 更重要的是：把两者合成一次返回，会让「读到的」与「读不出来的」**必须
+      // 同轮**——那是好事，但它要求每一个调用点都改成解包对象。
+      //
+      // 现在这个设计反而更强：**同轮**由实现保证（见 download.ts 的实现注释），
+      // 而既有调用点一行都不用改。
+      lastDownloadSkipped = skipped;
+      return downloaded;
     } catch (error) {
       logError('下载标签组失败:', error);
       throw error;
@@ -535,28 +650,40 @@ export const downloadSync = {
     // 如果有数据，将下划线命名法转换为驼峰命名法
     if (data) {
       // 定义允许的数据库字段到设置字段的映射
+      //
+      // 2026-10-20 审计 A-9：已退役的设置列（group_name_template /
+      // allow_duplicate_tabs / delete_strategy / sync_strategy / reorder_mode）
+      // 从映射表里移除 —— 它们没有任何读取方，映射回来只是让「已下线的东西」
+      // 重新出现在设置对象里。逐条删除理由见 `src/types/tab.ts`。
       const fieldMapping: Record<string, string> = {
-        'group_name_template': 'groupNameTemplate',
         'show_favicons': 'showFavicons',
         'show_tab_count': 'showTabCount',
         'confirm_before_delete': 'confirmBeforeDelete',
-        'allow_duplicate_tabs': 'allowDuplicateTabs',
         // 2026-10-11（1.23.0 自动同步档位）：云端列尚不存在时整行映射不受影响 ——
         // 未知列只是不会出现在 data 里，对应设置走 DEFAULT 合并（见 getSettings）。
-        // 上传侧有 42703 降级（缺列则忽略该字段重试），所以迁移前后都不阻塞同步。
+        // 上传侧有 42703 降级（**任意**缺列都剔掉该列重试，不只 collect_pinned_tabs
+        // 一列 —— 见 utils/supabase/missingColumn.ts），所以迁移前后都不阻塞同步。
         'sync_interval_minutes': 'syncIntervalMinutes',
         'sync_enabled': 'syncEnabled',
         'layout_mode': 'layoutMode',
         'show_notifications': 'showNotifications',
-        'sync_strategy': 'syncStrategy',
-        'delete_strategy': 'deleteStrategy',
         'theme_mode': 'themeMode',
         'theme_style': 'themeStyle',
         'collect_pinned_tabs': 'collectPinnedTabs',
-        'reorder_mode': 'reorderMode',
         // 向后兼容性：如果云端还有旧的字段，也要处理
         'use_double_column_layout': 'useDoubleColumnLayout'
       };
+
+      // 已退役的列：数据库里可能还留着（客户端已经不再写它们）。
+      // 这些列是**已知**的，不是「未知字段」—— 所以静默跳过，
+      // 不打 warning（否则每次下载都刷一堆「跳过未知的数据库字段」噪声，
+      // 真正的未知字段会被淹没在里面）。
+      //
+      // 名单来自 `types/tab.ts` 的 RETIRED_SETTING_COLUMNS —— 与上传侧的
+      // 23502 降级表同源。原先这里手抄一份列名、upload.ts 又手抄一份，
+      // 两份之间没有编译期关联：改一处忘另一处 ⇒ 要么把一个**还活着的**列
+      // 当成退役列静默跳过（设置悄悄丢一项，用户毫不知情）。
+      const retiredColumns = RETIRED_SETTING_COLUMNS;
 
       const convertedSettings: Record<string, any> = {};
       for (const [key, value] of Object.entries(data)) {
@@ -568,6 +695,8 @@ export const downloadSync = {
         // 使用映射表转换字段名
         if (fieldMapping[key]) {
           convertedSettings[fieldMapping[key]] = value;
+        } else if (retiredColumns.has(key)) {
+          // 已退役的列：静默跳过
         } else {
           logWarn(`跳过未知的数据库字段: ${key}`);
         }

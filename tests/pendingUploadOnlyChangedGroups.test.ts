@@ -119,13 +119,28 @@ describe('syncEngine：待决期按 id 过滤，且 fail-closed', () => {
     assert.equal(fast.length, 2, '快路径与 fallback 都要等 noted（否则可能读到没写全的白名单）');
   });
 
-  it('上传成功后清白名单；进入/离开待决态时也清（防陈旧 id 把历史会话带上去）', async () => {
+  it('上传成功后清白名单；进入/离开待决态时也清（防陈旧 id 把历史会话推上去）', async () => {
     const engine = await read('src/services/syncEngine.ts');
     assert.match(engine, /await storage\.clearPendingUploadGroupIds\(\)/);
     const storageSrc = await read('src/utils/storage.ts');
-    const fn = storageSrc.slice(storageSrc.indexOf('async setFirstSyncPending'));
+    // ⚠️ 2026-10-20：窗口从「固定 900 字符」改成「切到**下一个方法**为止」。
+    //
+    // 为什么必须改：待决位改成按库寻址后，`setFirstSyncPending` 前面多了一段
+    // 读-改-写（把全局单值规范化成「作用域 → 布尔」的记录），于是那句
+    // `clearPendingUploadGroupIds()` 被推到了 900 字符窗口**之外** ——
+    // 守卫红了，但**它要守的不变量一点没变**（两个方向都要清）。
+    //
+    // 这就是本仓记忆 `stale-literal-guards-block-correct-fixes` 的形态：
+    // 守卫钉的是「实现长什么样」，不是「行为对不对」。窗口越界是典型的
+    // 误报 —— 修法是让窗口跟着**语义边界**走（下一个方法），
+    // 而不是把数字调大（调大只是把同一个坑推远一点）。
+    const start = storageSrc.indexOf('async setFirstSyncPending');
+    assert.ok(start > 0, '找不到 setFirstSyncPending');
+    const rest = storageSrc.slice(start);
+    const nextMethod = rest.indexOf('\n  async ', 1);
+    const fn = nextMethod > 0 ? rest.slice(0, nextMethod) : rest;
     assert.match(
-      fn.slice(0, 900),
+      fn,
       /await this\.clearPendingUploadGroupIds\(\);/,
       'setFirstSyncPending 两个方向都要清：进待决态时清掉此前攒下的「历史」id，' +
         '否则刚切到 WebDAV 的那次自动上传照样会把历史会话推上去（抑制再次成为死代码）'
@@ -152,7 +167,22 @@ describe('syncEngine：待决期按 id 过滤，且 fail-closed', () => {
 
   it('切到自带存储时，待决标志必须排在 resyncAlarm 之前落盘', async () => {
     const src = await read('src/components/sync/WebDavSettings.tsx');
-    const flag = src.indexOf('await storage.setFirstSyncPending(true)');
+    // ⚠️ 2026-10-20：置位调用从 `storage.setFirstSyncPending(true)` 变成
+    // `writePending(true)`（写入器改成**按库寻址**，见 handleSave）。
+    //
+    // 不变量没变：**置位必须排在 resyncAlarm 之前**。所以这里钉的是
+    // 「置位的那次调用」而不是「某个具体字面量」——
+    // 否则下一次有人把写入器换个名字，这条守卫又会误报一遍
+    // （本仓记忆 `stale-literal-guards-block-correct-fixes` 的形态）。
+    //
+    // 怎么认得「置位的那次调用」：它是**传入 true** 的那次置位。
+    // 两个候选形态都认（直接调 storage 的、或经写入器的），
+    // 取**最早**的那个 —— 那就是真正的置位点。
+    const candidates = [
+      src.indexOf('setFirstSyncPending(true)'),
+      src.indexOf('writePending(true)'),
+    ].filter(i => i >= 0);
+    const flag = candidates.length > 0 ? Math.min(...candidates) : -1;
     const resync = src.indexOf("await sendSyncCommand('resyncAlarm')");
     assert.ok(flag > 0 && resync > 0, '两处都要在');
     assert.ok(

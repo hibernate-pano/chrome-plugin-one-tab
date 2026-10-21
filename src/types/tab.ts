@@ -85,9 +85,33 @@ export interface TabGroup {
   device_id?: string; // 创建设备ID
   last_sync?: string; // 最后同步时间
 
-  // 版本控制和排序
+  /**
+   * 版本号，每次修改时递增，用于检测冲突。
+   *
+   * 【为什么这里只剩 version，没有 displayOrder】—— 2026-10-20 审计 A-10 收敛。
+   *
+   * `displayOrder`（曾注释「显示顺序，用户手动拖动时更新」）曾经是**存着但
+   * 从不被读来排序**的死字段：列表排序三处（`TabList.tsx`、`tabSlice.ts` 的
+   * loadGroups / saveGroup.fulfilled）全按 `createdAt` 倒序；会话组级拖拽排序
+   * 早已下线（提交 545f67d，`moveGroup` / `applyMoveGroup` / `updateDisplayOrder`
+   * 全部退场）。于是它只是每次同步都在往返一个**永远无效**的字段 ——
+   * 数据模型在骗人。
+   *
+   * 更糟的是**两条后端形状不一致**：WebDAV 的 `encodeGroup` 把它写进分片、
+   * `decodeGroup` 把它读回来；Supabase 侧从不上传（数据库里也没有
+   * `display_order` 列）。同一份数据在两条路径上解出来的形状不同。
+   *
+   * 按「删除优于添加」处理：**收敛掉，而不是给它补一个读取方。**
+   * 要真正实现「用户手动拖动时更新顺序」，等于要引入一整套排序语义
+   * （拖到第几位、与其他设备如何合并、删除后如何重排）—— 那是**产品决策**，
+   * 不在修一个死字段的范围里；而现在它连「用户手动拖动」这个入口都没有，
+   * 是纯粹的残骸。
+   *
+   * ⚠️ 老用户本地存储里可能还留着 `displayOrder` 这个键：**无害**（多余字段
+   * 被忽略）。刻意**不**写「启动时清掉它」的迁移 —— 那是在给一个没人读的字段
+   * 做无用功。
+   */
   version?: number; // 版本号，每次修改时递增，用于检测冲突
-  displayOrder?: number; // 显示顺序，用户手动拖动时更新
 
   // 同步相关字段
   syncStatus?: 'synced' | 'local-only' | 'remote-only' | 'conflict';
@@ -99,6 +123,40 @@ export interface TabGroup {
 
   // 阶段二·§4.1：操作印记（写入者）。merge 时按全序决胜。
   lastOp?: { d: string; s: number };
+}
+
+/**
+ * 下载侧「读不出来而被整组跳过」的原因（2026-10-20 D-6）。
+ *
+ * 这些原因**不是**错误码，是**用户需要知道的事实**：
+ * 「云端有 N 个会话读不出来」和「云端有 N 个会话被删了」对用户是天壤之别。
+ */
+export type DownloadSkipReason =
+  /** 解密失败 / tabs_data 形状不可恢复（整行读不出来） */
+  | 'unreadable_shape'
+  /** 还原率低于 MIN_RESTORABLE_TAB_RATIO：部分标签过不了安全校验 */
+  | 'restore_ratio'
+  /** 老版本 tabs 表回填被网关 db-max-rows 静默截断 */
+  | 'tabs_table_truncated'
+  /** tabs 表回填的还原率不达标 */
+  | 'tabs_table_ratio'
+  /** 单组处理抛错（字段形状异常等） */
+  | 'processing_error';
+
+/**
+ * 一个被整组跳过的会话（2026-10-20 D-6）。
+ *
+ * ── 不变式：跳过 ≠ 云端没有 ──────────────────────────────────────────
+ * 被跳过的组：
+ *   · **云端行仍在**，一个字节都没被动过；
+ *   · **没有**进入本次下载结果 ⇒ 没有参与合并、没有被登记进删除广播队列；
+ *   · 下次下载（修好后）会自然重新出现。
+ */
+export interface DownloadSkippedGroup {
+  /** 云端那一行的会话 id。 */
+  id: string;
+  /** 为什么读不出来。 */
+  reason: DownloadSkipReason;
 }
 
 /** deleteTabAndSync 单项乐观备份（key 化槽位的值类型） */
@@ -187,11 +245,18 @@ export const THEME_STYLES = [
 export type ThemeStyle = (typeof THEME_STYLES)[number];
 
 export interface UserSettings {
-  groupNameTemplate: string;
+  /**
+   * 是否在标签行上显示网站图标（2026-10-20 审计 A-9：从「有设置、无入口、无读取方」
+   * 变成**真被读**的开关）。关掉时整行不渲染图标（不是换成占位球 ——
+   * 换占位球等于「图标还在」，那是对开关的另一种撒谎）。
+   */
   showFavicons: boolean;
+  /**
+   * 是否显示标签数量（会话卡片徽章 / 搜索结果徽章 / 顶栏「N 标签」）。
+   * 同一个字段、同一个含义，三处渲染点共用一个开关。
+   */
   showTabCount: boolean;
   confirmBeforeDelete: boolean;
-  allowDuplicateTabs: boolean;
   syncEnabled: boolean; // 是否启用同步
   /**
    * 用哪个后端做同步（2026-10-13，WebDAV 自带存储改造）。
@@ -226,18 +291,96 @@ export interface UserSettings {
   // 是否在收集/保存时包含固定标签页（pinned tabs）
   collectPinnedTabs: boolean;
 
-  // 新增同步策略设置
-  syncStrategy: 'newest' | 'local' | 'remote' | 'ask'; // 冲突解决策略
-  deleteStrategy: 'everywhere' | 'local-only'; // 删除策略
-
   // 新增主题设置
   themeMode: 'light' | 'dark' | 'auto'; // 主题模式
   themeStyle?: ThemeStyle; // 主题风格
 
-  reorderMode?: boolean; // 新增：全局重新排序模式
-
   // 保持向后兼容性的字段（已废弃，但保留以支持旧版本）
   useDoubleColumnLayout?: boolean;
+}
+
+/**
+ * 2026-10-20 审计 A-9：**已下线的设置**（字段本身已从 UserSettings 删除）。
+ *
+ * 下面这些键曾经是「有设置、无入口、无读取方」——存着、上云着，但**没有任何
+ * 代码读它们**。留着它们有两个害处：
+ *   ① 上云的设置里带着用户从没设过的字段（`group_name_template: 'Group %d'`
+ *      会随备份导出到别的设备），数据模型在骗人；
+ *   ② 它们看起来像「可以调的东西」，但拨了没反应。
+ *
+ * 逐条结论（删除 or 接入口）：
+ *   · groupNameTemplate —— 删。默认值是英文 `'Group %d'`，而真实命名走
+ *     `deriveSessionNameFromChromeTabs`（按内容/域名派生），这个模板从未参与。
+ *   · allowDuplicateTabs —— 删。它唯一的可能语义是「保存时去重」，而保存路径
+ *     现在**不判重**（判重只发生在「清理重复」这个显式动作里）。接上入口就得
+ *     改保存语义（把最贵的一个动作变成有损的），不在本轮范围。
+ *   · deleteStrategy —— 删。删除永远走「到处删」，要做「只删本地」等于新增一套
+ *     删除语义（墓碑/离线队列），风险远大于收益。
+ *   · reorderMode —— 删。会话组级拖拽排序早已下线（提交 545f67d），只剩字段。
+ *   · syncStrategy —— 删。**它没有任何读取方**：合并固定走组级 LWW
+ *     （`mergeOpStamped`），backgroundSync 里只有注释提到它、代码从不读它。
+ *     接上入口只会造出「又一个无效开关」。
+ *
+ * 云端列（`group_name_template` 等）在数据库里可能还留着 —— 下载侧把它们
+ * 归入「已退役列」静默跳过，上传侧不再写。见 `supabase/download.ts`。
+ */
+export const RETIRED_SETTING_KEYS = [
+  'groupNameTemplate',
+  'allowDuplicateTabs',
+  'deleteStrategy',
+  'reorderMode',
+  'syncStrategy',
+] as const;
+
+/**
+ * 已退役设置在**云端列名**（snake_case）下的样子，附它们的历史默认值。
+ *
+ * ── 为什么要有这张表 ──────────────────────────────────────────────────────
+ * 退役键在三处各有一份名单，而那三份**没有编译期关联**：
+ *   · `RETIRED_SETTING_KEYS`（驼峰，本地设置模型）
+ *   · `upload.ts` 的 `RETIRED_COLUMN_FALLBACKS`（云端列名 + 历史默认值）
+ *   · `download.ts` 的 `retiredColumns`（云端列名）
+ * 改一处忘另一处 ⇒ 要么把退役键又带上了云（数据模型在骗人），
+ * 要么把一个**还活着的**列当成退役列静默跳过（设置悄悄丢了一项）。
+ * 三份手抄清单之间没有编译期关联 ⇒ 这正是本仓反复修的那类「不报错的坑」。
+ *
+ * ── 为什么默认值不能省 ────────────────────────────────────────────────────
+ * 这几列在数据库里可能还在，且可能是 **NOT NULL 且无默认值**。那样
+ * Postgres 在 upsert 的 INSERT 阶段就抛 23502 ⇒ **整条设置同步直接断**。
+ * 降级路径要用历史默认值把那一列补齐后重试（见 `supabase/upload.ts` 的
+ * 23502 分支），而「历史默认值」只有这一处知道 —— 值必须与旧客户端
+ * 曾经写入的一致（`DEFAULT_SETTINGS` 里的原值），这样降级写回云端的行
+ * 与老客户端写出来的行没有区别。
+ *
+ * `reorderMode` 的历史值是 `false`（它当时是 `reorderMode?: boolean`，
+ * 默认没写进 DEFAULT_SETTINGS，故落回 `undefined` ⇒ 写上去就是 false）。
+ */
+export const RETIRED_SETTING_COLUMN_DEFAULTS = {
+  group_name_template: 'Group %d',
+  allow_duplicate_tabs: false,
+  delete_strategy: 'everywhere',
+  sync_strategy: 'newest',
+  reorder_mode: false,
+} as const satisfies Record<string, unknown>;
+
+/**
+ * 已退役设置对应的**云端列名**集合（snake_case）。
+ *
+ * 下载侧用它把退役列静默跳过（不报 warning —— 它们是**已知**的历史遗留，
+ * 不是「未知字段」；每次下载都刷一堆 warning 会把真正的未知字段淹没）。
+ */
+export const RETIRED_SETTING_COLUMNS: ReadonlySet<string> = new Set(
+  Object.keys(RETIRED_SETTING_COLUMN_DEFAULTS)
+);
+
+/**
+ * 驼峰 → snake_case（与 `supabase/upload.ts` 的转换规则一致）。
+ *
+ * 单点定义：上传侧把驼峰键转成列名、下载侧把列名转回驼峰键，
+ * 两边必须用**同一个**规则 —— 两份手抄的转换函数迟早会漂移。
+ */
+export function settingKeyToColumn(key: string): string {
+  return key.replace(/([A-Z])/g, '_$1').toLowerCase();
 }
 
 /**
@@ -252,7 +395,7 @@ export interface UserSettings {
  *   - `syncEnabled` / `syncIntervalMinutes`：描述本机的后台行为，alarm 与解锁态
  *     都是设备级的。在 A 机关掉自动同步、B 机开着，B 一次同步就把 A 的选择改回去。
  *
- * 云端与备份文件只承载外观与操作偏好（主题、布局、命名模板、通知、固定标签等）。
+ * 云端与备份文件只承载外观与操作偏好（主题、布局、通知、固定标签等）。
  * 三条外来的设置路径都要剔除这三个键（只做一侧不够，另一侧会把值带回来）：
  *   - 上云：`settingsSyncService.toCloudSettings`
  *   - 云端合并：`syncEngine.mergeCloudSettingsIntoLocal`
@@ -264,6 +407,40 @@ export const DEVICE_LEVEL_SETTING_KEYS = [
   'syncEnabled',
   'syncIntervalMinutes',
 ] as const;
+
+/**
+ * 剔除「不跨设备」与「已退役」的设置键。
+ *
+ * ── 为什么要有这个共用函数（2026-10-20 审计 A-21）────────────────────────
+ *
+ * 外来设置有**四条**路径，每条都必须剔除同一批键：
+ *   · 上云：`settingsSyncService.toCloudSettings`
+ *   · 云端合并：`syncEngine.mergeCloudSettingsIntoLocal`
+ *   · **导入备份**：`storage.importDetailed`
+ *   · **导出备份**：`storage.exportData` ← 2026-10-20 才发现漏了这条
+ *
+ * 前三条各自写了一遍剔除逻辑（写法还不完全一样），第四条**根本没写** ⇒
+ * 导出的备份文件里躺着 `syncBackend` / `syncEnabled` / `syncIntervalMinutes`
+ * 以及可能残留的已退役键。
+ *
+ * 【为什么导出侧也必须剔】
+ * ① **语义一致**：备份文件在导入时会被剔掉这三个键 ⇒ 写在文件里就是
+ *    **「文件内容在表达一个假承诺」** —— 用户打开备份看到
+ *    `syncBackend: "supabase"`，理所当然以为「导入后同步设置也会跟着走」，
+ *    而实际不会。
+ * ② **已退役键**在本地也不生效（`setSettings` 会剔）⇒ 写进备份纯属噪声，
+ *    而且会让「数据模型在假装它们存在」这件事扩散到用户手上的文件。
+ *
+ * ⇒ 规则只写这一个函数，四条路径共用。
+ */
+export function stripNonPortableSettings<T extends Partial<UserSettings>>(
+  settings: T
+): Partial<UserSettings> {
+  const out: Record<string, unknown> = { ...settings };
+  for (const key of DEVICE_LEVEL_SETTING_KEYS) delete out[key];
+  for (const key of RETIRED_SETTING_KEYS) delete out[key];
+  return out as Partial<UserSettings>;
+}
 
 export interface User {
   id: string;

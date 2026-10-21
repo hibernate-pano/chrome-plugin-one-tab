@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect, useCallback } from 'react';
+import React, { useState, useRef, useEffect, useLayoutEffect, useCallback, useMemo } from 'react';
 import { useAppSelector, useAppDispatch } from '@/store/hooks';
 import { signOut } from '@/store/slices/authSlice';
 import { deleteAllGroups, deleteBroadcastWarn, loadGroups } from '@/store/slices/tabSlice';
@@ -28,8 +28,15 @@ import {
   UNKNOWN_BACKEND_STATUS,
   type BackendStatus,
 } from './backendStatus';
+import { remainingViewportHeight } from './dropdownLayout';
+import {
+  collectFocusableMenuItemIndices,
+  resolveMenuNavigation,
+} from '@/utils/menuKeyboard';
+import { registerFocusReturn } from '@/utils/focusReturn';
 import { deleteAllConfirmMessage, deleteAllMenuWarning, deleteAllShouldPushOverwrite } from './deleteAllMessages';
 import { importPartialMessage, importSuccessMessage } from './importResultCopy';
+import { countOneTabGroups } from '@/core/oneTabFormatParser';
 import { resolveMenuSyncStatus, resolveSyncFailureCopy } from '@/components/sync/syncPreviewView';
 
 /** 问题反馈落点：GitHub issues 新建页。用户自己决定粘不粘诊断摘要。 */
@@ -76,6 +83,15 @@ interface HeaderDropdownProps {
   onToggleLayout?: () => void;
   /** 窄屏顶栏把「清理重复」收进了菜单，同上：复用 Header 的确认弹窗与执行路径。 */
   onRequestCleanDuplicates?: () => void;
+  /**
+   * 重放用户引导（2026-10-20 审计 B-2）。
+   *
+   * 为什么菜单里要有这一项：引导是**一次性**的，跳过就再也回不去了。
+   * 用户跳过的常见理由是「现在没空」，不是「我不需要」——
+   * 两天后他想知道「云端同步怎么开」，必须有个入口能回去看。
+   * 没有这一项时，他只能去翻文档或重装扩展。
+   */
+  onReplayOnboarding?: () => void;
 }
 
 /** 菜单行的统一 hover 反馈。菜单行不做位移（flat-interaction 的 -translate-y 会轻微跳动），只做背景色。 */
@@ -114,6 +130,7 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({
   onOpenAuth,
   onToggleLayout,
   onRequestCleanDuplicates,
+  onReplayOnboarding,
 }) => {
   const dispatch = useAppDispatch();
   const { isAuthenticated, user } = useAppSelector(state => state.auth);
@@ -121,12 +138,31 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({
   // 该字段全仓没有任何 reducer / thunk 写入（零写方），读它等于
   // 「上次同步」这一行永远不渲染。真值在 storage.getLastSyncTime()。
   const { groups } = useAppSelector(state => state.tabs);
+  // 2026-10-20 审计 A-3：「删除所有会话」对锁定会话走**方案 B** ——
+  // 全部删除，但确认框与菜单行必须**点名**「其中包含 N 个已锁定的会话」。
+  // 理由写在 deleteAllMessages.ts 的文件头（跳过锁定的残渣无处可去，
+  // 而全量物理移除本来就是 v1.22.0 起的明确产品决定）。
+  const lockedGroupCount = useMemo(
+    () => groups.reduce((acc, g) => (g.isLocked ? acc + 1 : acc), 0),
+    [groups]
+  );
   const settings = useAppSelector(state => state.settings);
   const [openSubmenu, setOpenSubmenu] = useState<'export' | 'import' | null>(null);
-  // 就地展开的那块面板。菜单本身可能是个滚动容器（`max-h-[70vh]`），展开出来的两三行
+  // 就地展开的那块面板。菜单本身可能是个滚动容器（高度上限 = 视口剩余空间），展开出来的两三行
   // 若落在可视区之外，用户看到的仍然是「点了没反应」—— 展开即把它带进视野
   // （block:'nearest' 只在需要时才滚动，不会把整份菜单跳走）。
   const submenuRef = useRef<HTMLDivElement | null>(null);
+  // ── 2026-10-20 键盘可达性：导入子菜单的隐藏 file input ────────────────
+  // 「导入数据」子菜单的两项原先是 `<label role="menuitem">` + 内嵌
+  // `<input type="file" className="hidden">`：label 没有 tabindex（tabIndex=-1）
+  // ⇒ **不可聚焦**；内层 input 是 display:none ⇒ 也不可聚焦。
+  // 后果：Tab 16 次、方向键 14 次都**从未**落到「JSON 格式」「OneTab 格式」，
+  // 而导入是全仓**唯一**的导入入口 ⇒ 键盘用户根本用不了导入。
+  //
+  // 现在改成真正的 `<button role="menuitem">`，onClick 里点隐藏 input ——
+  // 按钮可聚焦、读屏有名字、方向键能选中，input 仍然藏在视觉之外。
+  const jsonImportInputRef = useRef<HTMLInputElement | null>(null);
+  const oneTabImportInputRef = useRef<HTMLInputElement | null>(null);
   useEffect(() => {
     if (openSubmenu) submenuRef.current?.scrollIntoView({ block: 'nearest' });
   }, [openSubmenu]);
@@ -143,6 +179,36 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({
   const [lastSyncAt, setLastSyncAt] = useState<string | null>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
   const { showConfirm, showAlert, showToast } = useToast();
+
+  /**
+   * ── 2026-10-20 几何修复：菜单高度上限要按「视口剩余空间」算 ────────────
+   *
+   * 原先是 `max-h-[70vh]`：400×600 的视口下 70vh = 420px，菜单顶边在 y=54
+   * ⇒ 底边 474，而最后一项「删除所有会话（N）」底边在 487 ——
+   * **比菜单底边还低 13px**，被 overflow 裁在可视区外：用户不滚动就看不到
+   * 「删除所有会话」这颗核按钮。
+   *
+   * 参照系错了：上限该由「菜单顶边到视口底边还剩多少」决定，而不是视口比例。
+   * 菜单是绝对定位在菜单按钮的相对容器里，顶边位置随顶栏布局而变，
+   * 量出来最准（判据见 dropdownLayout.ts）。
+   *
+   * 用 useLayoutEffect：高度上限必须在**绘制前**算好，否则会闪一帧超高。
+   */
+  const [menuMaxHeight, setMenuMaxHeight] = useState<number | null>(null);
+
+  useLayoutEffect(() => {
+    const el = dropdownRef.current;
+    if (!el) return;
+    const update = () => {
+      const top = el.getBoundingClientRect().top;
+      setMenuMaxHeight(
+        remainingViewportHeight({ viewportHeight: window.innerHeight, menuTop: top })
+      );
+    };
+    update();
+    window.addEventListener('resize', update);
+    return () => window.removeEventListener('resize', update);
+  }, []);
 
   /**
    * 打开独立设置页（2026-10-14）。
@@ -303,6 +369,16 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({
   //   Esc 关闭并把焦点还给触发按钮
   // 方向键只在**焦点已经在菜单里**时才接管 —— 菜单刚打开时焦点在触发按钮上，
   // 按 ↓ 应当「进入菜单并落到第一项」。
+  //
+  // ── 2026-10-20 键盘可达性修复：候选集必须过滤掉不可聚焦的项 ──────────
+  // 旧实现的候选集是 `[role="menuitem"]:not([disabled])` —— 但 **role 不等于可聚焦**。
+  // 「导入数据」子菜单里的两项是 `<label role="menuitem">`：label 没有 tabindex，
+  // `tabIndex === -1` ⇒ **不可聚焦**。于是：
+  //   · 方向键选中它 → `focus()` 无效 → 焦点纹丝不动；
+  //   · 候选集里它占着一个位置 ⇒ 方向键每次都算回同一项 ⇒ **死循环**；
+  //   · 循环里的「问题反馈」「删除所有会话」**全部不可达**（实测 8 次 ArrowDown 焦点不动）。
+  // 现在候选集只收**真正可聚焦**的项（tabIndex >= 0 且未 disabled 且可见），
+  // 决策逻辑抽到 @/utils/menuKeyboard 的纯函数里（可单测）。
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
@@ -314,37 +390,24 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({
 
       const root = dropdownRef.current;
       if (!root) return;
-      const items = Array.from(
-        root.querySelectorAll<HTMLElement>('[role="menuitem"]:not([disabled])')
-      );
+      const items = Array.from(root.querySelectorAll<HTMLElement>('[role="menuitem"]'));
       if (items.length === 0) return;
+
+      // 只让**可聚焦**的项参与导航（role="menuitem" 但 tabIndex=-1 的项必须被排除）。
+      const focusableIndices = collectFocusableMenuItemIndices(root);
+      if (focusableIndices.length === 0) return;
 
       const active = document.activeElement as HTMLElement | null;
       const currentIndex = active ? items.indexOf(active) : -1;
-      // 焦点不在菜单内（例如还停在触发按钮上）→ 上下键进入菜单的第一/最后一项。
-      if (currentIndex === -1) {
-        event.preventDefault();
-        const target = event.key === 'ArrowUp' || event.key === 'End' ? items.length - 1 : 0;
-        items[target].focus();
-        return;
-      }
+      const decision = resolveMenuNavigation(
+        focusableIndices,
+        currentIndex,
+        event.key as 'ArrowDown' | 'ArrowUp' | 'Home' | 'End'
+      );
+      if (decision.kind === 'none') return;
+
       event.preventDefault();
-      let nextIndex: number;
-      switch (event.key) {
-        case 'ArrowDown':
-          nextIndex = (currentIndex + 1) % items.length;
-          break;
-        case 'ArrowUp':
-          nextIndex = (currentIndex - 1 + items.length) % items.length;
-          break;
-        case 'Home':
-          nextIndex = 0;
-          break;
-        default:
-          nextIndex = items.length - 1;
-          break;
-      }
-      items[nextIndex].focus();
+      items[decision.index].focus();
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
@@ -454,12 +517,27 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({
         });
     };
 
+    // ── 2026-10-20 焦点管理：登记「确认框关闭后焦点去哪」 ──────────────
+    // 确认框由 ToastContext 全局渲染，打开时 activeElement 是这个菜单项
+    // 按钮；菜单随即被卸载 ⇒ 关闭确认框时那个按钮已不在文档里 ⇒
+    // 旧实现拒绝还焦 ⇒ **焦点掉到 body**（实测：点「取消」后焦点 = body，
+    // 而 Esc 路径因为菜单还开着反而能还焦 —— 同一个弹层两种行为）。
+    //
+    // 登记**顶栏的菜单触发按钮**（`[data-menu-trigger]`）作为稳定落点：
+    // 它不会随菜单卸载而消失，于是 Esc 与「取消」两条路径都回到同一个地方。
+    registerFocusReturn(
+      document.querySelector<HTMLElement>('[data-menu-trigger]')
+    );
+
     showConfirm({
       title: `删除全部 ${groups.length} 个会话`,
       // 跨设备删除的披露判据是「有没有可用的同步后端」，不是「有没有账号」——
       // 自带存储（WebDAV）用户的删除意图同样以墓碑广播（见 deleteAllMessages 文件头）。
+      // lockedCount：锁定会话同样会被删掉，必须在按下去之前就说清楚有几个
+      // （方案 B 的理由见 deleteAllMessages.ts 文件头）。
       message: deleteAllConfirmMessage({
         groupCount: groups.length,
+        lockedCount: lockedGroupCount,
         isAuthenticated,
         syncBackend: settings.syncBackend,
       }),
@@ -625,7 +703,8 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({
       ref={dropdownRef}
       role="menu"
       aria-label="应用菜单"
-      className="ts-panel absolute right-0 mt-2 w-64 max-w-[calc(100vw-2rem)] theme-bg-elevated theme-radius-card theme-shadow-panel border theme-border-default z-20 max-h-[70vh] overflow-y-auto"
+      className="ts-panel absolute right-0 mt-2 w-64 max-w-[calc(100vw-2rem)] theme-bg-elevated theme-radius-card theme-shadow-panel border theme-border-default z-20 overflow-y-auto"
+      style={menuMaxHeight !== null ? { maxHeight: `${menuMaxHeight}px` } : undefined}
     >
       <div className="py-2">
         {/* 2026-10-17 B8（浏览器实测抓到）：这个条件原先只有 `isAuthenticated && user`。
@@ -675,7 +754,7 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({
                 2026-10-18 C 组：前缀、短语、圆点色、行动入口全部来自
                 resolveMenuSyncStatus（云端未登录恒为「未登录 + 去登录」）。 */}
             <p
-              className="min-w-0 text-xs text-gray-500 dark:text-gray-400 flex items-center"
+              className="min-w-0 text-xs theme-text-muted flex items-center"
               title={backendStatus.lockedReason ?? BACKEND_STATUS_TITLE[backendStatus.kind]}
             >
               <span
@@ -686,7 +765,12 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({
               </span>
             </p>
             {syncStatusView.needsLogin && (
+              // ── 2026-10-20 键盘可达性：补 role="menuitem" ────────────────
+              // 容器声明了 role="menu"，而这个按钮是菜单里**唯一**没有
+              // menuitem 角色的交互项（实测 interactiveCount=10 / menuitemCount=9）。
+              // 读屏在「菜单」上下文里遇到一个普通 button，菜单的键盘模型就不完整。
               <button
+                role="menuitem"
                 type="button"
                 onClick={() => {
                   onClose();
@@ -698,7 +782,10 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({
               </button>
             )}
             {!syncStatusView.needsLogin && syncStatusView.actionable && (
+              // 同「去登录」：菜单里的交互项必须带 menuitem 角色，
+              // 否则读屏的菜单键盘模型不完整。
               <button
+                role="menuitem"
                 type="button"
                 onClick={handleOpenOptions}
                 className="shrink-0 text-xs font-medium text-primary-600 underline hover:text-primary-700 dark:text-primary-400 dark:hover:text-primary-300"
@@ -712,7 +799,7 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({
               后者全仓零写方，读它等于这一行永远不渲染（缺陷 2）。
               坏时间戳 → formatLastSyncTime 返回 null → 整行不渲染。 */}
           {lastSyncLabel && lastSyncTitle && (
-            <p className="mt-1 text-xs text-gray-400 dark:text-gray-500" title={lastSyncTitle}>
+            <p className="mt-1 text-xs theme-text-muted" title={lastSyncTitle}>
               上次成功同步 · {lastSyncLabel}
             </p>
           )}
@@ -866,7 +953,7 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({
           </button>
           {/* 子项**就地展开**，不做向右的浮层。
               2026-10-18 修：原先是 `absolute left-full top-0 ml-1 w-48`，而菜单容器是
-              `max-h-[70vh] overflow-y-auto` —— 按 CSS 规范，单轴设为 auto 会让另一轴的
+              `overflow-y-auto`（单轴）+ 限高 —— 按 CSS 规范，单轴设为 auto 会让另一轴的
               `visible` 也计算成 auto（实测 overflow 计算值 auto/auto），容器因此成了横向
               裁剪盒：子菜单整个落在菜单右边界之外（实测菜单盒 [152,408]、子菜单 [411,603]），
               在子菜单中心做命中测试 elementFromPoint 返回 null。用户点「导出数据」屏幕毫无
@@ -874,18 +961,32 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({
               展开放在父行下方的流内，就不会被任何祖先裁剪，也不需要横向滚动。 */}
           {openSubmenu === 'import' && (
             <div ref={submenuRef} className="ts-panel mb-1 ml-3 rounded-lg border theme-border-default theme-bg-elevated shadow-lg">
-            <label role="menuitem"
-              className={MENU_ROW + ' cursor-pointer'}
+            {/* ── 2026-10-20 键盘可达性：`<label role="menuitem">` → 真按钮 ──
+                原先是 `<label role="menuitem">` 包着隐藏的 `<input type="file">`：
+                label 没有 tabindex ⇒ tabIndex=-1 ⇒ **不可聚焦**；内层 input 是
+                display:none ⇒ 也不可聚焦。于是「JSON 格式」这一项在 AX 树里是
+                一个菜单项，键盘却永远到不了（实测 Tab 16 次、方向键 14 次都
+                没落到它）。更要命的是它还堵死了方向键的后续项（见上方
+                方向键 effect 的注释）⇒ 「问题反馈」「删除所有会话」全部不可达。
+                现在换成真 button：可聚焦、有名字、方向键能选中。
+                hidden input 挪到按钮**外面**（button 里嵌 input 是非法的交互嵌套）。 */}
+            <button
+              role="menuitem"
+              type="button"
+              onClick={() => jsonImportInputRef.current?.click()}
+              className={MENU_ROW}
             >
               <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 mr-2 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
               </svg>
               JSON 格式
-              <input
-                type="file"
-                accept=".json"
-                className="hidden"
-                onChange={(e) => {
+            </button>
+            <input
+              ref={jsonImportInputRef}
+              type="file"
+              accept=".json"
+              className="hidden"
+              onChange={(e) => {
                   const file = e.target.files?.[0];
                   if (file) {
                     const reader = new FileReader();
@@ -978,19 +1079,23 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({
                   }
                 }}
               />
-            </label>
-            <label role="menuitem"
-              className={MENU_ROW + ' cursor-pointer'}
+            <button
+              role="menuitem"
+              type="button"
+              onClick={() => oneTabImportInputRef.current?.click()}
+              className={MENU_ROW}
             >
               <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 mr-2 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
               </svg>
               OneTab 格式
-              <input
-                type="file"
-                accept=".txt"
-                className="hidden"
-                onChange={(e) => {
+            </button>
+            <input
+              ref={oneTabImportInputRef}
+              type="file"
+              accept=".txt"
+              className="hidden"
+              onChange={(e) => {
                   const file = e.target.files?.[0];
                   if (file) {
                     const reader = new FileReader();
@@ -1000,14 +1105,28 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({
                         const importResult = await storage.importFromOneTabFormat(text);
                         e.target.value = '';
                         if (importResult.ok) {
+                          // ── 2026-10-20 A-20：会话数必须**来自解析器**，不能在这里重数 ──
+                          //
+                          // 此前用 `text.split('\n\n').filter(Boolean).length` 数组数，
+                          // 而解析器用的是 `split(/\n\s*\n/)` —— 两者规则不同 ⇒
+                          // 数字对不上：
+                          //   · Windows 换行（`\r\n\r\n`，OneTab 在 Windows 上的默认导出）
+                          //     → 解析器 2 组，界面报 1 个 ⇒ 「共 1 个会话，成功导入 2 个」
+                          //   · 中间是「换行 + 空格 + 换行」的空行 → 同上
+                          //
+                          // 而 F-5 审计刚建立的契约是「source = imported + skippedExisting
+                          // + 内容有问题」恒成立 ⇒ source 必须是**真实的组数**。
+                          //
+                          // 解析结果 `importResult.source` 就是真实组数（解析器已经算过），
+                          // 直接用它；只有在它缺失时才兜底，而兜底也必须与解析器同规则。
+                          const total = importResult.source ?? countOneTabGroups(text);
                           void trackProductEvent('onetab_import_completed', {
                             importSource: 'onetab',
-                            importedSessions: text.split('\n\n').filter(Boolean).length,
+                            importedSessions: total,
                           });
                           // ── 2026-10-09 P1-6：与 JSON 导入同口径报数量 ──
                           // 原先「成功不弹提示」直接 reload，用户不知道导入了几个、
                           // 跳过几个；reload 还会把提示一起刷掉。改 dispatch(loadGroups)。
-                          const total = importResult.source ?? text.split('\n\n').filter(Boolean).length;
                           const done = importResult.imported ?? 0;
                           if (importResult.pending) {
                             showAlert({
@@ -1060,7 +1179,6 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({
                   }
                 }}
               />
-            </label>
             </div>
           )}
         </div>
@@ -1078,6 +1196,27 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({
           问题反馈
         </button>
 
+        {/* 使用引导（2026-10-20 审计 B-2）。
+            引导是一次性的：跳过就回不去，而「现在没空」是最常见的跳过理由。
+            给用户一个随时能重看同一套引导的入口。
+            位置在「问题反馈」之后、危险区之前 —— 属普通操作行，
+            与「删除所有会话」的色块危险区明确分开。 */}
+        {onReplayOnboarding && (
+          <button role="menuitem"
+            onClick={() => {
+              onClose();
+              onReplayOnboarding();
+            }}
+            className={MENU_ROW}
+            type="button"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 mr-2 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M12 18.75a6 6 0 006-6v-1.5m-6 7.5a6 6 0 01-6-6v-1.5m6 7.5v3.75m-3.75 0h7.5M12 15.75a3 3 0 01-3-3V4.5a3 3 0 116 0v8.25a3 3 0 01-3 3z" />
+            </svg>
+            使用引导
+          </button>
+        )}
+
         {/* 危险区：与菜单平面语言一致（rounded-lg + 留边），用色块与普通项区分防误触。
             核弹级操作：强制确认不受「删除会话前确认」开关控制；无组时隐藏；描述带数量。 */}
         {groups.length > 0 && (
@@ -1093,7 +1232,11 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({
               <span className="flex-1">
                 <span className="block">删除所有会话（{groups.length}）</span>
                 <span className="mt-0.5 block text-xs font-normal text-rose-600/80 dark:text-rose-300/80">
-                  {deleteAllMenuWarning({ isAuthenticated, syncBackend: settings.syncBackend })}
+                  {deleteAllMenuWarning({
+                    lockedCount: lockedGroupCount,
+                    isAuthenticated,
+                    syncBackend: settings.syncBackend,
+                  })}
                 </span>
               </span>
             </button>

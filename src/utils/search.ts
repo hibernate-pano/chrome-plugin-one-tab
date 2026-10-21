@@ -1,4 +1,5 @@
 import { Tab, TabGroup } from '@/types/tab';
+import { hostMatchesDomainFilter } from '@/core/hostName';
 
 export const SCORE_WEIGHTS = {
   TITLE_EXACT: 100,
@@ -148,8 +149,7 @@ export class AdvancedSearch {
 
         if (domainFilter) {
           try {
-            const hostname = new URL(tab.url).hostname.toLowerCase();
-            if (!hostname.includes(domainFilter.toLowerCase())) {
+            if (!hostMatchesDomainFilter(new URL(tab.url).hostname, domainFilter)) {
               return;
             }
           } catch {
@@ -281,8 +281,7 @@ export const applySearchFilters = (results: SearchResult[], filters: SearchFilte
   return results.filter(result => {
     if (filters.domain) {
       try {
-        const hostname = new URL(result.tab.url).hostname.toLowerCase();
-        if (!hostname.includes(filters.domain.toLowerCase())) {
+        if (!hostMatchesDomainFilter(new URL(result.tab.url).hostname, filters.domain)) {
           return false;
         }
       } catch {

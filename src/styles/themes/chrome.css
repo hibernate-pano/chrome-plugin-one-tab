@@ -20,7 +20,8 @@ html[data-theme="chrome"] {
   --color-text-primary: #202124;
   --color-text-secondary: #3c4043;
   --color-text-tertiary: #5f6368;
-  --color-text-muted: #80868b;
+  /* 2026-10-20：原值在 tertiary 底上仅 3.4:1，低于 AA。抬到 #5f6368。 */
+  --color-text-muted: #5f6368;
 
   /* 分割线 */
   --color-border-default: #dadce0;
@@ -35,8 +36,9 @@ html[data-theme="chrome"] {
   --color-accent-subtle: #e8f0fe;
 
   /* 语义色 */
-  --color-warning: #f9ab00;
-  --color-danger: #d93025;
+  /* 2026-10-20：警告/危险色在本仓只当文字色用 ⇒ 浅底要 ≥4.5:1。 */
+  --color-warning: #9c5a00;
+  --color-danger: #c5281d;
   --color-success: #188038;
 
   /* 开关 */
@@ -59,7 +61,12 @@ html[data-theme="chrome"] {
   --color-accent-soft: #d2e3fc;
   --color-panel-translucent: rgba(255, 255, 255, 0.96);
   --color-border-translucent: rgba(218, 220, 224, 0.9);
-  --focus-ring: 0 0 0 2px #1a73e8;
+  /* 2026-10-20 审计 P1-1：与其它主题统一形态 —— 不透明描边 + 白内芯
+     把环与输入框底色隔开（chrome 原先只有 2px 实色环，贴着边框时读不出
+     「这是一圈环」）。 */
+  --focus-ring: 0 0 0 2px #1967d2, 0 0 0 4px #ffffff;
+  /* 焦点环墨色（2026-10-20 新增）：全局 :focus-visible 读它。 */
+  --color-focus-ring: #1967d2;
   --shadow-panel: 0 1px 3px rgba(60, 64, 67, 0.3), 0 4px 8px 3px rgba(60, 64, 67, 0.15);
   --panel-blur: none;
   --color-shell: #f8f9fa;
@@ -89,7 +96,8 @@ html[data-theme="chrome"].dark {
   --color-text-primary: #e8eaed;
   --color-text-secondary: #dadce0;
   --color-text-tertiary: #9aa0a6;
-  --color-text-muted: #80868b;
+  /* 2026-10-20：深色下原值在 tertiary 底上仅 3.4:1。抬到 #9aa0a6。 */
+  --color-text-muted: #9aa0a6;
 
   --color-border-default: #5f6368;
   --color-border-subtle: #3c4043;
@@ -117,7 +125,8 @@ html[data-theme="chrome"].dark {
   --color-accent-soft: rgba(138, 180, 248, 0.2);
   --color-panel-translucent: rgba(41, 42, 45, 0.96);
   --color-border-translucent: rgba(95, 99, 104, 0.7);
-  --focus-ring: 0 0 0 2px #8ab4f8;
+  --focus-ring: 0 0 0 2px #8ab4f8, 0 0 0 4px #202124;
+  --color-focus-ring: #8ab4f8;  /* 深色下焦点环墨色 */
   --shadow-panel: 0 4px 8px 3px rgba(0, 0, 0, 0.4);
   --panel-blur: none;
   --color-shell: #202124;

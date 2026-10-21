@@ -33,8 +33,17 @@
  *
  * ── manifest 是什么、不是什么 ───────────────────────────────────────────
  * 它是**派生数据**：全部信息都能通过列出 groups/ 目录重建。
- * 因此它损坏/丢失**不是数据丢失**，只是退化成「一次全量扫描」（见 downloader）。
- * 这个性质是下面 `parseManifest` 选择「宽容解析、坏则返回 null」的依据。
+ * 因此它损坏/丢失**不是数据丢失**，而是退化成「一次全量扫描」——
+ * **前提是有人真的实现了那次扫描**。
+ *
+ * ⚠️ 2026-10-20 修 P0 前的现实：这句话是**假的**。
+ * 传输层当时只有 Depth:0（stat 一个已知路径），没有列目录的能力；
+ * 于是「manifest 不存在」被当成了「远端是空库」，一次全量上传把云端
+ * 索引整体换成本机的子集 —— 那些没被覆盖到的分片文件仍在磁盘上，
+ * 却对所有设备隐形（manifest 是真相源），水位线还会让它们永远不再上行。
+ * 现在这条承诺由 `WebDavClient.listDir`（Depth:1 PROPFIND）与
+ * `WebDavBackendAdapter.rebuildManifestFromDisk` 兑现（见 adapter 的
+ * 「索引丢了 ≠ 远端空了」一节）。
  */
 import type { TabGroup } from '@/types/tab';
 import type { EncryptedPayload } from '../crypto';
@@ -95,6 +104,36 @@ export function shardPath(id: string): string {
 }
 
 /**
+ * 看一个文件名「像不像分片」，以及像的话它是不是一个**合法**的会话 id。
+ *
+ * ── 为什么把「不是分片」与「是分片但 id 非法」分开 ───────────────────────
+ * 这两种情况在「重建索引」时的处理方式**完全不同**：
+ *   · 不是分片（比如用户自己放进去的 `notes.txt`）→ 忽略即可；
+ *   · 是分片但 id 非法（`a b.json`、`.json`、超长名…）→ **必须报错**。
+ *     把它当「不是分片」忽略掉，等于让一个真实存在（可能装着会话内容）
+ *     的文件对所有设备隐形 —— 正是本次要消灭的那类静默丢失。
+ *     把它当合法分片收进索引，则会拼出错误的远端路径。
+ * 所以这里返回「像不像 + id 是什么」两段信息，由调用方决定怎么判。
+ */
+export interface ShardFileNameInfo {
+  /** 文件名是否像分片（以 `.json` 结尾）。 */
+  looksLikeShard: boolean;
+  /** 合法会话 id。`looksLikeShard` 为 false 或 id 非法时为 null。 */
+  id: string | null;
+}
+
+export function inspectShardFileName(name: string): ShardFileNameInfo {
+  if (!name.endsWith('.json')) return { looksLikeShard: false, id: null };
+  const id = name.slice(0, -'.json'.length);
+  try {
+    assertSafeId(id);
+  } catch {
+    return { looksLikeShard: true, id: null };
+  }
+  return { looksLikeShard: true, id };
+}
+
+/**
  * 校验会话 id 可用于路径拼接。
  *
  * 白名单而不是黑名单：只允许 `[A-Za-z0-9_-]`。
@@ -117,6 +156,45 @@ export interface SettingsFile {
   lastOp?: { d: string; s: number };
 }
 
+/**
+ * 分片文件的**明文头部**（2026-10-20 D-4）。
+ *
+ * ── 它解决什么问题 ────────────────────────────────────────────────────────
+ * 裁决（谁赢谁输）必须依据**分片自身**的印记，而不是索引（manifest）里抄的
+ * 那一行。索引可能与内容脱节：分片写成功而索引写失败（网络抖动、进程被杀、
+ * 服务端「返回 2xx 但没落盘」）时，索引里的印记是**旧的**。
+ * 拿旧印记做裁决 ⇒ 把「远端更新」误判成「本地更新」⇒ 用旧内容盖掉新内容；
+ * 删除路径上更糟：墓碑被旧副本覆盖 ⇒ **删除被静默撤销、会话复活**。
+ *
+ * ── 为什么头部能放在密文之外 ──────────────────────────────────────────────
+ * 外壳（`{v, enc|plain}`）本来就是**明文 JSON**，密文只在 `enc.data` 里
+ * （salt 也在明文外壳里，因为它是密钥派生参数、不是秘密）。
+ * 所以头部与密文正文天然可以分离：头部在明文区，正文在密文区。
+ *
+ * ── 隐私边界没有变 ────────────────────────────────────────────────────────
+ * 头部里只有 `id` / `isDeleted` / `lastOp`（设备号 + 序号）/ `updatedAt` ——
+ * 这些**manifest（明文）里本来就有**（每个分片一行同样的字段）。
+ * 也就是说：头部没有泄露 manifest 之外的新信息类别，
+ * 仍然**不泄露**会话名、标签 URL、标签标题。
+ * 隐私说明里「云盘上能看到会话数量与修改时间」那句仍然成立且不需要改写。
+ *
+ * ── 老分片怎么办 ──────────────────────────────────────────────────────────
+ * 老分片没有头部 ⇒ `hdr` 缺省 ⇒ 读方回退到「解密正文取印记」。
+ * 头部是**可选增强**，不是新格式的硬要求：v1 外壳的解析规则
+ * （`enc` 与 `plain` 恰好有一个）保持不变，老版本客户端读新分片也不受影响
+ * （它们只认 `enc`/`plain`，会忽略多出来的 `hdr`）。
+ */
+export interface ShardHeader {
+  /** 会话 id（= 文件名去掉 .json）。 */
+  id: string;
+  /** 是否是墓碑（已删除）。 */
+  isDeleted?: boolean;
+  /** 操作印记 —— 裁决的唯一依据。 */
+  lastOp?: { d: string; s: number };
+  /** 内容修改时刻（ISO）。 */
+  updatedAt?: string;
+}
+
 /** 分片文件与设置文件的落盘外壳。 */
 export interface SecureFileEnvelope {
   v: 1;
@@ -134,28 +212,70 @@ export interface SecureFileEnvelope {
    * 两个都有 / 都没有 ⇒ 解析失败（见 parseEnvelope）。
    */
   plain?: unknown;
+  /**
+   * 明文头部（2026-10-20 D-4）。**可选**：老分片没有它。
+   * 与密文正文分离 ⇒ 裁决与读回校验不必先解密。
+   */
+  hdr?: ShardHeader;
 }
 
-export function makeEncryptedEnvelope(enc: EncryptedPayload): SecureFileEnvelope {
-  return { v: 1, enc };
+export function makeEncryptedEnvelope(
+  enc: EncryptedPayload,
+  hdr?: ShardHeader
+): SecureFileEnvelope {
+  return { v: 1, enc, ...(hdr ? { hdr } : {}) };
 }
 
-export function makePlainEnvelope(plain: unknown): SecureFileEnvelope {
-  return { v: 1, plain };
+export function makePlainEnvelope(plain: unknown, hdr?: ShardHeader): SecureFileEnvelope {
+  return { v: 1, plain, ...(hdr ? { hdr } : {}) };
+}
+
+/**
+ * 从分片载荷（会话 / 墓碑）生成明文头部。
+ *
+ * 头部只抄**已经在载荷里**的字段 —— 它是索引的复制品，不是新数据源。
+ */
+export function shardHeaderFromPayload(payload: Record<string, unknown>): ShardHeader {
+  const id = typeof payload.id === 'string' ? payload.id : '';
+  return {
+    id,
+    ...(payload.isDeleted === true ? { isDeleted: true } : {}),
+    ...(isStamp(payload.lastOp) ? { lastOp: payload.lastOp } : {}),
+    ...(typeof payload.updatedAt === 'string' ? { updatedAt: payload.updatedAt } : {}),
+  };
+}
+
+/** 解析外壳里的头部。形状不对就当没有（旧分片走「解密正文」的回退路径）。 */
+function parseShardHeader(v: unknown): ShardHeader | undefined {
+  if (!v || typeof v !== 'object') return undefined;
+  const o = v as Record<string, unknown>;
+  if (typeof o.id !== 'string' || o.id.length === 0) return undefined;
+  return {
+    id: o.id,
+    ...(o.isDeleted === true ? { isDeleted: true } : {}),
+    ...(isStamp(o.lastOp) ? { lastOp: o.lastOp } : {}),
+    ...(typeof o.updatedAt === 'string' ? { updatedAt: o.updatedAt } : {}),
+  };
 }
 
 /**
  * 解析落盘外壳。
  *
- * 返回 `{ kind: 'encrypted', enc }` 或 `{ kind: 'plain', plain }`；
+ * 返回 `{ kind: 'encrypted', enc, hdr? }` 或 `{ kind: 'plain', plain, hdr? }`；
  * 无法解析（JSON 坏 / 版本不符 / enc 与 plain 同时有或同时无）→ **null**。
  *
  * 与 `parseManifest` 同一条纪律：**null 表示「不可用」，不表示「空」**。
  * 把坏文件当成空会话会让对端把这一条会话合并成「已被删除」。
+ *
+ * `hdr` 是**可选**的（2026-10-20 D-4）：老分片没有头部 ⇒ 读方回退到
+ * 「解密正文取印记」。头部的缺失**不**让外壳变成不可用。
  */
 export function parseEnvelope(
   text: string
-): { kind: 'encrypted'; enc: EncryptedPayload } | { kind: 'plain'; plain: unknown } | null {
+):
+  | { kind: 'encrypted'; enc: EncryptedPayload; hdr?: ShardHeader }
+  | { kind: 'plain'; plain: unknown; hdr?: ShardHeader }
+  | null {
   let raw: unknown;
   try {
     raw = JSON.parse(text);
@@ -170,12 +290,14 @@ export function parseEnvelope(
   const hasPlain = o.plain !== undefined;
   if (hasEnc === hasPlain) return null; // 恰好一个才合法
 
+  const hdr = parseShardHeader(o.hdr);
+
   if (hasEnc) {
     const enc = o.enc as Record<string, unknown>;
     if (enc.v !== 1 || typeof enc.salt !== 'string' || typeof enc.data !== 'string') return null;
-    return { kind: 'encrypted', enc: enc as unknown as EncryptedPayload };
+    return { kind: 'encrypted', enc: enc as unknown as EncryptedPayload, ...(hdr ? { hdr } : {}) };
   }
-  return { kind: 'plain', plain: o.plain };
+  return { kind: 'plain', plain: o.plain, ...(hdr ? { hdr } : {}) };
 }
 
 export function serializeEnvelope(env: SecureFileEnvelope): string {
@@ -188,6 +310,16 @@ export function serializeEnvelope(env: SecureFileEnvelope): string {
  * 刻意**不做字段裁剪**：写出去的就是内存里的形状（去掉了纯 UI 态字段）。
  * 这里唯一的取舍是丢掉 `unopenable`（types/tab.ts 明写「本设备的判断，
  * 不上云」——换一台设备同一个 URL 可能能打开，把它传出去会污染对端）。
+ *
+ * ── 2026-10-20 审计 A-10：`displayOrder` 不再进分片 ───────────────────────
+ * 它曾被写进分片、又被 `decodeGroup` 读回来，而**没有任何东西读它来排序**
+ * （列表排序一律按 `createdAt` 倒序；会话组级拖拽排序早已下线）。
+ * 更糟的是形状不一致：Supabase 侧从不上传这个字段（数据库里也没有
+ * `display_order` 列）⇒ 同一份数据在两条后端路径上解出来的形状不同。
+ * 现在两条后端的会话形状对齐：**都不带** `displayOrder`。
+ *
+ * ⚠️ 老分片（已经写上云盘的）里可能还留着这个键：解码时它被**忽略**
+ * （多余字段无害），不会让任何一条会话读不出来。
  */
 export function encodeGroup(group: TabGroup): Record<string, unknown> {
   return {
@@ -196,7 +328,6 @@ export function encodeGroup(group: TabGroup): Record<string, unknown> {
     createdAt: group.createdAt,
     updatedAt: group.updatedAt,
     isLocked: group.isLocked,
-    ...(group.displayOrder === undefined ? {} : { displayOrder: group.displayOrder }),
     ...(group.lastOp === undefined ? {} : { lastOp: group.lastOp }),
     tabs: group.tabs.map(t => ({
       id: t.id,
@@ -275,7 +406,9 @@ export function decodeGroup(raw: unknown): TabGroup | null {
     createdAt: typeof o.createdAt === 'string' ? o.createdAt : new Date(0).toISOString(),
     updatedAt: typeof o.updatedAt === 'string' ? o.updatedAt : new Date(0).toISOString(),
     isLocked: o.isLocked === true,
-    ...(typeof o.displayOrder === 'number' ? { displayOrder: o.displayOrder } : {}),
+    // ⚠️ `displayOrder` 不再被解出来（2026-10-20 审计 A-10）：它从来没有读取方，
+    // 留着它只会让 WebDAV 侧解出来的形状与 Supabase 侧不一致。老分片里若还留着
+    // 这个键，它被**忽略**（多余字段无害）。
     ...(isStamp(o.lastOp) ? { lastOp: o.lastOp } : {}),
     tabs,
   };
@@ -303,7 +436,7 @@ export function encodeTombstone(
   id: string,
   deletedAt: string,
   lastOp?: { d: string; s: number }
-): Record<string, unknown> {
+): Record<string, unknown> & { lastOp?: { d: string; s: number } } {
   assertSafeId(id);
   return {
     id,

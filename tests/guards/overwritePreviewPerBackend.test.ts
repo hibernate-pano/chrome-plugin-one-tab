@@ -36,7 +36,6 @@ const mkGroup = (id: string, name: string, tabId = id): TabGroup =>
     tabs: [mkTab(tabId)],
     createdAt: '2026-10-18T00:00:00.000Z',
     updatedAt: '2026-10-18T00:00:00.000Z',
-    displayOrder: 0,
   }) as TabGroup;
 
 // 云端有 A、B；本机只有 C ⇒ 云端独有 = 2 个（旧口径会报「预计删除 2 个会话」）
@@ -112,8 +111,11 @@ describe('接线：判据来自设置里的后端真值', () => {
   const source = read(SYNC_BUTTON);
 
   it('上传覆盖预览带上 preserveRemoteOnly', () => {
+    // 只钉**这一个判据被接上了**（它的值来自设置真值），不钉整个对象字面量的
+    // 形状：options 里还有别的键（2026-10-20 P1 加的 unrestorableRemoteIds），
+    // 逐字匹配整个字面量会把「多传一个必要的选项」也判成违规。
     assert.ok(
-      /buildUploadPreviewSummary\(localGroups, remoteGroups, 'overwrite', \{\s*preserveRemoteOnly: uploadOverwritePreservesRemote,?\s*\}\)/.test(
+      /buildUploadPreviewSummary\(localGroups, remoteGroups, 'overwrite', \{[\s\S]{0,400}?preserveRemoteOnly: uploadOverwritePreservesRemote[\s\S]{0,400}?\}\)/.test(
         source
       ),
       '上传覆盖预览必须按后端分流'

@@ -121,6 +121,9 @@ function missingColumnRes(col: string) {
 function matches(row: CloudRow, params: URLSearchParams): boolean {
   for (const [key, raw] of params.entries()) {
     if (key === 'select' || key === 'limit' || key === 'offset' || key === 'on_conflict') continue;
+    // 下载侧的排序参数不是过滤器（2026-10-20 P1：覆盖上传会先做一次可读性探测，
+    // 探测走的是下载路径 ⇒ 假云端必须认得 order= 与 range 的分页参数）。
+    if (key === 'order') continue;
     if (raw.startsWith('eq.')) {
       if (String(row[key]) !== raw.slice(3)) return false;
     } else if (raw.startsWith('in.(')) {

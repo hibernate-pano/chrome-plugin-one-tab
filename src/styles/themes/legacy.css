@@ -18,7 +18,11 @@ html[data-theme="legacy"] {
   --color-text-primary: #111827;     /* gray-900 */
   --color-text-secondary: #374151;   /* gray-700 */
   --color-text-tertiary: #6b7280;    /* gray-500 */
-  --color-text-muted: #9ca3af;       /* gray-400 */
+  /* 提示色（页脚版本号、占位符、时间戳、图标）。
+     2026-10-20：原值 gray-400 #9ca3af 在 tertiary 底上只有 3.6:1 ——
+     页脚版本号是 12px 小字，低于 WCAG AA 的 4.5:1。抬到 #5f6a78
+     （tertiary 底 5.00:1）。取值来自本主题灰阶，不引入外来色相。 */
+  --color-text-muted: #5f6a78;
 
   --color-border-default: #e5e7eb;   /* gray-200 */
   --color-border-subtle: #f3f4f6;    /* gray-100 */
@@ -32,8 +36,10 @@ html[data-theme="legacy"] {
   --color-accent-subtle: #dbeafe;    /* blue-100 */
 
   /* 状态颜色 */
-  --color-warning: #f59e0b;          /* amber-500 */
-  --color-danger: #ef4444;           /* red-500 */
+  /* 2026-10-20：警告/危险色在本仓**只当文字色用**（不当底色），
+     所以按「当墨色用」的标准取值：浅色底下要 ≥4.5:1。 */
+  --color-warning: #b45309;          /* amber-700 */
+  --color-danger: #b91c1c;           /* red-700 */
   --color-success: #22c55e;          /* green-500 */
 
   /* 排版 - 系统字体 */
@@ -92,7 +98,13 @@ html[data-theme="legacy"] {
   --radius-input: 0.375rem;
   --radius-input-sm: 0.25rem;
   --color-toggle-on-fg: #ffffff;
-  --focus-ring: 0 0 0 3px rgba(37, 99, 235, 0.22);
+  /* 2026-10-20 审计 P1-1：22% 透明度的柔光只有 1.2:1 左右 ——
+     改成不透明描边 + 白内芯（与其它主题同一形态）。 */
+  --focus-ring: 0 0 0 2px #1d4ed8, 0 0 0 4px #ffffff;
+  /* 焦点环墨色（2026-10-20 新增）：全局 :focus-visible 读它。
+     浅色底下 6.41:1（WCAG 2.2 非文本对比要 ≥3:1），且与 accent 填充
+     不同色 ⇒ 主按钮聚焦时环与底能分辨。 */
+  --color-focus-ring: #1d4ed8;
   --panel-blur: saturate(140%) blur(16px);
   --radius-card: 0.5rem;
   --radius-panel: 0.75rem;
@@ -114,7 +126,9 @@ html[data-theme="legacy"].dark {
   --color-text-primary: #f9fafb;     /* gray-50 */
   --color-text-secondary: #e5e7eb;   /* gray-200 */
   --color-text-tertiary: #9ca3af;    /* gray-400 */
-  --color-text-muted: #6b7280;       /* gray-500 */
+  /* 2026-10-20：深色下原值 gray-500 #6b7280 在 tertiary(#374151) 上只有
+     4.06:1 —— 页脚版本号读不清。抬到 #a8b0bc（tertiary 底 4.71:1）。 */
+  --color-text-muted: #a8b0bc;
 
   --color-border-default: #374151;   /* gray-700 */
   --color-border-subtle: #1f2937;    /* gray-800 */
@@ -127,7 +141,7 @@ html[data-theme="legacy"].dark {
 
   /* 状态颜色 */
   --color-warning: #fbbf24;
-  --color-danger: #f87171;
+  --color-danger: #fca5a5;
   --color-success: #4ade80;
 
   /* 深色模式阴影 */
@@ -154,7 +168,9 @@ html[data-theme="legacy"].dark {
   --shadow-panel: 0 2px 8px rgba(0, 0, 0, 0.4);
   --color-shell: #111827;
   --color-toggle-on-fg: #1a1512;
-  --focus-ring: 0 0 0 3px rgba(37, 99, 235, 0.28);
+  --focus-ring: 0 0 0 2px #93c5fd, 0 0 0 4px #111827;
+  /* 深色下的焦点环墨色（浅色 #93c5fd，次级 8.14:1） */
+  --color-focus-ring: #93c5fd;
   --panel-blur: saturate(140%) blur(16px);
 }
 
@@ -217,7 +233,8 @@ html[data-theme="legacy"] .input:hover {
 html[data-theme="legacy"] .input:focus {
   border-color: var(--color-accent);
   box-shadow: 0 0 0 1px var(--color-accent);
-  outline: none;
+  /* 2026-10-20：删掉 `outline: none` —— 它会盖掉全局 :focus-visible 的焦点环
+     （本规则特异性 0-3-1 > :focus-visible 的 0-1-0）。 */
 }
 
 /* Legacy 主题搜索框 - 原始矩形样式 */
@@ -278,6 +295,13 @@ html[data-theme="legacy"] .empty-state-icon {
 
 /* Legacy 主题标签项样式 */
 html[data-theme="legacy"] .tab-item {
+  /* 2026-10-20：原先这里**不声明底色** ⇒ 底色落回 drag-drop.css
+     （那个文件由 MainApp.tsx 单独 import，在 global.css **之后**加载），
+     而那里写死的是 white / #1f2937 ⇒ legacy 深色态的每一条标签行
+     都是一块与主题无关的写死色。
+     claude/apple/chrome 三套一直写的是 `transparent` —— 标签行与卡片底一体。
+     这里补齐，让「底色由主题决定」只发生在一个地方。 */
+  background: transparent;
   border-bottom: 1px solid var(--color-border-subtle);
   padding: 8px 12px;
 }
@@ -428,13 +452,16 @@ html[data-theme="legacy"] ::-webkit-scrollbar-thumb:hover {
    Legacy 主题 - Focus 样式 (原始蓝色)
    ========================================== */
 html[data-theme="legacy"] :focus-visible {
-  outline: 2px solid #2563eb;
+  /* 2026-10-20：原先写死 #2563eb（= 本主题的 accent 填充色）。主按钮底色也是它，
+     环与底同色 ⇒ 焦点环看不见。改读专用令牌 --color-focus-ring（浅色 #1d4ed8，
+     页面底 6.41:1）。 */
+  outline: 2px solid var(--color-focus-ring);
   outline-offset: 2px;
   border-radius: 2px;
 }
 
 html[data-theme="legacy"].dark :focus-visible {
-  outline-color: #93c5fd;
+  outline-color: var(--color-focus-ring);
 }
 
 /* ==========================================

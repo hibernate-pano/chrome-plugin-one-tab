@@ -275,7 +275,7 @@ describe('诊断报告：perf 段接线与摘要文本', () => {
   function makeSources(overrides: Record<string, unknown> = {}) {
     return {
       groups: [],
-      settings: { syncEnabled: true, syncStrategy: 'newest' },
+      settings: { syncEnabled: true, themeMode: 'dark' },
       productEvents: [],
       journal: [],
       isAuthenticated: true,

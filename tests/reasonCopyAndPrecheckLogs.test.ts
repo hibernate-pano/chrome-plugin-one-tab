@@ -8,8 +8,9 @@
 //      回退路径，用户看到的是 `recent_upload_guard` 原文。
 //    - 未登记的**纯 snake_case 枚举**（如未来的新 reason）回退到
 //      spec.failureMessage，而不是把枚举原文弹给用户。
-//    - 带人类可读文本的 reason（如 `validation_failed: ...`、error.message）
-//      原样显示，便于定位。
+//    - 带人类可读文本的 reason（如 error.message）原样显示，便于定位；
+//      但 `validation_failed: ` 这类**机器前缀**必须剥掉（2026-10-20 C-08）——
+//      里面的中文原因保留，前缀不进 UI。
 //    - `reason` 可能为 undefined：读 REASON_COPY 前做空值防护。
 //
 // 2. syncEngine.ts 的 precheck 读取失败日志（downloadAndMerge 的 catch 分支）：
@@ -127,9 +128,28 @@ describe('SyncButton 错误文案：REASON_COPY 补全（1.22.15）', () => {
     );
   });
 
-  it('带人类可读文本的 reason（如 error.message）必须原样显示', async () => {
+  it('带人类可读文本的 reason 必须显示其中的中文部分，且不得带机器前缀', async () => {
     const { resolveSyncFailureCopy } = await import('@/components/sync/syncPreviewView');
-    const human = 'validation_failed: 会话名称过长';
+    const shown = resolveSyncFailureCopy({
+      reason: 'validation_failed: 会话名称过长',
+      fallbackMessage: '上传失败，请重试',
+    });
+    // 2026-10-20 C-08：`validation_failed: ` 是机器前缀，对用户没有意义
+    // （弹出去会让人以为出了什么英文错误码）。中文原因本身必须原样保留 ——
+    // 剥前缀是为了去掉噪音，不是为了丢掉可读的原因。
+    assert.ok(
+      !shown.includes('validation_failed'),
+      '机器前缀不得原样弹给用户'
+    );
+    assert.ok(
+      shown.includes('会话名称过长'),
+      `中文原因必须保留，实际得到：${shown}`
+    );
+  });
+
+  it('带人类可读文本的 reason（无机器前缀）必须原样显示', async () => {
+    const { resolveSyncFailureCopy } = await import('@/components/sync/syncPreviewView');
+    const human = '本地存储读取失败';
     assert.equal(
       resolveSyncFailureCopy({ reason: human, fallbackMessage: '上传失败，请重试' }),
       human,

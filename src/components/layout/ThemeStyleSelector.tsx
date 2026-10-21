@@ -2,6 +2,8 @@ import React, { useState, useCallback, useMemo } from 'react';
 import { useTheme } from '@/contexts/ThemeContext';
 import { ThemeStyle } from '@/types/tab';
 import { cn } from '@/lib/utils';
+// 2026-10-20：折叠箭头提出来单源化（设置页的「自带存储配置」区块也要同款）。
+import { ChevronIcon } from '@/components/common/ChevronIcon';
 
 interface ThemeStyleSelectorProps {
   className?: string;
@@ -87,22 +89,6 @@ const PaletteIcon = () => (
   </svg>
 );
 
-// 展开/收起图标
-const ChevronIcon = ({ isExpanded }: { isExpanded: boolean }) => (
-  <svg
-    className={cn(
-      "w-4 h-4 transition-transform duration-200",
-      isExpanded && "rotate-180"
-    )}
-    viewBox="0 0 24 24"
-    fill="none"
-    stroke="currentColor"
-    strokeWidth={2}
-  >
-    <path d="M6 9l6 6 6-6" strokeLinecap="round" strokeLinejoin="round" />
-  </svg>
-);
-
 // 选中图标
 const CheckIcon = () => (
   <svg className="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={3}>
@@ -124,6 +110,31 @@ interface ThemeOption {
     accent: string;
     text: string;
   };
+}
+
+/**
+ * 在给定底色上选一个读得清的墨色（黑或白）。
+ *
+ * 2026-10-20 审计 P2-5：主题色圆点上的图标原先写死 `text-white`，
+ * 而 creamy 的 primaryColor 是 #d4a574（浅棕）—— 白字只有 2.23:1，
+ * 「当前选中」的勾完全看不见（WCAG 1.4.11 非文本对比要 ≥3:1）。
+ *
+ * 判据用 WCAG 的相对亮度公式：L > 0.179 时用黑字，否则用白字
+ * （这是 WCAG 推荐的「与黑/白对比取高者」阈值点，此时两者都比 4.5:1 高）。
+ */
+function readableInkOn(hexColor: string): string {
+  const m = hexColor.trim().match(/^#([0-9a-f]{3}|[0-9a-f]{6})$/i);
+  if (!m) return '#ffffff';
+  const h = m[1].length === 3 ? m[1].split('').map(c => c + c).join('') : m[1];
+  const toLinear = (v: number) => {
+    const s = v / 255;
+    return s <= 0.03928 ? s / 12.92 : Math.pow((s + 0.055) / 1.055, 2.4);
+  };
+  const r = toLinear(parseInt(h.slice(0, 2), 16));
+  const g = toLinear(parseInt(h.slice(2, 4), 16));
+  const b = toLinear(parseInt(h.slice(4, 6), 16));
+  const luminance = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+  return luminance > 0.179 ? '#000000' : '#ffffff';
 }
 
 const themeOptions: ThemeOption[] = [
@@ -298,7 +309,7 @@ export const ThemeStyleSelector: React.FC<ThemeStyleSelectorProps> = ({
           收起的状态，点了不响应 = 一个骗人的控件。 */}
       {alwaysExpanded ? (
         <div className="mb-1 flex items-center gap-2">
-          <span className="text-gray-500 dark:text-gray-400 flex-shrink-0">
+          <span className="theme-text-muted flex-shrink-0">
             <PaletteIcon />
           </span>
           <span
@@ -329,7 +340,7 @@ export const ThemeStyleSelector: React.FC<ThemeStyleSelectorProps> = ({
         aria-label="选择主题风格"
       >
         <div className="flex items-center gap-2 min-w-0">
-          <span className="text-gray-500 dark:text-gray-400 flex-shrink-0">
+          <span className="theme-text-muted flex-shrink-0">
             <PaletteIcon />
           </span>
           <span className="font-medium">主题风格</span>
@@ -386,9 +397,15 @@ export const ThemeStyleSelector: React.FC<ThemeStyleSelectorProps> = ({
                     "relative p-2 rounded-lg text-left flat-interaction",
                     "transition-all duration-150",
                     "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500",
+                    // 2026-10-20 审计 D-2：选中行原先写死 `bg-white dark:bg-gray-700`
+                    // —— 那个 gray-700(#374151) 不跟主题走，比主题自己的面更深，
+                    // 于是行内的 10px 说明文字（theme-text-muted）在深色下只有
+                    // 3.46–4.29:1，低于 AA 的 4.5:1。
+                    // 改用主题令牌 theme-bg-elevated：各主题的 muted 对 elevated
+                    // 实测均 ≥4.5:1（见 tests/guards/a11yTextAndFocusTokens.test.ts）。
                     isSelected
-                      ? "bg-white dark:bg-gray-700 shadow-sm ring-2 ring-blue-500/30"
-                      : "hover:bg-white/80 dark:hover:bg-gray-700/80",
+                      ? "theme-bg-elevated shadow-sm ring-2 ring-blue-500/30"
+                      : "hover:theme-btn-hover",
                     isTransitioning && "opacity-50 cursor-not-allowed"
                   )}
                   role="option"
@@ -404,15 +421,20 @@ export const ThemeStyleSelector: React.FC<ThemeStyleSelectorProps> = ({
 
                   {/* 主题信息 */}
                   <div className="flex items-center gap-2 mt-2">
-                    {/* 颜色指示器 */}
+                    {/* 颜色指示器
+                        2026-10-20 审计 P2-5：原先写死 `text-white` 压 option.primaryColor。
+                        creamy 的 primaryColor 是 #d4a574（浅棕），白字只有 2.23:1 ——
+                        主题卡片上的「当前选中」勾根本看不见。
+                        现在按底色亮度选墨色（黑或白），两者都能 ≥4.5:1。 */}
                     <div
                       className={cn(
                         "w-5 h-5 rounded-full flex items-center justify-center",
-                        "text-white transition-transform duration-150",
+                        "transition-transform duration-150",
                         isSelected && "scale-110"
                       )}
                       style={{
                         backgroundColor: option.primaryColor,
+                        color: readableInkOn(option.primaryColor),
                         boxShadow: isSelected ? `0 0 8px ${option.primaryColor}50` : 'none'
                       }}
                     >
@@ -431,7 +453,7 @@ export const ThemeStyleSelector: React.FC<ThemeStyleSelectorProps> = ({
                       )}>
                         {option.label}
                       </div>
-                      <div className="text-[10px] text-gray-500 dark:text-gray-400 truncate">
+                      <div className="text-[10px] theme-text-muted truncate">
                         {option.description}
                       </div>
                     </div>
@@ -443,7 +465,7 @@ export const ThemeStyleSelector: React.FC<ThemeStyleSelectorProps> = ({
 
           {/* 过渡状态提示 */}
           {isTransitioning && (
-            <div className="px-3 py-1.5 text-xs text-gray-500 dark:text-gray-400 text-center border-t border-gray-200/50 dark:border-gray-700/50">
+            <div className="px-3 py-1.5 text-xs theme-text-muted text-center border-t border-gray-200/50 dark:border-gray-700/50">
               <span className="inline-flex items-center gap-1.5">
                 <span className="w-1.5 h-1.5 rounded-full bg-blue-500 animate-pulse" />
                 正在切换主题...

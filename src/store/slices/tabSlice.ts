@@ -6,10 +6,43 @@
  * storage.getGroups 读真值）不在写收口范围内。
  *
  * 旧路径 → mutation op 代理清单：
- * saveGroup→saveGroup / deleteGroup→deleteGroup / deleteAllGroups→deleteAllGroups /
+ * deleteGroup→deleteGroup / deleteAllGroups→deleteAllGroups /
  * updateGroupNameAndSync→renameGroup /
  * toggleGroupLockAndSync→toggleGroupLock / moveTabAndSync→moveTab / cleanDuplicateTabs→cleanDuplicates /
  * deleteTabAndSync→removeTab
+ *
+ * ── 2026-10-20 D-9：saveGroup thunk 已删除（零调用方的重复 id 暗门）──────
+ * 修复前这里有一个 `saveGroup` thunk（转发 sendMutation({op:'saveGroup'})）
+ * 加上它的 `saveGroup.fulfilled` reducer（`state.groups.unshift(payload)`）。
+ *
+ * 【为什么删，而不是给它补一份归一化】
+ * 本仓的既有处置是「按『删除优于添加』处理：**收敛掉这个无调用 thunk**，
+ * 而不是给它补一份归一化让它变成第二条正式通路」（见上面 importGroups 那段）。
+ * 理由在这里同样成立，而且更硬：
+ *   1) **零生产调用方**。全仓检索（2026-10-20 复核）：除本文件外没有任何地方
+ *      dispatch 它；真实的新建会话路径在 `src/background/TabManager.ts`
+ *      （saveAllTabs / saveCurrentTab 走 `storage.setGroupsImmediate`，
+ *      完全绕过 Redux，注释里也写明「autoSyncMiddleware 永远监听不到
+ *      saveGroup.fulfilled」）。
+ *   2) 它即便被 dispatch 一次，也会**造出重复 id**：handler 回的 payload 是
+ *      `cmd.group`（**没有 lastOp** —— 印记是 SW 侧落的盘，载荷里没有），
+ *      而 reducer 无条件 `unshift` ⇒ Redux 里同 id 两条、其中一条「无印记」。
+ *      无印记的副本参与不了任何裁决（compareStampsLoose 把「无印记」当作
+ *      全序最小值）⇒ 它是「会赢、但赢得毫无道理」的那一条。
+ *   3) 更要命的是**它会与 SW 侧的落盘不一致**：reducer 只改 Redux，不改磁盘；
+ *      真实数据在磁盘上（且带 lastOp）。于是 Redux 与磁盘同 id 各一份、
+ *      形状不同 ⇒ 任何从 Redux 读出的组都可能带着「无印记」的旧形状。
+ *
+ * 【删掉之后协议 op 本身保留】
+ * `saveGroup` 语义命令（core/mutationProtocol 的 MutationOp）**保留**：
+ *   · `mutationHandlers` 的 'saveGroup' 分支仍可用（它是 SW 侧的落盘语义，
+ *     本身是**归一化**的：applySaveGroup 会盖 lastOp）；
+ *   · `affectedGroupIdsOf` 的 'saveGroup' 分支保留（协议层的映射）；
+ *   · `diagnostics.JOURNAL_OP_TYPES` / `perfTrace.PERF_SPAN_NAMES` 里的
+ *     'saveGroup' 保留（它们是**封闭词表**，由 `Record<MutationOp['op'], true>`
+ *     与 tsc 联动，改了会让诊断报告与协议对不上）。
+ * 删的只是「Redux 这条零调用方的入口」，不是协议。
+ * 回归锁见 tests/saveGroupDeadPath.test.ts。
  *
  * ── 2026-10-10 P1-2：importGroups thunk 已删除（零调用方的未归一化暗门）——─
  * 修复前这里有一个 `importGroups` thunk，**原样转发** sendMutation({op:'importGroups',
@@ -95,15 +128,6 @@ export const loadGroups = createAsyncThunk('tabs/loadGroups', async () => {
 
   return sortedGroups;
 });
-
-export const saveGroup = createAsyncThunk(
-  'tabs/saveGroup',
-  async (group: TabGroup) => {
-    const res = await sendMutation<TabGroup>({ op: 'saveGroup', group });
-    if (!res.ok) throw new Error(res.error ?? '保存失败');
-    return res.payload!;
-  }
-);
 
 /**
  * 删除类 mutation 的成功载荷（2026-10-05）。
@@ -583,15 +607,6 @@ export const tabSlice = createSlice({
         if (stale) return;
         state.error = action.error.message || '加载标签组失败';
         state.errorSource = 'load';
-      })
-      .addCase(saveGroup.fulfilled, (state, action) => {
-        // 添加新标签组并按创建时间倒序排列
-        state.groups.unshift(action.payload);
-        state.groups.sort((a, b) => {
-          const dateA = new Date(a.createdAt);
-          const dateB = new Date(b.createdAt);
-          return dateB.getTime() - dateA.getTime();
-        });
       })
       // 删除整个会话：乐观移除 + 失败还原。
       //

@@ -8,6 +8,8 @@ import { sanitizeTabUrl, isOpenableTabUrl } from '@/utils/inputValidation';
 import { enqueue } from './mutationQueue';
 import { createSeqRegistry } from '@/utils/seqRegistry';
 import { getDeviceId } from '@/utils/deviceUtils';
+import { saveAllSuccessMessage, type SaveAllSummary } from '@/domain/tabGroup/saveFeedbackCopy';
+import { MANAGER_PAGE_PATH } from '@/core/managerPage';
 import { kvGet, kvSet } from '@/storage/storageAdapter';
 import type { OpStamp } from '@/core/opStamp';
 import { logError, logInfo, logWarn } from '../utils/log';
@@ -44,9 +46,13 @@ export class TabManager {
 
   /**
    * 获取扩展页面URL
+   *
+   * 路径来自 `@/core/managerPage` 的单源常量 —— 此前这里是手抄的字符串，
+   * 而设置页的「回到 TapStack」出口也要同一个路径。各自手抄早晚会漂，
+   * 而漂了之后的症状是「先白屏再跳转」，极难查。
    */
   private getExtensionUrl(): string {
-    return chrome.runtime.getURL('src/popup/index.html');
+    return chrome.runtime.getURL(MANAGER_PAGE_PATH);
   }
 
   /**
@@ -80,7 +86,8 @@ export class TabManager {
   /**
    * 保存所有标签页
    *
-   * @returns 是否**真的保存了**。
+   * @returns 成功时返回保存摘要（保存了多少、丢了多少固定标签），
+   *          失败时返回 null。
    *
    * ── 2026-10-18：不许对没发生的事报成功 ───────────────────────────────
    * 本函数在「清洗后一个标签都不剩」（整窗都是内部页 / 危险 schema，或固定标签页
@@ -89,10 +96,14 @@ export class TabManager {
    * 用户看到「已保存」，实际列表里没有新会话（与 1.22.16 修掉的 saveCurrentTab
    * 是同一类缺陷：预检失败仍报成功）。
    *
-   * 现在返回 boolean：只有走完 setGroupsImmediate 才算 true。调用方据此决定
-   * 要不要报成功；失败通知仍由本函数在**判定失败的那一刻**发（原因更具体）。
+   * ── 2026-10-20 审计 A-4：返回摘要而不只是 boolean ────────────────────
+   * 「保存成功」不是全部事实：默认配置下固定标签页**既没保存也没关闭**，
+   * 而通知只报成功的那一半。调用方（popup 按钮反馈）需要知道丢了多少，
+   * 才能说出「已保存 12 个，另有 3 个固定标签未保存」。
+   * 返回 boolean 时这些信息只能留在 SW 内部 —— popup 看不到，
+   * 而 popup 的按钮反馈恰恰是用户盯着的那块屏幕。
    */
-  async saveAllTabs(inputTabs?: chrome.tabs.Tab[]): Promise<boolean> {
+  async saveAllTabs(inputTabs?: chrome.tabs.Tab[]): Promise<SaveAllSummary | null> {
     try {
       let tabs = inputTabs ?? [];
 
@@ -118,6 +129,19 @@ export class TabManager {
       // 隐患赔上本地保存功能，不成比例。见 storage.getSettingsForLocalUse 的分流理由。
       const settings = await storage.getSettingsForLocalUse();
       const collectPinnedTabs = settings.collectPinnedTabs ?? false;
+
+      // ── 2026-10-20 审计 A-4：被丢弃的固定标签从不被提起 ────────────────
+      // 默认配置下 collectPinnedTabs=false ⇒ 用户 pin 在窗口里的标签
+      // **既不会被保存、也不会被关闭**，它们就那么留在原处。
+      // 而成功通知只写「已将 N 个标签页保存为新会话」—— 用户 pin 了 3 个
+      // 工作台，收到「已保存 12 个」，那 3 个去哪了？它们通常正是最重要的
+      // 页面，而用户无从得知。这是「声明 ≠ 行为」的直接违反。
+      //
+      // 丢弃数必须**同时**出现在：① 系统通知；② 回给 popup 的结果里
+      // （popup 的按钮反馈是用户真正盯着的那块屏幕）。
+      const droppedPinnedCount = collectPinnedTabs
+        ? 0
+        : tabs.filter(tab => tab.pinned === true).length;
 
       const tabGroup = createTabGroupFromChromeTabs(tabs, {
         includePinned: collectPinnedTabs,
@@ -153,7 +177,7 @@ export class TabManager {
           kind: 'error',
         });
         // 一个标签都没存下 ⇒ 不是成功。调用方据此不得报「已保存」。
-        return false;
+        return null;
       }
 
       // 单写者：读-改-写必须整体在队列内（只把读放进队列、写在队列外 =
@@ -180,7 +204,10 @@ export class TabManager {
         type: 'basic',
         iconUrl: chrome.runtime.getURL('icons/icon128.png'),
         title: 'TapStack',
-        message: `已将 ${safeGroup.tabs.length} 个标签页保存为新会话`
+        message: saveAllSuccessMessage({
+          savedCount: safeGroup.tabs.length,
+          droppedPinnedCount,
+        })
       });
 
       await trackProductEvent('session_saved', {
@@ -209,7 +236,10 @@ export class TabManager {
       }
 
       // 走到这里 = 会话已落盘（关标签失败只影响便利性，不影响保存本身）。
-      return true;
+      return {
+        savedCount: safeGroup.tabs.length,
+        droppedPinnedCount,
+      };
 
     } catch (error) {
       logError('保存标签页失败:', error);

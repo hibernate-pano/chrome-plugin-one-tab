@@ -93,9 +93,26 @@ export function remainingMsUntilAllowed(
   return Math.max(0, minIntervalMs - (now - lastEmitAt));
 }
 
-/** 该快照该发哪些事件：有筛选才额外发 search_filtered。 */
+/**
+ * 该快照该发哪些事件。
+ *
+ * ── 为什么「没有搜索词」时可能一条都不发 ──────────────────────────────────
+ *
+ * `search_performed` 的含义是「用户搜了某个词」。没有搜索词时用户**没有搜过**
+ * —— 他可能只是打开了扩展、翻了一下列表。把这种情况记成 `search_performed`
+ * 会让统计口径里出现「搜索次数」凭空多出来的量。
+ *
+ * ── 为什么「有筛选、没有搜索词」要发 search_filtered ─────────────────────
+ *
+ * 空搜索词下的筛选浏览**是一个真实的检索行为**（「按域名找那些标签」），
+ * 不是「什么都没做」。它的口径就是「筛选」⇒ 记 `search_filtered`，
+ * 且**不**记 `search_performed`（两件事不许混成一件）。
+ *
+ * 判定只看两件事：有没有搜索词、有没有生效的筛选条件。
+ */
 export function searchEventNames(snapshot: SearchEventSnapshot): SearchEventName[] {
-  const names: SearchEventName[] = ['search_performed'];
+  const names: SearchEventName[] = [];
+  if (snapshot.query.trim()) names.push('search_performed');
   if (hasActiveSearchFilters(snapshot)) names.push('search_filtered');
   return names;
 }

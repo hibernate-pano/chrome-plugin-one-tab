@@ -153,7 +153,15 @@ export async function readConfiguredBackendId(): Promise<SyncBackendId | null> {
   }
 }
 
-export type { SyncBackendPort, SyncBackendId, RemoteGroupFingerprint, UploadGroupsResult } from './ports';
+export type {
+  SyncBackendPort,
+  SyncBackendId,
+  RemoteGroupFingerprint,
+  UploadGroupsResult,
+  // D-6：「读不出来而被整组跳过」的会话清单（端口的可选能力）。
+  DownloadSkippedGroup,
+  DownloadSkipReason,
+} from './ports';
 export { SupabaseBackendAdapter } from './supabaseAdapter';
 export { LockedBackendError, isLockedBackendError } from './lockedBackendError';
 
@@ -235,6 +243,22 @@ function defaultFactory(
     // 会在「观察到的全网最大印记 > 持久化值」时写回下限，把「看一眼」变成
     // 「改计数器」——同步后端没有取号的资格（seqRegistry.ts:peekDeviceSeq 注释）。
     peekDeviceSeq: () => webDavSeqRegistry.peekDeviceSeq(),
+    // ── 2026-10-20 D-7：删除广播必须用**本机 Lamport 时钟**发号 ───────────
+    // 缺陷形态是拿「云端那一行的 seq + 1」当墓碑印记 —— 那恰好等于对端设备
+    // 下一个自然要发的号，于是两边 seq 相等，胜负**退化成设备 id 字典序**
+    // （compareStamps 在 seq 相等时比 d），删除的胜负不再由因果顺序决定。
+    // 完整论证见 webdav/adapter.ts 的 nextDeleteStamp。
+    //
+    // 为什么这里能取号：删除广播是**写**（墓碑要落到远端），它与写作路径
+    // （mutationService / TabManager / 导入兜底）取的是**同一个持久化 key、
+    // 同一套推导规则**的计数器 ⇒ 本机号位全局一致。
+    // （上面 peekDeviceSeq 的「只读」顾虑针对的是**看水位**这个动作；
+    //  取号是写路径的资格，删除广播确实在写。）
+    nextDeviceSeq: () => webDavSeqRegistry.nextSeq(),
+    // 把「观察到的云端 seq」吸收进本机时钟：Lamport 不变式要求本机随后发出的
+    // 号严格大于它见过的任何号。缺了这一步，本机下一个号可能回退到云端号以下，
+    // 墓碑就在下一轮被对端的活跃副本盖掉（删除复活）。
+    bumpDeviceSeqIfLower: (candidate: number) => webDavSeqRegistry.bumpSeqIfLower(candidate),
   });
 }
 

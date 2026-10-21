@@ -83,17 +83,20 @@ function makeFakeBackend() {
       return 3;
     },
     async uploadSettings(settings) {
-      calls.push(`uploadSettings:${settings.groupNameTemplate}`);
+      calls.push(`uploadSettings:${settings.themeMode}`);
     },
     async downloadSettings() {
       calls.push('downloadSettings');
-      return { groupNameTemplate: '来自替身' };
+      return { themeMode: '来自替身' };
     },
   };
   return { fake, calls };
 }
 
-const SETTINGS = { groupNameTemplate: 'G %d' } as unknown as UserSettings;
+// 2026-10-20 审计 A-9：`groupNameTemplate` 已随其它死设置一起退役，
+// 拿它当样本会让本文件跟着编译不过。换成**还活着**的 `themeMode`
+// （非设备级 ⇒ 会原样穿过 toCloudSettings，替身收到的就是它自己）。
+const SETTINGS = { themeMode: 'dark' } as unknown as UserSettings;
 const GROUP = {
   id: 'g-1',
   name: 'n',
@@ -145,12 +148,12 @@ describe('同步后端接缝：注入替身后真的走替身', () => {
     const s = await downloadSettings();
 
     assert.equal(purged, 3);
-    assert.equal(s?.groupNameTemplate, '来自替身');
+    assert.equal(s?.themeMode, '来自替身');
     assert.deepEqual(calls, [
       'broadcastDeletes:x,y',
       // 不传参时必须落到默认 30 天（不是 undefined、不是 0）
       'purgeExpiredDeletes:30',
-      'uploadSettings:G %d',
+      'uploadSettings:dark',
       'downloadSettings',
     ]);
   });

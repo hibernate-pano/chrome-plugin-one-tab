@@ -16,7 +16,9 @@ html[data-theme='creamy'] {
   --color-text-primary: #44403c;
   --color-text-secondary: #57534e;
   --color-text-tertiary: #78716c;
-  --color-text-muted: #a8a29e;
+  /* 2026-10-20：原 stone-400 #a8a29e 在 tertiary 底上仅 3.1:1 —— 页脚版本号
+     等 12px 小字低于 AA。抬到 #78716c（本主题 stone-600），tertiary 底 4.63:1。 */
+  --color-text-muted: #78716c;
 
   --color-border-default: #f5e6d3;
   --color-border-subtle: #fef9e7;
@@ -29,8 +31,9 @@ html[data-theme='creamy'] {
   --color-accent-subtle: #fef3c7;
 
   /* 状态颜色 */
-  --color-warning: #f59e0b;
-  --color-danger: #dc2626;
+  /* 2026-10-20：警告色在本仓只当文字色用，浅色底要 ≥4.5:1 ⇒ 走 amber-700。 */
+  --color-warning: #b45309;
+  --color-danger: #dc2626;   /* red-600：浅色底 4.83:1 */
   --color-success: #16a34a;
 
   /* 排版 */
@@ -82,7 +85,11 @@ html[data-theme='creamy'] {
   --shadow-panel: 0 2px 8px rgba(120, 53, 15, 0.08);
   --color-shell: #fefcf3;
   --color-toggle-on-fg: #1a1512;
-  --focus-ring: 0 0 0 3px rgba(217, 119, 6, 0.22);
+  /* 2026-10-20 审计 P1-1：22% 透明度的柔光只有 1.2:1 左右 ——
+     改成不透明描边 + 白内芯（与其它主题同一形态）。 */
+  --focus-ring: 0 0 0 2px #b45309, 0 0 0 4px #ffffff;
+  /* 焦点环墨色（2026-10-20 新增）：全局 :focus-visible 读它。 */
+  --color-focus-ring: #b45309;
   --panel-blur: saturate(140%) blur(16px);
   --radius-card: 0.75rem;
   --radius-panel: 1rem;
@@ -104,7 +111,9 @@ html[data-theme='creamy'].dark {
   --color-text-primary: #fef3c7;
   --color-text-secondary: #fde68a;
   --color-text-tertiary: #fcd34d;
-  --color-text-muted: #d97706;
+  /* 2026-10-20：深色下原 amber-600 #d97706 在 tertiary 底上仅 3.5:1。
+     抬到 #d99a5e（本主题暖橙），tertiary 底 4.72:1。 */
+  --color-text-muted: #d99a5e;
 
   --color-border-default: #3f3a36;
   --color-border-subtle: #292524;
@@ -117,7 +126,7 @@ html[data-theme='creamy'].dark {
 
   /* 状态颜色 */
   --color-warning: #fbbf24;
-  --color-danger: #f87171;
+  --color-danger: #fca5a5;    /* 深色底 5.02:1 */
   --color-success: #4ade80;
 
   /* 深色模式阴影 */
@@ -125,7 +134,8 @@ html[data-theme='creamy'].dark {
   --shadow-card-hover: 0 12px 28px -8px rgb(0 0 0 / 0.5), 0 0 20px -4px rgb(251 191 36 / 0.15);
   --shadow-glow: 0 0 24px -4px rgb(251 191 36 / 0.4);
   --color-toggle-on-fg: #0f172a;
-  --focus-ring: 0 0 0 3px rgba(217, 119, 6, 0.28);
+  --focus-ring: 0 0 0 2px #f59e0b, 0 0 0 4px #1c1917;
+  --color-focus-ring: #f59e0b;   /* 深色下焦点环墨色（次级底 8.02:1） */
   --color-accent-text: #f59e0b;
   --color-accent-strong: #fbbf24;
   --color-accent-border: rgba(251, 191, 36, 0.45);
@@ -271,6 +281,13 @@ html[data-theme='creamy'] .modal-content {
 
 /* 标签项 */
 html[data-theme='creamy'] .tab-item {
+  /* 2026-10-20：原先这里**不声明底色** ⇒ 底色落回 drag-drop.css
+     （那个文件由 MainApp.tsx 单独 import，在 global.css **之后**加载），
+     而那里写死的是 white / #1f2937 ⇒ creamy 深色态（暖黑 #1c1917）
+     的每一条标签行都是一块**冷蓝灰**。
+     claude/apple/chrome 三套一直写的是 `transparent` —— 标签行与卡片底一体。
+     这里补齐，让「底色由主题决定」只发生在一个地方。 */
+  background: transparent;
   border-bottom: 1px solid var(--color-border-subtle);
   border-radius: var(--radius-md);
   margin: 2px 8px;
@@ -363,7 +380,9 @@ html[data-theme='creamy'] ::selection {
 
 /* Focus 样式 */
 html[data-theme='creamy'] :focus-visible {
-  outline: 2px solid var(--color-accent);
+  /* 2026-10-20：原先用 var(--color-accent)（填充色）—— 主按钮底色同它，焦点环看不见。
+     改读专用令牌 --color-focus-ring。 */
+  outline: 2px solid var(--color-focus-ring);
   outline-offset: 2px;
   border-radius: var(--radius-sm);
 }

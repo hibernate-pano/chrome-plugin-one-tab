@@ -147,9 +147,31 @@ describe('syncEngine 两处设置读都走真值', () => {
 
     const readAt = body.indexOf('await storage.getSettingsForWrite()');
     assert.ok(readAt !== -1, '合并基准必须读存储真值');
+
+    // 2026-10-20 审计 A-21：这条断言原来靠 `body.indexOf('...cloudSettings')`
+    // 定位「云端值进入本地设置」的位置 —— 而那个子串**只**在
+    // `const cloudPreferences = { ...cloudSettings }` 这种写法里存在。
+    // A-21 把这段换成共用函数 `stripNonPortableSettings(cloudSettings)`
+    // ⇒ 子串消失 ⇒ `indexOf` 返回 -1 ⇒ 断言「readAt < -1」为假 ⇒ **假红**。
+    //
+    // 【为什么这是「守卫钉写法」的典型】断言表达的意图是对的
+    // （基准读取必须发生在云端值进来之前），但它**碰巧**依赖了一个子串。
+    // ⇒ 改成用**语义锚点**定位「云端值进入本地设置」这一步：
+    //   · 展开进 convertedSettings 的那个对象（`...cloudPreferences`），
+    //   · 或「把云端值变成可合并对象」的那次调用。
+    // 两者的位置都必须在基准读取**之后**。
+    const cloudEnterAt = Math.min(
+      ...[body.indexOf('...cloudPreferences'), body.indexOf('stripNonPortableSettings(')].filter(
+        i => i !== -1
+      )
+    );
     assert.ok(
-      readAt < body.indexOf('...cloudSettings'),
-      '基准读取必须发生在展开云端值之前',
+      cloudEnterAt !== Infinity,
+      '找不到「云端值进入本地设置」这一步（展开或剔除调用）',
+    );
+    assert.ok(
+      readAt < cloudEnterAt,
+      '基准读取必须发生在云端值进入本地设置之前 —— 顺序即语义',
     );
     assert.match(
       body,

@@ -29,7 +29,8 @@ html[data-theme="prism"] {
     --color-text-primary: #1e1b4b;
     --color-text-secondary: #3730a3;
     --color-text-tertiary: #6366f1;
-    --color-text-muted: #a5b4fc;
+    /* 2026-10-20：原值在 tertiary 底上仅 3.2:1，低于 AA。抬到 #5a5fe0。 */
+    --color-text-muted: #5a5fe0;
 
     /* 边框色 - 半透明渐变感 */
     --color-border-default: rgba(139, 92, 246, 0.15);
@@ -51,8 +52,9 @@ html[data-theme="prism"] {
     --prism-glass-border: rgba(255, 255, 255, 0.3);
 
     /* 状态颜色 */
-    --color-warning: #f59e0b;
-    --color-danger: #ef4444;
+    /* 2026-10-20：警告色当文字色用 ⇒ 走 amber-700（浅底 ≥4.5:1）。 */
+    --color-warning: #b45309;
+    --color-danger: #b91c1c;   /* red-700：浅色底 ≥4.5:1 */
     --color-success: #10b981;
 
     /* 字体 */
@@ -84,7 +86,10 @@ html[data-theme="prism"] {
     
 
     /* 深色模式 */
-    --color-accent-text: #5a6fd6;
+    /* 2026-10-20 审计 P1-2：原值 #5a6fd6 在弹层底（elevated #fefeff）上只有
+       4.49:1 —— 认证弹窗激活标签页的 2px 下划线差一点点不到 3:1 的非文本线。
+       压到 #5466cb（elevated 底 5.03:1，页面底 4.62:1，tertiary 底 4.44:1）。 */
+    --color-accent-text: #5466cb;
     --color-accent-strong: #667eea;
     --color-accent-border: rgba(102, 126, 234, 0.45);
     --color-accent-wash: rgba(102, 126, 234, 0.12);
@@ -100,7 +105,11 @@ html[data-theme="prism"] {
     --shadow-panel: 0 2px 8px rgba(76, 29, 149, 0.08);
     --color-shell: #f5f3ff;
   --color-toggle-on-fg: #1a1512;
-    --focus-ring: 0 0 0 3px rgba(102, 126, 234, 0.22);
+    /* 2026-10-20 审计 P1-1：22% 透明度的柔光只有 1.2:1 左右 ——
+       改成不透明描边 + 白内芯（与其它主题同一形态）。 */
+    --focus-ring: 0 0 0 2px #5466cb, 0 0 0 4px #ffffff;
+    /* 焦点环墨色（2026-10-20 新增）：全局 :focus-visible 读它。 */
+    --color-focus-ring: #5a6fd6;
     --panel-blur: saturate(140%) blur(16px);
     --radius-card: 0.75rem;
     --radius-panel: 1rem;
@@ -124,7 +133,8 @@ html[data-theme="prism"].dark {
     --color-text-primary: #ede9fe;
     --color-text-secondary: #c4b5fd;
     --color-text-tertiary: #a78bfa;
-    --color-text-muted: #6d5aac;
+    /* 2026-10-20：深色下原值在 tertiary 底上仅 3.4:1。抬到 #9f83f5。 */
+    --color-text-muted: #9f83f5;
 
     /* 边框色 */
     --color-border-default: rgba(139, 92, 246, 0.25);
@@ -139,7 +149,7 @@ html[data-theme="prism"].dark {
 
     /* 状态颜色 */
     --color-warning: #fbbf24;
-    --color-danger: #f87171;
+    --color-danger: #f87171;   /* 深色底 5.55:1 */
     --color-success: #34d399;
 
     /* 深色毛玻璃变量 */
@@ -157,7 +167,8 @@ html[data-theme="prism"].dark {
     --prism-gradient: linear-gradient(135deg, #818cf8 0%, #a78bfa 100%);
     --prism-gradient-soft: linear-gradient(135deg, rgba(129, 140, 248, 0.15) 0%, rgba(167, 139, 250, 0.15) 100%);
   --color-toggle-on-fg: #0f172a;
-    --focus-ring: 0 0 0 3px rgba(102, 126, 234, 0.28);
+    --focus-ring: 0 0 0 2px #a5b4fc, 0 0 0 4px #0f0a1f;
+    --color-focus-ring: #a5b4fc;  /* 深色下焦点环墨色 */
     --color-accent-text: #a5b4fc;
     --color-accent-strong: #a78bfa;
     --color-accent-border: rgba(167, 139, 250, 0.45);
@@ -324,6 +335,13 @@ html[data-theme="prism"] .tab-group-time {
    棱镜主题 - 标签项
    ========================================== */
 html[data-theme="prism"] .tab-item {
+    /* 2026-10-20：原先这里**不声明底色** ⇒ 底色落回 drag-drop.css
+       （那个文件由 MainApp.tsx 单独 import，在 global.css **之后**加载），
+       而那里写死的是 white / #1f2937 ⇒ prism 深色态（#0f0a1f 深紫）
+       的每一条标签行都是一块**冷蓝灰**。
+       claude/apple/chrome 三套一直写的是 `transparent` —— 标签行与卡片底一体。
+       这里补齐，让「底色由主题决定」只发生在一个地方。 */
+    background: transparent;
     border-bottom: 1px solid var(--color-border-subtle);
     transition: all 0.2s ease;
 }
@@ -614,7 +632,9 @@ html[data-theme="prism"] ::selection {
    棱镜主题 - Focus 样式
    ========================================== */
 html[data-theme="prism"] :focus-visible {
-    outline: 2px solid var(--color-accent);
+    /* 2026-10-20：原先用 var(--color-accent)（填充色）—— 主按钮底色同它，焦点环看不见。
+       改读专用令牌 --color-focus-ring。 */
+    outline: 2px solid var(--color-focus-ring);
     outline-offset: 2px;
     border-radius: var(--radius-sm);
 }

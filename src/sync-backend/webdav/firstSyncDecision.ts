@@ -19,6 +19,7 @@
 import type { TabGroup } from '@/types/tab';
 import { mergeOpStamped } from '@/core/opStampMerge';
 import { compareStampsLoose } from '@/core/opStamp';
+import { sameLibrary, type LibraryRef } from './libraryIdentity';
 
 /** 用户可选的三种数据归属方式。 */
 export type OwnershipChoice = 'merge' | 'local-wins' | 'cloud-wins';
@@ -199,6 +200,82 @@ export function projectedCloudCount(localGroups: TabGroup[], remoteGroups: TabGr
  * 把它们做成不碰 DOM、写入器可注入的纯异步函数，才能对“哪个分支该写、
  * 写失败时该怎样”做**行为断言**，而不是只对着源码字符串数行。
  * ════════════════════════════════════════════════════════════════════════ */
+
+/**
+ * 「保存配置」这一步要不要**重新进入**「归属待决」状态（2026-10-20）。
+ *
+ * ── 缺陷形状 ──────────────────────────────────────────────────────────────
+ * 判据原先是「本机此前有没有配过自带存储」：
+ *
+ *     const wasConfigured = !!(await loadWebDavConfig())?.baseUrl;
+ *     if (!wasConfigured) await storage.setFirstSyncPending(true);
+ *
+ * 于是「**换云盘**」与「**同一个云盘重设密码**」在判据上**完全一样**
+ * （两者都是 `wasConfigured === true` ⇒ 两者都不置位）——
+ * 而它们的**后果完全不同**：重设密码还是同一个库，换云盘是**另一个库**。
+ * 结果：换到云盘 B 时本机的历史会话被**全量推上 B**，
+ * 而用户从来没有被问过「这些会话归 B 吗」（2026-10-18 P1#4 那条
+ * 「明令禁止的多传，不可回滚」）。
+ *
+ * ── 修法 ──────────────────────────────────────────────────────────────────
+ * 判据改成「**库的身份**变了没有」：地址 / 账号 / 目录任一变化 ⇒ 另一个库
+ * ⇒ 归属是**另一个决定** ⇒ 必须重新置位（让用户做三选一）。
+ * 而「同一个库重设密码 / 改加密口令」⇒ 身份没变 ⇒ 不重新置位
+ * （拦了会让同步莫名停摆且零提示 —— 那是老用户重设密码的既有行为）。
+ *
+ * ── 为什么这不是「首次配置」的特例 ────────────────────────────────────────
+ * 「首次配置」= 从**没有库**到**有库**；「换云盘」= 从**库 A**到**库 B**。
+ * 两者都是「归属待决的对象变了」⇒ 走**同一条**判据，不需要两个分支。
+ */
+export interface OwnershipGateInput {
+  /** 本机**已保存**的配置（null = 从没配过自带存储）。 */
+  saved: LibraryRef | null;
+  /** 用户这次要保存的配置（表单里的地址 / 账号 / 目录）。 */
+  target: LibraryRef;
+}
+
+/**
+ * 保存配置后，归属待决标志该置成什么。
+ *
+ * 返回 `true` = 必须进入（或保持在）「归属待决」状态。
+ */
+export function shouldEnterOwnershipPending(input: OwnershipGateInput): boolean {
+  // 从没配过 ⇒ 首次配置 ⇒ 必须置位（2026-10-18 真机实测出来的那条，别动）。
+  if (!input.saved) return true;
+  // 配过 ⇒ 只有「库的身份变了」（换云盘）才需要重新置位。
+  // 同一个库重设密码 / 改加密口令 ⇒ 不置位。
+  return !sameLibrary(input.saved, input.target);
+}
+
+/**
+ * 「为什么现在传不上去」的人话（2026-10-20）。
+ *
+ * ── 为什么必须有这句 ──────────────────────────────────────────────────────
+ * 归属待决期里，自动上传只传「本次改动过的会话」，历史会话被**排除**在外。
+ * 于是用户会看到「本机有 N 个会话，但云端只有刚改的那几个」——
+ * 若界面只报「同步失败」或干脆不提，用户只会得出「同步坏了」的结论，
+ * 而真正缺的是**一个决定**（这些会话归不归这个库）。
+ *
+ * 纪律：本仓的诚实度要求是「界面说的每一句都必须等于真实行为」。
+ * 所以这里必须说清三件事：**发生了什么**、**为什么**、**下一步做什么**。
+ *
+ * `localCount === null` = **读不到本机会话数** ⇒ 那一半**不报数字**
+ * （报一个编出来的数就是撒谎）。机制与下一步照说 —— 那部分不依赖计数。
+ */
+export function ownershipPendingNotice(input: {
+  localCount: number | null;
+  scopeLabel: string;
+}): string {
+  const howMany =
+    typeof input.localCount === 'number'
+      ? `本机还有 ${input.localCount} 个会话没有传到这个云盘（${input.scopeLabel}）。`
+      : `本机有会话还没有传到这个云盘（${input.scopeLabel}）。`;
+  return (
+    howMany +
+    '因为「这些会话归不归这个云盘」需要你来决定，系统不会替你决定 —— ' +
+    '请到设置页点「检查并推送到云端」，按提示选择归属方式。'
+  );
+}
 
 /** 令牌写入器（生产为 `storage.setFirstSyncPending`；测试注入假货）。 */
 export type FirstSyncPendingWriter = (pending: boolean) => Promise<void>;

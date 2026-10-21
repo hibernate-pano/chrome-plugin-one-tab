@@ -1,4 +1,4 @@
-import React, { useState, useTransition } from 'react';
+import React, { useState, useTransition, useRef, useLayoutEffect } from 'react';
 import { useAppDispatch, useAppSelector } from '@/store/hooks';
 import {
   toggleLayoutMode,
@@ -19,12 +19,25 @@ import { TapStackLogo } from '@/components/common/TapStackIcon';
 import { LoadingSpinner } from '@/components/common/LoadingSpinner';
 import { cleanDuplicatesConfirmMessage, cleanDuplicatesResultMessage } from './cleanDuplicatesMessage';
 import { saveAndCloseDescription, saveAndCloseLabel, saveAndCloseShortLabel } from './saveActionCopy';
+import { isBrandContentClipped } from './brandLayout';
+import {
+  saveAllSuccessMessage,
+  saveAllSuccessShortMessage,
+} from '@/domain/tabGroup/saveFeedbackCopy';
 import { planCleanDuplicates } from '@/core/mutationOps';
 import { storage } from '@/utils/storage';
 import { logError, logWarn } from '../../utils/log';
 
 interface HeaderProps {
   onSearch: (query: string) => void;
+  /**
+   * 重放用户引导（2026-10-20 审计 B-2）。
+   *
+   * 引导是一次性的：跳过后回不去，而用户跳过的常见理由是「现在没空」。
+   * 菜单里给了「使用引导」一个入口，重放的是**同一套** OnboardingGuide
+   * （不复制一份内容），走完照常记完成状态。
+   */
+  onReplayOnboarding?: () => void;
 }
 
 // 图标组件
@@ -74,7 +87,7 @@ const SaveIcon = () => (
   </svg>
 );
 
-export const Header: React.FC<HeaderProps> = ({ onSearch }) => {
+export const Header: React.FC<HeaderProps> = ({ onSearch, onReplayOnboarding }) => {
   const dispatch = useAppDispatch();
   const { showConfirm, showAlert, showToast } = useToast();
   const settings = useAppSelector(state => state.settings);
@@ -216,12 +229,26 @@ export const Header: React.FC<HeaderProps> = ({ onSearch }) => {
     try {
       const tabs = await chrome.tabs.query({ currentWindow: true });
       const windowId = tabs[0]?.windowId;
-      const response = await chrome.runtime.sendMessage({
+      const response = (await chrome.runtime.sendMessage({
         type: 'SAVE_ALL_TABS',
         data: { windowId },
-      });
+      })) as
+        | { success?: boolean; error?: string; savedCount?: number; droppedPinnedCount?: number }
+        | undefined;
       if (response?.success) {
-        setSaveFeedback({ kind: 'success', text: '已保存' });
+        // ── 2026-10-20 审计 A-4：成功文案要说出「没保存什么」─────────────
+        // 固定标签页开关关闭时，那些标签既没保存也没关闭，只剩它们还在原地。
+        // 按钮反馈是用户此刻唯一盯着的地方，不说 = 用户以为全存了。
+        const summary = {
+          savedCount: response.savedCount ?? 0,
+          droppedPinnedCount: response.droppedPinnedCount ?? 0,
+        };
+        setSaveFeedback({
+          kind: 'success',
+          text: saveAllSuccessShortMessage(summary),
+          shortText: saveAllSuccessShortMessage(summary),
+          fullText: saveAllSuccessMessage(summary),
+        });
       } else {
         setSaveFeedback({
           kind: 'error',
@@ -269,9 +296,15 @@ export const Header: React.FC<HeaderProps> = ({ onSearch }) => {
   // 必须让用户看得见结果 —— 哪怕标签已经关掉了。
   // 成功轻提示 3s 自动退场，失败常驻到下次操作（与 TabList 空态 CTA 同口径）。
   const [isSaving, setIsSaving] = useState(false);
-  const [saveFeedback, setSaveFeedback] = useState<{ kind: 'success' | 'error'; text: string } | null>(
-    null
-  );
+  // 成功反馈有长短两版（2026-10-20 审计 A-4）：
+  //   · shortText —— 按钮里显示（宽度有限）
+  //   · fullText  —— 悬停/读屏看到的完整说明（说清「什么没保存」）
+  const [saveFeedback, setSaveFeedback] = useState<{
+    kind: 'success' | 'error';
+    text: string;
+    shortText?: string;
+    fullText?: string;
+  } | null>(null);
   // 账号弹窗是应用级关注点：挂在 Header 上、portal 到 body，
   // 不随菜单开关而卸载（菜单点完就关，弹窗独立存活）。
   const [authModal, setAuthModal] = useState<AuthTab | null>(null);
@@ -283,19 +316,70 @@ export const Header: React.FC<HeaderProps> = ({ onSearch }) => {
     return () => clearTimeout(timer);
   }, [saveFeedback]);
 
+  // ── 2026-10-20 几何修复：品牌名要么完整可见，要么完全消失 ──────────────
+  //
+  // CSS 侧的降级阈值（`@media (max-width: 420px)`）只能覆盖**量过的宽度**：
+  // 滚动条 gutter 的宽度因平台而异（macOS 8px / Windows 15–17px），
+  // 字体缩放、系统字号也会改品牌名的宽度。凡是「差一点点放不下」的宽度，
+  // 都会退化成「TapSta」—— 用户看到半个词，**没有任何提示**。
+  //
+  // 所以再加一道运行期兜底：直接量「品牌名的右边界」有没有越过
+  // 「品牌盒的右边界」。越过了就把名字整体隐藏（visibility: hidden，
+  // 不占位也不参与命中测试）⇒ 只剩图标，绝不出现半个字。
+  //
+  // 用 useLayoutEffect：判定必须在绘制前完成，否则会闪一帧「TapSta」。
+  const brandRef = useRef<HTMLButtonElement>(null);
+  const [brandNameClipped, setBrandNameClipped] = useState(false);
+
+  useLayoutEffect(() => {
+    const el = brandRef.current;
+    if (!el) return;
+    const check = () => {
+      const name = el.querySelector<HTMLElement>('.app-header-brand-name');
+      if (!name) {
+        setBrandNameClipped(false);
+        return;
+      }
+      // CSS 已经降级成「只留图标」时，名字没有盒子，运行期不用再管。
+      if (getComputedStyle(name).display === 'none') {
+        setBrandNameClipped(false);
+        return;
+      }
+      setBrandNameClipped(
+        isBrandContentClipped(
+          name.getBoundingClientRect().right,
+          el.getBoundingClientRect().right
+        )
+      );
+    };
+    check();
+    // 品牌盒的宽度一变（窗口缩放、滚动条出现、操作区变宽）就要重量一次。
+    const observer = new ResizeObserver(check);
+    observer.observe(el);
+    const grid = el.closest('.app-header-grid');
+    if (grid) observer.observe(grid);
+    return () => observer.disconnect();
+  }, []);
+
   return (
     <header className="header">
       <div className={`w-full py-2.5 sm:py-3 px-3 sm:px-6 ${getContainerWidthClass()}`}>
         <div className="app-header-grid">
           {/* Logo 区域 */}
           <button
+            ref={brandRef}
             onClick={handleResetToDefaultView}
             className="app-header-brand flex items-center gap-2 sm:gap-3 group flat-interaction min-w-0"
             title="回到默认视图"
             aria-label="回到默认视图"
           >
             <span className="flex-shrink-0">
-              <TapStackLogo size="sm" showIcon={true} nameClassName="app-header-brand-name" />
+              <TapStackLogo
+                size="sm"
+                showIcon={true}
+                // 被裁掉时整体隐藏（不是省略号、不是半个字）—— 判据见 brandLayout.ts
+                nameClassName={`app-header-brand-name${brandNameClipped ? ' invisible' : ''}`}
+              />
             </span>
             <div className="app-header-brand-meta hidden sm:block">
               <TabCounter />
@@ -303,7 +387,11 @@ export const Header: React.FC<HeaderProps> = ({ onSearch }) => {
           </button>
 
           {/* 搜索框：图标位常驻占位，spinner 原位替换，避免输入中 pl-3→pl-10 整行跳动 */}
-          <div className="app-header-search">
+          {/* data-tooltip-avoid：顶栏提示条不得压住搜索框 ——
+              两行顶栏（≤1024px）里搜索框就在操作区下一行，提示条向下弹
+              必然压上去（实测 400px 下盖住 34.4%、700px 下 17.5%）。
+              标上这个属性，提示条会自动下移避让。 */}
+          <div className="app-header-search" data-tooltip-avoid>
             <div className="relative" role="search">
               <div className="absolute left-3 top-1/2 -translate-y-1/2 search-icon" aria-hidden="true">
                 {isSearchBusy ? <LoadingIcon /> : (
@@ -399,6 +487,9 @@ export const Header: React.FC<HeaderProps> = ({ onSearch }) => {
                 className={`btn ${groups.length === 0 ? 'btn-secondary' : 'btn-primary'} flat-interaction whitespace-nowrap shrink-0 px-3 sm:px-4 disabled:opacity-60 disabled:cursor-not-allowed`}
                 aria-label={saveAndCloseDescription}
                 aria-busy={isSaving}
+                // 成功后的完整说明放在 title 上：窄屏按钮装不下长句，
+                // 但「另有 N 个固定标签未保存」这个事实必须可查（悬停即可见）。
+                title={saveFeedback?.kind === 'success' ? saveFeedback.fullText : undefined}
               >
                 {isSaving ? <LoadingSpinner size="sm" className="text-current" /> : <SaveIcon />}
                 <span className="hidden sm:inline whitespace-nowrap">
@@ -411,7 +502,11 @@ export const Header: React.FC<HeaderProps> = ({ onSearch }) => {
                         : saveAndCloseLabel}
                 </span>
                 <span className="sm:hidden" aria-hidden="true">
-                  {isSaving ? '保存中' : saveFeedback?.kind === 'success' ? '已保存' : saveAndCloseShortLabel}
+                  {isSaving
+                    ? '保存中'
+                    : saveFeedback?.kind === 'success'
+                      ? saveFeedback.shortText
+                      : saveAndCloseShortLabel}
                 </span>
               </button>
             </Tooltip>
@@ -446,6 +541,7 @@ export const Header: React.FC<HeaderProps> = ({ onSearch }) => {
                   onRequestCleanDuplicates={() => {
                     handleCleanDuplicateTabs();
                   }}
+                  onReplayOnboarding={onReplayOnboarding}
                 />
               )}
             </div>

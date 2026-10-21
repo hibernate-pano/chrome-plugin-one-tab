@@ -32,6 +32,11 @@ supabase/.temp/
 # Grok Build 会话数据（工具生成，不入库）
 .grok/
 
+# 真机审计脚本的产物（Playwright 截图 / 诊断输出）
+# 这些是审计过程的中间证据，不是产品资产 —— 留在本地，不进仓库。
+outputs/
+scripts/_*-tmp.mjs
+
 # 本地记忆目录（不入库）
 # ⚠️ .workbuddy/ 曾只有一条忽略规则，但该目录里已有 1 个文件被跟踪
 # （.workbuddy/memory/2026-10-05.md，commit aa05b98，早于忽略规则加入）。

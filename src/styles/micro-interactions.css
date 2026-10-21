@@ -50,39 +50,12 @@
     box-shadow: 0 2px 4px -1px rgba(37, 99, 235, 0.3);
   }
 
-  /* CTA按钮 - 橙色强调 */
-  .btn-cta {
-    @apply relative overflow-hidden;
-    background: var(--color-cta, #F97316);
-    transition: all 80ms cubic-bezier(0.4, 0, 0.2, 1);
-    cursor: pointer;
-  }
-
-  .btn-cta::before {
-    content: '';
-    position: absolute;
-    top: 0;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    opacity: 0;
-    background: var(--color-cta-hover, #EA580C);
-    transition: opacity 80ms ease-out;
-  }
-
-  .btn-cta:hover::before {
-    opacity: 1;
-  }
-
-  .btn-cta:hover {
-    transform: translateY(-1px);
-    box-shadow: 0 4px 12px -2px rgba(249, 115, 22, 0.4);
-  }
-
-  .btn-cta:active {
-    transform: translateY(0);
-    box-shadow: 0 2px 4px -1px rgba(249, 115, 22, 0.3);
-  }
+  /* 2026-10-20 审计 P2-6：删掉整段 `.btn-cta`。
+     它引用的 `--color-cta` / `--color-cta-hover` 在**全仓没有任何地方定义**
+     （只有这两处引用），于是永远落到 fallback 的 #F97316 / #EA580C；
+     而 `.btn-cta` 这个类本身在 TSX 里**零引用**（全仓 grep 只命中这段 CSS 自己）。
+     留着它 = 一段永远不生效、却让人以为「橙色 CTA 是本仓设计」的死代码。
+     真正的 CTA 是 `.theme-cta`（accent 实底 + --color-accent-fg 墨色，跟主题走）。 */
 
   /* ==========================================
      图标按钮 - 快速响应

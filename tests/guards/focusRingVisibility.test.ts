@@ -116,8 +116,9 @@ describe('按钮焦点环：兜底规则必须把环画在按钮外面', () => {
       'var(--color-accent)',
       '环色不能取 --color-accent：它就是按钮填充色，且作为墨色对比度不足（claude 浅色只有 2.69:1）',
     );
-    assert.match(focusColor, /var\(--color-accent-text\)/,
-      '环色取本仓「当墨色用的 accent」令牌 --color-accent-text（三套新主题都定义了它）');
+    assert.match(focusColor, /var\(--color-focus-ring\)/,
+      '环色取专用的焦点环令牌 --color-focus-ring（2026-10-20 新增：6 套主题 × 明暗都必须显式定义它，'
+      + '否则某个主题忘了定义就会掉成浏览器默认近黑色。各主题取值与其 --color-accent-text 相同）');
   });
 
   it('.btn 里不得再有 focus-visible:outline-none（它会与兜底规则同特异性抢声明）', () => {
@@ -175,10 +176,12 @@ describe('焦点环颜色 vs 页面底色：6 套主题 × 明暗都够对比', 
     }
   }
 
-  it('兜底环色令牌在三套无覆盖的主题里都有定义（否则 var() 解析为空、环会掉成 currentColor）', () => {
-    for (const theme of ['claude', 'apple', 'chrome'] as const) {
+  it('兜底环色令牌在 6 套主题里都有定义（否则 var() 解析为空、环会掉成 currentColor）', () => {
+    // 2026-10-20：原先只查 claude/apple/chrome 三套「无 :focus-visible 覆盖」的主题，
+    // 现在焦点环统一走 --color-focus-ring ⇒ 六套主题都必须显式定义它（明暗各一个）。
+    for (const theme of THEMES) {
       const css = read(`src/styles/themes/${theme}.css`);
-      assert.ok(token(css, '--color-accent-text'), `${theme} 未定义 --color-accent-text，兜底环色会解析失败`);
+      assert.ok(token(css, '--color-focus-ring'), `${theme} 未定义 --color-focus-ring，兜底环色会解析失败`);
     }
   });
 });

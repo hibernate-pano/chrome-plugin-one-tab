@@ -290,7 +290,12 @@
     padding: 4px 12px;
     border-radius: 8px;
     font-size: 0.75rem;
-    color: #9ca3af;
+    /* 2026-10-20：原先写死 #9ca3af（gray-400），在引导卡的近白底
+       （rgba(255,255,255,.97)）上只有 2.54:1 —— 12px 的「跳过」两个字
+       属于最需要看清的一处，却最看不清。改用主题令牌：
+       --color-text-muted 在 6 套主题 × 明暗下实测全部 ≥ 4.5:1
+       （最差 creamy 深色 4.67；守卫见 tests/guards/a11yTextAndFocusTokens.test.ts）。 */
+    color: var(--color-text-muted);
     background: transparent;
     border: none;
     cursor: pointer;
@@ -299,7 +304,10 @@
 }
 
 .onboarding-btn-skip:hover {
-    color: #6b7280;
+    /* 2026-10-20：原先 #6b7280 on #f3f4f6 只有 4.39:1（差 0.11 不到 AA）。
+       hover 态是用户**已经决定要点「跳过」**的时刻，文字最该看清。
+       改用主题令牌 --color-text-secondary（各主题下均远高于 4.5:1）。 */
+    color: var(--color-text-secondary);
     background: #f3f4f6;
 }
 
@@ -357,7 +365,11 @@
 
 .onboarding-feature-desc {
     font-size: 0.625rem;
-    color: #9ca3af;
+    /* 2026-10-20：原先写死 #9ca3af（gray-400），浅色态在特性卡片底
+       （#f9fafb）上只有 2.43:1，深色态 5.78。10px 的说明文字是本仓
+       最小号的正文，低于 AA 正文线 4.5 属于实打实的可读性缺陷。
+       改用主题令牌 --color-text-muted（6 套主题 × 明暗全部 ≥ 4.5:1）。 */
+    color: var(--color-text-muted);
     margin-top: 2px;
 }
 
@@ -562,7 +574,10 @@
     border-radius: 20px;
     font-size: 0.6875rem;
     font-weight: 600;
-    color: #667eea;
+    /* 2026-10-20：原先 #667eea 在自己的浅蓝紫渐变底（#eff6ff→#ede9fe）
+       上只有 3.08:1（11px 粗体字）。改成同色系加深一档的 indigo-700
+       #4338ca ⇒ 最差 6.66:1，视觉上仍是同一支紫。 */
+    color: #4338ca;
     background: linear-gradient(135deg, #eff6ff, #ede9fe);
     margin-bottom: 16px;
 }

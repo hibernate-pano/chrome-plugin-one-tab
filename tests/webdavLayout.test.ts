@@ -153,15 +153,28 @@ describe('manifest 解析：null 与「空库」必须分得开', () => {
 
 describe('会话编解码', () => {
   it('往返保真：名字/标签/锁定/印记都回来', () => {
-    const g = makeGroup({ isLocked: true, displayOrder: 3 });
+    const g = makeGroup({ isLocked: true });
     const back = decodeGroup(encodeGroup(g));
     assert.equal(back?.id, g.id);
     assert.equal(back?.name, g.name);
     assert.equal(back?.isLocked, true);
-    assert.equal(back?.displayOrder, 3);
     assert.deepEqual(back?.lastOp, { d: 'dev-1', s: 7 });
     assert.equal(back?.tabs.length, 1);
     assert.equal(back?.tabs[0].url, 'https://example.com/a');
+  });
+
+  it('退役字段 displayOrder：既不写进分片、也不被解出来（两条后端形状对齐）', () => {
+    // 2026-10-20 审计 A-10：它从来没有任何读取方，却让 WebDAV 侧解出来的形状
+    // 与 Supabase 侧（从不上传）不一致。断言的是**行为**：
+    //   · 老用户内存里可能还带着这个键（类型已删、存量数据仍在）⇒ 不许写出去
+    //   · 老分片里可能还带着这个键 ⇒ 解码后不许再冒出来
+    const legacy = { ...makeGroup(), displayOrder: 7 };
+    const encoded = encodeGroup(legacy as TabGroup) as Record<string, unknown>;
+    assert.ok(!('displayOrder' in encoded), '退役字段不应再写进远端分片');
+
+    const back = decodeGroup({ ...encoded, displayOrder: 7 });
+    assert.ok(back, '多余字段不该让整条会话解不出来');
+    assert.ok(!('displayOrder' in back), '退役字段不应再被解出来');
   });
 
   it('unopenable 不上云（它是「本设备的判断」，传出去会污染对端）', () => {

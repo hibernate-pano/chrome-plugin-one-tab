@@ -33,7 +33,15 @@
   align-items: center;
   padding: 8px 12px;
   border-radius: 4px;
-  background-color: white;
+  /* 2026-10-20：原先写死 white —— 这个文件在 global.css **之后**加载
+     （MainApp.tsx 单独 import），而 6 套主题里有 3 套（legacy/creamy/prism）
+     只覆盖了 .tab-item 的 border/padding/hover，**没覆盖底色**
+     ⇒ 底色落回这里 ⇒ creamy/prism 下每一条标签行都是**纯白**，
+     与主题的米色/淡紫底格格不入。
+     claude/apple/chrome 三个主题已经写了 `background: transparent`
+     （标签行与卡片底一体）⇒ 这里改成 transparent，与它们一致，
+     并让「主题决定底色」这件事只发生在一处。 */
+  background-color: transparent;
   border: 1px solid transparent;
   margin-bottom: 4px;
   cursor: move;
@@ -41,7 +49,11 @@
 }
 
 .dark .tab-item {
-  background-color: #1f2937;
+  /* 2026-10-20：原先写死 #1f2937（gray-800，冷蓝灰）—— 6 套主题都**没有**
+     覆盖深色态的 .tab-item 底色 ⇒ creamy 深色（页面底 #1c1917 暖黑）
+     与 prism 深色（#0f0a1f 深紫）下的每一条标签行都是**冷蓝灰**。
+     改成 transparent ⇒ 标签行透出卡片底，与浅色态同一套逻辑。 */
+  background-color: transparent;
   color: #e5e7eb;
 }
 
@@ -188,7 +200,15 @@
   align-items: center;
   padding: 8px 12px;
   border-radius: 4px;
-  background-color: white;
+  /* 2026-10-20：原先写死 white —— 这个文件在 global.css **之后**加载
+     （MainApp.tsx 单独 import），而 6 套主题里有 3 套（legacy/creamy/prism）
+     只覆盖了 .tab-item 的 border/padding/hover，**没覆盖底色**
+     ⇒ 底色落回这里 ⇒ creamy/prism 下每一条标签行都是**纯白**，
+     与主题的米色/淡紫底格格不入。
+     claude/apple/chrome 三个主题已经写了 `background: transparent`
+     （标签行与卡片底一体）⇒ 这里改成 transparent，与它们一致，
+     并让「主题决定底色」这件事只发生在一处。 */
+  background-color: transparent;
   border: 1px solid transparent;
   margin-bottom: 4px;
   cursor: move;
@@ -197,7 +217,11 @@
 }
 
 .dark .tab-item {
-  background-color: #1f2937;
+  /* 2026-10-20：原先写死 #1f2937（gray-800，冷蓝灰）—— 6 套主题都**没有**
+     覆盖深色态的 .tab-item 底色 ⇒ creamy 深色（页面底 #1c1917 暖黑）
+     与 prism 深色（#0f0a1f 深紫）下的每一条标签行都是**冷蓝灰**。
+     改成 transparent ⇒ 标签行透出卡片底，与浅色态同一套逻辑。 */
+  background-color: transparent;
   color: #e5e7eb;
 }
 

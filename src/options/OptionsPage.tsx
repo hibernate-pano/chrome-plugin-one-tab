@@ -26,6 +26,8 @@ import { useAppDispatch, useAppSelector } from '@/store/hooks';
 import {
   dispatchSaveSettings,
   loadSettings,
+  setShowFavicons,
+  setShowTabCount,
   setSyncEnabled,
   setSyncIntervalMinutes,
   toggleCollectPinnedTabs,
@@ -33,7 +35,7 @@ import {
   toggleShowNotifications,
   updateSettings,
 } from '@/store/slices/settingsSlice';
-import { getCurrentUser } from '@/store/slices/authSlice';
+import { getCurrentUser, signOut } from '@/store/slices/authSlice';
 import { SYNC_INTERVAL_CHOICES } from '@/utils/storage';
 import { sendSyncCommand } from '@/shared/mutationProtocol';
 import { ToastProvider, useToast } from '@/contexts/ToastContext';
@@ -41,7 +43,7 @@ import { ThemeProvider, useTheme } from '@/contexts/ThemeContext';
 import ErrorBoundary from '@/components/common/ErrorBoundary';
 import { ThemeStyleSelector } from '@/components/layout/ThemeStyleSelector';
 import { WebDavSettings } from '@/components/sync/WebDavSettings';
-import { logWarn } from '@/utils/log';
+import { logError, logWarn } from '@/utils/log';
 import {
   getLastBackendResolution,
   // 切换后端是**真实的设置变更**：旧适配器持有的 Vault 与连接已经不对，
@@ -60,6 +62,23 @@ import {
   type BackendStatus,
 } from '@/components/layout/backendStatus';
 import { WEBDAV_CONFIG_CHANGED_EVENT } from '@/sync-backend/webdav/config';
+// 2026-10-20 第二轮审计：设置页的信息架构判据（纯函数，可测）。
+import {
+  collapsiblePanelState,
+  managerPageExitAction,
+  MANAGER_PAGE_PATH,
+  shouldCollapseWebDavSection,
+  syncIntervalHint,
+} from './optionsPageIa';
+// 2026-10-20 第二轮审计：账号区域的判据与文案（纯函数，可测）。
+import {
+  accountPanelMode,
+  loginHintCopy,
+  type AccountPanelMode,
+} from './optionsAccount';
+import { AuthModal, type AuthTab } from '@/components/auth/AuthModal';
+import { ChevronIcon } from '@/components/common/ChevronIcon';
+import { loadWebDavConfig } from '@/sync-backend/webdav/config';
 
 /** 明暗模式。ThemeContext 的 setThemeMode 收这个联合类型，
  *  但没导出它 —— 这里就地声明，避免为了一个类型去改 context 的公共面。 */
@@ -101,7 +120,12 @@ export function formContainerGateProps(settingsReady: boolean): {
 const card =
   'rounded-xl border theme-border-default theme-bg-elevated p-5';
 const labelCls = 'mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300';
-const hintCls = 'text-xs leading-relaxed text-gray-500 dark:text-gray-400';
+// 2026-10-20 审计 D-2：说明文字原先写死 Tailwind 灰阶（text-gray-500 / dark:text-gray-400），
+// 不跟主题走 —— claude/apple/prism 浅色下只有 4.16–4.47:1，creamy 深色 4.42:1，
+// 都低于 WCAG AA 的 4.5:1。改用主题令牌 theme-text-muted（各主题实测 ≥4.5:1）。
+// 硬编码的 dark: 变体特异性 (0,3,0) 会盖过 .theme-text-muted (0,1,0)，
+// 所以必须整段删掉，不能"再补一个主题类"。
+const hintCls = 'text-xs leading-relaxed theme-text-muted';
 
 /** 分组标题 + 一行说明。说明必须写清「这个设置的作用范围」，不能只写标签。 */
 const SectionTitle: React.FC<{ title: string; hint?: string }> = ({ title, hint }) => (
@@ -182,6 +206,42 @@ const OptionsContent: React.FC = () => {
   const [backendStatus, setBackendStatus] = useState<BackendStatus>(() =>
     classifyBackendResolution(null)
   );
+
+  // ── 2026-10-20 第二轮审计：设置页自己的三个缺口 ───────────────────────
+  //
+  // ① **账号入口**：设置页此前**没有任何登录入口**，而它的提示文案却让用户
+  //    「去右上角菜单登录」—— 而本页没有右上角菜单。于是云端用户
+  //    （默认后端）永远开不了自动同步，也不知道为什么。
+  //    现在本页提供登录 / 退出入口。
+  //
+  // ② **「自带存储配置」默认展开**：那块表单是设置页里最长的一块，
+  //    而 90% 的用户用默认的 Supabase 后端，永远不碰它。
+  //    默认折叠，首屏留给真正常用的项。
+  //
+  // ③ **出口**：设置页是独立标签页，改完设置想回列表只能靠浏览器「后退」，
+  //    而从扩展详情页进来时历史是空的 ⇒ 用户卡在这个页面里。
+  const [authModal, setAuthModal] = useState<AuthTab | null>(null);
+  const [webDavExpanded, setWebDavExpanded] = useState<boolean | null>(null);
+  const [isWebDavConfigured, setIsWebDavConfigured] = useState(false);
+
+  // 账号区形态：已登录 / 未登录（要提示）/ 不需要账号（自带存储）。
+  const accountMode: AccountPanelMode = accountPanelMode(
+    settings.syncBackend,
+    isAuthenticated
+  );
+  const authUserEmail = useAppSelector(state => state.auth.user?.email ?? null);
+
+  /**
+   * 「自带存储配置」区块当前是不是展开的。
+   *
+   * `webDavExpanded === null` = **用户还没表态** ⇒ 用判据算初始值
+   * （`shouldCollapseWebDavSection`）。用户一旦手动点过，就以他的选择为准，
+   * 不再被自动改回去 —— 自动改回去会让「我刚展开就被折叠了」变成一个
+   * 说不清的 bug。
+   */
+  const isWebDavPanelExpanded =
+    webDavExpanded ??
+    !shouldCollapseWebDavSection(settings.syncBackend, isWebDavConfigured);
 
   useEffect(() => {
     let alive = true;
@@ -289,6 +349,86 @@ const OptionsContent: React.FC = () => {
     };
   }, [refreshBackendStatus]);
 
+  /**
+   * 读一次「有没有配过 WebDAV」（2026-10-20 第二轮审计）。
+   *
+   * 为什么要单独读：`loadWebDavConfig()` 返回 `null` 表示「**从未配过**」，
+   * 而「配过」这件事决定「自带存储配置」区块要不要默认展开：
+   * 已经配过的人每次进来都想一眼看到「我的云盘配好了」，
+   * 从没配过的人（且用的是云端）不需要为一块用不到的表单让出首屏。
+   *
+   * ⚠️ 只读、不写：这里绝不能顺手把配置写进任何地方。
+   */
+  useEffect(() => {
+    let alive = true;
+    loadWebDavConfig()
+      .then(cfg => {
+        if (!alive) return;
+        setIsWebDavConfigured(!!cfg);
+      })
+      .catch(err => {
+        // 读不到配置 ⇒ 保守地当成「没配过」（默认折叠）。
+        // 读失败不该把整页变成一个错误 —— 用户要改的是主题，不是云盘。
+        logWarn('[OptionsPage] 读取 WebDAV 配置失败，自带存储区块按未配置处理:', err);
+      });
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  /**
+   * 「回到 TapStack」（2026-10-20 第二轮审计）。
+   *
+   * 【为什么要显式出口】设置页是 `open_in_tab: true` 打开的**独立标签页**。
+   * 用户改完设置想回会话列表，按浏览器的「后退」常常根本没用 ——
+   * 他可能是从扩展详情页的「扩展选项」进来的，那条历史里没有管理页。
+   * ⇒ 用户卡在这个页面里，只能手动去开一个新标签。
+   *
+   * 【为什么不关掉这个标签页】用户可能是在**另一个窗口**里开着管理页
+   * （设置页的用途就是「改设置时不打断工作」）。直接关掉设置页会让他
+   * 回到一个他不认识的空窗口。所以是「切过去」，不是「关掉」。
+   *
+   * 两条路径（已有就切、没有就开）与 `TabManager.openTabManager` 完全一致 ——
+   * 同一个语义，不该有两个实现。
+   */
+  const handleBackToManager = useCallback(async () => {
+    try {
+      const managerUrl = chrome.runtime.getURL(MANAGER_PAGE_PATH);
+      const existing = await chrome.tabs.query({ url: managerUrl + '*' });
+      const action = managerPageExitAction(existing.length > 0);
+      if (action === 'focus-existing' && existing[0].id !== undefined) {
+        await chrome.tabs.update(existing[0].id, { active: true });
+        // 切到那个标签还不够 —— 它可能在**另一个窗口**里，
+        // 而那个窗口可能没有焦点。连带把窗口也点亮，否则用户点了没反应。
+        await chrome.windows.update(existing[0].windowId, { focused: true });
+      } else {
+        await chrome.tabs.create({ url: managerUrl });
+      }
+    } catch (err) {
+      logError('[OptionsPage] 打开管理页失败:', err);
+      showToast('打开管理页失败，请在扩展图标上点一下回到 TapStack', 'error');
+    }
+  }, [showToast]);
+
+  /**
+   * 退出登录（2026-10-20 第二轮审计）。
+   *
+   * 【为什么要本页也能退出】本页现在有登录入口，那它就必须也能退出 ——
+   * 否则用户在这页登录了账号，却只能跑到管理页去退。
+   *
+   * 失败必须出声：静默失败会让用户以为已退出，而实际上仍是登录态
+   * （与管理页的那条路径同一纪律）。
+   */
+  const handleSignOut = useCallback(async () => {
+    try {
+      await dispatch(signOut()).unwrap();
+      showToast('已退出登录', 'success');
+    } catch (err) {
+      logError('[OptionsPage] 退出登录失败:', err);
+      showToast('退出登录失败，请重试', 'error');
+    }
+  }, [dispatch, showToast]);
+
   const handleToggleNotifications = useCallback(async () => {
     dispatch(toggleShowNotifications());
     const saveError = await dispatchSaveSettings(dispatch);
@@ -306,6 +446,34 @@ const OptionsContent: React.FC = () => {
     const saveError = await dispatchSaveSettings(dispatch);
     if (saveError) showToast(saveError, 'error');
   }, [dispatch, showToast]);
+
+  // ── 2026-10-20 审计 A-9：showFavicons / showTabCount 的**真入口** ────────
+  // 修复前这两个设置存着、上云着，却没有任何入口也没有任何读取方 ——
+  // favicon 永远显示、标签数量永远显示，用户拨不动。
+  //
+  // 【为什么要回滚】dispatch 已经把 Redux 改了，但 dispatchSaveSettings 可能
+  // 失败（磁盘写不进去）⇒ 界面显示「已关」而存储里还是「开」。
+  // 与 handleToggleAutoSync 同一纪律：保存失败就把 UI 收回磁盘真值，
+  // 并用一条 toast 说清「失败原因 + 现在实际是什么状态」。
+  const handleToggleShowFavicons = useCallback(async () => {
+    const next = !settings.showFavicons;
+    dispatch(setShowFavicons(next));
+    const saveError = await dispatchSaveSettings(dispatch);
+    if (saveError) {
+      dispatch(setShowFavicons(settings.showFavicons));
+      showToast(`${saveError}（网站图标开关已恢复为${settings.showFavicons ? '显示' : '隐藏'}）`, 'error');
+    }
+  }, [dispatch, settings.showFavicons, showToast]);
+
+  const handleToggleShowTabCount = useCallback(async () => {
+    const next = !settings.showTabCount;
+    dispatch(setShowTabCount(next));
+    const saveError = await dispatchSaveSettings(dispatch);
+    if (saveError) {
+      dispatch(setShowTabCount(settings.showTabCount));
+      showToast(`${saveError}（标签数量开关已恢复为${settings.showTabCount ? '显示' : '隐藏'}）`, 'error');
+    }
+  }, [dispatch, settings.showTabCount, showToast]);
 
   const handleToggleAutoSync = useCallback(async () => {
     const nextEnabled = !settings.syncEnabled;
@@ -328,7 +496,9 @@ const OptionsContent: React.FC = () => {
       // `false` 上 —— 页面提示行已经改口说「已登录」，点开关却仍被按「未登录」拒绝。
       const fresh = await refreshBackendStatus();
       if (!canEnableAutoSync(fresh, isAuthenticated)) {
-        showToast(autoSyncBlockedCopy(fresh, isAuthenticated), 'error');
+        // '本页'：设置页没有「⋯」菜单 —— 登录入口在**本页**顶部的
+        // 「登录 / 注册」按钮上。说「菜单」会让用户去找一个不存在的菜单。
+        showToast(autoSyncBlockedCopy(fresh, isAuthenticated, '本页'), 'error');
         return;
       }
     }
@@ -383,7 +553,11 @@ const OptionsContent: React.FC = () => {
     // 措辞也必须按后端分开：云端要的是**登录**，不是「重新输入应用密码」。
     if (backendStatus.backendId === 'supabase') {
       if (!isAuthenticated) {
-        return '尚未登录 TapStack 云端：自动同步即使打开也不会运行（后台每轮都会因未登录跳过）。请先在右上角菜单登录。';
+        // ── 2026-10-20 第二轮审计：这是一句**指向不存在的东西**的话 ──────
+        // 原文案让用户「去右上角菜单登录」—— 而**设置页没有右上角菜单**
+        // （那是管理页顶栏的东西）。用户照做得到的是「找一个不存在的菜单」。
+        // 现在指向本页真实存在的「登录 / 注册」按钮。
+        return loginHintCopy('supabase');
       }
       return settings.syncEnabled
         ? `已开启：每 ${settings.syncIntervalMinutes} 分钟在后台自动同步一次。`
@@ -461,13 +635,105 @@ const OptionsContent: React.FC = () => {
     <div className="app-shell theme-shell min-h-screen dark:text-gray-100">
       <div className="max-w-3xl mx-auto px-4 sm:px-6 py-8 sm:py-10 space-y-6">
         <header>
-          <h1 className="text-2xl font-semibold tracking-tight text-gray-900 dark:text-gray-50">
-            TapStack 设置
-          </h1>
+          {/* ── 出口：回到会话列表（2026-10-20 第二轮审计）────────────────
+              设置页是独立标签页，从扩展详情页进来时浏览器历史里**没有**
+              管理页 ⇒ 「后退」不是可靠的出路。必须有一条永远存在的显式出口。
+              这条链接在页首第一屏，不需要用户先滚。 */}
+          <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+            <h1 className="text-2xl font-semibold tracking-tight text-gray-900 dark:text-gray-50">
+              TapStack 设置
+            </h1>
+            <button
+              type="button"
+              onClick={() => {
+                void handleBackToManager();
+              }}
+              // ── 颜色用 theme-text-primary 而不是 theme-accent-text ──────────
+              // 真机实测（scripts/prod-a11y.mjs）：accent 作 13px 小字时，
+              // apple 浅色 4.34:1、claude 浅色 4.22:1，**都低于 AA 的 4.5:1**。
+              // 根因是 accent 是**当背景色**调的（配 --color-accent-fg 用），
+              // 拿来当墨色就不够深。theme-text-primary 是主题的最强文字色，
+              // 各主题实测均远高于 4.5:1。
+              //
+              // 这个按钮是**次级导航**（回列表），不是主 CTA ——
+              // 主 CTA 是下面账号区的「登录 / 注册」（走 theme-cta：
+              // accent 当底、accent-fg 当字，那才是 accent 的正确用法）。
+              className="inline-flex items-center gap-1.5 rounded-lg border theme-border-default px-3 py-1.5 text-sm font-medium theme-text-primary transition-colors hover:theme-btn-hover focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary-500"
+            >
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                className="h-4 w-4"
+                fill="none"
+                viewBox="0 0 24 24"
+                stroke="currentColor"
+                strokeWidth={2}
+                aria-hidden="true"
+                focusable="false"
+              >
+                <path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" />
+              </svg>
+              回到 TapStack
+            </button>
+          </div>
           <p className={`mt-2 ${hintCls}`}>
             设置保存在本机浏览器中，改动即时生效。「⋯」菜单里的「设置…」可再次进入本页。
           </p>
         </header>
+
+        {/* ── 账号区（2026-10-20 第二轮审计）──────────────────────────────
+            设置页此前**没有任何登录入口**，而它的提示文案却让用户
+            「去右上角菜单登录」—— 而本页没有右上角菜单。
+            用户照做得到的是「找一个不存在的菜单」，于是云端用户
+            （默认后端）永远开不了自动同步，也不知道为什么。
+
+            现在本页自带登录 / 退出入口。
+
+            ⚠️ 用自带存储（WebDAV）的人**不显示这一块**：TapStack 账号
+            对他毫无意义（账号由他自己的云盘提供）。给一个 WebDAV 用户
+            显示「去登录」是纯噪音，还会让他以为不用 WebDAV 就不能用这个扩展。
+            判据见 optionsAccount.accountPanelMode。 */}
+        {accountMode === 'not-needed' ? null : (
+          <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border theme-border-default theme-bg-elevated px-4 py-3">
+            {accountMode === 'signed-in' ? (
+              <>
+                <div className="min-w-0">
+                  <div className="text-sm font-medium theme-text-primary">
+                    已登录 TapStack 云端
+                  </div>
+                  <div className={`mt-0.5 truncate ${hintCls}`}>{authUserEmail ?? '账号已登录'}</div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    void handleSignOut();
+                  }}
+                  className="shrink-0 rounded-lg border theme-border-default px-3 py-1.5 text-sm font-medium theme-text-secondary transition-colors hover:theme-btn-hover focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary-500"
+                >
+                  退出登录
+                </button>
+              </>
+            ) : (
+              <>
+                <div className="min-w-0">
+                  <div className="text-sm font-medium theme-text-primary">
+                    尚未登录 TapStack 云端
+                  </div>
+                  <div className={`mt-0.5 ${hintCls}`}>
+                    登录后自动同步才能运行。本页下方「数据同步」里的自动同步开关
+                    在未登录时会被拒绝 —— 登录后才能打开。
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setAuthModal('login')}
+                  className="shrink-0 rounded-lg theme-cta px-3 py-1.5 text-sm font-semibold focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary-500"
+                >
+                  登录 / 注册
+                </button>
+              </>
+            )}
+          </div>
+        )}
 
         {/* ── 读取失败必须挡在表单之外 ──────────────────────────────────
             读失败时 Red 那一份 Redux 里是**出厂默认值**，而 saveSettings 是
@@ -590,7 +856,13 @@ const OptionsContent: React.FC = () => {
                   ))}
               </div>
               <p className={`mt-2 ${hintCls}`}>
-                间隔越短，跨设备看到新内容越快，但出站流量也越多。
+                {/* 2026-10-20 第二轮审计：这一档**始终渲染**（仓库里已定的
+                    2026-10-17 B8 决定，配套守卫 tests/syncStatusHonesty.test.ts
+                    钉着「档位行：**始终渲染**」）。但「始终渲染」不等于
+                    「不生效也要说」—— 自动同步关着时，用户改这一档什么都不会发生。
+                    把这件事写清楚，比把控件藏起来诚实（藏起来会让人以为
+                    这个功能不存在）。判据与文案都在 optionsPageIa。 */}
+                {syncIntervalHint(settings.syncEnabled)}
               </p>
             </div>
           </section>
@@ -601,16 +873,59 @@ const OptionsContent: React.FC = () => {
             <h3 className="sr-only" id="sec-webdav">
               自带存储配置
             </h3>
-            <SectionTitle
-              title="自带存储配置"
-              hint="填好后点「保存并启用」并先测试连接 —— 切换同步方式不会替你验证地址是否可用。"
-            />
 
-            {/* 这里**无条件**渲染：WebDAV 表单在设置页里不再受
-                「syncBackend 是不是 webdav」约束（那正是上一轮修掉的死锁 ——
-                面板要切过去才出现，切换入口又在面板里）。
-                独立页面天然没有这个循环依赖：用户想配就能配。 */}
-            <WebDavSettings />
+            {/* ── 2026-10-20 第二轮审计：默认折叠 ─────────────────────────
+                这块表单是设置页里**最长**的一块（地址、账号、应用密码、
+                加密口令、测试连接、保存、清除配置）。而 90% 的用户用默认的
+                Supabase 后端，**永远不碰它** —— 默认展开等于让一块用不到的
+                表单占掉首屏，把真正要设的「同步方式」「自动同步」挤到下面。
+
+                判据见 optionsPageIa.shouldCollapseWebDavSection：
+                  · 从没配过 + 用的是云端 ⇒ 折叠；
+                  · 已经配过 ⇒ 展开（他每次进来都想一眼看到「配好了」）；
+                  · 用的是自带存储 ⇒ 展开（这块表单是他要用的）。
+
+                ⚠️ 折叠**不是**「按 syncBackend 条件渲染」——
+                那样就回到上一轮修掉的死锁了（面板要切过去才出现，
+                切换入口又在面板里）。这里面板**永远在**，只是默认收起来。
+                用户随时能展开。 */}
+            <button
+              type="button"
+              onClick={() => setWebDavExpanded(!isWebDavPanelExpanded)}
+              aria-expanded={isWebDavPanelExpanded}
+              aria-controls="webdav-settings-panel"
+              className="w-full flex items-center justify-between gap-3 text-left rounded-lg px-1 py-1 -mx-1 hover:theme-btn-hover focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary-500"
+            >
+              <span className="min-w-0">
+                <span className="block text-base font-semibold theme-text-primary">
+                  自带存储配置
+                </span>
+                <span className={`mt-0.5 block ${hintCls}`}>
+                  {isWebDavConfigured
+                    ? '已配置。填好后点「保存并启用」并先测试连接 —— 切换同步方式不会替你验证地址是否可用。'
+                    : '填好后点「保存并启用」并先测试连接 —— 切换同步方式不会替你验证地址是否可用。'}
+                </span>
+              </span>
+              <ChevronIcon isExpanded={isWebDavPanelExpanded} className="shrink-0 theme-text-muted" />
+            </button>
+
+            {/* 收起时用**两个**通道把内容移出可交互树：
+                · hidden —— 让浏览器真的把它移出 Tab 序列（否则键盘用户会
+                  Tab 进一片看不见的输入框，盲按 Enter 就可能提交一份表单）；
+                · aria-hidden —— 告诉读屏软件它不存在。
+                先例：ThemeStyleSelector 的主题列表同一套做法
+                （tests/a11yLists.test.ts 钉着它）。 */}
+            <div
+              id="webdav-settings-panel"
+              {...collapsiblePanelState(isWebDavPanelExpanded)}
+              className="mt-4"
+            >
+              {/* 这里**无条件**渲染：WebDAV 表单在设置页里不再受
+                  「syncBackend 是不是 webdav」约束（那正是上一轮修掉的死锁 ——
+                  面板要切过去才出现，切换入口又在面板里）。
+                  独立页面天然没有这个循环依赖：用户想配就能配。 */}
+              <WebDavSettings />
+            </div>
           </section>
           {/* ── 标签页 ────────────────────────────────────────────────── */}
           <section className={card} aria-labelledby="sec-tabs">
@@ -635,7 +950,13 @@ const OptionsContent: React.FC = () => {
                 // 拖拽是连续手势，弹框与拖后回滚都是新交互且更差）。
                 // 设置页写「会先确认」而实际不确认，用户按「我开了保护」的
                 // 预期行事 ⇒ 真的丢了一组会话。
-                hint="删除整个会话、批量删除时先弹确认；用 ✕ 删掉会话里最后一条标签（等于删掉整个会话）也会先确认。单个标签页的 ✕ 直接删；把最后一条标签拖到别的会话会直接让整个会话消失，不受本开关保护。"
+                //
+                // ── 2026-10-20 审计 A-3：锁定会话的删除**始终**确认 ────────
+                // 这个开关管的是「日常删除要不要问一句」；删除锁定会话是
+                // 越权动作（用户显式保护过它），开关关掉就悄悄删，等于把
+                // 「锁定」变回一句谎话。所以这里必须写明例外，否则用户会
+                // 以为关掉开关后锁定会话一点就掉。
+                hint="删除整个会话、批量删除时先弹确认；用 ✕ 删掉会话里最后一条标签（等于删掉整个会话）也会先确认。单个标签页的 ✕ 直接删；把最后一条标签拖到别的会话会直接让整个会话消失，不受本开关保护。锁定的会话无论开关如何，删除前都会先提示「该会话已锁定」。"
                 checked={settings.confirmBeforeDelete}
                 onToggle={handleToggleConfirmDelete}
               />
@@ -697,10 +1018,52 @@ const OptionsContent: React.FC = () => {
                   `hidden`，是自动化与键盘用户的死区。 */}
               <ThemeStyleSelector alwaysExpanded />
             </div>
+
+            {/* ── 2026-10-20 审计 A-9：两个「真被读」的显示开关 ──────────────
+                这两个开关挂在「外观」小节（不是「标签页」）：它们决定的是
+                **界面上显示什么**，不是「保存时做什么」。放错小节会让用户
+                在「保存时收集固定标签页」旁边找到「显示网站图标」——
+                那是两件完全不同的事。
+                逐条对应关系（改 UI 时别只改一处）：
+                  显示网站图标 → 会话内的标签行 + 搜索结果里的标签行
+                  显示标签数量 → 会话卡片徽章 + 搜索结果徽章 + 顶栏「N 标签」 */}
+            <div className="divide-y divide-gray-200 dark:divide-gray-700">
+              <ToggleRow
+                label="显示网站图标"
+                hint="在会话的标签行和搜索结果里显示每个网站的图标。关掉后这些位置不再显示图标。"
+                checked={settings.showFavicons}
+                onToggle={handleToggleShowFavicons}
+              />
+              <ToggleRow
+                label="显示标签数量"
+                hint="在会话卡片、搜索结果和顶栏显示标签数量。关掉后这些位置的数字不再显示。"
+                checked={settings.showTabCount}
+                onToggle={handleToggleShowTabCount}
+              />
+            </div>
           </section>
 
         </div>
       </div>
+
+      {/* ── 登录 / 注册弹窗（2026-10-20 第二轮审计）──────────────────────
+          设置页此前**没有登录入口**，而提示文案却让用户「去右上角菜单登录」
+          —— 本页没有右上角菜单。现在本页自带入口。
+
+          ⚠️ 为什么挂在这里而不是页首那一行：AuthModal 走 createPortal
+          渲染到 document.body，所以它在 JSX 里的**位置不影响**视觉位置
+          （它固定居中于视口）。挂在组件树末尾是为了不打断页首的阅读顺序。
+
+          ⚠️ 登录成功会触发一次整库下载（restoreAfterLogin）——
+          那是**显式意图**（用户刚敲了账号密码，就是想看到另一台设备的会话），
+          不是后台轮询。所以在这里挂 AuthModal 是安全的：
+          设置页不挂 AuthProvider（那才是「打开设置就变成一次后台同步」的原因），
+          而登录这件事本身就是用户主动做的。 */}
+      <AuthModal
+        visible={authModal !== null}
+        initialTab={authModal ?? 'login'}
+        onClose={() => setAuthModal(null)}
+      />
     </div>
   );
 };

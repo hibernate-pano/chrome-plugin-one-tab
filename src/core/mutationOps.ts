@@ -90,14 +90,39 @@ export const removedGroupIds = (before: TabGroup[], after: TabGroup[]): string[]
   return before.filter(g => !kept.has(g.id)).map(g => g.id);
 };
 
-/** saveGroup 语义（对应 tabSlice.saveGroup）：新组置顶，按 createdAt 倒序 */
+/**
+ * saveGroup 语义：新组置顶，按 createdAt 倒序。
+ *
+ * ── 2026-10-20 D-9：同 id 必须**唯一** ─────────────────────────────────
+ * 修复前这里无条件 `[{ ...group, lastOp: stamp }, ...groups]`：若 groups 里
+ * 已经有同 id 的组，结果里就有**两条同 id**。
+ *
+ * 为什么这是数据安全缺陷（不是「小瑕疵」）：
+ *   · 同 id 两条 ⇒ 「哪一份是真的」不可判定。两份内容可能不同（一次保存
+ *     带新内容、一次是旧内容）⇒ 后续按 id 找组、取组、下发组，走的都是
+ *     「第一条命中」，于是另一条成了**影子数据**；
+ *   · 影子数据会被上传：云端那一行只有一个 id ⇒ 影子要么覆盖真身
+ *     （内容回退）要么被丢掉（取决于顺序），而两端都可能不一致；
+ *   · 合并侧按 id 建 Map（mergeOpStamped 的 byId）⇒ 影子在合并时**被静默
+ *     吞掉**（后写的赢）⇒ 云端与本地谁也不报错。
+ *
+ * 修法：**按 id 去重**（新组赢）。为什么是「新组赢」而不是「旧组赢」：
+ *   saveGroup 的语义是「保存/更新这一组」——本次保存的内容是更新的那份，
+ *   旧的同 id 组是上一轮留下的残留。保留旧的等于丢弃用户刚保存的内容。
+ *
+ * ⚠️ 本函数是**纯函数**（无 IO），去重是它**自己**的责任：调用方
+ * （SW 侧 mutationHandlers）不能指望「上游已经保证 id 唯一」——
+ * 协议 op 可以从任何进程发过来，磁盘上同 id 两条也可能是历史脏数据。
+ */
 export function applySaveGroup(
   groups: TabGroup[],
   group: TabGroup,
   _now: string,
   stamp: OpStamp
 ): TabGroup[] {
-  return [{ ...group, lastOp: stamp }, ...groups].sort(
+  // 同 id 的旧组先出局（本次保存的是更新的那份，见上面的论证）。
+  const withoutSameId = groups.filter(g => g.id !== group.id);
+  return [{ ...group, lastOp: stamp }, ...withoutSameId].sort(
     (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
   );
 }

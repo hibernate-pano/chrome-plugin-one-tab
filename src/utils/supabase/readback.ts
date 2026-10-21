@@ -22,9 +22,9 @@ export interface UploadReadbackExpect {
   /** 期望的云端 is_deleted（省略 = false = 活跃）。覆盖模式上行墓碑时为 true。 */
   isDeleted?: boolean;
   /**
-   * 本次上行的 version。用于区分两种"没写上"：云端 version 更高 = 对端更新、
-   * 本次写入输掉了竞争（OpStamp 合并本来就让先到的写输，不是故障）；云端
-   * version 不更高 = 真被守卫静默吞写，必须报错。
+   * 本次上行的 version。**不用于裁决**（version 是每设备本地计数器，跨设备不可比），
+   * 只在两侧都没有印记（老客户端 / 未迁移 schema）时作为唯一信号，以及在
+   * 吞写诊断里指出「云端是否还在用 version 裁决」。
    */
   version?: number | null;
 }
@@ -38,21 +38,89 @@ export interface UploadReadbackRow {
   version?: number | null;
 }
 
+/** 云端行的印记（两侧都必须完整：seq 与 device 同时在，才算「有印记」）。 */
+function rowStamp(row: UploadReadbackRow): { d: string; s: number } | null {
+  if (typeof row.last_op_seq !== 'number') return null;
+  if (!row.last_op_device) return null;
+  return { d: String(row.last_op_device), s: row.last_op_seq };
+}
+
 /**
- * 本次写入是否被更新的一侧合法取代（而非被守卫静默吞写）。
+ * 本次写入是否被更新的一侧**按印记全序**合法取代（而非被守卫静默吞写）。
  *
- * 生产库有遗留的 version BEFORE UPDATE 守卫：`NEW.version < OLD.version`
- * 即 RETURN NULL 整行丢弃（HTTP 200、无 error）。设备离线久了本地 version
- * 落后云端时，它的上传会被这条守卫静默吞掉——若读回校验只认"不一致即失败"，
- * 整台上传就会永久失败；而上传失败又会跳过下载（避免用旧云端覆盖本地），
- * 该设备就此既不能上传也不能下载，只能靠连续编辑把 version 一格格追平。
+ * ── 2026-10-20：判据从「version」改成「印记全序」 ────────────────────────
  *
- * 云端 version 更高说明对端确实更新、这次写入按设计输掉，标记为"已被取代"
- * 让上传继续走完；数据没有丢（云端存着更新的那份），本地下次下载会合并回来。
+ * 旧判据只看 version（`row.version > expect.version` ⇒ 判「被取代」）。
+ * 但 version 是**每台设备各自的本地计数器**，跨设备不可比：设备 A 改了 3 次
+ * （version=4），设备 B 离线期间改了 1 次（version=2），B 的印记更大
+ * （seq=5001 > 5000）= **B 才是更晚保存的一方**。用 version 判「谁取代谁」，
+ * 恰好会把**更新的一方**判成被取代 ——
+ *
+ *   服务端 guard_tab_group_version 判 `NEW.version < OLD.version` → RETURN NULL
+ *   → 整行静默吞写（HTTP 200、无 error）
+ *   → 读回校验把这次吞写判成「被更新一侧合法取代」（不报错）
+ *   → 上传报成功 → pending_upload 被清 → 水位被抬
+ *   → 那一组的上行通道被永久关闭，那次编辑**在两台设备上都永久丢失**。
+ *
+ * 现在：**印记全序是唯一裁决源**（与 core/opStamp.compareStamps 同口径，
+ * 与服务端 guard_tab_group_op_stamp 同一把尺子）：
+ *   · 两侧都有印记 ⇒ 只有「云端印记**严格更新**」才算被取代（本次写入按
+ *     合并语义输掉，不是故障）；云端印记更旧 ⇒ 本次写入本该赢却没赢上，
+ *     那不是「被取代」而是「被吞写」⇒ 走失败分支（见 isSwallowedByOlderCloudStamp）。
+ *   · 有一侧缺印记（老客户端 / 未迁移 schema，无从比较）⇒ 退回 version
+ *     单判据：此时服务端本来就只按 version 裁决。
  */
 export function isSupersededByCloud(expect: UploadReadbackExpect, row: UploadReadbackRow): boolean {
+  const cloud = rowStamp(row);
+  const local = expect.lastOp ?? null;
+  if (cloud && local) {
+    return compareStamps(cloud, local) > 0;
+  }
   if (expect.version == null || row.version == null) return false;
   return row.version > expect.version;
+}
+
+/**
+ * 本次写入是否**被服务端静默吞掉**（云端还停在更旧的印记上）。
+ *
+ * 判据：云端行的印记**严格小于**本地这次的印记。
+ *   · 本地印记更大 ⇒ 本地才是更晚保存的一方 ⇒ 这次写入本该赢；
+ *     云端却还停在更旧的印记上 ⇒ 写没落盘（守卫 RETURN NULL / RLS 丢行）。
+ *   · 这与「被取代」正好互斥：被取代是云端印记**更新**（按设计输），
+ *     被吞写是云端印记**更旧**（本该赢却没赢上）。
+ *
+ * 为什么要单独判：旧判据把「云端 version 更高」一律当成「被取代」，
+ * 于是本该赢的那次写入被当成合法收敛 ⇒ 上传报成功 ⇒ 静默丢数据。
+ * 吞写必须**报错**：调用方据此保留 pending_upload、下轮重试。
+ */
+export function isSwallowedByOlderCloudStamp(
+  expect: UploadReadbackExpect,
+  row: UploadReadbackRow
+): boolean {
+  const cloud = rowStamp(row);
+  const local = expect.lastOp ?? null;
+  if (!cloud || !local) return false;
+  return compareStamps(cloud, local) < 0;
+}
+
+/**
+ * 吞写的成因提示：云端 version 反而比本地大 ⇒ 云端还在用 version 裁决。
+ *
+ * 2026-10-20 之前，云端同时存在两套裁决规则（version 与印记全序），
+ * 后写的一方只要本地 version 计数更小就会被静默吞掉。迁移
+ * 20261020150000 把 version 降级为「无印记时的兜底」后，这条路径不再存在；
+ * 若线上仍观测到它，说明那个迁移还没在生产库上应用。
+ */
+export function describeVersionGuardRisk(
+  expect: UploadReadbackExpect,
+  row: UploadReadbackRow
+): string | null {
+  if (expect.version == null || row.version == null) return null;
+  if (row.version <= expect.version) return null;
+  return (
+    `云端 version=${row.version} > 本地 version=${expect.version}：` +
+    '云端似乎仍在用 version 裁决（请确认已应用迁移 20261020150000_align_version_guard_with_op_stamp.sql）'
+  );
 }
 
 /**
@@ -114,6 +182,19 @@ export function compareUploadReadback(
       conceded.push(e.id);
       continue;
     }
+    // 【P0-2026-10-20】云端印记比本地更旧 ⇒ 本次写入本该赢却没赢上 = 被静默吞写。
+    // 必须报错（保留 pending_upload、下轮重试），绝不能当成「被取代」放过：
+    // 放过 = 上传报成功 + 水位被抬 = 那一组的上行通道被永久关闭 = 静默丢数据。
+    if (isSwallowedByOlderCloudStamp(e, row)) {
+      const risk = describeVersionGuardRisk(e, row);
+      return {
+        ok: false,
+        reason:
+          `组 ${e.id} 读回印记(${String(row.last_op_device)},${String(row.last_op_seq)})` +
+          `比本地(${e.lastOp?.d},${e.lastOp?.s})更旧：本次写入本该赢却被服务端静默吞写` +
+          (risk ? `（${risk}）` : ''),
+      };
+    }
     if (opts.checkTombstone && row.is_deleted !== undefined && row.is_deleted !== null) {
       const wantDeleted = e.isDeleted === true;
       if (row.is_deleted !== wantDeleted) {
@@ -147,15 +228,22 @@ export function compareUploadReadback(
   };
 }
 
+/**
+ * 上传读回验证。抛错 = 这次写入没落盘（调用方保留 pending_upload、下轮重试）。
+ *
+ * 返回值不是装饰：被取代 / 认输的组**本次并没有写上云**，调用方必须把它们
+ * 从上传水位里剔除 —— 水位一旦把它们算进去，等于宣布「它们已同步」，
+ * 那一组的上行通道就被永久关闭（2026-10-20 的 P0 后果之一）。
+ */
 export async function verifyUploadReadback(
   expect: UploadReadbackExpect[],
   userId: string,
   opts: { checkStamp: boolean; checkTombstone: boolean }
-): Promise<void> {
-  if (expect.length === 0) return;
+): Promise<{ superseded: string[]; conceded: string[] }> {
+  if (expect.length === 0) return { superseded: [], conceded: [] };
   const ids = expect.map(e => e.id);
-  // version 必须取：没有它就无法区分"被守卫静默吞写"与"被更新一侧合法取代"，
-  // 后者若也判失败会让整台设备的上传永久卡死（连带下载被跳过）。
+  // version 必须取：没有它就无法在吞写时指出「云端是否还在用 version 裁决」
+  // （两侧都没有印记时它还是唯一的裁决信号）。
   let cols = 'id, updated_at, version';
   if (opts.checkStamp) cols += ', last_op_device, last_op_seq';
   if (opts.checkTombstone) cols += ', is_deleted';
@@ -174,7 +262,7 @@ export async function verifyUploadReadback(
   if (!cmp.ok) throw new Error(`[upload-verify] ${cmp.reason}`);
   if (cmp.superseded?.length) {
     logInfo(
-      `[upload-verify] ${cmp.superseded.length} 个组被更新一侧合法取代（云端 version 更高），` +
+      `[upload-verify] ${cmp.superseded.length} 个组被更新一侧合法取代（云端印记严格更新），` +
         `按设计让先到的写入输，不计为失败：${cmp.superseded.join(', ')}`
     );
   }
@@ -185,6 +273,7 @@ export async function verifyUploadReadback(
     );
   }
   logInfo(`[upload-verify] 读回校验通过（${expect.length} 组）`);
+  return { superseded: cmp.superseded ?? [], conceded: cmp.conceded ?? [] };
 }
 
 /**

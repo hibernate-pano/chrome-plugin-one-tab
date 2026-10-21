@@ -112,6 +112,11 @@ const cloud = {
   >,
   /** last_op_seq 探测请求的强制失败（模拟网络抖动，非 PGRST204 → 不缓存） */
   probeFailure: 0 as number,
+  /**
+   * 主查询（tab_groups 的 GET）的强制失败（模拟整轮下载失败）。
+   * 0 = 不注入。用于验「下载抛错后，上一轮的跳过清单不得残留」。
+   */
+  mainQueryFailure: 0 as number,
   rows: new Map<string, CloudRow>(),
   /** 老版本 tabs 表（回填源） */
   tabs: [] as CloudRow[],
@@ -233,6 +238,10 @@ globalThis.fetch = (async (input: any, init: RequestInit = {}) => {
     const cols = (params.get('select') ?? 'id').split(',').map(s => s.trim());
     for (const c of cols) {
       if (c !== '*' && cloud.columns[c] === false) return missingColumnRes(c);
+    }
+    // 整轮下载失败（模拟网络断了 / 服务端 500）
+    if (cloud.mainQueryFailure) {
+      return jsonRes({ message: 'boom' }, cloud.mainQueryFailure);
     }
     const limitRaw = params.get('limit');
     const offsetRaw = params.get('offset');
@@ -924,6 +933,100 @@ describe('下载结果 × 组级 LWW 合并', () => {
       localAfter.every(g => g.tabs.every(t => t.url.startsWith('https://'))),
       true,
       '本地存的必须是那份十全十美的 https 标签，没有被内部页污染'
+    );
+  });
+});
+
+// ══════════════════════════════════════════════════════════════════════════
+// 「读不出来的那几组」清单：必须与下载**同一轮**
+//
+// ── 这条不变量为什么重要 ────────────────────────────────────────────────
+//
+// 「读到了什么」与「哪些读不出来」是**两个方法**返回的
+// （`downloadTabGroups()` / `downloadSkippedGroups()`），中间靠一个
+// 模块级变量 `lastDownloadSkipped` 传递。这个设计的全部安全性都压在
+// 一句话上：**清单必须来自同一轮**。
+//
+// 清单被误用的后果不是「多显示一行字」，而是**保护错了对象**：
+// 覆盖下载会拿清单里的 id 去「保留本机那几份」。清单若是上一轮的，
+// 就会保留**这一轮根本与云端无关**的组，同时**不保护**这一轮真正读不
+// 出来的组 ⇒ 真正该保住的那份被物理删除。
+//
+// ── 曾经的漏洞 ──────────────────────────────────────────────────────────
+//
+// 原先 `lastDownloadSkipped` **只在下载成功结束时**赋值，于是
+// 「下载失败」这条路上它保留着上一轮的值。
+// 今天的调用顺序让这个坑踩不到（`downloadGroups()` 先跑、失败就整轮中止，
+// 清单压根不会被读），但那是**顺序的巧合**，不是结构上的保证。
+// 修法：下载**开始时**就清空 ⇒ 「清单要么是本轮的，要么是空的」永远成立。
+// ══════════════════════════════════════════════════════════════════════════
+
+describe('下载：跳过清单必须与下载同一轮', () => {
+  it('成功路径：这一轮没跳过任何会话 ⇒ 清单就是空的（不是上一轮的）', async () => {
+    const { downloadSync } = await import('@/utils/supabase/download');
+
+    // ── 第 1 轮：云端有一行解密失败 ⇒ 它被整组跳过 ────────────────────
+    seedGroup(cloudRow('g-cipher', { tabs_data: `ENCRYPTED_V2_S:${'A'.repeat(96)}` }));
+    seedGroup(cloudRow('g-ok'));
+
+    const firstGroups = await downloadSync.downloadTabGroups();
+    assert.deepEqual(
+      firstGroups.map(g => g.id),
+      ['g-ok'],
+      '前提：解密失败的那行整组跳过'
+    );
+
+    const firstSkipped = await downloadSync.downloadSkippedGroups();
+    assert.equal(
+      firstSkipped.length,
+      1,
+      '前提：这一轮确实有一组读不出来'
+    );
+    assert.equal(firstSkipped[0].id, 'g-cipher');
+
+    // ── 第 2 轮：云端全空（模拟一次「什么都没读到」的下载）──────────
+    cloud.rows.clear();
+    await downloadSync.downloadTabGroups();
+
+    const secondSkipped = await downloadSync.downloadSkippedGroups();
+    assert.deepEqual(
+      secondSkipped,
+      [],
+      '这一轮没跳过任何会话，清单必须是空的 —— ' +
+        '留着上一轮的清单 ⇒ 覆盖下载会保护错对象（该保的不保，不该保的乱保）'
+    );
+  });
+
+  // ↑ 这一条覆盖的是**成功路径**（下载正常结束 ⇒ 末尾赋值覆盖掉上一轮）。
+  //   真正需要「下载**开始时**就清空」的，是下面那条**失败路径** ——
+  //   失败时不会走到末尾的赋值，清空必须发生在开头。
+
+  it('下载抛错后，清单也不得是上一轮的残留', async () => {
+    const { downloadSync } = await import('@/utils/supabase/download');
+
+    // 第 1 轮：一组读不出来
+    seedGroup(cloudRow('g-cipher', { tabs_data: `ENCRYPTED_V2_S:${'A'.repeat(96)}` }));
+    seedGroup(cloudRow('g-ok'));
+    await downloadSync.downloadTabGroups();
+    assert.equal(
+      (await downloadSync.downloadSkippedGroups()).length,
+      1,
+      '前提：这一轮确实有一组读不出来'
+    );
+
+    // 第 2 轮：让下载直接失败
+    cloud.mainQueryFailure = 500;
+    await assert.rejects(
+      () => downloadSync.downloadTabGroups(),
+      '前提：这一轮下载必须失败'
+    );
+
+    const afterFailure = await downloadSync.downloadSkippedGroups();
+    assert.deepEqual(
+      afterFailure,
+      [],
+      '下载失败后清单必须是空的 —— 失败那一轮根本不知道谁读不出来，' +
+        '留着上一轮的清单就是拿「不知道」冒充「知道」'
     );
   });
 });

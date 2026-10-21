@@ -159,6 +159,7 @@ export const useEnhancedToast = () => {
       showSaveSuccess: noop,
       showSaveError: noop,
       showRestoreSuccess: noop,
+      showRestoreSuccessMessage: noop,
       showRestoreError: noop,
       showDeleteSuccess: noop,
       showDeleteError: noop,
@@ -183,6 +184,12 @@ export const useEnhancedToast = () => {
     showSaveSuccess: (count: number) => showNotification('save-success', { count }),
     showSaveError: (error: string) => showNotification('save-error', { error }),
     showRestoreSuccess: (count: number) => showNotification('restore-success', { count }),
+    // ── 2026-10-20 审计 A-1/A-2：自定义成功文案通道 ─────────────────────
+    // 恢复有两条路径（整组 / 单标签），各自的「消费」语义不同
+    // （整组可能因锁定而保留、单标签必然被移除），固定模板说不清。
+    // 这里给出自定义文案的出口，让调用方用 restoreFeedbackCopy 里的
+    // 统一措辞，而不是各自拼字符串。
+    showRestoreSuccessMessage: (message: string) => showNotification('restore-success', undefined, message),
     showRestoreError: (error: string) => showNotification('restore-error', { error }),
     showDeleteSuccess: (message: string) => showNotification('delete-success', { message }),
     showDeleteError: (error: string) => showNotification('delete-error', { error }),

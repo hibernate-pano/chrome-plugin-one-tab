@@ -48,7 +48,8 @@ html:not([data-theme]) {
   --color-text-primary: #111827;
   --color-text-secondary: #374151;
   --color-text-tertiary: #6b7280;
-  --color-text-muted: #9ca3af;
+  /* 2026-10-20：兜底也必须 ≥4.5:1（页脚版本号是 12px 小字）。与 legacy 浅色一致。 */
+  --color-text-muted: #5f6a78;
   --color-border-default: #e5e7eb;
   --color-border-subtle: #f3f4f6;
   --color-border-strong: #d1d5db;
@@ -56,8 +57,11 @@ html:not([data-theme]) {
   --color-accent-hover: #1d4ed8;
   --color-accent-subtle: #dbeafe;
   --color-accent-fg: #ffffff;
-  --color-warning: #f59e0b;
-  --color-danger: #ef4444;
+  /* 2026-10-20：警告/危险色在本仓只当文字色用 ⇒ 浅底要 ≥4.5:1。与 legacy 浅色一致。 */
+  --color-warning: #b45309;
+  --color-danger: #b91c1c;
+  /* 焦点环墨色（2026-10-20 新增）：全局 :focus-visible 读它，浅底 6.41:1。 */
+  --color-focus-ring: #1d4ed8;
   --color-success: #22c55e;
   --shadow-card: 0 1px 3px rgba(0, 0, 0, 0.1);
   --shadow-card-hover: 0 4px 6px rgba(0, 0, 0, 0.1);
@@ -76,7 +80,8 @@ html:not([data-theme]).dark {
   --color-text-primary: #f9fafb;
   --color-text-secondary: #e5e7eb;
   --color-text-tertiary: #9ca3af;
-  --color-text-muted: #6b7280;
+  /* 2026-10-20：深色兜底同样要 ≥4.5:1。与 legacy 深色一致。 */
+  --color-text-muted: #a8b0bc;
   --color-border-default: #374151;
   --color-border-subtle: #1f2937;
   --color-border-strong: #4b5563;
@@ -85,7 +90,9 @@ html:not([data-theme]).dark {
   --color-accent-subtle: #1e3a8a;
   --color-accent-fg: #0f172a;
   --color-warning: #fbbf24;
-  --color-danger: #f87171;
+  --color-danger: #fca5a5;
+  /* 焦点环墨色（深色下）：次级底 8.14:1。 */
+  --color-focus-ring: #93c5fd;
   --color-success: #4ade80;
   --shadow-card: 0 1px 3px rgba(0, 0, 0, 0.3);
   --shadow-card-hover: 0 4px 6px rgba(0, 0, 0, 0.4);
@@ -215,6 +222,30 @@ html:not([data-theme]).dark {
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
     text-rendering: optimizeLegibility;
+
+    /* ── 2026-10-20 几何修复：滚动条出现/消失不许让整页横向抖一下 ────────
+     *
+     * 真机实测（400px 视口，唯一变量是会话数量）：
+     *   12 个会话（有滚动条）→ clientWidth 392 → 品牌盒 80px → 「TapStack」
+     *                          被裁成「TapSta」
+     *    2 个会话（无滚动条）→ clientWidth 400 → 品牌盒 88px → 刚好放下
+     *
+     * 也就是说：**列表一变长，整条顶栏就横向挪 8px**（品牌盒、操作区、
+     * 搜索框全部错位），而且长列表恰好是「品牌名被裁」的那一档 ——
+     * 两件事其实是同一件事。
+     *
+     * 修法：`overflow-y: scroll` 让滚动条**恒定占位**，可用宽度不再随
+     * 列表长度变化。
+     *
+     * 为什么不用 `scrollbar-gutter: stable`：本仓把 `::-webkit-scrollbar`
+     * 定制成了 6px 的**占位型**滚动条（见下方滚动条样式），实测下
+     * `html { scrollbar-gutter: stable }` 在 Chrome 里**不生效** ——
+     * 根元素的 scrollbar-gutter 不会作用到视口（真机实测：
+     * 短内容 400px / 长内容 392px，照样抖）。
+     * 只有让根元素自己成为滚动容器（`overflow-y: scroll`）才真的恒定：
+     * 实测短/长内容都是 392px。
+     */
+    overflow-y: scroll;
   }
 
   /* 
@@ -291,9 +322,14 @@ html:not([data-theme]).dark {
     color: var(--color-text-primary);
   }
 
-  /* Focus 样式 */
+  /* Focus 样式
+     2026-10-20：原先用 `var(--color-accent)` —— 那是「填充色」，不是「墨色」。
+     在 claude 浅色（accent #d97757 压 #f0eee6）只有 3.05:1，而且主按钮的底色
+     就是 accent ⇒ 环和按钮底完全同色，焦点环等于没画。
+     现在改读专用令牌 --color-focus-ring（6 套主题 × 明暗各一个值，实测 ≥3:1，
+     WCAG 2.2 非文本对比要求）。 */
   :focus-visible {
-    outline: 2px solid var(--color-accent);
+    outline: 2px solid var(--color-focus-ring);
     outline-offset: 2px;
     border-radius: 4px;
   }
@@ -410,18 +446,22 @@ html:not([data-theme]).dark {
    * 这个毛病；claude / apple / chrome 三套新主题没有覆盖，于是落到这条兜底上。
    * 兜底本身必须是安全边界 —— 覆盖是可选的，兜底不是。
    *
-   * 环色取 `--color-accent-text` 而不是 `--color-accent`：后者与 .btn-primary 的填充
+   * 环色取 `--color-focus-ring` 而不是 `--color-accent`：后者与 .btn-primary 的填充
    * 同色（这正是原写法失效的根因），而且它作为「画在页面底色上的墨色」对比度不够 ——
    * claude 浅色主题下 accent 对页面底色只有 2.69:1，低于 WCAG 2.2 非文本对比的 3:1。
-   * `--color-accent-text` 正是本仓「当墨色用的 accent」令牌（三套新主题都定义了它，
-   * 全局也有默认），语义与这里完全一致。
+   *
+   * 2026-10-20：这条原来读 `--color-accent-text`（本仓「当墨色用的 accent」令牌）。
+   * 现在统一读新令牌 `--color-focus-ring` —— 它的取值与各主题的 accent-text 相同，
+   * 但名字直接说明用途（焦点环墨色），而且 6 套主题 × 明暗都必须显式定义它，
+   * 不会再出现「某个主题忘了定义 ⇒ 焦点环退回浏览器默认近黑色」的情况
+   * （2026-10-20 审计 D3：--color-focus-ring 此前压根没定义过）。
    *
    * 为什么不改用 `var(--focus-ring)`：那是给输入框这类浅色控件用的**半透明**光环
    * （如 rgba(217,119,87,0.22)），叠在页面上只有 1.1:1 左右；而 chrome 主题的
    * --focus-ring 干脆就等于 accent（#1a73e8），换过去等于没修。
    */
   .btn:focus-visible {
-    outline: 2px solid var(--color-accent-text);
+    outline: 2px solid var(--color-focus-ring);
     outline-offset: 2px;
   }
 
@@ -498,7 +538,11 @@ html:not([data-theme]).dark {
   }
 
   .input:focus {
-    @apply outline-none;
+    /* 2026-10-20：原先是 `@apply outline-none`（= outline: 2px solid transparent），
+       它把全局 :focus-visible 的焦点环整条吃掉了 —— 搜索框聚焦时只留下一圈
+       accent-subtle 的半透明柔光（叠在白底上约 1.1:1），等于没有焦点指示。
+       现在不再声明 outline ⇒ 全局 :focus-visible 的 2px 环（读 --color-focus-ring）
+       照常画出来；鼠标点击时 :focus-visible 不匹配，视觉与从前一致。 */
     box-shadow: 0 0 0 3px var(--color-accent-subtle);
     background: var(--color-bg-secondary);
     border-color: var(--color-accent);
@@ -537,7 +581,8 @@ html:not([data-theme]).dark {
   .search-bar-input {
     @apply w-full px-4 py-2 pl-10 rounded-lg;
     @apply transition duration-200;
-    @apply focus:outline-none;
+    /* 2026-10-20：删掉 `focus:outline-none` —— 它会把全局 :focus-visible 的
+       焦点环吃掉（同 .input:focus 的问题）。 */
     background-color: var(--color-bg-secondary);
     border: 1px solid var(--color-border-default);
     color: var(--color-text-primary);
@@ -561,7 +606,8 @@ html:not([data-theme]).dark {
     @apply absolute inset-y-0 right-0 pr-3;
     @apply transition-all duration-200 ease-in-out;
     @apply hover:scale-110;
-    @apply focus:outline-none;
+    /* 2026-10-20：删掉 `focus:outline-none` —— 键盘 Tab 到清除按钮时原本没有任何
+       焦点痕迹（WCAG 2.4.7）。:focus-visible 只在键盘聚焦时匹配，鼠标点击不受影响。 */
     @apply flex items-center;
     color: var(--color-text-muted);
   }
@@ -647,7 +693,7 @@ html:not([data-theme]).dark {
      * `overflow-hidden` 原本是为了让**折叠动画**（grid 0fr→1fr）在圆角内
      * 正确裁剪子内容。但它同时把窄屏「更多」菜单（absolute 定位在卡内）
      * 也裁了：1 个标签的会话里，「锁定会话」「删除会话」两行落在卡片
-     * 边界之外 ⇒ 被切掉且**完全点不到**（实测 400px：裁掉 90px，
+     * 边界之外 ⇒ 被切掉且**完全点不到**（实测 400px 宽的窗口：裁掉 90px，
      * elementFromPoint 命中的是背后的列表）。
      *
      * 而那恰恰是「刚保存完、马上想删掉」的新手最常见的场景 ——
@@ -949,7 +995,7 @@ html:not([data-theme]).dark {
    * transform **永久保留** —— 于是每张会话卡都成了一个 stacking context。
    * 后果：卡内 `position: absolute` 的「更多」菜单（z-30）被**困在**自己
    * 那张卡的层叠上下文里，画在下一张卡之下 ⇒ 菜单下半截点不到
-   * （实测 400px：1 个标签的会话里「锁定会话」「删除会话」两行
+   * （实测 400px 宽的窗口：1 个标签的会话里「锁定会话」「删除会话」两行
    * elementFromPoint 命中的是背后的列表）。
    *
    * 修法：给「有展开菜单的卡」一个高于兄弟卡的 z-index。
@@ -1176,6 +1222,13 @@ html:not([data-theme]).dark {
   color: var(--color-text-muted);
 }
 
+/* 警告色工具类（2026-10-20 审计 D-2：设置页 WebDAV 的「口令没有找回入口」
+   这类安全告警）。用主题的 --color-warning，而不是写死 Tailwind amber ——
+   写死的 amber-600 在浅底上只有 3.19:1，而这句恰恰是最需要看清的一句。 */
+.theme-text-warning {
+  color: var(--color-warning);
+}
+
 /* 危险色工具类（2026-10-19 审计 V-3：窄屏「更多」菜单里的删除项）。
    用主题的 --color-danger，而不是写死 rose —— 写死的那一套在暖色主题下
    与底色不搭。 */
@@ -1269,6 +1322,11 @@ html:not([data-theme]).dark {
   -webkit-backdrop-filter: var(--panel-blur);
 }
 .theme-accent-border { border-color: var(--color-accent-border); }
+/* 强调色当作「边框墨色」用（认证弹窗激活标签页的 2px 下划线）。
+   不用 --color-accent-border：那是 45% 透明度的淡描边，压在浅底上只有
+   1.6:1 —— 选中指示线看不见。--color-accent-text 是「当墨色用的 accent」，
+   在 6 套主题的弹层底上都能看清（非文本对比 ≥3:1）。 */
+.theme-accent-ink-border { border-color: var(--color-accent-text); }
 .theme-accent-wash { background: var(--color-accent-wash); }
 .theme-well { background: var(--color-well); }
 .theme-title-serif { font-family: var(--font-family-serif, inherit); }
@@ -1375,7 +1433,7 @@ html:not([data-theme]).dark {
  *   ② ≤640px 时搜索**独占一行**（grid-template-areas），不再与品牌/操作区抢宽度
  *   ③ 搜索轨道的下限（minmax）设在**轨道**上，而不是元素上 ——
  *      设在元素上时，元素会溢出自己的格子并**压到右边的操作区上**
- *      （第一版修复就是这么做的：400px 下搜索框与上传按钮叠在一起）。
+ *      （第一版修复就是这么做的：400px 宽的窗口下搜索框与上传按钮叠在一起）。
  */
 @media (max-width: 640px) {
   /* 窄屏：品牌与操作区一行，搜索独占第二行整宽。
@@ -1420,9 +1478,27 @@ html:not([data-theme]).dark {
   }
 }
 
-/* ≤380px：品牌只留图标。320px 下「TapStack」文字 + 操作区 228px 会超出，
-   两者重叠（主审真机实测：brand∩actions 面积 479px²）。 */
-@media (max-width: 380px) {
+/* ── 2026-10-20 几何修复：品牌名在任何宽度下都不许被「半个字」地裁掉 ──────
+ *
+ * 阈值来自**实测**，不是拍脑袋（推导过程见 layout/brandLayout.ts）：
+ *
+ *   视口 400px → clientWidth 392（滚动条 gutter 8px）→ 品牌盒 79.6px
+ *              而「图标+文字」需要 20 + 8 + 59.8 = 87.8px ⇒ **缺 8.2px**
+ *              ⇒ 「TapStack」被 overflow:hidden 切成「TapSta」（真机复现）
+ *   视口 412px → clientWidth 404 → 品牌盒 89.7px ⇒ 刚好放得下
+ *
+ * 物理上「图标+文字+操作区+内边距」需要 87.8 + 8 + 280 + 24 = 399.8px，
+ * 400px 视口**放不下**（再扣掉滚动条 gutter 还差 8.2px）—— 必须有一条
+ * 让位路径：品牌只是标识，操作区是功能，让位的是标识。
+ *
+ * 阈值取 420px 而不是实测的 409px：滚动条 gutter 因平台而异
+ * （macOS 8px / Windows 15–17px），媒体查询只看得到视口宽度，
+ * 留 11px 余量 ⇒ 任何平台都不会再出现半个字。
+ *
+ * 这一档只负责「默认就该降级」；万一还是不够（平台 gutter 更宽、
+ * 用户放大字号），运行期由 brandLayout.ts 的判据把名字整体隐藏。
+ */
+@media (max-width: 420px) {
   .app-header-brand .app-header-brand-name {
     display: none;
   }

@@ -199,9 +199,21 @@ export function createMutationHandlers(deps: MutationDeps) {
     switch (cmd.op) {
       case 'saveGroup': {
         const groups = await d.getGroups();
-        await persist(applySaveGroup(groups, cmd.group, now, stamp));
+        const next = applySaveGroup(groups, cmd.group, now, stamp);
+        await persist(next);
         scheduleUpload(DELETE_PRIORITY_MS);
-        return { ok: true, payload: cmd.group };
+        // ── 2026-10-20 D-9：payload 必须是**落盘后的真值**，不是入参 ───────
+        // 修复前这里回的是 `cmd.group` —— 也就是**命令的入参**：
+        //   · 它没有 lastOp（印记是 SW 侧 apply 时盖的，入参里没有）；
+        //   · 它没有经过 applySaveGroup 的按 id 去重（同 id 已存在时，
+        //     落盘的是「去重后那一份」，回包却是入参 ⇒ 回包与磁盘不一致）。
+        // 调用方若把这个 payload 直接塞进自己的状态（Redux 列表、缓存），
+        // 就会拿到一份「同 id、无印记、且可能与磁盘不同」的副本。
+        //
+        // 这正是 D-9 描述的「重复 id + 无印记副本」的来源之一。
+        // 修法：回**磁盘上那一份**（从 apply 的结果里按 id 取）。
+        const persisted = next.find(g => g.id === cmd.group.id) ?? cmd.group;
+        return { ok: true, payload: persisted };
       }
       case 'removeTab': {
         const groups = await d.getGroups();
@@ -250,7 +262,16 @@ export function createMutationHandlers(deps: MutationDeps) {
           stamp
         );
         await persist(r.groups);
-        scheduleUpload(DELETE_PRIORITY_MS);
+        // ── 2026-10-20 D-3：登记的必须是**落盘后的真实 id** ──────────────
+        // 修复前这里用默认的 changedIds = affectedGroupIdsOf(cmd) = **备份文件里的
+        // id**。而 applyImportGroups 给每个导入的组**重新生成了 id**
+        // （`id: deps.genId()`，见 core/mutationOps.ts）—— 文件里的 id 从此不存在。
+        // 于是增量白名单里装的是一批**不存在的 id**：
+        //   · 待决期的上传按白名单过滤 ⇒ 过滤结果恒为空 ⇒ 一个组都传不上去；
+        //   · 而 pending_upload 与白名单照样被清掉 ⇒ 20 个导入的会话永远到不了
+        //     云盘，alarm 与 60s 轮询也不再重试，界面毫无提示。
+        // 修法：登记 applyImportGroups 的**返回值**里的真实 id。
+        scheduleUpload(DELETE_PRIORITY_MS, r.imported.map(g => g.id));
         // 2026-10-19 审计 F-5：把「已存在而跳过」的计数一并回传。
         // UI 需要区分两种跳过：「这份会话你已导入过」（幂等，正常）与
         // 「文件里这条没有可恢复的内容」（异常）。原先只回 imported，

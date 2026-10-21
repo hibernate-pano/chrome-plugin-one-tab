@@ -412,9 +412,16 @@ describe('C4 批量恢复成功反馈：条数用 matchingTabs.length', () => {
   const src = stripComments(read(SEARCH_LIST));
 
   it('全成功分支必须播报成功（挡住「对话框关了、窗口开了、只是几行消失」）', () => {
+    // 2026-10-20 审计 A-1：措辞改用共享模块（restoreFeedbackCopy），
+    // 调用形态从 showRestoreSuccess(matchingTabs.length) 变成
+    // showRestoreSuccessMessage(restoreAllSearchSuccessMessage(...))。
+    //
+    // 断言盯**不变量**（成功路径必须有一条成功播报，且必须带上条数），
+    // 而不是盯某个已过时的调用写法 —— 后者会让「换了正确写法」变成红灯，
+    // 那正是本仓文档守卫被审计批评的毛病（docsAlignment 硬编码旧基线）。
     assert.match(
       src,
-      /showRestoreSuccess\(matchingTabs\.length\)/,
+      /showRestoreSuccessMessage\(\s*restoreAllSearchSuccessMessage\(/,
       '缺成功 toast：命中标签分散在多个会话时用户看不出恢复了几个'
     );
   });
@@ -426,7 +433,7 @@ describe('C4 批量恢复成功反馈：条数用 matchingTabs.length', () => {
     const body = src.slice(start, end === -1 ? src.length : end);
 
     const guardAt = body.indexOf('r.success !== true');
-    const toastAt = body.indexOf('showRestoreSuccess(matchingTabs.length)');
+    const toastAt = body.indexOf('showRestoreSuccessMessage(');
     assert.ok(guardAt !== -1 && toastAt !== -1);
     assert.ok(guardAt < toastAt, '成功播报必须排在失败出口之后');
 
@@ -486,9 +493,18 @@ describe('C5 空态：只有一张卡，问候语降级为标题的一部分', (
 
   it('空态分支只渲染一张卡', () => {
     const list = stripComments(read(TAB_LIST));
-    const branchAt = list.indexOf('if (filteredGroups.length === 0 && !searchQuery) {');
-    assert.ok(branchAt !== -1, '空态分支必须存在');
-    const body = list.slice(branchAt, list.indexOf('if (error && groups.length === 0)', branchAt));
+    // 2026-10-20 审计 A-14：空态分支的条件多了一个「没有生效的筛选条件」
+    // （有筛选条件时要看筛选浏览视图，而不是「没有会话」的引导卡）。
+    // 断言钉**不变量**（空态分支里只有一张 EmptyState 卡），不钉分支条件的写法 ——
+    // 条件怎么写是实现细节，一张卡才是这个产品对用户的承诺。
+    // 锚点用「空态标题用了问候语」这一行 —— 它只可能出现在「没有会话」那张卡上
+    // （错误页那张卡没有问候语）。
+    const titleAt = list.indexOf('getEmptyStateGreeting()');
+    assert.ok(titleAt > -1, '空态分支必须存在');
+    // 从这张卡的 <EmptyState 开始往后数（前面的锚点可能落在标签之后）。
+    const cardAt = list.lastIndexOf('<EmptyState', titleAt);
+    assert.ok(cardAt > -1, '应能找到空态那张 EmptyState 卡');
+    const body = list.slice(cardAt);
     // 一张卡 = 一个 EmptyState；不允许多个并排的大卡
     const emptyStateCount = (body.match(/<EmptyState/g) ?? []).length;
     assert.equal(emptyStateCount, 1, `空态只允许一张 EmptyState 卡，实际 ${emptyStateCount} 张`);

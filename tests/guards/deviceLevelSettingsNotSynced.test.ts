@@ -65,7 +65,6 @@ describe('设备级字段的上云与合并', () => {
       themeMode: 'light',
       layoutMode: 'dual',
       showNotifications: true,
-      groupNameTemplate: '会话 {n}',
       syncBackend: 'webdav',
       syncEnabled: true,
       syncIntervalMinutes: 30,
@@ -87,9 +86,7 @@ describe('设备级字段的上云与合并', () => {
       showFavicons: false,
       showTabCount: true,
       confirmBeforeDelete: true,
-      groupNameTemplate: 'T{n}',
       collectPinnedTabs: true,
-      reorderMode: 'manual',
       syncBackend: 'supabase',
       syncEnabled: false,
       syncIntervalMinutes: 5,
@@ -105,12 +102,43 @@ describe('设备级字段的上云与合并', () => {
       'showFavicons',
       'showTabCount',
       'confirmBeforeDelete',
-      'groupNameTemplate',
       'collectPinnedTabs',
-      'reorderMode',
     ]) {
       assert.equal(cloud[key], (settings as Record<string, unknown>)[key], `${key} 必须照常上云`);
     }
+  });
+
+  it('已退役的设置不得上云（2026-10-20 审计 A-9）', () => {
+    // 退役键既没有入口也没有读取方 —— 把它们继续写进云端设置，
+    // 就是在数据模型里继续假装它们存在。Supabase 侧有 allowedFields
+    // 兜着，但 WebDAV 侧是**整份透传** —— 只有这里能兜住两条路。
+    const settings = {
+      themeMode: 'dark',
+      showFavicons: true,
+      groupNameTemplate: 'T{n}',
+      allowDuplicateTabs: true,
+      deleteStrategy: 'everywhere',
+      reorderMode: 'manual',
+      syncStrategy: 'newest',
+    } as never;
+
+    const cloud = toCloudSettings(settings) as Record<string, unknown>;
+
+    for (const key of [
+      'groupNameTemplate',
+      'allowDuplicateTabs',
+      'deleteStrategy',
+      'reorderMode',
+      'syncStrategy',
+    ]) {
+      assert.ok(
+        !(key in cloud),
+        `${key} 已退役，不得出现在上云副本里 —— 留着它等于继续假装这个设置存在`
+      );
+    }
+    // 剔除必须是**定向**的：不能把整份设置丢掉。
+    assert.equal(cloud.themeMode, 'dark');
+    assert.equal(cloud.showFavicons, true);
   });
 
   it('剔除是非破坏性的：调用方手里的 settings 不被就地修改', async () => {
@@ -143,7 +171,20 @@ describe('两条同步路径都接上了设备级剔除', () => {
     assert.ok(start !== -1, '找不到 mergeCloudSettingsIntoLocal');
     const body = src.slice(start, src.indexOf('\n}', start));
 
-    const delAt = body.indexOf('delete cloudPreferences[key]');
+    // 2026-10-20 审计 A-21：剔除逻辑被抽成共用函数
+    // `stripNonPortableSettings`（@/types/tab）。
+    //
+    // 【为什么守卫要跟着改，而不是把代码改回去】
+    // 旧守卫钉的是**写法**（`delete cloudPreferences[key]`）。
+    // A-21 把它换成共用函数，**行为完全等价**
+    // （变异验证 M6：共用函数一改，这条就变红 ⇒ 行为确实被守住了）
+    // ⇒ 旧守卫会把**正确的改动**判成违规。
+    // 这正是本仓反复吃的亏：守卫钉的是写法，不是事实。
+    //
+    // ⇒ 现在钉的是**不变量**：
+    //   ① 合并路径确实调用了共用剔除函数
+    //   ② 剔除发生在展开进本机设置之前（顺序即语义）
+    const delAt = body.indexOf('stripNonPortableSettings(');
     assert.ok(delAt !== -1, '合并必须忽略云端给的设备级字段（云端存量行里仍留有旧值）');
     assert.ok(
       delAt < body.indexOf('...cloudPreferences'),

@@ -11,12 +11,18 @@ import { enqueue, hasQueuedOrRunningJob } from '@/background/mutationQueue';
 import { mutationService } from '@/background/mutationService';
 import { ensureOpStampMigrated } from '@/background/opStampMigratedGuard';
 import { runMigrations as runStorageMigrations } from '@/utils/migrationUtils';
-import { LEGACY_KEYS, STORAGE_KEYS } from '@/storage-kv/keys';
 import { UPLOAD_DEBOUNCE_MS } from '@/core/syncTiming';
+import { recordOnboardingTrigger } from '@/utils/onboardingStorage';
 import { logError, logInfo, logWarn } from './utils/log';
 // 诊断导出前落盘性能 span 用（见 PERF_FLUSH 消息分支）。
 import { perfTrace } from './utils/perfTrace';
 import { invalidateActiveSyncBackend, primeSyncBackend } from '@/sync-backend';
+import {
+  CONTEXT_MENU_IDS,
+  CONTEXT_TYPES,
+  resolveContextTypes,
+  toChromeContextType,
+} from '@/background/contextMenuPolicy';
 
 // Chrome 扩展的 Service Worker
 // 为了避免模块导入问题，早期版本内联了存储逻辑；现统一使用 utils/storage 以与前端页面共享同一数据源（IndexedDB）
@@ -35,30 +41,51 @@ logInfo('=====================================');
 // 迁移旧的存储键到新的统一键名
 // 2026-10-09 架构 P2-2：键名改引用权威表，不再手抄。
 // tabGroups 是历史键名（归在 LEGACY_KEYS），tab_groups 是现行键（STORAGE_KEYS）。
-// 这里改的是 chrome.storage.local 里的键，而权威表本身正是为「键名只在一处定义」
-// 建立的 —— 手抄副本的代价是：改名时漏改一处，旧数据静默读不到（不报错）。
-async function migrateStorageKeys() {
-  try {
-    const legacyKey = LEGACY_KEYS.LEGACY_TAB_GROUPS;
-    const currentKey = STORAGE_KEYS.GROUPS;
-    const { [legacyKey]: tabGroups } = await chrome.storage.local.get([legacyKey]);
-    const { [currentKey]: tab_groups } = await chrome.storage.local.get([currentKey]);
-
-    // 如果存在旧键且新键不存在或为空，则迁移
-    if (Array.isArray(tabGroups) && (!Array.isArray(tab_groups) || tab_groups.length === 0)) {
-      await chrome.storage.local.set({ [currentKey]: tabGroups });
-      // 迁移完成后可选择清理旧键（可选）
-      await chrome.storage.local.remove(legacyKey);
-      logInfo(`已将旧键 ${legacyKey} 迁移为 ${currentKey}`);
-    }
-  } catch (error) {
-    logWarn('迁移存储键失败（可忽略）:', error);
-  }
-}
+//
+// ── 2026-10-20 审计 A-15：这一步已被删除，理由是它**写错了地方** ──────────
+//
+// 修复前这里做的是：把 chrome.storage.local 里的 `tabGroups` **再写一份**到
+// chrome.storage.local 的 `tab_groups`（改名），再删掉旧键。
+//
+// 三个问题，一个比一个严重：
+//
+// ① **方向是反的**。会话数据最终的归宿是 IndexedDB（见 storage-kv/）。
+//    chrome.storage.local 是**迁移的源**，不是目的地。往源里写一份改名后的
+//    副本，等于「先把行李搬到中转站，再从中转站搬到目的地」—— 中转站有 10MB
+//    配额限制，而目的地（IndexedDB）压根不受限。
+//
+// ② **它是唯一会撞 10MB 配额的一步**。重度用户的 `tab_groups` 可能有
+//    几十上百个会话，序列化后逼近或超过配额 ⇒ `chrome.storage.local.set` 抛错。
+//    而整条迁移的 catch 是 `logWarn` 后「可忽略」⇒ **用户看不到自己的会话**，
+//    却没有任何报错。今天它靠 `unlimitedStorage` 权限兜着；一旦移除该权限，
+//    这条「看起来无害」的写就变成老用户升级路上的真雷。
+//
+// ③ **它与真正的迁移重复，而且覆盖不全**。`MIGRATION_SCAN_KEYS` 已经包含
+//    `tab_groups` 与历史键 `tabGroups`（见 storage-kv/keys.ts），
+//    `migrateFromChromeStorage` 会把两者都搬进 IndexedDB。改名这件事在
+//    **KV 层**做才对 —— 而且必须做，否则历史键的值会被搬进 IndexedDB 的
+//    `tabGroups` 键（一个没人读的键），用户依旧看不到会话。
+//
+// 处置：删掉这里的 chrome.storage 写入，改名交给 KV 层
+// （`MIGRATION_KEY_RENAMES` + `planMigrationWrites`，见 src/storage-kv/keys.ts
+// 与 storageAdapter.ts）。迁移失败时 KV 层**显式失败**（读抛错 / 写整条失败），
+// 不再静默降级成「用户一个会话都没有」。
+//
+// 保留一个「旧键清理」也不合适：`migrateFromChromeStorage` 成功后已经
+// `chrome.storage.local.remove(keys)`（keys 含两个键名）。
 
 async function runMigrations() {
-  // chrome.storage.local 旧键只碰迁移自身的旧键，不碰 GROUPS —— 可留在队列外。
-  await migrateStorageKeys();
+  // ── 2026-10-20 审计 A-15：原先这里的 `await migrateStorageKeys()` 已删除 ──
+  //
+  // 它会把会话数据**写回 chrome.storage.local**（改名），那是唯一会撞 10MB
+  // 配额的一步，而它的 catch 是静默吞掉 ⇒ 用户看不到自己的会话。
+  // 改名已下沉到 KV 层（storage-kv/keys.ts 的 MIGRATION_KEY_RENAMES +
+  // storageAdapter.ts 的 planMigrationWrites），那里失败会**显式失败**。
+  //
+  // 注意：`migrateFromChromeStorage` 由 `ensureInitialized()` 触发，而
+  // `ensureInitialized()` 由任意一次 kvGet 触发 —— 也就是说 chrome.storage
+  // → IndexedDB 的迁移**本来就不依赖** runMigrations。这里删掉调用不会
+  // 少搬任何数据。
 
   // ── 2026-10-09 专家团体检 P0：以下三件都是「全量读 → 改 → 写 groups」──
   //
@@ -115,6 +142,107 @@ const showNotification = async (
 logInfo('Service Worker: 已简化同步逻辑，只保留手动同步功能');
 
 // 初始化右键菜单
+//
+// ── 2026-10-20 审计 A-12：菜单要在「网页上右键」也出现 ───────────────────
+// 修复前三个菜单项的 contexts 全是 ['action'] ⇒ **只在扩展图标上右键才出现**。
+// 而用户最自然的位置是**在网页标签页上右键**（OneTab 等竞品就是在那儿做的），
+// 商店文案写的也是「不打开管理界面，也能保存当前标签页」——
+// 那句话在修复前是假的：在网页上右键，TapStack 什么也没有。
+//
+// 两条入口的语义不同：
+//   · action 上下文（右键图标）—— 「当前标签」= 当前窗口的活动标签
+//   · page 上下文（右键网页）—— 「当前标签」= **用户右键的那一个**
+//     （Chrome 传进来的 tab 就是它）。用活动标签会是错的：
+//     用户右键的是 B 页，系统却存了 A 页 —— 而且存完会把 A 页关掉。
+//
+// ⚠️ 标题与 id 的对应关系（Chrome 的硬约束）：
+//   `contextMenus.create` 的**一个**调用只有**一个** title，共享给它的
+//   全部 contexts。想要「在图标上叫 A、在网页上叫 B」，必须**拆成两个
+//   create 调用、两个 id**。所以下面 `saveCurrentTab`（网页）与
+//   `saveCurrentTabFromIcon`（图标）是**两项**，指向同一个业务动作。
+//
+//   拆开还有一个必要理由：**文案必须各自说清破坏性**。
+//   「保存其他标签并关闭」会关掉当前窗口除一个之外的**全部**标签 ——
+//   这种量级的破坏，放在随手右键就能触达的位置太危险，所以它只在
+//   action 上下文（用户明确右键了扩展图标）出现。
+//
+// ⚠️ 上下文覆盖（2026-10-20，需求「contexts 扩到 ['action','page','tab']」）：
+//   `tab` 上下文 = 右键**标签栏上的标签页标题**（不是网页内容区）。
+//   它与 `page` 是两个不同的右键位置，但语义相同 —— 都是「用户右键了某个
+//   标签页，要存的就是这个标签页」。
+//   Chrome 在这两种上下文里传给 onClicked 的 `tab` **都是被右键的那一个**，
+//   所以它们共用 `saveCurrentTab` 这一个菜单项（同一 title、同一动作）。
+//
+// ⚠️⚠️ `'tab'` 的两个坑（都不能靠「类型对了」蒙过去）：
+//   ① **类型滞后**：`@types/chrome@0.0.262` 的 `ContextType` 里还没有 'tab'，
+//      而 Chrome **运行时是支持的** —— Chrome 自己的参数校验错误把合法词表
+//      原样列了出来：
+//
+//        Error at property 'contexts': Error at index 0: Value must be one of
+//        action, all, audio, browser_action, editable, frame, image, launcher,
+//        link, page, page_action, selection, tab, video.
+//
+//      也就是说 `'tab'` 在运行时的词表里，只是**类型定义滞后**。
+//      所以这里必须做一次**精确**的类型断言，不是 `as any`：
+//      断言 `as chrome.contextMenus.ContextType[]` 会把未知字面量也一起
+//      放行，掩盖真正的拼写错误；而 `as unknown as ContextType[]`
+//      等于放弃检查。下面的做法是：先用 `CONTEXT_TYPES` 常量表把值
+//      钉死在一个地方（拼错会编译不过），再断言到 Chrome 的类型。
+//
+//   ② **老浏览器不认识**：实测 `'tab'` 在 Chrome 44~146 的 schema 里没有，
+//      150 起才有（Chrome 150 之前传 'tab' 会抛参数错误 ——
+//      「Value must be one of ...」里没有 tab）。
+//      本扩展的 `minimum_chrome_version` 是 120 ⇒ 老浏览器上必须裁掉它。
+//
+//      【为什么用特性探测、而不是版本号判断】版本号判断依赖「我核实过的
+//      那个数字」，而那个数字会随 Chrome 演进过时（实测表格见
+//      `contextMenuPolicy.ts` 的注释）。特性探测依赖的是**浏览器自己的
+//      答案**：试着注册一次，抛异常就是不支持 —— 不会过期，
+//      也不会因为我漏了一个中间版本而错。
+//
+//      【顺带纠正一个说法】老浏览器上 create 失败**只影响那一项**，
+//      不会让其他菜单项也注册不上（实测：['page'] → ['page','definitely_not_a_context']
+//      → ['action'] 三项连着注册，中间那项抛错，前后两项照常注册成功）。
+//      即便如此，裁剪仍然值得做 —— 少一次必然失败的调用，语义也更干净。
+//
+// ── 探测机制 ────────────────────────────────────────────────────────────
+/**
+ * 探测当前浏览器**是否接受 `'tab'` 上下文**（特性探测，不是版本号判断）。
+ *
+ * 做法：拿一个**探测用的 id** 试着注册带 'tab' 的菜单项：
+ *   · 注册成功 ⇒ 这个浏览器认识 'tab' ⇒ 真菜单可以用它 ⇒ 立刻删掉探测项。
+ *   · 抛异常   ⇒ 不认识（Chrome 150 之前的版本）⇒ 真菜单里去掉 'tab'。
+ *
+ * 【为什么用「探测项」而不是「直接注册真菜单项再看成不成功」】
+ * 后者的问题是：真菜单项的 id 一旦注册成功又失败，重试会撞 id 冲突，
+ * 而且「失败」与「被浏览器删了」分不清。独立的探测项没有这些歧义。
+ *
+ * 【为什么值得多这一次调用】`'tab'` 是用户最想「收起来」的位置
+ * （正在浏览时右键标签栏上的标签标题）。而按版本号判断要依赖
+ * 「我核实过的那个数字」—— 那个数字会随 Chrome 演进过时
+ * （实测：44~146 没有，150 起有）。特性探测依赖浏览器自己的答案，
+ * 不会过期。
+ *
+ * 【探测失败会怎样】probe 用的 id 是 `__tabstack_probe_tab_context__`，
+ * 失败时不会有任何残留（注册失败 = 没注册上）。成功时立刻 remove 掉。
+ */
+function supportsTabContext(): boolean {
+  const PROBE_ID = '__tabstack_probe_tab_context__';
+  try {
+    chrome.contextMenus.create({
+      id: PROBE_ID,
+      title: 'probe',
+      contexts: [toChromeContextType(CONTEXT_TYPES.tab)],
+    });
+    chrome.contextMenus.remove(PROBE_ID);
+    return true;
+  } catch (error) {
+    logInfo('当前浏览器不支持 tab 上下文，右键菜单只挂在 page 上下文上');
+    void error;
+    return false;
+  }
+}
+
 async function setupContextMenus() {
   try {
     await chrome.contextMenus.removeAll();
@@ -122,23 +250,63 @@ async function setupContextMenus() {
     logWarn('清理旧的右键菜单失败，可忽略:', error);
   }
 
+  // ① 打开标签管理器 —— 只在扩展图标上有意义（action 上下文）
   chrome.contextMenus.create({
-    id: 'open-tab-manager',
+    id: CONTEXT_MENU_IDS.openTabManager,
     title: '打开标签管理器',
-    contexts: ['action']
+    contexts: [CONTEXT_TYPES.action]
   });
 
+  // ②a 在网页上 / 标签页标题上右键：保存**此标签页**并关闭
+  //    标题用「此标签页」而不是「当前标签」—— 在网页上下文里，
+  //    「当前」有歧义（是活动标签？还是我右键的这个？）。
+  //    「此」明确指向用户刚刚右键的那一个。
+  //
+  //    contexts 含 'tab'：右键**标签栏上的标签标题**也要能存 ——
+  //    那是用户最想「收起来」的位置（正在浏览时右键标签标题）。
+  //
+  //    ⚠️ 断言说明：`@types/chrome@0.0.262` 的 `ContextType` 枚举缺 'tab'，
+  //    但 Chrome 运行时支持（见上面 Chrome 自己的参数校验词表）。
+  //    这里是**精确**断言（不是 `as any`）：上下文名由 `CONTEXT_TYPES`
+  //    常量表钉死，拼错会编译不过。
   chrome.contextMenus.create({
-    id: 'saveCurrentTab',
+    id: CONTEXT_MENU_IDS.saveCurrentTab,
     // 2026-10-09 P1-1：定位不变（保存 = 剪切，产品负责人已确认保持现状），
     // 但同一动作的每个入口都必须把「会关闭」说出来 —— 否则用户按右键菜单
     // 时以为只是存个副本，标签却被关掉了。
-    title: '保存当前标签并关闭',
+    title: '保存此标签页并关闭',
+    contexts: resolveContextTypes(
+      [CONTEXT_TYPES.page, CONTEXT_TYPES.tab],
+      supportsTabContext()
+    ).map(toChromeContextType)
+  });
+
+  // ②b 在扩展图标上右键：保存**当前标签页**并关闭（= 活动标签）
+  chrome.contextMenus.create({
+    id: CONTEXT_MENU_IDS.saveCurrentTabFromIcon,
+    title: '保存当前标签页并关闭',
     contexts: ['action']
   });
 
+  // ③ 保存其他标签并关闭 —— 只在扩展图标上有意义（action 上下文）：
+  //    在网页上右键时「其他标签」的参照点是模糊的，且这个动作会关掉
+  //    当前窗口除一个之外的**全部**标签 —— 在网页上随手右键就触发它太危险。
+  //
+  //    【enabled 为什么不是「按当前标签数现算」】Chrome **没有**
+  //    `contextMenus.onShown`（那是 Firefox `browser.menus` 的事件；
+  //    Chrome 只有 `onClicked`）。想在菜单弹出前置灰，就得自己跟踪
+  //    标签数的变化并在变化时 `update({enabled})` —— 那要求监听
+  //    tabs.onActivated/onCreated/onRemoved 三类事件，任何一个漏掉
+  //    都会留下「置灰状态与真实标签数不一致」的菜单项
+  //    （用户看到灰着的选项却其实能存，或反过来）。
+  //    两种错误的代价不对称：状态错了比多一句提示更糟。
+  //
+  //    所以这里**保留该项可点**，把「没有其他标签」这件事在**点击后**
+  //    明确说出来（见 onClicked 分支的提示）—— 用户点了立刻知道发生了什么，
+  //    不会「点了没反应」。这条动作的破坏性由「只在 action 上下文出现」
+  //    来控制（用户必须明确右键扩展图标才够得到它），不靠置灰。
   chrome.contextMenus.create({
-    id: 'saveOtherTabs',
+    id: CONTEXT_MENU_IDS.saveOtherTabs,
     title: '保存其他标签并关闭',
     contexts: ['action']
   });
@@ -149,21 +317,27 @@ chrome.runtime.onInstalled.addListener(async (details) => {
   logInfo('Service Worker: 扩展已安装或更新, 原因:', details.reason);
 
   // 记录安装/更新事件以触发用户引导
+  //
+  // ── 2026-10-20 审计 B-1：这里必须**合并**而不是覆写 ──────────────────────
+  // 原先两条分支各自 `chrome.storage.local.set({ onboarding_trigger: … })`，
+  // 每次安装/更新都无条件覆写。后果是一条真实的丢引导路径：
+  //   装 1.25.0 → 没打开过管理页 → 商店自动升级到 1.25.1
+  //   ⇒ update 触发把 install 触发抹掉
+  //   ⇒ 判据走 update 分支，patch 变化不算新功能 ⇒ **不展示引导**
+  //   ⇒ 这个用户永远看不到首次引导。
+  // 「用户还没看过引导」比「版本变没变」更要紧 ⇒ install 触发必须压过 update。
+  // 合并规则见 utils/onboardingStorage.ts 的 recordOnboardingTrigger。
   if (details.reason === 'install') {
-    await chrome.storage.local.set({
-      onboarding_trigger: {
-        reason: 'install',
-        version: chrome.runtime.getManifest().version,
-      },
+    await recordOnboardingTrigger({
+      reason: 'install',
+      version: chrome.runtime.getManifest().version,
     });
     logInfo('Service Worker: 已记录首次安装事件');
   } else if (details.reason === 'update') {
-    await chrome.storage.local.set({
-      onboarding_trigger: {
-        reason: 'update',
-        version: chrome.runtime.getManifest().version,
-        previousVersion: details.previousVersion,
-      },
+    await recordOnboardingTrigger({
+      reason: 'update',
+      version: chrome.runtime.getManifest().version,
+      previousVersion: details.previousVersion,
     });
     logInfo('Service Worker: 已记录版本更新事件, 旧版本:', details.previousVersion);
   }
@@ -293,18 +467,50 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
   logInfo('右键菜单点击:', info.menuItemId);
 
   try {
-    if (info.menuItemId === 'open-tab-manager') {
+    if (info.menuItemId === CONTEXT_MENU_IDS.openTabManager) {
       logInfo('点击右键菜单，打开标签管理器');
       await tabManager.openTabManager();
-    } else if (info.menuItemId === 'saveCurrentTab' && tab) {
-      logInfo('点击右键菜单，保存当前标签页');
+    } else if (
+      (info.menuItemId === CONTEXT_MENU_IDS.saveCurrentTab ||
+        info.menuItemId === CONTEXT_MENU_IDS.saveCurrentTabFromIcon) &&
+      tab
+    ) {
+      // ── 2026-10-20 审计 A-12：要存的是「用户右键的那一个」────────────
+      // 在网页上右键时，Chrome 传进来的 tab 就是被右键的那个标签。
+      // 拿「当前活动标签」会是错的：用户右键 B 页，系统却存了 A 页 ——
+      // 而且存完会把 A 页关掉。这是不可逆的错操作。
+      //
+      // 两个 id 指向同一动作：`saveCurrentTab`（网页/标签标题上下文，标题
+      // 「保存此标签页」）与 `saveCurrentTabFromIcon`（扩展图标上下文，标题
+      // 「保存当前标签页」）。拆成两个是因为 Chrome 的 create 只有**一个**
+      // title，共享给所有 contexts。
+      const fromPageContext = info.menuItemId === CONTEXT_MENU_IDS.saveCurrentTab;
+      logInfo(
+        '点击右键菜单，保存当前标签页',
+        fromPageContext ? '（网页/标签标题右键上下文）' : '（扩展图标上下文）'
+      );
+
       // 同快捷键：只在真保存了才报成功（失败原因由 saveCurrentTab 就地弹出）
       const saved = await tabManager.saveCurrentTab(tab);
       if (saved) {
         await showNotification('当前标签页已保存');
       }
-      await tabManager.openTabManager(true);
-    } else if (info.menuItemId === 'saveOtherTabs') {
+      // ── 右键保存后**不**打开管理页 ──────────────────────────────────
+      // 修复前这里无条件 `openTabManager(true)`，与商店文案「不打开管理界面，
+      // 也能保存当前标签页」正面相反 —— 而且快捷键路径不打开、图标点击
+      // 路径打开、菜单路径打开，三条入口三种行为。
+      //
+      // 【为什么现在**所有**右键保存路径都不打开】需求写的是「右键保存后不要
+      // 强制打开管理页 —— 快捷键路径就不打开，入口之间应一致」。
+      // 快捷键路径（save_all_tabs / save_current_tab）不打开管理页，
+      // 所以右键保存路径也不打开：**保存本身就是目的**，
+      // 用户要的是「标签收起来了」，不是「再看一眼列表」。
+      // 用户想看列表时，右键菜单里本来就有一项「打开标签管理器」。
+      //
+      // （扩展图标右键保存时「刷新一下列表」曾经是合理的 —— 但那条路径
+      //  与快捷键路径同样是一次「保存」，入口之间必须一致。
+      //  真要刷新，用户点「打开标签管理器」即可。）
+    } else if (info.menuItemId === CONTEXT_MENU_IDS.saveOtherTabs) {
       logInfo('点击右键菜单，保存除当前标签以外的所有标签');
       // 获取当前窗口的所有标签页和当前活动的标签页
       const [allTabs, activeTabs] = await Promise.all([
@@ -323,12 +529,15 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
       if (otherTabs.length === 0) {
         // 失败（用户点了「保存其他标签」，结果一个都没保存）⇒ 必须 'error'：
         // 这条通知不能被默认关闭的「显示通知提醒」吞掉，否则点了毫无反应。
+        // （Chrome 没有 contextMenus.onShown，所以无法在菜单弹出前置灰
+        //  这一项 —— 见 setupContextMenus 里的说明。用户点了至少得到
+        //  一句实话，而不是「点了没反应」。）
         await showNotification('没有其他标签页需要保存', 'TapStack', 'error');
         return;
       }
 
       await tabManager.saveAllTabs(otherTabs);
-      await tabManager.openTabManager(true);
+      // 同上：右键保存不强制打开管理页（与快捷键路径一致）。
     }
   } catch (error) {
     logError('处理右键菜单点击失败:', error);
@@ -473,18 +682,27 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
             logInfo('[Service Worker] SAVE_ALL_TABS 查询到标签页:', tabs.length);
 
             // ── 2026-10-18：只在真的保存了才回 success ───────────────────
-            // saveAllTabs 在「清洗后一个标签都不剩」时弹通知并返回 false
+            // saveAllTabs 在「清洗后一个标签都不剩」时弹通知并返回 null
             // （整窗都是内部页 / 危险 schema，或固定标签页开关关闭把它们全滤掉）。
             // 原先这里不看结果、无条件回 success:true ⇒ popup 的保存按钮显示
             // 「已保存」，而列表里根本没有新会话 —— 与 1.22.16 修掉的
             // saveCurrentTab 是同一类「预检失败仍报成功」。
-            const saved = await tabManager.saveAllTabs(tabs);
-            if (!saved) {
+            //
+            // ── 2026-10-20 审计 A-4：把摘要一起带回去 ────────────────────
+            // 「保存成功」不是全部事实：默认配置下固定标签页既没保存也没关闭。
+            // 摘要（savedCount / droppedPinnedCount）必须回到 popup ——
+            // 按钮反馈是用户真正盯着的那块屏幕，只在 SW 里弹通知不够。
+            const summary = await tabManager.saveAllTabs(tabs);
+            if (!summary) {
               // 文案与 TabManager 就地弹的通知同口径（那条说原因，这条进按钮）。
               sendResponse({ success: false, error: '没有可保存的标签页' });
               return;
             }
-            sendResponse({ success: true });
+            sendResponse({
+              success: true,
+              savedCount: summary.savedCount,
+              droppedPinnedCount: summary.droppedPinnedCount,
+            });
           } catch (e: any) {
             logError('[Service Worker] SAVE_ALL_TABS 失败:', e);
             sendResponse({ success: false, error: e?.message || '保存失败' });
@@ -662,12 +880,61 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
               // （含 scheduleUpload 与这里的默认路径）都算「用户尚未确认归属」。
               explicitFirstSync: data.explicitFirstSync === true,
             });
-            return { ok: r.success, error: r.error, payload: r };
+            // ── 2026-10-20 D-3：这里是把「本轮没全传上去」翻译给用户的地方 ──
+            //
+            // 引擎的 `success` 说的是「这一轮没有硬失败」（墓碑广播、TTL 清理、
+            // 设置上传都真的完成了），它**不是**「全部会话都同步了」。
+            // 而「全部同步了」才是用户按下按钮时期待的那件事 ——
+            // 所以**这一层**（唯一面向用户的一层）必须把两件事分开：
+            // 有会话没传上去 ⇒ ok=false + 如实的原因 ⇒ popup 弹错误提示。
+            //
+            // 为什么不在引擎里把 success 直接置 false：引擎的 success 被
+            // backgroundSync 与 downloadAndMerge 消费 —— 它们据此决定
+            // 「要不要继续下载」。若「部分没传上去」被当成「整体失败」，
+            // 下载会被永久挡住（上传永远补不齐 ⇒ 每轮都失败 ⇒ 每轮都跳过下载），
+            // 用户连**别的**会话都同步不了。那是把一个小洞捅成一个大洞。
+            //
+            // 为什么 UI 不需要改（本次任务不许动 src/components/**）：
+            // popup 现有的失败分支会把 error 交给 resolveSyncFailureCopy，
+            // 而它对「含中文的句子」是原样透出的 —— 于是
+            // 「N 个会话尚未同步到云端（已保留待传队列，下一轮会自动重试）」
+            // 会原样弹给用户，不需要在组件里新增字段。
+            //
+            // ── 2026-10-20 D-10：还有第三种「没同步完」——「无法确认」 ──────
+            // 「有没有东西没传上去」（skippedGroups>0）与「能不能证明东西都
+            // 传上去了」是**两件事**。登记失败过的那一轮，登记集合可能与上行
+            // 集合**完全对得上**（skippedGroups=0），而「没漏」**无从证明**
+            // （漏登记的改动压根没记下 id）。
+            //
+            // 旧判据只看 skippedGroups ⇒ 这种情况回包 ok=true ⇒ popup 弹
+            // 「上传成功」—— 那是在撒谎。现在多一个判据 cannotConfirmAllSynced：
+            // 它为 true ⇒ 同样 ok=false ⇒ 弹的是引擎给的人话（说明为什么卡住、
+            // 怎么恢复），不是「同步成功」。
+            const partial = typeof r.skippedGroups === 'number' && r.skippedGroups > 0;
+            const cannotConfirm = r.cannotConfirmAllSynced === true;
+            return {
+              ok: r.success && !partial && !cannotConfirm,
+              error: r.error,
+              payload: r,
+            };
           }
           if (data.op === 'download') {
             const r = await syncEngine.downloadAndMerge({
               forceRemote: !!data.forceRemote, syncSettings: !!data.syncSettings,
             });
+            // ── 2026-10-20 D-6：如实回传「云端有 N 组这轮读不出来」────────────
+            //
+            // `payload: r` 就是**整份 MergeResult**，其中含引擎如实上报的
+            // `skippedRemoteGroups`（数量 + id 清单）。界面据此区分「合并」与
+            // 「覆盖」两种事实并出文案（见 components/sync/syncPreviewView.tsx
+            // 的 skippedRemoteGroupsNotice）。
+            //
+            // ⚠️ **ok 仍然是 true**：这一轮没有硬失败，重试也不会变好（云端那行
+            // 还是读不出来）。说成失败 ⇒ 界面弹「下载失败，请重试」⇒ 用户一直
+            // 点重试 ⇒ 那是**误导性失败**，比谎报成功更糟。
+            //
+            // ⚠️ **不许在这里把 payload 削掉**：那会让「云端读不出来」这件事
+            // 重新退回「只写进日志」的状态（界面报成功，用户只看到列表变短）。
             return { ok: r.success, error: r.reason, payload: r };
           }
           return { ok: false, error: `未知同步操作: ${data.op}` };

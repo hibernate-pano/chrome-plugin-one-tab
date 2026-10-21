@@ -42,14 +42,53 @@ export const deleteAllShouldPushOverwrite = deleteReachesOtherDevices;
 const otherDevicesLabel = (input: DeleteAllDisclosure): string =>
   input.syncBackend === 'webdav' ? '其他设备' : '其他登录设备';
 
+/**
+ * 「删除所有会话」对**锁定会话**的处理口径 —— 方案 B（全部删除，但必须点名）。
+ *
+ * ── 为什么是 B（全部删除 + 确认框点名）而不是 A（跳过锁定会话）─────────
+ *
+ * A（跳过锁定）的致命问题是**残渣无处可去**：v1.22.0 起删除即物理清除，
+ * 没有回收站、没有撤销。于是「删除所有会话」点下去之后，锁定的那些还留在
+ * 列表里 —— 用户以为清空了，实际没清空；而这些残渣**只能逐个解锁再逐个删**
+ * （每一步都要先解锁），等于「一键清空」这个动作被悄悄改成了「清空大部分」，
+ * 且界面毫无交代。更糟的是用户的直觉会反着来：「我锁了它，它还在，
+ * 是不是锁坏了？」
+ *
+ * B（全部删除 + 确认框写明「其中包含 N 个已锁定的会话」）的代价是
+ * 「锁定的会话也会被删」—— 这个代价**本来就存在**（`applyDeleteAllGroups`
+ * 是全量物理移除，是 v1.22.0 起的明确产品决定，见 README），B 只是把它
+ * **说清楚**。用户在按「全部删除」之前就知道自己要删掉几个自己保护过的东西，
+ * 仍然可以取消；A 则是把一个已经发生的事实藏起来，让用户事后才发现。
+ *
+ * ⚠️ 本模块**只负责披露**，不改变删除语义：`applyDeleteAllGroups`
+ * （src/core/mutationOps.ts）依然全量物理移除锁定会话 —— 那是刻意的产品
+ * 决定，不得为了「让文案好看」而改成跳过（那会让文案再次说谎）。
+ */
+export interface DeleteAllLockedDisclosure {
+  /** 当前会话里被锁定的个数（0 表示没有锁定会话）。 */
+  lockedCount: number;
+}
+
+/** 确认框里那句「其中 N 个已锁定的会话，也会被删除」。 */
+export const deleteAllLockedWarning = (input: DeleteAllLockedDisclosure): string =>
+  input.lockedCount > 0
+    ? `，其中包含 ${input.lockedCount} 个已锁定的会话，也会被删除`
+    : '';
+
 /** 确认框正文（破坏性操作的最后一道说明）。 */
-export const deleteAllConfirmMessage = (input: DeleteAllDisclosure & { groupCount: number }): string =>
+export const deleteAllConfirmMessage = (
+  input: DeleteAllDisclosure & { groupCount: number } & DeleteAllLockedDisclosure
+): string =>
   `将删除本地全部 ${input.groupCount} 个会话，删除后无法恢复` +
+  deleteAllLockedWarning(input) +
   (deleteReachesOtherDevices(input) ? `，${otherDevicesLabel(input)}将同步删除` : '') +
   '。确认继续吗？';
 
 /** 菜单行副标题（点开菜单就能看到的那句）。 */
-export const deleteAllMenuWarning = (input: DeleteAllDisclosure): string =>
+export const deleteAllMenuWarning = (
+  input: DeleteAllDisclosure & DeleteAllLockedDisclosure
+): string =>
   '将清空本地全部会话，删除后无法恢复' +
+  deleteAllLockedWarning(input) +
   (deleteReachesOtherDevices(input) ? `（${otherDevicesLabel(input)}同步删除）` : '') +
   '。';

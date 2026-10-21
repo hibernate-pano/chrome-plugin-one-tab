@@ -1,4 +1,4 @@
-import type { TabGroup } from '@/types/tab';
+import type { DownloadSkippedGroup, TabGroup } from '@/types/tab';
 import { ensureBackendPrimed, getActiveSyncBackend } from '@/sync-backend';
 import type { RemoteGroupFingerprint } from '@/sync-backend';
 import type { GroupDigestLike } from '@/core/syncDecision';
@@ -60,7 +60,7 @@ export async function uploadTabGroups(
   // manifest 时会全量上传，而保存新会话触发的自动上传也会走到这里，
   // 于是用户的归属决策被绕过。设置页三选一的那一次显式传 true。
   explicitFirstSync: boolean = false
-): Promise<{ writtenTombstoneIds: string[] }> {
+): Promise<{ writtenTombstoneIds: string[]; recoveredIds?: string[]; indexRebuilt?: boolean }> {
   // 每个上下文（SW / popup / options）首次调用时补一次解析：
   // SW 启动时的 prime 管不到 popup，popup 里第一次点同步若直接读缓存，
   // 拿到的是「未预解析 fail-safe 的 Supabase」，用户配的 WebDAV 被无声绕过。
@@ -73,12 +73,62 @@ export async function uploadTabGroups(
   // 契约映射：SyncBackendPort.uploadGroups 的 `writtenIds` → 调用方熟悉的
   // `writtenTombstoneIds`。Supabase 适配器只报告真实写上的墓碑 id
   // （覆盖模式才可能非空），不做扩大解释 —— 见 supabaseAdapter 文件头。
-  return { writtenTombstoneIds: result.writtenIds };
+  return {
+    writtenTombstoneIds: result.writtenIds,
+    // 2026-10-20 修 P0：云端索引丢过 / 有会话被水位线误判成「已上传」时，
+    // 这两个字段是**要上报给用户的事实**，不能在这一层被吞掉。
+    ...(result.recoveredIds ? { recoveredIds: result.recoveredIds } : {}),
+    ...(result.indexRebuilt ? { indexRebuilt: true } : {}),
+  };
 }
 
 export async function downloadTabGroups(): Promise<TabGroup[]> {
   await ensureBackendPrimed();
   return getActiveSyncBackend().downloadGroups();
+}
+
+/**
+ * 本轮（或最近一轮）下载里**读不出来**而被整组跳过的会话（2026-10-20 D-6）。
+ *
+ * 那些组的**云端行仍在**（一个字节都没被动过），只是这一轮没能把它们还原成
+ * 可用的会话（形状不可恢复 / 还原率不达标 / tabs 表回填被截断 / 单组处理异常）。
+ *
+ * ⚠️ **凡是会用下载结果替换本地的路径（覆盖下载）必须用下面那个原子包装**，
+ * 不要用这个函数 + `downloadTabGroups()` 的「两步走」：两步之间有 await 间隙，
+ * 理论上可能读到**别的轮次**的清单 ⇒ 保护错对象。
+ *
+ * 「方法不存在」的语义 = 该后端本轮没有跳过任何会话（**这是事实，不是「不知道」**）。
+ * 「方法存在却抛错」的语义 = 事实未知 ⇒ 调用方必须中止（fail-closed）。
+ */
+export async function downloadSkippedGroups(): Promise<DownloadSkippedGroup[]> {
+  await ensureBackendPrimed();
+  return (await getActiveSyncBackend().downloadSkippedGroups?.()) ?? [];
+}
+
+/**
+ * 一次性拿到「读到的」+「读不出来的」（2026-10-20 D-6）。
+ *
+ * ── 引擎层**应该用这个**，不要用「两步走」 ──────────────────────────────
+ * `downloadTabGroups()` 与 `downloadSkippedGroups()` 是两次独立调用，中间有
+ * await 间隙 ⇒ 理论上可能读到**别的轮次**的清单（清单是「上一轮/这一轮」的
+ * 单例，见 utils/supabase/download.ts 的 lastDownloadSkipped）。把两件事收进
+ * 一个函数 ⇒ 端口实例只解析一次、两次读取紧邻执行 ⇒ 拿到的是**同一轮**的快照。
+ *
+ * 失败语义：
+ *   · 下载失败 → 抛（整轮中止，与既有下载路径一致）；
+ *   · 后端没有「跳过清单」这个能力 → 空清单（**事实**：它本轮没跳过任何会话）；
+ *   · 后端有这个能力但抛错 → **抛**（事实未知 ⇒ fail-closed：
+ *     拿「不知道哪些组被跳过」去覆盖本地 = 把「可能只是没读到」的会话删掉）。
+ */
+export async function downloadTabGroupsWithSkips(): Promise<{
+  groups: TabGroup[];
+  skipped: DownloadSkippedGroup[];
+}> {
+  await ensureBackendPrimed();
+  const backend = getActiveSyncBackend();
+  const groups = await backend.downloadGroups();
+  const skipped = (await backend.downloadSkippedGroups?.()) ?? [];
+  return { groups, skipped };
 }
 
 export async function markCloudGroupsAsDeleted(deletedIds: string[]): Promise<void> {

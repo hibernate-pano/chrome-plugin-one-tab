@@ -5,6 +5,7 @@
  */
 import type { SyncPreviewSummary } from '@/utils/syncPreview';
 import type { BackendStatusKind } from '@/components/layout/backendStatus';
+import { logError } from '@/utils/log';
 
 /* ── P1-6 · 覆盖模式的双闸门（纯函数，SyncButton 只做状态装配）─────────────
  *
@@ -28,14 +29,35 @@ export const syncModeOf = (actionKey: string): SyncMode =>
 
 export const describeOverwriteRisk = (
   summary: SyncPreviewSummary,
-  targetLabel: OverwriteTargetLabel
-): string =>
-  // 「一个都不删」时不能说成「直接替换现状：预计删除 0 个会话」——
-  // 自带存储（WebDAV）的覆盖是全量上行 + 清单并集，云端独有会话确实原样保留
-  //（见 syncPreview.buildUploadPreviewSummary 的 preserveRemoteOnly）。
-  summary.deletions === 0
-    ? `覆盖模式会把本次数据写入${targetLabel}现状：不会删除${targetLabel}上的任何会话、更新 ${summary.updates} 个会话，操作不可撤销。再点一次确认执行。`
-    : `覆盖模式会用本次数据直接替换${targetLabel}现状：预计删除 ${summary.deletions} 个会话、更新 ${summary.updates} 个会话，操作不可撤销。再点一次确认执行。`;
+  targetLabel: OverwriteTargetLabel,
+  /**
+   * 覆盖时**不会被删除或覆盖**的会话数（2026-10-20 P1）。
+   *
+   * 指「对端有、这台设备读不出来、而本机又没有副本」的那几组：删掉它们就是
+   * 永久丢失（无回收站），所以覆盖上传会跳过它们（判据见
+   * core/overwriteUploadGuard.ts）。
+   *
+   * 为什么要在这里说出来：覆盖模式的风险文案原文是「直接替换现状」，而这一句
+   * 在有受保护会话时**不再成立**（那几行会留在原地）。预览必须预告实际结果，
+   * 否则用户点两下确认之后才发现「云端没被完全替换」＝ 预览说了假话。
+   *
+   * 默认 0 = 没有需要保护的会话 ⇒ 原文案逐字不变（用户依赖的那句风险提示）。
+   */
+  preservedRemoteCount: number = 0
+): string => {
+  const base =
+    // 「一个都不删」时不能说成「直接替换现状：预计删除 0 个会话」——
+    // 自带存储（WebDAV）的覆盖是全量上行 + 清单并集，云端独有会话确实原样保留
+    //（见 syncPreview.buildUploadPreviewSummary 的 preserveRemoteOnly）。
+    summary.deletions === 0
+      ? `覆盖模式会把本次数据写入${targetLabel}现状：不会删除${targetLabel}上的任何会话、更新 ${summary.updates} 个会话，操作不可撤销。再点一次确认执行。`
+      : `覆盖模式会用本次数据直接替换${targetLabel}现状：预计删除 ${summary.deletions} 个会话、更新 ${summary.updates} 个会话，操作不可撤销。再点一次确认执行。`;
+  if (preservedRemoteCount <= 0) return base;
+  return (
+    `${base}` +
+    `另有 ${preservedRemoteCount} 个会话这台设备读不出来，${targetLabel}上那几份不会被删除或覆盖。`
+  );
+};
 
 export type OverwriteClickDecision =
   | { type: 'blocked'; reason: string }
@@ -49,6 +71,11 @@ export interface OverwriteClickInput {
   isArmed: boolean;
   isBusy: boolean;
   targetLabel: OverwriteTargetLabel;
+  /**
+   * 覆盖时不会被删除或覆盖的会话数（2026-10-20 P1）。
+   * 缺省 0 = 没有 ⇒ 风险文案与既往逐字一致。
+   */
+  preservedRemoteCount?: number;
 }
 
 /**
@@ -73,7 +100,10 @@ export const decideOverwriteClick = (input: OverwriteClickInput): OverwriteClick
   if (input.isArmed) {
     return { type: 'run' };
   }
-  return { type: 'armed', reason: describeOverwriteRisk(input.summary, input.targetLabel) };
+  return {
+    type: 'armed',
+    reason: describeOverwriteRisk(input.summary, input.targetLabel, input.preservedRemoteCount ?? 0),
+  };
 };
 
 /** runSyncAction 的硬闸门：覆盖模式必须带已确认标记，否则直接拒跑（合并模式不拦） */
@@ -197,16 +227,77 @@ export const SYNC_REASON_COPY: Record<string, string> = {
   // spec.failureMessage（「上传失败，请重试」）—— 一句既没说是没登录、
   // 也没说下一步的话。口径对齐 HeaderDropdown 的「请先登录以使用同步功能」。
   not_authenticated: '未登录：同步需要 TapStack 云端账号，请先点「⋯」菜单里的「登录 / 注册」',
+  // 2026-10-20 C-06：删除熔断是**保护性中止**，不是普通失败。
+  // syncEngine 在写入之前就中止了本轮下载（本地数据一个字节都没动），
+  // 原先它没有登记在案 ⇒ isBareEnum('failsafe_triggered') 为真 ⇒ 落到
+  // 兜底文案「下载失败，请重试」——用户既不知道本地数据没被动过，
+  // 又被引导去重试（重试只会再次触发熔断，白跑一趟）。
+  //
+  // 【文案必须自足】SW 那条下载分支只回传 `error: r.reason`，
+  // 把 `r.error`（中文可读原因）丢了 —— 本条不能依赖那个字段透传。
+  failsafe_triggered:
+    '本次同步会丢弃过多会话，已中止以保护你的本地数据（你的本地数据没有变化）。请先确认云端/云盘上的会话是否完整（例如目录被清空或移动过），确认无误后再手动重试',
 };
 
 /** 纯 snake_case 枚举（如 `precheck_unknown`）不该原样弹给用户。 */
 const isBareEnum = (reason: string): boolean => /^[a-z_]+$/.test(reason);
 
 /**
- * 一次同步失败的最终文案（三个来源，优先级从高到低）：
+ * 给日志 / 诊断用的机器前缀。
+ *
+ * `validation_failed: ` 是 syncEngine 拼出来的（`validation_failed: ${validation.reason}`），
+ * 里面的中文原因才是给人看的，前缀本身对用户没有意义 —— 弹出去只会让人
+ * 以为出了什么英文错误码。
+ *
+ * 判据写成一个**通用**形态（`snake_case 词 + 冒号`）而不是只认
+ * `validation_failed`：前缀是机器标记，与具体是哪个 reason 无关；
+ * 只认一个字面量等于赌它永远不变 —— 将来多一个 `xxx_failed:` 就又漏出去了。
+ */
+const MACHINE_PREFIX_RE = /^\s*[a-z][a-z0-9_]*\s*:\s*/i;
+
+/**
+ * 「像机器错误串」的特征。
+ *
+ * 判据来自一个事实：这是**全中文**界面，用户读得懂的失败原因一定是中文。
+ * 命中下列特征 ⇒ 它是机器串（数据库报错、浏览器网络报错、JS 运行时异常名、
+ * 堆栈帧……），必须换成中文兜底，原始串只进 console。
+ */
+const MACHINE_ERROR_SIGNATURES: readonly RegExp[] = [
+  /failed to fetch/i,
+  /network\s*error/i,
+  /duplicate key value/i,
+  /violates?\b/i,
+  /\bconstraint\b/i,
+  /\b(?:Type|Syntax|Range|Reference|Network|Unknown)Error\b/,
+  /undefined is not\b/i,
+  /is not a function/i,
+  /cannot read propert/i,
+  /\bERR_[A-Z_]+\b/,
+  /\bat\s+[\w.$<>]*\s*\(/, // 堆栈帧
+  /:\d+:\d+/, // 行列号
+];
+
+/** 是否含中日韩统一表意文字（用来判断「这段文本已经是中文」）。 */
+const HAS_CJK = /[一-鿿]/;
+
+/**
+ * 这段文本是不是「机器错误串」而不是人话。
+ *
+ * 两条判据（任一命中即是）：
+ *   1. 命中机器特征词（duplicate key / constraint / Failed to fetch / Error 名 …）；
+ *   2. 完全不含中文 —— 全中文界面里，一段纯英文的技术串对用户没有意义。
+ */
+const looksLikeMachineError = (text: string): boolean => {
+  if (MACHINE_ERROR_SIGNATURES.some(re => re.test(text))) return true;
+  return !HAS_CJK.test(text);
+};
+
+/**
+ * 一次同步失败的最终文案（来源优先级从高到低）：
  * 1. reason 已登记 ⇒ SYNC_REASON_COPY（逐条翻译，不退化成裸枚举）；
- * 2. reason 带人类可读文本（`validation_failed: ...`、error.message）⇒ 原样显示；
- * 3. 都没有 ⇒ spec.failureMessage。
+ * 2. reason 是纯 snake_case 枚举 ⇒ spec.failureMessage（枚举原文只进日志）；
+ * 3. reason 带人类可读文本 ⇒ 剥掉机器前缀后原样显示；
+ * 4. reason 是机器错误串（英文数据库/网络报错）⇒ 中文兜底，原始串只进 console。
  *
  * 方向无关：未登录在上传方向同样要说人话（2026-10-18 C 组）。
  */
@@ -218,8 +309,18 @@ export const resolveSyncFailureCopy = (input: {
   if (reason == null || reason === '') return input.fallbackMessage;
   const mapped = SYNC_REASON_COPY[reason];
   if (mapped) return mapped;
-  if (!isBareEnum(reason)) return reason;
-  return input.fallbackMessage;
+  // 纯枚举：原文对用户等于没说 ⇒ 回退到兜底（**原样**，不加后缀：
+  // 「上传失败，请重试」已经是完整的可执行文案）。
+  if (isBareEnum(reason)) return input.fallbackMessage;
+  // 剥掉机器前缀（`validation_failed: `），只留人话部分
+  const stripped = reason.replace(MACHINE_PREFIX_RE, '').trim();
+  if (!stripped) return input.fallbackMessage;
+  if (looksLikeMachineError(stripped)) {
+    // 机器串：换成中文兜底，原始串**只进 console**，绝不进 UI
+    logError('[syncPreviewView] 同步失败原因（机器串，仅日志）:', reason);
+    return `${input.fallbackMessage}。若反复出现，请导出诊断信息`;
+  }
+  return stripped;
 };
 
 /* ── C2：设置页 WebDAV banner 的状态文案（2026-10-18）─────────────────────
@@ -392,6 +493,11 @@ export const renderPreviewSummary = (
   summary: SyncPreviewSummary | null,
   targetLabel: '云端' | '本地',
   modeDescription: string,
+  /**
+   * 覆盖时不会被删除或覆盖的会话数（2026-10-20 P1）。
+   * 缺省 0 = 没有 ⇒ 卡片与既往一致。
+   */
+  preservedRemoteCount: number = 0,
 ) => {
   if (!summary) {
     return (
@@ -437,6 +543,11 @@ export const renderPreviewSummary = (
         {summary.unchanged > 0 && (
           <div className="mt-0.5 text-[0.7rem] leading-5 text-slate-400 dark:text-slate-500">
             另有 {summary.unchanged} 个会话保持不变
+          </div>
+        )}
+        {preservedRemoteCount > 0 && (
+          <div className="mt-0.5 text-[0.7rem] leading-5 text-amber-600 dark:text-amber-400">
+            另有 {preservedRemoteCount} 个会话这台设备读不出来，{targetLabel}上那几份不会被删除或覆盖
           </div>
         )}
       </div>

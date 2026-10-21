@@ -46,6 +46,7 @@ describe('确认框文案：破坏性操作的最后一道说明', () => {
   it('自带存储用户也会被告知其他设备会同步删除（改前完全没提）', () => {
     const message = deleteAllConfirmMessage({
       groupCount: 3,
+      lockedCount: 0,
       isAuthenticated: false,
       syncBackend: 'webdav',
     });
@@ -55,7 +56,12 @@ describe('确认框文案：破坏性操作的最后一道说明', () => {
 
   it('已登录用户保持原文案（口径不变）', () => {
     assert.equal(
-      deleteAllConfirmMessage({ groupCount: 7, isAuthenticated: true, syncBackend: 'supabase' }),
+      deleteAllConfirmMessage({
+        groupCount: 7,
+        lockedCount: 0,
+        isAuthenticated: true,
+        syncBackend: 'supabase',
+      }),
       '将删除本地全部 7 个会话，删除后无法恢复，其他登录设备将同步删除。确认继续吗？'
     );
   });
@@ -63,6 +69,7 @@ describe('确认框文案：破坏性操作的最后一道说明', () => {
   it('纯本地用户不出现跨设备那句（无后端可广播）', () => {
     const message = deleteAllConfirmMessage({
       groupCount: 2,
+      lockedCount: 0,
       isAuthenticated: false,
       syncBackend: 'supabase',
     });
@@ -71,7 +78,12 @@ describe('确认框文案：破坏性操作的最后一道说明', () => {
 
   it('数量就是传入的会话数（不写死、不吞 0）', () => {
     assert.ok(
-      deleteAllConfirmMessage({ groupCount: 0, isAuthenticated: true, syncBackend: 'supabase' }).includes('全部 0 个会话')
+      deleteAllConfirmMessage({
+        groupCount: 0,
+        lockedCount: 0,
+        isAuthenticated: true,
+        syncBackend: 'supabase',
+      }).includes('全部 0 个会话')
     );
   });
 });
@@ -79,21 +91,21 @@ describe('确认框文案：破坏性操作的最后一道说明', () => {
 describe('菜单行文案：与确认框同一份判据', () => {
   it('自带存储用户 → 其他设备同步删除', () => {
     assert.equal(
-      deleteAllMenuWarning({ isAuthenticated: false, syncBackend: 'webdav' }),
+      deleteAllMenuWarning({ lockedCount: 0, isAuthenticated: false, syncBackend: 'webdav' }),
       '将清空本地全部会话，删除后无法恢复（其他设备同步删除）。'
     );
   });
 
   it('已登录用户 → 与改前逐字一致', () => {
     assert.equal(
-      deleteAllMenuWarning({ isAuthenticated: true, syncBackend: 'supabase' }),
+      deleteAllMenuWarning({ lockedCount: 0, isAuthenticated: true, syncBackend: 'supabase' }),
       '将清空本地全部会话，删除后无法恢复（其他登录设备同步删除）。'
     );
   });
 
   it('纯本地用户 → 不再无条件承诺跨设备删除', () => {
     assert.equal(
-      deleteAllMenuWarning({ isAuthenticated: false, syncBackend: 'supabase' }),
+      deleteAllMenuWarning({ lockedCount: 0, isAuthenticated: false, syncBackend: 'supabase' }),
       '将清空本地全部会话，删除后无法恢复。'
     );
   });
@@ -115,8 +127,10 @@ describe('两处入口都走同一个纯函数（同一份声明只有一个版�
 
   it('菜单行用 deleteAllMenuWarning 装配副标题', () => {
     assert.ok(
-      /deleteAllMenuWarning\(\{ isAuthenticated, syncBackend: settings\.syncBackend \}\)/.test(source),
-      '菜单行副标题必须由 deleteAllMenuWarning 产出'
+      /deleteAllMenuWarning\(\{[\s\S]{0,120}?lockedCount: lockedGroupCount,[\s\S]{0,120}?isAuthenticated,[\s\S]{0,120}?syncBackend: settings\.syncBackend,?[\s\S]{0,40}?\}\)/.test(
+        source
+      ),
+      '菜单行副标题必须由 deleteAllMenuWarning 产出，且必须带上锁定会话数'
     );
   });
 

@@ -1,4 +1,4 @@
-import React, { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState, useTransition } from 'react';
+import React, { useCallback, useDeferredValue, useEffect, useMemo, useRef } from 'react';
 import { useAppDispatch, useAppSelector } from '@/store/hooks';
 import { Tab, TabGroup } from '@/types/tab';
 import { deleteGroup, deleteTabAndSync, deleteBroadcastWarn } from '@/store/slices/tabSlice';
@@ -10,7 +10,6 @@ import { useEnhancedToast } from '@/utils/toastHelper';
 import { trackProductEvent } from '@/utils/productEvents';
 import {
   AdvancedSearch,
-  SearchFilters,
   SessionSearchResult,
   applySearchFilters,
   buildSessionSearchResults,
@@ -19,6 +18,7 @@ import {
   SEARCH_EVENT_THROTTLE_MS,
   SearchEventSnapshot,
   buildSearchEventSignature,
+  hasActiveSearchFilters,
   remainingMsUntilAllowed,
   searchEventNames,
   shouldEmitSearchEvents,
@@ -30,6 +30,28 @@ import { getSessionResultSummary, getDisplayUrl } from '@/utils/sessionPresentat
 import { logError } from '../../utils/log';
 import { toServiceWorkerErrorCopy } from '@/utils/serviceWorkerErrorCopy';
 import { mutationErrorMessage } from '@/components/tabs/mutationErrorCopy';
+import { restoreAllSearchSuccessMessage } from '@/components/tabs/restoreFeedbackCopy';
+import {
+  buildResultWindow,
+  resultTruncationMessage,
+} from '@/components/search/searchWindowing';
+import { SearchFilterSection } from '@/components/search/SearchFilterPanel';
+import {
+  browseEmptyDescription,
+  browseEmptyTitle,
+  browseSummaryCopy,
+  browseTruncationMessage,
+  noCriteriaEmptyDescription,
+  noCriteriaEmptyTitle,
+  buildBrowseResults,
+  bulkActionTitle,
+  resultCardTitle,
+  resultRegionLabel,
+  resultViewTitle,
+  searchSummaryCopy,
+  showFilterSectionTitle,
+} from '@/components/search/searchBrowseMode';
+import type { SearchFilterControls } from '@/components/search/searchFilterState';
 
 const PinIcon = () => (
   <svg className="w-3 h-3 text-blue-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
@@ -37,60 +59,140 @@ const PinIcon = () => (
   </svg>
 );
 
-/** 筛选控件的 id 前缀：同一时刻只有一个搜索结果面板，固定前缀即可保证 label 唯一。 */
-const FILTER_IDS = {
-  pinned: 'search-filter-pinned',
-  domain: 'search-filter-domain',
-  groupName: 'search-filter-group-name',
-  savedWithin: 'search-filter-saved-within',
-} as const;
-
 interface SearchResultListProps {
   searchQuery: string;
+  /**
+   * 筛选状态与动作（**由列表层持有**）。
+   *
+   * 为什么不是本组件的内部 state：本组件只在有搜索词（或有筛选条件）时挂载，
+   * 一旦卸载，内部 state 就没了 —— 清空搜索词会连带把用户设好的筛选条件
+   * 一起清掉（2026-10-20 审计 A-14）。
+   *
+   * 状态住在列表层 ⇒ 结果视图卸载**不影响**筛选条件：
+   * 用户搜「react」→ 设了「7 天内」→ 清空搜索词 → 再搜「redux」，
+   * 筛选条件仍在并自动生效。
+   */
+  filterControls: SearchFilterControls;
 }
 
-export const SearchResultList: React.FC<SearchResultListProps> = ({ searchQuery }) => {
+export const SearchResultList: React.FC<SearchResultListProps> = ({
+  searchQuery,
+  filterControls,
+}) => {
   const dispatch = useAppDispatch();
   const { groups } = useAppSelector(state => state.tabs);
   const confirmBeforeDelete = useAppSelector(state => state.settings.confirmBeforeDelete);
+  // ── 2026-10-20 审计 A-5：「固定标签页」筛选器在默认配置下永远筛不出东西 ──
+  // `collectPinnedTabs` 默认 false ⇒ 存进会话的标签 `pinned` 恒为 false
+  // ⇒ 「仅固定」永远 0 结果、「排除固定」等价于「全部」。
+  //
+  // 把一个**在默认配置下无效的过滤器**摆在用户面前，还鼓励他去用，
+  // 是「选项在骗用户」的一类问题。与其给它加一句「需在设置中开启」的说明，
+  // 不如**默认不显示** —— 用户在设置里开启了之后它自己就会出现。
+  const collectPinnedTabs = useAppSelector(state => state.settings.collectPinnedTabs);
+  // ── 2026-10-20 审计 A-9：showFavicons / showTabCount 现在**真被读** ──
+  // 修复前这两个设置只有默认值与上云映射，UI 从不读它们 —— favicon 永远显示、
+  // 标签数量永远显示，用户拨不动。设置页现在有开关（OptionsPage「外观」小节），
+  // 渲染点按它们的值决定显不显示。三个渲染点（会话卡片徽章 / 搜索结果徽章 /
+  // 顶栏「N 标签」）共用同一个字段、同一个含义。
+  const showFavicons = useAppSelector(state => state.settings.showFavicons);
+  const showTabCount = useAppSelector(state => state.settings.showTabCount);
   const { showConfirm } = useToast();
-  const { showDeleteError, showRestoreError, showRestoreSuccess } = useEnhancedToast();
-  const [filters, setFilters] = useState<SearchFilters>({});
-  const [showFilters, setShowFilters] = useState(false);
-  const [isFilterPending, startFilterTransition] = useTransition();
+  const { showDeleteError, showRestoreError, showRestoreSuccessMessage } = useEnhancedToast();
+  const {
+    effectiveFilters,
+    activeFilterCount,
+    clearFilters,
+  } = filterControls;
   const deferredSearchQuery = useDeferredValue(searchQuery);
   const normalizedSearchQuery = deferredSearchQuery.trim();
+  /**
+   * 当前视图形态。
+   *
+   * · `search` —— 有搜索词：既有形态，不变。
+   * · `browse` —— 没有搜索词、但有生效的筛选条件：筛选浏览视图。
+   *
+   * 两种形态共用同一套结果渲染管线，只是**结果集来源**与**文案**不同 ——
+   * 详见 ./searchBrowseMode 的文件头（为什么空搜索词下的结果集必须是全部标签）。
+   */
+  const isBrowseMode = !normalizedSearchQuery && activeFilterCount > 0;
+  /**
+   * 什么都没给（既无搜索词，也无生效的筛选条件）。
+   *
+   * 正常路径下这一格不该出现（列表层只在有搜索词或有条件时才渲染结果视图），
+   * 但组件自己不能说假话 —— 否则界面上会出现「没有找到与“”相关的会话或标签」
+   * （空引号 + 「请尝试其他关键词」），那是在声称用户搜过、没搜到。
+   */
+  const hasNoCriteria = !normalizedSearchQuery && activeFilterCount === 0;
 
   // 搜索管线（全文检索 → 筛选 → 按会话归组）是本组件最重的计算。
   // 此前每次渲染都全量重跑，包括用户每敲一个字符的中间态；
   // 用 useMemo 把重算收敛到「groups / 查询词 / 筛选条件真正变化」时才发生。
+  //
+  // ── 结果集来源分两种 ──────────────────────────────────────────────────
+  // · 有搜索词 ⇒ 全文检索命中的标签（既有行为，不变）。
+  // · 无搜索词但有筛选条件 ⇒ **全部标签**（buildBrowseResults）。
+  //   理由：会话级筛选（会话名 / 保存时间）的判据作用在**会话**上，
+  //   若结果集只含「命中搜索词的标签」，这两类筛选就没有判据可作用
+  //   ⇒「按会话名找」永远筛不出东西。详见 ./searchBrowseMode 的文件头。
   const baseResults = useMemo(
-    () =>
-      normalizedSearchQuery
-        ? AdvancedSearch.search(groups, {
-            query: normalizedSearchQuery,
-            searchPinned: true,
-          })
-        : [],
-    [groups, normalizedSearchQuery]
+    () => {
+      if (normalizedSearchQuery) {
+        return AdvancedSearch.search(groups, {
+          query: normalizedSearchQuery,
+          searchPinned: true,
+        });
+      }
+      return isBrowseMode ? buildBrowseResults(groups) : [];
+    },
+    [groups, isBrowseMode, normalizedSearchQuery]
   );
-  const searchResults = useMemo(() => applySearchFilters(baseResults, filters), [baseResults, filters]);
+  // 筛选项被隐藏 ≠ 筛选条件失效。
+  // 设置页在**另一个标签页**里被改动时，本页会收到 storage 变更 ⇒
+  // 用户可能「开启过固定标签筛选 → 设了条件 → 再关掉设置」。
+  // 若条件继续生效，用户看不到筛选项却被筛掉了结果 —— 这是最坏的一种隐形行为。
+  // 所以设置一关，条件一并作废（activeFilterCount 与埋点口径同步跟着走）。
+  //
+  // ↑ 这段判定的**执行位置**搬到了列表层（见 filterControls 的来处）：
+  // 条件与它的有效性必须同源，否则两处各判一遍必然漂移。
+  const searchResults = useMemo(
+    () => applySearchFilters(baseResults, effectiveFilters),
+    [baseResults, effectiveFilters]
+  );
   const sessionResults = useMemo(() => buildSessionSearchResults(searchResults), [searchResults]);
   const matchingTabs = useMemo(
     () => sessionResults.flatMap(session => session.matches),
     [sessionResults]
   );
-  const activeFilterCount = useMemo(
-    () =>
-      [
-        !!filters.domain?.trim(),
-        !!filters.groupName?.trim(),
-        !!filters.savedWithin,
-        filters.pinned === 'only' || filters.pinned === 'exclude',
-      ].filter(Boolean).length,
-    [filters.domain, filters.groupName, filters.savedWithin, filters.pinned]
-  );
 
+  // ── 2026-10-20 审计 A-11：搜索结果也要有渲染上限 ───────────────────────
+  // 修复前这里**全量渲染**所有匹配结果：400 会话 × 20 标签搜一个宽泛词
+  // （如 "https"）⇒ 91311 个 DOM 节点、搜索响应 1250ms、滚动掉到 11fps。
+  // 主列表早有虚拟化（lazyTabRows + useNearViewport），搜索这条路却没有 ——
+  // 而搜索是本产品最高频的「找回」路径。
+  //
+  // 两道防线（判据都在 searchWindowing.ts，可测）：
+  //   1. **条数上限**：命中很多时只展示最靠前的部分。AdvancedSearch 已按
+  //      相关度排好序 ⇒ 截断是排序的兑现，不是信息损失。截断了必须说清
+  //      「还有 N 条未显示」，否则用户会以为只找到了这么多。
+  //   2. **分片渲染**：结果条数没超上限、但会话分组多时，按片渲染。
+  const resultWindow = useMemo(
+    () => buildResultWindow(matchingTabs.length),
+    [matchingTabs.length]
+  );
+  const visibleSessionResults = useMemo(() => {
+    // 截断按**标签条数**算（用户感知的是「条结果」），但渲染的最小单位是
+    // 「会话分组」—— 一个分组里的命中标签要么全在、要么全不在，
+    // 否则摘要行「匹配 n/m 个标签」会与实际显示的不符。
+    const kept: SessionSearchResult[] = [];
+    let used = 0;
+    for (const session of sessionResults) {
+      if (used >= resultWindow.visible) break;
+      kept.push(session);
+      used += session.matches.length;
+    }
+    return kept;
+  }, [sessionResults, resultWindow.visible]);
   // ── 埋点：leading + trailing 节流（见 ./searchAnalytics） ────────────────
   // 依赖 filters 对象时每敲一个字符就会重跑；节流后连续输入只在窗口首尾各发一次，
   // 且保证「用户停下时的最终状态」一定被记录（trailing 补发）。
@@ -133,15 +235,20 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({ searchQuery 
   useEffect(() => {
     const snapshot: SearchEventSnapshot = {
       query: normalizedSearchQuery,
-      domain: filters.domain || null,
-      groupName: filters.groupName || null,
-      pinned: filters.pinned || 'all',
-      savedWithin: filters.savedWithin || null,
+      domain: effectiveFilters.domain || null,
+      groupName: effectiveFilters.groupName || null,
+      pinned: effectiveFilters.pinned || 'all',
+      savedWithin: effectiveFilters.savedWithin || null,
       resultCount: searchResults.length,
     };
     latestSnapshotRef.current = snapshot;
 
-    if (!snapshot.query) return;
+    // ── 空搜索词时不是「什么都不用记」 ──────────────────────────────────
+    // 没有搜索词、但**有生效的筛选条件** ⇒ 这是一次真实的「筛选浏览」
+    // （用户按域名/时间找会话），必须记 `search_filtered`。
+    // 两者都没有 ⇒ 用户只是打开扩展看了一眼，什么都没做 ⇒ 不记。
+    // 判定在 `searchEventNames` 里（口径与「发哪些事件」同源）。
+    if (!snapshot.query && !hasActiveSearchFilters(snapshot)) return;
 
     const state = analyticsStateRef.current;
     const now = Date.now();
@@ -168,11 +275,11 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({ searchQuery 
     trailingTimerRef.current = setTimeout(() => {
       trailingTimerRef.current = null;
       const latest = latestSnapshotRef.current;
-      if (!latest.query) return;
+      if (!latest.query && !hasActiveSearchFilters(latest)) return;
       if (buildSearchEventSignature(latest) === analyticsStateRef.current.lastSignature) return;
       emitSearchEvents(latest);
     }, wait);
-  }, [emitSearchEvents, filters, normalizedSearchQuery, searchResults.length]);
+  }, [emitSearchEvents, effectiveFilters, normalizedSearchQuery, searchResults.length]);
 
   useEffect(
     () => () => {
@@ -180,18 +287,6 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({ searchQuery 
     },
     []
   );
-
-  const updateFilters = useCallback((updater: (current: SearchFilters) => SearchFilters) => {
-    startFilterTransition(() => {
-      setFilters(current => updater(current));
-    });
-  }, []);
-
-  const clearFilters = useCallback(() => {
-    startFilterTransition(() => {
-      setFilters({});
-    });
-  }, []);
 
   // 复活去重守卫（逻辑见 @/utils/openGuard，可单测）：与 TabGroup 同一对类、同一套语义 ——
   // 单 tab 按 tabId 冷却去重，整组恢复按 group.id 加同类在途锁。组件卸载即丢弃，无需额外清理。
@@ -402,7 +497,7 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({ searchQuery 
 
     const sessionCount = sessionResults.length;
     showConfirm({
-      title: `恢复搜索结果中的 ${matchingTabs.length} 个标签？`,
+      title: `${bulkActionTitle(isBrowseMode ? 'browse' : 'search', '恢复')}${matchingTabs.length} 个标签？`,
       // ── 2026-10-19 审计 F-4：文案必须等于真实行为 ──────────────────────
       // 原先这里写「未锁定的会话将从列表移除」，而实际执行的只是
       // consumeMatchedTabs —— 对**命中的标签**逐条 deleteTabAndSync。
@@ -481,7 +576,10 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({ searchQuery 
         // 2026-10-18 C 组：全成功时原先**零反馈** —— 对话框关掉、窗口开了、
         // 列表少几行；命中标签分散在多个会话且每会话只中 1 条时，视觉上只是
         // 几行消失，用户无法确证「恢复了几个」。与列表页整组恢复同口径报条数。
-        showRestoreSuccess(matchingTabs.length);
+        //
+        // 2026-10-20 审计 A-1：措辞改用共享模块（restoreFeedbackCopy），
+        // 列表页与搜索页引用同一份文案 —— 两处各写一遍迟早漂移。
+        showRestoreSuccessMessage(restoreAllSearchSuccessMessage(matchingTabs.length));
       }
     );
   };
@@ -511,7 +609,7 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({ searchQuery 
     }
 
     showConfirm({
-      title: `删除搜索结果中的 ${matchingTabs.length} 个标签？`,
+      title: `${bulkActionTitle(isBrowseMode ? 'browse' : 'search', '删除')}${matchingTabs.length} 个标签？`,
       message: `将从所属会话中永久移除这 ${matchingTabs.length} 条标签记录（锁定会话除外），删除后无法恢复。确认继续吗？`,
       type: 'danger',
       confirmText: '删除',
@@ -529,7 +627,9 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({ searchQuery 
     const isUnopenable = !isOpenableTabUrl(tab.url);
     return (
     <div className={`tab-item group/tab${isUnopenable ? ' tab-item-unopenable' : ''}`}>
-      <SafeFavicon src={tab.favicon} alt="" className="tab-item-favicon" />
+      {showFavicons && (
+        <SafeFavicon src={tab.favicon} alt="" className="tab-item-favicon" />
+      )}
 
       <div className="flex-1 min-w-0 flex items-center gap-3">
         <a
@@ -569,150 +669,47 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({ searchQuery 
     );
   };
 
+  /**
+   * 结果区里的筛选区（工具条 + 面板）。
+   *
+   * 面板本体在 `SearchFilterPanel` 里 —— 与主列表**共用同一份**。
+   * 状态只有一处（由列表层持有），这里是它的一个渲染点。
+   */
   const FiltersPanel = ({ withOuterMargin }: { withOuterMargin?: boolean }) => (
-    <>
-      <div className="flex flex-wrap items-center justify-between gap-2 mb-2 px-2">
-        <div className="flex items-center gap-2">
-          <h3 className="text-sm font-medium text-gray-700 dark:text-gray-300">会话搜索结果</h3>
-          {activeFilterCount > 0 && (
-            <span className="theme-accent-soft theme-accent-text rounded-full px-2 py-0.5 text-[11px] font-medium">
-              {activeFilterCount} 个筛选
-            </span>
-          )}
-          {isFilterPending && (
-            <span className="text-[11px] text-gray-500 dark:text-gray-400">更新结果中...</span>
-          )}
-        </div>
-        <div className="flex items-center gap-3">
-          {activeFilterCount > 0 && (
-            <button
-              onClick={clearFilters}
-              className="text-xs text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 flat-interaction"
-            >
-              清空筛选
-            </button>
-          )}
-          <button
-            onClick={() => setShowFilters(!showFilters)}
-            className="text-xs text-primary-600 dark:text-primary-400 hover:underline flex items-center flat-interaction"
-          >
-            <svg xmlns="http://www.w3.org/2000/svg" className="h-3 w-3 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2.586a1 1 0 01-.293.707l-6.414 6.414a1 1 0 00-.293.707V17l-4 4v-6.586a1 1 0 00-.293-.707L3.293 7.207A1 1 0 013 6.5V4z" />
-            </svg>
-            {showFilters ? '隐藏筛选' : '显示筛选'}
-          </button>
-        </div>
-      </div>
-
-      {showFilters && (
-        <div className={`theme-well theme-radius-control p-3 sm:p-4 mb-3 ${withOuterMargin ? 'mx-2' : ''}`}>
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2.5 sm:gap-3">
-            <div>
-              <label
-                htmlFor={FILTER_IDS.pinned}
-                className="block text-xs text-gray-600 dark:text-gray-300 mb-1"
-              >
-                固定标签页
-              </label>
-              <select
-                id={FILTER_IDS.pinned}
-                value={filters.pinned || 'all'}
-                onChange={event => {
-                  const nextPinned = event.target.value as SearchFilters['pinned'];
-                  updateFilters(current => ({
-                    ...current,
-                    pinned: nextPinned === 'all' ? undefined : nextPinned,
-                  }));
-                }}
-                className="w-full text-sm border theme-border-default theme-radius-input-sm theme-focus theme-bg-elevated px-2 py-1 text-gray-900 dark:text-gray-100"
-              >
-                <option value="all">全部</option>
-                <option value="only">仅固定</option>
-                <option value="exclude">排除固定</option>
-              </select>
-            </div>
-
-            <div>
-              <label
-                htmlFor={FILTER_IDS.domain}
-                className="block text-xs text-gray-600 dark:text-gray-300 mb-1"
-              >
-                域名
-              </label>
-              <input
-                id={FILTER_IDS.domain}
-                type="text"
-                placeholder="输入域名..."
-                value={filters.domain || ''}
-                onChange={event => {
-                  const nextDomain = event.target.value;
-                  updateFilters(current => ({
-                    ...current,
-                    domain: nextDomain || undefined,
-                  }));
-                }}
-                className="w-full text-sm border theme-border-default theme-radius-input-sm theme-focus theme-bg-elevated px-2 py-1 text-gray-900 dark:text-gray-100"
-              />
-            </div>
-
-            <div>
-              <label
-                htmlFor={FILTER_IDS.groupName}
-                className="block text-xs text-gray-600 dark:text-gray-300 mb-1"
-              >
-                会话名称
-              </label>
-              <input
-                id={FILTER_IDS.groupName}
-                type="text"
-                placeholder="输入会话名称..."
-                value={filters.groupName || ''}
-                onChange={event => {
-                  const nextGroupName = event.target.value;
-                  updateFilters(current => ({
-                    ...current,
-                    groupName: nextGroupName || undefined,
-                  }));
-                }}
-                className="w-full text-sm border theme-border-default theme-radius-input-sm theme-focus theme-bg-elevated px-2 py-1 text-gray-900 dark:text-gray-100"
-              />
-            </div>
-
-            <div>
-              <label
-                htmlFor={FILTER_IDS.savedWithin}
-                className="block text-xs text-gray-600 dark:text-gray-300 mb-1"
-              >
-                保存时间
-              </label>
-              <select
-                id={FILTER_IDS.savedWithin}
-                value={filters.savedWithin || ''}
-                onChange={event => {
-                  const nextValue = event.target.value as SearchFilters['savedWithin'] | '';
-                  updateFilters(current => ({
-                    ...current,
-                    savedWithin: nextValue || undefined,
-                  }));
-                }}
-                className="w-full text-sm border theme-border-default theme-radius-input-sm theme-focus theme-bg-elevated px-2 py-1 text-gray-900 dark:text-gray-100"
-              >
-                <option value="">全部</option>
-                <option value="24h">24 小时内</option>
-                <option value="7d">7 天内</option>
-                <option value="30d">30 天内</option>
-                <option value="older">30 天前</option>
-              </select>
-            </div>
-          </div>
-        </div>
-      )}
-    </>
+    <SearchFilterSection
+      controls={filterControls}
+      title={resultViewTitle(isBrowseMode ? 'browse' : 'search')}
+      // browse 形态下不显示标题：卡片头已经写着「符合条件的会话」，
+      // 筛选区再写一遍「按条件筛选会话」是同一句话在同一屏里出现两次。
+      // 判据与形态判定同源，见 searchBrowseMode.showFilterSectionTitle。
+      showTitle={showFilterSectionTitle(isBrowseMode ? 'browse' : 'search')}
+      collectPinnedTabs={collectPinnedTabs}
+      variant={withOuterMargin ? 'inset' : 'flush'}
+    />
   );
 
   if (sessionResults.length === 0) {
     return (
       <div>
+        {/* ── 2026-10-20 键盘可达性：空结果也必须播报 ──────────────────────
+            空结果与有结果走的是**两个不同的渲染分支**（这里 return 的是
+            EmptyState，上面那个分支 return 的是结果卡）⇒ 有结果时的 live
+            region 在空结果时**根本不在 DOM 里**。
+            若只在有结果的分支放 live region，「搜了个不存在的词」这件事
+            就彻底静默 —— 而这恰恰是最需要反馈的时刻（用户会以为搜索坏了）。
+            所以两个分支各放一个常驻的 polite live region。 */}
+        <div
+          role="status"
+          aria-live="polite"
+          aria-atomic="true"
+          className="sr-only"
+        >
+          {hasNoCriteria
+            ? noCriteriaEmptyTitle
+            : isBrowseMode
+              ? browseEmptyTitle
+              : `没有找到与“${searchQuery}”相关的会话或标签`}
+        </div>
         <FiltersPanel />
         <EmptyState
           tone="search"
@@ -721,8 +718,20 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({ searchQuery 
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
             </svg>
           }
-          title="没有找到可找回的会话"
-          description={`没有找到与“${searchQuery}”相关的会话或标签，请尝试其他关键词。`}
+          title={
+            hasNoCriteria
+              ? noCriteriaEmptyTitle
+              : isBrowseMode
+                ? browseEmptyTitle
+                : '没有找到可找回的会话'
+          }
+          description={
+            hasNoCriteria
+              ? noCriteriaEmptyDescription
+              : isBrowseMode
+                ? browseEmptyDescription
+                : `没有找到与“${searchQuery}”相关的会话或标签，请尝试其他关键词。`
+          }
           action={
             <div className="text-xs theme-text-muted space-y-3">
               {activeFilterCount > 0 && (
@@ -737,7 +746,13 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({ searchQuery 
                 <div>小提示：</div>
                 <ul className="list-disc list-inside space-y-0.5 text-left">
                   <li>支持搜索会话名称、标签标题或 URL</li>
-                  <li>可结合域名、保存时间和固定标签筛选</li>
+                  {/* 固定标签筛选器默认是隐藏的（见上方 collectPinnedTabs 注释），
+                      提示文案不能无条件承诺一个用户看不到的筛选项。 */}
+                  <li>
+                    {collectPinnedTabs
+                      ? '可结合域名、保存时间和固定标签筛选'
+                      : '可结合域名和保存时间筛选'}
+                  </li>
                   <li>如果刚换设备，可先登录后手动同步一次</li>
                 </ul>
               </div>
@@ -753,8 +768,39 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({ searchQuery 
     <div
       className="tab-group-card animate-in group/card"
       role="region"
-      aria-label={`搜索结果，共 ${sessionResults.length} 个匹配会话`}
+      aria-label={resultRegionLabel(
+        isBrowseMode ? 'browse' : 'search',
+        sessionResults.length,
+        matchingTabs.length
+      )}
     >
+      {/* ── 2026-10-20 键盘可达性：结果数量变化必须被读屏播报 ──────────────
+          修复前：容器只有 `role="region"` + 一句 `aria-label`，**没有 aria-live**；
+          整个文档的 [aria-live] 元素数 = 0。而搜索时焦点留在输入框里 ⇒
+          读屏用户在输入关键词后**听不到任何结果反馈**（「搜到了几个？」
+          永远得不到回答），空结果态同样不播报。
+
+          为什么不能只靠 aria-label 承载动态计数：`aria-label` 描述的是**这个
+          区域是什么**，不是「区域内容变了」的通知。区域内容变化要靠 live
+          region 播报。对照：TabList 的加载态与 Toast 都正确用了 aria-live
+          ⇒ 这是遗漏，不是全局约定缺失。
+
+          做法：常驻一个 polite live region（**不能**用 {cond && <div>…} 的
+          挂载式写法 —— 区域和文案同一帧插入的话多数读屏不会播报），
+          内容是「共 N 个匹配会话、M 个匹配标签」。aria-atomic 让整句被重读。
+
+          计数不放 aria-label 是刻意的：aria-label 保留给「这是搜索结果区」，
+          动态计数交给 live region —— 两件事、两个机制。 */}
+      <div
+        role="status"
+        aria-live="polite"
+        aria-atomic="true"
+        className="sr-only"
+      >
+        {isBrowseMode
+          ? browseSummaryCopy(sessionResults.length, matchingTabs.length)
+          : searchSummaryCopy(sessionResults.length, matchingTabs.length)}
+      </div>
       <div className="tab-group-header gap-2">
         <div className="flex items-center gap-2 sm:gap-3 flex-1 min-w-0">
           <div className="p-1 -ml-1">
@@ -763,9 +809,24 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({ searchQuery 
             </svg>
           </div>
 
-          <h3 className="tab-group-title truncate">匹配会话</h3>
+          <h3 className="tab-group-title truncate">
+            {resultCardTitle(isBrowseMode ? 'browse' : 'search')}
+          </h3>
 
-          <span className="tab-group-count flex-shrink-0">{sessionResults.length}</span>
+          {/* ── 2026-10-20 审计 A-13：徽章显示的是**标签数**，不是会话数 ──
+              修复前显示 sessionResults.length（会话数）：搜 "React" 命中 1 个会话里的
+              2 个标签 ⇒ 徽章显示「1」，而结果区里列了 2 行标签。用户会以为只有
+              1 条结果。改成标签数，并让会话数与标签数都能读到。
+              showTabCount 关掉时不渲染这枚徽章（2026-10-20 审计 A-9：让开关
+              真的生效；title 里仍保留「N 个会话 · M 个标签」的完整信息）。 */}
+          {showTabCount && (
+            <span
+              className="tab-group-count flex-shrink-0"
+              title={`${sessionResults.length} 个会话 · ${matchingTabs.length} 个标签`}
+            >
+              {matchingTabs.length}
+            </span>
+          )}
         </div>
 
         {matchingTabs.length > 0 && (
@@ -801,7 +862,7 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({ searchQuery 
       <FiltersPanel withOuterMargin />
 
       <div className="space-y-3 px-2 pb-2">
-        {sessionResults.map((session: SessionSearchResult) => (
+        {visibleSessionResults.map((session: SessionSearchResult) => (
           <div
             key={session.group.id}
             className="theme-radius-card theme-border-default theme-bg-elevated border p-3"
@@ -829,7 +890,7 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({ searchQuery 
                   )}
                 </div>
                 {/* 命中数已并入摘要行（匹配 n/m 个标签），不再单列徽章 */}
-                <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                <p className="mt-1 text-xs theme-text-muted">
                   {getSessionResultSummary(session.group, session.matches.length)}
                 </p>
               </div>
@@ -851,6 +912,21 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({ searchQuery 
             </div>
           </div>
         ))}
+
+        {/* ── 2026-10-20 审计 A-11：截断必须说清「还有多少、为什么」─────────
+            截断了不说 = 用户以为「只找到这么多条」（与 2026-10-19 审计 F-5
+            「重复导入被误报成备份文件坏了」是同一类：真实原因不告诉用户，
+            用户据此做出错误判断）。 */}
+        {resultWindow.truncated && (
+          <div
+            role="status"
+            className="theme-well theme-radius-control px-3 py-2.5 text-xs theme-text-secondary"
+          >
+            {isBrowseMode
+              ? browseTruncationMessage(resultWindow.hidden)
+              : resultTruncationMessage(resultWindow.hidden)}
+          </div>
+        )}
       </div>
     </div>
   );

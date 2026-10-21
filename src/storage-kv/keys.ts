@@ -37,6 +37,14 @@ export const STORAGE_KEYS = {
   // 语义：`true` = 归属未定，自动上传必须被挡住（只允许显式的首次推送走全量）；
   //       `false`/缺失 = 决策已完成（或从未进入 WebDAV），恢复正常自动上传。
   // 不存在 = 已完成：这样老用户升级后不会被无端挡住同步。
+  //
+  // ⚠️ 2026-10-20：**值**的形状从「全局单值」改成「按库寻址的记录」
+  // （`{ 库身份: 是否待决 }`），判据与取值规则见
+  // `storage-kv/firstSyncPendingRecord.ts`（纯函数，可直接做行为断言）。
+  // 键名**不变** —— 它仍是单键（`storage.clear()` 的键清单由
+  // `Object.values(STORAGE_KEYS)` 派生，动态键派生不出来 ⇒ 动态键会变成
+  // 清不掉的孤儿待决位，而它会把同步永久降级成增量）。
+  // 旧格式（全局布尔值）的迁移语义也在那个模块里写明。
   FIRST_SYNC_PENDING: 'webdav_first_sync_pending',
   // ── 2026-10-18 P1#4 第二半：「本次操作改动过的会话 id」队列 ──────────────
   // 上面那个标志只说了「待决期不许全量」，而适配器降级后用的判据是
@@ -49,6 +57,18 @@ export const STORAGE_KEYS = {
   // 不上传（fail-closed —— 待决期少传只是「留在本机等用户决定」，多传才是违约）。
   // 清队时机：上传成功之后、或归属决策完成时（setFirstSyncPending(false)）。
   PENDING_UPLOAD_GROUP_IDS: 'pending_upload_group_ids',
+  // ── 2026-10-20 D-3：增量白名单的登记**曾经失败过** ──────────────────────
+  // 上面那个队列是「本轮登记了哪些会话要传」。登记本身是**写操作**，
+  // 会失败（quota、死句柄看门狗、事务 abort）。
+  // 失败的后果不是「少传几个」而是「**不知道漏了哪几个**」——
+  // 于是「队列与上行集合对得上账」这件事已经**不能**作为清 pending_upload
+  // 的依据（对得上只说明「登记到的都传了」，没说明「没登记的也没漏」）。
+  //
+  // 语义：`true` = 有过登记失败 ⇒ 本轮**不得**宣称「全部同步」，
+  // 也不得清 pending_upload（保留它让下一轮继续尝试）。
+  // 读不到 ⇒ false（fail-closed 方向：读不到不代表失败过，
+  // 把它当 true 会让上传永远清不掉标志 ⇒ 无限重试）。
+  PENDING_UPLOAD_REGISTRY_UNRELIABLE: 'pending_upload_registry_unreliable',
   // P1-6（历史）：本地 purge（物理移除）未同步的组 id 队列。无墓碑重写后废弃，
   // 残留值由迁移 purge_tombstones_v1 转入 PENDING_DELETE_IDS 后删除本键。
   PENDING_PURGE_IDS: 'pending_purge_ids',
@@ -97,6 +117,40 @@ export const STORAGE_KEYS = {
   // 知道这条规则；本注释就是那条规则的载体。
 } as const;
 
+/**
+ * 存储格式版本号 —— **它不是迁移闸门**（2026-10-20 升级路径审计 U-3 更正）。
+ *
+ * ── 它实际是什么 ──────────────────────────────────────────────────────────
+ * 一个「本机最后一次写入时用的格式版本」的**标记字段**。唯一使用点
+ * （utils/storage.ts 的 ensureVersion）只做两件事：
+ *   1. 读出它；
+ *   2. 若与当前值不同 ⇒ **写回当前值**。
+ * 它**从不**比较 `stored < current`，也**从不**据此分支到任何迁移。
+ *
+ * ── 为什么不是「按版本迁移」 ──────────────────────────────────────────────
+ * 本仓的迁移机制**另有其人**：`utils/migrationUtils.ts` 的**逐项迁移标志**
+ * （`shouldRunMigration('favicon_urls_v1')` / `'tombstone_purge_v1'` …）。
+ * 那种形态按「迁移项」而非「版本号」记账，天然做到：
+ *   · 每个迁移**独立幂等**（跑过就跳过，没跑过就补跑）；
+ *   · **不必**在两个版本之间做 diff（版本号模型要求「从 vN 到 vN+1 依次执行」，
+ *     于是任何一次跳过都会把后面所有迁移永久错过）；
+ *   · 加一条迁移 = 加一个标志，不动版本号（版本号模型要求 bump 版本号，
+ *     而 bump 之后又必须记得补一条迁移 —— 两处都要改，容易只改一处）。
+ *
+ * 换句话说：**版本号模型在本仓是多余的闸门，而「看起来有个闸门」比「没有闸门」
+ * 更危险** —— 后来的开发者会以为「数据形状变了只要 bump 版本号就有地方挂迁移」，
+ * 而实际上那里什么都没挂。
+ *
+ * ── 为什么保留这个字段（而不是删掉） ──────────────────────────────────────
+ * 它是一个**诊断量**：出问题时可以从用户磁盘上读出「这台机器最后写入时
+ * 认为的格式版本」，与当前版本对照，判断是不是「从某个老版本直接跳过来」的。
+ * 保留成本极低（一次读 + 一次写），诊断价值实在。
+ *
+ * ⚠️ 若将来真的要做「按版本迁移」，请**先**把它改成真正的闸门
+ * （`stored < current` ⇒ 跑一张 version → migration 表），
+ * 并**同步**把 utils/migrationUtils.ts 的逐项标志制改掉 —— 两套机制并存必然
+ * 出现「某个版本号区间里的迁移，两套机制都以为对方会做」。
+ */
 export const STORAGE_VERSION = 5;
 
 /** 历史遗留键：早期版本写在 chrome.storage.local / localStorage 里的旧键名。 */
@@ -156,3 +210,30 @@ export const MIGRATION_SCAN_KEYS: readonly string[] = [
   LEGACY_KEYS.TAB_GROUP_PREFIX,
   LEGACY_KEYS.LEGACY_TAB_GROUPS,
 ];
+
+/**
+ * 源键 → 目标键的**改名表**（2026-10-20 审计 A-15 收口）。
+ *
+ * 【为什么需要它】`MIGRATION_SCAN_KEYS` 只保证「旧键会被扫到」，但
+ * `migrateFromChromeStorage` 搬运时**沿用源键名**写入 KV ——
+ * 于是 chrome.storage.local 里的 `tabGroups`（历史键）会被写进
+ * IndexedDB 的 `tabGroups` 键，而应用只读 `tab_groups`（现行键）。
+ * 结果：数据搬了，但**搬到了一个没人读的键上** ⇒ 用户看不到自己的会话，
+ * 而存储层一路绿灯（没有报错、没有告警）。
+ *
+ * 【为什么以前没炸】历史上 chrome.storage.local 里的会话键**一直**是
+ * `tab_groups`（`tabGroups` 只是更早的 service worker 读过一次就删的
+ * 过渡键）。但这个"历史上没人写"不是可以依赖的保证 ——
+ * 只要有一版把 `tabGroups` 真的写进去过（分叉分支、用户手改、
+ * 未来的一次重构），迁移就会静默把它搬进死键。
+ *
+ * 【这里的取舍】改名表只登记**键名不同、数据同类**的迁移：
+ * `tabGroups` → `tab_groups`。设备键（`deviceId` → `tabvaultpro_device_id`）
+ * 不在表里 —— 它是**现行键**（LEGACY_KEYS.DEVICE_ID），源侧同名的
+ * `deviceId` 是更早的历史键，同样按源键名搬走即可（`deviceUtils`
+ * 读的是 `tabvaultpro_device_id`，历史 `deviceId` 值搬过去后仍是
+ * 「另一个键上的旧值」，与本表无关）。
+ */
+export const MIGRATION_KEY_RENAMES: Readonly<Record<string, string>> = {
+  [LEGACY_KEYS.LEGACY_TAB_GROUPS]: STORAGE_KEYS.GROUPS,
+};

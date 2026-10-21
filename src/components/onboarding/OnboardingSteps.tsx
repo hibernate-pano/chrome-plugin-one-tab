@@ -1,5 +1,7 @@
 import React from 'react';
 
+import { saveAndCloseLabel } from '@/components/layout/saveActionCopy';
+
 /**
  * 引导各步内容。
  *
@@ -57,12 +59,19 @@ export const SaveTabsStep: React.FC = () => (
        * 改文案而不是改交互：让聚光灯目标在引导期间可点击需要重新设计
        * 「读」与「试」的边界（当前聚光灯是阅读态），属产品决策。
        * 文案只承诺**此刻真能做的事**，是无争议的诚实性修复。 */}
-      关闭本引导后，点击顶部的“保存会话”按钮
+      关闭本引导后，点击顶部的“{saveAndCloseLabel}”按钮
       <br />
       当前窗口会被收成一个工作会话，<strong>这些标签随之关闭</strong>
       {/* 2026-10-09 P1-1：定位保持「保存 = 剪切」（产品负责人已确认），
           但新用户第一次操作就该知道会发生什么 —— 「收成一个会话」没有明说
-          标签会关掉，用户可能以为只是存了个副本。 */}
+          标签会关掉，用户可能以为只是存了个副本。
+
+          2026-10-20 审计 A-14：按钮名必须引用常量。
+          原文案手写「保存会话」，而按钮的可见文字是 `saveAndCloseLabel`
+          （=「保存并关闭」）—— 用户在引导里看到的名字与按钮上的名字对不上，
+          会去找一个叫「保存会话」的东西。引导是 `saveAndCloseLabel` 的
+          **第三个**引用点（顶栏按钮 / 空态 CTA / 引导），2026-10-19 审计 I-3
+          只把前两处收敛到常量，第三处被漏在纪律之外。 */}
     </p>
     <div className="onboarding-feature-grid">
       <div className="onboarding-feature-card">
@@ -78,7 +87,12 @@ export const SaveTabsStep: React.FC = () => (
       <div className="onboarding-feature-card">
         <div className="onboarding-feature-icon">🔒</div>
         <div className="onboarding-feature-title">锁定保护</div>
-        <div className="onboarding-feature-desc">重要会话可锁定，避免误删</div>
+        {/* ── 2026-10-20 审计 A-3：承诺必须说清锁定的**边界** ─────────────
+         * 「重要会话可锁定，避免误删」听起来像「锁了就删不掉」，
+         * 而实现（修好后）是：锁定保护的是**会话内部**（不可重命名、
+         * 不可逐条删标签、不参与清理重复），整组仍然可以删，只是会先
+         * 明确提示「该会话已锁定」。把边界写出来，用户才知道锁定能挡住什么。 */}
+        <div className="onboarding-feature-desc">重要会话可锁定，避免误删其中的标签</div>
       </div>
     </div>
   </div>
@@ -104,12 +118,12 @@ export const SearchStep: React.FC = () => (
       <div className="onboarding-feature-card">
         <div className="onboarding-feature-icon">⏱️</div>
         <div className="onboarding-feature-title">按时间过滤</div>
-        <div className="onboarding-feature-desc">快速收敛到较新的会话或更久之前</div>
+        <div className="onboarding-feature-desc">不输入关键词也能筛：只看较近的，或更久之前的</div>
       </div>
       <div className="onboarding-feature-card">
         <div className="onboarding-feature-icon">🌐</div>
         <div className="onboarding-feature-title">按域名过滤</div>
-        <div className="onboarding-feature-desc">同一站点的标签更容易聚到一起</div>
+        <div className="onboarding-feature-desc">记得站点、不记得网址时，按域名直接找出来</div>
       </div>
     </div>
   </div>
@@ -144,8 +158,8 @@ export const RestoreStep: React.FC = () => (
       </div>
       <div className="onboarding-feature-card">
         <div className="onboarding-feature-icon">🕘</div>
-        <div className="onboarding-feature-title">时间戳命名</div>
-        <div className="onboarding-feature-desc">新会话默认按保存时间命名，回看更直接</div>
+        <div className="onboarding-feature-title">域名命名</div>
+        <div className="onboarding-feature-desc">新会话默认按出现最多的域名命名（如 github.com），没有可用域名时才用时间戳</div>
       </div>
     </div>
   </div>
@@ -191,9 +205,12 @@ export const SyncStep: React.FC = () => (
          * 都会先问。实际：单条标签的 ✕ 直接删、把最后一条标签拖到别的会话
          * 会让整个会话当场消失（这两条都不经过确认）。
          *
+         * 整组删除的确认还受设置里的「删除前确认」开关控制（默认开；锁定的会话
+         * 始终强制确认），「删除全部会话」始终确认并显示数量。
+         *
          * 锁定会话也不防「删除所有会话」—— 那个操作对所有会话一视同仁。
          * 如实说清比说得好听重要：用户据此决定要不要开「删除前确认」。 */}
-        <div className="onboarding-feature-desc">删除整个会话会先确认；单条删除直接生效</div>
+        <div className="onboarding-feature-desc">删除整个会话会先确认（可在设置里关闭，删除全部会话始终确认）；单条删除、以及把最后一条标签拖到别的会话，会立即生效</div>
       </div>
     </div>
   </div>

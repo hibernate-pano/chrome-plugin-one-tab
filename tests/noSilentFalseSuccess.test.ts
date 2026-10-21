@@ -563,18 +563,31 @@ describe('P0：整窗保存同样不得对「一个标签都没存下」报成�
   const SW = stripComments(read('src/service-worker.ts'));
   const TM = stripComments(read('src/background/TabManager.ts'));
 
-  it('saveAllTabs 必须回报「是否真的保存了」（boolean，不是 void）', () => {
+  it('saveAllTabs 必须回报「是否真的保存了」（不是 void）', () => {
+    // 2026-10-20 审计 A-4：返回类型从 `Promise<boolean>` 改成
+    // `Promise<SaveAllSummary | null>` —— 为了把「丢了几个固定标签」
+    // 带回 popup（boolean 表达不了这个信息）。
+    //
+    // 断言盯**不变量**而不是字面量：
+    //   · 失败时必须返回 falsy（null）—— 不能返回一个「看起来像成功」的对象
+    //   · 成功时必须返回带摘要的对象 —— 不能是 undefined/void
+    // 钉死 `Promise<boolean>` 会让任何合法的重构都变红（那正是
+    // docsAlignment 硬编码旧基线被批评的毛病）。
     assert.match(
       TM,
-      /async saveAllTabs\(inputTabs\?: chrome\.tabs\.Tab\[\]\):\s*Promise<boolean>/,
-      'saveAllTabs 必须返回 Promise<boolean> —— 返回 void 时调用方无从判断成败，' +
+      /async saveAllTabs\(inputTabs\?: chrome\.tabs\.Tab\[\]\):\s*Promise<SaveAllSummary \| null>/,
+      'saveAllTabs 必须返回「摘要 | null」—— 返回 void 时调用方无从判断成败，' +
         '只能无条件报成功（谎报「已保存」）'
     );
     const start = TM.indexOf('async saveAllTabs(');
     assert.ok(start > -1, '找不到 saveAllTabs');
     const body = TM.slice(start, TM.indexOf('\n  /**', start + 10));
-    assert.ok(/return false;/.test(body), '空窗早退分支必须显式 return false');
-    assert.ok(/return true;/.test(body), '成功路径必须显式 return true');
+    assert.ok(/return null;/.test(body), '空窗早退分支必须显式 return null（失败）');
+    assert.match(
+      body,
+      /return\s*\{\s*savedCount:/,
+      '成功路径必须显式返回摘要对象（含 savedCount）'
+    );
   });
 
   it('SAVE_ALL_TABS 分支必须先看返回值再回 success:true', () => {
@@ -583,20 +596,20 @@ describe('P0：整窗保存同样不得对「一个标签都没存下」报成�
     const body = SW.slice(start, SW.indexOf('// 异步响应', start));
     assert.match(
       body,
-      /const saved = await tabManager\.saveAllTabs\(/,
+      /const summary = await tabManager\.saveAllTabs\(/,
       '必须接住 saveAllTabs 的返回值 —— 不接就是「不看回包」的老毛病'
     );
-    const checksAt = body.indexOf('if (!saved)');
+    const checksAt = body.indexOf('if (!summary)');
     const successAt = body.indexOf('success: true');
-    assert.ok(checksAt > -1, '必须显式判断 !saved');
+    assert.ok(checksAt > -1, '必须显式判断 !summary');
     assert.ok(
       checksAt < successAt,
-      '!saved 判断必须排在 success:true 之前 —— 顺序反了等于没拦'
+      '!summary 判断必须排在 success:true 之前 —— 顺序反了等于没拦'
     );
     assert.match(
       body.slice(checksAt, successAt),
       /success: false/,
-      '!saved 分支必须回 success:false，否则界面拿不到失败信号'
+      '!summary 分支必须回 success:false，否则界面拿不到失败信号'
     );
   });
 });

@@ -78,12 +78,37 @@ class FakeDav {
     };
 
     if (method === 'PROPFIND') {
+      const depth = headers['depth'] ?? '0';
+      if (depth === '1') {
+        // 列目录（Depth:1）：2026-10-20 修 P0「索引丢了被当成空库」后，
+        // 适配器要靠**列目录**把云端索引重建出来 —— 这个假服务器必须
+        // 像真服务器一样支持它，否则测的就不是真实路径。
+        const children = this.childrenOf(path);
+        if (!this.dirs.has(path) && children.length === 0) return respond(404);
+        const responses = [
+          this.responseXml(`${BASE}${path}/`, true),
+          ...children.map(c => this.responseXml(`${BASE}${c.path}`, c.isCollection, c.etag)),
+        ];
+        return respond(
+          207,
+          `<?xml version="1.0"?><D:multistatus xmlns:D="DAV:">${responses.join('')}</D:multistatus>`
+        );
+      }
       const f = this.files.get(path);
-      if (!f) return respond(404);
-      return respond(
-        207,
-        `<?xml version="1.0"?><D:multistatus xmlns:D="DAV:"><D:response><D:propstat><D:prop><D:getetag>${f.etag}</D:getetag></D:prop></D:propstat></D:response></D:multistatus>`
-      );
+      if (f) {
+        return respond(
+          207,
+          `<?xml version="1.0"?><D:multistatus xmlns:D="DAV:"><D:response><D:propstat><D:prop><D:getetag>${f.etag}</D:getetag></D:prop></D:propstat></D:response></D:multistatus>`
+        );
+      }
+      // 目录也是一个存在的资源（Depth:0 PROPFIND 应当回 207）。
+      if (this.dirs.has(path)) {
+        return respond(
+          207,
+          `<?xml version="1.0"?><D:multistatus xmlns:D="DAV:"><D:response><D:propstat><D:prop><D:resourcetype><D:collection/></D:resourcetype></D:prop></D:propstat></D:response></D:multistatus>`
+        );
+      }
+      return respond(404);
     }
     if (method === 'MKCOL') {
       if (this.dirs.has(path)) return respond(405);
@@ -129,6 +154,37 @@ class FakeDav {
   }
   write(path: string, body: string): void {
     this.files.set(path, { body, etag: `"seed${++this.etagSeq}"` });
+  }
+
+  /** 某个目录的**直接**子资源（文件 + 子目录）。 */
+  private childrenOf(dir: string): Array<{ path: string; isCollection: boolean; etag?: string }> {
+    const out: Array<{ path: string; isCollection: boolean; etag?: string }> = [];
+    for (const [p, f] of this.files) {
+      if (this.parentOf(p) === dir) out.push({ path: p, isCollection: false, etag: f.etag });
+    }
+    for (const d of this.dirs) {
+      if (d === dir) continue;
+      if (this.parentOf(d) === dir) out.push({ path: d, isCollection: true });
+    }
+    return out;
+  }
+
+  private parentOf(p: string): string {
+    const i = p.lastIndexOf('/');
+    return i < 0 ? '' : p.slice(0, i);
+  }
+
+  /** 一条 PROPFIND 响应（对齐 RFC 4918 的 multistatus 形状）。 */
+  private responseXml(href: string, isCollection: boolean, etag?: string): string {
+    const resourcetype = isCollection ? '<D:resourcetype><D:collection/></D:resourcetype>' : '<D:resourcetype/>';
+    const etagXml = etag ? `<D:getetag>${etag}</D:getetag>` : '';
+    return (
+      '<D:response>' +
+      `<D:href>${href}</D:href>` +
+      `<D:propstat><D:prop>${resourcetype}${etagXml}</D:prop>` +
+      '<D:status>HTTP/1.1 200 OK</D:status></D:propstat>' +
+      '</D:response>'
+    );
   }
 }
 
@@ -391,14 +447,14 @@ describe('设置同步', () => {
   it('加密模式下往返（且盘上是密文，不出现明文设置）', async () => {
     const dav = new FakeDav();
     const { adapter } = makeAdapter(dav);
-    await adapter.uploadSettings({ groupNameTemplate: '机密名字 %d' } as never);
+    await adapter.uploadSettings({ themeMode: '机密模式' } as never);
 
     const raw = dav.read('TapStack/settings.json')!.body;
-    assert.ok(!raw.includes('机密名字'), '盘上不得出现明文设置');
+    assert.ok(!raw.includes('机密模式'), '盘上不得出现明文设置');
     assert.ok(raw.includes('"enc"'));
 
     const back = await adapter.downloadSettings();
-    assert.equal(back?.groupNameTemplate, '机密名字 %d');
+    assert.equal(back?.themeMode, '机密模式');
   });
 
   it('远端没有设置文件 → null（不是空对象）', async () => {

@@ -31,6 +31,7 @@ import type {
   SyncBackendPort,
   UploadGroupsResult,
 } from './ports';
+import type { DownloadSkippedGroup } from '@/types/tab';
 import { sync as supabaseSync } from '@/utils/supabaseFacade';
 
 /** `T | null | undefined` → `T | undefined`。指纹字段用 undefined 表示「后端没给」。 */
@@ -62,6 +63,26 @@ export class SupabaseBackendAdapter implements SyncBackendPort {
 
   async downloadGroups(): Promise<TabGroup[]> {
     return (await supabaseSync.downloadTabGroups()) as TabGroup[];
+  }
+
+  /**
+   * D-6：云端后端**会**产生「读不出来的那几组」。
+   *
+   * 那些组被整组跳过（形状不可恢复 / 还原率不达标 / tabs 表回填被截断 /
+   * 单组处理异常），**云端行原封保留**（一个字节都没被动过）。
+   *
+   * 为什么必须把它们报出去：覆盖下载（forceRemote）会用云端**替换**本地。
+   * 若「这轮没读到」在返回值里消失，引擎就会把「没读到」当成「云端没有」
+   * ⇒ 本机那一份被物理清除 ⇒ 云端的数据被用户自己的下载吃掉，UI 还报成功。
+   *
+   * ⚠️ 同轮保证：清单与 `downloadGroups()` 的结果来自**同一轮**下载
+   * （见 utils/supabase/download.ts 的 lastDownloadSkipped：那里把本轮的
+   * 跳过清单记下来，本方法读它，而不是**再读一次云端**）。
+   * 分两次读会拿到两轮不同的云端状态，而引擎需要的是「这一轮拿到了哪些、
+   * 没拿到哪些」的**同一个快照**。
+   */
+  async downloadSkippedGroups(): Promise<DownloadSkippedGroup[]> {
+    return (await supabaseSync.downloadSkippedGroups()) ?? [];
   }
 
   async uploadGroups(

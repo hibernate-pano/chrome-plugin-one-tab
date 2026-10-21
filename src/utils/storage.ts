@@ -1,9 +1,14 @@
-import { TabGroup, UserSettings, LayoutMode, ThemeStyle, THEME_STYLES, DEVICE_LEVEL_SETTING_KEYS } from '@/types/tab';
+import { TabGroup, UserSettings, LayoutMode, ThemeStyle, THEME_STYLES, RETIRED_SETTING_KEYS, RETIRED_SETTING_COLUMN_DEFAULTS, stripNonPortableSettings } from '@/types/tab';
 import { parseOneTabFormat, formatToOneTabFormat } from '@/core/oneTabFormatParser';
 import { secureStorage } from './secureStorage';
 import { kvGet, kvSet, kvRemove } from '@/storage/storageAdapter';
 import { notifyGroupsChanged, subscribeGroupsChanged } from '@/storage-kv/groupsChangedBus';
 import { STORAGE_KEYS, STORAGE_VERSION } from '@/storage-kv/keys';
+import {
+  resolveCurrentLibraryScope,
+  resolveFirstSyncPending,
+  toPendingRecord,
+} from '@/storage-kv/firstSyncPendingRecord';
 import { cacheManager, cachedAsyncFn, debounceAsync } from './performance';
 import { logError, logWarn } from './log';
 // 导入路径需要与 SW 单写者同构的语义：盖印记（LWW 载体）+ URL 白名单 + 重排。
@@ -238,11 +243,11 @@ export function validateSyncBackend(value: unknown): 'supabase' | 'webdav' {
 
 // 默认设置
 export const DEFAULT_SETTINGS: UserSettings = {
-  groupNameTemplate: 'Group %d',
+  // ── 2026-10-20 审计 A-9：showFavicons / showTabCount 从「死设置」变成
+  // **真被读**的开关（设置页有入口，UI 真按它渲染）。见 types/tab.ts 的注释。
   showFavicons: true,
   showTabCount: true,
   confirmBeforeDelete: true,
-  allowDuplicateTabs: false, // 默认不允许重复标签页
   // ── 2026-10-11（1.23.0）：自动同步默认关闭 ──────────────────────────
   // 自动同步每轮都是出站流量（Supabase egress 配额），而 60s 全量轮询是配额
   // 见底的主因。默认关闭后：后台 alarm 不注册、打开 popup 不再自动拉取，
@@ -250,11 +255,24 @@ export const DEFAULT_SETTINGS: UserSettings = {
   // 才传，F2 增量后极小），不受本开关影响 —— 关掉上传省不下什么，反而会把
   // 编辑困在本机且无声（失败要出声：困住必须有信号，而上传路径没有）。
   //
-  // 【存量用户不受影响】getSettings 是 {...DEFAULT_SETTINGS, ...stored}，
-  // 已存过设置的用户 stored 里自带 syncEnabled:true（保存时整份落盘），
-  // 合并后仍是 true。只有从未存过（新用户）或键缺失才落到 false。
+  // 【存量用户受影响吗？——要分开说，2026-10-20 升级路径审计 U-2 更正】
+  // getSettings 是 {...DEFAULT_SETTINGS, ...stored}：
+  //   · **已存过该键的用户**：stored 里自带 syncEnabled:true（1.22.12 时代
+  //     打开过管理页 / 存过会话 / 登录过的用户都会在磁盘上留下一份整份落盘的
+  //     设置，其中 syncEnabled 是 1.22.12 的默认值 true）⇒ 合并后仍是 true，
+  //     **不受影响**。
+  //   · **该键从不存在的老用户**：落到这里的 false。
+  //     ⚠️ 这一格**不等于「只有新用户」** —— 装了 1.22.12 但**从未打开过
+  //     管理页、从未保存过会话、也没登录**的纯旁观用户，磁盘上根本没有设置
+  //     这一份 blob，升级后自动同步**静默从「开」变「关」**（1.22.12 的后台
+  //     alarm 是无条件注册的）。
+  //     受影响面很窄（绝大多数真实用户都打开过页面或存过东西），但它是**真的**
+  //     存在，不能像旧注释那样断言「不会发生」。
   // 绝不在此做「把存量 true 强制改 false」的迁移 —— 那是静默改用户设置，
   // 正是 1.22.16「设置被静默重置」修掉的那类 bug。
+  //
+  // 「默认关闭」本身是 1.23.0 的产品决策（数据默认自动同步关闭），不是缺陷；
+  // 缺陷在于**旧注释把一个不成立的不变量写成了断言**，会误导后来的改动。
   syncEnabled: false, // 默认关闭自动同步（用户在菜单中开启）
   syncIntervalMinutes: DEFAULT_SYNC_INTERVAL_MINUTES, // 默认 10 分钟档
   // 默认走 Supabase：存量用户零行为变化（见 validateSyncBackend 的完整论证）。
@@ -262,12 +280,52 @@ export const DEFAULT_SETTINGS: UserSettings = {
   syncBackend: 'supabase',
   layoutMode: 'single' as LayoutMode, // 默认使用单栏布局
   showNotifications: false, // 默认关闭通知
-  syncStrategy: 'newest', // 默认使用最新版本
-  deleteStrategy: 'everywhere', // 默认在所有设备上删除
   themeMode: 'auto', // 默认使用自动模式（跟随系统）
   themeStyle: 'legacy', // 默认使用原始主题
   // 默认不收集固定标签页（更保守）
   collectPinnedTabs: false,
+};
+
+/**
+ * 云端列（snake_case）→ 我们**确实知道**的默认值。
+ *
+ * ── 它解决什么 ────────────────────────────────────────────────────────────
+ * `user_settings` 里有几列可能是 **NOT NULL 且没有默认值**。那样 Postgres
+ * 在 upsert 的 INSERT 阶段就抛 `23502` ⇒ **整条设置同步直接断**。
+ * 降级路径要靠这张表把撞规的那一列补上一个**类型正确**的值再重试。
+ *
+ * ── 为什么是「活列 + 退役列」合在一起，而不是只列退役列 ──────────────────
+ * A-9 之前上传侧只认一份**硬编码的五个退役列名单**，于是：
+ * ① 任何别的 NOT NULL 无默认列撞上 23502 时降级**不命中** ⇒ 错误原样抛出
+ *    ⇒ 整条同步断掉；
+ * ② 判定方式是「错误文本里包含某个列名」⇒ 可能补错列。
+ *
+ * 现在这张表覆盖**所有我们知道的列**：活列取当前 `DEFAULT_SETTINGS` 的值
+ * （那是产品认定的默认值，类型一定对），退役列取它们的历史默认值。
+ * 我们**不知道**默认值的列不在表里 ⇒ 撞上时宁可失败，也不瞎填一个
+ * 类型不对的值（那等于换个姿势失败，还把库里那一行改坏了）。
+ *
+ * ── 为什么放在这里 ────────────────────────────────────────────────────────
+ * 「某个设置的默认值是什么」是**设置模型**的性质，而 `DEFAULT_SETTINGS`
+ * 就在本文件 —— 放在这里，上面那份表与这一份天然同源，
+ * 不需要「记得两边一起改」。
+ *
+ * ⚠️ 注意 `syncEnabled` / `syncBackend` / `syncIntervalMinutes` 是**设备级**
+ *   字段，不上云（见 `DEVICE_LEVEL_SETTING_KEYS`），所以不在表里 ——
+ *   补它们没有意义（云端行里那几列的值以本机为准）。
+ */
+export const SETTINGS_COLUMN_DEFAULTS: Record<string, unknown> = {
+  // ── 活列：取当前 DEFAULT_SETTINGS 的值 ────────────────────────────────
+  show_favicons: DEFAULT_SETTINGS.showFavicons,
+  show_tab_count: DEFAULT_SETTINGS.showTabCount,
+  confirm_before_delete: DEFAULT_SETTINGS.confirmBeforeDelete,
+  layout_mode: DEFAULT_SETTINGS.layoutMode,
+  show_notifications: DEFAULT_SETTINGS.showNotifications,
+  theme_mode: DEFAULT_SETTINGS.themeMode,
+  theme_style: DEFAULT_SETTINGS.themeStyle,
+  collect_pinned_tabs: DEFAULT_SETTINGS.collectPinnedTabs,
+  // ── 退役列：它们的历史默认值（旧客户端曾经写上去的值）────────────────
+  ...RETIRED_SETTING_COLUMN_DEFAULTS,
 };
 
 // 兼容历史字段
@@ -275,13 +333,46 @@ type LegacySettings = Partial<UserSettings> & {
   useDoubleColumnLayout?: boolean;
 };
 
+/**
+ * 「增量白名单登记」这个事实的**完整状态**（2026-10-20 D-10）。
+ *
+ * 为什么要从布尔升级成结构：布尔版（D-3）把「最近一次登记失败了吗」与
+ * 「漏登记的那批改动补齐了吗」压成同一个位 ⇒ 复位它只能等「对账通过」
+ * ⇒ 自锁（见 core/uploadCoverage 的 decideRegistryAfterUpload 注释）。
+ *
+ * 三个字段各自的判据：
+ *   · unreliable —— 最近一次写方登记**失败**了 ⇒ 「登记机制此刻不可信」。
+ *     复位 = 下一次登记成功（写方事实，与上传对账无关）。
+ *   · gapOpen —— 漏登记的那批改动**还没被一次全量提交覆盖**。
+ *     复位 = 本轮提交的是全量（那批改动就在这份全量里）。
+ *   · gen —— 置位次数。**并发保护**：上传轮次开始时读一次，轮次结束时
+ *     只有在 gen 没变时才允许复位 ⇒ 轮次进行中又失败一次时不会被抹掉。
+ */
+export interface PendingUploadRegistryState {
+  unreliable: boolean;
+  gapOpen: boolean;
+  gen: number;
+}
+
 // 导出数据的格式
 interface ExportData {
   version: string;
   timestamp: string;
   data: {
     groups: TabGroup[];
-    settings: UserSettings;
+    /**
+     * 设置快照。
+     *
+     * 【为什么是 Partial 而不是 UserSettings】（2026-10-20 审计 A-21）
+     * 导出侧会剔掉「不跨设备」的三个键（syncBackend / syncEnabled /
+     * syncIntervalMinutes）与已退役键 ⇒ 文件里的设置**本来就不是全字段**。
+     * 类型写成 `UserSettings` 等于**在类型层面承诺一个假的完整性** ——
+     * 而这正是缺陷能长期存在的原因：类型说「全都在」，代码却少给三个。
+     *
+     * 导入侧对外部文件也只认部分字段（外来文件形状不可信），
+     * 两边对上。
+     */
+    settings: Partial<UserSettings>;
   };
 }
 
@@ -535,12 +626,25 @@ class ChromeStorage {
         // 落回 default 分支后列表毫无变化（详见 validateLayoutMode 的注释）。
         const validatedLayoutMode = validateLayoutMode(normalizedSettings.layoutMode);
 
+        // ── 2026-10-20 审计 A-9：退役的设置键从本地存储里**物理清掉** ──────
+        // 这五个键曾经是「有设置、无入口、无读取方」（见 types/tab.ts 的逐条结论）。
+        // 只从类型里删掉是不够的：存量用户的存储里还留着它们，
+        // 而 getSettings 是 {...DEFAULT_SETTINGS, ...stored} —— 不清就会让
+        // 已退役的键继续出现在设置对象里，一路被带上云（数据模型在骗人）。
+        // 这里在读路径上就地删除并触发一次回写（needsUpdate），让本地数据自愈。
+        const mutableSettings = normalizedSettings as Record<string, unknown>;
+        const retiredKeysPresent = RETIRED_SETTING_KEYS.filter(key => key in mutableSettings);
+        for (const key of retiredKeysPresent) {
+          delete mutableSettings[key];
+        }
+
         // 如果验证后的值与原值不同，说明存储中有无效值，需要更新
         const needsUpdate =
           normalizedSettings.themeStyle !== validatedThemeStyle ||
           normalizedSettings.themeMode !== validatedThemeMode ||
           normalizedSettings.syncIntervalMinutes !== validatedSyncInterval ||
-          normalizedSettings.layoutMode !== validatedLayoutMode;
+          normalizedSettings.layoutMode !== validatedLayoutMode ||
+          retiredKeysPresent.length > 0;
 
         const mergedSettings: UserSettings = {
           ...DEFAULT_SETTINGS,
@@ -641,6 +745,18 @@ class ChromeStorage {
   }, 500);
 
   async setSettings(settings: UserSettings): Promise<void> {
+    // ── 2026-10-20 审计 A-9：退役键在**写路径**上一律剔除 ──────────────
+    // setSettings 是所有设置写入的唯一漏斗：本地开关、导入备份、云端合并
+    // （syncEngine.mergeCloudSettingsIntoLocal）、下载后的回写，全都经过这里。
+    // 在这里剔除一次，就不必去改每一条来源路径 —— 也不必动 sync engine
+    // （合并语义不在本轮范围内）。
+    //
+    // 为什么必须剔：WebDAV 的设置文件是**整份对象**透传，Supabase 的云端行
+    // 也可能还留着旧客户端写下的退役列。若不剔，退役键会被「合并」回本地，
+    // 又变成「有设置、无入口、无读取方」的死设置 —— 删了等于没删。
+    const mutableIncoming = settings as unknown as Record<string, unknown>;
+    for (const key of RETIRED_SETTING_KEYS) delete mutableIncoming[key];
+
     const validatedSettings: UserSettings = {
       ...settings,
       themeStyle: validateThemeStyle(settings.themeStyle),
@@ -896,8 +1012,28 @@ class ChromeStorage {
    *
    * 缺失 = 已完成：老用户升级后不会被无端挡住同步（缺省方向必须是「放行」，
    * 因为误挡的代价是「数据传不上去」而非「多传一次」）。
+   *
+   * ⚠️ 2026-10-20：**待决位按「目标库」寻址**（`scope` 参数）。
+   *
+   * 判据是「**这些会话归这个库吗**」—— 而「这个库」会变：换云盘 = 另一个库，
+   * 那里的归属是**另一个决定**。全局单值会让「换云盘」与「同库重设密码」
+   * 长得一模一样（两者都是「本机配过自带存储」），于是换云盘时历史会话被
+   * 静默整批推上新云盘，而用户从没被问过。
+   *
+   * 口径与同步水位线一致（`baseUrl | username | rootPath` 三者任一变化
+   * 都意味着「另一个库」，见 `webdav/adapter.ts` 的 `watermarkKey`）。
+   *
+   * **旧格式的迁移**（老用户磁盘上那个全局布尔值）：语义见
+   * `storage-kv/firstSyncPendingRecord.ts` —— 旧值 `true` ⇒ 落进保留槽位 ⇒
+   * 任何**没有显式记录**的库都算待决（保守方向：多挡一次、少传一次；
+   * 「多传」不可回滚）。**显式记录优先于它**（用户做完三选一后写入的
+   * 显式 `false` 必须能压住旧的 `true`）。
+   *
+   * @param scope 目标库的作用域键（见 `webdav/libraryIdentity.ts`）。
+   *              省略 = **自动解析为「本机当前指向的库」**（读磁盘上的
+   *              已保存配置）—— 那正是「现在要往哪儿传」这个问题的答案。
    */
-  async getFirstSyncPending(): Promise<boolean> {
+  async getFirstSyncPending(scope?: string): Promise<boolean> {
     try {
       // ⚠️ `ensureVersion()` 不能省：KV 层要先完成版本初始化，否则首次读
       // （尤其 SW 冷启动）会读在未就绪的存储上，写进去的值读不回来。
@@ -906,16 +1042,31 @@ class ChromeStorage {
       // 代码看起来完全正确，只有真跑才暴露。
       await this.ensureVersion();
       const raw = await kvGet<unknown>(STORAGE_KEYS.FIRST_SYNC_PENDING);
-      return raw === true;
+      const resolved = scope ?? (await resolveCurrentLibraryScope());
+      return resolveFirstSyncPending(raw, resolved);
     } catch {
       // 读不到就当「没有待决」：挡住的代价（数据传不上去）比放过的代价大。
       return false;
     }
   }
 
-  async setFirstSyncPending(pending: boolean): Promise<void> {
+  async setFirstSyncPending(pending: boolean, scope?: string): Promise<void> {
     await this.ensureVersion();
-    await kvSet(STORAGE_KEYS.FIRST_SYNC_PENDING, pending);
+    // 读-改-写同一个键（不是「按库各写一个键」）：键名保持单值，
+    // `storage.clear()` 派生自 `Object.values(STORAGE_KEYS)`，动态键
+    // 派生不出来 ⇒ 「清除本地数据」会留下孤儿待决位。
+    const raw = await kvGet<unknown>(STORAGE_KEYS.FIRST_SYNC_PENDING);
+    const record = toPendingRecord(raw);
+    const key = scope ?? (await resolveCurrentLibraryScope());
+    if (pending) {
+      record[key] = true;
+    } else {
+      // 显式的「已完成」：它**只覆盖自己这个作用域**。
+      // 旧格式槽位描述的是「某个（未知的）库的未决决定」—— 别的库若没有
+      // 显式记录，仍按旧槽位待决（保守方向：不会少挡）。
+      record[key] = false;
+    }
+    await kvSet(STORAGE_KEYS.FIRST_SYNC_PENDING, record);
     // 两个方向都要清「本次改动过的会话 id」队列：
     //   · pending=true（刚切到自带存储）：队列的语义是「**进入待决态之后**改动过的会话」，
     //     此前攒下的 id（那时还没有待决态，上传也没配好）全都属于「历史会话」——
@@ -970,6 +1121,155 @@ class ChromeStorage {
   async clearPendingUploadGroupIds(): Promise<void> {
     await this.ensureVersion();
     await kvRemove(STORAGE_KEYS.PENDING_UPLOAD_GROUP_IDS);
+  }
+
+  /**
+   * 增量白名单的登记**是否曾经失败过**（2026-10-20 D-3 / D-10）。
+   *
+   * 登记失败的后果不是「少传几个」，而是「**不知道漏了哪几个**」——
+   * 于是「队列与上行集合对得上账」不再能作为「全部已同步」的依据。
+   * 有了这个标志，上传流程就知道：**不能**清 pending_upload，
+   * 也不能对外宣称「都同步了」。
+   *
+   * 读失败 ⇒ false（方向：读不到不等于失败过。把它当 true 会让上传
+   * 永远清不掉 pending_upload ⇒ 无限重试，比「偶尔多说一句」糟得多）。
+   */
+  async getPendingUploadRegistryUnreliable(): Promise<boolean> {
+    return (await this.getPendingUploadRegistryState()).unreliable;
+  }
+
+  /**
+   * 「登记不可信」标志的**完整状态**（2026-10-20 D-10）。
+   *
+   * ── 为什么不是一个布尔 ────────────────────────────────────────────────
+   * 这个标志原本是布尔，且**只**在「上传对账通过」的分支里清 ——
+   * 而「对账通过」的判据里含「标志为假」⇒ 自锁：标志一旦置上就永不复位
+   * ⇒ pending_upload 永远清不掉 ⇒ 每轮后台同步都在重跑上传，界面还报
+   * 「同步成功」（界面撒谎的原因：skippedGroups 恒为 undefined）。
+   *
+   * 现在它记的是**三件不同的事**（同一个 KV 键，值是对象）：
+   *   · unreliable —— 「最近一次登记失败了」（写方事实）。
+   *     复位条件 = **下一次登记成功**（写方事实，**与上传对账无关**），
+   *     或「本轮提交的是全量 ⇒ 登记漏没漏都不影响本轮传了什么」。
+   *   · gapOpen —— 「漏登记的那批改动还没被一次全量提交覆盖」。
+   *     复位条件 = 「本轮提交的是全量」（那批改动就在这份全量里）。
+   *   · gen —— 置位次数（**并发保护**，见 clearPendingUploadRegistryUnreliableIfUnchanged）。
+   *
+   * 前两者的区别是自锁的解药：unreliable 可以被「登记成功」单独复位，
+   * 而 gapOpen 会一直挂着，直到有一次全量提交把漏登记的那批补上去。
+   * 少了 gapOpen 就会出现这个洞：登记成功 ⇒ unreliable 复位 ⇒ 下一轮按
+   * 白名单过滤 ⇒ 漏登记的那批**永远传不上去**。
+   */
+  async getPendingUploadRegistryState(): Promise<PendingUploadRegistryState> {
+    const clean: PendingUploadRegistryState = { unreliable: false, gapOpen: false, gen: 0 };
+    try {
+      await this.ensureVersion();
+      const raw = await kvGet<unknown>(STORAGE_KEYS.PENDING_UPLOAD_REGISTRY_UNRELIABLE);
+      if (raw === undefined || raw === null) return clean;
+      // 老版本写的是裸 `true`（D-3 的形状）⇒ 读作「失败过且还没被覆盖」。
+      if (raw === true) return { unreliable: true, gapOpen: true, gen: 1 };
+      if (raw && typeof raw === 'object') {
+        const r = raw as Partial<PendingUploadRegistryState>;
+        const unreliable = r.unreliable === true;
+        const gapOpen = r.gapOpen === true;
+        const gen = Number.isFinite(r.gen) && Number(r.gen) > 0 ? Math.floor(Number(r.gen)) : 1;
+        return { unreliable, gapOpen, gen };
+      }
+      // 认不出来的形状：键存在却读不懂 ⇒ 有东西坏了 ⇒ 按「不可信」处理
+      //（方向：读不懂不等于没问题；但也别把它当成「失败过 N 次」）。
+      return { unreliable: true, gapOpen: true, gen: 1 };
+    } catch {
+      // 读失败 ⇒ false（既有纪律：读不到不等于失败过）。
+      return clean;
+    }
+  }
+
+  /**
+   * 记下「这次登记失败了」（true）或**整个清掉**（false）。
+   *
+   * ⚠️ false 是**全清**（unreliable + gapOpen + 键本身）——
+   * 「登记不可信」这件事整体不再成立。只清一半（只清 unreliable）的语义
+   * 是另一个方法（markPendingUploadRegistryTrusted），两者混用会漏掉
+   * 「漏登记未覆盖」这一半 ⇒ 白名单洞 ⇒ 漏传的改动永远补不回来。
+   */
+  async setPendingUploadRegistryUnreliable(unreliable: boolean): Promise<void> {
+    await this.ensureVersion();
+    if (unreliable) {
+      const prev = await this.getPendingUploadRegistryState();
+      // 置位 = 「又失败了一次」⇒ gen 递增（上传轮次据此发现「期间被改过」）。
+      await kvSet(STORAGE_KEYS.PENDING_UPLOAD_REGISTRY_UNRELIABLE, {
+        unreliable: true,
+        gapOpen: true,
+        gen: prev.gen + 1,
+      } satisfies PendingUploadRegistryState);
+    } else {
+      await kvRemove(STORAGE_KEYS.PENDING_UPLOAD_REGISTRY_UNRELIABLE);
+    }
+  }
+
+  /**
+   * 「登记恢复可信」（写方登记成功的证据）—— 只清 unreliable，**保留 gapOpen**。
+   *
+   * 为什么不能顺手把 gapOpen 也清了：漏登记的那批改动的 id **已经不知道了**
+   * ⇒ 唯一的兜底是「全量传一次」⇒ 必须等那次全量真的发生。
+   * 在这之前清掉 gapOpen ⇒ 下一轮按白名单过滤 ⇒ 漏登记的那批永远传不上去
+   * （静默丢失，且没有任何提示）。
+   *
+   * 幂等：已经是可信的状态 ⇒ 直接返回，不写盘。
+   */
+  async markPendingUploadRegistryTrusted(): Promise<void> {
+    await this.ensureVersion();
+    const prev = await this.getPendingUploadRegistryState();
+    if (!prev.unreliable) return; // 已经是可信的 ⇒ 不写（避免无谓的 KV 写）
+    await kvSet(STORAGE_KEYS.PENDING_UPLOAD_REGISTRY_UNRELIABLE, {
+      unreliable: false,
+      gapOpen: prev.gapOpen,
+      gen: prev.gen,
+    } satisfies PendingUploadRegistryState);
+  }
+
+  /**
+   * 按**给定的新状态**写标志（带 gen 并发保护）。
+   *
+   * ── 为什么是「写给定的状态」而不是「帮我清掉」 ─────────────────────────
+   * 判据的唯一真相源必须��**纯函数**（core/uploadCoverage 的
+   * decideRegistryAfterUpload / decideRegistryAfterRegistryWrite）。
+   * 若存储层自己「顺手清掉整个键」，就会出现两处判据漂移：纯函数说
+   * 「gapOpen 保留」、存储层却把键删了（gapOpen 也没了）⇒ 漏登记的那批
+   * 永远补不上（静默丢失）。所以这里只负责**忠实落盘**判据给出的状态。
+   *
+   * ⚠️ 并发保护：只有当 gen 与调用方读到的一致才写。
+   * 轮次进行中又发生了一次登记失败（gen 变了）⇒ 那一批改动**不在**本轮
+   * 提交的全量里（它是本轮提交之后才改的）⇒ 写下去就是抹掉一个真实问题
+   * ⇒ 那批改动会**永远**补不回来。
+   *
+   * @param expectedGen 调用方读到状态时的 gen。
+   * @param next 要落盘的新状态（由纯函数判据给出）。
+   * @returns 落盘之后的**当前**状态（没写成功时是「期间被别人改过」的状态）。
+   */
+  async setPendingUploadRegistryStateIfUnchanged(
+    expectedGen: number,
+    next: { unreliable: boolean; gapOpen: boolean }
+  ): Promise<PendingUploadRegistryState> {
+    await this.ensureVersion();
+    const prev = await this.getPendingUploadRegistryState();
+    if (prev.gen !== expectedGen) {
+      // 期间又有人置位了 ⇒ 不写（那一批不在本轮的提交里）。
+      return prev;
+    }
+    if (next.unreliable === false && next.gapOpen === false) {
+      // 两个位都清 ⇒ 键可以整个删掉（不留空对象）。
+      if (prev.unreliable || prev.gapOpen) {
+        await kvRemove(STORAGE_KEYS.PENDING_UPLOAD_REGISTRY_UNRELIABLE);
+      }
+      return { unreliable: false, gapOpen: false, gen: prev.gen };
+    }
+    await kvSet(STORAGE_KEYS.PENDING_UPLOAD_REGISTRY_UNRELIABLE, {
+      unreliable: next.unreliable,
+      gapOpen: next.gapOpen,
+      gen: prev.gen,
+    } satisfies PendingUploadRegistryState);
+    return { unreliable: next.unreliable, gapOpen: next.gapOpen, gen: prev.gen };
   }
 
   /**
@@ -1243,12 +1543,21 @@ class ChromeStorage {
     const groups = await this.getGroupsForWrite();
     const settings = await this.getSettings();
 
+    // 2026-10-20 审计 A-21：导出侧也必须剔掉「不跨设备」与「已退役」的设置键。
+    //
+    // 【为什么】导入侧（importDetailed）会剔这三个键 ⇒ 写在备份文件里就是
+    // **文件内容在表达一个假承诺**：用户打开备份看到 `syncBackend: "supabase"`，
+    // 理所当然以为「导入后同步设置也会跟着走」，而实际不会。
+    // 已退役键更不该出现 —— 它们在本地也不生效。
+    //
+    // 与「上云」「云端合并」共用同一张剔除表（stripNonPortableSettings），
+    // 免得四条路径各写一遍、各漂一次。
     return {
       version: '1.0.0',
       timestamp: new Date().toISOString(),
       data: {
         groups,
-        settings
+        settings: stripNonPortableSettings(settings)
       }
     };
   }
@@ -1346,8 +1655,10 @@ class ChromeStorage {
           // 本机没有 ⇒ 同步立刻坏掉，用户只看到「同步失败/请先登录」，
           // 无从判断是自己的后端被换了。syncEnabled/syncIntervalMinutes 同理，
           // 它们描述的是本机的后台行为。
-          const importedSettings = { ...data.data.settings };
-          for (const key of DEVICE_LEVEL_SETTING_KEYS) delete importedSettings[key];
+          //
+          // 2026-10-20 审计 A-21：改用共用函数 stripNonPortableSettings ——
+          // 与「上云」「云端合并」「导出备份」四条路径同一张剔除表。
+          const importedSettings = stripNonPortableSettings(data.data.settings);
           await this.setSettings({
             ...currentSettings,
             ...importedSettings

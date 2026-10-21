@@ -1,4 +1,5 @@
 import { useEffect, useRef } from 'react';
+import { consumeFocusReturn } from '@/utils/focusReturn';
 
 /**
  * 对话框内可聚焦元素的查询选择器。
@@ -54,6 +55,82 @@ export function resolveTabTarget(
 }
 
 /**
+ * 还焦落点的决策（纯函数，不碰 DOM 之外的东西）。
+ *
+ * ── 为什么要降级 ─────────────────────────────────────────────────────────
+ * 旧实现的判据是 `restoreTo === document.body || !restoreTo.isConnected` ⇒ **不还焦**。
+ * 理由本身没错（把焦点还给一个已经消失的元素 = 焦点掉到 body，用户更迷路），
+ * 但它漏了真实发生的那一类：
+ *
+ * 确认框由 ToastContext **全局渲染**，打开时 `document.activeElement` 是触发它的
+ * 菜单项按钮；而菜单项会在 `onClose()` 里被卸载 ⇒ 关闭确认框时那个按钮
+ * `isConnected === false` ⇒ 拒绝还焦 ⇒ **焦点掉到 body**。
+ *
+ * 更糟的是**同一个弹层两条路径行为不一致**：
+ *   · Esc 关闭 → 菜单还开着（Esc 路径不关菜单）⇒ 按钮还在 ⇒ 还焦成功；
+ *   · 点「取消」→ 菜单已关 ⇒ 按钮已卸载 ⇒ 拒绝还焦 ⇒ 焦点掉到 body。
+ * 同一个弹层、同一件事，取决于用户用哪个键 —— 这本身就是缺陷。
+ *
+ * 所以：**还焦失败时必须降级到一个仍然存在、且用户能看见的落点**，
+ * 而不是把焦点丢给 body。降级顺序：
+ *   1. 原触发元素（还在文档里）→ 还给它（标准行为）；
+ *   2. 触发元素所在的**弹层触发点**（还在）→ 给它；
+ *   3. 列表容器 `main`（带 `tabIndex={-1}`，是页面主内容区）→ 给它。
+ *
+ * 任何一步都不能返回 body：body 不是「落点」，它等于「键盘用户丢失了位置」。
+ */
+export interface FocusRestoreContext {
+  /** 关闭弹层时想要还焦的元素（打开弹层时的 activeElement）。 */
+  restoreTo: HTMLElement | null;
+  /** 弹层的触发点（可选）。 */
+  fallback?: HTMLElement | null;
+  /** 页面主内容容器（带 tabIndex={-1}）。 */
+  container?: HTMLElement | null;
+}
+
+/**
+ * 一个元素能不能作为还焦落点。
+ *
+ * 三条判据：
+ *   · 非空；
+ *   · `isConnected` —— 还在文档里（已被卸载的元素聚焦了也等于没聚焦）；
+ *   · 不是 `<body>` —— body 不是「落点」，它是「用户丢失了位置」。
+ *
+ * 判「是不是 body」用**标签名**而不是 `document.body`：
+ * 本函数要能在**没有 DOM 的环境**下被单测（node:test 没有 jsdom），
+ * 引用 `document` 会直接抛错。
+ */
+const isUsableRestoreTarget = (
+  element: HTMLElement | null | undefined
+): element is HTMLElement => {
+  if (!element) return false;
+  if (!element.isConnected) return false;
+  return element.tagName?.toLowerCase() !== 'body';
+};
+
+/**
+ * 还焦落点决策（纯函数，便于测试）。
+ *
+ * 按**顺序**在候选链里挑第一个可用的：
+ *   1. 原触发元素（还在文档里）—— 标准行为；
+ *   2. 降级落点（弹层触发点 / 登记的稳定落点）；
+ *   3. 页面主容器 `main`（带 tabIndex={-1}）。
+ *
+ * @returns 要聚焦的元素；**null 表示无处可去**（调用方此时不应调用 focus，
+ *   也不能把焦点塞给 body —— 保持现状总比丢到 body 好）。
+ */
+export function resolveFocusRestoreTarget({
+  restoreTo,
+  fallback,
+  container,
+}: FocusRestoreContext): HTMLElement | null {
+  if (isUsableRestoreTarget(restoreTo)) return restoreTo;
+  if (isUsableRestoreTarget(fallback)) return fallback;
+  if (isUsableRestoreTarget(container)) return container;
+  return null;
+}
+
+/**
  * 焦点管理Hook
  * 打开时把焦点移进容器、Tab/Shift+Tab 循环限制在容器内、关闭时把焦点还给触发元素。
  *
@@ -67,11 +144,25 @@ export function resolveTabTarget(
 export function useFocusTrap(
   containerRef: React.RefObject<HTMLElement>,
   enabled: boolean = true,
-  options: { returnFocus?: boolean } = {}
+  options: {
+    returnFocus?: boolean;
+    /**
+     * 还焦失败时的**降级落点**（可选）。
+     * 典型场景：确认框由 ToastContext 全局渲染，打开时 activeElement 是
+     * 菜单项按钮，而菜单项随后被卸载 ⇒ 原触发点已不在文档里。
+     * 此时还焦到「弹层的触发点」或页面 `main`，而不是让焦点掉到 body。
+     */
+    restoreFallback?: () => HTMLElement | null;
+  } = {}
 ) {
-  const { returnFocus = false } = options;
+  const { returnFocus = false, restoreFallback } = options;
   const restoreTargetRef = useRef<HTMLElement | null>(null);
   const wasEnabledRef = useRef(false);
+  const restoreFallbackRef = useRef(restoreFallback);
+
+  useEffect(() => {
+    restoreFallbackRef.current = restoreFallback;
+  });
 
   useEffect(() => {
     if (!enabled) return;
@@ -81,6 +172,9 @@ export function useFocusTrap(
 
     if (!wasEnabledRef.current) {
       wasEnabledRef.current = true;
+      // 打开时的 activeElement 只作**第一候选**：它可能就是马上要被卸载的
+      // 菜单项按钮。稳定落点由调用方显式登记（见 @/utils/focusReturn），
+      // 或走 restoreFallback / main 降级链。
       restoreTargetRef.current =
         (document.activeElement as HTMLElement | null) ?? null;
     }
@@ -92,11 +186,25 @@ export function useFocusTrap(
       wasEnabledRef.current = false;
       restoreTargetRef.current = null;
 
-      if (!returnFocus || !restoreTo) return;
-      // 触发器已经不在文档里（或本来就是 body）就别还焦，
-      // 否则会把焦点丢到一个用户看不见的地方，比不还更糟。
-      if (restoreTo === document.body || !restoreTo.isConnected) return;
-      restoreTo.focus();
+      if (!returnFocus) return;
+
+      // 降级链见 resolveFocusRestoreTarget 的说明：
+      //   1. **登记的稳定落点**（优先）—— 菜单的触发按钮 / 卡片的 summary。
+      //      优先于「原触发元素」是**为了让 Esc 与「取消」两条路径一致**：
+      //      若原触发元素优先，Esc 会还到「菜单项按钮」、点「取消」会还到
+      //      「触发按钮」—— 同一个弹层两个落点，仍是不一致。
+      //   2. 原触发元素（还在文档里）—— 标准行为。
+      //   3. 页面 main（带 tabIndex={-1}）。
+      // **绝不让焦点掉到 body**。
+      const main = document.querySelector<HTMLElement>('main[tabindex="-1"]');
+      const registered = consumeFocusReturn();
+      const target = resolveFocusRestoreTarget({
+        restoreTo: registered.target ?? restoreTo,
+        fallback: restoreFallbackRef.current?.() ?? restoreTo ?? main,
+        container: main,
+      });
+      if (!target) return;
+      target.focus();
     };
   }, [containerRef, enabled, returnFocus]);
 

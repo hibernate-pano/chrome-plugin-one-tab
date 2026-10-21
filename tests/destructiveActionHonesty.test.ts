@@ -151,7 +151,7 @@ describe('删除全部：承诺 == 行为（按「有没有可用后端」而不
           '一真一假就是「承诺了却没做」或「没承诺却做了」',
       );
 
-      const msg = deleteAllConfirmMessage({ ...disclosure, groupCount: 5 });
+      const msg = deleteAllConfirmMessage({ ...disclosure, groupCount: 5, lockedCount: 0 });
       const saidCrossDevice = /其他设备|其他登录设备/.test(msg);
       assert.equal(
         saidCrossDevice,
@@ -173,7 +173,12 @@ describe('删除全部：承诺 == 行为（按「有没有可用后端」而不
   });
 
   it('纯本地用户（云端未登录）不该被告知「其他设备会删除」，也不该白发一次同步', () => {
-    const disclosure = { isAuthenticated: false, syncBackend: 'supabase' as const, groupCount: 3 };
+    const disclosure = {
+      isAuthenticated: false,
+      syncBackend: 'supabase' as const,
+      groupCount: 3,
+      lockedCount: 0,
+    };
     const msg = deleteAllConfirmMessage(disclosure);
     assert.doesNotMatch(msg, /其他设备|其他登录设备/, '没有同步后端的用户，删除只在本机生效');
     assert.equal(deleteAllShouldPushOverwrite(disclosure), false);

@@ -1,0 +1,45 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="440" height="280" viewBox="0 0 440 280">
+  <!--
+    TapStack 小型宣传图（Chrome Web Store Small Promo Tile，440×280）。
+
+    复用 icons/icon128.png 的**同一套几何与配色**（方案 A「收拢的现场」）：
+      · 底板渐变 #3B82F6 → #1D4ED8（与图标同源）
+      · 三层卡片 60×42 rx9，透明度 .30 / .55 / 1.0
+      · 前卡折角 #93C5FD，内容条 #2563EB .85 / .45
+    理由：商店里**图标与宣传图并排出现**，两张图讲同一个故事才像一家人。
+
+    中英双语是硬要求（商店主要语言是中文，英文覆盖海外用户）。
+    栅格化用 Chrome headless（见 README）—— ImageMagick 的 SVG 渲染器
+    不支持 linearGradient，会渲染成黑底。
+  -->
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0.85" y2="1">
+      <stop offset="0" stop-color="#3B82F6"/>
+      <stop offset="1" stop-color="#1D4ED8"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="0.18" cy="0.08" r="0.75">
+      <stop offset="0" stop-color="#FFFFFF" stop-opacity="0.22"/>
+      <stop offset="1" stop-color="#FFFFFF" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+
+  <rect width="440" height="280" fill="url(#bg)"/>
+  <rect width="440" height="280" fill="url(#glow)"/>
+
+  <!-- 标记：图标里的三层卡片，放大到宣传图尺寸 -->
+  <g transform="translate(-6,24) scale(1.85)">
+    <rect x="26" y="26" width="60" height="42" rx="9" fill="#fff" opacity=".30"/>
+    <rect x="29" y="39" width="60" height="42" rx="9" fill="#fff" opacity=".55"/>
+    <path d="M41 52 H78 L92 66 V85 Q92 94 83 94 H41 Q32 94 32 85 V61 Q32 52 41 52 Z" fill="#fff"/>
+    <path d="M78 52 L92 66 H80 Q78 66 78 64 Z" fill="#93C5FD"/>
+    <rect x="40" y="64" width="28" height="6" rx="3" fill="#2563EB" opacity=".85"/>
+    <rect x="40" y="74" width="18" height="6" rx="3" fill="#2563EB" opacity=".45"/>
+  </g>
+
+  <!-- 文字 -->
+  <g font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', 'Helvetica Neue', Arial, sans-serif">
+    <text x="196" y="126" font-size="38" font-weight="700" fill="#FFFFFF" letter-spacing="-0.5">TapStack</text>
+    <text x="196" y="160" font-size="18" font-weight="600" fill="#FFFFFF" opacity="0.92">保存 · 命名 · 恢复</text>
+    <text x="196" y="187" font-size="13.5" font-weight="500" fill="#FFFFFF" opacity="0.72">Save &amp; restore your tab sessions</text>
+  </g>
+</svg>

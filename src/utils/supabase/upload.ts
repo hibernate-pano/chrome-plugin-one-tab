@@ -4,6 +4,7 @@
  * 方法体为原 `sync` 对象对应成员逐字搬运（含缩进），仅对象壳更名；行为零变化。
  */
 import type { TabGroup, UserSettings, TabData, SupabaseTabGroup } from '@/types/tab';
+import { RETIRED_SETTING_KEYS, settingKeyToColumn } from '@/types/tab';
 import { encryptData } from '../encryptionUtils';
 import { serializeTab } from '@/core/tabDataCodec';
 import { decideCloudTombstoneWrite } from '@/core/syncDecision';
@@ -14,7 +15,19 @@ import { logError, logInfo, logWarn } from '../log';
 // supportsOpStampStrict → 删除广播（fail-open 错误：见 supportsOpStampStrict 注释）
 import { supportsCloudTombstone, supportsDeletedAt, supportsOpStamp, supportsOpStampStrict } from './probe';
 import { chunkIds, UPSERT_ROW_BATCH_SIZE } from './idBatches';
+import {
+  upsertWithMissingColumnFallback,
+} from './missingColumn';
+import { upsertWithNotNullFallback } from './notNullFallback';
+import { compareStamps } from '@/core/opStamp';
+import { planOverwriteUpload, type OverwriteUploadPlan } from '@/core/overwriteUploadGuard';
 import { CRYPTO_CONCURRENCY, mapWithConcurrency } from '../concurrency';
+// 覆盖上传要判断「云端哪些行这台设备读不出来」⇒ 需要**下载侧**的还原判据。
+// 直接复用 download.ts（唯一一份还原逻辑）而不是在这里重写一遍：
+// 两份还原判据没有编译期关联，改一处忘另一处 ⇒ 静默漏迁（见 A-9 教训）。
+// 依赖方向 upload → download 是单向的（download.ts 不 import upload.ts），
+// 不会成环。
+import { downloadSync } from './download';
 import {
   verifyUploadReadback,
   verifyTombstoneReadback,
@@ -27,7 +40,24 @@ import {
 // 同一推导规则（见 utils/seqRegistry.ts 头注释），因此彼此一致。
 import { createSeqRegistry } from '@/utils/seqRegistry';
 import { kvGet, kvSet } from '@/storage/storageAdapter';
-import { storage } from '@/utils/storage';
+import { storage, SETTINGS_COLUMN_DEFAULTS } from '@/utils/storage';
+
+/**
+ * 退役设置列的历史默认值（2026-10-20 审计 A-9）。
+ *
+ * 这几列在数据库里可能还在，且可能是 NOT NULL。正常上传路径**不写**它们
+ * （见 uploadSettings 的 allowedFields）；只有真的撞上 23502 时才用这里的
+ * 值补齐重试一次 —— 见 uploadSettings 里 23502 分支的完整说明。
+ *
+ * 值必须与旧客户端曾经写入的一致（DEFAULT_SETTINGS 里的原值），
+ * 这样降级路径写回云端的行与老客户端写出来的行没有区别。
+ *
+ * ⚠️ 这份表原先在本文件里手抄一份，`supabase/download.ts` 又手抄一份列名，
+ * `types/tab.ts` 还有一份驼峰名单 —— **三份之间没有编译期关联**。
+ * 改一处忘另一处 ⇒ 要么把退役键又带上了云，要么把一个**还活着的**列
+ * 当成退役列静默跳过（设置悄悄丢一项）。现在统一到 `types/tab.ts` 的
+ * `RETIRED_SETTING_COLUMN_DEFAULTS` 一处。
+ */
 import { syncWatermarkKey, type SyncWatermark } from './syncWatermark';
 
 const tombstoneSeq = createSeqRegistry({
@@ -213,11 +243,40 @@ export async function findConcededGroupIds(
   for (const row of readRows) {
     const local = localById.get(row.id);
     if (!local) continue;
-    if (isConcededToCloudTombstone({ id: row.id, lastOp: local.lastOp ?? null }, row)) {
+    if (shouldConcedeGroup(local, row)) {
       conceded.add(row.id);
     }
   }
   return conceded;
+}
+
+/**
+ * 【F4】预检裁决：本地这一份该不该认输（不上行、交给下载合并物理移除）。
+ *
+ * 唯一认输理由：**云端是更新的墓碑**（合并语义：云端墓碑印记更大 ⇒ 本地组
+ * 服从删除，见 mergeOpStamped 的「云端墓碑 vs 本地活跃」）。
+ *
+ * 明确**不**认输的两条（都是 2026-10-20 P0 的根因所在）：
+ *   1. **本地印记严格更新** ⇒ 本地才是更晚保存的一方，本地必须赢。
+ *      哪怕云端的 version 更大也不认输 —— version 是每台设备各自的本地
+ *      计数器，跨设备根本不可比（设备 A 改 3 次 version=4，设备 B 改 1 次
+ *      version=2 但印记更大 = B 更晚保存）。拿 version 当认输理由，就是
+ *      「更晚保存的一方认输」。
+ *   2. 云端是**活跃行**且印记更大 ⇒ 那是合并语义里「先到的写输」的正常
+ *      收敛（读回阶段判为「被取代」，不是故障），预检不必拦。
+ *
+ * 所以本函数**完全不看 version**：预检不参与 version 裁决，服务端那条
+ * version 守卫才是吞写的真凶（迁移 20261020150000 已把它降级为兜底）。
+ */
+export function shouldConcedeGroup(local: TabGroup, cloud: UploadReadbackRow): boolean {
+  const localStamp = local.lastOp ?? null;
+  const cloudStamp =
+    typeof cloud.last_op_seq === 'number' && cloud.last_op_device
+      ? { d: String(cloud.last_op_device), s: cloud.last_op_seq }
+      : null;
+  // 不变量 1：本地印记严格更新 ⇒ 本地该赢 ⇒ 绝不认输
+  if (localStamp && cloudStamp && compareStamps(localStamp, cloudStamp) > 0) return false;
+  return isConcededToCloudTombstone({ id: local.id, lastOp: localStamp }, cloud);
 }
 
 /**
@@ -247,6 +306,85 @@ async function upsertRowsInBatches(rows: SupabaseTabGroup[]): Promise<{
     data = batchData;
   }
   return { data, error: null };
+}
+
+/**
+ * 覆盖上传前的「云端可读性探测」+ 删除计划（2026-10-20 P1）。
+ *
+ * ── 为什么必须**当场读一遍**云端 ─────────────────────────────────────────
+ *
+ * 「这台设备读不出来」是**每轮下载**的事实（download.ts 的 lastDownloadSkipped），
+ * 不能拿上一轮的清单来保护：
+ *   · 上一轮之后云端又写入了新的坏行 ⇒ 旧清单漏掉了它；
+ *   · 「这一轮读不出来」可能是**瞬时**的（网关把 tabs 表截断了）⇒ 上一轮
+ *     读得出来的行，这一轮可能读不出来 ⇒ 旧清单会保护错对象。
+ * 只有「删除之前这一轮」的清单才是事实。
+ *
+ * ── 失败语义：fail-closed ────────────────────────────────────────────────
+ *
+ * 探测读不出来（网络 / 会话 / 网关）⇒ 抛错 ⇒ 整次覆盖上传中止。
+ * 理由：「读不出来」**不等于**「没有要保护的行」。放行等于拿「不知道哪些行
+ * 读不出来」去做一次**不可逆的全量删除** —— 这正是本缺陷的形状。
+ * 中止的代价只是「这次覆盖没做成，用户再点一次」；放行的代价是「用户仅存的
+ * 那几份会话永久消失」。两个代价不对称，所以偏向中止。
+ *
+ * ⚠️ 与「跳过清单不跨 realm 共享」的关系（download.ts 文件头的同轮论证）：
+ * 本函数在**同一个 realm 内**紧邻调用 downloadTabGroups() 与
+ * downloadSkippedGroups() ⇒ 拿到的是同一轮的快照 ✓。
+ * ⚠️ 并发窗口：download.ts 的 lastDownloadSkipped 是模块级状态，同 realm 内
+ * 两次并发下载会互相覆盖清单。覆盖上传与下载都跑在 SW 的**单写者队列**里
+ * （service-worker.ts 的 enqueue('sync:…')），二者不会并发 ⇒ 窗口不可达。
+ */
+async function probeOverwriteDeletePlan(localIds: string[]): Promise<OverwriteUploadPlan> {
+  const restored = await downloadSync.downloadTabGroups();
+  const skipped = await downloadSync.downloadSkippedGroups();
+  // 云端行的全集 = 读得出来的 + 读不出来的（读不出来的那几行并没有从云端消失）。
+  const cloudIds = new Set<string>();
+  restored.forEach(group => cloudIds.add(group.id));
+  skipped.forEach(entry => cloudIds.add(entry.id));
+  return planOverwriteUpload({
+    cloudIds: [...cloudIds],
+    localIds,
+    unrestorableIds: skipped.map(entry => entry.id),
+  });
+}
+
+/**
+ * 读回确认「受保护的云端行」确实还在（2026-10-20 P1）。
+ *
+ * 与 verifyUploadReadback 同一纪律：**写完不算成功**。这里防的是
+ * 「删除比预想的宽」——一旦删除语句误伤受保护的行，用户仅存的那几份就没了，
+ * 而随后的 upsert 成功会把整轮报成「上传成功」⇒ 必须当场现形。
+ *
+ * 放在 upsert **之后**：读回失败时云端已经被 upsert 补成本机清单（云端不会
+ * 停在「空」这个状态）；若放在 upsert 之前就中止，云端会停在「本机的会话也
+ * 没了」的中间态 —— 那比丢几行更糟。
+ */
+async function verifyProtectedRowsStillExist(
+  userId: string,
+  protectedIds: string[]
+): Promise<void> {
+  if (protectedIds.length === 0) return;
+  const alive = new Set<string>();
+  for (const batch of chunkIds(protectedIds)) {
+    const { data, error } = await supabase
+      .from('tab_groups')
+      .select('id')
+      .eq('user_id', userId)
+      .in('id', batch);
+    if (error) {
+      logError('[upload] 覆盖上传后读回受保护的云端行失败:', error);
+      throw error;
+    }
+    (data ?? []).forEach(row => alive.add(String((row as { id?: unknown }).id)));
+  }
+  const missing = protectedIds.filter(id => !alive.has(id));
+  if (missing.length > 0) {
+    throw new Error(
+      `[upload] 覆盖上传后云端缺失 ${missing.length} 个本机读不出来的会话` +
+        `（${missing.join(',')}）：这些云端行可能已被删除（无回收站，不可撤销）。`
+    );
+  }
 }
 
 /**
@@ -329,13 +467,25 @@ export function selectDirtyGroupsForUpload(
  * 只认**本次落盘**的行：认输预检被过滤掉的组（云端已是更新的墓碑）没有写，
  * 把它们的水位抬上去等于宣布「它们已同步」—— 那种情况下它们的本地副本本轮
  * 就会被下载合并物理移除，影响有限，但口径上仍应与实际上行集合严格一致。
+ *
+ * ── 2026-10-20：excludedIds = 读回阶段判定「本次没写上云」的组 ─────────────
+ *   被取代（云端印记严格更新）/ 认输（云端是更新的墓碑）的组**本次没有落盘**。
+ *   把它们计入水位 = 宣布「它们已同步」= 那一组的上行通道被永久关闭：
+ *   之后 selectDirtyGroupsForUpload 永远跳过它（seq <= 水位），
+ *   它的本地编辑再也上不去云端、也永远传不到对端。
+ *   2026-10-20 的 P0 就是这么把一次静默吞写变成**永久丢数据**的：
+ *   吞写 → 读回误判成「被取代」→ 水位抬过那组 → 该组从此再不上行。
+ *
+ *   方向：宁可水位低（多传几组、浪费一点流量），绝不高（漏传 = 丢数据）。
  */
 export function nextSyncWatermark(
   uploadRows: TabGroup[],
-  previousWatermark: number
+  previousWatermark: number,
+  excludedIds?: ReadonlySet<string>
 ): number {
   let max = previousWatermark;
   for (const g of uploadRows) {
+    if (excludedIds?.has(g.id)) continue;
     const s = typeof g?.lastOp?.s === 'number' ? g.lastOp.s : null;
     if (s !== null && s > max) max = s;
   }
@@ -662,6 +812,9 @@ export const uploadSync = {
 
     // 上传标签组元数据和标签数据
     let result: any = null;
+    // 覆盖上传里「本机读不出来、且本机没有副本」的云端行（保护集）。
+    // 声明在 try **之外**：删除与读回校验分处 try 的两侧（读回在 upsert 之后）。
+    let protectedCloudIds: string[] = [];
     try {
       // 对每个标签组的数据进行加密。
       //
@@ -788,28 +941,90 @@ export const uploadSync = {
 
       let data, error;
 
+      // ── 2026-10-20 P1：覆盖上传不得删掉「本机读不出来、本机又没有副本」的云端行 ──
+      //
+      // 覆盖 = 「云端完全以本机为准」：先 DELETE 该用户全部行，再 upsert 本机清单。
+      // 但云端有些行**这台设备读不出来**（形状坏 / 还原率不达标 / tabs 表被
+      // 网关截断 / 单组处理异常）。对其中「本机又没有副本」的那些行，删除 =
+      // 永久丢失（v1.22.0 起无回收站、删除即物理清除）—— 而用户点的
+      // 「覆盖上传」只想让云端以本机为准，并不想销毁自己仅存的数据。
+      //
+      // 判据抽成纯函数（core/overwriteUploadGuard.ts）：预览（utils/syncPreview.ts）
+      // 与执行（这里）用**同一个**判据 ⇒ 预览预告的「会保留哪几行」与实际保留
+      // 的必然一致（仓库纪律：预览必须与实际同源）。
+      //
+      // 探测必须在删除**之前**当场做（读不出来是每轮下载的事实，上一轮的清单
+      // 既可能漏掉新写入的坏行、也可能保护错对象）—— 见 probeOverwriteDeletePlan。
+      // 合并模式不做这个探测（它压根不删云端行）。
+      const overwritePlan = overwriteCloud
+        ? await probeOverwriteDeletePlan(groups.map(group => group.id))
+        : null;
+      protectedCloudIds = overwritePlan?.protectedIds ?? [];
+      if (protectedCloudIds.length > 0) {
+        logWarn(
+          `[upload] 覆盖上传：云端有 ${protectedCloudIds.length} 个会话这台设备读不出来，` +
+            '且本机没有它们的副本 ⇒ 本次不删除它们（删了就是永久丢失）：' +
+            `${protectedCloudIds.join(',')}`
+        );
+      }
+
       // 如果是覆盖模式，先删除用户的所有标签组，然后插入新的标签组
       if (overwriteCloud) {
         // 使用覆盖模式
 
-        // 先删除用户的所有标签组
-        const { error: deleteError } = await supabase
-          .from('tab_groups')
-          .delete()
-          .eq('user_id', userId);
+        // 删除：默认「删光该用户全部行」（覆盖的原始语义）。
+        //
+        // 例外（2026-10-20 P1）：有需要保护的行时，只删其余的（按 id 分批）。
+        //
+        // 为什么不用 `.not('id','in','(…)')` 排除受保护行：过滤条件走 URL
+        // query，id 多了会撞网关长度上限（400 纯文本、无 code，见 idBatches.ts），
+        // 而且「否定列表」没法分批（分批会各自排除掉别批的行）。
+        // 「列出要删的 id」可以分批 ⇒ URL 长度可控 ⇒ 选它。
+        //
+        // 代价：删除集合是「探测那一刻云端有的行」，探测之后新写入的行会**幸存**
+        // （原来的一次性删除会把它删掉）。这个方向是安全的：多留一行只是让下一轮
+        // 合并把它拉下来，而少删一行可能少掉用户仅存的数据。
+        if (protectedCloudIds.length === 0) {
+          const { error: deleteError } = await supabase
+            .from('tab_groups')
+            .delete()
+            .eq('user_id', userId);
 
-        if (deleteError) {
-          logError('删除用户标签组失败:', deleteError);
-          logError('错误详情:', {
-            code: deleteError.code,
-            message: deleteError.message,
-            details: deleteError.details,
-            hint: deleteError.hint
-          });
-          throw deleteError;
+          if (deleteError) {
+            logError('删除用户标签组失败:', deleteError);
+            logError('错误详情:', {
+              code: deleteError.code,
+              message: deleteError.message,
+              details: deleteError.details,
+              hint: deleteError.hint
+            });
+            throw deleteError;
+          }
+
+          logInfo('用户标签组已删除，准备插入新数据');
+        } else {
+          for (const batch of chunkIds(overwritePlan!.deleteIds)) {
+            const { error: batchError } = await supabase
+              .from('tab_groups')
+              .delete()
+              .eq('user_id', userId)
+              .in('id', batch);
+
+            if (batchError) {
+              logError('删除用户标签组失败:', batchError);
+              logError('错误详情:', {
+                code: batchError.code,
+                message: batchError.message,
+                details: batchError.details,
+                hint: batchError.hint
+              });
+              throw batchError;
+            }
+          }
+          logInfo(
+            `用户标签组已删除（保留 ${protectedCloudIds.length} 个本机读不出来的云端行），准备插入新数据`
+          );
         }
-
-        logInfo('用户标签组已删除，准备插入新数据');
         // 无需等待：DELETE 的 promise resolve 时事务已提交（原来的 100ms sleep
         // 对「删除是否完成」不提供任何保证，只会在每次覆盖上传里白白拖慢同步）。
 
@@ -902,20 +1117,25 @@ export const uploadSync = {
     // 又把上传打成失败——正是本次要根治的那个卡死。
     const firstById = new Map<string, TabGroup>();
     for (const g of uploadRows) if (!firstById.has(g.id)) firstById.set(g.id, g);
-    await verifyUploadReadback(
+    const readbackOutcome = await verifyUploadReadback(
       [...firstById.values()].map(g => ({
         id: g.id,
         updatedAt: g.updatedAt,
         lastOp: g.lastOp ?? null,
         // 覆盖模式上行墓碑时，云端读回必须是 is_deleted=true（默认 false = 活跃）
         isDeleted: tombstonedIds.has(g.id),
-        // 带上 version，读回才能区分"被守卫静默吞写"与"被更新一侧合法取代"：
-        // 后者若也判失败，整台设备的上传会永久卡死（连带下载被跳过）
+        // 带上 version：两侧都没有印记时它是唯一信号；两侧都有印记时它只用于
+        // 诊断「云端是否还在用 version 裁决」（version 本身不参与裁决）
         version: typeof g.version === 'number' ? g.version : null,
       })),
       userId,
       { checkStamp: opStampSupported, checkTombstone: await supportsCloudTombstone() }
     );
+
+    // 2026-10-20 P1：覆盖上传后确认「受保护的云端行」还在。
+    // 放在 upsert 之后：读回失败时云端已被补成本机清单（不会停在「空」这个
+    // 中间态）；放在 upsert 之前就中止反而更糟（本机的会话也会一起丢）。
+    await verifyProtectedRowsStillExist(userId, protectedCloudIds);
 
     // F2：只有「真的写上云了」（upsert 无错 + 读回校验通过）才抬水位。
     // 顺序很关键：放在 verifyUploadReadback **之后**，于是
@@ -923,16 +1143,24 @@ export const uploadSync = {
     //   - 抛错上浮 → syncEngine.upload 失败 → pending_upload 保留 → 下轮重试。
     // 水位来自**上行集合**而非本地全部实体：认输组（云端已是更新的墓碑）没写，
     // 不能计入，否则等于宣布「它们已同步」。
+    // 【2026-10-20 P0】读回阶段判定的「被取代 / 认输」组**本次同样没落盘**
+    // （被取代 = 守卫按印记判这次写入输掉了；认输 = 云端是更新的墓碑），
+    // 一并从水位里剔除：计进去等于永久关闭那一组的上行通道（静默丢数据）。
     // KV 写失败 → 抛错 → 本次 upload 整体失败（保守方向：下轮全量重传），
     // 与 getLastUploadTime「读失败必须抛」的纪律同口径。
     if (!overwriteCloud && uploadRows.length > 0) {
-      const nextWatermark = nextSyncWatermark(uploadRows, watermark);
+      const notWritten = new Set<string>([
+        ...readbackOutcome.superseded,
+        ...readbackOutcome.conceded,
+      ]);
+      const nextWatermark = nextSyncWatermark(uploadRows, watermark, notWritten);
       // deviceSeq 必须取**写入这一刻**的计数器值，不能复用读取时的旧快照 ——
       // 本次上行本身可能推进了计数器（墓碑 seq 走同一个 registry）。
       const deviceSeqAtWrite = await tombstoneSeq.peekDeviceSeq();
       await saveSyncWatermark(userId, nextWatermark, deviceSeqAtWrite);
       logInfo(
         `[upload] 同步水位推进到 seq=${nextWatermark}（本次上行 ${uploadRows.length} 个组，` +
+          `其中 ${notWritten.size} 个本次没落盘（被取代/认输）不计入水位，` +
           `deviceSeq 基线=${deviceSeqAtWrite}，账号 ${userId}）`
       );
     }
@@ -1227,26 +1455,27 @@ export const uploadSync = {
 
     // 定义允许的设置字段，避免上传不存在的字段
     // 这些字段名对应数据库中的实际列名（驼峰命名，稍后会转换为下划线命名）
+    //
+    // 2026-10-20 审计 A-9：已退役的设置（groupNameTemplate / allowDuplicateTabs /
+    // deleteStrategy / reorderMode / syncStrategy）从这里**移除**。
+    // 它们曾经「存着、上云着，却没有任何读取方」—— 继续上传等于让
+    // `group_name_template: 'Group %d'` 随备份导出到别的设备（数据模型在骗人）。
+    // 逐条删除理由见 `src/types/tab.ts` 的 RETIRED_SETTING_KEYS 注释。
     const allowedFields = [
       // 'autoSave',              // -> auto_save (UserSettings中不存在，已注释)
       // 'autoSaveInterval',      // -> auto_save_interval (UserSettings中不存在，已注释)
-      'groupNameTemplate',     // -> group_name_template
       'showFavicons',          // -> show_favicons
       'showTabCount',          // -> show_tab_count
       // 'autoCloseTabs',         // -> auto_close_tabs (UserSettings中不存在，已注释)
       'confirmBeforeDelete',   // -> confirm_before_delete
-      'allowDuplicateTabs',    // -> allow_duplicate_tabs
       // 'syncInterval',          // -> sync_interval (UserSettings中不存在，已注释)
       'syncIntervalMinutes',   // -> sync_interval_minutes（2026-10-11，1.23.0 自动同步档位）
       'syncEnabled',           // -> sync_enabled
       'layoutMode',            // -> layout_mode
       'showNotifications',     // -> show_notifications
-      'syncStrategy',          // -> sync_strategy
-      'deleteStrategy',        // -> delete_strategy
       'themeMode',             // -> theme_mode
       'themeStyle',            // -> theme_style
-      'collectPinnedTabs',     // -> collect_pinned_tabs
-      'reorderMode'            // -> reorder_mode
+      'collectPinnedTabs'      // -> collect_pinned_tabs
     ];
 
     // 将驼峰命名法转换为下划线命名法，并过滤掉不允许的字段
@@ -1255,8 +1484,12 @@ export const uploadSync = {
       // 只处理允许的字段
       if (allowedFields.includes(key)) {
         // 将驼峰命名转换为下划线命名
-        const snakeKey = key.replace(/([A-Z])/g, '_$1').toLowerCase();
+        const snakeKey = settingKeyToColumn(key);
         convertedSettings[snakeKey] = value;
+      } else if ((RETIRED_SETTING_KEYS as readonly string[]).includes(key)) {
+        // 已退役的键：静默跳过（它是历史遗留，不是「未知字段」——
+        // 报 warning 只会让真正的未知字段淹没在噪声里）。
+        logInfo(`跳过已退役的设置字段: ${key}`);
       } else {
         logWarn(`跳过未知的设置字段: ${key}`);
       }
@@ -1277,36 +1510,90 @@ export const uploadSync = {
         .upsert(body, { onConflict: 'user_id' });
     };
 
-    let { data, error } = await doUpsert(payload);
+    // ── 通用降级：云端缺哪一列，就剔掉哪一列再重试 ─────────────────────────
+    // user_settings 的列是后期一份份 ALTER 迁移加上去的（theme_style /
+    // collect_pinned_tabs / sync_interval_minutes 各一条迁移）。没跑迁移的库
+    // 缺那一列，而 PostgREST 的 upsert 把整行一次发过去 ⇒ Postgres 抛
+    // 42703 undefined_column ⇒ **整条设置同步死掉**。
+    //
+    // 修复前只有 collect_pinned_tabs 一列有降级，其余缺列的库照样断
+    // （而 download.ts 的注释还宣称「上传侧有 42703 降级」，那句话对别的列不准确）。
+    // 现在改成**通用规则**：认出缺的是哪一列 → 剔掉 → 重试；重试还报 42703
+    // 就再剔一列（可能同时缺好几列，一次只剔一列会卡在第二列上）。
+    //
+    // 判定与剔除规则抽到 `utils/supabase/missingColumn.ts`（纯逻辑 + 可测的
+    // 上传包装）。受保护列（user_id / device_id / last_sync）永不剔除 ——
+    // user_id 是主键兼 upsert 的冲突键，剔了就不是 upsert 了。
+    const fallbackResult = await upsertWithMissingColumnFallback(
+      (body) => doUpsert(body as Record<string, any>),
+      payload as Record<string, unknown>
+    );
+    let { data, error } = fallbackResult;
+    const { droppedColumns } = fallbackResult;
+    // 降级包装把错误收敛成 unknown，这里收窄回 PostgREST 的形状，
+    // 好让下面的 23502 分支与最终报错日志按字段读。
+    const pgError = error as {
+      code?: string;
+      message?: string;
+      details?: string;
+      hint?: string;
+    } | null;
 
-    // 兼容：云端尚未加列 collect_pinned_tabs 时，不阻塞其他设置同步
+    if (droppedColumns.length > 0) {
+      logWarn(
+        '[Supabase] user_settings 缺少列（' +
+          droppedColumns.join('、') +
+          '），已剔除该列降级重试。可在 Supabase 侧执行对应迁移彻底修复。'
+      );
+    }
+
     if (error) {
-      // 检查是否是 PostgreSQL 的 undefined_column 错误（错误码 42703）
-      const errorCode = (error as any)?.code;
-      const message = (error as any)?.message || '';
-      const details = (error as any)?.details || '';
-      const hint = (error as any)?.hint || '';
-      const combined = `${message} ${details} ${hint}`.toLowerCase();
+      const errorCode = pgError?.code;
 
-      // 更精确的列不存在检查
-      const isUndefinedColumn = errorCode === '42703';
-      const mentionsCollectPinned = combined.includes('collect_pinned_tabs');
-
-      if (isUndefinedColumn && mentionsCollectPinned) {
-        logWarn('[Supabase] user_settings 缺少 collect_pinned_tabs 列，已降级重试（忽略该字段）');
-        const { collect_pinned_tabs: unusedCollectPinnedTabs, ...fallback } = payload as any;
-        void unusedCollectPinnedTabs;
-        ({ data, error } = await doUpsert(fallback));
+      if (errorCode === '23502') {
+        // ── 2026-10-20 审计 A-9：NOT NULL 违例的降级 ──────────────────────
+        // `user_settings` 里有几列可能是 NOT NULL 且没有默认值。那样 Postgres
+        // 在 upsert 的 INSERT 阶段就检查 NOT NULL —— 哪怕这一行已存在、
+        // 最终走的是 ON CONFLICT DO UPDATE 分支，也会先抛 23502 ⇒
+        // **整条设置同步对新老用户一起断**。
+        //
+        // A-9 把五个退役列从上传载荷里去掉了（它们没有读取方）。
+        // 「不再写」这件事本身**扩大**了 23502 的暴露面：以前我们写它们，
+        // 写的是一个非 null 值；现在不写了，数据库那一列就成了 null。
+        //
+        // 修复前这是一份**硬编码的五个列名名单**，用「错误文本包含列名」判定
+        // 撞的是哪一列 ⇒ ① 别的 NOT NULL 无默认列撞上时不命中，直接断；
+        // ② 子串匹配整个错误文本，可能补错列。
+        //
+        // 现在改成通用规则（`utils/supabase/notNullFallback.ts`）：
+        // 从错误里**认出撞的是哪一列** → 用**我们确实知道**的那个值补齐 →
+        // 重试；重试还撞 23502 就再补一列（Postgres 一次只报一列）。
+        // 我们不知道默认值的列不在表里 ⇒ 撞上时宁可失败，也不瞎填一个
+        // 类型不对的值（那等于换个姿势失败，还把库里那一行改坏了）。
+        const notNullResult = await upsertWithNotNullFallback(
+          (body) => doUpsert(body as Record<string, any>),
+          payload as Record<string, unknown>,
+          SETTINGS_COLUMN_DEFAULTS
+        );
+        data = notNullResult.data;
+        error = notNullResult.error;
+        if (notNullResult.filledColumns.length > 0) {
+          logWarn(
+            '[Supabase] user_settings 的列是 NOT NULL 且无默认值（' +
+              notNullResult.filledColumns.join('、') +
+              '），已补齐默认值重试。可在 Supabase 侧给这些列加默认值彻底修复。'
+          );
+        }
       }
     }
 
     if (error) {
       logError('上传用户设置失败:', error);
       logError('错误详情:', {
-        code: error.code,
-        message: error.message,
-        details: error.details,
-        hint: error.hint
+        code: pgError?.code,
+        message: pgError?.message,
+        details: pgError?.details,
+        hint: pgError?.hint
       });
       throw error;
     }

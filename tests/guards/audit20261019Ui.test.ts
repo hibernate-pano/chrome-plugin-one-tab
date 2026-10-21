@@ -101,8 +101,29 @@ describe('F-1（P0）搜索框在任何宽度都不许塌陷到 0 宽', () => {
   });
 
   it('极窄屏时品牌名让位（320px 下品牌与操作区曾重叠）', () => {
-    assert.match(GLOBAL_CSS, /@media \(max-width: 380px\)/);
-    assert.match(HEADER, /app-header-brand-name/);
+    // 断言的是「存在一个窄屏降级档，且降级的是品牌名」这条**不变量**，
+    // 不是那个具体像素值。
+    //
+    // 2026-10-20：阈值从 380px 改成了 420px —— 真机实测 400px 下品牌名
+    // 仍会被裁掉 8.2px，420px 才是实测出来的降级点（见 global.css 的注释与
+    // tests/guards/headerGeometry.test.ts）。这里原来钉死 380px，
+    // 于是「把阈值调对」反而让守卫变红 —— 那条守卫守的是错误的值。
+    const narrow = GLOBAL_CSS.match(/@media \(max-width: (\d+)px\)/g) ?? [];
+    const px = narrow
+      .map(m => Number(m.match(/max-width: (\d+)px/)?.[1] ?? NaN))
+      .filter(Number.isFinite);
+    assert.ok(px.length > 0, 'global.css 里应有窄屏媒体查询');
+    assert.ok(
+      px.some(v => v >= 320 && v <= 480),
+      `必须有 320–480px 之间的窄屏降级档（实际：${px.join('/')}）`
+    );
+    // 真正要守的是**降级动作**：那个档位里必须隐藏品牌名。
+    assert.match(HEADER, /app-header-brand-name/, '品牌名必须有一个可被媒体查询命中的类名');
+    assert.match(
+      GLOBAL_CSS,
+      /\.app-header-brand \.app-header-brand-name\s*\{[^}]*display:\s*none/,
+      '窄屏档必须真的隐藏品牌名（不只是声明一个媒体查询）'
+    );
   });
 });
 
@@ -113,11 +134,17 @@ describe('I-1 空态收敛成一张卡、一个主 CTA', () => {
   it('空态分支只渲染一张卡', () => {
     // 分支边界要按**出现顺序**取：空态分支在「加载失败」分支**之后**，
     // 用 indexOf('if (error...)') 当下界会切出一段空区间，断言恒等于 1 —— 假绿。
-    const branchAt = TAB_LIST.indexOf('if (filteredGroups.length === 0 && !searchQuery) {');
+    // 2026-10-20 审计 A-14：空态分支的条件多了「没有生效的筛选条件」
+    // （有条件时要看筛选浏览视图，而不是「没有会话」的引导卡）。
+    // 断言钉**不变量**（空态分支里只有一张卡），不钉分支条件的写法 ——
+    // 条件怎么写是实现细节，一张卡才是这个产品对用户的承诺。
+    const branchAt = TAB_LIST.indexOf('getEmptyStateGreeting()');
     assert.ok(branchAt !== -1, '找不到空态分支');
-    const endAt = TAB_LIST.indexOf('\n  return (', branchAt);
-    assert.ok(endAt > branchAt, '找不到空态分支的结束位置');
-    const body = TAB_LIST.slice(branchAt, endAt);
+    const cardAt = TAB_LIST.lastIndexOf('<EmptyState', branchAt);
+    assert.ok(cardAt !== -1, '找不到空态那张 EmptyState 卡');
+    const endAt = TAB_LIST.indexOf('\n  return (', cardAt);
+    assert.ok(endAt > cardAt, '找不到空态分支的结束位置');
+    const body = TAB_LIST.slice(cardAt, endAt);
     // 数**卡**而不是数 EmptyState：欢迎卡是 div.tab-group-card，
     // 数 EmptyState 的话「多插一张欢迎卡」根本不会被这条断言发现。
     const emptyState = (body.match(/<EmptyState/g) ?? []).length;
@@ -386,7 +413,14 @@ describe('C-7 菜单的 role="menu" 必须配套 menuitem 与方向键', () => {
   });
 
   it('方向键只接管焦点已在菜单内的情况（打开后 ↓ 进入第一项）', () => {
-    assert.match(DROPDOWN, /currentIndex === -1/, '焦点不在菜单内时要能「进入菜单」');
-    assert.match(DROPDOWN, /items\[target\]\.focus\(\)/);
+    // 2026-10-20：这段决策被抽到了 @/utils/menuKeyboard 的纯函数里
+    // （resolveMenuNavigation）—— 因为它必须**过滤掉不可聚焦的项**：
+    // 旧实现用 role 候选集，`<label role="menuitem">`（tabIndex=-1）被算进去
+    // ⇒ 方向键每次都算回同一项 ⇒ **死循环**，其后的菜单项全部不可达。
+    // 判据从「源码里有没有某个字符串」改成「决策函数有没有这个行为」
+    // （行为断言在 tests/keyboardReachability.test.ts）。
+    assert.match(DROPDOWN, /resolveMenuNavigation\(/, '方向键决策必须走共享的纯函数');
+    assert.match(DROPDOWN, /collectFocusableMenuItemIndices\(/, '候选集必须只收可聚焦的项');
+    assert.match(DROPDOWN, /items\[decision\.index\]\.focus\(\)/, '决策结果必须被聚焦');
   });
 });

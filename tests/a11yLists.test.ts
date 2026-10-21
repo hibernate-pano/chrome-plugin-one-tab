@@ -44,6 +44,12 @@ const TAB_GROUP = read('../src/components/tabs/TabGroup.tsx');
 const TAB_LIST = read('../src/components/tabs/TabList.tsx');
 const DRAGGABLE_TAB = read('../src/components/dnd/DraggableTab.tsx');
 const SEARCH_RESULT_LIST = read('../src/components/search/SearchResultList.tsx');
+// 筛选面板在 2026-10-20 审计 A-14 里被提到独立文件（筛选必须不依赖搜索词可达，
+// 而它原先住在只在有搜索词时才挂载的 SearchResultList 内部）。
+// 守卫钉的是**不变量**（筛选控件有 id + htmlFor），不是它住在哪个文件里 ——
+// 所以这里同时读两个文件，任一处出现控件都必须合规。
+const SEARCH_FILTER_PANEL = read('../src/components/search/SearchFilterPanel.tsx');
+const SEARCH_FILTER_SOURCES = `${SEARCH_RESULT_LIST}\n${SEARCH_FILTER_PANEL}`;
 const ONBOARDING_GUIDE = read('../src/components/onboarding/OnboardingGuide.tsx');
 const ONBOARDING_STEPS = read('../src/components/onboarding/OnboardingSteps.tsx');
 const HEADER = read('../src/components/layout/Header.tsx');
@@ -202,11 +208,11 @@ describe('表单控件：label 关联', () => {
   for (const key of filterIds) {
     it(`搜索筛选「${key}」有 id + htmlFor`, () => {
       assert.ok(
-        SEARCH_RESULT_LIST.includes(`htmlFor={FILTER_IDS.${key}}`),
+        SEARCH_FILTER_SOURCES.includes(`htmlFor={FILTER_IDS.${key}}`),
         `搜索筛选 ${key} 的 label 缺 htmlFor`
       );
       assert.ok(
-        SEARCH_RESULT_LIST.includes(`id={FILTER_IDS.${key}}`),
+        SEARCH_FILTER_SOURCES.includes(`id={FILTER_IDS.${key}}`),
         `搜索筛选 ${key} 的控件缺 id`
       );
     });
@@ -214,7 +220,10 @@ describe('表单控件：label 关联', () => {
 
   it('筛选 id 常量齐全', () => {
     for (const key of filterIds) {
-      assert.ok(SEARCH_RESULT_LIST.includes(`${key}: 'search-filter-`), `缺少 ${key} 的 FILTER_IDS 定义`);
+      assert.ok(
+        SEARCH_FILTER_SOURCES.includes(`${key}: 'search-filter-`),
+        `缺少 ${key} 的 FILTER_IDS 定义`
+      );
     }
   });
 
@@ -660,6 +669,37 @@ describe('搜索结果：重算收敛与埋点节流', () => {
     );
   });
 
+  it('没有搜索词时不得记成「搜索过」（筛选浏览是另一件事）', () => {
+    // 2026-10-20 审计 A-14：空搜索词 + 有筛选条件 = 「按域名找那些标签」，
+    // 这是一次真实的**筛选**行为，不是「搜索」。
+    //
+    // 口径：没有搜索词 ⇒ 不发 `search_performed`（用户没搜过）。
+    //       有生效的筛选条件 ⇒ 发 `search_filtered`（他在做筛选浏览）。
+    // 两件事不许混成一件 —— 否则「搜索次数」会被筛选浏览凭空灌水。
+    const noQuery = { ...snapshot, query: '' };
+    assert.deepEqual(
+      searchEventNames(noQuery),
+      [],
+      '没有搜索词、也没有筛选条件 ⇒ 什么都没做，不该记任何事件'
+    );
+    assert.deepEqual(
+      searchEventNames({ ...noQuery, domain: 'github.com' }),
+      ['search_filtered'],
+      '没有搜索词但有筛选条件 ⇒ 只记筛选，不记搜索'
+    );
+    assert.deepEqual(
+      searchEventNames({ ...noQuery, savedWithin: '7d' }),
+      ['search_filtered'],
+      '保存时间筛选同样只记筛选'
+    );
+    // 纯空白搜索词 = 没有搜索词
+    assert.deepEqual(
+      searchEventNames({ ...noQuery, query: '   ' }),
+      [],
+      '纯空白的搜索词算没有搜索词'
+    );
+  });
+
   it('hasActiveSearchFilters 与组件内判空一致（纯空格不算生效）', () => {
     assert.equal(hasActiveSearchFilters({}), false);
     assert.equal(hasActiveSearchFilters({ domain: '   ', groupName: '' }), false);
@@ -679,7 +719,7 @@ describe('搜索结果：重算收敛与埋点节流', () => {
       nearestUseMemo > SEARCH_RESULT_LIST.indexOf('const baseResults'),
       'useMemo 必须紧跟在 baseResults 声明处'
     );
-    for (const call of ['applySearchFilters(baseResults, filters)', 'buildSessionSearchResults(searchResults)']) {
+    for (const call of ['applySearchFilters(baseResults, ', 'buildSessionSearchResults(searchResults)']) {
       const at = SEARCH_RESULT_LIST.indexOf(call);
       const memo = SEARCH_RESULT_LIST.lastIndexOf('useMemo(', at);
       assert.ok(memo !== -1 && memo < at, `${call} 必须在 useMemo 内`);

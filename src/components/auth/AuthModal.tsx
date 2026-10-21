@@ -56,11 +56,16 @@ export const AuthModal: React.FC<AuthModalProps> = ({ visible, initialTab = 'log
             role="tablist"
             aria-label="登录或注册"
           >
+            {/* 激活态：2026-10-20 审计 P1-2 —— 原先写死 `text-primary-600`
+                （Tailwind 的 #2563eb，**在 6 个深色主题下都不变**），而深色底
+                亮度只有 17–44 级 ⇒ 实测塌到 2.17–2.96:1，低于 AA 的 4.5:1。
+                现在文字走 --color-text-primary（主题的最强文字色），
+                2px 激活下划线走 --color-accent-text（≥3:1 的非文本对比）。 */}
             <button
               type="button"
               role="tab"
               aria-selected={activeTab === 'login'}
-              className={`flex-1 py-3 transition-all font-medium ${activeTab === 'login' ? 'text-primary-600 border-b-2 border-primary-600' : 'text-gray-600 dark:text-gray-300 hover:text-primary-600 dark:hover:text-primary-400'}`}
+              className={`flex-1 py-3 transition-all font-medium ${activeTab === 'login' ? 'theme-text-primary border-b-2 theme-accent-ink-border' : 'text-gray-600 dark:text-gray-300 hover:text-primary-600 dark:hover:text-primary-400'}`}
               onClick={() => setActiveTab('login')}
             >
               登录
@@ -69,7 +74,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ visible, initialTab = 'log
               type="button"
               role="tab"
               aria-selected={activeTab === 'register'}
-              className={`flex-1 py-3 transition-all font-medium ${activeTab === 'register' ? 'text-primary-600 border-b-2 border-primary-600' : 'text-gray-600 dark:text-gray-300 hover:text-primary-600 dark:hover:text-primary-400'}`}
+              className={`flex-1 py-3 transition-all font-medium ${activeTab === 'register' ? 'theme-text-primary border-b-2 theme-accent-ink-border' : 'text-gray-600 dark:text-gray-300 hover:text-primary-600 dark:hover:text-primary-400'}`}
               onClick={() => setActiveTab('register')}
             >
               注册

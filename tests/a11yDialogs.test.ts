@@ -147,10 +147,27 @@ test('useFocusTrap 把 Tab 决策交给 resolveTabTarget，并且监听挂在 do
   // 只有 document 级监听才能把焦点重新拉回对话框。
   assert.ok(KEYBOARD_HOOKS.includes("document.addEventListener('keydown', handleKeyDown)"));
   assert.ok(KEYBOARD_HOOKS.includes('const decision = resolveTabTarget('));
-  // 关闭后还焦，且触发器已经不在文档里时不乱丢焦点
+  // 关闭后还焦。
+  //
+  // 2026-10-20：这里的判据被改写了。原先断言「触发器已经不在文档里就
+  // 不还焦」（`!restoreTo.isConnected` ⇒ return）—— 而那正是**焦点丢到
+  // body 的根因**：确认框由 ToastContext 全局渲染，打开时 activeElement
+  // 是菜单项按钮，菜单项随即被卸载 ⇒ 关闭时 `isConnected === false`
+  // ⇒ 拒绝还焦 ⇒ 焦点掉到 body（实测四条路径全部复现）。
+  //
+  // 新契约：还焦走**降级链**（原触发点 → 登记的稳定落点 → 页面 main），
+  // 任何一步都不把焦点丢给 body。详见 keyboardReachability.test.ts。
   assert.ok(KEYBOARD_HOOKS.includes('restoreTargetRef'));
-  assert.ok(KEYBOARD_HOOKS.includes('!restoreTo.isConnected'));
-  assert.ok(KEYBOARD_HOOKS.includes('restoreTo.focus()'));
+  assert.ok(KEYBOARD_HOOKS.includes('resolveFocusRestoreTarget('));
+  assert.ok(KEYBOARD_HOOKS.includes('target.focus()'));
+  // 只看**代码**：注释里可以引用旧写法（说明根因），代码里不许复活它。
+  const keyboardHookCode = KEYBOARD_HOOKS
+    .replace(/\/\*[\s\S]*?\*\//g, ' ')
+    .replace(/(^|[^:])\/\/.*$/gm, '$1');
+  assert.ok(
+    !keyboardHookCode.includes('!restoreTo.isConnected'),
+    '旧的「拒绝还焦」判据不得复活（它就是焦点丢到 body 的根因）'
+  );
 });
 
 test('确认框与提示框统一继承 ModalFrame 的修复（不各自手搓对话框）', () => {

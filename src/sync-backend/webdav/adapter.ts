@@ -15,6 +15,21 @@
  * 3. **水位的比较基准是「本设备 seq 时钟」**，不是墙上时间。
  *    seq 时钟回退（用户清了本地数据）时旧水位必须作废，否则新会话会被
  *    旧水位永久遮蔽、永不上云（Supabase 侧踩过这个 P0，见 syncWatermark.ts）。
+ *
+ * ── 第四条纪律（2026-10-20 修 P0「索引丢了被当成空库」时补上）──────────
+ * 4. **「索引丢了」≠「远端空了」**。manifest.json 是**派生数据**：
+ *    真正的内容是 `groups/` 目录下的分片文件。索引不在了，只能说明
+ *    **我们不知道云端有什么**，不能说明**云端什么都没有**。
+ *    把两者混同的后果（已确认的 P0 数据丢失）：
+ *      · 设备 A、B 共用一个库，B 有 S1..S5、A 有 S1..S3；
+ *      · 索引因第三方同步客户端冲突/用户整理目录而丢失；
+ *      · A 的下一次上传看到 404 ⇒ 判定「远端是空库」⇒ 全量上传 A 的 S1..S3
+ *        ⇒ manifest 被整体换成本批的 3 个条目；
+ *      · S4/S5 的**分片文件还在磁盘上**，却不在索引里 ⇒ 对所有设备隐形；
+ *      · B 的水位线又认为 S4/S5「已上传」⇒ 永远不再上行 ⇒ 云端侧永久丢失。
+ *    现在 `loadIndex()` 区分三态：**空库 / 索引在 / 索引丢了但分片还在**。
+ *    第三态必须先**重建索引**（列目录 + 读回分片）再谈上传，
+ *    重建不出来就**中止本轮**（fail-closed），绝不按空库处理。
  */
 import type { TabGroup, UserSettings } from '@/types/tab';
 import type {
@@ -36,6 +51,7 @@ import {
   emptyManifest,
   encodeGroup,
   encodeTombstone,
+  inspectShardFileName,
   isManifestUsable,
   makeEncryptedEnvelope,
   makePlainEnvelope,
@@ -43,13 +59,22 @@ import {
   parseManifest,
   serializeEnvelope,
   serializeManifest,
+  shardHeaderFromPayload,
   shardPath,
   type Manifest,
   type ShardFingerprint,
+  type ShardHeader,
 } from './layout';
 import { createVault, openVault, type Vault } from '../crypto';
 import { checkDeleteFailsafe } from '../failsafe';
-import { compareStampsLoose } from '@/core/opStamp';
+// 远端裁决的**共享判据**（2026-10-20 D-4/D-5）：内容优先于索引，
+// 墓碑读回 = 「广播成功」的定义。与 Supabase 侧是同一套口径，见该文件。
+import {
+  compareTombstoneReadback,
+  resolveRemoteState,
+  shouldConcedeToRemote,
+} from '@/core/remoteAdjudication';
+import { logWarn } from '@/utils/log';
 
 /** 适配器配置。口令为 null/undefined 表示用户选了「不加密」（明文存云盘）。 */
 export interface WebDavBackendConfig {
@@ -93,12 +118,66 @@ export interface WebDavAdapterDeps {
    * 而发号器的生命周期由写作路径持有（它比同步更底层）。
    */
   peekDeviceSeq?: () => Promise<number>;
+  /**
+   * 本设备 Lamport 时钟的**取号**与**抬升**能力（2026-10-20 D-7）。
+   *
+   * 删除广播的印记必须由**本机时钟**发出（见 nextDeleteStamp 的完整论证），
+   * 所以适配器需要的不只是「看一眼计数器」，而是「取一个新号」+「把观察到的
+   * 更大的号吸收进本机时钟」。
+   *
+   * 为什么注入而不是直接 import seqRegistry：同 peekDeviceSeq 的理由 ——
+   * 发号器的生命周期由写作路径持有，它比同步更底层。
+   *
+   * 缺省实现退化成「只看 + 不抬升」：那会让删除广播拿不到真正的新号
+   * （D-7 的缺陷形态）。**生产路径必须注入**（src/sync-backend/index.ts 绑定了
+   * 真实的 seqRegistry），测试里则可以注入内存实现来断言行为。
+   */
+  nextDeviceSeq?: () => Promise<number>;
+  /** 把观察到的号吸收进本机 Lamport 时钟（保证本机随后发出的号严格大于它）。 */
+  bumpDeviceSeqIfLower?: (candidate: number) => Promise<number>;
 }
 
 /** 水位值形状。与 Supabase 侧同构（含 deviceSeq 基线）。 */
 interface SyncWatermark {
   seq: number;
   deviceSeq: number;
+}
+
+/**
+ * 远端索引（manifest）的三态。
+ *
+ * · `empty` —— 远端确实没有这个库：`groups/` 目录不存在，或目录里一个分片都没有。
+ *   这是**合法**的首次同步起点，走「首次全量上传」。
+ * · `manifest` —— 索引在（`rebuilt: false`），或者索引丢了、我们刚从分片目录
+ *   **重建**了一份（`rebuilt: true`）。
+ *
+ * `rebuilt` 不是装饰标记：只有它为 true 时，我们才**确知**云端到底有哪些分片
+ * （权威认知），也只有它为 true 时，「本地水位线以为已上传、但云端其实没有」
+ * 这份差异才能被揪出来并补传（见 selectMissingFromIndex）。
+ */
+type RemoteIndex =
+  | { kind: 'empty' }
+  | { kind: 'manifest'; manifest: Manifest; etag: string | null; rebuilt: boolean };
+
+/** 远端 groups/ 目录的一次扫描结果。 */
+interface RemoteShardScan {
+  /** 符合本版本布局的分片（id + 相对 baseUrl 的路径）。 */
+  shards: Array<{ id: string; path: string }>;
+  /**
+   * **不符合**本版本布局的文件（相对 baseUrl 的路径）。
+   *
+   * 非空即意味着「云端目录被人动过」：可能是用户整理过目录，也可能是一个
+   * 装 着真实会话内容的分片被放错了位置。两种情况都**不能**当「没有这个文件」
+   * —— 那正是会让内容对所有设备隐形的那类静默丢失。
+   */
+  unexpected: string[];
+  /**
+   * 目录**列不出来**（404/409/405/501）。
+   *
+   * true = 我们**不知道**云端有什么 —— 绝不能当成「云端是空的」。
+   * 与 `shards.length === 0` 严格区分：那是「确知云端一个分片都没有」。
+   */
+  listingFailed: boolean;
 }
 
 /** 水位键前缀。按「库地址」寻址 —— 换库 / 换账号自动失效，不会带旧水位过去。 */
@@ -115,6 +194,42 @@ const WATERMARK_PREFIX = 'webdav_sync_watermark';
  */
 const CONFLICT_RETRY_LIMIT = 3;
 
+/**
+ * 列目录时的并发上限。
+ *
+ * 为什么不是串行：重建索引 / 索引自检都要列 `groups/` 下的**所有**前缀子目录
+ * （会话数 ≈ 前缀子目录数）。串行会让恢复态的上传等上好几秒。
+ * 为什么不是无限并发：坚果云这类服务端有并发/频率限制，打满它会触发限流，
+ * 反而把同步拖垮。8 是「不慢、也不压服务器」的折中。
+ */
+const DIR_SCAN_CONCURRENCY = 8;
+
+/**
+ * 「索引 ↔ 实际分片」全量自检的最小间隔（毫秒）。理由见 shouldVerifyIndex。
+ */
+const INDEX_VERIFY_INTERVAL_MS = 5 * 60_000;
+
+/**
+ * 远端分片的**裁决依据**（2026-10-20 D-4）。
+ *
+ * 全部来自**分片内容**，不是索引：
+ *   · `lastOp` —— 分片自己的操作印记（头部优先，老分片则解密正文取）；
+ *   · `isDeleted` —— 分片自己是不是墓碑；
+ *   · `etag` —— 服务端给的条件写凭据（不是索引里抄的那一份）。
+ */
+interface RemoteShardState {
+  /** 远端有没有这个分片。 */
+  exists: boolean;
+  /** 服务端给的 ETag（条件写用）。 */
+  etag: string | null;
+  /** 分片自身的印记。 */
+  lastOp?: { d: string; s: number };
+  /** 分片自身是不是墓碑。 */
+  isDeleted?: boolean;
+  /** 分片在，但内容读不出来（外壳坏了）⇒ 不可裁决。 */
+  unreadable?: boolean;
+}
+
 export class WebDavBackendAdapter implements SyncBackendPort {
   readonly id = 'webdav' as const;
   readonly label = '自带存储（WebDAV）';
@@ -124,7 +239,26 @@ export class WebDavBackendAdapter implements SyncBackendPort {
   private readonly kv: AdapterKv;
   private readonly now: () => string;
   private readonly peekDeviceSeq: () => Promise<number>;
+  private readonly nextDeviceSeq: () => Promise<number>;
+  private readonly bumpDeviceSeqIfLower: (candidate: number) => Promise<number>;
+  /**
+   * 兜底本机时钟的号位（只在调用方**没注入**发号器时使用）。
+   *
+   * 为什么需要它：兜底取号器若不持有号位，每次发号都会拿到同一个数 ⇒
+   * 墓碑号与云端 seq 无关 ⇒ 退回 D-7 的缺陷形态。见构造函数的说明。
+   */
+  private fallbackSeq: number;
   private readonly root: string;
+
+  /**
+   * 条件写能力（**显式状态**，2026-10-20 D-4）。null = 还没探测。
+   *
+   * 为什么必须变成「状态」而不是每次现探：裁决策略要在「发不发 If-Match」
+   * 上分叉，而这个判断必须**每轮一致** —— 同一轮里先按「支持」发、后按
+   * 「不支持」不发，等于自己跟自己打架，412 重试路径也就失去了意义。
+   * 探测一次、缓存住，策略才有稳定依据。
+   */
+  private conditionalWrites: boolean | null = null;
 
   constructor(deps: WebDavAdapterDeps) {
     this.client = deps.client;
@@ -134,6 +268,36 @@ export class WebDavBackendAdapter implements SyncBackendPort {
     // 默认 0：没有发号器时水位基线的自检退化为「不检测」，
     // 这在真实运行时不会发生（写作路径总会注入），测试里则让断言更简单。
     this.peekDeviceSeq = deps.peekDeviceSeq ?? (async () => 0);
+    // ── 2026-10-20 D-7：删除广播的取号与抬升 ────────────────────────────
+    //
+    // 生产路径（src/sync-backend/index.ts）注入真实的 seqRegistry ——
+    // 那是**唯一**能让删除广播的号与写作路径共享同一个计数器的接法。
+    // 下面的兜底只在「调用方没注入发号器」时生效（测试与设置页的探测适配器）。
+    //
+    // 兜底必须**真的是一台本机时钟**，不能是「看一眼 + 不发号」：
+    //   · 之前的兜底取号器算完 `peek + 1` 就丢掉，且配套的 bump 是空操作
+    //     ⇒ 每次发号都拿到**同一个**数，且那个数与云端 seq 无关 ⇒
+    //     墓碑号退化成「云端 seq + 1」= 缺陷形态本身（只是换了个地方发生）。
+    //   · 现在兜底持有**自己的单调号位**：发号时抬一格、吸收时抬高下限，
+    //     于是「墓碑的号是本机发出去的」与「本机随后的号严格大于墓碑」两条
+    //     不变式在兜底路径上同样成立。
+    //
+    // 兜底号位与写作路径的计数器**不共享**（那是「没注入发号器」的代价），
+    // 所以生产路径必须注入 —— 见 src/sync-backend/index.ts 的绑定。
+    this.fallbackSeq = 0;
+    this.nextDeviceSeq =
+      deps.nextDeviceSeq ??
+      (async () => {
+        const observed = await this.peekDeviceSeq();
+        this.fallbackSeq = Math.max(this.fallbackSeq, observed) + 1;
+        return this.fallbackSeq;
+      });
+    this.bumpDeviceSeqIfLower =
+      deps.bumpDeviceSeqIfLower ??
+      (async (candidate: number) => {
+        if (candidate > this.fallbackSeq) this.fallbackSeq = candidate;
+        return this.fallbackSeq;
+      });
     this.root = normalizeRoot(deps.config.rootPath);
   }
 
@@ -195,17 +359,95 @@ export class WebDavBackendAdapter implements SyncBackendPort {
   // ── manifest 读写 ───────────────────────────────────────────────────
 
   /**
-   * 读 manifest。
+   * 重建出来的索引缓存。
    *
-   * @returns null = 远端还没有这个库（**合法状态**，首次同步就是从这里开始）
-   * @throws 文件存在但解析不了 / 加密库缺 salt —— 「坏了」必须与「空」分开
+   * 只在「远端没有 manifest.json」的恢复态里有值。存在的理由是**成本**：
+   * 恢复态里每次探活（fetchFingerprints）都会触发一次「列目录 + 读回全部分片」，
+   * 而探活是每分钟级的高频调用 —— 不缓存的话恢复态会把用户的云盘打爆。
+   *
+   * 失效时机：manifest 写回成功（索引已落盘）、或写回时发生 412 冲突
+   * （说明远端状态已经变了，缓存的认知不再可靠）。
    */
-  private async loadManifest(): Promise<{ manifest: Manifest; etag: string | null } | null> {
+  private rebuiltIndex: Manifest | null = null;
+
+  /** 上次做「索引 ↔ 实际分片」全量自检的时刻（0 = 从没做过）。 */
+  private lastIndexVerifyAt = 0;
+
+  /**
+   * 读远端索引（manifest），并区分三种状态。
+   *
+   * @returns `empty` = 远端确实没有这个库（**合法状态**，首次同步从这里开始）
+   * @returns `manifest` = 索引在，或索引丢了但我们已从分片目录重建
+   * @throws 文件存在但解析不了 / 加密库缺 salt —— 「坏了」必须与「空」分开
+   * @throws 索引丢了、想重建却重建不出来 —— **中止本轮**，绝不按空库处理
+   */
+  private async loadIndex(): Promise<RemoteIndex> {
     const got = await this.client.get(this.p(MANIFEST_PATH));
     // 'notFound' in got = 404 或 409（父目录不存在）。两者对「清单还不存在」等价：
     // 坚果云等按 RFC 4918 对不存在的父目录回 409 而不是 404，语义上仍是「没有」。
-    if (!got || 'notFound' in got) return null;
+    if (got && !('notFound' in got)) {
+      const parsed = parseManifest(got.body);
+      if (!parsed) {
+        throw new Error(
+          `云端清单文件（${MANIFEST_PATH}）无法解析，已中止本次同步以免把本地数据判成「云端已清空」。` +
+            '请检查该文件是否被其他程序改动过。'
+        );
+      }
+      if (!isManifestUsable(parsed)) {
+        throw new Error(
+          '云端清单显示这个库是加密的，但缺少密钥参数（salt）。文件可能被截断，已中止本次同步。'
+        );
+      }
+      return { kind: 'manifest', manifest: parsed, etag: got.etag, rebuilt: false };
+    }
 
+    // ── 索引不在。接下来要回答的是：「远端是空的」还是「索引丢了、分片还在」？──
+    // 判据不是 manifest 本身，而是**分片目录**：
+    //   · groups/ 目录都不存在 ⇒ 远端确实没建过库（首次同步的合法起点）；
+    //   · groups/ 目录存在 ⇒ 里面可能有分片 ⇒ 必须重建索引。
+    //
+    // ⚠️ 为什么先 stat 再列目录（而不是直接列）：
+    // 有些服务端不支持 Depth:1（405/501）。先用 Depth:0 的 stat 判存在性，
+    // 首次同步（groups/ 压根不存在）就完全不碰 Depth:1 —— 不支持列目录的
+    // 服务端依然能完成首次同步。代价是多一次极轻量的 PROPFIND。
+    const dir = await this.client.stat(this.p(GROUPS_DIR));
+    if (!dir.exists) return { kind: 'empty' };
+
+    if (this.rebuiltIndex) {
+      return { kind: 'manifest', manifest: this.rebuiltIndex, etag: null, rebuilt: true };
+    }
+
+    const rebuilt = await this.rebuildManifestFromDisk();
+    // groups/ 在，但里面一个分片都没有 ⇒ 远端确实没有任何会话内容。
+    if (!rebuilt) return { kind: 'empty' };
+    this.rebuiltIndex = rebuilt;
+    return { kind: 'manifest', manifest: rebuilt, etag: null, rebuilt: true };
+  }
+
+  /**
+   * 读「写索引时用的 base」——**不做恢复**。
+   *
+   * ── 为什么必须与 loadIndex 分开 ────────────────────────────────────────
+   * `loadIndex` 在索引不在时会**去重建**（列目录 + 读回全部分片）。
+   * 而 writeManifest 的用途是「基于最新的远端索引合并后写回」——
+   * 它在**首次同步**里也会被调用，而首次同步时远端根本没有索引，
+   * 目录也还不存在（要等写分片时才建出来）。
+   *
+   * 若 writeManifest 复用 loadIndex，就会发生这个顺序：
+   *   写分片 → 建出 groups/ 目录 → 调 writeManifest → loadIndex 发现
+   *   「索引不在 + groups/ 在」⇒ 判定「索引丢了」⇒ 去重建 ⇒ 重建时列目录
+   *   （列得到）⇒ 把刚写的分片收进 base ⇒ 写回索引 —— 看起来没事，
+   *   但在**不支持 Depth:1** 的服务器上，重建会直接抛错 ⇒ 首次同步挂死。
+   *
+   * 写索引时需要的 base 只有两种可能：
+   *   · 远端**有**索引 ⇒ 用它（这是并发安全的核心）；
+   *   · 远端**没有**索引 ⇒ 从零开始（空 base），而这正是首次同步的形态。
+   * 「远端没有索引但目录里有分片」是**恢复态**，那条路由 loadIndex 负责，
+   * 写索引时不需要再问一次（问一次就会踩上面那个坑）。
+   */
+  private async loadIndexForWrite(): Promise<{ manifest: Manifest; etag: string | null } | null> {
+    const got = await this.client.get(this.p(MANIFEST_PATH));
+    if (!got || 'notFound' in got) return null;
     const parsed = parseManifest(got.body);
     if (!parsed) {
       throw new Error(
@@ -222,21 +464,552 @@ export class WebDavBackendAdapter implements SyncBackendPort {
   }
 
   /**
+   * 重建索引**失败**时的统一出口。
+   *
+   * 分两种「失败」，但**处理方式相同**（中止本轮，绝不按空库处理）：
+   *   · 目录列不出来（服务端不支持 Depth:1 / 目录被挪了）⇒ 我们不知道云端有什么；
+   *   · 目录里全是无法识别的文件 ⇒ 我们同样不知道云端有什么。
+   * 区别只在于**给用户看的话**（能不能给出可操作的下一步）。
+   */
+  private indexUnrecoverable(reason: string): never {
+    throw new Error(
+      `云端索引（${MANIFEST_PATH}）丢失，且无法从云盘的会话文件目录重建：${reason}` +
+        '已中止本次同步 —— 绝不会把云端当成空库（那会用本机的子集覆盖云端内容，' +
+        '造成不可恢复的丢失）。请检查云盘目录结构，或在设置里重新做一次全量同步。'
+    );
+  }
+
+  /**
+   * 列目录 + 读回分片，**从磁盘重建**一份 manifest。
+   *
+   * ── 哪些字段是可信的、哪些是不可信的 ──────────────────────────────────
+   * 可信（来自分片**内容**，逐个读回并解密）：
+   *   · id —— 来自**文件名**（`groups/<id前2位>/<id>.json`），不依赖内容，
+   *     也不依赖能不能解密 ⇒ **加密库同样拿得到**；
+   *   · updatedAt / lastOp / isDeleted —— 来自解码后的会话内容，
+   *     加密库需要口令才能拿到（拿不到就中止，见下）；
+   *   · etag —— 来自这次 GET 的响应头（服务端不给就没有这一项）。
+   * 不可信 / 拿不到：
+   *   · generatedAt —— 只能填「现在」，它本来就不参与判定（多设备时钟不可信）；
+   *   · 拿不到口令时的 updatedAt / lastOp —— **本函数直接抛错**，
+   *     绝不拿「猜出来的」值去填。理由：`lastOp` 缺失会让
+   *     `compareStampsLoose(undefined, x)` 把远端判成「最小」，
+   *     于是下一次上传会用**旧内容覆盖新内容** —— 一个「看起来重建成功了、
+   *     其实索引是错的」状态，比不重建更危险。
+   */
+  private async rebuildManifestFromDisk(): Promise<Manifest | null> {
+    const scan = await this.scanRemoteShards();
+
+    // ── 列不出来 ⇒ 我们**不知道**云端有什么（不是「云端是空的」）────────
+    if (scan.listingFailed) {
+      this.indexUnrecoverable(
+        `无法列出云端的 ${GROUPS_DIR}/ 目录（服务器可能不支持 PROPFIND Depth:1，或目录已被移动）。`
+      );
+    }
+
+    if (scan.shards.length === 0) {
+      if (scan.unexpected.length > 0) {
+        // 目录里有东西，但没有一个是我们认识的布局 ⇒ 可能是被人动过。
+        // 此时**绝不能**判定「远端是空库」：那些文件里可能装着真实会话。
+        throw new Error(
+          `云端 ${GROUPS_DIR}/ 目录里有 ${scan.unexpected.length} 个无法识别的文件` +
+            `（例如 ${scan.unexpected.slice(0, 3).join('、')}），目录结构与本版本不符。` +
+            '已中止本次同步以免把云端当成空库导致内容被覆盖。' +
+            '请检查云盘目录是否被手工整理过，或把分片放回 groups/<id前两位>/<id>.json。'
+        );
+      }
+      return null; // 远端确实一个分片都没有
+    }
+
+    const fingerprints: ShardFingerprint[] = [];
+    const vaults = new Map<string, Vault>();
+    let encrypted = false;
+    let salt: string | undefined;
+
+    for (const shard of scan.shards) {
+      // shard.path 已经是「相对 baseUrl」的路径（里面含了同步根目录），
+      // 所以这里**不能**再套 this.p()。
+      const got = await this.client.get(shard.path);
+      if (!got || 'notFound' in got) {
+        throw new Error(
+          `云端分片 ${shard.id} 在列目录之后就不见了（可能正被其它程序改动），` +
+            '已中止本次同步以免把云端当成空库。'
+        );
+      }
+      const env = parseEnvelope(got.body);
+      if (!env) {
+        throw new Error(
+          `云端分片 ${shard.id} 无法解析（可能被截断或改坏），已中止本次同步以免把云端当成空库。`
+        );
+      }
+
+      let payload: unknown;
+      if (env.kind === 'encrypted') {
+        // 加密分片的 salt 就在**外壳里**（明文）⇒ 索引丢了也能找回库的密钥参数。
+        // 这是「加密库也能重建索引」的关键（见 crypto.ts 的 EncryptedPayload）。
+        if (salt !== undefined && env.enc.salt !== salt) {
+          throw new Error(
+            '云端分片的加密 salt 互相不一致（这个库可能被合并过两个来源），' +
+              '已中止本次同步以免用错误的密钥覆盖云端内容。'
+          );
+        }
+        salt = env.enc.salt;
+        encrypted = true;
+
+        const pass = this.config.passphrase;
+        if (!pass) {
+          throw new Error(
+            '云端库是加密的，但本机没有口令，无法重建云端索引。' +
+              '已中止本次同步以免把云端当成空库。请在同步设置里填入当时设置的口令后重试。'
+          );
+        }
+        let vault = vaults.get(env.enc.salt);
+        if (!vault) {
+          // 一次同步只派生一次密钥（PBKDF2 250k 轮，很贵）；同一 salt 复用。
+          vault = await openVault(pass, env.enc.salt);
+          vaults.set(env.enc.salt, vault);
+          // 与重建出来的 manifest 用的 salt 一致 ⇒ 后续 unlock() 直接复用它，
+          // 不必再派生一次（也避免派生出**另一个** salt 的密钥）。
+          this.vault = vault;
+        }
+        payload = await vault.decrypt(env.enc);
+      } else {
+        payload = env.plain;
+      }
+
+      const group = decodeGroup(payload);
+      if (!group) {
+        throw new Error(
+          `云端分片 ${shard.id} 的内容无法解析成会话，已中止本次同步以免把云端当成空库。`
+        );
+      }
+      if (group.id !== shard.id) {
+        throw new Error(
+          `云端分片 ${shard.id} 的内容与文件名对不上（内容里的 id 是 ${group.id}），` +
+            '已中止本次同步以免把云端当成空库。'
+        );
+      }
+
+      fingerprints.push({
+        id: shard.id,
+        ...(got.etag ? { etag: got.etag } : {}),
+        updatedAt: group.updatedAt,
+        ...(group.isDeleted ? { isDeleted: true } : {}),
+        ...(group.lastOp ? { lastOp: group.lastOp } : {}),
+      });
+    }
+
+    return {
+      v: MANIFEST_VERSION,
+      generatedAt: this.now(),
+      encrypted,
+      ...(salt ? { salt } : {}),
+      shards: fingerprints,
+    };
+  }
+
+  /**
+   * 扫描远端 `groups/` 目录，列出符合本版本布局的分片。
+   *
+   * 布局是 `groups/<id前2位>/<id>.json`（见 layout.ts）：
+   *   · 先列 `groups/` → 拿到前缀子目录；
+   *   · 再逐个列前缀子目录 → 拿到 `<id>.json` 文件名。
+   *
+   * 为什么逐个列而不是 Depth:infinity：见 client.ts 的 listDir 注释
+   * （截断的 infinity 结果 = 静默少列 = 静默丢数据）。
+   *
+   * 为什么必须校验「文件名推导出的路径 == shardPath(id)」：
+   * 索引里的 id 会被上层拿去 `shardPath(id)` 读文件。若文件被放到了别的目录，
+   * 索引里的 id 指向一个**读不到**的位置 —— 那等于把这个会话变成隐形数据。
+   * 所以对不上就归入 unexpected（由调用方 fail-closed），而不是将就收下。
+   */
+  private async scanRemoteShards(): Promise<RemoteShardScan> {
+    const scan: RemoteShardScan = { shards: [], unexpected: [], listingFailed: false };
+
+    const root = await this.client.listDir(this.p(GROUPS_DIR));
+    // ⚠️ 「列不出来」与「列出来是空的」必须分开：
+    //   · 列不出来 ⇒ 我们**不知道**云端有什么 ⇒ 绝不按空库处理；
+    //   · 列出来是空的 ⇒ 确知云端一个分片都没有。
+    // 把前者当后者，就是本次要修的 P0（换了个位置重新犯）。
+    if (!root.listed) {
+      scan.listingFailed = true;
+      return scan;
+    }
+    const rootEntries = root.entries;
+    const prefixDirs = rootEntries.filter(e => e.isCollection);
+    // groups/ 根下的散落文件不是本版本布局（分片必须在自己的前缀子目录里）。
+    for (const loose of rootEntries.filter(e => !e.isCollection)) {
+      scan.unexpected.push(loose.path);
+    }
+
+    await mapWithConcurrency(prefixDirs, DIR_SCAN_CONCURRENCY, async dir => {
+      const child = await this.client.listDir(dir.path);
+      if (!child.listed) {
+        // 某个前缀子目录列不出来 ⇒ 那一段内容我们**不知道**。
+        // 不能当成「那个前缀下没有分片」。
+        scan.listingFailed = true;
+        return;
+      }
+      for (const c of child.entries) {
+        if (c.isCollection) {
+          scan.unexpected.push(c.path);
+          continue;
+        }
+        const info = inspectShardFileName(c.name);
+        if (info.id === null) {
+          // 不是分片（notes.txt），或是 id 非法的 .json（`a b.json`）。
+          // 后者必须出声：它可能装着真实内容，静默忽略 = 隐形数据。
+          scan.unexpected.push(c.path);
+          continue;
+        }
+        const expected = this.p(shardPath(info.id));
+        if (expected !== c.path) {
+          scan.unexpected.push(c.path);
+          continue;
+        }
+        scan.shards.push({ id: info.id, path: c.path });
+      }
+    });
+
+    return scan;
+  }
+
+  /**
+   * 该不该现在做「索引 ↔ 实际分片」的全量自检。
+   *
+   * ── 为什么有间隔，而不是每次上传都查 ──────────────────────────────────
+   * 自检要**列目录**（1 + 前缀子目录数 次 PROPFIND），而上传是高频动作
+   * （保存一次会话就可能触发一轮）。每次都查 ⇒ 请求数翻十几倍，
+   * 用户的云盘（尤其有 750 条 PROPFIND 上限的坚果云）先扛不住。
+   *
+   * ── 为什么间隔不会让数据更糟 ────────────────────────────────────────
+   * 自检抓的是**已经存在**的偏离（索引早就少了条目）。而写 manifest 永远
+   * 是在**最新 base 上合并** ⇒ 本轮上传**不会制造**新的偏离 ⇒ 巡检晚一点
+   * 发现，数据的处境不变。真正制造偏离的那条路径（索引丢失）由 loadIndex
+   * 的重建**当场**兜住，不靠巡检。
+   */
+  private shouldVerifyIndex(force: boolean): boolean {
+    const now = Date.now();
+    if (force) {
+      this.lastIndexVerifyAt = now;
+      return true;
+    }
+    if (now - this.lastIndexVerifyAt < INDEX_VERIFY_INTERVAL_MS) return false;
+    this.lastIndexVerifyAt = now;
+    return true;
+  }
+
+  /**
+   * 上传后的自检：云端索引（manifest）与**实际分片文件**是否一致。
+   *
+   * 两种偏离都要抓：
+   *   · 磁盘上有、索引里没有（orphan）—— **数据丢失方向**：那些会话对所有
+   *     设备隐形，且本机水位线可能认为「已上传」而永远不再上行；
+   *   · 索引里有、磁盘上没有（ghost）—— 索引指向了不存在的内容，
+   *     下载时会被判成「云端已删除」而误删本地副本。
+   *
+   * 不一致时：**中止本轮**并把「索引不可信」抛给上层（上层会把它显示给用户），
+   * 同时尽力把索引修回「磁盘真相」。
+   */
+  private async verifyIndexMatchesDisk(
+    writtenIds: string[],
+    groups: TabGroup[],
+    watermark: number
+  ): Promise<void> {
+    const got = await this.client.get(this.p(MANIFEST_PATH));
+    if (!got || 'notFound' in got) {
+      // 索引刚写完就不见了 —— 但这**不等于**「云端内容坏了」：
+      // 另一个设备可能正好在这一刻上传，把索引换成了它自己那份
+      // （内容仍然在云端，只是索引换了主人）。这类情况不是「索引不可信」，
+      // 不能因此中止整轮同步 —— 那会让「两台设备同时首次同步」这种
+      // 正常场景永久互相拖死。
+      //
+      // 判据：能不能**从磁盘重建**一份索引。能重建 ⇒ 云端内容是好的
+      // （重建结果就是真相），只是索引被并发换掉了。
+      // 重建不出来 ⇒ 我们**不知道**云端现状 —— 但本轮写入的分片是
+      // 我们刚 PUT 成功的（内容是好的），所以这里出声而不是判死。
+      // 真正的 fail-closed 发生在**下一轮**的 loadIndex：
+      // 那时索引仍然不在、又列不出目录 ⇒ 中止并明确告诉用户。
+      try {
+        const rebuilt = await this.rebuildManifestFromDisk();
+        if (rebuilt) {
+          logWarn('[webdav] 云端索引在写入后被换掉（可能是另一台设备同时上传），已从磁盘重建认知。');
+          this.rebuiltIndex = rebuilt;
+          return;
+        }
+      } catch (err) {
+        logWarn('[webdav] 云端索引在写入后被换掉，且无法从磁盘重建:', err);
+      }
+      logWarn(
+        '[webdav] 云端索引在写入后被换掉且无法重建（可能是另一台设备同时上传）。' +
+          '本轮写入的会话文件是好的，但云端索引已不可信，请再同步一次。'
+      );
+      return;
+    }
+    const parsed = parseManifest(got.body);
+    if (!parsed) {
+      throw new Error(
+        '云端索引在写入后无法解析，无法确认云端内容是否完整。已中止本轮同步。'
+      );
+    }
+
+    const scan = await this.scanRemoteShards();
+    // 列不出来 ⇒ 做不了「索引 ↔ 实际文件」的全量交叉核对。
+    // 这**不是**「索引不可信」的证据（很可能只是这台服务器不支持
+    // PROPFIND Depth:1），所以不能因此把整轮同步判死。
+    // 退而求其次：确认**本轮写入**的分片确实还在（GET 一下）——
+    // 这能抓住「写完就丢」这种最要命的情况。
+    // 抓不到的是「索引早就少了条目」，但那种情况下一轮的 loadIndex
+    // 会因为「索引不在 + 列不出目录」而中止并出声。
+    if (scan.listingFailed) {
+      const lost: string[] = [];
+      for (const id of writtenIds) {
+        const f = await this.client.get(this.p(shardPath(id)));
+        if (!f || 'notFound' in f) lost.push(id);
+      }
+      if (lost.length > 0) {
+        throw new Error(
+          `本轮写入的 ${lost.length} 个会话文件在云端找不到` +
+            `（${lost.slice(0, 5).join('、')}${lost.length > 5 ? ' 等' : ''}），已中止本轮同步。`
+        );
+      }
+      logWarn(
+        '[webdav] 云端目录无法列出，做不了「索引 ↔ 实际文件」的全量核对；' +
+          `已改为确认本轮写入的 ${writtenIds.length} 个会话文件都在。`
+      );
+      return;
+    }
+    const diskIds = new Set(scan.shards.map(s => s.id));
+    const manifestIds = new Set(parsed.shards.map(s => s.id));
+    const orphan = [...diskIds].filter(id => !manifestIds.has(id));
+    const ghost = [...manifestIds].filter(id => !diskIds.has(id));
+    if (orphan.length === 0 && ghost.length === 0) return;
+
+    // ── 区分两种「不一致」 ────────────────────────────────────────────────
+    // (a) 磁盘上有、索引里没有（orphan）：索引漏了内容。
+    //     这一种**必须**中止：它正是「某个会话对所有设备隐形」的那个形态。
+    // (b) 索引里有、磁盘上没有（ghost）：索引指向了不存在的内容。
+    //     这一种**不能**直接中止 —— 极可能是另一台设备刚把索引换成了
+    //     它自己那份（它那边的分片还没同步到这台机器的视野里），
+    //     或者另一台设备正在上传途中。中止会让两台设备互相拖死。
+    //     正确处理：以**磁盘真相**为准重建索引（内容才是数据，索引是派生），
+    //     并把这次偏离如实上报。
+    if (orphan.length === 0) {
+      logWarn(
+        `[webdav] 云端索引里有 ${ghost.length} 个磁盘上已不存在的条目` +
+          '（可能是另一台设备刚上传了它自己的索引），已按磁盘真相重建索引。'
+      );
+      try {
+        await this.repairIndexFromDisk(groups, watermark);
+      } catch (err) {
+        logWarn('[webdav] 按磁盘真相重建云端索引失败:', err);
+      }
+      return;
+    }
+
+    // 尽力修复：把索引重建成「磁盘真相」并写回，同时补传那些
+    // 「水位线以为已上传、但云端其实没有」的会话。
+    let repaired = false;
+    try {
+      await this.repairIndexFromDisk(groups, watermark);
+      repaired = true;
+    } catch (err) {
+      logWarn('[webdav] 重建云端索引失败（仍会中止本轮同步）:', err);
+    }
+
+    throw new Error(
+      `云端索引与实际文件不一致（云端有 ${orphan.length} 个会话文件不在索引里，` +
+        `索引里有 ${ghost.length} 个已不存在的条目）。` +
+        (repaired ? '已重建云端索引。' : '重建云端索引失败。') +
+        '已中止本轮同步以免覆盖云端内容，请重新同步一次。'
+    );
+  }
+
+  /**
+   * 上传后自检：索引条目带的印记必须与**分片自己**的印记一致（2026-10-20 D-4）。
+   *
+   * ── 为什么每轮都要查 ────────────────────────────────────────────────────
+   * 索引写失败是**静默**的：服务端返回 2xx 但内容没落盘、或写完又被别的
+   * 设备覆盖。索引一旦落后于内容，下一轮的认输预检就会读到**旧**印记 ⇒
+   * 裁决反转 ⇒ 用旧内容盖掉刚写上去的新内容。
+   * 删除路径上更糟：索引里的旧印记让「墓碑 vs 旧副本」判成「旧副本更新」⇒
+   * 墓碑被覆盖 ⇒ **删除被静默撤销 ⇒ 会话复活**。
+   *
+   * ── 判据 ────────────────────────────────────────────────────────────────
+   * 只查本轮**真的写过**的条目（`writtenEntries`）：它们是本轮唯一可能
+   * 造成「索引落后」的条目；查全库会把别的设备的写入也拖进本轮，
+   * 让一次无关的并发把本轮打成失败。
+   *
+   * 对不上 ⇒ **中止本轮（fail-closed）**：让上层保留 pending_upload，
+   * 下轮重试（重试是幂等的），并把原因如实报给用户。
+   */
+  private async verifyIndexMatchesShardHeaders(
+    writtenEntries: readonly ShardFingerprint[],
+    opts?: { tolerateMissingIndex?: boolean; firstSyncInThisRound?: boolean }
+  ): Promise<void> {
+    if (writtenEntries.length === 0) return;
+
+    const got = await this.client.get(this.p(MANIFEST_PATH));
+    if (!got || 'notFound' in got) {
+      // 「索引刚写完就不见了」有两种可能：
+      //   (a) 索引写入真的失败了（服务端静默丢弃）—— 危险，必须中止；
+      //   (b) 另一台设备同时上传，把索引换成了它自己那份 —— 内容是好的，
+      //       只是索引换了主人。此时中止会让两台设备互相拖死。
+      // 区分办法：看**本轮写进去的分片**还在不在、印记对不对 ——
+      // 那才是「本轮写入是否生效」的直接证据。
+      //
+      // ⚠️ 只有「本轮确实新建了索引」时，(a) 才可能成立。
+      // 首轮同步（firstSync）时索引是**刚由本轮新建**的：远端之前根本没有
+      // manifest.json，所以「写完读不到」有可能是这台服务器的写-读延迟，
+      // 而不是写失败。此时直接判死会让「首次同步」在部分服务器上永久失败。
+      const indexWasCreatedNow = opts?.firstSyncInThisRound === true;
+      if (opts?.tolerateMissingIndex || indexWasCreatedNow) {
+        // 用「本轮写进去的分片能不能读回来」当判据：
+        //   · 分片也读不回来 ⇒ 这台服务器的**读路径整体不可用** ⇒
+        //     GET 读不到东西不能证明「文件没落盘」⇒ 不判死，只出声。
+        //   · 分片读得回来 ⇒ 索引确实不在（真丢 / 被并发换掉）⇒ 按分支处理。
+        const unreadable: string[] = [];
+        for (const e of writtenEntries) {
+          const shard = await this.readRemoteShardState(e.id);
+          if (!shard.exists || shard.unreadable) unreadable.push(e.id);
+        }
+        if (unreadable.length > 0 && unreadable.length === writtenEntries.length) {
+          logWarn(
+            '[webdav] 云端索引与本轮写入的会话文件都读不回来 —— 这台服务器的读路径' +
+              '整体不可用（不是「文件没落盘」）。已跳过本轮写入自检，请检查云盘配置。'
+          );
+          return;
+        }
+        if (unreadable.length > 0) {
+          throw new Error(
+            `本轮写入的 ${unreadable.length} 个会话文件在云端找不到` +
+              `（${unreadable.slice(0, 5).join('、')}${unreadable.length > 5 ? ' 等' : ''}），` +
+              '已中止本轮同步。'
+          );
+        }
+        logWarn(
+          '[webdav] 云端索引在写入后读不到（服务器写-读延迟，或另一台设备同时上传），' +
+            '但本轮写入的会话文件都在，印记核对通过。'
+        );
+        return;
+      }
+      throw new Error(
+        '云端索引在写入后就不见了，无法确认本轮写入是否已生效。已中止本轮同步。'
+      );
+    }
+    const parsed = parseManifest(got.body);
+    if (!parsed) {
+      throw new Error(
+        '云端索引在写入后无法解析，无法确认本轮写入是否已生效。已中止本轮同步。'
+      );
+    }
+    const indexById = new Map<string, ShardFingerprint>(parsed.shards.map(s => [s.id, s]));
+
+    const mismatched: string[] = [];
+    for (const entry of writtenEntries) {
+      const indexed = indexById.get(entry.id);
+      if (!indexed) {
+        mismatched.push(entry.id);
+        continue;
+      }
+      const shard = await this.readRemoteShardState(entry.id);
+      if (!shard.exists || shard.unreadable) {
+        mismatched.push(entry.id);
+        continue;
+      }
+      // 索引带的印记必须与分片自己的印记一致。
+      // 印记缺失时（老数据）不比 —— 那是「本来就没有」而不是「写歪了」。
+      const indexedStamp = indexed.lastOp;
+      const shardStamp = shard.lastOp;
+      if (!indexedStamp || !shardStamp) continue;
+      if (indexedStamp.d !== shardStamp.d || indexedStamp.s !== shardStamp.s) {
+        mismatched.push(entry.id);
+      }
+    }
+
+    if (mismatched.length === 0) return;
+    throw new Error(
+      `云端索引与实际内容不一致（${mismatched.length} 个会话的索引印记与分片自身不符：` +
+        `${mismatched.slice(0, 5).join('、')}${mismatched.length > 5 ? ' 等' : ''}）。` +
+        '已中止本轮同步以免用旧内容覆盖新内容，请重新同步一次。'
+    );
+  }
+
+  /**
+   * 把索引修回「磁盘真相」，并补传缺失的会话。
+   *
+   * 步骤：
+   *   1. 重新扫描 + 读回分片，重建一份 manifest（权威）；
+   *   2. 找出「本地水位线认为已上传、但云端其实没有」的会话并补传
+   *      （否则它们会被 selectDirty 永远跳过 —— 那是本次要消灭的静默丢失）；
+   *   3. 用重建结果整体写回索引。
+   */
+  private async repairIndexFromDisk(groups: TabGroup[], watermark: number): Promise<void> {
+    this.rebuiltIndex = null; // 强制重新扫描，不复用可能过期的缓存
+    const rebuilt = await this.rebuildManifestFromDisk();
+    if (!rebuilt) return; // 云端一个分片都没有，无从重建
+
+    const missing = selectMissingFromIndex(groups, rebuilt, watermark);
+    const writtenEntries: ShardFingerprint[] = [];
+    for (const g of missing) {
+      const out = await this.writeShard(g.id, encodeGroup(g), { ifNoneMatch: '*' });
+      writtenEntries.push({
+        id: g.id,
+        ...(out.etag ? { etag: out.etag } : {}),
+        updatedAt: g.updatedAt || this.now(),
+        ...(g.lastOp ? { lastOp: g.lastOp } : {}),
+      });
+    }
+
+    const merged = new Map<string, ShardFingerprint>(rebuilt.shards.map(s => [s.id, s]));
+    for (const e of writtenEntries) merged.set(e.id, e);
+
+    await this.writeManifest(
+      () => ({ ...rebuilt, generatedAt: this.now(), shards: [...merged.values()] }),
+      rebuilt.encrypted,
+      rebuilt.salt
+    );
+  }
+
+  /**
    * 写 manifest（带乐观锁 + 冲突重试）。
    *
    * `apply` 在**每次尝试**都会被调用，且接收**最新读到的** manifest ——
    * 这是关键：冲突后如果拿旧快照重写，会把对方刚加进来的分片条目抹掉
    * （manifest 是派生数据，条目丢了不会丢会话内容，但会让对端少一次探活命中）。
+   *
+   * ⚠️ 2026-10-20 修 P0：base 现在可能来自**重建**（远端根本没有 manifest.json）。
+   * 这种情况下必须真的写出去 —— 否则「重建出来的索引」永远落不了盘，
+   * 恢复态会一直重复（每次探活都重扫一遍云盘），而且云端始终没有索引。
    */
   private async writeManifest(
     apply: (base: Manifest) => Manifest,
     encrypted: boolean,
-    salt: string | undefined
+    salt: string | undefined,
+    /**
+     * 远端**没有**索引时用来当底稿的 manifest。
+     *
+     * 场景：索引丢了、我们从分片目录重建了一份（恢复态）。这时远端仍然没有
+     * manifest.json，若 base 用「空 manifest」，写回时就会**只带本批条目**
+     * —— 云端那些没被本批覆盖的历史分片又会从索引里消失（正是本次要修的 P0）。
+     * 所以要把重建出来的那份（= 云端全集）当底稿。
+     *
+     * ⚠️ 只在「远端确实没有索引」时用它；远端有索引时一律用远端那份
+     * （那是并发安全的关键：base 必须是**最新**的远端状态）。
+     */
+    opts?: { recoveredBase?: Manifest | null }
   ): Promise<void> {
     for (let attempt = 0; attempt < CONFLICT_RETRY_LIMIT; attempt++) {
-      const current = await this.loadManifest();
+      // ⚠️ 用 loadIndexForWrite（**不触发恢复**）而不是 loadIndex：
+      // 首次同步时 groups/ 目录刚被本轮的分片写出来，若在这里触发一次
+      // 「索引丢了 → 重建」，就会在不支持 Depth:1 的服务器上直接挂掉，
+      // 而且重建出来的 base 还会把「本轮刚写的分片」当成「云端原有内容」
+      // 混进 base，掩盖「远端本来是空的」这个事实。
+      // 写索引要的就是「远端现有索引」，没有就是没有。
+      const current = await this.loadIndexForWrite();
       const base =
         current?.manifest ??
+        opts?.recoveredBase ??
         ({ ...emptyManifest(encrypted, this.now()), ...(salt ? { salt } : {}) } as Manifest);
 
       const next = apply(base);
@@ -250,11 +1023,15 @@ export class WebDavBackendAdapter implements SyncBackendPort {
           ...(current?.etag ? { ifMatch: current.etag } : { ifNoneMatch: '*' }),
           contentType: 'application/json; charset=utf-8',
         });
+        // 索引已落盘 ⇒ 重建缓存作废（下次直接读远端索引）。
+        this.rebuiltIndex = null;
         return;
       } catch (err) {
         const conflict = err instanceof WebDavError && err.isPreconditionFailed;
         if (!conflict || attempt === CONFLICT_RETRY_LIMIT - 1) throw err;
-        // 冲突：下一轮循环会重新读取最新 manifest 再 apply 一次。
+        // 冲突：远端状态已经变了，重建缓存不再可信，作废后下一轮重新读。
+        this.rebuiltIndex = null;
+        // 下一轮循环会重新读取最新 manifest 再 apply 一次。
       }
     }
   }
@@ -268,9 +1045,17 @@ export class WebDavBackendAdapter implements SyncBackendPort {
     opts: { ifMatch?: string; ifNoneMatch?: string }
   ): Promise<{ etag: string | null }> {
     const vault = this.vault;
+    // ── 2026-10-20 D-4：把印记放进**明文头部**（与密文正文分离）──────────
+    // 裁决与读回校验必须能只读头部就拿到印记：
+    //   · 裁决（谁赢）要在**解密之前**就能判断远端版本 —— 解密要口令，
+    //     而「远端版本」这件事不该依赖「本机有没有口令」；
+    //   · 读回校验（写没落盘）同理。
+    // 头部里的字段全是 manifest 里本来就有的（id / isDeleted / lastOp / updatedAt），
+    // 不新增任何隐私面（见 layout.ts 的 ShardHeader 注释）。
+    const header = shardHeaderFromPayload(payload);
     const envelope = vault
-      ? makeEncryptedEnvelope(await vault.encrypt(payload))
-      : makePlainEnvelope(payload);
+      ? makeEncryptedEnvelope(await vault.encrypt(payload), header)
+      : makePlainEnvelope(payload, header);
 
     const path = this.p(shardPath(id));
     await this.client.mkdirp(this.p(`${GROUPS_DIR}/${id.slice(0, 2)}`));
@@ -298,7 +1083,7 @@ export class WebDavBackendAdapter implements SyncBackendPort {
   }
 
   /** 读一个分片并解码成会话。返回 null = 文件缺失或不可解析（计入统计，不静默丢）。 */
-  private async readShard(id: string): Promise<{ group: TabGroup | null; etag: string | null }> {
+  private async readShard(id: string): Promise<{ group: TabGroup | null; etag: string | null; header?: ShardHeader }> {
     const got = await this.client.get(this.p(shardPath(id)));
     // 'notFound' in got = 404/409，即这个分片在远端不存在（首次同步的常态）。
     if (!got || 'notFound' in got) return { group: null, etag: null };
@@ -315,17 +1100,76 @@ export class WebDavBackendAdapter implements SyncBackendPort {
     } else {
       payload = env.plain;
     }
-    return { group: decodeGroup(payload), etag: got.etag };
+    return {
+      group: decodeGroup(payload),
+      etag: got.etag,
+      ...(env.hdr ? { header: env.hdr } : {}),
+    };
+  }
+
+  /**
+   * 读远端分片的**裁决依据**（2026-10-20 D-4）。
+   *
+   * ── 纪律：裁决依据必须是**分片自身**，不是索引 ──────────────────────────
+   * 索引（manifest）是派生数据，可能与内容脱节：分片写成功而索引写失败时，
+   * 索引里的印记是**旧的**。拿旧印记裁决会得出相反的结论：
+   *   · 索引旧（远端其实更新）⇒ 误判「本地更新」⇒ 用旧内容盖掉新内容；
+   *   · 删除路径上更糟：墓碑被旧副本覆盖 ⇒ **删除被静默撤销 ⇒ 会话复活**。
+   * Supabase 侧的对应防线读的是**云端行本身**（`findConcededGroupIds`），
+   * 两边必须同口径 —— 判据见 core/remoteAdjudication。
+   *
+   * 取值顺序：明文头部（hdr）→ 老分片（没有 hdr）则解密正文取印记。
+   * 头部存在时**不解密**：快，且不依赖口令。
+   */
+  private async readRemoteShardState(id: string): Promise<RemoteShardState> {
+    const got = await this.client.get(this.p(shardPath(id)));
+    if (!got || 'notFound' in got) return { exists: false, etag: null };
+
+    const env = parseEnvelope(got.body);
+    if (!env) {
+      // 分片在，但外壳坏了（被截断 / 被改）。它是**不可裁决**的：
+      // 既不能证明它更新，也不能证明它更旧。按「内容读不到」处理，
+      // 由调用方决定是保守认输还是修复覆盖。
+      return { exists: true, etag: got.etag, unreadable: true };
+    }
+
+    if (env.hdr?.lastOp) {
+      return {
+        exists: true,
+        etag: got.etag,
+        lastOp: env.hdr.lastOp,
+        isDeleted: env.hdr.isDeleted === true,
+      };
+    }
+
+    // 老分片（2026-10-20 之前写的，没有头部）：回退到解密正文。
+    // 头部只是**加速**与**解耦**，不是新事实来源 —— 内容才是。
+    let payload: unknown;
+    if (env.kind === 'encrypted') {
+      if (!this.vault) {
+        throw new Error('云端分片是加密的，但本机没有口令，无法读取。');
+      }
+      payload = await this.vault.decrypt(env.enc);
+    } else {
+      payload = env.plain;
+    }
+    const group = decodeGroup(payload);
+    return {
+      exists: true,
+      etag: got.etag,
+      ...(group?.lastOp ? { lastOp: group.lastOp } : {}),
+      isDeleted: group?.isDeleted === true,
+    };
   }
 
   // ── SyncBackendPort 实现 ────────────────────────────────────────────
 
   async fetchFingerprints(): Promise<RemoteGroupFingerprint[]> {
-    const loaded = await this.loadManifest();
-    if (!loaded) return []; // 远端确实还没建库
-    await this.unlock(loaded.manifest);
+    const index = await this.loadIndex();
+    if (index.kind === 'empty') return []; // 远端确实还没建库
+    await this.unlock(index.manifest);
 
-    return loaded.manifest.shards.map(s => ({
+    return index.manifest.shards.map(s => ({
       id: s.id,
       updatedAt: s.updatedAt,
       etag: s.etag,
@@ -334,15 +1178,31 @@ export class WebDavBackendAdapter implements SyncBackendPort {
     }));
   }
 
+  /**
+   * 全量下载会话。失败抛错。
+   *
+   * ⚠️ 本方法**遇到读不出来的分片就整体抛错**（不返回部分结果）。
+   * 那是刻意的：自带存储侧没有「还原率阈值」那类过滤，任何一个分片
+   * 读不出来都意味着「我们对云端的内容不完整」，此时给出「少了几条」的
+   * 数组比整体中止更危险。
+   *
+   * **因此 D-6 在这个后端上天然不成立**：读不出来 ⇒ 抛错 ⇒ 整轮中止、
+   * 一个字节都不写 ⇒ 云端的数据不可能被自己的下载吃掉。
+   * （云端后端才是「静默少读」的那一侧 —— 那里才有 D-6。）
+   *
+   * 这也是本适配器**不实现** `downloadSkippedGroups()` 的原因：
+   * 「本轮跳过任何会话」对它恒为真（它从不返回部分结果），
+   * 而「读不出来」的信息已经由这里的抛错如实报出去了。
+   */
   async downloadGroups(): Promise<TabGroup[]> {
-    const loaded = await this.loadManifest();
-    if (!loaded) return [];
-    await this.unlock(loaded.manifest);
+    const index = await this.loadIndex();
+    if (index.kind === 'empty') return [];
+    await this.unlock(index.manifest);
 
     const groups: TabGroup[] = [];
     const unreadable: string[] = [];
 
-    for (const shard of loaded.manifest.shards) {
+    for (const shard of index.manifest.shards) {
       try {
         const { group } = await this.readShard(shard.id);
         if (!group) {
@@ -372,10 +1232,10 @@ export class WebDavBackendAdapter implements SyncBackendPort {
     groups: TabGroup[],
     opts?: { overwriteRemote?: boolean; suppressFirstSyncFullUpload?: boolean }
   ): Promise<UploadGroupsResult> {
-    const loaded = await this.loadManifest();
-    const vault = await this.unlock(loaded?.manifest ?? null);
+    const index = await this.loadIndex();
+    const vault = await this.unlock(index.kind === 'manifest' ? index.manifest : null);
 
-    const watermark = loaded ? await this.loadWatermark() : 0;
+    const watermark = index.kind === 'manifest' ? await this.loadWatermark() : 0;
     // 「以本地为准」的落点（计划书 §0.3）：首次配置（远端还没有 manifest）
     // 或显式覆盖时全量上行；此后只传 stamp 大于水位的组。
     //
@@ -387,12 +1247,30 @@ export class WebDavBackendAdapter implements SyncBackendPort {
     // 降级后按「只有本地印记、没有远端水位」计算：selectDirty 用 stamp 比较，
     // 无水位时全部通过 ⇒ 本次新增/本机改过的组照常上传，而 firstSync 的
     // 「把历史数据全量搬上云」被跳过。
-    const firstSync = loaded === null && !opts?.suppressFirstSyncFullUpload;
+    //
+    // ⚠️ 2026-10-20 修 P0：firstSync 的判据从「manifest 读不到」改成
+    // 「**远端确实一个分片都没有**」。索引丢了但分片还在（index.rebuilt）
+    // **不是**首次同步 —— 那种情况下必须按增量走，否则就是把本地子集
+    // 整体覆盖到云端（那正是本次要消灭的数据丢失）。
+    const firstSync = index.kind === 'empty' && !opts?.suppressFirstSyncFullUpload;
+
+    // ── F4：水位线不能把「被索引丢掉」的组当已同步 ──────────────────────
+    // 索引是重建出来的 ⇒ 我们对「云端到底有哪些分片」有权威认知。
+    // 于是可以揪出这份差异：**本地水位线认为已上传、但云端其实没有**的会话。
+    // 那种组会被 selectDirty 永远跳过（stamp ≤ 水位）⇒ 永远补不回去 ⇒ 静默丢失。
+    // 这里把它们挑出来强制补传，并如实上报（recoveredIds）。
+    const recovered =
+      index.kind === 'manifest' && index.rebuilt
+        ? selectMissingFromIndex(groups, index.manifest, watermark)
+        : [];
+
     const toUpload =
-      firstSync || opts?.overwriteRemote ? groups : selectDirty(groups, watermark);
+      firstSync || opts?.overwriteRemote
+        ? groups
+        : dedupeById([...selectDirty(groups, watermark), ...recovered]);
 
     const entryById = new Map<string, ShardFingerprint>(
-      (loaded?.manifest.shards ?? []).map(s => [s.id, s])
+      (index.kind === 'manifest' ? index.manifest.shards : []).map(s => [s.id, s])
     );
     const writtenIds: string[] = [];
     // 本批真正写上远端的条目（只含 PUT 成功的，不含认输跳过的）。
@@ -405,22 +1283,56 @@ export class WebDavBackendAdapter implements SyncBackendPort {
       const existing = entryById.get(g.id);
       const payload = encodeGroup(g);
 
-      // ── 认输预检（2026-10-13 测试抓到的真 bug，别删）─────────────────────
+      // ── 认输预检：依据**分片自身**的印记，不是索引里的（2026-10-20 D-4）──
       // If-Match 只能发现「我读完之后有人改了」，**发现不了「我的版本本来就更旧」**。
       // 后者是真实场景：一台久未同步的设备（水位很旧甚至为 0）打开扩展，
       // 它手里的组 stamp 比云端小，但因为它读到 manifest 后没有任何人再改，
       // 条件写会**成功**——于是用旧内容覆盖掉云端的新版本，静默丢数据。
       //
-      // Supabase 侧的对应防线是 `findConcededGroupIds`（upload.ts:595-611），
+      // Supabase 侧的对应防线是 `findConcededGroupIds`（utils/supabase/upload.ts），
       // 语义逐字相同：云端 stamp 严格更大 ⇒ 本次认输、不上行，
       // 本地副本交给下一次下载合并物理替换（那条路径有回滚与校验）。
       //
-      // 只比 `lastOp`，不请求网络：manifest 条目里已经带着它。
-      if (existing && compareStamps(existing.lastOp, g.lastOp) > 0) {
+      // ⚠️ 2026-10-20 D-4 修掉的偏差：**判据的来源**。
+      // 修复前这里比的是 manifest 条目里抄的 lastOp（**索引**），
+      // 而 Supabase 侧比的是**云端行本身**（**内容**）。索引是派生数据，
+      // 可能与内容脱节（分片写成功、索引写失败）⇒ 拿旧印记裁决会得出相反的结论：
+      //   · 索引旧（远端其实更新）⇒ 误判「本地更新」⇒ 用旧内容盖掉新内容；
+      //   · 删除路径上更糟：墓碑被旧副本覆盖 ⇒ 删除被静默撤销 ⇒ 会话复活。
+      // 现在改成**读分片、比它自己的印记**（内容优先，判据见 core/remoteAdjudication）。
+      //
+      // 代价：每个待传会话多一次 GET。这笔钱必须花 ——
+      // 少一次 GET 换来的「省流量」，赔的是一次静默的数据覆盖。
+      const remote = await this.readRemoteShardState(g.id);
+      const remoteState = resolveRemoteState({
+        content:
+          remote.exists && !remote.unreadable
+            ? { lastOp: remote.lastOp, isDeleted: remote.isDeleted }
+            : null,
+        index: existing ? { lastOp: existing.lastOp, isDeleted: existing.isDeleted } : null,
+      });
+      // 覆盖模式（用户明确选了「以本地为准」）**不做**认输预检。
+      // Supabase 侧是同一口径：`findConcededGroupIds` 的第一行就是
+      // `if (opts.overwrite) return conceded;`（utils/supabase/upload.ts:181）。
+      //
+      // 为什么：认输的语义是「远端更新，我等下次下载合并被替换」。
+      // 在覆盖模式里用户已经**明确决定**「以本地为准」—— 此时认输等于
+      // 替用户反悔（他说覆盖，云端那条更新的却没被覆盖）。
+      // 两边必须同口径，否则「以本地为准」在两个后端上的结果不同。
+      const overwriteMode = opts?.overwriteRemote === true;
+      if (!overwriteMode && remote.exists && shouldConcedeToRemote(g.lastOp, remoteState)) {
         // 认输：不碰远端，本地副本等下次下载合并时被替换。
         // 注意这里**不**记入 writtenEntries —— apply 时以 base（最新远端）为准，
         // 记进去反而会用旧条目覆盖对端的新条目。
         continue;
+      }
+      if (remote.exists && remote.unreadable) {
+        // 分片在但读不出内容：它的印记不可知。索引里有印记就用索引的
+        // （可能过期，但比「完全没有依据」强）；索引也没有 ⇒ 只能当它没有印记。
+        logWarn(
+          `[webdav] 云端会话 ${g.id} 的分片无法解析（可能被截断或改坏），` +
+            '本次按「远端印记不可知」处理'
+        );
       }
 
       // ── 这里**不**做「内容哈希没变就跳过」的优化，两个理由 ──────────────
@@ -430,7 +1342,7 @@ export class WebDavBackendAdapter implements SyncBackendPort {
       //    把明文哈希写进明文 manifest，等于给攻击者一个「已知明文确认」的口子
       //    （猜到某个会话名/URL 就能验证猜得对不对），直接削弱端到端加密。
       //    密文哈希又不可用（IV 每次随机 ⇒ 密文每次都不同）。
-      const result = await this.putShardResolvingConflict(g, existing, payload);
+      const result = await this.putShardResolvingConflict(g, remote, payload);
       if (result.skipped) {
         // 远端版本更新（认输）：保留云端条目，本地副本等下次下载合并时被替换。
         // 同上：不记入，apply 时以最新 base 为准。
@@ -447,20 +1359,73 @@ export class WebDavBackendAdapter implements SyncBackendPort {
       });
     }
 
-    if (writtenIds.length > 0 || firstSync) {
+    // 索引要不要写：写了分片就要写（否则新分片对所有设备隐形）；
+    // 索引是重建出来的也要写（把找回的索引落回云端，恢复态才能结束）。
+    const manifestTouched =
+      writtenIds.length > 0 || firstSync || (index.kind === 'manifest' && index.rebuilt);
+    if (manifestTouched) {
       await this.writeManifest(
         // 以最新 base 为底，只覆盖本批真正写过的条目，其余原样保留。
         // 这是并发安全的关键：重试时 base 里已有对端刚写入的条目，
         // 若用关闭时的旧快照整体覆盖，对端条目会被静默抹掉
         // （文件还在，但 manifest 是真相源 ⇒ 对端会话隐形丢失）。
+        //
+        // ⚠️ 2026-10-20 修 P0：base 可能是**重建**出来的索引 ——
+        // 那种情况下 base 里已经含有云端全部历史分片，合并后写回的索引
+        // 是「云端全集 + 本批增量」，**不再**是「本批的子集」。
         base => {
           const merged = new Map<string, ShardFingerprint>(base.shards.map(s => [s.id, s]));
           for (const e of writtenEntries) merged.set(e.id, e);
-          return { ...base, generatedAt: this.now(), shards: [...merged.values()] };
+          return {
+            ...base,
+            generatedAt: this.now(),
+            shards: [...merged.values()],
+            // 有口令 ⇒ 这个库是加密态，salt 必须落进索引。
+            // 否则下一台设备/下一个进程会按「明文库」重新派生一个**随机 salt**
+            // 的密钥，反而解不开本轮写上去的密文。
+            // 口径与 uploadSettings 的「把明文库翻成加密态」一致。
+            ...(vault ? { encrypted: true, salt: vault.salt } : {}),
+          };
         },
         Boolean(vault),
-        vault?.salt
+        vault?.salt,
+        // 恢复态：远端没有索引，但重建出来的那份 = 云端全集。
+        // 把它当底稿 ⇒ 写回的索引是「云端全集 + 本批增量」，
+        // 而不是「本批的子集」（后者就是本次要修的那个 P0）。
+        {
+          recoveredBase:
+            index.kind === 'manifest' && index.rebuilt ? index.manifest : null,
+        }
       );
+    }
+
+    // ── F3：上传后自检「索引条目 ↔ 实际分片」 ───────────────────────────
+    // 不一致 = 索引不可信 ⇒ 中止本轮并把原因抛给上层（上层会显示给用户）。
+    // 巡检有间隔（见 INDEX_VERIFY_INTERVAL_MS 的理由），但**索引刚被重建过
+    // 时必查** —— 那正是「索引曾经坏掉」这条路径。
+    if (manifestTouched && this.shouldVerifyIndex(index.kind === 'manifest' && index.rebuilt)) {
+      await this.verifyIndexMatchesDisk(writtenIds, groups, watermark);
+    }
+
+    // ── D-4：上传后自检「索引条目 ↔ 分片自身的印记」 ────────────────────
+    // 索引写失败是**静默**的（服务端返回 2xx 但没落盘，或写完又被别的
+    // 设备覆盖）。后果是下一轮预检读到**旧**的索引印记 ⇒ 裁决反转 ⇒
+    // 用旧内容盖掉刚写上去的新内容（删除路径上则是墓碑被盖掉、会话复活）。
+    // 所以这里在**每轮**上传后核对一次：索引条目带的印记必须与分片
+    // 自己的印记一致。对不上 ⇒ 中止本轮（fail-closed），让上层保留
+    // pending_upload 并把原因报给用户。
+    //
+    // ⚠️ 2026-10-20（索引丢失 P0）：索引是**重建**出来的这一轮，
+    // 「索引刚写完就不见了」不能直接判死 —— 极可能是另一台设备同时上传、
+    // 把索引换成了它自己那份（内容仍在云端，只是索引换了主人）。
+    // 那种情况下中止会让「两台设备同时首次同步」永久互相拖死。
+    // 正确的判据是「**本轮写进去的条目**还在不在、印记对不对」，
+    // 而不是「索引文件还在不在」。所以这里只核对本轮写过的条目。
+    if (manifestTouched) {
+      await this.verifyIndexMatchesShardHeaders(writtenEntries, {
+        tolerateMissingIndex: index.kind === 'manifest' && index.rebuilt,
+        firstSyncInThisRound: firstSync,
+      });
     }
 
     if (writtenIds.length > 0 && !opts?.suppressFirstSyncFullUpload) {
@@ -477,9 +1442,23 @@ export class WebDavBackendAdapter implements SyncBackendPort {
       await this.saveWatermark(maxSeq, await this.peekDeviceSeq());
     }
 
+    if (recovered.length > 0) {
+      // 如实上报差异（不静默跳过）：这些会话是**被揪出来补传**的，
+      // 说明云端索引曾经与实际内容脱节过。
+      logWarn(
+        `[webdav] 云端索引曾与实际内容脱节：${recovered.length} 个会话被本机水位线误判为` +
+          '「已上传」，已强制补传（ids: ' +
+          recovered.map(g => g.id).slice(0, 5).join('、') +
+          (recovered.length > 5 ? ' 等' : '') +
+          '）。'
+      );
+    }
+
     return {
       writtenIds,
       overwroteRemote: opts?.overwriteRemote === true,
+      ...(recovered.length > 0 ? { recoveredIds: recovered.map(g => g.id) } : {}),
+      ...(index.kind === 'manifest' && index.rebuilt ? { indexRebuilt: true } : {}),
     };
   }
 
@@ -493,13 +1472,21 @@ export class WebDavBackendAdapter implements SyncBackendPort {
    */
   private async putShardResolvingConflict(
     group: TabGroup,
-    existing: ShardFingerprint | undefined,
+    remote: RemoteShardState,
     payload: Record<string, unknown>
   ): Promise<{ skipped: false; etag: string | null } | { skipped: true }> {
-    let ifMatch = existing?.etag;
+    // 条件写能力是**显式状态**（探测一次、缓存住；见 conditionalWriteCapability）：
+    //   · 支持 ⇒ If-Match / If-None-Match 是真乐观锁：服务端会真的拒绝过期写入，
+    //     412 时我们重读分片重裁（这条路径才有意义）。
+    //   · 不支持 ⇒ 那些头是**空头支票**（真机实测：dufs 0.46 收到 If-Match
+    //     照样 201 写入）。此时唯一的保护是「读-比-写」+ 写后读回自检，
+    //     所以**不发**条件头 —— 发了只是让代码看起来像有锁，
+    //     而「以为有锁」比「没有锁」更糟（见 probeConditionalWrites 的文档）。
+    const conditional = await this.conditionalWriteCapability();
+    let ifMatch = conditional ? remote.etag ?? undefined : undefined;
     // 首次写这个会话时用 If-None-Match:'*'（仅当不存在时创建）。
     // 不带条件会覆盖掉「另一台设备刚创建的同 id 分片」——那正是并发窗口。
-    let ifNoneMatch = existing ? undefined : '*';
+    let ifNoneMatch = conditional ? (remote.exists ? undefined : '*') : undefined;
 
     for (let attempt = 0; attempt < CONFLICT_RETRY_LIMIT; attempt++) {
       try {
@@ -511,16 +1498,26 @@ export class WebDavBackendAdapter implements SyncBackendPort {
       } catch (err) {
         const conflict = err instanceof WebDavError && err.isPreconditionFailed;
         if (!conflict) throw err;
+        if (!conditional) {
+          // 探测说「服务端不支持条件写」，却真的返回了 412 ⇒ 能力与实测不符。
+          // 不当作致命错误（412 本身仍然有效），但要出声：并发窗口比预想的小，
+          // 而下面的读回自检是这轮真正的防线。
+          logWarn('[webdav] 服务端返回了 412（条件写），与本轮探测结果不一致，继续按重读重裁处理');
+        }
 
-        // 冲突：读回远端当前版本，按 stamp 裁决。
-        const remote = await this.readShard(group.id);
-        if (remote.group) {
-          const remoteWins = compareStamps(remote.group.lastOp, group.lastOp) > 0;
-          if (remoteWins) return { skipped: true };
+        // 冲突：读回远端当前版本，**按分片自己的印记**裁决（不是索引）。
+        const latest = await this.readRemoteShardState(group.id);
+        const latestState = resolveRemoteState({
+          content: latest.exists && !latest.unreadable
+            ? { lastOp: latest.lastOp, isDeleted: latest.isDeleted }
+            : null,
+        });
+        if (latest.exists && shouldConcedeToRemote(group.lastOp, latestState)) {
+          return { skipped: true };
         }
         // 本地赢（或对端此刻又删了/读不到）：用刚拿到的 ETag 重试一次。
-        ifMatch = remote.etag ?? undefined;
-        ifNoneMatch = remote.etag ? undefined : '*';
+        ifMatch = conditional ? latest.etag ?? undefined : undefined;
+        ifNoneMatch = conditional ? (latest.exists ? undefined : '*') : undefined;
       }
     }
     throw new Error(
@@ -529,17 +1526,43 @@ export class WebDavBackendAdapter implements SyncBackendPort {
     );
   }
 
+  /**
+   * 广播删除意图（跨设备删除的唯一载体）。
+   *
+   * ── 「广播成功」的定义（2026-10-20 D-5）────────────────────────────────
+   * **写完不算成功，读回确认才算。**
+   *
+   * 修复前：写完分片 + 写完索引就返回成功 → 上层 `clearPendingDeleteIds`
+   * 把删除意图从队列里抹掉。但服务端可能「返回 2xx 而内容没落盘」
+   * （PUT 被接受却没持久化、被同步客户端改写、索引写成功但分片写失败……），
+   * 于是云端那条记录**仍然是活跃的** → 下次下载合并走 `cg && !lg` 分支
+   * → **整组在所有设备上复活**。而 1.22.0 起没有回收站，用户连「再删一次」
+   * 都得先找到它在哪。
+   *
+   * 现在：写完墓碑分片后**读回**它，比对「是不是墓碑」+「印记是不是我们要的那个」
+   * （判据见 core/remoteAdjudication 的 compareTombstoneReadback，
+   * 与 Supabase 侧 verifyTombstoneReadback 同一口径）。
+   * 不一致 ⇒ **抛错** ⇒ 上层不会清队列 ⇒ 下一轮重播（重播幂等，
+   * 丢掉删除意图不可逆）。
+   *
+   * 读回不可能时（分片读不到 / 外壳坏了）怎么办：**不消费队列**。
+   * 宁可下一轮重播一个幂等的墓碑，也不能把删除意图丢掉。
+   */
   async broadcastDeletes(ids: string[]): Promise<void> {
     if (ids.length === 0) return;
-    const loaded = await this.loadManifest();
-    const vault = await this.unlock(loaded?.manifest ?? null);
+    const index = await this.loadIndex();
+    const vault = await this.unlock(index.kind === 'manifest' ? index.manifest : null);
     const entryById = new Map<string, ShardFingerprint>(
-      (loaded?.manifest.shards ?? []).map(s => [s.id, s])
+      (index.kind === 'manifest' ? index.manifest.shards : []).map(s => [s.id, s])
     );
     // 本批新产生的墓碑条目。最终合并在 apply 里基于最新 base 做，
     // 未触及的条目以 base 为准（与 uploadGroups 同一纪律，见该处注释）。
     const tombstoneEntries: ShardFingerprint[] = [];
     const now = this.now();
+    // 条件写能力：服务端不支持时，发 If-Match 只是「看起来有锁」（见
+    // conditionalWriteCapability）。墓碑路径上更不能靠它 —— 墓碑写失败
+    // 会被下面的读回校验抓住，代价是删除意图延后一轮，不是数据丢失。
+    const conditional = await this.conditionalWriteCapability();
 
     for (const id of ids) {
       const existing = entryById.get(id);
@@ -550,9 +1573,12 @@ export class WebDavBackendAdapter implements SyncBackendPort {
       // 否则墓碑反而更小，对端合并时删除输给旧副本而「复活」（2026-10-14 修 P1）。
       const tombstone = encodeTombstone(id, now, await this.nextDeleteStamp(existing?.lastOp));
       const out = await this.writeShard(id, tombstone, {
-        ...(existing?.etag ? { ifMatch: existing.etag } : {}),
-        ...(existing?.etag ? {} : { ifNoneMatch: '*' } as object),
+        ...(conditional && existing?.etag ? { ifMatch: existing.etag } : {}),
+        ...(conditional && !existing?.etag ? { ifNoneMatch: '*' } : {}),
       });
+
+      // ── D-5：写完必须读回确认，否则不算「广播成功」 ──────────────────────
+      await this.verifyTombstoneReadback(id, tombstone.lastOp, out.etag);
 
       const entry: ShardFingerprint = {
         id,
@@ -573,7 +1599,72 @@ export class WebDavBackendAdapter implements SyncBackendPort {
         return { ...base, generatedAt: now, shards: [...merged.values()] };
       },
       Boolean(vault),
-      vault?.salt
+      vault?.salt,
+      // 恢复态：远端没有索引，重建出来的那份 = 云端全集。
+      // 不把它当底稿 ⇒ 写回的索引只剩这几条墓碑 ⇒ 其余云端会话全部隐形
+      // （这与 uploadGroups 是同一个 P0，只是走的是删除广播这条路）。
+      {
+        recoveredBase:
+          index.kind === 'manifest' && index.rebuilt ? index.manifest : null,
+      }
+    );
+  }
+
+  /**
+   * 墓碑读回校验（2026-10-20 D-5）。
+   *
+   * 读回分片，比对「是不是墓碑」+「印记是不是我们要的那个」。
+   * 不一致 ⇒ 抛错（调用方据此**不消费**删除队列）。
+   *
+   * 读回路径的降级顺序：
+   *   1. GET 分片 → 读明文头部（hdr）里的 isDeleted / lastOp —— 不用解密；
+   *   2. 头部没有（旧分片）⇒ 解密正文取；
+   *   3. 两者都读不到 ⇒ 用 ETag 对比（写前的 ETag vs 写后的 ETag）：
+   *      变了 ⇒ 至少说明内容被替换过（仍不可信，但有信号）；
+   *   4. 连 ETag 都拿不到 ⇒ **无法验证** ⇒ 抛错（不消费队列）。
+   *      宁可下一轮重播一个幂等的墓碑，也不能丢掉删除意图。
+   */
+  private async verifyTombstoneReadback(
+    id: string,
+    expectedStamp: { d: string; s: number } | undefined,
+    writtenEtag: string | null
+  ): Promise<void> {
+    const remote = await this.readRemoteShardState(id);
+    if (remote.exists && !remote.unreadable) {
+      const verdict = compareTombstoneReadback(
+        { id, ...(expectedStamp ? { lastOp: expectedStamp } : {}) },
+        { id, isDeleted: remote.isDeleted === true, ...(remote.lastOp ? { lastOp: remote.lastOp } : {}) }
+      );
+      if (!verdict.ok) {
+        throw new Error(
+          `删除广播没有落盘：${verdict.reason ?? '读回内容与期望不一致'}。` +
+            '已保留本机的删除意图，下一轮会重试。'
+        );
+      }
+      return;
+    }
+
+    // 读不到内容 ⇒ 退到 ETag 比对（弱证据）。
+    if (writtenEtag) {
+      try {
+        const stat = await this.client.stat(this.p(shardPath(id)));
+        if (stat.exists && stat.etag && stat.etag === writtenEtag) {
+          // ETag 一致：内容没被替换过。仍然不能证明「是墓碑」，
+          // 但至少不是「写失败却被当成成功」。
+          logWarn(
+            `[webdav] 墓碑 ${id} 读不回内容，只能用 ETag 核对（etag=${stat.etag}）。` +
+              '已按「写入未被替换」处理'
+          );
+          return;
+        }
+      } catch {
+        /* 落到下面抛错 */
+      }
+    }
+
+    throw new Error(
+      `删除广播无法确认落盘（会话 ${id} 读回失败或内容不可解析）。` +
+        '已保留本机的删除意图，下一轮会重试。'
     );
   }
 
@@ -581,13 +1672,60 @@ export class WebDavBackendAdapter implements SyncBackendPort {
    * 删除广播用的 stamp。
    *
    * 必须严格大于该会话已有的 stamp，否则对端合并时删除会输给旧副本而「复活」。
-   * 取 `max(设备 seq + 1, 云端已知 stamp + 1)`：这样既保持本设备单调，
-   * 也能压过「另一台设备写了更大 seq」的云端副本。
+   *
+   * ── 2026-10-20 D-7：号必须由**本机 Lamport 时钟**发出 ─────────────────
+   *
+   * 修复前这里取的是 `max(设备 seq + 1, 云端已知 stamp + 1)`，也就是
+   * **「云端那一行的 seq + 1」**。那个数有一个致命性质：它**恰好等于对端设备
+   * 下一个自然要发的号**（对端写下一条时也会取 cloudSeq + 1）。
+   * 于是两边的 seq **完全相等** —— 而全序的比较在 seq 相等时**退化成比设备 id
+   * 的字典序**（见 core/opStamp 的 compareStamps）。也就是说：
+   *
+   *   「谁赢」不再由**真实因果顺序**决定，而由**设备 id 的字典序**决定。
+   *
+   * 字典序与因果无关，而且方向是任意的：设备 id 靠后的那台，它的删除**永远赢**；
+   * 设备 id 靠前的那台，它的删除**永远输**。后者那一组就在对端**复活**了 ——
+   * 云端行明明已经是墓碑，对端却按「本地活跃副本的 stamp 更大/相等且设备 id 更小」
+   * 判本地赢，把墓碑覆盖回活跃行（mergeOpStamped 的「云端墓碑 vs 本地活跃」分支）。
+   *
+   * 【为什么 Supabase 侧早就修对了、这边没有】
+   * Supabase 侧的 markCloudGroupsAsDeleted 走的是**本机 tombstoneSeq.nextSeq()**
+   * （真 Lamport 取号），并把结果 bumpSeqIfLower 回本机时钟（见 upload.ts 的
+   * stamp 分支）。审计说「WebDAV 侧漏了吸收」——复核确认：**Supabase 侧已经是对的**，
+   * 漏的只有 WebDAV 侧（它既没取本机新号，也没把 seq 吸收进本机时钟）。
+   *
+   * 【现在的语义】**先吸收，再取号**
+   * 1) 把云端 seq **吸收**进本机时钟（bumpDeviceSeqIfLower）：本机时钟的号位
+   *    抬到「不小于云端那一行」。这一步是 Lamport 不变式
+   *    「本设备发出的序号必须大于它观察到的任何设备的任何印记」。
+   * 2) 向**本机 Lamport 时钟**要一个新号（nextDeviceSeq）—— 这个号因此
+   *    **严格大于**云端那一行的 seq，也严格大于本机此前发过的任何号。
+   * 3) 最终 seq = max(本机新号, 云端 seq + 1)：
+   *    第二项保证**压过**云端那一行（否则墓碑比它要删的那行还小，删除必输）。
+   *
+   * 【⚠️ 顺序为什么必须是「先吸收后取号」（本条最容易被写错的地方）】
+   * 若**先取号、后吸收**，本机号位在那一刻还低于云端 seq，于是：
+   *   localSeq = 本机号位 + 1        （远小于云端 seq）
+   *   最终 seq = max(localSeq, cloudSeq + 1) = cloudSeq + 1
+   *   而吸收把本机时钟抬到了 cloudSeq ⇒ **本机下一个写入拿到的号恰好也是
+   *   cloudSeq + 1** —— 与墓碑的 seq **完全相等**。
+   * 那就等于把「本条缺陷」在下一笔写入上**重新造了一遍**：两边 seq 相等 ⇒
+   * 胜负退化成设备 id 字典序 ⇒ 删除的因果顺序再次丢失。
+   * （本机自己那次写入与墓碑同 seq，两者是同一台设备的两笔写入；
+   *  字典序在这里是「同设备同 seq ⇒ 平局」，而平局会被判成本地赢，
+   *  也就是「墓碑被本机自己后来的写入盖掉」⇒ 删除被静默撤销。）
+   * 先吸收再取号 ⇒ 墓碑号 = clock+1，下一笔写入 = clock+2 ⇒ **严格递增**，
+   * 两笔永不相等，因果顺序保住了。
+   *
+   * 【为什么不能拆掉 max 的第二项】
+   * 「压过云端旧印记」与「号由本机时钟发出」是两个**不同**的要求：
+   * 前者保证这次删除赢，后者保证这次删除的胜负**由因果顺序**决定而不是由设备 id
+   * 字典序决定。少了第二项，墓碑可能输给云端那一行（复活）；
+   * 少了第一项，胜负由字典序决定（本条的缺陷形态）。两者都要。
    */
   private async nextDeleteStamp(
     cloudLastOp?: { d: string; s: number }
   ): Promise<{ d: string; s: number }> {
-    const deviceSeq = await this.peekDeviceSeq();
     // ── 2026-10-17 修 P0：键名此前是手抄的 'device_id' ─────────────────────
     // 权威键是 LEGACY_KEYS.DEVICE_ID（'tabvaultpro_device_id'），唯一写入方是
     // deviceUtils.getDeviceId()；kvGet 不做键名别名（storageAdapter 直接透传
@@ -604,18 +1742,30 @@ export class WebDavBackendAdapter implements SyncBackendPort {
     // DEVICE_SEQ，导致换机后「改什么都存不住」）。
     const device = await this.kv.get<string>(LEGACY_KEYS.DEVICE_ID);
     const cloudSeq = typeof cloudLastOp?.s === 'number' && Number.isFinite(cloudLastOp.s) ? cloudLastOp.s : -1;
+
+    // 1) **先**把云端 seq 吸收进本机时钟 —— Lamport 不变式：
+    //    本机此后发出的任何号都严格大于它观察到的这个号。
+    //    顺序不能反：先取号后吸收会让墓碑号与「本机下一笔写入」的号相等
+    //    （见上面「⚠️ 顺序为什么必须是先吸收后取号」的完整推导）。
+    if (cloudSeq >= 0) {
+      await this.bumpDeviceSeqIfLower(cloudSeq);
+    }
+    // 2) 再向本机 Lamport 时钟要一个新号（不是「云端 seq + 1」）：
+    //    此时本机时钟已吸收云端号 ⇒ 这个号严格大于云端 seq。
+    const localSeq = await this.nextDeviceSeq();
     return {
       // 拿不到设备 id 时仍留 'unknown' 兜底（老存储可能确实没写过），
       // 但生产路径现在能拿到真实 id —— 兜底不再是被常态掩盖的死分支。
       d: typeof device === 'string' && device ? device : 'unknown',
-      s: Math.max(deviceSeq + 1, cloudSeq + 1),
+      // 3) 压过云端那一行（否则墓碑比它要删的那行还小，删除必输）。
+      s: Math.max(localSeq, cloudSeq + 1),
     };
   }
 
   async purgeExpiredDeletes(maxAgeDays = 30): Promise<number> {
-    const loaded = await this.loadManifest();
-    if (!loaded) return 0;
-    const vault = await this.unlock(loaded.manifest);
+    const index = await this.loadIndex();
+    if (index.kind === 'empty') return 0;
+    const vault = await this.unlock(index.manifest);
 
     // ── 墙上时钟不可信（2026-10-14 复核时如实记录）────────────────────────
     // manifest 头上写着「多设备时钟不可信」，墓碑的 updatedAt 却是各设备墙上时间。
@@ -627,10 +1777,18 @@ export class WebDavBackendAdapter implements SyncBackendPort {
     // 不要在这里加宽松度（如 +7 天 grace）：那只是把阈值挪一下，风险形状不变，
     // 却让「过期墓碑被清理」这条现有测试的语义变模糊。
     const cutoff = Date.now() - maxAgeDays * 24 * 60 * 60 * 1000;
-    const expired = loaded.manifest.shards.filter(
+    const expired = index.manifest.shards.filter(
       s => s.isDeleted === true && Date.parse(s.updatedAt) > 0 && Date.parse(s.updatedAt) < cutoff
     );
-    if (expired.length === 0) return 0;
+    // 恢复态：索引在**云端**并不存在。即使这一轮没有过期墓碑，
+    // 也必须把重建出来的索引写回去 —— 否则恢复态永远结束不了，
+    // 而任何一条「写索引」路径一旦漏带底稿，就会把云端清空。
+    if (expired.length === 0) {
+      if (index.kind === 'manifest' && index.rebuilt) {
+        await this.persistRebuiltIndex();
+      }
+      return 0;
+    }
 
     for (const s of expired) {
       // 先删文件再改 manifest：反过来的话，中途失败会留下「manifest 里没有、
@@ -646,14 +1804,42 @@ export class WebDavBackendAdapter implements SyncBackendPort {
         shards: base.shards.filter(s => !expiredIds.has(s.id)),
       }),
       Boolean(vault),
-      vault?.salt
+      vault?.salt,
+      // 恢复态：远端没有索引，底稿必须是重建出来的那份（云端全集），
+      // 否则 TTL 清理会把索引写成「只剩没被清理的那些」，其余会话隐形。
+      {
+        recoveredBase:
+          index.kind === 'manifest' && index.rebuilt ? index.manifest : null,
+      }
     );
     return expired.length;
   }
 
+  /**
+   * 把「恢复出来的索引」写回云端（让恢复态结束）。
+   *
+   * 恢复态本身是**只读认知**：我们知道了云端有什么，但云端**仍然没有索引**。
+   * 只要不写回去，这个状态就会一直持续（每一轮探活都要重扫一遍云盘），
+   * 而且任何一条「写索引」路径一旦没带上底稿，就会把云端清空。
+   *
+   * 写回时用 `If-None-Match: *`（只当远端**确实没有**索引时才创建）：
+   * 若这期间另一台设备已经建好了索引，412 ⇒ 说明远端现在有索引了 ⇒
+   * **放弃写回**（不覆盖对方），让下一轮 loadIndex 走正常路径。
+   */
+  private async persistRebuiltIndex(): Promise<void> {
+    if (!this.rebuiltIndex) return;
+    const rebuilt = this.rebuiltIndex;
+    await this.writeManifest(
+      base => ({ ...base, generatedAt: this.now(), shards: base.shards }),
+      rebuilt.encrypted,
+      rebuilt.salt,
+      { recoveredBase: rebuilt }
+    );
+  }
+
   async uploadSettings(settings: UserSettings): Promise<void> {
-    let loaded = await this.loadManifest();
-    const vault = await this.unlock(loaded?.manifest ?? null);
+    let index = await this.loadIndex();
+    const vault = await this.unlock(index.kind === 'manifest' ? index.manifest : null);
     const payload = { v: 1 as const, settings: settings as unknown as Record<string, unknown>, updatedAt: this.now() };
     const envelope = vault
       ? makeEncryptedEnvelope(await vault.encrypt(payload))
@@ -663,13 +1849,30 @@ export class WebDavBackendAdapter implements SyncBackendPort {
     // Vault，加密完若不把 salt 写进 manifest，下次下载时按 manifest 的 salt 派生
     // 出另一个密钥 ⇒ 解不开 ⇒ 设置永久不可读。同理，已有明文库第一次用口令写设置
     // 时，也必须把 manifest 翻成加密态。明文模式（vault 为 null）不碰 manifest。
-    if (vault && (!loaded || !loaded.manifest.encrypted || loaded.manifest.salt !== vault.salt)) {
+    const needsSaltFlip =
+      vault !== null &&
+      (index.kind !== 'manifest' ||
+        !index.manifest.encrypted ||
+        index.manifest.salt !== vault.salt);
+    if (vault && needsSaltFlip) {
       await this.writeManifest(
         base => ({ ...base, generatedAt: this.now(), encrypted: true, salt: vault.salt }),
         true,
-        vault.salt
+        vault.salt,
+        // 恢复态：远端没有索引，底稿用重建出来的那份（云端全集），
+        // 否则「把库翻成加密态」这一个动作就会把索引写成空的 ——
+        // 云端所有会话瞬间隐形。
+        {
+          recoveredBase:
+            index.kind === 'manifest' && index.rebuilt ? index.manifest : null,
+        }
       );
-      loaded = await this.loadManifest();
+      index = await this.loadIndex();
+    } else if (index.kind === 'manifest' && index.rebuilt) {
+      // 恢复态且这一轮不需要翻加密态 ⇒ 索引仍然只存在于本机内存里。
+      // 把它写回云端，恢复态才算结束（否则每一轮都要重扫云盘，
+      // 且任何一条写索引路径漏带底稿都会把云端清空）。
+      await this.persistRebuiltIndex();
     }
     await this.client.put(this.p(SETTINGS_PATH), serializeEnvelope(envelope));
   }
@@ -684,8 +1887,8 @@ export class WebDavBackendAdapter implements SyncBackendPort {
     let payload: unknown;
     if (env.kind === 'encrypted') {
       if (!this.vault) {
-        const loaded = await this.loadManifest();
-        await this.unlock(loaded?.manifest ?? null);
+        const index = await this.loadIndex();
+        await this.unlock(index.kind === 'manifest' ? index.manifest : null);
       }
       if (!this.vault) return null;
       payload = await this.vault.decrypt(env.enc);
@@ -742,18 +1945,18 @@ export class WebDavBackendAdapter implements SyncBackendPort {
     conditionalWrites: boolean;
   }> {
     await this.client.checkConnection();
-    const loaded = await this.loadManifest();
+    const index = await this.loadIndex();
     const conditionalWrites = await this.probeConditionalWrites();
-    if (!loaded) return { groups: 0, encrypted: false, conditionalWrites };
+    if (index.kind === 'empty') return { groups: 0, encrypted: false, conditionalWrites };
 
     let encrypted = false;
-    if (loaded.manifest.encrypted) {
+    if (index.manifest.encrypted) {
       // 口令必须真的能解开这个库，否则「连接成功」是假象。
-      await this.unlock(loaded.manifest);
+      await this.unlock(index.manifest);
       encrypted = true;
     }
     return {
-      groups: loaded.manifest.shards.filter(s => s.isDeleted !== true).length,
+      groups: index.manifest.shards.filter(s => s.isDeleted !== true).length,
       encrypted,
       conditionalWrites,
     };
@@ -793,15 +1996,20 @@ export class WebDavBackendAdapter implements SyncBackendPort {
         ifMatch: '"tapstack-probe-deliberately-stale"',
       });
       // 条件写没被拒绝 ⇒ 服务端忽略 If-Match。
+      this.conditionalWrites = false;
       return false;
     } catch (err) {
-      if (err instanceof WebDavError && err.isPreconditionFailed) return true;
+      if (err instanceof WebDavError && err.isPreconditionFailed) {
+        this.conditionalWrites = true;
+        return true;
+      }
       // 「没授权」必须与「服务端不支持条件写」区分开（2026-10-14补 P1 时加）。
       // 权限预检抛的是 status 0 + 权限文案；若不在这里拦一道，它会被下面的
       // 兜底吞成 `false`，于是「浏览器没给这个域名的权限」会被如实上报成
       // 「你的服务端不支持条件写」——一个会让用户去检查服务器配置的**错误结论**。
       // 而真实原因只需要点一次「测试连接」授权就能解决。
       if (err instanceof WebDavError && err.isPermissionDenied) throw err;
+      this.conditionalWrites = false;
       return false;
     } finally {
       // 探针文件不该留在用户目录里。删除失败不抛错（这只是个探针）。
@@ -810,6 +2018,30 @@ export class WebDavBackendAdapter implements SyncBackendPort {
       } catch {
         /* 忽略 */
       }
+    }
+  }
+
+  /**
+   * 本轮的条件写能力（**显式状态**，探测一次、缓存住）。
+   *
+   * ── 为什么必须是状态而不是每次现探 ────────────────────────────────────────
+   * 裁决策略要在「发不发 If-Match」上分叉，而这个判断必须**每轮一致**：
+   * 同一轮里先按「支持」发、后按「不支持」不发，等于自己跟自己打架，
+   * 412 重试路径也就失去了意义。
+   *
+   * ── 探测失败 ⇒ 按「不支持」处理（保守方向）─────────────────────────────
+   * 探测本身是网络操作，可能失败。失败时**不能**假设「有保护」：
+   * 假设有 ⇒ 服务端其实不认 If-Match，我们却按「有锁」行事 ⇒ 静默覆盖。
+   * 假设没有 ⇒ 我们改走「读-比-写 + 写后读回」，慢一点但**不会撒谎**。
+   */
+  private async conditionalWriteCapability(): Promise<boolean> {
+    if (this.conditionalWrites !== null) return this.conditionalWrites;
+    try {
+      return await this.probeConditionalWrites();
+    } catch {
+      // 探测失败（如权限预检）⇒ 按「不支持」处理：慢，但安全。
+      this.conditionalWrites = false;
+      return false;
     }
   }
 
@@ -842,13 +2074,72 @@ function selectDirty(groups: TabGroup[], watermark: number): TabGroup[] {
   });
 }
 
-/** stamp 全序比较。委托给 core/opStamp，避免口径漂移（见该函数注释）。 */
-function compareStamps(
-  a: { d: string; s: number } | undefined,
-  b: { d: string; s: number } | undefined
-): number {
-  return compareStampsLoose(a, b);
+/**
+ * 找出「本地水位线认为已上传、但云端索引里没有」的会话（F4）。
+ *
+ * ── 这份差异意味着什么 ──────────────────────────────────────────────────
+ * 水位线是「本机认为自己已经传上去了」的记录。索引是「云端现在有什么」的记录。
+ * 两者对不上，只能说明**水位线骗了我们** —— 而被 selectDirty 跳过的组
+ * 永远不会自己回来（stamp ≤ 水位 ⇒ 永远不脏）。
+ *
+ * 真实场景：云端索引曾被整体覆盖成某台设备的子集（本次修的 P0），
+ * 另一台设备的水位线却仍记着「这些会话我传过了」⇒ 那些会话永远补不回去。
+ *
+ * ── 为什么只在「索引是重建出来的」时才算这份差异 ──────────────────────
+   * 索引在的时候，它就是云端的真相，我们没有理由怀疑它；
+ * 而「索引刚被重建」恰恰是我们**确知**云端分片集合的唯一时刻。
+ */
+function selectMissingFromIndex(
+  groups: TabGroup[],
+  manifest: Manifest,
+  watermark: number
+): TabGroup[] {
+  const ids = new Set(manifest.shards.map(s => s.id));
+  return groups.filter(g => {
+    const s = g?.lastOp?.s;
+    // 没有印记的组本来就「永远算脏」，不属于这份差异。
+    if (typeof s !== 'number') return false;
+    // 比水位新的组本来就会被上传，也不属于这份差异。
+    if (s > watermark) return false;
+    return !ids.has(g.id);
+  });
 }
+
+/** 按 id 去重（保留先出现的那个）。 */
+function dedupeById(groups: TabGroup[]): TabGroup[] {
+  const seen = new Set<string>();
+  const out: TabGroup[] = [];
+  for (const g of groups) {
+    if (seen.has(g.id)) continue;
+    seen.add(g.id);
+    out.push(g);
+  }
+  return out;
+}
+
+/**
+ * 有限并发地跑一批任务。
+ *
+ * 任何一个任务抛错都会让整批失败（调用方需要 fail-closed，不能吞掉）。
+ */
+async function mapWithConcurrency<T>(
+  items: T[],
+  limit: number,
+  fn: (item: T) => Promise<void>
+): Promise<void> {
+  if (items.length === 0) return;
+  let cursor = 0;
+  const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
+    for (;;) {
+      const i = cursor++;
+      if (i >= items.length) return;
+      await fn(items[i]);
+    }
+  });
+  await Promise.all(workers);
+}
+
+/** stamp 全序比较。委托给 core/opStamp，避免口径漂移（见该函数注释）。 */
 
 /** 稳定短哈希（FNV-1a，32 位十六进制）。只用于生成 KV 键名，不用于安全用途。 */
 function shortHash(input: string): string {

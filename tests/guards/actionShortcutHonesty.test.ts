@@ -72,3 +72,76 @@ describe('Ctrl+Shift+S（_execute_action）的语义声明必须与真实行为�
     }
   });
 });
+
+/**
+ * 快捷键的**平台差异**必须说清楚（2026-10-20 复核补测）。
+ *
+ * ── 为什么要有这一条 ────────────────────────────────────────────────────
+ * manifest.json 的 `commands` 允许给同一个命令配**不同的平台键位**：
+ *   `_execute_action`: default = Ctrl+Shift+S，**mac = Command+Shift+S**
+ *
+ * 也就是说：「Ctrl+Shift+S」这句话在 **Windows / Linux 上是真的，
+ * 在 macOS 上是错的**（那里是 ⌘⇧S）。
+ *
+ * 而文案原本只写「Ctrl+Shift+S」。对 macOS 用户来说这不是「不够详细」，
+ * 是**一句假话** —— 按 ⌘⇧S 的人会在浏览器里什么都不会发生（那个键位
+ * 在 macOS 上没有绑定），而想去按 Ctrl+Shift+S 的人会按出别的组合。
+ * 用户视角的后果：快捷键「不灵」，且看不出原因。
+ *
+ * 商店文案是**用户唯一会读到的版本说明**，平台差异漏写 = 事实缺失。
+ *
+ * ── 判据 ────────────────────────────────────────────────────────────────
+ * 盯**关系**而不是字面量：manifest 给某个命令配了 mac 键位，而文案提到了
+ * 该命令的 default 键位时，文案**必须**也提到那个 mac 键位
+ * （要么写 ⌘⇧S，要么写 Cmd+Shift+S —— 两种写法都认）。
+ * 将来若把 mac 键位改成别的，守卫会跟着要求文案写新的那个。
+ */
+describe('快捷键的平台差异：mac 上是 ⌘⇧S，文案不能只写 Ctrl+Shift+S', () => {
+  const manifest = JSON.parse(read('manifest.json')) as {
+    commands: Record<string, { suggested_key?: { default?: string; mac?: string } }>;
+  };
+
+  /** manifest 里所有「mac 上与 default 不同」的命令 → 它的 mac 键位。 */
+  const macSpecific = Object.entries(manifest.commands).filter(
+    ([, cmd]) =>
+      cmd.suggested_key?.mac && cmd.suggested_key.mac !== cmd.suggested_key.default
+  );
+
+  it('manifest 里确实存在平台差异（否则本文件是空断言，要改判据）', () => {
+    assert.ok(
+      macSpecific.length > 0,
+      'manifest.commands 里没有任何「mac 键位 ≠ default 键位」的命令 —— ' +
+        '若将来统一了平台键位，请把本文件改成「文案里不得再出现平台差异说明」的反向断言'
+    );
+  });
+
+  it('提到 default 键位的文案，必须同时说明 mac 上按哪个键', () => {
+    for (const [command, cmd] of macSpecific) {
+      const def = cmd.suggested_key!.default!;
+      const mac = cmd.suggested_key!.mac!;
+      // mac 键位写成「Command+Shift+S」或「⌘⇧S」都认 —— 只要求「提过它」。
+      const macForms = [
+        mac,
+        mac.replace('Command', 'Cmd'),
+        mac.replace('Command', '⌘').replace('Shift', '⇧').replace('+', ''),
+        '⌘⇧S',
+        'Cmd+Shift+S',
+        'Command+Shift+S',
+      ];
+      for (const rel of ['CHROMEWEBSTORE.md', 'README.md']) {
+        for (const [i, line] of read(rel).split('\n').entries()) {
+          if (!line.includes(def)) continue;
+          // 该行提到了 default 键位 ⇒ 必须也提到 mac 键位（或明确说「mac 上不一样」）。
+          const mentionsMac = macForms.some(f => line.includes(f));
+          const hedges = /mac|Mac|MAC|苹果|不同平台|各平台/.test(line);
+          assert.ok(
+            mentionsMac || hedges,
+            `${rel}:${i + 1} 提到了 ${def} 却没有说明 macOS 上按 ${mac} —— ` +
+              `命令 ${command} 在 mac 上的键位与其它平台不同（manifest: ` +
+              `default=${def}, mac=${mac}）。只写 default 键位 ⇒ mac 用户按了没反应，`
+            );
+        }
+      }
+    }
+  });
+});

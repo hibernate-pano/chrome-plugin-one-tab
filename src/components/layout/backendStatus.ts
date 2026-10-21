@@ -165,10 +165,29 @@ export function canEnableAutoSync(status: BackendStatus, isAuthenticated: boolea
  *
  * 为什么文案必须按后端分开：云端缺的是**登录**，自带存储缺的是**解锁**。
  * 合并成一句「请先解锁或登录」会让两类用户都去猜自己该做哪一个。
+ *
+ * ── 2026-10-20 第二轮审计：那句「请先在菜单里登录」是**指向不存在的入口** ──
+ *
+ * 这句文案有**两个**渲染位置，而它们的上下文不一样：
+ *   · 管理页（HeaderDropdown / SyncButton）—— 那里**有**「⋯」菜单，菜单里有登录；
+ *   · 设置页（OptionsPage）—— 那里**没有**右上角菜单。
+ *
+ * 原文案只有「请先在菜单里登录」一句 ⇒ 在设置页里它指向一个不存在的入口。
+ * 用户找遍设置页也找不到菜单，于是永远开不了自动同步（默认后端就是云端）。
+ *
+ * 修法：**不猜调用点在哪儿** —— 让调用方把「下一步动作」传进来。
+ * 管理页传「菜单」，设置页传「本页的登录按钮」。两边各说各的真实出口。
+ *
+ * ⚠️ 判据本身不变：云端未登录 ⇒ 拒绝；WebDAV ⇒ 不因登录态拒绝。
  */
-export function autoSyncBlockedCopy(status: BackendStatus, isAuthenticated: boolean): string {
+export function autoSyncBlockedCopy(
+  status: BackendStatus,
+  isAuthenticated: boolean,
+  /** 下一步该去哪里。管理页传 '菜单'，设置页传 '本页'。 */
+  loginEntry: '菜单' | '本页' = '菜单'
+): string {
   if (status.backendId === 'supabase' && !isAuthenticated) {
-    return '还没有登录 TapStack 云端，登录后自动同步才能运行。请先在菜单里登录。';
+    return `还没有登录 TapStack 云端，登录后自动同步才能运行。请先在${loginEntry}登录。`;
   }
   if (status.kind === 'unconfigured') {
     return '还没有配置云盘：先在下方「自带存储配置」填写地址并点「保存并启用」，再开启自动同步';

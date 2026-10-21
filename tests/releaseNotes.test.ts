@@ -86,3 +86,110 @@ describe('发版记录台账：docs/RELEASE-NOTES.md 必须跟得上版本号', 
     );
   });
 });
+
+/**
+ * 「显式检查项」的守卫。
+ *
+ * ── 为什么要有这一条 ────────────────────────────────────────────────────
+ * 2026-10-20 修 WebDAV「列目录 fail-open」时发现：那条链路的**失败模式是
+ * 静默的** —— 读不出目录若被当成「目录是空的」，云端明明有的会话会被本机
+ * 子集覆盖，对所有设备隐形且不可恢复。
+ * 而「三家 WebDAV 各跑一次列目录实测」是**真机**项，脚本替不了
+ * （`scripts/webdav-capability-matrix.mjs` / `scripts/e2e-webdav-local.mjs`
+ * 目前只测 Depth:0，不覆盖 Depth:1）。
+ *
+ * 台账里写一条「记得做」是**靠不住的** —— 文档不会自己变红，几轮重构之后
+ * 它会被当成「已验证的代码」而失去复核。所以这里把它钉成**会变红**的东西：
+ * 只要台账里删掉这条未完成项、或者把它勾成已完成，测试就红。
+ *
+ * ── 判据 ────────────────────────────────────────────────────────────────
+ * 不硬编码段落文字，而是钉**语义**：
+ *   1. 台账里存在一条**未勾选**的「三家 WebDAV 列目录实测」待办；
+ *   2. 它必须挂在**当前最新版本**的小节里（不能躺在历史版本里装完成）；
+ *   3. 待办必须写明 Depth:1 PROPFIND 的检查点（不然「列目录实测」是空话）。
+ */
+describe('显式检查项：三家 WebDAV 的列目录实测不许被静默丢掉', () => {
+  const latestSection = (() => {
+    const start = NOTES.indexOf('## v');
+    if (start < 0) return '';
+    const next = NOTES.indexOf('\n## v', start + 1);
+    return NOTES.slice(start, next < 0 ? NOTES.length : next);
+  })();
+
+  /** 待办里那条「三家 WebDAV 列目录实测」的**整块**（含其缩进续行）。 */
+  const todoBlock = (() => {
+    const lines = latestSection.split('\n');
+    const i = lines.findIndex(l => /^\s*-\s*\[.\]\s*.*三家\s*WebDAV.*列目录/.test(l));
+    if (i < 0) return '';
+    const out: string[] = [lines[i]];
+    for (let j = i + 1; j < lines.length; j++) {
+      if (!/^\s{2,}\S/.test(lines[j])) break; // 续行必须缩进
+      out.push(lines[j]);
+    }
+    return out.join('\n');
+  })();
+
+  it('最新一节里必须有「三家 WebDAV 各跑一次列目录实测」这条未完成的待办', () => {
+    const pending = [...latestSection.matchAll(/^\s*-\s*\[( |x)\]\s*(.+)$/gm)];
+    assert.ok(pending.length > 0, '最新一节里必须有勾选框形式的待办');
+    const target = pending.find(m => /三家\s*WebDAV/.test(m[2]) && /列目录/.test(m[2]));
+    assert.ok(
+      target,
+      '最新一节里必须有一条「三家 WebDAV 各跑一次列目录实测」的待办 —— ' +
+        '它是**真机**项，脚本与单测都替不了（Depth:1 PROPFIND 目前没有任何自动化覆盖）'
+    );
+    assert.notEqual(
+      target?.[1],
+      'x',
+      '这条待办还是**未完成**状态；若已真机验完，请把勾选证据与结论一并写进台账再勾'
+    );
+  });
+
+  it('这条待办必须写明 Depth:1 PROPFIND 的检查点（否则「列目录实测」是空话）', () => {
+    assert.ok(todoBlock, '必须先找到那条待办（否则下面两条是空断言）');
+    // 盯住「Depth:1 PROPFIND」这个**具体请求形态**（要记它的状态码），
+    // 而不是只盯 "Depth:1" 四个字 —— 待办末尾那句「不覆盖 Depth:1」里
+    // 也有这四个字，盯它就抓不到「检查点被抹掉」。
+    assert.match(
+      todoBlock,
+      /Depth:1\s*PROPFIND/,
+      '待办**本体**必须点名 Depth:1 PROPFIND —— 现有脚本只测 Depth:0，这正是缺口所在'
+    );
+    assert.match(
+      todoBlock,
+      /状态码/,
+      '待办**本体**必须要求记录**状态码** —— 「列出来了」与「列不出来」的区别就在状态码与正文'
+    );
+    assert.match(
+      todoBlock,
+      /multistatus/,
+      '待办**本体**必须点名「正文里有没有 multistatus」—— 这正是本轮 fail-open 的判据'
+    );
+    assert.match(
+      todoBlock,
+      /<response>/,
+      '待办**本体**必须点名「有没有 <response> 块」—— 本轮的第二条闸就是它'
+    );
+  });
+
+  it('台账必须同时记下「本轮把读不懂的 207 从空库改成 fail-closed」这个代价', () => {
+    // 判据盯「已知边界」那一段（本轮的代价），而不是整节 ——
+    // 整节里引言也会出现 fail-closed，盯整节就抓不到「代价被抹掉」。
+    const boundary = (() => {
+      const m = latestSection.match(/\*\*已知的[^\n]*\n([\s\S]*)$/);
+      return m ? m[1] : '';
+    })();
+    assert.ok(boundary, '最新一节里必须有「已知的边界」小节');
+    assert.match(
+      boundary,
+      /fail-closed/,
+      '收紧 listed 的判据是有代价的（真机上若某家形态特殊，用户会看到中止报错）—— ' +
+        '这个代价必须留在「已知的边界」里，不能只写「已修复」'
+    );
+    assert.match(
+      boundary,
+      /中止/,
+      '代价必须写明用户会看到什么（同步中止报错），否则没人能判断这个取舍能不能接受'
+    );
+  });
+});

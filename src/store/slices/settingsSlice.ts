@@ -153,6 +153,10 @@ const settingsSlice = createSlice({
       state.themeStyle = action.payload;
     },
 
+    // ── 2026-10-20 审计 A-9：showFavicons / showTabCount 现在**真被读** ──
+    // 修复前它们只有 setter、没有任何 UI 入口，也没有任何渲染点读它们 ——
+    // 存着、上云着，用户却拨不动。设置页现在有开关（见 OptionsPage），
+    // 渲染点（标签行图标 / 标签数量徽章）按它们的值决定显不显示。
     setShowFavicons: (state, action: PayloadAction<boolean>) => {
       state.showFavicons = action.payload;
     },
@@ -163,18 +167,8 @@ const settingsSlice = createSlice({
       state.showNotifications = action.payload;
     },
 
-    setGroupNameTemplate: (state, action: PayloadAction<string>) => {
-      state.groupNameTemplate = action.payload;
-    },
-
-    toggleShowFavicons: (state) => {
-      state.showFavicons = !state.showFavicons;
-    },
     toggleConfirmBeforeDelete: (state) => {
       state.confirmBeforeDelete = !state.confirmBeforeDelete;
-    },
-    toggleAllowDuplicateTabs: (state) => {
-      state.allowDuplicateTabs = !state.allowDuplicateTabs;
     },
     // 切换通知开关
     toggleShowNotifications: (state) => {
@@ -239,11 +233,8 @@ export const {
   setShowFavicons,
   setShowTabCount,
   setShowNotifications,
-  setGroupNameTemplate,
 
-  toggleShowFavicons,
   toggleConfirmBeforeDelete,
-  toggleAllowDuplicateTabs,
   toggleShowNotifications,
    toggleCollectPinnedTabs,
   setLayoutMode,

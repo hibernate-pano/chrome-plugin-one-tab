@@ -61,6 +61,7 @@ import {
 import { isOpenableTabUrl } from '@/utils/inputValidation';
 import { getDisplayUrl } from '@/utils/sessionPresentation';
 import { SafeFavicon } from '@/components/common/SafeFavicon';
+import { useAppSelector } from '@/store/hooks';
 
 interface DraggableTabProps {
   tab: Tab;
@@ -136,6 +137,14 @@ export const DraggableTab: React.FC<DraggableTabProps> = React.memo(({
 }) => {
   const ref = useRef<HTMLDivElement>(null);
   const linkRef = useRef<HTMLAnchorElement>(null);
+  // ── 2026-10-20 审计 A-9：showFavicons 从「死设置」变成**真被读**的开关 ──
+  // 修复前这个设置只有默认值与上云映射，UI 从不读它 —— favicon 永远显示。
+  // 现在设置页有开关（OptionsPage「外观」小节），这里真的按它决定画不画图标。
+  //
+  // 放在行组件里而不是列表容器里：图标是**每行**的，行组件才知道自己这一行
+  // 有没有图标可画。关掉时整行不渲染图标（不是换成占位球 —— 换占位球等于
+  // 「图标还在」，那是对开关的另一种撒谎）。
+  const showFavicons = useAppSelector(state => state.settings.showFavicons);
   // 拖拽源下标**不在这里**：它属于拖拽会话（dragSession.ts 的模块级单例）。
   // 曾经放在这个行级 ref 上（dragIndexRef.current = index 无条件覆写），
   // 于是 dragover 在落点行读到的是落点自己 —— 跨组拖拽搬错行（P1，见文件头）。
@@ -366,8 +375,10 @@ export const DraggableTab: React.FC<DraggableTabProps> = React.memo(({
       // 孤立的 listitem 是无效语义（读屏不播报"列表项 N/M"）。
       role="listitem"
     >
-      {/* Favicon */}
-      <SafeFavicon src={tab.favicon} alt={`${tab.title} 网站图标`} className="tab-item-favicon" />
+      {/* Favicon（showFavicons 关掉时整块不渲染） */}
+      {showFavicons && (
+        <SafeFavicon src={tab.favicon} alt={`${tab.title} 网站图标`} className="tab-item-favicon" />
+      )}
 
       {/* 标题和 URL */}
       <div className="flex-1 min-w-0 flex items-center gap-3">

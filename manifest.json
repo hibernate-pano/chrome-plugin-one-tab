@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "TapStack",
-  "version": "1.25.0",
+  "version": "1.25.1",
   "description": "Save browser work sessions and restore them later",
   "minimum_chrome_version": "120",
   "content_security_policy": {
@@ -10,7 +10,6 @@
   "permissions": [
     "tabs",
     "storage",
-    "unlimitedStorage",
     "notifications",
     "contextMenus",
     "alarms"
@@ -20,6 +19,7 @@
   ],
   "optional_host_permissions": [
     "https://*/*",
+    "http://*/*",
     "http://localhost/*",
     "http://127.0.0.1/*"
   ],

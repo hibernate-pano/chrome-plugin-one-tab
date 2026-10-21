@@ -3,9 +3,11 @@ import { createPortal } from 'react-dom';
 import { useAppSelector, useAppDispatch } from '@/store/hooks';
 import { loadGroups } from '@/store/slices/tabSlice';
 import { dispatchReloadSettings } from '@/store/slices/settingsSlice';
-import { downloadTabGroups } from '@/services/tabGroupSyncService';
+import { downloadTabGroups, downloadTabGroupsWithSkips } from '@/services/tabGroupSyncService';
+import { planOverwriteUpload } from '@/core/overwriteUploadGuard';
 import { sendSyncCommand } from '@/shared/mutationProtocol';
 import { decideOverwriteClick, decideSyncEntry, isOverwriteGateOpen, renderPreviewSummary, resolveSyncFailureCopy, shouldRenderSyncControls, syncIdentityCanRun, syncModeOf } from './syncPreviewView';
+import { skippedRemoteGroupsNotice } from './skippedRemoteGroupsCopy';
 
 // 与 syncEngine.SyncOperation 同语义（仅 UI 进度条用），本文件不再 import syncEngine。
 type SyncOperation = 'upload' | 'download' | 'none';
@@ -119,6 +121,17 @@ export const SyncButton: React.FC<SyncButtonProps> = () => {
   const [downloadPreviewError, setDownloadPreviewError] = useState<string | null>(null);
   const [uploadPreview, setUploadPreview] = useState<ModePreviewMap | null>(null);
   const [downloadPreview, setDownloadPreview] = useState<ModePreviewMap | null>(null);
+  /**
+   * 覆盖上传时**不会被删除或覆盖**的云端会话数（2026-10-20 P1）。
+   *
+   * 指「云端有、这台设备读不出来、而本机又没有副本」的那几组：删掉就是永久
+   * 丢失（无回收站），所以覆盖上传会跳过它们（执行侧见
+   * utils/supabase/upload.ts，判据见 core/overwriteUploadGuard.ts）。
+   *
+   * 这里用**同一个判据函数**算 ⇒ 预览预告的「会保留哪几行」与实际保留的一致
+   * （预览与实际同源；仓库纪律：预览不得预告与实际结果相反的东西）。
+   */
+  const [uploadPreservedRemoteCount, setUploadPreservedRemoteCount] = useState(0);
   // P1-6：覆盖模式的两段式确认。armed 只表示「用户看到了风险文案并又点了一次」，
   // 只有 armed === 当前 actionKey 时下一次点击才真下发；任何其他点击/关窗都会清空。
   const [armedOverwrite, setArmedOverwrite] = useState<SyncActionKey | null>(null);
@@ -134,7 +147,7 @@ export const SyncButton: React.FC<SyncButtonProps> = () => {
     setUploadPreviewError(null);
 
     try {
-      const [localGroups, remoteGroups] = await Promise.all([
+      const [localGroups, remote] = await Promise.all([
         // 2026-10-09 数据安全 P2-5：预览必须读真值。
         // 这里是**破坏性操作的确认闸门** —— 用户正是核对「本地 N / 云端 M」之后
         // 才按下「覆盖」。原先用 getGroups()（30s 进程内缓存），而 groupsChangedBus
@@ -144,12 +157,28 @@ export const SyncButton: React.FC<SyncButtonProps> = () => {
         // 错数字去写 —— 但确认信息失真就足以让用户做出错误决策。
         // getGroupsForWrite() 正是「要读真值」的语义入口，代价只是一次 flush + 失效。
         storage.getGroupsForWrite(),
-        downloadTabGroups(),
+        // 用**原子包装**（一次调用同时给出「读到的」与「读不出来的」）：
+        // 分两次调用中间有 await 间隙，可能读到别的轮次的清单 ⇒ 保护/预告错对象。
+        downloadTabGroupsWithSkips(),
       ]);
+      const remoteGroups = remote.groups;
+
+      // 覆盖上传会跳过「云端有、这台设备读不出来、本机又没有副本」的那几组
+      // （删了就是永久丢失）。数字必须与执行侧同源 ⇒ 同一个判据函数。
+      const skippedRemoteIds = remote.skipped.map(entry => entry.id);
+      const preservedRemoteCount = planOverwriteUpload({
+        cloudIds: [...remoteGroups.map(group => group.id), ...skippedRemoteIds],
+        localIds: localGroups.map(group => group.id),
+        unrestorableIds: skippedRemoteIds,
+      }).protectedIds.length;
+      setUploadPreservedRemoteCount(preservedRemoteCount);
 
       setUploadPreview({
         overwrite: buildUploadPreviewSummary(localGroups, remoteGroups, 'overwrite', {
           preserveRemoteOnly: uploadOverwritePreservesRemote,
+          // 读不出来的那几组**不在** remoteGroups 里（那是「读到的」）⇒
+          // 不把跳过清单一起给进来，预览就会算错保留数。
+          unrestorableRemoteIds: skippedRemoteIds,
         }),
         merge: buildUploadPreviewSummary(localGroups, remoteGroups, 'merge'),
       });
@@ -245,6 +274,12 @@ export const SyncButton: React.FC<SyncButtonProps> = () => {
     isArmed: armedOverwrite === 'upload.overwrite',
     isBusy: isWorking,
     targetLabel: '云端',
+    // 有读不出来的云端会话会被保留 ⇒ 风险文案必须说出来（预览不得预告与实际相反）。
+    //
+    // 取值来自**预览摘要自己算出来的那个数**（buildUploadPreviewSummary 用的是
+    // 与执行侧同一个判据函数）⇒ 卡片上显示的、风险文案里说的、实际会保留的
+    // 是同一个数，不会各算各的。
+    preservedRemoteCount: uploadPreview?.overwrite?.preservedRemoteCount ?? uploadPreservedRemoteCount,
   });
   const downloadOverwriteState = decideOverwriteClick({
     summary: downloadPreview?.overwrite ?? null,
@@ -355,6 +390,39 @@ export const SyncButton: React.FC<SyncButtonProps> = () => {
           }
         }
 
+        // ── 2026-10-20：「云端有会话这轮读不出来」必须让用户看见 ──────────
+        //
+        // 根因：云端下行时读不出来的会话会被**整组跳过**（形状读不出来 /
+        // 还原率不达标 / tabs 表被网关截断 / 单组处理异常，见
+        // src/utils/supabase/download.ts），而这件事过去**只写进日志**。
+        // 于是界面报「同步成功」，用户却在列表里发现少了几组，无法解释自己
+        // 为什么少了东西 —— v1.22.0 起删除即物理清除、无回收站，用户的第一
+        // 反应必然是「是不是同步把我的东西弄丢了」。
+        //
+        // 为什么不是 error：这一轮**没有硬失败**，重试也不会变好（云端那行
+        // 还是读不出来）。说成失败 ⇒ 界面弹「下载失败，请重试」⇒ 用户一直
+        // 点重试，那是**误导性失败**，比谎报成功更糟。所以级别固定为 info。
+        //
+        // 为什么模式由**组件**判断而不是依赖引擎回传：引擎侧有没有带模式信息
+        // 是引擎的事，而「本次是不是覆盖」这个状态组件本来就知道（SYNC_ACTIONS
+        // 的 command.forceRemote）。依赖自己已知的真相，比依赖别人回传更可靠。
+        //
+        // 字段缺失（老后端 / 测试替身 / 这轮没跳过任何会话）⇒ notice 为 null
+        // ⇒ **一个字都不多说**（弹「0 个会话读不出来」是纯噪音）。
+        if (direction === 'download') {
+          const payload = res.payload as
+            | { skippedRemoteGroups?: { count?: number; ids?: string[] } }
+            | undefined;
+          const notice = skippedRemoteGroupsNotice({
+            direction,
+            mode,
+            count: payload?.skippedRemoteGroups?.count,
+          });
+          if (notice) {
+            showToast(notice.text, notice.severity, notice.durationMs);
+          }
+        }
+
         void trackProductEvent(
           direction === 'upload' ? 'sync_upload_completed' : 'sync_download_completed',
           trackingPayload()
@@ -403,8 +471,8 @@ export const SyncButton: React.FC<SyncButtonProps> = () => {
         {/* ── 2026-10-19 审计 F-1（P0）：窄屏下这两颗按钮必须收成图标 ────────
          *
          * 修复前它们是**带文字**的「上传」「下载」，合计 148px；而顶栏操作区
-         * `flex-shrink: 0`，搜索框那一列是 `minmax(0, 1fr)` —— 于是 400px 的
-         * popup（Chrome 扩展 popup 的真实宽度）里搜索框被压成 **0 宽**，
+         * `flex-shrink: 0`，搜索框那一列是 `minmax(0, 1fr)` —— 于是 400px 宽的
+         * 窗口里搜索框被压成 **0 宽**，
          * 「找回会话」这个核心入口整框消失。
          *
          * 主审真机复现（400×700）：`.app-header-search w=0`、
@@ -417,13 +485,25 @@ export const SyncButton: React.FC<SyncButtonProps> = () => {
          * 断点取 `lg` 而不是 `sm`：641–1024px 这段操作区最宽 421px，
          * 而顶栏在该区间让搜索独占一行（见 global.css 的 grid-template-areas），
          * 两颗带文字的同步按钮仍会把首行挤爆。
+         *
+         * ── 2026-10-20 几何修复：命中区必须 ≥36×36 ────────────────────────
+         * 收成图标之后，这两颗按钮的命中区只剩 **32×28px**（实测 400px 与
+         * 1280px 两处）—— 比顶栏其它图标按钮（`.btn-icon` 的 36×36）小一圈。
+         * 顶栏那条 `@media (max-width:640px) { .btn-icon { min-width/min-height: 2.25rem } }`
+         * 管不到它们：它们用的是自己的 `px-2 py-1.5`，压根不是 `.btn-icon`。
+         *
+         * 补 `min-w-9 min-h-9`（= 2.25rem = 36px），把两颗按钮纳入与
+         * `.btn-icon` 相同的尺寸下限。选 36px 的理由见 hitTarget.ts：
+         * WCAG 2.2 的 SC 2.5.8（AA）下限是 24px、SC 2.5.5（AAA）要 44px；
+         * 400px 宽的顶栏装不下 44px（操作区已占 280px），36px 是留足余量
+         * 又不牺牲可用性的那个值。
          */}
         <div className="flex items-center gap-1 lg:gap-2">
           <button
             type="button"
             onClick={handleUpload}
             disabled={isWorking}
-            className={`flex items-center whitespace-nowrap px-2 lg:px-3 py-1.5 rounded-md text-sm flat-interaction ${
+            className={`flex items-center whitespace-nowrap px-2 lg:px-3 py-1.5 min-w-9 min-h-9 rounded-md text-sm flat-interaction ${
               isWorking
                 ? 'bg-green-100 text-green-600'
                 : 'bg-green-100 text-green-600 hover:bg-green-200'
@@ -452,7 +532,7 @@ export const SyncButton: React.FC<SyncButtonProps> = () => {
           <button
             onClick={handleDownload}
             disabled={isWorking}
-            className={`flex items-center whitespace-nowrap px-2 lg:px-3 py-1.5 rounded-md text-sm flat-interaction ${
+            className={`flex items-center whitespace-nowrap px-2 lg:px-3 py-1.5 min-w-9 min-h-9 rounded-md text-sm flat-interaction ${
               isWorking
                 ? 'bg-primary-100 text-primary-600'
                 : 'bg-primary-100 text-primary-600 hover:bg-primary-200'
@@ -558,6 +638,7 @@ export const SyncButton: React.FC<SyncButtonProps> = () => {
                         uploadOverwritePreservesRemote
                           ? '把本机全部会话写入云端；云端独有会话保留，同 id 冲突按版本新旧裁决。'
                           : '用当前本地会话直接替换云端现状。',
+                        uploadPreview?.overwrite?.preservedRemoteCount ?? uploadPreservedRemoteCount,
                       )}
                       {/* 闸门提示：blocked 说清为何点不动；armed 说清再点一次会发生什么 */}
                       <div className="mt-3 rounded-xl bg-rose-50 px-3 py-2 text-xs leading-5 text-rose-700 dark:bg-rose-500/10 dark:text-rose-300">

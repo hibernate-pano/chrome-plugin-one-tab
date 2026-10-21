@@ -122,6 +122,43 @@ async function injectGroups(page, data) {
   }, data);
 }
 
+/**
+ * 等页面上**所有 favicon 图片真正解码完成**再截图。
+ *
+ * ── 为什么不能用固定等待 ────────────────────────────────────────────────
+ * 原来用的是 `waitForTimeout(1500)`（"等 favicon / 布局稳定"）。
+ * 那个 1.5 秒是**猜**的：favicon 来自 `google.com/s2/favicons`，
+ * 而它会 **301 跳到 `t1.gstatic.com`** —— 多一次往返，且这两个服务都偶发慢。
+ * 猜早了 ⇒ 截出来的商店图里 favicon 是一片空白方块。
+ *
+ * 实测踩到过：同一份代码两次生成截图，一次有图标、一次没有 ——
+ * 因为「有没有图标」取决于那一刻网络抖动，**不可复现**。
+ *
+ * ── 为什么不用 networkidle ──────────────────────────────────────────────
+ * 扩展页面里可能有长连的请求（alarms / sync），networkidle 未必达成，
+ * 会让脚本**超时失败**而不是「等久一点」。
+ *
+ * 【判据】等到「页面上每一个 <img> 都 complete」：
+ *   · complete=true  且 naturalWidth>0 ⇒ 加载成功；
+ *   · complete=true  且 naturalWidth=0 ⇒ 加载**失败**（回退图标已渲染，
+ *     等下去也不会变好）—— 这种情况**不阻塞**，直接返回。
+ * ⇒ 只有「还在加载中」的才继续等，且有上限（15s）。
+ */
+async function waitForFavicons(page, timeoutMs = 15000) {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    const pending = await page.evaluate(() =>
+      Array.from(document.images).filter(img => !img.complete).length
+    );
+    if (pending === 0) return;
+    if (Date.now() > deadline) {
+      console.warn(`⚠️ 仍有 ${pending} 张图片未加载完（已等 ${timeoutMs}ms），继续截图`);
+      return;
+    }
+    await page.waitForTimeout(250);
+  }
+}
+
 async function main() {
   mkdirSync(OUT_DIR, { recursive: true });
   const profile = mkdtempSync(join(tmpdir(), 'tapstack-shot-'));
@@ -153,7 +190,7 @@ async function main() {
     await injectGroups(page, groups);
     await page.reload();
     await page.waitForSelector('text=V2 同步架构评审', { timeout: 15000 });
-    await page.waitForTimeout(1500); // 等 favicon / 布局稳定
+    await waitForFavicons(page);
 
     await page.screenshot({ path: join(OUT_DIR, 'screenshot-1-main.png') });
     console.log('✅ screenshot-1-main.png');
@@ -163,6 +200,7 @@ async function main() {
     await search.click();
     await search.fill('React');
     await page.waitForTimeout(1200);
+    await waitForFavicons(page);
     await page.screenshot({ path: join(OUT_DIR, 'screenshot-2-search.png') });
     console.log('✅ screenshot-2-search.png');
   } finally {

@@ -360,9 +360,52 @@ describe(
       // 走真实 defaultFactory ⇒ client 用的是全局 fetch，所以必须铺一个
       // 假的 DAV 服务端（否则会真的去请求 https://dav.example.com）。
       const files = new Map<string, string>();
+      // ⚠️ 这个假服务器必须**说 WebDAV 协议**。
+      // 2026-10-20：它原先对 PROPFIND 也回「请求正文」，于是响应里没有
+      // 任何 <multistatus> ⇒ 适配器判「目录读不懂」⇒ fail-closed ⇒
+      // 上传被中止。本条要测的是「水位基线有没有接上真实 seq 计数器」，
+      // 被列目录的失败挡住就测不到它了 —— 所以这里必须回一份**合法的
+      // DAV 清单**（Depth:0/1 都回），而不是随便回个 200。
+      const davResponseXml = (url: string) => {
+        const rel = url.replace('https://dav.example.com/dav/', '').replace(/\/+$/, '');
+        const childEntries = [...files.keys()]
+          .filter(k => {
+            const krel = k.replace('https://dav.example.com/dav/', '');
+            return krel !== rel && krel.startsWith(rel + '/') && !krel.slice(rel.length + 1).includes('/');
+          })
+          .map(k => {
+            const krel = k.replace('https://dav.example.com/dav/', '');
+            const isDir = !krel.slice(rel.length + 1).includes('/');
+            return (
+              `<D:response><D:href>https://dav.example.com/dav/${krel}${isDir ? '/' : ''}</D:href>` +
+              `<D:propstat><D:prop><D:resourcetype>${isDir ? '<D:collection/>' : ''}</D:resourcetype>` +
+              `<D:getetag>"x1"</D:getetag></D:prop><D:status>HTTP/1.1 200 OK</D:status></D:propstat></D:response>`
+            );
+          });
+        return (
+          '<?xml version="1.0"?><D:multistatus xmlns:D="DAV:">' +
+          `<D:response><D:href>https://dav.example.com/dav/${rel}/</D:href>` +
+          '<D:propstat><D:prop><D:resourcetype><D:collection/></D:resourcetype>' +
+          '<D:getetag>"x1"</D:getetag></D:prop><D:status>HTTP/1.1 200 OK</D:status></D:propstat></D:response>' +
+          childEntries.join('') +
+          '</D:multistatus>'
+        );
+      };
       const fakeFetch: typeof fetch = async (input, init) => {
         const url = String(input);
         const method = (init?.method ?? 'GET').toUpperCase();
+        if (method === 'PROPFIND') {
+          // 目录也可能不存在（还没建库）⇒ 404 = 「列不出来」。
+          const rel = url.replace('https://dav.example.com/dav/', '').replace(/\/+$/, '');
+          const known =
+            rel === '' ||
+            [...files.keys()].some(k => k.replace('https://dav.example.com/dav/', '').startsWith(rel));
+          if (!known) return new Response(null, { status: 404 });
+          return new Response(davResponseXml(url), {
+            status: 207,
+            headers: { 'Content-Type': 'application/xml' },
+          });
+        }
         if (method === 'GET') {
           const body = files.get(url);
           if (body === undefined) return new Response(null, { status: 404 });
