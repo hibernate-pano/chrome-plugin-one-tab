@@ -240,7 +240,7 @@ export function decideForceRemoteOverwrite(
  *
  * ⚠️ 覆盖下载（forceRemote）的空云端保护**不在这里**，而是上游的
  * decideForceRemoteOverwrite：那条路径在合并前就把 localGroups 置空，
- * 本函数的规则 2 在它上面恒不可达。两处必须分工明确，改一处要想到另一处。
+ * 本函数的规则 3 在它上面恒不可达。两处必须分工明确，改一处要想到另一处。
  */
 export function validateMergeResult(
   localGroups: TabGroup[],
@@ -254,13 +254,30 @@ export function validateMergeResult(
     return { valid: true };
   }
 
-  // 规则 2：本地有活跃数据但合并后为空，异常
-  if (activeLocalCount > 0 && mergedGroups.length === 0) {
-    return {
-      valid: false,
-      reason: `本地有 ${activeLocalCount} 个活跃组，但合并后为 0（可能云端覆盖了所有本地数据）`,
-    };
-  }
+  // ── 2026-10-21：原「规则 2」已删除（论证留档，防止有人凭直觉加回来）──────
+  // 旧规则 2：`activeLocalCount > 0 && mergedGroups.length === 0` ⇒ 判异常，
+  // 理由写的是「可能云端覆盖了所有本地数据」。
+  //
+  // 在 2026-09-29 重写后的 whole-group LWW 语义（见 opStampMerge.ts 头注释）
+  // 下，这条规则**只会命中一个合法场景**：本地每个活跃组都被云端**严格更新
+  // 的墓碑**覆盖 —— 也就是「另一台设备把这些会话全删了，本机必须收敛」。
+  // 推导：合并结果为空要求每个本地活跃 id 都在云端有同 id 行且该行赢；
+  // 若赢家是云端活跃行，它会以活跃身份进 merged（merged 非空）；本地独有
+  // id 永远保留。所以 merged=0 ⟺ 每个本地活跃组都输给了云端墓碑行。
+  //
+  // 实测后果（tests/syncNoResurrectConvergence.test.ts 的探针先红后绿）：
+  // 本地仅存的会话永远收不到「另一端已删除」，每轮下载都以
+  // `validation_failed` 中止，用户侧持续看到同步失败，且该会话成为
+  // 永不收敛的僵尸副本。规则 2 把合法传播当故障拦，属「防线方向错了」
+  // ——比没有防线更坏（没有它时合并语义本身就是对的）。
+  //
+  // 它当初要防的「云端覆盖所有本地数据」现在由两处分别覆盖，都不依赖本函数：
+  //   · 覆盖下载（forceRemote）：decideForceRemoteOverwrite 的空云端闸门
+  //     （本地活跃 > 0 且云端一行都没有 ⇒ refuse）；且该路径在合并前把
+  //     localGroups 置空，旧规则 2 在此同样不可达；
+  //   · 常规下载：云端活跃行只会以活跃身份进 merged，不可能把本地「覆盖
+  //     成空」；能让本地组消失的只有墓碑行，而墓碑 = 用户显式删除，
+  //     正是必须传播的东西（删除熔闸管的是合并剔除量，不管删除广播）。
 
   // 规则 3：合并后组数不应低于 活跃本地组数 减去云端明确删除的组数
   const cloudDeletedCount = cloudGroups.filter(g => g.isDeleted).length;

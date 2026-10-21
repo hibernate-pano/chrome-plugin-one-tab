@@ -10,16 +10,20 @@ export { UPLOAD_GUARD_MS } from '@/core/syncDecision';
 import type { TabGroup, UserSettings } from '@/types/tab';
 import { storage, invalidateGroupsCache } from '@/utils/storage';
 import {
-  downloadTabGroups,
   downloadTabGroupsDigest,
   uploadTabGroups,
   markCloudGroupsAsDeleted,
   purgeExpiredCloudTombstones,
 } from '@/services/tabGroupSyncService';
+// 「读到的 + 读不出来而被整组跳过的」一次性读取（2026-10-20 D-6）。
+// 为什么不用裸的 downloadTabGroups：只拿「读到的」会让引擎把「云端那份
+// 没读到」误判成「云端没有这一组」—— 覆盖下载时那会把本机那份物理删除，
+// 而删除熔断与删除广播都看不见它。详见该文件头。
+import { downloadGroupsWithSkipped } from '@/services/downloadWithSkippedGroups';
 import {
   uploadSettings,
   downloadSettings,
-  DEVICE_LEVEL_SETTING_KEYS,
+  stripNonPortableSettings,
 } from '@/services/settingsSyncService';
 import {
   validateMergeResult,
@@ -30,6 +34,13 @@ import {
 // 合并语义已统一为 mergeOpStamped（OpStamp 全序决胜，组级 LWW 整组覆盖）。
 // 这是合并的唯一真相源；旧 LWW 实现已随 2026-10-05 瘦身删除。
 import { mergeOpStamped } from '@/core/opStampMerge';
+// 「登记的待传集合」与「本轮上行的集合」的对账判据（2026-10-20 D-3）。
+// 纯函数、后端无关：两个后端走的是同一段引擎代码 ⇒ 判据只有一份。
+import {
+  reconcileUploadCoverage,
+  decideRegistryAfterUpload,
+  decideRegistryAfterRegistryWrite,
+} from '@/core/uploadCoverage';
 import { checkDeleteFailsafe } from '@/sync-backend/failsafe';
 import { readConfiguredBackendId } from '@/sync-backend';
 import type { SyncBackendId } from '@/sync-backend';
@@ -73,6 +84,17 @@ export interface MergeResult {
    * 把两者混成「reason === 'backend_locked'」会让人话从 toast 里消失。
    */
   locked?: boolean;
+  /**
+   * 本轮云端有 N 个会话**读不出来**而被整组跳过（2026-10-20 D-6）。
+   *
+   * 这些会话的**云端行仍在**（一个字节都没被动过），但本机这一轮拿不到它们。
+   * 引擎必须在覆盖模式下**保住本机那几份**（云端那份没拿到 ⇒「云端说了算」
+   * 这条规则不适用），并把这件事如实上报 —— 否则界面报「同步成功」，而用户
+   * 只看到「列表变短了」（v1.22.0 起无回收站 ⇒ 不可逆）。
+   *
+   * 字段缺失（老后端 / 测试替身 / 本轮没跳过任何会话）⇒ 没有这件事。
+   */
+  skippedRemoteGroups?: { count: number; ids: string[] };
 }
 
 export interface UploadResult {
@@ -89,6 +111,41 @@ export interface UploadResult {
    * 语义与 MergeResult.locked 相同：正常用户状态，后台应让路而不是退避。
    */
   locked?: boolean;
+  /**
+   * 本轮**登记了但没上传上去**的会话数（2026-10-20 D-3）。
+   *
+   * ── 为什么需要这个字段 ──────────────────────────────────────────────────
+   * 「上传成功」在这台机器上曾经意味着两件不同的事：
+   *   · 「这一批改动确实到了云端」；
+   *   · 「这一轮流程没有抛错」。
+   * 修复前这两件事被混为一谈：归属待决期的白名单里全是不存在的 id 时，
+   * 上传集合是空集，流程照样走完并 `success: true` ⇒
+   * 用户看到「上传成功」，而那 20 个导入的会话**一个都没上云**。
+   *
+   * 这个字段是**事实**，不是文案：>0 ⇒ 确实有会话没同步。
+   * UI 必须据此告诉用户「N 个会话尚未同步」（见 syncEngine.upload 的调用点）。
+   */
+  skippedGroups?: number;
+  /**
+   * 上面 skippedGroups 对应的会话 id（诊断用；UI 通常只报数量）。
+   */
+  skippedGroupIds?: string[];
+  /**
+   * 本轮**无法确认「全部已同步」**（2026-10-20 D-10）。
+   *
+   * ── 为什么需要这个字段 ──────────────────────────────────────────────────
+   * 「有没有东西没传上去」与「能不能证明东西都传上去了」是**两件事**：
+   * 登记失败过的那一轮，登记集合可能与上行集合**完全对得上**（skippedGroups=0），
+   * 而「没漏」这件事**无从证明**（漏登记的改动压根没记下 id）。
+   *
+   * 旧代码只按 skippedGroups>0 决定要不要告诉用户 ⇒ 这种情况界面报
+   * 「上传成功」—— 那是在**撒谎**。这个字段是那件事的**事实**：
+   * 为 true ⇒ 调用方（SW 的 SYNC 回包）必须把 ok 置 false ⇒ 界面弹提示，
+   * 而不是弹「同步成功」。
+   *
+   * 字段缺失（老调用方 / 本轮一切正常）⇒ 没有这件事。
+   */
+  cannotConfirmAllSynced?: boolean;
 }
 
 export type SyncOperation = 'upload' | 'download' | 'none';
@@ -145,8 +202,11 @@ async function mergeCloudSettingsIntoLocal(): Promise<void> {
   // syncIntervalMinutes）以本机为准，忽略云端给它们的值 —— 云端行里可能
   // 仍留着上传前的老版本写下的这些键（存量行、改设置前推上去的行）。
   // 这与 uploadSettings 侧剔除同一份 DEVICE_LEVEL_SETTING_KEYS，两侧成对。
-  const cloudPreferences = { ...cloudSettings };
-  for (const key of DEVICE_LEVEL_SETTING_KEYS) delete cloudPreferences[key];
+  // 2026-10-20 审计 A-21：改用共用函数 stripNonPortableSettings ——
+  // 「上云 / 云端合并 / 导入备份 / 导出备份」四条路径同一张剔除表。
+  // （已退役键此前在这一侧没剔，靠 storage.setSettings 兜底剔掉；
+  //   结果一样，但多走一步且「谁负责剔」不清楚。）
+  const cloudPreferences = stripNonPortableSettings(cloudSettings);
 
   const convertedSettings: UserSettings = {
     ...localSettings,
@@ -281,14 +341,55 @@ export class SyncEngine {
     // 决定「允许传哪些会话」，漏写就等于这次改动在待决期传不上去（fail-closed，
     // 不会多传；但用户会以为已同步）。与置位同样只记 error 级日志、不抛 ——
     // scheduleUpload 是 fire-and-forget 的调度入口。
+    //
+    // ⚠️ 2026-10-20 D-3：登记失败**不能只记日志**。
+    // 登记失败的后果不是「少传几个」，而是「**不知道漏了哪几个**」——
+    // 于是「白名单与上行集合对得上账」这个判据失去意义（对得上只说明
+    // 「登记到的都传了」，没说明「没登记的也没漏」）。
+    // 所以这里把「登记不可信」这个事实**持久化**：上传流程读到它就
+    // 不会清 pending_upload、不会宣称「全部同步」（见 core/uploadCoverage）。
+    //
+    // ── 2026-10-20 D-10：这里也是标志的**复位**入口之一 ─────────────────
+    // 标志原先只被「上传对账通过」清（写在 upload 的 canClearPending 分支里），
+    // 而那个判据里又含「标志为假」⇒ **自锁**：标志一旦置上就永不复位
+    // ⇒ pending_upload 永远清不掉 ⇒ 每轮后台同步都在重跑上传，界面还报
+    // 「同步成功」（界面撒谎的原因：skippedGroups 恒为 undefined）。
+    //
+    // 复位条件必须**与上传对账无关**，否则就是同一个自指。
+    // 这里给出的是其中一条**与对账完全无关**的路径：
+    //   「**本次登记成功**」⇒ 登记机制此刻是好的 ⇒ 「不可信」这个事实不再成立
+    //   （注意：只清「不可信」这一位，**不清**「漏登记的那批还没补传」——
+    //    那一位只能由「一次全量提交」清，见 core/uploadCoverage 的注释）。
+    // 依据是**写方的事实**（noteGroupsChanged 这次没抛错），与上传无关 ⇒ 不自指。
+    //
+    // 判据本身在纯函数里（decideRegistryAfterRegistryWrite）：存储层只负责
+    // 忠实落盘，两处不许各写一套（漂移过一次的后果是「漏登记永远补不上」）。
     const noted = changedGroupIds && changedGroupIds.length > 0
-      ? storage.noteGroupsChanged(changedGroupIds).catch(err => {
-          logError(
-            '[SyncEngine] 登记「本次改动的会话 id」失败——若此刻正处于 WebDAV 归属待决期，' +
-              '这批改动本轮不会被上传（不会多传，只会留在本机等你完成归属决策）。原始错误：',
-            err
-          );
-        })
+      ? storage.noteGroupsChanged(changedGroupIds).then(
+          () => this.applyRegistryWriteOutcome(true),
+          err => {
+            logError(
+              '[SyncEngine] 登记「本次改动的会话 id」失败——若此刻正处于 WebDAV 归属待决期，' +
+                '这批改动本轮不会被上传（不会多传，只会留在本机等你完成归属决策）。原始错误：',
+              err
+            );
+            // 登记失败 → 记下「登记不可信」。这个标记本身写失败也只能记日志
+            // （已经在一个失败路径上了，不能再抛）。
+            //
+            // ⚠️ 这里用的是**直接置位**而不是纯函数那条路：置位就是
+            // 「unreliable=true + gapOpen=true」，没有取舍可做。
+            // 纯函数那条路（decideRegistryAfterRegistryWrite）服务的是
+            // **复位**——「登记成功 ⇒ 只清 unreliable、保留 gapOpen」
+            // （顺手把 gapOpen 也清了 ⇒ 漏登记的那批永远补不上）。
+            return storage.setPendingUploadRegistryUnreliable(true).catch(err2 => {
+              logError(
+                '[SyncEngine] 标记「增量白名单登记不可信」也失败了——' +
+                  '本轮可能误判「全部已同步」而清掉 pending_upload。原始错误：',
+                err2
+              );
+            });
+          }
+        )
       : Promise.resolve();
     if (typeof chrome !== 'undefined' && chrome.alarms) {
       // ponytail: 双驱动——R6 修复。chrome.alarms 最小 delayInMinutes 是 0.5（30s），
@@ -319,6 +420,33 @@ export class SyncEngine {
         .catch(err => logError('[SyncEngine] 延迟上传失败:', err));
     }, delayMs);
     return Promise.all([marked, noted]).then(() => undefined);
+  }
+
+  /**
+   * 写方侧：把「本次登记成功 / 失败」这个**事实**落进「登记不可信」标志。
+   *
+   * 判据在纯函数里（core/uploadCoverage 的 decideRegistryAfterRegistryWrite），
+   * 这里只负责**忠实落盘** —— 存储层与纯函数不许各写一套判据：漂移过一次
+   * 的后果是「纯函数说保留 gapOpen、落盘却把整个键删了」⇒ 漏登记的那批
+   * 永远补不上（静默丢失）。
+   *
+   * ⚠️ 写失败只记日志，不抛：登记本身已经成功了（或已经失败了），
+   * 标志写不进去只是让它多留一轮（下一轮登记成功会再清一次），
+   * 不该让整个调度失败。
+   */
+  private async applyRegistryWriteOutcome(writeSucceeded: boolean): Promise<void> {
+    if (!writeSucceeded) {
+      // 失败路径：直接置位（unreliable + gapOpen）。调用方已经处理了日志。
+      return;
+    }
+    try {
+      const before = await storage.getPendingUploadRegistryState();
+      const decision = decideRegistryAfterRegistryWrite({ before, writeSucceeded: true });
+      if (!decision.changed) return; // 状态没变 ⇒ 不写（幂等）
+      await storage.setPendingUploadRegistryStateIfUnchanged(before.gen, decision.after);
+    } catch (err) {
+      logWarn('[SyncEngine] 标记「登记已恢复可信」失败（下轮登记成功时再清）:', err);
+    }
   }
 
   /**
@@ -527,13 +655,42 @@ export class SyncEngine {
         }
       }
       // 2. 下载云端
-      const cloudGroups = await downloadTabGroups();
+      //
+      // 【为什么必须连「读不出来的那几组」一起拿】（2026-10-20 D-6）
+      // 云端下行时有些会话**整组读不出来**会被跳过（形状不可恢复 / 还原率
+      // 不达标 / tabs 表被网关截断 / 单组处理异常）。它们的**云端行仍在**，
+      // 只是**不在下载结果里**。
+      //
+      // 只拿「读到的」⇒ 引擎会把「云端那份没读到」误判成「云端没有这一组」：
+      //   · 覆盖下载把 localGroups 整体置空 ⇒ 本机那一份被物理删除；
+      //   · 删除熔断量的是「合并结果里被剔除的」⇒ 压根没进合并结果 ⇒ 熔断看不见；
+      //   · droppedIds 为空 ⇒ 不登记删除广播 ⇒ 云端行也不会被标记；
+      //   · success: true ⇒ 界面报成功 ⇒ 用户唯一可见信号是「列表变短了」。
+      // 而 1.22.0 起删除即物理清除、无回收站 ⇒ 一次覆盖下载就足以永久清掉
+      // 用户仅存于本机的那一份。
+      //
+      // 自带存储后端在同样情形下是 fail-closed 的（整轮抛错中止，见
+      // sync-backend/webdav/adapter.ts）—— 只有云端后端是「静默少读」。
+      // 读法与清单在服务层一次完成（同一轮、同一端口实例），见
+      // services/downloadWithSkippedGroups.ts。
+      const { groups: cloudGroups, skipped: skippedRemote } =
+        await downloadGroupsWithSkipped();
       report(55, 'download');
+      // 本轮被整组跳过的会话 id（云端行仍在、未写回、未登记墓碑）。
+      const skippedIds = new Set(skippedRemote.map(s => s.id));
+      if (skippedRemote.length > 0) {
+        logWarn(
+          `[SyncEngine] 云端有 ${skippedRemote.length} 个会话这轮读不出来（整组跳过）：` +
+            `${skippedRemote.map(s => s.id).slice(0, 5).join('、')}` +
+            `${skippedRemote.length > 5 ? ' 等' : ''}。云端那些行未被改动；` +
+            '覆盖下载时本机对应的几份会被保住。'
+        );
+      }
       // 3. 空云端闸门（2026-10-17 修 P0）：覆盖下载必须先过这一关。
       //
       // 【为什么这一关不能省】下面第 4 步会把 localGroups 置空（覆盖语义），
-      // 于是 validateMergeResult 的规则 2「本地有活跃数据但合并后为空」在
-      // 覆盖路径上**恒不可达** —— 那条防线在这里形同不存在。
+      // 于是 validateMergeResult 的规则 3「合并后组数不得低于预期最小值」
+      // 在覆盖路径上**恒不可达** —— 那条防线在这里形同不存在。
       // 而「本地有会话 + 云端一个字节都没有」时继续覆盖，等于用空库把本机
       // 全清空且不可逆（1.22.0 起无回收站），UI 还会显示覆盖成功。
       //
@@ -542,10 +699,19 @@ export class SyncEngine {
       //
       // 【为什么不看活跃行】云端只有墓碑行时收敛到空是**合法**的 —— 那正是
       // 「另一台设备把会话都删了」，必须传播。判据用总行数（含墓碑）。
+      //
+      // 【云端真实行数 = 读到的 + 跳过的】（2026-10-20 D-6）
+      // 「云端只有 1 组、而那 1 组读不出来」时，cloudGroups.length === 0 ⇒
+      // 闸门会说「云端没有任何数据」⇒ 拒绝覆盖 —— **那句文案是假的**：
+      // 云端有 1 组，只是我们没拿到。
+      //
+      // 这个等式是**精确**的，不是近似：云端跳过路径**从不写云端**
+      // （读不出来的那些行一个字节都没被动过），所以云端行数既不增也不减。
+      // 墓碑行也在「读到的」里（isDeleted: true）⇒ 也在计数内。
       if (opts?.forceRemote) {
         const gate = decideForceRemoteOverwrite({
           localActiveCount: snapshot.filter(g => !g.isDeleted).length,
-          cloudTotalCount: cloudGroups.length,
+          cloudTotalCount: cloudGroups.length + skippedRemote.length,
         });
         if (gate.action === 'refuse') {
           logError('[SyncEngine] 拒绝空云端覆盖:', gate.reason);
@@ -557,7 +723,81 @@ export class SyncEngine {
       // 4. 确定本地。覆盖模式（forceRemote）= 云端完全镜像本地：本地置空，
       //    merge 退化为「云端活跃行直通」（云端墓碑行被 merge 跳过，永不入库）。
       //    正常模式剥掉本地残留的组级墓碑（老版本写入形状，见上）。
-      const localGroups = opts?.forceRemote ? [] : snapshot.filter(g => !g.isDeleted);
+      //
+      //    ⚠️ 覆盖模式下**例外**：被云端「读不出来」的那几组，本机那一份
+      //    **必须保留**（2026-10-20 D-6）。
+      //
+      //    为什么：覆盖语义是「云端说了算」，而「说了算」的前提是**我们确实
+      //    拿到了云端那一份**。读不出来 ⇒ 我们对那几组一无所知 ⇒ 把本机那份
+      //    一并清掉是在拿「不知道」冒充「云端没有」。
+      //
+      //    为什么这不是「保护做过头」：
+      //      · 被跳过的组**不在 cloudGroups 里** ⇒ mergeOpStamped 走
+      //        「只有本地」分支 ⇒ 保留本地（与合并模式同一条路径）；
+      //      · 它**不会**进 removedGroupIds ⇒ **不会**被登记进
+      //        pendingDeleteIds ⇒ 云端行不动（云端行原封保留）；
+      //      · 真正「云端说它没了」的组（墓碑行 is_deleted=true）是**另一件事**：
+      //        那不是跳过，那是删除广播，照常执行（见下面 mergeOpStamped 的
+      //        墓碑分支）。
+      //
+      //    代价（已知且可接受）：被保住的那份，其印记可能比云端旧。若云端
+      //    那一行始终读不出来，两边各有一份、内容可能不同 ⇒ 不会自动收敛。
+      //    那是「暂时不一致」换「永久丢失」—— 与 D-6 的设计意图一致。
+      // ── 2026-10-20 D-8：剥掉本机老版本墓碑组时**必须登记删除广播** ─────────
+      //
+      // 缺陷形态：本地有个老版本写入的墓碑组（isDeleted=true，v1.21 的残留形状），
+      // 云端那一行是**活跃**的。本机在合并前把它 filter 掉了（本地不留墓碑，
+      // 见文件头「无墓碑模型」），但**没有**登记一次删除广播 ⇒
+      // 云端那一行仍然是活跃的 ⇒ 下一轮下载合并时它以「云端有、本地无」的身份
+      // **整组复活** ⇒ 那个「本机已经删掉的会话」在所有设备上又回来了。
+      //
+      // 为什么它躲过了既有的删除广播登记：
+      // 登记走的是 `removedGroupIds(mergedGroups, finalGroups)` ——
+      // 而墓碑组在**进合并之前**就被 filter 掉了，它压根不在 mergedGroups 里 ⇒
+      // removedGroupIds 看不见它 ⇒ 队列里永远没有它 ⇒ 广播永远不发。
+      //
+      // 修法：剥掉的那一刻就把 id 收进「本轮要登记的删除广播」清单。
+      // 登记的**时机**仍然在写入之后（与空壳剔除同一批），保证「队列已落盘」
+      // 与「本地已写入」这两件事的顺序与既有路径一致。
+      //
+      // ⚠️ 方向为什么是「登记删除广播」而不是「保留本地那份」：
+      // 本地那份是**墓碑**（用户已经删了它，或老版本已经标记了它）。
+      // 保留它 = 让一个已删的会话继续存在 ⇒ 下一个本地清理才删它 ⇒
+      // 用户看到「我明明删了，它又出现了」。而登记广播 = 把删除意图送到云端
+      // ⇒ 下一轮云端那一行也变成墓碑 ⇒ 两边一致，且**符合用户意图**。
+      //
+      // 【为什么「剥掉」本身就是一次删除意图的证据】
+      // 本机这个组是**墓碑**（isDeleted=true）——它是老模型（v1.21）在本地盖的
+      // 删除标记。用户（或老版本设备）当时表达过「这个会话删掉」。
+      // 云端那一行仍是活跃的，只说明**那份删除意图从未送达云端**。
+      // 所以「本机把它剥掉」不等于「这个会话还活着」，恰恰相反：它是唯一
+      // 还留着的删除证据。剥掉它之前不把意图送去云端，这条证据就随写盘
+      // 一起消失了 —— 而云端那一行仍然是活跃的 ⇒ 下一轮它整组回来。
+      //
+      // 【与 D-6 的「被跳过组」不是一回事】
+      // D-6 保护的是「本机那一份是活的，只是云端这份这轮读不出来」——
+      // 那种情况下我们对云端的态度一无所知，所以不能把「读不出来」翻译成
+      // 「已删除」。而本机这份是**墓碑**：删除意图有本机证据，与云端读不读得
+      // 出来无关。所以这里不按 skippedIds 豁免。
+      //
+      // 【一个必须守住的例外】
+      // 若同一个 id **同时**存在一个活跃的本机组（老版本的脏数据可能留下
+      // 两条），那活跃那份才是真相（合并结果里它会胜出并留在本机）——
+      // 此时把墓碑的删除意图广播出去 = 把用户还想要的会话永久删掉。
+      // 所以：只登记「没有活跃副本」的墓碑 id。
+      const activeLocalIds = new Set(
+        snapshot.filter(g => !g.isDeleted).map(g => g.id)
+      );
+      const legacyLocalTombstoneIds = [
+        ...new Set(
+          snapshot
+            .filter(g => g.isDeleted && !activeLocalIds.has(g.id))
+            .map(g => g.id)
+        ),
+      ];
+      const localGroups = opts?.forceRemote
+        ? snapshot.filter(g => !g.isDeleted && skippedIds.has(g.id))
+        : snapshot.filter(g => !g.isDeleted);
       // 5. 合并
       // 无墓碑模型（2026-09-29）：组级 LWW 整组覆盖（语义见 mergeOpStamped 头注释）。
       // 云端 is_deleted 行 = 删除广播：对端活跃副本 stamp 更旧则服从删除；
@@ -593,7 +833,27 @@ export class SyncEngine {
       // 【副作用与取舍】锁定空壳会因此在 storage 里留更久。视图层另有过滤
       // （toActiveGroupsView 仍用 isEmptyGroup，不看锁定），所以不会渲染成空卡；
       // 想彻底删掉它的用户走 deleteGroup（用户显式意图，不豁免）。
-      const finalGroups = dropSyncMergedGroups(mergedGroups);
+      //
+      // ⚠️【被跳过的组必须豁免空壳剔除】（2026-10-20 D-6）
+      // 被跳过的组是以「本机那一份」进入合并结果的（见上面第 4 步；合并模式下
+      // 它本来就在合并结果里）。若本机那一份恰好是**零标签**（老版本残留形状 /
+      // 用户清空后留下的空壳），dropSyncMergedGroups 会把它当垃圾剔掉 ⇒
+      // 它进了 removedGroupIds ⇒ **被登记进 pendingDeleteIds** ⇒
+      // 云端那一行被打上墓碑 ⇒ 那个「云端只是这轮没读到」的会话被**永久删除**
+      // （1.22.0 起无回收站）。
+      //
+      // 也就是说：保护它不被「整份覆盖写」物理删除还不够，它也绝不能被
+      // 「空壳清理」这条路登记成删除广播。**两道门都要守住**（合并模式同样要守：
+      // 那里它进 pendingDeleteIds 的路径与覆盖模式是同一条）。
+      //
+      // 做法：先按既有判据剔除空壳，再把「被跳过的」那几组**放回去**。
+      // 用「放回去」而不是「剔除前先排除」是为了保住**原有顺序**
+      // （finalGroups 的顺序即合并结果的顺序）。
+      const shellDropped = dropSyncMergedGroups(mergedGroups);
+      const shellDroppedIds = new Set(removedGroupIds(mergedGroups, shellDropped));
+      const finalGroups = mergedGroups.filter(
+        g => !shellDroppedIds.has(g.id) || skippedIds.has(g.id)
+      );
 
       // ── 删除熔断（2026-10-13，WebDAV 阶段 3）────────────────────────────
       // 位置在**写入之前**：熔断的语义是「这一次同步不许造成这么大的删除」，
@@ -655,11 +915,34 @@ export class SyncEngine {
         }
       }
 
+      // ── D-8 登记：本机老版本墓碑组的删除意图（**必须早于写盘**）────────
+      //
+      // 顺序不是洁癖，是崩溃窗口的取舍：
+      //   先登记后写盘 ⇒ 崩在中间时意图仍在队列里（多广播一次，幂等）；
+      //   先写盘后登记 ⇒ 崩在中间时本机墓碑已被物理抹掉、意图**永久丢失**
+      //                    ⇒ 云端那一行仍是活跃的 ⇒ 下一轮整组复活（= 本缺陷）。
+      let deleteQueued = false;
+      if (legacyLocalTombstoneIds.length > 0) {
+        try {
+          await storage.addPendingDeleteIds(legacyLocalTombstoneIds);
+          deleteQueued = true;
+          logInfo(
+            `[SyncEngine] 登记删除广播 ${legacyLocalTombstoneIds.length} 个` +
+              '本机老版本墓碑组（它们马上会被写盘抹掉；不登记的话云端那一行' +
+              '仍是活跃的，下一轮整组复活）'
+          );
+        } catch (e) {
+          // 写失败时 addPendingDeleteIds 已把整批推进内存兜底，意图仍在，
+          // 仍需置位 pending_upload 让下一轮上传尝试广播（否则删除只留在内存）。
+          logWarn('[SyncEngine] 登记删除广播队列失败（云端行可能残留复活）:', e);
+          deleteQueued = true;
+        }
+      }
       await storage.setGroupsImmediate(finalGroups);
       // 广播队列必须伴随 pending_upload 置位，否则入队了也没人执行：
       // backgroundSync 只在 hasPendingUpload() 为真时才上传，而下载路径
       // 从不置这个标志 → 云端行永远标记不到 → 对端复活。
-      let deleteQueued = false;
+      // D-8：本机老版本墓碑组（上面已登记）+ 合并剔除的空壳组 —— 两类都要广播。
       const droppedIds = removedGroupIds(mergedGroups, finalGroups);
       if (droppedIds.length > 0) {
         try {
@@ -709,6 +992,24 @@ export class SyncEngine {
           mergedCount: finalGroups.length,
           conflicts: finalGroups.filter(g => g.syncStatus === 'conflict').length,
         },
+        // ── 2026-10-20 D-6：如实上报「云端有 N 组这轮读不出来」────────────
+        //
+        // 为什么 success 仍然是 true：这一轮**没有硬失败**，重试也不会变好
+        // （云端那行还是读不出来）。说成失败 ⇒ 界面弹「下载失败，请重试」
+        // ⇒ 用户一直点重试 ⇒ 那是**误导性失败**，比谎报成功更糟。
+        // 仓库已有先例：UploadResult 的 D-3 修法就是 success:true + skippedGroups。
+        //
+        // 为什么覆盖模式下不能只报数字：界面需要区分「合并」与「覆盖」两种
+        // 事实（合并时本机那份一直都在；覆盖时那几份是被**特意保住**的），
+        // 所以把 id 清单也带出去（界面按 count 出文案，id 供诊断）。
+        ...(skippedRemote.length > 0
+          ? {
+              skippedRemoteGroups: {
+                count: skippedRemote.length,
+                ids: skippedRemote.map(s => s.id),
+              },
+            }
+          : {}),
       };
     } catch (error) {
       logError('[SyncEngine] 下载合并失败:', error);
@@ -835,11 +1136,53 @@ export class SyncEngine {
       const changedGroupIds = suppressFullUpload
         ? new Set(await storage.getPendingUploadGroupIds())
         : null;
+
+      // ── 2026-10-20 D-10：「登记不可信」标志的**完整状态** ───────────────
+      // 标志是**持久化**的：写入失败可能发生在**上一次**上传之前，
+      // 那一轮的失败不能因为进程重启就消失。
+      //
+      // 两个位（见 core/uploadCoverage 的 decideRegistryAfterUpload）：
+      //   · unreliable —— 登记机制此刻不可信（最近一次登记失败了）；
+      //   · gapOpen —— 之前漏登记的那批改动**至今没被全量补传过**。
+      //
+      // 轮次开始时先读一次（快照）：轮次结束时要判断「本轮是否补上了漏登记
+      // 的那批」⇒ 需要一个「本轮提交的是不是全量」的事实。
+      const registryStateBefore = await storage.getPendingUploadRegistryState();
+      // gapOpen ⇒ 漏登记的那批 id 已经不知道 ⇒ 唯一的兜底是「全量传一次」。
+      const needsFullScope = registryStateBefore.gapOpen;
+      if (needsFullScope) {
+        logWarn(
+          '[SyncEngine] 此前有一次「本次改动的会话 id」登记失败，漏登记的那批改动' +
+            '尚未补传：本次若走全量（归属待决期之外）就会被一并带上去；' +
+            '若正处于归属待决期则本轮不许全量（不能替用户做归属决定），' +
+            '缺口会保留到用户完成归属决策的那一次上传。'
+        );
+      }
+      // ── 2026-10-20 D-10：漏登记的那批改动**靠一次全量补上** ─────────────
+      // 登记失败 ⇒ 那批改动的 id 压根没记下来 ⇒ 事后无法枚举它们
+      // ⇒ 唯一的兜底是「把本机有的全传一遍」（多传无害：后端按印记幂等）。
+      //
+      // ⚠️ 但**不许**为了补这个缺口而绕过归属决策：归属待决期（suppressFullUpload）
+      // 禁止自动全量 —— 那正是「用户还没决定历史会话归谁」的保护。
+      // 那种情况下本轮**不能**全量 ⇒ 缺口保持开着 ⇒ 本轮如实上报
+      // 「无法确认全部已同步」⇒ 用户完成归属决策的那一次上传（explicitFirstSync
+      // ⇒ 全量）自然把缺口补上。
+      //
+      // ℹ️ 这里**不需要**一条「强制全量」的分支：白名单过滤只在归属待决期
+      // 生效（changedGroupIds !== null ⟺ suppressFullUpload），而那一期
+      // 本来就不许自动全量 ⇒ 其它轮次**天然就是全量**（activeGroups）⇒
+      // 缺口在下一轮普通上传里自然被补上。写一条「强制全量」分支只会是
+      // 永远走不到的死代码（它的每个前置条件都与另一条互斥）。
       const groupsForUpload = overwriteCloud
         ? allGroups
         : changedGroupIds
           ? activeGroups.filter(g => changedGroupIds.has(g.id))
           : activeGroups;
+      // 本轮的上传清单是不是**由登记集合（白名单）决定**的（结构事实）。
+      // 它决定「登记不可信」这个标志**是否影响本轮结论**（见 uploadCoverage 的
+      // scopeDerivedFromRegistry）：白名单过滤 ⇒ 登记漏了就是真漏了；
+      // 全量 ⇒ 登记漏没漏都不影响本轮传了什么。
+      const scopeDerivedFromRegistry = changedGroupIds !== null;
       if (suppressFullUpload) {
         logInfo(
           '[SyncEngine] WebDAV 首次同步归属决策未完成：本次只上传本次操作改动过的 ' +
@@ -847,7 +1190,14 @@ export class SyncEngine {
             '其余会话等你到设置里点「检查并推送」后再决定归属'
         );
       }
-
+      // ── 2026-10-20 D-3：本轮**登记了**的待传会话 id（白名单快照）────────
+      // 这份快照是本轮结束时的对账基准：只有「登记的 ⊆ 上行的 ∪ 已删除结案的」
+      // 才允许清 pending_upload 与白名单（判据见 core/uploadCoverage）。
+      // 登记集合在**上传前**取快照：上传期间新登记的改动属于下一轮，
+      // 混进来会让本轮永远对不上账（每一轮都有新登记 ⇒ 永远不清）。
+      const registeredGroupIds = changedGroupIds ? [...changedGroupIds] : [];
+      // 本轮真的提交给后端裁决的会话 id（后端认输的也算「已裁决」）。
+      let submittedGroupIds: string[] = [];
       // 闸门仍按**活跃组**判（不是按过滤后的清单）：覆盖模式下的「本地一个活跃组都没有
       // ⇒ 绝不覆盖」是既有保护，不能因为待决期把清单过滤空了就改判成「跳过覆盖」。
       // 清单为空时连适配器都不必调（省一次读 manifest + 解锁，也避免在空远端上写出
@@ -861,7 +1211,27 @@ export class SyncEngine {
           overwriteCloud,
           explicitFirstSync
         );
+        // 「提交给后端裁决」的集合 = 本轮交给适配器的清单。
+        // 后端可能**认输**（远端更新 → 本地不上行，等下次下载合并物理替换），
+        // 认输是「已裁决」而不是「没传上去」—— 把它算成未同步会让 pending_upload
+        // 永远清不掉、上传陷入无限重试。
+        submittedGroupIds = groupsForUpload.map(g => g.id);
         writtenTombstoneIds = new Set(up?.writtenTombstoneIds ?? []);
+        // 2026-10-20 修 P0：云端索引丢过（indexRebuilt）或本机水位线把某些
+        // 会话误判成「已上传」（recoveredIds）—— 这是**要告诉用户**的异常，
+        // 不是常规增量。如实上报，不让修复悄悄发生。
+        if (up?.indexRebuilt) {
+          logWarn(
+            '[SyncEngine] 云端索引（manifest）曾丢失，本轮已从云盘分片目录重建并写回。' +
+              '如果其它设备上的会话「消失了」，先重新同步一次。'
+          );
+        }
+        if (up?.recoveredIds && up.recoveredIds.length > 0) {
+          logWarn(
+            `[SyncEngine] 有 ${up.recoveredIds.length} 个会话曾被水位线误判为「已上传」` +
+              '（云端索引与实际内容脱节），本轮已强制补传。'
+          );
+        }
       } else if (overwriteCloud) {
         // ponytail: 与旧 uploadTabsToCloudFlow 的空本地保护一致——本地没有任何活跃组时
         // 绝不执行覆盖模式（覆盖 = 先删云端全部再插），否则会把云端数据清空。
@@ -892,12 +1262,17 @@ export class SyncEngine {
         ...pendingDeleteIds,
         ...legacyTombstoneIds.filter(id => !writtenTombstoneIds.has(id)),
       ])];
+      // 本轮**真的广播成功**的删除 id（只有这些才算「已结案」）。
+      // 广播失败会抛给外层 catch ⇒ 根本走不到对账；
+      // includeDeleted=false（仅测试）时压根没广播 ⇒ 不能算结案。
+      let broadcastDeleteIds: string[] = [];
       // 广播与清队必须成对：includeDeleted===false 时这一轮**根本没广播**，
       // 此时清队等于把删除意图直接丢弃 —— 方向与 fail-closed 正好相反。
       // 所以清队放进同一个 if，且只在 markCloudGroupsAsDeleted 成功返回后才执行
       // （它失败会抛给外层 catch，整批要么都确认、要么整批留下等下轮）。
       if (cloudDeleteIds.length > 0 && opts?.includeDeleted !== false) {
         await markCloudGroupsAsDeleted(cloudDeleteIds);
+        broadcastDeleteIds = cloudDeleteIds;
         // 按本轮实际广播成功的清单消费队列，而不是整队清空：一轮上传期间队列
         // 还会继续长（读走 A 之后用户又删了 B，B 写 KV 失败只落进内存兜底），
         // 整队清空会把没广播过的 B 连坐抹掉 → 云端行仍活跃 → 下次合并整组复活，
@@ -937,21 +1312,165 @@ export class SyncEngine {
       }
       report(95, 'upload');
 
+      // ── 2026-10-20 D-3：清 pending_upload 必须**对过账** ────────────────
+      // 修复前这里是「无条件清」：不管本轮到底传上去多少，pending_upload 与
+      // 增量白名单一律清掉。归属待决期的白名单里全是不存在的 id 时
+      // （导入路径登记的是备份文件里的 id，而落盘时 id 被重新生成），
+      // 上传集合是空集、流程照样走完 ⇒ 20 个导入的会话永远到不了云盘，
+      // alarm 与 60s 轮询也不再重试（pending_upload 已是 false），界面毫无提示。
+      //
+      // 现在：清标志的**前提**是「登记的待传集合 ⊆ 本轮上行的 ∪ 已删除结案的」。
+      // 不满足 ⇒ **保留** pending_upload（下一轮继续重试）并把事实报给调用方。
+      // ── 2026-10-20 D-10：标志的复位**搬出**对账分支 ─────────────────────
+      // 原来的复位写在 `if (coverage.canClearPending)` 之内 ⇒ 标志为真 ⇒
+      // 判据为假 ⇒ 复位永远执行不到（**自锁**）：标志一旦置上就永不复位 ⇒
+      // pending_upload 永远清不掉 ⇒ 每轮后台同步都在重跑上传，界面还报
+      // 「同步成功」。
+      //
+      // 现在的复位判据（decideRegistryAfterUpload）依据的是**一件事实**，
+      // 与「对账是否通过」**完全无关**：
+      //   「本轮提交出去的是**全量**」⇒ 漏登记的那批就在这份全量里 ⇒ 缺口补上
+      //   ⇒ 标志整体清掉。
+      //
+      // ⚠️ 写方侧还有**另一条**独立的复位路径（「本次登记成功」，
+      // 见 scheduleUpload）—— 两条都依据事实，都不自指。
+      //
+      // 「全量」在这里是**数出来的**，不是推断的：本轮提交出去的会话 id
+      // 必须**覆盖本机全部活跃会话**。只靠「清单是不是 activeGroups」来判，
+      // 会在「本机有会话但一个都没提交」时误判成全量（空集 ⊆ 全集）⇒
+      // 缺口被错误地清掉 ⇒ 漏登记的那批永远补不回来。
+      //
+      // ⚠️ 本机一个活跃会话都没有时，「覆盖全部」是**空真**——这是对的：
+      // 本机没有会话 ⇒ 漏登记的那批（若有）只能是已被删掉的那些 ⇒ 它们走
+      // 删除广播那条路（pendingDeleteIds），不归上传管。若在这里判成 false，
+      // 缺口会永远开着 ⇒ pending_upload 永远清不掉 ⇒ 又变成无限重试。
+      const activeIds = new Set(activeGroups.map(g => g.id));
+      const submittedIdSet = new Set(submittedGroupIds);
+      const submittedCoversAllActive = [...activeIds].every(id => submittedIdSet.has(id));
+      const registryDecision = decideRegistryAfterUpload({
+        before: registryStateBefore,
+        // 本轮提交的是不是全量（本机每一个活跃会话都在提交清单里）。
+        submittedFullScope: submittedCoversAllActive,
+      });
+      // 落盘标志的**新状态** —— 判据由纯函数给出（decideRegistryAfterUpload），
+      // 存储层只负责**忠实落盘**（不许自己另有一套判据：两处漂移过一次，
+      // 后果是「纯函数说保留 gapOpen、存储层把键删了」⇒ 漏登记的那批永远
+      // 补不上 ⇒ 静默丢失）。
+      // ⚠️ 带 gen 并发保护：轮次进行中若又发生一次登记失败（gen 变了），
+      // 那批改动**不在**本轮提交的全量里 ⇒ 不许复位（否则它永远补不回来）。
+      let registryStateAfter = registryDecision.after;
+      if (registryDecision.changed) {
+        registryStateAfter = await storage
+          .setPendingUploadRegistryStateIfUnchanged(registryStateBefore.gen, registryDecision.after)
+          .catch(err => {
+            logWarn('[SyncEngine] 更新「登记不可信」标记失败（下轮上传再更新）:', err);
+            return registryStateBefore;
+          });
+        if (registryStateAfter.unreliable || registryStateAfter.gapOpen) {
+          logWarn(
+            '[SyncEngine] 「登记不可信」标记未清除：本轮上传期间又发生了一次登记失败' +
+              '（那一批改动不在本轮提交的全量里），标记继续保留，下一轮全量补传。'
+          );
+        }
+      }
+
+      const coverage = reconcileUploadCoverage({
+        registeredIds: registeredGroupIds,
+        submittedIds: submittedGroupIds,
+        uploadPerformed: submittedGroupIds.length > 0,
+        // 用**本轮结束后的真实状态**（不是「期望状态」）：并发保护可能拒绝复位
+        // （轮次进行中又失败了一次）⇒ 那时缺口仍开着 ⇒ 本轮不得宣称「都传了」。
+        registryUnreliable: registryStateAfter.unreliable,
+        registryGapOpen: registryStateAfter.gapOpen,
+        // 本轮的清单是不是**由白名单**决定的（缺省 true = 保守）。
+        scopeDerivedFromRegistry,
+        // 本轮以删除结案的会话：它们**不该**被上行（本地已经没有这个会话），
+        // 所以不能算「未同步」—— 它们的删除意图走 pendingDeleteIds 那条路径。
+        //
+        // ⚠️ 只算**真的广播成功**的那些（broadcastDeleteIds），而不是队列里的
+        // 全部（cloudDeleteIds）：广播失败会抛到外层 catch（走不到这里），
+        // 而 includeDeleted=false 时压根没广播 —— 那种情况下把队列里的 id
+        // 当成「已结案」会让「删了但没广播出去」的会话被算作「没问题」，
+        // 白名单被清掉，删除意图就永远丢了。
+        deletedIds: broadcastDeleteIds,
+      });
+
       await storage.setLastSyncTime(new Date().toISOString());
       const now = new Date().toISOString();
       await storage.setLastUploadTime(now);
       // ponytail: 上传成功才清持久化 pending_upload。失败时保留，下一轮
       // alarm / 后台轮询重新尝试。cancelPendingUpload 不清这个标志——
       // “本地有变更”这个事实在 upload 真正成功前都成立。
-      await storage.setPendingUpload(false);
-      // 增量白名单同批清理：这批改动已经上去了（或被如实跳过），留着只会在
-      // 下一次进入待决态时误导筛选。失败不阻断（下一轮成功时再清）。
-      await storage.clearPendingUploadGroupIds().catch(err =>
-        logWarn('[SyncEngine] 清理「本次改动的会话 id」失败（下轮上传再清）:', err)
-      );
+      //
+      // ⚠️ 2026-10-20 D-3：清位现在**以对账结果为前提**。
+      // 对不上账 ⇒ 保留标志（本轮有东西没传上去）⇒ 下一轮会重试。
+      //
+      // ⚠️ 2026-10-20 D-10：「登记不可信」标志的复位**不在**这个分支里
+      // （它曾经在这里 ⇒ 自锁）。它在上面按「写方登记成功 / 本轮是全量」
+      // 这两条与对账无关的事实独立复位。
+      if (coverage.canClearPending) {
+        await storage.setPendingUpload(false);
+        // 增量白名单同批清理：这批改动已经上去了（或被如实跳过），留着只会在
+        // 下一次进入待决态时误导筛选。失败不阻断（下一轮成功时再清）。
+        await storage.clearPendingUploadGroupIds().catch(err =>
+          logWarn('[SyncEngine] 清理「本次改动的会话 id」失败（下轮上传再清）:', err)
+        );
+      } else {
+        logError(
+          `[SyncEngine] 本轮有 ${coverage.unsyncedCount} 个会话没有上传到云端` +
+            (coverage.registryUnreliable ? '（且「本次改动的会话 id」登记曾失败，漏登记的改动无法确认）' : '') +
+            (coverage.registryGapOpen ? '（此前漏登记的那批改动尚未被一次全量上传覆盖）' : '') +
+            '，已保留 pending_upload 等待下一轮重试。涉及的会话 id：' +
+            `${coverage.unsyncedIds.slice(0, 5).join('、')}${coverage.unsyncedIds.length > 5 ? ' 等' : ''}`
+        );
+      }
       report(100, 'none');
       this.isSyncing = false;
-      return { success: true, ...(skippedOverwrite ? { skippedOverwrite } : {}) };
+      // ── 如实上报「有东西没传上去」 ────────────────────────────────────
+      // success 仍然是 true（这一轮的其他环节：墓碑广播、TTL 清理、设置上传
+      // 都真的完成了），但**不是「全部同步」**。事实放在两个字段里：
+      //   · skippedGroups —— 数量（机器可读）；
+      //   · error —— 人话（UI 走 resolveSyncFailureCopy，未登记的句子原样透出）。
+      //
+      // ⚠️ 为什么不给 `success: false`：那会让后台轮询把本轮判成故障并进入
+      // 退避阶梯，而实际上「下次重试」正是我们要的行为（保留 pending_upload）。
+      // 更糟的是它会走「上传未成功 ⇒ 跳过下载」，把一次**部分成功**的上传
+      // 说成整体失败。
+      //
+      // ── D-10：还有第三种「没同步完」——「无法确认」 ──────────────────────
+      // 「漏登记的那批改动至今没被全量覆盖」时，unsyncedCount 可能是 0
+      // （登记集合对得上账！），但「全部都传上去了」这句话**无法证明**。
+      // 旧代码只按 unsyncedCount>0 决定要不要报 ⇒ 这种情况界面报「同步成功」
+      // —— 那正是自锁期里界面在撒谎的地方。现在由 `cannotConfirmAllSynced`
+      // 统一裁决：它为 true ⇒ 必须带上「无法确认」的事实与文案。
+      const cannotConfirmAllSynced = coverage.cannotConfirmAllSynced;
+      return {
+        success: true,
+        ...(skippedOverwrite ? { skippedOverwrite } : {}),
+        ...(coverage.unsyncedCount > 0
+          ? { skippedGroups: coverage.unsyncedCount, skippedGroupIds: coverage.unsyncedIds }
+          : {}),
+        ...(coverage.unsyncedCount > 0
+          ? { error: `${coverage.unsyncedCount} 个会话尚未同步到云端（已保留待传队列，下一轮会自动重试）` }
+          : {}),
+        // 「无法确认全部已同步」：数量可能为 0，但「都传完了」这句话无法证明。
+        // 调用方（SW 的 SYNC 回包）据此把 ok 置 false ⇒ 界面弹提示而不是
+        // 「上传成功」。字段缺失（老调用方）⇒ 行为与从前一致。
+        ...(cannotConfirmAllSynced
+          ? {
+              cannotConfirmAllSynced: true,
+              ...(coverage.unsyncedCount === 0
+                ? {
+                    error:
+                      '本次同步无法确认是否全部完成：有一次「改动记录」写入失败，' +
+                      '可能有改动没被登记、也就没被上传。已保留待传队列；' +
+                      '下一轮会改用全量上传把可能漏掉的改动补齐（若正在等待' +
+                      '「云盘归属」决策，请先到设置里完成那一步）。',
+                  }
+                : {}),
+            }
+          : {}),
+      };
     } catch (error) {
       logError('[SyncEngine] 上传失败:', error);
       this.isSyncing = false;
