@@ -32,8 +32,13 @@
  * 压住旧的 `true`（否则用户刚做完三选一又被重新拦住 —— 那正是本次要
  * 消灭的误拦的另一面）。
  *
- * 本模块是**纯函数**，不碰 DOM、不碰存储 —— 所以判据能被直接做行为断言。
+ * 本模块的**判据部分是纯函数**，不碰 DOM、不碰存储 —— 所以判据能被直接做行为断言。
+ *
+ * ⚠️ 例外：文件末尾的 `resolveCurrentLibraryScope()` 是 IO（它要去读磁盘上的配置），
+ * 它经由**加载器注册表**取后端模块（页面动态 / SW 静态），见那里的说明。
  */
+
+import { loadLibraryIdentity } from '@/sync-backend/webdav/libraryIdentityRuntime';
 
 /**
  * 「没有目标库」的作用域名。
@@ -111,9 +116,10 @@ export function toPendingRecord(raw: unknown): Record<string, boolean> {
 }
 
 /**
- * 「本机当前指向的库」的作用域键 —— **同步**版本（纯函数）。
+ * 「本机当前指向的库」的作用域键 —— **异步**版本（要读磁盘上的配置）。
  *
- * ⚠️ 为什么必须同步：调用点有两类 ——
+ * ⚠️ 为什么身份计算本身必须是**纯函数**（`libraryScopeKey`，
+ * 见 `sync-backend/webdav/libraryIdentity.ts`）：调用点有两类 ——
  *   · 存储层（读写待决位）：那里已经能 `await`；
  *   · **UI 渲染期**（面板要显示「为什么被拦住了」）：那里不能 `await`。
  * 所以身份计算必须是**纯函数**，两处都调它。
@@ -125,15 +131,46 @@ export function toPendingRecord(raw: unknown): Record<string, boolean> {
  *
  * ⚠️ 依赖方向：本模块在 `storage-kv`（键与值的形状层），而配置在
  * `sync-backend/webdav/config.ts`（后端层）—— 后端层依赖键层，反过来会成环。
- * 所以这里**动态 import**：只有真的需要解析作用域时才会加载后端模块，
+ * 所以这里**经由加载器注册表**取后端模块：只有真的需要解析作用域时才会加载，
  * 而 `storage-kv` 的其余部分（键表、驱动）不依赖它。
+ *
+ * ⚠️ 2026-10-23 审计 P0-1：**不能直接 `await import()`** ——
+ * service worker 里 `import()` 被 Chrome 禁止（HTML 规范），
+ * 那一行在 SW realm 里必然抛 ⇒ 作用域恒为「没有目标库」
+ * ⇒ 待决位的判据整个换成保守分支 ⇒ SW 永远以为归属决策没做完
+ * ⇒ 历史会话被永久挡在用户自己的云盘之外，而回包还报「成功」。
+ * ⇒ 改成「同一份模块、两种取法」的注册表：页面动态加载，SW 由入口静态注册
+ * （见 `sync-backend/webdav/libraryIdentityRuntime.ts`）。
  */
 export async function resolveCurrentLibraryScope(): Promise<string> {
   try {
-    const { currentLibraryScope } = await import('@/sync-backend/webdav/libraryIdentity');
-    return await currentLibraryScope();
+    return await resolveCurrentLibraryScopeStrict();
   } catch {
     // 读不到配置 ⇒ 「没有目标库」。
+    //
+    // ⚠️ 这个兜底是**保守方向**（fail-closed）：算不出库 ⇒ 落进
+    // 「只要有一格待决就算待决」⇒ 自动上传被抑制 ⇒ 会话留在本机等用户决定。
+    // 反过来（读不到就当「没有待决」）会让历史会话在用户没表态时被整批推上云盘，
+    // 而那正是 2026-10-18 P1#4 明令禁止的「多传」，不可回滚。
     return NO_LIBRARY_SCOPE;
   }
+}
+
+/**
+ * 同上，但**不吞异常**（2026-10-23 审计 P0-1 的真机验证用）。
+ *
+ * ── 为什么需要「不吞」的版本 ──────────────────────────────────────────────
+ * `resolveCurrentLibraryScope` 把「算不出库」和「**没配过库**」都变成同一个值
+ * （`NO_LIBRARY_SCOPE`）⇒ 从外面**看不出**「SW 到底算没算出来」。
+ * 而这正是 P0-1 的核心问题：**单测里算得出（Node 的 import() 合法），
+ * 真 Chrome 的 SW 里算不出** ⇒ 只有真机能分辨。
+ * ⇒ 诊断通道用这个版本：算得出就返回真值，算不出就**报错**。
+ *
+ * ⚠️ 判据上仍然是 fail-closed：真正决定「能不能上传」的是
+ * `resolveCurrentLibraryScope`（它兜底成 no-library ⇒ 保守方向）。
+ * 这里只是把「兜底之前的事实」暴露给诊断用。
+ */
+export async function resolveCurrentLibraryScopeStrict(): Promise<string> {
+  const { currentLibraryScope } = await loadLibraryIdentity();
+  return await currentLibraryScope();
 }

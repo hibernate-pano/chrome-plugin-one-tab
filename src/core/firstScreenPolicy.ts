@@ -97,7 +97,8 @@ export const FIRST_SCREEN_FORBIDDEN_GROUPS: readonly FirstScreenGroup[] = [
       '⚠️ 这组**只点名两个文件**，不按目录前缀整包收：' +
       'webdav/config.ts（配置读写，gzip 约 1.8KB）每次解析后端都要用，' +
       '静态引入代价可忽略，而且它顺带消掉了 service worker 里的一次非法 import()；' +
-      'webdav/libraryIdentity.ts 由 storage-kv 动态 import（断开成环，见 firstSyncPendingRecord.ts）。',
+      'webdav/libraryIdentity.ts 由 storage-kv 经「加载器注册表」动态 import' +
+      '（页面动态 / SW 静态注册，断开成环，见 webdav/libraryIdentityRuntime.ts）。',
   },
   {
     chunk: '',

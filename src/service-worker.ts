@@ -35,6 +35,20 @@ import { setWebDavTransportLoader } from '@/sync-backend/webdavRuntime';
 import { WebDavClient } from '@/sync-backend/webdav/client';
 import { WebDavBackendAdapter } from '@/sync-backend/webdav/adapter';
 import { hasHostPermission } from '@/sync-backend/webdav/permission';
+// ── 2026-10-23 审计 P0-1：「本机当前在哪个库」也要在 SW 里算得出来 ──────
+//
+// 待决位是**按库寻址**的（storage-kv/firstSyncPendingRecord.ts）⇒ 页面与 SW
+// 必须得出同一个答案。而「算出库」要读后端层的库身份模块 ⇒ 那条边过去是
+// `await import(...)` ⇒ **SW 里 import() 被 Chrome 禁止** ⇒ SW 恒为
+// 「没有目标库」⇒ 落进保守分支 ⇒ SW 永远以为归属决策没做完 ⇒
+// 历史会话被永久挡在用户自己的云盘之外，而回包还报「成功」。
+//
+// ⇒ 与上面两个注册表同一个形状：SW 入口静态 import 进来，再注册给它。
+// 页面侧不注册 ⇒ 页面仍然是「用到才下载」，首屏照旧不碰云端栈。
+import { setLibraryIdentityLoader } from '@/sync-backend/webdav/libraryIdentityRuntime';
+import * as libraryIdentity from '@/sync-backend/webdav/libraryIdentity';
+// 诊断通道用：SW 侧算出来的库作用域（不吞异常 ⇒ 算不出就是报错）。
+import { resolveCurrentLibraryScopeStrict } from '@/storage-kv/firstSyncPendingRecord';
 import {
   CONTEXT_MENU_IDS,
   CONTEXT_TYPES,
@@ -63,6 +77,8 @@ setWebDavTransportLoader(async () => ({
   WebDavBackendAdapter,
   hasHostPermission,
 }));
+// 「本机当前在哪个库」：同一份模块，SW 静态取、页面动态取（见上面的 P0-1 说明）。
+setLibraryIdentityLoader(async () => libraryIdentity);
 
 // Service Worker启动日志
 logInfo('=== TapStack Service Worker 启动 ===');
@@ -837,6 +853,30 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         void perfTrace().flush()
           .then(() => sendResponse({ success: true }))
           .catch(() => sendResponse({ success: true }));
+        return true; // 异步响应
+      }
+
+      // 诊断：SW 侧算出来的「本机当前指向哪个库」。
+      //
+      // ── 为什么需要这个通道（2026-10-23 审计 P0-1）─────────────────────────
+      // 「本机在哪个库」这件事，页面与 SW 都必须算得出同一个答案
+      // （待决位是**按库寻址**的）。而 SW 里 `import()` 被 Chrome 禁止
+      // ⇒ 过去 SW **算不出** ⇒ 落进保守分支 ⇒ 历史会话永远传不上用户自己的
+      // 云盘，而回包还报「成功」。
+      //
+      // 这个缺陷在单测里看不出来（Node 的 `import()` 合法）⇒ **只有真机能验**。
+      // 而真机要验的正是「SW 算出来的是不是那个库」——
+      // 于是需要一条只读的诊断通道，把 SW 侧算出来的作用域原样报出来
+      // （用 `…Strict` 版本：不吞异常 ⇒ 算不出就是**报错**，而不是
+      // 悄悄兜底成 no-library 让人误以为「算出来了，只是没配库」）。
+      //
+      // ⚠️ 它是**只读**的：不写任何键、不碰任何数据。
+      case 'LIBRARY_SCOPE': {
+        void resolveCurrentLibraryScopeStrict()
+          .then(scope => sendResponse({ ok: true, scope }))
+          .catch(err =>
+            sendResponse({ ok: false, error: err?.message || '算不出库作用域' })
+          );
         return true; // 异步响应
       }
 

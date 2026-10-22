@@ -107,16 +107,19 @@ function serviceWorkerStaticGraph(): {
  * 不许「先放着再说」——地雷清单只涨不跌就会变成没人看的坟场。
  */
 const ALLOWED_DYNAMIC_IMPORT_SITES: Record<string, string> = {
-  // 两个注册表：默认路径是「页面动态加载」，SW 侧由入口注册静态加载器，
+  // 三个注册表：默认路径是「页面动态加载」，SW 侧由入口注册静态加载器，
   // 走到默认路径时会**明确报错**（isServiceWorkerRealm）。
   'src/utils/supabaseRuntime.ts': 'Supabase 门面注册表（SW 侧注册静态加载器）',
   'src/sync-backend/webdavRuntime.ts': 'WebDAV 传输栈注册表（SW 侧注册静态加载器）',
-  // 已知的历史地雷（2026-10-20 引入，**不是**首屏瘦身带来的）：
-  // storage-kv 依赖后端层会成环，所以那里用动态 import 断开环。
-  // 代价：SW 里这一句必然失败（import() 被禁止）⇒ 被 catch 兜成「没有目标库」。
-  // ⚠️ 这条意味着 **service worker 侧算出来的库作用域恒为 no-library** ——
-  // 已知缺陷，本次未修（改动会牵动「换云盘」那条语义，需要单独一轮）。
-  'src/storage-kv/firstSyncPendingRecord.ts': '已知历史地雷（storage-kv ↔ 后端层成环）',
+  'src/sync-backend/webdav/libraryIdentityRuntime.ts':
+    '库身份注册表（SW 侧注册静态加载器）—— 待决位按库寻址 ⇒ SW 也必须算得出「本机在哪个库」',
+  // ── 2026-10-23 审计 P0-1 已修 ──────────────────────────────────────────
+  // 原先这里有一条地雷：`src/storage-kv/firstSyncPendingRecord.ts` 直接
+  // `await import('@/sync-backend/webdav/libraryIdentity')` ⇒ SW 里必然抛
+  // ⇒ SW 算出的库作用域恒为 no-library ⇒ 落进保守分支 ⇒ SW 永远以为
+  // 归属决策没做完 ⇒ 历史会话被永久挡在用户自己的云盘之外（而回包报「成功」）。
+  // 修法：改走上面的「库身份注册表」（页面动态 / SW 静态注册），
+  // 于是这一条不再是地雷 —— **不许再加回来**。
 };
 
 describe('service worker 的静态图', () => {
@@ -143,6 +146,19 @@ describe('service worker 的静态图', () => {
       /import\s+\{[^}]*WebDavClient[^}]*\}\s+from\s+'@\/sync-backend\/webdav\/client'/,
       'SW 入口必须静态 import WebDAV 传输栈'
     );
+    // ── 2026-10-23 审计 P0-1：库身份也必须由 SW 入口静态带进来 ──────────
+    // 待决位按库寻址 ⇒ 页面与 SW 必须得出同一个「本机在哪个库」的答案。
+    // SW 里 import() 被禁止 ⇒ 那一段只能静态 import + 注册。
+    assert.match(
+      entry,
+      /setLibraryIdentityLoader\(/,
+      'SW 入口必须注册「库身份」的静态加载器（SW 里 import() 被禁止，算不出库就永远以为归属待决）'
+    );
+    assert.match(
+      entry,
+      /import\s+\*\s+as\s+libraryIdentity\s+from\s+'@\/sync-backend\/webdav\/libraryIdentity'/,
+      'SW 入口必须静态 import 库身份模块'
+    );
   });
 
   it('静态图里只有「已登记的地雷」才有动态 import', () => {
@@ -159,8 +175,12 @@ describe('service worker 的静态图', () => {
     );
   });
 
-  it('两个注册表在 SW 里都会**明确报错**，而不是让浏览器抛规范条款', () => {
-    for (const file of ['src/utils/supabaseRuntime.ts', 'src/sync-backend/webdavRuntime.ts']) {
+  it('三个注册表在 SW 里都会**明确报错**，而不是让浏览器抛规范条款', () => {
+    for (const file of [
+      'src/utils/supabaseRuntime.ts',
+      'src/sync-backend/webdavRuntime.ts',
+      'src/sync-backend/webdav/libraryIdentityRuntime.ts',
+    ]) {
       const src = readFileSync(resolve(ROOT, file), 'utf8');
       assert.match(
         src,
@@ -173,6 +193,26 @@ describe('service worker 的静态图', () => {
         `${file} 在 SW 里必须抛一条说人话的错`
       );
     }
+  });
+
+  it('storage-kv 那段作用域解析**不许**再直接动态 import（它在地雷清单里）', () => {
+    // 钉住 P0-1 的修法：作用域解析必须经由注册表，
+    // 否则 SW 侧又会回到「恒为 no-library ⇒ 永远以为归属待决」那条路。
+    const src = readFileSync(resolve(ROOT, 'src/storage-kv/firstSyncPendingRecord.ts'), 'utf8');
+    const dynamicImports = [...src.matchAll(/\bimport\s*\(\s*['"]([^'"]+)['"]\s*\)/g)].map(m => m[1]);
+    assert.deepEqual(
+      dynamicImports,
+      [],
+      'firstSyncPendingRecord.ts 里出现了直接动态 import —— ' +
+        'service worker 里 import() 被 Chrome 禁止 ⇒ SW 算不出「本机在哪个库」⇒ ' +
+        '归属待决的判据整个换成分支 ⇒ 历史会话被永久挡在用户自己的云盘之外。' +
+        '改成经由 sync-backend/webdav/libraryIdentityRuntime.ts 取。'
+    );
+    assert.match(
+      src,
+      /loadLibraryIdentity\(/,
+      'firstSyncPendingRecord.ts 必须经由库身份注册表取模块（页面动态 / SW 静态）'
+    );
   });
 
   it('注册表清单里的每一条都写清了理由（空理由 = 没人知道为什么可以留）', () => {
