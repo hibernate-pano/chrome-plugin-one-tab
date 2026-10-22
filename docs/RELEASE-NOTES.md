@@ -752,8 +752,11 @@ toast 挂在 body 末尾（按钮排在 Tab 序列的**最后**）。
   phoenix / **Admin API**，而我们实际只用 auth + postgrest）、
   webdav/adapter（72KB 源码）、supabase/upload（66KB 源码）、
   diagnostics（25KB 源码）。合计 262.2KB gzip。
-  ⇒ 「点开弹窗」这个最高频动作的等待时间，大部分花在**用不上的代码**上。
-  已单独派单（把同步栈改成懒加载），做完可以把首屏预算**降回去**。
+  ⇒ ✅ **已修**（第 45 轮之二，见 §十一之四）：**263.4KB → 176.0KB gzip**，
+  首屏预算同步收紧 **265 → 185KB**。
+  **残留两笔（如实记）**：SDK 每次开弹窗仍会被下载（≈75KB，挂在首屏之后，
+  不阻塞首帧 —— 要砍掉得改「挂载即联网核登录态」这个**行为**，属产品决定）；
+  `diagnostics.ts`（766 行）仍在首屏（顶栏菜单要它）。
 - **与本轮无关、但仍然欠着的**：
   ① 线上商店页的 **Privacy / data-safety 表单**写着「Web history: Yes」，
      而仓库写的是「No」—— 这不是笔误，是一个**真实的语义分歧**
@@ -850,8 +853,57 @@ toast 挂在 body 末尾（按钮排在 Tab 序列的**最后**）。
 - **「冲突提示」还是零提示**（DS-43-18 的残余）：两台设备**同时**编辑同一会话时，
   败方新增的标签仍会丢，界面不提示。这是**整组 LWW** 合并模型的既定代价，
   已在 README 与商店页如实披露；要根治得引入共同祖先（协议级）。
-- **首屏瘦身**（见 §十一之七）还在另一条线上，本轮收口时它尚未完成。
 - 其余旧账（线上商店文案要人粘、Supabase 配额 402、缺 release tag…）不变。
+
+---
+
+### 十一之四、第 45 轮之二：首屏瘦身 —— 弹窗不再拖着整条云端栈
+
+**这一版的由来**：用户点开弹窗只想**看会话列表**，但首屏（入口 chunk 的静态依赖闭包）
+此前把**整条云端栈**都下载并解析了。实测 **263.4KB gzip**（HEAD 的独立 worktree 构建）。
+
+**病根不是「chunk 分得不好」，是静态 import 图**：
+
+- `supabaseFacade` → 整个 `src/utils/supabase/` + `@supabase/supabase-js` 全家；
+- `sync-backend/index` → WebDAV adapter + client；
+- `vite.config.ts` 里那条 catch-all（`src/utils/**` 塞进一块）⇒ 弹窗只要静态 import 了
+  `authCache`，就顺手把 upload / download / diagnostics / perfTrace 一起拖进首屏。
+
+**改法**（真相源是纯函数 `src/core/firstScreenPolicy.ts`，守卫与构建闸门都从它派生）：
+
+| 切点 | 处理 |
+|---|---|
+| Supabase 门面 / WebDAV 传输栈 | **加载器注册表**：页面 `await import()`，SW 入口静态注册后注入 |
+| `src/utils/` catch-all 分块 | 删掉，改成策略驱动 |
+| perfTrace / journal / diagnostics | 词表拆成纯常量，diagnostics 动态加载 perfTrace |
+
+**结果**：首屏 **263.4KB → 176.0KB gzip（−87.4KB / −33.2%）**。
+字节是**搬走不是删掉**：dist 全量 gzip 303.1 → 306.2KB（+3.1KB），被搬走的 91.4KB
+变成按需块（点要用时才下）。**首屏预算同步收紧：265 → 185KB**（实测值 + 9KB 余量）
+—— 这道门是**棘轮**：每次合理增长都要写清理由再收紧，不收紧它就退化成一张纸。
+
+**这一轮踩到两个真平台约束**（写进守卫，避免下一轮重踩）：
+
+1. **MV3 的 module service worker 里 `import()` 被 Chrome 禁止**
+   （`TypeError: import() is disallowed on ServiceWorkerGlobalScope`）⇒
+   「页面懒加载」不能一刀切：SW 侧同步与核登录态同样要这些模块 ⇒
+   同一份模块、**两种取法**（页面动态 / SW 入口静态注册）。
+2. **Vite 往含字面量动态 import 的 chunk 注入 `__vitePreload`，而那个助手第一件事就是
+   `document.getElementsByTagName`** ⇒ SW 里 `ReferenceError: document is not defined`
+   —— 2026-10-14 那次「SW 启动即崩」就是它（当时绕法是「SW 里不许动态 import」，
+   代价就是首屏必须静态下载整条云端栈）。现在有 worker-safe 的 preload 补丁兜住。
+
+**真机回归**（`scripts/lead-verify-first-screen.mjs`，CDP 口径）：六条判据全过 ——
+列表真的渲染；**渲染阻塞集里没有同步栈**；first-paint 88ms；SDK 最终**确实被下载**
+（延后 ≠ 删功能）；SW 侧 `SYNC` 返回结构化错误且 `swErrors/moduleErrors` 为空；
+走真实表单提交一次无效登录 ⇒ 弹窗显示中文「登录失败」⇒ 懒加载的 facade 真跑了。
+
+**如实记下还没砍掉的两笔**：
+
+- **SDK 每次开弹窗仍会被下载**（≈75KB gzip，在首屏静态集**之后**补齐，不阻塞首帧）——
+  因为 `AuthProvider` 挂载后要核登录态。要彻底砍掉得改「挂载即联网核登录态」这个
+  **行为**，那是产品决定，不是工程决定 ⇒ 本版没做。
+- **`src/utils/diagnostics.ts`（766 行）仍在首屏**（顶栏菜单要它）。要砍得动顶栏菜单。
 
 ---
 

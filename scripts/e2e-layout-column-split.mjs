@@ -1,12 +1,21 @@
-// 复验双栏左右分栏规则：多次来回切单/双栏，(a) 空壳会话是否累积 (b) 左右是否按次序均分。
+// 复验双栏布局：多次来回切单/双栏，(a) 空壳会话是否累积 (b) 顺序对不对。
 //
 // v1.22.0 之前的造数据里塞过 isDeleted 墓碑 tab，那是旧模型的做法（已随提交 bdad42d
 // 废除）。这里改为塞「老版本遗留的空壳会话」——视图层 toActiveGroupsView 会把它们
 // 过滤掉（src/store/slices/tabSliceHelpers.ts），storage 保留原样。
 //
-// 分栏规则来自 src/components/tabs/TabList.tsx:153 —— 不是 CSS 自动均分，是 JS
-// 按次序对分：mid = ceil(n/2)，前半进左栏（含奇数时多出的那一个）、后半进右栏。
-// 旧实现用 index % 2 奇偶交替导致读序错乱，这条断言就是钉住修复后的次序。
+// ── 2026-10-23 审计 R-11：这条断言的**对象变了** ─────────────────────────────
+//
+// 旧规则：「两列各一个 div」，JS 按次序对分（mid = ceil(n/2)，前半进左栏）。
+//   ⇒ 屏幕顺序与**键盘 Tab 序**（= DOM 序 = 先走完左栏）都**不等于**用户选的排序。
+//
+// 新规则：**不拆列容器**了。排好序的会话**逐个**成为 `.session-grid` 的直接子项，
+//   CSS grid 两列**按行填充**（1,2 / 3,4 / 5,6）⇒ DOM 序 == 逐行视觉序 == 排序序。
+//
+// ⇒ 本脚本现在钉的是**三个不变量**（而不是「左右各一半」）：
+//   ① DOM 序 == 排序序；
+//   ② **视觉阅读序**（按行分组、行内按 x）== DOM 序；
+//   ③ 第 1、2 张卡**在同一行**（证明是行主序，不是列主序 `grid-auto-flow: column`）。
 //
 // 用法：node scripts/e2e-layout-column-split.mjs <label>
 import { launchCtx, readGroupsFromSW, dismissOnboarding, openPopup } from './e2e-helpers.mjs';
@@ -57,23 +66,44 @@ try {
   await page.waitForTimeout(2000);
 
   /**
-   * 双栏容器下取两栏的会话名；单栏下返回单列。
-   * 会话名取 h3.tab-group-title（TabGroup.tsx 的标题节点）：卡片里还有 input（仅改名
-   * 态渲染）、一堆按钮，用 textContent 整块截断认不出是哪个会话。
+   * 取网格里的会话卡：**DOM 序** + 每张卡的**视觉位置**（x/y）。
+   * 单栏/双栏是同一个容器（`.session-grid`），轨道数由 computed style 读出来。
+   *
+   * 为什么连位置一起读：R-11 的核心不变量是「DOM 序 == 视觉阅读序」——
+   * 只看名字序列，看不出用户眼睛扫到的顺序对不对。
    */
-  async function readColumns() {
+  async function readGrid() {
     return page.evaluate(() => {
       const name = el => (el.querySelector('h3.tab-group-title')?.textContent || '').trim();
-      const cols = [...document.querySelectorAll('.md\\:grid-cols-2 > div')];
-      if (cols.length === 2) {
-        return {
-          mode: 'double',
-          left: [...cols[0].querySelectorAll('.tab-group-card')].map(name),
-          right: [...cols[1].querySelectorAll('.tab-group-card')].map(name),
-        };
-      }
-      return { mode: 'single', single: [...document.querySelectorAll('.tab-group-card')].map(name) };
+      const grid = document.querySelector('.session-grid');
+      const cols = grid
+        ? getComputedStyle(grid).gridTemplateColumns.split(' ').filter(Boolean).length
+        : 0;
+      const cards = [...document.querySelectorAll('.session-grid > .tab-group-card')].map(el => {
+        const r = el.getBoundingClientRect();
+        return { name: name(el), x: Math.round(r.x), y: Math.round(r.y) };
+      });
+      return { cols, cards };
     });
+  }
+
+  /**
+   * **视觉阅读序**：按 y 分行（同一行 = y 相同），行内按 x 从左到右。
+   *
+   * CSS grid 按行填充时，同一行的卡片 y 完全相同（align-items: start），
+   * 不同行的 y 严格递增 ⇒ 这个算法还原的就是人眼扫到的顺序。
+   */
+  function visualOrder(cards) {
+    const rows = [];
+    for (const card of cards) {
+      const row = rows.find(r => Math.abs(r.y - card.y) <= 4);
+      if (row) row.items.push(card);
+      else rows.push({ y: card.y, items: [card] });
+    }
+    return rows
+      .sort((a, b) => a.y - b.y)
+      .flatMap(r => r.items.sort((a, b) => a.x - b.x))
+      .map(c => c.name);
   }
 
   // 视图排序 = createdAt 倒序（TabList.tsx:92）→ 正好是 seed 里的 会话1..会话7
@@ -81,54 +111,60 @@ try {
   // 旧写法 `s.tabs > 0` 对数组恒为 false → 期望列表恒为空 → 4 条次序判据假红。
   const EXPECTED_ORDER = SEED.filter(s => s.tabs.length > 0).map(s => s.name);
 
-  const first = await readColumns();
+  const first = await readGrid();
+  const domOrder = cards => cards.map(c => c.name);
   gate.check('单栏初始：7 个有内容的会话都渲染出来了（空壳被视图过滤）',
-    first.mode === 'single' && first.single.length === EXPECTED_ORDER.length,
-    `mode=${first.mode}，卡片=${JSON.stringify(first.single)}`);
-  gate.check('单栏初始：渲染次序 = createdAt 倒序', first.single.join() === EXPECTED_ORDER.join(),
-    `实际 [${first.single.join(' | ')}] 期望 [${EXPECTED_ORDER.join(' | ')}]`);
+    first.cards.length === EXPECTED_ORDER.length,
+    `卡片=${JSON.stringify(domOrder(first.cards))}`);
+  gate.check('单栏初始：渲染次序 = createdAt 倒序', domOrder(first.cards).join() === EXPECTED_ORDER.join(),
+    `实际 [${domOrder(first.cards).join(' | ')}] 期望 [${EXPECTED_ORDER.join(' | ')}]`);
 
-  let prevCards = first.single.length;
+  let prevCards = first.cards.length;
   for (let round = 1; round <= 3; round++) {
     const toDouble = page.locator('button[aria-label*="切换为双栏"]').first();
     if (await toDouble.count()) { await toDouble.click(); await page.waitForTimeout(1800); }
-    const d = await readColumns();
+    const d = await readGrid();
     const stored = await readGroupsFromSW(ctx);
     const shells = stored.filter(g => !(g.tabs || []).length).length;
-    console.log(`\n第${round}轮 · 双栏: 左栏${d.left?.length ?? 0} 张 [${(d.left || []).join(' | ')}]`);
-    console.log(`        右栏${d.right?.length ?? 0} 张 [${(d.right || []).join(' | ')}]`);
-    console.log(`        UI 合计=${(d.left?.length ?? 0) + (d.right?.length ?? 0)} | 存储组=${stored.length} | 存储空壳组=${shells}`);
+    console.log(`\n第${round}轮 · 双栏: 轨道数=${d.cols}，卡片 ${d.cards.length} 张 [${domOrder(d.cards).join(' | ')}]`);
+    console.log(`        视觉阅读序 [${visualOrder(d.cards).join(' | ')}]`);
+    console.log(`        UI 合计=${d.cards.length} | 存储组=${stored.length} | 存储空壳组=${shells}`);
 
-    const total = (d.left?.length ?? 0) + (d.right?.length ?? 0);
-    const expectLeft = Math.ceil(prevCards / 2);
-    const expectOrder = EXPECTED_ORDER.slice(0, expectLeft).concat(EXPECTED_ORDER.slice(expectLeft));
-    gate.check(`第${round}轮：双栏容器真的分成两栏`, d.mode === 'double', `mode=${d.mode}`);
-    gate.check(`第${round}轮：左栏 ${expectLeft} 张、右栏 ${prevCards - expectLeft} 张（按次序对分）`,
-      d.left?.length === expectLeft && d.right?.length === prevCards - expectLeft,
-      `实际左 ${d.left?.length ?? '-'} / 右 ${d.right?.length ?? '-'}`);
-    gate.check(`第${round}轮：两栏合起来不多不少（无渲染重复、无丢卡）`, total === prevCards,
-      `合计 ${total}，单栏时 ${prevCards}`);
-    gate.check(`第${round}轮：左栏是读序的前半段、右栏是后半段（不是奇偶交替）`,
-      (d.left || []).join() === expectOrder.slice(0, expectLeft).join() &&
-      (d.right || []).join() === expectOrder.slice(expectLeft).join(),
-      `左=[${(d.left || []).join(' | ')}] 右=[${(d.right || []).join(' | ')}] 期望=[${expectOrder.join(' | ')}]`);
+    gate.check(`第${round}轮：网格真的是两列`, d.cols === 2, `轨道数=${d.cols}`);
+    gate.check(`第${round}轮：卡片不多不少（无渲染重复、无丢卡）`, d.cards.length === prevCards,
+      `合计 ${d.cards.length}，单栏时 ${prevCards}`);
+    gate.check(`第${round}轮：DOM 序 = 排序序（会话1..会话7）`,
+      domOrder(d.cards).join() === EXPECTED_ORDER.join(),
+      `实际 [${domOrder(d.cards).join(' | ')}] 期望 [${EXPECTED_ORDER.join(' | ')}]`);
+    gate.check(`第${round}轮：视觉阅读序 = DOM 序（眼睛扫到的顺序就是排好的顺序）`,
+      visualOrder(d.cards).join() === domOrder(d.cards).join(),
+      `视觉 [${visualOrder(d.cards).join(' | ')}] DOM [${domOrder(d.cards).join(' | ')}]`);
+    // 行主序的指纹：第 1、2 张在同一行（列主序 grid-auto-flow: column 时它们不同行）。
+    gate.check(`第${round}轮：第 1、2 张卡在同一行（行主序，不是列主序）`,
+      d.cards.length >= 2 && Math.abs(d.cards[0].y - d.cards[1].y) <= 4 && d.cards[0].x < d.cards[1].x,
+      d.cards.length >= 2
+        ? `card0=(x=${d.cards[0].x},y=${d.cards[0].y}) card1=(x=${d.cards[1].x},y=${d.cards[1].y})`
+        : '卡片不足 2 张');
     gate.check(`第${round}轮：storage 组数不变（切布局不写数据、不长空壳）`,
       stored.length === SEED.length, `${SEED.length} → ${stored.length}`);
 
     const toSingle = page.locator('button[aria-label*="切换为单栏"]').first();
     if (await toSingle.count()) { await toSingle.click(); await page.waitForTimeout(1800); }
-    const s = await readColumns();
-    console.log(`        单栏 UI 合计=${s.single?.length ?? 0}`);
-    gate.check(`第${round}轮：切回单栏后卡片数不变（空壳不累积）`, s.single?.length === prevCards,
-      `${prevCards} → ${s.single?.length ?? '-'}`);
-    prevCards = s.single?.length ?? 0;
+    const s = await readGrid();
+    console.log(`        单栏 UI 合计=${s.cards.length}`);
+    gate.check(`第${round}轮：切回单栏后卡片数不变（空壳不累积）`, s.cards.length === prevCards,
+      `${prevCards} → ${s.cards.length}`);
+    gate.check(`第${round}轮：切回单栏后次序仍是排序序`,
+      domOrder(s.cards).join() === EXPECTED_ORDER.join(),
+      `实际 [${domOrder(s.cards).join(' | ')}]`);
+    prevCards = s.cards.length;
   }
 
-  gate.report('双栏左右按次序对分（v1.22.0 无墓碑模型）');
+  gate.report('双栏顺序（行主序）与 DOM 序一致（R-11）');
 } catch (e) {
   console.error('\n💥 执行异常:', e.message);
   gate.check('脚本执行未抛异常', false, e.message);
-  gate.report('双栏左右按次序对分（v1.22.0 无墓碑模型）');
+  gate.report('双栏顺序（行主序）与 DOM 序一致（R-11）');
 } finally {
   try { await ctx.close(); } catch { /* 关不掉不影响判定 */ }
 }
