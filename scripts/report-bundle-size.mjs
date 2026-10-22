@@ -49,8 +49,29 @@ const DIST = join(ROOT, 'dist');
  *   · 换来的：auth 从 2025-05 的版本到了当前版，audit 之外的上游修复
  *     与兼容性修复都能拿到（旧 pin 对 audit 是不可见的）。
  *   · 取 260 是留约 13% 余量。若将来首屏再进大依赖，这道门仍会红。
+ *
+ * 2026-10-23：260 → 265，理由与代价同样写在这里：
+ *   · 起因是第 43 轮的**撤销退路可达性**（产品 P0：「都留了退路」这句话
+ *     在整组恢复路径上当时是假的 —— 撤销提示挂在管理页，而管理页被恢复出来
+ *     的新窗口顶到后台 ⇒ 用户**看不见**那条退路）。
+ *   · 涨的是**我们自己的代码**：`components/common/toastPolicy.ts`（倒计时
+ *     状态机：悬停/聚焦/页面不可见时暂停、30 秒上限、带动作的提示 10 秒、
+ *     焦点接管判据）+ `toastQueuePolicy.ts`（队列准入：带 action 的撤销退路
+ *     与错误提示**不可被挤掉**）。实测：utils chunk +3.2KB、popup chunk
+ *     +0.8KB、global +0.3KB、index +0.5KB、CSS −0.2KB ⇒ **合计 +4.4KB**。
+ *   · **没有新依赖**：这 4.4KB 100% 是仓内源码，node_modules 一行没动 ⇒
+ *     这道门原本要防的「新依赖进首屏」**没有发生**。
+ *   · 代价：首屏从 257.8KB 涨到 262.2KB（gzip）—— 用户点开弹窗时多等
+ *     约 4.4KB 的解析与执行。这笔钱花在「撤销按钮真的够得着」上，
+ *     换的是「商店文案里的承诺不是假的」。
+ *   · ⚠️ **但真正的病不在这里**：实测首屏还扛着**整条同步栈** ——
+ *     supabase-vendor 57.5KB（含 auth-js / storage-js / postgrest-js /
+ *     phoenix / Admin API）+ webdav/adapter + supabase/upload + diagnostics
+ *     —— 而用户点开弹窗只需要**看会话列表**。把同步栈改成懒加载是本产品
+ *     首屏瘦身的主战场（已单独派单），做完可以把这条预算**降回去**。
+ *     在那之前，这条门的作用是「别再让它无声地涨」。
  */
-const BUDGET_KB = 260;
+const BUDGET_KB = 265;
 
 function gzipKb(path) {
   if (!existsSync(path)) return null;
