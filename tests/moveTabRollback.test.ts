@@ -161,7 +161,18 @@ describe('P3 moveTab 写失败：乐观顺序必须收回', () => {
     store.dispatch(moveTab({ sourceGroupId: 'g1', sourceIndex: 0, targetGroupId: 'g1', targetIndex: 1 }));
     store.dispatch(
       moveTabAndSync.fulfilled(
-        { value: { sourceGroupId: 'g1', sourceIndex: 0, targetGroupId: 'g1', targetIndex: 1, removedGroupId: null } },
+        {
+          value: {
+            sourceGroupId: 'g1',
+            sourceIndex: 0,
+            targetGroupId: 'g1',
+            targetIndex: 1,
+            removedGroupId: null,
+            // 2026-10-23 DS-43-11：thunk 的 payload 多了源会话名字（搬空源组时要报名字）。
+            // 这条用例只关心顺序与 error，名字取 null 即可（类型要对得上）。
+            sourceGroupName: null,
+          },
+        },
         'F1',
         { sourceGroupId: 'g1', sourceIndex: 0, targetGroupId: 'g1', targetIndex: 1 }
       )

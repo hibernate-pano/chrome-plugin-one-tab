@@ -62,6 +62,7 @@ import { isOpenableTabUrl } from '@/utils/inputValidation';
 import { getDisplayUrl } from '@/utils/sessionPresentation';
 import { SafeFavicon } from '@/components/common/SafeFavicon';
 import { useAppSelector } from '@/store/hooks';
+import { removeTabEntryCopy } from './removeTabEntryCopy';
 
 interface DraggableTabProps {
   tab: Tab;
@@ -69,6 +70,14 @@ interface DraggableTabProps {
   index: number;
   /** 同组标签总数：键盘重排的边界与「第几项」播报都要用 */
   itemCount: number;
+  /**
+   * 删掉这一条之后，**整个会话**会不会跟着消失（2026-10-23 审计 DS-43-16）。
+   *
+   * 传值即代表会（条件由 TabGroup 用 `shouldAutoDeleteAfterTabRemoval` 算完，
+   * 本组件不重复那套判据）——「删除会话前确认」开关**关闭**时没有确认框，
+   * 于是这个提示就是用户**唯一**的预警：它必须说清「整张卡会一起消失」。
+   */
+  removesWholeSession?: boolean;
   /**
    * 所属会话是否锁定。锁定后不渲染逐条删除按钮 ——
    * 锁定承诺的是「防误删」，而删除本产品不可撤销（无回收站）。
@@ -128,6 +137,7 @@ export const DraggableTab: React.FC<DraggableTabProps> = React.memo(({
   groupId,
   index,
   itemCount,
+  removesWholeSession = false,
   locked,
   onDragBlocked,
   onLockedDragBlocked,
@@ -306,6 +316,13 @@ export const DraggableTab: React.FC<DraggableTabProps> = React.memo(({
 
   const tabTitle = useMemo(() => tab.title, [tab.title]);
 
+  // 删掉这一条会发生什么（DS-43-16）：删掉**最后一条** ⇒ 整张会话卡消失。
+  // 「删除会话前确认」开关关闭时没有任何确认框 ⇒ 这句话是用户唯一的预警。
+  const removeCopy = useMemo(
+    () => removeTabEntryCopy({ removesWholeSession }),
+    [removesWholeSession]
+  );
+
   const handleTabClick = useCallback((e: React.MouseEvent) => {
     e.preventDefault();
     handleOpenTab(tab);
@@ -428,8 +445,14 @@ export const DraggableTab: React.FC<DraggableTabProps> = React.memo(({
             // 原 tooltip 只说「移除这条记录」，没说不可恢复 —— 这是本产品最贵的
             // 一件事（v1.22.0 起删除即物理清除），必须在点之前说出来。
             // title 与 aria-label 同步改：读屏用户与视觉用户要拿到同一句契约。
-            title="从会话中移除这条记录（无法恢复）"
-            aria-label={`从会话中移除（无法恢复）: ${tabTitle}`}
+            //
+            // ── 2026-10-23 审计 DS-43-16：删掉**最后一条**等于删掉整个会话 ──
+            // 「删除会话前确认」开关**关闭**时这件事零确认 ⇒ 整张卡静默消失。
+            // ⇒ 这一句必须说清「整张会话卡会一起消失」，否则提示与现象对不上。
+            //   判据由 TabGroup 用 `shouldAutoDeleteAfterTabRemoval` 算好传进来
+            //   （本组件不重复那套判据，避免两处漂移）。
+            title={removeCopy.title}
+            aria-label={`${removeCopy.action}: ${tabTitle}`}
           >
             <CloseIcon />
           </button>
@@ -443,7 +466,8 @@ export const DraggableTab: React.FC<DraggableTabProps> = React.memo(({
     prevProps.groupId === nextProps.groupId &&
     prevProps.index === nextProps.index &&
     prevProps.itemCount === nextProps.itemCount &&
-    prevProps.locked === nextProps.locked;
+    prevProps.locked === nextProps.locked &&
+    prevProps.removesWholeSession === nextProps.removesWholeSession;
 
   if (!basicPropsEqual) return false;
 

@@ -394,7 +394,26 @@ export const cleanDuplicateTabs = createAsyncThunk(
  * 那次 rejected 会按自己的备份把它带回来，不丢）。
  */
 export const moveTabAndSync = createAsyncThunk<
-  { value: { sourceGroupId: string; sourceIndex: number; targetGroupId: string; targetIndex: number; removedGroupId: string | null }; broadcastWarn?: string },
+  {
+    value: {
+      sourceGroupId: string;
+      sourceIndex: number;
+      targetGroupId: string;
+      targetIndex: number;
+      removedGroupId: string | null;
+      /**
+       * 被搬空的那个源会话的名字（2026-10-23 审计 DS-43-11）。
+       *
+       * 为什么 thunk 要带这个：搬空源组 ⇒ 整张会话卡消失，而**说这句话的是
+       * 目标会话那个组件**（drop 落在目标行上，目标行的 moveTab 回调属于目标组）
+       * ⇒ 目标组件手里没有源会话的名字。
+       * ⇒ 从**写入前抓的那份快照**里取（快照在乐观 dispatch 之前抓的，
+       *    此刻源组还在列表里，名字取得到）。
+       */
+      sourceGroupName: string | null;
+    };
+    broadcastWarn?: string;
+  },
   {
     sourceGroupId: string;
     sourceIndex: number;
@@ -431,6 +450,7 @@ export const moveTabAndSync = createAsyncThunk<
           targetGroupId,
           targetIndex,
           removedGroupId: null,
+          sourceGroupName: null,
         },
       };
     }
@@ -457,7 +477,15 @@ export const moveTabAndSync = createAsyncThunk<
 
     // 搬空源组属删除类：跨组移空会物理移除整组，广播登记失败同样要 surface
     //（否则用户看到「移动成功」，但这一组会在其它设备上复活）。
-    return { value: res.payload!, broadcastWarn: res.broadcastWarn };
+    //
+    // 源会话的名字从**写入前抓的快照**里取（见类型注释）：
+    // 此刻（乐观 dispatch 之后）源组可能已经被移出列表，名字取不到了。
+    const sourceGroupName =
+      snapshot.find(g => g.id === sourceGroupId)?.name ?? null;
+    return {
+      value: { ...res.payload!, sourceGroupName },
+      broadcastWarn: res.broadcastWarn,
+    };
   }
 );
 

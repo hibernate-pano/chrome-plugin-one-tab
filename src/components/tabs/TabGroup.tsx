@@ -11,7 +11,7 @@ import { useToast } from '@/contexts/ToastContext';
 import { useEnhancedToast } from '@/utils/toastHelper';
 import { OpenGuard, OpenAllGuard } from '@/utils/openGuard';
 import { isOpenableTabUrl } from '@/utils/inputValidation';
-import { shouldAutoDeleteAfterTabRemoval } from '@/core/tabGroupUtils';
+import { shouldAutoDeleteAfterTabRemoval, onlyActiveTabId } from '@/core/tabGroupUtils';
 import { useNearViewport } from '@/hooks/useNearViewport';
 import { resolveRowWindow } from './lazyTabRows';
 import { trackProductEvent } from '@/utils/productEvents';
@@ -36,8 +36,10 @@ import {
   deleteGroupConfirmTitle,
   deleteGroupEntryLabel,
   deleteGroupRequiresConfirm,
+  lockedTabDeleteMessage,
 } from '@/components/tabs/lockedDeleteCopy';
 import { lockToggleMessage } from '@/components/tabs/lockFeedbackCopy';
+import { moveEmptiesSessionMessage } from '@/components/tabs/moveFeedbackCopy';
 
 interface TabGroupProps {
   group: TabGroupType;
@@ -200,6 +202,15 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
   // 反映「这张卡在视口的什么位置」，展开后立刻按真实位置判定。
   const [cardRef, isNearViewport] = useNearViewport<HTMLDivElement>();
   const { renderRows, placeholderHeight } = resolveRowWindow(group.tabs.length, isNearViewport);
+
+  // ── DS-43-16：删掉**唯一那条**活跃标签 ⇒ 整个会话卡会消失 ──────────────────
+  // 「删除会话前确认」开关关闭时零确认 ⇒ ✕ 的提示是用户唯一的预警，
+  // 必须说清「整张卡会一起消失」。
+  //
+  // 一次扫完全组回答所有行（见 `onlyActiveTabId` 的注释）：
+  // 逐行调 `shouldAutoDeleteAfterTabRemoval` 是 O(n²)，
+  // 而拖拽过程中每 100ms 就重渲一次。
+  const soleActiveTabId = useMemo(() => onlyActiveTabId(group), [group]);
 
   // 只在“不处于编辑态”时把外部值同步进草稿。
   // 失败回滚会让 group.name 短暂变回旧值（那正是我们要的），
@@ -588,18 +599,37 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
         // 跨组拖拽搬空源组 = 整组物理移除，广播登记失败同样要 surface。
         const warn = deleteBroadcastWarn(payload);
         if (warn) showDeleteError(warn);
+        // ── 2026-10-23 审计 DS-43-11：搬空了一个会话，必须出声 ──────────
+        // 之前这里是**零反馈**：那张会话卡静默消失，用户全程不知道
+        // 自己拖走的是这个会话的最后一条标签。
+        //
+        // 交互本身**不动**（产品钦定「直接生效，不多问」，
+        // 见 tests/dragLastTabRefused.test.ts）—— 补的只是**说出来**。
+        //
+        // 注意说这句话的是**目标会话**那个组件（drop 落在目标行上，
+        // 目标行的 moveTab 回调属于目标组）⇒ 源会话的名字由 thunk 带回
+        // （见 tabSlice.ts 的 moveTabAndSync）。
+        const moved = payload?.value;
+        if (moved?.removedGroupId) {
+          showRestoreSuccessMessage(
+            moveEmptiesSessionMessage({
+              sourceName: moved.sourceGroupName,
+              targetName: group.name,
+            })
+          );
+        }
       })
       .catch(error => {
         logError('移动标签失败:', error);
         showDeleteError(mutationErrorMessage('移动标签', error));
       });
-  }, [dispatch, showDeleteError]);
+  }, [dispatch, group, showDeleteError, showRestoreSuccessMessage]);
 
   const handleDeleteTab = useCallback((tabId: string) => {
     // 按钮在锁定组里已不渲染（见 DraggableTab 的 locked），这里是兵底：
     // 任何绕过 UI 的调用同样不许逐条删 —— 与整组删除按钮「锁定时不渲染」同口径。
     if (group.isLocked) {
-      showDeleteError('会话已锁定，解锁后才能删除其中的标签');
+      showDeleteError(lockedTabDeleteMessage());
       return;
     }
 
@@ -1411,6 +1441,7 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
                     index={index}
                     itemCount={group.tabs.length}
                     locked={group.isLocked}
+                    removesWholeSession={soleActiveTabId !== null && soleActiveTabId === tab.id}
                     moveTab={handleMoveTab}
                     handleOpenTab={handleOpenTab}
                     handleDeleteTab={handleDeleteTab}

@@ -69,9 +69,11 @@ describe('两个入口（列表页 / 搜索页）都走同一口径', () => {
   for (const [file, label] of callSites) {
     it(`${label}（${file}）的 ✕ 先问判据、命中才弹确认`, () => {
       const source = read(file);
+      // 只钉「判据来自 core/tabGroupUtils」这**一件事** —— 不钉 import 的**长相**
+      // （同一个模块再导入别的名字是常事，钉死名单会把无关的改动变成红灯）。
       assert.match(
         source,
-        /import \{ shouldAutoDeleteAfterTabRemoval \} from '@\/core\/tabGroupUtils'/,
+        /import \{[^}]*\bshouldAutoDeleteAfterTabRemoval\b[^}]*\} from '@\/core\/tabGroupUtils'/,
         `${file} 没有复用 applyRemoveTab 的同一份判据（别另写一套）`
       );
 
