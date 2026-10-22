@@ -803,8 +803,15 @@ const OptionsContent: React.FC = () => {
                   }`}
                 >
                   TapStack 云端
+                  {/* ── 2026-10-23 审计 WC-10：默认状态必须写在卡片上 ──────
+                   * 「跨设备自动同步」听起来像「开了登录就一直在同步」，
+                   * 而**定时拉取默认是关的**（`DEFAULT_SETTINGS.syncEnabled`
+                   * 为 false，见 utils/storage.ts）⇒ 用户换到第二台设备时
+                   * 会以为「这产品同步不可靠」。
+                   * README / 商店页 / 引导 / 菜单状态行都写了这一句，
+                   * 这里补上 ⇒ 四处同一口径。 */}
                   <div className="mt-0.5 text-xs font-normal opacity-90">
-                    需要登录，跨设备自动同步
+                    需要登录，跨设备自动同步；定时拉取默认关闭，可在设置里开启
                   </div>
                 </button>
                 <button

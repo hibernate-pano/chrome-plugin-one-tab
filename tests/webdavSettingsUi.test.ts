@@ -15,6 +15,8 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 
+import { webDavPrivacyNotice } from '@/components/sync/webDavPrivacyCopy';
+
 const UI = readFileSync(
   new URL('../src/components/sync/WebDavSettings.tsx', import.meta.url),
   'utf8'
@@ -53,27 +55,38 @@ describe('WebDAV 面板：诚实度纪律（文案 = 真实行为）', () => {
     //
     // 修法：断言必须落在**那一条 UI 文案本身**上，而且要断言它的**实质内容**
     //（谁能看到什么），不是断言某个词出现过。
-    const privacyLines = UI.split('\n').filter(l => l.includes('隐私说明'));
-    assert.equal(privacyLines.length, 1, '隐私说明应恰好一处（多处 = 说辞分裂）');
-    // ⚠️ 这段 JSX 文本是**跨两行**的（TSX 里字符串会换行拼接），
-    //   只看第一行会漏掉后半句 —— 那样「云盘服务商能看到…」这句实质信息
-    //   明明在文件里，断言却报 false。断言要覆盖整段文本：
-    //   从「隐私说明」那行起，向后取到该 div 结束为止。
-    const allLines = UI.split('\n');
-    const startIdx = allLines.findIndex(l => l.includes('隐私说明'));
-    assert.ok(startIdx >= 0);
-    const chunk: string[] = [];
-    for (let i = startIdx; i < allLines.length; i++) {
-      chunk.push(allLines[i]);
-      if (allLines[i].includes('</div>')) break;
-    }
-    const privacy = chunk.join(' ');
-    assert.ok(privacy.includes('清单'), '隐私说明必须点明存在一个清单文件');
-    assert.ok(privacy.includes('明文'), '必须说清单是明文的');
+    //
+    // ── 2026-10-23 审计 WC-5：那段文案已抽成纯函数 ──────────────────────
+    // 原文案是**无条件渲染**的一句「会话内容加密后存放」，而同屏上方就有
+    // 「不加密」选项 ⇒ 用户选了明文之后界面仍在说「加密后存放」。
+    // 现在两套说法在 `webDavPrivacyCopy.ts` 里（纯函数，可被 node --test 直接跑），
+    // 面板只负责渲染 ⇒ 这里改成**断言纯函数的输出**，并另加一条接线断言
+    // （面板必须真的调用它，否则纯函数就是文案孤儿）。
+    // 更细的逐字段判据见 tests/guards/webDavPrivacyCopyHonesty.test.ts。
+    const encrypted = webDavPrivacyNotice('required');
+    assert.ok(encrypted.includes('清单'), '隐私说明必须点明存在一个清单文件');
+    assert.ok(encrypted.includes('明文'), '必须说清单是明文的');
     // 实质：谁能看到什么。少了后半句，用户仍会以为「全盘都是加密的」。
     assert.ok(
-      /云盘(服务商)?能看到/.test(privacy),
+      /云盘(服务商)?能看到/.test(encrypted),
       '必须说清「云盘服务商能看到什么」——这是实质信息，不是措辞',
+    );
+  });
+
+  it('面板必须真的渲染那段隐私说明（接线，不是文案孤儿）', () => {
+    // 纯函数写了不接上 = 没修：面板上还是什么都看不到。
+    assert.match(
+      UI,
+      /webDavPrivacyNotice\(/,
+      '面板必须调用 webDavPrivacyNotice —— 纯函数与界面之间必须接线'
+    );
+    // 且面板不得自己再写一份（两份说法必然漂移）。
+    const code = UI.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^[ \t]*\/\/.*$/gm, '');
+    const hardcoded = code.split('\n').filter(l => l.includes('隐私说明'));
+    assert.deepEqual(
+      hardcoded,
+      [],
+      '面板里还留着写死的隐私说明 —— 说法必须只有纯函数那一个出处'
     );
   });
 

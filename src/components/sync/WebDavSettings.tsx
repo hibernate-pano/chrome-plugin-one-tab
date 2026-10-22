@@ -24,7 +24,10 @@
  *   · 不写「数据加密存储」而写「离开浏览器前加密」——后者才是真的；
  *   · 口令**无法找回**（没有找回入口，就必须提前说）；
  *   · 「应用密码」是各服务商第三方应用专用密码，不是账号登录密码；
- *   · manifest 明文 ⇒ 会话数量与修改时间对云盘可见，必须告知。
+ *   · manifest 明文 ⇒ 会话数量、会话 id、是否已删除、操作印记（含设备编号）、
+ *     加密 salt 对云盘可见，每个会话分片还有一段明文头部，必须告知；
+ *   · 隐私说明必须**跟着加密开关走**（用户可以显式选「不加密」）——
+ *     无条件说「加密后存放」就是在骗人。两套说法见 `webDavPrivacyCopy.ts`。
  */
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useAppDispatch, useAppSelector } from '@/store/hooks';
@@ -76,6 +79,7 @@ import type { TabGroup } from '@/types/tab';
 import { logWarn } from '@/utils/log';
 import { classifyBackendResolution, type BackendStatusKind } from '@/components/layout/backendStatus';
 import { webDavBannerKindOf, WEB_DAV_BANNER_COPY, WEB_DAV_BANNER_TONE, resolveSyncFailureCopy } from './syncPreviewView';
+import { webDavPrivacyNotice } from './webDavPrivacyCopy';
 
 type CheckState =
   | { kind: 'idle' }
@@ -1431,7 +1435,11 @@ export const WebDavSettings: React.FC = () => {
             checked={encryption === 'required'}
             onChange={() => setEncryption('required')}
           />
-          <span>加密（推荐）：离开浏览器前用口令加密，云盘上只有密文</span>
+          {/* 2026-10-23 审计 WC-5：原文「云盘上只有密文」与下方那段隐私说明
+              **互相矛盾** —— 每个会话文件还带一段明文头部（id / 是否已删除 /
+              操作印记 / 最后修改时间），且清单文件整体就是明文。
+              ⇒ 改成只承诺「会话内容是密文」，那句承诺才是真的。 */}
+          <span>加密（推荐）：离开浏览器前用口令加密，会话内容在云盘上是密文</span>
         </label>
         <label className="mt-1 flex items-start gap-1.5 text-xs text-gray-600 dark:text-gray-300">
           <input
@@ -1462,9 +1470,18 @@ export const WebDavSettings: React.FC = () => {
         ) : null}
       </fieldset>
 
+      {/* ── 2026-10-23 审计 WC-5：隐私说明必须**跟着加密开关走** ──────────
+       * 修复前这是一段无条件渲染的「会话内容加密后存放」—— 可同屏上方就有
+       * 「不加密」选项，用户显式选了明文之后，这句话仍在说「加密后存放」。
+       * 而且它把明文面说得比实际小（manifest 里还有 id / 是否已删除 /
+       * 操作印记（含设备编号）/ salt，每个会话分片还有一段明文头部）。
+       *
+       * ⇒ 两套说法抽成纯函数（`webDavPrivacyCopy.ts`），这里只负责渲染。
+       *   为什么必须抽：两版各有半句独有内容（明文版要写清「名称与网址是
+       *   明文」，加密版要写清 manifest 的明文字段），内联写两遍必然漂移。
+       *   守卫见 tests/guards/webDavPrivacyCopyHonesty.test.ts。 */}
       <div className="mb-2 text-[11px] leading-relaxed theme-text-muted">
-        隐私说明：会话内容加密后存放，但目录清单文件（manifest）以明文记录「有多少个会话、
-        各自在何时被修改」，云盘服务商能看到这些信息，但不包含会话名称与网址。
+        {webDavPrivacyNotice(encryption)}
       </div>
 
       {/* ── 2026-10-19 审计 V-4：按钮层级 ────────────────────────────────
