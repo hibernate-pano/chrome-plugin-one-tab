@@ -41,7 +41,7 @@
 | **DS-43-16** | P2 | 「删除前确认」开关**关闭**时，✕ 的提示只说「移除这条记录」，**没说整个会话卡会一起消失** | `src/components/dnd/DraggableTab.tsx:431` |
 | **DS-43-17** | P3 | 删除按钮的 `aria-label` 不含「不可恢复」，且 Tooltip **没有 `aria-describedby` 接线** ⇒ 读屏用户听不到「删除后无法恢复」 | `src/components/tabs/TabGroup.tsx:1227-1236`、`src/components/common/Tooltip.tsx:171` |
 | **DS-43-20** | **P0（条件性）** | **`chrome.storage.local` 被清 ⇒ 用户被登出 ⇒ 重新登录时 `first-bind` 把本机全部会话**静默认领**给新账号，零提示** —— DS-1 的原始后果被完整重开。触发条件需真实浏览器验证（见 §6.3） | `src/utils/supabase/client.ts:59` + `src/storage-kv/stringStore.ts:27-37` → `src/store/slices/authSlice.ts:110-125` → `src/core/accountScope.ts:257-270` |
-| **DS-43-18** | P1 | 「冲突」在代码里**不存在**：`syncStatus: 'conflict'` 从未被赋值 ⇒ `stats.conflicts` **恒为 0**；且三处文档说「以**最后保存**的一方为准」，而胜负其实由 `(seq, deviceId 字典序)` 决定 ⇒ 文档教了一个不成立的预期 | `src/services/syncEngine.ts:1080`、`src/types/tab.ts:16`、`README.md:8/73`、`CHROMEWEBSTORE.md:480` |
+| **DS-43-18** | P1 | 「冲突」在代码里**不存在**：`syncStatus: 'conflict'` 从未被赋值 ⇒ `stats.conflicts` **恒为 0**；且三处文档说「以**最后保存**的一方为准」，而胜负其实由 `(seq, deviceId 字典序)` 决定 ⇒ 文档教了一个不成立的预期 —— ✅ **已修**（文档半：`00783c7` / `639f8ff` / `ec759a9`；代码半：本轮 —— 删掉恒为 0 的 `stats.conflicts` 与永不出现的 `'conflict'` 取值，见 §7.5 之五） | `src/services/syncEngine.ts:70/733/1161`、`src/types/tab.ts:16/119`、`README.md:8/73`、`CHROMEWEBSTORE.md:430` |
 | **DS-43-19** | P1 | 归属待决期（WebDAV 首次同步）有一条**登记竞态**：`scheduleUpload` 在保存/重命名/加锁分支**没有 await** ⇒ 登记还在飞行中，本轮白名单快照看不到它 ⇒ `clearPendingUploadGroupIds`（kvRemove）与在途的 kvSet 竞争 ⇒ **登记被抹掉、`pending_upload` 被置 false** ⇒ 该改动留在本机不上云，界面却报「同步成功」 | `src/background/mutationHandlers.ts:224/306/319` vs `:246/254/262`；`src/services/syncEngine.ts:1285,1558-1564` |
 | **DS-7 / DS-8 / DS-11 / DS-17** | — | **上轮清单已过期：这四条在 HEAD 上其实已经修好了**（详见 §1） | — |
 
@@ -310,7 +310,7 @@
 
 | 场景 | 实际行为 | 判定 |
 |---|---|---|
-| **两台设备编辑同一个会话** | 整组 LWW，印记决胜（`src/core/opStamp.ts:22-30`）。**跨设备裸比 `s` 数值**——`seqRegistry.ts` 自己的注释就说「序号只在同一设备内单调，跨设备裸比数值毫无意义」。败方那一组的**全部标签被物理替换**（无 tab 级并集） | ⚠️ **DS-43-18**：败方新增的标签**人间蒸发**，零提示；而且「冲突」这个概念在代码里**根本不存在**（`syncStatus: 'conflict'` 从未被赋值 ⇒ `stats.conflicts` 恒为 0）。三处文档说「以**最后保存**的一方为准」，而胜负其实由 `(seq, deviceId 字典序)` 决定 ⇒ **文档教了一个不成立的预期**（先保存的 A 可能赢过后保存的 B） |
+| **两台设备编辑同一个会话** | 整组 LWW，印记决胜（`src/core/opStamp.ts:22-30`）。**跨设备裸比 `s` 数值**——`seqRegistry.ts` 自己的注释就说「序号只在同一设备内单调，跨设备裸比数值毫无意义」。败方那一组的**全部标签被物理替换**（无 tab 级并集） | ⚠️ **DS-43-18**：败方新增的标签**人间蒸发**，零提示；而且「冲突」这个概念在代码里**根本不存在**（`syncStatus: 'conflict'` 从未被赋值 ⇒ `stats.conflicts` 恒为 0）。三处文档说「以**最后保存**的一方为准」，而胜负其实由 `(seq, deviceId 字典序)` 决定 ⇒ **文档教了一个不成立的预期**（先保存的 A 可能赢过后保存的 B）。**文档半已修**（`00783c7` / `639f8ff` / `ec759a9`），**代码半见 §5.3** |
 | **一台设备删除，另一台同时编辑** | **DS-3**：胜负由两个无关计数器的数值决定 ⇒ 删除被静默撤销、A 的内容被 B 的版本覆盖 | **P0，见 §1**。**披露也缺**：`README.md:8` / `README.md:73` / `CHROMEWEBSTORE.md:480` 三处都写了「同时编辑 ⇒ 后保存方整组赢」，但**没有一处**覆盖「删除 vs 并发编辑」—— 而删除确认框写的是「其他登录设备将同步删除」（`src/components/layout/deleteAllMessages.ts:43`） |
 | **一台设备删除，另一台只读不动** | 云端墓碑 vs 本地活跃 ⇒ 印记决胜；墓碑的 seq 走**本机 Lamport 时钟**（`src/utils/supabase/upload.ts:1374-1375`：`max(tombstoneSeq.nextSeq(), 云端旧 seq + 1)`，并 `bumpSeqIfLower` 抬本机时钟）⇒ 正常情况下墓碑更新，删除**会**传播 | ✔ |
 | **用户在同步进行中编辑会话** | 写方一路登记受影响 id ⇒ 下一轮补传；水位只取本轮真正落盘的行，且新号严格大于本机曾发出的每一个号（`seqRegistry.ts:78-104`）⇒ 不会跳过 | ✔ 一般路径不丢；**归属待决期有一个窄缝** ⇒ 见 **DS-43-19** |
@@ -338,6 +338,15 @@
 2. **SW 被回收 + KV 写失败**：`addPendingDeleteIds` 写 KV 失败时会塞进进程内存兜底（`src/utils/storage.ts:930-934`），但**内存兜底活不过 SW 生命周期** ⇒ 删除意图**永久消失** ⇒ 云端行永远停在活跃态 ⇒ 下一次下载在所有设备上把它带回来。用户当时**会被告知**（「N 个会话已从本机删除，但未能登记云端删除广播…」），但**这条告警不跨 SW 生命周期**。
 
 > **明确的「查了没事」**（免得下一轮重复排查）：`pendingDeleteIds` 那一支**没有**被 `writtenTombstoneIds` 过滤（`src/services/syncEngine.ts:1396-1400`）—— 铁律 4 那个陷阱在 HEAD **不存在**。清队是**按确认逐条消费**（`src/utils/storage.ts:959-994`），不会连坐抹掉本轮新增的意图。
+
+### 5.3 DS-43-18 的代码半：删掉那个**恒为 0** 的「冲突」统计量
+
+- **位置**：`src/services/syncEngine.ts` 的 `MergeResult.stats`（曾有 `conflicts: number`）、`src/types/tab.ts` 的 `syncStatus` 联合类型（曾含 `'conflict'`）。
+- **失效路径**：`syncStatus === 'conflict'` **全仓没有任何一处会赋出来**（合并是整组 LWW，见 `src/core/opStampMerge.ts`）⇒ `stats.conflicts` **恒为 0** ⇒ 而它**零消费**（全仓只有 `backgroundSync.ts` 拼日志字符串时提到它）。
+- **为什么这比「有个没用的字段」更糟**：统计量的语义是「这里发生过几次」。一个**恒为 0** 的统计量说的是「一次都没发生过」—— 而它明明发生过（败方新增的标签被丢）。⇒ **它让人以为这件事不存在**。
+- **本轮改法**：**删掉**这两处承诺，不补「读取方」也不补「实现」（本仓对 `displayOrder` 死字段也是同样的处理）。真相**留在文档里**：README「整组覆盖」与商店页「Known Issues」都写着「败方新增的标签会丢，且**没有任何提示** / 界面上看不到冲突提示」。
+- **为什么不做「冲突提示」**：那需要**共同祖先**（三方合并的基线）才能区分「云端只是更新了」与「两边同时改了、有一边被覆盖」。没有基线的任何实现都只能靠猜，**猜错就是误报**，而误报的冲突提示会教用户不信任同步 ⇒ 协议级改动，不在本轮范围。
+- **守卫**：`tests/guards/phantomConflictState.test.ts` —— ① 类型里不许再出现 `'conflict'`；② `syncEngine` 里不许再出现 `conflicts`；③ **README / 商店页必须仍然写着那两句真话**（代码不再承诺之后，文档是唯一的真相所在）；④ 台账不许把这条债抹掉。变异自证见 `phantomConflictStateMutation.test.ts`（三条「改坏 ⇒ 必须红」+ 一条「等价改写 ⇒ 必须仍绿」）。
 
 ---
 

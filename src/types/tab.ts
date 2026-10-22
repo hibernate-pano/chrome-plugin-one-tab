@@ -13,7 +13,15 @@ export interface Tab {
   pinned: boolean;
 
   // 同步相关字段
-  syncStatus?: 'synced' | 'local-only' | 'remote-only' | 'conflict';
+  //
+  // ⚠️ 这里**曾经**有 `'conflict'` 一项：它承诺「冲突」是一个可表示的状态。
+  // 但全仓**没有任何一处**会把它赋出来（合并是整组 LWW，见 src/core/opStampMerge.ts）
+  // ⇒ 一个类型里摆着一个永远不会出现的取值，等于对外宣称「本产品会标记冲突」，
+  // 而它其实不标记（败方新增的标签会丢，且**没有任何提示**，这一点在
+  // README「整组覆盖」与 CHROMEWEBSTORE「Known Issues」里如实写着）。
+  // 要真正有「冲突」这个状态，得先有**共同祖先**（三方合并的基线）——
+  // 那是协议级的改动，不是给类型加一个字能兑现的 ⇒ 这里删掉这个承诺。
+  syncStatus?: 'synced' | 'local-only' | 'remote-only';
   lastSyncedAt?: string | null;
   /** @deprecated 无墓碑模型（2026-09-29）新写入不再产生；仅为读取老版本设备数据保留 */
   isDeleted?: boolean;
@@ -115,8 +123,8 @@ export interface TabGroup {
    */
   version?: number; // 版本号，每次修改时递增，用于检测冲突
 
-  // 同步相关字段
-  syncStatus?: 'synced' | 'local-only' | 'remote-only' | 'conflict';
+  // 同步相关字段（同 Tab 上的那一处：'conflict' 已删除，理由见上）
+  syncStatus?: 'synced' | 'local-only' | 'remote-only';
   lastSyncedAt?: string | null;
   /** @deprecated 无墓碑模型（2026-09-29）本地新写入不再产生；云端 is_deleted 行为删除广播载体，读路径防御保留 */
   isDeleted?: boolean;

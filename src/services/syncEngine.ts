@@ -63,11 +63,25 @@ import { logError, logInfo, logWarn } from '../utils/log';
 export interface MergeResult {
   success: boolean;
   groups: TabGroup[];
+  /**
+   * 合并的**数字摘要**（只给日志用）。
+   *
+   * ⚠️ 这里**曾经**有 `conflicts: number`（2026-10-23 审计 DS-43-18 删掉）。
+   *
+   * 为什么删：它数的是 `syncStatus === 'conflict'` 的组数，而**没有任何一处**
+   * 会把组标成 `'conflict'`（合并是整组 LWW，见 src/core/opStampMerge.ts）
+   * ⇒ 这个数字**恒为 0**，而全仓**零消费**（只有 backgroundSync 拼日志时提到它）。
+   * 一个恒为 0 的统计量对外宣称「本产品会统计冲突」，而它其实不统计，
+   * 也不提示（败方新增的标签会丢且零提示，README「整组覆盖」如实写着）。
+   *
+   * 要有真的冲突数，得先有**共同祖先**（三方合并的基线）才能区分
+   * 「云端只是更新了」与「两边同时改了、有一边被覆盖」——那是协议级改动。
+   * 在那之前，这里宁可**没有**这个数字，也不要一个恒为 0 的假数字。
+   */
   stats?: {
     localCount: number;
     cloudCount: number;
     mergedCount: number;
-    conflicts: number;
   };
   reason?: string;
   /**
@@ -730,7 +744,6 @@ export class SyncEngine {
                 localCount: snapshot.length,
                 cloudCount: digest.length,
                 mergedCount: snapshot.length,
-                conflicts: 0,
               },
               reason: 'up_to_date',
               upToDate: true,
@@ -1158,7 +1171,6 @@ export class SyncEngine {
           localCount: localGroups.length,
           cloudCount: cloudGroups.length,
           mergedCount: finalGroups.length,
-          conflicts: finalGroups.filter(g => g.syncStatus === 'conflict').length,
         },
         // ── 2026-10-20 D-6：如实上报「云端有 N 组这轮读不出来」────────────
         //
