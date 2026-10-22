@@ -1096,11 +1096,6 @@ class ChromeStorage {
   // 之前这里 `catch { return false }`，与同文件 groups/settings 的
   // fail-closed 纪律正好相反。改为抛错：让调用方显式决定「读不到时怎么办」，
   // 而不是替它们编一个「没有待上传」的答案。
-  async getPendingUpload(): Promise<boolean> {
-    await this.ensureVersion();
-    return (await kvGet<boolean>(STORAGE_KEYS.PENDING_UPLOAD)) === true;
-  }
-
   /**
    * 置/清 pending_upload 标志（本地有未上传变更）。
    *
@@ -1109,10 +1104,65 @@ class ChromeStorage {
    *   清位失败 → 保守方向（多传一轮），无害。
    * 上层 scheduleUpload 仍会吞掉这个错误并只记日志（见 syncEngine），那是另一个
    * 文件的语义；本层不再假装写成功，把失败如实交出去。
+   *
+   * ⚠️ 2026-10-23（DS-43-19）：清位（false）**不再**等于「都传完了」。
+   * 读侧会拿白名单兜底（见 getPendingUpload），所以这里清位**不会**造成丢数据；
+   * 但也**别**把「清位」当成「白名单已清」——那是两件事，各有各的判据。
    */
   async setPendingUpload(pending: boolean): Promise<void> {
     await this.ensureVersion();
     await kvSet(STORAGE_KEYS.PENDING_UPLOAD, pending);
+  }
+
+  /**
+   * 读「本地有未上传变更」这个事实。
+   *
+   * ── 2026-10-05：读失败不再静默返回 false ──────────────────────────────
+   * 这个标志是「后台 alarm 要不要上传」的唯一判据，而 false 的语义是
+   * 「本地没有待上传的变更」——于是读失败会被读成「一切正常，不用了」，
+   * 而真实状态可能是「有一堆本地变更等着上云」。结果：本地变更**静默不推送**，
+   * 云端保持旧状态，下次下载再把本地覆盖回去，用户以为存了其实没存上。
+   *
+   * 之前这里 `catch { return false }`，与同文件 groups/settings 的
+   * fail-closed 纪律正好相反。改为抛错：让调用方显式决定「读不到时怎么办」，
+   * 而不是替它们编一个「没有待上传」的答案。
+   *
+   * ── 2026-10-23（DS-43-19）：这个标志现在是**派生值**的一半 ────────────────
+   * 读它的时候除了标志本身，还要看**增量白名单里有没有剩下东西**：
+   *
+   * 为什么：标志与白名单是「还有没传完的东西」的**两份记录**，而它们会被
+   * 两次独立的写分别更新 ⇒ 可以**漂移**。DS-43-19 的现场正是漂移的一种：
+   * 一轮上传在途（它开始时读到的白名单快照里没有某个刚改的会话）⇒ 对账
+   * 「对得上」⇒ 标志被清成 false ⇒ 而那个会话的登记要么被整表清一起抹掉、
+   * 要么还在白名单里却没人再传 ⇒ **改动永远不上云，界面却报「同步成功」**。
+   *
+   * ⇒ 只要白名单里还剩下 id，「还有没传完的东西」就成立 ⇒ 标志必须是 true。
+   * 这样一来，「标志被并发写覆盖成 false」不再能造成丢数据：**白名单**才是
+   * 真相源，标志只是它的快捷读法（另有一路登记不带 id，只靠标志）。
+   *
+   * ⚠️ 读白名单**失败要抛**（不许替用户猜「没有待传」）：读不到 ≠ 没有。
+   * 抛出去的后果是「这一轮同步中止、下轮重试」（fail-closed），
+   * 而猜成「没有待传」的后果是「后台再也不上传」⇒ 改动静默滞留本机。
+   */
+  async getPendingUpload(): Promise<boolean> {
+    await this.ensureVersion();
+    const flagged = (await kvGet<boolean>(STORAGE_KEYS.PENDING_UPLOAD)) === true;
+    if (flagged) return true;
+    return this.hasPendingUploadRegistryIds();
+  }
+
+  /**
+   * 增量白名单里还有没有 id（**读失败就抛**：读不到不等于没有）。
+   *
+   * 形状判据与 getPendingUploadGroupIds 一致（读不懂的形状一律当「没有登记」）：
+   * 这个键只有我们会写，写进去的永远是字符串数组 ⇒ 读出别的东西说明它被
+   * 覆盖过；此时标志仍在 ⇒ 待传的事实由标志兜底，不必靠这份读不懂的形状。
+   */
+  private async hasPendingUploadRegistryIds(): Promise<boolean> {
+    await this.ensureVersion();
+    const raw = await kvGet<unknown>(STORAGE_KEYS.PENDING_UPLOAD_GROUP_IDS);
+    if (!Array.isArray(raw)) return false;
+    return raw.some((x): x is string => typeof x === 'string' && x.length > 0);
   }
 
   /**
@@ -1144,6 +1194,23 @@ class ChromeStorage {
    * @param scope 目标库的作用域键（见 `webdav/libraryIdentity.ts`）。
    *              省略 = **自动解析为「本机当前指向的库」**（读磁盘上的
    *              已保存配置）—— 那正是「现在要往哪儿传」这个问题的答案。
+   *
+   * ⚠️ 2026-10-23 审计 DS-4：**读失败必须抛，不能编一个「没有待决」出来。**
+   *
+   * 原先这里 `catch { return false }` ⇒ 读失败被当成「归属决策已经做完」
+   * ⇒ 上传闸门放行 ⇒ **切库时历史会话被全量推上云**（用户从没被问过
+   * 「这些会话归不归这个库」）。而「多传」是**不可回滚**的：
+   * 别的设备上那些会话已经出现，用户再删就是第二次删除。
+   *
+   * 为什么不能学上一轮说的「读失败 ⇒ return true（当成待决）」：
+   * 那样会进「白名单模式」，而白名单**同一个读失败**下也是空集 ⇒
+   * 本轮一个会话都不传 ⇒ 对账看到「登记集合 = 空集」⇒ 判定「都传完了」
+   * ⇒ **清掉 pending_upload 并报「全部已同步」** ⇒ 读失败变成一次
+   * 「静默的假成功」，比原来的多传更隐蔽。
+   *
+   * ⇒ 抛。读不到就是读不到（铁律 1）。后果：这一轮同步中止 ⇒
+   * 界面报失败 ⇒ 下一轮重试 —— 与 `storage.getGroups` / `getSettings`
+   * 的既有纪律一致。
    */
   async getFirstSyncPending(scope?: string): Promise<boolean> {
     try {
@@ -1156,9 +1223,11 @@ class ChromeStorage {
       const raw = await kvGet<unknown>(STORAGE_KEYS.FIRST_SYNC_PENDING);
       const resolved = scope ?? (await resolveCurrentLibraryScope());
       return resolveFirstSyncPending(raw, resolved);
-    } catch {
-      // 读不到就当「没有待决」：挡住的代价（数据传不上去）比放过的代价大。
-      return false;
+    } catch (error) {
+      throw new Error(
+        '读不到归属决策状态，已中止本轮上传以免历史会话被误传。原始错误：' +
+          (error instanceof Error ? error.message : String(error))
+      );
     }
   }
 
@@ -1236,6 +1305,59 @@ class ChromeStorage {
   }
 
   /**
+   * **按确认逐条消费**增量白名单，并返回**消费之后还剩下什么**。
+   *
+   * ── 为什么不能整表清（2026-10-23 审计 DS-43-19）───────────────────────────
+   * 白名单有三个写者：登记（`noteGroupsChanged`，并集）、轮次清理、轮次开始
+   * 时的快照（读）。而一轮上传要跑几秒，期间**完全可能有新的改动登记进来**。
+   * 整表清（`kvRemove`）等于「清掉我没点名的一切」—— 而「我没点名的」里
+   * 必然包含「我读完之后才登记进来的」⇒ 那些改动**永远没人再传**，
+   * 而界面报「同步成功」（用户以为同步了，数据其实只在本机）。
+   *
+   * 本仓对同形状的删除广播队列已经踩过这一脚，修法与形状都是现成的：
+   * `clearPendingDeleteIds(confirmedBroadcastIds)`。⇒ 白名单用同一套：
+   * **点名消费**，读-改-写而不是删键。
+   *
+   * ── 消费之后为什么必须回读残余 ─────────────────────────────────────────
+   * 「还有没有没传完的东西」这个事实，判据**不能**是「轮次开始时的快照」：
+   * 快照看不见「本轮期间才登记进来的」⇒ 会把「还有东西没传」误判成
+   * 「都传完了」。⇒ 消费完再读一次，剩下的就是**真的还没传完的**。
+   *
+   * @param settledIds 本轮**真的结案**的 id（由 core/uploadCoverage 的
+   *   decideConsumableRegistryIds 给出 —— 它保证这批 id 是「轮次开始时的
+   *   快照」的子集 ⇒ 晚到的登记绝不会被消费掉）。
+   * @returns 消费之后白名单里**仍然剩下**的 id（= 还没传完的那些）。
+   *
+   * ⚠️ 失败即抛（fail-closed）：读-改-写失败 ⇒ 我们**不知道**白名单现在
+   * 是什么样 ⇒ 上层必须按「还有东西没传完」处理（保留待传标志、下一轮重试）。
+   * 上传按印记幂等，重复传一轮无害；把「还有没传上去的东西」清成「都传完了」
+   * 则是静默丢数据 —— 后者远比前者糟。
+   */
+  async consumePendingUploadGroupIds(settledIds: readonly string[]): Promise<string[]> {
+    await this.ensureVersion();
+    const settled = new Set(
+      settledIds.filter((id): id is string => typeof id === 'string' && id.length > 0)
+    );
+    const raw = await kvGet<unknown>(STORAGE_KEYS.PENDING_UPLOAD_GROUP_IDS);
+    const persisted = Array.isArray(raw)
+      ? raw.filter((x): x is string => typeof x === 'string' && x.length > 0)
+      : [];
+    // 只移除**点名**的那些；其余（晚到的登记、没点名的）一律留下。
+    const remaining = [...new Set(persisted.filter((id) => !settled.has(id)))];
+    if (remaining.length === persisted.length) {
+      // 一个都没点到 ⇒ 白名单**原样**（不写盘：省一次 KV 写，也避免
+      // 「读出来是空的、写回去也是空的」这种无谓的写-改-写竞争窗口）。
+      return remaining;
+    }
+    if (remaining.length === 0) {
+      await kvRemove(STORAGE_KEYS.PENDING_UPLOAD_GROUP_IDS);
+    } else {
+      await kvSet(STORAGE_KEYS.PENDING_UPLOAD_GROUP_IDS, remaining);
+    }
+    return remaining;
+  }
+
+  /**
    * 增量白名单的登记**是否曾经失败过**（2026-10-20 D-3 / D-10）。
    *
    * 登记失败的后果不是「少传几个」，而是「**不知道漏了哪几个**」——
@@ -1243,8 +1365,13 @@ class ChromeStorage {
    * 有了这个标志，上传流程就知道：**不能**清 pending_upload，
    * 也不能对外宣称「都同步了」。
    *
-   * 读失败 ⇒ false（方向：读不到不等于失败过。把它当 true 会让上传
-   * 永远清不掉 pending_upload ⇒ 无限重试，比「偶尔多说一句」糟得多）。
+   * 读失败 ⇒ **抛**（2026-10-23 审计 DS-5：底层 `getPendingUploadRegistryState`
+   * 改成 fail-closed ⇒ 这里跟着抛）。
+   *
+   * 原先这里写「读失败 ⇒ false（读不到不等于失败过）」—— 那条纪律在
+   * 「只用来给日志看」时说得过去，但这份状态会被**复位**判据读：
+   * 读失败被当成「没失败过」⇒ 复位 ⇒ **漏登记的那批永远不被重试**
+   * ⇒ 那些改动静默滞留本机。
    */
   async getPendingUploadRegistryUnreliable(): Promise<boolean> {
     return (await this.getPendingUploadRegistryState()).unreliable;
@@ -1290,9 +1417,27 @@ class ChromeStorage {
       // 认不出来的形状：键存在却读不懂 ⇒ 有东西坏了 ⇒ 按「不可信」处理
       //（方向：读不懂不等于没问题；但也别把它当成「失败过 N 次」）。
       return { unreliable: true, gapOpen: true, gen: 1 };
-    } catch {
-      // 读失败 ⇒ false（既有纪律：读不到不等于失败过）。
-      return clean;
+    } catch (error) {
+      // ── 2026-10-23 审计 DS-5：读失败必须**抛**，不能编一个「干净」出来 ──
+      //
+      // 原先这里 `catch { return clean }`（unreliable:false / gapOpen:false）
+      // ⇒ **读失败被当成「登记机制是好的」**。而这个标志复位后，
+      // 上传对账就会认为「漏登记的那批已经被全量补上了」⇒
+      // **漏登记的改动永远不再被重试** ⇒ 那些改动静默滞留本机。
+      //
+      // 为什么不能学 DS-4 那样「返回一个保守值」（unreliable:true）——
+      // 那样能自愈，但代价是**编造了一个没读到的事实**（gen 只能瞎填），
+      // 而这份状态会被 `setPendingUploadRegistryStateIfUnchanged` 拿去做
+      // **并发保护**（compare-and-set）⇒ 瞎填的 gen 会挡住本该发生的复位
+      // ⇒ 状态永远卡在「不可信」⇒ 每轮都报「无法确认全部已同步」。
+      //
+      // ⇒ 抛。读不到就是读不到（铁律 1：读失败必须 fail-closed）。
+      // 后果：这一轮同步中止 ⇒ 界面报失败 ⇒ 下一轮重试（读得到就正常走）。
+      // 这与 `storage.getGroups` / `getSettings` 的既有纪律一致。
+      throw new Error(
+        '读不到「本次改动的会话 id」登记状态，已中止本轮上传。原始错误：' +
+          (error instanceof Error ? error.message : String(error))
+      );
     }
   }
 

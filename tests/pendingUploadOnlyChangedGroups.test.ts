@@ -107,7 +107,25 @@ describe('syncEngine：待决期按 id 过滤，且 fail-closed', () => {
       '三个前提缺一不可（待决 + 非显式 + 非覆盖）'
     );
     assert.match(src, /const suppressFullUpload = decideSuppressFullUpload\(\{/);
-    assert.match(src, /new Set\(await storage\.getPendingUploadGroupIds\(\)\)/);
+    // ⚠️ 2026-10-23（DS-43-19）：这一条**不再钉字面量**。
+    //
+    // 原来钉的是 `new Set(await storage.getPendingUploadGroupIds())` ——
+    // 那是「实现长什么样」，不是「行为对不对」：白名单快照改成先读进一个
+    // 变量再构造集合（因为**普通轮次**也要读它，见引擎里的结案分支），
+    // 这条守卫就误报了一遍（本仓记忆 `stale-literal-guards-block-correct-fixes`）。
+    //
+    // 现在钉**行为**：过滤用的 id 集合必须来自**白名单快照**，
+    // 快照怎么读、变量叫什么，都可以变。
+    assert.match(
+      src,
+      /await storage\.getPendingUploadGroupIds\(\)/,
+      '必须读增量白名单（过滤用的 id 集合只能来自它）'
+    );
+    assert.match(
+      src,
+      /const changedGroupIds = suppressFullUpload\s*\?[^;]*new Set\(/,
+      '抑制生效时，过滤集合必须由白名单快照构造（不是别的来源）'
+    );
     assert.match(src, /activeGroups\.filter\(g => changedGroupIds\.has\(g\.id\)\)/);
     assert.match(src, /uploadTabGroups\(\s*groupsForUpload,/, '上传的必须是过滤后的清单');
   });
@@ -119,9 +137,26 @@ describe('syncEngine：待决期按 id 过滤，且 fail-closed', () => {
     assert.equal(fast.length, 2, '快路径与 fallback 都要等 noted（否则可能读到没写全的白名单）');
   });
 
-  it('上传成功后清白名单；进入/离开待决态时也清（防陈旧 id 把历史会话推上去）', async () => {
+  it('上传成功后**按确认逐条消费**白名单；进入/离开待决态时整队清（防陈旧 id 把历史会话推上去）', async () => {
     const engine = await read('src/services/syncEngine.ts');
-    assert.match(engine, /await storage\.clearPendingUploadGroupIds\(\)/);
+    // ⚠️ 2026-10-23（DS-43-19）：上传成功后的清理**不再是整表清**。
+    //
+    // 整表清（kvRemove）会把「本轮期间才登记进来的」一起抹掉 ⇒ 那批改动
+    // 永远没人再传 ⇒ 界面却报「同步成功」。现在改成**按确认逐条消费**
+    // （形状与删除广播队列的 clearPendingDeleteIds 一致）。
+    //
+    // 这里钉**接线**（引擎调的是消费、不是整表清），不钉消费本身的细节
+    // （那是 DS-43-19 自己的守卫管的）。
+    assert.match(
+      engine,
+      /consumePendingUploadGroupIds\(/,
+      '上传成功后必须走「按确认逐条消费」，不能整表清'
+    );
+    assert.doesNotMatch(
+      engine,
+      /await storage\.clearPendingUploadGroupIds\(\)/,
+      '引擎里不许再整表清白名单（会把本轮期间才登记进来的改动抹掉）'
+    );
     const storageSrc = await read('src/utils/storage.ts');
     // ⚠️ 2026-10-20：窗口从「固定 900 字符」改成「切到**下一个方法**为止」。
     //

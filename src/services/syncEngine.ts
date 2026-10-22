@@ -40,6 +40,10 @@ import {
   reconcileUploadCoverage,
   decideRegistryAfterUpload,
   decideRegistryAfterRegistryWrite,
+  // 「本轮能消费掉哪些增量登记」与「消费之后还有没有没传完的」
+  // （2026-10-23 审计 DS-43-19）。纯函数：判据不许散在 IO 层。
+  decideConsumableRegistryIds,
+  decidePendingAfterRegistryConsume,
 } from '@/core/uploadCoverage';
 import { checkDeleteFailsafe, type FailsafeVerdict } from '@/sync-backend/failsafe';
 // 覆盖下载的删除计划（DS-2）：这次覆盖会物理清除本机哪些会话。
@@ -1347,10 +1351,19 @@ export class SyncEngine {
       // 判据因此换成写方一路记下来的 id（保存路径 + mutation 命令，见
       // core/mutationAffectedGroups）；读不到 ⇒ 空集 ⇒ 什么都不传（fail-closed：
       // 待决期少传只是「留在本机等用户决定」，多传才是违约）。
-      const changedGroupIds = suppressFullUpload
-        ? new Set(await storage.getPendingUploadGroupIds())
-        : null;
-
+      // ── 2026-10-23（DS-43-19）：白名单快照**每一轮都要读** ─────────────────
+      // 待决期它决定「本轮允许传哪些会话」；普通轮次它决定「本轮能消费掉哪些
+      // 登记」（见本轮末尾的结案分支）。
+      //
+      // 为什么普通轮次也要读：白名单是**共享可变状态**，写方随时在往里加 id。
+      // 清理时若不知道「轮次开始时里面有哪些」，就只能整表清 ⇒ 会把「读完之后
+      // 才登记进来的」一起抹掉 ⇒ 那批改动永远没人再传（DS-43-19）。
+      //
+      // ⚠️ 读失败 ⇒ 空集（getPendingUploadGroupIds 的 fail-closed 方向）：
+      // 待决期什么都不传（少传只是「留本机等用户决定」，多传才是违约）；
+      // 普通轮次则「消费不到任何登记」⇒ 白名单原样保留 ⇒ 下一轮再清。
+      const registrySnapshotIds = await storage.getPendingUploadGroupIds();
+      const changedGroupIds = suppressFullUpload ? new Set(registrySnapshotIds) : null;
       // ── 2026-10-20 D-10：「登记不可信」标志的**完整状态** ───────────────
       // 标志是**持久化**的：写入失败可能发生在**上一次**上传之前，
       // 那一轮的失败不能因为进程重启就消失。
@@ -1715,13 +1728,58 @@ export class SyncEngine {
       // ⚠️ 2026-10-20 D-10：「登记不可信」标志的复位**不在**这个分支里
       // （它曾经在这里 ⇒ 自锁）。它在上面按「写方登记成功 / 本轮是全量」
       // 这两条与对账无关的事实独立复位。
+      // ── 2026-10-23（DS-43-19）：结案 = **按确认逐条消费** + **残余说了算** ──
+      //
+      // 原实现：`setPendingUpload(false)` + **整表清**白名单（kvRemove）。
+      // 两个动作各自都能把「还有没传完的东西」清成「都传完了」：
+      //   · 整表清把「本轮期间才登记进来的」一起抹掉；
+      //   · 清标志用的判据是「**轮次开始时**的快照」，看不见那批新登记。
+      // ⇒ 结果：改动留在本机、永远不上云，而界面报「同步成功」。
+      //
+      // 现在：
+      //   ① **按确认逐条消费**（storage.consumePendingUploadGroupIds）：
+      //      只删「轮次开始时的快照 ∩ 本轮真的结案」的那批 ⇒ 晚到的登记活下来
+      //      （形状与删除广播队列的 clearPendingDeleteIds 一致，见那里的理由）。
+      //   ② **残余说了算**：消费完重新读，剩下的就是「真的还没传完的」⇒
+      //      待传标志按残余置位 ⇒ 下一轮会接着传。
+      //   ③ 消费失败 ⇒ 按「还有东西没传完」处理（fail-closed：宁可多传一轮）。
+      //
+      // ⚠️ 为什么「消费」这一步的判据在纯函数里（decideConsumableRegistryIds）：
+      // 「本轮能消费掉哪些 id」是纯集合运算；放纯函数才不会在
+      // 「存储层顺手清一遍」与「引擎点名消费」之间漂移一次。
+      let residualIds: string[] = [];
+      let consumeFailed = false;
       if (coverage.canClearPending) {
-        await storage.setPendingUpload(false);
-        // 增量白名单同批清理：这批改动已经上去了（或被如实跳过），留着只会在
-        // 下一次进入待决态时误导筛选。失败不阻断（下一轮成功时再清）。
-        await storage.clearPendingUploadGroupIds().catch(err =>
-          logWarn('[SyncEngine] 清理「本次改动的会话 id」失败（下轮上传再清）:', err)
-        );
+        const consumable = decideConsumableRegistryIds({
+          snapshotIds: registrySnapshotIds,
+          // 本轮真的结案的：上行成功 ∪ 删除已广播 ∪ 不属于当前账号（被闸门挡下）。
+          settledIds: [
+            ...submittedGroupIds,
+            ...broadcastDeleteIds,
+            ...blockedByAccountScope,
+          ],
+          submittedFullScope: submittedCoversAllActive,
+        });
+        try {
+          residualIds = await storage.consumePendingUploadGroupIds(consumable);
+        } catch (err) {
+          consumeFailed = true;
+          logWarn(
+            '[SyncEngine] 消费「本次改动的会话 id」失败（保守：保留待传队列，下轮重试）:',
+            err
+          );
+        }
+        const settle = decidePendingAfterRegistryConsume({ residualIds, consumeFailed });
+        // 残余非空 ⇒ 「本轮期间还有改动登记进来」⇒ 待传标志必须留着
+        // （清掉它就等于宣布「都传完了」，而那批改动还没上去）。
+        await storage.setPendingUpload(settle.keepPending);
+        if (settle.keepPending) {
+          logInfo(
+            `[SyncEngine] 本轮上传期间又登记了 ${residualIds.length} 个会话的改动` +
+              '（不在本轮开始时的快照里 ⇒ 本轮没传它们）' +
+              '，已保留待传队列，下一轮会自动补传。'
+          );
+        }
       } else {
         logError(
           `[SyncEngine] 本轮有 ${coverage.unsyncedCount} 个会话没有上传到云端` +
@@ -1759,6 +1817,27 @@ export class SyncEngine {
           : {}),
         ...(coverage.unsyncedCount > 0
           ? { error: `${coverage.unsyncedCount} 个会话尚未同步到云端（已保留待传队列，下一轮会自动重试）` }
+          : {}),
+        // ── 2026-10-23（DS-43-19）：「本轮期间才登记进来的改动」也要如实报 ──
+        // 这批 id 不在本轮开始时的快照里 ⇒ 本轮**没传**它们 ⇒ 说「同步成功」
+        // 是不老实的（那正是本缺陷的用户可见面）。
+        //
+        // ⚠️ 为什么**不说**「N 个会话尚未同步到云端」：那句话在普通轮次里
+        // 可能是**假的** —— 普通轮次上传的是本机全部活跃会话，而那个会话
+        // 很可能**已经**随本轮上去了（本轮只是没看到它的登记）。
+        // ⇒ 只说能被这一轮的事实支撑的话：期间有改动、队列留着、下一轮补传。
+        //
+        // 它走的是与「未同步」**同一条通道**（skippedGroups + error）⇒
+        // SW 的 SYNC 回包据此把 ok 置 false ⇒ 界面弹这句人话，而不是
+        // 「上传成功」。下一轮补传成功后界面会再报一次成功。
+        ...(residualIds.length > 0
+          ? {
+              skippedGroups: residualIds.length,
+              skippedGroupIds: residualIds,
+              error:
+                `本轮上传期间有 ${residualIds.length} 个会话被改动，已保留待传队列，` +
+                '下一轮会自动补传',
+            }
           : {}),
         // 「无法确认全部已同步」：数量可能为 0，但「都传完了」这句话无法证明。
         // 调用方（SW 的 SYNC 回包）据此把 ok 置 false ⇒ 界面弹提示而不是

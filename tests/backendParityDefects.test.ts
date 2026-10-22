@@ -38,6 +38,25 @@ function stripComments(src: string): string {
   return src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/.*$/gm, '$1');
 }
 
+/**
+ * 从 openBrace 处做括号配对，返回该**块**的结束下标（不含）。
+ *
+ * 为什么需要它：「某句话在某个 if 块**里面**还是**外面**」这件事，
+ * 用「往后 N 个字符里有没有」来验是**不成立**的 —— 邻接的代码会被误判成
+ * 「在块内」。⇒ 必须求出块的真实范围。
+ */
+function matchingBraceEnd(src: string, openBrace: number): number {
+  let depth = 0;
+  for (let i = openBrace; i < src.length; i++) {
+    if (src[i] === '{') depth++;
+    else if (src[i] === '}') {
+      depth--;
+      if (depth === 0) return i;
+    }
+  }
+  return src.length;
+}
+
 // ════════════════════════════════════════════════════════════════════
 // D-3：待决期的白名单是「不存在的 id」⇒ 必须保留 pending_upload
 // ════════════════════════════════════════════════════════════════════
@@ -104,14 +123,51 @@ describe('D-3：白名单里的 id 全部不存在时，不得清 pending_upload
       /reconcileUploadCoverage\(\{/,
       '必须用共享的对账判据（两个后端同一份判据，不许在引擎里另写一份）'
     );
-    assert.match(
-      src,
-      /if\s*\(coverage\.canClearPending\)\s*\{[\s\S]{0,400}setPendingUpload\(false\)/,
-      'setPendingUpload(false) 必须在 canClearPending 守卫之内'
+    // ⚠️ 2026-10-23（DS-43-19）：清位现在由「**消费后的残余**」这个判据给出
+    // （不再是写死的 false），但**不变量没变、反而更强**：
+    //   · 置位仍然只发生在对账守卫（canClearPending）之内；
+    //   · 代码里**不再存在**「无条件清」那句字面量。
+    // ⇒ 这里钉**行为**（清位在守卫内 + 由判据给出），不钉字面量写法。
+    //
+    // 「在守卫内」怎么验才算数：光看「守卫后面 2000 字符里有 setPendingUpload(」
+    // 是不够的 —— 那分不清「在守卫块里」与「在守卫块**外面**、只是离得近」。
+    // ⇒ 用括号配对求出守卫块的**真实范围**，再断言清位落在块内。
+    const guardAt = src.indexOf('if (coverage.canClearPending)');
+    assert.ok(guardAt > 0, '找不到对账守卫');
+    const braceAt = src.indexOf('{', guardAt);
+    const blockEnd = matchingBraceEnd(src, braceAt);
+    const block = src.slice(braceAt, blockEnd);
+    const setsInBlock = block.match(/setPendingUpload\(([^)]*)\)/g) ?? [];
+    assert.ok(setsInBlock.length > 0, '守卫内必须重新置位 pending_upload');
+    for (const call of setsInBlock) {
+      assert.doesNotMatch(
+        call,
+        /setPendingUpload\((false|true)\)/,
+        '置位必须由判据给出（写死 false/true 就是「无条件清」）'
+      );
+    }
+    // 守卫**外面**不许有第二条清位路径（把清位挪出守卫 ⇒ 这里必须红）。
+    const outside = src.slice(0, guardAt) + src.slice(blockEnd);
+    const clearsOutside = (outside.match(/setPendingUpload\(([^)]*)\)/g) ?? []).filter(
+      call => !/setPendingUpload\(true\)/.test(call)
+    );
+    assert.equal(
+      clearsOutside.length,
+      0,
+      `守卫外面不许有「清 pending_upload」的路径（实际 ${clearsOutside.length} 处）`
     );
     // 判据之外不许有第二条「无条件清 pending_upload」的路径。
     const clears = src.match(/setPendingUpload\(false\)/g) ?? [];
-    assert.equal(clears.length, 1, `setPendingUpload(false) 只许出现在对账守卫里（实际 ${clears.length} 处）`);
+    assert.equal(clears.length, 0, `代码里不许再出现「无条件清 pending_upload」（实际 ${clears.length} 处）`);
+    // ── DS-43-19 的本体：整表清不许再出现在引擎里 ────────────────────────
+    // `clearPendingUploadGroupIds()` 是 kvRemove（删键）⇒ 会把「本轮上传期间
+    // 才登记进来的改动」连坐抹掉 ⇒ 那批改动永远没人再传，而界面报「同步成功」。
+    // 清理必须改成**按确认逐条消费**（storage.consumePendingUploadGroupIds）。
+    assert.doesNotMatch(
+      src,
+      /storage\.clearPendingUploadGroupIds\(/,
+      '引擎里不许整表清增量白名单（DS-43-19 的本体：会把并发登记连坐抹掉）'
+    );
   });
 
   it('syncEngine：结果必须如实带上「N 个会话尚未同步」', async () => {

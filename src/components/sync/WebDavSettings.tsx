@@ -62,6 +62,7 @@ import {
   decideFirstSync,
   isFirstPushBusy,
   ownershipPendingNotice,
+  ownershipStatusUnreadableNotice,
   previewOutcome,
   projectedCloudCount,
   releaseFirstSyncPendingOnSaveFailure,
@@ -402,7 +403,19 @@ export const WebDavSettings: React.FC = () => {
    * 所以这里必须说清三件事：**发生了什么**、**为什么**、**下一步做什么**
    * （见 `ownershipPendingNotice`）。
    */
-  const [ownershipPending, setOwnershipPending] = useState(false);
+  /**
+   * 归属待决状态：**三态**。
+   *
+   * `true` = 待决；`false` = 不待决；**`null` = 读不到**。
+   *
+   * ⚠️ 为什么要有第三态（2026-10-23 审计 DS-4）：存储层对读失败**抛错**
+   * （fail-closed：读不到 ≠ 没有待决 ⇒ 那一轮上传中止 ⇒ 历史会话不会被
+   * 整批推上云）。界面若把读失败当成「不待决」，就会**沉默**：用户看到
+   * 「一切正常」，而实际上传已停摆、且「为什么停」被藏起来 ——
+   * 那正是本仓最恨的「界面不说的谎」。
+   * ⇒ 读不到时显示**另一句**（说清「读不到 / 已暂停自动上传 / 刷新重试」）。
+   */
+  const [ownershipPending, setOwnershipPending] = useState<boolean | null>(false);
   /**
    * 本机**活跃**会话数（横幅里要如实报出「多少个会话被按住了」）。
    *
@@ -416,10 +429,9 @@ export const WebDavSettings: React.FC = () => {
     try {
       setOwnershipPending(await storage.getFirstSyncPending());
     } catch (err) {
-      // 读不到就当「没有待决」——与存储层同一方向（少挡一次，
-      // 而「多传」不可回滚）。界面上不显示横幅 = 不谎报。
-      logWarn('[WebDavSettings] 读取归属待决状态失败（不显示提示）:', err);
-      setOwnershipPending(false);
+      // 读不到 ⇒ **第三态**（不是「没有待决」）。见上面那句注释。
+      logWarn('[WebDavSettings] 读取归属待决状态失败（显示「读不到」提示）:', err);
+      setOwnershipPending(null);
     }
     try {
       const groups = await storage.getGroups();
@@ -1617,7 +1629,13 @@ export const WebDavSettings: React.FC = () => {
            * 界面若对此只字不提，用户只会看到「本机有 N 个会话、云端只有几个」
            * ⇒ 只能得出「同步坏了」的结论，而真正缺的是**一个决定**。
            * 这条横幅说清三件事：发生了什么 / 为什么 / 下一步做什么。 */}
-          {ownershipPending ? (
+          {ownershipPending === null ? (
+            // ── 2026-10-23 审计 DS-4：读不到是**第三种**状态 ──────────────
+            // 不许把它塞进「不待决」（= 沉默）或「待决」（= 编一个事实）。
+            <div className="mb-2 rounded-md border border-amber-300 bg-amber-50 px-2 py-1.5 text-[11px] leading-relaxed text-amber-800 dark:border-amber-700 dark:bg-amber-900/20 dark:text-amber-200">
+              {ownershipStatusUnreadableNotice(savedCfg ? `${savedCfg.baseUrl}` : '当前云盘')}
+            </div>
+          ) : ownershipPending ? (
             <div className="mb-2 rounded-md border border-amber-300 bg-amber-50 px-2 py-1.5 text-[11px] leading-relaxed text-amber-800 dark:border-amber-700 dark:bg-amber-900/20 dark:text-amber-200">
               {ownershipPendingNotice({
                 localCount: localActiveCount,

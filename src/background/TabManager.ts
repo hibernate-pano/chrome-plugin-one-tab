@@ -192,14 +192,20 @@ export class TabManager {
             (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
           )
         );
+        // ponytail: 自动上传承诺接入点。SW 保存路径完全绕过 Redux（直接 setGroups），
+        // autoSyncMiddleware 永远监听不到 saveGroup.fulfilled——这里补上 scheduleUpload
+        // 让"保存后自动同步云端"实际生效（未登录时 syncEngine 安全跳过）。
+        // 第二个参数＝本次改动过的会话 id：WebDAV 归属待决期只允许上传这些，
+        // 否则「保存一个标签页」会把全部历史会话推上用户的云盘（P1#4 第二半）。
+        //
+        // ── 2026-10-23（DS-43-19）：为什么**搬进队列内**并 await ─────────────
+        // 「本次改动的会话 id」的登记与「上传轮次结束时清白名单」是两个
+        // 没有互斥的写者 ⇒ 登记还在飞行中就返回 ⇒ 那一轮上传既看不到它、
+        // 又会把它连坐清掉 ⇒ **这次改动永远不上云**，而界面报「同步成功」。
+        // 放进队列内并 await ⇒ 登记与上传轮次**不可能交错**（单写者），
+        // 且命令返回前登记已落盘（顺带关掉 MV3「SW 在两条写之间被回收」的窗口）。
+        await syncEngine.scheduleUpload(UPLOAD_DEBOUNCE_MS, [safeGroup.id]);
       }, { priority: 'high' });
-
-      // ponytail: 自动上传承诺接入点。SW 保存路径完全绕过 Redux（直接 setGroups），
-      // autoSyncMiddleware 永远监听不到 saveGroup.fulfilled——这里补上 scheduleUpload
-      // 让"保存后自动同步云端"实际生效（未登录时 syncEngine 安全跳过）。
-      // 第二个参数＝本次改动过的会话 id：WebDAV 归属待决期只允许上传这些，
-      // 否则「保存一个标签页」会把全部历史会话推上用户的云盘（P1#4 第二半）。
-      syncEngine.scheduleUpload(UPLOAD_DEBOUNCE_MS, [safeGroup.id]);
 
       // ── 2026-10-23：徽标回执（不依赖任何开关的成功凭据）───────────────
       //
@@ -375,10 +381,11 @@ export class TabManager {
         const existingGroups = await storage.getGroupsForWrite();
         const stamped: typeof safeGroup = { ...safeGroup, lastOp: await stampForNewEntity() };
         await storage.setGroupsImmediate([stamped, ...existingGroups]);
+        // ponytail: 关闭单标签时也会触发数据变更（保存到当前会话）——同样需自动上传。
+        // 搬进队列内并 await 的理由同 saveAllTabs（DS-43-19：登记与清白名单
+        // 必须不可能交错，且命令返回前登记已落盘）。
+        await syncEngine.scheduleUpload(UPLOAD_DEBOUNCE_MS, [safeGroup.id]);
       }, { priority: 'high' });
-
-      // ponytail: 关闭单标签时也会触发数据变更（保存到当前会话）——同样需自动上传。
-      syncEngine.scheduleUpload(UPLOAD_DEBOUNCE_MS, [safeGroup.id]);
 
       // ── 2026-10-23：徽标回执（同 saveAllTabs 的理由）──────────────────
       //

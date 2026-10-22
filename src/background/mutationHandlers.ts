@@ -221,7 +221,19 @@ export function createMutationHandlers(deps: MutationDeps) {
         const groups = await d.getGroups();
         const next = applySaveGroup(groups, cmd.group, now, stamp);
         await persist(next);
-        scheduleUpload(DELETE_PRIORITY_MS);
+        // ── 2026-10-23（DS-43-19）：登记必须 await ──────────────────────────
+        // 「本次改动的会话 id」的登记（noteGroupsChanged）与「本轮上传结束时
+        // 清白名单」是两个写者，中间没有互斥 ⇒ 登记还在飞行中就返回，
+        // 那一轮上传会既看不到它、又把它连坐清掉 ⇒ **这次改动永远不上云**，
+        // 而界面报「同步成功」。
+        //
+        // await 解决的是**这一段**：命令返回前登记已落盘（顺带把 MV3 的
+        // 「SW 在两条写之间被回收」窗口关掉）。它**不**解决「正在跑的那轮
+        // 上传会不会把这次登记清掉」—— 那一段由引擎侧的「按确认逐条消费 +
+        // 残余说了算」解决（core/uploadCoverage 的 decideConsumableRegistryIds）。
+        // 两条必须都在：只有 await ⇒ 上传仍可能整表清；只有消费 ⇒ SW 仍可能
+        // 在登记落盘前被回收。
+        await scheduleUpload(DELETE_PRIORITY_MS);
         // ── 2026-10-20 D-9：payload 必须是**落盘后的真值**，不是入参 ───────
         // 修复前这里回的是 `cmd.group` —— 也就是**命令的入参**：
         //   · 它没有 lastOp（印记是 SW 侧 apply 时盖的，入参里没有）；
@@ -291,7 +303,9 @@ export function createMutationHandlers(deps: MutationDeps) {
         //   · 而 pending_upload 与白名单照样被清掉 ⇒ 20 个导入的会话永远到不了
         //     云盘，alarm 与 60s 轮询也不再重试，界面毫无提示。
         // 修法：登记 applyImportGroups 的**返回值**里的真实 id。
-        scheduleUpload(DELETE_PRIORITY_MS, r.imported.map(g => g.id));
+        // 登记必须 await（理由同 saveGroup 分支的注释：登记与「清白名单」
+        // 是两个无互斥的写者；不 await ⇒ 这次改动可能永远不上云）。
+        await scheduleUpload(DELETE_PRIORITY_MS, r.imported.map(g => g.id));
         // 2026-10-19 审计 F-5：把「已存在而跳过」的计数一并回传。
         // UI 需要区分两种跳过：「这份会话你已导入过」（幂等，正常）与
         // 「文件里这条没有可恢复的内容」（异常）。原先只回 imported，
@@ -303,7 +317,8 @@ export function createMutationHandlers(deps: MutationDeps) {
         const groups = await d.getGroups();
         const r = applyRenameGroup(groups, cmd.groupId, cmd.name, now, stamp);
         await persist(r.groups);
-        scheduleUpload(NORMAL_MS);
+        // 登记必须 await（理由同 saveGroup 分支的注释）。
+        await scheduleUpload(NORMAL_MS);
         return {
           ok: true,
           payload: { groupId: cmd.groupId, name: cmd.name },
@@ -313,7 +328,8 @@ export function createMutationHandlers(deps: MutationDeps) {
         const groups = await d.getGroups();
         const r = applyToggleGroupLock(groups, cmd.groupId, now, stamp);
         await persist(r.groups);
-        scheduleUpload(NORMAL_MS);
+        // 登记必须 await（理由同 saveGroup 分支的注释）。
+        await scheduleUpload(NORMAL_MS);
         return {
           ok: true,
           payload: { groupId: cmd.groupId, isLocked: r.isLocked },
