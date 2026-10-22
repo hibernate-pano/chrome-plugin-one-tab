@@ -197,9 +197,24 @@ export class SecureStorage {
     }
   }
 
-  async clear(): Promise<void> {
-    await chrome.storage.local.clear();
-  }
+  // ⚠️ 这里**曾经**有一个 `clear()`（`chrome.storage.local.clear()`，整片清空），
+  // 2026-10-23 删掉了 —— 它零调用方（死代码），却是一颗地雷：
+  //
+  // **本机会话的归属账本落在 chrome.storage.local 的独立键里**
+  // （`local_account_scope`，见 utils/authCache.ts），而会话本体在 IndexedDB。
+  // 两个库**各活各的** ⇒ 整片清空 chrome.storage.local 就会：
+  //   1. 抹掉归属账本（ownerUserId 变 null）；
+  //   2. 但会话还在（IndexedDB 没动）；
+  //   3. ⇒ 下一次登录走 **first-bind** 分支 ⇒ 这台机器上**残留的会话被静默认领**
+  //      给新账号 ⇒ **跨账号泄露**（数据安全审计 DS-43-20，条件性 P0）。
+  //
+  // 真正要「重置一切」时，正确做法是**按键删**（逐个 `chrome.storage.local.remove`），
+  // 并且**先处理归属账本**（先记下 ownerUserId，再清会话，最后清账本）——
+  // 而不是整片清空。要加这个能力，请先看
+  // `tests/guards/accountScopeLedgerNotWipeable.test.ts`（它钉死了「仓内不得整片清空」）。
+  //
+  // 另一个理由：这个类叫 SecureStorage，它的方法**按键**存取；
+  // 一个「整片清空」的方法放在这里，名不副实。
 }
 
 export const secureStorage = new SecureStorage();
