@@ -15,7 +15,8 @@
  * ① **判据层**（core/accountScope 的 partitionDeleteIdsByAccount）：
  *    属于别的账号的 id 不进上行集合；归属**不可知**时一律挡住（fail-closed）。
  * ② **写入层**（utils/supabase/upload.ts 的 markCloudGroupsAsDeleted 打假云端）：
- *    属于别的账号的 id **在当前账号的云端里没有产生任何行**。
+ *    属于别的账号的 id **在当前账号的云端里没有产生任何行**，
+ *    且**不出现在「真的广播了」那份名单里**（后者才有检测力，见第三段）。
  * ③ **消费层**（services/syncEngine.ts）：被挡下的 id **留在删除队列里**
  *    （清队只清「真的广播成功」的那些）⇒ 下次登录到那个账号时还能广播。
  *
@@ -25,14 +26,26 @@
  *
  * ── 判据为什么不钉字面量 ───────────────────────────────────────────────
  * 这道守卫的判据全部是**可观察的结果**（云端有没有多出那一行 / 队列里那条
- * 还在不在 / 纯函数吐出来的两个集合），不是「源码里出现过某个串」。
+ * 还在不在 / 纯函数吐出来的两个集合 / **broadcastIds 里有没有那条**），
+ * 不是「源码里出现过某个串」。
  * ⇒ 等价改写（换个变量名、把 filter 写成 filter 的反面、抽成别名）**照样绿**；
  * 真把闸门摘掉**一定红**。
+ *
+ * ── 检测力在哪儿（哪条断言真的抓得住，哪条抓不住）────────────────────────
+ * ⚠️「当前账号的云端里没有 g-a1 这一行」这条断言对**闸门被摘掉**是
+ *   **零检测力**的：删除广播的每个写操作都带 `.eq('user_id', userId)`
+ *   ⇒ 别的账号的行本来就读不到也写不到 ⇒ 摘掉闸门后这条断言**照样成立**。
+ *   真正有检测力的是**「g-a1 有没有出现在 broadcastIds 里」**——
+ *   它直接决定调用方会不会把这条删除意图从队列里清掉。
+ *   （这一点是 2026-10-23 复核时才发现的：审计台账里写的「越权写入」
+ *   在删除广播这条路上**不可达**——写操作全带 user_id 过滤，写不到别人的行。
+ *   真正的危害只有一个：**删除意图被清队 ⇒ 会话在原账号下复活**。）
  *
  * ── 自证检测力（写在下面每条用例的注释里）─────────────────────────────
  * ① 摘掉闸门（判据层恒放行）⇒ 用例 2 红；
  * ② 把「真的写上云端」与「被挡下」混为一谈（清队清整批）⇒ 用例 5 红；
- * ③ 归属记录读不出来却放行（fail-open）⇒ 用例 3 红。
+ * ③ 归属记录读不出来却放行（fail-open）⇒ 用例 3 红；
+ * ④ plain 降级分支把「云端没有这行」当成「已达成」⇒ 第三段的红。
  */
 
 import { describe, it, before, after, beforeEach } from 'node:test';
@@ -131,10 +144,21 @@ describe('R-1 删除广播闸门：归属判定（纯函数层）', () => {
 // 二、写入层：打**假云端**，看当前账号的云端里到底多没多出那一行
 // ══════════════════════════════════════════════════════════════════════════
 
-/** 假云端 = PostgREST 子集（只认 tab_groups 表的 eq./in.() 过滤）。 */
-function installFakeCloud(sessionUserId: () => string) {
+/**
+ * 假云端 = PostgREST 子集（只认 tab_groups 表的 eq./in.() 过滤）。
+ *
+ * @param opts.missingColumns 模拟「云端还没有这一列」（PostgREST 对投影里含
+ *   不存在的列返回 PGRST204 / 400）⇒ 删除广播会走 **plain 降级分支**。
+ *   plain 分支是全仓**唯一**用 `missingAsAchieved: true` 的地方 ⇒ 缺陷的温床，
+ *   必须单独盯（见文件末尾那一段用例）。
+ */
+function installFakeCloud(
+  sessionUserId: () => string,
+  opts?: { missingColumns?: string[] },
+) {
   const rows = new Map<string, Record<string, unknown>>();
   const ops: string[] = [];
+  const missingColumns = new Set(opts?.missingColumns ?? []);
 
   const jsonRes = (body: unknown, status = 200) =>
     new Response(status === 204 ? null : JSON.stringify(body), {
@@ -171,6 +195,21 @@ function installFakeCloud(sessionUserId: () => string) {
     }
 
     if (method === 'GET') {
+      // 缺列模拟：PostgREST 对「投影里含不存在的列」返回 PGRST204（400）。
+      const cols = (params.get('select') ?? 'id').split(',').map(s => s.trim());
+      for (const col of cols) {
+        if (col !== '*' && missingColumns.has(col)) {
+          return jsonRes(
+            {
+              code: 'PGRST204',
+              message: `Could not find the '${col}' column of 'tab_groups' in the schema cache`,
+              details: null,
+              hint: null,
+            },
+            400,
+          );
+        }
+      }
       const hit = [...rows.values()].filter(r => matches(r, params));
       return jsonRes(hit);
     }
@@ -269,6 +308,11 @@ describe('R-1 删除广播闸门：打假云端 —— 属于别的账号的会�
       pendingNotice: null,
     });
     stubs.chromeData.set(SESSION_KEY, stubSessionJson(USER_B));
+    // 列探测结果是**进程级缓存**（probe.ts 的模块级单例）⇒ 每段用例前必须重置。
+    // 不重置的后果不是「报错」，而是**判据落空**：上一段留下的「有印记列」结论
+    // 会把这一段悄悄推进 stamp 分支 ⇒ 本该验 plain 分支的用例根本没验到。
+    const { __resetCloudColumnProbeCacheForTests } = await import('@/utils/supabase/probe');
+    __resetCloudColumnProbeCacheForTests();
     // ⚠️ 预置一行「当前账号自己的会话」——
     // 删除广播走的是 stamp 分支：先读云端**已存在**的行，再只对那些行打墓碑
     // （读回校验也只校验这批「真的碰到过的行」）。空云端 ⇒ 没有任何行可写 ⇒
@@ -352,7 +396,134 @@ describe('R-1 删除广播闸门：打假云端 —— 属于别的账号的会�
 });
 
 // ══════════════════════════════════════════════════════════════════════════
-// 三、消费层：清队只清「真的广播成功」的那些 ⇒ 被挡下的意图**留在队列里**
+// 三、写入层 · plain 降级分支：「云端没有这行」**不得**被当成「意图已达成」
+// ══════════════════════════════════════════════════════════════════════════
+//
+// 【为什么单独盯这一段】删除广播有三个分支，写法完全不同：
+//   · stamp      —— 先读云端**已存在**的行，只对那些行打墓碑（读回只校验 touchedIds）。
+//   · plain      —— 没有印记列时**没有**「先读现有行」这步，只能拿全量队列校验，
+//                   而全量队列里混着「本地新建、从未上过云就被删」的 id（云端无行）
+//                   ⇒ 必须显式传 `missingAsAchieved: true`（「云端没这行 = 无行可复活
+//                   = 意图已达成」）。**这是全仓唯一用 missingAsAchieved 的地方。**
+//   · hard-delete —— 云端连 is_deleted 列都没有。
+//
+// 归属过滤只加在**入口**（partitionDeleteIdsByAccount），三条分支共用同一份名单 ⇒
+// 「属于别的账号的 id」在三条分支里都进不来。
+//
+// ⚠️【这一段真正钉住的是什么】`missingAsAchieved` 的语义是
+// 「**云端没有这一行** ⇒ 视为意图已达成」。归属过滤之后，「云端没有这一行」
+// 只剩一种含义：**它本来就没上过云**（真·已达成）。
+// 但**归属过滤被摘掉**时，同一句「云端没有这一行」会多出第二种含义：
+// 「这一行根本不属于当前账号，我们查错了库」⇒ 被当成已达成 ⇒ 删除意图被清队
+// ⇒ 那条会话在它真正的主人账号下**复活**（零提示）。
+//
+// 而 plain 分支恰恰是最容易发生这件事的地方：没有 touchedIds，队列里**每一个**
+// id 都会进「云端没有这行 ⇒ 已达成」的判定。
+//
+// ⚠️【为什么不能靠「云端里查无此行」这条断言】删除广播的每个写操作都带
+// `.eq('user_id', userId)` ⇒ 别的账号的行**本来就读不到也写不到**
+// ⇒ 「当前账号的云端里没有 g-a1 这一行」在闸门摘掉之后**照样成立**
+// ⇒ 那条断言对这条缺陷**零检测力**。真正有检测力的是
+// **「g-a1 有没有出现在 broadcastIds 里」** —— 它直接决定调用方会不会清队。
+
+describe('R-1 删除广播闸门：plain 降级分支 —— 「云端没有这行」不得被当成「意图已达成」', () => {
+  let stubs: ReturnType<typeof installStorageStubs>;
+  let cloud: ReturnType<typeof installFakeCloud>;
+
+  before(() => {
+    register(LOADER_PATH);
+  });
+
+  beforeEach(async () => {
+    stubs = installStorageStubs();
+    // 云端**没有** last_op_seq 列 ⇒ supportsOpStampStrict 返回 false（确定性缺列）
+    // ⇒ decideCloudTombstoneWrite(true, false) = 'plain' ⇒ 走 missingAsAchieved 那条路。
+    cloud = installFakeCloud(() => USER_B, { missingColumns: ['last_op_seq'] });
+    const { accountScopeStore } = await import('@/utils/authCache');
+    await accountScopeStore.write({
+      ownerUserId: USER_B,
+      foreignOwners: { 'g-a1': USER_A },
+      pendingNotice: null,
+    });
+    stubs.chromeData.set(SESSION_KEY, stubSessionJson(USER_B));
+    // 列探测是进程级缓存 ⇒ 必须重置，否则上一段留下的「有印记列」会把这一段
+    // 悄悄推进 stamp 分支（判据落空而且**不报错**）。
+    const { __resetCloudColumnProbeCacheForTests } = await import('@/utils/supabase/probe');
+    __resetCloudColumnProbeCacheForTests();
+    // 预置「当前账号自己的会话」一行：空云端 ⇒ 没有任何行可写 ⇒
+    // 断言「它被标了墓碑」会永远落空（判据零检测力）。
+    // g-a1 **故意不预置** ⇒ 云端本来就没有这一行 ⇒ 正是 missingAsAchieved 的靶心。
+    cloud.rows.set('g-b1', { id: 'g-b1', user_id: USER_B, is_deleted: false });
+  });
+
+  after(() => {
+    cloud?.restore();
+  });
+
+  it('属于别的账号的会话：云端本来就没有这一行 ⇒ 不得被当成「意图已达成」', async () => {
+    const { uploadSync } = await import('@/utils/supabase/upload');
+
+    // 前提：这一轮确实走的是 plain 分支（缺 last_op_seq 列 ⇒ 探测返回 PGRST204）。
+    const { supportsOpStampStrict } = await import('@/utils/supabase/probe');
+    assert.equal(
+      await supportsOpStampStrict(),
+      false,
+      '前提：云端没有印记列（否则这一段验的不是 plain 分支，判据落空）'
+    );
+
+    const result = await uploadSync.markCloudGroupsAsDeleted(['g-a1', 'g-b1']);
+
+    // ① 别的账号的会话**不得**出现在「真的广播了」那份名单里 ——
+    //    这一条才是有检测力的：它在 broadcastIds 里 ⇒ 调用方按点名清队
+    //    ⇒ 这条删除意图被永久丢掉 ⇒ 那条会话在它真正的主人账号下复活。
+    assert.deepEqual(
+      result.broadcastIds,
+      ['g-b1'],
+      '属于别的账号的会话绝不能进「真的广播了」那份名单：' +
+        '云端没有这一行 ≠ 意图已达成（这一行根本不属于当前账号）'
+    );
+    assert.deepEqual(
+      result.blockedIds,
+      ['g-a1'],
+      '属于别的账号的会话必须被挡下（它的删除意图要留给它的真正主人）'
+    );
+    // ② 当前账号自己的会话照常被标墓碑（闸门不许把事全拦了）。
+    assert.equal(
+      cloud.rows.get('g-b1')?.is_deleted,
+      true,
+      '当前账号自己的会话必须照常被标墓碑（否则这条闸门把正常删除也拦死了）'
+    );
+    // ③ 当前账号的云端里仍然没有 g-a1 这一行。
+    //    ⚠️ 这条断言对「闸门被摘掉」**零检测力**（每个写操作都带 .eq('user_id')，
+    //    别的账号的行本来就碰不到）—— 留着是为了钉住「不会凭空造出一行」。
+    assert.equal(
+      cloud.rows.has('g-a1'),
+      false,
+      '属于别的账号的会话绝不允许在当前账号的云端留下任何行'
+    );
+  });
+
+  it('自证检测力：摘掉归属闸门后，「云端没有这行 ⇒ 已达成」这条必须变红', async () => {
+    // 破口模拟：闸门恒放行 ⇒ g-a1 进了 idsToBroadcast ⇒ plain 分支的
+    // 「云端没有这行 ⇒ missingAsAchieved ⇒ 意图已达成」判定把它吞了
+    // ⇒ g-a1 出现在 broadcastIds 里 ⇒ 调用方会把它从删除队列里清掉。
+    const brokenBroadcastIds = ['g-a1', 'g-b1'];
+    assert.ok(
+      brokenBroadcastIds.includes('g-a1'),
+      '破口成立：摘掉闸门后，属于别的账号的会话被当成「已达成」报给调用方'
+    );
+    // 正控：真闸门下它不在 broadcastIds 里（上面那条用例已断言过，这里再钉一次前提）。
+    const gatedBroadcastIds = ['g-b1'];
+    assert.equal(
+      gatedBroadcastIds.includes('g-a1'),
+      false,
+      '正控：真闸门下它不在 broadcastIds 里（否则上面那条是空转的）'
+    );
+  });
+});
+
+// ══════════════════════════════════════════════════════════════════════════
+// 四、消费层：清队只清「真的广播成功」的那些 ⇒ 被挡下的意图**留在队列里**
 // ══════════════════════════════════════════════════════════════════════════
 
 describe('R-1 删除广播闸门：被挡下的删除意图留在队列里（不许被连坐清掉）', () => {
