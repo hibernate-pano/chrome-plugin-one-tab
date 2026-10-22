@@ -1,0 +1,437 @@
+/**
+ * 商店文案判据（纯函数，2026-10-23 · 第 43 轮 R-8）。
+ *
+ * ── 这个文件防的具体事故 ──────────────────────────────────────────────────
+ *
+ * 2026-10-23 抓公开页实证：**线上 Chrome Web Store 的 Detailed Description
+ * 描述的是另一个产品**。它宣传：
+ *   · 「分组管理：拖拽整理标签页，自动折叠空分组」
+ *   · 「数据仅在你授权的云端存储（Supabase），本地与云端双重保障」
+ * 而本产品**从来没有**「分组/文件夹」这个概念（会话不是文件夹，组级拖拽排序
+ * 早已下线），也**从 1.24.0 起**就有第二条通路「自带存储（WebDAV）��把数据
+ * 同步到用户自己的云盘；云端也不是备份，是同一份数据的镜像（本机删了云端那份
+ * 也删）。
+ *
+ * 而且这份线上文案**从未在本仓存在过**（`git log --all -S` 零命中）⇒ 它不是
+ * 「仓库改了没同步」，而是**一份手写进商店后台的、描述另一个产品的文案**。
+ *
+ * ── 判据为什么必须**按版本锚定** ──────────────────────────────────────────
+ *
+ * 「线上文案 == 仓库文案」是**错的判据**：线上那份是手写的手抄本，仓库那份是
+ * 逐条对着代码写的，两者本就不可能相等；而且仓库当前版本（1.26.0）与线上
+ * 版本（1.25.1）本来就不同。
+ *
+ * 正确的问法是：**这份文案对它自己声称的那个版本，是不是真的？**
+ * ⇒ 判据吃「文案文本 + 该版本的产品能力」，吐「哪些说法在该版本不成立」。
+ *
+ * 版本锚定不是装饰，它在两个方向上都会改变结论：
+ *   · 「撤销」这条能力**从 1.26.0 才存在** ⇒ 线上（1.25.1）**不许**宣传它，
+ *     而仓库（1.26.0）**必须**宣传它 —— 同一个判据，两个版本的结论相反。
+ *   · 「数据仅在 Supabase」**从 1.24.0 起**就是假的（自带存储存在）⇒ 在
+ *     1.25.1 判红。
+ *
+ * ── 纪律 ──────────────────────────────────────────────────────────────────
+ *
+ * ① 判据**吃事实、不吃措辞**：能说的说法写成「一组可接受的措辞」（`any`），
+ *    不许只认某一句原话 ⇒ 改一次措辞不会红。
+ * ② 反向断言（**不许说的话**）与正向断言分开写。
+ * ③ 判据是**纯函数** ⇒ 可以直接喂它一份「被改回旧说法」的文本，断言它看得见
+ *    （见 tests/guards/storeListingLiveMatchesRepo.test.ts 的自证用例）。
+ */
+
+/** 线上商店页（公开页，curl 可取，无需登录、无需浏览器 UA）。 */
+export const LIVE_LISTING_URL =
+  'https://chromewebstore.google.com/detail/bbbpnccbclnnphchghpfmcjjfhigepbk';
+
+/**
+ * 能力时间线：**某个能力从哪个版本开始存在**。
+ *
+ * 【为什么必须写死在这里，而不是现场问 git】
+ * CI 是浅克隆（`actions/checkout@v4` 默认 depth=1）⇒ **CI 里没有
+ * tag** ⇒ 任何「`git show v1.24.0:…` 看看那时候有没有 WebDAV」的判据在 CI 里
+ * 跑不了。因此这里把结论**快照进仓库**，并另有一条守卫在**有完整历史时**
+ * 逐条核验它（见测试文件里的「能力时间线必须与 git 对得上」那一组）。
+ *
+ * 【证据】
+ * · webdav      —— `src/sync-backend/webdav/adapter.ts` 首次出现在 v1.24.0
+ *                  （`git log --diff-filter=A`），v1.23.0 还没有。
+ * · consumeUndo —— `src/core/consumeUndo.ts` 首次出现在 v1.26.0；
+ *                  v1.25.1 还没有（那时「恢复即消费」是**不可撤销**的）。
+ */
+export const CAPABILITY_SINCE = Object.freeze({
+  webdav: '1.24.0',
+  consumeUndo: '1.26.0',
+});
+
+/** 比较两个版本号（点分数字）。b 比 a 新 ⇒ 正数。 */
+export function compareVersions(a, b) {
+  const pa = String(a).split('.').map(x => Number.parseInt(x, 10) || 0);
+  const pb = String(b).split('.').map(x => Number.parseInt(x, 10) || 0);
+  const n = Math.max(pa.length, pb.length);
+  for (let i = 0; i < n; i += 1) {
+    const d = (pa[i] ?? 0) - (pb[i] ?? 0);
+    if (d !== 0) return d;
+  }
+  return 0;
+}
+
+/** 某个版本上，产品**有没有**某项能力。 */
+export function capabilitiesAt(version) {
+  return {
+    webdav: compareVersions(version, CAPABILITY_SINCE.webdav) >= 0,
+    consumeUndo: compareVersions(version, CAPABILITY_SINCE.consumeUndo) >= 0,
+  };
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// 提取：线上页面 → { version, updated, tagline, description }
+// ────────────────────────────────────────────────────────────────────────────
+
+const ENTITIES = {
+  '&quot;': '"',
+  '&#39;': "'",
+  '&#x27;': "'",
+  '&apos;': "'",
+  '&amp;': '&',
+  '&lt;': '<',
+  '&gt;': '>',
+  '&nbsp;': ' ',
+};
+
+export function decodeEntities(text) {
+  return text.replace(/&(?:quot|#39|#x27|apos|amp|lt|gt|nbsp);/g, m => ENTITIES[m] ?? m);
+}
+
+/** 从 `<div jsname="ij8cu">` 起，扫出配对结束的 `</div>`，返回这一整块。 */
+function sliceBalancedDiv(html, start) {
+  let depth = 0;
+  for (let i = start; i < html.length; i += 1) {
+    if (html.startsWith('<div', i)) {
+      depth += 1;
+      i += 3;
+      continue;
+    }
+    if (html.startsWith('</div>', i)) {
+      depth -= 1;
+      if (depth === 0) return html.slice(start, i + 6);
+      i += 5;
+    }
+  }
+  return html.slice(start);
+}
+
+/**
+ * 从线上商店页里抽出「版本 / 更新时间 / 简介 / 详细描述」。
+ *
+ * 【为什么用 `jsname="ij8cu"` 而不是别的锚点】那个块是 Overview 里的
+ * description 容器；实测（2026-10-23）它是页面上**唯一**同时含
+ * 「一句话简介」和「详细描述」两段 `<p>` 的容器 ⇒ 第一个 `<p>` 是简介，
+ * 其余是详细描述。判据只认内容（`<p>`），不认样式。
+ */
+export function extractLiveListing(html) {
+  if (typeof html !== 'string' || html.length === 0) return null;
+
+  const version = html.match(
+    /<div[^>]*>\s*Version\s*<\/div>\s*<div[^>]*>([^<]*)<\/div>/
+  )?.[1]?.trim();
+  const updated = html.match(
+    /<div[^>]*>\s*Updated\s*<\/div>\s*<div[^>]*>([^<]*)<\/div>/
+  )?.[1]?.trim();
+
+  // 【为什么用正则找开标签，而不是 `indexOf('jsname="ij8cu"')`】
+  // 后者会被**正文里提到这个字符串**的地方骗到（实测：连 fixture 自己的
+  // 说明注释里写了 `jsname="ij8cu"` 就把提取带偏了 ⇒ 抽出来的描述是空的）。
+  // 找**开标签本身**才是真的。
+  const openTag = html.match(/<div[^>]*jsname="ij8cu"[^>]*>/);
+  if (!openTag) return { version, updated, tagline: '', description: '' };
+  const block = sliceBalancedDiv(html, openTag.index);
+  const paras = [...block.matchAll(/<p>([\s\S]*?)<\/p>/g)].map(m =>
+    decodeEntities(m[1].trim())
+  );
+
+  return {
+    version,
+    updated,
+    tagline: paras[0] ?? '',
+    description: paras.slice(1).join('\n'),
+  };
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// 提取：仓库 CHROMEWEBSTORE.md → { shortDescription, detailedDescription }
+// ────────────────────────────────────────────────────────────────────────────
+
+/**
+ * 抽出仓库里「**Detailed Description**」与「**Short Description**」两段。
+ *
+ * 【为什么用段落标记而不是行号】行号会被别人的编辑推着走 ⇒ 每次改文档都得
+ * 重新钉一遍位置。段落标记（`**Detailed Description** [REQUIRED]` /
+ * `**Category**`）是这份文档自己的结构，改结构时才会动。
+ */
+export function extractRepoListing(markdown) {
+  const detailed = markdown.match(
+    /\*\*Detailed Description\*\*[^\n]*\n([\s\S]*?)\n\*\*Category\*\*/
+  )?.[1];
+  const shortBlock = markdown.match(
+    /\*\*Short Description\*\*[^\n]*\n([\s\S]*?)\n\*\*Detailed Description\*\*/
+  )?.[1];
+
+  const stripComments = s => (s ?? '').replace(/<!--[\s\S]*?-->/g, '');
+  // 短描述是**一段里的一行**（后面跟着 HTML 注释说明字数限制）⇒ 取第一行非空。
+  const firstNonEmpty = s =>
+    stripComments(s)
+      .split('\n')
+      .map(x => x.trim())
+      .find(x => x.length > 0) ?? '';
+
+  return {
+    shortDescription: firstNonEmpty(shortBlock),
+    detailedDescription: stripComments(detailed).trim(),
+  };
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// 判据
+// ────────────────────────────────────────────────────────────────────────────
+
+/**
+ * 【不许说的话】—— 文案不得宣传产品**没有**的能力。
+ *
+ * 每条都带「为什么」，因为审查方要能判断这条判据对不对，而不是照抄。
+ */
+const FORBIDDEN = [
+  {
+    code: 'claims-folder-groups',
+    why:
+      '产品没有「分组 / 文件夹」这个概念：会话不是文件夹，**组级拖拽排序早已下线**' +
+      '（`src/components/dnd/DraggableTabGroup.tsx:12` 明确写着「会话组级拖拽保持禁用」）；' +
+      '空会话是**物理删除**，不是折叠（`src/core/tabGroupUtils.ts:9`）。' +
+      '宣传它 ⇒ 审核方按它核对功能会发现做不到，用户按它找功能也找不到。',
+    patterns: [
+      /分组管理/,
+      /空分组/,
+      /自动折叠/,
+      /拖拽整理/,
+      /group management/i,
+      /empty groups/i,
+      /auto[-\s]?collaps/i,
+      /drag to organize/i,
+    ],
+  },
+  {
+    code: 'claims-supabase-only',
+    why:
+      '「数据仅在 Supabase」从 **1.24.0** 起就是假的：还有第二条通路「自带存储' +
+      '（WebDAV）」，数据同步到**用户自己的云盘**，不经过我们的服务器。' +
+      '只说一个后端 ⇒ 用户以为数据一定会到我们这儿。',
+    patterns: [
+      /数据仅在/,
+      /仅.{0,24}Supabase/i,
+      /只(?:在|存).{0,24}Supabase/i,
+      /stored only in/i,
+      /only in cloud storage/i,
+      /only.{0,30}Supabase/i,
+    ],
+  },
+  {
+    code: 'claims-cloud-backup',
+    why:
+      '云端**不是备份**，是同一份数据的镜像 —— 本机删了、云端那份也删（删除广播）；' +
+      '产品明确弃用「保险箱」隐喻（`README.md:17-20` 专门论证过它为什么有害）。' +
+      '说「本地与云端双重保障」⇒ 用户以为本机那份是安全网。',
+    patterns: [
+      /双重保障/,
+      /本地与云端.{0,8}保障/,
+      /保险箱/,
+      /both local and cloud backups?/i,
+      /local and cloud backups?/i,
+    ],
+  },
+];
+
+/**
+ * 【必须说的东西】—— 能力存在 ⇒ 文案得说，否则用户带着错的预期用。
+ *
+ * 每条都带「为什么」，判的是**预期会不会错**，不是「文案够不够漂亮」。
+ */
+const REQUIRED = [
+  {
+    code: 'missing-save-and-close',
+    why:
+      '**保存 = 剪切**：保存后当前窗口的这些标签会被关闭。不说清楚 ⇒ ' +
+      '用户以为这是「备份工具」，恢复完发现自己那堆页面还开着。',
+    any: [
+      /保存即关闭/,
+      /并把窗口腾空/,
+      /保存.{0,24}(?:关掉|关闭)/,
+      /(?:关掉|关闭).{0,12}标签页/,
+      /save.{0,24}and close/i,
+      /saving is a cut/i,
+      /clears the window/i,
+      /and closes? (?:it|them|the (?:window|tabs))/i,
+    ],
+  },
+  {
+    code: 'missing-self-hosted-storage',
+    why:
+      '「自带存储（WebDAV）」是 1.24.0 起就有的第二条通路，隐私段还专门解释了它。' +
+      '不说 ⇒ 用户以为数据**一定**会离开这台机器、且一定是到我们的服务器。',
+    any: [
+      /自带存储/,
+      /自己的云盘/,
+      /WebDAV/i,
+      /self-hosted storage/i,
+      /your own (?:WebDAV|storage|cloud)/i,
+      /own-cloud/i,
+    ],
+  },
+  {
+    code: 'missing-restore-consumes',
+    why:
+      '未锁定的会话**恢复后即从列表移除**（消费）。不说 ⇒ 用户以为那条会话还在，' +
+      '回头找不到，以为数据丢了。',
+    any: [
+      /从列表移除/,
+      /从会话中移除/,
+      /removed from the list/i,
+      /removed from the session/i,
+      /consume[sd]?/i,
+    ],
+  },
+  {
+    code: 'missing-no-cap',
+    why:
+      '「没有数量上限」是本产品与「免费版只能存 N 个」的竞品的核心差异，' +
+      '也是仓库自己的商店文案守卫（`storeListingClaimGuard`）的硬性要求。',
+    any: [
+      /没有数量上限/,
+      /不限数量/,
+      /想存多少存多少/,
+      /无数量限制/,
+      /no caps? on how many/i,
+      /no limit on how many/i,
+      /as many sessions as you like/i,
+    ],
+  },
+];
+
+/**
+ * 「移除可撤销」这个**承诺**的措辞集合 —— **同一个集合在两个方向上用**：
+ * 版本 ≥ 1.26.0 ⇒ **必须**出现；版本 < 1.26.0 ⇒ **不许**出现（那时还没有）。
+ *
+ * 【为什么不能直接用「撤销」两个字】文案里也有**否认句**（「删除没有撤销」/
+ * 「no undo for a deletion」）⇒ 直接认字会把否认当成承诺。下面的措辞都指向
+ * 「**移除这件事有退路**」，不会误伤否认句。
+ */
+const UNDO_OFFER = [
+  /留了退路/,
+  /(?<!没)有退路/,
+  /有「?撤销」?按钮/,
+  /撤销按钮/,
+  /可(?:以)?撤销/,
+  /come[s]? with a way back/i,
+  /an undo button/i,
+  /with an undo button/i,
+  /offer.{0,24}undo/i,
+  /short-lived undo/i,
+];
+
+/**
+ * 把一份文案按语言切成**若干段**。
+ *
+ * 【为什么必须分段判】商店文案是中英双语的，两段之间用 `---` 分隔 ——
+ * **每一段都要自洽**。只判「整篇合起来有没有说」的话，中文读者和英文读者
+ * 拿到的就是**两个不同的产品说明书**（实测过：把中文段里「自带存储」那句
+ * 删掉，英文段还留着 ⇒ 合起来判是绿的，但中文用户被误导了）。
+ */
+export function splitHalves(text) {
+  return String(text)
+    .split(/^\s*---\s*$/m)
+    .map(p => p.trim())
+    .filter(p => p.length > 0);
+}
+
+/**
+ * 判一份文案（针对**它自己声称的那个版本**）。
+ *
+ * @param {object} input
+ * @param {string} input.version  文案对应的产品版本（线上页面上的 Version）
+ * @param {string} input.tagline  一句话简介
+ * @param {string} input.description  详细描述
+ * @returns {Array<{code:string, kind:'lie'|'omission', why:string, evidence:string, where:string}>}
+ */
+export function judgeListing({ version, tagline = '', description = '' }) {
+  const caps = capabilitiesAt(version);
+  const violations = [];
+
+  // 简介是**另一个版面**（页面上的一行灰字）⇒ 只查「不许说的话」，
+  // 不查「必须说的」（它装不下）。
+  const surfaces = [];
+  if (tagline.trim()) surfaces.push({ label: '简介', text: tagline, required: false });
+  const halves = splitHalves(description);
+  if (halves.length === 0) {
+    surfaces.push({ label: '正文', text: '', required: true });
+  } else {
+    halves.forEach((text, i) =>
+      surfaces.push({ label: `正文第 ${i + 1} 段`, text, required: true })
+    );
+  }
+
+  for (const surface of surfaces) {
+    for (const rule of FORBIDDEN) {
+      const hit = rule.patterns.find(p => p.test(surface.text));
+      if (hit) {
+        violations.push({
+          code: rule.code,
+          kind: 'lie',
+          where: surface.label,
+          why: rule.why,
+          evidence: hit.source,
+        });
+      }
+    }
+
+    if (!surface.required) continue;
+
+    for (const rule of REQUIRED) {
+      if (!rule.any.some(p => p.test(surface.text))) {
+        violations.push({
+          code: rule.code,
+          kind: 'omission',
+          where: surface.label,
+          why: rule.why,
+          evidence: '（这一段里找不到任何可接受的说法）',
+        });
+      }
+    }
+
+    const undoHit = UNDO_OFFER.find(p => p.test(surface.text));
+    if (caps.consumeUndo) {
+      if (!undoHit) {
+        violations.push({
+          code: 'missing-consume-undo',
+          kind: 'omission',
+          where: surface.label,
+          why:
+            `从 **${CAPABILITY_SINCE.consumeUndo}** 起，「恢复/点开」把记录移出列表这件事` +
+            '**带一条可点的撤销**（几秒内）。文案不提前说 ⇒ 用户以为那条记录没了就是没了。',
+          evidence: '（这一段里找不到任何可接受的说法）',
+        });
+      }
+    } else if (undoHit) {
+      violations.push({
+        code: 'claims-consume-undo-not-yet',
+        kind: 'lie',
+        where: surface.label,
+        why:
+          `「移除可撤销」这条能力**从 ${CAPABILITY_SINCE.consumeUndo} 才存在**；` +
+          `线上这份文案对应的是 **${version}**，那时恢复即消费是**不可撤销**的。` +
+          '宣传它 ⇒ 装到 1.25.1 的用户点完就再也找不回那条记录。' +
+          `（要写这条文案，就得先发 ${CAPABILITY_SINCE.consumeUndo}。）`,
+        evidence: undoHit.source,
+      });
+    }
+  }
+
+  return violations;
+}

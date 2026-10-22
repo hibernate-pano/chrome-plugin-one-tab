@@ -1,0 +1,16 @@
+{
+  "_comment": "线上商店文案的**已知欠账**（2026-10-23 抓公开页实证）。线上那份文案从未在本仓存在过（git log --all -S 零命中）—— 它是手写进商店后台的、描述另一个产品的文案。判据只允许线上比这份基线更干净，不允许更脏。修好之后请删掉本文件。",
+  "capturedAt": "2026-10-23",
+  "liveVersion": "1.25.1",
+  "knownViolations": [
+    "claims-folder-groups",
+    "claims-supabase-only",
+    "claims-cloud-backup",
+    "missing-save-and-close",
+    "missing-self-hosted-storage",
+    "missing-restore-consumes",
+    "missing-no-cap"
+  ],
+  "howToFix": "在 Chrome Web Store 后台把 Short Description / Detailed Description 替换为 CHROMEWEBSTORE.md 的「## Store Listing」段。商店文案没有 API 通道（v1.1 的 Item 不暴露文案字段，v2 只有 media.upload）⇒ 只能人工粘贴。粘贴内容：node scripts/store-listing-audit.mjs --print-text",
+  "note": "「撤销」这条能力从 1.26.0 才有 ⇒ 在 1.25.1 上不许宣传它；要写这段文案，先发 1.26.0。"
+}

@@ -25,6 +25,22 @@
 > `PUBLISHED` 投影 400、`v2` 端点 404）⇒ 审核状态只能看商店后台（需人登录）。
 > 本文件是 Chrome Web Store 上架信息的单一事实来源（chrome-extensions skill 约定）。
 > 标注 ⚠️ 的字段需要发布者确认后才能提交。
+>
+> **2026-10-23 线上文案核对（新增守卫 R-8）**：线上商店页的 **Detailed Description
+> 描述的是另一个产品** —— 它宣传「**分组管理：拖拽整理标签页，自动折叠空分组**」、
+> 「**数据仅在你授权的云端存储（Supabase），本地与云端双重保障**」；这三样本产品
+> **从来没有**：会话不是文件夹（组级拖拽排序早已下线）、空会话是物理删除不是折叠、
+> 自带存储（WebDAV）从 1.24.0 起就是第二条通路、云端**不是备份**而是同一份数据的镜像。
+> 而且这份线上文案**从未在本仓存在过**（`git log --all -S` 零命中）⇒ 它不是
+> 「仓库改了没同步」，而是**手写进商店后台的、描述另一个产品的文案**。
+> ⇒ **商店文案没有 API 通道**（CWS v1.1 的 `Item` 只暴露 5 个字段、不含文案；v2 只有
+> `media.upload`）⇒ 只能人工在后台粘贴。
+> **体检命令**：`node scripts/store-listing-audit.mjs`（抓公开页 → 按它**自己声称的版本**
+> 逐条核对 → 打印该粘的内容；`--print-text` 只打印待粘文案）。
+> **守卫**：`tests/guards/storeListingLiveMatchesRepo.test.ts`（判据 + 真实线上快照的
+> 检测力 + 在线棘轮 + 台账版本核对）。已知欠账记在
+> `tests/fixtures/store-listing-live-baseline.json`；**改好之后删掉那个文件**，
+> 守卫会自动升级成「线上必须零违规」。
 
 ## Store Listing
 
@@ -51,7 +67,7 @@ TapStack 把你当前浏览器窗口里的所有标签页保存为一个会话�
 · 会话搜索：按会话名、标签标题/网址查找，支持按域名过滤；也可以不输关键词，直接按域名、会话名称、保存时间筛选
 · 误删保护：删除**整个会话**前会二次确认（可在设置里关闭；**锁定的会话一定确认**，不受该开关影响；「删除全部会话」始终确认并显示数量，其中锁定会话的数量也会一并写明），删除后彻底清除、没有回收站；单条标签删除会立即生效、不弹确认——**但如果这一删会让整个会话消失，就会先确认**（因为后果等同删除整个会话）；**把最后一条标签拖到别的会话**，则是**直接生效、不多问一句**，而那个被搬空的会话会随之消失（这是核心规则：拖拽即剪切，不额外拦你）。**删除没有退路** —— 它是永久的，没有回收站也没有撤销；「快速恢复」里那种从列表移除则带「撤销」
 · 一键清理：清除重复标签页和空会话
-· 导入导出：支持 OneTab 文本格式导入导出，以及 JSON 备份；导出的网址与标题**原样保留**（网址里带竖线、标题里带竖线或换行都不会被截断），导入的会话也**按内容命名**（和保存时同一套规则）
+· 导入导出：支持 OneTab 文本格式导入导出，以及 JSON 备份；导出的网址与标题**原样保留**（网址里带竖线、标题里带竖线或换行都不会被截断）。导入的会话**怎么命名分两种**：导回**本扩展导出的 JSON 备份**时，会话名**原样保留**（备份里叫什么就叫什么）；导入 **OneTab 文本**时，因为那个格式**本身不带会话名**（所以名字一定会丢），会话会按内容命名 —— 取这批标签里出现最多的域名（如 `github.com`），取不到域名时才回落到「导入的会话 1、2、3…」。**导入的内容一律不带锁定状态**（OneTab 格式里没有这个信息）—— 想让它不被误删，导入后记得重新锁定
 · 登录同步：登录后会把云端的会话拉回本机，换设备、换浏览器也能找回你的工作现场；本机每次保存、重命名、删除也都会自动上传到云端。**定时自动拉取默认关闭**（可在设置里打开）—— 关掉它只是不再周期性去云端取新内容，你本机的改动仍然照常上传
 · **没有数量上限**：会话想存多少存多少 —— 没有「免费版只能存 N 个」这种限制，锁定的会话、同步过去的会话也都一样算数
 · 外观：6 套主题风格（legacy / creamy / prism / apple / chrome / claude）加暗色模式，单栏 / 双栏布局随心切换 —— 会话清单长什么样由你定
@@ -76,7 +92,7 @@ Key features:
 · Search: find sessions by name, tab title or URL, filter by domain
 · Deletion protection: deleting a whole session asks you first (you can turn that off in settings, **except for locked sessions, which always ask**; "delete all sessions" always asks and shows the count, including how many of them are locked), and a deleted session is permanently removed — there is no recycle bin, and no undo for a deletion; deleting a single tab takes effect immediately without asking — **unless that deletion would take the whole session with it, in which case you are asked first** (the effect is the same as deleting the session); **dragging the last tab out of a session** happens **right away, with no extra question**, and the emptied session is removed with it (that is the core rule: dragging is a cut, so it is not blocked). **A deletion has no way back** — it is permanent, with no recycle bin and no undo; the removals described under Fast restore are a different thing, and those do offer a short-lived Undo
 · One-click cleanup: remove duplicate tabs and empty sessions
-· Import/export: OneTab text format, plus JSON backup; exported URLs and titles are kept **exactly as they are** (a URL containing a vertical bar, or a title containing one or a line break, is never truncated), and imported sessions are **named after their content**, using the same rule as when you save them
+· Import/export: OneTab text format, plus JSON backup; exported URLs and titles are kept **exactly as they are** (a URL containing a vertical bar, or a title containing one or a line break, is never truncated). Imported sessions are **named in one of two ways**: when you import a **JSON backup this extension exported**, the session names are **kept exactly as they were** (whatever the backup calls them); when you import **OneTab text**, the name is taken from the content — because that format carries no session name of its own (so the name is lost either way), the session is named after the most frequent domain among its tabs (e.g. `github.com`), falling back to "Imported session 1, 2, 3…" only when there is no domain to use. **Imported sessions are never locked** (the OneTab format has no such field) — lock them again after importing if you want them protected against accidental deletion
 · Cloud sync: sign in and the sessions in your cloud are pulled back to this device, so you can pick up your work on any device or browser; every save, rename or delete you make locally is uploaded automatically too. **The scheduled auto-pull is off by default** (you can turn it on in settings) — turning it off only means TapStack stops periodically checking the cloud for new content; your local changes are still uploaded as usual
 · **No caps on how many**: keep as many sessions as you like — there is no "the free version only stores N" limit, and locked or cloud-synced sessions count the same
 · Look and feel: 6 theme styles (legacy / creamy / prism / apple / chrome / claude) plus a dark mode, with single- or two-column layouts — the session list looks the way you want it to
@@ -411,6 +427,8 @@ https://github.com/hibernate-pano/chrome-plugin-one-tab
 
 **⑮ 文档与隐私说明此前有几处与实际行为对不上**，这一版一并改正：商店页与隐私政策现在**区分「删除」与「从列表移除」** —— 删除是永久的、没有回收站、没有撤销；恢复/点开那种移除才有「撤销」。「定时自动拉取默认关闭」这件事不再被写成默认开；权限表里会话数据的存储位置改对了（IndexedDB，不是 chrome.storage）；隐私政策补上了「自带存储」那一节。
 
+**⑯ 三处「文档在教一个不成立的预期」**，这一版一并订正：① 此前说「两台设备同时编辑同一个会话时**以最后保存的一方为准**」—— 实际胜负由**操作印记**（序号 + 设备编号）决定，而两台设备的序号来自各自独立的计数器，**先保存的那台也可能赢**；赢的一方整组覆盖另一方，败方新增的标签会丢，且没有任何提示。② 此前说「导入的会话也**按内容命名**（和保存时同一套规则）」—— 实际是**导回本扩展导出的 JSON 备份时保留文件里的会话名**（一个字都不改），只有 **OneTab 文本**导入才按域名命名（那个格式本身不带会话名）；**OneTab 导入的会话也不带锁定状态**，想防误删需要重新锁定一次。③ 此前删除确认框只说「其他设备将同步删除」，而**一台设备删除、另一台在离线期间同时改了它时，删除可能被撤销**（胜负同样由印记决定）—— 商店页与 README 现在把这一档如实写出来，并告诉你：删完请等一轮同步完成，再确认另一台设备上的那条也确实没了。同步**不会**提示「刚才两边撞车了」，界面上看不到冲突提示。
+
 ---
 
 **1.25.1 的详细清单**（对应上表那一行）：
@@ -477,4 +495,7 @@ https://github.com/hibernate-pano/chrome-plugin-one-tab
 - 删除的会话会从本设备彻底移除且无法恢复，因此删除**整个会话**前会弹出确认框（可在设置里关闭；「删除全部会话」始终确认）；
   单条标签删除会立即生效、不弹确认——但如果这一删会让整个会话消失，就会先确认；把最后一条标签拖到别的会话，会立即生效、不弹确认。
   为避免其他设备把已删除内容重新同步回来，云端会保留一条轻量的「已删除」标记 30 天后自动清除。
-- 多设备同时编辑同一会话时，以最后保存的一方为准（错峰使用不受影响）。
+- 多设备**同时**编辑同一会话时，整组由**操作印记**（序号 + 设备编号）决胜 —— **不是**按「谁保存得晚」。两台设备的序号来自各自独立的计数器，先保存的那台也可能赢。赢的一方整组覆盖另一方，**败方新增的标签会丢失，且没有任何提示**（错峰使用不受影响）。
+- 一台设备删除会话、另一台在离线期间同时改了它时，胜负同样由印记决定 ⇒ **删除可能被撤销**（那台离线编辑的设备若印记更大，它会保留这条会话并重新上传）。删除没有回收站、不可恢复。删完请等一轮同步完成，再确认另一台设备上的那条也确实没了。
+- 同步**不会**提示「刚才两边撞车了」，界面上看不到冲突提示，只看得到最终结果。
+- 导入的会话**不带锁定状态**（OneTab 格式里没有这个字段），JSON 备份里带了锁定信息 —— 导入后想让它防误删，需要重新锁定一次。
