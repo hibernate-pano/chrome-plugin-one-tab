@@ -33,7 +33,32 @@ import type {
 } from './ports';
 import type { DownloadSkippedGroup } from '@/types/tab';
 import type { DeleteBroadcastResult } from '@/core/accountScope';
-import { sync as supabaseSync } from '@/utils/supabaseFacade';
+import { loadSupabaseFacade } from '@/utils/supabaseRuntime';
+
+/**
+ * 加载 Supabase 读写实现（**按需加载**）。
+ *
+ * ── 为什么不是静态 import ────────────────────────────────────────────────
+ * `@/utils/supabaseFacade` 是整条 Supabase 链的入口：Supabase SDK
+ * （auth-js / postgrest-js / realtime-js / storage-js / functions-js /
+ * phoenix，gzip 后约 58KB）加上 upload / download / probe / readback
+ * 四份实现（约 140KB 源码）。适配器本身只有本文件这几十行，
+ * 真正干活的是那套实现 ⇒ **在第一次真的同步时才加载它**。
+ *
+ * 否则：弹窗首屏（用户只想看本机会话列表）也得下载这一整条栈。
+ *
+ * 代价：每次调用多一次 `await`（动态加载命中已加载模块 ⇒ 一次
+ * Promise 微任务，不是重新下载、也不是重新求值）。端口的每个方法本来就
+ * 是 async 的 ⇒ 调用方**感知不到**这次多出来的微任务。
+ *
+ * ⚠️ **service worker 里不能用 `import()`**（Chrome 按 HTML 规范禁止），
+ * 而 SW 侧同样要同步 ⇒ 取法由 `utils/supabaseRuntime.ts` 统一：
+ * 页面动态加载，SW 由入口注册静态加载器。
+ */
+async function loadSupabaseSync() {
+  const { sync } = await loadSupabaseFacade();
+  return sync;
+}
 
 /** `T | null | undefined` → `T | undefined`。指纹字段用 undefined 表示「后端没给」。 */
 function nn<T>(v: T | null | undefined): T | undefined {
@@ -45,6 +70,7 @@ export class SupabaseBackendAdapter implements SyncBackendPort {
   readonly label = 'TapStack 云端';
 
   async fetchFingerprints(): Promise<RemoteGroupFingerprint[]> {
+    const supabaseSync = await loadSupabaseSync();
     const digest = await supabaseSync.fetchTabGroupsDigest();
     return digest.map(d => ({
       id: d.id,
@@ -63,6 +89,7 @@ export class SupabaseBackendAdapter implements SyncBackendPort {
   }
 
   async downloadGroups(): Promise<TabGroup[]> {
+    const supabaseSync = await loadSupabaseSync();
     return (await supabaseSync.downloadTabGroups()) as TabGroup[];
   }
 
@@ -83,6 +110,7 @@ export class SupabaseBackendAdapter implements SyncBackendPort {
    * 没拿到哪些」的**同一个快照**。
    */
   async downloadSkippedGroups(): Promise<DownloadSkippedGroup[]> {
+    const supabaseSync = await loadSupabaseSync();
     return (await supabaseSync.downloadSkippedGroups()) ?? [];
   }
 
@@ -92,6 +120,7 @@ export class SupabaseBackendAdapter implements SyncBackendPort {
   ): Promise<UploadGroupsResult> {
     // overwriteCloud 的语义与 Supabase 实现的第二参数逐字对应：
     // 先 DELETE 该 user 全部行再 upsert（逐条语义见 upload.ts 的覆盖模式段）。
+    const supabaseSync = await loadSupabaseSync();
     const up = await supabaseSync.uploadTabGroups(groups, opts?.overwriteRemote === true);
 
     // writtenIds 只含 Supabase 真实报告已写的墓碑（覆盖模式才可能非空）。
@@ -117,18 +146,22 @@ export class SupabaseBackendAdapter implements SyncBackendPort {
     // —— 全仓唯一真正写 `.eq('user_id', userId)` 的地方）：属于本机另一个账号的
     // 删除意图**不写云端**，由返回值里的 blockedIds 报上来 ⇒ 调用方只清
     // broadcastIds ⇒ 被挡下的那几条留在删除队列里，等登录到那个账号时再广播。
+    const supabaseSync = await loadSupabaseSync();
     return supabaseSync.markCloudGroupsAsDeleted(ids);
   }
 
   async purgeExpiredDeletes(maxAgeDays?: number): Promise<number> {
+    const supabaseSync = await loadSupabaseSync();
     return supabaseSync.purgeExpiredCloudTombstones(maxAgeDays);
   }
 
   async uploadSettings(settings: UserSettings): Promise<void> {
+    const supabaseSync = await loadSupabaseSync();
     await supabaseSync.uploadSettings(settings);
   }
 
   async downloadSettings(): Promise<DownloadSettingsResult> {
+    const supabaseSync = await loadSupabaseSync();
     return (await supabaseSync.downloadSettings()) as DownloadSettingsResult;
   }
 }

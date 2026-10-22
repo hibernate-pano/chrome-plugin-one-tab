@@ -106,12 +106,22 @@ describe('D-9：Redux 的 saveGroup 暗门已收敛（不得复活）', () => {
       'diagnostics.JOURNAL_OP_TYPES 必须保留 saveGroup —— 删了它，诊断导出的' +
         'journal 类型分布会与协议对不上（用户贴到公开 issue 的报告会缺字段）'
     );
-    const perfTrace = code('src/utils/perfTrace.ts');
+    // 词表 2026-10-23 从 perfTrace.ts 搬到 perfSpanNames.ts（纯常量与
+    // 「会写 IndexedDB 的采集器」拆开，理由见那个文件的头注释）。
+    // 这里**两件事都钉**：① 词表里有它；② perfTrace 用的确实是那份词表 ——
+    // 只查文件会漏掉「词表复制了一份、采集时用的是另一份」的孤儿副本。
+    const perfSpanNames = code('src/utils/perfSpanNames.ts');
     assert.match(
-      perfTrace,
+      perfSpanNames,
       /'saveGroup'/,
-      'perfTrace.PERF_SPAN_NAMES 必须保留 saveGroup —— 它是诊断文件里的' +
+      'perfSpanNames.PERF_SPAN_NAMES 必须保留 saveGroup —— 它是诊断文件里的' +
         '封闭词表，删了它会让「某个 op 没有性能记录」变成静默的洞'
+    );
+    assert.match(
+      code('src/utils/perfTrace.ts'),
+      /export\s*\{[^}]*PERF_SPAN_NAMES[^}]*\}\s*from\s*'\.\/perfSpanNames'/,
+      'perfTrace 必须用 perfSpanNames 那份词表 —— 两份词表就会各说各话，' +
+        '诊断文件里的字段分布会与实际采集到的不一致'
     );
   });
 

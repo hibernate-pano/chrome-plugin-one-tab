@@ -4,12 +4,158 @@ import { crx } from '@crxjs/vite-plugin';
 import manifest from './manifest.json';
 import { resolve } from 'path';
 import { writeFileSync, readFileSync } from 'fs';
+import {
+  firstScreenChunkFor,
+  firstScreenForbiddenReason,
+  isForbiddenInFirstScreen,
+} from './src/core/firstScreenPolicy';
+import { buildWorkerSafePreloadCode } from './src/core/workerSafePreload';
 
 // 创建临时 manifest，不包含 service worker
 const tempManifest = {
   ...manifest,
   background: undefined
 };
+
+/**
+ * 首屏准入闸门（2026-10-23）。
+ *
+ * 规则：**popup 入口 chunk 的静态依赖闭包里不许出现被禁的模块**
+ * （见 src/core/firstScreenPolicy.ts）。
+ *
+ * 为什么要放在构建里判，而不是只靠一个单测：
+ *   · 单测跑的是**源码图**（我写的 import 解析器），构建产物才是**真相**；
+ *     两者可能不一致（Rollup 会合并块、会把动态 import 变成静态边）。
+ *   · 这条规则一旦破掉，后果是「首屏悄悄涨回 260KB 而没人知道是哪根线」，
+ *     体积数字本身不会报警（预算门只报总数，不报**是谁**）。
+ *
+ * 为什么在 `generateBundle` 判（而不是 `renderChunk`）：这一步 Rollup 已经把
+ * 静态 import 图（chunk.imports）与动态 import（chunk.dynamicImports）分开了，
+ * 正是「首屏 = 静态闭包」这个定义能直接落地的地方。
+ */
+function firstScreenPolicyGate() {
+  return {
+    name: 'first-screen-policy-gate',
+    generateBundle(_options: unknown, bundle: Record<string, any>) {
+      // popup 入口：rollup input 名字是 'src/popup/index'；
+      // facadeModuleId 可能是 HTML 本身（vite 的 html 入口）或 index.tsx。
+      const entry = Object.values(bundle).find(
+        (c: any) =>
+          c.type === 'chunk' &&
+          (c.name === 'src/popup/index' ||
+            (typeof c.facadeModuleId === 'string' &&
+              /src\/popup\/index\.(html|tsx)$/.test(c.facadeModuleId.replace(/\\/g, '/'))))
+      ) as any;
+      if (!entry) return; // 这一轮产物里没有 popup（例如单独构建 SW）⇒ 不判
+
+      // 静态依赖闭包（只跟 chunk.imports，不跟 dynamicImports）
+      const seen = new Set<any>();
+      const stack = [entry];
+      const violations: { id: string; reason: string }[] = [];
+      while (stack.length) {
+        const chunk = stack.pop();
+        if (!chunk || seen.has(chunk)) continue;
+        seen.add(chunk);
+        for (const fileName of chunk.imports ?? []) {
+          const next = bundle[fileName];
+          if (next) stack.push(next);
+        }
+        for (const mod of Object.keys(chunk.modules ?? {})) {
+          if (isForbiddenInFirstScreen(mod)) {
+            violations.push({ id: mod, reason: firstScreenForbiddenReason(mod) ?? '' });
+          }
+        }
+      }
+      if (violations.length > 0) {
+        const detail = violations
+          .map(v => `  · ${v.id.replace(/\\/g, '/')}\n    理由：${v.reason}`)
+          .join('\n');
+        throw new Error(
+          'popup 首屏准入被破：以下模块出现在 popup 入口的**静态**依赖闭包里。\n' +
+            `${detail}\n` +
+            '修法：把调用点改成 `await import(...)`（动态 import 不算首屏），' +
+            '或从 popup 的静态图里断开这条边。规则见 src/core/firstScreenPolicy.ts。'
+        );
+      }
+    },
+  };
+}
+
+/**
+ * worker 安全的 `__vitePreload` 助手（2026-10-23）。
+ *
+ * ── 为什么必须换掉 vite 那个虚拟模块 ─────────────────────────────────────
+ * vite 会给「含字面量动态 import 的 chunk」注入 `__vitePreload`，
+ * 用来在 import 之前先插 `<link rel="modulepreload">`（免下载瀑布）。
+ * 原版助手**假设自己有 DOM**（第一件事就是 `document.getElementsByTagName`），
+ * 而 MV3 的 module service worker 没有 document ⇒
+ * `ReferenceError: document is not defined`。
+ *
+ * 本仓 2026-10-14 踩过一次，绕法是「SW 里不许用动态 import」，
+ * 代价是弹窗首屏必须静态下载整条云端栈。首屏瘦身要把动态 import 请回来，
+ * 就必须先把助手修成 worker 安全的（见 src/core/workerSafePreload.ts）。
+ *
+ * ── 怎么换 ───────────────────────────────────────────────────────────────
+ * `vite:build-import-analysis` 往 chunk 里注入
+ * `import { __vitePreload } from "\0vite/preload-helper.js"`。
+ * 我们用 `enforce: 'pre'` 的插件**抢在它前面**把这个 id 解析成自己的 id，
+ * 再由 `load` 返回替换后的实现（DOM 分支与 vite 原版逐字相同，
+ * 只多了「没有 document 就直接 import」这一句）。
+ */
+function workerSafePreloadHelper() {
+  const VITE_HELPER_ID = '\0vite/preload-helper.js';
+  const PATCHED_HELPER_ID = '\0tapstack/worker-safe-preload-helper.js';
+  let rootConfig: any = null;
+  return {
+    name: 'tapstack:worker-safe-preload-helper',
+    enforce: 'pre' as const,
+    configResolved(config: any) {
+      rootConfig = config;
+    },
+    resolveId(id: string) {
+      if (id === VITE_HELPER_ID) return PATCHED_HELPER_ID;
+      return null;
+    },
+    load(this: any, id: string) {
+      if (id !== PATCHED_HELPER_ID) return null;
+      const config = (this.environment && this.environment.config) || rootConfig;
+      if (!config) {
+        throw new Error('worker 安全的 preload 助手：拿不到构建配置');
+      }
+      // ── 下面两处的口径与 vite 原版逐字一致 ──────────────────────────
+      // scriptRel：polyfill 开着就固定 'modulepreload'，否则运行时探测。
+      const modulePreload = config.build && config.build.modulePreload;
+      const scriptRel =
+        modulePreload && modulePreload.polyfill
+          ? "'modulepreload'"
+          : `/* @__PURE__ */ (${detectScriptRel.toString()})()`;
+      // assetsURL：相对 base / renderBuiltUrl ⇒ 用 importerUrl 解析绝对地址。
+      const base = config.base;
+      const renderBuiltUrl = config.experimental && config.experimental.renderBuiltUrl;
+      const isRelativeBase = base === './' || base === '';
+      const assetsURL =
+        renderBuiltUrl || isRelativeBase
+          ? 'function(dep, importerUrl) { return new URL(dep, importerUrl).href }'
+          : `function(dep) { return ${JSON.stringify(base)}+dep }`;
+      return {
+        code: buildWorkerSafePreloadCode({ scriptRel, assetsURL }),
+        moduleSideEffects: false,
+      };
+    },
+  };
+}
+
+/**
+ * vite 内部的 `detectScriptRel`（运行时探测浏览器支不支持 modulepreload）。
+ * 逐字照抄：只有 `build.modulePreload.polyfill` 关掉时才会用到它。
+ */
+function detectScriptRel() {
+  const relList =
+    typeof document !== 'undefined' && document.createElement('link').relList;
+  return relList && relList.supports && relList.supports('modulepreload')
+    ? 'modulepreload'
+    : 'preload';
+}
 
 // https://vitejs.dev/config/
 export default defineConfig(({ mode }) => {
@@ -31,12 +177,15 @@ export default defineConfig(({ mode }) => {
     base: './',
     plugins: [
       react(),
-      crx({ 
+      crx({
         manifest: tempManifest,
         contentScripts: {
           preambleCode: false,
         },
       }),
+      firstScreenPolicyGate(),
+      // 放在 react() 之后即可：它只跟 vite 内部的虚拟模块打交道。
+      workerSafePreloadHelper(),
       // 自定义插件：在构建后恢复 manifest.json
       {
         name: 'restore-manifest',
@@ -110,14 +259,29 @@ export default defineConfig(({ mode }) => {
             if (nm.includes('node_modules/@reduxjs/toolkit') || nm.includes('node_modules/react-redux')) {
               return 'redux-vendor';
             }
-            // Supabase 相关库打包到一起
-            if (nm.includes('node_modules/@supabase/supabase-js')) {
-              return 'supabase-vendor';
-            }
-            // 工具函数打包到一起
-            if (nm.includes('src/utils/')) {
-              return 'utils';
-            }
+            // ── 2026-10-23（首屏瘦身）：准入策略驱动的分块 ──────────────────
+            //
+            // 【旧规则为什么被删掉】原先有一条
+            //   `if (nm.includes('src/utils/')) return 'utils';`
+            // 它把**整个 src/utils/** 塞进一个块。于是：弹窗只要静态 import
+            // 了 utils 里的任意一个模块（哪怕只是 authCache），
+            // 就得连带下载 upload / download / diagnostics / perfTrace ……
+            // 一个「兜底式 catch-all」看起来很整齐，实际是**首屏体积的搬运工**。
+            //
+            // 【新规则】哪些模块该单独成块、哪些不许进首屏，由
+            // `src/core/firstScreenPolicy.ts` 说了算（纯函数，可单测）。
+            //
+            // ⚠️ **只有 SDK 那组会拿到块名**：Rollup 的 manualChunks 会把
+            // 「手动分块里的模块的依赖」一并吸进那个块 ⇒ 给**本仓源码**起块名时，
+            // 那块会顺带吞掉共享模块（src/utils/storage.ts、src/types/tab.ts …），
+            // 于是「谁引用了共享模块」这条边会把整个手动块拖进首屏。
+            // 实测：给 Supabase 那组起块名后首屏从 175.9KB 反弹回 262.4KB。
+            // SDK 那组例外 —— 它的依赖全是 node_modules 里的包，吸进同一块正确。
+            //
+            // 【没进策略表的模块】一律返回 undefined ⇒ Rollup 默认分块
+            // （按「谁静态可达」自然切分：只被 SW / 设置页用到的模块
+            //  自动不进 popup 的首屏）。
+            return firstScreenChunkFor(id) ?? undefined;
           }
         }
       }

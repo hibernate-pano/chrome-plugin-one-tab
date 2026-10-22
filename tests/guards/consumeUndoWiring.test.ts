@@ -158,7 +158,13 @@ describe('撤销的协议与编排都登记了', () => {
 
   it('诊断/性能词表必须登记它（漏登记会被 tsc 拦下，这里再钉一道）', () => {
     assert.match(read('src/utils/diagnostics.ts'), /restoreConsumed:\s*true/);
-    assert.match(read('src/utils/perfTrace.ts'), /'restoreConsumed'/);
+    // 词表 2026-10-23 搬到 src/utils/perfSpanNames.ts（纯常量，与采集器拆开，
+    // 理由见那个文件的头注释）。这里同时钉住「perfTrace 用的确实是那份词表」。
+    assert.match(read('src/utils/perfSpanNames.ts'), /'restoreConsumed'/);
+    assert.match(
+      read('src/utils/perfTrace.ts'),
+      /export\s*\{[^}]*PERF_SPAN_NAMES[^}]*\}\s*from\s*'\.\/perfSpanNames'/
+    );
   });
 
   it('生产必须真的注入「撤回删除意图」的能力', () => {

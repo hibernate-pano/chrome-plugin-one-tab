@@ -53,7 +53,11 @@ import type { JournalEntry } from '@/utils/journal';
 import type { ProductEventName } from '@/utils/productEvents';
 import type { MutationOp } from '@/shared/mutationProtocol';
 import type { PerfSpan, SpanStep } from '@/utils/perfTrace';
-import { PERF_SPAN_NAMES, SPAN_STEPS, perfTrace } from '@/utils/perfTrace';
+// ⚠️ **只从 perfSpanNames 取词表**（纯常量），不从 perfTrace 取 ——
+// perfTrace 是「会写 IndexedDB 的性能采集」，弹窗首屏用不到。
+// 2026-10-23（首屏瘦身）：这根静态 import 曾把整套 perfTrace 拖进首屏
+// （diagnostics 在顶栏菜单里，菜单在首屏）。拆分说明见 perfSpanNames.ts。
+import { PERF_SPAN_NAMES, SPAN_STEPS } from '@/utils/perfSpanNames';
 
 /** span 名 / step 名的封闭词表集合（输出键只可能来自这里，理由同 PRODUCT_EVENT_NAMES）。 */
 const PERF_SPAN_NAME_SET = new Set<string>(PERF_SPAN_NAMES);
@@ -259,6 +263,8 @@ export async function readDiagnosticsSources(
   // 读失败降级成空数组（readPerfSpans 内部已兜住），因此不进 unavailable，
   // 与 productEvents / journal 同一口径。
   await requestSwPerfFlush();
+  // perfTrace 动态加载：它会写 IndexedDB，首屏用不到（见 perfSpanNames.ts 的说明）。
+  const { perfTrace } = await import('@/utils/perfTrace');
   const perfSpans = await perfTrace().read();
 
   return {

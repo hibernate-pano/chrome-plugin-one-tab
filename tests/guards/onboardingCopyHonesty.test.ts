@@ -615,11 +615,12 @@ describe('H-14 · OneTab 文本格式本身不带会话名', () => {
 
 describe('注释里引用的测试文件必须真的存在', () => {
   /**
-   * 已知待办：这三处指向的守卫文件**从来不存在**，照着注释去找守卫的人会扑空。
+   * 已知待办：这几处指向的守卫文件**从来不存在**，照着注释去找守卫的人会扑空。
    *
-   * 但这三个文件（`src/core/remoteAdjudication.ts` / `src/utils/secureStorage.ts`
-   * / `src/store/slices/tabSlice.ts`）**不在本轮分工内** ⇒ 本轮无权改它们
-   * （并行 agent 正在改那些文件，碰了会互相覆盖）。
+   * 但这几个文件（`src/core/remoteAdjudication.ts` / `src/utils/secureStorage.ts`
+   * / `src/store/slices/tabSlice.ts` / `src/core/firstScreenPolicy.ts`）
+   * **不在本轮分工内** ⇒ 本轮无权改它们（并行 agent 正在改那些文件，
+   * 碰了会互相覆盖）。
    * ⇒ 记在这里当**待办清单**：等负责那几个文件的 agent 顺手把注释指到
    *    真实存在的守卫（或者把守卫补出来），就把对应条目从这里删掉。
    *

@@ -1,9 +1,31 @@
 import type { DownloadSkippedGroup, TabGroup } from '@/types/tab';
-import { ensureBackendPrimed, getActiveSyncBackend } from '@/sync-backend';
+import { getActiveSyncBackend, ensureBackendPrimed } from '@/sync-backend';
 import type { RemoteGroupFingerprint } from '@/sync-backend';
 import type { OverwriteSkipReason } from '@/core/overwriteUploadGuard';
 import type { GroupDigestLike } from '@/core/syncDecision';
 import type { DeleteBroadcastResult } from '@/core/accountScope';
+
+/**
+ * 透传层：调用方（SyncEngine / SyncButton）与「当前生效的同步后端」之间的唯一接缝。
+ *
+ * ── 为什么这里是**静态** import ──────────────────────────────────────────
+ * 2026-10-23 之前这里没有任何 import（后端由调用方传进来），
+ * 后来一度改成 `await import('@/sync-backend')`，理由是「别把同步栈拖进首屏」。
+ * 两件事让那个改法站不住：
+ *   1. **弹窗首屏本来就有这个桶**：`HeaderDropdown`（顶栏菜单）静态 import 了
+ *      `@/sync-backend`（它要看后端解析状态）⇒ 本文件改静态**不增加**首屏体积。
+ *   2. **service worker 里 `import()` 被 Chrome 禁止**（HTML 规范），
+ *      而 SW 侧（syncEngine）正是这个接缝的主要调用方 ⇒ 动态加载在 SW 里必然失败。
+ *
+ * ⇒ 真正要挡住首屏的不是「这个桶」，而是**桶里的重依赖**：
+ * Supabase SDK 与 WebDAV 传输栈。那两块的取法见
+ * `utils/supabaseRuntime.ts` 与 `sync-backend/webdavRuntime.ts`
+ * （页面动态加载、SW 静态注册）。
+ *
+ * ⚠️ **顺序不许调换**：必须先 `await ensureBackendPrimed()`（补一次解析）
+ * 再取后端 —— 顺序颠倒会拿到「未预解析的 fail-safe Supabase」，
+ * 用户配的 WebDAV 被无声绕过（见 sync-backend/index.ts 的说明）。
+ */
 
 /**
  * 透传层：调用方（SyncEngine / SyncButton）与「当前生效的同步后端」之间的唯一接缝。

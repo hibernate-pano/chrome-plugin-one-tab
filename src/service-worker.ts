@@ -18,6 +18,23 @@ import { logError, logInfo, logWarn } from './utils/log';
 // 诊断导出前落盘性能 span 用（见 PERF_FLUSH 消息分支）。
 import { perfTrace } from './utils/perfTrace';
 import { invalidateActiveSyncBackend, primeSyncBackend } from '@/sync-backend';
+// ── 2026-10-23（首屏瘦身 + SW 可运行）────────────────────────────────────
+//
+// 【为什么 SW 入口要静态 import 这些】弹窗首屏瘦身 ⇒ Supabase SDK 与
+// WebDAV 传输栈在**页面侧**改成按需加载（首屏不下载）。
+// 但 **service worker 里 `import()` 被 Chrome 禁止**
+// （HTML 规范：ServiceWorkerGlobalScope 上不允许 import()），
+// 而 SW 侧同样需要它们（核登录态、上传下载）⇒
+// **SW 入口静态 import 进来，再注册给那两个加载器**。
+//
+// 页面侧不注册 ⇒ 页面走默认的动态加载（首屏照旧不下载）。
+// 两边的**实现是同一份模块**（不是两份代码），所以行为不会漂移。
+import { setSupabaseFacadeLoader } from '@/utils/supabaseRuntime';
+import * as supabaseFacade from '@/utils/supabaseFacade';
+import { setWebDavTransportLoader } from '@/sync-backend/webdavRuntime';
+import { WebDavClient } from '@/sync-backend/webdav/client';
+import { WebDavBackendAdapter } from '@/sync-backend/webdav/adapter';
+import { hasHostPermission } from '@/sync-backend/webdav/permission';
 import {
   CONTEXT_MENU_IDS,
   CONTEXT_TYPES,
@@ -32,6 +49,20 @@ import { backendUnavailableCopy } from '@/components/sync/backendUnavailableCopy
 
 // Chrome 扩展的 Service Worker
 // 为了避免模块导入问题，早期版本内联了存储逻辑；现统一使用 utils/storage 以与前端页面共享同一数据源（IndexedDB）
+
+// ⚠️ **注册必须在任何同步/认证动作之前** ─────────────────────────────────
+//
+// SW 里的 `import()` 是非法的 ⇒ 重依赖只能静态带进来。
+// 这里把「静态拿到的模块」注册成两个加载器的实现：
+//   · Supabase 门面（SDK + 读写实现）
+//   · WebDAV 传输栈（client + adapter + 权限）
+// 页面侧不注册 ⇒ 页面仍然是「用到才下载」，首屏照旧不碰云端栈。
+setSupabaseFacadeLoader(async () => supabaseFacade);
+setWebDavTransportLoader(async () => ({
+  WebDavClient,
+  WebDavBackendAdapter,
+  hasHostPermission,
+}));
 
 // Service Worker启动日志
 logInfo('=== TapStack Service Worker 启动 ===');

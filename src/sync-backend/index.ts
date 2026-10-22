@@ -24,18 +24,21 @@ import type { SyncBackendId, SyncBackendPort } from './ports';
 import { SupabaseBackendAdapter } from './supabaseAdapter';
 import { logError, logWarn } from '@/utils/log';
 import { kvGet, kvSet } from '@/storage-kv/storageAdapter';
-import { WebDavClient } from './webdav/client';
-import { WebDavBackendAdapter } from './webdav/adapter';
-import { hasHostPermission } from './webdav/permission';
 import { LockedBackendError } from './lockedBackendError';
 import { createSeqRegistry } from '@/utils/seqRegistry';
 import { storage } from '@/utils/storage';
-import {
-  chromeKvAdapter,
-  getSessionSecrets,
-  loadWebDavConfig,
-  type StoredWebDavConfig,
-} from './webdav/config';
+// ── 2026-10-23（首屏瘦身 + SW 可运行）────────────────────────────────────
+//
+// 【配置这一半是静态的】`webdav/config.ts`（gzip 约 1.8KB）**每次解析后端都要**
+// （读地址/账号/解锁状态），而且它只依赖 storage-kv，不拖任何传输栈 ⇒
+// 静态引入，代价可忽略，还顺手消掉了 service worker 里的一次非法 import()。
+//
+// 【传输栈那一半是动态的】client + adapter（源码 150KB）只有真的要建
+// WebDAV 后端时才用得上 ⇒ 不能进弹窗首屏。取法见 webdavRuntime.ts：
+// 页面动态加载，service worker 由入口注册静态加载器（SW 里 import() 被禁止）。
+import { chromeKvAdapter, getSessionSecrets, loadWebDavConfig } from './webdav/config';
+import type { StoredWebDavConfig } from './webdav/config';
+import { loadWebDavTransport } from './webdavRuntime';
 
 let activeBackend: SyncBackendPort | null = null;
 
@@ -181,11 +184,24 @@ export type LockedKind = 'unconfigured' | 'locked' | 'error';
 
 // ── 阶段 2：按设置解析后端 ─────────────────────────────────────────────
 
-/** 默认适配器工厂（测试可替换）。 */
+/**
+ * 默认适配器工厂（测试可替换）。
+ *
+ * ── 为什么允许返回 Promise ──────────────────────────────────────────────
+ * 2026-10-23（首屏瘦身）：工厂要造的是 **WebDAV 适配器**，而 WebDAV 那条栈
+ * （client + adapter + permission + config，合计约 170KB 源码）**只有真的要
+ * 同步时才用得上** —— 弹窗首屏只想看本机会话列表，不该为此下载它。
+ * 于是构造动作改成 `await import()`。
+ *
+ * 代价：工厂从「同步」变成「可能异步」。所有调用点只有一个（下面的
+ * `resolveBackendOutcome`，它本来就是 async）⇒ 行为面没有扩大。
+ * 注入的测试替身（`setBackendFactory`）仍可返回同步对象 —— 联合类型
+ * `SyncBackendPort | Promise<SyncBackendPort>` 兼容原来的写法。
+ */
 type BackendFactory = (
   cfg: StoredWebDavConfig,
   secrets: { password: string; passphrase: string | null }
-) => SyncBackendPort;
+) => SyncBackendPort | Promise<SyncBackendPort>;
 
 let factory: BackendFactory | null = null;
 
@@ -195,10 +211,18 @@ export function setBackendFactory(f: BackendFactory | null): void {
   activeBackend = null;
 }
 
-function defaultFactory(
+async function defaultFactory(
   cfg: StoredWebDavConfig,
   secrets: { password: string; passphrase: string | null }
-): SyncBackendPort {
+): Promise<SyncBackendPort> {
+  // ⚠️ 这三块是 **WebDAV 传输栈**（client 40KB + adapter 108KB 源码）。
+  // 它们只在「用户真的选了自带存储并要同步」时才需要 ⇒ 不进弹窗首屏。
+  //
+  // 取法分两种（见 webdavRuntime.ts）：
+  //   · 页面：动态加载（首屏不下载，真同步时才下）；
+  //   · service worker：**静态** import（SW 里 import() 被 Chrome 禁止）——
+  //     由 SW 入口注册静态加载器。
+  const { WebDavClient, WebDavBackendAdapter, hasHostPermission } = await loadWebDavTransport();
   return new WebDavBackendAdapter({
     client: new WebDavClient(
       { baseUrl: cfg.baseUrl, username: cfg.username, password: secrets.password },
@@ -366,6 +390,8 @@ async function resolveBackendOutcome(): Promise<ResolutionOutcome> {
 
   let cfg: StoredWebDavConfig | null;
   try {
+    // 读配置失败也走这一档：读不到配置 ⇒ 本轮中止（fail-closed），而不是
+    // 猜一个后端继续同步。
     cfg = await loadWebDavConfig();
   } catch (err) {
     // 2026-10-18：这两条 catch 原先**不打任何日志**，只返锁定占位。
@@ -390,7 +416,8 @@ async function resolveBackendOutcome(): Promise<ResolutionOutcome> {
   }
 
   return {
-    backend: (factory ?? defaultFactory)(cfg, secrets),
+    // 工厂可能是异步的（默认工厂要动态加载 WebDAV 全栈）⇒ 必须 await。
+    backend: await (factory ?? defaultFactory)(cfg, secrets),
     resolvedId: 'webdav',
     requestedId,
   };

@@ -1,6 +1,5 @@
 import { createSlice, createAsyncThunk } from '@reduxjs/toolkit';
 import { AuthState, User } from '@/types/tab';
-import { auth as supabaseAuth } from '@/utils/supabaseFacade';
 import { accountScopeStore, authCache } from '@/utils/authCache';
 import { createAccountScopeRecord, decideAccountBind } from '@/core/accountScope';
 import {
@@ -11,7 +10,31 @@ import {
 } from '@/core/backendUnavailable';
 import { backendUnavailableAuthCopy } from '@/components/sync/backendUnavailableCopy';
 import { storage } from '@/utils/storage';
+import { loadSupabaseFacade } from '@/utils/supabaseRuntime';
 import { logError, logInfo, logWarn } from '../../utils/log';
+
+/**
+ * 加载 Supabase 登录封装（**按需加载**）。
+ *
+ * ── 为什么不是静态 import ────────────────────────────────────────────────
+ * `@/utils/supabaseFacade` 会把整条 Supabase 链拖进来：SDK（gzip 约 58KB）
+ * + upload / download / probe / readback（约 140KB 源码）。
+ * 而弹窗首屏（用户只想看本机会话列表）**不需要**它。
+ *
+ * 加载时机：登录 / 退出 / 校验登录态的那一刻（都是用户主动或恢复触发的
+ * 异步动作）。首屏渲染**不等**它 ⇒ 首屏不必为它下载 58KB。
+ *
+ * 行为零变化：调用序列、错误语义、失败分支全部照旧；变的只是
+ * 「什么时候把 SDK 拉进来」。
+ *
+ * ⚠️ **service worker 里不能用 `import()`**（Chrome 按 HTML 规范禁止），
+ * 而 SW 侧的 `restoreAuth` 也要校验登录态 ⇒ 取法由
+ * `utils/supabaseRuntime.ts` 统一：页面动态加载，SW 由入口注册静态加载器。
+ */
+async function loadSupabaseAuth() {
+  const { auth } = await loadSupabaseFacade();
+  return auth;
+}
 
 /* ── 认证错误的中文化（2026-10-20 审计 C-07）───────────────────────────────
  *
@@ -188,6 +211,7 @@ export const signUp = createAsyncThunk(
   'auth/signUp',
   async ({ email, password }: { email: string; password: string }) => {
     try {
+      const supabaseAuth = await loadSupabaseAuth();
       const { data, error } = await supabaseAuth.signUp(email, password);
       if (error) {
         logError('注册错误:', error);
@@ -218,6 +242,7 @@ export const signIn = createAsyncThunk(
   'auth/signIn',
   async ({ email, password }: { email: string; password: string }) => {
     try {
+      const supabaseAuth = await loadSupabaseAuth();
       const { data, error } = await supabaseAuth.signIn(email, password);
       if (error) {
         logError('登录错误:', error);
@@ -259,6 +284,7 @@ export const signOut = createAsyncThunk(
       logInfo('已简化同步逻辑，只保留手动同步功能');
 
       // 退出登录
+      const supabaseAuth = await loadSupabaseAuth();
       const { error } = await supabaseAuth.signOut();
       if (error) {
         logError('退出登录错误:', error);
@@ -283,6 +309,7 @@ export const getCurrentUser = createAsyncThunk(
   async () => {
     try {
       // 首先检查是否有活跃会话，避免未登录用户触发错误
+      const supabaseAuth = await loadSupabaseAuth();
       const { data: sessionData } = await supabaseAuth.getSession();
 
       // 如果没有会话，直接返回 null，不触发错误

@@ -37,52 +37,14 @@ import { getContextOrigin } from '@/core/contextOrigin';
 import { logWarn } from './log';
 import type { MutationOp } from '@/shared/mutationProtocol';
 
-/**
- * span 名封闭词表。
- *
- * 与 diagnostics 的事件名白名单同一个理由：这些字符串会进入诊断文件（用户可能贴到
- * 公开 issue）。全部来自代码常量（MutationOp['op'] / 队列任务名），不含任何来自
- * 存储或用户输入的内容。词表外的名字一律拒记——宁可少一条观测，也不能让
- * 「某个动态字符串」成为流向公开文件的通道。
- */
-export const PERF_SPAN_NAMES = [
-  // 语义命令（与 MutationOp['op'] 同集）
-  'saveGroup',
-  'removeTab',
-  'deleteGroup',
-  'deleteAllGroups',
-  'importGroups',
-  'renameGroup',
-  'toggleGroupLock',
-  'updateGroupFields',
-  'moveTab',
-  'cleanDuplicates',
-  'restoreConsumed',
-  // 队列任务名（非 mutation）
-  'sync:upload',
-  'sync:download',
-  'opStampMigration',
-  'saveAllTabs',
-  'saveCurrentTab',
-] as const;
-
-/**
- * run 段内部可计时的 IO 阶段。
- *
- * 只列**真的被测**的阶段；纯计算段（apply）不在这里——它由聚合时相减推出
- * （见文件头）。把推导值也塞进这张表会让人误以为它被直接测过。
- */
-export const SPAN_STEPS = [
-  'journal',
-  'read',
-  'write',
-  'noteDeleted',
-  // 撤回删除广播意图（撤销「恢复即消费」，2026-10-22 审计 P0-4）
-  'retractDeleted',
-  'scheduleUpload',
-] as const;
-
-export type SpanStep = (typeof SPAN_STEPS)[number];
+// ── 2026-10-23（首屏瘦身）：词表搬到 perfSpanNames.ts ──────────────────
+// 理由与迁移说明见那个文件的头注释。**外部 import 路径不变**（下面 re-export），
+// 但首屏路径（diagnostics.ts）一律从 perfSpanNames.ts 取，
+// 免得又把「会写 IndexedDB 的 perfTrace」拖回首屏。
+export { PERF_SPAN_NAMES, SPAN_STEPS } from './perfSpanNames';
+export type { SpanStep } from './perfSpanNames';
+import { PERF_SPAN_NAMES } from './perfSpanNames';
+import type { SpanStep } from './perfSpanNames';
 
 /**
  * span 阶段：
