@@ -9,7 +9,9 @@
     "missing-save-and-close",
     "missing-self-hosted-storage",
     "missing-restore-consumes",
-    "missing-no-cap"
+    "missing-no-cap",
+    "missing-file-url-disclosure",
+    "missing-import-lock-disclosure"
   ],
   "howToFix": "在 Chrome Web Store 后台把 Short Description / Detailed Description 替换为 CHROMEWEBSTORE.md 的「## Store Listing」段。商店文案没有 API 通道（v1.1 的 Item 不暴露文案字段，v2 只有 media.upload）⇒ 只能人工粘贴。粘贴内容：node scripts/store-listing-audit.mjs --print-text",
   "note": "「撤销」这条能力从 1.26.0 才有 ⇒ 在 1.25.1 上不许宣传它；要写这段文案，先发 1.26.0。"

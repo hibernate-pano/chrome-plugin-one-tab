@@ -465,3 +465,110 @@ describe('R-8⑤ 台账里的「线上已发布」必须与公开页的 Version 
     );
   });
 });
+
+// ══════════════════════════════════════════════════════════════════════════
+// R-8⑥ 2026-10-23 措辞审计新增的三条判据：必须**看得见旧文案**，且**放得过新文案**
+// ══════════════════════════════════════════════════════════════════════════
+//
+// 【为什么要有这一组】判据是「写下来的正则」⇒ 它可能一开始就写错（太宽 ⇒ 误伤
+// 正确的改写；太窄 ⇒ 看不见旧文案）。⇒ 每条新判据都要两半证明：
+//   ① **旧说法必须被抓住**（否则它是空网）；
+//   ② **新说法必须被放过**（否则没人敢改文案 —— 本仓吃过这个亏）。
+describe('R-8⑥ 措辞审计的三条新判据（自证：旧文案红、新文案绿）', () => {
+  const judge = (description: string) =>
+    judgeListing({ version: '1.26.0', tagline: '', description }).map(v => v.code);
+
+  it('WC-2：「file:// 在别的设备上不一定打得开」必须被抓住（它是半句假话）', () => {
+    const oldCn = judge(
+      '本地文件（file://）的地址会照常存下来，但它在别的设备上不一定打得开。'
+    );
+    assert.ok(
+      oldCn.includes('claims-file-urls-openable'),
+      '判据没看出「file:// 在别的设备上不一定打得开」—— 这句话把真相说反了（本机也打不开）'
+    );
+    assert.ok(
+      oldCn.includes('missing-file-url-disclosure'),
+      '判据没看出「没有说清 file:// 只作为记录留存」'
+    );
+
+    const oldEn = judge(
+      'Local file addresses (file://) are saved as-is, though they may not open on another device.'
+    );
+    assert.ok(
+      oldEn.includes('claims-file-urls-openable'),
+      '英文那句旧文案没被抓住'
+    );
+  });
+
+  it('WC-2：说对了的新文案必须被放过（中英各一次）', () => {
+    const newCn = judge(
+      '本地文件（file://）的地址会照常存下来，但浏览器不允许扩展打开本地文件 —— ' +
+        '这类标签只作为一条记录留存，点开时仍会提示「在当前设备无法打开」。'
+    );
+    assert.ok(
+      !newCn.includes('claims-file-urls-openable'),
+      '判据把**正确**的新文案判成假话 —— 守卫太宽，就没人敢改了'
+    );
+    assert.ok(
+      !newCn.includes('missing-file-url-disclosure'),
+      '判据把说清楚了的新文案判成漏说'
+    );
+
+    const newEn = judge(
+      'Local file addresses (file://) are saved as-is, but browsers do not let extensions open ' +
+        'local files — those tabs are kept as a record only.'
+    );
+    assert.ok(
+      !newEn.includes('claims-file-urls-openable') &&
+        !newEn.includes('missing-file-url-disclosure'),
+      '英文新文案被误判'
+    );
+  });
+
+  it('WC-3：「导入的一律不带锁定」必须被当成**漏说**（而不是被禁止）', () => {
+    const oldText = judge(
+      '导入的内容一律不带锁定状态（OneTab 格式里没有这个信息）。' +
+        'Imported sessions are never locked (the OneTab format has no such field).'
+    );
+    assert.ok(
+      oldText.includes('missing-import-lock-disclosure'),
+      '判据没看出「两条导入路径的锁定语义没分开说」'
+    );
+  });
+
+  it('WC-3：分两种说了的新文案必须被放过', () => {
+    const newText = judge(
+      '锁定状态分两种：导入 OneTab 文本时那个格式里没有这个信息 ⇒ 一律不带锁定状态；' +
+        '而导回本扩展导出的 JSON 备份时，锁定状态原样保留。' +
+        'Locking works differently per format: OneTab text carries no lock field, ' +
+        'so OneTab imports are never locked; but when you import a JSON backup this ' +
+        'extension exported, the lock state is kept exactly as it was.'
+    );
+    assert.ok(
+      !newText.includes('missing-import-lock-disclosure'),
+      '判据把**正确**的新文案判成漏说'
+    );
+  });
+
+  it('WC-4：「不收集任何分析数据」必须被抓住（产品确实在本机记了使用事件）', () => {
+    const oldText = judge(
+      '扩展不收集任何分析数据，也不读取你的浏览器自动浏览历史。' +
+        'The extension collects no analytics and does not read your browser’s automatic browsing history.'
+    );
+    assert.ok(
+      oldText.includes('claims-no-analytics-collected'),
+      '判据没看出「不收集任何分析数据」与数据使用表自相矛盾'
+    );
+  });
+
+  it('WC-4：「不上传 + 只记在本机」必须被放过', () => {
+    const newText = judge(
+      '扩展不上传任何分析数据（功能使用事件只记在你自己的设备上）。' +
+        'The extension uploads no analytics (feature-usage events are recorded on your own device only).'
+    );
+    assert.ok(
+      !newText.includes('claims-no-analytics-collected'),
+      '判据把说对了的新文案判成假话'
+    );
+  });
+});

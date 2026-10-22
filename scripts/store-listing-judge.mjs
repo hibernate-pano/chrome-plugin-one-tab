@@ -247,7 +247,51 @@ const FORBIDDEN = [
       /local and cloud backups?/i,
     ],
   },
+  {
+    // ── 2026-10-23 措辞审计 WC-2 ──────────────────────────────────────────
+    code: 'claims-file-urls-openable',
+    why:
+      '扩展**能存** `file://` 地址，但 Chrome **不允许扩展打开本地文件**' +
+      '（`OPENABLE_TAB_PROTOCOLS` 里没有 `file:`，见 src/utils/inputValidation.ts:245）' +
+      '⇒ 文案若只说「在别的设备上不一定打得开」，用户会以为**本机点得开** ⇒ ' +
+      '装完发现 PDF 打不开 ⇒ 以为产品坏了。' +
+      '正确说法：这类地址**只作为一条记录留存**，点开时提示打不开。',
+    patterns: [
+      /在别的设备上不一定打得开/,
+      /may not open on another device/i,
+      // 「file:// 打得开 / 能打开 / 可以打开」—— 只认**肯定**的说法。
+      /file:\/\/[^。\n]{0,80}(?:打得开|能打开|可以打开)/,
+      /file:\/\/[^.\n]{0,80}(?:can be opened|will open|opens fine)/i,
+    ],
+  },
+  {
+    // ── 2026-10-23 措辞审计 WC-4 ──────────────────────────────────────────
+    code: 'claims-no-analytics-collected',
+    why:
+      '产品**确实**在本机记了功能使用事件（`src/utils/productEvents.ts` → ' +
+      '本机最多 200 条，导出的诊断信息里能看到事件名与次数），' +
+      '而同一份文案的**数据使用表**里也登记着「User activity｜仅本地记录」。' +
+      '详细描述若写「不收集任何分析数据」⇒ 审核方/用户按详细描述读与按表读' +
+      '会得到两个互斥的结论 ⇒ 隐私问卷与详细描述打架是下架风险。' +
+      '正确说法：**不上传**（事件只记在本机）。',
+    patterns: [
+      /不收集任何分析数据/,
+      /collects no analytics/i,
+      /does not collect any analytics/i,
+    ],
+  },
 ];
+
+/**
+ * 【为什么「导入的锁定状态」没有写成「不许说的话」】—— 2026-10-23 措辞审计 WC-3
+ *
+ * 「导入的内容一律不带锁定状态」这句话，**限定在 OneTab 那句话里时是对的**
+ * （OneTab 格式确实没有这个字段）⇒ 禁止整句会**误伤正确的改写**
+ * （本仓反复踩的坑：守卫把正确的等价改写判红 ⇒ 没人敢改文案）。
+ * ⇒ 改成**正向判据**：「必须说清两条路径的分歧」
+ * （见 REQUIRED 的 `missing-import-lock-disclosure`）——
+ * 旧文案（笼统一句）过不了，新文案（分两种说）过得了。
+ */
 
 /**
  * 【必须说的东西】—— 能力存在 ⇒ 文案得说，否则用户带着错的预期用。
@@ -311,6 +355,37 @@ const REQUIRED = [
       /no caps? on how many/i,
       /no limit on how many/i,
       /as many sessions as you like/i,
+    ],
+  },
+  {
+    // ── 2026-10-23 措辞审计 WC-2 ──────────────────────────────────────────
+    code: 'missing-file-url-disclosure',
+    why:
+      '本地文件地址**存得下但打不开**（Chrome 不允许扩展导航到 file://）⇒ ' +
+      '文案必须说清这一点，否则用户以为「存下来了就能点」。' +
+      '这是**预期**问题：PDF / 论文这类标签是用户存它的理由。',
+    any: [
+      // 中文：file:// 出现之后不远处必须交代「打不开 / 只作为记录留存」。
+      /file:\/\/[^。\n]{0,200}(?:打不开|无法打开|只作为[^。\n]{0,12}记录)/,
+      /本地文件[^。\n]{0,120}(?:打不开|无法打开|只作为[^。\n]{0,12}记录)/,
+      // English
+      /file:\/\/[^.\n]{0,240}(?:cannot be opened|kept as a record only|not openable)/i,
+      /local file[^.\n]{0,240}(?:cannot be opened|kept as a record only|not openable)/i,
+    ],
+  },
+  {
+    // ── 2026-10-23 措辞审计 WC-3 ──────────────────────────────────────────
+    code: 'missing-import-lock-disclosure',
+    why:
+      '两条导入路径的锁定语义**相反**（JSON 备份保留锁定状态、OneTab 文本没有这个字段）⇒ ' +
+      '文案必须把两条分开说，否则用户会在其中一条路径上被咬一口。',
+    any: [
+      // 中文：JSON 备份那条路必须说「锁定状态保留」。
+      /锁定状态分两种/,
+      /JSON[^。\n]{0,160}锁定[^。\n]{0,30}(?:原样)?保留/,
+      // English
+      /Locking works differently per format/i,
+      /JSON[^.\n]{0,200}lock[^.\n]{0,40}(?:kept|preserved)/i,
     ],
   },
 ];
