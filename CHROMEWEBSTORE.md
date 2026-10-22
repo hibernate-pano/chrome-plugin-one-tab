@@ -46,6 +46,7 @@ TapStack 把你当前浏览器窗口里的所有标签页保存为一个会话�
 · 一键清理：清除重复标签页和空会话
 · 导入导出：支持 OneTab 文本格式导入导出，以及 JSON 备份；导出的网址与标题**原样保留**（网址里带竖线、标题里带竖线或换行都不会被截断），导入的会话也**按内容命名**（和保存时同一套规则）
 · 登录同步：登录后会把云端的会话拉回本机，换设备、换浏览器也能找回你的工作现场；本机每次保存、重命名、删除也都会自动上传到云端。**定时自动拉取默认关闭**（可在设置里打开）—— 关掉它只是不再周期性去云端取新内容，你本机的改动仍然照常上传
+· **没有数量上限**：会话想存多少存多少 —— 没有「免费版只能存 N 个」这种限制，锁定的会话、同步过去的会话也都一样算数
 · 外观：6 套主题风格（legacy / creamy / prism / apple / chrome / claude）加暗色模式，单栏 / 双栏布局随心切换 —— 会话清单长什么样由你定
 · 自带存储：也可以不同步到我们的服务器——选择「自带存储」，数据只同步到你自己的云盘（坚果云、自建 Nextcloud 等 WebDAV 服务），会话内容**默认**在离开浏览器前就用你的口令加密；你也可以在设置里选「不加密」，此时云盘服务商能看到会话名称与网址（目录清单文件**始终是明文**，里面是每个会话的 id、最后修改时间、是否已删除、操作印记（其中含设备编号），以及本库的加密 salt —— salt 本身不是秘密，它的作用是防跨库预计算，但明文放在这里；会话**名称与网址**不在清单里，在各个会话文件里）
 
@@ -70,6 +71,7 @@ Key features:
 · One-click cleanup: remove duplicate tabs and empty sessions
 · Import/export: OneTab text format, plus JSON backup; exported URLs and titles are kept **exactly as they are** (a URL containing a vertical bar, or a title containing one or a line break, is never truncated), and imported sessions are **named after their content**, using the same rule as when you save them
 · Cloud sync: sign in and the sessions in your cloud are pulled back to this device, so you can pick up your work on any device or browser; every save, rename or delete you make locally is uploaded automatically too. **The scheduled auto-pull is off by default** (you can turn it on in settings) — turning it off only means TapStack stops periodically checking the cloud for new content; your local changes are still uploaded as usual
+· **No caps on how many**: keep as many sessions as you like — there is no "the free version only stores N" limit, and locked or cloud-synced sessions count the same
 · Look and feel: 6 theme styles (legacy / creamy / prism / apple / chrome / claude) plus a dark mode, with single- or two-column layouts — the session list looks the way you want it to
 · Own-cloud sync (optional): skip our servers entirely — choose "self-hosted storage" and your sessions sync to your own WebDAV storage (JianGuoCloud, a self-hosted Nextcloud, and similar), encrypted with your passphrase by default before anything leaves your browser (you can turn encryption off in settings — then your storage provider can see session names and URLs; the directory manifest is **always plaintext**: it holds each session's id, last-modified time, deleted flag and operation stamp (which includes a device id), plus this library's encryption salt — the salt is not a secret (it exists to prevent cross-library precomputation), but it is stored in plaintext; session **names and URLs are not in the manifest**, they live in the individual session files)
 
