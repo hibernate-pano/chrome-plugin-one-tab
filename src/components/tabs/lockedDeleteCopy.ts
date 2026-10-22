@@ -54,6 +54,26 @@ export const deleteGroupEntryLabel = (isLocked: boolean): string =>
   isLocked ? '删除已锁定的会话' : '删除会话';
 
 /**
+ * 删除入口的**可访问名**（读屏播报的那一句）。
+ *
+ * ── 为什么不能只靠 Tooltip（2026-10-23 审计 DS-43-17）────────────────────
+ * 「删除后无法恢复」原先只写在 Tooltip 的 `content` 里。而 Tooltip 的接线
+ * （V-15）是「**提示条可见时**才把它挂到触发元素的 `aria-describedby` 上」——
+ * 提示条本身也只在 `isVisible` 时才渲染。于是：
+ *   焦点落到按钮上 ⇒ 读屏先念按钮名（「删除会话」）
+ *   300ms 后提示条出现、`aria-describedby` 被挂上 ⇒ **多数读屏不会重新播报**
+ * ⇒ 读屏用户**从头到尾听不到**「删除后无法恢复」。
+ *
+ * 而这个动作是**不可逆**的（v1.22.0 起无回收站）⇒ 后果必须进**可访问名**。
+ *
+ * ⚠️ WCAG 2.5.3（Label in Name）：可访问名必须**包含**可见文字 ——
+ * 「删除会话（删除后无法恢复）」包含「删除会话」⇒ 合规。
+ * 锁定态同理：「删除已锁定的会话（删除后无法恢复）」包含可见文字。
+ */
+export const deleteGroupEntryAriaLabel = (isLocked: boolean): string =>
+  `${deleteGroupEntryLabel(isLocked)}（删除后无法恢复）`;
+
+/**
  * 确认框正文。
  *
  * 锁定会话必须**点名**「已锁定」：用户锁它是为了防误删，

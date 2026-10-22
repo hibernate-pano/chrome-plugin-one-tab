@@ -44,6 +44,7 @@ import ts from 'typescript';
 import {
   deleteGroupConfirmMessage,
   deleteGroupConfirmTitle,
+  deleteGroupEntryAriaLabel,
   deleteGroupEntryLabel,
   deleteGroupRequiresConfirm,
 } from '../src/components/tabs/lockedDeleteCopy.ts';
@@ -321,10 +322,52 @@ describe('会话卡片：锁定会话仍渲染删除入口（宽屏按钮 + 窄�
   });
 
   it('宽屏删除按钮的可访问名对锁定会话说清「已锁定」', () => {
+    // ── 2026-10-23 审计 DS-43-17：判据从「源码里写了哪个函数名」改成
+    //    「读屏听到的那句话能不能区分锁定态」。
+    //
+    // 为什么换判据：可访问名原先是「删除会话」，**听不到「删除后无法恢复」**
+    // （那句话只在 Tooltip 里，而 Tooltip 只在可见时挂 aria-describedby，
+    //  多数读屏不会重新播报）⇒ 后果必须进可访问名本身。
+    // 而可访问名因此不再等于 `deleteGroupEntryLabel(...)` ⇒
+    // 继续钉那个字面量就变成「改对了实现反而红」。
+    //
+    // ⇒ 判据只看两件事：
+    //   ① **内容**：锁定态的可访问名能说出「已锁定」（且带后果）；
+    //   ② **接线**：按钮的 aria-label 取自 lockedDeleteCopy 引入的那一份
+    //      （不许在组件里现拼，也不许各入口各写一份）。
+    assert.match(
+      deleteGroupEntryAriaLabel(true),
+      /已锁定/,
+      '锁定会话的删除按钮必须能被读屏区分出来'
+    );
+    assert.match(
+      deleteGroupEntryAriaLabel(false),
+      /删除后无法恢复/,
+      '可访问名必须带上后果（读屏听不到 tooltip）'
+    );
+
+    // 接线：找出 lockedDeleteCopy 引入的「可访问名」那个函数（认导入别名）。
+    const imported = src.match(/import\s*\{([^}]*)\}\s*from\s*'([^']*lockedDeleteCopy[^']*)'/);
+    assert.ok(imported, 'TabGroup 必须从 lockedDeleteCopy 引入删除入口的文案');
+    const localNames = imported![1]
+      .split(',')
+      .map(part => part.trim())
+      .filter(Boolean)
+      .map(part => {
+        const aliased = part.match(/^([A-Za-z_$][\w$]*)\s+as\s+([A-Za-z_$][\w$]*)$/);
+        return aliased ? { export: aliased[1], local: aliased[2] } : { export: part, local: part };
+      })
+      .filter(entry => entry.export === 'deleteGroupEntryAriaLabel')
+      .map(entry => entry.local);
+    assert.equal(
+      localNames.length,
+      1,
+      '必须从 lockedDeleteCopy 引入 deleteGroupEntryAriaLabel（恰好一次）'
+    );
     assert.match(
       src,
-      /aria-label=\{deleteGroupEntryLabel\(group\.isLocked\)\}/,
-      '锁定会话的删除按钮必须能被读屏区分出来'
+      new RegExp(`aria-label=\\{${localNames[0]}\\(group\\.isLocked\\)\\}`),
+      '宽屏删除按钮的 aria-label 必须取自共享的可访问名'
     );
   });
 

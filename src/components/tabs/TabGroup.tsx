@@ -34,6 +34,7 @@ import { useConsumeUndo } from '@/components/tabs/useConsumeUndo';
 import {
   deleteGroupConfirmMessage,
   deleteGroupConfirmTitle,
+  deleteGroupEntryAriaLabel,
   deleteGroupEntryLabel,
   deleteGroupRequiresConfirm,
   lockedTabDeleteMessage,
@@ -1280,14 +1281,14 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
               删除锁定会话仍是**允许**的，只是要走更重的确认
               （见 handleDelete 与 lockedDeleteCopy）。 */}
           <Tooltip
-            content={`${deleteGroupEntryLabel(group.isLocked)}（删除后无法恢复）`}
+            content={deleteGroupEntryAriaLabel(group.isLocked)}
             className="hidden sm:inline-flex"
           >
             <button
               ref={cardActionRef}
               onClick={handleDelete}
               className="btn-icon tab-group-action-danger micro-interaction-button"
-              aria-label={deleteGroupEntryLabel(group.isLocked)}
+              aria-label={deleteGroupEntryAriaLabel(group.isLocked)}
             >
               <DeleteIcon />
             </button>
@@ -1392,6 +1393,10 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
                 handleDelete();
               }}
               className="w-full px-3 py-2 text-left text-sm theme-text-danger transition-colors hover:theme-btn-hover"
+              // ── 2026-10-23 审计 DS-43-17：可访问名必须带**后果** ────────────
+              // 窄屏菜单项没有 Tooltip ⇒ 后果若只写在别处，读屏用户听不到。
+              // 可见文字仍是「删除会话」（aria-label 以它为前缀 ⇒ WCAG 2.5.3 合规）。
+              aria-label={deleteGroupEntryAriaLabel(group.isLocked)}
             >
               {deleteGroupEntryLabel(group.isLocked)}
             </button>
