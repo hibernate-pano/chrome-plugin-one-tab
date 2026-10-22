@@ -5,6 +5,7 @@ import { InlineNotice } from '@/components/common/InlineNotice';
 import { validateEmail, validatePassword, validateForm } from '@/utils/inputValidation';
 import { useToast } from '@/contexts/ToastContext';
 import { restoreAfterLogin } from './restoreAfterLogin';
+import { loginRestoreFeedback } from './restoreFeedbackCopy';
 import { logError } from '../../utils/log';
 
 interface LoginFormProps {
@@ -69,10 +70,14 @@ export const LoginForm: React.FC<LoginFormProps> = ({ onSuccess }) => {
       // 不该被「后台定时轮询的开关」拦下 —— 那是拿错判据。
       //
       // 失败不阻断登录：同步失败不该把用户踢回登录页，手动「下载」入口仍在。
-      void restoreAfterLogin(dispatch).then(count => {
-        if (count > 0) {
-          showToast(`已从云端恢复 ${count} 个会话`, 'success');
-        }
+      //
+      // ── 2026-10-22 审计 SC-6：三种结果 ⇒ 三种回执 ──────────────────────
+      // 修复前这里只 `if (count > 0)` 才说话 ⇒ 「拉回失败」与「云端为空」
+      // 都回 0 ⇒ 两种情况**一句话都没有** ⇒ 用户以为云端的数据没了。
+      // ⇒ 现在按结果分别出声：拉到 N 个（成功）/ 云端为空（提示）/ 失败（错误 + 出路）。
+      void restoreAfterLogin(dispatch).then(outcome => {
+        const feedback = loginRestoreFeedback(outcome);
+        showToast(feedback.text, feedback.tone);
       });
 
       if (onSuccess) {

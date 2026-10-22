@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { useAppDispatch, useAppSelector } from '@/store/hooks';
-import { loadGroups } from '@/store/slices/tabSlice';
+import { clearError, loadGroups } from '@/store/slices/tabSlice';
 import { invalidateGroupsCache, onGroupsChanged } from '@/utils/storage';
 import { DraggableTabGroup } from '@/components/dnd/DraggableTabGroup';
 import { SearchResultList } from '@/components/search/SearchResultList';
@@ -12,9 +12,14 @@ import { EmptyState } from '@/components/common/EmptyState';
 import { getEmptyStateGreeting } from '@/components/common/emptyStateGreeting';
 import { saveAndCloseLabel } from '@/components/layout/saveActionCopy';
 import { saveAllSuccessShortMessage } from '@/domain/tabGroup/saveFeedbackCopy';
-import { toListErrorCopy } from './listErrorCopy';
+import { toListErrorCopy, toListErrorView } from './listErrorCopy';
+import { bootstrapFirstRead } from './firstReadBootstrap';
+import {
+  CLOUD_PULL_BUSY_LABEL,
+  cloudPullOutcomeMessage,
+} from '@/domain/tabGroup/cloudPullCopy';
 import { getContextOrigin } from '@/core/contextOrigin';
-import { logError } from '../../utils/log';
+import { logError, logWarn } from '../../utils/log';
 import { AuthTab } from '@/components/auth/AuthModal';
 import { sendSyncCommand } from '@/shared/mutationProtocol';
 import { requestImport } from '@/components/layout/importRequest';
@@ -48,9 +53,39 @@ interface TabListProps {
   filterControls: SearchFilterControls;
 }
 
+/**
+ * 列表**还读不出来**时的骨架屏。
+ *
+ * 抽成组件是因为它有两处用（首次读取没走完 / 这一轮读取在途），
+ * 而两处的语义必须**完全一致** —— 一处说「还在读」、另一处说「读完了」
+ * 会让用户以为自己看到的是最终结果。
+ */
+const ListLoadingSkeleton: React.FC = () => (
+  <div
+    className="session-list-stack"
+    role="status"
+    aria-live="polite"
+    aria-label="正在加载会话列表"
+  >
+    <div className="tab-group-card p-4 space-y-3" aria-hidden="true">
+      <div className="skeleton-block h-5 w-2/5" />
+      <div className="skeleton-block h-4 w-full" />
+      <div className="skeleton-block h-4 w-11/12" />
+      <div className="skeleton-block h-4 w-4/5" />
+    </div>
+    <div className="tab-group-card p-4 space-y-3" aria-hidden="true">
+      <div className="skeleton-block h-5 w-1/3" />
+      <div className="skeleton-block h-4 w-full" />
+      <div className="skeleton-block h-4 w-3/5" />
+    </div>
+    <span className="sr-only">正在加载会话列表…</span>
+  </div>
+);
+
 export const TabList: React.FC<TabListProps> = ({ searchQuery, onOpenAuth, filterControls }) => {
   const dispatch = useAppDispatch();
-  const { groups, isLoading, error, errorSource } = useAppSelector(state => state.tabs);
+  const { groups, isLoading, error, errorSource, errorAction, hasCompletedInitialLoad } =
+    useAppSelector(state => state.tabs);
   const { layoutMode, syncBackend } = useAppSelector(state => state.settings);
   // 排序键（2026-10-22 审计 L-10）：筛选区里那个「排序方式」下拉写的就是它。
   const sessionSort = useAppSelector(state => state.settings.sessionSort);
@@ -151,16 +186,22 @@ export const TabList: React.FC<TabListProps> = ({ searchQuery, onOpenAuth, filte
         return;
       }
       // 拉成功**不等于**拉到了东西：云端本来就可能是空的。
-      // 刷新后按真实条数说话，不谎报「已恢复 N 个会话」。
+      // 刷新后按真实条数说话，不谎报「已拉回 N 个会话」。
       const loaded = await dispatch(loadGroups()).unwrap();
-      setEmptyRestoreFeedback(
-        loaded.length > 0
-          ? { kind: 'success', text: `已从云端恢复 ${loaded.length} 个会话` }
-          : { kind: 'success', text: '云端没有会话可拉回' },
-      );
+      setEmptyRestoreFeedback({
+        kind: 'success',
+        text: cloudPullOutcomeMessage(
+          loaded.length > 0
+            ? { kind: 'pulled', count: loaded.length }
+            : { kind: 'empty' }
+        ),
+      });
     } catch (restoreError) {
-      logError('空态从云端恢复失败:', restoreError);
-      setEmptyRestoreFeedback({ kind: 'error', text: '从云端恢复失败，请稍后重试' });
+      logError('空态从云端拉回失败:', restoreError);
+      setEmptyRestoreFeedback({
+        kind: 'error',
+        text: cloudPullOutcomeMessage({ kind: 'failed' }),
+      });
     } finally {
       setEmptyRestoreBusy(false);
     }
@@ -198,8 +239,12 @@ export const TabList: React.FC<TabListProps> = ({ searchQuery, onOpenAuth, filte
   };
 
   useEffect(() => {
-    const initializeData = async () => {
-      try {
+    // 首次读取**不等**迁移（2026-10-22 审计 SC-1）：理由见 firstReadBootstrap.ts。
+    bootstrapFirstRead({
+      read: () => {
+        dispatch(loadGroups());
+      },
+      runMigrations: async () => {
         // ── 2026-10-09 专家团体检 P0：迁移必须委托给 SW 单写者队列 ──
         //
         // 修复前这里直接 await runMigrations() —— 它内部三件（favicon 清洗、
@@ -212,26 +257,25 @@ export const TabList: React.FC<TabListProps> = ({ searchQuery, onOpenAuth, filte
         // 写回 → 刚保存的会话当场消失（本地与云端一起丢，且 v1.22.0 无回收站）。
         //
         // 改走 RUN_MIGRATIONS 消息后，迁移与其它写在**同一条 SW 队列**内串行，
-        // 与 importGroups 走 sendMutation 是同一条先例。失败仍如实抛错，
-        // 由下面的 catch 落日志并照常 loadGroups（应用不能因迁移失败而打不开）。
+        // 与 importGroups 走 sendMutation 是同一条先例。
         const res = (await chrome.runtime.sendMessage({ type: 'RUN_MIGRATIONS' })) as
           | { success?: boolean; error?: string }
           | undefined;
         // sendMessage 在 SW 回 {success:false} 时是**resolve 不是 reject** ——
         // 不检查回包就是「失败被静默通过」，与本仓修掉的谎报成功同一类。
-        // 迁移失败不阻断加载（下面照常 loadGroups，应用必须能打开），
-        // 但必须留下日志：否则「迁移没跑」与「迁移成功」在日志里完全同形。
+        // 迁移失败不阻断列表（上面已经读过了），但必须留下日志：
+        // 否则「迁移没跑」与「迁移成功」在日志里完全同形。
         if (res && res.success === false) {
-          throw new Error(res.error || 'SW 侧迁移失败');
+          logError('迁移失败（会话列表不受影响）:', res.error || 'SW 未给原因');
         }
-        dispatch(loadGroups());
-      } catch (migrationError) {
-        logError('初始化数据失败:', migrationError);
-        dispatch(loadGroups());
-      }
-    };
-
-    initializeData();
+        return res;
+      },
+      onMigrationsUnconfirmed: (reason) => {
+        // 消息通道被关（用户关掉弹窗 / SW 被回收）**≠** 迁移失败：
+        // 迁移在 SW 那边可能照样跑完了 ⇒ 只记「结果未知」，不报成失败。
+        logWarn('迁移结果未知（消息通道关闭，迁移可能仍在完成）:', reason);
+      },
+    });
 
     // 刷新统一走这个 150ms 防抖出口：把「拖拽中连续 hover 触发的多次写盘回声」、
     // SW 的 REFRESH_TAB_LIST 合并成一次读取，避免同一帧内反复重载。
@@ -292,34 +336,43 @@ export const TabList: React.FC<TabListProps> = ({ searchQuery, onOpenAuth, filte
     }
   }, [error, errorSource]);
 
+  // 非阻塞提示（列表里**已有数据**时后台刷新失败）用的还是「加载失败」那套文案 ——
+  // 那条提示只在 errorSource === 'load' 时出现（见下方渲染分支），
+  // 所以这里用 toListErrorCopy 正好；整页错误视图走下面的 errorView（按来源分流）。
   const errorCopy = toListErrorCopy(error);
+
+  // 整页错误视图：文案与按钮**随 errorSource 变化**（2026-10-22 审计 SC-2）。
+  //
+  // 为什么不能只按 error 分流：`state.error` 是共享字段，一次**失败的撤销**
+  // 与一次**读列表失败**写进去的东西长得一样 ⇒ 撤销失败会被整页报成
+  // 「会话列表暂时不可用」+ 一个「重新加载」按钮 ⇒ 真正发生的事被盖掉，
+  // 而重读列表并不能重试那次撤销。
+  const errorView = toListErrorView({ errorSource, error, errorAction });
+
+  // ── 2026-10-22 审计 SC-1：首次读取**没走完**之前，不许说「你没有会话」──
+  //
+  // 首次读取不是立即发生的：它要等一次存储读取（读路径不经过 SW，但仍是异步的），
+  // 而 Redux 的 isLoading 初值是 false（它只表示「**这一轮**读取在途」）、
+  // groups 初值是 [] ⇒ 第一帧看起来就是「你有 0 个会话」⇒ 空态卡（谎报）
+  // + 一个**可点**的「保存并关闭」。
+  //
+  // ⇒ 在「读完了」之前，界面只给骨架屏，不给任何「你有 0 个会话」的断言。
+  //    （「读完了」这个标志由 slice 在 loadGroups 的 fulfilled / rejected 里置位 ——
+  //    读失败也算「读完了」，否则用户永远看不到错误页。）
+  const firstReadPending = hasCompletedInitialLoad === false;
 
   // 只有「冷启动还没有任何数据」才整页 loading。
   // 后台刷新（onGroupsChanged / REFRESH_TAB_LIST）也会把 isLoading 置真，
   // 若照旧整页替换，拖拽/同步每次落盘都会闪一次全屏 spinner——即用户看到的
   // 「整个标签管理器页面都刷新了」。有数据时让刷新静默进行。
+  //
+  // 两个分支给的是**同一个**骨架屏：语义必须一致 ——
+  // 一处说「还在读」、另一处说「读完了」会让用户以为自己看到的是最终结果。
+  if (firstReadPending) {
+    return <ListLoadingSkeleton />;
+  }
   if (isLoading && groups.length === 0) {
-    return (
-      <div
-        className="session-list-stack"
-        role="status"
-        aria-live="polite"
-        aria-label="正在加载会话列表"
-      >
-        <div className="tab-group-card p-4 space-y-3" aria-hidden="true">
-          <div className="skeleton-block h-5 w-2/5" />
-          <div className="skeleton-block h-4 w-full" />
-          <div className="skeleton-block h-4 w-11/12" />
-          <div className="skeleton-block h-4 w-4/5" />
-        </div>
-        <div className="tab-group-card p-4 space-y-3" aria-hidden="true">
-          <div className="skeleton-block h-5 w-1/3" />
-          <div className="skeleton-block h-4 w-full" />
-          <div className="skeleton-block h-4 w-3/5" />
-        </div>
-        <span className="sr-only">正在加载会话列表…</span>
-      </div>
-    );
+    return <ListLoadingSkeleton />;
   }
 
   // 同理：已有数据时后台刷新失败不该把列表整页换成错误页，日志照旧（见上 error effect）。
@@ -327,18 +380,34 @@ export const TabList: React.FC<TabListProps> = ({ searchQuery, onOpenAuth, filte
     return (
       <EmptyState
         tone="warning"
-        title={errorCopy.title}
-        description={errorCopy.description}
+        title={errorView.title}
+        description={errorView.description}
         action={
-          <button
-            type="button"
-            onClick={() => {
-              dispatch(loadGroups());
-            }}
-            className="rounded-2xl border border-gray-200 bg-white px-4 py-2 text-sm font-medium text-gray-700 shadow-sm transition hover:bg-gray-50 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-200 dark:hover:bg-gray-800"
-          >
-            重新加载
-          </button>
+          // ── 只有**读路径**失败才给「重新加载」 ──────────────────────────
+          // 动作失败（删除 / 撤销 / 重命名…）时，重读列表并不能重试那个操作 ——
+          // 给那个按钮等于把用户引到一条解决不了问题的路上。
+          // 那时给的是「回到会话列表」：只清掉这条错误提示，不动数据。
+          errorView.reloadable ? (
+            <button
+              type="button"
+              onClick={() => {
+                dispatch(loadGroups());
+              }}
+              className="rounded-2xl border border-gray-200 bg-white px-4 py-2 text-sm font-medium text-gray-700 shadow-sm transition hover:bg-gray-50 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-200 dark:hover:bg-gray-800"
+            >
+              重新加载
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={() => {
+                dispatch(clearError());
+              }}
+              className="rounded-2xl border border-gray-200 bg-white px-4 py-2 text-sm font-medium text-gray-700 shadow-sm transition hover:bg-gray-50 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-200 dark:hover:bg-gray-800"
+            >
+              {errorView.dismissLabel}
+            </button>
+          )
         }
         className="min-h-[16rem] flex flex-col justify-center"
       />
@@ -457,7 +526,9 @@ export const TabList: React.FC<TabListProps> = ({ searchQuery, onOpenAuth, filte
                         title={EMPTY_STATE_ACTION_HINT[action]}
                         aria-label={`${EMPTY_STATE_ACTION_LABEL[action]}：${EMPTY_STATE_ACTION_HINT[action]}`}
                       >
-                        {action === 'download' && emptyRestoreBusy ? '恢复中…' : EMPTY_STATE_ACTION_LABEL[action]}
+                        {action === 'download' && emptyRestoreBusy
+                          ? CLOUD_PULL_BUSY_LABEL
+                          : EMPTY_STATE_ACTION_LABEL[action]}
                       </button>
                     ))}
                   </div>
@@ -543,7 +614,19 @@ export const TabList: React.FC<TabListProps> = ({ searchQuery, onOpenAuth, filte
       )}
 
       {viewMode !== 'list' ? (
-        <SearchResultList searchQuery={searchQuery} filterControls={filterControls} />
+        /* ── 2026-10-23 审计 SC-4：结果视图的零结果页也要有「登录」出口 ────
+         * 搜索**只搜本机**的会话 ⇒ 用户的会话在云端时这里必然零结果，
+         * 而「把云端的会话拉回来」这条路只有空态有 ⇒ 零结果页必须给出
+         * **同样的出口**（判据与执行都在判据层，与本组件的空态同一份）。
+         *
+         * 「登录」那一格需要一个能真的打开登录弹窗的能力 —— 弹窗实例由
+         * MainApp 持有，这里把同一个回调转交给结果视图（两个界面共用
+         * **同一个**弹窗，不会出现两个 portal）。 */
+        <SearchResultList
+          searchQuery={searchQuery}
+          filterControls={filterControls}
+          {...(onOpenAuth ? { onOpenAuth } : {})}
+        />
       ) : layoutMode === 'double' ? (
         /* ── 2026-10-23 审计 R-11：双栏必须是**行主序** ──────────────────────
          *

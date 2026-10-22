@@ -11,7 +11,21 @@
  * 原则：主视觉只给「发生了什么 + 你能做什么」；原始文本由调用方写进 console，
  * 不进 DOM。这里只做分类映射，**任何情况下都不把 raw 回显给用户**——
  * 未识别的异常一律落到通用兜底文案。
+ *
+ * ── 2026-10-22 审计 SC-2：按**来源**分流 ──────────────────────────────────
+ *
+ * `state.error` 是**共享字段**：读路径（loadGroups）与列表内的写操作
+ * （删除 / 撤销 / 重命名…）都往里写。原先这个模块只回答「加载失败怎么说」，
+ * 于是一次**失败的撤销**会被整页错误页报成「会话列表暂时不可用」——
+ * 真正发生的事被盖掉，用户去点「重新加载」（重读列表并不能重试那次撤销）。
+ *
+ * ⇒ 这里多了一个出口：`toListErrorView` —— 它把「来源 + 失败的操作」一起
+ * 翻译成**整页错误视图**该有的样子（标题 / 说明 / 给不给「重新加载」）。
  */
+
+import type { TabErrorAction } from '@/types/tab';
+import { TIMEOUT_REASON_PREFIX } from '@/core/mutationProtocol';
+import { mutationErrorMessage } from './mutationErrorCopy';
 
 export interface ListErrorCopy {
     /** 标题：一句人话结论 */
@@ -103,4 +117,152 @@ export function toListErrorCopy(raw: string | null | undefined): ListErrorCopy {
         if (rule.match.test(raw)) return rule.copy;
     }
     return FALLBACK;
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// SC-2：整页错误视图按**来源**分流
+// ─────────────────────────────────────────────────────────────────────────
+
+/** 整页错误视图的两种形态。 */
+export type ListErrorViewKind =
+    /** 读路径失败：列表读不出来。 */
+    | 'load'
+    /** 列表内操作失败：列表本身没问题，是那个操作没成。 */
+    | 'action';
+
+/** 整页错误视图该长什么样（纯函数的输出，界面照着渲染）。 */
+export interface ListErrorView {
+    kind: ListErrorViewKind;
+    /** 标题：一句人话结论。 */
+    title: string;
+    /** 描述：发生了什么 + 下一步能做什么。 */
+    description: string;
+    /**
+     * 是否给「重新加载」。
+     *
+     * **只有读路径失败才给**：重读列表能重试「读列表」，
+     * 但重读列表**不能**重试一次失败的删除 / 撤销 —— 给那个按钮等于
+     * 把用户引到一条解决不了问题的路上。
+     */
+    reloadable: boolean;
+    /** 不给「重新加载」时给的那个按钮（回到列表 / 关掉提示）。 */
+    dismissLabel?: string;
+}
+
+/** 每个操作的用户可读名 + 失败之后**能做什么**。 */
+interface ActionErrorCopy {
+    /** 操作的**用户可读名**（标题的主语）。 */
+    operation: string;
+    /** 这次失败之后，用户**能做什么**（不承诺做不到的事）。 */
+    nextStep: string;
+}
+
+/**
+ * 动作失败的操作名与下一步。
+ *
+ * 【为什么逐个写，而不是共用一句】
+ * 不同操作失败后的**后果不同**：撤销失败 ⇒ 那条记录仍然不在（用户会以为
+ * 自己没点上）；删除失败 ⇒ 会话可能还在；重命名失败 ⇒ 名字已经改回去了。
+ * 共用一句「操作失败，请重试」会把这些差别全抹平。
+ *
+ * 导出它是为了让判据能断言「标题里出现的是**这个操作的名字**」
+ * —— 而不必在守卫里另写一份中文。
+ */
+export const ACTION_ERROR_COPY: Record<TabErrorAction, ActionErrorCopy> = {
+    undo: {
+        operation: '撤销',
+        nextStep: '没有生效 —— 那条记录仍然不在列表里。想把它放回来，重新打开扩展后再试一次。',
+    },
+    deleteSession: {
+        operation: '删除会话',
+        nextStep: '这个会话可能还在本机。重新打开扩展就能看到最终结果。',
+    },
+    deleteTab: {
+        operation: '删除标签页',
+        nextStep: '这个标签页可能已经被删掉了。重新打开扩展就能看到最终结果。',
+    },
+    deleteAll: {
+        operation: '删除全部会话',
+        nextStep: '可能只删掉了一部分。重新打开扩展就能看到最终结果。',
+    },
+    renameSession: {
+        operation: '重命名会话',
+        nextStep: '会话名称已恢复成原来的样子，可以再改一次。',
+    },
+    toggleLock: {
+        operation: '切换锁定',
+        nextStep: '锁定状态已恢复成原来的样子，可以再试一次。',
+    },
+    moveTab: {
+        operation: '移动标签页',
+        nextStep: '顺序已恢复成原来的样子，可以再拖一次。',
+    },
+    cleanDuplicates: {
+        operation: '清理重复标签',
+        nextStep: '可能只清理了一部分。重新打开扩展就能看到最终结果。',
+    },
+};
+
+/** 来源没标出来时的兜底（不该发生，但必须有话可说）。 */
+const GENERIC_ACTION_COPY: ActionErrorCopy = {
+    operation: '操作',
+    nextStep: '这次操作没有生效，可以再试一次。',
+};
+
+/**
+ * 动作失败时**为什么**失败（一句人话）。
+ *
+ * 【超时必须单独说】
+ * 超时 ≠ 没发生：后台可能仍在继续（仓库既有纪律，见 tabSlice 的 timeoutCopy）。
+ * 说成「失败，请重试」会让用户以为没删掉而重复操作。
+ */
+function describeActionFailure(error: string | null | undefined): string {
+    if (typeof error === 'string' && error.startsWith(TIMEOUT_REASON_PREFIX)) {
+        return '扩展没有及时响应，后台可能仍在继续';
+    }
+    // 复用写路径同一份分类器（components/tabs/mutationErrorCopy）——
+    // 同一个失败在两个界面必须是同一套说法。主语用「这次操作」，
+    // 因为标题里已经写了具体是哪个操作。
+    return mutationErrorMessage('这次操作', error);
+}
+
+/**
+ * 整页错误视图的文案与按钮（**纯函数**）。
+ *
+ * @param input.errorSource 失败来源（'load' = 读列表失败；'action' = 列表内操作失败）
+ * @param input.error        原始异常（只用于分类，**永不**回显）
+ * @param input.errorAction  失败的具体操作（机器可读；见 types/tab.ts）
+ */
+export function toListErrorView(input: {
+    errorSource?: 'load' | 'action' | null;
+    error?: string | null;
+    errorAction?: TabErrorAction | null;
+}): ListErrorView {
+    if (input.errorSource === 'action') {
+        const copy = (input.errorAction && ACTION_ERROR_COPY[input.errorAction]) || GENERIC_ACTION_COPY;
+        const timedOut =
+            typeof input.error === 'string' && input.error.startsWith(TIMEOUT_REASON_PREFIX);
+        return {
+            kind: 'action',
+            // 超时 ≠ 没成 ⇒ 标题不能说「没能完成」。
+            title: timedOut
+                ? `${copy.operation}还在处理中`
+                : `${copy.operation}没能完成`,
+            description: timedOut
+                ? `扩展没有及时响应，后台可能仍在继续${copy.operation}。稍等几秒后重新打开扩展就能看到最终结果；列表本身没有问题。`
+                : `${describeActionFailure(input.error)}。${copy.nextStep}`,
+            // 重读列表**不能**重试一次失败的操作 ⇒ 不给这个按钮。
+            reloadable: false,
+            dismissLabel: '回到会话列表',
+        };
+    }
+
+    // 读路径失败（含来源未标注的兜底）：现在的行为基本对。
+    const copy = toListErrorCopy(input.error);
+    return {
+        kind: 'load',
+        title: copy.title,
+        description: copy.description,
+        reloadable: true,
+    };
 }

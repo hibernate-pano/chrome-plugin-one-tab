@@ -4,6 +4,8 @@ import { signUp, signIn, clearError } from '@/store/slices/authSlice';
 import { InlineNotice } from '@/components/common/InlineNotice';
 import { validateEmail, validatePassword } from '@/utils/inputValidation';
 import { restoreAfterLogin } from './restoreAfterLogin';
+import { loginRestoreFeedback } from './restoreFeedbackCopy';
+import { useToast } from '@/contexts/ToastContext';
 import { logError } from '../../utils/log';
 
 interface RegisterFormProps {
@@ -13,6 +15,7 @@ interface RegisterFormProps {
 export const RegisterForm: React.FC<RegisterFormProps> = ({ onSuccess }) => {
   const dispatch = useAppDispatch();
   const { isLoading, error } = useAppSelector(state => state.auth);
+  const { showToast } = useToast();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
@@ -76,7 +79,15 @@ export const RegisterForm: React.FC<RegisterFormProps> = ({ onSuccess }) => {
             // ── 2026-10-19 审计 F-6：注册后自动登录 ⇒ 同样拉一次云端 ────────
             // 「注册」与「登录」是同一个意图：我要开始用这个账号。
             // 走同一条路（restoreAfterLogin），两处行为不分裂。
-            void restoreAfterLogin(dispatch);
+            //
+            // ── 2026-10-22 审计 SC-6：注册这条路原先**零反馈** ────────────
+            // `void restoreAfterLogin(dispatch)` 把结果丢在地上 ⇒
+            // 「云端会话没回来」时用户一句话都收不到 ⇒ 以为云端数据没了。
+            // ⇒ 与登录同一条口径：三种结果各给一句（见 restoreFeedbackCopy）。
+            void restoreAfterLogin(dispatch).then(outcome => {
+              const feedback = loginRestoreFeedback(outcome);
+              showToast(feedback.text, feedback.tone);
+            });
             if (onSuccess) {
               onSuccess();
             }

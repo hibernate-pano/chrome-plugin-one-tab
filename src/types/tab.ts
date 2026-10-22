@@ -181,6 +181,35 @@ export interface OptimisticTabBackup {
   snapshot: TabGroup;
 }
 
+/**
+ * 失败的是**哪个操作**（机器可读，2026-10-22 审计 SC-2）。
+ *
+ * ── 为什么需要它 ─────────────────────────────────────────────────────────
+ * `state.error` 是**共享字段**，写进去的常常是底层异常原文
+ * （`Timeout: undo` / `duplicate key …`），从原文反推「哪个操作失败了」
+ * 只能靠文案匹配 —— 而文案随时会被改写。
+ *
+ * ⇒ 判据层据此说清「**撤销**没能完成」而不是笼统的「操作失败」，
+ * 也据此决定**给不给「重新加载」**：重读列表并不能重试那个失败的操作。
+ */
+export type TabErrorAction =
+  /** 删除一个会话。 */
+  | 'deleteSession'
+  /** 删除一个标签页。 */
+  | 'deleteTab'
+  /** 撤销一次「恢复即消费」。 */
+  | 'undo'
+  /** 删除全部会话。 */
+  | 'deleteAll'
+  /** 重命名会话。 */
+  | 'renameSession'
+  /** 切换会话的锁定状态。 */
+  | 'toggleLock'
+  /** 移动标签页（拖拽排序）。 */
+  | 'moveTab'
+  /** 清理重复标签与空会话。 */
+  | 'cleanDuplicates';
+
 export interface TabState {
   groups: TabGroup[];
   activeGroupId: string | null;
@@ -193,6 +222,28 @@ export interface TabState {
    * 就是这么来的。'load'=读路径失败；'action'=列表内写操作失败；null/缺省=无错误。
    */
   errorSource?: 'load' | 'action' | null;
+  /**
+   * 首次读取是否已经**走完**（成功或失败都算走完，2026-10-22 审计 SC-1）。
+   *
+   * ── 为什么需要它 ───────────────────────────────────────────────────────
+   * 冷启动那一两秒里，界面**还不知道**用户有没有会话
+   * （首次读取要先等一次 SW 往返才能开始）。
+   * 而 `isLoading` 的初值是 `false`（它只表示「**这一轮**读取在途」），
+   * `groups` 的初值是 `[]` ⇒ 第一帧看起来就是「你有 0 个会话」。
+   *
+   * ⇒ 那是一句**谎报**：用户可能有 50 个会话，只是还没读完；
+   * 那个「保存并关闭」按钮在这段时间里还**可点** ⇒ 误点即误操作。
+   *
+   * 缺省（undefined）按「已完成」处理：手搓状态的旧测试不必逐个补这个字段，
+   * 而真实冷启动路径上 `initialTabState` 明确把它置为 false。
+   */
+  hasCompletedInitialLoad?: boolean;
+  /**
+   * 失败的具体操作（机器可读）。见 {@link TabErrorAction}。
+   *
+   * 只有 `errorSource === 'action'` 时才有意义；读路径失败时为 null。
+   */
+  errorAction?: TabErrorAction | null;
   searchQuery: string;
   syncStatus: 'idle' | 'syncing' | 'success' | 'error'; // 同步状态
   lastSyncTime: string | null; // 最后同步时间

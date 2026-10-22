@@ -23,6 +23,7 @@
 import type { LayoutMode, TabGroup } from '@/types/tab';
 import type { SessionSortKey } from '@/core/sessionSort';
 import type { SearchFilters } from '@/utils/search';
+import type { TabErrorAction } from '@/types/tab';
 import { parseHtml, findAll, textContent, type HtmlElement } from './htmlTree.ts';
 
 /** 会话卡标题元素的 id 前缀（DOM 事实，仓库里的真机脚本也用它定位）。 */
@@ -80,6 +81,23 @@ export interface RenderOptions {
   isAuthenticated?: boolean;
   /** 登录弹窗回调（不传 = 宿主没接上这个能力）。 */
   onOpenAuth?: (tab: 'login') => void;
+  /**
+   * 读路径的错误（模拟 store 里的 `error`）。
+   *
+   * 只放**原始异常**：界面上的文案由判据层翻译，判据要验的是「翻译得对不对」。
+   */
+  error?: string | null;
+  /** 错误来源（'load' = 读列表失败；'action' = 列表内操作失败）。 */
+  errorSource?: 'load' | 'action' | null;
+  /** 失败的具体操作（机器可读）。 */
+  errorAction?: TabErrorAction | null;
+  /**
+   * 首次读取是否已经**走完**（2026-10-22 审计 SC-1）。
+   *
+   * 默认 true = 「读完了，确实一个会话都没有」⇒ 空态。
+   * false = 冷启动那一两秒（还不知道用户有没有会话）⇒ 只能是骨架屏。
+   */
+  initialLoadCompleted?: boolean;
 }
 
 /** 渲染结果。 */
@@ -96,6 +114,10 @@ export interface RenderResult {
   hasSortControl: boolean;
   /** 空态出口的种类（按 data-testid 读出来的，不是文案）。 */
   exitActions: string[];
+  /** 所有按钮的可见文字（判据要问「这一屏上有哪些按钮」时用）。 */
+  buttonTexts: string[];
+  /** 整屏的可见文字。 */
+  text: string;
 }
 
 let browserStubsInstalled = false;
@@ -200,7 +222,16 @@ export async function renderTabList(options: RenderOptions = {}): Promise<Render
   };
 
   const store = createStore({
-    tabs: { ...base.tabs, groups, isLoading: false, error: null, errorSource: null },
+    tabs: {
+      ...base.tabs,
+      groups,
+      isLoading: false,
+      error: options.error ?? null,
+      errorSource: options.errorSource ?? null,
+      errorAction: options.errorAction ?? null,
+      // 默认「读完了」—— 判据要显式表达「还没读完」时才传 false。
+      hasCompletedInitialLoad: options.initialLoadCompleted ?? true,
+    },
     settings: {
       ...base.settings,
       layoutMode: options.layoutMode ?? base.settings.layoutMode,
@@ -245,6 +276,10 @@ export async function renderTabList(options: RenderOptions = {}): Promise<Render
     (element.attrs['data-testid'] ?? '').startsWith(EMPTY_EXIT_TESTID_PREFIX)
   ).map(element => (element.attrs['data-testid'] as string).slice(EMPTY_EXIT_TESTID_PREFIX.length));
 
+  const buttonTexts = findAll(tree, element => element.tag === 'button').map(element =>
+    textContent(element).trim()
+  );
+
   return {
     html,
     tree,
@@ -252,5 +287,7 @@ export async function renderTabList(options: RenderOptions = {}): Promise<Render
     sessionNameOrder,
     hasSortControl: html.includes(SORT_CONTROL_ID),
     exitActions,
+    buttonTexts,
+    text: textContent(tree).trim(),
   };
 }

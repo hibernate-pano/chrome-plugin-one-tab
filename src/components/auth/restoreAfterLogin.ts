@@ -27,6 +27,7 @@ import { accountScopeStore, authCache } from '@/utils/authCache';
 import { errorHandler } from '@/utils/errorHandler';
 import { logInfo, logWarn } from '@/utils/log';
 import type { AccountSwitchNotice } from '@/core/accountScope';
+import type { CloudPullOutcome } from '@/domain/tabGroup/cloudPullCopy';
 
 /**
  * 本次页面会话里「登录已触发过一次恢复」的标志（2026-10-19 审计 P1-4）。
@@ -89,7 +90,7 @@ let noticeConsumeQueue: Promise<unknown> = Promise.resolve();
  * 【消费即清空】同一条提示只会被告知一次。
  *
  * 【给界面用的接口 · 现状：仓库里没有界面调用方】界面若要把这句并进
- * 自己的文案（例如「已从云端恢复 N 个会话」那句），可以调这个导出拿到
+ * 自己的文案（例如「已从云端拉回 N 个会话」那句），可以调这个导出拿到
  * 提示对象 —— 文案由 core/accountScope 的 accountSwitchNotice 拼装
  * （纯函数，界面与守卫同源）。
  * 但**截至 2026-10-23（R-4 复核）没有任何界面调它**：提示目前只由本模块
@@ -186,33 +187,111 @@ function scheduleAccountSwitchNotice(): void {
 /**
  * 登录成功后拉一次云端会话。
  *
- * @returns 拉回多少个会话（失败时 0）
+ * ── 为什么回的是「三种结果」而不是一个数字（2026-10-22 审计 SC-6）────────
+ * 修复前它回 `number`，而**「拉回失败」与「云端本来就是空的」都回 0** ——
+ * 两种 0 混成一种 ⇒ 调用方分不出「没拉到东西」与「拉失败了」，
+ * 于是失败时**一句话都没有**（用户以为云端的数据没了）。
+ *
+ * ⇒ 现在回 `CloudPullOutcome`：拉到 N 个 / 云端为空 / 拉回失败，
+ * 三种结果各有各的回执（见 components/auth/restoreFeedbackCopy.ts）。
+ *
+ * @returns 本次拉回的结果（三选一）
  */
-export async function restoreAfterLogin(dispatch: AppDispatch): Promise<number> {
+export async function restoreAfterLogin(
+  dispatch: AppDispatch,
+  deps: RestoreAfterLoginDeps = defaultRestoreDeps
+): Promise<CloudPullOutcome> {
   // 先占位，再发命令：两条路（显式登录 / AuthProvider 的 auto 下载）
   // 可能几乎同时到达，先占位才能保证只有一条真的发出去。
   markLoginRestoreTriggered();
   try {
-    const res = await sendSyncCommand('download', {
-      forceRemote: false,
-      syncSettings: false,
-    });
+    const res = await deps.download();
     if (!res.ok) {
       // 失败不抛：登录**已经成功了**，同步失败不该把用户踢回登录页。
-      // 界面上的手动「下载」入口仍在，用户随时可以自己拉。
-      return 0;
+      // 但**必须如实报成失败**（界面据此出声并给出路）——
+      // 界面上的手动「从云端刷新数据」入口仍在，用户随时可以自己拉。
+      return {
+        kind: 'failed',
+        reason: res.error ?? null,
+        backendUnavailable: res.backendUnavailable === true,
+      };
     }
     // 下载结果写进了 storage，必须重读才能让界面显示出来。
     await dispatch(loadGroups());
-    const payload = res.payload as { groups?: unknown[] } | undefined;
-    return Array.isArray(payload?.groups) ? payload.groups.length : 0;
+    return toRestoreOutcome(res);
   } catch {
-    return 0;
+    // 抛异常的那条路（协议超时、SW 无响应等）同样是「拉回失败」。
+    return { kind: 'failed' };
   } finally {
     // 换账号提示在**最后**才安排发出（下载完成之后）：下载期间用户可能
     // 已经把弹窗关掉了，那就没必要再发一条「恢复完成」的提示。
     // 提示本身是持久的 ⇒ 就算这一轮没发出去（页面被关、或者用户还没
     // 登录），它也不会丢：下次页面挂载时还会被消费一次（不许静默）。
-    scheduleAccountSwitchNotice();
+    deps.scheduleNotice();
   }
+}
+
+/**
+ * 一次整库下载的回包（判据层只关心这三件事）。
+ *
+ * 为什么要单独定一个窄类型：判据层要能**注入**假的下载结果，
+ * 而 `MutationResult` 的 payload 是 `unknown` ⇒ 注入方无从构造。
+ */
+export interface RestoreDownloadResult {
+  ok: boolean;
+  error?: string;
+  payload?: unknown;
+  /** 服务端不可用（402 之类）的机器标记 —— 界面据此选措辞。 */
+  backendUnavailable?: boolean;
+}
+
+/**
+ * 这条链路用到的**副作用**（可注入 ⇒ 判据层能直接喂三种结果）。
+ *
+ * 为什么注入：判据必须能验证「三种结果 ⇒ 三种回执」，
+ * 而真跑一次下载要 SW + 存储 + 网络 —— 那是端到端的事，不是判据层的事。
+ */
+export interface RestoreAfterLoginDeps {
+  /** 发一次整库下载。 */
+  download: () => Promise<RestoreDownloadResult>;
+  /** 安排换账号提示（延迟发出）。 */
+  scheduleNotice: () => void;
+}
+
+/** 生产环境的副作用。 */
+const defaultRestoreDeps: RestoreAfterLoginDeps = {
+  download: () =>
+    sendSyncCommand('download', {
+      forceRemote: false,
+      syncSettings: false,
+    }),
+  scheduleNotice: scheduleAccountSwitchNotice,
+};
+
+/**
+ * 把下载回包翻译成「三种结果之一」（**纯函数**）。
+ *
+ * ── 为什么数的是「云端有多少个」而不是「合并后有多少个」 ──────────────────
+ * `payload.groups` 是**合并后**的列表（本机 + 云端）。拿它当「拉回 N 个」
+ * 会在本机本来就有会话时**夸大**（本机 30 个 + 云端 2 个 ⇒ 报「拉回 32 个」）。
+ * ⇒ 优先用引擎如实上报的 `stats.cloudCount`（= 云端这一轮读到的会话数）。
+ */
+export function toRestoreOutcome(res: RestoreDownloadResult): CloudPullOutcome {
+  if (!res.ok) {
+    return {
+      kind: 'failed',
+      reason: res.error ?? null,
+      backendUnavailable: res.backendUnavailable === true,
+    };
+  }
+  const payload = res.payload as
+    | { groups?: unknown[]; stats?: { cloudCount?: number } }
+    | undefined;
+  const count =
+    typeof payload?.stats?.cloudCount === 'number'
+      ? payload.stats.cloudCount
+      : Array.isArray(payload?.groups)
+        ? payload.groups.length
+        : 0;
+  return count > 0 ? { kind: 'pulled', count } : { kind: 'empty' };
 }

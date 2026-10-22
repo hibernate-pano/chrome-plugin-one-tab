@@ -88,6 +88,15 @@ export const initialTabState: TabState = {
   isLoading: false,
   error: null,
   errorSource: null,
+  // 首次读取**还没走完**（冷启动的第一帧）。
+  //
+  // 为什么不能靠 isLoading 表达：`isLoading` 的语义是「**这一轮**读取在途」，
+  // 而首次读取要等一次 SW 往返（RUN_MIGRATIONS）才启动 ⇒ 第一帧它恒为 false。
+  // 于是「正在读」与「读完了，一个都没有」在界面上完全同形 ⇒ 空态（谎报
+  // 「你有 0 个会话」+ 一个可点的「保存并关闭」）会在冷启动那一两秒里出现。
+  hasCompletedInitialLoad: false,
+  // 失败的是哪个操作（机器可读）—— 见 types/tab.ts 的 TabErrorAction。
+  errorAction: null,
   searchQuery: '',
   syncStatus: 'idle',
   lastSyncTime: null,
@@ -607,6 +616,24 @@ export const tabSlice = createSlice({
     setGroups: (state, action) => {
       state.groups = action.payload;
     },
+
+    /**
+     * 清掉错误提示（**只清信号，不碰数据**）。
+     *
+     * ── 为什么需要它（2026-10-22 审计 SC-2）───────────────────────────────
+     * 列表内的一次操作失败（删除 / 撤销 / 重命名…）时，整页错误视图会接管
+     * 界面。它给的那个按钮**不是**「重新加载」——重读列表并不能重试那次操作，
+     * 那是把用户引到一条解决不了问题的路上。
+     *
+     * ⇒ 它给的是「回到会话列表」：用户点它只是想**继续用列表**，
+     * 不该因此触发一次整库重读（那会把列表整个换掉，还可能把
+     * 「刚才那次操作其实成功了」这件事搅浑）。
+     */
+    clearError: state => {
+      state.error = null;
+      state.errorSource = null;
+      state.errorAction = null;
+    },
   },
   extraReducers: builder => {
     builder
@@ -614,6 +641,7 @@ export const tabSlice = createSlice({
         state.isLoading = true;
         state.error = null;
         state.errorSource = null;
+        state.errorAction = null;
         // 快照发起时代际：mutation 在途期读到的旧快照在 fulfilled 时被忽略
         takeLoadGuard(state, action.meta.requestId);
       })
@@ -625,6 +653,12 @@ export const tabSlice = createSlice({
         );
         dropLoadGuard(state, action.meta.requestId);
         state.isLoading = false;
+        // 首次读取**走完了**（哪怕这一轮是旧回环）⇒ 界面从此知道
+        // 「用户到底有没有会话」，可以放心显示列表或空态。
+        //
+        // 为什么放在 stale 判断**之前**：旧回环也是「读过了」——
+        // 若这里 return 掉，界面会永远停在骨架屏（谎报「还在读」）。
+        state.hasCompletedInitialLoad = true;
         // 在途旧回环（发起早于某次 deleteTab 乐观更新）直接丢弃，保留乐观态；
         // 与当前代际一致的新回环（含外部变更触发的）正常应用，不饿死。
         // 同代际但仍在途的回环（pending 之后、SW 落盘之前发起）：按在途备份过滤，
@@ -645,9 +679,13 @@ export const tabSlice = createSlice({
         );
         dropLoadGuard(state, action.meta.requestId);
         state.isLoading = false;
+        // 读取**失败**也算「走完了」—— 否则界面会永远停在骨架屏，
+        // 而真相是「读不到」⇒ 用户永远看不到错误页，也永远不知道出了什么事。
+        state.hasCompletedInitialLoad = true;
         if (stale) return;
         state.error = action.error.message || '加载标签组失败';
         state.errorSource = 'load';
+        state.errorAction = null;
       })
       // 删除整个会话：乐观移除 + 失败还原。
       //
@@ -678,6 +716,7 @@ export const tabSlice = createSlice({
         // 作废的时机是 fulfilled（磁盘确认组已不存在），见那里的注释。
         state.error = null;
         state.errorSource = null;
+        state.errorAction = null;
       })
       .addCase(deleteGroup.fulfilled, (state, action) => {
         // 载荷是 { value, broadcastWarn }（见 DeleteOpResult 的说明）：
@@ -726,6 +765,7 @@ export const tabSlice = createSlice({
         // 超时时用统一文案覆盖原始串：原始串没有「可能仍在继续」这层指引。
         state.error = isTimeout ? timeoutCopy('删除会话') : action.error.message || '删除会话失败';
         state.errorSource = 'action';
+        state.errorAction = 'deleteSession';
       })
       // ── 撤销「恢复即消费」（2026-10-22 审计 P0-4）──────────────────────
       //
@@ -748,6 +788,7 @@ export const tabSlice = createSlice({
         }
         state.error = null;
         state.errorSource = null;
+        state.errorAction = null;
       })
       .addCase(restoreConsumedAndSync.rejected, (state, action) => {
         // 撤销失败 = 那条记录**仍然不在**（SW 侧是先撤意图、成功才写记录）。
@@ -755,6 +796,7 @@ export const tabSlice = createSlice({
         // 「撤销按钮按了没反应」这种沉默。
         state.error = action.error.message || '撤销失败';
         state.errorSource = 'action';
+        state.errorAction = 'undo';
       })
       .addCase(deleteTabAndSync.pending, (state, action) => {
         // 乐观更新：点击即从列表消失，不等 SW mutation + 云端回环（此前只在
@@ -806,6 +848,7 @@ export const tabSlice = createSlice({
           // 这层可行动信息，一律用 timeoutCopy 覆盖。
           state.error = timeoutCopy('删除标签页');
           state.errorSource = 'action';
+          state.errorAction = 'deleteTab';
           return;
         }
         const key = backupKeyOf(groupId, tabId);
@@ -855,8 +898,9 @@ export const tabSlice = createSlice({
             state.groups.unshift({ ...backup.snapshot, tabs: restoredTabs });
           }
         }
-        state.error = action.error.message || '更新会话失败';
+        state.error = action.error.message || '删除标签页失败';
         state.errorSource = 'action';
+        state.errorAction = 'deleteTab';
       })
       .addCase(deleteTabAndSync.fulfilled, (state, action) => {
         // 即时 UI 反馈（旧行为：updateGroup.fulfilled 即时替换组）。没有这个 case，
@@ -892,6 +936,7 @@ export const tabSlice = createSlice({
         state.isLoading = true;
         state.error = null;
         state.errorSource = null;
+        state.errorAction = null;
       })
       .addCase(deleteAllGroups.fulfilled, (state) => {
         state.isLoading = false;
@@ -917,6 +962,7 @@ export const tabSlice = createSlice({
         state.isLoading = false;
         state.error = action.error.message || '删除所有标签组失败';
         state.errorSource = 'action';
+        state.errorAction = 'deleteAll';
       })
 
       // 更新标签组名称并同步到云端
@@ -936,6 +982,7 @@ export const tabSlice = createSlice({
         }
         state.error = action.error.message || '重命名失败，会话名称已恢复';
         state.errorSource = 'action';
+        state.errorAction = 'renameSession';
       })
 
       // 切换标签组锁定状态并同步到云端
@@ -955,6 +1002,7 @@ export const tabSlice = createSlice({
         }
         state.error = action.error.message || '切换锁定失败，锁定状态已恢复';
         state.errorSource = 'action';
+        state.errorAction = 'toggleLock';
       })
 
       // 移动标签页并同步到云端
@@ -1005,6 +1053,7 @@ export const tabSlice = createSlice({
           ? timeoutCopy('移动标签页')
           : action.error.message || '移动标签页失败，顺序已恢复';
         state.errorSource = 'action';
+        state.errorAction = 'moveTab';
       })
 
       // 清理重复标签和空会话：pending 乐观应用，fulfilled 从快照重推收敛，
@@ -1020,6 +1069,7 @@ export const tabSlice = createSlice({
         state.mutationEpoch = (state.mutationEpoch ?? 0) + 1;
         state.error = null;
         state.errorSource = null;
+        state.errorAction = null;
         // 不再置 isLoading=true：清理已有乐观结果，列表不该整页转圈
         //（TabList 只在 groups 为空时才整页 loading，但置位仍会引发多余重渲染）。
       })
@@ -1068,6 +1118,7 @@ export const tabSlice = createSlice({
         // 超时时用统一文案覆盖原始串：原始串没有「可能仍在继续」这层指引。
         state.error = isTimeout ? timeoutCopy('清理') : action.error.message || '清理重复标签和空标签组失败';
         state.errorSource = 'action';
+        state.errorAction = 'cleanDuplicates';
       });
   },
 });
@@ -1080,6 +1131,7 @@ export const {
   setSearchQuery,
   moveTab,
   setGroups,
+  clearError,
 } = tabSlice.actions;
 
 // 删除单个标签页：物理移除，删除意图随整组上传广播到云端与其他设备。

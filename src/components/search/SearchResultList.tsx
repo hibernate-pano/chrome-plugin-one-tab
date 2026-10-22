@@ -1,7 +1,7 @@
-import React, { useCallback, useDeferredValue, useEffect, useMemo, useRef } from 'react';
+import React, { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
 import { useAppDispatch, useAppSelector } from '@/store/hooks';
 import { Tab, TabGroup } from '@/types/tab';
-import { deleteGroup, deleteTabAndSync, deleteBroadcastWarn } from '@/store/slices/tabSlice';
+import { deleteGroup, deleteTabAndSync, deleteBroadcastWarn, loadGroups } from '@/store/slices/tabSlice';
 import { isOpenableTabUrl } from '@/utils/inputValidation';
 import { shouldAutoDeleteAfterTabRemoval } from '@/core/tabGroupUtils';
 import { OpenGuard, OpenAllGuard } from '@/utils/openGuard';
@@ -34,6 +34,7 @@ import {
   openSingleTabSuccessMessage,
   restoreAllSearchSuccessMessage,
   restoreGroupSuccessMessage,
+  restoreOutcomeSentence,
 } from '@/components/tabs/restoreFeedbackCopy';
 import { useConsumeUndo } from '@/components/tabs/useConsumeUndo';
 import type { ConsumedTabRef, ConsumeUndoSpec } from '@/core/consumeUndo';
@@ -59,6 +60,23 @@ import {
   showFilterSectionTitle,
 } from '@/components/search/searchBrowseMode';
 import type { SearchFilterControls } from '@/components/search/searchFilterState';
+// ── 2026-10-23 审计 SC-4：零结果页也要有「我的会话在别处」的出口 ──────────
+// 判据与执行都在**判据层**（后端 × 登录态 ⇒ 给哪些出口；点了会发生什么），
+// 这里只负责把界面注入的 IO 接上去 —— 与主列表的空态**走同一份**判据。
+import {
+  EMPTY_STATE_ACTION_HINT,
+  EMPTY_STATE_ACTION_LABEL,
+  resolveEmptyStateActions,
+} from '@/components/tabs/emptyStateActions';
+import { runSearchEmptyStateExit } from '@/components/search/searchEmptyStateExits';
+import type { EmptyStateAction } from '@/core/emptyStateExits';
+// ── 2026-10-23 审计 DS-43-13：确认框里的计数必须等于真正会删的数量 ────────
+import { bulkDeleteConfirmCopy, runBulkDelete } from '@/components/search/searchBulkDelete';
+import { Tooltip } from '@/components/common/Tooltip';
+import type { AuthTab } from '@/components/auth/AuthModal';
+import { sendSyncCommand } from '@/shared/mutationProtocol';
+import { requestImport } from '@/components/layout/importRequest';
+import { resolveSyncFailureCopy } from '@/components/sync/syncPreviewView';
 
 const PinIcon = () => (
   <svg className="w-3 h-3 text-blue-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
@@ -80,11 +98,25 @@ interface SearchResultListProps {
    * 筛选条件仍在并自动生效。
    */
   filterControls: SearchFilterControls;
+  /**
+   * 打开登录 / 注册弹窗（2026-10-23 审计 SC-4）。
+   *
+   * 为什么搜索页也需要它：零结果页现在**复用**主列表空态的那几个出口
+   * （登录 / 从云端恢复 / 打开设置 / 导入），而「登录」这一格需要一个
+   * 能真的把登录弹窗打开的能力 —— 弹窗实例由 MainApp 持有，
+   * 列表层把它转交给本组件（与主列表的空态拿到的是**同一个**弹窗）。
+   *
+   * 不传 = 宿主没接上这个能力 ⇒ 判据层会替它出声
+   * （「登录入口暂时不可用，请用右上角菜单里的『登录』」），
+   * 绝不会变成「点了没反应也没提示」。
+   */
+  onOpenAuth?: (tab: AuthTab) => void;
 }
 
 export const SearchResultList: React.FC<SearchResultListProps> = ({
   searchQuery,
   filterControls,
+  onOpenAuth,
 }) => {
   const dispatch = useAppDispatch();
   const { groups } = useAppSelector(state => state.tabs);
@@ -114,6 +146,17 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({
     activeFilterCount,
     clearFilters,
   } = filterControls;
+  // ── 2026-10-23 审计 SC-4：零结果页的空态出口 ────────────────────────────
+  // 判据与主列表的空态**同一份**（后端 × 登录态 ⇒ 该给哪些出口）。
+  // 为什么搜索页也需要：搜索**只搜本机**的会话 —— 用户的会话在云端时，
+  // 这里必然零结果。而「我的会话在别处」的出口恰恰只有主列表的空态有。
+  const syncBackend = useAppSelector(state => state.settings.syncBackend);
+  const { isAuthenticated } = useAppSelector(state => state.auth);
+  const emptyStateActions = resolveEmptyStateActions({ syncBackend, isAuthenticated });
+  const [emptyRestoreBusy, setEmptyRestoreBusy] = useState(false);
+  const [emptyRestoreFeedback, setEmptyRestoreFeedback] = useState<
+    { kind: 'success' | 'error'; text: string } | null
+  >(null);
   const deferredSearchQuery = useDeferredValue(searchQuery);
   const normalizedSearchQuery = deferredSearchQuery.trim();
   /**
@@ -324,6 +367,64 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({
   const openAllGuardRef = useRef<OpenAllGuard | null>(null);
   if (openGuardRef.current === null) openGuardRef.current = new OpenGuard();
   if (openAllGuardRef.current === null) openAllGuardRef.current = new OpenAllGuard();
+
+  // ── 2026-10-23 审计 SC-4：零结果页的「从云端恢复会话」出口 ──────────────
+  // 与主列表的空态**同一套**同步协议与同一句失败文案（syncPreviewView 的
+  // 机器码 → 中文映射），不在这里另写一份。
+  const handleRestoreFromCloud = async () => {
+    if (emptyRestoreBusy) return;
+    setEmptyRestoreBusy(true);
+    setEmptyRestoreFeedback(null);
+    try {
+      const res = await sendSyncCommand('download', { forceRemote: false, syncSettings: false });
+      if (!res.ok) {
+        setEmptyRestoreFeedback({
+          kind: 'error',
+          text: resolveSyncFailureCopy({ reason: res.error, fallbackMessage: '无法从云端拉取数据' }),
+        });
+        return;
+      }
+      // 拉成功**不等于**拉到了东西：云端本来就可能是空的。
+      // 刷新后按真实条数说话，不谎报「已恢复 N 个会话」。
+      const loaded = await dispatch(loadGroups()).unwrap();
+      setEmptyRestoreFeedback(
+        loaded.length > 0
+          ? { kind: 'success', text: `已从云端恢复 ${loaded.length} 个会话` }
+          : { kind: 'success', text: '云端没有会话可拉回' },
+      );
+    } catch (restoreError) {
+      logError('搜索页从云端恢复失败:', restoreError);
+      setEmptyRestoreFeedback({ kind: 'error', text: '从云端恢复失败，请稍后重试' });
+    } finally {
+      setEmptyRestoreBusy(false);
+    }
+  };
+
+  /**
+   * 执行一个空态出口（2026-10-23 审计 SC-4）。
+   *
+   * 「哪个出口对应哪个动作」归判据层管（core/emptyStateExits.ts），
+   * 这里只负责**注入**真正的 IO，并保证：
+   *   每个出口要么真的触发了什么，要么**出声**说明它此刻用不了。
+   */
+  const handleEmptyStateAction = (action: EmptyStateAction) => {
+    runSearchEmptyStateExit(action, {
+      // 宿主没给登录弹窗的回调 ⇒ 这个出口此刻**点了没反应**
+      // ⇒ 不传这个键（=「这个能力此刻不存在」）⇒ 判据层会替它出声。
+      ...(onOpenAuth ? { openAuth: () => onOpenAuth('login') } : {}),
+      openOptions: () => {
+        // 自带存储的口令与地址只能在设置页填 —— 那里才是能解开云盘的地方。
+        chrome.runtime.openOptionsPage();
+      },
+      restoreFromCloud: () => {
+        void handleRestoreFromCloud();
+      },
+      requestImport: () => requestImport(),
+      notifyUnavailable: text => {
+        setEmptyRestoreFeedback({ kind: 'error', text });
+      },
+    });
+  };
 
   const restoreSession = (group: TabGroup) => {
     const allGuard = openAllGuardRef.current as OpenAllGuard;
@@ -560,7 +661,10 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({
 
     showConfirm({
       title: `删除「${group.name}」？`,
-      message: '这是该会话的最后一条标签记录，删除后整个会话会从列表消失，无法恢复。确认继续吗？',
+      // ── 2026-10-23 审计 WC-12：「标签记录」统一成「标签页」 ──────────────
+      // 同一个东西在本仓曾有三种叫法（标签页 / 标签 / 标签记录）⇒
+      // 用户在三个界面看到三个词，会以为是三样东西。
+      message: '这是该会话的最后一条标签页，删除后整个会话会从列表消失，无法恢复。确认继续吗？',
       type: 'danger',
       confirmText: '删除',
       cancelText: '取消',
@@ -720,12 +824,15 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({
     }
 
     try {
-      for (const { tab, group } of matchingTabs) {
-        if (group.isLocked) continue;
+      // ── 2026-10-23 审计 DS-43-13：删哪些与「说删多少」必须同源 ──────────
+      // 删哪些由 `runBulkDelete` 决定（锁定会话里的**跳过**），
+      // 确认框里的数字也由同一份判据算出（`bulkDeleteConfirmCopy`）⇒
+      // 两边不可能各数各的。
+      await runBulkDelete(matchingTabs, async ({ tab, group }) => {
         const res = await dispatch(deleteTabAndSync({ groupId: group.id, tabId: tab.id })).unwrap();
         const warn = deleteBroadcastWarn(res);
         if (warn) showDeleteError(warn);
-      }
+      });
     } catch (error) {
       logError('批量删除搜索结果失败:', error);
       showDeleteError('删除操作失败，请重试');
@@ -738,9 +845,21 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({
       return;
     }
 
+    // ── 2026-10-23 审计 DS-43-13：计数必须与**实际会发生的事**一致 ──────────
+    // 修复前这里用的是 `matchingTabs.length`（**含锁定组**），而执行时
+    // `if (group.isLocked) continue` 跳过锁定组 ⇒ 确认框说的 N 恒 ≥ 真正删掉的数。
+    // 用户以为删了 N 条、实际少了 M 条 —— 这是**数据安全**层面的谎报。
+    // ⇒ 计数改由 `bulkDeleteConfirmCopy` 从同一份判据算出。
+    //
+    // 「（锁定会话除外）」那句仍然成立：计数已经不含锁定会话里的那些，
+    // 括号说的是「锁定会话里的不会被删」。
+    //
+    // ── 2026-10-23 审计 WC-12：「标签记录」统一成「标签页」 ──────────────
+    const copy = bulkDeleteConfirmCopy(isBrowseMode ? 'browse' : 'search', matchingTabs);
+
     showConfirm({
-      title: `${bulkActionTitle(isBrowseMode ? 'browse' : 'search', '删除')}${matchingTabs.length} 个标签？`,
-      message: `将从所属会话中永久移除这 ${matchingTabs.length} 条标签记录（锁定会话除外），删除后无法恢复。确认继续吗？`,
+      title: copy.title,
+      message: copy.message,
       type: 'danger',
       confirmText: '删除',
       cancelText: '取消',
@@ -892,6 +1011,51 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({
               <ul className="list-disc list-inside space-y-0.5 text-left">
                 <li>{searchEmptyHint(collectPinnedTabs)}</li>
               </ul>
+              {/* ── 2026-10-23 审计 SC-4：零结果页也要有「我的会话在别处」的出口 ──
+                  这一块原来**整个没有** —— 零结果页只有一句「请尝试其他关键词」。
+                  但搜索**只搜本机**的会话：用户的会话在云端（换设备的老用户、
+                  自动同步默认关闭）时，这里必然零结果，而「把云端的会话拉回来」
+                  这条路恰恰只有主列表的空态有 ⇒ 用户在这个界面上**一条出路都没有**。
+
+                  出口集合与执行都**复用**主列表空态的那一份
+                  （resolveEmptyStateActions + runEmptyStateExit），
+                  不另写一套 —— 两处各判一遍必然漂。
+
+                  为什么在这里也给（哪怕本机还有会话、只是没搜到）：
+                  搜索页搜的是**本机**的会话，零结果最常见的解释之一就是
+                  「那些会话还没同步到本机」⇒ 「从云端恢复」正是该给的下一步。 */}
+              {emptyStateActions.length > 0 && (
+                <div className="flex flex-wrap items-center justify-center gap-2 border-t theme-border-default pt-3">
+                  {emptyStateActions.map(action => (
+                    <button
+                      key={action}
+                      type="button"
+                      /* 出口的**身份**要可机读：守卫要能回答「这一格渲染的是哪个出口」，
+                         而答案不能依赖文案（文案会改）。 */
+                      data-testid={`empty-state-action-${action}`}
+                      onClick={() => handleEmptyStateAction(action)}
+                      disabled={emptyRestoreBusy && action === 'download'}
+                      className="theme-radius-control theme-btn-hover border theme-border-default px-3 py-1.5 text-xs font-medium text-gray-600 transition-colors disabled:cursor-not-allowed disabled:opacity-60 dark:text-gray-300"
+                      title={EMPTY_STATE_ACTION_HINT[action]}
+                      aria-label={`${EMPTY_STATE_ACTION_LABEL[action]}：${EMPTY_STATE_ACTION_HINT[action]}`}
+                    >
+                      {action === 'download' && emptyRestoreBusy ? '恢复中…' : EMPTY_STATE_ACTION_LABEL[action]}
+                    </button>
+                  ))}
+                </div>
+              )}
+              {emptyRestoreFeedback && (
+                <p
+                  role={emptyRestoreFeedback.kind === 'error' ? 'alert' : 'status'}
+                  className={
+                    emptyRestoreFeedback.kind === 'error'
+                      ? 'text-sm text-red-600 dark:text-red-400'
+                      : 'text-sm text-green-700 dark:text-green-400'
+                  }
+                >
+                  {emptyRestoreFeedback.text}
+                </p>
+              )}
             </div>
           }
         />
@@ -997,7 +1161,22 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({
       <FiltersPanel withOuterMargin />
 
       <div className="space-y-3 px-2 pb-2">
-        {visibleSessionResults.map((session: SessionSearchResult) => (
+        {visibleSessionResults.map((session: SessionSearchResult) => {
+          // ── 2026-10-23 审计 WC-7：按钮必须**先说清点了会发生什么** ────────
+          // 这个按钮原先是纯文本：没有 tooltip、没有 aria-label ⇒
+          // 用户点之前不知道点完会发生什么。
+          //
+          // 后果的措辞取自**共享模块**（restoreFeedbackCopy 的
+          // restoreOutcomeSentence）—— 与列表页那两个恢复按钮同一个出处，
+          // 且**按 isLocked 分流**：锁定会话恢复后仍保留在列表里，
+          // 未锁定会话恢复后从列表移除（可撤销）。
+          //
+          // tooltip 与 aria-label 用**同一个字符串** ⇒ 鼠标用户与读屏用户
+          // 拿到的是同一句，不会各说各话。
+          const restoreOutcome = restoreOutcomeSentence(session.group.isLocked);
+          const restoreButtonLabel =
+            `在新窗口恢复整个会话，共 ${session.group.tabs.length} 个标签页（${restoreOutcome}）`;
+          return (
           <div
             key={session.group.id}
             className="theme-radius-card theme-border-default theme-bg-elevated border p-3"
@@ -1030,12 +1209,18 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({
                 </p>
               </div>
 
-              <button
-                onClick={() => restoreSession(session.group)}
-                className="theme-accent-outline theme-radius-control self-start border px-3 py-1.5 text-xs font-medium transition-colors"
-              >
-                恢复整个会话
-              </button>
+              <Tooltip content={restoreButtonLabel} className="self-start">
+                <button
+                  /* 按钮的**身份**要可机读：守卫要能回答「这是哪个会话的恢复按钮」，
+                     而答案不能依赖文案（文案会改）。 */
+                  data-testid={`search-restore-session-${session.group.id}`}
+                  onClick={() => restoreSession(session.group)}
+                  className="theme-accent-outline theme-radius-control border px-3 py-1.5 text-xs font-medium transition-colors"
+                  aria-label={restoreButtonLabel}
+                >
+                  恢复整个会话
+                </button>
+              </Tooltip>
             </div>
 
             <div className="mt-3 space-y-1 border-t border-gray-100 dark:border-gray-800 pt-3">
@@ -1046,7 +1231,8 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({
               ))}
             </div>
           </div>
-        ))}
+          );
+        })}
 
         {/* ── 2026-10-20 审计 A-11：截断必须说清「还有多少、为什么」─────────
             截断了不说 = 用户以为「只找到这么多条」（与 2026-10-19 审计 F-5

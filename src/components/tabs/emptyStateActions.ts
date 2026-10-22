@@ -40,6 +40,10 @@
  */
 import type { EmptyStateAction } from '@/core/emptyStateExits';
 import { MENU_LOGIN_LABEL } from '@/components/common/menuLabels';
+import {
+  CLOUD_PULL_ACTION_HINT,
+  CLOUD_PULL_ACTION_LABEL,
+} from '@/domain/tabGroup/cloudPullCopy';
 
 export type { EmptyStateAction };
 
@@ -72,7 +76,12 @@ export function resolveEmptyStateActions(input: EmptyStateActionsInput): EmptySt
 /** 次级出口的可见文字。 */
 export const EMPTY_STATE_ACTION_LABEL: Record<EmptyStateAction, string> = {
   login: '登录 TapStack 云端',
-  download: '从云端恢复会话',
+  // 「拉回」而不是「恢复」——「恢复」在本产品里已经专指
+  // 「打开某个会话的标签并消费它」（restoreOutcomePhrase 的「从列表移除」）。
+  // 这个出口做的是**另一件事**（把云端的会话列表拉到本机，不打开任何标签），
+  // 两个动作用同一个动词 = 承诺与事实不符（2026-10-22 审计 WC-13）。
+  // 措辞的**唯一出处**在 domain 层（domain/tabGroup/cloudPullCopy.ts）。
+  download: CLOUD_PULL_ACTION_LABEL,
   options: '打开设置恢复云盘会话',
   import: '导入数据',
 };
@@ -81,11 +90,11 @@ export const EMPTY_STATE_ACTION_LABEL: Record<EmptyStateAction, string> = {
  * 次级出口的**补充说明**（悬停 / 读屏）。
  *
  * 为什么要说明：这三个动作都会改变用户对「我的数据在哪」的判断。
- * 不说清楚，用户会以为「导入数据」是导出、或者「从云端恢复」会覆盖本地。
+ * 不说清楚，用户会以为「导入数据」是导出、或者「从云端拉回」会覆盖本地。
  */
 export const EMPTY_STATE_ACTION_HINT: Record<EmptyStateAction, string> = {
   login: '登录后会自动把云端会话拉回本机',
-  download: '把云端会话拉回本机并合并，不会清掉本地内容',
+  download: CLOUD_PULL_ACTION_HINT,
   options: '自带存储需要先在设置里填好地址并解锁',
   import: '支持 OneTab 文本与 JSON 备份',
 };
@@ -99,11 +108,13 @@ export const EMPTY_STATE_ACTION_HINT: Record<EmptyStateAction, string> = {
  * 「点了没反应」是本项目明令禁止的失败形态。
  *
  * 逐出口给，不共用一句：不同出口的替代路径不同（登录走 ⋯ 菜单、
- * 恢复走「从云端刷新数据」、导入走「导入数据」子菜单）。
+ * 拉回走「从云端刷新数据」、导入走「导入数据」子菜单）。
  */
 export const EMPTY_STATE_EXIT_UNAVAILABLE: Record<EmptyStateAction, string> = {
   login: `登录入口暂时不可用，请用右上角菜单里的「${MENU_LOGIN_LABEL}」`,
-  download: '从云端恢复暂时不可用，请用右上角菜单里的「从云端刷新数据」',
+  // 「拉回」与「刷新数据」是两个**界面**上的两个入口：这一格在空态卡里，
+  // 那一格在右上角 ⋯ 菜单里。两者读起来不打架，但也不能混成一个说法。
+  download: '从云端拉回暂时不可用，请用右上角菜单里的「从云端刷新数据」',
   options: '设置页暂时打不开，请手动打开扩展的设置页',
   import: '导入入口暂时不可用，请用右上角菜单里的「导入数据」',
 };

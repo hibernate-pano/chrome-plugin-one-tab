@@ -84,14 +84,22 @@ const EMPTY_STATE_MARKER = '先保存一个工作会话';
 /**
  * 真的把列表渲染一遍，返回 HTML 字符串。
  *
- * 默认 Redux store 的 `tabs.groups` 为空、加载已完成 —— 即「用户还没有任何会话」
- * 这条路径（空态引导卡唯一会出现的地方）。
+ * store 的 `tabs.groups` 为空、**首次读取已完成** —— 即「读完了，确实一个会话
+ * 都没有」这条路径（空态引导卡唯一会出现的地方）。
+ *
+ * ── 为什么必须显式声明「读完了」（2026-10-22 审计 SC-1）────────────────────
+ * 修复前，「还没读过」与「读完了、一个都没有」在界面上完全同形（`isLoading`
+ * 初值是 false、groups 初值是 []）⇒ 冷启动那一两秒里界面就在说「你有 0 个会话」。
+ * 现在这两个状态被分开了（`hasCompletedInitialLoad`）⇒ 本守卫要验的
+ * 「空会话 ⇒ 空态引导卡」必须**声明**自己处在「读完了」那一侧，
+ * 否则它验的其实是「骨架屏不该出现」—— 那是另一条守卫的事。
  */
 const renderList = async (searchQuery: string): Promise<string> => {
   const React = (await import('react')).default;
   const { renderToStaticMarkup } = await import('react-dom/server');
   const { Provider } = await import('react-redux');
   const { createStore } = await import('@/store');
+  const { initialTabState } = await import('@/store/slices/tabSlice');
   const { TabList } = await import('@/components/tabs/TabList');
   // 筛选状态住在**应用层**（MainApp 持有，2026-10-22 审计 P1-8：
   // 顶栏的「回到默认视图」要能清筛选，而顶栏在列表层上面）。
@@ -109,7 +117,11 @@ const renderList = async (searchQuery: string): Promise<string> => {
   return renderToStaticMarkup(
     React.createElement(
       Provider,
-      { store: createStore() } as never,
+      {
+        store: createStore({
+          tabs: { ...initialTabState, hasCompletedInitialLoad: true },
+        } as never),
+      } as never,
       React.createElement(
         ToastProvider,
         null,
