@@ -18,35 +18,40 @@
 
 | 编号 | 严重度 | 结论 | 位置 |
 |---|---|---|---|
-| **DS-3** | **P0** | 仍然成立，**且上轮主审把它「撤回」成「不成立」是错的**（见 §1）。删除 vs 另一台设备的并发编辑，胜负由**两台无关计数器的数值大小**决定 ⇒ 删除被静默撤销、A 的内容丢。**修法①要改协议，本轮不能碰**；修法②（披露）现在就能做 | `src/core/opStampMerge.ts:50-56`、`src/core/opStamp.ts:22-30` |
-| **DS-43-1** | **P1（本轮新）** | **删除广播没有账号闸门** ⇒ 删掉「属于别的账号」的会话时，删除意图被发给当前账号的云端并被当成「已达成」清队 ⇒ 该会话在它真正所属的账号下**复活** | `src/utils/supabase/upload.ts:1269`、`src/services/syncEngine.ts:1396-1416` |
-| **DS-43-2** | **P1（本轮新）** | **OneTab 往返抹掉锁定态** ⇒ 用户自己设的「防误删锁」消失 ⇒ 恢复即消费（不可逆） | `src/sync-backend/oneTabFormatParser.ts:240` |
-| **DS-43-3** | **P1（本轮新）** | 导入文件可注入 `isDeleted` ⇒ 该会话**列表里看不见**，且一轮同步后被**物理删除** | `src/core/normalizeTabsData.ts:179` → `src/services/syncEngine.ts:1180,1421` |
-| **DS-43-10** | **P1（本轮新）** | 搜索页「恢复整个会话」的**部分成功分支不挂撤销** ⇒ 会话已被物理消费，用户手里**一条退路都没有**（列表页同一分支挂了） | `src/components/search/SearchResultList.tsx:403-413` vs `src/components/tabs/TabGroup.tsx:442-450` |
-| **DS-43-11** | **P1（本轮新）** | **上轮说「DS-12 已修」，实际没修**：拖走最后一条标签仍然**零成功反馈**、全程无「会话会消失」文案。HEAD 的 `.then` 里只有失败分支；上轮发布提交对这段函数的 diff 也没加过 toast | `src/components/tabs/TabGroup.tsx:583-601`；`docs/audit-2026-10-22-round42.md:112` |
-| **DS-4** | **P1** | 仍然 fail-open。读失败 ⇒ 当成「没有待决」⇒ 切库时历史会话被全量推上云 | `src/utils/storage.ts:1138-1141` |
-| **DS-5** | **P1** | 仍然 fail-open。读失败 ⇒ 当成「干净」⇒ 漏登记的改动永远补不上云 | `src/utils/storage.ts:1272-1275` |
+| **DS-3** | **P0** | 仍然成立，**且上轮主审把它「撤回」成「不成立」是错的**（见 §1）。删除 vs 另一台设备的并发编辑，胜负由**两台无关计数器的数值大小**决定 ⇒ 删除被静默撤销、A 的内容丢。**修法①要改协议，本轮不能碰**；修法②（披露）✅ **已修**（`1f7bb14`：确认框与菜单行那句「其他登录设备将同步删除」补上「**删除可能不生效**」这一档 ⇒ 用户按确认键的那一刻不再被许一个实现不保证的结果） | `src/core/opStampMerge.ts:50-56`、`src/core/opStamp.ts:22-30` |
+| **DS-43-1** | **P1（本轮新）** | **删除广播没有账号闸门** ⇒ 删掉「属于别的账号」的会话时，删除意图被发给当前账号的云端并被当成「已达成」清队 ⇒ 该会话在它真正所属的账号下**复活** —— ✅ **已修**（`00a2ad0`：广播前按归属分批，别账号的**留在队列里**、等主人登录回来再广播；第 47 轮补上**端到端往返守卫** + 变异自证，见 §3.1） | `src/utils/supabase/upload.ts:1269`、`src/services/syncEngine.ts:1396-1416` |
+| **DS-43-2** | **P1（本轮新）** | **OneTab 往返抹掉锁定态** ⇒ 用户自己设的「防误删锁」消失 ⇒ 恢复即消费（不可逆） —— ✅ **已修**（`00783c7`：格式承载不了锁定态 ⇒ 走**披露**（导出 / 导入各说清丢了什么）；第 47 轮补上变异自证） | `src/sync-backend/oneTabFormatParser.ts:240` |
+| **DS-43-3** | **P1（本轮新）** | 导入文件可注入 `isDeleted` ⇒ 该会话**列表里看不见**，且一轮同步后被**物理删除** —— ✅ **已修**（`00783c7` 组级；`5b33048` **标签级** —— 一条标签在所有设备上永久隐形） | `src/core/normalizeTabsData.ts:179` → `src/services/syncEngine.ts:1180,1421` |
+| **DS-43-10** | **P1（本轮新）** | 搜索页「恢复整个会话」的**部分成功分支不挂撤销** ⇒ 会话已被物理消费，用户手里**一条退路都没有**（列表页同一分支挂了） —— ✅ **已修**（`bad5aae`：两处同口径） | `src/components/search/SearchResultList.tsx:403-413` vs `src/components/tabs/TabGroup.tsx:442-450` |
+| **DS-43-11** | **P1（本轮新）** | **上轮说「DS-12 已修」，实际没修**：拖走最后一条标签仍然**零成功反馈**、全程无「会话会消失」文案。HEAD 的 `.then` 里只有失败分支；上轮发布提交对这段函数的 diff 也没加过 toast —— ✅ **已修**（`e169764`） | `src/components/tabs/TabGroup.tsx:583-601`；`docs/audit-2026-10-22-round42.md:112` |
+| **DS-4** | **P1** | 第 43 轮时**仍然 fail-open**：读失败 ⇒ 当成「没有待决」⇒ 切库时历史会话被全量推上云 —— ✅ **已修**（`3c73504`：**抛错**，本轮上传中止、界面报失败、下一轮重试 —— **不是**返回 `true`，那会变成「静默的假成功」，见 §1.1） | `src/utils/storage.ts:1138-1141` |
+| **DS-5** | **P1** | 第 43 轮时**仍然 fail-open**：读失败 ⇒ 当成「干净」⇒ 漏登记的改动永远补不上云 —— ✅ **已修**（`3c73504`：同样**抛错**） | `src/utils/storage.ts:1272-1275` |
 | **DS-43-4** | P2 | 导入时**一个**越界时间戳炸掉整批导入，且失败理由甩锅「存储空间 / 写入权限」 —— ✅ **已修**（`35b363f`：根因修掉 + 逐组隔离 + 失败理由分家） | `src/utils/storage.ts:1707` + `src/core/normalizeTabsData.ts:80` |
 | **DS-43-5** | P2 | 导入的**设置**合并失败被吞，仍弹「已导入 N 个会话」⇒ 主题 / 布局 / 排序没恢复，零提示 —— ✅ **已修**（`35b363f`：失败如实上报，界面说「设置没恢复」） | `src/utils/storage.ts:1758-1760` |
 | **DS-43-6** | P2 | 导出**成功零反馈**，且扩展没有 `downloads` 权限 ⇒ 下载被拦 / 写盘失败时用户什么都看不到 —— ⚠️ **部分修**（`35b363f`：回执有了（文件名 + 会话数）、blob 撤销改成延后）；**`downloads` 权限仍未加** ⇒ 「文件真的落到磁盘上了」这件事我们仍然看不到，如实记为残余 | `src/components/layout/HeaderDropdown.tsx:644` |
-| **DS-43-7** | P2 | 上传闸门的兜底是 **fail-open**：归属记录缺失 ⇒ 全机会话认给当前账号。它的注释写着「读失败 ⇒ 中止上传」，代码没这么做 | `src/utils/supabase/upload.ts:514-533` + `src/utils/authCache.ts:44-54` |
+| **DS-43-7** | P2 | 上传闸门的兜底是 **fail-open**：归属记录缺失 ⇒ 全机会话认给当前账号。它的注释写着「读失败 ⇒ 中止上传」，代码没这么做 —— ✅ **已修**（`00783c7`） | `src/utils/supabase/upload.ts:514-533` + `src/utils/authCache.ts:44-54` |
 | **DS-43-8** | P2 | 商店文案「导入的会话也按内容命名（和保存时同一套规则）」**两档都不成立** —— ✅ **已修**（`639f8ff` 改文案；`35b363f` 复核：**行为不能改** —— 会话名是幂等指纹的一部分） | `CHROMEWEBSTORE.md:54` |
 | **DS-43-9** | P2 | 导入没有体积 / 条数上限，整个文件在 popup 主线程解析 —— ✅ **已修**（`35b363f`：导入**分块**（大文件能真的导进去）+ 文件上限 64MB，超了说清「文件没问题」并给出路） | `src/components/layout/HeaderDropdown.tsx:1100-1292` |
-| **DS-9** | P2 | 仍然零覆盖。守卫只断言「有一个 `showDeleteError(` 调用」，改文案 0 红 | `tests/guards/lockedTabDeleteGuard.test.ts:80-91` |
-| **DS-15** | P2 | 仍然成立。导入不做覆盖 ⇒ 同名不同内容的会话并存成两份，零提示 —— ✅ **已修**（`35b363f`：导入结果一律带上这句披露；**行为不动** —— 改成覆盖式会吞掉用户的真实数据） | `src/core/mutationOps.ts:330-346` |
-| **DS-43-12** | P2 | toast 队列只留最近 3 条 ⇒ 连续消费 4 次时，最早那条**带撤销的** toast 被**静默挤出** ⇒ 那次消费变成不可逆，用户不知道 | `src/contexts/ToastContext.tsx:86` |
-| **DS-43-13** | P2 | 搜索页「删除全部搜索结果」的确认计数**含锁定组** ⇒ 标题与正文说的 N 恒 ≥ 实际删除数 | `src/components/search/SearchResultList.tsx:742-743` vs `:724` |
-| **DS-43-14** | P2 | 批量删除**第 k 条失败 ⇒ 第 k+1…n 条根本不执行**，但只有一句通用「删除操作失败，请重试」⇒ 静默的部分执行 | `src/components/search/SearchResultList.tsx:721-733` |
+| **DS-9** | P2 | 第 43 轮时**仍然零覆盖**：守卫只断言「有一个 `showDeleteError(` 调用」，改文案 0 红 —— ✅ **已修**（`bad5aae`：列表页与搜索页的拒删措辞抽成同源纯函数 `lockedTabDeleteMessage()`；守卫断言的是「两处同源」而不是「有一处调用」） | `tests/guards/lockedTabDeleteGuard.test.ts:80-91` |
+| **DS-15** | P2 | 第 43 轮时**仍然成立**：导入不做覆盖 ⇒ 同名不同内容的会话并存成两份，零提示 —— ✅ **已修**（`35b363f`：导入结果一律带上这句披露；**行为不动** —— 改成覆盖式会吞掉用户的真实数据） | `src/core/mutationOps.ts:330-346` |
+| **DS-43-12** | P2 | toast 队列只留最近 3 条 ⇒ 连续消费 4 次时，最早那条**带撤销的** toast 被**静默挤出** ⇒ 那次消费变成不可逆，用户不知道 —— ✅ **已修**（`00783c7`：队列准入策略 `toastQueuePolicy.admitToast` —— 挤掉的是**可挤掉**的那条；带动作的退路与错误提示**不可被自动挤掉**，挤不掉时允许超限） | `src/contexts/ToastContext.tsx:86` |
+| **DS-43-13** | P2 | 搜索页「删除全部搜索结果」的确认计数**含锁定组** ⇒ 标题与正文说的 N 恒 ≥ 实际删除数 —— ✅ **已修**（`bad5aae`：确认框与执行同源 `planBulkDelete`） | `src/components/search/SearchResultList.tsx:742-743` vs `:724` |
+| **DS-43-14** | P2 | 批量删除**第 k 条失败 ⇒ 第 k+1…n 条根本不执行**，但只有一句通用「删除操作失败，请重试」⇒ 静默的部分执行 —— ✅ **已修**（`bad5aae`：在第一条失败处停下，并如实回报「第几条失败、前面删了几个、还剩几个没动」） | `src/components/search/SearchResultList.tsx:721-733` |
 | **DS-43-15** | P2 | 「删除所有会话」的确认数字取自 **Redux 快照**，SW 按磁盘真值删并回传 `{count}` —— **这个 count 从未展示过**，且删完零成功提示 —— ✅ **已修**（第 46 轮，`34c2b33`：确认前读**磁盘真值**（读不到就**中止**）+ 删完报**实际条数**） | `src/components/layout/HeaderDropdown.tsx:170/602` vs `src/core/mutationOps.ts:211` |
-| **DS-43-16** | P2 | 「删除前确认」开关**关闭**时，✕ 的提示只说「移除这条记录」，**没说整个会话卡会一起消失** | `src/components/dnd/DraggableTab.tsx:431` |
-| **DS-43-17** | P3 | 删除按钮的 `aria-label` 不含「不可恢复」，且 Tooltip **没有 `aria-describedby` 接线** ⇒ 读屏用户听不到「删除后无法恢复」 | `src/components/tabs/TabGroup.tsx:1227-1236`、`src/components/common/Tooltip.tsx:171` |
+| **DS-43-16** | P2 | 「删除前确认」开关**关闭**时，✕ 的提示只说「移除这条记录」，**没说整个会话卡会一起消失** —— ✅ **已修**（`e169764`） | `src/components/dnd/DraggableTab.tsx:431` |
+| **DS-43-17** | P3 | 删除按钮的 `aria-label` 不含「不可恢复」，且 Tooltip **没有 `aria-describedby` 接线** ⇒ 读屏用户听不到「删除后无法恢复」 —— ✅ **已修**（`b0ca1f9`：「删除后无法恢复」进**可访问名**本身 —— Tooltip 的 `aria-describedby` 只在可见时才挂，多数读屏不会重念 ⇒ 后果必须写在名字里） | `src/components/tabs/TabGroup.tsx:1227-1236`、`src/components/common/Tooltip.tsx:171` |
 | **DS-43-20** | **P0（条件性）** | **`chrome.storage.local` 被清 ⇒ 用户被登出 ⇒ 重新登录时 `first-bind` 把本机全部会话**静默认领**给新账号，零提示** —— DS-1 的原始后果被完整重开。触发条件需真实浏览器验证（见 §6.3） | `src/utils/supabase/client.ts:59` + `src/storage-kv/stringStore.ts:27-37` → `src/store/slices/authSlice.ts:110-125` → `src/core/accountScope.ts:257-270` |
 | **DS-43-18** | P1 | 「冲突」在代码里**不存在**：`syncStatus: 'conflict'` 从未被赋值 ⇒ `stats.conflicts` **恒为 0**；且三处文档说「以**最后保存**的一方为准」，而胜负其实由 `(seq, deviceId 字典序)` 决定 ⇒ 文档教了一个不成立的预期 —— ✅ **已修**（文档半：`00783c7` / `639f8ff` / `ec759a9`；代码半：本轮 —— 删掉恒为 0 的 `stats.conflicts` 与永不出现的 `'conflict'` 取值，见 §7.5 之五） | `src/services/syncEngine.ts:70/733/1161`、`src/types/tab.ts:16/119`、`README.md:8/73`、`CHROMEWEBSTORE.md:430` |
-| **DS-43-19** | P1 | 归属待决期（WebDAV 首次同步）有一条**登记竞态**：`scheduleUpload` 在保存/重命名/加锁分支**没有 await** ⇒ 登记还在飞行中，本轮白名单快照看不到它 ⇒ `clearPendingUploadGroupIds`（kvRemove）与在途的 kvSet 竞争 ⇒ **登记被抹掉、`pending_upload` 被置 false** ⇒ 该改动留在本机不上云，界面却报「同步成功」 | `src/background/mutationHandlers.ts:224/306/319` vs `:246/254/262`；`src/services/syncEngine.ts:1285,1558-1564` |
+| **DS-43-19** | P1 | 归属待决期（WebDAV 首次同步）有一条**登记竞态**：`scheduleUpload` 在保存/重命名/加锁分支**没有 await** ⇒ 登记还在飞行中，本轮白名单快照看不到它 ⇒ `clearPendingUploadGroupIds`（kvRemove）与在途的 kvSet 竞争 ⇒ **登记被抹掉、`pending_upload` 被置 false** ⇒ 该改动留在本机不上云，界面却报「同步成功」 —— ✅ **已修**（`3c73504`：`scheduleUpload` 补 await + 白名单改成**按确认逐条消费**（读-改-写，不再 `kvRemove`）⇒ 在途的登记不会被抹掉） | `src/background/mutationHandlers.ts:224/306/319` vs `:246/254/262`；`src/services/syncEngine.ts:1285,1558-1564` |
 | **DS-7 / DS-8 / DS-11 / DS-17** | — | **上轮清单已过期：这四条在 HEAD 上其实已经修好了**（详见 §1） | — |
+| **P0-1**（第 47 轮新） | **P0** | **后台算不出「本机当前指向哪个云端库」** ⇒ 归属待决位（**按库寻址**）在 service worker 侧恒为保守分支 ⇒ **SW 永远以为归属决策没做完** ⇒ 自动上传被永久降级成「只传本次改动过的那几个」⇒ **本机的历史会话再也传不上用户自己的云盘，而回包还报「成功」** —— ✅ **已修**（第 47 轮：同一份模块、两种取法 —— 页面动态 import / SW 由入口静态注册；**已在真 Chrome 上验过**，见 §8） | `src/storage-kv/firstSyncPendingRecord.ts:145`（旧写法 `await import(...)`）→ `src/sync-backend/webdav/libraryIdentityRuntime.ts` |
 
 **本轮真正能立刻动手、且不需要改协议的**：DS-4、DS-5、DS-9、DS-15、DS-43-1、DS-43-2、DS-43-3、DS-43-7、DS-43-10 ~ DS-43-16、DS-43-18、DS-43-19。合计 17 条。
 **需要改协议 / 需要真实浏览器或真实后端才能验的**：DS-3（①）、DS-43-20（触发条件）。
+
+> **第 47 轮的结账（2026-10-23）**：上面这 17 条**全部已修并各自带 commit**（见 §0 表与 §3 / §4 / §5 的逐条处置）。
+> 另有第 47 轮**新发现并当场修掉**的：P0-1（后台算不出库作用域，见上）、P0-2 / P1-3 / P1-4 / P1-5（搜索页那一批，`bad5aae`）。
+> **仍然开放**：DS-3 的**修法①**（要改印记格式 = 协议级）、DS-43-6 残余（`downloads` 权限 —— **要 Jasper 拍板**）、DS-43-20（触发条件要真机）。
 
 ---
 
@@ -56,14 +61,14 @@
 
 | 编号 | 上轮说「推迟」的理由 | 本轮裁定（HEAD `23d2aab`） | 现在能修吗 |
 |---|---|---|---|
-| **DS-3** | 需要改协议 | **仍然成立，确认为 P0**。但上轮给的**修法②（披露）不需要改协议** —— 删除确认框与三处文档补一句即可，**现在就能做**。修法①（给删除一个语义优先级位）确实要改印记格式 ⇒ 本轮不碰 | ②能，①不能 |
-| **DS-4** | 读失败 fail-open | **仍然 fail-open**，`src/utils/storage.ts:1138-1141` 一字未改 | **能**，但**别照抄上轮的改法**（见下） |
-| **DS-5** | 读失败 fail-open | **仍然 fail-open**，`src/utils/storage.ts:1272-1275` 一字未改 | **能**（1 行，见下） |
+| **DS-3** | 需要改协议 | **仍然成立，确认为 P0**。但上轮给的**修法②（披露）不需要改协议** —— 删除确认框与三处文档补一句即可，**现在就能做** —— ✅ **已修**（`1f7bb14`）。修法①（给删除一个语义优先级位）确实要改印记格式 ⇒ 本轮不碰 | ②✅已修，①不能 |
+| **DS-4** | 读失败 fail-open | 第 43 轮时**仍然 fail-open**（`src/utils/storage.ts:1138-1141` 一字未改）—— ✅ **已修**（`3c73504`，按 §1.1 的结论**抛错**） | **能**，但**别照抄上轮的改法**（见下） |
+| **DS-5** | 读失败 fail-open | 第 43 轮时**仍然 fail-open**（`src/utils/storage.ts:1272-1275` 一字未改）—— ✅ **已修**（`3c73504`，**抛错**） | **能**（1 行，见下） |
 | **DS-7** | 清理重复的确认数来自陈旧快照 | **已经修好了**（上轮清单过期）。`src/components/layout/Header.tsx:135-140` 现在读真值失败就**中止清理并提示**，不再退回快照 | 不用修 |
 | **DS-8** | 退出登录不清本地数据、零提示 | **已经修好了**（上轮清单过期）。`src/components/layout/HeaderDropdown.tsx:459-512` 现在先数本机会话数，退出后明说「本机 N 个会话仍保留，不会上传到其它账号」 | 不用修 |
-| **DS-9** | 锁定会话逐条删除的提示零覆盖 | **仍然零覆盖**。守卫的标题写着「且给出可执行的解释」，断言却只到 `/showDeleteError\(/` 为止 | **能**（1 行断言） |
+| **DS-9** | 锁定会话逐条删除的提示零覆盖 | 第 43 轮时**仍然零覆盖**：守卫的标题写着「且给出可执行的解释」，断言却只到 `/showDeleteError\(/` 为止 —— ✅ **已修**（`bad5aae`：两处措辞抽成同源纯函数，守卫改钉「两处同源」） | **能**（1 行断言） |
 | **DS-11** | 熔断守卫把实参钉死 | **已经修好了**（上轮清单过期）。`tests/syncFailsafeGuard.test.ts:92-120` 现在断言的是不变量（两道闸门都要在），不再是字面量 | 不用修 |
-| **DS-15** | 导入不覆盖，同名会话并存无提示 | **仍然成立**。导入仍是纯追加（`src/core/mutationOps.ts:346`），导入结果文案仍不说这件事 | **能**（文案层） |
+| **DS-15** | 导入不覆盖，同名会话并存无提示 | 第 43 轮时**仍然成立**：导入仍是纯追加（`src/core/mutationOps.ts:346`），导入结果文案仍不说这件事 —— ✅ **已修**（`35b363f`：导入结果一律带上这句披露；**行为不动**） | **能**（文案层） |
 | **DS-17** | 两后端「读不出来」共用一句话 | **已经解决了**（上轮清单过期）。现在 Supabase 侧有专属文案模块 `src/components/sync/skippedRemoteGroupsCopy.ts`（只挂在 `SyncButton.tsx:10`），而 WebDAV 的「读不出来」是整轮抛错 ⇒ **两边不再共用同一句话**。`src/utils/serviceWorkerErrorCopy.ts` 的 `REASON_COPY` 与本条无关（那是 SW 的 URL 打开失败） | 不用修 |
 
 > **上轮清单本身的四个错**（留给下一轮，别再照抄）：
@@ -91,6 +96,19 @@
   ⇒ 若不想留这个多轮提示，**同样可以抛错**（读不到 ⇒ 本轮中止 ⇒ 下一轮重来），语义更直白。
 
 ⇒ 两条都建议**抛错**，与 `getGroups` / `getSettings` 同口径；这比「返回一个假装正常的值」更符合仓库自己的铁律 1。
+
+> **已按此修**（`3c73504`）：两条都改成**抛错**。
+> · `storage.getFirstSyncPending()` 读失败 ⇒ 抛「读不到归属决策状态，已中止本轮上传以免历史会话被误传」
+>   ⇒ 本轮上传中止、界面报失败、下一轮重试。**不是** `return true`（那会进白名单模式 ⇒ 本轮一个都不传 ⇒ 对账看到空集 ⇒ 报「全部已同步」⇒ 静默的假成功）。
+> · `storage.getPendingUploadRegistryState()` 读失败 ⇒ 抛「读不到『本次改动的会话 id』登记状态，已中止本轮上传」。
+> · 界面（`WebDavSettings.tsx`）的「归属待决」从布尔改成**三态**（`boolean | null`）：
+>   `null` = **读不到** ⇒ 显示「读不到『这些会话归不归这个云盘』的状态，已暂停自动上传以免误传。请刷新页面重试……」
+>   ⇒ **不许**落回「没有待决」（那等于把「不知道」说成「没有」）。
+>
+> **守卫**：`tests/guards/readFailureFailClosed.test.ts`（行为层：注入读失败 ⇒ 必须 reject）
++ `tests/guards/readFailureFailClosedMutation.test.ts`（变异自证：**六条**——改回 `return false` ⇒ 红；
+> 改成 `return true`（上一轮那版）⇒ **也必须红**；改回 `return clean` ⇒ 红；界面落回 `setOwnershipPending(false)` ⇒ 红；
+> 界面退回布尔 ⇒ 红；**等价改写**（错误消息换个说法）⇒ **仍然绿**）。
 
 ---
 
@@ -188,6 +206,14 @@
 
 这样「换账号 ⇒ 删了 A 的会话 ⇒ 切回 A ⇒ 它还在」变成「切回 A ⇒ 它真的被删了」，语义闭合。**注意这条与铁律 4 是两回事**：铁律 4 禁的是套 `writtenTombstoneIds` 过滤器，这里加的是**归属**过滤，两者不冲突。
 
+> **已修**（`00a2ad0`）：广播前用同一套归属判据把 `pendingDeleteIds` 分成「属于当前账号」与「属于别的账号」两批；
+> 后者**留在队列里**（清队是**按确认逐条消费**的 ⇒ 天然支持），等用户登录到那个账号时再广播。
+> **第 47 轮补上端到端守卫**（`e006eaa`）：`tests/guards/deleteBroadcastAccountRoundTrip.test.ts`
+> 钉的是**用户可见的终点**（A 的云端那行还是活跃的 → 切回 A 后它**必须**变成墓碑 → 真广播过之后队列**必须**被清掉），
+> 而不只是「没被清掉」（后者挡不住「永远留在队列里、永远不广播」）。
+> 假后端**转手给真的 Supabase 写入层**（闸门住在那里）⇒ 证明的是「闸门真的挡住了别的账号的会话」，
+> 不是「引擎按点名清队」。
+
 ### 3.2 导入路径顺带发现的删除相关问题
 - **DS-43-3**（详见 §4.1）：导入可以注入 `isDeleted` ⇒ 造出一个「看不见的会话」，它随后被当成老版本墓碑**物理删除**。
 - `applyImportGroups` 是全仓**唯一一条纯增量、零删除**的路径（`src/core/mutationOps.ts:346`：`[...processed, ...groups]`）⇒ 这条性质值得保留，**不要**为了修 DS-15 把它改成覆盖式。
@@ -208,6 +234,7 @@
 - **数据是否丢**：会丢（会话已被消费；无回收站、无撤销）。
 - **为什么这一条特别值得修**：部分成功**恰恰是最需要退路**的场景（有的标签开了、有的打不开，用户会想「那打不开的那几个还在吧」⇒ 实际上整条会话都没了）。
 - **修法**：把搜索页这一分支改成与列表页同口径（`showConsumeToast(..., group.isLocked ? undefined : { group }, { type: 'error' })`）。**两条分支应该共用同一个函数**（`useConsumeUndo.ts` 的 `showConsumeToast` 已经是共用的，缺的是调用方对齐 —— 这正是仓库自己的元教训「同一语义两处实现，迟早漂移」）。
+- ✅ **已修**（`bad5aae`）：两处同口径。**守卫钉的是「数据流」不是「字面量」**（断言那条分支真的调用了带撤销凭据的 toast）。
 
 #### DS-43-11（P1）· 上轮说「DS-12 已修」，实际没修
 
@@ -218,17 +245,18 @@
 - **用户看到什么**：卡片凭空消失，零解释。**用户能不能拿回**：不能。
 - **注**：`tests/dragLastTabRefused.test.ts` 把「不加确认」钉成了产品决定（那是对的，不建议改语义）—— **缺的只是反馈**。这正是上轮 DS-12 的原话（「产品钦定，不建议改语义，缺的只是反馈」），说明上轮**知道自己要修什么、但没修**。
 - **修法**：成功时补一句「已从「X」移出「Y」，「X」因最后一条被移出而消失」（或按仓库既有风格给一条带撤销的 toast —— 但拖拽路径要接撤销，需要把「源组快照」一起带上，工作量比 toast 大 ⇒ **本轮建议先补文案，别动语义**）。
+- ✅ **已修**（`e169764`）：按建议只补文案、**不动语义**（拖拽路径仍然不加确认）。
 
 #### 其余披露缺口（DS-43-12 ~ DS-43-17）
 
 | 编号 | 事实 | 位置 |
 |---|---|---|
-| **DS-43-12** | toast 队列只保留最近 3 条（`setQueue(prev => [...prev.slice(-2), ...])`）⇒ **连续消费 4 个会话**时，最早那条带撤销的 toast 被**静默挤出队列** ⇒ 那次消费变成不可逆，而用户从头到尾不知道有过退路 | `src/contexts/ToastContext.tsx:86` |
-| **DS-43-13** | 搜索页「删除全部搜索结果」的确认计数用 `matchingTabs.length`（**不排除锁定组**），而执行时 `if (group.isLocked) continue` 跳过 ⇒ 标题「删除 N 个标签？」与正文「永久移除这 N 条标签记录」用的都是**含锁定的总数**，恒 ≥ 实际删除数 | `SearchResultList.tsx:742-743` vs `:724` |
-| **DS-43-14** | 批量删除的所有条目在**同一个 try 里**串行执行 ⇒ 第 k 条失败后**第 k+1…n 条根本不执行**，但提示只有一句「删除操作失败，请重试」⇒ 用户既不知道前 k−1 条已删、也不知道后面没删 ⇒ **静默的部分执行** | `SearchResultList.tsx:721-733` |
+| **DS-43-12** | toast 队列只保留最近 3 条（`setQueue(prev => [...prev.slice(-2), ...])`）⇒ **连续消费 4 个会话**时，最早那条带撤销的 toast 被**静默挤出队列** ⇒ 那次消费变成不可逆，而用户从头到尾不知道有过退路 —— ✅ **已修**（`00783c7`：`slice(-2)` 换成 `toastQueuePolicy.admitToast` —— 挤掉的是**可挤掉**的那条（既没有动作、又不是错误）；带动作的退路与错误提示**不可被自动挤掉**，一条都挤不掉时**允许队列变长**） | `src/contexts/ToastContext.tsx:86` |
+| **DS-43-13** | 搜索页「删除全部搜索结果」的确认计数用 `matchingTabs.length`（**不排除锁定组**），而执行时 `if (group.isLocked) continue` 跳过 ⇒ 标题「删除 N 个标签？」与正文「永久移除这 N 条标签记录」用的都是**含锁定的总数**，恒 ≥ 实际删除数 —— ✅ **已修**（`bad5aae`：确认框与执行**同源** `planBulkDelete`） | `SearchResultList.tsx:742-743` vs `:724` |
+| **DS-43-14** | 批量删除的所有条目在**同一个 try 里**串行执行 ⇒ 第 k 条失败后**第 k+1…n 条根本不执行**，但提示只有一句「删除操作失败，请重试」⇒ 用户既不知道前 k−1 条已删、也不知道后面没删 ⇒ **静默的部分执行** —— ✅ **已修**（`bad5aae`：在第一条失败处停下，并如实回报「第几条失败、前面删了几个、还剩几个没动」） | `SearchResultList.tsx:721-733` |
 | **DS-43-15** | 「删除所有会话」的确认数字 N 取自 **Redux 快照**，SW 按**磁盘真值**删并回传 `{count}` —— **这个 count 从头到尾没有被展示过**（payload 只用来取 `broadcastWarn`）⇒ 确认框数字可能 ≠ 实际删除条数；且删完**零成功提示** —— ✅ **已修**（第 46 轮，`34c2b33`）：确认前读**磁盘真值**（`planDeleteAll`，总数与锁定数出自**同一次读**），读失败**中止**（fail closed，不退回快照）；执行后按 SW 回执报**实际条数**，与确认时的数不等时说明差在哪 | `HeaderDropdown.tsx:170/602`、`:517`；`src/core/mutationOps.ts:211` |
-| **DS-43-16** | 「删除前确认」开关**打开**时，删最后一条会弹「这是该会话的最后一条标签记录，删除后整个会话会从列表消失」✓；开关**关闭**时零确认，而 ✕ 的提示只有「从会话中移除这条记录（无法恢复）」—— **没说整张会话卡会一起消失** | `TabGroup.tsx:625` vs `src/components/dnd/DraggableTab.tsx:431` |
-| **DS-43-17** | 删除按钮的 `aria-label` 只有「删除会话」，「（删除后无法恢复）」只存在于 Tooltip 的 `content`；而 Tooltip 只渲染 `role="tooltip"`、**没有 `aria-describedby` 接线** ⇒ 读屏用户听不到「不可恢复」 | `TabGroup.tsx:1227-1236`、`src/components/common/Tooltip.tsx:171` |
+| **DS-43-16** | 「删除前确认」开关**打开**时，删最后一条会弹「这是该会话的最后一条标签记录，删除后整个会话会从列表消失」✓；开关**关闭**时零确认，而 ✕ 的提示只有「从会话中移除这条记录（无法恢复）」—— **没说整张会话卡会一起消失** —— ✅ **已修**（`e169764`） | `TabGroup.tsx:625` vs `src/components/dnd/DraggableTab.tsx:431` |
+| **DS-43-17** | 删除按钮的 `aria-label` 只有「删除会话」，「（删除后无法恢复）」只存在于 Tooltip 的 `content`；而 Tooltip 只渲染 `role="tooltip"`、**没有 `aria-describedby` 接线** ⇒ 读屏用户听不到「不可恢复」 —— ✅ **已修**（`b0ca1f9`）：「删除后无法恢复」进**可访问名**本身。⚠️ 关键理由：Tooltip 的 `aria-describedby` **只在它可见时才挂** ⇒ 多数读屏**不会重念** ⇒ 后果必须写在名字里（WCAG 2.5.3 要求可访问名包含可见文字 ⇒ 名字与提示必须一起改） | `TabGroup.tsx:1227-1236`、`src/components/common/Tooltip.tsx:171` |
 
 #### 这条链路上**确认没问题**的部分（省得下一轮重新查）
 
@@ -264,6 +292,11 @@
 
 **修法**：`normalizeImportedGroup` 的覆盖名单里加上 `isDeleted: false`（导入的永远是「活着的会话」），并在 `applyImportGroups` 里对组级 `isDeleted` 显式归零。一行。
 
+> **已修**（`00783c7` 组级 / `5b33048` **标签级**）：
+> · **组级**：`isDeleted` 在导入归一化时显式归零 ⇒ 导入文件带不进来。
+> · **标签级**（第 47 轮补）：导入文件**不许注入标签级墓碑** —— 一条标签在**所有设备**上会永久隐形
+>   （组还在，但那条标签谁都看不见、也删不掉）。这是组级墓碑的「缩小版」，同一个洞的另一个入口。
+
 ### 4.2 DS-43-2（本轮新，P1）：OneTab 往返抹掉锁定态 ⇒ 锁的保护失效
 
 **位置**：`src/sync-backend/oneTabFormatParser.ts:222-241` —— 解析 OneTab 时新建的会话是 `isLocked: false`、`favicon: ''`、`pinned: false`、时间戳全为导入时刻、**会话名由内容派生**（`deriveImportedGroupName`，只实现了保存规则的第一档「主导域名」，`oneTabFormatParser.ts:33-36`）。导出侧 `formatToOneTabFormat`（`oneTabFormatParser.ts:253-274`）只写 `url | title` ⇒ **格式本身承载不了锁定态**。
@@ -279,6 +312,9 @@
 **数据是否丢**：**是**（会话被消费掉了）。
 **与承诺的冲突**：`CHROMEWEBSTORE.md:50` 承诺「**锁定的会话恢复后仍保留**，可以反复使用」。往返之后这个承诺对导出的那份不成立。
 **修法**：OneTab 格式承载不了锁定态 ⇒ **不能靠格式补**（那是协议级改动）。可做的是**披露**：导入 OneTab 后的提示里写明「OneTab 格式不含锁定信息，导入的会话都是未锁定的」；并在**导出**时提示「OneTab 格式不保存锁定状态 / 会话名 / favicon，导出后重新导入会丢失这些」。JSON 路径无此问题（`isLocked` 保真）。
+
+> **已修**（`00783c7` 披露；第 47 轮补 `002e666` 变异自证）：披露落在**导出侧 + 导入侧**两处。
+> 守卫不钉字面量 ⇒ **等价改写必须仍然绿**（钉死字面量会让正确修复反而红 —— 本仓反复踩的坑）。
 
 ### 4.3 DS-15（仍开放）：导入不覆盖 ⇒ 同名不同内容的会话并存成两份
 
@@ -327,6 +363,14 @@
 - **适用范围**：只在**自带存储的归属待决期**成立（正常模式传全量，白名单不参与筛选）。
 - **最小修法**：把保存 / 重命名 / 加锁分支改成 `await scheduleUpload(...)`（与删除分支一致）；或者把 `clearPendingUploadGroupIds` 改成**按确认集合逐条消费**（`storage.clearPendingDeleteIds` 已经是这个形状）。
 - **同一根因的另一处**：导入路径 `src/background/mutationHandlers.ts:294` 也没 `await scheduleUpload(...)`（登记的是**新 id**，D-3 的修法本身是对的，但少一个 await）。
+
+> **已修**（`3c73504`）：**两头都堵**——
+> · 保存 / 重命名 / 加锁 / 导入分支的 `scheduleUpload(...)` **补上 `await`**（与删除分支一致）⇒ 登记不会还在飞行中就被快照。
+> · `clearPendingUploadGroupIds`（`kvRemove`，整键抹）改成 **`consumePendingUploadGroupIds(settledIds)`**：
+>   **读-改-写**（取出 → 只去掉已确认的那些 → 写回）⇒ **在途的登记不会被抹掉**（原来整键抹掉 ⇒ 与在途的 `kvSet` 竞争 ⇒ 谁后写谁赢）。
+> · ⚠️ 守卫 `tests/backendParityDefects.test.ts` 原本**钉死了字面量** `setPendingUpload(false)` ⇒
+>   改对了实现反而红 ⇒ 守卫已改成用**括号配对**算出 `canClearPending` 守卫块的**真实范围**，
+>   再断言「标志的写入**在**守卫块之内」，但**不**钉那个字面量（并断言它**全仓不出现**）。
 
 ### 5.2 两条「删除复活」向量（补记，`pendingDeleteIds` 队列本身是对的）
 
@@ -436,6 +480,11 @@
 
 ### 7.2 DS-43-1（删除广播发错账号）—— 需要真机 + 真实后端
 
+> ✅ **仓内已能验**（第 47 轮，`e006eaa`）：`tests/guards/deleteBroadcastAccountRoundTrip.test.ts`
+> 用**真的**写入层（`utils/supabase/upload.ts` 的 `markCloudGroupsAsDeleted`）对着假云端跑完整往返 ⇒
+> 「挡下 → 留在队列 → 主人登录回来 → 墓碑真的落地 → 队列被清掉」这条链**在仓内钉住了**。
+> 下面这套真机脚本仍然是**最终确认**（要连真的 Supabase、真的多账号）。
+
 - 机器 M 登录账号 A ⇒ 保存会话 X ⇒ 同步（云端 A 有 X）。
 - 退出 A ⇒ 登录账号 B（此时界面应出现「本机还有 1 个会话属于上一个账号」提示）。
 - 删除 X ⇒ 等一轮同步完成（此时 B 的云端**没有** X，广播是空操作）。
@@ -445,10 +494,16 @@
 
 ### 7.3 OneTab 往返（DS-43-2）—— 需要真机（后端不需要）
 
+> ✅ **仓内已能验**（`00783c7` 的行为守卫 + 第 47 轮 `002e666` 的变异自证）：
+> 往返后的 `isLocked === false` 与两处**披露文案**都已被钉住。
+
 - 锁定一个会话 ⇒ 导出 OneTab ⇒ 导入回本机。
 - **断言**：导入后的会话 `isLocked === false`；再点「快速恢复」⇒ 断言该会话**从列表消失**（= 被消费了）⇒ 复现成立。
 
 ### 7.4 导入注入墓碑（DS-43-3）—— 需要真机（后端不需要，但需要一个真实的旧备份）
+
+> ✅ **仓内已能验**（`00783c7` 组级 / `5b33048` 标签级）：带 `isDeleted` 的导入文件**归一化时就被抹掉**，
+> 不再进落盘 ⇒ 下面那两步（列表里看不见 → 一轮同步后被物理删除）都**不再可达**。
 
 - 造一份 JSON：`{ data: { groups: [ { name: "X", tabs: [{url:"https://a.com", title:"a"}], isDeleted: true } ] } }`。
 - 导入 ⇒ **断言**：提示说「已导入 1 个会话」但列表**没有** X ⇒ 复现第一半。
@@ -517,11 +572,103 @@
 |---|---|---|
 | 账号闸门 | `tests/guards/accountScopeGuard.test.ts`、`accountScopeReconcile.test.ts` | ✔ 有，且带「闸门退化成不过滤时守卫必须看得见」的自证检测力 |
 | 覆盖删除熔断 | `tests/guards/overwriteDeleteGuard.test.ts` | ✔ 有 |
-| 锁定会话逐条删除 | `tests/guards/lockedTabDeleteGuard.test.ts:80-91` | **⚠️ 只断言「有 `showDeleteError(` 调用」，不检查它说了什么**（DS-9） |
+| 锁定会话逐条删除 | `tests/guards/lockedTabDeleteGuard.test.ts:80-91` | ✅ **已补**（`bad5aae`，DS-9）：断言改成「两处**同源**」（都调共享纯函数 `lockedTabDeleteMessage()`，且那个名字是从 `lockedDeleteCopy` 引入的）⇒ 换个写法不误报，只有「各写一份」才红 |
 | 熔断实参不变量 | `tests/syncFailsafeGuard.test.ts:92-120` | ✔ 已改成钉不变量（DS-11 已修） |
 | 导入登记新 id | `tests/backendParityDefects.test.ts:124-136` | ✔ 有（D-3 修复已锁） |
-| 消费撤销的**接线**（两个界面都挂上撤销） | 无 | **⚠️ 缺口**（DS-43-10）⇒ 建议补一条**接线守卫**：断言 `skippedUnopenable > 0` 这条分支在**两个界面**都调用了带撤销凭据的 toast（钉数据流，不钉字面量） |
+| 消费撤销的**接线**（两个界面都挂上撤销） | `tests/guards/searchPageCopyHonestyMutation.test.ts` | ✅ **已补**（`bad5aae`，DS-43-10）：断言那条分支真的调用了**带撤销凭据**的 toast（钉数据流，不钉字面量） |
+| **页面与后台的库作用域一致**（P0-1） | `tests/guards/libraryScopeResolution.test.ts` + `libraryScopeResolutionMutation.test.ts` | ✅ **有**（`29bdb91`）：三态断言（页面真值 / SW 必须走注册表 / 两边相同）+ 三条变异自证。⚠️ 这一类缺陷在 Node 里**天然隐形**（Node 的 `import()` 合法）⇒ 另有真机探针 `scripts/lead-verify-sw-library-scope.mjs` |
+| 删除广播的**整条往返**（DS-43-1） | `tests/guards/deleteBroadcastAccountRoundTrip.test.ts` + `…RoundTripMutation.test.ts` | ✅ **有**（`e006eaa`）：钉的是**用户可见的终点**（切回主人 ⇒ 墓碑真的落地 ⇒ 队列真的被清掉） |
 
 ---
 
-*本报告只读审计，未改动 `src/` 与 `tests/`。所有行号对应 HEAD `23d2aab`（与 `cb6ac46` 的 `src/` 零差异）。*
+---
+
+## 10. 第 47 轮新发现并修掉的：P0-1 —— 后台算不出「本机在哪个库」
+
+> 这一条**不在**第 43 轮的清单里 —— 它是第 47 轮顺着「同步路径为什么静默不同步」往下挖时挖出来的，
+> 而且它是**第 43 轮 §5.1 那条（DS-43-19）之外的另一个静默失败**。
+
+### 10.1 缺陷形状
+
+归属待决位（「这些会话归不归这个库」）是**按库寻址**的（`storage-kv/firstSyncPendingRecord.ts`）
+⇒ 要判断「当前这个库待不待决」，**必须先知道「当前是哪个库」**。
+
+而「当前是哪个库」要在**两个 realm** 里各算一次：页面（弹窗 / 设置页）与
+**Service Worker**（真正执行上传的那一侧）。过去那条边是 `await import(...)`
+⇒ **service worker 里 `import()` 被 Chrome 禁止**（HTML 规范）⇒ **SW 侧永远算不出**。
+
+⇒ 于是判据整个换了一档：
+
+```
+SW 算不出库 ⇒ scope = null
+             ⇒ 落进「不知道是哪个库 ⇒ 只要有 ANY 一格待决就算待决」的保守分支
+             ⇒ SW 永远以为归属决策没做完
+             ⇒ 自动上传被永久降级成「只传本次改动过的那几个」
+             ⇒ 本机的历史会话再也传不上用户自己的云盘，而回包还报「成功」
+```
+
+而页面侧算得出真值 ⇒ 界面显示「决策已完成」⇒ **两边对不上，且用户毫无提示**。
+
+⚠️ 注意这条**不是**「多传」（那才是不可逆的灾难）。它是「**少传**」——
+方向是保守的，但**结果是永久的**：用户的历史会话再也传不上自己的云盘，
+而界面一直显示「同步成功」。
+
+### 10.2 为什么单测完全看不见
+
+**Node 的 `import()` 是合法的** ⇒ 单测里 SW 侧照样算得出真值 ⇒ 这条缺陷在
+整个单测套件里**隐形**（既不报类型错也不报 lint）。
+（同仓教训：memory「SW 启动即崩这一类缺陷」—— Chrome 上不存在的行为，
+在 Node 里合法、在真机里非法。）
+
+### 10.3 修法
+
+**同一份模块，两种取法**（与既有的 `supabaseRuntime` / `webdavRuntime` 同一个形状）：
+
+- 新增 `src/sync-backend/webdav/libraryIdentityRuntime.ts`（**加载器注册表**）：
+  页面走默认的动态 import（首屏不下载）；SW 由入口 `src/service-worker.ts`
+  **静态** import 并注册。没注册就**明确报错**，而不是让 Chrome 抛一句规范条款。
+- 注册表对 `libraryIdentity` 只有**类型位置**的引用
+  （`typeof import('./libraryIdentity')` ⇒ 编译后消失）⇒ 运行时不成环。
+- `src/storage-kv/firstSyncPendingRecord.ts` 拆出**不吞异常**的
+  `resolveCurrentLibraryScopeStrict()`（给诊断通道用），
+  `resolveCurrentLibraryScope()` 仍然是兜底成 `no-library` 的那一个
+  （**判据上仍然 fail-closed**）。
+
+### 10.4 判据
+
+- `tests/guards/libraryScopeResolution.test.ts`：① 页面 realm 算出来的作用域
+  = 磁盘上那个库的真值（**不是**兜底的 no-library）；② SW realm 里算作用域
+  **必须经由注册进来的加载器**（用**哨兵加载器**把「走没走注册表」变成可观测的事实 ——
+  不钉这条的话，把实现改回旧写法守卫仍然全绿 ⇒ 零检测力）；③ 两边算出的作用域**必须相同**。
+- `tests/guards/libraryScopeResolutionMutation.test.ts`：三条变异自证
+  （改回直接动态 import ⇒ 红；注册表在 SW realm 里忽略注册的加载器 ⇒ 红；
+  **等价改写 ⇒ 仍然绿**）。
+
+### 10.5 真机验证（**已在真 Chrome 上跑通**）
+
+`scripts/lead-verify-sw-library-scope.mjs`（产出 `outputs/lead-verify-sw-library-scope/report.json`）：
+
+| 步骤 | 结果 |
+|---|---|
+| 事实 1：SW realm 里的动态 `import()` | **失败** —— Chrome 原话：`import() is disallowed on ServiceWorkerGlobalScope by the HTML specification` ⇒ **根因坐实** |
+| 事实 2：页面 realm 里的动态 `import()` | **成功**（对照组） |
+| 事实 3：页面 realm 算出来的库 | `["https://dav.probe.invalid/","probe-user","TapStack"]`（= 磁盘上配的那个库） |
+| 事实 3bis：**SW realm 算出来的库（走注册表）** | **与页面完全相同** ← **这才是 P0-1 的直接判据** |
+| 两轮上传（自动 vs 显式） | **同形**（都走到后端那一层，如实报 `locked:true`） |
+
+⚠️ **为什么「同形」本身不够**：修好之后两轮都死在「云服务还没解锁」那一道闸门上
+（探针没有应用密码）⇒ 「同形」也可能是「两边都死在同一个无关的地方」⇒ **弱绿**。
+⇒ 所以才加了**事实 3bis**（SW 必须**正面算出**那个库）+ 一个**阳性对照**。
+
+**检测力自证**（关键）：把入口的注册调用去掉并重新构建 ⇒ 探针立刻报**两条**问题：
+
+- SW 侧算不出库作用域（注册表抛「Service Worker 里必须注册静态的『库身份』加载器」）；
+- **自动上传回包变成 `{ok:true, payload:{success:true}}`**（**什么都没传，却报成功**），
+  而同一次显式上传如实报 `locked:true` ⇒ 两轮**不同形**。
+
+⇒ 判据真的看得见这个缺陷，**不是弱绿**。
+
+---
+
+*本报告原本是只读审计（对应 HEAD `23d2aab`）。**第 47 轮**在其中列出的条目上动了 `src/` 与 `tests/`，
+处置与 commit 见 §0 表与各条末尾的「已修」标注。第 43 轮原始的行号仍对应 `23d2aab`。*
