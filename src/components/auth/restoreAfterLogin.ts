@@ -23,6 +23,10 @@
 import { sendSyncCommand } from '@/shared/mutationProtocol';
 import { loadGroups } from '@/store/slices/tabSlice';
 import type { AppDispatch } from '@/store/hooks';
+import { accountScopeStore } from '@/utils/authCache';
+import { errorHandler } from '@/utils/errorHandler';
+import { logWarn } from '@/utils/log';
+import type { AccountSwitchNotice } from '@/core/accountScope';
 
 /**
  * 本次页面会话里「登录已触发过一次恢复」的标志（2026-10-19 审计 P1-4）。
@@ -58,6 +62,59 @@ export const markLoginRestoreTriggered = (): void => {
 };
 
 /**
+ * 消费「待告知的换账号提示」（2026-10-22 审计 DS-1）。
+ *
+ * 【为什么提示是持久的】它存在归属记录里（utils/authCache.ts 的独立键），
+ * 而不是某个内存变量 ⇒ 用户在登录后立刻关掉弹窗、提示没来得及发出去，
+ * 它也不会丢：下次还能取到（不许静默）。
+ *
+ * 【消费即清空】同一条提示只会被告知一次。
+ *
+ * 【给界面用的接口】调用方（LoginForm）可以在自己的提示文案里并上
+ * 「本机还剩 N 个会话属于上一个账号」这一句 —— 文案由
+ * core/accountScope 的 accountSwitchNotice 拼装（纯函数，界面与守卫同源）。
+ */
+export async function consumeAccountSwitchNotice(): Promise<AccountSwitchNotice | null> {
+  try {
+    const record = await accountScopeStore.read();
+    if (!record?.pendingNotice) return null;
+    await accountScopeStore.write({ ...record, pendingNotice: null });
+    return record.pendingNotice;
+  } catch (error) {
+    logWarn('[auth] 读取换账号提示失败:', error);
+    return null;
+  }
+}
+
+/**
+ * 把换账号提示告诉用户（兜底通道）。
+ *
+ * 为什么走 errorHandler 而不是 React 的 useToast：发出点不在组件里
+ * （登录流程在 thunk 里），而 errorHandler 是仓库里唯一的**非组件** toast
+ * 通道（ToastContext 注册的回调），它的类型只允许 error/warning ——
+ * 换账号提示正好是 warning 级（不是错误，但必须让用户看见）。
+ */
+async function deliverAccountSwitchNotice(): Promise<void> {
+  const notice = await consumeAccountSwitchNotice();
+  if (!notice) return;
+  errorHandler.handle(notice.text, { severity: 'medium', logToConsole: false });
+  logWarn(`[auth] 换账号提示已告知用户：${notice.text}`);
+}
+
+/**
+ * 安排一次换账号提示的发出（留宽限期给调用方）。
+ *
+ * 400ms 宽限期的用途：调用方（LoginForm）是在 restoreAfterLogin 之后的
+ * .then 里消费这条提示的 —— 先消费掉并进自己那句文案的人赢；
+ * 宽限期过了还没人消费，就由本模块自己发（保证用户一定被告知，不许静默）。
+ */
+function scheduleAccountSwitchNotice(): void {
+  setTimeout(() => {
+    void deliverAccountSwitchNotice();
+  }, 400);
+}
+
+/**
  * 登录成功后拉一次云端会话。
  *
  * @returns 拉回多少个会话（失败时 0）
@@ -82,5 +139,10 @@ export async function restoreAfterLogin(dispatch: AppDispatch): Promise<number> 
     return Array.isArray(payload?.groups) ? payload.groups.length : 0;
   } catch {
     return 0;
+  } finally {
+    // 换账号提示在**最后**才安排发出（下载完成之后）：调用方是在
+    // restoreAfterLogin 之后的 .then 里消费它的 —— 提示先到、宽限期后到，
+    // 调用方才有机会把它并进自己那句文案里；没人消费则由本模块兜底发出。
+    scheduleAccountSwitchNotice();
   }
 }

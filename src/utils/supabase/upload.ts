@@ -789,7 +789,7 @@ export const uploadSync = {
     // 「幽灵复活」。绝不在这条分支假装删除意图已达成。
     const rowsToUpload = selectRowsForUpload(candidateGroups, { overwriteCloud, tombstoneColumn: tombstoneSupported });
     const tombstonesDropped = overwriteCloud && !tombstoneSupported
-      ? groups.filter(g => g.isDeleted === true).map(g => g.id)
+      ? uploadGroups.filter(g => g.isDeleted === true).map(g => g.id)
       : [];
     const tombstonedIds = new Set(
       rowsToUpload.filter(g => g.isDeleted === true).map(g => g.id)
@@ -1027,6 +1027,13 @@ export const uploadSync = {
       // 探测必须在删除**之前**当场做（读不出来是每轮下载的事实，上一轮的清单
       // 既可能漏掉新写入的坏行、也可能保护错对象）—— 见 probeOverwriteDeletePlan。
       // 合并模式不做这个探测（它压根不删云端行）。
+      // ⚠️ 这里传的是**本机全部会话 id**（不是账号闸门放行的那一批）：
+      // 「本机有没有副本」是关于**数据**的事实，与它归谁无关 ——
+      // 被闸门拦下的那些会话，本机确实有一份；把它们算成「本机没有副本」
+      // 会让读不出来的云端行被保护下来（= 旧版本泄露进当前账号的残留
+      // 永远留在云端）。用全量清单 ⇒ 那批残留会在覆盖上传时被清掉
+      // （本地副本仍在，不丢数据）。
+      // 「受保护集 ∩ 上行集 = ∅」依然成立：上行集是本机清单的子集。
       const overwritePlan = overwriteCloud
         ? await probeOverwriteDeletePlan(groups.map(group => group.id))
         : null;
