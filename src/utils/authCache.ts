@@ -54,6 +54,18 @@ export async function readLastAuthCacheUserId(): Promise<string | null> {
 }
 
 /**
+ * chrome.storage.local 是否可用。
+ *
+ * 非扩展环境（单测里没装 chrome 桩的、非扩展页面）没有它 —— 那不是「读失败」，
+ * 而是「这个环境压根没有归属记录可存」：返回「没有记录」而不是抛错。
+ * 扩展环境里它恒在（popup 与 SW 都有），所以这个分支只影响测试与未来的
+ * 非扩展宿主。
+ */
+function hasLocalStorage(): boolean {
+  return typeof chrome !== 'undefined' && Boolean(chrome.storage?.local);
+}
+
+/**
  * 本机会话的归属记录（读写都在 chrome.storage.local）。
  *
  * read() 的三种返回必须分清：
@@ -64,6 +76,7 @@ export async function readLastAuthCacheUserId(): Promise<string | null> {
  */
 export const accountScopeStore = {
   async read(): Promise<AccountScopeRecord | null> {
+    if (!hasLocalStorage()) return null;
     const result = await chrome.storage.local.get(ACCOUNT_SCOPE_KEY);
     const raw = result[ACCOUNT_SCOPE_KEY];
     if (raw === undefined || raw === null) return null;
@@ -71,10 +84,12 @@ export const accountScopeStore = {
   },
 
   async write(record: AccountScopeRecord): Promise<void> {
+    if (!hasLocalStorage()) return;
     await chrome.storage.local.set({ [ACCOUNT_SCOPE_KEY]: record });
   },
 
   async clear(): Promise<void> {
+    if (!hasLocalStorage()) return;
     await chrome.storage.local.remove(ACCOUNT_SCOPE_KEY);
   },
 };

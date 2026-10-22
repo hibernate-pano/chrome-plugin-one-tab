@@ -107,7 +107,7 @@ const initialState: AuthState = {
  * 认账失败的后果是**上传闸门更保守**（归属记录没更新 ⇒ 旧归属仍在 ⇒
  * 旧会话在新账号下被挡住），方向是安全的。
  */
-async function bindLocalSessionsToAccount(userId: string): Promise<void> {
+export async function bindLocalSessionsToAccount(userId: string): Promise<void> {
   try {
     const record = await accountScopeStore.read();
     // 已经是这个账号 ⇒ 什么都不用改（也不必枚举本机会话：99% 的路径走这里）。

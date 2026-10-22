@@ -499,38 +499,35 @@ export function nextSyncWatermark(
 /**
  * 取本机的账号归属记录（DS-1 账号闸门的前置）。
  *
- * 【记录不存在 ⇒ 这台机器还没建立归属】两种可能：
- *   1. 刚升级到带这道闸门的版本 ⇒ 兜底用「登录缓存里的上一个账号」——
- *      那是本机归属的最好证据（这台机器上最后登录过谁）；
- *   2. 登录缓存也没有（从没登录过 / 被清过）⇒ **无从判断 ⇒ 中止上传**。
+ * 【记录不存在 ⇒ 这台机器还没建立归属】兜底顺序：
+ *   ① 登录缓存里的**上一个账号**（这台机器上最后登录过谁）—— 有它就按它
+ *      认账：本机会话归那个账号 ⇒ 换到别的账号时它们会被挡住。
+ *   ② 连它都没有 ⇒ 这台机器**从来没有过被记下的账号**（从没登录过，或
+ *      登录缓存写失败）⇒ 本机会话无主 ⇒ 只能归当前账号。
+ *      这一步是「宁可少认一件事」：把用户锁死在「永远传不上去」的状态，
+ *      比「本机从来没有过别的账号」这件事本身更糟。
  *
- * 【为什么读不到就中止，而不是「当作没有归属」】
- * 「当作没有归属」= fail-open ⇒ 闸门会放行本机全部会话 ⇒ 跨账号泄露原样发生。
- * 宁可这次不同步（用户会看到失败、重新登录一次即可），
- * 也不能把上一个账号的数据写进当前账号。
- *
- * 【读失败（抛错）同理】形状损坏的记录读出来是「读不出来」，
- * 不是「没有归属」—— 与 storage.getGroups 的 fail-closed 纪律一致。
+ * 【读失败（抛错）不在兜底之列】形状损坏的记录读出来是「读不出来」，
+ * 不是「没有归属」—— 与 storage.getGroups 的 fail-closed 纪律一致：
+ * 读不出来就中止上传，绝不把它当成「没有归属」而放行全部会话。
  */
-async function loadAccountScopeForUpload(): Promise<AccountScopeRecord> {
+async function loadAccountScopeForUpload(currentUserId: string): Promise<AccountScopeRecord> {
   const record = await accountScopeStore.read();
   if (record) return record;
 
   const lastUserId = await readLastAuthCacheUserId();
-  if (!lastUserId) {
-    throw new Error(
-      '无法确认本机会话归属的账号，已中止上传（防止跨账号泄露）：请重新登录一次'
-    );
-  }
+  const ownerUserId = lastUserId ?? currentUserId;
   const seeded: AccountScopeRecord = {
-    ownerUserId: lastUserId,
+    ownerUserId,
     foreignOwners: {},
     pendingNotice: null,
   };
   await accountScopeStore.write(seeded);
   logWarn(
-    '[upload] 本机尚无账号归属记录，已按登录缓存里的上一个账号兜底' +
-      `（${lastUserId}）；若这台机器换过账号，请重新登录一次以完成认账`
+    '[upload] 本机尚无账号归属记录，已兜底认账：' +
+      (lastUserId
+        ? `按登录缓存里的上一个账号（${lastUserId}）认账；若这台机器换过账号，请重新登录一次以完成认账`
+        : '这台机器没有登录缓存可依据（从没登录过？），本机会话暂归当前账号')
   );
   return seeded;
 }
@@ -700,7 +697,7 @@ export const uploadSync = {
     // 四条全都汇到本函数（syncEngine.upload → tabGroupSyncService →
     // supabaseAdapter → supabaseSync.uploadTabGroups → 这里），
     // 而**这一层才是真正写云端的地方**。闸门放在调用方 ⇒ 漏一条路径就漏一次。
-    const accountScope = await loadAccountScopeForUpload();
+    const accountScope = await loadAccountScopeForUpload(userId);
     const scoped = filterGroupsByAccount(groups, accountScope, userId);
     const uploadGroups = scoped.allowed;
     if (scoped.blocked.length > 0) {

@@ -20,9 +20,10 @@
 // · 结构层的「四条路径都落到同一道过滤上」（钉**调用关系**，不钉行号 ——
 //   行号会漂，调用关系不会）；
 // · 退出登录只许删登录缓存这一个键（行为层）。
-import { describe, it, beforeEach } from 'node:test';
+import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, readdirSync } from 'node:fs';
+import { stubSessionJson } from '../_helpers/stubSession.ts';
 import {
   accountSwitchNotice,
   createAccountScopeRecord,
@@ -331,5 +332,256 @@ describe('DS-1 退出登录：本机会话一个都不能删', () => {
     const scope = await accountScopeStore.read();
     assert.equal(scope?.ownerUserId, 'user-A', '归属记录必须活过退出登录');
     assert.deepEqual(scope?.foreignOwners, { 'g-a1': 'user-A' });
+  });
+});
+
+// ══════════════════════════════════════════════════════════════════════════
+// 六、端到端复验：A 登录 → 存 3 个会话 → 登出 → B 登录 → 触发上传
+//
+// 【为什么这一段必须是端到端的】前面的守卫是纯函数层 + 结构层：
+// 它们能证明「判据是对的」「四条路径都汇到那一层」，但证明不了
+// 「那一层真的把 A 的会话挡在云端之外」—— 而后者才是这条缺陷的本体。
+// 这一段用**真的**上传函数（utils/supabase/upload.ts 的 uploadTabGroups，
+// 即四条路径最终汇到的那一处）打**假云端**（PostgREST 子集），
+// 断言 B 的云端行里没有 A 的会话，且本机 A 的 3 个会话原样还在。
+// ══════════════════════════════════════════════════════════════════════════
+
+const USER_A = 'user-ds1-account-a';
+const USER_B = 'user-ds1-account-b';
+const SESSION_KEY = 'sb-stub-auth-token';
+const NOW = '2026-10-22T08:00:00.000Z';
+const LATER = '2026-10-22T09:00:00.000Z';
+
+function mkGroup(id: string, overrides: Record<string, unknown> = {}) {
+  return {
+    id,
+    name: id,
+    tabs: [],
+    createdAt: NOW,
+    updatedAt: LATER,
+    isLocked: false,
+    version: 1,
+    ...overrides,
+  } as any;
+}
+
+function mkTab(id: string, url: string) {
+  return {
+    id,
+    url,
+    title: id,
+    created_at: NOW,
+    last_accessed: NOW,
+    last_op_device: null,
+    last_op_seq: null,
+  } as any;
+}
+
+/** 假云端 = PostgREST 子集（GET/POST/DELETE/PATCH + eq./in.() 过滤）。 */
+function installFakeCloud(sessionUserId: () => string) {
+  const rows = new Map<string, Record<string, unknown>>();
+  const ops: string[] = [];
+
+  const jsonRes = (body: unknown, status = 200) =>
+    new Response(status === 204 ? null : JSON.stringify(body), {
+      status,
+      headers: { 'content-type': 'application/json' },
+    });
+
+  const matches = (row: Record<string, unknown>, params: URLSearchParams): boolean => {
+    for (const [key, raw] of params.entries()) {
+      if (['select', 'limit', 'offset', 'order', 'on_conflict', 'Prefer'].includes(key)) continue;
+      if (raw.startsWith('eq.')) {
+        if (String(row[key]) !== raw.slice(3)) return false;
+      } else if (raw.startsWith('in.(')) {
+        const ids = raw.slice(4, -1).split(',').map(s => s.replace(/"/g, '').trim());
+        if (!ids.includes(String(row.id))) return false;
+      } else {
+        throw new Error(`假云端不认识的过滤器: ${key}=${raw}`);
+      }
+    }
+    return true;
+  };
+
+  const previousFetch = globalThis.fetch;
+  globalThis.fetch = (async (input: any, init: RequestInit = {}) => {
+    const url = new URL(typeof input === 'string' ? input : input.url);
+    const method = (init.method ?? 'GET').toUpperCase();
+    const params = url.searchParams;
+
+    if (url.pathname.endsWith('/auth/v1/user')) {
+      return jsonRes({ id: sessionUserId(), aud: 'authenticated', role: 'authenticated' });
+    }
+    if (!url.pathname.endsWith('/rest/v1/tab_groups')) {
+      return jsonRes({ message: 'not found' }, 404);
+    }
+
+    if (method === 'GET') {
+      const hit = [...rows.values()].filter(r => matches(r, params));
+      hit.sort((a, b) => {
+        const byCreated = String(b.created_at ?? '').localeCompare(String(a.created_at ?? ''));
+        return byCreated !== 0 ? byCreated : String(b.id).localeCompare(String(a.id));
+      });
+      const limit = Number(params.get('limit') ?? Number.POSITIVE_INFINITY);
+      const offset = Number(params.get('offset') ?? 0);
+      const page = hit.slice(offset, offset + limit);
+      return new Response(JSON.stringify(page), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    }
+
+    if (method === 'POST') {
+      const body = init.body ? JSON.parse(String(init.body)) : [];
+      const list: Record<string, unknown>[] = Array.isArray(body) ? body : [body];
+      for (const row of list) rows.set(String(row.id), { ...row });
+      ops.push(`UPSERT:${list.map(r => String(r.id)).sort().join(',')}`);
+      return jsonRes(list);
+    }
+
+    if (method === 'DELETE') {
+      const deleted: string[] = [];
+      for (const [id, row] of [...rows.entries()]) {
+        if (!matches(row, params)) continue;
+        rows.delete(id);
+        deleted.push(id);
+      }
+      ops.push(`DELETE:${deleted.sort().join(',')}`);
+      return jsonRes([]);
+    }
+
+    if (method === 'PATCH') {
+      const body = init.body ? JSON.parse(String(init.body)) : {};
+      const touched: Record<string, unknown>[] = [];
+      for (const [id, row] of [...rows.entries()]) {
+        if (!matches(row, params)) continue;
+        const next = { ...row, ...body };
+        rows.set(id, next);
+        touched.push(next);
+      }
+      ops.push(`PATCH:${touched.map(r => String(r.id)).sort().join(',')}`);
+      return jsonRes(touched);
+    }
+
+    return jsonRes({ message: `假云端不认识的请求: ${method} ${url.pathname}` }, 405);
+  }) as typeof fetch;
+
+  return { rows, ops, restore: () => { globalThis.fetch = previousFetch; } };
+}
+
+describe('DS-1 端到端：A 的会话绝不能进 B 的云端行', () => {
+  it('A 登录 → 存 3 个会话 → 登出 → B 登录 → 上传：B 的云端行里没有 A 的会话，本机 A 的 3 个会话还在', async () => {
+    // ── 环境桩（必须在被测模块被 import 之前就位）─────────────────────
+    const lsData = new Map<string, string>();
+    const localStorageStub = {
+      get length() { return lsData.size; },
+      key: (i: number) => [...lsData.keys()][i] ?? null,
+      getItem: (k: string) => (lsData.has(k) ? (lsData.get(k) as string) : null),
+      setItem: (k: string, v: string) => void lsData.set(k, String(v)),
+      removeItem: (k: string) => void lsData.delete(k),
+      clear: () => void lsData.clear(),
+    };
+    (globalThis as Record<string, unknown>).window = { localStorage: localStorageStub };
+    (globalThis as Record<string, unknown>).localStorage = localStorageStub;
+
+    const chromeData = new Map<string, unknown>();
+    (globalThis as Record<string, unknown>).chrome = {
+      storage: {
+        local: {
+          get: async (k: string | string[]) => {
+            const keys = Array.isArray(k) ? k : [k];
+            const out: Record<string, unknown> = {};
+            for (const key of keys) if (chromeData.has(key)) out[key] = chromeData.get(key);
+            return out;
+          },
+          set: async (obj: Record<string, unknown>) => {
+            for (const [k, v] of Object.entries(obj)) chromeData.set(k, v);
+          },
+          remove: async (k: string) => void chromeData.delete(k),
+        },
+        onChanged: { addListener: () => undefined, removeListener: () => undefined },
+      },
+      runtime: { getManifest: () => ({ version: 'test' }) },
+      alarms: { create: () => undefined, clear: async () => true, onAlarm: { addListener: () => undefined } },
+    };
+
+    let sessionUser = USER_A;
+    const cloud = installFakeCloud(() => sessionUser);
+
+    try {
+      // ── ① A 登录，本机存了 3 个会话 ─────────────────────────────────
+      lsData.set('storage_version', JSON.stringify(5));
+      lsData.set(
+        'tab_groups',
+        JSON.stringify([
+          mkGroup('g-a1', { tabs: [mkTab('t1', 'https://a.example.com/')] }),
+          mkGroup('g-a2', { tabs: [mkTab('t2', 'https://a.example.com/2')] }),
+          mkGroup('g-a3', { tabs: [mkTab('t3', 'https://a.example.com/3')] }),
+        ])
+      );
+      chromeData.set('auth_cache', {
+        user: { id: USER_A, email: 'a@example.com' },
+        isAuthenticated: true,
+        timestamp: Date.now(),
+      });
+      chromeData.set(SESSION_KEY, stubSessionJson(USER_A));
+
+      const { authCache, accountScopeStore } = await import('@/utils/authCache');
+
+      // ── ② 登出（只清登录态，本机会话原样留下）─────────────────────
+      await authCache.clearAuthState();
+      const afterSignOut = await accountScopeStore.read();
+      assert.equal(afterSignOut?.ownerUserId, USER_A, '登出前必须先记下本机会话属于谁');
+      assert.equal(
+        JSON.parse(lsData.get('tab_groups')!).length,
+        3,
+        '退出登录不许删除本机会话'
+      );
+
+      // ── ③ B 登录（换账号 ⇒ 旧会话认账给 A）────────────────────────
+      const { bindLocalSessionsToAccount } = await import('@/store/slices/authSlice');
+      await bindLocalSessionsToAccount(USER_B);
+      const scope = await accountScopeStore.read();
+      assert.equal(scope?.ownerUserId, USER_B);
+      assert.deepEqual(
+        scope?.foreignOwners,
+        { 'g-a1': USER_A, 'g-a2': USER_A, 'g-a3': USER_A },
+        'A 的三个会话必须认账给 A'
+      );
+      assert.ok(scope?.pendingNotice, '换账号必须备一条要告知用户的提示');
+      assert.ok(scope.pendingNotice.text.includes('3'), '提示里必须带残留会话数');
+
+      // ── ④ B 触发上传（3 个 A 的 + 1 个 B 自己的，一起进上传函数）───
+      sessionUser = USER_B;
+      chromeData.set(SESSION_KEY, stubSessionJson(USER_B));
+      const { uploadSync } = await import('@/utils/supabase/upload');
+      await uploadSync.uploadTabGroups(
+        [
+          mkGroup('g-a1', { tabs: [mkTab('t1', 'https://a.example.com/')] }),
+          mkGroup('g-a2', { tabs: [mkTab('t2', 'https://a.example.com/2')] }),
+          mkGroup('g-a3', { tabs: [mkTab('t3', 'https://a.example.com/3')] }),
+          mkGroup('g-b1', { tabs: [mkTab('t4', 'https://b.example.com/')] }),
+        ],
+        false
+      );
+
+      // ── ⑤ 断言：B 的云端行里只有 B 自己的会话 ────────────────────
+      assert.deepEqual(
+        [...cloud.rows.keys()].sort(),
+        ['g-b1'],
+        `A 的会话绝不能进 B 的云端行（实际写入：${[...cloud.rows.keys()].join(',')}）`
+      );
+      assert.equal(cloud.rows.get('g-b1')?.user_id, USER_B, '云端行必须挂在当前账号名下');
+
+      // ── ⑥ 断言：本机 A 的 3 个会话原样还在（不许丢数据）─────────
+      const localGroups = JSON.parse(lsData.get('tab_groups')!) as any[];
+      assert.equal(localGroups.length, 3, '本机会话一个都不能少');
+      assert.deepEqual(
+        localGroups.map(g => g.id).sort(),
+        ['g-a1', 'g-a2', 'g-a3']
+      );
+    } finally {
+      cloud.restore();
+    }
   });
 });
