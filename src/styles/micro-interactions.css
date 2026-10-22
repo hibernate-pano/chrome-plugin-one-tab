@@ -1,14 +1,26 @@
 /* ==========================================
    ⚡ TabVault Pro 微交互系统
-   快速响应 (50-100ms) + 触觉反馈
+   快速响应 + 触觉反馈
    ========================================== */
 
 /*
  * 设计原则：
- * 1. 响应时间控制在 50-100ms（人眼感知最佳）
+ * 1. 响应时间读**命名阶梯**（--motion-fast / --motion-base / --motion-slow），
+ *    不再各处写死毫秒数
  * 2. 所有交互提供视觉和"触觉"反馈
  * 3. 使用品牌色（Teal）增强识别度
  * 4. 支持 prefers-reduced-motion
+ *
+ * ── 2026-10-23 审计 V-14：动效节奏收敛 ────────────────────────────────
+ * 本文件原先混用 60 / 80 / 100 / 120ms 四种时长（.btn-icon 60ms、
+ * .btn-primary 80ms、.tab-group-card 120ms、.search-input 100ms）
+ * ⇒ 同一次点击里三颗按钮反馈速度不同。
+ *
+ * 现在全部读 global.css 定义的阶梯：
+ *   --motion-fast 120ms  状态类反馈（hover / 按下 / 图标按钮 / 涟漪）
+ *   --motion-base 180ms  常规过渡（卡片、输入框、标签行）
+ *   --motion-slow 250ms  大面积变化（主题切换）
+ *   --ease-standard      统一缓动
  */
 
 @layer components {
@@ -19,7 +31,7 @@
   .btn-primary {
     @apply relative overflow-hidden;
     background: var(--color-accent, #2563EB);
-    transition: all 80ms cubic-bezier(0.4, 0, 0.2, 1);
+    transition: all var(--motion-fast) var(--ease-standard);
     cursor: pointer;
   }
 
@@ -32,7 +44,7 @@
     bottom: 0;
     opacity: 0;
     background: var(--color-accent-hover, #1D4ED8);
-    transition: opacity 80ms ease-out;
+    transition: opacity var(--motion-fast) var(--ease-standard);
     z-index: -1;
   }
 
@@ -65,7 +77,7 @@
     @apply relative;
     /* 建立层叠上下文，确保 ::after 悬浮层（z-index: -1）不会盖住图标，也不会逃到卡片背景之后 */
     isolation: isolate;
-    transition: all 60ms cubic-bezier(0.4, 0, 0.2, 1);
+    transition: all var(--motion-fast) var(--ease-standard);
     cursor: pointer;
   }
 
@@ -82,7 +94,7 @@
     border-radius: inherit;
     opacity: 0;
     background: var(--color-bg-tertiary, rgba(37, 99, 235, 0.08));
-    transition: opacity 60ms ease-out;
+    transition: opacity var(--motion-fast) var(--ease-standard);
     z-index: -1;
   }
 
@@ -100,7 +112,7 @@
 
   .tab-group-card {
     @apply relative;
-    transition: all 120ms cubic-bezier(0.4, 0, 0.2, 1);
+    transition: all var(--motion-base) var(--ease-standard);
     cursor: default;
   }
 
@@ -115,7 +127,7 @@
     opacity: 0;
     pointer-events: none;
     box-shadow: 0 4px 12px -2px rgba(37, 99, 235, 0.15);
-    transition: opacity 100ms ease-out;
+    transition: opacity var(--motion-fast) var(--ease-standard);
   }
 
   .tab-group-card:hover::before {
@@ -132,7 +144,7 @@
 
   .tab-item {
     @apply relative;
-    transition: all 80ms cubic-bezier(0.4, 0, 0.2, 1);
+    transition: all var(--motion-fast) var(--ease-standard);
     cursor: pointer;
   }
 
@@ -145,7 +157,7 @@
     width: 0.25rem;
     opacity: 0;
     background: linear-gradient(180deg, #60A5FA 0%, #2563EB 100%);
-    transition: opacity 80ms ease-out;
+    transition: opacity var(--motion-fast) var(--ease-standard);
   }
 
   .tab-item:hover::before {
@@ -166,7 +178,7 @@
      ========================================== */
 
   .search-input {
-    transition: all 100ms cubic-bezier(0.4, 0, 0.2, 1);
+    transition: all var(--motion-base) var(--ease-standard);
   }
 
   .search-input:hover {
@@ -184,7 +196,7 @@
 
   /* 搜索清除按钮 */
   .search-clear-btn {
-    transition: all 60ms ease-out;
+    transition: all var(--motion-fast) var(--ease-standard);
   }
 
   .search-clear-btn:hover {
@@ -219,7 +231,7 @@
      ========================================== */
 
   .dragging {
-    transition: all 100ms cubic-bezier(0.4, 0, 0.2, 1);
+    transition: all var(--motion-base) var(--ease-standard);
     opacity: 0.6;
     transform: scale(1.03);
     box-shadow:
@@ -231,25 +243,29 @@
   .drag-over {
     background: rgba(37, 99, 235, 0.08) !important;
     box-shadow: inset 0 0 0 2px rgba(37, 99, 235, 0.4);
-    transition: all 80ms ease-out;
+    transition: all var(--motion-fast) var(--ease-standard);
   }
 
   /* ==========================================
      Tooltip 微交互
      ========================================== */
 
-  .tooltip {
-    opacity: 0;
-    transform: scale(0.95);
-    transition: all 100ms cubic-bezier(0.4, 0, 0.2, 1);
-    pointer-events: none;
-  }
-
-  .tooltip.show {
-    opacity: 1;
-    transform: scale(1);
-    pointer-events: auto;
-  }
+  /*
+   * 2026-10-23 审计 V-10：这两条规则**已删**。
+   *
+   * 原先这里有 `.tooltip { opacity: 0; transform: scale(0.95) }` +
+   * `.tooltip.show { opacity: 1; ... }` —— 一套「显隐两态」的写法。
+   * 但 `<Tooltip>` 组件是**条件挂载**的（isVisible 时才渲染），组件渲染的
+   * 提示条**从来没有 `.show` 这个类** ⇒ `.tooltip` 一旦挂上去，
+   * opacity 永远是 0 ⇒ 提示条**整个不可见**。
+   *
+   * 之前没暴露，是因为组件根本没用 `.tooltip` 这个类名 —— 它自己带了一套
+   * 写死的 `bg-gray-900 dark:bg-gray-800 text-white`（12 组主题实测无一组
+   * 跟主题走，V-10）。
+   *
+   * 现在两处对齐：组件挂上 `.tooltip`（配色交给 global.css 的 `.tooltip`
+   * 规则读主题令牌），这两条「显隐两态」规则删掉 —— 组件不需要它们。
+   */
 
   /* ==========================================
      成功/错误状态微动画
@@ -268,7 +284,7 @@
   }
 
   .success-feedback {
-    animation: success-bounce 400ms cubic-bezier(0.34, 1.56, 0.64, 1);
+    animation: success-bounce var(--motion-slow) cubic-bezier(0.34, 1.56, 0.64, 1);
   }
 
   @keyframes error-shake {
@@ -284,7 +300,7 @@
   }
 
   .error-feedback {
-    animation: error-shake 300ms cubic-bezier(0.4, 0, 0.2, 1);
+    animation: error-shake var(--motion-slow) var(--ease-standard);
   }
 
   /* ==========================================
@@ -304,7 +320,7 @@
   }
 
   .count-update {
-    animation: count-pop 300ms cubic-bezier(0.34, 1.56, 0.64, 1);
+    animation: count-pop var(--motion-slow) cubic-bezier(0.34, 1.56, 0.64, 1);
   }
 
   /* ==========================================
@@ -342,7 +358,7 @@
 @layer utilities {
   /* 快速悬停效果 */
   .micro-hover {
-    transition: all 80ms cubic-bezier(0.4, 0, 0.2, 1);
+    transition: all var(--motion-fast) var(--ease-standard);
   }
 
   .micro-hover:hover {
@@ -366,7 +382,7 @@
 
   /* 触觉点击 */
   .micro-tap {
-    transition: transform 60ms cubic-bezier(0.4, 0, 0.2, 1);
+    transition: transform var(--motion-fast) var(--ease-standard);
   }
 
   .micro-tap:active {

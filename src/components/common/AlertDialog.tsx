@@ -32,7 +32,7 @@ export const AlertDialog: React.FC<AlertDialogProps> = ({
               </svg>
             </div>
           ),
-          button: 'bg-emerald-700 hover:bg-emerald-800 focus-visible:outline-slate-600 dark:focus-visible:outline-slate-300 text-white'
+          button: 'bg-emerald-700 hover:bg-emerald-800 text-white'
         };
       case 'error':
         return {
@@ -43,7 +43,7 @@ export const AlertDialog: React.FC<AlertDialogProps> = ({
               </svg>
             </div>
           ),
-          button: 'bg-rose-600 hover:bg-rose-700 focus-visible:outline-slate-600 dark:focus-visible:outline-slate-300 text-white'
+          button: 'bg-rose-600 hover:bg-rose-700 text-white'
         };
       case 'warning':
         return {
@@ -54,7 +54,7 @@ export const AlertDialog: React.FC<AlertDialogProps> = ({
               </svg>
             </div>
           ),
-          button: 'bg-amber-700 hover:bg-amber-800 focus-visible:outline-slate-600 dark:focus-visible:outline-slate-300 text-white'
+          button: 'bg-amber-700 hover:bg-amber-800 text-white'
         };
       case 'info':
         return {
@@ -65,12 +65,12 @@ export const AlertDialog: React.FC<AlertDialogProps> = ({
               </svg>
             </div>
           ),
-          button: 'bg-sky-700 hover:bg-sky-800 focus-visible:outline-slate-600 dark:focus-visible:outline-slate-300 text-white'
+          button: 'bg-sky-700 hover:bg-sky-800 text-white'
         };
       default:
         return {
           icon: null,
-          button: 'bg-sky-700 hover:bg-sky-800 focus-visible:outline-slate-600 dark:focus-visible:outline-slate-300 text-white'
+          button: 'bg-sky-700 hover:bg-sky-800 text-white'
         };
     }
   };
@@ -87,7 +87,7 @@ export const AlertDialog: React.FC<AlertDialogProps> = ({
       footer={
         <button
           onClick={onClose}
-          className={`inline-flex items-center justify-center rounded-xl px-4 py-2.5 text-sm font-medium transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 ${typeStyles.button}`}
+          className={`inline-flex items-center justify-center rounded-xl px-4 py-2.5 text-sm font-medium transition-colors ${typeStyles.button}`}
         >
           {buttonText}
         </button>

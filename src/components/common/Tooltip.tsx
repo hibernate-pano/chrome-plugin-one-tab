@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect, useLayoutEffect } from 'react';
+import React, { useState, useRef, useEffect, useLayoutEffect, useId } from 'react';
 import { resolveTooltipAvoid, TOOLTIP_SIDE_GAP } from './tooltipPlacement';
 
 interface TooltipProps {
@@ -25,6 +25,16 @@ export const Tooltip: React.FC<TooltipProps> = ({
   const tooltipRef = useRef<HTMLDivElement>(null);
   // 避让位移（px，正 = 向下）。0 = 贴着按钮原位弹出。
   const [avoidOffset, setAvoidOffset] = useState(0);
+  // ── 2026-10-23 审计 V-15：提示条必须被读屏引用到 ──────────────────────
+  // 原先提示条有 role="tooltip" 却**没有 id**，也没有任何元素用
+  // aria-describedby 指向它 ⇒ 多数读屏根本不会播报这段说明。
+  // 而这段说明不是装饰：锁定按钮的提示是「会话未锁定 · 点此锁定（锁定后
+  // 不会被「清理重复标签」清理，也不能重命名或逐条删除）」——
+  // 这是第 42 轮 U-11 定案「tooltip 必须同时说明当前状态和点了会发生什么」
+  // 的那一半，键盘/读屏用户却拿不到。
+  //
+  // useId() 生成的 id 在组件生命周期内稳定 ⇒ 可以直接挂到包装层上。
+  const tooltipId = useId();
 
   const showTooltip = () => {
     if (timeoutId) {
@@ -134,17 +144,67 @@ export const Tooltip: React.FC<TooltipProps> = ({
   const getArrowClasses = () => {
     switch (position) {
       case 'top':
-        return 'top-full right-4 border-t-gray-800';
+        return 'top-full right-4';
       case 'bottom':
-        return 'bottom-full right-4 border-b-gray-800';
+        return 'bottom-full right-4';
       case 'left':
-        return 'left-full top-1/2 transform -translate-y-1/2 border-l-gray-800';
+        return 'left-full top-1/2 transform -translate-y-1/2';
       case 'right':
-        return 'right-full top-1/2 transform -translate-y-1/2 border-r-gray-800';
+        return 'right-full top-1/2 transform -translate-y-1/2';
       default:
-        return 'top-full right-4 border-t-gray-800';
+        return 'top-full right-4';
     }
   };
+
+  /**
+   * 箭头的颜色必须与提示条**同底**（V-10）。
+   *
+   * 原先箭头写死 `border-t-gray-800`（#1f2937），提示条写死 `bg-gray-900`
+   * （#111827）—— 两种冷灰。改成主题底色后，箭头若还留冷灰，就变成
+   * 「暖纸底上的一个深灰三角」，比没有箭头更扎眼。
+   * 用内联样式读同一个令牌 ⇒ 条与箭头不可能漂移。
+   */
+  const getArrowStyle = (): React.CSSProperties => {
+    const color = 'var(--color-bg-elevated)';
+    switch (position) {
+      case 'bottom':
+        return { borderBottomColor: color };
+      case 'left':
+        return { borderLeftColor: color };
+      case 'right':
+        return { borderRightColor: color };
+      default:
+        return { borderTopColor: color };
+    }
+  };
+
+  /**
+   * 把 `aria-describedby` 挂到**触发元素**上（V-15）。
+   *
+   * 为什么不是挂在包装层 `<div>` 上：包装层通常不可聚焦，读屏根本不会
+   * 读它的描述 ⇒ 挂了等于没挂。必须挂到真正能获得焦点的那个元素
+   * （`<button>` 或 `role="button"` 的 `<h3>`）上。
+   *
+   * ⚠️ 子元素**可能已经**有 `aria-describedby`（TabGroup 的会话标题就
+   * 指向一条 sr-only 说明）⇒ 这里**合并**而不是覆盖（空格分隔两个 id），
+   * 否则那条已有说明会被吃掉。
+   */
+  const trigger = React.isValidElement(children)
+    ? React.cloneElement(
+        children as React.ReactElement<{ 'aria-describedby'?: string }>,
+        {
+          'aria-describedby':
+            [
+              (children as React.ReactElement<{ 'aria-describedby'?: string }>).props[
+                'aria-describedby'
+              ],
+              isVisible ? tooltipId : undefined,
+            ]
+              .filter(Boolean)
+              .join(' ') || undefined,
+        },
+      )
+    : children;
 
   return (
     <div
@@ -154,10 +214,11 @@ export const Tooltip: React.FC<TooltipProps> = ({
       onFocus={showTooltip}
       onBlur={hideTooltip}
     >
-      {children}
+      {trigger}
       {isVisible && (
         <div
           ref={tooltipRef}
+          id={tooltipId}
           // ── 2026-10-19 审计 V-7：tooltip 不得撑破视口 ──────────────────
           // 修复前是 `max-w-[min(20rem,calc(100vw-1.5rem))] whitespace-normal break-words` + `left-1/2 -translate-x-1/2`：
           // 顶栏「保存」按钮的提示语有 20 个字，在 400px 宽的窗口里
@@ -166,7 +227,13 @@ export const Tooltip: React.FC<TooltipProps> = ({
           //
           // 修法：① 允许换行；② 宽度上限跟着视口走；③ 超出时改为靠边对齐
           // （right-0 而不是居中），保证它始终完整落在视口内。
-          className={`absolute z-50 max-w-[min(20rem,calc(100vw-1.5rem))] whitespace-normal break-words px-3 py-2 text-sm text-white bg-gray-900 dark:bg-gray-800 rounded-lg shadow-xl backdrop-blur-sm border border-gray-700 dark:border-gray-600 pointer-events-none ${getPositionClasses()} animate-fadeIn`}
+          //
+          // ── 2026-10-23 审计 V-10：配色交给 `.tooltip` 规则（主题令牌）──
+          // 原先是 `text-white bg-gray-900 dark:bg-gray-800 border-gray-700
+          // dark:border-gray-600` ⇒ 12 组主题 × 明暗实测**没有一组**跟主题走
+          // （claude 暖纸主题里弹出一张冷灰卡片）。
+          // 现在只留布局类，配色由 global.css 的 `.tooltip` 规则给。
+          className={`tooltip absolute z-50 max-w-[min(20rem,calc(100vw-1.5rem))] whitespace-normal break-words px-3 py-2 text-sm rounded-lg backdrop-blur-sm border pointer-events-none ${getPositionClasses()} animate-fadeIn`}
           style={getOffsetStyle()}
           role="tooltip"
         >
@@ -176,6 +243,7 @@ export const Tooltip: React.FC<TooltipProps> = ({
           {avoidOffset === 0 && (
             <div
               className={`absolute w-0 h-0 border-4 border-transparent ${getArrowClasses()}`}
+              style={getArrowStyle()}
             />
           )}
         </div>

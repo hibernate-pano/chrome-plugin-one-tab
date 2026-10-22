@@ -18,6 +18,14 @@ import { supportsOpStamp } from './probe';
 import { DOWNLOAD_PAGE_SIZE } from './idBatches';
 import { logError, logInfo, logWarn } from '../log';
 import { CRYPTO_CONCURRENCY, mapWithConcurrency } from '../concurrency';
+// ── 2026-10-22（402）：「服务端项目被限制」要**带着机器判据**上浮 ──────────
+// 本文件有**四处**自己的会话/账号校验（downloadTabGroups / downloadSettings
+// 各两处），它们原先把 402 降级成普通 Error ⇒ 上层只看到一句英文 ⇒
+// 用户看到「请重试」（而重试对被封禁的服务端无用）。
+//
+// 归一在**产生点**做（这一层还拿得到 SDK 原始错误的 status / http_status）：
+// 过了这一层就只剩 message，判据就再也认不出来了。
+import { BackendUnavailableError, isBackendUnavailable, readHttpStatus } from '@/core/backendUnavailable';
 
 /**
  * 还原率阈值：云端一行里的标签有低于这个比例能还原成 Tab 时，这一行**整组跳过**。
@@ -204,6 +212,14 @@ export const downloadSync = {
 
     if (sessionError) {
       logError('获取会话失败:', sessionError);
+      // ── 2026-10-22（402）：保留机器判据（别降级成普通 Error）────────────
+      // 判据喂**原始**错误：它带 status / http_status；包装后只剩 message。
+      if (isBackendUnavailable(sessionError)) {
+        throw new BackendUnavailableError(
+          `获取会话失败: ${sessionError.message}`,
+          readHttpStatus(sessionError) ?? undefined
+        );
+      }
       throw new Error(`获取会话失败: ${sessionError.message}`);
     }
 
@@ -217,6 +233,15 @@ export const downloadSync = {
 
     if (userError) {
       logError('获取用户信息失败:', userError);
+      // ── 2026-10-22（402）：**这一支才是账号态 402 的真实落点** ────────────
+      // 实测（生产 402）：`/auth/v1/user` 同样返回 402 ⇒ auth-js 抛
+      // AuthApiError { status: 402 }。原先降级成普通 Error ⇒ 上层拿不到判据。
+      if (isBackendUnavailable(userError)) {
+        throw new BackendUnavailableError(
+          `获取用户信息失败: ${userError.message}`,
+          readHttpStatus(userError) ?? undefined
+        );
+      }
       throw new Error(`获取用户信息失败: ${userError.message}`);
     }
 
@@ -596,6 +621,14 @@ export const downloadSync = {
 
     if (sessionError) {
       logError('获取会话失败:', sessionError);
+      // ── 2026-10-22（402）：保留机器判据（别降级成普通 Error）────────────
+      // 判据喂**原始**错误：它带 status / http_status；包装后只剩 message。
+      if (isBackendUnavailable(sessionError)) {
+        throw new BackendUnavailableError(
+          `获取会话失败: ${sessionError.message}`,
+          readHttpStatus(sessionError) ?? undefined
+        );
+      }
       throw new Error(`获取会话失败: ${sessionError.message}`);
     }
 
@@ -609,6 +642,15 @@ export const downloadSync = {
 
     if (userError) {
       logError('获取用户信息失败:', userError);
+      // ── 2026-10-22（402）：**这一支才是账号态 402 的真实落点** ────────────
+      // 实测（生产 402）：`/auth/v1/user` 同样返回 402 ⇒ auth-js 抛
+      // AuthApiError { status: 402 }。原先降级成普通 Error ⇒ 上层拿不到判据。
+      if (isBackendUnavailable(userError)) {
+        throw new BackendUnavailableError(
+          `获取用户信息失败: ${userError.message}`,
+          readHttpStatus(userError) ?? undefined
+        );
+      }
       throw new Error(`获取用户信息失败: ${userError.message}`);
     }
 

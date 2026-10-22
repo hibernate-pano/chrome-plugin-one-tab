@@ -1,9 +1,17 @@
 /* 动画效果样式 */
 
+/*
+ * 2026-10-23 审计 V-14：动效节奏读命名阶梯。
+ * 阶梯定义在 global.css 的 :root（--motion-fast 120ms / --motion-base 180ms /
+ * --motion-slow 250ms / --ease-standard）—— 自定义属性在文档级继承，
+ * 所以本文件（由 MainApp.tsx 单独 import）也能读到。
+ * 本文件原先混用 0.15s / 0.2s / 0.3s / 0.4s 四种时长。
+ */
+
 /* 标签组折叠/展开动画 */
 .tab-group-content {
   overflow: hidden;
-  transition: max-height 0.3s ease-in-out;
+  transition: max-height var(--motion-slow) var(--ease-standard);
 }
 
 .tab-group-content.collapsed {
@@ -16,7 +24,7 @@
 
 /* 标签组折叠/展开图标动画 */
 .expand-icon {
-  transition: transform 0.3s ease;
+  transition: transform var(--motion-slow) var(--ease-standard);
 }
 
 .expand-icon.collapsed {
@@ -29,7 +37,9 @@
 
 /* 拖拽动画效果 */
 .tab-drag-animation {
-  transition: transform 0.15s ease, opacity 0.15s ease, box-shadow 0.15s ease;
+  transition: transform var(--motion-fast) var(--ease-standard),
+    opacity var(--motion-fast) var(--ease-standard),
+    box-shadow var(--motion-fast) var(--ease-standard);
 }
 
 .tab-drag-animation.dragging {
@@ -41,7 +51,8 @@
 
 /* 放置目标高亮动画 */
 .drop-target-animation {
-  transition: background-color 0.2s ease, border-color 0.2s ease;
+  transition: background-color var(--motion-base) var(--ease-standard),
+    border-color var(--motion-base) var(--ease-standard);
 }
 
 .drop-target-animation.active {
@@ -57,7 +68,9 @@
 
 /* 标签组拖拽动画 */
 .group-drag-animation {
-  transition: transform 0.15s ease, opacity 0.15s ease, box-shadow 0.15s ease;
+  transition: transform var(--motion-fast) var(--ease-standard),
+    opacity var(--motion-fast) var(--ease-standard),
+    box-shadow var(--motion-fast) var(--ease-standard);
 }
 
 .group-drag-animation.dragging {
@@ -83,13 +96,14 @@
 .search-highlight {
   border-radius: 4px;
   padding: 0 2px;
-  animation: highlight-enter 0.4s ease-out 1;
+  animation: highlight-enter var(--motion-slow) var(--ease-standard) 1;
 }
 
 /* 标签组操作按钮动画 */
 .group-action-button {
   opacity: 0.5;
-  transition: opacity 0.2s ease, transform 0.2s ease;
+  transition: opacity var(--motion-base) var(--ease-standard),
+    transform var(--motion-base) var(--ease-standard);
 }
 
 .group-action-button:hover {
@@ -100,7 +114,7 @@
 /* 标签页操作按钮动画 */
 .tab-action-button {
   opacity: 0;
-  transition: opacity 0.2s ease;
+  transition: opacity var(--motion-base) var(--ease-standard);
 }
 
 .tab-item:hover .tab-action-button {
@@ -109,7 +123,7 @@
 
 /* 标签组头部悬停效果 */
 .group-header {
-  transition: background-color 0.2s ease;
+  transition: background-color var(--motion-base) var(--ease-standard);
 }
 
 .group-header:hover {

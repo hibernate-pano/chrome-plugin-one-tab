@@ -54,7 +54,16 @@ const STEPS: StepConfig[] = [
       // 元素」，正是为了拦住「改文案后引导高亮静默消失」。
       spotlightTarget: `[aria-label="${saveAndCloseDescription}"]`,
     },
-    { title: '搜索工作会话', spotlightTarget: '[aria-label="搜索会话或标签页"]' },
+    // ── 2026-10-23 审计 H-7：搜索框的 aria-label 补上了「URL」 ──────────
+    // Header.tsx 的 placeholder 与 aria-label 原本只说「会话或标签」，
+    // 而引导第 3 步教的是「搜索会话名、标签标题或 URL」（能力是真的：
+    // `utils/search.ts` 的 `searchUrls` 默认 true）⇒ 教了与界面说的不一致。
+    // 改 aria-label **必须同步改这里的选择器** —— 否则这两处聚光灯会
+    // 匹配不到任何元素、静默失去高亮（与 42 轮 P0-1 同类的缺陷）。
+    // ⚠️ aria-label 里用的是中文顿号「、」，不是 ASCII 逗号 ——
+    //    Spotlight 的 splitSelectorChain 按顶层逗号拆候选链，ASCII 逗号
+    //    会把一个候选劈成两个（引号内的逗号不受影响，但这里不必冒险）。
+    { title: '搜索工作会话', spotlightTarget: '[aria-label="搜索会话名、标签标题或 URL"]' },
     {
         title: '恢复整个会话',
         // 2026-10-22 审计 P0-1：这里原本只有恢复按钮一个候选，而**全新安装时
@@ -68,7 +77,7 @@ const STEPS: StepConfig[] = [
         // 文档顺序而不是选择器顺序，一次性拿全部是拿不到「A 优先、B 兜底」的。
         // Spotlight.tsx 的 splitSelectorChain 就是为此存在的。
         spotlightTarget:
-            'button[aria-label^="在新窗口恢复整个会话"], button[aria-label^="在新窗口恢复所有匹配标签"], [aria-label="搜索会话或标签页"]',
+            'button[aria-label^="在新窗口恢复整个会话"], button[aria-label^="在新窗口恢复所有匹配标签"], [aria-label="搜索会话名、标签标题或 URL"]',
     },
     { title: '跨设备同步', spotlightTarget: '[aria-label="菜单"]' },
     { title: '一切就绪' },

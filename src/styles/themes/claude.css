@@ -195,3 +195,22 @@ html[data-theme="claude"] .tab-item:hover { background: var(--color-row-hover); 
 html[data-theme="claude"] .btn-primary { border-radius: var(--radius-btn); font-weight: 500; }
 html[data-theme="claude"] .btn-icon { border-radius: var(--radius-btn-icon); }
 html[data-theme="claude"] .tab-group-card:hover { transform: none; }
+
+/* ── 焦点环（2026-10-23 审计 V-2）──────────────────────────────────────
+ *
+ * claude 主题原先**只有 `--color-focus-ring` 变量定义，没有 `:focus-visible`
+ * 规则** ⇒ 焦点环落到 global.css 的全局兜底（@layer base）⇒ 被 Tailwind
+ * utilities 层的 `focus-visible:outline-primary-600` 压过去 ⇒ 弹窗里实测
+ * 环色恒为 rgb(37,99,235)（**别家产品的蓝** —— claude 的品牌色是陶土红
+ * #c2603f）；深色态 `dark:focus-visible:outline-slate-300`（0-3-0）赢，
+ * 环色 rgb(203,213,225) 压 claude 深色面板 rgb(38,37,35) 只有 **2.96:1**
+ * （WCAG 2.2 非文本对比要求 3:1）。换成自己的 --color-focus-ring 后
+ * 是 5.89:1。
+ *
+ * 这条规则必须**未分层**（不在 @layer 里）—— 分层会被 utilities 层压过去。
+ */
+html[data-theme="claude"] :focus-visible {
+  outline: 2px solid var(--color-focus-ring);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
+}

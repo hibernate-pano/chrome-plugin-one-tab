@@ -213,6 +213,28 @@ html:not([data-theme]).dark {
     --theme-transition-timing: cubic-bezier(0.4, 0, 0.2, 1);
   }
 
+  /* ── 2026-10-23 审计 V-14：动效节奏阶梯 ────────────────────────────────
+   *
+   * 此前全仓 45 处 `transition:` 混用了 60 / 80 / 100 / 120 / 150 / 200 /
+   * 250 / 300 / 400ms 九种时长 ⇒ 同一次点击里三颗按钮反馈速度不同
+   * （.btn-icon 60ms / .btn-primary 80ms / .btn 150ms），会话卡 200ms
+   * 而它的卡头 250ms。**看起来像没做完**，而不是像有节奏。
+   *
+   * 收敛成三档 + 一条缓动：
+   *   --motion-fast  120ms  状态类反馈（hover / 按下 / 图标按钮）
+   *   --motion-base  180ms  常规过渡（卡片、菜单、按钮）
+   *   --motion-slow  250ms  大面积变化（主题切换、聚光灯）
+   *
+   * 主题切换的 --theme-transition-duration 保持 250ms（= --motion-slow）：
+   * 它是**大面积**颜色变化，比 180ms 慢一档才对。
+   */
+  :root {
+    --motion-fast: 120ms;
+    --motion-base: 180ms;
+    --motion-slow: 250ms;
+    --ease-standard: cubic-bezier(0.4, 0, 0.2, 1);
+  }
+
   html.dark {
     --color-row-hover: #374151;
     --color-menu-hover: rgba(55, 65, 81, 0.5);
@@ -283,13 +305,28 @@ html:not([data-theme]).dark {
    * - fill: SVG 填充色变化
    * - stroke: SVG 描边色变化
    */
+  /*
+   * 2026-10-23 审计 V-9：名单里原来有 12 个**死类**（CSS 里有规则、代码里
+   * 零引用），而三个**真实存在**的表面（空态 / 菜单 / 弹窗）一个都不在。
+   * ⇒ 结果是：会话卡在渐变、菜单在闪、空态与弹窗是「硬切」——
+   * 同一次切主题里三套速度，观感上像没做完。
+   *
+   * 现在名单只留**代码里真的在用**的类，并补上三个真实表面：
+   *   .ts-panel    菜单 / 子菜单面板（HeaderDropdown，3 处）
+   *   .ts-dialog   弹窗面板（ModalFrame）
+   *   .ts-empty-state 空态容器（EmptyState）
+   *   .tooltip     提示条（Tooltip 组件）
+   *
+   * 被清掉的死类（`.card-glass` / `.btn-ghost` / `.badge-accent` /
+   * `.empty-state*` / `.dropdown-*` / `.popup-menu` / `.modal-content` /
+   * `.search-result-*` / `.search-bar-input`）—— 全仓 grep 零引用，
+   * 留着只会诱使下一个人往这份名单里加名字。
+   */
   body,
   .card,
-  .card-glass,
   .btn,
   .btn-primary,
   .btn-secondary,
-  .btn-ghost,
   .btn-icon,
   .input,
   .search-input,
@@ -302,16 +339,10 @@ html:not([data-theme]).dark {
   .tab-item-url,
   .header,
   .badge,
-  .badge-accent,
-  .empty-state,
-  .empty-state-icon,
-  .empty-state-title,
-  .empty-state-description,
   .tooltip,
-  .dropdown-menu,
-  .dropdown-item,
-  .popup-menu,
-  .modal-content {
+  .ts-panel,
+  .ts-dialog,
+  .ts-empty-state {
     transition:
       background-color var(--theme-transition-duration) var(--theme-transition-timing),
       border-color var(--theme-transition-duration) var(--theme-transition-timing),
@@ -395,11 +426,9 @@ html:not([data-theme]).dark {
 
   body,
   .card,
-  .card-glass,
   .btn,
   .btn-primary,
   .btn-secondary,
-  .btn-ghost,
   .btn-icon,
   .input,
   .search-input,
@@ -412,16 +441,10 @@ html:not([data-theme]).dark {
   .tab-item-url,
   .header,
   .badge,
-  .badge-accent,
-  .empty-state,
-  .empty-state-icon,
-  .empty-state-title,
-  .empty-state-description,
   .tooltip,
-  .dropdown-menu,
-  .dropdown-item,
-  .popup-menu,
-  .modal-content,
+  .ts-panel,
+  .ts-dialog,
+  .ts-empty-state,
   svg,
   svg path,
   svg circle,
@@ -440,7 +463,7 @@ html:not([data-theme]).dark {
     border: 1px solid var(--color-border-default);
     border-radius: 0.75rem;
     box-shadow: var(--shadow-card);
-    transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+    transition: all var(--motion-base) var(--ease-standard);
   }
 
   .card:hover {
@@ -462,7 +485,10 @@ html:not([data-theme]).dark {
   .btn {
     @apply inline-flex items-center justify-center gap-2;
     @apply px-4 py-2 font-medium text-sm;
-    @apply transition-all duration-150 ease-smooth;
+    /* V-14：读命名阶梯（--motion-base 180ms + --ease-standard），不写死 150ms */
+    transition-property: all;
+    transition-duration: var(--motion-base);
+    transition-timing-function: var(--ease-standard);
     /* 圆角读形状令牌（U-14）：原先写死 rounded-lg(8px)，而 6 套主题各自
        用 9999px / 8px / 6px / 12px 覆写同一个组件 ⇒ 同一屏里主按钮、
        图标按钮、徽章三种形状语言。现在形状由主题令牌统一给值。 */
@@ -540,7 +566,9 @@ html:not([data-theme]).dark {
 
   .btn-icon {
     @apply p-2 rounded-lg;
-    @apply transition-all duration-150;
+    transition-property: all;
+    transition-duration: var(--motion-base);
+    transition-timing-function: var(--ease-standard);
     color: var(--color-text-tertiary);
 
     /* 命中区下限：36×36（口径见 src/components/layout/hitTarget.ts）。
@@ -579,7 +607,9 @@ html:not([data-theme]).dark {
   .input {
     @apply w-full px-3 py-2 rounded-lg;
     @apply text-sm font-normal;
-    @apply transition-all duration-150;
+    transition-property: all;
+    transition-duration: var(--motion-base);
+    transition-timing-function: var(--ease-standard);
     background: var(--color-bg-tertiary);
     border: 1px solid transparent;
     color: var(--color-text-primary);
@@ -637,7 +667,9 @@ html:not([data-theme]).dark {
      ========================================== */
   .search-bar-input {
     @apply w-full px-4 py-2 pl-10 rounded-lg;
-    @apply transition duration-200;
+    transition-property: color, background-color, border-color, text-decoration-color, fill, stroke;
+    transition-duration: var(--motion-base);
+    transition-timing-function: var(--ease-standard);
     /* 2026-10-20：删掉 `focus:outline-none` —— 它会把全局 :focus-visible 的
        焦点环吃掉（同 .input:focus 的问题）。 */
     background-color: var(--color-bg-secondary);
@@ -661,7 +693,9 @@ html:not([data-theme]).dark {
   /* 搜索清除按钮 - 增强样式 */
   .search-clear-btn {
     @apply absolute inset-y-0 right-0 pr-3;
-    @apply transition-all duration-200 ease-in-out;
+    transition-property: all;
+    transition-duration: var(--motion-base);
+    transition-timing-function: var(--ease-standard);
     @apply hover:scale-110;
     /* 2026-10-20：删掉 `focus:outline-none` —— 键盘 Tab 到清除按钮时原本没有任何
        焦点痕迹（WCAG 2.4.7）。:focus-visible 只在键盘聚焦时匹配，鼠标点击不受影响。 */
@@ -764,7 +798,7 @@ html:not([data-theme]).dark {
     background: var(--color-bg-secondary);
     border: 1px solid var(--color-border-subtle);
     box-shadow: var(--shadow-card);
-    transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+    transition: all var(--motion-base) var(--ease-standard);
   }
 
   .tab-group-card:hover {
@@ -852,7 +886,10 @@ html:not([data-theme]).dark {
      ========================================== */
   .tab-item {
     @apply flex items-center gap-2 sm:gap-3 px-3 py-2.5 sm:px-4;
-    @apply cursor-pointer transition-all duration-150;
+    @apply cursor-pointer;
+    transition-property: all;
+    transition-duration: var(--motion-base);
+    transition-timing-function: var(--ease-standard);
     border-bottom: 1px solid var(--color-border-subtle);
     min-height: 2.75rem;
   }
@@ -932,7 +969,10 @@ html:not([data-theme]).dark {
   }
 
   .tab-item-actions {
-    @apply flex items-center gap-1 transition-opacity duration-150;
+    @apply flex items-center gap-1;
+    transition-property: opacity;
+    transition-duration: var(--motion-fast);
+    transition-timing-function: var(--ease-standard);
     @apply opacity-100;
   }
 
@@ -1116,7 +1156,7 @@ html:not([data-theme]).dark {
      动画类
      ========================================== */
   .animate-in {
-    animation: fadeInUp 0.3s ease-out forwards;
+    animation: fadeInUp var(--motion-slow) var(--ease-standard) forwards;
   }
 
   /* ── 2026-10-19 审计 P0-2（补）：展开的卡必须能盖住后面的卡 ────────────
@@ -1137,7 +1177,7 @@ html:not([data-theme]).dark {
   }
 
   .animate-out {
-    animation: fadeOut 0.2s ease-out forwards;
+    animation: fadeOut var(--motion-base) var(--ease-standard) forwards;
   }
 
   @keyframes fadeOut {
@@ -1176,14 +1216,67 @@ html:not([data-theme]).dark {
   /* ==========================================
      工具提示
      ========================================== */
+  /*
+   * 2026-10-23 审计 V-10：这条规则原先与 `<Tooltip>` 组件**完全脱节** ——
+   * 组件渲染的提示条根本没有 `tooltip` 这个类名（组件自带一套写死的
+   * `bg-gray-900 dark:bg-gray-800 text-white`），所以这条规则一次都没生效过，
+   * 12 组主题 × 明暗实测提示条底色**无一组**跟主题走。
+   *
+   * 现在组件挂上 `tooltip` 类（见 components/common/Tooltip.tsx），
+   * 配色统一由这条规则给 —— 读主题令牌，跟主题走。
+   *
+   * ⚠️ 这里的 `whitespace-nowrap` **必须删掉**：组件要允许换行
+   * （400px 视口下 20 字的提示语会撑破视口，guards/audit20261019Ui.test.ts
+   * 的 V-7 守卫钉的就是这条）。宽度上限由组件自己的 className 给。
+   */
   .tooltip {
-    @apply absolute z-50 px-2 py-1 rounded-md;
-    @apply text-xs font-medium whitespace-nowrap;
-    @apply animate-fade-in;
+    @apply absolute z-50;
     background: var(--color-bg-elevated);
     color: var(--color-text-primary);
     border: 1px solid var(--color-border-default);
     box-shadow: var(--shadow-card-hover);
+  }
+
+  /* ==========================================
+     表面类（Surface）
+     ========================================== */
+  /*
+   * 2026-10-23 审计 V-9 / V-16：给三个**真实存在**的表面一个自己的类名，
+   * 让「切主题时哪些表面应该渐变」这件事有一个明确、有限的名单。
+   *
+   * 背景：主题过渡名单里原本写的是 `.dropdown-menu` / `.popup-menu` /
+   * `.modal-content` —— 全仓 grep 零引用（**死类**）⇒ 真正的菜单面板与弹窗
+   * 面板都不在名单里 ⇒ 实测「菜单面板过渡时长 = 0s」「弹窗面板过渡时长 = 0s」
+   * （同屏的会话卡是 0.2s）⇒ 同一次切主题里，列表在渐变、菜单在闪。
+   *
+   * 而 `.ts-panel` 是**反向死类**：组件用了它（HeaderDropdown 3 处），
+   * CSS 里却没有任何规则 —— 面板的位置/圆角/阴影/边框全靠旁边的 theme-*
+   * 工具类撑着，这个名字本身什么也没做。
+   *
+   * 现在这三个类各有明确职责：
+   *   .ts-panel        菜单 / 子菜单面板
+   *   .ts-dialog       弹窗面板
+   *   .ts-empty-state  空态容器
+   * 三者都进主题过渡名单（见文件上半部分）。
+   */
+  .ts-panel {
+    background: var(--color-bg-elevated);
+    border: 1px solid var(--color-border-default);
+    border-radius: var(--radius-card);
+    box-shadow: var(--shadow-panel);
+  }
+
+  .ts-dialog {
+    background: var(--color-bg-elevated);
+    border: 1px solid var(--color-border-default);
+    border-radius: var(--radius-panel);
+    box-shadow: var(--shadow-panel);
+  }
+
+  .ts-empty-state {
+    background: var(--color-panel-translucent);
+    border: 1px solid var(--color-border-translucent);
+    border-radius: var(--radius-panel);
   }
 
   /* ==========================================
@@ -1215,13 +1308,15 @@ html:not([data-theme]).dark {
     border: 1px solid var(--color-border-default);
     border-radius: 0.75rem;
     box-shadow: var(--shadow-card);
-    transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+    transition: all var(--motion-base) var(--ease-standard);
   }
 
   .flat-button-primary {
     @apply inline-flex items-center justify-center gap-2;
     @apply px-4 py-2 rounded-lg font-medium text-sm;
-    @apply transition-all duration-150;
+    transition-property: all;
+    transition-duration: var(--motion-base);
+    transition-timing-function: var(--ease-standard);
     background-color: var(--color-accent);
     color: var(--color-accent-fg);
     @apply shadow-soft hover:shadow-medium;
@@ -1230,14 +1325,18 @@ html:not([data-theme]).dark {
   .flat-button-secondary {
     @apply inline-flex items-center justify-center gap-2;
     @apply px-4 py-2 rounded-lg font-medium text-sm;
-    @apply transition-all duration-150;
+    transition-property: all;
+    transition-duration: var(--motion-base);
+    transition-timing-function: var(--ease-standard);
     background: var(--color-bg-tertiary);
     color: var(--color-text-primary);
     border: 1px solid var(--color-border-default);
   }
 
   .flat-interaction {
-    @apply transition-all duration-150;
+    transition-property: all;
+    transition-duration: var(--motion-base);
+    transition-timing-function: var(--ease-standard);
   }
 
   .flat-interaction:hover {
@@ -1264,7 +1363,9 @@ html:not([data-theme]).dark {
   }
 
   .transition-material {
-    @apply transition-all duration-200 ease-smooth;
+    transition-property: all;
+    transition-duration: var(--motion-base);
+    transition-timing-function: var(--ease-standard);
   }
 }
 
@@ -1306,11 +1407,11 @@ html:not([data-theme]).dark {
 }
 
 .animate-fadeIn {
-  animation: fadeIn 0.2s ease-out forwards;
+  animation: fadeIn var(--motion-base) var(--ease-standard) forwards;
 }
 
 .animate-scaleIn {
-  animation: scaleIn 0.2s ease-out forwards;
+  animation: scaleIn var(--motion-base) var(--ease-standard) forwards;
 }
 
 /* ==========================================
@@ -1466,8 +1567,13 @@ html:not([data-theme]).dark {
    Tailwind 的 `ring-blue-500/30` 是**固定品牌蓝**，不跟主题走 ⇒ 在 claude /
    creamy 的设置页里，主题选择器画出的选中圈是别的产品的蓝。
    Tailwind v3 的 ring 工具类把颜色写进 --tw-ring-color，这里换成本主题的
-   强调描边色（未分层 ⇒ 压过 utilities 层里的 ring-blue-500）。 */
-.theme-accent-ring { --tw-ring-color: var(--color-accent-border); }
+   强调墨色（未分层 ⇒ 压过 utilities 层里的 ring-blue-500）。
+   ── 2026-10-23 审计 V-11：原先读 --color-accent-border（**40~45% 透明度**
+   的淡描边）⇒ 8 组主题实测对卡底全部低于 3:1（claude 浅色只有 1.87:1）
+   ⇒ 用户在设置页**看不出当前选的是哪个主题**。
+   改读 --color-accent-text（不透明的「当墨色用的 accent」）—— 同一个文件
+   下面两行的 `.theme-accent-ink-border` 早就这么修了，这一条是漏网的。 */
+.theme-accent-ring { --tw-ring-color: var(--color-accent-text); }
 /* 强调色当作「边框墨色」用（认证弹窗激活标签页的 2px 下划线）。
    不用 --color-accent-border：那是 45% 透明度的淡描边，压在浅底上只有
    1.6:1 —— 选中指示线看不见。--color-accent-text 是「当墨色用的 accent」，
@@ -1599,7 +1705,18 @@ html:not([data-theme]).dark {
 
   .app-header-brand {
     grid-area: brand;
-    min-width: 0;
+    /* ── 2026-10-23 审计 V-5：品牌按钮必须保住一个 36px 的命中区 ──────────
+     *
+     * 原先这里是 `min-width: 0` + `overflow: hidden`。品牌名在 ≤420px 被
+     * `display:none` 隐藏后，按钮宽度就塌成 logo 自身的宽度 —— 实测
+     * 320px 下品牌盒只有 **2.7 × 20px**，logo 的**右侧 40% 根本点不到**
+     * （命中的是旁边那颗按钮）。
+     *
+     * 根因：`brandLayout.ts` 的 `isBrandContentClipped()` 只负责**隐藏品牌名**，
+     * 不保证品牌**按钮**的盒子；缺口在 CSS 这边 ⇒ 这里补下限。
+     * 36px = 本仓自订的 MIN_HIT_TARGET_PX（见 components/layout/hitTarget.ts）。
+     */
+    min-width: 36px;
     /* 极窄时品牌名让位：品牌只是标识，操作区是功能。
        320px 实测两者会重叠（品牌 118px + 操作区 228px > 320px 可用宽）。 */
     overflow: hidden;
@@ -1647,6 +1764,16 @@ html:not([data-theme]).dark {
 @media (max-width: 420px) {
   .app-header-brand .app-header-brand-name {
     display: none;
+  }
+
+  /* ── 2026-10-23 审计 V-5：名字藏起来后，按钮就是一个正方形的图标按钮 ────
+   *
+   * 没有品牌名时按钮的内容宽度 = logo 宽度（20px）⇒ 命中区 20×20，
+   * 低于本仓的 36px（也低于 WCAG 2.2 的 24px）。这里把它撑成 36px 的
+   * 方块并居中 —— 视觉上仍然只是那颗 logo，但点得到。
+   */
+  .app-header-brand {
+    justify-content: center;
   }
 }
 
@@ -1799,7 +1926,7 @@ button:disabled:not(.btn-primary) {
   font-weight: 600;
   background: var(--color-accent);
   color: var(--color-accent-fg);
-  transition: top 0.15s ease-out;
+  transition: top var(--motion-fast) var(--ease-standard);
 }
 
 .skip-to-content:focus-visible {

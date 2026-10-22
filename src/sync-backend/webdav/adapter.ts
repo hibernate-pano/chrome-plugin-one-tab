@@ -32,6 +32,7 @@
  *    重建不出来就**中止本轮**（fail-closed），绝不按空库处理。
  */
 import type { TabGroup, UserSettings } from '@/types/tab';
+import type { DeleteBroadcastResult } from '@/core/accountScope';
 import type {
   DownloadSettingsResult,
   RemoteGroupFingerprint,
@@ -1548,8 +1549,12 @@ export class WebDavBackendAdapter implements SyncBackendPort {
    * 读回不可能时（分片读不到 / 外壳坏了）怎么办：**不消费队列**。
    * 宁可下一轮重播一个幂等的墓碑，也不能把删除意图丢掉。
    */
-  async broadcastDeletes(ids: string[]): Promise<void> {
-    if (ids.length === 0) return;
+  async broadcastDeletes(ids: string[]): Promise<DeleteBroadcastResult> {
+    // 自带存储**不做账号闸门**：WebDAV 的库不属于任何账号（库身份是
+    // baseUrl | username | rootPath，见 sync-backend/index.ts 的 defaultFactory），
+    // 归属由「这台机器的库是谁的」决定，而不是由会话 id 决定。
+    // ⇒ 全放行，blockedIds 恒为空。
+    if (ids.length === 0) return { broadcastIds: [], blockedIds: [] };
     const index = await this.loadIndex();
     const vault = await this.unlock(index.kind === 'manifest' ? index.manifest : null);
     const entryById = new Map<string, ShardFingerprint>(
@@ -1608,6 +1613,9 @@ export class WebDavBackendAdapter implements SyncBackendPort {
           index.kind === 'manifest' && index.rebuilt ? index.manifest : null,
       }
     );
+
+    // 自带存储没有账号闸门 ⇒ 全部广播成功、没有任何一条被挡下。
+    return { broadcastIds: [...ids], blockedIds: [] };
   }
 
   /**

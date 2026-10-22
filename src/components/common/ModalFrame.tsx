@@ -63,12 +63,12 @@ export const ModalFrame: React.FC<ModalFrameProps> = ({
           // #191817 暖黑，弹层却是一块 rgba(15,23,42,.95) 的冷蓝黑 ——
           // 一个暖色产品里弹出一块冷蓝面板，主题看起来像半成品。
           // 现在全部走 theme-* 工具类（与 AuthModal 同一写法）。
-          className={`relative w-full ${maxWidthClassName} overflow-hidden theme-radius-panel border theme-border-default theme-bg-elevated theme-shadow-panel backdrop-blur focus:outline-none`}
+          className={`relative w-full ${maxWidthClassName} overflow-hidden ts-dialog theme-radius-panel border theme-border-default theme-bg-elevated theme-shadow-panel backdrop-blur focus:outline-none`}
         >
           <button
             type="button"
             onClick={onClose}
-            className="absolute right-4 top-4 inline-flex h-9 w-9 items-center justify-center rounded-full border theme-border-strong theme-bg-elevated theme-text-secondary transition-colors hover:theme-btn-hover focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary-600"
+            className="absolute right-4 top-4 inline-flex h-9 w-9 items-center justify-center rounded-full border theme-border-strong theme-bg-elevated theme-text-secondary transition-colors hover:theme-btn-hover"
             aria-label="关闭弹窗"
           >
             <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>

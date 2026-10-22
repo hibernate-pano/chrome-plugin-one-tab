@@ -40,17 +40,26 @@ interface AuthCache {
  *
  * 用途：上传闸门在「本机还没有归属记录」时，用它兜底判断
  * 「这台机器上次登录的是谁」—— 那是本机归属的最好证据。
- * 读失败返回 null（调用方据此中止上传，fail-closed）。
+ *
+ * ── 三态，必须分清（2026-10-23 审计 R-5）───────────────────────────────
+ *   · 返回 id  —— 读到了，这台机器上次登录的是它；
+ *   · 返回 null —— **键不存在**（这台机器从没登录过）；
+ *   · **抛错**  —— 读**失败**（存储故障 / 权限 / 配额）。
+ *
+ * 原来读失败返回 null，与「键不存在」同形 ⇒ 调用方无法区分「这台机器
+ * 从没登录过」（真·无主）与「登录缓存读不出来」（**不可知**）⇒ 两者都
+ * 落到同一个兜底「认账给当前账号」⇒ **把别的账号的会话写进当前账号的云端**
+ * （DS-1 原样复发，且触发概率比「从没登录过」高得多：存储故障常见得多）。
+ *
+ * 现在读失败**抛错**（fail-closed）：调用方据此中止，不把它当成「没有归属」。
  */
 export async function readLastAuthCacheUserId(): Promise<string | null> {
-  try {
-    const result = await chrome.storage.local.get(AUTH_CACHE_KEY);
-    const cacheData = result[AUTH_CACHE_KEY] as AuthCache | undefined;
-    return cacheData?.user?.id ?? null;
-  } catch (error) {
-    logError('读取登录缓存里的账号 id 失败:', error);
-    return null;
-  }
+  // 非扩展环境（单测里没装 chrome 桩的、非扩展页面）没有它 ——
+  // 那不是「读失败」，是「这个环境压根没有登录缓存可读」。
+  if (!hasLocalStorage()) return null;
+  const result = await chrome.storage.local.get(AUTH_CACHE_KEY);
+  const cacheData = result[AUTH_CACHE_KEY] as AuthCache | undefined;
+  return cacheData?.user?.id ?? null;
 }
 
 /**

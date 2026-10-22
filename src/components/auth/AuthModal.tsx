@@ -81,7 +81,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ visible, initialTab = 'log
             </button>
             <button
               type="button"
-              className="p-3 text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-gray-400"
+              className="p-3 text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200"
               onClick={onClose}
               aria-label="关闭登录弹窗"
             >

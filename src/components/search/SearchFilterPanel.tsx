@@ -602,7 +602,19 @@ export const SearchFilterSection: React.FC<SearchFilterSectionProps> = ({
           )}
           <button
             onClick={toggleFilters}
-            className="text-sm theme-accent-text font-medium hover:underline flex items-center flat-interaction"
+            /* ── 2026-10-23 审计 V-4：命中区必须 ≥ 36px ─────────────────────
+             *
+             * 原先这个按钮没有任何内边距 / 最小尺寸 ⇒ 实测只有 **68.3 × 20px**
+             * （320 / 360 / 390 / 768 / 1280 / 1920px 六个宽度全一样）。
+             * 高度 20px 低于 WCAG 2.2 SC 2.5.8 的 24px AA，也低于本仓自订的
+             * MIN_HIT_TARGET_PX = 36（见 components/layout/hitTarget.ts）——
+             * 它是**全站唯一一个**低于 24px 的可见元素。
+             *
+             * 320px 下它还会折成两行（实测 67.1 × 40px），`<svg>` 图标孤零零
+             * 落在两行文字中间。`whitespace-nowrap` 一并解掉折行，
+             * `shrink-0` 保证窄屏下它不被压扁。
+             */
+            className="text-sm theme-accent-text font-medium hover:underline flex items-center gap-1 min-h-9 min-w-9 px-2 shrink-0 whitespace-nowrap flat-interaction"
           >
             <FilterIcon />
             {showFilters ? '隐藏筛选' : '显示筛选'}

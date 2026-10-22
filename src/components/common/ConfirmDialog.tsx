@@ -36,7 +36,7 @@ export const ConfirmDialog: React.FC<ConfirmDialogProps> = ({
               </svg>
             </div>
           ),
-          confirmButton: 'bg-rose-600 hover:bg-rose-700 focus-visible:outline-slate-600 dark:focus-visible:outline-slate-300 text-white'
+          confirmButton: 'bg-rose-600 hover:bg-rose-700 text-white'
         };
       case 'warning':
         return {
@@ -47,7 +47,7 @@ export const ConfirmDialog: React.FC<ConfirmDialogProps> = ({
               </svg>
             </div>
           ),
-          confirmButton: 'bg-amber-700 hover:bg-amber-800 focus-visible:outline-slate-600 dark:focus-visible:outline-slate-300 text-white'
+          confirmButton: 'bg-amber-700 hover:bg-amber-800 text-white'
         };
       case 'info':
         return {
@@ -58,12 +58,12 @@ export const ConfirmDialog: React.FC<ConfirmDialogProps> = ({
               </svg>
             </div>
           ),
-          confirmButton: 'bg-primary-600 hover:bg-primary-700 focus-visible:outline-primary-500 text-white'
+          confirmButton: 'bg-primary-600 hover:bg-primary-700 text-white'
         };
       default:
         return {
           icon: null,
-          confirmButton: 'bg-sky-700 hover:bg-sky-800 focus-visible:outline-slate-600 dark:focus-visible:outline-slate-300 text-white'
+          confirmButton: 'bg-sky-700 hover:bg-sky-800 text-white'
         };
     }
   };
@@ -90,13 +90,13 @@ export const ConfirmDialog: React.FC<ConfirmDialogProps> = ({
             onClick={onCancel}
             // 2026-10-19 审计 V-6：取消按钮也跟主题（原先写死 slate 系，
             // 在暖色主题下是一块冷灰补丁）。
-            className="inline-flex items-center justify-center rounded-xl border theme-border-strong theme-bg-tertiary px-4 py-2.5 text-sm font-medium theme-text-primary transition-colors hover:theme-btn-hover focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary-600"
+            className="inline-flex items-center justify-center rounded-xl border theme-border-strong theme-bg-tertiary px-4 py-2.5 text-sm font-medium theme-text-primary transition-colors hover:theme-btn-hover"
           >
             {cancelText}
           </button>
           <button
             onClick={onConfirm}
-            className={`inline-flex items-center justify-center rounded-xl px-4 py-2.5 text-sm font-medium transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 ${typeStyles.confirmButton}`}
+            className={`inline-flex items-center justify-center rounded-xl px-4 py-2.5 text-sm font-medium transition-colors ${typeStyles.confirmButton}`}
           >
             {confirmText}
           </button>

@@ -459,14 +459,27 @@ export const Header: React.FC<HeaderProps> = ({ onSearch, onReplayOnboarding, on
                   </svg>
                 )}
               </div>
+              {/* ── 2026-10-23 审计 H-7：placeholder / aria-label 必须提「URL」──
+                  引导第 3 步教的是「搜索会话名、标签标题或 URL」，能力也确实
+                  存在（`utils/search.ts` 的 `searchUrls` 默认 true，匹配
+                  `tab.url`）。但**界面上唯一在输入前可见的说明**是这个
+                  placeholder —— 它原先只写「会话或标签」⇒ 用户没有任何线索
+                  知道网址也能搜，只能用自己记得的关键词试。
+                  （空态那句「支持搜索…或 URL」要**搜空之后**才出现，
+                  而他得先知道能搜 URL，才可能搜空。）
+                  ⇒ placeholder 与 aria-label 一起改：placeholder 是**视觉**提示
+                  （短，带省略号），aria-label 是**读屏**提示（完整、无省略号）。
+                  ⚠️ 改了 aria-label 就必须同步改引导里的聚光灯选择器
+                  （`OnboardingGuide.tsx` 两处）—— 否则第 2 步的聚光灯会
+                  匹配不到任何元素、静默失去高亮（与 42 轮 P0-1 同类缺陷）。 */}
               <input
                 ref={searchInputRef}
                 type="text"
-                placeholder="搜索会话或标签..."
+                placeholder="搜索会话 / 标签 / URL..."
                 className="input search-input theme-focus w-full py-2 pl-10 text-sm"
                 onChange={handleSearch}
                 value={searchValue}
-                aria-label="搜索会话或标签页"
+                aria-label="搜索会话名、标签标题或 URL"
                 role="searchbox"
                 autoComplete="off"
                 aria-busy={isSearchBusy}

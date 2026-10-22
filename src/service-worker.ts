@@ -24,6 +24,11 @@ import {
   resolveContextTypes,
   toChromeContextType,
 } from '@/background/contextMenuPolicy';
+// ── 2026-10-22（402）：「云端项目被限制」的机器判据要穿过 SW 这一层 ────────
+// SW 的 SYNC 分支是 popup 与引擎之间的**唯一**接缝；标记在这一层被吞掉 ⇒
+// 界面拿不到它 ⇒ 又退回「请重试」（而重试对被封禁的服务端无用）。
+import { isBackendUnavailableError } from '@/core/backendUnavailable';
+import { backendUnavailableCopy } from '@/components/sync/backendUnavailableCopy';
 
 // Chrome 扩展的 Service Worker
 // 为了避免模块导入问题，早期版本内联了存储逻辑；现统一使用 utils/storage 以与前端页面共享同一数据源（IndexedDB）
@@ -967,6 +972,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
               ok: r.success && !partial && !cannotConfirm,
               error: r.error,
               payload: r,
+              // ── 2026-10-22（402）：把「服务端不可用」的机器标记带出 SW ────
+              // 这一层是 popup 与 SW 的**唯一**接缝。标记不在这透出 ⇒
+              // 界面只能拿到一句人话/英文 ⇒ resolveSyncFailureCopy 选不对措辞
+              // ⇒ 用户又看到「请重试」（而重试无用）。
+              ...(r.backendUnavailable ? { backendUnavailable: true } : {}),
             };
           }
           if (data.op === 'download') {
@@ -986,12 +996,37 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
             //
             // ⚠️ **不许在这里把 payload 削掉**：那会让「云端读不出来」这件事
             // 重新退回「只写进日志」的状态（界面报成功，用户只看到列表变短）。
-            return { ok: r.success, error: r.reason, payload: r };
+            //
+            // ── 2026-10-22（402）：同样带出「服务端不可用」的机器标记 ────────
+            // 与上传分支同形：标记必须穿过 SW 这一层，否则界面选不对措辞。
+            return {
+              ok: r.success,
+              error: r.reason,
+              payload: r,
+              ...(r.backendUnavailable ? { backendUnavailable: true } : {}),
+            };
           }
           return { ok: false, error: `未知同步操作: ${data.op}` };
         }, { priority: 'high' })
           .then(res => sendResponse(res))
-          .catch(err => sendResponse({ ok: false, error: err?.message || '同步失败' }));
+          // ── 2026-10-22（402）：异常路径**不许**把机器标记吞掉 ──────────────
+          // 这一层是 popup 与 SW 的接缝，而它是**通用** catch：任何异常都
+          // 落成 `{ ok:false, error: err?.message }`。而「服务端项目被限制」
+          // 的机器标记（code / http_status）就在异常对象上 —— 不显式带出，
+          // 界面就只剩一句英文原文 ⇒ 「请重试」（错方向）。
+          //
+          // 什么时候会走到这里：账号闸门（ensureAuthenticated）在引擎里
+          // **就地**处理了「服务端不可用」，但队列里**别的**任务
+          // （含未来新增的调用点）抛出的同类异常仍会落到这里。
+          // 所以这一层也要认。
+          .catch(err => {
+            const unavailable = isBackendUnavailableError(err);
+            sendResponse({
+              ok: false,
+              error: unavailable ? backendUnavailableCopy(data.op === 'download' ? 'download' : 'upload') : err?.message || '同步失败',
+              ...(unavailable ? { backendUnavailable: true } : {}),
+            });
+          });
         return true;
         };
         return runSyncOp();

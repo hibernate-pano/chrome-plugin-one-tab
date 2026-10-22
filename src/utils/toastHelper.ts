@@ -6,7 +6,7 @@
 import { useToast } from '@/contexts/ToastContext';
 import { logError } from './log';
 import type { ToastAction } from '@/components/common/Toast';
-import { consumeUndoDurationMs } from '@/components/tabs/consumeUndoCopy';
+import { resolveToastDuration } from '@/components/common/toastPolicy';
 
 /**
  * 通知消息类型
@@ -181,8 +181,13 @@ export const useEnhancedToast = () => {
     action?: ToastAction,
   ) => {
     const config = showEnhancedNotification(type, params, customMessage);
-    // 带动作的提示必须活得久一点：3 秒不够用户读完「卡片不见了」再决定退不退回。
-    const duration = action ? consumeUndoDurationMs : config.duration;
+    // 时长**由「有没有动作」决定**，不是这里写死一个数：
+    //   · 带动作（「撤销」= 不可逆操作的唯一退路）⇒ 给一个能做决定的窗口
+    //     （原先这里写死 8 秒、而 Toast 组件自己又是 3 秒 —— 两处各写一个数，
+    //      迟早漂；现在只有 toastPolicy 一个出处）；
+    //   · 不带动作 ⇒ 用配置里的时长（普通成功提示仍是 3 秒）。
+    // 真正的判据在 resolveToastDuration 里（纯函数，可单测）。
+    const duration = resolveToastDuration(config.type, config.duration, action !== undefined);
     showToast(config.message, config.type, duration, action);
   };
   

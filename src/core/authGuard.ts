@@ -15,6 +15,8 @@
  *   · WebDAV：账号由用户自带 ⇒ 不查 Supabase；不可用时由锁定后端抛可读错
  * 这样「是否可同步」只有一个答案来源：后端自己。
  */
+import { isBackendUnavailableError } from '@/core/backendUnavailable';
+
 export interface AuthGuardDeps {
   isAuthenticated: () => boolean;
   restoreAuth: () => Promise<boolean>;
@@ -41,7 +43,19 @@ export async function ensureAuthenticated(deps: AuthGuardDeps): Promise<boolean>
   if (deps.isAuthenticated()) return true;
   try {
     return await deps.restoreAuth();
-  } catch {
+  } catch (err) {
+    // ── 2026-10-22（402）：「云端整体不可用」**不许**被吞成「未登录」─────
+    // 原先这里 `catch { return false; }` 把**所有**失败都读成「没登录」。
+    // 而生产实测（Supabase 项目被封禁）：账号校验请求本身返回 402 ⇒
+    // restoreAuth 失败 ⇒ 返回 false ⇒ 用户看到「用户未登录」。
+    //
+    // 那是一句**更重的谎话**：他明明登录着，界面却说没登录 ⇒ 他会去重新登录、
+    // 重新输密码、甚至以为自己的账号被删了。而真正的原因是「我们的云端项目
+    // 被限制」，用户做什么都没用。
+    //
+    // 所以这一类必须**原样上抛**，由调用方按「服务端不可用」说人话
+    // （见 syncEngine.upload / downloadAndMerge 的 catch）。
+    if (isBackendUnavailableError(err)) throw err;
     return false;
   }
 }

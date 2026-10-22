@@ -104,7 +104,20 @@
    本主题的**深色**取值（.dark 挂在 html 上，预览是它的后代；
    特异性 (0,2,1) 压过浅色那条 (0,1,0)）。 */
 html.dark [data-theme="apple"], html[data-theme="apple"].dark {
-  --color-bg-primary: #000000;
+  /* ── 2026-10-23 审计 V-13：底色不该是**纯黑** ──────────────────────────
+   *
+   * 原先 `--color-bg-primary` 与 `--color-shell` 都是 `#000000`。
+   * 纯黑不是「深色」，是**没有底色** —— 卡片底 #1c1c1e 与它的对比只有
+   * **1.23:1**，8% 白描边合成后是 1.26:1 ⇒ 卡片与页面之间几乎没有任何
+   * 明度差，分隔全靠那条描边撑着。在 OLED 屏上整块内容像浮在虚空里。
+   * 而且从 chrome 主题（#202124）切过来是「从有底色跳到无底色」，
+   * 不是从一种深灰跳到另一种深灰。
+   *
+   * 改成 #141416：与卡片底 #1c1c1e 拉开一档（1.24:1 → 1.31:1），
+   * 同时比纯黑更有「面」的感觉；对比度改动极小，不影响任何文字可读性
+   * （文字色是 #f5f5f7，对新底仍远高于 AA）。
+   */
+  --color-bg-primary: #141416;
   --color-bg-secondary: #1c1c1e;
   --color-bg-tertiary: #2c2c2e;
   --color-bg-elevated: #2c2c2e;
@@ -154,7 +167,8 @@ html.dark [data-theme="apple"], html[data-theme="apple"].dark {
   --color-focus-ring: #7ab8f5;  /* 深色下焦点环墨色 */
   --shadow-panel: 0 12px 32px rgba(0, 0, 0, 0.5);
   --panel-blur: saturate(180%) blur(20px);
-  --color-shell: #000000;
+  /* V-13：与 --color-bg-primary 同步（原先两处都是 #000000）。 */
+  --color-shell: #141416;
 
   --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.4), 0 8px 24px rgba(0, 0, 0, 0.35);
   --shadow-card-hover: 0 2px 6px rgba(0, 0, 0, 0.5), 0 12px 32px rgba(0, 0, 0, 0.45);
@@ -162,6 +176,27 @@ html.dark [data-theme="apple"], html[data-theme="apple"].dark {
 }
 
 /* ── 结构性覆盖 ─────────────────────────────────────────────── */
+
+/* ── 焦点环（2026-10-23 审计 V-2）──────────────────────────────────────
+ *
+ * apple 主题原先**只有 `--color-focus-ring` 变量定义，没有 `:focus-visible`
+ * 规则** ⇒ 这套主题下的焦点环来自 global.css 的全局兜底（那条在
+ * `@layer base` 里）⇒ 被 Tailwind utilities 层的
+ * `focus-visible:outline-primary-600` 压过去 ⇒ 弹窗里实测环色恒为
+ * `rgb(37,99,235)`（固定品牌蓝，与 apple 的 #0071e3 无关）；
+ * 深色态更糟 —— `dark:focus-visible:outline-slate-300`（0-3-0）赢，
+ * 环色 rgb(203,213,225) 压 apple 深色面板 rgb(44,44,46) 只有 **2.70:1**
+ * （WCAG 2.2 非文本对比要求 3:1）。
+ *
+ * 这条规则必须**未分层**（不在 @layer 里）—— 分层的话它会被 utilities
+ * 层压过去，等于没写。
+ */
+html[data-theme="apple"] :focus-visible {
+  outline: 2px solid var(--color-focus-ring);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
+}
+
 html[data-theme="apple"] .app-shell,
 html[data-theme="apple"] .header { background: var(--color-bg-overlay); }
 

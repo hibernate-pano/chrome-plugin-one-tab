@@ -158,7 +158,7 @@ const ToggleRow: React.FC<{
       aria-label={label}
       onClick={onToggle}
       className="shrink-0 relative inline-flex h-6 w-11 items-center rounded-full transition-colors mt-0.5
-        focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary-500"
+       "
     >
       <span
         className={`absolute inset-0 rounded-full transition-colors ${
@@ -666,7 +666,7 @@ const OptionsContent: React.FC = () => {
               // 这个按钮是**次级导航**（回列表），不是主 CTA ——
               // 主 CTA 是下面账号区的「登录 / 注册」（走 theme-cta：
               // accent 当底、accent-fg 当字，那才是 accent 的正确用法）。
-              className="inline-flex items-center gap-1.5 rounded-lg border theme-border-default px-3 py-1.5 text-sm font-medium theme-text-primary transition-colors hover:theme-btn-hover focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary-500"
+              className="inline-flex items-center gap-1.5 rounded-lg border theme-border-default px-3 py-1.5 text-sm font-medium theme-text-primary transition-colors hover:theme-btn-hover"
             >
               <svg
                 xmlns="http://www.w3.org/2000/svg"
@@ -715,7 +715,7 @@ const OptionsContent: React.FC = () => {
                   onClick={() => {
                     void handleSignOut();
                   }}
-                  className="shrink-0 rounded-lg border theme-border-default px-3 py-1.5 text-sm font-medium theme-text-secondary transition-colors hover:theme-btn-hover focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary-500"
+                  className="shrink-0 rounded-lg border theme-border-default px-3 py-1.5 text-sm font-medium theme-text-secondary transition-colors hover:theme-btn-hover"
                 >
                   退出登录
                 </button>
@@ -734,7 +734,7 @@ const OptionsContent: React.FC = () => {
                 <button
                   type="button"
                   onClick={() => setAuthModal('login')}
-                  className="shrink-0 rounded-lg theme-cta px-3 py-1.5 text-sm font-semibold focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary-500"
+                  className="shrink-0 rounded-lg theme-cta px-3 py-1.5 text-sm font-semibold"
                 >
                   登录 / 注册
                 </button>
@@ -902,7 +902,7 @@ const OptionsContent: React.FC = () => {
               onClick={() => setWebDavExpanded(!isWebDavPanelExpanded)}
               aria-expanded={isWebDavPanelExpanded}
               aria-controls="webdav-settings-panel"
-              className="w-full flex items-center justify-between gap-3 text-left rounded-lg px-1 py-1 -mx-1 hover:theme-btn-hover focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary-500"
+              className="w-full flex items-center justify-between gap-3 text-left rounded-lg px-1 py-1 -mx-1 hover:theme-btn-hover"
             >
               <span className="min-w-0">
                 <span className="block text-base font-semibold theme-text-primary">

@@ -3,6 +3,13 @@ import { AuthState, User } from '@/types/tab';
 import { auth as supabaseAuth } from '@/utils/supabaseFacade';
 import { accountScopeStore, authCache } from '@/utils/authCache';
 import { createAccountScopeRecord, decideAccountBind } from '@/core/accountScope';
+import {
+  BackendUnavailableError,
+  isBackendUnavailable,
+  isBackendUnavailableError,
+  readHttpStatus,
+} from '@/core/backendUnavailable';
+import { backendUnavailableAuthCopy } from '@/components/sync/backendUnavailableCopy';
 import { storage } from '@/utils/storage';
 import { logError, logInfo, logWarn } from '../../utils/log';
 
@@ -77,6 +84,29 @@ const supabaseErrorMessage = (error: unknown): string | undefined => {
   return undefined;
 };
 
+/**
+ * 账号相关的错误 → 中文文案（2026-10-22，402 收口）。
+ *
+ * ── 为什么要单独一个函数（而不是直接用 authErrorCopy）───────────────────
+ * `authErrorCopy` 的兜底是「操作失败，请稍后重试」/「获取用户信息失败，请稍后重试」
+ * —— 对**服务端项目被限制**（生产实测 402）来说是**错的方向**：
+ *   ① 「请稍后重试」——重试一万次也一样（项目被封禁）；
+ *   ② 更糟的是它把「服务端挂了」说成「获取用户信息失败」——用户会以为是
+ *      自己的账号有问题，反复改密码、重新注册，而**他其实已经登录了**。
+ *
+ * 而这一层是**最要命**的一层：账号校验失败 ⇒ `getCurrentUser` thunk reject ⇒
+ *   · syncEngine.ensureAuthenticated → restoreAuth 失败 ⇒ 整个同步说「用户未登录」；
+ *   · backgroundSync 第 1 步 → 返回 not_logged_in ⇒ **后台每轮静默跳过**。
+ * 也就是说：**在账号恢复这一层被吞掉的话，后面所有同步文案都修不好**。
+ *
+ * 判据用**机器字段**（HTTP 状态码 / 报文标记），不靠文案匹配 ——
+ * 见 core/backendUnavailable.ts 的完整论证。
+ */
+export const authBackendUnavailableCopy = (error: unknown): string | null => {
+  if (!isBackendUnavailable(error)) return null;
+  return backendUnavailableAuthCopy();
+};
+
 const initialState: AuthState = {
   user: null,
   isAuthenticated: false,
@@ -117,7 +147,25 @@ export async function bindLocalSessionsToAccount(userId: string): Promise<void> 
     // 读-改-写口径的快照（先落盘 pending 写、失效 30s 缓存）：
     // 用 getGroups() 的缓存快照会漏掉「刚保存、还没落盘」的会话。
     const groups = await storage.getGroupsForWrite();
-    const decision = decideAccountBind(scope, userId, groups.map(g => g.id));
+    // ── 2026-10-23 审计 R-1 / DS-43-1：删除意图队列里的 id 也要参与认账 ──
+    // 一条被**物理删除**的会话不在 getGroupsForWrite() 里（v1.22.0 起删除即
+    // 物理清除），但它的**删除意图**还在队列里，而那条意图**要发给它的真正
+    // 主人**。若不把它算进认账，这条会话的归属事实（属于上一个账号）会在
+    // 换账号时**当场丢失** ⇒ 换账号后它的删除意图被发给**新账号**：
+    // ① 越权写（往新账号的云端写了一行不属于它的墓碑）；
+    // ② 读回校验把「云端没这行」判成「意图已达成」（missingAsAchieved）
+    //    ⇒ 删除意图被清队 ⇒ 那条会话在它真正的主人账号下**复活**（零提示）。
+    //
+    // 队列读不出来时**不吞**：让这一整个认账失败（catch 里记日志）⇒ 归属记录
+    // 保持原样（旧归属仍在 ⇒ 闸门更保守）⇒ 方向是安全的。
+    const pendingDeleteIds = await storage.getPendingDeleteIds();
+    const decision = decideAccountBind(
+      scope,
+      userId,
+      groups.map(g => g.id),
+      Date.now(),
+      pendingDeleteIds
+    );
     await accountScopeStore.write({
       ...decision.nextScope,
       // 已有提示不许被这次认账抹掉（还没告知用户的提示必须留着 ⇒ 不许静默）。
@@ -247,6 +295,13 @@ export const getCurrentUser = createAsyncThunk(
       const { data, error } = await supabaseAuth.getCurrentUser();
       if (error) {
         logError('获取用户信息错误:', error);
+        // ── 2026-10-22（402）：服务端项目被限制 ⇒ 专用人话（不降级成「请重试」）──
+        // 判据喂**原始** error（它带 status / http_status）；这里还是第一层，
+        // 机器字段还没被包装掉。
+        const unavailableCopy = authBackendUnavailableCopy(error);
+        if (unavailableCopy) {
+          throw new BackendUnavailableError(unavailableCopy, readHttpStatus(error) ?? undefined);
+        }
         throw new Error(authErrorCopy(supabaseErrorMessage(error), '获取用户信息失败，请稍后重试'));
       }
 
@@ -267,6 +322,14 @@ export const getCurrentUser = createAsyncThunk(
       logError('获取用户信息异常:', err);
       // 确保返回一个字符串错误消息，而不是对象
       if (err instanceof Error) {
+        // ── 2026-10-22（402）：catch 分支**也要**认机器判据 ─────────────────
+        // 上面那一支已经处理了 402；这一支是「别处抛的同类错误」与
+        // 「包装过程中丢掉的判据」的兜底。少了它，BackendUnavailableError
+        // 会在这一层被 authErrorCopy 降级成「获取用户信息失败，请稍后重试」
+        // —— 正是本次要消灭的那句错方向的话。
+        if (isBackendUnavailableError(err)) {
+          throw err;
+        }
         throw new Error(authErrorCopy(err.message, '获取用户信息失败，请稍后重试'));
       } else {
         throw new Error('获取用户信息失败，请稍后重试');
@@ -374,6 +437,31 @@ const authSlice = createSlice({
       })
       .addCase(getCurrentUser.rejected, (state, action) => {
         state.isLoading = false;
+        // ── 2026-10-22（402）：「服务端不可用」**不许**把登录态读成「没登录」──
+        // 原先这里无条件 `authErrorCopy(...)` ⇒ 界面弹「获取用户信息失败，请稍后重试」。
+        //
+        // 但「服务端项目被限制」（生产实测 402）时，这句是**两重错**：
+        //   ① 「请稍后重试」——重试一万次也一样（项目被封禁）；
+        //   ② 更糟的是**登录态被读成 false**（见下）⇒ popup 的入口闸门
+        //      （syncIdentityBlockedCopy）在用户点上传的**那一刻**就拦下，
+        //      弹「还没有登录 TapStack 云端」—— 他明明登录着。
+        //
+        // ⚠️ 所以这里要分开处理两类失败：
+        //   · **服务端不可用** ⇒ 保留**已缓存的登录态**（用户确实登录着，
+        //     只是服务端暂时确认不了），并给出「等我们恢复」的人话；
+        //   · 其它失败（令牌过期 / 真的没登录 / 账号被删）⇒ 维持原行为
+        //     （登录态读成 false）。
+        //
+        // 判据用**机器字段**（HTTP 状态码 / 报文标记），不靠文案匹配 ——
+        // 见 core/backendUnavailable.ts。
+        if (isBackendUnavailableError(action.error)) {
+          state.error = backendUnavailableAuthCopy();
+          // 登录态**保持原样**（不清零）：清零 = 告诉界面「你没登录」，
+          // 而事实是「服务端暂时确认不了你的账号」。
+          state.backendUnavailable = true;
+          logWarn('[auth] 云端项目不可用，无法验证账号（登录态按缓存保留，不告诉用户「未登录」）');
+          return;
+        }
         // 确保错误消息是字符串而不是对象；且进 UI 的必须是中文
         state.error = authErrorCopy(action.error.message, '获取用户信息失败，请稍后重试');
         logInfo('自动登录失败，但这是正常的，用户可能未登录');

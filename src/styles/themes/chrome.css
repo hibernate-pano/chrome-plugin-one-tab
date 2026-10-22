@@ -187,3 +187,21 @@ html[data-theme="chrome"] .tab-group-card:hover { transform: none; }
    皮肤」—— 6 套主题里只有 chrome 是圆的。现在都读形状令牌。 */
 html[data-theme="chrome"] .btn-primary { border-radius: var(--radius-btn); font-weight: 500; }
 html[data-theme="chrome"] .btn-icon { border-radius: var(--radius-btn-icon); }
+
+/* ── 焦点环（2026-10-23 审计 V-2）──────────────────────────────────────
+ *
+ * chrome 主题原先**只有 `--color-focus-ring` 变量定义，没有 `:focus-visible`
+ * 规则** ⇒ 焦点环落到 global.css 的全局兜底（@layer base）⇒ 被 Tailwind
+ * utilities 层的 `focus-visible:outline-primary-600` 压过去 ⇒ 弹窗里实测
+ * 环色恒为 rgb(37,99,235)（固定品牌蓝，与 chrome 的 #1967d2 无关）；
+ * 深色态 `dark:focus-visible:outline-slate-300`（0-3-0）赢，
+ * 环色 rgb(203,213,225) 压 chrome 深色面板 rgb(41,42,45) 只有 **2.78:1**
+ * （WCAG 2.2 非文本对比要求 3:1）。
+ *
+ * 这条规则必须**未分层**（不在 @layer 里）—— 分层会被 utilities 层压过去。
+ */
+html[data-theme="chrome"] :focus-visible {
+  outline: 2px solid var(--color-focus-ring);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
+}

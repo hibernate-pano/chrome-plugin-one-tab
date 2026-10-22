@@ -183,6 +183,37 @@ export function normalizeImportedGroup(raw: unknown): TabGroup {
     createdAt,
     updatedAt: asIso(g.updatedAt ?? g.updated_at) ?? createdAt,
     isLocked: isLegacyTruthy(g.isLocked) || isLegacyTruthy(g.is_locked),
+    // ── 2026-10-22 审计 DS-43-3：组级墓碑标记必须在这里归零 ──────────────
+    //
+    // 【为什么这是数据安全缺陷，而不是"顺手清一个字段"】
+    // `...(g as object)` 把文件里的**每一个未知字段**原样带进本地行。
+    // 组级 `isDeleted` 恰好不在上面的覆盖名单里 ⇒ 备份文件里写了
+    // `isDeleted: true` 就**原样保留**（v1.21 时代的备份、手改过的文件都能做到）。
+    //
+    // 失效链（本轮实测复现）：
+    //   ① 落盘行带组级 isDeleted:true；
+    //   ② `toActiveGroupsView` 按 `if (!g.isDeleted)` 过滤 ⇒ **列表里看不见它**
+    //      （用户看到「导入了，但什么都没多」）；
+    //   ③ `syncEngine.upload` 的 `legacyTombstoneIds` 把本地墓碑当成
+    //      「老版本残留墓碑」⇒ 进删除广播集合；云端**没有这一行** ⇒
+    //      广播是空操作（missingAsAchieved）⇒ 紧接着
+    //      `setGroupsImmediate(activeGroups)` 把它**从本地物理删除**。
+    //
+    // ⇒ 用户的会话在列表里隐形、一轮同步后**连磁盘上的记录也没了**，零解释。
+    //
+    // 【口径：导入的永远是「活着的会话」】
+    // 导入语义 = 「把文件里的东西加进来」，不是「把文件里的删除状态也搬过来」。
+    // 备份文件里的墓碑标记是**导入来源的历史残留**（旧版本的删除广播载体），
+    // 对本机没有任何意义：那个删除意图早就在别的设备上执行完了。
+    // ⇒ 归零是**唯一正确**的口径，不是"更安全一点"的取舍。
+    //
+    // ⚠️ 为什么不能靠 `delete g.isDeleted`（把字段摘掉）：下游有多处按
+    // `g.isDeleted === true` 判定，而 `toActiveGroupsView` 用的是
+    // `if (!g.isDeleted)`（falsy 判定）—— 摘掉字段在视图层等价于 false，
+    // 但在**别的**地方（`filter(g => !g.isDeleted)`）同样等价。
+    // 显式写 `false` 的好处是：形状**确定**（不依赖"字段不存在"这种约定），
+    // 读的人一眼看得见"这条是活的"。两条路都安全，但**确定**的那条更难被误改。
+    isDeleted: false,
   } as TabGroup;
 }
 

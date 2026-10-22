@@ -29,7 +29,7 @@
 export interface DeleteGroupCopyInput {
   /** 会话名（出现在标题里）。 */
   name: string;
-  /** 会话里的标签记录数。 */
+  /** 会话里的标签页数。 */
   tabCount: number;
   /** 该会话是否被锁定。 */
   isLocked: boolean;
@@ -60,7 +60,13 @@ export const deleteGroupEntryLabel = (isLocked: boolean): string =>
  * 此刻要删的正是那个被保护的东西 —— 不说清楚，用户会以为在删一个普通会话。
  */
 export const deleteGroupConfirmMessage = (input: DeleteGroupCopyInput): string => {
-  const records = `将永久删除该会话内的 ${input.tabCount} 个标签记录，删除后无法恢复。`;
+  // ── 2026-10-23 审计 H-10：同一个东西不许有三种叫法 ────────────────────
+  // 「会话里的一条 URL」在本仓曾有三种叫法：标签页（保存提示、aria-label）
+  // / 标签（顶栏计数、卡头徽章）/ **标签记录**（此处）。
+  // 同一个东西三个名字 ⇒ 用户在三个界面看到三个词，会以为是三样东西。
+  // ⇒ 统一成「标签页」（与 `saveActionCopy` / `saveFeedbackCopy` / TabGroup
+  //   的 aria-label / 卡头徽章同源）。
+  const records = `将永久删除该会话内的 ${input.tabCount} 个标签页，删除后无法恢复。`;
   if (!input.isLocked) {
     return `${records}确认继续吗？`;
   }

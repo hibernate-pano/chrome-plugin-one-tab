@@ -187,13 +187,100 @@ const REQUEST_TIMEOUT_MS = (() => {
 const fetchWithTimeout: typeof fetch = (input, init) => {
   // 调用方自带 signal 时不覆盖：两个 signal 无法合并，而我们的超时是兜底
   // 需求，不该压过业务侧的取消意图（例如 auth 的 token 刷新）。
-  if (init?.signal) return fetch(input, init);
+  //
+  // ⚠️ 但**状态码注入两条路径都要做**（2026-10-22）：auth 的 token 刷新正是
+  // 走「自带 signal」这条路，而「服务端项目被限制」在 auth 侧同样会发生
+  // （实测 /auth/v1/user 也返回 402）。漏掉它 ⇒ 账号恢复路径拿不到判据。
+  if (init?.signal) return fetch(input, init).then(res => injectHttpStatus(res));
 
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
-  return fetch(input, { ...init, signal: controller.signal }).finally(() => {
-    clearTimeout(timer);
-  });
+  return fetch(input, { ...init, signal: controller.signal })
+    .then(res => injectHttpStatus(res))
+    .finally(() => {
+      clearTimeout(timer);
+    });
+};
+
+/**
+ * 把 HTTP 状态码写进**错误响应体的 JSON** 里（2026-10-22，402 收口）。
+ *
+ * ── 为什么必须在这里做 ──────────────────────────────────────────────────
+ * 这是所有 Supabase 流量的**唯一咽喉**（REST 与 auth 都走它），也是**唯一**
+ * 能同时看到「HTTP 状态码」与「响应体」的地方。
+ *
+ * 而状态码本来是**拿不到**的（2026-10-22 生产实测，Supabase 402 时）：
+ *   · postgrest-js 2.118 把错误体解析成 `{ message }` —— **没有 code、没有
+ *     status**，且不是 Error 实例（`error instanceof Error` 为 false）。
+ *     HTTP 402 只在**信封**的 `res.status` 上，被 `{ data, error }` 的解构丢掉。
+ *   · auth-js 2.118 造 `AuthApiError { status: 402 }` —— status 原生可用，
+ *     但那是 auth 侧的形状；REST 侧拿不到。
+ *
+ * ⇒ 「服务端项目被限制（402）」这个判据**在 SDK 之上完全不可见**。要让它
+ * 可见，只能在**唯一知道状态码的地方**把它写进去。
+ *
+ * ── 为什么写 `http_status` 而不是 `code` ────────────────────────────────
+ * `code` 已被既有语义消费：PGRST204（列不存在）、42703、23502（not-null）——
+ * 见 upload.ts 的认输预检、probe.ts 的列探测、missingColumn.ts /
+ * notNullFallback.ts。往 `code` 注入状态码会让「402」被误当成「PostgREST
+ * 错误码」，改变那几处的既有判定。`http_status` 是**新字段**，不与任何
+ * 既有字段竞争。
+ *
+ * ── 为什么**只**改错误响应（2xx 不碰） ──────────────────────────────────
+ * 成功响应是数据，不能动。失败响应改写的前提是「它确实是 JSON 且能安全
+ * 解析」—— 解析失败就**原样返回**（网关的纯文本 400「Bad Request」正是
+ * 这种，见 idBatches.ts 的注释；那种情况状态码不在 body 里，但本函数
+ * 已经**在响应上**读过状态码，可以走「响应不可改 ⇒ 靠 header/状态码」的
+ * 兜底路径，见下）。
+ *
+ * ⚠️ 改写响应体 ⇒ 必须重建 Response（body 已被读过）。**保留原 headers**
+ * （含 content-type），否则 SDK 会把 JSON 当纯文本解析。
+ */
+const injectHttpStatus = async (res: Response): Promise<Response> => {
+  // 2xx / 3xx：不是错误响应，一个字节都不动。
+  if (res.ok || res.status < 400) return res;
+
+  // 已经有状态码字段的（我们自己重放过 / 别的层注入过）：不重复注入。
+  let text: string;
+  try {
+    text = await res.clone().text();
+  } catch {
+    return res; // 读不出 body ⇒ 原样返回
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    // 非 JSON（网关的纯文本错误页）。此时状态码只存在于 Response 上，
+    // 而 SDK 拿不到 —— 把它塞进一个 JSON 形状的错误体，让 SDK 能解析出
+    // `{ message, http_status }`。**这改变了响应体的形状**，所以必须
+    // 同时把 content-type 换成 JSON，否则 SDK 会拿到纯文本。
+    return new Response(
+      JSON.stringify({ message: text || res.statusText || `HTTP ${res.status}`, http_status: res.status }),
+      {
+        status: res.status,
+        statusText: res.statusText,
+        headers: { 'content-type': 'application/json; charset=utf-8' },
+      }
+    );
+  }
+
+  // 已是对象：补上 http_status（不覆盖已有的）。
+  if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+    const obj = parsed as Record<string, unknown>;
+    if (obj.http_status === undefined) {
+      obj.http_status = res.status;
+    }
+    return new Response(JSON.stringify(obj), {
+      status: res.status,
+      statusText: res.statusText,
+      headers: res.headers,
+    });
+  }
+
+  // 数组或标量：不动（形状不是「错误对象」，改它风险大于收益）。
+  return res;
 };
 
 // 检查 Supabase 是否已配置

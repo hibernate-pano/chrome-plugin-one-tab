@@ -333,6 +333,29 @@ export function applyImportGroups(
         ...group,
         id: deps.genId(),
         lastOp: stamp,
+        // ── 2026-10-22 审计 DS-43-3：组级墓碑标记显式归零 ────────────────
+        //
+        // 【为什么这里要再写一遍，而不是只靠 normalizeImportedGroup】
+        // 本函数有**三个**入口（SW mutationHandlers / storage 本地兜底 /
+        // 未来的 UI thunk），载荷来自**用户手上的文件**或跨进程消息 ——
+        // 形状不可信。`normalizeImportedGroup` 是上游那道防线，但
+        // 「每个调用方都记得先调它」正是这条暗门当初的成因（P1-1 的教训）。
+        // ⇒ 落盘路径自己也要有一道，**不依赖调用方的自觉**。
+        //
+        // 【为什么不能只靠 `...group` 的展开】
+        // `...group` 会把文件里的 `isDeleted: true` **原样带进落盘行**。
+        // 那条行随后：
+        //   · 视图层 `if (!g.isDeleted)` ⇒ **列表里看不见**；
+        //   · `syncEngine.upload` 的 legacyTombstoneIds ⇒ 进删除广播集合；
+        //     云端没有这一行 ⇒ 广播空操作 ⇒ 紧接着
+        //     `setGroupsImmediate(activeGroups)` 把它**物理删除**。
+        // ⇒ 「导入了，但什么都没多」，然后那行数据也没了，零解释。**数据丢。**
+        //
+        // 【口径】导入的永远是「活着的会话」：备份里的删除标记是**别的设备上
+        // 已经执行完的删除意图的残留**，对它本机没有任何意义。
+        // 显式写 false（而不是 delete 掉字段）⇒ 形状确定，不依赖
+        // 「字段不存在 ⇒ falsy」这种约定。
+        isDeleted: false,
         tabs: sourceTabs.reduce<Tab[]>((acc, tab) => {
           const url = deps.sanitizeUrl(tab?.url as string);
           if (!url) return acc;

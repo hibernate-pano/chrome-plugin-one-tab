@@ -58,6 +58,19 @@ export interface MutationResult<P = unknown> {
    * 语义：**非空 ⇒ 调用方应当向用户表面提示**，但不得因此回滚本地状态。
    */
   broadcastWarn?: string;
+  /**
+   * 本轮失败是否因「**云端项目被限制 / 服务端不可用**」（2026-10-22，402 收口）。
+   *
+   * ── 为什么必须是**独立字段**（而不是靠 error 的文案）──────────────────
+   * `error` 到界面这一层是**人话句子**，而界面要判断「这是不是服务端不可用」
+   * 才能选对措辞。若靠文案反推 ⇒ 改一句文案就静默失效（本仓纪律：
+   * 「文案匹配让 UI 分类取决于另一处文件里的措辞」是错的）。
+   *
+   * 机器标记从引擎（syncEngine）产出 → SW 回包 → 界面，全程透传。
+   *
+   * 字段缺失（老调用方 / 本轮没有这个问题）⇒ 没有这件事。
+   */
+  backendUnavailable?: boolean;
 }
 
 export type MessageSender = (msg: unknown) => Promise<unknown>;

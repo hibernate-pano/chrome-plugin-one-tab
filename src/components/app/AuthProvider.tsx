@@ -1,11 +1,15 @@
 import React, { useEffect, useState } from 'react';
 import { useAppDispatch } from '@/store/hooks';
-import { getCurrentUser } from '@/store/slices/authSlice';
+import { getCurrentUser, setFromCache } from '@/store/slices/authSlice';
 import { loadGroups } from '@/store/slices/tabSlice';
 import { auth as supabaseAuth } from '@/utils/supabaseFacade';
 import { authCache } from '@/utils/authCache';
 import { sendSyncCommand } from '@/shared/mutationProtocol';
-import { hasLoginRestoreTriggered } from '@/components/auth/restoreAfterLogin';
+import {
+  hasLoginRestoreTriggered,
+  deliverAccountSwitchNotice,
+} from '@/components/auth/restoreAfterLogin';
+import { isBackendUnavailableError } from '@/core/backendUnavailable';
 import { logError, logInfo, logWarn } from '../../utils/log';
 
 interface AuthProviderProps {
@@ -25,6 +29,25 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     const initializeAuth = async () => {
       try {
         logInfo('开始初始化认证状态...');
+
+        // ── 2026-10-23 审计 R-4：页面挂载时消费一次「待告知的换账号提示」──
+        //
+        // 【为什么必须有这条通道】提示是**持久**的（存在归属记录里，
+        // utils/authCache.ts 的独立键）⇒ 就算这次没发出去，它也不会丢。
+        // 但它原先**只有**一个消费者：restoreAfterLogin 的 finally 里那个
+        // 400ms setTimeout ⇒ 用户在登录后 400ms 内关掉弹窗 ⇒ 提示**永远
+        // 没人告知**（提示还在那儿，但没人去取）⇒ 违反「不许静默」。
+        //
+        // 【为什么不会重复发两条】消费即清空（consumeAccountSwitchNotice
+        // 读出来就写回 pendingNotice: null）⇒ 两条通道争抢**同一条**提示
+        // ⇒ 谁先到谁发，**保证一定有人发，且只发一次**（消费本身在
+        // restoreAfterLogin 里是串行的，同时抢也不会发出两条）。
+        //
+        // 【为什么放在最前面】这一条不许被「初始化失败」之类的分支跳过：
+        // 它消费的是**持久**提示，而「登录态」由 deliverAccountSwitchNotice
+        // 自己判（没登录就不消费，见 restoreAfterLogin 的注释）⇒
+        // 放在最前面既不会误伤，也保证「提示迟早有人告知」。
+        void deliverAccountSwitchNotice();
 
         // 首先检查缓存的认证状态
         const cachedAuth = await authCache.getAuthState();
@@ -96,7 +119,35 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
                 }
               }
             })
-            .catch(() => {
+            .catch(async err => {
+              // ── 2026-10-22（402）：「服务端不可用」不许把登录态读成「没登录」──
+              // 生产实测：Supabase 项目被封禁（egress 配额超限）时，账号校验
+              // （/auth/v1/user）本身返回 402 ⇒ thunk reject ⇒ Redux 的
+              // `isAuthenticated` 恒为 false ⇒ popup 的**入口闸门**
+              // （syncIdentityBlockedCopy）在用户点上传的**那一刻**就拦下，
+              // 弹「还没有登录 TapStack 云端」——
+              //
+              // 而他**明明登录着**（会话还在，缓存里也有账号）。那句提示比
+              // 「请重试」更重：用户会去重新登录、重新输密码，甚至以为账号
+              // 被删了 —— 而真正的原因是「我们的云端项目被限制」。
+              //
+              // ⇒ 这一类必须**按缓存恢复登录态**（会话存在 + 缓存里有账号 ⇒
+              // 用户确实登录着，只是服务端暂时确认不了）。让用户能点上传，
+              // 于是他看到的是「云端暂时不可用 + 本地没丢 + 等我们恢复」。
+              //
+              // ⚠️ 判据用**机器字段**（HTTP 状态码 / 报文标记），不靠文案匹配
+              // —— 见 core/backendUnavailable.ts。
+              if (isBackendUnavailableError(err)) {
+                const cached = await authCache.getAuthState();
+                if (cached?.isAuthenticated && cached.user) {
+                  dispatch(setFromCache({ user: cached.user, isAuthenticated: true }));
+                  logWarn(
+                    '[auth] 云端项目不可用，无法验证账号 —— 按缓存恢复登录态' +
+                      '（用户确实登录着；不说「未登录」）'
+                  );
+                }
+                return;
+              }
               logInfo('获取用户信息失败，但会话存在');
             });
         } else {

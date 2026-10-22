@@ -24,6 +24,8 @@ import { STORAGE_KEYS } from '../storage-kv/keys';
 import { kvGet } from '../storage-kv/storageAdapter';
 import type { UserSettings } from '../types/tab';
 import { primeSyncBackend } from '@/sync-backend';
+import { isBackendUnavailableError } from '@/core/backendUnavailable';
+import { backendUnavailableBackgroundNotice } from '@/components/sync/backendUnavailableCopy';
 
 /**
  * 后台定时同步（chrome.alarms 驱动，Service Worker 常驻时每 60s 触发）。
@@ -125,6 +127,68 @@ const backoffKv: BackoffKv = {
  * 提醒是附加的，绝不能因为它反把同步让路这条路弄失败。
  */
 const LOCKED_BACKEND_NOTICE_KEY = 'background_sync_locked_notice_shown';
+
+/**
+ * 「云端项目被限制」时后台轮询的下次重试间隔（分钟）。
+ *
+ * ── 为什么是 60 分钟（而不是退避阶梯的 1/2/5）───────────────────────────
+ * 这一类失败**重试无用**（项目被封禁时重试一万次结果一样），而且每次重试
+ * 都在消耗 **egress 配额** —— 配额超限正是被封禁的原因。所以间隔必须
+ * 显著长于普通故障的退避档。
+ *
+ * 但**不能拉到无穷大**（也不能清 alarm）：那会让「恢复后自动继续」变成
+ * 谎话 —— 用户得手动同步或重启浏览器才知道恢复了。60 分钟是一个折中：
+ * 配额喘得起气，且恢复后最多一小时自愈。
+ *
+ * 为什么不是「用户档位」（默认 10 分钟）：10 分钟一轮全量轮询仍在持续
+ * 烧配额，而封禁状态往往持续更久（要等人去解封）。
+ */
+export const BACKEND_UNAVAILABLE_RETRY_MINUTES = 60;
+
+/** 「云端项目被限制」的一次性提醒标志（与 LOCKED_BACKEND_NOTICE_KEY 分开）。 */
+const BACKEND_UNAVAILABLE_NOTICE_KEY = 'background_sync_backend_unavailable_notice_shown';
+
+/**
+ * 「云端项目被限制」的一次性可见提醒（2026-10-22）。
+ *
+ * ── 为什么必须可见 ──────────────────────────────────────────────────────
+ * 后台同步失败时**用户什么都没点** ⇒ 界面上零动静。唯一能主动触达用户的
+ * 通道就是这条通知。而这一次尤其需要：用户会以为「自动同步坏了」或
+ * 「我被限流了」—— 通知必须说清「**你的本地数据没事、不是你的错、等我们恢复**」。
+ *
+ * 【一次性】同一段封禁期只打扰一次（标志在 backoffKv = chrome.storage.local，
+ * 活过 SW 回收）。真正跑通一轮（done）后清掉 ⇒ 「封禁 → 恢复 → 再封禁」
+ * 会重新提醒一次。
+ */
+async function notifyBackendUnavailableOnce(): Promise<void> {
+  const api = (globalThis as { chrome?: typeof chrome }).chrome;
+  // API 不可用（测试环境 / 权限被移除）时**不置标志**直接返回：
+  // 「发不出去」不等于「已提醒过」。
+  if (!api?.notifications?.create) return;
+  try {
+    const already = await backoffKv.get(BACKEND_UNAVAILABLE_NOTICE_KEY);
+    if (already) return;
+
+    // 通知权限由设置里的「显示通知提醒」控制（与 locked 那条同口径）。
+    // 读不到设置时按**开启**处理（漏报一次的代价 < 用户以为已提醒过）。
+    try {
+      const settings = await storage.getSettings();
+      if (settings.showNotifications !== true) return;
+    } catch (err) {
+      logWarn('[BackgroundSync] 读取通知设置失败，按开启处理:', err);
+    }
+
+    await api.notifications.create({
+      type: 'basic',
+      iconUrl: api.runtime?.getURL?.('icons/icon128.png'),
+      title: 'TapStack 云端暂时不可用',
+      message: backendUnavailableBackgroundNotice(),
+    });
+    await backoffKv.set(BACKEND_UNAVAILABLE_NOTICE_KEY, true);
+  } catch {
+    // 发不出去就下轮再试，不置标志，不抛错。
+  }
+}
 
 async function notifyLockedBackendOnce(): Promise<void> {
   const api = (globalThis as { chrome?: typeof chrome }).chrome;
@@ -480,16 +544,42 @@ async function handleAlarm(alarm: chrome.alarms.Alarm): Promise<void> {
         // 那会让「锁定 → 队列忙让路 → 再锁定」多发一次提醒（标志被误清）。
         if (outcome.kind === 'done') {
           await backoffKv.remove(LOCKED_BACKEND_NOTICE_KEY).catch(() => undefined);
+          // ── 2026-10-22（402）：同样清掉「云端不可用已提醒」标志 ────────────
+          // 「封禁 → 恢复 → 再封禁」要重新提醒一次，而不是被第一次永久静默。
+          await backoffKv.remove(BACKEND_UNAVAILABLE_NOTICE_KEY).catch(() => undefined);
         }
         logInfo(`[BackgroundSync] 同步成功，退避复位（此前连续失败 ${before} 次）→ 回到 ${cfg.intervalMinutes} 分钟节奏`);
         rescheduleAlarm(cfg.intervalMinutes, cfg.intervalMinutes);
       } else {
         if (outcome.kind === 'done') {
           await backoffKv.remove(LOCKED_BACKEND_NOTICE_KEY).catch(() => undefined);
+          await backoffKv.remove(BACKEND_UNAVAILABLE_NOTICE_KEY).catch(() => undefined);
         }
         logInfo(`[BackgroundSync] 同步成功（${outcome.detail}）`);
       }
     } else {
+      // ── 2026-10-22（402）：「云端项目被限制」是**不可重试**的故障 ────────
+      // 走下面的通用失败分支会有三个坏后果：
+      //   ① 推进退避阶梯（1→2→5 分钟）⇒ 每 5 分钟重试一次，而项目被封禁时
+      //      重试一万次结果一样 —— 而且**每次重试都在烧 egress 配额**，
+      //      配额超限正是被封禁的原因（越重试越封得久）；
+      //   ② 8 次后清 alarm ⇒ 「恢复后会自动继续」变成谎话（用户得手动同步
+      //      或重启浏览器才知道恢复了）；
+      //   ③ 不通知用户 ⇒ 用户只看到「自动同步不动了」，没有任何解释。
+      //
+      // 正确收尾：**不推进退避阶梯**（不是可重试的故障）、**间隔大幅拉长**
+      // （让 egress 配额喘口气、也让它在恢复后能自愈）、**一次性通知用户**、
+      // **alarm 保持存活**。
+      if (outcome.backendUnavailable) {
+        await notifyBackendUnavailableOnce();
+        rescheduleAlarm(BACKEND_UNAVAILABLE_RETRY_MINUTES, cfg.intervalMinutes);
+        logWarn(
+          `[BackgroundSync] 云端项目不可用（${outcome.detail}）：本轮不计入退避阶梯，` +
+            `下次重试间隔拉长到 ${BACKEND_UNAVAILABLE_RETRY_MINUTES} 分钟（重试无用，` +
+            '且每次重试都会消耗配额）。恢复后会自动继续。'
+        );
+        return;
+      }
       const next = await recordSyncFailure(backoffKv, Date.now(), outcome.detail);
       const minutes = backoffMinutesFor(next.consecutiveFailures);
       if (isBackoffExhausted(next.consecutiveFailures)) {
@@ -508,6 +598,24 @@ async function handleAlarm(alarm: chrome.alarms.Alarm): Promise<void> {
     }
   } catch (err) {
     logError('[BackgroundSync] 后台同步异常:', err);
+    // ── 2026-10-22（402）：「云端项目被限制」从异常路径上浮到这里 ──────────
+    // 账号校验那一支（performBackgroundSync 的第 1 步）会把「服务端不可用」
+    // **原样抛出**（不吞成「未登录」），于是它落到本 catch。
+    //
+    // 必须单独处理：走下面的通用退避 = 每 1/2/5 分钟重试一次，而项目被封禁时
+    // 重试无用**且烧配额**（配额超限正是封禁原因）。
+    if (isBackendUnavailableError(err)) {
+      await notifyBackendUnavailableOnce();
+      rescheduleAlarm(
+        BACKEND_UNAVAILABLE_RETRY_MINUTES,
+        cfg?.intervalMinutes ?? NORMAL_INTERVAL_MINUTES
+      );
+      logWarn(
+        '[BackgroundSync] 云端项目不可用（异常路径）：本轮不计入退避阶梯，' +
+          `下次重试间隔拉长到 ${BACKEND_UNAVAILABLE_RETRY_MINUTES} 分钟。恢复后会自动继续。`
+      );
+      return;
+    }
     // 异常路径同样计入退避：未捕获异常也是失败，不处理等于无限 60s 重试。
     try {
       const next = await recordSyncFailure(backoffKv, Date.now(), `unexpected: ${String(err)}`);
@@ -582,6 +690,25 @@ export interface BackgroundSyncOutcome {
    * （一次性通知 + 显式按用户档位重排 alarm）。两套语义不能挤在一个字段。
    */
   locked?: boolean;
+  /**
+   * 本轮失败的根因是「**云端项目被限制 / 服务端不可用**」（2026-10-22，402 收口）。
+   *
+   * ── 为什么单独一个字段（而不是复用 kind='failed'）──────────────────────
+   * `kind='failed'` 的语义是「**可重试**的故障」⇒ 后台会推进退避阶梯
+   * （1→2→5 分钟）并在 8 次后清 alarm。
+   *
+   * 而「云端项目被限制」是**不可重试**的：重试一万次结果一样，而且
+   * **每次重试都在烧 egress 配额** —— 配额超限正是被封禁的原因。
+   * 继续按 1/2/5 分钟重试 = 让封禁更久、让配额更负。
+   *
+   * ⇒ 正确的收尾是：**不推进退避阶梯**（不是失败）、**大幅拉长间隔**、
+   * **一次性通知用户**、**alarm 保持存活**（否则「恢复后会自动继续」是谎话）。
+   *
+   * ⚠️ 为什么不用 kind='yielded'：那一档的语义是「正常用户状态，让路」，
+   * 它的间隔是**用户档位**（默认 10 分钟）—— 那是「用户还没配云盘」的情形，
+   * 而这里要的是「别再试了，等我们恢复」。
+   */
+  backendUnavailable?: boolean;
 }
 
 async function performBackgroundSync(): Promise<BackgroundSyncOutcome> {
@@ -630,7 +757,24 @@ async function performBackgroundSync(): Promise<BackgroundSyncOutcome> {
     return { ok: false, kind: 'failed', detail: '读不到同步设置，已中止本轮' };
   }
   if (backendId !== 'webdav') {
-    const user = await store.dispatch(getCurrentUser()).unwrap().catch(() => null);
+    // ── 2026-10-22（402）：「云端整体不可用」**不许**被吞成「未登录」───────
+    // 原先 `.catch(() => null)` 把**所有**失败都读成「没登录」⇒ 返回
+    // `not_logged_in` ⇒ **后台每轮静默跳过**：不报错、不退避、不通知。
+    // 用户看到的现象是「我开着自动同步，但它一动不动」，而设置页仍宣称
+    // 「每 N 分钟后台同步一次」—— 这是本仓反复消灭的那类「静默停摆 + 界面说谎」。
+    //
+    // 生产实测（Supabase 项目被封禁）：账号校验请求本身返回 402 ⇒
+    // thunk reject ⇒ 被这句 catch 吃掉 ⇒ 每轮都读成「未登录」。
+    //
+    // 所以这一类必须**原样上抛**，按「服务端不可用」处理（不推进退避阶梯、
+    // 间隔大幅拉长、一次性通知用户）。
+    const user = await store
+      .dispatch(getCurrentUser())
+      .unwrap()
+      .catch(err => {
+        if (isBackendUnavailableError(err)) throw err;
+        return null;
+      });
     if (!user) {
       logInfo('[BackgroundSync] 未登录，跳过后台同步');
       // 未登录不是同步故障（此时大概也没联网），不推进退避。
@@ -699,6 +843,22 @@ async function performBackgroundSync(): Promise<BackgroundSyncOutcome> {
         };
       }
       if (!upResult.success) {
+        // ── 2026-10-22（402）：「云端项目被限制」要**单独归类** ─────────────
+        // 不能落进普通的 'failed'：那会让后台按 1/2/5 分钟退避重试，
+        // 而重试既无用（项目被封禁）**又烧配额**（配额超限正是封禁原因）。
+        // 机器标记来自 syncEngine（见 UploadResult.backendUnavailable）。
+        if (upResult.backendUnavailable) {
+          logWarn(
+            '[BackgroundSync] 云端项目不可用，上传失败（重试无用且会消耗配额）：' +
+              `${upResult.error ?? 'unknown'}`
+          );
+          return {
+            ok: false,
+            kind: 'failed',
+            backendUnavailable: true,
+            detail: `云端项目不可用，上传未成功: ${upResult.error ?? 'unknown'}`,
+          };
+        }
         logWarn(`[BackgroundSync] 上传未成功，跳过本次下载: ${upResult.error}（下轮 alarm 重试）`);
         // 修复前这里 return true（当成功），于是「上传一直失败」会每 60s 无限重试。
         return { ok: false, kind: 'failed', detail: `上传未成功: ${upResult.error ?? 'unknown'}` };
@@ -737,6 +897,28 @@ async function performBackgroundSync(): Promise<BackgroundSyncOutcome> {
         kind: 'yielded',
         locked: true,
         detail: `未配置/未解锁云盘：${reason}`,
+      };
+    }
+    // ── 2026-10-22（402）：「云端项目被限制」要**单独归类**，且**必须先判** ──
+    // 同上传口：不能落进普通的 'failed'（那会按 1/2/5 分钟退避重试，
+    // 而重试既无用**又烧配额**）。机器标记来自 syncEngine。
+    //
+    // ⚠️ 为什么这一段必须在下面的「保护性跳过」**之前**：
+    // `pending_upload_failed` 原本属于「让路」（保护性跳过 ⇒ 不算故障）。
+    // 而「上传被 402 挡住」时，downloadAndMerge 的 upload_first 分支
+    // 会把 reason 换成「服务端不可用的人话」—— 但如果哪天它仍带着
+    // `pending_upload_failed` 这个 reason（历史形状、老调用方），
+    // 让路分支就会**先命中** ⇒ 后台静默什么都不做（不报故障、不退避、
+    // 不通知）—— 而它恰恰是**真故障**且**不可重试**。
+    //
+    // ⇒ 判据必须是**机器标记优先**：只要标记在，一律按「云端不可用」收尾。
+    if (result.backendUnavailable) {
+      logWarn(`[BackgroundSync] 云端项目不可用，自动下载未成功: ${reason}`);
+      return {
+        ok: false,
+        kind: 'failed',
+        backendUnavailable: true,
+        detail: `云端项目不可用，自动下载未成功: ${reason}`,
       };
     }
     // already_syncing / recent_upload_guard / pending_upload_failed 属正常并发或保护性跳过，

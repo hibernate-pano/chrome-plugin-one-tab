@@ -2,6 +2,10 @@ import { TabGroup, Tab } from '../types/tab';
 import { nanoid } from '@reduxjs/toolkit';
 import { sanitizeTabUrl } from '../utils/inputValidation';
 import { deriveDominantHost } from '../domain/tabGroup/sessionName';
+import {
+  announceOneTabExportLimits,
+  announceOneTabImportLimits,
+} from './oneTabFormatLimits';
 
 /**
  * 给导入的会话起名（2026-10-20 审计 A-20）。
@@ -189,6 +193,19 @@ export const countOneTabGroups = (text: string): number =>
   text.replace(/^\uFEFF/, '').trim().split(/\n\s*\n/).length;
 
 export function parseOneTabFormat(text: string): TabGroup[] {
+  // ── 2026-10-22 审计 DS-43-2：导入即披露这个格式带不过去什么 ──────────
+  //
+  // 披露点选在**这里**（格式的唯一实现）而不是 UI 层：
+  //   · OneTab 导入只有这一条路（storage.importFromOneTabFormat → 这里），
+  //     UI 那一处披露迟早会被另一条路绕过；
+  //   · 这里正是**知道**「锁定态带不过来」的那一处
+  //     （下面建出来的会话 isLocked 恒为 false 就是证据）。
+  //
+  // 【为什么必须在导入的当下说，而不是等恢复时再说】
+  // 恢复时的那句「该会话已从列表移除」是在**不可逆之后**才说的 ——
+  // 用户已经没得选了。导入时说，他还能在恢复之前手动锁上那个会话。
+  announceOneTabImportLimits();
+
   // 移除可能的 BOM 和其他不可见字符
   const cleanText = text.replace(/^\uFEFF/, '').trim();
   
@@ -251,6 +268,18 @@ export function parseOneTabFormat(text: string): TabGroup[] {
  * @returns OneTab 格式的导出文本
  */
 export function formatToOneTabFormat(groups: TabGroup[]): string {
+  // ── 2026-10-22 审计 DS-43-2：导出即披露这个格式带不过去什么 ──────────
+  //
+  // 【为什么导出侧也要说，而不是只在导入时说】
+  // 导入侧的披露发生得太晚：用户**已经把文件带到另一台机器**了，
+  // 那时候知道「这个格式不带锁定」已经没有用了（那边的会话已经建立）。
+  // 导出时才是他还能改主意的时候（「那我改用 JSON 备份」）。
+  //
+  // 两侧都说，是因为它们回答的是**两个不同的问题**：
+  //   · 导出：「你即将拿到的文件带不过去什么」；
+  //   · 导入：「你刚拿进来的文件带不过去什么」。
+  announceOneTabExportLimits();
+
   return groups.map(group => {
     // 将每个标签格式化为 "URL | 标题"
     //

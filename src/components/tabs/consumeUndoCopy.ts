@@ -11,13 +11,20 @@
 export const consumeUndoActionLabel = '撤销';
 
 /**
- * 带撤销的提示停留多久（毫秒）。
+ * 带撤销的提示停留多久（毫秒）—— **不在这里定**。
  *
- * 8 秒的依据：这是一个**不可逆操作**的退路，3 秒（普通提示的时长）不够用户
- * 读完「卡片不见了」再决定退不退回；Chrome 自己的「重新打开已关闭的标签」
- * 给 8 秒。给 30 秒则会让提示变成常驻噪音。
+ * 2026-10-22 前这里有一个 `consumeUndoDurationMs = 8000`。它是个**写死的数**，
+ * 而且还与 Toast 组件内部自己用的 3 秒**各说各话** ⇒ 同一个「退路」有两个
+ * 时长出处，早晚会漂（漂出来的后果：一边以为有 8 秒、实际 3 秒就没了）。
+ *
+ * 现在只有一个出处：`@/components/common/toastPolicy` 的
+ * `TOAST_ACTION_DURATION_MS` / `resolveToastDuration` —— 判据是
+ * **「有没有动作」**，不是「这是不是撤销」。
+ *
+ * 顺带补上原先没写清的一条：带动作的提示**悬停/聚焦时倒计时会暂停**
+ * （见 toastPolicy 的倒计时状态机）。「用户伸手去够那个按钮」这件事本身
+ * 要花时间，提示在伸手的过程中消失 ⇒ 退路等于不存在。
  */
-export const consumeUndoDurationMs = 8000;
 
 /** 一个会话被撤销后。 */
 export const consumeUndoSuccessMessage = (sessionName: string): string =>

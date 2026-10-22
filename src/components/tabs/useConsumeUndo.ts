@@ -76,6 +76,18 @@ export function useConsumeUndo(): ConsumeUndoApi {
       }
       notify(message, {
         label: consumeUndoActionLabel,
+        // 要不要把焦点交到这个按钮上：**要**，但只在安全的时候（判据见
+        // toastPolicy.decideFocusClaim —— 键盘用户 + 不在输入框 + 没有对话框
+        // 开着 才接管）。
+        //
+        // 为什么非抢不可：toast 挂在 body 末尾 ⇒ 它的按钮排在 Tab 序列的
+        // **最后**。实测从「刚点完恢复」走到「撤销」要按十几次 Tab ——
+        // 而那条提示 3 秒后就没了。抢焦点把这条退路变成**一次回车**。
+        //
+        // 为什么不是无脑抢：焦点一动，用户的下一次按键就落在别处了。
+        // 鼠标用户点了「恢复」之后，若焦点被抢到「撤销」上，他下一次按空格
+        // 就会**误触撤销**；而且焦点停在提示里 ⇒ 倒计时被暂停 ⇒ 提示赖着不走。
+        autoFocus: true,
         onAction: () => {
           // 逐个派发、**串行**等前一个落地：并行会让两个 restoreConsumed
           // 同时读同一份 groups、同时写回 —— 后写的覆盖先写的（后写的那份

@@ -7,6 +7,7 @@ import type { SyncPreviewSummary } from '@/utils/syncPreview';
 import type { BackendStatusKind } from '@/components/layout/backendStatus';
 import { logError } from '@/utils/log';
 import { MENU_LOGIN_LABEL } from '@/components/common/menuLabels';
+import { backendUnavailableCopy } from '@/components/sync/backendUnavailableCopy';
 
 /* ── P1-6 · 覆盖模式的双闸门（纯函数，SyncButton 只做状态装配）─────────────
  *
@@ -295,17 +296,48 @@ const looksLikeMachineError = (text: string): boolean => {
 
 /**
  * 一次同步失败的最终文案（来源优先级从高到低）：
+ * 0. **服务端整体不可用**（机器标记）⇒ 专用人话（见下）；
  * 1. reason 已登记 ⇒ SYNC_REASON_COPY（逐条翻译，不退化成裸枚举）；
  * 2. reason 是纯 snake_case 枚举 ⇒ spec.failureMessage（枚举原文只进日志）；
  * 3. reason 带人类可读文本 ⇒ 剥掉机器前缀后原样显示；
  * 4. reason 是机器错误串（英文数据库/网络报错）⇒ 中文兜底，原始串只进 console。
  *
  * 方向无关：未登录在上传方向同样要说人话（2026-10-18 C 组）。
+ *
+ * ── 2026-10-22（402）：第 0 档为什么必须在最前面 ─────────────────────────
+ * 「云端项目被限制」这一档**不能**落到第 4 档的兜底：
+ *   · 兜底是「上传失败，请重试。若反复出现，请导出诊断信息」——
+ *     「请重试」是**错的方向**（项目被封禁，重试一万次也一样）；
+ *     「请导出诊断信息」是**甩锅给用户**（真正需要知道的是产品负责人）；
+ *     「若反复出现」是废话（它**正在**反复出现）。
+ *   · 而「云端项目被限制」的报文是**纯英文** ⇒ 第 4 档的
+ *     `looksLikeMachineError` 命中「不含 CJK」⇒ 走中文兜底 ⇒
+ *     原始信息（配额被限、这是服务端问题）**全丢**。
+ * 也就是说：兜底路径会把「服务端封禁」说成「网络抖动，请重试」——
+ * 方向完全相反。
+ *
+ * ⚠️ 第 0 档靠**机器标记**（`backendUnavailable`），不靠文案匹配：
+ * 本仓纪律是「文案匹配让 UI 分类取决于另一处文件里的措辞」
+ * （见 components/layout/backendStatus.ts）。
  */
 export const resolveSyncFailureCopy = (input: {
   reason?: string | null;
   fallbackMessage: string;
+  /**
+   * 本轮失败是否因「云端项目被限制 / 服务端不可用」（2026-10-22）。
+   *
+   * 之所以要**显式传**而不是从 reason 里嗅探：reason 到这一层通常已经是
+   * 人话句子（或英文原文），从它反推「是不是服务端不可用」就退化成文案匹配 ——
+   * 而文案随时会被改写。机器标记由引擎（syncEngine）产出，一路透传。
+   */
+  backendUnavailable?: boolean;
+  /** 方向（只影响「云端」那半句措辞）。缺省按 upload。 */
+  direction?: 'upload' | 'download';
 }): string => {
+  // 第 0 档：服务端整体不可用 —— 专用人话，优先级最高。
+  if (input.backendUnavailable) {
+    return backendUnavailableCopy(input.direction ?? 'upload');
+  }
   const reason = input.reason;
   if (reason == null || reason === '') return input.fallbackMessage;
   const mapped = SYNC_REASON_COPY[reason];

@@ -459,6 +459,135 @@ export class TabManager {
   }
 
   /**
+   * 把管理页**带回用户眼前**（2026-10-23 审计 §2.5 P0）。
+   *
+   * ── 为什么需要它 ────────────────────────────────────────────────────────
+   *
+   * 「恢复整个会话」的撤销提示是**页面内 toast**，它挂在管理页那个标签页的
+   * DOM 上。而整组恢复的两条路径都会**把管理页从用户眼前拿走**：
+   *   · 当前窗口路径：新标签 `active: true` ⇒ 管理页退为后台标签；
+   *   · 新窗口路径：  新窗口 `focused: true` ⇒ 管理页所在窗口变后台窗口。
+   * ⇒ 提示在 DOM 里（`isVisible()` 为真），但用户**看不见** ⇒ 那次消费事实上
+   *   没有退路 ⇒ 用户点错组且过了 8 秒，这一组**永久没了**（删除即物理清除、
+   *   无回收站），而他连「这里原本可以撤销」都不知道。
+   *
+   * 这与「对外承诺的『有退路』」（README / 商店文案）直接冲突。
+   *
+   * ── 为什么不改「恢复即消费」语义 ───────────────────────────────────────
+   *
+   * 「恢复即消费」是 1.24.1 由产品负责人拍板的定案。撤销是**附加**退路，
+   * 不许把消费改回复制、不许让恢复后的会话留在列表里。
+   *
+   * ── 为什么是「切回管理页」而不是「把提示复制一份到新窗口」──────────────
+   *
+   * 复制一份提示 = 第二个撤销入口 = 第二个真相源（两条提示的倒计时各走各的、
+   * 一条过期另一条还在）。而管理页**本来就开着**（用户是从它点下恢复的），
+   * 把它切回前台是**零新概念**的做法。
+   *
+   * ── 会不会打断用户 ─────────────────────────────────────────────────────
+   *
+   * 会打断一次，但打断的**时机**正是「撤销窗口刚开始倒数」的那一刻：
+   * 用户刚点了「恢复整个会话」，此时把他拉回管理页，他看到的第一眼就是
+   * 「已恢复 N 个标签页 / [撤销]」⇒ 退路**当场**就在眼前。
+   * 而「不打断」的代价是：退路只在用户**自己想到要切回去**时才知道存在，
+   * 而 8 秒过后它就没了 ⇒ 断的是承诺，不是体验。
+   *
+   * ⇒ 两害相权：**拉回一次**（可预期的一次打断）远比**静默地没有退路**好。
+   *
+   * ── 与「页面不可见时暂停倒计时」那一半的关系 ─────────────────────────
+   *
+   * 两半**互补，不打架**：
+   *   · 本函数负责「提示在用户眼前」（可见性）；
+   *   · 暂停那一半负责「提示不会在用户看不见时偷偷过期」（时限）。
+   * 本函数把管理页切回前台 ⇒ 页面**变为可见** ⇒ 暂停那一半会自动恢复计时
+   * （暂停的触发条件是「页面不可见」）⇒ 两半的触发条件互斥，不会同时生效，
+   * 也不会互相取消。
+   * ⇒ 即便暂停那一半尚未落地，本函数单独也把「看得见」这件事做到了。
+   *
+   * ── fail-closed 的方向：失败只记警告，不把「恢复」判成失败 ────────────
+   *
+   * 走到这里时**标签已经开好了**（恢复已经成功且不可撤销地发生了）。
+   * 若此处切焦点失败而抛错 ⇒ 调用方会回 success:false ⇒ UI 播「恢复失败」
+   * ⇒ 而标签明明开好了、记录也已经被消费 ⇒ **界面在撒谎**，且用户会以为
+   * 会话还在列表里（实际已没了）⇒ 比不做还糟。
+   * ⇒ 因此这里吞掉失败、只记一行 warn。
+   *
+   * ── 为什么这里只认传进来的那个管理页，不再自己找一次 ─────────────────
+   *
+   * 「要不要把管理页切回前台」这个决定，**必须**和「恢复出来的标签要不要
+   * 抢活动位」是同一个决定（见 openTabsInCurrentWindow 的说明）⇒
+   * 两边必须看同一个事实（`target` 是不是 null）⇒ 这里若再自己找一次，
+   * 两个决定就可能打架（一个说切、一个说不抢），结局又变成不确定的。
+   */
+  private async bringManagerPageToFront(
+    /** 抢焦点**之前**记下的那个管理页（null = 没有管理页可切 ⇒ 什么都不做）。 */
+    target?: chrome.tabs.Tab | null,
+  ): Promise<void> {
+    try {
+      const managerTab = target ?? null;
+      if (!managerTab || managerTab.id === undefined) {
+        // 没有管理页可切（用户是从别处触发的恢复）⇒ 无所谓，不算失败。
+        return;
+      }
+      // ① 先把管理页切成**当前窗口**的活动标签。
+      //    只做这一步时它可能仍在**后台窗口**里 —— 用户看不见（见下）。
+      await chrome.tabs.update(managerTab.id, { active: true });
+      // ② 再把它所在的**窗口**点亮。
+      //    新窗口路径下，恢复出来的新窗口抢走了前台焦点 ⇒ 管理页所在窗口
+      //    变成后台窗口 ⇒ 只 tabs.update 不够（tabs.update 不会把窗口带到前台）。
+      //    少了这一步，「切回前台」在新窗口路径上就是空操作。
+      if (managerTab.windowId !== undefined) {
+        await chrome.windows.update(managerTab.windowId, { focused: true });
+      }
+    } catch (error) {
+      // 焦点切换失败**不许**把「恢复」判成失败（见文件头末段）。
+      logWarn('[TabManager] 恢复后把管理页切回前台失败（标签已开好，不影响恢复结果）:', error);
+    }
+  }
+
+  /**
+   * 找到「用户此刻正在看的那个管理页」。
+   *
+   * ── 为什么不能随便取一个 ──────────────────────────────────────────────
+   *
+   * 用户可能在**两个窗口**里各开着一个管理页（点扩展图标开一个、之前又开过
+   * 一个）。撤销提示挂在**他点下去的那一个**上 ⇒ 把另一个切到前台 =
+   * 提示仍然看不见，而屏幕上却换了个页面（比不切更迷惑）。
+   *
+   * 判据：管理页标签**既是活动标签、又在最后聚焦的窗口里** ⇒ 那就是用户
+   * 刚刚点按钮的地方（他点的时候那个窗口必然是聚焦的、那个标签必然是活动的）。
+   *
+   * ⚠️ 必须在**抢焦点之前**问：一旦新窗口建好并获得焦点，
+   * 「最后聚焦的窗口」就变成新窗口了 ⇒ 那时再问就问不出「用户刚才在哪儿」。
+   *
+   * ⚠️ 这个函数**绝不许抛错**：它只服务于「把提示带回用户眼前」这一层，
+   * 而恢复本身（标签已经开好）是不可逆地成功的。让它抛错 ⇒ 调用方回
+   * success:false ⇒ UI 播「恢复失败」、说原会话还留着 —— 而标签明明开好了、
+   * 记录明明被消费了 ⇒ 界面在撒谎，且比不做还糟。
+   * ⇒ 找不到就返回 null（= 没有管理页可切），把「切回前台」整段降级为可选动作。
+   */
+  private async findManagerTabToReturnTo(): Promise<chrome.tabs.Tab | null> {
+    try {
+      const existing = await this.getExistingTabManagerTabs();
+      if (existing.length === 0) {
+        return null;
+      }
+      const [front] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+      if (front && front.id !== undefined) {
+        const match = existing.find(tab => tab.id === front.id);
+        if (match) {
+          return match;
+        }
+      }
+      // 退而求其次：任意一个管理页（总比没有强）。
+      return existing.find(tab => tab.id !== undefined) ?? null;
+    } catch (error) {
+      logWarn('[TabManager] 恢复后寻找管理页失败（不影响恢复结果）:', error);
+      return null;
+    }
+  }
+
+  /**
    * 打开多个标签页，保留标签管理器页面
    */
   async openTabsInNewWindow(tabs: Array<{ url: string; pinned?: boolean }>): Promise<void> {
@@ -467,8 +596,25 @@ export class TabManager {
         return;
       }
 
+      // ⚠️ 必须在**建窗之前**记住管理页是哪一个：
+      //    `chrome.windows.create({focused:true})` 之后「最后聚焦的窗口」就变成
+      //    新开的那个 ⇒ 那时再去找就分不清「用户刚才看的那个管理页」与
+      //    「另一个窗口里的管理页」。
+      const managerTarget = await this.findManagerTabToReturnTo();
+
+      // 「要不要把管理页切回前台」与「新窗口要不要抢焦点」必须是**同一个决定**
+      // （理由见 openTabsInCurrentWindow 的说明：抢激活是异步落地的，会反咬一口）。
+      // 没有管理页可切回前台 ⇒ 新窗口就是用户要的地方 ⇒ 照旧把它点亮。
+      const willFrontManager = managerTarget !== null;
+
       const [firstTab, ...remainingTabs] = tabs;
-      const createdWindow = await chrome.windows.create({ url: firstTab.url, focused: true });
+      const createdWindow = await chrome.windows.create({
+        url: firstTab.url,
+        // 有管理页要切回前台时**不抢焦点** —— 抢了也白抢：
+        // 管理页那一侧随后会把焦点抢回来（这正是我们要的），
+        // 而新窗口「稍后再抢一次」的副作用会把用户带离管理页 ⇒ 撤销提示看不见。
+        focused: !willFrontManager,
+      });
       const targetWindowId = createdWindow.id;
       const createdFirstTabId = createdWindow.tabs?.[0]?.id;
 
@@ -491,6 +637,11 @@ export class TabManager {
         )
       );
 
+      // ── 把管理页带回用户眼前（撤销提示就挂在它上面）──────────────────
+      // 必须在**窗口建好之后**做：新窗口此刻正抢着前台焦点，不把它抢回来，
+      // 管理页就留在后台窗口里 ⇒ 撤销提示用户看不见 ⇒ 那次消费没有退路。
+      await this.bringManagerPageToFront(managerTarget);
+
     } catch (error) {
       logError('在新窗口恢复会话失败:', error);
       throw error;
@@ -510,15 +661,48 @@ export class TabManager {
       const [currentTab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
       const index = currentTab ? currentTab.index + 1 : undefined;
 
+      // ⚠️ 在**新标签抢走活动位之前**记住管理页是哪一个。
+      //    这一条路径不换窗口，但它会把管理页顶成后台标签 ⇒ 切回来时要靠
+      //    tab id 认人（多窗口多管理页时，取错一个 = 提示仍然看不见）。
+      const managerTarget = await this.findManagerTabToReturnTo();
+
+      // ── 为什么恢复出来的标签「不抢活动位」─────────────────────────────
+      //
+      // Chrome 的**标签激活是异步落地**的：新标签 `active:true` 的激活事件
+      // 要等它**开始加载**才触发（实测：热缓存 6–20ms，冷加载 500ms+，
+      // 慢站点可能好几秒）⇒ 它可能**晚于**我们把管理页切回前台 ⇒
+      // 管理页被顶回后台 ⇒ 撤销提示又看不见了（要修的那个 P0 复发）。
+      //
+      // 真机上量到过这个竞态：同一段代码，跑 5 次有 1 次结局相反。
+      //
+      // ⇒ 所以这里**根本不让它抢**：有管理页可切回前台时，第一个标签也用
+      //   `active:false` 打开（Chrome 建后台标签不会动活动位 ⇒ 活动位
+      //   始终是管理页 ⇒ 结局确定）。
+      // 没有管理页可切时（恢复是从别处触发的）⇒ 照旧把第一个标签点亮，
+      //   那才是用户要的。
+      const willFrontManager = managerTarget !== null;
+
       const [firstTab, ...remainingTabs] = tabs;
-      // 第一个标签激活，其余后台打开
-      await chrome.tabs.create({ url: firstTab.url, active: true, pinned: !!firstTab.pinned, index });
+      // 第一个标签：仅当**没有**管理页可切回前台时才点亮（见上）
+      await chrome.tabs.create({
+        url: firstTab.url,
+        active: !willFrontManager,
+        pinned: !!firstTab.pinned,
+        index,
+      });
 
       await Promise.all(
         remainingTabs.map(tab =>
           chrome.tabs.create({ url: tab.url, active: false, pinned: !!tab.pinned })
         )
       );
+
+      // ── 把管理页带回用户眼前（撤销提示就挂在它上面）──────────────────
+      // 管理页本来就在这个窗口里，且因为上面的标签是「后台打开」的，
+      // 活动位一直是它 ⇒ 撤销提示就在用户眼前。
+      // 仍然显式切一次：① 万一管理页此前不是活动标签（恢复是从别处触发的
+      // 情形），② 这条路径将来若改到别的窗口，行为不会悄悄退化。
+      await this.bringManagerPageToFront(managerTarget);
     } catch (error) {
       logError('在当前窗口恢复会话失败:', error);
       throw error;

@@ -141,7 +141,14 @@ const restoreTooltip = (inCurrentWindow: boolean): string =>
 const LOCK_TOOLTIP = {
   locked: '会话已锁定 · 点此解锁（解锁后恢复即从列表移除）',
   unlocked:
-    '会话未锁定 · 点此锁定（锁定后不会被「清理重复标签」清理，也不能重命名或逐条删除）',
+    // ── 2026-10-23 审计 H-8：补上锁定最要紧的那半句 ──────────────────────
+    // 锁定真正改变的是「**恢复后这个会话还在不在**」——
+    // 未锁定的会话恢复后即被消费（从列表移除），锁定的才留得住、可反复用。
+    // 这半句原先只在**锁定之后**的 toast 里说（lockFeedbackCopy），
+    // 而「点之前」该说的 tooltip 里一个字没提 ⇒ 用户在按钮上得不到
+    // 「锁定到底改变了什么」的答案。
+    // 措辞与 lockFeedbackCopy 的锁定后提示对齐（同一件事，同一口径）。
+    '会话未锁定 · 点此锁定（恢复后仍留在列表里，可反复使用；不会被「清理重复标签」清理，也不能重命名或逐条删除）',
 } as const;
 
 export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
@@ -629,7 +636,9 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
 
     showConfirm({
       title: `删除「${group.name}」？`,
-      message: '这是该会话的最后一条标签记录，删除后整个会话会从列表消失，无法恢复。确认继续吗？',
+      // 2026-10-23 审计 H-10：「标签记录」统一成「标签页」
+      // （⚠️ 同一句话在 SearchResultList.tsx 也有，那一处不在本轮分工内）。
+      message: '这是该会话的最后一条标签页，删除后整个会话会从列表消失，无法恢复。确认继续吗？',
       type: 'danger',
       confirmText: '删除',
       cancelText: '取消',
@@ -1078,7 +1087,18 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
               className="tab-group-count flex-shrink-0"
               aria-label={`包含 ${group.tabs.length} 个标签页`}
             >
-              {group.tabs.length}
+              {/* ── 2026-10-23 审计 H-10：徽章不能是**裸数字** ────────────────
+               * 原先这里只渲染 `{group.tabs.length}` ⇒ 视觉上就是一个「2」，
+               * 而顶栏同时挂着「1 会话」和「2 个标签页」两个数字 ⇒
+               * 用户扫卡片时会把卡头的「2」本能地读成「会话数」
+               * （它长在会话卡上呀），而它其实是**标签数**。
+               * 读屏用户反而知道（aria-label 说了「包含 N 个标签页」）。
+               *
+               * ⇒ 补上**视觉单位**，与顶栏 / 保存提示同一口径（「N 个标签页」）。
+               *   不用原生 `title` 兜底：上一轮 U-18 刚把原生 title 换成仓里的
+               *   <Tooltip>（原生 title ≈1s 延迟、触屏根本不出现）。
+               *   既然单位已经**看得见**了，悬停提示就不必再补一句。 */}
+              {group.tabs.length} 个标签页
             </span>
           )}
 

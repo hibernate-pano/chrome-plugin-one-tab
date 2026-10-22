@@ -54,11 +54,21 @@ export const EmptyState: React.FC<EmptyStateProps> = ({
   }[tone];
 
   return (
-    <div className={`animate-in theme-radius-panel theme-shadow-panel theme-panel-blur border px-4 sm:px-6 py-6 sm:py-8 text-center ${toneStyles.shell} ${className}`}>
+    <div className={`animate-in ts-empty-state theme-radius-panel theme-shadow-panel theme-panel-blur border px-4 sm:px-6 py-6 sm:py-8 text-center ${toneStyles.shell} ${className}`}>
       <div
         className={`mx-auto inline-flex h-14 w-14 sm:h-16 sm:w-16 items-center justify-center rounded-2xl ${toneStyles.icon}`}
-        role="img"
-        aria-label={title}
+        /* ── 2026-10-23 审计 V-8：图标是纯装饰，别再念一遍标题 ──────────────
+         *
+         * 原先这里有 `role="img" aria-label={title}` —— 而紧邻的 <h3> 渲染
+         * **同一个字符串** ⇒ 读屏播报两遍：
+         *   「[图片] 早上好，先保存一个工作会话」→ 紧接着
+         *   「早上好，先保存一个工作会话，标题 3 级」。
+         *
+         * 图标本身没有可访问名（SVG 无 title/aria-label）⇒ 它的**唯一**名字
+         * 来源就是这个 aria-label。删掉它 + 标 aria-hidden，图标退出朗读队列，
+         * 文字只由 <h3> 提供一次。
+         */
+        aria-hidden="true"
       >
         {icon || <DefaultIcon />}
       </div>

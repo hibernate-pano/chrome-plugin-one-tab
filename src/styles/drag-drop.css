@@ -1,13 +1,23 @@
 /* 拖曳相关样式 - 全新重构版 */
 
+/*
+ * 2026-10-23 审计 V-14：动效时长读命名阶梯（global.css 的 :root 定义
+ * --motion-fast 120ms / --motion-base 180ms / --motion-slow 250ms /
+ * --ease-standard）。自定义属性在文档级继承 ⇒ 本文件（由 MainApp.tsx
+ * 单独 import）同样能读到。
+ */
+
 /* 基本过渡效果 */
 .dnd-transition {
-  transition: transform 0.2s ease, opacity 0.2s ease, margin 0.2s ease, box-shadow 0.2s ease;
+  transition: transform var(--motion-base) var(--ease-standard),
+    opacity var(--motion-base) var(--ease-standard),
+    margin var(--motion-base) var(--ease-standard),
+    box-shadow var(--motion-base) var(--ease-standard);
 }
 
 /* 拖拽返回动画 - 当拖拽结束但未放置到有效目标时 */
 .tab-drag-return {
-  animation: tab-return 0.3s ease-out;
+  animation: tab-return var(--motion-slow) var(--ease-standard);
 }
 
 @keyframes tab-return {
@@ -175,7 +185,7 @@
 
 /* 标签组内容区域 */
 .tabs-container {
-  transition: height 0.2s ease;
+  transition: height var(--motion-base) var(--ease-standard);
 }
 
 /* 标签组头部 */
@@ -213,7 +223,20 @@
   margin-bottom: 4px;
   cursor: move;
   position: relative;
-  transition: transform 0.15s ease, opacity 0.15s ease;
+  /* 2026-10-23 审计 V-14：这条 `transition` **覆盖**了 global.css 主题过渡名单里
+     .tab-item 的那条（这个文件在 global.css **之后**加载 ⇒ 同一特异性的后者胜）。
+     原先只列 transform / opacity ⇒ 背景色与文字色**不参与过渡**
+     ⇒ 标签行换主题时是硬切，而它旁边的卡头是 0.25s 渐变（观感上像没做完）。
+
+     现在把颜色属性也列回来，并按主题过渡时长走（--theme-transition-duration）
+     ⇒ 标签行与卡头用同一档速度换主题。
+     transform / opacity 仍读 --motion-fast（拖拽跟手的即时反馈）。 */
+  transition:
+    background-color var(--theme-transition-duration) var(--theme-transition-timing),
+    border-color var(--theme-transition-duration) var(--theme-transition-timing),
+    color var(--theme-transition-duration) var(--theme-transition-timing),
+    transform var(--motion-fast) var(--ease-standard),
+    opacity var(--motion-fast) var(--ease-standard);
 }
 
 .dark .tab-item {
@@ -267,7 +290,8 @@
 }
 
 .group-item {
-  transition: transform 0.15s ease, opacity 0.15s ease;
+  transition: transform var(--motion-fast) var(--ease-standard),
+    opacity var(--motion-fast) var(--ease-standard);
 }
 
 .group-item.dragging {
@@ -342,5 +366,5 @@
   background-color: #f0f7ff;
   border-color: #bfdbfe;
   box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.15);
-  transition: all 0.2s cubic-bezier(0.2, 0, 0, 1);
+  transition: all var(--motion-base) var(--ease-standard);
 }

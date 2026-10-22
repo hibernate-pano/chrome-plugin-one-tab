@@ -213,6 +213,76 @@ export function filterGroupsByAccount<T extends ScopedGroup>(
 }
 
 /**
+ * 一次删除广播的**结果**（2026-10-23 审计 R-1 / DS-43-1）。
+ *
+ * ── 为什么删除广播要回传结果 ────────────────────────────────────────────
+ * 删除广播的**输入**是「本机登记过的删除意图队列」，**输出**是「云端真的被标了墓碑
+ * 的那几条」。这两者不一定相等 —— 账号闸门会挡下一部分：
+ *
+ *   · `broadcastIds` —— 真的写进当前账号云端、读回确认过的（⇒ **可以清队**）；
+ *   · `blockedIds` —— 属于本机上的**另一个账号**，**没有**写云端
+ *     （⇒ **绝不能清队**：清了就等于把这条删除意图永久丢掉）。
+ *
+ * v1.22.0 起删除即物理清除、无回收站 ⇒ 丢掉一条删除意图 = 那条会话在对端复活，
+ * 而用户看见的是「我删掉了」。⇒ 队列侧必须**按点名消费**，不能整队清。
+ *
+ * 这个类型住在 core/（而不是 ports/）是因为**两层端口**都要用它：
+ * Supabase 侧（utils/supabase/ports.ts）与后端无关侧（sync-backend/ports.ts）。
+ * 放在 core ⇒ 两边都只依赖 core ⇒ 依赖方向不倒置（utils 不许 import sync-backend）。
+ */
+export interface DeleteBroadcastResult {
+  /** 真的写上云端、读回确认过的会话 id（这些才可以从删除队列里清掉）。 */
+  broadcastIds: string[];
+  /** 被账号闸门挡下、**没有**写云端的会话 id（删除意图必须留在队列里）。 */
+  blockedIds: string[];
+}
+
+/**
+ * 删除广播的账号闸门：把删除意图分成「属于当前账号」与「属于别的账号」两批。
+ *
+ * ── 为什么删除这一路必须 fail-closed（与上行侧刻意不同）─────────────────
+ * 上行侧读不到归属记录时会**播种**（兜底认账，见 utils/supabase/upload.ts 的
+ * loadAccountScopeForUpload）：那只是「多传一点」，方向是浪费流量。
+ * 删除广播侧不一样：**多广播一条 = 往当前账号的云端里写一行不属于它的墓碑**
+ * （越权写入），而且读回校验会把「云端没有这行」判成「意图已达成」
+ * （missingAsAchieved）⇒ 删除意图被清掉 ⇒ 那条会话在它真正的主人账号下**复活**
+ * （零提示）。⇒ 归属**不可知**时一律挡住，宁可不删（用户看得见「还有 N 条没
+ * 同步」），不可删错账号（用户看不见）。
+ *
+ * 「归属不可知」的三种形态：
+ *   · 归属记录读不出来（存储故障）⇒ scope = null；
+ *   · 归属记录**没有记录**（键不存在）⇒ scope = null；
+ *   · 归属记录在、但 `ownerUserId` 为 null（没有主人）⇒ 本机这批会话无主。
+ * 三种都判成「不属于当前账号」。
+ *
+ * @param deletedIds 本轮要广播的删除意图 id
+ * @param scope 本机的归属记录；null = 读不出来 / 没有记录
+ * @param currentUserId 当前登录账号（= 真正写云端时用的那个 userId）
+ */
+export function partitionDeleteIdsByAccount(
+  deletedIds: readonly string[],
+  scope: AccountScopeRecord | null,
+  currentUserId: string
+): DeleteBroadcastResult {
+  const ids = [...new Set(deletedIds.filter((id): id is string => typeof id === 'string' && id.length > 0))];
+  // 归属不可知 ⇒ 一律挡住（fail-closed，见上面的论证）。
+  if (!scope || !scope.ownerUserId) {
+    return { broadcastIds: [], blockedIds: ids };
+  }
+  const broadcastIds: string[] = [];
+  const blockedIds: string[] = [];
+  for (const id of ids) {
+    // 用 resolveGroupOwner（**判据只有一份**）：ownerUserId 非空时它**不会**走到
+    // 「兜底归当前账号」那一支（那条只在 ownerUserId 为 null 时才触发，而那种
+    // 情况已经在上面挡住了）⇒ 这里不存在「读不到就当成当前账号的」这条漏口。
+    const owner = resolveGroupOwner(scope, id, currentUserId);
+    if (owner === currentUserId) broadcastIds.push(id);
+    else blockedIds.push(id);
+  }
+  return { broadcastIds, blockedIds };
+}
+
+/**
  * 只保留「本机现在还有」的归属记录。
  *
  * 为什么要裁：归属表随会话数增长，而已经删掉的会话不再需要归属记录。
@@ -235,7 +305,23 @@ function pruneForeignOwners(
  *
  * @param scope 当前归属记录
  * @param incomingUserId 刚登录的账号
- * @param localGroupIds 本机现有的会话 id（活跃 + 墓碑）
+ * @param machineGroupIds 本机**仍然存在**的会话 id（活跃 + 墓碑）
+ * @param now 判定时刻
+ * @param pendingDeleteIds **删除意图还在队列里**的会话 id
+ *
+ *   ⚠️ 这一组为什么必须在（2026-10-23 审计 R-1 / DS-43-1）：一条会话被**物理
+ *   删除**之后，它就不在本机清单里了 —— 但它的**删除意图**还在队列里，而那条
+ *   意图**要发给它的真正主人**。若这里按「本机清单」裁剪归属记录，那条会话的
+ *   归属事实（它属于上一个账号）就**当场丢失** ⇒ 换账号后它的删除意图会被发给
+ *   **新账号**（越权写 + 删除意图被当成「已达成」清掉 ⇒ 会话在原账号下复活）。
+ *   ⇒ 认账时必须把「队列里的删除意图 id」一并算进**归属账本**。
+ *
+ *   【两类 id 的分工（这是本函数的要点）】
+ *   · **归属账本**（machineGroupIds ∪ pendingDeleteIds）：决定「谁拥有哪些会话」
+ *     ⇒ 两条都要进，否则删除意图的归属会丢。
+ *   · **残留计数**（只用 machineGroupIds）：决定告诉用户「本机还剩 N 个会话
+ *     属于上一个账号」⇒ **只算用户看得见的**。一条已被删除的会话用户看不见，
+ *     把它算进「本机还剩 N 个」会报出一个用户对不上的数字（说谎）。
  *
  * 三种结果：
  *   · first-bind：这台机器第一次有账号 ⇒ 本机现有会话归它（没有上一个账号，
@@ -248,10 +334,14 @@ function pruneForeignOwners(
 export function decideAccountBind(
   scope: AccountScopeRecord,
   incomingUserId: string,
-  localGroupIds: readonly string[],
-  now: number = Date.now()
+  machineGroupIds: readonly string[],
+  now: number = Date.now(),
+  pendingDeleteIds: readonly string[] = []
 ): AccountBindDecision {
-  const localIds = [...new Set(localGroupIds)];
+  // 用户看得见的会话（本机清单）。
+  const localIds = [...new Set(machineGroupIds)];
+  // 归属账本：看得见的 + 删除意图还在队列里的（后者用户看不见，但归属必须记着）。
+  const ownedIds = [...new Set([...localIds, ...pendingDeleteIds])];
   const previousUserId = scope.ownerUserId;
 
   if (previousUserId === null) {
@@ -262,7 +352,7 @@ export function decideAccountBind(
       previousOwnedCount: 0,
       nextScope: {
         ownerUserId: incomingUserId,
-        foreignOwners: pruneForeignOwners(scope.foreignOwners, localIds),
+        foreignOwners: pruneForeignOwners(scope.foreignOwners, ownedIds),
         pendingNotice: null,
       },
       notice: null,
@@ -277,7 +367,7 @@ export function decideAccountBind(
       previousOwnedCount: 0,
       nextScope: {
         ownerUserId: incomingUserId,
-        foreignOwners: pruneForeignOwners(scope.foreignOwners, localIds),
+        foreignOwners: pruneForeignOwners(scope.foreignOwners, ownedIds),
         pendingNotice: null,
       },
       notice: null,
@@ -288,12 +378,19 @@ export function decideAccountBind(
   // 本机现有会话里，**没有明确归属记录**的那些，认账给上一个账号：
   // 它们是在上一个账号名下产生的（或者产生时还没绑定任何账号），
   // 无论如何都不该跟着新账号上云。
-  const foreignOwners = pruneForeignOwners(scope.foreignOwners, localIds);
-  for (const id of localIds) {
+  //
+  // ⚠️ 循环范围是**归属账本**（含删除意图队列里的 id）而不是「本机清单」：
+  // 一条被物理删除的会话，它的删除意图必须发给**上一个账号** ⇒ 它的归属
+  // 必须在这次认账里被记下来（否则下一次认账时它已经不在本机清单里 ⇒
+  // 归属被裁掉 ⇒ 删除意图被发给新账号 ⇒ 越权写 + 会话在原账号下复活）。
+  const foreignOwners = pruneForeignOwners(scope.foreignOwners, ownedIds);
+  for (const id of ownedIds) {
     if (!foreignOwners[id]) foreignOwners[id] = previousUserId;
   }
 
   // 换账号之后，本机哪些会话不属于新账号？（= 不会被上传到新账号的那些）
+  // ⚠️ 只数**用户看得见**的（本机清单）：已被删除的会话用户看不见，算进去
+  // 会报出一个用户对不上的数字。
   const residualIds = localIds.filter(id => foreignOwners[id] !== incomingUserId);
   const residualCount = residualIds.length;
   const previousOwnedCount = residualIds.filter(
