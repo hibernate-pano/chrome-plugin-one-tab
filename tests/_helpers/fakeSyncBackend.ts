@@ -92,6 +92,8 @@ export async function installFakeSyncBackend(
     },
     async broadcastDeletes(ids) {
       handle.calls.broadcastDeletes.push([...ids]);
+      // 自带存储没有账号闸门 ⇒ 全部广播成功、没有一条被挡下。
+      return { broadcastIds: [...ids], blockedIds: [] };
     },
     async purgeExpiredDeletes(maxAgeDays = 30) {
       handle.calls.purgeExpiredDeletes.push(maxAgeDays);

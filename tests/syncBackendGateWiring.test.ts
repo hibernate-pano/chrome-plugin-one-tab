@@ -102,9 +102,25 @@ describe('syncEngine：门禁调用必须显式传 backendId', () => {
     for (const g of guards) {
       // 每处门禁之前的 400 字符里必须有「=== null」+ 提前 return；
       // 不得有「先调门禁、后判 null」的写法（那就是 null 仍然流进去）。
+      //
+      // ⚠️ 2026-10-22：这里的「400 字符」窗口原先是**魔数**（钉写法、不钉语义）：
+      // 门禁与「=== null」之间的**注释一长**，窗口就被顶破，而它想表达的
+      // 语义（null 的提前 return 排在门禁**之前**）**一个字都没变**。
+      // （2026-10-22 加了「云端项目被限制」的闸门处理，注释多了 20 行。）
+      //
+      // 改成钉**语义**：从**所属函数**的起点看到门禁调用为止，这一段里必须
+      // 出现「=== null」+ 提前 return。这样无论中间写多少注释，判据都在；
+      // 而「先调门禁、后判 null」的写法仍然会被抓到（那时函数起点到门禁
+      // 之间根本没有「=== null」）。
+      const fnStart = Math.max(
+        src.lastIndexOf('async upload(', g),
+        src.lastIndexOf('async downloadAndMerge(', g),
+      );
+      assert.ok(fnStart !== -1 && fnStart < g, '应能定位门禁所属的函数');
+      const region = src.slice(fnStart, g);
       assert.match(
-        src.slice(Math.max(0, g - 400), g),
-        /=== null[\s\S]{0,400}?return \{/,
+        region,
+        /=== null[\s\S]{0,600}?return \{/,
         'null 提前 return 必须排在对应门禁之前（排在后面等于先查账号再判断）'
       );
     }

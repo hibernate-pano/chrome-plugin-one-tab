@@ -51,6 +51,25 @@ const SPOTLIGHT = read('src/components/onboarding/Spotlight.tsx');
 const HEADER = read('src/components/layout/Header.tsx');
 
 /**
+ * Header 里那个搜索框的真实 aria-label —— **现场读**，不写死中文。
+ *
+ * 为什么要读而不是钉字面量：搜索框的文案改过一次（2026-10-23 审计 H-7 补上
+ * 「URL」）。守卫若钉住旧文案，改对实现反而让它变红 ⇒ 后来的人会把文案
+ * 改回去。这是本仓库反复踩过的坑（「守卫钉死字面量的陷阱」）。
+ *
+ * 判据钉的是**关系**：引导的兜底候选必须指向 Header 里真实存在的那个
+ * 搜索框。改文案时两边一起改即可；而「引导指向了一个不存在的元素」
+ * 这类真缺陷仍然会被抓住。
+ */
+function readSearchBoxAriaLabel(): string {
+  const match = HEADER.match(/aria-label="([^"]*搜索[^"]*)"/);
+  assert.ok(match, 'Header 里找不到搜索框的 aria-label（它应当含「搜索」）');
+  return match[1];
+}
+
+const searchBoxAriaLabel = readSearchBoxAriaLabel();
+
+/**
  * 取引导里配置的聚光灯目标。
  *
  * 单引号与模板串两种写法都要认 —— 只认一种的话，
@@ -129,16 +148,24 @@ describe('引导每一步的聚光灯都要有兜底', () => {
     );
 
     // 兜底必须指向搜索框：它在空态下一直渲染（顶栏是常驻的）。
+    //
+    // ⚠️ 这里**不钉中文**（2026-10-23 审计 H-7 之后的教训）：
+    // 搜索框的 aria-label 改过一次（补上「URL」），而本守卫原先钉的是
+    // 「搜索会话或标签页」这个字面量 ⇒ 改文案就会让守卫变红，
+    // 于是后来的人会把文案改回去 —— 「改对实现反而让测试变红」的陷阱。
+    //
+    // ⇒ 判据改成**现场读**：Header 里那个搜索框的 aria-label 是什么，
+    //    引导的兜底候选就必须指向它。改文案时两边一起改即可，
+    //    而「引导与 Header 对不上」这种真缺陷仍然会被抓住。
     const fallback = chain[chain.length - 1];
     assert.match(
       fallback,
-      /搜索会话或标签页/,
+      /搜索/,
       `兜底候选必须指向空态下也存在的东西（搜索框），实际是：${fallback}`
     );
-    assert.match(
-      HEADER,
-      /搜索会话或标签页/,
-      '兜底指向的搜索框必须在 Header 里真实存在'
+    assert.ok(
+      fallback.includes(searchBoxAriaLabel),
+      `兜底候选必须指向 Header 里那个搜索框（aria-label="${searchBoxAriaLabel}"），实际是：${fallback}`
     );
   });
 
@@ -146,7 +173,7 @@ describe('引导每一步的聚光灯都要有兜底', () => {
     const restoreStep = targets.find(t => t.includes('在新窗口恢复整个会话'))!;
     const chain = splitSelectorChain(restoreStep);
     const restoreIndex = chain.findIndex(c => c.includes('在新窗口恢复'));
-    const fallbackIndex = chain.findIndex(c => c.includes('搜索会话或标签页'));
+    const fallbackIndex = chain.findIndex(c => c.includes(searchBoxAriaLabel));
     assert.ok(
       restoreIndex >= 0 && fallbackIndex > restoreIndex,
       '有会话时必须优先高亮恢复按钮；搜索框只是兜底'

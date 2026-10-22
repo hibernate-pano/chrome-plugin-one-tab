@@ -114,6 +114,79 @@ async function tabTitlesOf(page, sessionName) {
   );
 }
 
+/**
+ * **Chrome 自己的窗口账本** —— 判断「用户是不是正在看这个页面」的唯一依据。
+ *
+ * ── 为什么不能用 `isVisible()` ──────────────────────────────────────────
+ *
+ * 原先这个脚本判「撤销提示在不在」用的是
+ * `page.locator('button', {hasText:'撤销'}).first().isVisible()`。
+ *
+ * **`isVisible()` 问的是「这个元素在页面上有没有盒子」** —— 它**不关心这个页面
+ * 是不是用户正在看的那个**。⇒ 探针的判据比要验的判据**弱** ⇒ 上一轮它是
+ * **假绿**：2026-10-23 审计 §2.5 实测发现，整组恢复的两条路径都会把管理页
+ * 从用户眼前拿走（新标签抢活动位 / 新窗口抢焦点），而那个脚本照样报「看得见」。
+ *
+ * ── 为什么主判据是 getLastFocused 而不是 focused ───────────────────────
+ *
+ * 实测：`chrome.windows.getAll()` 的 `focused` 标志，在**整个浏览器失去 OS
+ * 焦点**时会**全部变 false**（实测 `onFocusChanged(-1)`）⇒ 只看 `focused`
+ * 会把「用户切到别的 App 了」误判成「修复失效」。
+ *
+ * `getLastFocused()` 给的是**上一次**有焦点的窗口，与 OS 焦点无关 ⇒ 稳定读数。
+ *
+ * 「用户看得见撤销提示」当且仅当：
+ *   ① **最后聚焦的窗口**里，管理页是 **active 标签**，**且**
+ *   ② 该窗口此刻 `focused`（浏览器窗口确实在前台）—— 只作对照。
+ */
+async function windowLedger(sw, managerUrl) {
+  return sw.evaluate(async (mgrUrl) => {
+    const wins = await chrome.windows.getAll({ populate: true });
+    const last = await chrome.windows.getLastFocused({ populate: true });
+    return {
+      windows: wins.map(w => ({
+        id: w.id,
+        focused: w.focused,
+        tabs: (w.tabs ?? []).map(t => ({
+          id: t.id,
+          url: t.url,
+          active: t.active,
+          isManager: t.url?.startsWith(mgrUrl),
+        })),
+      })),
+      lastFocusedWindowId: last?.id ?? null,
+      lastFocusedHasManagerActiveTab: (last?.tabs ?? []).some(
+        t => t.url?.startsWith(mgrUrl) && t.active),
+    };
+  }, managerUrl);
+}
+
+/**
+ * 「管理页是不是用户**正在看的**那个页面」。
+ *
+ * 返回 { ok, why }：ok=false 时 why 说明差在哪（哪个条件没满足）。
+ */
+function isManagerInFront(ledger) {
+  const wins = ledger.windows ?? [];
+  const managerWindows = wins.filter(w => w.tabs.some(t => t.isManager));
+  if (managerWindows.length === 0) {
+    return { ok: false, why: '窗口账本里没有管理页' };
+  }
+  const last = wins.find(w => w.id === ledger.lastFocusedWindowId);
+  if (!last) {
+    return { ok: false, why: `最后聚焦的窗口 ${ledger.lastFocusedWindowId} 不在账本里` };
+  }
+  if (last.tabs.some(t => t.isManager && t.active)) {
+    return { ok: true, why: '' };
+  }
+  const why = [
+    `最后聚焦的窗口${last.id} 里管理页不是活动标签`,
+    ...managerWindows.map(w =>
+      `窗口${w.id}(focused=${w.focused}, 管理页是活动标签=${w.tabs.some(t => t.isManager && t.active)})`),
+  ].join('; ');
+  return { ok: false, why };
+}
+
 async function main() {
   mkdirSync(OUT_DIR, { recursive: true });
   const profile = mkdtempSync(join(tmpdir(), 'tapstack-undo-'));
@@ -132,13 +205,14 @@ async function main() {
     }
     if (!sw) throw new Error('扩展的 service worker 没有起来');
     const id = new URL(sw.url()).host;
+    const managerUrl = `chrome-extension://${id}/src/popup/index.html`;
 
     const page = await ctx.newPage();
     const consoleErrors = [];
     page.on('console', m => { if (m.type() === 'error') consoleErrors.push(m.text()); });
     page.on('pageerror', e => consoleErrors.push(`pageerror: ${e.message}`));
 
-    await page.goto(`chrome-extension://${id}/src/popup/index.html`);
+    await page.goto(managerUrl);
     const skip = page.locator('button[aria-label="跳过引导"]');
     await skip.waitFor({ state: 'visible', timeout: 8000 }).then(() => skip.click()).catch(() => {});
     await injectGroups(page, groups);
@@ -156,6 +230,17 @@ async function main() {
     const undoBtn = page.locator('button', { hasText: '撤销' }).first();
     const hasUndo = await undoBtn.isVisible().catch(() => false);
     if (!hasUndo) problems.push('消费之后看不到「撤销」按钮 —— 不可逆的操作没有退路');
+    // ── 强判据：提示必须挂在**用户正在看的那个页面**上 ──────────────────
+    // `isVisible()` 只说「DOM 里有盒子」；这里问 Chrome 自己的窗口账本：
+    // 管理页所在窗口是不是 focused、管理页是不是那个窗口的 active 标签。
+    const ledger1 = await windowLedger(sw, managerUrl);
+    const front1 = isManagerInFront(ledger1);
+    log.push({ step: '点开单个标签', ledger: ledger1, managerInFront: front1 });
+    if (!front1.ok) {
+      problems.push(
+        `点开单个标签之后，用户正在看的不是挂着提示的那个页面 —— ${front1.why}`
+      );
+    }
     // 消费掉的那条标签必须**不在**列表里了（判据看标签行，不看会话名）。
     const titlesAfterConsume = await tabTitlesOf(page, '撤销验证会话');
     if (titlesAfterConsume.some(t => t.includes('Alpha'))) {
@@ -187,15 +272,29 @@ async function main() {
       .locator('button[aria-label^="在新窗口恢复整个会话"]')
       .first()
       .click();
-    await page.waitForTimeout(1800);
+    await page.waitForTimeout(2500);
     const afterRestore = await visibleText(page);
     log.push({ step: '恢复整个会话', visible: afterRestore });
     await page.screenshot({ path: join(OUT_DIR, '03-consume-whole-group.png') });
 
     const undo2 = page.locator('button', { hasText: '撤销' }).first();
-    if (!(await undo2.isVisible().catch(() => false))) {
+    const hasUndo2 = await undo2.isVisible().catch(() => false);
+    if (!hasUndo2) {
       problems.push('整组恢复之后看不到「撤销」按钮');
     } else {
+      // ── 强判据：整组恢复（**新窗口**路径）之后，管理页必须回到用户眼前。
+      // 这一条在 2026-10-23 之前是**假绿**：新窗口抢走前台焦点 ⇒ 管理页所在
+      // 窗口变后台窗口 ⇒ 提示在 DOM 里（isVisible() 为真）但用户看不见。
+      const ledger2 = await windowLedger(sw, managerUrl);
+      const front2 = isManagerInFront(ledger2);
+      log.push({ step: '恢复整个会话', ledger: ledger2, managerInFront: front2 });
+      if (!front2.ok) {
+        problems.push(
+          `整组恢复之后，用户正在看的不是挂着撤销提示的那个页面 —— ${front2.why}`
+        );
+      }
+    }
+    if (hasUndo2) {
       await undo2.click();
       await page.waitForTimeout(1500);
       await page.screenshot({ path: join(OUT_DIR, '04-after-undo-whole-group.png') });

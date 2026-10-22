@@ -62,6 +62,7 @@ const ORDER = [
   'e2e-webdav-local.mjs',                   // PROPFIND/PUT-If-Match 等协议事实 + 适配器完整往返（dufs + TS loader）
   'e2e-webdav-lock.mjs',                    // 锁定占位后端不回落 + 会话口令 options→SW 跨上下文镜像（真机）
   'e2e-webdav-permission.mjs',              // optional host 权限授予/拦截 + CSP connect-src 放行（真机）
+  'e2e-import-tombstone-visible.mjs',       // DS-43-3：导入带 isDeleted:true 的备份 ⇒ 看得见 + 一轮真同步后不消失（纯本地 dufs）
 ];
 
 /**

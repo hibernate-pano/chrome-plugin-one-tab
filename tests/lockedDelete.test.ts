@@ -238,9 +238,11 @@ describe('锁定会话的删除确认：标题与正文都必须点名「已锁�
     assert.match(message, /已锁定/, '正文必须点明这个会话被锁定过');
   });
 
-  it('锁定会话的正文仍然说清「永久删除 + 不可恢复 + 标签记录数」', () => {
+  it('锁定会话的正文仍然说清「永久删除 + 不可恢复 + 标签页数」', () => {
     const message = deleteGroupConfirmMessage({ name: '重要会话', tabCount: 12, isLocked: true });
-    assert.match(message, /12 个标签记录/, '必须说出这次会删掉多少条记录');
+    // 2026-10-23 审计 H-10：「标签记录」统一成「标签页」
+    // （同一个东西在本仓曾有三种叫法：标签页 / 标签 / 标签记录）。
+    assert.match(message, /12 个标签页/, '必须说出这次会删掉多少条记录');
     assert.match(message, /无法恢复/, '必须说清不可恢复（无回收站）');
   });
 
@@ -254,7 +256,7 @@ describe('锁定会话的删除确认：标题与正文都必须点名「已锁�
   it('未锁定会话的正文保持既有口径（逐字不变）', () => {
     assert.equal(
       deleteGroupConfirmMessage({ name: '普通会话', tabCount: 3, isLocked: false }),
-      '将永久删除该会话内的 3 个标签记录，删除后无法恢复。确认继续吗？'
+      '将永久删除该会话内的 3 个标签页，删除后无法恢复。确认继续吗？'
     );
   });
 

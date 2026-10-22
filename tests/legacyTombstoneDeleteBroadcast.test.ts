@@ -93,6 +93,9 @@ function makeBackend(opts?: { groups?: unknown[] }) {
     },
     async broadcastDeletes(ids: string[]) {
       calls.broadcastDeletes.push([...ids]);
+      // 端口契约（2026-10-23 R-1）：必须回报「哪些真的广播了、哪些被账号闸门挡下」。
+      // 自带存储（WebDAV）不按账号分行 ⇒ 全部放行。
+      return { broadcastIds: [...ids], blockedIds: [] };
     },
     async purgeExpiredDeletes() {
       return 0;

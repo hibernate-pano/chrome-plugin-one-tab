@@ -151,7 +151,9 @@ const fakeBackend = (id: 'supabase' | 'webdav'): SyncBackendPort =>
     async uploadGroups() {
       return { writtenIds: [] };
     },
-    async broadcastDeletes() {},
+    async broadcastDeletes(ids) {
+      return { broadcastIds: [...ids], blockedIds: [] };
+    },
     async purgeExpiredDeletes() {
       return 0;
     },

@@ -77,6 +77,7 @@ function makeFakeBackend() {
     },
     async broadcastDeletes(ids) {
       calls.push(`broadcastDeletes:${ids.join(',')}`);
+      return { broadcastIds: [...ids], blockedIds: [] };
     },
     async purgeExpiredDeletes(maxAgeDays) {
       calls.push(`purgeExpiredDeletes:${maxAgeDays}`);

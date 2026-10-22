@@ -14,6 +14,7 @@ import { register } from 'node:module';
 import { pathToFileURL, fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
 import { readFile } from 'node:fs/promises';
+import ts from 'typescript';
 
 globalThis.__TABSTACK_META_ENV__ = {
   VITE_SUPABASE_URL: 'https://stub.supabase.co',
@@ -371,10 +372,125 @@ describe('D-5：删除广播必须读回确认，否则不消费删除队列', (
     const clear = src.indexOf('clearPendingDeleteIds(');
     assert.ok(broadcast > 0 && clear > broadcast, '清队必须排在广播之后');
     // 广播抛错 ⇒ 上浮到外层 catch ⇒ 清队那行根本不会执行。
-    assert.match(
-      src,
-      /await markCloudGroupsAsDeleted\(cloudDeleteIds\);[\s\S]{0,200}await storage\.clearPendingDeleteIds\(cloudDeleteIds\);/,
-      '清队必须在广播成功之后（靠抛错跳过）'
+    //
+    // ⚠️ 这里**不钉调用形状**（2026-10-23 审计 R-2 的教训）：原来那条
+    // assert.match 钉的是「`markCloudGroupsAsDeleted(cloudDeleteIds)` 后面
+    // 200 字符内出现 `clearPendingDeleteIds(cloudDeleteIds)`」——
+    //   ① 钉的是**字面量与参数名** ⇒ 等价改写（把广播结果先存进变量再传）
+    //      会被误判成「没接上」；
+    //   ② 它钉的**恰好是那条错误行为**（清队清「原始那一批」）——
+    //      2026-10-23 审计 R-1 修好之后（清队只清真的广播成功的那批），
+    //      这条断言反而会红 ⇒ 守卫在**挡正确修复**。
+    // 「清队只清真的广播成功的那批」由下面那条 D-6 用例（数据流判据）盯。
+    assert.ok(
+      broadcast > 0 && clear > broadcast,
+      '清队在广播成功之后（靠抛错跳过）'
     );
+  });
+
+  /**
+   * D-6 补充（2026-10-23 审计 R-1）：清队**只能清「真的广播成功」的那些**。
+   *
+   * ── 为什么这条要单独盯 ──────────────────────────────────────────────
+   * 广播层现在带账号闸门：一批删除意图里，属于**别的账号**的那些会被挡下
+   * （不许写进当前账号的云端）。它们**仍然在删除队列里** —— 等用户登录到
+   * 那个账号时还要广播。
+   * ⇒ 清队若按「我发出去的那一批」整批清，被挡下的那条**随整批一起没了**
+   * ⇒ 那条删除意图被**永久丢弃** ⇒ 那条会话在它真正的主人账号下**复活**
+   *   （v1.22.0 起无回收站、不可逆，且用户零提示）。
+   *
+   * ── 判据钉的是**数据流**，不是长相 ───────────────────────────────────
+   * 「清队那一行的参数」必须**派生自**广播结果的 `broadcastIds`（= 真的
+   * 广播成功的那批），而不能是**原始那一批**。
+   * ⇒ 等价改写（换个变量名、把 broadcastIds 先存进别处再传）照样绿；
+   *   真把参数换回「原始那一批」一定红。
+   */
+  it('D-6：清队只清「真的广播成功」的那批（被账号闸门挡下的必须留在队列里）', async () => {
+    const source = await read('src/services/syncEngine.ts');
+    const src = ts.createSourceFile(
+      'syncEngine.ts',
+      source,
+      ts.ScriptTarget.Latest,
+      true,
+      ts.ScriptKind.TS
+    );
+
+    /** 变量名 → 它被赋的值（同名取最后一条 = 生效的那条）。 */
+    const bindings = new Map<string, ts.Expression>();
+    const visit = (n: ts.Node): void => {
+      if (ts.isVariableDeclaration(n) && ts.isIdentifier(n.name) && n.initializer) {
+        bindings.set(n.name.text, n.initializer);
+      }
+      if (
+        ts.isBinaryExpression(n) &&
+        n.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+        ts.isIdentifier(n.left)
+      ) {
+        bindings.set(n.left.text, n.right);
+      }
+      n.forEachChild(visit);
+    };
+    visit(src);
+
+    /** 表达式里有没有「派生自广播结果的 broadcastIds」。 */
+    const derivesFromBroadcastIds = (node: ts.Node, depth = 0): boolean => {
+      if (depth > 12) return false;
+      // 变量名 ⇒ 追到它生效的那条赋值（别名也算同一条数据流）。
+      if (ts.isIdentifier(node)) {
+        const bound = bindings.get(node.text);
+        if (!bound) return false;
+        if (bound === node) return false;
+        return derivesFromBroadcastIds(bound, depth + 1);
+      }
+      if (ts.isPropertyAccessExpression(node) && node.name.text === 'broadcastIds') {
+        // `broadcastResult.broadcastIds` —— 接收者必须是广播结果的变量。
+        if (ts.isIdentifier(node.expression)) {
+          const bound = bindings.get(node.expression.text);
+          // `await markCloudGroupsAsDeleted(...)` ⇒ 剥掉 await 再看。
+          const call = bound && ts.isAwaitExpression(bound) ? bound.expression : bound;
+          if (call && ts.isCallExpression(call)) {
+            const callee = call.expression;
+            const name = ts.isPropertyAccessExpression(callee)
+              ? callee.name.text
+              : ts.isIdentifier(callee)
+                ? callee.text
+                : '';
+            if (name === 'markCloudGroupsAsDeleted' || name === 'broadcastDeletes') return true;
+          }
+        }
+        return false;
+      }
+      let found = false;
+      node.forEachChild(child => {
+        if (!found && derivesFromBroadcastIds(child, depth + 1)) found = true;
+      });
+      return found;
+    };
+
+    // 找「清队」调用：storage.clearPendingDeleteIds(...)
+    const clearCalls: ts.CallExpression[] = [];
+    const visit2 = (n: ts.Node): void => {
+      if (
+        ts.isCallExpression(n) &&
+        ts.isPropertyAccessExpression(n.expression) &&
+        n.expression.name.text === 'clearPendingDeleteIds'
+      ) {
+        clearCalls.push(n);
+      }
+      n.forEachChild(visit2);
+    };
+    visit2(src);
+
+    assert.ok(clearCalls.length > 0, 'syncEngine 必须有清删除队列的调用');
+    for (const call of clearCalls) {
+      const arg = call.arguments[0];
+      assert.ok(arg, '清队必须点名要清哪些 id');
+      assert.ok(
+        derivesFromBroadcastIds(arg),
+        '清队的参数必须派生自广播结果的 broadcastIds（= 真的广播成功的那批）—— ' +
+          '清整批会把「被账号闸门挡下的那条」一起清掉 ⇒ 那条删除意图被永久丢弃 ⇒ ' +
+          '那条会话在它真正的主人账号下复活'
+      );
+    }
   });
 });

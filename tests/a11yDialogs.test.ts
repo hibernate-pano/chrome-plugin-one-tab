@@ -275,17 +275,47 @@ test('Toast 的 live region 常驻挂载：不再有提前 return null 把区域
 test('Toast 进度条改成 CSS 动画，不再用 setInterval 驱动 React state', () => {
   const code = stripComments(TOAST);
   assert.ok(!code.includes('setInterval'));
-  assert.ok(!code.includes('setProgress'));
+  // ⚠️ 「setProgress」这个具体名字不再是判据了：2026-10-22 之后进度条多了一个
+  // 「暂停/续走」的状态（progressRunning），用一个更贴切的名字。
+  // 真正的判据是「**不用 React state 逐帧驱动**」—— 只要还靠 setInterval
+  // 往 state 里塞进度，每个 toast 就白白重渲染几十次。
+  assert.ok(!/setInterval\s*\([^)]*\)[^;]*set[A-Z]\w*\(/.test(code));
   assert.ok(!code.includes('progressTimer'));
   assert.ok(code.includes('@keyframes tapstack-toast-progress'));
-  assert.ok(code.includes('tapstack-toast-progress ${duration}ms linear forwards'));
+  // 进度条动画的时长必须跟着**实际时长**走（不是写死的数）——
+  // 2026-10-22 之前这里是 `${duration}`，之后时长由「有没有动作」决定，
+  // 于是这里必须用 effectiveDuration。
+  assert.match(
+    code,
+    /tapstack-toast-progress \$\{effectiveDuration\}ms linear forwards/,
+    '进度条动画的时长必须用实际生效的时长（effectiveDuration），否则进度条与倒计时对不上',
+  );
 });
 
 test('Toast 的消失计时器不再依赖每次渲染都变的 onClose', () => {
   // ToastContext 每次渲染都传新的箭头函数；放进依赖会让「弹窗期间再来一个弹窗」
   // 把计时器重置、动画重播。
-  assert.ok(!TOAST.includes('}, [visible, duration, onClose]);'));
-  assert.ok(TOAST.includes('}, [visible, duration]);'));
+  //
+  // ⚠️ 依赖数组里的时长变量名从 `duration` 改成了 `effectiveDuration`
+  // （时长由「有没有动作」决定，见 toastPolicy.resolveToastDuration）。
+  // 判据钉的是**性质**：依赖里**不许**出现 onClose。
+  //
+  // ⚠️ 找计时器 effect 的方式也要钉住：Toast 里现在有**两个**依赖里带
+  // `visible` 的 effect（倒计时那个 + 「页面可见性」那个），所以不能靠
+  // 「第一个带 visible 的」来找 —— 必须找**同时**带 visible 与时长的那个，
+  // 否则将来把两个 effect 的顺序换一下，这条断言就会指向错的那个。
+  const deps = TOAST.match(/\}, \[[^\]]*\]\);/g) ?? [];
+  const timerEffect = deps.find(d => d.includes('visible') && /duration/i.test(d));
+  assert.ok(timerEffect, `应能找到计时器的 effect 依赖数组（实际：${deps.join(' | ')}）`);
+  assert.ok(
+    !timerEffect.includes('onClose'),
+    `计时器的依赖里出现了 onClose（${timerEffect}）—— onClose 每次渲染都是新函数，` +
+      '会让计时器重置、动画重播',
+  );
+  assert.ok(
+    /duration/i.test(timerEffect),
+    `计时器的依赖里必须有实际时长（${timerEffect}）—— 少了它时长变了也不会重置`,
+  );
   assert.ok(TOAST.includes('onCloseRef.current?.();'));
 });
 

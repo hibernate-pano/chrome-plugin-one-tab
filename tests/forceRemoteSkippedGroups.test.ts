@@ -603,8 +603,9 @@ describe('后端不产生跳过（没有该方法）⇒ 同步照常成功', () 
       async uploadGroups() {
         return { writtenIds: [] };
       },
-      async broadcastDeletes() {
+      async broadcastDeletes(ids: string[]) {
         /* 不该被调用 */
+        return { broadcastIds: [...ids], blockedIds: [] };
       },
       async purgeExpiredDeletes() {
         return 0;

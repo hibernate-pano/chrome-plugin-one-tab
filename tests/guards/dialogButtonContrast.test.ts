@@ -159,7 +159,69 @@ describe('弹窗出口按钮：静止态与 hover 态的白字都 ≥ 4.5:1（WC
   }
 });
 
-describe('焦点环：按钮环色必须是 600 档石板灰，不是 400/500 档浅色', () => {
+/*
+ * ── 2026-10-23 审计 V-2：焦点环的**归属**换了 ──────────────────────────
+ *
+ * 原来这一段钉的是「按钮的环必须写 `focus-visible:outline-slate-600` /
+ * `dark:focus-visible:outline-slate-300`」（或 primary-600）。
+ * 那是**在组件里写死环色**的做法 —— 它有三个问题：
+ *
+ *  ① **不跟主题**：claude 的品牌色是陶土红，弹窗里的焦点环却是别家产品的
+ *     固定蓝 rgb(37,99,235)（真机实测，12 组里 6 组是它）。
+ *  ② **深色模式下看不见**：写死的 #2563eb 压 apple/chrome/claude 的深色
+ *     面板只有 2.70 / 2.78 / 2.96:1（WCAG 2.2 非文本对比要求 3:1）；
+ *     而 `dark:focus-visible:outline-slate-300`（特异性 0-3-0）赢过主题的
+ *     `:focus-visible`（0-2-0）⇒ 深色下拿到 rgb(203,213,225)，
+ *     压深色面板同样低于 3:1。
+ *  ③ 它把「环色」这件事散落在十几个组件里 —— 每加一颗按钮就要再抄一遍。
+ *
+ * ⇒ 现在环色的**唯一来源**是主题令牌 `--color-focus-ring`：
+ *   · 组件里**不写任何** `focus-visible:outline-<颜色>` 工具类；
+ *   · 每套主题**自己**声明一条 `:focus-visible` 规则读那个令牌
+ *     （必须**未分层**，否则会被 Tailwind utilities 层压过）。
+ *
+ * 契约**没变**：焦点环必须能被看清（≥3:1）。变的是它**由谁决定** ——
+ * 从「组件写死」变成「主题给」。达标性由
+ * tests/guards/focusRingVisibility.test.ts 与 a11yTextAndFocusTokens.test.ts
+ * 逐主题实测（那里读的是令牌值本身，不是类名字符串）。
+ *
+ * 【变异自证】
+ *   ① 把 ModalFrame 的关闭按钮加回 `focus-visible:outline-primary-600`
+ *      ⇒ 「组件里不得出现写死的焦点环色」变红。
+ *   ② 把 claude.css 的 `html[data-theme="claude"] :focus-visible` 整块删掉
+ *      ⇒ 「每套主题都必须声明自己的 :focus-visible」变红。
+ *   ③ 把 claude.css 那条规则的 outline 改成 `var(--color-accent)`
+ *      ⇒ 「主题的 :focus-visible 必须读 --color-focus-ring」变红。
+ */
+
+const THEMES = ['legacy', 'creamy', 'prism', 'claude', 'apple', 'chrome'] as const;
+
+/** 组件里**任何**写死颜色的焦点环工具类。 */
+const HARDCODED_RING = /focus-visible:outline-(?:primary|slate|gray|amber|emerald|rose|sky|red|blue|green|yellow|indigo|violet|purple|pink|teal|cyan|lime|orange|fuchsia)-\d+/;
+
+/**
+ * 主题的 `:focus-visible` 规则块（找不到返回 ''）。
+ *
+ * 主题选择器的引号风格不统一（creamy 用单引号），两种都要试 ——
+ * 与 focusRingVisibility.test.ts / a11yTextAndFocusTokens.test.ts 同一口径。
+ */
+function themeFocusVisibleBlock(css: string, theme: string): string {
+  for (const sel of [
+    `html[data-theme="${theme}"] :focus-visible`,
+    `html[data-theme='${theme}'] :focus-visible`,
+  ]) {
+    const at = css.indexOf(sel);
+    if (at === -1) continue;
+    const open = css.indexOf('{', at);
+    if (open === -1) continue;
+    const close = css.indexOf('}', open);
+    if (close === -1) continue;
+    return css.slice(open + 1, close);
+  }
+  return '';
+}
+
+describe('焦点环：环色由主题给，组件里不得再写死', () => {
   for (const file of DIALOG_FILES) {
     const src = read(file);
 
@@ -172,45 +234,22 @@ describe('焦点环：按钮环色必须是 600 档石板灰，不是 400/500 �
       assert.doesNotMatch(src, /outline-slate-400/, `${file}：slate-400 对白只有 2.56:1，不能当焦点环`);
     });
 
-    it(`${file}：每个按钮的环都是 slate-600 / 深色 slate-300`, () => {
-      const strings = buttonClassStrings(src);
-      for (const classes of strings) {
-        if (isThemeTokenButton(classes)) {
-          // 主题令牌按钮的环与底色一并保持原样（本轮不动 primary），只确认没被顺手改掉。
-          assert.match(
-            classes,
-            /focus-visible:outline-primary-500/,
-            `${file}：主题令牌按钮「${classes}」的环不该在本轮被改（primary 属于主题契约）`,
-          );
-          continue;
-        }
-        assert.match(classes, /focus-visible:outline-slate-600/, `${file}：按钮「${classes}」缺 focus-visible:outline-slate-600`);
-        assert.match(
-          classes,
-          /dark:focus-visible:outline-slate-300/,
-          `${file}：按钮「${classes}」缺深色环 dark:focus-visible:outline-slate-300（slate-600 在深色底上读不出来）`,
-        );
-      }
+    it(`${file}：不得出现任何写死颜色的焦点环工具类（环色归主题令牌）`, () => {
+      assert.doesNotMatch(
+        src,
+        HARDCODED_RING,
+        `${file}：又出现了写死颜色的焦点环工具类 —— 环色必须由主题的 --color-focus-ring 给。` +
+          '写死的环不跟主题走（claude 的品牌色是陶土红，环却是固定蓝），' +
+          '深色模式下还可能低于 3:1（2026-10-23 审计 V-2 实测 2.70–2.96:1）',
+      );
     });
   }
 
-  // ── 2026-10-19 审计 V-6：弹层的环色与配色都改为主题令牌 ──────────────
-  //
-  // 修复前 ModalFrame / ConfirmDialog 写死 slate 系（bg-slate-900/95、
-  // text-slate-900、focus-visible:outline-slate-600）：在 Claude 这类暖色
-  // 主题下，弹层是一块冷蓝补丁。现在改用主题令牌（theme-bg-elevated /
-  // theme-text-primary / focus-visible:outline-primary-600）。
-  //
-  // 契约没变：**焦点环必须能被看清**。原先钉「slate-600 / 深色 slate-300」，
-  // 现在钉「primary-600 档或 slate-600 档」——两者在各自底色上 ≥3:1
-  // （2px 图形的要求，见 WCAG 1.4.11）。
-  const RING_PATTERN = /focus-visible:outline-(?:primary-600|slate-600)/;
-
-  it('ConfirmDialog 的取消按钮（同一弹窗的第二个出口）也有能看清的焦点环', () => {
+  it('ConfirmDialog 的取消按钮（同一弹窗的第二个出口）也不写死环色', () => {
     const src = read('src/components/common/ConfirmDialog.tsx');
     const cancel = src.match(/onClick=\{onCancel\}[\s\S]*?className="([^"]+)"/);
     assert.ok(cancel, '找不到取消按钮的 className，守卫前提变了（onClick={onCancel} 的写法被改？）');
-    assert.match(cancel[1], RING_PATTERN, '取消按钮必须有 focus-visible 环（600 档）');
+    assert.doesNotMatch(cancel[1], HARDCODED_RING, '取消按钮不得写死焦点环色');
     assert.doesNotMatch(cancel[1], /outline-slate-400/, 'slate-400 对白只有 2.56:1');
     assert.doesNotMatch(cancel[1], /outline-slate-500/, '500 档当环色对白底只有 2.5–4.1:1');
   });
@@ -219,17 +258,54 @@ describe('焦点环：按钮环色必须是 600 档石板灰，不是 400/500 �
     ['src/components/common/ModalFrame.tsx', '关闭弹窗'],
     ['src/components/common/Toast.tsx', '关闭提示'],
   ] as const) {
-    it(`${file}：右上角「${label}」按钮的环能被看清`, () => {
+    it(`${file}：右上角「${label}」按钮的环不写死`, () => {
       const src = read(file);
       const close = src.match(/className="([^"]+)"[\s\S]{0,240}?aria-label="[^"]+"/);
       assert.ok(close, `${file}：找不到关闭按钮的 className，守卫前提变了`);
-      assert.match(close[1], RING_PATTERN, '关闭按钮必须有 focus-visible 环（600 档）');
+      assert.doesNotMatch(close[1], HARDCODED_RING, '关闭按钮不得写死焦点环色');
       assert.doesNotMatch(close[1], /outline-slate-400/, 'slate-400 对白只有 2.56:1');
       assert.doesNotMatch(close[1], /outline-slate-500/, '500 档当环色对白底只有 2.5–4.1:1');
     });
   }
 
-  // 弹层本体必须跟主题（V-6）：写死的 slate 系在暖色主题下是冷蓝补丁。
+  // ── 主题侧：每套主题都必须声明自己的 :focus-visible ──────────────────
+  for (const theme of THEMES) {
+    it(`${theme}.css 必须声明自己的 :focus-visible（否则环色退回全局兜底 / 被工具类压过）`, () => {
+      const css = read(`src/styles/themes/${theme}.css`);
+      const block = themeFocusVisibleBlock(css, theme);
+      assert.ok(
+        block,
+        `${theme}.css 里没有 html[data-theme="${theme}"] :focus-visible —— ` +
+          '该主题的焦点环会落到 global.css 的 @layer base 兜底（被 Tailwind utilities 层压过）',
+      );
+      assert.match(
+        block,
+        /outline:\s*2px solid var\(--color-focus-ring\)/,
+        `${theme} 的 :focus-visible 必须画一条 2px 实色环，环色读 --color-focus-ring`,
+      );
+      assert.match(
+        block,
+        /outline-offset:\s*2px/,
+        `${theme} 的 :focus-visible 必须有正 offset —— offset=0 时环贴在按钮填充上，与填充同色就完全看不见`,
+      );
+    });
+  }
+
+  it('主题的 :focus-visible 规则不得退回 var(--color-accent)（环会与主按钮填充同色）', () => {
+    for (const theme of THEMES) {
+      const css = read(`src/styles/themes/${theme}.css`);
+      const block = themeFocusVisibleBlock(css, theme);
+      if (!block) continue; // 上一条已经报了
+      assert.doesNotMatch(
+        block,
+        /var\(--color-accent\)/,
+        `${theme} 的 :focus-visible 又取了 --color-accent —— 它就是 .btn-primary 的填充色，环与底同色 ⇒ 焦点环看不见`,
+      );
+    }
+  });
+});
+
+describe('弹层本体必须跟主题（V-6）：写死的 slate 系在暖色主题下是冷蓝补丁', () => {
   it('ModalFrame 的弹层本体不写死 slate 配色', () => {
     const src = read('src/components/common/ModalFrame.tsx');
     // 弹层的 className 在 tabIndex={-1} 之后的那一处。

@@ -122,8 +122,9 @@ function makeFakeBackend() {
       uploads.push(groups.map(g => g.id));
       return { writtenIds: groups.map(g => g.id) };
     },
-    async broadcastDeletes() {
+    async broadcastDeletes(ids) {
       /* 本文件不考删除广播 */
+      return { broadcastIds: [...ids], blockedIds: [] };
     },
     async purgeExpiredDeletes() {
       return 0;

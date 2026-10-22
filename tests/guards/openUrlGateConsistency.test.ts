@@ -108,8 +108,19 @@ describe('后台轮询：判据读不到时不下载（2026-10-05 fail-closed）
     const start = src.indexOf('const hasPending = await syncEngine.hasPendingUpload()');
     assert.ok(start !== -1, '应能找到 pending 判据的调用点');
     // catch 块必须在 return 之前就结束本轮
-    const catchIdx = src.indexOf('} catch', start);
-    assert.ok(catchIdx !== -1 && catchIdx - start < 1200, '应有紧邻的 catch');
+    //
+    // ⚠️ 2026-10-22：这里原先用「catch 距离判据调用点 < 1200 字符」来**近似**
+    // 找那个 catch。那是个**魔数**（钉写法、不钉语义）：try 块里多写几句
+    // 正常的分支处理就会把它顶破，而 catch 块**一个字都没改**。
+    // （2026-10-22 加了「云端不可用」的分支，正是这种情况。）
+    //
+    // 改成**结构化**地找：从判据调用点往前找**包住它**的那个 `try {`，
+    // 再从那个 try 找配对的 `} catch`。这样无论 try 块里写多少行，
+    // 找到的都是**同一个** catch —— 判据从「距离够近」变成「确实是这一个」。
+    const tryIdx = src.lastIndexOf('try {', start);
+    assert.ok(tryIdx !== -1, '判据调用点应在一个 try 块里');
+    const catchIdx = src.indexOf('} catch', tryIdx);
+    assert.ok(catchIdx !== -1, '应有紧邻的 catch');
     const catchBody = src.slice(catchIdx, catchIdx + 900);
     assert.match(
       catchBody,

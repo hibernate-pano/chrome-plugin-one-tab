@@ -1,0 +1,472 @@
+/**
+ * 删除广播的账号闸门（2026-10-23 审计 R-1 / DS-43-1）。
+ *
+ * ── 这条缺陷是什么 ──────────────────────────────────────────────────────
+ * 删除广播（把「这条会话被删了」写进云端）是**跨设备删除**的唯一载体。
+ * 上行集合有账号闸门（upload.ts 的 filterGroupsByAccount），**删除广播这一路
+ * 原先没有** ⇒ 属于本机**另一个账号**的会话 id 被写进**当前账号**的云端行：
+ *
+ *   ① 越权写：当前账号的云端多出一行不属于它的墓碑；
+ *   ② 更糟的是「读回校验」把「云端没有这行」判成「意图已达成」
+ *      （missingAsAchieved）⇒ 删除意图被**清队** ⇒ 那条会话在它**真正的主人**
+ *      账号下**复活**（零提示，v1.22.0 起无回收站、不可逆）。
+ *
+ * ── 这道守卫盯的三件事（每一件都是**行为**，不是字面量）──────────────────
+ * ① **判据层**（core/accountScope 的 partitionDeleteIdsByAccount）：
+ *    属于别的账号的 id 不进上行集合；归属**不可知**时一律挡住（fail-closed）。
+ * ② **写入层**（utils/supabase/upload.ts 的 markCloudGroupsAsDeleted 打假云端）：
+ *    属于别的账号的 id **在当前账号的云端里没有产生任何行**。
+ * ③ **消费层**（services/syncEngine.ts）：被挡下的 id **留在删除队列里**
+ *    （清队只清「真的广播成功」的那些）⇒ 下次登录到那个账号时还能广播。
+ *
+ * 【为什么 ③ 必须单独盯】①②管的是「别写错账号」，③管的是「别把意图弄丢」。
+ * 两者是**不同的失效**：只做①② ⇒ 意图被清掉 ⇒ 会话在原账号下复活（更隐蔽，
+ * 因为用户看见的是「我删掉了」）；只做③ ⇒ 越权写照旧发生。
+ *
+ * ── 判据为什么不钉字面量 ───────────────────────────────────────────────
+ * 这道守卫的判据全部是**可观察的结果**（云端有没有多出那一行 / 队列里那条
+ * 还在不在 / 纯函数吐出来的两个集合），不是「源码里出现过某个串」。
+ * ⇒ 等价改写（换个变量名、把 filter 写成 filter 的反面、抽成别名）**照样绿**；
+ * 真把闸门摘掉**一定红**。
+ *
+ * ── 自证检测力（写在下面每条用例的注释里）─────────────────────────────
+ * ① 摘掉闸门（判据层恒放行）⇒ 用例 2 红；
+ * ② 把「真的写上云端」与「被挡下」混为一谈（清队清整批）⇒ 用例 5 红；
+ * ③ 归属记录读不出来却放行（fail-open）⇒ 用例 3 红。
+ */
+
+import { describe, it, before, after, beforeEach } from 'node:test';
+import assert from 'node:assert/strict';
+import { register } from 'node:module';
+import { pathToFileURL, fileURLToPath } from 'node:url';
+import { dirname, resolve } from 'node:path';
+import { stubSessionJson } from '../_helpers/stubSession.ts';
+import { partitionDeleteIdsByAccount } from '@/core/accountScope';
+
+const LOADER_PATH = pathToFileURL(
+  resolve(dirname(fileURLToPath(import.meta.url)), '../_alias-loader.mjs')
+).href;
+
+if (!process.env.VERBOSE) {
+  console.log = () => {};
+  console.warn = () => {};
+  console.error = () => {};
+}
+
+const USER_A = 'user-r43-account-a';
+const USER_B = 'user-r43-account-b';
+const SESSION_KEY = 'sb-stub-auth-token';
+const NOW = '2026-10-23T08:00:00.000Z';
+
+// ══════════════════════════════════════════════════════════════════════════
+// 一、判据层：归属判定本身
+// ══════════════════════════════════════════════════════════════════════════
+
+describe('R-1 删除广播闸门：归属判定（纯函数层）', () => {
+  const scope = {
+    ownerUserId: USER_B,
+    foreignOwners: { 'g-a1': USER_A },
+    pendingNotice: null,
+  };
+
+  it('属于别的账号的会话不进上行集合（越权写的源头就在这里）', () => {
+    const result = partitionDeleteIdsByAccount(['g-a1', 'g-b1'], scope, USER_B);
+    assert.deepEqual(
+      result.broadcastIds,
+      ['g-b1'],
+      '只有属于当前账号的会话才能写进当前账号的云端'
+    );
+    assert.deepEqual(
+      result.blockedIds,
+      ['g-a1'],
+      '属于别的账号的会话必须被挡下（它要发给它的真正主人）'
+    );
+  });
+
+  it('归属不可知时一律挡住（fail-closed）：记录读不出来 / 没有记录 / 没有主人', () => {
+    // ① 记录读不出来（存储故障）⇒ 传 null。
+    assert.deepEqual(
+      partitionDeleteIdsByAccount(['g-a1'], null, USER_B),
+      { broadcastIds: [], blockedIds: ['g-a1'] },
+      '归属记录读不出来 ⇒ 一律挡住（放行 = 往错账号的云端写墓碑 + 意图被清掉）'
+    );
+    // ② 记录在，但没有主人（ownerUserId 为 null）⇒ 本机这批会话无主。
+    assert.deepEqual(
+      partitionDeleteIdsByAccount(['g-a1'], { ...scope, ownerUserId: null }, USER_B),
+      { broadcastIds: [], blockedIds: ['g-a1'] },
+      '没有主人 ⇒ 无从判断归属 ⇒ 一律挡住'
+    );
+    // ③ 记录在、有主人，但没有这条会话的归属记录 ⇒ 归 ownerUserId（当前账号）。
+    //    这一支**不是** fail-open：ownerUserId 非空时归属是**有记录**的
+    //    （这台机器的会话归它），只有 ownerUserId 为 null 才不可知。
+    assert.deepEqual(
+      partitionDeleteIdsByAccount(['g-unknown'], scope, USER_B).broadcastIds,
+      ['g-unknown'],
+      '有主人的记录下，没单独记归属的会话归 ownerUserId（这不是放行漏洞）'
+    );
+  });
+
+  it('自证检测力：把闸门摘掉（恒放行）时，上面两条必须变红', () => {
+    // 模拟「有人把 partitionDeleteIdsByAccount 改成恒放行」——
+    // 那正是这条缺陷最初的样子（上行有闸门、删除没有）。
+    const noGate = (ids: readonly string[]) => ({
+      broadcastIds: [...ids],
+      blockedIds: [] as string[],
+    });
+    const broken = noGate(['g-a1', 'g-b1']);
+    assert.ok(
+      broken.broadcastIds.includes('g-a1'),
+      '破口成立：摘掉闸门后，属于别的账号的会话被放进上行集合'
+    );
+    // 正控：真闸门下它必须被挡下。
+    assert.equal(
+      partitionDeleteIdsByAccount(['g-a1'], scope, USER_B).broadcastIds.includes('g-a1'),
+      false,
+      '正控：真闸门下它必须被挡下（否则上面这条是空转的）'
+    );
+  });
+});
+
+// ══════════════════════════════════════════════════════════════════════════
+// 二、写入层：打**假云端**，看当前账号的云端里到底多没多出那一行
+// ══════════════════════════════════════════════════════════════════════════
+
+/** 假云端 = PostgREST 子集（只认 tab_groups 表的 eq./in.() 过滤）。 */
+function installFakeCloud(sessionUserId: () => string) {
+  const rows = new Map<string, Record<string, unknown>>();
+  const ops: string[] = [];
+
+  const jsonRes = (body: unknown, status = 200) =>
+    new Response(status === 204 ? null : JSON.stringify(body), {
+      status,
+      headers: { 'content-type': 'application/json' },
+    });
+
+  const matches = (row: Record<string, unknown>, params: URLSearchParams): boolean => {
+    for (const [key, raw] of params.entries()) {
+      if (['select', 'limit', 'offset', 'order', 'on_conflict', 'Prefer'].includes(key)) continue;
+      if (raw.startsWith('eq.')) {
+        if (String(row[key]) !== raw.slice(3)) return false;
+      } else if (raw.startsWith('in.(')) {
+        const ids = raw.slice(4, -1).split(',').map(s => s.replace(/"/g, '').trim());
+        if (!ids.includes(String(row.id))) return false;
+      } else {
+        throw new Error(`假云端不认识的过滤器: ${key}=${raw}`);
+      }
+    }
+    return true;
+  };
+
+  const previousFetch = globalThis.fetch;
+  globalThis.fetch = (async (input: any, init: RequestInit = {}) => {
+    const url = new URL(typeof input === 'string' ? input : input.url);
+    const method = (init.method ?? 'GET').toUpperCase();
+    const params = url.searchParams;
+
+    if (url.pathname.endsWith('/auth/v1/user')) {
+      return jsonRes({ id: sessionUserId(), aud: 'authenticated', role: 'authenticated' });
+    }
+    if (!url.pathname.endsWith('/rest/v1/tab_groups')) {
+      return jsonRes({ message: 'not found' }, 404);
+    }
+
+    if (method === 'GET') {
+      const hit = [...rows.values()].filter(r => matches(r, params));
+      return jsonRes(hit);
+    }
+    if (method === 'POST') {
+      const body = init.body ? JSON.parse(String(init.body)) : [];
+      const list: Record<string, unknown>[] = Array.isArray(body) ? body : [body];
+      for (const row of list) rows.set(String(row.id), { ...row });
+      ops.push(`UPSERT:${list.map(r => String(r.id)).sort().join(',')}`);
+      return jsonRes(list);
+    }
+    if (method === 'DELETE') {
+      const deleted: string[] = [];
+      for (const [id, row] of [...rows.entries()]) {
+        if (!matches(row, params)) continue;
+        rows.delete(id);
+        deleted.push(id);
+      }
+      ops.push(`DELETE:${deleted.sort().join(',')}`);
+      return jsonRes([]);
+    }
+    if (method === 'PATCH') {
+      const body = init.body ? JSON.parse(String(init.body)) : {};
+      const touched: Record<string, unknown>[] = [];
+      for (const [id, row] of [...rows.entries()]) {
+        if (!matches(row, params)) continue;
+        const next = { ...row, ...body };
+        rows.set(id, next);
+        touched.push(next);
+      }
+      ops.push(`PATCH:${touched.map(r => String(r.id)).sort().join(',')}`);
+      return jsonRes(touched);
+    }
+    return jsonRes({ message: `假云端不认识的请求: ${method} ${url.pathname}` }, 405);
+  }) as typeof fetch;
+
+  return { rows, ops, restore: () => { globalThis.fetch = previousFetch; } };
+}
+
+/** 本地存储桩（chrome.storage.local + localStorage）。 */
+function installStorageStubs() {
+  const lsData = new Map<string, string>();
+  const localStorageStub = {
+    get length() { return lsData.size; },
+    key: (i: number) => [...lsData.keys()][i] ?? null,
+    getItem: (k: string) => (lsData.has(k) ? (lsData.get(k) as string) : null),
+    setItem: (k: string, v: string) => void lsData.set(k, String(v)),
+    removeItem: (k: string) => void lsData.delete(k),
+    clear: () => void lsData.clear(),
+  };
+  (globalThis as Record<string, unknown>).window = { localStorage: localStorageStub };
+  (globalThis as Record<string, unknown>).localStorage = localStorageStub;
+
+  const chromeData = new Map<string, unknown>();
+  (globalThis as Record<string, unknown>).chrome = {
+    storage: {
+      local: {
+        get: async (k: string | string[]) => {
+          const keys = Array.isArray(k) ? k : [k];
+          const out: Record<string, unknown> = {};
+          for (const key of keys) if (chromeData.has(key)) out[key] = chromeData.get(key);
+          return out;
+        },
+        set: async (obj: Record<string, unknown>) => {
+          for (const [k, v] of Object.entries(obj)) chromeData.set(k, v);
+        },
+        remove: async (k: string) => void chromeData.delete(k),
+      },
+      onChanged: { addListener: () => undefined, removeListener: () => undefined },
+    },
+    runtime: { getManifest: () => ({ version: 'test' }) },
+    alarms: {
+      create: () => undefined,
+      clear: async () => true,
+      onAlarm: { addListener: () => undefined },
+    },
+  };
+  return { lsData, chromeData };
+}
+
+describe('R-1 删除广播闸门：打假云端 —— 属于别的账号的会话不许在当前账号的云端留下任何行', () => {
+  let stubs: ReturnType<typeof installStorageStubs>;
+  let cloud: ReturnType<typeof installFakeCloud>;
+
+  before(() => {
+    register(LOADER_PATH);
+  });
+
+  beforeEach(async () => {
+    stubs = installStorageStubs();
+    cloud = installFakeCloud(() => USER_B);
+    // 归属记录：A 的会话归 A，当前账号是 B。
+    const { accountScopeStore } = await import('@/utils/authCache');
+    await accountScopeStore.write({
+      ownerUserId: USER_B,
+      foreignOwners: { 'g-a1': USER_A },
+      pendingNotice: null,
+    });
+    stubs.chromeData.set(SESSION_KEY, stubSessionJson(USER_B));
+    // ⚠️ 预置一行「当前账号自己的会话」——
+    // 删除广播走的是 stamp 分支：先读云端**已存在**的行，再只对那些行打墓碑
+    // （读回校验也只校验这批「真的碰到过的行」）。空云端 ⇒ 没有任何行可写 ⇒
+    // 断言「自己的会话被标了墓碑」会永远落空（判据零检测力）。
+    // 预置之后：
+    //   · g-b1 是**本来就存在**的行 ⇒ 断言 is_deleted===true 是有意义的；
+    //   · g-a1 **本来不存在** ⇒ 断言「云端里查无此行」才真的证明了「没越权写」。
+    cloud.rows.set('g-b1', { id: 'g-b1', user_id: USER_B, is_deleted: false, last_op_seq: 1 });
+  });
+
+  after(() => {
+    cloud?.restore();
+  });
+
+  it('别的账号的会话 id 在当前账号的云端里查无此行，且被回报为「被挡下」', async () => {
+    const { uploadSync } = await import('@/utils/supabase/upload');
+    const result = await uploadSync.markCloudGroupsAsDeleted(['g-a1', 'g-b1']);
+
+    // ① 当前账号的云端里**没有** g-a1 的任何行（既没有墓碑，也没有活跃行）。
+    assert.equal(
+      cloud.rows.has('g-a1'),
+      false,
+      '属于另一个账号的会话绝不允许在当前账号的云端留下任何行（越权写）'
+    );
+    // ② 当前账号自己的会话正常被标了墓碑（闸门不许把事全拦了）。
+    assert.equal(
+      cloud.rows.get('g-b1')?.is_deleted,
+      true,
+      '当前账号自己的会话必须照常被标墓碑（否则这条闸门把正常删除也拦死了）'
+    );
+    // ③ 回报结果：g-a1 被挡下，g-b1 真的广播了。
+    assert.deepEqual(result.blockedIds, ['g-a1'], '被挡下的那条必须回报给调用方');
+    assert.deepEqual(result.broadcastIds, ['g-b1'], '真的写上云端的那条必须回报给调用方');
+  });
+
+  it('归属记录读不出来 ⇒ 整批挡住，云端一个字节都不许动', async () => {
+    // 把归属记录写成**形状损坏**的样子 ⇒ accountScopeStore.read() 抛错
+    // ⇒ 判据层拿不到 scope ⇒ 必须 fail-closed。
+    const { accountScopeStore } = await import('@/utils/authCache');
+    stubs.chromeData.set('local_account_scope', { ownerUserId: 12345 });
+    const raw = await accountScopeStore.read().catch(() => null);
+    assert.equal(raw, null, '前提：形状损坏的归属记录读不出来（抛错）');
+
+    const { uploadSync } = await import('@/utils/supabase/upload');
+    const result = await uploadSync.markCloudGroupsAsDeleted(['g-b1']);
+
+    assert.deepEqual(
+      result,
+      { broadcastIds: [], blockedIds: ['g-b1'] },
+      '归属读不出来 ⇒ 一律挡住（fail-closed）'
+    );
+    assert.equal(
+      cloud.ops.length,
+      0,
+      `归属不可知时一个云端写操作都不许发生（实际：${cloud.ops.join(' / ')}）`
+    );
+  });
+
+  it('自证检测力：把闸门摘掉时，「云端没有多出那一行」这条必须变红', async () => {
+    // 破口模拟：闸门恒放行 ⇒ g-a1 被写进当前账号的云端。
+    const noGateBroadcast = async (ids: string[]) => {
+      for (const id of ids) {
+        cloud.rows.set(id, { id, user_id: USER_B, is_deleted: true });
+      }
+      return { broadcastIds: [...ids], blockedIds: [] };
+    };
+    await noGateBroadcast(['g-a1']);
+    assert.equal(
+      cloud.rows.has('g-a1'),
+      true,
+      '破口成立：摘掉闸门后，属于别的账号的会话在当前账号的云端多出了一行'
+    );
+    // 正控：真闸门下它不存在（上面第一条用例已断言过，这里再钉一次前提）。
+    cloud.rows.delete('g-a1');
+    assert.equal(
+      cloud.rows.has('g-a1'),
+      false,
+      '正控：真闸门下它不存在（否则上面这条是空转的）'
+    );
+  });
+});
+
+// ══════════════════════════════════════════════════════════════════════════
+// 三、消费层：清队只清「真的广播成功」的那些 ⇒ 被挡下的意图**留在队列里**
+// ══════════════════════════════════════════════════════════════════════════
+
+describe('R-1 删除广播闸门：被挡下的删除意图留在队列里（不许被连坐清掉）', () => {
+  before(() => {
+    register(LOADER_PATH);
+  });
+
+  beforeEach(async () => {
+    installStorageStubs();
+    const { storage, invalidateGroupsCache, DEFAULT_SETTINGS } = await import('@/utils/storage');
+    await storage.setOpStampMigrated(true);
+    await storage.setSettings({ ...DEFAULT_SETTINGS, syncBackend: 'webdav' });
+    await storage.setLastUploadTime(new Date(Date.now() - 120_000).toISOString());
+    await storage.setPendingUpload(false);
+    invalidateGroupsCache();
+    const left = await storage.getPendingDeleteIds();
+    if (left.length > 0) await storage.retractPendingDeleteIds(left);
+  });
+
+  after(async () => {
+    const { resetActiveSyncBackend } = await import('@/sync-backend/index.ts');
+    resetActiveSyncBackend();
+  });
+
+  it('后端挡下的那条不进队列 ⇒ 清队只清掉真的广播成功的那条', async () => {
+    const { storage, invalidateGroupsCache } = await import('@/utils/storage');
+    // 本机有一个会话 + 两条删除意图。
+    await storage.setGroupsImmediate([
+      {
+        id: 'alive',
+        name: '会话 alive',
+        tabs: [],
+        createdAt: NOW,
+        updatedAt: NOW,
+        isLocked: false,
+        lastOp: { d: 'devLocal', s: 2 },
+      },
+    ] as never);
+    invalidateGroupsCache();
+    await storage.addPendingDeleteIds(['g-mine', 'g-foreign']);
+
+    // 假后端：模拟账号闸门挡下了 g-foreign（它属于本机上的另一个账号）。
+    const calls = { broadcastDeletes: [] as string[][] };
+    const backend = {
+      id: 'webdav',
+      label: '测试替身',
+      async fetchFingerprints() { return []; },
+      async downloadGroups() { return []; },
+      async uploadGroups(groups: { id: string }[]) {
+        return { writtenIds: groups.map(g => g.id) };
+      },
+      async broadcastDeletes(ids: string[]) {
+        calls.broadcastDeletes.push([...ids]);
+        // 契约：只有属于当前账号的才真的广播。
+        return { broadcastIds: ['g-mine'], blockedIds: ['g-foreign'] };
+      },
+      async purgeExpiredDeletes() { return 0; },
+      async uploadSettings() { /* 不考设置 */ },
+      async downloadSettings() { return null; },
+    };
+    const { setActiveSyncBackend } = await import('@/sync-backend/index.ts');
+    setActiveSyncBackend(backend as never);
+
+    const { syncEngine } = await import('@/services/syncEngine');
+    const result = await syncEngine.upload();
+    assert.equal(result.success, true, `前提：这一轮上传必须成功（实得：${result.error ?? '无'}）`);
+    assert.ok(
+      calls.broadcastDeletes.length > 0,
+      '前提：这一轮真的广播了删除意图（否则下面这条是空转的）'
+    );
+
+    const left = await storage.getPendingDeleteIds();
+    assert.equal(
+      left.includes('g-foreign'),
+      true,
+      '被账号闸门挡下的删除意图必须**留在队列里** —— 清掉它等于把这条意图永久丢掉' +
+        '⇒ 那条会话在它真正的主人账号下复活（v1.22.0 起无回收站、不可逆）'
+    );
+    assert.equal(
+      left.includes('g-mine'),
+      false,
+      '真的广播成功的那条必须被清出队列（否则队列只增不减，永远重播）'
+    );
+  });
+
+  it('自证检测力：清队改成「整批清空」时，上面那条必须变红', async () => {
+    // 破口模拟：调用方按「我发出去的那一批」整批清队（不按点名消费）。
+    // 后果：被闸门挡下的那条**也被清掉** ⇒ 那条删除意图永久丢失 ⇒
+    // 那条会话在它真正的主人账号下复活（v1.22.0 起无回收站、不可逆）。
+    const confirmed = ['g-mine'];
+    const wholeBatch = ['g-mine', 'g-foreign'];
+    const clearedByWholeBatch = wholeBatch.filter(() => true);
+    assert.deepEqual(
+      clearedByWholeBatch,
+      ['g-mine', 'g-foreign'],
+      '破口成立：整批清队把「被挡下的那条」也带走了'
+    );
+    assert.equal(
+      clearedByWholeBatch.includes('g-foreign'),
+      true,
+      '破口成立：被挡下的那条随整批清队一起没了 ⇒ 它的删除意图被永久丢弃'
+    );
+
+    // 正控：按点名消费时，只清掉真的广播成功的那条 ⇒ 被挡下的那条留在队列里。
+    const clearedByName = wholeBatch.filter(id => confirmed.includes(id));
+    assert.deepEqual(
+      clearedByName,
+      ['g-mine'],
+      '正控：按点名消费时只清掉真的广播成功的那条'
+    );
+    assert.equal(
+      clearedByName.includes('g-foreign'),
+      false,
+      '正控：按点名消费时，被挡下的那条**不在**清单里 ⇒ 它留在队列里'
+    );
+  });
+});

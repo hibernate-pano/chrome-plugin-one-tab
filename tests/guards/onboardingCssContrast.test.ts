@@ -170,15 +170,41 @@ const appliesIn = (selector: string): 'light' | 'dark' =>
 
 describe('引导页 CSS：文字对比度达到 WCAG AA 正文线 4.5:1', () => {
   it('引导页里每条 color 声明都被扫到了（扫描器本身没坏）', () => {
+    // ⚠️ 2026-10-23 审计 V-1：这个自证的锚点原先是「带 `color` 声明的规则条数
+    // ≥ 15」。**锚点选错了** —— 它数的是「规则数」，不是「颜色数」。
+    // V-1 把引导页的写死颜色全部换成主题令牌（`var(--color-*)`）之后，
+    // 规则总数自然从 20+ 掉到 13 ⇒ 守卫**假红**（"扫描器坏了"），可扫描器
+    // 一点没坏。
+    //
+    // ⇒ 改成数「**真正带颜色值**的规则」：字面量或主题令牌都算 ——
+    // 这才是「扫描器扫到了东西」这件事本身的判据。
+    // 「引导页不得有写死的品牌色」由 tests/guards/audit20261023UiVisual.test.ts
+    // 单独钉（那是 V-1 的语义不变量，与本守卫的对比度职责分工）。
     const withColor = RULES.filter(r => r.decls.has('color'));
+    const withColorValue = withColor.filter(r => {
+      const c = r.decls.get('color') ?? '';
+      return (
+        c.startsWith('var(--') ||
+        /^#[0-9a-fA-F]{3,8}$/.test(c) ||
+        /^rgba?\(/.test(c) ||
+        c === 'transparent'
+      );
+    });
     assert.ok(
-      withColor.length >= 15,
-      `只扫到 ${withColor.length} 条带 color 的规则，扫描器可能坏了`
+      withColorValue.length >= 13,
+      `只扫到 ${withColorValue.length} 条真正带颜色值的规则（带 color 声明的共 ${withColor.length} 条），扫描器可能坏了`
     );
     // 抽查一条：我们知道它有 color
     assert.ok(
       RULES.some(r => r.selector.includes('.onboarding-feature-desc')),
       '规则列表里必须有 .onboarding-feature-desc'
+    );
+    // 抽查：同一个「带 color 声明」但**解析不出颜色**的规则不该被算进来 ——
+    // 否则「扫描器扫到了东西」就退化成一个计数游戏。
+    assert.equal(
+      withColorValue.length,
+      withColor.length,
+      '每条带 color 声明的规则都应当解析得出颜色值 —— 有解析不出来的，说明扫描器的解析分支变了'
     );
   });
 

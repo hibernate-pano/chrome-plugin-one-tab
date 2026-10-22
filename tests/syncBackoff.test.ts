@@ -221,8 +221,18 @@ describe('F3 · 让路不算失败（回归：不能把「有任务在途」推�
     assert.ok(successAt < failureAt, '成功分支（复位）必须排在失败分支之前');
     assert.match(body, /if \(outcome\.ok\) \{\s*const before = state\.consecutiveFailures;\s*await recordSyncSuccess\(/,
       '成功 → recordSyncSuccess（复位）');
-    assert.match(body, /\} else \{\s*const next = await recordSyncFailure\(/,
-      '非成功 → recordSyncFailure（推进阶梯）；让路/未登录走不到这里');
+    // ⚠️ 2026-10-22：这里原先用 `/\} else \{\s*const next = await recordSyncFailure\(/`
+    // —— 它要求 recordSyncFailure 是 else 块的**第一句**。那是钉写法、不钉语义：
+    // 「不可重试的失败要在推进阶梯之前早退」（2026-10-22 加的「云端项目被限制」
+    // 分支）必然要插一句在前面，于是这条正则匹配不到 —— 而它想表达的语义
+    // （失败分支里要有 recordSyncFailure）**一个字都没变。
+    //
+    // 改成钉语义：**else 分支里存在 recordSyncFailure 调用**（不再要求它是第一句）。
+    const elseIdx = body.indexOf('} else {');
+    assert.ok(elseIdx !== -1, '应能找到失败分支');
+    const elseBranch = body.slice(elseIdx);
+    assert.match(elseBranch, /recordSyncFailure\(/,
+      '非成功分支里必须有 recordSyncFailure（推进阶梯）；让路/未登录走不到这里');
   });
 });
 

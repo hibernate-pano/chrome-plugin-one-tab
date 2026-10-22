@@ -217,6 +217,22 @@ function makeTabs(count = 3): chrome.tabs.Tab[] {
  * @param showNotifications 设置里的 showNotifications（默认 false = 默认配置）
  * @param tabs               喂给 saveAllTabs 的标签（默认 3 个可保存的）
  */
+/**
+ * 取出测试里装的那个 `window.localStorage` 桩。
+ *
+ * 【为什么单独包一层】`globalThis` 上的 `window` 在 TS 里是 `unknown`
+ * （`Record<string, unknown>` ⇒ 取出来是 unknown ⇒ 再点属性就报 TS2571）。
+ * 这里给一个**具体的类型**，比在调用处硬转 `as unknown as {...}` 干净，
+ * 也不会改动任何运行时行为。
+ */
+function localStorageStub(): { setItem: (key: string, value: string) => void } {
+  return (
+    globalThis as unknown as {
+      window: { localStorage: { setItem: (key: string, value: string) => void } };
+    }
+  ).window.localStorage;
+}
+
 async function runSaveAndCollectVisibleChanges(
   showNotifications = false,
   tabs = makeTabs(3)
@@ -224,10 +240,7 @@ async function runSaveAndCollectVisibleChanges(
   const handles = installChromeMock();
   // 覆盖默认设置（本仓默认是 false，这里显式写出来是为了让「开关打开时
   // **也**有回执」这条断言能复用同一个函数）。
-  (globalThis as Record<string, unknown>).window.localStorage.setItem(
-    'user_settings',
-    JSON.stringify({ showNotifications })
-  );
+  localStorageStub().setItem('user_settings', JSON.stringify({ showNotifications }));
 
   const { tabManager } = await import('@/background/TabManager');
   const result = await tabManager.saveAllTabs(tabs);
