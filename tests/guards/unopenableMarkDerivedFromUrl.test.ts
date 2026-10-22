@@ -56,11 +56,13 @@ describe('打不开的标签：渲染侧按 URL 现算', () => {
     });
   }
 
+  // 「标签」/「标签页」两种量词都接受 —— 这条守卫管的是**降级分支存在且由现算值驱动**，
+  // 不是管它用哪个量词（量词统一由 P2-7 那条守卫管；把量词钉死在这里，两条守卫会互相打架）。
   it('列表页 aria 只在现算「打不开」时才不说「打开标签页」', () => {
     const src = code('src/components/dnd/DraggableTab.tsx');
     assert.match(
       src,
-      /isUnopenable\s*\?\s*`\$\{tabTitle\}（此标签在当前设备无法打开，仍保留在会话中）/,
+      /isUnopenable\s*\?\s*`\$\{tabTitle\}（此标签页?在当前设备无法打开，仍保留在会话中）/,
       'aria 的降级分支必须由现算值决定，而不是由没盖章的标记决定'
     );
     assert.match(
@@ -74,7 +76,7 @@ describe('打不开的标签：渲染侧按 URL 现算', () => {
     const src = code('src/components/search/SearchResultList.tsx');
     assert.match(
       src,
-      /aria-label=\{isUnopenable \? `\$\{tab\.title\}（此标签在当前设备无法打开，仍保留在会话中）` : undefined\}/,
+      /aria-label=\{isUnopenable \? `\$\{tab\.title\}（此标签页?在当前设备无法打开，仍保留在会话中）` : undefined\}/,
       '点下去才弹错太晚——读屏用户点之前就该知道这一行打不开'
     );
   });

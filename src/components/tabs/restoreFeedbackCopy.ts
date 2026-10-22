@@ -97,8 +97,110 @@ export const openSingleTabSuccessMessage = (isLocked: boolean): string => {
 };
 
 /**
- * 批量恢复（搜索页）成功的文案 —— 复用的也是「命中的标签被移除、会话保留」语义。
- * 与 SearchResultList 里已有的那段保持同一口径。
+ * 批量恢复（搜索页）成功时的**真实账目**。
+ *
+ * ── 为什么不是一个数字 ────────────────────────────────────────────────────
+ * 批量恢复里**两件事**必须分开说（2026-10-23 审计 P0-2）：
+ *
+ *   · **打开了几个标签页** —— 含锁定会话里的（锁定只阻止「消费」，不阻止「打开」）；
+ *   · **从会话里移除了几条记录** —— **不含**锁定会话里的（锁定会话从不被消费）。
+ *
+ * 修复前那句话（`已恢复 N 个标签；命中的标签已从所属会话移除…`）把这两件事
+ * 混成一句 ⇒ 用户以为「命中的那些都从列表里清掉了」，而锁定会话里的那几条
+ * **原封不动地还在**。
+ *
+ * ⇒ 这里的每个数字都必须来自**同一份判据**（哪些会被消费、哪些会被保留），
+ *   而不是各数各的。判据见 `@/components/search/searchBatchRestore`。
  */
-export const restoreAllSearchSuccessMessage = (tabCount: number): string =>
-  `已恢复 ${tabCount} 个标签；命中的标签已从所属会话移除，会话内其余标签保留。`;
+export interface BatchRestoreCounts {
+  /** 这次批量恢复涉及多少个标签页（全部命中）。 */
+  matched: number;
+  /** 实际打开了几个（当前设备打不开的不算）。 */
+  opened: number;
+  /** 真正从会话里移除了几条。 */
+  removed: number;
+  /** 因为会话被锁定而**留在会话里**的条数。 */
+  keptLocked: number;
+  /** 计划移除、但没移除的条数（删除失败）。 */
+  failedToRemove: number;
+  /** 在当前设备打不开的条数（0 或省略 = 没有）。 */
+  unopenable?: number;
+}
+
+/**
+ * 批量恢复（搜索页）的**确认框正文**。
+ *
+ * 为什么确认框也要说清「锁定的那几条不会被移除」（2026-10-23 审计 P0-2）：
+ * 成功提示修好之后，确认框还在说「命中的标签会从所属会话中移除」⇒
+ * 用户在**点确认之前**就已经被承诺了一件不会发生的事。
+ * ⇒ 两处必须用**同一份划分**（`BatchRestoreCounts`）算出来。
+ *
+ * @param counts       这次**将要**发生的账目（判据层算出的 prospective 数字）。
+ * @param sessionCount 这些命中分布在几个会话里。
+ */
+export const restoreAllSearchConfirmMessage = (
+  counts: BatchRestoreCounts,
+  sessionCount: number
+): string => {
+  const parts: string[] = [
+    `将在新窗口打开 ${sessionCount} 个会话中的 ${counts.matched} 个标签页；`,
+  ];
+  if (counts.keptLocked > 0) {
+    parts.push(`其中 ${counts.removed} 个会从所属会话中移除，会话内其余标签页保留；`);
+    parts.push(`另有 ${counts.keptLocked} 个在已锁定的会话里，仍保留在会话中。`);
+  } else {
+    parts.push('命中的标签页会从所属会话中移除，会话内其余标签页保留。');
+  }
+  parts.push('（某会话若因此被清空，会一并从列表消失；删除不可恢复。）确认继续吗？');
+  return parts.join('');
+};
+
+/**
+ * 批量恢复（搜索页）成功的文案 —— 与 SearchResultList 里已有的那段同口径。
+ *
+ * ── 为什么每一句都带**数字** ───────────────────────────────────────────────
+ * 「命中的标签页已从所属会话移除」这种**无数量的说法**本身就是谎报的一半：
+ * 命中的里面有一部分在锁定会话里（没被移除），说「命中的」就是把它们算进去了。
+ * ⇒ 每一句都带数字，且数字**互相加得起来**（移除的 + 留下的 = 命中的）。
+ *
+ * 三笔账各说各的：
+ *   · 打开了几个（`opened`）—— 含锁定会话里的；
+ *   · 从会话里移除了几个（`removed`）—— 不含锁定会话里的；
+ *   · 还剩几个在会话里（`keptLocked`）、打不开的（`unopenable`）、
+ *     没移除掉的（`failedToRemove`）。
+ */
+export const restoreAllSearchSuccessMessage = (counts: BatchRestoreCounts): string => {
+  const parts: string[] = [`已恢复 ${counts.opened} 个标签页`];
+
+  // ① 移除的那部分。
+  if (counts.removed > 0) {
+    parts.push(
+      `已从所属会话移除 ${counts.removed} 个标签页（会话内其余标签页保留）`
+    );
+  } else {
+    // 一条都没移除（全都锁着 / 全都失败）—— 说清「没移除」，别让用户以为动了。
+    parts.push('没有任何一条被从会话中移除');
+  }
+
+  // ② 锁定会话里留下的那几条（**用户最需要知道的那几条**）。
+  if (counts.keptLocked > 0) {
+    parts.push(
+      `另有 ${counts.keptLocked} 个在已锁定的会话里，仍保留在会话中`
+    );
+  }
+
+  // ③ 当前设备打不开的。
+  if (counts.unopenable && counts.unopenable > 0) {
+    parts.push(
+      `另有 ${counts.unopenable} 个在当前设备无法打开` +
+        '（本地文件、临时链接或浏览器内部页面）'
+    );
+  }
+
+  // ④ 没移除掉的（删除失败）——不许藏。
+  if (counts.failedToRemove > 0) {
+    parts.push(`另有 ${counts.failedToRemove} 条未能从会话中移除`);
+  }
+
+  return `${parts.join('；')}。`;
+};

@@ -32,11 +32,15 @@ import { toServiceWorkerErrorCopy } from '@/utils/serviceWorkerErrorCopy';
 import { mutationErrorMessage } from '@/components/tabs/mutationErrorCopy';
 import {
   openSingleTabSuccessMessage,
+  restoreAllSearchConfirmMessage,
   restoreAllSearchSuccessMessage,
   restoreGroupSuccessMessage,
   restoreOutcomeSentence,
+  type BatchRestoreCounts,
 } from '@/components/tabs/restoreFeedbackCopy';
 import { useConsumeUndo } from '@/components/tabs/useConsumeUndo';
+import { lockedTabDeleteMessage } from '@/components/tabs/lockedDeleteCopy';
+import { removeTabEntryCopy } from '@/components/dnd/removeTabEntryCopy';
 import type { ConsumedTabRef, ConsumeUndoSpec } from '@/core/consumeUndo';
 import { searchEmptyHint } from '@/components/search/searchEmptyHint';
 import {
@@ -71,7 +75,22 @@ import {
 import { runSearchEmptyStateExit } from '@/components/search/searchEmptyStateExits';
 import type { EmptyStateAction } from '@/core/emptyStateExits';
 // ── 2026-10-23 审计 DS-43-13：确认框里的计数必须等于真正会删的数量 ────────
-import { bulkDeleteConfirmCopy, runBulkDelete } from '@/components/search/searchBulkDelete';
+// ── 2026-10-23 审计 P1-5 / DS-43-14：一条都删不掉时别弹确认框；部分失败要如实报 ──
+import {
+  bulkDeleteBlockedCopy,
+  bulkDeleteConfirmCopy,
+  bulkDeleteFailureMessage,
+  runBulkDelete,
+} from '@/components/search/searchBulkDelete';
+// ── 2026-10-23 审计 P0-2：批量恢复的「打开了几个」与「移除了几个」必须分开说 ──
+import { planBatchRestore } from '@/components/search/searchBatchRestore';
+// ── 2026-10-23 审计 WC-13 / P1-4：云端拉回这个动作的措辞与条数只有一个出处 ────
+import {
+  CLOUD_PULL_BUSY_LABEL,
+  cloudPullOutcomeMessage,
+  cloudPullSuccessWithoutCountMessage,
+  readCloudPullCount,
+} from '@/domain/tabGroup/cloudPullCopy';
 import { Tooltip } from '@/components/common/Tooltip';
 import type { AuthTab } from '@/components/auth/AuthModal';
 import { sendSyncCommand } from '@/shared/mutationProtocol';
@@ -217,6 +236,10 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({
     () => sessionResults.flatMap(session => session.matches),
     [sessionResults]
   );
+  // ── 2026-10-23 审计 P0-2：批量恢复的**同一份划分** ──────────────────────
+  // 哪些会被消费、哪些会被留下 —— 执行循环与提示文案都从它派生，
+  // 两处不可能再各判一遍（判据见 ./searchBatchRestore）。
+  const batchRestorePlan = useMemo(() => planBatchRestore(matchingTabs), [matchingTabs]);
 
 
   // ── 2026-10-20 审计 A-11：搜索结果也要有渲染上限 ───────────────────────
@@ -368,9 +391,19 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({
   if (openGuardRef.current === null) openGuardRef.current = new OpenGuard();
   if (openAllGuardRef.current === null) openAllGuardRef.current = new OpenAllGuard();
 
-  // ── 2026-10-23 审计 SC-4：零结果页的「从云端恢复会话」出口 ──────────────
+  // ── 2026-10-23 审计 SC-4：零结果页的「从云端拉回会话」出口 ──────────────
   // 与主列表的空态**同一套**同步协议与同一句失败文案（syncPreviewView 的
   // 机器码 → 中文映射），不在这里另写一份。
+  //
+  // ── 2026-10-23 审计 P1-3：措辞走**单源**（domain/tabGroup/cloudPullCopy）──
+  // 这里原先自己写着「已从云端恢复 N 个会话」「从云端恢复失败…」——
+  // 「恢复」在本产品里专指「打开某个会话的标签并消费它」，而这个出口做的是
+  // 另一件事（把云端的会话列表拉到本机）⇒ 两个动作共用一个动词 = 承诺与事实不符。
+  //
+  // ── 2026-10-23 审计 P1-4：条数必须来自**引擎**，不是本地列表长度 ────────
+  // 原先报的是 `loadGroups()` 返回的**本地列表长度**：本机已有 5 个、云端 3 个
+  // ⇒ 界面说「已恢复 8 个会话」。⇒ 改用引擎如实上报的
+  // `stats.cloudCount`（= 云端这一轮读到的会话数）。
   const handleRestoreFromCloud = async () => {
     if (emptyRestoreBusy) return;
     setEmptyRestoreBusy(true);
@@ -385,16 +418,26 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({
         return;
       }
       // 拉成功**不等于**拉到了东西：云端本来就可能是空的。
-      // 刷新后按真实条数说话，不谎报「已恢复 N 个会话」。
-      const loaded = await dispatch(loadGroups()).unwrap();
-      setEmptyRestoreFeedback(
-        loaded.length > 0
-          ? { kind: 'success', text: `已从云端恢复 ${loaded.length} 个会话` }
-          : { kind: 'success', text: '云端没有会话可拉回' },
-      );
+      // 条数只能来自引擎（见上）；引擎没报条数时**不声称条数**，也不拿本地
+      // 列表长度顶替（那正是本缺陷的本体）。
+      const cloudCount = readCloudPullCount(res);
+      // 拉回来的内容要进列表 —— 刷新本机视图（这一步与「说几个」无关）。
+      await dispatch(loadGroups()).unwrap();
+      setEmptyRestoreFeedback({
+        kind: 'success',
+        text:
+          cloudCount === null
+            ? cloudPullSuccessWithoutCountMessage()
+            : cloudPullOutcomeMessage(
+                cloudCount > 0 ? { kind: 'pulled', count: cloudCount } : { kind: 'empty' }
+              ),
+      });
     } catch (restoreError) {
-      logError('搜索页从云端恢复失败:', restoreError);
-      setEmptyRestoreFeedback({ kind: 'error', text: '从云端恢复失败，请稍后重试' });
+      logError('搜索页从云端拉回失败:', restoreError);
+      setEmptyRestoreFeedback({
+        kind: 'error',
+        text: cloudPullOutcomeMessage({ kind: 'failed' }),
+      });
     } finally {
       setEmptyRestoreBusy(false);
     }
@@ -506,10 +549,18 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({
           const keptNote = group.isLocked
             ? '该会话已锁定，记录仍在列表中。'
             : '这几个地址不再保存在列表中。';
-          showDeleteError(
-            `已恢复 ${tabsPayload.length - r.skippedUnopenable} 个标签；另有 ` +
+          // ── 2026-10-23 审计 DS-43-10：部分成功**也是一次消费** ────────────
+          // consumeSession() 已经在上面跑过 ⇒ 未锁定时整条会话已被移除，
+          // 而那是不可逆的删除（无回收站）⇒ 用户手里必须有退路。
+          // 列表页（TabGroup.openAllTabs）同一分支早就挂了撤销；搜索页没有
+          // ⇒ 同一个产品两个界面两种保障。
+          // 锁定会话从不被消费 ⇒ 没东西可撤 ⇒ 不挂（挂了就是骗人）。
+          showConsumeToast(
+            `已恢复 ${tabsPayload.length - r.skippedUnopenable} 个标签页；另有 ` +
               `${r.skippedUnopenable} 个在当前设备无法打开（本地文件、临时链接或浏览器内部页面）。` +
-              keptNote
+              keptNote,
+            group.isLocked ? undefined : { group },
+            { type: 'error' },
           );
           return;
         }
@@ -540,7 +591,7 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({
     // 顺序理由见 TabGroup：排在锁定分支之后 ⇒ 锁定组的 success:false 回包被丢弃、
     // 点了没反应；排在去重守卫之后 ⇒ 第二次点击的文案会谎报「刚刚已打开」。
     if (!isOpenableTabUrl(tab.url)) {
-      showRestoreError('此标签在当前设备无法打开，已保留在会话中');
+      showRestoreError('此标签页在当前设备无法打开，已保留在会话中');
       return;
     }
     // ── 在途+冷却去重（与 TabGroup.handleOpenTab 同口径，见 @/utils/openGuard）──
@@ -551,7 +602,7 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({
     const guard = openGuardRef.current as OpenGuard;
     // 【冷却命中必须出声】tryAcquire 失败就静默 return 等于「点了没反应」。
     if (!guard.tryAcquire(tab.id, group.isLocked)) {
-      showRestoreError('刚刚已打开这个标签，正在冷却中，请稍候再试');
+      showRestoreError('刚刚已打开这个标签页，正在冷却中，请稍候再试');
       return;
     }
     const releaseOnFailure = () => guard.release(tab.id);
@@ -624,7 +675,7 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({
           })
           .catch(error => {
             logError('打开后从会话移除失败:', error);
-            showDeleteError(mutationErrorMessage('标签已打开，但从会话移除', error));
+            showDeleteError(mutationErrorMessage('标签页已打开，但从会话移除', error));
           });
       }
     );
@@ -635,7 +686,7 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({
     // 按钮在锁定组里已不渲染（见 renderTabItem），这里是绕过 UI 时的兵底 ——
     // 与批量删除 / 恢复两条路径的 `if (group.isLocked) continue` 同一口径。
     if (group.isLocked) {
-      showDeleteError('该会话已锁定，解锁后才能删除其中的标签');
+      showDeleteError(lockedTabDeleteMessage());
       return;
     }
 
@@ -680,7 +731,14 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({
 
     const sessionCount = sessionResults.length;
     showConfirm({
-      title: `${bulkActionTitle(isBrowseMode ? 'browse' : 'search', '恢复')}${matchingTabs.length} 个标签？`,
+      // ── 2026-10-23 审计 P2-6：标题里**只许一个问号** ────────────────────
+      // 整句由 `bulkActionTitle` 一次拼好（原先这里拼出来的是
+      // 「恢复搜索结果中的标签？5 个标签？？」—— 两个问号）。
+      title: bulkActionTitle(
+        isBrowseMode ? 'browse' : 'search',
+        '恢复',
+        matchingTabs.length
+      ),
       // ── 2026-10-19 审计 F-4：文案必须等于真实行为 ──────────────────────
       // 原先这里写「未锁定的会话将从列表移除」，而实际执行的只是
       // consumeMatchedTabs —— 对**命中的标签**逐条 deleteTabAndSync。
@@ -689,9 +747,21 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({
       //
       // 真实语义：会话内**只有命中的那些标签**被移除；某会话若因此被清空，
       // 它会随「删掉最后一条」一并消失（那是有条件的一句话说清，不是承诺）。
-      message: `将在新窗口打开 ${sessionCount} 个会话中的 ${matchingTabs.length} 个标签；` +
-        `命中的标签会从所属会话中移除，会话内其余标签保留。` +
-        `（某会话若因此被清空，会一并从列表消失；删除不可恢复。）确认继续吗？`,
+      //
+      // ── 2026-10-23 审计 P0-2：锁定会话里的那几条**不会**被移除 ──────────
+      // 确认框原先说「命中的标签会从所属会话中移除」⇒ 用户在点确认**之前**
+      // 就被承诺了一件不会发生的事（锁定的那几条原封不动）。
+      // ⇒ 正文改由共享文案函数按**同一份划分**算出来。
+      message: restoreAllSearchConfirmMessage(
+        {
+          matched: matchingTabs.length,
+          opened: matchingTabs.length,
+          removed: batchRestorePlan.consumable.length,
+          keptLocked: batchRestorePlan.keptLocked.length,
+          failedToRemove: 0,
+        },
+        sessionCount
+      ),
       type: 'info',
       confirmText: '全部恢复',
       cancelText: '取消',
@@ -721,8 +791,12 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({
     // 保证同一条命令链上的顺序）。
     const consumeMatchedTabs = async (): Promise<Array<{ group: TabGroup; ref: ConsumedTabRef }>> => {
       const consumed: Array<{ group: TabGroup; ref: ConsumedTabRef }> = [];
-      for (const { tab, group } of matchingTabs) {
-        if (group.isLocked) continue;
+      // ── 2026-10-23 审计 P0-2：消费哪几条由**同一份划分**决定 ────────────
+      // 原先这里自己写了一遍「`if (group.isLocked) continue`」，而提示文案
+      // 又隐含地判了一遍（说「命中的标签已从所属会话移除」）⇒ 两处各判一遍，
+      // 锁定的那几条就真的没被移除、而提示说被移除了。
+      // ⇒ 改为遍历判据层给出的 `consumable`（= 不会被消费的那些已被剔除）。
+      for (const { tab, group } of batchRestorePlan.consumable) {
         // 原下标必须在**消费前**取：消费之后这条标签已经不在列表里，
         // 下标就找不回来了（撤销要靠它把标签插回原来的位置）。
         const index = group.tabs.findIndex(t => t.id === tab.id);
@@ -783,35 +857,28 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({
         void (async () => {
           const consumed = await consumeMatchedTabs();
           const undoSpecs = buildUndoSpecs(consumed);
-          if (typeof r.skippedUnopenable === 'number' && r.skippedUnopenable > 0) {
-            // 同 F-4：只说真实发生的事 —— 移除的是**命中的标签**，不是整个会话。
-            const removedNote = matchingTabs.some(t => !t.group.isLocked)
-              ? '命中的标签已从所属会话移除，会话内其余标签保留。'
-              : '所涉会话均已锁定，记录仍在列表中。';
-            // 部分成功也是一次消费（能打开的那些已经被移出会话了）⇒
-            // 这条提示上**同样**挂「撤销」，否则用户手里有一条没退路的消费。
-            showConsumeToast(
-              `已恢复 ${tabsPayload.length - r.skippedUnopenable} 个标签；另有 ` +
-                `${r.skippedUnopenable} 个在当前设备无法打开（本地文件、临时链接或浏览器内部页面）。` +
-                removedNote,
-              undoSpecs.length > 0 ? undoSpecs : undefined,
-              { type: 'error' },
-            );
-            return;
-          }
-          // 2026-10-18 C 组：全成功时原先**零反馈** —— 对话框关掉、窗口开了、
-          // 列表少几行；命中标签分散在多个会话且每会话只中 1 条时，视觉上只是
-          // 几行消失，用户无法确证「恢复了几个」。与列表页整组恢复同口径报条数。
-          //
-          // 2026-10-20 审计 A-1：措辞改用共享模块（restoreFeedbackCopy），
-          // 列表页与搜索页引用同一份文案 —— 两处各写一遍迟早漂。
-          //
-          // 2026-10-22 审计 P0-4：挂上「撤销」—— 批量恢复一次可能从好几个
-          // 会话里消费掉几十条记录，是本产品**一次吞掉最多记录**的动作，
-          // 最需要一条退路。
+          // ── 2026-10-23 审计 P0-2：成功提示必须把两笔账分开说 ────────────
+          //   · 打开了几个（含锁定会话里的）；
+          //   · 从会话里移除了几个（**不含**锁定会话里的 —— 它们原封不动）。
+          // 修复前那一句把两件事混成一句 ⇒ 用户以为锁定的那几条也被清掉了。
+          // 数字全部来自**同一份划分**（batchRestorePlan）与**真实执行结果**
+          // （consumed）⇒ 不可能再出现「说移除了、其实没移除」。
+          const unopenable =
+            typeof r.skippedUnopenable === 'number' ? r.skippedUnopenable : 0;
+          const counts: BatchRestoreCounts = {
+            matched: matchingTabs.length,
+            opened: tabsPayload.length - unopenable,
+            removed: consumed.length,
+            keptLocked: batchRestorePlan.keptLocked.length,
+            failedToRemove: batchRestorePlan.consumable.length - consumed.length,
+            unopenable,
+          };
+          // 部分成功也是一次消费（能打开的那些已经被移出会话了）⇒
+          // 这条提示上**同样**挂「撤销」，否则用户手里有一条没退路的消费。
           showConsumeToast(
-            restoreAllSearchSuccessMessage(matchingTabs.length),
+            restoreAllSearchSuccessMessage(counts),
             undoSpecs.length > 0 ? undoSpecs : undefined,
+            unopenable > 0 ? { type: 'error' } : undefined,
           );
         })();
       }
@@ -823,16 +890,36 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({
       return;
     }
 
+    // ── 2026-10-23 审计 P1-5：一条都删不掉 ⇒ 别弹确认框，说清为什么 ──────
+    // 全部命中都在锁定会话里时，确认框会变成「删除 0 个标签页？」——
+    // 用户点「确认」然后什么都不会发生，也没有任何提示。
+    // ⇒ 这里直接说清「它们都在锁着的会话里，不会被删除」并给出路。
+    const blocked = bulkDeleteBlockedCopy(matchingTabs);
+    if (blocked) {
+      showDeleteError(blocked.message);
+      return;
+    }
+
     try {
       // ── 2026-10-23 审计 DS-43-13：删哪些与「说删多少」必须同源 ──────────
       // 删哪些由 `runBulkDelete` 决定（锁定会话里的**跳过**），
       // 确认框里的数字也由同一份判据算出（`bulkDeleteConfirmCopy`）⇒
       // 两边不可能各数各的。
-      await runBulkDelete(matchingTabs, async ({ tab, group }) => {
+      //
+      // ── 2026-10-23 审计 DS-43-14：部分失败必须**如实报** ────────────────
+      // 删除是串行的，第 k 条失败后后面的**根本不执行** ⇒ 只报一句
+      // 「删除操作失败，请重试」＝ 用户既不知道删掉了多少、也不知道还剩多少。
+      const result = await runBulkDelete(matchingTabs, async ({ tab, group }) => {
         const res = await dispatch(deleteTabAndSync({ groupId: group.id, tabId: tab.id })).unwrap();
         const warn = deleteBroadcastWarn(res);
         if (warn) showDeleteError(warn);
       });
+      if (result.failedAt !== undefined) {
+        logError('批量删除搜索结果失败:', result.error);
+        showDeleteError(
+          bulkDeleteFailureMessage(result, mutationErrorMessage('删除标签页', result.error))
+        );
+      }
     } catch (error) {
       logError('批量删除搜索结果失败:', error);
       showDeleteError('删除操作失败，请重试');
@@ -840,6 +927,16 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({
   };
 
   const handleRequestDeleteAllSearchResults = () => {
+    // ── 2026-10-23 审计 P1-5：一条都删不掉 ⇒ **不弹确认框** ──────────────
+    // 全部命中都在锁定会话里时，确认框会变成「删除 0 个标签页？」/「将从所属
+    // 会话中永久移除这 0 个标签页…」—— 自相矛盾，且点了什么都不会发生。
+    // ⇒ 直接说清「它们都在锁着的会话里，不会被删除」并给出路（先去解锁）。
+    const blocked = bulkDeleteBlockedCopy(matchingTabs);
+    if (blocked) {
+      showDeleteError(blocked.message);
+      return;
+    }
+
     if (!confirmBeforeDelete) {
       void handleDeleteAllSearchResults();
       return;
@@ -872,8 +969,19 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({
     // 「本设备打不开」按 **URL 现算**，不读 `tab.unopenable` 标记（理由见 DraggableTab：
     // 那个标记只有云端读取路径会盖章）。列表页会把这一行灰掉并划掉标题，搜索页此前
     // 不标 —— 同一个标签两个界面两种长相，搜索页那一行看起来是能点开的，点下去只会
-    // 弹一句「此标签在当前设备无法打开」。现算后两处口径一致。
+    // 弹一句「此标签页在当前设备无法打开」。现算后两处口径一致。
     const isUnopenable = !isOpenableTabUrl(tab.url);
+    // ── 2026-10-23 审计 DS-43-16：删掉**最后一条** = 整个会话消失 ─────────
+    // 「删除会话前确认」开关关闭时零确认 ⇒ 这个 ✕ 的提示就是用户**唯一**的预警，
+    // 它必须说清「整张会话卡会一起消失」。
+    //
+    // 判据用**同一份** shouldAutoDeleteAfterTabRemoval —— 与下面 handleDeleteTab
+    // 里「要不要弹确认」用的是同一个函数、同一个问法（列表页那边用等价的
+    // onlyActiveTabId，见 core/tabGroupUtils 里两者等价性的注释）。
+    // ⇒ 提示与现象必然对得上；两处各判一遍迟早漂。
+    const removeCopy = removeTabEntryCopy({
+      removesWholeSession: shouldAutoDeleteAfterTabRemoval(group, tab.id),
+    });
     return (
     <div className={`tab-item group/tab${isUnopenable ? ' tab-item-unopenable' : ''}`}>
       {showFavicons && (
@@ -889,7 +997,7 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({
             handleOpenTab(tab, group);
           }}
           title={tab.title}
-          aria-label={isUnopenable ? `${tab.title}（此标签在当前设备无法打开，仍保留在会话中）` : undefined}
+          aria-label={isUnopenable ? `${tab.title}（此标签页在当前设备无法打开，仍保留在会话中）` : undefined}
         >
           <HighlightText text={tab.title} highlight={searchQuery} />
           {tab.pinned && <PinIcon />}
@@ -905,8 +1013,8 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({
           <button
             onClick={() => handleDeleteTab(tab, group)}
             className="btn-icon p-1 tab-item-delete-btn flat-interaction"
-            title="从会话中移除这条记录（无法恢复）"
-            aria-label={`从会话中移除（无法恢复）: ${tab.title}`}
+            title={removeCopy.title}
+            aria-label={`${removeCopy.action}: ${tab.title}`}
           >
             <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
@@ -965,7 +1073,7 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({
             ? noCriteriaEmptyTitle
             : isBrowseMode
               ? browseEmptyTitle
-              : `没有找到与“${searchQuery}”相关的会话或标签`}
+              : `没有找到与“${searchQuery}”相关的会话或标签页`}
         </div>
         <FiltersPanel />
         <EmptyState
@@ -987,7 +1095,7 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({
               ? noCriteriaEmptyDescription
               : isBrowseMode
                 ? browseEmptyDescription
-                : `没有找到与“${searchQuery}”相关的会话或标签，请尝试其他关键词。`
+                : `没有找到与“${searchQuery}”相关的会话或标签页，请尝试其他关键词。`
           }
           action={
             <div className="text-xs theme-text-muted space-y-3">
@@ -1039,7 +1147,9 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({
                       title={EMPTY_STATE_ACTION_HINT[action]}
                       aria-label={`${EMPTY_STATE_ACTION_LABEL[action]}：${EMPTY_STATE_ACTION_HINT[action]}`}
                     >
-                      {action === 'download' && emptyRestoreBusy ? '恢复中…' : EMPTY_STATE_ACTION_LABEL[action]}
+                      {action === 'download' && emptyRestoreBusy
+                        ? CLOUD_PULL_BUSY_LABEL
+                        : EMPTY_STATE_ACTION_LABEL[action]}
                     </button>
                   ))}
                 </div>
@@ -1121,7 +1231,7 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({
           {showTabCount && (
             <span
               className="tab-group-count flex-shrink-0"
-              title={`${sessionResults.length} 个会话 · ${matchingTabs.length} 个标签`}
+              title={`${sessionResults.length} 个会话 · ${matchingTabs.length} 个标签页`}
             >
               {matchingTabs.length}
             </span>
@@ -1136,8 +1246,8 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({
             <button
               onClick={handleRestoreAllSearchResults}
               className="btn-icon p-1.5 tab-group-action-accent flat-interaction"
-              title="在新窗口恢复所有匹配标签"
-              aria-label={`在新窗口恢复所有匹配标签，共 ${matchingTabs.length} 个标签页`}
+              title="在新窗口恢复所有匹配标签页"
+              aria-label={`在新窗口恢复所有匹配标签页，共 ${matchingTabs.length} 个标签页`}
             >
               <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M13.5 6H5.25A2.25 2.25 0 003 8.25v10.5A2.25 2.25 0 005.25 21h10.5A2.25 2.25 0 0018 18.75V10.5m-10.5 6L21 3m0 0h-5.25M21 3v5.25" />
@@ -1194,7 +1304,7 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({
                   {session.group.isLocked && (
                     <span
                       className="tab-group-lock-icon flex-shrink-0"
-                      title="会话已锁定，不会逐条移除其中的标签"
+                      title="会话已锁定，不会逐条移除其中的标签页"
                       aria-label="会话已锁定"
                     >
                       <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>

@@ -83,11 +83,78 @@ describe('恢复成功文案：说清两件事（打开了什么 / 记录去哪�
     assert.doesNotMatch(msg, /从会话中移除/);
   });
 
-  it('批量恢复（搜索页）必须说「命中的标签被移除、其余保留」', () => {
-    const msg = restoreAllSearchSuccessMessage(8);
-    assert.match(msg, /已恢复 8 个标签/);
-    assert.match(msg, /命中的标签已从所属会话移除/);
-    assert.match(msg, /会话内其余标签保留/);
+  it('批量恢复（搜索页）必须说「移除了几个、其余保留」', () => {
+    const msg = restoreAllSearchSuccessMessage({
+      matched: 8,
+      opened: 8,
+      removed: 8,
+      keptLocked: 0,
+      failedToRemove: 0,
+    });
+    assert.match(msg, /已恢复 8 个标签页/);
+    assert.match(msg, /已从所属会话移除 8 个标签页/);
+    assert.match(msg, /会话内其余标签页保留/);
+  });
+
+  // ── 2026-10-23 审计 P0-2 ──────────────────────────────────────────────
+  // 「打开了几个」与「从会话里移除了几个」是**两件事** ——
+  // 锁定会话里的标签页**照样会被打开**，但**不会被移除**（锁定 = 防误删）。
+  // 把两件事混成一句就是谎报（用户以为锁定的那几条也被清掉了）。
+  it('批量恢复：有锁定命中时必须说清「锁定的那几条仍留在会话里」', () => {
+    const msg = restoreAllSearchSuccessMessage({
+      matched: 5,
+      opened: 5,
+      removed: 3,
+      keptLocked: 2,
+      failedToRemove: 0,
+    });
+    assert.match(msg, /已恢复 5 个标签页/);
+    assert.match(
+      msg,
+      /另有 2 个在已锁定的会话里，仍保留在会话中/,
+      '锁定会话里的那几条一个都没被移除 ⇒ 必须说出来'
+    );
+  });
+
+  it('批量恢复：一条都没移除时不许说「已从所属会话移除」', () => {
+    const allLocked = restoreAllSearchSuccessMessage({
+      matched: 3,
+      opened: 3,
+      removed: 0,
+      keptLocked: 3,
+      failedToRemove: 0,
+    });
+    assert.doesNotMatch(
+      allLocked,
+      /已从所属会话移除/,
+      '一条都没移除还说「已移除」= 谎报'
+    );
+    assert.match(allLocked, /没有任何一条被从会话中移除/);
+    assert.match(allLocked, /另有 3 个在已锁定的会话里/);
+  });
+
+  it('批量恢复：有条没移除掉时必须说出来（不许藏）', () => {
+    const msg = restoreAllSearchSuccessMessage({
+      matched: 4,
+      opened: 4,
+      removed: 2,
+      keptLocked: 0,
+      failedToRemove: 2,
+    });
+    assert.match(msg, /另有 2 条未能从会话中移除/);
+  });
+
+  it('批量恢复：打不开的那些必须说出来', () => {
+    const msg = restoreAllSearchSuccessMessage({
+      matched: 4,
+      opened: 3,
+      removed: 4,
+      keptLocked: 0,
+      failedToRemove: 0,
+      unopenable: 1,
+    });
+    assert.match(msg, /已恢复 3 个标签页/);
+    assert.match(msg, /另有 1 个在当前设备无法打开/);
   });
 
   it('文案不得出现内部实现词（op 名、SW、协议）', () => {
@@ -96,7 +163,13 @@ describe('恢复成功文案：说清两件事（打开了什么 / 记录去哪�
       restoreGroupSuccessMessage(1, true),
       openSingleTabSuccessMessage(false),
       openSingleTabSuccessMessage(true),
-      restoreAllSearchSuccessMessage(1),
+      restoreAllSearchSuccessMessage({
+        matched: 1,
+        opened: 1,
+        removed: 1,
+        keptLocked: 0,
+        failedToRemove: 0,
+      }),
     ].join('\n');
     for (const forbidden of ['OPEN_TABS', 'OPEN_TAB', 'deleteGroup', 'SW', 'mutation']) {
       assert.doesNotMatch(all, new RegExp(forbidden), `文案不应出现「${forbidden}」`);

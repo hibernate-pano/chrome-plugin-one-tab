@@ -27,10 +27,10 @@
  * 不是「某一句必须长这样」。⇒ 换一种**等价的**写法（换个同义词、调换语序）
  * 不会让守卫变红；把「恢复」放回来会让它变红。
  *
- * ⚠️ **覆盖范围**：这条守卫盯的是**本轮改动到的那几个出口**
- * （列表页空态 + 登录/注册后的 toast）。搜索页那个出口由**另一条线**在改
- * （`components/search/**`），它当时还在用旧说法 —— 见交付报告里的
- * 「需要人决策」一节。
+ * ⚠️ **覆盖范围**：这条守卫盯的是这个动作在界面上的**全部出口** ——
+ *   列表页空态（TabList）、登录/注册后的 toast，以及**搜索页的零结果页**
+ *   （SearchResultList —— 2026-10-23 审计 P1-3 之前它还在自己写
+ *   「从云端恢复会话」，是最后一个漏网的出口）。
  */
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
@@ -47,6 +47,8 @@ import {
   cloudPullEmptyMessage,
   cloudPullFailureMessage,
   cloudPullSuccessMessage,
+  cloudPullSuccessWithoutCountMessage,
+  readCloudPullCount,
 } from '@/domain/tabGroup/cloudPullCopy';
 import {
   EMPTY_STATE_ACTION_HINT,
@@ -123,6 +125,7 @@ describe('WC-13 同源：出口标签 / 说明 / 回执都从同一处派生', (
       'src/components/tabs/emptyStateActions.ts',
       'src/components/auth/LoginForm.tsx',
       'src/components/auth/RegisterForm.tsx',
+      'src/components/search/SearchResultList.tsx',
     ]) {
       const src = code(rel);
       assert.ok(
@@ -145,6 +148,7 @@ describe('WC-13 同源：出口标签 / 说明 / 回执都从同一处派生', (
       'src/components/auth/RegisterForm.tsx',
       'src/components/auth/restoreFeedbackCopy.ts',
       'src/core/emptyStateExits.ts',
+      'src/components/search/SearchResultList.tsx',
     ]) {
       const literals = code(rel).match(/'[^'\n]*'|"[^"\n]*"/g) ?? [];
       const offending = literals.filter(literal => literal.includes('从云端恢复'));
@@ -155,6 +159,78 @@ describe('WC-13 同源：出口标签 / 说明 / 回执都从同一处派生', (
           '那是与「恢复＝打开并消费」撞车的旧说法'
       );
     }
+  });
+
+  it('搜索页必须走 domain 层那一份措辞（不许自己再写一份）', () => {
+    // 2026-10-23 审计 P1-3：搜索页原先自己写着「已从云端恢复 N 个会话」
+    // 「从云端恢复失败，请稍后重试」「恢复中…」—— 四个出口、四个说法。
+    const src = read('src/components/search/SearchResultList.tsx');
+    assert.match(
+      src,
+      /from\s*'@\/domain\/tabGroup\/cloudPullCopy'/,
+      '搜索页必须从 domain 层取这个动作的措辞'
+    );
+    assert.match(
+      src,
+      /cloudPullOutcomeMessage\(/,
+      '搜索页的成功/失败回执必须走共享的 outcome 文案'
+    );
+    assert.match(
+      src,
+      /CLOUD_PULL_BUSY_LABEL/,
+      '搜索页的在途文案必须用共享的那一份（原先写死了「恢复中…」）'
+    );
+  });
+});
+
+// ══════════════════════════════════════════════════════════════════════════
+// P1-4 · 「拉回了几个」必须来自引擎，不能是本地列表长度
+// ══════════════════════════════════════════════════════════════════════════
+
+describe('P1-4 · 拉回的条数必须来自引擎如实上报的数字', () => {
+  it('引擎报了 cloudCount 就用它', () => {
+    assert.equal(
+      readCloudPullCount({ ok: true, payload: { stats: { cloudCount: 3 } } }),
+      3
+    );
+  });
+
+  it('引擎没报 ⇒ 读不到（返回 null），**不许**拿本地列表长度顶替', () => {
+    // 本地 5 个 + 云端 3 个 ⇒ 报「拉回 8 个」就是谎报（2026-10-23 审计 P1-4）。
+    assert.equal(
+      readCloudPullCount({ ok: true, payload: { groups: [1, 2, 3, 4, 5] } }),
+      null,
+      'payload.groups 是**合并后**的列表，不能当「拉回几个」'
+    );
+    assert.equal(readCloudPullCount({ ok: true }), null);
+    assert.equal(readCloudPullCount({ ok: true, payload: {} }), null);
+  });
+
+  it('读不到条数时，界面上不许出现一个数（宁可少说）', () => {
+    const message = cloudPullSuccessWithoutCountMessage();
+    assert.ok(
+      !/\d/.test(message),
+      `读不到条数时不许声称条数（当前：${message}）`
+    );
+    assert.ok(
+      message.includes(CLOUD_PULL_VERB),
+      `同一个动作必须用同一个动词（当前：${message}）`
+    );
+    assert.ok(!message.includes('恢复'), '「恢复」在本产品里专指「打开并消费」');
+  });
+
+  it('搜索页不许拿本地列表长度当「拉回几个」', () => {
+    const src = read('src/components/search/SearchResultList.tsx');
+    assert.match(
+      src,
+      /readCloudPullCount\(/,
+      '搜索页必须用引擎如实上报的条数'
+    );
+    assert.doesNotMatch(
+      src,
+      /loaded\.length/,
+      '本地列表长度不是「从云端拉回几个」—— 那正是这条缺陷的本体'
+    );
   });
 });
 

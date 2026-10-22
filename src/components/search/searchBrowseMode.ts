@@ -138,11 +138,11 @@ export const buildBrowseResults = (groups: TabGroup[]): SearchResult[] => {
 
 /** 筛选浏览态的结果计数。 */
 export const browseSummaryCopy = (sessionCount: number, tabCount: number): string =>
-  `按筛选条件找到 ${sessionCount} 个会话、${tabCount} 个标签`;
+  `按筛选条件找到 ${sessionCount} 个会话、${tabCount} 个标签页`;
 
 /** 搜索态的结果计数（既有口径，不变）。 */
 export const searchSummaryCopy = (sessionCount: number, tabCount: number): string =>
-  `共 ${sessionCount} 个匹配会话，${tabCount} 个匹配标签`;
+  `共 ${sessionCount} 个匹配会话，${tabCount} 个匹配标签页`;
 
 /** 结果区的无障碍标签。 */
 export const resultRegionLabel = (
@@ -152,7 +152,7 @@ export const resultRegionLabel = (
 ): string =>
   mode === 'browse'
     ? `筛选结果，${browseSummaryCopy(sessionCount, tabCount)}`
-    : `搜索结果，共 ${sessionCount} 个匹配会话，${tabCount} 个匹配标签`;
+    : `搜索结果，共 ${sessionCount} 个匹配会话，${tabCount} 个匹配标签页`;
 
 /** 筛选条标题。 */
 export const resultViewTitle = (mode: 'search' | 'browse'): string =>
@@ -186,14 +186,22 @@ export const showFilterSectionTitle = (mode: 'search' | 'browse'): boolean =>
 export const resultCardTitle = (mode: 'search' | 'browse'): string =>
   mode === 'browse' ? '符合条件的会话' : '匹配会话';
 
-/** 筛选浏览态的批量操作标题（「恢复/删除 筛选结果中的 N 个标签」）。 */
+/**
+ * 批量操作的标题（「恢复/删除 搜索结果中的 N 个标签页？」）。
+ *
+ * ⚠️ 标题里**只许有一个问号**（2026-10-23 审计 P2-6）。
+ * 修复前这个函数自带一个「？」，调用方又拼一个「…N 个标签？」⇒
+ * 界面上出现「恢复搜索结果中的标签？5 个标签？？」这种拼接出来的标点。
+ * ⇒ 条数由调用方传进来，**整句**在这里一次拼好。
+ */
 export const bulkActionTitle = (
   mode: 'search' | 'browse',
-  action: '恢复' | '删除'
+  action: '恢复' | '删除',
+  count: number
 ): string =>
   mode === 'browse'
-    ? `${action}筛选结果中的标签？`
-    : `${action}搜索结果中的标签？`;
+    ? `${action}筛选结果中的 ${count} 个标签页？`
+    : `${action}搜索结果中的 ${count} 个标签页？`;
 
 /** 筛选浏览态的空态标题（说清是**筛选条件**筛空了什么）。 */
 export const browseEmptyTitle = '没有找到符合条件的会话';
@@ -213,7 +221,7 @@ export const browseEmptyDescription =
 export const noCriteriaEmptyTitle = '请输入关键词或设置筛选条件';
 
 export const noCriteriaEmptyDescription =
-  '输入会话名、标签标题或网址，或按域名、会话名称、保存时间筛选。';
+  '输入会话名、标签页标题或网址，或按域名、会话名称、保存时间筛选。';
 
 /**
  * 筛选浏览态的截断提示。

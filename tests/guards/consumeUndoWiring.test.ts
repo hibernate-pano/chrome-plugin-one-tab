@@ -20,6 +20,13 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import ts from 'typescript';
+
+import {
+  findBranchByPositiveField,
+  parseSource,
+  variableInitializerNode,
+} from '../_helpers/sourceAst.ts';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 const read = (rel: string): string => readFileSync(resolve(ROOT, rel), 'utf8');
@@ -128,6 +135,8 @@ describe('批量恢复（搜索页）也能一次撤回来', () => {
   });
 
   it('「部分成功」（有条打不开）那条提示**同样**要挂撤销', () => {
+    // 具体的判据在下面的「DS-43-10」一节里（这里只留一条总纲，
+    // 避免两处各说一半、彼此漂移）。
     assert.match(
       src,
       /type:\s*'error'/,
@@ -135,6 +144,142 @@ describe('批量恢复（搜索页）也能一次撤回来', () => {
     );
   });
 });
+
+// ══════════════════════════════════════════════════════════════════════════
+// DS-43-10：部分成功**也是一次消费** ⇒ 那条提示必须挂撤销凭据
+// ══════════════════════════════════════════════════════════════════════════
+//
+// 【缺陷本体】
+// 「有条打不开、其余被消费掉」的那条提示走的是 `showDeleteError(...)` ——
+// 没有撤销凭据。而那一次消费**真的发生了**（能打开的那些已经从会话里移除，
+// 不可逆、无回收站）⇒ 用户手里一条退路都没有。
+// 列表页（TabGroup）同一分支早就挂了撤销，搜索页没有 ⇒
+// 同一个产品两个界面两种保障。
+//
+// 【判据钉的是**接线**，不是措辞】
+//   ① 「部分成功」那条分支里，必须有一句提示**带着撤销凭据**传出去；
+//   ② 凭据按**锁定态**分叉（锁定会话从不被消费 ⇒ 挂了就是骗人）；
+//   ③ 那条提示走**错误通道**（部分成功要说清「有的没成」）。
+//
+// ⇒ 局部变量改名（group → g）不影响判据；凭据被摘掉 / 分叉被写死 ⇒ 变红。
+
+describe('DS-43-10：「部分成功」那条提示必须挂上撤销凭据', () => {
+  for (const file of [
+    'src/components/tabs/TabGroup.tsx',
+    'src/components/search/SearchResultList.tsx',
+  ]) {
+    it(`${file}：部分成功分支必须带撤销凭据（按锁定态分叉）`, () => {
+      const source = parseSource(file, stripComments(read(file)));
+      const branch = findBranchByPositiveField(source, 'skippedUnopenable');
+      assert.ok(
+        branch,
+        `${file}：找不到「部分成功」那条分支（条件里出现 skippedUnopenable 且 > 0）`
+      );
+
+      const calls = callsIn(branch.thenStatement);
+      const wired = calls.filter(call => isLockedConditionalCredential(call, source));
+      assert.ok(
+        wired.length > 0,
+        `${file}：「部分成功」那条提示必须带着撤销凭据传出去 —— ` +
+          '那次消费已经发生（不可逆、无回收站），不给退路就是让用户白丢记录'
+      );
+
+      // 走错误通道：部分成功要说清「有的没成」。
+      assert.ok(
+        wired.some(call => isErrorTypeOption(call)),
+        `${file}：那条提示必须走错误通道（type: 'error'）—— ` +
+          '部分成功不是全成功，不能用成功的样子说'
+      );
+    });
+  }
+
+  it('凭据的形状：锁定 ⇒ 不给（undefined），未锁定 ⇒ 给消费前的那份会话', () => {
+    const source = parseSource(
+      'src/components/search/SearchResultList.tsx',
+      stripComments(read('src/components/search/SearchResultList.tsx'))
+    );
+    const branch = findBranchByPositiveField(source, 'skippedUnopenable');
+    assert.ok(branch);
+    const wired = callsIn(branch.thenStatement).filter(call =>
+      isLockedConditionalCredential(call, source)
+    );
+    assert.ok(wired.length > 0);
+    // 条件里必须问「锁没锁」；锁定的那一端必须是 undefined（不给退路）。
+    const credential = credentialExpression(wired[0], source);
+    assert.ok(credential);
+    assert.match(
+      credential.condition.getText(source.file),
+      /isLocked/,
+      '分叉必须按「锁定没锁定」来判 —— 锁定会话从不被消费，挂了撤销就是骗人'
+    );
+    assert.equal(
+      credential.whenTrue.getText(source.file).trim(),
+      'undefined',
+      '锁定的那一端必须是不给撤销凭据'
+    );
+    assert.ok(
+      ts.isObjectLiteralExpression(credential.whenFalse),
+      '未锁定的那一端必须给出撤销凭据（消费前的那份会话快照）'
+    );
+  });
+});
+
+/** 收集一棵子树里的所有调用表达式。 */
+function callsIn(node: ts.Node): ts.CallExpression[] {
+  const out: ts.CallExpression[] = [];
+  const visit = (current: ts.Node): void => {
+    if (ts.isCallExpression(current)) out.push(current);
+    current.forEachChild(visit);
+  };
+  visit(node);
+  return out;
+}
+
+/**
+ * 这个调用的第 2 个参数是不是「按锁定态分叉的撤销凭据」。
+ *
+ * 允许实现先把凭据存进局部变量再传出去（**等价改写**）：
+ * 守卫钉的是「凭据有没有、按什么分叉」，不是「它写在哪一行」。
+ */
+function isLockedConditionalCredential(
+  call: ts.CallExpression,
+  source: { file: ts.SourceFile }
+): boolean {
+  const expression = credentialExpression(call, source);
+  if (!expression) return false;
+  if (!/isLocked/.test(expression.condition.getText(source.file))) return false;
+  if (expression.whenTrue.getText(source.file).trim() !== 'undefined') return false;
+  return ts.isObjectLiteralExpression(expression.whenFalse);
+}
+
+/** 取第 2 个参数里的那个「条件表达式」（直接传或先存进变量都认）。 */
+function credentialExpression(
+  call: ts.CallExpression,
+  source: { file: ts.SourceFile }
+): ts.ConditionalExpression | null {
+  const arg = call.arguments[1];
+  if (!arg) return null;
+  if (ts.isConditionalExpression(arg)) return arg;
+  if (ts.isIdentifier(arg)) {
+    const initializer = variableInitializerNode(source as never, arg.text);
+    if (initializer && ts.isConditionalExpression(initializer)) return initializer;
+  }
+  return null;
+}
+
+/** 这个调用的第 3 个参数是不是「走错误通道」的选项。 */
+function isErrorTypeOption(call: ts.CallExpression): boolean {
+  const arg = call.arguments[2];
+  if (!arg || !ts.isObjectLiteralExpression(arg)) return false;
+  return arg.properties.some(
+    property =>
+      ts.isPropertyAssignment(property) &&
+      ts.isIdentifier(property.name) &&
+      property.name.text === 'type' &&
+      ts.isStringLiteral(property.initializer) &&
+      property.initializer.text === 'error'
+  );
+}
 
 describe('撤销的协议与编排都登记了', () => {
   it('协议里必须有 restoreConsumed 这个 op', () => {

@@ -52,6 +52,60 @@ export const CLOUD_PULL_BUSY_LABEL = '拉回中…';
 export const cloudPullSuccessMessage = (count: number): string =>
   `已从云端拉回 ${count} 个会话`;
 
+/**
+ * 一次「从云端拉回」的**原始回包**（同步协议 `download` 的 MutationResult）。
+ *
+ * 只声明界面要用到的字段 —— `payload` 的内部形状（`MergeResult`）由本模块
+ * 自己读，界面不必知道它长什么样。
+ */
+export interface CloudPullDownloadResult {
+  /** 这一轮有没有成功。 */
+  ok: boolean;
+  /** 失败原因（机器码或人话）。 */
+  error?: string;
+  /** 「服务端不可用」的机器标记（界面据此选措辞）。 */
+  backendUnavailable?: boolean;
+  /** 引擎的原始回包（`MergeResult`）。 */
+  payload?: unknown;
+}
+
+/**
+ * 引擎如实上报的「**云端这一轮读到了几个会话**」。
+ *
+ * ── 为什么不能拿 `payload.groups.length` 当这个数 ──────────────────────────
+ * `payload.groups` 是**合并后**的列表（本机 + 云端）⇒ 拿它当「拉回 N 个」
+ * 会在本机本来就有会话时**夸大**（本机 5 个 + 云端 3 个 ⇒ 报「拉回 8 个」，
+ * 而实际只从云端取回 3 个，其中还有 2 个本地早就有）。
+ *
+ * 引擎在成功路径上如实上报 `stats.cloudCount`（= 云端这一轮读到的会话数，
+ * 读不出来被整组跳过的那些不算在内）⇒ 那才是「从云端拉回」的条数。
+ *
+ * ── 为什么读不到就返回 `null`（而不是猜一个） ─────────────────────────────
+ * `null` = **引擎没说**。这时候界面**不许**拿本地列表长度顶替（那正是
+ * 本条缺陷的本体），也不许说「云端没有会话可拉回」（那是在断言一件
+ * 引擎没说的事）⇒ 界面改说「已从云端拉回，会话列表已更新」（不声称条数）。
+ *
+ * 宁可少说，不可说错。
+ *
+ * @returns 云端这一轮读到的会话数；**读不到时为 null**（不是 0）。
+ */
+export const readCloudPullCount = (res: CloudPullDownloadResult): number | null => {
+  const payload = res.payload as { stats?: { cloudCount?: number } } | undefined;
+  const cloudCount = payload?.stats?.cloudCount;
+  return typeof cloudCount === 'number' ? cloudCount : null;
+};
+
+/**
+ * 拉回来了，但**条数读不到** ⇒ 不声称条数。
+ *
+ * 为什么需要这一句：`CloudPullOutcome` 只有三种（拉到 N 个 / 云端为空 /
+ * 失败），没有「第 4 种：拉回来了但不知道几个」——
+ * 而那一格是真的存在（引擎没上报 `stats.cloudCount` 时）。
+ * 与其编一个数，不如只说「确实拉回来了，列表已更新」。
+ */
+export const cloudPullSuccessWithoutCountMessage = (): string =>
+  '已从云端拉回，会话列表已更新';
+
 /** 云端本来就是空的（拉回成功，但一条都没有）。 */
 export const cloudPullEmptyMessage = (): string => '云端没有会话可拉回';
 

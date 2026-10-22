@@ -142,11 +142,18 @@ describe('搜索结果真的接上了截断', () => {
 
   it('批量操作作用于**全部**匹配标签，不是只显示的那部分', () => {
     const src = read('src/components/search/SearchResultList.tsx');
-    // 「恢复所有匹配标签」「删除所有匹配标签」必须覆盖全部匹配 ——
+    // 「恢复所有匹配标签页」「删除所有搜索到的标签页」必须覆盖全部匹配 ——
     // 按钮文案说的是「共 N 个标签页」，N 取自 matchingTabs（全部）。
     // 若改成只作用于可见部分，就会出现「按钮说 500 个、实际只处理 200 个」。
     assert.match(src, /const tabsPayload = matchingTabs\.map\(/, '批量恢复必须用全部匹配标签');
-    assert.match(src, /for \(const \{ tab, group \} of matchingTabs\)/, '批量删除必须用全部匹配标签');
+    // 2026-10-23 审计 P0-2：批量恢复的「哪些会被消费」改由判据层给出
+    // （`planBatchRestore(matchingTabs)`）⇒ 断言也钉在那份判据上：
+    // 它必须**覆盖全部匹配**（而不是可见的那部分）。
+    assert.match(
+      src,
+      /planBatchRestore\(matchingTabs\)/,
+      '批量恢复的判据必须覆盖全部匹配标签'
+    );
   });
 
   it('截断时必须渲染提示条', () => {
