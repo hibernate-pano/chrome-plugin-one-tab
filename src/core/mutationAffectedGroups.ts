@@ -36,6 +36,10 @@ export function affectedGroupIdsOf(cmd: MutationOp): string[] {
       return [cmd.groupId];
     case 'moveTab':
       return [cmd.sourceGroupId, cmd.targetGroupId];
+    // 撤销消费 = 把这条会话重新变成本机有的记录 ⇒ 它必须能上云，
+    // 否则撤销只在本机生效，别的设备上这条会话仍然是删掉的。
+    case 'restoreConsumed':
+      return [cmd.group.id];
     // 删光之后本地没有活跃会话可传；删除意图走 pendingDeleteIds 那条独立的广播路径，
     // 不受这里的增量筛选影响（见 syncEngine.upload 的 markCloudGroupsAsDeleted 段）。
     case 'deleteAllGroups':

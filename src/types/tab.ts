@@ -1,3 +1,5 @@
+import type { SessionSortKey } from '@/core/sessionSort';
+
 export interface Tab {
   id: string;
   url: string;
@@ -287,6 +289,24 @@ export interface UserSettings {
   syncIntervalMinutes: number;
   layoutMode: LayoutMode; // 布局模式：单栏、双栏、三栏
   showNotifications: boolean; // 是否显示通知
+
+  /**
+   * 会话列表的排序键（2026-10-22 审计 L-10）。
+   *
+   * 【它是什么】`core/sessionSort.ts` 里的四种排序键之一：
+   * `'saved'`（最近保存，默认）/ `'accessed'`（最近访问）/ `'name'`（名称）/
+   * `'size'`（会话大小 = 标签数）。
+   *
+   * 【为什么是界面偏好而不是「仅本机」】它描述的是「用户的会话列表怎么摆」，
+   * 与 `layoutMode`（界面布局）、`themeMode`（主题明暗）同一性质 ⇒ 允许随设置
+   * 一起跨设备漫游（见 `types/tab.ts` 的 `DEVICE_LEVEL_SETTING_KEYS`：那三个
+   * 才是「以本机为准」的设备级字段）。**不新增第三类处理**。
+   *
+   * 【存量用户】升级后这个键在存储里**不存在** ⇒ 读路径合并
+   * `{...DEFAULT_SETTINGS, ...stored}` 后落到默认 `'saved'` ⇒ 列表顺序与升级前
+   * 完全一致（默认键就是旧版写死的 `createdAt` 倒序）。
+   */
+  sessionSort: SessionSortKey;
 
   // 是否在收集/保存时包含固定标签页（pinned tabs）
   collectPinnedTabs: boolean;

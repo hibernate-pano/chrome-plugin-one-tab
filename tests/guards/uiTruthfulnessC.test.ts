@@ -38,6 +38,7 @@ import {
   SYNC_REASON_COPY,
 } from '@/components/sync/syncPreviewView';
 import type { BackendStatusKind } from '@/components/layout/backendStatus';
+import { MENU_LOGIN_LABEL } from '@/components/common/menuLabels';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 const read = (rel: string): string => readFileSync(resolve(ROOT, rel), 'utf8');
@@ -305,7 +306,16 @@ describe('C1 菜单状态卡：云端未登录也看得到，且不说谎', () =
     );
     assert.match(src, /const syncStatusView = resolveMenuSyncStatus\(\{/);
     assert.match(src, /\{syncStatusView\.headline\}/);
-    assert.match(src, /去登录/, '未登录时缺的唯一入口');
+    // 未登录时缺的唯一入口。判据是**这个入口渲染出来的那句话**，
+    // 不是源码里有没有「去登录」三个字 —— 那三个字已经抽成常量
+    // （MENU_LOGIN_LABEL，2026-10-22 审计 P0-2），源码里自然搜不到。
+    // 钉字面量的话，将来改一次文案守卫就红，而行为一点没变。
+    assert.match(src, /\{MENU_LOGIN_LABEL\}/, '未登录时缺的唯一入口必须渲染出来');
+    assert.equal(
+      MENU_LOGIN_LABEL,
+      '去登录',
+      '菜单里这个入口的文案变了的话，引导 / 同步预览里指向它的三处也要一起变'
+    );
     // handleQuickRefresh 已经是后端分流（:180 needsAccount），不该被改。
     assert.match(
       src,
@@ -416,12 +426,15 @@ describe('C4 批量恢复成功反馈：条数用 matchingTabs.length', () => {
     // 调用形态从 showRestoreSuccess(matchingTabs.length) 变成
     // showRestoreSuccessMessage(restoreAllSearchSuccessMessage(...))。
     //
+    // 2026-10-22 审计 P0-4：批量恢复多了一条退路（撤销），于是成功播报走
+    // 共享 hook showConsumeToast（它内部再走 showRestoreSuccessMessage，
+    // 额外挂一个「撤销」按钮）。两条路都是「出声了」——
     // 断言盯**不变量**（成功路径必须有一条成功播报，且必须带上条数），
     // 而不是盯某个已过时的调用写法 —— 后者会让「换了正确写法」变成红灯，
     // 那正是本仓文档守卫被审计批评的毛病（docsAlignment 硬编码旧基线）。
     assert.match(
       src,
-      /showRestoreSuccessMessage\(\s*restoreAllSearchSuccessMessage\(/,
+      /show(?:RestoreSuccessMessage|ConsumeToast)\(\s*restoreAllSearchSuccessMessage\(/,
       '缺成功 toast：命中标签分散在多个会话时用户看不出恢复了几个'
     );
   });
@@ -432,8 +445,10 @@ describe('C4 批量恢复成功反馈：条数用 matchingTabs.length', () => {
     const end = src.indexOf('const handleDeleteAllSearchResults', start);
     const body = src.slice(start, end === -1 ? src.length : end);
 
+    // 成功播报有两种调用形态（直接播 / 走带撤销的共享 hook），都算「出声了」。
+    const toastCall = /show(?:RestoreSuccessMessage|ConsumeToast)\(/;
     const guardAt = body.indexOf('r.success !== true');
-    const toastAt = body.indexOf('showRestoreSuccessMessage(');
+    const toastAt = body.search(toastCall);
     assert.ok(guardAt !== -1 && toastAt !== -1);
     assert.ok(guardAt < toastAt, '成功播报必须排在失败出口之后');
 
@@ -443,12 +458,15 @@ describe('C4 批量恢复成功反馈：条数用 matchingTabs.length', () => {
     // 「部分不可打开」那一分支也是部分失败出口：它自己已经报了条数，
     // 再往下走就会同时播「已恢复 N 个」与「另有 M 个打不开」（自相矛盾）。
     // ⚠️ 先断言子串确实存在，否则 -1 会让下一条比较恒真。
-    const partialAt = failBranch.indexOf('skippedUnopenable');
+    const partialAt = body.indexOf('skippedUnopenable');
     assert.ok(partialAt !== -1, '应能找到「部分不可打开」分支');
-    const lastReturnAt = failBranch.lastIndexOf('return;');
-    assert.ok(lastReturnAt !== -1, '应能找到 return');
+    const partialReturnAt = body.indexOf('return;', partialAt);
+    assert.ok(partialReturnAt !== -1, '应能找到 return');
+    // 全成功那条播报必须排在「部分不可打开」分支的 return 之后。
+    const fullToastAt = body.indexOf('restoreAllSearchSuccessMessage(');
+    assert.ok(fullToastAt !== -1, '应能找到全成功分支的播报');
     assert.ok(
-      lastReturnAt > partialAt,
+      partialReturnAt < fullToastAt,
       '「部分不可打开」分支也要 return，否则会同时播报「已恢复 N 个」和「另有 M 个打不开」'
     );
   });

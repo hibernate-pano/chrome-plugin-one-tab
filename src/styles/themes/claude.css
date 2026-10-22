@@ -6,7 +6,14 @@
    本文件 = 完整 token 集（与 legacy 同构）+ 结构性覆盖。
    交互与布局不变；legacy 观感由 global.css 默认值保证。 */
 
-html[data-theme="claude"] {
+/* ── 预览作用域（L-3）──────────────────────────────────────────────────
+   设置页的主题预览卡要显示「这个主题自己长什么样」，而令牌平时只挂在
+   html 上（html[data-theme=x]）—— 预览别的主题时读不到。
+   所以把**同一个**选择器列表再挂一个 [data-theme=x]：预览元素带上
+   data-theme=x 就拿到完全相同的一份值，不复制值 ⇒ 两处不可能漂移。
+   注意：html[...] 必须留在列表**最后** —— 仓库里好几个守卫用
+   `html[data-theme=...] {` 这个字面量定位主题块。 */
+[data-theme="claude"], html[data-theme="claude"] {
   /* 表面 */
   --color-bg-primary: #f0eee6;
   --color-bg-secondary: #faf9f5;
@@ -29,10 +36,15 @@ html[data-theme="claude"] {
   --color-border-strong: #b8b3a4;
 
   /* 强调 */
-  --color-accent: #d97757;
-  --color-accent-hover: #c56a4b;
+  /* 2026-10-22 审计 U-12：原值 #d97757 在卡片底(#faf9f5)上只有 2.96:1、
+     在三级面(#ece9df)上只有 2.57:1 —— 「在新窗口恢复整个会话」那颗图标
+     （本仓最高频的动作）在最像「有人精心设计过」的主题里几乎看不见。
+     压到 #c2603f：卡片底 3.99:1、三级面 3.43:1（都 ≥3:1 非文本线）。
+     连带把 accent-fg 压深一档（#0a0f1a），否则实底上的墨色只有 4.26:1。 */
+  --color-accent: #c2603f;
+  --color-accent-hover: #b05436;
   /* accent 实底上的墨色：白字只有 3.1:1（深色下 2.6:1） ⇒ 深墨 */
-  --color-accent-fg: #0f172a;
+  --color-accent-fg: #0a0f1a;
   --color-accent-subtle: #f6e8e0;
 
   /* 语义色 */
@@ -51,14 +63,23 @@ html[data-theme="claude"] {
   --radius-control: 0.75rem;
   --radius-input: 0.5rem;
   --radius-input-sm: 0.375rem;
-  --color-accent-text: #b4552f;
-  --color-accent-strong: #d97757;
+  /* 2026-10-22 审计 U-12：accent-text 是「当墨色用的 accent」（强调文字 /
+     数量徽章 / 顶栏同步按钮）。原值 #b4552f 在 accent-soft(#f3ddd2) 上只有
+     3.76:1 —— 徽章与同步按钮都读这一对。压到 #9b4928 ⇒ 5 套底色上
+     全部 ≥4.76:1（WCAG AA 正文线）。 */
+  --color-accent-text: #9b4928;
+  --color-accent-strong: #c2603f;
   --color-accent-border: rgba(217, 119, 87, 0.45);
   --color-accent-wash: rgba(217, 119, 87, 0.12);
   --color-well: #ece9df;
   --color-note-bg: #f4f1e8;
   --color-btn-hover: rgba(217, 119, 87, 0.08);
   --color-accent-soft: #f3ddd2;
+  /* U-14：形状语言令牌（chrome/apple 这类「软圆角」语言给 10px，其余 8px）。 */
+  --radius-btn: 8px;
+  --radius-btn-icon: 8px;
+  /* U-24：卡头底色（claude 是「纸面章节带」—— 暖纸色，与备注块同色）。 */
+  --color-card-head-bg: var(--color-note-bg);
   --color-panel-translucent: rgba(250, 249, 245, 0.92);
   --color-border-translucent: rgba(229, 226, 214, 0.9);
   /* 2026-10-20 审计 P1-1：原先 22% 透明度（叠在底上仅 1.24–1.65:1）。
@@ -83,7 +104,10 @@ html[data-theme="claude"] {
   --color-toggle-on-fg: #0f172a;
 }
 
-html[data-theme="claude"].dark {
+/* 深色态同理：html.dark [data-theme=x] 让预览元素在暗色模式下拿到
+   本主题的**深色**取值（.dark 挂在 html 上，预览是它的后代；
+   特异性 (0,2,1) 压过浅色那条 (0,1,0)）。 */
+html.dark [data-theme="claude"], html[data-theme="claude"].dark {
   --color-bg-primary: #191817;
   --color-bg-secondary: #262523;
   --color-bg-tertiary: #302e2b;
@@ -114,7 +138,10 @@ html[data-theme="claude"].dark {
   --color-toggle-on: #e08b6d;
   --color-toggle-off: #45423c;
 
-  --color-accent-text: #e08b6d;
+  /* 2026-10-22 审计 U-12/U-16：深色下 accent-soft 是一层暖色淡染，
+     accent-text 压在上面只有 4.17:1（数量徽章与顶栏同步按钮都读这一对）。
+     把墨色提亮到 #f0a488 ⇒ 5.1:1（同一支暖鲑鱼，只是更亮一档）。 */
+  --color-accent-text: #f0a488;
   --color-accent-strong: #e08b6d;
   --color-accent-border: rgba(224, 139, 109, 0.45);
   --color-accent-wash: rgba(224, 139, 109, 0.14);
@@ -122,6 +149,11 @@ html[data-theme="claude"].dark {
   --color-note-bg: #2a2825;
   --color-btn-hover: rgba(224, 139, 109, 0.1);
   --color-accent-soft: rgba(224, 139, 109, 0.2);
+  /* U-14：形状语言令牌（深浅一致 ⇒ 切换明暗时形状不变） */
+  --radius-btn: 8px;
+  --radius-btn-icon: 8px;
+  /* U-24：卡头底色（深色下 = 暖黑备注块底）。 */
+  --color-card-head-bg: var(--color-note-bg);
   --color-panel-translucent: rgba(38, 37, 35, 0.92);
   --color-border-translucent: rgba(69, 66, 60, 0.8);
   --focus-ring: 0 0 0 2px #e08b6d, 0 0 0 4px #262523;
@@ -150,16 +182,16 @@ html[data-theme="claude"] .tab-group-title {
   letter-spacing: 0.01em;
 }
 
-/* 纸面章节带：卡头与备注同色 */
+/* 纸面章节带：卡头与备注同色
+   （底色改由 --color-card-head-bg 令牌给，global.css 的 .tab-group-header 读它） */
 html[data-theme="claude"] .tab-group-header {
-  background: var(--color-note-bg);
   border-bottom: 1px solid var(--color-border-subtle);
 }
 
 html[data-theme="claude"] .tab-item { background: transparent; }
 html[data-theme="claude"] .tab-item:hover { background: var(--color-row-hover); }
 
-/* Anthropic 按钮：小圆角矩形，非药丸 */
-html[data-theme="claude"] .btn-primary { border-radius: 8px; font-weight: 500; }
-html[data-theme="claude"] .btn-icon { border-radius: 8px; }
+/* Anthropic 按钮：小圆角矩形，非药丸（圆角值来自形状令牌 U-14） */
+html[data-theme="claude"] .btn-primary { border-radius: var(--radius-btn); font-weight: 500; }
+html[data-theme="claude"] .btn-icon { border-radius: var(--radius-btn-icon); }
 html[data-theme="claude"] .tab-group-card:hover { transform: none; }

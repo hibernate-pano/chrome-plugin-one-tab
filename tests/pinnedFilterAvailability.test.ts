@@ -208,10 +208,27 @@ describe('组件接线：UI 可见性与筛选有效性同源', () => {
     );
   });
 
-  it('空态提示不无条件承诺「固定标签」筛选', () => {
+  it('空态提示不无条件承诺「固定标签」筛选', async () => {
+    // 2026-10-22 审计 L-1：这条守卫原先钉的是 JSX 的**写法**
+    // （`<li>{collectPinnedTabs …}</li>` + 三元表达式），
+    // 于是「把提示抽成纯函数」这种正确的改动会被判成红灯。
+    //
+    // 判据改成**行为**：提示文案已抽成 `searchEmptyHint(collectPinnedTabs)`，
+    // 直接调用它断言两种开关下的输出 —— 承诺必须跟着开关走，这条不变。
+    const { searchEmptyHint } = await import('@/components/search/searchEmptyHint');
+    assert.ok(
+      searchEmptyHint(true).includes('固定标签'),
+      '开了「保存固定标签页」时，提示可以提固定标签筛选'
+    );
+    assert.ok(
+      !searchEmptyHint(false).includes('固定标签'),
+      '没开时不得承诺一个根本不渲染的筛选项'
+    );
     const src = component();
-    const hint = src.match(/<li>\s*\{collectPinnedTabs[\s\S]*?<\/li>/);
-    assert.ok(hint, '空态提示里的那句筛选说明必须是条件渲染的');
-    assert.match(hint[0], /collectPinnedTabs\s*\?/, '两套文案必须由同一个开关切换');
+    assert.match(
+      src,
+      /searchEmptyHint\(collectPinnedTabs\)/,
+      '渲染处必须调用这个纯函数（两套文案由同一个开关切换，且只有一份措辞）'
+    );
   });
 });

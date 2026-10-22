@@ -409,12 +409,21 @@ export const DraggableTab: React.FC<DraggableTabProps> = React.memo(({
       </div>
 
       {/* 操作按钮。锁定会话不渲染删除：锁定承诺「防误删」，而删除不可撤销；
-          与同卡片的重命名 / 删除整组按钮同口径（锁定时不渲染，而非渲染后拦截）。 */}
+          与同卡片的重命名 / 删除整组按钮同口径（锁定时不渲染，而非渲染后拦截）。
+
+          ── 2026-10-22 审计 U-03 / U-21 ──────────────────────────────────
+          · U-03：`p-1` 让这颗物理删除键只有 22×22（4px padding + 14px 图标），
+            低于 WCAG 2.2 SC 2.5.8 AA 的 24px —— 而它删掉的东西**不可恢复**。
+            `.btn-icon` 现在无条件给 36×36 命中区下限（global.css:541），
+            这里的 `p-1` 会把它压回 22×22 ⇒ 去掉，让 36px 规则说了算。
+          · U-21：`.tab-item-actions` 在精细指针下改成
+            「隐形 ⇒ pointer-events: none，hover / focus-within 才可点」，
+            粗指针（触屏）下始终可见可点。CSS 侧已完成。 */}
       {!locked && (
         <div className="tab-item-actions">
           <button
             onClick={handleDelete}
-            className="btn-icon theme-btn-hover p-1 tab-item-delete-btn micro-interaction-button"
+            className="btn-icon theme-btn-hover tab-item-delete-btn micro-interaction-button"
             // UX P1-7：X 不受「删除会话前确认」开关保护、且无回收站，
             // 原 tooltip 只说「移除这条记录」，没说不可恢复 —— 这是本产品最贵的
             // 一件事（v1.22.0 起删除即物理清除），必须在点之前说出来。

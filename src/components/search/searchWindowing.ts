@@ -45,6 +45,21 @@
  * 所以本模块做两件事：
  *   1. `selectVisibleResults` —— 按**分片**决定渲染哪些会话分组（视口感知）；
  *   2. `buildResultWindow` —— 决定「显示前 K 条 + 还有多少」的截断。
+ *
+ * ── ⚠️ 2026-10-22 架构审计 D1：分片**还没接线** ───────────────────────────
+ *
+ * 本文件里 `computeVisibleChunks` / `chunkResults` / `SEARCH_CHUNK_SIZE`
+ * 三个导出**零生产调用点** —— 只有 `tests/searchWindowing.test.ts` 在测它们。
+ * **生产里真正生效的只有 `buildResultWindow`**（命中 200 条上限那道防线）。
+ *
+ * 为什么必须写清楚：搜索结果这条路的「渲染上限」曾被注释与单测描述成
+ * 「两道防线」，而第二道（分片）根本不存在 —— 200 条截断只管住**标签条数**，
+ * **管不住卡头数**（400 组各命中 1 个标签时，200 组全部渲染）。
+ *
+ * ⇒ 接线前不许在别处声称「搜索路径已做分片」。
+ *   接线的前置条件是给 `useNearViewport` 加「当前第几片」的序号接口
+ *   （它现在是**按元素**判定的，没有序号概念）。
+ *   守卫见 tests/guards/noPhantomMechanisms.test.ts。
  */
 
 export interface SearchResultChunk<T> {

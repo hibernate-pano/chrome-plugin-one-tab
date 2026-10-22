@@ -1,4 +1,9 @@
 import type { TabGroup } from '../types/tab';
+// 删除熔断的阈值只有一份，在 sync-backend/failsafe.ts（Floccus 判据）。
+// 闸门要自己回答「这次覆盖会清掉多少个会话、清掉得太多吗」，
+// 所以这里直接用**同一个**判据函数，而不是把比例判据再抄一遍
+// （同判据两处漂移是本仓库反复出现的事故类型）。
+import { checkDeleteFailsafe } from '../sync-backend/failsafe';
 
 // ── 下载前置保护（防「本地删除被云端旧数据复活」） ──────────────────────
 
@@ -199,6 +204,25 @@ export const getGroupsToSync = (groups: TabGroup[]): TabGroup[] => {
  * 也拦下来，于是删除永远传不过来、对端留一份永不收敛的僵尸副本。
  * 所以判据用 cloudTotalCount（行数，含墓碑）而非活跃数。
  *
+ * ── 判据为什么不能只看「云端空不空」（DS-2 续）────────────────────────
+ * 「云端空」与「云端这次只读到一部分」在**引擎层无法可靠区分**：
+ *   · 端口不暴露云端总行数，我们算得出的 cloudTotalCount 只是「我们知道的行数」；
+ *   · 两个后端各自的下载层已经是 fail-closed 的（云端后端用 count(exact)
+ *     交叉校验分页累计、不一致就整轮抛错；自带存储读不出的分片整轮抛错）
+ *     ⇒ 「合法但不完整」极少能变成一份短清单走到这里；
+ *   · 剩下那点残余（云端自己的索引不全）与「云端本来就只有这么多」在本地
+ *     推理上**完全同形**，猜不出来。
+ * ⇒ 于是闸门不猜「云端完整吗」，而是问第二个问题：
+ *   **这次覆盖会清掉本机多少个会话？**（判据见 core/overwriteGuard.ts）
+ *   清掉得太多 ⇒ 拒绝。清掉得不多 ⇒ 放行（哪怕云端确实比本机小）。
+ * 这样「云端真的空了」「云端只读到一部分」「云端合法地比本机小」三种情况
+ * 落在**同一条**可测量的判据上，而不是靠猜。
+ *
+ * ⚠️ 墓碑豁免是承重的（见 overwriteGuard.ts 文件头第 3 条）：
+ * 「云端只有墓碑行」= 别的设备把会话都删了 = **合法清空**，必须能传播。
+ * 若把墓碑造成的消失也计进删除数，删 10 个会话（100% > 20%）就会被熔断拦下
+ * ⇒ 用户在 A 设备删掉的会话永远传不到 B 设备 ⇒ 「删不掉」。
+ *
  * ── 为什么放在 syncDecision 而不是 syncEngine ──────────────────────────
  * 与 decideDownloadPrecheck 同构：纯函数、可在 node:test 直测、不碰 chrome.*。
  * 引擎那侧只负责「调用点 + 落用户文案」，判据本身不留在 IO 交错里。
@@ -208,14 +232,29 @@ export interface ForceRemoteOverwriteInput {
   localActiveCount: number;
   /** 云端行数（含墓碑行）：0 = 云端一个字节都没有 */
   cloudTotalCount: number;
+  /**
+   * 这次覆盖会清掉本机多少个会话（覆盖删除计划算出来的，见 core/overwriteGuard.ts）。
+   *
+   * 缺省 = 调用方没有覆盖计划（例如只关心「云端是不是空的」的旧调用方）。
+   */
+  overwriteDeletion?: { beforeActive: number; wouldDelete: number };
 }
 export type ForceRemoteOverwriteDecision =
   | { action: 'proceed' }
   // ⚠️ reason 只进日志（syncEngine logError），**不给用户看**：用户文案由
-  // SyncButton 的 REASON_COPY['overwrite_empty_cloud_refused'] 提供。
+  // SyncButton 的 REASON_COPY 提供（两个 code 各对应一条）。
   // 这里保留一句完整表述是为了日志能独立说明「拒绝了什么」，但它与
   // REASON_COPY 是两处文案 —— 改文案时别只改一处。
-  | { action: 'refuse'; reason: string };
+  | {
+      action: 'refuse';
+      /**
+       * 拒绝的种类（**给 UI 选文案用的机器码**，不是给人看的句子）：
+       *   · `empty_cloud`     = 云端一个字节都没有；
+       *   · `delete_too_many` = 这次覆盖会清掉太多本机会话（熔断裁决）。
+       */
+      code: 'empty_cloud' | 'delete_too_many';
+      reason: string;
+    };
 
 export function decideForceRemoteOverwrite(
   input: ForceRemoteOverwriteInput
@@ -223,10 +262,27 @@ export function decideForceRemoteOverwrite(
   if (input.localActiveCount > 0 && input.cloudTotalCount === 0) {
     return {
       action: 'refuse',
+      code: 'empty_cloud',
       reason:
         `云端没有任何数据，用空云端覆盖会清空本机 ${input.localActiveCount} 个会话且无法恢复，` +
         '已中止。如需清空本机请手动删除会话。',
     };
+  }
+  // 「云端这次只读到一部分」的后果有多大？—— 用后果回答，不用猜完整性。
+  if (input.overwriteDeletion) {
+    const verdict = checkDeleteFailsafe(
+      input.overwriteDeletion.beforeActive,
+      input.overwriteDeletion.wouldDelete
+    );
+    if (!verdict.allowed) {
+      return {
+        action: 'refuse',
+        code: 'delete_too_many',
+        reason:
+          verdict.reason ??
+          '这次覆盖会清掉过多本机会话，已中止以免误删（你的本地数据没有变化）。',
+      };
+    }
   }
   return { action: 'proceed' };
 }

@@ -57,6 +57,7 @@ export const PERF_SPAN_NAMES = [
   'updateGroupFields',
   'moveTab',
   'cleanDuplicates',
+  'restoreConsumed',
   // 队列任务名（非 mutation）
   'sync:upload',
   'sync:download',
@@ -76,6 +77,8 @@ export const SPAN_STEPS = [
   'read',
   'write',
   'noteDeleted',
+  // 撤回删除广播意图（撤销「恢复即消费」，2026-10-22 审计 P0-4）
+  'retractDeleted',
   'scheduleUpload',
 ] as const;
 

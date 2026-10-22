@@ -80,6 +80,8 @@ const stripComments = (src: string): string =>
   src.replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/(^|[^:])\/\/.*$/gm, '$1');
 
 const TAB_LIST = read('src/components/tabs/TabList.tsx');
+const MAIN_APP = read('src/components/app/MainApp.tsx');
+const HEADER = read('src/components/layout/Header.tsx');
 const SEARCH_RESULT_LIST = read('src/components/search/SearchResultList.tsx');
 const FILTER_PANEL = read('src/components/search/SearchFilterPanel.tsx');
 const FILTER_STATE = read('src/components/search/searchFilterState.ts');
@@ -442,7 +444,7 @@ describe('3. 筛选状态机：没有任何动作能清掉条件', () => {
 // ════════════════════════════════════════════════════════════════════════
 
 describe('4. 接线：筛选状态必须活得比结果视图久', () => {
-  it('筛选状态由列表层持有（reducer 不在结果视图里）', () => {
+  it('筛选状态由结果视图的**祖先层**持有（reducer 不在结果视图里）', () => {
     // 结果视图卸载时筛选条件不能跟着没 ⇒ 状态必须住在它外面。
     assert.ok(
       !/useReducer\(searchFilterReducer|useState<SearchFilters>/.test(SEARCH_RESULT_LIST),
@@ -453,10 +455,19 @@ describe('4. 接线：筛选状态必须活得比结果视图久', () => {
       /useReducer\(searchFilterReducer/,
       '筛选状态必须由列表层的 hook 持有'
     );
+    // 状态持有者必须是结果视图的**祖先**（TabList 或更上层），而不是别处
+    // —— 住在别处的话，祖先拿不到它，筛选条件就成了孤儿。
+    // 2026-10-22 审计 P1-8：持有者从 TabList 上提到 MainApp（顶栏的
+    // 「回到默认视图」需要能清筛选，而顶栏在列表层上面）。
+    assert.ok(
+      /useSearchFilters\(\)/.test(TAB_LIST) || /useSearchFilters\(\)/.test(MAIN_APP),
+      '筛选状态必须由结果视图的祖先层持有（TabList 或 MainApp）'
+    );
+    // 祖先持有 ⇒ 必须沿渲染链**下发**给结果视图（否则是一份没人用的状态）。
     assert.match(
       TAB_LIST,
-      /useSearchFilters\(\)/,
-      '列表层必须真的持有筛选状态'
+      /<SearchResultList[^>]*filterControls=/,
+      '结果视图必须接收祖先层持有的筛选状态'
     );
   });
 
@@ -466,6 +477,27 @@ describe('4. 接线：筛选状态必须活得比结果视图久', () => {
       /<SearchResultList[^>]*filterControls=/,
       '结果视图必须接收列表层持有的筛选状态'
     );
+  });
+
+  it('顶栏的「回到默认视图」必须同时清搜索词**和**筛选条件（2026-10-22 审计 P1-8）', () => {
+    // 承诺是「回到默认视图」—— 默认视图 = 无搜索词 **且** 无筛选条件。
+    // 修复前它只清搜索词：用户只靠筛选（没输过关键词）时点它，
+    // setSearchValue('') 写回本来就是 '' 的值 ⇒ React bail out ⇒ 零变化，
+    // 按钮看起来像坏了。
+    assert.match(
+      MAIN_APP,
+      /onResetFilters=\{filterControls\.clearFilters\}/,
+      'MainApp 必须把「清筛选」接到 Header 上'
+    );
+    assert.match(
+      HEADER,
+      /onResetFilters\?\.\(\)/,
+      'Header 的「回到默认视图」必须真的调用 onResetFilters'
+    );
+    // 两件事都得做：只清搜索词是不够的。
+    const reset = HEADER.match(/const handleResetToDefaultView[\s\S]*?\n {2}\};/);
+    assert.ok(reset, '应能找到「回到默认视图」的处理函数');
+    assert.match(reset[0], /clearSearch\(\)/, '「回到默认视图」必须清搜索词');
   });
 
   it('空搜索词下的结果集必须来自「全部标签」（否则会话级筛选无判据可作用）', () => {

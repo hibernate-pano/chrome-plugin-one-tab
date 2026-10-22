@@ -1,5 +1,10 @@
 import { TabGroup, UserSettings, LayoutMode, ThemeStyle, THEME_STYLES, RETIRED_SETTING_KEYS, RETIRED_SETTING_COLUMN_DEFAULTS, stripNonPortableSettings } from '@/types/tab';
 import { parseOneTabFormat, formatToOneTabFormat } from '@/core/oneTabFormatParser';
+import {
+  DEFAULT_SESSION_SORT,
+  isSessionSortKey,
+  type SessionSortKey,
+} from '@/core/sessionSort';
 import { secureStorage } from './secureStorage';
 import { kvGet, kvSet, kvRemove } from '@/storage/storageAdapter';
 import { notifyGroupsChanged, subscribeGroupsChanged } from '@/storage-kv/groupsChangedBus';
@@ -194,6 +199,27 @@ export function validateLayoutMode(value: unknown): LayoutMode {
 }
 
 /**
+ * 会话排序键的校验单点（2026-10-22，审计 L-10）。
+ *
+ * 与 `validateLayoutMode` / `validateThemeMode` 同一纪律：**非法值 fail-safe
+ * 回落，不抛错**（抛错会让 `getSettings` 整条失败，阻塞所有读设置的路径）。
+ *
+ * ── 回落方向为什么是 `'saved'` ──────────────────────────────────────────
+ * `'saved'` 就是旧版写死的 `createdAt` 倒序 ⇒ 回落值等于「升级前用户看到的样子」。
+ * 换成别的键，等于「存储里有个看不懂的值」就替用户改了列表顺序。
+ *
+ * 脏值从哪来：手改过的本地存储、导入的旧备份、另一台设备同步过来的旧行、
+ * 早期版本写下的值。读路径必须兜住它们（`getSettings` 里已有同款兜底）。
+ */
+export function validateSessionSort(value: unknown): SessionSortKey {
+  if (isSessionSortKey(value)) {
+    return value;
+  }
+  logWarn('无效的会话排序键，使用默认值:', value);
+  return DEFAULT_SESSION_SORT;
+}
+
+/**
  * 自动同步间隔档位（分钟）。2026-10-11（1.23.0）：用户在菜单中四选一。
  *
  * 【为什么收敛到固定四档而不是任意数字】alarm 的 periodInMinutes 是 Chrome
@@ -280,6 +306,10 @@ export const DEFAULT_SETTINGS: UserSettings = {
   syncBackend: 'supabase',
   layoutMode: 'single' as LayoutMode, // 默认使用单栏布局
   showNotifications: false, // 默认关闭通知
+  // ── 2026-10-22 审计 L-10：会话排序 ──────────────────────────────────────
+  // 默认「最近保存」= 旧版写死的 `createdAt` 倒序 ⇒ 存量用户升级后
+  // 看到的顺序**一个都不变**（这是「新增能力不许偷偷改既有行为」的要求）。
+  sessionSort: DEFAULT_SESSION_SORT,
   themeMode: 'auto', // 默认使用自动模式（跟随系统）
   themeStyle: 'legacy', // 默认使用原始主题
   // 默认不收集固定标签页（更保守）
@@ -324,6 +354,8 @@ export const SETTINGS_COLUMN_DEFAULTS: Record<string, unknown> = {
   theme_mode: DEFAULT_SETTINGS.themeMode,
   theme_style: DEFAULT_SETTINGS.themeStyle,
   collect_pinned_tabs: DEFAULT_SETTINGS.collectPinnedTabs,
+  // 2026-10-22 审计 L-10：会话排序键（活列 —— 随设置跨设备漫游）。
+  session_sort: DEFAULT_SETTINGS.sessionSort,
   // ── 退役列：它们的历史默认值（旧客户端曾经写上去的值）────────────────
   ...RETIRED_SETTING_COLUMN_DEFAULTS,
 };
@@ -625,6 +657,10 @@ class ChromeStorage {
         // 却没校验的字段 —— 脏值会让顶栏文案与列表呈现互相矛盾，且点一次按钮
         // 落回 default 分支后列表毫无变化（详见 validateLayoutMode 的注释）。
         const validatedLayoutMode = validateLayoutMode(normalizedSettings.layoutMode);
+        // 2026-10-22 审计 L-10：会话排序键只认四种（saved / accessed / name / size）。
+        // 存量用户的存储里**没有**这个键 ⇒ 这里拿到 undefined ⇒ 回落成默认
+        // 'saved'（= 旧版写死的顺序 ⇒ 升级后列表顺序不变）。
+        const validatedSessionSort = validateSessionSort(normalizedSettings.sessionSort);
 
         // ── 2026-10-20 审计 A-9：退役的设置键从本地存储里**物理清掉** ──────
         // 这五个键曾经是「有设置、无入口、无读取方」（见 types/tab.ts 的逐条结论）。
@@ -644,6 +680,7 @@ class ChromeStorage {
           normalizedSettings.themeMode !== validatedThemeMode ||
           normalizedSettings.syncIntervalMinutes !== validatedSyncInterval ||
           normalizedSettings.layoutMode !== validatedLayoutMode ||
+          normalizedSettings.sessionSort !== validatedSessionSort ||
           retiredKeysPresent.length > 0;
 
         const mergedSettings: UserSettings = {
@@ -653,6 +690,7 @@ class ChromeStorage {
           themeMode: validatedThemeMode,
           syncIntervalMinutes: validatedSyncInterval,
           layoutMode: validatedLayoutMode,
+          sessionSort: validatedSessionSort,
         };
 
         // 如果有无效值被修正，保存修正后的设置
@@ -735,6 +773,8 @@ class ChromeStorage {
       // 这里是真正落盘的那一步，与 setSettings 保持同一份字段清单
       // （2026-10-18 补 layoutMode：两个外部来源带进来的值没有别处兜底）
       layoutMode: validateLayoutMode(settings.layoutMode),
+      // 2026-10-22 审计 L-10：排序键同样只在 storage 层认这四种值。
+      sessionSort: validateSessionSort(settings.sessionSort),
     };
 
     await kvSet(STORAGE_KEYS.SETTINGS, validatedSettings);
@@ -765,6 +805,8 @@ class ChromeStorage {
       // ——导入的备份文件与云端行的合并（见 importDetailed / syncEngine 的
       // mergeCloudSettingsIntoLocal），它们都没有字段级校验。
       layoutMode: validateLayoutMode(settings.layoutMode),
+      // 2026-10-22 审计 L-10：排序键同理（云端行 / 导入备份都可能带脏值）。
+      sessionSort: validateSessionSort(settings.sessionSort),
     };
 
     const cache = cacheManager.getCache('storage');
@@ -949,6 +991,55 @@ class ChromeStorage {
 
     // KV 落定后才动内存兜底（反过来则会在清队列失败时凭空丢掉兜底里的 id）。
     for (const id of confirmed) unsyncedDeleteIds.delete(id);
+  }
+
+  /**
+   * **撤回**删除广播意图（2026-10-22 审计 P0-4：撤销「恢复即消费」）。
+   *
+   * ── 什么时候用 ────────────────────────────────────────────────────────
+   * 「恢复即消费」被撤销时：那条记录回到本机了，于是「我这儿已经没有这条
+   * 记录了，你那儿也删掉吧」这句话变成**假话**。不撤回的话，下一次上传
+   * 会把云端行标成墓碑 ⇒ 别的设备上这条会话消失 ⇒ 两台设备分叉，且无提示。
+   *
+   * ── 语义 ──────────────────────────────────────────────────────────────
+   * 撤回的是**意图**，不是「已经写上云的墓碑」。已经广播出去的墓碑撤不回来
+   * （云端行已经是墓碑了），那种情况靠**更新的印记**让「本地赢」把云端行
+   * 复位（见 core/consumeUndo.ts 的文件头）。
+   *
+   * ── fail-closed ───────────────────────────────────────────────────────
+   * 读失败 / 写失败一律抛错，**且抛错时内存兜底原样不动** —— 意图留在队列里
+   * 等下轮广播，比「撤回失败却当成撤回了」安全得多：前者是「删意图多留一轮」
+   * （代价：撤销没生效，用户看得见），后者是「删除意图凭空消失」
+   * （代价：别的设备上的会话复活，用户看不见）。
+   *
+   * 为什么必须在**写回成功之后**才动内存兜底：反过来（先删兜底再写 KV），
+   * 写失败就会把兜底里的意图弄丢 —— 而那正是「KV 写不进去」时唯一的存身处。
+   */
+  async retractPendingDeleteIds(ids: readonly string[]): Promise<void> {
+    const targets = new Set(
+      ids.filter((id): id is string => typeof id === 'string' && id.length > 0),
+    );
+    if (targets.size === 0) return;
+
+    await this.ensureVersion();
+
+    const raw = await kvGet<unknown>(STORAGE_KEYS.PENDING_DELETE_IDS);
+    const persisted = Array.isArray(raw)
+      ? raw.filter((x): x is string => typeof x === 'string')
+      : [];
+    const remaining = [...new Set(persisted.filter(id => !targets.has(id)))];
+
+    if (remaining.length !== persisted.length) {
+      if (remaining.length === 0) {
+        await kvRemove(STORAGE_KEYS.PENDING_DELETE_IDS);
+      } else {
+        await kvSet(STORAGE_KEYS.PENDING_DELETE_IDS, remaining);
+      }
+    }
+
+    // KV 落定后才动内存兜底（顺序反了会在写失败时凭空丢掉兜底里的意图）。
+    // 注意：只在上面的 KV 写**没有抛错**时才会走到这里。
+    for (const id of targets) unsyncedDeleteIds.delete(id);
   }
 
   // 获取最后同步时间
@@ -1232,7 +1323,7 @@ class ChromeStorage {
    * 按**给定的新状态**写标志（带 gen 并发保护）。
    *
    * ── 为什么是「写给定的状态」而不是「帮我清掉」 ─────────────────────────
-   * 判据的唯一真相源必须��**纯函数**（core/uploadCoverage 的
+   * 判据的唯一真相源必须是**纯函数**（core/uploadCoverage 的
    * decideRegistryAfterUpload / decideRegistryAfterRegistryWrite）。
    * 若存储层自己「顺手清掉整个键」，就会出现两处判据漂移：纯函数说
    * 「gapOpen 保留」、存储层却把键删了（gapOpen 也没了）⇒ 漏登记的那批

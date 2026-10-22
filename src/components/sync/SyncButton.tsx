@@ -458,13 +458,19 @@ export const SyncButton: React.FC<SyncButtonProps> = () => {
       <div className="sync-button flex items-center gap-2">
         {workingOperation !== 'none' && isWorking && (
           <div
-            className="h-1.5 w-16 overflow-hidden rounded-full bg-gray-200 dark:bg-slate-700"
+            className="h-1.5 w-16 overflow-hidden rounded-full theme-bg-tertiary"
             role="progressbar"
             aria-label={workingOperation === 'upload' ? '正在上传' : '正在下载'}
           >
             {/* 不定式进度：真实进度在 SW 侧，popup 拿不到回传；
-                用匀速假百分比会给虚假安全感，改为来回扫动的条 + 文字说明 */}
-            <div className="h-full w-1/2 animate-pulse rounded-full bg-current text-green-600 motion-safe:animate-[tapstack-indeterminate_1.2s_ease-in-out_infinite]" />
+                用匀速假百分比会给虚假安全感，改为来回扫动的条 + 文字说明。
+                2026-10-22 审计 U-01：轨道与进度条原先写死 bg-gray-200/dark:bg-slate-700
+                与 text-green-600 —— 固定灰阶与固定绿，在暖色主题里色相不属于主题。
+                现在都读主题令牌：轨道 = --color-bg-tertiary，
+                进度条 = --color-accent-text（accent 的「当墨色用」那一档）。
+                这里没用 --color-success：实测它在 legacy / prism / apple 浅色主题的
+                轨道上只有 2.04–2.08:1（低于非文本 3:1），accent 墨色最差 4.89:1。 */}
+            <div className="h-full w-1/2 animate-pulse rounded-full bg-current theme-accent-text motion-safe:animate-[tapstack-indeterminate_1.2s_ease-in-out_infinite]" />
           </div>
         )}
 
@@ -499,15 +505,27 @@ export const SyncButton: React.FC<SyncButtonProps> = () => {
          * 又不牺牲可用性的那个值。
          */}
         <div className="flex items-center gap-1 lg:gap-2">
+          {/*
+            2026-10-22 审计 U-01：这两颗按钮原先写死 `bg-green-100 text-green-600`
+            与 `bg-primary-100 text-primary-600` ——
+            · primary 是 Tailwind 的**固定品牌蓝**，不跟主题走 ⇒ 12 套主题 × 明暗下
+              颜色完全不变（claude 主题的顶栏同时出现绿 / 蓝 / 陶土红三种色相）；
+            · 对比度实测 3.00:1 与 4.24:1，**都低于 AA 的 4.5:1**（标签 13px）。
+            现在两处都读主题令牌：底色 --color-accent-soft、文字 --color-accent-text
+            （这组值在 6 套主题 × 明暗下都 ≥4.5:1，见 tests/guards/themeContrast.test.ts）。
+            上传/下载靠**图标形状**区分（向上入托盘 / 向下入托盘），图标语义不动。
+
+            2026-10-22 审计 U-14：圆角原先写死 `rounded-md`（= 6px），是 6 套主题里
+            唯一的离群形状（chrome/apple 的语言是 10px 软圆角，其余 8px）——
+            同一排按钮在 6 套主题下看起来像 6 个产品。现在读 --radius-btn
+            （theme-radius-btn），跟着本主题的形状语言走。 */}
           <button
             type="button"
             onClick={handleUpload}
             disabled={isWorking}
-            className={`flex items-center whitespace-nowrap px-2 lg:px-3 py-1.5 min-w-9 min-h-9 rounded-md text-sm flat-interaction ${
-              isWorking
-                ? 'bg-green-100 text-green-600'
-                : 'bg-green-100 text-green-600 hover:bg-green-200'
-              } transition-colors`}
+            className={`flex items-center whitespace-nowrap px-2 lg:px-3 py-1.5 min-w-9 min-h-9 theme-radius-btn text-sm flat-interaction theme-accent-soft theme-accent-text ${
+              isWorking ? '' : 'hover:theme-accent-wash'
+            } transition-colors`}
             title="手动上传本地会话到云端"
             aria-label="上传本地会话到云端"
           >
@@ -532,11 +550,9 @@ export const SyncButton: React.FC<SyncButtonProps> = () => {
           <button
             onClick={handleDownload}
             disabled={isWorking}
-            className={`flex items-center whitespace-nowrap px-2 lg:px-3 py-1.5 min-w-9 min-h-9 rounded-md text-sm flat-interaction ${
-              isWorking
-                ? 'bg-primary-100 text-primary-600'
-                : 'bg-primary-100 text-primary-600 hover:bg-primary-200'
-              } transition-colors`}
+            className={`flex items-center whitespace-nowrap px-2 lg:px-3 py-1.5 min-w-9 min-h-9 theme-radius-btn text-sm flat-interaction theme-accent-soft theme-accent-text ${
+              isWorking ? '' : 'hover:theme-accent-wash'
+            } transition-colors`}
             title="手动从云端下载会话到本地"
             aria-label="从云端下载会话到本地"
           >

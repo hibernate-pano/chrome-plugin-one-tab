@@ -11,7 +11,22 @@
 //
 // 判定依据（回归时按这三条）：① 域名取出现次数最多的那个；
 // ② 并列时取最先出现的（结果稳定，不随标签顺序抖动）；
-// ③ 取不到域名时回落到时间戳（不给空名字，也不破坏既有行为）。
+// ③ 取不到域名时回落到**有意义的标题**，再取不到才回落时间戳
+//    （不给空名字，也不破坏既有行为）。
+//
+// ── 2026-10-22 审计 U-06：取值链扩了一级 ────────────────────────────────
+//
+// 旧链：`域名 ?? 时间戳` —— 中间没有别的，域名取不到就直接落时间戳。
+// 新链：`域名 → 有意义的标题 → 时间戳`。
+//
+// 为什么加这一级：内网 / 本地 / 自建服务场景（`localhost:3000`、
+// `192.168.1.5`、`[::1]:8080`）以前**全部**落进时间戳兜底 ⇒
+// 一屏 10 张卡全是「标签组 10月22日 09:12」「标签组 10月22日 09:47」，
+// 连站点身份都没有。现在它们**也**产出主机名（见 hostNamePolicy 守卫），
+// 而标题这一级兜住「连主机名都没有」的那一格（`about:blank` + 有意义的标题）。
+//
+// 本文件守的是**取值链本身**；命名口径的细节（内网主机名的确切形态、
+// `pickDominantTab` 的四条契约）在 `tests/guards/sessionNaming.test.ts`。
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
@@ -84,35 +99,68 @@ test('deriveSessionNameFromChromeTabs 只有一个域名时就是那个域名', 
 });
 
 // ─────────────────────────────────────────────────────────────────────────
-// 2. 取不到域名时必须回落时间戳（不能给空名字）
+// 2. 取不到域名时必须回落（不能给空名字）
+//
+// 【口径变更 2026-10-22 U-06】回落链从「直接落时间戳」变成
+// 「有意义的标题 → 时间戳」。所以下面这几条要么给出**空标题**（逼它
+// 落到时间戳），要么明确断**标题**这一级 —— 断「域名不贡献」这个事实。
 // ─────────────────────────────────────────────────────────────────────────
 
 test('deriveSessionNameFromChromeTabs 没有可解析的 URL 时回落到时间戳', () => {
+  // 标题必须是空的：否则新链会取标题当名字（那是**正确**行为，
+  // 不是缺陷）。这里要验的是「连标题都没有 ⇒ 落时间戳」。
   assert.equal(
-    deriveSessionNameFromChromeTabs([tab('not-a-url')], now),
+    deriveSessionNameFromChromeTabs([tab('not-a-url', '')], now),
     '标签组 5月11日 08:09'
   );
 });
 
 test('deriveSessionNameFromChromeTabs 内部页/扩展页不贡献域名', () => {
+  // 断的是「不贡献域名」这个事实：内部页既不产生主机名，
+  // 也不该把别的域名稀释成并列。标题留空 ⇒ 名字落回时间戳。
   assert.equal(
     deriveSessionNameFromChromeTabs(
-      [tab('chrome://settings'), tab('chrome-extension://abc/options.html')],
+      [tab('chrome://settings', ''), tab('chrome-extension://abc/options.html', '')],
       now
     ),
     '标签组 5月11日 08:09'
   );
 });
 
-test('deriveSessionNameFromChromeTabs localhost 与裸 IP 不贡献域名', () => {
-  // 显示 "localhost" 是噪声；显示 127.0.0.1 更是 —— 它们都不是用户
-  // 记忆工作现场时用的名字。
+test('deriveSessionNameFromChromeTabs 没有域名时取首个有意义的标题当会话名', () => {
+  // U-06 新增的中间级：连域名都没有（内部页 / about:blank）时，
+  // 标题比时间戳有信息量得多 —— 「设计稿评审」比「标签组 5月11日 08:09」强。
+  assert.equal(
+    deriveSessionNameFromChromeTabs(
+      [tab('about:blank', '设计稿评审 - 2026 迭代')],
+      now
+    ),
+    '设计稿评审 - 2026 迭代'
+  );
+});
+
+test('deriveSessionNameFromChromeTabs 浏览器默认标题不算数（落回时间戳）', () => {
+  // 「New Tab」/「新标签页」是**浏览器给的空白页标题**，不含任何站点信息 ——
+  // 拿它当会话名，只是把「一屏时间戳」换成「一屏 New Tab」，信息量一样是零。
+  for (const title of ['New Tab', '新标签页', '新标签', 'New Tab Page', '']) {
+    assert.equal(
+      deriveSessionNameFromChromeTabs([tab('about:blank', title)], now),
+      '标签组 5月11日 08:09',
+      `默认标题「${title}」被当成了会话名`
+    );
+  }
+});
+
+test('deriveSessionNameFromChromeTabs localhost 与裸 IP 用主机名当会话名', () => {
+  // U-06 的核心：对自建服务而言，主机名**就是**用户记忆工作现场的方式。
+  // 以前这两者都退化成时间戳 ⇒ 一屏内网会话卡长得一模一样。
   assert.equal(
     deriveSessionNameFromChromeTabs(
       [tab('http://localhost:3000/app'), tab('http://127.0.0.1:8080/x')],
       now
     ),
-    '标签组 5月11日 08:09'
+    'localhost:3000',
+    '内网会话名退化成了时间戳 —— U-06 没修好'
   );
 });
 

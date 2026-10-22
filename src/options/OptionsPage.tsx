@@ -78,6 +78,7 @@ import {
 } from './optionsAccount';
 import { AuthModal, type AuthTab } from '@/components/auth/AuthModal';
 import { ChevronIcon } from '@/components/common/ChevronIcon';
+import { TapStackIcon } from '@/components/common/TapStackIcon';
 import { loadWebDavConfig } from '@/sync-backend/webdav/config';
 
 /** 明暗模式。ThemeContext 的 setThemeMode 收这个联合类型，
@@ -640,7 +641,14 @@ const OptionsContent: React.FC = () => {
               管理页 ⇒ 「后退」不是可靠的出路。必须有一条永远存在的显式出口。
               这条链接在页首第一屏，不需要用户先滚。 */}
           <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
-            <h1 className="text-2xl font-semibold tracking-tight text-gray-900 dark:text-gray-50">
+            {/* ── 2026-10-22 审计 L-4：设置页补上品牌标识 ──────────────────
+                管理页顶栏有橙色品牌标 + 「TapStack」，设置页首行却只有一行
+                纯文字「TapStack 设置」。而设置页是**独立标签页**，
+                很多人是从 chrome://extensions 的「扩展选项」进来的 ——
+                他看到的第一个东西不像这个产品的一部分。
+                复用同一个品牌图标组件（TapStackIcon），不新画一个。 */}
+            <h1 className="flex items-center gap-2 text-2xl font-semibold tracking-tight text-gray-900 dark:text-gray-50">
+              <TapStackIcon size={26} className="flex-shrink-0" />
               TapStack 设置
             </h1>
             <button

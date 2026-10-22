@@ -17,7 +17,14 @@
 /* ==========================================
    棱镜主题 - 浅色模式
    ========================================== */
-html[data-theme="prism"] {
+/* ── 预览作用域（L-3）──────────────────────────────────────────────────
+   设置页的主题预览卡要显示「这个主题自己长什么样」，而令牌平时只挂在
+   html 上（html[data-theme=x]）—— 预览别的主题时读不到。
+   所以把**同一个**选择器列表再挂一个 [data-theme=x]：预览元素带上
+   data-theme=x 就拿到完全相同的一份值，不复制值 ⇒ 两处不可能漂移。
+   注意：html[...] 必须留在列表**最后** —— 仓库里好几个守卫用
+   `html[data-theme=...] {` 这个字面量定位主题块。 */
+[data-theme="prism"], html[data-theme="prism"] {
     /* 背景色 - 薰衣草灰 */
     --color-bg-primary: #f5f3ff;
     --color-bg-secondary: rgba(255, 255, 255, 0.85);
@@ -28,9 +35,18 @@ html[data-theme="prism"] {
     /* 文字色 */
     --color-text-primary: #1e1b4b;
     --color-text-secondary: #3730a3;
-    --color-text-tertiary: #6366f1;
-    /* 2026-10-20：原值在 tertiary 底上仅 3.2:1，低于 AA。抬到 #5a5fe0。 */
-    --color-text-muted: #5a5fe0;
+    /* 2026-10-22 审计 U-12：原值 #6366f1 在卡片底上只有 4.41:1（阈值 4.5）——
+       三级文字是图标按钮（.btn-icon）的墨色，也是「三级文字」层级的墨色。
+       压到 #5b5bd8 ⇒ 卡片底 5.26:1、页面底 4.83:1。
+       真机复测再压一档：棱镜的卡头是**淡紫渐变**（--prism-gradient-soft），
+       比卡片底更暗，#5b5bd8 在渐变最差那档上只有 4.43:1 ⇒ 压到 #5454c8
+       （渐变卡头 5.01:1、页面底 5.50:1）。 */
+    --color-text-tertiary: #5454c8;
+    /* 2026-10-20：原值在 tertiary 底上仅 3.2:1，低于 AA。抬到 #5a5fe0。
+       2026-10-22 真机复测：#5a5fe0 在棱镜**渐变卡头**的最差那档上只有
+       4.20:1 ⇒ 压到 #5459d2（渐变卡头 4.67:1、页面底 5.12:1）。
+       仍比三级文字 #5454c8 浅一档 ⇒ 层级没被压平。 */
+    --color-text-muted: #5459d2;
 
     /* 边框色 - 半透明渐变感 */
     --color-border-default: rgba(139, 92, 246, 0.15);
@@ -89,11 +105,22 @@ html[data-theme="prism"] {
     /* 2026-10-20 审计 P1-2：原值 #5a6fd6 在弹层底（elevated #fefeff）上只有
        4.49:1 —— 认证弹窗激活标签页的 2px 下划线差一点点不到 3:1 的非文本线。
        压到 #5466cb（elevated 底 5.03:1，页面底 4.62:1，tertiary 底 4.44:1）。 */
-    --color-accent-text: #5466cb;
-    --color-accent-strong: #667eea;
+    /* 2026-10-22 审计 U-12：accent-text 是「当墨色用的 accent」。
+       原值 #5466cb 在 accent-soft（14% 靛蓝淡染）上只有 4.29:1 ——
+       数量徽章与顶栏同步按钮都读这一对。压到 #4c5cb7 ⇒ 5.07:1。 */
+    --color-accent-text: #4857ae;
+    /* 2026-10-22 真机复测：原值 #667eea 在空态图标的底（accent-wash
+       叠在渐变卡头上）只有 2.70:1，低于非文本 3:1 ⇒ 压到 #5e74d7
+       （该底 3.13:1、页面底 3.86:1）。 */
+    --color-accent-strong: #5e74d7;
     --color-accent-border: rgba(102, 126, 234, 0.45);
     --color-accent-wash: rgba(102, 126, 234, 0.12);
     --color-accent-soft: rgba(102, 126, 234, 0.14);
+    /* U-14：形状语言令牌 */
+    --radius-btn: 8px;
+    --radius-btn-icon: 8px;
+    /* U-24：卡头底色（棱镜的淡紫渐变）。 */
+    --color-card-head-bg: var(--prism-gradient-soft);
     --color-toggle-on: #667eea;
     --color-toggle-off: rgba(139, 92, 246, 0.18);
     --color-well: rgba(255, 255, 255, 0.6);
@@ -121,7 +148,10 @@ html[data-theme="prism"] {
 /* ==========================================
    棱镜主题 - 深色模式
    ========================================== */
-html[data-theme="prism"].dark {
+/* 深色态同理：html.dark [data-theme=x] 让预览元素在暗色模式下拿到
+   本主题的**深色**取值（.dark 挂在 html 上，预览是它的后代；
+   特异性 (0,2,1) 压过浅色那条 (0,1,0)）。 */
+html.dark [data-theme="prism"], html[data-theme="prism"].dark {
     /* 背景色 - 深紫蓝 */
     --color-bg-primary: #0f0a1f;
     --color-bg-secondary: rgba(22, 15, 42, 0.9);
@@ -181,6 +211,11 @@ html[data-theme="prism"].dark {
     --color-btn-hover: rgba(167, 139, 250, 0.12);
     --color-panel-translucent: rgba(30, 20, 55, 0.9);
     --color-border-translucent: rgba(139, 92, 246, 0.25);
+    /* U-14：形状语言令牌（深浅一致） */
+    --radius-btn: 8px;
+    --radius-btn-icon: 8px;
+    /* U-24：卡头底色（深色下的淡紫渐变）。 */
+    --color-card-head-bg: var(--prism-gradient-soft);
     --shadow-panel: 0 2px 8px rgba(0, 0, 0, 0.45);
     --panel-blur: saturate(140%) blur(16px);
     --color-shell: #0f0a1f;
@@ -291,9 +326,9 @@ html[data-theme="prism"] .tab-group-card:hover::before {
     opacity: 1;
 }
 
-/* 标签组头部 */
+/* 标签组头部
+   U-24：底色改由 --color-card-head-bg 令牌给（prism = 淡紫渐变）。 */
 html[data-theme="prism"] .tab-group-header {
-    background: var(--prism-gradient-soft);
     border-bottom: 1px solid var(--color-border-subtle);
 }
 
@@ -308,22 +343,11 @@ html[data-theme="prism"] .tab-group-title-hover:hover {
     color: var(--color-accent);
 }
 
-/* 标签组计数徽章 - 渐变 */
-html[data-theme="prism"] .tab-group-count {
-    background: var(--prism-gradient);
-    color: white;
-    font-weight: 600;
-    padding: 2px 10px;
-    border-radius: var(--radius-full);
-    font-size: 0.75rem;
-    box-shadow: 0 2px 8px rgba(102, 126, 234, 0.3);
-}
-
-html[data-theme="prism"].dark .tab-group-count {
-    background: var(--prism-gradient);
-    color: white;
-    box-shadow: 0 2px 12px rgba(129, 140, 248, 0.25);
-}
+/* 标签组计数徽章 —— U-13/U-16：原先是「靛蓝→紫渐变 + 写死白字」，
+   白字压在渐变左端(#667eea) 上只有 3.66:1（12px 的数字读不清）；
+   改用深墨后又变成右端(#764ba2) 只有 2.79:1 —— **同一支墨色压不住
+   跨两档的渐变**。现在徽章统一走 global.css 的强调族规则
+   （accent-soft 底 + accent-ink 文字 + 药丸），与其余 5 套主题同形同配方。 */
 
 /* 标签组时间 */
 html[data-theme="prism"] .tab-group-time {
@@ -392,7 +416,8 @@ html[data-theme="prism"] .btn-primary:active {
 
 html[data-theme="prism"] .btn-icon {
     color: var(--color-text-tertiary);
-    border-radius: var(--radius-lg);
+    /* U-14：原先 --radius-lg(12px)，与其余 5 套主题（8px）不是同一个形状语言。 */
+    border-radius: var(--radius-btn-icon);
     transition: all 0.2s ease;
 }
 
@@ -556,14 +581,12 @@ html[data-theme="prism"] .tooltip {
 /* ==========================================
    棱镜主题 - 徽章
    ========================================== */
+/* 强调徽章：与 global.css 的 .badge-accent 同配方（accent-soft 底 +
+   accent-ink 文字）。原先深色块里写死了 rgba(129,140,248,0.15)/#a5b4fc ——
+   那两个值不跟主题令牌走，主题一改就漏。 */
 html[data-theme="prism"] .badge-accent {
-    background: var(--color-accent-subtle);
-    color: var(--color-accent);
-}
-
-html[data-theme="prism"].dark .badge-accent {
-    background: rgba(129, 140, 248, 0.15);
-    color: #a5b4fc;
+    background: var(--color-accent-soft);
+    color: var(--color-accent-text);
 }
 
 /* ==========================================

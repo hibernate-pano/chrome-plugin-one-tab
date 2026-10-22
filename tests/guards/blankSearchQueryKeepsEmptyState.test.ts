@@ -93,9 +93,18 @@ const renderList = async (searchQuery: string): Promise<string> => {
   const { Provider } = await import('react-redux');
   const { createStore } = await import('@/store');
   const { TabList } = await import('@/components/tabs/TabList');
+  // 筛选状态住在**应用层**（MainApp 持有，2026-10-22 审计 P1-8：
+  // 顶栏的「回到默认视图」要能清筛选，而顶栏在列表层上面）。
+  // 所以这里用一个小包装组件在**组件内部**调 hook —— hook 不能在组件外调。
+  const { useSearchFilters } = await import('@/components/search/useSearchFilters');
   // 有搜索词时会走到 SearchResultList，它用 useToast ⇒ 必须包 ToastProvider
   // （与 tests/guards/filterBrowseRender.test.ts 同一套 harness）。
   const { ToastProvider } = await import('@/contexts/ToastContext');
+
+  const ListWithFilters = ({ query }: { query: string }) => {
+    const filterControls = useSearchFilters();
+    return React.createElement(TabList, { searchQuery: query, filterControls } as never);
+  };
 
   return renderToStaticMarkup(
     React.createElement(
@@ -104,7 +113,7 @@ const renderList = async (searchQuery: string): Promise<string> => {
       React.createElement(
         ToastProvider,
         null,
-        React.createElement(TabList, { searchQuery } as never)
+        React.createElement(ListWithFilters, { query: searchQuery })
       )
     )
   );

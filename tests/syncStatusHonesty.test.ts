@@ -323,11 +323,31 @@ describe('缺陷 1：同步状态由真实解析决定，三种状态互相可�
       '不得再按「已登录 或 自带存储」隐藏状态卡（云端未登录同样需要看到同步）'
     );
     assert.match(MENU, /resolveMenuSyncStatus\(/, '状态行必须走统一函数，不在 JSX 里各写一份');
-    // 登录按钮必须保留：未登录**且不是**自带存储时才提示。
+    // 登录按钮必须保留，但**只保留一个**。
+    //
+    // 2026-10-22 审计 L-6：原来菜单里有**两个**同义入口 ——
+    //   ① 状态卡里的内联「去登录」（由 needsLogin 驱动）
+    //   ② 一行独立的 MENU_ROW「登录 / 注册」（条件 `!isAuthenticated &&
+    //      settings.syncBackend !== 'webdav'`）
+    // 而这两个条件**逐字相同**（needsLogin ⟺ 云端后端 && 未登录）
+    // ⇒ 未登录时一个菜单里出现两个做同一件事的入口。
+    //
+    // 现在只留内联那个：它紧挨着「TapStack 云端 · 未登录」这一行状态，
+    // 因果关系一目了然；且与 WebDAV 的「去设置」内联入口是同一套语言。
+    //
+    // 守卫随之从「钉住条件字面量」改成「钉住不变量」——
+    // 钉字面量会逼着后来的人把重复入口加回来（这正是本轮之前的状态）。
+    // 行为面（自带存储看不到登录入口）由下面的四组合用例保证：
+    // `webdavAnon.needsLogin === false` / `cloudAnon.needsLogin === true`。
+    assert.doesNotMatch(
+      MENU,
+      /登录 \/ 注册/,
+      '不得再有独立的「登录 / 注册」菜单行 —— 它与状态卡里的内联「去登录」是同一个按钮'
+    );
     assert.match(
       MENU,
-      /!isAuthenticated\s*&&\s*settings\.syncBackend !== 'webdav'/,
-      '登录按钮不应出现在自带存储用户的菜单里 —— 他们不需要 TapStack 账号'
+      /syncStatusView\.needsLogin/,
+      '唯一的登录入口必须由 needsLogin 驱动（自带存储恒为 false ⇒ 他们看不到登录入口）'
     );
   });
 

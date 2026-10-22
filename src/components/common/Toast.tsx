@@ -18,6 +18,27 @@ const TYPE_LABEL: Record<ToastType, string> = {
   warning: '注意',
 };
 
+/**
+ * Toast 上的**动作按钮**（2026-10-22 审计 P0-4：撤销「恢复即消费」）。
+ *
+ * 为什么需要它：产品里有些操作是**不可逆**的（恢复会话 = 消费掉那条记录），
+ * 而「按了键之后给一条可点回去的路」是这类产品该有的最低配置 ——
+ * Chrome 自己的「重新打开已关闭的标签」、Dropbox 的「撤销删除」都是这个形状。
+ *
+ * 形状说明：
+ *   · 动作按钮**常驻可见**（不是 hover 才出现）—— 鼠标不在 toast 上时用户
+ *     也必须看得见还有一条退路；
+ *   · 点了动作之后 toast 立即退场（动作已经执行，再留着是噪音）；
+ *   · 命中区按本项目自己的规则给到 36px（`min-h-9 min-w-9`，见
+ *     components/layout/hitTarget.ts 的口径说明）。
+ */
+export interface ToastAction {
+  /** 按钮文字。必须是一个**动作**（动词），不是一个状态。 */
+  label: string;
+  /** 点击后执行。抛错由调用方自己处理（组件不吞异常，也不假装成功）。 */
+  onAction: () => void;
+}
+
 interface ToastProps {
   message: string;
   type?: ToastType;
@@ -26,6 +47,8 @@ interface ToastProps {
   visible: boolean;
   /** 在队列中的堆叠序号，用于错开底部位置，避免多条互相遮挡 */
   stackIndex?: number;
+  /** 可选的「撤销/重做」动作按钮。给了就多一条退路。 */
+  action?: ToastAction;
 }
 
 /**
@@ -43,6 +66,7 @@ export const Toast: React.FC<ToastProps> = ({
   onClose,
   visible,
   stackIndex = 0,
+  action,
 }) => {
   const [isVisible, setIsVisible] = useState(visible);
   const [animation, setAnimation] = useState('animate-fadeIn');
@@ -149,6 +173,20 @@ export const Toast: React.FC<ToastProps> = ({
 
   const typeStyles = getTypeStyles();
 
+  /**
+   * 退场：淡出 → 卸载 → 通知上层从队列里移除。
+   *
+   * 抽成函数是因为「点关闭」与「点动作」两条路径的退场必须完全一致 ——
+   * 动作执行完若还把 toast 留在原地，用户会以为动作没生效（而动作其实做完了）。
+   */
+  const dismiss = () => {
+    setAnimation('animate-fadeOut');
+    setTimeout(() => {
+      setIsVisible(false);
+      onCloseRef.current?.();
+    }, 220);
+  };
+
   // 错误要打断当前朗读（assertive），其余提示排队等空档（polite）。
   const isAssertive = type === 'error';
 
@@ -188,16 +226,26 @@ export const Toast: React.FC<ToastProps> = ({
                 {TYPE_LABEL[type]}
               </div>
               <p className="mt-1 text-sm font-medium leading-6 text-current">{message}</p>
+              {action && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    // 动作先执行、再退场：动作里可能是异步的（撤销要落盘），
+                    // 但**退场不等待它** —— 界面不该被一次网络往返卡住。
+                    // 动作失败由动作自己的调用方负责出声（组件不吞异常、
+                    // 也不假装成功）。
+                    action.onAction();
+                    dismiss();
+                  }}
+                  className="mt-2 inline-flex min-h-9 min-w-9 items-center justify-center rounded-lg border border-current/20 bg-white/60 px-3 text-sm font-semibold text-current transition-colors hover:bg-white/90 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-current dark:bg-white/10 dark:hover:bg-white/20"
+                >
+                  {action.label}
+                </button>
+              )}
             </div>
             <button
               type="button"
-              onClick={() => {
-                setAnimation('animate-fadeOut');
-                setTimeout(() => {
-                  setIsVisible(false);
-                  onCloseRef.current?.();
-                }, 220);
-              }}
+              onClick={dismiss}
               className="inline-flex h-8 w-8 items-center justify-center rounded-full theme-text-muted transition-colors hover:bg-slate-100 hover:text-slate-600 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-600 dark:hover:bg-slate-800 dark:hover:text-slate-200 dark:focus-visible:outline-slate-300"
               aria-label="关闭提示"
             >

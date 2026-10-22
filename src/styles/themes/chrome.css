@@ -6,7 +6,14 @@
    本文件 = 完整 token 集（与 legacy 同构）+ 结构性覆盖。
    交互与布局不变；legacy 观感由 global.css 默认值保证。 */
 
-html[data-theme="chrome"] {
+/* ── 预览作用域（L-3）──────────────────────────────────────────────────
+   设置页的主题预览卡要显示「这个主题自己长什么样」，而令牌平时只挂在
+   html 上（html[data-theme=x]）—— 预览别的主题时读不到。
+   所以把**同一个**选择器列表再挂一个 [data-theme=x]：预览元素带上
+   data-theme=x 就拿到完全相同的一份值，不复制值 ⇒ 两处不可能漂移。
+   注意：html[...] 必须留在列表**最后** —— 仓库里好几个守卫用
+   `html[data-theme=...] {` 这个字面量定位主题块。 */
+[data-theme="chrome"], html[data-theme="chrome"] {
   /* 表面 */
   --color-bg-primary: #ffffff;
   --color-bg-secondary: #ffffff;
@@ -51,7 +58,10 @@ html[data-theme="chrome"] {
   --radius-control: 0.5rem;
   --radius-input: 0.5rem;
   --radius-input-sm: 9999px;
-  --color-accent-text: #1967d2;
+  /* 2026-10-22 审计 U-12：accent-text 是「当墨色用的 accent」。
+     原值 #1967d2 在 accent-soft(#d2e3fc) 上只有 4.12:1 —— 数量徽章与
+     顶栏同步按钮都读这一对（12px 小字，阈值 4.5:1）。压到 #175dbd ⇒ 4.85:1。 */
+  --color-accent-text: #175dbd;
   --color-accent-strong: #1a73e8;
   --color-accent-border: rgba(26, 115, 232, 0.4);
   --color-accent-wash: rgba(26, 115, 232, 0.1);
@@ -59,6 +69,11 @@ html[data-theme="chrome"] {
   --color-note-bg: #f1f3f4;
   --color-btn-hover: #f1f3f4;
   --color-accent-soft: #d2e3fc;
+  /* U-14：形状语言令牌（chrome 的「软圆角」语言：10px，不再是药丸/正圆） */
+  --radius-btn: 10px;
+  --radius-btn-icon: 8px;
+  /* U-24：卡头底色（Material 语言：卡头无灰带，靠可见描边区分） */
+  --color-card-head-bg: transparent;
   --color-panel-translucent: rgba(255, 255, 255, 0.96);
   --color-border-translucent: rgba(218, 220, 224, 0.9);
   /* 2026-10-20 审计 P1-1：与其它主题统一形态 —— 不透明描边 + 白内芯
@@ -84,7 +99,10 @@ html[data-theme="chrome"] {
   --color-toggle-on-fg: #ffffff;
 }
 
-html[data-theme="chrome"].dark {
+/* 深色态同理：html.dark [data-theme=x] 让预览元素在暗色模式下拿到
+   本主题的**深色**取值（.dark 挂在 html 上，预览是它的后代；
+   特异性 (0,2,1) 压过浅色那条 (0,1,0)）。 */
+html.dark [data-theme="chrome"], html[data-theme="chrome"].dark {
   --color-bg-primary: #202124;
   --color-bg-secondary: #292a2d;
   --color-bg-tertiary: #35363a;
@@ -123,6 +141,11 @@ html[data-theme="chrome"].dark {
   --color-note-bg: #35363a;
   --color-btn-hover: #3c4043;
   --color-accent-soft: rgba(138, 180, 248, 0.2);
+  /* U-14：形状语言令牌（深浅一致） */
+  --radius-btn: 10px;
+  --radius-btn-icon: 8px;
+  /* U-24：卡头底色 */
+  --color-card-head-bg: transparent;
   --color-panel-translucent: rgba(41, 42, 45, 0.96);
   --color-border-translucent: rgba(95, 99, 104, 0.7);
   --focus-ring: 0 0 0 2px #8ab4f8, 0 0 0 4px #202124;
@@ -147,8 +170,8 @@ html[data-theme="chrome"] .header {
 
 /* 卡片分离靠可见描边（Material 语言），卡头无灰带 */
 html[data-theme="chrome"] .tab-group-card { border: 1px solid var(--color-border-default); }
+/* 卡头底色改由 --color-card-head-bg 令牌给（chrome = transparent） */
 html[data-theme="chrome"] .tab-group-header {
-  background: transparent;
   border-bottom: 1px solid var(--color-border-subtle);
 }
 
@@ -160,5 +183,7 @@ html[data-theme="chrome"] .search-input { border-radius: 9999px; }
 
 /* Material 状态层：hover 不抬升 */
 html[data-theme="chrome"] .tab-group-card:hover { transform: none; }
-html[data-theme="chrome"] .btn-primary { border-radius: 9999px; font-weight: 500; }
-html[data-theme="chrome"] .btn-icon { border-radius: 9999px; }
+/* U-14：药丸主按钮（9999px）与正圆图标按钮（9999px）都是「另一个产品的
+   皮肤」—— 6 套主题里只有 chrome 是圆的。现在都读形状令牌。 */
+html[data-theme="chrome"] .btn-primary { border-radius: var(--radius-btn); font-weight: 500; }
+html[data-theme="chrome"] .btn-icon { border-radius: var(--radius-btn-icon); }

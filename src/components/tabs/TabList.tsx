@@ -5,7 +5,7 @@ import { invalidateGroupsCache, onGroupsChanged } from '@/utils/storage';
 import { DraggableTabGroup } from '@/components/dnd/DraggableTabGroup';
 import { SearchResultList } from '@/components/search/SearchResultList';
 import { SearchFilterSection } from '@/components/search/SearchFilterPanel';
-import { useSearchFilters } from '@/components/search/useSearchFilters';
+import type { SearchFilterControls } from '@/components/search/searchFilterState';
 import { resolveSearchViewMode } from '@/components/search/searchBrowseMode';
 import { EmptyState } from '@/components/common/EmptyState';
 import { getEmptyStateGreeting } from '@/components/common/emptyStateGreeting';
@@ -14,15 +14,42 @@ import { saveAllSuccessShortMessage } from '@/domain/tabGroup/saveFeedbackCopy';
 import { toListErrorCopy } from './listErrorCopy';
 import { getContextOrigin } from '@/core/contextOrigin';
 import { logError } from '../../utils/log';
+import { AuthTab } from '@/components/auth/AuthModal';
+import { sendSyncCommand } from '@/shared/mutationProtocol';
+import { requestImport } from '@/components/layout/importRequest';
+import { resolveSyncFailureCopy } from '@/components/sync/syncPreviewView';
+import {
+  EMPTY_STATE_ACTION_HINT,
+  EMPTY_STATE_ACTION_LABEL,
+  resolveEmptyStateActions,
+} from './emptyStateActions';
 
 interface TabListProps {
   searchQuery: string;
+  /**
+   * 打开登录 / 注册弹窗（2026-10-22 审计 L-11）。
+   *
+   * 空态要给「登录 TapStack 云端」一个出口：换设备的老用户打开扩展
+   * 看到的是一片空白，而他最该做的那一步（登录 → 自动拉回云端会话）
+   * 当时无处可点。弹窗实例由 MainApp 持有（Header 与空态共用同一个）。
+   */
+  onOpenAuth?: (tab: AuthTab) => void;
+  /**
+   * 筛选控件（2026-10-22 审计 P1-8：状态提升到应用层）。
+   *
+   * 筛选条件原本由列表层自己持有，而顶栏那个「回到默认视图」的按钮
+   * **拿不到**它 ⇒ 那个按钮清不掉筛选条件，承诺比兑现多。
+   *
+   * 现在由 MainApp 持有并下发，Header 与 TabList 拿到的是**同一份**。
+   */
+  filterControls: SearchFilterControls;
 }
 
-export const TabList: React.FC<TabListProps> = ({ searchQuery }) => {
+export const TabList: React.FC<TabListProps> = ({ searchQuery, onOpenAuth, filterControls }) => {
   const dispatch = useAppDispatch();
   const { groups, isLoading, error, errorSource } = useAppSelector(state => state.tabs);
-  const { layoutMode } = useAppSelector(state => state.settings);
+  const { layoutMode, syncBackend } = useAppSelector(state => state.settings);
+  const { isAuthenticated } = useAppSelector(state => state.auth);
   // ── 2026-10-20 审计 A-14：筛选状态住在**列表层** ────────────────────────
   // 修复前筛选条件是 SearchResultList 的内部 useState，而该组件只在有搜索词时
   // 才挂载 ⇒ 清空搜索词就把用户设好的筛选条件一起清掉，「换个关键词继续筛」
@@ -30,7 +57,11 @@ export const TabList: React.FC<TabListProps> = ({ searchQuery }) => {
   //
   // 状态提到这里之后：结果视图卸载**不影响**筛选条件；筛选面板也在这里渲染，
   // 于是**没有搜索词时筛选器依然可达**（按域名 / 会话名 / 保存时间都能当检索入口用）。
-  const filterControls = useSearchFilters();
+  //
+  // ── 2026-10-22 审计 P1-8：又往上提了一层（现在在 MainApp） ─────────────
+  // 原因是顶栏的「回到默认视图」要能清筛选，而顶栏在列表层的**上面**，
+  // 列表层持有的状态它拿不到 ⇒ 只能再往上提一层。
+  // 筛选面板仍然在这里渲染（它属于列表视图），只是状态不再由这里产生。
   const collectPinnedTabs = useAppSelector(state => state.settings.collectPinnedTabs);
   // ── 2026-10-09 P1-4：空态主 CTA 不得 fire-and-forget ──────────────────
   // 这是**新用户第一屏**的主 CTA。原先 query 后直接 sendMessage、不 await、
@@ -89,6 +120,73 @@ export const TabList: React.FC<TabListProps> = ({ searchQuery }) => {
       setEmptySaveFeedback({ kind: 'error', text: '保存失败，请重试' });
     } finally {
       setIsSavingFromEmpty(false);
+    }
+  };
+
+  // ── 2026-10-22 审计 L-11：空态的次级出口（云端恢复 / 设置 / 导入）─────
+  // 见 components/tabs/emptyStateActions.ts 的文件头：空态只给「保存并关闭」
+  // 时，换设备的老用户看到的是一片空白，最该做的那一步（登录 / 拉回云端）
+  // 当时无处可点 —— 而自动同步默认关闭，不会替他拉。
+  const [emptyRestoreBusy, setEmptyRestoreBusy] = useState(false);
+  const [emptyRestoreFeedback, setEmptyRestoreFeedback] = useState<{ kind: 'success' | 'error'; text: string } | null>(null);
+
+  const handleRestoreFromCloud = async () => {
+    if (emptyRestoreBusy) return;
+    setEmptyRestoreBusy(true);
+    setEmptyRestoreFeedback(null);
+    try {
+      const res = await sendSyncCommand('download', { forceRemote: false, syncSettings: false });
+      if (!res.ok) {
+        // 失败原因用机器码 → 中文文案的统一映射（syncPreviewView），
+        // 不要把裸枚举弹给用户，也不要自己另写一份映射。
+        setEmptyRestoreFeedback({
+          kind: 'error',
+          text: resolveSyncFailureCopy({ reason: res.error, fallbackMessage: '无法从云端拉取数据' }),
+        });
+        return;
+      }
+      // 拉成功**不等于**拉到了东西：云端本来就可能是空的。
+      // 刷新后按真实条数说话，不谎报「已恢复 N 个会话」。
+      const loaded = await dispatch(loadGroups()).unwrap();
+      setEmptyRestoreFeedback(
+        loaded.length > 0
+          ? { kind: 'success', text: `已从云端恢复 ${loaded.length} 个会话` }
+          : { kind: 'success', text: '云端没有会话可拉回' },
+      );
+    } catch (restoreError) {
+      logError('空态从云端恢复失败:', restoreError);
+      setEmptyRestoreFeedback({ kind: 'error', text: '从云端恢复失败，请稍后重试' });
+    } finally {
+      setEmptyRestoreBusy(false);
+    }
+  };
+
+  const emptyStateActions = resolveEmptyStateActions({ syncBackend, isAuthenticated });
+
+  const showEmptyActionError = (text: string) => {
+    setEmptyRestoreFeedback({ kind: 'error', text });
+  };
+
+  const handleEmptyStateAction = (action: (typeof emptyStateActions)[number]) => {
+    switch (action) {
+      case 'login':
+        // 登录成功会触发 restoreAfterLogin 的整库拉取（显式意图不受自动同步开关约束）。
+        onOpenAuth?.('login');
+        break;
+      case 'download':
+        void handleRestoreFromCloud();
+        break;
+      case 'options':
+        // 自带存储的口令与地址只能在设置页填 —— 那里才是能解开云盘的地方。
+        chrome.runtime.openOptionsPage();
+        break;
+      case 'import':
+        // 导入的实现长在 ⋯ 菜单里（一份，不复制）：请求它展开导入子菜单。
+        if (!requestImport()) {
+          // 没有订阅者 ⇒ 点了没反应。必须出声。
+          showEmptyActionError('导入入口暂时不可用，请用右上角菜单里的「导入数据」');
+        }
+        break;
     }
   };
 
@@ -278,16 +376,16 @@ export const TabList: React.FC<TabListProps> = ({ searchQuery }) => {
           // 必须在动手前把「标签会被关闭」说出来 —— 不能等它关了才发现。
           // 2026-10-19 I-3：措辞与顶栏按钮**逐字同源**（saveAndCloseLabel），
           // 两处各写一遍文案，迟早会漂移成「一个说关闭、一个不说」。
-          description={`${saveAndCloseLabel}：把当前窗口收成可稍后找回的工作会话，当前标签随后会被关闭。固定标签默认不保存，可在设置中更改。快捷键 Alt+Shift+S 也可快速保存。`}
+          description={`${saveAndCloseLabel}：把当前窗口收成可稍后找回的工作会话，当前标签随后会被关闭。固定标签默认不保存，可在设置中更改。快捷键 Ctrl+Shift+S（macOS 为 ⌘⇧S）也可快速保存。`}
           action={
-            <div className="flex flex-col items-center gap-2">
+            <div className="flex flex-col items-center gap-3">
               <button
                 type="button"
                 onClick={handleSaveFromEmpty}
                 disabled={isSavingFromEmpty}
                 className="btn btn-primary flat-interaction px-5 py-2.5 text-sm disabled:cursor-not-allowed disabled:opacity-60"
                 aria-busy={isSavingFromEmpty}
-                title={`${saveAndCloseLabel}（快捷键 Alt+Shift+S）`}
+                title={`${saveAndCloseLabel}（快捷键 Ctrl+Shift+S，macOS 为 ⌘⇧S）`}
               >
                 {isSavingFromEmpty ? '保存中…' : saveAndCloseLabel}
               </button>
@@ -303,6 +401,47 @@ export const TabList: React.FC<TabListProps> = ({ searchQuery }) => {
                 >
                   {emptySaveFeedback.text}
                 </p>
+              )}
+
+              {/* ── 2026-10-22 审计 L-11：别的用户是怎么走到这个空态的 ──────
+                  新用户：保存一个工作会话 ⇒ 上面的主 CTA 就是对的。
+                  换设备的老用户：他的会话在云端，**自动同步默认关闭**，
+                  不会替他拉 —— 空态是他唯一能发现这件事的地方。
+                  OneTab / JSON 老用户：他的会话在文件里。
+
+                  这三条出口指向的都是**已经存在**的能力（登录 / 手动下载 /
+                  设置页 / 导入），空态缺的只是出口，不是功能。 */}
+              {emptyStateActions.length > 0 && (
+                <div className="mt-1 flex w-full max-w-md flex-col items-center gap-2 border-t theme-border-default pt-3">
+                  <p className="text-xs theme-text-muted">或者，你的会话已经在别处了：</p>
+                  <div className="flex flex-wrap items-center justify-center gap-2">
+                    {emptyStateActions.map(action => (
+                      <button
+                        key={action}
+                        type="button"
+                        onClick={() => handleEmptyStateAction(action)}
+                        disabled={emptyRestoreBusy && action === 'download'}
+                        className="theme-radius-control theme-btn-hover border theme-border-default px-3 py-1.5 text-xs font-medium text-gray-600 transition-colors disabled:cursor-not-allowed disabled:opacity-60 dark:text-gray-300"
+                        title={EMPTY_STATE_ACTION_HINT[action]}
+                        aria-label={`${EMPTY_STATE_ACTION_LABEL[action]}：${EMPTY_STATE_ACTION_HINT[action]}`}
+                      >
+                        {action === 'download' && emptyRestoreBusy ? '恢复中…' : EMPTY_STATE_ACTION_LABEL[action]}
+                      </button>
+                    ))}
+                  </div>
+                  {emptyRestoreFeedback && (
+                    <p
+                      role={emptyRestoreFeedback.kind === 'error' ? 'alert' : 'status'}
+                      className={
+                        emptyRestoreFeedback.kind === 'error'
+                          ? 'text-sm text-red-600 dark:text-red-400'
+                          : 'text-sm text-green-700 dark:text-green-400'
+                      }
+                    >
+                      {emptyRestoreFeedback.text}
+                    </p>
+                  )}
+                </div>
               )}
             </div>
           }

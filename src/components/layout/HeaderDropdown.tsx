@@ -1,6 +1,7 @@
 import React, { useState, useRef, useEffect, useLayoutEffect, useCallback, useMemo } from 'react';
 import { useAppSelector, useAppDispatch } from '@/store/hooks';
 import { signOut } from '@/store/slices/authSlice';
+import { MENU_LOGIN_LABEL } from '@/components/common/menuLabels';
 import { deleteAllGroups, deleteBroadcastWarn, loadGroups } from '@/store/slices/tabSlice';
 import { dispatchReloadSettings } from '@/store/slices/settingsSlice';
 import { sendSyncCommand } from '@/shared/mutationProtocol';
@@ -29,6 +30,7 @@ import {
   type BackendStatus,
 } from './backendStatus';
 import { remainingViewportHeight } from './dropdownLayout';
+import { autoPullStatusView } from './autoPullStatusCopy';
 import {
   collectFocusableMenuItemIndices,
   resolveMenuNavigation,
@@ -84,6 +86,16 @@ interface HeaderDropdownProps {
   /** 窄屏顶栏把「清理重复」收进了菜单，同上：复用 Header 的确认弹窗与执行路径。 */
   onRequestCleanDuplicates?: () => void;
   /**
+   * 清理重复标签**正在进行中**（2026-10-22 审计 U-20 之后的接线）。
+   *
+   * 这个动作原先住在顶栏的一颗按钮上，`disabled={isCleaningDuplicates}` 直接
+   * 钉在按钮上。U-20 之后入口搬进了本菜单 ⇒ 「清理中禁点」这件事必须跟着搬，
+   * 否则用户可以在清理进行中再点一次（同一个动作跑两遍）。
+   *
+   * 同时它也是「进行中」的可见信号：菜单项转圈 + aria-busy。
+   */
+  isCleaningDuplicates?: boolean;
+  /**
    * 重放用户引导（2026-10-20 审计 B-2）。
    *
    * 为什么菜单里要有这一项：引导是**一次性**的，跳过就再也回不去了。
@@ -92,6 +104,21 @@ interface HeaderDropdownProps {
    * 没有这一项时，他只能去翻文档或重装扩展。
    */
   onReplayOnboarding?: () => void;
+  /**
+   * 挂载时**直接展开**哪个子菜单（2026-10-22 审计 L-11）。
+   *
+   * 背景：空态给「导入数据」一个出口，而导入的实现（文件选择、解析、
+   * 成功报数量、失败报原因）长在这个组件里 —— 200 多行，
+   * 复制一份到空态就是两套实现漂移的起点。
+   * 所以空态只发一个「打开导入」的意图，由 Header 打开菜单并把导入子菜单
+   * 展开到这里：用户看到的仍是**同一个**导入流程（连格式选择都是同一组按钮）。
+   *
+   * 只在**挂载时**读一次（见 openSubmenu 的初始值），
+   * 所以必须由调用方在消费后清掉待办，否则下次打开菜单还会自动展开它。
+   */
+  initialSubmenu?: 'export' | 'import' | null;
+  /** 子菜单初始值被读走后的回调（调用方据此清待办）。 */
+  onInitialSubmenuConsumed?: () => void;
 }
 
 /** 菜单行的统一 hover 反馈。菜单行不做位移（flat-interaction 的 -translate-y 会轻微跳动），只做背景色。 */
@@ -130,7 +157,10 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({
   onOpenAuth,
   onToggleLayout,
   onRequestCleanDuplicates,
+  isCleaningDuplicates,
   onReplayOnboarding,
+  initialSubmenu,
+  onInitialSubmenuConsumed,
 }) => {
   const dispatch = useAppDispatch();
   const { isAuthenticated, user } = useAppSelector(state => state.auth);
@@ -147,7 +177,19 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({
     [groups]
   );
   const settings = useAppSelector(state => state.settings);
-  const [openSubmenu, setOpenSubmenu] = useState<'export' | 'import' | null>(null);
+  // ── 2026-10-22 审计 L-11：初始展开的子菜单 ────────────────────────────
+  // `initialSubmenu` 只在**挂载时**读一次（这个组件随菜单开关挂载/卸载，
+  // 每次打开都是新实例 ⇒ 正好是「这次要不要自动展开导入」的语义）。
+  const [openSubmenu, setOpenSubmenu] = useState<'export' | 'import' | null>(initialSubmenu ?? null);
+
+  // 挂载即消费：调用方要在这个子菜单展开状态下被读走一次，
+  // 否则「下次打开菜单还会自动展开导入」。
+  const consumedRef = useRef(false);
+  useEffect(() => {
+    if (consumedRef.current) return;
+    consumedRef.current = true;
+    onInitialSubmenuConsumed?.();
+  }, [onInitialSubmenuConsumed]);
   // 就地展开的那块面板。菜单本身可能是个滚动容器（高度上限 = 视口剩余空间），展开出来的两三行
   // 若落在可视区之外，用户看到的仍然是「点了没反应」—— 展开即把它带进视野
   // （block:'nearest' 只在需要时才滚动，不会把整份菜单跳走）。
@@ -417,19 +459,46 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({
     // 先关闭下拉菜单，提高用户体验
     onClose();
 
-    // 异步登出，不阻塞用户界面
-    dispatch(signOut())
-      .then(() => {
+    // ── 2026-10-22 审计 DS-8：退出登录时要说清「本机的数据还在」 ──────────
+    // 修复前只有一句「已退出登录」。用户合理地以为「退出 = 这个账号的数据
+    // 不在本机了」—— 而实际上**一个会话都没删**（`tab_groups` 是单键存储，
+    // 登出只清 `auth_cache`）。
+    //
+    // 这个误解有真实后果：接着登录**另一个**账号时，本机旧账号的会话会
+    // 混进新账号的列表（见数据安全审计 DS-1）。所以必须说清：
+    // 数据仍在本机、且不会上传到新账号。
+    //
+    // 数字在**登出前**取：登出动作本身可能改变 storage 的可读性
+    // （账号分键之后，未登录状态读不到那一键），那时候再数就数不准了。
+    void (async () => {
+      let localCount = groups.length;
+      try {
+        localCount = (await storage.getGroups()).length;
+      } catch (error) {
+        // 读不到就退回界面上的现值 —— 宁可给一个可能偏旧的数字，
+        // 也不能在这条披露里给出「0」。
+        logWarn('[HeaderDropdown] 读取本机会话数失败，用界面现值:', error);
+      }
+
+      // 异步登出，不阻塞用户界面
+      try {
+        await dispatch(signOut()).unwrap();
         logInfo('登出成功');
-        showToast('已退出登录', 'success');
-      })
-      .catch(error => {
-        logError('登出失败:', error);
+        showToast(
+          localCount > 0
+            ? `已退出登录。本机 ${localCount} 个会话仍保留，不会上传到其它账号。`
+            : '已退出登录',
+          'success',
+          localCount > 0 ? 5000 : undefined,
+        );
+      } catch (error) {
         // ── 2026-10-09 P2-4：失败必须出声 ──────────────────────────────
         // 菜单已经关了、界面无任何变化，只有一行 console —— 用户无法区分
         // 「没点上」与「坏了」，会以为自己已登出，而实际上仍是登录态。
+        logError('登出失败:', error);
         showToast('退出登录失败，请重试', 'error');
-      });
+      }
+    })();
   };
 
   // 移除同步功能，简化逻辑
@@ -698,6 +767,17 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({
     backend: backendStatus,
   });
 
+  // ── 2026-10-22 审计 P1-5：菜单里必须看得见「定时拉取」的状态 ────────────
+  // 「同步」是两件事：上传（一直发生）与定时拉取（**默认关闭**）。
+  // 菜单里原先只说「已配置并解锁 / 未登录」这类**后端**状态，
+  // 「定时拉取开没开」在管理页上零处可见 ⇒ 新用户以为「登录 = 开了同步」，
+  // 两台设备都在线时第一台的更新不会自动出现在第二台，
+  // 于是得出「这产品同步不可靠」的结论（真相：只需在设置里打开开关）。
+  const autoPullView = autoPullStatusView({
+    syncEnabled: settings.syncEnabled,
+    intervalMinutes: settings.syncIntervalMinutes,
+  });
+
   return (
     <div
       ref={dropdownRef}
@@ -778,7 +858,7 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({
                 }}
                 className="shrink-0 text-xs font-medium text-primary-600 underline hover:text-primary-700 dark:text-primary-400 dark:hover:text-primary-300"
               >
-                去登录
+                {MENU_LOGIN_LABEL}
               </button>
             )}
             {!syncStatusView.needsLogin && syncStatusView.actionable && (
@@ -803,28 +883,48 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({
               上次成功同步 · {lastSyncLabel}
             </p>
           )}
+          {/* 定时拉取状态（审计 P1-5）：默认关闭这件事必须在管理页看得见，
+              否则「登录 = 开了同步」的误解会一路带到「同步不可靠」的结论。
+              完整说明（关掉它少了什么、没少什么）放在 title 里。 */}
+          <p className="mt-1 text-xs theme-text-muted" title={autoPullView.title}>
+            {autoPullView.label}
+          </p>
         </div>
 
-        {!isAuthenticated && settings.syncBackend !== 'webdav' && (
-          <button role="menuitem"
-            onClick={() => onOpenAuth('login')}
-            className={MENU_ROW}
-          >
-            <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 mr-2 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 16l-4-4m0 0l4-4m-4 4h14m-5 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h7a3 3 0 013 3v1" />
-            </svg>
-            登录 / 注册
-          </button>
-        )}
+        {/* ── 2026-10-22 审计 L-6：删掉重复的「登录 / 注册」菜单行 ──────────
+           原来这里有一行独立的 MENU_ROW「登录 / 注册」，**和上面状态卡里的
+           内联「去登录」是同一个按钮**（两个条件逐字相同：
+           `needsLogin` ⟺ 云端后端 && 未登录；`!isAuthenticated && !== 'webdav'`
+           ⟺ 云端后端 && 未登录）。
+
+           一个菜单里两个同义入口 ⇒ 用户会以为它们不一样，也让菜单看起来
+           像没设计完。保留**内联**那个：它紧挨着「TapStack 云端 · 未登录」
+           这一行状态，因果关系一目了然；而且它与 WebDAV 的「去设置」内联
+           入口是同一套语言（状态卡 → 就地给下一步），对称。
+
+           ⚠️ 被删掉的是**唯一**带图标的登录入口。删除后必须确认：
+             · 云端未登录 → 状态卡内联「去登录」在（needsLogin 为真）；
+             · WebDAV 用户 → 这行本来就不渲染（条件含 !== 'webdav'），
+               且 WebDAV 不需要 TapStack 账号；
+             · 已登录 → 这行本来也不渲染。
+           三种情形都由 needsLogin 覆盖，见 tests/menuLoginEntry.test.ts。 */}
 
         <div className="border-t border-gray-200 dark:border-gray-700 my-1.5"></div>
 
-        {/* ── 窄屏补偿入口（2026-10-14）──────────────────────────────────
-            390px 实测：顶栏塞不下「布局切换 + 清理重复 + 主题 + 同步 + 保存 + 菜单」，
-            搜索框被压到 0 宽而整框消失。Header 因此在窄屏把前两个低频操作
-            收进本菜单 —— 但不能就此让它们在窄屏**消失**（那是「窄屏少个功能」）。
-            这里补回两个入口，sm 以上与顶栏按钮重复，故对 sm+ 隐藏。 */}
-        <div className="sm:hidden">
+        {/* ── 布局切换 / 清理重复标签（2026-10-14 起是「窄屏补偿入口」，
+            2026-10-22 审计 U-20 后成为**全宽度**入口）────────────────────
+            背景：390px 实测顶栏塞不下「布局切换 + 清理重复 + 主题 + 同步 + 保存 + 菜单」，
+            搜索框被压到 0 宽而整框消失（见 global.css 的 F-1 注释）。
+            当时 Header 把这两个低频操作在**窄屏**收进本菜单、sm 以上用顶栏按钮。
+
+            但那个实现的逻辑是反的：顶栏按钮写的是 `hidden sm:block`
+            ⇒ 它们**只在 ≥640px 出现**，而那正是宽度最紧的时候
+            （1280 实测操作区 434px 已比搜索框 428px 还宽）。
+            注释说「顶栏宽度优先给搜索」，实现却是「顶栏宽度优先给两个低频按钮」。
+
+            现在：顶栏不再有这两颗按钮，菜单里的入口**所有宽度都可见** ——
+            顶栏释放 72px 给搜索框，功能一条不少，且破坏性动作不再随手可点。 */}
+        <div>
           <button role="menuitem"
             onClick={() => {
               onToggleLayout?.();
@@ -846,12 +946,23 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({
               onRequestCleanDuplicates?.();
               onClose();
             }}
-            className={MENU_ROW}
+            // 清理进行中禁点：同一个破坏性动作不能跑两遍。
+            // 入口从顶栏搬进菜单后，这道防线也得跟着搬（审计 U-20 之后的接线）。
+            disabled={isCleaningDuplicates}
+            aria-busy={isCleaningDuplicates}
+            className={MENU_ROW + ' disabled:opacity-60 disabled:cursor-not-allowed'}
           >
-            <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 mr-2 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0" />
-            </svg>
-            清理重复标签
+            {isCleaningDuplicates ? (
+              <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 mr-2 animate-spin" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+              </svg>
+            ) : (
+              <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 mr-2 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0" />
+              </svg>
+            )}
+            {isCleaningDuplicates ? '正在清理重复标签…' : '清理重复标签'}
           </button>
         </div>
 

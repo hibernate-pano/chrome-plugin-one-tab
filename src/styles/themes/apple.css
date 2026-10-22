@@ -6,7 +6,14 @@
    本文件 = 完整 token 集（与 legacy 同构）+ 结构性覆盖。
    交互与布局不变；legacy 观感由 global.css 默认值保证。 */
 
-html[data-theme="apple"] {
+/* ── 预览作用域（L-3）──────────────────────────────────────────────────
+   设置页的主题预览卡要显示「这个主题自己长什么样」，而令牌平时只挂在
+   html 上（html[data-theme=x]）—— 预览别的主题时读不到。
+   所以把**同一个**选择器列表再挂一个 [data-theme=x]：预览元素带上
+   data-theme=x 就拿到完全相同的一份值，不复制值 ⇒ 两处不可能漂移。
+   注意：html[...] 必须留在列表**最后** —— 仓库里好几个守卫用
+   `html[data-theme=...] {` 这个字面量定位主题块。 */
+[data-theme="apple"], html[data-theme="apple"] {
   /* 表面 */
   --color-bg-primary: #f5f5f7;
   --color-bg-secondary: #ffffff;
@@ -51,7 +58,11 @@ html[data-theme="apple"] {
   --radius-control: 0.875rem;
   --radius-input: 0.625rem;
   --radius-input-sm: 0.625rem;
-  --color-accent-text: #0071e3;
+  /* 2026-10-22 审计 U-12：accent-text 是「当墨色用的 accent」。
+     原值 #0071e3 在 accent-soft（12% 蓝淡染）上只有 3.98:1、页面底 4.31:1
+     —— 数量徽章 / 顶栏同步按钮 / 强调文字都读它（12px 小字，阈值 4.5:1）。
+     压到 #0063c8 ⇒ 全部 ≥4.9:1。 */
+  --color-accent-text: #0063c8;
   --color-accent-strong: #0071e3;
   --color-accent-border: rgba(0, 113, 227, 0.4);
   --color-accent-wash: rgba(0, 113, 227, 0.1);
@@ -59,6 +70,11 @@ html[data-theme="apple"] {
   --color-note-bg: #f5f5f7;
   --color-btn-hover: rgba(0, 0, 0, 0.05);
   --color-accent-soft: rgba(0, 113, 227, 0.12);
+  /* U-14：形状语言令牌（apple 的「软圆角」语言：10px） */
+  --radius-btn: 10px;
+  --radius-btn-icon: 8px;
+  /* U-24：卡头底色（apple 的卡头与卡片同底，只靠一条分割线分） */
+  --color-card-head-bg: transparent;
   --color-panel-translucent: rgba(255, 255, 255, 0.72);
   --color-border-translucent: rgba(0, 0, 0, 0.08);
   /* 2026-10-20 审计 P1-1：原先是 22% 透明度的一圈柔光，叠在底上只有
@@ -84,7 +100,10 @@ html[data-theme="apple"] {
   --color-toggle-on-fg: #0f172a;
 }
 
-html[data-theme="apple"].dark {
+/* 深色态同理：html.dark [data-theme=x] 让预览元素在暗色模式下拿到
+   本主题的**深色**取值（.dark 挂在 html 上，预览是它的后代；
+   特异性 (0,2,1) 压过浅色那条 (0,1,0)）。 */
+html.dark [data-theme="apple"], html[data-theme="apple"].dark {
   --color-bg-primary: #000000;
   --color-bg-secondary: #1c1c1e;
   --color-bg-tertiary: #2c2c2e;
@@ -123,6 +142,11 @@ html[data-theme="apple"].dark {
   --color-note-bg: #2c2c2e;
   --color-btn-hover: rgba(255, 255, 255, 0.08);
   --color-accent-soft: rgba(10, 132, 255, 0.2);
+  /* U-14：形状语言令牌（深浅一致） */
+  --radius-btn: 10px;
+  --radius-btn-icon: 8px;
+  /* U-24：卡头底色 */
+  --color-card-head-bg: transparent;
   --color-panel-translucent: rgba(28, 28, 30, 0.72);
   --color-border-translucent: rgba(255, 255, 255, 0.1);
   /* 深色下同理：不透明描边 + 深色内芯把环与输入框底色隔开。 */
@@ -147,16 +171,17 @@ html[data-theme="apple"] .header {
   border-bottom: 1px solid var(--color-border-subtle);
 }
 
+/* 卡头底色改由 --color-card-head-bg 令牌给（apple = transparent） */
 html[data-theme="apple"] .tab-group-header {
-  background: transparent;
   border-bottom: 1px solid var(--color-border-subtle);
 }
 
 html[data-theme="apple"] .tab-item { background: transparent; }
 html[data-theme="apple"] .tab-item:hover { background: var(--color-row-hover); }
 
-html[data-theme="apple"] .btn-primary { border-radius: 9999px; font-weight: 500; }
-html[data-theme="apple"] .btn-icon { border-radius: 8px; }
+/* U-14：药丸主按钮（9999px）改读形状令牌（apple = 10px）。 */
+html[data-theme="apple"] .btn-primary { border-radius: var(--radius-btn); font-weight: 500; }
+html[data-theme="apple"] .btn-icon { border-radius: var(--radius-btn-icon); }
 
 /* 签名动效：卡片 hover 轻抬 1px（"可拾起"感） */
 html[data-theme="apple"] .tab-group-card {

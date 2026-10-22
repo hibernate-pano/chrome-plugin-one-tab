@@ -102,22 +102,28 @@ interface ThemeOption {
   label: string;
   description: string;
   icon: React.ReactNode;
+  /**
+   * 该主题的**品牌色**（= 它在浅色模式下的 --color-accent）。
+   *
+   * 2026-10-22 审计 L-3：预览色块原先是 6 套主题各 4 个写死的 hex
+   * （previewColors），暗色模式下不跟随 ⇒ 用户在设置页看到的不是
+   * 自己正在用的界面。现在预览读**该主题自己的 CSS 变量**，
+   * 这个字段只剩一个用途：当某个主题没声明 --color-accent 时，
+   * 圆点退回品牌色（不悬空）。
+   */
   primaryColor: string;
-  secondaryColor: string;
-  previewColors: {
-    bg: string;
-    card: string;
-    accent: string;
-    text: string;
-  };
 }
 
 /**
  * 在给定底色上选一个读得清的墨色（黑或白）。
  *
  * 2026-10-20 审计 P2-5：主题色圆点上的图标原先写死 `text-white`，
- * 而 creamy 的 primaryColor 是 #d4a574（浅棕）—— 白字只有 2.23:1，
+ * 而 creamy 的强调色是浅棕 —— 白字只有 2.23:1，
  * 「当前选中」的勾完全看不见（WCAG 1.4.11 非文本对比要 ≥3:1）。
+ *
+ * 现在圆点的底色读主题自己的 --color-accent、墨色读 --color-accent-fg
+ * （各主题都保证 ≥4.5:1，见 tests/guards/themeContrast.test.ts）；
+ * 这个函数是**兜底**：主题没给 --color-accent-fg 时，按底色亮度算一个。
  *
  * 判据用 WCAG 的相对亮度公式：L > 0.179 时用黑字，否则用白字
  * （这是 WCAG 推荐的「与黑/白对比取高者」阈值点，此时两者都比 4.5:1 高）。
@@ -143,28 +149,14 @@ const themeOptions: ThemeOption[] = [
     label: '原始',
     description: '默认主题',
     icon: <LegacyIcon />,
-    primaryColor: '#007acc',
-    secondaryColor: '#0ea5e9',
-    previewColors: {
-      bg: '#f5f5f5',
-      card: '#ffffff',
-      accent: '#007acc',
-      text: '#333333',
-    },
+    primaryColor: '#2563eb',
   },
   {
     value: 'creamy',
     label: '奶油',
     description: '温暖柔和',
     icon: <CreamyIcon />,
-    primaryColor: '#d4a574',
-    secondaryColor: '#e8c9a8',
-    previewColors: {
-      bg: '#faf8f5',
-      card: '#fffdf9',
-      accent: '#d4a574',
-      text: '#5c4a3a',
-    },
+    primaryColor: '#d97706',
   },
   {
     value: 'apple',
@@ -172,13 +164,6 @@ const themeOptions: ThemeOption[] = [
     description: '系统质感',
     icon: <AppleIcon />,
     primaryColor: '#0071e3',
-    secondaryColor: '#0a84ff',
-    previewColors: {
-      bg: '#f5f5f7',
-      card: '#ffffff',
-      accent: '#0071e3',
-      text: '#1d1d1f',
-    },
   },
   {
     value: 'chrome',
@@ -186,27 +171,13 @@ const themeOptions: ThemeOption[] = [
     description: '浏览器原生',
     icon: <ChromeIcon />,
     primaryColor: '#1a73e8',
-    secondaryColor: '#8ab4f8',
-    previewColors: {
-      bg: '#f1f3f4',
-      card: '#ffffff',
-      accent: '#1a73e8',
-      text: '#202124',
-    },
   },
   {
     value: 'claude',
     label: 'Claude',
     description: '暖纸编辑感',
     icon: <ClaudeIcon />,
-    primaryColor: '#d97757',
-    secondaryColor: '#e08b6d',
-    previewColors: {
-      bg: '#f0eee6',
-      card: '#faf9f5',
-      accent: '#d97757',
-      text: '#141413',
-    },
+    primaryColor: '#c2603f',
   },
   {
     value: 'prism',
@@ -214,67 +185,57 @@ const themeOptions: ThemeOption[] = [
     description: '毛玻璃渐变',
     icon: <PrismIcon />,
     primaryColor: '#667eea',
-    secondaryColor: '#764ba2',
-    previewColors: {
-      bg: '#f5f3ff',
-      card: 'rgba(255,255,255,0.85)',
-      accent: '#667eea',
-      text: '#1e1b4b',
-    },
   },
 ];
 
 
-// 主题预览卡片组件
+/**
+ * 主题预览卡（L-3）。
+ *
+ * 2026-10-22 审计 L-3：这里原先画的是**写死的浅色色块**
+ * （每个主题 4 个 hex 存在 previewColors 里），于是：
+ * · 切到暗色模式，预览还是浅色的 —— 用户看到的不是自己正在用的界面；
+ * · apple / chrome 的预览几乎一模一样（白底 + 一根蓝条），选哪个没区别。
+ *
+ * 现在预览元素自己带上 data-theme={主题 id}：主题文件里
+ * `[data-theme="x"], html[data-theme="x"] { …令牌… }` 那条规则会把
+ * **该主题自己的**令牌挂到这个元素上（深色态同理，走 html.dark 那条），
+ * 于是预览读的是这个主题的 CSS 变量，**跟着明暗模式一起变**。
+ * 令牌值仍然只有主题文件里那一份 —— 预览不复制任何色值，两边不可能漂移。
+ *
+ * 画的是一张「会话卡」的小模型：左侧强调条 + 标题条 + 两条标签行。
+ * 里面的色块是**示意性的线框**（不是文字），所以只要求层次看得清，
+ * 不按正文对比度要求；真正承载信息的是标题条的墨色（--color-text-secondary）。
+ */
 const ThemePreviewCard: React.FC<{
   option: ThemeOption;
   isSelected: boolean;
   isHovered: boolean;
-}> = ({ option, isSelected, isHovered }) => {
-  const { previewColors } = option;
-
-  return (
-    <div
-      className={cn(
-        "w-full h-10 rounded-md overflow-hidden border transition-all duration-200",
-        isSelected
-          ? "border-blue-500 ring-2 ring-blue-500/20"
-          : isHovered
-            ? "border-gray-300 dark:border-gray-600"
-            : "border-gray-200 dark:border-gray-700"
-      )}
-      style={{ backgroundColor: previewColors.bg }}
-    >
-      {/* 迷你预览布局 */}
-      <div className="flex h-full">
-        {/* 侧边栏预览 */}
-        <div
-          className="w-2 h-full"
-          style={{ backgroundColor: previewColors.accent }}
-        />
-        {/* 内容区预览 */}
-        <div className="flex-1 p-1 flex flex-col justify-center gap-0.5">
-          {/* 标题栏 */}
-          <div
-            className="h-1.5 w-8 rounded-full"
-            style={{ backgroundColor: previewColors.text, opacity: 0.7 }}
-          />
-          {/* 卡片预览 */}
-          <div className="flex gap-0.5">
-            <div
-              className="h-3 w-6 rounded-sm"
-              style={{ backgroundColor: previewColors.card, boxShadow: '0 1px 2px rgba(0,0,0,0.1)' }}
-            />
-            <div
-              className="h-3 w-6 rounded-sm"
-              style={{ backgroundColor: previewColors.card, boxShadow: '0 1px 2px rgba(0,0,0,0.1)' }}
-            />
-          </div>
-        </div>
+}> = ({ option, isSelected, isHovered }) => (
+  <div
+    data-theme={option.value}
+    className={cn(
+      "w-full h-10 overflow-hidden border transition-all duration-200 theme-radius-card",
+      isSelected
+        ? "theme-accent-ink-border ring-2 theme-accent-ring"
+        : isHovered
+          ? "theme-border-default"
+          : "theme-border-subtle"
+    )}
+  >
+    <div className="flex h-full theme-bg-secondary">
+      {/* 左侧强调条：本主题的 accent */}
+      <div className="w-1.5 h-full theme-accent-bg" />
+      <div className="flex-1 min-w-0 p-1.5 flex flex-col justify-center gap-1">
+        {/* 会话组标题条：bg-current 取 theme-text-secondary 的墨色 */}
+        <div className="h-1.5 w-10 rounded-full theme-text-secondary bg-current" />
+        {/* 两条标签行 */}
+        <div className="h-1.5 w-full rounded-full theme-bg-tertiary" />
+        <div className="h-1.5 w-3/5 rounded-full theme-bg-tertiary" />
       </div>
     </div>
-  );
-};
+  </div>
+);
 
 export const ThemeStyleSelector: React.FC<ThemeStyleSelectorProps> = ({
   className = '',
@@ -315,12 +276,15 @@ export const ThemeStyleSelector: React.FC<ThemeStyleSelectorProps> = ({
           <span
             className={cn(
               "inline-flex items-center gap-1.5 px-2 py-0.5 text-xs font-medium rounded-full",
-              "bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-300"
+              "theme-bg-tertiary theme-text-secondary"
             )}
           >
             <span
+              data-theme={currentTheme.value}
               className="w-2 h-2 rounded-full shrink-0"
-              style={{ backgroundColor: currentTheme.primaryColor }}
+              // 这个主题自己的强调色（跟随明暗）—— 写死品牌色时，暗色模式下
+              // 会是一块比背景还暗的脏色。主题没给 --color-accent 时退回品牌色。
+              style={{ background: `var(--color-accent, ${currentTheme.primaryColor})` }}
             />
             当前：{currentTheme.label}
           </span>
@@ -330,10 +294,17 @@ export const ThemeStyleSelector: React.FC<ThemeStyleSelectorProps> = ({
         onClick={toggleExpanded}
         className={cn(
           "w-full text-left px-4 py-2.5 text-sm flat-interaction",
-          "text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700/50",
+          // L-3：原先写死 text-gray-700 / hover:bg-gray-50 —— 固定灰在暖色
+          // 主题（creamy/claude）里色相不属于主题，且暗色模式下那套
+          // dark: 变体又与浅色那套不是同一种灰。改读主题令牌。
+          "theme-text-secondary hover:theme-btn-hover",
           "flex items-center justify-between gap-2",
-          "transition-colors duration-150",
-          "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-1"
+          "transition-colors duration-150"
+          // 2026-10-22 审计 U-23：原先写 `focus-visible:outline-none
+          // focus-visible:ring-2 focus-visible:ring-blue-500` —— 它把全站那套
+          // --color-focus-ring 换成了 Tailwind 的**固定蓝**，于是在 claude /
+          // creamy 的设置页里，键盘用户看到一圈不属于主题的蓝。
+          // 现在不写任何 focus 样式，让 global.css 的全局 :focus-visible 生效。
         )}
         aria-expanded={expanded}
         aria-controls="theme-options-panel"
@@ -348,12 +319,13 @@ export const ThemeStyleSelector: React.FC<ThemeStyleSelectorProps> = ({
           <span
             className={cn(
               "inline-flex items-center gap-1.5 px-2 py-0.5 text-xs font-medium rounded-full",
-              "bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-300"
+              "theme-bg-tertiary theme-text-secondary"
             )}
           >
             <span
+              data-theme={currentTheme.value}
               className="w-2 h-2 rounded-full shrink-0"
-              style={{ backgroundColor: currentTheme.primaryColor }}
+              style={{ background: `var(--color-accent, ${currentTheme.primaryColor})` }}
             />
             {currentTheme.label}
           </span>
@@ -379,7 +351,9 @@ export const ThemeStyleSelector: React.FC<ThemeStyleSelectorProps> = ({
       >
         <div
           hidden={!expanded}
-          className="bg-gray-50/50 dark:bg-gray-800/30 border-y border-gray-200/50 dark:border-gray-700/50"
+          // L-3：原先写死 bg-gray-50/50 + dark:bg-gray-800/30 —— 固定灰
+          // 不跟主题走（暖色主题里那块灰是冷的）。改读主题的半透明面板色。
+          className="theme-panel-translucent border-y theme-border-subtle"
         >
           <div className="grid grid-cols-2 gap-1.5 p-2">
             {themeOptions.map((option) => {
@@ -394,9 +368,12 @@ export const ThemeStyleSelector: React.FC<ThemeStyleSelectorProps> = ({
                   onMouseLeave={() => setHoveredTheme(null)}
                   disabled={isTransitioning}
                   className={cn(
-                    "relative p-2 rounded-lg text-left flat-interaction",
+                    // 圆角读主题的卡片令牌：里面的预览卡也是 theme-radius-card，
+                    // 两层圆角必须同源，否则 apple（0.875rem）里内层圆角会
+                    // 顶穿外层的 rounded-lg(8px)。
+                    "relative p-2 theme-radius-card text-left flat-interaction",
                     "transition-all duration-150",
-                    "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500",
+                    // U-23：焦点环交给全局 :focus-visible（读 --color-focus-ring）。
                     // 2026-10-20 审计 D-2：选中行原先写死 `bg-white dark:bg-gray-700`
                     // —— 那个 gray-700(#374151) 不跟主题走，比主题自己的面更深，
                     // 于是行内的 10px 说明文字（theme-text-muted）在深色下只有
@@ -404,7 +381,7 @@ export const ThemeStyleSelector: React.FC<ThemeStyleSelectorProps> = ({
                     // 改用主题令牌 theme-bg-elevated：各主题的 muted 对 elevated
                     // 实测均 ≥4.5:1（见 tests/guards/a11yTextAndFocusTokens.test.ts）。
                     isSelected
-                      ? "theme-bg-elevated shadow-sm ring-2 ring-blue-500/30"
+                      ? "theme-bg-elevated shadow-sm ring-2 theme-accent-ring"
                       : "hover:theme-btn-hover",
                     isTransitioning && "opacity-50 cursor-not-allowed"
                   )}
@@ -423,19 +400,29 @@ export const ThemeStyleSelector: React.FC<ThemeStyleSelectorProps> = ({
                   <div className="flex items-center gap-2 mt-2">
                     {/* 颜色指示器
                         2026-10-20 审计 P2-5：原先写死 `text-white` 压 option.primaryColor。
-                        creamy 的 primaryColor 是 #d4a574（浅棕），白字只有 2.23:1 ——
+                        creamy 的 primaryColor 是浅棕，白字只有 2.23:1 ——
                         主题卡片上的「当前选中」勾根本看不见。
-                        现在按底色亮度选墨色（黑或白），两者都能 ≥4.5:1。 */}
+                        2026-10-22 审计 L-3：底色也一起改成**该主题自己的**
+                        --color-accent（圆点自带 data-theme=主题 id）——
+                        写死品牌色时，暗色模式下的圆点是一块比背景还暗的脏色。 */}
                     <div
+                      data-theme={option.value}
                       className={cn(
                         "w-5 h-5 rounded-full flex items-center justify-center",
                         "transition-transform duration-150",
                         isSelected && "scale-110"
                       )}
                       style={{
-                        backgroundColor: option.primaryColor,
-                        color: readableInkOn(option.primaryColor),
-                        boxShadow: isSelected ? `0 0 8px ${option.primaryColor}50` : 'none'
+                        // 底色：本主题自己的强调色（跟随明暗）。
+                        background: `var(--color-accent, ${option.primaryColor})`,
+                        // 墨色：主题给的「accent 实底上的墨色」—— 6 套主题 × 明暗
+                        // 都保证它在 accent 上 ≥4.5:1（见 tests/guards/themeContrast.test.ts）。
+                        // 万一某个主题没给这个令牌，退回按底色亮度算的墨色
+                        // （creamy 那种浅棕底上白字只有 2.23:1）。
+                        color: `var(--color-accent-fg, ${readableInkOn(option.primaryColor)})`,
+                        boxShadow: isSelected
+                          ? '0 0 8px color-mix(in srgb, var(--color-accent) 40%, transparent)'
+                          : 'none'
                       }}
                     >
                       {isSelected ? (
@@ -449,7 +436,7 @@ export const ThemeStyleSelector: React.FC<ThemeStyleSelectorProps> = ({
                     <div className="flex-1 min-w-0">
                       <div className={cn(
                         "text-xs font-medium truncate",
-                        isSelected ? "text-gray-900 dark:text-gray-100" : "text-gray-700 dark:text-gray-300"
+                        isSelected ? "theme-text-primary" : "theme-text-secondary"
                       )}>
                         {option.label}
                       </div>
@@ -465,9 +452,9 @@ export const ThemeStyleSelector: React.FC<ThemeStyleSelectorProps> = ({
 
           {/* 过渡状态提示 */}
           {isTransitioning && (
-            <div className="px-3 py-1.5 text-xs theme-text-muted text-center border-t border-gray-200/50 dark:border-gray-700/50">
+            <div className="px-3 py-1.5 text-xs theme-text-muted text-center border-t theme-border-subtle">
               <span className="inline-flex items-center gap-1.5">
-                <span className="w-1.5 h-1.5 rounded-full bg-blue-500 animate-pulse" />
+                <span className="w-1.5 h-1.5 rounded-full theme-accent-bg animate-pulse" />
                 正在切换主题...
               </span>
             </div>

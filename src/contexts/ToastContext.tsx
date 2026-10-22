@@ -1,12 +1,25 @@
 import React, { createContext, useContext, useState, ReactNode, useEffect, useCallback } from 'react';
-import Toast, { ToastType } from '../components/common/Toast';
+import Toast, { ToastType, ToastAction } from '../components/common/Toast';
 import ConfirmDialog, { ConfirmDialogProps } from '../components/common/ConfirmDialog';
 import AlertDialog, { AlertDialogProps } from '../components/common/AlertDialog';
 import { errorHandler } from '@/utils/errorHandler';
 import { logError } from '../utils/log';
 
 interface ToastContextType {
-  showToast: (message: string, type?: ToastType, duration?: number) => void;
+  /**
+   * 弹一条提示。
+   *
+   * 第 4 个参数是**可选的动作按钮**（2026-10-22 审计 P0-4）：
+   * 不可逆的操作（恢复会话 = 消费掉那条记录）必须给用户一条**点得回去**的路。
+   * 用位置参数而不是 options 对象，是因为这个函数有 100+ 处调用点，
+   * 改签名会让每一次调用都变成一次无谓的改写。
+   */
+  showToast: (
+    message: string,
+    type?: ToastType,
+    duration?: number,
+    action?: ToastAction,
+  ) => void;
   showConfirm: (options: Omit<ConfirmDialogProps, 'visible'>) => void;
   showAlert: (options: Omit<AlertDialogProps, 'visible'>) => void;
 }
@@ -31,6 +44,8 @@ interface QueuedToast {
   message: string;
   type: ToastType;
   duration: number;
+  /** 可选的「撤销」动作按钮（2026-10-22 审计 P0-4）。 */
+  action?: ToastAction;
 }
 
 let toastSeq = 0;
@@ -58,11 +73,19 @@ export const ToastProvider: React.FC<ToastProviderProps> = ({ children }) => {
     onClose: () => { },
   });
 
-  const showToast = useCallback((message: string, type: ToastType = 'success', duration: number = 3000) => {
+  const showToast = useCallback((
+    message: string,
+    type: ToastType = 'success',
+    duration: number = 3000,
+    action?: ToastAction,
+  ) => {
     const id = ++toastSeq;
     // error 默认常驻，需用户手动关闭，避免关键失败一闪而过
     const effectiveDuration = type === 'error' && duration === 3000 ? 0 : duration;
-    setQueue(prev => [...prev.slice(-2), { id, visible: true, message, type, duration: effectiveDuration }]);
+    setQueue(prev => [
+      ...prev.slice(-2),
+      { id, visible: true, message, type, duration: effectiveDuration, action },
+    ]);
   }, []);
 
   const dismissToast = useCallback((id: number) => {
@@ -108,6 +131,7 @@ export const ToastProvider: React.FC<ToastProviderProps> = ({ children }) => {
           message={item.message}
           type={item.type}
           duration={item.duration}
+          action={item.action}
           stackIndex={queue.length - 1 - index}
           onClose={() => dismissToast(item.id)}
         />

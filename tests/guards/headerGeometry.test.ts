@@ -343,12 +343,29 @@ describe('G4 顶栏按钮命中区必须够大', () => {
   });
 
   it('两颗同步按钮都必须带上达标的最小尺寸', () => {
-    const buttonClassNames = [...SYNC_BUTTON.matchAll(/className=\{`([^`]+)`\}/g)]
-      .map(m => m[1])
-      .filter(c => c.includes('rounded-md text-sm flat-interaction'));
-    assert.ok(
-      buttonClassNames.length >= 2,
-      `至少要有两颗同步按钮（实际 ${buttonClassNames.length}）`
+    // 【锚点】按 **aria-label** 找按钮，不按类名字符串找。
+    // 原来的锚点是 `rounded-md text-sm flat-interaction` —— 那是**会被
+    // 主题改造换掉**的类名片段：2026-10-22 审计 U-14 把这两颗按钮的
+    // 圆角从写死的 rounded-md 改成读 --radius-btn 的 theme-radius-btn，
+    // 判据本身没问题，锚点却过时了 ⇒ 守卫报「实际 0 颗按钮」而红。
+    // 判据钉的是「这两颗按钮的命中区够大」，所以只该钉**稳定**的锚点：
+    // 无障碍名（aria-label）是给读屏软件看的，不会因为换主题而变。
+    const SYNC_BUTTON_LABELS = ['上传本地会话到云端', '从云端下载会话到本地'];
+    const buttonClassNames = SYNC_BUTTON_LABELS.map(label => {
+      const at = SYNC_BUTTON.indexOf(`aria-label="${label}"`);
+      assert.ok(at !== -1, `SyncButton 里找不到 aria-label="${label}" 的按钮`);
+      // 往前找这个按钮自己的 <button 开头，再往后取它的 className。
+      const open = SYNC_BUTTON.lastIndexOf('<button', at);
+      assert.ok(open !== -1, `找不到 aria-label="${label}" 所属的 <button 标签`);
+      const segment = SYNC_BUTTON.slice(open, at);
+      const m = /className=\{`([^`]+)`\}/.exec(segment);
+      assert.ok(m, `找不到 aria-label="${label}" 对应按钮的 className`);
+      return m[1];
+    });
+    assert.equal(
+      buttonClassNames.length,
+      2,
+      `应当正好是上传 / 下载两颗同步按钮（实际 ${buttonClassNames.length}）`
     );
     for (const cls of buttonClassNames) {
       assert.ok(

@@ -405,15 +405,35 @@ chrome.alarms.onAlarm.addListener((alarm) => {
 });
 
 // 监听扩展图标点击事件
+//
+// ── 2026-10-22 审计 P0-1：点图标**不再**保存并关闭当前窗口 ──────────────
+//
+// 原来的行为：showNotification('正在保存当前窗口为会话…') → saveAllTabs(tabs)
+// → 关掉这些标签 → 打开管理器。全程**零确认**。
+//
+// 而用户点工具栏图标的心智模型是「打开这个扩展看看」——和所有其它扩展一样，
+// 不是「把我这一窗标签销毁掉」。于是产品的第一句话就不可逆：装完第一次点图标，
+// 12 个标签消失。而「我想看看上周存的会话」和「我要把这一窗收起来」是**两个
+// 意图**，共用一个手势 ⇒ 破坏性的那一个总会被误触。
+//
+// 这条已被独立标记两次：`docs/audit-2026-10-20-round1.md:342`（P0，未修）、
+// `docs/audit-2026-10-22-product-director.md`（P0-1，2026-10-22 复核仍成立）。
+//
+// 现在：点图标 = **只打开会话管理器**，不动当前窗口任何一个标签。
+// 「保存并关闭」仍然是产品的核心动作，但改由**明确的意图**触发：
+//   · 管理页顶栏的「保存并关闭」按钮（按钮上有字，用户看得见自己在干什么）；
+//   · 右键扩展图标 →「保存其他标签并关闭」/「保存当前标签页并关闭」；
+//   · 快捷键 Ctrl+Shift+S（macOS ⌘⇧S）保存整窗并关闭 —— 键位与语义都没变。
+//
+// 这不是把功能删掉，是把**不可逆的破坏**从「随手一点」挪到「明确的一步」。
 chrome.action.onClicked.addListener(async () => {
   try {
-    await showNotification('正在保存当前窗口为会话...');
-    const tabs = await chrome.tabs.query({ currentWindow: true });
-    await tabManager.saveAllTabs(tabs);
-    await tabManager.openTabManager(true);
+    // 不传 shouldRefresh：管理器开着时刷新它会丢滚动位置，
+    // 而它的数据本来就靠 storage 变更事件保持新鲜。
+    await tabManager.openTabManager();
   } catch (error) {
-    logError('处理扩展图标点击失败:', error);
-    await showNotification('无法保存当前窗口，请重试。如果问题持续，请重启浏览器。', 'TapStack', 'error');
+    logError('打开标签管理器失败:', error);
+    await showNotification('无法打开会话管理器，请重试。如果问题持续，请重启浏览器。', 'TapStack', 'error');
   }
 });
 
@@ -428,7 +448,16 @@ chrome.commands.onCommand.addListener(async (command) => {
 
   try {
     switch (command) {
-      case 'save_all_tabs': {
+      // Alt+Shift+S 是 Ctrl+Shift+S 的等价备用键位（两个 command id，
+      // 同一个动作）。以前 Ctrl+Shift+S 挂在 `_execute_action` 上 ——
+      // 那条命令走的是「点图标」，也就是**保存整窗并关闭**；现在图标改成
+      // 只打开管理器，所以 Ctrl+Shift+S 必须挂到一个真的保存命令上，
+      // 否则「Ctrl+Shift+S 保存整窗并关闭」这句话就成了假话。
+      //
+      // 两条 case 故意相邻且中间不夹注释：空 case 的 fall-through 是 eslint
+      // no-fallthrough 认可的写法，但**中间夹注释**会让它判成漏写 break。
+      case 'save_all_tabs':
+      case 'save_all_tabs_alt': {
         logInfo('快捷键保存所有标签页');
         const allTabs = await chrome.tabs.query({ currentWindow: true });
         await tabManager.saveAllTabs(allTabs);

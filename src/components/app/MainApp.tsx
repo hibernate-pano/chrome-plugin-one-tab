@@ -6,6 +6,8 @@ import { loadSettings } from '@/store/slices/settingsSlice';
 import { OnboardingGuide } from '@/components/onboarding/OnboardingGuide';
 import { shouldShowOnboarding } from '@/utils/onboardingStorage';
 import { getAppVersionLabel } from '@/utils/runtimeInfo';
+import { AuthModal, AuthTab } from '@/components/auth/AuthModal';
+import { useSearchFilters } from '@/components/search/useSearchFilters';
 
 // 导入样式文件
 import '@/styles/drag-drop.css';
@@ -53,6 +55,32 @@ export const MainApp: React.FC = () => {
     setShowOnboarding(true);
   }, []);
 
+  // ── 2026-10-22 审计 L-11：登录弹窗提升到 MainApp ──────────────────────
+  // 弹窗原先寄生在 Header 里 ⇒ **只有顶栏这一个地方能开它**。
+  // 而空态（一个会话都没有）需要给「登录 TapStack 云端」一个出口：
+  // 换设备的老用户打开扩展看到的是一片空白，
+  // 他最该做的那一步（登录 → 自动拉回云端会话）当时无处可点。
+  //
+  // 提升到 MainApp 后，Header 与空态共用**同一个**弹窗实例 ——
+  // 不会出现两个 portal、两个焦点陷阱。
+  const [authModal, setAuthModal] = useState<AuthTab | null>(null);
+  const handleOpenAuth = useCallback((tab: AuthTab) => {
+    setAuthModal(tab);
+  }, []);
+
+  // ── 2026-10-22 审计 P1-8：筛选状态**提升到应用层** ──────────────────────
+  // 筛选条件原先住在列表层（TabList 里的 useSearchFilters），而顶栏那个
+  // 「回到默认视图」的按钮**只清搜索词** ⇒ 它清不掉筛选条件，
+  // 而按钮上写的是「回到默认视图」，承诺比兑现多。
+  //
+  // 症状最刺眼的一种：用户从没输过关键词，只靠筛选在看列表，这时点 Logo
+  // ⇒ setSearchValue('') 写回一个本来就是 '' 的值 ⇒ React bail out
+  // ⇒ 零 DOM 变化、零提示，界面看起来像**按钮坏了**。
+  //
+  // 提升到 MainApp 后，Header（清筛选）与 TabList（渲染筛选面板/结果）
+  // 拿到的是**同一份**状态，Logo 这一次真的能回到默认视图。
+  const filterControls = useSearchFilters();
+
   return (
     <Suspense
       fallback={
@@ -66,10 +94,19 @@ export const MainApp: React.FC = () => {
             <a href="#tapstack-main" className="skip-to-content">
               跳到会话列表
             </a>
-            <Header onSearch={setSearchQuery} onReplayOnboarding={handleReplayOnboarding} />
+            <Header
+              onSearch={setSearchQuery}
+              onReplayOnboarding={handleReplayOnboarding}
+              onOpenAuth={handleOpenAuth}
+              onResetFilters={filterControls.clearFilters}
+            />
             <main id="tapstack-main" className={`flex-1 w-full py-3 sm:py-4 ${getContainerWidthClass()}`} tabIndex={-1}>
               <Suspense fallback={<div className="p-4 text-center">加载标签列表...</div>}>
-                <TabList searchQuery={deferredSearchQuery} />
+                <TabList
+                  searchQuery={deferredSearchQuery}
+                  onOpenAuth={handleOpenAuth}
+                  filterControls={filterControls}
+                />
               </Suspense>
             </main>
               {/* 2026-10-20 审计 D-1：页脚版本号是 12px 小字，硬编码的
@@ -91,6 +128,16 @@ export const MainApp: React.FC = () => {
       {showOnboarding && (
         <OnboardingGuide onComplete={() => setShowOnboarding(false)} />
       )}
+
+      {/* ── 2026-10-22 审计 L-11：登录 / 注册弹窗（应用级，portal 到 body）──
+          原本挂在 Header 内部（`<AuthModal>` 在 header 末尾）。
+          AuthModal 自己 portal 到 body，所以**放在哪一层都不影响定位** ——
+          而放在 MainApp 才让空态也能开它（见上方 handleOpenAuth 注释）。 */}
+      <AuthModal
+        visible={authModal !== null}
+        initialTab={authModal ?? 'login'}
+        onClose={() => setAuthModal(null)}
+      />
     </Suspense>
   );
 };

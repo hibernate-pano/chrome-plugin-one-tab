@@ -88,25 +88,74 @@ describe('熔断接线：必须发生在写入之前', () => {
     );
   });
 
-  it('判定对象是「合并剔除」而不是「用户显式删除」', () => {
+  it('判定对象是「这次同步会删掉的会话数」而不是「用户显式删除」', () => {
     // 用户显式删除（deleteGroup）不该被熔断拦下 —— 那会变成「删不掉」。
-    // 熔断管的是**合并过程**里被丢弃的会话。
+    // 熔断管的是**这次同步会造成的删除**。
     //
-    // ⚠️ 变异验证补的收紧（2026-10-13）：初版只断言「调用点附近 800 字符内
-    // 出现过 removedGroupIds(...)」。把**实参**换成 `snapshot.length,
-    // droppedIds.length` 后依然全绿 —— 因为 mergeDropped 的**赋值行**还在
-    // 附近，子串断言分不清「附近出现过」与「真的传进去了」。
-    // 现在断言的是**实参本身**：必须传 mergeDropped.length。
-    const callIdx = SRC.indexOf('checkDeleteFailsafe(');
-    assert.ok(callIdx > 0, '必须调用熔断');
-    const callText = SRC.slice(callIdx, SRC.indexOf(');', callIdx) + 2);
+    // ⚠️ 2026-10-22（DS-2 修复）本条断言被改写过一次。
+    //
+    // 【改前】断言的是**实参的字面量**：「必须传 mergeDropped.length」。
+    // 【为什么必须改】那条断言守的**不变量**是「熔断看得见这次同步会删掉多少
+    //   个会话」，而它把它**实现方式**（用「合并剔除差集」这个量）钉死了。
+    //   覆盖下载路径上那个量**恒为 0**（被云端替换掉的本机会话在进合并之前
+    //   就被过滤掉了，压根不在 mergedGroups 里）⇒ 熔断看不见这次覆盖 ⇒
+    //   一次覆盖能物理清空本机 49 个会话。
+    //   ⇒ 断言把「正确的修法」判红了（DS-11）。
+    //
+    // 【改后】断言的是**不变量**本身：「熔断的删除数实参必须能反映这次同步
+    //   会删掉多少个会话」。实现上有两条路（合并剔除量 / 覆盖清空量），
+    //   两条都要在，且**都不能缺席**：
+    //   · 合并剔除量：合并结果里被剔掉的会话（两条路径都有）；
+    //   · 覆盖清空量：这次覆盖会物理清除本机会话数（**只有覆盖路径有**，
+    //     而它正是 DS-2 的那道门 —— 合并剔除量在覆盖路径下恒为 0）。
+    //
+    // 破了会怎样：把覆盖清空量那道删掉 ⇒ 覆盖路径重新变成「熔断看不见」
+    //   （DS-2 复现）；把合并剔除量那道删掉 ⇒ 正常合并的空壳清理不再受保护。
+    const callSites = [...SRC.matchAll(/checkDeleteFailsafe\(/g)].map(m => ({
+      at: m.index!,
+      args: (() => {
+        const open = SRC.indexOf('(', m.index!);
+        let depth = 0;
+        for (let i = open; i < SRC.length; i++) {
+          if (SRC[i] === '(') depth++;
+          else if (SRC[i] === ')') {
+            depth--;
+            if (depth === 0) return SRC.slice(open + 1, i);
+          }
+        }
+        return '';
+      })(),
+    }));
+    assert.ok(callSites.length >= 2, '熔断至少要有两道：合并剔除 + 覆盖清空');
+
+    // 合并剔除那道：实参必须是「合并剔除差集」，分母是合并结果里的活跃组。
+    const mergeCall = callSites.find(c => c.args.includes('mergeDropped.length'));
     assert.ok(
-      callText.includes('mergeDropped.length'),
-      `熔断的删除数实参必须是 mergeDropped.length（合并剔除差集），实际传的是：${callText}`,
+      mergeCall,
+      '必须有一道熔断，其删除数实参是 mergeDropped.length（合并剔除差集）—— ' +
+        `现有实参：${callSites.map(c => c.args.replace(/\s+/g, ' ')).join(' | ')}`,
     );
     assert.ok(
-      callText.includes('mergedGroups') && callText.includes('isDeleted'),
-      '总数实参必须来自合并结果中的活跃组（排除墓碑）',
+      mergeCall!.args.includes('mergedGroups') && mergeCall!.args.includes('isDeleted'),
+      '合并剔除那道的总数实参必须来自合并结果中的活跃组（排除墓碑）',
+    );
+
+    // 覆盖清空那道：实参必须来自覆盖删除计划，且分母是「覆盖前的本机会话数」。
+    const overwriteCall = callSites.find(c => !c.args.includes('mergeDropped.length'));
+    assert.ok(
+      overwriteCall,
+      '必须有一道熔断，其删除数实参不是 mergeDropped —— 那是「合并剔除量」，' +
+        '覆盖路径下恒为 0，熔断看不见这次覆盖（DS-2）',
+    );
+    assert.ok(
+      /\w+\.wouldDelete/.test(overwriteCall!.args),
+      `覆盖清空那道的删除数实参必须来自覆盖删除计划（planOverwriteDeletion 的 wouldDelete），` +
+        `实际传的是：${overwriteCall!.args.replace(/\s+/g, ' ')}`,
+    );
+    assert.ok(
+      !overwriteCall!.args.includes('mergedGroups'),
+      '覆盖清空那道的总数实参必须是「覆盖前的本机会话数」，不是合并结果的活跃组数' +
+        '（分母不同 = 百分比不同 = 用户看到的「删了多少占比」是说假话）',
     );
   });
 

@@ -150,6 +150,26 @@ html:not([data-theme]).dark {
     --radius-input: 0.625rem;
     --radius-input-sm: 0.5rem;
     --radius-search: 9999px;
+
+    /* ── 2026-10-22 审计 U-14：形状语言令牌 ────────────────────────────────
+       6 套主题原先有 **4 种** 按钮形状（主按钮 9999px / 8px / 6px，
+       图标按钮 9999px / 8px / 12px）⇒ 同一个产品在 6 套主题下看起来
+       像 6 个产品。现在形状也 token 化：每个主题文件各自声明这两个值
+       （**不能**只在这里定一次然后指望主题覆盖 —— 那正是「某个主题
+       忘了改 ⇒ 离群值漏回」的成因）。
+
+       --radius-btn      主按钮 / 次级按钮 / 输入类的圆角
+       --radius-btn-icon 图标按钮的圆角（涟漪 ::after 会 inherit 它）
+       默认 8px；chrome / apple 这类「软圆角」语言给 10px。 */
+    --radius-btn: 8px;
+    --radius-btn-icon: 8px;
+
+    /* ── 2026-10-22 审计 U-24：卡头底色令牌 ────────────────────────────────
+       6 套主题原先对「卡头是不是一个独立区块」的判断不一致：3 套有底色
+       （legacy 写死 #f9fafb/#1f2937、creamy 暖渐变、prism 渐变），
+       3 套透明。**没定义**不是审美分歧，是漏改。
+       这里给默认值（= 三级面），6 套主题各自覆盖；想要透明就给 transparent。 */
+    --color-card-head-bg: var(--color-bg-tertiary);
     --color-accent-text: #1d4ed8;
     --color-accent-strong: #2563eb;
     --color-accent-border: #93c5fd;
@@ -212,6 +232,8 @@ html:not([data-theme]).dark {
     --color-accent-strong: #3b82f6;
     --color-panel-translucent: rgba(17, 24, 39, 0.8);
     --color-border-translucent: rgba(55, 65, 81, 0.8);
+    /* 卡头底色（U-24）：深色下的默认值同样是三级面，主题各自覆盖。 */
+    --color-card-head-bg: var(--color-bg-tertiary);
     --focus-ring: 0 0 0 4px rgba(23, 37, 84, 0.6);
     --shadow-panel: 0 24px 60px -40px rgba(0, 0, 0, 0.7);
     --panel-blur: blur(4px);
@@ -315,6 +337,17 @@ html:not([data-theme]).dark {
     color: var(--color-text-primary);
     font-family: var(--font-family-sans);
     /* 主题过渡已在上方统一定义 */
+
+    /* 2026-10-22 审计 U-04：显式声明 body 字号。
+       浏览器 UA 样式表对 `chrome-extension://` 源有一条 `body { font-size: 75% }`
+       （16 × 0.75 = 12px）—— 实测同一 Chromium 里 file:// / chrome:// /
+       http://localhost 的 body 都是 16px，只有扩展页是 12px。
+       本仓库没设 body 字号 ⇒ 被动吃下这条规则，**所有没有显式字号的文字
+       （段落、列表项、按钮内文字）全部缩到 12px**，而 Tailwind 的 rem 刻度
+       （text-xs/sm/base）不受影响 ⇒ 继承来的字比刻意设的还小，同屏出现两种字号。
+       这里定死 0.875rem（14px）＝ Tailwind 刻度里的 base，
+       让「继承来的字」和「显式写的字」落在同一个基准上。 */
+    font-size: 0.875rem;
   }
 
   .dark body {
@@ -428,8 +461,12 @@ html:not([data-theme]).dark {
      ========================================== */
   .btn {
     @apply inline-flex items-center justify-center gap-2;
-    @apply px-4 py-2 rounded-lg font-medium text-sm;
+    @apply px-4 py-2 font-medium text-sm;
     @apply transition-all duration-150 ease-smooth;
+    /* 圆角读形状令牌（U-14）：原先写死 rounded-lg(8px)，而 6 套主题各自
+       用 9999px / 8px / 6px / 12px 覆写同一个组件 ⇒ 同一屏里主按钮、
+       图标按钮、徽章三种形状语言。现在形状由主题令牌统一给值。 */
+    border-radius: var(--radius-btn);
     /* 这里原先还有 `focus-visible:outline-none`（Tailwind 会展开成
        `outline: 2px solid transparent`）。它与下面这条焦点环同特异性、靠源码顺序
        决定胜负 —— 一旦有人调整顺序，焦点环就会变回透明。既然下面显式定义了
@@ -505,6 +542,19 @@ html:not([data-theme]).dark {
     @apply p-2 rounded-lg;
     @apply transition-all duration-150;
     color: var(--color-text-tertiary);
+
+    /* 命中区下限：36×36（口径见 src/components/layout/hitTarget.ts）。
+       2026-10-22 审计 U-02：这条规则原先被关在 `@media (max-width: 640px)` 里
+       ⇒ **桌面端完全没生效**：卡片头的按钮是 24×24 / 28×28，
+       标签行的物理删除键是 22×22（低于 WCAG 2.2 SC 2.5.8 AA 的 24px）。
+       而 tests/guards/headerGeometry.test.ts 那条守卫是拿正则去 global.css 里
+       「找一条 min-width 的规则」—— 它找到了那条**只在窄屏生效**的规则就判绿，
+       守的是「规则存在」而不是「规则生效」。这里改成无条件生效。 */
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 2.25rem;
+    min-height: 2.25rem;
   }
 
   .btn-icon:hover {
@@ -514,6 +564,13 @@ html:not([data-theme]).dark {
 
   .btn-icon:active {
     @apply scale-95;
+  }
+
+  /* U-14：图标按钮的圆角也读形状令牌（写死 rounded-lg = 8px 时，
+     chrome 的正圆按钮 9999px 与它对不上）。
+     单独一条规则，不动上面那条 .btn-icon 块（那里刚加过命中区下限）。 */
+  .btn-icon {
+    border-radius: var(--radius-btn-icon);
   }
 
   /* ==========================================
@@ -721,24 +778,38 @@ html:not([data-theme]).dark {
 
   .tab-group-header {
     @apply flex items-center justify-between px-3 py-2.5 sm:px-4 sm:py-3;
-    background: var(--color-bg-tertiary);
+    /* U-24：卡头底色读令牌（原先直接读 --color-bg-tertiary，于是 6 套主题
+       里 3 套透明、3 套有色，而 legacy 还写死了 #f9fafb/#1f2937）。
+       现在「卡头是不是一个区块」由各主题自己的 --color-card-head-bg 决定。 */
+    background: var(--color-card-head-bg);
     border-bottom: 1px solid var(--color-border-subtle);
   }
 
   .tab-group-title {
-    @apply text-base font-semibold;
+    /* 2026-10-22 审计 U-04：会话名是这张卡的**主标题**，必须与它下面的
+       标签名（text-base 14px）拉开一档，否则「这是一组」和「这是组里的一条」
+       在扫视时是同一级。14 → 16px，与标签名差 2px、域名差 4px。 */
+    @apply text-lg font-semibold;
     color: var(--color-text-primary);
   }
 
-  .tab-group-count {
-    @apply text-xs font-medium px-2 py-0.5 rounded-full;
-    background: var(--color-bg-tertiary);
-    color: var(--color-text-secondary);
-  }
+  /* 数量徽章（U-13 / U-16）。
+     原先浅色用 --color-bg-tertiary —— 与 .tab-group-header 的底色**同源**
+     ⇒ 默认主题下徽章和卡头同色，徽章的「容器」等于不存在；
+     深色更糟：写死的 rgba(148,163,184,0.12)/#94a3b8 是**另一个品牌的冷灰蓝**
+     （claude 暖黑 / apple / chrome 深色下色相不属于主题）。
 
-  .dark .tab-group-count {
-    background: rgba(148, 163, 184, 0.12);
-    color: #94a3b8;
+     现在统一走强调族：accent-soft 底 + accent-ink 文字。
+     · 底色永远与卡头底不同源 ⇒ 徽章在 6 套主题下都看得见；
+     · 文字用 --color-accent-text（本仓「当墨色用的 accent」）而不是 --color-accent，
+       后者在 claude 浅色的卡片底上只有 2.96:1；
+     · 对比度由 tests/guards/themeContrast.test.ts 按「accent-ink / accent-soft ≥ 4.5:1」
+       逐主题 × 明暗守住。 */
+  .tab-group-count {
+    @apply text-xs font-medium px-2 py-0.5;
+    border-radius: var(--radius-full);
+    background: var(--color-accent-soft);
+    color: var(--color-accent-text);
   }
 
   /* 标签组锁定图标 */
@@ -804,7 +875,16 @@ html:not([data-theme]).dark {
   }
 
   .tab-item-title {
-    @apply flex-1 truncate text-sm;
+    /* 2026-10-22 审计 U-04：标签名 13 → 14px，与会话名（16px）差 2px，
+       与域名（12px）差 2px —— 三级层级不再是「1px 之差」。 */
+    @apply truncate text-base;
+    /* 2026-10-22 审计 U-05：原来 flex-1 ⇒ 标题的**盒子**吃满整行，
+       真正的文字只有几百像素，而 URL 被 flex 推到行尾 ⇒ 单栏 1280px 下
+       实测「标题 x=118」「域名 x=1083」，中间隔着约 700–1000px 空白。
+       改成 flex: 0 1 auto（不涨、可缩）⇒ 域名紧跟在标题后面，死区消失。
+       truncate 的 overflow:hidden 会让 min-width:auto 归零，窄屏仍然截断
+       而不是溢出。 */
+    flex: 0 1 auto;
     color: var(--color-text-primary);
   }
 
@@ -814,6 +894,9 @@ html:not([data-theme]).dark {
      （prism 浅色 1.99、legacy 深色 2.13、legacy 浅色 2.31、奶油浅色 2.52、prism 深色 3.13）。 */
   .tab-item-url {
     @apply text-xs truncate max-w-[200px];
+    /* 不参与收缩：URL 有 200px 上限，标题让位给它的量是确定的；
+       空间不够时应该截断标题（它是主标识），而不是把域名压成几十像素。 */
+    flex-shrink: 0;
     color: var(--color-text-secondary);
   }
 
@@ -850,7 +933,7 @@ html:not([data-theme]).dark {
 
   .tab-item-actions {
     @apply flex items-center gap-1 transition-opacity duration-150;
-    @apply opacity-100 md:opacity-0;
+    @apply opacity-100;
   }
 
   .tab-item:hover .tab-item-actions {
@@ -866,6 +949,50 @@ html:not([data-theme]).dark {
     @apply opacity-100;
   }
 
+  /* ── 2026-10-22 审计 U-21：删除键「隐形但可点」────────────────────────
+   *
+   * 现场（实测）：≥768px 时 `.tab-item-actions` 是 `opacity: 0` 但
+   * `pointer-events: auto` ⇒ 在按钮中心做 elementFromPoint，命中的
+   * **就是那个删除按钮自己**。
+   *
+   * 鼠标用户还有 hover 兜底，风险有限；**触屏没有 hover** ⇒ 用户看不见
+   * 一个按钮，却可能点到一个不可撤销的删除（v1.22.0 起物理清除、无回收站、
+   * 无撤销 —— 全产品最贵的一个按钮）。
+   *
+   * 判据：**看不见的东西不许能点**。
+   *   · 精细指针（鼠标）≥768px：隐形 ⇒ pointer-events: none；
+   *     hover / focus-within 时才恢复可点且显形。
+   *   · 粗指针（触屏）：没有 hover ⇒ 操作按钮**始终可见且可点**。
+   *
+   * 键盘用户不受影响：pointer-events 只管**命中测试**（鼠标），不影响
+   * Tab 序列 —— 按钮照样能被 Tab 聚焦，而 :focus-within 会让它显形且可点。
+   *
+   * 【为什么不用 `md:opacity-0` 直接写】
+   * 那样写出来的「隐形」规则不带 pointer-events，命中测试仍然穿透到按钮；
+   * 而且 Tailwind 生成的 `md:` 媒体查询与本文件的 `@media (pointer: coarse)`
+   * 只能靠源码顺序决胜（媒体查询不加特异性）—— 触屏下会不会显形要看
+   * 谁写在后面。显式写成两条互斥的媒体查询，判据才是**读得出来的**。
+   */
+  @media (min-width: 768px) and (pointer: fine) {
+    .tab-item-actions {
+      opacity: 0;
+      pointer-events: none;
+    }
+
+    .tab-item:hover .tab-item-actions,
+    .tab-item:focus-within .tab-item-actions {
+      opacity: 1;
+      pointer-events: auto;
+    }
+  }
+
+  @media (pointer: coarse) {
+    .tab-item-actions {
+      opacity: 1;
+      pointer-events: auto;
+    }
+  }
+
   /* ==========================================
      徽章组件
      ========================================== */
@@ -874,9 +1001,12 @@ html:not([data-theme]).dark {
     @apply text-xs font-medium;
   }
 
+  /* 强调徽章：与数量徽章同一套强调族（accent-soft 底 + accent-ink 文字）。
+     原先是 accent-subtle 底 + --color-accent 文字 —— 后者是**填充色**，
+     当文字用时在 claude 浅色底上只有 2.6:1。 */
   .badge-accent {
-    background: var(--color-accent-subtle);
-    color: var(--color-accent);
+    background: var(--color-accent-soft);
+    color: var(--color-accent-text);
   }
 
   .badge-success {
@@ -1285,6 +1415,11 @@ html:not([data-theme]).dark {
  * 且实测有效，这里补一条同形的变体，让 `hover:theme-btn-hover` 能用。
  */
 .hover\:theme-btn-hover:hover { background: var(--color-btn-hover); }
+/* U-01：同步按钮（上传/下载）的 hover 底色。
+   原先写死 `hover:bg-green-200` / `hover:bg-primary-200` —— 那两个是
+   Tailwind 的固定品牌色，跟主题无关（12 套主题 × 明暗下颜色完全不变）。
+   现在用主题自己的 accent 淡染（--color-accent-wash），hover 反馈跟着主题走。 */
+.hover\:theme-accent-wash:hover { background: var(--color-accent-wash); }
 .theme-accent-soft { background: var(--color-accent-soft); }
 .theme-panel-translucent { background: var(--color-panel-translucent); }
 .theme-focus:focus { box-shadow: var(--focus-ring); }
@@ -1308,6 +1443,11 @@ html:not([data-theme]).dark {
 
 /* 二级界面工具类：圆角三档 / 强调文字 / 强调描边 / 强调淡染 / 井底 / 衬线标题 */
 .theme-radius-card { border-radius: var(--radius-card); }
+/* 按钮圆角（U-14 形状语言）。Tailwind 的 `rounded-md` 是**写死的 6px**，
+   不跟主题走 —— 顶栏那两颗同步按钮就是这么变成了 6 套主题里唯一的
+   离群形状（chrome/apple 的语言是 10px 的软圆角）。改读 --radius-btn
+   之后，同一颗按钮在 6 套主题下各自是本主题的形状。 */
+.theme-radius-btn { border-radius: var(--radius-btn); }
 .theme-radius-panel { border-radius: var(--radius-panel); }
 .theme-radius-control { border-radius: var(--radius-control); }
 .theme-radius-input { border-radius: var(--radius-input); }
@@ -1322,6 +1462,12 @@ html:not([data-theme]).dark {
   -webkit-backdrop-filter: var(--panel-blur);
 }
 .theme-accent-border { border-color: var(--color-accent-border); }
+/* 主题感知的 ring 颜色（2026-10-22 审计 U-23）。
+   Tailwind 的 `ring-blue-500/30` 是**固定品牌蓝**，不跟主题走 ⇒ 在 claude /
+   creamy 的设置页里，主题选择器画出的选中圈是别的产品的蓝。
+   Tailwind v3 的 ring 工具类把颜色写进 --tw-ring-color，这里换成本主题的
+   强调描边色（未分层 ⇒ 压过 utilities 层里的 ring-blue-500）。 */
+.theme-accent-ring { --tw-ring-color: var(--color-accent-border); }
 /* 强调色当作「边框墨色」用（认证弹窗激活标签页的 2px 下划线）。
    不用 --color-accent-border：那是 45% 透明度的淡描边，压在浅底上只有
    1.6:1 —— 选中指示线看不见。--color-accent-text 是「当墨色用的 accent」，
@@ -1524,6 +1670,15 @@ html:not([data-theme]).dark {
     grid-area: search;
     min-width: 0;
     width: 100%;
+    /* ── 2026-10-22 审计 L-2：双行布局下搜索框必须**左对齐并撑满** ──────
+       基础规则是 `max-width: 32rem; margin-inline: auto`（单行三段布局里
+       居中是对的）。但在「品牌+操作区一行、搜索独占第二行」的双行布局里，
+       居中会让搜索框成为**全页唯一居中的元素** —— 而品牌、卡片、
+       筛选行全部左对齐在同一条 x=16 的边上，视线要来回跳。
+       实测 1024px：搜索框居中在 x=280..765，两侧各留 ~250px 死区。
+       双行时搜索本就独占整行 ⇒ 放开上限、左对齐，与下方内容同一条边。 */
+    max-width: none;
+    margin-inline: 0;
   }
 
   .app-header-actions {
@@ -1581,13 +1736,9 @@ button:disabled:not(.btn-primary) {
   opacity: 0.65;
 }
 
-/* 触控目标下限：图标按钮在窄屏保持可点击 */
-@media (max-width: 640px) {
-  .btn-icon {
-    min-width: 2.25rem;
-    min-height: 2.25rem;
-  }
-}
+/* 触控目标下限：图标按钮保持可点击。
+   2026-10-22：这条规则原先带 `@media (max-width: 640px)`，
+   桌面端等于没有 —— 现在已并入 .btn-icon 的无条件规则（见上方 .btn-icon）。 */
 
 /* 骨架屏：加载态统一质感 */
 .skeleton-block {

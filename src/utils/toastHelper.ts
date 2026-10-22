@@ -5,6 +5,8 @@
 
 import { useToast } from '@/contexts/ToastContext';
 import { logError } from './log';
+import type { ToastAction } from '@/components/common/Toast';
+import { consumeUndoDurationMs } from '@/components/tabs/consumeUndoCopy';
 
 /**
  * 通知消息类型
@@ -172,12 +174,16 @@ export const useEnhancedToast = () => {
   const { showToast } = toastContext;
   
   const showNotification = (
-    type: NotificationType, 
-    params?: NotificationParams, 
-    customMessage?: string
+    type: NotificationType,
+    params?: NotificationParams,
+    customMessage?: string,
+    /** 可选的动作按钮（2026-10-22 审计 P0-4 的「撤销」）。 */
+    action?: ToastAction,
   ) => {
     const config = showEnhancedNotification(type, params, customMessage);
-    showToast(config.message, config.type, config.duration);
+    // 带动作的提示必须活得久一点：3 秒不够用户读完「卡片不见了」再决定退不退回。
+    const duration = action ? consumeUndoDurationMs : config.duration;
+    showToast(config.message, config.type, duration, action);
   };
   
   return {
@@ -189,8 +195,17 @@ export const useEnhancedToast = () => {
     // （整组可能因锁定而保留、单标签必然被移除），固定模板说不清。
     // 这里给出自定义文案的出口，让调用方用 restoreFeedbackCopy 里的
     // 统一措辞，而不是各自拼字符串。
-    showRestoreSuccessMessage: (message: string) => showNotification('restore-success', undefined, message),
-    showRestoreError: (error: string) => showNotification('restore-error', { error }),
+    //
+    // ── 2026-10-22 审计 P0-4：第二个参数是可选的**动作按钮** ──────────
+    // 「恢复即消费」是不可逆的删除，给它配一条「撤销」是产品该有的最低配置。
+    showRestoreSuccessMessage: (message: string, action?: ToastAction) =>
+      showNotification('restore-success', undefined, message, action),
+    // ── 2026-10-22 审计 P0-4：错误通道也能带动作 ───────────────────────
+    // 「部分成功」也是一次消费（例如批量恢复里有几条打不开，但其余的
+    // 已经被消费掉了）—— 那条提示上同样要挂「撤销」，否则用户手里
+    // 就有一条**没有退路**的消费。
+    showRestoreError: (error: string, action?: ToastAction) =>
+      showNotification('restore-error', { error }, undefined, action),
     showDeleteSuccess: (message: string) => showNotification('delete-success', { message }),
     showDeleteError: (error: string) => showNotification('delete-error', { error }),
     showSyncSuccess: (message: string) => showNotification('sync-success', { message }),

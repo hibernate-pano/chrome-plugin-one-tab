@@ -670,6 +670,11 @@ export const downloadSync = {
         'theme_mode': 'themeMode',
         'theme_style': 'themeStyle',
         'collect_pinned_tabs': 'collectPinnedTabs',
+        // 2026-10-22 审计 L-10：会话排序键。云端列尚不存在时整行映射不受影响
+        // ——未知列只是不会出现在 data 里，对应设置走 DEFAULT 合并（见 getSettings）。
+        // 上传侧有 42703 降级（**任意**缺列都剔掉该列重试，见 utils/supabase/missingColumn.ts），
+        // 所以迁移前后都不阻塞同步。
+        'session_sort': 'sessionSort',
         // 向后兼容性：如果云端还有旧的字段，也要处理
         'use_double_column_layout': 'useDoubleColumnLayout'
       };

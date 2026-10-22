@@ -19,10 +19,55 @@
  * 域名 / 固定标签是**标签级**判据，会话名 / 保存时间是**会话级**判据。
  * 空搜索词时结果集必须是全部标签（见 ./searchBrowseMode 的文件头），
  * 否则会话级筛选没有判据可作用。
+ *
+ * ── 为什么面板是「一条 chip 行」而不是四块表单 ──────────────────────────
+ *
+ * 修复前面板是 4 列栅格（2026-10-22 审计 U-08 / U-09）：
+ *   · 窄窗口（400px）下 4 个字段堆成 4 行 ⇒ 面板 191px 高，把第一张会话卡
+ *     的下半截顶出折叠线（卡片 287px、视口 600px）；
+ *   · 1280px 下 3 个短字段各占 1/4 屏（输入框 ~280px，只装得下一个
+ *     `github.com`），第 4 格空着 —— 而「固定标签页」是条件渲染的，
+ *     关掉那个设置 ⇒ 空的格子从 1 个变成 2 个。
+ *
+ * 现在面板是**一条可换行的 chip 行**：每个筛选维度一个 chip，点开才展开
+ * 对应的输入框。窄屏下高度与字段数无关；宽屏下 chip 贴着内容宽度，
+ * 不再摊成 1/4 屏。
+ *
+ * ── chip 方案的三条硬约束 ───────────────────────────────────────────────
+ *
+ * ① **生效中的条件必须始终可见**（本仓反复修过的那类隐形行为：
+ *    「看不见但条件在生效」）。这里有**两个**可见点：
+ *      · 工具条上的「生效条件 chip」（域名 github.com）—— 面板收起也在；
+ *      · 面板里的维度 chip 用强调色标出「这个维度正在生效」。
+ *    两者都**从当前生效值渲染**（不是写死的字符串）。
+ * ② **收起状态不能把筛选能力藏没了** ——「显示筛选」按钮一直在工具条上，
+ *    而且它现在用主题强调色（以前是写死的品牌蓝 ⇒ 六套主题里它是
+ *    唯一一块不跟主题走的颜色，U-07）。
+ * ③ **chip 是真 `<button>`**（不是 div）⇒ 键盘可达：Tab 能走到、
+ *    Enter/空格能点开；并带 `aria-expanded` / `aria-controls`。
+ *
+ * ── 为什么编辑框一直在 DOM 里（只是收起时 display:none）───────────────
+ *
+ * ① `tests/sessionSort.test.ts` 断言「面板展开时 HTML 里必须有
+ *    `search-filter-domain`」—— 收起态的输入框如果压根不渲染，这条断言
+ *    会把「面板展开」这件事判成没发生；
+ * ② 焦点管理：点 chip 展开后要把焦点送到对应输入框，元素必须已经在
+ *    DOM 里（否则 ref 拿不到、焦点无处可去）。
+ * 收起 = `display:none`（Tailwind 的 `hidden`）⇒ 不可聚焦、读屏跳过。
  */
 import React from 'react';
 import type { SearchFilters } from '@/utils/search';
 import type { SearchFilterControls } from './searchFilterState';
+import { useAppDispatch, useAppSelector } from '@/store/hooks';
+import { dispatchSaveSettings, setSessionSort } from '@/store/slices/settingsSlice';
+import { useToast } from '@/contexts/ToastContext';
+import {
+  SESSION_SORT_OPTIONS,
+  resolveSortControlPlacement,
+  sessionSortLabel,
+  type SessionSortKey,
+  type SortControlPlacement,
+} from '@/core/sessionSort';
 
 /**
  * 筛选控件的 id 前缀：同一时刻只有一个筛选面板，固定前缀即可保证 label 唯一。
@@ -34,17 +79,186 @@ export const FILTER_IDS = {
   savedWithin: 'search-filter-saved-within',
 } as const;
 
+/** 排序下拉的 id（与 L-10 的排序控件共用一份）。 */
+export const SORT_CONTROL_ID = 'session-sort-control';
+
+/**
+ * 筛选维度：chip 的键、编辑器的键、条件的键 —— 三者是同一个。
+ */
+export type FilterDimension = keyof typeof FILTER_IDS;
+
+/** 每个维度的中文名（维度 chip 上的字 / 编辑器的 label）。 */
+const DIMENSION_LABELS: Record<FilterDimension, string> = {
+  pinned: '固定标签页',
+  domain: '域名',
+  groupName: '会话名称',
+  savedWithin: '保存时间',
+};
+
+/** 「保存时间」的取值 → 人话（工具条上的生效条件 chip 用它）。 */
+const SAVED_WITHIN_LABELS: Record<NonNullable<SearchFilters['savedWithin']>, string> = {
+  '24h': '24 小时内',
+  '7d': '7 天内',
+  '30d': '30 天内',
+  older: '30 天前',
+};
+
+/** 「固定标签页」的取值 → 人话。 */
+const PINNED_LABELS: Record<'only' | 'exclude', string> = {
+  only: '仅固定',
+  exclude: '排除固定',
+};
+
 const FilterIcon = () => (
-  <svg xmlns="http://www.w3.org/2000/svg" className="h-3 w-3 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2.586a2 0 01-.293.707l-6.414 6.414a2 0 00-.293.707V17l-4 4v-6.586a2 0 00-.293-.707L3.293 7.207A2 0 013 6.5V4z" />
+  <svg xmlns="http://www.w3.org/2000/svg" className="h-3 w-3 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2.586a1 1 0 01-.293.707l-6.414 6.414a1 1 0 00-.293.707V17l-4 4v-6.586a1 1 0 00-.293-.707L3.293 7.207A1 1 0 013 6.5V4z" />
 );
 
-interface SearchFilterPanelProps {
-  controls: SearchFilterControls;
-  /** 设置里的「保存固定标签页」是否开启（关闭时这个筛选项是死控件，不渲染）。 */
-  collectPinnedTabs: boolean;
-  /** 面板是否带左右外边距（结果视图里的面板要缩进，列表层的不要）。 */
-  withOuterMargin?: boolean;
+/**
+ * 某个维度当前**是否在筛**。
+ *
+ * 判据读的是**生效值**（`effectiveFilters`）而不是用户设定的原始值 ——
+ * 「保存固定标签页」关闭时，`pinned` 这个条件是作废的（见
+ * searchFilterAvailability），把它算成「在筛」就是在骗用户。
+ */
+const isDimensionActive = (dimension: FilterDimension, filters: SearchFilters): boolean => {
+  switch (dimension) {
+    case 'domain':
+      return Boolean(filters.domain?.trim());
+    case 'groupName':
+      return Boolean(filters.groupName?.trim());
+    case 'savedWithin':
+      return Boolean(filters.savedWithin);
+    case 'pinned':
+      return Boolean(filters.pinned && filters.pinned !== 'all');
+    default:
+      return false;
+  }
+};
+
+/** 工具条上的「生效条件 chip」。 */
+interface ActiveFilterChip {
+  /** chip 点开时要编辑哪个维度。 */
+  dimension: FilterDimension;
+  /** 维度名（灰）与值（强调色）两段。 */
+  label: string;
+  /** 给人看的值。 */
+  value: string;
+  /**
+   * chip 的 key = 「维度 + 当前生效值」。
+   *
+   * 【为什么 key 里要带值】key 相同 ⇒ React 认为是同一个 chip；值变了
+   * 就是**另一个** chip（内容变了），key 跟着变才不会在两个不同内容之间
+   * 复用同一个 DOM 节点。
+   */
+  key: string;
 }
+
+/**
+ * 从**当前生效值**生成工具条上的「生效条件 chip」。
+ *
+ * 这条链路是「生效中的条件必须始终可见」那条契约的**唯一出口** ——
+ * 条件变了、chip 的内容必须跟着变（守卫 `tests/guards/searchFilterPanel.test.ts`
+ * 守的就是这件事：渲染处必须调用当前值，而不是写死一句字符串）。
+ */
+export const buildActiveFilterChips = (filters: SearchFilters): ActiveFilterChip[] => {
+  const chips: ActiveFilterChip[] = [];
+  const push = (dimension: FilterDimension, raw: string | undefined, display: string) => {
+    const value = (raw ?? '').trim();
+    if (!value) return;
+    chips.push({
+      dimension,
+      label: DIMENSION_LABELS[dimension],
+      value: display,
+      key: `${dimension}:${value}`,
+    });
+  };
+
+  push('domain', filters.domain, filters.domain?.trim() ?? '');
+  push('groupName', filters.groupName, filters.groupName?.trim() ?? '');
+  if (filters.savedWithin) {
+    push('savedWithin', filters.savedWithin, SAVED_WITHIN_LABELS[filters.savedWithin]);
+  }
+  if (filters.pinned && filters.pinned !== 'all') {
+    push('pinned', filters.pinned, PINNED_LABELS[filters.pinned]);
+  }
+  return chips;
+};
+
+/**
+ * 排序下拉（L-10 的接线部分）。
+ *
+ * 摆法判据在 `src/core/sessionSort.ts`（`resolveSortControlPlacement`）：
+ * 面板收起时它摆在工具条上、展开时进面板 —— **两种摆法下都可见**
+ * （排序是列表管理的主入口，藏进「筛选」里用户第一屏就看不到它）。
+ *
+ * 【落盘与回滚】改了排序键必须**落盘**（否则刷新后回默认值 = 用户刚做的
+ * 选择无声消失），而落盘是 fail-closed 的（`dispatchSaveSettings` 读不到真值
+ * 就拒绝写）⇒ 写失败时必须**回滚**到旧值并把失败原因告诉用户，不能让下拉
+ * 显示着一个其实没存进去的值。
+ */
+const SessionSortControl: React.FC<{ placement: SortControlPlacement }> = ({
+  placement,
+}) => {
+  const dispatch = useAppDispatch();
+  const sessionSort = useAppSelector(state => state.settings.sessionSort);
+  const { showToast } = useToast();
+  const inPanel = placement === 'panel';
+
+  const handleChange = async (event: React.ChangeEvent<HTMLSelectElement>) => {
+    const next = event.target.value as SessionSortKey;
+    const previous = sessionSort;
+    dispatch(setSessionSort(next));
+    const saveError = await dispatchSaveSettings(dispatch);
+    if (saveError) {
+      dispatch(setSessionSort(previous));
+      showToast(`${saveError}（排序已恢复为「${sessionSortLabel(previous)}」）`, 'error');
+    }
+  };
+
+  const select = (
+    <select
+      id={SORT_CONTROL_ID}
+      aria-label="排序方式"
+      value={sessionSort}
+      onChange={handleChange}
+      className={`border theme-border-default theme-radius-input-sm theme-focus theme-bg-elevated px-2 py-1 theme-text-primary ${
+        inPanel ? 'text-base' : 'text-sm'
+      } ${inPanel ? 'w-full max-w-[12rem]' : 'shrink-0 max-w-[11rem]'}`}
+    >
+      {SESSION_SORT_OPTIONS.map(option => (
+        <option key={option.value} value={option.value}>
+          {option.label}
+        </option>
+      ))}
+    </select>
+  );
+
+  if (inPanel) {
+    return (
+      <div className="flex items-center gap-1.5">
+        <label
+          htmlFor={SORT_CONTROL_ID}
+          className="shrink-0 text-sm theme-text-secondary"
+        >
+          排序
+        </label>
+        {select}
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex items-center gap-1.5">
+      <label
+        htmlFor={SORT_CONTROL_ID}
+        className="shrink-0 text-sm theme-text-secondary"
+      >
+        排序
+      </label>
+      {select}
+    </div>
+  );
+};
 
 /**
  * 筛选区放在哪里的两种语境。
@@ -58,59 +272,134 @@ interface SearchFilterPanelProps {
  */
 export type SearchFilterVariant = 'inset' | 'flush';
 
+interface SearchFilterPanelProps {
+  controls: SearchFilterControls;
+  /** 设置里的「保存固定标签页」是否开启（关闭时这个筛选项是死控件，不渲染）。 */
+  collectPinnedTabs: boolean;
+  /** 面板是否带左右外边距（结果视图里的面板要缩进，列表层的不要）。 */
+  withOuterMargin?: boolean;
+  /** 面板展开时摆在面板里的排序控件（收起时同一个控件在工具条上）。 */
+  sortControl?: React.ReactNode;
+  /** 当前展开（可见）的筛选维度；null = 全部收起。 */
+  expandedDimension: FilterDimension | null;
+  /** 点维度 chip 时切换它的展开状态。 */
+  onSelectDimension: (dimension: FilterDimension) => void;
+}
+
 /**
- * 筛选面板本体：四个筛选控件。
+ * 筛选面板本体：一条 chip 行 + 被点开的那个编辑框。
  *
  * 【固定标签页筛选器只在「保存固定标签页」开启时才有意义】——
  * 关闭时存进会话的标签 `pinned` 恒为 false，这个筛选器形同虚设。
  * 摆在用户面前还占一行，就是「选项在骗用户」（见 searchFilterAvailability）。
+ *
+ * 【布局不得随「固定标签页」开关抖动】chip 行是 `flex flex-wrap` ——
+ * 列数由视口决定，**不由开关决定**；关掉那个设置只是少一个 chip，
+ * 不会出现「4 列变 3 列 ⇒ 整行重排」这种情况。
  */
 export const SearchFilterPanel: React.FC<SearchFilterPanelProps> = ({
   controls,
   collectPinnedTabs,
   withOuterMargin,
+  sortControl,
+  expandedDimension,
+  onSelectDimension,
 }) => {
-  const { filters, updateFilters } = controls;
+  const { filters, effectiveFilters, updateFilters } = controls;
+
+  /** 可用维度（固定标签页只在设置开启时才是活的筛选项）。 */
+  const dimensions: FilterDimension[] = collectPinnedTabs
+    ? ['pinned', 'domain', 'groupName', 'savedWithin']
+    : ['domain', 'groupName', 'savedWithin'];
+
+  /** 编辑框的 ref：点开某个维度后要把焦点送进去。 */
+  const fieldRefs = React.useRef<Partial<Record<FilterDimension, HTMLElement | null>>>({});
+
+  React.useEffect(() => {
+    if (!expandedDimension) return;
+    const element = fieldRefs.current[expandedDimension];
+    if (element && typeof element.focus === 'function') element.focus();
+  }, [expandedDimension]);
 
   return (
-    <div className={`theme-well theme-radius-control p-3 sm:p-4 mb-3 ${withOuterMargin ? 'mx-2' : ''}`}>
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2.5 sm:gap-3">
-        {collectPinnedTabs && (
-          <div>
-            <label
-              htmlFor={FILTER_IDS.pinned}
-              className="block text-xs text-gray-600 dark:text-gray-300 mb-1"
+    <div className={`theme-well theme-radius-control p-2 sm:p-3 mb-3 ${withOuterMargin ? 'mx-2' : ''}`}>
+      <div className="flex flex-wrap items-center gap-1" data-testid="search-filter-chip-row">
+        {dimensions.map(dimension => {
+          const active = isDimensionActive(dimension, effectiveFilters);
+          return (
+            <button
+              key={dimension}
+              type="button"
+              onClick={() => onSelectDimension(dimension)}
+              aria-expanded={expandedDimension === dimension}
+              aria-controls={`${FILTER_IDS[dimension]}-field`}
+              className={[
+                'inline-flex items-center theme-radius-input-sm border px-2 py-1 text-sm',
+                active
+                  ? 'theme-accent-soft theme-accent-text border-transparent'
+                  : 'theme-bg-elevated theme-border-default theme-text-secondary hover:theme-btn-hover',
+              ].join(' ')}
             >
-              固定标签页
-            </label>
-            <select
-              id={FILTER_IDS.pinned}
-              value={filters.pinned || 'all'}
-              onChange={event => {
-                const nextPinned = event.target.value as SearchFilters['pinned'];
-                updateFilters(current => ({
-                  ...current,
-                  pinned: nextPinned === 'all' ? undefined : nextPinned,
-                }));
-              }}
-              className="w-full text-sm border theme-border-default theme-radius-input-sm theme-focus theme-bg-elevated px-2 py-1 text-gray-900 dark:text-gray-100"
-            >
-              <option value="all">全部</option>
-              <option value="only">仅固定</option>
-              <option value="exclude">排除固定</option>
-            </select>
-          </div>
-        )}
+              {DIMENSION_LABELS[dimension]}
+            </button>
+          );
+        })}
+        {sortControl}
+      </div>
 
-        <div>
+      {/* 编辑区：四个维度各一行（label 与控件同一行），收起的那块 display:none
+          （仍在 DOM 里 —— 见文件头「为什么编辑框一直在 DOM 里」）。 */}
+      <div>
+        <div
+          id={`${FILTER_IDS.pinned}-field`}
+          className={expandedDimension === 'pinned' ? 'mt-2' : 'hidden'}
+        >
+          {collectPinnedTabs && (
+            <div>
+              <label
+                htmlFor={FILTER_IDS.pinned}
+                className="inline-block align-middle mr-2 text-sm theme-text-secondary"
+              >
+                固定标签页
+              </label>
+              <select
+                id={FILTER_IDS.pinned}
+                ref={element => {
+                  fieldRefs.current.pinned = element;
+                }}
+                value={filters.pinned || 'all'}
+                onChange={event => {
+                  const nextPinned = event.target.value as SearchFilters['pinned'];
+                  updateFilters(current => ({
+                    ...current,
+                    pinned: nextPinned === 'all' ? undefined : nextPinned,
+                  }));
+                }}
+                className="inline-block align-middle w-[10rem] max-w-full text-base border theme-border-default theme-radius-input-sm theme-focus theme-bg-elevated px-2 py-1 theme-text-primary"
+              >
+                <option value="all">全部</option>
+                <option value="only">仅固定</option>
+                <option value="exclude">排除固定</option>
+              </select>
+            </div>
+          )}
+        </div>
+
+        <div
+          id={`${FILTER_IDS.domain}-field`}
+          className={expandedDimension === 'domain' ? 'mt-2' : 'hidden'}
+        >
           <label
             htmlFor={FILTER_IDS.domain}
-            className="block text-xs text-gray-600 dark:text-gray-300 mb-1"
+            className="inline-block align-middle mr-2 text-sm theme-text-secondary"
           >
             域名
           </label>
           <input
             id={FILTER_IDS.domain}
+            ref={element => {
+              fieldRefs.current.domain = element;
+            }}
             type="text"
             placeholder="输入域名..."
             value={filters.domain || ''}
@@ -121,19 +410,25 @@ export const SearchFilterPanel: React.FC<SearchFilterPanelProps> = ({
                 domain: nextDomain || undefined,
               }));
             }}
-            className="w-full text-sm border theme-border-default theme-radius-input-sm theme-focus theme-bg-elevated px-2 py-1 text-gray-900 dark:text-gray-100"
+            className="inline-block align-middle w-[16rem] max-w-full text-base border theme-border-default theme-radius-input-sm theme-focus theme-bg-elevated px-2 py-1 theme-text-primary"
           />
         </div>
 
-        <div>
+        <div
+          id={`${FILTER_IDS.groupName}-field`}
+          className={expandedDimension === 'groupName' ? 'mt-2' : 'hidden'}
+        >
           <label
             htmlFor={FILTER_IDS.groupName}
-            className="block text-xs text-gray-600 dark:text-gray-300 mb-1"
+            className="inline-block align-middle mr-2 text-sm theme-text-secondary"
           >
             会话名称
           </label>
           <input
             id={FILTER_IDS.groupName}
+            ref={element => {
+              fieldRefs.current.groupName = element;
+            }}
             type="text"
             placeholder="输入会话名称..."
             value={filters.groupName || ''}
@@ -144,19 +439,25 @@ export const SearchFilterPanel: React.FC<SearchFilterPanelProps> = ({
                 groupName: nextGroupName || undefined,
               }));
             }}
-            className="w-full text-sm border theme-border-default theme-radius-input-sm theme-focus theme-bg-elevated px-2 py-1 text-gray-900 dark:text-gray-100"
+            className="inline-block align-middle w-[16rem] max-w-full text-base border theme-border-default theme-radius-input-sm theme-focus theme-bg-elevated px-2 py-1 theme-text-primary"
           />
         </div>
 
-        <div>
+        <div
+          id={`${FILTER_IDS.savedWithin}-field`}
+          className={expandedDimension === 'savedWithin' ? 'mt-2' : 'hidden'}
+        >
           <label
             htmlFor={FILTER_IDS.savedWithin}
-            className="block text-xs text-gray-600 dark:text-gray-300 mb-1"
+            className="inline-block align-middle mr-2 text-sm theme-text-secondary"
           >
             保存时间
           </label>
           <select
             id={FILTER_IDS.savedWithin}
+            ref={element => {
+              fieldRefs.current.savedWithin = element;
+            }}
             value={filters.savedWithin || ''}
             onChange={event => {
               const nextValue = event.target.value as SearchFilters['savedWithin'] | '';
@@ -165,7 +466,7 @@ export const SearchFilterPanel: React.FC<SearchFilterPanelProps> = ({
                 savedWithin: nextValue || undefined,
               }));
             }}
-            className="w-full text-sm border theme-border-default theme-radius-input-sm theme-focus theme-bg-elevated px-2 py-1 text-gray-900 dark:text-gray-100"
+            className="inline-block align-middle w-[10rem] max-w-full text-base border theme-border-default theme-radius-input-sm theme-focus theme-bg-elevated px-2 py-1 theme-text-primary"
           >
             <option value="">全部</option>
             <option value="24h">24 小时内</option>
@@ -199,11 +500,16 @@ interface SearchFilterSectionProps {
 }
 
 /**
- * 筛选区 = 工具条（标题 + 「N 个筛选」+ 「清空筛选」+ 「显示筛选」）+ 面板。
+ * 筛选区 = 工具条（标题 + 「N 个筛选」+ 生效条件 chip + 「清空筛选」+ 「显示筛选」）+ 面板。
  *
  * 【徽章与「清空筛选」是「条件生效」的可见证据】
  * 筛选条件生效时用户**必须看得见** —— 「看不见但条件在生效」是本仓反复
  * 修过的那类隐形行为（见 searchFilterAvailability 的注释）。
+ *
+ * 【生效条件 chip 是「条件是什么」的可见证据】
+ * 徽章只说「有 1 个筛选」，不说**是哪一个** —— 条件一旦生效而用户不知道
+ * 是哪一个，界面上就出现了「看不见但条件在生效」。所以工具条上再挂一排
+ * chip，把**当前生效的值**写出来（域名 github.com），点它直接去改那个维度。
  */
 export const SearchFilterSection: React.FC<SearchFilterSectionProps> = ({
   controls,
@@ -213,6 +519,7 @@ export const SearchFilterSection: React.FC<SearchFilterSectionProps> = ({
   variant,
 }) => {
   const {
+    effectiveFilters,
     activeFilterCount,
     isFilterPending,
     clearFilters,
@@ -220,35 +527,82 @@ export const SearchFilterSection: React.FC<SearchFilterSectionProps> = ({
     toggleFilters,
   } = controls;
   const isInset = variant === 'inset';
+  const sortPlacement = resolveSortControlPlacement(showFilters);
+
+  /** 当前展开的筛选维度（点 chip 展开对应编辑框）。 */
+  const [expandedDimension, setExpandedDimension] = React.useState<FilterDimension | null>(null);
+
+  /** 生效条件 chip（从**当前生效值**渲染，不是写死的字符串）。 */
+  const activeChips = React.useMemo(
+    () => buildActiveFilterChips(effectiveFilters),
+    [effectiveFilters]
+  );
+
+  /** 点维度 chip：切换它的展开状态（开着就收起来）。 */
+  const handleSelectDimension = React.useCallback(
+    (dimension: FilterDimension) => {
+      setExpandedDimension(current => (current === dimension ? null : dimension));
+      // 面板还收着 ⇒ 先把它打开（否则「点 chip 展开编辑框」什么也没发生）。
+      if (!showFilters) toggleFilters();
+    },
+    [showFilters, toggleFilters]
+  );
+
+  /**
+   * 点工具条上的「生效条件 chip」：**去改那个维度**（不是切展开状态）。
+   *
+   * 两种入口语义不同，不能共用一个 handler：面板里的 chip 是「开关」，
+   * 工具条上的生效条件 chip 是「去编辑」—— 点它却把编辑器关掉，是骗人。
+   */
+  const handleEditDimension = React.useCallback(
+    (dimension: FilterDimension) => {
+      setExpandedDimension(dimension);
+      if (!showFilters) toggleFilters();
+    },
+    [showFilters, toggleFilters]
+  );
 
   return (
     <>
       <div className="flex flex-wrap items-center justify-between gap-2 mb-2 px-2">
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           {showTitle && (
-            <h3 className="text-sm font-medium text-gray-700 dark:text-gray-300">{title}</h3>
+            <h3 className="text-sm font-medium theme-text-secondary">{title}</h3>
           )}
           {activeFilterCount > 0 && (
             <span className="theme-accent-soft theme-accent-text rounded-full px-2 py-0.5 text-[11px] font-medium">
               {activeFilterCount} 个筛选
             </span>
           )}
+          {activeChips.map(chip => (
+            <button
+              key={chip.key}
+              type="button"
+              onClick={() => handleEditDimension(chip.dimension)}
+              aria-label={`编辑筛选条件：${chip.label} ${chip.value}`}
+              className="inline-flex items-center gap-1 theme-radius-input-sm border theme-border-default theme-bg-elevated px-2 py-0.5 text-xs hover:theme-btn-hover"
+            >
+              <span className="theme-text-secondary">{chip.label}</span>
+              <span className="theme-accent-text font-medium">{chip.value}</span>
+            </button>
+          ))}
           {isFilterPending && (
             <span className="text-[11px] theme-text-muted">更新结果中...</span>
           )}
         </div>
         <div className="flex items-center gap-3">
+          {sortPlacement === 'toolbar' && <SessionSortControl placement="toolbar" />}
           {activeFilterCount > 0 && (
             <button
               onClick={clearFilters}
-              className="text-xs theme-text-muted hover:theme-text-secondary flat-interaction"
+              className="text-xs theme-text-muted hover:underline flat-interaction"
             >
               清空筛选
             </button>
           )}
           <button
             onClick={toggleFilters}
-            className="text-xs text-primary-600 dark:text-primary-400 hover:underline flex items-center flat-interaction"
+            className="text-sm theme-accent-text font-medium hover:underline flex items-center flat-interaction"
           >
             <FilterIcon />
             {showFilters ? '隐藏筛选' : '显示筛选'}
@@ -261,6 +615,11 @@ export const SearchFilterSection: React.FC<SearchFilterSectionProps> = ({
           controls={controls}
           collectPinnedTabs={collectPinnedTabs}
           withOuterMargin={isInset}
+          sortControl={
+            sortPlacement === 'panel' ? <SessionSortControl placement="panel" /> : undefined
+          }
+          expandedDimension={expandedDimension}
+          onSelectDimension={handleSelectDimension}
         />
       )}
     </>

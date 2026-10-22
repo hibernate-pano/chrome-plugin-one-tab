@@ -67,7 +67,7 @@ describe('整组恢复：TabGroup.openAllTabs 先开后删', () => {
   const body = bodyFrom(src, 'const openAllTabs = useCallback(');
 
   it('删除只发生在成功后调用的消费者函数里', () => {
-    const consumerStart = body.indexOf('const consumeSession = () =>');
+    const consumerStart = body.indexOf('const consumeSession');
     assert.ok(consumerStart !== -1, '应把删除收敛到 consumeSession');
     const sendAt = body.indexOf("type: 'OPEN_TABS'");
     const deleteAt = body.indexOf('dispatch(deleteGroup(');
@@ -76,11 +76,11 @@ describe('整组恢复：TabGroup.openAllTabs 先开后删', () => {
       deleteAt > consumerStart,
       '删除只允许出现在 consumeSession 内 —— 顶层直接 dispatch 等于先删后开'
     );
-    assert.ok(sendAt < body.indexOf('consumeSession()'), 'OPEN_TABS 必须先发出');
+    assert.ok(sendAt < body.indexOf('consumeSession('), 'OPEN_TABS 必须先发出');
   });
 
   it('回包没有 success:true 时保留会话并提示', () => {
-    assertConsumerGatedBySuccess(body, 'consumeSession()', 'dispatch(deleteGroup(');
+    assertConsumerGatedBySuccess(body, 'consumeSession(', 'dispatch(deleteGroup(');
   });
 });
 
@@ -89,14 +89,14 @@ describe('搜索结果单会话恢复：SearchResultList.restoreSession 先开�
   const body = bodyFrom(src, 'const restoreSession = (group: TabGroup) =>');
 
   it('删除收敛到 consumeSession，且 OPEN_TABS 先发', () => {
-    const consumerStart = body.indexOf('const consumeSession = () =>');
+    const consumerStart = body.indexOf('const consumeSession');
     assert.ok(consumerStart !== -1);
     const deleteAt = body.indexOf('dispatch(deleteGroup(');
     assert.ok(deleteAt > consumerStart, '搜索页单会话恢复也必须先开后删');
   });
 
   it('回包没有 success:true 时保留会话并提示', () => {
-    assertConsumerGatedBySuccess(body, 'consumeSession()', 'dispatch(deleteGroup(');
+    assertConsumerGatedBySuccess(body, 'consumeSession(', 'dispatch(deleteGroup(');
   });
 });
 
@@ -105,10 +105,10 @@ describe('搜索结果批量恢复：先开后删（一条记录都不提前删�
   const body = bodyFrom(src, 'const runRestoreAllSearchResults = () =>');
 
   it('删除循环只在回包成功后才执行', () => {
-    const consumerStart = body.indexOf('const consumeMatchedTabs = () =>');
+    const consumerStart = body.indexOf('const consumeMatchedTabs');
     assert.ok(consumerStart !== -1, '应把批量删除收敛到 consumeMatchedTabs');
     const deleteAt = body.indexOf('dispatch(deleteTabAndSync(');
     assert.ok(deleteAt > consumerStart, '批量删除只允许出现在消费者函数内');
-    assertConsumerGatedBySuccess(body, 'consumeMatchedTabs()', 'dispatch(deleteTabAndSync(');
+    assertConsumerGatedBySuccess(body, 'consumeMatchedTabs(', 'dispatch(deleteTabAndSync(');
   });
 });

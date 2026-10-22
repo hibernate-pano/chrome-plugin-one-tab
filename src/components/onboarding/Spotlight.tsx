@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { logWarn } from '@/utils/log';
+import { splitSelectorChain } from './spotlightSelectorChain';
 
 interface SpotlightProps {
     /** 目标元素的 CSS 选择器 */
@@ -11,14 +12,19 @@ interface SpotlightProps {
 }
 
 /**
- * 选区命中多个元素时（选择器用逗号并列了多个候选）取第一个真正可见的：
- * 命中但零尺寸的节点画出来是一个看不见的高亮框，等同于没高亮。
+ * 按候选链的**先后顺序**取第一个真正可见的元素。
+ *
+ * - 命中但零尺寸的节点画出来是一个看不见的高亮框，等同于没高亮 ⇒ 跳过；
+ * - 前面的候选一个都没命中时，才轮到后面的兜底 ⇒ 链是有意义的。
+ *
+ * 拆分规则与理由见 spotlightSelectorChain.ts（纯函数，可单测）。
  */
 function firstVisibleMatch(targetSelector: string): Element | null {
-    const matches = document.querySelectorAll(targetSelector);
-    for (const match of Array.from(matches)) {
-        const rect = match.getBoundingClientRect();
-        if (rect.width > 0 && rect.height > 0) return match;
+    for (const selector of splitSelectorChain(targetSelector)) {
+        for (const match of Array.from(document.querySelectorAll(selector))) {
+            const rect = match.getBoundingClientRect();
+            if (rect.width > 0 && rect.height > 0) return match;
+        }
     }
     return null;
 }

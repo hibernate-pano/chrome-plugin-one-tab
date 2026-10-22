@@ -151,6 +151,77 @@ function deleteEntryIsLockedGated(rel: string): Array<{ gated: boolean; text: st
   return results;
 }
 
+/**
+ * 找出所有「重命名」入口（宽屏的标题按钮 + 窄屏的菜单项）。
+ * 返回每个元素**是否**被 `!group.isLocked` 包住。
+ *
+ * ── 为什么不能写成正则 ────────────────────────────────────────────────────
+ *
+ * 原来的断言钉的是字面量 `{!group.isLocked && (<button … 重命名会话`。
+ * 那条正则判不出**嵌套关系**，只能判「附近有没有那串字符」——
+ * 于是给按钮套一层 <Tooltip>（2026-10-22 审计 U-18：卡片头不再用原生
+ * `title=`，换成仓里的 Tooltip）就让它失配，而「锁定时重命名仍被挡住」
+ * 这条承诺**根本没有被破坏**。
+ *
+ * 这是本仓反复踩到的坑：**守卫钉死字面量 ⇒ 把正确的修法判成回归**。
+ * 断言必须判「这个元素是不是被 `!group.isLocked` 包着」，
+ * 判嵌套就得用 AST（判不了嵌套的正则只会制造假红）。
+ */
+function renameEntryIsLockedGated(rel: string): Array<{ gated: boolean; text: string }> {
+  const sf = parseTsx(rel);
+  const results: Array<{ gated: boolean; text: string }> = [];
+
+  const visit = (node: ts.Node, gated: boolean) => {
+    let childGated = gated;
+    if (ts.isBinaryExpression(node) && isNotGroupIsLocked(node)) {
+      childGated = true;
+    }
+    if (ts.isConditionalExpression(node) && isNotGroupIsLocked(node.condition)) {
+      childGated = true;
+    }
+    if (ts.isJsxElement(node)) {
+      const opening = node.openingElement;
+      const text = node.getText(sf);
+      const onClick = opening.attributes.properties.find(
+        (p): p is ts.JsxAttribute =>
+          ts.isJsxAttribute(p) && ts.isIdentifier(p.name) && p.name.text === 'onClick'
+      );
+      // 「重命名」入口的两种形态：
+      //   · 宽屏：标题 <h3>（onClick 里 setIsEditing(true)）
+      //   · 窄屏：菜单项 <button role="menuitem">，正文是「重命名会话」
+      //
+      // ⚠️ 只认 button / h3 这两种**真正能点的元素**：用「整段文本里出现
+      // 『重命名会话』」来判的话，外层那张卡片 div 也会命中（菜单项在它里面），
+      // 而卡片 div 天然不在 `!group.isLocked` 里 ⇒ 断言必假红。
+      const tag = opening.tagName.getText(sf);
+      const isEntryTag = tag === 'button' || tag === 'h3';
+      const isRenameEntry =
+        isEntryTag &&
+        ((onClick?.initializer
+          ? /setIsEditing\(true\)/.test(onClick.initializer.getText(sf))
+          : false) ||
+          /重命名会话/.test(text));
+      if (isRenameEntry) {
+        // 「被挡住」有两种实现，判据必须把两种都认：
+        //   ① 元素**不渲染**（`{!group.isLocked && (<button …>)}`）；
+        //   ② 元素渲染，但点击时**自己先判**（标题 <h3> 的 onClick 里
+        //      `!group.isLocked && setIsEditing(true)`）。
+        // 锁定态下标题仍然渲染（它还要显示名字、还要能被读屏读到），
+        // 所以它的挡法只能是 ② —— 只认 ① 会把它判成「没挡住」。
+        const handlerGuards =
+          onClick?.initializer ? /!\s*group\.isLocked/.test(onClick.initializer.getText(sf)) : false;
+        results.push({
+          gated: childGated || handlerGuards,
+          text: text.slice(0, 120),
+        });
+      }
+    }
+    node.forEachChild(child => visit(child, childGated));
+  };
+  visit(sf, false);
+  return results;
+}
+
 // ══════════════════════════════════════════════════════════════════════════
 // 1. 锁定会话的删除确认文案（纯函数）
 // ══════════════════════════════════════════════════════════════════════════
@@ -275,11 +346,17 @@ describe('会话卡片：锁定会话仍渲染删除入口（宽屏按钮 + 窄�
   });
 
   it('「重命名会话」仍被锁定挡住（锁定承诺不许放松）', () => {
-    assert.match(
-      src,
-      /\{!group\.isLocked && \(\s*<button[\s\S]{0,200}?重命名会话/,
-      '重命名必须继续被锁定挡住'
-    );
+    // 用 AST 判「被 !group.isLocked 包住」，不用正则钉字面量 ——
+    // 包装层（<Tooltip>）一变，正则就失配，而承诺并没有被破坏。
+    const entries = renameEntryIsLockedGated(TAB_GROUP);
+    assert.ok(entries.length >= 2, `应至少找到两处重命名入口，实得 ${entries.length}`);
+    for (const entry of entries) {
+      assert.equal(
+        entry.gated,
+        true,
+        `重命名入口必须继续被锁定挡住（未包在 !group.isLocked 里）：${entry.text}`
+      );
+    }
   });
 
   it('锁定会话的删除确认框走共享的文案层（两入口同一份措辞）', () => {
@@ -305,7 +382,14 @@ describe('锁定承诺一条都不许放松（逐条删除 / 重命名 / 拖走 
 
   it('重命名仍被锁定挡住（标题与菜单两处）', () => {
     assert.match(src, /onClick=\{\(\) => !group\.isLocked && setIsEditing\(true\)\}/);
-    assert.match(src, /title=\{group\.isLocked \? '会话已锁定，先解锁才能重命名'/);
+    // 锁定态的提示语必须仍然存在，且必须点明「先解锁才能重命名」。
+    // 它的**载体**换过（原生 title= → 仓里的 <Tooltip>，2026-10-22 审计 U-18），
+    // 所以这里只钉「这句话在、且挂在锁定分支上」，不钉它写在哪个属性上。
+    assert.match(
+      src,
+      /group\.isLocked \? '会话已锁定，先解锁才能重命名'/,
+      '锁定态的提示语必须点明「先解锁才能重命名」'
+    );
   });
 
   it('逐条删除仍被锁定挡住（handleDeleteTab 里先判锁定）', () => {

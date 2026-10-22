@@ -30,7 +30,14 @@ import { getSessionResultSummary, getDisplayUrl } from '@/utils/sessionPresentat
 import { logError } from '../../utils/log';
 import { toServiceWorkerErrorCopy } from '@/utils/serviceWorkerErrorCopy';
 import { mutationErrorMessage } from '@/components/tabs/mutationErrorCopy';
-import { restoreAllSearchSuccessMessage } from '@/components/tabs/restoreFeedbackCopy';
+import {
+  openSingleTabSuccessMessage,
+  restoreAllSearchSuccessMessage,
+  restoreGroupSuccessMessage,
+} from '@/components/tabs/restoreFeedbackCopy';
+import { useConsumeUndo } from '@/components/tabs/useConsumeUndo';
+import type { ConsumedTabRef, ConsumeUndoSpec } from '@/core/consumeUndo';
+import { searchEmptyHint } from '@/components/search/searchEmptyHint';
 import {
   buildResultWindow,
   resultTruncationMessage,
@@ -99,6 +106,9 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({
   const showTabCount = useAppSelector(state => state.settings.showTabCount);
   const { showConfirm } = useToast();
   const { showDeleteError, showRestoreError, showRestoreSuccessMessage } = useEnhancedToast();
+  // ── 2026-10-22 审计 P0-4：恢复即消费 ⇒ 给一条「撤销」的路 ─────────────
+  // 撤销的语义与实现见 @/core/consumeUndo.ts 与 useConsumeUndo.ts。
+  const { showConsumeToast } = useConsumeUndo();
   const {
     effectiveFilters,
     activeFilterCount,
@@ -165,17 +175,32 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({
     [sessionResults]
   );
 
+
   // ── 2026-10-20 审计 A-11：搜索结果也要有渲染上限 ───────────────────────
   // 修复前这里**全量渲染**所有匹配结果：400 会话 × 20 标签搜一个宽泛词
   // （如 "https"）⇒ 91311 个 DOM 节点、搜索响应 1250ms、滚动掉到 11fps。
   // 主列表早有虚拟化（lazyTabRows + useNearViewport），搜索这条路却没有 ——
   // 而搜索是本产品最高频的「找回」路径。
   //
-  // 两道防线（判据都在 searchWindowing.ts，可测）：
+  // 当前**只有一道**防线（判据在 searchWindowing.ts，可测）：
   //   1. **条数上限**：命中很多时只展示最靠前的部分。AdvancedSearch 已按
   //      相关度排好序 ⇒ 截断是排序的兑现，不是信息损失。截断了必须说清
   //      「还有 N 条未显示」，否则用户会以为只找到了这么多。
-  //   2. **分片渲染**：结果条数没超上限、但会话分组多时，按片渲染。
+  //
+  // ── 2026-10-22 架构审计 D1 更正 ──────────────────────────────────────────
+  // 这段注释原先写着「两道防线」，第二条是「**分片渲染**：结果条数没超上限、
+  // 但会话分组多时，按片渲染」—— 而它**在生产代码里不存在**：
+  // `searchWindowing.ts` 的 `computeVisibleChunks` / `chunkResults` /
+  // `SEARCH_CHUNK_SIZE` 三个导出**零生产调用点**（只有单测在测它们）。
+  //
+  // 为什么这句谎话危险：只看这个文件的人会以为「搜索路径已经做了渲染上限」，
+  // 于是以为「200 条截断管住了渲染量」—— 但它只管住了**标签条数**，
+  // **没管住卡头数**（visibleSessionResults 按整组保留：400 组各命中 1 个标签时，
+  // 200 组全部渲染，每组一个卡头）。
+  //
+  // ⇒ 注释必须说真话。分片能力**还没接线**（接线需要给 useNearViewport 加
+  // 「当前第几片」的接口），接线前不许在这里声称它存在。
+  // 守卫见 tests/guards/noPhantomMechanisms.test.ts。
   const resultWindow = useMemo(
     () => buildResultWindow(matchingTabs.length),
     [matchingTabs.length]
@@ -385,7 +410,26 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({
               `${r.skippedUnopenable} 个在当前设备无法打开（本地文件、临时链接或浏览器内部页面）。` +
               keptNote
           );
+          return;
         }
+        // ── 2026-10-22 审计 P1-4：成功必须出声 ─────────────────────────────
+        // 修复前这里**什么都不说**：窗口开了、会话卡从列表消失、屏幕上零反馈。
+        // 「我的会话怎么没了？」是用户看到卡片凭空消失时的第一反应，
+        // 而它其实是成功。
+        //
+        // 对照：列表页（TabGroup）同一动作早就有播报，搜索页没有 ——
+        // 同一个产品动作，两个界面两种反馈。
+        // 文案复用 restoreFeedbackCopy.ts：列表页与搜索页共用一份措辞。
+        //
+        // ── 2026-10-22 审计 P0-4：挂上「撤销」 ───────────────────────────
+        // 未锁定会话恢复后即被消费（记录从列表移除、无回收站）⇒ 这次成功
+        // 同时是一次**不可撤销的删除**。给它配一条退路，是产品该有的最低配置。
+        // 锁定会话从不被消费 ⇒ 没有东西可撤 ⇒ 不挂按钮（挂了就是骗人）。
+        // 撤销凭据里的 group 是**消费前**的那份快照（闭包捕获的旧值）。
+        showConsumeToast(
+          restoreGroupSuccessMessage(tabsPayload.length, group.isLocked),
+          group.isLocked ? undefined : { group },
+        );
       }
     );
   };
@@ -415,13 +459,30 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({
     // 锁定组从不消费（与整组恢复语义一致）。两处必须同口径，否则同一个产品
     // 在两个界面两种行为。
     if (group.isLocked) {
-      chrome.runtime.sendMessage({
-        type: 'OPEN_TAB',
-        data: { url: tab.url, pinned: !!tab.pinned },
-      }).catch(error => {
-        logError('打开标签失败:', error);
-        showRestoreError(mutationErrorMessage('打开标签', error));
-      });
+      // ── 2026-10-22 审计 P1-4 + P1-6：锁定分支也要有**成功门** ─────────
+      // 修复前这里是 `.catch` 一个 promise、**没有 `.then`** ⇒
+      //   · 成功：零反馈（行也还在、屏幕也不动，用户分不出「已打开」与「没反应」）
+      //   · 失败：SW 拒开是 `sendResponse({success:false})` ⇒ promise **resolve
+      //     而不是 reject** ⇒ `.catch` 根本不触发 ⇒ 失败也零反馈
+      // 改用 callback 形式，照抄下面未锁定分支的 success 判定：
+      // 没有 success:true 就没有证据证明打开了，不能报成功。
+      chrome.runtime.sendMessage(
+        {
+          type: 'OPEN_TAB',
+          data: { url: tab.url, pinned: !!tab.pinned },
+        },
+        (res: unknown) => {
+          const r = res as { success?: boolean; error?: string } | undefined;
+          if (!r || r.success !== true) {
+            releaseOnFailure();
+            showRestoreError(toServiceWorkerErrorCopy(r?.error, '打开失败，已保留在会话中'));
+            return;
+          }
+          // 锁定组不消费记录，但**行也还在** —— 屏幕上同样什么都不动，
+          // 「点了没反应」与「已打开」用户分不出来。
+          showRestoreSuccessMessage(openSingleTabSuccessMessage(true));
+        }
+      );
       return;
     }
     chrome.runtime.sendMessage(
@@ -441,6 +502,24 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({
           .then(payload => {
             const warn = deleteBroadcastWarn(payload);
             if (warn) showDeleteError(warn);
+            // ── 2026-10-22 审计 P1-4：点开即消费 = 一次不可撤销的删除 ──
+            // 这是本产品**最高频**的动作，却是零反馈的：标签行消失、
+            // 页面打开、屏幕上什么都不动。用户无法区分「已打开」与「被删了」。
+            // 成功门已过（SW 回包 success:true），所以这里可以放心报成功。
+            //
+            // ── 2026-10-22 审计 P0-4：挂上「撤销」 ───────────────────────
+            // 点开即消费 = 一次不可撤销的删除（无回收站），而这是本产品
+            // 最高频的动作。给一条退路。
+            // 撤销凭据带**下标**：撤销时把这条标签插回原来的位置，而不是
+            // 追加到末尾（顺序是用户自己排的，撤销不该偷偷改它）。
+            showConsumeToast(
+              openSingleTabSuccessMessage(false),
+              {
+                group,
+                consumedTabId: tab.id,
+                consumedIndex: group.tabs.findIndex(t => t.id === tab.id),
+              },
+            );
           })
           .catch(error => {
             logError('打开后从会话移除失败:', error);
@@ -527,20 +606,54 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({
     // 串行删除每枚 tab：deleteTabAndSync 内部处理"删到组空→自动整组删除"。
     // 旧版用 updateGroup(filter) 走 diff 通道，存在 UI 状态陈旧时误伤的风险（根因 R3）。
     // 只在 OPEN_TABS 回 success:true 后执行（先开后删，失败时记录原样保留）。
-    const consumeMatchedTabs = () => {
-      void (async () => {
-        for (const { tab, group } of matchingTabs) {
-          if (group.isLocked) continue;
-          try {
-            const res = await dispatch(deleteTabAndSync({ groupId: group.id, tabId: tab.id })).unwrap();
-            const warn = deleteBroadcastWarn(res);
-            if (warn) showDeleteError(warn);
-          } catch (error) {
-            logError('批量恢复后删除会话失败:', error);
-            showDeleteError(mutationErrorMessage('批量恢复后清理原会话', error));
-          }
+    //
+    // ── 2026-10-22 审计 P0-4：消费是**批量**的，撤销也得能一次撤回来 ──────
+    // 这里**如实**回报「真正被消费掉的是哪些」，而不是「本来打算消费哪些」：
+    // 某条删除失败时那条标签还在列表里，撤销若按「打算消费的清单」还原，
+    // 就会去动一条根本没被消费的标签（把用户后来加进去的东西顶掉）。
+    //
+    // 为什么改成 await：撤销的还原清单要等消费**落地**才定得了，而排队中的
+    // 删除命令会把还原结果又删掉 —— 撤销必须排在消费之后（SW 的单写者队列
+    // 保证同一条命令链上的顺序）。
+    const consumeMatchedTabs = async (): Promise<Array<{ group: TabGroup; ref: ConsumedTabRef }>> => {
+      const consumed: Array<{ group: TabGroup; ref: ConsumedTabRef }> = [];
+      for (const { tab, group } of matchingTabs) {
+        if (group.isLocked) continue;
+        // 原下标必须在**消费前**取：消费之后这条标签已经不在列表里，
+        // 下标就找不回来了（撤销要靠它把标签插回原来的位置）。
+        const index = group.tabs.findIndex(t => t.id === tab.id);
+        try {
+          const res = await dispatch(deleteTabAndSync({ groupId: group.id, tabId: tab.id })).unwrap();
+          const warn = deleteBroadcastWarn(res);
+          if (warn) showDeleteError(warn);
+          if (index >= 0) consumed.push({ group, ref: { tabId: tab.id, index } });
+        } catch (error) {
+          logError('批量恢复后删除会话失败:', error);
+          showDeleteError(mutationErrorMessage('批量恢复后清理原会话', error));
         }
-      })();
+      }
+      return consumed;
+    };
+
+    /**
+     * 把「消费了哪些」整理成撤销凭据：**按会话分组**。
+     *
+     * 同一个会话里可能命中好几条 —— 它们共用一份「消费前的整组快照」，
+     * 撤销时一次把这一会话里被消费掉的那几条原样插回（顺序也回到原样）。
+     */
+    const buildUndoSpecs = (
+      consumed: Array<{ group: TabGroup; ref: ConsumedTabRef }>,
+    ): ConsumeUndoSpec[] => {
+      const byGroup = new Map<string, { group: TabGroup; refs: ConsumedTabRef[] }>();
+      for (const { group, ref } of consumed) {
+        const entry = byGroup.get(group.id);
+        if (entry) entry.refs.push(ref);
+        else byGroup.set(group.id, { group, refs: [ref] });
+      }
+      return [...byGroup.values()].map(({ group, refs }) => ({
+        group,
+        consumedTabs: refs,
+      }));
     };
 
     chrome.runtime.sendMessage(
@@ -560,26 +673,43 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({
           );
           return;
         }
-        consumeMatchedTabs();
-        if (typeof r.skippedUnopenable === 'number' && r.skippedUnopenable > 0) {
-          // 同 F-4：只说真实发生的事 —— 移除的是**命中的标签**，不是整个会话。
-          const removedNote = matchingTabs.some(t => !t.group.isLocked)
-            ? '命中的标签已从所属会话移除，会话内其余标签保留。'
-            : '所涉会话均已锁定，记录仍在列表中。';
-          showDeleteError(
-            `已恢复 ${tabsPayload.length - r.skippedUnopenable} 个标签；另有 ` +
-              `${r.skippedUnopenable} 个在当前设备无法打开（本地文件、临时链接或浏览器内部页面）。` +
-              removedNote
+        // 消费是逐条派发删除命令的**异步**过程，所以成功提示等它落地再出 ——
+        // 「已恢复 N 个标签，命中的标签已从所属会话移除」这句话，只有在
+        // 那 N 条真的被移除之后才是真的（撤销的还原清单也才定得下来）。
+        void (async () => {
+          const consumed = await consumeMatchedTabs();
+          const undoSpecs = buildUndoSpecs(consumed);
+          if (typeof r.skippedUnopenable === 'number' && r.skippedUnopenable > 0) {
+            // 同 F-4：只说真实发生的事 —— 移除的是**命中的标签**，不是整个会话。
+            const removedNote = matchingTabs.some(t => !t.group.isLocked)
+              ? '命中的标签已从所属会话移除，会话内其余标签保留。'
+              : '所涉会话均已锁定，记录仍在列表中。';
+            // 部分成功也是一次消费（能打开的那些已经被移出会话了）⇒
+            // 这条提示上**同样**挂「撤销」，否则用户手里有一条没退路的消费。
+            showConsumeToast(
+              `已恢复 ${tabsPayload.length - r.skippedUnopenable} 个标签；另有 ` +
+                `${r.skippedUnopenable} 个在当前设备无法打开（本地文件、临时链接或浏览器内部页面）。` +
+                removedNote,
+              undoSpecs.length > 0 ? undoSpecs : undefined,
+              { type: 'error' },
+            );
+            return;
+          }
+          // 2026-10-18 C 组：全成功时原先**零反馈** —— 对话框关掉、窗口开了、
+          // 列表少几行；命中标签分散在多个会话且每会话只中 1 条时，视觉上只是
+          // 几行消失，用户无法确证「恢复了几个」。与列表页整组恢复同口径报条数。
+          //
+          // 2026-10-20 审计 A-1：措辞改用共享模块（restoreFeedbackCopy），
+          // 列表页与搜索页引用同一份文案 —— 两处各写一遍迟早漂。
+          //
+          // 2026-10-22 审计 P0-4：挂上「撤销」—— 批量恢复一次可能从好几个
+          // 会话里消费掉几十条记录，是本产品**一次吞掉最多记录**的动作，
+          // 最需要一条退路。
+          showConsumeToast(
+            restoreAllSearchSuccessMessage(matchingTabs.length),
+            undoSpecs.length > 0 ? undoSpecs : undefined,
           );
-          return;
-        }
-        // 2026-10-18 C 组：全成功时原先**零反馈** —— 对话框关掉、窗口开了、
-        // 列表少几行；命中标签分散在多个会话且每会话只中 1 条时，视觉上只是
-        // 几行消失，用户无法确证「恢复了几个」。与列表页整组恢复同口径报条数。
-        //
-        // 2026-10-20 审计 A-1：措辞改用共享模块（restoreFeedbackCopy），
-        // 列表页与搜索页引用同一份文案 —— 两处各写一遍迟早漂移。
-        showRestoreSuccessMessage(restoreAllSearchSuccessMessage(matchingTabs.length));
+        })();
       }
     );
   };
@@ -742,23 +872,20 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({
                   清空筛选后重试
                 </button>
               )}
-              <div className="space-y-1">
-                <div>小提示：</div>
-                <ul className="list-disc list-inside space-y-0.5 text-left">
-                  <li>支持搜索会话名称、标签标题或 URL</li>
-                  {/* 固定标签筛选器默认是隐藏的（见上方 collectPinnedTabs 注释），
-                      提示文案不能无条件承诺一个用户看不到的筛选项。 */}
-                  <li>
-                    {collectPinnedTabs
-                      ? '可结合域名、保存时间和固定标签筛选'
-                      : '可结合域名和保存时间筛选'}
-                  </li>
-                  <li>如果刚换设备，可先登录后手动同步一次</li>
-                </ul>
-              </div>
+              {/* ── 2026-10-22 审计 L-1：提示从「三条 bullet」压成「一条」──
+                  这个 action 块原本塞着一个小标题 + 三条 list-item，
+                  在「搜不到」这个**用户已经挫败**的时刻占据整屏高度，
+                  却给不了一个可点的动作。压成一条：
+                    · 高度从 ~90px 降到 ~30px，空态不再喧宾夺主；
+                    · 固定标签筛选器默认隐藏（见上方 collectPinnedTabs 注释），
+                      提示文案仍不能无条件承诺一个用户看不到的筛选项 ——
+                      所以那句仍然是**条件渲染**的（tests/pinnedFilterAvailability
+                      守的就是这一条）。 */}
+              <ul className="list-disc list-inside space-y-0.5 text-left">
+                <li>{searchEmptyHint(collectPinnedTabs)}</li>
+              </ul>
             </div>
           }
-          className="h-40"
         />
       </div>
     );

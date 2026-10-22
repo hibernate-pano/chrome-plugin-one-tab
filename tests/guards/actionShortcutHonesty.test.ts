@@ -1,16 +1,27 @@
-// 快捷键语义诚实性守卫（2026-10-18）。
+// 快捷键语义诚实性守卫（2026-10-18 建立，2026-10-22 因 P0-1 重写）。
 //
-// 【要防的回归】`_execute_action` 是 Chrome 的 action 命令：按下时触发
-// chrome.action.onClicked（本扩展 = 保存整窗并关闭，随后打开管理器），
-// **不会**派发 commands.onCommand（Chrome 官方文档明文，实测
-// chrome.commands.getAll() 也可确认）。所以任何把 Ctrl+Shift+S 描述成
-// 「打开管理器」的文案都是错的，而且后果不可逆：用户以为要看列表，
-// 结果整窗被存掉并关闭。曾经三处同时出错——manifest 描述、service-worker
-// 里的死分支、商店/推广页文案——本文件把「三处不许再漂回去」钉住。
+// ── 2026-10-22 之前的那一版 ────────────────────────────────────────────
 //
-// 判据不硬编码文案：manifest 侧断言「描述不得声称打开管理器」，
-// sw 侧断言「不得存在 _execute_action 分支」，文案侧断言
-// 「Ctrl+Shift+S 不得与『打开管理器 / open the manager』出现在同一句」。
+// `_execute_action` 是 Chrome 的 action 命令：按下时触发
+// chrome.action.onClicked，**不会**派发 commands.onCommand。
+// 当时点图标 = 保存整窗并关闭，于是「Ctrl+Shift+S」的真实语义是
+// 「保存整窗并关闭」—— 文案必须这么说，任何说成「打开管理器」的文案都是错的。
+// 本文件就是钉那件事的。
+//
+// ── 为什么现在要重写 ────────────────────────────────────────────────────
+//
+// 审计 P0-1（`docs/audit-2026-10-22-product-director.md`）：
+// **点扩展图标不再保存并关闭当前窗口**，只打开会话管理器。
+// 破坏性动作改由「明确的意图」触发（页面按钮 / 右键菜单 / 快捷键）。
+//
+// 于是旧契约整体翻转：
+//   · `_execute_action` 必须**删掉** —— 它会触发图标点击，而图标已经不存了；
+//     留着它，Ctrl+Shift+S 就会变成「打开管理器」，而所有文案都写着
+//     「Ctrl+Shift+S 保存整窗并关闭」⇒ 一句彻头彻尾的假话。
+//   · Ctrl+Shift+S 必须绑到一个**真的保存命令**上（`save_*`），
+//     键位和语义都不变 —— 用户的肌肉记忆不该为这次修复买单。
+//
+// 本文件现在钉的是这条**新**契约。
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -20,23 +31,65 @@ import { fileURLToPath } from 'node:url';
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 const read = (rel: string): string => readFileSync(resolve(ROOT, rel), 'utf8');
 
-const MANAGER_WORDS = /管理器|tab manager/i;
+const manifest = () =>
+  JSON.parse(read('manifest.json')) as {
+    commands: Record<string, { description?: string; suggested_key?: { default?: string; mac?: string } }>;
+  };
 
-describe('Ctrl+Shift+S（_execute_action）的语义声明必须与真实行为一致', () => {
-  it('manifest: _execute_action 的描述不得声称打开管理器', () => {
-    const manifest = JSON.parse(read('manifest.json')) as {
-      commands: Record<string, { description?: string }>;
-    };
-    const cmd = manifest.commands['_execute_action'];
-    assert.ok(cmd, 'manifest 必须声明 _execute_action（Ctrl+Shift+S 的载体）');
+describe('Ctrl+Shift+S 的语义声明必须与真实行为一致（2026-10-22 P0-1 后）', () => {
+  it('manifest 不得再声明 _execute_action', () => {
     assert.equal(
-      MANAGER_WORDS.test(cmd.description ?? ''),
-      false,
-      `_execute_action 描述 "${cmd.description}" 声称打开管理器，但按下它走的是 action.onClicked（保存整窗并关闭）`
+      manifest().commands['_execute_action'],
+      undefined,
+      '_execute_action 会触发图标点击 —— 而图标现在只打开管理器。' +
+        '留着它，Ctrl+Shift+S 就会与所有文案里「保存整窗并关闭」那句话对不上'
     );
   });
 
-  it('service-worker: commands.onCommand 不得处理 _execute_action（Chrome 从不派发它）', () => {
+  it('Ctrl+Shift+S 必须绑在一个真的保存命令上（不是 _execute_action）', () => {
+    const commands = manifest().commands;
+    const binding = Object.entries(commands).find(
+      ([, cmd]) =>
+        cmd.suggested_key?.default === 'Ctrl+Shift+S' ||
+        cmd.suggested_key?.mac === 'Command+Shift+S'
+    );
+    assert.ok(binding, 'manifest 必须给 Ctrl+Shift+S 绑一个命令');
+    const [id, cmd] = binding;
+    assert.match(
+      id,
+      /^save_/,
+      `Ctrl+Shift+S 绑到了「${id}」上 —— 它必须是保存命令：` +
+        '文案里写着「Ctrl+Shift+S 保存整窗并关闭」，行为必须对得上'
+    );
+    assert.match(
+      cmd.description ?? '',
+      /save/i,
+      `命令 ${id} 的描述必须说清它会保存`
+    );
+    assert.match(
+      cmd.description ?? '',
+      /close/i,
+      `命令 ${id} 的描述必须说清它会关闭标签`
+    );
+  });
+
+  it('service-worker: 该命令必须真的被处理', () => {
+    const commands = manifest().commands;
+    const binding = Object.entries(commands).find(
+      ([, cmd]) =>
+        cmd.suggested_key?.default === 'Ctrl+Shift+S' ||
+        cmd.suggested_key?.mac === 'Command+Shift+S'
+    );
+    assert.ok(binding, 'manifest 必须给 Ctrl+Shift+S 绑一个命令');
+    const src = read('src/service-worker.ts');
+    assert.match(
+      src,
+      new RegExp(`case\\s+['"]${binding[0]}['"]`),
+      `service-worker 必须处理 ${binding[0]} —— 否则按下快捷键什么都不会发生`
+    );
+  });
+
+  it('service-worker: 不得处理 _execute_action（Chrome 从不派发它）', () => {
     const src = read('src/service-worker.ts');
     assert.equal(
       /case\s+['"]_execute_action['"]/.test(src),

@@ -57,8 +57,18 @@ const STEPS: StepConfig[] = [
     { title: '搜索工作会话', spotlightTarget: '[aria-label="搜索会话或标签页"]' },
     {
         title: '恢复整个会话',
+        // 2026-10-22 审计 P0-1：这里原本只有恢复按钮一个候选，而**全新安装时
+        // 一个会话都没有** ⇒ 那张卡片不存在 ⇒ 按钮不存在 ⇒ 聚光灯整个消失，
+        // 界面上没有任何提示（只有 console 里一句 warn）。
+        //
+        // ⇒ 加一条兜底链：找不到恢复按钮时，改指向搜索框（空态下也一定存在），
+        // 而这一步教的本来就是「怎么把存回来的会话找出来」。
+        //
+        // ⚠️ 兜底**必须按顺序试**：CSS 的 `querySelectorAll('A, B')` 返回的是
+        // 文档顺序而不是选择器顺序，一次性拿全部是拿不到「A 优先、B 兜底」的。
+        // Spotlight.tsx 的 splitSelectorChain 就是为此存在的。
         spotlightTarget:
-            'button[aria-label^="在新窗口恢复整个会话"], button[aria-label^="在新窗口恢复所有匹配标签"]',
+            'button[aria-label^="在新窗口恢复整个会话"], button[aria-label^="在新窗口恢复所有匹配标签"], [aria-label="搜索会话或标签页"]',
     },
     { title: '跨设备同步', spotlightTarget: '[aria-label="菜单"]' },
     { title: '一切就绪' },

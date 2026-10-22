@@ -1,6 +1,7 @@
 import { createSlice, createAsyncThunk, PayloadAction } from '@reduxjs/toolkit';
 import { UserSettings, LayoutMode, ThemeStyle } from '@/types/tab';
 import { storage, DEFAULT_SETTINGS as defaultSettings, invalidateSettingsCache } from '@/utils/storage';
+import type { SessionSortKey } from '@/core/sessionSort';
 
 /**
  * 本会话是否成功读到过真实设置（2026-10-09 数据安全 P1-3）。
@@ -183,6 +184,17 @@ const settingsSlice = createSlice({
       state.layoutMode = action.payload;
     },
 
+    /**
+     * 会话列表的排序键（2026-10-22 审计 L-10）。
+     *
+     * 与 `setLayoutMode` 同一纪律：只改 Redux state，落盘走
+     * `dispatchSaveSettings`（fail-closed：没读到真值就拒绝写，见文件头），
+     * 非法值由 storage 层的 `validateSessionSort` 兜底（读路径 + 写路径各一道）。
+     */
+    setSessionSort: (state, action: PayloadAction<SessionSortKey>) => {
+      state.sessionSort = action.payload;
+    },
+
     // 切换布局模式（循环切换：单栏 -> 双栏 -> 单栏）
     toggleLayoutMode: (state) => {
       switch (state.layoutMode) {
@@ -239,6 +251,7 @@ export const {
    toggleCollectPinnedTabs,
   setLayoutMode,
   toggleLayoutMode,
+  setSessionSort,
   setSyncEnabled,
   setSyncIntervalMinutes,
 } = settingsSlice.actions;

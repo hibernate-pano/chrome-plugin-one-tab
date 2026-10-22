@@ -1,6 +1,7 @@
 import React from 'react';
 
 import { saveAndCloseLabel } from '@/components/layout/saveActionCopy';
+import { MENU_LOGIN_LABEL } from '@/components/common/menuLabels';
 
 /**
  * 引导各步内容。
@@ -172,7 +173,7 @@ export const SyncStep: React.FC = () => (
     </div>
     <h2 tabIndex={-1} className="onboarding-title">换台设备也能找回</h2>
     <p className="onboarding-description">
-      通过右上角菜单「登录 / 注册」开启同步
+      通过右上角菜单「{MENU_LOGIN_LABEL}」开启同步
       <br />
       {/* ── 2026-10-19 审计 I-4：「备份」这个词必须去掉 ────────────────
        * 云端不是备份，而是**同一份数据的镜像**：你在本机删除，云端那份
@@ -185,12 +186,25 @@ export const SyncStep: React.FC = () => (
        * 且「登录即恢复」是本轮 F-6 修好后才成立的（登录成功会主动拉一次）。
        * 现在说的是用户真正会遇到的流程。 */}
       保存后会自动同步到云端；新设备登录后会自动拉回云端的会话
+      <br />
+      {/* ── 2026-10-22 审计 P1-5：默认状态必须说清 ────────────────────────
+       * 上面两句**都成立**（保存后会自动上传、登录后会主动拉一次），
+       * 但它们让人以为「登录 = 开了自动同步」。实际上：
+       *   · 上传：每次本地保存/重命名都会安排一次延迟上传 —— 与开关无关；
+       *   · **定时拉取**：默认**关闭**（后台轮询 alarm 只在 syncEnabled=true
+       *     时注册）⇒ 两台设备都在线时，A 存的东西**不会自动出现在 B**。
+       * 用户会得出「这产品同步不可靠」的结论，而事实上只需在设置里打开开关。
+       * 商店文案（CHROMEWEBSTORE.md）早就写对了，这里补上同一件事。 */}
+      定时拉取默认关闭，可在设置里打开
     </p>
     <div className="onboarding-feature-grid">
       <div className="onboarding-feature-card">
         <div className="onboarding-feature-icon">🔄</div>
         <div className="onboarding-feature-title">自动同步</div>
-        <div className="onboarding-feature-desc">保存和重命名都会同步到云端</div>
+        {/* 审计 P1-5：卡片标题叫「自动同步」，描述却只讲上传 ⇒ 用户以为
+            「登录 = 开了自动同步」。把上传与定时拉取分开说，与上面那句、
+            与商店文案同口径。 */}
+        <div className="onboarding-feature-desc">保存和重命名都会上传到云端；定时拉取可在设置里开启</div>
       </div>
       <div className="onboarding-feature-card">
         <div className="onboarding-feature-icon">📤</div>

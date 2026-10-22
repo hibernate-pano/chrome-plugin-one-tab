@@ -6,6 +6,7 @@
 import type { SyncPreviewSummary } from '@/utils/syncPreview';
 import type { BackendStatusKind } from '@/components/layout/backendStatus';
 import { logError } from '@/utils/log';
+import { MENU_LOGIN_LABEL } from '@/components/common/menuLabels';
 
 /* ── P1-6 · 覆盖模式的双闸门（纯函数，SyncButton 只做状态装配）─────────────
  *
@@ -181,7 +182,7 @@ export const shouldRenderSyncControls = (
 export const syncIdentityBlockedCopy = (input: SyncGateInput): string | null =>
   syncIdentityCanRun(input)
     ? null
-    : '还没有登录 TapStack 云端，登录后同步才能使用。请先点右上角「⋯」菜单里的「登录 / 注册」。';
+    : `还没有登录 TapStack 云端，登录后同步才能使用。请先点右上角「⋯」菜单里的「${MENU_LOGIN_LABEL}」。`;
 
 /**
  * 点上传/下载时是否允许开弹窗。
@@ -226,7 +227,7 @@ export const SYNC_REASON_COPY: Record<string, string> = {
   // 2026-10-18 C 组：未登录在 upload 方向原先没有任何条目，会落到
   // spec.failureMessage（「上传失败，请重试」）—— 一句既没说是没登录、
   // 也没说下一步的话。口径对齐 HeaderDropdown 的「请先登录以使用同步功能」。
-  not_authenticated: '未登录：同步需要 TapStack 云端账号，请先点「⋯」菜单里的「登录 / 注册」',
+  not_authenticated: `未登录：同步需要 TapStack 云端账号，请先点「⋯」菜单里的「${MENU_LOGIN_LABEL}」`,
   // 2026-10-20 C-06：删除熔断是**保护性中止**，不是普通失败。
   // syncEngine 在写入之前就中止了本轮下载（本地数据一个字节都没动），
   // 原先它没有登记在案 ⇒ isBareEnum('failsafe_triggered') 为真 ⇒ 落到

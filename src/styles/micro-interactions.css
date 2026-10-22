@@ -76,7 +76,10 @@
     left: 0;
     right: 0;
     bottom: 0;
-    border-radius: 0.5rem;
+    /* 2026-10-22 审计 U-17：原先写死 0.5rem(8px) ⇒ chrome 主题的正圆按钮
+       （--radius-btn-icon）里出现一个**方形**涟漪。现在 inherit 按钮自己的
+       圆角，涟漪自动跟随按钮形状（伪元素的继承来源就是它的宿主元素）。 */
+    border-radius: inherit;
     opacity: 0;
     background: var(--color-bg-tertiary, rgba(37, 99, 235, 0.08));
     transition: opacity 60ms ease-out;

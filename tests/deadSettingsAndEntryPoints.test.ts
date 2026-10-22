@@ -512,13 +512,32 @@ describe('F4 · 「固定标签页」筛选器在设置关闭时必须隐藏', (
     );
   });
 
-  it('空态提示不得无条件承诺「固定标签」', () => {
-    const search = read('src/components/search/SearchResultList.tsx');
-    // 承诺必须跟着开关走：开了才提「固定标签」，没开就不提。
+  it('空态提示不得无条件承诺「固定标签」', async () => {
+    // 2026-10-22 审计 L-1：这条守卫原先**钉死了一整句文案**
+    // （`'可结合域名、保存时间和固定标签筛选' : '可结合域名和保存时间筛选'`），
+    // 于是「把三�� bullet 压成一条、换个措辞」这种正确的改动会被判成红灯，
+    // 逼着后来的人把措辞改回去 —— 这正是本仓库反复踩的
+    // 「守卫钉死字面量」陷阱。
+    //
+    // 改成**行为断言**：提示已抽成纯函数 `searchEmptyHint(collectPinnedTabs)`，
+    // 直接调用它，断言两种开关下的输出。判据从「源码里长什么样」
+    // 变成「界面上实际会说什么」—— 措辞可以改，**承诺必须跟着开关走**这条不变。
+    const { searchEmptyHint } = await import('@/components/search/searchEmptyHint');
+    const withPinned = searchEmptyHint(true);
+    const withoutPinned = searchEmptyHint(false);
+    assert.ok(
+      withPinned.includes('固定标签'),
+      '开了「保存固定标签页」时，提示可以提固定标签筛选'
+    );
+    assert.ok(
+      !withoutPinned.includes('固定标签'),
+      '没开时提示**不得**承诺一个根本不渲染的筛选项'
+    );
+    // 接线：渲染处必须走这个纯函数，而不是自己再写一份。
     assert.match(
-      search,
-      /collectPinnedTabs\s*\?\s*'可结合域名、保存时间和固定标签筛选'\s*:\s*'可结合域名和保存时间筛选'/,
-      '空态提示必须按 collectPinnedTabs 决定提不提「固定标签」'
+      read('src/components/search/SearchResultList.tsx'),
+      /searchEmptyHint\(collectPinnedTabs\)/,
+      '渲染处必须调用这个纯函数（措辞只有一份）'
     );
   });
 });

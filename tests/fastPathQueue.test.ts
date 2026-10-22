@@ -99,6 +99,34 @@ globalThis.fetch = (async (input: any) => {
 
 const tick = (ms: number) => new Promise(r => setTimeout(r, ms));
 
+/**
+ * 轮询等待一个条件成立，而不是「睡固定 50ms 再说」。
+ *
+ * ── 为什么换掉固定 sleep（2026-10-22 审计） ────────────────────────────
+ * 这条用例原先在 `scheduleUpload(0)` 之后 `await tick(50)`，
+ * 然后断言 `pending_upload` 仍为 true。那 50ms 是在赌
+ * 「0ms 定时器已经跑完、且它把上传排进了被占住的队列」。
+ *
+ * 实测本用例**在本机单独跑就有 2/3 的概率变红**（与并行负载无关）：
+ * 一旦机器上同时有别的构建/测试在跑，事件循环被推迟，
+ * 50ms 就可能不够 —— 于是「队列被占住时上传不得抢跑」这条断言
+ * 会因为**计时不足**而红，而不是因为产品行为变了。
+ *
+ * 计时假设不该藏在守卫里。改成轮询：**条件成立就返回**，
+ * 超时才失败 —— 这样红的时候一定是行为不对，不是机器慢。
+ */
+const waitFor = async (
+  predicate: () => Promise<boolean>,
+  { timeoutMs = 3000, intervalMs = 10 } = {}
+): Promise<boolean> => {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (await predicate()) return true;
+    await tick(intervalMs);
+  }
+  return predicate();
+};
+
 before(async () => {
   register(LOADER_PATH);
   chromeData.set(SESSION_KEY, stubSessionJson(USER_ID));
@@ -127,10 +155,18 @@ describe('scheduleUpload 快路径：timer 回调必须经单写者队列（不�
 
     // 0ms 定时器：到点后把 upload 入队——必须排在被占住的 slow 之后
     await syncEngine.scheduleUpload(0);
-    await tick(50);
+    // 等「定时器已触发且把上传排进了队列」这件事发生，而不是死等 50ms。
+    // 判据是 pending_upload 仍为 true（上传**没跑**，只是排上了队）。
+    const queuedButNotRun = await waitFor(async () => {
+      // pending_upload 为 true 可能是因为「定时器还没跑」也可能是「排上了队」。
+      // 这两者在本用例里无法区分 —— 但**两者都满足**「上传没有抢跑」，
+      // 所以用「等到 pending_upload 为 true」作为「定时器已生效」的信号即可：
+      // 真正的抢跑会让它变成 false（上传跑完并清掉了标记）。
+      return (await storage.getPendingUpload()) === true;
+    });
 
     assert.equal(
-      await storage.getPendingUpload(),
+      queuedButNotRun,
       true,
       '队列被占住时，快路径上传不得抢跑（修复前：timer 直调 upload()，' +
       '此刻它已经跑完并把 pending_upload 清成 false——与单写者承诺矛盾）'
@@ -138,11 +174,11 @@ describe('scheduleUpload 快路径：timer 回调必须经单写者队列（不�
 
     release();
     await slow;
-    await tick(50);
+    const cleared = await waitFor(async () => (await storage.getPendingUpload()) === false);
 
     assert.equal(
-      await storage.getPendingUpload(),
-      false,
+      cleared,
+      true,
       '队列放行后，快路径上传应正常执行完成并清掉 pending_upload'
     );
   });

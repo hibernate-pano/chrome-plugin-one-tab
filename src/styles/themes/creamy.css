@@ -5,7 +5,14 @@
    视觉亮点：奶油色背景、金色强调、柔和阴影
    ========================================== */
 
-html[data-theme='creamy'] {
+/* ── 预览作用域（L-3）──────────────────────────────────────────────────
+   设置页的主题预览卡要显示「这个主题自己长什么样」，而令牌平时只挂在
+   html 上（html[data-theme=x]）—— 预览别的主题时读不到。
+   所以把**同一个**选择器列表再挂一个 [data-theme=x]：预览元素带上
+   data-theme=x 就拿到完全相同的一份值，不复制值 ⇒ 两处不可能漂移。
+   注意：html[...] 必须留在列表**最后** —— 仓库里好几个守卫用
+   `html[data-theme=...] {` 这个字面量定位主题块。 */
+[data-theme='creamy'], html[data-theme='creamy'] {
   /* 颜色 - 温暖奶黄色调 */
   --color-bg-primary: #fefcf3;
   --color-bg-secondary: #ffffff;
@@ -69,8 +76,13 @@ html[data-theme='creamy'] {
   
 
   /* 深色模式 */
-  --color-accent-text: #b45309;
-  --color-accent-strong: #d97706;
+  /* 2026-10-22 审计 U-12：accent-text 是「当墨色用的 accent」。
+     原值 #b45309 在 accent-soft(#fef3c7) 上只有 4.51:1 —— 数量徽章与顶栏
+     同步按钮都读这一对（12px 小字，阈值 4.5:1），余量太薄。压到 #ad5009 ⇒ 4.82:1。 */
+  --color-accent-text: #ad5009;
+  /* accent-strong 是「更重的强调墨色」（空态图标压在 accent-wash 上）。
+     原值 #d97706 在那层 12% 琥珀淡染上只有 2.67:1（<3:1 非文本线）⇒ 压到 #c76a08。 */
+  --color-accent-strong: #c76a08;
   --color-accent-border: rgba(217, 119, 6, 0.45);
   --color-accent-wash: rgba(217, 119, 6, 0.12);
   --color-accent-soft: #fef3c7;
@@ -79,6 +91,11 @@ html[data-theme='creamy'] {
   --color-well: #fdf8ee;
   --color-note-bg: #fefcf3;
   --color-btn-hover: rgba(217, 119, 6, 0.08);
+  /* U-14：形状语言令牌 */
+  --radius-btn: 8px;
+  --radius-btn-icon: 8px;
+  /* U-24：卡头底色（奶油暖渐变，与卡头同源）。 */
+  --color-card-head-bg: linear-gradient(135deg, var(--color-bg-tertiary) 0%, var(--color-bg-primary) 100%);
   --color-panel-translucent: rgba(255, 253, 247, 0.92);
   --color-border-translucent: rgba(245, 230, 211, 0.9);
   
@@ -101,7 +118,10 @@ html[data-theme='creamy'] {
 /* ==========================================
    奶黄主题 - 深色模式
    ========================================== */
-html[data-theme='creamy'].dark {
+/* 深色态同理：html.dark [data-theme=x] 让预览元素在暗色模式下拿到
+   本主题的**深色**取值（.dark 挂在 html 上，预览是它的后代；
+   特异性 (0,2,1) 压过浅色那条 (0,1,0)）。 */
+html.dark [data-theme='creamy'], html[data-theme='creamy'].dark {
   --color-bg-primary: #1c1917;
   --color-bg-secondary: #292524;
   --color-bg-tertiary: #3f3a36;
@@ -136,7 +156,9 @@ html[data-theme='creamy'].dark {
   --color-toggle-on-fg: #0f172a;
   --focus-ring: 0 0 0 2px #f59e0b, 0 0 0 4px #1c1917;
   --color-focus-ring: #f59e0b;   /* 深色下焦点环墨色（次级底 8.02:1） */
-  --color-accent-text: #f59e0b;
+  /* 2026-10-22 审计 U-12：深色下 accent-subtle 是 15% 琥珀淡染，
+     原值 #f59e0b 压上去只有 3.78:1 ⇒ 提到 #fbbf24（5.0:1）。 */
+  --color-accent-text: #fbbf24;
   --color-accent-strong: #fbbf24;
   --color-accent-border: rgba(251, 191, 36, 0.45);
   --color-accent-wash: rgba(251, 191, 36, 0.14);
@@ -148,6 +170,11 @@ html[data-theme='creamy'].dark {
   --color-btn-hover: rgba(251, 191, 36, 0.1);
   --color-panel-translucent: rgba(63, 58, 54, 0.92);
   --color-border-translucent: rgba(63, 58, 54, 0.9);
+  /* U-14：形状语言令牌（深浅一致） */
+  --radius-btn: 8px;
+  --radius-btn-icon: 8px;
+  /* U-24：卡头底色（深色下同一支暖渐变）。 */
+  --color-card-head-bg: linear-gradient(135deg, var(--color-bg-tertiary) 0%, var(--color-bg-primary) 100%);
   --shadow-panel: 0 2px 8px rgba(0, 0, 0, 0.4);
   --panel-blur: saturate(140%) blur(16px);
   --color-shell: #1c1917;
@@ -190,9 +217,10 @@ html[data-theme='creamy'] .tab-group-card:hover {
   border-color: var(--color-border-default);
 }
 
-/* 标签组头部 */
+/* 标签组头部
+   U-24：暖渐变底色改由 --color-card-head-bg 令牌给（global.css 的
+   .tab-group-header 读它），这样「卡头有没有底色」是 6 套主题各自声明的一件事。 */
 html[data-theme='creamy'] .tab-group-header {
-  background: linear-gradient(135deg, var(--color-bg-tertiary) 0%, var(--color-bg-primary) 100%);
   border-bottom: 1px solid var(--color-border-subtle);
   border-radius: var(--radius-lg) var(--radius-lg) 0 0;
 }
@@ -201,20 +229,12 @@ html[data-theme='creamy'] .tab-group-tabs-container {
   border-radius: 0 0 var(--radius-lg) var(--radius-lg);
 }
 
-/* 徽章样式 */
-html[data-theme='creamy'] .badge-accent,
-html[data-theme='creamy'] .tab-group-count {
-  background: linear-gradient(135deg, var(--color-accent) 0%, var(--color-accent-hover) 100%);
-  color: #ffffff;
-  font-weight: 600;
-  border-radius: var(--radius-full);
-}
-
-html[data-theme='creamy'].dark .badge-accent,
-html[data-theme='creamy'].dark .tab-group-count {
-  background: linear-gradient(135deg, var(--color-accent) 0%, var(--color-accent-hover) 100%);
-  color: #1c1917;
-}
+/* 徽章样式 —— U-13/U-16：原先是「琥珀渐变 + 写死白字」，白字压在渐变左端
+   (#d97706) 上只有 3.19:1（12px 的数字读不清）；改成 accent-ink 之后，
+   渐变右端(#b45309) 又是 3.53:1 —— **同一支墨色压不住跨两档的渐变**。
+   现在徽章统一走 global.css 的强调族规则（accent-soft 底 + accent-ink 文字），
+   与其余 5 套主题同形同配方；对比度由 tests/guards/themeContrast.test.ts
+   按「accent-ink / accent-soft ≥ 4.5:1」逐主题 × 明暗守住。 */
 
 /* 输入框样式 */
 html[data-theme='creamy'] .input,

@@ -17,6 +17,16 @@ export interface EngineStorageEnv {
   lsData: Map<string, string>;
   /** 命中这些键的读会抛错（模拟 IndexedDB/localStorage 读失败）。 */
   failReadKeys: Set<string>;
+  /**
+   * 命中这些键的写会抛错（模拟配额满 / 存储不可用）。
+   *
+   * 为什么要能注入**写**失败：读失败与写失败在数据安全上方向相反 ——
+   * 读失败可以「停下不写」，写失败则可能已经改了一半。凡是「读-改-写」
+   * 的队列（删除广播队列就是），都必须证明**写失败时不会把意图弄丢**
+   * （见 tests/retractDeleteIntent.test.ts）。只注入读失败时，那条性质
+   * 是测不出来的 —— 守卫会因「根本没走到写」而假绿。
+   */
+  failWriteKeys: Set<string>;
   /** 落盘日志（按 setItem 顺序，含重复）。 */
   writes: string[];
   /** chrome.storage.local 的独立内容。 */
@@ -26,6 +36,7 @@ export interface EngineStorageEnv {
 export function installEngineStorageEnv(): EngineStorageEnv {
   const lsData = new Map<string, string>();
   const failReadKeys = new Set<string>();
+  const failWriteKeys = new Set<string>();
   const writes: string[] = [];
 
   const localStorageStub = {
@@ -38,10 +49,12 @@ export function installEngineStorageEnv(): EngineStorageEnv {
       return lsData.has(k) ? (lsData.get(k) as string) : null;
     },
     setItem: (k: string, v: string) => {
+      if (failWriteKeys.has(k)) throw new Error(`simulated write failure: ${k}`);
       writes.push(k);
       lsData.set(k, String(v));
     },
     removeItem: (k: string) => {
+      if (failWriteKeys.has(k)) throw new Error(`simulated write failure: ${k}`);
       lsData.delete(k);
     },
     clear: () => lsData.clear(),
@@ -76,7 +89,7 @@ export function installEngineStorageEnv(): EngineStorageEnv {
     },
   };
 
-  return { lsData, failReadKeys, writes, chromeData };
+  return { lsData, failReadKeys, failWriteKeys, writes, chromeData };
 }
 
 /** 测试数据：一个带活跃标签的组（空壳会被空组判据剔除，做种子必须带 tab）。 */

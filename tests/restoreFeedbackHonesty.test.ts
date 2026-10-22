@@ -27,6 +27,31 @@ import {
 
 const read = (rel: string) => readFileSync(new URL(`../${rel}`, import.meta.url), 'utf8');
 
+/**
+ * 抽出 `handleOpenTab` 里 `if (group.isLocked) { … }` 这一支的源码。
+ *
+ * 用括号配平而不是正则截断：分支里有嵌套的回调（`.then(() => {…})`），
+ * 正则会在第一个 `}` 处就停下，截出来的不是完整的分支。
+ */
+function extractLockedBranch(src: string): string | null {
+  const fnStart = src.indexOf('const handleOpenTab');
+  if (fnStart < 0) return null;
+  const guardAt = src.indexOf('if (group.isLocked)', fnStart);
+  if (guardAt < 0) return null;
+  const open = src.indexOf('{', guardAt);
+  if (open < 0) return null;
+  let depth = 0;
+  for (let i = open; i < src.length; i += 1) {
+    const ch = src[i];
+    if (ch === '{') depth += 1;
+    else if (ch === '}') {
+      depth -= 1;
+      if (depth === 0) return src.slice(open, i + 1);
+    }
+  }
+  return null;
+}
+
 // ─────────────────────────────────────────────────────────────────────────
 // 1. 文案本身：必须说清「发生了什么」与「为什么卡片不见了」
 // ─────────────────────────────────────────────────────────────────────────
@@ -83,15 +108,34 @@ describe('恢复成功文案：说清两件事（打开了什么 / 记录去哪�
 // 2. 接线：调用真的接上了吗
 // ─────────────────────────────────────────────────────────────────────────
 
+/**
+ * 数一数「成功播报」的调用点。
+ *
+ * 2026-10-22 审计 P0-4：「恢复即消费」是不可逆的删除，所以成功播报现在
+ * 多了一条路 —— 走共享 hook（`showConsumeToast`，它内部再走
+ * `showRestoreSuccessMessage`，额外挂一个「撤销」按钮）。两条路都是
+ * 「出声了」，所以这里数的是**两者之和**；只认某一条字面量的话，
+ * 换个出口就会被误判成「没接上」。
+ */
+const countSuccessToasts = (src: string, copyFn: string): number => {
+  const direct = src.match(new RegExp(`showRestoreSuccessMessage\\(\\s*${copyFn}\\(`, 'g')) ?? [];
+  const viaHook = src.match(new RegExp(`showConsumeToast\\(\\s*${copyFn}\\(`, 'g')) ?? [];
+  return direct.length + viaHook.length;
+};
+
 describe('恢复成功反馈真的接到了两个界面', () => {
   it('列表页（TabGroup）：整组恢复与点开单标签都要出声', () => {
     const src = read('src/components/tabs/TabGroup.tsx');
     // 两个动作各一次成功反馈
-    const groupRestore = src.match(/showRestoreSuccessMessage\(\s*restoreGroupSuccessMessage\(/g) ?? [];
-    const singleOpen = src.match(/showRestoreSuccessMessage\(\s*openSingleTabSuccessMessage\(/g) ?? [];
-    assert.equal(groupRestore.length, 1, '列表页整组恢复必须有一次成功反馈');
+    const groupRestore = countSuccessToasts(src, 'restoreGroupSuccessMessage');
+    const singleOpen = countSuccessToasts(src, 'openSingleTabSuccessMessage');
+    assert.equal(groupRestore, 1, '列表页整组恢复必须有一次成功反馈');
+    // countSuccessToasts 返回的是**数字**（两条路的计数之和）。
+    // 早先这里写的是 `singleOpen.length >= 2` —— 数字上的 .length 是
+    // undefined，断言永远为假 ⇒ 这条守卫从来没有真正生效过
+    // （把两条成功播报全删掉它也不会红）。修的是守卫，不是实现。
     assert.ok(
-      singleOpen.length >= 2,
+      singleOpen >= 2,
       '列表页点开单标签（锁定 / 未锁定两条路径）都必须有成功反馈'
     );
   });
@@ -117,6 +161,57 @@ describe('恢复成功反馈真的接到了两个界面', () => {
       /showRestoreSuccess\(\s*matchingTabs\.length\s*\)/,
       '旧的固定模板调用应已换成共享文案（否则两处措辞会漂移）'
     );
+  });
+
+  // ───────────────────────────────────────────────────────────────────────
+  // 搜索页的三条路径（2026-10-22 审计 P1-4）
+  //
+  // 缺陷：搜索页「恢复整个会话」与「点开单标签」**零成功反馈** ——
+  // 窗口开了、会话卡从列表消失、屏幕上什么都不动；而列表页（主界面）早就有播报。
+  // 同一个产品动作，两个界面两种反馈。
+  // 守卫盲区：下面原来只查了列表页与搜索页的**批量**恢复，
+  // 单会话恢复与单标签点开两条路径**既没实现、也没被守**。
+  // ───────────────────────────────────────────────────────────────────────
+  it('搜索页：恢复整个会话必须有成功反馈', () => {
+    const src = read('src/components/search/SearchResultList.tsx');
+    assert.ok(
+      countSuccessToasts(src, 'restoreGroupSuccessMessage') >= 1,
+      '搜索页整组恢复必须有一次成功反馈'
+    );
+  });
+
+  it('搜索页：点开单标签（锁定 / 未锁定两条路径）都必须有成功反馈', () => {
+    const src = read('src/components/search/SearchResultList.tsx');
+    const singleOpen = countSuccessToasts(src, 'openSingleTabSuccessMessage');
+    assert.ok(
+      singleOpen >= 2,
+      '搜索页点开单标签（锁定 / 未锁定两条路径）都必须有成功反馈'
+    );
+  });
+
+  it('搜索页与列表页的锁定分支都必须有**成功门**（不成功不许报成功）', () => {
+    // 2026-10-22 审计 P1-6：锁定分支原先是 `.then(() => 报成功)`，
+    // 而 SW 拒开是 `sendResponse({success:false})` ⇒ promise **resolve 而非
+    // reject** ⇒ `.then` 照样跑 ⇒ 界面播「已打开」，实际一个标签都没开。
+    //
+    // 判据不是「有没有写 success」，而是「报成功之前有没有判过 success」——
+    // 所以这里断言：锁定分支里出现成功播报**之前**必须先出现失败判定。
+    for (const file of [
+      'src/components/search/SearchResultList.tsx',
+      'src/components/tabs/TabGroup.tsx',
+    ]) {
+      const src = read(file);
+      const branch = extractLockedBranch(src);
+      assert.ok(branch, `${file}：应能找到 handleOpenTab 里的锁定分支`);
+      const successAt = branch.search(/showRestoreSuccessMessage|showConsumeToast/);
+      assert.ok(successAt >= 0, `${file}：锁定分支必须有成功播报`);
+      const gateAt = branch.search(/success\s*!==\s*true|success\s*===\s*false/);
+      assert.ok(
+        gateAt >= 0 && gateAt < successAt,
+        `${file}：锁定分支必须在报成功**之前**判过 success` +
+          `（否则 SW 拒开时界面会谎报「已打开」）`
+      );
+    }
   });
 
   it('toastHelper 暴露了自定义成功文案的通道', () => {

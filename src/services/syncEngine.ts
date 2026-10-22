@@ -41,7 +41,10 @@ import {
   decideRegistryAfterUpload,
   decideRegistryAfterRegistryWrite,
 } from '@/core/uploadCoverage';
-import { checkDeleteFailsafe } from '@/sync-backend/failsafe';
+import { checkDeleteFailsafe, type FailsafeVerdict } from '@/sync-backend/failsafe';
+// 覆盖下载的删除计划（DS-2）：这次覆盖会物理清除本机哪些会话。
+// 纯函数、判据只有一份（闸门与熔断用的是同一个函数）。
+import { planOverwriteDeletion } from '@/core/overwriteGuard';
 import { readConfiguredBackendId } from '@/sync-backend';
 import type { SyncBackendId } from '@/sync-backend';
 import { isLockedBackendError } from '@/sync-backend/lockedBackendError';
@@ -519,6 +522,9 @@ export class SyncEngine {
     // 再让覆盖上传用本地全量重建云端。
     if (opts?.forceRemote) {
       try {
+        // 这里读到的队列就是**此刻**队列里的内容（读完立刻广播，窗口极小）。
+        // 2026-10-22 审计 P0-4：撤销「恢复即消费」会把那条 id 从队列里摘掉，
+        // 所以「读到时还在队列里」就是「此刻仍有效的删除意图」。
         const pendingDeletes = await storage.getPendingDeleteIds();
         if (pendingDeletes.length > 0) {
           await markCloudGroupsAsDeleted(pendingDeletes);
@@ -708,16 +714,70 @@ export class SyncEngine {
       // 这个等式是**精确**的，不是近似：云端跳过路径**从不写云端**
       // （读不出来的那些行一个字节都没被动过），所以云端行数既不增也不减。
       // 墓碑行也在「读到的」里（isDeleted: true）⇒ 也在计数内。
+      //
+      // ── DS-2：闸门还要拦住「云端这次只读到一部分」────────────────────
+      //
+      // 【为什么空云端这一关挡不住它】云端只读到 1 条时 cloudTotalCount = 1
+      // ≠ 0 ⇒ 闸门放行 ⇒ 而这次覆盖会把本机 49 条**物理清空**
+      // （1.22.0 起无回收站、无撤销）。原缺陷更狠：删除熔断的实参取的是
+      // 「合并时空壳剔除了几个」，而覆盖路径下被云端替换掉的本机会话
+      // **在进合并之前就已经不在了** ⇒ 那个数恒为 0 ⇒ 熔断也看不见。
+      //
+      // 【判据：问后果，不猜完整性】「云端真的空了」与「云端只读到一部分」
+      // 在引擎层**无法可靠区分**（端口不暴露云端总行数；两个后端的下载层
+      // 各自已是 fail-closed）。所以这里不问「云端完整吗」，而问
+      // **「这次覆盖会清掉本机多少个会话」** —— 那是可以算出来的事实。
+      // 判据与阈值都只有一份（core/overwriteGuard.ts + sync-backend/failsafe.ts）。
+      //
+      // 【为什么墓碑造成的消失不计入】墓碑 = 别的设备上用户**显式删掉**了它
+      // ⇒ 删除本就该传播（云端只有墓碑行 = 合法清空）⇒ 计入就变成「用户删不掉」。
+      //
+      // 【这里的数是合并前的估计】精确值在下面第 8 步（合并后）再算一次，
+      // 那里才是最终裁决（空壳清理会让实际删除数更大）。两处同源、同阈值，
+      // 且这里算出的数不大于精确值 ⇒ 这里放行的下面仍可能拦下，反之不会。
       if (opts?.forceRemote) {
+        const overwritePlanBeforeMerge = planOverwriteDeletion({
+          localActiveIds: snapshot.filter(g => !g.isDeleted).map(g => g.id),
+          // 覆盖后本机会有的会话 = 云端读到的活跃组 + 被云端「读不出来」
+          // 而特意保留下来的本机组（D-6）。
+          survivingActiveIds: [
+            ...cloudGroups.filter(g => !g.isDeleted).map(g => g.id),
+            ...snapshot.filter(g => !g.isDeleted && skippedIds.has(g.id)).map(g => g.id),
+          ],
+          cloudTombstoneIds: cloudGroups.filter(g => g.isDeleted).map(g => g.id),
+        });
         const gate = decideForceRemoteOverwrite({
-          localActiveCount: snapshot.filter(g => !g.isDeleted).length,
+          localActiveCount: overwritePlanBeforeMerge.beforeActive,
           cloudTotalCount: cloudGroups.length + skippedRemote.length,
+          overwriteDeletion: {
+            beforeActive: overwritePlanBeforeMerge.beforeActive,
+            wouldDelete: overwritePlanBeforeMerge.wouldDelete,
+          },
         });
         if (gate.action === 'refuse') {
-          logError('[SyncEngine] 拒绝空云端覆盖:', gate.reason);
           this.isSyncing = false;
           // 不动本地一个字节：refuse 的全部意义就是「什么都不做」。
-          return { success: false, groups: snapshot, reason: 'overwrite_empty_cloud_refused' };
+          if (gate.code === 'empty_cloud') {
+            logError('[SyncEngine] 拒绝空云端覆盖:', gate.reason);
+            return {
+              success: false,
+              groups: snapshot,
+              reason: 'overwrite_empty_cloud_refused',
+            };
+          }
+          // 拒绝码必须是 'failsafe_triggered'：UI 上那条文案（REASON_COPY）
+          // 说的是「会丢弃过多会话，已中止以保护你的本地数据」，与这里的事实
+          // 一致；若报成「云端没有任何数据」那句就是假的（云端明明有 1 条）。
+          logError('[SyncEngine] 覆盖会清掉过多本机会话，已中止:', gate.reason);
+          // 与下面那道熔断同处置：保留 pending_upload 让下轮重试
+          // （本地数据没被动过，但本地的改动仍需要传上去）。
+          await this.rescheduleUploadIfPending();
+          return {
+            success: false,
+            groups: snapshot,
+            reason: 'failsafe_triggered',
+            error: gate.reason,
+          };
         }
       }
       // 4. 确定本地。覆盖模式（forceRemote）= 云端完全镜像本地：本地置空，
@@ -875,26 +935,53 @@ export class SyncEngine {
       // dropSyncMergedGroups / removedGroupIds 用同一口径 ——
       // 熔断管的是「合并剔除」，不是「云端删除广播」（后者是用户显式删除，
       // 不该被熔断拦下，那会让用户删不掉）。
+      //
+      // ── DS-2 续：覆盖路径的实参必须换掉 ───────────────────────────────
+      // 合并剔除量（mergeDropped）在覆盖路径下**恒为 0**：被云端替换掉的
+      // 本机会话在**进合并之前**就被过滤掉了（见上面第 4 步），压根不在
+      // mergedGroups 里 ⇒ 熔断看不见这次覆盖 ⇒ 「本机 50 条、云端 1 条」
+      // 一次覆盖就物理清空 49 条（无回收站、无撤销、界面还报成功）。
+      //
+      // 所以熔断在覆盖路径下问的是**另一个问题**（两道闸门，各问各的）：
+      //   ① 合并剔除：合并结果里被剔掉的会话数（两条路径都有，判据不变）；
+      //   ② 覆盖清空：**这次覆盖会物理清除本机多少个会话**
+      //      （覆盖路径专有；分母是「覆盖前本机活跃会话数」，
+      //        与 ① 的分母「合并结果里的活跃组数」不是同一个量，
+      //        所以不能把两个数塞进同一个实参 —— 那会让百分比变成
+      //        「删了多少 / 一堆不相干的会话数」，文案会说假话）。
       const mergeDropped = removedGroupIds(mergedGroups, finalGroups);
-      if (mergeDropped.length > 0) {
-        const verdict = checkDeleteFailsafe(
-          mergedGroups.filter(g => !g.isDeleted).length,
-          mergeDropped.length
-        );
-        if (!verdict.allowed) {
-          logError('[SyncEngine] 删除熔断触发，本轮下载已中止（未写入任何数据）:', verdict.reason);
-          this.isSyncing = false;
-          // 不回滚也不重排：本地数据**根本没被动过**（熔断在写入之前），
-          // 所以不需要 restoreSnapshot。保留 pending_upload 让下轮重试。
-          await this.rescheduleUploadIfPending();
-          return {
-            success: false,
-            groups: snapshot,
-            reason: 'failsafe_triggered',
-            // reason 字段是给 UI/日志看的可读原因，测试与诊断都按它识别
-            error: verdict.reason,
-          };
+      let verdict: FailsafeVerdict = mergeDropped.length > 0
+        ? checkDeleteFailsafe(
+            mergedGroups.filter(g => !g.isDeleted).length,
+            mergeDropped.length
+          )
+        : { allowed: true };
+      if (verdict.allowed && opts?.forceRemote) {
+        // 精确值：合并之后才知道（空壳清理还会再剔掉一些）。
+        // 「云端说了它被删掉」（墓碑行）不算这次覆盖的删除 ——
+        // 那是别的设备上的显式删除，本就该传播（拦下就是「用户删不掉」）。
+        const overwritePlan = planOverwriteDeletion({
+          localActiveIds: snapshot.filter(g => !g.isDeleted).map(g => g.id),
+          survivingActiveIds: finalGroups.filter(g => !g.isDeleted).map(g => g.id),
+          cloudTombstoneIds: cloudGroups.filter(g => g.isDeleted).map(g => g.id),
+        });
+        if (overwritePlan.wouldDelete > 0) {
+          verdict = checkDeleteFailsafe(overwritePlan.beforeActive, overwritePlan.wouldDelete);
         }
+      }
+      if (!verdict.allowed) {
+        logError('[SyncEngine] 删除熔断触发，本轮下载已中止（未写入任何数据）:', verdict.reason);
+        this.isSyncing = false;
+        // 不回滚也不重排：本地数据**根本没被动过**（熔断在写入之前），
+        // 所以不需要 restoreSnapshot。保留 pending_upload 让下轮重试。
+        await this.rescheduleUploadIfPending();
+        return {
+          success: false,
+          groups: snapshot,
+          reason: 'failsafe_triggered',
+          // reason 字段是给 UI/日志看的可读原因，测试与诊断都按它识别
+          error: verdict.reason,
+        };
       }
 
       // 3.5 覆盖模式：同步设置（与旧 smartSyncService 的 overwriteLocal 行为一致）
@@ -1257,6 +1344,41 @@ export class SyncEngine {
       // P0-2：markCloudGroupsAsDeleted 抛错（写失败、读回不一致、未登录跳过）直接
       // 上浮到外层 catch → 本次 upload 整体失败，pending_upload 与删除队列保留，
       // 下轮 alarm 重试。禁止吞错假装成功（云端没标记、下次下载直接复活）。
+      //
+      // ── 2026-10-22 审计 P0-4：只广播「此刻仍在队列里」的删除意图 ──────
+      //
+      // 队列里的一条删除意图，随时可能被**撤回**：「恢复即消费」被撤销时，
+      // 撤销动作会把那条 id 从队列里摘掉（storage.retractPendingDeleteIds）。
+      //
+      // 【为什么队列必须在这里读，而不是用本轮开头读到的那份清单】
+      // 若写墓碑用的是**读队列时**那份清单，就会给一条**已经被撤回**的意图
+      // 写墓碑：墓碑的印记是写墓碑这一刻才取的 ⇒ 必然比撤销写下的记录**新**
+      // ⇒ 撤销被静默推翻（本地卡片回来了，别的设备上却没了），而用户看到的
+      // 是「撤销成功了」—— 这是最坏的一种骗人。
+      // 在写墓碑前重读队列 ⇒ 撤掉了就不写。墓碑不写 ⇒ 云端那一行仍是活跃行 ⇒
+      // 下一轮上传把恢复出来的记录写上去（印记更新）⇒ 撤销在所有设备上都成立。
+      //
+      // 【为什么「上传期间发生的撤销」也不会漏】
+      // 上传与语义命令在 SW 的**单写者队列**里串行（background/mutationQueue.ts）：
+      // 撤销要么整块排在上传之前（意图已撤回 ⇒ 这里读到的队列里没有它），
+      // 要么整块排在上传之后（墓碑已写 ⇒ 撤销取**更新的印记**把云端行复位）。
+      // 两种顺序都不会出现「墓碑写在撤销之后、印记却比撤销旧」的分叉。
+      //
+      // 【为什么不按「本机还有这条记录就别写墓碑」那种判据】
+      // 那条判据是错的：下载合并会把**云端的活跃副本**带进本机
+      // （老版本墓碑组被剥掉后，云端那一行仍是活跃的，本机因此又有了这条
+      // 记录）—— 此时删除意图**必须**照写，否则那条「本机已经删掉的会话」
+      // 下一轮又从云端回来（tests/legacyTombstoneDeleteBroadcast 守的就是它）。
+      // 判据得是「意图还在不在队列里」，而不是「记录在不在本机」。
+      //
+      // ⚠️【队列这一支**不能**套 writtenTombstoneIds 那个过滤器】
+      // 那个过滤器的语义是「这条墓碑本轮 upsert 已经写上云了，别再写一遍」。
+      // 而端口的 writtenIds 在两个后端含义不同：Supabase 只报墓碑 id，
+      // WebDAV 报的是**本轮写上远端的全部 id**（含活跃行）—— 于是「本轮刚
+      // 写成活跃行的那个 id」也会被当成「墓碑已写」⇒ 它的删除意图被跳过 ⇒
+      // 云端行刚被写成活跃就再也不会标墓碑 ⇒ 已删会话在别的设备上复活
+      // （= tests/legacyTombstoneDeleteBroadcast 守的那个缺陷）。
+      // 所以队列这一支保持「不筛选」，只按「此刻还在不在队列里」判定。
       const pendingDeleteIds = await storage.getPendingDeleteIds();
       const cloudDeleteIds = [...new Set([
         ...pendingDeleteIds,

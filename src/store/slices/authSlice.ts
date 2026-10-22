@@ -1,8 +1,10 @@
 import { createSlice, createAsyncThunk } from '@reduxjs/toolkit';
 import { AuthState, User } from '@/types/tab';
 import { auth as supabaseAuth } from '@/utils/supabaseFacade';
-import { authCache } from '@/utils/authCache';
-import { logError, logInfo } from '../../utils/log';
+import { accountScopeStore, authCache } from '@/utils/authCache';
+import { createAccountScopeRecord, decideAccountBind } from '@/core/accountScope';
+import { storage } from '@/utils/storage';
+import { logError, logInfo, logWarn } from '../../utils/log';
 
 /* ── 认证错误的中文化（2026-10-20 审计 C-07）───────────────────────────────
  *
@@ -82,6 +84,58 @@ const initialState: AuthState = {
   error: null,
 };
 
+/**
+ * 登录这一刻给本机会话「认账」（2026-10-22 审计 DS-1：跨账号数据泄露）。
+ *
+ * ── 为什么必须有这一步 ──────────────────────────────────────────────────
+ * 退出账号 A、再登录账号 B 时，本机残留的 A 的会话会原样留在列表里；
+ * 随后一次上传会用 **B 的 userId 作 user_id、用 B 的 userId 派生密钥加密**，
+ * 把 A 的私有数据写进 B 的账号行里 —— 零提示。
+ *
+ * 本机那批会话存在**一个**不分账号的键里（`tab_groups`），而云端按 user_id
+ * 分行 —— 「本机这批会话属于谁」这个事实必须有人记着，否则每次上传都只能
+ * 「拿当前账号盖上去」。
+ *
+ * ── 这一步做什么 ───────────────────────────────────────────────────────
+ * 1. 读归属记录（chrome.storage.local 的独立键，见 utils/authCache.ts）；
+ * 2. 读本机现有会话 id；
+ * 3. 用 core/accountScope 的纯函数判定：首次绑定 / 同一个账号 / 换账号；
+ * 4. 换账号 ⇒ 本机旧会话认账给上一个账号 + 生成一条要告知用户的提示。
+ *
+ * ── 失败不许阻断登录 ───────────────────────────────────────────────────
+ * 登录本身已经成功了，为一条「归属记录」把用户踢回登录页是更糟的结果。
+ * 认账失败的后果是**上传闸门更保守**（归属记录没更新 ⇒ 旧归属仍在 ⇒
+ * 旧会话在新账号下被挡住），方向是安全的。
+ */
+async function bindLocalSessionsToAccount(userId: string): Promise<void> {
+  try {
+    const record = await accountScopeStore.read();
+    // 已经是这个账号 ⇒ 什么都不用改（也不必枚举本机会话：99% 的路径走这里）。
+    if (record && record.ownerUserId === userId) return;
+
+    const scope = record ?? createAccountScopeRecord();
+    // 读-改-写口径的快照（先落盘 pending 写、失效 30s 缓存）：
+    // 用 getGroups() 的缓存快照会漏掉「刚保存、还没落盘」的会话。
+    const groups = await storage.getGroupsForWrite();
+    const decision = decideAccountBind(scope, userId, groups.map(g => g.id));
+    await accountScopeStore.write({
+      ...decision.nextScope,
+      // 已有提示不许被这次认账抹掉（还没告知用户的提示必须留着 ⇒ 不许静默）。
+      pendingNotice: decision.notice ?? scope.pendingNotice,
+    });
+
+    if (decision.kind === 'account-switch') {
+      logWarn(
+        `[auth] 检测到换账号：本机 ${decision.residualCount} 个会话属于上一个账号` +
+          `（其中 ${decision.previousOwnedCount} 个），它们不会被上传到当前账号` +
+          '（提示已备好，登录后会告知用户）'
+      );
+    }
+  } catch (error) {
+    logError('[auth] 认账本机会话归属失败:', error);
+  }
+}
+
 export const signUp = createAsyncThunk(
   'auth/signUp',
   async ({ email, password }: { email: string; password: string }) => {
@@ -123,6 +177,9 @@ export const signIn = createAsyncThunk(
       }
 
       if (data.user) {
+        // DS-1：登录这一刻必须给本机会话「认账」——本机那批会话属于上一个账号
+        // 还是这个账号，是后面所有上传闸门的依据。
+        await bindLocalSessionsToAccount(data.user.id);
         return {
           id: data.user.id,
           email: data.user.email!,
@@ -194,6 +251,10 @@ export const getCurrentUser = createAsyncThunk(
       }
 
       if (data.user) {
+        // DS-1：会话被恢复（浏览器重启 / SW 冷启动）时同样要认账。
+        // 走的是「没有登录动作」的路径，但账号可能已经换了
+        // （比如用户在另一处换了账号，这台机器的会话还在）。
+        await bindLocalSessionsToAccount(data.user.id);
         return {
           id: data.user.id,
           email: data.user.email!,

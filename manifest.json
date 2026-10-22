@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "TapStack",
-  "version": "1.25.1",
+  "version": "1.26.0",
   "description": "Save browser work sessions and restore them later",
   "minimum_chrome_version": "120",
   "content_security_policy": {
@@ -25,7 +25,7 @@
   ],
   "action": {
     "default_icon": "icons/icon16.png",
-    "default_title": "TapStack - 保存当前窗口并关闭这些标签"
+    "default_title": "TapStack - 打开会话管理器"
   },
   "options_ui": {
     "page": "src/options/index.html",
@@ -40,14 +40,14 @@
     "128": "icons/icon128.png"
   },
   "commands": {
-    "_execute_action": {
+    "save_all_tabs": {
       "suggested_key": {
         "default": "Ctrl+Shift+S",
         "mac": "Command+Shift+S"
       },
-      "description": "Save all tabs in this window and close them (same as clicking the icon)"
+      "description": "Save all tabs in this window and close them"
     },
-    "save_all_tabs": {
+    "save_all_tabs_alt": {
       "suggested_key": {
         "default": "Alt+Shift+S",
         "mac": "Alt+Shift+S"

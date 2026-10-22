@@ -68,8 +68,30 @@ describe('Header：清理重复标签的成功反馈不得被静默', () => {
     );
   });
 
-  it('清理期间按钮禁用并显示进行中（不当场卡住，但可感知）', () => {
-    assert.match(HEADER, /disabled=\{isCleaningDuplicates\}/, '清理中应禁用按钮防重复触发');
-    assert.match(HEADER, /aria-busy=\{isCleaningDuplicates\}/, '清理中应有 aria-busy 供读屏感知');
+  it('清理期间入口禁用并显示进行中（不当场卡住，但可感知）', () => {
+    // 判据钉**行为**（「清理中必须禁点 + 可感知」），不钉它住在哪个组件 ——
+    // 2026-10-22 审计 U-20 之后，这个入口从顶栏搬进了 ⋯ 菜单，
+    // 钉死「必须在 Header.tsx 里」只会在入口搬家时误报。
+    const DROPDOWN = readFileSync(
+      new URL('../src/components/layout/HeaderDropdown.tsx', import.meta.url),
+      'utf8',
+    );
+    const owner = [HEADER, DROPDOWN].find(src =>
+      /disabled=\{isCleaningDuplicates\}/.test(src),
+    );
+    assert.ok(
+      owner,
+      '清理中必须禁用「清理重复标签」入口（否则同一个破坏性动作能跑两遍）',
+    );
+    assert.ok(
+      /aria-busy=\{isCleaningDuplicates\}/.test(owner),
+      '清理中应有 aria-busy 供读屏感知',
+    );
+    // 状态必须真的从 Header 流到入口所在的那个组件。
+    assert.match(
+      HEADER,
+      /isCleaningDuplicates=\{isCleaningDuplicates\}/,
+      '清理中的状态必须传给入口所在的组件',
+    );
   });
 });

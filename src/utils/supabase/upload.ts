@@ -41,6 +41,10 @@ import {
 import { createSeqRegistry } from '@/utils/seqRegistry';
 import { kvGet, kvSet } from '@/storage/storageAdapter';
 import { storage, SETTINGS_COLUMN_DEFAULTS } from '@/utils/storage';
+// DS-1 账号闸门：判据在 core/accountScope（纯函数），归属记录的读写在
+// utils/authCache（chrome.storage.local 的独立键）。
+import { filterGroupsByAccount, type AccountScopeRecord } from '@/core/accountScope';
+import { accountScopeStore, readLastAuthCacheUserId } from '@/utils/authCache';
 
 /**
  * 退役设置列的历史默认值（2026-10-20 审计 A-9）。
@@ -492,6 +496,45 @@ export function nextSyncWatermark(
   return max;
 }
 
+/**
+ * 取本机的账号归属记录（DS-1 账号闸门的前置）。
+ *
+ * 【记录不存在 ⇒ 这台机器还没建立归属】两种可能：
+ *   1. 刚升级到带这道闸门的版本 ⇒ 兜底用「登录缓存里的上一个账号」——
+ *      那是本机归属的最好证据（这台机器上最后登录过谁）；
+ *   2. 登录缓存也没有（从没登录过 / 被清过）⇒ **无从判断 ⇒ 中止上传**。
+ *
+ * 【为什么读不到就中止，而不是「当作没有归属」】
+ * 「当作没有归属」= fail-open ⇒ 闸门会放行本机全部会话 ⇒ 跨账号泄露原样发生。
+ * 宁可这次不同步（用户会看到失败、重新登录一次即可），
+ * 也不能把上一个账号的数据写进当前账号。
+ *
+ * 【读失败（抛错）同理】形状损坏的记录读出来是「读不出来」，
+ * 不是「没有归属」—— 与 storage.getGroups 的 fail-closed 纪律一致。
+ */
+async function loadAccountScopeForUpload(): Promise<AccountScopeRecord> {
+  const record = await accountScopeStore.read();
+  if (record) return record;
+
+  const lastUserId = await readLastAuthCacheUserId();
+  if (!lastUserId) {
+    throw new Error(
+      '无法确认本机会话归属的账号，已中止上传（防止跨账号泄露）：请重新登录一次'
+    );
+  }
+  const seeded: AccountScopeRecord = {
+    ownerUserId: lastUserId,
+    foreignOwners: {},
+    pendingNotice: null,
+  };
+  await accountScopeStore.write(seeded);
+  logWarn(
+    '[upload] 本机尚无账号归属记录，已按登录缓存里的上一个账号兜底' +
+      `（${lastUserId}）；若这台机器换过账号，请重新登录一次以完成认账`
+  );
+  return seeded;
+}
+
 export const uploadSync = {
   /**
    * 把云端 tab_groups 的旧格式列迁移到 JSONB（历史一次性迁移工具）。
@@ -644,8 +687,36 @@ export const uploadSync = {
 
     const userId = await requireSessionUserId();
 
+    // ── DS-1 账号闸门（跨账号数据泄露）────────────────────────────────────
+    //
+    // 硬底线：本机归属 ≠ 当前账号的会话，**绝不能**进上行集合
+    // （云端行的 user_id 与加密密钥都按当前账号派生 ⇒ 放进去就是泄露）。
+    //
+    // 为什么必须落在这里（而不是只靠调用方自觉）：上传有 4 条路径 ——
+    //   ① 手动 SYNC（service-worker 的 SYNC 分支）
+    //   ② 快路径（scheduleUpload 定时器 → syncEngine.upload）
+    //   ③ 后台轮询（backgroundSync → syncEngine.upload）
+    //   ④ alarm 兜底（service-worker 的 SYNC_UPLOAD_ALARM）
+    // 四条全都汇到本函数（syncEngine.upload → tabGroupSyncService →
+    // supabaseAdapter → supabaseSync.uploadTabGroups → 这里），
+    // 而**这一层才是真正写云端的地方**。闸门放在调用方 ⇒ 漏一条路径就漏一次。
+    const accountScope = await loadAccountScopeForUpload();
+    const scoped = filterGroupsByAccount(groups, accountScope, userId);
+    const uploadGroups = scoped.allowed;
+    if (scoped.blocked.length > 0) {
+      logWarn(
+        `[upload] 账号闸门拦下 ${scoped.blocked.length} 个不属于当前账号的会话` +
+          `（${scoped.blockedIds.slice(0, 5).join(',')}` +
+          `${scoped.blockedIds.length > 5 ? '…' : ''}）：` +
+          '它们属于本机上的另一个账号，不会被上传到当前账号'
+      );
+    }
+
     logInfo('准备上传标签组，用户ID:', userId, '设备ID:', deviceId);
-    logInfo(`本地共有 ${groups.length} 个标签组（实际上行数由下方增量闸门决定）`);
+    logInfo(
+      `本地共有 ${groups.length} 个标签组（账号闸门放行 ${uploadGroups.length} 个，` +
+        `实际上行数由下方增量闸门决定）`
+    );
 
     // ── F2 增量上传 ─────────────────────────────────────────────────────
     // 水位读**必须 fail-closed**（与同文件 getPendingUpload 同纪律）：读不到水位
@@ -657,10 +728,10 @@ export const uploadSync = {
     // 「水位基准是否还成立」——清本地数据后计数器归零而水位存活时必须弃用。
     const currentDeviceSeq = await tombstoneSeq.peekDeviceSeq();
     const watermark = overwriteCloud ? 0 : await loadSyncWatermark(userId, currentDeviceSeq);
-    const dirtyGroups = selectDirtyGroupsForUpload(groups, watermark);
-    if (dirtyGroups.length < groups.length) {
+    const dirtyGroups = selectDirtyGroupsForUpload(uploadGroups, watermark);
+    if (dirtyGroups.length < uploadGroups.length) {
       logInfo(
-        `[upload] 增量上传：本次 ${dirtyGroups.length}/${groups.length} 个组需要上行` +
+        `[upload] 增量上传：本次 ${dirtyGroups.length}/${uploadGroups.length} 个组需要上行` +
           `（水位 seq=${watermark}${watermark === 0 ? '，首次/水位丢失 → 全量' : ''}）`
       );
     }
@@ -1475,7 +1546,8 @@ export const uploadSync = {
       'showNotifications',     // -> show_notifications
       'themeMode',             // -> theme_mode
       'themeStyle',            // -> theme_style
-      'collectPinnedTabs'      // -> collect_pinned_tabs
+      'collectPinnedTabs',     // -> collect_pinned_tabs
+      'sessionSort'            // -> session_sort（2026-10-22 审计 L-10 会话排序）
     ];
 
     // 将驼峰命名法转换为下划线命名法，并过滤掉不允许的字段

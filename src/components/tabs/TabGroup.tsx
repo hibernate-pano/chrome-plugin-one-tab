@@ -1,6 +1,9 @@
-import React, { useEffect, useState, useCallback, useRef } from 'react';
+import React, { useEffect, useState, useCallback, useRef, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import { useAppDispatch, useAppSelector } from '@/store/hooks';
+import { SafeFavicon } from '@/components/common/SafeFavicon';
+import { Tooltip } from '@/components/common/Tooltip';
+import { pickDominantTab } from '@/domain/tabGroup/pickDominantTab';
 import { updateGroupNameAndSync, toggleGroupLockAndSync, deleteGroup, deleteBroadcastWarn, deleteTabAndSync, moveTabAndSync } from '@/store/slices/tabSlice';
 import { DraggableTab } from '@/components/dnd/DraggableTab';
 import { TabGroup as TabGroupType, Tab } from '@/types/tab';
@@ -26,12 +29,14 @@ import {
   openSingleTabSuccessMessage,
   restoreGroupSuccessMessage,
 } from '@/components/tabs/restoreFeedbackCopy';
+import { useConsumeUndo } from '@/components/tabs/useConsumeUndo';
 import {
   deleteGroupConfirmMessage,
   deleteGroupConfirmTitle,
   deleteGroupEntryLabel,
   deleteGroupRequiresConfirm,
 } from '@/components/tabs/lockedDeleteCopy';
+import { lockToggleMessage } from '@/components/tabs/lockFeedbackCopy';
 
 interface TabGroupProps {
   group: TabGroupType;
@@ -44,11 +49,27 @@ const EditIcon = () => (
   </svg>
 );
 
+/**
+ * 锁图标 —— **画的是当前状态**，不是点了会发生什么。
+ *
+ * 【这是产品负责人的决定，不采纳「永远画闭锁」的建议】
+ * 闭锁＝已锁、开锁＝未锁，这是 Material / Lucide / SF Symbols 一致的约定，
+ * 用户扫一屏卡片时正是靠**形状**判断「哪个被锁了」。若改成永远画闭锁，
+ * 就把「形状＝状态」这条用户已经建立的读法反过来 —— 锁定与未锁定在
+ * 一屏里反而分不出来了。
+ *
+ * 因此这里补的是真正的缺口（而不是改图标语义）：
+ *   · 锁定态有 accent 色的**徽章 + 闭锁图形**，未锁定态只有中性描边；
+ *   · tooltip 同时说明「现在是什么状态」与「点了会发生什么」。
+ */
 const LockIcon = ({ locked }: { locked: boolean }) => (
   <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
     {locked ? (
+      /* 闭锁：锁梁端正地扣在锁体上（锁体 x 4.5–16.5，锁梁 x 7.5–16.5）。 */
       <path strokeLinecap="round" strokeLinejoin="round" d="M16.5 10.5V6.75a4.5 4.5 0 10-9 0v3.75m-.75 11.25h10.5a2.25 2.25 0 002.25-2.25v-6.75a2.25 2.25 0 00-2.25-2.25H6.75a2.25 2.25 0 00-2.25 2.25v6.75a2.25 2.25 0 002.25 2.25z" />
     ) : (
+      /* 开锁：锁梁整个甩到锁体右侧并探出边界（锁梁 x 13.5–22.5，锁体 x 1.5–16.5）
+         ⇒ 与闭锁的形态差异一眼可见，不靠颜色。 */
       <path strokeLinecap="round" strokeLinejoin="round" d="M13.5 10.5V6.75a4.5 4.5 0 119 0v3.75M3.75 21.75h10.5a2.25 2.25 0 002.25-2.25v-6.75a2.25 2.25 0 00-2.25-2.25H3.75a2.25 2.25 0 00-2.25 2.25v6.75a2.25 2.25 0 002.25 2.25z" />
     )}
   </svg>
@@ -60,17 +81,68 @@ const DeleteIcon = () => (
   </svg>
 );
 
+/**
+ * 「在新窗口恢复整个会话」—— 窗口框 + **穿出框外**的箭头。
+ *
+ * 【为什么是这个形状（U-10）】两个「打开」按钮并排出现在每一张卡上，
+ * 是全产品最高频的两个动作。原先两者共用同一个圆角矩形框，只差箭头朝向
+ * ⇒ 16px 下 90% 的像素一样，肉眼读不出哪个是「开新窗口」。
+ *
+ * 现在两者**基础形状就不同**：
+ *   · 本图标 = 框的右上角**开了缺口**，箭头从缺口探出去伸到框外
+ *     （业界通用的「另开一个窗口」符号 open_in_new）⇒ 轮廓是「带尾巴的框」；
+ *   · 另一个 = 一个**闭合的框**，箭头**完全落在框内** ⇒ 轮廓是「一个干净的框」。
+ *
+ * 于是即使把颜色全部抹掉（灰度打印、强制高对比），两者的**轮廓**仍然不同：
+ * 一个有伸出边界的东西，一个所有笔画都在框里。
+ */
 const OpenAllIcon = () => (
   <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
     <path strokeLinecap="round" strokeLinejoin="round" d="M13.5 6H5.25A2.25 2.25 0 003 8.25v10.5A2.25 2.25 0 005.25 21h10.5A2.25 2.25 0 0018 18.75V10.5m-10.5 6L21 3m0 0h-5.25M21 3v5.25" />
   </svg>
 );
 
+/**
+ * 「在当前窗口打开」—— **闭合的**窗口框 + 完全落在框内的横向箭头。
+ *
+ * 箭头不越界 ⇒ 一眼可读成「内容进到这个框里」＝ 就地打开；
+ * 而上一个图标有笔画伸到框外 ⇒ 读成「离开这个框」＝ 另开一个窗口。
+ * 两者遮住颜色后仍可区分（见 OpenAllIcon 的注释）。
+ */
 const OpenAllInPlaceIcon = () => (
   <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-    <path strokeLinecap="round" strokeLinejoin="round" d="M13.5 6H5.25A2.25 2.25 0 003 8.25v10.5A2.25 2.25 0 005.25 21h10.5A2.25 2.25 0 0018 18.75V10.5M21 3v5.25M21 3h-5.25M21 3l-7.5 7.5" />
+    <path strokeLinecap="round" strokeLinejoin="round" d="M5.25 6h8.25A2.25 2.25 0 0 1 15.75 8.25v10.5A2.25 2.25 0 0 1 13.5 21H5.25A2.25 2.25 0 0 1 3 18.75V8.25A2.25 2.25 0 0 1 5.25 6Z" />
+    <path strokeLinecap="round" strokeLinejoin="round" d="M6.5 13.5h6.5M10.5 11l2.5 2.5-2.5 2.5" />
   </svg>
 );
+
+/**
+ * 「恢复」两个入口的提示语（2026-10-22 审计 U-18）。
+ *
+ * 两句都**说明后果**，不只是动作名 —— 「恢复」这个词本身是有歧义的：
+ * 用户不知道恢复完这个会话还在不在列表里。而这恰恰是本产品
+ * 最容易被误解的一条规则（恢复 = 消费会话，见 restoreFeedbackCopy）。
+ */
+const restoreTooltip = (inCurrentWindow: boolean): string =>
+  inCurrentWindow
+    ? '在当前窗口打开整个会话（标签会加到当前窗口；恢复后该会话会从列表中移除）'
+    : '在新窗口恢复整个会话（恢复后该会话会从列表中移除）';
+
+/**
+ * 锁定 / 解锁按钮的提示语（2026-10-22 审计 U-11）。
+ *
+ * 必须**同时说明当前状态和点了会发生什么**：
+ * 原文案只有「锁定会话」三个字 —— 用户既不知道这个会话现在是不是锁着，
+ * 也不知道锁定会带来哪些后果（会被清理吗？还能改名吗？恢复后还在吗？）。
+ *
+ * 两句的措辞与 lockFeedbackCopy（锁定后的 toast）保持一致，
+ * 免得「点之前说的」与「点之后说的」对不上。
+ */
+const LOCK_TOOLTIP = {
+  locked: '会话已锁定 · 点此解锁（解锁后恢复即从列表移除）',
+  unlocked:
+    '会话未锁定 · 点此锁定（锁定后不会被「清理重复标签」清理，也不能重命名或逐条删除）',
+} as const;
 
 export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
   const dispatch = useAppDispatch();
@@ -79,8 +151,25 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
   // 修复前这个设置只有默认值与上云映射，UI 从不读它 —— 标签数量永远显示。
   // 现在设置页有开关（OptionsPage「外观」小节），这里真的按它决定画不画徽章。
   const showTabCount = useAppSelector(state => state.settings.showTabCount);
+  // ── 2026-10-22 审计 U-15：卡片的视觉身份 ────────────────────────────────
+  // 此前 SafeFavicon 只出现在**标签行**，卡片级一处都没有 ⇒ 行的辨识度
+  // 比卡还高，层级倒挂（一屏十张卡长得一模一样）。
+  //
+  // 成本为零：会话里已经存着每个标签的 favicon（来自浏览器自己的
+  // chrome.tabs.Tab.favIconUrl，src/domain/tabGroup/factory.ts 落盘），
+  // 这里只是把它读出来 —— 不新增权限、不新增网络请求、不引第三方服务。
+  //
+  // 取哪个标签：与「默认会话名」同一把尺子（域名占多数的那个），
+  // 否则卡片图标与会话名会来自不同站点，自相矛盾。判据见
+  // @/domain/tabGroup/pickDominantTab（纯函数，四条契约有单测）。
+  const dominantTab = useMemo(() => pickDominantTab(group.tabs), [group.tabs]);
   const { showConfirm, showToast } = useToast();
   const { showDeleteError, showRestoreError, showRestoreSuccessMessage } = useEnhancedToast();
+  // ── 2026-10-22 审计 P0-4：「恢复即消费」要可撤销 ────────────────────────
+  // 恢复动作会把这条会话**删掉**（无回收站）—— 本产品最高频的两个动作，
+  // 却都是不可逆的删除。撤销凭据挂在成功提示上：用户点开一个标签之后，
+  // 那条记录还找得回来。
+  const { showConsumeToast } = useConsumeUndo();
 
   const [isEditing, setIsEditing] = useState(false);
   const [newName, setNewName] = useState(group.name);
@@ -242,10 +331,17 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
         if (toggleGroupLockAndSync.rejected.match(action)) {
           logError('切换锁定失败，已恢复原状态:', action.error);
           showToast('切换锁定失败，锁定状态已恢复', 'error');
+          return;
         }
+        // ── 2026-10-22 审计 L-9：锁定改变的是「恢复后还在不在」这条规则 ──
+        // 恢复时消费会话是本产品最容易被误解的一条规则，而锁定是**唯一**
+        // 能改变它的开关 —— 切换时不出声，用户只能在恢复之后才发现
+        // 「这次怎么没被消费」，那时已经晚了。
+        // 文案必须说出**后果**，而不只是「已锁定」这三个字。
+        showToast(lockToggleMessage(!group.isLocked), 'success', 4000);
       })
       .catch(error => logError('切换锁定失败:', error));
-  }, [dispatch, group.id, showToast]);
+  }, [dispatch, group.id, group.isLocked, showToast]);
 
   const openAllTabs = useCallback((inCurrentWindow: boolean) => {
     const allGuard = openAllGuardRef.current as OpenAllGuard;
@@ -333,10 +429,16 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
         consumeSession();
         if (typeof r.skippedUnopenable === 'number' && r.skippedUnopenable > 0) {
           const keptNote = group.isLocked ? '它们仍保留在会话中。' : '这几个地址不再保存在列表中。';
-          showDeleteError(
+          // ── 2026-10-22 审计 P0-4：部分成功**也是一次消费** ──────────────
+          // consumeSession() 已经在上面跑过了 ⇒ 未锁定时整条会话已被移除。
+          // 那是不可逆的删除，所以这条提示上同样要挂「撤销」——
+          // 否则用户手里就有一条**没有退路**的消费。
+          showConsumeToast(
             `已恢复 ${tabsPayload.length - r.skippedUnopenable} 个标签；` +
               `另有 ${r.skippedUnopenable} 个在当前设备无法打开（本地文件、临时链接或` +
-              `浏览器内部页面）。${keptNote}`
+              `浏览器内部页面）。${keptNote}`,
+            group.isLocked ? undefined : { group },
+            { type: 'error' },
           );
           return;
         }
@@ -348,10 +450,18 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
         //
         // 文案抽到 restoreFeedbackCopy.ts：列表页与搜索页共用一份措辞，
         // 改一处就不会漂移成两个说法。
-        showRestoreSuccessMessage(restoreGroupSuccessMessage(tabsPayload.length, group.isLocked));
+        //
+        // ── 2026-10-22 审计 P0-4：这条提示上挂「撤销」 ────────────────────
+        // 未锁定 ⇒ 整条会话已被移除（不可逆，无回收站）⇒ 必须给退路。
+        // 锁定 ⇒ 会话仍在列表里，从未被消费 ⇒ 挂撤销就是骗人（按钮按了
+        // 什么也不会发生）。
+        showConsumeToast(
+          restoreGroupSuccessMessage(tabsPayload.length, group.isLocked),
+          group.isLocked ? undefined : { group },
+        );
       }
     );
-  }, [dispatch, group, showDeleteError, showRestoreError, showRestoreSuccessMessage]);
+  }, [dispatch, group, showConsumeToast, showDeleteError, showRestoreError, showRestoreSuccessMessage]);
 
   const handleOpenAllTabs = useCallback(() => openAllTabs(false), [openAllTabs]);
   const handleOpenAllTabsInCurrentWindow = useCallback(() => openAllTabs(true), [openAllTabs]);
@@ -390,7 +500,20 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
         type: 'OPEN_TAB',
         data: { url: tab.url, pinned: !!tab.pinned }
       })
-        .then(() => {
+        .then((res: unknown) => {
+          // ── 2026-10-22 审计 P1-6：成功门（锁定分支原来会谎报成功）──────
+          // SW 拒开是 sendResponse({success:false}) ⇒ promise **resolve**
+          // 而不是 reject ⇒ 原来的 .then(() => 报成功) 在拒开时照样跑 ⇒
+          // 界面播「已打开该标签页」，实际一个标签都没开。
+          // 判据与下面未锁定分支同一把尺子：没有 success:true 就没有证据。
+          const r = res as { success?: boolean; error?: string } | undefined;
+          if (!r || r.success !== true) {
+            // 失败必须释放冷却档位：否则这条标签被记住一整个冷却窗口，
+            // 用户点重试没反应（与未锁定分支同口径）。
+            releaseOnFailure();
+            showRestoreError(toServiceWorkerErrorCopy(r?.error, '打开失败，标签仍保留在会话中'));
+            return;
+          }
           // ── 2026-10-20 审计 A-2：成功必须出声 ─────────────────────────
           // 锁定组不消费记录，但**行也还在** —— 屏幕上同样什么都不动。
           // 「点了没反应」与「已打开」用户分不出来。
@@ -398,6 +521,8 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
         })
         .catch(error => {
         logError('打开标签失败:', error);
+        // 消息本身失败（SW 没起来 / 没有接收方）⇒ 同样释放冷却档位。
+        releaseOnFailure();
         showRestoreError(mutationErrorMessage('打开标签', error));
       });
       return;
@@ -430,7 +555,16 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
             // 这是本产品**最高频**的动作，却是零反馈的：标签行消失、
             // 页面打开、屏幕上什么都不动。用户无法区分「已打开」与「被删了」。
             // 成功门已过（SW 回包 success:true），所以这里可以放心报成功。
-            showRestoreSuccessMessage(openSingleTabSuccessMessage(false));
+            //
+            // ── 2026-10-22 审计 P0-4：这条提示上挂「撤销」 ────────────────
+            // 点开标签 = 消费掉那条记录（不可逆，无回收站）⇒ 必须给退路。
+            // 凭据里带 consumedIndex：撤销时标签要插回**原来的位置**，
+            // 而不是追加到末尾（那是用户自己排的顺序，撤销不该偷偷改它）。
+            showConsumeToast(openSingleTabSuccessMessage(false), {
+              group,
+              consumedTabId: tab.id,
+              consumedIndex: group.tabs.findIndex(t => t.id === tab.id),
+            });
           })
           .catch(error => {
             logError('打开后从会话移除失败:', error);
@@ -438,7 +572,7 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
           });
       }
     );
-  }, [dispatch, group, showRestoreError, showDeleteError, showRestoreSuccessMessage]);
+  }, [dispatch, group, showConsumeToast, showRestoreError, showDeleteError, showRestoreSuccessMessage]);
 
   const handleMoveTab = useCallback((sourceGroupId: string, sourceIndex: number, targetGroupId: string, targetIndex: number) => {
     dispatch(moveTabAndSync({
@@ -811,28 +945,47 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
       <div className="tab-group-header gap-2">
         <div className="flex items-center gap-2 sm:gap-3 flex-1 min-w-0">
           {/* 折叠按钮 */}
-          <button
-            onClick={() => setIsCollapsed(!isCollapsed)}
-            className="btn-icon theme-btn-hover p-1 -ml-1 micro-interaction-button"
-            // ── 2026-10-20 可访问名：带上会话名 ──────────────────────────
-            // 原先所有卡的折叠按钮都叫「折叠会话」：3 张卡 ⇒
-            // ["折叠会话", "折叠会话", "折叠会话"] ⇒ 读屏用户按按钮列表
-            // 时完全分不出是哪张卡（同一行的 summary 就带了会话名）。
-            // 现在是「折叠会话：{会话名}」。
-            aria-label={isCollapsed ? `展开会话：${group.name}` : `折叠会话：${group.name}`}
-            aria-expanded={!isCollapsed}
-          >
-            <svg
-              className={`w-4 h-4 transition-transform duration-300 ease-out ${isCollapsed ? '-rotate-90' : ''}`}
-              fill="none"
-              viewBox="0 0 24 24"
-              stroke="currentColor"
-              strokeWidth={2}
-              aria-hidden="true"
+          <Tooltip content={isCollapsed ? '展开这个会话的标签页' : '收起这个会话的标签页'}>
+            <button
+              onClick={() => setIsCollapsed(!isCollapsed)}
+              className="btn-icon theme-btn-hover -ml-1 micro-interaction-button"
+              // ── 2026-10-20 可访问名：带上会话名 ──────────────────────────
+              // 原先所有卡的折叠按钮都叫「折叠会话」：3 张卡 ⇒
+              // ["折叠会话", "折叠会话", "折叠会话"] ⇒ 读屏用户按按钮列表
+              // 时完全分不出是哪张卡（同一行的 summary 就带了会话名）。
+              // 现在是「折叠会话：{会话名}」。
+              aria-label={isCollapsed ? `展开会话：${group.name}` : `折叠会话：${group.name}`}
+              aria-expanded={!isCollapsed}
             >
-              <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
-            </svg>
-          </button>
+              <svg
+                className={`w-4 h-4 transition-transform duration-300 ease-out ${isCollapsed ? '-rotate-90' : ''}`}
+                fill="none"
+                viewBox="0 0 24 24"
+                stroke="currentColor"
+                strokeWidth={2}
+                aria-hidden="true"
+              >
+                <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+              </svg>
+            </button>
+          </Tooltip>
+
+          {/* ── 2026-10-22 审计 U-15：卡片的视觉身份 ────────────────────────
+              favicon 取「域名占多数」的那个标签（pickDominantTab），
+              与会话名同一把尺子 ⇒ 图标与名字不会自相矛盾。
+
+              缺 favicon 时**整块不渲染**（不留灰方块占位）——
+              占位方块会让人以为「这里本该有个图标但没加载出来」，
+              而事实是「这个会话确实没有图标」。
+
+              装饰性图片 ⇒ alt=""（不参与读屏朗读；站点的名字由标题承担）。 */}
+          {dominantTab?.favicon && (
+            <SafeFavicon
+              src={dominantTab.favicon}
+              alt=""
+              className="w-4 h-4 shrink-0 rounded"
+            />
+          )}
 
           {/* 标题 */}
           {isEditing ? (
@@ -848,21 +1001,68 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
             />
           ) : (
             <div className="min-w-0 flex items-center gap-2">
-              <h3
-                id={`tab-group-title-${group.id}`}
-                className="tab-group-title truncate cursor-pointer tab-group-title-hover transition-colors flat-interaction min-w-0"
-                onClick={() => !group.isLocked && setIsEditing(true)}
-                title={group.isLocked ? '会话已锁定，先解锁才能重命名' : '点击编辑会话名称'}
-                tabIndex={0}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter' || e.key === ' ') {
-                    e.preventDefault();
-                    if (!group.isLocked) setIsEditing(true);
-                  }
-                }}
+              {/* ── 2026-10-22 审计 L-8：标题承担「点击重命名」，语义要跟上 ──
+                  原先这是一个 `tabIndex={0}` + onClick 的 <h3>，**没有任何角色**：
+                  读屏把它念成「三级标题 React 19 升级 PR」，用户既不知道它可交互，
+                  也不知道按 Enter 会发生什么。
+
+                  修法（不加 aria-label，这是有意的）：
+                  · 加 `role="button"` ⇒ 读屏会说「…，按钮」。
+                  · **不加 aria-label** ⇒ 按钮的可访问名仍由文本内容给出，
+                    于是卡片 region 的 `aria-labelledby`（指向这个 h3）
+                    算出来的名字**不变**（仍是「React 19 升级 PR」）。
+                    若加了 aria-label，region 的名字会变成
+                    「重命名会话：React 19 升级 PR」—— 卡片在读屏的导航列表里
+                    就会以「一个动作」而不是「一个会话」出现，更糟。
+                  · 动作说明走 `aria-describedby`（读屏会补一句），
+                    不污染 region 的名字。
+                  · 锁定态：标题**不可交互** ⇒ 不给 role、不进 Tab 序、
+                    去掉 pointer 光标与 hover 变色。
+                    原先锁定会话的标题仍带 cursor-pointer 与 hover 高亮，
+                    点了却什么都不发生（`!group.isLocked`）——
+                    看起来可点、实际不可点，是最坏的一种组合。 */}
+              {/* ── 2026-10-22 审计 U-18：原生 title= 换成仓里的 <Tooltip> ──
+                  原生 title：≈1s 延迟、样式不可控、**触屏永远不出现** ——
+                  而卡片头恰恰是新手最需要提示的地方（它同时也是「点标题改名」
+                  这个隐藏交互的唯一线索）。
+                  用套里的 Tooltip：300ms、跟随主题、触屏可点出来。
+
+                  ⚠️ 包装层要带 min-w-0：它是 flex item，不给 min-w-0 就不会
+                  收缩 ⇒ 长会话名会把整张卡撑破（标题的 truncate 会失效）。 */}
+              <Tooltip
+                content={group.isLocked ? '会话已锁定，先解锁才能重命名' : '点击编辑会话名称'}
+                className="min-w-0"
               >
-                {group.name}
-              </h3>
+                <h3
+                  id={`tab-group-title-${group.id}`}
+                  className={`tab-group-title truncate transition-colors flat-interaction min-w-0 ${
+                    group.isLocked
+                      ? ''
+                      : 'cursor-pointer tab-group-title-hover'
+                  }`}
+                  onClick={() => !group.isLocked && setIsEditing(true)}
+                  {...(group.isLocked
+                    ? {}
+                    : {
+                        role: 'button',
+                        tabIndex: 0,
+                        'aria-describedby': `tab-group-title-hint-${group.id}`,
+                        onKeyDown: (e: React.KeyboardEvent) => {
+                          if (e.key === 'Enter' || e.key === ' ') {
+                            e.preventDefault();
+                            setIsEditing(true);
+                          }
+                        },
+                      })}
+                >
+                  {group.name}
+                </h3>
+              </Tooltip>
+              {!group.isLocked && (
+                <span id={`tab-group-title-hint-${group.id}`} className="sr-only">
+                  激活后可重命名此会话
+                </span>
+              )}
             </div>
           )}
 
@@ -876,11 +1076,25 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
             </span>
           )}
 
-          {/* 锁定图标 */}
+          {/* ── 2026-10-22 审计 U-11：锁定态必须**看得见** ──────────────────
+              图标继续表示**当前状态**（闭锁＝已锁）—— 这是 Material / Lucide /
+              SF Symbols 的通用约定，用户扫一屏卡片时正是靠形状判断「哪个被锁了」。
+              审计建议的「永远画闭锁」被产品负责人否决：它会把「形状＝状态」
+              这条用户已经建立的读法反过来。
+
+              所以补的是真正的缺口 —— 让锁定态**在视觉上可区分**：
+                · 一个 accent 淡染底的徽章（accent 色，不是中性灰）；
+                · 闭锁图形（与未锁定时的开锁图形形态完全不同）；
+                · 未锁定时这个位置**什么都没有**。
+              一屏卡片里，哪些被锁了，一眼扫得出来。
+
+              配色用工具类直接给（accent-wash 底 + accent-text 墨）：
+              `tab-group-lock-icon` 那个 class 读的是 --color-warning（琥珀），
+              且 3 套主题各自覆写它 —— 与「accent 强调」的口径对不上，
+              这里就不复用它（搜索页仍在用，不受影响）。 */}
           {group.isLocked && (
-            <span 
-              className="tab-group-lock-icon flex-shrink-0" 
-              title="会话已锁定"
+            <span
+              className="tab-group-lock-badge flex-shrink-0 inline-flex items-center justify-center rounded p-0.5 bg-[var(--color-accent-wash)] text-[var(--color-accent-text)]"
               aria-label="会话已锁定"
             >
               <LockIcon locked={true} />
@@ -918,47 +1132,81 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
          * 到卡片之外，且层级高于标签列表。
          */}
         <div className="relative z-30 flex items-center gap-0.5 sm:gap-1 opacity-100 transition-all duration-200 ease-out flex-shrink-0">
-          {/* 恢复全部（新窗口）—— 核心动作，窄屏也常驻 */}
-          <button
-            onClick={handleOpenAllTabs}
-            className="btn-icon theme-btn-hover p-1.5 tab-group-action-accent micro-interaction-button"
-            title="在新窗口恢复整个会话"
-            aria-label={`在新窗口恢复整个会话，共 ${group.tabs.length} 个标签页`}
-          >
-            <OpenAllIcon />
-          </button>
+          {/* 恢复全部（新窗口）—— 核心动作，窄屏也常驻。
 
-          {/* 在当前窗口打开 —— 宽屏常驻，窄屏收进「更多」 */}
-          <button
-            onClick={handleOpenAllTabsInCurrentWindow}
-            className="btn-icon theme-btn-hover p-1.5 micro-interaction-button hidden sm:inline-flex"
-            title="在当前窗口打开整个会话"
-            aria-label={`在当前窗口打开整个会话，共 ${group.tabs.length} 个标签页`}
-          >
-            <OpenAllInPlaceIcon />
-          </button>
+              ── 2026-10-22 审计 U-10（两枚「打开」图标 16px 下近乎同形）──
+              硬要求：**形状上**要能分，遮住颜色也能分。
+                · 本图标 = 框 + **穿出框外**的箭头（另开一个窗口）；
+                · 另一个 = **闭合的**框 + 框**内**的箭头（就地打开）。
+              两者的轮廓因此根本不同：一个有笔画伸到框外，一个所有笔画都在框里。
 
-          {/* 编辑 —— 宽屏常驻，窄屏收进「更多」 */}
-          {!group.isLocked && (
+              另加一层「填充」区分：这是**主操作**（整个产品的「找回」入口），
+              所以用 accent 实底 + 反色图标（.theme-cta）；另一个保持描边。
+              ⇒ 形状 + 填充两重编码，16px 下绝不含糊。
+
+              ── 2026-10-22 审计 U-18（两套 tooltip 节奏）────────────────
+              原生 `title=` 换成仓里的 <Tooltip>（300ms、样式可控、
+              **触屏也能出现** —— 原生 title 在触屏上永远不出现，
+              而卡片头恰恰是新手最需要提示的地方）。
+              aria-label 保持不变（读屏文案不动）。 */}
+          <Tooltip content={restoreTooltip(false)}>
             <button
-              onClick={() => setIsEditing(true)}
-              className="btn-icon theme-btn-hover p-1.5 micro-interaction-button hidden sm:inline-flex"
-              title="重命名会话"
-              aria-label="重命名会话"
+              onClick={handleOpenAllTabs}
+              className="btn-icon theme-cta micro-interaction-button"
+              aria-label={`在新窗口恢复整个会话，共 ${group.tabs.length} 个标签页`}
             >
-              <EditIcon />
+              <OpenAllIcon />
             </button>
+          </Tooltip>
+
+          {/* 在当前窗口打开 —— 宽屏常驻，窄屏收进「更多」。
+              Tooltip 的包装层负责窄屏隐藏（`hidden sm:inline-flex`）——
+              包装层 display:none 时按钮与提示条一起消失，不会在窄屏
+              留下一个 0 宽的 flex 项（那会让操作区多出一道空隙）。 */}
+          <Tooltip content={restoreTooltip(true)} className="hidden sm:inline-flex">
+            <button
+              onClick={handleOpenAllTabsInCurrentWindow}
+              className="btn-icon theme-btn-hover micro-interaction-button"
+              aria-label={`在当前窗口打开整个会话，共 ${group.tabs.length} 个标签页`}
+            >
+              <OpenAllInPlaceIcon />
+            </button>
+          </Tooltip>
+
+          {/* 编辑 —— 宽屏常驻，窄屏收进「更多」。
+              锁定时这个按钮**不渲染**（锁定承诺「防误删」，
+              重命名会改掉用户自己标记过的名字）⇒ 提示层也不渲染，
+              免得留下一个 0 宽的 flex 项。 */}
+          {!group.isLocked && (
+            <Tooltip content="重命名这个会话" className="hidden sm:inline-flex">
+              <button
+                onClick={() => setIsEditing(true)}
+                className="btn-icon theme-btn-hover micro-interaction-button"
+                aria-label="重命名会话"
+              >
+                <EditIcon />
+              </button>
+            </Tooltip>
           )}
 
-          {/* 锁定/解锁 —— 宽屏常驻，窄屏收进「更多」 */}
-          <button
-            onClick={handleToggleLock}
-            className={`btn-icon p-1.5 micro-interaction-button hidden sm:inline-flex ${group.isLocked ? 'tab-group-lock-icon' : ''}`}
-            title={group.isLocked ? '解锁会话' : '锁定会话'}
-            aria-label={group.isLocked ? '解锁会话' : '锁定会话'}
+          {/* 锁定/解锁 —— 宽屏常驻，窄屏收进「更多」。
+              ── 2026-10-22 审计 U-11：tooltip 必须**同时说明当前状态和
+              点了会发生什么**。原文案只有「锁定会话」三个字，
+              用户不知道锁定意味着什么（恢复后还在？会被清理？）。
+              锁定态另有 accent 徽章 + 闭锁图形（形状差异），
+              这里 tooltip 补的是「后果」那一半。 */}
+          <Tooltip
+            content={group.isLocked ? LOCK_TOOLTIP.locked : LOCK_TOOLTIP.unlocked}
+            className="hidden sm:inline-flex"
           >
-            <LockIcon locked={group.isLocked} />
-          </button>
+            <button
+              onClick={handleToggleLock}
+              className={`btn-icon micro-interaction-button ${group.isLocked ? 'tab-group-lock-icon' : ''}`}
+              aria-label={group.isLocked ? '解锁会话' : '锁定会话'}
+            >
+              <LockIcon locked={group.isLocked} />
+            </button>
+          </Tooltip>
 
           {/* 删除 —— 宽屏常驻，窄屏收进「更多」。
               ── 2026-10-20 审计 A-3：锁定会话**也**保留这个入口 ──────────────
@@ -969,15 +1217,19 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
               不可拖走 / 不参与清理重复），不是「这张卡不许消失」。
               删除锁定会话仍是**允许**的，只是要走更重的确认
               （见 handleDelete 与 lockedDeleteCopy）。 */}
-          <button
-            ref={cardActionRef}
-            onClick={handleDelete}
-            className="btn-icon p-1.5 tab-group-action-danger micro-interaction-button hidden sm:inline-flex"
-            title={deleteGroupEntryLabel(group.isLocked)}
-            aria-label={deleteGroupEntryLabel(group.isLocked)}
+          <Tooltip
+            content={`${deleteGroupEntryLabel(group.isLocked)}（删除后无法恢复）`}
+            className="hidden sm:inline-flex"
           >
-            <DeleteIcon />
-          </button>
+            <button
+              ref={cardActionRef}
+              onClick={handleDelete}
+              className="btn-icon tab-group-action-danger micro-interaction-button"
+              aria-label={deleteGroupEntryLabel(group.isLocked)}
+            >
+              <DeleteIcon />
+            </button>
+          </Tooltip>
 
           {/* 窄屏「更多」菜单：承载上面收起来的那几项。
               用原生 <details> 而不是自造弹层 —— 它自带键盘可达性
@@ -985,7 +1237,7 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
           <details className="sm:hidden relative" ref={moreMenuRef}>
             <summary
               ref={moreMenuButtonRef as never}
-              className="btn-icon theme-btn-hover p-1.5 micro-interaction-button list-none cursor-pointer"
+              className="btn-icon theme-btn-hover micro-interaction-button list-none cursor-pointer"
               aria-label={`${group.name} 的更多操作`}
               aria-haspopup="menu"
               aria-expanded={moreMenuPos !== null}

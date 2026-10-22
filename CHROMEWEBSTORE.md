@@ -1,6 +1,9 @@
 # Chrome Web Store Listing — TapStack
 
-> Last Updated: 2026-10-21
+> Last Updated: 2026-10-22
+>
+> **2026-10-22 状态**：`1.26.0` 已在仓库内完成（**未提审**）；线上已发布仍是 **`1.24.1`**，
+> `1.25.1` 处于审核队列中（2026-10-21 提交）。
 >
 > **2026-10-21 线上状态核对（v1.1 API + 公开页交叉实证）**：线上已发布 = **`1.24.1`**。
 > ⚠️ 此前那条「线上已发布 = 1.22.12」的记录是 **2026-10-11** 的事实，**已过期**（当时正确）。
@@ -25,24 +28,25 @@ TapStack
 **Short Description** [REQUIRED]
 <!-- ≤132 字符。写具体功能，不写口号。中英双语拼接。 -->
 
-保存、命名和恢复浏览器标签会话，跨设备同步找回。Save, restore & sync your tab sessions.
+保存即关闭：把当前窗口的标签页存成命名会话，随时找回。Save & close: turn your window into named sessions.
 
 **Detailed Description** [REQUIRED]
 <!-- 用户视角，禁提实现细节（API/框架/代码模式）。CWS 会剥离 markdown。中英双语用 --- 分隔。 -->
 
-TapStack 把你当前浏览器窗口里的所有标签页保存为一个会话，随时找回、随时恢复，不让标签页堆积成灾难。
+TapStack 把你当前浏览器窗口里的所有标签页保存为一个会话，**并把窗口腾空**（保存即关闭），随时找回、随时恢复，不让标签页堆积成灾难。
 
 主要功能：
-· 一键保存：把当前窗口的标签页存为会话；快捷键 Ctrl+Shift+S（macOS 为 ⌘⇧S）保存整窗并关闭（等同点击扩展图标）、Alt+Shift+S 保存全部并关闭、Alt+S 保存当前页并关闭。默认不保存「固定标签页」（可在设置里改）；浏览器内部页面（设置页、扩展页等）一律不保存；**本地文件（`file://`）的地址会照常存下来**（否则 PDF、论文这类标签会被悄悄丢掉），但它在别的设备上不一定打得开
+· 一键保存：把当前窗口的标签页存为会话；快捷键 Ctrl+Shift+S（macOS 为 ⌘⇧S）保存整窗并关闭、Alt+Shift+S 保存全部并关闭、Alt+S 保存当前页并关闭。**点扩展图标只会打开会话管理器，不会动你当前的标签页** —— 要「保存并关闭」，用页面顶栏的按钮、右键扩展图标，或上面的快捷键。默认不保存「固定标签页」（可在设置里改）；浏览器内部页面（设置页、扩展页等）一律不保存；**本地文件（`file://`）的地址会照常存下来**（否则 PDF、论文这类标签会被悄悄丢掉），但它在别的设备上不一定打得开
 · 右键菜单：在网页标签页上右键（或右键标签标题），可保存该标签页并关闭；右键扩展图标，可保存当前标签页或窗口里的其他标签页（同样会关闭），也可直接打开标签管理器
-· 智能命名：新会话默认按内容命名（取出现最多的域名，如 `github.com`），一眼看出是哪个工作现场；取不到域名时（本机地址、内网 IP 等）退回「标签组 月日 时:分」；也可以随时手动重命名
+· 智能命名：新会话默认按内容命名（取出现最多的域名，如 `github.com`），一眼看出是哪个工作现场；本机地址与内网 IP（如 `localhost:3000`、`192.168.1.5`）按主机名命名；连主机名都没有时才用页面标题，再取不到才退回「标签组 月日 时:分」；也可以随时手动重命名
 · 会话整理：每个会话可重命名、锁定防误删（锁定后不可重命名、不可逐个删除其中的标签、不可把标签拖到别的会话、不参与清理重复；仍可删除整个会话，只是会先提示「该会话已锁定」，而且这一步**一定**要确认）
-· 快速恢复：一键在新窗口打开整组标签，不打乱当前窗口；未锁定的会话恢复后即从列表移除（标签已在浏览器打开，无需手动清理）；**锁定的会话恢复后仍保留**，可以反复使用；点开单个标签直接继续工作，它会自动从会话中移除（锁定会话除外）
+· 快速恢复：一键在新窗口打开整组标签，不打乱当前窗口；未锁定的会话恢复后即从列表移除（标签已在浏览器打开，无需手动清理）；**锁定的会话恢复后仍保留**，可以反复使用；点开单个标签直接继续工作，它会自动从会话中移除（锁定会话除外）；**这两种「移除」都留了退路** —— 屏幕上会浮出一条提示，上面有个「撤销」按钮，几秒钟内点一下，那条记录就回到原来的位置（锁定的会话从不被移除，也就没有「撤销」）
 · 会话搜索：按会话名、标签标题/网址查找，支持按域名过滤；也可以不输关键词，直接按域名、会话名称、保存时间筛选
-· 误删保护：删除**整个会话**前会二次确认（可在设置里关闭；**锁定的会话一定确认**，不受该开关影响；「删除全部会话」始终确认并显示数量，其中锁定会话的数量也会一并写明），删除后彻底清除、没有回收站；单条标签删除会立即生效、不弹确认——**但如果这一删会让整个会话消失，就会先确认**（因为后果等同删除整个会话）；**把最后一条标签拖到别的会话**，则是**直接生效、不多问一句**，而那个被搬空的会话会随之消失（这是核心规则：拖拽即剪切，不额外拦你）
+· 误删保护：删除**整个会话**前会二次确认（可在设置里关闭；**锁定的会话一定确认**，不受该开关影响；「删除全部会话」始终确认并显示数量，其中锁定会话的数量也会一并写明），删除后彻底清除、没有回收站；单条标签删除会立即生效、不弹确认——**但如果这一删会让整个会话消失，就会先确认**（因为后果等同删除整个会话）；**把最后一条标签拖到别的会话**，则是**直接生效、不多问一句**，而那个被搬空的会话会随之消失（这是核心规则：拖拽即剪切，不额外拦你）。**删除没有退路** —— 它是永久的，没有回收站也没有撤销；「快速恢复」里那种从列表移除则带「撤销」
 · 一键清理：清除重复标签页和空会话
 · 导入导出：支持 OneTab 文本格式导入导出，以及 JSON 备份；导出的网址与标题**原样保留**（网址里带竖线、标题里带竖线或换行都不会被截断），导入的会话也**按内容命名**（和保存时同一套规则）
-· 登录同步：登录后会话自动同步云端，换设备、换浏览器也能找回你的工作现场
+· 登录同步：登录后会把云端的会话拉回本机，换设备、换浏览器也能找回你的工作现场；本机每次保存、重命名、删除也都会自动上传到云端。**定时自动拉取默认关闭**（可在设置里打开）—— 关掉它只是不再周期性去云端取新内容，你本机的改动仍然照常上传
+· 外观：6 套主题风格（legacy / creamy / prism / apple / chrome / claude）加暗色模式，单栏 / 双栏布局随心切换 —— 会话清单长什么样由你定
 · 自带存储：也可以不同步到我们的服务器——选择「自带存储」，数据只同步到你自己的云盘（坚果云、自建 Nextcloud 等 WebDAV 服务），会话内容**默认**在离开浏览器前就用你的口令加密；你也可以在设置里选「不加密」，此时云盘服务商能看到会话名称与网址（目录清单文件**始终是明文**，里面是每个会话的 id、最后修改时间、是否已删除、操作印记（其中含设备编号），以及本库的加密 salt —— salt 本身不是秘密，它的作用是防跨库预计算，但明文放在这里；会话**名称与网址**不在清单里，在各个会话文件里）
 
 隐私说明：会话数据默认只保存在你的浏览器本地；开启同步后，数据只会传输到你自己选择的云端——登录 TapStack 云端账户，或选择「自带存储」同步到你自己的云盘（**不经过我们的服务器**）。扩展不收集任何分析数据，也不读取你的浏览器自动浏览历史——**同步时上传的网址与标题，正是你主动保存的标签页本身**（会话数据），见下方数据使用表。
@@ -51,19 +55,22 @@ TapStack 把你当前浏览器窗口里的所有标签页保存为一个会话�
 
 ---
 
-TapStack saves every tab in your current window as a named session, so you can find and restore your work later — no more tab pileups.
+TapStack saves every tab in your current window as a named session **and clears the window** (saving is a cut), so you can find and restore your work later — no more tab pileups.
+
+*The extension's interface is currently in Simplified Chinese only.*
 
 Key features:
-· One-click save: store the tabs of the current window as a session. Shortcuts: Ctrl+Shift+S (Cmd+Shift+S on macOS) saves the whole window and closes it (same as clicking the icon), Alt+Shift+S saves all tabs and closes them, Alt+S saves the current tab and closes it. Pinned tabs are not saved by default (changeable in settings); browser internal pages (settings, extension pages, …) are never saved; **local file addresses (`file://`) are saved as-is** (dropping them would silently lose PDFs and papers), though they may not open on another device
+· One-click save: store the tabs of the current window as a session. Shortcuts: Ctrl+Shift+S (Cmd+Shift+S on macOS) saves the whole window and closes it, Alt+Shift+S saves all tabs and closes them, Alt+S saves the current tab and closes it. **Clicking the extension icon only opens the session manager — it never touches your open tabs.** To save and close, use the button at the top of the page, right-click the extension icon, or the shortcuts above. Pinned tabs are not saved by default (changeable in settings); browser internal pages (settings, extension pages, …) are never saved; **local file addresses (`file://`) are saved as-is** (dropping them would silently lose PDFs and papers), though they may not open on another device
 · Right-click menu: right-click a page or a tab title to save that tab and close it; right-click the extension icon to save the current tab or all other tabs in the window (and close them), or to open the tab manager
-· Smart naming: new sessions are named after the most frequent domain (e.g. github.com), so you can tell them apart at a glance; when no domain is available (local addresses, intranet IPs, …) it falls back to "Group Mon DD HH:mm"; rename any time
+· Smart naming: new sessions are named after the most frequent domain (e.g. github.com), so you can tell them apart at a glance; local addresses and intranet IPs (localhost:3000, 192.168.1.5, …) are named after their host; when there is no host at all it uses the page title, and only then falls back to "Group Mon DD HH:mm"; rename any time
 · Session tools: rename, lock against accidental deletion (a locked session cannot be renamed, its tabs cannot be deleted one by one, its tabs cannot be dragged into another session, and it is left out of duplicate cleanup; you can still delete the whole session, but you will be told it is locked first — and that step **always** asks you to confirm)
-· Fast restore: reopen the whole session in a new window without disturbing the current one; an **unlocked** session is removed from the list once restored (its tabs are open in the browser), while a **locked** session stays in the list so you can reuse it; click a single tab to jump straight back into work — it is then removed from the session (locked sessions excepted)
+· Fast restore: reopen the whole session in a new window without disturbing the current one; an **unlocked** session is removed from the list once restored (its tabs are open in the browser), while a **locked** session stays in the list so you can reuse it; click a single tab to jump straight back into work — it is then removed from the session (locked sessions excepted); **both kinds of removal come with a way back** — a notice appears on screen with an Undo button, and within a few seconds you can put the record back exactly where it was (a locked session is never removed, so it never has one)
 · Search: find sessions by name, tab title or URL, filter by domain
-· Deletion protection: deleting a whole session asks you first (you can turn that off in settings, **except for locked sessions, which always ask**; "delete all sessions" always asks and shows the count, including how many of them are locked), and a deleted session is permanently removed — there is no recycle bin and no undo; deleting a single tab takes effect immediately without asking — **unless that deletion would take the whole session with it, in which case you are asked first** (the effect is the same as deleting the session); **dragging the last tab out of a session** happens **right away, with no extra question**, and the emptied session is removed with it (that is the core rule: dragging is a cut, so it is not blocked)
+· Deletion protection: deleting a whole session asks you first (you can turn that off in settings, **except for locked sessions, which always ask**; "delete all sessions" always asks and shows the count, including how many of them are locked), and a deleted session is permanently removed — there is no recycle bin, and no undo for a deletion; deleting a single tab takes effect immediately without asking — **unless that deletion would take the whole session with it, in which case you are asked first** (the effect is the same as deleting the session); **dragging the last tab out of a session** happens **right away, with no extra question**, and the emptied session is removed with it (that is the core rule: dragging is a cut, so it is not blocked). **A deletion has no way back** — it is permanent, with no recycle bin and no undo; the removals described under Fast restore are a different thing, and those do offer a short-lived Undo
 · One-click cleanup: remove duplicate tabs and empty sessions
 · Import/export: OneTab text format, plus JSON backup; exported URLs and titles are kept **exactly as they are** (a URL containing a vertical bar, or a title containing one or a line break, is never truncated), and imported sessions are **named after their content**, using the same rule as when you save them
-· Cloud sync: sign in and your sessions sync automatically, so you can pick up your work on any device or browser
+· Cloud sync: sign in and the sessions in your cloud are pulled back to this device, so you can pick up your work on any device or browser; every save, rename or delete you make locally is uploaded automatically too. **The scheduled auto-pull is off by default** (you can turn it on in settings) — turning it off only means TapStack stops periodically checking the cloud for new content; your local changes are still uploaded as usual
+· Look and feel: 6 theme styles (legacy / creamy / prism / apple / chrome / claude) plus a dark mode, with single- or two-column layouts — the session list looks the way you want it to
 · Own-cloud sync (optional): skip our servers entirely — choose "self-hosted storage" and your sessions sync to your own WebDAV storage (JianGuoCloud, a self-hosted Nextcloud, and similar), encrypted with your passphrase by default before anything leaves your browser (you can turn encryption off in settings — then your storage provider can see session names and URLs; the directory manifest is **always plaintext**: it holds each session's id, last-modified time, deleted flag and operation stamp (which includes a device id), plus this library's encryption salt — the salt is not a secret (it exists to prevent cross-library precomputation), but it is stored in plaintext; session **names and URLs are not in the manifest**, they live in the individual session files)
 
 Privacy: session data stays in your browser by default; once sync is on it goes only to a cloud you choose yourself — your TapStack account, or your own storage via "self-hosted storage" (**it never passes through our servers**). The extension collects no analytics and does not read your browser's automatic browsing history — **the URLs and titles uploaded during sync are the tabs you deliberately saved** (the session data itself); see the data-use table below.
@@ -87,8 +94,8 @@ Productivity
 | Asset | Dimensions | Status | Filename |
 |-------|-----------|--------|----------|
 | Store Icon [REQUIRED] | 128×128 PNG | ✅ Ready | icons/icon128.png |
-| Screenshot 1 [REQUIRED] | 1280×800 | ✅ Ready | store-assets/screenshot-1-main.png（2026-10-20 重拍：已无收藏星标/备注块，操作区 5 个按钮，favicon 已加载） |
-| Screenshot 2 [RECOMMENDED] | 1280×800 | ✅ Ready | store-assets/screenshot-2-search.png（2026-10-20 重拍，页脚显示 TapStack v1.25.1） |
+| Screenshot 1 [REQUIRED] | 1280×800 | ✅ Ready | store-assets/screenshot-1-main.png（2026-10-22 重拍：会话卡带 favicon，操作区 5 个按钮，顶栏「排序」下拉已上线） |
+| Screenshot 2 [RECOMMENDED] | 1280×800 | ✅ Ready | store-assets/screenshot-2-search.png（2026-10-22 重拍，页脚显示 TapStack v1.26.0） |
 | Small Promo Tile [RECOMMENDED] | 440×280 | ✅ Ready | store-assets/promo-tile-440x280.png（2026-10-20 新建；源文件 store-assets/promo-tile-440x280.svg，PNG 无 alpha 通道，符合 CWS 要求） |
 
 <!-- 宣传图与图标**必须讲同一个故事** —— 商店里两张图并排出现。
@@ -107,7 +114,7 @@ Productivity
 这两张图分别展示什么：
 
 - **screenshot-1-main.png** —— 主界面：单栏布局，5 个已保存会话展开显示，
-  每个会话有域名徽章与标签数徽章，标签行左侧是已加载的网站图标。
+  每个会话有标签数徽章，标签行右侧显示域名，标签行左侧是已加载的网站图标。
   页脚显示当前版本号。
 - **screenshot-2-search.png** —— 搜索命中态：搜索框输入「React」，
   命中的关键词高亮，结果按会话分组，每组显示「匹配 n/m 个标签」与保存时间。
@@ -131,7 +138,7 @@ Productivity
 | Permission | Type | Justification |
 |------------|------|---------------|
 | `tabs` | permissions | 读取当前窗口的标签页标题与网址，用于把标签页保存为会话；恢复会话时按保存的网址重新打开标签页。扩展功能的核心依赖。 |
-| `storage` | permissions | 在本地保存用户的会话数据、设置与登录状态，保证离线可用。 |
+| `storage` | permissions | 在本地保存用户的登录状态与设置标记（如主题、布局、同步设置），保证离线可用。会话数据本身存放在浏览器的 IndexedDB 中，不占用 chrome.storage 配额。 |
 | `notifications` | permissions | 在保存会话成功或失败时给出浏览器通知，避免静默操作。通知**默认关闭**，可在设置里打开「显示通知提醒」；**失败提示不受该开关影响，始终会通知**（失败不能静默）。 |
 | `contextMenus` | permissions | 提供四个右键菜单项：在网页或标签标题上右键「保存此标签页并关闭」；右键扩展图标「保存当前标签页并关闭」「保存其他标签并关闭」「打开标签管理器」。前两项会**关闭对应标签页**，菜单标题里已写明。 |
 | `alarms` | permissions | **仅当你开启自动同步时**才创建后台轮询 alarm：按你选择的 5 / 10 / 30 / 60 分钟节奏检查云端是否有其他设备保存的新会话并合并到本地。**此外，每次本地保存 / 重命名 / 删除都会安排一次延迟上传**（扩展进程存活时约 1.5–3 秒后触发；浏览器把扩展挂起时改由一个后台 alarm 兜底，而 Chrome 规定 alarm 的最小延迟是 30 秒），与自动同步开关无关——自动同步默认关闭，关掉它只是不再周期性拉取，你本地的改动仍会上传。 |
@@ -162,7 +169,7 @@ Productivity
 | Location | No | No | — | No |
 | Web history | No（不自动收集浏览历史；主动保存的标签页单列于 Website content） | No | — | No |
 | User activity | 仅本地记录（产品事件仅存本地，不上传） | No（扩展**不会自动上传**；仅「导出诊断信息」由用户主动生成本地 JSON 文件供其自行决定是否分享，该文件默认白名单脱敏，只含会话数量、标签数量分布等规模信息，不含网址、标题、会话名或设备标识） | 改进功能参考 | No |
-| User settings | Yes（主题风格、界面布局、删除前确认、保存固定标签页、通知提醒等界面偏好） | Yes（仅同步到用户自己的云端：TapStack 云端账户，或「自带存储」下用户自己的云盘） | 让同一账号在多台设备上看到一致的界面偏好 | Yes（TapStack 云端由 Supabase 托管；选「自带存储」时只有用户自己的云盘服务商接触数据） |
+| User settings | Yes（主题风格、界面布局、删除前确认、保存固定标签页、通知提醒等界面偏好；**用哪个同步后端、是否开启定时自动同步、同步间隔这三项设备级设置始终只留在本机、不上传**） | Yes（仅同步到用户自己的云端：TapStack 云端账户，或「自带存储」下用户自己的云盘） | 让同一账号在多台设备上看到一致的界面偏好 | Yes（TapStack 云端由 Supabase 托管；选「自带存储」时只有用户自己的云盘服务商接触数据） |
 | Website content | Yes（用户主动保存的标签页网址与标题） | Yes（仅同步到用户自己选择的云端：TapStack 云端账户，或「自带存储」下用户自己的云盘） | 跨设备恢复会话 | Yes（TapStack 云端由 Supabase 托管；选「自带存储」时只有用户自己的云盘服务商接触数据） |
 
 <!-- 「Shared with Third Parties」的口径：TapStack 云端由我们的基础设施服务商
@@ -182,7 +189,7 @@ Productivity
 
 https://tapstack-two.vercel.app/privacy.html
 
-<!-- 隐私政策页面源码：src/legal/privacy.html（最后更新 2026-10-21）。
+<!-- 隐私政策页面源码：src/legal/privacy.html（最后更新 2026-10-22）。
      2026-10-02 与线上商店页核对：商店 Privacy 区展示的就是该 URL。
 
      ⚠️ 2026-10-20：实测发现线上那份**停在 2026-09-29**（本地早已更新到
@@ -359,8 +366,41 @@ https://github.com/hibernate-pano/chrome-plugin-one-tab
 
 | Version | Date | Changes | Status |
 |---------|------|---------|--------|
+| 1.26.0 | 2026-10-22 | **一次由五位专家各自独立挑刺后的收口：给最高频的那两个「不可逆」动作配上一条退路，并把若干处「界面在说谎」改成说实话**。下面是用户能感知到的变化。 | **未提审**（仓库内已完成；待提审） |
 | 1.25.1 | 2026-10-21 | **设置页的三个真实缺口 + 同步的数据安全收口 + 五处「文档说错、代码做的是另一回事」**。下面是用户能感知到的变化。 | **已提交审核**（2026-10-21；publish 返回 status=OK；草稿 crxVersion 由 1.24.1 → 1.25.1；公开页此刻仍显示 1.24.1，待过审后自动切换） |
 | 1.25.0 | 2026-10-19 | **一次覆盖四个维度的深度体检收口：功能与数据安全、信息架构、视觉与主题、文案与承诺**。下面是用户能感知到的变化。 | **未提审（内容已并入 1.25.1 一并提交）** |
+
+**1.26.0 的详细清单**（对应上表那一行）：
+
+**① 「恢复」不再是一去不回**：点开一个标签、或恢复一个会话之后，屏幕上会出现一条带「撤销」按钮的提示，几秒内点一下，那条记录就回到**原来的位置** —— 位置也对，不会被追加到末尾。这两种「从列表移除」现在都有退路了。锁定的会话从不被移除，所以它恢复时不会出现「撤销」（那个按钮按了也不会有变化，不该给你看）。撤销**同时**会撤回「让别的设备也删掉它」的那一步，所以不会出现「本机撤销了、别的设备上却没了」。
+
+**② 锁定会话点开一个标签时，此前会在失败时谎报成功** —— 浏览器其实没打开，界面却说「已打开该标签页」。现在只有在确实打开时才这么报；打不开会明说「打开失败，标签仍保留在会话中」，而且**立刻**就能再点一次（此前要等上一段冷却时间）。
+
+**③ 搜索页此前恢复会话、点开标签都一声不吭** —— 窗口开了、会话卡从列表消失、屏幕上什么都不动。现在两个界面用同一套说法：恢复了几个、记录去哪了，都告诉你。
+
+**④ 「覆盖下载」此前可能一次清掉你本机一大批会话** —— 云端只剩一条、而你本机有五十条时，一次覆盖会把那四十九条**物理清掉**（没有回收站、没有撤销），界面却报「同步成功」。现在这种情况会被拦下来，并且**如实告诉你**：「这次覆盖会清掉过多本机会话，已中止以免误删（你的本地数据没有变化）。」
+
+**⑤ 会话列表现在可以排序**：筛选区多了一个「排序方式」下拉 —— 最近保存 / 最近访问 / 名称 / 会话大小（标签数）。默认仍是「最近保存」，与此前完全一样，升级后你看到的顺序一个都不会变。
+
+**⑥ 筛选面板跟主题了** —— 此前它是整个界面上唯一一块不随主题换颜色的地方，在窄窗口里还会吃掉近两百像素的宽度、把第一张会话卡整个挤到折叠线以下。现在它跟着主题走，窄屏下也不再占那么多地方。
+
+**⑦ 卡片头与标签行更好点了**：卡片头上几颗按钮的命中区此前只有 24×24 / 28×28（低于无障碍标准，也低于这个产品自己定的 36×36），标签行的删除按钮只有 22×22 —— 现在统一放大了。卡片头此前用浏览器自带的悬浮提示（要等约一秒、触屏上永远不出现），现在换成产品自己的提示条（300 毫秒出现、触屏也能点出来）。
+
+**⑧ 主题的对比度实测并修正**：288 组配色里有 3 处硬失败（最要紧的是「恢复」按钮在 Claude 浅色主题下几乎看不见），奶油浅色主题的数量徽章是白字压在琥珀色上，只有 3.19:1（标准要求 4.5）。现在都改到看得清。
+
+**⑨ 默认会话名此前在「本机地址 / 内网地址」场景下退化成「标签组 10月22日 15:30」** —— 于是攒到二十个会话，列表又是一列分不清的时间戳。现在按主机名命名（`localhost:3000` → `localhost:3000`），实在取不到才回落时间戳。
+
+**⑩ 首次引导此前有三个真问题**：① 第 4 步「恢复整个会话」的聚光灯在**全新安装**时整个消失（那一页正好是最该被看到的）；② 引导让你「通过右上角菜单登录」，而设置页**没有右上角菜单**；③ 保存失败在窄屏下完全看不见（提示被样式藏了）。现在都修了。
+
+**⑪ 清理重复标签的确认框此前拿着可能过期的数字问你** —— 界面上的会话数可能是几分钟前的，而真正要删的是别的。现在先读真实数据再报数；读不到就**直接取消清理**并说明，而不是拿着一个可能错的数字问你「确定要删 N 条吗」。
+
+**⑫ 点扩展图标此前会零确认地关掉你当前的窗口** —— 现在点图标**只打开会话管理器**，不动你正在用的标签页。要「保存并关闭」，用页面顶栏的按钮、右键菜单，或快捷键。
+
+**⑬ 排序、命名、筛选、退出登录等一批界面细节**：会话卡的标题现在有自己的提示条（此前是浏览器自带的、触屏永远不出现）；锁定与解锁会说明「解锁后恢复即从列表移除」这类后果，而不是干巴巴地显示「已锁定」；退出登录会明确告诉你成没成。
+
+**⑭ 文档与隐私说明此前有几处与实际行为对不上**，这一版一并改正：商店页与隐私政策现在**区分「删除」与「从列表移除」** —— 删除是永久的、没有回收站、没有撤销；恢复/点开那种移除才有「撤销」。「定时自动拉取默认关闭」这件事不再被写成默认开；权限表里会话数据的存储位置改对了（IndexedDB，不是 chrome.storage）；隐私政策补上了「自带存储」那一节。
+
+---
 
 **1.25.1 的详细清单**（对应上表那一行）：
 
@@ -385,7 +425,7 @@ https://github.com/hibernate-pano/chrome-plugin-one-tab
 
 | 1.24.3 | 2026-10-19 | **恢复一条被误拦的核心操作 + 三处「说要发生的事，和实际发生的事」不一致的收口。** 首先是回退：**把会话里的最后一条标签拖到别的会话，会连同这个空会话一起删除**——这条规则此前在拖动开始前被拦下并提示「请改用删除按钮」，本次恢复原行为（拖拽直接生效，不再多一道确认）。其余三处都出现在会删数据的同步动作上。① **删除全部：自带存储用户的删除此前没有同步到云盘**。确认框写着「其他设备将同步删除」，但随后那次云同步的判据是「有没有 TapStack 账号」——自带存储用户没有账号，于是一路被跳过，云端旧会话仍留在原地，换台设备连回来就会被原样拉回。现在判据改为「有没有可用的同步后端」，承诺与行为同源。② **首次推送遇到「云端只剩删除记录」时，选项文字把风险写反了**：面板抬头警告「继续推送会撤销那些删除、让已删的会话重新出现」，紧挨着的三个选项却在说「云端独有的 0 个会话」，标着「推荐」的那一个连二次确认都不弹。现在三个选项都如实报出会复活几条删除记录，并统一在不可逆时先确认。③ **清理重复标签的确认框此前不告诉你会删掉多少**：现在先算出真实波及范围再问——「本次预计清除 N 个重复标签页、M 个空会话，此操作无法撤销」；没有可清的东西时直接说明，不再摆一道确认框。另新增一条**核心闭环真机回归**（保存 → 列表可见 → 恢复 → 标签真的打开，连续两次一致），以及断言最终落盘状态的存储侧测试。 | 未提审 |
 | 1.24.2 | 2026-10-17 | **修复两个会导致会话被静默删除的数据缺陷**（仅影响「自带存储（WebDAV）」用户，云端用户不受影响）。① 删除广播此前盖的设备标识读取的是一个从未被写入的键，导致两台设备都删除同一会话时无法分出先后 —— 删除会被静默撤销、会话复活。② 增量同步的水位线自检在生产环境未生效，换机或清过数据后新建的会话可能静默传不上云、并被云端旧版本覆盖消失。两者都已修复并补上回归测试；已发生的删除无法找回，但此后不会再出现。同时修好：请求挂死时不再永久占住同步队列（新增 45 秒超时）、首次配置云盘后不再出现「数据永远传不上云」、用空云端覆盖本机时会被拦下（此前会清空本机会话且不可恢复）、「显示通知提醒」开关此前不起作用（现已生效，失败提示始终会通知）。 | 未提审 |
-| 1.24.1 | 2026-10-14 | **点开单个标签改回「打开即从会话移除」**：1.22.13 曾把点开改成两步（先标记「已打开」、再用独立按钮移除），本次按产品定位改回——标签管理器是未读标签的暂存，点击继续浏览的同时该条即从会话移除（锁定会话除外，可反复打开）。比 1.22.13 之前多一道成功门：只有浏览器真正打开了页面才移除；本设备打不开的地址（本地文件、浏览器内部页面等）会明确提示并保留记录，不会出现「页面没看到、记录也没了」。 | 未提审 |
+| 1.24.1 | 2026-10-14 | **点开单个标签改回「打开即从会话移除」**：1.22.13 曾把点开改成两步（先标记「已打开」、再用独立按钮移除），本次按产品定位改回——标签管理器是未读标签的暂存，点击继续浏览的同时该条即从会话移除（锁定会话除外，可反复打开）。比 1.22.13 之前多一道成功门：只有浏览器真正打开了页面才移除；本设备打不开的地址（本地文件、浏览器内部页面等）会明确提示并保留记录，不会出现「页面没看到、记录也没了」。 | **已发布**（线上当前版本；1.25.1 已提交审核，待过审后自动切换） |
 | 1.24.0 | 2026-10-14 | **自带存储：同步到你自己的云盘（WebDAV）**。① 新增可选后端「自带存储」：数据同步到你自己的云盘（坚果云、自建 Nextcloud 等），**不经过我们的服务器**；会话内容在离开浏览器前用你的口令加密（口令只存在本次浏览器会话的内存中、不落盘）。两点如实说明：目录清单以明文存放，云盘服务商能看到「有多少会话、何时改过」（不含名称与网址）；在设置里选「不加密」则会话名称与网址也可见。忘记口令无法找回，云盘上的数据将无法解密。② **默认行为零变化**：存量用户仍走 TapStack 云端，不配置不会被切到任何没选过的后端。③ **权限按需申请**：只有你主动选择「自带存储」并点击「测试连接」时，浏览器才会弹窗请求该地址的访问权限；不使用就永远不会申请。④ 对真实服务端做了协议实测与三套真机端到端验证，覆盖并发写保护、未解锁时给出可读错误且绝不静默改传其他后端、权限与内容安全策略放行。 | 未提审 |
 | 1.23.1 | 2026-10-13 | **一次针对数据丢失风险的深度体检收口**（六方向并行审查 + 逐条变异验证）：① **修掉一条会静默覆盖你全部会话的路径**：当浏览器本地存储不可用（配额满、无痕窗口、站点数据被清）时，此前代码会把「读不到」当成「你没有会话」返回空列表——而保存、改名、删除、移动标签走的都是「读出-改回写」，于是下一次保存就会把你所有会话替换成刚保存的那一条，界面还提示「已保存」，且**没有回收站可以找回**。现在读取失败会明确中止并保住原有数据，不再伪装成空列表。② **修掉一处设置被默认值覆盖**：扩展刚打开、设置还在读取的那几秒里（冷启动读取较慢时），你若改动任意设置项并保存，可能把整份出厂默认值写回去、覆盖你原本的设置（还可能同步到云端）。现在在真正读到你的设置之前会拒绝写入并提示你重试。③ **自动同步不再「读不到就当关掉」**：读取设置失败时，此前会直接清除定时任务，表现为「我明明开着自动同步却不动了」，且没有任何提示。现在改为 1 分钟后自动重试，期间不出流量、也不会动你的上传。④ **一处同步异常不再把你的同步节奏退回每分钟**：你选了 1 小时同步，某次异常后扩展会退回每分钟反复拉取，白耗流量与电量；现在沿用你选的节奏。⑤ **诊断导出不再谎报**：导出诊断文件时若某项读取失败，此前会被写成「没有待上传」，导致排障时被引向错误结论；现在如实标记为「读取失败」。本次新增并强化了自动化回归测试，每条关键修复都做了「故意改坏实现、确认测试会红」的变异验证；其中一条原有测试被发现是**假绿**（实际测的是另一处修复），已修正为真正守护它声称的不变量。另修正 3 处结论性错误（把「依赖扩展唤醒」说成「永久停摆」、误判一处注释的作用域、把缺陷根因归到错误的提交）。 | 未提审 |
 | 1.23.0 | 2026-10-11 | **自动同步改为默认关闭，并由你决定多久同步一次**：此前扩展每 60 秒自动连一次云端、且每次都把全部会话重新下载一遍，会话多时这会持续消耗流量与电量。现在默认不再自动同步——打开页面不会自动拉取云端，需要更新时点「同步」按钮手动获取即可。想要自动同步的话，在菜单里打开「自动同步」开关，然后从 **5 分钟 / 10 分钟 / 30 分钟 / 1 小时** 四档里选一个节奏（默认 10 分钟）。**三件需要知道的事**：① 已经在用自动同步的老用户，你的开关状态保持不变，不会被偷偷关掉；② 关掉自动同步**不影响你本地改动的上传**——你保存、改名、删除、移动标签仍会照常上传到云端（只是不再自动去「拉」别人的改动），所以不会出现「改了却留在本机」的情况；③ 自动同步关闭期间，本页显示的是本机数据，可能不是云端最新，需要时点「同步」。本版同时包含 1.22.17 的全部内容（该版本未单独提审）：会话内标签拖拽排序恢复可用、同步只传改动过的会话（不再整库重传）、网络故障时自动拉开重试间隔、移动标签失败会自动恢复原顺序并提示、导入同一份备份两次不再产生重复会话。新增自动化回归测试，关键修复均做了「故意改坏实现、确认测试会红」的变异验证 | 已提交审核（2026-10-11，publish 返回 status=OK；fetchStatus 确认 submittedItemRevisionStatus=PENDING_REVIEW / crxVersion=1.23.0；线上仍 1.22.12 待过审后自动切换） |
@@ -422,8 +462,8 @@ https://github.com/hibernate-pano/chrome-plugin-one-tab
 ## Review Notes
 
 ### Known Issues / Limitations
-- 多设备同步要求登录；未登录用户仅使用本地功能。
+- 使用 TapStack 云端同步需登录；选择「自带存储」（WebDAV）不需要账号。未登录且未配置云盘的用户仅使用本地功能。
 - 删除的会话会从本设备彻底移除且无法恢复，因此删除**整个会话**前会弹出确认框（可在设置里关闭；「删除全部会话」始终确认）；
-  单条标签删除、以及把最后一条标签拖到别的会话，会立即生效、不弹确认。
+  单条标签删除会立即生效、不弹确认——但如果这一删会让整个会话消失，就会先确认；把最后一条标签拖到别的会话，会立即生效、不弹确认。
   为避免其他设备把已删除内容重新同步回来，云端会保留一条轻量的「已删除」标记 30 天后自动清除。
 - 多设备同时编辑同一会话时，以最后保存的一方为准（错峰使用不受影响）。
