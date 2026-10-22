@@ -158,7 +158,28 @@ async function main() {
   const profile = mkdtempSync(join(tmpdir(), 'tapstack-undo-reach-'));
   const ctx = await launchWithExtension(profile);
   const problems = [];
-  const report = { steps: [] };
+  const report = { steps: [], stalls: [] };
+  /** 环境卡顿记录（见下面 waitReal 的说明）。 */
+  const stalls = [];
+  /**
+   * 会**测量真实耗时**的等待。
+   *
+   * 为什么需要它：实测里偶发「切回来之后提示没了」，追下去发现是
+   * **环境卡顿** —— 页面里的定时器被拖后了 80 多秒（浏览器被挂起 / 机器
+   * 睡了）。那不是产品缺陷，但把它算成产品缺陷就是**报告不诚实**。
+   * ⇒ 每次等待都量一下真实耗时，超过 3 秒就记一条「卡顿」。
+   *
+   * 判据因此分两说：卡顿期间测出来的结果**不可信**，要在报告里说明。
+   */
+  const waitReal = async (page, ms, label) => {
+    const t0 = Date.now();
+    await page.waitForTimeout(ms);
+    const actual = Date.now() - t0;
+    if (actual > ms + 3000) {
+      stalls.push({ label, asked: ms, actual });
+    }
+    return actual;
+  };
   try {
     let sw = null;
     for (let i = 0; i < 30 && !sw; i++) {
@@ -170,7 +191,7 @@ async function main() {
 
     const page = await ctx.newPage();
     const consoleErrors = [];
-    page.on('console', m => { if (m.type() === 'error') consoleErrors.push(m.text()); if (m.text().startsWith('[CD]')) console.log('   ', m.text()); });
+    page.on('console', m => { if (m.type() === 'error') consoleErrors.push(m.text()); });
     page.on('pageerror', e => consoleErrors.push(`pageerror: ${e.message}`));
 
     await page.goto(`chrome-extension://${id}/src/popup/index.html`);
@@ -395,7 +416,7 @@ async function main() {
       });
       await page.mouse.move(10, 10);
       // 让倒计时先走 1.5 秒（剩下的时间 ≈ 6.5 秒）。
-      await page.waitForTimeout(1500);
+      await waitReal(page, 1500, '⑧ 切走前先走 1.5 秒');
       const before = await toastState(page);
 
       // 关掉焦点模拟 —— 之后 `document.hasFocus()` 才是真的。
@@ -406,7 +427,7 @@ async function main() {
       const other = await ctx.newPage();
       await other.goto('about:blank');
       await other.bringToFront();
-      await page.waitForTimeout(600);
+      await waitReal(page, 600, '⑧ 切走后落定');
 
       // ⚠️ 先断言**前置条件**成立，否则这条判据是空的
       //（"断言要钉路径不是终态"：必须证明「用户确实看不见了」）。
@@ -429,7 +450,7 @@ async function main() {
       // 倒计时本来就在走 —— 把它算进「看不见期间」是量错了东西。
       // 所以：切走 ⇒ 等它落定 ⇒ 取冻结值 ⇒ 再等 9 秒 ⇒ 比对。
       const frozen = await toastState(page);
-      await page.waitForTimeout(9000);
+      await waitReal(page, 9000, '⑧ 用户看不见的 9 秒');
       const during = await toastState(page);
       if (!during.present) {
         problems.push(
@@ -455,7 +476,7 @@ async function main() {
       await page.bringToFront();
       const curve = [];
       for (let i = 0; i < 10; i += 1) {
-        await page.waitForTimeout(250);
+        await waitReal(page, 250, `⑧ 切回后第 ${i + 1} 次采样`);
         const s = await toastState(page);
         curve.push({ ms: (i + 1) * 250, playState: s.animationPlayState, scale: s.progressScale });
       }
@@ -485,6 +506,13 @@ async function main() {
       problems.push(`控制台报错 ${consoleErrors.length} 条：${consoleErrors.slice(0, 3).join(' | ')}`);
     }
 
+    report.stalls = stalls;
+    if (stalls.length) {
+      problems.push(
+        `环境卡顿 ${stalls.length} 次（${stalls.map(s => `${s.label}: 问 ${s.asked}ms 实耗 ${s.actual}ms`).join(' | ')}）` +
+          '—— 这段时间里的测量不可信（浏览器被挂起/机器休眠），不是产品缺陷',
+      );
+    }
     writeFileSync(join(OUT_DIR, 'report.json'), JSON.stringify({ problems, ...report }, null, 2));
     console.log(JSON.stringify({ problems, tabSteps: report.steps.find(s => s.step.includes('步数'))?.steps }, null, 2));
   } finally {

@@ -37,7 +37,7 @@
 | **DS-43-12** | P2 | toast 队列只留最近 3 条 ⇒ 连续消费 4 次时，最早那条**带撤销的** toast 被**静默挤出** ⇒ 那次消费变成不可逆，用户不知道 | `src/contexts/ToastContext.tsx:86` |
 | **DS-43-13** | P2 | 搜索页「删除全部搜索结果」的确认计数**含锁定组** ⇒ 标题与正文说的 N 恒 ≥ 实际删除数 | `src/components/search/SearchResultList.tsx:742-743` vs `:724` |
 | **DS-43-14** | P2 | 批量删除**第 k 条失败 ⇒ 第 k+1…n 条根本不执行**，但只有一句通用「删除操作失败，请重试」⇒ 静默的部分执行 | `src/components/search/SearchResultList.tsx:721-733` |
-| **DS-43-15** | P2 | 「删除所有会话」的确认数字取自 **Redux 快照**，SW 按磁盘真值删并回传 `{count}` —— **这个 count 从未展示过**，且删完零成功提示 | `src/components/layout/HeaderDropdown.tsx:170/602` vs `src/core/mutationOps.ts:211` |
+| **DS-43-15** | P2 | 「删除所有会话」的确认数字取自 **Redux 快照**，SW 按磁盘真值删并回传 `{count}` —— **这个 count 从未展示过**，且删完零成功提示 —— ✅ **已修**（第 46 轮，`34c2b33`：确认前读**磁盘真值**（读不到就**中止**）+ 删完报**实际条数**） | `src/components/layout/HeaderDropdown.tsx:170/602` vs `src/core/mutationOps.ts:211` |
 | **DS-43-16** | P2 | 「删除前确认」开关**关闭**时，✕ 的提示只说「移除这条记录」，**没说整个会话卡会一起消失** | `src/components/dnd/DraggableTab.tsx:431` |
 | **DS-43-17** | P3 | 删除按钮的 `aria-label` 不含「不可恢复」，且 Tooltip **没有 `aria-describedby` 接线** ⇒ 读屏用户听不到「删除后无法恢复」 | `src/components/tabs/TabGroup.tsx:1227-1236`、`src/components/common/Tooltip.tsx:171` |
 | **DS-43-20** | **P0（条件性）** | **`chrome.storage.local` 被清 ⇒ 用户被登出 ⇒ 重新登录时 `first-bind` 把本机全部会话**静默认领**给新账号，零提示** —— DS-1 的原始后果被完整重开。触发条件需真实浏览器验证（见 §6.3） | `src/utils/supabase/client.ts:59` + `src/storage-kv/stringStore.ts:27-37` → `src/store/slices/authSlice.ts:110-125` → `src/core/accountScope.ts:257-270` |
@@ -226,7 +226,7 @@
 | **DS-43-12** | toast 队列只保留最近 3 条（`setQueue(prev => [...prev.slice(-2), ...])`）⇒ **连续消费 4 个会话**时，最早那条带撤销的 toast 被**静默挤出队列** ⇒ 那次消费变成不可逆，而用户从头到尾不知道有过退路 | `src/contexts/ToastContext.tsx:86` |
 | **DS-43-13** | 搜索页「删除全部搜索结果」的确认计数用 `matchingTabs.length`（**不排除锁定组**），而执行时 `if (group.isLocked) continue` 跳过 ⇒ 标题「删除 N 个标签？」与正文「永久移除这 N 条标签记录」用的都是**含锁定的总数**，恒 ≥ 实际删除数 | `SearchResultList.tsx:742-743` vs `:724` |
 | **DS-43-14** | 批量删除的所有条目在**同一个 try 里**串行执行 ⇒ 第 k 条失败后**第 k+1…n 条根本不执行**，但提示只有一句「删除操作失败，请重试」⇒ 用户既不知道前 k−1 条已删、也不知道后面没删 ⇒ **静默的部分执行** | `SearchResultList.tsx:721-733` |
-| **DS-43-15** | 「删除所有会话」的确认数字 N 取自 **Redux 快照**，SW 按**磁盘真值**删并回传 `{count}` —— **这个 count 从头到尾没有被展示过**（payload 只用来取 `broadcastWarn`）⇒ 确认框数字可能 ≠ 实际删除条数；且删完**零成功提示** | `HeaderDropdown.tsx:170/602`、`:517`；`src/core/mutationOps.ts:211` |
+| **DS-43-15** | 「删除所有会话」的确认数字 N 取自 **Redux 快照**，SW 按**磁盘真值**删并回传 `{count}` —— **这个 count 从头到尾没有被展示过**（payload 只用来取 `broadcastWarn`）⇒ 确认框数字可能 ≠ 实际删除条数；且删完**零成功提示** —— ✅ **已修**（第 46 轮，`34c2b33`）：确认前读**磁盘真值**（`planDeleteAll`，总数与锁定数出自**同一次读**），读失败**中止**（fail closed，不退回快照）；执行后按 SW 回执报**实际条数**，与确认时的数不等时说明差在哪 | `HeaderDropdown.tsx:170/602`、`:517`；`src/core/mutationOps.ts:211` |
 | **DS-43-16** | 「删除前确认」开关**打开**时，删最后一条会弹「这是该会话的最后一条标签记录，删除后整个会话会从列表消失」✓；开关**关闭**时零确认，而 ✕ 的提示只有「从会话中移除这条记录（无法恢复）」—— **没说整张会话卡会一起消失** | `TabGroup.tsx:625` vs `src/components/dnd/DraggableTab.tsx:431` |
 | **DS-43-17** | 删除按钮的 `aria-label` 只有「删除会话」，「（删除后无法恢复）」只存在于 Tooltip 的 `content`；而 Tooltip 只渲染 `role="tooltip"`、**没有 `aria-describedby` 接线** ⇒ 读屏用户听不到「不可恢复」 | `TabGroup.tsx:1227-1236`、`src/components/common/Tooltip.tsx:171` |
 

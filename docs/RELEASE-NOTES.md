@@ -390,8 +390,11 @@ sequential focus navigation 起点停在被移除元素的位置）。
 于是「暂停 10 秒后剩余时间不变」这类判据不用真等。
 判据钉的是**行为**（剩余时间冻不冻、进度条停不停、焦点抢不抢、
 「用户看不见时停不停」），不是 `onMouseEnter=` 这类字面量 ——
-**10 个变异全部被守卫抓红**（`node scripts/verify-toast-mutation-proof.mjs` 可复跑：
-把实现改坏 ⇒ 守卫必须变红 ⇒ 自动还原）。
+**10 个变异全部被守卫抓红**（**2026-10-23 已固化成可复跑、且进 CI 的测试**：
+`tests/guards/toastUndoReachabilityMutation.test.ts` ——
+把实现改坏 ⇒ 守卫必须变红 ⇒ **沙箱里**自动还原，共享工作树一个字节不动；
+原先那个就地改写源码的 `scripts/verify-toast-mutation-proof.mjs` 已删除，
+它在共享工作树里跑会把别的 agent 读到变异后的实现 ⇒ 假红）。
 
 **顺带修掉一个真缺陷**（守卫自己抓出来的）：倒计时控制器**最初没有在起点挂计时器**
 ⇒ 提示**永远不会自己消失**。tsc 与 eslint 都看不见它（类型对、lint 干净、
