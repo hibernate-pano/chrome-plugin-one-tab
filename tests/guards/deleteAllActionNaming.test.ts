@@ -43,16 +43,20 @@ const stripComments = (src: string): string =>
 /**
  * 界面上那个叫法（从菜单那一行现场读）。
  *
- * 菜单行长这样：`删除所有会话（{groups.length}）` ⇒ 去掉计数括号就是叫法。
+ * 菜单行长这样：`删除所有会话（{menuGroupCount}）` ⇒ 去掉计数括号就是叫法。
  * 这样改名的人（无论是改菜单还是改文档）都会撞到守卫。
+ *
+ * ⚠️ 计数那一段**故意不钉成 `groups.length`**（2026-10-23 DS-43-15）：
+ * 菜单行的计数已改成取磁盘真值（表达式名会变），而这个守卫要守的是
+ * **叫法**，不是计数怎么来的。钉死计数表达式 ⇒ 换一种正确的写法就误报。
  */
 function uiDeleteAllTerm(): string {
-  const m = DROPDOWN.match(/删除[^，。；「」（）]{0,8}会话（\{groups\.length\}）/);
+  const m = DROPDOWN.match(/删除[^，。；「」（）]{0,8}会话（\{[^}]+\}）/);
   assert.ok(
     m,
-    '菜单里找不到「删除…会话（{groups.length}）」那一行 —— 守卫的前提变了'
+    '菜单里找不到「删除…会话（{…}）」那一行 —— 守卫的前提变了'
   );
-  return m[0].replace(/（\{groups\.length\}）$/, '');
+  return m[0].replace(/（\{[^}]+\}）$/, '');
 }
 
 /** 另一个（历史遗留的）叫法。 */

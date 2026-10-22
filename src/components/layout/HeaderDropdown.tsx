@@ -6,6 +6,7 @@ import { deleteAllGroups, deleteBroadcastWarn, loadGroups } from '@/store/slices
 import { dispatchReloadSettings } from '@/store/slices/settingsSlice';
 import { sendSyncCommand } from '@/shared/mutationProtocol';
 import { storage } from '@/utils/storage';
+import type { TabGroup } from '@/types/tab';
 import type { AuthTab } from '../auth/AuthModal';
 import { useToast } from '@/contexts/ToastContext';
 import { trackProductEvent } from '@/utils/productEvents';
@@ -36,7 +37,17 @@ import {
   resolveMenuNavigation,
 } from '@/utils/menuKeyboard';
 import { registerFocusReturn } from '@/utils/focusReturn';
-import { deleteAllConfirmMessage, deleteAllMenuWarning, deleteAllShouldPushOverwrite } from './deleteAllMessages';
+import {
+  DELETE_ALL_NOTHING_MESSAGE,
+  DELETE_ALL_READ_FAILED_MESSAGE,
+  deleteAllConfirmMessage,
+  deleteAllConfirmTitle,
+  deleteAllMenuWarning,
+  deleteAllShouldPushOverwrite,
+  deleteAllSuccessMessage,
+  deletedCountFromResult,
+  planDeleteAll,
+} from './deleteAllMessages';
 import { importPartialMessage, importSuccessMessage } from './importResultCopy';
 import { countOneTabGroups } from '@/core/oneTabFormatParser';
 import { formatExportStamp } from '@/utils/exportStamp';
@@ -192,6 +203,22 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({
     () => groups.reduce((acc, g) => (g.isLocked ? acc + 1 : acc), 0),
     [groups]
   );
+  // ── 2026-10-23 DS-43-15：菜单行里的会话数也取**磁盘真值** ──────────────
+  //
+  // 确认框已经改成读磁盘（fail closed）。若菜单行还留着 Redux 快照，用户会
+  // 看到「菜单说 8 个、确认框说 7 个」⇒ 看起来像 bug，而不是「数据变了」。
+  //
+  // 菜单每次打开都会挂载本组件 ⇒ 在这里读一次即可。读失败时**退回界面现值**
+  // （菜单行是预告，不是承诺；真正的承诺在确认框，而那里读失败会**中止**）。
+  const [diskCounts, setDiskCounts] = useState<{ groupCount: number; lockedCount: number } | null>(
+    null
+  );
+  // 组件是否还活着：删除动作要 await 磁盘读，await 期间菜单可能已被关掉
+  // （用户点了外面）⇒ 那时不该再弹确认框（对已卸载的组件开弹层）。
+  const mountedRef = useRef(true);
+  // 菜单行用的数字：有磁盘真值就用它，没有（读失败）才退回界面现值。
+  const menuGroupCount = diskCounts?.groupCount ?? groups.length;
+  const menuLockedCount = diskCounts?.lockedCount ?? lockedGroupCount;
   const settings = useAppSelector(state => state.settings);
   // ── 2026-10-22 审计 L-11：初始展开的子菜单 ────────────────────────────
   // `initialSubmenu` 只在**挂载时**读一次（这个组件随菜单开关挂载/卸载，
@@ -387,6 +414,41 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({
     };
   }, []);
 
+  // ── 2026-10-23 DS-43-15：菜单打开时读一次磁盘真值（菜单行的数字）──────
+  //
+  // 为什么要单独读一次：Redux 的 `groups` 可能在**外部写入**之后仍然陈旧
+  // （SW 删过、另一台设备同步过、popup 挂载早于那笔写）。菜单行写着
+  // 「删除所有会话（8）」而磁盘上只剩 7 个，就是一个**当场就能戳破**的谎。
+  //
+  // 读失败不退化成 0：菜单行是**预告**，不是承诺 ⇒ 读失败就保留界面现值
+  // （Redux），由 logWarn 留痕；真正的承诺在确认框，而那里读失败会**中止**。
+  useEffect(() => {
+    let alive = true;
+    void (async () => {
+      try {
+        const diskGroups = await storage.getGroupsForWrite();
+        if (!alive) return;
+        setDiskCounts({
+          groupCount: diskGroups.length,
+          lockedCount: diskGroups.reduce((acc, g) => (g.isLocked ? acc + 1 : acc), 0),
+        });
+      } catch (error) {
+        logWarn('[HeaderDropdown] 读取真实会话数失败，菜单行用界面现值:', error);
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  // 组件是否还活着（删除动作要 await 磁盘读，见 mountedRef 的说明）。
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
+
   // 2026-10-18 round 38：监听用 `click` 而不是 `mousedown`。
   // mousedown 会先于同一次点击的 React onClick 关掉菜单，随后 Header 汉堡按钮的
   // `setShowDropdown(!showDropdown)` 又把（已经变 false 的）状态翻回 true ——
@@ -522,8 +584,40 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({
   // 处理删除所有标签组。核弹级操作：不受「删除会话前确认」开关控制，永远弹确认
   // （该开关只应管单组删除；关闭后一键删光全部曾造成误操作事故 2026-09-26）。
   // 无墓碑模型（2026-09-29）：删除即物理移除，跨设备广播由云端 is_deleted 行承担。
-  const handleDeleteAllGroups = () => {
-    if (groups.length === 0) return;
+  //
+  // ── 2026-10-23 DS-43-15：确认框的数字取**磁盘真值**，删完**说出来** ──────
+  //
+  // 修复前：确认框里的 N 取自 Redux 快照，而 SW 执行时按磁盘真值删
+  // （`mutationHandlers` → `d.getGroups()`），回传的 `{count}` **从没被展示过**
+  // （payload 只用来取 `broadcastWarn`）⇒
+  //   ① 确认框可能说「删除 8 个」而实际删了 7 个；
+  //   ② 删完零成功提示 —— 用户只看到列表空了，不知道删了几个。
+  //
+  // 现在：确认前读一次磁盘（**fail closed** —— 读不到就中止，绝不退回快照），
+  // 执行后把 SW 回传的实际条数说出来；与确认时的数不等时说明差在哪。
+  const handleDeleteAllGroups = async () => {
+    // ── 破坏性路径上的读必须 fail closed ──────────────────────────────────
+    // 与 `Header.tsx` 的「清理重复标签」同纪律：读不到真值就**不动手**。
+    // 拿一个可能偏大的数字去承诺「删除 N 个」，比不删更糟 ——
+    // 尤其 v1.22.0 起删除即物理清除，**没有回收站、没有撤销**。
+    let diskGroups: TabGroup[];
+    try {
+      diskGroups = await storage.getGroupsForWrite();
+    } catch (error) {
+      logError('[HeaderDropdown] 删除前读取真实会话失败，已取消删除:', error);
+      showToast(DELETE_ALL_READ_FAILED_MESSAGE, 'error');
+      return;
+    }
+
+    // 磁盘上已经没有会话 ⇒ 不弹「确认删除 0 个」这种自相矛盾的框。
+    const plan = planDeleteAll(diskGroups);
+    if (plan.nothingToDelete) {
+      showToast(DELETE_ALL_NOTHING_MESSAGE, 'info', 4000);
+      return;
+    }
+
+    // await 期间菜单可能已被关掉（用户点了外面）⇒ 那时不该再弹确认框。
+    if (!mountedRef.current) return;
 
     const runDeleteAll = () => {
       onClose();
@@ -531,6 +625,16 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({
       dispatch(deleteAllGroups())
         .unwrap()
         .then(payload => {
+          // ── DS-43-15：成功提示（此前完全没有）─────────────────────────────
+          // SW 按磁盘真值删，回传**实际条数**。把它说出来 ——
+          // 用户点完「全部删除」只看到列表空了，不知道删了几个、
+          // 也不知道和自己确认时的数对不对得上。
+          const deletedCount = deletedCountFromResult(payload);
+          showToast(
+            deleteAllSuccessMessage({ deletedCount, confirmedCount: plan.groupCount }),
+            'success',
+            4000
+          );
           // 广播登记失败时本地已删干净，但云端行不会被标 is_deleted ⇒
           // 其它设备下次合并会把它当 remote-only 全部复活。必须如实告知。
           const warn = deleteBroadcastWarn(payload);
@@ -625,14 +729,19 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({
     );
 
     showConfirm({
-      title: `删除全部 ${groups.length} 个会话`,
+      // 标题里的数字同样取磁盘真值（与正文同源）——
+      // 标题说 8、正文说 7 会让用户以为界面坏了。
+      title: deleteAllConfirmTitle(plan.groupCount),
       // 跨设备删除的披露判据是「有没有可用的同步后端」，不是「有没有账号」——
       // 自带存储（WebDAV）用户的删除意图同样以墓碑广播（见 deleteAllMessages 文件头）。
+      // groupCount / lockedCount：**同一次磁盘读**的两个数（planDeleteAll）——
+      // 确认框说的必须与真正会删掉的一致（旧实现取 Redux 快照，
+      // 而 SW 按磁盘真值删 ⇒ 两者可能对不上，见 DS-43-15）。
       // lockedCount：锁定会话同样会被删掉，必须在按下去之前就说清楚有几个
       // （方案 B 的理由见 deleteAllMessages.ts 文件头）。
       message: deleteAllConfirmMessage({
-        groupCount: groups.length,
-        lockedCount: lockedGroupCount,
+        groupCount: plan.groupCount,
+        lockedCount: plan.lockedCount,
         isAuthenticated,
         syncBackend: settings.syncBackend,
       }),
@@ -1429,21 +1538,21 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({
 
         {/* 危险区：与菜单平面语言一致（rounded-lg + 留边），用色块与普通项区分防误触。
             核弹级操作：强制确认不受「删除会话前确认」开关控制；无组时隐藏；描述带数量。 */}
-        {groups.length > 0 && (
+        {menuGroupCount > 0 && (
           <div className="px-2 pt-1.5 pb-0.5">
             <button
               role="menuitem"
-              onClick={handleDeleteAllGroups}
+              onClick={() => { void handleDeleteAllGroups(); }}
               className="flex w-full items-center gap-2 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2.5 text-left text-sm font-medium text-rose-700 transition-colors hover:bg-rose-100 dark:border-rose-900/40 dark:bg-rose-950/30 dark:text-rose-300 dark:hover:bg-rose-950/50"
             >
               <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 shrink-0 text-rose-500 dark:text-rose-300" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
               </svg>
               <span className="flex-1">
-                <span className="block">删除所有会话（{groups.length}）</span>
+                <span className="block">删除所有会话（{menuGroupCount}）</span>
                 <span className="mt-0.5 block text-xs font-normal text-rose-600/80 dark:text-rose-300/80">
                   {deleteAllMenuWarning({
-                    lockedCount: lockedGroupCount,
+                    lockedCount: menuLockedCount,
                     isAuthenticated,
                     syncBackend: settings.syncBackend,
                   })}

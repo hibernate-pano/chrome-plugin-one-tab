@@ -509,14 +509,28 @@ describe('「删除所有会话」的调用方必须把真实锁定数传进去'
     const call = src.slice(src.indexOf('deleteAllConfirmMessage({'));
     assert.ok(call.length > 0, '确认框正文必须由 deleteAllConfirmMessage 产出');
     const args = call.slice(0, call.indexOf('})'));
-    assert.match(args, /lockedCount: lockedGroupCount/, '确认框必须带上真实锁定数');
-    assert.match(args, /groupCount: groups\.length/, '数量必须是当前会话数');
+    // ── 2026-10-23 DS-43-15：这两条断言原来钉死 `lockedCount: lockedGroupCount`
+    // 与 `groupCount: groups.length` —— 那是**旧行为**：确认框读 Redux 快照，
+    // 而 SW 按磁盘真值删 ⇒ 两者可能不等（见 deleteAllDisclosure.test.ts）。
+    // 现在确认框的数字来自**同一次磁盘读**算出的那份 plan。
+    // ⇒ 断言改成「取自某个 .lockedCount / .groupCount」，不钉局部变量名 ——
+    //   钉名字就等于逼实现不许改写法（守卫钉死字面量的陷阱）。
+    assert.match(
+      args,
+      /lockedCount:\s*[A-Za-z_$][\w$]*\.lockedCount/,
+      '确认框必须带上真实锁定数'
+    );
+    assert.match(
+      args,
+      /groupCount:\s*[A-Za-z_$][\w$]*\.groupCount/,
+      '数量必须来自磁盘真值算出的那份 plan'
+    );
   });
 
   it('菜单行调用带上了 lockedCount', () => {
     assert.match(
       src,
-      /deleteAllMenuWarning\(\{[\s\S]{0,200}?lockedCount: lockedGroupCount/,
+      /deleteAllMenuWarning\(\{[\s\S]{0,200}?lockedCount:\s*[A-Za-z_$][\w$]*/,
       '菜单行副标题必须带上真实锁定数'
     );
   });

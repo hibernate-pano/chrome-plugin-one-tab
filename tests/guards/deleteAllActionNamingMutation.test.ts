@@ -65,11 +65,17 @@ describe('变异自证：WC-8 叫法一致性守卫必须看得见破口', () =>
         targets: [
           {
             path: 'src/components/layout/HeaderDropdown.tsx',
-            mutate: source =>
-              source.replace(
-                '删除所有会话（{groups.length}）',
-                '删除全部会话（{groups.length}）',
-              ),
+            mutate: source => {
+              // ⚠️ 只改**叫法**，不碰计数表达式（2026-10-23 DS-43-15：
+              // 菜单行的计数已改成取磁盘真值，表达式名会变 —— 变异要守的是
+              // 「叫法变了守卫会不会红」，不是「某个表达式还在不在」）。
+              const next = source.replace(
+                /删除所有会话（\{[^}]+\}）/,
+                '删除全部会话（{count}）'
+              );
+              if (next === source) throw new Error('变异前提没成立：找不到菜单里那一行');
+              return next;
+            },
           },
         ],
         expectRed: true,

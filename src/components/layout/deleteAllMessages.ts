@@ -90,6 +90,101 @@ export const deleteAllLockedWarning = (input: DeleteAllLockedDisclosure): string
  */
 const crossDeviceCaveat = '（另一台设备若在离线时改过它，删除可能不生效）';
 
+// ── 2026-10-23 数据安全审计 DS-43-15：确认框的数字必须取**磁盘真值** ────────
+//
+// 修复前：确认框里的 N 取自 **Redux 快照**，而 SW 执行时按**磁盘真值**删
+// （`mutationHandlers` → `d.getGroups()`），回传的 `{count}` **从头到尾没被展示过**
+// （payload 只用来取 `broadcastWarn`）⇒
+//   ① 确认框可能说「删除 8 个」而实际删了 7 个（另一台设备刚同步进来一条、
+//      本机写入还没回环 Redux）；
+//   ② 删完**零成功提示** —— 用户点完「全部删除」只看到列表空了，
+//      不知道到底删了几个、有没有同步出去。
+//
+// 修法两条，都落在这份纯函数里（判据抽纯函数，IO 留在 IO 层）：
+//   · 确认前读一次磁盘真值，读不到就**中止**（fail closed，绝不退回快照）——
+//     与 `Header.tsx` 的「清理重复标签」同纪律；
+//   · 执行后把 SW 回传的**实际条数**说出来；与确认时的数不等时必须说明差在哪。
+
+/** 一次「删除所有会话」在**确认之前**的判据结果（全部取自同一次磁盘读）。 */
+export interface DeleteAllPlan {
+  /** 要删多少个会话（磁盘真值）。 */
+  groupCount: number;
+  /** 其中被锁定的个数（**同一次读** —— 与总数必须出自同一份快照）。 */
+  lockedCount: number;
+  /** 磁盘上已经没有会话 ⇒ 不该弹确认框。 */
+  nothingToDelete: boolean;
+}
+
+/**
+ * 判据：一次磁盘真值 → 确认框要用的那份数字。
+ *
+ * ⚠️ 入参必须是**刚读出来的磁盘真值**，不是 Redux 快照 —— 两者可能不同，
+ * 而执行侧（SW）读的是磁盘。
+ */
+export const planDeleteAll = (groups: { isLocked?: boolean }[]): DeleteAllPlan => {
+  const groupCount = groups.length;
+  const lockedCount = groups.reduce((acc, g) => (g.isLocked ? acc + 1 : acc), 0);
+  return { groupCount, lockedCount, nothingToDelete: groupCount === 0 };
+};
+
+/**
+ * 读不到磁盘真值时的中止提示。
+ *
+ * fail closed：破坏性路径上的读失败**必须中止**，不能退回快照继续删 ——
+ * 拿一个可能偏大的数字去承诺「删除 N 个」，比不删更糟。
+ */
+export const DELETE_ALL_READ_FAILED_MESSAGE =
+  '暂时读不到真实会话，已取消删除，请稍后重试';
+
+/** 磁盘上已经没有会话：不用弹确认框，直接说清（与「点了没反应」不同）。 */
+export const DELETE_ALL_NOTHING_MESSAGE = '没有可删除的会话';
+
+/** 确认框标题（数字同样取磁盘真值，与正文同源）。 */
+export const deleteAllConfirmTitle = (groupCount: number): string =>
+  `删除全部 ${groupCount} 个会话`;
+
+/**
+ * 删除完成后的那句话（此前**完全没有**成功提示）。
+ *
+ * `deletedCount` = SW 按磁盘真值回传的实际条数；
+ * `confirmedCount` = 用户在确认框里看到的那个数。
+ *
+ * 两者不等 ⇒ 确认与执行之间会话数变了（另一台设备同步进来 / 本机被清空）。
+ * 这种情况**必须说出来** —— 否则用户会以为「删了 7 个，可我明明确认了 8 个」。
+ */
+export const deleteAllSuccessMessage = (input: {
+  deletedCount: number;
+  confirmedCount: number;
+}): string => {
+  const { deletedCount, confirmedCount } = input;
+  if (deletedCount === 0) {
+    return confirmedCount > 0
+      ? '没有会话被删除（它们在你确认之前就已被移除）'
+      : DELETE_ALL_NOTHING_MESSAGE;
+  }
+  if (deletedCount === confirmedCount) return `已删除 ${deletedCount} 个会话`;
+  if (deletedCount < confirmedCount) {
+    return `已删除 ${deletedCount} 个会话（确认时是 ${confirmedCount} 个，其余已被移除）`;
+  }
+  return `已删除 ${deletedCount} 个会话（确认时是 ${confirmedCount} 个，期间有新的会话同步进来）`;
+};
+
+/**
+ * 从删除回执里取**实际删除条数**（SW 按磁盘真值回传的 `{count}`）。
+ *
+ * 为什么要单独抽一个函数：回执的形状是 `unknown`（thunk 载荷），而
+ * `count` 缺失时**不能猜** —— 猜出来的数字会被当成「删了 N 个」说出来，
+ * 那就是在编数字。缺失一律按 0 处理，由 `deleteAllSuccessMessage` 去说
+ * 「没有会话被删除」。
+ */
+export const deletedCountFromResult = (payload: unknown): number => {
+  if (!payload || typeof payload !== 'object') return 0;
+  const value = (payload as { value?: unknown }).value;
+  if (!value || typeof value !== 'object') return 0;
+  const count = (value as { count?: unknown }).count;
+  return typeof count === 'number' && Number.isFinite(count) && count >= 0 ? count : 0;
+};
+
 /** 确认框正文（破坏性操作的最后一道说明）。 */
 export const deleteAllConfirmMessage = (
   input: DeleteAllDisclosure & { groupCount: number } & DeleteAllLockedDisclosure

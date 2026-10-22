@@ -19,9 +19,15 @@ import { readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
+  DELETE_ALL_NOTHING_MESSAGE,
+  DELETE_ALL_READ_FAILED_MESSAGE,
   deleteAllConfirmMessage,
+  deleteAllConfirmTitle,
   deleteAllMenuWarning,
   deleteReachesOtherDevices,
+  deleteAllSuccessMessage,
+  deletedCountFromResult,
+  planDeleteAll,
 } from '@/components/layout/deleteAllMessages';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
@@ -133,7 +139,10 @@ describe('两处入口都走同一个纯函数（同一份声明只有一个版�
     const call = source.slice(source.indexOf('deleteAllConfirmMessage({'));
     assert.ok(call.length > 0, '确认框正文必须由 deleteAllConfirmMessage 产出');
     const args = call.slice(0, call.indexOf('})'));
-    assert.ok(/groupCount: groups\.length/.test(args), '数量必须是当前会话数');
+    assert.ok(
+      /groupCount:\s*[A-Za-z_$][\w$]*\.groupCount/.test(args),
+      '数量必须来自磁盘真值算出的那份 plan'
+    );
     assert.ok(
       /syncBackend: settings\.syncBackend/.test(args),
       '后端必须是设置里的真值 —— 写死 supabase 会让自带存储用户又看不到那句'
@@ -142,7 +151,7 @@ describe('两处入口都走同一个纯函数（同一份声明只有一个版�
 
   it('菜单行用 deleteAllMenuWarning 装配副标题', () => {
     assert.ok(
-      /deleteAllMenuWarning\(\{[\s\S]{0,120}?lockedCount: lockedGroupCount,[\s\S]{0,120}?isAuthenticated,[\s\S]{0,120}?syncBackend: settings\.syncBackend,?[\s\S]{0,40}?\}\)/.test(
+      /deleteAllMenuWarning\(\{[\s\S]{0,120}?lockedCount:\s*[A-Za-z_$][\w$]*,[\s\S]{0,120}?isAuthenticated,[\s\S]{0,120}?syncBackend: settings\.syncBackend,?[\s\S]{0,40}?\}\)/.test(
         source
       ),
       '菜单行副标题必须由 deleteAllMenuWarning 产出，且必须带上锁定会话数'
@@ -158,5 +167,140 @@ describe('两处入口都走同一个纯函数（同一份声明只有一个版�
       !/将清空本地全部会话，删除后无法恢复（其他登录设备同步删除）。/.test(source),
       '菜单行不该再无条件写死「其他登录设备同步删除」'
     );
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 2026-10-23 数据安全审计 DS-43-15：确认数字取自 Redux 快照、实际条数从不展示。
+//
+// 【要防的回归类别】破坏性动作的「承诺」与「执行」读了**两个不同的真值**：
+//   · 确认框说 N（Redux 快照）⇒ SW 按**磁盘真值**删 ⇒ 两者可能不等；
+//   · SW 回传的实际条数 `{count}` 从来没被展示过 ⇒ 删完**零成功提示**。
+//
+// 这条守卫钉三件事：
+//   ① 确认前读的是**磁盘真值**，且读不到就**中止**（fail closed）；
+//   ② 确认框的总数与锁定数出自**同一次读**；
+//   ③ 删完必须把**实际条数**说出来。
+//
+// ⚠️ 判据写成「不钉局部变量名」的形式（只钉纯函数与存储 API 这些**接口锚点**），
+//    否则改个等价写法就会误报 —— 那是「守卫钉死字面量」的陷阱。
+//    改完之后由 `deleteAllCountTruthMutation.test.ts` 证明它**有检测力**。
+// ─────────────────────────────────────────────────────────────────────────────
+describe('DS-43-15：确认数字取磁盘真值，删完说出来', () => {
+  const source = read(DROPDOWN);
+
+  /** 取出 handleDeleteAllGroups 整个函数的源码（判据只在这个函数里）。 */
+  const handlerSource = (): string => {
+    const start = source.indexOf('const handleDeleteAllGroups');
+    assert.ok(start > 0, '找不到 handleDeleteAllGroups');
+    const rest = source.slice(start);
+    const end = rest.indexOf('\n  const ', 10);
+    return end > 0 ? rest.slice(0, end) : rest;
+  };
+
+  it('确认前读磁盘真值（不是 Redux 快照）', () => {
+    const handler = handlerSource();
+    assert.match(
+      handler,
+      /storage\.getGroupsForWrite\(\)/,
+      '确认框的数字必须来自磁盘真值 —— Redux 快照可能落后于磁盘'
+    );
+    assert.match(
+      handler,
+      /planDeleteAll\(/,
+      '总数与锁定数必须由同一个判据一次算出（planDeleteAll）'
+    );
+    assert.ok(
+      !/groups\.length/.test(handler),
+      '删除动作里不许再直接读 Redux 的 groups.length'
+    );
+  });
+
+  it('读不到真值就**中止**（fail closed），不许退回快照继续删', () => {
+    const handler = handlerSource();
+    assert.match(
+      handler,
+      /catch \(error\) \{[\s\S]{0,600}?DELETE_ALL_READ_FAILED_MESSAGE[\s\S]{0,300}?return;/,
+      '读失败必须中止：先报「读不到真实会话」，然后 return（不弹确认框、不执行删除）'
+    );
+  });
+
+  it('磁盘上没有会话时不弹「删除 0 个」这种自相矛盾的确认框', () => {
+    const handler = handlerSource();
+    assert.match(handler, /nothingToDelete/, '必须先判「没有可删的」再决定弹不弹框');
+    assert.match(handler, /DELETE_ALL_NOTHING_MESSAGE/, '没有可删的要说清楚，而不是弹一个空框');
+  });
+
+  it('删完必须把**实际条数**说出来（SW 回执 → 提示）', () => {
+    const handler = handlerSource();
+    assert.match(
+      handler,
+      /deletedCountFromResult\(/,
+      '必须从 SW 回执里取实际删除条数（不是自己算的数）'
+    );
+    assert.match(handler, /deleteAllSuccessMessage\(/, '成功提示必须由同一份文案函数产出');
+    assert.match(handler, /showToast\(/, '成功提示必须真的弹出来');
+  });
+
+  it('菜单行的数字也不再直接用 Redux 快照', () => {
+    assert.ok(
+      !/删除所有会话（\{groups\.length\}）/.test(source),
+      '菜单行的数字必须走磁盘快照（读失败才退回界面现值），不能直接印 Redux 的 length'
+    );
+  });
+});
+
+describe('DS-43-15：判据本身（纯函数，可直接验证行为）', () => {
+  it('planDeleteAll：总数与锁定数出自同一份输入', () => {
+    const plan = planDeleteAll([{ isLocked: true }, { isLocked: false }, { isLocked: true }]);
+    assert.equal(plan.groupCount, 3);
+    assert.equal(plan.lockedCount, 2);
+    assert.equal(plan.nothingToDelete, false);
+  });
+
+  it('planDeleteAll：空列表 ⇒ 没什么可删', () => {
+    const plan = planDeleteAll([]);
+    assert.equal(plan.groupCount, 0);
+    assert.equal(plan.nothingToDelete, true);
+  });
+
+  it('deleteAllConfirmTitle：标题里的数与正文同源', () => {
+    assert.equal(deleteAllConfirmTitle(5), '删除全部 5 个会话');
+  });
+
+  it('deleteAllSuccessMessage：删了几个就说几个', () => {
+    assert.equal(
+      deleteAllSuccessMessage({ deletedCount: 7, confirmedCount: 7 }),
+      '已删除 7 个会话'
+    );
+  });
+
+  it('deleteAllSuccessMessage：实际比确认的少 ⇒ 必须说明差在哪', () => {
+    const message = deleteAllSuccessMessage({ deletedCount: 7, confirmedCount: 8 });
+    assert.match(message, /^已删除 7 个会话（/, `必须点出确认时是 8 个：${message}`);
+    assert.match(message, /8/, '必须带上确认时的数字');
+  });
+
+  it('deleteAllSuccessMessage：一个都没删 ⇒ 不得说「已删除 0 个」', () => {
+    const message = deleteAllSuccessMessage({ deletedCount: 0, confirmedCount: 8 });
+    assert.ok(
+      !message.includes('已删除 0 个'),
+      `没删成不能说成「已删除」：${message}`
+    );
+    assert.match(message, /没有会话被删除/, `必须说清没删成：${message}`);
+  });
+
+  it('deletedCountFromResult：回执缺 count 时按 0 处理（不猜）', () => {
+    assert.equal(deletedCountFromResult({ value: { count: 3 } }), 3);
+    assert.equal(deletedCountFromResult({ value: {} }), 0);
+    assert.equal(deletedCountFromResult({}), 0);
+    assert.equal(deletedCountFromResult(null), 0);
+    assert.equal(deletedCountFromResult({ value: { count: 'x' } }), 0);
+  });
+
+  it('中止与「没什么可删」两句文案都存在且说清后果', () => {
+    assert.match(DELETE_ALL_READ_FAILED_MESSAGE, /读不到/, '要说清是读不到');
+    assert.match(DELETE_ALL_READ_FAILED_MESSAGE, /已取消/, '要说清已经取消了');
+    assert.equal(DELETE_ALL_NOTHING_MESSAGE, '没有可删除的会话');
   });
 });
