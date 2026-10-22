@@ -28,6 +28,7 @@ import { mutationErrorMessage } from '@/components/tabs/mutationErrorCopy';
 import {
   openSingleTabSuccessMessage,
   restoreGroupSuccessMessage,
+  restoreOutcomeSentence,
 } from '@/components/tabs/restoreFeedbackCopy';
 import { useConsumeUndo } from '@/components/tabs/useConsumeUndo';
 import {
@@ -115,18 +116,6 @@ const OpenAllInPlaceIcon = () => (
     <path strokeLinecap="round" strokeLinejoin="round" d="M6.5 13.5h6.5M10.5 11l2.5 2.5-2.5 2.5" />
   </svg>
 );
-
-/**
- * 「恢复」两个入口的提示语（2026-10-22 审计 U-18）。
- *
- * 两句都**说明后果**，不只是动作名 —— 「恢复」这个词本身是有歧义的：
- * 用户不知道恢复完这个会话还在不在列表里。而这恰恰是本产品
- * 最容易被误解的一条规则（恢复 = 消费会话，见 restoreFeedbackCopy）。
- */
-const restoreTooltip = (inCurrentWindow: boolean): string =>
-  inCurrentWindow
-    ? '在当前窗口打开整个会话（标签会加到当前窗口；恢复后该会话会从列表中移除）'
-    : '在新窗口恢复整个会话（恢复后该会话会从列表中移除）';
 
 /**
  * 锁定 / 解锁按钮的提示语（2026-10-22 审计 U-11）。
@@ -1174,12 +1163,26 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
               原生 `title=` 换成仓里的 <Tooltip>（300ms、样式可控、
               **触屏也能出现** —— 原生 title 在触屏上永远不出现，
               而卡片头恰恰是新手最需要提示的地方）。
-              aria-label 保持不变（读屏文案不动）。 */}
-          <Tooltip content={restoreTooltip(false)}>
+              aria-label 原本保持不变（读屏文案不动）——
+              WC-1 起它**也带后果**（读屏用户看不到 tooltip，见下）。
+
+              ── 2026-10-23 审计 WC-1（后果说明必须按锁定态分流）──────────
+              tooltip 与 aria-label 都**带上后果**，而且后果的措辞取自
+              共享模块（restoreOutcomeSentence）——
+              那儿按锁定态分两种说法，与成功提示用**同一个短语**。
+              修复前这两处**不看 isLocked**（锁定会话的按钮也写着「会被移除」），
+              而锁定恰恰是本产品**唯一**能让恢复后不被消费的开关
+              （consumeSession 里 `if (group.isLocked) return;`），
+              它的说明书不该劝退用户。
+
+              aria-label 也带后果：读屏用户**看不到** tooltip。 */}
+          <Tooltip
+            content={`在新窗口恢复整个会话（${restoreOutcomeSentence(group.isLocked)}）`}
+          >
             <button
               onClick={handleOpenAllTabs}
               className="btn-icon theme-cta micro-interaction-button"
-              aria-label={`在新窗口恢复整个会话，共 ${group.tabs.length} 个标签页`}
+              aria-label={`在新窗口恢复整个会话，共 ${group.tabs.length} 个标签页（${restoreOutcomeSentence(group.isLocked)}）`}
             >
               <OpenAllIcon />
             </button>
@@ -1189,11 +1192,14 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
               Tooltip 的包装层负责窄屏隐藏（`hidden sm:inline-flex`）——
               包装层 display:none 时按钮与提示条一起消失，不会在窄屏
               留下一个 0 宽的 flex 项（那会让操作区多出一道空隙）。 */}
-          <Tooltip content={restoreTooltip(true)} className="hidden sm:inline-flex">
+          <Tooltip
+            content={`在当前窗口打开整个会话（标签会加到当前窗口；${restoreOutcomeSentence(group.isLocked)}）`}
+            className="hidden sm:inline-flex"
+          >
             <button
               onClick={handleOpenAllTabsInCurrentWindow}
               className="btn-icon theme-btn-hover micro-interaction-button"
-              aria-label={`在当前窗口打开整个会话，共 ${group.tabs.length} 个标签页`}
+              aria-label={`在当前窗口打开整个会话，共 ${group.tabs.length} 个标签页（${restoreOutcomeSentence(group.isLocked)}）`}
             >
               <OpenAllInPlaceIcon />
             </button>
