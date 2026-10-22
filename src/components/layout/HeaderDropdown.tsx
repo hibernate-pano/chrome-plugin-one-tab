@@ -40,6 +40,7 @@ import { deleteAllConfirmMessage, deleteAllMenuWarning, deleteAllShouldPushOverw
 import { importPartialMessage, importSuccessMessage } from './importResultCopy';
 import { countOneTabGroups } from '@/core/oneTabFormatParser';
 import { resolveMenuSyncStatus, resolveSyncFailureCopy } from '@/components/sync/syncPreviewView';
+import { skippedOverwriteNotice } from '@/components/sync/skippedOverwriteNotice';
 
 /** 问题反馈落点：GitHub issues 新建页。用户自己决定粘不粘诊断摘要。 */
 const FEEDBACK_ISSUE_URL = 'https://github.com/hibernate-pano/chrome-plugin-one-tab/issues/new';
@@ -122,7 +123,7 @@ interface HeaderDropdownProps {
 }
 
 /** 菜单行的统一 hover 反馈。菜单行不做位移（flat-interaction 的 -translate-y 会轻微跳动），只做背景色。 */
-const MENU_ROW = "w-full text-left px-4 py-2 text-sm text-gray-700 dark:text-gray-300 flex items-center transition-colors duration-150 theme-menu-hover";
+const MENU_ROW = "w-full text-left px-4 py-2 text-sm theme-text-primary flex items-center transition-colors duration-150 theme-menu-hover";
 
 /**
  * 读一次**真实**的后端状态（2026-10-17 B8，从 slim 适配双模式）。
@@ -561,7 +562,17 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({
                   // 删光后本地无活跃组 → 覆盖被跳过是预期路径；删除意图已由
                   // upload 内的 markCloudGroupsAsDeleted（pendingDeleteIds 队列）
                   // 广播到云端，无需报警。
-                  logInfo('[HeaderDropdown] 覆盖上传被跳过（本地无活跃组），删除意图已按队列广播:', res.payload.skippedOverwrite);
+                  //
+                  // ⚠️ 但**不能**在这里报「已同步到云端」（那是在对没发生的事
+                  // 报成功）。文案与顶栏同步按钮同源（skippedOverwriteNotice），
+                  // 两条跳过理由（空本地 / 换账号后闸门放行 0 个）说的都是
+                  // 「云端数据保持不变」。
+                  const notice = skippedOverwriteNotice(res.payload.skippedOverwrite);
+                  logInfo(
+                    '[HeaderDropdown] 覆盖上传被跳过，云端未被改动:',
+                    res.payload.skippedOverwrite,
+                    notice?.text ?? ''
+                  );
                   return;
                 }
                 logInfo('删除操作已同步到云端');
@@ -795,9 +806,9 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({
             supabase，菜单里连同步存在都看不到。现改为无条件渲染（两种后端的
             未就绪态各自有话说），状态文案由 resolveMenuSyncStatus 统一决定，
             云端未登录时显示「未登录 · 去登录」而不是转述后端的 ready。 */}
-        <div className="px-4 py-3 border-b border-gray-200 dark:border-gray-700">
+        <div className="px-4 py-3 border-b theme-border-default">
           <div className="flex items-center justify-between mb-2">
-            <p className="text-sm font-medium text-gray-900 dark:text-gray-100">
+            <p className="text-sm font-medium theme-text-primary">
               {syncStatusView.headline}
             </p>
             <button
@@ -811,7 +822,7 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({
               {/* 进行中的可视信号：转圈。只 disabled 不转，用户仍看不出「在动」 */}
               <svg
                 xmlns="http://www.w3.org/2000/svg"
-                className={`h-4 w-4 text-primary-600 dark:text-primary-400${isRefreshing ? ' animate-spin' : ''}`}
+                className={`h-4 w-4 theme-accent-text${isRefreshing ? ' animate-spin' : ''}`}
                 fill="none"
                 viewBox="0 0 24 24"
                 stroke="currentColor"
@@ -849,6 +860,32 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({
               // 容器声明了 role="menu"，而这个按钮是菜单里**唯一**没有
               // menuitem 角色的交互项（实测 interactiveCount=10 / menuitemCount=9）。
               // 读屏在「菜单」上下文里遇到一个普通 button，菜单的键盘模型就不完整。
+              //
+              // ── 2026-10-23 审计 H-1：命中区必须够大 ────────────────────────
+              // 真机实测（400px 视口）：这个入口的命中区只有 **36.4×16px**，
+              // 而菜单里其它 7 行都是 **254×36px** —— 命中区只有别人的 1/7，
+              // 16px 高低于 WCAG 2.2 SC 2.5.8 (AA) 的 24px 下限 ⇒ 触屏点不准；
+              // 字号 12px vs 其它行 13px；它是菜单里唯一没有图标、也不在菜单行
+              // 垂直序列里的一行 ⇒ 键盘用户方向键能走到它，却**没有任何视觉反馈**
+              // 说「你到了一个菜单项」。
+              //
+              // 本条治的是**命中区与视觉规格**，**不是位置** —— 把它挪成独立菜单行
+              // 会推翻上面 L-6 记录的有意设计（它紧挨着「TapStack 云端 · 未登录」
+              // 那一行状态，因果关系一目了然），也会让 WebDAV 的「去设置」变成
+              // 唯一的例外。⇒ 保位置、保 role="menuitem"、保 MENU_LOGIN_LABEL，
+              // 只调 className。
+              //
+              // 命中区口径：本仓自己的判定在 `layout/hitTarget.ts`（MIN_HIT_TARGET_PX
+              // = 36）。但那条口径管的是**图标按钮**（顶栏 .btn-icon，min-w/min-h
+              // 2.25rem）—— 内联文字入口靠 padding + 行高撑开盒子，不是 min-*，
+              // 所以这里不套 min-w/min-h（那会把状态卡的抬头行撑成两行高）。
+              // 实际取值：`text-sm`（14px，与菜单行同字号）行高 20px + `py-1.5`
+              // (6px×2) = **32px 高** ≥ AA 的 24px；`px-2` 把文字两侧各撑 8px，
+              // 命中区从 36.4px 宽涨到 ~52px。`-mr-2` 抵掉右侧 padding，
+              // 让按钮右边缘仍与状态卡内容右边缘对齐（视觉不跑偏）。
+              //
+              // 下划线**保留** —— 它是「这是可以点的文字」的线索，
+              // 也是它与状态行里那些纯说明文字的区分。
               <button
                 role="menuitem"
                 type="button"
@@ -856,19 +893,19 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({
                   onClose();
                   onOpenAuth('login');
                 }}
-                className="shrink-0 text-xs font-medium text-primary-600 underline hover:text-primary-700 dark:text-primary-400 dark:hover:text-primary-300"
+                className="shrink-0 -mr-2 rounded px-2 py-1.5 text-sm font-medium theme-accent-text underline hover:theme-accent-wash"
               >
                 {MENU_LOGIN_LABEL}
               </button>
             )}
             {!syncStatusView.needsLogin && syncStatusView.actionable && (
               // 同「去登录」：菜单里的交互项必须带 menuitem 角色，
-              // 否则读屏的菜单键盘模型不完整。
+              // 否则读屏的菜单键盘模型不完整。命中区口径也完全相同（它们是一对）。
               <button
                 role="menuitem"
                 type="button"
                 onClick={handleOpenOptions}
-                className="shrink-0 text-xs font-medium text-primary-600 underline hover:text-primary-700 dark:text-primary-400 dark:hover:text-primary-300"
+                className="shrink-0 -mr-2 rounded px-2 py-1.5 text-sm font-medium theme-accent-text underline hover:theme-accent-wash"
               >
                 去设置
               </button>
@@ -907,9 +944,16 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({
              · WebDAV 用户 → 这行本来就不渲染（条件含 !== 'webdav'），
                且 WebDAV 不需要 TapStack 账号；
              · 已登录 → 这行本来也不渲染。
-           三种情形都由 needsLogin 覆盖，见 tests/menuLoginEntry.test.ts。 */}
+           三种情形都由 needsLogin 覆盖 —— 行为面（自带存储看不到登录入口）
+           由 tests/syncStatusHonesty.test.ts 的四组合用例保证：
+           `webdavAnon.needsLogin === false` / `cloudAnon.needsLogin === true`。
 
-        <div className="border-t border-gray-200 dark:border-gray-700 my-1.5"></div>
+           ⚠️ 2026-10-23：此处原先指向一个**并不存在**的守卫文件（它从未
+           被创建过，全仓只有那一处提到它）。照着注释去找守卫的人会扑空
+           ⇒ 改成指向真正守着这个不变量的文件（上面那一个）。
+           守卫还会盯住「src/ 下不再出现指向不存在测试文件的注释」。 */}
+
+        <div className="border-t theme-border-default my-1.5"></div>
 
         {/* ── 布局切换 / 清理重复标签（2026-10-14 起是「窄屏补偿入口」，
             2026-10-22 审计 U-20 后成为**全宽度**入口）────────────────────
@@ -932,7 +976,7 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({
             }}
             className={MENU_ROW}
           >
-            <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 mr-2 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+            <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 mr-2 theme-text-muted" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
               <rect x="3.75" y="5.25" width="16.5" height="13.5" rx="1.5" strokeLinecap="round" strokeLinejoin="round" />
               {settings.layoutMode === 'single' && (
                 <path d="M12 5.25v13.5" strokeLinecap="round" strokeLinejoin="round" />
@@ -958,7 +1002,7 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({
                 <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
               </svg>
             ) : (
-              <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 mr-2 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+              <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 mr-2 theme-text-muted" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0" />
               </svg>
             )}
@@ -980,7 +1024,7 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({
           className={MENU_ROW}
           type="button"
         >
-          <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 mr-2 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+          <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 mr-2 theme-text-muted" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
             <circle cx="12" cy="12" r="3" />
             <path strokeLinecap="round" strokeLinejoin="round" d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 11-2.83 2.83l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 11-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 11-2.83-2.83l.06-.06a1.65 1.65 0 00.33-1.82 1.65 1.65 0 00-1.51-1H3a2 2 0 110-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 112.83-2.83l.06.06a1.65 1.65 0 001.82.33H9a1.65 1.65 0 001-1.51V3a2 2 0 114 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 112.83 2.83l-.06.06a1.65 1.65 0 00-.33 1.82V9a1.65 1.65 0 001.51 1H21a2 2 0 110 4h-.09a1.65 1.65 0 00-1.51 1z" />
           </svg>
@@ -995,13 +1039,13 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({
             type="button"
           >
             <div className="flex items-center">
-              <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 mr-2 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 mr-2 theme-text-muted" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
               </svg>
               导出数据
             </div>
             {/* 方向指示要与实际展开方向一致：面板现在开在下方，箭头随之转 90°。 */}
-            <svg xmlns="http://www.w3.org/2000/svg" className={`h-4 w-4 text-gray-500 transition-transform duration-150 ${openSubmenu === 'export' ? 'rotate-90' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <svg xmlns="http://www.w3.org/2000/svg" className={`h-4 w-4 theme-text-muted transition-transform duration-150 ${openSubmenu === 'export' ? 'rotate-90' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
             </svg>
           </button>
@@ -1013,7 +1057,7 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({
               className={MENU_ROW}
               type="button"
             >
-              <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 mr-2 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 mr-2 theme-text-muted" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
               </svg>
               JSON 格式
@@ -1023,7 +1067,7 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({
               className={MENU_ROW}
               type="button"
             >
-              <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 mr-2 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 mr-2 theme-text-muted" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
               </svg>
               OneTab 格式
@@ -1035,7 +1079,7 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({
               className={MENU_ROW}
               type="button"
             >
-              <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 mr-2 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 mr-2 theme-text-muted" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3.75 12h16.5m-16.5 0a3 3 0 013-3m13.5 0a3 3 0 013 3m-16.5 0a3 3 0 003 3m13.5 0a3 3 0 003-3m-16.5 0a9 9 0 0118 0m-18 0a9 9 0 018 9m-8-9a9 9 0 00-8 9m0-9v9m18-9v9" />
               </svg>
               诊断信息
@@ -1052,13 +1096,13 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({
             type="button"
           >
             <div className="flex items-center">
-              <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 mr-2 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 mr-2 theme-text-muted" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
               </svg>
               导入数据
             </div>
             {/* 同「导出数据」：箭头方向跟随实际展开方向。 */}
-            <svg xmlns="http://www.w3.org/2000/svg" className={`h-4 w-4 text-gray-500 transition-transform duration-150 ${openSubmenu === 'import' ? 'rotate-90' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <svg xmlns="http://www.w3.org/2000/svg" className={`h-4 w-4 theme-text-muted transition-transform duration-150 ${openSubmenu === 'import' ? 'rotate-90' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
             </svg>
           </button>
@@ -1087,7 +1131,7 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({
               onClick={() => jsonImportInputRef.current?.click()}
               className={MENU_ROW}
             >
-              <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 mr-2 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 mr-2 theme-text-muted" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
               </svg>
               JSON 格式
@@ -1196,7 +1240,7 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({
               onClick={() => oneTabImportInputRef.current?.click()}
               className={MENU_ROW}
             >
-              <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 mr-2 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 mr-2 theme-text-muted" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
               </svg>
               OneTab 格式
@@ -1301,7 +1345,7 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({
           className={MENU_ROW}
           type="button"
         >
-          <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 mr-2 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 mr-2 theme-text-muted" fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8.625 12a.375.375 0 11-.75 0 .375.375 0 01.75 0zm0 0H8.25m4.125 0a.375.375 0 11-.75 0 .375.375 0 01.75 0zm0 0H12m4.125 0a.375.375 0 11-.75 0 .375.375 0 01.75 0zm0 0h-.375M21 12c0 4.556-4.03 8.25-9 8.25a9.764 9.764 0 01-2.555-.337A5.972 5.972 0 015.41 20.97a5.969 5.969 0 01-.474-.065 4.48 4.48 0 00.978-2.025c.09-.457-.133-.901-.467-1.226C3.93 16.178 3 14.189 3 12c0-4.556 4.03-8.25 9-8.25s9 3.694 9 8.25z" />
           </svg>
           问题反馈
@@ -1321,7 +1365,7 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({
             className={MENU_ROW}
             type="button"
           >
-            <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 mr-2 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 mr-2 theme-text-muted" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M12 18.75a6 6 0 006-6v-1.5m-6 7.5a6 6 0 01-6-6v-1.5m6 7.5v3.75m-3.75 0h7.5M12 15.75a3 3 0 01-3-3V4.5a3 3 0 116 0v8.25a3 3 0 01-3 3z" />
             </svg>
             使用引导
@@ -1356,12 +1400,12 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({
 
         {isAuthenticated && (
           <>
-            <div className="border-t border-gray-200 dark:border-gray-700 my-1.5"></div>
+            <div className="border-t theme-border-default my-1.5"></div>
             <button role="menuitem"
               onClick={handleSignOut}
               className={MENU_ROW}
             >
-              <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 mr-2 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 mr-2 theme-text-muted" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
               </svg>
               退出登录

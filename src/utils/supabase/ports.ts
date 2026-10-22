@@ -4,6 +4,8 @@
  */
 import type { DownloadSkippedGroup, TabGroup, UserSettings } from '@/types/tab';
 import type { TabGroupDigest } from './probe';
+import type { DeleteBroadcastResult } from '@/core/accountScope';
+import type { OverwriteSkipReason } from '@/core/overwriteUploadGuard';
 
 
 /** sync 端口：tabGroupSyncService 及设置同步实际调用的全部 8 个方法。 */
@@ -19,11 +21,24 @@ export interface SupabaseSyncPort {
    * 它们属于本机上的另一个账号，**没进上行集合** ⇒ 调用方对账时必须知道
    * 它们「不算已提交」。
    */
+  /**
+   * `overwriteSkipped` = 覆盖上传被**跳过**（2026-10-23 回归审计 R-1 收口）。
+   *
+   * 覆盖 = 「先删空该账号的云端，再把本机的写回去」。当账号闸门放行 0 个
+   * （换账号后本机的会话都属于上一个账号）时，「删空」会发生而「写回」什么
+   * 都不会写 ⇒ **纯数据丢失** ⇒ 必须跳过，并把这件事如实报给上层
+   * （否则界面报「已覆盖云端」，而云端其实被清空了 / 或原封未动）。
+   */
   uploadTabGroups(
     groups: TabGroup[],
     overwriteCloud?: boolean
-  ): Promise<{ result: any; writtenTombstoneIds?: string[]; blockedAccountIds?: string[] }>;
-  markCloudGroupsAsDeleted(deletedIds: string[]): Promise<void>;
+  ): Promise<{
+    result: any;
+    writtenTombstoneIds?: string[];
+    blockedAccountIds?: string[];
+    overwriteSkipped?: OverwriteSkipReason;
+  }>;
+  markCloudGroupsAsDeleted(deletedIds: string[]): Promise<DeleteBroadcastResult>;
   purgeCloudGroups(purgedIds: string[]): Promise<void>;
   /** 无墓碑模型：物理删除云端过期墓碑行（is_deleted=true 且 deleted_at 早于龄期）。 */
   purgeExpiredCloudTombstones(maxAgeDays?: number): Promise<number>;

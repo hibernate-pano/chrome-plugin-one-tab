@@ -148,6 +148,7 @@ describe('DS-43-20③ 认领语义：旧账号的会话不得被新账号认领'
     const scope = {
       ownerUserId: 'user-A',
       foreignOwners: {} as Record<string, string>,
+      pendingNotice: null,
     };
     const d = decideAccountBind(scope, 'user-B', ['g1', 'g2']);
     assert.equal(d.kind, 'account-switch');
@@ -161,7 +162,11 @@ describe('DS-43-20③ 认领语义：旧账号的会话不得被新账号认领'
   });
 
   it('first-bind（账本为空）不得谎报「上一个账号还剩 N 个会话」', () => {
-    const scope = { ownerUserId: null, foreignOwners: {} as Record<string, string> };
+    const scope = {
+      ownerUserId: null,
+      foreignOwners: {} as Record<string, string>,
+      pendingNotice: null,
+    };
     const d = decideAccountBind(scope, 'user-B', ['g1', 'g2']);
     assert.equal(d.kind, 'first-bind');
     assert.equal(d.residualCount, 0, '没有上一个账号 ⇒ 不得报出残留会话数');

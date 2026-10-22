@@ -48,6 +48,8 @@ import { planOverwriteDeletion } from '@/core/overwriteGuard';
 import { readConfiguredBackendId } from '@/sync-backend';
 import type { SyncBackendId } from '@/sync-backend';
 import { isLockedBackendError } from '@/sync-backend/lockedBackendError';
+import { isBackendUnavailableError } from '@/core/backendUnavailable';
+import { backendUnavailableCopy } from '@/components/sync/backendUnavailableCopy';
 import { dropSyncMergedGroups, removedGroupIds } from '@/core/mutationOps';
 import { ensureOpStampMigrated } from '@/background/opStampMigratedGuard';
 import { enqueue } from '@/background/mutationQueue';
@@ -88,6 +90,15 @@ export interface MergeResult {
    */
   locked?: boolean;
   /**
+   * 本轮失败的根因是「**云端项目被限制 / 服务端不可用**」（2026-10-22，402 收口）。
+   *
+   * 语义与 UploadResult.backendUnavailable 相同：故障且**重试无用**，
+   * 后台据此停止推进退避阶梯（而不是每 5 分钟烧一次 egress 配额）。
+   *
+   * 字段缺失（老调用方 / 本轮没有这个问题）⇒ 没有这件事。
+   */
+  backendUnavailable?: boolean;
+  /**
    * 本轮云端有 N 个会话**读不出来**而被整组跳过（2026-10-20 D-6）。
    *
    * 这些会话的**云端行仍在**（一个字节都没被动过），但本机这一轮拿不到它们。
@@ -105,15 +116,37 @@ export interface UploadResult {
   error?: string;
   /**
    * 本次确实没有执行的操作（success 仍为 true：墓碑/purge/设置等其他环节照常完成）。
-   * 上传入口据此区分「已覆盖云端」与「空本地保护跳过覆盖」，避免给用户报假的成功。
-   * 目前只有一种：本地无活跃组时跳过覆盖上传（绝不拿空本地清空云端）。
+   * 上传入口据此区分「已覆盖云端」与「覆盖被跳过」，避免给用户报假的成功。
+   *
+   * 已知取值：
+   *   · `no-active-groups` —— 本地没有任何活跃组时跳过覆盖上传
+   *     （绝不拿空本地清空云端）。
+   *   · `no-account-groups` —— 换账号后本机没有属于当前账号的会话，账号闸门
+   *     放行 0 个（2026-10-23 回归审计 R-1）：覆盖会先删空云端却什么都不会写
+   *     ⇒ 纯数据丢失 ⇒ 跳过，云端原样保留。
    */
-  skippedOverwrite?: 'no-active-groups';
+  skippedOverwrite?: 'no-active-groups' | 'no-account-groups';
   /**
    * 失败根因是「自带存储未配置/未解锁」（锁定占位后端抛出）。
    * 语义与 MergeResult.locked 相同：正常用户状态，后台应让路而不是退避。
    */
   locked?: boolean;
+  /**
+   * 失败根因是「**云端项目被限制 / 服务端不可用**」（2026-10-22，402 收口）。
+   *
+   * ── 为什么与 `locked` 分开 ────────────────────────────────────────────
+   * `locked` = 「用户还没配置/解锁」——**正常用户状态**，后台据此让路
+   * （不进退避、按用户档位重排）。
+   * 本字段 = 「**服务端出问题了**」——故障，且**重试无用**（项目被封禁时
+   * 重试一万次结果一样）。后台据此**停止推进退避阶梯**、把间隔大幅拉长，
+   * 而不是每 5 分钟重试一次（那是在烧 egress 配额，而配额正是封禁的原因）。
+   *
+   * 两者混在一起 ⇒ 要么把故障当正常状态（永不重试 ⇒ 恢复后也不自愈），
+   * 要么把正常状态当故障（用户没配云盘就疯狂重试）。
+   *
+   * 字段缺失（老调用方 / 本轮没有这个问题）⇒ 没有这件事。
+   */
+  backendUnavailable?: boolean;
   /**
    * 本轮**登记了但没上传上去**的会话数（2026-10-20 D-3）。
    *
@@ -492,12 +525,36 @@ export class SyncEngine {
       logError('[SyncEngine] 读不到本机设置，本轮无法判断同步后端，已中止下载');
       return { success: false, groups: [], reason: 'backend_unknown' };
     }
-    const authed = await ensureAuthenticated({
-      isAuthenticated: () =>
-        (store.getState() as { auth: { isAuthenticated: boolean } }).auth.isAuthenticated,
-      restoreAuth: () => this.restoreAuth(),
-      backendId: gateBackendId,
-    });
+    // ── 2026-10-22（402）：账号闸门必须**就地**处理「服务端不可用」──────
+    // 这一段原本是裸的 `await ensureAuthenticated(...)`，而它**位于 try 块之外**
+    // （try 在下面第 657 行）。而生产实测里**账号校验（/auth/v1/user）就是最先
+    // 402 的地方** —— 也就是说，最常走的那条路上，BackendUnavailableError
+    // 会**绕过**本方法末尾那个 catch，直接冒到 SW 的
+    // `.catch(err => sendResponse({ok:false, error: err?.message}))`：
+    // 机器标记在那一层被吞掉 ⇒ 界面拿不到 backendUnavailable ⇒ 用户看到的
+    // 仍是「上传失败，请重试」（而重试无用）。
+    //
+    // 所以这里必须**就地捕获**并把标记带出来，而不是指望下游的 catch。
+    // 非「服务端不可用」的异常仍原样上抛（与修复前行为一致）。
+    let authed: boolean;
+    try {
+      authed = await ensureAuthenticated({
+        isAuthenticated: () =>
+          (store.getState() as { auth: { isAuthenticated: boolean } }).auth.isAuthenticated,
+        restoreAuth: () => this.restoreAuth(),
+        backendId: gateBackendId,
+      });
+    } catch (err) {
+      if (isBackendUnavailableError(err)) {
+        return {
+          success: false,
+          groups: [],
+          reason: backendUnavailableCopy('download'),
+          backendUnavailable: true,
+        };
+      }
+      throw err;
+    }
     if (!authed) {
       return { success: false, groups: [], reason: 'not_authenticated' };
     }
@@ -527,12 +584,20 @@ export class SyncEngine {
         // 所以「读到时还在队列里」就是「此刻仍有效的删除意图」。
         const pendingDeletes = await storage.getPendingDeleteIds();
         if (pendingDeletes.length > 0) {
-          await markCloudGroupsAsDeleted(pendingDeletes);
+          // ⚠️ 只清**真的广播成功**的那几条（2026-10-23 审计 R-1）：账号闸门
+          // 会挡下属于本机另一个账号的删除意图 ⇒ 它们没写进当前账号的云端 ⇒
+          // 清队就会把这条删除意图永久丢掉（那条会话在对端复活，零提示）。
+          const broadcastResult = await markCloudGroupsAsDeleted(pendingDeletes);
           // 点名本轮实际广播成功的这一批，不整队清空（队列在读走之后还会继续长，
           // 整队清会把没广播过的删除意图连坐抹掉 → 云端行仍活跃 → 复活）。
           // markCloudGroupsAsDeleted 失败会抛给下面的 catch，此时不会走到清队。
-          await storage.clearPendingDeleteIds(pendingDeletes);
-          logInfo(`[SyncEngine] 覆盖下载前已广播 ${pendingDeletes.length} 条删除意图`);
+          await storage.clearPendingDeleteIds(broadcastResult.broadcastIds);
+          logInfo(
+            `[SyncEngine] 覆盖下载前已广播 ${broadcastResult.broadcastIds.length} 条删除意图` +
+              (broadcastResult.blockedIds.length > 0
+                ? `（另有 ${broadcastResult.blockedIds.length} 条属于本机上的另一个账号，未写云端、保留在队列里）`
+                : '')
+          );
         }
       } catch (err) {
         // 不阻断覆盖下载：用户明确选了覆盖语义，但要让日志留下"可能复活"的痕迹
@@ -604,7 +669,23 @@ export class SyncEngine {
           // 上传失败（如网络断开）时中止下载：此时拉云端只会用旧数据覆盖
           // 本地未推送的新状态。pending flag 已保留，下轮 alarm / 手动同步重试。
           logWarn(`[SyncEngine] 上传未成功，跳过本次下载: ${upResult.error}`);
-          return { success: false, groups: [], reason: 'pending_upload_failed' };
+          // ── 2026-10-22（402）：这一支**不能**把机器标记丢了 ──────────────
+          // 原先固定返回 `reason: 'pending_upload_failed'`。而后台把这个
+          // reason 归入「**保护性跳过 ⇒ 让路**」（不进退避、不通知）——
+          // 于是在「云端项目被限制」时，后台会**静默地什么都不做**：
+          // 既不报故障、也不推进退避、更不通知用户。而它恰恰是**真故障**，
+          // 且是**不可重试**的那一类（重试无用且烧配额）。
+          //
+          // 保留 reason（后台靠它认「这是上传失败引起的跳过」），
+          // 同时把机器标记带出去 ⇒ 后台据此归类成「云端不可用」。
+          return {
+            success: false,
+            groups: [],
+            reason: 'pending_upload_failed',
+            ...(upResult.backendUnavailable
+              ? { reason: backendUnavailableCopy('download'), backendUnavailable: true }
+              : {}),
+          };
         }
       }
     }
@@ -1106,11 +1187,25 @@ export class SyncEngine {
       await this.rescheduleUploadIfPending();
       // locked 标记必须保留：reason 保持人话（UI 原样展示），
       // 机器分类走 locked（backgroundSync 据此把「未配置/未解锁」算让路）。
+      //
+      // ── 2026-10-22（402）：下载侧同样要带机器判据 ────────────────────────
+      // 与上传侧同形：reason 若是英文原文，UI 的中文判定会把它当机器串吞掉
+      // （纯英文 ⇒ 命中「不含 CJK」）⇒ 用户看到「下载失败，请重试」。
+      // 而「云端项目被限制」时重试无用 ⇒ 措辞必须说清「等恢复」。
+      //
+      // ⚠️ 本地数据**没有**被动过（快照已回滚，且下载的写盘发生在最后），
+      // 所以「本地会话没丢」这句承诺在下载侧同样成立。
+      const backendUnavailable = isBackendUnavailableError(error);
       return {
         success: false,
         groups: snapshot,
-        reason: error instanceof Error ? error.message : 'download_merge_failed',
+        reason: backendUnavailable
+          ? backendUnavailableCopy('download')
+          : error instanceof Error
+            ? error.message
+            : 'download_merge_failed',
         ...(isLockedBackendError(error) ? { locked: true } : {}),
+        ...(backendUnavailable ? { backendUnavailable: true } : {}),
       };
     }
   }
@@ -1148,12 +1243,32 @@ export class SyncEngine {
       logError('[SyncEngine] 读不到本机设置，本轮无法判断同步后端，已中止上传');
       return { success: false, error: '读不到本机设置，已中止同步以免把数据传到错误的后端' };
     }
-    const authed = await ensureAuthenticated({
-      isAuthenticated: () =>
-        (store.getState() as { auth: { isAuthenticated: boolean } }).auth.isAuthenticated,
-      restoreAuth: () => this.restoreAuth(),
-      backendId: gateBackendId,
-    });
+    // ── 2026-10-22（402）：账号闸门必须**就地**处理「服务端不可用」──────
+    // 与 downloadAndMerge 同形：这一段位于 try 块之外（try 在下面），
+    // 而生产实测**账号校验（/auth/v1/user）就是最先 402 的地方** ——
+    // 也就是说，最常走的那条路上「服务端不可用」会**绕过**本方法末尾的
+    // catch，直接冒到 SW 的通用 `.catch`，机器标记在那一层被吞掉，
+    // 界面于是又看到「上传失败，请重试」（而重试无用）。
+    //
+    // 非「服务端不可用」的异常仍原样上抛（与修复前行为一致）。
+    let authed: boolean;
+    try {
+      authed = await ensureAuthenticated({
+        isAuthenticated: () =>
+          (store.getState() as { auth: { isAuthenticated: boolean } }).auth.isAuthenticated,
+        restoreAuth: () => this.restoreAuth(),
+        backendId: gateBackendId,
+      });
+    } catch (err) {
+      if (isBackendUnavailableError(err)) {
+        return {
+          success: false,
+          error: backendUnavailableCopy('upload'),
+          backendUnavailable: true,
+        };
+      }
+      throw err;
+    }
     if (!authed) {
       return { success: false, error: '用户未登录' };
     }
@@ -1318,6 +1433,24 @@ export class SyncEngine {
           .map(g => g.id)
           .filter(id => !blockedByAccountScope.has(id));
         writtenTombstoneIds = new Set(up?.writtenTombstoneIds ?? []);
+        // ── 2026-10-23 回归审计 R-1：后端说「覆盖没发生」，这里必须信它 ──────
+        //
+        // 覆盖 = 「先 DELETE 掉云端该账号的全部行，再把本机的写上去」。当账号
+        // 闸门放行 0 个（换账号后本机会话都属于上一个账号）时：
+        //   旧行为 = DELETE 照做、upsert 写 0 行 ⇒ 当前账号的云端被**整个删空**，
+        //            而界面上报的是「上传成功」—— 数据丢失 + 谎报成功。
+        //   现在   = 后端跳过覆盖（云端原样保留）并把「跳过了」如实报上来。
+        //
+        // 引擎这一层要做的只有一件：**把这件事透出去**，让界面不要说「已覆盖」。
+        // 注意 `up.overwroteRemote` 回答的是「请求是不是覆盖模式」，
+        // **不能**用它判断「覆盖有没有发生」。
+        if (up?.overwriteSkipped) {
+          logWarn(
+            `[SyncEngine] 覆盖上传被跳过（${up.overwriteSkipped}）：云端数据原样保留，` +
+              '本轮没有覆盖云端。'
+          );
+          skippedOverwrite = up.overwriteSkipped;
+        }
         // 2026-10-20 修 P0：云端索引丢过（indexRebuilt）或本机水位线把某些
         // 会话误判成「已上传」（recoveredIds）—— 这是**要告诉用户**的异常，
         // 不是常规增量。如实上报，不让修复悄悄发生。
@@ -1407,13 +1540,28 @@ export class SyncEngine {
       // 所以清队放进同一个 if，且只在 markCloudGroupsAsDeleted 成功返回后才执行
       // （它失败会抛给外层 catch，整批要么都确认、要么整批留下等下轮）。
       if (cloudDeleteIds.length > 0 && opts?.includeDeleted !== false) {
-        await markCloudGroupsAsDeleted(cloudDeleteIds);
-        broadcastDeleteIds = cloudDeleteIds;
+        // ── 2026-10-23 审计 R-1：清队必须按**真的广播成功**的那几条 ──────
+        // 账号闸门（后端内部，utils/supabase/upload.ts 的 markCloudGroupsAsDeleted）
+        // 会挡下一部分：它们属于本机上的**另一个账号** ⇒ 不能写进当前账号的
+        // 云端（越权写），而且读回校验会把「云端没有这行」判成「意图已达成」
+        // ⇒ 清队就把这条删除意图**永久丢掉** ⇒ 那条会话在它真正的主人账号下
+        // **复活**（零提示，v1.22.0 起无回收站不可逆）。
+        //
+        // ⇒ 只清 `broadcastIds`（真的写上云端、读回确认过的），被挡下的那几条
+        // 留在队列里，等用户登录到那个账号时再广播。
+        const broadcastResult = await markCloudGroupsAsDeleted(cloudDeleteIds);
+        broadcastDeleteIds = broadcastResult.broadcastIds;
+        if (broadcastResult.blockedIds.length > 0) {
+          logWarn(
+            `[SyncEngine] ${broadcastResult.blockedIds.length} 条删除意图属于本机上的另一个账号，` +
+              '本轮没有写进当前账号的云端，删除意图保留在队列里（登录到那个账号时再广播）'
+          );
+        }
         // 按本轮实际广播成功的清单消费队列，而不是整队清空：一轮上传期间队列
         // 还会继续长（读走 A 之后用户又删了 B，B 写 KV 失败只落进内存兜底），
         // 整队清空会把没广播过的 B 连坐抹掉 → 云端行仍活跃 → 下次合并整组复活，
         // 且 v1.22.0 起无回收站、用户无法找回。详见 storage.clearPendingDeleteIds。
-        await storage.clearPendingDeleteIds(cloudDeleteIds);
+        await storage.clearPendingDeleteIds(broadcastDeleteIds);
       } else if (cloudDeleteIds.length > 0) {
         logWarn('[SyncEngine] includeDeleted=false：删除意图本轮未广播，队列保留不清理');
       }
@@ -1627,10 +1775,29 @@ export class SyncEngine {
         severity: 'medium',
         fallbackMessage: '数据上传失败',
       });
+      // ── 2026-10-22（402）：「云端整体不可用」要**带着机器判据**出本层 ────
+      // 这一层是上传结果**唯一**的出口（后台轮询与 popup 手动同步都消费它）。
+      // 原先 `error instanceof Error ? error.message : '上传失败'` 有两个问题：
+      //   ① postgrest-js 的错误**不是 Error 实例** ⇒ 直接落成「上传失败」，
+      //      message 与状态码一起丢；
+      //   ② 即便是 Error，message 也是英文原文 ⇒ 中文判定会把它当机器串
+      //      吞掉（纯英文 ⇒ 命中「不含 CJK」）⇒ 用户看到「请重试」。
+      //
+      // 归一在**这里**（最后一层还能拿到 `code` 的地方）⇒ 引擎的返回形状
+      // 多一个 `backendUnavailable: true` 机器标记，UI 与后台据此说人话。
+      //
+      // ⚠️ `error` 字段仍保留人话（不是英文原文）：UI 的 resolveSyncFailureCopy
+      // 会原样透出含中文的句子；机器标记单独走 `backendUnavailable`。
+      const backendUnavailable = isBackendUnavailableError(error);
       return {
         success: false,
-        error: error instanceof Error ? error.message : '上传失败',
+        error: backendUnavailable
+          ? backendUnavailableCopy('upload')
+          : error instanceof Error
+            ? error.message
+            : '上传失败',
         ...(isLockedBackendError(error) ? { locked: true } : {}),
+        ...(backendUnavailable ? { backendUnavailable: true } : {}),
       };
     }
   }
@@ -1660,7 +1827,25 @@ export class SyncEngine {
 
   /** 从 chrome.storage.local 里的持久化 supabase session 恢复 SW store 登录态。 */
   private async restoreAuth(): Promise<boolean> {
-    const user = await store.dispatch(getCurrentUser()).unwrap().catch(() => null);
+    // ── 2026-10-22（402）：「云端整体不可用」不许被吞成「没登录」──────────
+    // 原先 `.catch(() => null)` 把**所有**失败都读成「恢复不出来」⇒ 返回 false
+    // ⇒ 整个同步说「用户未登录」。而生产实测（项目被封禁）：账号校验请求本身
+    // 返回 402 —— 他明明登录着，却被告成「没登录」。
+    //
+    // 这一层必须把「服务端不可用」**原样上抛**（ensureAuthenticated 认它），
+    // 由上层按「等我们恢复」说人话。
+    //
+    // ⚠️ RTK 的 `unwrap()` reject 出来的是**序列化后**的错误
+    // （miniSerializeError 只保留 name/message/stack/code）—— 我们的
+    // `code: 'backend_unavailable'` **恰好在 commonProperties 里**（code），
+    // 所以机器标记能活下来；但 `httpStatus` 会丢。判据因此必须认 `code`。
+    const user = await store
+      .dispatch(getCurrentUser())
+      .unwrap()
+      .catch(err => {
+        if (isBackendUnavailableError(err)) throw err;
+        return null;
+      });
     if (!user) return false;
     store.dispatch(setFromCache({ user, isAuthenticated: true }));
     return true;

@@ -1,7 +1,9 @@
 import type { DownloadSkippedGroup, TabGroup } from '@/types/tab';
 import { ensureBackendPrimed, getActiveSyncBackend } from '@/sync-backend';
 import type { RemoteGroupFingerprint } from '@/sync-backend';
+import type { OverwriteSkipReason } from '@/core/overwriteUploadGuard';
 import type { GroupDigestLike } from '@/core/syncDecision';
+import type { DeleteBroadcastResult } from '@/core/accountScope';
 
 /**
  * 透传层：调用方（SyncEngine / SyncButton）与「当前生效的同步后端」之间的唯一接缝。
@@ -66,6 +68,14 @@ export async function uploadTabGroups(
   indexRebuilt?: boolean;
   /** 被账号闸门挡下、**不算已提交**的会话 id（2026-10-22 DS-1 收口）。 */
   blockedAccountIds?: string[];
+  /**
+   * 覆盖模式被跳过的原因（2026-10-23 回归审计 R-1 收口）。
+   *
+   * 覆盖 = 「先删空云端再写回」。当账号闸门放行 0 个（换账号）时，
+   * 「删空」会发生而「写回」什么都不会写 ⇒ 纯数据丢失 ⇒ 必须跳过并**如实上报**
+   * （否则界面报「已覆盖云端」，而云端其实原封未动/或已被清空）。
+   */
+  overwriteSkipped?: OverwriteSkipReason;
 }> {
   // 每个上下文（SW / popup / options）首次调用时补一次解析：
   // SW 启动时的 prime 管不到 popup，popup 里第一次点同步若直接读缓存，
@@ -88,6 +98,9 @@ export async function uploadTabGroups(
     // 账号闸门拦下的那批（2026-10-22 DS-1 收口）：同样**不能在这一层被吞掉**
     // —— 上层要靠它把「没提交」与「已提交」分开。
     ...(result.blockedAccountIds ? { blockedAccountIds: result.blockedAccountIds } : {}),
+    // 覆盖被跳过的事实（2026-10-23 R-1）：同样不能吞 —— 上层要靠它区分
+    // 「已覆盖云端」与「覆盖没发生」。
+    ...(result.overwriteSkipped ? { overwriteSkipped: result.overwriteSkipped } : {}),
   };
 }
 
@@ -140,7 +153,17 @@ export async function downloadTabGroupsWithSkips(): Promise<{
   return { groups, skipped };
 }
 
-export async function markCloudGroupsAsDeleted(deletedIds: string[]): Promise<void> {
+/**
+ * 广播删除意图（跨设备删除的唯一载体）。
+ *
+ * @returns 哪些真的广播了、哪些被账号闸门挡下了（2026-10-23 审计 R-1）。
+ *   调用方**只**能按 `broadcastIds` 清删除队列：被挡下的那几条（属于本机上的
+ *   另一个账号）必须留在队列里，等用户登录到那个账号时再广播 ——
+ *   清掉它们等于那条会话在对端复活，而用户看见的是「我删掉了」。
+ */
+export async function markCloudGroupsAsDeleted(
+  deletedIds: string[]
+): Promise<DeleteBroadcastResult> {
   await ensureBackendPrimed();
   return getActiveSyncBackend().broadcastDeletes(deletedIds);
 }

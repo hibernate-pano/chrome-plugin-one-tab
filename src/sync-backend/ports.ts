@@ -25,6 +25,8 @@
  * 「什么时候切到 WebDAV」是后续阶段的事（settings.syncBackend）。
  */
 import type { DownloadSkippedGroup, TabGroup, UserSettings } from '@/types/tab';
+import type { DeleteBroadcastResult } from '@/core/accountScope';
+import type { OverwriteSkipReason } from '@/core/overwriteUploadGuard';
 
 /** 后端标识。写进同步水位键名与设置持久化，用于「换后端 ⇒ 水位作废」。 */
 export type SyncBackendId = 'supabase' | 'webdav';
@@ -75,6 +77,15 @@ export interface RemoteGroupFingerprint {
   lastOp?: { d: string; s: number };
 }
 
+/** 覆盖模式被跳过的原因（2026-10-23 回归审计 R-1 收口）。
+ *
+ * 覆盖 = 「先删空云端再写回」。凡是「这一轮什么都不会写」的情形都必须跳过，
+ * 否则就是**纯数据丢失**（删空发生、写回没发生）。
+ *
+ * 定义在 core/overwriteUploadGuard.ts（执行侧、端口层、引擎层共用一份）。
+ */
+export type { OverwriteSkipReason } from '@/core/overwriteUploadGuard';
+
 /** 上传一批会话的结果。
  *
  * `writtenIds` 是**本轮确实写上远端**的 id 集合（不是「打算写的」）：
@@ -86,6 +97,16 @@ export interface UploadGroupsResult {
   writtenIds: string[];
   /** 覆盖模式是否真的执行了（false = 因本地无活跃组而跳过）。 */
   overwroteRemote?: boolean;
+  /**
+   * 覆盖模式被**跳过**的原因（2026-10-23 回归审计 R-1 收口）。
+   *
+   * ⚠️ 与 `overwroteRemote` 的关系：那个字段回答的是「**请求**是不是覆盖模式」，
+   * 这个字段回答的是「**覆盖到底发生没有**」。两者可以同时为真/为假，所以
+   * **不能**用 `overwroteRemote` 判断「云端被覆盖了」——
+   * 换账号后本机一个属于当前账号的会话都没有时，覆盖被跳过（云端原样保留），
+   * 而请求确实是覆盖模式 ⇒ `overwroteRemote` 仍为 true。
+   */
+  overwriteSkipped?: OverwriteSkipReason;
   /**
    * 本轮**补传（找回）**的会话 id —— 2026-10-20 修 P0「索引丢了被当成空库」新增。
    *
@@ -228,6 +249,20 @@ export interface SyncBackendPort {
    * 失败**必须抛错**——吞掉它等于让已删的组在对端复活
    * （见 utils/storage.ts pendingDeleteIds 段的 fail-closed 论证）。
    *
+   * ── 返回值：哪些真的广播了、哪些被挡下了（2026-10-23 审计 R-1）────────
+   * 返回 `DeleteBroadcastResult`（定义在 core/accountScope.ts，两层端口共用）：
+   *   · `broadcastIds` —— 真的写上远端、读回确认过的；
+   *   · `blockedIds` —— 被**账号闸门**挡下、**没有**写远端的。
+   *
+   * 【为什么调用方需要这个】删除队列是**按点名消费**的
+   * （storage.clearPendingDeleteIds 只移除被点名的 id，其余保留）。
+   * 调用方必须只点名 `broadcastIds` ⇒ 被挡下的那几条**留在队列里**，
+   * 等用户登录到那个账号时再广播。
+   * 若调用方按「我发出去的那一批」整批清队 ⇒ 被挡下的删除意图被连坐抹掉
+   * ⇒ 那条会话在对端**复活**，而用户看见的是「我删掉了」（v1.22.0 起无回收站）。
+   *
+   * 自带存储（WebDAV）不按账号分行 ⇒ 永远全放行（`blockedIds` 恒为空）。
+   *
    * ── 「广播成功」的定义（2026-10-20 D-5）：**读回确认** ─────────────────
    * 写完**不算**成功。返回（resolve）必须意味着：
    *   「远端**确实**已经是墓碑，且印记就是本次要写的那一个」——
@@ -253,7 +288,7 @@ export interface SyncBackendPort {
    * 两侧共用同一套**判据**（core/remoteAdjudication 的
    * compareTombstoneReadback），不允许各写一份。
    */
-  broadcastDeletes(ids: string[]): Promise<void>;
+  broadcastDeletes(ids: string[]): Promise<DeleteBroadcastResult>;
 
   /** 物理清理超过龄期的删除广播载体。失败抛错（调用方降级为下轮重试）。 */
   purgeExpiredDeletes(maxAgeDays?: number): Promise<number>;

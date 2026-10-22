@@ -32,6 +32,7 @@ import type {
   UploadGroupsResult,
 } from './ports';
 import type { DownloadSkippedGroup } from '@/types/tab';
+import type { DeleteBroadcastResult } from '@/core/accountScope';
 import { sync as supabaseSync } from '@/utils/supabaseFacade';
 
 /** `T | null | undefined` → `T | undefined`。指纹字段用 undefined 表示「后端没给」。 */
@@ -98,15 +99,25 @@ export class SupabaseBackendAdapter implements SyncBackendPort {
     return {
       writtenIds: [...new Set(up?.writtenTombstoneIds ?? [])],
       overwroteRemote: opts?.overwriteRemote === true,
+      // 覆盖被跳过时**必须透出去**（2026-10-23 回归审计 R-1）：
+      // `overwroteRemote` 只说明「请求是覆盖模式」，不说明「覆盖真的发生了」。
+      // 换账号后本机没有属于当前账号的会话 ⇒ 闸门放行 0 个 ⇒ 覆盖被跳过、
+      // 云端原样保留 —— 上层要据此**不**给用户报「已覆盖云端」。
+      ...(up?.overwriteSkipped ? { overwriteSkipped: up.overwriteSkipped } : {}),
       // 账号闸门拦下的那批（2026-10-22 DS-1 收口）：它们**没进上行集合**，
       // 上层对账时必须知道它们「不算已提交」。
       ...(up?.blockedAccountIds ? { blockedAccountIds: up.blockedAccountIds } : {}),
     };
   }
 
-  async broadcastDeletes(ids: string[]): Promise<void> {
+  async broadcastDeletes(ids: string[]): Promise<DeleteBroadcastResult> {
     // 失败必须抛（markCloudGroupsAsDeleted 内部已保证读回确认后才返回）。
-    await supabaseSync.markCloudGroupsAsDeleted(ids);
+    //
+    // ⚠️ 账号闸门在**里面**（utils/supabase/upload.ts 的 markCloudGroupsAsDeleted
+    // —— 全仓唯一真正写 `.eq('user_id', userId)` 的地方）：属于本机另一个账号的
+    // 删除意图**不写云端**，由返回值里的 blockedIds 报上来 ⇒ 调用方只清
+    // broadcastIds ⇒ 被挡下的那几条留在删除队列里，等登录到那个账号时再广播。
+    return supabaseSync.markCloudGroupsAsDeleted(ids);
   }
 
   async purgeExpiredDeletes(maxAgeDays?: number): Promise<number> {

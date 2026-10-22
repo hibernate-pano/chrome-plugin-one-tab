@@ -8,6 +8,11 @@ import { planOverwriteUpload } from '@/core/overwriteUploadGuard';
 import { sendSyncCommand } from '@/shared/mutationProtocol';
 import { decideOverwriteClick, decideSyncEntry, isOverwriteGateOpen, renderPreviewSummary, resolveSyncFailureCopy, shouldRenderSyncControls, syncIdentityCanRun, syncModeOf } from './syncPreviewView';
 import { skippedRemoteGroupsNotice } from './skippedRemoteGroupsCopy';
+import { skippedOverwriteNotice } from './skippedOverwriteNotice';
+// ── 2026-10-22（402）：「云端项目被限制」的人话与机器判据 ─────────────────
+// 预览读云端失败时，机器标记决定「说人话」还是「说读不到预览」（见两处 catch）。
+import { isBackendUnavailableError } from '@/core/backendUnavailable';
+import { backendUnavailableCopy } from './backendUnavailableCopy';
 
 // 与 syncEngine.SyncOperation 同语义（仅 UI 进度条用），本文件不再 import syncEngine。
 type SyncOperation = 'upload' | 'download' | 'none';
@@ -184,7 +189,17 @@ export const SyncButton: React.FC<SyncButtonProps> = () => {
       });
     } catch (error) {
       logError('加载上传预览失败:', error);
-      setUploadPreviewError('暂时无法读取云端会话预览：合并模式仍可使用，覆盖模式需预览就绪后才会解锁。');
+      // ── 2026-10-22（402）：「服务端不可用」要说人话，而不是「读不到预览」──
+      // 这一句原先是**所有**失败共用的兜底：「暂时无法读取云端会话预览」。
+      // 而生产实测（项目被封禁）时它**特别误导**：用户读到的是「预览读不出来」
+      // ⇒ 他会以为是自己云端的数据有问题、反复点、或者干脆不敢同步。
+      //
+      // 机器标记优先（判据在 core/backendUnavailable.ts，不靠文案匹配）。
+      setUploadPreviewError(
+        isBackendUnavailableError(error)
+          ? backendUnavailableCopy('upload')
+          : '暂时无法读取云端会话预览：合并模式仍可使用，覆盖模式需预览就绪后才会解锁。'
+      );
       setUploadPreview(null);
     } finally {
       setIsUploadPreviewLoading(false);
@@ -215,7 +230,12 @@ export const SyncButton: React.FC<SyncButtonProps> = () => {
       });
     } catch (error) {
       logError('加载下载预览失败:', error);
-      setDownloadPreviewError('暂时无法读取云端会话预览：合并模式仍可使用，覆盖模式需预览就绪后才会解锁。');
+      // ── 2026-10-22（402）：同上 —— 「服务端不可用」要说人话 ───────────────
+      setDownloadPreviewError(
+        isBackendUnavailableError(error)
+          ? backendUnavailableCopy('download')
+          : '暂时无法读取云端会话预览：合并模式仍可使用，覆盖模式需预览就绪后才会解锁。'
+      );
       setDownloadPreview(null);
     } finally {
       setIsDownloadPreviewLoading(false);
@@ -383,9 +403,16 @@ export const SyncButton: React.FC<SyncButtonProps> = () => {
         if (direction === 'upload' && spec.reportSkippedOverwrite) {
           // 空本地保护：本地没有任何活跃组时覆盖上传被跳过（绝不清空云端）。
           // 引擎把这件事如实回传，这里不能再当成「上传成功」上报/提示。
+          //
+          // 2026-10-23（R-1）新增第二种跳过理由 `no-account-groups`：换账号后
+          // 本机的会话都属于上一个账号 ⇒ 闸门放行 0 个 ⇒ 覆盖会删空**当前账号**
+          // 的云端却什么都不会写 ⇒ 纯数据丢失 ⇒ 跳过并如实上报。
+          // 两种理由的文案由同一个纯函数产出（skippedOverwriteNotice），
+          // 两处消费点不会各说各话。
           const payload = res.payload as { skippedOverwrite?: string } | undefined;
-          if (payload?.skippedOverwrite === 'no-active-groups') {
-            showToast('本地没有活跃会话，覆盖上传已跳过（云端数据保持不变）', 'info');
+          const notice = skippedOverwriteNotice(payload?.skippedOverwrite);
+          if (notice) {
+            showToast(notice.text, notice.level);
             return;
           }
         }
@@ -432,8 +459,18 @@ export const SyncButton: React.FC<SyncButtonProps> = () => {
         // 2026-10-07：reason 是内部枚举，不该原样弹给用户 —— `precheck_unknown`
         // 这种直接显示等于没说。翻译表与兜底规则集中在 syncPreviewView
         //（纯函数，可直接单测）；未登录在**两个方向**都有可执行文案。
+        //
+        // ── 2026-10-22（402）：把「服务端不可用」的机器标记交给翻译层 ──────
+        // 标记不传 ⇒ 翻译层只能落到兜底「上传失败，请重试」⇒ 而重试无用
+        // （项目被封禁）。方向由本组件自己知道（direction 变量），
+        // 不去猜 payload 里的内容。
         showToast(
-          resolveSyncFailureCopy({ reason, fallbackMessage: spec.failureMessage }),
+          resolveSyncFailureCopy({
+            reason,
+            fallbackMessage: spec.failureMessage,
+            backendUnavailable: res.backendUnavailable === true,
+            direction,
+          }),
           'error'
         );
       }
@@ -602,7 +639,7 @@ export const SyncButton: React.FC<SyncButtonProps> = () => {
               <button
                 type="button"
                 onClick={closeModals}
-                className="absolute right-4 top-4 inline-flex h-9 w-9 items-center justify-center rounded-full border border-slate-200/80 bg-white/80 text-slate-500 transition-colors hover:border-slate-300 hover:text-slate-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-400 dark:border-slate-700/80 dark:bg-slate-900/80 dark:text-slate-400 dark:hover:border-slate-600 dark:hover:text-slate-200"
+                className="absolute right-4 top-4 inline-flex h-9 w-9 items-center justify-center rounded-full border border-slate-200/80 bg-white/80 text-slate-500 transition-colors hover:border-slate-300 hover:text-slate-700 dark:border-slate-700/80 dark:bg-slate-900/80 dark:text-slate-400 dark:hover:border-slate-600 dark:hover:text-slate-200"
                 aria-label="关闭同步弹窗"
               >
                 <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
@@ -639,7 +676,7 @@ export const SyncButton: React.FC<SyncButtonProps> = () => {
                     onClick={() => void handleSyncActionClick('upload.overwrite')}
                     disabled={uploadOverwriteState.type === 'blocked'}
                     aria-disabled={uploadOverwriteState.type === 'blocked'}
-                    className="flex w-full flex-col justify-start overflow-hidden theme-radius-card border border-rose-200/70 bg-white text-left shadow-sm transition-transform duration-200 hover:-translate-y-0.5 hover:shadow-lg focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-rose-500 disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:translate-y-0 disabled:hover:shadow-sm dark:border-rose-500/20 dark:bg-slate-900/80"
+                    className="flex w-full flex-col justify-start overflow-hidden theme-radius-card border border-rose-200/70 bg-white text-left shadow-sm transition-transform duration-200 hover:-translate-y-0.5 hover:shadow-lg disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:translate-y-0 disabled:hover:shadow-sm dark:border-rose-500/20 dark:bg-slate-900/80"
                   >
                     <div className="flex items-center justify-center bg-rose-600 px-5 py-3.5 text-white">
                       <svg xmlns="http://www.w3.org/2000/svg" className="h-8 w-8" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -670,7 +707,7 @@ export const SyncButton: React.FC<SyncButtonProps> = () => {
                   <button
                     type="button"
                     onClick={() => void handleSyncActionClick('upload.merge')}
-                    className="flex w-full cursor-pointer flex-col justify-start overflow-hidden theme-radius-card border border-emerald-200/70 bg-white text-left shadow-sm transition-transform duration-200 hover:-translate-y-0.5 hover:shadow-lg focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-500 dark:border-emerald-500/20 dark:bg-slate-900/80"
+                    className="flex w-full cursor-pointer flex-col justify-start overflow-hidden theme-radius-card border border-emerald-200/70 bg-white text-left shadow-sm transition-transform duration-200 hover:-translate-y-0.5 hover:shadow-lg dark:border-emerald-500/20 dark:bg-slate-900/80"
                   >
                     <div className="flex items-center justify-center bg-emerald-600 px-5 py-3.5 text-white">
                       <svg xmlns="http://www.w3.org/2000/svg" className="h-8 w-8" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -692,7 +729,7 @@ export const SyncButton: React.FC<SyncButtonProps> = () => {
                   <button
                     type="button"
                     onClick={closeModals}
-                    className="inline-flex items-center justify-center rounded-xl border border-slate-200 bg-slate-100 px-4 py-2.5 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-200 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-400 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700"
+                    className="inline-flex items-center justify-center rounded-xl border border-slate-200 bg-slate-100 px-4 py-2.5 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-200 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700"
                   >
                     取消
                   </button>
@@ -715,7 +752,7 @@ export const SyncButton: React.FC<SyncButtonProps> = () => {
               <button
                 type="button"
                 onClick={closeModals}
-                className="absolute right-4 top-4 inline-flex h-9 w-9 items-center justify-center rounded-full border border-slate-200/80 bg-white/80 text-slate-500 transition-colors hover:border-slate-300 hover:text-slate-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-400 dark:border-slate-700/80 dark:bg-slate-900/80 dark:text-slate-400 dark:hover:border-slate-600 dark:hover:text-slate-200"
+                className="absolute right-4 top-4 inline-flex h-9 w-9 items-center justify-center rounded-full border border-slate-200/80 bg-white/80 text-slate-500 transition-colors hover:border-slate-300 hover:text-slate-700 dark:border-slate-700/80 dark:bg-slate-900/80 dark:text-slate-400 dark:hover:border-slate-600 dark:hover:text-slate-200"
                 aria-label="关闭同步弹窗"
               >
                 <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
@@ -766,7 +803,7 @@ export const SyncButton: React.FC<SyncButtonProps> = () => {
                     onClick={() => void handleSyncActionClick('download.overwrite')}
                     disabled={downloadOverwriteState.type === 'blocked'}
                     aria-disabled={downloadOverwriteState.type === 'blocked'}
-                    className="flex w-full flex-col justify-start overflow-hidden theme-radius-card border border-rose-200/70 bg-white text-left shadow-sm transition-transform duration-200 hover:-translate-y-0.5 hover:shadow-lg focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-rose-500 disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:translate-y-0 disabled:hover:shadow-sm dark:border-rose-500/20 dark:bg-slate-900/80"
+                    className="flex w-full flex-col justify-start overflow-hidden theme-radius-card border border-rose-200/70 bg-white text-left shadow-sm transition-transform duration-200 hover:-translate-y-0.5 hover:shadow-lg disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:translate-y-0 disabled:hover:shadow-sm dark:border-rose-500/20 dark:bg-slate-900/80"
                   >
                     <div className="flex items-center justify-center bg-rose-600 px-5 py-3.5 text-white">
                       <svg xmlns="http://www.w3.org/2000/svg" className="h-8 w-8" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -793,7 +830,7 @@ export const SyncButton: React.FC<SyncButtonProps> = () => {
                   <button
                     type="button"
                     onClick={() => void handleSyncActionClick('download.merge')}
-                    className="flex w-full cursor-pointer flex-col justify-start overflow-hidden theme-radius-card border border-sky-200/70 bg-white text-left shadow-sm transition-transform duration-200 hover:-translate-y-0.5 hover:shadow-lg focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sky-500 dark:border-sky-500/20 dark:bg-slate-900/80"
+                    className="flex w-full cursor-pointer flex-col justify-start overflow-hidden theme-radius-card border border-sky-200/70 bg-white text-left shadow-sm transition-transform duration-200 hover:-translate-y-0.5 hover:shadow-lg dark:border-sky-500/20 dark:bg-slate-900/80"
                   >
                     <div className="flex items-center justify-center bg-sky-600 px-5 py-3.5 text-white">
                       <svg xmlns="http://www.w3.org/2000/svg" className="h-8 w-8" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -815,7 +852,7 @@ export const SyncButton: React.FC<SyncButtonProps> = () => {
                   <button
                     type="button"
                     onClick={closeModals}
-                    className="inline-flex items-center justify-center rounded-xl border border-slate-200 bg-slate-100 px-4 py-2.5 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-200 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-400 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700"
+                    className="inline-flex items-center justify-center rounded-xl border border-slate-200 bg-slate-100 px-4 py-2.5 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-200 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700"
                   >
                     取消
                   </button>

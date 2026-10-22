@@ -158,6 +158,8 @@ export type {
   SyncBackendId,
   RemoteGroupFingerprint,
   UploadGroupsResult,
+  // 覆盖被跳过的原因（2026-10-23 R-1）。
+  OverwriteSkipReason,
   // D-6：「读不出来而被整组跳过」的会话清单（端口的可选能力）。
   DownloadSkippedGroup,
   DownloadSkipReason,

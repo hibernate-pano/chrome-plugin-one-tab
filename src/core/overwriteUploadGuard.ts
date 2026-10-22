@@ -45,6 +45,23 @@
  * docs/RELEASE-NOTES.md 里「预览必须与实际同源」那条纪律）。
  */
 
+/**
+ * 覆盖上传被**跳过**的原因（2026-10-23 回归审计 R-1 收口）。
+ *
+ * 覆盖 = 「先删空云端再写回」。凡是「这一轮什么都不会写」的情形都必须跳过，
+ * 否则就是**纯数据丢失**（删空发生、写回没发生），而且界面还会报「上传成功」。
+ *
+ * 已知取值：
+ *   · `no-active-groups` —— 本地没有任何活跃组（空本地保护）。
+ *   · `no-account-groups` —— 账号闸门放行 0 个：换账号后本机的会话都属于上一个
+ *     账号 ⇒ 覆盖会删空**当前账号**的云端，却一个字节都不会写回去。
+ *
+ * 为什么定义在 core（而不是 ports 或某个适配器里）：三层都要引用它 ——
+ * 执行侧（utils/supabase/upload.ts）、端口层（sync-backend/ports.ts）、
+ * 引擎层（services/syncEngine.ts）。core 在它们下面，不构成环。
+ */
+export type OverwriteSkipReason = 'no-active-groups' | 'no-account-groups';
+
 /** 覆盖上传的删除计划。 */
 export interface OverwriteUploadPlan {
   /**

@@ -21,6 +21,11 @@ import {
 import { upsertWithNotNullFallback } from './notNullFallback';
 import { compareStamps } from '@/core/opStamp';
 import { planOverwriteUpload, type OverwriteUploadPlan } from '@/core/overwriteUploadGuard';
+import {
+  BackendUnavailableError,
+  isBackendUnavailable,
+  readHttpStatus,
+} from '@/core/backendUnavailable';
 import { CRYPTO_CONCURRENCY, mapWithConcurrency } from '../concurrency';
 // 覆盖上传要判断「云端哪些行这台设备读不出来」⇒ 需要**下载侧**的还原判据。
 // 直接复用 download.ts（唯一一份还原逻辑）而不是在这里重写一遍：
@@ -43,7 +48,11 @@ import { kvGet, kvSet } from '@/storage/storageAdapter';
 import { storage, SETTINGS_COLUMN_DEFAULTS } from '@/utils/storage';
 // DS-1 账号闸门：判据在 core/accountScope（纯函数），归属记录的读写在
 // utils/authCache（chrome.storage.local 的独立键）。
-import { filterGroupsByAccount, type AccountScopeRecord } from '@/core/accountScope';
+import {
+  filterGroupsByAccount,
+  partitionDeleteIdsByAccount,
+  type AccountScopeRecord,
+} from '@/core/accountScope';
 import { accountScopeStore, readLastAuthCacheUserId } from '@/utils/authCache';
 
 /**
@@ -502,14 +511,20 @@ export function nextSyncWatermark(
  * 【记录不存在 ⇒ 这台机器还没建立归属】兜底顺序：
  *   ① 登录缓存里的**上一个账号**（这台机器上最后登录过谁）—— 有它就按它
  *      认账：本机会话归那个账号 ⇒ 换到别的账号时它们会被挡住。
- *   ② 连它都没有 ⇒ 这台机器**从来没有过被记下的账号**（从没登录过，或
- *      登录缓存写失败）⇒ 本机会话无主 ⇒ 只能归当前账号。
+ *   ② 连它都没有 ⇒ 这台机器**从来没有过被记下的账号**（从没登录过）⇒
+ *      本机会话无主 ⇒ 只能归当前账号。
  *      这一步是「宁可少认一件事」：把用户锁死在「永远传不上去」的状态，
  *      比「本机从来没有过别的账号」这件事本身更糟。
  *
- * 【读失败（抛错）不在兜底之列】形状损坏的记录读出来是「读不出来」，
- * 不是「没有归属」—— 与 storage.getGroups 的 fail-closed 纪律一致：
- * 读不出来就中止上传，绝不把它当成「没有归属」而放行全部会话。
+ * 【读失败（抛错）不在兜底之列】三种「读不出来」都必须与「没有归属」分开：
+ *   · 归属记录**形状损坏** ⇒ normalizeAccountScope 抛 ⇒ 冒到上传之外 ⇒ 中止；
+ *   · 归属记录**读失败**（I/O 故障）⇒ accountScopeStore.read 抛 ⇒ 同样中止；
+ *   · 登录缓存**读失败** ⇒ readLastAuthCacheUserId 抛 ⇒ 同样中止
+ *     （2026-10-23 审计 R-5：它原先把读失败吞成 null，于是「读不出来」与
+ *     「从没登录过」同形 ⇒ 一条瞬时存储故障就足以让**全部**会话被认给
+ *     当前账号 ⇒ DS-1 原样复发，且触发概率远高于「从没登录过」）。
+ * 与 storage.getGroups 的 fail-closed 纪律一致：读不出来就中止上传，
+ * 绝不把它当成「没有归属」而放行全部会话。
  */
 async function loadAccountScopeForUpload(currentUserId: string): Promise<AccountScopeRecord> {
   const record = await accountScopeStore.read();
@@ -707,6 +722,47 @@ export const uploadSync = {
           `${scoped.blockedIds.length > 5 ? '…' : ''}）：` +
           '它们属于本机上的另一个账号，不会被上传到当前账号'
       );
+    }
+
+    // ── R-1 收口（2026-10-23 回归审计 P0）：覆盖模式 + 闸门放行 0 个 ⇒ 绝不删云端 ──
+    //
+    // 覆盖 = 「先 DELETE 掉当前账号云端的**全部**行，再把本机的写上去」。
+    // 而**上行集合**是过完账号闸门之后的那一批（`filterGroupsByAccount`）——
+    // 换账号之后，本机的会话全都属于上一个账号 ⇒ **放行 0 个**。
+    // ⇒ 旧行为：DELETE 照做、upsert 写 0 行 ⇒ **当前账号的云端被整个删空**，
+    //    而界面上报的是「上传成功」—— 数据丢失 + 谎报成功（这正是 R-1 的实测）。
+    //
+    // 为什么判据落在**这一层**（真正写云端的那一层），而不是调用方：
+    // 上传有 4 条路径（手动 SYNC / 快路径 / 后台轮询 / alarm 兜底），全都汇到
+    // 本函数；放在调用方 ⇒ 漏一条路径就漏一次。
+    // —— 与上面「账号闸门为什么落在这里」是同一条理由。
+    //
+    // 口径与 syncEngine 那条既有保护一致（「本地没有活跃组 ⇒ 绝不覆盖」）：
+    // 这里多判一格 —— **属于当前账号的会话一个都没有**（含墓碑）。
+    //
+    // ⚠️ 这是**跳过**，不是失败：云端数据原样保留，用户可以在正确的账号下再传。
+    // 上层据此把「覆盖没发生」如实告诉用户（不谎报成功）——
+    // `overwriteSkipped` 就是要透出去的那句实话（见 syncEngine 的
+    // `skippedOverwrite` 与 SyncButton 的提示文案）。
+    if (overwriteCloud && uploadGroups.length === 0) {
+      // 理由要**分清**两种「什么都不会写」：
+      //   · 本机一个会话都没有 ⇒ 空本地保护（`no-active-groups`）；
+      //   · 本机有会话、但**没有一个属于当前账号** ⇒ 账号闸门放行 0 个
+      //     （`no-account-groups`）。
+      // 混成一句话 ⇒ 用户不知道自己该「建个会话再传」还是「换回原来的账号」。
+      const reason: 'no-active-groups' | 'no-account-groups' =
+        groups.length === 0 ? 'no-active-groups' : 'no-account-groups';
+      logWarn(
+        `[upload] 覆盖上传被跳过（${reason}）：本机没有属于当前账号的会话` +
+          '（账号闸门放行 0 个）—— 覆盖会先删空当前账号的云端再写回，' +
+          '而这一轮什么都不会写 ⇒ 那是纯数据丢失。云端数据原样保留。'
+      );
+      return {
+        result: null,
+        writtenTombstoneIds: [],
+        blockedAccountIds: [...scoped.blockedIds],
+        overwriteSkipped: reason,
+      };
     }
 
     logInfo('准备上传标签组，用户ID:', userId, '设备ID:', deviceId);
@@ -1139,6 +1195,28 @@ export const uploadSync = {
           hint: error.hint
         });
 
+        // ── 2026-10-22（402）：「服务端项目被限制」要**带着机器判据**上浮 ────
+        // 原先这里 `throw error` 原样抛出。而 postgrest-js 的错误对象
+        // **不是 Error 实例**（`error instanceof Error` 为 false）⇒
+        // syncEngine 的 catch `error instanceof Error ? error.message : '上传失败'`
+        // 于是落成「上传失败」，message 与状态码**一起丢掉** ⇒
+        // 用户看到「上传失败，请重试」。
+        //
+        // 归一在**这里**做（产生点）：这一层还拿得到 `http_status`（由
+        // client.ts 的 fetch 边界注入）与报文原文；再往上就只剩 message 了。
+        //
+        // ⚠️ 放在 RLS 特判**之前**：RLS 分支要求 message 含特定关键字，
+        // 而 402 的 message 是「Service for this project is restricted…」，
+        // 本来就不会命中 —— 但顺序写清楚是为了让「先判『云端整体不可用』、
+        // 再判『这一条请求被 RLS 挡了』」这个优先级是显式的（云端整体挂了时，
+        // 任何请求都会被拒，而那不是用户的权限问题）。
+        if (isBackendUnavailable(error)) {
+          throw new BackendUnavailableError(
+            error.message || '云端项目暂时不可用',
+            readHttpStatus(error) ?? undefined
+          );
+        }
+
         // 特别处理 RLS 策略错误
         if (error.message && error.message.includes('row-level security policy')) {
           logError('RLS 策略违规错误，尝试诊断和重试...');
@@ -1266,8 +1344,28 @@ export const uploadSync = {
   // 把本地软删的标签组 ID 同步到云端。
   // 双轨：云端有 is_deleted 列 → 置墓碑（保留行，跨端一致性关键）；
   //       无列（未执行 migration）→ 回退硬删，并提示执行 SQL。
+  //
+  // ── 账号闸门（2026-10-23 审计 R-1 / DS-43-1）──────────────────────────
+  //
+  // 【为什么删除广播也要过账号闸门】上行集合有闸门（uploadTabGroups 里
+  // filterGroupsByAccount），**删除广播这一路原先没有** ⇒ 别的账号的会话 id
+  // 会被写进**当前账号**的云端行（越权写入），而且读回校验把「云端没有这行」
+  // 判成「意图已达成」（missingAsAchieved）⇒ 删除意图被清队 ⇒ 那条会话在
+  // 它真正的主人账号下**复活**（零提示）。
+  //
+  // 【为什么落在这里而不是调用方】本函数是全仓唯一真正写 `.eq('user_id', userId)`
+  // 的地方，而且它拿得到**真正写云端时用的那个 userId**（会话里的那个）。
+  // 调用方（syncEngine）拿到的是 store 里的 user，可能已经过期。
+  //
+  // 【fail-closed】归属**不可知**时（记录读不出来 / 没有记录 / 没有主人）
+  // 一律挡住，不写云端、不抛错（抛错会让整轮上传失败、连带本账号的正常
+  // 会话也传不上去）。被挡下的那几条由返回值告诉调用方 ⇒ 留在删除队列里，
+  // 等用户登录到那个账号时再广播。判据见 core/accountScope 的
+  // partitionDeleteIdsByAccount。
   async markCloudGroupsAsDeleted(deletedIds: string[]) {
-    if (deletedIds.length === 0) return;
+    if (deletedIds.length === 0) {
+      return { broadcastIds: [], blockedIds: [] };
+    }
 
     checkSupabaseConfig();
     const { data: sessionData } = await supabase.auth.getSession();
@@ -1277,13 +1375,49 @@ export const uploadSync = {
     }
 
     const userId = sessionData.session.user.id;
-    logInfo(`[markCloudGroupsAsDeleted] 正在标记云端 ${deletedIds.length} 个组为删除`);
 
     // P0-2：未登录不再静默跳过——跳过等于“删了本地、没删云端还报成功”，
     // 下次下载直接复活。抛错让 upload 整体失败、保留 pending 下轮重试。
     if (!userId) {
       throw new Error('[markCloudGroupsAsDeleted] 会话无效，软删意图保留下轮重试');
     }
+
+    // ── 账号闸门：不属于当前账号的删除意图，不许写进当前账号的云端 ──────
+    //
+    // 【为什么直接读归属记录，而不是复用 loadAccountScopeForUpload】那个函数
+    // 在**记录缺失**时会**播种**（兜底认账给 lastAuthCacheUserId ?? currentUserId），
+    // 那是上行侧的口径（「多认一件事」的代价只是浪费流量）。删除广播侧不一样：
+    // 播种等于把「归属不可知」翻译成「归属当前账号」⇒ 一台归属记录丢失的机器
+    // 会把**每一条**删除意图都当成当前账号的 ⇒ 闸门形同虚设 ⇒ DS-43-1 原样复发。
+    // ⇒ 这一路**不播种**：读不出来（抛错）/ 没有记录（null）/ 没有主人
+    //   ⇒ 一律交给判据层挡住（fail-closed）。
+    //
+    // 【为什么 catch 而不是让它冒出去】冒出去会让整轮上传失败、连带**本账号**
+    // 的正常会话也传不上去（一个存储故障不该连坐整个账号）。所以这里把「读不出来」
+    // 翻译成「归属不可知」⇒ 判据层一律挡住这一批：
+    // 宁可不删（用户看得见「还有 N 条没同步」），不可删错账号（用户看不见）。
+    let accountScope: AccountScopeRecord | null = null;
+    try {
+      accountScope = await accountScopeStore.read();
+    } catch (error) {
+      logError('[markCloudGroupsAsDeleted] 读账号归属记录失败，本批删除意图一律挡住:', error);
+    }
+    const partitioned = partitionDeleteIdsByAccount(deletedIds, accountScope, userId);
+    if (partitioned.blockedIds.length > 0) {
+      logWarn(
+        `[markCloudGroupsAsDeleted] 账号闸门挡下 ${partitioned.blockedIds.length} 条删除意图` +
+          `（${partitioned.blockedIds.slice(0, 5).join(',')}` +
+          `${partitioned.blockedIds.length > 5 ? '…' : ''}）：` +
+          '它们属于本机上的另一个账号，不会被写进当前账号的云端；' +
+          '这些删除意图保留在队列里，等登录到那个账号时再广播'
+      );
+    }
+    const idsToBroadcast = partitioned.broadcastIds;
+    if (idsToBroadcast.length === 0) {
+      // 本批全部被挡住 ⇒ 什么都不写云端，但**不抛错**（本账号的其它上传不受影响）。
+      return { broadcastIds: [], blockedIds: partitioned.blockedIds };
+    }
+    logInfo(`[markCloudGroupsAsDeleted] 正在标记云端 ${idsToBroadcast.length} 个组为删除`);
 
     const [tombstoneColumn, stampColumn, deletedAtColumn] = await Promise.all([
       supportsCloudTombstone(),
@@ -1308,7 +1442,7 @@ export const uploadSync = {
       // 云端有 is_deleted 列但无印记列（客户端先于 SQL 迁移发布）：
       // 软删是局部 UPDATE，与印记列无关；绝不能降级成硬删（见 decideCloudTombstoneWrite）。
       // 分批 UPDATE：deletedIds 可能上千，整串 .in() 会让 URL 超过网关上限（400 纯文本，无 code）。
-      for (const batch of chunkIds(deletedIds)) {
+      for (const batch of chunkIds(idsToBroadcast)) {
         const { error } = await supabase
           .from('tab_groups')
           .update({ is_deleted: true, updated_at: new Date().toISOString(), ...deletedAtPatch })
@@ -1328,9 +1462,9 @@ export const uploadSync = {
       // 其他组的删除广播被连坐卡死（与文件头注释的「设备钉死」同一形态，只是搬到了
       // plain 分支）。口径对齐 stamp 分支（只校验 touchedIds）：存在的行必须已标删
       // （吞写照样现形），缺失的行视为意图已达成。
-      await verifyTombstoneReadback(deletedIds, userId, { missingAsAchieved: true });
-      logInfo(`[markCloudGroupsAsDeleted] 已软删 ${deletedIds.length} 个云端组（云端无印记列，不带 stamp）`);
-      return;
+      await verifyTombstoneReadback(idsToBroadcast, userId, { missingAsAchieved: true });
+      logInfo(`[markCloudGroupsAsDeleted] 已软删 ${idsToBroadcast.length} 个云端组（云端无印记列，不带 stamp）`);
+      return { broadcastIds: idsToBroadcast, blockedIds: partitioned.blockedIds };
     }
 
     if (mode === 'stamp') {
@@ -1350,7 +1484,7 @@ export const uploadSync = {
       // 整串 .in() 的 URL 超过网关上限时返回的是 400 纯文本（无 code/message），
       // 只有 "Object" 可查——就是这个「读取现有 stamp 失败」反复刷屏的根因。
       const rows: Array<{ id: string; last_op_seq: number | null }> = [];
-      for (const batch of chunkIds(deletedIds)) {
+      for (const batch of chunkIds(idsToBroadcast)) {
         const { data, error: readError } = await supabase
           .from('tab_groups')
           .select('id, last_op_seq')
@@ -1393,12 +1527,20 @@ export const uploadSync = {
         successCount++;
       }
 
-      logInfo(`[markCloudGroupsAsDeleted] 已标记 ${successCount}/${deletedIds.length} 个云端组为删除`);
+      logInfo(`[markCloudGroupsAsDeleted] 已标记 ${successCount}/${idsToBroadcast.length} 个云端组为删除`);
       // P0-1：墓碑读回校验——逐行 UPDATE 任一行被守卫吞写都必须现形。
       // 注意只校验本次实际处理到的行（rows）：云端根本不存在的 id 说明本地墓碑
       // 从未上过云，软删无目标可写——直接视为意图已达成（无行可复活），不报错。
       const touchedIds = rows.map(r => r.id);
       await verifyTombstoneReadback(touchedIds, userId);
+      // ⚠️ 「已达成」的 id 是 touchedIds（真正写上云端、读回确认过的那些）。
+      // idsToBroadcast 里**没有**对应云端行的那些（本地新建、从未上过云就被删）
+      // 同样算「意图已达成」（无行可复活）—— 见 verifyTombstoneReadback 的
+      // missingAsAchieved 口径 ⇒ 它们也要进 broadcastIds（可以清队）。
+      return {
+        broadcastIds: idsToBroadcast,
+        blockedIds: partitioned.blockedIds,
+      };
     } else {
       // mode === 'hard-delete'：云端连 is_deleted 列都没有，只能物理删除。
       // P1-6：这是降级路径，必须明确告警（缺 migration），且删后读回确认无残留——
@@ -1410,7 +1552,7 @@ export const uploadSync = {
       );
       // 降级：硬删云端行（旧的统一做法）
       // 分批：同软删，deletedIds 可能上千，整串 .in() 会触发网关 400。
-      for (const batch of chunkIds(deletedIds)) {
+      for (const batch of chunkIds(idsToBroadcast)) {
         const { error } = await supabase
           .from('tab_groups')
           .delete()
@@ -1424,7 +1566,7 @@ export const uploadSync = {
       }
 
       const remaining: Array<{ id: string }> = [];
-      for (const batch of chunkIds(deletedIds)) {
+      for (const batch of chunkIds(idsToBroadcast)) {
         const { data, error: reError } = await supabase
           .from('tab_groups')
           .select('id')
@@ -1434,12 +1576,13 @@ export const uploadSync = {
         remaining.push(...((data ?? []) as Array<{ id: string }>));
       }
       const cmp = compareHardDeleteReadback(
-        deletedIds,
+        idsToBroadcast,
         remaining
       );
       if (!cmp.ok) throw new Error(`[markCloudGroupsAsDeleted] ${cmp.reason}`);
 
-      logInfo(`[markCloudGroupsAsDeleted] 已删除 ${deletedIds.length} 个云端组`);
+      logInfo(`[markCloudGroupsAsDeleted] 已删除 ${idsToBroadcast.length} 个云端组`);
+      return { broadcastIds: idsToBroadcast, blockedIds: partitioned.blockedIds };
     }
   },
   // P1-6：把本地已 purge（物理移除）的组 id 同步删掉云端对应行。
