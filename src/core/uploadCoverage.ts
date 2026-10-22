@@ -92,6 +92,21 @@ export interface UploadCoverageInput {
    * 它们**不该**被上行（本地已经没有这个会话了），所以不能算「未同步」。
    */
   deletedIds?: readonly string[];
+  /**
+   * 本轮**不属于当前账号**的会话 id（被账号闸门挡下，2026-10-22 DS-1 收口）。
+   *
+   * 它们属于本机上的**另一个账号**（换了账号之后留下的），**不该**被上传到
+   * 当前账号 —— 这不是「没传上去」，是「不该传给这个账号」。
+   *
+   * 【为什么不能算「未同步」】那会让「本轮有 N 个会话没同步」在当前账号下
+   * **永远**成立 ⇒ pending_upload 永远清不掉 ⇒ 每轮都重试一个注定失败的
+   * 上传，而用户真正该看到的提示（「本机还有 N 个会话属于上一个账号」）
+   * 已经由换账号提示单独给过了。
+   *
+   * 【与 deletedIds 同构】两者都是「本轮不参与上行、且不计入未同步」的
+   * 会话，区别只在原因（一个已删、一个属于别的账号）。
+   */
+  notThisAccountIds?: readonly string[];
 }
 
 export interface UploadCoverage {
@@ -156,8 +171,12 @@ export function reconcileUploadCoverage(input: UploadCoverageInput): UploadCover
   const registered = unique(input.registeredIds);
   const submitted = new Set(unique(input.submittedIds));
   const deleted = new Set(unique(input.deletedIds ?? []));
+  // 属于别的账号的会话（账号闸门挡下）：同样**不计入未同步**（见输入字段注释）。
+  const notThisAccount = new Set(unique(input.notThisAccountIds ?? []));
 
-  const unsyncedIds = registered.filter(id => !submitted.has(id) && !deleted.has(id));
+  const unsyncedIds = registered.filter(
+    id => !submitted.has(id) && !deleted.has(id) && !notThisAccount.has(id)
+  );
   const registryUnreliable = input.registryUnreliable === true;
   const registryGapOpen = input.registryGapOpen === true;
   // 本轮清单是不是**由白名单**决定的（缺省 true = 保守）。

@@ -162,6 +162,12 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
   // 取哪个标签：与「默认会话名」同一把尺子（域名占多数的那个），
   // 否则卡片图标与会话名会来自不同站点，自相矛盾。判据见
   // @/domain/tabGroup/pickDominantTab（纯函数，四条契约有单测）。
+  //
+  // ⚠️ 受设置页的「显示网站图标」开关控制（2026-10-22 收口）。
+  // 那个开关叫「显示网站图标」，用户关掉它的意思就是「我不想看到网站图标」——
+  // 卡片头这枚也是网站图标 ⇒ 它必须一起消失，否则开关就是半拉子的
+  // （关掉了还剩一处，那一处就成了「偷偷显示」）。
+  const showFavicons = useAppSelector(state => state.settings.showFavicons);
   const dominantTab = useMemo(() => pickDominantTab(group.tabs), [group.tabs]);
   const { showConfirm, showToast } = useToast();
   const { showDeleteError, showRestoreError, showRestoreSuccessMessage } = useEnhancedToast();
@@ -979,7 +985,7 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
               而事实是「这个会话确实没有图标」。
 
               装饰性图片 ⇒ alt=""（不参与读屏朗读；站点的名字由标题承担）。 */}
-          {dominantTab?.favicon && (
+          {showFavicons && dominantTab?.favicon && (
             <SafeFavicon
               src={dominantTab.favicon}
               alt=""

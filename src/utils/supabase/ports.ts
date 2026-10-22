@@ -14,11 +14,15 @@ export interface SupabaseSyncPort {
    * `writtenTombstoneIds` = 本次 upsert 真正写上云的墓碑行 id（见
    * uploadTabGroups 内注释：调用方必须用它把同批 id 从
    * markCloudGroupsAsDeleted 里剔除，避免同一 id 被二次写墓碑）。
+   *
+   * `blockedAccountIds` = 被**账号闸门**挡下的会话 id（2026-10-22 DS-1 收口）：
+   * 它们属于本机上的另一个账号，**没进上行集合** ⇒ 调用方对账时必须知道
+   * 它们「不算已提交」。
    */
   uploadTabGroups(
     groups: TabGroup[],
     overwriteCloud?: boolean
-  ): Promise<{ result: any; writtenTombstoneIds?: string[] }>;
+  ): Promise<{ result: any; writtenTombstoneIds?: string[]; blockedAccountIds?: string[] }>;
   markCloudGroupsAsDeleted(deletedIds: string[]): Promise<void>;
   purgeCloudGroups(purgedIds: string[]): Promise<void>;
   /** 无墓碑模型：物理删除云端过期墓碑行（is_deleted=true 且 deleted_at 早于龄期）。 */

@@ -32,13 +32,13 @@ function tab(groupId, url, title, ageHours) {
   };
 }
 
-function group(name, { notes, favorite = false, locked = false, order, ageHours, tabs }) {
+// ⚠️ 2026-10-22 收口：同 ui-audit-screenshots.mjs —— 不再注入已下线的
+// `notes` / `isFavorite`（会被迁移并进会话名，截图里出现新用户看不到的长名）。
+function group(name, { locked = false, order, ageHours, tabs }) {
   const id = crypto.randomUUID();
   return {
     id,
     name,
-    notes,
-    isFavorite: favorite,
     isLocked: locked,
     isDeleted: false,
     tabs: tabs.map(([url, title, age]) => tab(id, url, title, age ?? ageHours)),
@@ -53,8 +53,6 @@ function group(name, { notes, favorite = false, locked = false, order, ageHours,
 // 与 ui-audit 同一套样例数据（收藏/备注/锁定/多龄期都在）
 const groups = [
   group('V2 同步架构评审', {
-    notes: 'P1 对账观察期结论周五同步；重点看墓碑 sweep 接线方案',
-    favorite: true,
     order: 1,
     ageHours: 2,
     tabs: [
@@ -73,7 +71,6 @@ const groups = [
     ],
   }),
   group('面试准备（进行中）', {
-    notes: '周五下午 3 点，二面。系统设计 + 同步协议',
     locked: true,
     order: 3,
     ageHours: 40,

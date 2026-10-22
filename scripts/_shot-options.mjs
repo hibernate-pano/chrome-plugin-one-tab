@@ -107,12 +107,50 @@ async function main() {
     await opt.screenshot({ path: join(OUT_DIR, '11-options-claude.png'), fullPage: true });
     console.log('   📷 11-options-claude.png');
 
-    // 再开一个自动同步开关（写 chrome.storage 的另一条路径）
+    // ── ③b 自动同步：**被闸门挡住时的正确表现不是「变成 true」** ──────────
+    //
+    // 【为什么改了断言】2026-10-17/18 落地的闸门 `canEnableAutoSync`：
+    // 云端后端要求**已登录**（`src/components/layout/backendStatus.ts:155`），
+    // 而这个探针跑在没登录的临时 profile 里 ⇒ 自动同步**必然开不了**。
+    // 老断言「点了应该变成 true」从 2026-10-18 起就是错的（脚本写于 10-14，
+    // 闸门之后没跟着改）⇒ 探针一直在报假警。
+    //
+    // 【现在断言什么】产品的真契约是「用户按了键没反应必须有一句话解释」：
+    // 点被拒的开关 ⇒ ①开关**保持关闭**（不能偷偷变成开）②**弹出一句
+    // 指出下一步的话**（不是静默无反应）。这才是这条路径该保证的东西。
     const syncSwitch = opt.locator('button[role="switch"][aria-label="自动同步"]');
     await syncSwitch.click();
-    await opt.waitForTimeout(900);
+    await opt.waitForTimeout(1200);
     const syncAfter = await syncSwitch.getAttribute('aria-checked');
-    check('③b 自动同步开关可切换', syncAfter === 'true', `aria-checked=${syncAfter}`);
+    const toastText = await opt.evaluate(() =>
+      [...document.querySelectorAll('[role="alert"], [role="status"]')]
+        // 只要**可见**的 live region：Toast.tsx 的外层 live region 永远挂载
+        // （空壳也留在无障碍树里），不筛可见就会读到空串。
+        .filter(e => e.getBoundingClientRect().height > 0)
+        // innerText 而不是 textContent：Toast 把进度条关键帧放在同级的
+        // <style> 里，textContent 会把 `@keyframes …` 一起读进来。
+        .map(e => e.innerText?.trim() ?? '')
+        .filter(Boolean)
+        .join(' | ')
+    );
+    check(
+      '③b 被闸门挡下的自动同步：保持关闭 + 给出下一步',
+      syncAfter === 'false' && toastText.length > 0,
+      `aria-checked=${syncAfter}，提示=${toastText ? JSON.stringify(toastText.slice(0, 60)) : '（无）'}`
+    );
+
+    // ③b' 再用**不受闸门管**的开关证明开关机制本身是好的
+    //（写 chrome.storage 的另一条路径，且不受登录态影响）
+    const faviconSwitch = opt.locator('button[role="switch"][aria-label="显示网站图标"]');
+    const faviconBefore = await faviconSwitch.getAttribute('aria-checked');
+    await faviconSwitch.click();
+    await opt.waitForTimeout(900);
+    const faviconAfter = await faviconSwitch.getAttribute('aria-checked');
+    check(
+      '③b\' 普通开关可切换（不受闸门影响）',
+      faviconBefore !== faviconAfter,
+      `显示网站图标 ${faviconBefore} → ${faviconAfter}`
+    );
 
     // 关掉这个窗口，另开一个读回来 —— 这才是「持久化」的真正判据
     await opt.close();
@@ -124,12 +162,13 @@ async function main() {
 
     const persisted = await opt2.evaluate(() => ({
       theme: document.documentElement.dataset.theme,
-      syncEnabled: document.querySelector('button[role="switch"][aria-label="自动同步"]')?.getAttribute('aria-checked'),
+      favicons: document.querySelector('button[role="switch"][aria-label="显示网站图标"]')?.getAttribute('aria-checked'),
     }));
     check(
       '③c 设置跨窗口持久化（重开仍是新值）',
-      persisted.theme === 'claude' && persisted.syncEnabled === 'true',
-      `重开后 theme=${persisted.theme} syncEnabled=${persisted.syncEnabled}`
+      persisted.theme === 'claude' && persisted.favicons === faviconAfter,
+      `重开后 theme=${persisted.theme} 显示网站图标=${persisted.favicons}` +
+      `（期望 ${faviconAfter}）`
     );
 
     // ── ④ 从 popup 菜单点「设置…」 ───────────────────────────────────────

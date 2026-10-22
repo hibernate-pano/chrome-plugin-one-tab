@@ -99,9 +99,17 @@ describe('U-15 · 会话卡头必须有 favicon（层级不倒挂）', () => {
   it('没有 favicon 时整块不渲染（不留灰方块占位）', () => {
     // 占位方块会让人以为「这里本该有个图标但没加载出来」，
     // 而事实是「这个会话确实没有图标」—— 那是另一种撒谎。
+    // 2026-10-22 收口：判据从 `{dominantTab?.favicon && (` 放宽为
+    // 「`dominantTab?.favicon &&` 之后**紧接** `(<SafeFavicon`」。
+    // 放宽的原因是 U-15 之后又接了一个**前置**开关 `showFavicons &&` ——
+    // 那是另一条独立要求（设置页的「显示网站图标」必须真的管到卡片头，
+    // 由 deadSettingsAndEntryPoints 守）。钉死整段字面量会让**两条都对**的
+    // 实现变红，而这里真正要守的不变量只有一条：
+    // 「没有 favicon 就不画」—— 它只要求那个 `&&` 紧邻渲染块，与前面还有
+    // 多少个别的条件是无关的。
     assert.match(
       TAB_GROUP,
-      /\{dominantTab\?\.favicon\s*&&\s*\(\s*<SafeFavicon/,
+      /dominantTab\?\.favicon\s*&&\s*\(\s*<SafeFavicon/,
       'favicon 缺失时必须整块不渲染，而不是画一个占位球'
     );
   });

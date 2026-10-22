@@ -90,6 +90,24 @@ describe('F1-A · showFavicons 必须被真的读到（不是死设置）', () =
       '搜索结果的图标同样受开关控制'
     );
   });
+
+  it('会话卡片头的图标也必须受它控制（开关不许是半拉子的）', () => {
+    // 2026-10-22 收口：卡片头新增了一枚网站图标（U-15 的「卡片视觉身份」）。
+    // 那个开关叫「显示网站图标」—— 用户关掉它的意思就是「我不想看到网站图标」。
+    // 卡片头这枚也是网站图标 ⇒ 它必须一起消失，否则开关就只管了一半，
+    // 剩下的那一半成了「偷偷显示」。
+    const tabGroup = read('src/components/tabs/TabGroup.tsx');
+    assert.match(
+      tabGroup,
+      /state\.settings\.showFavicons/,
+      'TabGroup 必须读 settings.showFavicons'
+    );
+    assert.match(
+      tabGroup,
+      /\{showFavicons && dominantTab\?\.favicon && \(\s*<SafeFavicon/,
+      '卡片头的图标必须在开关关闭时**整块不渲染**'
+    );
+  });
 });
 
 describe('F1-B · showTabCount 必须被真的读到', () => {

@@ -98,6 +98,9 @@ export class SupabaseBackendAdapter implements SyncBackendPort {
     return {
       writtenIds: [...new Set(up?.writtenTombstoneIds ?? [])],
       overwroteRemote: opts?.overwriteRemote === true,
+      // 账号闸门拦下的那批（2026-10-22 DS-1 收口）：它们**没进上行集合**，
+      // 上层对账时必须知道它们「不算已提交」。
+      ...(up?.blockedAccountIds ? { blockedAccountIds: up.blockedAccountIds } : {}),
     };
   }
 

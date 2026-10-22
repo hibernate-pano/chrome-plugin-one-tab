@@ -160,7 +160,7 @@ export const RestoreStep: React.FC = () => (
       <div className="onboarding-feature-card">
         <div className="onboarding-feature-icon">🕘</div>
         <div className="onboarding-feature-title">域名命名</div>
-        <div className="onboarding-feature-desc">新会话默认按出现最多的域名命名（如 github.com），没有可用域名时才用时间戳</div>
+        <div className="onboarding-feature-desc">新会话默认按域名或主机名命名（如 github.com、localhost:3000），取不到时用标签标题，再取不到才用时间戳</div>
       </div>
     </div>
   </div>

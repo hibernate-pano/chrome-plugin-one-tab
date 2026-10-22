@@ -1285,6 +1285,9 @@ export class SyncEngine {
       const registeredGroupIds = changedGroupIds ? [...changedGroupIds] : [];
       // 本轮真的提交给后端裁决的会话 id（后端认输的也算「已裁决」）。
       let submittedGroupIds: string[] = [];
+      // 本轮被账号闸门挡下的会话（属于本机上的另一个账号，2026-10-22 DS-1 收口）。
+      // 它们**不算已提交、也不算未同步**（见 core/uploadCoverage.ts 的注释）。
+      let blockedByAccountScope = new Set<string>();
       // 闸门仍按**活跃组**判（不是按过滤后的清单）：覆盖模式下的「本地一个活跃组都没有
       // ⇒ 绝不覆盖」是既有保护，不能因为待决期把清单过滤空了就改判成「跳过覆盖」。
       // 清单为空时连适配器都不必调（省一次读 manifest + 解锁，也避免在空远端上写出
@@ -1302,7 +1305,18 @@ export class SyncEngine {
         // 后端可能**认输**（远端更新 → 本地不上行，等下次下载合并物理替换），
         // 认输是「已裁决」而不是「没传上去」—— 把它算成未同步会让 pending_upload
         // 永远清不掉、上传陷入无限重试。
-        submittedGroupIds = groupsForUpload.map(g => g.id);
+        //
+        // ⚠️ 账号闸门拦下的那批**不在**这个集合里（2026-10-22 DS-1 收口）：
+        // 它们根本没进上行集合 ⇒ 不算「已提交」⇒ 必须从清单里剔出去。
+        // 不剔的后果有两条，都很坏：
+        //   ① 用户看不到「还有 N 个会话没同步」（对账认为它们传上去了）；
+        //   ② 「本轮是全量」被误判成 true ⇒ 漏登记的那批改动被当成已补上
+        //      ⇒ 可能永远补不回来。
+        const blockedIds = up?.blockedAccountIds ?? [];
+        blockedByAccountScope = new Set(blockedIds);
+        submittedGroupIds = groupsForUpload
+          .map(g => g.id)
+          .filter(id => !blockedByAccountScope.has(id));
         writtenTombstoneIds = new Set(up?.writtenTombstoneIds ?? []);
         // 2026-10-20 修 P0：云端索引丢过（indexRebuilt）或本机水位线把某些
         // 会话误判成「已上传」（recoveredIds）—— 这是**要告诉用户**的异常，
@@ -1466,9 +1480,17 @@ export class SyncEngine {
       // 本机没有会话 ⇒ 漏登记的那批（若有）只能是已被删掉的那些 ⇒ 它们走
       // 删除广播那条路（pendingDeleteIds），不归上传管。若在这里判成 false，
       // 缺口会永远开着 ⇒ pending_upload 永远清不掉 ⇒ 又变成无限重试。
+      // 「本轮是不是全量」的判据范围 = **当前账号的**活跃会话。
+      //
+      // ⚠️ 属于别的账号的会话（账号闸门挡下）必须排除（2026-10-22 DS-1 收口）：
+      // 它们**永远**不会进上行集合 ⇒ 把它们算进「活跃会话」的话，
+      // 「本轮覆盖了全部活跃会话」永远为 false ⇒ 「漏登记的那批已被全量补上」
+      // 这个缺口永远关不上 ⇒ pending_upload 永远清不掉 ⇒ 无限重试。
       const activeIds = new Set(activeGroups.map(g => g.id));
       const submittedIdSet = new Set(submittedGroupIds);
-      const submittedCoversAllActive = [...activeIds].every(id => submittedIdSet.has(id));
+      const submittedCoversAllActive = [...activeIds]
+        .filter(id => !blockedByAccountScope.has(id))
+        .every(id => submittedIdSet.has(id));
       const registryDecision = decideRegistryAfterUpload({
         before: registryStateBefore,
         // 本轮提交的是不是全量（本机每一个活跃会话都在提交清单里）。
@@ -1515,6 +1537,9 @@ export class SyncEngine {
         // 当成「已结案」会让「删了但没广播出去」的会话被算作「没问题」，
         // 白名单被清掉，删除意图就永远丢了。
         deletedIds: broadcastDeleteIds,
+        // 属于别的账号的那批（账号闸门挡下）：不参与本账号的对账 ——
+        // 它们不是「没传上去」，是「不该传给这个账号」。
+        notThisAccountIds: [...blockedByAccountScope],
       });
 
       await storage.setLastSyncTime(new Date().toISOString());

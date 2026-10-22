@@ -29,13 +29,17 @@ function tab(groupId, url, title, ageHours) {
   };
 }
 
-function group(name, { notes, favorite = false, locked = false, order, ageHours, tabs, isDeleted = false }) {
+// ⚠️ 2026-10-22 收口：生成器**不再注入 `notes` / `isFavorite`**。
+// 这两个字段在 1.22.13 就整条下线了（见 src/core/orphanedGroupFields.ts），
+// 但脚本里一直带着 ⇒ 每次注入的数据都会被「备注并入会话名」的迁移改写，
+// 于是截图里的会话名变成「V2 同步架构评审 · P1 对账观察期结论周五同步；
+// 重点看墓碑 sweep 接线方案」这种 40 字长名 —— **新用户永远看不到的样子**。
+// 审计截图要展示的是产品现在的样子，不是一条已下线字段的迁移结果。
+function group(name, { locked = false, order, ageHours, tabs, isDeleted = false }) {
   const id = crypto.randomUUID();
   return {
     id,
     name,
-    notes,
-    isFavorite: favorite,
     isLocked: locked,
     isDeleted,
     deletedAt: isDeleted ? iso(now - 3600e3) : undefined,
@@ -50,8 +54,6 @@ function group(name, { notes, favorite = false, locked = false, order, ageHours,
 
 const groups = [
   group('V2 同步架构评审', {
-    notes: 'P1 对账观察期结论周五同步；重点看墓碑 sweep 接线方案',
-    favorite: true,
     order: 1,
     ageHours: 2,
     tabs: [
@@ -81,7 +83,6 @@ const groups = [
     ],
   }),
   group('面试准备（进行中）', {
-    notes: '周五下午 3 点，二面。系统设计 + 同步协议',
     locked: true,
     order: 4,
     ageHours: 40,
@@ -186,14 +187,48 @@ async function main() {
     await page2.screenshot({ path: join(OUT_DIR, '04-search.png') });
     console.log('✅ 04-search');
 
-    // 05 确认弹窗（清理重复标签，点 header 垃圾桶按钮触发）
+    // 05 确认弹窗（清理重复标签）
+    //
+    // ⚠️ 2026-10-22 U-20：「切换布局」与「清理重复标签」两颗图标已随按钮
+    // 一起移进「应用菜单」（⋯）⇒ 顶栏那个 `button[aria-label="清理重复标签页"]`
+    // 没有了。脚本必须**先开菜单**再点菜单项，否则会一直等一个不存在的按钮。
+    //
+    // ⚠️ 2026-10-22 收口（第二次踩同一个坑）：这张图此前拍到的**不是确认框**，
+    // 而是一条「没有发现重复标签或空会话，无需清理」的 toast —— 因为上面那套
+    // 演示数据里**本来就没有重复标签**，`planCleanDuplicates` 算出 0 个，
+    // `Header` 于是直接弹 toast、根本不弹确认框（见 Header.tsx 的
+    // removedTabsCount === 0 分支）。脚本照样打印 ✅，产物叫
+    // `05-confirm-dialog.png` 而画面里没有确认框 —— 与 07-empty 那次假绿同类。
+    //
+    // 修法：**先制造重复**再点。这里在「周报素材收集」里追加一个与首条同 URL
+    // 的标签（只在拍 05 之前注入，01/02/04 用的仍是干净的演示数据），
+    // 然后**断言 dialog 真的出现**才拍；不出现就抛错，不留会说谎的截图。
     await page2.keyboard.press('Escape');
     await page2.locator('input[type="text"], input[placeholder*="搜索"]').first().fill('');
     await page2.waitForTimeout(500);
-    await page2.click('button[aria-label="清理重复标签页"]');
-    await page2.waitForTimeout(600);
+
+    const withDuplicate = groups.map(g => {
+      if (g.name !== '周报素材收集') return g;
+      const first = g.tabs[0];
+      return {
+        ...g,
+        tabs: [...g.tabs, { ...first, id: crypto.randomUUID(), title: first.title }],
+      };
+    });
+    await injectGroups(page2, withDuplicate);
+    await page2.reload();
+    await page2.waitForSelector('text=V2 同步架构评审', { timeout: 15000 });
+    await page2.waitForTimeout(1000);
+
+    await page2.click('[data-menu-trigger]');
+    await page2.waitForTimeout(400);
+    await page2.locator('button', { hasText: '清理重复标签' }).first().click();
+    // 确认框出现才算数（aria-modal 的 ModalFrame，见 components/common/ModalFrame.tsx）。
+    const confirmDialog = page2.locator('[role="dialog"][aria-modal="true"]');
+    await confirmDialog.waitFor({ state: 'visible', timeout: 8000 });
+    await page2.waitForTimeout(400);
     await page2.screenshot({ path: join(OUT_DIR, '05-confirm-dialog.png') });
-    console.log('✅ 05-confirm-dialog');
+    console.log('✅ 05-confirm-dialog（确认框已出现）');
 
     // ── 空状态（清空本 profile 已注入的数据，拍真实空态）──
     // 旧写法直接新开一页拍：profile 里已经注入过演示数据，「空状态」截图其实是

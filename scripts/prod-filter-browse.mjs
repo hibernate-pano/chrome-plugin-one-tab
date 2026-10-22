@@ -106,12 +106,22 @@ async function measure(page) {
         .find(b => /显示筛选|隐藏筛选/.test(b.textContent ?? ''))
         ? vis([...document.querySelectorAll('button')].find(b => /显示筛选|隐藏筛选/.test(b.textContent ?? '')))
         : null,
+      // 维度 chip 行（2026-10-22：面板改成 chip 方案 —— 点哪个维度才展开哪个输入框）
+      chipRow: vis(document.querySelector('[data-testid="search-filter-chip-row"]')),
+      chipCount: document.querySelectorAll('[data-testid="search-filter-chip-row"] button').length,
       // 筛选面板本体（按 id 找：域名输入框）
       domainInput: vis(document.querySelector('#search-filter-domain')),
       groupNameInput: vis(document.querySelector('#search-filter-group-name')),
       savedWithinSelect: vis(document.querySelector('#search-filter-saved-within')),
       // 徽章 / 清空
-      activeBadge: text('.theme-accent-soft'),
+      //
+      // ⚠️ 不能用 `querySelector('.theme-accent-soft')` 取第一个：那个类
+      // 顶栏的「上传」按钮也在用 ⇒ 取到的会是「上传」。
+      // 这里按**文案**找（「N 个筛选」那个徽章）。
+      activeBadge:
+        [...document.querySelectorAll('.theme-accent-soft')]
+          .map(el => (el.textContent || '').trim())
+          .find(t => /^\d+ 个筛选$/.test(t)) ?? null,
       clearButton: [...document.querySelectorAll('button')]
         .some(b => /清空筛选/.test(b.textContent ?? '')),
       // 结果区标题
@@ -187,10 +197,20 @@ async function main() {
     await page.waitForTimeout(500);
     m = await measure(page);
     await page.screenshot({ path: join(OUT_DIR, '02-panel-open.png') });
-    check('域名筛选框可见（不输入搜索词就能用）', m.domainInput?.visible === true,
+    // 面板现在是**一条 chip 行**（2026-10-22）：点哪个维度才展开那个输入框。
+    // 所以「筛选器可达」的判据是「维度 chip 都在」，不是「三个输入框同时可见」。
+    check('维度 chip 行可见（筛选器不依赖搜索词即可达）', m.chipRow?.visible === true,
+      `chipRow=${JSON.stringify(m.chipRow)}`);
+    check('三个筛选维度都有 chip', m.chipCount === 3, `chipCount=${m.chipCount}`);
+
+    // ── ②之二 点开「域名」维度 ⇒ 域名输入框才出现 ──
+    console.log('\n②之二 点开「域名」维度 chip');
+    await page.locator('button[aria-controls="search-filter-domain-field"]').click();
+    await page.waitForTimeout(300);
+    m = await measure(page);
+    await page.screenshot({ path: join(OUT_DIR, '02b-domain-dimension.png') });
+    check('域名筛选框可见（点开维度后就能用）', m.domainInput?.visible === true,
       `domain=${JSON.stringify(m.domainInput)}`);
-    check('会话名称筛选框可见', m.groupNameInput?.visible === true);
-    check('保存时间筛选可见', m.savedWithinSelect?.visible === true);
     check('筛选面板无横向溢出', m.overflowers.length === 0, JSON.stringify(m.overflowers));
 
     // ── ③ 输入域名条件 → browse 形态 ──

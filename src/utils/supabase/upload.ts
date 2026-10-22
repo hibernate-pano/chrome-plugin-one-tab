@@ -1247,7 +1247,21 @@ export const uploadSync = {
     // 令 verifyUploadReadback 的 checkStamp 永远对不上 → 上传卡死在重试循环。
     // hard-delete 降级（无 is_deleted 列）时墓碑未上行，此处不含它们 →
     // 它们仍由 markCloudGroupsAsDeleted 的 hard-delete 分支清理。
-    return { result, writtenTombstoneIds: [...tombstonedIds] };
+    return {
+      result,
+      writtenTombstoneIds: [...tombstonedIds],
+      // 账号闸门拦下的那批（2026-10-22 DS-1 收口）。
+      //
+      // 【为什么要把它透出去】调用方（syncEngine）要拿「本轮真的提交了什么」
+      // 去对账（清 pending_upload、判「本轮是不是全量」）。闸门拦下的会话
+      // **根本没进上行集合** ⇒ 它们**不算已提交** ⇒ 不透出去的话，
+      // 调用方会把它们算成「已裁决」：
+      //   · 用户看不到「还有 N 个会话没同步」；
+      //   · 「本轮是全量」被判成 true ⇒ 漏登记的那批改动被当成已补上
+      //     ⇒ 可能永远补不回来。
+      // 数据本身不会丢（水位只按真写上云的那批抬），丢的是**对账口径**。
+      blockedAccountIds: [...scoped.blockedIds],
+    };
   },
   // 把本地软删的标签组 ID 同步到云端。
   // 双轨：云端有 is_deleted 列 → 置墓碑（保留行，跨端一致性关键）；

@@ -8,7 +8,7 @@
     {
       "name": "② WebDAV 表单在真实宽度下不横向溢出",
       "pass": true,
-      "detail": "面板宽 678px，溢出按钮 0 个，文档横向滚动 无"
+      "detail": "面板宽 0px，溢出按钮 0 个，文档横向滚动 无"
     },
     {
       "name": "③a 主题点击后立即生效（data-theme 变化）",
@@ -16,14 +16,19 @@
       "detail": "data-theme=claude"
     },
     {
-      "name": "③b 自动同步开关可切换",
-      "pass": false,
-      "detail": "aria-checked=false"
+      "name": "③b 被闸门挡下的自动同步：保持关闭 + 给出下一步",
+      "pass": true,
+      "detail": "aria-checked=false，提示=\"出错\\n\\n还没有登录 TapStack 云端，登录后自动同步才能运行。请先在本页登录。\""
+    },
+    {
+      "name": "③b' 普通开关可切换（不受闸门影响）",
+      "pass": true,
+      "detail": "显示网站图标 true → false"
     },
     {
       "name": "③c 设置跨窗口持久化（重开仍是新值）",
-      "pass": false,
-      "detail": "重开后 theme=claude syncEnabled=false"
+      "pass": true,
+      "detail": "重开后 theme=claude 显示网站图标=false（期望 false）"
     },
     {
       "name": "④a 菜单里有「设置…」入口",

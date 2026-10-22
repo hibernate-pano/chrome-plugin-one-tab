@@ -19,7 +19,7 @@
  *
  * · `'saved'`   （最近保存）—— `createdAt` 倒序。**默认键**，与旧版写死的
  *   表达式在有效时间戳上**逐元素等价** ⇒ 存量用户升级后看到的顺序一个都不变。
- * · `'accessed'`（最近访问）—— 会话「最近一次动静」的时间倒序。口径见
+ * · `'accessed'`（最近活动）—— 会话「最近一次动静」的时间倒序。口径见
  *   `lastActivityAt` 的注释（这一条踩过一个坑：字面上的「标签最后访问时间」
  *   在当前数据模型里**从来不被更新**，照字面实现会得到一个骗人的选项）。
  * · `'name'`    （名称）—— `name` 升序，用 `localeCompare(b, 'zh-CN')`
@@ -42,7 +42,12 @@ export type SessionSortKey = 'saved' | 'accessed' | 'name' | 'size';
 /** 排序下拉的选项。label 是给用户看的中文文案。 */
 export const SESSION_SORT_OPTIONS: ReadonlyArray<{ value: SessionSortKey; label: string }> = [
   { value: 'saved', label: '最近保存' },
-  { value: 'accessed', label: '最近访问' },
+  // 「最近活动」而不是「最近访问」：这个键的口径是「这个会话最近一次被
+  // 改动 / 被碰过」（见 lastActivityAt 的注释）——**改名也算**。
+  // 叫「访问」会让人以为只有「打开过」才算，与实际不符（本仓的纪律：
+  // 界面上的字必须与它实际在算的东西一致）。「活动」正好覆盖用户真正
+  // 想要的语义：��近我在动哪些会话。
+  { value: 'accessed', label: '最近活动' },
   { value: 'name', label: '名称' },
   // 「会话大小」的口径是**标签数**。括号里写出来，是因为「大小」两个字
   // 单独看会被理解成「占多少空间 / 多少字节」——而这个选项排的是标签条数。

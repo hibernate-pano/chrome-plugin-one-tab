@@ -294,7 +294,7 @@ export interface UserSettings {
    * 会话列表的排序键（2026-10-22 审计 L-10）。
    *
    * 【它是什么】`core/sessionSort.ts` 里的四种排序键之一：
-   * `'saved'`（最近保存，默认）/ `'accessed'`（最近访问）/ `'name'`（名称）/
+   * `'saved'`（最近保存，默认）/ `'accessed'`（最近活动）/ `'name'`（名称）/
    * `'size'`（会话大小 = 标签数）。
    *
    * 【为什么是界面偏好而不是「仅本机」】它描述的是「用户的会话列表怎么摆」，

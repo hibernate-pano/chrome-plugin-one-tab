@@ -60,7 +60,13 @@ export async function uploadTabGroups(
   // manifest 时会全量上传，而保存新会话触发的自动上传也会走到这里，
   // 于是用户的归属决策被绕过。设置页三选一的那一次显式传 true。
   explicitFirstSync: boolean = false
-): Promise<{ writtenTombstoneIds: string[]; recoveredIds?: string[]; indexRebuilt?: boolean }> {
+): Promise<{
+  writtenTombstoneIds: string[];
+  recoveredIds?: string[];
+  indexRebuilt?: boolean;
+  /** 被账号闸门挡下、**不算已提交**的会话 id（2026-10-22 DS-1 收口）。 */
+  blockedAccountIds?: string[];
+}> {
   // 每个上下文（SW / popup / options）首次调用时补一次解析：
   // SW 启动时的 prime 管不到 popup，popup 里第一次点同步若直接读缓存，
   // 拿到的是「未预解析 fail-safe 的 Supabase」，用户配的 WebDAV 被无声绕过。
@@ -79,6 +85,9 @@ export async function uploadTabGroups(
     // 这两个字段是**要上报给用户的事实**，不能在这一层被吞掉。
     ...(result.recoveredIds ? { recoveredIds: result.recoveredIds } : {}),
     ...(result.indexRebuilt ? { indexRebuilt: true } : {}),
+    // 账号闸门拦下的那批（2026-10-22 DS-1 收口）：同样**不能在这一层被吞掉**
+    // —— 上层要靠它把「没提交」与「已提交」分开。
+    ...(result.blockedAccountIds ? { blockedAccountIds: result.blockedAccountIds } : {}),
   };
 }
 

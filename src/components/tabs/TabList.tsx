@@ -7,6 +7,7 @@ import { SearchResultList } from '@/components/search/SearchResultList';
 import { SearchFilterSection } from '@/components/search/SearchFilterPanel';
 import type { SearchFilterControls } from '@/components/search/searchFilterState';
 import { resolveSearchViewMode } from '@/components/search/searchBrowseMode';
+import { sortSessions } from '@/core/sessionSort';
 import { EmptyState } from '@/components/common/EmptyState';
 import { getEmptyStateGreeting } from '@/components/common/emptyStateGreeting';
 import { saveAndCloseLabel } from '@/components/layout/saveActionCopy';
@@ -49,6 +50,8 @@ export const TabList: React.FC<TabListProps> = ({ searchQuery, onOpenAuth, filte
   const dispatch = useAppDispatch();
   const { groups, isLoading, error, errorSource } = useAppSelector(state => state.tabs);
   const { layoutMode, syncBackend } = useAppSelector(state => state.settings);
+  // 排序键（2026-10-22 审计 L-10）：筛选区里那个「排序方式」下拉写的就是它。
+  const sessionSort = useAppSelector(state => state.settings.sessionSort);
   const { isAuthenticated } = useAppSelector(state => state.auth);
   // ── 2026-10-20 审计 A-14：筛选状态住在**列表层** ────────────────────────
   // 修复前筛选条件是 SearchResultList 的内部 useState，而该组件只在有搜索词时
@@ -338,9 +341,22 @@ export const TabList: React.FC<TabListProps> = ({ searchQuery, onOpenAuth, filte
     );
   }
 
-  const sortedGroups = [...groups].sort((left, right) => {
-    return new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime();
-  });
+  /**
+   * 会话列表的排序（2026-10-22 审计 L-10）。
+   *
+   * 【为什么这里原来是写死的】旧版这一行是
+   * `createdAt` 倒序 —— 只有一个排序口径，用户没得选。排序控件（下拉）
+   * 落在筛选区里（见 SearchFilterPanel），判据与默认值在
+   * `core/sessionSort.ts`，持久化在设置里（`settings.sessionSort`）。
+   *
+   * 【为什么默认值是「不改变现状」】默认键 `'saved'` 的判据与上面这行
+   * **逐元素等价** ⇒ 存量用户升级后看到的顺序一个都不变（守卫钉住了
+   * 这条等价性，见 tests/sessionSort.test.ts）。
+   *
+   * 【为什么不改搜索结果视图】搜索的主序是**相关度**，那是搜索的承诺；
+   * 把排序套到搜索结果上会让「已按相关度排序」变成假话。
+   */
+  const sortedGroups = sortSessions(groups, sessionSort);
 
   const filteredGroups = sortedGroups;
 

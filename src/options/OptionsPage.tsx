@@ -1033,12 +1033,12 @@ const OptionsContent: React.FC = () => {
                 在「保存时收集固定标签页」旁边找到「显示网站图标」——
                 那是两件完全不同的事。
                 逐条对应关系（改 UI 时别只改一处）：
-                  显示网站图标 → 会话内的标签行 + 搜索结果里的标签行
+                  显示网站图标 → 会话内的标签行 + 搜索结果里的标签行 + 会话卡片头
                   显示标签数量 → 会话卡片徽章 + 搜索结果徽章 + 顶栏「N 标签」 */}
             <div className="divide-y divide-gray-200 dark:divide-gray-700">
               <ToggleRow
                 label="显示网站图标"
-                hint="在会话的标签行和搜索结果里显示每个网站的图标。关掉后这些位置不再显示图标。"
+                hint="在会话的标签行、搜索结果和会话卡片头上显示网站图标。关掉后这些位置不再显示图标。"
                 checked={settings.showFavicons}
                 onToggle={handleToggleShowFavicons}
               />

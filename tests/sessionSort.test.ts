@@ -429,7 +429,10 @@ describe('默认层 · 默认排序键与选项表', () => {
       assert.notEqual(option.label, option.value, `${option.value} 的标签不能就是 key 本身`);
     }
     assert.equal(sessionSortLabel('saved'), '最近保存');
-    assert.equal(sessionSortLabel('accessed'), '最近访问');
+    // 「最近活动」而不是「最近访问」：口径是「最近一次被改动/被碰过」
+    // （改名也算，见 core/sessionSort.ts 的 lastActivityAt 注释）。
+    // 叫「访问」会让用户以为只有「打开过」才算 —— 与实际不符。
+    assert.equal(sessionSortLabel('accessed'), '最近活动');
     assert.equal(sessionSortLabel('name'), '名称');
     assert.equal(sessionSortLabel('size'), '会话大小（标签数）');
   });
