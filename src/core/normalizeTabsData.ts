@@ -138,6 +138,44 @@ function normalizeImportedTab(raw: unknown, nowIso: string): Tab | null {
     pinned: isLegacyTruthy(t.pinned),
     createdAt: createdAt ?? nowIso,
     lastAccessed: asIso(t.lastAccessed ?? t.last_accessed) ?? createdAt ?? nowIso,
+    // ── 2026-10-23 审计 DS-43-3（**标签级**）：墓碑标记与同步印记必须在这里归零 ──
+    //
+    // 【为什么组级归零还不够】
+    // 组级 `isDeleted` 已在 normalizeImportedGroup 的覆盖名单里归零，
+    // 但**标签级**的墓碑标记此前没人管：`...(t as object)` 同样把文件里的
+    // 每一个未知字段原样带进来 ⇒ 标签上的 `isDeleted` 一路活到落盘行。
+    //
+    // 失效链（每一环都是真代码，不是假想）：
+    //   ① 落盘行里那条标签带 `isDeleted: true`；
+    //   ② `isEmptyGroup`（core/mutationOps.ts）只数**非墓碑**标签
+    //      ⇒ 一组标签**全部**带墓碑时，整组被判成「空组」
+    //      ⇒ **这一组被导入流程直接丢弃**（用户看到「导入了，但一个都没多」，
+    //      而提示还甩锅「文件里有空会话」—— 文件里明明有内容）；
+    //      只带一部分时组留着，但那条标签在 `toActiveGroupsView` 的
+    //      `stripTombstonedTabs` 里**被滤掉** ⇒ 用户看不见它，零提示；
+    //   ③ `serializeTab`（core/tabDataCodec.ts）把 `isDeleted` 写成
+    //      `is_deleted` 存进云端 `tabs_data`，`deserializeTab` 再读回来
+    //      ⇒ **别的设备上那条标签也不见了**
+    //      ⇒ 一条明明躺在用户备份文件里的标签，在所有设备上永久隐形。
+    //
+    // 【口径】导入的永远是「活着的会话 / 活着的标签」——
+    // 备份文件里的删除标记是**别的设备上已经执行完的删除意图的残留**，
+    // 对本机没有任何意义（同组级口径：归零不是"更安全一点"的取舍，
+    // 是导入语义本身要求的唯一解）。
+    //
+    // `deletedAt` 是同一个墓碑的另一个字段名 ⇒ 一起归零，
+    // 否则将来有人改用 `deletedAt` 判定，墓碑又活了。
+    //
+    // 【为什么 `lastOp` 也要摘掉】
+    // 文件里的标签带着**别的设备**的操作印记（v1.2x 的正常导出就会带）。
+    // 印记里的 `s` 会被 `maxObservedSeq`（utils/seqRegistry.ts）读成本机
+    // Lamport 时钟的下限 ⇒ 一份被手改过/被篡改的备份（`s` 是个天文数字）
+    // 能把本机时钟顶上去 ⇒ 本机之后的每次写入都用天文数字的序号
+    // ⇒ 合并时**别的设备的较新编辑一律输给本机** ⇒ 那些编辑被覆盖丢失。
+    // ⇒ 印记归**落盘层**按本机这次操作盖（与组级同口径，见 mutationOps.ts）。
+    isDeleted: false,
+    deletedAt: undefined,
+    lastOp: undefined,
   } as Tab;
 }
 

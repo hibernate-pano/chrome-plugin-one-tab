@@ -359,7 +359,33 @@ export function applyImportGroups(
         tabs: sourceTabs.reduce<Tab[]>((acc, tab) => {
           const url = deps.sanitizeUrl(tab?.url as string);
           if (!url) return acc;
-          acc.push({ ...tab, url, id: deps.genId() });
+          acc.push({
+            ...tab,
+            url,
+            id: deps.genId(),
+            // ── 2026-10-23 审计 DS-43-3（**标签级**）────────────────────────
+            //
+            // 【这一段与上方组级的 `isDeleted: false` 是同一条理由】
+            // 标签级墓碑此前一路活到落盘行 ⇒
+            //   · 全部标签带墓碑 ⇒ isEmptyGroup 判空 ⇒ **整组被丢弃**
+            //     （用户导入了，列表里一个都没多）；
+            //   · 部分标签带墓碑 ⇒ 那条标签在视图里隐形（stripTombstonedTabs），
+            //     并被 serializeTab 写成 `is_deleted` 上云 ⇒ **别的设备上也隐形**。
+            // 完整的失效链与口径见 core/normalizeTabsData 的 normalizeImportedTab
+            // （那里是同一处判据的说明源头）。
+            //
+            // 【为什么这里要再写一遍，而不是只靠 normalizeImportedGroup】
+            // 同上方组级注释：载荷来自用户手上的文件或跨进程消息，形状不可信；
+            // 「每个调用方都记得先调归一化」正是这条暗门当初的成因（P1-1 的教训）。
+            // ⇒ 落盘路径自己也要有一道，**不依赖调用方的自觉**。
+            isDeleted: false,
+            deletedAt: undefined,
+            // 印记由**本机这次操作**盖（与组级 `lastOp: stamp` 同口径）：
+            // 导入产生的行是本机新写的行，不能挂着文件里**别的设备**的印记
+            // （那会让 maxObservedSeq 把本机 Lamport 时钟顶成一个外来数字，
+            //   合并时本机永远赢 ⇒ 别的设备的较新编辑被覆盖丢失）。
+            lastOp: stamp,
+          });
           return acc;
         }, []),
       };
