@@ -804,6 +804,13 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({
    *
    * 面板本体在 `SearchFilterPanel` 里 —— 与主列表**共用同一份**。
    * 状态只有一处（由列表层持有），这里是它的一个渲染点。
+   *
+   * ── 这里**不摆**排序下拉（2026-10-23 审计 R-6）────────────────────────
+   * 搜索结果按**相关度**排、筛选浏览按**会话更新时间**排 ——
+   * 两个视图都**不**按 `settings.sessionSort` 排。
+   * 修复前这里照样摆着那个「排序方式」下拉 ⇒ 用户选了「按名称」，
+   * 顺序一动不动 ⇒ 一个「能选、选了没反应」的控件在骗人。
+   * ⇒ 不排序的视图就不摆排序控件（不是「摆着 + 提示它不生效」）。
    */
   const FiltersPanel = ({ withOuterMargin }: { withOuterMargin?: boolean }) => (
     <SearchFilterSection
@@ -815,6 +822,7 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({
       showTitle={showFilterSectionTitle(isBrowseMode ? 'browse' : 'search')}
       collectPinnedTabs={collectPinnedTabs}
       variant={withOuterMargin ? 'inset' : 'flush'}
+      showSortControl={false}
     />
   );
 

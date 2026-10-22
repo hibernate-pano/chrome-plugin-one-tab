@@ -31,10 +31,17 @@
  *   · 设置  → `chrome.runtime.openOptionsPage()`（WebDAV 需要在这里解锁）
  *   · 导入  → 菜单里的 JSON / OneTab 导入（同一套文件选择与结果提示）
  * 空态缺的只是**出口**，不是能力。
+ *
+ * ── 2026-10-23 审计 R-12 的收口 ──────────────────────────────────────────
+ * 这个文件原先只回答「**该给哪些出口**」，没回答「**点了会发生什么**」——
+ * 而后者才是用户真正遇到的：四个按钮点下去有没有反应，全靠人读源码。
+ * ⇒ 「执行」那一半挪到 `src/core/emptyStateExits.ts`（纯函数，可直接测），
+ *   本文件只留**出口集合的判据**与**文案**。
  */
+import type { EmptyStateAction } from '@/core/emptyStateExits';
+import { MENU_LOGIN_LABEL } from '@/components/common/menuLabels';
 
-/** 空态次级出口的种类。 */
-export type EmptyStateAction = 'login' | 'download' | 'options' | 'import';
+export type { EmptyStateAction };
 
 export interface EmptyStateActionsInput {
   /** 当前同步后端。 */
@@ -81,4 +88,22 @@ export const EMPTY_STATE_ACTION_HINT: Record<EmptyStateAction, string> = {
   download: '把云端会话拉回本机并合并，不会清掉本地内容',
   options: '自带存储需要先在设置里填好地址并解锁',
   import: '支持 OneTab 文本与 JSON 备份',
+};
+
+/**
+ * 「这个出口此刻用不了」的说明（2026-10-23 审计 R-12）。
+ *
+ * 什么时候会用到：宿主没接上这个出口的能力（登录弹窗没传下来）、
+ * 或者请求没有订阅者（导入菜单没挂上）⇒ 点了不会有任何反应。
+ * ⇒ 这时候**必须出声**，并告诉用户**还能去哪**（菜单里的另一个入口）——
+ * 「点了没反应」是本项目明令禁止的失败形态。
+ *
+ * 逐出口给，不共用一句：不同出口的替代路径不同（登录走 ⋯ 菜单、
+ * 恢复走「从云端刷新数据」、导入走「导入数据」子菜单）。
+ */
+export const EMPTY_STATE_EXIT_UNAVAILABLE: Record<EmptyStateAction, string> = {
+  login: `登录入口暂时不可用，请用右上角菜单里的「${MENU_LOGIN_LABEL}」`,
+  download: '从云端恢复暂时不可用，请用右上角菜单里的「从云端刷新数据」',
+  options: '设置页暂时打不开，请手动打开扩展的设置页',
+  import: '导入入口暂时不可用，请用右上角菜单里的「导入数据」',
 };

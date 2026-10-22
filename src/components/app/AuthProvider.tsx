@@ -2,8 +2,8 @@ import React, { useEffect, useState } from 'react';
 import { useAppDispatch } from '@/store/hooks';
 import { getCurrentUser, setFromCache } from '@/store/slices/authSlice';
 import { loadGroups } from '@/store/slices/tabSlice';
-import { auth as supabaseAuth } from '@/utils/supabaseFacade';
 import { authCache } from '@/utils/authCache';
+import { loadSupabaseFacade } from '@/utils/supabaseRuntime';
 import { sendSyncCommand } from '@/shared/mutationProtocol';
 import {
   hasLoginRestoreTriggered,
@@ -53,7 +53,26 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
         const cachedAuth = await authCache.getAuthState();
         if (cachedAuth && cachedAuth.isAuthenticated && cachedAuth.user) {
           logInfo('发现缓存的认证状态，用户:', cachedAuth.user.email);
-          // 这里可以设置用户状态，但不直接dispatch，让后续的会话检查来处理
+          // ── 2026-10-23 审计 R-12：缓存里明明有登录态，Redux 却还是 false ──
+          //
+          // 【为什么必须在这里就 dispatch】原来这一段**只打了一行日志**
+          // （注释写的是「这里可以设置用户状态，但不直接dispatch」）⇒
+          // 冷启动的第一帧，`state.auth.isAuthenticated` 恒为 false
+          // （authSlice 的初值），登录态要等**网络回包**（getCurrentUser.fulfilled）
+          // 才补上 ⇒ 换设备的老用户（他的会话在云端、本机是空的）
+          // 在那一两秒里看到的是空态卡上的「**登录 TapStack 云端**」——
+          // 而他明明登录着，点它会把他带去重新登录一遍。
+          // 这正是 L-11（空态出口）最想服务的那个用户，却先看到了错的那一个。
+          //
+          // 【为什么这不算「谎报已登录」】缓存登录态是**暂定事实**，
+          // 随后的会话检查会修正它：
+          //   · 会话还在 ⇒ getCurrentUser.fulfilled → 登录态维持；
+          //   · 会话没了 ⇒ fulfilled(null) → isAuthenticated 归零；
+          //   · 服务端不可用（402）⇒ 早就按缓存保留登录态（见下面的 catch 分支）。
+          // ⇒ 提前置真只是把「几毫秒后才知道的事」提前说，
+          //   最坏情况是「先显示已登录、随后翻回未登录」，
+          //   而不是「一直谎报」。
+          dispatch(setFromCache({ user: cachedAuth.user, isAuthenticated: true }));
         }
 
         // 标记认证初始化完成
@@ -77,6 +96,20 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
         logInfo('检查用户会话状态...');
 
         // 使用 getSession 而不是 getCurrentUser 来避免未登录用户的错误
+        //
+        // ── 2026-10-23（首屏瘦身）：Supabase SDK 改成**按需加载** ─────────
+        // SDK（gzip 约 58KB）+ 读写实现（约 140KB 源码）此前是**首屏**的
+        // 静态依赖 —— 用户点开弹窗只想看本机会话列表，却要先下载整条云端栈。
+        // 现在它在**挂载之后**才加载：首屏不等它、不为它下载。
+        //
+        // 行为零变化：检查顺序、判定口径、失败分支（402 → 按缓存恢复登录态）
+        // 全部照旧；变的只是「SDK 什么时候被拉进来」。
+        // 顺带说明：首屏那一下「未登录」的观感**本来就有** —— 初始 state 的
+        // `isAuthenticated` 恒为 false，登录态是异步补上的。
+        //
+        // 取法走 `utils/supabaseRuntime`（全仓唯一入口）：页面动态加载，
+        // service worker 由入口注册静态加载器（SW 里 import() 被 Chrome 禁止）。
+        const { auth: supabaseAuth } = await loadSupabaseFacade();
         const { data } = await supabaseAuth.getSession();
         if (data.session) {
           logInfo('发现活跃会话，获取用户信息...');

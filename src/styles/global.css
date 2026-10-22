@@ -1821,6 +1821,18 @@ html:not([data-theme]).dark {
   gap: 0.75rem;
 }
 
+/* 双栏布局：**行主序**（2026-10-23 审计 R-11）。
+ *
+ * 会话卡**直接**是网格子项（不再是「两列各一个 div」）⇒
+ * 浏览器按行填充（1,2 / 3,4 / 5,6）⇒ 视觉序 == DOM 序 == 排序序。
+ *
+ * ⚠️ 因此这里**不得**改成 `grid-auto-flow: column`（列优先会让视觉序
+ * 重新变成「先走完第一列」⇒ 又一次与排序序不符）。
+ * 守卫：tests/guards/doubleColumnOrderHonesty.test.ts
+ *
+ * `align-items: start` 让同一行的卡片**顶对齐** —— 卡片高度不同时
+ * 短的那张下面会留白（高低脚）。这是有意接受的取舍：
+ * 用户的显式排序选择优先于视觉齐整。 */
 .session-grid {
   display: grid;
   grid-template-columns: 1fr;
@@ -1831,19 +1843,6 @@ html:not([data-theme]).dark {
 @media (min-width: 768px) {
   .session-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 1rem;
-  }
-}
-
-.session-grid-column {
-  display: flex;
-  flex-direction: column;
-  gap: 0.75rem;
-  min-width: 0;
-}
-
-@media (min-width: 768px) {
-  .session-grid-column {
     gap: 1rem;
   }
 }

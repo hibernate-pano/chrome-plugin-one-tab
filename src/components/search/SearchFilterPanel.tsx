@@ -497,6 +497,29 @@ interface SearchFilterSectionProps {
   collectPinnedTabs: boolean;
   /** 面板在哪个语境里渲染（见 SearchFilterVariant）。 */
   variant: SearchFilterVariant;
+  /**
+   * 是否摆出「排序方式」下拉（默认 true）。
+   *
+   * ── 为什么需要这个开关（2026-10-23 审计 R-6）────────────────────────────
+   *
+   * 排序下拉**只在真的按它排序的视图里**才有意义。
+   * 而 `SearchFilterSection` 有**两个**渲染点：
+   *   · `TabList.tsx` —— 主列表视图（**会**按 `sortSessions` 排）；
+   *   · `SearchResultList.tsx` —— 搜索结果 / 筛选浏览视图
+   *     （**不按** `sessionSort` 排：搜索视图按相关度，
+   *       浏览视图按会话更新时间）。
+   *
+   * 修复前两个渲染点都摆了这个下拉 ⇒ 在结果视图里选「按名称」，
+   * 顺序**一动不动** ⇒ 一个「能选、选了没反应」的控件在骗人。
+   *
+   * ⇒ 不排序的视图**不摆**这个控件（不是「摆着 + 文案解释它不生效」——
+   *   那是把缺陷写进界面）。
+   *
+   * 【判据放在 prop 上而不是各组件自己判】这样「摆不摆」与
+   * 「这个视图排不排序」由**调用方**一句话说清，
+   * 不会两个渲染点各判一遍然后漂移。
+   */
+  showSortControl?: boolean;
 }
 
 /**
@@ -517,6 +540,7 @@ export const SearchFilterSection: React.FC<SearchFilterSectionProps> = ({
   showTitle = true,
   collectPinnedTabs,
   variant,
+  showSortControl = true,
 }) => {
   const {
     effectiveFilters,
@@ -527,7 +551,17 @@ export const SearchFilterSection: React.FC<SearchFilterSectionProps> = ({
     toggleFilters,
   } = controls;
   const isInset = variant === 'inset';
+  // 排序控件摆在哪（工具条 / 面板）由「面板是否展开」决定；
+  // 「摆不摆」由「这个视图排不排序」决定（见 showSortControl 的注释）。
   const sortPlacement = resolveSortControlPlacement(showFilters);
+  const toolbarSortControl =
+    showSortControl && sortPlacement === 'toolbar' ? (
+      <SessionSortControl placement="toolbar" />
+    ) : undefined;
+  const panelSortControl =
+    showSortControl && sortPlacement === 'panel' ? (
+      <SessionSortControl placement="panel" />
+    ) : undefined;
 
   /** 当前展开的筛选维度（点 chip 展开对应编辑框）。 */
   const [expandedDimension, setExpandedDimension] = React.useState<FilterDimension | null>(null);
@@ -591,7 +625,7 @@ export const SearchFilterSection: React.FC<SearchFilterSectionProps> = ({
           )}
         </div>
         <div className="flex items-center gap-3">
-          {sortPlacement === 'toolbar' && <SessionSortControl placement="toolbar" />}
+          {toolbarSortControl}
           {activeFilterCount > 0 && (
             <button
               onClick={clearFilters}
@@ -627,9 +661,7 @@ export const SearchFilterSection: React.FC<SearchFilterSectionProps> = ({
           controls={controls}
           collectPinnedTabs={collectPinnedTabs}
           withOuterMargin={isInset}
-          sortControl={
-            sortPlacement === 'panel' ? <SessionSortControl placement="panel" /> : undefined
-          }
+          sortControl={panelSortControl}
           expandedDimension={expandedDimension}
           onSelectDimension={handleSelectDimension}
         />

@@ -22,8 +22,10 @@ import { resolveSyncFailureCopy } from '@/components/sync/syncPreviewView';
 import {
   EMPTY_STATE_ACTION_HINT,
   EMPTY_STATE_ACTION_LABEL,
+  EMPTY_STATE_EXIT_UNAVAILABLE,
   resolveEmptyStateActions,
 } from './emptyStateActions';
+import { runEmptyStateExit } from '@/core/emptyStateExits';
 
 interface TabListProps {
   searchQuery: string;
@@ -171,26 +173,28 @@ export const TabList: React.FC<TabListProps> = ({ searchQuery, onOpenAuth, filte
   };
 
   const handleEmptyStateAction = (action: (typeof emptyStateActions)[number]) => {
-    switch (action) {
-      case 'login':
-        // 登录成功会触发 restoreAfterLogin 的整库拉取（显式意图不受自动同步开关约束）。
-        onOpenAuth?.('login');
-        break;
-      case 'download':
-        void handleRestoreFromCloud();
-        break;
-      case 'options':
+    // ── 2026-10-23 审计 R-12：出口的「对应关系」归判据层管 ────────────────
+    // 以前这段是一个 switch，四个分支各自直接调 IO ⇒ 「点了会发生什么」
+    // 只能靠人读源码（审计：这条线上一个断言都没有）。
+    // 现在对应关系在 `core/emptyStateExits.ts`（纯函数、可测），
+    // 这里只负责**注入**真正的 IO，并保证：
+    //   每个出口要么真的触发了什么，要么**出声**说明它此刻用不了。
+    runEmptyStateExit(action, {
+      // 宿主没给登录弹窗的回调 ⇒ 这个出口此刻**点了没反应**
+      // ⇒ 不传这个键（=「这个能力此刻不存在」）⇒ 判据层会替它出声。
+      // 登录成功会触发 restoreAfterLogin 的整库拉取（显式意图不受自动同步开关约束）。
+      ...(onOpenAuth ? { openAuth: () => onOpenAuth('login') } : {}),
+      openOptions: () => {
         // 自带存储的口令与地址只能在设置页填 —— 那里才是能解开云盘的地方。
         chrome.runtime.openOptionsPage();
-        break;
-      case 'import':
-        // 导入的实现长在 ⋯ 菜单里（一份，不复制）：请求它展开导入子菜单。
-        if (!requestImport()) {
-          // 没有订阅者 ⇒ 点了没反应。必须出声。
-          showEmptyActionError('导入入口暂时不可用，请用右上角菜单里的「导入数据」');
-        }
-        break;
-    }
+      },
+      restoreFromCloud: () => {
+        void handleRestoreFromCloud();
+      },
+      requestImport: () => requestImport(),
+      unavailableMessage: (which) => EMPTY_STATE_EXIT_UNAVAILABLE[which],
+      notifyUnavailable: showEmptyActionError,
+    });
   };
 
   useEffect(() => {
@@ -355,6 +359,13 @@ export const TabList: React.FC<TabListProps> = ({ searchQuery, onOpenAuth, filte
    *
    * 【为什么不改搜索结果视图】搜索的主序是**相关度**，那是搜索的承诺；
    * 把排序套到搜索结果上会让「已按相关度排序」变成假话。
+   * ⇒ 结果视图里**不摆排序控件**（2026-10-23 审计 R-6）：
+   *   摆着一个「选了没反应」的下拉，比不摆更糟（控件说谎）。
+   *
+   * 【排序必须一路兑现到渲染层】排序算对了 ≠ 列表按它摆了。
+   * 2026-10-23 审计 R-11 就栽在这儿：双栏布局把排好的顺序
+   * 又按「标签数」重分了两栏 ⇒ 屏幕顺序与键盘 Tab 序都不等于排序序。
+   * ⇒ 渲染层现在按**行主序**逐个铺（见下方双栏分支的注释）。
    */
   const sortedGroups = sortSessions(groups, sessionSort);
 
@@ -435,6 +446,11 @@ export const TabList: React.FC<TabListProps> = ({ searchQuery, onOpenAuth, filte
                       <button
                         key={action}
                         type="button"
+                        /* ── 2026-10-23 审计 R-12：出口的**身份**要可机读 ────────
+                         * 守卫要能回答「这一格渲染的是哪个出口」，
+                         * 而答案不能依赖文案（文案会改）。
+                         * ⇒ 带上动作本身的标识（不是文案）。 */
+                        data-testid={`empty-state-action-${action}`}
                         onClick={() => handleEmptyStateAction(action)}
                         disabled={emptyRestoreBusy && action === 'download'}
                         className="theme-radius-control theme-btn-hover border theme-border-default px-3 py-1.5 text-xs font-medium text-gray-600 transition-colors disabled:cursor-not-allowed disabled:opacity-60 dark:text-gray-300"
@@ -529,25 +545,35 @@ export const TabList: React.FC<TabListProps> = ({ searchQuery, onOpenAuth, filte
       {viewMode !== 'list' ? (
         <SearchResultList searchQuery={searchQuery} filterControls={filterControls} />
       ) : layoutMode === 'double' ? (
+        /* ── 2026-10-23 审计 R-11：双栏必须是**行主序** ──────────────────────
+         *
+         * 修复前这里是「两列各一个 div」，按**标签数**贪心均衡分栏：
+         *
+         *   const columns = [[], []];  // 按标签数塞进更空的那一栏
+         *
+         * ⇒ 屏幕上的阅读顺序、**键盘 Tab 序**（= DOM 序 = 先走完左栏再走右栏）
+         *   都**不等于**用户选的排序。审计穷举：6 个会话 × 标签数 {1,2,3,4}
+         *   共 4096 种组合，DOM 序与排序序 **100% 不一致**，逐行视觉序约 2/3 不一致。
+         *   键盘用户与读屏用户拿到的顺序，和眼睛看到的**不一样** ——
+         *   比「视觉顺序错」更糟。
+         *
+         * 【这一版的取舍（明说，不假装没有代价）】
+         * 现在 `filteredGroups`（已按 `sortSessions` 排好）**逐个**成为网格的
+         * 直接子项 ⇒ CSS grid 两列 ⇒ 视觉上是 1,2 / 3,4 / 5,6
+         * ⇒ **DOM 序 == 视觉序 == 排序序**，三者一致。
+         *
+         * 代价：**放弃按卡片高度均衡**（会出现「高低脚」——
+         * 同一行里两张卡片高度不同时，短的那张下面留白）。
+         * 这是**有意接受**的取舍：用户的显式选择（排序）优先级高于
+         * 视觉上的齐整。审计原文的取舍也是这一条
+         * （「可以让**高度**去均衡，而不是让**顺序**去均衡」—— 那是以后的事）。
+         * 另一档更差的修法是「保留现状 + 文案提示用户」= 把缺陷写进文案，
+         * 等于承认功能半残 —— 本仓明令不做。
+         */
         <div className="session-grid">
-          {(() => {
-            // 按标签数均衡分栏：贪心把下一组放进当前标签总数更少的一栏，
-            // 避免“前半进左栏”时高卡全堆一侧的高低脚。读序仍按保存时间倒序。
-            const columns: typeof filteredGroups[] = [[], []];
-            const counts = [0, 0];
-            for (const group of filteredGroups) {
-              const target = counts[0] <= counts[1] ? 0 : 1;
-              columns[target].push(group);
-              counts[target] += group.tabs.length;
-            }
-            return columns.map((column, columnIndex) => (
-              <div key={columnIndex} className="session-grid-column transition-all duration-300 ease-out">
-                {column.map(group => (
-                  <DraggableTabGroup key={group.id} group={group} />
-                ))}
-              </div>
-            ));
-          })()}
+          {filteredGroups.map(group => (
+            <DraggableTabGroup key={group.id} group={group} />
+          ))}
         </div>
       ) : (
         <div className="session-list-stack transition-all duration-300 ease-out">
