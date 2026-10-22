@@ -9,6 +9,7 @@ import { enqueue } from './mutationQueue';
 import { createSeqRegistry } from '@/utils/seqRegistry';
 import { getDeviceId } from '@/utils/deviceUtils';
 import { saveAllSuccessMessage, type SaveAllSummary } from '@/domain/tabGroup/saveFeedbackCopy';
+import { issueSaveReceipt, paintSaveReceipt } from './saveReceipt';
 import { MANAGER_PAGE_PATH } from '@/core/managerPage';
 import { kvGet, kvSet } from '@/storage/storageAdapter';
 import type { OpStamp } from '@/core/opStamp';
@@ -200,6 +201,31 @@ export class TabManager {
       // 否则「保存一个标签页」会把全部历史会话推上用户的云盘（P1#4 第二半）。
       syncEngine.scheduleUpload(UPLOAD_DEBOUNCE_MS, [safeGroup.id]);
 
+      // ── 2026-10-23：徽标回执（不依赖任何开关的成功凭据）───────────────
+      //
+      // 为什么必须有这一句：上面那条通知**没有 kind** ⇒ 按 showNotification
+      // 的分流规则按 'success' 处理 ⇒ **受「显示通知提醒」开关约束**，而那个
+      // 开关**默认关闭**（src/utils/storage.ts）⇒ 默认配置下这条通知根本不发。
+      // 加上快捷键路径**明确不打开管理页** ⇒ 管理页那个「已保存 N」的内联反馈
+      // 在这条路上也没有。
+      // ⇒ 用户按 ⌘⇧S 保存整窗 → 标签被关掉、窗口被腾空 → **屏幕上零反馈**。
+      //   而「我刚才那 20 个标签存到哪了？叫什么名字？」正是他此刻的问题。
+      //
+      // 为什么是徽标而不是通知：
+      //   · 「显示通知提醒」默认关闭是**已拍板的产品决定**（用户偏好，不能推翻）；
+      //     把成功通知改成无条件发 = 推翻一个已决定的用户偏好。
+      //   · 徽标**零新权限**（chrome.action.setBadgeText 不需要 permission）、
+      //     零打扰（长在图标上，不跨应用）、**且不依赖任何开关**。
+      //   · 它守的是本仓第一性原则「用户按了键没反应必须有一句话解释」的镜像：
+      //     键按了、世界变了，一句话没有。
+      //
+      // 放在「落盘之后、关标签之前」：回执必须晚于「真的存下了」，
+      // 早于「把屏幕夺走」—— 用户在标签消失的那一刻就该看到凭据。
+      //
+      // 会话名一起带上：用户此刻问的是「存到哪了？**叫什么名字？**」，
+      // 而徽标只有 4 个字符放不下一个域名 ⇒ 名字进 tooltip（悬停可见）。
+      await this.showSaveReceipt(safeGroup.tabs.length, safeGroup.name);
+
       await this.showNotification({
         type: 'basic',
         iconUrl: chrome.runtime.getURL('icons/icon128.png'),
@@ -353,6 +379,17 @@ export class TabManager {
 
       // ponytail: 关闭单标签时也会触发数据变更（保存到当前会话）——同样需自动上传。
       syncEngine.scheduleUpload(UPLOAD_DEBOUNCE_MS, [safeGroup.id]);
+
+      // ── 2026-10-23：徽标回执（同 saveAllTabs 的理由）──────────────────
+      //
+      // 「保存当前标签页」这条路上有**完全相同**的缺陷：
+      //   · 成功通知由**调用方**发（service-worker.ts 的快捷键 / 右键菜单分支），
+      //     不传 kind ⇒ 受「显示通知提醒」开关约束 ⇒ 默认关闭时**不发**；
+      //   · 这条路也**不打开管理页**（service-worker.ts 明确写死）。
+      // ⇒ 快捷键 Alt+S 存完一个标签，那个标签被关掉，屏幕上零反馈。
+      //
+      // 这里发的是**同一个**回执通道 ⇒ 两条保存路径的回执口径一致。
+      await this.showSaveReceipt(safeGroup.tabs.length, safeGroup.name);
 
       await trackProductEvent('session_saved', {
         sessionId: safeGroup.id,
@@ -562,6 +599,56 @@ export class TabManager {
       });
     } catch (error) {
       logError('显示通知失败:', error);
+    }
+  }
+
+  /**
+   * 保存成功的**徽标回执** —— 一句**不依赖任何开关**的在场凭据。
+   *
+   * ── 为什么这条通道与 {@link showNotification} 并存 ──────────────────────
+   *
+   * 两者服务的不是同一件事：
+   *   · `showNotification` = **例行确认**。受「显示通知提醒」开关约束
+   *     （默认关）—— 这是已拍板的用户偏好，不该被推翻。
+   *   · 徽标回执 = **破坏性动作的完成凭据**。「保存」会**关掉用户窗口里的标签**
+   *     （产品定位：保存 = 剪切），所以用户必须能确认「刚才那 20 个标签去哪了」。
+   *     这类凭据**不该**被一个「我要不要被通知打扰」的开关关掉。
+   *
+   * ⇒ 两者**不互相替代**，也不共用开关。守卫钉的正是这条性质：
+   *   「保存成功 ⇒ 存在一个对用户可见的状态变化，且它**不依赖** showNotifications」。
+   *
+   * ── 为什么用 chrome.action.setBadgeText（零新权限）──────────────────────
+   *
+   * 官方文档：action API 只要求 manifest 里有 `"action"` 键（本仓已有），
+   * `permissions` 里**不需要**加 `action` ⇒ 商店页不用交代新权限。
+   * 全仓 grep 过：`setBadgeText` 此前零调用方 ⇒ 不与任何既有徽标打架。
+   *
+   * ── 为什么走 chrome.alarms 清空，而不是 setTimeout ─────────────────────
+   *
+   * MV3 的 SW 随时被回收 ⇒ setTimeout 必然丢失 ⇒ 徽标会**永远留在图标上**，
+   * 变成一个过期的假数字（比没有回执更糟）。alarms 是持久的 ⇒ 一定清得掉。
+   *
+   * ⚠️ 回执失败**绝不抛错**：一次已经成功的保存不能因为「画不出徽标」
+   * 而变成一次报错（那会让用户以为保存失败，而数据其实已经存好了）。
+   */
+  async showSaveReceipt(savedCount: number, sessionName = ''): Promise<void> {
+    try {
+      const state = issueSaveReceipt(savedCount, Date.now(), sessionName);
+      await paintSaveReceipt(
+        {
+          setBadgeText: (details) => chrome.action.setBadgeText(details),
+          setBadgeBackgroundColor: (details) => chrome.action.setBadgeBackgroundColor(details),
+          setTitle: (details) => chrome.action.setTitle(details),
+        },
+        {
+          create: (name, info) => chrome.alarms.create(name, info),
+          clear: (name) => chrome.alarms.clear(name),
+        },
+        state
+      );
+    } catch (error) {
+      // 回执是锦上添花：它失败 ≠ 保存失败。记一行 warn 就走。
+      logWarn('[TabManager] 保存徽标回执失败（不影响保存结果）:', error);
     }
   }
 }

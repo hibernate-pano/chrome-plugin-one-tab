@@ -10,6 +10,7 @@ import { isOpenableTabUrl, isStorableTabUrl } from '@/utils/inputValidation';
 import { enqueue, hasQueuedOrRunningJob } from '@/background/mutationQueue';
 import { mutationService } from '@/background/mutationService';
 import { ensureOpStampMigrated } from '@/background/opStampMigratedGuard';
+import { clearSaveReceipt, RECEIPT_CLEAR_ALARM } from '@/background/saveReceipt';
 import { runMigrations as runStorageMigrations } from '@/utils/migrationUtils';
 import { UPLOAD_DEBOUNCE_MS } from '@/core/syncTiming';
 import { recordOnboardingTrigger } from '@/utils/onboardingStorage';
@@ -401,6 +402,27 @@ chrome.alarms.onAlarm.addListener((alarm) => {
     enqueue('sync:upload', () => syncEngine.runScheduledUpload()).catch(err => {
       logError('[ServiceWorker] alarm 驱动的上传入队失败:', err);
     });
+  }
+  // ── 2026-10-23：保存徽标回执的到期清空 ─────────────────────────────────
+  //
+  // 为什么必须是 alarm 而不是 setTimeout：MV3 的 SW 随时被系统回收，
+  // setTimeout 必然丢失 ⇒ 徽标会**永远留在图标上**，变成一个过期的假数字
+  // （「已保存 12」挂在图标上，而那件事早就过去了 —— 比没有回执更糟）。
+  // chrome.alarms 是持久的，SW 被回收后照样触发 ⇒ 徽标一定清得掉。
+  if (alarm.name === RECEIPT_CLEAR_ALARM) {
+    void clearSaveReceipt(
+      {
+        setBadgeText: (details) => chrome.action.setBadgeText(details),
+        setBadgeBackgroundColor: (details) => chrome.action.setBadgeBackgroundColor(details),
+        setTitle: (details) => chrome.action.setTitle(details),
+      },
+      {
+        create: (name, info) => chrome.alarms.create(name, info),
+        clear: (name) => chrome.alarms.clear(name),
+      },
+      // 还原成 manifest 的 default_title —— 硬编码在这里会与 manifest 漂移。
+      chrome.runtime.getManifest().action?.default_title ?? 'TapStack'
+    );
   }
 });
 
