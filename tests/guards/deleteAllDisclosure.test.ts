@@ -50,20 +50,33 @@ describe('确认框文案：破坏性操作的最后一道说明', () => {
       isAuthenticated: false,
       syncBackend: 'webdav',
     });
-    assert.equal(message, '将删除本地全部 3 个会话，删除后无法恢复，其他设备将同步删除。确认继续吗？');
+    // 【为什么改成「前缀匹配」而不是逐字相等】2026-10-23 追加了 DS-3 那一句
+    // 「删除可能不生效」⇒ 逐字相等会把**正确的**改动判成红。
+    // 这条守卫真正要守的是三件事：**谁**被告知（设备标签对不对）、
+    // **有没有**被告知（那句在不在）、**结尾**的确认问句在不在。
+    // ⇒ 钉这三件事，不钉整串字节。
+    assert.match(
+      message,
+      /^将删除本地全部 3 个会话，删除后无法恢复，其他设备将同步删除/,
+      `自带存储用户的确认框必须先说清「其他设备将同步删除」：${message}`
+    );
+    assert.match(message, /。确认继续吗？$/, `确认问句必须还在：${message}`);
     assert.ok(!message.includes('登录设备'), '自带存储用户没有账号，不该说「登录设备」');
   });
 
   it('已登录用户保持原文案（口径不变）', () => {
-    assert.equal(
-      deleteAllConfirmMessage({
-        groupCount: 7,
-        lockedCount: 0,
-        isAuthenticated: true,
-        syncBackend: 'supabase',
-      }),
-      '将删除本地全部 7 个会话，删除后无法恢复，其他登录设备将同步删除。确认继续吗？'
+    const message = deleteAllConfirmMessage({
+      groupCount: 7,
+      lockedCount: 0,
+      isAuthenticated: true,
+      syncBackend: 'supabase',
+    });
+    assert.match(
+      message,
+      /^将删除本地全部 7 个会话，删除后无法恢复，其他登录设备将同步删除/,
+      `已登录用户必须被告知「其他登录设备将同步删除」：${message}`
     );
+    assert.match(message, /。确认继续吗？$/);
   });
 
   it('纯本地用户不出现跨设备那句（无后端可广播）', () => {
@@ -90,16 +103,18 @@ describe('确认框文案：破坏性操作的最后一道说明', () => {
 
 describe('菜单行文案：与确认框同一份判据', () => {
   it('自带存储用户 → 其他设备同步删除', () => {
-    assert.equal(
+    assert.match(
       deleteAllMenuWarning({ lockedCount: 0, isAuthenticated: false, syncBackend: 'webdav' }),
-      '将清空本地全部会话，删除后无法恢复（其他设备同步删除）。'
+      /^将清空本地全部会话，删除后无法恢复（其他设备同步删除/,
+      '自带存储用户的菜单行必须说「其他设备同步删除」'
     );
   });
 
   it('已登录用户 → 与改前逐字一致', () => {
-    assert.equal(
+    assert.match(
       deleteAllMenuWarning({ lockedCount: 0, isAuthenticated: true, syncBackend: 'supabase' }),
-      '将清空本地全部会话，删除后无法恢复（其他登录设备同步删除）。'
+      /^将清空本地全部会话，删除后无法恢复（其他登录设备同步删除/,
+      '已登录用户的菜单行必须说「其他登录设备同步删除」'
     );
   });
 

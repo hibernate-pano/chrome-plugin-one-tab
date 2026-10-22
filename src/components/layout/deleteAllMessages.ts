@@ -75,13 +75,30 @@ export const deleteAllLockedWarning = (input: DeleteAllLockedDisclosure): string
     ? `，其中包含 ${input.lockedCount} 个已锁定的会话，也会被删除`
     : '';
 
+/**
+ * 「删除会传到其他设备」这句话**还差一档**（数据安全审计 DS-3，2026-10-23）。
+ *
+ * 删除意图确实会广播（墓碑上传 ⇒ 对端服从删除），但**胜负由操作印记决定**
+ * （`src/core/opStampMerge.ts`）：另一台设备若在**离线期间改过**这个会话，
+ * 它的印记可能更大 ⇒ **删除被撤销** ⇒ 那条会话在对方那儿还在，
+ * 下一轮同步还会回到本机。
+ *
+ * ⇒ 「其他登录设备将同步删除」这句话**只对了一半** —— 它承诺了一个
+ * 实现不保证的结果（README / 商店文案 / Known Issues 已经把这一档写出来了，
+ * 剩下的就是**当用户要按下确认键的那一刻**，也让他看见）。
+ * 代价是一句话，而收益是：他以为自己删干净了，而其实没有。
+ */
+const crossDeviceCaveat = '（另一台设备若在离线时改过它，删除可能不生效）';
+
 /** 确认框正文（破坏性操作的最后一道说明）。 */
 export const deleteAllConfirmMessage = (
   input: DeleteAllDisclosure & { groupCount: number } & DeleteAllLockedDisclosure
 ): string =>
   `将删除本地全部 ${input.groupCount} 个会话，删除后无法恢复` +
   deleteAllLockedWarning(input) +
-  (deleteReachesOtherDevices(input) ? `，${otherDevicesLabel(input)}将同步删除` : '') +
+  (deleteReachesOtherDevices(input)
+    ? `，${otherDevicesLabel(input)}将同步删除${crossDeviceCaveat}`
+    : '') +
   '。确认继续吗？';
 
 /** 菜单行副标题（点开菜单就能看到的那句）。 */
@@ -90,5 +107,7 @@ export const deleteAllMenuWarning = (
 ): string =>
   '将清空本地全部会话，删除后无法恢复' +
   deleteAllLockedWarning(input) +
-  (deleteReachesOtherDevices(input) ? `（${otherDevicesLabel(input)}同步删除）` : '') +
+  (deleteReachesOtherDevices(input)
+    ? `（${otherDevicesLabel(input)}同步删除${crossDeviceCaveat}）`
+    : '') +
   '。';

@@ -20,6 +20,7 @@ import { cleanDuplicatesConfirmMessage, cleanDuplicatesResultMessage } from '../
 import { planCleanDuplicates } from '../src/core/mutationOps.ts';
 import {
   deleteAllConfirmMessage,
+  deleteAllMenuWarning,
   deleteAllShouldPushOverwrite,
   deleteReachesOtherDevices,
 } from '../src/components/layout/deleteAllMessages.ts';
@@ -272,5 +273,56 @@ describe('首次推送：远端只有墓碑时，三个选项都不许说「零�
       "「merge 永不确认」正是让推荐选项零确认撤销删除的原因，必须去掉",
     );
     assert.match(src, /if \(d\.warning\)/, '确认判据应为「这一步有不可恢复后果就确认」');
+  });
+});
+
+/**
+ * 「删除会传到其他设备」这句话**还差一档**（数据安全审计 DS-3，2026-10-23）。
+ *
+ * 删��意图确实会广播，但**胜负由操作印记决定** ⇒ 另一台设备若在离线期间改过
+ * 这个会话，**删除可能被撤销**（那条会话在对方那儿还在，下一轮同步还会回本机）。
+ * ⇒ 只写「其他登录设备将同步删除」，是在确认键前许一个实现不保证的结果。
+ *
+ * 守卫钉的是**承诺的完整性**：说了「会同步删除」，就必须同时说清那一档。
+ */
+describe('删除的跨设备承诺必须连「可能不生效」一起说', () => {
+  it('确认框承诺跨设备删除时，必须同时说清「删除可能不生效」', () => {
+    const msg = deleteAllConfirmMessage({
+      isAuthenticated: true,
+      syncBackend: 'supabase',
+      groupCount: 5,
+      lockedCount: 0,
+    });
+    assert.match(msg, /其他登录设备将同步删除/, '前提：这句话本身必须还在');
+    assert.match(
+      msg,
+      /删除可能不生效|可能保留|可能不生效/,
+      '确认框许了「其他设备会同步删除」，却没说清「对方在离线时改过它 ⇒ 删除可能不生效」—— ' +
+        '用户以为删干净了，而其实那条会话还在。'
+    );
+  });
+
+  it('菜单行那句（用户点开菜单就能看到的）必须同样说清', () => {
+    const msg = deleteAllMenuWarning({
+      isAuthenticated: true,
+      syncBackend: 'supabase',
+      lockedCount: 0,
+    });
+    assert.match(msg, /同步删除/, '前提：这句话本身必须还在');
+    assert.match(
+      msg,
+      /删除可能不生效|可能保留/,
+      '菜单行与确认框必须同口径 —— 两处各说一半，读者看到的就是两件不同的事'
+    );
+  });
+
+  it('纯本地用户（没有同步后端）不该看到这句承诺，也不该看到那句限定', () => {
+    const msg = deleteAllConfirmMessage({
+      isAuthenticated: false,
+      syncBackend: 'supabase',
+      groupCount: 3,
+      lockedCount: 0,
+    });
+    assert.doesNotMatch(msg, /其他设备|其他登录设备|删除可能不生效/);
   });
 });
