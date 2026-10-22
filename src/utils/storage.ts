@@ -20,7 +20,13 @@ import { logError, logWarn } from './log';
 // 纯函数在 @/core/mutationOps，与 mutationHandlers 走的是同一份实现，
 // 本地兜底（无 SW 语境）与 SW 语义不可能漂移。
 import { applyImportGroups } from '@/core/mutationOps';
-import { normalizeImportedGroup } from '@/core/normalizeTabsData';
+import { normalizeImportedGroup, normalizeImportedGroupsIsolated } from '@/core/normalizeTabsData';
+import { chunkGroups, dedupeByFileFingerprint } from '@/core/importChunking';
+import {
+  importFileUnreadableReason,
+  importNoImportableGroupReason,
+  importWriteFailedReason,
+} from '@/core/importResultReasons';
 import { sanitizeTabUrl } from './inputValidation';
 import { createSeqRegistry } from './seqRegistry';
 import { getDeviceId } from './deviceUtils';
@@ -439,6 +445,21 @@ export interface ImportDetailedResult {
    * UI 必须分开说，否则用户重复导入一次就以为自己的备份坏了。
    */
   skippedExisting?: number;
+  /**
+   * 备份里的**设置**（主题/布局/排序等）没能合并进本机（2026-10-23 审计 DS-43-5）。
+   *
+   * 为什么要单独一个字段：设置合并的失败原先只写进日志，导入照样报「成功」——
+   * 用户看到「已导入 12 个会话」，以为整套状态都回来了，其实主题还是旧的、
+   * 排序也还是旧的。⇒ 会话导进来但设置没回来，**必须说出来**。
+   */
+  settingsMergeFailed?: boolean;
+  /**
+   * 文件里**读不出来**的会话数（2026-10-23 审计 DS-43-4）。
+   *
+   * 这些组被**逐个隔离**跳过（不影响其它组落盘），但用户必须知道：
+   * 否则「文件里有 20 个、会话列表里只多了 18 个」这件事没人解释。
+   */
+  failedGroups?: number;
 }
 
 class ChromeStorage {
@@ -1427,44 +1448,134 @@ class ChromeStorage {
     // 二次归一化对已归一化的输入不变（容器选择命中 tabs、元素映射恒等），
     // 代价是一趟数组映射（几百组的规模下远小于一次落盘往返）。
     const safeIncoming = incoming.map(normalizeImportedGroup);
+
+    // ── 2026-10-23 审计 DS-43-9：分块前先按**文件指纹**去重 ────────────────
+    //
+    // 分块会改变「同一份文件里的重复项」的判重对象（文件指纹 vs 已落盘的
+    // 清洗后指纹）⇒ 跨块的重复项可能判不中 ⇒ 造副本。详见 importChunking.ts
+    // 文件头。去重掉的个数计入 skippedExisting —— 与不分块时的计数完全一致。
+    const { groups: deduped, duplicates } = dedupeByFileFingerprint(safeIncoming);
+
+    // ── 2026-10-23 审计 DS-43-9：分块 ──────────────────────────────────────
+    //
+    // **两条路径共用同一份分块结果**（不是各自分一次）：
+    // · 语义上没差别（两条路径都要分块）；
+    // · 但「只有一处调用」让守卫能咬住 —— 分两次时，
+    //   守卫「源码里出现了 chunkGroups(」会被另一条路径的调用满足，
+    //   于是「把其中一条改回整块发送」这个变异**照样全绿**（实测过）。
+    //   ⇒ 一处分块 = 一个变异 = 一条会红的断言。
+    const chunks = chunkGroups(deduped);
+
     if (hasMutationSender()) {
-      const res = await sendMutation<{ imported: number; skippedExisting: number }>({ op: 'importGroups', groups: safeIncoming });
-      if (!res.ok) {
-        // 超时 ≠ 未受理（1.22.14）：sendMutation 把超时折成 { ok:false,
-        // error:'操作超时…' }（它内部吞掉一切异常）。但超时的真实语义只是
-        // 「popup 不再等了」，命令已进入 SW 单写者队列且后台会继续执行完。
-        // 此时若报「导入失败」，用户重试同一份文件会导入出整份副本
-        // （1.22.17 起 applyImportGroups 会跳过「同名 + 同内容指纹」的组，见
-        // core/normalizeTabsData.groupContentFingerprint；但幂等是收敛机制，
-        // 不是「可以随便重试」的许可）。按「已受理」处理：让 reload 后的
-        // 列表展示真实结果；极端情况下列表短暂未含导入内容，等 SW 跑完再开即见。
-        if (typeof res.error === 'string' && res.error.startsWith(TIMEOUT_REASON_PREFIX)) {
-          logWarn('[Storage] 导入等待超时，命令已受理并在后台继续执行（不报失败，避免重复导入整份副本）');
-          return { imported: -1, skippedExisting: 0 };
+      let imported = 0;
+      let skippedExisting = duplicates;
+      for (let i = 0; i < chunks.length; i += 1) {
+        const res = await this.sendImportChunk(chunks[i]);
+        if (res.timedOut) {
+          // 超时 ≠ 未受理（1.22.14）：sendMutation 把超时折成 { ok:false,
+          // error:'操作超时…' }（它内部吞掉一切异常）。但超时的真实语义只是
+          // 「popup 不再等了」，命令已进入 SW 单写者队列且后台会继续执行完。
+          // 此时若报「导入失败」，用户重试同一份文件会导入出整份副本
+          // （1.22.17 起 applyImportGroups 会跳过「同名 + 同内容指纹」的组，见
+          // core/normalizeTabsData.groupContentFingerprint；但幂等是收敛机制，
+          // 不是「可以随便重试」的许可）。按「已受理」处理：让 reload 后的
+          // 列表展示真实结果；极端情况下列表短暂未含导入内容，等 SW 跑完再开即见。
+          //
+          // 分块后的新问题：**后面的块还没发**。不发 = 那部分数据永远不进来
+          // （静默丢数据，比慢更糟）⇒ 照发；但不再等它们的响应 ——
+          // 否则总等待会变成「每块各等 30s」（几十块 = 十几分钟）。
+          // 不等的代价是数量未知 ⇒ 报 pending（既有契约：数量未知、后台继续）。
+          for (let j = i + 1; j < chunks.length; j += 1) {
+            void this.sendImportChunk(chunks[j]);
+          }
+          logWarn(
+            `[Storage] 导入等待超时，命令已受理并在后台继续执行（不报失败，避免重复导入整份副本）` +
+              `（共 ${chunks.length} 块，已发出 ${i + 1} 块，其余在后台排队）`
+          );
+          return { imported: -1, skippedExisting };
         }
         // 其余明确失败如实失败：不退回本地直写——那正是本方法要消灭的竞态路径。
-        throw new Error(res.error ?? 'Service Worker 未接受导入');
+        if (!res.ok) {
+          throw new Error(res.error ?? 'Service Worker 未接受导入');
+        }
+        // SW 回了个看不懂的形状 ⇒ 数量未知（与旧实现一致：-1 = 数量未知）。
+        if (res.imported < 0) {
+          return { imported: -1, skippedExisting };
+        }
+        imported += res.imported;
+        skippedExisting += res.skippedExisting;
       }
-      const payload = res.payload;
-      if (payload && typeof payload === 'object' && typeof payload.imported === 'number') {
-        return { imported: payload.imported, skippedExisting: payload.skippedExisting ?? 0 };
-      }
-      // 旧形状（数组）兜底：SW 版本比本仓旧时按数组长度算。
-      return { imported: Array.isArray(payload) ? payload.length : -1, skippedExisting: 0 };
+      return { imported, skippedExisting };
     }
 
-    const existing = await this.getGroupsForWrite();
-    const stamp = await this.nextLocalOpStamp(existing);
-    const merged = applyImportGroups(
-      existing,
-      safeIncoming,
-      { genId: () => nanoid(), sanitizeUrl: sanitizeTabUrl },
-      new Date().toISOString(),
-      stamp
-    );
-    await this.setGroupsImmediate(merged.groups);
-    await this.markGroupsChangedByImport();
-    return { imported: merged.imported.length, skippedExisting: merged.skippedExisting };
+    // ── 本地兜底（无 SW：网页版 / node:test）────────────────────────────────
+    // 逐块顺序执行：本地没有单写者队列可依赖，顺序 = 串行。
+    // 每块都是一次完整的「读真值 → 合并 → 盖印记 → 写盘」。
+    let imported = 0;
+    let skippedExisting = duplicates;
+    try {
+      for (const chunk of chunks) {
+        const existing = await this.getGroupsForWrite();
+        const stamp = await this.nextLocalOpStamp(existing);
+        const merged = applyImportGroups(
+          existing,
+          chunk,
+          { genId: () => nanoid(), sanitizeUrl: sanitizeTabUrl },
+          new Date().toISOString(),
+          stamp
+        );
+        await this.setGroupsImmediate(merged.groups);
+        imported += merged.imported.length;
+        skippedExisting += merged.skippedExisting;
+      }
+    } finally {
+      // 已经落盘的块必须被记账（哪怕后面某块失败）——否则「导入了但没上云」。
+      await this.markGroupsChangedByImport();
+    }
+    return { imported, skippedExisting };
+  }
+
+  /**
+   * 发一条 importGroups 消息（一块会话组）。
+   *
+   * 单独抽出来是因为「超时」需要与「明确失败」分开处理：
+   * 超时 = 已受理、后台继续；明确失败 = 真的没成。
+   */
+  private async sendImportChunk(chunk: TabGroup[]): Promise<{
+    ok: boolean;
+    error?: string;
+    imported: number;
+    skippedExisting: number;
+    timedOut: boolean;
+  }> {
+    const res = await sendMutation<{ imported: number; skippedExisting: number }>({
+      op: 'importGroups',
+      groups: chunk,
+    });
+    if (!res.ok) {
+      const error = typeof res.error === 'string' ? res.error : 'Service Worker 未接受导入';
+      if (error.startsWith(TIMEOUT_REASON_PREFIX)) {
+        return { ok: false, error, imported: 0, skippedExisting: 0, timedOut: true };
+      }
+      return { ok: false, error, imported: 0, skippedExisting: 0, timedOut: false };
+    }
+    const payload = res.payload;
+    if (payload && typeof payload === 'object' && typeof payload.imported === 'number') {
+      return {
+        ok: true,
+        imported: payload.imported,
+        skippedExisting: payload.skippedExisting ?? 0,
+        timedOut: false,
+      };
+    }
+    // 旧形状（数组）兜底：SW 版本比本仓旧时按数组长度算。
+    // 再兜底（形状完全看不懂）：-1 = 数量未知（调用方据此报「仍在后台继续」）。
+    return {
+      ok: true,
+      imported: Array.isArray(payload) ? payload.length : -1,
+      skippedExisting: 0,
+      timedOut: false,
+    };
   }
 
   /**
@@ -1694,6 +1805,20 @@ class ChromeStorage {
     // 不该因为后续步骤失败而归零。格式完全不对（data.data.groups 非数组）
     // 时它就是 0，仍然诚实。
     const sourceGroupsCount = Array.isArray(data?.data?.groups) ? data.data.groups.length : 0;
+
+    // ── 阶段一：读文件（纯计算）───────────────────────────────────────────
+    //
+    // 【为什么把「读文件」和「写盘」分成两段，各自带自己的失败理由】——
+    //
+    // 原先两者挤在一个 try 里，任何异常都落到同一句 catch 的理由上：
+    // 「可能是浏览器存储空间不足或扩展无写入权限」。
+    // 而**实测复现**的真实故障是：文件里一个组的时间戳越界 ⇒ 归一化抛
+    // RangeError ⇒ 整批归零 ⇒ 用户看到的解释是「存储空间不足」。
+    // ⇒ 解释与故障对不上号，用户会去清存储（没用）而不是去修文件（有用）。
+    //
+    // 现在：**文件读不懂**与**写盘失败**是两条路、两句理由。
+    let groups: TabGroup[];
+    let failedGroups = 0;
     try {
       if (!data || !data.data || !Array.isArray(data.data.groups)) {
         throw new Error('无效的导入数据格式');
@@ -1704,8 +1829,27 @@ class ChromeStorage {
       // applyImportGroups 会直接 group.tabs.reduce(...)，一旦缺失就整次导入抛异常
       // （用户看到「导入失败」却不知道原因，而文件其实是好的）。
       // 下载路径早就在用 normalizeTabsData 处理同一类形状，导入路径此前没有。
-      const groups = data.data.groups.map(normalizeImportedGroup);
+      //
+      // 逐组隔离（2026-10-23 审计 DS-43-4）：`map` 是全有或全无的 ——
+      // 任何一个组抛异常，**整批**都没了（实测：createdAt: 1e20 ⇒ 整批归零）。
+      // 现在一个组坏掉只丢这一个组，其余照常导入，并如实上报坏了几个。
+      const normalized = normalizeImportedGroupsIsolated(data.data.groups);
+      groups = normalized.groups;
+      failedGroups = normalized.failed;
+    } catch (parseError) {
+      logError('导入文件无法解析:', parseError);
+      return {
+        ok: false,
+        imported: 0,
+        source: sourceGroupsCount,
+        pending: false,
+        // 「文件读不懂」与「写盘失败」必须分开说（见上方注释）。
+        reason: importFileUnreadableReason(sourceGroupsCount),
+      };
+    }
 
+    // ── 阶段二：写盘 ───────────────────────────────────────────────────────
+    try {
       // 诚实化（2026-10-07 补漏）：与 importFromOneTabFormat 同一处判据 ——
       // 「有 N 个组」不等于「能导入 N 个组」。applyImportGroups 会把 sanitizeTabUrl
       // 不通过的标签整条丢弃、并滤掉因此变空的组；若所有组都这样，旧实现一路
@@ -1727,15 +1871,15 @@ class ChromeStorage {
         // 注意这是 1.22.15 引入的行为变化：旧版本在这条路径上仍会合并 settings。
         // 若要恢复旧行为，把这段 early return 移到 settings 合并之后即可，
         // 但需要先重新论证「失败提示 + 设置被改」的组合是否可接受。
-        return { ok: false, imported: 0, source: groups.length, pending: false,
-          reason: `文件内共 ${groups.length} 个会话，但没有任何可导入的网址：` +
-            '全部为空会话，或只含无法保存的网址（javascript:、data: 等危险协议，' +
-            '以及 chrome://、edge:// 等浏览器内部地址会被跳过）' };
+        return { ok: false, imported: 0, source: sourceGroupsCount, pending: false,
+          failedGroups,
+          reason: importNoImportableGroupReason(sourceGroupsCount, failedGroups) };
       }
 
       const merged = await this.mergeImportedGroups(groups);
 
       // 如果有设置数据，则合并设置
+      let settingsMergeFailed = false;
       if (data.data.settings) {
         try {
           const currentSettings = await this.getSettings();
@@ -1755,7 +1899,11 @@ class ChromeStorage {
             ...importedSettings
           });
         } catch (settingsError) {
+          // 2026-10-23 审计 DS-43-5：原先这里只写日志，导入照样报「成功」——
+          // 用户以为整套状态都回来了，其实主题/布局/排序都还是旧的。
+          // 现在把失败**如实上报**，让界面说「会话导进来了，但设置没恢复」。
           logWarn('[Storage] 导入的设置未合并（标签组已导入成功，设置保持原样）:', settingsError);
+          settingsMergeFailed = true;
         }
       }
 
@@ -1763,13 +1911,15 @@ class ChromeStorage {
         ok: true,
         // importedCount === -1 表示超时但命令已受理（后台继续跑，真实数量未知）
         imported: merged.imported < 0 ? 0 : merged.imported,
-        source: groups.length,
+        source: sourceGroupsCount,
         pending: merged.imported < 0,
         // 2026-10-19 审计 F-5：「已存在而跳过」的个数。
         // UI 据此把「幂等跳过」与「文件内容有问题」分开说 —— 原先两者共用
         // 一句「为空会话或只含无法保存的网址」，用户重复导入同一份备份时
         // 看到的是「你的备份文件坏了」。
         skippedExisting: merged.skippedExisting,
+        settingsMergeFailed,
+        failedGroups,
       };
     } catch (error) {
       logError('导入数据失败:', error);
@@ -1779,12 +1929,10 @@ class ChromeStorage {
         imported: 0,
         source: sourceGroupsCount,
         pending: false,
-        // 格式不对（最高频，且用户自己能判断）与写盘失败（用户处理不了）
-        // 必须分开说 —— 原先 UI 只有一句静态的「数据导入失败」，三种原因同一句。
-        reason:
-          sourceGroupsCount === 0
-            ? '这个文件里没有可导入的会话：请确认选中的是本扩展导出的 JSON 备份文件'
-            : `导入未能完成（文件内共 ${sourceGroupsCount} 个会话，本次一个都没落盘）。请稍后重试；若反复失败，可能是浏览器存储空间不足或扩展无写入权限。`,
+        failedGroups,
+        // 阶段二失败 = **写盘**失败（阶段一的「文件读不懂」已在上方单独返回）。
+        // 理由必须与故障对得上：这里只说写盘，绝不提「文件坏了」。
+        reason: importWriteFailedReason(sourceGroupsCount),
       };
     }
   }

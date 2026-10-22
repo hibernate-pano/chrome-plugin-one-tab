@@ -73,11 +73,31 @@ export function normalizeTabsData(value: unknown, contextId?: string): TabData[]
 // 只管容器形状、不管元素形状，所以从旧文件导入的标签会丢时间戳。
 // ────────────────────────────────────────────────────────────────────────────
 
-/** 任意输入 → ISO 字符串。合法输入（ISO 字符串 / 有限数字纪元毫秒）→ 原值换算，绝不替换成 now。 */
+/**
+ * 任意输入 → ISO 字符串。合法输入（ISO 字符串 / 有限数字纪元毫秒）→ 原值换算，绝不替换成 now。
+ *
+ * ── 2026-10-23 审计 DS-43-4：这里原先会**抛异常**，且抛在整批导入的正中间 ──
+ *
+ * 原实现：`Number.isFinite(value) ? new Date(value).toISOString() : null`
+ * —— 「有限」不等于「Date 能表示」。Date 的合法纪元毫秒范围是 ±8.64e15，
+ * 而 `Number.isFinite(1e20)` 是 true ⇒ `new Date(1e20)` 是 Invalid Date ⇒
+ * `.toISOString()` 抛 `RangeError: Invalid time value`。
+ *
+ * 后果链（实测复现）：备份文件里**一个**组的时间戳越界 ⇒ 归一化抛出 ⇒
+ * 整个 `map` 中断 ⇒ **整批**会话一个都没落盘 ⇒ 而失败提示甩锅
+ * 「浏览器存储空间不足或扩展无写入权限」（真正的原因是文件里有个坏时间戳）。
+ * ⇒ 一个坏字段 = 丢一整批数据 + 一句错误的解释。
+ *
+ * 现在：越界与其它不可用时间戳**同口径**（返回 null ⇒ 走 nowIso 回退），
+ * 这个函数**永不抛**。
+ */
 function asIso(value: unknown): string | null {
   // 数字：只认有限数值（纪元毫秒），NaN/±Infinity 等非法值走回退。
   if (typeof value === 'number') {
-    return Number.isFinite(value) ? new Date(value).toISOString() : null;
+    if (!Number.isFinite(value)) return null;
+    // 有限但超出 Date 可表示范围（|ms| > 8.64e15）⇒ 同样判为不可用。
+    const date = new Date(value);
+    return Number.isNaN(date.getTime()) ? null : date.toISOString();
   }
   if (typeof value !== 'string' || !value.trim()) return null;
   const ms = new Date(value).getTime();
@@ -215,6 +235,51 @@ export function normalizeImportedGroup(raw: unknown): TabGroup {
     // 读的人一眼看得见"这条是活的"。两条路都安全，但**确定**的那条更难被误改。
     isDeleted: false,
   } as TabGroup;
+}
+
+/**
+ * 逐组隔离地归一化一批导入组（2026-10-23 审计 DS-43-4）。
+ *
+ * ── 为什么不能直接 `.map(normalizeImportedGroup)` ──────────────────────────
+ *
+ * 归一化面对的是**用户手上的文件**：形状完全不可信。而 `map` 是**全有或全无**的
+ * —— 任何一个组抛异常，**整批**都没了（实测：一个 `createdAt: 1e20` 的组
+ * ⇒ 整批 N 个会话一个都没落盘，而提示还甩锅「存储空间不足」）。
+ *
+ * ⇒ 隔离的口径：**一个组坏掉，只丢这一个组**，其余照常导入，
+ *   并把「坏掉几个」如实报给用户（见 ImportDetailedResult.failedGroups）。
+ *
+ * 这不是「防御性编程」的洁癖，而是**数据丢失**与**错误解释**两件事同时发生：
+ * 坏的那一个组丢掉可以接受（N-1 个还在），整批归零不可接受。
+ */
+export interface NormalizedImportGroups {
+  /** 归一化成功的组（已按文件顺序排列）。 */
+  groups: TabGroup[];
+  /** 因为自身数据坏掉而无法归一化的组数（已隔离，不影响其它组）。 */
+  failed: number;
+}
+
+/**
+ * 逐组隔离地归一化一批导入组。
+ *
+ * @param raw 文件里的原始组数组（形状不可信）
+ */
+export function normalizeImportedGroupsIsolated(raw: unknown[]): NormalizedImportGroups {
+  const groups: TabGroup[] = [];
+  let failed = 0;
+  for (const item of raw) {
+    try {
+      groups.push(normalizeImportedGroup(item));
+    } catch (error) {
+      failed += 1;
+      // 逐组记录，不中断整批；用户侧会看到「有 N 个会话读不出来，已跳过」。
+      logWarn(
+        '[normalizeTabsData] 导入文件里有 1 个会话无法解析，已跳过（不影响其它会话）:',
+        error
+      );
+    }
+  }
+  return { groups, failed };
 }
 
 // ────────────────────────────────────────────────────────────────────────────

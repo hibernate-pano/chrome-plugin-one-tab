@@ -39,11 +39,26 @@ import { registerFocusReturn } from '@/utils/focusReturn';
 import { deleteAllConfirmMessage, deleteAllMenuWarning, deleteAllShouldPushOverwrite } from './deleteAllMessages';
 import { importPartialMessage, importSuccessMessage } from './importResultCopy';
 import { countOneTabGroups } from '@/core/oneTabFormatParser';
+import { formatExportStamp } from '@/utils/exportStamp';
+import { MAX_IMPORT_FILE_BYTES, importFileTooLargeMessage } from '@/core/importLimits';
 import { resolveMenuSyncStatus, resolveSyncFailureCopy } from '@/components/sync/syncPreviewView';
 import { skippedOverwriteNotice } from '@/components/sync/skippedOverwriteNotice';
 
 /** 问题反馈落点：GitHub issues 新建页。用户自己决定粘不粘诊断摘要。 */
 const FEEDBACK_ISSUE_URL = 'https://github.com/hibernate-pano/chrome-plugin-one-tab/issues/new';
+
+/**
+ * 释放 blob URL —— **延后**释放，而不是点完就撤。
+ *
+ * 为什么：下载是浏览器进程**异步**去取这个 blob 的（`<a download>` 只是发起，
+ * 真正取数据在浏览器侧）。原实现是 `a.click(); URL.revokeObjectURL(url);`
+ * 紧挨着 —— 撤销与取数撞上时，下载会拿到一个已经失效的 URL，
+ * 表现是「点了导出，文件没下来，也没有任何提示」（静默失败）。
+ * ⇒ 延后释放：10 秒后文件早已下载完，内存代价可以忽略。
+ */
+const revokeBlobUrlLater = (url: string): void => {
+  setTimeout(() => URL.revokeObjectURL(url), 10_000);
+};
 
 /**
  * 复制文本到剪贴板，两级降级，返回是否真的写进去了。
@@ -629,6 +644,26 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({
     });
   };
 
+  /**
+   * 导入文件太大时的拦截（2026-10-23 审计 DS-43-9）。
+   *
+   * 必须在**读文件之前**判：读进来再判，弹窗已经被那份大文件撑过一次了
+   * （JSON.parse 会把主线程卡住几十秒，用户只看到「扩展没反应」）。
+   *
+   * ⚠️ 这条上限约束的是**一次导入的文件大小**，不是「本机能存多少个会话」——
+   * 后者是另一回事（IndexedDB 配额），仓库不设会话数上限。
+   */
+  const rejectTooLargeFile = (file: File): boolean => {
+    if (file.size <= MAX_IMPORT_FILE_BYTES) return false;
+    showAlert({
+      title: '文件太大',
+      message: importFileTooLargeMessage(file.size),
+      type: 'error',
+      onClose: () => { },
+    });
+    return true;
+  };
+
   // 导出数据为 JSON 格式
   const handleExportData = async () => {
     try {
@@ -641,23 +676,32 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      // 安全地处理日期格式化
-      const date = new Date();
-      const year = date.getFullYear();
-      const month = String(date.getMonth() + 1).padStart(2, '0');
-      const day = String(date.getDate()).padStart(2, '0');
-      a.download = `onetab-backup-${year}-${month}-${day}.json`;
+      // 日期戳取**载荷自己那个时间**（exportData.timestamp），不另取一个 now ——
+      // 跨零点那一毫秒的窗口里，两者会差一天（见 utils/exportStamp.ts 文件头）。
+      const stamp = formatExportStamp(new Date(exportData.timestamp));
+      // 文件名用产品自己的名字：这个文件是 **TapStack 的 JSON 备份**，
+      // 不是 OneTab 格式（OneTab 格式是下面那个 .txt）。
+      const fileName = `tapstack-backup-${stamp}.json`;
+      a.download = fileName;
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
-      URL.revokeObjectURL(url);
+      revokeBlobUrlLater(url);
 
+      // ── 2026-10-23 审计 DS-43-6：导出成功必须有回执 ────────────────────
+      // 原先是「点了就下载、什么都不说」⇒ 用户不知道文件有没有生成、
+      // 也不知道生成了几个会话（导出的会话数与文件内容是用户唯一的核对依据）。
+      // 这里说**我们真正知道的事**：文件已生成、含几个会话、叫什么名字。
+      // 浏览器自己的下载气泡负责「文件落到哪了」——那部分我们看不到，
+      // 所以不假装知道。
+      const groupCount = exportData.data.groups.length;
+      showToast(`已生成备份文件 ${fileName}（${groupCount} 个会话）`, 'success');
       onClose();
     } catch (error) {
       logError('导出数据失败:', error);
       showAlert({
         title: '导出失败',
-        message: '导出数据失败，请重试',
+        message: '导出数据失败，请重试；若反复失败请到「问题反馈」里说明',
         type: 'error',
         onClose: () => { }
       });
@@ -676,23 +720,24 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      // 安全地处理日期格式化
-      const date = new Date();
-      const year = date.getFullYear();
-      const month = String(date.getMonth() + 1).padStart(2, '0');
-      const day = String(date.getDate()).padStart(2, '0');
-      a.download = `onetab-export-${year}-${month}-${day}.txt`;
+      const now = new Date();
+      const fileName = `onetab-export-${formatExportStamp(now)}.txt`;
+      a.download = fileName;
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
-      URL.revokeObjectURL(url);
+      revokeBlobUrlLater(url);
 
+      // 同上：导出成功要有回执，且带上**会话数**（OneTab 文本里没有会话名，
+      // 用户唯一能核对的只有「导出了几个」）。
+      const groupCount = countOneTabGroups(oneTabText);
+      showToast(`已生成 OneTab 导出文件 ${fileName}（${groupCount} 个会话）`, 'success');
       onClose();
     } catch (error) {
       logError('导出 OneTab 格式数据失败:', error);
       showAlert({
         title: '导出失败',
-        message: '导出 OneTab 格式数据失败，请重试',
+        message: '导出 OneTab 格式数据失败，请重试；若反复失败请到「问题反馈」里说明',
         type: 'error',
         onClose: () => { }
       });
@@ -718,7 +763,7 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
-      URL.revokeObjectURL(url);
+      revokeBlobUrlLater(url);
 
       onClose();
     } catch (error) {
@@ -1144,6 +1189,7 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({
               onChange={(e) => {
                   const file = e.target.files?.[0];
                   if (file) {
+                    if (rejectTooLargeFile(file)) { e.target.value = ''; return; }
                     const reader = new FileReader();
                     reader.onload = async (event) => {
                       try {
@@ -1177,6 +1223,12 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({
                                 source: result.source,
                                 imported: result.imported,
                                 skippedExisting: result.skippedExisting,
+                                // 2026-10-23 审计 DS-43-4/5：读不出来的会话数与
+                                // 「设置没恢复」都要说 —— 前者解释「文件里有 N 个，
+                                // 列表里只多了 N-1 个」，后者解释「会话进来了，
+                                // 主题却还是旧的」。
+                                failedGroups: result.failedGroups,
+                                settingsMergeFailed: result.settingsMergeFailed,
                               }),
                               type: 'warning',
                               onClose: () => {},
@@ -1185,6 +1237,8 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({
                             showToast(importSuccessMessage({
                               source: result.source,
                               imported: result.imported,
+                              failedGroups: result.failedGroups,
+                              settingsMergeFailed: result.settingsMergeFailed,
                             }), 'success');
                           }
                           // 只刷新列表，不 reload 整页：提示能完整显示完
@@ -1253,6 +1307,7 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({
               onChange={(e) => {
                   const file = e.target.files?.[0];
                   if (file) {
+                    if (rejectTooLargeFile(file)) { e.target.value = ''; return; }
                     const reader = new FileReader();
                     reader.onload = async (event) => {
                       try {

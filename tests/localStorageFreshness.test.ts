@@ -1020,13 +1020,18 @@ describe('importData 的旧备份形状接线（2026-10-09）', () => {
   // 会让他去「修」一个不存在的问题，甚至删掉真实有效的守护。
   const read = (rel: string) => readFileSync(resolve(ROOT, rel), 'utf8');
 
-  it('importData 必须对每个组调用 normalizeImportedGroup（源码接线断言）', () => {
+  it('importData 必须对每个组调用归一化（源码接线断言）', () => {
     const src = read('src/utils/storage.ts')
       .replace(/\/\*[\s\S]*?\*\//g, '')
       .replace(/(^|[^:])\/\/.*$/gm, '$1');
+    // 2026-10-23 审计 DS-43-4：这条断言原先钉死的是 `data.data.groups.map(
+    // normalizeImportedGroup)` 这个**字面形状** —— 而 `map` 恰恰是缺陷本身
+    // （全有或全无：一个组抛异常 ⇒ 整批归零）。⇒ 钉形状 ⇒ 钉住了 bug。
+    // 现在钉**接线**（导入路径必须经过归一化），形状交给下面那条端到端用例
+    // 与新的守卫文件去证明。
     assert.match(
       src,
-      /data\.data\.groups\.map\(\s*normalizeImportedGroup\s*\)/,
+      /normalizeImportedGroupsIsolated\(\s*data\.data\.groups\s*\)|data\.data\.groups\.map\(\s*normalizeImportedGroup\s*\)/,
       'importData 不再对导入的组做归一化 —— 旧版本备份（tabs_data 键）会变成空组仍报成功，' +
         '而既有良构用例测不出来（它们全用 tabs: 形状）'
     );
