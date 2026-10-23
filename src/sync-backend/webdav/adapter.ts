@@ -1265,6 +1265,52 @@ export class WebDavBackendAdapter implements SyncBackendPort {
     return groups;
   }
 
+  /**
+   * 只取给定 ids 的那些分片（2026-10-23 第 53 轮）。
+   *
+   * 自带存储的布局是「一组一个文件」⇒ 按 id 取 = 只读那几个文件。
+   * 收益与云端后端同源：全量下载会把**整个库**逐个文件读一遍
+   * （100 组 = 100 次请求），而绝大多数分片没变 ⇒
+   * 「每轮全量」让流量与库大小成正比。
+   *
+   * 失败语义与 `downloadGroups()` **逐字一致**：读不出来 ⇒ 抛错中止
+   * （自带存储是 fail-closed 的，不存在云端后端那种「静默少读」）。
+   */
+  async downloadGroupsByIds(ids: string[]): Promise<TabGroup[]> {
+    const wanted = new Set(ids);
+    if (wanted.size === 0) return [];
+    const index = await this.loadIndex();
+    if (index.kind === 'empty') return [];
+    await this.unlock(index.manifest);
+
+    const groups: TabGroup[] = [];
+    const unreadable: string[] = [];
+
+    for (const shard of index.manifest.shards) {
+      if (!wanted.has(shard.id)) continue;
+      try {
+        const { group } = await this.readShard(shard.id);
+        if (!group) {
+          unreadable.push(shard.id);
+          continue;
+        }
+        groups.push(group);
+      } catch (err) {
+        unreadable.push(shard.id);
+        void err;
+      }
+    }
+
+    if (unreadable.length > 0) {
+      throw new Error(
+        `云端有 ${unreadable.length} 个会话文件无法读取（可能被其他程序改动或口令不符）。` +
+          `已中止合并以免把本地对应会话判成「云端已删除」。涉及的会话 id：${unreadable.slice(0, 5).join('、')}` +
+          (unreadable.length > 5 ? ' 等' : '')
+      );
+    }
+    return groups;
+  }
+
   async uploadGroups(
     groups: TabGroup[],
     opts?: { overwriteRemote?: boolean; suppressFirstSyncFullUpload?: boolean }

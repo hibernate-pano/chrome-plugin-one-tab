@@ -7,7 +7,7 @@ export const SYNC_UPLOAD_ALARM = 'tapstack-scheduled-upload';
 // UPLOAD_GUARD_MS 常量与下载前置决策在 core/syncDecision（纯函数，可单测），
 // 此处 re-export 供既有引用方不破坏。
 export { UPLOAD_GUARD_MS } from '@/core/syncDecision';
-import type { TabGroup, UserSettings } from '@/types/tab';
+import type { TabGroup, UserSettings, DownloadSkippedGroup } from '@/types/tab';
 import { storage, invalidateGroupsCache } from '@/utils/storage';
 import {
   downloadTabGroupsDigest,
@@ -34,6 +34,8 @@ import {
 // 合并语义已统一为 mergeOpStamped（OpStamp 全序决胜，组级 LWW 整组覆盖）。
 // 这是合并的唯一真相源；旧 LWW 实现已随 2026-10-05 瘦身删除。
 import { mergeOpStamped } from '@/core/opStampMerge';
+import { assembleCloudGroups, computeCloudDelta } from '@/core/cloudDelta';
+import type { CloudDelta } from '@/core/cloudDelta';
 // 「登记的待传集合」与「本轮上行的集合」的对账判据（2026-10-20 D-3）。
 // 纯函数、后端无关：两个后端走的是同一段引擎代码 ⇒ 判据只有一份。
 import {
@@ -733,9 +735,36 @@ export class SyncEngine {
     }
     try {
       report(10, 'download');
+      // ── 第 53 轮：把「本地活跃组」与「本地墓碑残留」提前算出来 ─────────
+      //
+      // 为什么提前：增量下载的差量判据（core/cloudDelta.ts）需要这两份，
+      // 而它必须在**下载之前**算出来（要据此决定回源哪几行）。
+      // 口径必须与后面喂给 mergeOpStamped 的那份**逐字一致**
+      //（合并模式下 localGroups 就是 snapshot.filter(!isDeleted)）
+      // —— 否则「差量算的」与「合并用的」不是同一个集合 ⇒ 判据失真。
+      const activeLocalIds = new Set(
+        snapshot.filter(g => !g.isDeleted).map(g => g.id)
+      );
+      const legacyLocalTombstoneIds = [
+        ...new Set(
+          snapshot
+            .filter(g => g.isDeleted && !activeLocalIds.has(g.id))
+            .map(g => g.id)
+        ),
+      ];
+      const activeLocalGroups = snapshot.filter(g => !g.isDeleted);
+      const localById = new Map(activeLocalGroups.map(g => [g.id, g]));
       // 2.0 轻量探活：全量下载前先拉指纹列，无变更直接返回本地快照。
       // 短路条件：非 forceRemote（forceRemote 必须绕过探活）且本地非空
       // （首次同步本地为空必须全量下载）。探活失败 fail-open 走原全量流程。
+      //
+      // 【第 53 轮：探活命中之后不再走「全量下载」】──────────────────────
+      // 探活未命中只说明「云端有变化」，**不说明**「要下载整个库」。
+      // 旧实现据此走全量 ⇒ 每轮都把整个库的加密 payload 拉一遍
+      // ⇒ 云端出网量 ∝ 库大小 × 轮数 × 设备数 ⇒ 撞穿 Free 档配额
+      // ⇒ **整个项目被限流**（Supabase 的 egress 封禁是项目级的）。
+      // ⇒ 现在据探活结果算出**差量**，只回源取真正变了的那几行。
+      let delta: CloudDelta | null = null;
       if (!opts?.forceRemote && snapshot.length > 0) {
         try {
           const digest = await downloadTabGroupsDigest();
@@ -758,13 +787,40 @@ export class SyncEngine {
               upToDate: true,
             };
           }
-          logInfo('[SyncEngine] 探活未命中：检测到云端变更，走全量下载合并');
+          logInfo('[SyncEngine] 探活未命中：检测到云端变更，走增量下载合并');
+          delta = computeCloudDelta({
+            localGroups: activeLocalGroups,
+            localTombstoneIds: legacyLocalTombstoneIds,
+            digest,
+          });
+          logInfo(
+            `[SyncEngine] 差量：云端 ${digest.length} 行 ⇒ 需回源 ${delta.payloadIds.length} 行、` +
+              `本地即可代表 ${delta.coveredByLocalIds.length} 行、墓碑 ${delta.tombstones.length} 行`
+          );
         } catch (err) {
           logWarn('[SyncEngine] 指纹探活失败，走全量下载:', err);
+          delta = null;
         }
       }
       // 2. 下载云端
       //
+      // 【第 53 轮：只回源取「真正变了」的那几行】────────────────────────
+      // 全量下载把**每一行**的加密 tabs_data 都拉回来（实测占响应体 93.5%），
+      // 而绝大多数行没变 ⇒ 出网量 ∝ 库大小 ⇒ 配额必然被吃光。
+      // ⇒ 这一轮只取差量点名的那些行，其余行由本地副本代表
+      //（印记相同 ⇒ 合并必然选本地那份 ⇒ 结果与全量下载**逐字相同**）。
+      //
+      // 【为什么必须看 selective】后端不支持增量下载时会自动退回全量，
+      // 那时拿到的是**完整**云端集合 —— 再装配一次就会把完整集合当成
+      // 「只有那几行」削掉一大半 ⇒ 合并把没变的会话判成「云端没有」
+      // ⇒ 数据丢失。所以「拿到的是哪一套」必须由返回值说清楚。
+      //
+      // ⚠️ 一处**已知且极小**的行为差异（如实记下来）：
+      //   增量路径只回源「变了的那几行」⇒ 「本地那份会赢下合并、而云端那一行
+      //   恰好读不出来」的组，不会出现在跳过清单里（今天它会被读一次 ⇒ 进清单）。
+      //   影响面：该组必须是**未锁定且零标签**（本地未锁定的零标签组由
+      //   applyRemoveTab 直接删掉，正常路径下不存在）⇒ 实际不可达。
+      //   合并结果本身不受影响（本地赢 ⇒ 两种路径都留本地那份）。
       // 【为什么必须连「读不出来的那几组」一起拿】（2026-10-20 D-6）
       // 云端下行时有些会话**整组读不出来**会被跳过（形状不可恢复 / 还原率
       // 不达标 / tabs 表被网关截断 / 单组处理异常）。它们的**云端行仍在**，
@@ -782,8 +838,26 @@ export class SyncEngine {
       // sync-backend/webdav/adapter.ts）—— 只有云端后端是「静默少读」。
       // 读法与清单在服务层一次完成（同一轮、同一端口实例），见
       // services/downloadWithSkippedGroups.ts。
-      const { groups: cloudGroups, skipped: skippedRemote } =
-        await downloadGroupsWithSkipped();
+      let cloudGroups: TabGroup[];
+      let skippedRemote: DownloadSkippedGroup[];
+      if (delta) {
+        const selective = await downloadGroupsWithSkipped({ onlyIds: delta.payloadIds });
+        if (selective.selective) {
+          cloudGroups = assembleCloudGroups(selective.groups, delta, localById);
+          skippedRemote = selective.skipped;
+        } else {
+          // 后端不支持增量下载 ⇒ 已退回全量 ⇒ 拿到的就是完整云端集合，
+          // **不许再装配**（装配会把完整集合当成「只有那几行」削掉一大半
+          // ⇒ 合并把没变的会话判成「云端没有」⇒ 数据丢失）。
+          cloudGroups = selective.groups;
+          skippedRemote = selective.skipped;
+          logInfo('[SyncEngine] 该后端不支持增量下载，本轮走全量下载');
+        }
+      } else {
+        const full = await downloadGroupsWithSkipped();
+        cloudGroups = full.groups;
+        skippedRemote = full.skipped;
+      }
       report(55, 'download');
       // 本轮被整组跳过的会话 id（云端行仍在、未写回、未登记墓碑）。
       const skippedIds = new Set(skippedRemote.map(s => s.id));
@@ -952,19 +1026,14 @@ export class SyncEngine {
       // 两条），那活跃那份才是真相（合并结果里它会胜出并留在本机）——
       // 此时把墓碑的删除意图广播出去 = 把用户还想要的会话永久删掉。
       // 所以：只登记「没有活跃副本」的墓碑 id。
-      const activeLocalIds = new Set(
-        snapshot.filter(g => !g.isDeleted).map(g => g.id)
-      );
-      const legacyLocalTombstoneIds = [
-        ...new Set(
-          snapshot
-            .filter(g => g.isDeleted && !activeLocalIds.has(g.id))
-            .map(g => g.id)
-        ),
-      ];
+      //
+      // ⚠️ `activeLocalIds` / `legacyLocalTombstoneIds` 已在**探活之前**算好
+      //（第 53 轮：差量判据要用它们，见上面的注释）—— 这里直接复用，
+      // **不要**再算一遍：两份口径一旦漂移，「差量算的」与「合并用的」
+      // 就不是同一个集合 ⇒ 判据失真（这是判据层最常见的事故类型）。
       const localGroups = opts?.forceRemote
         ? preservedLocalGroups(snapshot, skippedIds)
-        : snapshot.filter(g => !g.isDeleted);
+        : activeLocalGroups;
       // 5. 合并
       // 无墓碑模型（2026-09-29）：组级 LWW 整组覆盖（语义见 mergeOpStamped 头注释）。
       // 云端 is_deleted 行 = 删除广播：对端活跃副本 stamp 更旧则服从删除；

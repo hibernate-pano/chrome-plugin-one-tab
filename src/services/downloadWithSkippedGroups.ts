@@ -57,6 +57,11 @@ import type { SyncBackendPort } from '@/sync-backend/ports';
  */
 type BackendWithSkippedGroups = SyncBackendPort & {
   downloadSkippedGroups?: () => Promise<DownloadSkippedGroup[]>;
+  /**
+   * 按 id 取回（可选能力，2026-10-23 第 53 轮）。
+   * 不存在 ⇒ 本轮走全量（少一次优化，不是错误）。
+   */
+  downloadGroupsByIds?: (ids: string[]) => Promise<TabGroup[]>;
 };
 
 export interface DownloadWithSkippedResult {
@@ -64,6 +69,21 @@ export interface DownloadWithSkippedResult {
   groups: TabGroup[];
   /** 本轮**读不出来**而被整组跳过的会话（云端行仍在）。 */
   skipped: DownloadSkippedGroup[];
+  /**
+   * 本轮是不是**真的只取了指定的那些 id**（2026-10-23 第 53 轮）。
+   *
+   * ⚠️ 调用方**必须**看这个标志：
+   *   · true  ⇒ `groups` 就是「那几行」，可以拿它去装配完整的云端集合
+   *     （core/cloudDelta.ts 的 assembleCloudGroups）；
+   *   · false ⇒ 后端不支持增量下载，已退回**全量**，`groups` 就是完整云端集合，
+   *     调用方**必须直接用它**，不许再装配（否则会重复/丢失）。
+   *
+   * 为什么不把「后端支不支持」藏起来：增量下载是**性能**优化，
+   * 退���全量是**正确**行为，不是错误 —— 但调用方若分不清这两种结果，
+   * 就会把「完整集合」当成「只有那几行」去装配 ⇒ 云端集合被削掉一大半
+   * ⇒ 合并把没变的会话判成「云端没有」⇒ **数据丢失**。
+   */
+  selective: boolean;
 }
 
 /**
@@ -95,12 +115,24 @@ function normalizeSkipped(raw: unknown): DownloadSkippedGroup[] {
  *   · `downloadGroups()` 失败 → 抛（与既有下载路径一致：整轮中止）；
  *   · `downloadSkippedGroups()` **不存在** → 空清单（该后端不产生跳过）；
  *   · `downloadSkippedGroups()` **存在但抛错** → 抛（事实未知 ⇒ fail-closed）。
+ *
+ * ── `options.onlyIds`（2026-10-23 第 53 轮）：只取指定的那几行 ──────────
+ * 后端**支持**时走 `downloadGroupsByIds`（出网量 ∝ 变更量）；
+ * **不支持**时自动退回全量，并把 `selective` 置 false 让调用方知道
+ * 「拿到的是完整集合，不是那几行」（见 DownloadWithSkippedResult 的说明）。
  */
-export async function downloadGroupsWithSkipped(): Promise<DownloadWithSkippedResult> {
+export async function downloadGroupsWithSkipped(
+  options?: { onlyIds?: string[] }
+): Promise<DownloadWithSkippedResult> {
   await ensureBackendPrimed();
   const backend = getActiveSyncBackend() as BackendWithSkippedGroups;
 
-  const groups = await backend.downloadGroups();
+  const onlyIds = options?.onlyIds;
+  const canSelect = Array.isArray(onlyIds) && typeof backend.downloadGroupsByIds === 'function';
+
+  const groups = canSelect
+    ? await backend.downloadGroupsByIds!(onlyIds as string[])
+    : await backend.downloadGroups();
 
   let raw: unknown;
   try {
@@ -117,5 +149,5 @@ export async function downloadGroupsWithSkipped(): Promise<DownloadWithSkippedRe
     );
   }
 
-  return { groups, skipped: normalizeSkipped(raw) };
+  return { groups, skipped: normalizeSkipped(raw), selective: canSelect };
 }

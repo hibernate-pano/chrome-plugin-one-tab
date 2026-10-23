@@ -43,8 +43,13 @@ export interface SupabaseSyncPort {
   /** 无墓碑模型：物理删除云端过期墓碑行（is_deleted=true 且 deleted_at 早于龄期）。 */
   purgeExpiredCloudTombstones(maxAgeDays?: number): Promise<number>;
   fetchTabGroupsDigest(): Promise<TabGroupDigest[]>;
-  /** 全量下载会话（只含**成功还原**的那些）。 */
-  downloadTabGroups(): Promise<TabGroup[]>;
+  /**
+   * 下载会话（只含**成功还原**的那些）。
+   *
+   * `options.onlyIds`（2026-10-23 第 53 轮）：只取给定的那几行。
+   * 不传 = 全量。传了 = 出网量 ∝ 变更量（见 core/cloudDelta.ts 的判据）。
+   */
+  downloadTabGroups(options?: { onlyIds?: string[] }): Promise<TabGroup[]>;
   /**
    * 本轮（或最近一轮）下载里**读不出来**而被整组跳过的会话（2026-10-20 D-6）。
    *

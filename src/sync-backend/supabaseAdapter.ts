@@ -94,6 +94,22 @@ export class SupabaseBackendAdapter implements SyncBackendPort {
   }
 
   /**
+   * 只取给定 ids 的那些行（2026-10-23 第 53 轮）。
+   *
+   * 为什么这条必须存在：全量下载把**每一行**的加密 tabs_data 都拉回来
+   * （实测占响应体 93.5%），而绝大多数行没变 ⇒ 云端出网按字节计费时
+   * 「每轮全量」会把配额吃光 ⇒ 整个项目被限流（Supabase 是项目级封禁）。
+   * ⇒ 出网量必须 ∝ 变更量。
+   *
+   * 判据在 core/cloudDelta.ts（纯函数）：哪些行「本地那份就能代表它」
+   * （印记相同 ⇒ 合并必然选本地）⇒ 那些行根本不必回源。
+   */
+  async downloadGroupsByIds(ids: string[]): Promise<TabGroup[]> {
+    const supabaseSync = await loadSupabaseSync();
+    return (await supabaseSync.downloadTabGroups({ onlyIds: ids })) as TabGroup[];
+  }
+
+  /**
    * D-6：云端后端**会**产生「读不出来的那几组」。
    *
    * 那些组被整组跳过（形状不可恢复 / 还原率不达标 / tabs 表回填被截断 /

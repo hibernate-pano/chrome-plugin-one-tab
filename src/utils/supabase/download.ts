@@ -15,7 +15,7 @@ import { normalizeTabsData } from '@/core/normalizeTabsData';
 import { deserializeTab } from '@/core/tabDataCodec';
 import { supabase, checkSupabaseConfig } from './client';
 import { supportsOpStamp } from './probe';
-import { DOWNLOAD_PAGE_SIZE } from './idBatches';
+import { DOWNLOAD_PAGE_SIZE, ID_BATCH_SIZE, chunkIds } from './idBatches';
 import { logError, logInfo, logWarn } from '../log';
 import { CRYPTO_CONCURRENCY, mapWithConcurrency } from '../concurrency';
 // ── 2026-10-22（402）：「服务端项目被限制」要**带着机器判据**上浮 ──────────
@@ -211,10 +211,33 @@ export const downloadSync = {
   },
 
   // 下载标签组
-  async downloadTabGroups() {
+  //
+  // ── 2026-10-23（第 53 轮）：`options.onlyIds` = **只取这几行** ──────────
+  //
+  // 【为什么需要它】全量下载 `select *` 会把**每一行**的加密 tabs_data
+  // 都拉回来（实测占响应体 93.5%），而绝大多数行**根本没变**。
+  // 云端出网（egress）按「发出去多少字节」计 ⇒
+  // 「每轮都把整个库拉一遍」⇒ 出网量 ∝ 库大小 × 轮数 × 设备数
+  // ⇒ 用户一多就撞穿 Free 档 5GB/30 天 ⇒ **整个项目被封**（项目级 402）。
+  //
+  // ⇒ 这里只按 id 取回**确实变了**的那几行；其余行由调用方用本地副本代表
+  //（判据见 core/cloudDelta.ts —— 印记相同 ⇒ 合并必然选本地那份 ⇒ 等价）。
+  //
+  // ⚠️ 只传 `onlyIds` 时**不要**顺手改排序/分页/校验那几段：
+  //   那些是 2026-10-07 那场真实丢数据的遗产（created_at 并列 ⇒ 漏 25%），
+  //   增量路径必须**继承**同一套分页与 count 交叉校验，而不是另写一套。
+  async downloadTabGroups(options?: { onlyIds?: string[] }) {
     // 本轮的清单从零开始（见上面 lastDownloadSkipped 的注释）：
     // 下载失败时它必须是空的，不能是上一轮的残留。
     lastDownloadSkipped = [];
+    // ── 增量下载的空集短路（2026-10-23 第 53 轮）────────────────────────
+    // 明确只要这几行、而这几行为空 ⇒ 云端一行都不用拉 ⇒ **一个请求都不发**
+    // （连账号核对都不发：那是一次真实往返，而这里确定拿不到任何东西）。
+    // 放在最前面是有意的：放在鉴权之后会让「无变化的那一轮」白白付一次网络往返。
+    if (Array.isArray(options?.onlyIds) && options.onlyIds.length === 0) {
+      logInfo('[download] 增量下载：目标 id 为空，未发出任何请求');
+      return [];
+    }
     checkSupabaseConfig();
     // 先检查会话是否有效
     // ── 2026-10-23（第 51 轮）：走**唯一入口**（先问云端在吗 + 5 秒上限）
@@ -334,38 +357,62 @@ export const downloadSync = {
       // 做交叉校验兜底：分页结束后累计行数 != 总行数即整体抛错（fail-closed），
       // 绝不拿半份数据继续合并。
       const groups: any[] = [];
-      let totalCount: number | null = null;
-      for (;;) {
-        const isFirstPage = groups.length === 0;
-        // 首个请求带 { count: 'exact' }：supabase-js 会在**同一个请求**里经
-        // PostgREST 的 Content-Range 带回总行数（零额外请求）。分页结束后拿它
-        // 与累计行数交叉校验 —— 它**只能检测净行数变化**（下方注释与上面
-        // 「它不消除 offset 漂移」那段说清了盲区）。
-        const { data: page, error, count } = await supabase
-          .from('tab_groups')
-          .select(selectColumns, isFirstPage ? { count: 'exact' } : {})
-          .eq('user_id', downloadUserId)
-          .order('created_at', { ascending: false })
-          .order('id', { ascending: false })
-          .range(groups.length, groups.length + DOWNLOAD_PAGE_SIZE - 1);
+      // ── 第 53 轮：按 id 取回时的分块 ────────────────────────────────────
+      //
+      // PostgREST 的 `id=in.(...)` 走 **URL 查询串** ⇒ id 太多会把 URL 撑爆
+      // （超长时的报错形态不可控，且不同网关上限不同）⇒ 按固定块大小切开，
+      // 逐块走**同一套**分页与 count 交叉校验（不是另写一套简化路径 ——
+      // 2026-10-07 那场真实丢数据就发生在分页窗口上）。
+      //
+      // ⚠️ 批大小**复用** idBatches 的 ID_BATCH_SIZE（150），不另立一份：
+      //   那个数字是实测出来的（150 个 uuid ≈ 5.5KB，而网关上限在 22KB~33KB
+      //   之间，见 idBatches.ts 的完整论证）。这里另写一个 50 只是「看起来更安全」，
+      //   代价是请求数翻三倍 —— 而请求数也要花钱（限流 + 每次往返都有延迟）。
+      const requestedIds = Array.isArray(options?.onlyIds)
+        ? options.onlyIds.filter(id => typeof id === 'string' && id.length > 0)
+        : null;
+      const idChunks: Array<string[] | null> = requestedIds
+        ? chunkIds(requestedIds, ID_BATCH_SIZE)
+        : [null];
 
-        if (error) {
-          logError('获取标签组失败:', error);
-          logError('错误详情:', {
-            code: error.code,
-            message: error.message,
-            details: error.details,
-            hint: error.hint
-          });
-          throw error;
+      for (const idChunk of idChunks) {
+        const rows: any[] = [];
+        let totalCount: number | null = null;
+        for (;;) {
+          const isFirstPage = rows.length === 0;
+          // 首个请求带 { count: 'exact' }：supabase-js 会在**同一个请求**里经
+          // PostgREST 的 Content-Range 带回总行数（零额外请求）。分页结束后拿它
+          // 与累计行数交叉校验 —— 它**只能检测净行数变化**（下方注释与上面
+          // 「它不消除 offset 漂移」那段说清了盲区）。
+          let query = supabase
+            .from('tab_groups')
+            .select(selectColumns, isFirstPage ? { count: 'exact' } : {})
+            .eq('user_id', downloadUserId)
+            .order('created_at', { ascending: false })
+            .order('id', { ascending: false });
+          if (idChunk) query = query.in('id', idChunk);
+          const { data: page, error, count } = await query.range(
+            rows.length,
+            rows.length + DOWNLOAD_PAGE_SIZE - 1
+          );
+
+          if (error) {
+            logError('获取标签组失败:', error);
+            logError('错误详情:', {
+              code: error.code,
+              message: error.message,
+              details: error.details,
+              hint: error.hint
+            });
+            throw error;
+          }
+
+          if (isFirstPage) totalCount = count ?? null;
+          rows.push(...(page ?? []));
+
+          // 短页 = 已取完：最后一页不足 PAGE_SIZE（或恰好为 0）时结束。
+          if (!page || page.length < DOWNLOAD_PAGE_SIZE) break;
         }
-
-        if (isFirstPage) totalCount = count ?? null;
-        groups.push(...(page ?? []));
-
-        // 短页 = 已取完：最后一页不足 PAGE_SIZE（或恰好为 0）时结束。
-        if (!page || page.length < DOWNLOAD_PAGE_SIZE) break;
-      }
 
         // 分页截断交叉校验（1.22.15）：tiebreaker 只保证「同一冻结快照上窗口
         // 稳定」，挡不住分页期间云端行数变化或网关 db-max-rows 截断。两者都
@@ -389,12 +436,15 @@ export const downloadSync = {
         // 并发新建的行延迟一轮可见（≤60s）+ 一次额外全量，**没有数据丢失**。
         // 这正是这条校验值得留着的理由：它真正拦住的是「网关静默截断」与「净行数
         // 变化了的漂移」这两个高危形态，而不是所有漂移。
-        if (totalCount !== null && groups.length !== totalCount) {
+        if (totalCount !== null && rows.length !== totalCount) {
           throw new Error(
-            `[download] 分页结果不完整：累计 ${groups.length} 行 != 云端总行数 ${totalCount}，` +
+            `[download] 分页结果不完整：累计 ${rows.length} 行 != 云端总行数 ${totalCount}，` +
               `分页期间云端行数发生变化或响应被网关截断。已中止本次下载（fail-closed）。`
           );
         }
+
+        groups.push(...rows);
+      }
 
       logInfo(`从云端获取到 ${groups.length} 个标签组`);
 
