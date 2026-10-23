@@ -91,7 +91,16 @@ type SyncActionKey = keyof typeof SYNC_ACTIONS;
 
 export const SyncButton: React.FC<SyncButtonProps> = () => {
   const dispatch = useAppDispatch();
-  const { isAuthenticated } = useAppSelector(state => state.auth);
+  /**
+   * 登录态的**那一档**（四档 + 还没核），不是「登录了没」这个布尔。
+   *
+   * ⚠️ 2026-10-23（第 50 轮）：以前这里取的是 `isAuthenticated`，
+   * 而那个布尔把「核不到」（断网 / 402）与「核到没登录」压成同一件事
+   * ⇒ 断网时点同步得到的回复是「还没有登录 TapStack 云端，请先去登录」——
+   * 事实错（用户多半登录着），动作也错（断网时登录必然失败）。
+   */
+  const authStatusKind = useAppSelector(state => state.auth.authStatusKind);
+  const auth = authStatusKind ?? 'unchecked';
   const settings = useAppSelector(state => state.settings);
   /**
    * 「当前身份能不能真的跑一次同步」（与 authGuard / backgroundSync 同口径，按后端分流）。
@@ -100,14 +109,14 @@ export const SyncButton: React.FC<SyncButtonProps> = () => {
    * 用来**隐藏整组按钮**和**给 isOverwriteGateOpen 传 isAuthenticated**。拆开之后：
    *   · 渲染不再看身份（见下方 shouldRenderSyncControls），未登录用户也看得见同步；
    *   · 身份只决定「点下去能不能真跑」，不能跑时由入口闸门当场给出下一步。
-   * 自带存储（WebDAV）用户没有 TapStack 账号，isAuthenticated 恒为 false，
-   * 所以判据必须按后端分流而不是直接读 isAuthenticated。
+   * 自带存储（WebDAV）用户没有 TapStack 账号，登录态恒为 false，
+   * 所以判据必须按后端分流而不是直接读登录态。
    */
   const identityCanRun = syncIdentityCanRun({
     syncBackend: settings.syncBackend,
-    isAuthenticated,
+    auth,
   });
-  const identityGate = { syncBackend: settings.syncBackend, isAuthenticated };
+  const identityGate = { syncBackend: settings.syncBackend, auth };
   /**
    * 上传覆盖在自带存储（WebDAV）上**不删云端独有会话**（全量上行 + 清单并集，
    * 见 `syncPreview.buildUploadPreviewSummary` 的 preserveRemoteOnly）。
@@ -775,10 +784,15 @@ export const SyncButton: React.FC<SyncButtonProps> = () => {
                    * 若存量设置是 local / remote / ask，弹窗会显示一个从未发生
                    * 的合并行为 —— 这是本仓库最不该出现的一类谎报。
                    *
-                   * 下面这行说的是**真实**行为：同一会话在两台设备上都改过时，
-                   * 以最后一次保存的一方为准。 */}
+                   * ⚠️ 2026-10-23 第 50 轮：下面这行原先写的是「后保存的那台赢」
+                   * —— **那是假话**。胜负由 (序号, 设备编号) 决胜，而两台设备的
+                   * 序号来自**各自独立**的计数器 ⇒ 先保存的那台完全可能赢
+                   * （真相源：src/core/opStamp.ts 与 src/core/opStampMerge.ts
+                   * 的文件头注释；DS-43-18）。
+                   * ⇒ 这里改成与商店 Known Issues 同一口径：说清「印记决胜」，
+                   * 并说清败方的后果（**整组**被替换，不是合并）。 */}
                   <p className="mt-2 text-xs font-medium text-sky-600 dark:text-sky-300">
-                    同一会话在两台设备上都改过时，以最后一次保存的一方为准
+                    同一会话两边都改过时，由操作印记决胜（后改的不一定赢），输的一边这次改动会被整组替换
                   </p>
                 </div>
 
@@ -842,7 +856,7 @@ export const SyncButton: React.FC<SyncButtonProps> = () => {
                       {renderPreviewSummary(
                         downloadPreview?.merge ?? null,
                         '本地',
-                        '按当前同步策略把云端会话合并进本地。',
+                        '按 ID 把云端会话合并进本地，未命中的本地会话会保留。',
                       )}
                     </div>
                   </button>

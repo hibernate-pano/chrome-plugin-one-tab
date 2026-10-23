@@ -23,10 +23,8 @@
 import type { SyncBackendId, SyncBackendPort } from './ports';
 import { SupabaseBackendAdapter } from './supabaseAdapter';
 import { logError, logWarn } from '@/utils/log';
-import { kvGet, kvSet } from '@/storage-kv/storageAdapter';
+import { kvGet } from '@/storage-kv/storageAdapter';
 import { LockedBackendError } from './lockedBackendError';
-import { createSeqRegistry } from '@/utils/seqRegistry';
-import { storage } from '@/utils/storage';
 // ── 2026-10-23（首屏瘦身 + SW 可运行）────────────────────────────────────
 //
 // 【配置这一半是静态的】`webdav/config.ts`（gzip 约 1.8KB）**每次解析后端都要**
@@ -36,8 +34,9 @@ import { storage } from '@/utils/storage';
 // 【传输栈那一半是动态的】client + adapter（源码 150KB）只有真的要建
 // WebDAV 后端时才用得上 ⇒ 不能进弹窗首屏。取法见 webdavRuntime.ts：
 // 页面动态加载，service worker 由入口注册静态加载器（SW 里 import() 被禁止）。
-import { chromeKvAdapter, getSessionSecrets, loadWebDavConfig } from './webdav/config';
+import { getSessionSecrets, loadWebDavConfig } from './webdav/config';
 import type { StoredWebDavConfig } from './webdav/config';
+import { buildWebDavAdapterDeps } from './webdav/factory';
 import { loadWebDavTransport } from './webdavRuntime';
 
 let activeBackend: SyncBackendPort | null = null;
@@ -222,24 +221,14 @@ async function defaultFactory(
   //   · 页面：动态加载（首屏不下载，真同步时才下）；
   //   · service worker：**静态** import（SW 里 import() 被 Chrome 禁止）——
   //     由 SW 入口注册静态加载器。
-  const { WebDavClient, WebDavBackendAdapter, hasHostPermission } = await loadWebDavTransport();
-  return new WebDavBackendAdapter({
-    client: new WebDavClient(
-      { baseUrl: cfg.baseUrl, username: cfg.username, password: secrets.password },
-      // 第二个参数留空 = 用全局 fetch（真实运行路径）。
-      fetch,
-      // ── 权限预检接线（2026-10-14 补 P1）────────────────────────────────
-      // 为什么在这里注入而不在 client.ts 里直接调 permission.ts：
-      // 传输层要能在 Node 测试环境独立跑（那里没有 chrome.permissions），
-      // 注入的方式让「不注入 = 不检查」成为显式选择。
-      //
-      // 用 `hasHostPermission`（只 contains、不 request）而非
-      // `ensureHostPermission`：后者会调 `chrome.permissions.request()`，
-      // 而该调用**必须有用户手势**，在 service worker 的定时任务里会直接失败
-      // （permission.ts:52-54已注明）。授权只发生在配置面板的按钮点击里。
-      () => hasHostPermission(cfg.baseUrl)
-    ),
-    config: {
+  //
+  // ⚠️ 依赖（client / config / kv / 三项 seq 能力）由 **webdav/factory.ts** 装配
+  // ——那是全仓唯一的装配点（2026-10-23 第 50 轮）。原来这段代码自己抄了一份，
+  // 于是「设置页那两处」抄的时候漏了三项 seq 能力（D-7 的缺陷形态，只差一次
+  // 写操作就会发作）。收口之后，调用方没有机会漏。
+  const { WebDavBackendAdapter } = await loadWebDavTransport();
+  return new WebDavBackendAdapter(
+    await buildWebDavAdapterDeps({
       baseUrl: cfg.baseUrl,
       username: cfg.username,
       password: secrets.password,
@@ -248,57 +237,10 @@ async function defaultFactory(
       // 且 requireEncryption=true ⇒ 适配器**报错中止**，而不是静默明文上云
       // （这是「静默明文」与「合法不加密」两种状态必须分开的原因）。
       passphrase: secrets.passphrase,
-      requireEncryption: cfg.encryption === 'required',
-    },
-    kv: chromeKvAdapter,
-    // ── 2026-10-17 补 P0：注入本设备 seq 计数器 ──────────────────────────
-    // 为什么必须在这里注入：适配器的 `peekDeviceSeq ?? (() => 0)` 兜底会让
-    // 「水位线的 seq 时钟回退自检」永远拿到 0，`current < deviceSeq` 恒假，
-    // 于是 loadWatermark 的守卫在生产环境是死代码。后果就是 Supabase 侧
-    // 已经修过的那个 P0（utils/supabase/syncWatermark.ts 头注释）：本地
-    // device_seq 被清零（换机 / 清数据 / IndexedDB 被回收）而水位线存活时，
-    // 新会话 lastOp.s 从 1 重新起算，永远低于旧水位 → **新会话静默永不上传**；
-    // 下一拍下载合并又以云端大 seq 赢 → **新会话被静默删除，而 UI 报「同步成功」**。
-    // 1.22.0 起删除即物理清除、无回收站，这一条不可逆。
-    //
-    // 为什么用 `createSeqRegistry` 而不是直接 import 单例：registry 头注释
-    // 说明各处各持一实例但无 memo，共用同一持久化 key 与同一推导规则，
-    // 因此彼此一致（与 utils/supabase/upload.ts 的 tombstoneSeq 同一范式）。
-    //
-    // 为什么用 `peekDeviceSeq` 而不是 `getDeviceSeq`：前者是纯读。getDeviceSeq
-    // 会在「观察到的全网最大印记 > 持久化值」时写回下限，把「看一眼」变成
-    // 「改计数器」——同步后端没有取号的资格（seqRegistry.ts:peekDeviceSeq 注释）。
-    peekDeviceSeq: () => webDavSeqRegistry.peekDeviceSeq(),
-    // ── 2026-10-20 D-7：删除广播必须用**本机 Lamport 时钟**发号 ───────────
-    // 缺陷形态是拿「云端那一行的 seq + 1」当墓碑印记 —— 那恰好等于对端设备
-    // 下一个自然要发的号，于是两边 seq 相等，胜负**退化成设备 id 字典序**
-    // （compareStamps 在 seq 相等时比 d），删除的胜负不再由因果顺序决定。
-    // 完整论证见 webdav/adapter.ts 的 nextDeleteStamp。
-    //
-    // 为什么这里能取号：删除广播是**写**（墓碑要落到远端），它与写作路径
-    // （mutationService / TabManager / 导入兜底）取的是**同一个持久化 key、
-    // 同一套推导规则**的计数器 ⇒ 本机号位全局一致。
-    // （上面 peekDeviceSeq 的「只读」顾虑针对的是**看水位**这个动作；
-    //  取号是写路径的资格，删除广播确实在写。）
-    nextDeviceSeq: () => webDavSeqRegistry.nextSeq(),
-    // 把「观察到的云端 seq」吸收进本机时钟：Lamport 不变式要求本机随后发出的
-    // 号严格大于它见过的任何号。缺了这一步，本机下一个号可能回退到云端号以下，
-    // 墓碑就在下一轮被对端的活跃副本盖掉（删除复活）。
-    bumpDeviceSeqIfLower: (candidate: number) => webDavSeqRegistry.bumpSeqIfLower(candidate),
-  });
+      encryption: cfg.encryption,
+    })
+  );
 }
-
-/**
- * 本设备 seq 计数器的只读视图，供 WebDAV 适配器做水位线自检。
- *
- * 与 utils/supabase/upload.ts 的 tombstoneSeq 同构：同一持久化 key、同一推导
- * 规则、不 memo，因此与写作路径（mutationService / TabManager）看到同一个号位。
- */
-const webDavSeqRegistry = createSeqRegistry({
-  kvGet,
-  kvSet,
-  getGroups: () => storage.getGroups(),
-});
 
 interface ResolutionOutcome {
   backend: SyncBackendPort;

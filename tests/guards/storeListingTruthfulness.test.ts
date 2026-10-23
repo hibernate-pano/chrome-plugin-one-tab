@@ -53,7 +53,7 @@
 
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -68,6 +68,55 @@ const OP_STAMP = read('src/core/opStamp.ts');
 const NORMALIZE = read('src/core/normalizeTabsData.ts');
 const ONETAB = read('src/core/oneTabFormatParser.ts');
 const SESSION_NAME = read('src/domain/tabGroup/sessionName.ts');
+
+/**
+ * 扩展 id 的**真相源**：`scripts/store-listing-judge.mjs` 的 LIVE_LISTING_URL
+ * （同一份 id 也写在 scripts/cws-publish.mjs 的 itemId 注释里）。
+ *
+ * ⚠️ **不在这里手写第二份**：手写的 id 会漂，而漂了的后果是
+ * 「官网的商店链接又指回商店首页」—— 链接看着正常，点进去是别的页面。
+ */
+const EXTENSION_ID = (() => {
+  const m = read('scripts/store-listing-judge.mjs').match(
+    /chromewebstore\.google\.com\/detail\/([a-z]{32})/,
+  );
+  assert.ok(m, 'scripts/store-listing-judge.mjs 里读不出扩展 id —— 判据的锚点丢了');
+  return m[1];
+})();
+
+/** 去掉注释 —— **注释不是用户读到的文案**，不该按文案判。 */
+const stripComments = (src: string): string =>
+  src.replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/(^|[^:])\/\/.*$/gm, '$1');
+
+/**
+ * 应用内文案：`src/` 下的每一个 `.tsx` 文件（**剥掉注释**）。
+ *
+ * ── 为什么要扫这一层（2026-10-23 第 50 轮补上）──────────────────────────
+ * 原来这个守卫只扫文档（README / 商店文案 / 官网）⇒ **应用里用户真正读到的那
+ * 几行**从来没人查。于是「同一会话两边都改过时，以最后一次保存的一方为准」
+ * 这句谎话就住在同步弹窗里（`src/components/sync/SyncButton.tsx`），
+ * 而守卫一路绿灯 —— 扫描面漏了「应用内」这一层。
+ */
+function appCopy(): Array<{ name: string; text: string }> {
+  const out: Array<{ name: string; text: string }> = [];
+  const srcRoot = resolve(ROOT, 'src');
+  const walk = (dir: string): void => {
+    for (const entry of readdirSync(dir).sort()) {
+      const full = resolve(dir, entry);
+      if (statSync(full).isDirectory()) {
+        walk(full);
+        continue;
+      }
+      if (!entry.endsWith('.tsx')) continue;
+      out.push({
+        name: `src/${full.slice(srcRoot.length + 1)}`,
+        text: stripComments(readFileSync(full, 'utf8')),
+      });
+    }
+  };
+  walk(srcRoot);
+  return out;
+}
 
 /** 商店文档的「正文」：排除版本历史表（历史条目描述的是**当时**的行为）。 */
 const storeBody = (): string =>
@@ -164,13 +213,19 @@ const MENTIONS_DELETE_MAY_BE_UNDONE = [
   /your deletion.{0,30}may (?:not|be undone)/i,
 ];
 
-/** **不成立**的具体规则 —— 文案不许说。 */
+/**
+ * **不成立**的具体规则 —— 文案不许说。
+ *
+ * ⚠️ 2026-10-23 第 50 轮：补上「**一次**」这个变体。
+ * 原来只有 /以最后保存的一方为准/ 这一串，而同步弹窗里那句谎话写的是
+ * 「以**最后一次**保存的一方为准」—— 多一个「一次」就**整套判据看不见它**
+ * ⇒ 那条谎话才能在应用里住这么久。
+ */
 const FALSE_LAST_SAVED_CLAIM = [
-  /以最后保存的一方为准/,
-  /以\*\*最后保存的一方\*\*为准/,
-  /以最后保存的一方赢/,
+  /以最后(?:一次)?保存的一方为准/,
+  /以\*\*最后(?:一次)?保存的一方\*\*为准/,
+  /以最后(?:一次)?保存的一方赢/,
   /后保存方整组赢/,
-  /以最后保存的一方为准/,
   /last saved (?:side|party|one) wins/i,
   /the last one saved wins/i,
   /whoever saved last/i,
@@ -276,6 +331,41 @@ describe('文案 ①：不得宣称「以最后保存的一方为准」', () => 
       '商店文案的 Known Issues 必须明确否掉「最后保存的一方赢」'
     );
   });
+
+  // ⚠️ 2026-10-23 第 50 轮补上：**应用内文案**这一层。
+  // 原来这个守卫只扫文档 ⇒ 用户在同步弹窗里读到的那句谎话
+  // （`src/components/sync/SyncButton.tsx`）从来没人查，守卫一路绿灯。
+  it('应用内文案（src/**/*.tsx）不得出现「最后保存的一方为准」', () => {
+    const offenders: string[] = [];
+    for (const file of appCopy()) {
+      for (const p of FALSE_LAST_SAVED_CLAIM) {
+        if (p.test(file.text)) offenders.push(`${file.name}（命中 ${p}）`);
+      }
+    }
+    assert.deepEqual(
+      offenders,
+      [],
+      `应用内文案仍然宣称「最后保存的一方为准」：\n${offenders.join('\n')}\n` +
+        '—— 而代码里的决胜口径是**操作印记**（序号 + 设备编号）：两台设备的序号来自' +
+        '各自独立的计数器，先保存的那台完全可能赢。' +
+        '应用内文案比文档更致命：用户是照着弹窗里那行字做决定的。'
+    );
+  });
+
+  it('应用内那行必须说清「印记决胜」+「败方整组被替换」', () => {
+    const sync = appCopy().find(f => f.name === 'src/components/sync/SyncButton.tsx');
+    assert.ok(sync, '找不到 src/components/sync/SyncButton.tsx —— 判据的锚点丢了');
+    assert.match(
+      sync.text,
+      /印记/,
+      '同步弹窗必须说清冲突由「操作印记」决胜 —— 否则用户会自己脑补成「后保存的赢」'
+    );
+    assert.match(
+      sync.text,
+      /整组(?:替换|覆盖)/,
+      '同步弹窗必须说清败方那一组会被**整组**替换（合并听起来像两边都保留，不是）'
+    );
+  });
 });
 
 describe('文案 ②：导入命名不得说「同一套规则」', () => {
@@ -332,6 +422,112 @@ describe('文案 ③：删除可能被撤销这件事必须说清', () => {
       MENTIONS_DELETE_MAY_BE_UNDONE.some(p => p.test(storeKnownIssues())),
       '商店文案的 Known Issues 必须说清「删除可能被撤销」'
     );
+  });
+});
+
+describe('文案 ④：对外文案不得**否定产品已有的能力**（2026-10-23 第 50 轮）', () => {
+  // ── 这一类的危险与前三条不同 ──────────────────────────────────────────
+  // 前三条是「承诺比实现多」（说了做不到的）；这一类是**反过来**：
+  // 「说得比实现少」—— 读者据此以为产品**缺**这项能力，于是不用它、
+  // 或者去找别的工具。而「诚实边界」那一节恰恰是用户读它的地方 ⇒
+  // 在那里少说一句，代价最大。
+
+  /**
+   * 「锁定 ⇒ 删除入口消失」这类说法 —— 产品做不到。
+   *
+   * 真相（2026-10-20 审计 A-3，`src/components/tabs/TabGroup.tsx`）：
+   * 锁定保护的是会话**内部**（不可重命名 / 不可逐条删 / 不可拖走 /
+   * 不参与清理重复），**不是**「这张卡不许消失」——
+   * 删除入口**始终渲染**，删锁定会话只是**多一道确认**。
+   */
+  const LOCK_HIDES_DELETE_CLAIM = [
+    /删除[^。；\n]{0,10}(按钮|入口)[^。；\n]{0,12}(隐藏|不显示|看不见|消失|一并|一起|同时|没有)/,
+    /(隐藏|不显示|看不见|消失|一并|一起|同时|没有|不提供)[^。；\n]{0,12}(删除|删掉)(按钮|入口)/,
+    /(删除|删)(按钮|入口)[^。；\n]{0,8}(一并|一起|同时|都)[^。；\n]{0,8}(隐藏|不显示|不见|消失)/,
+    // 「锁定 ⇒ 整个会话不能删」：只在**提到锁定**的句子里查，
+    // 并排除「卡内不能逐条删」这种**真的**限制（逐条/标签/其中…）。
+    /锁定[^。；\n]{0,24}?(不能|不可|没法|禁止|不让)(?![^。；\n]{0,8}(标签|条目|其中|里面|单条|单个|一条|逐条|之内|内部))[^。；\n]{0,4}?(删除|删掉)/,
+  ];
+
+  /** 「锁定会话整张卡仍然可以删除」—— 可接受的说法。 */
+  const LOCK_STILL_DELETABLE = [
+    /仍然可以删除/,
+    /依然可以删除/,
+    /照样可以删除/,
+    /仍可删除/,
+    /依然可删除/,
+    /照样能删/,
+    /仍然能删/,
+    /也能删除/,
+    /整张卡[^。；\n]{0,12}(可以|能|照样|仍然|依然|依旧)?[^。；\n]{0,4}删/,
+  ];
+
+  /**
+   * 「没有撤销」—— 1.26.0 起产品**有**撤销（恢复 / 点开那一步，8 秒窗口）。
+   *
+   * ⚠️ 为什么不放行「删除没有撤销」这种**限定说法**：
+   * 官网的「诚实边界」是**逐条**读的，一句「没有撤销」会被读成
+   * 「整个产品没有撤销」⇒ 这条能力在读者眼里被整个抹掉。
+   * ⇒ 口径统一成：删除那一步说「**没有退路**」，撤销只挂在恢复 / 点开上。
+   */
+  const NO_UNDO_CLAIM = [/没有撤销/, /无撤销/, /不提供撤销/, /没有\s*undo/i];
+
+  /** 官网里的段落（按换行切；HTML 里一段就是一行）。 */
+  const paragraphs = (): string[] => PROMO.split(/\n+/).filter(s => s.trim().length > 0);
+
+  it('官网不得宣称「锁定会藏起删除入口」', () => {
+    for (const p of LOCK_HIDES_DELETE_CLAIM) {
+      assert.ok(
+        !p.test(PROMO),
+        `promo-site/index.html 仍然宣称锁定会让删除入口消失（命中 ${p}）—— ` +
+          '而真相是：锁定保护的是会话**内部**（不可重命名 / 不可逐条删 / 不可拖走 / ' +
+          '不被「清理重复标签」误伤），**删除入口始终在**，删锁定会话只是多一道确认。'
+      );
+    }
+  });
+
+  it('官网必须说清「锁定会话整张卡仍然可以删除」', () => {
+    assert.ok(
+      paragraphs().some(p => /锁定/.test(p) && LOCK_STILL_DELETABLE.some(re => re.test(p))),
+      '官网必须在讲锁定的那一段里说清「整张卡仍然可以删除」—— ' +
+        '只说「锁定保护会话内部」不够：读者会以为锁定 = 不可删除（A-3 修掉的正是这个误解）'
+    );
+  });
+
+  it('官网不得宣称「没有撤销」', () => {
+    for (const p of NO_UNDO_CLAIM) {
+      assert.ok(
+        !p.test(PROMO),
+        `promo-site/index.html 仍然宣称「没有撤销」（命中 ${p}）—— ` +
+          '而 1.26.0 起「恢复整个会话 / 点开单条标签」都带 8 秒的「撤销」。' +
+          '删除那一步确实没有退路，但请写成「**删除这一步没有退路**」，' +
+          '把「撤销」留给恢复 / 点开 —— 一句「没有撤销」会把这条能力整个抹掉。'
+      );
+    }
+  });
+
+  it('官网必须说清「恢复 / 点开那一步有撤销」', () => {
+    assert.ok(
+      paragraphs().some(p => /撤销/.test(p) && /恢复|点开/.test(p)),
+      '官网必须说清「恢复 / 点开那一步有撤销（8 秒）」—— ' +
+        '这一节是「我们不承诺的东西」，读者据此判断产品缺什么；' +
+        '把已有的能力从这一节里抹掉，等于教读者「它没有这条退路」'
+    );
+  });
+
+  it('官网里所有 Chrome 商店链接都必须指向带扩展 id 的详情页', () => {
+    const links = [
+      ...PROMO.matchAll(
+        /https?:\/\/(?:chrome\.google\.com\/webstore|chromewebstore\.google\.com)\/[^\s"'<>)]*/g,
+      ),
+    ].map(m => m[0]);
+    assert.ok(links.length > 0, '官网里至少要有一个商店链接 —— 判据的锚点丢了');
+    for (const link of links) {
+      assert.ok(
+        link.includes(`/detail/${EXTENSION_ID}`),
+        `商店链接「${link}」没有扩展 id —— 它会落到**商店首页**，而不是这个扩展的详情页`
+      );
+    }
   });
 });
 

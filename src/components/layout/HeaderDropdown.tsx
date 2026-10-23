@@ -191,6 +191,11 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({
 }) => {
   const dispatch = useAppDispatch();
   const { isAuthenticated, user } = useAppSelector(state => state.auth);
+// ── 2026-10-23（第 50 轮）：登录态的**那一档**（四档 + 还没核）───────────
+// 「核不到」（断网 / 402）与「核到没登录」在菜单里必须长得不一样。
+const authKind = useAppSelector(state => state.auth.authStatusKind ?? 'unchecked');
+// 「这一档在界面上怎么说」（用户可见；null = 无话可说）。
+const authNotice = useAppSelector(state => state.auth.notice ?? null);
   // 2026-10-17 B8：不再从 tabs 取 lastSyncTime。
   // 该字段全仓没有任何 reducer / thunk 写入（零写方），读它等于
   // 「上次同步」这一行永远不渲染。真值在 storage.getLastSyncTime()。
@@ -927,7 +932,8 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({
   // 直接渲染就是新的谎话（Supabase 分支不检查登录态）。
   const syncStatusView = resolveMenuSyncStatus({
     syncBackend: settings.syncBackend,
-    isAuthenticated,
+    // ⚠️ 传**那一档**，不传布尔（第 50 轮）：布尔会把「核不到」说成「未登录」。
+    auth: authKind,
     userEmail: user?.email,
     backend: backendStatus,
   });
@@ -1009,6 +1015,18 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({
                 {syncStatusView.prefix} · {syncStatusView.label}
               </span>
             </p>
+            {authNotice && (
+              // ── 2026-10-23（第 50 轮）：「核不到」必须**让用户知道** ──────
+              // 判据层早就写好了这一档该怎么说（core/authStatus.ts 的
+              // `authStatusCopy`），修复前它**零调用** ⇒ 界面一句话都不说 ⇒
+              // 用户看到「照旧显示我登录着」，却不知道云端此刻是 402 / 断网。
+              //
+              // 出声的位置就在同步状态行**下面**（离控制最近的一屏），
+              // 而不是弹一个每次开弹窗都弹的 toast（那是噪声）。
+              <p className="min-w-0 text-xs theme-text-muted leading-5">
+                {authNotice}
+              </p>
+            )}
             {syncStatusView.needsLogin && (
               // ── 2026-10-20 键盘可达性：补 role="menuitem" ────────────────
               // 容器声明了 role="menu"，而这个按钮是菜单里**唯一**没有

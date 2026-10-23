@@ -223,17 +223,49 @@ describe('传递链：机器判据一路到 UI 不断层', () => {
     assert.match(src, /new BackendUnavailableError\(/, '必须抛专用错误');
   });
 
-  it('账号恢复路径：不把「服务端不可用」吞成「未登录」', () => {
+  it('账号恢复路径：不把「服务端不可用」吞成「未登录」', async () => {
     // 这是本次最要命的一层：吞掉它 ⇒ 用户明明登录着却被告知「用户未登录」。
-    const guard = read('src/core/authGuard.ts');
-    assert.match(guard, /isBackendUnavailableError\(/,
-      'authGuard 必须把「服务端不可用」原样上抛');
-    assert.match(guard, /if\s*\(isBackendUnavailableError\(err\)\)\s*throw err;/,
-      '「服务端不可用」不许被 catch 吞成 false（= 未登录）');
+    //
+    // ── 2026-10-23（第 50 轮）：判据从「源码里有没有 throw」改成**行为** ──
+    // 闸门现在返回**四档判定**（core/authGuard.ts），不再抛异常 ⇒
+    // 「原样上抛」这个形状已经不存在了。真正要钉的性质是：
+    // **「服务端不可用」这一档，绝不能落进「没登录」那一档。**
+    const { ensureAuthenticated } = await import('@/core/authGuard');
+    const { BackendUnavailableError } = await import('@/core/backendUnavailable');
 
-    const engine = read('src/services/syncEngine.ts');
-    assert.match(engine, /isBackendUnavailableError\(err\)\)\s*throw err;/,
-      'restoreAuth 必须把「服务端不可用」原样上抛，而不是 catch 成 null');
+    const unavailable = await ensureAuthenticated({
+      isAuthenticated: () => false,
+      restoreAuth: async () => { throw new BackendUnavailableError('云端项目被限制', 402); },
+    });
+    assert.equal(unavailable.allowed, false);
+    assert.equal(
+      unavailable.allowed === false ? unavailable.kind : null,
+      'backend_unavailable',
+      '「服务端不可用」必须单独成一档 —— 混进「没登录」会让用户去重新登录（白折腾）'
+    );
+
+    // 对照组：普通的网络失败**不是** backend_unavailable，也**不是** not_authenticated。
+    const netDown = await ensureAuthenticated({
+      isAuthenticated: () => false,
+      restoreAuth: async () => { throw new Error('network down'); },
+    });
+    assert.equal(
+      netDown.allowed === false ? netDown.kind : null,
+      'unknown',
+      '断网是「不知道」，不是「服务端不可用」，更不是「没登录」'
+    );
+
+    // restoreAuth 里**不许**再有任何 catch（它一 catch 就把失败压成「恢复不出来」
+    // ⇒ 「没登录」）。这是本轮修掉的第二个谎。
+    const engine = stripComments(read('src/services/syncEngine.ts'));
+    const restoreAt = engine.indexOf('private async restoreAuth(');
+    assert.ok(restoreAt !== -1, '应能找到 restoreAuth');
+    const restoreBody = engine.slice(restoreAt, restoreAt + 2000);
+    assert.ok(
+      !/\.catch\s*\(/.test(restoreBody),
+      'restoreAuth 不许再 catch 任何失败 —— 「核不到」必须原样上抛，' +
+        '由闸门分档（压成 null = 读成「没登录」）'
+    );
   });
 
   it('引擎结果：带出 backendUnavailable 机器标记', () => {
@@ -375,40 +407,51 @@ describe('传递链：机器判据一路到 UI 不断层', () => {
     );
   });
 
-  it('**账号闸门**就地处理：闸门在 try 块外，异常必须就地归一', () => {
-    // ── 为什么这条单独钉 ────────────────────────────────────────────────
-    // 生产实测里**最先** 402 的地方是账号校验（/auth/v1/user），而账号闸门
-    // （ensureAuthenticated）位于引擎的 try 块**之外** ⇒ 异常绕过引擎的
-    // catch，直接冒到 SW 的通用 `.catch` ⇒ 机器标记在那一层被吞。
+  it('**账号闸门**的四档必须被引擎**分别归一**（每一档有自己的收尾）', () => {
+    // ── 为什么这条要改写（2026-10-23，第 50 轮）────────────────────────
+    // 原判据钉的是「闸门被 try 就地包住 + catch 里判机器标记」——
+    // 那是**旧契约**（闸门抛异常）。新契约：闸门**返回四档判定**
+    // （core/authGuard.ts），引擎按档分流。
     //
-    // 这就是「只改最后一层」的翻版：判据在引擎里齐了，闸门却不在覆盖范围内。
-    const engine = read('src/services/syncEngine.ts');
+    // 旧形状若还在，就是「判据层做对了、闸门层没接」的翻版 ——
+    // 而这一层恰恰是生产实测里**最先** 402 的地方（账号校验
+    // /auth/v1/user），也是最容易被静默吞掉的一层。
+    // ⚠️ 必须**去掉注释**再找：注释里会提到 `.catch(`、旧契约的名字等，
+    // 照抄进断言就成了「断言注释里写了什么」—— 那种守卫改一次注释就红。
+    const engine = stripComments(read('src/services/syncEngine.ts'));
     for (const fn of ['async upload(', 'async downloadAndMerge(']) {
       const start = engine.indexOf(fn);
       assert.ok(start !== -1, `应能找到 ${fn}`);
       const body = engine.slice(start, start + 4000);
       const gateAt = body.indexOf('ensureAuthenticated(');
       assert.ok(gateAt !== -1, `${fn} 应当过账号闸门`);
-      // 闸门必须**就地**被 try 包住（就地捕获 ⇒ 标记带得出来）。
-      //
-      // ⚠️ 定位不能只看「前面有没有 try {」：那个 try 可能是**别的**块
-      // （比如读判据的 try），判据会因此假绿。真正要钉的是
-      // 「闸门调用与它所属的 catch 之间**距离很近**」—— 即闸门被就地
-      // 包裹，而不是恰好落在某个更外层 try 的范围内。
-      //
-      // 用「catch 出现在闸门**之后**且在 900 字符内」来表达「就地」：
-      // 这正是「try { 闸门 } catch { 判机器标记 }」的形状。
-      const catchAfter = body.indexOf('} catch', gateAt);
-      assert.ok(catchAfter !== -1, `${fn} 的闸门后面应有 catch（就地捕获）`);
-      assert.ok(
-        catchAfter - gateAt < 900,
-        `${fn} 的账号闸门必须**就地**捕获 —— 闸门在 try 之外时，异常会绕过 ` +
-          '引擎末尾那个 catch，机器标记死在 SW 的通用 catch 里'
+      const gateBlock = body.slice(gateAt, gateAt + 1200);
+
+      // ① 「服务端不可用」这一档 ⇒ 必须带出机器标记（否则界面选不对措辞）。
+      assert.match(
+        gateBlock,
+        /gate\.kind === 'backend_unavailable'/,
+        `${fn} 必须把闸门的「服务端不可用」单独分流 —— ` +
+          '混进「未登录」会让用户去重新登录（而重试无用）'
       );
-      // 且必须显式判「服务端不可用」并原样上抛其它异常
-      const gateBlock = body.slice(gateAt, catchAfter + 400);
-      assert.match(gateBlock, /isBackendUnavailableError\(/,
-        `${fn} 的账号闸门必须判「服务端不可用」（生产上这是最先炸的一层）`);
+      assert.match(
+        gateBlock,
+        /backendUnavailable:\s*true/,
+        `${fn} 的「服务端不可用」必须带出机器标记（它要一路到 UI）`
+      );
+      // ② 「核不到」这一档 ⇒ 必须是**独立**的 reason，绝不能落成 not_authenticated。
+      assert.match(
+        gateBlock,
+        /'auth_unknown'/,
+        `${fn} 必须给「核不到（断网等）」一个独立 reason —— ` +
+          '落成 not_authenticated 就是那句更重的谎（用户去重新输密码，而重登必然失败）'
+      );
+      // ③ 核到没登录 ⇒ 仍然是 not_authenticated（这一档的语义不许被改掉）。
+      assert.match(
+        gateBlock,
+        /'not_authenticated'/,
+        `${fn} 必须保留「核到没登录」这一档`
+      );
     }
   });
 

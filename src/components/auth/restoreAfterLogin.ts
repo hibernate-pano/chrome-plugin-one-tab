@@ -152,10 +152,15 @@ async function consumeAccountSwitchNoticeOnce(): Promise<AccountSwitchNotice | n
  * 离线也判得出来。
  */
 export async function deliverAccountSwitchNotice(): Promise<void> {
+  // ⚠️ 2026-10-23（第 50 轮）：缓存读是**三态**（known / absent / unreadable）。
+  // 修复前 `getAuthState()` 读失败返回 null，与「没登录过」同形。
+  // 这里读失败（unreadable）时**不消费**提示 —— 消费即清空，
+  // 而「读不出来」时消费 = 把这条事实吃掉却没人知道 ⇒ 提示永远丢失。
   const cached = await authCache.getAuthState();
-  if (!cached?.isAuthenticated) {
-    // 没登录 ⇒ 不消费（提示原封不动留在归属记录里，等用户登录后还会被告知）。
-    logInfo('[auth] 当前未登录，不消费换账号提示（提示留在原地，不会被吃掉）');
+  if (cached.state !== 'known' || !cached.isAuthenticated) {
+    // 没登录（或读不出来）⇒ 不消费（提示原封不动留在归属记录里，
+    // 等用户登录后还会被告知）。
+    logInfo('[auth] 当前未登录（或登录态读不出来），不消费换账号提示（提示留在原地，不会被吃掉）');
     return;
   }
   const notice = await consumeAccountSwitchNotice();

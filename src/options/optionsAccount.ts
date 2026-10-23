@@ -21,6 +21,7 @@
 //   ② 明确说「回管理页登录」。
 //
 // 本模块提供 ① 的**判据**（纯函数，可测），文案与出口动作也在这里单源化。
+import type { AuthCheckState } from '@/types/tab';
 
 /** 设置页里账号区域的展示形态。 */
 export type AccountPanelMode =
@@ -28,8 +29,27 @@ export type AccountPanelMode =
   | 'signed-in'
   /** 未登录且本次用的是自带存储：账号对当前后端无意义 ⇒ 不显示任何账号 UI。 */
   | 'not-needed'
-  /** 未登录且用的是云端：显示「去登录」。 */
-  | 'signed-out';
+  /** **核到**没登录且用的是云端：显示「去登录」。 */
+  | 'signed-out'
+  /**
+   * **还没核**（刚打开本页，登录态检查还在路上），而用的是云端。
+   *
+   * ── 为什么与 `unverified` 分开（2026-10-23，第 50 轮）─────────────────
+   * `unverified` 的措辞是「现在联系不上 TapStack 云端」—— 那句话对
+   * `unchecked` 是**假话**：此刻我们**还没问**，不是问了问不到。
+   * 把两者混为一档 ⇒ 界面在用户刚打开设置页的那一瞬间就宣称
+   * 「联系不上云端」⇒ 一个本来好好的云端用户被吓一跳。
+   */
+  | 'pending'
+  /**
+   * **核不到**（断网 / 402），而用的是云端。
+   *
+   * ── 为什么不能落进 `signed-out`（2026-10-23，第 50 轮）────────────────
+   * `signed-out` 会**渲染登录表单** ⇒ 界面等于在说「你没登录」。
+   * 而用户多半**登录着**（只是确认不了）—— 他看到登录表单的第一反应是
+   * 「我的账号掉了？」⇒ 于是重新输一遍密码，而断网时那**必然失败**。
+   */
+  | 'unverified';
 
 /**
  * 设置页的账号区域该显示成什么。
@@ -44,15 +64,20 @@ export type AccountPanelMode =
  * （WebDAV 用户不需要登录）。
  *
  * @param syncBackend 当前同步后端
- * @param isAuthenticated 是否已登录
+ * @param auth 登录态的**那一档**（四档 + 还没核）
  */
 export const accountPanelMode = (
   syncBackend: 'supabase' | 'webdav',
-  isAuthenticated: boolean
+  auth: AuthCheckState
 ): AccountPanelMode => {
-  if (isAuthenticated) return 'signed-in';
+  if (auth === 'authenticated') return 'signed-in';
   if (syncBackend === 'webdav') return 'not-needed';
-  return 'signed-out';
+  // 只有**核到**没登录才显示登录表单。
+  if (auth === 'not_authenticated') return 'signed-out';
+  // 还没核 ⇒ 正在确认（不是「联系不上」）。
+  if (auth === 'unchecked') return 'pending';
+  // 核不到 ⇒ 不显示登录表单（那等于说「你没登录」）。
+  return 'unverified';
 };
 
 /**

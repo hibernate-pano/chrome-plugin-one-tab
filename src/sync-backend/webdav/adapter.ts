@@ -67,7 +67,7 @@ import {
   type ShardHeader,
 } from './layout';
 import { createVault, openVault, type Vault } from '../crypto';
-import { checkDeleteFailsafe } from '../failsafe';
+import { checkDeleteFailsafe } from '@/core/deleteFailsafe';
 // 远端裁决的**共享判据**（2026-10-20 D-4/D-5）：内容优先于索引，
 // 墓碑读回 = 「广播成功」的定义。与 Supabase 侧是同一套口径，见该文件。
 import {
@@ -136,6 +136,23 @@ export interface WebDavAdapterDeps {
   nextDeviceSeq?: () => Promise<number>;
   /** 把观察到的号吸收进本机 Lamport 时钟（保证本机随后发出的号严格大于它）。 */
   bumpDeviceSeqIfLower?: (candidate: number) => Promise<number>;
+  /**
+   * **只读模式**（2026-10-23 第 50 轮）：这个适配器只许读，不许写远端。
+   *
+   * ── 为什么需要它 ────────────────────────────────────────────────────────
+   * 设置页有两处会造适配器（「测试连接」与「探测远端」）。它们过去是
+   * **靠调用方自觉**只调读方法 —— 一旦有人在这两处基础上加一次写操作，
+   * 就落回 D-7 那个缺陷形态（墓碑号退化成「云端 seq + 1」⇒ 跨设备删除被
+   * 静默撤销、会话复活）。
+   *
+   * 有了这个开关，写方法在**运行时**直接拒绝 ⇒「只读」不再是一句注释，
+   * 而是可执行的约束（判据见 tests/guards/webDavTransportSingleAcquisition.test.ts）。
+   *
+   * ⚠️ 只拦**本适配器自己的**写方法。`checkConnection()` 内部会往远端写一个
+   * 探针文件（`.tapstack-probe`，用来实测服务端支持不支持条件写）——
+   * 那不是用户数据，不构成「写」，所以不在此列。
+   */
+  readOnly?: boolean;
 }
 
 /** 水位值形状。与 Supabase 侧同构（含 deviceSeq 基线）。 */
@@ -242,6 +259,8 @@ export class WebDavBackendAdapter implements SyncBackendPort {
   private readonly peekDeviceSeq: () => Promise<number>;
   private readonly nextDeviceSeq: () => Promise<number>;
   private readonly bumpDeviceSeqIfLower: (candidate: number) => Promise<number>;
+  /** 只读模式（探针路径）：true ⇒ 写方法一律拒绝。 */
+  private readonly readOnly: boolean;
   /**
    * 兜底本机时钟的号位（只在调用方**没注入**发号器时使用）。
    *
@@ -300,6 +319,23 @@ export class WebDavBackendAdapter implements SyncBackendPort {
         return this.fallbackSeq;
       });
     this.root = normalizeRoot(deps.config.rootPath);
+    // 只读模式：默认 false（生产路径照旧可写）；探针路径显式传 true。
+    this.readOnly = deps.readOnly === true;
+  }
+
+  /**
+   * 写操作的闸门（只读模式下直接拒绝）。
+   *
+   * 为什么放在**每个写方法的第一行**而不是别处：闸门必须早于任何网络访问，
+   * 否则「只读探针误调了写方法」会先在远端留下痕迹再报错 —— 那时候
+   * 「没写成功」的承诺已经不成立了。
+   */
+  private assertWritable(): void {
+    if (!this.readOnly) return;
+    throw new Error(
+      '这个适配器是**只读探针**（设置页的「测试连接」/「探测远端」用），不允许写远端。' +
+        '要写真实数据请走正常的同步路径。'
+    );
   }
 
   // ── 路径 ────────────────────────────────────────────────────────────
@@ -1233,6 +1269,7 @@ export class WebDavBackendAdapter implements SyncBackendPort {
     groups: TabGroup[],
     opts?: { overwriteRemote?: boolean; suppressFirstSyncFullUpload?: boolean }
   ): Promise<UploadGroupsResult> {
+    this.assertWritable();
     const index = await this.loadIndex();
     const vault = await this.unlock(index.kind === 'manifest' ? index.manifest : null);
 
@@ -1550,6 +1587,7 @@ export class WebDavBackendAdapter implements SyncBackendPort {
    * 宁可下一轮重播一个幂等的墓碑，也不能把删除意图丢掉。
    */
   async broadcastDeletes(ids: string[]): Promise<DeleteBroadcastResult> {
+    this.assertWritable();
     // 自带存储**不做账号闸门**：WebDAV 的库不属于任何账号（库身份是
     // baseUrl | username | rootPath，见 sync-backend/index.ts 的 defaultFactory），
     // 归属由「这台机器的库是谁的」决定，而不是由会话 id 决定。
@@ -1771,6 +1809,7 @@ export class WebDavBackendAdapter implements SyncBackendPort {
   }
 
   async purgeExpiredDeletes(maxAgeDays = 30): Promise<number> {
+    this.assertWritable();
     const index = await this.loadIndex();
     if (index.kind === 'empty') return 0;
     const vault = await this.unlock(index.manifest);
@@ -1846,6 +1885,7 @@ export class WebDavBackendAdapter implements SyncBackendPort {
   }
 
   async uploadSettings(settings: UserSettings): Promise<void> {
+    this.assertWritable();
     let index = await this.loadIndex();
     const vault = await this.unlock(index.kind === 'manifest' ? index.manifest : null);
     const payload = { v: 1 as const, settings: settings as unknown as Record<string, unknown>, updatedAt: this.now() };

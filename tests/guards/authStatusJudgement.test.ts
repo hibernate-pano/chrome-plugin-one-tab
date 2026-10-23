@@ -91,6 +91,9 @@ describe('登录态判定：四档，不是两个', () => {
     const status = decideAuthStatus({
       verifiedUser: null,
       cachedUser: { id: USER_A, email: 'a@example.com' },
+      // ⚠️ 2026-10-23（第 50 轮）：「没登录」必须是**明确核到的事实**，
+      // 靠一个布尔把「服务端说没有会话」与「我们什么都没问到」区分开。
+      verifiedNoSession: true,
     });
     assert.equal(status.kind, 'not_authenticated');
     assert.equal(
@@ -100,6 +103,25 @@ describe('登录态判定：四档，不是两个', () => {
     );
   });
 
+  // ── 2026-10-23（第 50 轮）：**默认**必须是「不知道」，不是「没登录」─────
+  //
+  // 修复前判据靠 `failureDetail` 的真伪来区分「核到了没登录」与「没核到」——
+  // 于是「核失败但没有失败原因」会被读成「没登录」。
+  // **失败原因的长相不该决定事实的性质** ⇒ 改成显式的 `verifiedNoSession`。
+  it('没有任何事实（既没核到账号、也没核到「没有会话」）⇒ 必须是「不知道」', async () => {
+    const { decideAuthStatus } = await import('@/core/authStatus.ts');
+    const status = decideAuthStatus({
+      verifiedUser: null,
+      cachedUser: { id: USER_A, email: 'a@example.com' },
+    });
+    assert.equal(
+      status.kind,
+      'unknown',
+      '「什么都没问到」绝不能被读成「没登录」—— 那是本轮修掉的那个谎'
+    );
+    assert.equal(status.user?.id, USER_A, '「不知道」时保留缓存那份（暂定事实）');
+  });
+
   it('「服务端不可用」与「没登录」在界面上必须是**两句不同的话**', async () => {
     const { decideAuthStatus, authStatusCopy } = await import('@/core/authStatus.ts');
     const unavailable = decideAuthStatus({
@@ -107,7 +129,11 @@ describe('登录态判定：四档，不是两个', () => {
       cachedUser: { id: USER_A, email: 'a@example.com' },
       backendUnavailable: true,
     });
-    const notLoggedIn = decideAuthStatus({ verifiedUser: null, cachedUser: null });
+    const notLoggedIn = decideAuthStatus({
+      verifiedUser: null,
+      cachedUser: null,
+      verifiedNoSession: true, // 明确核到「没有会话」
+    });
     const copy = {
       backendUnavailable: '云端暂时不可用，本地数据没丢',
       unknown: '暂时联系不上云端，先按本机状态显示',

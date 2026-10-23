@@ -428,12 +428,22 @@ describe('L-12 未登录 ≠ 数据不出设备（自带存储不需要登录）
     }
   });
 
-  it('（事实来源）自带存储路径确实不要求登录', () => {
-    const guard = read('src/core/authGuard.ts');
-    assert.match(
-      guard,
-      /backendId === 'webdav'\)\s*return true/,
-      'authGuard 对 WebDAV 直接放行 ⇒ 「自带存储不需要登录」是事实'
-    );
+  it('（事实来源）自带存储路径确实不要求登录', async () => {
+    // ── 2026-10-23（第 50 轮）：从「源码长什么样」改成**行为** ──────────
+    // 原判据钉的是 `backendId === 'webdav') return true` 这句**字面量** ——
+    // 而闸门在第 50 轮改了返回形状（boolean → 四档判定）⇒
+    // 「改对了实现反而红」，正是本仓反复消灭的那类陷阱。
+    //
+    // 真正要钉的性质是：**自带存储不查 Supabase 账号** ⇒ 判据改成行为：
+    // ① 放行；② 压根不调用 restoreAuth（不查账号）。
+    const { ensureAuthenticated } = await import('@/core/authGuard');
+    let restoreCalled = 0;
+    const verdict = await ensureAuthenticated({
+      isAuthenticated: () => false,
+      restoreAuth: async () => { restoreCalled++; return false; },
+      backendId: 'webdav',
+    });
+    assert.equal(verdict.allowed, true, 'authGuard 对 WebDAV 直接放行 ⇒ 「自带存储不需要登录」是事实');
+    assert.equal(restoreCalled, 0, '自带存储路径不查 Supabase 账号（restoreAuth 一次都不该被调）');
   });
 });

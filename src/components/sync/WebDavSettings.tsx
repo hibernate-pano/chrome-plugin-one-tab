@@ -49,11 +49,6 @@ import {
   WEBDAV_CONFIG_CHANGED_EVENT,
   type StoredWebDavConfig,
 } from '@/sync-backend/webdav/config';
-import { WebDavClient } from '@/sync-backend/webdav/client';
-import { WebDavBackendAdapter } from '@/sync-backend/webdav/adapter';
-import { chromeKvAdapter } from '@/sync-backend/webdav/config';
-import { invalidateActiveSyncBackend, getLastBackendResolution, primeSyncBackend, readConfiguredBackendId } from '@/sync-backend';
-import { ensureHostPermission, PERMISSION_DENIED_MESSAGE } from '@/sync-backend/webdav/permission';
 import {
   clearFirstSyncPendingBestEffort,
   completeFirstSyncSuccess,
@@ -70,6 +65,13 @@ import {
   shouldEnterOwnershipPending,
   type OwnershipChoice,
 } from '@/sync-backend/webdav/firstSyncDecision';
+import { invalidateActiveSyncBackend, getLastBackendResolution, primeSyncBackend, readConfiguredBackendId } from '@/sync-backend';
+import { ensureHostPermission, PERMISSION_DENIED_MESSAGE } from '@/sync-backend/webdav/permission';
+import {
+  buildProbeAdapterDeps,
+  type WebDavProbe,
+} from '@/sync-backend/webdav/factory';
+import { loadWebDavTransport } from '@/sync-backend/webdavRuntime';
 import {
   libraryScopeKey,
   NO_LIBRARY_SCOPE,
@@ -548,19 +550,13 @@ export const WebDavSettings: React.FC = () => {
         }).catch(err => logWarn('[WebDavSettings] 记录测试连接结果失败（不影响本次结论）:', err));
         return;
       }
-      const client = new WebDavClient({ baseUrl, username, password });
-      const adapter = new WebDavBackendAdapter({
-        client,
-        config: {
-          baseUrl,
-          username,
-          password,
-          rootPath,
-          passphrase: encryption === 'required' ? passphrase || null : null,
-          requireEncryption: encryption === 'required',
-        },
-        kv: chromeKvAdapter,
-      });
+      // ⚠️ 2026-10-23 第 50 轮：适配器不再在这里现造 ——
+      // 「测试连接」与「探测远端」共用同一个 `buildProbeAdapter`（见下），
+      // 依赖（client / config / kv / 三项 seq 能力）由 webdav/factory.ts 装配。
+      // 原来这两处各自抄了一份配置块，**且一份 seq 依赖都没给** ⇒ 适配器退回
+      // 自带的兜底号位（与写作路径的计数器不共享）。今天只读所以没出事，
+      // 一旦有人在这里加一次写操作，就落回 D-7 的缺陷形态。
+      const adapter = await buildProbeAdapter({ baseUrl, username, password, rootPath, passphrase, encryption });
       const info = await adapter.checkConnection();
       setCheck({
         kind: 'done',
@@ -591,6 +587,51 @@ export const WebDavSettings: React.FC = () => {
       );
     }
   }, [baseUrl, username, password, rootPath, passphrase, encryption, savedCfg, persistLastCheck]);
+
+  /**
+   * 造一个**只读探针**适配器（设置页的两处入口共用：「测试连接」与「探测远端」）。
+   *
+   * ── 为什么是「只读」 ────────────────────────────────────────────────────
+   * 这两处只做 `checkConnection()` 与 `downloadGroups()`，都是读。
+   * 而它们过去是**靠调用方自觉**只读 —— 一旦有人在这里加一次写操作，
+   * 就落回 D-7 的缺陷形态（墓碑号退化成「云端 seq + 1」⇒ 跨设备删除被静默撤销）。
+   *
+   * 现在有三道防线：
+   *   1. **类型**：返回类型是 `WebDavProbe`（只有读方法）⇒ 编译期就调不到写方法；
+   *   2. **运行时**：依赖里的 `readOnly: true` ⇒ 适配器的写方法直接抛错；
+   *   3. **号位**：三项 seq 能力由 webdav/factory.ts 注入 ⇒ 即便将来有人
+   *      在这条路径上加写操作，墓碑号也来自**本机 Lamport 时钟**，不是兜底号位。
+   *
+   * ── 为什么取法走注册表 ──────────────────────────────────────────────────
+   * `loadWebDavTransport()` 是全仓取 WebDAV 传输栈的**唯一**入口
+   * （页面动态 import / service worker 静态注册，见 sync-backend/webdavRuntime.ts）。
+   * 这里原先是**直接静态 import** 实现 —— 于是全仓有第三条取法，
+   * 维护者读 webdavRuntime.ts 会以为只有一条路。
+   *
+   * ⚠️ 代价：首次点「测试连接」时才下 ~149KB（adapter + client 源码）。
+   * 这与「页面按需加载」的约定一致，可接受。
+   */
+  async function buildProbeAdapter(params: {
+    baseUrl: string;
+    username: string;
+    password: string;
+    rootPath: string;
+    passphrase: string;
+    encryption: 'required' | 'plain';
+  }): Promise<WebDavProbe> {
+    const { WebDavBackendAdapter } = await loadWebDavTransport();
+    const adapter = new WebDavBackendAdapter(
+      await buildProbeAdapterDeps({
+        baseUrl: params.baseUrl,
+        username: params.username,
+        password: params.password,
+        rootPath: params.rootPath,
+        passphrase: params.passphrase || null,
+        encryption: params.encryption,
+      })
+    );
+    return adapter;
+  }
 
   const handleSave = useCallback(async () => {
     setSaving(true);
@@ -841,19 +882,8 @@ export const WebDavSettings: React.FC = () => {
       // 30s 缓存里的旧快照会让数字与实际不符（syncPreview.ts 同一纪律）。
       const localGroups = await storage.getGroupsForWrite();
 
-      const client = new WebDavClient({ baseUrl, username, password });
-      const adapter = new WebDavBackendAdapter({
-        client,
-        config: {
-          baseUrl,
-          username,
-          password,
-          rootPath,
-          passphrase: encryption === 'required' ? passphrase || null : null,
-          requireEncryption: encryption === 'required',
-        },
-        kv: chromeKvAdapter,
-      });
+      // 与「测试连接」共用同一个探针工厂（见 buildProbeAdapter 的注释）。
+      const adapter = await buildProbeAdapter({ baseUrl, username, password, rootPath, passphrase, encryption });
       const remoteGroups = await adapter.downloadGroups();
       return { ok: true, decision: decideFirstSync({ localGroups, remoteGroups }), localGroups, remoteGroups };
     } catch (err) {

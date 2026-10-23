@@ -1,9 +1,14 @@
 import type { TabGroup } from '../types/tab';
-// 删除熔断的阈值只有一份，在 sync-backend/failsafe.ts（Floccus 判据）。
+// 删除熔断的阈值只有一份，在 core/deleteFailsafe.ts（Floccus 判据）。
 // 闸门要自己回答「这次覆盖会清掉多少个会话、清掉得太多吗」，
 // 所以这里直接用**同一个**判据函数，而不是把比例判据再抄一遍
 // （同判据两处漂移是本仓库反复出现的事故类型）。
-import { checkDeleteFailsafe } from '../sync-backend/failsafe';
+//
+// ⚠️ 为什么是 core 内的文件而不是 sync-backend/failsafe（2026-10-23 第 50 轮）：
+// core 是**纯判据层**，sync-backend 是 IO 层。判据层反向依赖 IO 层 ⇒
+// 以后 sync-backend 下加任何带 IO 的东西都会顺着这条边进 core 的静态图，
+// 而 core 的判据是要在 node:test 里无浏览器直测的。
+import { checkDeleteFailsafe } from './deleteFailsafe';
 
 // ── 下载前置保护（防「本地删除被云端旧数据复活」） ──────────────────────
 

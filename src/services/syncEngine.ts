@@ -45,7 +45,7 @@ import {
   decideConsumableRegistryIds,
   decidePendingAfterRegistryConsume,
 } from '@/core/uploadCoverage';
-import { checkDeleteFailsafe, type FailsafeVerdict } from '@/sync-backend/failsafe';
+import { checkDeleteFailsafe, type FailsafeVerdict } from '@/core/deleteFailsafe';
 // 覆盖下载的删除计划（DS-2）：这次覆盖会物理清除本机哪些会话。
 // 纯函数、判据只有一份（闸门与熔断用的是同一个函数）。
 import { planOverwriteDeletion } from '@/core/overwriteGuard';
@@ -552,18 +552,21 @@ export class SyncEngine {
     // 机器标记在那一层被吞掉 ⇒ 界面拿不到 backendUnavailable ⇒ 用户看到的
     // 仍是「上传失败，请重试」（而重试无用）。
     //
-    // 所以这里必须**就地捕获**并把标记带出来，而不是指望下游的 catch。
-    // 非「服务端不可用」的异常仍原样上抛（与修复前行为一致）。
-    let authed: boolean;
-    try {
-      authed = await ensureAuthenticated({
-        isAuthenticated: () =>
-          (store.getState() as { auth: { isAuthenticated: boolean } }).auth.isAuthenticated,
-        restoreAuth: () => this.restoreAuth(),
-        backendId: gateBackendId,
-      });
-    } catch (err) {
-      if (isBackendUnavailableError(err)) {
+    // ── 2026-10-23（第 50 轮）：闸门返回**四档判定**（core/authGuard.ts）──
+    // 三种「不许放行」各有各的下一步：
+    //   · `not_authenticated` ⇒ **核到**没登录 ⇒ 「请去登录」；
+    //   · `backend_unavailable` ⇒ 服务端不可用 ⇒ 「等我们恢复」；
+    //   · `unknown` ⇒ **核不到**（断网等）⇒ 「现在联系不上云端」。
+    // ⚠️ 第三档绝不能落成 `not_authenticated`：用户会以为要重新输密码，
+    // 而断网时重新登录**必然失败** ⇒ 死循环。
+    const gate = await ensureAuthenticated({
+      isAuthenticated: () =>
+        (store.getState() as { auth: { isAuthenticated: boolean } }).auth.isAuthenticated,
+      restoreAuth: () => this.restoreAuth(),
+      backendId: gateBackendId,
+    });
+    if (!gate.allowed) {
+      if (gate.kind === 'backend_unavailable') {
         return {
           success: false,
           groups: [],
@@ -571,10 +574,11 @@ export class SyncEngine {
           backendUnavailable: true,
         };
       }
-      throw err;
-    }
-    if (!authed) {
-      return { success: false, groups: [], reason: 'not_authenticated' };
+      return {
+        success: false,
+        groups: [],
+        reason: gate.kind === 'unknown' ? 'auth_unknown' : 'not_authenticated',
+      };
     }
     if (this.isSyncing) {
       return { success: false, groups: [], reason: 'already_syncing' };
@@ -825,7 +829,7 @@ export class SyncEngine {
       // 在引擎层**无法可靠区分**（端口不暴露云端总行数；两个后端的下载层
       // 各自已是 fail-closed）。所以这里不问「云端完整吗」，而问
       // **「这次覆盖会清掉本机多少个会话」** —— 那是可以算出来的事实。
-      // 判据与阈值都只有一份（core/overwriteGuard.ts + sync-backend/failsafe.ts）。
+      // 判据与阈值都只有一份（core/overwriteGuard.ts + core/deleteFailsafe.ts）。
       //
       // 【为什么墓碑造成的消失不计入】墓碑 = 别的设备上用户**显式删掉**了它
       // ⇒ 删除本就该传播（云端只有墓碑行 = 合法清空）⇒ 计入就变成「用户删不掉」。
@@ -1266,27 +1270,29 @@ export class SyncEngine {
     // catch，直接冒到 SW 的通用 `.catch`，机器标记在那一层被吞掉，
     // 界面于是又看到「上传失败，请重试」（而重试无用）。
     //
-    // 非「服务端不可用」的异常仍原样上抛（与修复前行为一致）。
-    let authed: boolean;
-    try {
-      authed = await ensureAuthenticated({
-        isAuthenticated: () =>
-          (store.getState() as { auth: { isAuthenticated: boolean } }).auth.isAuthenticated,
-        restoreAuth: () => this.restoreAuth(),
-        backendId: gateBackendId,
-      });
-    } catch (err) {
-      if (isBackendUnavailableError(err)) {
+    // ── 2026-10-23（第 50 轮）：闸门返回**四档判定**（core/authGuard.ts）──
+    // 上传方向与下载方向必须**同一口径**：`not_authenticated`（核到没登录）
+    // 与 `unknown`（核不到）是两件事，措辞也不同。
+    const gate = await ensureAuthenticated({
+      isAuthenticated: () =>
+        (store.getState() as { auth: { isAuthenticated: boolean } }).auth.isAuthenticated,
+      restoreAuth: () => this.restoreAuth(),
+      backendId: gateBackendId,
+    });
+    if (!gate.allowed) {
+      if (gate.kind === 'backend_unavailable') {
         return {
           success: false,
           error: backendUnavailableCopy('upload'),
           backendUnavailable: true,
         };
       }
-      throw err;
-    }
-    if (!authed) {
-      return { success: false, error: '用户未登录' };
+      // ⚠️ `auth_unknown` 与 `not_authenticated` 分开：前者是「核不到」
+      // （本地数据没丢、检查网络即可），后者是「核到没登录」（要去登录）。
+      return {
+        success: false,
+        error: gate.kind === 'unknown' ? 'auth_unknown' : 'not_authenticated',
+      };
     }
     // ponytail: 后台轮询路径可带 forcePending 绕过 isSyncing 检查；
     // 但仅在不与当前下载合并冲突时调用（backgroundSync 已先检查）。
@@ -1923,22 +1929,24 @@ export class SyncEngine {
     // ⇒ 整个同步说「用户未登录」。而生产实测（项目被封禁）：账号校验请求本身
     // 返回 402 —— 他明明登录着，却被告成「没登录」。
     //
-    // 这一层必须把「服务端不可用」**原样上抛**（ensureAuthenticated 认它），
-    // 由上层按「等我们恢复」说人话。
+    // ── 2026-10-23（第 50 轮）：**不再有任何 catch** ────────────────────
+    // 修复前这里还有一句 `.catch(err => { if (isBackendUnavailableError(err)) throw err; return null; })`
+    // —— 那句把「断网 / 超时」也压成了 null ⇒「恢复不出来」⇒「没登录」。
+    //
+    // 现在由 `getCurrentUser` 自己分档（见 core/sessionFailure.ts）：
+    //   · **核到**没会话 ⇒ resolve(null) ⇒ 这一支返回 false ⇒「确实没登录」；
+    //   · 核不到（断网 / 402 / 令牌被吊销）⇒ **reject** ⇒ 错误原样上抛
+    //     ⇒ 闸门（core/authGuard.ts）据此分出「等我们恢复」与「现在联系不上」。
     //
     // ⚠️ RTK 的 `unwrap()` reject 出来的是**序列化后**的错误
     // （miniSerializeError 只保留 name/message/stack/code）—— 我们的
     // `code: 'backend_unavailable'` **恰好在 commonProperties 里**（code），
     // 所以机器标记能活下来；但 `httpStatus` 会丢。判据因此必须认 `code`。
-    const user = await store
-      .dispatch(getCurrentUser())
-      .unwrap()
-      .catch(err => {
-        if (isBackendUnavailableError(err)) throw err;
-        return null;
-      });
+    const user = await store.dispatch(getCurrentUser()).unwrap();
     if (!user) return false;
-    store.dispatch(setFromCache({ user, isAuthenticated: true }));
+    store.dispatch(
+      setFromCache({ user, isAuthenticated: true, statusKind: 'authenticated' })
+    );
     return true;
   }
 

@@ -22,7 +22,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 
-import { checkDeleteFailsafe, DEFAULT_FAILSAFE_LIMITS } from '@/sync-backend/failsafe';
+import { checkDeleteFailsafe, DEFAULT_FAILSAFE_LIMITS } from '@/core/deleteFailsafe';
 
 describe('熔断判据：阈值必须精确', () => {
   it('默认参数对齐 Floccus 常规档（minTotal 5 / ratio 0.2 / maxChanged 1000）', () => {

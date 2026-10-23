@@ -1,9 +1,14 @@
 import React, { useEffect } from 'react';
 import { useAppDispatch } from '@/store/hooks';
-import { setFromCache } from '@/store/slices/authSlice';
+import { setFromCache, setAuthCheckState } from '@/store/slices/authSlice';
 import { loadGroups } from '@/store/slices/tabSlice';
 import { authCache } from '@/utils/authCache';
 import { requestAuthStatus } from '@/utils/authStatusChannel';
+import { authStatusCopy } from '@/core/authStatus';
+import {
+  backendUnavailableAuthCopy,
+  authUnknownCopy,
+} from '@/components/sync/backendUnavailableCopy';
 import { sendSyncCommand } from '@/shared/mutationProtocol';
 import {
   hasLoginRestoreTriggered,
@@ -72,9 +77,18 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
         void deliverAccountSwitchNotice();
 
         // ── ① 本机缓存先行（本地读，零延迟、零下载）────────────────────
-        const cachedAuth = await authCache.getAuthState();
+        // ⚠️ 2026-10-23（第 50 轮）：缓存读是**三态**（known / absent / unreadable）——
+        // 「读不出来」不等于「没有登录态」。修复前 `getAuthState()` 读失败返回
+        // null，与「从没登录过」同形 ⇒ 冷启动那一帧分不清这两种情况。
+        const cachedRead = await authCache.getAuthState();
         const cachedUser =
-          cachedAuth?.isAuthenticated && cachedAuth.user ? cachedAuth.user : null;
+          cachedRead.state === 'known' && cachedRead.isAuthenticated && cachedRead.user
+            ? cachedRead.user
+            : null;
+        if (cachedRead.state === 'unreadable') {
+          // 读不出来**不许**说「没登录」——这一帧只能说「还没核」（unchecked）。
+          logWarn('[auth] 读本机缓存登录态失败（不可知，不等于没登录）:', cachedRead.detail);
+        }
         if (cachedUser) {
           logInfo('发现缓存的认证状态，用户:', cachedUser.email);
           // ── 2026-10-23 审计 R-12：缓存里明明有登录态，Redux 却还是 false ──
@@ -96,7 +110,13 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
           // ⇒ 提前置真只是把「几毫秒后才知道的事」提前说，
           //   最坏情况是「先显示已登录、随后翻回未登录」，
           //   而不是「一直谎报」。
-          dispatch(setFromCache({ user: cachedUser, isAuthenticated: true }));
+          dispatch(setFromCache({
+            user: cachedUser,
+            isAuthenticated: true,
+            // ⚠️ 缓存只是**暂定事实**，没核过 ⇒ 这一档是 `unchecked`，
+            // 不是「已登录」也不是「没登录」（下面的核对结果会覆盖它）。
+            statusKind: 'unchecked',
+          }));
         }
 
         // ── ② 联网核登录态 —— **交给 service worker** ──────────────────
@@ -122,6 +142,8 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
                 lastLogin: cachedUser?.lastLogin ?? new Date().toISOString(),
               },
               isAuthenticated: true,
+              // 这一档是**核到了**的（服务端确认了账号）。
+              statusKind: 'authenticated',
             })
           );
           // 核到登录着 ⇒ 顺手把云端拉回来（跨设备找回）。
@@ -166,10 +188,27 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
         } else if (status.kind === 'not_authenticated') {
           // 明确核到「没有会话」⇒ 真的没登录 ⇒ 归零。
           // ⚠️ 只有这一档才归零：「服务端不可用」与「不知道」都保留缓存那份。
-          dispatch(setFromCache({ user: null, isAuthenticated: false }));
+          dispatch(
+            setFromCache({ user: null, isAuthenticated: false, statusKind: 'not_authenticated' })
+          );
           logInfo('后台核到：未登录');
         } else {
           // backend_unavailable / unknown ⇒ 保留缓存那份（**不许**说「没登录」）。
+          //
+          // ── 2026-10-23（第 50 轮）：这两档**必须让用户知道** ────────────
+          // 修复前这里只有一句 logInfo ⇒ 界面上**一句话都不说** ⇒ 用户看到的
+          // 是「照旧显示我登录着」，而他不知道云端此刻是 402 / 断网。
+          // 判据层早就写好了「这一档在界面上怎么说」（core/authStatus.ts 的
+          // `authStatusCopy`），只是**从来没有人调用它** ⇒ 死代码。
+          // 现在把它接到 store（菜单那一行会显示它）——
+          // 出声的位置离控制越近越好：同步状态行就在菜单里。
+          const notice = authStatusCopy(status, {
+            backendUnavailable: backendUnavailableAuthCopy(),
+            unknown: authUnknownCopy(),
+          });
+          // ⚠️ 这里**不重发**用户：用户那份来自缓存（上面第 ① 步已经送进 store），
+          // 而「核不到」这一档不引入任何新事实 ⇒ 只更新「那一档」与「那句话」。
+          dispatch(setAuthCheckState({ statusKind: status.kind, notice: notice ?? null }));
           logInfo(
             status.kind === 'backend_unavailable'
               ? '[auth] 云端项目不可用，按缓存保留登录态（不说「未登录」）'

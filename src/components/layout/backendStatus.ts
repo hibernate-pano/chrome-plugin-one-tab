@@ -21,6 +21,7 @@
  * 「状态不可读」，也不把未知状态猜成「已解锁」或「未配置」。
  */
 import type { getLastBackendResolution } from '@/sync-backend';
+import type { AuthCheckState } from '@/types/tab';
 
 /** 最近一次后端解析结果（`null` = 尚未解析）。 */
 export type BackendResolution = ReturnType<typeof getLastBackendResolution>;
@@ -152,11 +153,25 @@ export function classifyBackendResolution(res: BackendResolution): BackendStatus
  * WebDAV 不需要登录（账号由用户自带），所以只对云端加这条要求 ——
  * 这正是「按后端分流」的必要之处：一个 kind 值覆盖不了两个后端的就绪条件。
  */
-export function canEnableAutoSync(status: BackendStatus, isAuthenticated: boolean): boolean {
+export function canEnableAutoSync(status: BackendStatus, auth: AuthCheckState): boolean {
   if (status.kind !== 'ready') return false;
   // 后端 id 未知时按最保守处理：不放行。
   // （unknown 已经是 kind !== 'ready'，这里是防御 resolvedId 缺失的构造形状。）
-  if (status.backendId === 'supabase') return isAuthenticated;
+  if (status.backendId === 'supabase') {
+    // ── 2026-10-23（第 50 轮）：只有**核到没登录**才拒绝 ────────────────
+    // 修复前这里收的是 `isAuthenticated`（布尔）⇒ 「核不到」（断网 / 402）
+    // 与「还没核」都被读成「没登录」⇒ ① 开关**根本点不开**；
+    // ② toast 告诉他「还没有登录 TapStack 云端」⇒ 他去重新输密码，
+    // 而断网时重新登录**必然失败** ⇒ 死循环。
+    //
+    // 而这一屏是**唯一**能配自动同步的地方（设置页没有右上角菜单）⇒
+    // 把它锁死 = 用户永远开不了自动同步。
+    //
+    // ⇒ 只有 `not_authenticated`（**核到**没会话）才拒绝；
+    //   `unchecked`（还没核）/ `unknown`（核不到）/ `backend_unavailable`
+    //   一律放行 —— 后台每轮会自己再核一次。
+    return auth !== 'not_authenticated';
+  }
   return true;
 }
 
@@ -182,11 +197,13 @@ export function canEnableAutoSync(status: BackendStatus, isAuthenticated: boolea
  */
 export function autoSyncBlockedCopy(
   status: BackendStatus,
-  isAuthenticated: boolean,
+  auth: AuthCheckState,
   /** 下一步该去哪里。管理页传 '菜单'，设置页传 '本页'。 */
   loginEntry: '菜单' | '本页' = '菜单'
 ): string {
-  if (status.backendId === 'supabase' && !isAuthenticated) {
+  // ⚠️ 只有**核到没登录**才说「去登录」——
+  // 「核不到」时这句话是**错的**（用户多半登录着，重登也解决不了断网）。
+  if (status.backendId === 'supabase' && auth === 'not_authenticated') {
     return `还没有登录 TapStack 云端，登录后自动同步才能运行。请先在${loginEntry}登录。`;
   }
   if (status.kind === 'unconfigured') {

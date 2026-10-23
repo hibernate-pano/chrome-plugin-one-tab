@@ -6,8 +6,7 @@ import { resolve } from 'path';
 import { writeFileSync, readFileSync } from 'fs';
 import {
   firstScreenChunkFor,
-  firstScreenForbiddenReason,
-  isForbiddenInFirstScreen,
+  firstScreenPolicyGate,
 } from './src/core/firstScreenPolicy';
 import { buildWorkerSafePreloadCode } from './src/core/workerSafePreload';
 
@@ -16,70 +15,6 @@ const tempManifest = {
   ...manifest,
   background: undefined
 };
-
-/**
- * 首屏准入闸门（2026-10-23）。
- *
- * 规则：**popup 入口 chunk 的静态依赖闭包里不许出现被禁的模块**
- * （见 src/core/firstScreenPolicy.ts）。
- *
- * 为什么要放在构建里判，而不是只靠一个单测：
- *   · 单测跑的是**源码图**（我写的 import 解析器），构建产物才是**真相**；
- *     两者可能不一致（Rollup 会合并块、会把动态 import 变成静态边）。
- *   · 这条规则一旦破掉，后果是「首屏悄悄涨回 260KB 而没人知道是哪根线」，
- *     体积数字本身不会报警（预算门只报总数，不报**是谁**）。
- *
- * 为什么在 `generateBundle` 判（而不是 `renderChunk`）：这一步 Rollup 已经把
- * 静态 import 图（chunk.imports）与动态 import（chunk.dynamicImports）分开了，
- * 正是「首屏 = 静态闭包」这个定义能直接落地的地方。
- */
-function firstScreenPolicyGate() {
-  return {
-    name: 'first-screen-policy-gate',
-    generateBundle(_options: unknown, bundle: Record<string, any>) {
-      // popup 入口：rollup input 名字是 'src/popup/index'；
-      // facadeModuleId 可能是 HTML 本身（vite 的 html 入口）或 index.tsx。
-      const entry = Object.values(bundle).find(
-        (c: any) =>
-          c.type === 'chunk' &&
-          (c.name === 'src/popup/index' ||
-            (typeof c.facadeModuleId === 'string' &&
-              /src\/popup\/index\.(html|tsx)$/.test(c.facadeModuleId.replace(/\\/g, '/'))))
-      ) as any;
-      if (!entry) return; // 这一轮产物里没有 popup（例如单独构建 SW）⇒ 不判
-
-      // 静态依赖闭包（只跟 chunk.imports，不跟 dynamicImports）
-      const seen = new Set<any>();
-      const stack = [entry];
-      const violations: { id: string; reason: string }[] = [];
-      while (stack.length) {
-        const chunk = stack.pop();
-        if (!chunk || seen.has(chunk)) continue;
-        seen.add(chunk);
-        for (const fileName of chunk.imports ?? []) {
-          const next = bundle[fileName];
-          if (next) stack.push(next);
-        }
-        for (const mod of Object.keys(chunk.modules ?? {})) {
-          if (isForbiddenInFirstScreen(mod)) {
-            violations.push({ id: mod, reason: firstScreenForbiddenReason(mod) ?? '' });
-          }
-        }
-      }
-      if (violations.length > 0) {
-        const detail = violations
-          .map(v => `  · ${v.id.replace(/\\/g, '/')}\n    理由：${v.reason}`)
-          .join('\n');
-        throw new Error(
-          'popup 首屏准入被破：以下模块出现在 popup 入口的**静态**依赖闭包里。\n' +
-            `${detail}\n` +
-            '修法：把调用点改成 `await import(...)`（动态 import 不算首屏），' +
-            '或从 popup 的静态图里断开这条边。规则见 src/core/firstScreenPolicy.ts。'
-        );
-      }
-    },
-  };
-}
 
 /**
  * worker 安全的 `__vitePreload` 助手（2026-10-23）。

@@ -22,7 +22,7 @@ import { DEFAULT_SETTINGS, validateSyncIntervalMinutes } from '../utils/storage'
 import { storage } from '../utils/storage';
 import { STORAGE_KEYS } from '../storage-kv/keys';
 import { kvGet } from '../storage-kv/storageAdapter';
-import type { UserSettings } from '../types/tab';
+import type { UserSettings, User } from '../types/tab';
 import { primeSyncBackend } from '@/sync-backend';
 import { isBackendUnavailableError } from '@/core/backendUnavailable';
 import { backendUnavailableBackgroundNotice } from '@/components/sync/backendUnavailableCopy';
@@ -666,7 +666,7 @@ async function handleAlarm(alarm: chrome.alarms.Alarm): Promise<void> {
  *              这些正是修复前「每 60s 无限重试」的场景，现在逐级退避。
  *   · 失败原因随 outcome.detail 落进持久化状态，日志/诊断可追。
  */
-export type BackgroundSyncOutcomeKind = 'done' | 'yielded' | 'not_logged_in' | 'failed';
+export type BackgroundSyncOutcomeKind = 'done' | 'yielded' | 'not_logged_in' | 'auth_unknown' | 'failed';
 
 export interface BackgroundSyncOutcome {
   /**
@@ -678,6 +678,11 @@ export interface BackgroundSyncOutcome {
    * 更细的分类。存在的理由：runBackgroundSyncOnce 的历史 boolean 契约必须能区分
    * 「让路」(true) 与「未登录」(false)，而 handleAlarm 只关心 ok —— 两套语义不能
    * 挤在一个字段里，否则不是把守卫改坏就是把退避改坏。
+   *
+   * ── 2026-10-23（第 50 轮）：新增 `auth_unknown` ───────────────────────
+   * 「**核不到**登录态」（断网 / 超时）与「**核到**没登录」是**两件事**：
+   * 修复前两者都落在 `not_logged_in` ⇒ 后台每轮静默跳过、设置页却承诺
+   * 「每 N 分钟后台同步一次」⇒ 静默停摆 + 界面说谎。
    */
   kind: BackgroundSyncOutcomeKind;
   /** 一句话原因，落日志与退避状态；成功时是进度摘要。 */
@@ -768,13 +773,28 @@ async function performBackgroundSync(): Promise<BackgroundSyncOutcome> {
     //
     // 所以这一类必须**原样上抛**，按「服务端不可用」处理（不推进退避阶梯、
     // 间隔大幅拉长、一次性通知用户）。
-    const user = await store
-      .dispatch(getCurrentUser())
-      .unwrap()
-      .catch(err => {
-        if (isBackendUnavailableError(err)) throw err;
-        return null;
-      });
+    //
+    // ── 2026-10-23（第 50 轮）：**核不到**也必须与「未登录」分开 ──────────
+    // 那句 catch 里剩下的 `return null` 把「断网 / 超时」也压成了 null
+    // ⇒ 每轮都读成「未登录」⇒ 后台静默跳过、设置页却承诺「每 N 分钟同步一次」。
+    // 现在核不到 ⇒ 单独一档 `auth_unknown`：
+    //   · 与 `not_logged_in` **分开**（用户没登录 ≠ 网断了）；
+    //   · 与服务端不可用**分开**（等我们恢复 ≠ 等你的网络）；
+    //   · `ok: true`（不推进退避）：网会自己好，而惩罚用户的 wifi
+    //     （退避阶梯一路推到 5 分钟、8 次后清 alarm ⇒ 自动同步静默停掉）
+    //     代价远大于省下的那点请求。
+    let user: User | null = null;
+    try {
+      user = await store.dispatch(getCurrentUser()).unwrap();
+    } catch (err) {
+      if (isBackendUnavailableError(err)) throw err;
+      logWarn('[BackgroundSync] 核不到登录态（网络等原因），本轮跳过（不是「未登录」）');
+      return {
+        ok: true,
+        kind: 'auth_unknown',
+        detail: '暂时联系不上云端，本轮跳过（不是「未登录」）',
+      };
+    }
     if (!user) {
       logInfo('[BackgroundSync] 未登录，跳过后台同步');
       // 未登录不是同步故障（此时大概也没联网），不推进退避。
@@ -783,7 +803,7 @@ async function performBackgroundSync(): Promise<BackgroundSyncOutcome> {
 
     // 2. 登录态写入 store（SyncEngine 检查 store.auth.isAuthenticated 才放行）
     store.dispatch(
-      setFromCache({ user, isAuthenticated: true })
+      setFromCache({ user, isAuthenticated: true, statusKind: 'authenticated' })
     );
   }
 

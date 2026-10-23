@@ -1,5 +1,6 @@
-import { createSlice, createAsyncThunk } from '@reduxjs/toolkit';
+import { createSlice, createAsyncThunk, type PayloadAction } from '@reduxjs/toolkit';
 import { AuthState, User } from '@/types/tab';
+import type { AuthCheckState } from '@/types/tab';
 import { accountScopeStore, authCache } from '@/utils/authCache';
 import { createAccountScopeRecord, decideAccountBind } from '@/core/accountScope';
 import {
@@ -8,7 +9,8 @@ import {
   isBackendUnavailableError,
   readHttpStatus,
 } from '@/core/backendUnavailable';
-import { backendUnavailableAuthCopy } from '@/components/sync/backendUnavailableCopy';
+import { backendUnavailableAuthCopy, authUnknownCopy } from '@/components/sync/backendUnavailableCopy';
+import { classifySessionFailure } from '@/core/sessionFailure';
 import { storage } from '@/utils/storage';
 import { loadSupabaseFacade } from '@/utils/supabaseRuntime';
 import { logError, logInfo, logWarn } from '../../utils/log';
@@ -135,6 +137,8 @@ const initialState: AuthState = {
   isAuthenticated: false,
   isLoading: false,
   error: null,
+  // ⚠️ 还没核过（不是「没登录」）。见 AuthCheckState 的注释。
+  authStatusKind: 'unchecked',
 };
 
 /**
@@ -310,7 +314,44 @@ export const getCurrentUser = createAsyncThunk(
     try {
       // 首先检查是否有活跃会话，避免未登录用户触发错误
       const supabaseAuth = await loadSupabaseAuth();
-      const { data: sessionData } = await supabaseAuth.getSession();
+      const { data: sessionData, error: sessionError } = await supabaseAuth.getSession();
+
+      // ── 2026-10-23（第 50 轮）：**读会话失败 ≠ 「没登录」**───────────────
+      // 【原来的缺陷】`const { data: sessionData } = await getSession();`
+      // **只取 data、丢掉 error** ⇒ 刷新失败时 session 是 null、失败原因被丢掉
+      // ⇒ 这一层返回 null ⇒ 上游读成「服务端明确说没有会话」
+      // ⇒ ① 界面说「未登录」；② `authCache.clearAuthState()` 把本机缓存清空。
+      //
+      // 【为什么这是本轮最重的一个缺陷】用户明明登录着（只是刷新令牌过期了、
+      // 网络断了、云端 402），却被告知「没登录」并被要求重新输密码 ——
+      // 而重新登录在断网/402 时**必然失败** ⇒ 死循环。
+      // 旧代码对这一格免疫：它先 `getSession()`，**有会话才去核**，
+      // 失败时旧路径只是「核不到」，不会被读成「没登录」。
+      //
+      // 【现在怎么做】按**失败原因**分流（判据见 core/sessionFailure.ts）：
+      //   · 会话真的死了（刷新令牌被吊销/已被用过）⇒ 确实没登录 ⇒ 返回 null；
+      //   · 服务端整体不可用（402）⇒ 抛 BackendUnavailableError（机器标记要活着）；
+      //   · 核不到（断网等）⇒ 抛出去 ⇒ thunk **reject**
+      //     ⇒ 登录态**按缓存保留**，界面说「现在联系不上云端」，**不说「未登录」**。
+      if (sessionError) {
+        const failure = classifySessionFailure(sessionError);
+        if (failure.kind === 'session_expired') {
+          // 会话真的死了 ⇒ 确实没登录（这一档说「未登录」是**诚实的**）。
+          logInfo('[auth] 会话已失效（刷新令牌无效），按未登录处理:', failure.detail);
+          return null;
+        }
+        if (failure.kind === 'backend_unavailable') {
+          // 机器标记必须活着（下游认 `code: 'backend_unavailable'`），
+          // 状态码只用于日志。
+          throw new BackendUnavailableError(
+            `读取会话失败：${failure.detail}`,
+            failure.httpStatus,
+          );
+        }
+        // 核不到（断网 / 超时 / 通道断了）⇒ 抛出去。
+        // ⚠️ 抛出去 ⇒ thunk reject ⇒ 走 rejected 分支 ⇒ **不清缓存、不归零**。
+        throw new Error(`读取会话失败：${failure.detail}`);
+      }
 
       // 如果没有会话，直接返回 null，不触发错误
       if (!sessionData || !sessionData.session) {
@@ -374,11 +415,54 @@ const authSlice = createSlice({
     },
 
     // 从缓存设置认证状态
-    setFromCache: (state, action) => {
+    setFromCache: (
+      state,
+      action: PayloadAction<{
+        user: User | null;
+        isAuthenticated: boolean;
+        /**
+         * 这一档是**核到了的**还是**没核过**（缺省 = `unchecked`）。
+         * 见 reducer 里的注释。
+         */
+        statusKind?: AuthCheckState;
+        /** 「这一档在界面上怎么说」（用户可见；null = 无话可说）。 */
+        notice?: string | null;
+      }>,
+    ) => {
       state.user = action.payload.user;
       state.isAuthenticated = action.payload.isAuthenticated;
       state.isLoading = false;
       state.error = null;
+      // ── 2026-10-23（第 50 轮）：这一动作有两个**不同**的来源 ──────────
+      //   · **本机缓存**（弹窗冷启动）⇒ 只是「暂定事实」，**没核过**
+      //     ⇒ 这一档是 `unchecked`（不是「没登录」！）；
+      //   · **服务端核到了**（恢复登录态之后）⇒ `authenticated`。
+      // 两者共用一个 action，若不显式带上「这一档是什么」，
+      // 调用方就只能靠猜 ⇒ 界面会把「还没核」说成「未登录」。
+      // ⚠️ 缺省是 `unchecked`（**fail-closed**：宁可说「还没核」，
+      // 也不说「没登录」）。
+      state.authStatusKind = action.payload.statusKind ?? 'unchecked';
+      // 「这一档在界面上怎么说」——核到了（authenticated / not_authenticated）
+      // 就没有话可说 ⇒ 清掉上一轮留下的提示。
+      state.notice = action.payload.notice ?? null;
+    },
+
+    /**
+     * 只更新「核到哪儿了」与「这一档在界面上怎么说」。
+     *
+     * ⚠️ 为什么要有这个**独立**动作（而不是复用 setFromCache）：
+     * `setFromCache` 的语义是「把某个用户放进 store」——
+     * 而「核不到」这一档**不引入任何用户**（用户那份来自缓存，已经在 store 里了）。
+     * 用 setFromCache 顺带重发一次缓存用户，会让「缓存用户被 dispatch 进 store」
+     * 这件事出现**两次** ⇒ 那条守卫（冷启动必须立刻把缓存登录态送进 store）
+     * 就再也分不出「冷启动那一次」⇒ **零检测力**。
+     */
+    setAuthCheckState: (
+      state,
+      action: PayloadAction<{ statusKind: AuthCheckState; notice?: string | null }>,
+    ) => {
+      state.authStatusKind = action.payload.statusKind;
+      state.notice = action.payload.notice ?? null;
     },
   },
   extraReducers: (builder) => {
@@ -412,6 +496,9 @@ const authSlice = createSlice({
         state.isLoading = false;
         state.user = action.payload;
         state.isAuthenticated = !!action.payload;
+        // 登录是**用户显式做**的 ⇒ 这一档是核到了的「已登录」。
+        state.authStatusKind = action.payload ? 'authenticated' : 'not_authenticated';
+        state.backendUnavailable = false;
 
         // 登录成功后缓存认证状态
         if (action.payload) {
@@ -435,6 +522,8 @@ const authSlice = createSlice({
         state.isLoading = false;
         state.user = null;
         state.isAuthenticated = false;
+        // 退出登录是**用户显式做**的 ⇒ 这一档是「没登录」（核到了的）。
+        state.authStatusKind = 'not_authenticated';
 
         // 退出登录后清除认证缓存
         authCache.clearAuthState();
@@ -452,6 +541,11 @@ const authSlice = createSlice({
         state.isLoading = false;
         state.user = action.payload;
         state.isAuthenticated = !!action.payload;
+        // ── 2026-10-23（第 50 轮）：这一档是**核到了** ──────────────────
+        // fulfilled 只有两种可能（有账号 / 明确没有会话）——
+        // 「核不到」一律走 rejected 分支 ⇒ 这里可以放心写死。
+        state.authStatusKind = action.payload ? 'authenticated' : 'not_authenticated';
+        state.backendUnavailable = false;
 
         // 更新认证缓存
         if (action.payload) {
@@ -476,8 +570,8 @@ const authSlice = createSlice({
         // ⚠️ 所以这里要分开处理两类失败：
         //   · **服务端不可用** ⇒ 保留**已缓存的登录态**（用户确实登录着，
         //     只是服务端暂时确认不了），并给出「等我们恢复」的人话；
-        //   · 其它失败（令牌过期 / 真的没登录 / 账号被删）⇒ 维持原行为
-        //     （登录态读成 false）。
+        //   · **核不到**（断网 / 超时）⇒ 同样是「不知道」⇒ 同样保留登录态，
+        //     但说的是另一句话（「现在联系不上云端」而不是「等我们恢复」）。
         //
         // 判据用**机器字段**（HTTP 状态码 / 报文标记），不靠文案匹配 ——
         // 见 core/backendUnavailable.ts。
@@ -486,16 +580,23 @@ const authSlice = createSlice({
           // 登录态**保持原样**（不清零）：清零 = 告诉界面「你没登录」，
           // 而事实是「服务端暂时确认不了你的账号」。
           state.backendUnavailable = true;
+          state.authStatusKind = 'backend_unavailable';
           logWarn('[auth] 云端项目不可用，无法验证账号（登录态按缓存保留，不告诉用户「未登录」）');
           return;
         }
-        // 确保错误消息是字符串而不是对象；且进 UI 的必须是中文
-        state.error = authErrorCopy(action.error.message, '获取用户信息失败，请稍后重试');
-        logInfo('自动登录失败，但这是正常的，用户可能未登录');
+        // ── 2026-10-23（第 50 轮）：核不到（断网等）——**也不许**说「未登录」──
+        // 这一档以前落在下面那句 `state.error = authErrorCopy(...)` 里，
+        // 而 `isAuthenticated` 保持原样 ⇒ 界面说「获取用户信息失败，请稍后重试」
+        // —— 方向没错（确实是失败），但**没说清「本地数据没丢」**，
+        // 也没把「这一档是 unknown」记进 store（界面分不出
+        // 「核到没登录」和「没核到」）。
+        state.authStatusKind = 'unknown';
+        state.error = authUnknownCopy();
+        logWarn('[auth] 核不到登录态（网络等原因），登录态按缓存保留（不说「未登录」）');
       });
   },
 });
 
-export const { clearError, setFromCache } = authSlice.actions;
+export const { clearError, setFromCache, setAuthCheckState } = authSlice.actions;
 
 export default authSlice.reducer;

@@ -163,23 +163,3 @@ export const isBackendUnavailableError = (err: unknown): boolean => {
   return isBackendUnavailable(err);
 };
 
-/**
- * 把任意形状的错误**归一**成「服务端不可用」的专用错误。
- *
- * 归一发生在**产生点**（fetch 边界）—— 那一层是唯一能同时看到 HTTP 状态码
- * 与响应体的地方。归一之后，上游每一层只需要 `throw`/`instanceof`，
- * 不再各自去猜「这个 402 长什么样」。
- *
- * 不是「服务端不可用」时**原样返回**（不改写、不吞掉）—— 调用方照旧按
- * 原来的错误处理。
- */
-export const toBackendUnavailableError = (err: unknown): unknown => {
-  if (!isBackendUnavailable(err)) return err;
-  if (err instanceof BackendUnavailableError) return err;
-  const status = readHttpStatus(err);
-  const text = readErrorText(err);
-  return new BackendUnavailableError(
-    text || '服务端项目被限制，暂时无法访问云端服务',
-    status ?? undefined
-  );
-};

@@ -7,7 +7,8 @@ import type { SyncPreviewSummary } from '@/utils/syncPreview';
 import type { BackendStatusKind } from '@/components/layout/backendStatus';
 import { logError } from '@/utils/log';
 import { MENU_LOGIN_LABEL } from '@/components/common/menuLabels';
-import { backendUnavailableCopy } from '@/components/sync/backendUnavailableCopy';
+import { backendUnavailableCopy, LOCAL_DATA_INTACT } from '@/components/sync/backendUnavailableCopy';
+import type { AuthCheckState } from '@/types/tab';
 
 /* ── P1-6 · 覆盖模式的双闸门（纯函数，SyncButton 只做状态装配）─────────────
  *
@@ -139,18 +140,35 @@ export const isOverwriteGateOpen = (input: {
 /** 身份判定的两种来源（`syncBackend === 'supabase'` 时登录是必须的）。 */
 export interface SyncGateInput {
   syncBackend: 'supabase' | 'webdav';
-  isAuthenticated: boolean;
+  /**
+   * 登录态的**那一档**（四档 + 还没核）。
+   *
+   * ── 2026-10-23（第 50 轮）：从 `isAuthenticated: boolean` 换成四档 ────────
+   * 修复前这里收的是「登录了没」这个布尔 ⇒ 「核不到」（断网 / 402）与
+   * 「核到没登录」**同形** ⇒ 闸门把前者也拦成「还没有登录 TapStack 云端，
+   * 请先点右上角「⋯」菜单里的「登录 / 注册」」。
+   *
+   * 而那是**两句错话**：
+   *   · 事实错 —— 用户多半登录着；
+   *   · 动作错 —— 断网时点「登录 / 注册」**必然失败**。
+   *
+   * ⇒ 只有 `not_authenticated`（**核到**没会话）才拦。
+   *   其余三档（核不到 / 服务端不可用 / 还没核）放行，让真正的同步引擎
+   *   去核 —— 它有 `ensureAuthenticated` 这道闸，核完会按同一套四档
+   *   说人话（`SYNC_REASON_COPY.auth_unknown`），不会静默失败。
+   */
+  auth: AuthCheckState;
 }
 
 /**
  * 「当前身份能不能真的完成一次同步」。
  *
  * 为什么不直接用 isAuthenticated：自带存储（WebDAV）用户没有 TapStack 账号，
- * isAuthenticated 恒为 false；判据必须按后端分流（与 authGuard / backgroundSync
+ * 登录态恒为 false；判据必须按后端分流（与 authGuard / backgroundSync
  * 同口径）。
  */
 export const syncIdentityCanRun = (input: SyncGateInput): boolean =>
-  input.syncBackend === 'webdav' || input.isAuthenticated;
+  input.syncBackend === 'webdav' || input.auth !== 'not_authenticated';
 
 /**
  * 工具栏同步按钮组**是否渲染**。
@@ -179,6 +197,10 @@ export const shouldRenderSyncControls = (
  *
  * 为什么必须在这一刻出声：放宽渲染后，未登录用户能开弹窗、能点覆盖两下；
  * 若这里也静默，他就得到「点了完全没反应」。
+ *
+ * ⚠️ 这一句里说「登录」只在**核到没登录**时成立（第 50 轮）：
+ * 「核不到」那一档由同步引擎自己说（`SYNC_REASON_COPY.auth_unknown`），
+ * 那里的话术是「检查网络」，与这里的「去登录」是两件不同的事。
  */
 export const syncIdentityBlockedCopy = (input: SyncGateInput): string | null =>
   syncIdentityCanRun(input)
@@ -229,6 +251,20 @@ export const SYNC_REASON_COPY: Record<string, string> = {
   // spec.failureMessage（「上传失败，请重试」）—— 一句既没说是没登录、
   // 也没说下一步的话。口径对齐 HeaderDropdown 的「请先登录以使用同步功能」。
   not_authenticated: `未登录：同步需要 TapStack 云端账号，请先点「⋯」菜单里的「${MENU_LOGIN_LABEL}」`,
+  // ── 2026-10-23（第 50 轮）：「**核不到**登录态」（断网 / 超时 / 通道断了）──
+  //
+  // ⚠️ 这一档与 `not_authenticated` 是**两件事**，绝不能合并：
+  //   · `not_authenticated` = **核到**没有会话 ⇒ 下一步是**重新登录**；
+  //   · `auth_unknown`      = **核不到** ⇒ 用户多半登录着，下一步是
+  //     **检查网络**（重新登录在断网时**必然失败** ⇒ 死循环）。
+  //
+  // 修复前这一档不存在：闸门把「核不到」压成 false ⇒ 说「用户未登录」。
+  // 三个字的事实基础是假的，而用户会照着它去重新输密码。
+  //
+  // 措辞必须自带「本地数据没丢」：同步失败时用户第一反应是
+  // 「我存的东西没了」（v1.22.0 起删除即物理清除，没有回收站）。
+  auth_unknown:
+    `现在联系不上 TapStack 云端，暂时无法确认登录状态：${LOCAL_DATA_INTACT}。请检查网络后重试`,
   // 2026-10-20 C-06：删除熔断是**保护性中止**，不是普通失败。
   // syncEngine 在写入之前就中止了本轮下载（本地数据一个字节都没动），
   // 原先它没有登记在案 ⇒ isBareEnum('failsafe_triggered') 为真 ⇒ 落到
@@ -443,7 +479,16 @@ export interface MenuSyncStatusView {
 
 export const resolveMenuSyncStatus = (input: {
   syncBackend: 'supabase' | 'webdav';
-  isAuthenticated: boolean;
+  /**
+   * 登录态的**那一档**（四档 + 还没核）。
+   *
+   * ── 2026-10-23（第 50 轮）：从布尔换成四档 ────────────────────────────
+   * 修复前收的是 `isAuthenticated: boolean` ⇒ 「核不到」（断网 / 402）与
+   * 「核到没登录」在菜单里**长得一模一样**：都显示「未登录」+「去登录」。
+   * 而菜单是用户最常看的一屏 ⇒ 断网时它反复告诉用户「你没登录」，
+   * 于是他反复去重新输密码。
+   */
+  auth: AuthCheckState;
   userEmail: string | null | undefined;
   backend: { label: string; tone: MenuSyncStatusView['tone']; actionable: boolean };
 }): MenuSyncStatusView => {
@@ -453,18 +498,60 @@ export const resolveMenuSyncStatus = (input: {
     ? input.userEmail
     : isWebdav
       ? '自带存储'
-      : '未登录';
+      : input.auth === 'authenticated'
+        ? '已登录'
+        : input.auth === 'not_authenticated'
+          ? '未登录'
+          : '登录状态待确认';
 
-  // 云端 + 未登录：后端解析再「ready」也不代表能同步（Supabase 分支不检查登录态）。
-  if (!isWebdav && !input.isAuthenticated) {
-    return {
-      headline,
-      prefix,
-      label: '未登录',
-      tone: 'warn',
-      actionable: false,
-      needsLogin: true,
-    };
+  // ── 云端：登录态的**四档**各自有话要说（2026-10-23，第 50 轮）──────────
+  // ① `not_authenticated`（**核到**没会话）：后端解析再「ready」也不代表能同步
+  //    （Supabase 分支不检查登录态）⇒ 仍说「未登录」+ 给「去登录」入口；
+  // ② `backend_unavailable`（服务端不可用）：用户**多半登录着** ⇒
+  //    绝不说「未登录」、也**不**给「去登录」（那是错的下一步）；
+  // ③ `unknown`（核不到）：同上，但说的是「联系不上」；
+  // ④ `unchecked`（还没核）：此刻任何结论都还没被证实 ⇒ 说「正在确认」。
+  if (!isWebdav) {
+    if (input.auth === 'not_authenticated') {
+      return {
+        headline,
+        prefix,
+        label: '未登录',
+        tone: 'warn',
+        actionable: false,
+        needsLogin: true,
+      };
+    }
+    if (input.auth === 'backend_unavailable') {
+      return {
+        headline,
+        prefix,
+        label: '云端暂时不可用',
+        tone: 'error',
+        actionable: false,
+        needsLogin: false,
+      };
+    }
+    if (input.auth === 'unknown') {
+      return {
+        headline,
+        prefix,
+        label: '暂时联系不上云端',
+        tone: 'warn',
+        actionable: false,
+        needsLogin: false,
+      };
+    }
+    if (input.auth === 'unchecked') {
+      return {
+        headline,
+        prefix,
+        label: '正在确认登录状态',
+        tone: 'muted',
+        actionable: false,
+        needsLogin: false,
+      };
+    }
   }
 
   return {

@@ -189,7 +189,16 @@ const OptionsContent: React.FC = () => {
   const settings = useAppSelector(state => state.settings);
   // 2026-10-18 P1#1：云端的就绪判据必须看登录态 —— Supabase 解析永远没有
   // lockedReason，不看它就分不出「已登录」与「从未登录」。
-  const isAuthenticated = useAppSelector(state => state.auth.isAuthenticated);
+  // ── 2026-10-23（第 50 轮）：登录态的**那一档**（四档 + 还没核）─────────
+  // `isAuthenticated` 是**暂定事实**，它回答不了「这次没核到，还是核到了没登录？」
+  // 而这两件事在界面上说法**完全相反**：
+  //   · 核到没登录 ⇒ 「请在本页点登录 / 注册」（下一步是输密码）；
+  //   · 没核到（断网 / 402）⇒ 「现在联系不上云端，本地数据没丢」
+  //     （下一步是检查网络，**重新登录解决不了**）。
+  // 修复前本页只读那个布尔 ⇒ 核不到时被说成「尚未登录 TapStack 云端」，
+  // 而且**自动同步开关根本点不开**（canEnableAutoSync 对云端要求已登录）
+  // —— 而这是**唯一**能配自动同步的地方（设置页没有右上角菜单）。
+  const authKind = useAppSelector(state => state.auth.authStatusKind ?? 'unchecked');
   const { themeMode, setThemeMode } = useTheme();
   const { showToast } = useToast();
 
@@ -228,7 +237,7 @@ const OptionsContent: React.FC = () => {
   // 账号区形态：已登录 / 未登录（要提示）/ 不需要账号（自带存储）。
   const accountMode: AccountPanelMode = accountPanelMode(
     settings.syncBackend,
-    isAuthenticated
+    authKind
   );
   const authUserEmail = useAppSelector(state => state.auth.user?.email ?? null);
 
@@ -492,14 +501,14 @@ const OptionsContent: React.FC = () => {
       // 方向又出现了一次：开关亮着、toast 承诺会跑、后台每轮 not_logged_in。
       // WebDAV 不需要登录（账号自带），由 canEnableAutoSync 按后端分流。
       //
-      // ⚠️ `isAuthenticated` 必须进本回调的依赖数组（round 28）：它是**异步注入**的
+      // ⚠️ `authKind` 必须进本回调的依赖数组（round 28 → 第 50 轮）：它是**异步注入**的
       // （见上面的 getCurrentUser effect），漏进 deps 会让这个回调永远闭包在首帧的
       // `false` 上 —— 页面提示行已经改口说「已登录」，点开关却仍被按「未登录」拒绝。
       const fresh = await refreshBackendStatus();
-      if (!canEnableAutoSync(fresh, isAuthenticated)) {
+      if (!canEnableAutoSync(fresh, authKind)) {
         // '本页'：设置页没有「⋯」菜单 —— 登录入口在**本页**顶部的
         // 「登录 / 注册」按钮上。说「菜单」会让用户去找一个不存在的菜单。
-        showToast(autoSyncBlockedCopy(fresh, isAuthenticated, '本页'), 'error');
+        showToast(autoSyncBlockedCopy(fresh, authKind, '本页'), 'error');
         return;
       }
     }
@@ -525,7 +534,7 @@ const OptionsContent: React.FC = () => {
         'success'
       );
     }
-  }, [dispatch, isAuthenticated, settings.syncEnabled, settings.syncIntervalMinutes, notifySwResyncAlarm, showToast]);
+  }, [dispatch, authKind, settings.syncEnabled, settings.syncIntervalMinutes, notifySwResyncAlarm, showToast]);
 
   /**
    * 自动同步开关的说明文案（2026-10-17 B8 缺陷 3）。
@@ -553,12 +562,33 @@ const OptionsContent: React.FC = () => {
     // 说「打开后会每 N 分钟同步」，就是 B8 修掉的那种假绿灯。
     // 措辞也必须按后端分开：云端要的是**登录**，不是「重新输入应用密码」。
     if (backendStatus.backendId === 'supabase') {
-      if (!isAuthenticated) {
+      // ── 2026-10-23（第 50 轮）：登录态**分档**说话 ─────────────────────
+      // 修复前只有一个布尔 ⇒ 「核不到」（断网 / 402）与「核到没登录」
+      // 说的是同一句话：「尚未登录 TapStack 云端：自动同步即使打开也不会运行。
+      // 请在本页点「登录 / 注册」。」
+      //
+      // 那是**两重错**：
+      //   ① 事实错 —— 用户多半**登录着**（只是确认不了）；
+      //   ② 动作错 —— 断网时点「登录 / 注册」**必然失败**。
+      // 而开关本身也被 `canEnableAutoSync` 锁着 ⇒ 用户在这一屏**什么都做不了**。
+      if (authKind === 'not_authenticated') {
         // ── 2026-10-20 第二轮审计：这是一句**指向不存在的东西**的话 ──────
         // 原文案让用户「去右上角菜单登录」—— 而**设置页没有右上角菜单**
         // （那是管理页顶栏的东西）。用户照做得到的是「找一个不存在的菜单」。
         // 现在指向本页真实存在的「登录 / 注册」按钮。
         return loginHintCopy('supabase');
+      }
+      if (authKind === 'backend_unavailable') {
+        // 我们的云端项目被限制（402）—— 不是他的问题，也不需要他做什么。
+        return 'TapStack 云端暂时不可用：自动同步会在服务恢复后继续，你的本地会话一个都没有丢。';
+      }
+      if (authKind === 'unknown') {
+        // 断网 / 超时 —— 下一步是**检查网络**，不是重新登录。
+        return '现在联系不上 TapStack 云端，暂时无法确认登录状态：自动同步会在连上后继续，你的本地会话一个都没有丢。';
+      }
+      if (authKind === 'unchecked') {
+        // 还没核完 —— 此刻**任何**关于登录态的结论都还没被证实。
+        return '正在确认登录状态…确认之后这里会说明自动同步能不能运行。';
       }
       return settings.syncEnabled
         ? `已开启：每 ${settings.syncIntervalMinutes} 分钟在后台自动同步一次。`
@@ -718,6 +748,45 @@ const OptionsContent: React.FC = () => {
                   className="shrink-0 rounded-lg border theme-border-default px-3 py-1.5 text-sm font-medium theme-text-secondary transition-colors hover:theme-btn-hover"
                 >
                   退出登录
+                </button>
+              </>
+            ) : accountMode === 'pending' ? (
+              // ── 2026-10-23（第 50 轮）：**还没核** ≠ **核不到** ───────────
+              // 刚打开本页时登录态检查还在路上。此时说「联系不上云端」是假话
+              // （我们还没问），说「你没登录」是更重的假话（多半登录着）。
+              // 只说「正在确认」—— 不给登录表单，也不给「重新确认」按钮
+              // （它正在确认，点它没有意义）。
+              <div className="min-w-0">
+                <div className="text-sm font-medium theme-text-primary">
+                  正在确认登录状态…
+                </div>
+                <div className={`mt-0.5 ${hintCls}`}>
+                  确认之后这里会显示你的账号状态。
+                </div>
+              </div>
+            ) : accountMode === 'unverified' ? (
+              // ── 2026-10-23（第 50 轮）：**核不到**时不给登录表单 ────────
+              // 显示登录表单 = 界面在说「你没登录」—— 而用户多半登录着
+              // （只是确认不了）。这一屏原本在断网时把用户推向「重新输密码」，
+              // 而重新登录在断网时**必然失败** ⇒ 死循环。
+              <>
+                <div className="min-w-0">
+                  <div className="text-sm font-medium theme-text-primary">
+                    暂时无法确认登录状态
+                  </div>
+                  <div className={`mt-0.5 ${hintCls}`}>
+                    现在联系不上 TapStack 云端（或服务正在恢复）。你的本地会话一个都没有丢，
+                    网络恢复后这里会自动恢复显示；**不需要**重新登录。
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    void dispatch(getCurrentUser());
+                  }}
+                  className="shrink-0 rounded-lg border theme-border-default px-3 py-1.5 text-sm font-medium theme-text-secondary transition-colors hover:theme-btn-hover"
+                >
+                  重新确认
                 </button>
               </>
             ) : (

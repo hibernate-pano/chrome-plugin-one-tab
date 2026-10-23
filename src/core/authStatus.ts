@@ -30,17 +30,16 @@
  */
 
 import type { User } from '@/types/tab';
+import type { AuthCheckState } from '@/types/tab';
 
-/** 四种登录态。 */
-export type AuthStatusKind =
-  /** 核到了：这个账号确实登录着。 */
-  | 'authenticated'
-  /** 核到了：确实没登录（会话不存在）。 */
-  | 'not_authenticated'
-  /** 核不到：服务端整体不可用（402 之类）—— **用户多半登录着**，只是确认不了。 */
-  | 'backend_unavailable'
-  /** 核不到：其它原因（断网等）—— **不知道**。 */
-  | 'unknown';
+/**
+ * 四种登录态。
+ *
+ * ⚠️ 它是 `AuthCheckState`（`src/types/tab.ts`）去掉「还没核」那一档 ——
+ * 形状只定义**一次**（types 层），本文件只做**推导**，
+ * 免得两处各写一份枚举、慢慢漂成两个口径。
+ */
+export type AuthStatusKind = Exclude<AuthCheckState, 'unchecked'>;
 
 /** 账号身份（只带真正需要的字段，不把整个 User 传过消息通道）。 */
 export interface AuthStatusUser {
@@ -67,12 +66,15 @@ export function toAuthStatusUser(user: User | null | undefined): AuthStatusUser 
  *
  * @param verifiedUser 服务端核到的账号（`null` = 没核到 / 没登录）
  * @param cachedUser   本机缓存里的账号（**暂定事实**，用来兜底）
+ * @param verifiedNoSession 服务端**明确**回答了「没有会话」—— 这是**事实**，
+ *   不是「没拿到账号」。⚠️ 必须与 `failureDetail` 分开（见下）。
  * @param backendUnavailable 服务端是否整体不可用（402 之类）
  * @param failureDetail 失败原因（只进日志，不面向用户）
  */
 export function decideAuthStatus(input: {
   verifiedUser?: AuthStatusUser | null;
   cachedUser?: AuthStatusUser | null;
+  verifiedNoSession?: boolean;
   backendUnavailable?: boolean;
   failureDetail?: string;
 }): AuthStatus {
@@ -83,21 +85,26 @@ export function decideAuthStatus(input: {
     return { kind: 'authenticated', user: input.verifiedUser };
   }
 
-  // ② 服务端整体不可用 ⇒ **不许**读成「没登录」。
+  // ② **明确**核到「没有会话」⇒ 真的没登录。
+  //    ⚠️ 这一支是**事实**，不是「没拿到结果」的副作用 ——
+  //    修复前这里靠 `failureDetail` 的真伪来区分（`if (input.failureDetail)`），
+  //    于是「核失败但没有失败原因」会被读成「没登录」——
+  //    **失败原因的长相不该决定事实的性质**。
+  if (input.verifiedNoSession) {
+    return { kind: 'not_authenticated', user: null };
+  }
+
+  // ③ 服务端整体不可用 ⇒ **不许**读成「没登录」。
   //    用户多半登录着（缓存里就有账号）⇒ 保留缓存那份，界面据此说
   //    「云端暂时不可用」而不是「请重新登录」。
   if (input.backendUnavailable) {
     return { kind: 'backend_unavailable', user: cached };
   }
 
-  // ③ 核不到（断网等）⇒ 「不知道」⇒ 同样保留缓存那份。
-  //    ⚠️ 这一档与 ② 的差别只在**界面怎么说话**，判据方向一致（都不说「没登录」）。
-  if (input.failureDetail) {
-    return { kind: 'unknown', user: cached, detail: input.failureDetail };
-  }
-
-  // ④ 真的核到了「没有会话」⇒ 没登录。
-  return { kind: 'not_authenticated', user: null };
+  // ④ 兜底：**核不到就是核不到**（fail-closed）⇒ 「不知道」。
+  //    ⚠️ 绝不能在这里落到「没登录」—— 那正是第 50 轮修掉的那个谎：
+  //    「核不到」被读成「没登录」⇒ 用户去重新输密码，而重登解决不了断网。
+  return { kind: 'unknown', user: cached, detail: input.failureDetail };
 }
 
 /**

@@ -130,6 +130,21 @@ jobs:
           fi
           initdb --version && pg_ctl --version && psql --version
 
+      # ⚠️ **构建必须在单测之前**（2026-10-23 第 50 轮）。
+      #
+      # 原来的顺序是 `pnpm test` → `pnpm validate`，而 build 只在 validate 里面
+      # ⇒ 干净 checkout 下跑 `pnpm test` 时 **dist/ 还不存在**
+      # ⇒ tests/guards/firstScreenBudget.test.ts 的**产物级**首屏断言
+      #   （读 dist/src/popup/index.html 的 modulepreload 清单）**每次都 skip**。
+      # 首屏准入有三层（纯函数 / 源码静态图 / 产物清单），而产物那一层
+      # 在 CI 里**从来没执行过** —— 日志里只有一行 skip，看起来像「验过了」。
+      #
+      # 现在先构建再跑单测 ⇒ 产物级断言在 CI 里真的会跑。
+      # （`pnpm validate` 里仍然会再构建一次：validate 是「发布前四道门」的
+      #   自包含集合，为了少跑 7 秒而把它拆开会破坏那份清单的意义。）
+      - name: 构建（产物级首屏断言的前置：dist 必须先存在）
+        run: pnpm build
+
       - name: 单测（含真实 Postgres 触发器集成测试）
         run: pnpm test
 

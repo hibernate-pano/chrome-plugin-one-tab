@@ -32,6 +32,31 @@ before(async () => {
 const read = (rel: string) =>
   readFile(resolve(dirname(fileURLToPath(import.meta.url)), '..', rel), 'utf8');
 
+/**
+ * 从源码里取出「登录态那个变量」。
+ *
+ * ── 为什么不逐字钉 `state.auth.isAuthenticated` ─────────────────────────
+ * 第 50 轮把登录态从「一个布尔」改成「四档 + 还没核」，逐字断言会立刻变红
+ * —— 但那不是回归，是**接口升级**。本仓纪律：守卫钉死字面量 ⇒ 改对了实现
+ * 反而红（见记忆 stale-literal-guards-block-correct-fixes）。
+ *
+ * 真正要守的不变量是**数据流**：
+ *   ① 登录态来自 Redux 的 auth 切片（不是页签自己另算一份）；
+ *   ② 闸门用的**就是** selector 出来的**同一个变量**（不是重新读一次、
+ *      也不是另取一个字段）；
+ *   ③ 那个变量进了 useCallback 的依赖数组（它是**异步注入**的，
+ *      不进依赖 ⇒ 闭包永远停在首帧的值上）。
+ *
+ * 所以这里**从源码里把变量名抠出来**，再拿它去钉 ②③ ——
+ * 变量改名、字段名升级都不影响，语义一断立刻红。
+ */
+const extractAuthSelector = (
+  src: string
+): { ident: string; field: string } | null => {
+  const m = /const\s+(\w+)\s*=\s*useAppSelector\(\s*state\s*=>\s*state\.auth\.(\w+)/.exec(src);
+  return m ? { ident: m[1], field: m[2] } : null;
+};
+
 describe('options 页：登录态必须自己注入一次', () => {
   it('OptionsPage 挂载时 dispatch(getCurrentUser())', async () => {
     const src = await read('src/options/OptionsPage.tsx');
@@ -64,10 +89,13 @@ describe('options 页：登录态必须自己注入一次', () => {
 
   it('闸门读的就是这份 Redux 登录态（判据与注入值同一处）', async () => {
     const src = await read('src/options/OptionsPage.tsx');
-    assert.match(src, /useAppSelector\(state => state\.auth\.isAuthenticated\)/,
-      '登录态必须来自 Redux auth');
-    assert.match(src, /canEnableAutoSync\(fresh, isAuthenticated\)/,
-      '自动同步闸门必须用同一个值，不许另算一份');
+    const sel = extractAuthSelector(src);
+    assert.ok(sel, '登录态必须来自 Redux auth（不是页签自己另算一份）');
+    assert.match(
+      src,
+      new RegExp(`canEnableAutoSync\\(\\s*\\w+\\s*,\\s*${sel.ident}\\s*\\)`),
+      '自动同步闸门必须用 selector 出来的**同一个**变量，不许另算一份'
+    );
   });
 
   it('popup 侧的 AuthProvider 仍在注入（两处同一动作）', async () => {
@@ -75,13 +103,19 @@ describe('options 页：登录态必须自己注入一次', () => {
     assert.match(src, /getCurrentUser/, 'AuthProvider 仍负责 popup 的登录态注入');
   });
 
-  it('登录态是异步注入的，必须进开关回调的依赖数组（否则闭包在首帧的 false 上）', async () => {
+  it('登录态是异步注入的，必须进开关回调的依赖数组（否则闭包在首帧的旧值上）', async () => {
     const src = await read('src/options/OptionsPage.tsx');
+    const sel = extractAuthSelector(src);
+    assert.ok(sel, '登录态必须来自 Redux auth');
     const start = src.indexOf('const handleToggleAutoSync = useCallback');
     const depsIdx = src.indexOf('}, [dispatch', start);
     assert.ok(start > 0 && depsIdx > start, '必须能定位到 handleToggleAutoSync 的依赖数组');
     const deps = src.slice(depsIdx, src.indexOf(']);', depsIdx));
-    assert.match(deps, /isAuthenticated/, '依赖数组必须含 isAuthenticated');
+    assert.match(
+      deps,
+      new RegExp(`\\b${sel.ident}\\b`),
+      '依赖数组必须含登录态那个变量（它是异步注入的，不进依赖就永远是首帧的值）'
+    );
     assert.match(deps, /settings\.syncEnabled/, '原有依赖不得丢');
   });
 });

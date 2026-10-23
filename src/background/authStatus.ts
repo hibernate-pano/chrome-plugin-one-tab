@@ -31,14 +31,19 @@ import { logWarn } from '../utils/log';
  */
 export async function readAuthStatus(): Promise<AuthStatus> {
   let cachedUser = null as ReturnType<typeof toAuthStatusUser>;
-  try {
-    const cached = await authCache.getAuthState();
-    if (cached?.isAuthenticated && cached.user) {
-      cachedUser = toAuthStatusUser(cached.user);
+  // ── 2026-10-23（第 50 轮）：缓存读**三态**（known / absent / unreadable）──
+  // 修复前 `authCache.getAuthState()` 读失败**返回 null**，与「这台机器从没
+  // 登录过」同形 ⇒ 缓存这一层已经分不清「没有」与「读不出来」。
+  // 现在：**读不出来**不中止核对（缓存只是兜底，核服务端才是主路径），
+  // 但也**不许**被当成「没有缓存的登录态」——那一档由判据层自己决定
+  // （`decideAuthStatus` 的兜底是「不知道」，fail-closed）。
+  const cachedRead = await authCache.getAuthState();
+  if (cachedRead.state === 'known') {
+    if (cachedRead.isAuthenticated && cachedRead.user) {
+      cachedUser = toAuthStatusUser(cachedRead.user);
     }
-  } catch (err) {
-    // 缓存读不到**不中止**核登录态：缓存只是兜底，核服务端才是主路径。
-    logWarn('[authStatus] 读本机缓存登录态失败（不影响核对服务端）:', err);
+  } else if (cachedRead.state === 'unreadable') {
+    logWarn('[authStatus] 读本机缓存登录态失败（缓存只是兜底，继续核对服务端）:', cachedRead.detail);
   }
 
   try {
@@ -47,7 +52,13 @@ export async function readAuthStatus(): Promise<AuthStatus> {
       // 服务端明确说「没有会话」⇒ 真的没登录。
       // ⚠️ 这一支**必须**清掉缓存那份：用户可能刚刚在别处登出了
       // （否则界面会一直显示「已登录」，而他点了上传只会得到一句「会话已过期」）。
-      return decideAuthStatus({ verifiedUser: null, cachedUser: null });
+      // ⚠️ `verifiedNoSession: true` —— 这是**事实**（服务端明确回答了
+      // 「没有会话」），不是「没拿到结果」的副作用。
+      return decideAuthStatus({
+        verifiedUser: null,
+        cachedUser: null,
+        verifiedNoSession: true,
+      });
     }
     return decideAuthStatus({ verifiedUser: toAuthStatusUser(user), cachedUser });
   } catch (err) {
@@ -56,6 +67,9 @@ export async function readAuthStatus(): Promise<AuthStatus> {
       // 402 那一类：**用户确实登录着**，只是我们确认不了 ⇒ 不许读成「没登录」。
       logWarn('[authStatus] 云端项目不可用，按缓存保留登录态（不说「未登录」）');
     } else {
+      // ── 2026-10-23（第 50 轮）：核不到（断网等）也不许读成「没登录」─────
+      // `getCurrentUser` 现在只在**核到**没会话时 resolve(null)；
+      // 核不到一律 reject ⇒ 走到这里就是「不知道」。
       logWarn('[authStatus] 核对登录态失败（不知道，不等于没登录）:', err);
     }
     return decideAuthStatus({

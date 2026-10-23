@@ -170,9 +170,13 @@ describe('门禁语义：后端自己回答「是否就绪」', () => {
   const guard = read('src/core/authGuard.ts');
 
   it('webdav 直接放行到后端层（前置条件由后端自己判）', () => {
+    // ⚠️ 2026-10-23（第 50 轮）：闸门的返回值从 `boolean` 升级成**四档判定**，
+    // 逐字钉 `return true` 会把**改对了的实现**判成红
+    // （见记忆 stale-literal-guards-block-correct-fixes）。
+    // 改钉**语义**：webdav 分支必须返回一个**放行**的判定。
     assert.match(
       guard,
-      /backendId\s*===\s*['"]webdav['"][\s\S]{0,40}return\s+true/,
+      /backendId\s*===\s*['"]webdav['"][\s\S]{0,80}allowed:\s*true/,
       '自带存储必须放行；不可用时由锁定后端抛可读错误'
     );
   });

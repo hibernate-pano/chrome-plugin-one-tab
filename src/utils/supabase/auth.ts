@@ -41,8 +41,24 @@ export const auth = {
           error: null
         };
       }
-      // 首先检查是否有活跃会话
-      const { data: sessionData } = await supabase.auth.getSession();
+      // ── 2026-10-23（第 50 轮）：读会话**失败**不许被吞成「没登录」──────
+      // 原先这里 `const { data: sessionData } = await supabase.auth.getSession();`
+      // **只取 data、丢掉 error** ⇒ 刷新失败（断网 / 402 / 刷新令牌被吊销）
+      // 时 session 是 null、error 被丢掉 ⇒ 这一层返回 `{user:null, error:null}`
+      // ⇒ 上游读成「服务端明确说没有会话」⇒ 界面说「未登录」+ 清掉本机缓存。
+      //
+      // 现在把 error **原样带出去**：它决定「为什么没有会话」，
+      // 而那正是后面该说「请重新登录」还是「现在联系不上云端」的唯一依据
+      // （判据见 core/sessionFailure.ts）。
+      const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
+
+      if (sessionError) {
+        logError('读取会话失败:', sessionError);
+        return {
+          data: { user: null },
+          error: sessionError
+        };
+      }
 
       // 如果没有会话，直接返回空用户，不触发错误
       if (!sessionData || !sessionData.session) {

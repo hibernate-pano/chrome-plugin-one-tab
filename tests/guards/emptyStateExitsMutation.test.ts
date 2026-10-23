@@ -149,14 +149,33 @@ describe('变异自证：空态出口这条守卫必须看得见破口', () => {
               // ⚠️ 注意**两个**右括号：`dispatch( setFromCache( {…} ) ) ;` ——
               // setFromCache 一个、dispatch 一个。只匹配一个的话正则会失配，
               // 变异前提不成立（这次就是这么坏的）。
+              //
+              // ⚠️ 2026-10-23（第 50 轮）：payload 里多了一个 `statusKind`
+              // 字段（说明这一档是「还没核」还是「核到了」）⇒ 原来那条
+              // 「逐字匹配整个 payload」的写法会失配。⇒ 改成**按结构**匹配
+              // （花括号配平），再用下面的检查确认匹配到的**正是**那一次
+              // （`user` 是标识符而不是对象字面量 —— 「核到身份」那一次的
+              // `user` 是 `{ id: … }`，不能被误伤）。
               const pattern =
-                /^[ \t]*dispatch\(\s*setFromCache\(\{\s*user:\s*[A-Za-z_$][\w$]*\s*,\s*isAuthenticated:\s*true\s*,?\s*\}\s*\)\s*\)\s*;[ \t]*\r?\n/m;
-              const mutated = source.replace(pattern, '');
-              if (mutated === source) {
+                /^[ \t]*dispatch\(\s*setFromCache\(\{(?:[^{}]|\{[^{}]*\})*\}\s*\)\s*\)\s*;[ \t]*\r?\n/m;
+              const matched = source.match(pattern);
+              if (!matched) {
                 throw new Error(
                   '变异前提没成立：找不到「把缓存里的用户 dispatch 进 store」那一次 —— ' +
                     '实现形状变了，这条变异必须跟着改，否则它会一直绿（假自证）。',
                 );
+              }
+              if (
+                !/user:\s*[A-Za-z_$][\w$]*\s*,/.test(matched[0]) ||
+                !/isAuthenticated:\s*true/.test(matched[0])
+              ) {
+                throw new Error(
+                  '变异前提没成立：匹配到的那次 dispatch 不是「缓存里的用户」那一次',
+                );
+              }
+              const mutated = source.replace(pattern, '');
+              if (mutated === source) {
+                throw new Error('变异前提没成立：替换没有生效');
               }
               return mutated;
             },

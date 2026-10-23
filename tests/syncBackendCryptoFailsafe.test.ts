@@ -19,7 +19,7 @@ import assert from 'node:assert/strict';
 
 import { createVault, openVault, hashPlaintext } from '@/sync-backend/crypto';
 import type { EncryptedPayload } from '@/sync-backend/crypto';
-import { checkDeleteFailsafe, DEFAULT_FAILSAFE_LIMITS } from '@/sync-backend/failsafe';
+import { checkDeleteFailsafe, DEFAULT_FAILSAFE_LIMITS } from '@/core/deleteFailsafe';
 
 /** 与实现里的文案保持一致：口令错 / 数据坏统一是这一句。 */
 const DECRYPT_FAILURE = '口令错误或数据已损坏（无法解密）';

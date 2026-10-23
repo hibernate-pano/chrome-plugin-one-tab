@@ -124,20 +124,20 @@ describe('① 设置页必须有一条永远存在的出口（「后退」不是
 // ══════════════════════════════════════════════════════════════════════════
 describe('② 设置页必须自带登录入口（它没有右上角菜单）', () => {
   it('判据：云端未登录 ⇒ 提示登录；自带存储 ⇒ 不要账号；已登录 ⇒ 显示账号', () => {
-    assert.equal(accountPanelMode('supabase', false), 'signed-out');
-    assert.equal(accountPanelMode('supabase', true), 'signed-in');
+    assert.equal(accountPanelMode('supabase', 'not_authenticated'), 'signed-out');
+    assert.equal(accountPanelMode('supabase', 'authenticated'), 'signed-in');
     // WebDAV 用户没有 TapStack 账号 —— 给他显示「去登录」是纯噪音。
-    assert.equal(accountPanelMode('webdav', false), 'not-needed');
+    assert.equal(accountPanelMode('webdav', 'not_authenticated'), 'not-needed');
     // 已经登录的人哪怕切到 WebDAV 也仍然显示账号（他确实登录着）。
-    assert.equal(accountPanelMode('webdav', true), 'signed-in');
+    assert.equal(accountPanelMode('webdav', 'authenticated'), 'signed-in');
   });
 
   it('判据真的按后端分流（证伪「只看登录态」的实现）', () => {
     // 这是本条最容易写错的地方：只判 isAuthenticated 会让 WebDAV 用户
     // 看到一个与他无关的「去登录」。
     assert.notEqual(
-      accountPanelMode('supabase', false),
-      accountPanelMode('webdav', false),
+      accountPanelMode('supabase', 'not_authenticated'),
+      accountPanelMode('webdav', 'not_authenticated'),
       '两个后端在未登录时必须是两种形态'
     );
   });
@@ -379,16 +379,27 @@ describe('⑤ 真实渲染：页首有出口、账号区按状态出现', () => 
     runtime: { getManifest: () => ({ version: 'test' }) },
   };
 
-  const renderOptions = async (): Promise<string> => {
+  const renderOptions = async (
+    authStatusKind?: 'authenticated' | 'not_authenticated' | 'backend_unavailable' | 'unknown' | 'unchecked'
+  ): Promise<string> => {
     const React = await import('react');
     const { renderToStaticMarkup } = await import('react-dom/server');
     const { Provider } = await import('react-redux');
     const { createStore } = await import('../src/store/index.ts');
     const mod = await import('../src/options/OptionsPage.tsx');
+    const store = createStore();
+    // 登录态是**异步注入**的（挂载后 dispatch getCurrentUser），
+    // 而 renderToStaticMarkup 不跑 effect ⇒ 静态渲染里它恒为 'unchecked'。
+    // 所以要测别的档，必须在这里显式把那一档塞进 store ——
+    // 否则测的其实是「还没核」那一档，而不是被点名的那一档。
+    if (authStatusKind) {
+      const { setAuthCheckState } = await import('../src/store/slices/authSlice.ts');
+      store.dispatch(setAuthCheckState({ statusKind: authStatusKind }));
+    }
     return renderToStaticMarkup(
       React.createElement(
         Provider,
-        { store: createStore() } as unknown as React.ComponentProps<typeof Provider>,
+        { store } as unknown as React.ComponentProps<typeof Provider>,
         React.createElement((mod as { OptionsPage: React.FC }).OptionsPage)
       )
     );
@@ -408,14 +419,43 @@ describe('⑤ 真实渲染：页首有出口、账号区按状态出现', () => 
   });
 
   it('未登录 + 云端（默认后端）⇒ 渲染出登录入口', async () => {
-    const html = await renderOptions();
-    // createStore() 的 auth 初始态是未登录，settings 默认 syncBackend='supabase'。
+    // ⚠️ 必须显式指定这一档：静态渲染不跑 effect，登录态恒为「还没核」。
+    const html = await renderOptions('not_authenticated');
     assert.match(html, /尚未登录 TapStack 云端/, '未登录时必须显示账号区');
     assert.match(html, /登录 \/ 注册/, '必须给出可点的登录入口');
     // 反向：不得再让用户去找菜单。
     assert.ok(
       !html.includes('右上角菜单'),
       '渲染产物里不得出现「右上角菜单」（本页没有菜单）'
+    );
+  });
+
+  it('还没核登录态 ⇒ 既不说「联系不上云端」，也不给登录表单', async () => {
+    // 2026-10-23（第 50 轮）：刚打开设置页时登录态检查还在路上。
+    // 此刻若渲染「联系不上 TapStack 云端」= 假话（我们还没问）；
+    // 若渲染登录表单 = 更重的假话（说「你没登录」）。
+    const html = await renderOptions('unchecked');
+    assert.match(html, /正在确认登录状态/, '「还没核」必须说「正在确认」');
+    assert.ok(
+      !html.includes('尚未登录 TapStack 云端'),
+      '「还没核」时不得说「尚未登录」'
+    );
+    assert.ok(
+      !html.includes('联系不上 TapStack 云端'),
+      '「还没核」时不得说「联系不上云端」—— 我们还没问，不是问了问不到'
+    );
+    assert.ok(
+      !html.includes('登录 / 注册'),
+      '「还没核」时不得渲染登录表单（那等于说「你没登录」）'
+    );
+  });
+
+  it('核不到登录态（断网 / 402）⇒ 说「核不到」，且**不给**登录表单', async () => {
+    const html = await renderOptions('unknown');
+    assert.match(html, /暂时无法确认登录状态/, '必须说「暂时无法确认」');
+    assert.ok(
+      !html.includes('登录 / 注册'),
+      '「核不到」时不得渲染登录表单 —— 断网时重新登录必然失败'
     );
   });
 

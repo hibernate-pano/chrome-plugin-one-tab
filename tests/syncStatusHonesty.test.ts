@@ -170,7 +170,7 @@ describe('缺陷 1：同步状态由真实解析决定，三种状态互相可�
     assert.equal(status.kind, 'unconfigured', '没配云盘必须显示未配置，而不是绿色');
     assert.equal(status.tone, 'muted');
     assert.equal(status.actionable, true, '未配置必须给出「去设置」入口');
-    assert.equal(canEnableAutoSync(status, true), false, '未配置时自动同步不得放行（登录与否都无关）');
+    assert.equal(canEnableAutoSync(status, 'authenticated'), false, '未配置时自动同步不得放行（登录与否都无关）');
   });
 
   it('已配置但本次会话未解锁 → 分类为「未解锁」（与未配置不同）', async () => {
@@ -181,7 +181,7 @@ describe('缺陷 1：同步状态由真实解析决定，三种状态互相可�
     assert.notEqual(status.kind, 'unconfigured', '「已配置未解锁」与「没配置」必须是两种状态');
     assert.equal(status.tone, 'warn');
     assert.equal(status.actionable, true, '未解锁必须给出「去设置」入口');
-    assert.equal(canEnableAutoSync(status, true), false, '未解锁时自动同步不得放行（登录与否都无关）');
+    assert.equal(canEnableAutoSync(status, 'authenticated'), false, '未解锁时自动同步不得放行（登录与否都无关）');
   });
 
   it('已配置且本次会话已解锁 → 分类为 ready（绿点），且无锁定原因', async () => {
@@ -194,7 +194,7 @@ describe('缺陷 1：同步状态由真实解析决定，三种状态互相可�
     assert.equal(status.kind, 'ready');
     assert.equal(status.tone, 'ok');
     assert.equal(status.actionable, false, '就绪态不应再出现「去设置」');
-    assert.equal(canEnableAutoSync(status, true), true, 'WebDAV 就绪态不要求登录（账号由用户自带）');
+    assert.equal(canEnableAutoSync(status, 'authenticated'), true, 'WebDAV 就绪态不要求登录（账号由用户自带）');
   });
 
   it('读失败 / 没见过的原因 → error / unknown，绝不猜成「已解锁」', () => {
@@ -264,7 +264,7 @@ describe('缺陷 1：同步状态由真实解析决定，三种状态互相可�
       assert.equal(out.lockedKind, 'error');
       const status = classifyBackendResolution(getLastBackendResolution());
       assert.equal(status.kind, 'error', '预期外异常必须显示「状态不可读」，不是绿色');
-      assert.equal(canEnableAutoSync(status, true), false);
+      assert.equal(canEnableAutoSync(status, 'authenticated'), false);
     } finally {
       setBackendFactory(null);
     }
@@ -362,7 +362,7 @@ describe('缺陷 1：同步状态由真实解析决定，三种状态互相可�
 
     const webdavAnon = resolveMenuSyncStatus({
       syncBackend: 'webdav',
-      isAuthenticated: false,
+      auth: 'not_authenticated',
       userEmail: null,
       backend: locked,
     });
@@ -372,7 +372,7 @@ describe('缺陷 1：同步状态由真实解析决定，三种状态互相可�
 
     const cloudAuthed = resolveMenuSyncStatus({
       syncBackend: 'supabase',
-      isAuthenticated: true,
+      auth: 'authenticated',
       userEmail: 'a@b.c',
       backend: ready,
     });
@@ -383,7 +383,7 @@ describe('缺陷 1：同步状态由真实解析决定，三种状态互相可�
 
     const cloudAnon = resolveMenuSyncStatus({
       syncBackend: 'supabase',
-      isAuthenticated: false,
+      auth: 'not_authenticated',
       userEmail: null,
       backend: ready,
     });
@@ -440,12 +440,24 @@ describe('缺陷 3：自动同步在配置 + 解锁前不得被打开', () => {
 
   it('开启前先做真实解析；未就绪时直接拒绝，而不是先亮开关再报错', () => {
     assert.match(CODE, /refreshBackendStatus/, '必须复用真实解析函数');
-    assert.match(CODE, /canEnableAutoSync\(fresh, isAuthenticated\)/, '放行判据必须来自后端状态 + 登录态，而不是 settings 副本');
+    // ⚠️ 2026-10-23（第 50 轮）：登录态从「一个布尔」升级成「那一档 + 还没核」，
+    // 逐字钉 `canEnableAutoSync(fresh, isAuthenticated)` 会把**改对了的实现**
+    // 判成红（见记忆 stale-literal-guards-block-correct-fixes）。
+    // ⇒ 改钉**数据流**：放行判据用的必须是 selector 出来的**同一个**变量
+    //   （不许另取一个字段、不许用 settings 的副本）。
+    const authIdent = /const\s+(\w+)\s*=\s*useAppSelector\(\s*state\s*=>\s*state\.auth\.\w+/.exec(CODE)?.[1];
+    assert.ok(authIdent, '登录态必须来自 Redux auth（不是页签自己另算一份）');
+    const gateCall = `canEnableAutoSync(fresh, ${authIdent})`;
+    assert.match(
+      CODE,
+      new RegExp(gateCall.replace(/[()]/g, '\\$&')),
+      '放行判据必须来自后端状态 + 登录态，而不是 settings 副本'
+    );
     const start = CODE.indexOf('const handleToggleAutoSync');
     assert.ok(start > 0, '应能找到 handleToggleAutoSync');
     const end = CODE.indexOf('const handleSetSyncInterval', start);
     const body = CODE.slice(start, end === -1 ? CODE.length : end);
-    const gate = body.indexOf('canEnableAutoSync(fresh, isAuthenticated)');
+    const gate = body.indexOf(gateCall);
     const dispatch = body.indexOf('dispatch(setSyncEnabled(nextEnabled))');
     assert.ok(gate > 0, '未就绪必须有拒绝分支');
     assert.ok(dispatch > 0, '就绪后才有开启分支');
@@ -645,7 +657,7 @@ describe('缺陷 7：云端未登录是「未就绪」，不是绿灯', () => {
     assert.equal(status.kind, 'ready', '前提：云端解析没有锁定原因，kind 就是 ready');
     assert.equal(status.backendId, 'supabase', '分类必须带上后端 id，否则门禁无从分流');
     assert.equal(
-      canEnableAutoSync(status, false),
+      canEnableAutoSync(status, 'not_authenticated'),
       false,
       '云端未登录时自动同步不得放行：后台每轮都会 not_logged_in，承诺必然落空'
     );
@@ -654,7 +666,7 @@ describe('缺陷 7：云端未登录是「未就绪」，不是绿灯', () => {
   it('云端 + 已登录 ⇒ 放行', () => {
     const status = classifyBackendResolution(cloudResolved());
     assert.equal(
-      canEnableAutoSync(status, true),
+      canEnableAutoSync(status, 'authenticated'),
       true,
       '已登录的云端用户必须能开自动同步（不能把门禁做成「云端一律不开」）'
     );
@@ -670,12 +682,12 @@ describe('缺陷 7：云端未登录是「未就绪」，不是绿灯', () => {
     });
     assert.equal(webdav.kind, 'ready', '前提：WebDAV 已配置已解锁也是 ready');
     assert.equal(
-      canEnableAutoSync(cloud, false),
+      canEnableAutoSync(cloud, 'not_authenticated'),
       false,
       '云端未登录：拒绝'
     );
     assert.equal(
-      canEnableAutoSync(webdav, false),
+      canEnableAutoSync(webdav, 'not_authenticated'),
       true,
       'WebDAV 未登录（本来就没有账号）：放行 —— 这正是「按后端分流」的意义'
     );
@@ -683,7 +695,7 @@ describe('缺陷 7：云端未登录是「未就绪」，不是绿灯', () => {
 
   it('拒绝文案必须按后端分说：云端缺的是「登录」，不是「应用密码」', () => {
     const cloud = classifyBackendResolution(cloudResolved());
-    const cloudMsg = autoSyncBlockedCopy(cloud, false);
+    const cloudMsg = autoSyncBlockedCopy(cloud, 'not_authenticated');
     assert.match(cloudMsg, /登录/, '云端未登录的文案必须说「登录」');
     assert.doesNotMatch(
       cloudMsg,
@@ -699,7 +711,7 @@ describe('缺陷 7：云端未登录是「未就绪」，不是绿灯', () => {
       lockedKind: 'locked',
       at: new Date().toISOString(),
     });
-    const webdavMsg = autoSyncBlockedCopy(webdavLocked, false);
+    const webdavMsg = autoSyncBlockedCopy(webdavLocked, 'not_authenticated');
     assert.match(webdavMsg, /解锁|应用密码|口令/, 'WebDAV 未解锁要说「解锁」');
     assert.doesNotMatch(webdavMsg, /登录/, 'WebDAV 用户不需要登录');
   });

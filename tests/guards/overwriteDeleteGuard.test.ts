@@ -57,7 +57,7 @@ if (!process.env.VERBOSE) {
 }
 
 const { planOverwriteDeletion } = await import('@/core/overwriteGuard');
-const { checkDeleteFailsafe } = await import('@/sync-backend/failsafe');
+const { checkDeleteFailsafe } = await import('@/core/deleteFailsafe');
 const { decideForceRemoteOverwrite } = await import('@/core/syncDecision');
 
 /** n 个 id（local-0 … local-(n-1)）。 */

@@ -36,6 +36,19 @@ interface AuthCache {
 }
 
 /**
+ * 读登录缓存的**三态**（2026-10-23 第 50 轮）。
+ *
+ * ⚠️ 「读失败」必须与「没有缓存」分开 —— 详见 `authCache.getAuthState` 的注释。
+ */
+export type AuthCacheRead =
+  /** 读到了：缓存里确实有（或没有）登录态。 */
+  | { state: 'known'; user: User | null; isAuthenticated: boolean }
+  /** 读到了：键不存在 ⇒ 这台机器从没登录过（**事实**）。 */
+  | { state: 'absent' }
+  /** **读失败** ⇒ 不可知（**不许**当成「没登录过」）。 */
+  | { state: 'unreadable'; detail: string };
+
+/**
  * 读出登录缓存里的账号 id（**不管缓存有没有过期**）。
  *
  * 用途：上传闸门在「本机还没有归属记录」时，用它兜底判断
@@ -169,16 +182,29 @@ export const authCache = {
   },
 
   /**
-   * 从本地缓存获取认证状态
-   * @returns 缓存的认证状态，如果没有缓存则返回null
+   * 从本地缓存获取认证状态（**三态**，2026-10-23 第 50 轮）。
+   *
+   * ── 为什么必须分三态（而不是 `| null`）────────────────────────────────
+   * 修复前这里读失败**返回 null**，与「这台机器从没登录过」**同形** ⇒
+   * 调用方无法区分：
+   *   · `known`      —— 读到了：缓存里确实有（或没有）登录态；
+   *   · `absent`     —— **读到了**，键不存在 ⇒ 这台机器从没登录过（**事实**）；
+   *   · `unreadable` —— **读失败** ⇒ 我们**不知道**（**不可知**）。
+   *
+   * 而「不可知」被读成「没登录过」，就是第 50 轮修掉的那个谎的另一半：
+   * 存储一抖 ⇒ 界面说「你没登录」⇒ 用户去重新输密码。
+   * 本仓已有同款纪律：`readLastAuthCacheUserId` 读失败**抛错**（fail-closed），
+   * 注释里写明「把别的账号的会话写进当前账号的云端」的后果 —— 同一个道理。
+   *
+   * @returns 缓存的认证状态（三态，见 `AuthCacheRead`）
    */
-  async getAuthState(): Promise<{ user: User | null; isAuthenticated: boolean } | null> {
+  async getAuthState(): Promise<AuthCacheRead> {
     try {
       const result = await chrome.storage.local.get(AUTH_CACHE_KEY);
       const cacheData = result[AUTH_CACHE_KEY] as AuthCache | undefined;
 
       if (!cacheData) {
-        return null;
+        return { state: 'absent' };
       }
 
       // 检查缓存是否过期（30天）
@@ -189,16 +215,22 @@ export const authCache = {
       if (cacheExpired) {
         logInfo('认证缓存已过期');
         await this.clearAuthState();
-        return null;
+        return { state: 'absent' };
       }
 
       return {
+        state: 'known',
         user: cacheData.user,
-        isAuthenticated: cacheData.isAuthenticated
+        isAuthenticated: cacheData.isAuthenticated,
       };
     } catch (error) {
+      // ⚠️ **不许**在这里返回 null / absent —— 那会把「读不出来」说成
+      // 「没有登录态」。读失败是**不可知**，必须原样传出去。
       logError('获取认证缓存失败:', error);
-      return null;
+      return {
+        state: 'unreadable',
+        detail: error instanceof Error ? error.message : String(error),
+      };
     }
   },
 

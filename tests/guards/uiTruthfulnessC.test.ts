@@ -77,9 +77,23 @@ describe('C1 同步入口可发现：渲染门禁只看后端，不看登录态'
   });
 
   it('身份判定按后端分流：WebDAV 不需要登录，云端需要', () => {
-    assert.equal(syncIdentityCanRun({ syncBackend: 'webdav', isAuthenticated: false }), true);
-    assert.equal(syncIdentityCanRun({ syncBackend: 'supabase', isAuthenticated: false }), false);
-    assert.equal(syncIdentityCanRun({ syncBackend: 'supabase', isAuthenticated: true }), true);
+    assert.equal(syncIdentityCanRun({ syncBackend: 'webdav', auth: 'not_authenticated' }), true);
+    assert.equal(syncIdentityCanRun({ syncBackend: 'supabase', auth: 'not_authenticated' }), false);
+    assert.equal(syncIdentityCanRun({ syncBackend: 'supabase', auth: 'authenticated' }), true);
+  });
+
+  // ── 2026-10-23（第 50 轮）：「核不到」**不许**被拦成「去登录」─────────────
+  // 修复前闸门收的是 `isAuthenticated: boolean` ⇒ 断网（核不到）与
+  // 核到没登录同形 ⇒ 两者都被拦成「还没有登录 TapStack 云端，请先去登录」。
+  // 那是两句错话：事实错（用户多半登录着），动作也错（断网时登录必然失败）。
+  it('「核不到」那一档不得被拦（拦了就是把用户推向一个必然失败的动作）', () => {
+    assert.equal(
+      syncIdentityCanRun({ syncBackend: 'supabase', auth: 'unknown' }),
+      true,
+      '断网时不该拦 —— 真正的闸门在引擎里（ensureAuthenticated），它会按同一套四档说人话'
+    );
+    assert.equal(syncIdentityCanRun({ syncBackend: 'supabase', auth: 'backend_unavailable' }), true);
+    assert.equal(syncIdentityCanRun({ syncBackend: 'supabase', auth: 'unchecked' }), true);
   });
 
   it('组件里不再有 `if (!canSync) return null` 这种按身份隐藏整组按钮的写法', () => {
@@ -101,7 +115,7 @@ describe('C1 入口闸门：缺身份时不得静默放行', () => {
   it('云端未登录点上传/下载 ⇒ blocked，且文案指向登录', () => {
     const decision = decideSyncEntry({
       syncBackend: 'supabase',
-      isAuthenticated: false,
+      auth: 'not_authenticated',
       isBusy: false,
     });
     assert.equal(decision.type, 'blocked', '不得放行到弹窗：否则覆盖按钮点两下毫无反应');
@@ -112,14 +126,14 @@ describe('C1 入口闸门：缺身份时不得静默放行', () => {
 
   it('自带存储未登录 ⇒ 放行（没有 TapStack 账号也能同步）', () => {
     assert.deepEqual(
-      decideSyncEntry({ syncBackend: 'webdav', isAuthenticated: false, isBusy: false }),
+      decideSyncEntry({ syncBackend: 'webdav', auth: 'not_authenticated', isBusy: false }),
       { type: 'open' }
     );
   });
 
   it('云端已登录 ⇒ 放行', () => {
     assert.deepEqual(
-      decideSyncEntry({ syncBackend: 'supabase', isAuthenticated: true, isBusy: false }),
+      decideSyncEntry({ syncBackend: 'supabase', auth: 'authenticated', isBusy: false }),
       { type: 'open' }
     );
   });
@@ -127,10 +141,24 @@ describe('C1 入口闸门：缺身份时不得静默放行', () => {
   it('同步进行中 ⇒ blocked（与旧行为一致：进行中不开新弹窗）', () => {
     const decision = decideSyncEntry({
       syncBackend: 'supabase',
-      isAuthenticated: true,
+      auth: 'authenticated',
       isBusy: true,
     });
     assert.equal(decision.type, 'blocked');
+  });
+
+  // ── 2026-10-23（第 50 轮）：入口闸门也不许把「核不到」说成「没登录」──────
+  it('「核不到」时入口闸门不得拦，更不得说「去登录」', () => {
+    const decision = decideSyncEntry({
+      syncBackend: 'supabase',
+      auth: 'unknown',
+      isBusy: false,
+    });
+    assert.equal(
+      decision.type,
+      'open',
+      '核不到时拦住 = 用户永远传不上去，且这一屏在教他去重新输密码'
+    );
   });
 
   it('接线：两个按钮都走 openSyncModal，且闸门真的在它里面', () => {
@@ -173,7 +201,15 @@ describe('C1 覆盖硬闸门：入参是「身份能否真跑」，不是「登�
     const src = stripComments(read(SYNC_BUTTON));
     assert.match(src, /const identityCanRun = syncIdentityCanRun\(\{/);
     assert.match(src, /syncBackend: settings\.syncBackend/);
-    assert.match(src, /isAuthenticated,/);
+    // ⚠️ 2026-10-23（第 50 轮）：入参从裸布尔 `isAuthenticated` 换成了
+    // **那一档**（`state.auth.authStatusKind`）。这里断言的是「读的是哪一档」，
+    // 而不是「变量叫什么」—— 改名不该让守卫变红（见记忆
+    // stale-literal-guards-block-correct-fixes）。
+    assert.match(
+      src,
+      /state\.auth\.authStatusKind/,
+      '闸门的入参必须来自登录态的**那一档**，不能是「登录了没」这个布尔'
+    );
   });
 });
 
@@ -246,7 +282,7 @@ describe('C1 菜单状态卡：云端未登录也看得到，且不说谎', () =
   it('云端未登录：显示「未登录 · 去登录」，不转述后端的 ready', () => {
     const view = resolveMenuSyncStatus({
       syncBackend: 'supabase',
-      isAuthenticated: false,
+      auth: 'not_authenticated',
       userEmail: null,
       backend: readyLike,
     });
@@ -262,7 +298,7 @@ describe('C1 菜单状态卡：云端未登录也看得到，且不说谎', () =
   it('云端已登录：抬头是邮箱，状态行按后端前缀 + 真实分类', () => {
     const view = resolveMenuSyncStatus({
       syncBackend: 'supabase',
-      isAuthenticated: true,
+      auth: 'authenticated',
       userEmail: 'a@b.c',
       backend: readyLike,
     });
@@ -276,7 +312,7 @@ describe('C1 菜单状态卡：云端未登录也看得到，且不说谎', () =
   it('自带存储未登录：不提示登录（没有 TapStack 账号），状态如实转述', () => {
     const view = resolveMenuSyncStatus({
       syncBackend: 'webdav',
-      isAuthenticated: false,
+      auth: 'not_authenticated',
       userEmail: null,
       backend: { label: '未解锁', tone: 'warn' as const, actionable: true },
     });
@@ -290,7 +326,7 @@ describe('C1 菜单状态卡：云端未登录也看得到，且不说谎', () =
   it('云端未登录 + 后端锁定态：仍然只说「未登录」（登录才是第一位的）', () => {
     const view = resolveMenuSyncStatus({
       syncBackend: 'supabase',
-      isAuthenticated: false,
+      auth: 'not_authenticated',
       userEmail: null,
       backend: { label: '未解锁', tone: 'warn' as const, actionable: true },
     });

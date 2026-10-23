@@ -7,12 +7,12 @@
 // 实测首屏 262.2KB / 预算 265KB，只差 3KB 就要破门。
 //
 // 「哪些模块算首屏」是**产品决定**，但「哪些模块**不许**算首屏」必须有一个
-// 可单测的真相源 ⇒ `src/core/firstScreenPolicy.ts`（纯函数）。
+// 可单测的真相源 ⇒ `src/core/firstScreenPolicy.ts`（纯判据）。
 //
 // 本文件三层：
-//   1. **纯函数单测** —— 策略本身的判定逻辑（路径归一化、分组命中）。
+//   1. **纯函数单测** —— 策略本身的判定逻辑（路径归一化、分组命中、白名单）。
 //   2. **源码静态图** —— 从 popup 入口出发走**静态** import，闭包里不许出现
-//      禁止组的模块（动态 import 不算首屏）。
+//      禁止组的模块，**也不许出现白名单之外的第三方包**（动态 import 不算首屏）。
 //   3. **产物清单** —— 若 dist 已构建，popup 的首屏清单里不许出现
 //      禁止组的块名。
 //
@@ -20,86 +20,33 @@
 //   第 3 层需要先构建（`pnpm build`），而 `pnpm test` 应当**不依赖构建产物**
 //   就能守住这条规则；反过来，第 2 层是源码图，与产物可能有偏差
 //   （Rollup 会合并块、会把动态 import 变成静态边）⇒ 两层都要有。
+//
+// ⚠️ 为什么第 2 层用 **AST** 而不是正则（2026-10-23 第 50 轮换掉）：
+//   正则分不清「运行时 import」与「类型 import」，而且会把
+//   `export function getActiveSyncBackend(): SyncBackendPort {` 里的 "export"
+//   当成 re-export，从下一个 `from` 一路吞过去 —— 实测会**凭空**多出一个
+//   运行时依赖（`src/sync-backend/ports.ts`，实测它是 `export type {…}`）。
+//   ⇒ 改用 `tests/_helpers/moduleGraph.ts` 的 AST 静态图工具。
 
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync, existsSync, statSync } from 'node:fs';
+import { readFileSync, existsSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import {
+  FIRST_SCREEN_ALLOWED_PACKAGES,
   FIRST_SCREEN_FORBIDDEN_GROUPS,
   firstScreenForbiddenReason,
   firstScreenGroupFor,
+  firstScreenSpecifierViolation,
   forbiddenChunkNames,
   isForbiddenInFirstScreen,
   normalizeModuleId,
 } from '@/core/firstScreenPolicy';
+import { popupStaticClosure, runtimeImportSpecs } from '../_helpers/moduleGraph.ts';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
-const SRC = resolve(ROOT, 'src');
-const EXTS = ['.ts', '.tsx', '.js', '.jsx'];
-
-const rel = (p: string) => (p.startsWith(ROOT) ? p.slice(ROOT.length + 1) : p);
-
-function resolveFile(p: string): string | null {
-  if (existsSync(p) && statSync(p).isFile()) return p;
-  for (const e of EXTS) if (existsSync(p + e)) return p + e;
-  for (const e of EXTS) {
-    const idx = resolve(p, 'index' + e);
-    if (existsSync(idx)) return idx;
-  }
-  return null;
-}
-
-/** 解析一个源文件的**运行时** import（`import type` / `export type` 不算）。 */
-const importCache = new Map<string, string[]>();
-function runtimeImportsOf(file: string): string[] {
-  const cached = importCache.get(file);
-  if (cached) return cached;
-  const raw = readFileSync(file, 'utf8');
-  // 去块注释与行注释（避免注释里的 import 字样被当成真 import）
-  const src = raw.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/.*$/gm, '$1');
-  const out = new Set<string>();
-  const stmtRe = /(?:^|\n)\s*(?:import|export)\b([\s\S]*?)\bfrom\s*['"]([^'"]+)['"]/g;
-  let m: RegExpExecArray | null;
-  while ((m = stmtRe.exec(src))) {
-    const clause = m[1] || '';
-    // `import type {...} from` / `export type {...} from` 编译后消失 ⇒ 不算静态依赖
-    if (/^\s*type\b/.test(clause) || /\bimport\s+type\b/.test(clause)) continue;
-    out.add(m[2]);
-  }
-  for (const mm of src.matchAll(/(?:^|\n)\s*import\s*['"]([^'"]+)['"]/g)) out.add(mm[1]);
-  const list = [...out];
-  importCache.set(file, list);
-  return list;
-}
-
-function resolveSpec(spec: string, fromFile: string): string | null {
-  let target: string;
-  if (spec.startsWith('@/')) target = resolve(SRC, spec.slice(2));
-  else if (spec.startsWith('.')) target = resolve(dirname(fromFile), spec);
-  else return null; // 裸包名 = node_modules，不是本仓源码
-  return resolveFile(target);
-}
-
-/** 从 popup 入口出发走静态 import，返回闭包里的本仓源文件（仓库根相对）。 */
-function popupStaticClosure(): Set<string> {
-  const entry = resolveFile(resolve(SRC, 'popup/index.tsx'));
-  assert.ok(entry, '找不到 popup 入口 src/popup/index.tsx');
-  const seen = new Set<string>([entry]);
-  const queue = [entry];
-  while (queue.length) {
-    const f = queue.shift()!;
-    for (const spec of runtimeImportsOf(f)) {
-      const t = resolveSpec(spec, f);
-      if (!t || seen.has(t)) continue;
-      seen.add(t);
-      queue.push(t);
-    }
-  }
-  return new Set([...seen].map(rel));
-}
 
 describe('首屏准入策略：纯函数', () => {
   it('normalizeModuleId 把绝对路径 / pnpm 虚拟 store 路径归一成仓库根相对', () => {
@@ -146,8 +93,24 @@ describe('首屏准入策略：纯函数', () => {
   });
 
   it('禁止组里没有重复的块名（守卫按名字断言，重复名会让断言失真）', () => {
-    const names = forbiddenChunkNames();
-    assert.deepEqual(names, [...new Set(names)]);
+    // ⚠️ 判重必须对**原始数组**做：`new Set` 自己就会去重，
+    //   `assert.deepEqual(names, [...new Set(names)])` 两边永远相等 ⇒
+    //   这条断言**不可能失败**（恒绿守卫 = 零检测力）。
+    //   这里判的是「块名 → 禁止组」是**单射**：同一个非空块名出现在两个组里，
+    //   按名字断言就会失真（一个名字同时代表两组）。
+    const byChunk = new Map<string, number[]>();
+    FIRST_SCREEN_FORBIDDEN_GROUPS.forEach((g, index) => {
+      if (!g.chunk) return; // 空块名 = 不起块名，不参与「按名字断言」
+      const owners = byChunk.get(g.chunk) ?? [];
+      owners.push(index);
+      byChunk.set(g.chunk, owners);
+    });
+    const duplicated = [...byChunk.entries()].filter(([, owners]) => owners.length > 1);
+    assert.deepEqual(
+      duplicated,
+      [],
+      '同一个块名出现在多个禁止组里 ⇒ 守卫按名字断言会失真（块名 → 禁止组必须是单射）'
+    );
   });
 
   it('每个禁止组都写清了理由（空理由 = 没人知道为什么不能进首屏）', () => {
@@ -159,6 +122,12 @@ describe('首屏准入策略：纯函数', () => {
         ) !== null,
         `禁止组 ${g.chunk || '(无名)'} 的判定路径走不通`
       );
+    }
+  });
+
+  it('首屏白名单每条都写清了「为什么允许」（空理由 = 没人知道它为什么能进首屏）', () => {
+    for (const p of FIRST_SCREEN_ALLOWED_PACKAGES) {
+      assert.ok(p.reason.trim().length > 10, `白名单条目「${p.package}」缺理由`);
     }
   });
 });
@@ -177,6 +146,29 @@ describe('首屏准入：popup 入口的静态依赖闭包里没有禁止组', (
       0,
       `popup 的静态 import 图里出现了禁止组模块：\n${violations.join('\n')}\n` +
         '修法：调用点改成 `await import(...)`，或断开这条静态边。'
+    );
+  });
+
+  it('源码静态图里不许出现白名单之外的第三方包（新依赖进首屏的唯一兜底）', () => {
+    // ⚠️ 这条是**黑名单的兜底**：黑名单只能拦住「已经有人想过」的东西，
+    //   任何**新** npm 包（dayjs / chart.js / lodash …）只要被 popup 侧静态
+    //   import 一下，黑名单一声不响 ⇒ 这里靠白名单兜住。
+    const violations: string[] = [];
+    for (const file of popupStaticClosure()) {
+      for (const spec of runtimeImportSpecs(resolve(ROOT, file))) {
+        const violation = firstScreenSpecifierViolation(spec);
+        if (violation) {
+          violations.push(`${file} → ${spec}\n    理由：${violation.reason}`);
+        }
+      }
+    }
+    assert.equal(
+      violations.length,
+      0,
+      `popup 的静态 import 图里出现了白名单之外的第三方包：\n${violations.join('\n')}\n` +
+        '修法：① 改成 `await import(...)`（动态 import 不算首屏）；' +
+        '② 确认它确实该进首屏 ⇒ 在 src/core/firstScreenPolicy.ts 的 ' +
+        'FIRST_SCREEN_ALLOWED_PACKAGES 里加一行并写清「为什么允许」。'
     );
   });
 
@@ -216,7 +208,7 @@ describe('首屏准入：popup 入口的静态依赖闭包里没有禁止组', (
       barrel,
       /^import\s+\{[^}]*\}\s+from\s+'\.\/webdav\/(client|adapter|permission)'/m,
       'sync-backend 不许静态 import WebDAV 传输栈（adapter 单文件 100KB+ 源码）' +
-        '—— 只有 webdav/config（配置读写，gzip 约 1.8KB）是允许静态的'
+        '—— 只有 webdav/config（配置读写；源码 20.5KB，minify 后 gzip 约 1.8KB）是允许静态的'
     );
     assert.match(
       barrel,
@@ -241,7 +233,18 @@ describe('首屏准入：构建产物里 popup 的首屏清单没有禁止组', 
   it('dist 已构建时，popup 的 modulepreload 清单里没有禁止组的块名', (t) => {
     const popupHtml = resolve(ROOT, 'dist/src/popup/index.html');
     if (!existsSync(popupHtml)) {
-      t.skip('dist 未构建（先跑 pnpm build）—— 产物级断言跳过，源码级断言仍然生效');
+      // ⚠️ **不许静默 skip**（2026-10-23 第 50 轮）：
+      //   产物级断言是首屏准入三层里的第三层，而 CI 曾经是
+      //   「先 pnpm test、后 pnpm validate（validate 里才 build）」
+      //   ⇒ 干净 checkout 下 dist 根本不存在 ⇒ 这一层**每次都跳过**，
+      //   而 CI 日志里只是一行 skip，看起来像「验过了」。
+      //   CI 顺序已改成「先 build 再 test」；本地没构建时必须**显眼地**说一声。
+      const msg =
+        '⚠️ 本轮跳过了**产物级**首屏断言（dist 未构建）—— 首屏准入三层里有一层没跑。' +
+        '先跑 `pnpm build` 再跑 `pnpm test`，或直接 `pnpm validate`。';
+      console.error(msg);
+      t.diagnostic(msg);
+      t.skip(msg);
       return;
     }
     const html = readFileSync(popupHtml, 'utf8');
