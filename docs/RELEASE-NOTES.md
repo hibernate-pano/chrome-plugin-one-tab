@@ -10,6 +10,18 @@
 
 ## v1.27.0（2026-10-23，**待提审**）
 
+**提审状态（2026-10-23）**：代码已 push（`main` → `759b4d2`，走 SSH URL），
+tag `v1.27.0` 指向同一个 commit；产物 `chrome-extension.zip`
+（manifest `1.27.0`，内含 `ENCRYPTED_V3_Z` 与增量下载的判据代码 ⇒ 确实来自当前源码）。
+⚠️ **上传被商店挡下了**：`upload` 回包 **HTTP 200 + `uploadState: FAILURE` +
+`ITEM_NOT_UPDATABLE`**（"The item cannot be updated now because it is in pending review,
+ready to publish, or deleted status"），`publish` 回包 **400**
+（"Publish condition not met: You may not edit or publish an item that is in review"）。
+⇒ **原因不在我们这边**：**1.26.1 还在审核队列里**（公开页此刻仍是
+`Version 1.26.0 / October 22, 2026`），商店在「item in review」期间
+**既不接受新版本、也不接受 publish**。⇒ 只能等审核放行。
+⇒ 已挂一个守候进程：每 5 分钟试一次上传，放行即上传 1.27.0 并提交审核。
+
 **这版的由来**：第 53～54 轮 —— **一次根因级修复**（不是巡检）。
 起因是生产 Supabase 项目被 egress 配额**项目级**封禁
 （`/rest/v1/*` 与 `/auth/v1/health` 一律 402 ⇒ 整个项目对所有端点不可用）。

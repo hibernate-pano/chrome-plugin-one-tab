@@ -6,6 +6,15 @@
 > （2026-10-23 抓公开页实证：页面里已**不再出现** 1.25.1）。
 > 线上已发布 = **`1.26.0`**。
 >
+> **2026-10-23 `1.27.0` 上传被商店挡下（等 1.26.1 审核放行）**：
+> `upload` 回包 HTTP 200 + `uploadState: FAILURE` + `ITEM_NOT_UPDATABLE`
+> （"The item cannot be updated now because it is in pending review, ready to publish,
+> or deleted status"）；`publish` 回包 HTTP 400
+> （"Publish condition not met: You may not edit or publish an item that is in review"）。
+> ⇒ **1.26.1 还在审核队列里**（公开页仍是 1.26.0），商店在 item in review 期间
+> **既不接受新版本、也不接受 publish** ⇒ 这不是代码问题，**只能等审核放行**。
+> ⇒ 已挂守候进程：每 5 分钟试一次上传，放行即上传 1.27.0 并提交审核。
+>
 > **2026-10-23 当前状态（待提审）**：**`1.27.0` 待提审** —— 本版带的是
 > **一次根因级修复**：生产 Supabase 项目被**出网流量配额**项目级封禁
 > （HTTP 402，所有端点不可用），根因是「每次同步都把整个云端库重新下载一遍」，
