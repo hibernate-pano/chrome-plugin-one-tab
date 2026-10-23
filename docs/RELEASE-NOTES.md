@@ -20,7 +20,20 @@ ready to publish, or deleted status"），`publish` 回包 **400**
 ⇒ **原因不在我们这边**：**1.26.1 还在审核队列里**（公开页此刻仍是
 `Version 1.26.0 / October 22, 2026`），商店在「item in review」期间
 **既不接受新版本、也不接受 publish**。⇒ 只能等审核放行。
-⇒ 已挂一个守候进程：每 5 分钟试一次上传，放行即上传 1.27.0 并提交审核。
+⇒ 已挂一个守候进程：放行即上传 1.27.0 并提交审核。
+　它的成功判据是**三条全中**：upload 回包 `uploadState: SUCCESS` ＋
+　publish 回包 `status: ["OK"]` ＋ 之后 `status` 查到 `crxVersion: 1.27.0`；
+　并且**上传前先校 sha256**（版本号对得上 ≠ 产物新鲜）。
+
+**顺带修掉的一个假绿（发版工具，不影响本版产物）**：
+`scripts/cws-publish.mjs` 的 `publish` 分支原本只校验 HTTP 状态码 ⇒ 遇到
+「2xx 但商店的 `status` 不是 OK」的形状仍会打印「✓ 已提交审核」，
+而线上其实没提交。改成三态全明确（`status` 里有 OK ⇒ exit 0；
+`status` 存在但没有 OK ⇒ exit 1；**`status` 字段根本不存在 ⇒ exit 1**，
+无法自证 ≠ 成功）。守卫是**行为**级的（`tests/guards/cwsPublishStatus.test.ts`：
+把假 curl 放进 PATH，真跑一遍 `publish`，断言退出码与报错）——
+源码文本断言钉不住「exit(1) 是不是被那个条件守着」，变异验证会露馅。
+⚠️ 本条只改发版脚本，**产物 zip 不受影响**（sha256 未变，仍是 `67b46951…`）。
 
 **这版的由来**：第 53～54 轮 —— **一次根因级修复**（不是巡检）。
 起因是生产 Supabase 项目被 egress 配额**项目级**封禁
