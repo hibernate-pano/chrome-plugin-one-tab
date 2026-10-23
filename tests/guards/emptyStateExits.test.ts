@@ -574,6 +574,42 @@ function analyzeColdStartWiring(source: string): ColdStartWiring {
   };
   findCachedVars(file);
 
+  // ── 「派生自缓存」的变量也算 ────────────────────────────────────────────
+  //
+  // 为什么需要这一档：缓存登录态的**持有者**可以是
+  //   ① `cachedAuth`（直接读 `authCache.getAuthState()` 的那个变量），也可以是
+  //   ② 一个**从它派生**出来的变量
+  //      （例如 `const cachedUser = cachedAuth?.isAuthenticated ? cachedAuth.user : null`）。
+  // 两种形状都是「把缓存里的用户送进 store」——
+  // 守卫如果只认 ①，那正确的写法反而会被判红
+  // （本仓反复踩的坑：守卫钉死形状 ⇒ 改对了实现反而红）。
+  //
+  // ⇒ 这里按「初始化文本里提到了哪个已知缓存变量」往下追几轮。
+  const derivedVarNames = new Set(cachedVarNames);
+  for (let round = 0; round < 4; round++) {
+    let changed = false;
+    const collect = (node: ts.Node): void => {
+      if (
+        ts.isVariableDeclaration(node) &&
+        ts.isIdentifier(node.name) &&
+        node.initializer &&
+        !derivedVarNames.has(node.name.text)
+      ) {
+        const text = node.initializer.getText(file);
+        for (const known of derivedVarNames) {
+          if (new RegExp(`\\b${known}\\b`).test(text)) {
+            derivedVarNames.add(node.name.text);
+            changed = true;
+            break;
+          }
+        }
+      }
+      node.forEachChild(collect);
+    };
+    collect(file);
+    if (!changed) break;
+  }
+
   let dispatchedOnNormalPath = false;
   let usesCachedUser = false;
 
@@ -630,11 +666,17 @@ function analyzeColdStartWiring(source: string): ColdStartWiring {
             continue;
           }
           const initializer = property.initializer;
-          if (
-            ts.isPropertyAccessExpression(initializer) &&
-            ts.isIdentifier(initializer.expression) &&
-            cachedVarNames.has(initializer.expression.text)
-          ) {
+          // 「缓存里的用户」可以是两种形状：
+          //   ① 属性访问：`cachedAuth.user`（直接取缓存变量的字段）
+          //   ② 标识符：`cachedUser`（从缓存变量**派生**出来的那个）
+          // 两者都是「把缓存里的用户送进 store」⇒ 判据两个都要认，
+          // 只认 ① 的话，正确的写法反而会被判红。
+          const isCachedDerived =
+            (ts.isPropertyAccessExpression(initializer) &&
+              ts.isIdentifier(initializer.expression) &&
+              derivedVarNames.has(initializer.expression.text)) ||
+            (ts.isIdentifier(initializer) && derivedVarNames.has(initializer.text));
+          if (isCachedDerived) {
             usesCachedUser = true;
             if (!inErrorHandler) dispatchedOnNormalPath = true;
           }

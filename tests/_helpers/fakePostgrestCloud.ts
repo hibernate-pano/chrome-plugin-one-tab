@@ -32,6 +32,17 @@ export interface FakePostgrestCloudOptions {
    * 降级（plain / hard-delete 分支）。
    */
   missingColumns?: string[];
+  /**
+   * 模拟「整个云端项目被限制」（生产实测 402）。
+   *
+   * 真实报文：`{"code":402,"message":"Service for this project is restricted
+   * due to the following violations: …"}` ⇒ **所有**请求都返回 402。
+   *
+   * ⚠️ 这一档要能单独模拟，是因为「服务端不可用」与「没登录」在界面上
+   * 必须是**两句不同的话**：前者用户什么都不用做，后者用户要重新输密码。
+   * 把它们混成一句 ⇒ 用户在服务端故障时去重新登录（白白折腾）。
+   */
+  unavailable?: boolean;
 }
 
 /** 假云端句柄。 */
@@ -52,6 +63,7 @@ export function installFakePostgrestCloud(
   const rows = new Map<string, Record<string, unknown>>();
   const ops: string[] = [];
   const missingColumns = new Set(opts?.missingColumns ?? []);
+  const unavailable = opts?.unavailable === true;
   let sessionUserId = 'user-unknown';
 
   const jsonRes = (body: unknown, status = 200) =>
@@ -80,6 +92,24 @@ export function installFakePostgrestCloud(
     const url = new URL(typeof input === 'string' ? input : String((input as { url: string }).url));
     const method = (init.method ?? 'GET').toUpperCase();
     const params = url.searchParams;
+
+    // ── 整个项目被限制（402）：所有请求都返回这一句 ──────────────────────
+    // 生产实测（2026-10-22）：Supabase 项目 egress 配额超限 ⇒ 整个项目 402
+    // ⇒ **连账号校验（/auth/v1/user）都是 402** ⇒ 「用户登录着」这件事
+    // 我们**确认不了**。这一档必须能被单独模拟，否则「服务端不可用」
+    // 这一支永远只被单测**假装**过。
+    if (unavailable) {
+      return jsonRes(
+        {
+          code: 402,
+          error_code: 'project_restricted',
+          message:
+            'Service for this project is restricted due to the following violations: ' +
+            'daily egress exceeded for project',
+        },
+        402
+      );
+    }
 
     if (url.pathname.endsWith('/auth/v1/user')) {
       return jsonRes({ id: sessionUserId, aud: 'authenticated', role: 'authenticated' });

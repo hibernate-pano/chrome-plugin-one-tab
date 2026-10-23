@@ -9,6 +9,7 @@ import { syncEngine, SYNC_UPLOAD_ALARM } from '@/services/syncEngine';
 import { isOpenableTabUrl, isStorableTabUrl } from '@/utils/inputValidation';
 import { enqueue, hasQueuedOrRunningJob } from '@/background/mutationQueue';
 import { mutationService } from '@/background/mutationService';
+import { readAuthStatus, describeAuthStatus } from '@/background/authStatus';
 import { ensureOpStampMigrated } from '@/background/opStampMigratedGuard';
 import { clearSaveReceipt, RECEIPT_CLEAR_ALARM } from '@/background/saveReceipt';
 import { runMigrations as runStorageMigrations } from '@/utils/migrationUtils';
@@ -877,6 +878,36 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           .catch(err =>
             sendResponse({ ok: false, error: err?.message || '算不出库作用域' })
           );
+        return true; // 异步响应
+      }
+
+      // ── 核登录态：弹窗不再挂载即联网核（那会拉下整条 Supabase SDK）──────
+      //
+      // 【为什么这条通道存在】弹窗挂载时核登录态 ⇒ 必须加载 Supabase SDK
+      // （≈75KB gzip）⇒ **每次开弹窗都付一次**，而用户点开弹窗只想看
+      // 本机会话列表。⇒ 核的这件事搬到 SW：SW 侧的 SDK 是**静态依赖**
+      // （入口静态 import 门面）⇒ 已经在扩展包里 ⇒ **不产生任何下载**。
+      //
+      // 【为什么这条通道必须是只读的】它只回答「登录态是什么」，
+      // 不写任何键、不碰任何数据。真正的写入仍走 MUTATE / SYNC 两条既有通道。
+      //
+      // 【判据在哪】`src/core/authStatus.ts`（纯函数）—— 四档而不是一个布尔：
+      // 「服务端不可用」（402）与「不知道」（断网）都**不许**被读成「没登录」。
+      case 'AUTH_STATUS': {
+        void readAuthStatus()
+          .then(status => {
+            logInfo('[SW] 核登录态:', describeAuthStatus(status));
+            sendResponse({ ok: true, status });
+          })
+          .catch(err => {
+            // 这一层**不该**抛（readAuthStatus 内部已兜住）⇒ 真抛了就是缺陷，
+            // 如实报出去，不假装核过了。
+            logError('[SW] 核登录态失败:', err);
+            sendResponse({
+              ok: false,
+              error: err?.message || '核登录态失败',
+            });
+          });
         return true; // 异步响应
       }
 

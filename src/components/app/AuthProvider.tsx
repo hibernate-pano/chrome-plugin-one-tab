@@ -1,15 +1,14 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect } from 'react';
 import { useAppDispatch } from '@/store/hooks';
-import { getCurrentUser, setFromCache } from '@/store/slices/authSlice';
+import { setFromCache } from '@/store/slices/authSlice';
 import { loadGroups } from '@/store/slices/tabSlice';
 import { authCache } from '@/utils/authCache';
-import { loadSupabaseFacade } from '@/utils/supabaseRuntime';
+import { requestAuthStatus } from '@/utils/authStatusChannel';
 import { sendSyncCommand } from '@/shared/mutationProtocol';
 import {
   hasLoginRestoreTriggered,
   deliverAccountSwitchNotice,
 } from '@/components/auth/restoreAfterLogin';
-import { isBackendUnavailableError } from '@/core/backendUnavailable';
 import { logError, logInfo, logWarn } from '../../utils/log';
 
 interface AuthProviderProps {
@@ -19,10 +18,33 @@ interface AuthProviderProps {
 /**
  * 认证提供者组件
  * 负责处理用户认证状态的初始化和管理
+ *
+ * ── 2026-10-23（第 47 轮）：**挂载时不再联网核登录态** ──────────────────
+ *
+ * 【原来在做什么】挂载后立刻 `loadSupabaseFacade()` → `getSession()` →
+ * `getCurrentUser()`。那条路会把**整条 Supabase SDK** 拉下来
+ * （SDK ≈58KB gzip + 门面 ≈16KB gzip ≈ **75KB**）——
+ * 而用户点开弹窗只想看**本机会话列表**，这一下跟他要干的事毫无关系。
+ * ⇒ **每次开弹窗都付一次 75KB**，而它只换来一个「你登录着吗」的答案。
+ *
+ * 【现在怎么做】把「核」这件事搬到 **service worker**：
+ *   · 弹窗**本地读缓存**（`chrome.storage.local`，零延迟、零下载）⇒
+ *     第一帧就是对的（R-12 那一版已经做了一半：缓存里有登录态就立刻 dispatch）；
+ *   · **联网核**改由后台做（SW 侧的 SDK 是**静态依赖**，已经在扩展包里
+ *     ⇒ **不产生任何下载**）⇒ 弹窗只发一条消息问「核完了吗」。
+ *
+ * 【核不到的时候怎么办】**不许**读成「没登录」——
+ *   · 服务端整体不可用（生产实测 402）⇒ 用户**确实登录着**，只是确认不了；
+ *   · 断网 / 通道断了 ⇒ 我们**不知道**。
+ * 这两种都**保留本机缓存那份**登录态（判据见 `core/authStatus.ts`）。
+ * ⚠️ 只有**明确核到「没有会话」**才归零 —— 那才是真的没登录。
+ *
+ * 【少掉的东西，一件都不少】挂载时那次核的**另一个作用**是
+ * 「登录着就顺手把云端拉回来」（跨设备找回）。这条**保留**：
+ * 由后台去拉（`download` 命令本来就发给后台），弹窗不参与下载。
  */
 export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   const dispatch = useAppDispatch();
-  const [initialAuthLoaded, setInitialAuthLoaded] = useState(false);
 
   // 初始化认证状态
   useEffect(() => {
@@ -49,10 +71,12 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
         // 放在最前面既不会误伤，也保证「提示迟早有人告知」。
         void deliverAccountSwitchNotice();
 
-        // 首先检查缓存的认证状态
+        // ── ① 本机缓存先行（本地读，零延迟、零下载）────────────────────
         const cachedAuth = await authCache.getAuthState();
-        if (cachedAuth && cachedAuth.isAuthenticated && cachedAuth.user) {
-          logInfo('发现缓存的认证状态，用户:', cachedAuth.user.email);
+        const cachedUser =
+          cachedAuth?.isAuthenticated && cachedAuth.user ? cachedAuth.user : null;
+        if (cachedUser) {
+          logInfo('发现缓存的认证状态，用户:', cachedUser.email);
           // ── 2026-10-23 审计 R-12：缓存里明明有登录态，Redux 却还是 false ──
           //
           // 【为什么必须在这里就 dispatch】原来这一段**只打了一行日志**
@@ -66,133 +90,99 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
           //
           // 【为什么这不算「谎报已登录」】缓存登录态是**暂定事实**，
           // 随后的会话检查会修正它：
-          //   · 会话还在 ⇒ getCurrentUser.fulfilled → 登录态维持；
-          //   · 会话没了 ⇒ fulfilled(null) → isAuthenticated 归零；
-          //   · 服务端不可用（402）⇒ 早就按缓存保留登录态（见下面的 catch 分支）。
+          //   · 会话还在 ⇒ 核到 ⇒ 登录态维持；
+          //   · 会话没了 ⇒ 核到「没登录」⇒ isAuthenticated 归零；
+          //   · 服务端不可用（402）⇒ 按缓存保留登录态（见下面的 catch 分支）。
           // ⇒ 提前置真只是把「几毫秒后才知道的事」提前说，
           //   最坏情况是「先显示已登录、随后翻回未登录」，
           //   而不是「一直谎报」。
-          dispatch(setFromCache({ user: cachedAuth.user, isAuthenticated: true }));
+          dispatch(setFromCache({ user: cachedUser, isAuthenticated: true }));
         }
 
-        // 标记认证初始化完成
-        setInitialAuthLoaded(true);
-        logInfo('认证状态初始化完成');
+        // ── ② 联网核登录态 —— **交给 service worker** ──────────────────
+        //
+        // 弹窗**不加载** Supabase SDK（那 75KB 就是这么省掉的）：
+        // 核在后台做，后台的 SDK 是静态依赖 ⇒ 零下载。
+        let status;
+        try {
+          status = await requestAuthStatus();
+        } catch (err) {
+          // 通道断了（SW 正在重启 / 扩展刚更新）⇒ **不知道**，不等于「没登录」。
+          // 保留缓存那份（上面已经 dispatch 过了）⇒ 这里什么都不用做。
+          logWarn('[auth] 核登录态失败（不知道，不等于没登录）:', err);
+          return;
+        }
+
+        if (status.kind === 'authenticated' && status.user) {
+          dispatch(
+            setFromCache({
+              user: {
+                id: status.user.id,
+                email: status.user.email,
+                lastLogin: cachedUser?.lastLogin ?? new Date().toISOString(),
+              },
+              isAuthenticated: true,
+            })
+          );
+          // 核到登录着 ⇒ 顺手把云端拉回来（跨设备找回）。
+          //
+          // ⚠️ 下载**在后台做**（命令本来就发给后台）⇒ 弹窗不碰 SDK。
+          //
+          // 2026-10-19 审计 P1-4：若用户在本次页面会话里**已经登录过**，
+          // 那次恢复已经由 restoreAfterLogin 触发过了（显式意图）——
+          // 这里再发一次就是「登录一次跑两遍整库下载 + 两遍 merge 写盘」。
+          // 判据：hasLoginRestoreTriggered()。
+          if (hasLoginRestoreTriggered()) {
+            logInfo('[AutoSync] 本次登录已触发过恢复，跳过重复下载');
+            return;
+          }
+          // auto:true = 自动触发而非用户手点：SW 侧在已有 sync 任务在途时
+          // 直接回 already_syncing（见 service-worker SYNC 分支的去重闸门），
+          // 不再排第二条整库下载 —— 否则这条消息只能排队等满 30s 协议超时。
+          sendSyncCommand('download', { auto: true })
+            .then(res => {
+              if (res.ok) {
+                const payload = res.payload as { groups?: unknown[] } | undefined;
+                logInfo(`[AutoSync] 自动下载合并完成: ${payload?.groups?.length ?? 0} 个组`);
+                // 合并结果写进了 storage，需刷新 Redux 让 UI 更新
+                dispatch(loadGroups());
+              } else if (
+                res.error &&
+                res.error !== 'already_syncing' &&
+                res.error !== 'recent_upload_guard' &&
+                res.error !== 'pending_upload_failed' &&
+                res.error !== 'auto_sync_disabled'
+              ) {
+                // ── 2026-10-11（1.23.0）：auto_sync_disabled 是稳态，不是故障 ──
+                // 用户关了自动同步，SW 侧门禁拦下本轮自动下载。白名单静默它
+                // （与 already_syncing 同待遇）：「关」是用户显式选择，
+                // 每次打开页面弹一句 warn 等于为正常状态制造噪声。
+                // 「数据可能过期」这层信息由菜单里的开关行与提示行承担，
+                // 不在这里出声 —— 出声的位置必须离控制越近越好。
+                logWarn('[AutoSync] 自动下载未成功:', res.error);
+              }
+            })
+            .catch(err => logWarn('[AutoSync] 自动下载异常:', err));
+        } else if (status.kind === 'not_authenticated') {
+          // 明确核到「没有会话」⇒ 真的没登录 ⇒ 归零。
+          // ⚠️ 只有这一档才归零：「服务端不可用」与「不知道」都保留缓存那份。
+          dispatch(setFromCache({ user: null, isAuthenticated: false }));
+          logInfo('后台核到：未登录');
+        } else {
+          // backend_unavailable / unknown ⇒ 保留缓存那份（**不许**说「没登录」）。
+          logInfo(
+            status.kind === 'backend_unavailable'
+              ? '[auth] 云端项目不可用，按缓存保留登录态（不说「未登录」）'
+              : '[auth] 登录态未知，按缓存保留登录态（不说「未登录」）'
+          );
+        }
       } catch (error) {
         logError('初始化认证状态失败:', error);
-        setInitialAuthLoaded(true); // 即使失败也要标记完成，避免阻塞应用
       }
     };
 
     initializeAuth();
-  }, []);
-
-  // 检查实际的登录状态
-  useEffect(() => {
-    if (!initialAuthLoaded) return;
-
-    const checkSession = async () => {
-      try {
-        logInfo('检查用户会话状态...');
-
-        // 使用 getSession 而不是 getCurrentUser 来避免未登录用户的错误
-        //
-        // ── 2026-10-23（首屏瘦身）：Supabase SDK 改成**按需加载** ─────────
-        // SDK（gzip 约 58KB）+ 读写实现（约 140KB 源码）此前是**首屏**的
-        // 静态依赖 —— 用户点开弹窗只想看本机会话列表，却要先下载整条云端栈。
-        // 现在它在**挂载之后**才加载：首屏不等它、不为它下载。
-        //
-        // 行为零变化：检查顺序、判定口径、失败分支（402 → 按缓存恢复登录态）
-        // 全部照旧；变的只是「SDK 什么时候被拉进来」。
-        // 顺带说明：首屏那一下「未登录」的观感**本来就有** —— 初始 state 的
-        // `isAuthenticated` 恒为 false，登录态是异步补上的。
-        //
-        // 取法走 `utils/supabaseRuntime`（全仓唯一入口）：页面动态加载，
-        // service worker 由入口注册静态加载器（SW 里 import() 被 Chrome 禁止）。
-        const { auth: supabaseAuth } = await loadSupabaseFacade();
-        const { data } = await supabaseAuth.getSession();
-        if (data.session) {
-          logInfo('发现活跃会话，获取用户信息...');
-          // 只有确认有会话时才调用 getCurrentUser
-          dispatch(getCurrentUser())
-            .unwrap()
-            .then(user => {
-              if (user) {
-                logInfo('用户已自动登录:', user.email);
-                // 登录后自动从云端合并到本地（跨设备找回。失败不阻塞，静默处理）
-                //
-                // 2026-10-19 审计 P1-4：若用户在本次页面会话里**已经登录过**，
-                // 那次恢复已经由 restoreAfterLogin 触发过了（显式意图）——
-                // 这里再发一次就是「登录一次跑两遍整库下载 + 两遍 merge 写盘」。
-                // 判据：hasLoginRestoreTriggered()。
-                if (hasLoginRestoreTriggered()) {
-                  logInfo('[AutoSync] 本次登录已触发过恢复，跳过重复下载');
-                } else {
-                // auto:true = 自动触发而非用户手点：SW 侧在已有 sync 任务在途时
-                // 直接回 already_syncing（见 service-worker SYNC 分支的去重闸门），
-                // 不再排第二条整库下载 —— 否则这条消息只能排队等满 30s 协议超时。
-                sendSyncCommand('download', { auto: true })
-                  .then(res => {
-                    if (res.ok) {
-                      const payload = res.payload as { groups?: unknown[] } | undefined;
-                      logInfo(`[AutoSync] 自动下载合并完成: ${payload?.groups?.length ?? 0} 个组`);
-                      // 合并结果写进了 storage，需刷新 Redux 让 UI 更新
-                      dispatch(loadGroups());
-                  } else if (res.error && res.error !== 'already_syncing' && res.error !== 'recent_upload_guard' && res.error !== 'pending_upload_failed' && res.error !== 'auto_sync_disabled') {
-                    // ── 2026-10-11（1.23.0）：auto_sync_disabled 是稳态，不是故障 ──
-                    // 用户关了自动同步，SW 侧门禁拦下本轮自动下载。白名单静默它
-                    // （与 already_syncing 同待遇）：「关」是用户显式选择，
-                    // 每次打开页面弹一句 warn 等于为正常状态制造噪声。
-                    // 「数据可能过期」这层信息由菜单里的开关行与提示行承担，
-                    // 不在这里出声 —— 出声的位置必须离控制越近越好。
-                      logWarn('[AutoSync] 自动下载未成功:', res.error);
-                    }
-                  })
-                  .catch(err => logWarn('[AutoSync] 自动下载异常:', err));
-                }
-              }
-            })
-            .catch(async err => {
-              // ── 2026-10-22（402）：「服务端不可用」不许把登录态读成「没登录」──
-              // 生产实测：Supabase 项目被封禁（egress 配额超限）时，账号校验
-              // （/auth/v1/user）本身返回 402 ⇒ thunk reject ⇒ Redux 的
-              // `isAuthenticated` 恒为 false ⇒ popup 的**入口闸门**
-              // （syncIdentityBlockedCopy）在用户点上传的**那一刻**就拦下，
-              // 弹「还没有登录 TapStack 云端」——
-              //
-              // 而他**明明登录着**（会话还在，缓存里也有账号）。那句提示比
-              // 「请重试」更重：用户会去重新登录、重新输密码，甚至以为账号
-              // 被删了 —— 而真正的原因是「我们的云端项目被限制」。
-              //
-              // ⇒ 这一类必须**按缓存恢复登录态**（会话存在 + 缓存里有账号 ⇒
-              // 用户确实登录着，只是服务端暂时确认不了）。让用户能点上传，
-              // 于是他看到的是「云端暂时不可用 + 本地没丢 + 等我们恢复」。
-              //
-              // ⚠️ 判据用**机器字段**（HTTP 状态码 / 报文标记），不靠文案匹配
-              // —— 见 core/backendUnavailable.ts。
-              if (isBackendUnavailableError(err)) {
-                const cached = await authCache.getAuthState();
-                if (cached?.isAuthenticated && cached.user) {
-                  dispatch(setFromCache({ user: cached.user, isAuthenticated: true }));
-                  logWarn(
-                    '[auth] 云端项目不可用，无法验证账号 —— 按缓存恢复登录态' +
-                      '（用户确实登录着；不说「未登录」）'
-                  );
-                }
-                return;
-              }
-              logInfo('获取用户信息失败，但会话存在');
-            });
-        } else {
-          logInfo('没有活跃会话，用户未登录');
-        }
-      } catch (err) {
-        logInfo('检查会话状态时出错，假定用户未登录');
-      }
-    };
-
-    checkSession();
-  }, [dispatch, initialAuthLoaded]);
+  }, [dispatch]);
 
   return <>{children}</>;
 };

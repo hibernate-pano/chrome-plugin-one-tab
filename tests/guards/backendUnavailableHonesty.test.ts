@@ -38,6 +38,9 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import ts from 'typescript';
+
+import { parseSource } from '../_helpers/sourceAst.ts';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 const read = (rel: string): string => readFileSync(resolve(ROOT, rel), 'utf8');
@@ -303,21 +306,73 @@ describe('传递链：机器判据一路到 UI 不断层', () => {
       '「服务端不可用」不许把登录态清成 false（那会让界面说「未登录」）'
     );
 
-    // popup 侧必须**按缓存**恢复登录态（让用户能点上传 ⇒ 于是他看到人话）。
+    // ── popup 侧：**只有「明确核到没登录」那一档才许归零** ─────────────
     //
-    // ⚠️ 断言要**贴着「服务端不可用」那个分支**看，不能全文件搜：
-    // AuthProvider 里还有另一处 `authCache.getAuthState()`（初始化时读缓存，
-    // 那一处与本判据无关）—— 全文件搜会命中它，于是判据在真被改坏时
-    // 仍然「绿」（变异自证就是这么发现的：改坏后守卫没红）。
-    const provider = read('src/components/app/AuthProvider.tsx');
-    const gateAt = provider.indexOf('isBackendUnavailableError(');
-    assert.ok(gateAt !== -1, 'AuthProvider 必须判「服务端不可用」');
-    // 就地分支的形状：从判据点到分支结束（catch 的收尾）。
-    const gateBlock = provider.slice(gateAt, gateAt + 900);
-    assert.match(gateBlock, /authCache\.getAuthState\(\)/,
-      '「服务端不可用」分支里必须读缓存的登录态（服务端确认不了时，用户其实登录着）');
-    assert.match(gateBlock, /setFromCache\(/,
-      '「服务端不可用」分支里必须按缓存恢复登录态，否则入口闸门会拦下并说「未登录」');
+    // 【为什么判据换了地方】2026-10-23（第 47 轮）：「核登录态」整件事搬到了
+    // **service worker** —— 弹窗不再加载 Supabase SDK（每次开弹窗省 ≈75KB）。
+    // 于是「服务端不可用 ⇒ 保留缓存那份」的判定落在**后台侧**：
+    //   · `src/background/authStatus.ts` —— 判「服务端不可用」并把缓存那份带出来；
+    //   · `src/core/authStatus.ts`       —— 纯判据（四档，见 authStatusJudgement）。
+    //
+    // 【弹窗侧剩下的唯一性质】**只有明确核到「没有会话」才许把登录态归零**。
+    // 「服务端不可用」与「不知道」两档都**不许**归零 ——
+    // 归零了，入口闸门就会在点击那一刻拦下并说「还没有登录 TapStack 云端」，
+    // 而用户明明登录着（缓存里有账号，他做什么都没用）。
+    //
+    // ⚠️ 这里用**结构**判据（AST）而不是正则：
+    //   · 局部变量改名 ⇒ 仍然绿（结构没变）；
+    //   · 把归零挪到别的分支 / 再加一处归零 ⇒ 变红（性质破了）。
+    const swReader = read('src/background/authStatus.ts');
+    assert.match(
+      swReader,
+      /isBackendUnavailableError\(/,
+      '后台侧必须判「服务端不可用」—— 这一档如今由后台判（弹窗不再联网核）'
+    );
+    assert.match(
+      swReader,
+      /cachedUser/,
+      '后台侧必须把**本机缓存那份**登录态一起带出来（服务端确认不了时，用户其实登录着）'
+    );
+
+    const providerPath = resolve(ROOT, 'src/components/app/AuthProvider.tsx');
+    const providerSrc = parseSource(providerPath, readFileSync(providerPath, 'utf8'));
+    let zeroCount = 0;
+    let zeroInsideNotAuthenticated = false;
+    const visit = (node: ts.Node, inNotAuthenticated: boolean): void => {
+      if (ts.isIfStatement(node)) {
+        const cond = node.expression.getText(providerSrc.file);
+        if (cond.includes('not_authenticated')) {
+          // 这一支的 then 是「确实没登录」⇒ 允许归零；else 是「不可用/不知道」⇒ 不许。
+          visit(node.thenStatement, true);
+          if (node.elseStatement) visit(node.elseStatement, inNotAuthenticated);
+          return;
+        }
+      }
+      if (
+        ts.isPropertyAssignment(node) &&
+        ts.isIdentifier(node.name) &&
+        node.name.text === 'isAuthenticated' &&
+        node.initializer.kind === ts.SyntaxKind.FalseKeyword
+      ) {
+        zeroCount += 1;
+        if (inNotAuthenticated) zeroInsideNotAuthenticated = true;
+      }
+      node.forEachChild(child => visit(child, inNotAuthenticated));
+    };
+    visit(providerSrc.file, false);
+
+    assert.equal(
+      zeroCount,
+      1,
+      `弹窗里「把登录态归零」只许有一处（当前 ${zeroCount} 处）—— ` +
+        '每一处归零都是一次「说用户没登录」的断言；' +
+        '「服务端不可用」那一档归零 ⇒ 明明登录着的人被要求重新登录（白折腾）'
+    );
+    assert.ok(
+      zeroInsideNotAuthenticated,
+      '那一处归零必须落在「明确核到没有会话」那一支里 —— ' +
+        '「服务端不可用」与「不知道」两档都只是**确认不了**，不是没登录'
+    );
   });
 
   it('**账号闸门**就地处理：闸门在 try 块外，异常必须就地归一', () => {

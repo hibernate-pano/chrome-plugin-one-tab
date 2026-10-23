@@ -17,10 +17,20 @@
 //   ① 首屏真的渲染出了会话列表（功能没被改坏）；
 //   ② **渲染阻塞集**里没有同步栈（首屏不再被云端栈挡住）；
 //   ③ 首帧之前真正下载了多少字节（真机口径，不靠 gzip 估算）；
-//   ④ 同步栈**最终**确实被下载了（证明是「延后」不是「删掉」）；
-//   ⑤ Service Worker 侧的动态 import 还能跑（SYNC 消息拿得到结构化响应，
+//   ④ **弹窗页面自始至终不请求 SDK 块**（2026-10-23 第 48 轮改判据：
+//      核登录态搬去 SW ⇒ 页面侧**一次也不该**下载那 ≈75KB）；
+//   ⑤ Service Worker 侧仍然能跑（SYNC 消息拿得到结构化响应，
 //      且没有 `document is not defined` 这类模块加载错误）；
+//   ⑤' **AUTH_STATUS 通道真的通了**（弹窗问后台核登录态 ⇒ 拿到判定）；
 //   ⑥ 登录 / 撤销两条用户路径仍然有明确结果（不是静默失败）。
+//
+// ── ④ 为什么从「最终被下载」改成「一次也不被下载」 ────────────────────────
+// 上一轮的口径是「同步栈最终确实被下载了（延后 ≠ 删掉）」——
+// 那时的设计是「页面里动态 import SDK」。核登录态搬去 SW 之后，
+// **页面侧连延后都不该有**：点开弹窗只想看本机会话列表，
+// 那 75KB 跟用户要干的事毫无关系，延后也是白延后。
+// ⇒ 现在 ④ 判的是「页面**零次**请求 SDK 块」，
+//   而「功能没被删掉」由 ⑤'（AUTH_STATUS 回合）与 ⑥a（登录路径）承担。
 //
 // ── 为什么用 CDP 而不是页面内的 performance API ────────────────────────
 // 页面内的 `performance.getEntriesByType('resource')` 在
@@ -328,17 +338,33 @@ async function main() {
       ),
     });
 
-    // ── 判据 ④：同步栈**最终**确实被下载了（延后 ≠ 删掉）──────────────
-    const syncLoaded = requestsOfLastLoad.filter(r => syncFiles.has(fileOf(r.url)));
-    if (syncLoaded.length === 0) {
+    // ── 判据 ④：弹窗页面**一次也不该**下载云端栈 ────────────────────────
+    //
+    // ⚠️ **采样点**很重要：⑥a 会**故意**点「去登录」⇒ 那时页面**应该**
+    // 加载 SDK（用户明确要用登录功能了）。所以这里只判
+    // 「**任何用户操作之前**」的那一段请求 —— 也就是「打开弹窗」本身。
+    //
+    // 核登录态搬去 SW 之后，页面侧**连延后都不该有**：
+    // 点开弹窗只想看本机会话列表，那 ≈75KB 跟用户要干的事毫无关系。
+    const cloudStackFiles = new Set([...sdkFiles, ...webdavFiles]);
+    const cloudRequestedByPopup = requestsOfLastLoad.filter(r =>
+      cloudStackFiles.has(fileOf(r.url)),
+    );
+    if (cloudRequestedByPopup.length) {
       problems.push(
-        '④ 同步栈**始终没有**被下载 —— 这不是「延后加载」，是把功能删了换体积。' +
-          '（登录态检查必须真的跑起来）',
+        `④ 弹窗打开时**下载了**云端栈：${cloudRequestedByPopup
+          .map(r => fileOf(r.url))
+          .join(', ')} —— 用户点开弹窗只想看本机会话列表，` +
+          '这 ≈75KB 跟他要干的事毫无关系，却每次开弹窗都付一次。' +
+          '核登录态请交给 service worker（SW 侧 SDK 是静态依赖 ⇒ 零下载）。',
       );
     }
     report.steps.push({
-      step: '④ 同步栈最终被加载（延后而非删除）',
-      loaded: syncLoaded.map(r => ({ file: fileOf(r.url), ts: r.ts })),
+      step: '④ 弹窗打开时不下载云端栈',
+      requested: cloudRequestedByPopup.map(r => ({ file: fileOf(r.url), ts: r.ts })),
+      // 分开记一份：SDK 与 WebDAV 是两件事，将来分开修时能看出是哪一条。
+      sdkRequested: requestsOfLastLoad.filter(r => sdkFiles.has(fileOf(r.url))).length,
+      webdavRequested: requestsOfLastLoad.filter(r => webdavFiles.has(fileOf(r.url))).length,
     });
 
     // ── 判据 ⑤：SW 侧的动态 import 还能跑 ────────────────────────────
@@ -372,6 +398,43 @@ async function main() {
       swErrors: swErrors.slice(0, 5),
       moduleErrors: swModuleErrors,
     });
+
+    // ── 判据 ⑤'：AUTH_STATUS 通道真的通了 ──────────────────────────────
+    //
+    // ④ 判的是「页面**不**下载 SDK」，那**必须**配一条「功能没被删掉」的
+    // 判据，否则「把核登录态整段删了」也会让 ④ 变绿。
+    // ⇒ 这里让弹窗**真的问一次**后台，看后台答不答得出一个判定（四档之一）。
+    //
+    // ⚠️ 生产 Supabase 当前被 402 封禁 ⇒ 现实里大概率答「backend_unavailable」
+    //   （这正是四档设计要覆盖的：不可用 ≠ 没登录）。
+    //   判据只要求「答得出判定」，不要求答「authenticated」。
+    const authRoundTrip = await page.evaluate(async () => {
+      const timeout = new Promise(resolve =>
+        setTimeout(() => resolve({ ok: false, error: '30 秒内后台没回包' }), 30000),
+      );
+      try {
+        const res = await Promise.race([
+          chrome.runtime.sendMessage({ type: 'AUTH_STATUS' }),
+          timeout,
+        ]);
+        return { ok: true, res };
+      } catch (err) {
+        return { ok: false, error: String(err?.message ?? err) };
+      }
+    });
+    const AUTH_KINDS = ['authenticated', 'not_authenticated', 'backend_unavailable', 'unknown'];
+    const authKind = authRoundTrip.ok ? authRoundTrip.res?.status?.kind : null;
+    if (!authRoundTrip.ok) {
+      problems.push(`⑤' AUTH_STATUS 通道失败：${authRoundTrip.error}`);
+    } else if (authRoundTrip.res?.ok !== true) {
+      problems.push(`⑤' 后台没给出登录态：${JSON.stringify(authRoundTrip.res)}`);
+    } else if (!AUTH_KINDS.includes(authKind)) {
+      problems.push(
+        `⑤' 后台给的登录态不是四档之一：${JSON.stringify(authRoundTrip.res)}` +
+          '（四档：authenticated / not_authenticated / backend_unavailable / unknown）',
+      );
+    }
+    report.steps.push({ step: "⑤' AUTH_STATUS 通道答得出判定", authRoundTrip, kind: authKind });
 
     // ── 判据 ⑥a：登录路径（懒加载的 facade 真跑了）────────────────────
     //
