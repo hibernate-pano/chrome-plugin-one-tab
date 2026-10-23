@@ -26,10 +26,24 @@ before(async () => {
 const OLD_T = '2026-01-01T00:00:00.000Z';
 const NEW_T = '2026-06-01T00:00:00.000Z';
 
+const tab = (id: string) => ({
+  id,
+  url: `https://example.com/${id}`,
+  title: id,
+  createdAt: OLD_T,
+  lastAccessed: OLD_T,
+  pinned: false,
+});
+
 const group = (over: Record<string, unknown>) => ({
   id: 'g1',
   name: 'g',
-  tabs: [],
+  // ⚠️ 夹具必须带一条**真实标签**（2026-10-23，第 51 轮）：
+  // 同步落盘路径会剔掉「零标签的空壳」（core/mutationOps.ts 的
+  // dropSyncMergedGroups）⇒ 用零标签的组当夹具，测到的就不是「印记决胜」
+  // 而是「空壳被清掉」。预览现在**也**建模空壳清理（与引擎同源），
+  // 所以零标签夹具在这里必然被剔掉 —— 那是**引擎的真实行为**，不是缺陷。
+  tabs: [tab('t1')],
   createdAt: OLD_T,
   updatedAt: OLD_T,
   isDeleted: false,
@@ -46,7 +60,7 @@ describe('buildDownloadPreviewSummary: 与实际合并同源', () => {
     const local = group({ name: '本地名', version: 9, lastOp: { d: 'devA', s: 10 } });
     const remote = group({ name: '云端名', version: 2, updatedAt: NEW_T, lastOp: { d: 'devA', s: 50 } });
 
-    const summary = buildDownloadPreviewSummary([local as any], [remote as any], 'merge');
+    const summary = buildDownloadPreviewSummary([local as any], [remote as any], 'merge', { skippedRemoteIds: [] });
 
     assert.deepEqual(
       summary.updatedNames,
@@ -70,7 +84,7 @@ describe('buildDownloadPreviewSummary: 与实际合并同源', () => {
       group({ id: 'stale-local', name: '云端新版', version: 1, lastOp: { d: 'devB', s: 60 } }),
     ];
 
-    const summary = buildDownloadPreviewSummary(local as any, remote as any, 'merge');
+    const summary = buildDownloadPreviewSummary(local as any, remote as any, 'merge', { skippedRemoteIds: [] });
     // mergeOpStamped 现在只收两个参数（旧的第三个 mergeStamp 已在操作印记重写时移除），
     // 这里跟着去掉，免得测试看起来还在传一个早就不存在的实参。
     const merged = mergeOpStamped(local as any, remote as any);
@@ -86,7 +100,7 @@ describe('buildDownloadPreviewSummary: 与实际合并同源', () => {
     const local = [group({ id: 'gone', name: '云端已删' })];
     const remote = [group({ id: 'gone', name: '云端已删', isDeleted: true, lastOp: { d: 'devB', s: 60 } })];
 
-    const summary = buildDownloadPreviewSummary(local as any, remote as any, 'merge');
+    const summary = buildDownloadPreviewSummary(local as any, remote as any, 'merge', { skippedRemoteIds: [] });
 
     assert.equal(summary.afterCount, 0);
     assert.deepEqual(summary.deletedNames, ['云端已删']);

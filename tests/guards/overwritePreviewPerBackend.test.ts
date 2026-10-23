@@ -18,13 +18,15 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { buildUploadPreviewSummary } from '@/utils/syncPreview';
+import { buildUploadPreviewSummary, buildDownloadPreviewSummary } from '@/utils/syncPreview';
 import { describeOverwriteRisk } from '@/components/sync/syncPreviewView';
 import type { Tab, TabGroup } from '@/types/tab';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 const read = (rel: string) => readFileSync(resolve(ROOT, rel), 'utf8');
 const SYNC_BUTTON = 'src/components/sync/SyncButton.tsx';
+// 2026-10-23（第 51 轮）：数据装配搬进了 services/syncPreviewLoader.ts。
+const PREVIEW_LOADER = 'src/services/syncPreviewLoader.ts';
 
 const mkTab = (id: string): Tab =>
   ({ id, url: `https://example.com/${id}`, title: id, createdAt: '2026-10-18T00:00:00.000Z', lastAccessed: '2026-10-18T00:00:00.000Z' }) as Tab;
@@ -109,13 +111,18 @@ describe('风险文案：一个都不删时不能说成「直接替换现状」'
 
 describe('接线：判据来自设置里的后端真值', () => {
   const source = read(SYNC_BUTTON);
+  // 2026-10-23（第 51 轮）：「读真值 + 读云端 + 算摘要」搬进了
+  // services/syncPreviewLoader.ts ⇒ 接线分两段看：
+  //   组件 → 装配路径（settings 真值传进去）、
+  //   装配路径 → 摘要函数（开关真的用上，不是收下就算）。
+  const loader = read(PREVIEW_LOADER);
 
   it('上传覆盖预览带上 preserveRemoteOnly', () => {
     // 只钉**这一个判据被接上了**（它的值来自设置真值），不钉整个对象字面量的
     // 形状：options 里还有别的键（2026-10-20 P1 加的 unrestorableRemoteIds），
     // 逐字匹配整个字面量会把「多传一个必要的选项」也判成违规。
     assert.ok(
-      /buildUploadPreviewSummary\(localGroups, remoteGroups, 'overwrite', \{[\s\S]{0,400}?preserveRemoteOnly: uploadOverwritePreservesRemote[\s\S]{0,400}?\}\)/.test(
+      /loadUploadPreviewData\(\{[\s\S]{0,200}?preserveRemoteOnly: uploadOverwritePreservesRemote[\s\S]{0,200}?\}\)/.test(
         source
       ),
       '上传覆盖预览必须按后端分流'
@@ -129,15 +136,38 @@ describe('接线：判据来自设置里的后端真值', () => {
     );
   });
 
+  it('装配路径把这个开关真的交给摘要函数（不是收下就算）', () => {
+    assert.ok(
+      /buildUploadPreviewSummary\([\s\S]{0,400}?preserveRemoteOnly: options\?\.preserveRemoteOnly === true/.test(
+        loader
+      ),
+      '开关必须一路传到摘要函数（半路丢掉 = 分流没生效）'
+    );
+  });
+
   it('卡片说明在自带存储下不再说「直接替换云端现状」', () => {
     assert.ok(source.includes('云端独有会话保留，同 id 冲突按版本新旧裁决。'), '缺 WebDAV 口径的卡片说明');
     assert.ok(source.includes("'用当前本地会话直接替换云端现状。'"), 'Supabase 口径的说明不该被删掉');
   });
 
-  it('下载方向的预览不动（本地确实会被替换成云端镜像）', () => {
+  it('下载方向的预览**接不到**那个开关（本地确实会被替换成云端镜像）', () => {
+    // ① 结构上：下载方向的装配路径里根本不该出现这个开关。
+    const downloadFn = loader.slice(loader.indexOf('export const loadDownloadPreviewData'));
     assert.ok(
-      /buildDownloadPreviewSummary\(localGroups, remoteGroups, 'overwrite'\)/.test(source),
-      '下载覆盖不接该开关'
+      !downloadFn.includes('preserveRemoteOnly'),
+      '下载方向不接该开关（本地会被替换成云端镜像，没有「并集口径」这回事）'
+    );
+    // ② 行为上：**硬塞**进去也不影响结果（类型层面就不接受它 ⇒ 不会有第二份实现）。
+    //    `skippedRemoteIds` 是必填项（第 51 轮）：这里没有跳过清单 ⇒ 空清单。
+    const plain = buildDownloadPreviewSummary(LOCAL, REMOTE, 'overwrite', { skippedRemoteIds: [] });
+    const hacked = buildDownloadPreviewSummary(LOCAL, REMOTE, 'overwrite', {
+      skippedRemoteIds: [],
+      preserveRemoteOnly: true,
+    } as never);
+    assert.deepEqual(
+      hacked,
+      plain,
+      '下载方向的预览不受「并集口径」影响 —— 塞了开关也必须一样'
     );
   });
 });

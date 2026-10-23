@@ -26,3 +26,10 @@ export type { UploadReadbackExpect, UploadReadbackRow } from './supabase/readbac
 export { auth } from './supabase/auth';
 export { sync } from './supabase/sync';
 export type { SupabaseSyncPort, SupabaseAuthPort, SupabasePort } from './supabase/ports';
+// ── 2026-10-23（第 51 轮）：读会话的**唯一入口** + 「云端不可用」的观测 ──────
+// 为什么这两个也走门面：`store/slices/authSlice.ts` 在弹窗首屏的**静态**闭包里
+// ⇒ 它**静态** import 的任何 `src/utils/supabase/*` 都会把整条云端栈拖进首屏
+// （构建期的 first-screen 闸门会当场拒绝构建 —— 那是**对的**）。
+// ⇒ 这两个 SDK-free 的小模块也改从**按需加载**的门面取 ⇒ 首屏不下载它们。
+export { readSessionSafely, toSessionReadError, NO_SESSION_MESSAGE } from './supabase/sessionRead';
+export { outageTracker } from './supabase/outageTracker';

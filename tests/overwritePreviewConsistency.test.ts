@@ -33,6 +33,11 @@ import type { Tab, TabGroup } from '@/types/tab';
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const read = (rel: string): string => readFileSync(resolve(ROOT, rel), 'utf8');
 const SYNC_BUTTON = 'src/components/sync/SyncButton.tsx';
+// 2026-10-23（第 51 轮）：「读真值 + 读云端 + 算摘要」从组件搬进了
+// services/syncPreviewLoader.ts —— 搬出来是为了让守卫能**真的调用**它
+// （留在组件里时只能对着源码长相断言，而源码长相证明不了「清单真进了预览」）。
+// 行为级的同源验证见 tests/guards/overwriteDownloadPreviewMatchesActual.test.ts。
+const PREVIEW_LOADER = 'src/services/syncPreviewLoader.ts';
 
 const mkTab = (id: string): Tab =>
   ({
@@ -71,7 +76,7 @@ describe('覆盖上传预览：保留数与执行侧同源', () => {
     }).protectedIds.length;
 
     assert.equal(
-      summary.preservedRemoteCount,
+      summary.preservedCount,
       expected,
       '预览的保留数必须与执行侧同一个判据算出来的一致（预览与实际同源）'
     );
@@ -84,7 +89,7 @@ describe('覆盖上传预览：保留数与执行侧同源', () => {
       unrestorableRemoteIds: UNREADABLE_IDS,
     });
     assert.equal(
-      summary.preservedRemoteCount,
+      summary.preservedCount,
       1,
       '本机有副本的那一行会被替换掉，不算「保留」'
     );
@@ -92,7 +97,7 @@ describe('覆盖上传预览：保留数与执行侧同源', () => {
 
   it('没有读不出来的行 ⇒ 保留数为 0（风险文案逐字不变）', () => {
     const summary = buildUploadPreviewSummary(LOCAL, READABLE, 'overwrite');
-    assert.equal(summary.preservedRemoteCount, 0);
+    assert.equal(summary.preservedCount, 0);
     assert.equal(
       describeOverwriteRisk(summary, '云端'),
       '覆盖模式会用本次数据直接替换云端现状：预计删除 1 个会话、更新 0 个会话，操作不可撤销。再点一次确认执行。'
@@ -103,7 +108,7 @@ describe('覆盖上传预览：保留数与执行侧同源', () => {
     const summary = buildUploadPreviewSummary(LOCAL, READABLE, 'merge', {
       unrestorableRemoteIds: UNREADABLE_IDS,
     });
-    assert.equal(summary.preservedRemoteCount, 0);
+    assert.equal(summary.preservedCount, 0);
   });
 
   it('自带存储（并集型后端）⇒ 保留数恒为 0（那边一个都不删）', () => {
@@ -111,7 +116,7 @@ describe('覆盖上传预览：保留数与执行侧同源', () => {
       preserveRemoteOnly: true,
       unrestorableRemoteIds: UNREADABLE_IDS,
     });
-    assert.equal(summary.preservedRemoteCount, 0);
+    assert.equal(summary.preservedCount, 0);
   });
 });
 
@@ -120,9 +125,9 @@ describe('覆盖上传预览：有保留行时，风险文案必须说出来', (
     const summary = buildUploadPreviewSummary(LOCAL, READABLE, 'overwrite', {
       unrestorableRemoteIds: UNREADABLE_IDS,
     });
-    const text = describeOverwriteRisk(summary, '云端', summary.preservedRemoteCount);
+    const text = describeOverwriteRisk(summary, '云端', summary.preservedCount);
     assert.ok(
-      text.includes(String(summary.preservedRemoteCount)),
+      text.includes(String(summary.preservedCount)),
       `风险文案必须报出保留的会话数（实得：${text}）`
     );
     assert.match(
@@ -142,34 +147,54 @@ describe('覆盖上传预览：有保留行时，风险文案必须说出来', (
 });
 
 describe('接线：预览拿到的跳过清单来自同一次下载（原子包装）', () => {
+  // 数据装配在 services/syncPreviewLoader.ts（2026-10-23 第 51 轮搬出组件）。
+  const loader = read(PREVIEW_LOADER);
   const source = read(SYNC_BUTTON);
 
-  it('上传预览用的是「结果 + 跳过清单」同一次下载（downloadTabGroupsWithSkips）', () => {
+  it('上传预览用的是「结果 + 跳过清单」同一次下载（downloadGroupsWithSkipped）', () => {
+    // ⚠️ 2026-10-23（第 51 轮）：原子包装只有**一份**实现 ——
+    // services/downloadWithSkippedGroups.ts 的 downloadGroupsWithSkipped()
+    // （引擎与预览都走它）。之前还有第二份（tabGroupSyncService 里的
+    // downloadTabGroupsWithSkips，不归一化、抛错不 fail-closed）⇒ 已删除。
     assert.match(
-      source,
-      /downloadTabGroupsWithSkips\(\)/,
+      loader,
+      /downloadGroupsWithSkipped\(\)/,
       '必须用原子包装一次拿到「读到的」与「读不出来的」（分两次调用可能读到别的轮次）'
+    );
+    assert.doesNotMatch(
+      loader,
+      /downloadTabGroupsWithSkips/,
+      '不得用那份不归一化、抛错不 fail-closed 的旧包装（两条路径迟早用错一条）'
     );
   });
 
   it('跳过清单**原样**用上（被丢掉 ⇒ 预览算不出保留数 = 谎报「全部替换」）', () => {
     assert.match(
-      source,
-      /unrestorableRemoteIds: skippedRemoteIds/,
+      loader,
+      /unrestorableRemoteIds: remote\.skippedIds/,
       '读不出来的那几组不在「读到的」里 ⇒ 必须单独传进预览'
     );
-    // 清单不许在中间被换成空数组（那正是「组件把跳过清单丢掉」的形态）。
+    // 清单不许在中间被换成空数组（那正是「把跳过清单丢掉」的形态）。
     assert.doesNotMatch(
-      source,
-      /skipped:\s*\[\s*\]/,
+      loader,
+      /skippedIds:\s*\[\s*\]/,
       '不得把跳过清单替换成空数组（那会让预览算成「云端全部都会被替换」）'
     );
+  });
+
+  it('组件必须走这条装配路径（不许自己另算一份）', () => {
+    assert.match(
+      source,
+      /loadUploadPreviewData\(/,
+      '组件只负责渲染与状态，摘要由装配路径算（各算各的就会漂）'
+    );
+    assert.match(source, /loadDownloadPreviewData\(/);
   });
 
   it('风险文案用的保留数取自预览摘要自己算的那个数（不是另算一份）', () => {
     assert.match(
       source,
-      /preservedRemoteCount: uploadPreview\?\.overwrite\?\.preservedRemoteCount/,
+      /preservedCount: uploadPreview\?\.overwrite\?\.preservedCount/,
       '卡片与风险文案必须用同一个数（各算各的就会漂）'
     );
   });

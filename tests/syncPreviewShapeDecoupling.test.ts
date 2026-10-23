@@ -156,7 +156,10 @@ describe('内容指纹与两条后端的形状差异脱钩', () => {
     const local = mkGroup('g1', { version: 1, lastOp: { d: 'dev-a', s: 1 } });
     const remote = mkGroup('g1', { version: 9, lastOp: { d: 'dev-b', s: 5 } });
 
-    const summary = buildDownloadPreviewSummary([local], [remote], 'merge');
+    // ⚠️ `skippedRemoteIds` 现在是**必填**（第 51 轮）：缺了它，预览会退回
+    // 「已知会撒谎」的旧口径（把保住的几份报成「将删除」）⇒ 让「忘了传」变成
+    // 编译期错误，比让它静默说谎好。这里是合并模式且没有跳过清单 ⇒ 空清单。
+    const summary = buildDownloadPreviewSummary([local], [remote], 'merge', { skippedRemoteIds: [] });
 
     assert.equal(summary.updates, 0, '内容没变就不该报「将更新」');
     assert.equal(summary.unchanged, 1, '内容没变就必须判为 unchanged');

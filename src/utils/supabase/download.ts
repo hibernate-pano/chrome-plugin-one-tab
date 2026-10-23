@@ -26,6 +26,10 @@ import { CRYPTO_CONCURRENCY, mapWithConcurrency } from '../concurrency';
 // 归一在**产生点**做（这一层还拿得到 SDK 原始错误的 status / http_status）：
 // 过了这一层就只剩 message，判据就再也认不出来了。
 import { BackendUnavailableError, isBackendUnavailable, readHttpStatus } from '@/core/backendUnavailable';
+// ── 2026-10-23（第 51 轮）：读会话走**唯一入口** ──────────────────────────
+// 先问「云端在吗」（不可用就**不碰 SDK** ⇒ 会话不会被 SDK 删掉）+ 5 秒上限
+// + 失败原样带出。判据见 utils/supabase/sessionRead.ts 的注释。
+import { readSessionSafely, toSessionReadError } from './sessionRead';
 
 /**
  * 还原率阈值：云端一行里的标签有低于这个比例能还原成 Tab 时，这一行**整组跳过**。
@@ -208,7 +212,11 @@ export const downloadSync = {
     lastDownloadSkipped = [];
     checkSupabaseConfig();
     // 先检查会话是否有效
-    const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
+    // ── 2026-10-23（第 51 轮）：走**唯一入口**（先问云端在吗 + 5 秒上限）
+    const { data: sessionData, error: sessionError } = await readSessionSafely(
+      () => supabase.auth.getSession(),
+      '下载前核对会话'
+    );
 
     if (sessionError) {
       logError('获取会话失败:', sessionError);
@@ -234,8 +242,16 @@ export const downloadSync = {
     if (userError) {
       logError('获取用户信息失败:', userError);
       // ── 2026-10-22（402）：**这一支才是账号态 402 的真实落点** ────────────
-      // 实测（生产 402）：`/auth/v1/user` 同样返回 402 ⇒ auth-js 抛
-      // AuthApiError { status: 402 }。原先降级成普通 Error ⇒ 上层拿不到判据。
+      // 实测（生产 402）：`/auth/v1/user` 同样返回 402。
+      // ⚠️ 2026-10-23（第 51 轮）更正：auth-js 抛的是
+      // `AuthApiError { status: 503 }`，**不是 402** —— 402 在 fetch 咽喉处
+      // 已被翻译成 503（core/authSdkStatus.ts，为了不让 SDK 删掉用户的会话），
+      // 而 auth-js 的 `handleError` 把响应体整个丢掉（只留 message/status/code）
+      // ⇒ 我们拿不到 402、也拿不到响应体里的 `http_status`。
+      // ⇒ 分类结论**不变**：503 在「服务端不可用」集合里；而 402 响应体里那句
+      // 「…exceed_egress_quota…」会进 `AuthApiError.message`
+      // ⇒ 报文标记那条判据也照样命中。
+      // 原先降级成普通 Error ⇒ 上层拿不到判据。
       if (isBackendUnavailable(userError)) {
         throw new BackendUnavailableError(
           `获取用户信息失败: ${userError.message}`,
@@ -258,7 +274,15 @@ export const downloadSync = {
     try {
 
       // 确保用户已登录并且会话有效
-      const { data: sessionCheck } = await supabase.auth.getSession();
+      // ── 2026-10-23（第 51 轮）：读失败不许被读成「会话已过期」
+      // （那会把用户引去重登，而云端故障时重登必然失败 ⇒ 死循环）
+      const { data: sessionCheck, error: sessionCheckError } = await readSessionSafely(
+        () => supabase.auth.getSession(),
+        '下载中核对会话'
+      );
+      if (sessionCheckError) {
+        throw toSessionReadError(sessionCheckError, '下载中核对会话');
+      }
       if (!sessionCheck.session) {
         logError('会话已过期，无法下载数据');
         throw new Error('会话已过期，请重新登录');
@@ -617,7 +641,11 @@ export const downloadSync = {
   async downloadSettings() {
     checkSupabaseConfig();
     // 先检查会话是否有效
-    const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
+    // ── 2026-10-23（第 51 轮）：走**唯一入口**（先问云端在吗 + 5 秒上限）
+    const { data: sessionData, error: sessionError } = await readSessionSafely(
+      () => supabase.auth.getSession(),
+      '下载设置前核对会话'
+    );
 
     if (sessionError) {
       logError('获取会话失败:', sessionError);
@@ -643,8 +671,16 @@ export const downloadSync = {
     if (userError) {
       logError('获取用户信息失败:', userError);
       // ── 2026-10-22（402）：**这一支才是账号态 402 的真实落点** ────────────
-      // 实测（生产 402）：`/auth/v1/user` 同样返回 402 ⇒ auth-js 抛
-      // AuthApiError { status: 402 }。原先降级成普通 Error ⇒ 上层拿不到判据。
+      // 实测（生产 402）：`/auth/v1/user` 同样返回 402。
+      // ⚠️ 2026-10-23（第 51 轮）更正：auth-js 抛的是
+      // `AuthApiError { status: 503 }`，**不是 402** —— 402 在 fetch 咽喉处
+      // 已被翻译成 503（core/authSdkStatus.ts，为了不让 SDK 删掉用户的会话），
+      // 而 auth-js 的 `handleError` 把响应体整个丢掉（只留 message/status/code）
+      // ⇒ 我们拿不到 402、也拿不到响应体里的 `http_status`。
+      // ⇒ 分类结论**不变**：503 在「服务端不可用」集合里；而 402 响应体里那句
+      // 「…exceed_egress_quota…」会进 `AuthApiError.message`
+      // ⇒ 报文标记那条判据也照样命中。
+      // 原先降级成普通 Error ⇒ 上层拿不到判据。
       if (isBackendUnavailable(userError)) {
         throw new BackendUnavailableError(
           `获取用户信息失败: ${userError.message}`,

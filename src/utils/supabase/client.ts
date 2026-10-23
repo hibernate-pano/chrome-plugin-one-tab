@@ -5,47 +5,17 @@
 import { createClient } from '@supabase/supabase-js';
 import { hasExtensionStorage } from '@/storage-kv/env';
 import { sharedStringStorage } from '@/storage-kv/stringStore';
+import { getSupabaseConfig } from './config';
+import { statusForAuthSdk } from '@/core/authSdkStatus';
+import { UNAVAILABLE_STATUS_CODES } from '@/core/backendUnavailable';
+import { outageTracker } from './outageTracker';
 import type { Database } from './database.types';
 
-// 安全的配置管理
-function getSecureConfig() {
-  // 从环境变量中获取 Supabase 配置
-  const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL as string;
-  const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY as string;
-
-  // 验证环境变量格式
-  if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
-    return null;
-  }
-
-  // 验证URL格式
-  try {
-    const url = new URL(SUPABASE_URL);
-    if (!url.hostname.includes('supabase.co')) {
-      return null;
-    }
-  } catch (error) {
-    return null;
-  }
-
-  // 验证匿名密钥格式（JWT格式）
-  if (!SUPABASE_ANON_KEY.startsWith('eyJ')) {
-    return null;
-  }
-
-  // 在生产环境中，不要在控制台输出完整的配置信息
-  if (import.meta.env.DEV) {
-    logInfo('Supabase 配置已加载:', {
-      url: SUPABASE_URL,
-      keyPrefix: SUPABASE_ANON_KEY.substring(0, 10) + '...'
-    });
-  }
-
-  return {
-    url: SUPABASE_URL,
-    anonKey: SUPABASE_ANON_KEY
-  };
-}
+// ── 2026-10-23（第 51 轮）：配置读取下沉到 ./config ────────────────────────
+// 为什么不留在本文件：问「云端在不在服务」必须在**不加载 SDK** 的前提下问出口
+// （见 ./cloudAvailability.ts），而配置是问它唯一的输入 ⇒ 配置读取单独成文件，
+// 弹窗侧与 SW 侧都能用。**行为零变化**（判据逐字照搬）。
+const getSecureConfig = getSupabaseConfig;
 
 // 延迟初始化 Supabase 客户端
 // 类型参数 Database 是纯类型标注：不传时 createClient 的 Database 落到 any，
@@ -86,21 +56,48 @@ async function migrateLegacySupabaseSession(): Promise<void> {
   }
 }
 
-function initSupabaseClient() {
-  if (supabaseClient) {
-    return supabaseClient;
-  }
-
+/**
+ * ── 2026-10-23（第 51 轮）：客户端**惰性创建** ─────────────────────────────
+ *
+ * ⚠️ **为什么不能在这里就把客户端建出来**（这一条是第 51 轮最深的那个坑）：
+ * `createClient` ⇒ auth-js 的构造函数 ⇒ **它自己会调 `initialize()`** ⇒
+ * `_recoverAndRefresh()` ⇒ **只要本地会话已过期，就立刻发一次刷新请求**
+ * （POST /auth/v1/token）—— 而且那次刷新**发生在我们的任何闸门之前**
+ * （我们还没拿到客户端，就更谈不上「先问一句云端在吗」）。
+ *
+ * ⇒ 后果（云端挂着时）：一次云端故障 = **8 次刷新请求 + 25.4 秒退避**
+ *   （`_refreshAccessToken` 的 `retryable()`），而且这些请求**全都计进
+ *   那个已经被配额限制的项目的 egress** ⇒ 故障期间每开一次弹窗，
+ *   就往一个正在被限制的项目上再添一笔。
+ *
+ * ⇒ **判据**：客户端**第一次被真正用到**时才建 ⇒
+ *   · 读会话一律走 `sessionRead.ts` 的入口 ⇒ 那里**先探活**；
+ *   · 探活判定「云端不可用」⇒ 直接抛错 ⇒ **客户端压根没被建**
+ *     ⇒ 一次刷新请求都不会发 ⇒ 会话连读都没被读。
+ *
+ * ⚠️ **为什么用 Proxy 而不是改成函数**：`supabase` 这个导出被 20+ 处
+ * 按「对象」用（`supabase.auth.getSession()` / `supabase.from(...)`）
+ * ⇒ 改成函数 = 全仓改调用形状（容易漏，还会漂移）。
+ * ⇒ Proxy 保持**形状不变**，只把「建客户端」这件事推迟到第一次属性访问。
+ *
+ * ⚠️ **绑定**：取出来的方法必须 `bind` 到**真客户端**上 ——
+ *   `supabase.from(...)` 若以 Proxy 当 `this`，PostgREST 内部读
+ *   `this.url` / `this.headers` 会再绕回 Proxy（虽然能work，但多一层不确定性）。
+ * ⇒ 一律 `bind(client)`。
+ *
+ * ⚠️ **`then` 特判**：若有人 `await supabase`（Promise 解析会先问 `.then`），
+ *   那次属性访问会**凭空建一个客户端** ⇒ 白建。`then` 恒为 undefined ⇒ 直接短路。
+ */
+function createSupabaseClient() {
   const config = getSecureConfig();
   if (!config) {
     // 配置缺失时，创建一个占位符客户端
     // 使用占位符 URL 和 key，避免后续调用时出错
     logWarn('Supabase 配置缺失。同步功能将不可用。如需使用同步功能，请在 .env 文件中设置 VITE_SUPABASE_URL 和 VITE_SUPABASE_ANON_KEY。');
-    supabaseClient = createClient<Database>('https://placeholder.supabase.co', 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InBsYWNlaG9sZGVyIiwicm9sZSI6ImFub24iLCJpYXQiOjE2NDUxOTIwMDAsImV4cCI6MTk2MDc2ODAwMH0.placeholder');
-    return supabaseClient;
+    return createClient<Database>('https://placeholder.supabase.co', 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InBsYWNlaG9sZGVyIiwicm9sZSI6ImFub24iLCJpYXQiOjE2NDUxOTIwMDAsImV4cCI6MTk2MDc2ODAwMH0.placeholder');
   }
 
-  supabaseClient = createClient<Database>(config.url, config.anonKey, {
+  const client = createClient<Database>(config.url, config.anonKey, {
     auth: {
       // service-worker 无 localStorage，统一用 chrome.storage.local 持久化 session
       storage: supabaseSharedStorage,
@@ -146,8 +143,22 @@ function initSupabaseClient() {
   // 旧 session 迁移（幂等：只搬一次，搬完即删 localStorage 源）
   void migrateLegacySupabaseSession();
 
-  return supabaseClient;
+  return client;
 }
+
+/**
+ * 真正创建客户端（**只创建一次**）。
+ *
+ * ⚠️ 为什么要单独一层：创建客户端 = `createClient` ⇒ **auth-js 会自己
+ * 刷新会话**（见上面那段注释）⇒ 创建时机就是「会不会误伤用户会话」的
+ * 决定性时刻 ⇒ 它必须**晚于**探活闸门。
+ */
+const getSupabaseClient = (): ReturnType<typeof createClient<Database>> => {
+  if (!supabaseClient) {
+    supabaseClient = createSupabaseClient();
+  }
+  return supabaseClient;
+};
 
 /**
  * 带请求级超时的 fetch（2026-10-06）。
@@ -184,19 +195,35 @@ const REQUEST_TIMEOUT_MS = (() => {
   return Number.isFinite(override) && override > 0 ? override : 45_000;
 })();
 
+/**
+ * 取出这次请求的 URL（`fetch` 的第一个参数有三种形状）。
+ *
+ * ⚠️ 为什么不用 `res.url`：测试里用的假云端是 `new Response(...)` 造的，
+ * 它的 `url` 是**空串** ⇒ 拿它判端点会判成「不是 auth 端点」⇒
+ * 状态码翻译不生效 ⇒ 守卫会**假绿**（测的是一个根本没走到的分支）。
+ * 请求侧的 URL 才是权威的。
+ */
+const requestUrlOf = (input: RequestInfo | URL): string => {
+  if (typeof input === 'string') return input;
+  if (input instanceof URL) return input.toString();
+  const u = (input as { url?: unknown })?.url;
+  return typeof u === 'string' ? u : '';
+};
+
 const fetchWithTimeout: typeof fetch = (input, init) => {
+  const requestUrl = requestUrlOf(input);
   // 调用方自带 signal 时不覆盖：两个 signal 无法合并，而我们的超时是兜底
   // 需求，不该压过业务侧的取消意图（例如 auth 的 token 刷新）。
   //
   // ⚠️ 但**状态码注入两条路径都要做**（2026-10-22）：auth 的 token 刷新正是
   // 走「自带 signal」这条路，而「服务端项目被限制」在 auth 侧同样会发生
   // （实测 /auth/v1/user 也返回 402）。漏掉它 ⇒ 账号恢复路径拿不到判据。
-  if (init?.signal) return fetch(input, init).then(res => injectHttpStatus(res));
+  if (init?.signal) return fetch(input, init).then(res => injectHttpStatus(res, requestUrl));
 
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
   return fetch(input, { ...init, signal: controller.signal })
-    .then(res => injectHttpStatus(res))
+    .then(res => injectHttpStatus(res, requestUrl))
     .finally(() => {
       clearTimeout(timer);
     });
@@ -235,17 +262,61 @@ const fetchWithTimeout: typeof fetch = (input, init) => {
  *
  * ⚠️ 改写响应体 ⇒ 必须重建 Response（body 已被读过）。**保留原 headers**
  * （含 content-type），否则 SDK 会把 JSON 当纯文本解析。
+ *
+ * ── 2026-10-23（第 51 轮）：auth 端点上的「服务端不可用」要**翻译** ──────
+ * 注入 `http_status` 只解决「判据可见」；还剩一个更要紧的问题：
+ * **auth SDK 会因为 402 把用户的会话删掉**（它把 402 当成「服务端明确拒绝」
+ * ⇒ 认定刷新令牌已死 ⇒ `_removeSession()`）⇒ 一次云端故障 = 全员被登出。
+ * ⇒ 这里把「服务端现在不服务」的状态码在 auth 端点上**翻译**成
+ * SDK 眼里的「瞬时故障」（503）—— 判据见 `core/authSdkStatus.ts`。
+ * 原始状态码**不丢**（照旧写进 `http_status`），本仓的分类结论不变。
  */
-const injectHttpStatus = async (res: Response): Promise<Response> => {
+const injectHttpStatus = async (
+  res: Response,
+  requestUrl = '',
+): Promise<Response> => {
   // 2xx / 3xx：不是错误响应，一个字节都不动。
-  if (res.ok || res.status < 400) return res;
+  if (res.ok || res.status < 400) {
+    // ── 2026-10-23（第 51 轮）：云端活了 ⇒ 之前的「不可用」观测作废 ──────
+    // 任何一次成功的响应都证明云端在服务 ⇒ 立刻回到真实判定，
+    // 不让「刚刚不可用」这条**暂定事实**粘住（否则云端恢复后仍会说不可用）。
+    outageTracker.clear();
+    return res;
+  }
+
+  const originalStatus = res.status;
+  // ── 第 51 轮：记一笔「云端不可用」的观测 ─────────────────────────────
+  // 判据用**状态码**（402/503/52x），不靠文案匹配。
+  // 为什么在这里记：这是唯一同时看得到「状态码」与「这次请求失败了」的地方。
+  if (UNAVAILABLE_STATUS_CODES.includes(originalStatus)) {
+    outageTracker.noteUnavailable();
+  }
 
   // 已经有状态码字段的（我们自己重放过 / 别的层注入过）：不重复注入。
   let text: string;
   try {
     text = await res.clone().text();
   } catch {
-    return res; // 读不出 body ⇒ 原样返回
+    // 读不出 body ⇒ 原样返回。
+    // ⚠️ 但**必须改状态码时例外**：改状态码是为了**保住用户的会话**
+    // （一次云端故障不该把人登出）—— 那比保留原始 body 更重要。
+    // ⚠️ 读不出 body ⇒ 我们**分不清**这是不是 GoTrue 自己的判决
+    // （见 core/authSdkStatus.ts 的 hasGoTrueErrorField）⇒ 按「不是」处理
+    // ⇒ 刷新端点上的 401/403 会被翻译（fail-closed：宁可保留一个可能已死的
+    // 会话，也不误删一个还活着的会话）。
+    const sdkStatus = statusForAuthSdk(requestUrl || res.url, originalStatus);
+    if (sdkStatus === originalStatus) return res;
+    return new Response(
+      JSON.stringify({
+        message: res.statusText || `HTTP ${originalStatus}`,
+        http_status: originalStatus,
+      }),
+      {
+        status: sdkStatus,
+        statusText: res.statusText,
+        headers: { 'content-type': 'application/json; charset=utf-8' },
+      }
+    );
   }
 
   let parsed: unknown;
@@ -256,24 +327,30 @@ const injectHttpStatus = async (res: Response): Promise<Response> => {
     // 而 SDK 拿不到 —— 把它塞进一个 JSON 形状的错误体，让 SDK 能解析出
     // `{ message, http_status }`。**这改变了响应体的形状**，所以必须
     // 同时把 content-type 换成 JSON，否则 SDK 会拿到纯文本。
+    const sdkStatus = statusForAuthSdk(requestUrl || res.url, originalStatus);
     return new Response(
-      JSON.stringify({ message: text || res.statusText || `HTTP ${res.status}`, http_status: res.status }),
+      JSON.stringify({ message: text || res.statusText || `HTTP ${originalStatus}`, http_status: originalStatus }),
       {
-        status: res.status,
+        status: sdkStatus,
         statusText: res.statusText,
         headers: { 'content-type': 'application/json; charset=utf-8' },
       }
     );
   }
 
+  // ⚠️ 送给 SDK 的状态码**在这里**才算（不是更早）：判据需要**响应体**
+  // （刷新端点上的 401/403 是「GoTrue 的判决」还是「网关拒了我们的 key」，
+  // 只能从 body 的机器字段分辨 —— 见 core/authSdkStatus.ts）。
+  const sdkStatus = statusForAuthSdk(requestUrl || res.url, originalStatus, parsed);
+
   // 已是对象：补上 http_status（不覆盖已有的）。
   if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
     const obj = parsed as Record<string, unknown>;
     if (obj.http_status === undefined) {
-      obj.http_status = res.status;
+      obj.http_status = originalStatus;
     }
     return new Response(JSON.stringify(obj), {
-      status: res.status,
+      status: sdkStatus,
       statusText: res.statusText,
       headers: res.headers,
     });
@@ -296,8 +373,21 @@ export function checkSupabaseConfig() {
   }
 }
 
-// 导出 supabase 客户端，延迟初始化
-export const supabase = initSupabaseClient();
+// 导出 supabase 客户端，**惰性创建**（2026-10-23，第 51 轮）。
+//
+// ⚠️ 形状与「真客户端」完全一样（`supabase.auth.*` / `supabase.from(...)`）
+//    ⇒ 调用方零改动；变的只是「客户端什么时候被建出来」。
+//    理由见 `createSupabaseClient` 上方那段注释（建客户端 = 一次刷新请求）。
+export const supabase = new Proxy({} as ReturnType<typeof createClient<Database>>, {
+  get(_target, prop) {
+    // `await` 一个对象时 JS 会先问 `.then` ⇒ 那次访问**不许**建客户端。
+    if (prop === 'then') return undefined;
+    const client = getSupabaseClient();
+    const value = Reflect.get(client, prop, client);
+    // 方法必须绑到真客户端上（`this` 要是 Proxy，PostgREST 内部读属性会绕圈）。
+    return typeof value === 'function' ? value.bind(client) : value;
+  },
+});
 
 export { getDeviceId } from '../deviceUtils';
 import { logInfo, logWarn } from '../log';

@@ -49,6 +49,7 @@ import { checkDeleteFailsafe, type FailsafeVerdict } from '@/core/deleteFailsafe
 // 覆盖下载的删除计划（DS-2）：这次覆盖会物理清除本机哪些会话。
 // 纯函数、判据只有一份（闸门与熔断用的是同一个函数）。
 import { planOverwriteDeletion } from '@/core/overwriteGuard';
+import { preservedLocalGroups } from '@/core/overwriteDownloadPreserve';
 import { readConfiguredBackendId } from '@/sync-backend';
 import type { SyncBackendId } from '@/sync-backend';
 import { isLockedBackendError } from '@/sync-backend/lockedBackendError';
@@ -838,13 +839,17 @@ export class SyncEngine {
       // 那里才是最终裁决（空壳清理会让实际删除数更大）。两处同源、同阈值，
       // 且这里算出的数不大于精确值 ⇒ 这里放行的下面仍可能拦下，反之不会。
       if (opts?.forceRemote) {
+        // ⚠️ 判据与下载预览**同一个函数**（core/overwriteDownloadPreserve.ts）——
+        // 否则预览会预告一个与实际落盘结果相反的结果（2026-10-23 第 51 轮修的就是
+        // 这个：预览把「云端读不出来、本机有副本」的那几份算成了「会被删除」）。
+        const preservedBySkip = preservedLocalGroups(snapshot, skippedIds);
         const overwritePlanBeforeMerge = planOverwriteDeletion({
           localActiveIds: snapshot.filter(g => !g.isDeleted).map(g => g.id),
           // 覆盖后本机会有的会话 = 云端读到的活跃组 + 被云端「读不出来」
           // 而特意保留下来的本机组（D-6）。
           survivingActiveIds: [
             ...cloudGroups.filter(g => !g.isDeleted).map(g => g.id),
-            ...snapshot.filter(g => !g.isDeleted && skippedIds.has(g.id)).map(g => g.id),
+            ...preservedBySkip.map(g => g.id),
           ],
           cloudTombstoneIds: cloudGroups.filter(g => g.isDeleted).map(g => g.id),
         });
@@ -958,7 +963,7 @@ export class SyncEngine {
         ),
       ];
       const localGroups = opts?.forceRemote
-        ? snapshot.filter(g => !g.isDeleted && skippedIds.has(g.id))
+        ? preservedLocalGroups(snapshot, skippedIds)
         : snapshot.filter(g => !g.isDeleted);
       // 5. 合并
       // 无墓碑模型（2026-09-29）：组级 LWW 整组覆盖（语义见 mergeOpStamped 头注释）。

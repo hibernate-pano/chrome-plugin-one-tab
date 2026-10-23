@@ -10,6 +10,7 @@ import { serializeTab } from '@/core/tabDataCodec';
 import { decideCloudTombstoneWrite } from '@/core/syncDecision';
 import { supabase, checkSupabaseConfig, getDeviceId } from './client';
 import { requireSessionUserId } from './session';
+import { readSessionSafely, toSessionReadError } from './sessionRead';
 import { logError, logInfo, logWarn } from '../log';
 // supportsOpStamp      → 上传路径（fail-open 正确：少带一列，退化但仍能上传）
 // supportsOpStampStrict → 删除广播（fail-open 错误：见 supportsOpStampStrict 注释）
@@ -577,7 +578,17 @@ export const uploadSync = {
 
     try {
       // 确保用户已登录并且会话有效
-      const { data: sessionCheck } = await supabase.auth.getSession();
+      // ── 2026-10-23（第 51 轮）：读会话走**唯一入口** ──────────────────────
+      // 原来这里**只取 data、丢掉 error** ⇒ 读失败（云端故障/断网）被读成
+      // 「会话已过期，请重新登录」—— 而那两件事下重登**必然失败** ⇒ 死循环。
+      // 现在：读失败按**失败原因**抛（云端不可用 vs 读不到），别再冒充「没登录」。
+      const { data: sessionCheck, error: sessionCheckError } = await readSessionSafely(
+        () => supabase.auth.getSession(),
+        '迁移前核对会话'
+      );
+      if (sessionCheckError) {
+        throw toSessionReadError(sessionCheckError, '迁移前核对会话');
+      }
       if (!sessionCheck.session) {
         logError('会话已过期，无法迁移数据');
         throw new Error('会话已过期，请重新登录');
@@ -666,7 +677,14 @@ export const uploadSync = {
             logError('行级安全策略错误，可能是用户ID不匹配或会话已过期');
 
             // 重新检查会话和用户信息
-            const { data: recheckSession } = await supabase.auth.getSession();
+            // ── 第 51 轮：读失败不许被读成「会话已过期」（那会把用户引去重登）
+            const { data: recheckSession, error: recheckError } = await readSessionSafely(
+              () => supabase.auth.getSession(),
+              '重试前核对会话'
+            );
+            if (recheckError) {
+              throw toSessionReadError(recheckError, '重试前核对会话');
+            }
             if (!recheckSession.session) {
               throw new Error('会话已过期，请重新登录');
             }
@@ -1368,7 +1386,16 @@ export const uploadSync = {
     }
 
     checkSupabaseConfig();
-    const { data: sessionData } = await supabase.auth.getSession();
+    // ── 2026-10-23（第 51 轮）：读会话走**唯一入口**，且**失败不许说成「未登录」**
+    // 云端故障时，这一句必须是「云端不可用」（等我们恢复）——
+    // 说成「未登录」会让用户去重新输密码，而云端恢复前那必然失败。
+    const { data: sessionData, error: sessionError } = await readSessionSafely(
+      () => supabase.auth.getSession(),
+      '删除广播前核对会话'
+    );
+    if (sessionError) {
+      throw toSessionReadError(sessionError, '删除广播前核对会话');
+    }
     if (!sessionData?.session) {
       // P0-2：未登录必须抛错阻断上传成功（见上），禁止静默跳过。
       throw new Error('[markCloudGroupsAsDeleted] 未登录，软删意图保留下轮重试');
@@ -1591,7 +1618,14 @@ export const uploadSync = {
     if (purgedIds.length === 0) return;
 
     checkSupabaseConfig();
-    const { data: sessionData } = await supabase.auth.getSession();
+    // ── 第 51 轮：同 markCloudGroupsAsDeleted —— 读失败不许说成「未登录」
+    const { data: sessionData, error: sessionError } = await readSessionSafely(
+      () => supabase.auth.getSession(),
+      '彻底删除前核对会话'
+    );
+    if (sessionError) {
+      throw toSessionReadError(sessionError, '彻底删除前核对会话');
+    }
     if (!sessionData?.session) {
       throw new Error('[purgeCloudGroups] 未登录，purge 队列保留下轮重试');
     }
@@ -1642,7 +1676,17 @@ export const uploadSync = {
     ]);
     if (!tombstoneColumn) return 0;
 
-    const { data: sessionData } = await supabase.auth.getSession();
+    // ── 2026-10-23（第 51 轮）：读会话走**唯一入口** ────────────────────────
+    // ⚠️ 这一段是「尽力而为」的清理任务（失败不影响上传），所以读不到会话时
+    // **记日志并跳过**（与本函数其余失败分支同款），而不是抛出去打断整轮同步。
+    const { data: sessionData, error: sessionError } = await readSessionSafely(
+      () => supabase.auth.getSession(),
+      '清理过期墓碑前核对会话'
+    );
+    if (sessionError) {
+      logWarn('[purgeExpiredCloudTombstones] 读不到会话（本轮跳过，下轮重试）:', sessionError);
+      return 0;
+    }
     const userId = sessionData?.session?.user?.id as string | undefined;
     if (!userId) return 0;
 

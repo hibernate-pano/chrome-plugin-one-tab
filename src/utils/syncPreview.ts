@@ -1,6 +1,8 @@
 import type { TabGroup } from '@/types/tab';
 import { mergeOpStamped } from '@/core/opStampMerge';
 import { planOverwriteUpload } from '@/core/overwriteUploadGuard';
+import { preservedLocalGroups } from '@/core/overwriteDownloadPreserve';
+import { dropSyncMergedGroups, removedGroupIds } from '@/core/mutationOps';
 
 export interface SyncPreviewSummary {
   additions: number;
@@ -13,17 +15,19 @@ export interface SyncPreviewSummary {
   updatedNames: string[];
   deletedNames: string[];
   /**
-   * 覆盖上传时**留在云端、不会被删除或覆盖**的会话数（2026-10-20 P1）。
+   * 覆盖时**目标侧被保住**（不删、也不覆盖）的会话数。
    *
-   * 指「云端有、这台设备读不出来、而本机又没有副本」的那几组：删掉它们就是
-   * 永久丢失（无回收站），所以覆盖上传会跳过它们（见
-   * utils/supabase/upload.ts 与 core/overwriteUploadGuard.ts）。
+   * ⚠️ 2026-10-23（第 51 轮）**改名**：原名 `preservedRemoteCount` 把「哪一侧」
+   * 写死在名字里 ⇒ 下载方向沿用它就会变成「说远程」而实际说的是**本地**那份
+   * （同名不同义 = 谎话的温床）。语义没变，只是改成目标侧中性的说法：
+   *   · 上传覆盖 ⇒ 保住在**云端**的那几行（云端有、这台设备读不出来、本机没副本）；
+   *   · 下载覆盖 ⇒ 保住在**本地**的那几份（云端有、这台设备读不出来、本机有副本）。
    *
-   * 数字来自**同一个判据函数**（planOverwriteUpload）⇒ 预览预告的「会保留哪几行」
-   * 与执行时真正保留的是同一套规则算出来的（预览与实际同源）。
-   * 非覆盖模式恒为 0（合并模式不删云端行）。
+   * 上传方向：判据见 core/overwriteUploadGuard.ts 的 planOverwriteUpload
+   * （与执行侧 utils/supabase/upload.ts 同一个函数 ⇒ 预览与实际同源）。
+   * 非覆盖模式恒为 0（合并模式不删任何一侧的行）。
    */
-  preservedRemoteCount: number;
+  preservedCount: number;
 }
 
 type SyncPreviewMode = 'overwrite' | 'merge';
@@ -174,9 +178,9 @@ const buildPreviewFromBeforeAndAfter = (
     addedNames,
     updatedNames,
     deletedNames,
-    // 覆盖上传时被保留的云端会话数由 buildUploadPreviewSummary 单独算
-    // （它需要「读不出来的清单」这份额外事实）⇒ 这里恒为 0。
-    preservedRemoteCount: 0,
+    // 覆盖时被保住的会话数由两个 build*PreviewSummary 单独算
+    // （它们各自需要「读不出来的清单」这份额外事实）⇒ 这里恒为 0。
+    preservedCount: 0,
   };
 };
 
@@ -237,26 +241,73 @@ export const buildUploadPreviewSummary = (
       localIds: localGroups.map(group => group.id),
       unrestorableIds,
     }).protectedIds;
-    return { ...summary, preservedRemoteCount: protectedIds.length };
+    return { ...summary, preservedCount: protectedIds.length };
   }
 
-  return { ...summary, preservedRemoteCount: 0 };
+  return { ...summary, preservedCount: 0 };
 };
+
+export interface DownloadPreviewOptions {
+  /**
+   * 云端那些「这台设备读不出来」的会话 id（下载跳过清单）。
+   *
+   * 覆盖下载时，这些组的**本机副本会被保住**（执行侧见
+   * services/syncEngine.ts 第 4 步：`forceRemote` 时本机参与合并的只有
+   * `skippedIds` 命中的那几份 —— 也就是「云端只是这轮没读到」的那几份）。
+   *
+   * 为什么必须由调用方传入：读不出来是**下载侧**的事实，而被跳过的那些组
+   * **不在** `remoteGroups` 里（那是「读到的」）。不把跳过清单一起给进来，
+   * 预览就会算成「覆盖下载后本地只剩云端读到的那些」⇒ **把不会发生的事说成
+   * 会发生**（把保住的几份报成「将删除」）。
+   *
+   * ⚠️ **必填**（2026-10-23，第 51 轮）：它不是「可选的补充信息」——
+   * 缺了它，预览就会退回**已知会撒谎**的旧口径（把保住的几份报成「将删除」）。
+   * 让「忘了传」变成编译期错误，比让它静默说谎好。
+   */
+  skippedRemoteIds: readonly string[];
+}
 
 export const buildDownloadPreviewSummary = (
   localGroups: TabGroup[],
   remoteGroups: TabGroup[],
-  mode: SyncPreviewMode
+  mode: SyncPreviewMode,
+  options: DownloadPreviewOptions
 ) => {
   const activeLocalGroups = toActiveGroups(localGroups);
-  const activeRemoteGroups = toActiveGroups(remoteGroups);
-  // 必须用与实际下载相同的合并函数与相同入参（含墓碑行/墓碑组的完整列表），
-  // 否则预览会预告一个与实际结果相反的胜负：预先 toActiveGroups 过滤会把云端
-  // 墓碑行滤掉 → 预览说「组还在」，实际删除广播却把它删了。合并结果再按活跃态展示。
-  const afterGroups =
-    mode === 'overwrite'
-      ? activeRemoteGroups
-      : toActiveGroups(mergeOpStamped(localGroups, remoteGroups));
+  // 「云端这轮读不出来」的那几组：它们的**云端行仍在**，而执行侧会保住
+  // **本机**对应的副本（见 options.skippedRemoteIds 的说明）。
+  const skippedIds = new Set(options.skippedRemoteIds);
+  // ⚠️ 判据与执行侧**同一个函数**（core/overwriteDownloadPreserve.ts）⇒
+  // 预览预告的「覆盖后本地还剩什么」与真正落盘的结果必然一致。
+  const preserved = preservedLocalGroups(activeLocalGroups, skippedIds);
 
-  return buildPreviewFromBeforeAndAfter(activeLocalGroups, afterGroups);
+  // ── 落盘集合：**与执行侧同函数同公式**（2026-10-23，第 51 轮）────────────
+  //
+  // 执行侧（services/syncEngine.ts 第 4/5/7 步）：
+  //   ① 本机参与合并的 = 覆盖时只有「被跳过的」那几份；合并时是全部活跃组；
+  //   ② merged = mergeOpStamped(本机参与的那几份, 云端读到的);
+  //   ③ finalGroups = merged 剔掉「零标签空壳」，但**被跳过的组豁免**。
+  //
+  // ⚠️ 为什么不能手写拼接（第 51 轮之前的写法）：
+  //   · **不去重**：同一个 id 若同时出现在「读到的」与「读不出来的」两份清单里
+  //     （云端 tabs 表回填抛错时那一组**既在结果里又被记成跳过**，
+  //     见 utils/supabase/download.ts 的 catch 分支）⇒ 预览把它数两遍，
+  //     而引擎按 id 去重 ⇒ 预览说「还剩 2 个」，实际落盘 1 个。
+  //   · **不建模空壳清理**：云端带来的零标签组会被引擎当空壳剔掉**并登记删除
+  //     广播**（1.22.0 起 = 永久删除）⇒ 预览却算成「保留/更新」，
+  //     风险文案会说「不会删除本地上的任何会话」—— **方向相反的谎话**。
+  const mergeInputLocal = mode === 'overwrite' ? preserved : activeLocalGroups;
+  const merged = mergeOpStamped(mergeInputLocal, remoteGroups);
+  const shellDropped = dropSyncMergedGroups(merged);
+  const shellDroppedIds = new Set(removedGroupIds(merged, shellDropped));
+  const afterGroups = merged.filter(
+    group => !shellDroppedIds.has(group.id) || skippedIds.has(group.id),
+  );
+
+  const summary = buildPreviewFromBeforeAndAfter(activeLocalGroups, afterGroups);
+  return {
+    ...summary,
+    // 合并模式没有「目标侧被保住」这回事（它压根不删云端行）⇒ 恒 0。
+    preservedCount: mode === 'overwrite' ? preserved.length : 0,
+  };
 };

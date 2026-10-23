@@ -27,6 +27,22 @@ import type { AuthCheckState } from '@/types/tab';
 export type SyncMode = 'overwrite' | 'merge';
 export type OverwriteTargetLabel = '云端' | '本地';
 
+/**
+ * 「被保住的那几份」那句话（2026-10-23，第 51 轮）。
+ *
+ * 为什么必须**整句**分两侧（而不是「公共前半句 + 随方向变的后半句」）：
+ *   · 上传方向保住的是**云端那几行** ⇒ 原句「云端上那几份不会被删除或覆盖」
+ *     是用户已经看过、并且**逐字依赖**的那句风险提示 —— 第 51 轮重构文案时
+ *     把它改成了「云端那几份不会被删除或覆盖」（少了「上」字）⇒ 同样的意思、
+ *     但换了个样子的句子 ⇒ 用户熟悉的提示变了样，这是回归而不是改进。
+ *     ⇒ 上传方向**逐字还原**。
+ *   · 下载方向保住的是**本地那几份** ⇒ 同一句「不会被删除或覆盖」套上去会读成
+ *     「本地那几份不会被覆盖」，而这次覆盖**就是要覆盖本地** ⇒ 那句话自相矛盾。
+ *     ⇒ 下载方向另说一句。
+ */
+const preservedNotice = (targetLabel: OverwriteTargetLabel): string =>
+  targetLabel === '本地' ? '本地那几份会被保留（这次覆盖不会删掉它们）' : '云端上那几份不会被删除或覆盖';
+
 export const syncModeOf = (actionKey: string): SyncMode =>
   actionKey.endsWith('overwrite') ? 'overwrite' : 'merge';
 
@@ -34,19 +50,19 @@ export const describeOverwriteRisk = (
   summary: SyncPreviewSummary,
   targetLabel: OverwriteTargetLabel,
   /**
-   * 覆盖时**不会被删除或覆盖**的会话数（2026-10-20 P1）。
+   * 覆盖时**目标侧被保住**（不删也不覆盖）的会话数（2026-10-20 P1 / 第 51 轮改名）。
    *
-   * 指「对端有、这台设备读不出来、而本机又没有副本」的那几组：删掉它们就是
-   * 永久丢失（无回收站），所以覆盖上传会跳过它们（判据见
-   * core/overwriteUploadGuard.ts）。
+   * 指「对端有、这台设备读不出来」的那几组里被保住的部分：
+   *   · 上传方向 = 云端那几行（没有本机副本 ⇒ 删掉就是永久丢失，所以跳过它们）；
+   *   · 下载方向 = 本机那几份（云端这轮读不出来 ⇒ 不能拿「没读到」当「已删除」）。
    *
    * 为什么要在这里说出来：覆盖模式的风险文案原文是「直接替换现状」，而这一句
-   * 在有受保护会话时**不再成立**（那几行会留在原地）。预览必须预告实际结果，
-   * 否则用户点两下确认之后才发现「云端没被完全替换」＝ 预览说了假话。
+   * 在有受保护会话时**不再成立**（那几行/那几份会留在原地）。预览必须预告实际结果，
+   * 否则用户点两下确认之后才发现「本地没被完全替换」＝ 预览说了假话。
    *
    * 默认 0 = 没有需要保护的会话 ⇒ 原文案逐字不变（用户依赖的那句风险提示）。
    */
-  preservedRemoteCount: number = 0
+  preservedCount: number = 0
 ): string => {
   const base =
     // 「一个都不删」时不能说成「直接替换现状：预计删除 0 个会话」——
@@ -55,10 +71,10 @@ export const describeOverwriteRisk = (
     summary.deletions === 0
       ? `覆盖模式会把本次数据写入${targetLabel}现状：不会删除${targetLabel}上的任何会话、更新 ${summary.updates} 个会话，操作不可撤销。再点一次确认执行。`
       : `覆盖模式会用本次数据直接替换${targetLabel}现状：预计删除 ${summary.deletions} 个会话、更新 ${summary.updates} 个会话，操作不可撤销。再点一次确认执行。`;
-  if (preservedRemoteCount <= 0) return base;
+  if (preservedCount <= 0) return base;
   return (
     `${base}` +
-    `另有 ${preservedRemoteCount} 个会话这台设备读不出来，${targetLabel}上那几份不会被删除或覆盖。`
+    `另有 ${preservedCount} 个会话这台设备读不出来，${preservedNotice(targetLabel)}。`
   );
 };
 
@@ -75,10 +91,10 @@ export interface OverwriteClickInput {
   isBusy: boolean;
   targetLabel: OverwriteTargetLabel;
   /**
-   * 覆盖时不会被删除或覆盖的会话数（2026-10-20 P1）。
+   * 覆盖时**目标侧被保住**（不删也不覆盖）的会话数（2026-10-20 P1 / 第 51 轮改名）。
    * 缺省 0 = 没有 ⇒ 风险文案与既往逐字一致。
    */
-  preservedRemoteCount?: number;
+  preservedCount?: number;
 }
 
 /**
@@ -105,7 +121,7 @@ export const decideOverwriteClick = (input: OverwriteClickInput): OverwriteClick
   }
   return {
     type: 'armed',
-    reason: describeOverwriteRisk(input.summary, input.targetLabel, input.preservedRemoteCount ?? 0),
+    reason: describeOverwriteRisk(input.summary, input.targetLabel, input.preservedCount ?? 0),
   };
 };
 
@@ -611,13 +627,13 @@ export const formatDelta = (delta: number): { text: string; toneClass: string } 
  */
 export const renderPreviewSummary = (
   summary: SyncPreviewSummary | null,
-  targetLabel: '云端' | '本地',
+  targetLabel: OverwriteTargetLabel,
   modeDescription: string,
   /**
-   * 覆盖时不会被删除或覆盖的会话数（2026-10-20 P1）。
+   * 覆盖时**目标侧被保住**（不删也不覆盖）的会话数（2026-10-20 P1 / 第 51 轮改名）。
    * 缺省 0 = 没有 ⇒ 卡片与既往一致。
    */
-  preservedRemoteCount: number = 0,
+  preservedCount: number = 0,
 ) => {
   if (!summary) {
     return (
@@ -665,9 +681,9 @@ export const renderPreviewSummary = (
             另有 {summary.unchanged} 个会话保持不变
           </div>
         )}
-        {preservedRemoteCount > 0 && (
+        {preservedCount > 0 && (
           <div className="mt-0.5 text-[0.7rem] leading-5 text-amber-600 dark:text-amber-400">
-            另有 {preservedRemoteCount} 个会话这台设备读不出来，{targetLabel}上那几份不会被删除或覆盖
+            另有 {preservedCount} 个会话这台设备读不出来，{preservedNotice(targetLabel)}
           </div>
         )}
       </div>

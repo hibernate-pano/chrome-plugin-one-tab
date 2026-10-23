@@ -1,4 +1,4 @@
-import type { DownloadSkippedGroup, TabGroup } from '@/types/tab';
+import type { TabGroup } from '@/types/tab';
 import { getActiveSyncBackend, ensureBackendPrimed } from '@/sync-backend';
 import type { RemoteGroupFingerprint } from '@/sync-backend';
 import type { OverwriteSkipReason } from '@/core/overwriteUploadGuard';
@@ -131,49 +131,23 @@ export async function downloadTabGroups(): Promise<TabGroup[]> {
   return getActiveSyncBackend().downloadGroups();
 }
 
-/**
- * 本轮（或最近一轮）下载里**读不出来**而被整组跳过的会话（2026-10-20 D-6）。
- *
- * 那些组的**云端行仍在**（一个字节都没被动过），只是这一轮没能把它们还原成
- * 可用的会话（形状不可恢复 / 还原率不达标 / tabs 表回填被截断 / 单组处理异常）。
- *
- * ⚠️ **凡是会用下载结果替换本地的路径（覆盖下载）必须用下面那个原子包装**，
- * 不要用这个函数 + `downloadTabGroups()` 的「两步走」：两步之间有 await 间隙，
- * 理论上可能读到**别的轮次**的清单 ⇒ 保护错对象。
- *
- * 「方法不存在」的语义 = 该后端本轮没有跳过任何会话（**这是事实，不是「不知道」**）。
- * 「方法存在却抛错」的语义 = 事实未知 ⇒ 调用方必须中止（fail-closed）。
- */
-export async function downloadSkippedGroups(): Promise<DownloadSkippedGroup[]> {
-  await ensureBackendPrimed();
-  return (await getActiveSyncBackend().downloadSkippedGroups?.()) ?? [];
-}
+// ⚠️ 2026-10-23（第 51 轮）：这里原本还有一个**导出的** `downloadSkippedGroups()`，
+// 全仓没有任何调用方（引擎与预览都走下面的原子包装）⇒ 删掉了。
+// 留着它 = 留一条「可以两步走」的路，而那正是本文件头警告的错法 ⇒ 删掉比留着更安全。
 
 /**
- * 一次性拿到「读到的」+「读不出来的」（2026-10-20 D-6）。
+ * ⚠️ 2026-10-23（第 51 轮）：这里原本还有一个 `downloadTabGroupsWithSkips()`
+ * （同样是「一次性拿到读到的 + 读不出来的」），但它**少了三样东西**：
+ *   · 不**归一化**清单（脏 id / 重复 id 不管）；
+ *   · 端口的 `downloadSkippedGroups` **存在却抛错**时不 fail-closed
+ *     （而是静默当成空清单 ⇒ 拿「不知道」去覆盖本地）；
+ *   · 与引擎/预览用的那条路径**不是同一份实现**。
+ * ⇒ 删掉它，全仓只剩**一条**原子读路径：
+ *   `services/downloadWithSkippedGroups.ts` 的 `downloadGroupsWithSkipped()`
+ *   （引擎、预览、以及这里的调用方都走它）。
  *
- * ── 引擎层**应该用这个**，不要用「两步走」 ──────────────────────────────
- * `downloadTabGroups()` 与 `downloadSkippedGroups()` 是两次独立调用，中间有
- * await 间隙 ⇒ 理论上可能读到**别的轮次**的清单（清单是「上一轮/这一轮」的
- * 单例，见 utils/supabase/download.ts 的 lastDownloadSkipped）。把两件事收进
- * 一个函数 ⇒ 端口实例只解析一次、两次读取紧邻执行 ⇒ 拿到的是**同一轮**的快照。
- *
- * 失败语义：
- *   · 下载失败 → 抛（整轮中止，与既有下载路径一致）；
- *   · 后端没有「跳过清单」这个能力 → 空清单（**事实**：它本轮没跳过任何会话）；
- *   · 后端有这个能力但抛错 → **抛**（事实未知 ⇒ fail-closed：
- *     拿「不知道哪些组被跳过」去覆盖本地 = 把「可能只是没读到」的会话删掉）。
+ * 两条「看起来一样」的下载路径 = 迟早有一处用错 ⇒ 少一条比多一条安全。
  */
-export async function downloadTabGroupsWithSkips(): Promise<{
-  groups: TabGroup[];
-  skipped: DownloadSkippedGroup[];
-}> {
-  await ensureBackendPrimed();
-  const backend = getActiveSyncBackend();
-  const groups = await backend.downloadGroups();
-  const skipped = (await backend.downloadSkippedGroups?.()) ?? [];
-  return { groups, skipped };
-}
 
 /**
  * 广播删除意图（跨设备删除的唯一载体）。

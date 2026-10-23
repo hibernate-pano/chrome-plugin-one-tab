@@ -3,8 +3,7 @@ import { createPortal } from 'react-dom';
 import { useAppSelector, useAppDispatch } from '@/store/hooks';
 import { loadGroups } from '@/store/slices/tabSlice';
 import { dispatchReloadSettings } from '@/store/slices/settingsSlice';
-import { downloadTabGroups, downloadTabGroupsWithSkips } from '@/services/tabGroupSyncService';
-import { planOverwriteUpload } from '@/core/overwriteUploadGuard';
+import { loadDownloadPreviewData, loadUploadPreviewData } from '@/services/syncPreviewLoader';
 import { sendSyncCommand } from '@/shared/mutationProtocol';
 import { decideOverwriteClick, decideSyncEntry, isOverwriteGateOpen, renderPreviewSummary, resolveSyncFailureCopy, shouldRenderSyncControls, syncIdentityCanRun, syncModeOf } from './syncPreviewView';
 import { skippedRemoteGroupsNotice } from './skippedRemoteGroupsCopy';
@@ -19,12 +18,7 @@ type SyncOperation = 'upload' | 'download' | 'none';
 import { useToast } from '@/contexts/ToastContext';
 import { useDialogA11y } from '@/hooks/useKeyboardNavigation';
 import { trackProductEvent } from '@/utils/productEvents';
-import { storage } from '@/utils/storage';
-import {
-  buildDownloadPreviewSummary,
-  buildUploadPreviewSummary,
-  SyncPreviewSummary,
-} from '@/utils/syncPreview';
+import { SyncPreviewSummary } from '@/utils/syncPreview';
 import { logError, logWarn } from '../../utils/log';
 
 interface SyncButtonProps { }
@@ -135,17 +129,11 @@ export const SyncButton: React.FC<SyncButtonProps> = () => {
   const [downloadPreviewError, setDownloadPreviewError] = useState<string | null>(null);
   const [uploadPreview, setUploadPreview] = useState<ModePreviewMap | null>(null);
   const [downloadPreview, setDownloadPreview] = useState<ModePreviewMap | null>(null);
-  /**
-   * 覆盖上传时**不会被删除或覆盖**的云端会话数（2026-10-20 P1）。
-   *
-   * 指「云端有、这台设备读不出来、而本机又没有副本」的那几组：删掉就是永久
-   * 丢失（无回收站），所以覆盖上传会跳过它们（执行侧见
-   * utils/supabase/upload.ts，判据见 core/overwriteUploadGuard.ts）。
-   *
-   * 这里用**同一个判据函数**算 ⇒ 预览预告的「会保留哪几行」与实际保留的一致
-   * （预览与实际同源；仓库纪律：预览不得预告与实际结果相反的东西）。
-   */
-  const [uploadPreservedRemoteCount, setUploadPreservedRemoteCount] = useState(0);
+  // ⚠️ 2026-10-23（第 51 轮）：这里原本还有一个**独立的** `uploadPreservedCount`
+  // 状态（覆盖上传时「云端会被保住几行」）。它与摘要里的 `preservedCount`
+  // 是**同一个判据算出来的同一个数**（core/overwriteUploadGuard.ts）⇒ 两份数字
+  // 必然漂移（改了一处忘了另一处 ⇒ 卡片与风险文案对不上）。
+  // ⇒ 现在只留**一个**来源：摘要里的 `preservedCount`（预览与执行同源）。
   // P1-6：覆盖模式的两段式确认。armed 只表示「用户看到了风险文案并又点了一次」，
   // 只有 armed === 当前 actionKey 时下一次点击才真下发；任何其他点击/关窗都会清空。
   const [armedOverwrite, setArmedOverwrite] = useState<SyncActionKey | null>(null);
@@ -161,40 +149,16 @@ export const SyncButton: React.FC<SyncButtonProps> = () => {
     setUploadPreviewError(null);
 
     try {
-      const [localGroups, remote] = await Promise.all([
-        // 2026-10-09 数据安全 P2-5：预览必须读真值。
-        // 这里是**破坏性操作的确认闸门** —— 用户正是核对「本地 N / 云端 M」之后
-        // 才按下「覆盖」。原先用 getGroups()（30s 进程内缓存），而 groupsChangedBus
-        // 的通知是尽力而为（明写「丢了通知最坏是列表晚一次刷新」）：
-        // 通知丢失 + 缓存未到 TTL ⇒ 弹窗显示陈旧的 N/M，用户在错误前提下确认覆盖。
-        // 实际执行侧（syncEngine）本来就 invalidateGroupsCache + 真值读，不会照着
-        // 错数字去写 —— 但确认信息失真就足以让用户做出错误决策。
-        // getGroupsForWrite() 正是「要读真值」的语义入口，代价只是一次 flush + 失效。
-        storage.getGroupsForWrite(),
-        // 用**原子包装**（一次调用同时给出「读到的」与「读不出来的」）：
-        // 分两次调用中间有 await 间隙，可能读到别的轮次的清单 ⇒ 保护/预告错对象。
-        downloadTabGroupsWithSkips(),
-      ]);
-      const remoteGroups = remote.groups;
-
-      // 覆盖上传会跳过「云端有、这台设备读不出来、本机又没有副本」的那几组
-      // （删了就是永久丢失）。数字必须与执行侧同源 ⇒ 同一个判据函数。
-      const skippedRemoteIds = remote.skipped.map(entry => entry.id);
-      const preservedRemoteCount = planOverwriteUpload({
-        cloudIds: [...remoteGroups.map(group => group.id), ...skippedRemoteIds],
-        localIds: localGroups.map(group => group.id),
-        unrestorableIds: skippedRemoteIds,
-      }).protectedIds.length;
-      setUploadPreservedRemoteCount(preservedRemoteCount);
-
+      // 数据装配搬到 services/syncPreviewLoader.ts（2026-10-23，第 51 轮）：
+      // 「读真值 + 读云端 + 算摘要」必须在**能直接被测到**的地方 ——
+      // 留在组件里的话，守卫只能对着源码长相断言，而源码长相证明不了
+      // 「那份清单真的进了预览」。
+      const data = await loadUploadPreviewData({
+        preserveRemoteOnly: uploadOverwritePreservesRemote,
+      });
       setUploadPreview({
-        overwrite: buildUploadPreviewSummary(localGroups, remoteGroups, 'overwrite', {
-          preserveRemoteOnly: uploadOverwritePreservesRemote,
-          // 读不出来的那几组**不在** remoteGroups 里（那是「读到的」）⇒
-          // 不把跳过清单一起给进来，预览就会算错保留数。
-          unrestorableRemoteIds: skippedRemoteIds,
-        }),
-        merge: buildUploadPreviewSummary(localGroups, remoteGroups, 'merge'),
+        overwrite: data.overwrite,
+        merge: data.merge,
       });
     } catch (error) {
       logError('加载上传预览失败:', error);
@@ -220,22 +184,12 @@ export const SyncButton: React.FC<SyncButtonProps> = () => {
     setDownloadPreviewError(null);
 
     try {
-      const [localGroups, remoteGroups] = await Promise.all([
-        // 2026-10-09 数据安全 P2-5：预览必须读真值。
-        // 这里是**破坏性操作的确认闸门** —— 用户正是核对「本地 N / 云端 M」之后
-        // 才按下「覆盖」。原先用 getGroups()（30s 进程内缓存），而 groupsChangedBus
-        // 的通知是尽力而为（明写「丢了通知最坏是列表晚一次刷新」）：
-        // 通知丢失 + 缓存未到 TTL ⇒ 弹窗显示陈旧的 N/M，用户在错误前提下确认覆盖。
-        // 实际执行侧（syncEngine）本来就 invalidateGroupsCache + 真值读，不会照着
-        // 错数字去写 —— 但确认信息失真就足以让用户做出错误决策。
-        // getGroupsForWrite() 正是「要读真值」的语义入口，代价只是一次 flush + 失效。
-        storage.getGroupsForWrite(),
-        downloadTabGroups(),
-      ]);
+      // 同上：数据装配在 services/syncPreviewLoader.ts（能直接被测到）。
+      const data = await loadDownloadPreviewData();
 
       setDownloadPreview({
-        overwrite: buildDownloadPreviewSummary(localGroups, remoteGroups, 'overwrite'),
-        merge: buildDownloadPreviewSummary(localGroups, remoteGroups, 'merge'),
+        overwrite: data.overwrite,
+        merge: data.merge,
       });
     } catch (error) {
       logError('加载下载预览失败:', error);
@@ -308,7 +262,7 @@ export const SyncButton: React.FC<SyncButtonProps> = () => {
     // 取值来自**预览摘要自己算出来的那个数**（buildUploadPreviewSummary 用的是
     // 与执行侧同一个判据函数）⇒ 卡片上显示的、风险文案里说的、实际会保留的
     // 是同一个数，不会各算各的。
-    preservedRemoteCount: uploadPreview?.overwrite?.preservedRemoteCount ?? uploadPreservedRemoteCount,
+    preservedCount: uploadPreview?.overwrite?.preservedCount ?? 0,
   });
   const downloadOverwriteState = decideOverwriteClick({
     summary: downloadPreview?.overwrite ?? null,
@@ -317,6 +271,11 @@ export const SyncButton: React.FC<SyncButtonProps> = () => {
     isArmed: armedOverwrite === 'download.overwrite',
     isBusy: isWorking,
     targetLabel: '本地',
+    // 覆盖下载会保住「云端这轮读不出来、本机有副本」的那几份 ⇒ 风险文案必须
+    // 说出来（「直接替换本地现状」在有保住项时**不再成立**）。
+    // 取值来自**预览摘要自己算出来的那个数** ⇒ 卡片上显示的、风险文案里说的、
+    // 实际会保住的是同一个数，不会各算各的。
+    preservedCount: downloadPreview?.overwrite?.preservedCount ?? 0,
   });
 
   /**
@@ -700,7 +659,7 @@ export const SyncButton: React.FC<SyncButtonProps> = () => {
                         uploadOverwritePreservesRemote
                           ? '把本机全部会话写入云端；云端独有会话保留，同 id 冲突按版本新旧裁决。'
                           : '用当前本地会话直接替换云端现状。',
-                        uploadPreview?.overwrite?.preservedRemoteCount ?? uploadPreservedRemoteCount,
+                        uploadPreview?.overwrite?.preservedCount ?? 0,
                       )}
                       {/* 闸门提示：blocked 说清为何点不动；armed 说清再点一次会发生什么 */}
                       <div className="mt-3 rounded-xl bg-rose-50 px-3 py-2 text-xs leading-5 text-rose-700 dark:bg-rose-500/10 dark:text-rose-300">
@@ -830,6 +789,7 @@ export const SyncButton: React.FC<SyncButtonProps> = () => {
                         downloadPreview?.overwrite ?? null,
                         '本地',
                         '用云端会话直接替换本地现状。',
+                        downloadPreview?.overwrite?.preservedCount ?? 0,
                       )}
                       <div className="mt-3 rounded-xl bg-rose-50 px-3 py-2 text-xs leading-5 text-rose-700 dark:bg-rose-500/10 dark:text-rose-300">
                         {downloadOverwriteState.type === 'blocked'

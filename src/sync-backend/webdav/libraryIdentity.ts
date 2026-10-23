@@ -123,8 +123,13 @@ export function sameLibrary(a: LibraryRef | null, b: LibraryRef | null): boolean
  * 表单 ≠ 磁盘 ⇒ 恰恰是**不同**的库）。
  *
  * 读不到（没配过 / 读失败）⇒ `null`（= 没有目标库）。
+ *
+ * ⚠️ 2026-10-23（第 51 轮）：**不再导出** —— 全仓只有本文件内的
+ * `currentLibraryScope()` 用它（外面的读取方要的是**作用域键**，不是那个
+ * 引用对象）。留着一个没人用的导出 = 留一条「可以直接拿引用当身份」的路，
+ * 而引用里含用户名/路径 ⇒ 那条路不该开。
  */
-export async function currentLibraryRef(): Promise<LibraryRef | null> {
+async function currentLibraryRef(): Promise<LibraryRef | null> {
   try {
     const cfg = await loadWebDavConfig();
     if (!cfg) return null;

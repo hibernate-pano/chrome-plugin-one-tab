@@ -474,12 +474,17 @@ describe('端口 / 适配器 / 服务层：清单与结果来自同一轮', () =
   });
 
   it('服务层的原子包装一次给出「结果 + 清单」', async () => {
-    const { downloadTabGroupsWithSkips } = await import('@/services/tabGroupSyncService');
+    // ⚠️ 2026-10-23（第 51 轮）：原子包装只有**一份**实现 ——
+    // services/downloadWithSkippedGroups.ts 的 downloadGroupsWithSkipped()
+    // （归一化 + 「方法存在却抛错」时 fail-closed）。
+    // 之前 tabGroupSyncService 里还有第二份（不归一化、抛错不 fail-closed）
+    // ⇒ 已删除：两条「看起来一样」的下载路径 = 迟早有一处用错。
+    const { downloadGroupsWithSkipped } = await import('@/services/downloadWithSkippedGroups');
 
     seedGroup(cloudRow('g-ratio', { tabs_data: JSON.stringify(tabsWithRestoreRate('g-ratio', 1, 10)) }));
     seedGroup(cloudRow('g-ok'));
 
-    const { groups, skipped } = await downloadTabGroupsWithSkips();
+    const { groups, skipped } = await downloadGroupsWithSkipped();
 
     assert.deepEqual(groups.map(g => g.id), ['g-ok'], '结果与下载侧一致');
     assert.deepEqual(skipped.map(s => s.id), ['g-ratio'], '清单与下载侧一致');

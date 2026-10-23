@@ -4,7 +4,7 @@
 //
 // P1（覆盖上传会删掉「本机读不出来」的云端行）给预览卡片加了一行：
 //
-//   「另有 N 个会话这台设备读不出来，云端上那几份不会被删除或覆盖」
+//   「另有 N 个会话这台设备读不出来，云端那几份不会被删除或覆盖」
 //
 // 实现方（agent）自己如实报告了一条**没验证的东西**：
 //   > 组件层的改动只做了纯函数断言 + 源码级接线断言，没有用 react-dom/server
@@ -16,8 +16,8 @@
 // （见 tests/optionsInertGate.test.ts 的文件头）。
 //
 // 别的错法同样看不出来：
-//   · 条件写反（`preservedRemoteCount <= 0` 时反而显示）；
-//   · JSX 里把 `{preservedRemoteCount}` 写到了不该在的位置（渲染成 "[object Object]"）；
+//   · 条件写反（`preservedCount <= 0` 时反而显示）；
+//   · JSX 里把 `{preservedCount}` 写到了不该在的位置（渲染成 "[object Object]"）；
 //   · 组件根本没被接上（函数存在，但调用方没传那个数）⇒ 永远不显示。
 //
 // ── 为什么能用 react-dom/server ──────────────────────────────────────────
@@ -82,13 +82,13 @@ const summaryOf = (over: Record<string, unknown> = {}) => ({
   addedNames: [],
   updatedNames: [],
   deletedNames: [],
-  preservedRemoteCount: 0,
+  preservedCount: 0,
   ...over,
 });
 
 const render = async (
   summary: unknown,
-  preservedRemoteCount: number
+  preservedCount: number
 ): Promise<string> => {
   const { renderToStaticMarkup } = await import('react-dom/server');
   const { renderPreviewSummary } = await import('@/components/sync/syncPreviewView');
@@ -100,7 +100,7 @@ const render = async (
       summary as never,
       '云端' as never,
       '覆盖模式' as never,
-      preservedRemoteCount
+      preservedCount
     )
   );
 };

@@ -12,8 +12,21 @@ import {
 import { backendUnavailableAuthCopy, authUnknownCopy } from '@/components/sync/backendUnavailableCopy';
 import { classifySessionFailure } from '@/core/sessionFailure';
 import { storage } from '@/utils/storage';
-import { loadSupabaseFacade } from '@/utils/supabaseRuntime';
+import { loadSupabaseFacade, type SupabaseFacadeModule } from '@/utils/supabaseRuntime';
+import { isDeadlineExceeded } from '@/utils/deadline';
 import { logError, logInfo, logWarn } from '../../utils/log';
+
+/**
+ * 核对登录态的**等待上限**：5 秒（2026-10-23，第 51 轮）。
+ *
+ * ⚠️ 上限住在**读会话的唯一入口**（`utils/supabase/sessionRead.ts`），
+ * 不在本文件 —— 同步路径读会话也要有同一个上限，两边各写一份会漂。
+ * 为什么要上限、为什么是 5 秒：见 sessionRead.ts 的注释。
+ *
+ * ⚠️ 到了上限**不是**「没登录」，而是「**不知道**」——
+ * 那一档由 rejected 分支记成 `unknown`，界面说「联系不上云端」，
+ * 登录态**按缓存保留**（见本文件下方的 rejected 分支）。
+ */
 
 /**
  * 加载 Supabase 登录封装（**按需加载**）。
@@ -132,6 +145,37 @@ export const authBackendUnavailableCopy = (error: unknown): string | null => {
   return backendUnavailableAuthCopy();
 };
 
+/**
+ * 「云端不可用」的错误 → **统一**成带机器标记的专用错误（2026-10-23，第 52 轮）。
+ *
+ * ── 为什么必须「统一」，而不是「命中就抛」──────────────────────────────
+ * RTK 的 `miniSerializeError` 只保留 `name / message / stack / code`
+ * ⇒ SDK 原始错误上的 `status`（402 / 503）**在 rejected action 里会丢**
+ * ⇒ 上层只能靠 `code` 认出「云端不可用」这一档
+ * ⇒ 抛出去的必须是带 `code: 'backend_unavailable'` 的那一个；
+ *   否则这一档会掉回「登录失败，请稍后重试」—— **错方向**的那句话
+ *   （用户会以为是自己密码错了 ⇒ 反复改密码、重新注册，而他其实没输错）。
+ *
+ * ⚠️ 判据必须喂**原始**错误：包装过的 `new Error(...)` 只剩 message，
+ * 状态码（402 / 503）就看不见了 ⇒ 那一档就认不出来了。
+ *
+ * @returns 是「云端不可用」就返回统一后的错误；不是就返回 null（走普通失败）。
+ */
+const toBackendUnavailable = (error: unknown): BackendUnavailableError | null => {
+  if (isBackendUnavailableError(error)) {
+    // 已经是本仓的专用错误 ⇒ 原样带出（别把 httpStatus 弄丢）。
+    if (error instanceof BackendUnavailableError) return error;
+    // 是 SDK 的原始错误（status 在，但序列化会丢）⇒ 换成带 code 的那一个。
+    return new BackendUnavailableError(
+      backendUnavailableAuthCopy(),
+      readHttpStatus(error) ?? undefined,
+    );
+  }
+  const copy = authBackendUnavailableCopy(error);
+  if (!copy) return null;
+  return new BackendUnavailableError(copy, readHttpStatus(error) ?? undefined);
+};
+
 const initialState: AuthState = {
   user: null,
   isAuthenticated: false,
@@ -219,6 +263,13 @@ export const signUp = createAsyncThunk(
       const { data, error } = await supabaseAuth.signUp(email, password);
       if (error) {
         logError('注册错误:', error);
+        // ── 2026-10-23（第 52 轮）：**先问「是不是云端不可用」** ──────────
+        // 「注册失败，请稍后重试」是**错的方向**：项目被限制（生产实测 402）时
+        // 重试一万次也一样，而用户会以为自己填错了邮箱 ⇒ 白折腾。
+        // ⇒ 命中「云端不可用」就抛**带机器标记**的专用错误，让上层走
+        //   `backend_unavailable` 那一档（等我们恢复），而不是「你失败了」。
+        const unavailable = toBackendUnavailable(error);
+        if (unavailable) throw unavailable;
         throw new Error(authErrorCopy(supabaseErrorMessage(error), '注册失败，请稍后重试'));
       }
 
@@ -233,6 +284,13 @@ export const signUp = createAsyncThunk(
       throw new Error('注册失败，请稍后重试');
     } catch (err) {
       logError('注册异常:', err);
+      // ⚠️ 「云端不可用」**不许**在这里被降级成普通 Error：
+      //    降级后机器标记（code）就丢了 ⇒ 上层读不到 `backend_unavailable`
+      //    ⇒ 那一档掉回「注册失败，请稍后重试」（本轮要消灭的那句错方向的话）。
+      //    这一支同时兜住「SDK 直接抛」的情况（auth-js 遇到 503 会抛
+      //    `AuthRetryableFetchError`，不一定走 `{error}` 返回值那条路）。
+      const unavailable = toBackendUnavailable(err);
+      if (unavailable) throw unavailable;
       if (err instanceof Error) {
         throw new Error(authErrorCopy(err.message, '注册失败，请稍后重试'));
       } else {
@@ -250,6 +308,18 @@ export const signIn = createAsyncThunk(
       const { data, error } = await supabaseAuth.signIn(email, password);
       if (error) {
         logError('登录错误:', error);
+        // ── 2026-10-23（第 52 轮）：**先问「是不是云端不可用」** ──────────
+        // 「登录失败，请稍后重试」是**错方向**的那句话（`core/authSdkStatus.ts`
+        // 自己就是这么判的）：项目被限制（生产实测 402）时重试一万次也一样，
+        // 而用户会以为**自己密码错了** ⇒ 反复改密码、重新注册 —— 而他没输错。
+        //
+        // ⚠️ 为什么这一条现在更要紧：第 51 轮修好之后**会话活下来了**
+        // ⇒ 用户更可能真的走到「登录」这一步 ⇒ 撞上这句话的概率更高了。
+        //
+        // ⇒ 命中「云端不可用」就抛**带机器标记**的专用错误，让上层走
+        //   `backend_unavailable` 那一档（等我们恢复），而不是「你失败了」。
+        const unavailable = toBackendUnavailable(error);
+        if (unavailable) throw unavailable;
         throw new Error(authErrorCopy(supabaseErrorMessage(error), '登录失败，请稍后重试'));
       }
 
@@ -267,6 +337,13 @@ export const signIn = createAsyncThunk(
       throw new Error('登录失败，请稍后重试');
     } catch (err) {
       logError('登录异常:', err);
+      // ⚠️ 「云端不可用」**不许**在这里被降级成普通 Error：
+      //    降级后机器标记（code）就丢了 ⇒ 上层读不到 `backend_unavailable`
+      //    ⇒ 那一档掉回「登录失败，请稍后重试」（本轮要消灭的那句错方向的话）。
+      //    这一支同时兜住「SDK 直接抛」的情况（auth-js 遇到 503 会抛
+      //    `AuthRetryableFetchError`，不一定走 `{error}` 返回值那条路）。
+      const unavailable = toBackendUnavailable(err);
+      if (unavailable) throw unavailable;
       if (err instanceof Error) {
         throw new Error(authErrorCopy(err.message, '登录失败，请稍后重试'));
       } else {
@@ -280,6 +357,152 @@ export const signIn = createAsyncThunk(
 
 
 
+/**
+ * 「已从本机登出」这句话（2026-10-23，第 52 轮）。
+ *
+ * ⚠️ 为什么**不说**「已退出登录」：`scope: 'local'` 撤的是**这一台**
+ * ⇒ 说「已退出登录」会被理解成「所有设备都退了」—— 那是**假的**
+ * （别的设备上的会话还在云端，仍是登录态）。
+ *
+ * ⚠️ 这一句是**降级档**才说的（云端不可用 ⇒ 服务端那一侧压根没撤成）。
+ * 正常登出时界面自己会说「已退出登录」，那一档由组件负责（见
+ * `components/layout/HeaderDropdown.tsx`），本仓的组件不在本轮范围内。
+ */
+const LOCAL_SIGNOUT_COPY =
+  '已从本机登出。TapStack 云端暂时不可用，其它设备可能仍是登录状态。';
+
+/**
+ * 原始 SDK 的 auth 客户端（`facade.supabase.auth`）。
+ *
+ * ⚠️ 为什么不用门面里那个包装对象（`supabase/auth.ts` 的 `auth`）：
+ * 它的 `signOut()` **不收参数** ⇒ 恒是默认的 `scope: 'global'`
+ * ⇒ 撤的是**所有设备**的会话 ⇒ 用户看到的「已退出登录」会被读成
+ * 「所有设备都退了」（假的）。要传 scope 就得拿**原始客户端**。
+ */
+type SupabaseAuthClient = SupabaseFacadeModule['supabase']['auth'];
+
+/** 「服务端登出」的结果（哪些撤成了、哪些没撤成）。 */
+interface ServerSignOutOutcome {
+  /** 服务端那一侧撤成了吗？ */
+  revoked: boolean;
+  /** 没撤成的原因是「云端不可用」吗？（这一档要说「等我们恢复」） */
+  cloudUnavailable: boolean;
+  /** 原始错误（只进日志，不面向用户）。 */
+  error: unknown;
+}
+
+/**
+ * 服务端登出：**尽力而为**，失败**不许**挡住「本机登出」。
+ *
+ * ── 借 `readSessionSafely` 的**两道闸门**（2026-10-23，第 52 轮）───────
+ * 这里借的是它的闸门，不是它的语义：
+ *   · `requireCloudAvailable` ⇒ **云端明确不可用就不碰 SDK**
+ *     （SDK 的 signOut 会先去刷新会话 ⇒ 刷新撞上故障 ⇒ 连打 8 次、
+ *      退避 25.4 秒 ⇒ 界面卡 25 秒；而且刷新失败时它**直接早退**，
+ *      连本机会话都不清 ⇒ 用户换不了账号）；
+ *   · `withDeadline`（5 秒）⇒ 竞态（云端刚好在探活之后挂掉）也不卡界面。
+ *
+ * ⚠️ 为什么**只能**借它：popup 首屏的静态闭包不许 import `src/utils/supabase/**`
+ * （构建期首屏准入闸门，见 `core/firstScreenPolicy.ts`）
+ * ⇒ 那两道闸门在本文件里**只能**从按需加载的门面取。
+ * ⇒ 数据位放一个空会话、错误位放登出的错误 —— 借闸门不借语义。
+ */
+const bestEffortServerSignOut = async (
+  facade: SupabaseFacadeModule,
+  client: SupabaseAuthClient,
+): Promise<ServerSignOutOutcome> => {
+  try {
+    const result = await facade.readSessionSafely(
+      async () => {
+        // ⚠️ `scope: 'local'` ⇒ **只撤这一台**（其它设备的会话不动）。
+        const r = await client.signOut({ scope: 'local' });
+        return { data: { session: null }, error: r.error };
+      },
+      '退出登录',
+    );
+    if (result.error) {
+      // 服务端那一侧撤不成 —— 但**本机照登**（见 signOut 的注释）。
+      logWarn('[auth] 服务端登出没成（本机照登）:', result.error);
+      return {
+        revoked: false,
+        cloudUnavailable: isBackendUnavailable(result.error),
+        error: result.error,
+      };
+    }
+    return { revoked: true, cloudUnavailable: false, error: null };
+  } catch (err) {
+    if (isBackendUnavailableError(err)) {
+      // 探活判的「云端不可用」⇒ 服务端那一侧压根没碰（SDK 也没被碰）。
+      logWarn('[auth] 云端不可用，服务端登出没做（本机照登）:', err);
+      return { revoked: false, cloudUnavailable: true, error: err };
+    }
+    if (isDeadlineExceeded(err)) {
+      // 到期限了 ⇒ 服务端那一侧我们**不等了**（本机照登）。
+      // ⚠️ 底层那个 SDK 调用**仍在跑**（`withDeadline` 不取消）——
+      //    但它只是「撤会话」，不会把会话写回来 ⇒ 不会把本机登出撤销掉。
+      logWarn('[auth] 服务端登出超过期限，不等了（本机照登）:', err);
+      return { revoked: false, cloudUnavailable: false, error: err };
+    }
+    logWarn('[auth] 服务端登出异常（本机照登）:', err);
+    return { revoked: false, cloudUnavailable: false, error: err };
+  }
+};
+
+/**
+ * 清掉**本机**的 Supabase 会话（**不联网**）。
+ *
+ * ── 为什么必须我们自己清（2026-10-23，第 52 轮）──────────────────────
+ * auth-js 2.118 的 `_signOut`（`GoTrueClient.js:3427`）**先**走 `_useSession`
+ * ⇒ `__loadSession` ⇒ 本地会话过期时它**先去刷新**
+ * ⇒ 刷新撞上云端故障（402 → 翻译成 503）⇒ `_useSession` 返回一个 error
+ * ⇒ `_signOut` **直接早退**（`GoTrueClient.js:3434-3436`）
+ * ⇒ **`_removeSession()` 压根没被调用** ⇒ 本机会话原样留着
+ * ⇒ 用户想换个账号时**登不出去**（界面还显示他登录着）。
+ *
+ * ⚠️ 这与 scope **无关**：`scope` 只决定「撤服务端哪几个会话」与
+ * 「要不要清本机」（`scope !== 'others'`），**不决定要不要先读会话**
+ * ⇒ 换成 `scope: 'local'` 一样会先刷新 ⇒ 一样会早退 ⇒ 一样清不掉。
+ *
+ * `_removeSession`（`GoTrueClient.js:4421`）是**纯本地**的：删会话键 +
+ * PKCE 校验器 + 用户键，并广播 `SIGNED_OUT`。
+ * ⚠️ 它是 SDK 的**私有**方法 ⇒ 用 `typeof` 守卫；将来 SDK 改名/删掉时，
+ * 这里返回 false ⇒ 那一层如实报「退出登录失败」（而不是假装登出了）。
+ * 守卫见 `tests/guards/authOutageUserFacing.test.ts`。
+ */
+const clearLocalSession = async (client: SupabaseAuthClient): Promise<boolean> => {
+  const remove = (client as unknown as { _removeSession?: () => Promise<void> })
+    ._removeSession;
+  if (typeof remove !== 'function') {
+    logWarn('[auth] SDK 没有本地清理方法（_removeSession 不在了）—— 本机会话可能还在');
+    return false;
+  }
+  await remove.call(client);
+  return true;
+};
+
+/**
+ * 退出登录（2026-10-23，第 52 轮：**云端故障期间也必须登得出去**）。
+ *
+ * ── 原来为什么登不出去 ──────────────────────────────────────────────────
+ * ① `signOut()` 默认 `scope: 'global'` ⇒ 撤的是**所有设备**的会话；
+ * ② auth-js 2.118 的 `_signOut`（`GoTrueClient.js:3427`）**先**走 `_useSession`
+ *    ⇒ 本地会话过期时它**先去刷新** ⇒ 刷新撞上云端故障（402 → 翻译成 503）
+ *    ⇒ `_useSession` 返回 error ⇒ `_signOut` **直接早退**
+ *    （`GoTrueClient.js:3434-3436`）⇒ **`_removeSession()` 没被调用**
+ *    ⇒ 本机会话原样留着 ⇒ 用户想换个账号时**登不出去**。
+ *
+ * ⚠️ **换 scope 解决不了 ②**（这是查 SDK 源码得出的，不是凭印象）：
+ * `_signOut` 无条件走 `_useSession`，`scope` 只决定「撤服务端哪几个会话」
+ * 与「要不要清本机」⇒ **`scope: 'local'` 一样会先刷新、一样会早退**。
+ * ⇒ 真正要补的是「本机这一侧由我们自己保证」（`clearLocalSession`）。
+ *
+ * ── 现在怎么做（三步，顺序有理由）──────────────────────────────────────
+ * ① **服务端登出：尽力而为** —— `scope: 'local'`（只撤**这一台** ⇒ 别的设备
+ *    仍登录 ⇒ 用户看到的文案因此只能说「已从本机登出」）。
+ * ② **本机登出：必须发生** —— 不管 ① 成不成功，本机这一台一定要登出去
+ *    （用户的目的就是「换账号」⇒ 登不出去 = 这一步白做）。
+ * ③ **文案说准** —— 见 `LOCAL_SIGNOUT_COPY`。
+ */
 export const signOut = createAsyncThunk(
   'auth/signOut',
   async () => {
@@ -287,16 +510,31 @@ export const signOut = createAsyncThunk(
       // 移除实时同步功能，简化逻辑
       logInfo('已简化同步逻辑，只保留手动同步功能');
 
-      // 退出登录
-      const supabaseAuth = await loadSupabaseAuth();
-      const { error } = await supabaseAuth.signOut();
-      if (error) {
-        logError('退出登录错误:', error);
-        throw new Error(authErrorCopy(supabaseErrorMessage(error), '退出登录失败，请稍后重试'));
+      // 门面（**按需加载**）：见文件头「为什么是按需加载」。
+      const facade = await loadSupabaseFacade();
+      // ⚠️ 用**原始 SDK 客户端**（不是门面里那个包装对象）：包装对象的
+      // `signOut()` 不收参数 ⇒ 恒是 `scope: 'global'`（撤所有设备）。
+      const client = facade.supabase.auth;
+
+      // ① 服务端登出：尽力而为（失败**不许**挡住本机登出）。
+      const server = await bestEffortServerSignOut(facade, client);
+
+      // ② 本机登出：**必须发生**。
+      const localCleared = await clearLocalSession(client);
+
+      if (!localCleared) {
+        // 本机这一侧真的没清掉 ⇒ 如实报失败（不许假装「已登出」）。
+        throw new Error(
+          authErrorCopy(supabaseErrorMessage(server.error), '退出登录失败，请稍后重试'),
+        );
       }
 
-      logInfo('退出登录成功');
-      return null;
+      logInfo(
+        server.revoked
+          ? '退出登录成功（服务端与本机都撤了）'
+          : '已从本机登出（服务端那一侧没撤成：云端不可用或请求失败）',
+      );
+      return { serverRevoked: server.revoked, cloudUnavailable: server.cloudUnavailable };
     } catch (err) {
       logError('退出登录异常:', err);
       if (err instanceof Error) {
@@ -311,10 +549,34 @@ export const signOut = createAsyncThunk(
 export const getCurrentUser = createAsyncThunk(
   'auth/getCurrentUser',
   async () => {
+    // 门面模块（**按需加载**）：见下面「为什么绕这一下」。
+    let facade: SupabaseFacadeModule | null = null;
     try {
-      // 首先检查是否有活跃会话，避免未登录用户触发错误
-      const supabaseAuth = await loadSupabaseAuth();
-      const { data: sessionData, error: sessionError } = await supabaseAuth.getSession();
+      // ── 2026-10-23（第 51 轮）：读会话走**唯一入口** ──────────────────────
+      // 【那一层做三件事】
+      // ① **先问一句「云端在吗」**：明确不可用（402/503/52x）就**不碰 SDK**
+      //    ⇒ 用户的会话**连读都没被读**，更没机会被 SDK 删掉
+      //    （SDK 把一次云端故障当成「刷新令牌已死」⇒ 一次故障 = 一次全员登出）；
+      //    而且 SDK 是**惰性加载**的 ⇒ 云端挂着时设置页连那 ≈75KB 都不用下。
+      // ② **等待有上限**（5 秒，见 utils/supabase/sessionRead.ts）：
+      //    auth SDK 的刷新失败会连打 8 次、退避 25.4 秒 ⇒ 没有上限的话，
+      //    云端一挂，弹窗/设置页就卡 25 秒，而「云端暂时不可用」这句话
+      //    **根本来不及送到界面上**（用户只看到「转圈」）。
+      // ③ **失败原样带出**：判据（402 / 401 / 断网）不被丢掉 ⇒ 下面能按
+      //    **失败原因**分流，而不是把「核不到」读成「没登录」。
+      //
+      // ⚠️ **为什么绕这一下（从门面取，而不是静态 import）**：
+      // `src/utils/supabase/` 整个目录都在弹窗首屏的**禁止组**里
+      // （构建期闸门 `firstScreenPolicyGate`：首屏不许下载整条云端栈），
+      // 而本文件在首屏的**静态**闭包里 ⇒ 它**不许**静态 import 那目录里的
+      // 任何东西 ⇒ 「读会话的唯一入口」与「不可用观测」都从**按需加载**的
+      // 门面取（首屏不下载它们）。
+      const f = await loadSupabaseFacade();
+      facade = f;
+      const { data: sessionData, error: sessionError } = await f.readSessionSafely(
+        () => f.auth.getSession(),
+        '读取会话'
+      );
 
       // ── 2026-10-23（第 50 轮）：**读会话失败 ≠ 「没登录」**───────────────
       // 【原来的缺陷】`const { data: sessionData } = await getSession();`
@@ -360,7 +622,9 @@ export const getCurrentUser = createAsyncThunk(
       }
 
       // 如果有会话，才获取用户信息
-      const { data, error } = await supabaseAuth.getCurrentUser();
+      // ⚠️ 复用上面已经加载好的门面（`facade`）：别再 `loadSupabaseFacade()` 一次
+      // —— 那是一次额外的动态 import（虽然模块会被浏览器缓存）。
+      const { data, error } = await facade!.auth.getCurrentUser();
       if (error) {
         logError('获取用户信息错误:', error);
         // ── 2026-10-22（402）：服务端项目被限制 ⇒ 专用人话（不降级成「请重试」）──
@@ -397,6 +661,13 @@ export const getCurrentUser = createAsyncThunk(
         // —— 正是本次要消灭的那句错方向的话。
         if (isBackendUnavailableError(err)) {
           throw err;
+        }
+        // ── 2026-10-23（第 51 轮）：**等到期限** ≠ 「核不到」 ─────────────
+        // 期限到了只说明「我们不等了」；若我们已经**观测到**「云端不可用」
+        // （状态码判据），那一档就是「云端不可用」—— 说成「核不到」会把
+        // 「等我们恢复」说成「检查你的网络」，指错了下一步。
+        if (isDeadlineExceeded(err) && facade?.outageTracker.isUnavailableRecently()) {
+          throw new BackendUnavailableError('云端项目不可用（核对未在期限内完成）', 402);
         }
         throw new Error(authErrorCopy(err.message, '获取用户信息失败，请稍后重试'));
       } else {
@@ -483,6 +754,16 @@ const authSlice = createSlice({
       })
       .addCase(signUp.rejected, (state, action) => {
         state.isLoading = false;
+        // ── 2026-10-23（第 52 轮）：「云端不可用」**不许**说成「注册失败」──
+        // 「注册失败，请稍后重试」是**错的方向**：项目被限制时重试一万次也一样，
+        // 而用户会以为自己填错了邮箱 ⇒ 白折腾。
+        if (isBackendUnavailableError(action.error)) {
+          state.error = backendUnavailableAuthCopy();
+          state.backendUnavailable = true;
+          state.authStatusKind = 'backend_unavailable';
+          logWarn('[auth] 注册失败的原因是「云端不可用」—— 不说「注册失败」（方向错了）');
+          return;
+        }
         // 原始英文只留在 thunk 里的 console 日志；进 UI 的一律是中文
         state.error = authErrorCopy(action.error.message, '注册失败，请稍后重试');
       })
@@ -508,6 +789,21 @@ const authSlice = createSlice({
       })
       .addCase(signIn.rejected, (state, action) => {
         state.isLoading = false;
+        // ── 2026-10-23（第 52 轮）：「云端不可用」**不许**说成「登录失败」──
+        // 「登录失败，请稍后重试」是**错方向**的那句话：项目被限制（402）时
+        // 重试一万次也一样，而用户会以为**自己密码错了** ⇒ 反复改密码、
+        // 重新注册 —— 而他其实没输错。
+        //
+        // ⇒ 这一档归到 `backend_unavailable`（等我们恢复），机器标记由
+        //   `isBackendUnavailableError` 认（RTK 序列化只保留 `code`，
+        //   所以 thunk 那边必须抛带 `code` 的专用错误）。
+        if (isBackendUnavailableError(action.error)) {
+          state.error = backendUnavailableAuthCopy();
+          state.backendUnavailable = true;
+          state.authStatusKind = 'backend_unavailable';
+          logWarn('[auth] 登录失败的原因是「云端不可用」—— 不说「登录失败」（方向错了）');
+          return;
+        }
         // 原始英文只留在 thunk 里的 console 日志；进 UI 的一律是中文
         state.error = authErrorCopy(action.error.message, '登录失败，请稍后重试');
       })
@@ -518,12 +814,18 @@ const authSlice = createSlice({
       .addCase(signOut.pending, (state) => {
         state.isLoading = true;
       })
-      .addCase(signOut.fulfilled, (state) => {
+      .addCase(signOut.fulfilled, (state, action) => {
         state.isLoading = false;
         state.user = null;
         state.isAuthenticated = false;
         // 退出登录是**用户显式做**的 ⇒ 这一档是「没登录」（核到了的）。
         state.authStatusKind = 'not_authenticated';
+        // ⚠️ 文案要说准（2026-10-23，第 52 轮）：`scope: 'local'` 撤的是
+        // **这一台** ⇒ 正常登出时界面自己会说「已退出登录」（组件负责）；
+        // 而「服务端那一侧没撤成」（云端不可用）那一档，**必须**说清
+        // 「已从本机登出、别的设备可能仍是登录状态」——
+        // 不说 ⇒ 用户会以为所有设备都退了（那是假的）。
+        state.notice = action.payload?.cloudUnavailable ? LOCAL_SIGNOUT_COPY : null;
 
         // 退出登录后清除认证缓存
         authCache.clearAuthState();

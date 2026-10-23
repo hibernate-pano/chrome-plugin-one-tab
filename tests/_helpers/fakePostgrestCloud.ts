@@ -51,6 +51,15 @@ export interface FakePostgrestCloud {
   rows: Map<string, Record<string, unknown>>;
   /** 写操作日志（UPSERT/PATCH/DELETE），排查用。 */
   ops: string[];
+  /**
+   * **每一个**请求的路径日志（`${method} ${pathname}`），排查用。
+   *
+   * ⚠️ 为什么需要它：「我们**没有**去问云端」这件事，是**没法从返回值上看出来**的
+   * —— 假云端答什么只说明它被问了什么。⇒ 守卫要断言「SDK 的刷新端点**一次都没被问**」
+   * （第 51 轮：云端不可用时**不许**让 SDK 去刷新 ⇒ 用户的会话才不会被删），
+   * 就必须能看见「哪些请求真的发生过」。
+   */
+  requests: string[];
   /** 切换「当前登录账号」（`/auth/v1/user` 返回它）。 */
   setSessionUser(userId: string): void;
   /** 还原 `globalThis.fetch`。 */
@@ -62,6 +71,7 @@ export function installFakePostgrestCloud(
 ): FakePostgrestCloud {
   const rows = new Map<string, Record<string, unknown>>();
   const ops: string[] = [];
+  const requests: string[] = [];
   const missingColumns = new Set(opts?.missingColumns ?? []);
   const unavailable = opts?.unavailable === true;
   let sessionUserId = 'user-unknown';
@@ -92,6 +102,8 @@ export function installFakePostgrestCloud(
     const url = new URL(typeof input === 'string' ? input : String((input as { url: string }).url));
     const method = (init.method ?? 'GET').toUpperCase();
     const params = url.searchParams;
+    // 每一个请求都记账（**在** 402 短路之前）—— 「哪些请求真的发生过」只有它知道。
+    requests.push(`${method} ${url.pathname}`);
 
     // ── 整个项目被限制（402）：所有请求都返回这一句 ──────────────────────
     // 生产实测（2026-10-22）：Supabase 项目 egress 配额超限 ⇒ 整个项目 402
@@ -176,6 +188,7 @@ export function installFakePostgrestCloud(
   return {
     rows,
     ops,
+    requests,
     setSessionUser(userId: string) {
       sessionUserId = userId;
     },

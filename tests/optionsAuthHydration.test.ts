@@ -125,8 +125,23 @@ describe('getCurrentUser：未登录时安全（options 页可以无条件 dispa
     const src = await read('src/store/slices/authSlice.ts');
     const start = src.indexOf('export const getCurrentUser');
     const thunk = src.slice(start, src.indexOf('export const', start + 10));
-    assert.match(thunk, /await supabaseAuth\.getSession\(\)/,
-      '必须先查会话 —— 否则未登录用户会吃一个错误');
+    // ⚠️ 钉的是**数据流**，不是某一句字面量（2026-10-23，第 51 轮）。
+    //
+    // 原来这里钉的是 `await supabaseAuth.getSession()` 这句**字面量**。
+    // 但「读会话」这一步已经收敛到**唯一入口**
+    // （`utils/supabase/sessionRead.ts` 的 `readSessionSafely`：先问云端在吗、
+    //  再读、有 5 秒上限）⇒ 那句字面量**必然**变，而**性质没变**。
+    //
+    // ⇒ 断言改成钉**顺序**（先读会话、后取用户）+ **读会话这件事确实发生了**：
+    // 这样「把读会话删了」会红，而「换个写法读会话」不会红。
+    const sessionReadIdx = thunk.search(/readSessionSafely\(|\.getSession\(\)/);
+    assert.ok(sessionReadIdx > 0, 'thunk 必须读会话 —— 否则未登录用户会吃一个错误');
+    const userFetchIdx = thunk.search(/getCurrentUser\(\)|getUser\(\)/);
+    assert.ok(userFetchIdx > 0, 'thunk 必须取用户信息');
+    assert.ok(
+      sessionReadIdx < userFetchIdx,
+      '必须**先**读会话、后取用户（顺序反了 ⇒ 未登录用户会白吃一个错误）'
+    );
     assert.match(thunk, /if \(!sessionData \|\| !sessionData\.session\)[\s\S]{0,120}return null;/,
       '无会话必须直接返回 null（不抛错）');
   });
