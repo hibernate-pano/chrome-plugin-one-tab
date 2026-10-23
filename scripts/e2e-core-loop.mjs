@@ -125,20 +125,29 @@ try {
   await page.screenshot({ path: process.env.SHOT_PREFIX ? `${process.env.SHOT_PREFIX}-restored.png` : undefined });
 
   // ── 连跑第二次：种子里那个会话也要能被恢复（证明上一次的恢复没有污染存储）──
+  //
+  // ⚠️ 这里的等待条件**不能只看「URL 在不在」**：种子会话的标签页在**第一次**
+  //    恢复时就已经被打开了 ⇒ `seedUrls.every(u => opened2.includes(u))` 在
+  //    **第一次循环就成立** ⇒ 循环立刻退出 ⇒ 紧接着那句「页面数变多了吗」
+  //    是在**新标签还没建出来**的时候问的 ⇒ 恒假（实测假红一次）。
+  // ⇒ 判据改成「**页面数真的变多** 且 **URL 都在**」，两个条件都满足才算。
   const seedGroup = afterRestore[0];
   const seedUrls = seedGroup.tabs.map(t => t.url.replace(/\/$/, ''));
   const pagesBefore2 = ctx.pages().length;
   await page.click(`button[aria-label^="在新窗口恢复整个会话，共 ${seedUrls.length} 个标签页"]`, { timeout: 20_000 });
   let opened2 = [];
+  let grew = false;
   for (let i = 0; i < 40; i++) {
     opened2 = ctx.pages().map(p => { try { return new URL(p.url()).href.replace(/\/$/, ''); } catch { return ''; } });
-    if (seedUrls.every(u => opened2.includes(u))) break;
+    grew = ctx.pages().length > pagesBefore2;
+    if (grew && seedUrls.every(u => opened2.includes(u))) break;
     await page.waitForTimeout(500);
   }
+  gate.check('第二次恢复也新增了标签页', grew,
+    `之前 ${pagesBefore2} 页 / 之后 ${ctx.pages().length} 页`);
   gate.check('第二次恢复同样真的打开了对应 URL（结果可重复）',
     seedUrls.every(u => opened2.includes(u)),
     `期望 ${seedUrls.join(',')} / 实际 ${opened2.join(',')}`);
-  gate.check('第二次恢复也新增了标签页', ctx.pages().length > pagesBefore2, '');
 
   for (let i = 0; i < 30; i++) {
     if ((await readGroupsFromSW(ctx)).length === 0) break;
