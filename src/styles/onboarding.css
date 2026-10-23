@@ -210,6 +210,62 @@
     letter-spacing: -0.01em;
 }
 
+/* 引导标题**不许**画焦点环（2026-10-23 真机实测）。
+ *
+ * 【为什么】每换一步，代码会把焦点移到该步标题上（OnboardingGuide.tsx 的
+ * `title?.focus()`）—— 那是给**读屏**用的：它会播报「欢迎使用 TapStack」
+ * 「先保存一个会话」……，键盘用户也不会停留在已销毁的按钮上。
+ *
+ * ⚠️ 但这个标题是 `tabIndex={-1}` ⇒ **它不在 Tab 序列里** ⇒
+ *   键盘用户永远不可能「Tab 到它」⇒ 焦点环对它**没有任何信息量**。
+ *   而全局那条 `:focus-visible { outline: 2px solid var(--color-focus-ring) }`
+ *   会把这个环画出来 —— 于是**第一屏**（全新用户看到的第一个画面）
+ *   的标题上套着一个 2px 蓝框，**看起来像一个输入框 / 一个坏掉的按钮**。
+ *
+ * 【为什么偏偏是第一屏】Chrome 的启发式：程序化聚焦时，若用户**还没动过鼠标**
+ * ⇒ 匹配 `:focus-visible`；一旦点过一次「下一步」，之后每一步的聚焦都不匹配。
+ * ⇒ 这个环**只出现在第 1 步** —— 也就是**第一印象**那一屏。
+ *   （真机实测：第 1 步 `outline: rgb(29,78,216) solid 2px`、
+ *     `matches(':focus-visible') === true`；第 2 步起 `outline-style: none`。）
+ *
+ * 【修法】显式去掉这个标题的 outline（`:focus` 与 `:focus-visible` 都去）。
+ *   读屏播报一点不受影响（那是焦点本身，不是环）；键盘可达性也不受影响
+ *   （它本来就不在 Tab 序列里）⇒ 只去掉那圈**误导性的**视觉噪音。
+ *
+ * ⚠️ **选择器必须带 `.onboarding-overlay`（真机撞过一次）**：
+ *   6 套主题各自有 `html[data-theme="xxx"] :focus-visible { outline: 2px solid … }`
+ *   —— 那是 **(0,2,1)** 的特异度；而 `.onboarding-title:focus-visible` 只有 **(0,2,0)**
+ *   ⇒ **规则写得再对也会被主题那条压过去**（真机实测：文件里有 outline: none，
+ *   画面上那圈蓝框**照样在**）。加上 `.onboarding-overlay` 一层类 ⇒ (0,3,0) > (0,2,1)
+ *   ⇒ 与样式表的加载顺序无关地压住它。
+ *   （判据见 tests/guards/onboardingTitleFocusRing.test.ts —— 它算的是**特异度**，
+ *     不是「文件里有没有 outline: none」。）
+ */
+.onboarding-overlay .onboarding-title:focus,
+.onboarding-overlay .onboarding-title:focus-visible {
+    outline: none;
+}
+
+/* 引导遮罩层自己也不许画焦点环（真机实测：手工把焦点放回遮罩层 ⇒
+ * `outline: 2px solid rgb(29,78,216)`）。
+ *
+ * 【为什么】遮罩层是 `tabIndex={-1}`、开局被聚焦过（为了让读屏播报
+ * 「用户引导 对话框」）—— 而它是**铺满整窗**的一层
+ * ⇒ 焦点环画在它身上 = 沿着**窗口边缘描一圈蓝框**。
+ * 它同样不在 Tab 序列里 ⇒ 那圈环没有任何信息量。
+ *
+ * 【为什么前面挂 `html body`】特异度。主题那条
+ * `html[data-theme="xxx"] :focus-visible` 是 **(0,2,1)**；
+ * 光写 `.onboarding-overlay:focus` 只有 **(0,2,0)** ⇒ 会被它压过去
+ * （真机撞过：规则写得对，画面上的环照样在）。
+ * 挂上 `html body` 两个标签 ⇒ **(0,2,2)** > (0,2,1) ⇒
+ * 与样式表顺序无关地压住它。
+ */
+html body .onboarding-overlay:focus,
+html body .onboarding-overlay:focus-visible {
+    outline: none;
+}
+
 /* 引导描述 */
 .onboarding-description {
     font-size: 0.875rem;
