@@ -21,6 +21,30 @@ import type { Tab, TabData } from '../types/tab';
 import { isStorableTabUrl, isOpenableTabUrl } from '../utils/inputValidation';
 
 export function serializeTab(tab: Tab): TabData {
+  // ── 2026-10-23 第 54 轮：只写「非默认值」 ────────────────────────────
+  //
+  // 云端出网按**字节**计费，而 tabs_data 占下载响应体 93.5% ⇒ 每条标签
+  // 多写一个恒为 null 的字段，就是每条标签多几十字节的出网量（实测每条
+  // 标签 372 B，其中 62 B 是「last_op_device:null + last_op_seq:null +
+  // pinned:false」—— 也就是说 **1/6 的出网量是恒定值**）。
+  //
+  // 为什么省略是**零风险**的：下面两个字段的「缺省」与「显式 null / false」
+  // 在**每一个读者**眼里完全等价 ——
+  //   · pinned     → deserializeTab 读 `data.pinned ?? false`
+  //   · last_op_*  → deserializeTab 读
+  //     `typeof data.last_op_seq === 'number' && data.last_op_device`
+  // 缺省与 null/false 都落不到那个判据上 ⇒ 读出来的 Tab **逐字相同**。
+  // 本文件头部早就写着「印记缺失 ↔ null（云端 NULL 视为全序最小值）」是
+  // 同一语义 —— 这次只是让**写侧**也守同一条约定，而不是各写各的。
+  //
+  // ⚠️ 写侧省略 ⇒ 云端行里这两个键**不存在**。任何直接读
+  //   `data.last_op_seq` 的新代码必须自己处理「缺省」（本仓库唯一读
+  //   tabs_data 内印记的地方是 deserializeTab，它已经处理了）。
+  const stamp =
+    tab.lastOp && typeof tab.lastOp.s === 'number' && tab.lastOp.d
+      ? { d: tab.lastOp.d, s: tab.lastOp.s }
+      : null;
+
   return {
     id: tab.id,
     url: tab.url,
@@ -28,11 +52,10 @@ export function serializeTab(tab: Tab): TabData {
     favicon: tab.favicon,
     created_at: tab.createdAt,
     last_accessed: tab.lastAccessed,
-    pinned: tab.pinned,
+    ...(tab.pinned ? { pinned: true } : {}),
     is_deleted: tab.isDeleted || undefined,
     deleted_at: tab.deletedAt ?? undefined,
-    last_op_device: tab.lastOp?.d ?? null,
-    last_op_seq: typeof tab.lastOp?.s === 'number' ? tab.lastOp.s : null,
+    ...(stamp ? { last_op_device: stamp.d, last_op_seq: stamp.s } : {}),
   };
 }
 

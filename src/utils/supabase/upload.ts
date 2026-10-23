@@ -5,7 +5,7 @@
  */
 import type { TabGroup, UserSettings, TabData, SupabaseTabGroup } from '@/types/tab';
 import { RETIRED_SETTING_KEYS, settingKeyToColumn } from '@/types/tab';
-import { encryptData } from '../encryptionUtils';
+import { decryptData, encryptCompressedData } from '../encryptionUtils';
 import { serializeTab } from '@/core/tabDataCodec';
 import { decideCloudTombstoneWrite } from '@/core/syncDecision';
 import { supabase, checkSupabaseConfig, getDeviceId } from './client';
@@ -978,7 +978,26 @@ export const uploadSync = {
           if (group.tabs_data && Array.isArray(group.tabs_data)) {
             try {
               // 加密标签数据（按下标原位回写：group 与 groupsWithUser[i] 是同一对象）
-              const encryptedData = await encryptData(group.tabs_data, userId);
+              //
+              // 2026-10-23 第 54 轮：压缩后再加密（V3 格式）。
+              // 云端出网按字节计费，而 tabs_data 占下载响应体 93% ⇒
+              // 「JSON → AES-GCM」的顺序让 JSON 里的重复在加密后压不动了。
+              // 改成「JSON → gzip → AES-GCM」后 10 标签/组 4291 B → 635 B。
+              const encryptedData = await encryptCompressedData(group.tabs_data, userId);
+
+              // ── 上行前的自检：解回来必须与原文逐字相同 ──────────────────
+              // 为什么必须有：载荷编码换了（密文里装的是 gzip），
+              // 而上传后的读回校验**只读指纹列、不读 tabs_data**
+              // （readback.ts 的 select 列）⇒ 一份写坏的载荷会**静静地上云**，
+              // 用户下次下载才发现那一组读不出来。
+              // 这里在**写之前**就地往返一次：不一致就当这组加密失败
+              // （进 encryptionFailedIds，不写云端）⇒ fail-closed。
+              // 代价：每组多一次 PBKDF2（~10 ms），换掉「写坏也不知道」。
+              const roundTrip = await decryptData<unknown>(encryptedData, userId);
+              if (JSON.stringify(roundTrip) !== JSON.stringify(group.tabs_data)) {
+                throw new Error('加密后自检失败：解回来的内容与原文不一致');
+              }
+
               groupsWithUser[i].tabs_data = encryptedData as any;
               logInfo(`标签组 ${group.id} 的数据已加密`);
             } catch (error) {
