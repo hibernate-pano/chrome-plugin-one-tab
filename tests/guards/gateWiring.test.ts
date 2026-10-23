@@ -89,6 +89,12 @@ describe('门禁接线：发版结果校验', () => {
       '空草稿时 publish 返回 200 但是 no-op（见文件头踩坑记录），必须一并识别'
     );
   });
+
+  // ⚠️ 这里**故意不再**加「publish 必须校验 status」的源码文本断言：
+  //   那种断言钉不住「exit(1) 是不是被那个条件守着」—— 变异验证时把
+  //   `if (cond)` 改成 `if (false)`，源码里照样有 cond 和 exit(1)，它照样绿。
+  // 真正钉住这条的是**行为**守卫 tests/guards/cwsPublishStatus.test.ts：
+  //   它把假 curl 放进 PATH，真的跑一遍 publish，断言退出码与报错。
 });
 
 describe('门禁接线：validate 的完整性', () => {

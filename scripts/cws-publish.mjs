@@ -131,5 +131,30 @@ if (cmd === 'status') {
     );
     process.exit(1);
   }
+  // ── 2026-10-23：2xx 还要看「商店自己怎么说」 ────────────────────────────
+  // 提交成功的回包形状是 `{"status": ["OK"], "statusDetail": ["OK."]}`。
+  // 只校验 HTTP 状态码不够：商店存在「2xx 但 status 不是 OK」的形状，
+  // 那样脚本会打印「✓ 已提交审核」而线上其实没提交 ⇒ **假绿**。
+  //
+  // 三态，全都要说清楚（不许有第四种含糊）：
+  //   ① status 里出现 OK      ⇒ 提交成功，exit 0
+  //   ② status 存在但没有 OK  ⇒ 提交未生效，exit 1
+  //   ③ status 字段根本不存在 ⇒ **无法自证**，exit 1（不许默认当成成功）
+  // 判据 ③ 是 fail-closed：宁可报红让人去用 `status` 复查，也不给假绿。
+  const statusMatch = body.match(/"status"\s*:\s*\[([^\]]*)\]/);
+  if (!statusMatch) {
+    console.error(
+      'publish 返回 2xx，但回包里找不到 status 字段 —— 无法自证提交是否生效。' +
+        '绝不当作已发布；请跑一次 `status` 复查草稿版本。'
+    );
+    process.exit(1);
+  }
+  if (!/OK/.test(statusMatch[1])) {
+    console.error(
+      `publish 返回 2xx，但 status 里没有 OK（${statusMatch[0]}）—— 提交未生效，` +
+        '线上没有任何变化。绝不当作已发布。'
+    );
+    process.exit(1);
+  }
   console.log('✓ 已提交审核。建议再跑一次 `status` 确认 PENDING_REVIEW。');
 }
