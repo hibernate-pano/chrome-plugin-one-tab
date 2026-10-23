@@ -30,6 +30,11 @@ import { BackendUnavailableError, isBackendUnavailable, readHttpStatus } from '@
 // 先问「云端在吗」（不可用就**不碰 SDK** ⇒ 会话不会被 SDK 删掉）+ 5 秒上限
 // + 失败原样带出。判据见 utils/supabase/sessionRead.ts 的注释。
 import { readSessionSafely, toSessionReadError } from './sessionRead';
+// ── 2026-10-23（第 52 轮）：「核账号」收口到**唯一入口** ──────────────────
+// 裸调 `supabase.auth.getUser()` 没有「先问云端在吗」、没有等待上限、
+// 失败还被降级成普通 Error ⇒ 实测弱网时拖满 45 秒（协议上界是 30 秒）。
+// 详见 session.ts 的 `requireSessionUser` 注释。
+import { requireSessionUser } from './session';
 
 /**
  * 还原率阈值：云端一行里的标签有低于这个比例能还原成 Tab 时，这一行**整组跳过**。
@@ -236,40 +241,28 @@ export const downloadSync = {
       throw new Error('用户未登录或会话已过期，请重新登录');
     }
 
-    // 获取用户信息
-    const { data: { user }, error: userError } = await supabase.auth.getUser();
-
-    if (userError) {
-      logError('获取用户信息失败:', userError);
-      // ── 2026-10-22（402）：**这一支才是账号态 402 的真实落点** ────────────
-      // 实测（生产 402）：`/auth/v1/user` 同样返回 402。
-      // ⚠️ 2026-10-23（第 51 轮）更正：auth-js 抛的是
-      // `AuthApiError { status: 503 }`，**不是 402** —— 402 在 fetch 咽喉处
-      // 已被翻译成 503（core/authSdkStatus.ts，为了不让 SDK 删掉用户的会话），
-      // 而 auth-js 的 `handleError` 把响应体整个丢掉（只留 message/status/code）
-      // ⇒ 我们拿不到 402、也拿不到响应体里的 `http_status`。
-      // ⇒ 分类结论**不变**：503 在「服务端不可用」集合里；而 402 响应体里那句
-      // 「…exceed_egress_quota…」会进 `AuthApiError.message`
-      // ⇒ 报文标记那条判据也照样命中。
-      // 原先降级成普通 Error ⇒ 上层拿不到判据。
-      if (isBackendUnavailable(userError)) {
-        throw new BackendUnavailableError(
-          `获取用户信息失败: ${userError.message}`,
-          readHttpStatus(userError) ?? undefined
-        );
-      }
-      throw new Error(`获取用户信息失败: ${userError.message}`);
-    }
-
-    if (!user) {
-      logError('用户未登录');
-      throw new Error('用户未登录');
-    }
-
-    if (!user.id) {
-      logError('用户ID无效');
-      throw new Error('用户ID无效');
-    }
+    // ── 2026-10-23（第 52 轮）：核账号走**收口入口**，不再裸调 SDK ──────────
+    // 【这一处原来漏了闸门 —— 后果是 45 秒】
+    // 原先这里**裸调** `supabase.auth.getUser()` ⇒ 三件事一件都没有：
+    //   ① 没有「先问云端在吗」（云端不可用时照样碰 SDK
+    //      ⇒ `getUser` 走 `_useSession` ⇒ 本地会话过期时它会去刷新
+    //      ⇒ 刷新撞上故障 ⇒ 连打 8 次、退避 25.4 秒）；
+    //   ② 没有**等待上限**（弱网时它一路拖到 SDK 自带的 45 秒 fetch 超时
+    //      ⇒ 而同步管线的协议上界是 30 秒 ⇒ **打爆**
+    //      ⇒ 用户只看到「操作超时」，真实原因却是「联系不上云端」）；
+    //   ③ 失败被**降级成普通 Error** ⇒ 机器判据丢了
+    //      ⇒ 上层读不到「云端不可用」⇒ 用户看到「请重试」（错方向）。
+    //
+    // ⚠️ 为什么这一处**特别容易**漏掉闸门（根因，值得记住）：
+    //   断网时探活判「**不知道**」⇒ **放行**（那一档放行是**对的**：
+    //   本地会话没过期时，SDK 读它根本不需要联网）⇒ 于是「读会话」这一关
+    //   **顺利通过** ⇒ 看起来闸门生效了 ⇒ **真正需要上限的那一步**
+    //   （核账号）却还是裸的 ⇒ 闸门装在了**错误的位置**。
+    //
+    // ⇒ 现在走 `requireSessionUser()`（先问云端在吗 + 5 秒上限 + 失败带判据）。
+    //   **错误文案与判据逐字不变**（都收口在那个函数里）。
+    const userId = await requireSessionUser();
+    logInfo('已核对账号:', { userId });
 
     try {
 
@@ -290,15 +283,21 @@ export const downloadSync = {
 
       // 记录详细的会话信息
       logInfo('会话信息:', {
-        userID: user.id,
+        userID: userId,
         sessionUserID: sessionCheck.session.user.id,
         isSessionValid: !!sessionCheck.session
       });
 
       // 确保用户ID匹配会话用户ID
-      if (user.id !== sessionCheck.session.user.id) {
+      // ⚠️ 调和规则**逐字保留**（原来就是拿**第二次**读的会话为准）：
+      //   会话才是「本机登录的是谁」的事实，`getUser()` 返回的那份可能是
+      //   另一个账号的残留 ⇒ 用它去查云端会读到**别人的**行。
+      //   （`downloadSettings` 拿的是**第一次**读的会话 —— 两处规则不同，
+      //     本轮**不动**它，见 session.ts 的 `requireSessionUser` 注释。）
+      let downloadUserId = userId;
+      if (userId !== sessionCheck.session.user.id) {
         logWarn('用户ID与会话用户ID不匹配，使用会话用户ID');
-        user.id = sessionCheck.session.user.id;
+        downloadUserId = sessionCheck.session.user.id;
       }
 
       // 获取用户的所有标签组，包含 tabs_data JSONB 字段，按创建时间倒序排列
@@ -345,7 +344,7 @@ export const downloadSync = {
         const { data: page, error, count } = await supabase
           .from('tab_groups')
           .select(selectColumns, isFirstPage ? { count: 'exact' } : {})
-          .eq('user_id', user.id)
+          .eq('user_id', downloadUserId)
           .order('created_at', { ascending: false })
           .order('id', { ascending: false })
           .range(groups.length, groups.length + DOWNLOAD_PAGE_SIZE - 1);
@@ -451,7 +450,7 @@ export const downloadSync = {
       const resolvedShapes = await mapWithConcurrency<unknown, unknown>(
         groups,
         CRYPTO_CONCURRENCY,
-        group => resolveTabsShape(group as any, user.id)
+        group => resolveTabsShape(group as any, downloadUserId)
       );
 
       for (const [index, group] of groups.entries()) {
@@ -665,45 +664,37 @@ export const downloadSync = {
       throw new Error('用户未登录或会话已过期，请重新登录');
     }
 
-    // 获取用户信息
-    const { data: { user }, error: userError } = await supabase.auth.getUser();
-
-    if (userError) {
-      logError('获取用户信息失败:', userError);
-      // ── 2026-10-22（402）：**这一支才是账号态 402 的真实落点** ────────────
-      // 实测（生产 402）：`/auth/v1/user` 同样返回 402。
-      // ⚠️ 2026-10-23（第 51 轮）更正：auth-js 抛的是
-      // `AuthApiError { status: 503 }`，**不是 402** —— 402 在 fetch 咽喉处
-      // 已被翻译成 503（core/authSdkStatus.ts，为了不让 SDK 删掉用户的会话），
-      // 而 auth-js 的 `handleError` 把响应体整个丢掉（只留 message/status/code）
-      // ⇒ 我们拿不到 402、也拿不到响应体里的 `http_status`。
-      // ⇒ 分类结论**不变**：503 在「服务端不可用」集合里；而 402 响应体里那句
-      // 「…exceed_egress_quota…」会进 `AuthApiError.message`
-      // ⇒ 报文标记那条判据也照样命中。
-      // 原先降级成普通 Error ⇒ 上层拿不到判据。
-      if (isBackendUnavailable(userError)) {
-        throw new BackendUnavailableError(
-          `获取用户信息失败: ${userError.message}`,
-          readHttpStatus(userError) ?? undefined
-        );
-      }
-      throw new Error(`获取用户信息失败: ${userError.message}`);
-    }
-
-    if (!user) {
-      logError('用户未登录');
-      throw new Error('用户未登录');
-    }
-
-    if (!user.id) {
-      logError('用户ID无效');
-      throw new Error('用户ID无效');
-    }
+    // ── 2026-10-23（第 52 轮）：核账号走**收口入口**，不再裸调 SDK ──────────
+    // 【这一处原来漏了闸门 —— 后果是 45 秒】
+    // 原先这里**裸调** `supabase.auth.getUser()` ⇒ 三件事一件都没有：
+    //   ① 没有「先问云端在吗」（云端不可用时照样碰 SDK
+    //      ⇒ `getUser` 走 `_useSession` ⇒ 本地会话过期时它会去刷新
+    //      ⇒ 刷新撞上故障 ⇒ 连打 8 次、退避 25.4 秒）；
+    //   ② 没有**等待上限**（弱网时它一路拖到 SDK 自带的 45 秒 fetch 超时
+    //      ⇒ 而同步管线的协议上界是 30 秒 ⇒ **打爆**
+    //      ⇒ 用户只看到「操作超时」，真实原因却是「联系不上云端」）；
+    //   ③ 失败被**降级成普通 Error** ⇒ 机器判据丢了
+    //      ⇒ 上层读不到「云端不可用」⇒ 用户看到「请重试」（错方向）。
+    //
+    // ⚠️ 为什么这一处**特别容易**漏掉闸门（根因，值得记住）：
+    //   断网时探活判「**不知道**」⇒ **放行**（那一档放行是**对的**：
+    //   本地会话没过期时，SDK 读它根本不需要联网）⇒ 于是「读会话」这一关
+    //   **顺利通过** ⇒ 看起来闸门生效了 ⇒ **真正需要上限的那一步**
+    //   （核账号）却还是裸的 ⇒ 闸门装在了**错误的位置**。
+    //
+    // ⇒ 现在走 `requireSessionUser()`（先问云端在吗 + 5 秒上限 + 失败带判据）。
+    //   **错误文案与判据逐字不变**（都收口在那个函数里）。
+    const userId = await requireSessionUser();
+    logInfo('已核对账号:', { userId });
 
     // 确保用户ID匹配会话用户ID
-    if (user.id !== sessionData.session.user.id) {
+    // ⚠️ 调和规则**逐字保留**（原来就是拿**第一次**读的会话为准）：
+    //   会话才是「本机登录的是谁」的事实，`getUser()` 返回的那份可能是
+    //   另一个账号的残留 ⇒ 用它去查云端会读到**别人的**行。
+    let settingsUserId = userId;
+    if (userId !== sessionData.session.user.id) {
       logWarn('用户ID与会话用户ID不匹配，使用会话用户ID');
-      user.id = sessionData.session.user.id;
+      settingsUserId = sessionData.session.user.id;
     }
 
     // 下载用户设置
@@ -711,7 +702,7 @@ export const downloadSync = {
     const { data, error } = await supabase
       .from('user_settings')
       .select('*')
-      .eq('user_id', user.id)
+      .eq('user_id', settingsUserId)
       .single();
 
     if (error && error.code !== 'PGRST116') {

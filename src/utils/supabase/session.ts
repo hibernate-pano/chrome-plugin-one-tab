@@ -61,22 +61,68 @@ export async function requireSessionUserId(): Promise<string> {
   }
 
   // ── 2026-10-23（第 52 轮）：**核账号也有上限** ──────────────────────────
-  // 为什么要：读会话那一步有上限（`sessionRead.ts` 的 `SESSION_READ_DEADLINE_MS`），
-  // 但**核账号**这一步原来**没有** ⇒ 弱网时 `getUser()` 会一路拖到 SDK 自带的
-  // 45 秒（`client.ts` 的 `fetchWithTimeout` 超时）⇒ 「核对会话」这一整段
-  // 仍可能拖 45 秒 ⇒ 同步管线的协议上界（30 秒）被打爆，用户只看到「操作超时」。
-  //
-  // ⇒ ① **先问一句「云端在吗」**（与读会话那一层**同一个**闸门函数）：
-  //   明确不可用就**不碰 SDK** ⇒ 不会撞上那阵 25.4 秒的退避风暴
-  //   （`getUser` 走 `_useSession` ⇒ 本地会话过期时它会去刷新 ⇒
-  //     刷新撞上故障 ⇒ 连打 8 次、退避 25.4 秒）。
-  // ⇒ ② 给等待一个**上限**：`SESSION_READ_DEADLINE_MS`（**不另写一个数字**——
-  //   两处各写一份会漂，而漂的方向永远是「某一处忘了加闸门」）。
-  //
-  // ⚠️ 到期限**不是**「没登录」，而是「**核不到**」——
-  //   这一档由抛出的错误表达（普通 Error ⇒ 上层读成「核不到」），
-  //   **不许**被读成「请重新登录」（重登在弱网时必然失败 ⇒ 死循环）。
+  // 「核账号」这一步收口到 `requireSessionUser()`（同一文件下方）：
+  // 它负责「先问云端在吗 + 5 秒上限 + 失败原样带出」三件事。
+  // 为什么要拆出来（而不是就写在这里）：`download.ts` 的两处核账号
+  // 也需要**同样**的三件事 ⇒ 拆出来才能**一处**实现、两处复用。
+  const userId = await requireSessionUser();
+
+  if (userId !== sessionData.session.user.id) {
+    return sessionData.session.user.id;
+  }
+
+  return userId;
+}
+
+/**
+ * 「核账号」的**收口入口**（2026-10-23，第 52 轮补）。
+ *
+ * ── 为什么要有这一层（这是第 52 轮漏掉的那一处的根因）─────────────────
+ * `requireSessionUserId()` 做了三件事：
+ *   ① 先问「云端在吗」（明确不可用 ⇒ **不碰 SDK** ⇒ 用户的会话不会被删）；
+ *   ② 给「核账号」一个**上限**（5 秒 ⇒ 不会卡满 SDK 自带的 45 秒 fetch 超时）；
+ *   ③ 失败**原样带出**（机器码 `deadline_exceeded` / `backend_unavailable` 活着）。
+ *
+ * 而 `download.ts` 的两处核账号（`downloadTabGroups` / `downloadSettings`）
+ * 走的是**裸的** `supabase.auth.getUser()` ⇒ **三件事一件都没有**。
+ *
+ * ⇒ 实测（2026-10-23，断网 + 本地会话未过期）：
+ *   `requireSessionUserId()` **5.0 秒**结束；
+ *   `download.ts` 的裸 `getUser()` **45.0 秒**结束（SDK 自带的 fetch 超时）。
+ * ⇒ 而同步管线的协议上界是 30 秒（`core/mutationProtocol.ts`）
+ * ⇒ **打爆** ⇒ 用户只看到「操作超时」，真实原因却是「联系不上云端」
+ * —— 又一句指错方向的谎。
+ *
+ * ⚠️ 为什么这条路径**特别容易**漏掉闸门（这才是根因）：
+ * 断网时探活判「**不知道**」⇒ **放行**（那一档放行是对的：本地会话没过期时，
+ * SDK 读它根本不需要联网）⇒ 于是「读会话」这一关**顺利通过**
+ * ⇒ 看起来闸门生效了 ⇒ **真正需要上限的那一步**（核账号）却还是裸的。
+ * ⇒ 闸门装在**错误的位置**（装在「读会话」上，而不是装在「核账号」上）。
+ *
+ * ⇒ 这一层把**核账号**单独收口：调用方拿到的仍然是「核到的账号」，
+ * 但**等待有上限**、**失败带着机器判据**。
+ *
+ * ⚠️ **为什么不直接让调用方用 `requireSessionUserId()`**：
+ * 那条路会把「读会话」也重做一遍 ⇒ 两次探活、两次 5 秒上限
+ * ⇒ 总等待不再有界（本仓既有纪律：入口只有一处，不许叠两层闸门）。
+ * ⇒ 而 `download.ts` 的两处**已经有**读会话的结果（`sessionData.session`）
+ * ⇒ 只需要**核账号**这一步 ⇒ 正好是这一层提供的东西。
+ *
+ * ⚠️ **这一层不做「以会话为准」的调和**：
+ * 两个调用点的调和规则**不一样**（`download.ts` 的 `downloadTabGroups`
+ * 拿**第二次**读的会话调和，`downloadSettings` 拿**第一次**读的会话调和）
+ * ⇒ 把调和搬进这一层会把两处的行为**悄悄改成一样** ⇒ 那是行为变更。
+ * ⇒ 调和留在调用点；这里只管「核账号 + 有上限 + 失败带判据」。
+ */
+export async function requireSessionUser(): Promise<string> {
+  // ① 先问一句「云端在吗」（与读会话那一层**同一个**闸门函数）。
+  //    明确不可用就**不碰 SDK** ⇒ 不会撞上那阵 25.4 秒的退避风暴
+  //    （`getUser` 走 `_useSession` ⇒ 本地会话过期时它会去刷新
+  //      ⇒ 刷新撞上故障 ⇒ 连打 8 次、退避 25.4 秒）。
   await requireCloudAvailable('获取用户信息');
+  // ② 给等待一个**上限**：`SESSION_READ_DEADLINE_MS`
+  //    （**不另写一个数字** —— 两处各写一份会漂，
+  //      而漂的方向永远是「某一处忘了加闸门」）。
   const userResult = await withDeadline(
     supabase.auth.getUser(),
     SESSION_READ_DEADLINE_MS,
@@ -87,13 +133,15 @@ export async function requireSessionUserId(): Promise<string> {
     //   （重登在弱网时必然失败 ⇒ 死循环）。
     if (isDeadlineExceeded(err)) throw err;
     // 别的失败 ⇒ 与其它失败**同一形状**（普通 Error）。
-    throw new Error(`获取用户信息失败: ${err instanceof Error ? err.message : String(err)}`);
+    throw new Error(
+      `获取用户信息失败: ${err instanceof Error ? err.message : String(err)}`,
+    );
   });
   const { data: { user }, error: userError } = userResult;
 
   if (userError) {
     // ── 2026-10-22（402）：**这一支才是账号态 402 的真实落点** ────────────
-    // 实测（生产 402）：`/auth/v1/user` 同样返回 402 ⇒ 这一支会失败。
+    // 实测（生产 402）：`/auth/v1/user` 同样返回 402。
     //
     // ⚠️ **但 SDK 看到的不是 402，是 503**（2026-10-23 第 51 轮起的事实，
     //    这里原先写的是「AuthApiError { status: 402 }」——**那是假的**）：
@@ -113,7 +161,10 @@ export async function requireSessionUserId(): Promise<string> {
     // 判据喂**原始**错误（它带 status / http_status），包装后的只剩 message。
     const wrapped = new Error(`获取用户信息失败: ${userError.message}`);
     if (isBackendUnavailable(userError)) {
-      throw new BackendUnavailableError(wrapped.message, readHttpStatus(userError) ?? undefined);
+      throw new BackendUnavailableError(
+        wrapped.message,
+        readHttpStatus(userError) ?? undefined,
+      );
     }
     throw wrapped;
   }
@@ -124,10 +175,6 @@ export async function requireSessionUserId(): Promise<string> {
 
   if (!user.id) {
     throw new Error('用户ID无效');
-  }
-
-  if (user.id !== sessionData.session.user.id) {
-    user.id = sessionData.session.user.id;
   }
 
   return user.id;

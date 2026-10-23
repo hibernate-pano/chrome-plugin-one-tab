@@ -306,18 +306,54 @@ describe('传递链：机器判据一路到 UI 不断层', () => {
       '下载预览失败要用下载方向的人话');
   });
 
-  it('下载侧自己的会话/账号校验保留机器判据（download.ts 有四处）', () => {
+  it('下载侧自己的会话/账号校验保留机器判据（会话两处 + 账号两处）', () => {
     // download.ts 有**自己的一份**会话/账号校验（downloadTabGroups /
     // downloadSettings 各两处），它原先把 402 降级成普通 Error ⇒
     // 上层只看到一句英文 ⇒ 用户看到「请重试」。
+    //
+    // ── 2026-10-23（第 52 轮）：「账号」那两处**搬走了** ────────────────
+    // 原先这里是 4 处 `isBackendUnavailable(`（会话 2 + 账号 2）。
+    // 第 52 轮把「核账号」收口到 `session.ts` 的 `requireSessionUser()`
+    // （弱网时裸调 `getUser()` 会拖满 45 秒 ⇒ 打爆 30 秒协议上界）
+    // ⇒ 账号那 2 处随之搬到了 `session.ts`。
+    //
+    // ⚠️ **判据跟着搬，不跟着「同一个文件里有几处」走**：
+    // 原来这里钉的是「`download.ts` 里 ≥4 处」⇒ 收口（把重复实现合并到
+    // 一处）反而会让它变红 ⇒ **逼着代码不许收口** ⇒ 那是「守卫钉字面量」
+    // 那个坑的第四例（本仓已踩过三次，见 accountScopeReconcile 的头注）。
+    // ⇒ 现在钉的是**性质**：
+    //   · download.ts 自己那两处**读会话**的校验，判据不许丢；
+    //   · 账号那两处在 `session.ts`（收口入口）里，判据也不许丢。
     const dl = read('src/utils/supabase/download.ts');
-    const occurrences = (stripComments(dl).match(/isBackendUnavailable\(/g) ?? []).length;
+    const dlOccurrences = (stripComments(dl).match(/isBackendUnavailable\(/g) ?? []).length;
     assert.ok(
-      occurrences >= 4,
-      `download.ts 的四处会话/账号校验都要保留机器判据（当前 ${occurrences} 处）—— ` +
+      dlOccurrences >= 2,
+      `download.ts 的两处**读会话**校验都要保留机器判据（当前 ${dlOccurrences} 处）—— ` +
         '少了任何一处，那条路上 402 就又变回一句英文'
     );
     assert.match(dl, /new BackendUnavailableError\(/,
+      '必须抛专用错误（带 code），否则上游拿不到判据');
+
+    // 账号那两处（第 52 轮收口后住在 session.ts）—— 判据同样不许丢。
+    //
+    // ⚠️ **判据必须钉「哪一个」错误被判**，不是「文件里有几处」：
+    //   只数「`session.ts` 里有 ≥1 处 `isBackendUnavailable(`」是**假绿** ——
+    //   把**账号**那处拆掉，读会话那处还在，计数照样 ≥1 ⇒ 守卫全绿。
+    //   （这是本条判据自己的第一版写法的漏洞，靠变异自证抓出来的。）
+    // ⇒ 现在分别钉两个**不同的错误变量**：`sessionError`（读会话）
+    //   与 `userError`（核账号）—— 少任何一处，断言立刻红。
+    const session = read('src/utils/supabase/session.ts');
+    assert.match(
+      session,
+      /isBackendUnavailable\(sessionError\)/,
+      'session.ts 的「读会话」那处要判「服务端不可用」（丢了它，402 就变回一句英文）'
+    );
+    assert.match(
+      session,
+      /isBackendUnavailable\(userError\)/,
+      'session.ts 的「核账号」那处要判「服务端不可用」（丢了它，账号态 402 就变回一句英文）'
+    );
+    assert.match(session, /new BackendUnavailableError\(/,
       '必须抛专用错误（带 code），否则上游拿不到判据');
   });
 
