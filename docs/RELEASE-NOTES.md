@@ -10,9 +10,13 @@
 
 ## v1.27.0（2026-10-23，**待提审**）
 
-**提审状态（2026-10-23）**：代码已 push（`main` → `759b4d2`，走 SSH URL），
-tag `v1.27.0` 指向同一个 commit；产物 `chrome-extension.zip`
-（manifest `1.27.0`，内含 `ENCRYPTED_V3_Z` 与增量下载的判据代码 ⇒ 确实来自当前源码）。
+**提审状态（2026-10-24 更新）**：代码已 push（`main` → `4436f1f`，走 SSH URL），
+tag `v1.27.0` 指向**同一个 commit `4436f1f`**（原先指向 `759b4d2`，因第 55 轮
+审计修复合入而**前移**）。
+⚠️ **产物已经过期**：磁盘上的 `chrome-extension.zip`（sha256 `67b46951…`，
+2026-10-23 13:52 打包）**早于本轮全部修复** ⇒ 它的 manifest 版本号对得上，
+但**内容不是当前源码** ⇒ **提审前必须重新打包并重新记 sha256**
+（manifest 对得上 ≠ 产物新鲜）。
 ⚠️ **上传被商店挡下了**：`upload` 回包 **HTTP 200 + `uploadState: FAILURE` +
 `ITEM_NOT_UPDATABLE`**（"The item cannot be updated now because it is in pending review,
 ready to publish, or deleted status"），`publish` 回包 **400**
@@ -53,7 +57,8 @@ bash scripts/cws-wait-publish.sh
 无法自证 ≠ 成功）。守卫是**行为**级的（`tests/guards/cwsPublishStatus.test.ts`：
 把假 curl 放进 PATH，真跑一遍 `publish`，断言退出码与报错）——
 源码文本断言钉不住「exit(1) 是不是被那个条件守着」，变异验证会露馅。
-⚠️ 本条只改发版脚本，**产物 zip 不受影响**（sha256 未变，仍是 `67b46951…`）。
+⚠️ 本条只改发版脚本，**当时那个产物 zip 不受影响**（sha256 未变，仍是 `67b46951…`）；
+但那个 zip **已早于第 55 轮的修复** ⇒ 提审前照样要重打、重记 sha256。
 
 **DS-3（P0）：删除不再可能被另一台设备的离线编辑撤销**（2026-10-24 追加）
 
