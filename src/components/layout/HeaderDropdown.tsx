@@ -1100,47 +1100,59 @@ const authNotice = useAppSelector(state => state.auth.notice ?? null);
           </p>
         </div>
 
-        {/* ── 2026-10-22 审计 L-6：删掉重复的「登录 / 注册」菜单行 ──────────
-           原来这里有一行独立的 MENU_ROW「登录 / 注册」，**和上面状态卡里的
-           内联「去登录」是同一个按钮**（两个条件逐字相同：
-           `needsLogin` ⟺ 云端后端 && 未登录；`!isAuthenticated && !== 'webdav'`
-           ⟺ 云端后端 && 未登录）。
+        {/* ── 2026-10-24：这一行「登录 / 注册」回到菜单（v1.25.1 的增）──────
+           1.26.0（审计 L-6）把它删了，理由是「它和状态卡里内联的『去登录』
+           是同一个按钮」⇒ 两个同义入口让菜单看起来像没设计完。
+           那是**菜单项的增删**（长相），不是功能 ⇒ 随 v1.25.1 一起退回来。
 
-           一个菜单里两个同义入口 ⇒ 用户会以为它们不一样，也让菜单看起来
-           像没设计完。保留**内联**那个：它紧挨着「TapStack 云端 · 未登录」
-           这一行状态，因果关系一目了然；而且它与 WebDAV 的「去设置」内联
-           入口是同一套语言（状态卡 → 就地给下一步），对称。
+           ⚠️ 状态卡里内联的「去登录」**保留**（不删）：
+             · 它是登录态诚实度的一环（紧挨着「TapStack 云端 · 未登录」那一行），
+               也是引导第 4 步 / 同步预览指向的那个入口（MENU_LOGIN_LABEL）；
+             · 守卫 tests/guards/onboardingCopyHonesty.test.ts 与
+               tests/guards/uiTruthfulnessC.test.ts 钉的就是它。
+           两处并存 = v1.25.1 本来的样子（那一版也同时有内联「去登录」
+           和这一行「登录 / 注册」）。
 
-           ⚠️ 被删掉的是**唯一**带图标的登录入口。删除后必须确认：
-             · 云端未登录 → 状态卡内联「去登录」在（needsLogin 为真）；
-             · WebDAV 用户 → 这行本来就不渲染（条件含 !== 'webdav'），
-               且 WebDAV 不需要 TapStack 账号；
-             · 已登录 → 这行本来也不渲染。
-           三种情形都由 needsLogin 覆盖 —— 行为面（自带存储看不到登录入口）
-           由 tests/syncStatusHonesty.test.ts 的四组合用例保证：
-           `webdavAnon.needsLogin === false` / `cloudAnon.needsLogin === true`。
-
-           ⚠️ 2026-10-23：此处原先指向一个**并不存在**的守卫文件（它从未
-           被创建过，全仓只有那一处提到它）。照着注释去找守卫的人会扑空
-           ⇒ 改成指向真正守着这个不变量的文件（上面那一个）。
-           守卫还会盯住「src/ 下不再出现指向不存在测试文件的注释」。 */}
+           ⚠️ 带图标的登录入口当年只有一个 ⇒ 恢复这一行之后，
+           WebDAV 用户必须**看不到**它（他们不需要 TapStack 账号）。
+           条件与 v1.25.1 逐字相同：云端后端 && 未登录。 */}
+        {!isAuthenticated && settings.syncBackend !== 'webdav' && (
+          <button role="menuitem"
+            onClick={() => {
+              onClose();
+              onOpenAuth('login');
+            }}
+            className={MENU_ROW}
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 mr-2 theme-text-muted" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M11 16l-4-4m0 0l4-4m-4 4h14m-5 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h7a3 3 0 013 3v1" />
+            </svg>
+            登录 / 注册
+          </button>
+        )}
 
         <div className="border-t theme-border-default my-1.5"></div>
 
         {/* ── 布局切换 / 清理重复标签（2026-10-14 起是「窄屏补偿入口」，
-            2026-10-22 审计 U-20 后成为**全宽度**入口）────────────────────
+            2026-10-24 回到 v1.25.1 的排布：仍是**窄屏补偿**）──────────────
             背景：390px 实测顶栏塞不下「布局切换 + 清理重复 + 主题 + 同步 + 保存 + 菜单」，
             搜索框被压到 0 宽而整框消失（见 global.css 的 F-1 注释）。
             当时 Header 把这两个低频操作在**窄屏**收进本菜单、sm 以上用顶栏按钮。
 
-            但那个实现的逻辑是反的：顶栏按钮写的是 `hidden sm:block`
-            ⇒ 它们**只在 ≥640px 出现**，而那正是宽度最紧的时候
-            （1280 实测操作区 434px 已比搜索框 428px 还宽）。
-            注释说「顶栏宽度优先给搜索」，实现却是「顶栏宽度优先给两个低频按钮」。
+            ── 2026-10-24 的变化 ────────────────────────────────────────────
+            1.26.0（审计 U-20）把这两颗从顶栏收进菜单、让它们**所有宽度都可见**，
+            顶栏因此少了两颗按钮、搜索框变宽。那是**长相**（排布）⇒ 退。
 
-            现在：顶栏不再有这两颗按钮，菜单里的入口**所有宽度都可见** ——
-            顶栏释放 72px 给搜索框，功能一条不少，且破坏性动作不再随手可点。 */}
-        <div>
+            现在（= v1.25.1）：
+              · 顶栏有这两颗图标按钮（sm 以上显示，见 Header.tsx）；
+              · 这里保留同名入口，对 sm+ 隐藏（`sm:hidden`）——
+                sm 以上顶栏已经有了，菜单里不必重复；sm 以下顶栏藏起来了，
+                这里就是它们的**唯一**去处。
+            ⇒ 两个入口任何宽度都摸得到，功能一条不少。
+
+            ⚠️ 窄屏下这两个入口**必须看得见**（不许 `hidden sm:block`）：
+               那是「窄屏少个功能」的老毛病。 */}
+        <div className="sm:hidden">
           <button role="menuitem"
             onClick={() => {
               onToggleLayout?.();
@@ -1163,7 +1175,8 @@ const authNotice = useAppSelector(state => state.auth.notice ?? null);
               onClose();
             }}
             // 清理进行中禁点：同一个破坏性动作不能跑两遍。
-            // 入口从顶栏搬进菜单后，这道防线也得跟着搬（审计 U-20 之后的接线）。
+            // 这一行与顶栏那颗共用同一个标志（Header.tsx 传进来），
+            // 两处同时禁点 —— 窄屏下顶栏那颗是藏起来的，靠这一行。
             disabled={isCleaningDuplicates}
             aria-busy={isCleaningDuplicates}
             className={MENU_ROW + ' disabled:opacity-60 disabled:cursor-not-allowed'}

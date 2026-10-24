@@ -1,39 +1,26 @@
 // 顶栏的「视觉预算」必须给「找回」，不给低频按钮（2026-10-22 审计 U-20）。
 //
-// ── 缺陷 ────────────────────────────────────────────────────────────────
+// ── 2026-10-24：判据已改成 v1.25.1 的口径 ─────────────────────────────────
 //
-// 顶栏是三段栅格 `auto | minmax(0, 1fr) | auto`：左边品牌、中间搜索框、右边操作区。
-// 操作区是 `flex-shrink: 0`，中间那一列的轨道下限是 **0** ⇒
-// **操作区永远赢，搜索框永远是输家**。
+// 2026-10-24 产品负责人要求「界面与交互回到 v1.25.1 的样子」⇒ 本守卫原先钉的
+// 那条设计约定（低频入口**不许**回顶栏）**不再成立**。
+// **退掉它的是产品决定，不是偷懒。**
 //
-// 1280px 实测：操作区 434px，搜索框 428px —— 「找回」这个核心入口
-// 比「存档 + 同步 + 换肤」的总和还窄一点点。再加一颗按钮，搜索框就开始被压；
-// 而这条防线历史上真的塌过一次（700px 视口下搜索框实测 **0 宽**，
-// 整框消失且没有任何报错，见 global.css 的 F-1 注释）。
+// 退掉的是哪条：原 ①② 断言「顶栏不得再出现布局切换 / 清理重复这两颗按钮」，
+// 原 ④ 断言「菜单里的这两个入口不许被 `sm:hidden` 藏起来」。
+// 这三条钉的都是**长相**（按钮在不在顶栏、菜单项在什么宽度出现），
+// 而 v1.25.1 的顶栏恰恰**有**那两颗图标按钮（空框 / 垃圾桶），
+// 菜单里的同名入口也恰恰是 `sm:hidden` 的**窄屏补偿**。
 //
-// ── 错在哪 ──────────────────────────────────────────────────────────────
+// 留下来的不变式（**一条都不许退**）：
+//   · 这两个入口在**顶栏**有（sm 以上可见）—— v1.25.1 的排布；
+//   · 这两个入口在**菜单**里也有（窄屏补偿）—— 功能一条不许少，
+//     窄屏顶栏上是没有这两颗按钮的（`hidden sm:block`）；
+//   · 窄屏补偿必须是 `sm:hidden`（窄屏看得见），不许写成 `hidden sm:block`
+//     （那会让这两个入口在窄屏**消失** = 「窄屏少个功能」的老毛病）。
 //
-// Header 里原本有「切换布局」和「清理重复标签」两颗图标按钮，注释写着
-// 「顶栏宽度优先给搜索，布局切换是低频偏好设置，不值得占掉信息获取入口的位置」——
-// 但它们的类名是 `hidden sm:block`：**只在 ≥640px 出现**，而那正是宽度最紧的时候。
-// 也就是说，注释声明的优先级与实现的行为正好相反。
-//
-// ── 修法 ────────────────────────────────────────────────────────────────
-//
-// 两件事都收进 ⋯ 菜单（菜单里本来就有这两个入口，原来只在窄屏显示）：
-//   · 「切换布局」是低频的**视图偏好**，本就不该占顶栏黄金位；
-//   · 「清理重复标签」是**破坏性**动作且要弹确认，藏在菜单里误触成本更低。
-// 顶栏因此释放 72px，全部给搜索框；功能一条不少。
-//
-// ── 这份文件钉什么 ──────────────────────────────────────────────────────
-//
-// 钉的是**不变量**，不是「按钮长什么样」：
-//   ① 这两个低频入口在 Header.tsx 里不得再是可点击元素（不许回流到顶栏）；
-//   ② 菜单必须始终提供这两个入口（不许因为挪位置而丢功能）；
-//   ③ 菜单里的这两个入口必须在**所有宽度**可见（不许再被 `sm:hidden` 藏起来）。
-//
-// 特别注意 ③：它钉的是「窄屏补偿」这个**曾经的反模式**不许回来 ——
-// 当年就是因为 `sm:hidden` 让这两个入口只在窄屏出现，才导致宽屏反而没地方放。
+// 换句话说：本文件钉的是「**任何宽度下这两个动作都摸得到，且顶栏的长相
+// 与 v1.25.1 一致**」，而不是「它们不许在顶栏」。
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -50,30 +37,52 @@ const stripComments = (src: string) =>
 const HEADER = stripComments(read('src/components/layout/Header.tsx'));
 const DROPDOWN = stripComments(read('src/components/layout/HeaderDropdown.tsx'));
 
-describe('顶栏动作预算：低频入口不进顶栏，但不许消失', () => {
-  it('①「切换布局」不得再是顶栏里的可点击元素', () => {
-    assert.doesNotMatch(
-      HEADER,
-      /onClick=\{handleToggleLayout\}/,
-      '「切换布局」已移进 ⋯ 菜单 —— 它若回流到顶栏，操作区就会重新挤压搜索框'
-    );
-    assert.doesNotMatch(
+/**
+ * 某个元素**直接所在**的 <div> 的 className。
+ *
+ * 怎么找：从元素位置往上回溯，取**最近的一个开标签**；中途不许出现闭合标签
+ * （出现了就说明中间隔着别的容器，那不是「直接所在」）。
+ * ⇒ 钉的是「按钮被包在哪个容器里」，不是「文件里某处出现过某个类名」。
+ */
+function containerClassBefore(src: string, at: number): string {
+  const region = src.slice(0, at);
+  const open = region.lastIndexOf('<div className="');
+  const close = region.lastIndexOf('</div>');
+  assert.ok(open > close, '找不到该元素直接所在的 <div> 容器');
+  // 开标签是 `<div className="`（16 个字符），内容从第 17 个字符开始。
+  const end = region.indexOf('"', open + 16);
+  assert.ok(end > open, '找不到该 <div> 的 className 结束引号');
+  return region.slice(open + 16, end);
+}
+
+describe('顶栏动作预算：低频入口在顶栏（v1.25.1 的排布），且不许在任何宽度消失', () => {
+  it('①「切换布局」在顶栏有图标按钮（sm 以上可见）', () => {
+    const at = HEADER.indexOf('onClick={handleToggleLayout}');
+    assert.ok(at > -1, '顶栏必须有「切换布局」按钮 —— v1.25.1 的顶栏就是四颗图标按钮');
+    assert.match(
       HEADER,
       /切换为双栏布局|切换为单栏布局/,
-      '顶栏不得再出现布局切换按钮的可访问名'
+      '顶栏的布局切换按钮必须有无障碍名（读屏要能念出它做什么）'
+    );
+    assert.equal(
+      containerClassBefore(HEADER, at),
+      'hidden sm:block',
+      '顶栏这两颗按钮只在 sm 以上出现（窄屏由 ⋯ 菜单提供）'
     );
   });
 
-  it('②「清理重复标签」不得再是顶栏里的可点击元素', () => {
-    assert.doesNotMatch(
-      HEADER,
-      /onClick=\{handleCleanDuplicateTabs\}/,
-      '「清理重复标签」是破坏性动作，已移进 ⋯ 菜单'
-    );
-    assert.doesNotMatch(
+  it('②「清理重复标签」在顶栏有图标按钮（sm 以上可见）', () => {
+    const at = HEADER.indexOf('onClick={handleCleanDuplicateTabs}');
+    assert.ok(at > -1, '顶栏必须有「清理重复标签」按钮 —— v1.25.1 的顶栏就是四颗图标按钮');
+    assert.match(
       HEADER,
       /aria-label="清理重复标签页"/,
-      '顶栏不得再出现清理重复按钮的可访问名'
+      '顶栏的清理按钮必须有无障碍名'
+    );
+    assert.equal(
+      containerClassBefore(HEADER, at),
+      'hidden sm:block',
+      '顶栏这两颗按钮只在 sm 以上出现（窄屏由 ⋯ 菜单提供）'
     );
   });
 
@@ -90,18 +99,18 @@ describe('顶栏动作预算：低频入口不进顶栏，但不许消失', () =
     );
   });
 
-  it('④ 菜单里的这两个入口在所有宽度都可见（不许再被 sm:hidden 藏起来）', () => {
-    // 这条钉的是当年那个反模式：`sm:hidden` 让入口只在窄屏出现，
-    // 于是宽屏反而没地方放，只能把按钮塞回顶栏 —— 循环回原点。
-    const anchor = DROPDOWN.indexOf('切换为双栏布局');
-    assert.ok(anchor > -1, '菜单里必须能找到布局切换入口的文案');
-
-    // 从这段入口往上回溯 1200 字符，找它所在容器的开标签
-    const region = DROPDOWN.slice(Math.max(0, anchor - 1200), anchor);
-    assert.doesNotMatch(
-      region,
-      /sm:hidden/,
-      '这两个入口所在容器不得带 sm:hidden —— 它们必须在所有宽度都可见'
-    );
+  it('④ 菜单里的这两个入口是**窄屏补偿**：窄屏看得见，宽屏不与顶栏重复', () => {
+    // 这条钉的是「窄屏少个功能」这个老毛病的反面：
+    // 补偿入口必须 `sm:hidden`（窄屏可见），**不许** `hidden sm:block`
+    // （那正是当年让这两个入口在窄屏凭空消失的写法）。
+    for (const anchor of ['切换为双栏布局', '清理重复标签']) {
+      const at = DROPDOWN.indexOf(anchor);
+      assert.ok(at > -1, `菜单里必须能找到「${anchor}」入口`);
+      assert.equal(
+        containerClassBefore(DROPDOWN, at),
+        'sm:hidden',
+        `「${anchor}」是窄屏补偿：sm 以下可见（sm 以上顶栏已经有那颗按钮了）`
+      );
+    }
   });
 });

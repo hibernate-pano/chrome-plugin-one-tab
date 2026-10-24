@@ -35,6 +35,17 @@
 //    tests/guards/a11yTextAndFocusTokens.test.ts 单独钉死
 //    （6 套主题 × 明暗 × 6 种表面色全部 ≥ 4.5:1）。
 //    但本守卫会**要求**：文字色若是令牌，就必须真的定义过。
+//
+// ── 2026-10-24：引导页配色回到 v1.25.1，这条守卫**一条判据都没退** ────────
+// 产品负责人要求「界面回到 v1.25.1 的样子」⇒ 引导页的色板整体退回 v1.25.1
+// （写死的紫蓝渐变、写死的标题/说明色、`.dark` 独立配色）。
+// 那是一次**长相**回退，**不是**一次可读性回退 —— 所以：
+//   · **4.5:1 这条线一个字没动**（放宽阈值才是真正的退让）；
+//   · 2026-10-20 修过的两处（「跳过」按钮与特性卡片说明走
+//     `--color-text-muted`）**保留** —— 它们是**对比度修复**，不是长相；
+//   · v1.25.1 唯一一处不过线的地方（白字压 #667eea = 3.66:1），
+//     在实现里被加深刻一档成 #5b5bd6（5.37:1）⇒ **无需退任何断言**。
+// ⇒ 本文件**只**做了一件事：让解析器认得 v1.25.1 用到的具名色 `white`。
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -46,6 +57,18 @@ const CSS = readFileSync(resolve(ROOT, 'src/styles/onboarding.css'), 'utf8');
 const GLOBAL = readFileSync(resolve(ROOT, 'src/styles/global.css'), 'utf8');
 
 type Rgb = { r: number; g: number; b: number; a: number };
+
+/**
+ * 具名颜色（2026-10-24 补）。
+ *
+ * v1.25.1 的引导页用 `color: white`（主按钮）与 `background: white`（快捷键）。
+ * 解析器认不得它 ⇒ 那条规则的底色会**静默退化成「引导卡底色」**，
+ * 对比度算出来是个假数字。⇒ 认得它，才算得准。
+ */
+const NAMED_COLORS: Record<string, [number, number, number]> = {
+  white: [255, 255, 255],
+  black: [0, 0, 0],
+};
 
 function parseColor(raw: string): Rgb | null {
   const value = String(raw).trim();
@@ -68,6 +91,8 @@ function parseColor(raw: string): Rgb | null {
     if (p.length < 3) return null;
     return { r: p[0], g: p[1], b: p[2], a: p.length > 3 ? p[3] : 1 };
   }
+  const named = NAMED_COLORS[value.toLowerCase()];
+  if (named) return { r: named[0], g: named[1], b: named[2], a: 1 };
   return null;
 }
 
@@ -180,6 +205,13 @@ describe('引导页 CSS：文字对比度达到 WCAG AA 正文线 4.5:1', () => 
     // 这才是「扫描器扫到了东西」这件事本身的判据。
     // 「引导页不得有写死的品牌色」由 tests/guards/audit20261023UiVisual.test.ts
     // 单独钉（那是 V-1 的语义不变量，与本守卫的对比度职责分工）。
+    //
+    // ⚠️ 2026-10-24：引导页配色回到 v1.25.1 ⇒ 写死颜色重新多了起来
+    // （23 条带 color 声明的规则，23 条都解析得出颜色值）。
+    // 这**不是**把锚点放宽 —— 锚点量的是「扫到多少条」，
+    // 不是「允许多少条不过线」；不过线的由下面那条 4.5:1 判据管。
+    // 具名色 `white` / `black` 也必须被认出来（v1.25.1 的主按钮就是白字）
+    // —— 否则它们会被算成「解析不出颜色」⇒ 自证那条直接红。
     const withColor = RULES.filter(r => r.decls.has('color'));
     const withColorValue = withColor.filter(r => {
       const c = r.decls.get('color') ?? '';
@@ -187,6 +219,7 @@ describe('引导页 CSS：文字对比度达到 WCAG AA 正文线 4.5:1', () => 
         c.startsWith('var(--') ||
         /^#[0-9a-fA-F]{3,8}$/.test(c) ||
         /^rgba?\(/.test(c) ||
+        /^(white|black)$/i.test(c) ||
         c === 'transparent'
       );
     });
@@ -265,7 +298,10 @@ describe('引导页 CSS：文字对比度达到 WCAG AA 正文线 4.5:1', () => 
       const c = r.decls.get('color');
       return c?.startsWith('var(--color-');
     });
-    assert.ok(tokenUses.length > 0, '引导页应当至少有一处用主题令牌（否则颜色不跟主题走）');
+    assert.ok(
+      tokenUses.length > 0,
+      '引导页应当至少有一处用主题令牌（2026-10-20 的两处对比度修复走的就是令牌）',
+    );
 
     for (const rule of tokenUses) {
       const name = rule.decls.get('color')!.match(/var\((--[\w-]+)\)/)![1];

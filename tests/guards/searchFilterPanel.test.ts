@@ -1,5 +1,30 @@
 // 筛选面板的四条不变量 —— 2026-10-22 审计 U-07 / U-08 / U-09 / U-22 的守卫。
 //
+// ══════════════════════════════════════════════════════════════════════════
+// 2026-10-24 · 界面回退到 v1.25.1：下面三条「视觉审计」的判据被退掉了
+// ══════════════════════════════════════════════════════════════════════════
+//
+// 2026-10-24 产品负责人要求界面回到 v1.25.1 ⇒ 本守卫钉的那条设计约定
+// 不再成立。退掉它的是**产品决定**，不是偷懒。
+//
+// 具体退掉的是 **U-08 / U-09 那批「chip 行」的设计约定**（1.26.0 把面板从
+// 「四个字段的栅格」换成了「一条 chip 行 + 点开才展开的那一个编辑框」）：
+//
+//   · 原「chip 行的布局不得随『固定标签页』开关变化」
+//     ⇒ 改成 v1.25.1 的口径：**面板容器**的栅格列数是写死的（开关只决定
+//       「多一格内容」而不是「多一列」），所以开关一变，整行不重排。
+//   · 原「不得用固定列数的栅格」
+//     ⇒ 改成 v1.25.1 的口径：栅格列数**静态**（不许按开关算出来）。
+//   · 原「维度 chip 必须是真 button 且带展开状态」
+//     ⇒ 改成 v1.25.1 的口径：四个筛选字段**同时可见**，每个字段都带
+//       `<label for>`（原生控件，键盘可达）。
+//
+// **没有退掉的**（它们钉的是诚实度 / 可达性 / 功能，与长相无关）：
+//   · U-07 面板不得用写死的颜色（「显示筛选」必须走主题强调色）；
+//   · U-22 控件与标签的字号下限；
+//   · 「生效中的条件必须渲染成 chip」（看不见但条件在生效 = 说谎）；
+//   · 排序控件的可见性、落盘与失败回滚。
+//
 // ── 这个文件守的是什么 ────────────────────────────────────────────────────
 //
 // 面板（`src/components/search/SearchFilterPanel.tsx`）是筛选区唯一的渲染点。
@@ -281,40 +306,40 @@ describe('U-07 · 筛选面板不得用写死的颜色', () => {
 // ─────────────────────────────────────────────────────────────────────────
 
 describe('U-08 / U-09 · 面板的布局与生效条件', () => {
-  it('chip 行的布局不得随「固定标签页」开关变化', async () => {
-    // 【为什么这条要存在】修复前面板是 `grid-cols-1 sm:grid-cols-2 lg:grid-cols-4`，
-    // 而「固定标签页」那一列是条件渲染的 ⇒ 关掉那个设置，列数从 4 变 3，
-    // 整行重排、输入框宽度也变 —— 布局在用户眼皮底下抖。
+  it('面板容器的布局不得随「固定标签页」开关变化（v1.25.1 口径）', async () => {
+    // 【为什么这条要存在】「列数」如果由开关算出来（`grid-cols-${n}`），那么
+    // 改开关 = 改布局 = 用户眼里的抖动（1.26.0 的 chip 行方案就是为了消掉
+    // 这一点，2026-10-24 界面回退到 v1.25.1 后它已经退掉了）。
     //
-    // 【怎么判】渲染两次（开关开 / 关），取 chip 行那一格的 class 比对：
-    // 布局容器必须**完全一样**。
+    // 【v1.25.1 的口径】面板是「一排字段」：容器是**静态**的栅格
+    // （`grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4`），「固定标签页」
+    // 那一格是**条件渲染**的 ⇒ 开关只决定「有没有这一格的内容」，
+    // 容器本身（列数、间距）**一个字都不变** ⇒ 开关一变，整行不重排。
+    //
+    // 【怎么判】渲染两次（开关开 / 关），取**容器**那一格的 class 比对：
+    // 必须完全一样。
     const withPinned = await renderFilterSection({ showFilters: true }, true);
     const withoutPinned = await renderFilterSection({ showFilters: true }, false);
 
-    const rowClass = (html: string): string => {
-      const tag = html.match(/<div[^>]*data-testid="search-filter-chip-row"[^>]*>/);
-      assert.ok(tag, '面板里必须有一行 chip（data-testid 锚点不见了）');
-      const cls = tag[0].match(/class="([^"]*)"/);
-      return cls ? cls[1] : '';
+    const gridClass = (html: string): string => {
+      const tag = html.match(/<div[^>]*class="([^"]*\bgrid-cols-[^"]*)"/);
+      assert.ok(tag, '面板里必须有一块字段栅格（找不到 grid-cols-* 的容器）');
+      return tag[1];
     };
 
     assert.equal(
-      rowClass(withPinned),
-      rowClass(withoutPinned),
-      'chip 行的布局类必须与「固定标签页」开关无关'
-    );
-    assert.ok(
-      rowClass(withPinned).includes('flex-wrap'),
-      `维度行必须是流式换行的（flex-wrap），实测：${rowClass(withPinned)}`
+      gridClass(withPinned),
+      gridClass(withoutPinned),
+      '面板容器的栅格布局类必须与「固定标签页」开关无关（开关只决定多一格内容）'
     );
   });
 
-  it('布局类名不得是条件表达式，也不得用固定列数的栅格', () => {
-    // 【为什么这条要存在】「列数」如果由开关算出来（`grid-cols-${n}`），那么
-    // 改开关 = 改布局 = 用户眼里的抖动；固定列数的栅格在 3 个维度时还会留
-    // 一格空白（U-09 说的「第 4 格空着」）。
-    const anchor = PANEL_SOURCE.indexOf('data-testid="search-filter-chip-row"');
-    assert.ok(anchor > -1, '源码里找不到 chip 行的锚点');
+  it('栅格列数必须是**静态**的（不许按开关算出来）', () => {
+    // 【为什么这条要存在】列数一旦由开关算出来（`grid-cols-${n}`），
+    // 改开关 = 改布局 = 用户眼里的抖动。
+    // 判据钉的是「静态」这件事，不是「不许用栅格」（v1.25.1 就是栅格）。
+    const anchor = PANEL_SOURCE.indexOf('grid grid-cols-');
+    assert.ok(anchor > -1, '源码里找不到面板的字段栅格');
     const tagStart = PANEL_SOURCE.lastIndexOf('<div', anchor);
     const tagEnd = PANEL_SOURCE.indexOf('>', anchor);
     const openTag = PANEL_SOURCE.slice(tagStart, tagEnd + 1);
@@ -322,15 +347,15 @@ describe('U-08 / U-09 · 面板的布局与生效条件', () => {
     const classMatch = openTag.match(/className="([^"]*)"/);
     assert.ok(
       classMatch,
-      `chip 行的 className 必须是静态字符串（不得是模板表达式）：${openTag}`
+      `栅格容器的 className 必须是静态字符串（不得是模板表达式）：${openTag}`
     );
     assert.ok(
       !classMatch[1].includes('${') && !classMatch[1].includes('?'),
-      `chip 行的布局类名不得含条件表达式：${classMatch[1]}`
+      `栅格容器的布局类名不得含条件表达式：${classMatch[1]}`
     );
     assert.ok(
-      !/grid-cols-/.test(PANEL_SOURCE),
-      '面板不得用按固定列数排布的栅格（维度行是流式的；固定列数 ⇒ 开关一变就重排）'
+      /lg:grid-cols-\d/.test(classMatch[1]),
+      `面板必须有一块固定列数的字段栅格（实测：${classMatch[1]}）`
     );
   });
 
@@ -430,21 +455,29 @@ describe('U-08 / U-09 · 面板的布局与生效条件', () => {
     );
   });
 
-  it('维度 chip 必须是真 button（键盘可达）且带展开状态', async () => {
-    // 【为什么这条要存在】chip 用 div 也能「点开」，但 div 不可聚焦 ⇒ 键盘
-    // 用户走不到筛选器。chip 必须是 `<button>`，并带 `aria-expanded`
-    // （读屏用户才知道它现在是展开还是收起）。
+  it('四个筛选字段必须**同时可见**且各自带 <label for>（v1.25.1 口径：一次看完）', async () => {
+    // 【为什么这条要存在】1.26.0 的 chip 行把「四个字段」换成「一行 chip +
+    // 点开才展开的那一个编辑框」—— 那是 2026-10-24 界面回退要退掉的**长相**。
+    //
+    // 【v1.25.1 的口径】面板一打开，四个字段（固定标签页 / 域名 / 会话名称 /
+    // 保存时间）**同时可见**，标签在上、控件在下；每个字段都有
+    // `<label for>` 指着它 ⇒ 原生控件，键盘可达（Tab 能走到、标签可点）。
+    //
+    // 【怎么判】渲染一次展开态，逐个维度断言：控件在 DOM 里 + label 在。
+    const { FILTER_IDS } = await import('@/components/search/SearchFilterPanel');
     const html = await renderFilterSection({ showFilters: true }, true);
-    const chips = html.match(/<button[^>]*aria-expanded="[^"]*"[^>]*>/g) ?? [];
-    assert.ok(chips.length >= 3, `每个维度都要有一个 chip 按钮，实测 ${chips.length} 个`);
-    for (const chip of chips) {
-      assert.ok(
-        /type="button"/.test(chip),
-        `chip 必须是 type="button" 的真按钮（不提交表单、可聚焦）：${chip}`
+
+    for (const dimension of ['pinned', 'domain', 'groupName', 'savedWithin'] as const) {
+      const id = FILTER_IDS[dimension];
+      assert.match(
+        html,
+        new RegExp(`<(input|select)[^>]*id="${id}"`),
+        `${dimension} 的控件必须在面板展开时**同时可见**（不许要点开才出现）`
       );
-      assert.ok(
-        /aria-controls="search-filter-[^"]+"/.test(chip),
-        `chip 必须用 aria-controls 指向它控制的编辑区：${chip}`
+      assert.match(
+        html,
+        new RegExp(`<label[^>]*for="${id}"`),
+        `${dimension} 必须有 <label for>（读屏与点击标签都要靠它）`
       );
     }
   });

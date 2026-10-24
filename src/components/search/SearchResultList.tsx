@@ -991,6 +991,21 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({
       <div className="flex-1 min-w-0 flex items-center gap-3">
         <a
           href="#"
+          /* ── 2026-10-24 界面回退到 v1.25.1：域名回到行尾（右对齐）──────
+           *
+           * 1.26.0 的 U-05 把标题的 flex 从 `flex-1` 改成 `flex: 0 1 auto`
+           * ⇒ 域名从行尾挪到了标题后面。**那是长相，不是功能** ⇒ 按产品负责人
+           * 2026-10-24 的要求，搜索结果行回到 v1.25.1 的样子：域名在行尾。
+           *
+           * ⚠️ 这条取值**只由共享规则一处给出**：`src/styles/global.css` 的
+           * `.tab-item-title { @apply flex-1 truncate text-sm; }`。
+           * `.tab-item-title` 是**共享类** —— 卡片里的标签行与搜索结果行共用它
+           * ⇒ 标题吃满整行、域名被推到行尾这件事，两边由**同一条规则**决定。
+           *
+           * 【为什么不在这里再写一遍 `flex-1`】写两遍就会出现**两个事实源**：
+           * 哪天共享规则被改回 U-05（域名紧跟标题），这一处的工具类会压住它
+           * ⇒ **卡片行与搜索结果行长得不一样**（一个域名在行尾、一个在标题后）。
+           * 那比「两行一致地换一种排布」更糟 ⇒ 单一事实源，值只在 CSS 那一处。 */
           className="tab-item-title tab-item-title-hover transition-colors flex items-center gap-1"
           onClick={event => {
             event.preventDefault();

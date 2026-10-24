@@ -30,15 +30,13 @@ export const TabCounter: React.FC = () => {
             color: 'var(--color-text-secondary)'
           }}
         >
-          {/* ── 2026-10-23 审计 H-10：同一个实体不许有三种叫法 ────────────
-           * 「会话里的一条 URL」在本仓曾有三种叫法：标签页（保存提示、
-           * aria-label）/ 标签（本计数器、卡头徽章）/ 标签记录（删除确认）。
-           * 同一个东西三个名字 ⇒ 用户在三个界面看到三个词，会以为是三样东西。
-           * ⇒ 统一成「标签页」（与 `saveActionCopy` / `saveFeedbackCopy`
-           *   / TabGroup 的 aria-label 同源）。
-           * 注意「会话数」那一颗**不归这个开关管**（开关只管标签数），
-           * 它的文案本来就是「N 会话」，与「标签页」不冲突。 */}
-          <strong>{tabCount}</strong> 个标签页
+          {/* ── 2026-10-24：回到 v1.25.1 的短形式「N 标签」 ────────────────
+           * 顶栏是**紧凑位置**：药丸只有一颗「N 会话」那么宽，1.27.0 的
+           * 「N 个标签页」把这枚药丸撑长了（实拍对比里可见）。
+           * ⇒ 紧凑位置用短形式「标签」，句子里用全名「N 个标签页」
+           *   （保存提示 / 删除确认 / aria-label 那几处不变）。
+           * 守卫：tests/guards/onboardingCopyHonesty.test.ts 的 H-10 段。 */}
+          <strong>{tabCount}</strong> 标签
         </span>
       )}
     </div>

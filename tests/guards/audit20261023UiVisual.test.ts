@@ -1,13 +1,24 @@
 // 第 43 轮 · 视觉与可访问性守卫（2026-10-23 审计 V-1 / V-2 / V-3 / V-4 /
 // V-5 / V-7 / V-8 / V-9 / V-10 / V-11 / V-12 / V-13 / V-14 / V-15 / V-16）。
 //
+// ── 2026-10-24：引导页配色回到 v1.25.1（产品负责人的决定）──────────────
+// 这一轮只动 **V-1 那一节**（引导页配色），其余各节（V-2 … V-16）一条没动。
+// V-1 的判据从「引导页必须跟主题」改成「引导页的色板就是 v1.25.1 那套」，
+// 但**安全判据只变严、没变松**（A4：白字压主按钮底必须 ≥ 4.5:1）。
+// ⇒ 退掉的是**长相**，不是安全。详见 V-1 那节开头的完整说明。
+//
 // ═══════════════════════════════════════════════════════════════════════════
 // 【这个文件要防的回归类别】
 //
-// A. **界面不跟主题**（V-1 / V-3 / V-7 / V-10 / V-11）
-//    引导页整页写死紫蓝渐变、⋯ 菜单内容全是固定灰阶与固定品牌蓝、Toast 弹出
+// A. **界面不跟主题**（V-3 / V-7 / V-10 / V-11）
+//    ⋯ 菜单内容全是固定灰阶与固定品牌蓝、Toast 弹出
 //    冷白卡片、提示条永远是冷灰底、主题选择环只有 1.87:1。
 //    ⇒ 六套主题换过去，**这些表面一像素都不变**。
+//
+//    ⚠️ V-1（引导页）**已不在这一类里**：2026-10-24 产品负责人要求
+//    「界面回到 v1.25.1 的样子」⇒ 引导页的写死配色是**产品决定**，不是缺陷。
+//    V-1 现在钉的是「引导页的色板就是 v1.25.1 那套」+「白字压主按钮底
+//    ≥ 4.5:1」（该节开头有完整的判据变更说明）。
 //
 // B. **焦点环被写死成品牌蓝**（V-2）
 //    组件里写 `focus-visible:outline-primary-600` 之类 ⇒ 环不跟主题；深色
@@ -35,7 +46,9 @@
 // 本文件**不**写「onboarding.css 里必须出现 #667eea 的反面」这种断言 ——
 // 改一次措辞就红，而且它只能防住那一个具体写法。
 // 它钉的是**语义不变量**：
-//   · 「引导页的样式里不得有写死的品牌色（遮罩除外）」
+//   · 「引导页的色板就是 v1.25.1 那套，且白字压主按钮底 ≥ 4.5:1」
+//     （V-1 —— 2026-10-24 产品决定：引导页的写死配色**是产品决定**；
+//      A1/A2 钉长相、A3 钉深色态成套、A4 钉安全）
 //   · 「每一套主题都必须声明自己的 :focus-visible」
 //   · 「组件里不得出现写死颜色的焦点环工具类」
 //   · 「⋯ 菜单里不得出现固定灰阶 / 固定品牌蓝的类名」
@@ -47,8 +60,9 @@
 // 还原，全程没有 git stash / git checkout）。
 //
 //   编号  改坏了什么                              变红的断言数
-//   M1    onboarding 主按钮改回写死渐变            3
-//        （#667eea→#764ba2 + color: white）
+//   M1    onboarding 主按钮首色改回 #667eea         3
+//        （A1 色板 + A4 对比度。⚠️ 2026-10-24 之前这条变异是
+//        「主按钮改回写死渐变」—— 判据方向已随产品决定反转）
 //   M2    删掉 claude.css 的 :focus-visible 块      2
 //   M3    ModalFrame 关闭按钮加回                   1
 //        focus-visible:outline-primary-600
@@ -74,6 +88,21 @@
 //   M19   删掉 global.css 的 .ts-panel 规则          1
 //   M20   420px 断点去掉 justify-content: center    1
 //   M21   「显示筛选」去掉 whitespace-nowrap         1
+//   M22   onboarding 标题色改回 var(--color-text-primary）        2
+//   M23   onboarding 卡片内层底色改回 var(--color-bg-elevated）  2
+//   M24   删掉 .dark .onboarding-title（深色态半途而废）         3
+//   M25   onboarding 描述色换成色板外的 #71717a                 3
+//   M26   onboarding 主按钮渐变换成色板内的浅色对
+//        （#764ba2→#f093fb）                                    2
+//   M27   onboarding 主按钮白字换成浅灰 #d1d5db                  2
+//
+//   ⚠️ M26 / M27 **只让 A4 变红**（A1/A2 全绿）—— 这是「A4 有**独立**
+//   检测力」的证据：主按钮是「长相」与「安全」唯一交汇的地方，
+//   A2 故意**不**钉它，交给 A4 用**不变量**（白字 ≥ 4.5:1）守着。
+//   ⇒ 若哪天 A4 变绿而 A1/A2 也绿，就是判据失声了。
+//
+//   （M22–M27 的实测记录在 2026-10-24 那一轮：变异全部在
+//     /tmp 的一次性沙箱里做，**没有碰共享工作树**。）
 //
 // ⚠️ 有一处**首测假阴性**值得记下来：M9 第一次改的是文件头注释里那句
 // 「现在每个 emoji 容器都标 `aria-hidden="true"`」⇒ 守卫没红。
@@ -133,16 +162,106 @@ function themeFocusVisibleBlock(css: string, theme: string): string {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// V-1：引导页必须跟主题
+// V-1：引导页的配色回到 v1.25.1（2026-10-24 产品负责人的决定）
 // ═══════════════════════════════════════════════════════════════════════════
+//
+// 【这一节为什么改判据】
+//
+// 2026-10-23 审计 V-1 主张的是「引导页必须跟主题走」：主按钮读 --color-accent、
+// 卡片描边读单色 accent、标题读 --color-text-primary、卡片底读
+// --color-bg-elevated ……（理由：陶土红的产品里弹出一条紫蓝渐变按钮很怪）。
+//
+// 2026-10-24 产品负责人要求「界面回到 v1.25.1 的样子」⇒ **这一节退掉
+// 「不得有写死色」那条主张**，改成钉「引导页的色板就是 v1.25.1 那套」。
+// ⇒ 退掉的是**长相**，不是安全。
+//
+// 【退掉的是什么 / 没退的是什么】
+//   退掉：①「引导页不得有写死色」②「关键表面必须读主题令牌」
+//         ③「不得有 .dark 独立配色」
+//   没退：④「白字压主按钮底 ≥ 4.5:1」—— 它从「**必须用令牌实现**」改成
+//         「**用任何实现都必须达标**」⇒ 安全判据反而更强了：
+//         令牌法下这条由 a11yTextAndFocusTokens 兜底，写死色后由本节兜底。
+//         V-2（焦点环）/ V-4/V-5（命中区）/ V-8/V-12/V-15（读屏）…… 一条没动。
+//
+// 【每条断言钉的是「长相」还是「安全」】
+//   A1 写死色只允许是 v1.25.1 那套色板          —— 钉的是**长相**
+//   A2 关键表面必须是 v1.25.1 的值                —— 钉的是**长相**
+//   A3 深色态覆盖必须成套、不得半途而废          —— 钉的是**长相**（完整性）
+//   A4 白字压主按钮底必须 ≥ 4.5:1                —— 钉的是**安全**
 
-describe('V-1：引导页的配色必须跟主题（不得有写死的品牌色）', () => {
+/**
+ * v1.25.1 的引导页色板（2026-10-24 回退的基准）。
+ *
+ * 唯一一处**刻意不完全等同于 v1.25.1**：紫蓝 `#667eea` → `#5b5bd6`。
+ * 原因：v1.25.1 的白字压 #667eea 只有 3.66:1（14px 粗体 ⇒ 未达 AA 4.5:1）；
+ * #5b5bd6 是同一支紫（视觉几乎无差），实测白字 5.37:1 ⇒ 达标。
+ * 换句话说：**没有为「回到 v1.25.1」牺牲任何一条对比度判据**。
+ */
+const V1251_PALETTE = [
+  // 主紫（#667eea 加深刻一档）+ 彩虹描边的其余四色
+  '#5b5bd6', '#764ba2', '#f093fb', '#f5576c', '#fda085',
+  // 步骤点（浅 / 深）
+  '#d1d5db', '#4b5563',
+  // 图标底 / 版本徽章底的浅蓝紫两色 + 深色态的深蓝紫两色
+  '#eff6ff', '#ede9fe', '#1e293b', '#312e81',
+  // 标题 / 描述
+  '#111827', '#f9fafb', '#6b7280', '#9ca3af',
+  // 卡片 / 次要按钮 / 快捷键
+  '#e5e7eb', '#f3f4f6', '#374151', '#1f2937',
+  // 主题选择卡（选中态）
+  '#1e1b4b', '#818cf8',
+  // 版本徽章文字
+  '#4338ca', '#a5b4fc',
+] as const;
+
+/** 解析 CSS（剥掉注释）成规则列表。 */
+function cssRules(css: string): Array<{ selector: string; body: string }> {
+  const stripped = css.replace(/\/\*[\s\S]*?\*\//g, ' ');
+  const out: Array<{ selector: string; body: string }> = [];
+  for (const m of stripped.matchAll(/([^{}]+)\{([^}]*)\}/g)) {
+    out.push({ selector: m[1].trim().replace(/\s+/g, ' '), body: m[2] });
+  }
+  return out;
+}
+
+/** 一条规则的声明块（按**完整选择器**匹配；匹配不到 ⇒ 空串）。 */
+function ruleBody(css: string, selector: string): string {
+  return cssRules(css).find(r => r.selector === selector)?.body ?? '';
+}
+
+/** 声明块里某条声明的值（归一化空白）。 */
+function declValue(body: string, prop: string): string {
+  for (const decl of body.split(';')) {
+    const at = decl.indexOf(':');
+    if (at === -1) continue;
+    if (decl.slice(0, at).trim() !== prop) continue;
+    return decl.slice(at + 1).trim().replace(/\s+/g, ' ');
+  }
+  return '';
+}
+
+/** sRGB 相对亮度（WCAG 2.x 的定义）。 */
+function relLum(hex: string): number {
+  const h = hex.replace('#', '').toLowerCase();
+  const full = h.length === 3 ? h.split('').map(c => c + c).join('') : h;
+  const [r, g, b] = [0, 2, 4].map(i => parseInt(full.slice(i, i + 2), 16) / 255);
+  const f = (s: number) => (s <= 0.03928 ? s / 12.92 : Math.pow((s + 0.055) / 1.055, 2.4));
+  return 0.2126 * f(r) + 0.7152 * f(g) + 0.0722 * f(b);
+}
+
+/** 两个颜色之间的对比度（WCAG 2.x 的定义）。 */
+function contrastRatio(a: string, b: string): number {
+  const [hi, lo] = [relLum(a), relLum(b)].sort((x, y) => y - x);
+  return (hi + 0.05) / (lo + 0.05);
+}
+
+describe('V-1：引导页的配色回到 v1.25.1（2026-10-24 产品决定）', () => {
   const CSS = read('src/styles/onboarding.css');
 
-  it('引导页里不得出现写死的十六进制颜色（遮罩层与遮罩形状除外）', () => {
+  it('A1 引导页的写死色只允许是 v1.25.1 那套色板（钉的是**长相**）', () => {
     // 遮罩 `.onboarding-overlay` 的 rgba(0,0,0,.5) / .dark 的 rgba(0,0,0,.7)
     // 是**刻意**保留的：遮罩的作用就是压暗背景，主题化会让它在某些浅色
-    // 主题下失效。⇒ 把这两条规则排除掉，其余一律不许有字面量颜色。
+    // 主题下失效。⇒ 把这两条规则排除掉。
     const withoutOverlay = CSS.replace(/\.onboarding-overlay\s*\{[^}]*\}/g, ' ').replace(
       /\.dark\s+\.onboarding-overlay\s*\{[^}]*\}/g,
       ' ',
@@ -153,62 +272,137 @@ describe('V-1：引导页的配色必须跟主题（不得有写死的品牌色�
       /-?(?:webkit-)?mask\s*:[^;]*;/g,
       ' ',
     );
-    const hexes = [...withoutMask.matchAll(/#[0-9a-fA-F]{3,8}\b/g)].map(m => m[0]);
+    const hexes = [...new Set(
+      [...withoutMask.matchAll(/#[0-9a-fA-F]{3,8}\b/g)].map(m => m[0].toLowerCase()),
+    )];
+    const allowed = new Set<string>(V1251_PALETTE);
+    const bad = hexes.filter(h => !allowed.has(h));
     assert.deepEqual(
-      hexes,
+      bad,
       [],
-      `引导页里还有写死的颜色 ${hexes.join('、')} —— 引导页必须跟主题走（V-1）。` +
-        '只有遮罩层、遮罩形状与阴影允许例外。',
+      `引导页里出现了 v1.25.1 色板之外的写死颜色 ${bad.join('、')} —— ` +
+        '2026-10-24 的产品决定是「引导页配色就是 v1.25.1 那套」，' +
+        '不是「可以随便加新颜色」。',
     );
   });
 
-  it('引导页的关键表面必须读主题令牌', () => {
-    const cases: Array<[string, RegExp]> = [
-      ['.onboarding-btn-primary', /background:\s*var\(--color-accent\)/],
-      ['.onboarding-btn-primary', /color:\s*var\(--color-accent-fg\)/],
-      ['.onboarding-card-inner', /background:\s*var\(--color-bg-elevated\)/],
-      ['.onboarding-title', /color:\s*var\(--color-text-primary\)/],
-      ['.onboarding-description', /color:\s*var\(--color-text-muted\)/],
-      ['.onboarding-version-badge', /color:\s*var\(--color-accent-text\)/],
-      ['.onboarding-version-badge', /background:\s*var\(--color-accent-wash\)/],
-      ['.onboarding-dot.active', /background:\s*var\(--color-accent\)/],
-      ['.onboarding-icon-wrapper', /background:\s*var\(--color-accent-wash\)/],
+  it('A2 引导页的关键表面必须是 v1.25.1 的值（钉的是**长相**）', () => {
+    // ⚠️ 这一条**故意钉字面量**：它钉的就是「长相」——
+    //   产品负责人已经拍板「界面回到 v1.25.1 的样子」，
+    //   引导页的色板因此是**冻结**的（动它 = 改产品决定，不是改实现）。
+    //   唯一例外是主紫：v1.25.1 的 #667eea 加深刻一档成 #5b5bd6
+    //   （白字 3.66:1 → 5.37:1，见 A4 与文件头说明）。
+    //
+    // ⚠️ **主按钮不在这一条的清单里** —— 那是 A4（安全）的地盘。
+    //   理由：主按钮是「长相」与「安全」**唯一交汇**的地方
+    //   （白字压紫蓝渐变）。把它交给 A4，A4 才有**独立的**检测力：
+    //   换成色板内的浅色渐变（例：#764ba2→#f093fb）时 A1/A2 全绿，
+    //   只有 A4 会红 —— 那才是「安全判据在独立工作」的证据。
+    const cases: Array<[string, string, string]> = [
+      ['.onboarding-card::before', 'background',
+       'linear-gradient(135deg, #5b5bd6 0%, #764ba2 25%, #f093fb 50%, #f5576c 75%, #fda085 100%)'],
+      ['.onboarding-card-inner', 'background', 'rgba(255, 255, 255, 0.97)'],
+      ['.dark .onboarding-card-inner', 'background', 'rgba(30, 30, 40, 0.97)'],
+      ['.onboarding-title', 'color', '#111827'],
+      ['.dark .onboarding-title', 'color', '#f9fafb'],
+      ['.onboarding-description', 'color', '#6b7280'],
+      ['.dark .onboarding-description', 'color', '#9ca3af'],
+      ['.onboarding-dot.active', 'background', 'linear-gradient(135deg, #5b5bd6, #764ba2)'],
+      ['.onboarding-dot.completed', 'background', '#5b5bd6'],
+      ['.onboarding-icon-wrapper', 'background', 'linear-gradient(135deg, #eff6ff, #ede9fe)'],
+      ['.onboarding-version-badge', 'color', '#4338ca'],
+      ['.onboarding-version-badge', 'background', 'linear-gradient(135deg, #eff6ff, #ede9fe)'],
     ];
-    for (const [selector, pattern] of cases) {
-      const at = CSS.indexOf(`${selector} {`);
-      assert.ok(at !== -1, `onboarding.css 里找不到 ${selector}`);
-      const block = CSS.slice(at, CSS.indexOf('}', at));
-      assert.match(
-        block,
-        pattern,
-        `${selector} 必须读主题令牌（${pattern.source}）—— 引导页不跟主题走 = 换主题等于没换`,
+    for (const [selector, prop, expected] of cases) {
+      const body = ruleBody(CSS, selector);
+      assert.ok(body, `onboarding.css 里找不到规则 ${selector} —— 判据锚点丢了`);
+      const actual = declValue(body, prop);
+      assert.equal(
+        actual,
+        expected,
+        `${selector} 的 ${prop} 应当是 v1.25.1 的「${expected}」，现在是「${actual}」`,
       );
     }
   });
 
-  it('引导页不得再有针对 `.dark` 的独立配色（主题令牌自动翻面）', () => {
-    // `.dark .onboarding-card-inner { background: rgba(30,30,40,.97) }` 这类
-    // 覆盖是「引导页自成一套」的根源：令牌翻面后它反而把深色态盖回冷蓝黑。
-    //
-    // 例外：遮罩层（`.onboarding-overlay`）—— 它的作用就是压暗，深浅两档
-    // 本来就该不同（浅色态 .5 / 深色态 .7），刻意保留。
-    const darkOverrides = [
-      ...CSS.matchAll(/\.dark\s+\.onboarding-[\w-]+\s*\{[^}]*\}/g),
-    ]
-      .map(m => m[0].split('{')[0].trim())
-      .filter(sel => !sel.includes('overlay'));
+  it('A3 深色态的覆盖必须成套、不得半途而废（钉的是**长相**的完整性）', () => {
+    // 引导页现在又是**写死配色**了 ⇒ 每一处浅色都必须有对应的深色覆盖，
+    // 否则深色态会留下一块「浅色补丁」（在黑底上刺眼、或在浅色底上不可读）。
+    // ⇒ 这里钉的是 v1.25.1 那**一整套**深色覆盖的清单：
+    //   少一条 ⇒ 半途而废（红）；多一条 ⇒ 同样是改了长相（红）。
+    const expected = [
+      '.dark .onboarding-btn-secondary',
+      '.dark .onboarding-btn-secondary:hover',
+      '.dark .onboarding-btn-skip:hover',
+      '.dark .onboarding-card-inner',
+      '.dark .onboarding-description',
+      '.dark .onboarding-dot',
+      '.dark .onboarding-feature-card',
+      '.dark .onboarding-feature-title',
+      '.dark .onboarding-icon-wrapper',
+      '.dark .onboarding-kbd',
+      '.dark .onboarding-overlay',
+      '.dark .onboarding-shortcut-desc',
+      '.dark .onboarding-shortcut-item',
+      '.dark .onboarding-spotlight-ring',
+      '.dark .onboarding-theme-card',
+      '.dark .onboarding-theme-card.selected',
+      '.dark .onboarding-theme-name',
+      '.dark .onboarding-title',
+      '.dark .onboarding-version-badge',
+    ];
+    const actual = [
+      ...new Set(
+        cssRules(CSS)
+          .map(r => r.selector)
+          .filter(sel => sel.startsWith('.dark .onboarding-')),
+      ),
+    ].sort();
     assert.deepEqual(
-      darkOverrides,
-      [],
-      `引导页还有针对 .dark 的独立配色覆盖：${darkOverrides.join('、')} —— ` +
-        '主题令牌自己会翻面，这些覆盖只会把它盖回写死的冷色',
+      actual,
+      expected,
+      '引导页的 `.dark` 覆盖与 v1.25.1 的那一整套不一致 —— ' +
+        '深色态要么半途而废（少一条）、要么被改了长相（多一条）。',
+    );
+  });
+
+  it('A4 白字压主按钮底必须 ≥ 4.5:1（钉的是**安全**）', () => {
+    // ⚠️ 这条**不是**长相，是**安全** —— 它没有跟着回退而变松：
+    //   2026-10-23 之前它是「白字压 #667eea = 3.66:1 ⇒ 改用 --color-accent-fg」；
+    //   2026-10-24 配色回到 v1.25.1 ⇒ 断言从「必须用令牌」改成
+    //   「**无论怎么实现都必须达标**」⇒ 判据只变严了，没变松。
+    //
+    // ⚠️ 这一条**刻意不钉具体色值**，它钉的是**不变量**
+    //   （白字压主按钮底 ≥ 4.5:1）⇒ 将来色板若再被打开（换紫、换渐变两端、
+    //   把白字换成浅灰），这一条依然有效 —— 它是 A1/A2（长相）之外的兜底。
+    //
+    //   渐变的**每一端**都可能出现 ⇒ 取较差的那端算。
+    const body = ruleBody(CSS, '.onboarding-btn-primary');
+    assert.ok(body, 'onboarding.css 里找不到 .onboarding-btn-primary —— 判据锚点丢了');
+    assert.equal(
+      declValue(body, 'color'),
+      'white',
+      '主按钮的文字应当是白字（v1.25.1 的口径）',
+    );
+    const bg = declValue(body, 'background');
+    const stops = [...bg.matchAll(/#[0-9a-fA-F]{3,8}/g)].map(m => m[0]);
+    assert.ok(stops.length > 0, '主按钮的底色应当是渐变（至少要有一个色标）');
+    const worst = Math.min(...stops.map(s => contrastRatio('#ffffff', s)));
+    assert.ok(
+      worst >= 4.5,
+      `白字压主按钮底只有 ${worst.toFixed(2)}:1（最差的一端 ${stops.join('、')}）—— ` +
+        '14px 粗体正文要 4.5:1（WCAG AA）。v1.25.1 的 #667eea 只有 3.66:1，' +
+        '所以那一端必须用加深刻一档的 #5b5bd6。',
     );
   });
 
   it('引导页用的每个主题令牌都必须在 global.css 里定义过', () => {
     const global = read('src/styles/global.css');
     const used = [...CSS.matchAll(/var\((--color-[\w-]+)\)/g)].map(m => m[1]);
-    assert.ok(used.length > 0, '引导页应当用主题令牌（否则颜色不跟主题走）');
+    assert.ok(
+      used.length > 0,
+      '引导页应当至少有一处用主题令牌（2026-10-20 的两处对比度修复走的就是令牌）',
+    );
     for (const name of new Set(used)) {
       assert.ok(
         global.includes(`${name}:`),
@@ -217,24 +411,15 @@ describe('V-1：引导页的配色必须跟主题（不得有写死的品牌色�
     }
   });
 
-  // ── 实测变异 ────────────────────────────────────────────────────────
-  // ① 把 .onboarding-btn-primary 的 background 改回
-  //    `linear-gradient(135deg, #667eea, #764ba2)` ⇒ 「不得有写死颜色」变红。
-  // ② 把 .onboarding-title 的 color 改回 `#111827` ⇒ 同上。
-  // ③ 把 .onboarding-card-inner 的 background 改回
-  //    `rgba(255,255,255,.97)` ⇒ 同上。
-});
-
-describe('V-1 附带：引导页的对比度契约交给令牌后不再需要写死值', () => {
-  it('白字压 accent 底不再出现（改用 --color-accent-fg）', () => {
-    const CSS = read('src/styles/onboarding.css');
-    // 原先是 `color: white` 压 `#667eea` ⇒ 只有 3.66:1（14px 粗体未达 AA）。
-    assert.doesNotMatch(
-      CSS,
-      /\.onboarding-btn-primary\s*\{[^}]*\bcolor:\s*white\b/,
-      '主按钮又写死了白字 —— 应当用 --color-accent-fg（各主题为「压 accent 实底的墨色」准备的令牌）',
-    );
-  });
+  // ── 实测变异（2026-10-24 那一轮，编号见文件头的表）──────────────────
+  // M1  主按钮首色改回 #667eea        ⇒ A1 + A4 变红（对比度 3.66:1）
+  // M2  标题色改回 var(--color-text-primary)  ⇒ A2 变红
+  // M3  卡片内层底色改回 var(--color-bg-elevated) ⇒ A2 变红
+  // M4  删掉 .dark .onboarding-title   ⇒ A2 + A3 变红（深色态半途而废）
+  // M5  描述色换成色板外的 #71717a     ⇒ A1 + A2 变红
+  // M6  主按钮渐变换成色板内的浅色对    ⇒ **只有 A4** 变红
+  // M7  主按钮白字换成浅灰 #d1d5db     ⇒ **只有 A4** 变红
+  // ⇒ M6 / M7 是 A4 **独立**检测力的证据（主按钮不钉在 A2 里）。
 });
 
 // ═══════════════════════════════════════════════════════════════════════════

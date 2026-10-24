@@ -912,16 +912,22 @@ html:not([data-theme]).dark {
   }
 
   .tab-item-title {
-    /* 2026-10-22 审计 U-04：标签名 13 → 14px，与会话名（16px）差 2px，
-       与域名（12px）差 2px —— 三级层级不再是「1px 之差」。 */
-    @apply truncate text-base;
-    /* 2026-10-22 审计 U-05：原来 flex-1 ⇒ 标题的**盒子**吃满整行，
-       真正的文字只有几百像素，而 URL 被 flex 推到行尾 ⇒ 单栏 1280px 下
-       实测「标题 x=118」「域名 x=1083」，中间隔着约 700–1000px 空白。
-       改成 flex: 0 1 auto（不涨、可缩）⇒ 域名紧跟在标题后面，死区消失。
-       truncate 的 overflow:hidden 会让 min-width:auto 归零，窄屏仍然截断
-       而不是溢出。 */
-    flex: 0 1 auto;
+    /* ── 2026-10-24：回到 v1.25.1 的取值 ──────────────────────────────
+     * 第 42 轮审计 U-04 / U-05 改过两处：
+     *   U-04 字号 13px → 14px（text-sm → text-base）；
+     *   U-05 flex-1 → flex: 0 1 auto（域名从行尾挪到标题后面，
+     *        消掉单栏下 700–1000px 的死白）。
+     * 产品负责人 2026-10-24 要求界面回到 v1.25.1 ⇒ 两处一起退回去：
+     *   · 标题恢复 13px（text-sm），与域名 12px 差一档，与会话名 16px 差三档；
+     *   · 标题恢复 flex-1（吃满整行）⇒ 域名回到**行尾右对齐**。
+     * 这条规则同时管着**卡片里的标签行**与**搜索结果行**（两边用同一个
+     * class）⇒ 退一次，两边一起回到 v1.25.1 的样子。
+     * ⚠️ 这一条**本来就没有守卫**（U-05/U-04 当时只写在注释里，没有断言）
+     * ⇒ 这次回退不涉及删任何守卫；判据的证据是**实拍对比**
+     * （outputs/shot-ui-v1251/ 与 outputs/shot-ui-rollback/ 逐张比）。
+     * ⚠️ 别拿「反着改」当防御：把域名重新挪到标题后面（U-05）是**另一种**
+     * 设计取舍，不是一条「不许违反的规矩」—— 想要那个效果时应当先问产品。 */
+    @apply flex-1 truncate text-sm;
     color: var(--color-text-primary);
   }
 
@@ -931,9 +937,6 @@ html:not([data-theme]).dark {
      （prism 浅色 1.99、legacy 深色 2.13、legacy 浅色 2.31、奶油浅色 2.52、prism 深色 3.13）。 */
   .tab-item-url {
     @apply text-xs truncate max-w-[200px];
-    /* 不参与收缩：URL 有 200px 上限，标题让位给它的量是确定的；
-       空间不够时应该截断标题（它是主标识），而不是把域名压成几十像素。 */
-    flex-shrink: 0;
     color: var(--color-text-secondary);
   }
 

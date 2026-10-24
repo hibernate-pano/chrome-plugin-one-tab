@@ -1,19 +1,24 @@
 /* ====================================
    用户引导（Onboarding）样式
 
-   ── 2026-10-23 审计 V-1：这一页必须跟主题走 ──────────────────────
-   引导页原先是一条**独立于主题系统**的样式表：主按钮写死
-   `linear-gradient(135deg, #667eea, #764ba2)`、卡片描边写死 5 色彩虹渐变、
-   标题写死 #111827、说明文字写死 #6b7280 ……
-   ⇒ 6 套主题换过去，引导页**一像素都不变**（陶土红的产品里弹出一条紫蓝渐变按钮）。
-   全文 587 行里 `var(--color-*)` 只出现 3 次。
+   ── 2026-10-24：引导页配色回到 v1.25.1（产品负责人的决定）─────────────
+   2026-10-23 审计 V-1 曾把这一页整体改读主题令牌（主按钮读 --color-accent、
+   卡片描边读单色 accent、标题读 --color-text-primary、卡片底读
+   --color-bg-elevated ……）。
+   产品负责人随后要求「界面回到 v1.25.1 的样子」⇒ **配色整体退回 v1.25.1**：
+   5 色彩虹描边、紫蓝渐变主按钮、写死的标题/说明色、`.dark` 独立配色。
+   （这属于**长相**；功能与结构一条没动。）
 
-   现在全部改读主题令牌。**遮罩层除外** —— 遮罩本就该压暗（它的作用
-   就是把背景压下去，主题化反而会让遮罩在某些浅色主题下失效）。
+   **保留的 1.26.0 成果（不能退，退了就出事）**：
+   ① 两条焦点环抑制规则 —— 第一屏标题上那圈 2px 蓝框的修复。
+      判据见 tests/guards/onboardingTitleFocusRing.test.ts（它算**特异度**，
+      不是「文件里有没有 outline: none」）。
+   ② `--motion-*` 动效阶梯 —— 判据见 audit20261023UiVisual.test.ts 的 V-14。
 
-   附带收益：白字压 #667eea 只有 3.66:1（14px 粗体 ⇒ 未达 AA 4.5:1）。
-   改用 `--color-accent` + `--color-accent-fg` 后，各主题的对比契约
-   （accent 实底上的墨色）已经现成 ⇒ 这条对比缺陷一并消失。
+   **唯一一处刻意不完全等同于 v1.25.1**：紫蓝 `#667eea` → **`#5b5bd6`**。
+   原因：v1.25.1 的白字压 #667eea 只有 **3.66:1**（14px 粗体 ⇒ 未达 AA 4.5:1）。
+   #5b5bd6 与 #667eea 是同一支紫（视觉几乎无差），实测白字 **5.37:1** ⇒ 达标。
+   ⇒ 「回到 v1.25.1」这条产品决定**不需要**牺牲任何一条对比度守卫。
    ==================================== */
 
 /* 引导遮罩层 —— 刻意不主题化：遮罩的作用就是压暗背景。 */
@@ -59,16 +64,17 @@
     animation: onboardingCardIn var(--motion-slow) var(--ease-standard);
 }
 
-/* 渐变边框效果 —— 改为单色 accent（V-1）。
-   原先是 5 色彩虹渐变（#667eea→#764ba2→#f093fb→#f5576c→#fda085），
-   在任何主题下都是「别家产品的渐变」。borderGlow 动画保留，只动颜色。 */
+/* 渐变边框效果 —— 5 色彩虹渐变（2026-10-24 回到 v1.25.1 的长相）。
+   v1.25.1 的原值是 #667eea→#764ba2→#f093fb→#f5576c→#fda085；
+   首色改用同一支紫的 #5b5bd6（理由见文件头：白字对比度 3.66:1 → 5.37:1）。
+   borderGlow 动画保留。 */
 .onboarding-card::before {
     content: '';
     position: absolute;
     inset: 0;
     border-radius: 20px;
     padding: 2px;
-    background: var(--color-accent);
+    background: linear-gradient(135deg, #5b5bd6 0%, #764ba2 25%, #f093fb 50%, #f5576c 75%, #fda085 100%);
     /* mask 里的 #fff 不是「颜色」，是**遮罩的镂空形状**（纯白 = 全不透明 = 保留）。
        它不参与配色，所以不算「写死的品牌色」。 */
     -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
@@ -91,14 +97,17 @@
     }
 }
 
-/* 卡片内层 —— 读主题的 elevated 面（V-1）。
-   原先写死 rgba(255,255,255,.97) + 一条 `.dark` 覆盖 rgba(30,30,40,.97)
-   ⇒ 深色态是一块**冷蓝黑**，与 claude/apple/chrome 的暖黑/纯黑体系都不搭。 */
+/* 卡片内层 —— 回到 v1.25.1 的近白底 + 一条 `.dark` 覆盖（2026-10-24）。
+   浅色 rgba(255,255,255,.97) / 深色 rgba(30,30,40,.97)。 */
 .onboarding-card-inner {
-    background: var(--color-bg-elevated);
+    background: rgba(255, 255, 255, 0.97);
     border-radius: 18px;
     padding: 32px 28px 24px;
     position: relative;
+}
+
+.dark .onboarding-card-inner {
+    background: rgba(30, 30, 40, 0.97);
 }
 
 @keyframes onboardingCardIn {
@@ -159,22 +168,26 @@
     width: 8px;
     height: 8px;
     border-radius: 50%;
-    background: var(--color-border-strong);
+    background: #d1d5db;
     transition: all var(--motion-base) var(--ease-standard);
     cursor: pointer;
+}
+
+.dark .onboarding-dot {
+    background: #4b5563;
 }
 
 .onboarding-dot.active {
     width: 24px;
     border-radius: 4px;
-    background: var(--color-accent);
+    background: linear-gradient(135deg, #5b5bd6, #764ba2);
 }
 
 .onboarding-dot.completed {
-    background: var(--color-accent);
+    background: #5b5bd6;
 }
 
-/* 步骤头部图标区域 —— 底读 accent-wash（V-1） */
+/* 步骤头部图标区域 —— 浅蓝紫渐变底（2026-10-24 回到 v1.25.1） */
 .onboarding-icon-wrapper {
     width: 72px;
     height: 72px;
@@ -184,8 +197,12 @@
     justify-content: center;
     margin: 0 auto 20px;
     font-size: 32px;
-    background: var(--color-accent-wash);
+    background: linear-gradient(135deg, #eff6ff, #ede9fe);
     animation: iconFloat 3s ease-in-out infinite;
+}
+
+.dark .onboarding-icon-wrapper {
+    background: linear-gradient(135deg, #1e293b, #312e81);
 }
 
 @keyframes iconFloat {
@@ -206,8 +223,12 @@
     font-weight: 700;
     text-align: center;
     margin-bottom: 8px;
-    color: var(--color-text-primary);
+    color: #111827;
     letter-spacing: -0.01em;
+}
+
+.dark .onboarding-title {
+    color: #f9fafb;
 }
 
 /* 引导标题**不许**画焦点环（2026-10-23 真机实测）。
@@ -270,9 +291,13 @@ html body .onboarding-overlay:focus-visible {
 .onboarding-description {
     font-size: 0.875rem;
     text-align: center;
-    color: var(--color-text-muted);
+    color: #6b7280;
     line-height: 1.6;
     margin-bottom: 24px;
+}
+
+.dark .onboarding-description {
+    color: #9ca3af;
 }
 
 /* 按钮区域 */
@@ -284,17 +309,18 @@ html body .onboarding-overlay:focus-visible {
     margin-top: 24px;
 }
 
-/* 主按钮 —— 底读 accent、字读 accent-fg（V-1）。
-   accent-fg 正是各主题为「压 accent 实底的墨色」准备的令牌
-   （--color-accent-fg），对比契约现成。 */
+/* 主按钮 —— 紫蓝渐变底 + 白字（2026-10-24 回到 v1.25.1 的长相）。
+   v1.25.1 原值 `linear-gradient(135deg, #667eea, #764ba2)` 配 `color: white`
+   ⇒ 白字压 #667eea 只有 3.66:1（14px 粗体，未达 AA 4.5:1）。
+   首色改用同一支紫的 #5b5bd6 ⇒ 5.37:1（理由见文件头）。 */
 .onboarding-btn-primary {
     flex: 1;
     padding: 10px 20px;
     border-radius: 12px;
     font-size: 0.875rem;
     font-weight: 600;
-    color: var(--color-accent-fg);
-    background: var(--color-accent);
+    color: white;
+    background: linear-gradient(135deg, #5b5bd6, #764ba2);
     border: none;
     cursor: pointer;
     transition: all var(--motion-base) var(--ease-standard);
@@ -306,8 +332,7 @@ html body .onboarding-overlay:focus-visible {
 
 .onboarding-btn-primary:hover {
     transform: translateY(-1px);
-    background: var(--color-accent-hover);
-    box-shadow: 0 4px 14px var(--color-accent-wash);
+    box-shadow: 0 4px 14px rgba(91, 91, 214, 0.4);
 }
 
 .onboarding-btn-primary:active {
@@ -320,16 +345,26 @@ html body .onboarding-overlay:focus-visible {
     border-radius: 12px;
     font-size: 0.875rem;
     font-weight: 500;
-    color: var(--color-text-muted);
+    color: #6b7280;
     background: transparent;
-    border: 1.5px solid var(--color-border-default);
+    border: 1.5px solid #e5e7eb;
     cursor: pointer;
     transition: all var(--motion-base) var(--ease-standard);
 }
 
+.dark .onboarding-btn-secondary {
+    color: #9ca3af;
+    border-color: #374151;
+}
+
 .onboarding-btn-secondary:hover {
-    background: var(--color-bg-secondary);
-    color: var(--color-text-primary);
+    background: #f3f4f6;
+    color: #374151;
+}
+
+.dark .onboarding-btn-secondary:hover {
+    background: #1f2937;
+    color: #d1d5db;
 }
 
 /* 跳过按钮 */
@@ -356,9 +391,15 @@ html body .onboarding-overlay:focus-visible {
 .onboarding-btn-skip:hover {
     /* 2026-10-20：原先 #6b7280 on #f3f4f6 只有 4.39:1（差 0.11 不到 AA）。
        hover 态是用户**已经决定要点「跳过」**的时刻，文字最该看清。
-       改用主题令牌 --color-text-secondary（各主题下均远高于 4.5:1）。 */
+       改用主题令牌 --color-text-secondary（各主题下均远高于 4.5:1）。
+       底色回到 v1.25.1 的 #f3f4f6（2026-10-24 长相回退）。 */
     color: var(--color-text-secondary);
-    background: var(--color-bg-secondary);
+    background: #f3f4f6;
+}
+
+.dark .onboarding-btn-skip:hover {
+    color: #d1d5db;
+    background: #1f2937;
 }
 
 /* 步骤内容区域 */
@@ -377,10 +418,15 @@ html body .onboarding-overlay:focus-visible {
 .onboarding-feature-card {
     padding: 14px 12px;
     border-radius: 12px;
-    background: var(--color-bg-secondary);
-    border: 1px solid var(--color-border-subtle);
+    background: #f9fafb;
+    border: 1px solid #f3f4f6;
     text-align: center;
     transition: all var(--motion-base) var(--ease-standard);
+}
+
+.dark .onboarding-feature-card {
+    background: #1f2937;
+    border-color: #374151;
 }
 
 .onboarding-feature-card:hover {
@@ -396,7 +442,11 @@ html body .onboarding-overlay:focus-visible {
 .onboarding-feature-title {
     font-size: 0.75rem;
     font-weight: 600;
-    color: var(--color-text-primary);
+    color: #374151;
+}
+
+.dark .onboarding-feature-title {
+    color: #e5e7eb;
 }
 
 .onboarding-feature-desc {
@@ -423,15 +473,24 @@ html body .onboarding-overlay:focus-visible {
     justify-content: space-between;
     padding: 12px 16px;
     border-radius: 12px;
-    background: var(--color-bg-secondary);
-    border: 1px solid var(--color-border-subtle);
+    background: #f9fafb;
+    border: 1px solid #f3f4f6;
     transition: all var(--motion-base) var(--ease-standard);
+}
+
+.dark .onboarding-shortcut-item {
+    background: #1f2937;
+    border-color: #374151;
 }
 
 .onboarding-shortcut-desc {
     font-size: 0.8125rem;
-    color: var(--color-text-primary);
+    color: #374151;
     font-weight: 500;
+}
+
+.dark .onboarding-shortcut-desc {
+    color: #e5e7eb;
 }
 
 .onboarding-shortcut-keys {
@@ -445,10 +504,16 @@ html body .onboarding-overlay:focus-visible {
     font-size: 0.6875rem;
     font-family: ui-monospace, monospace;
     font-weight: 600;
-    color: var(--color-text-primary);
-    background: var(--color-bg-elevated);
-    border: 1px solid var(--color-border-default);
+    color: #374151;
+    background: white;
+    border: 1px solid #d1d5db;
     box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+}
+
+.dark .onboarding-kbd {
+    color: #e5e7eb;
+    background: #111827;
+    border-color: #4b5563;
 }
 
 /* 主题选择网格 */
@@ -462,11 +527,15 @@ html body .onboarding-overlay:focus-visible {
 .onboarding-theme-card {
     padding: 10px 6px;
     border-radius: 12px;
-    background: var(--color-bg-secondary);
+    background: #f9fafb;
     border: 2px solid transparent;
     text-align: center;
     cursor: pointer;
     transition: all var(--motion-base) var(--ease-standard);
+}
+
+.dark .onboarding-theme-card {
+    background: #1f2937;
 }
 
 .onboarding-theme-card:hover {
@@ -475,9 +544,15 @@ html body .onboarding-overlay:focus-visible {
 }
 
 .onboarding-theme-card.selected {
-    border-color: var(--color-accent);
-    background: var(--color-accent-wash);
-    box-shadow: 0 0 0 3px var(--color-accent-wash);
+    border-color: #5b5bd6;
+    background: #eff6ff;
+    box-shadow: 0 0 0 3px rgba(91, 91, 214, 0.15);
+}
+
+.dark .onboarding-theme-card.selected {
+    background: #1e1b4b;
+    border-color: #818cf8;
+    box-shadow: 0 0 0 3px rgba(129, 140, 248, 0.15);
 }
 
 .onboarding-theme-swatch {
@@ -501,7 +576,11 @@ html body .onboarding-overlay:focus-visible {
 .onboarding-theme-name {
     font-size: 0.625rem;
     font-weight: 600;
-    color: var(--color-text-primary);
+    color: #374151;
+}
+
+.dark .onboarding-theme-name {
+    color: #e5e7eb;
 }
 
 /* Spotlight 高亮遮罩 */
@@ -520,15 +599,35 @@ html body .onboarding-overlay:focus-visible {
     animation: spotlightPulse 2s ease-in-out infinite;
 }
 
+.dark .onboarding-spotlight-ring {
+    box-shadow: 0 0 0 4000px rgba(0, 0, 0, 0.75);
+}
+
 @keyframes spotlightPulse {
 
     0%,
     100% {
-        box-shadow: 0 0 0 4000px rgba(0, 0, 0, 0.55), 0 0 0 0 var(--color-accent-wash);
+        box-shadow: 0 0 0 4000px rgba(0, 0, 0, 0.55), 0 0 0 0 rgba(91, 91, 214, 0.4);
     }
 
     50% {
-        box-shadow: 0 0 0 4000px rgba(0, 0, 0, 0.55), 0 0 0 8px var(--color-accent-wash);
+        box-shadow: 0 0 0 4000px rgba(0, 0, 0, 0.55), 0 0 0 8px rgba(91, 91, 214, 0.2);
+    }
+}
+
+.dark .onboarding-spotlight-ring {
+    animation: spotlightPulseDark 2s ease-in-out infinite;
+}
+
+@keyframes spotlightPulseDark {
+
+    0%,
+    100% {
+        box-shadow: 0 0 0 4000px rgba(0, 0, 0, 0.75), 0 0 0 0 rgba(129, 140, 248, 0.4);
+    }
+
+    50% {
+        box-shadow: 0 0 0 4000px rgba(0, 0, 0, 0.75), 0 0 0 8px rgba(129, 140, 248, 0.2);
     }
 }
 
@@ -552,9 +651,9 @@ html body .onboarding-overlay:focus-visible {
     }
 }
 
-/* 版本标签 —— 文字读 accent-text（当墨色用的 accent）、底读 accent-wash（V-1）。
-   原先是 #4338ca 压在自己的蓝紫渐变底上（3.08:1 → 修成 6.66:1），
-   但那整套配色在任何非 legacy 主题下都是「别家产品的紫蓝」。 */
+/* 版本标签 —— 2026-10-24 回到 v1.25.1 的长相。
+   indigo-700 #4338ca 压自己的蓝紫渐变底（#eff6ff→#ede9fe）⇒ 6.66:1；
+   这处对比度在 v1.25.1 就已经修好了，原样带回。 */
 .onboarding-version-badge {
     display: inline-flex;
     align-items: center;
@@ -563,7 +662,12 @@ html body .onboarding-overlay:focus-visible {
     border-radius: 20px;
     font-size: 0.6875rem;
     font-weight: 600;
-    color: var(--color-accent-text);
-    background: var(--color-accent-wash);
+    color: #4338ca;
+    background: linear-gradient(135deg, #eff6ff, #ede9fe);
     margin-bottom: 16px;
+}
+
+.dark .onboarding-version-badge {
+    color: #a5b4fc;
+    background: linear-gradient(135deg, #1e1b4b, #312e81);
 }

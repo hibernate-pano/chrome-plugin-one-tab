@@ -1,9 +1,7 @@
 import React, { useEffect, useLayoutEffect, useState, useCallback, useRef, useMemo, useSyncExternalStore } from 'react';
 import { createPortal } from 'react-dom';
 import { useAppDispatch, useAppSelector } from '@/store/hooks';
-import { SafeFavicon } from '@/components/common/SafeFavicon';
 import { Tooltip } from '@/components/common/Tooltip';
-import { pickDominantTab } from '@/domain/tabGroup/pickDominantTab';
 import { updateGroupNameAndSync, toggleGroupLockAndSync, deleteGroup, deleteBroadcastWarn, deleteTabAndSync, moveTabAndSync } from '@/store/slices/tabSlice';
 import { DraggableTab } from '@/components/dnd/DraggableTab';
 import { TabGroup as TabGroupType, Tab } from '@/types/tab';
@@ -105,17 +103,16 @@ const DeleteIcon = () => (
 /**
  * 「在新窗口恢复整个会话」—— 窗口框 + **穿出框外**的箭头。
  *
- * 【为什么是这个形状（U-10）】两个「打开」按钮并排出现在每一张卡上，
- * 是全产品最高频的两个动作。原先两者共用同一个圆角矩形框，只差箭头朝向
- * ⇒ 16px 下 90% 的像素一样，肉眼读不出哪个是「开新窗口」。
+ * 【v1.25.1 的画法，2026-10-24 恢复】
+ * 第 42 轮审计 U-10 曾把两枚「打开」图标拆成两种基础形状
+ * （本图标 = 框的右上角开了缺口、箭头探出框外；另一个 = 闭合的框 +
+ * 框内箭头），让它们遮住颜色也仍可区分。产品负责人 2026-10-24 要求
+ * 界面回到 v1.25.1 ⇒ 两枚图标恢复成 v1.25.1 的画法
+ * （本图标 = 框 + 一笔连出去的箭头）。
  *
- * 现在两者**基础形状就不同**：
- *   · 本图标 = 框的右上角**开了缺口**，箭头从缺口探出去伸到框外
- *     （业界通用的「另开一个窗口」符号 open_in_new）⇒ 轮廓是「带尾巴的框」；
- *   · 另一个 = 一个**闭合的框**，箭头**完全落在框内** ⇒ 轮廓是「一个干净的框」。
- *
- * 于是即使把颜色全部抹掉（灰度打印、强制高对比），两者的**轮廓**仍然不同：
- * 一个有伸出边界的东西，一个所有笔画都在框里。
+ * 主次仍然分得开，**但不靠形状**而靠**墨色**：这颗是 accent 墨色
+ * （tab-group-action-accent），「在当前窗口打开」是中性描边
+ * —— 见 JSX 里那颗按钮的 class。
  */
 const OpenAllIcon = () => (
   <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
@@ -124,16 +121,21 @@ const OpenAllIcon = () => (
 );
 
 /**
- * 「在当前窗口打开」—— **闭合的**窗口框 + 完全落在框内的横向箭头。
+ * 「在当前窗口打开」—— 窗口框 + 右上角**独立一笔**的箭头。
  *
- * 箭头不越界 ⇒ 一眼可读成「内容进到这个框里」＝ 就地打开；
- * 而上一个图标有笔画伸到框外 ⇒ 读成「离开这个框」＝ 另开一个窗口。
- * 两者遮住颜色后仍可区分（见 OpenAllIcon 的注释）。
+ * ── 2026-10-24：回到 v1.25.1 的画法 ──────────────────────────────────────
+ * 第 42 轮审计 U-10 把这两枚图标拆成「开口框 + 出界箭头」与
+ * 「闭合框 + 框内箭头」两种轮廓（遮住颜色也能分）。产品负责人 2026-10-24
+ * 要求界面回到 v1.25.1 ⇒ 这里恢复 v1.25.1 的画法：
+ * 同一个闭合框，箭头**独立成一条 path** 落在右上角。
+ * ⇒ 两枚图标在 16px 下又变得很接近（v1.25.1 就是这样的）。
+ * 这是**产品决定**，不是疏忽：守卫 sessionCardActions.test.ts
+ * 里钉「两枚图标形状可分」的那条断言已按同一理由退掉，
+ * 改由「墨色分主次」那条守住（见 OpenAllIcon 的注释）。
  */
 const OpenAllInPlaceIcon = () => (
   <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-    <path strokeLinecap="round" strokeLinejoin="round" d="M5.25 6h8.25A2.25 2.25 0 0 1 15.75 8.25v10.5A2.25 2.25 0 0 1 13.5 21H5.25A2.25 2.25 0 0 1 3 18.75V8.25A2.25 2.25 0 0 1 5.25 6Z" />
-    <path strokeLinecap="round" strokeLinejoin="round" d="M6.5 13.5h6.5M10.5 11l2.5 2.5-2.5 2.5" />
+    <path strokeLinecap="round" strokeLinejoin="round" d="M13.5 6H5.25A2.25 2.25 0 003 8.25v10.5A2.25 2.25 0 005.25 21h10.5A2.25 2.25 0 0018 18.75V10.5M21 3v5.25M21 3h-5.25M21 3l-7.5 7.5" />
   </svg>
 );
 
@@ -173,24 +175,6 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(
   // 修复前这个设置只有默认值与上云映射，UI 从不读它 —— 标签数量永远显示。
   // 现在设置页有开关（OptionsPage「外观」小节），这里真的按它决定画不画徽章。
   const showTabCount = useAppSelector(state => state.settings.showTabCount);
-  // ── 2026-10-22 审计 U-15：卡片的视觉身份 ────────────────────────────────
-  // 此前 SafeFavicon 只出现在**标签行**，卡片级一处都没有 ⇒ 行的辨识度
-  // 比卡还高，层级倒挂（一屏十张卡长得一模一样）。
-  //
-  // 成本为零：会话里已经存着每个标签的 favicon（来自浏览器自己的
-  // chrome.tabs.Tab.favIconUrl，src/domain/tabGroup/factory.ts 落盘），
-  // 这里只是把它读出来 —— 不新增权限、不新增网络请求、不引第三方服务。
-  //
-  // 取哪个标签：与「默认会话名」同一把尺子（域名占多数的那个），
-  // 否则卡片图标与会话名会来自不同站点，自相矛盾。判据见
-  // @/domain/tabGroup/pickDominantTab（纯函数，四条契约有单测）。
-  //
-  // ⚠️ 受设置页的「显示网站图标」开关控制（2026-10-22 收口）。
-  // 那个开关叫「显示网站图标」，用户关掉它的意思就是「我不想看到网站图标」——
-  // 卡片头这枚也是网站图标 ⇒ 它必须一起消失，否则开关就是半拉子的
-  // （关掉了还剩一处，那一处就成了「偷偷显示」）。
-  const showFavicons = useAppSelector(state => state.settings.showFavicons);
-  const dominantTab = useMemo(() => pickDominantTab(group.tabs), [group.tabs]);
   const { showConfirm, showToast } = useToast();
   const { showDeleteError, showRestoreError, showRestoreSuccessMessage } = useEnhancedToast();
   // ── 2026-10-22 审计 P0-4：「恢复即消费」要可撤销 ────────────────────────
@@ -1107,23 +1091,6 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(
             </button>
           </Tooltip>
 
-          {/* ── 2026-10-22 审计 U-15：卡片的视觉身份 ────────────────────────
-              favicon 取「域名占多数」的那个标签（pickDominantTab），
-              与会话名同一把尺子 ⇒ 图标与名字不会自相矛盾。
-
-              缺 favicon 时**整块不渲染**（不留灰方块占位）——
-              占位方块会让人以为「这里本该有个图标但没加载出来」，
-              而事实是「这个会话确实没有图标」。
-
-              装饰性图片 ⇒ alt=""（不参与读屏朗读；站点的名字由标题承担）。 */}
-          {showFavicons && dominantTab?.favicon && (
-            <SafeFavicon
-              src={dominantTab.favicon}
-              alt=""
-              className="w-4 h-4 shrink-0 rounded"
-            />
-          )}
-
           {/* 标题 */}
           {isEditing ? (
             <input
@@ -1203,24 +1170,23 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(
             </div>
           )}
 
-          {/* 数量徽章（showTabCount 关掉时不渲染） */}
+          {/* 数量徽章（showTabCount 关掉时不渲染）
+              ── 2026-10-24：可见内容回到 v1.25.1 的**裸数字** ──────────────
+              第 42 轮审计 H-10 把它写成「N 个标签页」（顶栏同时挂着两个数字时，
+              裸数字会被本能地读成会话数）。产品负责人 2026-10-24 要求界面回到
+              v1.25.1 ⇒ 可见内容恢复成裸数字（v1.25.1 就是一个小药丸里一个数）。
+
+              **单位没有丢**：它仍然在 aria-label 里 ⇒ 读屏用户听到的仍是
+              「包含 N 个标签页」；删除确认 / 保存提示 / 恢复提示这些**句子**里
+              也仍然是全名「N 个标签页」。
+              也就是说：紧凑的位置用短形式，句子里用全名。
+              守卫见 tests/guards/onboardingCopyHonesty.test.ts 的 H-10。 */}
           {showTabCount && (
             <span
               className="tab-group-count flex-shrink-0"
               aria-label={`包含 ${group.tabs.length} 个标签页`}
             >
-              {/* ── 2026-10-23 审计 H-10：徽章不能是**裸数字** ────────────────
-               * 原先这里只渲染 `{group.tabs.length}` ⇒ 视觉上就是一个「2」，
-               * 而顶栏同时挂着「1 会话」和「2 个标签页」两个数字 ⇒
-               * 用户扫卡片时会把卡头的「2」本能地读成「会话数」
-               * （它长在会话卡上呀），而它其实是**标签数**。
-               * 读屏用户反而知道（aria-label 说了「包含 N 个标签页」）。
-               *
-               * ⇒ 补上**视觉单位**，与顶栏 / 保存提示同一口径（「N 个标签页」）。
-               *   不用原生 `title` 兜底：上一轮 U-18 刚把原生 title 换成仓里的
-               *   <Tooltip>（原生 title ≈1s 延迟、触屏根本不出现）。
-               *   既然单位已经**看得见**了，悬停提示就不必再补一句。 */}
-              {group.tabs.length} 个标签页
+              {group.tabs.length}
             </span>
           )}
 
@@ -1230,19 +1196,20 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(
               审计建议的「永远画闭锁」被产品负责人否决：它会把「形状＝状态」
               这条用户已经建立的读法反过来。
 
-              所以补的是真正的缺口 —— 让锁定态**在视觉上可区分**：
-                · 一个 accent 淡染底的徽章（accent 色，不是中性灰）；
-                · 闭锁图形（与未锁定时的开锁图形形态完全不同）；
-                · 未锁定时这个位置**什么都没有**。
-              一屏卡片里，哪些被锁了，一眼扫得出来。
+              补的是「在视觉上可区分」—— v1.25.1 的做法是一枚**琥珀色**的锁
+              （`tab-group-lock-icon` 读 --color-warning），未锁定时这个位置
+              **什么都没有**。一屏卡片里哪些被锁了，一眼扫得出来。
 
-              配色用工具类直接给（accent-wash 底 + accent-text 墨）：
-              `tab-group-lock-icon` 那个 class 读的是 --color-warning（琥珀），
-              且 3 套主题各自覆写它 —— 与「accent 强调」的口径对不上，
-              这里就不复用它（搜索页仍在用，不受影响）。 */}
+              ── 2026-10-24：回到 v1.25.1 的长相 ────────────────────────────
+              第 42 轮把这里改成了一个 accent 淡染底的**药丸**（tab-group-lock-badge）。
+              产品负责人 2026-10-24 要求界面回到 v1.25.1 ⇒ 恢复成那枚琥珀色锁。
+
+              ⚠️ 这里**没有**原生 `title`（U-18：卡片头一律用仓里的 <Tooltip>），
+              所以「会话已锁定」这句说明只挂在 aria-label 上 ⇒ 读屏用户听得到，
+              鼠标用户从旁边那颗锁定按钮的提示里也能拿到同样的信息。 */}
           {group.isLocked && (
             <span
-              className="tab-group-lock-badge flex-shrink-0 inline-flex items-center justify-center rounded p-0.5 bg-[var(--color-accent-wash)] text-[var(--color-accent-text)]"
+              className="tab-group-lock-icon flex-shrink-0"
               aria-label="会话已锁定"
             >
               <LockIcon locked={true} />
@@ -1282,15 +1249,15 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(
         <div className="relative z-30 flex items-center gap-0.5 sm:gap-1 opacity-100 transition-all duration-200 ease-out flex-shrink-0">
           {/* 恢复全部（新窗口）—— 核心动作，窄屏也常驻。
 
-              ── 2026-10-22 审计 U-10（两枚「打开」图标 16px 下近乎同形）──
-              硬要求：**形状上**要能分，遮住颜色也能分。
-                · 本图标 = 框 + **穿出框外**的箭头（另开一个窗口）；
-                · 另一个 = **闭合的**框 + 框**内**的箭头（就地打开）。
-              两者的轮廓因此根本不同：一个有笔画伸到框外，一个所有笔画都在框里。
+              ── 2026-10-24：回到 v1.25.1 的长相 ────────────────────────────
+              第 42 轮审计 U-10 给这颗按钮加了 **accent 实底**（.theme-cta），
+              让它成为一屏卡里唯一的实心按钮。产品负责人 2026-10-24 要求界面
+              回到 v1.25.1 ⇒ 恢复成 v1.25.1 的做法：**accent 墨色的描边图标**
+              （`theme-btn-hover` + `tab-group-action-accent`），不加实底。
 
-              另加一层「填充」区分：这是**主操作**（整个产品的「找回」入口），
-              所以用 accent 实底 + 反色图标（.theme-cta）；另一个保持描边。
-              ⇒ 形状 + 填充两重编码，16px 下绝不含糊。
+              主次仍然在：**墨色**分主次（这颗是 accent，另一个「在当前窗口
+              打开」是中性描边）—— 形状不再分主次（见 OpenAllIcon 的注释）。
+              守卫 sessionCardActions.test.ts 的 U-10 已按同一口径改判。
 
               ── 2026-10-22 审计 U-18（两套 tooltip 节奏）────────────────
               原生 `title=` 换成仓里的 <Tooltip>（300ms、样式可控、
@@ -1314,7 +1281,7 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(
           >
             <button
               onClick={handleOpenAllTabs}
-              className="btn-icon theme-cta micro-interaction-button"
+              className="btn-icon theme-btn-hover tab-group-action-accent micro-interaction-button"
               aria-label={`在新窗口恢复整个会话，共 ${group.tabs.length} 个标签页（${restoreOutcomeSentence(group.isLocked)}）`}
             >
               <OpenAllIcon />

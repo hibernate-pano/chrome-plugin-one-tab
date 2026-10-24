@@ -80,9 +80,40 @@ const CloseIcon = () => (
   </svg>
 );
 
-// 「切换布局」与「清理重复标签」的两颗图标已随按钮一起移进 ⋯ 菜单
-// （2026-10-22 审计 U-20：顶栏宽度优先给「找回」这个核心入口）。
-// 菜单里用的是自己的内联 SVG，见 HeaderDropdown.tsx。
+// ── 2026-10-24：顶栏回到 v1.25.1 的样子 ────────────────────────────────
+//
+// 产品负责人定案：「界面与交互回到 v1.25.1 的样子」。
+// v1.25.1 的顶栏是**四颗图标按钮**（布局 / 清理 / 主题 / ⋯），
+// 1.26.0（审计 U-20）把前两颗收进了 ⋯ 菜单，顶栏因此少了两颗按钮、
+// 搜索框变宽 —— 那是**长相**（按钮的排布），不是功能。
+// ⇒ 这两颗按钮**回到顶栏**（sm 以上显示），功能一条不少：
+//   · 布局切换：点一下还是同一份 dispatch（handleToggleLayout 未变）；
+//   · 清理重复：还是同一个破坏性确认流程（handleCleanDuplicateTabs 未变）。
+// 菜单里的同名入口**保留**（窄屏补偿，见 HeaderDropdown.tsx）。
+//
+// ⚠️ 布局切换 / 清理重复**都不许从顶栏消失**——它们是 v1.25.1 顶栏的一部分。
+// 守卫见 tests/guards/headerActionBudget.test.ts（判据已改成 v1.25.1 的口径）。
+
+// 单栏：一个整框（换掉旧的三横线——和菜单图标撞形）
+const LayoutSingleIcon = () => (
+  <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+    <rect x="3.75" y="5.25" width="16.5" height="13.5" rx="1.5" strokeLinecap="round" strokeLinejoin="round" />
+  </svg>
+);
+
+// 双栏：整框 + 中缝
+const LayoutDoubleIcon = () => (
+  <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+    <rect x="3.75" y="5.25" width="16.5" height="13.5" rx="1.5" strokeLinecap="round" strokeLinejoin="round" />
+    <path d="M12 5.25v13.5" strokeLinecap="round" strokeLinejoin="round" />
+  </svg>
+);
+
+const CleanIcon = () => (
+  <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+    <path strokeLinecap="round" strokeLinejoin="round" d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0" />
+  </svg>
+);
 
 const MenuIcon = () => (
   <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
@@ -499,18 +530,46 @@ export const Header: React.FC<HeaderProps> = ({ onSearch, onReplayOnboarding, on
 
           {/* 操作按钮组 */}
           <nav className="app-header-actions" aria-label="会话操作">
-            {/* 2026-10-22 审计 U-20：原来这里有「切换布局」和「清理重复标签」
-                两颗图标按钮，注释写着「顶栏宽度优先给搜索」—— 可实现恰好相反：
-                它们是 `hidden sm:block`，也就是**只在 ≥640px 出现**，而那正是
-                宽度最紧的时候（1280 实测：操作区 434px 已经比搜索框 428px 还宽，
-                再加一颗按钮搜索框就开始被压；历史上这条防线真的塌过一次，
-                见 global.css 的 F-1 注释）。
+            {/* ── 2026-10-24：这两颗按钮回到顶栏（v1.25.1 的排布）─────────────
+                1.26.0（审计 U-20）把它们收进 ⋯ 菜单，顶栏因此少了两颗按钮、
+                搜索框变宽。那是**长相**（按钮排布），不是功能 ⇒ 随 v1.25.1 一起退回去。
 
-                现在两件事都收进 ⋯ 菜单（全宽度可见，不丢功能）：
-                  · 「切换布局」是低频的**视图偏好**，本就不该占顶栏的黄金位；
-                  · 「清理重复标签」是**破坏性**动作且需要确认，藏在菜单里
-                    反而更安全（顶栏上随手一点就开确认框，误触成本高）。
-                释放出来的 72px 全部给搜索框 —— 「找回」是本产品唯一的核心入口。 */}
+                两颗都是**重复入口**，不是独有能力：
+                  · 布局切换 —— 同一份 dispatch（handleToggleLayout），菜单里也有；
+                  · 清理重复 —— 同一个破坏性确认流程（handleCleanDuplicateTabs），菜单里也有。
+                ⇒ 退的只是「顶栏上少这两颗」这个长相，功能一条没少。
+
+                窄屏（<640px）藏起来：390px 实测顶栏塞不下这么多按钮，
+                搜索框会被压成 0 宽（global.css 的 F-1 注释）。
+                窄屏时这两个入口由 ⋯ 菜单提供（见 HeaderDropdown.tsx 的 sm:hidden 补偿区）。 */}
+            <div className="hidden sm:block">
+              <Tooltip
+                content={settings.layoutMode === 'single' ? '切换双栏布局' : '切换单栏布局'}
+                position="bottom"
+              >
+                <button
+                  onClick={handleToggleLayout}
+                  className="btn-icon flat-interaction"
+                  aria-label={settings.layoutMode === 'single' ? '切换为双栏布局' : '切换为单栏布局'}
+                >
+                  {settings.layoutMode === 'single' ? <LayoutSingleIcon /> : <LayoutDoubleIcon />}
+                </button>
+              </Tooltip>
+            </div>
+
+            <div className="hidden sm:block">
+              <Tooltip content="清理重复标签" position="bottom">
+                <button
+                  onClick={handleCleanDuplicateTabs}
+                  disabled={isCleaningDuplicates}
+                  className="btn-icon flat-interaction"
+                  aria-label="清理重复标签页"
+                  aria-busy={isCleaningDuplicates}
+                >
+                  {isCleaningDuplicates ? <LoadingIcon /> : <CleanIcon />}
+                </button>
+              </Tooltip>
+            </div>
 
             {/* 主题切换 */}
             <SimpleThemeToggle />
@@ -534,25 +593,21 @@ export const Header: React.FC<HeaderProps> = ({ onSearch, onReplayOnboarding, on
                 CTA 成为**唯一**的主操作；有会话之后（空态卡不渲染）顶栏恢复
                 主按钮样式。
 
-                ── 2026-10-22 审计 L-5：空态之外**也**保持次级 ──────────────
-                修 I-1 时留下的条件是 `groups.length === 0 ? 次级 : 主按钮`，
-                于是**有会话之后**它又变回页面上唯一的实心主按钮。
-                但管理页此时的内容是**一列会话**，用户正在做的是「找回」，
-                而列表里每张卡的「恢复」动作只有 16px 的小图标 ——
-                页面上最响的那颗按钮，是个**会把用户当前窗口清空**的动作，
-                而且它是**低频**的（扩展图标和快捷键都能存，不必来管理页）。
+                ── 2026-10-24：回到 v1.25.1 的层级 ────────────────────────────
+                1.26.0（审计 L-5）把条件改成了「**任何时候**都是次级」——
+                理由是「管理页此时是一列会话，用户在做的是『找回』，
+                页面上最响的那颗按钮却是个会把当前窗口清空的动作」。
+                那是**视觉层级**（按钮长什么样），不是功能 ⇒ 随 v1.25.1 一起退。
 
-                层级倒置的代价是真实的：用户在列表页扫一眼，最先看到的是
-                「保存并关闭」，而不是他正在找的那张卡。
-
-                处置：顶栏这一颗**任何时候**都是次级样式。
-                整个应用里唯一的实心主按钮留在**空态卡**上 ——
-                那才是「这页还没有内容、只有一个明显该做的事」的时刻。 */}
+                退回去之后 I-1 的原始意图**仍然成立**：空态（groups.length === 0）
+                时它是次级按钮，空态卡那颗 CTA 是页面上唯一的主操作。
+                有会话之后它恢复主按钮样式 —— 这正是 v1.25.1 的样子。
+                守卫：tests/guards/audit20261019Ui.test.ts（判据已改成 v1.25.1 口径）。 */}
             <Tooltip content={saveAndCloseDescription} position="bottom">
               <button
                 onClick={handleSaveAllTabs}
                 disabled={isSaving}
-                className="btn btn-secondary flat-interaction whitespace-nowrap shrink-0 px-3 sm:px-4 disabled:opacity-60 disabled:cursor-not-allowed"
+                className={`btn ${groups.length === 0 ? 'btn-secondary' : 'btn-primary'} flat-interaction whitespace-nowrap shrink-0 px-3 sm:px-4 disabled:opacity-60 disabled:cursor-not-allowed`}
                 aria-label={saveAndCloseDescription}
                 aria-busy={isSaving}
                 // 成功后的完整说明放在 title 上：窄屏按钮装不下长句，

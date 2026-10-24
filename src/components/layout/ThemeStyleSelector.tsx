@@ -203,7 +203,20 @@ const themeOptions: ThemeOption[] = [
  * 于是预览读的是这个主题的 CSS 变量，**跟着明暗模式一起变**。
  * 令牌值仍然只有主题文件里那一份 —— 预览不复制任何色值，两边不可能漂移。
  *
- * 画的是一张「会话卡」的小模型：左侧强调条 + 标题条 + 两条标签行。
+ * ── 2026-10-24：预览卡的**形状**回到 v1.25.1 ──────────────────────────────
+ * L-3 顺带把形状也换了：强调条由 8px 收成 6px、标题条由 w-8 拉长到 w-10、
+ * 下面两枚「卡片」被换成两条通栏细线。形状是**长相** ⇒ 随 v1.25.1 一起退：
+ * 现在画的是 v1.25.1 那张「强调条 + 标题条 + 两枚小卡片」的模型。
+ *
+ * 颜色仍然走主题令牌（那是**结构**，用户看不见，且修掉了「暗色下预览还是浅色」
+ * 与「apple / chrome 看不出区别」两个真缺陷）—— 退的是形状，不是令牌化。
+ *
+ * 令牌与 v1.25.1 那两套写死色块的对应关系（保证退回来的样子**就是**旧样子）：
+ *   · v1.25.1 的 previewColors.bg（预览底）  → theme-bg-tertiary
+ *   · v1.25.1 的 previewColors.card（卡片面）→ theme-bg-elevated
+ *   · v1.25.1 卡片上的 0 1px 2px rgba(0,0,0,.1) → var(--shadow-elevation-1)
+ * 六套主题逐个核对过，明色态与 v1.25.1 的实拍几乎一致。
+ *
  * 里面的色块是**示意性的线框**（不是文字），所以只要求层次看得清，
  * 不按正文对比度要求；真正承载信息的是标题条的墨色（--color-text-secondary）。
  */
@@ -223,15 +236,24 @@ const ThemePreviewCard: React.FC<{
           : "theme-border-subtle"
     )}
   >
-    <div className="flex h-full theme-bg-secondary">
-      {/* 左侧强调条：本主题的 accent */}
-      <div className="w-1.5 h-full theme-accent-bg" />
-      <div className="flex-1 min-w-0 p-1.5 flex flex-col justify-center gap-1">
-        {/* 会话组标题条：bg-current 取 theme-text-secondary 的墨色 */}
-        <div className="h-1.5 w-10 rounded-full theme-text-secondary bg-current" />
-        {/* 两条标签行 */}
-        <div className="h-1.5 w-full rounded-full theme-bg-tertiary" />
-        <div className="h-1.5 w-3/5 rounded-full theme-bg-tertiary" />
+    <div className="flex h-full theme-bg-tertiary">
+      {/* 左侧强调条：本主题的 accent（v1.25.1 是 8px 宽） */}
+      <div className="w-2 h-full theme-accent-bg" />
+      <div className="flex-1 min-w-0 p-1 flex flex-col justify-center gap-0.5">
+        {/* 标题条：bg-current 取 theme-text-secondary 的墨色（v1.25.1 是 w-8） */}
+        <div className="h-1.5 w-8 rounded-full theme-text-secondary bg-current" />
+        {/* 两枚小卡片（v1.25.1 的形状）：卡面 = theme-bg-elevated，
+            投影 = 该主题自己的 --shadow-elevation-1（不写死 rgba） */}
+        <div className="flex gap-0.5">
+          <div
+            className="h-3 w-6 rounded-sm theme-bg-elevated"
+            style={{ boxShadow: 'var(--shadow-elevation-1)' }}
+          />
+          <div
+            className="h-3 w-6 rounded-sm theme-bg-elevated"
+            style={{ boxShadow: 'var(--shadow-elevation-1)' }}
+          />
+        </div>
       </div>
     </div>
   </div>
