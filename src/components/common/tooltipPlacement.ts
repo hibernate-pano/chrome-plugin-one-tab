@@ -73,6 +73,58 @@ export interface TooltipAvoidResult {
   cleared: boolean;
 }
 
+/**
+ * 提示条与视口左右边缘之间保留的空隙（px）。
+ */
+export const TOOLTIP_VIEWPORT_MARGIN = 8;
+
+export interface TooltipClampInput {
+  /** 提示条当前（未修正）的位置 */
+  tooltip: TooltipBox;
+  /** 视口宽度 */
+  viewportWidth: number;
+  /** 与视口边缘的空隙，默认 {@link TOOLTIP_VIEWPORT_MARGIN} */
+  margin?: number;
+}
+
+export interface TooltipClampResult {
+  /** 水平位移（px，正 = 向右）。0 = 不用动。 */
+  shift: number;
+  /** 位移之后能不能完整落在视口里（宽度本身太大时为 false）。 */
+  fits: boolean;
+}
+
+/**
+ * 把提示条**夹回视口内**（水平方向）。
+ *
+ * ── 为什么需要它 ──────────────────────────────────────────────────────────
+ * 提示条锚在触发元素的**右缘**（`right-0`）⇒ 它往**左**展开。
+ * 宽度一旦改成「按内容自然宽度」（`w-max`，否则会被触发元素的 36px 宽度
+ * 挤成「一个汉字一行」），靠左边的触发元素就会把提示条顶出视口左缘 ——
+ * 那段提示语用户根本看不到，比挤成竖排更糟。
+ *
+ * ⇒ 规则很简单：**先保证完整可见**，宁可位置不再精确对准按钮。
+ * 放不下（提示条本身就比视口还宽）⇒ 不乱挪，如实报告 `fits: false`。
+ */
+export function resolveTooltipClamp(input: TooltipClampInput): TooltipClampResult {
+  const margin = input.margin ?? TOOLTIP_VIEWPORT_MARGIN;
+  const { left, right } = input.tooltip;
+  const width = right - left;
+  const viewport = input.viewportWidth;
+
+  // 宽度本身放不下 ⇒ 挪哪儿都露不全，别乱动（如实说放不下）。
+  if (width + margin * 2 > viewport) {
+    return { shift: 0, fits: false };
+  }
+  if (left < margin) {
+    return { shift: margin - left, fits: true };
+  }
+  if (right > viewport - margin) {
+    return { shift: viewport - margin - right, fits: true };
+  }
+  return { shift: 0, fits: true };
+}
+
 /** 两个矩形是否相交（面积 > 0）。 */
 export function boxesOverlap(a: TooltipBox, b: TooltipBox): boolean {
   return a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom;

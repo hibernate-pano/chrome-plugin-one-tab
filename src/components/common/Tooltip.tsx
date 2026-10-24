@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect, useLayoutEffect, useId } from 'react';
-import { resolveTooltipAvoid, TOOLTIP_SIDE_GAP } from './tooltipPlacement';
+import { resolveTooltipAvoid, resolveTooltipClamp, TOOLTIP_SIDE_GAP } from './tooltipPlacement';
 
 interface TooltipProps {
   children: React.ReactNode;
@@ -25,6 +25,8 @@ export const Tooltip: React.FC<TooltipProps> = ({
   const tooltipRef = useRef<HTMLDivElement>(null);
   // 避让位移（px，正 = 向下）。0 = 贴着按钮原位弹出。
   const [avoidOffset, setAvoidOffset] = useState(0);
+  // 水平夹回视口的位移（px，正 = 向右）。0 = 不需要夹。
+  const [horizontalShift, setHorizontalShift] = useState(0);
   // ── 2026-10-23 审计 V-15：提示条必须被读屏引用到 ──────────────────────
   // 原先提示条有 role="tooltip" 却**没有 id**，也没有任何元素用
   // aria-describedby 指向它 ⇒ 多数读屏根本不会播报这段说明。
@@ -79,6 +81,7 @@ export const Tooltip: React.FC<TooltipProps> = ({
   useLayoutEffect(() => {
     if (!isVisible) {
       setAvoidOffset(0);
+      setHorizontalShift(0);
       return;
     }
     const el = tooltipRef.current;
@@ -95,6 +98,15 @@ export const Tooltip: React.FC<TooltipProps> = ({
       viewportHeight: window.innerHeight,
     });
     setAvoidOffset(result.offset);
+    // ── 2026-10-24：提示条不许被挤出视口 ────────────────────────────────
+    // 提示条按内容自然宽度展开（`w-max`）⇒ 靠左边的触发元素会把它顶出
+    // 视口左缘，那段提示语用户根本看不到。⇒ 量一次，夹回视口内。
+    // 判据与算式都在 tooltipPlacement.ts（纯函数，可单测）。
+    const clamp = resolveTooltipClamp({
+      tooltip: { top: rect.top, bottom: rect.bottom, left: rect.left, right: rect.right },
+      viewportWidth: window.innerWidth,
+    });
+    setHorizontalShift(clamp.shift);
   }, [isVisible, position, content]);
 
   /**
@@ -139,6 +151,19 @@ export const Tooltip: React.FC<TooltipProps> = ({
       return { marginTop: TOOLTIP_SIDE_GAP + avoidOffset };
     }
     return {};
+  };
+
+  /**
+   * 水平位移怎么落到样式上。
+   *
+   * 提示条默认锚在触发元素的**右缘**（`right-0`）⇒ 往左展开；
+   * 只有 `position="right"`（`left-full`）是往右展开。
+   * ⇒ 前者用 `right: -shift`（负的 right = 向右挪），后者用 `left: shift`。
+   */
+  const getShiftStyle = (): React.CSSProperties => {
+    if (horizontalShift === 0) return {};
+    if (position === 'right') return { left: horizontalShift };
+    return { right: -horizontalShift };
   };
 
   const getArrowClasses = () => {
@@ -233,14 +258,20 @@ export const Tooltip: React.FC<TooltipProps> = ({
           // dark:border-gray-600` ⇒ 12 组主题 × 明暗实测**没有一组**跟主题走
           // （claude 暖纸主题里弹出一张冷灰卡片）。
           // 现在只留布局类，配色由 global.css 的 `.tooltip` 规则给。
-          className={`tooltip absolute z-50 max-w-[min(20rem,calc(100vw-1.5rem))] whitespace-normal break-words px-3 py-2 text-sm rounded-lg backdrop-blur-sm border pointer-events-none ${getPositionClasses()} animate-fadeIn`}
-          style={getOffsetStyle()}
+          // ── 2026-10-24：提示条必须按**内容**的宽度展开 ──────────────────
+          // 修复前没有 `w-max` ⇒ 绝对定位元素在 `right-0` 下的收缩宽度
+          // 是**包含块**（触发元素那个 36px 的按钮）的宽度 ⇒ 中文提示语
+          // 被压成「一个汉字一行」的竖条（真机实测 26px 宽、118px 高）。
+          // `w-max` = 按内容自然宽度展开；`max-w-[…]` 仍然管住上限，
+          // `whitespace-normal break-words` 仍然让长句在上限处换行。
+          className={`tooltip absolute z-50 w-max max-w-[min(20rem,calc(100vw-1.5rem))] whitespace-normal break-words px-3 py-2 text-sm rounded-lg backdrop-blur-sm border pointer-events-none ${getPositionClasses()} animate-fadeIn`}
+          style={{ ...getOffsetStyle(), ...getShiftStyle() }}
           role="tooltip"
         >
           {content}
-          {/* 被下移避让时，箭头已经不再指向触发元素 —— 留着会指向
-              搜索框，比没有箭头更误导，索性不画。 */}
-          {avoidOffset === 0 && (
+          {/* 被下移/夹动时，箭头已经不再指向触发元素 —— 留着会指向
+              搜索框或半截按钮，比没有箭头更误导，索性不画。 */}
+          {avoidOffset === 0 && horizontalShift === 0 && (
             <div
               className={`absolute w-0 h-0 border-4 border-transparent ${getArrowClasses()}`}
               style={getArrowStyle()}
