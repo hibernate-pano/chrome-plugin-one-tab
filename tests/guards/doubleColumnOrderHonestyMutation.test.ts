@@ -36,15 +36,8 @@ const OLD_DOUBLE_BRANCH = `) : layoutMode === 'double' ? (
         </div>
       `;
 
-/** 旧实现配套的列容器样式。 */
-const OLD_COLUMN_CSS = `
-.session-grid-column {
-  display: flex;
-  flex-direction: column;
-  gap: 0.75rem;
-  min-width: 0;
-}
-`;
+/** 双栏分支里的切栏调用（现在仓里已经有 `.session-grid-column` 样式 ⇒ 变异只改 JS）。 */
+const DOUBLE_SPLIT_CALL = 'const { left, right } = splitIntoTwoColumns(filteredGroups);';
 
 describe('变异自证：双栏顺序这条守卫必须看得见破口', () => {
   it('变异一：把旧的「按标签数贪心分栏」放回去 ⇒ 守卫必须变红', () => {
@@ -63,10 +56,6 @@ describe('变异自证：双栏顺序这条守卫必须看得见破口', () => {
               return source.slice(0, start) + OLD_DOUBLE_BRANCH + source.slice(end);
             },
           },
-          {
-            path: 'src/styles/global.css',
-            mutate: source => `${source}\n${OLD_COLUMN_CSS}`,
-          },
         ],
         expectRed: true,
         expectedFailure: 'DOM 顺序必须等于排序后的顺序',
@@ -76,26 +65,30 @@ describe('变异自证：双栏顺序这条守卫必须看得见破口', () => {
     assertMutationOutcome(outcome, true, '把旧的贪心分栏实现放回去');
   });
 
-  it('等价改写：先复制一份数组再铺（渲染结果一模一样）⇒ 守卫必须**仍然绿**', () => {
+  it('等价改写：切之前先复制一份数组（渲染结果一模一样）⇒ 守卫必须**仍然绿**', () => {
     const [outcome] = runMutationCases([
       {
-        name: '铺之前先复制一份数组',
+        name: '切之前先复制一份数组',
         testFile: GUARD,
         targets: [
           {
             path: 'src/components/tabs/TabList.tsx',
-            // 第一次出现的是双栏分支 ⇒ 只改它。
-            mutate: source =>
-              source.replace(
-                '{filteredGroups.map(group => (',
-                '{[...filteredGroups].map(group => ('
-              ),
+            // ⚠️ 必须落在**双栏**分支上：改单栏那条等于没测这条守卫（本仓栽过）。
+            mutate: source => {
+              if (!source.includes(DOUBLE_SPLIT_CALL)) {
+                throw new Error('变异前提没成立：找不到双栏的切栏调用');
+              }
+              return source.replace(
+                DOUBLE_SPLIT_CALL,
+                'const { left, right } = splitIntoTwoColumns([...filteredGroups]);'
+              );
+            },
           },
         ],
         expectRed: false,
       },
     ]);
     assert.ok(outcome, '变异必须真的跑起来');
-    assertMutationOutcome(outcome, false, '铺之前先复制一份数组（渲染结果一模一样）');
+    assertMutationOutcome(outcome, false, '切之前先复制一份数组（渲染结果一模一样）');
   });
 });

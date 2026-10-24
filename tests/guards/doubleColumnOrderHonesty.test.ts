@@ -18,13 +18,18 @@
  *   DOM 序 = 键盘 Tab 序 = 读屏顺序。排序是用户**显式**做的选择，
  *   它必须在**每一种**顺序通道里都成立。
  *
- * ② **会话卡是网格的直接子项**
- *   卡片一旦被塞进「列容器」里，网格就会先摆列容器 ⇒ 顺序被列的边界重排。
- *   （旧实现正是这样：网格的两个直接子项是那两个列容器。）
+ * ② **两栏是「连续切一刀」，不是「轮流分」**
+ *   网格的直接子项必须是**恰好两个** `.session-grid-column`，
+ *   卡片住在栏里（不许直接当网格子项 —— 那样会被两两配成一行、撕出空白）。
+ *   左栏在前、右栏在后 ⇒ 先读完左栏再读右栏 == 排序序。
+ *   ⚠️ 这一条 2026-10-24 改过判据：原判据要求「卡片是网格的**直接**子项」，
+ *   那是 1.26.0–1.28.0 那版行主序实现的形状；产品负责人判「每行留一大块空白」
+ *   是缺陷 ⇒ 回到两栏堆叠。**顺序那条性质（①）一条没松**，
+ *   变的是「靠什么布局来保住它」。
  *
  * ③ **网格是两列、行主序**
- *   两列行主序 ⇒ 视觉逐行序 == DOM 序。列主序（`grid-auto-flow: column`）
- *   会让视觉序变成「先走完第一列」⇒ 与 DOM 序分道扬镳。
+ *   两个栏道并排。列主序（`grid-auto-flow: column`）会让网格的自动放置
+ *   与栏内堆叠打架，且视觉序与 DOM 序分家。
  *
  * ── 为什么必须渲染一遍 ────────────────────────────────────────────────────
  * 「排序算对了」与「列表按它摆了」是两件事（本仓 L-10 栽过一次）。
@@ -94,7 +99,7 @@ describe('双栏：屏幕顺序与键盘顺序都必须等于用户选的排序'
     });
   }
 
-  it('会话卡必须是网格容器的**直接子项**（不能被塞进列容器）', async () => {
+  it('会话卡必须住在**两栏各自的堆叠**里（不许直接当网格子项）', async () => {
     const rendered = await renderTabList({
       groups: GROUPS,
       layoutMode: 'double',
@@ -104,13 +109,51 @@ describe('双栏：屏幕顺序与键盘顺序都必须等于用户选的排序'
     assert.ok(titles.length > 0, '前置：双栏视图必须真的渲染出会话卡');
     const container = commonAncestor(titles);
     assert.ok(container, '会话卡必须有一个共同的容器（网格）');
+
+    // ① 网格的直接子项恰好是两个栏容器。
     assert.equal(
       container.children.length,
+      2,
+      `网格容器的直接子元素必须是**恰好两个**栏容器（实际 ${container.children.length} 个）——\n` +
+        '  卡片直接当网格子项会按行两两配对：同一行里一高一矮，短的那张下面\n' +
+        '  必然空出一大块（实测 174px/行），这就是 2026-10-24 被判缺陷的那个洞。'
+    );
+    const columns = container.children;
+    for (const [index, column] of columns.entries()) {
+      assert.ok(
+        classList(column).includes('session-grid-column'),
+        `第 ${index + 1} 个栏容器必须带 .session-grid-column 类名` +
+          `（实际 class="${column.attrs['class'] ?? ''}"）—— 那是给它的纵向堆叠样式挂钩的`
+      );
+    }
+
+    // ② 每一栏里，一个直接子项 = 一张卡（而不是一张卡里塞好几张、或一张卡都没包）。
+    const cardsPerColumn = columns.map(column => column.children.map(card => findAll(card, isGroupTitle)));
+    for (const [index, cards] of cardsPerColumn.entries()) {
+      for (const [cardIndex, found] of cards.entries()) {
+        assert.equal(
+          found.length,
+          1,
+          `第 ${index + 1} 栏的第 ${cardIndex + 1} 个直接子项里必须**恰好**是一张会话卡` +
+            `（实际找到 ${found.length} 个标题元素）`
+        );
+      }
+    }
+
+    // ③ 左栏在前、右栏在后 ⇒ 先读完左栏再读右栏 == DOM 序 == 排序序。
+    const cardsInColumns = cardsPerColumn.flat(2);
+    assert.equal(
+      cardsInColumns.length,
       titles.length,
-      `网格容器的直接子元素必须**恰好**是这些会话卡（实际 ${container.children.length} 个 / ` +
-        `${titles.length} 张卡）——\n` +
-        '  卡片一旦被包进「列容器」，网格就先摆列容器 ⇒ 顺序被列的边界重排，\n' +
-        '  于是 DOM 序（= 键盘序）不再等于排序序。'
+      `两栏里的会话卡总数必须等于渲染出的卡片数（${cardsInColumns.length} vs ${titles.length}）—— ` +
+        '少了说明有卡落在栏外，多了说明有卡被渲染了两次'
+    );
+    const expected = sortSessions(GROUPS, 'name').map(group => group.id);
+    assert.deepEqual(
+      cardsInColumns.map(title => String(title.attrs['id']).slice('tab-group-title-'.length)),
+      expected,
+      '按栏拆开再按「先左栏、后右栏」拼回来，顺序必须仍是排序序 —— ' +
+        '否则「两栏堆叠」就会像旧版贪心分栏那样把顺序打乱'
     );
   });
 

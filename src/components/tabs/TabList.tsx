@@ -13,6 +13,7 @@ import { getEmptyStateGreeting } from '@/components/common/emptyStateGreeting';
 import { saveAndCloseLabel } from '@/components/layout/saveActionCopy';
 import { saveAllSuccessShortMessage } from '@/domain/tabGroup/saveFeedbackCopy';
 import { toListErrorCopy, toListErrorView } from './listErrorCopy';
+import { splitIntoTwoColumns } from './doubleColumnSplit';
 import { bootstrapFirstRead } from './firstReadBootstrap';
 import {
   CLOUD_PULL_BUSY_LABEL,
@@ -649,41 +650,51 @@ export const TabList: React.FC<TabListProps> = ({ searchQuery, onOpenAuth, filte
           {...(onOpenAuth ? { onOpenAuth } : {})}
         />
       ) : layoutMode === 'double' ? (
-        /* ── 2026-10-23 审计 R-11：双栏必须是**行主序** ──────────────────────
+        /* ── 双栏：两栏**各自纵向堆叠**，仍按用户选的排序摆 ────────────────
          *
-         * 修复前这里是「两列各一个 div」，按**标签数**贪心均衡分栏：
+         * 历史绕了一圈，两次都栽在同一个取舍上，这里把两次都记下来：
          *
-         *   const columns = [[], []];  // 按标签数塞进更空的那一栏
+         * · v1.25.1：贪心「按标签数塞进更矮的那一栏」⇒ 两栏底部对得齐，
+         *   但 DOM 序（= 键盘 Tab 序 = 读屏顺序）被打成 `1,4,5 | 2,3,6`，
+         *   与排序序不符 —— 2026-10-23 审计 R-11 的原始缺陷。
+         * · 1.26.0 – 1.28.0：改成「卡片直接是网格子项、行主序」
+         *   ⇒ 顺序对了，**代价是每一行两两配对**。卡片高度不同时，
+         *   短的那张下面必然空出一块（实测 174px/行）——
+         *   产品负责人 2026-10-24：「双栏的标签组没有对齐…会导致大量空白」。
          *
-         * ⇒ 屏幕上的阅读顺序、**键盘 Tab 序**（= DOM 序 = 先走完左栏再走右栏）
-         *   都**不等于**用户选的排序。审计穷举：6 个会话 × 标签数 {1,2,3,4}
-         *   共 4096 种组合，DOM 序与排序序 **100% 不一致**，逐行视觉序约 2/3 不一致。
-         *   键盘用户与读屏用户拿到的顺序，和眼睛看到的**不一样** ——
-         *   比「视觉顺序错」更糟。
+         * 【这一版：连续切一刀，两件事一起成立】
+         * 用 `splitIntoTwoColumns` 把**已排序**的列表切成左/右两段，
+         * 每段各自是一个 `.session-grid-column` 纵向堆叠（不配对、不产生洞）
+         * ⇒ 先读完左栏再读右栏，顺序**恰好就是**排序序（R-11 那条性质没丢），
+         * 切点又取「两栏估计高度差最小」⇒ 两栏底部不会一长一短。
          *
-         * 【这一版的取舍（明说，不假装没有代价）】
-         * 现在 `filteredGroups`（已按 `sortSessions` 排好）**逐个**成为网格的
-         * 直接子项 ⇒ CSS grid 两列 ⇒ 视觉上是 1,2 / 3,4 / 5,6
-         * ⇒ **DOM 序 == 视觉序 == 排序序**，三者一致。
-         *
-         * 代价：**放弃按卡片高度均衡**（会出现「高低脚」——
-         * 同一行里两张卡片高度不同时，短的那张下面留白）。
-         * 这是**有意接受**的取舍：用户的显式选择（排序）优先级高于
-         * 视觉上的齐整。审计原文的取舍也是这一条
-         * （「可以让**高度**去均衡，而不是让**顺序**去均衡」—— 那是以后的事）。
-         * 另一档更差的修法是「保留现状 + 文案提示用户」= 把缺陷写进文案，
-         * 等于承认功能半残 —— 本仓明令不做。
+         * ⇒ 别再改回「卡片直接当网格子项」：那会把每行的洞带回来。
+         *   也别改回贪心轮流放：那会把顺序打乱。
+         *   守卫：tests/guards/doubleColumnOrderHonesty.test.ts（顺序 + 结构）
+         *         tests/guards/doubleColumnBalance.test.ts（切点取最齐的那一刀）
          */
-        <div className="session-grid">
-          {filteredGroups.map(group => (
-            <DraggableTabGroup
-              key={group.id}
-              group={group}
-              collapsed={collapsedIds.has(group.id)}
-              onToggleCollapsed={() => toggleCollapsed(group.id)}
-            />
-          ))}
-        </div>
+        (() => {
+          const { left, right } = splitIntoTwoColumns(filteredGroups);
+          return (
+            <div className="session-grid">
+              {[left, right].map((column, columnIndex) => (
+                <div
+                  key={columnIndex}
+                  className="session-grid-column transition-all duration-300 ease-out"
+                >
+                  {column.map(group => (
+                    <DraggableTabGroup
+                      key={group.id}
+                      group={group}
+                      collapsed={collapsedIds.has(group.id)}
+                      onToggleCollapsed={() => toggleCollapsed(group.id)}
+                    />
+                  ))}
+                </div>
+              ))}
+            </div>
+          );
+        })()
       ) : (
         <div className="session-list-stack transition-all duration-300 ease-out">
           {filteredGroups.map(group => (

@@ -1824,18 +1824,23 @@ html:not([data-theme]).dark {
   gap: 0.75rem;
 }
 
-/* 双栏布局：**行主序**（2026-10-23 审计 R-11）。
+/* 双栏布局：网格只负责**分出两条等宽的栏道**，里面的卡片不互相配对。
  *
- * 会话卡**直接**是网格子项（不再是「两列各一个 div」）⇒
- * 浏览器按行填充（1,2 / 3,4 / 5,6）⇒ 视觉序 == DOM 序 == 排序序。
+ * 网格的两个子项是 `.session-grid-column`（两栏各自的纵向堆叠），
+ * 卡片住在栏里 ⇒ 一张高一张矮不会在它旁边撕出空白
+ * （1.26.0–1.28.0 曾让卡片直接当网格子项、行主序摆放，每行短的那张下面
+ * 空出 174px，产品负责人 2026-10-24 判为缺陷）。
  *
- * ⚠️ 因此这里**不得**改成 `grid-auto-flow: column`（列优先会让视觉序
- * 重新变成「先走完第一列」⇒ 又一次与排序序不符）。
- * 守卫：tests/guards/doubleColumnOrderHonesty.test.ts
+ * `align-items: start` 让两栏**各自从顶部起排**，短的那栏到自己的底就结束，
+ * 不被拉长到和长的那栏等高。
  *
- * `align-items: start` 让同一行的卡片**顶对齐** —— 卡片高度不同时
- * 短的那张下面会留白（高低脚）。这是有意接受的取舍：
- * 用户的显式排序选择优先于视觉齐整。 */
+ * 顺序：切栏用的是「连续切一刀」（src/components/tabs/doubleColumnSplit.ts）
+ * ⇒ 先读完左栏再读右栏 == 用户选的排序序。窄屏（< 768px）塌成一列时，
+ * 两栏仍是「先左后右」拼起来 ⇒ 顺序照样对（旧版贪心轮流放就没这个性质）。
+ * **别**改成
+ * `grid-auto-flow: column`（那是另一回事，且会让视觉序与 DOM 序分家）。
+ * 守卫：tests/guards/doubleColumnOrderHonesty.test.ts（顺序 + 结构）
+ *       tests/guards/doubleColumnBalance.test.ts（切点） */
 .session-grid {
   display: grid;
   grid-template-columns: 1fr;
@@ -1846,6 +1851,21 @@ html:not([data-theme]).dark {
 @media (min-width: 768px) {
   .session-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 1rem;
+  }
+}
+
+/* 一栏 = 一个独立的纵向堆叠（卡片之间只有竖向间隔，互不配对）。
+ * `min-width: 0`：卡片里的长标题/长网址不许把栏撑得比栏道还宽。 */
+.session-grid-column {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  min-width: 0;
+}
+
+@media (min-width: 768px) {
+  .session-grid-column {
     gap: 1rem;
   }
 }
