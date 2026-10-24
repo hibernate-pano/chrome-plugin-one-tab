@@ -25,7 +25,7 @@
   ],
   "action": {
     "default_icon": "icons/icon16.png",
-    "default_title": "TapStack - 打开会话管理器"
+    "default_title": "TapStack - 保存当前窗口并关闭这些标签"
   },
   "options_ui": {
     "page": "src/options/index.html",

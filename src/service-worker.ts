@@ -12,6 +12,7 @@ import { mutationService } from '@/background/mutationService';
 import { readAuthStatus, describeAuthStatus } from '@/background/authStatus';
 import { ensureOpStampMigrated } from '@/background/opStampMigratedGuard';
 import { clearSaveReceipt, RECEIPT_CLEAR_ALARM } from '@/background/saveReceipt';
+import { runIconClick } from '@/background/iconClickAction';
 import { runMigrations as runStorageMigrations } from '@/utils/migrationUtils';
 import { UPLOAD_DEBOUNCE_MS } from '@/core/syncTiming';
 import { recordOnboardingTrigger } from '@/utils/onboardingStorage';
@@ -481,52 +482,60 @@ chrome.alarms.onAlarm.addListener((alarm) => {
 
 // 监听扩展图标点击事件
 //
-// ── 2026-10-22 审计 P0-1：点图标**不再**保存并关闭当前窗口 ──────────────
+// ── 2026-10-24：产品负责人要求**恢复旧交互**（点图标 = 保存并关闭）────────
 //
-// 原来的行为：showNotification('正在保存当前窗口为会话…') → saveAllTabs(tabs)
-// → 关掉这些标签 → 打开管理器。全程**零确认**。
+// 2026-10-22 审计 P0-1 曾把这里改成「只打开会话管理器」，理由是
+// 「点工具栏图标的心智模型是『打开它看看』，破坏性的那一个总会被误触」。
+// 那个判断在**单实例**里成立，在**多实例**里却是反的：
 //
-// 而用户点工具栏图标的心智模型是「打开这个扩展看看」——和所有其它扩展一样，
-// 不是「把我这一窗标签销毁掉」。于是产品的第一句话就不可逆：装完第一次点图标，
-// 12 个标签消失。而「我想看看上周存的会话」和「我要把这一窗收起来」是**两个
-// 意图**，共用一个手势 ⇒ 破坏性的那一个总会被误触。
+//   · 用户同时开着两个 Chrome（一个日常、一个工作），扩展在两边都装了；
+//   · 旧交互下点图标 = 把这一窗收成会话 —— 动作**发生在点的那一边**，
+//     结果**当场可见**（标签消失、窗口腾空），几个实例互不干扰；
+//   · 改成「只打开管理器」之后，多实例场景下「点 A 实例的图标、B 实例
+//     跳出来一个管理器」是常态（管理器页可能被激活在**另一个窗口**），
+//     用户在点的那一边**看不到任何变化** ⇒ 体验从「一键收起」退化成
+//     「点了像没点」。
 //
-// 这条已被独立标记两次：`docs/audit-2026-10-20-round1.md:342`（P0，未修）、
-// `docs/audit-2026-10-22-product-director.md`（P0-1，2026-10-22 复核仍成立）。
+// ⇒ **恢复旧交互**：点图标 = 把**点到的那个窗口**的标签存成会话并关掉它们
+//   （这正是产品名的含义：保存即关闭），随后打开会话管理器。
+//   审计里那些与「破坏性」有关的其它安全策略**一律保留**（删除确认、
+//   锁定会话的豁免、恢复即消费的可撤销回执、危险 URL 拦截…）——
+//   被推翻的只有「图标点击不许保存」这一条交互约定。
 //
-// 现在：点图标 = **只打开会话管理器**，不动当前窗口任何一个标签。
-// 「保存并关闭」仍然是产品的核心动作，但改由**明确的意图**触发：
-//   · 管理页顶栏的「保存并关闭」按钮（按钮上有字，用户看得见自己在干什么）；
-//   · 右键扩展图标 →「保存其他标签并关闭」/「保存当前标签页并关闭」；
-//   · 快捷键 Ctrl+Shift+S（macOS ⌘⇧S）保存整窗并关闭 —— 键位与语义都没变。
-//
-// 这不是把功能删掉，是把**不可逆的破坏**从「随手一点」挪到「明确的一步」。
-chrome.action.onClicked.addListener(async () => {
-  try {
-    // 不传 shouldRefresh：管理器开着时刷新它会丢滚动位置，
-    // 而它的数据本来就靠 storage 变更事件保持新鲜。
-    await tabManager.openTabManager();
-  } catch (error) {
-    logError('打开标签管理器失败:', error);
-    await showNotification('无法打开会话管理器，请重试。如果问题持续，请重启浏览器。', 'TapStack', 'error');
-  }
+// ⚠️ 窗口必须取「**点图标那一个**」，不能取 currentWindow：
+//   service worker 语境下的 `currentWindow` = **最后被聚焦的窗口**，
+//   在多个 Chrome 实例 / 多个窗口并存时可能指向**别的**窗口
+//   ⇒ 点 A 的图标却把 B 的标签存走并关掉（更糟：存错 + 关错）。
+//   `chrome.action.onClicked` 传进来的 `tab` 就是被点时那个窗口的活动标签
+//   ⇒ 它的 `windowId` 才是「用户以为在点的那个窗口」。
+chrome.action.onClicked.addListener(async clickedTab => {
+  await runIconClick(clickedTab, {
+    queryTabs: query => chrome.tabs.query(query),
+    saveAllTabs: tabs => tabManager.saveAllTabs(tabs),
+    openTabManager: (shouldRefresh, windowId) =>
+      tabManager.openTabManager(shouldRefresh, windowId),
+    notify: (message, kind) => showNotification(message, 'TapStack', kind),
+  });
 });
 
 // 监听快捷键命令
 //
 // 这里**没有** `_execute_action` 分支：Chrome 对 action 命令不派发
-// commands.onCommand，按下 Ctrl+Shift+S 等同于点击扩展图标，走的是上面
-// chrome.action.onClicked（保存整窗并关闭，随后打开管理器）。曾经写在这里的
+// commands.onCommand（它只会触发 chrome.action.onClicked）。曾经写在这里的
 // 那条分支是死代码，而它的文案（「打开标签管理器」）与真实行为相反。
+//
+// ⚠️ 2026-10-24 恢复旧交互后，图标点击重新变成「保存整窗并关闭、随后打开
+//   管理器」—— 但**快捷键仍然不该绑回 `_execute_action`**：
+//   Chrome 不允许两个命令占同一个键位，而 Ctrl+Shift+S 已经绑在
+//   `save_all_tabs` 上了；两条路径的差别只在一处 —— 快捷键**不打开管理页**
+//   （省得抢走用户正在看的东西），图标点击会打开。
 chrome.commands.onCommand.addListener(async (command) => {
   logInfo('收到快捷键命令:', command);
 
   try {
     switch (command) {
       // Alt+Shift+S 是 Ctrl+Shift+S 的等价备用键位（两个 command id，
-      // 同一个动作）。以前 Ctrl+Shift+S 挂在 `_execute_action` 上 ——
-      // 那条命令走的是「点图标」，也就是**保存整窗并关闭**；现在图标改成
-      // 只打开管理器，所以 Ctrl+Shift+S 必须挂到一个真的保存命令上，
+      // 同一个动作）。Ctrl+Shift+S 必须挂在一个**真的保存命令**上，
       // 否则「Ctrl+Shift+S 保存整窗并关闭」这句话就成了假话。
       //
       // 两条 case 故意相邻且中间不夹注释：空 case 的 fall-through 是 eslint

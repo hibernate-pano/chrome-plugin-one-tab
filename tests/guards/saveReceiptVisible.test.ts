@@ -134,7 +134,7 @@ function installChromeMock(): ChromeMock {
     runtime: {
       getManifest: () => ({
         version: 'test',
-        action: { default_title: 'TapStack - 打开会话管理器' },
+        action: { default_title: 'TapStack - 保存当前窗口并关闭这些标签' },
       }),
       getURL: (p: string) => `chrome-extension://test/${p}`,
       sendMessage: () => Promise.resolve(),

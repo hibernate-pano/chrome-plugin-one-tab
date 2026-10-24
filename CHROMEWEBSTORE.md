@@ -110,7 +110,7 @@ TapStack
 TapStack 把你当前浏览器窗口里的所有标签页保存为一个会话，**并把窗口腾空**（保存即关闭），随时找回、随时恢复，不让标签页堆积成灾难。
 
 主要功能：
-· 一键保存：把当前窗口的标签页存为会话；快捷键 Ctrl+Shift+S（macOS 为 ⌘⇧S）保存整窗并关闭、Alt+Shift+S 保存全部并关闭、Alt+S 保存当前页并关闭。**点扩展图标只会打开会话管理器，不会动你当前的标签页** —— 要「保存并关闭」，用页面顶栏的按钮、右键扩展图标，或上面的快捷键。默认不保存「固定标签页」（可在设置里改）；浏览器内部页面（设置页、扩展页等）一律不保存；**本地文件（`file://`）的地址会照常存下来**（否则 PDF、论文这类标签会被悄悄丢掉），但浏览器不允许扩展打开本地文件 —— 这类标签**只作为一条记录留存**，点开时仍会提示「在当前设备无法打开」
+· 一键保存：**点扩展图标**就把当前窗口的标签页存成一个会话**并关掉它们**（屏幕立刻干净，这正是「保存即关闭」）；快捷键 Ctrl+Shift+S（macOS 为 ⌘⇧S）保存整窗并关闭、Alt+Shift+S 保存全部并关闭、Alt+S 保存当前页并关闭；页面顶栏也有「保存并关闭」按钮，右键扩展图标可保存当前标签页或窗口里的其它标签页。默认不保存「固定标签页」（可在设置里改）；浏览器内部页面（设置页、扩展页等）一律不保存；**本地文件（`file://`）的地址会照常存下来**（否则 PDF、论文这类标签会被悄悄丢掉），但浏览器不允许扩展打开本地文件 —— 这类标签**只作为一条记录留存**，点开时仍会提示「在当前设备无法打开」
 · 右键菜单：在网页标签页上右键（或右键标签标题），可保存该标签页并关闭；右键扩展图标，可保存当前标签页或窗口里的其他标签页（同样会关闭），也可直接打开标签管理器
 · 智能命名：新会话默认按内容命名（取出现最多的域名，如 `github.com`），一眼看出是哪个工作现场；本机地址与内网 IP（如 `localhost:3000`、`192.168.1.5`）按主机名命名；连主机名都没有时才用页面标题，再取不到才退回「标签组 月日 时:分」；也可以随时手动重命名
 · 会话整理：每个会话可重命名、锁定防误删（锁定后不可重命名、不可逐个删除其中的标签、不可把标签拖到别的会话、不参与清理重复；仍可删除整个会话，只是会先提示「该会话已锁定」，而且这一步**一定**要确认）
@@ -135,7 +135,7 @@ TapStack saves every tab in your current window as a named session **and clears 
 *The extension's interface is currently in Simplified Chinese only.*
 
 Key features:
-· One-click save: store the tabs of the current window as a session. Shortcuts: Ctrl+Shift+S (Cmd+Shift+S on macOS) saves the whole window and closes it, Alt+Shift+S saves all tabs and closes them, Alt+S saves the current tab and closes it. **Clicking the extension icon only opens the session manager — it never touches your open tabs.** To save and close, use the button at the top of the page, right-click the extension icon, or the shortcuts above. Pinned tabs are not saved by default (changeable in settings); browser internal pages (settings, extension pages, …) are never saved; **local file addresses (`file://`) are saved as-is** (dropping them would silently lose PDFs and papers), but browsers do not let extensions open local files — those tabs are **kept as a record only**, and tapping one still says it cannot be opened on this device
+· One-click save: **clicking the extension icon** turns the tabs of the current window into a session **and closes them** (the window goes blank right away — that is the whole idea of “save & close”). Shortcuts: Ctrl+Shift+S (Cmd+Shift+S on macOS) saves the whole window and closes it, Alt+Shift+S saves all tabs and closes them, Alt+S saves the current tab and closes it. You can also use the button at the top of the page, or right-click the extension icon to save the current tab or the other tabs in the window. Pinned tabs are not saved by default (changeable in settings); browser internal pages (settings, extension pages, …) are never saved; **local file addresses (`file://`) are saved as-is** (dropping them would silently lose PDFs and papers), but browsers do not let extensions open local files — those tabs are **kept as a record only**, and tapping one still says it cannot be opened on this device
 · Right-click menu: right-click a page or a tab title to save that tab and close it; right-click the extension icon to save the current tab or all other tabs in the window (and close them), or to open the tab manager
 · Smart naming: new sessions are named after the most frequent domain (e.g. github.com), so you can tell them apart at a glance; local addresses and intranet IPs (localhost:3000, 192.168.1.5, …) are named after their host; when there is no host at all it uses the page title, and only then falls back to "Group Mon DD HH:mm"; rename any time
 · Session tools: rename, lock against accidental deletion (a locked session cannot be renamed, its tabs cannot be deleted one by one, its tabs cannot be dragged into another session, and it is left out of duplicate cleanup; you can still delete the whole session, but you will be told it is locked first — and that step **always** asks you to confirm)
@@ -460,6 +460,7 @@ https://github.com/hibernate-pano/chrome-plugin-one-tab
 
 **⑤ 自带存储（WebDAV）的加密口令，从「一个字符也接受」变成有门槛** —— 此前这个口令**只要不是空的就行**（`a` 也算数）。而它恰恰是这层加密里**唯一**由你决定的变量：云盘服务商手里有 salt（明文写在目录清单里）和密文文件，**他可以离线一个个试你的口令**。口令越短，试完越快 —— 4 位数在普通机器上两三个小时就穷举完了。现在新建一个加密库时，口令**至少要 12 位**，且不能是常见口令、纯重复、连续字符或键盘上的一排（`123456` / `aaaaaaaaaaaa` / `abcdefghijkl` / `qwertyuiopas` 这类一律不行）。口令框旁边会实时显示强度（太弱 / 够用 / 很强）并说明为什么不行。另外补上了一直没写清的边界：**加密挡的是「离线」**（拿到你云盘副本的人看不到会话名与网址），**不挡「运行时」**（已经装在你浏览器里的恶意扩展、或有人看着你输入口令，都不受它保护）。**已经加密过的库不受影响** —— 你原来那个口令哪怕很短也照常能用，不会被要求改掉（否则「加密更安全」就变成了「再也连不上自己的云盘」）。
 
+**⑥ 点扩展图标重新变成「保存当前窗口并关闭」** —— 1.26.0 起，工具栏图标被改成了「只打开会话管理器」；**1.27.0 改回旧行为**：点一下图标，当前窗口的标签就被存成一个会话**并关掉它们**，屏幕立刻干净，随后打开的就是你刚存的那一批。1.26.0 之所以改，是因为在**只开一个 Chrome** 的时候，「点图标看看」很容易被误当成「把这一窗收起来」；但当你**同时开着两个 Chrome**（一个日常、一个工作）时，改成「只打开管理器」反而让图标「点了像没点」—— 动作发生在你点的那一边，结果却可能出现在另一个窗口。现在点图标收起的**永远是你点的那一个窗口**，不会串到别处去。⚠️ 也就是说：**点图标会关掉当前窗口的标签**，只想「打开会话管理器看看」的话，请**右键**扩展图标 →「打开标签管理器」。
 ---
 
 **1.26.1 的详细清单**（对应上表那一行）：
@@ -502,7 +503,7 @@ https://github.com/hibernate-pano/chrome-plugin-one-tab
 
 **⑫ 清理重复标签的确认框此前拿着可能过期的数字问你** —— 界面上的会话数可能是几分钟前的，而真正要删的是别的。现在先读真实数据再报数；读不到就**直接取消清理**并说明，而不是拿着一个可能错的数字问你「确定要删 N 条吗」。
 
-**⑬ 点扩展图标此前会零确认地关掉你当前的窗口** —— 现在点图标**只打开会话管理器**，不动你正在用的标签页。要「保存并关闭」，用页面顶栏的按钮、右键菜单，或快捷键。
+**⑬ 点扩展图标此前会零确认地关掉你当前的窗口** —— 1.26.0 起改成**只打开会话管理器**，不动你正在用的标签页。⚠️ **1.27.0 又把它改回了「保存并关闭」**（多开 Chrome 时旧交互才顺手），见 1.27.0 的 ⑥。
 
 **⑭ 排序、命名、筛选、退出登录等一批界面细节**：会话卡的标题现在有自己的提示条（此前是浏览器自带的、触屏永远不出现）；锁定与解锁会说明「解锁后恢复即从列表移除」这类后果，而不是干巴巴地显示「已锁定」；退出登录会明确告诉你成没成。
 

@@ -226,10 +226,10 @@ describe('chrome.* 薄壳：回执失败绝不能把「保存成功」变成「�
     await clearSaveReceipt(
       badge.api,
       { create: () => {}, clear: (n) => { cleared.push(n); return true; } },
-      'TapStack - 打开会话管理器'
+      'TapStack - 保存当前窗口并关闭这些标签'
     );
     assert.deepEqual(badge.calls.texts, [''], '徽标必须被清空');
-    assert.deepEqual(badge.calls.titles, ['TapStack - 打开会话管理器'], '标题必须还原');
+    assert.deepEqual(badge.calls.titles, ['TapStack - 保存当前窗口并关闭这些标签'], '标题必须还原');
     assert.deepEqual(cleared, [RECEIPT_CLEAR_ALARM], 'alarm 必须被清掉');
   });
 

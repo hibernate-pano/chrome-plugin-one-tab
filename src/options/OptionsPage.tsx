@@ -472,7 +472,10 @@ const OptionsContent: React.FC = () => {
       }
     } catch (err) {
       logError('[OptionsPage] 打开管理页失败:', err);
-      showToast('打开管理页失败，请在扩展图标上点一下回到 TapStack', 'error');
+      // ⚠️ **不许让用户去点扩展图标** —— 点图标现在是「保存当前窗口并关闭」
+      //   （2026-10-24 恢复旧交互）⇒ 让用户去点它等于让他把正在用的标签收起来。
+      //   正确入口是**右键**扩展图标 →「打开标签管理器」。
+      showToast('打开管理页失败，请右键扩展图标 →「打开标签管理器」回到 TapStack', 'error');
     }
   }, [showToast]);
 

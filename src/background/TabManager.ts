@@ -58,18 +58,29 @@ export class TabManager {
 
   /**
    * 检查是否已有标签管理页面打开
+   *
+   * @param windowId 只在这个窗口里找（给了就别去动别的窗口的页面）
    */
-  private async getExistingTabManagerTabs(): Promise<chrome.tabs.Tab[]> {
+  private async getExistingTabManagerTabs(windowId?: number): Promise<chrome.tabs.Tab[]> {
     const extensionUrl = this.getExtensionUrl();
-    return await chrome.tabs.query({ url: extensionUrl + '*' });
+    if (windowId === undefined) {
+      return await chrome.tabs.query({ url: extensionUrl + '*' });
+    }
+    return await chrome.tabs.query({ url: extensionUrl + '*', windowId });
   }
 
   /**
    * 打开或激活标签管理器页面
+   *
    * @param shouldRefresh 是否刷新已存在的页面
+   * @param windowId 打开在哪个窗口（给了就在那个窗口里找/开）。
+   *   ⚠️ **多实例共存的命门**：不传就跨窗口找 —— 找到的是「另一个窗口里的
+   *   管理器」时，`tabs.update(active:true)` 会把**那个窗口**带到前台，
+   *   而用户是在**这边**点的图标 ⇒ 看着像「点了没反应」。
+   *   点图标那条路必须传 windowId（= 点图标那个窗口）。
    */
-  async openTabManager(shouldRefresh: boolean = false): Promise<void> {
-    const existingTabs = await this.getExistingTabManagerTabs();
+  async openTabManager(shouldRefresh: boolean = false, windowId?: number): Promise<void> {
+    const existingTabs = await this.getExistingTabManagerTabs(windowId);
 
     if (existingTabs.length > 0) {
       const tab = existingTabs[0];
@@ -80,7 +91,12 @@ export class TabManager {
         }
       }
     } else {
-      await chrome.tabs.create({ url: this.getExtensionUrl() });
+      // ⚠️ 窗口作用域：不传 windowId ⇒ 新标签开在「最后被聚焦的窗口」，
+      //   多实例时用户在自己这边看着「点了没反应」⇒ 点图标那条路必须传。
+      await chrome.tabs.create({
+        url: this.getExtensionUrl(),
+        ...(windowId === undefined ? {} : { windowId }),
+      });
     }
   }
 
@@ -260,7 +276,22 @@ export class TabManager {
 
       if (tabIdsToClose.length > 0) {
         try {
-          await chrome.tabs.create({ url: 'chrome://newtab' });
+          // ⚠️ 2026-10-24：占位新标签必须开在**被关标签所在的那个窗口**里。
+          // `chrome.tabs.create` 不带 windowId ⇒ 开在「最后被聚焦的窗口」，
+          // 而多窗口 / 多 Chrome 实例并存时那可能是**另一个**窗口 ⇒
+          // 用户在点的那一边看着窗口被清空，另一个窗口凭空多出一个新标签
+          // （用户描述的「单独 Chrome APP 实例里点了，标签页和管理器都没出现」）。
+          //
+          // 为什么需要这个占位标签：Chrome 在「窗口最后一个标签被关掉」时会
+          // **把整个窗口关掉** ⇒ 用户的窗口凭空消失。
+          const targetWindowId = tabs.find(
+            tab => typeof tab.windowId === 'number'
+          )?.windowId;
+          await chrome.tabs.create(
+            targetWindowId === undefined
+              ? { url: 'chrome://newtab' }
+              : { url: 'chrome://newtab', windowId: targetWindowId }
+          );
           await chrome.tabs.remove(tabIdsToClose);
         } catch (error) {
           logWarn('关闭标签页时出错:', error);
@@ -557,9 +588,9 @@ export class TabManager {
    *
    * ── 为什么不能随便取一个 ──────────────────────────────────────────────
    *
-   * 用户可能在**两个窗口**里各开着一个管理页（点扩展图标开一个、之前又开过
-   * 一个）。撤销提示挂在**他点下去的那一个**上 ⇒ 把另一个切到前台 =
-   * 提示仍然看不见，而屏幕上却换了个页面（比不切更迷惑）。
+   * 用户可能在**两个窗口**里各开着一个管理页（用右键菜单「打开标签管理器」
+   * 开一个、之前又开过一个）。撤销提示挂在**他点下去的那一个**上 ⇒ 把另一个
+   * 切到前台 = 提示仍然看不见，而屏幕上却换了个页面（比不切更迷惑）。
    *
    * 判据：管理页标签**既是活动标签、又在最后聚焦的窗口里** ⇒ 那就是用户
    * 刚刚点按钮的地方（他点的时候那个窗口必然是聚焦的、那个标签必然是活动的）。
