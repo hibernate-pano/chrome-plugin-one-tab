@@ -35,7 +35,12 @@ let observedRoot: Element | null = null;
 
 /**
  * 提前量（px）：与 IntersectionObserver 的 rootMargin 保持一致。
- * 600px ≈ 15 行 × 44px，滚动时内容已经就位，不会出现「滚到了还是空白」。
+ * 600px ≈ 10 行 × 58px（行距是量出来的，见 cardMetrics）⇒ 滚动时内容已经就位，
+ * 不会出现「滚到了还是空白」。
+ *
+ * ⚠️ 这个值同时决定**同时有多少张卡是真卡**（真卡数 ≈ (视口高 + 2×600) / 卡高
+ * ⇒ 有上界，不随会话总数增长）。调大它会让性能承诺变松，调小会让快速滚动
+ * 出现空白 ⇒ 两边都要有真机数据再动（scripts/perf03-card-window-probe.mjs）。
  */
 const NEAR_MARGIN_PX = 600;
 
@@ -96,8 +101,13 @@ function ensureObserver(root: Element | null): IntersectionObserver | null {
  *
  * 单次测量是 O(1)（getBoundingClientRect），几百张卡也只有几百次布局读数，
  * 而且发生在同一次布局里（无读写交错），不会造成布局抖动。
+ *
+ * 【导出给测试用】这条规则决定「同时有多少张卡是**真卡**」：
+ * 真实渲染的卡数 ≈ (视口高 + 2×提前量) / 卡高 ⇒ **有上界**（不随会话总数增长）。
+ * 这正是「1000 个会话时 DOM 里只有几十张真卡」那条性能承诺的**根据**，
+ * 所以它必须能被直接断言，而不是只能靠真机看。
  */
-function measureNear(el: Element, root: Element | null): boolean {
+export function measureNear(el: Element, root: Element | null): boolean {
   const rect = el.getBoundingClientRect();
   const top = root ? root.getBoundingClientRect().top : 0;
   const height = root ? root.clientHeight : window.innerHeight || 0;

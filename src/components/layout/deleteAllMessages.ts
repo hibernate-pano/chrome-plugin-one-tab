@@ -13,15 +13,22 @@
  * 判据与 syncEngine / backgroundSync 的门禁同口径：**有没有可用的同步后端**，
  * 而不是「有没有账号」。抽成纯函数是为了让两处调用同一个，边界（登录 / 自带存储 /
  * 纯本地）由单测钉死。
+ *
+ * ── 2026-10-24 审计 DS-3：跨设备判据与措辞搬去了共享模块 ──────────────────
+ * 「删除单个会话」的确认框也要说同一件事（此前它一个字不提），两处必须同源 ⇒
+ * 判据（`deleteReachesOtherDevices`）与措辞（`crossDeviceDeleteCaveat`）都搬到了
+ * `components/sync/crossDeviceDeleteCopy.ts`，本文件只做组装。
  */
+import {
+  crossDeviceDeleteCaveat,
+  deleteReachesOtherDevices,
+  otherDevicesLabel,
+} from '@/components/sync/crossDeviceDeleteCopy';
+
 export interface DeleteAllDisclosure {
   isAuthenticated: boolean;
   syncBackend: 'supabase' | 'webdav';
 }
-
-/** 这次删除会不会传到其他设备。 */
-export const deleteReachesOtherDevices = (input: DeleteAllDisclosure): boolean =>
-  input.isAuthenticated || input.syncBackend === 'webdav';
 
 /**
  * 「删完全部之后，要不要立刻发一次覆盖上传」——**必须与
@@ -37,10 +44,6 @@ export const deleteReachesOtherDevices = (input: DeleteAllDisclosure): boolean =
  * `syncIdentityCanRun`、backgroundSync 的门禁同一口径。
  */
 export const deleteAllShouldPushOverwrite = deleteReachesOtherDevices;
-
-/** 自带存储用户没有账号，说「登录设备」会指向一个他不需要也不存在的东西。 */
-const otherDevicesLabel = (input: DeleteAllDisclosure): string =>
-  input.syncBackend === 'webdav' ? '其他设备' : '其他登录设备';
 
 /**
  * 「删除所有会话」对**锁定会话**的处理口径 —— 方案 B（全部删除，但必须点名）。
@@ -78,17 +81,17 @@ export const deleteAllLockedWarning = (input: DeleteAllLockedDisclosure): string
 /**
  * 「删除会传到其他设备」这句话**还差一档**（数据安全审计 DS-3，2026-10-23）。
  *
- * 删除意图确实会广播（墓碑上传 ⇒ 对端服从删除），但**胜负由操作印记决定**
- * （`src/core/opStampMerge.ts`）：另一台设备若在**离线期间改过**这个会话，
- * 它的印记可能更大 ⇒ **删除被撤销** ⇒ 那条会话在对方那儿还在，
- * 下一轮同步还会回到本机。
+ * 旧版这里写的是「（另一台设备若在离线时改过它，删除可能不生效）」—— 那句话
+ * 当时是**真的**（胜负由操作印记决定 ⇒ 删除可能被撤销），但它已经被修掉了：
+ * 2026-10-24 审计 DS-3 把判据改成「**云端墓碑一律赢**」
+ * （`core/opStampMerge.ts` / `core/remoteAdjudication.ts` /
+ * `utils/supabase/upload.ts` 三处同口径）⇒ 对方离线期间改过也一样会被删除。
  *
- * ⇒ 「其他登录设备将同步删除」这句话**只对了一半** —— 它承诺了一个
- * 实现不保证的结果（README / 商店文案 / Known Issues 已经把这一档写出来了，
- * 剩下的就是**当用户要按下确认键的那一刻**，也让他看见）。
- * 代价是一句话，而收益是：他以为自己删干净了，而其实没有。
+ * ⇒ 继续留着「可能不生效」= 对着「让用户低估后果」的方向说假话；
+ *   而删掉它又不补上「对方那份也没了」= 说另一半假话（用户会以为对方那份还在）。
+ * ⇒ 现在这句说的是**真实后果**：删除会同步过去，对方那份离线编辑也一起没。
+ * 措辞在 `components/sync/crossDeviceDeleteCopy.ts`（与「删除单个会话」同源）。
  */
-const crossDeviceCaveat = '（另一台设备若在离线时改过它，删除可能不生效）';
 
 // ── 2026-10-23 数据安全审计 DS-43-15：确认框的数字必须取**磁盘真值** ────────
 //
@@ -192,7 +195,7 @@ export const deleteAllConfirmMessage = (
   `将删除本地全部 ${input.groupCount} 个会话，删除后无法恢复` +
   deleteAllLockedWarning(input) +
   (deleteReachesOtherDevices(input)
-    ? `，${otherDevicesLabel(input)}将同步删除${crossDeviceCaveat}`
+    ? `，${otherDevicesLabel(input)}将同步删除${crossDeviceDeleteCaveat}`
     : '') +
   '。确认继续吗？';
 
@@ -203,6 +206,6 @@ export const deleteAllMenuWarning = (
   '将清空本地全部会话，删除后无法恢复' +
   deleteAllLockedWarning(input) +
   (deleteReachesOtherDevices(input)
-    ? `（${otherDevicesLabel(input)}同步删除${crossDeviceCaveat}）`
+    ? `（${otherDevicesLabel(input)}同步删除${crossDeviceDeleteCaveat}）`
     : '') +
   '。';

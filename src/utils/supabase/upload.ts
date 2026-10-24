@@ -5,7 +5,7 @@
  */
 import type { TabGroup, UserSettings, TabData, SupabaseTabGroup } from '@/types/tab';
 import { RETIRED_SETTING_KEYS, settingKeyToColumn } from '@/types/tab';
-import { decryptData, encryptCompressedData } from '../encryptionUtils';
+import { encryptCompressedDataWithSelfCheck } from '../encryptionUtils';
 import { serializeTab } from '@/core/tabDataCodec';
 import { decideCloudTombstoneWrite } from '@/core/syncDecision';
 import { supabase, checkSupabaseConfig, getDeviceId } from './client';
@@ -21,6 +21,7 @@ import {
 } from './missingColumn';
 import { upsertWithNotNullFallback } from './notNullFallback';
 import { compareStamps } from '@/core/opStamp';
+import { resolveRemoteState, shouldConcedeToRemoteTombstone } from '@/core/remoteAdjudication';
 import { planOverwriteUpload, type OverwriteUploadPlan } from '@/core/overwriteUploadGuard';
 import {
   BackendUnavailableError,
@@ -48,7 +49,7 @@ import { createSeqRegistry } from '@/utils/seqRegistry';
 import { kvGet, kvSet } from '@/storage/storageAdapter';
 import { storage, SETTINGS_COLUMN_DEFAULTS } from '@/utils/storage';
 // DS-1 账号闸门：判据在 core/accountScope（纯函数），归属记录的读写在
-// utils/authCache（chrome.storage.local 的独立键）。
+// utils/authCache（**KV 层**，与本机会话同一个库）。
 import {
   filterGroupsByAccount,
   partitionDeleteIdsByAccount,
@@ -267,20 +268,44 @@ export async function findConcededGroupIds(
 /**
  * 【F4】预检裁决：本地这一份该不该认输（不上行、交给下载合并物理移除）。
  *
- * 唯一认输理由：**云端是更新的墓碑**（合并语义：云端墓碑印记更大 ⇒ 本地组
- * 服从删除，见 mergeOpStamped 的「云端墓碑 vs 本地活跃」）。
+ * 判据两条（顺序不可换）：
+ *   ① **云端是墓碑而本地是活跃副本 ⇒ 一律认输**（删除优先于编辑）。
+ *   ② 其余：**本地印记严格更新** ⇒ 本地该赢，不认输。
  *
- * 明确**不**认输的两条（都是 2026-10-20 P0 的根因所在）：
- *   1. **本地印记严格更新** ⇒ 本地才是更晚保存的一方，本地必须赢。
- *      哪怕云端的 version 更大也不认输 —— version 是每台设备各自的本地
- *      计数器，跨设备根本不可比（设备 A 改 3 次 version=4，设备 B 改 1 次
- *      version=2 但印记更大 = B 更晚保存）。拿 version 当认输理由，就是
- *      「更晚保存的一方认输」。
- *   2. 云端是**活跃行**且印记更大 ⇒ 那是合并语义里「先到的写输」的正常
- *      收敛（读回阶段判为「被取代」，不是故障），预检不必拦。
+ * ── ① 为什么删除要压过编辑（2026-10-24 审计 DS-3，P0）────────────────────
+ * 旧判据是「本地印记严格更新 ⇒ 绝不认输」，而**两台设备的印记来自各自独立的
+ * 计数器**（`utils/seqRegistry.ts` 的 Lamport 时钟只保证「本设备发出的号 >
+ * 它观察到的任何号」）⇒ 一台**离线**设备上的编辑，它的号与另一台设备上的
+ * 删除号**没有任何因果关系** ⇒ 比大小等于掷硬币：
  *
- * 所以本函数**完全不看 version**：预检不参与 version 裁决，服务端那条
- * version 守卫才是吞写的真凶（迁移 20261020150000 已把它降级为兜底）。
+ *   A 删掉会话 S（墓碑号 100）；B 离线期间编辑过 S（B 的号 101）⇒
+ *   旧判据「B 赢」⇒ B 不认输 ⇒ **B 把自己的活跃行 upsert 上去** ⇒
+ *   服务端 `guard_tab_group_op_stamp` 判 `NEW >= OLD` 放行 ⇒
+ *   **云端墓碑被活跃行覆盖** ⇒ A 下一轮同步把 S 又下回来 ⇒
+ *   A 明确删掉的会话复活了，而且回来的还是 B 的版本。
+ *
+ * ⇒ 合并侧（`core/opStampMerge.ts`）与本处（上传侧）必须**同时**改成
+ *   「墓碑优先」：只改合并侧，B 仍会把活跃行写上云端，复活照旧。
+ *
+ * ⚠️ **显式覆盖模式不受这条约束**：用户明确选了「以本地为准」
+ *   （`findConcededGroupIds` 的 `opts.overwrite`）⇒ 那时用户已经替这件事
+ *   做了决定，不该由判据替他反悔（见该函数的 overwrite 早退）。
+ *
+ * ── ② 为什么「本地印记严格更新」仍要保留（且**不看** version）───────────
+ * 这一条管的是**活跃 vs 活跃**：云端是活跃行而它的印记更大 ⇒ 那是合并语义里
+ * 「先到的写输」的正常收敛，交给读回判「被取代」，预检不必拦。
+ * 而 version 是每台设备各自的本地计数器，跨设备根本不可比（设备 A 改 3 次
+ * version=4，设备 B 改 1 次 version=2 但印记更大 = B 更晚保存）⇒
+ * 拿 version 当认输理由，就是「更晚保存的一方认输」。
+ *
+ * 口径与两处保持一致，缺一不可：
+ *   1. 只认「本次要写活跃、读回是墓碑」这一个方向；反方向（要写墓碑读回活跃）
+ *      永远是「墓碑未落盘」的故障，不能放过（见 `isConcededToCloudTombstone`）。
+ *   2. 云端墓碑**必须带印记**才算数：两侧任一无印记时服务端守卫是放行的
+ *      （守卫第 2 条「NULL 不是最小印记，是不知道」），那种情况下读回不一致
+ *      是真被吞写，必须报错。
+ * 上传侧已在 upsert **之前**用同一判据预检（见 upload.ts 的预检）把这类组
+ * 剔出本次写入；本函数是那条预检与 upsert 之间的竞态兜底。
  */
 export function shouldConcedeGroup(local: TabGroup, cloud: UploadReadbackRow): boolean {
   const localStamp = local.lastOp ?? null;
@@ -288,8 +313,31 @@ export function shouldConcedeGroup(local: TabGroup, cloud: UploadReadbackRow): b
     typeof cloud.last_op_seq === 'number' && cloud.last_op_device
       ? { d: String(cloud.last_op_device), s: cloud.last_op_seq }
       : null;
+  // ① 云端墓碑 vs 本地活跃副本 ⇒ 删除优先于编辑，认输（让删除跨设备传播）。
+  //    远端状态走共享的 resolveRemoteState：云端行本身就是「内容」，不是索引。
+  const cloudState = resolveRemoteState({
+    content: {
+      ...(cloudStamp ? { lastOp: cloudStamp } : {}),
+      isDeleted: cloud.is_deleted === true,
+    },
+  });
+  if (
+    shouldConcedeToRemoteTombstone(
+      { ...(localStamp ? { lastOp: localStamp } : {}), isDeleted: local.isDeleted },
+      cloudState
+    )
+  ) {
+    return true;
+  }
   // 不变量 1：本地印记严格更新 ⇒ 本地该赢 ⇒ 绝不认输
   if (localStamp && cloudStamp && compareStamps(localStamp, cloudStamp) > 0) return false;
+  // ③ 剩下的**唯一**情形：**本地也是墓碑**（local.isDeleted=true ⇒ ① 不适用）。
+  //    云端那份墓碑的印记更大 ⇒ 它代表的是更新的删除意图 ⇒ 本机这份不必再上行
+  //    （上行也不会改变云端任何东西）。
+  //
+  //    ⚠️ ① 与 ③ 不是重复：① 管的是「本地**活跃** vs 云端墓碑」，③ 管的是
+  //    「本地**也是**墓碑」。别把 ③ 删掉说「① 已经覆盖」—— 删了以后
+  //    「本地墓碑 vs 更大的云端墓碑」会变成不认输 ⇒ 白白多上行一次。
   return isConcededToCloudTombstone({ id: local.id, lastOp: localStamp }, cloud);
 }
 
@@ -983,7 +1031,15 @@ export const uploadSync = {
               // 云端出网按字节计费，而 tabs_data 占下载响应体 93% ⇒
               // 「JSON → AES-GCM」的顺序让 JSON 里的重复在加密后压不动了。
               // 改成「JSON → gzip → AES-GCM」后 10 标签/组 4291 B → 635 B。
-              const encryptedData = await encryptCompressedData(group.tabs_data, userId);
+              // ── 2026-10-24 审计 PERF-05：自检**复用**这次派生的密钥 ────────
+              // 修复前是 `decryptData(encryptedData, userId)` —— 它会从头再派生
+              // 一次 PBKDF2-100k（~9ms/组），而同一份载荷刚才加密时已经派生过
+              // 同盐同 userId 的密钥 ⇒ 1000 组白花约 2.6 秒墙钟。
+              // 现在 `decryptForSelfCheck` 用同一次派生的 key，但**仍然**从载荷里
+              // 切 salt/iv、仍然显式比对 salt、仍然断言读端认得密文
+              // （检测力不变，见 encryptionUtils.decryptInline 的注释）。
+              const { payload: encryptedData, decryptForSelfCheck } =
+                await encryptCompressedDataWithSelfCheck(group.tabs_data, userId);
 
               // ── 上行前的自检：解回来必须与原文逐字相同 ──────────────────
               // 为什么必须有：载荷编码换了（密文里装的是 gzip），
@@ -992,8 +1048,7 @@ export const uploadSync = {
               // 用户下次下载才发现那一组读不出来。
               // 这里在**写之前**就地往返一次：不一致就当这组加密失败
               // （进 encryptionFailedIds，不写云端）⇒ fail-closed。
-              // 代价：每组多一次 PBKDF2（~10 ms），换掉「写坏也不知道」。
-              const roundTrip = await decryptData<unknown>(encryptedData, userId);
+              const roundTrip = await decryptForSelfCheck();
               if (JSON.stringify(roundTrip) !== JSON.stringify(group.tabs_data)) {
                 throw new Error('加密后自检失败：解回来的内容与原文不一致');
               }

@@ -10,13 +10,18 @@
  *   · 菜单里本来已经挤着七八行设置，没有剩余空间。
  * 这个页面是 Chrome 的 `options_ui`，独立窗口、独立生命周期，关闭时状态保留。
  *
- * ── 与 popup 的关系（重要，不要误改成跨窗口实时同步） ───────────────────
- * 两边共用同一份 `chrome.storage.local`（utils/storage.ts）。**不需要**
- * `chrome.storage.onChanged` 做双向同步：popup 每次打开都重新 `loadSettings()`，
- * 且它在关闭期间不显示任何东西，不存在两个窗口互相覆盖的窗口期。
- * 反过来说，如果将来让 options 页开着、popup 也开着（用户可以并排两个窗口），
- * 那么**两边同时改设置会后写覆盖先写** —— 这是共享存储的固有性质，
- * 本页不做乐观锁。真要防，得给每次写入加版本号并在读时比对，超出当前需要。
+ * ── 与 popup / 管理页的关系（这段曾写错，2026-10-24 审计 GAP1-1 更正） ───
+ * 原注释说「popup 每次打开都重新 loadSettings()，且它在关闭期间不显示任何东西，
+ * 不存在两个窗口互相覆盖的窗口期」—— **那是错的**：管理页是**常驻标签页**，
+ * 本页也是独立标签页 ⇒ 两个 realm 真的同时存在，各持一份挂载时的设置快照。
+ *
+ * ⇒ 两条纪律（都已落地）：
+ *   ① 设置在 KV 层（IndexedDB）⇒ `chrome.storage.onChanged` 根本不触发
+ *      ⇒ 跨 realm 的失效通道是自建的（storage-kv/settingsChangedBus），
+ *      本页订阅它：别的 realm 改了设置就重读（并重算后端状态）。
+ *   ② 写设置**按字段**落盘（store/slices/settingsSlice.ts 的 pendingIntent）：
+ *      只写「本 realm 的用户动过的字段」⇒ 别的 realm 刚改的设置不会被盖回去。
+ *      同样不需要乐观锁：字段级的写-改-写已经把并发合并掉了。
  *
  * ── 诚实度纪律（与 popup 原有实现一致，不许为了好看而放松） ─────────────
  * 详见 WebDavSettings.tsx 文件头：文案必须等于真实行为。
@@ -25,6 +30,7 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { useAppDispatch, useAppSelector } from '@/store/hooks';
 import {
   dispatchSaveSettings,
+  dispatchReloadSettings,
   loadSettings,
   setShowFavicons,
   setShowTabCount,
@@ -36,7 +42,7 @@ import {
   updateSettings,
 } from '@/store/slices/settingsSlice';
 import { getCurrentUser, signOut } from '@/store/slices/authSlice';
-import { SYNC_INTERVAL_CHOICES } from '@/utils/storage';
+import { SYNC_INTERVAL_CHOICES, invalidateSettingsCache, storage } from '@/utils/storage';
 import { sendSyncCommand } from '@/shared/mutationProtocol';
 import { ToastProvider, useToast } from '@/contexts/ToastContext';
 import { ThemeProvider, useTheme } from '@/contexts/ThemeContext';
@@ -44,6 +50,7 @@ import ErrorBoundary from '@/components/common/ErrorBoundary';
 import { ThemeStyleSelector } from '@/components/layout/ThemeStyleSelector';
 import { WebDavSettings } from '@/components/sync/WebDavSettings';
 import { logError, logWarn } from '@/utils/log';
+import { subscribeSettingsChanged } from '@/storage-kv/settingsChangedBus';
 import {
   getLastBackendResolution,
   // 切换后端是**真实的设置变更**：旧适配器持有的 Vault 与连接已经不对，
@@ -296,6 +303,7 @@ const OptionsContent: React.FC = () => {
     void dispatch(getCurrentUser());
   }, [dispatch]);
 
+
   /**
    * 通知 SW 重建自动同步 alarm。
    *
@@ -357,6 +365,54 @@ const OptionsContent: React.FC = () => {
       window.removeEventListener('focus', onFocus);
       window.removeEventListener(WEBDAV_CONFIG_CHANGED_EVENT, onBackendChanged);
     };
+  }, [refreshBackendStatus]);
+
+  /**
+   * 页面重新可见 / 重新拿到焦点时，补齐两件「别的 realm 可能已经改掉」的事
+   * （2026-10-24 审计 GAP1-1）。
+   *
+   * 【为什么不能只靠挂载时那一次】设置页是**独立标签页**，可以开着放很久；
+   * 登录态与设置都可能在别的标签页里被改掉。本页挂载时读的那份会静默过期：
+   *   · 账号区还显示「未登录」⇒ 自动同步的闸门（canEnableAutoSync）把
+   *     已登录的云端用户挡在外面，还告诉他「请先登录」；
+   *   · 「同步方式」还显示旧后端 ⇒ 用户以为自己已经切到自带存储。
+   *
+   * 【为什么有失效通道还要这个】设置失效总线（见下）是**别人改了设置**时
+   * 立刻刷新；这里是**兜底**：页面被切走很久、通知没送达（SW 在休眠、
+   * 消息丢失）时，回到页面必须能自愈。
+   *
+   * visibilitychange 也要管：标签页在后台时 focus 不一定触发（用户可能只是
+   * 切了窗口），而用户看到的是这个标签页。
+   */
+  useEffect(() => {
+    const refreshSelf = () => {
+      void dispatchReloadSettings(dispatch);
+      void dispatch(getCurrentUser());
+    };
+    const onVisibility = () => {
+      if (document.visibilityState === 'visible') refreshSelf();
+    };
+    window.addEventListener('focus', refreshSelf);
+    document.addEventListener('visibilitychange', onVisibility);
+    return () => {
+      window.removeEventListener('focus', refreshSelf);
+      document.removeEventListener('visibilitychange', onVisibility);
+    };
+  }, [dispatch]);
+
+  /**
+   * 订阅「设置变了」事件总线（2026-10-24 审计 GAP1-1）。
+   *
+   * 设置在 IndexedDB 里 ⇒ `chrome.storage.onChanged` 根本不触发 ⇒ 别的 realm
+   * （管理页标签 / 设置页标签 / MV3 SW）改了设置，本页**不会知道**。
+   * 设置**状态**的重读由 store 统一订阅（见 src/store/index.ts）⇒ 每个 realm
+   * 天然都有，不靠页面各写一遍；本页额外要重算的是**后端状态**：
+   * 换了后端，「自动同步能不能跑」的结论就变了（闸门、提示文案都按后端分档）。
+   */
+  useEffect(() => {
+    return subscribeSettingsChanged(() => {
+      void refreshBackendStatus();
+    });
   }, [refreshBackendStatus]);
 
   /**
@@ -612,13 +668,31 @@ const OptionsContent: React.FC = () => {
   }, [dispatch, settings.syncIntervalMinutes, notifySwResyncAlarm, showToast]);
 
   const handleSelectBackend = useCallback(async (next: 'supabase' | 'webdav') => {
-    if (next === settings.syncBackend) return;
-    const prevBackend = settings.syncBackend;
+    // ── 2026-10-24 审计 GAP1-1：判据用**磁盘真值**，不用界面上的快照 ──────
+    //
+    // 界面上的 `settings.syncBackend` 是本 realm 的快照，它可能已经过期
+    // （别的 realm 刚改过、本页还没收到失效通知）。拿它当「已经在这个后端
+    // 上了」的判据，后果是：**点当前正在用的后端**会被当成「切换后端」⇒
+    // 顺手把 syncEnabled 置 false（自动同步被静默关掉）。
+    //
+    // 读不出真值 ⇒ 不知道现在在哪个后端上 ⇒ **拒绝切换**（fail-closed）：
+    // 猜一个比停下来更危险。
+    let truth: Awaited<ReturnType<typeof storage.getSettings>>;
+    try {
+      invalidateSettingsCache();
+      truth = await storage.getSettings();
+    } catch (err) {
+      logWarn('[OptionsPage] 读取当前同步方式失败，已取消本次切换:', err);
+      showToast('读取当前同步方式失败，已取消本次切换，请稍后重试', 'error');
+      return;
+    }
+    if (next === truth.syncBackend) return;
     // 2026-10-18 round 33：这次 dispatch 同时改了两个字段，回滚就必须**成对**。
     // 只还原 syncBackend 会留下「界面显示自动同步已关、磁盘上还开着」的分叉：
-    // 用户接下来改任何一项设置都会把 syncEnabled:false 整份盲写回去，
+    // 用户接下来改任何一项设置都会把 syncEnabled:false 写回去，
     // 静默关掉他的自动同步（对照 handleToggleAutoSync 的完整回滚写法）。
-    const prevSyncEnabled = settings.syncEnabled;
+    const prevBackend = truth.syncBackend;
+    const prevSyncEnabled = truth.syncEnabled;
     dispatch(updateSettings({ syncBackend: next, syncEnabled: false }));
     const saveError = await dispatchSaveSettings(dispatch);
     if (saveError) {
@@ -660,7 +734,7 @@ const OptionsContent: React.FC = () => {
     // prime 只是为了让本页缓存预热（切完立刻点同步也不用再解析一次）；
     // 这里再调一次拿分类结果，代价是一次本地存储读。
     await refreshBackendStatus();
-  }, [dispatch, settings.syncBackend, settings.syncEnabled, notifySwResyncAlarm, showToast, refreshBackendStatus]);
+  }, [dispatch, notifySwResyncAlarm, showToast, refreshBackendStatus]);
 
   return (
     <div className="app-shell theme-shell min-h-screen dark:text-gray-100">

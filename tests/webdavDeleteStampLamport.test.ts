@@ -53,6 +53,15 @@ import type { TabGroup } from '@/types/tab';
 const BASE = 'https://dav.example.com/dav/';
 const NOW = '2026-10-20T10:00:00.000Z';
 const M = 'TapStack/manifest.json';
+/**
+ * 测试用的加密口令（2026-10-24 审计 SEC-1）。
+ *
+ * 新建加密库时**必须**够强（`webdav/passphrasePolicy.ts`），否则适配器会
+ * 在建库那一刻抛错。所以这里的口令换成了真正能用的长口令 ——
+ * 它不是被测对象，只是「一把正常的钥匙」。
+ */
+const PASSPHRASE = 'correct horse battery staple';
+
 
 // ── 内存 WebDAV 服务器（够用即可：PUT/GET/PROPFIND/DELETE）──────────────
 
@@ -234,7 +243,7 @@ function makeAdapter(dav: FakeDav, opts: { localSeqStart?: number; cloudSeq?: nu
       username: 'u',
       password: 'p',
       rootPath: 'TapStack',
-      passphrase: 'pw',
+      passphrase: PASSPHRASE,
     },
     kv,
     now: () => NOW,
@@ -397,7 +406,7 @@ describe('D-7：删除广播的印记必须由本机 Lamport 时钟发出', () =
         username: 'u',
         password: 'p',
         rootPath: 'TapStack',
-        passphrase: 'pw',
+        passphrase: PASSPHRASE,
       },
       kv,
       now: () => NOW,

@@ -218,18 +218,19 @@ describe('前提①②：合并结果落到存储后，墓碑与本地删除都�
     );
   });
 
-  it('本地离线修改比墓碑新 ⇒ 本地副本保留（不被删除广播误伤）', async () => {
+  it('本地离线修改比墓碑新 ⇒ **仍然**服从删除（DS-3：删除优先于编辑）', async () => {
     const { mergeOpStamped } = await import('@/core/opStampMerge');
     const local = [mkGroup('g1', [mkTab('t1', 'https://a.dev/new')], { lastOp: { d: 'devA', s: 20 } })];
     const cloud = [mkGroup('g1', [], { isDeleted: true, lastOp: { d: 'devB', s: 9 } })];
 
     const merged = mergeOpStamped(local as never, cloud as never);
-    assert.equal(merged.length, 1, '前提：合并不该把本地新版本也删掉');
+    // 2026-10-24 审计 DS-3：云端墓碑**一律**赢 —— 本机离线期间的编辑（印记更大）
+    // 也不再保住这条会话。两台设备的印记来自各自独立的计数器，比大小等于掷硬币；
+    // 旧语义下这里有一半概率「本地赢」⇒ 删除被静默撤销。
+    assert.equal(merged.length, 0, '云端墓碑一律赢：本地副本被移除');
 
     await seed(merged as never);
-    const stored = await currentGroups();
-    assert.equal(stored.length, 1, '本地新版本必须留在存储里');
-    assert.equal(stored[0].tabs[0].url, 'https://a.dev/new', '留下的是本地的新内容');
+    assert.equal((await currentGroups()).length, 0, '本地副本必须从存储里消失');
   });
 
   it('云端旧活跃行 vs 本地已删除 ⇒ 合并不会把会话带回来', async () => {

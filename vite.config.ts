@@ -8,6 +8,7 @@ import {
   firstScreenChunkFor,
   firstScreenPolicyGate,
 } from './src/core/firstScreenPolicy';
+import { vendorChunkFor } from './src/core/chunkingPolicy';
 import { buildWorkerSafePreloadCode } from './src/core/workerSafePreload';
 
 // 创建临时 manifest，不包含 service worker
@@ -178,22 +179,17 @@ export default defineConfig(({ mode }) => {
             chunk.name === 'service-worker' ? 'service-worker.js' : '[name]-[hash].js',
           // 手动配置代码分块策略
           manualChunks: (id) => {
-            // React 相关库打包到一起
+            // 第三方包的分块判据在 `src/core/chunkingPolicy.ts`（纯函数、可单测）。
             //
-            // 【为什么要用精确路径而不是 includes('node_modules/react')】
-            // 旧规则用 `id.includes('node_modules/react')`，它会连带匹配
-            // `node_modules/react-dnd` / `react-redux` 之外的一切 react* 包，
-            // 于是懒加载 chunk 被强行并进 react-vendor，vite 的 dynamic import
-            // 失效（产物里 DndProvider chunk 只剩 143 字节的 re-export）。
-            // 这里改成「路径段精确匹配」，只认真正的 react / react-dom。
-            const nm = id.replace(/\\/g, '/');
-            if (/node_modules\/(react|react-dom)\//.test(nm)) {
-              return 'react-vendor';
-            }
-            // Redux 相关库打包到一起
-            if (nm.includes('node_modules/@reduxjs/toolkit') || nm.includes('node_modules/react-redux')) {
-              return 'redux-vendor';
-            }
+            // 为什么要搬出去：① 构建配置不该是「没人能测的判据」；
+            // ② 2026-10-24 审计 PERF-02 —— react-redux 与 @reduxjs/toolkit
+            // 必须**分块**：前者依赖 react ⇒ 同块会把 react-vendor 拖进
+            // Service Worker 的静态闭包（SW 一行 React 都不用，因为它没有 DOM）。
+            // 实测：SW 静态闭包 646.9KB raw / 202.0KB gzip ⇒ 拆开后
+            // 503.3KB / 155.7KB（−143.6KB raw / −46.3KB gzip，−22.2%）。
+            // MV3 的 module SW 每次被唤醒都要把这张图读回来并解析。
+            const vendor = vendorChunkFor(id);
+            if (vendor) return vendor;
             // ── 2026-10-23（首屏瘦身）：准入策略驱动的分块 ──────────────────
             //
             // 【旧规则为什么被删掉】原先有一条

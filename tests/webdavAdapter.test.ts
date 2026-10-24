@@ -17,7 +17,15 @@ import assert from 'node:assert/strict';
 
 import { WebDavClient, WebDavError } from '@/sync-backend/webdav/client';
 import { WebDavBackendAdapter, type AdapterKv } from '@/sync-backend/webdav/adapter';
-import { shardPath } from '@/sync-backend/webdav/layout';
+import {
+  encodeGroup,
+  makeEncryptedEnvelope,
+  serializeEnvelope,
+  serializeManifest,
+  shardHeaderFromPayload,
+  shardPath,
+} from '@/sync-backend/webdav/layout';
+import { createVault } from '@/sync-backend/crypto';
 import { LEGACY_KEYS } from '@/storage-kv/keys';
 import type { TabGroup } from '@/types/tab';
 import type { UserSettings } from '@/types/tab';
@@ -50,6 +58,21 @@ class FakeDav {
   ignoreConditionalWrites = false;
   /** 非 null 时，所有 PUT 都返回该状态码（模拟 5xx 等服务端故障）。 */
   putStatusOverride: number | null = null;
+  /**
+   * 严格模式：按 RFC 4918 建模「父目录必须存在」。
+   *
+   *   · MKCOL 时父目录不存在 ⇒ 409（§9.3.1）；
+   *   · PUT 时父目录不存在 ⇒ 409。
+   *
+   * 为什么默认**不开**：老用例里有不少是「直接把文件写进一个从没建过的目录」
+   * （宽松模式会顺手把父目录补上），一次性收紧会把一堆**与本用例无关**的
+   * 既有用例变红 —— 那是另一个工程，不该混在性能修复里。
+   *
+   * 为什么**必须**有它：真实服务端在父目录不存在时一律 409。少了「建目录链」
+   * 这一步，宽松的假服务器**完全看不见**（MKCOL/PUT 都成功）⇒ 缺陷能一路
+   * 溜到真机才炸。凡是要检验「目录链有没有被正确建出来」的用例，必须开它。
+   */
+  strictParents = false;
   etagSeq = 0;
 
   private key(path: string): string {
@@ -112,6 +135,10 @@ class FakeDav {
     }
     if (method === 'MKCOL') {
       if (this.dirs.has(path)) return respond(405);
+      if (this.strictParents) {
+        const parent = this.parentOf(path);
+        if (parent && !this.dirs.has(parent)) return respond(409);
+      }
       this.dirs.add(path);
       return respond(201);
     }
@@ -126,6 +153,10 @@ class FakeDav {
       return respond(200, f.body, { ETag: f.etag });
     }
     if (method === 'PUT') {
+      if (this.strictParents) {
+        const parent = this.parentOf(path);
+        if (parent && !this.dirs.has(parent)) return respond(409);
+      }
       if (this.putStatusOverride !== null) return respond(this.putStatusOverride);
       // 强制冲突：模拟「读到之后、写之前，别人改了」这个并发窗口。
       if (this.forcedConflicts > 0) {
@@ -226,7 +257,7 @@ function makeAdapter(dav: FakeDav, opts: {
         username: 'u',
         password: 'p',
         rootPath: opts.rootPath ?? 'TapStack',
-        passphrase: opts.passphrase === undefined ? 'pw' : opts.passphrase,
+        passphrase: opts.passphrase === undefined ? PASSPHRASE : opts.passphrase,
       },
       kv,
       now: () => NOW,
@@ -251,6 +282,15 @@ function makeGroup(id: string, over: Partial<TabGroup> = {}): TabGroup {
 }
 
 const M = 'TapStack/manifest.json';
+/**
+ * 测试用的加密口令（2026-10-24 审计 SEC-1）。
+ *
+ * 新建加密库时**必须**够强（`webdav/passphrasePolicy.ts`），否则适配器会
+ * 在建库那一刻抛错。所以这里的口令换成了真正能用的长口令 ——
+ * 它不是被测对象，只是「一把正常的钥匙」。
+ */
+const PASSPHRASE = 'correct horse battery staple';
+
 
 // ── 「不可用」≠「空」 ──────────────────────────────────────────────────
 
@@ -285,6 +325,61 @@ describe('「不可用」绝不等于「空」', () => {
 
     const { adapter: noPass } = makeAdapter(dav, { passphrase: null });
     await assert.rejects(() => noPass.downloadGroups(), /没有口令/);
+  });
+});
+
+// ── SEC-1：新建加密库时的口令强度门槛（2026-10-24）────────────────────
+//
+// 为什么这一节钉在**适配器**而不是表单：口令不落盘，老用户每次重开页面
+// 都要重新输入当年那个口令。在表单上拦 ⇒ 他会被**自己的**口令挡在门外
+// （新设备配同一个库、清过配置再配回来都会中招）。
+// 适配器知道「这个库是不是已经加密了」—— 只有「还没有」时才拦。
+
+describe('SEC-1：口令强度门槛只拦「新建加密库」', () => {
+  it('远端还没有库 + 弱口令 → 拒绝建库（一个字节都不许上云）', async () => {
+    const dav = new FakeDav();
+    const { adapter } = makeAdapter(dav, { passphrase: '123456' });
+    await assert.rejects(() => adapter.uploadGroups([makeGroup('g1')]), /口令太弱/);
+    // 前提：失败发生在建库那一刻 ⇒ 云端不该留下任何文件
+    assert.equal(dav.read(M), undefined, '弱口令不得建出 manifest');
+    assert.equal(dav.read(`TapStack/${shardPath('g1')}`), undefined, '弱口令不得写出会话分片');
+  });
+
+  it('远端还没有库 + 强口令 → 正常建库（门槛不是把功能堵死）', async () => {
+    const dav = new FakeDav();
+    const { adapter } = makeAdapter(dav, { passphrase: PASSPHRASE });
+    const out = await adapter.uploadGroups([makeGroup('g1')]);
+    assert.equal(out.writtenIds.length, 1);
+    assert.ok(dav.read(M), '前提：库建成了');
+  });
+
+  it('已加密的老库 + 弱口令 → **照常能用**（老用户不被自己的口令锁死）', async () => {
+    // 这一条是整个修法的**核心不变量**。
+    // 造一个「修复前建成的库」：弱口令 123456，且它**真的能用那个口令解开**
+    // （不是拿强口令的库去撞弱口令，那样只会得到「口令错误」，测不到门槛）。
+    const dav = new FakeDav();
+    const legacyPass = '123456';
+    const vault = await createVault(legacyPass);
+    const payload = encodeGroup(makeGroup('g1'));
+    dav.write(
+      `TapStack/${shardPath('g1')}`,
+      serializeEnvelope(makeEncryptedEnvelope(await vault.encrypt(payload), shardHeaderFromPayload(payload)))
+    );
+    dav.write(
+      M,
+      serializeManifest({
+        v: 1,
+        generatedAt: NOW,
+        encrypted: true,
+        salt: vault.salt,
+        shards: [{ id: 'g1', updatedAt: NOW, etag: 'e1', lastOp: { d: 'dev-A', s: 10 } }],
+      })
+    );
+
+    const { adapter } = makeAdapter(dav, { passphrase: legacyPass });
+    const groups = await adapter.downloadGroups();
+    assert.equal(groups.length, 1, '老库必须照常读出来（门槛不能落到「回忆口令」上）');
+    assert.equal(groups[0].id, 'g1');
   });
 });
 
@@ -607,7 +702,7 @@ describe('2026-10-14 修 P1：并发写不丢对端条目', () => {
     const clientA = new WebDavClient({ baseUrl: BASE, username: 'u', password: 'p' }, dav.fetch);
     const a2 = new WebDavBackendAdapter({
       client: clientA,
-      config: { baseUrl: BASE, username: 'u', password: 'p', rootPath: 'TapStack', passphrase: 'pw' },
+      config: { baseUrl: BASE, username: 'u', password: 'p', rootPath: 'TapStack', passphrase: PASSPHRASE },
       kv: makeKv({ [LEGACY_KEYS.DEVICE_ID]: 'dev-A' }),
       now: () => NOW,
       peekDeviceSeq: async () => 0,
@@ -817,5 +912,116 @@ describe('2026-10-14 坚果云形态：PUT 不返 ETag 时读回一个', () => {
     const out = await adapter.uploadGroups([makeGroup('aa1', { name: 'v2', lastOp: { d: 'dev-A', s: 9 } })]);
     assert.equal(out.writtenIds.length, 1);
     assert.equal((await adapter.downloadGroups())[0]?.name, 'v2');
+  });
+});
+
+// ── PERF-01：写路径的往返放大（2026-10-24 审计）────────────────────────
+//
+// ── 这条防的具体事故 ────────────────────────────────────────────────────
+//
+// 写一个分片要逐级建目录（库根 → groups → 前 2 位前缀目录）。修复前每轮上传
+// 都对**每个会话**把整条链重发一遍（`client.mkdirp`）：
+//
+//   · 生产会话 id 是 nanoid（21 位、64 字符表）⇒ 前 2 位有 4096 种取值
+//     ⇒ 1000 个会话约 884～899 个不同前缀目录；
+//   · 其中绝大部分 MKCOL 打的是**早已存在**的目录（必然 405 的空请求），
+//     而且**全程串行**。
+//
+// 实测（真实 WebDavClient 打真实服务器，2026-10-24）：写一个会话要
+// **6.89～7.91 次串行往返**（下载同库只要 1.00 次）⇒ 1000 个会话一轮上传
+// ≈ 6900～7900 次往返 ⇒ 用户看到的是「推送失败：操作超时（30 秒）」，
+// 而后台其实还在继续传。
+//
+// 修复：目录链**每级每个适配器实例最多建一次**（knownDirs 缓存）。
+//
+// ── 为什么必须开 strictParents ─────────────────────────────────────────
+//
+// 「目录链有没有被正确建出来」这件事，宽松的假服务器**看不见**：
+// MKCOL / PUT 一律成功 ⇒ 少了库根、少了中间层，测试照样全绿 ⇒ 缺陷一路溜到
+// 真机才炸（真服务端：父目录不存在 ⇒ 409）。
+// ⇒ 这条守卫用 strictParents 的服务器：目录链少建一级，第一次写就 409。
+
+describe('PERF-01：写路径的 MKCOL 放大', () => {
+  /** N 个会话，前 2 位各不相同（N 个前缀桶，模拟 nanoid 的真实分布）。 */
+  function makePrefixedGroups(n: number): ReturnType<typeof makeGroup>[] {
+    return Array.from({ length: n }, (_, i) =>
+      makeGroup(`${String(i).padStart(2, '0')}${i}-${'x'.repeat(16)}`)
+    );
+  }
+
+  it('上传 N 个会话时，MKCOL 次数 ≤ 前缀桶数 + 2（不再每个会话重发整条链）', async () => {
+    const dav = new FakeDav();
+    dav.strictParents = true; // 父目录必须存在（RFC 4918）
+    const { adapter } = makeAdapter(dav);
+
+    const N = 20;
+    const groups = makePrefixedGroups(N);
+
+    const out = await adapter.uploadGroups(groups);
+    assert.equal(out.writtenIds.length, N, '前提：N 个会话都写上去了');
+
+    const mkcols = dav.calls.filter(c => c.method === 'MKCOL');
+    const buckets = new Set(groups.map(g => g.id.slice(0, 2)));
+    assert.equal(
+      buckets.size,
+      N,
+      '前提：这 N 个会话的前缀各不相同（否则这条守卫没有检测力）'
+    );
+    assert.ok(
+      mkcols.length <= buckets.size + 2,
+      `MKCOL 次数 ${mkcols.length} 超过上限 ${buckets.size + 2}` +
+        '（库根 + groups + 每个前缀目录各一次）—— 目录缓存失效了，' +
+        '写路径把整条链重发了一遍 ⇒ 往返次数按会话数线性放大'
+    );
+  });
+
+  it('同一个目录不会被 MKCOL 两次（缓存的精确契约）', async () => {
+    const dav = new FakeDav();
+    dav.strictParents = true;
+    const { adapter } = makeAdapter(dav);
+
+    await adapter.uploadGroups(makePrefixedGroups(12));
+
+    const paths = dav.calls.filter(c => c.method === 'MKCOL').map(c => c.path);
+    const dup = paths.filter((p, i) => paths.indexOf(p) !== i);
+    assert.deepEqual(
+      [...new Set(dup)],
+      [],
+      '同一个目录被 MKCOL 了多次 —— 目录缓存没有生效'
+    );
+  });
+
+  it('目录链真的被建出来了（严格服务器：父目录不存在就 409）', async () => {
+    const dav = new FakeDav();
+    dav.strictParents = true;
+    const { adapter } = makeAdapter(dav);
+
+    // 这条在 strictParents 下能过，靠的就是「库根 → groups → 前缀目录」
+    // 每一级都被建出来。若某一级没建 ⇒ PUT 409 ⇒ 上传直接失败。
+    await adapter.uploadGroups([makeGroup('zz-1')]);
+
+    assert.ok(dav.dirs.has('TapStack'), '库根必须被建出来');
+    assert.ok(dav.dirs.has('TapStack/groups'), 'groups 目录必须被建出来');
+    assert.ok(dav.dirs.has('TapStack/groups/zz'), '前缀目录必须被建出来');
+  });
+
+  it('目录被人从服务器上删掉后，下一次写能自愈（缓存过期不会把本机锁死）', async () => {
+    const dav = new FakeDav();
+    dav.strictParents = true;
+    const { adapter } = makeAdapter(dav);
+
+    await adapter.uploadGroups([makeGroup('ab-1')]);
+    assert.ok(dav.dirs.has('TapStack/groups/ab'));
+
+    // 模拟「云盘上的目录被人删了」（缓存还在 ⇒ 适配器以为它还在）。
+    dav.dirs.delete('TapStack/groups/ab');
+
+    const out = await adapter.uploadGroups([
+      // 同一个前缀 ⇒ 命中已缓存的目录 ⇒ 第一次 PUT 会 409。
+      // stamp 必须比上一轮的水位新，否则会被增量逻辑跳过（压根不写）。
+      makeGroup('ab-2', { lastOp: { d: 'dev-A', s: 20 } }),
+    ]);
+    assert.equal(out.writtenIds.length, 1, '目录被删后必须自愈，而不是从此传不上去');
+    assert.ok(dav.dirs.has('TapStack/groups/ab'), '前缀目录必须被重建');
   });
 });

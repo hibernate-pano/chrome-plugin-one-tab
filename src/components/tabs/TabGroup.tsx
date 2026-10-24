@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback, useRef, useMemo } from 'react';
+import React, { useEffect, useLayoutEffect, useState, useCallback, useRef, useMemo, useSyncExternalStore } from 'react';
 import { createPortal } from 'react-dom';
 import { useAppDispatch, useAppSelector } from '@/store/hooks';
 import { SafeFavicon } from '@/components/common/SafeFavicon';
@@ -13,6 +13,13 @@ import { OpenGuard, OpenAllGuard } from '@/utils/openGuard';
 import { isOpenableTabUrl } from '@/utils/inputValidation';
 import { shouldAutoDeleteAfterTabRemoval, onlyActiveTabId } from '@/core/tabGroupUtils';
 import { useNearViewport } from '@/hooks/useNearViewport';
+import {
+  getRowStride,
+  reportCardHeaderHeight,
+  reportRowStride,
+  rowStrideFrom,
+  subscribeRowStride,
+} from './cardMetrics';
 import { resolveRowWindow } from './lazyTabRows';
 import { trackProductEvent } from '@/utils/productEvents';
 import {
@@ -44,6 +51,16 @@ import { moveEmptiesSessionMessage } from '@/components/tabs/moveFeedbackCopy';
 
 interface TabGroupProps {
   group: TabGroupType;
+  /**
+   * 折叠态（**由列表层持有**，2026-10-24 审计 PERF-03）。
+   *
+   * 为什么不在卡片内部持有：远离视口的卡会被**卸载**（只留等高占位）⇒
+   * 折叠状态留在卡片里就随卸载一起没了 ⇒ 用户滚远再滚回来，
+   * 刚才收起的会话又弹开了（一次「界面失忆」）。
+   */
+  collapsed: boolean;
+  /** 折叠/展开的切换回调（列表层持有状态，这里只负责转交）。 */
+  onToggleCollapsed: () => void;
 }
 
 // 图标组件
@@ -143,9 +160,15 @@ const LOCK_TOOLTIP = {
     '会话未锁定 · 点此锁定（恢复后仍留在列表里，可反复使用；不会被「清理重复标签」清理，也不能重命名或逐条删除）',
 } as const;
 
-export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
+export const TabGroup: React.FC<TabGroupProps> = React.memo(
+  ({ group, collapsed: isCollapsed, onToggleCollapsed }) => {
   const dispatch = useAppDispatch();
   const confirmBeforeDelete = useAppSelector(state => state.settings.confirmBeforeDelete);
+  // ── 2026-10-24 审计 DS-3：删除单个会话的跨设备披露需要这两个事实 ──────────
+  // 「会不会传到其他设备」的判据是「有没有可用的同步后端」，不是「有没有账号」
+  // （自带存储 WebDAV 用户没有账号，但删除照样以墓碑广播）。
+  const isAuthenticated = useAppSelector(state => state.auth.isAuthenticated);
+  const syncBackendSetting = useAppSelector(state => state.settings.syncBackend);
   // ── 2026-10-20 审计 A-9：showTabCount 从「死设置」变成**真被读**的开关 ──
   // 修复前这个设置只有默认值与上云映射，UI 从不读它 —— 标签数量永远显示。
   // 现在设置页有开关（OptionsPage「外观」小节），这里真的按它决定画不画徽章。
@@ -178,7 +201,8 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
 
   const [isEditing, setIsEditing] = useState(false);
   const [newName, setNewName] = useState(group.name);
-  const [isCollapsed, setIsCollapsed] = useState(false);
+  // ⚠️ 折叠态**不在这里**（2026-10-24 审计 PERF-03）：卡片远离视口时会被卸载
+  // ⇒ 状态留在卡片里就随卸载一起没了 ⇒ 状态由列表层持有（见 TabGroupProps）。
   // 复活去重守卫（逻辑见 @/utils/openGuard，可单测）：单 tab 按 tabId 冷却去重，
   // 整组恢复按 group.id 加同类在途锁。组件卸载即丢弃，无需额外清理。
   const openGuardRef = useRef<OpenGuard | null>(null);
@@ -202,7 +226,80 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
   // 但一旦展开，判定依据会变成「展开前的位置」，语义混乱。挂在卡片上则始终
   // 反映「这张卡在视口的什么位置」，展开后立刻按真实位置判定。
   const [cardRef, isNearViewport] = useNearViewport<HTMLDivElement>();
-  const { renderRows, placeholderHeight } = resolveRowWindow(group.tabs.length, isNearViewport);
+
+  // 行距（**量出来的**，见 cardMetrics）：行高是内容驱动的，跟着主题
+  // （creamy 的 margin: 2px 8px ⇒ 行距 56）、浏览器缩放、rem 走 ⇒
+  // 写死一个常量只对某一个版本的样式成立（历史常量 44px 已经过期：
+  // 真实行盒 54px + margin 4px = 58px）。
+  //
+  // ⚠️ SSR（本仓的测试用 renderToStaticMarkup）必须给 getServerSnapshot，
+  // 否则 React 报「Missing getServerSnapshot」并回退到客户端渲染。
+  const rowStride = useSyncExternalStore(subscribeRowStride, getRowStride, getRowStride);
+
+  const { renderRows, placeholderHeight } = resolveRowWindow(
+    group.tabs.length,
+    isNearViewport,
+    rowStride
+  );
+
+  // ── 2026-10-24 审计 PERF-03：量一次**卡头高度** ──────────────────────────
+  //
+  // 远离视口的卡只留一个等高占位（见 DraggableTabGroup）⇒ 占位高度必须与真卡
+  // 逐像素一致 ⇒ 卡头高度得是**量出来的**（它随断点变化：窄屏 py-2.5、
+  // 宽屏 py-3；内容高度还取决于最高的那个子元素）⇒ 不能写死。
+  //
+  // 量的是**小数**（getBoundingClientRect）而不是 offsetHeight（取整）：
+  // 1000 张卡的取整误差会累加成几千像素的滚动漂移。
+  //
+  // 为什么用 ResizeObserver 而不是只量一次：改窗口宽度会改断点 ⇒ 卡头高度
+  // 变了 ⇒ 所有占位的高度都得跟着变（否则滚动条与真实内容对不上）。
+  const headerRef = useRef<HTMLDivElement | null>(null);
+  useLayoutEffect(() => {
+    const el = headerRef.current;
+    if (!el) return;
+    const measure = () => reportCardHeaderHeight(el.getBoundingClientRect().height);
+    measure();
+    if (typeof ResizeObserver === 'undefined') return;
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
+  // ── 2026-10-24 审计 PERF-03：量一次**行距**（一行占多高）──────────────────
+  //
+  // 为什么必须量：行高是**内容驱动**的（操作条 36px + padding 8px×2 + 边框 1px×2
+  // = 54px），而这些数跟着主题（creamy 的 margin: 2px 8px ⇒ 行距 56）、
+  // 浏览器缩放、rem 走 ⇒ 任何写死的常量（历史上是 44px）都只对**某一个**
+  // 版本的样式成立。量出来的才是真的。
+  //
+  // 量的方法（推导见 cardMetrics.rowStrideFrom）：
+  //   行距 = (行容器高 + 最后一行塌陷出去的下外边距) / 行数
+  //
+  // ⚠️ 量的是**行容器**（`.tab-group-tabs-container`）而不是轨道：
+  //   轨道（grid 1fr）在折叠动画期间会插值 ⇒ 量轨道会拿到动画中间值
+  //   ⇒ 远处卡的占位高度会跟着抖。行容器的高度与动画无关。
+  //
+  // 为什么用 ResizeObserver 而不是只量一次：换主题 / 改窗口宽度会改行高 ⇒
+  // 所有占位都得跟着变（否则滚动条与真实内容对不上）。
+  const rowsRef = useRef<HTMLDivElement | null>(null);
+  useLayoutEffect(() => {
+    const el = rowsRef.current;
+    if (!el) return;
+    const measure = () => {
+      const rows = el.querySelectorAll('.tab-item');
+      if (!rows.length) return; // 只有占位、没有真行 ⇒ 量不到（保持旧值）
+      const last = rows[rows.length - 1] as HTMLElement;
+      const marginBottom = parseFloat(getComputedStyle(last).marginBottom) || 0;
+      reportRowStride(
+        rowStrideFrom(el.getBoundingClientRect().height, marginBottom, rows.length)
+      );
+    };
+    measure();
+    if (typeof ResizeObserver === 'undefined') return;
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [renderRows, group.tabs.length]);
 
   // ── DS-43-16：删掉**唯一那条**活跃标签 ⇒ 整个会话卡会消失 ──────────────────
   // 「删除会话前确认」开关关闭时零确认 ⇒ ✕ 的提示是用户唯一的预警，
@@ -308,6 +405,11 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
       name: group.name,
       tabCount: group.tabs.length,
       isLocked: group.isLocked,
+      // ── 2026-10-24 审计 DS-3：单个会话的删除也要说清跨设备后果 ──────────
+      // 删除意图会广播（墓碑上传 ⇒ 对端服从删除，且**云端墓碑一律赢** ⇒
+      // 对方离线期间改过也一样会被删）。此前这个确认框一个字不提 ⇒
+      // 用户以为「只删本机」。判据与「删除所有会话」同源。
+      crossDevice: { isAuthenticated, syncBackend: syncBackendSetting },
     };
     if (!deleteGroupRequiresConfirm({ isLocked: group.isLocked, confirmBeforeDelete })) {
       runDelete();
@@ -337,7 +439,7 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
       onConfirm: runDelete,
       onCancel: () => { }
     });
-  }, [confirmBeforeDelete, dispatch, group.id, group.isLocked, group.name, group.tabs.length, showConfirm, showDeleteError]);
+  }, [confirmBeforeDelete, dispatch, group.id, group.isLocked, group.name, group.tabs.length, isAuthenticated, showConfirm, showDeleteError, syncBackendSetting]);
 
   const handleToggleLock = useCallback(() => {
     void dispatch(toggleGroupLockAndSync(group.id))
@@ -977,12 +1079,12 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
       aria-labelledby={`tab-group-title-${group.id}`}
     >
       {/* 标签组头部 */}
-      <div className="tab-group-header gap-2">
+      <div ref={headerRef} className="tab-group-header gap-2">
         <div className="flex items-center gap-2 sm:gap-3 flex-1 min-w-0">
           {/* 折叠按钮 */}
           <Tooltip content={isCollapsed ? '展开这个会话的标签页' : '收起这个会话的标签页'}>
             <button
-              onClick={() => setIsCollapsed(!isCollapsed)}
+              onClick={onToggleCollapsed}
               className="btn-icon theme-btn-hover -ml-1 micro-interaction-button"
               // ── 2026-10-20 可访问名：带上会话名 ──────────────────────────
               // 原先所有卡的折叠按钮都叫「折叠会话」：3 张卡 ⇒
@@ -1412,7 +1514,7 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
 
           ── 2026-10-05 折叠动画改用 grid-rows，不再有高度上限 ──
           旧实现是 max-height 在 0 与 2000px 之间切换。但 2000px 是个**硬编码魔数**：
-          行距 44px（lazyTabRows.TAB_ROW_STRIDE_PX）⇒ 2000/44 ≈ 45.5 行，
+          行距约 58px（**量出来的**，见 cardMetrics）⇒ 2000/58 ≈ 34.5 行，
           超过 45 个标签的会话展开后**尾部被裁掉且无法滚动到**
           （本组件内没有任何 overflow-y-auto），对一个「一次收纳整窗标签」的
           产品这是常见路径。lazyTabRows 的占位高度算的是「行数 × 44」精确值，
@@ -1433,6 +1535,7 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
              否则内容会把轨道撑开、折叠失效（这层是动画必需，不是多余包装） */
           <div className="min-h-0 overflow-hidden">
             <div
+              ref={rowsRef}
               className="tab-group-tabs-container"
               role="list"
               aria-label="会话内的标签页，可用上下方向键调整顺序"
@@ -1478,7 +1581,10 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(({ group }) => {
     prevProps.group.isLocked === nextProps.group.isLocked &&
     prevProps.group.tabs.length === nextProps.group.tabs.length &&
     prevProps.group.updatedAt === nextProps.group.updatedAt &&
-    prevProps.group.createdAt === nextProps.group.createdAt;
+    prevProps.group.createdAt === nextProps.group.createdAt &&
+    // ⚠️ 折叠态必须参与比较（2026-10-24 PERF-03）：折叠状态在**列表层**持有
+    // ⇒ props 变了；比较器若不看它 ⇒ 折叠/展开**不重渲** ⇒ 界面不响应。
+    prevProps.collapsed === nextProps.collapsed;
 
   if (!basicPropsEqual) return false;
 

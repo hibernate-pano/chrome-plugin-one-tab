@@ -344,12 +344,20 @@ describe('回归保护：本地活跃组写 is_deleted=false（Web 恢复语义�
     assert.equal(cloud.rows.get('g-active')?.is_deleted, false);
   });
 
-  it('合并模式（overwriteCloud=false）：同样复位为 false，且墓碑组不由本次写入', async () => {
+  it('合并模式（overwriteCloud=false）：本机活跃组**不得**盖掉云端墓碑（DS-3：删除优先）', async () => {
     const { uploadTabGroups } = await loadUploadModule('stamp');
     cloud.rows.set('g-active', { id: 'g-active', user_id: USER_ID, is_deleted: true, updated_at: NOW });
     await uploadTabGroups([ACTIVE], false);
     assert.equal(cloud.rows.size, 1);
-    assert.equal(cloud.rows.get('g-active')?.is_deleted, false);
+    // 2026-10-24 审计 DS-3：云端墓碑**一律**赢 ⇒ 合并模式下的认输预检会让本机
+    // 这份活跃副本不上行（等下次下载合并时物理移除）。
+    // 旧语义（本机印记更大就赢）会把这行复位成 is_deleted=false ⇒ 另一台设备
+    // 明确删掉的会话被静默撤销 ⇒ 复活。
+    assert.equal(
+      cloud.rows.get('g-active')?.is_deleted,
+      true,
+      '❌ 回归：合并模式把云端墓碑复位成活跃 = 删除被静默撤销（DS-3）',
+    );
   });
 });
 

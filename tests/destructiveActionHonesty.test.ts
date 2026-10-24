@@ -22,8 +22,8 @@ import {
   deleteAllConfirmMessage,
   deleteAllMenuWarning,
   deleteAllShouldPushOverwrite,
-  deleteReachesOtherDevices,
 } from '../src/components/layout/deleteAllMessages.ts';
+import { deleteReachesOtherDevices } from '../src/components/sync/crossDeviceDeleteCopy.ts';
 import { previewOutcome, decideFirstSync } from '../src/sync-backend/webdav/firstSyncDecision.ts';
 import type { TabGroup, Tab } from '../src/types/tab.ts';
 
@@ -206,18 +206,18 @@ describe('删除全部：承诺 == 行为（按「有没有可用后端」而不
 });
 
 // ─────────────────────────────────────────────────────────────────────────
-// 3. 首次推送：墓碑态下每个选项的后果说明都必须包含「会让已删会话复活」
+// 3. 首次推送：墓碑态下每个选项的后果说明都必须**与真实后果一致**
 // ─────────────────────────────────────────────────────────────────────────
 
 const stamp = (d: string, s: number) => ({ d, s });
 
-describe('首次推送：远端只有墓碑时，三个选项都不许说「零后果」', () => {
+describe('首次推送：远端只有墓碑时，三个选项的后果说明都必须与真实后果一致', () => {
   const local = [
     group('g1', [tab('t1', 'https://x.dev/1')], { lastOp: stamp('devA', 5) }),
     group('g2', [tab('t2', 'https://x.dev/2')], { lastOp: stamp('devA', 6) }),
   ];
-  // 远端两条墓碑：g1 与本地同 id（墓碑更旧 ⇒ 本地赢 ⇒ 复活），
-  // g3 本地没有（上传会把它写成活跃行 ⇒ 复活）。
+  // 远端两条墓碑：g1 与本地同 id（**墓碑一律赢** ⇒ 本机那份不会上传，
+  // 下次同步时被移除），g3 本地没有（非覆盖路径下什么也不会动它）。
   const tombstones = [
     group('g1', [], { isDeleted: true, lastOp: stamp('devB', 2) }),
     group('g3', [], { isDeleted: true, lastOp: stamp('devB', 3) }),
@@ -233,21 +233,71 @@ describe('首次推送：远端只有墓碑时，三个选项都不许说「零�
   });
 
   for (const choice of ['merge', 'local-wins', 'cloud-wins'] as const) {
-    it(`${choice}：hint 必须说出「删除会被撤销」，且带 warning 触发确认`, () => {
+    it(`${choice}：hint 必须提到云端已删除的记录，且带 warning 触发确认`, () => {
       const out = previewOutcome(local, tombstones, choice);
       assert.match(
         out.hint,
         /已删除/,
         `${choice} 的 hint 必须提到云端已删除的记录（修复前写的是「云端独有的 0 个会话」）`,
       );
-      assert.match(out.hint, /重新出现|撤销/, `${choice} 的 hint 必须说清后果是「复活」`);
       assert.ok(
         out.warning && out.warning.length > 0,
         `${choice} 在墓碑态必须有 warning —— UI 只对有 warning 的选项弹二次确认，` +
-          '缺了它用户就是零确认地撤销掉别的设备的删除',
+          '缺了它用户就是零确认地丢掉一批会话',
       );
     });
   }
+
+  // ── 2026-10-24 审计 DS-3：后果的方向变了，说明必须跟着变 ────────────────
+  //
+  // 旧说明说「N 条已删除的会话记录会因本次推送重新出现（撤销了那些删除）」，
+  // 那在 DS-3 之前是对的。DS-3 把判据改成「**云端墓碑一律赢**」之后：
+  //   · 非覆盖（合并 / 以云端为准）：云端的删除**保住**了 ⇒ 说明不得再说
+  //     「会复活 / 撤销那些删除」（那是朝着相反的方向说假话）；
+  //     真实的损失在**本机**：那份同 id 副本没被上传 ⇒ 会被移除。
+  //   · 覆盖（以本机为准）：云端被清空重写 ⇒ 删除记录被抹掉 ⇒ 删除**确实**
+  //     被撤销 ⇒ 说明必须说这一层。
+  it('merge：不得再说「删除会被撤销」（云端墓碑一律赢 ⇒ 删除保住）', () => {
+    const out = previewOutcome(local, tombstones, 'merge');
+    assert.doesNotMatch(
+      out.hint,
+      /重新出现/,
+      `❌ 回归：合并路径下云端的删除**不会**被撤销（墓碑一律赢）—— ` +
+        `说「会重新出现」是把已经修好的缺陷当成还存在的：${out.hint}`,
+    );
+    assert.match(
+      out.hint,
+      /保持删除/,
+      `必须说清云端那边的删除会保住：${out.hint}`,
+    );
+    assert.match(
+      out.hint,
+      /副本/,
+      `真实的损失在本机那份同 id 副本（没上传 ⇒ 会被移除），必须说出来：${out.hint}`,
+    );
+  });
+
+  it('cloud-wins：同样不得说「删除会被撤销」', () => {
+    const out = previewOutcome(local, tombstones, 'cloud-wins');
+    assert.doesNotMatch(out.hint, /重新出现/);
+    assert.match(out.hint, /保持删除/);
+    assert.match(out.hint, /副本/);
+  });
+
+  it('local-wins：覆盖确实会抹掉云端的删除记录 ⇒ 必须说「删除被撤销」', () => {
+    const out = previewOutcome(local, tombstones, 'local-wins');
+    assert.match(
+      out.hint,
+      /删除被撤销/,
+      `覆盖会把云端清空重写 ⇒ 那些删除记录真的没了，必须说出来：${out.hint}`,
+    );
+  });
+
+  it('merge 的 warning 必须点名本机那份副本会被移除（不可逆）', () => {
+    const out = previewOutcome(local, tombstones, 'merge');
+    assert.match(out.warning!, /副本/);
+    assert.match(out.warning!, /无法撤销/);
+  });
 
   it('merge 在墓碑态不再携带「云端独有的 0 个」这种抹平事实的说法', () => {
     const out = previewOutcome(local, tombstones, 'merge');
@@ -277,16 +327,22 @@ describe('首次推送：远端只有墓碑时，三个选项都不许说「零�
 });
 
 /**
- * 「删除会传到其他设备」这句话**还差一档**（数据安全审计 DS-3，2026-10-23）。
+ * 「删除会传到其他设备」这句话**必须说清真实后果**（数据安全审计 DS-3）。
  *
- * 删��意图确实会广播，但**胜负由操作印记决定** ⇒ 另一台设备若在离线期间改过
- * 这个会话，**删除可能被撤销**（那条会话在对方那儿还在，下一轮同步还会回本机）。
- * ⇒ 只写「其他登录设备将同步删除」，是在确认键前许一个实现不保证的结果。
+ * ── 口径在 2026-10-24 变过一次 ────────────────────────────────────────────
+ * 旧口径：删除意图会广播，但**胜负由操作印记决定** ⇒ 另一台设备若在离线期间
+ * 改过这个会话，删除**可能被撤销** ⇒ 确认框必须说清「可能不生效」。
  *
- * 守卫钉的是**承诺的完整性**：说了「会同步删除」，就必须同时说清那一档。
+ * 新口径（DS-3 已修）：**云端墓碑一律压过本地活跃副本**（`core/opStampMerge.ts`
+ * / `core/remoteAdjudication.ts` / `utils/supabase/upload.ts` 三处同口径）⇒
+ * 对方离线期间改过**也一样会被删除** ⇒ 「可能不生效」已经不成立，
+ * 继续留着就是**对着让用户低估后果的方向说假话**。
+ *
+ * ⇒ 现在这句必须说出**真实后果**：删除会同步过去，**对方那份离线编辑也一起没**。
+ * 守卫钉的是「承诺与实现一致」这个不变量，不钉某一句话的字面量。
  */
-describe('删除的跨设备承诺必须连「可能不生效」一起说', () => {
-  it('确认框承诺跨设备删除时，必须同时说清「删除可能不生效」', () => {
+describe('删除的跨设备承诺必须与实现一致（DS-3 修完后：删除一定生效）', () => {
+  it('确认框承诺跨设备删除时，不得还说「删除可能不生效」（那句已经不成立）', () => {
     const msg = deleteAllConfirmMessage({
       isAuthenticated: true,
       syncBackend: 'supabase',
@@ -294,11 +350,25 @@ describe('删除的跨设备承诺必须连「可能不生效」一起说', () =
       lockedCount: 0,
     });
     assert.match(msg, /其他登录设备将同步删除/, '前提：这句话本身必须还在');
+    assert.doesNotMatch(
+      msg,
+      /删除可能不生效/,
+      '❌ 回归：云端墓碑已经一律赢了（DS-3），删除**一定**生效 —— ' +
+        '继续说「可能不生效」是把已经修好的缺陷当成还存在的，说的是假话'
+    );
+  });
+
+  it('确认框必须说清真实后果：对方离线期间改过的那份也一起被删', () => {
+    const msg = deleteAllConfirmMessage({
+      isAuthenticated: true,
+      syncBackend: 'supabase',
+      groupCount: 5,
+      lockedCount: 0,
+    });
     assert.match(
       msg,
-      /删除可能不生效|可能保留|可能不生效/,
-      '确认框许了「其他设备会同步删除」，却没说清「对方在离线时改过它 ⇒ 删除可能不生效」—— ' +
-        '用户以为删干净了，而其实那条会话还在。'
+      /离线期间改过.*会被删除/,
+      '删除会同步过去且对方那份离线编辑也没了 —— 这一层后果必须说在按确认键之前'
     );
   });
 
@@ -309,9 +379,14 @@ describe('删除的跨设备承诺必须连「可能不生效」一起说', () =
       lockedCount: 0,
     });
     assert.match(msg, /同步删除/, '前提：这句话本身必须还在');
+    assert.doesNotMatch(
+      msg,
+      /删除可能不生效/,
+      '菜单行与确认框必须同口径 —— 而真相只有一个：删除一定生效'
+    );
     assert.match(
       msg,
-      /删除可能不生效|可能保留/,
+      /离线期间改过.*会被删除/,
       '菜单行与确认框必须同口径 —— 两处各说一半，读者看到的就是两件不同的事'
     );
   });
@@ -323,6 +398,6 @@ describe('删除的跨设备承诺必须连「可能不生效」一起说', () =
       groupCount: 3,
       lockedCount: 0,
     });
-    assert.doesNotMatch(msg, /其他设备|其他登录设备|删除可能不生效/);
+    assert.doesNotMatch(msg, /其他设备|其他登录设备|也会被删除/);
   });
 });

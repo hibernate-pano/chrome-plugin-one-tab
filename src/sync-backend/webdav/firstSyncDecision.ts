@@ -403,8 +403,17 @@ export async function clearFirstSyncPendingBestEffort(args: {
  * 却说着相反的话；标着「推荐」的那一个连二次确认都不弹（UI 只对有 warning
  * 的选项弹）。方向都错：唯一真的不可逆的那一项被描述成零风险。
  *
- * 现在墓碑单独统计：凡是本机会让它「复活」的（有同 id 活跃会话，或本机
- * 带印记 ⇒ stamp 决胜时胜出），都计入 `revived` 并让**所有**选项带上 warning。
+ * ── 2026-10-24 审计 DS-3：墓碑的后果**按选择分开算** ─────────────────────
+ * 旧实现只有一个数 `revived`（三种选择共用），判据是「本机 stamp 不更旧 ⇒
+ * 复活」。那个判据在 DS-3 修完之后**已经不成立**：云端墓碑一律赢 ⇒ 非覆盖的
+ * 上传里，本机那份同 id 副本**不会**被写上去 ⇒ 删除**不会**被撤销。
+ * 继续沿用旧判据 = 面板在**对着相反的方向**说假话（说「会复活」而实际不会）。
+ *
+ * ⇒ 真实的形状是**两边各有一份损失，方向相反**，必须分别说：
+ *   · **非覆盖**（合并 / 以云端为准）：云端的删除**保住**了，但**本机**那份
+ *     同 id 副本会被合并移除（它没被上传过 ⇒ 两边都没有了）。
+ *   · **覆盖**（以本机为准）：本机那份被写上去了，但云端的**删除记录被抹掉**
+ *     ⇒ 那些删除被撤销。
  */
 export function previewOutcome(
   localGroups: TabGroup[],
@@ -415,38 +424,54 @@ export function previewOutcome(
   const remote = remoteGroups.filter(g => !g.isDeleted);
   const tombstones = remoteGroups.filter(g => g.isDeleted);
   /**
-   * 这次操作会让多少条「云端已删除」的记录重新变成活跃会话。
+   * 本机有多少条活跃会话与云端某条墓碑**同 id**。
    *
-   * 判据与 `mergeOpStamped` 的「云端墓碑 vs 本地活跃」分支同口径：
-   * 有本机同 id 副本时由 stamp 决胜（本机赢 ⇒ 删除被撤销），
-   * 本机没有同 id 副本时上传会把它写回活跃行（同样是复活）。
-   * 两种情况用户都要知道，所以这里一律计为「会复活」。
+   * 这些副本的命运由墓碑决定（DS-3：墓碑一律赢）⇒ 它们**不会**被上传
+   * （适配器的认输预检会跳过），随后被合并移除 ⇒ **内容两边都不剩**。
    */
-  const revived = countRevivedTombstones(local, tombstones);
-  const tombstoneNote = revived > 0
-    ? `另有云端 ${revived} 条已删除的会话记录会因本次推送重新出现（撤销了那些删除）`
-    : '';
+  const colliding = countCollidingLocal(local, tombstones);
 
   switch (choice) {
     case 'merge': {
-      const merged = mergeOpStamped(localGroups, remoteGroups).filter(g => !g.isDeleted);
+      const mergedAll = mergeOpStamped(localGroups, remoteGroups);
+      const merged = mergedAll.filter(g => !g.isDeleted);
       const remoteOnly = countRemoteOnly(local, remote);
+      // 真正会上行的是「合并结果里**本机那份**」—— 云端赢的那些（同 id 且云端
+      // 更新）本机认输、不上行，云端独有的也还没上行。
+      const localObjects = new Set(localGroups);
+      const uploaded = merged.filter(g => localObjects.has(g)).length;
+      // 非覆盖 ⇒ 云端的删除**保住**；本机那份同 id 副本没被上传 ⇒ 会在下次
+      // 同步的合并里被移除 ⇒ 内容两边都不剩。
+      const tombstoneNote = tombstones.length === 0
+        ? ''
+        : `云端 ${tombstones.length} 条已删除的记录会保持删除` +
+          (colliding > 0
+            ? `，本机同 id 的 ${colliding} 条副本会在下次同步时被移除（内容不保留）`
+            : '');
       return {
         localCount: merged.length,
         cloudCount: merged.length,
         hint:
-          `把本机 ${local.length} 个会话上传到云端（共 ${merged.length} 个）；` +
+          `把本机 ${uploaded} 个会话上传到云端（共 ${merged.length} 个）；` +
           `云端独有的 ${remoteOnly} 个会话保留在云端，本机暂不会收到` +
           (tombstoneNote ? `；${tombstoneNote}` : ''),
-        // merge 此前恒无 warning，于是 UI 不弹二次确认。墓碑态下这正是
+        // 合并此前恒无 warning，于是 UI 不弹二次确认。墓碑态下这正是
         // 不可逆的那一步，必须与其他选项一样先确认（见 UI 的确认判据）。
-        ...(revived > 0
-          ? { warning: `${tombstoneNote}，且这一步无法撤销。确认继续吗？` }
+        ...(colliding > 0
+          ? {
+              warning:
+                `本机同 id 的 ${colliding} 条副本会被云端的已删除记录移除（内容不保留），` +
+                '这一步无法撤销。确认继续吗？',
+            }
           : {}),
       };
     }
     case 'local-wins': {
       const { overlapOlder, remoteOnly } = countLocalWinsEffects(local, remote);
+      // 覆盖 ⇒ 云端被清空重写 ⇒ 云端的**删除记录被抹掉** ⇒ 那些删除被撤销。
+      const tombstoneNote = tombstones.length === 0
+        ? ''
+        : `云端 ${tombstones.length} 条已删除的记录会因覆盖而被抹掉（那些删除被撤销）`;
       return {
         localCount: local.length,
         cloudCount: local.length,
@@ -463,6 +488,14 @@ export function previewOutcome(
     case 'cloud-wins': {
       const union = projectedCloudCount(localGroups, remoteGroups);
       const remoteOnly = countRemoteOnly(local, remote);
+      // 上传是非覆盖（墓碑保住），随后**覆盖下载**把本机换成云端 ⇒ 本机那份
+      // 同 id 副本**当场**被移除（比合并的「下次同步」更早）。
+      const tombstoneNote = tombstones.length === 0
+        ? ''
+        : `云端 ${tombstones.length} 条已删除的记录会保持删除` +
+          (colliding > 0
+            ? `，本机同 id 的 ${colliding} 条副本会被本次拉取移除（内容不保留）`
+            : '');
       return {
         localCount: remote.length,
         cloudCount: remote.length,
@@ -481,23 +514,17 @@ export function previewOutcome(
 }
 
 /**
- * 本次推送会「复活」多少条云端墓碑。
+ * 本机有多少条活跃会话与云端某条墓碑**同 id**。
  *
- * 分两种，都会让已删的会话重新出现：
- *   · 本机有同 id 活跃会话且本机 stamp 不更旧 → mergeOpStamped 让本机赢，墓碑失效；
- *   · 本机没有同 id 副本 → 上传把该行写回活跃形态，墓碑消失。
- * 本机更旧的同 id 副本会服从删除（不算复活），故按 compareStampsLoose 判。
+ * 这些是「会被云端的删除收走」的副本：DS-3 之后墓碑一律赢 ⇒ 它们不会被上传
+ * （适配器的认输预检跳过），随后被合并移除 ⇒ **内容两边都不剩**。
  */
-function countRevivedTombstones(local: TabGroup[], tombstones: TabGroup[]): number {
-  if (tombstones.length === 0) return 0;
-  const localById = new Map(local.map(g => [g.id, g]));
-  let revived = 0;
-  for (const t of tombstones) {
-    const l = localById.get(t.id);
-    if (!l) { revived += 1; continue; }
-    if (compareStampsLoose(t.lastOp, l.lastOp) <= 0) revived += 1;
-  }
-  return revived;
+function countCollidingLocal(local: TabGroup[], tombstones: TabGroup[]): number {
+  if (tombstones.length === 0 || local.length === 0) return 0;
+  const tombstoneIds = new Set(tombstones.map(t => t.id));
+  let n = 0;
+  for (const g of local) if (tombstoneIds.has(g.id)) n += 1;
+  return n;
 }
 
 /** 云端独有（本机没有同 id 活跃会话）的会话数。 */

@@ -20,10 +20,11 @@
 // · 结构层的「四条路径都落到同一道过滤上」（钉**调用关系**，不钉行号 ——
 //   行号会漂，调用关系不会）；
 // · 退出登录只许删登录缓存这一个键（行为层）。
-import { describe, it } from 'node:test';
+import { describe, it, before } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, readdirSync } from 'node:fs';
 import { stubSessionJson } from '../_helpers/stubSession.ts';
+import { installKvEnv } from '../_helpers/kvEnv.ts';
 import {
   accountSwitchNotice,
   createAccountScopeRecord,
@@ -33,6 +34,19 @@ import {
 } from '@/core/accountScope';
 
 const repoRoot = new URL('../../', import.meta.url);
+
+/**
+ * KV 层（storage-kv）的环境桩。
+ *
+ * 归属账本与会话都住在 KV 层（IndexedDB；Node 里没有 ⇒ 回退 localStorage 驱动）
+ * ⇒ 不装这个桩的话，「写进去了」是假的（localStorage 驱动在无 window 时
+ * 静默 no-op），用例会假绿。见 tests/_helpers/kvEnv.ts。
+ */
+let kv: ReturnType<typeof installKvEnv>;
+
+before(() => {
+  kv = installKvEnv();
+});
 
 function readSrc(relPath: string): string {
   return readFileSync(new URL(relPath, repoRoot), 'utf8');
@@ -241,7 +255,7 @@ describe('DS-1 换账号：用户必须被告知本机还留着上一个账号�
   });
 
   it('提示是持久且可消费的（不许静默：没发出去也得留着）', async () => {
-    // 提示存在归属记录里（chrome.storage.local 的独立键）⇒ 弹窗被关掉也不丢。
+    // 提示存在归属记录里（**KV 层**，与本机会话同一个库）⇒ 弹窗被关掉也不丢。
     const { accountScopeStore } = await import('@/utils/authCache');
     const chromeData = new Map<string, unknown>();
     (globalThis as Record<string, unknown>).chrome = {
@@ -318,7 +332,8 @@ describe('DS-1 退出登录：本机会话一个都不能删', () => {
       foreignOwners: { 'g-a1': 'user-A' },
       pendingNotice: null,
     });
-    chromeData.set('tab_groups', [{ id: 'g-a1' }]);
+    // 本机会话住在 KV 层（与归属账本同一个库）。
+    kv.lsData.set('tab_groups', JSON.stringify([{ id: 'g-a1' }]));
 
     const before = new Set(chromeData.keys());
     await authCache.clearAuthState();
@@ -328,6 +343,8 @@ describe('DS-1 退出登录：本机会话一个都不能删', () => {
       if (key === 'auth_cache') continue;
       assert.ok(chromeData.has(key), `退出登录不许删除 ${key}（本机会话与归属记录必须原样留下）`);
     }
+    // 本机会话（KV 层）必须活过退出登录。
+    assert.ok(kv.lsData.has('tab_groups'), '退出登录不许删除本机会话');
     // 归属记录必须活过退出登录 —— 否则下一次登录无从判断「换没换账号」。
     const scope = await accountScopeStore.read();
     assert.equal(scope?.ownerUserId, 'user-A', '归属记录必须活过退出登录');

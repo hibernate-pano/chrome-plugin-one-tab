@@ -3,8 +3,8 @@
  *
  * ── 这条提示是什么 ─────────────────────────────────────────────────────
  * 「本机还有 N 个会话属于上一个账号，不会被上传到当前账号」是**持久**的：
- * 它存在归属记录里（utils/authCache.ts 的独立键 `local_account_scope`），
- * 不是某个内存变量 ⇒ 提示发不出去时它不会丢。
+ * 它存在归属记录里（utils/authCache.ts 管的归属账本，落在**KV 层**，
+ * 与本机会话同一个库），不是某个内存变量 ⇒ 提示发不出去时它不会丢。
  *
  * ── 这道守卫盯什么（全部是**不变量**，不是字面量）─────────────────────
  * ① **页面挂载时必须消费**：提示必须有一条「**每次页面挂载就会跑**」的出口。
@@ -331,13 +331,35 @@ function aliasConsumerCalls(absFile: string, source: string): string {
 describe('R-4 补强：换账号提示的发出闭环（行为）', () => {
   const storage = new Map<string, unknown>();
   let toasts: Array<{ message: string; type: string }> = [];
+  /** KV 层（归属账本的落盘处）：命中这些键的读会抛错（模拟存储故障）。 */
+  const failReadKeys = new Set<string>();
+  const lsData = new Map<string, string>();
 
   before(() => {
     register(LOADER_PATH);
+    // 归属账本住在 KV 层（Node 里没有 indexedDB ⇒ 回退 localStorage 驱动）。
+    // 不装这个桩的话「写进去了」是假的（驱动静默 no-op），用例会假绿。
+    const localStorageStub = {
+      get length() {
+        return lsData.size;
+      },
+      key: (i: number) => [...lsData.keys()][i] ?? null,
+      getItem: (k: string) => {
+        if (failReadKeys.has(k)) throw new Error(`simulated read failure: ${k}`);
+        return lsData.has(k) ? (lsData.get(k) as string) : null;
+      },
+      setItem: (k: string, v: string) => void lsData.set(k, String(v)),
+      removeItem: (k: string) => void lsData.delete(k),
+      clear: () => void lsData.clear(),
+    };
+    (globalThis as Record<string, unknown>).window = { localStorage: localStorageStub };
+    (globalThis as Record<string, unknown>).localStorage = localStorageStub;
   });
 
   beforeEach(() => {
     storage.clear();
+    lsData.clear();
+    failReadKeys.clear();
     toasts = [];
     (globalThis as Record<string, unknown>).chrome = {
       storage: {
@@ -370,17 +392,27 @@ describe('R-4 补强：换账号提示的发出闭环（行为）', () => {
     });
   }
 
-  /** 归属记录里挂着一条待告知的换账号提示。 */
-  function seedNotice(text = '本机还有 1 个会话属于上一个账号，不会被上传到当前账号'): void {
-    storage.set('local_account_scope', {
+  /**
+   * 归属记录里挂着一条待告知的换账号提示。
+   *
+   * 走**公开接口**写（accountScopeStore.write）而不是直接塞存储：
+   * 归属账本住在 KV 层，键在哪、值怎么归一化都由它管 ⇒ 用例不该知道这些。
+   */
+  async function seedNotice(
+    text = '本机还有 1 个会话属于上一个账号，不会被上传到当前账号'
+  ): Promise<void> {
+    const { accountScopeStore } = await import('@/utils/authCache');
+    await accountScopeStore.write({
       ownerUserId: 'user-b',
       foreignOwners: { 'g-a': 'user-a' },
       pendingNotice: { text, previousUserId: 'user-a', residualCount: 1, at: Date.now() },
     });
   }
 
-  function pendingNoticeInStorage(): unknown {
-    const record = storage.get('local_account_scope') as { pendingNotice?: unknown } | undefined;
+  /** 归属记录里现在的待告知提示（消费后应当是 null）。 */
+  async function pendingNoticeInStorage(): Promise<unknown> {
+    const { accountScopeStore } = await import('@/utils/authCache');
+    const record = await accountScopeStore.read();
     return record?.pendingNotice;
   }
 
@@ -395,7 +427,7 @@ describe('R-4 补强：换账号提示的发出闭环（行为）', () => {
 
   it('登录着的时候：提示会被消费，并真的走到界面上（errorHandler → toast 回调）', async () => {
     seedLoggedIn();
-    seedNotice();
+    await seedNotice();
     const deliver = await captureToasts();
 
     await deliver();
@@ -406,11 +438,11 @@ describe('R-4 补强：换账号提示的发出闭环（行为）', () => {
       '本机还有 1 个会话属于上一个账号，不会被上传到当前账号'
     );
     assert.equal(toasts[0].type, 'warning', '换账号提示是 warning 级（不是错误，但必须让用户看见）');
-    assert.equal(pendingNoticeInStorage(), null, '消费即清空 ⇒ 同一条提示不会被告知两次');
+    assert.equal(await pendingNoticeInStorage(), null, '消费即清空 ⇒ 同一条提示不会被告知两次');
   });
 
   it('没登录的时候：不消费（提示不能被吃掉）', async () => {
-    seedNotice(); // 故意不 seed 登录态
+    await seedNotice(); // 故意不 seed 登录态
     const deliver = await captureToasts();
 
     await deliver();
@@ -421,7 +453,7 @@ describe('R-4 补强：换账号提示的发出闭环（行为）', () => {
       '没登录时不该出现「不会上传到当前账号」这种提示 —— 压根没有「当前账号」'
     );
     assert.notEqual(
-      pendingNoticeInStorage(),
+      await pendingNoticeInStorage(),
       null,
       '提示不许被消费掉：消费即清空 ⇒ 清了还没告知 = 这条事实永远没人知道'
     );
@@ -429,7 +461,7 @@ describe('R-4 补强：换账号提示的发出闭环（行为）', () => {
 
   it('两条通道同时消费同一条提示：只告知一次', async () => {
     seedLoggedIn();
-    seedNotice();
+    await seedNotice();
     const deliver = await captureToasts();
 
     await Promise.all([deliver(), deliver()]);
@@ -443,18 +475,10 @@ describe('R-4 补强：换账号提示的发出闭环（行为）', () => {
 
   it('读存储失败：fail-closed（不显示，也不抛错）', async () => {
     seedLoggedIn();
-    seedNotice();
-    // 只让**归属记录**读失败（登录缓存仍读得到 ⇒ 登录态判定不受影响）
-    const chromeStub = (globalThis as Record<string, unknown>).chrome as {
-      storage: { local: { get: (key: string | string[]) => Promise<Record<string, unknown>> } };
-    };
-    chromeStub.storage.local.get = async (key: string | string[]) => {
-      const keys = Array.isArray(key) ? key : [key];
-      if (keys.includes('local_account_scope')) throw new Error('归属记录读不出来');
-      const out: Record<string, unknown> = {};
-      for (const one of keys) if (storage.has(one)) out[one] = storage.get(one);
-      return out;
-    };
+    await seedNotice();
+    // 只让**归属记录**读失败（登录缓存仍读得到 ⇒ 登录态判定不受影响）。
+    // 归属记录住在 KV 层 ⇒ 故障注入在 KV 那一侧（不是 chrome.storage.local）。
+    failReadKeys.add('local_account_scope');
     const deliver = await captureToasts();
 
     await deliver(); // 不许把异常抛给调用方
@@ -464,10 +488,11 @@ describe('R-4 补强：换账号提示的发出闭环（行为）', () => {
 
   it('归属记录形状损坏：fail-closed（不显示半截/错的提示）', async () => {
     seedLoggedIn();
-    storage.set('local_account_scope', {
+    const { accountScopeStore } = await import('@/utils/authCache');
+    await accountScopeStore.write({
       ownerUserId: 'user-b',
       foreignOwners: {},
-      pendingNotice: { text: 123 }, // 缺字段
+      pendingNotice: { text: 123 } as never, // 缺字段
     });
     const deliver = await captureToasts();
 

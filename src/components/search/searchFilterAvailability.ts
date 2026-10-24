@@ -37,17 +37,48 @@
 import type { SearchFilters } from '@/utils/search';
 
 /**
+ * 文本型筛选值的归一化：去首尾空白；只剩空白 ⇒ 视为「没有这个条件」。
+ *
+ * 【为什么由这里负责】`applySearchFilters` 的会话名判据是
+ * `group.name.includes(filters.groupName)` —— 用户输入「 调研 」时，
+ * 那个尾随空格会被当成匹配内容，**一条都筛不出来**；而三处「是否在筛」
+ * 的判定（计数 / 徽章 / chip）都做了 trim ⇒ 徽章说「0 个筛选」，
+ * 列表却已经被筛空（2026-10-24 审计 F2）。
+ *
+ * 修法不是给 `applySearchFilters` 单独打补丁（那样每多一处读 filter
+ * 就多一份 trim 责任），而是**在唯一的归一化入口做一次**：
+ * 所有消费方都只读 `effectiveFilters`，口径天然同源。
+ */
+const normalizeFilterText = (value: string | undefined): string | undefined => {
+  if (value === undefined) return undefined;
+  const trimmed = value.trim();
+  return trimmed === '' ? undefined : trimmed;
+};
+
+/**
  * 计算**真正参与过滤**的筛选条件。
+ *
+ * 两件事都收在这里：
+ *   1. 文本条件去空白（见 `normalizeFilterText`）；
+ *   2. 关闭固定标签收集时移除 `pinned` 条件。
+ *
+ * 无变化时返回**原对象**：调用方用 `useMemo` 以引用为依赖，
+ * 每次渲染都造新对象会让整条搜索管线全量重算。
  *
  * @param filters 用户当前设置的筛选条件
  * @param collectPinnedTabs 设置里的「保存固定标签页」是否开启
- * @returns 关闭固定标签收集时移除 `pinned` 条件的筛选条件
+ * @returns 归一化后的、真正参与过滤的筛选条件
  */
 export const resolveEffectiveSearchFilters = (
   filters: SearchFilters,
   collectPinnedTabs: boolean
 ): SearchFilters => {
-  if (collectPinnedTabs) return filters;
-  if (filters.pinned === undefined) return filters;
-  return { ...filters, pinned: undefined };
+  const domain = normalizeFilterText(filters.domain);
+  const groupName = normalizeFilterText(filters.groupName);
+  const pinned = collectPinnedTabs ? filters.pinned : undefined;
+
+  if (domain === filters.domain && groupName === filters.groupName && pinned === filters.pinned) {
+    return filters;
+  }
+  return { ...filters, domain, groupName, pinned };
 };

@@ -276,9 +276,29 @@ async function migrateFromChromeStorage(target: StorageDriver) {
   }
 }
 
-async function ensureInitialized() {
-  if (initialized) return;
+/**
+ * 初始化的 **single-flight**（2026-10-24 审计 PERF-04）。
+ *
+ * 【修的是什么】修复前 `initialized = true` 要在**两个 await 之后**才置位，
+ * 而 `ensureInitialized` 没有任何在途去重 ⇒ 同一 realm 里**并发**发起的调用
+ * 都会看到 `initialized === false`，于是各自从头跑一遍初始化。
+ * 实测：每次打开管理页并发跑 **4 遍**整表迁移（`migration_flags` 读 ×8、
+ * `chrome.storage.local.get(25 键)` ×4，稳态 popup realm 共 14 个 IndexedDB
+ * 事务）；Service Worker 是独立 realm、另有 1 份 ⇒ 升级路径上 **≥5 份并发
+ * 整表迁移**（4 个写者在同一批键上写同一份快照）。终态会收敛，但读写放大
+ * 4～5 倍，而且「谁先写完」变成调度运气。
+ *
+ * 【为什么是「共享同一个 promise」而不是「加锁排队」】初始化是**幂等**的：
+ * 第二个调用者不需要再等一轮，它只需要**第一个**的结果。共享 promise 既去重
+ * 又不需要额外的等待队列（失败语义见下）。
+ *
+ * 【失败时必须清空】把失败的 promise 永久缓存起来，会让这个 realm 在**一次**
+ * 瞬时失败之后就永久坏掉（后续每次调用都重放同一个拒绝）。清空 ⇒ 下一次调用
+ * 重新初始化 ⇒ 与修复前「下次冷启动重试」的语义一致，只是快了一步。
+ */
+let initPromise: Promise<void> | null = null;
 
+async function doInitialize(): Promise<void> {
   backend = pickBackend();
   driver = backend === 'indexeddb' ? indexedDbDriver : localStorageDriver;
 
@@ -289,6 +309,20 @@ async function ensureInitialized() {
   }
 
   initialized = true;
+}
+
+async function ensureInitialized() {
+  if (initialized) return;
+
+  initPromise ??= doInitialize();
+  const pending = initPromise;
+  try {
+    await pending;
+  } catch (error) {
+    // 只清「本次那次」：若别的调用者已经发起了一次新的初始化，别把它清掉。
+    if (initPromise === pending) initPromise = null;
+    throw error;
+  }
 }
 
 // 显式初始化，供入口处预热与日志上报

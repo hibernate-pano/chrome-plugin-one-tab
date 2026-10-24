@@ -3,7 +3,8 @@
  *
  * ── 这条缺陷是什么 ──────────────────────────────────────────────────────
  * 「本机还剩 N 个会话属于上一个账号」这条提示是**持久**的：它存在归属记录里
- * （utils/authCache.ts 的独立键 `local_account_scope`），而不是某个内存变量
+ * （utils/authCache.ts 管的归属账本，落在**KV 层**，与本机会话同一个库），
+ * 而不是某个内存变量
  * ⇒ 用户在登录后立刻关掉弹窗，它也不会丢。
  *
  * 但「持久」不等于「有人告诉」：它原先**只有**一个消费者 ——
@@ -41,6 +42,7 @@ import { dirname, resolve } from 'node:path';
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import ts from 'typescript';
+import { installKvEnv } from '../_helpers/kvEnv.ts';
 
 const LOADER_PATH = pathToFileURL(
   resolve(dirname(fileURLToPath(import.meta.url)), '../_alias-loader.mjs')
@@ -221,6 +223,9 @@ describe('R-4：换账号提示必须有人告诉用户（不许靠计时器）'
 describe('R-4：消费即清空（只发一次）+ 归属事实活过提示', () => {
   before(() => {
     register(LOADER_PATH);
+    // 归属账本住在 KV 层（Node 里没有 indexedDB ⇒ 回退 localStorage 驱动）。
+    // 不装这个桩的话「写进去了」是假的（驱动静默 no-op），用例会假绿。
+    installKvEnv();
   });
 
   beforeEach(() => {

@@ -351,8 +351,9 @@ describe('R-1 删除广播闸门：打假云端 —— 属于别的账号的会�
   it('归属记录读不出来 ⇒ 整批挡住，云端一个字节都不许动', async () => {
     // 把归属记录写成**形状损坏**的样子 ⇒ accountScopeStore.read() 抛错
     // ⇒ 判据层拿不到 scope ⇒ 必须 fail-closed。
+    // 归属记录住在 KV 层（与本机会话同一个库）⇒ 损坏也注入在那一侧。
     const { accountScopeStore } = await import('@/utils/authCache');
-    stubs.chromeData.set('local_account_scope', { ownerUserId: 12345 });
+    stubs.lsData.set('local_account_scope', JSON.stringify({ ownerUserId: 12345 }));
     const raw = await accountScopeStore.read().catch(() => null);
     assert.equal(raw, null, '前提：形状损坏的归属记录读不出来（抛错）');
 

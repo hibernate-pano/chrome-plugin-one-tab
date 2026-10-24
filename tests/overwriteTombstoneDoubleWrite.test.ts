@@ -445,7 +445,7 @@ describe('P1-2 墓碑 stamp 语义：合并时墓碑必须赢过本地活跃副�
     );
   });
 
-  it('对照：墓碑印记比本地旧时本地赢（compareStamps 方向不能反）', async () => {
+  it('对照：墓碑印记比本地旧时**墓碑仍然赢**（DS-3：删除优先，与印记新旧无关）', async () => {
     const { mergeOpStamped } = await import('@/core/opStampMerge');
     const localActive = { ...TOMB_A, isDeleted: false } as any;
     // 一枚**故意更旧**的墓碑（seq 0，设备号排在本机之后，不影响 s 的比较）
@@ -454,8 +454,9 @@ describe('P1-2 墓碑 stamp 语义：合并时墓碑必须赢过本地活跃副�
     const merged = mergeOpStamped([localActive], [staleTombstone]);
     assert.deepEqual(
       merged.map(g => g.id),
-      ['g-tomb-a'],
-      '墓碑比本地旧时必须保留本地活跃组（离线期间的本地修改赢过删除广播）'
+      [],
+      '2026-10-24 审计 DS-3：云端墓碑**一律**赢（本地印记再大也不撤销删除）—— ' +
+        '两台设备的印记来自各自独立的计数器，比大小等于掷硬币',
     );
   });
 });

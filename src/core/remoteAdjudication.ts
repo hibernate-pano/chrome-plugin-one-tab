@@ -12,10 +12,24 @@
  *   · `resolveRemoteState`：远端印记该从**内容**取还是从**索引**取（内容优先）；
  *   · `shouldConcedeToRemote`：拿到印记后，本地该不该认输。
  *
- * ⚠️ Supabase 侧的实现（utils/supabase/upload.ts、utils/supabase/readback.ts）
- * 按本次任务约束**不得改动**，因此它暂时仍用自己的那一份；
- * 两边的一致性由 tests/backendParityAdjudication.test.ts 钉住
- * （同一批输入必须给出同一结论）—— 漂移会让那条测试变红。
+ * ⚠️ Supabase 侧**也**用这里的**墓碑判据**（`shouldConcedeGroup` 调
+ *   `shouldConcedeToRemoteTombstone`，见 utils/supabase/upload.ts）——
+ *   2026-10-24 审计 DS-3 之前，那边用的是自己抄的一份，而本文件头注释
+ *   声称「由 tests/backendParityAdjudication.test.ts 钉住」——
+ *   **那个测试文件从来不存在**（文档在教一个不存在的规则）。
+ *   现在两边真的共用这里的判据，一致性由 `tests/backendParityDefects.test.ts`
+ *   里的那条**真调用两个实现**的用例钉住（不是把判据重写一遍再比）。
+ *
+ * ⚠️ **但两边的口径并非处处相同**，差的那一处是**有意的**（2026-10-24 更正）：
+ *   · **墓碑方向**（远端是墓碑、本地是活跃）⇒ 两边**完全一致**：一律认输。
+ *   · **活跃 vs 活跃**（远端印记更新）⇒ 两边**不同**：
+ *     Supabase 的上传预检**不拦**（服务端有 `guard_tab_group_op_stamp`
+ *     按印记全序裁决，读回再判「被取代」= 收敛）；
+ *     WebDAV **认输跳过**（自带存储没有服务端守卫，不拦就是拿旧内容盖掉
+ *     对端的新版本 = 静默丢数据）。
+ *   这个差异由 `tests/backendParityDefects.test.ts` 里那条「已知的口径差异
+ *   必须被钉住」的用例显式记录 —— 不写下来的差异，下一个人会当 bug「统一」
+ *   掉，而统一的方向恰好是危险的那边。
  */
 import { compareStampsLoose, type OpStamp } from './opStamp';
 
@@ -74,19 +88,72 @@ export function resolveRemoteState(input: RemoteStateInput): RemoteState {
 }
 
 /**
+ * 「远端是墓碑、本地是活跃副本」⇒ 本地**一律认输**（删除优先于编辑）。
+ *
+ * ── 为什么删除要压过编辑（2026-10-24 审计 DS-3，P0）─────────────────────
+ * 旧语义是「比印记，谁大谁赢」。而**两台设备的印记来自各自独立的计数器**
+ * （`utils/seqRegistry.ts` 的 Lamport 时钟：只保证「本设备发出的号大于它
+ * 观察到的任何号」）⇒ 一台**离线**设备上的编辑，它的号与另一台设备上的删除号
+ * **没有任何因果关系**，比大小等于掷硬币：
+ *
+ *   A 删掉会话 S（墓碑号 100）；B 离线期间编辑过 S（B 的号 101）⇒
+ *   旧语义下「B 赢」⇒ 墓碑被丢弃 ⇒ **A 明确删掉的会话又回来了**，
+ *   而且回来的还是 B 的版本 ⇒ A 那份内容被顶掉。
+ *
+ * 反过来（B 的号 99）则删除生效 ⇒ **同一件事，两种结果**，
+ * 且用户完全无法预期。这就是「静默撤销删除」的根因。
+ *
+ * ── 删掉「编辑赢」这条路为什么没有代价（逐条查过，2026-10-24）────────────
+ * ① **没有回收站**：本地删除是物理移除（`core/mutationOps.ts` 的
+ *    `applyDeleteGroup` 直接 `groups.filter(...)`），`loadDeletedGroups` /
+ *    `restoreGroup` / `purgeGroup` 早已删除 ⇒ 不存在「跨设备把删掉的会话恢复回来」
+ *    这条需求 ⇒ 删除优先不会挡掉任何真实功能。
+ * ② **导入不会撞号**：`applyImportGroups` 给导入的组发**全新 id**
+ *    ⇒ 导入的会话与云端墓碑的 id 永不相同 ⇒ 不存在「用户明确要恢复一个被删的
+ *    会话」被误吞的场景。
+ * ③ **删除没有撤销**（1.22.0 起无回收站、无删除撤销）⇒ 不存在「本机删了又
+ *    想拿回来」的本地竞争 ⇒ 同设备也不会出现「墓碑 vs 本机活跃副本」。
+ *
+ * ⇒ 剩下的唯一竞争就是「**别的设备**离线期间改过」⇒ 那份改动**本来就不知道
+ * 那个会话已经被删了**⇒ 让删除生效是唯一不自相矛盾的选择。
+ *
+ * ⚠️ **显式覆盖模式不受这条约束**：用户明确选了「以本地为准」
+ *   （`upload.ts` 的 `overwriteRemote` / WebDAV 的 `overwriteMode`）
+ *   ⇒ 那时用户已经替这件事做了决定，不该由判据替他反悔。
+ *   两个后端都在调用点显式跳过认输预检（口径一致）。
+ */
+export function shouldConcedeToRemoteTombstone(
+  local: RemoteEntityState,
+  remote: RemoteState
+): boolean {
+  return remote.isDeleted === true && local.isDeleted !== true;
+}
+
+/**
  * 本地该不该对远端认输（本次不上行，等下次下载合并物理替换）。
  *
- * 判据：**远端印记严格更新** ⇒ 认输。
- * 与 `mergeOpStamped` 的组级 LWW 逐字一致（stamp 大者整组赢）。
+ * 判据分两条，**顺序不可换**：
+ *   ① 远端是墓碑而本地是活跃副本 ⇒ **认输**（删除优先于编辑，见
+ *      {@link shouldConcedeToRemoteTombstone} 的完整论证）。
+ *   ② 否则：**远端印记严格更新** ⇒ 认输。
+ *
+ * 与 `mergeOpStamped` 的**合并**语义一致（活跃 vs 活跃：stamp 大者整组赢、
+ * 平局本地赢；墓碑 vs 活跃：墓碑赢）。
+ *
+ * ⚠️ 与 Supabase 侧的 `shouldConcedeGroup` 在**活跃 vs 活跃**上刻意不同
+ *   （那边不拦，交给服务端守卫 + 读回裁决；这边拦，因为没有服务端守卫）。
+ *   墓碑方向上两边**完全一致**。差在哪由
+ *   `tests/backendParityDefects.test.ts` 显式钉住。
  *
  * 「无印记」按全序最小处理（`compareStampsLoose`）：远端没有印记而本地有 ⇒
  * 本地赢（本地是已知的一方）；两边都没有 ⇒ 打平，不认输。
  */
 export function shouldConcedeToRemote(
-  localLastOp: OpStamp | undefined,
+  local: RemoteEntityState,
   remote: RemoteState
 ): boolean {
-  return compareStampsLoose(remote.lastOp, localLastOp) > 0;
+  if (shouldConcedeToRemoteTombstone(local, remote)) return true;
+  return compareStampsLoose(remote.lastOp, local.lastOp) > 0;
 }
 
 /** 墓碑读回的期望值（我们要写上去的东西）。 */
@@ -112,17 +179,31 @@ export interface TombstoneReadbackVerdict {
 }
 
 /**
- * 墓碑读回校验：**「广播成功」的定义**。
+ * 墓碑读回校验：**「广播成功」的定义**（自带存储侧用）。
  *
  * 只有「远端确实已经是墓碑、且印记就是我们要的那个」才算广播成功。
  * 任何不一致 ⇒ 抛错 ⇒ 调用方**不消费**删除队列 ⇒ 下一轮重播
  * （重播幂等，丢掉删除意图不可逆 —— 1.22.0 起没有回收站）。
  *
- * ── 与 Supabase 侧的等价关系 ──────────────────────────────────────────────
- * Supabase 侧做同一件事的是 `verifyTombstoneReadback`
- * （utils/supabase/readback.ts）：比对 `is_deleted` 与印记，不一致就抛错。
- * 两边的**判据**在这里（`compareTombstoneReadback`），
- * Supabase 那份按任务约束未改动，一致性由 parity 测试钉住。
+ * ── 与 Supabase 侧的差别（2026-10-24 审计更正：此前这里写错了）────────────
+ * 本文件这个函数（比 **is_deleted + 印记**）是**自带存储侧**在用的那个
+ * （`sync-backend/webdav/adapter.ts` 的删除广播读回）。
+ * Supabase 侧有**同名但不同判据**的另一个函数
+ * （`utils/supabase/readback.ts` 的 `compareTombstoneReadback(ids, rows, opts)`），
+ * 它只比 **is_deleted**、并把「云端没这一行」按调用方的语义处理
+ * （默认报错，plain 模式可显式当成「删除意图已达成」）。
+ *
+ * ⚠️ 此前本注释写的是「Supabase 侧…比对 is_deleted **与印记**…两边的判据在这里」
+ * —— **那是假的**：Supabase 侧读回时只 select 了 `id, is_deleted`
+ * （`readback.ts` 的 `verifyTombstoneReadback`），**根本没有印记这一维**。
+ *
+ * 两边口径不同是**有意的**，不是漂移：
+ *   · 自带存储侧要确认「写进去的**就是**我这一条墓碑」⇒ 必须比印记
+ *     （它的分片头里就带着印记，比对成本为零）。
+ *   · Supabase 侧要确认的是「**这个会话确实被删掉了**」⇒ `is_deleted` 足够；
+ *     而且**不能**要求印记等于我的：别的设备写下的更新墓碑同样满足删除意图
+ *     （那不是失败，是收敛）⇒ 要求印记相等反而会把删除意图判成故障、无限重播。
+ * ⇒ 改动任何一边之前，先确认它的「广播成功」定义是什么。
  */
 export function compareTombstoneReadback(
   expected: TombstoneExpectation,

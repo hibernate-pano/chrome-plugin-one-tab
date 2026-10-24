@@ -39,6 +39,7 @@ import { register } from 'node:module';
 import { pathToFileURL, fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
 import { stubSessionJson } from '../_helpers/stubSession.ts';
+import { installKvEnv } from '../_helpers/kvEnv.ts';
 
 const LOADER_PATH = pathToFileURL(
   resolve(dirname(fileURLToPath(import.meta.url)), '../_alias-loader.mjs')
@@ -177,9 +178,16 @@ describe('R-5：上传侧的既有兜底口径**不许**被顺手改掉', () => 
   });
 
   let stub: ReturnType<typeof installChromeStorageStub>;
+  let kv: ReturnType<typeof installKvEnv>;
 
   beforeEach(() => {
     stub = installChromeStorageStub();
+    // 归属账本住在 KV 层（Node 里没有 indexedDB ⇒ 回退 localStorage 驱动）。
+    // 不装这个桩的话「写进去了」是假的（驱动静默 no-op），用例会假绿。
+    // 归属账本是**本机状态** ⇒ 用例之间必须清干净（否则会串味：
+    // 上一段兜底认账写下的记录会让下一段的「记录缺失」前提不成立）。
+    kv = installKvEnv();
+    kv.reset();
     // 登录态（supabase-js 存在 chrome.storage.local 的会话键里）。
     stub.data.set(SESSION_KEY, stubSessionJson('user-current'));
   });

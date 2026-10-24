@@ -13,8 +13,9 @@
  * 每次登录都只是「把当前登录账号的 userId 盖在要写的行上」。
  *
  * ── 这一层只做纯判定，不做 IO ───────────────────────────────────────────
- * 归属记录落在 chrome.storage.local 的独立键里（读写见 utils/authCache.ts），
- * 而「谁拥有哪一批会话 / 换账号时怎么认账 / 上传时放行哪些」全部收口在
+ * 归属记录落在**本机会话同一个库**里（KV 层 / IndexedDB，读写见
+ * utils/authCache.ts 的 accountScopeStore），而「谁拥有哪一批会话 /
+ * 换账号时怎么认账 / 上传时放行哪些」全部收口在
  * 本文件的纯函数里：判据只有一份 ⇒ 认账（写）、上传闸门（执行）、守卫（防回归）
  * 用的是同一套口径，不会出现「一处改了另一处没改」。
  *
@@ -48,7 +49,7 @@ export interface AccountSwitchNotice {
   at: number;
 }
 
-/** 本机会话的归属记录（落盘在 chrome.storage.local 的独立键里）。 */
+/** 本机会话的归属记录（落盘在 KV 层，与本机会话同一个库）。 */
 export interface AccountScopeRecord {
   /**
    * 本机这批会话当前归属的账号 id。
@@ -76,6 +77,31 @@ export type AccountBindKind =
   | 'same-account'
   /** 换了账号 ⇒ 本机旧会话要认账给上一个账号。 */
   | 'account-switch';
+
+/**
+ * 「这台机器上还有别的账号吗」这条事实的**外部证据**（2026-10-24 审计 DS-43-20）。
+ *
+ * ── 为什么需要它 ────────────────────────────────────────────────────────
+ * 归属账本（`AccountScopeRecord`）是**权威**，但它可能**不在**：
+ * 账本丢了（存储事故、升级迁移没搬过来）而本机会话还在时，
+ * `decideAccountBind` 若按 first-bind 处理，就会把**本机现有会话静默认领**
+ * 给刚登录的账号 —— 那正是 DS-1 的跨账号泄露。
+ *
+ * 「这台机器上次登录的是谁」（登录缓存里的最后一个账号 id）是**第二条证据**：
+ * 它能回答「这台机器上有没有别的账号」，而不需要账本本身。
+ *
+ * 判据（三态）：
+ *   · 有它、且**不是**新登录的账号 ⇒ 这台机器上有别的账号的会话 ⇒ 按
+ *     「换账号」处理（旧会话认账给上一个账号 + 明确告知用户）；
+ *   · 有它、且**就是**新登录的账号 ⇒ 这些会话本来就是它的（账本丢了而已）
+ *     ⇒ 认领无妨；
+ *   · 没有它（从没登录过 / 读不到）⇒ 这台机器**从没有过被记下的账号**
+ *     ⇒ 这就是第一次绑定，认领。
+ */
+export interface AccountBindEvidence {
+  /** 这台机器上次登录的账号 id；null = 从没登录过（或读不到）。 */
+  lastKnownUserId: string | null;
+}
 
 /** 认账（绑定）的判定结果。 */
 export interface AccountBindDecision {
@@ -308,6 +334,7 @@ function pruneForeignOwners(
  * @param machineGroupIds 本机**仍然存在**的会话 id（活跃 + 墓碑）
  * @param now 判定时刻
  * @param pendingDeleteIds **删除意图还在队列里**的会话 id
+ * @param evidence 「这台机器上次登录的是谁」这条外部证据（可省；省了 = 无证据）
  *
  *   ⚠️ 这一组为什么必须在（2026-10-23 审计 R-1 / DS-43-1）：一条会话被**物理
  *   删除**之后，它就不在本机清单里了 —— 但它的**删除意图**还在队列里，而那条
@@ -330,19 +357,31 @@ function pruneForeignOwners(
  *   · account-switch：换了账号 ⇒ **本机现有会话认账给上一个账号**，
  *     归属账号改成新账号 ⇒ 于是旧会话在新账号下的上传里被挡住，
  *     而新账号之后新建的会话照常上传。
+ *
+ * ── 「上一个账号」是谁：账本优先，外部证据兜底 ──────────────────────────
+ * 账本里的 `ownerUserId` 是权威。**账本缺主人时**（ownerUserId 为 null），
+ * 用 `evidence.lastKnownUserId`（这台机器上次登录的是谁）补位 ——
+ * 补上之后就走「换账号 / 同一个账号」口径，而不是 first-bind。
+ *
+ * ⚠️ 这一步是 DS-43-20 的直接修法：没有它，「账本丢了 + 本机有会话」
+ * 会被当成「第一次绑定」⇒ 本机残留的会话**静默认领**给新账号 ⇒
+ * 跨账号泄露。有了它：账本丢了但这台机器明明登录过别的账号 ⇒
+ * 旧会话认账给那个账号（并明确告知用户），**不会被新账号带走**。
  */
 export function decideAccountBind(
   scope: AccountScopeRecord,
   incomingUserId: string,
   machineGroupIds: readonly string[],
   now: number = Date.now(),
-  pendingDeleteIds: readonly string[] = []
+  pendingDeleteIds: readonly string[] = [],
+  evidence?: AccountBindEvidence
 ): AccountBindDecision {
   // 用户看得见的会话（本机清单）。
   const localIds = [...new Set(machineGroupIds)];
   // 归属账本：看得见的 + 删除意图还在队列里的（后者用户看不见，但归属必须记着）。
   const ownedIds = [...new Set([...localIds, ...pendingDeleteIds])];
-  const previousUserId = scope.ownerUserId;
+  // 「上一个账号」：账本优先；账本缺主人时用外部证据补位（见上方注释）。
+  const previousUserId = scope.ownerUserId ?? evidence?.lastKnownUserId ?? null;
 
   if (previousUserId === null) {
     return {

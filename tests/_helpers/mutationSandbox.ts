@@ -98,7 +98,7 @@ export function runMutationCases(cases: MutationCase[]): MutationOutcome[] {
     //（判据的一半是「文档不许撤回那句话说」）。不拷 ⇒ 守卫在沙箱里读文件时
     // ENOENT ⇒ **对照组直接失败** ⇒ 每条变异用例都会「红」，看起来像守卫有检测力，
     // 其实是沙箱坏了（假红）。宁可多拷几个文件，也不能让判据在沙箱里失声。
-    for (const extra of ['README.md', 'CHROMEWEBSTORE.md', 'docs']) {
+    for (const extra of ['README.md', 'CHROMEWEBSTORE.md', 'docs', 'supabase']) {
       const from = resolve(REPO_ROOT, extra);
       if (!existsSync(from)) continue;
       cpSync(from, join(workDir, extra), { recursive: true });

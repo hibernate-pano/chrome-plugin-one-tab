@@ -359,8 +359,8 @@ export const SyncButton: React.FC<SyncButtonProps> = () => {
         }
         if (spec.refreshSettings) {
           // 覆盖下载在 SW 里改写了存储中的设置，本上下文手里的是旧值（缓存也没失效）。
-          // 重读失败必须出声：此时界面显示旧设置，而用户接着改任何一项都会把旧值
-          // 整份回写（saveSettings 是盲写）并上传 —— 静默的话没人会知道。
+          // 重读失败必须出声：此时界面显示旧设置，而上传路径读的是同一份缓存里的
+          // 旧值（无条件 upsert）⇒ 旧值会被顶回云端 —— 静默的话没人会知道。
           const reloadError = await dispatchReloadSettings(dispatch);
           if (reloadError) {
             logWarn('同步后重读设置失败，界面可能显示旧值:', reloadError);

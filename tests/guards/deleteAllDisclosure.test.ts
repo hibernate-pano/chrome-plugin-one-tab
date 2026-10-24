@@ -24,11 +24,11 @@ import {
   deleteAllConfirmMessage,
   deleteAllConfirmTitle,
   deleteAllMenuWarning,
-  deleteReachesOtherDevices,
   deleteAllSuccessMessage,
   deletedCountFromResult,
   planDeleteAll,
 } from '@/components/layout/deleteAllMessages';
+import { deleteReachesOtherDevices } from '@/components/sync/crossDeviceDeleteCopy';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 const read = (rel: string) => readFileSync(resolve(ROOT, rel), 'utf8');

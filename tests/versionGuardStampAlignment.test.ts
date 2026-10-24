@@ -178,12 +178,12 @@ describe('上传水位：本次没写上云的组不得计入（否则上行通�
   });
 });
 
-describe('认输预检：本地印记更新 ⇒ 绝不认输（预检不参与 version 裁决）', () => {
+describe('认输预检：version 不参与裁决（活跃 vs 活跃由印记说话）', () => {
   it('本地印记更大时，即使云端 version 更大也不认输', () => {
     const cloud = {
       id: 'g1',
       updated_at: NOW,
-      is_deleted: true,
+      is_deleted: false,
       last_op_device: CLOUD_STAMP.d,
       last_op_seq: CLOUD_STAMP.s,
       version: 4,
@@ -217,5 +217,57 @@ describe('认输预检：本地印记更新 ⇒ 绝不认输（预检不参与 v
       version: 9,
     };
     assert.equal(shouldConcedeGroup(localGroup(), cloud), false);
+  });
+});
+
+// ── DS-3（2026-10-24 审计）：云端墓碑**无条件**压过本地活跃副本 ─────────────
+//
+// 旧语义是「本地印记严格更新 ⇒ 绝不认输」，那让删除可以被另一台设备的离线
+// 编辑撤销（两台设备的计数器互相独立，比大小等于掷硬币）。
+// 现在：墓碑优先。version 在这个方向上**更加**不参与（version 是每设备本地
+// 计数器，跨设备不可比）。
+describe('认输预检：云端墓碑一律压过本地活跃副本（DS-3）', () => {
+  it('本地印记比云端墓碑更新 ⇒ 仍然认输（删除优先）', () => {
+    const cloud = {
+      id: 'g1',
+      updated_at: NOW,
+      is_deleted: true,
+      last_op_device: 'devA',
+      last_op_seq: 100,
+      version: 99,
+    };
+    assert.equal(
+      shouldConcedeGroup(localGroup({ lastOp: { d: 'devB', s: 5001 } }), cloud),
+      true,
+      '❌ 回归：本地印记更大就把云端墓碑顶掉 = 删除被静默撤销（DS-3）'
+    );
+  });
+
+  it('本地印记比云端墓碑旧 ⇒ 认输', () => {
+    const cloud = {
+      id: 'g1',
+      updated_at: NOW,
+      is_deleted: true,
+      last_op_device: 'devA',
+      last_op_seq: 5000,
+      version: 1,
+    };
+    assert.equal(shouldConcedeGroup(localGroup({ lastOp: { d: 'devB', s: 4999 } }), cloud), true);
+  });
+
+  it('云端墓碑**没有印记**时也认输（守卫会放行写入 ⇒ 不认输就等于把墓碑覆盖掉）', () => {
+    const cloud = {
+      id: 'g1',
+      updated_at: NOW,
+      is_deleted: true,
+      last_op_device: null,
+      last_op_seq: null,
+      version: 1,
+    };
+    assert.equal(
+      shouldConcedeGroup(localGroup(), cloud),
+      true,
+      '❌ 回归：云端墓碑无印记时服务端 guard_tab_group_op_stamp 判「无从裁决」会放行写入 ⇒ 不认输就等于把墓碑覆盖掉'
+    );
   });
 });

@@ -79,6 +79,15 @@ async function probe() {
   console.log(`模式: ${ALLOW_WRITE ? '只读 + 写探测（会立即回滚）' : '只读'}\n`);
 
   const findings = [];
+  // ── 2026-10-24 审计 RLS-DRIFT：402 不是「绿」──────────────────────────────
+  //
+  // Supabase 的 Free 档超配额会**项目级**封禁：`/rest/v1/*` 与
+  // `/auth/v1/health` 一律 402。修复前这里把它当普通「被拒」推进 findings，
+  // 而汇总只看「有没有表暴露行」⇒ 一张表都读不到就打印
+  // 「✓ 没有表对 anon 暴露任何行（RLS 生效或表为空）」。
+  // 而真相是**探测根本没拿到答案** —— 把「无法判定」说成「通过」，
+  // 是这类核对工具最坏的失败模式（比报错更危险：没人会去看）。
+  let restrictedStatus = null;
   for (const t of TABLES) {
     let r;
     try {
@@ -90,6 +99,7 @@ async function probe() {
     const txt = await r.text();
     if (r.status !== 200) {
       console.log(`  ${t.padEnd(15)} HTTP ${r.status}  → 被拒：${errMsg(txt).slice(0, 70)}`);
+      if (r.status === 402) restrictedStatus = 402;
       findings.push({ table: t, status: r.status, rows: 0, cols: [], leaked: [] });
       continue;
     }
@@ -108,7 +118,15 @@ async function probe() {
   // ── 汇总 ──
   console.log('\n=== 结论 ===');
   const exposed = findings.filter(f => f.status === 200 && f.rows > 0);
-  if (exposed.length === 0) {
+  if (restrictedStatus !== null) {
+    // 402 = 项目被限制（配额/封禁）⇒ 一个端点都没答上话。
+    // 「读不到」在这里**不能**被读成「没暴露」：那是两件完全不同的事。
+    console.log(`  ? 无法判定：项目对端点返回 HTTP ${restrictedStatus}（配额/封禁）`);
+    console.log('    这不是「RLS 生效」，也不是「表为空」——探测根本没拿到答案。');
+    console.log('    先解封/恢复配额（Dashboard → Usage / Billing），再重跑本脚本。');
+    console.log('    （同类事故：2026-10 的生产 Supabase 项目被 egress 配额项目级封禁）');
+    process.exitCode = 2;
+  } else if (exposed.length === 0) {
     console.log('  ✓ 没有表对 anon 暴露任何行（RLS 生效或表为空）');
   } else {
     console.log(`  ✗ ${exposed.length} 张表对 anon 暴露数据：`);
@@ -156,6 +174,9 @@ async function probe() {
           ? `     探针行已清理`
           : `     ⚠️ 清理失败 HTTP ${d.status}，需手动执行：DELETE FROM ${table} WHERE group_id='${probeId}'`
       );
+    } else if (r.status === 402) {
+      // 2026-10-24 审计 RLS-DRIFT：项目受限时写探测同样拿不到答案。
+      console.log(`  ? ${table}：项目受限（HTTP 402）⇒ 无法判定 RLS 是否生效`);
     } else if (/42501|row-level security|permission denied/i.test(txt)) {
       console.log(`  ✓ ${table}：INSERT 被拒 ⇒ RLS 生效`);
       console.log(`     （${errMsg(txt).slice(0, 80)}）`);
@@ -170,7 +191,15 @@ async function probe() {
   // ── 提权探测：能读 ≠ 能改 ──
   console.log('\n=== 提权探测（PATCH plan=pro，随后立即改回）===');
   const r0 = await fetch(`${URL_}/rest/v1/profiles?select=id,plan&limit=1`, { headers: H });
-  if (!r0.ok) { console.log('  读不到行，跳过提权探测'); return; }
+  if (!r0.ok) {
+    // 2026-10-24 审计 RLS-DRIFT：402 不等于「读不到行」。
+    console.log(
+      r0.status === 402
+        ? '  项目受限（HTTP 402）⇒ 无法判定，不是「没有行」'
+        : '  读不到行，跳过提权探测'
+    );
+    return;
+  }
   const [row] = await r0.json();
   if (!row) { console.log('  表为空，跳过'); return; }
 

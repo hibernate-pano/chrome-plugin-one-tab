@@ -1372,9 +1372,9 @@ const authNotice = useAppSelector(state => state.auth.notice ?? null);
                           dispatch(loadGroups());
                           // 2026-10-18 round 31：备份里带 settings 时 importDetailed 已经把它
                           // 合并进存储，但**本上下文手里的 Redux 还是旧值**（60s 设置缓存 + 各自
-                          // 一份 state）。用户接着改任何一项设置都会把旧值整份盲写回去
-                          // （saveSettings 不是读-改-写）—— 刚导入的设置被静默回滚，界面也
-                          // 一直显示旧主题/旧布局，看起来像「设置没导进来」。
+                          // 一份 state）。界面会一直显示旧主题/旧布局，看起来像「设置没导进来」；
+                          // 而上传路径读的是同一份缓存里的旧值（无条件 upsert）⇒ 刚导入的设置
+                          // 会被旧值顶回云端，其它设备再复制一遍。
                           // 与同步按钮 / 设置页「以云端为准」同一口径：先失效缓存，再读。
                           const reloadError = await dispatchReloadSettings(dispatch);
                           if (reloadError) {

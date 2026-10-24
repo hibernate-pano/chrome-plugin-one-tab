@@ -8,6 +8,7 @@ import {
 import { secureStorage } from './secureStorage';
 import { kvGet, kvSet, kvRemove } from '@/storage/storageAdapter';
 import { notifyGroupsChanged, subscribeGroupsChanged } from '@/storage-kv/groupsChangedBus';
+import { notifySettingsChanged } from '@/storage-kv/settingsChangedBus';
 import { STORAGE_KEYS, STORAGE_VERSION } from '@/storage-kv/keys';
 import {
   resolveCurrentLibraryScope,
@@ -78,9 +79,10 @@ export function invalidateGroupsCache(): void {
  * 覆盖下载会在 SW 里把云端设置合并进存储（syncEngine.mergeCloudSettingsIntoLocal），
  * popup / options 各自的缓存副本不会因此失效。留在缓存里的旧值有两个后果：
  *   ① 界面继续显示旧主题 / 旧布局，用户以为覆盖下载没生效；
- *   ② 更贵的一条：popup 的 saveSettings 是**整份 state 盲写**，用户接下来随便改
- *      一项设置，就会把这份旧设置整份写回存储（并随自动上传推到云端），
- *      刚刚从云端落下来的那批值被静默回滚。
+ *   ② 更贵的一条：上传路径读的是 `storage.getSettings()`（syncEngine.upload
+ *      末尾 `uploadSettings(await storage.getSettings())`），而 uploadSettings 是
+ *      **无条件 upsert** ⇒ 一次陈旧读就把用户云端设置整行覆盖成旧值，
+ *      刚刚从云端落下来的那批值被静默回滚，其它设备下次下载再复制一遍。
  * 因此覆盖下载成功后，本上下文必须「先失效、再重读」。
  */
 export function invalidateSettingsCache(): void {
@@ -803,6 +805,17 @@ class ChromeStorage {
     // 落盘后刷新缓存 TTL（即便之前已 optimistic 更新）
     const cache = cacheManager.getCache('storage');
     cache.set('settings', validatedSettings, CACHE_TTL.SETTINGS);
+
+    // ── 2026-10-24 审计 GAP1-1：落盘后**通知别的执行上下文** ──────────────
+    // 设置在 IndexedDB 里 ⇒ `chrome.storage.onChanged` 根本不触发 ⇒ 别的
+    // realm（管理页 / 设置页 / SW）**不知道**设置刚被改过 ⇒ 它们的界面停在
+    // 旧值上（实测：磁盘上的 syncBackend 已经是 webdav，设置页还显示云端选中
+    // ⇒ 用户以为自己已经切到自带存储）。
+    //
+    // 本通知是**读侧**的失效通道；**写侧**的治本那一半在
+    // store/slices/settingsSlice.ts 的 saveSettings（按字段的读-改-写：
+    // 只写用户动过的字段，别人的改动原样保留）。
+    notifySettingsChanged();
   }, 500);
 
   async setSettings(settings: UserSettings): Promise<void> {
@@ -1888,7 +1901,10 @@ class ChromeStorage {
     // 用 getGroupsForWrite 而非 getGroupsFresh：后者只失效缓存、不 flush 500ms 防抖
     // 窗口，用户「刚改名完 200ms 就点导出」时那次 setGroups 还没落盘，备份会缺这一笔。
     const groups = await this.getGroupsForWrite();
-    const settings = await this.getSettings();
+    // 设置侧同理：导出是写用户备份，必须是最新真值。getSettings() 带 60s 进程内
+    // 缓存 ⇒ 备份里可能是几分钟前的设置（2026-10-24 审计 GAP1-1）。
+    // 用 getSettingsForWrite：先 flush 500ms 防抖窗口、再失效缓存、最后读盘。
+    const settings = await this.getSettingsForWrite();
 
     // 2026-10-20 审计 A-21：导出侧也必须剔掉「不跨设备」与「已退役」的设置键。
     //
@@ -2027,7 +2043,10 @@ class ChromeStorage {
       let settingsMergeFailed = false;
       if (data.data.settings) {
         try {
-          const currentSettings = await this.getSettings();
+          // 读-改-写 ⇒ 必须读**真值**（2026-10-24 审计 GAP1-1）：
+          // getSettings() 带 60s 进程内缓存，而这里紧接着就要写回设置 ——
+          // 拿缓存里的旧值当底，会把「本机在这 60s 内被别人改过的设置」覆盖掉。
+          const currentSettings = await this.getSettingsForWrite();
           // 设备级字段不跟着备份跨设备（2026-10-18 产品定稿，同一个
           // DEVICE_LEVEL_SETTING_KEYS 也用在「上云」与「云端合并」两条路径上）。
           // 备份文件是**用户手上的外来文件**：B 机导入 A 机的备份后，本机的
@@ -2178,6 +2197,15 @@ class ChromeStorage {
       // 就**自动作废水位**走全量上行（见 supabase/syncWatermark.ts 头注释 P0 段）。
       // 残留的只是一个无害的孤儿推导量，代价是清数据后的首轮多传一次全量。
       // 正确性由水位自身保证，不依赖这里补一刀。
+      //
+      // ── 2026-10-24：清完必须让**进程内缓存**失效 ──────────────────────
+      // 磁盘清掉了，但本进程的 30s（会话）/ 60s（设置）缓存还端着旧值 ⇒
+      // 「清除本地数据」之后界面**照样显示**那些会话与设置，用户以为没清掉；
+      // 而设置的旧值更贵：上传路径读的是 `storage.getSettings()`，一次陈旧读
+      // 就把「已清空」这件事在云端又复活（上传是无条件 upsert）。
+      // ⇒ 清完立刻失效两个缓存（与 invalidateGroupsCache 的理由同款）。
+      invalidateGroupsCache();
+      invalidateSettingsCache();
     } catch (error) {
       logError('清除存储失败:', error);
     }

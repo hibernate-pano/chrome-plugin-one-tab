@@ -6,36 +6,69 @@
 //   2) 按 44px 后又「减掉塌陷外边距」→ 每卡矮 4px。
 // 两次都是靠真机基准（「滚动前后文档总高一致」断言）才暴露出来的，
 // 所以这里把公式与判定顺序显式钉住，避免第三次。
+//
+// ── 2026-10-24 审计 PERF-03：行距从「写死的常量」改成「量出来的输入」──────
+//
+// 本文件原来断言 `TAB_ROW_STRIDE_PX === 44`，并在注释里说它对应
+// 「global.css 的 .tab-item { padding:10px 16px; border-bottom:1px }」。
+// 那条对应关系**早已不成立**：padding 现在由 drag-drop.css 写死 8px 12px，
+// 内容（操作条）36px ⇒ 行盒 54px，加 margin-bottom 4px ⇒ **真实行距 58px**。
+// ⇒ 每一行占位比真实行矮 14px ⇒ 卡片从「远」变「近」时高度突变 ⇒ 滚动漂。
+//
+// 而且写死的常量只对**某一个版本的样式**成立（主题覆盖、浏览器缩放都会改它），
+// 所以行距现在由运行时测量提供（cardMetrics.rowStrideFrom），
+// 本模块只负责「行数 × 行距」这个乘法 ⇒ 下面钉的是**乘法与降级**，
+// 行距本身的推导在 tests/cardMetrics.test.ts 里钉。
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 
-import {
-  TAB_ROW_STRIDE_PX,
-  resolveRowWindow,
-} from '../src/components/tabs/lazyTabRows.ts';
+import { resolveRowWindow } from '../src/components/tabs/lazyTabRows.ts';
+import { ROW_STRIDE_FALLBACK_PX } from '../src/components/tabs/cardMetrics.ts';
 
 const READ = (rel: string) => readFileSync(new URL(rel, import.meta.url), 'utf8');
 
 describe('懒渲染：占位高度', () => {
-  it('行距常量是 44px（40px 行高 + 4px 下外边距）', () => {
-    // 与 global.css 的 .tab-item { padding:10px 16px; border-bottom:1px } + 行间距 4px 对应。
-    // 若样式改了行高/间距，这条会失败，提醒同步改常量（否则占位高度失准、滚动会漂）。
-    assert.equal(TAB_ROW_STRIDE_PX, 44);
+  it('占位高度 = 行数 × **给定的**行距（行距是输入，不是内部常量）', () => {
+    // 58 = 默认主题实测行距（行盒 54 + 下外边距 4）。
+    assert.equal(resolveRowWindow(20, false, 58).placeholderHeight, 1160);
+    assert.equal(resolveRowWindow(1, false, 58).placeholderHeight, 58);
+    assert.equal(resolveRowWindow(7, false, 58).placeholderHeight, 406);
+    assert.equal(resolveRowWindow(150, false, 58).placeholderHeight, 8700);
   });
 
-  it('远离视口时占位高度 = 行数 × 44（不做任何塌陷修正）', () => {
-    // 真实结构实测：卡片 927 = 1 + 45(卡头) + 880 + 1，其中 880 = 20×44。
-    // 「最后一行外边距塌陷出容器」那 4px 会被外层 overflow:hidden 的 BFC 加回来，
-    // 净效果就是整齐的 n×44 —— 见 lazyTabRows.ts 顶部对两次踩坑的记录。
-    assert.equal(resolveRowWindow(20, false).placeholderHeight, 880);
-    assert.equal(resolveRowWindow(1, false).placeholderHeight, 44);
-    assert.equal(resolveRowWindow(7, false).placeholderHeight, 308);
-    assert.equal(resolveRowWindow(150, false).placeholderHeight, 6600);
+  it('行距换一个值，占位高度就跟着换（证明行距真的参与了计算）', () => {
+    // 这条是防「参数被忽略」的：若实现里写死了 58，改这里就不会变红。
+    assert.equal(resolveRowWindow(10, false, 44).placeholderHeight, 440);
+    assert.equal(resolveRowWindow(10, false, 56).placeholderHeight, 560);
+    assert.notEqual(
+      resolveRowWindow(10, false, 58).placeholderHeight,
+      resolveRowWindow(10, false, 44).placeholderHeight
+    );
+  });
+
+  it('行距不可用时退回到暂用值（占位绝不能变成 0 —— 那会把内容藏起来）', () => {
+    for (const bad of [Number.NaN, 0, -10, Infinity]) {
+      const r = resolveRowWindow(10, false, bad);
+      assert.equal(r.renderRows, false);
+      assert.equal(
+        r.placeholderHeight,
+        10 * ROW_STRIDE_FALLBACK_PX,
+        `行距=${bad} 必须退回暂用值 ${ROW_STRIDE_FALLBACK_PX}`
+      );
+      assert.ok(r.placeholderHeight > 0, '占位高度必须为正');
+    }
+  });
+
+  it('暂用值本身是 58px（默认主题实测：行盒 54 + 下外边距 4）', () => {
+    // ⚠️ 这个数只是**第一次布局、还没量到**时用的暂用值：
+    // 运行时量到的真值会立刻接管（cardMetrics.reportRowStride）。
+    // 它**不是**真值 —— creamy 主题的行距是 56，浏览器缩放会再改一遍。
+    assert.equal(ROW_STRIDE_FALLBACK_PX, 58);
   });
 
   it('接近视口时渲染真实行，且不带占位高度', () => {
-    const r = resolveRowWindow(150, true);
+    const r = resolveRowWindow(150, true, 58);
     assert.equal(r.renderRows, true);
     assert.equal(r.placeholderHeight, 0);
   });
@@ -43,7 +76,7 @@ describe('懒渲染：占位高度', () => {
   it('渲染与占位互斥：不可能既渲染行又留占位', () => {
     for (const n of [0, 1, 20, 500]) {
       for (const near of [true, false]) {
-        const r = resolveRowWindow(n, near);
+        const r = resolveRowWindow(n, near, 58);
         assert.ok(
           (r.renderRows && r.placeholderHeight === 0) ||
             (!r.renderRows && r.placeholderHeight > 0),
@@ -57,14 +90,14 @@ describe('懒渲染：占位高度', () => {
     // 降级方向很重要：算不出高度时必须渲染真内容（最多慢一点），
     // 而不是留一个占位把内容藏起来——后者对用户就是「标签凭空消失」。
     for (const bad of [Number.NaN, Infinity, -1, -100]) {
-      const r = resolveRowWindow(bad, false);
+      const r = resolveRowWindow(bad, false, 58);
       assert.equal(r.renderRows, true, `totalTabs=${bad} 必须退化为渲染`);
       assert.equal(r.placeholderHeight, 0);
     }
   });
 
   it('0 个标签的会话：渲染（得到空列表），不留占位', () => {
-    const r = resolveRowWindow(0, false);
+    const r = resolveRowWindow(0, false, 58);
     assert.equal(r.renderRows, true);
     assert.equal(r.placeholderHeight, 0);
   });
@@ -72,7 +105,7 @@ describe('懒渲染：占位高度', () => {
   it('占位高度随行数单调递增（不会出现越少越高）', () => {
     let prev = -1;
     for (let n = 1; n <= 200; n++) {
-      const h = resolveRowWindow(n, false).placeholderHeight;
+      const h = resolveRowWindow(n, false, 58).placeholderHeight;
       assert.ok(h > prev, `n=${n} 高度未递增`);
       prev = h;
     }
@@ -102,12 +135,25 @@ describe('懒渲染：与源码结构的契约', () => {
 
   it('占位高度来自纯函数，不允许在组件里另写一份算式', () => {
     assert.ok(
-      /resolveRowWindow\(group\.tabs\.length, isNearViewport\)/.test(TAB_GROUP),
-      '组件应调用 resolveRowWindow 取高度'
+      /resolveRowWindow\(\s*group\.tabs\.length,\s*isNearViewport,\s*rowStride\s*\)/.test(
+        TAB_GROUP
+      ),
+      '组件应把**量出来的**行距传给 resolveRowWindow'
     );
     assert.ok(
-      !/\*\s*TAB_ROW_STRIDE_PX/.test(TAB_GROUP),
+      !/\*\s*ROW_STRIDE_FALLBACK_PX/.test(TAB_GROUP),
       '组件里不应出现自己的行高乘法（会与纯函数漂移）'
+    );
+  });
+
+  it('组件必须把行距**量出来**并上报（写死的常量只对某个版本的样式成立）', () => {
+    assert.ok(
+      /reportRowStride\(/.test(TAB_GROUP),
+      '组件必须上报量到的行距，否则占位高度会随主题/缩放失准'
+    );
+    assert.ok(
+      /rowStrideFrom\(/.test(TAB_GROUP),
+      '组件必须用 cardMetrics.rowStrideFrom 推导行距（推导规则只有一处）'
     );
   });
 });

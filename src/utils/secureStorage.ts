@@ -200,7 +200,7 @@ export class SecureStorage {
   // ⚠️ 这里**曾经**有一个 `clear()`（`chrome.storage.local.clear()`，整片清空），
   // 2026-10-23 删掉了 —— 它零调用方（死代码），却是一颗地雷：
   //
-  // **本机会话的归属账本落在 chrome.storage.local 的独立键里**
+  // **本机会话的归属账本原先落在 chrome.storage.local 的独立键里**
   // （`local_account_scope`，见 utils/authCache.ts），而会话本体在 IndexedDB。
   // 两个库**各活各的** ⇒ 整片清空 chrome.storage.local 就会：
   //   1. 抹掉归属账本（ownerUserId 变 null）；
@@ -208,10 +208,14 @@ export class SecureStorage {
   //   3. ⇒ 下一次登录走 **first-bind** 分支 ⇒ 这台机器上**残留的会话被静默认领**
   //      给新账号 ⇒ **跨账号泄露**（数据安全审计 DS-43-20，条件性 P0）。
   //
-  // 真正要「重置一切」时，正确做法是**按键删**（逐个 `chrome.storage.local.remove`），
-  // 并且**先处理归属账本**（先记下 ownerUserId，再清会话，最后清账本）——
-  // 而不是整片清空。要加这个能力，请先看
-  // `tests/guards/accountScopeLedgerNotWipeable.test.ts`（它钉死了「仓内不得整片清空」）。
+  // ⇒ **2026-10-24 已根治**：归属账本搬进了 KV 层（与本机会话同一个库，
+  // 见 storage-kv/keys.ts 的 STORAGE_KEYS.ACCOUNT_SCOPE）⇒「会话还在 ⇒
+  // 账本还在」是结构事实，整片清空 chrome.storage.local **动不了它**。
+  // 这条注释保留，是因为「整片清空」这件事本身仍然危险：它会连带清掉
+  // **登录态与云盘凭据**（用户被静默登出）⇒ 要「重置一切」，请**按键删**
+  // （逐个 `chrome.storage.local.remove`）。要加这个能力，请先看
+  // `tests/guards/accountScopeLedgerNotWipeable.test.ts`（它钉死了「仓内不得
+  // 整片清空」，以及「账本与会话同生共死」）。
   //
   // 另一个理由：这个类叫 SecureStorage，它的方法**按键**存取；
   // 一个「整片清空」的方法放在这里，名不副实。

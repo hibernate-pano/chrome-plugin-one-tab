@@ -18,7 +18,18 @@
 
 | 编号 | 严重度 | 结论 | 位置 |
 |---|---|---|---|
-| **DS-3** | **P0** | 仍然成立，**且上轮主审把它「撤回」成「不成立」是错的**（见 §1）。删除 vs 另一台设备的并发编辑，胜负由**两台无关计数器的数值大小**决定 ⇒ 删除被静默撤销、A 的内容丢。**修法①要改协议，本轮不能碰**；修法②（披露）✅ **已修**（`1f7bb14`：确认框与菜单行那句「其他登录设备将同步删除」补上「**删除可能不生效**」这一档 ⇒ 用户按确认键的那一刻不再被许一个实现不保证的结果） | `src/core/opStampMerge.ts:50-56`、`src/core/opStamp.ts:22-30` |
+| **DS-3** | **P0** | 仍然成立，**且上轮主审把它「撤回」成「不成立」是错的**（见 §1）。删除 vs 另一台设备的并发编辑，胜负由**两台无关计数器的数值大小**决定 ⇒ 删除被静默撤销、A 的内容丢。**修法①要改协议，本轮不能碰**；修法②（披露）✅ **已修**（`1f7bb14`：确认框与菜单行那句「其他登录设备将同步删除」补上「**删除可能不生效**」这一档 ⇒ 用户按确认键的那一刻不再被许一个实现不保证的结果）
+
+> ⚠️ **2026-10-24 更正（结论已变）**：本条后来**整个修掉了**，且**没有改协议**。
+> 修法是「**云端墓碑一律压过本地活跃副本**」—— 客户端侧改三处
+> （`core/opStampMerge.ts` 合并侧、`utils/supabase/upload.ts` 上传前预检、
+> `core/remoteAdjudication.ts` ← `sync-backend/webdav/adapter.ts` 认输预检），
+> 不需要给印记加 `prio` 位、不需要数据库迁移（旧行天然兼容：墓碑的身份来自
+> `is_deleted` 列，与印记无关）。
+> ⇒ 上面说的「删除可能被撤销」**已不成立** ⇒ 修法②写下的那句
+> 「**删除可能不生效**」也随之作废（它现在说的是假话），确认框与文档改成
+> 说出**真实后果**：「删除优先；对方离线期间改过也一样会被删除（对方那份编辑
+> 也一起没了）」。详见 `docs/RELEASE-NOTES.md` 的 v1.27.0 一节。 | `src/core/opStampMerge.ts:50-56`、`src/core/opStamp.ts:22-30` |
 | **DS-43-1** | **P1（本轮新）** | **删除广播没有账号闸门** ⇒ 删掉「属于别的账号」的会话时，删除意图被发给当前账号的云端并被当成「已达成」清队 ⇒ 该会话在它真正所属的账号下**复活** —— ✅ **已修**（`00a2ad0`：广播前按归属分批，别账号的**留在队列里**、等主人登录回来再广播；第 47 轮补上**端到端往返守卫** + 变异自证，见 §3.1） | `src/utils/supabase/upload.ts:1269`、`src/services/syncEngine.ts:1396-1416` |
 | **DS-43-2** | **P1（本轮新）** | **OneTab 往返抹掉锁定态** ⇒ 用户自己设的「防误删锁」消失 ⇒ 恢复即消费（不可逆） —— ✅ **已修**（`00783c7`：格式承载不了锁定态 ⇒ 走**披露**（导出 / 导入各说清丢了什么）；第 47 轮补上变异自证） | `src/sync-backend/oneTabFormatParser.ts:240` |
 | **DS-43-3** | **P1（本轮新）** | 导入文件可注入 `isDeleted` ⇒ 该会话**列表里看不见**，且一轮同步后被**物理删除** —— ✅ **已修**（`00783c7` 组级；`5b33048` **标签级** —— 一条标签在所有设备上永久隐形） | `src/core/normalizeTabsData.ts:179` → `src/services/syncEngine.ts:1180,1421` |
@@ -40,7 +51,7 @@
 | **DS-43-15** | P2 | 「删除所有会话」的确认数字取自 **Redux 快照**，SW 按磁盘真值删并回传 `{count}` —— **这个 count 从未展示过**，且删完零成功提示 —— ✅ **已修**（第 46 轮，`34c2b33`：确认前读**磁盘真值**（读不到就**中止**）+ 删完报**实际条数**） | `src/components/layout/HeaderDropdown.tsx:170/602` vs `src/core/mutationOps.ts:211` |
 | **DS-43-16** | P2 | 「删除前确认」开关**关闭**时，✕ 的提示只说「移除这条记录」，**没说整个会话卡会一起消失** —— ✅ **已修**（`e169764`） | `src/components/dnd/DraggableTab.tsx:431` |
 | **DS-43-17** | P3 | 删除按钮的 `aria-label` 不含「不可恢复」，且 Tooltip **没有 `aria-describedby` 接线** ⇒ 读屏用户听不到「删除后无法恢复」 —— ✅ **已修**（`b0ca1f9`：「删除后无法恢复」进**可访问名**本身 —— Tooltip 的 `aria-describedby` 只在可见时才挂，多数读屏不会重念 ⇒ 后果必须写在名字里） | `src/components/tabs/TabGroup.tsx:1227-1236`、`src/components/common/Tooltip.tsx:171` |
-| **DS-43-20** | **P0（条件性）** | **`chrome.storage.local` 被清 ⇒ 用户被登出 ⇒ 重新登录时 `first-bind` 把本机全部会话**静默认领**给新账号，零提示** —— DS-1 的原始后果被完整重开。触发条件需真实浏览器验证（见 §6.3） | `src/utils/supabase/client.ts:59` + `src/storage-kv/stringStore.ts:27-37` → `src/store/slices/authSlice.ts:110-125` → `src/core/accountScope.ts:257-270` |
+| **DS-43-20** | **P0（条件性）** | **`chrome.storage.local` 被清 ⇒ 用户被登出 ⇒ 重新登录时 `first-bind` 把本机全部会话**静默认领**给新账号，零提示** —— DS-1 的原始后果被完整重开。触发条件需真实浏览器验证（见 §6.3） —— ✅ **已修**（2026-10-24，**结构修法**）：① **归属账本搬进 KV 层**（与本机会话同一个库）⇒「会话还在 ⇒ 账本还在」成为结构事实，整片清空 `chrome.storage.local` **动不了它**；② 认账补上**外部证据**（登录缓存里「这台机器上次登录的是谁」）⇒ 账本万一不在，「第一次绑定」与「账本丢了」不再同形 ⇒ 旧会话认账给上一个账号 + 明确告知用户，**绝不静默认领**；③ 「清除本地数据」的**进程内缓存**顺带失效（清完界面还显示旧会话/旧设置）。见 §6.4 的处置 | `src/utils/authCache.ts`（`accountScopeStore`）、`src/core/accountScope.ts`（`decideAccountBind`）、`src/storage-kv/keys.ts`（`STORAGE_KEYS.ACCOUNT_SCOPE`） |
 | **DS-43-18** | P1 | 「冲突」在代码里**不存在**：`syncStatus: 'conflict'` 从未被赋值 ⇒ `stats.conflicts` **恒为 0**；且三处文档说「以**最后保存**的一方为准」，而胜负其实由 `(seq, deviceId 字典序)` 决定 ⇒ 文档教了一个不成立的预期 —— ✅ **已修**（文档半：`00783c7` / `639f8ff` / `ec759a9`；代码半：本轮 —— 删掉恒为 0 的 `stats.conflicts` 与永不出现的 `'conflict'` 取值，见 §7.5 之五） | `src/services/syncEngine.ts:70/733/1161`、`src/types/tab.ts:16/119`、`README.md:8/73`、`CHROMEWEBSTORE.md:430` |
 | **DS-43-19** | P1 | 归属待决期（WebDAV 首次同步）有一条**登记竞态**：`scheduleUpload` 在保存/重命名/加锁分支**没有 await** ⇒ 登记还在飞行中，本轮白名单快照看不到它 ⇒ `clearPendingUploadGroupIds`（kvRemove）与在途的 kvSet 竞争 ⇒ **登记被抹掉、`pending_upload` 被置 false** ⇒ 该改动留在本机不上云，界面却报「同步成功」 —— ✅ **已修**（`3c73504`：`scheduleUpload` 补 await + 白名单改成**按确认逐条消费**（读-改-写，不再 `kvRemove`）⇒ 在途的登记不会被抹掉） | `src/background/mutationHandlers.ts:224/306/319` vs `:246/254/262`；`src/services/syncEngine.ts:1285,1558-1564` |
 | **DS-7 / DS-8 / DS-11 / DS-17** | — | **上轮清单已过期：这四条在 HEAD 上其实已经修好了**（详见 §1） | — |
@@ -449,10 +460,32 @@
 
 ### 6.4 能不能关掉？—— 能，而且**不用改协议**（四条，按推荐顺序）
 
+> **2026-10-24 处置（DS-43-20 已修）**：下面第 **3** 条（搬进 KV）与第 **2** 条
+> （first-bind 与「账本丢了」分形）**都做了**，做法见本节末尾的「处置」。
+> 第 1 条（上传侧改成抛错）**故意不做** —— 仓库里有一条既有守卫
+> （`tests/guards/authCacheReadFailureDistinguished.test.ts`）明确要求
+> 「上传侧的既有兜底口径不许被顺手改掉」（R-5 只要求把「读失败」与
+> 「没有记录」分开），而那条兜底**已经**是**证据优先**的
+> （`lastAuthCacheUserId ?? currentUserId` ⇒ 换到别的账号时旧会话会被挡住），
+> 方向是安全的；把它改成抛错会把一次偶发的存储故障变成「用户的会话传不上去」。
+> ⇒ 真正的根治在**结构**（第 3 条）：账本与会话同库 ⇒ 那个窗口根本不存在。
+
 1. **推荐（1 行）**：把 `loadAccountScopeForUpload` 的兜底从「播种 `ownerUserId = currentUserId`」改成**抛错**。理由：登录必然走过 `bindLocalSessionsToAccount` ⇒ 真正要上传时归属记录一定存在；记录不存在本身是异常状态，上传层不该替用户认账。这条同时修掉 **DS-43-7**（fail-open）和 §6.2 那个窗口。
 2. **必须一起做（否则 1 不够）**：`decideAccountBind` 的 `first-bind` 分支要区分「本机真的从没绑过账号」与「归属记录丢了」。判据：本机会话非空 **且** 归属记录缺失 ⇒ 不是 first-bind ⇒ 走「认账可疑」路径（提示用户 / 拒绝认账）。**这是 DS-43-20 的直接修法。**
 3. **可选（更彻底）**：把归属记录从 `chrome.storage.local` 搬进 KV（IndexedDB），让「会话还在 ⇒ 归属记录还在」成为**结构事实**。代价：归属记录会跟着 `storage.clear()` 一起没 —— 但那时会话也没了，无可归属，**不亏**。需要一次性迁移（读旧键 → 写 KV → 删旧键）。**注意**：`src/utils/authCache.ts:20-22` 的设计意图原文是「独立键也让『清除本地数据』不会顺手把它带走 —— **归属记录与本机会话同生共死**」—— 而它现在与本机会话**分处两地** ⇒ **那句注释描述的正是它做不到的事**。
 4. **不推荐**：给 `secureStorage.clear()` 加一道「会连带清掉归属记录 ⇒ 先把归属记录备份到 KV」的护栏。能防住那一条路径，但防不住未来新增的其它清空路径 ⇒ 治标不治本。
+
+#### 6.4.1 处置明细（2026-10-24）
+
+| 做了什么 | 在哪 | 为什么这么选 |
+|---|---|---|
+| **归属账本搬进 KV 层** | `src/storage-kv/keys.ts` 的 `STORAGE_KEYS.ACCOUNT_SCOPE`；`src/utils/authCache.ts` 的 `accountScopeStore` | 「会话还在 ⇒ 账本还在」从**约定**变成**结构事实**：清 `chrome.storage.local` 动不了它（登录态与云盘凭据还在那儿）；「清除本地数据」会把两者一起清（那时会话也没了，无可归属，不亏） |
+| **升级前的一次性搬运** | `accountScopeStore.read()` | chrome.storage→KV 的**通用**迁移对存量用户早已跑过（`chromeStorageMigrated` 为真 ⇒ 不会重跑）⇒ 存量用户的旧键不会自动被搬 ⇒ 必须显式补搬（读旧键 → 写 KV → **删旧键**）。删旧键是必须的：留着它，「清除本地数据」之后它会把账本复活 |
+| **认账补上外部证据** | `core/accountScope.ts` 的 `AccountBindEvidence` / `decideAccountBind`；`utils/authCache.ts` 的 `readAccountBindEvidence`；`store/slices/authSlice.ts` | 账本**万一**不在（存储事故、迁移没搬过来）而本机还有会话时，用「这台机器上次登录的是谁」（登录缓存）区分「第一次绑定」与「账本丢了」：有证据且不是新账号 ⇒ 按**换账号**处理（旧会话认账给上一个账号 + 明确告知用户）；有证据且就是新账号 ⇒ 认领无妨；没有证据 ⇒ 这台机器从没有过被记下的账号 ⇒ 就是第一次绑定 |
+| **「清除本地数据」顺带失效进程内缓存** | `src/utils/storage.ts` 的 `clear()` | 磁盘清掉了但 30s/60s 的进程内缓存还端着旧值 ⇒ 界面照样显示那些会话与设置，用户以为没清掉；设置的旧值更贵（popup 的 saveSettings 是整份盲写 ⇒ 会把旧设置整份写回并推到云端） |
+
+**守卫**：`tests/guards/accountScopeLedgerNotWipeable.test.ts`（行为层：① 整片清空 chrome.storage.local 之后账本还在；② 「清除本地数据」账本与会话一起没；③ 旧形态会被一次性搬进 KV 且旧键被删；④ 认账的证据判据）+ `tests/guards/accountScopeLedgerLifetimeMutation.test.ts`（7 条变异自证：改坏实现 ⇒ 守卫变红；等价改写 ⇒ 守卫仍绿）。
+
 
 ### 6.5 触发条件需要真实浏览器验证
 

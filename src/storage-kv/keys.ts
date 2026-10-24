@@ -46,6 +46,29 @@ export const STORAGE_KEYS = {
   // 清不掉的孤儿待决位，而它会把同步永久降级成增量）。
   // 旧格式（全局布尔值）的迁移语义也在那个模块里写明。
   FIRST_SYNC_PENDING: 'webdav_first_sync_pending',
+  // ── 2026-10-24 审计 DS-43-20：账号归属账本 ──────────────────────────────
+  // 本机那批会话「归哪个账号」的账本（记着 ownerUserId 与逐会话的例外归属）。
+  //
+  // 【为什么它必须与本机会话在同一个库里】它原先落在 chrome.storage.local
+  // 的独立键里，而会话本体在 KV 层（IndexedDB）⇒ **两个库各活各的** ⇒
+  // 只要 chrome.storage.local 被整片清掉（浏览器清扩展数据、或任何新增的
+  // 「重置一切」路径）：
+  //   ① 归属账本没了（ownerUserId 变 null）；
+  //   ② 会话还在（KV 没动）；
+  //   ③ 下一次登录走 decideAccountBind 的 first-bind 分支 ⇒
+  //      **本机残留的会话被静默认领给新登录的账号** ⇒ 跨账号泄露
+  //      （DS-1 的原始后果被完整重开；数据安全审计 DS-43-20，条件性 P0）。
+  //
+  // ⇒ 搬进 KV 层后，「会话还在 ⇒ 账本还在」成为**结构事实**：
+  //  · 清 chrome.storage.local 动不了它（登录态与云盘凭据还在那儿）；
+  //  · 「清除本地数据」（storage.clear，键清单由 Object.values(STORAGE_KEYS)
+  //    派生）会把两者**一起**清掉 —— 那时会话也没了，无可归属，不亏。
+  //
+  // ⚠️ 搬动它 = 一条**数据迁移**（读旧键 → 写 KV → 删旧键）。迁移在
+  // `utils/authCache.ts` 的 accountScopeStore.read() 里做**一次性**补搬
+  // （不能靠 chrome.storage→KV 那次通用迁移：它对存量用户早已跑过，
+  //  标志位 chromeStorageMigrated 为真 ⇒ 不会再跑一遍）。
+  ACCOUNT_SCOPE: 'local_account_scope',
   // ── 2026-10-18 P1#4 第二半：「本次操作改动过的会话 id」队列 ──────────────
   // 上面那个标志只说了「待决期不许全量」，而适配器降级后用的判据是
   // `selectDirty(groups, 水位)` —— 远端还没有 manifest 时水位恒为 0，

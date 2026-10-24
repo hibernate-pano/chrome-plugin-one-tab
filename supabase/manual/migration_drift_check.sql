@@ -8,19 +8,72 @@
 -- 全部是 SELECT，不写库、不改数据。
 
 -- ═══════════════════════════════════════════════════════════════
+-- Q0【最关键的安全项】RLS 到底开没开？（**策略存在 ≠ 策略生效**）
+-- ═══════════════════════════════════════════════════════════════
+-- 为什么单列一条（2026-10-24 审计 RLS-DRIFT）：
+--   在 PostgreSQL 里，`CREATE POLICY` 只在 `pg_class.relrowsecurity = t`
+--   时才参与判定 —— **开关关着时，策略行再多也全是死策略**。
+--   20261009120000 之前，仓库只建了 12 条策略、从没 ENABLE ROW LEVEL SECURITY
+--   ⇒ anon key（随扩展产物公开，Supabase 设计如此）能 GET 全站浏览历史、
+--   能 DELETE 别人的会话。而「只数策略条数」的核对**完全看不出这件事**。
+--
+-- 正常：7 张表全部 rls_on = t；三张浏览历史表 policy_kinds = 4。
+-- 漂移：任何一张 rls_on = f ⇒ 该表的策略全部失效（数据对 anon 敞开）。
+-- 漂移：tab_groups / tabs / user_settings 的 policy_kinds < 4
+--       ⇒ 20261009120000 的前提不成立，或策略被人删过
+--       （此时若 RLS 是开的，产品会因「默认拒绝」而**锁死**）。
+--
+-- ⚠️ 用 pg_catalog.pg_policy **基表**，不用 pg_policies 视图：
+--   视图按当前角色过滤，非 owner 看不见 ⇒ 会静默误判成「没有策略」。
+SELECT c.relname AS table_name,
+       c.relrowsecurity AS rls_on,
+       (SELECT count(*) FROM pg_catalog.pg_policy pol WHERE pol.polrelid = c.oid) AS policy_count,
+       (SELECT count(DISTINCT pol.polcmd) FROM pg_catalog.pg_policy pol
+         WHERE pol.polrelid = c.oid AND pol.polcmd IN ('r','a','w','d')) AS policy_kinds,
+       CASE
+         WHEN NOT c.relrowsecurity THEN 'DRIFT: RLS 未启用（策略全是死策略）'
+         WHEN c.relname IN ('tab_groups','tabs','user_settings')
+              AND (SELECT count(DISTINCT pol.polcmd) FROM pg_catalog.pg_policy pol
+                    WHERE pol.polrelid = c.oid AND pol.polcmd IN ('r','a','w','d')) < 4
+           THEN 'DRIFT: 策略类数不足 4（RLS 开着时会出现默认拒绝）'
+         ELSE 'ok'
+       END AS verdict
+FROM pg_catalog.pg_class c
+JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+WHERE n.nspname = 'public'
+  AND c.relkind = 'r'
+  AND c.relname IN ('tab_groups','tabs','user_settings',
+                    'profiles','ai_usage_logs','sync_snapshots','sync_updates')
+ORDER BY c.relname;
+
+-- ═══════════════════════════════════════════════════════════════
 -- Q1【最关键】线上守卫函数是哪个版本？权限/search_path 钉住了吗？
 -- ═══════════════════════════════════════════════════════════════
 -- 正常：guard_tab_group_op_stamp = 'TIEBREAK (20260913)'
+-- 正常：guard_tab_group_version   = 'VERSION-FALLBACK (20261020)'
 -- 漂移：'SEQ-ONLY (20260910)' 或 'LEGACY <= (20260909 BUG)' → 20260913 的
 --       同 seq 跨设备决胜没上线，两台设备同 seq 离线编辑会丢标签。
 -- 漂移：search_path_cfg = '(mutable search_path)' → 20260826 的加固没上线。
 -- 漂移：anon_may_execute = t → 触发器函数对匿名用户开放，属于安全项。
+--
+-- ⚠️ 为什么必须有 'VERSION-FALLBACK (20261020)' 这一支（2026-10-24 审计
+--    RLS-DRIFT）：`guard_tab_group_version` 在 20261020150000 之后有了**新形状**
+--    （version 只在「两侧都无印记」时兜底）。在这支之前它落到 ELSE = UNKNOWN，
+--    而把该函数**回退成旧版**时输出**逐字节相同** ⇒ 这条查询对它零检测力。
+--    判据取「有 last_op_seq IS NULL 门 + 有 version 严格比较」两条同时成立：
+--      · 现行版：两者都有 ⇒ 认得出；
+--      · 旧版（20260826064109）：只有 version 比较、没有印记门 ⇒ UNKNOWN
+--        ⇒ 回退**会被看出来**（这正是原来缺的检测力）。
 SELECT p.proname,
        COALESCE(array_to_string(p.proconfig, ','), '(mutable search_path)') AS search_path_cfg,
        p.prosecdef AS security_definer,
        has_function_privilege('anon', p.oid, 'EXECUTE') AS anon_may_execute,
        CASE
          WHEN p.proname NOT LIKE 'guard_tab_group%' THEN 'n/a'
+         WHEN p.proname = 'guard_tab_group_version'
+              AND pg_get_functiondef(p.oid) LIKE '%last_op_seq IS NULL%'
+              AND pg_get_functiondef(p.oid) LIKE '%NEW.version < OLD.version%'
+           THEN 'VERSION-FALLBACK (20261020)  <- want this'
          WHEN pg_get_functiondef(p.oid) LIKE '%last_op_device%COLLATE%' THEN 'TIEBREAK (20260913)  <- want this'
          WHEN pg_get_functiondef(p.oid) LIKE '%NEW.last_op_seq <= OLD.last_op_seq%' THEN 'LEGACY <= (20260909 BUG)'
          WHEN pg_get_functiondef(p.oid) LIKE '%NEW.last_op_seq < OLD.last_op_seq%' THEN 'SEQ-ONLY (20260910)'

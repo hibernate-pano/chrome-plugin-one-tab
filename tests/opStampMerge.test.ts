@@ -121,14 +121,16 @@ describe('mergeOpStamped: 删除广播（云端 is_deleted 行的服从语义）
     const out = mergeOpStamped(local, cloud);
     assert.equal(out.length, 0, '删除广播生效：本地组被移除');
   });
-  it('本地 stamp 更新（离线修改未上传）→ 本地活跃副本保留，删除被本地更新撤销', async () => {
+  it('本地 stamp 更新（离线修改未上传）→ 仍服从云端墓碑（DS-3：删除优先于编辑）', async () => {
     const { mergeOpStamped } = await import('@/core/opStampMerge');
+    // 旧语义是「本地印记更大 ⇒ 本地赢 ⇒ 墓碑被丢弃」，那正是 DS-3 的缺陷：
+    // 两台设备的印记来自**各自独立**的计数器，比大小等于掷硬币 ⇒ 一台设备
+    // 明确删掉的会话会被另一台设备的离线编辑悄悄撤销。
+    // 现在：**云端墓碑无条件赢**，本地副本被物理移除。
     const local = [mkG('g1', [mkT('t1', 'https://a')], { lastOp: { d: 'devA', s: 99 }, name: '离线改名' })];
     const cloud = [mkG('g1', [mkT('t1', 'https://a')], { lastOp: { d: 'devB', s: 5 }, isDeleted: true })];
     const out = mergeOpStamped(local, cloud);
-    assert.equal(out.length, 1);
-    assert.notEqual(out[0].isDeleted, true, '本地活跃副本保留（非墓碑）');
-    assert.equal(out[0].name, '离线改名');
+    assert.equal(out.length, 0, '删除优先：本地印记更大也不许把墓碑顶掉');
   });
 });
 
@@ -202,14 +204,16 @@ describe('mergeOpStamped: 印记完全相同（平局）时本地赢 —— 刻�
     }
   });
 
-  it('云端墓碑 vs 本地活跃、平局 → 本地保留（删除不生效）', async () => {
+  it('云端墓碑 vs 本地活跃、平局 → 墓碑赢（删除优先，DS-3）', async () => {
     const { mergeOpStamped } = await import('@/core/opStampMerge');
+    // 旧语义：平局由「首个参数赢」⇒ 本地保留 ⇒ 删除不生效。
+    // 现在墓碑无条件赢 —— 这一条与上面「活跃 vs 活跃平局本地赢」**方向相反**，
+    // 是刻意的：活跃副本之间谁赢无所谓（都是数据），但「删了」是一个**用户做过的
+    // 明确动作**，撤销它必须有理由，而那个理由不能是两台设备无关计数器的比大小。
     const local = [mkG('g1', [], { lastOp: TIE, name: '本地名' })];
     const cloud = [mkG('g1', [], { lastOp: { d: 'devX', s: 42 }, name: '云端名', isDeleted: true })];
     const out = mergeOpStamped(local, cloud);
-    assert.equal(out.length, 1, '平局时本地赢 → 墓碑不生效，本地组保留');
-    assert.equal(out[0].name, '本地名');
-    assert.notEqual(out[0].isDeleted, true);
+    assert.equal(out.length, 0, '平局也由墓碑赢：删除优先于编辑');
   });
 });
 

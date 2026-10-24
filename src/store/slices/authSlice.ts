@@ -1,7 +1,7 @@
 import { createSlice, createAsyncThunk, type PayloadAction } from '@reduxjs/toolkit';
 import { AuthState, User } from '@/types/tab';
 import type { AuthCheckState } from '@/types/tab';
-import { accountScopeStore, authCache } from '@/utils/authCache';
+import { accountScopeStore, authCache, readAccountBindEvidence } from '@/utils/authCache';
 import { createAccountScopeRecord, decideAccountBind } from '@/core/accountScope';
 import {
   BackendUnavailableError,
@@ -198,7 +198,7 @@ const initialState: AuthState = {
  * 「拿当前账号盖上去」。
  *
  * ── 这一步做什么 ───────────────────────────────────────────────────────
- * 1. 读归属记录（chrome.storage.local 的独立键，见 utils/authCache.ts）；
+ * 1. 读归属记录（**KV 层**，与会话同一个库，见 utils/authCache.ts）；
  * 2. 读本机现有会话 id；
  * 3. 用 core/accountScope 的纯函数判定：首次绑定 / 同一个账号 / 换账号；
  * 4. 换账号 ⇒ 本机旧会话认账给上一个账号 + 生成一条要告知用户的提示。
@@ -230,12 +230,23 @@ export async function bindLocalSessionsToAccount(userId: string): Promise<void> 
     // 队列读不出来时**不吞**：让这一整个认账失败（catch 里记日志）⇒ 归属记录
     // 保持原样（旧归属仍在 ⇒ 闸门更保守）⇒ 方向是安全的。
     const pendingDeleteIds = await storage.getPendingDeleteIds();
+    // ── 2026-10-24 审计 DS-43-20：认账要带上「这台机器上次登录的是谁」──
+    //
+    // 归属账本**可能不在**（存储事故、迁移没搬过来）而本机会话还在。
+    // 那时若按 first-bind 处理 ⇒ 本机残留的会话被**静默认领**给刚登录的
+    // 账号 ⇒ 跨账号泄露（DS-1 的原始后果）。
+    //
+    // 证据来自登录缓存（登录时**还没**被本次登录覆盖 ⇒ 它记的正是
+    // 「上一个账号」）。读失败会抛错 ⇒ 整条认账失败 ⇒ 归属记录保持原样
+    // ⇒ 上传闸门更保守（方向是安全的）。
+    const evidence = await readAccountBindEvidence();
     const decision = decideAccountBind(
       scope,
       userId,
       groups.map(g => g.id),
       Date.now(),
-      pendingDeleteIds
+      pendingDeleteIds,
+      evidence
     );
     await accountScopeStore.write({
       ...decision.nextScope,

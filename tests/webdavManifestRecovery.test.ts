@@ -27,6 +27,15 @@ import type { TabGroup } from '../src/types/tab.ts';
 const BASE = 'https://dav.example.com/dav/';
 const NOW = '2026-10-20T10:00:00.000Z';
 const M = 'TapStack/manifest.json';
+/**
+ * 测试用的加密口令（2026-10-24 审计 SEC-1）。
+ *
+ * 新建加密库时**必须**够强（`webdav/passphrasePolicy.ts`），否则适配器会
+ * 在建库那一刻抛错。所以这里的口令换成了真正能用的长口令 ——
+ * 它不是被测对象，只是「一把正常的钥匙」。
+ */
+const PASSPHRASE = 'correct horse battery staple';
+
 
 // ── 内存 WebDAV 服务器（与 tests/webdavAdapter.test.ts 同款，含列目录）────
 
@@ -223,7 +232,7 @@ function makeAdapter(
         username: 'u',
         password: 'p',
         rootPath: 'TapStack',
-        passphrase: opts.passphrase === undefined ? 'pw' : opts.passphrase,
+        passphrase: opts.passphrase === undefined ? PASSPHRASE : opts.passphrase,
       },
       kv,
       now: () => NOW,
@@ -315,7 +324,7 @@ describe('索引丢了 ≠ 远端空了（2026-10-20 修 P0）', () => {
 
   it('加密库的索引丢了也能重建（salt 从分片外壳里找回）', async () => {
     const dav = new FakeDav();
-    const { adapter: a } = makeAdapter(dav, { passphrase: 'pw' });
+    const { adapter: a } = makeAdapter(dav, { passphrase: PASSPHRASE });
     await a.uploadGroups([makeGroup('s1'), makeGroup('s2')]);
     // 分片是密文（外壳里带着库 salt）
     const raw = dav.read(`TapStack/${shardPath('s1')}`)!.body;
@@ -323,14 +332,14 @@ describe('索引丢了 ≠ 远端空了（2026-10-20 修 P0）', () => {
 
     dav.removeIndex();
 
-    const { adapter: reader } = makeAdapter(dav, { passphrase: 'pw' });
+    const { adapter: reader } = makeAdapter(dav, { passphrase: PASSPHRASE });
     const groups = await reader.downloadGroups();
     assert.deepEqual(groups.map(g => g.id).sort(), ['s1', 's2'], '加密库也必须能重建索引');
   });
 
   it('加密库的索引丢了、又没有口令 ⇒ 中止（绝不按空库处理）', async () => {
     const dav = new FakeDav();
-    const { adapter: a } = makeAdapter(dav, { passphrase: 'pw' });
+    const { adapter: a } = makeAdapter(dav, { passphrase: PASSPHRASE });
     await a.uploadGroups([makeGroup('s1')]);
     dav.removeIndex();
 
@@ -501,7 +510,7 @@ describe('恢复态下，写索引的每条路径都必须保住云端全集', (
     await a.uploadGroups([makeGroup('s1'), makeGroup('s2')]);
     dav.removeIndex();
 
-    const { adapter: b } = makeAdapter(dav, { passphrase: 'pw' });
+    const { adapter: b } = makeAdapter(dav, { passphrase: PASSPHRASE });
     await b.uploadSettings({ theme: 'dark' } as never);
 
     const ids = dav.indexIds();

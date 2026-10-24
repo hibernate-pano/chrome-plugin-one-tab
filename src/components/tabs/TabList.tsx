@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { useAppDispatch, useAppSelector } from '@/store/hooks';
 import { clearError, loadGroups } from '@/store/slices/tabSlice';
 import { invalidateGroupsCache, onGroupsChanged } from '@/utils/storage';
@@ -109,6 +109,27 @@ export const TabList: React.FC<TabListProps> = ({ searchQuery, onOpenAuth, filte
   // 用户只能猜「没点上」还是「坏了」。同一操作在 Header.tsx 已于 1.22.13 修好
   // （await + 转圈 + inline 成功/失败），唯独空态这条漏了。
   // 复用同一模式：在途禁点、回包决定成败、失败出声。
+  // ── 2026-10-24 审计 PERF-03：折叠状态住在**列表层** ────────────────────
+  //
+  // 卡片远离视口时会被**卸载**（只留等高占位，见 DraggableTabGroup）⇒
+  // 折叠状态若留在卡片内部，就随卸载一起没了 ⇒ 用户滚远再滚回来，
+  // 刚才收起的会话又弹开了（一次「界面失忆」）。
+  //
+  // 为什么不用「按会话 id 存到磁盘」：折叠是**浏览时的临时状态**，
+  // 以前它就是「组件挂载期间有效」；现在只是把寿命从「组件」延长到
+  // 「这一页列表还在时」，语义没变，也不用为此新增一条持久化。
+  const [collapsedIds, setCollapsedIds] = useState<ReadonlySet<string>>(
+    () => new Set<string>()
+  );
+  const toggleCollapsed = useCallback((groupId: string) => {
+    setCollapsedIds(prev => {
+      const next = new Set(prev);
+      if (next.has(groupId)) next.delete(groupId);
+      else next.add(groupId);
+      return next;
+    });
+  }, []);
+
   const [isSavingFromEmpty, setIsSavingFromEmpty] = useState(false);
   const [emptySaveFeedback, setEmptySaveFeedback] = useState<
     { kind: 'success' | 'error'; text: string } | null
@@ -655,13 +676,23 @@ export const TabList: React.FC<TabListProps> = ({ searchQuery, onOpenAuth, filte
          */
         <div className="session-grid">
           {filteredGroups.map(group => (
-            <DraggableTabGroup key={group.id} group={group} />
+            <DraggableTabGroup
+              key={group.id}
+              group={group}
+              collapsed={collapsedIds.has(group.id)}
+              onToggleCollapsed={() => toggleCollapsed(group.id)}
+            />
           ))}
         </div>
       ) : (
         <div className="session-list-stack transition-all duration-300 ease-out">
           {filteredGroups.map(group => (
-            <DraggableTabGroup key={group.id} group={group} />
+            <DraggableTabGroup
+              key={group.id}
+              group={group}
+              collapsed={collapsedIds.has(group.id)}
+              onToggleCollapsed={() => toggleCollapsed(group.id)}
+            />
           ))}
         </div>
       )}

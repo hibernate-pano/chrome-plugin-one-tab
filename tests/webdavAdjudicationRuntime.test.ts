@@ -37,6 +37,15 @@ const { LEGACY_KEYS } = await import('@/storage-kv/keys');
 const BASE = 'https://dav.example.com/dav/';
 const NOW = '2026-10-20T10:00:00.000Z';
 const M = 'TapStack/manifest.json';
+/**
+ * 测试用的加密口令（2026-10-24 审计 SEC-1）。
+ *
+ * 新建加密库时**必须**够强（`webdav/passphrasePolicy.ts`），否则适配器会
+ * 在建库那一刻抛错。所以这里的口令换成了真正能用的长口令 ——
+ * 它不是被测对象，只是「一把正常的钥匙」。
+ */
+const PASSPHRASE = 'correct horse battery staple';
+
 
 interface StoredFile {
   body: string;
@@ -204,7 +213,7 @@ function makeAdapter(dav: FakeDav, opts: { deviceId?: string; deviceSeq?: number
   const client = new WebDavClient({ baseUrl: BASE, username: 'u', password: 'p' }, dav.fetch);
   const adapter = new WebDavBackendAdapter({
     client,
-    config: { baseUrl: BASE, username: 'u', password: 'p', rootPath: 'TapStack', passphrase: 'pw' },
+    config: { baseUrl: BASE, username: 'u', password: 'p', rootPath: 'TapStack', passphrase: PASSPHRASE },
     kv,
     now: () => NOW,
     peekDeviceSeq: async () => opts.deviceSeq ?? 0,
@@ -402,5 +411,52 @@ describe('D-5：墓碑写完必须读回确认', () => {
     await adapter.broadcastDeletes(['aa1']);
     const groups = await adapter.downloadGroups();
     assert.equal(groups[0]?.isDeleted, true);
+  });
+});
+
+// ════════════════════════════════════════════════════════════════════
+// DS-3（2026-10-24 审计 P0）：云端墓碑不得被另一台设备的离线编辑覆盖
+// ════════════════════════════════════════════════════════════════════
+//
+// 这条是**端到端**的：真适配器 + 内存 WebDAV，走完整的
+// 「上传 → 删除广播 → 另一台设备上传」链路。
+// 只测纯函数（tests/guards/tombstoneBeatsEdit.test.ts）不够 —— 那三条判据
+// 里的任何一条**没被真正接线**到适配器上，纯函数测试照样全绿。
+describe('DS-3：另一台设备的离线编辑不得撤销云端墓碑', () => {
+  it('设备 B 的本地活跃副本不得盖掉设备 A 已经广播的墓碑', async () => {
+    const dav = new FakeDav();
+
+    // 设备 A：上传一份会话，然后删掉它（墓碑落盘，印记 = max(设备 seq+1, 云端 seq+1)）
+    const { adapter: a } = makeAdapter(dav, { deviceId: 'dev-A', deviceSeq: 10 });
+    await a.uploadGroups([makeGroup('aa1', { lastOp: { d: 'dev-A', s: 10 } })]);
+    await a.broadcastDeletes(['aa1']);
+
+    // 设备 B：离线期间改过同一会话，印记**比墓碑更新**（旧语义下 B 会赢 ⇒ 删除被撤销）
+    const { adapter: b } = makeAdapter(dav, { deviceId: 'dev-B', deviceSeq: 999 });
+    const out = await b.uploadGroups([
+      makeGroup('aa1', { name: 'B 的离线编辑', lastOp: { d: 'dev-B', s: 999 } }),
+    ]);
+
+    assert.equal(out.writtenIds.length, 0, 'B 必须认输（不上行）—— 删除优先于编辑');
+    const groups = await b.downloadGroups();
+    assert.equal(groups[0]?.isDeleted, true, '云端仍是墓碑：删除没有被另一台设备的离线编辑撤销');
+    assert.notEqual(groups[0]?.name, 'B 的离线编辑', '墓碑内容不得被 B 的版本顶掉');
+  });
+
+  it('墓碑比本地印记旧时同样不得被覆盖（方向无关）', async () => {
+    const dav = new FakeDav();
+    const { adapter: a } = makeAdapter(dav, { deviceId: 'dev-A', deviceSeq: 5000 });
+    await a.uploadGroups([makeGroup('aa1', { lastOp: { d: 'dev-A', s: 5000 } })]);
+    await a.broadcastDeletes(['aa1']);
+
+    // 设备 B 的印记比墓碑**旧**（墓碑号 = 5001）
+    const { adapter: b } = makeAdapter(dav, { deviceId: 'dev-B', deviceSeq: 3 });
+    const out = await b.uploadGroups([
+      makeGroup('aa1', { name: 'B 的旧副本', lastOp: { d: 'dev-B', s: 3 } }),
+    ]);
+
+    assert.equal(out.writtenIds.length, 0, '墓碑一律赢，与印记大小无关');
+    const groups = await b.downloadGroups();
+    assert.equal(groups[0]?.isDeleted, true, '云端仍是墓碑');
   });
 });

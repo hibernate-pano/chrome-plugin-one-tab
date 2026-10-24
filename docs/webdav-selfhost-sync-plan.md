@@ -482,6 +482,14 @@ PBKDF2-HMAC-SHA256(口令, 随机 salt, 250_000 轮) → AES-256-GCM
   但在扩展里只能 PBKDF2；OWASP 对 FIPS 场景的 PBKDF2 基线是 ≥600k 轮。
   → **建议 250k（对齐 Floccus/xBrowserSync 的业界事实值），并在 UI 里说明「这是
   防离线明文，不是防运行时」**。
+  → **2026-10-24 已落地（审计 SEC-1）**：那句边界说明进了设置页
+    （`src/components/sync/webDavPrivacyCopy.ts` 的 `webDavEncryptionBoundaryNotice`）；
+    同一轮把**口令强度**也变成有门槛（新建加密库时 ≥ 12 位，
+    见 `src/sync-backend/webdav/passphrasePolicy.ts`）——
+    250k 轮只抬高「每一次试错」的成本，4 位口令单核两三个小时就穷举完了
+    ⇒ **轮数救不了弱口令**，口令强度才是这条防线上唯一由用户决定的变量。
+    ⚠️ 门槛只拦**新建**加密库：**已加密的库一律放行**（哪怕口令很弱）——
+      否则「加密更安全」会变成「再也连不上自己的云盘」。
 - 用户能不能每次输口令？**不能**（体验灾难）。折中：
   「设备密钥（高熵随机）加密密文 → 设备密钥用用户口令低轮数派生加密 → 存 storage.local」
   这套两层是 1Password 的做法，工程量大。**第一版建议：口令只在「首次配置」与

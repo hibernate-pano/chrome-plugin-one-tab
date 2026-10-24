@@ -24,6 +24,11 @@
  * 改一处漏一处。抽出纯函数后：措辞只有一份，node 单测可以直接断言
  * （.tsx 组件在没有 DOM 环境时加载不了）。
  */
+import {
+  crossDeviceDeleteSentence,
+  deleteReachesOtherDevices,
+  type CrossDeviceDeleteInput,
+} from '@/components/sync/crossDeviceDeleteCopy';
 
 /** 删除一个会话时，确认框需要知道的最小信息。 */
 export interface DeleteGroupCopyInput {
@@ -33,6 +38,19 @@ export interface DeleteGroupCopyInput {
   tabCount: number;
   /** 该会话是否被锁定。 */
   isLocked: boolean;
+  /**
+   * 跨设备删除的**原始事实**（有没有账号 / 跟谁同步）。
+   *
+   * 2026-10-24 审计 DS-3：此前**单个会话**的删除确认框一个字都不提跨设备 ——
+   * 而删除意图确实会广播（墓碑上传 ⇒ 对端服从删除）。用户在按确认键的那一刻
+   * 被误导成「只删本机」。
+   *
+   * 传**原始事实**而不是布尔值，是为了让「会不会传到其他设备」这个判断
+   * **只有一处**（`components/sync/crossDeviceDeleteCopy.ts` 的
+   * `deleteReachesOtherDevices`）—— 与「删除所有会话」同源。
+   * 省略 = 纯本地用户（没有同步后端 ⇒ 删除只发生在本机）。
+   */
+  crossDevice?: CrossDeviceDeleteInput;
 }
 
 /** 确认框标题。 */
@@ -78,6 +96,10 @@ export const deleteGroupEntryAriaLabel = (isLocked: boolean): string =>
  *
  * 锁定会话必须**点名**「已锁定」：用户锁它是为了防误删，
  * 此刻要删的正是那个被保护的东西 —— 不说清楚，用户会以为在删一个普通会话。
+ *
+ * 跨设备那句（2026-10-24 审计 DS-3）与「删除所有会话」**同源**
+ * （`components/sync/crossDeviceDeleteCopy.ts`）：删除会广播到其他设备，
+ * 对方离线期间改过也一样会被删（云端墓碑一律赢，见 `core/opStampMerge.ts`）。
  */
 export const deleteGroupConfirmMessage = (input: DeleteGroupCopyInput): string => {
   // ── 2026-10-23 审计 H-10：同一个东西不许有三种叫法 ────────────────────
@@ -87,10 +109,14 @@ export const deleteGroupConfirmMessage = (input: DeleteGroupCopyInput): string =
   // ⇒ 统一成「标签页」（与 `saveActionCopy` / `saveFeedbackCopy` / TabGroup
   //   的 aria-label / 卡头徽章同源）。
   const records = `将永久删除该会话内的 ${input.tabCount} 个标签页，删除后无法恢复。`;
+  const crossDevice =
+    input.crossDevice && deleteReachesOtherDevices(input.crossDevice)
+      ? crossDeviceDeleteSentence(input.crossDevice)
+      : '';
   if (!input.isLocked) {
-    return `${records}确认继续吗？`;
+    return `${records}${crossDevice}确认继续吗？`;
   }
-  return `该会话已锁定，本来用于防止误删。${records}确认仍要删除它吗？`;
+  return `该会话已锁定，本来用于防止误删。${records}${crossDevice}确认仍要删除它吗？`;
 };
 
 /**

@@ -2,31 +2,27 @@ import { User } from '@/types/tab';
 import {
   createAccountScopeRecord,
   normalizeAccountScope,
+  type AccountBindEvidence,
   type AccountScopeRecord,
 } from '@/core/accountScope';
+import { kvGet, kvRemove, kvSet } from '@/storage-kv/storageAdapter';
+import { STORAGE_KEYS } from '@/storage-kv/keys';
 import { logError, logInfo, logWarn } from './log';
 
 // 存储键名
 const AUTH_CACHE_KEY = 'auth_cache';
 
 /**
- * 本机会话归属记录的键（2026-10-22 审计 DS-1）。
+ * 升级前归属账本的位置（chrome.storage.local 的独立键）。
  *
- * 为什么是**独立键**而不是塞进 auth_cache：
- *   · auth_cache 会被退出登录抹掉，而归属记录**必须活过退出登录** ——
- *     「本机这批会话属于谁」是关于数据的事实，不是关于登录态的事实；
- *   · 归属记录要能在**没有登录态**的时候被读到（上传闸门要判断
- *     「当前账号是不是这些会话的主人」）；
- *   · 独立键也让「清除本地数据」（storage.clear，只清 KV 键）不会顺手
- *     把它带走 —— 归属记录与本机会话同生共死。
- *
- * 为什么放 chrome.storage.local 而不是 KV（IndexedDB）：
- *   · 它是**按账号派生**的推导量（与 storage-kv/keys.ts 里
- *     `supabase_sync_watermark_seq:<userId>` 同一类），不进 STORAGE_KEYS
- *     ⇒ 不参与迁移扫描、不参与 storage.clear 的键清单；
- *   · 读写是「一次 get / 一次 set」的量级，不需要 KV 的版本与迁移机制。
+ * 2026-10-24 审计 DS-43-20：账本已搬进 KV 层（`STORAGE_KEYS.ACCOUNT_SCOPE`），
+ * 这个键名只作为**一次性迁移的来源**保留。搬完就把旧键删掉 ——
+ * 留着它有两个后果：
+ *   ① 「清除本地数据」只清 KV ⇒ 旧键把账本**复活**（会话已经没了，账本还在）；
+ *   ② 两个地方各有一份 ⇒ 迟早分叉，而分叉的方向是「哪份旧用哪份」。
  */
-const ACCOUNT_SCOPE_KEY = 'local_account_scope';
+const LEGACY_ACCOUNT_SCOPE_KEY = 'local_account_scope';
+
 
 // 缓存数据结构
 interface AuthCache {
@@ -88,7 +84,51 @@ function hasLocalStorage(): boolean {
 }
 
 /**
- * 本机会话的归属记录（读写都在 chrome.storage.local）。
+ * 读**升级前**那份归属账本（chrome.storage.local 的旧键）。
+ *
+ * 三态与 `readLastAuthCacheUserId` 同纪律：
+ *   · 记录对象 ⇒ 有（旧形态的账本）；
+ *   · null ⇒ **键不存在**（这台机器从来没有过归属记录）；
+ *   · **抛错** ⇒ 读失败 —— 不可知，不许当成「没有」。
+ */
+async function readLegacyAccountScope(): Promise<unknown | null> {
+  if (!hasLocalStorage()) return null;
+  const result = await chrome.storage.local.get(LEGACY_ACCOUNT_SCOPE_KEY);
+  const raw = result[LEGACY_ACCOUNT_SCOPE_KEY];
+  return raw === undefined || raw === null ? null : raw;
+}
+
+/**
+ * 删掉升级前那份归属账本（搬进 KV 之后，旧键就是过时数据）。
+ *
+ * 删不掉**不抛错**：KV 里那份才是真相（旧键留着只会让「清除本地数据」
+ * 之后账本被复活一次，而那时会话已经没了 ⇒ 无害）。但要留日志，
+ * 因为「删不掉」说明 chrome.storage.local 出了别的问题。
+ */
+async function removeLegacyAccountScope(): Promise<void> {
+  if (!hasLocalStorage()) return;
+  try {
+    await chrome.storage.local.remove(LEGACY_ACCOUNT_SCOPE_KEY);
+  } catch (error) {
+    logWarn('[authCache] 删不掉升级前的归属记录旧键（KV 里的那份才是真相）:', error);
+  }
+}
+
+/**
+ * 本机会话的归属记录（**落盘在 KV 层**，与本机会话同一个库）。
+ *
+ * ── 为什么搬进 KV（2026-10-24 审计 DS-43-20）───────────────────────────
+ * 它原先在 chrome.storage.local 的独立键里，而会话本体在 KV 层（IndexedDB）
+ * ⇒ **两个库各活各的** ⇒ 只要 chrome.storage.local 被整片清掉：
+ *   归属账本没了、会话还在 ⇒ 下一次登录走 first-bind ⇒ 本机残留的会话
+ *   被**静默认领**给新账号 ⇒ 跨账号泄露（DS-1 的原始后果）。
+ * 搬进 KV 后，「会话还在 ⇒ 账本还在」是**结构事实**。
+ *
+ * ── 一次性迁移（为什么不能靠通用迁移）──────────────────────────────────
+ * chrome.storage→KV 的通用迁移**对存量用户早已跑过**（标志位
+ * `chromeStorageMigrated` 为真 ⇒ 不会重跑）⇒ 存量用户的旧键不会自动被搬。
+ * ⇒ 这里在 read() 里做**显式的一次性补搬**：KV 里没有 ⇒ 读旧键 ⇒ 写 KV
+ * ⇒ 删旧键。搬完之后两个地方再无分叉。
  *
  * read() 的三种返回必须分清：
  *   · 记录对象 ⇒ 有归属事实；
@@ -98,23 +138,52 @@ function hasLocalStorage(): boolean {
  */
 export const accountScopeStore = {
   async read(): Promise<AccountScopeRecord | null> {
-    if (!hasLocalStorage()) return null;
-    const result = await chrome.storage.local.get(ACCOUNT_SCOPE_KEY);
-    const raw = result[ACCOUNT_SCOPE_KEY];
-    if (raw === undefined || raw === null) return null;
-    return normalizeAccountScope(raw);
+    const raw = await kvGet<unknown>(STORAGE_KEYS.ACCOUNT_SCOPE);
+    if (raw !== null && raw !== undefined) return normalizeAccountScope(raw);
+
+    // KV 里没有 ⇒ 可能还是升级前的形态（账本在 chrome.storage.local）。
+    const legacy = await readLegacyAccountScope();
+    if (legacy === null) return null;
+    const record = normalizeAccountScope(legacy);
+    // 先写 KV，再删旧键：写失败 ⇒ 抛错（旧键还在，下次还能重搬），
+    // 删失败 ⇒ 只留一条告警（KV 那份已经是真相）。
+    await kvSet(STORAGE_KEYS.ACCOUNT_SCOPE, record);
+    await removeLegacyAccountScope();
+    logInfo('[authCache] 已把升级前的账号归属记录搬进本地库');
+    return record;
   },
 
   async write(record: AccountScopeRecord): Promise<void> {
-    if (!hasLocalStorage()) return;
-    await chrome.storage.local.set({ [ACCOUNT_SCOPE_KEY]: record });
+    await kvSet(STORAGE_KEYS.ACCOUNT_SCOPE, record);
   },
 
   async clear(): Promise<void> {
-    if (!hasLocalStorage()) return;
-    await chrome.storage.local.remove(ACCOUNT_SCOPE_KEY);
+    await kvRemove(STORAGE_KEYS.ACCOUNT_SCOPE);
   },
 };
+
+/**
+ * 认账判据要用的**外部证据**：「这台机器上次登录的是谁」。
+ *
+ * ── 为什么认账需要它（2026-10-24 审计 DS-43-20）────────────────────────
+ * `decideAccountBind` 的 first-bind 分支（账本里没有归属账号）会把
+ * **本机现有会话直接认领给新登录的账号**。若这台机器明明登录过别的账号，
+ * 那就不是「第一次绑定」，而是「归属记录丢了」—— 两者必须分开，
+ * 否则一次存储事故就足以把别人的会话写进新账号的云端。
+ *
+ * 判据就是**登录缓存里最后一个账号 id**（`readLastAuthCacheUserId`）：
+ *   · 有它且不是新账号 ⇒ 这台机器上有别的账号的会话 ⇒ 走「换账号」口径
+ *     （旧会话认账给上一个账号 + 明确告诉用户），**不许**静默认领；
+ *   · 有它且就是新账号 ⇒ 这些会话本来就是它的（账本丢了而已）⇒ 认领无妨；
+ *   · 没有它 ⇒ 这台机器**从没有过被记下的账号** ⇒ 第一次绑定，认领。
+ *
+ * ⚠️ 读**失败**时这里会抛错（不吞成「没有证据」）—— 与本仓其它读路径
+ * 同一纪律：不可知 ≠ 不知。抛错 ⇒ 认账整条失败 ⇒ 归属记录保持原样
+ * ⇒ 上传闸门更保守（方向是安全的）。
+ */
+export async function readAccountBindEvidence(): Promise<AccountBindEvidence> {
+  return { lastKnownUserId: await readLastAuthCacheUserId() };
+}
 
 /**
  * 退出登录前把「本机会话属于谁」记下来（DS-1 的第一环）。

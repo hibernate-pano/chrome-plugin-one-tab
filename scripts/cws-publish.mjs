@@ -18,11 +18,30 @@
 // （curl 原生认 HTTPS_PROXY；Node 22 fetch 需 NODE_USE_ENV_PROXY，属实验特性）。
 // execFileSync（非 execSync）过 mimosa 的包脚本审计。
 //
+// ── 2026-10-24 审计 REL-01：**HTTP 2xx 一律不等于「成功」** ──────────────────
+//
+// 商店的 v1.1 语义（官方 Item schema，逐字）：
+//   uploadState ∈ { SUCCESS | FAILURE | IN_PROGRESS | NOT_FOUND }
+//   itemError   —— 人类可读的错误原因数组（商店界面上显示的那一份）
+//   crxVersion  —— 草稿的 CRX 版本（projection=DRAFT 时是草稿那份）
+//
+// 而**失败也回 HTTP 200**：本仓 2026-10-23 的真实回包（/tmp/cws-wait-publish.log）
+//   HTTP 200 { "uploadState": "FAILURE",
+//              "itemError": [{ "error_code": "ITEM_NOT_UPDATABLE", … }] }
+// 那是「1.26.1 还在审核队列 ⇒ 商店不接受新上传」。只看 HTTP 码 ⇒ 脚本 exit 0
+// ⇒ 我把「没发上去」报成「上传成功」。
+//
+// ⇒ 本文件现在对每条路径都要求「**商店自己说成功了**」才 exit 0，
+//   拿不到自证信号（字段缺失 / 状态未定）一律 exit 1（fail-closed）。
+//   守卫：tests/guards/cwsPublishStatus.test.ts（回放真实回包形状，断言退出码）。
+//
 // 用法：
 //   node scripts/cws-publish.mjs status                 # 查询草稿/线上状态
 //   node scripts/cws-publish.mjs upload dist.zip        # 上传新包（覆盖草稿）
-//   node scripts/cws-publish.mjs publish                # 提交审核发布
+//   node scripts/cws-publish.mjs publish [期望版本]      # 提交审核发布
 // 发版顺序：pnpm package → upload → publish → status 确认 PENDING_REVIEW。
+// ⚠️ publish 的「期望版本」建议给：它会核对草稿的 crxVersion，
+//    避免「草稿里还是上一版」被当成「这一版发出去了」。
 
 import { execFileSync } from 'node:child_process';
 
@@ -79,8 +98,70 @@ function accessToken() {
   return json.access_token;
 }
 
+/** 回包不一定是 JSON（网关错误页、空 body）⇒ 解析失败当作「拿不到自证信号」。 */
+function parseJsonSafe(body) {
+  try { return JSON.parse(body); } catch { return null; }
+}
+
+/** 读草稿（item 资源）。projection=DRAFT 才是草稿那一份。 */
+function getItem() {
+  return http('GET', `${BASE}/items/${ITEM_ID}?projection=DRAFT`, { headers: auth });
+}
+
+/** itemError 数组 → 人话。商店只在 itemError 里说「为什么失败」。 */
+function describeItemError(item) {
+  const errs = Array.isArray(item?.itemError) ? item.itemError : [];
+  if (errs.length === 0) return '';
+  const lines = errs.map((e) => {
+    const code = e?.error_code ?? '(无代码)';
+    const detail = e?.error_detail ?? '';
+    return `  · ${code}${detail ? '：' + detail : ''}`;
+  });
+  return '\n商店给的原因：\n' + lines.join('\n');
+}
+
+/**
+ * 从 zip 里读 manifest.json 的 version（发行前自检的第一环）。
+ * 读不出来返回 null —— 调用方据此**如实说「读不到」**，而不是假装有版本号。
+ */
+function readVersionFromZip(zipPath) {
+  try {
+    const out = execFileSync('unzip', ['-p', zipPath, 'manifest.json'], {
+      encoding: 'utf8',
+      maxBuffer: 4 * 1024 * 1024,
+      timeout: 30_000,
+      // ⚠️ 必须吞掉 unzip 的 stderr：execFileSync 默认把子进程 stderr **继承**给
+      //   父进程 ⇒ 一个「读不到版本」的正常降级路径，会在脚本的 stderr 里刷一屏
+      //   unzip 的报错噪音，把真正的失败原因淹掉（还会污染下游对 stderr 的判读）。
+      stdio: ['ignore', 'pipe', 'ignore'],
+    });
+    const v = parseJsonSafe(out)?.version;
+    return typeof v === 'string' && v ? v : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * uploadState = IN_PROGRESS 时的等待：服务器还在处理。
+ *
+ * 为什么要等：IN_PROGRESS 既不是成功也不是失败 ⇒ 直接 exit 1 会把一次**正常**
+ * 上传判成失败（假红卡住发版）；直接当成功则是假绿。
+ * ⇒ 轮询 item，最多 5 次 × 2 秒；落定后按 SUCCESS / FAILURE / NOT_FOUND 判。
+ */
+function waitForUploadState(maxAttempts = 5, intervalMs = 2000) {
+  for (let i = 0; i < maxAttempts; i++) {
+    execFileSync('sleep', [String(intervalMs / 1000)]);
+    const res = getItem();
+    const item = parseJsonSafe(res.body);
+    const state = item?.uploadState;
+    if (state && state !== 'IN_PROGRESS') return { state, item };
+  }
+  return { state: 'IN_PROGRESS', item: null };
+}
+
 if (!['status', 'upload', 'publish'].includes(cmd)) {
-  console.error('未知子命令:', cmd, '（可用：status / upload <zip> / publish）');
+  console.error('未知子命令:', cmd, '（可用：status / upload <zip> / publish [版本]）');
   process.exit(1);
 }
 if (cmd === 'upload' && !(process.argv[3] && process.argv[3].endsWith('.zip'))) {
@@ -88,23 +169,121 @@ if (cmd === 'upload' && !(process.argv[3] && process.argv[3].endsWith('.zip'))) 
   process.exit(1);
 }
 
-const auth = { Authorization: `Bearer ${accessToken()}` };
-
+// ── 换 token 失败 ⇒ 干净退出，不要抛栈 ────────────────────────────────────
+// 原来 `accessToken()` 直接抛 ⇒ Node 打印一屏栈再退出 1。
+// 退出码虽然也是 1，但「崩溃」与「明确失败」在下游无法区分
+// （守卫断言里就得专门排除栈信息），而这里本来就是一个可预期的失败。
+let token;
+try {
+  token = accessToken();
+} catch (err) {
+  console.error(`换 access token 失败：${err?.message ?? String(err)}`);
+  process.exit(1);
+}
+const auth = { Authorization: `Bearer ${token}` };
 if (cmd === 'status') {
-  const res = http('GET', `${BASE}/items/${ITEM_ID}?projection=DRAFT`, { headers: auth });
+  const res = getItem();
   console.log('HTTP', res.status);
-  try { console.log(JSON.stringify(JSON.parse(res.body), null, 2)); } catch { console.log(res.body.slice(0, 400)); }
+  const item = parseJsonSafe(res.body);
+  if (item) console.log(JSON.stringify(item, null, 2));
+  else console.log(res.body.slice(0, 400));
+  // ── 2026-10-24：查不到状态 ≠ 状态正常 ────────────────────────────────────
+  // 原来这个分支**完全没有退出码逻辑**：token 过期回 401 也 exit 0 ⇒
+  // 「拿不到状态」被报成「查到了，状态正常」。
+  if (res.status < 200 || res.status >= 300) {
+    console.error(`查询失败（HTTP ${res.status}）—— 拿不到草稿状态，绝不当作「状态正常」。`);
+    process.exit(1);
+  }
+  console.log(
+    `草稿：crxVersion=${item?.crxVersion ?? '(未知)'}  uploadState=${item?.uploadState ?? '(未知)'}`,
+  );
+  process.exit(0);
 } else if (cmd === 'upload') {
   const zipPath = process.argv[3];
+  // 先把 zip 里的版本号读出来：发版的人一眼能确认「我要发的是哪一版」。
+  // 读不到不阻断上传（版本对账另有 release-verify 那道门），但必须**说清**。
+  const zipVersion = readVersionFromZip(zipPath);
+  if (zipVersion) console.log(`待上传 zip 的 manifest 版本：${zipVersion}`);
+  else console.warn('⚠️ 读不到 zip 里的 manifest.json 版本（继续上传，但这次没有版本自证）');
+
   const res = httpUpload('PUT', `https://www.googleapis.com/upload/chromewebstore/v1.1/items/${ITEM_ID}`, zipPath, {
     headers: { ...auth, 'Content-Type': 'application/zip' },
   });
   console.log('HTTP', res.status, res.body.slice(0, 400));
-  if (res.status !== 200) {
-    console.error('上传失败，草稿未更新——绝不 publish（空草稿 publish 是静默 no-op）');
+  if (res.status < 200 || res.status >= 300) {
+    console.error(
+      `上传失败（HTTP ${res.status}）—— 草稿未更新，绝不 publish（空草稿 publish 是静默 no-op）`,
+    );
     process.exit(1);
   }
+  // ── 2026-10-24：2xx 不等于上传成功 ────────────────────────────────────────
+  // 商店对「item 在审核队列」这一失败**正是回 HTTP 200**（uploadState=FAILURE）。
+  // 三态，全都要说清楚（不许有第四种含糊）：
+  //   ① uploadState = SUCCESS      ⇒ 上传成功，exit 0
+  //   ② uploadState = FAILURE/NOT_FOUND ⇒ 明确失败，exit 1（打印 itemError）
+  //   ③ uploadState = IN_PROGRESS  ⇒ 等它落定，再按 ①② 判
+  //   ④ uploadState 字段缺失        ⇒ **无法自证**，exit 1（不许默认当成成功）
+  let item = parseJsonSafe(res.body);
+  let state = item?.uploadState;
+  if (state === 'IN_PROGRESS') {
+    console.log('商店说上传仍在处理中（IN_PROGRESS），等待落定…');
+    const settled = waitForUploadState();
+    state = settled.state;
+    item = settled.item;
+    console.log('等待结束，uploadState =', state);
+  }
+  if (state === 'SUCCESS') {
+    console.log(`✓ 上传成功${zipVersion ? `（${zipVersion}）` : ''}`);
+    process.exit(0);
+  }
+  if (state === 'FAILURE' || state === 'NOT_FOUND') {
+    console.error(
+      `上传失败（uploadState=${state}）—— 草稿未更新，绝不 publish。` +
+        describeItemError(item),
+    );
+    process.exit(1);
+  }
+  console.error(
+    '上传返回 2xx，但回包里没有可判定的 uploadState —— 无法自证上传是否生效，' +
+      '绝不当作成功。请跑一次 `status` 复查草稿。',
+  );
+  process.exit(1);
 } else if (cmd === 'publish') {
+  // publish 的可选第三参数：期望发出的版本。给了就核对草稿的 crxVersion，
+  // 避免「草稿里还是上一版」被当成「这一版发出去了」。
+  const expectedVersion = process.argv[3] || null;
+
+  // ── 2026-10-24：**发布前自检**（原来完全没有）──────────────────────────
+  // 空草稿（uploadState=NOT_FOUND）时 publish 回 200 {"status":["OK"]} 却什么都没发，
+  // 而「publish 回包里有没有 uploadState」是**永远为假的检查**（publish 回包形状是
+  // {status, statusDetail}，uploadState 是 item 资源上的字段）⇒ 那条检查是死代码。
+  // ⇒ 改成发布**之前**先读 item：草稿没有一次成功的上传 ⇒ 直接拒绝 publish。
+  const pre = getItem();
+  const preItem = parseJsonSafe(pre.body);
+  if (pre.status < 200 || pre.status >= 300) {
+    console.error(`发布前自检失败（HTTP ${pre.status}）—— 拿不到草稿状态，绝不 publish。`);
+    process.exit(1);
+  }
+  if (preItem?.uploadState !== 'SUCCESS') {
+    console.error(
+      `发布前自检失败：草稿的 uploadState=${preItem?.uploadState ?? '(未知)'}（不是 SUCCESS）—— ` +
+        '空草稿 publish 是静默 no-op，线上不会有任何变化。绝不当作已发布。' +
+        describeItemError(preItem),
+    );
+    process.exit(1);
+  }
+  if (expectedVersion && preItem?.crxVersion !== expectedVersion) {
+    console.error(
+      `发布前自检失败：草稿版本 crxVersion=${preItem?.crxVersion ?? '(未知)'} ≠ 期望 ${expectedVersion} —— ` +
+        '草稿里不是你要发的那一份，绝不 publish。',
+    );
+    process.exit(1);
+  }
+  console.log(
+    `发布前自检通过：草稿 crxVersion=${preItem.crxVersion}` +
+      (expectedVersion ? `（期望 ${expectedVersion}）` : ''),
+  );
+
   const res = http('POST', `${BASE}/items/${ITEM_ID}/publish`, { headers: auth });
   console.log('HTTP', res.status, res.body.slice(0, 400));
   // ── 2026-10-05：publish 分支补状态校验（原来只有 upload 分支有）────────
@@ -112,23 +291,9 @@ if (cmd === 'status') {
   // 「提交审核」这一步失败时 CI/脚本看起来是成功的 —— 这是发版流程里
   // 最关键的一步（upload 只是更新草稿，publish 才真的提交审核）。
   //
-  // 已知的两种「200 但没发出去」（见文件头踩坑记录）：
-  //   - 空草稿（uploadState NOT_FOUND）时 publish 返回 200 但是 no-op；
-  //   - crxVersion 没变（upload 没真正生效）时同样可能 200 no-op。
-  // 所以除了状态码，还要看响应体里有没有「已提交」的信号。
+  // 已知的一种「200 但没发出去」：空草稿 ⇒ 已在上面的**发布前自检**里挡掉。
   if (res.status < 200 || res.status >= 300) {
     console.error(`提交审核失败（HTTP ${res.status}）——草稿仍是草稿，线上没有变化`);
-    process.exit(1);
-  }
-  // 200 不等于发出去：空草稿 publish 是 no-op。这里对「明显的 no-op 形状」
-  // 也失败退出，避免脚本给出「已发布」的错觉。
-  const body = res.body ?? '';
-  const looksLikeNoop = /"uploadState"\s*:\s*"NOT_FOUND"/.test(body);
-  if (looksLikeNoop) {
-    console.error(
-      'publish 返回 200，但 uploadState=NOT_FOUND —— 这是空草稿的静默 no-op，' +
-        '线上没有任何变化。通常是 upload 没成功或草稿被重置。绝不当作已发布。'
-    );
     process.exit(1);
   }
   // ── 2026-10-23：2xx 还要看「商店自己怎么说」 ────────────────────────────
@@ -141,6 +306,7 @@ if (cmd === 'status') {
   //   ② status 存在但没有 OK  ⇒ 提交未生效，exit 1
   //   ③ status 字段根本不存在 ⇒ **无法自证**，exit 1（不许默认当成成功）
   // 判据 ③ 是 fail-closed：宁可报红让人去用 `status` 复查，也不给假绿。
+  const body = res.body ?? '';
   const statusMatch = body.match(/"status"\s*:\s*\[([^\]]*)\]/);
   if (!statusMatch) {
     console.error(
@@ -152,9 +318,22 @@ if (cmd === 'status') {
   if (!/OK/.test(statusMatch[1])) {
     console.error(
       `publish 返回 2xx，但 status 里没有 OK（${statusMatch[0]}）—— 提交未生效，` +
-        '线上没有任何变化。绝不当作已发布。'
+        '线上没有任何变化。绝不当作已发布。' +
+        '（商店的 status 取值见官方文档：NOT_AUTHORIZED / INVALID_DEVELOPER / ' +
+        'ITEM_NOT_FOUND / ITEM_PENDING_REVIEW / ITEM_TAKEN_DOWN / DEVELOPER_SUSPENDED …）'
     );
     process.exit(1);
+  }
+  // 后置复核：把落点说清楚（草稿版本 + 上传状态），让操作的人自己看得见。
+  const post = getItem();
+  const postItem = parseJsonSafe(post.body);
+  if (post.status >= 200 && post.status < 300) {
+    console.log(
+      `发布后草稿：crxVersion=${postItem?.crxVersion ?? '(未知)'}  ` +
+        `uploadState=${postItem?.uploadState ?? '(未知)'}`,
+    );
+  } else {
+    console.warn(`⚠️ 发布后复核失败（HTTP ${post.status}）—— 请手动跑一次 status 确认。`);
   }
   console.log('✓ 已提交审核。建议再跑一次 `status` 确认 PENDING_REVIEW。');
 }

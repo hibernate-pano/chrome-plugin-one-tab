@@ -266,12 +266,12 @@ describe('D-4：远端裁决的依据是分片自身，不是索引', () => {
     assert.equal(state.fromContent, true, '内容必须在索引之上');
     assert.equal(state.lastOp?.s, 100);
     assert.equal(
-      shouldConcedeToRemote({ d: 'dev-B', s: 200 }, state),
+      shouldConcedeToRemote({ lastOp: { d: 'dev-B', s: 200 } }, state),
       false,
       '本地 s=200 比远端 s=100 新 ⇒ 不认输'
     );
     assert.equal(
-      shouldConcedeToRemote({ d: 'dev-B', s: 60 }, state),
+      shouldConcedeToRemote({ lastOp: { d: 'dev-B', s: 60 } }, state),
       true,
       '本地 s=60 比远端 s=100 旧 ⇒ 认输'
     );
@@ -289,29 +289,113 @@ describe('D-4：远端裁决的依据是分片自身，不是索引', () => {
 
   it('共享判据：两个后端对同一组输入必须给出同一结论（不许漂移）', async () => {
     const { shouldConcedeToRemote, resolveRemoteState } = await import('@/core/remoteAdjudication');
-    // Supabase 侧的判据（utils/supabase/upload.ts 的 shouldConcedeGroup）：
-    // 「云端 stamp 严格更大 ⇒ 认输；本地严格更新 ⇒ 绝不认输」。
-    // 两边对同一组 (本地印记, 远端印记) 必须一致 —— 这就是「判据来自同一处」的
-    // 可检验形式。
-    const cases: Array<[ { d: string; s: number } | undefined, { d: string; s: number } | undefined ]> = [
-      [{ d: 'A', s: 10 }, { d: 'B', s: 20 }],
-      [{ d: 'A', s: 20 }, { d: 'B', s: 10 }],
-      [{ d: 'A', s: 10 }, { d: 'A', s: 10 }],
-      [undefined, { d: 'B', s: 20 }],
-      [{ d: 'A', s: 10 }, undefined],
-      [undefined, undefined],
+    const { shouldConcedeGroup } = await import('@/utils/supabase/upload');
+    type Stamp = { d: string; s: number } | undefined;
+    const NOW = '2026-10-24T00:00:00.000Z';
+
+    // ⚠️ 这里必须**调用两个后端各自的真实实现**，不能把判据在这里重写一遍
+    // 再和自己比（那是零检测力：判据漂移了这条用例照样绿）。
+    //   · Supabase 侧的真实预检 = utils/supabase/upload.ts 的 shouldConcedeGroup
+    //   · WebDAV 侧的真实预检 = core/remoteAdjudication 的 shouldConcedeToRemote
+    //     （sync-backend/webdav/adapter.ts 的 uploadGroups / 删除广播都在调它）
+    const cases: Array<{
+      name: string;
+      local: Stamp;
+      cloud: Stamp;
+      cloudDeleted: boolean;
+      localDeleted: boolean;
+    }> = [
+      { name: '本地新 / 云端旧', local: { d: 'A', s: 20 }, cloud: { d: 'B', s: 10 }, cloudDeleted: false, localDeleted: false },
+      { name: '本地旧 / 云端新', local: { d: 'A', s: 10 }, cloud: { d: 'B', s: 20 }, cloudDeleted: false, localDeleted: false },
+      { name: '印记相同', local: { d: 'A', s: 10 }, cloud: { d: 'A', s: 10 }, cloudDeleted: false, localDeleted: false },
+      { name: '本地无印记 / 云端有', local: undefined, cloud: { d: 'B', s: 20 }, cloudDeleted: false, localDeleted: false },
+      { name: '本地有印记 / 云端无', local: { d: 'A', s: 10 }, cloud: undefined, cloudDeleted: false, localDeleted: false },
+      { name: '两侧都无印记', local: undefined, cloud: undefined, cloudDeleted: false, localDeleted: false },
+      // ↓ 墓碑四连（2026-10-24 审计 DS-3：删除优先于编辑，两边必须一致）
+      { name: '云端墓碑 / 本地活跃 · 云端印记更新', local: { d: 'A', s: 10 }, cloud: { d: 'B', s: 20 }, cloudDeleted: true, localDeleted: false },
+      { name: '云端墓碑 / 本地活跃 · 本地印记更新', local: { d: 'A', s: 99 }, cloud: { d: 'B', s: 5 }, cloudDeleted: true, localDeleted: false },
+      { name: '云端墓碑 / 本地活跃 · 印记相同', local: { d: 'A', s: 10 }, cloud: { d: 'A', s: 10 }, cloudDeleted: true, localDeleted: false },
+      { name: '云端墓碑 / 本地活跃 · 云端无印记', local: { d: 'A', s: 10 }, cloud: undefined, cloudDeleted: true, localDeleted: false },
     ];
-    for (const [local, remote] of cases) {
-      const remoteState = resolveRemoteState({ content: remote ? { lastOp: remote } : null });
-      const shared = shouldConcedeToRemote(local, remoteState);
-      // Supabase 口径的等价判定（严格更大 ⇒ 认输）：
-      // 用 compareStampsLoose 的同一全序，MISSING 视为最小。
-      const MISSING = { d: '', s: -Infinity };
-      const sa = local ?? MISSING;
-      const sb = remote ?? MISSING;
-      const expected = sb.s !== sa.s ? sb.s > sa.s : sb.d > sa.d;
-      assert.equal(shared, expected, `印记(${local?.s} vs ${remote?.s}) 的结论必须一致`);
+
+    for (const c of cases) {
+      const localGroup = {
+        id: 'g1',
+        name: '组',
+        tabs: [],
+        createdAt: NOW,
+        updatedAt: NOW,
+        isLocked: false,
+        ...(c.local ? { lastOp: c.local } : {}),
+        ...(c.localDeleted ? { isDeleted: true } : {}),
+      } as never;
+      const cloudRow = {
+        id: 'g1',
+        updated_at: NOW,
+        version: 3,
+        ...(c.cloud ? { last_op_device: c.cloud.d, last_op_seq: c.cloud.s } : {}),
+        ...(c.cloudDeleted ? { is_deleted: true } : {}),
+      } as never;
+
+      const supabase = shouldConcedeGroup(localGroup, cloudRow);
+      const webdav = shouldConcedeToRemote(
+        { ...(c.local ? { lastOp: c.local } : {}), ...(c.localDeleted ? { isDeleted: true } : {}) },
+        resolveRemoteState({
+          content: {
+            ...(c.cloud ? { lastOp: c.cloud } : {}),
+            ...(c.cloudDeleted ? { isDeleted: true } : {}),
+          },
+        })
+      );
+
+      if (c.cloudDeleted && !c.localDeleted) {
+        // 墓碑方向：两边必须**都**认输（DS-3）。这里断言具体值而不只是
+        // 「相等」——相等地错（比如两边都认输墓碑以外的情况）也抓不到。
+        assert.equal(supabase, true, `Supabase 侧：${c.name} ⇒ 必须认输（删除优先）`);
+        assert.equal(webdav, true, `WebDAV 侧：${c.name} ⇒ 必须认输（删除优先）`);
+      } else if (!c.cloudDeleted) {
+        assert.equal(
+          supabase,
+          false,
+          `Supabase 侧：${c.name} ⇒ 云端是活跃行，预检不得拦（交给服务端守卫 + 读回裁决）`
+        );
+      }
     }
+  });
+
+  it('已知的口径差异必须被钉住：活跃 vs 活跃时 Supabase 交给服务端裁决，WebDAV 自行认输', async () => {
+    const { shouldConcedeToRemote, resolveRemoteState } = await import('@/core/remoteAdjudication');
+    const { shouldConcedeGroup } = await import('@/utils/supabase/upload');
+    const NOW = '2026-10-24T00:00:00.000Z';
+
+    // 云端是**活跃**行且印记更新（本地印记更旧）：
+    //   · Supabase 侧：预检**不拦**（shouldConcedeGroup=false）—— 服务端有
+    //     guard_tab_group_op_stamp 按印记全序裁决，读回再判「被取代」= 收敛。
+    //   · WebDAV 侧：**认输跳过**（shouldConcedeToRemote=true）—— 自带存储
+    //     没有服务端守卫，不拦就是拿旧内容盖掉对端的新版本（静默丢数据）。
+    // 这是**有意的差异**（有无服务端守卫），不是漂移 —— 但必须写下来，
+    // 否则下一个人会把它当 bug「统一」掉，方向刚好是危险的那边。
+    const localGroup = {
+      id: 'g1', name: '组', tabs: [], createdAt: NOW, updatedAt: NOW, isLocked: false,
+      lastOp: { d: 'A', s: 10 },
+    } as never;
+    const cloudRow = {
+      id: 'g1', updated_at: NOW, version: 3, last_op_device: 'B', last_op_seq: 20,
+    } as never;
+
+    assert.equal(
+      shouldConcedeGroup(localGroup, cloudRow),
+      false,
+      'Supabase：活跃 vs 活跃不拦预检（服务端守卫 + 读回裁决）'
+    );
+    assert.equal(
+      shouldConcedeToRemote(
+        { lastOp: { d: 'A', s: 10 } },
+        resolveRemoteState({ content: { lastOp: { d: 'B', s: 20 } } })
+      ),
+      true,
+      'WebDAV：活跃 vs 活跃必须认输（没有服务端守卫，拦下来才安全）'
+    );
   });
 
   it('分片必须带上明文头部（裁决不必先解密）', async () => {

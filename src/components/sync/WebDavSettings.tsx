@@ -82,7 +82,9 @@ import type { TabGroup } from '@/types/tab';
 import { logWarn } from '@/utils/log';
 import { classifyBackendResolution, type BackendStatusKind } from '@/components/layout/backendStatus';
 import { webDavBannerKindOf, WEB_DAV_BANNER_COPY, WEB_DAV_BANNER_TONE, resolveSyncFailureCopy } from './syncPreviewView';
-import { webDavPrivacyNotice } from './webDavPrivacyCopy';
+import { webDavEncryptionBoundaryNotice, webDavPrivacyNotice } from './webDavPrivacyCopy';
+// 2026-10-24 审计 SEC-1：口令强度提示（只提示、不拦截 —— 门槛在适配器建库那一刻）。
+import { PassphraseStrengthHint } from './PassphraseStrengthHint';
 
 type CheckState =
   | { kind: 'idle' }
@@ -1037,8 +1039,8 @@ export const WebDavSettings: React.FC = () => {
             return;
           }
           // 本次下载带 syncSettings ⇒ SW 已把云端设置合并进存储，本页手里的
-          // settings 成了旧值。不重读的话，用户接着在**这一页**改任一开关都会把
-          // 旧设置整份写回（saveSettings 是盲写）并上传，刚拉下来的设置被回滚。
+          // settings 成了旧值。不重读的话，本页显示的是旧设置，而上传路径读的
+          // 也是那份旧值（无条件 upsert）⇒ 刚拉下来的设置被旧值顶回云端。
           // 与 popup 同步按钮同一口径（见 dispatchReloadSettings 注释）。
           const reloadError = await dispatchReloadSettings(dispatch);
           if (reloadError) {
@@ -1216,7 +1218,8 @@ export const WebDavSettings: React.FC = () => {
     try {
       // 2026-10-18 round 38：这次 dispatch 同时改两个字段，回滚必须**成对**。
       // 只回滚 syncBackend 会留下「界面说还留在自带存储、磁盘上 syncEnabled 已变 false」
-      // 的分叉：用户下一次改任何设置都会把 false 整份盲写回去，静默关掉自动同步。
+      // 的分叉：用户下一次改任何设置都会把 false 一起写回去，静默关掉自动同步
+      // （写路径按字段落盘，但**回滚过的字段同样算用户的改动**）。
       // 口径对齐 OptionsPage.handleSelectBackend（round 33）。
       const prevBackend = settings.syncBackend;
       const prevEnabled = settings.syncEnabled;
@@ -1495,18 +1498,31 @@ export const WebDavSettings: React.FC = () => {
         {encryption === 'required' ? (
           <>
             <input
+              id="webdav-encryption-pass"
               type="password"
               className={`${inputCls} mt-1.5`}
               placeholder="加密口令（无法找回，忘记将无法解密）"
               value={passphrase}
               onChange={e => setPassphrase(e.target.value)}
               disabled={!loaded}
+              aria-describedby="webdav-encryption-pass-hint"
             />
+            {/* 2026-10-24 审计 SEC-1：口令强度的**实时**提示。
+                抽成组件是为了能被 react-dom/server 真渲染一遍来验
+                （源码里有 ≠ 界面上有）。它**只提示、不拦截** ——
+                拦截在适配器建库那一刻，见 passphrasePolicy 的文件头。 */}
+            <PassphraseStrengthHint passphrase={passphrase} />
             {/* 2026-10-20 审计 D-2：写死的 text-amber-600 / dark:text-amber-500
                 在浅底上只有 3.19:1 —— 而这句恰恰是最需要看清的一句（安全告警）。
                 改用主题令牌 theme-text-warning（各主题实测 ≥4.5:1）。 */}
             <div className="mt-1 text-[11px] leading-relaxed theme-text-warning">
               口令没有找回入口。请务必自己记牢 —— 忘记后云盘上的数据将无法解密，也没有我们能做的补救。
+            </div>
+            {/* 2026-10-24 审计 SEC-1：计划书 §5.2 要求 UI 说明「这是防离线明文，
+                不是防运行时」—— 那句话至今没落到界面上。弱口令门槛要成立，
+                用户必须知道自己在防谁、以及防不了谁。 */}
+            <div className="mt-1 text-[11px] leading-relaxed theme-text-muted">
+              {webDavEncryptionBoundaryNotice()}
             </div>
           </>
         ) : null}

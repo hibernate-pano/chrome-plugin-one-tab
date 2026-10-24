@@ -164,6 +164,10 @@ describe('S2 键常量单源', () => {
     // 不再能作为清 pending_upload 的依据。新键由 STORAGE_KEYS 全量派生，
     // MIGRATION_SCAN_KEYS 会自动带上它（见 keys.ts 的派生表）。
     PENDING_UPLOAD_REGISTRY_UNRELIABLE: 'pending_upload_registry_unreliable',
+    // 2026-10-24 审计 DS-43-20：账号归属账本搬进 KV 层（与本机会话同一个库）。
+    // 搬进来之后「会话还在 ⇒ 账本还在」是结构事实 ⇒ chrome.storage.local 被清
+    // 不再能让本机残留的会话被新账号静默认领（跨账号泄露）。
+    ACCOUNT_SCOPE: 'local_account_scope',
   };
 
   it('STORAGE_KEYS 字面值与搬迁前逐字一致', async () => {

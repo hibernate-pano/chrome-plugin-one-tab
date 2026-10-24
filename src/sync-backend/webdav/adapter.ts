@@ -40,6 +40,16 @@ import type {
   UploadGroupsResult,
 } from '../ports';
 import { WebDavClient, WebDavError } from './client';
+
+/**
+ * 这个错误是不是「父目录不存在」（HTTP 409）。
+ *
+ * 只认 WebDavError 的 409：网络层失败（status 0）与 5xx 都不是「目录没了」，
+ * 重试建目录对它们没有意义（只会把同一个故障重试一遍）。
+ */
+function isConflictStatus(err: unknown): boolean {
+  return err instanceof WebDavError && err.status === 409;
+}
 // 设备 id 的权威键名（2026-10-17）：见 nextDeleteStamp 的说明。
 // 手抄字面量导致删除广播全部盖成 d:'unknown'，是本文件修掉的一个 P0。
 import { LEGACY_KEYS } from '@/storage-kv/keys';
@@ -67,6 +77,8 @@ import {
   type ShardHeader,
 } from './layout';
 import { createVault, openVault, type Vault } from '../crypto';
+// 2026-10-24 审计 SEC-1：新建加密库时的口令强度门槛（见 passphrasePolicy 的文件头）。
+import { evaluatePassphrase, PASSPHRASE_MIN_LENGTH } from './passphrasePolicy';
 import { checkDeleteFailsafe } from '@/core/deleteFailsafe';
 // 远端裁决的**共享判据**（2026-10-20 D-4/D-5）：内容优先于索引，
 // 墓碑读回 = 「广播成功」的定义。与 Supabase 侧是同一套口径，见该文件。
@@ -280,6 +292,36 @@ export class WebDavBackendAdapter implements SyncBackendPort {
    */
   private conditionalWrites: boolean | null = null;
 
+  /**
+   * **已经建好**的远端目录（相对 baseUrl 的路径，例：`TapStack/groups/ab`）。
+   *
+   * ── 为什么需要它（2026-10-24 审计 PERF-01）────────────────────────────
+   * 写一个分片要逐级 MKCOL（root → groups → 前 2 位前缀目录），而生产会话 id
+   * 是 `nanoid()`（21 位、64 字符表 ⇒ 前 2 位有 **4096** 种取值）⇒ 1000 个会话
+   * 约产生 884～899 个不同前缀目录 ⇒ 每轮上传的 MKCOL 里约 **70%** 是
+   * 「对早已存在的目录再发一次必然 405 的空请求」，而且**全程串行**。
+   *
+   * 实测（真实 WebDavClient 打真实服务器）：写一个会话要 **6.89～7.91 次串行
+   * 往返**（下载同库只要 1.00 次）⇒ 1000 个会话一轮上传 ≈ 6900～7900 次往返 ⇒
+   * 用户看到的是「推送失败：操作超时（30 秒）」，而后台其实还在继续传。
+   *
+   * ── 为什么缓存是**安全**的 ──────────────────────────────────────────
+   * `client.mkcol` 把 **405（目录已存在）当成成功** ⇒ 「建过」这件事幂等 ⇒
+   * 缓存「这个目录已经在了」不会让写入失败。
+   *
+   * ── 为什么缓存是**实例级**而不是模块级 ───────────────────────────────
+   * 缓存的是「**这个库**里有哪些目录」⇒ 换服务器（改配置）必须清空 ⇒
+   * 模块级缓存会把 A 服务器的目录记到 B 服务器头上（⇒ B 上少了目录 ⇒
+   * PUT 409）。适配器实例与配置一一绑定（配置一变就重建适配器）⇒
+   * 实例级缓存天然随配置失效 ✔。
+   *
+   * ── 目录被人删掉了怎么办 ────────────────────────────────────────────
+   * 缓存会过期 ⇒ PUT 返回 409 ⇒ `writeShard` 会**忘掉**这个目录、重建一次、
+   * 再重试一次（见 writeShard 的注释）。⇒ 「云盘上的目录被人删了」不会
+   * 变成「本机从此再也传不上去」。
+   */
+  private readonly knownDirs = new Set<string>();
+
   constructor(deps: WebDavAdapterDeps) {
     this.client = deps.client;
     this.config = deps.config;
@@ -371,6 +413,26 @@ export class WebDavBackendAdapter implements SyncBackendPort {
       // 首次创建时按配置里有没有口令决定，而不是一律明文。
       const pass = this.config.passphrase;
       if (pass) {
+        // 2026-10-24 审计 SEC-1：这一行正是在**新建**一个加密库 ⇒ 这个口令
+        // 是在「选一个」，不是在「回忆一个」 ⇒ 弱口令必须在这里被拦下。
+        //
+        // 【为什么门槛落在这里，而不是表单校验】口令**不落盘**（只在浏览器
+        // 会话内存里，见 webdav/config.ts 的文件头），所以老用户每次重开页面
+        // 都要**重新输入**当年那个口令。把门槛放在表单上 ⇒ 当年用了 `123456`
+        // 的老用户，在新设备上配同一个库、或清过配置再配回来时，会被**自己
+        // 的口令**挡在门外 —— 把「安全加固」做成「数据取不回来」。
+        //
+        // 而这一行只在「库里还没有加密」时才走得到（已加密的库走下面的
+        // openVault）⇒ 拦的**永远**是「选口令」，不会拦「回忆口令」。
+        const verdict = evaluatePassphrase(pass);
+        if (!verdict.acceptable) {
+          throw new Error(
+            `这个云端库还没有加密过，而你设置的加密口令太弱（${verdict.reason}）。` +
+              '已中止：口令太弱时，拿到你云盘副本的人可以离线把它猜出来，' +
+              '整库会话（会话名、标签标题、网址）就都失去保护了。' +
+              `请在同步设置里换一个至少 ${PASSPHRASE_MIN_LENGTH} 位的口令。`
+          );
+        }
         this.vault = await createVault(pass);
       } else if (this.config.requireEncryption) {
         // ⚠️ 这一条挡的是「静默明文上云」：用户选择了加密，但本次没给口令。
@@ -1036,6 +1098,13 @@ export class WebDavBackendAdapter implements SyncBackendPort {
      */
     opts?: { recoveredBase?: Manifest | null }
   ): Promise<void> {
+    // 索引就躺在库根下（`TapStack/manifest.json`）⇒ 库根必须先在。
+    //
+    // 以前这个「库根什么时候被建出来」是**副作用**：分片写的 mkdirp 顺手建的。
+    // 于是「一个会话都没有、只写索引」这条路径（首次同步 / 恢复态 / 只同步设置）
+    // 在真实服务端上会 409（父目录不存在）—— 宽松的假服务器看不见这个洞。
+    // 这里显式建一次（缓存 ⇒ 每个适配器实例只多一次 MKCOL）。
+    await this.ensureDir(this.root);
     for (let attempt = 0; attempt < CONFLICT_RETRY_LIMIT; attempt++) {
       // ⚠️ 用 loadIndexForWrite（**不触发恢复**）而不是 loadIndex：
       // 首次同步时 groups/ 目录刚被本轮的分片写出来，若在这里触发一次
@@ -1075,6 +1144,47 @@ export class WebDavBackendAdapter implements SyncBackendPort {
 
   // ── 分片读写 ────────────────────────────────────────────────────────
 
+  /**
+   * 确保远端目录存在（**逐级**建，且每级只建一次）。
+   *
+   * 为什么不用 `client.mkdirp`：mkdirp 每次都把整条链重发一遍 ⇒ 每个会话要
+   * 3 次 MKCOL（root / groups / 前缀目录），而其中绝大部分是对已存在目录的
+   * 空请求（见 knownDirs 的注释里的实测数字）。这里逐级查缓存 ⇒ 一条链上
+   * 每一级**最多建一次**。
+   *
+   * ⚠️ 参数是**相对 baseUrl 的完整路径**（含库根，例：`TapStack/groups/ab`），
+   * 不是相对库根的路径。库根本身也得建：真实服务端在父目录不存在时
+   * MKCOL 返回 409、PUT 也返回 409（RFC 4918 §9.3.1 / §9.7）⇒ 少了库根，
+   * 第一次写分片就直接失败。
+   *
+   * （为什么这里容易漏：不少假服务器不建模「父目录必须存在」，MKCOL / PUT
+   * 一律成功 ⇒ 少了库根这件事在测试里**完全看不见**。所以守卫里那台假服务器
+   * 专门开了 strictParents 来按 RFC 建模。）
+   *
+   * @param fullPath 相对 baseUrl 的目录路径（例：`TapStack/groups/ab`）
+   */
+  private async ensureDir(fullPath: string): Promise<void> {
+    const segments = fullPath.split('/').filter(Boolean);
+    let acc = '';
+    for (const seg of segments) {
+      acc = acc ? `${acc}/${seg}` : seg;
+      if (this.knownDirs.has(acc)) continue;
+      // 405（已存在）被 client.mkcol 当成成功 ⇒ 这里可以放心记进缓存。
+      await this.client.mkcol(acc);
+      this.knownDirs.add(acc);
+    }
+  }
+
+  /** 忘掉一个目录（服务器上它可能已经被人删了）。 */
+  private forgetDir(fullPath: string): void {
+    const segments = fullPath.split('/').filter(Boolean);
+    let acc = '';
+    for (const seg of segments) {
+      acc = acc ? `${acc}/${seg}` : seg;
+      this.knownDirs.delete(acc);
+    }
+  }
+
   /** 落盘一个分片的载荷（加密或明文），返回服务端给的 ETag。 */
   private async writeShard(
     id: string,
@@ -1095,11 +1205,30 @@ export class WebDavBackendAdapter implements SyncBackendPort {
       : makePlainEnvelope(payload, header);
 
     const path = this.p(shardPath(id));
-    await this.client.mkdirp(this.p(`${GROUPS_DIR}/${id.slice(0, 2)}`));
-    const out = await this.client.put(path, serializeEnvelope(envelope), {
+    // 目录按需建（见 ensureDir / knownDirs 的注释）：每个前缀目录最多建一次，
+    // 不再每个会话重发 3 次 MKCOL。
+    const dirFull = this.p(`${GROUPS_DIR}/${id.slice(0, 2)}`);
+    await this.ensureDir(dirFull);
+    const putArgs = {
       ...(opts.ifMatch ? { ifMatch: opts.ifMatch } : {}),
       ...(opts.ifNoneMatch ? { ifNoneMatch: opts.ifNoneMatch } : {}),
-    });
+    };
+    const body = serializeEnvelope(envelope);
+    let out: { etag: string | null };
+    try {
+      out = await this.client.put(path, body, putArgs);
+    } catch (err) {
+      // ── 409 = 父目录在服务器上不存在 ──────────────────────────────────
+      // 可能是缓存过期（目录被人删了 / 换了服务器），也可能是本来就没建。
+      // 两种情况的处理都一样：**忘掉缓存、重建一次、再试一次**。
+      //
+      // 为什么必须重试而不是直接报错：一次「目录被删」不该让这台机器从此
+      // 再也传不上去（那比慢更糟）。重试一次仍失败 ⇒ 真故障，照实抛出。
+      if (!isConflictStatus(err)) throw err;
+      this.forgetDir(dirFull);
+      await this.ensureDir(dirFull);
+      out = await this.client.put(path, body, putArgs);
+    }
     // ── 服务端不返回 ETag 时，读回一个（2026-10-14 坚果云真机实测）────────
     // 坚果云实测：PUT **响应**不带 ETag，但 GET 带，且该 ETag 可直接用于
     // If-Match（正确 ETag 写 → 204、过期 ETag 写 → 412，真乐观锁成立）。
@@ -1404,7 +1533,7 @@ export class WebDavBackendAdapter implements SyncBackendPort {
       // 替用户反悔（他说覆盖，云端那条更新的却没被覆盖）。
       // 两边必须同口径，否则「以本地为准」在两个后端上的结果不同。
       const overwriteMode = opts?.overwriteRemote === true;
-      if (!overwriteMode && remote.exists && shouldConcedeToRemote(g.lastOp, remoteState)) {
+      if (!overwriteMode && remote.exists && shouldConcedeToRemote(g, remoteState)) {
         // 认输：不碰远端，本地副本等下次下载合并时被替换。
         // 注意这里**不**记入 writtenEntries —— apply 时以 base（最新远端）为准，
         // 记进去反而会用旧条目覆盖对端的新条目。
@@ -1596,7 +1725,7 @@ export class WebDavBackendAdapter implements SyncBackendPort {
             ? { lastOp: latest.lastOp, isDeleted: latest.isDeleted }
             : null,
         });
-        if (latest.exists && shouldConcedeToRemote(group.lastOp, latestState)) {
+        if (latest.exists && shouldConcedeToRemote(group, latestState)) {
           return { skipped: true };
         }
         // 本地赢（或对端此刻又删了/读不到）：用刚拿到的 ETag 重试一次。
@@ -2085,6 +2214,10 @@ export class WebDavBackendAdapter implements SyncBackendPort {
   async probeConditionalWrites(): Promise<boolean> {
     const probePath = this.p('.tapstack-probe');
     try {
+      // 探针文件也在库根下 ⇒ 库根必须先在。否则 PUT 409（父目录不存在），
+      // 而这个 catch 会把它吞成「服务端不支持条件写」—— 一个**错误结论**
+      // （真机上表现为：刚配好 WebDAV，界面就报「服务端不支持条件写」）。
+      await this.ensureDir(this.root);
       await this.client.put(probePath, 'probe', { contentType: 'text/plain' });
       await this.client.put(probePath, 'probe2', {
         ifMatch: '"tapstack-probe-deliberately-stale"',

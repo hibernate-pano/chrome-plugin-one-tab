@@ -241,12 +241,12 @@ beforeEach(async () => {
   invalidateGroupsCache();
   await storage.setGroupsImmediate([]);
   invalidateGroupsCache();
-  chromeData.delete('local_account_scope');
+  lsData.delete('local_account_scope');
 });
 
 after(() => {
   // 归属记录是**本机状态** ⇒ 测试之间必须清干净，否则会串味。
-  chromeData.delete('local_account_scope');
+  lsData.delete('local_account_scope');
 });
 
 // ══════════════════════════════════════════════════════════════════════════
