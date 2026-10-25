@@ -10,14 +10,30 @@
  *
  * ── 变异清单 ─────────────────────────────────────────────────────────────
  *
- *   ① 未锁定整组恢复的 `showConsumeToast` 删掉 ⇒ 红在「未锁定必须有退路」
+ *   ① 未锁定整组恢复**只删掉撤销凭据**（`{ group }` → `undefined`）⇒ 红在
+ *      「整组恢复那条必须挂上撤销凭据」
  *   ② 锁定分支的 `r.success !== true` 判定删掉 ⇒ 红在「成功门仍在」
  *   ③ 锁定分支**成功门那一支**的 `showRestoreError` 删掉 ⇒ 红在「成功门仍在」
  *   ④ `deleteAllCountMatches` 恒返回 `true` ⇒ 红在「删除数量不一致必须说」
  *   ⑤ `decideFeedback` 的 `hiddenFact` 分支删掉 ⇒ 红在「fact 档判据」
  *   ⑥ `lockDisclosureText` 恒返回 `null` ⇒ 红在「锁定说明常驻」
  *   ⑦ `ToastKind` 把 `'success'` 加回去 ⇒ 红在「类型层不许再有 success」
- *   ⑧ 反向：`restoreGroupSuccessMessage` 的 `inCurrentWindow` 参数改名 ⇒ 仍然绿
+ *   ⑧ 反向：`restoreGroupSuccessMessage` 的局部变量 `opened` 改名
+ *      （`opened` → `headline`）⇒ 仍然绿
+ *
+ * ── `expectedFailure` 的铁律：只能是 `assert.*` 的第三个参数原文 ──────────
+ *
+ * node 的 TAP 输出会把**通过的**子测试标题也打出来 ⇒ 拿一条 `it` 标题当 needle
+ * 是**恒真**的（守卫全绿时它也在输出里，`reasonMatched` 白送）。
+ * ⇒ 每条 needle 都是某条 `assert.*` 的第三个参数（只在**红了**的时候才打印）。
+ * ⇒ 核对办法：跑一次**全绿**的守卫、抓完整 TAP 输出，每个 needle 必须**出现 0 次**。
+ *
+ * ── 变异必须打在「断言看得见的那条性质」上 ──────────────────────────────
+ *
+ * ① 原先写的是「把整块 `showConsumeToast` 删掉」。那样确实会红，但红的**第一条**
+ * 是「整组恢复的成功播报必须还在」（`assert.ok(groupCall, …)`），
+ * ⇒ **撤销凭据**那条断言一次都没被触发过 ⇒ 这条变异没有证明它有任何检测力。
+ * ⇒ 改成**只动凭据**（第二个实参），让红的必然是关于凭据的那一句。
  *
  * 变异只发生在沙箱副本里（`tests/_helpers/mutationSandbox.ts`），
  * 共享工作树一个字节都不动。
@@ -56,36 +72,30 @@ const replaceIn = (source: string, from: string, to: string): string => {
 };
 
 describe('变异自证：「安静的成功」的守卫必须看得见破口', () => {
-  it('① 删掉未锁定整组恢复的播报 ⇒ 守卫必须变红（红在「未锁定必须有退路」）', () => {
+  it('① 撤掉未锁定整组恢复的撤销凭据 ⇒ 守卫必须变红（红在「撤销凭据」那句）', () => {
     const [outcome] = runMutationCases([
       {
-        name: '未锁定整组恢复不播报',
+        name: '未锁定整组恢复不带撤销凭据',
         testFile: GUARD,
         targets: [
           {
             path: TAB_GROUP,
-            // 未锁定那一条成功播报（含它的「撤销」凭据）整块删掉。
-            mutate: source =>
-              replaceIn(
-                source,
-                '        if (!group.isLocked) {\n' +
-                  '          showConsumeToast(\n' +
-                  '            restoreGroupSuccessMessage(tabsPayload.length, inCurrentWindow),\n' +
-                  '            { group },\n' +
-                  '          );\n' +
-                  '        }',
-                '        if (!group.isLocked) {\n' +
-                  '          void restoreGroupSuccessMessage;\n' +
-                  '        }',
-              ),
+            // ⚠️ **只动凭据**（第二个实参），成功播报本身一个字不动。
+            //    删掉整块会让红的**第一条**变成「成功播报必须还在」——
+            //    「撤销凭据」那条断言就永远没被触发 ⇒ 这条变异证明不了它有检测力。
+            //
+            // 片段是 `TabGroup.tsx:578` 那一行（12 空格缩进；全文仅此一处）。
+            // 换成 `undefined` 之后：播报还在、文案还在，但退路没了。
+            mutate: source => replaceIn(source, '            { group },\n', '            undefined,\n'),
           },
         ],
         expectRed: true,
-        expectedFailure: '未锁定必须有退路：整组恢复与点开单标签都挂着撤销凭据',
+        expectedFailure:
+          'src/components/tabs/TabGroup.tsx：整组恢复那条必须挂上撤销凭据（不可逆的删除必须有退路）',
       },
     ]);
     assert.ok(outcome, '变异必须真的跑起来');
-    assertMutationOutcome(outcome, true, '把未锁定整组恢复的成功播报删掉');
+    assertMutationOutcome(outcome, true, '把未锁定整组恢复的撤销凭据换成 undefined');
   });
 
   it('② 删掉锁定分支的成功门 ⇒ 守卫必须变红（红在「成功门仍在」）', () => {

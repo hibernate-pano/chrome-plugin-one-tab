@@ -29,11 +29,23 @@
  * ⇒ 「文件里不含 `'success'` 三个字符」这种 blanket 写法**必然误伤**。
  * ⇒ 这里解析出联合类型的**成员**再逐个比对。
  *
- * ── 本文件不覆盖什么（留给后续任务） ─────────────────────────────────────
+ * ── Task 4 在这个文件里补上了什么 ───────────────────────────────────────
  *
- *   · 接线 / 退路 / 成功门（恢复即消费那条链路）⇒ Task 3 / Task 4；
- *   · `TabGroup.tsx` 的锁定说明 toast（#19）⇒ **Task 3** 把它改成
- *     卡片常驻行 —— 本任务对它**先不动**，因此这里也不钉它的现状。
+ *   · **19 处裁决登记表**（`LEDGER`）：每一处曾经直接报成功的地方，
+ *     现在的档位（fact / silent / 条件 fact / 常驻）、判据由哪条断言守着、
+ *     判据调用有没有真的接上，全部列成 19 行钉死 —— 少一行、多一行、
+ *     悄悄换一档，守卫都会红。
+ *   · **失败不得被静默**：`showToast` 的 error 调用点不得少于基线 35 处、
+ *     error 的时长必须为 0（不自动消失）、error 与带操作的提示都不可被挤掉。
+ *   · **命名空间不许误伤**：`'success'` 在别处（浏览器通知、就地反馈、
+ *     `InlineNoticeTone`、`AlertDialog.type`、`TabGroup.syncStatus` …）
+ *     仍然是合法字面量 —— 守卫按命名空间逐个钉，不做 blanket 禁止。
+ *   · **接线 / 退路 / 成功门**（恢复即消费那条链路）**已经钉在本文件里**
+ *     （见「Task 3：恢复类播报收口」一节）：
+ *     退路 —— `it('未锁定必须有退路：整组恢复与点开单标签都挂着撤销凭据')`；
+ *     成功门 —— `assert.match(…, ${file}：锁定分支必须判过成功门 —— …)`；
+ *     #19 锁定说明 —— `it('锁定说明的文案必须含三个要素…')`。
+ *     **不再是「留给后续任务」。**
  *
  * ── 行号不是承重信息，锚点才是 ─────────────────────────────────────────
  *
@@ -601,6 +613,160 @@ const deleteAllHandlerSource = (): string => {
   return end > 0 ? rest.slice(0, end) : rest;
 };
 
+/**
+ * 取「删除全部」那处 `hiddenFact` 三元的**两臂**源码。
+ *
+ * 形状：`hiddenFact: deleteAllCountMatches(counts) ? <条数一致那一臂> : <对不上那一臂>;`
+ *
+ * ── 为什么必须**抽取**而不是正则「看」那一臂 ─────────────────────────────
+ *
+ * 早先这里只断言「handler 里出现过 `deleteAllCountMatches(`」+「出现过
+ * `if (fb.level !== 'silent')`」+「出现过 `deleteAllSuccessMessage(`」。
+ * 三条**全部**只钉住了「出现过」，**没有一条钉住两臂的顺序** ⇒
+ * 把两臂对调：
+ *
+ *   `deleteAllCountMatches(counts) ? deleteAllSuccessMessage(counts) : undefined`
+ *
+ * 所有断言照样全绿，而产品行为**整个反过来**：
+ *   · 条数**一致**时反而出声（又念一遍「已删除 N 个」，正是本任务要灭掉的）；
+ *   · 条数**对不上**时反而沉默（该说的那个差一个字都没说）。
+ *
+ * ⇒ 必须把「**条数一致的那一支**」单独取出来，判它是不是「没有事实」。
+ */
+const deleteAllFactArms = (): { matchesArm: string; mismatchArm: string } => {
+  const source = parseTsx('src/components/layout/HeaderDropdown.tsx');
+  /** 这棵子树里有没有 `deleteAllCountMatches(...)` 这次调用。 */
+  const mentionsCountCheck = (root: ts.Node): boolean => {
+    let hit = false;
+    const walk = (node: ts.Node): void => {
+      if (
+        ts.isCallExpression(node) &&
+        ts.isIdentifier(node.expression) &&
+        node.expression.text === 'deleteAllCountMatches'
+      ) {
+        hit = true;
+      }
+      if (!hit) node.forEachChild(walk);
+    };
+    walk(root);
+    return hit;
+  };
+  let found: ts.ConditionalExpression | null = null;
+  const visit = (node: ts.Node): void => {
+    if (
+      !found &&
+      ts.isConditionalExpression(node) &&
+      // ⚠️ 这里**不**要求条件就是那次调用：`!调(...)` / `调(...) === false` 都是
+      //    等价写法，形状不同、行为相同 ⇒ 只要求条件**问到了**它。
+      mentionsCountCheck(node.condition)
+    ) {
+      found = node;
+    }
+    node.forEachChild(visit);
+  };
+  visit(source);
+  assert.ok(
+    found,
+    '「删除全部」那处 hiddenFact 必须问 `deleteAllCountMatches(...)`（解析器坏了就是假绿）',
+  );
+  const ternary = found as ts.ConditionalExpression;
+
+  // ── 只认「哪一支对应『条数一致』」，不认写法 ────────────────────────────
+  // 等价写法至少四种：
+  //   `counts 匹配 ? A : B` / `!counts 匹配 ? B : A`
+  //   `counts 匹配 === false ? B : A` / `counts 匹配 !== true ? B : A`
+  // 前两种/后两种在**行为上完全一样**。若这里只认「条件是裸调用」，
+  // 有人改成 `!deleteAllCountMatches(counts) ? … : …`（等价、甚至更好读）
+  // 就会误红 —— 那正是「守卫钉长相不钉行为」（变异 ⑧ 要抓的那一类）。
+  // ⇒ 数**否定次数**，用奇偶决定哪一支是「条数一致」。
+  const condition = ternary.condition;
+  /** 这一层是不是「取反」？（对 boolean 而言 `!x` / `x === false` / `x !== true` 同一件事） */
+  const negationOf = (node: ts.Expression): { negates: boolean; operand: ts.Expression } | null => {
+    if (ts.isPrefixUnaryExpression(node) && node.operator === ts.SyntaxKind.ExclamationToken) {
+      return { negates: true, operand: node.operand };
+    }
+    if (ts.isBinaryExpression(node)) {
+      const op = node.operatorToken.kind;
+      const right = node.right.getText(source).replace(/\s+/g, '');
+      if (op === ts.SyntaxKind.EqualsEqualsEqualsToken && right === 'false') {
+        return { negates: true, operand: node.left };
+      }
+      if (op === ts.SyntaxKind.ExclamationEqualsEqualsToken && right === 'true') {
+        return { negates: true, operand: node.left };
+      }
+      // `x === true` / `x !== false` 不取反（同义写法，行为一样）
+      if (op === ts.SyntaxKind.EqualsEqualsEqualsToken && right === 'true') {
+        return { negates: false, operand: node.left };
+      }
+      if (op === ts.SyntaxKind.ExclamationEqualsEqualsToken && right === 'false') {
+        return { negates: false, operand: node.left };
+      }
+    }
+    return null;
+  };
+  let negations = 0;
+  let core: ts.Expression = condition;
+  for (let step = negationOf(core); step !== null; step = negationOf(core)) {
+    if (step.negates) negations += 1;
+    core = step.operand;
+  }
+  assert.ok(
+    ts.isCallExpression(core) &&
+      ts.isIdentifier(core.expression) &&
+      core.expression.text === 'deleteAllCountMatches',
+    `「删除全部」那处三元的条件必须是「条数是否一致」本身（现在是 \`${condition.getText(source)}\`）`,
+  );
+  const positiveWhenTrue = negations % 2 === 0;
+  const trueArm = ternary.whenTrue.getText(source).replace(/\s+/g, ' ').trim();
+  const falseArm = ternary.whenFalse.getText(source).replace(/\s+/g, ' ').trim();
+  return {
+    matchesArm: positiveWhenTrue ? trueArm : falseArm,
+    mismatchArm: positiveWhenTrue ? falseArm : trueArm,
+  };
+};
+
+/**
+ * 这一臂是不是「**没有事实**」？
+ *
+ * `undefined` / `null` / `void 0` / 空字面量（`''` / `""` / `` `` ``）对判据层
+ * 是同一件事：「没有界面表达不了的事实」⇒ 判成 silent。
+ *
+ * ⚠️ 只认**单个**字面量：`'' + '已退出登录'` 这种拼接**不算**空
+ *    （运行时 fact = '已退出登录'，会出声）⇒ 判成「有事实」。
+ */
+const armIsEmptyFact = (text: string): boolean => {
+  const t = text.trim();
+  // `undefined` / `null` / `void 0` 是同一个「没有值」的三种写法。
+  if (t === 'undefined' || t === 'null' || t === 'void 0') return true;
+  const m = t.match(/^(['"`])([\s\S]*)\1$/);
+  return m ? m[2].trim().length === 0 : false;
+};
+
+/**
+ * 「删除全部」的**极性**：条数一致 ⇒ 事实为空（静默）；对不上 ⇒ 事实非空（必须说）。
+ *
+ * 这是本文件里唯一一处「**行为方向**」的断言 —— 前面那些钉的都是「存在 / 不存在」，
+ * 这里钉的是「**哪个分支对应哪种结果**」。
+ */
+const assertDeleteAllPolarity = (): void => {
+  const arms = deleteAllFactArms();
+  assert.ok(
+    armIsEmptyFact(arms.matchesArm),
+    `条数一致的那一支必须是「没有事实」（undefined / 空）—— 现在是 \`${arms.matchesArm}\`：` +
+      '一致时反而出声 = 又念一遍界面已经说得出的结果；对不上时反而沉默 = 该说的差没说',
+  );
+  assert.ok(
+    !armIsEmptyFact(arms.mismatchArm),
+    `条数对不上的那一支必须带上那个事实 —— 现在是 \`${arms.mismatchArm}\`：` +
+      '对不上时沉默 = 界面永远表达不了的那个差被吞了',
+  );
+  assert.match(
+    arms.mismatchArm,
+    /deleteAllSuccessMessage\(/,
+    '条数对不上的那一支必须用同一份文案函数（不许另写一句）',
+  );
+};
+
 /** 一个 silent 站点的**完整判据**：那条提示不存在 **且** 界面载体真的在。 */
 const assertSilentSite = (site: { file: string; gone: RegExp; carrier: () => void }): void => {
   assert.doesNotMatch(
@@ -773,6 +939,10 @@ describe('19 处裁决：删除全部的条数对不上时必须说出来', () =
       'info',
       '这条提示的类型必须是 info（不是 success）',
     );
+    // ⚠️ 上面四条只钉住了「出现过」，**没有一条钉住两臂的顺序** ⇒
+    //    把「一致 ⇒ 空事实 / 对不上 ⇒ 有事实」对调，行为整个反过来而守卫全绿。
+    // ⇒ 这里必须单独钉住**极性**。
+    assertDeleteAllPolarity();
   });
 });
 
@@ -1618,6 +1788,9 @@ const LEDGER: readonly LedgerRow[] = [
         'info',
         '这条提示的类型必须是 info（不是 success）',
       );
+      // 极性：一致 ⇒ 空事实（静默）；对不上 ⇒ 有事实（必须说）。
+      // 少了这一条，把两臂对调后守卫照样全绿，而行为整个反过来。
+      assertDeleteAllPolarity();
     },
   },
   {
@@ -2254,6 +2427,54 @@ describe('Task 4：闸门是命名空间限定的（不许误伤别的 success�
     assert.ok(
       swKindMembers().includes('success'),
       `浏览器通知的 kind 里必须仍然有 'success'（实际：${swKindMembers().join(' | ')}）—— ` +
+        '那是通知分流，不是 toast',
+    );
+
+    // `TabManager.ts` 那个 `kind` 是**对象类型里的属性签名**
+    // （`kind?: 'success' | 'info' | 'error';`），既不是类型别名也不是内联参数
+    // ⇒ 上面两种解析器都够不着 ⇒ 单独抽属性签名的联合成员。
+    //
+    // ⚠️ 这里**不能**走 `parseTsx`：那个解析器先剥注释再解析，而本仓的
+    //    `stripComments` 有一条已知缺陷 —— 它把**模板串里的 `//`** 也当注释
+    //    （`src/background/TabManager.ts:469` 的 `` `${u.protocol}//${u.host}` ``
+    //    就是这一类）⇒ 剥完那一行的收尾反引号被吃掉 ⇒ 模板串从那里开始不闭合
+    //    ⇒ **后面所有 AST 节点报废**（`showNotification` 的 `kind` 正好在它后面）。
+    //    ⇒ 这里解析**原始源码**（TS 自己会处理注释），再把抽出来的成员文本单独去注释。
+    const tabManagerKindMembers = (): string[] => {
+      const source = ts.createSourceFile(
+        'src/background/TabManager.ts',
+        read('src/background/TabManager.ts'),
+        ts.ScriptTarget.Latest,
+        true,
+        ts.ScriptKind.TS,
+      );
+      let members: string[] | null = null;
+      const visit = (node: ts.Node): void => {
+        if (
+          !members &&
+          ts.isPropertySignature(node) &&
+          node.name &&
+          ts.isIdentifier(node.name) &&
+          node.name.text === 'kind' &&
+          node.type &&
+          ts.isUnionTypeNode(node.type)
+        ) {
+          members = node.type.types.map(part =>
+            stripComments(part.getText(source)).replace(/^['"]|['"]$/g, ''),
+          );
+        }
+        node.forEachChild(visit);
+      };
+      visit(source);
+      assert.ok(
+        members,
+        'TabManager.ts：找不到 showNotification 的 kind 属性签名（解析器坏了就是假绿）',
+      );
+      return members as string[];
+    };
+    assert.ok(
+      tabManagerKindMembers().includes('success'),
+      `TabManager.ts 浏览器通知的 kind 里必须仍然有 'success'（实际：${tabManagerKindMembers().join(' | ')}）—— ` +
         '那是通知分流，不是 toast',
     );
 
