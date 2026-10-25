@@ -311,6 +311,35 @@ async function main() {
     if (!ok) problems.push(`${label} —— ${detail}`);
   };
 
+  /**
+   * ── 防「静默跳过」（2026-10-25 修复轮 1）────────────────────────────────
+   *
+   * 原脚本里有一半判据包在 `if (hasBulk) { … }` / `if (found > 0) { … }` 里：
+   * **选择器一旦失效，那些判据根本不执行**，而汇总打印的是
+   * `passed / log.length` —— 分母自己缩水，**仍然显示全绿**。
+   * ⇒ 「39/39」不是一个被钉住的数。
+   *
+   * ⇒ 现在每一块都声明**它必须产出几条判据**；少一条就当场记一条红。
+   *   最后再核对总数（`EXPECTED_TOTAL`）—— 双保险。
+   */
+  // 每块必须产出的判据条数（= brief Step 9 的 7 条检查拆出来的具体判据）。
+  // 键用 ASCII：变量名不能用圈号（JS 标识符不接受 ①②③）。
+  const TOTAL = { B1: 5, B2: 4, B7: 4, B3: 7, B4: 5, B6: 5, B5: 9 };
+  const EXPECTED_TOTAL = Object.values(TOTAL).reduce((a, b) => a + b, 0);
+  const blockStart = () => log.length;
+  /** 收口一块：它必须比开始时多产出 `n` 条判据。 */
+  const expectChecks = (start, n, block) => {
+    const got = log.length - start;
+    if (got === n) return;
+    check(
+      `${block} 块的判据条数`,
+      false,
+      `本块应产出 ${n} 条，实际只有 ${got} 条（差了 ${n - got} 条）` +
+        ' —— 大概率是某个选择器失效、那条判据被 if 静默跳过了。' +
+        '「没跑」不等于「通过」。',
+    );
+  };
+
   try {
     let sw = null;
     for (let i = 0; i < 30 && !sw; i++) {
@@ -338,6 +367,7 @@ async function main() {
     // ① 锁定组恢复 ⇒ 没有任何 toast、卡片还在、窗口开了、常驻说明在
     // ══════════════════════════════════════════════════════════════════
     {
+      const startB1 = blockStart();
       await clearToasts(page);
       const before = await browserTabCount(sw);
       const disclosureBefore = await lockDisclosureOf(page, '锁定会话丙');
@@ -371,12 +401,14 @@ async function main() {
       check('①e 锁定组恢复 ⇒ 那行常驻说明还在',
         !!disclosureAfter && disclosureAfter.includes('已锁定'),
         `实际：${JSON.stringify(disclosureAfter)}`);
+      expectChecks(startB1, TOTAL.B1, '①');
     }
 
     // ══════════════════════════════════════════════════════════════════
     // ② 锁定组点开单个标签 ⇒ 没有任何 toast、那行还在、页面开了
     // ══════════════════════════════════════════════════════════════════
     {
+      const startB2 = blockStart();
       await clearToasts(page);
       const before = await browserTabCount(sw);
       const titlesBefore = await tabTitlesOf(page, '锁定会话丙');
@@ -402,12 +434,14 @@ async function main() {
         `点开前 ${titlesBefore.length} 行，点开后 ${titlesAfter.length} 行`);
       check('②d 锁定组点开单标签 ⇒ 那行常驻说明还在',
         !!disclosure && disclosure.includes('已锁定'), `实际：${JSON.stringify(disclosure)}`);
+      expectChecks(startB2, TOTAL.B2, '②');
     }
 
     // ══════════════════════════════════════════════════════════════════
     // ⑦ 锁定 → 解锁 ⇒ 没有任何 toast、那行消失（再锁回去，顺带验锁定也静默）
     // ══════════════════════════════════════════════════════════════════
     {
+      const startB7 = blockStart();
       await clearToasts(page);
       await startToastRecorder(page);
       await cardOf(page, '锁定会话丙')
@@ -439,12 +473,14 @@ async function main() {
         `实际出现了 ${toasts2.length} 条：${JSON.stringify(toasts2)}`);
       check('⑦d 锁定 ⇒ 那行常驻说明回来了',
         !!disclosure2 && disclosure2.includes('已锁定'), `实际：${JSON.stringify(disclosure2)}`);
+      expectChecks(startB7, TOTAL.B7, '⑦');
     }
 
     // ══════════════════════════════════════════════════════════════════
     // ③ 未锁定点开单个标签 ⇒ 一条中性提示 + 撤销 + 撤销后回原位
     // ══════════════════════════════════════════════════════════════════
     {
+      const startB3 = blockStart();
       await clearToasts(page);
       await startToastRecorder(page);
       await page
@@ -495,6 +531,7 @@ async function main() {
     // ④ 未锁定整组恢复 ⇒ 一条中性提示 + 撤销 + 撤销后会话回来
     // ══════════════════════════════════════════════════════════════════
     {
+      const startB4 = blockStart();
       await clearToasts(page);
       await startToastRecorder(page);
       await cardOf(page, '未锁定会话乙')
@@ -526,6 +563,7 @@ async function main() {
           names.some(n => n.includes('未锁定会话乙')), `实际列表：${JSON.stringify(names)}`);
         await page.screenshot({ path: join(OUT_DIR, '08-after-undo-group.png') });
       }
+      expectChecks(startB4, TOTAL.B4, '④');
     }
 
     // ══════════════════════════════════════════════════════════════════
@@ -535,6 +573,7 @@ async function main() {
     // —— 未锁定会话里打不开的地址也不再保存在列表中）⇒ ⑤ 跑完这条就没了。
     // ══════════════════════════════════════════════════════════════════
     {
+      const startB6 = blockStart();
       await clearToasts(page);
       await startToastRecorder(page);
       const link = page.locator('a.tab-item-title[aria-label^="本机文件"]').first();
@@ -560,12 +599,14 @@ async function main() {
         check('⑥e 那条记录还在（没被吃掉）', titles.length === 1,
           `实际 ${titles.length} 行：${JSON.stringify(titles)}`);
       }
+      expectChecks(startB6, TOTAL.B6, '⑥');
     }
 
     // ══════════════════════════════════════════════════════════════════
     // ⑤ 搜索页批量恢复 ⇒ 一条提示，四笔账的数字都在
     // ══════════════════════════════════════════════════════════════════
     {
+      const startB5 = blockStart();
       await clearToasts(page);
       const search = page.locator('input[aria-label="搜索会话名、标签标题或 URL"]');
       await search.fill('页面');
@@ -644,18 +685,38 @@ async function main() {
       }
       await search.fill('');
       await page.waitForTimeout(800);
+      expectChecks(startB5, TOTAL.B5, '⑤');
     }
 
     if (consoleErrors.length) {
       problems.push(`控制台报错 ${consoleErrors.length} 条：${consoleErrors.slice(0, 3).join(' | ')}`);
     }
 
-    writeFileSync(join(OUT_DIR, 'log.json'), JSON.stringify({ log, problems }, null, 2));
-    console.log(JSON.stringify({
+    // ── 总数必须被钉住（2026-10-25 修复轮 1）────────────────────────────
+    // 每块自己核过条数之后，这里再核一次总数：只要有一块少产出（哪怕
+    // 是别的路径漏进来的），总数就对不上 ⇒ 立刻红。
+    // ⇒ 「39/39」是一个**被断言钉住的数**，不是「分母自己缩水之后刚好相等」。
+    if (log.length !== EXPECTED_TOTAL) {
+      problems.push(
+        `判据总数不对：应产出 ${EXPECTED_TOTAL} 条，实际 ${log.length} 条` +
+          ' —— 有判据被静默跳过了（「没跑」不等于「通过」）',
+      );
+    }
+
+    const summary = {
       problems,
       passed: log.filter(l => l.ok).length,
       total: log.length,
-    }, null, 2));
+      expectedTotal: EXPECTED_TOTAL,
+    };
+    writeFileSync(join(OUT_DIR, 'log.json'), JSON.stringify({ ...summary, log }, null, 2));
+    console.log(JSON.stringify(summary, null, 2));
+
+    // ── 失败出口（2026-10-25 修复轮 1）─────────────────────────────────
+    // 原先只有 `main().catch(…)` 会 exit 1，`problems` 非空时**照样 exit 0**
+    // ⇒ 「全绿」只能靠人眼读输出。同目录 13 个 lead-verify-*.mjs 里 12 个
+    // 都是这个形状，本脚本是唯一例外 ⇒ 补上。
+    if (problems.length > 0) process.exitCode = 1;
   } finally {
     await ctx.close();
   }

@@ -133,16 +133,56 @@ describe('恢复提示：说清「开在哪个窗口」（2026-10-25）', () => 
     );
   });
 
-  it('锁定那条已经**没有文案**了（锁定路径整条静默，不许留死分支）', () => {
+  it('锁定那条已经**没有文案**了：函数签名里不许再有 locked 岔路', () => {
     // 2026-10-25「安静的成功」：锁定会话恢复后**保留在列表里** ⇒ 界面自明
     // ⇒ 锁定路径不再出声 ⇒「锁定版成功提示」成为死分支 ⇒ 已删。
     // ⇒ 这个文案函数只描述**未锁定**那条（它是被消费的那条）。
-    // 断言的是**没有 isLocked 这条岔路**（不是逐字比对某句中文）。
-    const msg = restoreGroupSuccessMessage(2);
+    //
+    // ── 2026-10-25 修复轮 1：这条断言原来是**同义反复** ──────────────────
+    //
+    // 原写法是 `assert.doesNotMatch(restoreGroupSuccessMessage(2), /仍保留在列表中/)`。
+    // 函数已经没有 `isLocked` 参数、只有一条分支 ⇒ 那句话**结构上不可能出现**
+    // ⇒ 断言恒真、零检测力：就算有人把 `isLocked` 加回来、locked 分支改说
+    // 「锁定会话不会被移除」，它照样绿。
+    // ⇒ 现在钉**签名**：参数表里只许有 `tabCount` 与 `inCurrentWindow`，
+    //   不许出现任何 locked 形状的参数；函数体里也不许再按 locked 分流。
+    const file = ts.createSourceFile(
+      'restoreFeedbackCopy.ts',
+      read('src/components/tabs/restoreFeedbackCopy.ts'),
+      ts.ScriptTarget.Latest,
+      true,
+      ts.ScriptKind.TS,
+    );
+    let decl: ts.VariableDeclaration | null = null;
+    const visit = (node: ts.Node): void => {
+      if (
+        ts.isVariableDeclaration(node) &&
+        ts.isIdentifier(node.name) &&
+        node.name.text === 'restoreGroupSuccessMessage'
+      ) {
+        decl = node;
+      }
+      node.forEachChild(visit);
+    };
+    visit(file);
+    assert.ok(decl, '找不到 restoreGroupSuccessMessage 的声明');
+
+    const init = (decl as unknown as ts.VariableDeclaration).initializer;
+    assert.ok(init && ts.isArrowFunction(init), 'restoreGroupSuccessMessage 必须还是箭头函数');
+    const params = (init as ts.ArrowFunction).parameters;
+    const paramNames = params.map(p => p.name.getText(file));
+    assert.deepEqual(
+      paramNames,
+      ['tabCount', 'inCurrentWindow'],
+      '签名只许是 (tabCount, inCurrentWindow) —— 多一个 locked 形状的参数，' +
+        '就说明「锁定那条静默」这件事被悄悄改回去了',
+    );
+    // 参数类型里也不许出现 locked（防止 `isLocked: boolean` 换个名字复活）
+    const signatureText = params.map(p => p.getText(file)).join(', ');
     assert.doesNotMatch(
-      msg,
-      /仍保留在列表中/,
-      '成功提示只描述未锁定那条（锁定那条已静默）—— 留着就是一条死分支'
+      signatureText,
+      /locked/i,
+      '参数里不许出现任何 locked 形状的东西（锁定那条的成功提示已随死分支删除）',
     );
   });
 });

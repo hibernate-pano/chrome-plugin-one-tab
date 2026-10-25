@@ -790,9 +790,27 @@ describe('19 处裁决：删除全部的条数对不上时必须说出来', () =
 const TAB_GROUP = 'src/components/tabs/TabGroup.tsx';
 const SEARCH_LIST = 'src/components/search/SearchResultList.tsx';
 
-/** 解析一个 .tsx 源文件（按 TSX 解析，JSX 与泛型都不会误判）。 */
+/**
+ * 解析一个 .tsx 源文件（按 TSX 解析，JSX 与泛型都不会误判）。
+ *
+ * ── 2026-10-25 修复轮 1：**先剥注释再解析** ─────────────────────────────
+ *
+ * 原来直接解析原始源码 ⇒ AST 的 `getText()` 会把注释一起带出来 ⇒
+ * 本文件那几条 `assert.match(分支, /showRestoreError\(/)` /
+ * `doesNotMatch(分支, /showToast\(/)` 理论上能被**注释里的同形文本**满足或误伤
+ * （本仓「守卫钉的是注释不是行为」那一类假绿）。
+ *
+ * 剥注释后再解析，结构不变（顶层语句数、`handleOpenTab` / `consumeSession` /
+ * `handleToggleLock` 这些声明都还在 —— 已实测），但判据只看**真的会跑的代码**。
+ */
 const parseTsx = (rel: string): ts.SourceFile =>
-  ts.createSourceFile(rel, read(rel), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+  ts.createSourceFile(
+    rel,
+    stripComments(read(rel)),
+    ts.ScriptTarget.Latest,
+    true,
+    ts.ScriptKind.TSX,
+  );
 
 /**
  * 找出某个调用（可按**整段调用文本**里的标记再筛一层）。
@@ -991,7 +1009,9 @@ const isErrorTypeOption = (call: ts.CallExpression): boolean => {
 describe('Task 3：锁定组恢复静默（但成功门与失败出口一个字都没动）', () => {
   for (const file of [TAB_GROUP, SEARCH_LIST]) {
     it(`${file}：点开单标签的锁定分支静默`, () => {
-      const src = read(file);
+      // 剥注释后再抽分支：注释里的 `showRestoreError(` / `showToast(` 不算数
+      // （2026-10-25 修复轮 1 —— 否则守卫钉的是注释，不是行为）。
+      const src = code(file);
       const branch = extractLockedBranch(src);
       assert.ok(branch, `${file}：应能找到 handleOpenTab 里的锁定分支`);
       assert.doesNotMatch(
@@ -1002,7 +1022,9 @@ describe('Task 3：锁定组恢复静默（但成功门与失败出口一个字�
     });
 
     it(`${file}：锁定分支的成功门与失败出口仍在（静默的是成功，不是失败）`, () => {
-      const src = read(file);
+      // 剥注释后再抽分支：注释里的 `showRestoreError(` / `showToast(` 不算数
+      // （2026-10-25 修复轮 1 —— 否则守卫钉的是注释，不是行为）。
+      const src = code(file);
       const branch = extractLockedBranch(src);
       assert.ok(branch, `${file}：应能找到 handleOpenTab 里的锁定分支`);
       assert.match(
@@ -1018,7 +1040,9 @@ describe('Task 3：锁定组恢复静默（但成功门与失败出口一个字�
     });
 
     it(`${file}：锁定分支不删行（那条记录还在 ⇒ 所以不必说）`, () => {
-      const src = read(file);
+      // 剥注释后再抽分支：注释里的 `showRestoreError(` / `showToast(` 不算数
+      // （2026-10-25 修复轮 1 —— 否则守卫钉的是注释，不是行为）。
+      const src = code(file);
       const branch = extractLockedBranch(src);
       assert.ok(branch, `${file}：应能找到 handleOpenTab 里的锁定分支`);
       assert.doesNotMatch(
@@ -1029,25 +1053,72 @@ describe('Task 3：锁定组恢复静默（但成功门与失败出口一个字�
     });
   }
 
-  it('锁定 ⇒ 卡片还在：consumeSession 对锁定组早退（不 dispatch 删除）', () => {
-    const src = read(TAB_GROUP);
-    const at = src.indexOf('const consumeSession = () => {');
-    assert.ok(at > 0, '应能找到 consumeSession');
-    const body = src.slice(at, src.indexOf('\n  };', at));
-    const lockAt = body.indexOf('if (group.isLocked)');
-    const deleteAt = body.indexOf('dispatch(deleteGroup(');
-    assert.ok(lockAt >= 0, '锁定早退必须还在（锁定组恢复后卡片还在）');
+  it('锁定 ⇒ 卡片还在：consumeSession 对锁定组**真的早退**（return，不 dispatch 删除）', () => {
+    // ── 2026-10-25 修复轮 1：这条守卫原来抓不住真正的破口 ──────────────────
+    //
+    // 原实现有三处漏：
+    //   ① 只用 `src.indexOf('\n  };', at)` 切函数体 —— 那个锚点在 TabGroup.tsx 里
+    //      匹配不到 `consumeSession` 的真实结尾（真实结尾是 4 空格 `    };`），
+    //      切出来的其实是「从 consumeSession 到文件末尾」⇒ `deleteAt > lockAt`
+    //      会被这段范围里**任何**一处 `dispatch(deleteGroup(` 满足。
+    //   ② 从没断言早退那一支**真的 return** —— 把 `return;` 删掉，锁定组于是
+    //      穿透到 `dispatch(deleteGroup(group.id))`（**锁定组真的会被消费**），
+    //      三条断言照样全绿。
+    //   ③ 早退那一支用 `body.indexOf('}', lockAt)` 切 —— 那是**代码里第一个 `}`**，
+    //      不是这一支的结尾。
+    //
+    // ⇒ 现在全部改用 AST：取 `consumeSession` 的**函数节点**，再看它函数体里
+    //   那层 `if (group.isLocked)` 的**那一支**（then 分支），断言它末尾有
+    //   `return;`，且这一支里没有任何 `dispatch(...)`。
+    const source = parseTsx(TAB_GROUP);
+    const fn = initializerOf(source, 'consumeSession');
+    assert.ok(fn, '应能找到 consumeSession');
     assert.ok(
-      deleteAt > lockAt,
-      '锁定早退必须排在删除之前 —— 这才是「卡片还在」的根据',
+      ts.isArrowFunction(fn!),
+      'consumeSession 必须还是一个函数（不然下面取不到它的函数体）',
     );
-    // 早退那一支里不许有 dispatch
-    const early = body.slice(lockAt, body.indexOf('}', lockAt));
+    const fnBody = (fn as ts.ArrowFunction).body;
+    assert.ok(ts.isBlock(fnBody), 'consumeSession 必须是块体（要能 return）');
+
+    // 函数体里**第一层**的那个 `if (group.isLocked)`
+    const lockIf = fnBody.statements.find(
+      (statement): statement is ts.IfStatement =>
+        ts.isIfStatement(statement) &&
+        /group\s*\.\s*isLocked/.test(statement.expression.getText(source)),
+    );
+    assert.ok(lockIf, '锁定早退必须还在（锁定组恢复后卡片还在）');
+
+    // ① 早退那一支**真的 return**（这一条才是「卡片还在」的根据）
+    const thenText = lockIf!.thenStatement.getText(source);
+    assert.match(
+      thenText,
+      /\breturn\b/,
+      '锁定那一支必须**真的 return** —— 少了它，锁定组会穿透到下面的 dispatch，' +
+        '锁定组就真的会被消费（那正是「卡片还在」这条根据的破口）',
+    );
     assert.doesNotMatch(
-      early,
+      thenText,
       /dispatch\(/,
-      '锁定那一支必须直接返回（一条记录都不删）',
+      '锁定那一支不许有 dispatch（一条记录都不删）',
     );
+
+    // ② 删除调用必须在 if **之外**（也就是「锁定那一支走不到它」）
+    //
+    // 用 AST 祖先链判，不用文本包含：文本包含会被「同一段源码出现两次」
+    // 或「注释里也写了这句」骗过去。
+    const deleteCalls = callsIn(fnBody, 'dispatch');
+    assert.ok(deleteCalls.length > 0, '未锁定那条必须真的 dispatch 删除（否则恢复 = 不消费）');
+    for (const call of deleteCalls) {
+      let ancestor: ts.Node | undefined = call.parent;
+      while (ancestor && ancestor !== fnBody) {
+        assert.notEqual(
+          ancestor,
+          lockIf!.thenStatement,
+          'dispatch 不许落在锁定那一支里 —— 锁定组恢复后卡片必须还在',
+        );
+        ancestor = ancestor.parent;
+      }
+    }
   });
 
   for (const file of [TAB_GROUP, SEARCH_LIST]) {
@@ -1198,13 +1269,16 @@ describe('Task 3：锁定说明常驻在卡片上 + 解锁静默', () => {
   });
 
   it('旧的「锁定/解锁」toast 文案已经没了（改由卡片常驻行承担）', () => {
+    // 剥注释后再判：这两个文件的**注释里**本来就会提到 `lockToggleMessage`
+    // （「原先这里调的是 lockToggleMessage」）⇒ 拿原始源码判 `doesNotMatch`
+    // 会被注释**误伤**成假红（2026-10-25 修复轮 1）。
     assert.doesNotMatch(
-      read(TAB_GROUP),
+      code(TAB_GROUP),
       /lockToggleMessage/,
       '锁定提示不再是一条 toast（它常驻在卡片上）',
     );
     assert.doesNotMatch(
-      read('src/components/tabs/lockFeedbackCopy.ts'),
+      code('src/components/tabs/lockFeedbackCopy.ts'),
       /lockToggleMessage/,
       'lockToggleMessage 必须删掉（两个分支都不再需要它）',
     );

@@ -34,6 +34,10 @@ import {
 
 const read = (rel: string) => readFileSync(new URL(`../${rel}`, import.meta.url), 'utf8');
 
+/** 去注释后的源码：注释里提到一个符号不等于生产在用它。 */
+const stripComments = (src: string): string =>
+  src.replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/(^|[^:])\/\/.*$/gm, '$1');
+
 /**
  * 抽出 `handleOpenTab` 里 `if (group.isLocked) { … }` 这一支的源码。
  *
@@ -291,7 +295,12 @@ describe('恢复成功反馈真的接到了两个界面', () => {
       'src/components/search/SearchResultList.tsx',
       'src/components/tabs/TabGroup.tsx',
     ]) {
-      const src = read(file);
+      // 剥注释后再抽分支：注释里也会出现 `showRestoreError(` / `showToast(`
+      // （本任务就在锁定分支里写了一整段解释）⇒ 拿原始源码判
+      // `doesNotMatch(/showToast\(/)` 会被注释误伤成假红，
+      // `match(/showRestoreError\(/)` 又能被注释满足成假绿。
+      // （2026-10-25 修复轮 1，与 tests/guards/quietSuccess.test.ts 同口径。）
+      const src = stripComments(read(file));
       const branch = extractLockedBranch(src);
       assert.ok(branch, `${file}：应能找到 handleOpenTab 里的锁定分支`);
       assert.doesNotMatch(
