@@ -15,6 +15,18 @@
 // ② status：原来这个分支**完全没有退出码逻辑**，token 过期回 401 也 exit 0。
 // ③ publish：HTTP 2xx 还要看商店自己的 status 字段；空草稿 publish 是静默 no-op。
 //
+// ── 2026-10-24（提审 1.28.3 时真机踩到）：守卫回放的形状必须是**真机形状** ──
+//
+// 旧用例把「草稿 uploadState=NOT_FOUND」当成「空草稿」，于是要求 publish 拒绝。
+// 真机上：**上传成功之后**，草稿的 uploadState **也是 NOT_FOUND**（连续 5 次
+// GET items/{id}?projection=DRAFT 全是它；publish 成功之后还是它）⇒
+// 它区分不了「空草稿」与「草稿里正躺着刚上传好的包」。
+// ⇒ 照着「我们以为的形状」写的闸门，**把真发布拦下来了**（今天就拦了一次：
+//    草稿明明是 1.28.3，脚本却拒绝 publish）。
+// ⇒ 现在：uploadState 不再当闸门（FAILURE / IN_PROGRESS 才拒绝），
+//    闸门换成 crxVersion（必须等于期望版本），且**期望版本必填**。
+//    本文件下面两条用例回放的**就是真机形状**（NOT_FOUND + 对的 crxVersion）。
+//
 // ── 为什么值得单独一个文件 ────────────────────────────────────────────────
 // 「提交审核」是发版流程里最关键的一步（upload 只改草稿，publish 才真提交）。
 // 它一旦假绿，我会把「没提交」报成「已发布」—— 而这正是本仓库反复吃过的
@@ -229,7 +241,7 @@ describe('发版结果自证：脚本不得假绿', () => {
   // ── publish ───────────────────────────────────────────────────────────────
 
   it('publish：真回包（status: ["OK"]）⇒ exit 0 且说「已提交审核」', () => {
-    const r = runScript('publish', [], {
+    const r = runScript('publish', ['1.27.0'], {
       item: { body: JSON.stringify({ crxVersion: '1.27.0', uploadState: 'SUCCESS' }), status: 200 },
       publish: { body: JSON.stringify({ status: ['OK'], statusDetail: ['OK.'] }), status: 200 },
     });
@@ -238,7 +250,7 @@ describe('发版结果自证：脚本不得假绿', () => {
   });
 
   it('publish：2xx 但 status 里没有 OK ⇒ 必须 exit 1（否则就是假绿）', () => {
-    const r = runScript('publish', [], {
+    const r = runScript('publish', ['1.27.0'], {
       item: { body: JSON.stringify({ crxVersion: '1.27.0', uploadState: 'SUCCESS' }), status: 200 },
       publish: { body: JSON.stringify({ status: ['FAILED'], statusDetail: ['nope.'] }), status: 200 },
     });
@@ -247,7 +259,7 @@ describe('发版结果自证：脚本不得假绿', () => {
   });
 
   it('publish：2xx 但回包里根本没有 status 字段 ⇒ 必须 exit 1（无法自证 ≠ 成功）', () => {
-    const r = runScript('publish', [], {
+    const r = runScript('publish', ['1.27.0'], {
       item: { body: JSON.stringify({ crxVersion: '1.27.0', uploadState: 'SUCCESS' }), status: 200 },
       publish: { body: JSON.stringify({ somethingElse: true }), status: 200 },
     });
@@ -256,7 +268,7 @@ describe('发版结果自证：脚本不得假绿', () => {
   });
 
   it('publish：HTTP 4xx ⇒ exit 1（既有行为，不能被这次改动挤掉）', () => {
-    const r = runScript('publish', [], {
+    const r = runScript('publish', ['1.27.0'], {
       item: { body: JSON.stringify({ crxVersion: '1.27.0', uploadState: 'SUCCESS' }), status: 200 },
       publish: {
         body: JSON.stringify({ error: { code: 400, message: 'Publish condition not met' } }),
@@ -267,28 +279,57 @@ describe('发版结果自证：脚本不得假绿', () => {
     assert.doesNotMatch(r.out, /已提交审核/, '失败时绝不能打印「已提交审核」');
   });
 
-  it('publish：空草稿（uploadState=NOT_FOUND）⇒ 必须 exit 1，且**根本不该调 publish**', () => {
+  it('publish：**不带期望版本** ⇒ 必须 exit 1，且**根本不该调 publish**', () => {
+    // 2026-10-24 改的口径：判断「草稿里有没有可发的包」不再用 uploadState
+    // （真机上它回 NOT_FOUND 时草稿里正躺着刚上传好的包），改用 crxVersion。
+    // 而 crxVersion 要跟「期望版本」比 ⇒ **期望版本必填**：
+    // 不知道要发哪一版，就不许发（草稿里可能是上一版，也可能是空草稿）。
     const r = runScript('publish', [], {
-      item: { body: JSON.stringify({ uploadState: 'NOT_FOUND' }), status: 200 },
+      item: { body: JSON.stringify({ crxVersion: '1.27.0', uploadState: 'NOT_FOUND' }), status: 200 },
       publish: { body: JSON.stringify({ status: ['OK'] }), status: 200 },
     });
-    assertCleanFailure(r, /NOT_FOUND/, '空草稿 no-op');
-    assert.doesNotMatch(r.out, /已提交审核/, 'no-op 时绝不能打印「已提交审核」');
-    // 关键：不只是「报错了」，而是**商店那头根本没收到 publish**。
-    // 只断言退出码的话，一个「先 publish 再报错」的实现也能蒙混过关。
+    assertCleanFailure(r, /期望发布的版本/, '不带期望版本');
+    assert.doesNotMatch(r.out, /已提交审核/, '没给版本时绝不能打印「已提交审核」');
     assert.equal(
       r.called.filter((u) => u.includes('/publish')).length,
       0,
-      '空草稿时不该向商店发出 publish 请求',
+      '没给期望版本时不该向商店发出 publish 请求',
     );
   });
 
+  it('publish：**真机形状**（草稿 uploadState=NOT_FOUND + crxVersion 是要发的那一版）⇒ 照常提交', () => {
+    // 2026-10-24 真机实测（提审 1.28.3）：
+    //   upload → 回包 uploadState=SUCCESS
+    //   GET item?projection=DRAFT → {crxVersion:"1.28.3", uploadState:"NOT_FOUND"}
+    //   publish → 商店回 {"status":["OK"]}
+    // ⇒ item 上的 uploadState 在「草稿里正躺着刚上传好的包」时**也是 NOT_FOUND**
+    //   （空草稿时同样是 NOT_FOUND ⇒ 这个字段区分不了两者）。
+    // ⇒ 旧守卫回放「NOT_FOUND = 空草稿」这个**我们以为的形状**，把真发布拦了下来。
+    //   现在改成：uploadState 不再当闸门，闸门是 crxVersion。
+    const r = runScript('publish', ['1.28.3'], {
+      item: { body: JSON.stringify({ crxVersion: '1.28.3', uploadState: 'NOT_FOUND' }), status: 200 },
+      publish: { body: JSON.stringify({ status: ['OK'], statusDetail: ['OK.'] }), status: 200 },
+    });
+    assert.equal(r.code, 0, `应 exit 0，实际 ${r.code}；err=${r.err}`);
+    assert.equal(r.called.filter((u) => u.includes('/publish')).length, 1, '应当发出一次 publish 请求');
+    assert.match(r.out, /已提交审核/, '商店说 OK 时应报出「已提交审核」');
+  });
+
   it('publish：草稿上一次上传失败（uploadState=FAILURE）⇒ 必须 exit 1', () => {
-    const r = runScript('publish', [], {
-      item: { body: JSON.stringify({ uploadState: 'FAILURE' }), status: 200 },
+    const r = runScript('publish', ['1.27.0'], {
+      item: { body: JSON.stringify({ crxVersion: '1.26.1', uploadState: 'FAILURE' }), status: 200 },
       publish: { body: JSON.stringify({ status: ['OK'] }), status: 200 },
     });
     assertCleanFailure(r, /FAILURE/, '草稿上传失败');
+    assert.equal(r.called.filter((u) => u.includes('/publish')).length, 0, '不该发出 publish 请求');
+  });
+
+  it('publish：商店还在处理上一次上传（uploadState=IN_PROGRESS）⇒ 必须 exit 1', () => {
+    const r = runScript('publish', ['1.27.0'], {
+      item: { body: JSON.stringify({ crxVersion: '1.27.0', uploadState: 'IN_PROGRESS' }), status: 200 },
+      publish: { body: JSON.stringify({ status: ['OK'] }), status: 200 },
+    });
+    assertCleanFailure(r, /IN_PROGRESS/, '上传还在处理中');
     assert.equal(r.called.filter((u) => u.includes('/publish')).length, 0, '不该发出 publish 请求');
   });
 
@@ -311,7 +352,7 @@ describe('发版结果自证：脚本不得假绿', () => {
   });
 
   it('publish：发布前自检拿不到草稿状态（HTTP 500）⇒ 必须 exit 1，且不该发出 publish', () => {
-    const r = runScript('publish', [], {
+    const r = runScript('publish', ['1.27.0'], {
       item: { body: 'oops', status: 500 },
       publish: { body: JSON.stringify({ status: ['OK'] }), status: 200 },
     });

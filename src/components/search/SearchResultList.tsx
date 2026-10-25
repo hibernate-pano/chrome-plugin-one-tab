@@ -988,7 +988,7 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({
         <SafeFavicon src={tab.favicon} alt="" className="tab-item-favicon" />
       )}
 
-      <div className="flex-1 min-w-0 flex items-center gap-3">
+      <div className="tab-item-body flex-1 min-w-0 flex items-stretch gap-3 self-stretch">
         <a
           href="#"
           /* ── 2026-10-24 界面回退到 v1.25.1：域名回到行尾（右对齐）──────
@@ -1018,7 +1018,7 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({
           {tab.pinned && <PinIcon />}
         </a>
         {/* URL 显示形态统一走 @/utils/sessionPresentation（与列表页同一个函数，别再各写一份） */}
-        <span className="tab-item-url hidden sm:block">{getDisplayUrl(tab.url)}</span>
+        <span className="tab-item-url hidden sm:block self-center">{getDisplayUrl(tab.url)}</span>
       </div>
 
       {/* 锁定会话不渲染删除：锁定承诺「防误删」，而删除不可撤销（无回收站）。

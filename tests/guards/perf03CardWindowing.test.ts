@@ -37,8 +37,12 @@ import { measureNear } from '@/hooks/useNearViewport';
 import { cardHeightFor } from '@/components/tabs/cardMetrics';
 
 /** 真机实测：默认主题、视口 1280×800（scripts/perf03-card-window-probe.mjs）。 */
-const MEASURED_HEADER_PX = 53;
-const MEASURED_STRIDE_PX = 58;
+const MEASURED_HEADER_PX = 41;
+/**
+ * 真实行距 37px（2026-10-24 标签行收紧后：行盒 37px = 内容 36 + 下边框 1，
+ * 无行间距）。采样脚本：scripts/_measure-tab-row-density.mjs。
+ */
+const MEASURED_STRIDE_PX = 37;
 
 const ORIGINAL_IO = (globalThis as Record<string, unknown>)['IntersectionObserver'];
 
@@ -154,7 +158,7 @@ describe('PERF-03：远离视口的卡只留等高占位', () => {
     //
     // 实测样本（真 Chrome + 真实产物，scripts/perf03-card-window-probe.mjs，
     // 2026-10-24，默认主题、视口 1280×800）：
-    //   卡头 53px、真实行距 58px（行盒 54 + 下外边距 4）、边框 2px。
+    //   卡头 41px、真实行距 37px（行盒 37 = 内容 36 + 下边框 1）、边框 2px。
     const expected = new Set(
       groups.map(g => cardHeightFor(g.tabs.length, MEASURED_HEADER_PX, MEASURED_STRIDE_PX, false))
     );
@@ -194,7 +198,8 @@ describe('PERF-03：远离视口的卡只留等高占位', () => {
 
     const cardAt = (top: number) =>
       ({
-        getBoundingClientRect: () => ({ top, bottom: top + 345 }),
+        // 5 行的真卡高 = 2 边框 + 41 卡头 + 5×37 轨道 = 228（2026-10-24 实测）
+        getBoundingClientRect: () => ({ top, bottom: top + 228 }),
       }) as unknown as Element;
 
     // 视口 800 + 提前量 600 ⇒ 1400 以内的卡算「近」。

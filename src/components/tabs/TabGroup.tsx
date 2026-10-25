@@ -101,18 +101,21 @@ const DeleteIcon = () => (
 );
 
 /**
- * 「在新窗口恢复整个会话」—— 窗口框 + **穿出框外**的箭头。
+ * 「在新窗口恢复整个会话」—— 窗口框 + **穿出框外**的斜箭头。
  *
- * 【v1.25.1 的画法，2026-10-24 恢复】
- * 第 42 轮审计 U-10 曾把两枚「打开」图标拆成两种基础形状
- * （本图标 = 框的右上角开了缺口、箭头探出框外；另一个 = 闭合的框 +
- * 框内箭头），让它们遮住颜色也仍可区分。产品负责人 2026-10-24 要求
- * 界面回到 v1.25.1 ⇒ 两枚图标恢复成 v1.25.1 的画法
- * （本图标 = 框 + 一笔连出去的箭头）。
+ * 形状语义：**箭头从框里出去** ⇒ 标签页被送到**另一扇窗**。
+ * 框的右上角因此是「缺口」，箭头正好从缺口出去（不是压在框线上）。
  *
- * 主次仍然分得开，**但不靠形状**而靠**墨色**：这颗是 accent 墨色
- * （tab-group-action-accent），「在当前窗口打开」是中性描边
- * —— 见 JSX 里那颗按钮的 class。
+ * ── 2026-10-25：两枚图标重新按**形状**分开（产品负责人：「经常误操作」）──
+ * 2026-10-24 曾为了「回到 v1.25.1」把两枚图标画得几乎一样
+ * （本图标 = 框 + 一笔连出去的斜箭头；另一个 = 同一个框 + 右上角独立一笔箭头）
+ * ⇒ 16px 下遮住颜色就分不出，守卫里「形状可分」那条断言也被一起退掉了。
+ *
+ * 产品负责人 2026-10-25 的原话：「目前这两个按钮外观相似，导致我经常误操作」
+ * ⇒ **本图标的画法保持不变**（它本来就是「出去」），改的是**另一枚**：
+ * 「在当前窗口打开」现在画成「闭合的框 + 框内一支向右的箭头」
+ * （见 OpenAllInPlaceIcon）—— 一枚**在框内**、一枚**出框外**，
+ * 遮住颜色也分得开。
  */
 const OpenAllIcon = () => (
   <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
@@ -121,21 +124,24 @@ const OpenAllIcon = () => (
 );
 
 /**
- * 「在当前窗口打开」—— 窗口框 + 右上角**独立一笔**的箭头。
+ * 「在当前窗口打开」—— 闭合的窗口框 + **框内**一支向右的箭头。
  *
- * ── 2026-10-24：回到 v1.25.1 的画法 ──────────────────────────────────────
- * 第 42 轮审计 U-10 把这两枚图标拆成「开口框 + 出界箭头」与
- * 「闭合框 + 框内箭头」两种轮廓（遮住颜色也能分）。产品负责人 2026-10-24
- * 要求界面回到 v1.25.1 ⇒ 这里恢复 v1.25.1 的画法：
- * 同一个闭合框，箭头**独立成一条 path** 落在右上角。
- * ⇒ 两枚图标在 16px 下又变得很接近（v1.25.1 就是这样的）。
- * 这是**产品决定**，不是疏忽：守卫 sessionCardActions.test.ts
- * 里钉「两枚图标形状可分」的那条断言已按同一理由退掉，
- * 改由「墨色分主次」那条守住（见 OpenAllIcon 的注释）。
+ * 形状语义：**箭头留在框里** ⇒ 标签页被放进**这扇窗**（当前窗口）。
+ * 与 OpenAllIcon 正好相反：一枚**框内**、一枚**出框外**
+ * ⇒ 16px 下遮住颜色也分得开
+ * （产品负责人 2026-10-25：「外观相似，导致我经常误操作」）。
+ *
+ * 这正是第 42 轮审计 U-10 当初拆出来的第二种基础形状
+ * （「闭合的框 + 框内箭头」），2026-10-24 随「回到 v1.25.1」被退掉，
+ * 2026-10-25 按产品负责人的误操作反馈**恢复**，并且把箭头画得更实
+ * （旧版那支右上角的小箭头太轻，16px 下还是会被误认）。
+ *
+ * 命中区不受影响：按钮本体仍是 36×36（btn-icon），图标只画 16×16。
  */
 const OpenAllInPlaceIcon = () => (
   <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-    <path strokeLinecap="round" strokeLinejoin="round" d="M13.5 6H5.25A2.25 2.25 0 003 8.25v10.5A2.25 2.25 0 005.25 21h10.5A2.25 2.25 0 0018 18.75V10.5M21 3v5.25M21 3h-5.25M21 3l-7.5 7.5" />
+    <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 6H5.25A2.25 2.25 0 003 8.25v10.5A2.25 2.25 0 005.25 21h10.5A2.25 2.25 0 0018 18.75V8.25A2.25 2.25 0 0015.75 6z" />
+    <path strokeLinecap="round" strokeLinejoin="round" d="M6.75 13.5h7m0 0l-3-3m3 3l-3 3" />
   </svg>
 );
 
@@ -831,9 +837,11 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(
    * 面板 portal 到 `document.body` 末尾 ⇒ DOM 序在所有卡片之后 ⇒
    * 从 summary 按 Tab 要穿过整个列表才进得去（实测 4 标签会话 16 次 Tab、
    * 15 标签会话 37 次 Tab）。这不是「Tab 序不理想」，是**功能不可达**：
-   * 窄屏（<640px）下「重命名 / 锁定 / 删除会话」只存在于这个菜单里
-   * （那三颗宽屏按钮都是 `hidden sm:inline-flex`）⇒ 菜单键盘不可达
-   * = 这三个功能在窄屏**完全无法使用**。
+   * 窄屏（<640px）下「重命名 / 锁定 / 删除会话 / 在新窗口恢复」只存在于
+   * 这个菜单里（那四颗宽屏按钮都是 `hidden sm:inline-flex`）⇒ 菜单键盘不可达
+   * = 这四个功能在窄屏**完全无法使用**。
+   * （2026-10-25：主操作换成「在当前窗口打开」后，它宽窄屏都常驻，
+   *  收进菜单的四颗变成了「在新窗口恢复 / 重命名 / 锁定 / 删除」。）
    *
    * 为什么不把面板搬回卡内（那样 Tab 序自然就对了）：
    * 实测那样会**破坏菜单** —— 外层 wrapper 带 `content-visibility: auto`
@@ -1247,17 +1255,30 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(
          * 到卡片之外，且层级高于标签列表。
          */}
         <div className="relative z-30 flex items-center gap-0.5 sm:gap-1 opacity-100 transition-all duration-200 ease-out flex-shrink-0">
-          {/* 恢复全部（新窗口）—— 核心动作，窄屏也常驻。
+          {/* 在当前窗口打开 —— **第一颗**，也是产品负责人 2026-10-25
+              点名「我主要使用」的那个动作。
+
+              ── 2026-10-25：两颗「打开」按钮换位 + 图标按形状分开 ──────────
+              产品负责人的原话：「请将『从当前窗口打开所有标签页』和
+              『在新窗口打开所有标签页』这两个按钮的位置互换，并对它们的
+              icon 进行区分，使两者看起来有所区别。目前这两个按钮外观相似，
+              导致我经常误操作。我主要使用『从当前窗口打开所有标签页』」。
+
+              ⇒ 三件事一起改（缺一件都还会误操作）：
+              ① **位置**：常用的那颗排到前面（操作区最左）。
+              ② **形状**：本图标 = 闭合的框 + 框内一支向右的箭头（**在框内**）；
+                 「在新窗口」那枚 = 框 + 穿出框外的斜箭头（**出框外**）。
+                 ⇒ 遮住颜色也分得开（守卫 U-10 现在钉的就是这个）。
+              ③ **墨色**：accent（`tab-group-action-accent`）跟着**主操作**走
+                 —— 主操作是谁，由产品负责人说，不由界面惯例说。
 
               ── 2026-10-24：回到 v1.25.1 的长相 ────────────────────────────
-              第 42 轮审计 U-10 给这颗按钮加了 **accent 实底**（.theme-cta），
-              让它成为一屏卡里唯一的实心按钮。产品负责人 2026-10-24 要求界面
-              回到 v1.25.1 ⇒ 恢复成 v1.25.1 的做法：**accent 墨色的描边图标**
+              第 42 轮审计 U-10 曾给「新窗口」那颗加 **accent 实底**
+              （.theme-cta），让它成为一屏卡里唯一的实心按钮。产品负责人
+              2026-10-24 要求界面回到 v1.25.1 ⇒ 恢复成 **accent 墨色的描边图标**
               （`theme-btn-hover` + `tab-group-action-accent`），不加实底。
-
-              主次仍然在：**墨色**分主次（这颗是 accent，另一个「在当前窗口
-              打开」是中性描边）—— 形状不再分主次（见 OpenAllIcon 的注释）。
-              守卫 sessionCardActions.test.ts 的 U-10 已按同一口径改判。
+              2026-10-25 只把 accent 墨色**换到主操作那枚**（在当前窗口打开），
+              样式形态（描边 + hover）不变。
 
               ── 2026-10-22 审计 U-18（两套 tooltip 节奏）────────────────
               原生 `title=` 换成仓里的 <Tooltip>（300ms、样式可控、
@@ -1277,31 +1298,36 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(
 
               aria-label 也带后果：读屏用户**看不到** tooltip。 */}
           <Tooltip
-            content={`在新窗口恢复整个会话（${restoreOutcomeSentence(group.isLocked)}）`}
-          >
-            <button
-              onClick={handleOpenAllTabs}
-              className="btn-icon theme-btn-hover tab-group-action-accent micro-interaction-button"
-              aria-label={`在新窗口恢复整个会话，共 ${group.tabs.length} 个标签页（${restoreOutcomeSentence(group.isLocked)}）`}
-            >
-              <OpenAllIcon />
-            </button>
-          </Tooltip>
-
-          {/* 在当前窗口打开 —— 宽屏常驻，窄屏收进「更多」。
-              Tooltip 的包装层负责窄屏隐藏（`hidden sm:inline-flex`）——
-              包装层 display:none 时按钮与提示条一起消失，不会在窄屏
-              留下一个 0 宽的 flex 项（那会让操作区多出一道空隙）。 */}
-          <Tooltip
             content={`在当前窗口打开整个会话（标签会加到当前窗口；${restoreOutcomeSentence(group.isLocked)}）`}
-            className="hidden sm:inline-flex"
           >
             <button
               onClick={handleOpenAllTabsInCurrentWindow}
-              className="btn-icon theme-btn-hover micro-interaction-button"
+              className="btn-icon theme-btn-hover tab-group-action-accent micro-interaction-button"
               aria-label={`在当前窗口打开整个会话，共 ${group.tabs.length} 个标签页（${restoreOutcomeSentence(group.isLocked)}）`}
             >
               <OpenAllInPlaceIcon />
+            </button>
+          </Tooltip>
+
+          {/* 在新窗口恢复整个会话 —— 第二颗，中性描边。
+
+              ⚠️ 2026-10-25：它现在排在「在当前窗口打开」**后面**，
+              也不再是 accent —— 主操作是「在当前窗口打开」
+              （产品负责人：「我主要使用『从当前窗口打开所有标签页』」）。
+              形状上它是「箭头穿出框外」，与前一颗的「箭头留在框内」相反。
+
+              ── 2026-10-22 审计 U-18（两套 tooltip 节奏）────────────────
+              见上面那颗按钮的同一段说明。 */}
+          <Tooltip
+            content={`在新窗口恢复整个会话（${restoreOutcomeSentence(group.isLocked)}）`}
+            className="hidden sm:inline-flex"
+          >
+            <button
+              onClick={handleOpenAllTabs}
+              className="btn-icon theme-btn-hover micro-interaction-button"
+              aria-label={`在新窗口恢复整个会话，共 ${group.tabs.length} 个标签页（${restoreOutcomeSentence(group.isLocked)}）`}
+            >
+              <OpenAllIcon />
             </button>
           </Tooltip>
 
@@ -1419,15 +1445,19 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(
             className="w-44 rounded-lg border theme-border-default theme-bg-elevated theme-shadow-panel py-1"
             onClick={e => e.stopPropagation()}
           >
+            {/* ── 2026-10-25：菜单项跟着「主操作常驻」一起换 ────────────────
+                「在当前窗口打开整个会话」升为主操作（卡头第一颗 + accent 墨色，
+                宽窄屏都常驻）⇒ 收进「更多」的不再是它，而是次要的
+                「在新窗口恢复整个会话」。窄屏用户仍然两个入口都够得着。 */}
             <button
               role="menuitem"
               onClick={() => {
                 closeMoreMenu();
-                handleOpenAllTabsInCurrentWindow();
+                handleOpenAllTabs();
               }}
               className="w-full px-3 py-2 text-left text-sm theme-text-secondary transition-colors hover:theme-btn-hover"
             >
-              在当前窗口打开
+              在新窗口恢复整个会话
             </button>
             {!group.isLocked && (
               <button

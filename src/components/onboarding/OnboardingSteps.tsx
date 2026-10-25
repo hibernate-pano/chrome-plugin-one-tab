@@ -54,7 +54,7 @@ export const WelcomeStep: React.FC<{ version: string }> = ({ version }) => (
       <div className="onboarding-feature-card">
         <div className="onboarding-feature-icon" aria-hidden="true">🚀</div>
         <div className="onboarding-feature-title">恢复</div>
-        <div className="onboarding-feature-desc">默认在新窗口里继续工作</div>
+        <div className="onboarding-feature-desc">默认在当前窗口里继续工作</div>
       </div>
     </div>
   </div>
@@ -200,7 +200,7 @@ export const RestoreStep: React.FC = () => (
     </div>
     <h2 tabIndex={-1} className="onboarding-title">恢复时继续，而不是重来</h2>
     <p className="onboarding-description">
-      恢复整个会话时，会默认在新窗口中打开
+      恢复整个会话时，默认用「在当前窗口打开整个会话」直接加到当前窗口
       <br />
       {/* ── 2026-10-19 审计 I-6：原文与真实行为相反 ──────────────────────
        * 原文「需要时也可以从会话列表里再次打开刚刚整理过的内容」承诺了
@@ -208,22 +208,23 @@ export const RestoreStep: React.FC = () => (
        * 消失，无回收站）—— 用户回头找不到那组东西。
        * 真实的重复使用方式是「先锁定」。 */}
       想反复使用同一组，请先锁定该会话；未锁定的会话恢复后即从列表移除
-      {/* ── 2026-10-23 审计 H-5：补上「在当前窗口打开」这个**真实入口** ──
-          卡头有两颗恢复按钮：「在新窗口恢复整个会话」（主按钮，accent 实底）
-          与「在当前窗口打开整个会话」（描边，宽屏常驻 / 窄屏收进「更多」）。
-          「默认在新窗口」这半句是对的（主按钮确实是新窗口），
-          但引导**完全没提第二个入口** ⇒ 习惯「在当前标签栏接着开」的用户
-          永远学不到，每次恢复都被弹到新窗口。
+      {/* ── 2026-10-25：主操作换人 ⇒ 这半句必须跟着换 ────────────────────
+          产品负责人 2026-10-25：「我主要使用『从当前窗口打开所有标签页』」
+          ⇒ 卡头那颗**主按钮**（第一位 + accent 墨色）现在是
+          「在当前窗口打开整个会话」，「在新窗口恢复整个会话」退成次要的
+          （宽屏第二颗 / 窄屏收进「更多」）。
+          ⇒ 引导里「默认在新窗口中打开」这句**已经变成假话**，改成
+          「默认直接加到当前窗口」，并把另一个入口按真实文案点名。
           守卫从 `TabGroup.tsx` 的两个 aria-label 现场读，不钉中文措辞。 */}
       <br />
-      也可以选「在当前窗口打开整个会话」，直接加到当前窗口
+      也可以选「在新窗口恢复整个会话」，另开一扇窗继续
     </p>
     <div className="onboarding-feature-grid">
       <div className="onboarding-feature-card">
         <div className="onboarding-feature-icon" aria-hidden="true">🪄</div>
-        <div className="onboarding-feature-title">新窗口恢复</div>
+        <div className="onboarding-feature-title">当前窗口恢复</div>
         <div className="onboarding-feature-desc">
-          尽量不打断你当前正在做的事；也可以选「在当前窗口打开」
+          直接加到当前窗口接着做；也可以选「在新窗口恢复整个会话」另开一扇窗
         </div>
       </div>
       <div className="onboarding-feature-card">

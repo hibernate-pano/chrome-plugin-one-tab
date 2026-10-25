@@ -11,7 +11,7 @@
 //
 // 本文件原来断言 `TAB_ROW_STRIDE_PX === 44`，并在注释里说它对应
 // 「global.css 的 .tab-item { padding:10px 16px; border-bottom:1px }」。
-// 那条对应关系**早已不成立**：padding 现在由 drag-drop.css 写死 8px 12px，
+// 那条对应关系**早已不成立**：padding 当时由 drag-drop.css 写死 8px 12px，
 // 内容（操作条）36px ⇒ 行盒 54px，加 margin-bottom 4px ⇒ **真实行距 58px**。
 // ⇒ 每一行占位比真实行矮 14px ⇒ 卡片从「远」变「近」时高度突变 ⇒ 滚动漂。
 //
@@ -19,6 +19,11 @@
 // 所以行距现在由运行时测量提供（cardMetrics.rowStrideFrom），
 // 本模块只负责「行数 × 行距」这个乘法 ⇒ 下面钉的是**乘法与降级**，
 // 行距本身的推导在 tests/cardMetrics.test.ts 里钉。
+//
+// ── 2026-10-24：标签行的垂直节奏收紧到 37px 一行 ──────────────────────────
+//
+// 行盒 54px → 37px（上下 padding 与行间距都撤掉；垂直节奏只在 global.css 的
+// `.tab-item` 一处给出）⇒ 真实行距 58px → 37px。暂用值随之改成 37。
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -30,19 +35,19 @@ const READ = (rel: string) => readFileSync(new URL(rel, import.meta.url), 'utf8'
 
 describe('懒渲染：占位高度', () => {
   it('占位高度 = 行数 × **给定的**行距（行距是输入，不是内部常量）', () => {
-    // 58 = 默认主题实测行距（行盒 54 + 下外边距 4）。
-    assert.equal(resolveRowWindow(20, false, 58).placeholderHeight, 1160);
-    assert.equal(resolveRowWindow(1, false, 58).placeholderHeight, 58);
-    assert.equal(resolveRowWindow(7, false, 58).placeholderHeight, 406);
-    assert.equal(resolveRowWindow(150, false, 58).placeholderHeight, 8700);
+    // 37 = 默认主题实测行距（2026-10-24 收紧后：行盒 37px，无行间距）。
+    assert.equal(resolveRowWindow(20, false, 37).placeholderHeight, 740);
+    assert.equal(resolveRowWindow(1, false, 37).placeholderHeight, 37);
+    assert.equal(resolveRowWindow(7, false, 37).placeholderHeight, 259);
+    assert.equal(resolveRowWindow(150, false, 37).placeholderHeight, 5550);
   });
 
   it('行距换一个值，占位高度就跟着换（证明行距真的参与了计算）', () => {
-    // 这条是防「参数被忽略」的：若实现里写死了 58，改这里就不会变红。
+    // 这条是防「参数被忽略」的：若实现里写死了 37，改这里就不会变红。
     assert.equal(resolveRowWindow(10, false, 44).placeholderHeight, 440);
-    assert.equal(resolveRowWindow(10, false, 56).placeholderHeight, 560);
+    assert.equal(resolveRowWindow(10, false, 58).placeholderHeight, 580);
     assert.notEqual(
-      resolveRowWindow(10, false, 58).placeholderHeight,
+      resolveRowWindow(10, false, 37).placeholderHeight,
       resolveRowWindow(10, false, 44).placeholderHeight
     );
   });
@@ -60,15 +65,15 @@ describe('懒渲染：占位高度', () => {
     }
   });
 
-  it('暂用值本身是 58px（默认主题实测：行盒 54 + 下外边距 4）', () => {
+  it('暂用值本身是 37px（默认主题实测：行盒 37px = 内容 36 + 下边框 1）', () => {
     // ⚠️ 这个数只是**第一次布局、还没量到**时用的暂用值：
     // 运行时量到的真值会立刻接管（cardMetrics.reportRowStride）。
-    // 它**不是**真值 —— creamy 主题的行距是 56，浏览器缩放会再改一遍。
-    assert.equal(ROW_STRIDE_FALLBACK_PX, 58);
+    // 它**不是**真值 —— 主题覆盖、浏览器缩放都会再改一遍。
+    assert.equal(ROW_STRIDE_FALLBACK_PX, 37);
   });
 
   it('接近视口时渲染真实行，且不带占位高度', () => {
-    const r = resolveRowWindow(150, true, 58);
+    const r = resolveRowWindow(150, true, 37);
     assert.equal(r.renderRows, true);
     assert.equal(r.placeholderHeight, 0);
   });
@@ -76,7 +81,7 @@ describe('懒渲染：占位高度', () => {
   it('渲染与占位互斥：不可能既渲染行又留占位', () => {
     for (const n of [0, 1, 20, 500]) {
       for (const near of [true, false]) {
-        const r = resolveRowWindow(n, near, 58);
+        const r = resolveRowWindow(n, near, 37);
         assert.ok(
           (r.renderRows && r.placeholderHeight === 0) ||
             (!r.renderRows && r.placeholderHeight > 0),
@@ -90,14 +95,14 @@ describe('懒渲染：占位高度', () => {
     // 降级方向很重要：算不出高度时必须渲染真内容（最多慢一点），
     // 而不是留一个占位把内容藏起来——后者对用户就是「标签凭空消失」。
     for (const bad of [Number.NaN, Infinity, -1, -100]) {
-      const r = resolveRowWindow(bad, false, 58);
+      const r = resolveRowWindow(bad, false, 37);
       assert.equal(r.renderRows, true, `totalTabs=${bad} 必须退化为渲染`);
       assert.equal(r.placeholderHeight, 0);
     }
   });
 
   it('0 个标签的会话：渲染（得到空列表），不留占位', () => {
-    const r = resolveRowWindow(0, false, 58);
+    const r = resolveRowWindow(0, false, 37);
     assert.equal(r.renderRows, true);
     assert.equal(r.placeholderHeight, 0);
   });
@@ -105,7 +110,7 @@ describe('懒渲染：占位高度', () => {
   it('占位高度随行数单调递增（不会出现越少越高）', () => {
     let prev = -1;
     for (let n = 1; n <= 200; n++) {
-      const h = resolveRowWindow(n, false, 58).placeholderHeight;
+      const h = resolveRowWindow(n, false, 37).placeholderHeight;
       assert.ok(h > prev, `n=${n} 高度未递增`);
       prev = h;
     }

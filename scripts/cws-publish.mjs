@@ -14,6 +14,25 @@
 //   publish 前必须先确认 upload 已让 crxVersion 变成新版本。
 // - itemId：bbbpnccbclnnphchghpfmcjjfhigepbk（商店详情页 URL 即 ID，可抓取验证）。
 //
+// ── 2026-10-24（提审 1.28.3 时真机踩到）：uploadState 不是「草稿里有没有包」 ──
+//
+// 提审 1.28.3 时的实测顺序：
+//   upload  → 回包 uploadState=SUCCESS（上传成功）
+//   GET item?projection=DRAFT → {crxVersion:"1.28.3", uploadState:"NOT_FOUND"}
+//   publish（本次修好的脚本）→ 商店回 {"status":["OK"],"statusDetail":["OK."]}
+//   GET item?projection=DRAFT → {crxVersion:"1.28.3", uploadState:"NOT_FOUND"}（还是它）
+//
+// ⇒ item 上的 uploadState 在「草稿里正躺着刚上传好的包」时**也是 NOT_FOUND**
+//   （空草稿时同样是 NOT_FOUND ⇒ 这个字段区分不了两者）。
+//   ⇒ 「publish 前要求 uploadState === 'SUCCESS'」这条闸门**会把真发布拦下来**
+//     —— 2026-10-24 就被它拦了一次（草稿明明是 1.28.3，脚本却拒绝 publish）。
+//   ⇒ 改用 crxVersion 当闸门（草稿版本必须正是要发的那一版），且**期望版本必填**。
+//   守卫（tests/guards/cwsPublishStatus.test.ts）也改成回放**真机形状**
+//   （NOT_FOUND + 对的 crxVersion ⇒ 照常提交）。
+//
+// ⚠️ 另一个真机事实：**线上是哪个版本，只认商店公开页**（item API 只有 DRAFT 投影，
+//   拿不到线上版本）；审核通过前公开页不会变。
+//
 // 为什么用 curl 子进程而不是 fetch：本机出境请求走 Clash 代理最稳
 // （curl 原生认 HTTPS_PROXY；Node 22 fetch 需 NODE_USE_ENV_PROXY，属实验特性）。
 // execFileSync（非 execSync）过 mimosa 的包脚本审计。
@@ -38,7 +57,7 @@
 // 用法：
 //   node scripts/cws-publish.mjs status                 # 查询草稿/线上状态
 //   node scripts/cws-publish.mjs upload dist.zip        # 上传新包（覆盖草稿）
-//   node scripts/cws-publish.mjs publish [期望版本]      # 提交审核发布
+//   node scripts/cws-publish.mjs publish <期望版本>      # 提交审核发布（版本必填）
 // 发版顺序：pnpm package → upload → publish → status 确认 PENDING_REVIEW。
 // ⚠️ publish 的「期望版本」建议给：它会核对草稿的 crxVersion，
 //    避免「草稿里还是上一版」被当成「这一版发出去了」。
@@ -49,17 +68,35 @@ const CLIENT_ID = process.env.CWS_CLIENT_ID;
 const CLIENT_SECRET = process.env.CWS_CLIENT_SECRET;
 const REFRESH_TOKEN = process.env.CWS_REFRESH_TOKEN;
 const cmd = process.argv[2];
-// ⚠️ 参数布局：upload 的 argv[3] 是 zip 路径，itemId 只能是 argv[4] 或 env——
-// 2026-09-27 事故：upload chrome-extension.zip 时 zip 占了 argv[3] 被当成 itemId，
-// URL 变成 items/chrome-extension.zip，服务端返回误导性 404。
+// ⚠️ 参数布局：**itemId 在不同子命令里不是同一个位置** ——
+//   upload  → argv[3] 是 zip 路径，itemId 只能是 argv[4] 或 env
+//     （2026-09-27 事故：upload chrome-extension.zip 时 zip 占了 argv[3]
+//      被当成 itemId，URL 变成 items/chrome-extension.zip，服务端返回误导性 404）。
+//   publish → argv[3] 是**期望发布的版本**（2026-10-24 起必填）
+//     ⇒ 再拿 argv[3] 当 itemId，URL 就变成 items/1.28.3?projection=DRAFT
+//       ⇒ **HTTP 404**，而且报的是「拿不到草稿状态」，看不出是 itemId 填错了
+//       （2026-10-24 真机撞了两次：草稿明明是 1.28.3，脚本却两次 404 拒绝 publish）。
+//   ⇒ publish 的 itemId **只从 CWS_ITEM_ID env 取**，不给就明确报错。
 const positional = process.argv[3];
-const ITEM_ID = (cmd === 'upload' ? process.argv[4] : positional) || process.env.CWS_ITEM_ID;
+const ITEM_ID =
+  cmd === 'upload'
+    ? process.argv[4] || process.env.CWS_ITEM_ID
+    : cmd === 'publish'
+      ? process.env.CWS_ITEM_ID || ''
+      : positional || process.env.CWS_ITEM_ID;
 const BASE = 'https://www.googleapis.com/chromewebstore/v1.1';
 
 for (const [k, v] of Object.entries({ CWS_CLIENT_ID: CLIENT_ID, CWS_CLIENT_SECRET: CLIENT_SECRET, CWS_REFRESH_TOKEN: REFRESH_TOKEN })) {
   if (!v) { console.error(`缺少 env: ${k}`); process.exit(1); }
 }
-if (!ITEM_ID) { console.error('缺少 itemId（第二参数或 CWS_ITEM_ID env）'); process.exit(1); }
+if (!ITEM_ID) {
+  console.error(
+    cmd === 'publish'
+      ? '缺少 itemId（publish 的位置参数是「期望版本」，itemId 只能走 CWS_ITEM_ID env）'
+      : '缺少 itemId（第二参数或 CWS_ITEM_ID env）',
+  );
+  process.exit(1);
+}
 
 /** curl 调 API。返回 { status, body }。zip 上传不要走这里（二进制经参数会坏），用 httpUpload */
 function http(method, url, { headers = [], body } = {}) {
@@ -161,7 +198,7 @@ function waitForUploadState(maxAttempts = 5, intervalMs = 2000) {
 }
 
 if (!['status', 'upload', 'publish'].includes(cmd)) {
-  console.error('未知子命令:', cmd, '（可用：status / upload <zip> / publish [版本]）');
+  console.error('未知子命令:', cmd, '（可用：status / upload <zip> / publish <版本>）');
   process.exit(1);
 }
 if (cmd === 'upload' && !(process.argv[3] && process.argv[3].endsWith('.zip'))) {
@@ -249,39 +286,74 @@ if (cmd === 'status') {
   );
   process.exit(1);
 } else if (cmd === 'publish') {
-  // publish 的可选第三参数：期望发出的版本。给了就核对草稿的 crxVersion，
-  // 避免「草稿里还是上一版」被当成「这一版发出去了」。
+  // ── 2026-10-24（真机实测修正）：发布前自检改用「草稿版本」，不再拿 uploadState 当闸门 ──
+  //
+  // 原来这里要求草稿的 `uploadState === 'SUCCESS'`，理由是「空草稿（NOT_FOUND）时
+  // publish 回 200 但是 no-op」。**这个前提是错的**：
+  //   2026-10-24 真机（提审 1.28.3）实测 ——
+  //     · 上传**成功**：回包 uploadState=SUCCESS；
+  //     · 之后连续 5 次 GET items/{id}?projection=DRAFT，全都回
+  //       {crxVersion:"1.28.3", uploadState:"NOT_FOUND"}；
+  //     · publish 成功之后**仍然是** NOT_FOUND。
+  //   ⇒ item 资源上的 uploadState **不表示「草稿里有没有包」**（它回 NOT_FOUND
+  //     的时候，草稿里正躺着刚上传好的那一版）⇒ 拿它当闸门会把**真发布拦下来**
+  //     —— 今天就被它拦过一次：草稿明明是 1.28.3，脚本却拒绝 publish。
+  //   （老坑重演：守卫回放的是「我们以为的形状」，不是服务器真给的形状。）
+  //
+  // 真正能证明「草稿里躺着的就是我要发的那一版」的字段只有 **crxVersion** ⇒
+  //   · 期望版本**必填** —— 不知道要发哪一版，就不许发；
+  //   · crxVersion 必须与期望版本一致（草稿里还是上一版 ⇒ 拒绝）；
+  //   · uploadState=FAILURE（上次上传失败）/ IN_PROGRESS（还在传）⇒ 一律拒绝；
+  //   · uploadState=NOT_FOUND / SUCCESS **都不拦**（真机上这就是正常形状）。
   const expectedVersion = process.argv[3] || null;
+  if (!expectedVersion) {
+    console.error(
+      '发布前自检失败：必须给出「期望发布的版本」（用法：publish <版本>）—— ' +
+        '不知道要发哪一版就不许发（草稿里可能是上一版，也可能是空草稿）。',
+    );
+    process.exit(1);
+  }
 
-  // ── 2026-10-24：**发布前自检**（原来完全没有）──────────────────────────
-  // 空草稿（uploadState=NOT_FOUND）时 publish 回 200 {"status":["OK"]} 却什么都没发，
+  // ── 2026-10-24：**发布前自检** ────────────────────────────────────────────
+  // 空草稿（草稿里没有新包）时 publish 回 200 {"status":["OK"]} 却什么都没发，
   // 而「publish 回包里有没有 uploadState」是**永远为假的检查**（publish 回包形状是
   // {status, statusDetail}，uploadState 是 item 资源上的字段）⇒ 那条检查是死代码。
-  // ⇒ 改成发布**之前**先读 item：草稿没有一次成功的上传 ⇒ 直接拒绝 publish。
+  // ⇒ 改成发布**之前**先读 item：草稿里的版本必须正是要发的那一版。
   const pre = getItem();
   const preItem = parseJsonSafe(pre.body);
   if (pre.status < 200 || pre.status >= 300) {
-    console.error(`发布前自检失败（HTTP ${pre.status}）—— 拿不到草稿状态，绝不 publish。`);
+    // ⚠️ 404 最常见的原因是 **itemId 填错**（URL 变成了 items/<别的东西>）⇒
+    //    把回包也打出来，否则只看到「拿不到草稿状态」根本猜不到是 itemId 的问题。
+    console.error(
+      `发布前自检失败（HTTP ${pre.status}）—— 拿不到草稿状态，绝不 publish。` +
+        (pre.status === 404 ? '（404 通常是 itemId 填错了：publish 的位置参数是「期望版本」，itemId 走 CWS_ITEM_ID）' : '') +
+        `\n回包：${pre.body.slice(0, 300)}`,
+    );
     process.exit(1);
   }
-  if (preItem?.uploadState !== 'SUCCESS') {
+  if (preItem?.uploadState === 'FAILURE') {
     console.error(
-      `发布前自检失败：草稿的 uploadState=${preItem?.uploadState ?? '(未知)'}（不是 SUCCESS）—— ` +
-        '空草稿 publish 是静默 no-op，线上不会有任何变化。绝不当作已发布。' +
+      '发布前自检失败：草稿上一次上传是 FAILURE —— 草稿里没有可发的包，绝不 publish。' +
         describeItemError(preItem),
     );
     process.exit(1);
   }
-  if (expectedVersion && preItem?.crxVersion !== expectedVersion) {
+  if (preItem?.uploadState === 'IN_PROGRESS') {
+    console.error(
+      '发布前自检失败：商店还在处理上一次上传（IN_PROGRESS）—— 等它落定再 publish。',
+    );
+    process.exit(1);
+  }
+  if (preItem?.crxVersion !== expectedVersion) {
     console.error(
       `发布前自检失败：草稿版本 crxVersion=${preItem?.crxVersion ?? '(未知)'} ≠ 期望 ${expectedVersion} —— ` +
-        '草稿里不是你要发的那一份，绝不 publish。',
+        '草稿里不是你要发的那一版，绝不 publish。',
     );
     process.exit(1);
   }
   console.log(
-    `发布前自检通过：草稿 crxVersion=${preItem.crxVersion}` +
-      (expectedVersion ? `（期望 ${expectedVersion}）` : ''),
+    `发布前自检通过：草稿 crxVersion=${preItem.crxVersion}（期望 ${expectedVersion}）` +
+      `  uploadState=${preItem.uploadState ?? '(未知)'}`,
   );
 
   const res = http('POST', `${BASE}/items/${ITEM_ID}/publish`, { headers: auth });

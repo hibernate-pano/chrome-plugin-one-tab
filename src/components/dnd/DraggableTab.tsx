@@ -397,8 +397,14 @@ export const DraggableTab: React.FC<DraggableTabProps> = React.memo(({
         <SafeFavicon src={tab.favicon} alt={`${tab.title} 网站图标`} className="tab-item-favicon" />
       )}
 
-      {/* 标题和 URL */}
-      <div className="flex-1 min-w-0 flex items-center gap-3">
+      {/* 标题和 URL。
+          2026-10-24（垂直节奏收紧到 37px 一行）：这一层现在**撑满行高**
+          （`self-stretch` + `items-stretch`）⇒ 标题链接的高度 = 整行高度
+          ⇒ **整行可点**（此前只有 20px 高的那行文字可点，点行里的空白处
+          什么也不会发生 —— 用户看到的是一行，回应的却只有一行字）。
+          域名用 `self-center` 保持垂直居中（否则它会被拉高 36px 且文字
+          贴在框顶）。 */}
+      <div className="tab-item-body flex-1 min-w-0 flex items-stretch gap-3 self-stretch">
         <a
           ref={linkRef}
           href="#"
@@ -418,7 +424,7 @@ export const DraggableTab: React.FC<DraggableTabProps> = React.memo(({
           {tab.pinned && <PinIcon />}
         </a>
         <span
-          className="tab-item-url hidden sm:block"
+          className="tab-item-url hidden sm:block self-center"
           aria-label={`网址: ${tab.url}`}
         >
           {displayUrl}

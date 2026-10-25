@@ -811,7 +811,26 @@ html:not([data-theme]).dark {
   }
 
   .tab-group-header {
-    @apply flex items-center justify-between px-3 py-2.5 sm:px-4 sm:py-3;
+    /* ── 2026-10-24：卡头收到 41px（原先 53–61px）──────────────────────────
+     *
+     * 卡头的内容高是 **36px**（那 5 颗图标按钮的命中区下限，见
+     * hitTarget.ts: MIN_HIT_TARGET_PX = 36 —— 这 5 颗里有一颗是「删除整个
+     * 会话」，物理清除、无回收站、无撤销 ⇒ 命中区不缩）。
+     * ⇒ 卡头盒高 = 内容 36 + 上下 padding + 下边框 1。
+     *
+     * 原先的 padding 是 py-2.5（窄屏 10px）/ sm:py-3（宽屏 12px）
+     * ⇒ 卡头 57px（窄）/ 61px（宽），legacy 又自己写死 8px ⇒ 53px。
+     * ⇒ 一行标签已经收到 37px，卡头却还占着 53–61px ⇒ 整个卡头成了一条
+     *    厚重的横带，「列表」的读感被它压住了。
+     *
+     * 现在的口径（产品负责人定的）：**卡头就是「一行」，只比一行高一点点**
+     * —— 上下各 2px ⇒ **41px**（6 套主题一致），比一行标签（37px）高 4px：
+     *   · 高的这一点 = 「这是分组头，下面是组里的条目」的形状提示；
+     *   · 别的区分手段已经齐了（卡头有自己的底色 --color-card-head-bg +
+     *     下边框 + 更大的标题字号）⇒ 高度差不需要再承担识别责任。
+     * 内容一字不动、按钮命中区一字不动，只是**贴紧**了。
+     */
+    @apply flex items-center justify-between px-3 py-0.5 sm:px-4;
     /* U-24：卡头底色读令牌（原先直接读 --color-bg-tertiary，于是 6 套主题
        里 3 套透明、3 套有色，而 legacy 还写死了 #f9fafb/#1f2937）。
        现在「卡头是不是一个区块」由各主题自己的 --color-card-head-bg 决定。 */
@@ -877,21 +896,54 @@ html:not([data-theme]).dark {
     border-color: var(--color-border-subtle);
   }
 
-  .tab-group-tabs-container>*+* {
-    border-top: 1px solid var(--color-border-subtle);
-  }
+  /* 2026-10-24：这里原先给「除第一行外的每一行」加了一条 border-top，
+     与行自己的 border-bottom 是一对**重复的分隔线**。
+     它当时其实是**死的**：drag-drop.css（后加载、unlayered）的
+     `.tab-item { border: 1px solid transparent; }` 把它盖成了透明。
+     2026-10-24 把那条 transparent border 撤掉后，它会**活过来** ⇒
+     行与行之间变成 2px 的双线 ⇒ 所以这里连同重复一起删掉：
+     分隔线只由 `.tab-item` 的 border-bottom 承担（唯一定义处）。 */
 
   /* ==========================================
      标签项组件
      ========================================== */
+  /* ── 2026-10-24：标签行的垂直节奏收紧为「一行 37px」──────────────────
+   *
+   * 【改之前长什么样（真机实测，Chromium + 真实产物，6 套主题）】
+   *   行盒 54px = 内容 36px（删除键的 36×36 命中区）+ padding 8×2 + 边框 1×2
+   *   行距 56–58px（再多一行间 margin-bottom 4px）
+   *   ⇒ 一行里**看得见的**东西只有 20px（13px 标题）与 12px 域名。
+   *   ⇒ 更糟的是：锁定会话没有删除键 ⇒ 内容只有 20px，被
+   *     `min-height: 2.75rem` 兜到 44px ⇒ **同一张卡里两行高度差 10px**，
+   *     而且另外 3 套主题（claude/apple/chrome）连分隔线都没有
+   *     （分隔线被后加载的 drag-drop.css 的透明 border 盖掉了）
+   *     ⇒ 一堆浮着的行 —— 这就是「行距大、不够紧凑」的来源。
+   *
+   * 【为什么不能靠「把删除键缩小」换紧凑】
+   *   删除键是全产品**最贵**的一颗按钮（v1.22.0 起物理清除、无回收站、
+   *   无撤销）⇒ 36×36 是本仓自定的命中区下限（hitTarget.ts:
+   *   MIN_HIT_TARGET_PX = 36，WCAG 2.2 AA 的下限是 24）⇒ 不动它。
+   *   正确做法是让它**不再撑高整行**：行高由内容（36px 的命中区）决定，
+   *   上下 padding 与行间距都去掉。
+   *
+   * 【现在】
+   *   行盒 = 36px 内容 + 1px 分隔线 = **37px**，行距 37px（比原来少 36%）
+   *   锁定行与可删行**一样高**（min-height 兜底，两边都是 37px）
+   *   分隔线由这一条 border-bottom 承担（拖拽环改用 box-shadow 画，
+   *   不再需要 transparent border ⇒ 主题层的 border-bottom 也不会被盖掉）
+   *
+   * ⚠️ 这里的 padding / min-height / border-bottom 是**标签行垂直节奏的
+   *    唯一定义处** —— drag-drop.css 与 6 套主题都不得再声明（守卫：
+   *    tests/guards/tabRowRhythmSingleSource.test.ts）。
+   */
   .tab-item {
-    @apply flex items-center gap-2 sm:gap-3 px-3 py-2.5 sm:px-4;
+    @apply flex items-center gap-2 sm:gap-3 px-3 sm:px-4;
     @apply cursor-pointer;
     transition-property: all;
     transition-duration: var(--motion-base);
     transition-timing-function: var(--ease-standard);
     border-bottom: 1px solid var(--color-border-subtle);
-    min-height: 2.75rem;
+    min-height: 37px;
   }
 
   .tab-item:last-child {

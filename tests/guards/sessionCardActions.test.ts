@@ -34,6 +34,20 @@
  *     U-10 的另一半（主操作要更醒目）改判成 v1.25.1 的做法：
  *     **靠墨色分主次**（accent 墨色 vs 中性描边），不再靠实底。
  *
+ * ── 2026-10-25：U-10 的「形状可分」**恢复**，而且从「不相等」升级成「量化」 ──
+ *
+ * 产品负责人 2026-10-25 的原话：「目前这两个按钮外观相似，导致我经常误操作。
+ * 我主要使用『从当前窗口打开所有标签页』」⇒ 那个「path 不完全相同」当时
+ * **一直是绿的**，而用户照样误操作 —— 因为人眼在 16px 下很宽容，
+ * 「path 不等」不等于「看得分」。
+ *
+ * ⇒ 现在守三件事：
+ *   ① **形状差得够开**：把两枚图标扫成墨迹掩码，对称差必须 ≥ 0.25
+ *      （尺子见 tests/_helpers/iconShape.ts）。门槛还有一条断言守着它的
+ *      **判别力**：被退掉的那对画法在同一把尺子下只有 ~0.10。
+ *   ② **位置**：主操作排第一（产品负责人主要用哪颗，位置就得是哪颗）。
+ *   ③ **墨色**：accent 跟着主操作走；两颗都醒目 = 没有主次。
+ *
  * U-11（锁定态可区分 + 提示说清后果）、U-18（不用原生 title=）、
  * U-21（看不见的东西不许能点）**一条没退** —— 它们守的是诚实度与
  * 可达性，不是长相。
@@ -53,6 +67,9 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import ts from 'typescript';
+
+import { shapeDifferenceRatio, type SvgShape } from '../_helpers/iconShape.ts';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 const read = (rel: string): string => readFileSync(resolve(ROOT, rel), 'utf8');
@@ -65,14 +82,109 @@ const TAB_GROUP = code('src/components/tabs/TabGroup.tsx');
 const DRAGGABLE_TAB = code('src/components/dnd/DraggableTab.tsx');
 const GLOBAL_CSS = code('src/styles/global.css');
 
-/** 抽出某个图标组件里所有 <path> 的 d 属性。 */
-function pathDataOf(iconName: string): string[] {
+/**
+ * 形状差的门槛：两枚「打开」图标的**墨迹对称差**必须 ≥ 这个比例。
+ *
+ * 0.25 不是拍脑袋：2026-10-24 被退掉的那对画法在同一把尺子下只有 ~0.10，
+ * 现在这对（框内箭头 vs 出框斜箭头）是 ~0.42 ⇒ 门槛落在两者中间。
+ * 守卫里有一条断言专门守着「门槛仍有判别力」。
+ */
+const SHAPE_DIFF_MIN = 0.25;
+
+/** 2026-10-24 那对画法（同一个闭合框 + 各自的一笔箭头）—— 门槛的反例样本。 */
+const LEGACY_NEW_WINDOW =
+  'M13.5 6H5.25A2.25 2.25 0 003 8.25v10.5A2.25 2.25 0 005.25 21h10.5A2.25 2.25 0 0018 18.75V10.5m-10.5 6L21 3m0 0h-5.25M21 3v5.25';
+const LEGACY_IN_PLACE =
+  'M13.5 6H5.25A2.25 2.25 0 003 8.25v10.5A2.25 2.25 0 005.25 21h10.5A2.25 2.25 0 0018 18.75V10.5M21 3v5.25M21 3h-5.25M21 3l-7.5 7.5';
+
+/** TabGroup.tsx 的语法树（按 TSX 解析）。 */
+const TAB_GROUP_AST = ts.createSourceFile(
+  'TabGroup.tsx',
+  read('src/components/tabs/TabGroup.tsx'),
+  ts.ScriptTarget.Latest,
+  true,
+  ts.ScriptKind.TSX,
+);
+
+/**
+ * 按 aria-label 找到**那颗按钮**：源码位置 + className。
+ *
+ * 用 AST 而不是正则：正则 `className="..."[^>]*aria-label=...` 会在
+ * 「className 在前、aria-label 在后」时跨过别的标签（实测会认错按钮）。
+ * 这里直接走 JSX 开标签的属性表 ⇒ 定位唯一。
+ */
+function findButtonByAriaLabel(
+  file: ts.SourceFile,
+  ariaLabelPrefix: string,
+): { start: number; className: string } {
+  let found: { start: number; className: string } | null = null;
+  const visit = (node: ts.Node): void => {
+    if (found) return;
+    if (ts.isJsxAttribute(node) && ts.isIdentifier(node.name) && node.name.text === 'aria-label') {
+      const init = node.initializer;
+      const text =
+        init && ts.isJsxExpression(init) && init.expression
+          ? init.expression.getText(file)
+          : init && ts.isStringLiteral(init)
+            ? init.text
+            : '';
+      if (text.includes(ariaLabelPrefix)) {
+        // ⚠️ JSX 属性的父节点是 **JsxAttributes**，开标签在它**上面**一层。
+        const opening = node.parent?.parent;
+        if (opening && ts.isJsxOpeningElement(opening)) {
+          let className = '';
+          for (const prop of opening.attributes.properties) {
+            if (
+              ts.isJsxAttribute(prop) &&
+              ts.isIdentifier(prop.name) &&
+              prop.name.text === 'className' &&
+              prop.initializer
+            ) {
+              className = prop.initializer.getText(file).replace(/^["'`]|["'`]$/g, '');
+            }
+          }
+          found = { start: node.getStart(file), className };
+        }
+      }
+    }
+    node.forEachChild(visit);
+  };
+  visit(file);
+  assert.ok(found, `找不到 aria-label 含「${ariaLabelPrefix}」的那个按钮`);
+  return found;
+}
+
+/**
+ * 抽出某个图标组件里画出来的所有**图形**（<path> 的 d 与 <rect> 的几何）。
+ *
+ * 为什么连 <rect> 一起收：守卫量的是**画出来的形状**，
+ * 不是「用哪种元素画的」。把框从 `<path d="…">` 改成 `<rect …>`
+ * （同一形状、另一种写法）不该让守卫变红。
+ */
+function shapesOf(iconName: string): SvgShape[] {
   const start = TAB_GROUP.indexOf(`const ${iconName} = (`);
   assert.ok(start > -1, `找不到图标组件 ${iconName}`);
   const end = TAB_GROUP.indexOf('\n);', start);
   assert.ok(end > start, `图标组件 ${iconName} 的结尾找不到`);
   const body = TAB_GROUP.slice(start, end);
-  return [...body.matchAll(/d="([^"]+)"/g)].map(m => m[1]);
+  const shapes: SvgShape[] = [];
+  for (const match of body.matchAll(/<path[^>]*\sd="([^"]+)"/g)) {
+    shapes.push({ kind: 'path', d: match[1] });
+  }
+  for (const match of body.matchAll(/<rect([^>]*?)\/?>/g)) {
+    const attrs = match[1];
+    const num = (name: string): number | undefined => {
+      const hit = new RegExp(`\\b${name}="(-?[\\d.]+)"`).exec(attrs);
+      return hit ? parseFloat(hit[1]) : undefined;
+    };
+    const x = num('x');
+    const y = num('y');
+    const width = num('width');
+    const height = num('height');
+    if (x === undefined || y === undefined || width === undefined || height === undefined) continue;
+    shapes.push({ kind: 'rect', x, y, width, height, rx: num('rx') });
+  }
+  return shapes;
 }
 
 // ══════════════════════════════════════════════════════════════════════════
@@ -95,10 +207,10 @@ function pathDataOf(iconName: string): string[] {
 // U-10 · 两枚「打开」图标不许是同一张图
 // ══════════════════════════════════════════════════════════════════════════
 
-describe('U-10 · 两枚「打开」图标不许完全相同', () => {
+describe('U-10 · 两枚「打开」图标不许看起来一样', () => {
   it('两枚图标的 path 不完全相同', () => {
-    const newWindow = pathDataOf('OpenAllIcon');
-    const inPlace = pathDataOf('OpenAllInPlaceIcon');
+    const newWindow = shapesOf('OpenAllIcon');
+    const inPlace = shapesOf('OpenAllInPlaceIcon');
     assert.ok(newWindow.length > 0, 'OpenAllIcon 至少要有一条 path');
     assert.ok(inPlace.length > 0, 'OpenAllInPlaceIcon 至少要有一条 path');
     assert.notDeepEqual(
@@ -109,33 +221,71 @@ describe('U-10 · 两枚「打开」图标不许完全相同', () => {
     );
   });
 
-  // ── 已退：'两枚图标必须**形状**上可分' ──────────────────────────────────
+  // ── 2026-10-25 恢复「形状上分得开」，并把它**量化** ──────────────────────
   //
-  // 原断言是「两者不许共用同一条 path」（⇒ 基础形状真的不同，遮住颜色也能分）。
-  // 2026-10-24 产品负责人要求界面回到 v1.25.1，而 v1.25.1 的两枚图标正是
-  // 「同一个闭合框 + 各自的一笔箭头」⇒ 这条要求不再成立，退掉。
+  // 2026-10-24：这条按产品决定退掉了（当时要「回到 v1.25.1」，
+  // 而 v1.25.1 的两枚图标就是「同一个闭合框 + 各自的一笔箭头」）。
   //
-  // 退掉它**不等于**「两个图标可以是同一张图」：上面那条
-  // 「path 不完全相同」仍在守着（两个动作的图标不能一模一样）。
+  // 2026-10-25 产品负责人报：「目前这两个按钮外观相似，导致我经常误操作。
+  // 我主要使用『从当前窗口打开所有标签页』」⇒ 这条**恢复**，而且不能只写
+  // 「path 不相等」—— 那条在退掉之前就一直是绿的，而用户照样误操作
+  // （人眼在 16px 下很宽容，path 不等 ≠ 看得分）。
   //
-  // 主次靠**墨色**分（见下一条），不靠形状。
+  // ⇒ 改用一把**尺子**：把两枚图标扫成墨迹掩码，比对称差占并集的比例。
+  // 尺子见 tests/_helpers/iconShape.ts（纯 JS，无 DOM，确定性）。
+  it('形状上真的分得开：16px 下两枚图形的差异必须够大', () => {
+    const ratio = shapeDifferenceRatio(
+      shapesOf('OpenAllIcon'),
+      shapesOf('OpenAllInPlaceIcon'),
+    );
+    assert.ok(
+      ratio >= SHAPE_DIFF_MIN,
+      `两枚「打开」图标的形状差只有 ${ratio.toFixed(3)}（门槛 ${SHAPE_DIFF_MIN}）` +
+        ' ⇒ 16px 下遮住颜色也分不出，用户会继续误点。' +
+        '（约定：「在当前窗口打开」= 闭合的框 + 框内箭头；' +
+        '「在新窗口恢复」= 框 + 穿出框外的斜箭头。）'
+    );
+  });
 
-  it('主操作（新窗口恢复）仍要比另一个醒目 —— 用 accent 墨色，不靠实底', () => {
-    // 「在新窗口恢复整个会话」是这个产品的「找回」入口 ⇒ 必须是主操作。
+  it('门槛本身有判别力：被退掉的那对画法在同一把尺子下必须低于门槛', () => {
+    // 2026-10-24 那对（同一个框 + 各自的一笔箭头）在同一把尺子下只有 ~0.10。
+    // ⇒ 门槛 0.25 落在「坏画法」与「好画法」之间，而不是拍脑袋定的数字。
+    // 哪天有人把两枚图标又画回那样，这条会先红。
+    const legacyRatio = shapeDifferenceRatio(
+      [{ kind: 'path', d: LEGACY_NEW_WINDOW }],
+      [{ kind: 'path', d: LEGACY_IN_PLACE }],
+    );
+    assert.ok(
+      legacyRatio < SHAPE_DIFF_MIN,
+      `旧画法的形状差是 ${legacyRatio.toFixed(3)}，已经 ≥ 门槛 ${SHAPE_DIFF_MIN}` +
+        ' ⇒ 门槛不再有判别力，得重新定（或两枚图标又变回一样了）。'
+    );
+  });
+
+  it('主操作是「在当前窗口打开整个会话」：排第一 + accent 墨色', () => {
+    // 产品负责人 2026-10-25：「我主要使用『从当前窗口打开所有标签页』」
+    // ⇒ 主操作换了人，**位置**（卡头第一颗）与**墨色**（accent）都要跟着走。
+    // 「在新窗口恢复整个会话」退成次要：第二颗 + 中性描边。
     //
-    // v1.25.1 的做法：accent **墨色**的描边图标（tab-group-action-accent），
-    // 「在当前窗口打开」是中性描边 ⇒ 主次一样分得开，只是不再靠实底。
-    // 第 42 轮审计 U-10 把它加成了 .theme-cta 实底按钮，2026-10-24 已按
-    // 产品决定退回 v1.25.1 的做法（见 TabGroup.tsx 的按钮注释）。
+    // 只钉「哪一颗是 accent」不够：两颗都是 accent 就分不出默认是哪一颗，
+    // 而用户正是按「第一颗/最醒目那颗」去点的。
+    const inPlace = findButtonByAriaLabel(TAB_GROUP_AST, '在当前窗口打开整个会话');
+    const newWindow = findButtonByAriaLabel(TAB_GROUP_AST, '在新窗口恢复整个会话');
+    assert.ok(
+      inPlace.start < newWindow.start,
+      '「在当前窗口打开整个会话」必须排在「在新窗口恢复整个会话」**前面**' +
+        '（产品负责人主要用前者；位置是用户找按钮的第一线索）'
+    );
+
     assert.match(
-      TAB_GROUP,
+      inPlace.className,
       /tab-group-action-accent/,
-      '「在新窗口恢复整个会话」必须用 accent 墨色（.tab-group-action-accent）标出主次'
+      '主操作「在当前窗口打开整个会话」必须用 accent 墨色（.tab-group-action-accent）标出主次'
     );
     assert.doesNotMatch(
-      TAB_GROUP,
-      /OpenAllInPlaceIcon[\s\S]{0,120}?tab-group-action-accent/,
-      '「在当前窗口打开」不得也用 accent 墨色 —— 两个都醒目就没有主次了'
+      newWindow.className,
+      /tab-group-action-accent/,
+      '「在新窗口恢复整个会话」不得也是 accent 墨色 —— 两个都醒目就没有主次了'
     );
   });
 });
@@ -158,7 +308,7 @@ describe('U-11 · 锁定态必须视觉可区分 + tooltip 说清后果', () => 
       '锁定按钮的 class 必须区分锁定 / 未锁定（锁定态要有强调色）'
     );
     // 形状差异：闭锁与开锁是两条不同的 path。
-    const locked = pathDataOf('LockIcon');
+    const locked = shapesOf('LockIcon');
     assert.ok(locked.length >= 2, 'LockIcon 必须有闭锁 / 开锁两条分支');
     assert.notEqual(
       locked[0],

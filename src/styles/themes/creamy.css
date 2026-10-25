@@ -308,10 +308,14 @@ html[data-theme='creamy'] .tab-item {
      claude/apple/chrome 三套一直写的是 `transparent` —— 标签行与卡片底一体。
      这里补齐，让「底色由主题决定」只发生在一个地方。 */
   background: transparent;
-  border-bottom: 1px solid var(--color-border-subtle);
   border-radius: var(--radius-md);
-  margin: 2px 8px;
-  padding: 8px 12px;
+  /* 2026-10-24：原先是 `margin: 2px 8px`（上下各 2px + 左右各 8px）
+     与 `padding: 8px 12px`。
+     垂直方向（padding 8px、行距 2px）现在由 global.css 的 `.tab-item`
+     **一处**给出 ⇒ 这里只保留**水平内缩 8px**（creamy 的标签行是
+     「内缩的圆角块」，这是这套主题的长相，不是松紧）。
+     行盒从 54px 收到 37px，与其余 5 套主题一致。 */
+  margin: 0 8px;
 }
 
 html[data-theme='creamy'] .tab-item:hover {
@@ -412,10 +416,11 @@ html[data-theme="creamy"] .single-column-layout .tab-group-card {
   margin-bottom: 1rem;
 }
 
-html[data-theme="creamy"] .single-column-layout .tab-item {
-  padding: 10px 16px;
-}
-
+/* 2026-10-24：`.single-column-layout` 这个类**全仓没有任何地方加**
+   （只有 CSS 与守卫的排除名单里出现过）⇒ 这条规则是死代码。
+   它当年给标签行加的是 `padding: 10px 16px`（比默认还松）⇒ 连它一起删：
+   垂直节奏只在 global.css 的 `.tab-item` 一处给出，别留一个能把行
+   撑回 58px 的地雷。 */
 html[data-theme="creamy"] .single-column-layout .tab-item-url {
   max-width: 350px;
 }

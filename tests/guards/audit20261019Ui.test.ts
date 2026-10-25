@@ -283,13 +283,20 @@ describe('V-3 窄屏卡头：只留核心动作，其余收进「更多」', () 
     assert.equal(hidden, 4, `四颗次要按钮都要收进「更多」（实际 ${hidden}）`);
   });
 
-  it('「恢复整个会话」在窄屏仍然常驻（它是零学习成本的核心动作）', () => {
-    const restoreBlock = TAB_GROUP.match(/<button[^>]*onClick=\{handleOpenAllTabs\}/);
-    assert.ok(restoreBlock, '找不到恢复按钮');
+  it('「在当前窗口打开整个会话」在窄屏仍然常驻（它是零学习成本的核心动作）', () => {
+    // ── 2026-10-25：常驻的那颗换了人 ───────────────────────────────────────
+    // 产品负责人 2026-10-25：「我主要使用『从当前窗口打开所有标签页』」
+    // ⇒ 主操作（第一位 + accent 墨色）是它 ⇒ 它宽窄屏都常驻；
+    // 次要的「在新窗口恢复整个会话」收进「更多」（窄屏仍够得着）。
+    //
+    // 守的仍是**原来那件事**：窄屏下始终有一颗恢复按钮平铺在卡头上，
+    // 不用先展开菜单。钉的是「哪颗常驻」跟着「主操作是谁」走。
+    const restoreBlock = TAB_GROUP.match(/<button[^>]*onClick=\{handleOpenAllTabsInCurrentWindow\}/);
+    assert.ok(restoreBlock, '找不到「在当前窗口打开」的按钮');
     assert.doesNotMatch(
       restoreBlock[0],
       /hidden sm:/,
-      '恢复按钮不许在窄屏被隐藏'
+      '主操作（当前窗口打开）不许在窄屏被隐藏 —— 窄屏也要一次点到它'
     );
   });
 

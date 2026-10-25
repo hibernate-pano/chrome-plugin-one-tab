@@ -41,7 +41,6 @@
 .tab-item {
   display: flex;
   align-items: center;
-  padding: 8px 12px;
   border-radius: 4px;
   /* 2026-10-20：原先写死 white —— 这个文件在 global.css **之后**加载
      （MainApp.tsx 单独 import），而 6 套主题里有 3 套（legacy/creamy/prism）
@@ -52,10 +51,15 @@
      （标签行与卡片底一体）⇒ 这里改成 transparent，与它们一致，
      并让「主题决定底色」这件事只发生在一处。 */
   background-color: transparent;
-  border: 1px solid transparent;
-  margin-bottom: 4px;
   cursor: move;
   position: relative;
+  /* 2026-10-24：这里原来还写死了 `padding: 8px 12px`、
+     `margin-bottom: 4px` 与一圈 `border: 1px solid transparent`
+     ⇒ 行盒 54px / 行距 58px（13px 的标题占着 58px 的行距）。
+     标签行的垂直节奏现在由 global.css 的 `.tab-item` **一处**给出
+     （37px 一行）⇒ 这三个声明全部撤掉。
+     连带影响：那圈 transparent border 没了 ⇒ 拖拽环不能再靠
+     `border-color` 画 ⇒ 改用 box-shadow（不改盒模型）。 */
 }
 
 .dark .tab-item {
@@ -78,8 +82,10 @@
 /* 标签页拖拽中状态 */
 .tab-item.dragging {
   opacity: 0.5;
-  border-color: #3b82f6;
-  box-shadow: 0 2px 6px rgba(59, 130, 246, 0.2);
+  /* 2026-10-24：原来是 `border-color: #3b82f6` —— 那依赖行上存在一圈
+     transparent border（已随垂直节奏收敛撤掉）⇒ 改用 box-shadow 画 1px 环：
+     视觉上同样是「蓝框」，但**不改盒模型** ⇒ 拖起来行高不会跳一下。 */
+  box-shadow: 0 0 0 1px #3b82f6, 0 2px 6px rgba(59, 130, 246, 0.2);
   z-index: 999;
   background-color: #f0f7ff;
 }
@@ -208,7 +214,6 @@
 .tab-item {
   display: flex;
   align-items: center;
-  padding: 8px 12px;
   border-radius: 4px;
   /* 2026-10-20：原先写死 white —— 这个文件在 global.css **之后**加载
      （MainApp.tsx 单独 import），而 6 套主题里有 3 套（legacy/creamy/prism）
@@ -219,10 +224,10 @@
      （标签行与卡片底一体）⇒ 这里改成 transparent，与它们一致，
      并让「主题决定底色」这件事只发生在一处。 */
   background-color: transparent;
-  border: 1px solid transparent;
-  margin-bottom: 4px;
   cursor: move;
   position: relative;
+  /* 2026-10-24：padding / margin-bottom / border（见本文件上一处同名规则的
+     注释）—— 垂直节奏只在 global.css 的 `.tab-item` 一处给出。 */
   /* 2026-10-23 审计 V-14：这条 `transition` **覆盖**了 global.css 主题过渡名单里
      .tab-item 的那条（这个文件在 global.css **之后**加载 ⇒ 同一特异性的后者胜）。
      原先只列 transform / opacity ⇒ 背景色与文字色**不参与过渡**
@@ -258,15 +263,15 @@
 
 .tab-item.dragging {
   opacity: 0.5;
-  border-color: #3b82f6;
-  box-shadow: 0 4px 8px rgba(59, 130, 246, 0.2);
+  /* 2026-10-24：同本文件上一处同名规则 —— 拖拽环改用 box-shadow 画
+     （行上已无 transparent border 可染色，且 box-shadow 不改盒模型）。 */
+  box-shadow: 0 0 0 1px #3b82f6, 0 4px 8px rgba(59, 130, 246, 0.2);
   z-index: 999;
   background-color: #f0f7ff;
 }
 
 .dark .tab-item.dragging {
   background-color: #1e40af;
-  border-color: #3b82f6;
 }
 
 .drag-overlay {

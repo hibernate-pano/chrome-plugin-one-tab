@@ -366,7 +366,8 @@ html[data-theme="prism"] .tab-item {
        claude/apple/chrome 三套一直写的是 `transparent` —— 标签行与卡片底一体。
        这里补齐，让「底色由主题决定」只发生在一个地方。 */
     background: transparent;
-    border-bottom: 1px solid var(--color-border-subtle);
+    /* 2026-10-24：原先这里还声明了 `border-bottom` —— 分隔线统一由
+       global.css 的 `.tab-item` 那一处给出（垂直节奏唯一定义处）。 */
     transition: all 0.2s ease;
 }
 
@@ -788,10 +789,10 @@ html[data-theme="prism"] .single-column-layout .tab-group-card {
     margin-bottom: 1rem;
 }
 
-html[data-theme="prism"] .single-column-layout .tab-item {
-    padding: 10px 16px;
-}
-
+/* 2026-10-24：`.single-column-layout` 这个类**全仓没有任何地方加**
+   ⇒ 下面那条 `padding: 10px 16px` 是死代码，且是个能把标签行撑回
+   58px 的地雷 ⇒ 连它一起删（垂直节奏只在 global.css 的 `.tab-item`
+   一处给出）。 */
 html[data-theme="prism"] .single-column-layout .tab-item-url {
     max-width: 350px;
 }

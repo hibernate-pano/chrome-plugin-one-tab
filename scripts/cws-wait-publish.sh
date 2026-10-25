@@ -26,6 +26,13 @@
 #   脚本打印的是**未格式化的原始回包**（`"uploadState":"SUCCESS"`，冒号后没空格），
 #   grep `"uploadState": "SUCCESS"` **永远匹配不上** ⇒ 会永远重试。
 #   （这正是上一版 /tmp 脚本的 bug：它靠 grep 判成功。）
+#
+# ── 退出码 ────────────────────────────────────────────────────────────────
+#   0 = 已提交审核（publish 拿到 status:["OK"] 且草稿 crxVersion 对得上）
+#   2 = 缺凭证
+#   4 = 产物对不上打包时的 sha256（拒绝上传）
+#   5 = 商店说这个 item **已在审核队列**（in review）—— 重试无意义，停止；
+#       但**不能**据此断言「我们提交成功了」（在审核的可能也是上一版）⇒ 人工确认。
 set -u
 
 cd "$(dirname "$0")/.." || exit 1
@@ -51,12 +58,18 @@ if [ -z "${CWS_CLIENT_ID:-}" ] || [ -z "${CWS_CLIENT_SECRET:-}" ] || [ -z "${CWS
   fi
   creds="$(mktemp)"
   # 逐行 key=value，导出到环境里（**不进 argv** ⇒ 不会出现在 ps 输出里）。
+  #
+  # ⚠️ 2026-10-24：这个文件里的值**有时带着 `{{SECRET_xxxx}}` 占位符前缀**
+  #   （harness 写盘时的形态），有时是裸值 ⇒ 原样导出的话，前缀会跟着进到
+  #   OAuth 请求里 ⇒ 换 token 直接失败（invalid_grant / invalid_client），
+  #   而报错看起来像「凭证不对」。⇒ 统一**剥掉前缀**（没有前缀就是空操作）。
   MCP_JSON="$MCP_JSON" node -e '
     const fs = require("fs");
     const j = JSON.parse(fs.readFileSync(process.env.MCP_JSON, "utf8"));
     const env = (j.mcpServers && j.mcpServers["cws-mcp"] && j.mcpServers["cws-mcp"].env) || {};
+    const strip = (v) => v.replace(/^\{\{[A-Za-z0-9_]+\}\}/, "");
     for (const k of ["CWS_CLIENT_ID", "CWS_CLIENT_SECRET", "CWS_REFRESH_TOKEN"]) {
-      if (env[k]) process.stdout.write(k + "=" + env[k] + "\n");
+      if (env[k]) process.stdout.write(k + "=" + strip(env[k]) + "\n");
     }
   ' > "$creds"
   while IFS='=' read -r k v; do
@@ -131,8 +144,21 @@ while [ "$i" -lt "$ATTEMPTS" ]; do
   fi
 
   # 期望版本给了 ⇒ 脚本会核对草稿 crxVersion，避免「草稿里还是上一版」。
-  if node scripts/cws-publish.mjs publish "$EXPECT_VERSION"; then
+  pub_out="$(node scripts/cws-publish.mjs publish "$EXPECT_VERSION" 2>&1)"
+  pub_rc=$?
+  echo "$pub_out"
+  if [ "$pub_rc" -eq 0 ]; then
     echo "----- publish 拿到 status:[\"OK\"] -----"
+  elif echo "$pub_out" | grep -q "in review"; then
+    # 2026-10-24 真机：item 在审核队列里时，商店回
+    #   400 "Publish condition not met: You may not edit or publish an item that is in review."
+    # ⇒ **重试没有意义**（审核期间商店既不接受新版本、也不接受 publish）。
+    #   但**不能**就此断言「我们提交成功了」：在审核的可能也是**上一版**
+    #   （2026-10-23 就是那个局面：1.26.1 在审核 ⇒ 1.27.0 传不上去）。
+    # ⇒ 明确说「不知道是哪种」，让人去公开页/后台确认，别报假绿。
+    echo "===== 商店说这个 item 已在审核队列（in review）—— 重试无意义，停止 ====="
+    echo "===== 可能是「刚才那次已提交成功」，也可能是「上一版还在审核」⇒ 查公开页/后台确认 ====="
+    exit 5
   else
     echo "----- publish 未生效（草稿还在，继续试）-----"
     sleep "$SLEEP"

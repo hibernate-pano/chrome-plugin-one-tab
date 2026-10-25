@@ -36,10 +36,12 @@ interface StepConfig {
  * spotlightTarget 依赖对应组件的 aria-label 文案，改文案必须同步改这里
  * （文案本身是给读屏用户听的，不要为了迁就选择器去改 aria-label）：
  * - 保存 / 搜索 / 菜单 → Header.tsx
- * - 恢复 → TabGroup.tsx 的「在新窗口恢复整个会话，共 N 个标签页」与
- *   SearchResultList.tsx 的「在新窗口恢复所有匹配标签，共 N 个标签页」。
+ * - 恢复 → TabGroup.tsx 的「在当前窗口打开整个会话，共 N 个标签页」
+ *   （2026-10-25 起是主按钮）与「在新窗口恢复整个会话，共 N 个标签页」，
+ *   外加 SearchResultList.tsx 的「在新窗口恢复所有匹配标签，共 N 个标签页」。
  *   旧的 `button[aria-label^="恢复整个会话"]` 匹配不到任何一个：真实文案以
- *   「在新窗口…」开头，第 4 步因此静默不高亮。tests/a11yLists.test.ts 会交叉校验。
+ *   「在当前窗口…」/「在新窗口…」开头，第 4 步因此静默不高亮。
+ *   tests/a11yLists.test.ts 会交叉校验。
  */
 const STEPS: StepConfig[] = [
     { title: '欢迎使用 TapStack' },
@@ -77,7 +79,7 @@ const STEPS: StepConfig[] = [
         // 文档顺序而不是选择器顺序，一次性拿全部是拿不到「A 优先、B 兜底」的。
         // Spotlight.tsx 的 splitSelectorChain 就是为此存在的。
         spotlightTarget:
-            'button[aria-label^="在新窗口恢复整个会话"], button[aria-label^="在新窗口恢复所有匹配标签"], [aria-label="搜索会话名、标签标题或 URL"]',
+            'button[aria-label^="在当前窗口打开整个会话"], button[aria-label^="在新窗口恢复整个会话"], button[aria-label^="在新窗口恢复所有匹配标签"], [aria-label="搜索会话名、标签标题或 URL"]',
     },
     { title: '跨设备同步', spotlightTarget: '[aria-label="菜单"]' },
     { title: '一切就绪' },

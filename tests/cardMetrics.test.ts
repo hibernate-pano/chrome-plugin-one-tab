@@ -10,19 +10,20 @@
 // ── 为什么这些数字不是「随手写的常量」────────────────────────────────────
 //
 // 下面用到的每一组数都来自**真机实测**（真 Chrome + 真实产物，
-// 采样脚本：scripts/perf03-card-window-probe.mjs，采样时间 2026-10-24，
+// 采样脚本：scripts/_measure-tab-row-density.mjs，采样时间 2026-10-24，
 // 默认主题、视口 1280×800、每会话 5 个标签）：
 //
-//   · 一行（.tab-item）的盒高 = 54px（内容 36 + padding 8×2 + 边框 1×2）
-//   · 一行的 margin-bottom = 4px
-//   · 行容器（.tab-group-tabs-container，5 行）高 = 286px
-//     （= 5×54 + 4×4：**最后一行的 4px 塌陷出去了**）
-//   · 轨道（grid 1fr）高 = 290px（BFC 包装层把那 4px 加了回来）
-//   · 卡头高 = 53px
-//   · 真卡高 = 345px（= 2 边框 + 53 卡头 + 290 轨道）
+//   · 一行（.tab-item）的盒高 = 37px（内容 36 + 下边框 1）
+//     —— 2026-10-24 起上下 padding 与行间距都撤掉了（见 global.css 的
+//     `.tab-item` 注释：垂直节奏唯一定义处）
+//   · 一行的 margin-bottom = 0
+//   · 行容器（.tab-group-tabs-container，5 行）高 = 185px（= 5×37）
+//   · 轨道（grid 1fr）高 = 185px（没有塌陷出去的外边距要加回）
+//   · 卡头高 = 41px（2 padding + 36 内容 + 1 下边框）
+//   · 真卡高 = 228px（= 2 边框 + 41 卡头 + 185 轨道）
 //
 // ⇒ 这些数是**独立于代码**量出来的 ⇒ 公式必须能复现它们。
-// 这比「断言常量等于 44」强得多：后者只是在复述代码自己的选择。
+// 这比「断言常量等于 37」强得多：后者只是在复述代码自己的选择。
 import { describe, it, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 
@@ -42,19 +43,19 @@ import {
 
 /** 真机实测样本（见文件头）。 */
 const REAL = {
-  rowBox: 54,
-  rowMarginBottom: 4,
-  rowsContainerHeight5: 286,
-  trackHeight5: 290,
-  headerHeight: 53,
-  realCardHeight5: 345,
+  rowBox: 37,
+  rowMarginBottom: 0,
+  rowsContainerHeight5: 185,
+  trackHeight5: 185,
+  headerHeight: 41,
+  realCardHeight5: 228,
 };
 
 describe('卡高：行距的推导（rowStrideFrom）', () => {
-  it('用真机实测的容器高推出真机实测的行距（58px）', () => {
+  it('用真机实测的容器高推出真机实测的行距（37px）', () => {
     assert.equal(
       rowStrideFrom(REAL.rowsContainerHeight5, REAL.rowMarginBottom, 5),
-      58
+      37
     );
   });
 
@@ -73,14 +74,21 @@ describe('卡高：行距的推导（rowStrideFrom）', () => {
     // 后来又「减掉最后一行塌陷的外边距」⇒ 每卡矮 4px ⇒ 文档总高随
     // 渲染集合变化 ⇒ 滚动漂。
     // 正确形状：容器高不含最后一行的外边距 ⇒ 必须**加回**它。
-    const stride = rowStrideFrom(REAL.rowsContainerHeight5, REAL.rowMarginBottom, 5)!;
-    const wrong = (REAL.rowsContainerHeight5 - REAL.rowMarginBottom) / 5;
+    //
+    // ⚠️ 这里的样本是**合成的**（外边距非零），不是真机样本 ——
+    // 2026-10-24 起标签行没有下外边距了（真机样本那一项是 0，
+    // 于是「加回来」与「减掉」在真机样本上恰好同值，测不出方向）。
+    // 公式必须对**任意**外边距都成立（换主题、改样式都可能让它再非零），
+    // 所以这里用一个外边距非零的样本把方向钉死。
+    const stride = rowStrideFrom(286, 4, 5)!;
+    const wrong = (286 - 4) / 5;
+    assert.equal(stride, 58);
     assert.notEqual(stride, wrong);
     assert.ok(stride > wrong, '加回来的行距必须大于减掉的行距');
   });
 
   it('只有一行时也成立（容器高 = 行盒高，最后一行的外边距同样要加回）', () => {
-    assert.equal(rowStrideFrom(REAL.rowBox, REAL.rowMarginBottom, 1), 58);
+    assert.equal(rowStrideFrom(REAL.rowBox, REAL.rowMarginBottom, 1), 37);
   });
 
   it('量不出来时返回 null（调用方保持旧值，不许瞎猜）', () => {
@@ -95,13 +103,13 @@ describe('卡高：行距的推导（rowStrideFrom）', () => {
 
 describe('卡高：cardHeightFor', () => {
   it('卡高 = 上下边框 + 卡头 + 行数 × 行距', () => {
-    assert.equal(cardHeightFor(5, 53, 58, false), 2 + 53 + 290);
-    assert.equal(cardHeightFor(0, 53, 58, false), 2 + 53);
+    assert.equal(cardHeightFor(5, 41, 37, false), 2 + 41 + 185);
+    assert.equal(cardHeightFor(0, 41, 37, false), 2 + 41);
   });
 
   it('折叠态没有行区（轨道为 0fr）', () => {
-    assert.equal(cardHeightFor(5, 53, 58, true), 2 + 53);
-    assert.equal(cardHeightFor(0, 53, 58, true), 2 + 53);
+    assert.equal(cardHeightFor(5, 41, 37, true), 2 + 41);
+    assert.equal(cardHeightFor(0, 41, 37, true), 2 + 41);
   });
 
   it('边框是 2px（.tab-group-card 的 border: 1px）', () => {
@@ -109,13 +117,13 @@ describe('卡高：cardHeightFor', () => {
   });
 
   it('标签数是负数时按 0 行算（不许算出负高度）', () => {
-    assert.equal(cardHeightFor(-5, 53, 58, false), 2 + 53);
+    assert.equal(cardHeightFor(-5, 41, 37, false), 2 + 41);
   });
 
   it('行距变了卡高就变（证明行距真的参与了计算）', () => {
     assert.notEqual(
-      cardHeightFor(5, 53, 58, false),
-      cardHeightFor(5, 53, 44, false)
+      cardHeightFor(5, 41, 37, false),
+      cardHeightFor(5, 41, 44, false)
     );
   });
 });
@@ -134,7 +142,7 @@ describe('卡高：共享真值（订阅式存储）', () => {
     reportCardHeaderHeight(REAL.headerHeight);
     reportRowStride(rowStrideFrom(REAL.rowsContainerHeight5, REAL.rowMarginBottom, 5));
     assert.equal(getCardHeaderHeight(), REAL.headerHeight);
-    assert.equal(getRowStride(), 58);
+    assert.equal(getRowStride(), 37);
   });
 
   it('量不出来（null）时保持旧值 —— 「不知道」不等于「换一个数」', () => {
