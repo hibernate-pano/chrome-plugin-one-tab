@@ -190,9 +190,19 @@ describe('恢复成功文案：说清两件事（打开了什么 / 记录去哪�
  * 「出声了」，所以这里数的是**两者之和**；只认某一条字面量的话，
  * 换个出口就会被误判成「没接上」。
  */
+/**
+ * 数「成功播报」在源码里出现了几次（按 `showX(文案函数(` 的形状）。
+ *
+ * ⚠️ 2026-10-25：这里原先只允许**空白**出现在 `showConsumeToast(` 与文案函数
+ * 之间 ⇒ 有人在参数里加一行注释（说明「为什么要传第三个参数」）就会让计数变成 0
+ * ⇒ 守卫报「列表页整组恢复必须有一次成功反馈」——**红在一个正确的改动上**
+ * （本仓的教训：改对实现却让测试变红时，先怀疑守卫钉错了值，不是回退实现）。
+ * ⇒ 现在允许注释出现在中间：判据要数的是**调用点**，不是源码长相。
+ */
 const countSuccessToasts = (src: string, copyFn: string): number => {
-  const direct = src.match(new RegExp(`showRestoreSuccessMessage\\(\\s*${copyFn}\\(`, 'g')) ?? [];
-  const viaHook = src.match(new RegExp(`showConsumeToast\\(\\s*${copyFn}\\(`, 'g')) ?? [];
+  const gap = '(?:\\s|//[^\\n]*\\n|\\/[\\s\\S]*?\\*\\/)*';
+  const direct = src.match(new RegExp(`showRestoreSuccessMessage\\(${gap}${copyFn}\\(`, 'g')) ?? [];
+  const viaHook = src.match(new RegExp(`showConsumeToast\\(${gap}${copyFn}\\(`, 'g')) ?? [];
   return direct.length + viaHook.length;
 };
 

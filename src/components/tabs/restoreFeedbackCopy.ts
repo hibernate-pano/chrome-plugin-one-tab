@@ -69,12 +69,32 @@ export const restoreOutcomeSentence = (isLocked: boolean): string =>
     ? `恢复后该会话${restoreOutcomePhrase(true)}`
     : `恢复后该会话会${restoreOutcomePhrase(false)}，可撤销`;
 
-/** 整组恢复成功的文案。 */
+/**
+ * 整组恢复成功的文案。
+ *
+ * ── `inCurrentWindow`：说「在哪个窗口打开」（2026-10-25）────────────────────
+ *
+ * 恢复有**两条**路径，开在**不同的窗口**：
+ *   · 「在当前窗口打开整个会话」→ 标签加到**当前**窗口；
+ *   · 「在新窗口恢复整个会话」→ 另开一扇窗。
+ *
+ * 修复前这句话**写死**成「已在新窗口打开 N 个标签页」⇒ 点「在当前窗口打开」
+ * 也会这么说 —— 界面在**撒谎**（用户看到标签明明加在了眼前这个窗口，
+ * 提示却说新窗口）。这不是措辞洁癖：2026-10-25 产品负责人把「在当前窗口打开」
+ * 定成**主操作**（第一位 + accent + 窄屏常驻）⇒ 这条谎话出现在最高频的那条
+ * 路径上。
+ *
+ * ⇒ 开在哪个窗口，必须由**调用方告诉**（`inCurrentWindow`），
+ *   文案只负责照着说，不许自己假设。
+ */
 export const restoreGroupSuccessMessage = (
   tabCount: number,
-  isLocked: boolean
+  isLocked: boolean,
+  inCurrentWindow = false
 ): string => {
-  const opened = `已在新窗口打开 ${tabCount} 个标签页`;
+  const opened = inCurrentWindow
+    ? `已在当前窗口打开 ${tabCount} 个标签页`
+    : `已在新窗口打开 ${tabCount} 个标签页`;
   if (isLocked) {
     // 锁定会话恢复后保留 —— 用户可以反复用同一组。
     return `${opened}。该会话已锁定，${restoreOutcomePhrase(true)}。`;

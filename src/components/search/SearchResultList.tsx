@@ -578,8 +578,10 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({
         // 同时是一次**不可撤销的删除**。给它配一条退路，是产品该有的最低配置。
         // 锁定会话从不被消费 ⇒ 没有东西可撤 ⇒ 不挂按钮（挂了就是骗人）。
         // 撤销凭据里的 group 是**消费前**的那份快照（闭包捕获的旧值）。
+        // 搜索页这两条路径都**新开一扇窗**（OPEN_TABS 不带 inCurrentWindow）⇒
+        // 显式传 false，别让文案自己猜。
         showConsumeToast(
-          restoreGroupSuccessMessage(tabsPayload.length, group.isLocked),
+          restoreGroupSuccessMessage(tabsPayload.length, group.isLocked, false),
           group.isLocked ? undefined : { group },
         );
       }

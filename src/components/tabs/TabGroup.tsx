@@ -561,8 +561,10 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(
         // 未锁定 ⇒ 整条会话已被移除（不可逆，无回收站）⇒ 必须给退路。
         // 锁定 ⇒ 会话仍在列表里，从未被消费 ⇒ 挂撤销就是骗人（按钮按了
         // 什么也不会发生）。
+        // ⚠️ 必须把「开在哪个窗口」告诉文案：点「在当前窗口打开」时说
+        // 「已在新窗口打开」就是撒谎（2026-10-25 修）。
         showConsumeToast(
-          restoreGroupSuccessMessage(tabsPayload.length, group.isLocked),
+          restoreGroupSuccessMessage(tabsPayload.length, group.isLocked, inCurrentWindow),
           group.isLocked ? undefined : { group },
         );
       }
