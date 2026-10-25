@@ -82,7 +82,7 @@ pnpm type-check && pnpm type-check:tests && pnpm lint && pnpm lint:tests && pnpm
 | `src/components/tabs/useConsumeUndo.ts` | `opts.type` 的联合类型 `'success' \| 'error'` → `'info' \| 'error'`。 |
 | `src/components/auth/restoreFeedbackCopy.ts` | `LoginRestoreTone` 的 `'success'` → `'info'`。 |
 | `src/components/layout/Header.tsx` | `:210` 清理重复标签结果 → fact。 |
-| `src/components/layout/HeaderDropdown.tsx` | 8 处 success 逐条裁决（`:355` 删、`:570` fact、`:638` 条件 fact、`:812`/`:848`/`:904`/`:1377`/`:1502` fact）。 |
+| `src/components/layout/HeaderDropdown.tsx` | 8 处 success 逐条裁决（`:355` 删、`:570` 条件 fact、`:638` 条件 fact、`:812`/`:848`/`:904`/`:1377`/`:1502` fact）。 |
 | `src/components/sync/WebDavSettings.tsx` | 6 处 success 逐条裁决（`:807` fact、`:1082`/`:1184`/`:1265`/`:1342`/`:1400` 删）。 |
 | `src/options/OptionsPage.tsx` | 3 处 success 逐条裁决（`:494`/`:712` 删、`:588` 删 + 备注搬进 hint）。 |
 | `src/components/tabs/TabGroup.tsx` | `:448` 锁定 toast → 卡片常驻行；`:567`/`:629` 锁定分支删播报（**保留成功门**）；`:672`/`:710` 中性化。 |
@@ -271,14 +271,14 @@ if (fb.level !== 'silent') showToast(msg, 'info', 4000);
 |---|---|
 | `Header.tsx:210` 清理重复标签结果 | **fact**。`decideFeedback({ visibility: 'self-evident', hiddenFact: cleanDuplicatesResultMessage(...) })` ⇒ 报 `'info'`。文案 `cleanDuplicatesResultMessage(...)` 不变 |
 | `HeaderDropdown.tsx:355` 云端已是最新 | **删掉整个 `showToast` 调用**。留一行注释说明「探活命中也写 `lastSyncTime`（`src/services/syncEngine.ts:776`）⇒ 菜单那行会前进成「刚刚」，这就是回执」 |
-| `HeaderDropdown.tsx:570` 已退出登录 | **fact**（`hiddenFact: <那句文案>`）—— 「本机 N 个会话仍保留、不会传到别的账号」界面表达不了。文案不变 |
+| `HeaderDropdown.tsx:570` 已退出登录 | **条件 fact**——本机 N>0 时 `hiddenFact: 「本机 N 个会话仍保留，不会上传到其它账号。」`（**那句文案逐字不变**）；N=0 时**静默**（没有盲区：账号区变了就是回执）⇒ 与 #16 同口径 |
 | `HeaderDropdown.tsx:638` 已删除 N 个会话 | **条件 fact**（见下） |
 | `HeaderDropdown.tsx:812` 导出备份 | **fact**（`hiddenFact: <那句文案>`） |
 | `HeaderDropdown.tsx:848` 导出 OneTab | **fact** |
 | `HeaderDropdown.tsx:904` 诊断摘要已复制 | **fact** |
 | `HeaderDropdown.tsx:1377` 导入 JSON | **fact** |
 | `HeaderDropdown.tsx:1502` 导入 OneTab | **fact** |
-| `WebDavSettings.tsx:807` 已保存并切到新云盘 | **fact**（含用户要做的下一步） |
+| `WebDavSettings.tsx:807` 已保存并切到新云盘 | **条件 fact**——「换云盘」「切回自带存储」两支**含用户要做的下一步** ⇒ 出声；**「已保存」那一支静默**（纯结果播报） |
 | `WebDavSettings.tsx:1082` 推送完成 | **删掉**（`firstPush` 状态机已就地渲染 `kind:'done'`，`WebDavSettings.tsx:1716`） |
 | `WebDavSettings.tsx:1184` 已从云端下载到本机 | **删掉**（同上） |
 | `WebDavSettings.tsx:1265` 已切回 TapStack 云端 | **删掉**（后端选择器变了 ⇒ 自明） |
@@ -500,6 +500,14 @@ git commit -m "feat(ui): 锁定组恢复静默 + 锁定说明常驻化 + 撤销�
 | `openSingleTabSuccessMessage(` | 只剩未锁定 | `restoreFeedbackCopy.ts` 里该函数**不含**「仍保留在会话中」那句；`TabGroup.tsx` 的锁定分支**不含**它 |
 | `restoreGroupSuccessMessage(` | 只剩未锁定 | 同上；且 `inCurrentWindow` 参数**仍在** |
 
+**三处「条件 fact」的形状（登记表的断言按这张表写）：**
+
+| 锚点 | 什么时候出声 | 断言 |
+|---|---|---|
+| `retainedFact`（`HeaderDropdown.tsx` 退出登录） | `localCount > 0` | 断言 `localCount > 0 ? …不会上传到其它账号` 与 `hiddenFact: retainedFact` 都在；**并**断言 N=0 那一支的空 fact 会落进 `fb.level === 'silent'`（一个字都不说） |
+| `deleteAllSuccessMessage(` | `deleteAllCountMatches` 为**假**（数量对不上） | 断言该调用处**被 `if (fb.level !== 'silent')` 包着**；且该处出现 `deleteAllCountMatches(` |
+| `saveFact`（`WebDavSettings.tsx` 保存） | 只有「换云盘」「切回自带存储」两支 | 断言 `saveFact` 的三个分支里，**纯「已保存」那一支的 fact 为空**（空 fact ⇒ 判据层判 silent ⇒ 不出声） |
+
 ⚠️ **接线守卫必须真的调用那条路径** —— 断言要落在「`decideFeedback(` 出现在这段代码里」+「这段代码的 `showToast` 的 type 是 `'info'`」上，**不许**只断言「文件里出现过 `decideFeedback`」（那是零检测力）。
 
 - [ ] **Step 2: 写「失败不得被静默」的守卫**
@@ -627,7 +635,7 @@ git commit -m "docs: 同步对外文案（撤销退路与浏览器通知的承�
 - [ ] **Step 7: 交付说明**
 
 在提交信息或 PR 描述里写清：
-- 19 处裁决的清单（silent 9 / 条件 fact 1（删除全部，数量一致时静默）/ fact 8 / 常驻 1（锁定说明））。
+- 19 处裁决的清单（silent 9 / 条件 fact 3（#3 退出登录 N>0 才说、#4 删除全部数量一致时静默、#10 保存三支里「已保存」那支静默）/ fact 6 / 常驻 1（锁定说明））。
 - 撤销机制、错误通道、浏览器通知**均未改动**。
 - 与主工作树的 v1.28.6 改动在 `src/components/common/Toast.tsx`、`src/contexts/ToastContext.tsx`、`src/components/tabs/TabGroup.tsx` 三处会有**小规模合并冲突**（改的是文件里不同的区域：`getTypeStyles`/`TYPE_LABEL`/`getIcon` vs `stackOffset`/`onHeightChange`）⇒ 合并时人工确认两边的意图都保住。
 

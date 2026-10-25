@@ -162,14 +162,14 @@ export const decideFeedback = (input: FeedbackInput): FeedbackDecision => { … 
 |---|---|---|---|---|
 | 1 | `Header.tsx:210` | 清理重复标签的结果（清掉 X 个重复标签、Y 个空会话） | **fact** | 列表会变，但「清了几个」界面表达不了；且这是**破坏性**操作。确认框里写的是「预计」，实到多少要实说 |
 | 2 | `HeaderDropdown.tsx:355` | 云端已是最新 | **删** | 探活命中也写 `lastSyncTime`（`src/services/syncEngine.ts:776`）⇒ 菜单那行会前进成「刚刚」，已有安静回执 |
-| 3 | `HeaderDropdown.tsx:570` | 已退出登录。本机 N 个会话仍保留，不会上传到其它账号 | **fact** | 「本机 N 个会话还留着、不会传到别的账号」界面表达不了 |
+| 3 | `HeaderDropdown.tsx:570` | 已退出登录。本机 N 个会话仍保留，不会上传到其它账号 | **条件 fact** | 「本机 N 个会话还留着、不会传到别的账号」界面表达不了；**但本机本来就没有会话时没有盲区**（账号区从「已登录」变成「登录 / 注册」自明）⇒ 那一支静默。与 #16（设置页退出登录）同口径 |
 | 4 | `HeaderDropdown.tsx:638` | 已删除 N 个会话 | **条件 fact** | `deleteAllSuccessMessage`（`src/components/layout/deleteAllMessages.ts:158`）共 4 种文案 / 5 个分支。**只有 `deletedCount === confirmedCount` 这一支是界面自明的**（列表空了、数量与确认的一致）⇒ 一致时静默；其余四支（实际为 0 / 少于确认数 / 多于确认数）都是界面看不见的事实 ⇒ 出声 |
 | 5 | `HeaderDropdown.tsx:812` | 导出备份（N 个会话） | **fact** | 文件名在浏览器下载条可见，「N 个」不可见 |
 | 6 | `HeaderDropdown.tsx:848` | 导出 OneTab（N 个会话） | **fact** | 同上 |
 | 7 | `HeaderDropdown.tsx:904` | 诊断摘要已复制，请在 issue 正文里粘贴 | **fact** | 剪贴板写入界面看不见 |
 | 8 | `HeaderDropdown.tsx:1377` | 导入 JSON 备份 | **fact** | 列表会变，但「导入几个 / 几个读不出来 / 几个失败」界面永远看不见。⚠️ 这条路径**不 reload 整页**（只 `dispatch(loadGroups())`），所以提示能显示完 |
 | 9 | `HeaderDropdown.tsx:1502` | 导入 OneTab | **fact** | 同上 |
-| 10 | `WebDavSettings.tsx:807` | 已保存，已切换到新的云盘。…这些会话暂未上传；请点下方「检查并推送到云端」 | **fact** | 里面是**用户要做的下一步**，不是播报 |
+| 10 | `WebDavSettings.tsx:807` | 已保存，已切换到新的云盘。…这些会话暂未上传；请点下方「检查并推送到云端」 | **条件 fact** | 三个分支里**两个**装着「用户要做的下一步」（换云盘 / 切回自带存储）⇒ 那两支出声；**「已保存」那一支**（重存同一份云盘配置）是纯结果播报 ⇒ 静默 |
 | 11 | `WebDavSettings.tsx:1082` | 推送完成 | **删** | `firstPush` 状态机已就地渲染 `kind:'done'`（`WebDavSettings.tsx:1716`）⇒ 重复 |
 | 12 | `WebDavSettings.tsx:1184` | 已从云端下载到本机 | **删** | 同上 |
 | 13 | `WebDavSettings.tsx:1265` | 已切回 TapStack 云端。云盘上的文件不会被删除 | **删** | 后端选择器变了 ⇒ 自明 |
