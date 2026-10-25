@@ -206,9 +206,55 @@ const saveFactBranches = (): {
   return { switchedLibrary: m[1], wasWebdav: m[2], elseBranch: m[3] };
 };
 
-/** 取一支源码里所有字符串字面量拼起来的内容（分支里可能是 `'A' + 'B'`）。 */
+/**
+ * 取一支源码里**字符串字面量的内容**并拼起来。
+ *
+ * 支持的写法：`'A'`、`"A"`、`` `A` ``、以及 `'A' + 'B'` 这种拼接。
+ *
+ * ⚠️ 2026-10-25 修复轮 2：原先**只认单双引号** ⇒ 有人把那一支改写成
+ * 模板字符串（`` `已保存` ``）时这里返回空串 ⇒「那一支必须为空」会**假绿**，
+ * 而运行时其实会出声（与 F2 刚修的引号变体洞同一类）。
+ * ⇒ 反引号那条分支排在前面：同一起点先按模板字符串整体吃掉，
+ *   免得模板里的引号被单双引号分支切成碎片。
+ */
 const literalOf = (branch: string): string =>
-  [...branch.matchAll(/'([^']*)'|"([^"]*)"/g)].map(x => x[1] ?? x[2]).join('');
+  [...branch.matchAll(/`([^`]*)`|'([^']*)'|"([^"]*)"/g)].map(x => x[1] ?? x[2] ?? x[3]).join('');
+
+/**
+ * 接线断言（两处「条件 fact」共用这一套写法，不另造一套）。
+ *
+ * 钉的是「**fact 为空时那次 showToast 根本不会发生**」这条链路：
+ *   ① `<fact> 的声明` → `const fb = decideFeedback` → 那一次 `showToast(` 之间，
+ *      必须出现 `if (<某>.level !== 'silent')` —— 提示被**判据结果**包着；
+ *   ② 弹出来的那一句必须就是这个 fact 本身，且类型是 `'info'`。
+ *
+ * ⚠️ 为什么必须两条一起：只断言「判据层拿得到那个 fact」是不够的 ——
+ * 把 `if (fb.level !== 'silent')` 的包法去掉，空 fact 照样会出声。
+ */
+const assertFactWiredThroughFeedback = (
+  src: string,
+  factName: string,
+  declAnchor: string,
+  toastCall: RegExp,
+): void => {
+  const from = src.indexOf(declAnchor);
+  assert.ok(from > 0, `找不到 ${factName} 的声明`);
+  const fbAt = src.indexOf('const fb = decideFeedback', from);
+  assert.ok(fbAt > from, `${factName} 必须交给判据层裁决`);
+  const toastAt = src.indexOf('showToast(', fbAt);
+  assert.ok(toastAt > fbAt, '判据层之后应当有一次 showToast');
+  const region = src.slice(from, toastAt + 80);
+  assert.match(
+    region,
+    /if\s*\(\s*[A-Za-z_$][\w$]*\.level\s*!==\s*'silent'\s*\)/,
+    '提示必须被判据结果包着（fact 为空 ⇒ silent ⇒ 不弹）',
+  );
+  assert.match(
+    region,
+    toastCall,
+    '弹出来的那句必须就是那个 fact（类型是 info）',
+  );
+};
 
 // ─────────────────────────────────────────────────────────────────────────
 // 一、类型层：toast 这一层不许再有 'success'
@@ -525,6 +571,17 @@ describe('19 处裁决：判成 fact 的必须经判据层、提示是 info', ()
       /localCount\s*>\s*0\s*\?[^;]*不会上传到其它账号/,
       '「本机会话仍保留」这个事实必须以「本机有会话」为前提（有会话才说）',
     );
+    // ⚠️ 2026-10-25 修复轮 2：上一条只覆盖了**真值臂** ——
+    // `[^;]*` 跨过那句短语之后就不再看 else 臂了 ⇒ 把 else 臂填回 `: '已退出登录'`
+    // 守卫照样全绿，而 N=0 会重新出声（还拼成「已退出登录。已退出登录」）。
+    // ⇒ 现在钉住 else 臂**必须是空的**。
+    //    （空串 / 空双引号 / 空模板 / undefined 都是「没有事实」，
+    //      判据层对它们的处理完全一样 ⇒ 都算数，不把等价写法判成红。）
+    assert.match(
+      src,
+      /localCount\s*>\s*0\s*\?[^;]*不会上传到其它账号[^;]*:\s*(?:''|""|``|undefined)/,
+      'N=0 那一支的 fact 必须是空的（else 臂不许有内容）—— 有内容就会在「没有盲区」时重新出声',
+    );
     assert.match(
       src,
       /hiddenFact:\s*retainedFact/,
@@ -534,6 +591,15 @@ describe('19 处裁决：判成 fact 的必须经判据层、提示是 info', ()
       src,
       /showToast\(`已退出登录。\$\{retainedFact\}`/,
       '说出口的那句必须逐字沿用原句（不得改写文案）',
+    );
+    // ⚠️ 2026-10-25 修复轮 2：光钉「判据层拿得到那个 fact」**不够** ——
+    // 把 `if (fb.level !== 'silent')` 的包法去掉，空 fact 照样会出声。
+    // ⇒ 复用同文件里「保存」那条 it 的接线断言写法（同一个助手，不另造一套）。
+    assertFactWiredThroughFeedback(
+      src,
+      'retainedFact',
+      'const retainedFact =',
+      /showToast\(\s*`已退出登录。\$\{retainedFact\}`\s*,\s*'info'/,
     );
     // 「空 fact ⇒ 沉默」必须由**判据层本体**保证（不是调用点自己拍脑袋）。
     const { decideFeedback } = await import('@/core/feedbackPolicy');
@@ -581,22 +647,12 @@ describe('19 处裁决：判成 fact 的必须经判据层、提示是 info', ()
     );
 
     // ④ 接线：提示被判据结果包着 ⇒ fact 为空时那次 showToast 根本不会发生
-    const from = src.indexOf('const saveFact =');
-    assert.ok(from > 0, '找不到 saveFact 的声明');
-    const fbAt = src.indexOf('const fb = decideFeedback', from);
-    assert.ok(fbAt > from, 'saveFact 必须交给判据层裁决');
-    const toastAt = src.indexOf('showToast(', fbAt);
-    assert.ok(toastAt > fbAt, '判据层之后应当有一次 showToast');
-    const region = src.slice(from, toastAt + 80);
-    assert.match(
-      region,
-      /if\s*\(\s*[A-Za-z_$][\w$]*\.level\s*!==\s*'silent'\s*\)/,
-      '提示必须被判据结果包着（fact 为空 ⇒ silent ⇒ 不弹）',
-    );
-    assert.match(
-      region,
+    //   （与「退出登录」那条 it **共用同一个助手**，不另造一套写法）
+    assertFactWiredThroughFeedback(
+      src,
+      'saveFact',
+      'const saveFact =',
       /showToast\(\s*saveFact\s*,\s*'info'\s*\)/,
-      '弹出来的那句必须就是那个 fact（类型是 info）',
     );
   });
 });
