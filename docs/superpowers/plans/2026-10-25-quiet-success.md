@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** 让「成功是状态、失败是事件」成为可编译、��守卫的产品事实 —— 删掉 toast 的 `success` 类型，逐条裁决 19 处成功播报，把界面表达不了的事实降级为中性提示。
+**Goal:** 让「成功是状态、失败是事件」成为可编译、有守卫的产品事实 —— 删掉 toast 的 `success` 类型，逐条裁决 19 处成功播报，把界面表达不了的事实降级为中性提示。
 
 **Architecture:** 新增纯函数判据层 `src/core/feedbackPolicy.ts`（`decideFeedback`），把「这件事该不该出声」从组件里抽出来；toast 类型层删掉 `'success'`，让 `showToast(x, 'success')` 变成编译错误；每个出声点都经判据层裁决，判据结果与「界面状态载体」互为验证。
 
@@ -452,7 +452,7 @@ Expected: 全绿。
 
 - [ ] **Step 9: 真机验证（不能只靠单测）**
 
-用 `scripts/lead-inspect-localhost.mjs` 或手动加载解���，逐条确认：
+用 `scripts/lead-inspect-localhost.mjs` 或手动加载扩展，逐条确认：
 
 1. 锁定一个会话 → 恢复 → **没有任何 toast**、卡片还在、窗口开了、卡片上有那行常驻说明。
 2. 锁定一个会话 → 点开其中一个标签 → **没有任何 toast**、那行还在、页面开了。

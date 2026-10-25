@@ -130,11 +130,16 @@ export interface FeedbackInput {
 
 export interface FeedbackDecision {
   level: FeedbackLevel;
-  /** level !== 'silent' 时要说的那句话。 */
-  message?: string;
   /** 判据本身给出的理由（供守卫与调试，不进界面）。 */
   reason: string;
 }
+
+/**
+ * ⚠️ `FeedbackDecision` **不带 `message`** —— 事实文案留在调用方
+ * （它本来就在那儿），判据只判「该不该出声」。
+ * 早先的草稿在这里放过一个 `message?: string`，那会让调用点写成
+ * `fb.message ?? msg` 这种双份真相，已在实现前删掉。
+ */
 
 export const decideFeedback = (input: FeedbackInput): FeedbackDecision => { … };
 ```
