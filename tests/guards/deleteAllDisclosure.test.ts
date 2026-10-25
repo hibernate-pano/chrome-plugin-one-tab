@@ -239,7 +239,23 @@ describe('DS-43-15：确认数字取磁盘真值，删完说出来', () => {
       '必须从 SW 回执里取实际删除条数（不是自己算的数）'
     );
     assert.match(handler, /deleteAllSuccessMessage\(/, '成功提示必须由同一份文案函数产出');
-    assert.match(handler, /showToast\(/, '成功提示必须真的弹出来');
+    // ⚠️ 2026-10-25 审阅后修正措辞：原先写的是「成功提示必须真的弹出来」——
+    //   按新规则「数量一致时**故意**不弹」（列表空了就是回执），
+    //   那句措辞会误导后来人以为「每次删完都必须弹」。
+    //   断言**逻辑不许削弱**：除了「提示还在」，还要钉住
+    //   ① 它仍由 `deleteAllSuccessMessage` 产出；
+    //   ② 它落在 `fb.level !== 'silent'` 那个分支里（一致 ⇒ 静默，不一致 ⇒ 出声）。
+    assert.match(handler, /showToast\(/, '提示必须还在（不许把这条提示整个删掉）');
+    assert.match(
+      handler,
+      /showToast\(\s*deleteAllSuccessMessage\(/,
+      '弹出来的那句必须仍由 deleteAllSuccessMessage 产出（不许换成一句没有数字的话）'
+    );
+    assert.match(
+      handler,
+      /if\s*\(\s*[A-Za-z_$][\w$]*\.level\s*!==\s*'silent'\s*\)[\s\S]{0,200}?showToast\(/,
+      '提示必须落在「判据说不许静默」的那个分支里 —— 数量一致时**故意**不弹'
+    );
   });
 
   it('菜单行的数字也不再直接用 Redux 快照', () => {

@@ -255,7 +255,13 @@ describe('A2/A3/A4 组件接线', () => {
       ['runPush', push],
       ['handlePullFromCloud', pull],
     ] as const) {
-      assert.match(body, /completeFirstSyncSuccess\(/, `${name} 必须经收尾函数（先清令牌、再报成功）`);
+      // ⚠️ 2026-10-25 审阅后修正措辞：原先写「先清令牌、再报成功」——
+      //   但两个生产调用点（runPush / handlePullFromCloud）**已经不再报成功**
+      //   （`notifySuccess` 变成可选，生产不传 ⇒ 不出声；
+      //   结果由 `firstPush` 状态机就地渲染）。
+      //   收尾函数现在的契约是「先清令牌；**要不要出声由调用方决定**」。
+      //   判定不改，只改措辞（别让后来人以为生产还会报成功）。
+      assert.match(body, /completeFirstSyncSuccess\(/, `${name} 必须经收尾函数（先清令牌；播报由调用方决定）`);
       assert.ok(
         !/await storage\.setFirstSyncPending\(false\)/.test(body),
         `${name} 里不得再有裸 await 清令牌 —— KV 写失败会被外层 catch 报成「失败」`

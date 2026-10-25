@@ -396,20 +396,20 @@ export const Toast: React.FC<ToastProps> = ({
           accent: 'bg-[var(--color-danger)]',
           iconWrap: 'bg-rose-100 text-rose-600 dark:bg-rose-500/15 dark:text-rose-300',
         };
-      case 'info':
-        return {
-          shell: 'theme-bg-elevated theme-text-primary theme-border-default border',
-          accent: 'bg-[var(--color-accent)]',
-          iconWrap: 'bg-sky-100 text-sky-600 dark:bg-sky-500/15 dark:text-sky-300',
-        };
       case 'warning':
         return {
           shell: 'theme-bg-elevated theme-text-primary theme-border-default border',
           accent: 'bg-[var(--color-warning)]',
           iconWrap: 'bg-amber-100 text-amber-800 dark:bg-amber-500/15 dark:text-amber-300',
         };
+      case 'info':
       default:
-        // 兜底走 info 的配色（中性）—— 成功是状态不是事件，提示层没有绿色那一档。
+        // ⚠️ 2026-10-25 审阅后修正：`info` 与兜底**合并成一支**。
+        // 联合类型已封闭（`ToastType` 不含 `'success'`）⇒ `default:` 是**死分支**，
+        // 而它原先与 `case 'info':` 的内容**逐字重复**（两处重复的配色 / 图标
+        // 迟早会漂移）。⇒ 合成一支：既没有重复，也保留了运行期兜底 ——
+        // 万一有非 TS 的调用方传了意外类型，仍然走中性图标而不是崩。
+        // 没有绿色那一档：成功是状态不是事件。
         return {
           shell: 'theme-bg-elevated theme-text-primary theme-border-default border',
           accent: 'bg-[var(--color-accent)]',
@@ -426,20 +426,20 @@ export const Toast: React.FC<ToastProps> = ({
             <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clipRule="evenodd" />
           </svg>
         );
-      case 'info':
-        return (
-          <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
-            <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clipRule="evenodd" />
-          </svg>
-        );
       case 'warning':
         return (
           <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
             <path fillRule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
           </svg>
         );
+      case 'info':
       default:
-        // 兜底走 info 的图标（中性）—— 没有「对勾」那一档：成功是状态不是事件。
+        // ⚠️ 2026-10-25 审阅后修正：与 `getTypeStyles` 同一处修正 ——
+        // `default:` 是**死分支**（联合类型已封闭），而它原先与 `case 'info':`
+        // 的图标**逐字重复**（两处重复的 SVG 迟早会漂移）⇒ 合成一支。
+        // 保留 default 作为运行期兜底：万一有非 TS 的调用方传了意外类型，
+        // 仍然走中性图标而不是崩。
+        // 没有「对勾」那一档：成功是状态不是事件。
         return (
           <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
             <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clipRule="evenodd" />
