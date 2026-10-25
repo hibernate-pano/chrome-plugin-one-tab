@@ -1,5 +1,6 @@
 /**
- * 「安静的成功」守卫（2026-10-25）—— **Task 2：类型层 + 19 处裁决**。
+ * 「安静的成功」守卫（2026-10-25）—— **Task 2 类型层 + 19 处裁决 / Task 3 恢复类收口 /
+ * Task 4 登记表 + 失败不得静默 + 命名空间不许误伤**。
  *
  * ── 这个守卫在防什么 ──────────────────────────────────────────────────────
  *
@@ -40,7 +41,7 @@
  */
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import ts from 'typescript';
@@ -561,25 +562,58 @@ const SILENT_SITES: Array<{
   },
 ];
 
+/**
+ * 一个 fact 站点的**完整判据**（登记表与逐条 `it` 共用这一份，不另造一套）。
+ *
+ * 钉的是两件事，缺一不可：
+ *   ① 锚点 → 那一次 `showToast(` 之间**真的出现** `decideFeedback(`；
+ *   ② 那一次 `showToast` 的**类型实参**是 `'info'`。
+ *
+ * ⚠️ 只有 ① 是零检测力：`decideFeedback(` 算了却把结果扔掉、照样
+ * `showToast(x, 'success')`，① 照样绿。只有 ② 也不够：`showToast` 的类型对了，
+ * 但「说不说」没人裁决 ⇒ 空 fact 照样出声。
+ */
+const assertFactSite = (site: { file: string; anchor: string; mustContain?: string }): void => {
+  const src = code(site.file);
+  const at = anchorIndex(src, site.anchor, site.mustContain);
+  assert.notEqual(at, -1, `找不到锚点：${site.anchor}（${site.file}）`);
+  const toastAt = src.indexOf('showToast(', at);
+  assert.ok(toastAt > at, `锚点之后应当有一次 showToast：${site.anchor}`);
+  assert.match(
+    src.slice(at, toastAt),
+    /decideFeedback\(/,
+    '必须先经判据层裁决（不许凭感觉直接 showToast）',
+  );
+  assert.equal(
+    showToastType(src, at),
+    'info',
+    '这条提示的类型必须是 info（不是 success）',
+  );
+};
+
+/** 取 `handleDeleteAllGroups` 整个函数的源码（「删除全部」的判据只在这个函数里）。 */
+const deleteAllHandlerSource = (): string => {
+  const src = code('src/components/layout/HeaderDropdown.tsx');
+  const start = src.indexOf('const handleDeleteAllGroups');
+  assert.ok(start > 0, '找不到 handleDeleteAllGroups');
+  const rest = src.slice(start);
+  const end = rest.indexOf('\n  const ', 10);
+  return end > 0 ? rest.slice(0, end) : rest;
+};
+
+/** 一个 silent 站点的**完整判据**：那条提示不存在 **且** 界面载体真的在。 */
+const assertSilentSite = (site: { file: string; gone: RegExp; carrier: () => void }): void => {
+  assert.doesNotMatch(
+    code(site.file),
+    site.gone,
+    '这条提示已经不该存在了 —— 结果在界面自明，说出来只是重复念一遍',
+  );
+  site.carrier();
+};
+
 describe('19 处裁决：判成 fact 的必须经判据层、提示是 info', () => {
   for (const site of FACT_SITES) {
-    it(site.label, () => {
-      const src = code(site.file);
-      const at = anchorIndex(src, site.anchor, site.mustContain);
-      assert.notEqual(at, -1, `找不到锚点：${site.anchor}（${site.file}）`);
-      const toastAt = src.indexOf('showToast(', at);
-      assert.ok(toastAt > at, `锚点之后应当有一次 showToast：${site.anchor}`);
-      assert.match(
-        src.slice(at, toastAt),
-        /decideFeedback\(/,
-        '必须先经判据层裁决（不许凭感觉直接 showToast）',
-      );
-      assert.equal(
-        showToastType(src, at),
-        'info',
-        '这条提示的类型必须是 info（不是 success）',
-      );
-    });
+    it(site.label, () => assertFactSite(site));
   }
 
   // ── 退出登录：唯一一处「fact 本身可能为空」的站点 ─────────────────────
@@ -695,28 +729,11 @@ describe('19 处裁决：判成 fact 的必须经判据层、提示是 info', ()
 
 describe('19 处裁决：判成 silent 的那条提示必须不存在（且载体在）', () => {
   for (const site of SILENT_SITES) {
-    it(site.label, () => {
-      assert.doesNotMatch(
-        code(site.file),
-        site.gone,
-        '这条提示已经不该存在了 —— 结果在界面自明，说出来只是重复念一遍',
-      );
-      site.carrier();
-    });
+    it(site.label, () => assertSilentSite(site));
   }
 });
 
 describe('19 处裁决：删除全部的条数对不上时必须说出来', () => {
-  /** 取 handleDeleteAllGroups 整个函数的源码（判据只在这个函数里）。 */
-  const handlerSource = (): string => {
-    const src = code('src/components/layout/HeaderDropdown.tsx');
-    const start = src.indexOf('const handleDeleteAllGroups');
-    assert.ok(start > 0, '找不到 handleDeleteAllGroups');
-    const rest = src.slice(start);
-    const end = rest.indexOf('\n  const ', 10);
-    return end > 0 ? rest.slice(0, end) : rest;
-  };
-
   it('判据：实际删的数与确认的数一致吗', async () => {
     const { deleteAllCountMatches } = await import('@/components/layout/deleteAllMessages');
     assert.equal(
@@ -742,7 +759,7 @@ describe('19 处裁决：删除全部的条数对不上时必须说出来', () =
   });
 
   it('接线：提示被判据结果包着，且用的是同一份文案函数', () => {
-    const handler = handlerSource();
+    const handler = deleteAllHandlerSource();
     assert.match(handler, /deleteAllCountMatches\(/, '必须先判「实际删的数与确认的数一致吗」');
     assert.match(handler, /decideFeedback\(/, '必须经判据层裁决');
     assert.match(
@@ -992,6 +1009,43 @@ const extractLockedBranch = (src: string): string | null => {
   return null;
 };
 
+/**
+ * 抽 `handleOpenTab` 里 `if (group.isLocked) { … }` 那一支的**语法节点**。
+ *
+ * 与 `extractLockedBranch`（文本版）的区别：文本版只能做「有没有出现过」这种
+ * 包含判断；要判「**成功门那一支**里有没有出声」就必须拿到 AST ——
+ * 那一支的边界只有解析器知道（缩进与括号在文本里会骗人）。
+ *
+ * 实现：找到 `handleOpenTab` 的初始化箭头函数 → 在它的**第一层语句**里找
+ * `if (group.isLocked)` → 返回那个 `IfStatement` 的 then 分支。
+ */
+const extractLockedBranchNode = (source: ts.SourceFile): ts.Statement | null => {
+  const init = initializerOf(source, 'handleOpenTab');
+  if (!init) return null;
+  // 两种声明形状都要认：`useCallback((tab) => {…})`（列表页）与裸箭头函数（搜索页）。
+  const fn: ts.ArrowFunction | ts.FunctionExpression | null = ts.isArrowFunction(init)
+    ? init
+    : ts.isFunctionExpression(init)
+      ? init
+      : ts.isCallExpression(init)
+        ? ((init.arguments.find(arg => ts.isArrowFunction(arg)) as ts.ArrowFunction | undefined) ??
+          null)
+        : null;
+  if (!fn || !ts.isBlock(fn.body)) return null;
+  for (const statement of fn.body.statements) {
+    if (!ts.isIfStatement(statement)) continue;
+    // ⚠️ 条件必须**恰好**是 `group.isLocked`。
+    //    早先写的是 `/group\s*\.\s*isLocked/`（包含匹配）⇒ 先命中的是
+    //    `if (!guard.tryAcquire(tab.id, group.isLocked))` 那个去重守卫
+    //    （它只是**传了** group.isLocked 当参数）⇒ 取到的不是锁定分支。
+    //    症状：搜索页那条「成功门判到失败的那一支里必须真的出声」报
+    //    「锁定分支必须判过成功门」—— 红在一个正确的实现上。
+    const cond = statement.expression.getText(source).replace(/\s+/g, '');
+    if (cond === 'group.isLocked') return statement.thenStatement;
+  }
+  return null;
+};
+
 /** 某个调用是不是「走错误通道」（第三个实参里 `type: 'error'`）。 */
 const isErrorTypeOption = (call: ts.CallExpression): boolean => {
   const arg = call.arguments[2];
@@ -1036,6 +1090,42 @@ describe('Task 3：锁定组恢复静默（但成功门与失败出口一个字�
         branch,
         /showRestoreError\(/,
         `${file}：锁定分支的失败路径必须出声（打不开必须明说，记录原样保留）`,
+      );
+    });
+
+    it(`${file}：成功门**判到失败的那一支**里必须真的出声（不只是分支里某处有 showRestoreError）`, () => {
+      // ── 2026-10-25 Task 4：这条守卫补的是「上一条的零检测力」──────────────
+      //
+      // 上一条只断言「锁定分支里出现过 `showRestoreError(`」。而锁定分支里
+      // **有两处**失败出口（TabGroup：成功门那一支 + `.catch` 那一支；
+      // SearchResultList：只有成功门那一支）⇒ 把**成功门那一支**的
+      // `showRestoreError` 删掉，上一条照样绿（另一处还在），
+      // 而 SW 拒开时界面就变成「点了没反应」—— 正是本守卫要防的那件事。
+      //
+      // ⇒ 用 AST 找到那层判 `success` 的 `if`，断言**它的 then 分支**里
+      //   真的调了 `showRestoreError`（失败路径与成功门是同一个 if 的两半）。
+      const source = parseTsx(file);
+      const branch = extractLockedBranchNode(source);
+      assert.ok(branch, `${file}：应能找到 handleOpenTab 里的锁定分支`);
+
+      let gate: ts.IfStatement | null = null;
+      const visit = (node: ts.Node): void => {
+        if (
+          !gate &&
+          ts.isIfStatement(node) &&
+          /success\s*!==\s*true|success\s*===\s*false/.test(node.expression.getText(source))
+        ) {
+          gate = node;
+        }
+        node.forEachChild(visit);
+      };
+      visit(branch!);
+      assert.ok(gate, `${file}：锁定分支必须判过成功门 —— SW 拒开时界面不许谎报「已打开」`);
+
+      const thenCalls = callsIn((gate as ts.IfStatement).thenStatement, 'showRestoreError');
+      assert.ok(
+        thenCalls.length > 0,
+        `${file}：成功门判到失败时，那一支里必须真的出声 —— 打不开必须明说（记录原样保留）`,
       );
     });
 
@@ -1369,4 +1459,833 @@ describe('Task 3：新增的 fact 站点都必须经判据层裁决', () => {
       );
     });
   }
+});
+
+// ══════════════════════════════════════════════════════════════════════════
+// 五、Task 4 Step 1：19 处裁决的**显式登记表**
+// ══════════════════════════════════════════════════════════════════════════
+//
+// ── 这一节在防什么 ────────────────────────────────────────────────────────
+//
+// 上面那三节把 19 处**逐个**钉了一遍，但它们分散在四个 `describe` 里，
+// 「到底有几处、每处是哪一档」这件事本身**没有任何一处**被钉住。
+// ⇒ 两个后果：
+//   ① 有人**悄悄加回来**第 20 处 `showToast(..., 'info')` 成功播报 ⇒ 全绿
+//      （它不违反任何一条既有断言：那些断言只钉「登记过的那几处」）；
+//   ② 有人把某一处**从表里删掉** ⇒ 那条 `it` 跟着消失 ⇒ 全绿
+//      （`node:test` 不会因为「少了一个 `it`」而红）。
+//
+// ⇒ 这一节是一张**显式登记表**：19 行，每行写死「文件 + 锚点 + 裁决档 + 判据」，
+//   并断言「表里恰好 19 行」「每一行的档位与数量都钉死」。
+//   上面那几节的逐条 `it` 负责**逐条判**，这一节负责**不许增减、不许改档**。
+//
+// ── 为什么这张表里不放「行号」──────────────────────────────────────────────
+//
+// 行号会随别的改动漂（Task 3 就把 `TabGroup.tsx` 的锁定分支整体挪过一次）。
+// 锚点是**语义唯一串**（一句文案 / 一个函数名），它跟着行为走，不跟着排版走。
+//
+// ── 19 行的来源 ───────────────────────────────────────────────────────────
+//
+// 规格 §5.1 的 19 处 `success` 直接调用（`docs/superpowers/specs/2026-10-25-quiet-success-design.md`）。
+// 其中 #19（`TabGroup.tsx` 的锁定说明）由 Task 3 改成**卡片常驻行**
+// （`lockDisclosureText`）⇒ 本表把它登记成「常驻」档，并钉住「常驻载体真的在」。
+
+/** 裁决档。`fact` / `silent` 是规格 §5.1 的两种主档；`conditional` / `persistent` 见下。 */
+type Ruling = 'fact' | 'silent' | 'conditional' | 'persistent';
+
+interface LedgerRow {
+  /** 规格 §5.1 的序号（1–19）—— 这是**对外编号**，删行/换行会在这里露馅。 */
+  readonly index: number;
+  readonly ruling: Ruling;
+  /** 人读的一句话（报告与失败信息里用）。 */
+  readonly label: string;
+  /** 这一行钉在哪（每条都返回 void；失败时 assert 抛错）。 */
+  readonly check: () => void;
+}
+
+/**
+ * 取 `restoreFeedbackCopy.ts` 里某个导出函数的**函数体文本**（箭头函数块体）。
+ *
+ * ⚠️ 用 AST 取，不用正则：`restoreGroupSuccessMessage` 的函数体里有嵌套模板串
+ * （`${opened}。该会话已${restoreOutcomePhrase(false)}…`）—— 正则会在第一个
+ * `${` 或第一个 `;` 处停下，切出来的不是完整函数体。
+ */
+const exportedFunctionBody = (rel: string, name: string): string => {
+  const source = parseTsx(rel);
+  const init = initializerOf(source, name);
+  assert.ok(init, `${rel}：找不到 ${name} 的声明`);
+  assert.ok(ts.isArrowFunction(init!), `${rel}：${name} 必须是箭头函数`);
+  return (init as ts.ArrowFunction).body.getText(source);
+};
+
+/** `src/` 下全部 .ts / .tsx（递归）。 */
+function allSourceFiles(): string[] {
+  const out: string[] = [];
+  const walk = (dir: string): void => {
+    for (const entry of readdirSync(resolve(ROOT, dir))) {
+      const rel = `${dir}/${entry}`;
+      const stat = statSync(resolve(ROOT, rel));
+      if (stat.isDirectory()) walk(rel);
+      else if (/\.tsx?$/.test(entry) && !entry.endsWith('.d.ts')) out.push(rel);
+    }
+  };
+  walk('src');
+  return out;
+}
+
+const LEDGER: readonly LedgerRow[] = [
+  {
+    index: 1,
+    ruling: 'fact',
+    label: 'Header.tsx 清理重复标签的结果（清了几个界面表达不了）',
+    check: () =>
+      assertFactSite({
+        file: 'src/components/layout/Header.tsx',
+        anchor: 'cleanDuplicatesResultMessage(',
+      }),
+  },
+  {
+    index: 2,
+    ruling: 'silent',
+    label: 'HeaderDropdown.tsx 云端已是最新（回执是菜单那行 lastSyncTime）',
+    check: () => {
+      // ⚠️ 与 SILENT_SITES 里那条**同口径**：不许只看「没有 showToast」——
+      // 探活命中也写 lastSyncTime 才是「不说话」的依据。
+      const engine = read('src/services/syncEngine.ts');
+      const probeAt = engine.indexOf("reason: 'up_to_date'");
+      assert.ok(probeAt > 0, 'syncEngine 必须有「已是最新」这条出口');
+      assert.match(
+        engine.slice(Math.max(0, probeAt - 800), probeAt),
+        /setLastSyncTime/,
+        '探活命中必须写 lastSyncTime —— 菜单那行会前进成「刚刚」，那才是回执',
+      );
+      assert.match(
+        code('src/components/layout/HeaderDropdown.tsx'),
+        /getLastSyncTime/,
+        '菜单那行必须读 lastSyncTime（它就是那个回执）',
+      );
+      assert.doesNotMatch(
+        code('src/components/layout/HeaderDropdown.tsx'),
+        /showToast\(\s*['"`]云端已是最新/,
+        '这条提示已经不该存在了 —— 结果在界面自明，说出来只是重复念一遍',
+      );
+    },
+  },
+  {
+    index: 3,
+    ruling: 'conditional',
+    label: 'HeaderDropdown.tsx 退出登录：本机 N>0 才说「不会上传到其它账号」',
+    check: () => {
+      const src = code('src/components/layout/HeaderDropdown.tsx');
+      assert.match(
+        src,
+        /localCount\s*>\s*0\s*\?[^;]*不会上传到其它账号/,
+        '「本机会话仍保留」这个事实必须以「本机有会话」为前提（有会话才说）',
+      );
+      assert.equal(
+        literalOf(retainedFactElseArm()),
+        '',
+        'N=0 那一支（else 臂）的 fact 必须是空的 —— 有内容就会在「没有盲区」时重新出声',
+      );
+      assert.match(
+        src,
+        /hiddenFact:\s*retainedFact/,
+        '判据层拿到的必须是那个事实本身（0 个会话时它是空 ⇒ 判成 silent）',
+      );
+      assertFactWiredThroughFeedback(
+        src,
+        'retainedFact',
+        'const retainedFact =',
+        /showToast\(\s*`已退出登录。\$\{retainedFact\}`\s*,\s*'info'/,
+      );
+    },
+  },
+  {
+    index: 4,
+    ruling: 'conditional',
+    label: 'HeaderDropdown.tsx 删除全部：条数一致才静默，对不上必须说',
+    check: () => {
+      const handler = deleteAllHandlerSource();
+      assert.match(handler, /deleteAllCountMatches\(/, '必须先判「实际删的数与确认的数一致吗」');
+      assert.match(
+        handler,
+        /if\s*\(\s*[A-Za-z_$][\w$]*\.level\s*!==\s*'silent'\s*\)/,
+        '提示必须被判据结果包着（一致时沉默，不一致时说话）',
+      );
+      assert.match(handler, /deleteAllSuccessMessage\(/, '文案仍由同一份文案函数产出');
+      assert.equal(
+        showToastType(handler, handler.indexOf('deleteAllSuccessMessage(')),
+        'info',
+        '这条提示的类型必须是 info（不是 success）',
+      );
+    },
+  },
+  {
+    index: 5,
+    ruling: 'fact',
+    label: 'HeaderDropdown.tsx 导出备份（含几个会话）',
+    check: () =>
+      assertFactSite({
+        file: 'src/components/layout/HeaderDropdown.tsx',
+        anchor: '已生成备份文件',
+      }),
+  },
+  {
+    index: 6,
+    ruling: 'fact',
+    label: 'HeaderDropdown.tsx 导出 OneTab（含几个会话）',
+    check: () =>
+      assertFactSite({
+        file: 'src/components/layout/HeaderDropdown.tsx',
+        anchor: '已生成 OneTab 导出文件',
+      }),
+  },
+  {
+    index: 7,
+    ruling: 'fact',
+    label: 'HeaderDropdown.tsx 诊断摘要已复制（剪贴板写入界面看不见）',
+    check: () =>
+      assertFactSite({
+        file: 'src/components/layout/HeaderDropdown.tsx',
+        anchor: '诊断摘要已复制',
+      }),
+  },
+  {
+    index: 8,
+    ruling: 'fact',
+    label: 'HeaderDropdown.tsx 导入 JSON 备份（导入几个 / 几个读不出来）',
+    check: () =>
+      assertFactSite({
+        file: 'src/components/layout/HeaderDropdown.tsx',
+        anchor: 'importSuccessMessage(',
+        // JSON 导入块独有的标记（OneTab 块没有 failedGroups / settingsMergeFailed）。
+        mustContain: 'failedGroups',
+      }),
+  },
+  {
+    index: 9,
+    ruling: 'fact',
+    label: 'HeaderDropdown.tsx 导入 OneTab（导入几个）',
+    check: () =>
+      assertFactSite({
+        file: 'src/components/layout/HeaderDropdown.tsx',
+        anchor: 'importSuccessMessage(',
+        // OneTab 导入块独有的标记（JSON 块用 result.source / result.imported）。
+        mustContain: 'source: total',
+      }),
+  },
+  {
+    index: 10,
+    ruling: 'conditional',
+    label: 'WebDavSettings.tsx 保存：换云盘 / 切自带存储出声，纯「已保存」静默',
+    check: () => {
+      const branches = saveFactBranches();
+      assert.equal(
+        literalOf(branches.wasWebdav),
+        '',
+        '「重存同一份云盘配置」那一支的 fact 必须是空的 —— 「已保存」是纯结果播报，界面自明 ⇒ 不出声',
+      );
+      assert.notEqual(
+        literalOf(branches.switchedLibrary),
+        '',
+        '换云盘那一支必须说出「用户要做的下一步」',
+      );
+      assert.notEqual(
+        literalOf(branches.elseBranch),
+        '',
+        '切到自带存储那一支必须说出「用户要做的下一步」',
+      );
+      const src = code('src/components/sync/WebDavSettings.tsx');
+      assertFactWiredThroughFeedback(
+        src,
+        'saveFact',
+        'const saveFact =',
+        /showToast\(\s*saveFact\s*,\s*'info'\s*\)/,
+      );
+    },
+  },
+  {
+    index: 11,
+    ruling: 'silent',
+    label: 'WebDavSettings.tsx 推送完成（firstPush 状态机就地渲染）',
+    check: () => {
+      assert.match(
+        code('src/components/sync/WebDavSettings.tsx'),
+        /setFirstPush\(\{\s*kind:\s*'done'/,
+        'firstPush 状态机必须就地渲染「做完了」—— 那才是回执',
+      );
+      assert.doesNotMatch(
+        code('src/components/sync/WebDavSettings.tsx'),
+        /showToast\(\s*['"`]推送完成/,
+        '这条提示已经不该存在了 —— 结果在界面自明，说出来只是重复念一遍',
+      );
+    },
+  },
+  {
+    index: 12,
+    ruling: 'silent',
+    label: 'WebDavSettings.tsx 已从云端下载到本机（同上）',
+    check: () => {
+      assert.match(
+        code('src/components/sync/WebDavSettings.tsx'),
+        /setFirstPush\(\{\s*kind:\s*'done'/,
+        'firstPush 状态机必须就地渲染「做完了」—— 那才是回执',
+      );
+      assert.doesNotMatch(
+        code('src/components/sync/WebDavSettings.tsx'),
+        /showToast\(\s*['"`]已从云端下载到本机/,
+        '这条提示已经不该存在了 —— 结果在界面自明，说出来只是重复念一遍',
+      );
+    },
+  },
+  {
+    index: 13,
+    ruling: 'silent',
+    label: 'WebDavSettings.tsx 已切回 TapStack 云端（选择器 + 常驻横幅）',
+    check: () => {
+      const src = code('src/components/sync/WebDavSettings.tsx');
+      assert.match(src, /syncBackend:\s*'supabase'/, '后端选择器必须真的切过去 —— 界面自己说得出来');
+      assert.match(
+        src,
+        /当前仍在使用 TapStack 云端/,
+        '面板上那块常驻横幅必须真的写明「当前仍在使用 TapStack 云端」—— 那才是回执',
+      );
+      assert.doesNotMatch(
+        src,
+        /showToast\(\s*['"`]已切回 TapStack 云端/,
+        '这条提示已经不该存在了 —— 结果在界面自明，说出来只是重复念一遍',
+      );
+    },
+  },
+  {
+    index: 14,
+    ruling: 'silent',
+    label: 'WebDavSettings.tsx 已清除本机保存的云服务信息（表单被清空）',
+    check: () => {
+      const src = code('src/components/sync/WebDavSettings.tsx');
+      assert.match(src, /setUsername\(''\)/, '账号输入框必须被清空 —— 那才是回执');
+      assert.match(src, /setPassword\(''\)/, '口令输入框必须被清空 —— 那才是回执');
+      assert.match(src, /setPassphrase\(''\)/, '加密口令输入框必须被清空 —— 那才是回执');
+      assert.doesNotMatch(
+        src,
+        /showToast\(\s*['"`]已清除本机保存的云服务信息/,
+        '这条提示已经不该存在了 —— 结果在界面自明，说出来只是重复念一遍',
+      );
+    },
+  },
+  {
+    index: 15,
+    ruling: 'silent',
+    label: 'WebDavSettings.tsx 已锁定（口令输入框被清空）',
+    check: () => {
+      const src = code('src/components/sync/WebDavSettings.tsx');
+      assert.match(src, /setPassword\(''\)/, '口令输入框必须被清空 —— 那才是回执');
+      assert.match(src, /setPassphrase\(''\)/, '加密口令输入框必须被清空 —— 那才是回执');
+      assert.doesNotMatch(
+        src,
+        /showToast\(\s*['"`]已锁定/,
+        '这条提示已经不该存在了 —— 结果在界面自明，说出来只是重复念一遍',
+      );
+    },
+  },
+  {
+    index: 16,
+    ruling: 'silent',
+    label: 'OptionsPage.tsx 已退出登录（账号区状态变了）',
+    check: () => {
+      const src = code('src/options/OptionsPage.tsx');
+      assert.match(src, /dispatch\(signOut\(\)\)/, '登出必须真的执行 —— 账号区状态变了就是回执');
+      assert.match(
+        src,
+        /已登录 TapStack 云端/,
+        '账号区必须真的渲染「已登录 / 尚未登录」两种形态 —— 那才是回执',
+      );
+      assert.match(src, /尚未登录 TapStack 云端/, '账号区必须真的渲染「已登录 / 尚未登录」两种形态');
+      assert.doesNotMatch(
+        src,
+        /showToast\(\s*['"`]已退出登录/,
+        '这条提示已经不该存在了 —— 结果在界面自明，说出来只是重复念一遍',
+      );
+    },
+  },
+  {
+    index: 17,
+    ruling: 'silent',
+    label: 'OptionsPage.tsx 已开启自动同步（开关翻了 + 后半句搬进 hint）',
+    check: () => {
+      const src = code('src/options/OptionsPage.tsx');
+      assert.match(
+        src,
+        /关闭浏览器后需要重新输入应用密码/,
+        '「关闭浏览器后需重新输入应用密码」是这条设置的常驻属性，必须写进 hint',
+      );
+      assert.match(
+        src,
+        /label="自动同步"[\s\S]{0,200}hint=\{autoSyncHint\}/,
+        '那句必须挂在「自动同步」这个设置项的 hint 上（常驻说明，不是 toast）',
+      );
+      assert.match(
+        src,
+        /label="自动同步"[\s\S]{0,300}checked=\{settings\.syncEnabled\}/,
+        '开关本身必须显示真实状态 —— 开关翻了就是回执',
+      );
+      // ⚠️ 这一条**不是** showToast 形状：它钉的是那句话本身不许再出现。
+      assert.doesNotMatch(
+        src,
+        /已开启自动同步/,
+        '这条提示已经不该存在了 —— 结果在界面自明，说出来只是重复念一遍',
+      );
+    },
+  },
+  {
+    index: 18,
+    ruling: 'silent',
+    label: 'OptionsPage.tsx 已切回 TapStack 云端（选择器状态变了）',
+    check: () => {
+      const src = code('src/options/OptionsPage.tsx');
+      assert.match(src, /syncBackend:\s*next/, '后端选择器必须真的切过去 —— 界面自己说得出来');
+      assert.match(
+        src,
+        /aria-checked=\{settings\.syncBackend === 'supabase'\}/,
+        '选择器必须真的把「TapStack 云端」这一档标成选中 —— 那才是回执',
+      );
+      assert.doesNotMatch(
+        src,
+        /showToast\(\s*['"`]已切回 TapStack 云端/,
+        '这条提示已经不该存在了 —— 结果在界面自明，说出来只是重复念一遍',
+      );
+    },
+  },
+  {
+    index: 19,
+    ruling: 'persistent',
+    label: 'TabGroup.tsx 锁定说明：从 toast 改成卡片常驻行（Task 3）',
+    check: () => {
+      // ── 「常驻」档的两半 ────────────────────────────────────────────────
+      // ① 旧的 toast 文案与出口都**没了**（`lockToggleMessage` 两个分支都不再需要）；
+      // ② 新的载体**真的在**：`lockDisclosureText` 存在、且真的渲染在卡片上
+      //    （只断言「没有 toast」是零检测力 —— 把整行删掉也照样绿）。
+      assert.doesNotMatch(
+        code(TAB_GROUP),
+        /lockToggleMessage/,
+        '锁定提示不再是一条 toast（它常驻在卡片上）',
+      );
+      assert.doesNotMatch(
+        code('src/components/tabs/lockFeedbackCopy.ts'),
+        /lockToggleMessage/,
+        'lockToggleMessage 必须删掉（两个分支都不再需要它）',
+      );
+      const source = parseTsx(TAB_GROUP);
+      const call = findCall(source, 'lockDisclosureText');
+      assert.ok(call, 'TabGroup 必须用 lockDisclosureText 驱动那行说明');
+      assert.equal(
+        call!.arguments[0]?.getText(source),
+        'group.isLocked',
+        '那行说明必须按「这个会话锁没锁」渲染',
+      );
+      const name = assignedNameOf(source, call!);
+      assert.ok(name, '那行说明的结果必须先落到一个变量上');
+      assert.ok(jsxUses(source, name!), '那行说明必须真的渲染出来（算了不用 = 没有那行）');
+    },
+  },
+];
+
+describe('Task 4 登记表：19 处裁决，一处不多一处不少', () => {
+  it('登记表恰好 19 行，且序号是 1–19（不许悄悄删行 / 换行）', () => {
+    assert.equal(
+      LEDGER.length,
+      19,
+      `登记表必须恰好 19 行（实际 ${LEDGER.length} 行）—— 少一行 = 那一处裁决失去了守卫`,
+    );
+    assert.deepEqual(
+      LEDGER.map(row => row.index),
+      Array.from({ length: 19 }, (_, i) => i + 1),
+      '序号必须是 1–19 且不重不漏（对应规格 §5.1 的 19 处 success 调用）',
+    );
+  });
+
+  it('档位分布被钉死：6 fact / 9 silent / 3 条件 fact / 1 常驻（共 19）', () => {
+    // ── 这张分布表就是「裁决漂移」的探针 ────────────────────────────────
+    // 有人把一处 fact 悄悄改成 silent（少说一句话），或者把一处 silent
+    // 改成 fact（多说一句废话）⇒ 下面的 deepEqual 立刻红。
+    //
+    // 6 fact = #1 清理重复 + #5/#6/#7 导出备份 / 导出 OneTab / 诊断摘要 + #8/#9 两处导入。
+    // 9 silent = #2 + #11–#18。
+    // 3 条件 fact = #3 退出登录 / #4 删除全部 / #10 保存（出声那半边的形状与 fact 一样，
+    //   但「什么时候出声」另由各行的 `check` 钉住 ⇒ 单列一档，不重复计入 fact）。
+    // 1 常驻 = #19 锁定说明（Task 3 改成卡片常驻行）。
+    const tally: Record<Ruling, number> = { fact: 0, silent: 0, conditional: 0, persistent: 0 };
+    for (const row of LEDGER) tally[row.ruling] += 1;
+    assert.deepEqual(
+      tally,
+      { fact: 6, silent: 9, conditional: 3, persistent: 1 },
+      '档位分布漂了 —— 19 处裁决的档位是定过案的（规格 §5.1 / Ruling 11 / Ruling 12 / §5.3）',
+    );
+    // 四档加起来必须还是 19（防止有人加一档又减一档、总数没变但内容变了）。
+    assert.equal(
+      tally.fact + tally.silent + tally.conditional + tally.persistent,
+      19,
+      '四档加起来必须还是 19',
+    );
+  });
+
+  for (const row of LEDGER) {
+    it(`#${row.index} [${row.ruling}] ${row.label}`, () => row.check());
+  }
+
+  // ── brief 的两行样板：`openSingleTabSuccessMessage(` / `restoreGroupSuccessMessage(` ──
+  //
+  // 这两处**不在规格 §5.1 的 19 处里**（它们是 §5.2「恢复类 11 处播报」的收口，
+  // 由 Task 3 改成「只剩未锁定」）⇒ 不占 19 行的编号，但 brief 要求它们也进登记表。
+  // ⇒ 单列成两行**附加行**，钉「只剩未锁定」这件事。
+  it('附加：openSingleTabSuccessMessage 只剩「未锁定」（锁定那句已删、TabGroup 锁定分支不含它）', () => {
+    // ① 文案函数里**不含**「仍保留在会话中」——锁定版那句随死分支一起删了。
+    //    用 `exportedFunctionBody` **抽取**函数体再判（正则钉不到「函数体的范围」）。
+    const singleBody = exportedFunctionBody(
+      'src/components/tabs/restoreFeedbackCopy.ts',
+      'openSingleTabSuccessMessage',
+    );
+    assert.doesNotMatch(
+      singleBody,
+      /仍保留在会话中/,
+      '点开单标签的文案里不该再有「仍保留在会话中」——锁定版那句已随死分支删除',
+    );
+    // ② TabGroup 的锁定分支里**不含**它（锁定分支必须整条静默）。
+    const lockedBranch = extractLockedBranch(code(TAB_GROUP));
+    assert.ok(lockedBranch, `${TAB_GROUP}：应能找到 handleOpenTab 里的锁定分支`);
+    assert.doesNotMatch(
+      lockedBranch!,
+      /openSingleTabSuccessMessage/,
+      `${TAB_GROUP}：锁定分支不许出现点开单标签的成功文案（锁定路径整条静默）`,
+    );
+  });
+
+  it('附加：restoreGroupSuccessMessage 只剩「未锁定」（且 inCurrentWindow 参数仍在）', () => {
+    const groupBody = exportedFunctionBody(
+      'src/components/tabs/restoreFeedbackCopy.ts',
+      'restoreGroupSuccessMessage',
+    );
+    assert.doesNotMatch(
+      groupBody,
+      /仍保留在列表/,
+      '整组恢复的文案里不该再有「仍保留在列表」——锁定版那句已随死分支删除',
+    );
+    // ⚠️ 参数名 `inCurrentWindow` **仍在**（brief 的样板要求）。
+    //    这条钉的是「开在哪个窗口必须由调用方告诉」这件事——参数没了，
+    //    文案就只能猜一个（历史上猜错过，见 restoreWindowWording）。
+    const source = parseTsx('src/components/tabs/restoreFeedbackCopy.ts');
+    const init = initializerOf(source, 'restoreGroupSuccessMessage');
+    assert.ok(init && ts.isArrowFunction(init), 'restoreGroupSuccessMessage 必须还是箭头函数');
+    const paramNames = (init as ts.ArrowFunction).parameters.map(p => p.name.getText(source));
+    assert.deepEqual(
+      paramNames,
+      ['tabCount', 'inCurrentWindow'],
+      '签名必须仍是 (tabCount, inCurrentWindow) —— 「开在哪个窗口」必须由调用方告诉，不许猜',
+    );
+  });
+});
+
+// ══════════════════════════════════════════════════════════════════════════
+// 六、Task 4 Step 2：失败**不得**被静默
+// ══════════════════════════════════════════════════════════════════════════
+//
+// ── 这一节在防什么 ────────────────────────────────────────────────────────
+//
+// 「安静的成功」这个动作最容易犯的错，是**顺手把失败也一起静音了** ——
+// 删掉一条 `showToast(..., 'success')` 的同一把刀，很容易连它下面那条
+// `showToast(..., 'error')` 一起切掉。那不是「安静」，那是**哑巴**：
+// 用户点了没反应、以为成功了、数据没了。
+//
+// ⇒ 三条不变式（规格 §6.2 第 7 条 + Global Constraints）：
+//   ① error 型调用点数**不许减少**（基线 35，Task 2 之前的实测值）；
+//   ② error 且调用方没指定时长 ⇒ **常驻**（不许被改回 3 秒自动消失）；
+//   ③ error 与**带动作**的提示**不许被后来的提示静默挤掉**（退路与失败都不许丢）。
+
+/** 全仓 `showToast(...)` 调用点的类型实参（AST 解析，不吃注释、不吃字符串里的巧合）。 */
+const showToastCalls = (): Array<{ file: string; type: string | null }> => {
+  const out: Array<{ file: string; type: string | null }> = [];
+  for (const file of allSourceFiles()) {
+    const source = ts.createSourceFile(
+      file,
+      stripComments(read(file)),
+      ts.ScriptTarget.Latest,
+      true,
+      file.endsWith('.tsx') ? ts.ScriptKind.TSX : ts.ScriptKind.TS,
+    );
+    const visit = (node: ts.Node): void => {
+      if (
+        ts.isCallExpression(node) &&
+        ts.isIdentifier(node.expression) &&
+        node.expression.text === 'showToast'
+      ) {
+        const arg = node.arguments[1];
+        const literal =
+          arg && (ts.isStringLiteral(arg) || ts.isNoSubstitutionTemplateLiteral(arg))
+            ? arg.text
+            : null;
+        out.push({ file, type: literal });
+      }
+      node.forEachChild(visit);
+    };
+    visit(source);
+  }
+  return out;
+};
+
+describe('Task 4：判据层的 fact 档必须真的存在（不然「说事实」全哑）', () => {
+  // ── 为什么这条归在 Task 4 ────────────────────────────────────────────────
+  //
+  // 上面 19 处里，8 处靠判据层判成 `fact` 才出声。而 `decideFeedback` 的
+  // 规则②（`hiddenFact` 非空 ⇒ fact）就是那条通路本身：
+  //   · 把规则②删掉 ⇒ 非空 fact 会掉到规则④ ⇒ **全部判成 silent**
+  //     ⇒ 那 8 处一句话都不说，而本文件里**没有一条**断言会红
+  //     （逐条 `it` 只钉「接线在」「类型是 info」，钉不到「判据层会不会判 fact」）。
+  //
+  // ⇒ 这里直接钉判据层的**三档输出**，三档缺一不可。
+  it('有非空 fact ⇒ fact（规则②）；没有 fact 且结果自明 ⇒ silent（规则④）', async () => {
+    const { decideFeedback } = await import('@/core/feedbackPolicy');
+    const withFact = decideFeedback({
+      visibility: 'self-evident',
+      hiddenFact: '清了 3 个重复标签',
+    });
+    assert.equal(
+      withFact.level,
+      'fact',
+      '有非空 fact 时必须判成 fact —— 这一档没了，「清掉了几个」这类界面表达不了的事就全哑了',
+    );
+    assert.match(withFact.reason, /规则②/, '必须命中规则②（判据要能自述命中了哪一条）');
+    const withoutFact = decideFeedback({ visibility: 'self-evident' });
+    assert.equal(withoutFact.level, 'silent', '没有 fact 且结果自明 ⇒ 沉默');
+    assert.match(withoutFact.reason, /规则④/, '必须命中规则④');
+    // 空 / 纯空白不算「有一件事」（否则空 fact 会出声，条件 fact 的两处静默就失效）
+    for (const blank of ['', '   ', '\n']) {
+      assert.equal(
+        decideFeedback({ visibility: 'self-evident', hiddenFact: blank }).level,
+        'silent',
+        `空白 fact（${JSON.stringify(blank)}）必须判成 silent —— 没有事实就没有话可说`,
+      );
+    }
+  });
+});
+
+describe('Task 4：失败不得被静默', () => {
+  it('全仓 error 型 showToast 调用点 ≥ 35（Task 2 之前的基线）', () => {
+    // ⚠️ 这是**下限**不是等式：以后新增失败提示应该让它变大，不该变小。
+    //    基线来源：Task 2 动手前实测 `error 35 / success 19 / warning 7 / info 5 / 动态 6`。
+    //    口径：AST 解析 `showToast(` 的**第二个实参**，只认字符串字面量
+    //    （变量 / 三元 / 模板插值算「动态」，不计入 error）—— 与规格 §4.2 的统计同口径。
+    const calls = showToastCalls();
+    assert.ok(calls.length > 0, '应当能解析出 showToast 调用（解析器坏了就是假绿）');
+    const errorCalls = calls.filter(call => call.type === 'error');
+    assert.ok(
+      errorCalls.length >= 35,
+      `error 型 showToast 只剩 ${errorCalls.length} 处（基线 35）—— ` +
+        '「安静的成功」删的是成功播报，不是失败出口；少了就说明有失败被顺手静音了',
+    );
+  });
+
+  it('error 且调用方没指定时长 ⇒ 常驻（不许被改回自动消失）', async () => {
+    const { resolveToastDuration } = await import('@/components/common/toastPolicy');
+    assert.equal(
+      resolveToastDuration('error', 3000, false),
+      0,
+      '错误提示必须常驻（0 = 不自动消失）—— 一闪而过的失败等于没说过',
+    );
+  });
+
+  it('error 与带动作的提示都不会被后来的提示静默挤掉', async () => {
+    const { isEvictable } = await import('@/components/common/toastQueuePolicy');
+    assert.equal(
+      isEvictable({ hasAction: false, isError: true }),
+      false,
+      '错误提示不许被静默挤掉（「失败始终会通知」是本仓的对外承诺）',
+    );
+    assert.equal(
+      isEvictable({ hasAction: true, isError: false }),
+      false,
+      '带动作的提示不许被静默挤掉（那是「恢复即消费」的唯一退路）',
+    );
+    // 自证这条判据不是「一律不可挤」：普通信息类提示**必须**可挤掉，
+    // 否则队列一旦满了就再也进不来新提示（那是另一种坏）。
+    assert.equal(
+      isEvictable({ hasAction: false, isError: false }),
+      true,
+      '普通提示必须可挤掉 —— 否则队列满了就再也进不来新提示',
+    );
+  });
+});
+
+// ══════════════════════════════════════════════════════════════════════════
+// 七、Task 4 Step 3：命名空间不许误伤
+// ══════════════════════════════════════════════════════════════════════════
+//
+// ── 这一节在防什么 ────────────────────────────────────────────────────────
+//
+// `'success'` 这个字面量在本仓同时活在**六个互不相干的命名空间**里（见文件头）。
+// 本次只删 toast 那一层。如果哪天有人「顺手统一一下」，把 `AlertDialog.type`
+// 或 `TabGroup.syncStatus` 里的 `'success'` 也删了 —— 那是**误伤**：
+//   · `AlertDialog.type = 'success'` 是**弹窗**的语气，不是 toast；
+//   · `TabState.syncStatus = 'success'` 是**同步状态机**的一个状态。
+//
+// ⇒ 这两处必须**仍然有** `'success'`。它们的存在正是「闸门是命名空间限定的、
+//   不是 blanket」的证明 —— 也是 §类型层 那三条断言没有变成 blanket grep 的证据。
+
+describe('Task 4：闸门是命名空间限定的（不许误伤别的 success）', () => {
+  it("AlertDialog 的 type 里仍然有 'success'（弹窗语气，不是 toast）", () => {
+    const source = parseTsx('src/components/common/AlertDialog.tsx');
+    let members: string[] | null = null;
+    const visit = (node: ts.Node): void => {
+      if (ts.isInterfaceDeclaration(node) && node.name.text === 'AlertDialogProps') {
+        for (const member of node.members) {
+          if (
+            ts.isPropertySignature(member) &&
+            member.name &&
+            ts.isIdentifier(member.name) &&
+            member.name.text === 'type' &&
+            member.type
+          ) {
+            members = member.type
+              .getText(source)
+              .split('|')
+              .map(part => part.trim().replace(/^['"]|['"]$/g, ''));
+          }
+        }
+      }
+      node.forEachChild(visit);
+    };
+    visit(source);
+    assert.ok(members, 'AlertDialogProps 必须还有 type 这个属性（找不到 = 解析器坏了）');
+    assert.ok(
+      (members as string[]).includes('success'),
+      `AlertDialog.type 里必须仍然有 'success'（实际成员：${(members as string[]).join(' | ')}）—— ` +
+        '它是**弹窗**的语气，不是 toast；删掉它就是误伤',
+    );
+  });
+
+  it("TabState.syncStatus 里仍然有 'success'（同步状态机，不是 toast）", () => {
+    const source = parseTsx('src/types/tab.ts');
+    let members: string[] | null = null;
+    const visit = (node: ts.Node): void => {
+      if (ts.isInterfaceDeclaration(node) && node.name.text === 'TabState') {
+        for (const member of node.members) {
+          if (
+            ts.isPropertySignature(member) &&
+            member.name &&
+            ts.isIdentifier(member.name) &&
+            member.name.text === 'syncStatus' &&
+            member.type
+          ) {
+            members = member.type
+              .getText(source)
+              .split('|')
+              .map(part => part.trim().replace(/^['"]|['"]$/g, ''));
+          }
+        }
+      }
+      node.forEachChild(visit);
+    };
+    visit(source);
+    assert.ok(members, 'TabState.syncStatus 必须还在（找不到 = 解析器坏了）');
+    assert.ok(
+      (members as string[]).includes('success'),
+      `TabState.syncStatus 里必须仍然有 'success'（实际成员：${(members as string[]).join(' | ')}）—— ` +
+        '它是**同步状态机**的一个状态，不是 toast；删掉它就是误伤',
+    );
+  });
+
+  it("「安静的成功」只删了 toast 那一层：别的命名空间里的 'success' 一处都没少", () => {
+    // ⚠️ 这条**不是** blanket grep（Global Constraints 明令禁止）：
+    //    它断言的是「那几处**仍然在**」，方向与 blanket 相反 —— blanket 会
+    //    因为「别处还有 success」而误报，这条只在「别处被删空了」时才红。
+    //
+    // 三处必须仍在的（本次**不该动**的命名空间）：
+    //   · 浏览器通知 kind —— `TabManager.ts` / `service-worker.ts` 的 showNotification 分流
+    //   · 就地反馈 kind —— `Header.tsx` / `TabList.tsx` / `SearchResultList.tsx`
+    //   · `InlineNoticeTone` —— `InlineNotice.tsx`
+    // （`AlertDialog.type` / `TabState.syncStatus` 由上面两条 AST 断言钉住。）
+    //
+    // ⚠️ 一律**抽取类型/属性的成员**再判，不钉 `kind: 'success'` 这种字面长相：
+    //    浏览器通知那个 `kind` 是**属性签名**（`kind?: 'success' | 'info' | 'error'`），
+    //    就地反馈那个是**对象字面量的值**（`kind: 'success'`）—— 两种形状，
+    //    一个正则必然漏掉一种（本仓「正则钉形状」那一类假绿）。
+    const typeMembers = (rel: string, typeName: string): string[] => {
+      const source = parseTsx(rel);
+      let members: string[] | null = null;
+      const visit = (node: ts.Node): void => {
+        if (ts.isTypeAliasDeclaration(node) && node.name.text === typeName) {
+          members = node.type
+            .getText(source)
+            .split('|')
+            .map(part => part.trim().replace(/^['"]|['"]$/g, ''));
+        }
+        node.forEachChild(visit);
+      };
+      visit(source);
+      assert.ok(members, `${rel}：找不到类型 ${typeName}（解析器坏了就是假绿）`);
+      return members as string[];
+    };
+
+    assert.ok(
+      typeMembers('src/components/common/InlineNotice.tsx', 'InlineNoticeTone').includes('success'),
+      "InlineNoticeTone 里必须仍然有 'success' —— 那是就地提示的语气，不是 toast",
+    );
+    // 浏览器通知：`service-worker.ts` 那个参数的类型联合 + 默认值。
+    // 这一处**没有**具名类型别名（是参数上的内联联合）⇒ 用 AST 抽参数声明再判。
+    const swKindMembers = (): string[] => {
+      const source = parseTsx('src/service-worker.ts');
+      let members: string[] | null = null;
+      const visit = (node: ts.Node): void => {
+        if (
+          ts.isParameter(node) &&
+          ts.isIdentifier(node.name) &&
+          node.name.text === 'kind' &&
+          node.type &&
+          ts.isUnionTypeNode(node.type)
+        ) {
+          members = node.type.types
+            .map(part => part.getText(source).replace(/^['"]|['"]$/g, ''));
+        }
+        node.forEachChild(visit);
+      };
+      visit(source);
+      assert.ok(members, 'service-worker.ts：找不到 showNotification 的 kind 参数（解析器坏了就是假绿）');
+      return members as string[];
+    };
+    assert.ok(
+      swKindMembers().includes('success'),
+      `浏览器通知的 kind 里必须仍然有 'success'（实际：${swKindMembers().join(' | ')}）—— ` +
+        '那是通知分流，不是 toast',
+    );
+
+    /** 某个文件里「作为对象字面量值出现的 `kind: 'success'`」有几处。 */
+    const kindValueCount = (rel: string): number => {
+      const source = parseTsx(rel);
+      let count = 0;
+      const visit = (node: ts.Node): void => {
+        if (
+          ts.isPropertyAssignment(node) &&
+          node.name &&
+          ts.isIdentifier(node.name) &&
+          node.name.text === 'kind' &&
+          ts.isStringLiteralLike(node.initializer) &&
+          node.initializer.text === 'success'
+        ) {
+          count += 1;
+        }
+        node.forEachChild(visit);
+      };
+      visit(source);
+      return count;
+    };
+    for (const file of [
+      'src/components/layout/Header.tsx',
+      'src/components/tabs/TabList.tsx',
+      'src/components/search/SearchResultList.tsx',
+    ]) {
+      assert.ok(
+        kindValueCount(file) > 0,
+        `${file}：就地反馈的 kind 里必须仍然有 'success' —— 那是页内提示，不是 toast`,
+      );
+    }
+  });
 });
