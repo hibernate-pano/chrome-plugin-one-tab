@@ -26,6 +26,7 @@ import {
   saveAllSuccessShortMessage,
 } from '@/domain/tabGroup/saveFeedbackCopy';
 import { planCleanDuplicates } from '@/core/mutationOps';
+import { decideFeedback } from '@/core/feedbackPolicy';
 import { storage } from '@/utils/storage';
 import { logError } from '../../utils/log';
 
@@ -201,23 +202,29 @@ export const Header: React.FC<HeaderProps> = ({ onSearch, onReplayOnboarding, on
           showToast('正在清理重复标签和空会话…', 'info', 2000);
           try {
             const result = await dispatch(cleanDuplicateTabs()).unwrap();
-            // 清理是有成效的操作，结果必须让用户看见——静默会让「点了一下没反应」
-            // 与「真的没东西可清」无法区分。
+            // 清理是有成效的操作，但**结果不是界面能说出来的** ——
+            // 列表只是变短了，「清了几个重复标签、几个空会话」界面永远表达不了；
+            // 而且这是**破坏性**操作，确认框里写的是「预计」，实到多少要实说。
             //
             // 计数取自 SW 回传的权威计划，而不是本地乐观算出的那份：popup 的
             // state.groups 可能陈旧，本地计数会与实际落盘结果不符（见 tabSlice
             // 的 cleanDuplicateTabs 注释）。列表更新在 pending 阶段就已经发生了。
-            showToast(
-              cleanDuplicatesResultMessage(
-                result.value.plan.removedTabsCount,
-                result.value.plan.removedGroupsCount,
-              ),
-              'success',
-              4000,
+            //
+            // 「说不说」由判据层裁决（decideFeedback），不在这里拍脑袋。
+            const cleanResult = cleanDuplicatesResultMessage(
+              result.value.plan.removedTabsCount,
+              result.value.plan.removedGroupsCount,
             );
+            const fb = decideFeedback({
+              visibility: 'self-evident',
+              hiddenFact: cleanResult,
+            });
+            if (fb.level !== 'silent') {
+              showToast(cleanResult, 'info', 4000);
+            }
             // 清理会物理移除整组（空会话）。本地已删干净，但若云端删除广播
             // 登记失败，这些会话会在其它设备上复活——必须如实告知，不能让
-            // 「清理成功」的成功提示盖过去。
+            // 「清理成功」那句结果提示盖过去。
             const warn = deleteBroadcastWarn(result);
             if (warn) {
               showAlert({

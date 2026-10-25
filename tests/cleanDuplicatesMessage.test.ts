@@ -50,7 +50,30 @@ describe('Header：清理重复标签的成功反馈不得被静默', () => {
       /cleanDuplicatesResultMessage\(\s*result\.value\.plan\.removedTabsCount,\s*result\.value\.plan\.removedGroupsCount,?\s*\)/,
       '成功分支必须用清理结果计数生成文案',
     );
-    assert.match(HEADER, /showToast\(\s*cleanDuplicatesResultMessage/, '文案必须经 showToast 展示给用户');
+    // 2026-10-25「安静的成功」：成功提示现在先过判据层（decideFeedback），
+    // 文案先落进一个局部变量再交给 showToast ⇒ 不能再钉
+    // 「showToast(cleanDuplicatesResultMessage(…))」那个**字面形状**
+    //（换个变量名就误报）。改为**顺着数据流**断言：
+    //   ① 文案由权威计划里的两个计数算出（上面的判据，不变）；
+    //   ② 算出来的那句话**原样**进了 showToast（顺着变量名走，不钉名字）；
+    //   ③ 判据层拿到的是**同一句非空的话** ⇒ 它判成 fact，**不会被静默**
+    //      （`cleanDuplicatesResultMessage` 永远返回非空句子，见上面那组纯函数断言）。
+    const assign = HEADER.match(/const (\w+) = cleanDuplicatesResultMessage\(/);
+    assert.ok(assign, '成功分支必须把文案先落进一个变量（判据层要用它）');
+    const msgVar = assign[1];
+    const tail = HEADER.slice(assign.index);
+    assert.ok(
+      tail.includes(`showToast(${msgVar}`),
+      '文案必须经 showToast 展示给用户',
+    );
+    const fbAt = tail.indexOf('decideFeedback(');
+    assert.ok(fbAt > -1, '成功提示必须先过判据层（decideFeedback）');
+    const fbCall = tail.slice(fbAt, tail.indexOf(')', fbAt) + 1);
+    assert.match(
+      fbCall,
+      new RegExp(`hiddenFact:\\s*${msgVar}`),
+      '判据层拿到的必须是同一句话（非空 ⇒ fact ⇒ 不得被静默）',
+    );
   });
 
   it('清理会物理移除整组：广播登记失败必须 surface（不得被成功提示盖掉）', () => {

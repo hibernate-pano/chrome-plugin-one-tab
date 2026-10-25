@@ -58,8 +58,8 @@ describe('SC-6 判据层：三种结果 ⇒ 三种不同的反馈', () => {
     assert.equal(empty.tone, 'info', '云端本来就是空的 ⇒ 不是错误，是一条提示');
   });
 
-  it('拉到东西 ⇒ 成功语气', () => {
-    assert.equal(loginRestoreFeedback({ kind: 'pulled', count: 2 }).tone, 'success');
+  it('拉到东西 ⇒ 中性语气（成功是状态不是事件，提示层没有成功这一档）', () => {
+    assert.equal(loginRestoreFeedback({ kind: 'pulled', count: 2 }).tone, 'info');
   });
 });
 

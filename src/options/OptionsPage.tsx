@@ -491,7 +491,8 @@ const OptionsContent: React.FC = () => {
   const handleSignOut = useCallback(async () => {
     try {
       await dispatch(signOut()).unwrap();
-      showToast('已退出登录', 'success');
+      // 2026-10-25「安静的成功」：**不出声** —— 账号区会从「已登录」变成
+      // 「登录 / 注册」，界面自己说得出来。
     } catch (err) {
       logError('[OptionsPage] 退出登录失败:', err);
       showToast('退出登录失败，请重试', 'error');
@@ -584,16 +585,11 @@ const OptionsContent: React.FC = () => {
       return;
     }
     notifySwResyncAlarm();
-    if (nextEnabled) {
-      showToast(
-        `已开启自动同步，每 ${settings.syncIntervalMinutes} 分钟同步一次。` +
-          // config.ts 明确要求 UI 把「重启后要重新输密码」说出来：
-          // MV3 的会话密钥不落盘，浏览器一关就没了，自动同步会停在锁定态。
-          '关闭浏览器后需重新输入应用密码才会继续。',
-        'success'
-      );
-    }
-  }, [dispatch, authKind, settings.syncEnabled, settings.syncIntervalMinutes, notifySwResyncAlarm, showToast]);
+    // 2026-10-25「安静的成功」：**不出声** —— 开关翻了就是回执。
+    // 「关闭浏览器后需重新输入应用密码才会继续」是这条设置的**常驻属性**，
+    // 已经写在下方「自动同步」那一项的 hint 里（按后端分措辞：云端不需要
+    // 应用密码，自带存储才需要）—— 常驻说明不靠 toast 撑着。
+  }, [dispatch, authKind, settings.syncEnabled, notifySwResyncAlarm, showToast]);
 
   /**
    * 自动同步开关的说明文案（2026-10-17 B8 缺陷 3）。
@@ -708,10 +704,13 @@ const OptionsContent: React.FC = () => {
       return;
     }
     notifySwResyncAlarm();
-    if (next === 'supabase') {
-      showToast('已切回 TapStack 云端，自动同步已关闭。云盘上的文件不会被删除。', 'success');
-    } else {
-      // 切到自带存储但**可能还没配好**：这时若不提醒，用户会以为已经生效。
+    // 2026-10-25「安静的成功」：切回 TapStack 云端时**不出声** —— 后端选择器
+    // 已经切过去了，界面自己说得出来（「云盘上的文件不会被删除」是常驻说明，
+    // 不是这一刻的回执）。
+    //
+    // 切到自带存储但**可能还没配好**：这时若不提醒，用户会以为已经生效 ⇒
+    // 这条是 fact（界面说「自带存储」但其实还没配好，用户照着说就行）。
+    if (next !== 'supabase') {
       showToast('已切到自带存储。若还没填地址，请在下方填好后点「保存并启用」并测试连接。', 'info');
     }
     // 本页的后端缓存也要失效 + 重解析：notifySwResyncAlarm 只管 SW 那边，

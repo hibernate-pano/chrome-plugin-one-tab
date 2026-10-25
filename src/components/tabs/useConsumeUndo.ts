@@ -42,13 +42,13 @@ export interface ConsumeUndoApi {
    *   锁定组从不被消费，没什么可撤）。这时只播报，不挂按钮。
    *   批量消费（一次动了好几个会话）传**数组** —— 每个会话一份凭据，
    *   撤销时逐个派发（互不影响：某个失败不影响其它）。
-   * @param opts.type 提示类型。默认 'success'；'error' 用于「部分成功」
+   * @param opts.type 提示类型。默认 'info'；'error' 用于「部分成功」
    *   （那次消费照样发生了，所以也要给退路）。
    */
   showConsumeToast: (
     message: string,
     spec?: ConsumeUndoSpec | ConsumeUndoSpec[],
-    opts?: { type?: 'success' | 'error' }
+    opts?: { type?: 'info' | 'error' }
   ) => void;
 }
 
@@ -60,7 +60,7 @@ export function useConsumeUndo(): ConsumeUndoApi {
     (
       message: string,
       spec?: ConsumeUndoSpec | ConsumeUndoSpec[],
-      opts?: { type?: 'success' | 'error' }
+      opts?: { type?: 'info' | 'error' }
     ) => {
       const specs = spec === undefined ? [] : Array.isArray(spec) ? spec : [spec];
       const isError = opts?.type === 'error';

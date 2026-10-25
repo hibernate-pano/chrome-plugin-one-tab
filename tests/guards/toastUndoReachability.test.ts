@@ -19,7 +19,7 @@
 //   · 悬停/聚焦时倒计时**不推进**（假时钟推进 10 秒，剩余时间不变）；
 //   · 恢复时**从暂停处续走**（不是从头、也不是再给一整段）；
 //   · 暂停有上限（鼠标停着不动，提示最终仍会收起）；
-//   · 带动作的提示活得比普通成功提示久（但普通成功提示仍是 3 秒）；
+//   · 带动作的提示活得比普通提示久（但普通提示仍是 3 秒）；
 //   · 焦点接管有条件（打字中 / 对话框开着 / 鼠标用户 ⇒ 不抢）。
 //
 // 接线层（Toast.tsx 把这些函数接到 DOM 事件上）用**结构断言**钉，
@@ -126,16 +126,16 @@ function createFakeClock(start = 1_000_000) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────
-// 一、时长策略：带动作 ⇒ 给一个能做决定的窗口；普通成功提示仍是 3 秒
+// 一、时长策略：带动作 ⇒ 给一个能做决定的窗口；普通提示仍是 3 秒
 // ─────────────────────────────────────────────────────────────────────────
 
 describe('时长由「有没有动作」决定', () => {
-  it('带动作的提示活得比普通成功提示久（3 秒不够读完「卡片不见了」）', async () => {
+  it('带动作的提示活得比普通提示久（3 秒不够读完「卡片不见了」）', async () => {
     const { resolveToastDuration, TOAST_DEFAULT_DURATION_MS } = await import(
       '@/components/common/toastPolicy'
     );
-    const plain = resolveToastDuration('success', TOAST_DEFAULT_DURATION_MS, false);
-    const withAction = resolveToastDuration('success', TOAST_DEFAULT_DURATION_MS, true);
+    const plain = resolveToastDuration('info', TOAST_DEFAULT_DURATION_MS, false);
+    const withAction = resolveToastDuration('info', TOAST_DEFAULT_DURATION_MS, true);
     assert.ok(
       withAction > plain,
       `带动作的提示（${withAction}ms）必须比普通提示（${plain}ms）活得久 —— ` +
@@ -152,14 +152,14 @@ describe('时长由「有没有动作」决定', () => {
     );
   });
 
-  it('普通成功提示**不受影响**（仍是 3 秒 —— 把那些也拖长只是让屏幕更吵）', async () => {
+  it('普通提示**不受影响**（仍是 3 秒 —— 把那些也拖长只是让屏幕更吵）', async () => {
     const { resolveToastDuration, TOAST_DEFAULT_DURATION_MS } = await import(
       '@/components/common/toastPolicy'
     );
     assert.equal(
-      resolveToastDuration('success', TOAST_DEFAULT_DURATION_MS, false),
+      resolveToastDuration('info', TOAST_DEFAULT_DURATION_MS, false),
       TOAST_DEFAULT_DURATION_MS,
-      '不带动作的成功提示必须还是 3 秒',
+      '不带动作的普通提示必须还是 3 秒',
     );
     assert.equal(
       resolveToastDuration('info', TOAST_DEFAULT_DURATION_MS, false),
@@ -171,7 +171,7 @@ describe('时长由「有没有动作」决定', () => {
   it('调用方**明确**要求常驻（duration <= 0）时尊重它，不改写', async () => {
     const { resolveToastDuration } = await import('@/components/common/toastPolicy');
     assert.equal(resolveToastDuration('error', 0, false), 0);
-    assert.equal(resolveToastDuration('success', 0, false), 0);
+    assert.equal(resolveToastDuration('info', 0, false), 0);
   });
 
   it('错误 + 无动作 + 默认时长 ⇒ 常驻（错误不该一闪而过）', async () => {
@@ -203,14 +203,14 @@ describe('时长由「有没有动作」决定', () => {
         '3 秒连读完「卡片不见了」都不够，退路等于没有',
     );
     assert.ok(
-      resolveToastDuration('success', TOAST_DEFAULT_DURATION_MS, true) >= 8000,
+      resolveToastDuration('info', TOAST_DEFAULT_DURATION_MS, true) >= 8000,
       '带动作的提示实际拿到的时长也必须 ≥ 8 秒',
     );
-    // 但普通成功提示**不受影响**（把那些也拖长只是让屏幕更吵）。
+    // 但普通提示**不受影响**（把那些也拖长只是让屏幕更吵）。
     assert.equal(
-      resolveToastDuration('success', TOAST_DEFAULT_DURATION_MS, false),
+      resolveToastDuration('info', TOAST_DEFAULT_DURATION_MS, false),
       TOAST_DEFAULT_DURATION_MS,
-      '普通成功提示必须还是 3 秒',
+      '普通提示必须还是 3 秒',
     );
   });
 });

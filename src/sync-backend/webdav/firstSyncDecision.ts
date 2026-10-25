@@ -353,10 +353,15 @@ export async function releaseFirstSyncPendingOnSaveFailure(args: {
  *   1. 先尝试清令牌，无论成败**都**报成功（数据确实已经合了）；
  *   2. 清失败只走 onError（生产里是 logWarn），绝不向外抛。
  * 代价极小：写不进去的后果是「下次自动上传仍按增量」，不丢也不重传。
+ *
+ * ⚠️ 2026-10-25「安静的成功」：`notifySuccess` **变成可选**。
+ * 推送 / 下载的结果已经由 `firstPush` 状态机**就地渲染**（`kind:'done'`）⇒
+ * 再补一句「推送完成」只是把界面刚说过的话重复一遍。
+ * ⇒ 「还要不要额外播报」由调用方决定；这里只负责「先清令牌、再（可选地）出声」。
  */
 export async function completeFirstSyncSuccess(args: {
   write: FirstSyncPendingWriter;
-  notifySuccess: () => void;
+  notifySuccess?: () => void;
   onError?: (err: unknown) => void;
 }): Promise<{ pendingCleared: boolean }> {
   let pendingCleared = false;
@@ -366,8 +371,8 @@ export async function completeFirstSyncSuccess(args: {
   } catch (err) {
     args.onError?.(err);
   }
-  // 无论上面成没成，本次数据动作已经成功 —— 这句必须说。
-  args.notifySuccess();
+  // 无论上面成没成，本次数据动作已经成功 —— 要说就由调用方说。
+  args.notifySuccess?.();
   return { pendingCleared };
 }
 

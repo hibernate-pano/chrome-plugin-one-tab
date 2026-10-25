@@ -188,6 +188,25 @@ export const deletedCountFromResult = (payload: unknown): number => {
   return typeof count === 'number' && Number.isFinite(count) && count >= 0 ? count : 0;
 };
 
+/**
+ * 实际删的数与用户确认的数一致吗？一致 ⇒ 列表空了就是回执，不必再说。
+ *
+ * ── 为什么要有这个判据（2026-10-25「安静的成功」）────────────────────────
+ *
+ * `deleteAllSuccessMessage` 有四种说法（删了 0 个 / 与确认的一致 / 比确认的少 /
+ * 比确认的多）。其中**只有「与确认的一致」这一种是界面自明的** ——
+ * 列表空了、数量与用户确认时看到的那个数一样 ⇒ 界面已经把结果说完了。
+ * 其余三种都是**界面永远表达不了的事实**（列表空着，用户无从知道少了几个、
+ * 或者多出来的那些是哪来的）⇒ 必须说出来。
+ *
+ * ⇒ 判据独立成纯函数：调用点只问「一致吗」，文案仍由
+ * `deleteAllSuccessMessage` 产出（同一份文案只有一个版本）。
+ */
+export const deleteAllCountMatches = (input: {
+  deletedCount: number;
+  confirmedCount: number;
+}): boolean => input.deletedCount === input.confirmedCount;
+
 /** 确认框正文（破坏性操作的最后一道说明）。 */
 export const deleteAllConfirmMessage = (
   input: DeleteAllDisclosure & { groupCount: number } & DeleteAllLockedDisclosure

@@ -66,6 +66,7 @@ import {
   type OwnershipChoice,
 } from '@/sync-backend/webdav/firstSyncDecision';
 import { invalidateActiveSyncBackend, getLastBackendResolution, primeSyncBackend, readConfiguredBackendId } from '@/sync-backend';
+import { decideFeedback } from '@/core/feedbackPolicy';
 import { ensureHostPermission, PERMISSION_DENIED_MESSAGE } from '@/sync-backend/webdav/permission';
 import {
   buildProbeAdapterDeps,
@@ -804,15 +805,19 @@ export const WebDavSettings: React.FC = () => {
       // 换云盘时那句「别忘了点检查并推送」还不够：它没说明**为什么**现在
       // 需要做这个决定、以及**不做**会怎样（历史会话会一直留在这台设备上）。
       const switchedLibrary = wasConfigured && libraryChanged;
-      showToast(
-        switchedLibrary
-          ? '已保存，已切换到新的云盘。为避免把本机历史会话未经你同意就传上去，' +
-            '这些会话暂未上传；请点下方「检查并推送到云端」选择归属方式。'
-          : wasWebdav
-            ? '已保存'
-            : '已保存，同步方式已切换为「自带存储」。别忘了点下方「检查并推送」把本机已有会话推上去。',
-        'success'
-      );
+      // 2026-10-25「安静的成功」：这句话里是**用户要做的下一步**
+      // （「请点下方『检查并推送到云端』选择归属方式」）—— 界面表达不了，
+      // 也不是「保存成功」那种自明的事 ⇒ 判据层判成 fact。
+      const saveFact = switchedLibrary
+        ? '已保存，已切换到新的云盘。为避免把本机历史会话未经你同意就传上去，' +
+          '这些会话暂未上传；请点下方「检查并推送到云端」选择归属方式。'
+        : wasWebdav
+          ? '已保存'
+          : '已保存，同步方式已切换为「自带存储」。别忘了点下方「检查并推送」把本机已有会话推上去。';
+      const fb = decideFeedback({ visibility: 'self-evident', hiddenFact: saveFact });
+      if (fb.level !== 'silent') {
+        showToast(saveFact, 'info');
+      }
     } catch (err) {
       // 同 saveError 分支：抛出（落盘失败 / 会话凭据写失败）也不能把待决位留在盘上。
       await releaseFirstSyncPendingIfSetHere(firstSyncPendingSetHere, 'save-throw', writePending);
@@ -1074,12 +1079,15 @@ export const WebDavSettings: React.FC = () => {
                 ? `已用本机 ${localActive} 个会话覆盖云端同 id 的旧版本；云端现在共 ${afterCloud} 个会话，云端独有会话未被删除。`
                 : `已把本机 ${localActive} 个会话并入云端，并从云端拉回 ${afterCloud} 个会话到本机。`,
         });
-        // 2026-10-18 A4：解除待决必须排在成功 toast **之前**，且自带 try/catch。
+        // 2026-10-18 A4：解除待决必须排在**结果播报之前**，且自带 try/catch。
         // 排在后面时，一次 KV 写失败会被下面的 catch 报成「推送失败…本地数据未
         // 受影响」——而合并其实已经成功了（见 completeFirstSyncSuccess 的注释）。
+        //
+        // 2026-10-25「安静的成功」：**不再额外播报「推送完成」** ——
+        // 上面的 `setFirstPush({ kind:'done', … })` 已经就地渲染了结果
+        // （含云端现在共几个会话），那才是回执。
         await completeFirstSyncSuccess({
           write: writeCurrentScope,
-          notifySuccess: () => showToast('推送完成', 'success'),
           onError: err =>
             logWarn('[WebDavSettings] 推送完成：解除归属待决标志失败（不影响本次结果）:', err),
         });
@@ -1176,12 +1184,14 @@ export const WebDavSettings: React.FC = () => {
     // 现在三种结果（抛出 / {ok:false} / 成功）都收敛成一个可渲染状态。
     const outcome = await runPullCommand({
       run: () => sendSyncCommand('download', { forceRemote: false, syncSettings: false }),
-      // 2026-10-18 A4：解除待决排在成功 toast **之前**，且自带 try/catch ——
+      // 2026-10-18 A4：解除待决排在**结果播报之前**，且自带 try/catch ——
       // 否则一次 KV 写失败就会被报成「下载失败」，而合并其实已经成功了。
+      //
+      // 2026-10-25「安静的成功」：**不再额外播报「已从云端下载到本机」** ——
+      // 下方的 `setFirstPush({ kind:'done', … })` 已经就地渲染了结果。
       complete: () =>
         completeFirstSyncSuccess({
           write: writeCurrentScope,
-          notifySuccess: () => showToast('已从云端下载到本机', 'success'),
           onError: err => logWarn('[WebDavSettings] 下载完成：解除归属待决标志失败（不影响本次结果）:', err),
         }),
       copyOf: downloadReasonCopy,
@@ -1262,7 +1272,8 @@ export const WebDavSettings: React.FC = () => {
       await clearPendingToken('切回 TapStack 云端', writeCurrentScope);
       // P2-4：通知父页面刷新自动同步提示（切回云端后「已配置并解锁」不再成立）
       notifyWebDavConfigChanged();
-      showToast('已切回 TapStack 云端。云盘上的文件不会被删除。', 'success');
+      // 2026-10-25「安静的成功」：**不出声** —— 后端选择器已经切回云端，
+      // 界面自己说得出来（「云盘上的文件不会被删除」是常驻说明，不是这一刻的回执）。
     } catch (err) {
       showToast(err instanceof Error ? err.message : '切换失败', 'error');
     }
@@ -1313,12 +1324,15 @@ export const WebDavSettings: React.FC = () => {
       // 2026-10-18 round 38：保存结果以前被丢弃，末尾无条件报「自动同步已关闭」。
       // 写盘失败时那就是假的 —— 开关仍是 true，后台会继续按间隔醒来。
       // 失败就把 Redux 回滚成磁盘上的真值，并在 toast 里如实说明。
-      let autoSyncOffFailed = false;
+      //
+      // ⚠️ 2026-10-25「安静的成功」：**末尾那句「已清除…自动同步已关闭」删掉了**
+      // —— 表单被清空（地址 / 账号 / 口令 / 口令框）与开关翻回关闭**都是界面自明**，
+      // 说出来只是把界面刚显示的东西再念一遍。失败那一条 error 保留（那是失败，
+      // 必须出声）。
       if (settings.syncEnabled) {
         dispatch(updateSettings({ syncEnabled: false }));
         const saveError = await dispatchSaveSettings(dispatch);
         if (saveError) {
-          autoSyncOffFailed = true;
           dispatch(updateSettings({ syncEnabled: true }));
           showToast(
             `云服务信息与本次会话口令已清除，但${saveError}：自动同步开关未能关闭（仍为开启），` +
@@ -1337,10 +1351,6 @@ export const WebDavSettings: React.FC = () => {
       setCheck({ kind: 'idle' });
       // P2-4：清除配置后父页面的「已配置并解锁」必须失效
       notifyWebDavConfigChanged();
-      // 失败路径已经报过一条更准确的 error toast，不能再覆盖成「已关闭」。
-      if (!autoSyncOffFailed) {
-        showToast('已清除本机保存的云服务信息与本次会话口令，自动同步已关闭', 'success');
-      }
     } catch (err) {
       showToast(err instanceof Error ? err.message : '清除失败', 'error');
     }
@@ -1397,7 +1407,9 @@ export const WebDavSettings: React.FC = () => {
       setPassphrase('');
       // P2-4：锁定后父页面的「已配置并解锁」必须失效
       notifyWebDavConfigChanged();
-      showToast('已锁定：后台同步已停止，需要重新输入应用密码与加密口令才能继续', 'success');
+      // 2026-10-25「安静的成功」：**不出声** —— 口令与加密口令两个输入框
+      // 已经被清空、面板状态也切成了锁定态，界面自己说得出来。
+      // （「需要重新输入应用密码」是常驻说明，不是这一刻的回执。）
     } catch (err) {
       showToast(err instanceof Error ? err.message : '锁定失败', 'error');
     }

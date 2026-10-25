@@ -40,6 +40,7 @@ import { registerFocusReturn } from '@/utils/focusReturn';
 import {
   DELETE_ALL_NOTHING_MESSAGE,
   DELETE_ALL_READ_FAILED_MESSAGE,
+  deleteAllCountMatches,
   deleteAllConfirmMessage,
   deleteAllConfirmTitle,
   deleteAllMenuWarning,
@@ -54,6 +55,7 @@ import { formatExportStamp } from '@/utils/exportStamp';
 import { MAX_IMPORT_FILE_BYTES, importFileTooLargeMessage } from '@/core/importLimits';
 import { resolveMenuSyncStatus, resolveSyncFailureCopy } from '@/components/sync/syncPreviewView';
 import { skippedOverwriteNotice } from '@/components/sync/skippedOverwriteNotice';
+import { decideFeedback } from '@/core/feedbackPolicy';
 
 /** 问题反馈落点：GitHub issues 新建页。用户自己决定粘不粘诊断摘要。 */
 const FEEDBACK_ISSUE_URL = 'https://github.com/hibernate-pano/chrome-plugin-one-tab/issues/new';
@@ -350,9 +352,10 @@ const authNotice = useAppSelector(state => state.auth.notice ?? null);
       if (res.ok) {
         try {
           await dispatch(loadGroups()).unwrap();
-          // 成功也要说话：云端无变化时页面不会有任何视觉差异，
-          // 不给一句「已是最新」就等于「点了没反应」。
-          showToast('云端已是最新', 'success');
+          // 2026-10-25「安静的成功」：**不出声**。
+          // 探活命中也写 `lastSyncTime`（src/services/syncEngine.ts 的
+          // `up_to_date` 分支）⇒ 菜单那行会前进成「刚刚」—— 那行就是回执。
+          // 再补一句「云端已是最新」只是把界面刚说过的话重复一遍。
         } catch (err) {
           // 本地列表没刷出来 —— 这是「云端成功了但你没看见」的中间态，
           // 必须说清楚，否则用户以为同步失败（或反过来以为成功了）。
@@ -567,13 +570,15 @@ const authNotice = useAppSelector(state => state.auth.notice ?? null);
       try {
         await dispatch(signOut()).unwrap();
         logInfo('登出成功');
-        showToast(
-          localCount > 0
-            ? `已退出登录。本机 ${localCount} 个会话仍保留，不会上传到其它账号。`
-            : '已退出登录',
-          'success',
-          localCount > 0 ? 5000 : undefined,
-        );
+        // 2026-10-25「安静的成功」：**「本机 N 个会话仍保留、不会传到别的账号」
+        // 界面表达不了**（列表里的会话一个都没少，账号区只是变成了未登录）⇒
+        // 这是必须说的事实。本机本来就没有会话时没有盲区：账号区变了就是回执。
+        const retainedFact =
+          localCount > 0 ? `本机 ${localCount} 个会话仍保留，不会上传到其它账号。` : '';
+        const fb = decideFeedback({ visibility: 'self-evident', hiddenFact: retainedFact });
+        if (fb.level !== 'silent') {
+          showToast(`已退出登录。${retainedFact}`, 'info', 5000);
+        }
       } catch (error) {
         // ── 2026-10-09 P2-4：失败必须出声 ──────────────────────────────
         // 菜单已经关了、界面无任何变化，只有一行 console —— 用户无法区分
@@ -630,16 +635,23 @@ const authNotice = useAppSelector(state => state.auth.notice ?? null);
       dispatch(deleteAllGroups())
         .unwrap()
         .then(payload => {
-          // ── DS-43-15：成功提示（此前完全没有）─────────────────────────────
-          // SW 按磁盘真值删，回传**实际条数**。把它说出来 ——
+          // ── DS-43-15：结果回执（此前完全没有）─────────────────────────────
+          // SW 按磁盘真值删，回传**实际条数**。
           // 用户点完「全部删除」只看到列表空了，不知道删了几个、
-          // 也不知道和自己确认时的数对不对得上。
+          // 也不知道和自己确认时的数对不对得上 ⇒ **数量对不上时必须说出来**。
           const deletedCount = deletedCountFromResult(payload);
-          showToast(
-            deleteAllSuccessMessage({ deletedCount, confirmedCount: plan.groupCount }),
-            'success',
-            4000
-          );
+          const counts = { deletedCount, confirmedCount: plan.groupCount };
+          // 2026-10-25「安静的成功」：**实际删的数与用户确认的数一致 ⇒ 列表空了
+          // 就是回执**，界面自己说得出来，不必再念一遍。
+          // 不一致（一个都没删 / 比确认的少 / 比确认的多）⇒ 那是界面永远表达不了的
+          // 事实 —— 少了几个？多出来的那些是哪来的？—— 必须说出来。
+          const fb = decideFeedback({
+            visibility: 'self-evident',
+            hiddenFact: deleteAllCountMatches(counts) ? undefined : deleteAllSuccessMessage(counts),
+          });
+          if (fb.level !== 'silent') {
+            showToast(deleteAllSuccessMessage(counts), 'info', 4000);
+          }
           // 广播登记失败时本地已删干净，但云端行不会被标 is_deleted ⇒
           // 其它设备下次合并会把它当 remote-only 全部复活。必须如实告知。
           const warn = deleteBroadcastWarn(payload);
@@ -808,8 +820,15 @@ const authNotice = useAppSelector(state => state.auth.notice ?? null);
       // 这里说**我们真正知道的事**：文件已生成、含几个会话、叫什么名字。
       // 浏览器自己的下载气泡负责「文件落到哪了」——那部分我们看不到，
       // 所以不假装知道。
+      //
+      // ⚠️ 2026-10-25「安静的成功」：「含几个会话」界面表达不了（下载气泡只说
+      // 文件名）⇒ 判据层判成 fact，说的是**事实**而不是「导出成功」。
       const groupCount = exportData.data.groups.length;
-      showToast(`已生成备份文件 ${fileName}（${groupCount} 个会话）`, 'success');
+      const exportFact = `已生成备份文件 ${fileName}（${groupCount} 个会话）`;
+      const fb = decideFeedback({ visibility: 'self-evident', hiddenFact: exportFact });
+      if (fb.level !== 'silent') {
+        showToast(exportFact, 'info');
+      }
       onClose();
     } catch (error) {
       logError('导出数据失败:', error);
@@ -845,7 +864,11 @@ const authNotice = useAppSelector(state => state.auth.notice ?? null);
       // 同上：导出成功要有回执，且带上**会话数**（OneTab 文本里没有会话名，
       // 用户唯一能核对的只有「导出了几个」）。
       const groupCount = countOneTabGroups(oneTabText);
-      showToast(`已生成 OneTab 导出文件 ${fileName}（${groupCount} 个会话）`, 'success');
+      const exportFact = `已生成 OneTab 导出文件 ${fileName}（${groupCount} 个会话）`;
+      const fb = decideFeedback({ visibility: 'self-evident', hiddenFact: exportFact });
+      if (fb.level !== 'silent') {
+        showToast(exportFact, 'info');
+      }
       onClose();
     } catch (error) {
       logError('导出 OneTab 格式数据失败:', error);
@@ -901,7 +924,13 @@ const authNotice = useAppSelector(state => state.auth.notice ?? null);
       const report = await collectDiagnostics({ isAuthenticated });
       const summary = diagnosticsSummaryText(report);
       if (await copyTextToClipboard(summary)) {
-        showToast('诊断摘要已复制，请在 issue 正文里粘贴', 'success');
+        // 2026-10-25「安静的成功」：剪贴板写入**界面看不见**（浏览器不给回执）
+        // ⇒ 判据层判成 fact，说的是「已复制」这个事实。
+        const copyFact = '诊断摘要已复制，请在 issue 正文里粘贴';
+        const fb = decideFeedback({ visibility: 'self-evident', hiddenFact: copyFact });
+        if (fb.level !== 'silent') {
+          showToast(copyFact, 'info');
+        }
       } else {
         // 复制不了就把原文摆出来让用户手动拿，不静默吞掉
         showAlert({
@@ -1374,12 +1403,22 @@ const authNotice = useAppSelector(state => state.auth.notice ?? null);
                               onClose: () => {},
                             });
                           } else {
-                            showToast(importSuccessMessage({
+                            // 2026-10-25「安静的成功」：列表会变，但「导入几个 /
+                            // 几个读不出来 / 几个失败」界面**永远看不见** ⇒
+                            // 判据层判成 fact，说的是这些事实。
+                            const importFact = importSuccessMessage({
                               source: result.source,
                               imported: result.imported,
                               failedGroups: result.failedGroups,
                               settingsMergeFailed: result.settingsMergeFailed,
-                            }), 'success');
+                            });
+                            const fb = decideFeedback({
+                              visibility: 'self-evident',
+                              hiddenFact: importFact,
+                            });
+                            if (fb.level !== 'silent') {
+                              showToast(importFact, 'info');
+                            }
                           }
                           // 只刷新列表，不 reload 整页：提示能完整显示完
                           dispatch(loadGroups());
@@ -1499,10 +1538,18 @@ const authNotice = useAppSelector(state => state.auth.notice ?? null);
                               onClose: () => {},
                             });
                           } else {
-                            showToast(importSuccessMessage({
+                            // 同 JSON 导入：导入了几个界面看不见 ⇒ fact。
+                            const importFact = importSuccessMessage({
                               source: total,
                               imported: done,
-                            }), 'success');
+                            });
+                            const fb = decideFeedback({
+                              visibility: 'self-evident',
+                              hiddenFact: importFact,
+                            });
+                            if (fb.level !== 'silent') {
+                              showToast(importFact, 'info');
+                            }
                           }
                           dispatch(loadGroups());
                         } else {

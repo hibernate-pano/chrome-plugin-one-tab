@@ -90,9 +90,13 @@ describe('变异自证：DS-43-15 的守卫必须看得见破口', () => {
           {
             path: DROPDOWN,
             mutate: source => {
-              const old = 'deleteAllSuccessMessage({ deletedCount, confirmedCount: plan.groupCount })';
+              // ⚠️ 2026-10-25「安静的成功」：调用点改成了 `counts` 变量
+              // （判据层要拿同一份 {deletedCount, confirmedCount} 判「一致吗」）。
+              // ⇒ 这里必须**替换全部**出现处：只换第一处的话，第二处（提示本身）
+              // 还留着 `deleteAllSuccessMessage(` ⇒ 守卫照样绿 ⇒ 变异前提失效。
+              const old = 'deleteAllSuccessMessage(counts)';
               if (!source.includes(old)) throw new Error('变异前提没成立：找不到成功提示的调用');
-              return source.replace(old, "'已删除'");
+              return source.split(old).join("'已删除'");
             },
           },
         ],

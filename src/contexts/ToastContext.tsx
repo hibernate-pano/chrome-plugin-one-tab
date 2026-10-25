@@ -57,7 +57,7 @@ let toastSeq = 0;
 
 /**
  * Toast 队列（2026-10-14 UI 打磨）：
- * 原先单例存一条，删除广播警告 + 成功提示连发时互相顶掉。
+ * 原先单例存一条，删除广播警告 + 普通提示连发时互相顶掉。
  * 现最多同时堆叠 3 条：error 常驻（duration 0 = 不自动消失）、其余 3s 自动退场。
  *
  * ⚠️ 「带动作」的提示时长由**有没有动作**决定（见 resolveToastDuration），
@@ -83,7 +83,7 @@ export const ToastProvider: React.FC<ToastProviderProps> = ({ children }) => {
 
   const showToast = useCallback((
     message: string,
-    type: ToastType = 'success',
+    type: ToastType = 'info',
     duration: number = 3000,
     action?: ToastAction,
   ) => {
@@ -93,7 +93,7 @@ export const ToastProvider: React.FC<ToastProviderProps> = ({ children }) => {
     //     避免关键失败一闪而过）；
     //   · **带动作** ⇒ 至少给一个「能做决定」的窗口（撤销的退路够不着
     //     就等于没有 —— 见 toastPolicy.ts 的文件头）；
-    //   · 其余 ⇒ 调用方给的时长（普通成功提示仍是 3 秒）。
+    //   · 其余 ⇒ 调用方给的时长（普通提示仍是 3 秒）。
     const effectiveDuration = resolveToastDuration(type, duration, action !== undefined);
     // ── 队列准入：不是「最老的 2 条 + 新的」而是「挤掉可挤掉的那条」─────
     // 原先的 `prev.slice(-2)` 会**静默丢掉**最老的那条 ——

@@ -10,17 +10,22 @@ import { resolveToastDuration } from '@/components/common/toastPolicy';
 
 /**
  * 通知消息类型
+ *
+ * ⚠️ 2026-10-25「安静的成功」：这里只剩**三个**类型。
+ * 原先还有 `save-success` / `save-error` / `delete-success` / `sync-success` /
+ * `sync-error` / `pinned-info` 六个 —— 它们只被**七个死 helper**用
+ * （`showSaveSuccess` / `showSaveError` / `showRestoreSuccess` /
+ * `showDeleteSuccess` / `showSyncSuccess` / `showSyncError` / `showPinnedInfo`），
+ * 而那七个 helper 仓里一个调用点都没有 ⇒ 「随手撒成功提示」的后门，全删。
+ *
+ * ⚠️ 名字里的 "success" 指「**恢复这件事已经发生**」，不是「庆祝成功」——
+ *    `showRestoreSuccessMessage` 走的是 `restore-success` 这一档，而它的提示
+ *    类型是 `'info'`（中性）。别看到名字里有 success 就以为漏改了。
  */
-export type NotificationType = 
-  | 'save-success' 
-  | 'save-error' 
-  | 'restore-success' 
+export type NotificationType =
+  | 'restore-success'
   | 'restore-error'
-  | 'delete-success'
-  | 'delete-error'
-  | 'sync-success'
-  | 'sync-error'
-  | 'pinned-info';
+  | 'delete-error';
 
 /**
  * 通知参数类型
@@ -33,11 +38,13 @@ export type NotificationParams = {
 
 /**
  * 通知消息配置
+ *
+ * ⚠️ `type` 里**没有** `'success'`（2026-10-25）—— 成功是状态，不是事件。
  */
 interface NotificationConfig {
   title: string;
   message: string;
-  type: 'success' | 'error' | 'info' | 'warning';
+  type: 'error' | 'info' | 'warning';
   duration?: number;
 }
 
@@ -45,32 +52,16 @@ interface NotificationConfig {
  * 获取通知配置
  */
 export const getNotificationConfig = (
-  type: NotificationType, 
+  type: NotificationType,
   params?: NotificationParams
 ): NotificationConfig => {
   switch (type) {
-    // 保存操作
-    case 'save-success':
-      return {
-        title: '保存成功',
-        message: `已成功保存 ${params?.count || 0} 个标签页`,
-        type: 'success',
-        duration: 3000
-      };
-    case 'save-error':
-      return {
-        title: '保存失败',
-        message: params?.error || '保存标签页时发生错误',
-        type: 'error',
-        duration: 5000
-      };
-
-    // 恢复操作
+    // 恢复操作（活路径：showRestoreSuccessMessage 走的就是它）
     case 'restore-success':
       return {
         title: '恢复成功',
         message: `已成功恢复 ${params?.count || 0} 个标签页`,
-        type: 'success',
+        type: 'info',
         duration: 3000
       };
     case 'restore-error':
@@ -82,13 +73,6 @@ export const getNotificationConfig = (
       };
 
     // 删除操作
-    case 'delete-success':
-      return {
-        title: '删除成功',
-        message: params?.message || '已成功删除',
-        type: 'success',
-        duration: 3000
-      };
     case 'delete-error':
       return {
         title: '删除失败',
@@ -97,36 +81,11 @@ export const getNotificationConfig = (
         duration: 5000
       };
 
-    // 同步操作
-    case 'sync-success':
-      return {
-        title: '同步成功',
-        message: params?.message || '手动同步已完成',
-        type: 'success',
-        duration: 3000
-      };
-    case 'sync-error':
-      return {
-        title: '同步失败',
-        message: params?.error || '数据同步失败',
-        type: 'error',
-        duration: 5000
-      };
-
-    // 固定标签页信息
-    case 'pinned-info':
-      return {
-        title: '固定标签页',
-        message: params?.message || '当前标签页是固定标签页',
-        type: 'info',
-        duration: 4000
-      };
-
     default:
       return {
         title: '提示',
         message: '操作完成',
-        type: 'success',
+        type: 'info',
         duration: 3000
       };
   }
@@ -136,13 +95,13 @@ export const getNotificationConfig = (
  * 显示增强的通知
  */
 export const showEnhancedNotification = (
-  type: NotificationType, 
+  type: NotificationType,
   params?: NotificationParams,
   customMessage?: string
 ) => {
   const config = getNotificationConfig(type, params);
   const message = customMessage || config.message;
-  
+
   // 这里我们简单地返回配置，实际使用时需要结合 useToast
   return { ...config, message };
 };
@@ -152,27 +111,20 @@ export const showEnhancedNotification = (
  */
 export const useEnhancedToast = () => {
   const toastContext = useToast();
-  
+
   // 如果 ToastContext 未提供，返回空操作函数
   if (!toastContext) {
     logError('useEnhancedToast must be used within ToastProvider');
     const noop = () => {};
     return {
-      showSaveSuccess: noop,
-      showSaveError: noop,
-      showRestoreSuccess: noop,
       showRestoreSuccessMessage: noop,
       showRestoreError: noop,
-      showDeleteSuccess: noop,
       showDeleteError: noop,
-      showSyncSuccess: noop,
-      showSyncError: noop,
-      showPinnedInfo: noop,
     };
   }
-  
+
   const { showToast } = toastContext;
-  
+
   const showNotification = (
     type: NotificationType,
     params?: NotificationParams,
@@ -185,21 +137,21 @@ export const useEnhancedToast = () => {
     //   · 带动作（「撤销」= 不可逆操作的唯一退路）⇒ 给一个能做决定的窗口
     //     （原先这里写死 8 秒、而 Toast 组件自己又是 3 秒 —— 两处各写一个数，
     //      迟早漂；现在只有 toastPolicy 一个出处）；
-    //   · 不带动作 ⇒ 用配置里的时长（普通成功提示仍是 3 秒）。
+    //   · 不带动作 ⇒ 用配置里的时长（普通提示仍是 3 秒）。
     // 真正的判据在 resolveToastDuration 里（纯函数，可单测）。
     const duration = resolveToastDuration(config.type, config.duration, action !== undefined);
     showToast(config.message, config.type, duration, action);
   };
-  
+
   return {
-    showSaveSuccess: (count: number) => showNotification('save-success', { count }),
-    showSaveError: (error: string) => showNotification('save-error', { error }),
-    showRestoreSuccess: (count: number) => showNotification('restore-success', { count }),
     // ── 2026-10-20 审计 A-1/A-2：自定义成功文案通道 ─────────────────────
     // 恢复有两条路径（整组 / 单标签），各自的「消费」语义不同
     // （整组可能因锁定而保留、单标签必然被移除），固定模板说不清。
     // 这里给出自定义文案的出口，让调用方用 restoreFeedbackCopy 里的
     // 统一措辞，而不是各自拼字符串。
+    //
+    // ⚠️ 名字里的 "Success" 指「恢复这件事已经发生」，不是「庆祝成功」——
+    //    这条通道现在发的是**中性**提示（info）。
     //
     // ── 2026-10-22 审计 P0-4：第二个参数是可选的**动作按钮** ──────────
     // 「恢复即消费」是不可逆的删除，给它配一条「撤销」是产品该有的最低配置。
@@ -211,10 +163,6 @@ export const useEnhancedToast = () => {
     // 就有一条**没有退路**的消费。
     showRestoreError: (error: string, action?: ToastAction) =>
       showNotification('restore-error', { error }, undefined, action),
-    showDeleteSuccess: (message: string) => showNotification('delete-success', { message }),
     showDeleteError: (error: string) => showNotification('delete-error', { error }),
-    showSyncSuccess: (message: string) => showNotification('sync-success', { message }),
-    showSyncError: (error: string) => showNotification('sync-error', { error }),
-    showPinnedInfo: (message: string) => showNotification('pinned-info', { message }),
   };
 };

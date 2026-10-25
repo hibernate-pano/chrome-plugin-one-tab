@@ -444,7 +444,10 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(
         // 能改变它的开关 —— 切换时不出声，用户只能在恢复之后才发现
         // 「这次怎么没被消费」，那时已经晚了。
         // 文案必须说出**后果**，而不只是「已锁定」这三个字。
-        showToast(lockToggleMessage(!group.isLocked), 'success', 4000);
+        //
+        // ⚠️ 2026-10-25「安静的成功」：toast 层已经没有「成功」这一档了
+        // ⇒ 这条规则披露改用中性语气（info）。
+        showToast(lockToggleMessage(!group.isLocked), 'info', 4000);
       })
       .catch(error => logError('切换锁定失败:', error));
   }, [dispatch, group.id, group.isLocked, showToast]);

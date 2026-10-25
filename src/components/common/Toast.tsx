@@ -23,7 +23,6 @@ export type ToastType = ToastKind;
  * 也就是说「每一条反馈都带一个英文单词」。
  */
 const TYPE_LABEL: Record<ToastType, string> = {
-  success: '完成',
   error: '出错',
   info: '提示',
   warning: '注意',
@@ -91,7 +90,7 @@ const WINDOW_CLOCK: ToastClock = {
 
 export const Toast: React.FC<ToastProps> = ({
   message,
-  type = 'success',
+  type = 'info',
   duration = 3000,
   onClose,
   visible,
@@ -146,7 +145,7 @@ export const Toast: React.FC<ToastProps> = ({
   });
 
   // 时长由「有没有动作」决定（不是写死一个数）——
-  // 带动作的提示要给用户一个能做决定的窗口，普通成功提示仍是 3 秒。
+  // 带动作的提示要给用户一个能做决定的窗口，普通提示仍是 3 秒。
   //
   // ⚠️ 幂等：ToastContext 存进队列时已经算过一次，这里再算一次是同一个值
   // （resolveToastDuration 对已算过的值再算一遍不改变它 —— 见该函数说明）。
@@ -381,19 +380,16 @@ export const Toast: React.FC<ToastProps> = ({
    *   · 壳体读 `--color-bg-elevated` + `--color-text-primary`（主题令牌，
    *     深浅自动翻面 ⇒ 不需要 `dark:` 变体）；
    *   · 描边读 `--color-border-default`；
-   *   · 类型色（emerald / rose / sky / amber）**保留** —— 成功=绿、危险=红
+   *   · 类型色（rose / sky / amber）**保留** —— 危险=红、注意=琥珀
    *     是通用约定，不是「某个品牌的配色」；
-   *   · 顶部进度条改读主题的语义色令牌（--color-success / --color-danger），
+   *   · 顶部进度条改读主题的语义色令牌（--color-accent / --color-danger），
    *     这样进度条与图标徽章是同一支色。
+   *
+   * ⚠️ 2026-10-25「安静的成功」：这里**没有**绿色那一档 ——
+   * 「成功是状态，不是事件」⇒ 提示层不再有「完成」这个语义。
    */
   const getTypeStyles = () => {
     switch (type) {
-      case 'success':
-        return {
-          shell: 'theme-bg-elevated theme-text-primary theme-border-default border',
-          accent: 'bg-[var(--color-success)]',
-          iconWrap: 'bg-emerald-100 text-emerald-600 dark:bg-emerald-500/15 dark:text-emerald-300',
-        };
       case 'error':
         return {
           shell: 'theme-bg-elevated theme-text-primary theme-border-default border',
@@ -413,22 +409,17 @@ export const Toast: React.FC<ToastProps> = ({
           iconWrap: 'bg-amber-100 text-amber-800 dark:bg-amber-500/15 dark:text-amber-300',
         };
       default:
+        // 兜底走 info 的配色（中性）—— 成功是状态不是事件，提示层没有绿色那一档。
         return {
           shell: 'theme-bg-elevated theme-text-primary theme-border-default border',
-          accent: 'bg-[var(--color-success)]',
-          iconWrap: 'bg-emerald-100 text-emerald-600 dark:bg-emerald-500/15 dark:text-emerald-300',
+          accent: 'bg-[var(--color-accent)]',
+          iconWrap: 'bg-sky-100 text-sky-600 dark:bg-sky-500/15 dark:text-sky-300',
         };
     }
   };
 
   const getIcon = () => {
     switch (type) {
-      case 'success':
-        return (
-          <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
-            <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
-          </svg>
-        );
       case 'error':
         return (
           <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
@@ -448,7 +439,12 @@ export const Toast: React.FC<ToastProps> = ({
           </svg>
         );
       default:
-        return null;
+        // 兜底走 info 的图标（中性）—— 没有「对勾」那一档：成功是状态不是事件。
+        return (
+          <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+            <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clipRule="evenodd" />
+          </svg>
+        );
     }
   };
 
@@ -473,7 +469,7 @@ export const Toast: React.FC<ToastProps> = ({
   // 错误要打断当前朗读（assertive），其余提示排队等空档（polite）。
   //
   // ⚠️ 「带动作」的提示**不因此变成 assertive**：只有**错误**才打断。
-  // 「撤销」那条是成功提示（role=status，polite）—— 打断读屏会让正在读
+  // 「撤销」那条是普通提示（role=status，polite）—— 打断读屏会让正在读
   // 别的内容的用户被抢走注意力，而这条提示并不紧急。
   const isAssertive = type === 'error';
 

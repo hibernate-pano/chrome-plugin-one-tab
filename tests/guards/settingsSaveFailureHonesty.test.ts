@@ -132,12 +132,20 @@ describe('handleForget：关自动同步失败时不得假装关掉了', () => {
     assert.match(branch, /未解锁/, '要告诉用户后台会停在什么状态');
   });
 
-  it('成功 toast 不是无条件发的', () => {
-    const successAt = body.indexOf("showToast('已清除本机保存的云服务信息");
-    assert.ok(successAt > -1, '成功文案应保留');
-    const guard = body.slice(Math.max(0, successAt - 120), successAt);
-    assert.match(guard, /if\s*\(!\w+\)\s*\{/, '成功 toast 必须落在「没失败」的分支里');
-    assert.match(body, /autoSyncOffFailed = true/, '失败标记要在分支里置位');
+  it('不许再说「自动同步已关闭」（失败时是假话，成功时界面已自明）', () => {
+    // 2026-10-25「安静的成功」：原先那句「已清除…自动同步已关闭」的**成功提示
+    // 被删掉了** —— 表单被清空、开关翻回关闭，界面自己说得出来。
+    //
+    // ⇒ 收窄后的判据（不是删除）：这段代码里**任何情况下都不许**再出现
+    // 「已关闭」的说法 ——
+    //   · 写盘失败时它是**假话**（开关仍是开启的，后台照旧按间隔醒来）；
+    //   · 写盘成功时它是**重复**（界面已经显示了）。
+    // 失败那一条 error 保留（失败必须出声）—— 见上一条断言。
+    assert.doesNotMatch(
+      body,
+      /自动同步已关闭/,
+      '不许再报「自动同步已关闭」—— 失败时是假话，成功时界面已自明',
+    );
   });
 });
 

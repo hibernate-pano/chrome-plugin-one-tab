@@ -28,12 +28,18 @@ import {
 } from '@/domain/tabGroup/cloudPullCopy';
 import { resolveSyncFailureCopy } from '@/components/sync/syncPreviewView';
 
-/** 一条回执的语气（对应 toast 的类型）。 */
-export type LoginRestoreTone = 'success' | 'info' | 'error';
+/**
+ * 一条回执的语气（对应 toast 的类型）。
+ *
+ * ⚠️ 这里**没有** `'success'`（2026-10-25「安静的成功」）——
+ * 「成功是状态，不是事件」：拉到东西这件事已经发生在列表上了，
+ * 语气用中性的 `info`；只有拉回失败才是 `error`。
+ */
+export type LoginRestoreTone = 'info' | 'error';
 
 /** 一次「登录后拉回」要给用户看的那句话。 */
 export interface LoginRestoreFeedback {
-  /** 语气：拉到东西=成功；云端为空=提示（不是失败！）；失败=错误。 */
+  /** 语气：拉到东西=提示（不是庆祝）；云端为空=提示（不是失败！）；失败=错误。 */
   tone: LoginRestoreTone;
   /** 完整句子。 */
   text: string;
@@ -51,7 +57,7 @@ export interface LoginRestoreFeedback {
 export const loginRestoreFeedback = (outcome: CloudPullOutcome): LoginRestoreFeedback => {
   switch (outcome.kind) {
     case 'pulled':
-      return { tone: 'success', text: cloudPullSuccessMessage(outcome.count) };
+      return { tone: 'info', text: cloudPullSuccessMessage(outcome.count) };
     case 'empty':
       return { tone: 'info', text: cloudPullEmptyMessage() };
     case 'failed': {
