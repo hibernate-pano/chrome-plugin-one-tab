@@ -108,7 +108,7 @@ function sendsInCurrentWindowFlag(rel: string): boolean {
 
 describe('恢复提示：说清「开在哪个窗口」（2026-10-25）', () => {
   it('当前窗口那条：必须说「当前窗口」，且不得说「新窗口」', () => {
-    const msg = restoreGroupSuccessMessage(3, false, true);
+    const msg = restoreGroupSuccessMessage(3, true);
     assert.match(msg, CURRENT_WINDOW, '开在当前窗口就必须这么说');
     assert.doesNotMatch(
       msg,
@@ -118,14 +118,14 @@ describe('恢复提示：说清「开在哪个窗口」（2026-10-25）', () => 
   });
 
   it('新窗口那条：必须说「新窗口」，且不得说「当前窗口」', () => {
-    const msg = restoreGroupSuccessMessage(3, false, false);
+    const msg = restoreGroupSuccessMessage(3, false);
     assert.match(msg, NEW_WINDOW);
     assert.doesNotMatch(msg, CURRENT_WINDOW);
   });
 
   it('两条必须给出不同的话（否则 = 压根没分流）', () => {
-    const inPlace = restoreGroupSuccessMessage(3, false, true);
-    const newWindow = restoreGroupSuccessMessage(3, false, false);
+    const inPlace = restoreGroupSuccessMessage(3, true);
+    const newWindow = restoreGroupSuccessMessage(3, false);
     assert.notEqual(
       inPlace,
       newWindow,
@@ -133,30 +133,38 @@ describe('恢复提示：说清「开在哪个窗口」（2026-10-25）', () => 
     );
   });
 
-  it('锁定与否不能影响「开在哪个窗口」这句话（那是另一条规则）', () => {
-    assert.match(restoreGroupSuccessMessage(2, true, true), CURRENT_WINDOW);
-    assert.match(restoreGroupSuccessMessage(2, true, false), NEW_WINDOW);
+  it('锁定那条已经**没有文案**了（锁定路径整条静默，不许留死分支）', () => {
+    // 2026-10-25「安静的成功」：锁定会话恢复后**保留在列表里** ⇒ 界面自明
+    // ⇒ 锁定路径不再出声 ⇒「锁定版成功提示」成为死分支 ⇒ 已删。
+    // ⇒ 这个文案函数只描述**未锁定**那条（它是被消费的那条）。
+    // 断言的是**没有 isLocked 这条岔路**（不是逐字比对某句中文）。
+    const msg = restoreGroupSuccessMessage(2);
+    assert.doesNotMatch(
+      msg,
+      /仍保留在列表中/,
+      '成功提示只描述未锁定那条（锁定那条已静默）—— 留着就是一条死分支'
+    );
   });
 });
 
 // ─────────────────────────────────────────────────────────────────────────
-// 2. 接线：第三个参数必须真的接上
+// 2. 接线：第二个参数必须真的接上
 // ─────────────────────────────────────────────────────────────────────────
 
-describe('恢复提示的接线：第三个参数必须跟着「开在哪个窗口」走', () => {
+describe('恢复提示的接线：第二个参数必须跟着「开在哪个窗口」走', () => {
   it('列表页那条必须把 inCurrentWindow 传进去（不许写死）', () => {
     const calls = findCalls('src/components/tabs/TabGroup.tsx');
     assert.ok(calls.length > 0, '列表页必须真的调用这个文案函数');
     for (const call of calls) {
       assert.ok(
-        call.args.length >= 3,
-        `列表页第 ${call.line} 行的调用少传了第三个参数 ⇒ 文案会自己猜「新窗口」` +
+        call.args.length >= 2,
+        `列表页第 ${call.line} 行的调用少传了第二个参数 ⇒ 文案会自己猜「新窗口」` +
           '（等价于把谎话写死）'
       );
       assert.match(
-        call.args[2],
+        call.args[1],
         /inCurrentWindow/,
-        `列表页第 ${call.line} 行传的是 ${call.args[2]} ⇒ 那个「当前窗口」的提示` +
+        `列表页第 ${call.line} 行传的是 ${call.args[1]} ⇒ 那个「当前窗口」的提示` +
           '永远不会被说出来'
       );
     }
@@ -170,23 +178,23 @@ describe('恢复提示的接线：第三个参数必须跟着「开在哪个窗�
     const sendsInCurrentWindow = sendsInCurrentWindowFlag(src);
     for (const call of calls) {
       assert.ok(
-        call.args.length >= 3,
-        `搜索页第 ${call.line} 行的调用少传了第三个参数`
+        call.args.length >= 2,
+        `搜索页第 ${call.line} 行的调用少传了第二个参数`
       );
       if (sendsInCurrentWindow) {
-        assert.match(call.args[2], /inCurrentWindow/);
+        assert.match(call.args[1], /inCurrentWindow/);
       } else {
         assert.match(
-          call.args[2],
+          call.args[1],
           /^false$/,
-          `搜索页第 ${call.line} 行传的是 ${call.args[2]}，而它发的请求不带 ` +
+          `搜索页第 ${call.line} 行传的是 ${call.args[1]}，而它发的请求不带 ` +
             'inCurrentWindow ⇒ 标签会开在新窗口，文案却会说自己窗口'
         );
       }
     }
   });
 
-  it('全仓每个调用点都必须显式传第三个参数（不许吃默认值）', () => {
+  it('全仓每个调用点都必须显式传第二个参数（不许吃默认值）', () => {
     const files = [
       'src/components/tabs/TabGroup.tsx',
       'src/components/search/SearchResultList.tsx',
@@ -194,8 +202,8 @@ describe('恢复提示的接线：第三个参数必须跟着「开在哪个窗�
     for (const file of files) {
       for (const call of findCalls(file)) {
         assert.ok(
-          call.args.length >= 3,
-          `${file}:${call.line} 少传第三个参数 —— 默认值是「新窗口」，` +
+          call.args.length >= 2,
+          `${file}:${call.line} 少传第二个参数 —— 默认值是「新窗口」，` +
             '而列表页有一半路径开在当前窗口'
         );
       }

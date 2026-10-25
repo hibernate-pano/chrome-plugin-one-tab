@@ -44,8 +44,9 @@ import {
   deleteGroupRequiresConfirm,
   lockedTabDeleteMessage,
 } from '@/components/tabs/lockedDeleteCopy';
-import { lockToggleMessage } from '@/components/tabs/lockFeedbackCopy';
+import { lockDisclosureText } from '@/components/tabs/lockFeedbackCopy';
 import { moveEmptiesSessionMessage } from '@/components/tabs/moveFeedbackCopy';
+import { decideFeedback } from '@/core/feedbackPolicy';
 
 interface TabGroupProps {
   group: TabGroupType;
@@ -439,18 +440,19 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(
           showToast('切换锁定失败，锁定状态已恢复', 'error');
           return;
         }
-        // ── 2026-10-22 审计 L-9：锁定改变的是「恢复后还在不在」这条规则 ──
-        // 恢复时消费会话是本产品最容易被误解的一条规则，而锁定是**唯一**
-        // 能改变它的开关 —— 切换时不出声，用户只能在恢复之后才发现
-        // 「这次怎么没被消费」，那时已经晚了。
-        // 文案必须说出**后果**，而不只是「已锁定」这三个字。
+        // ── 2026-10-25「安静的成功」：锁定与解锁**都不出声** ──────────────
+        // 锁定不是一次「完成」事件，而是**一条规则的披露**（它改了「恢复
+        // 之后这个会话还在不在」这条本产品唯一会被说反的规则）⇒ 这句话
+        // 必须**随时可查**，而 toast 会消失 ⇒ 它改挂在卡片上**常驻**
+        // （见下方 lockDisclosureText 的渲染）。
         //
-        // ⚠️ 2026-10-25「安静的成功」：toast 层已经没有「成功」这一档了
-        // ⇒ 这条规则披露改用中性语气（info）。
-        showToast(lockToggleMessage(!group.isLocked), 'info', 4000);
+        // 解锁则是**移除**保护、回到默认行为 ⇒ 那一行消失本身就是反馈 ⇒
+        // 同样静默（默认行为的后果本来就写在恢复按钮的提示与 aria-label 上）。
+        //
+        // ⚠️ 失败仍然必须出声（「失败是事件」）：上面那条 error 提示不动。
       })
       .catch(error => logError('切换锁定失败:', error));
-  }, [dispatch, group.id, group.isLocked, showToast]);
+  }, [dispatch, group.id, showToast]);
 
   const openAllTabs = useCallback((inCurrentWindow: boolean) => {
     const allGuard = openAllGuardRef.current as OpenAllGuard;
@@ -562,17 +564,23 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(
         //
         // ── 2026-10-22 审计 P0-4：这条提示上挂「撤销」 ────────────────────
         // 未锁定 ⇒ 整条会话已被移除（不可逆，无回收站）⇒ 必须给退路。
-        // 锁定 ⇒ 会话仍在列表里，从未被消费 ⇒ 挂撤销就是骗人（按钮按了
-        // 什么也不会发生）。
+        //
         // ⚠️ 必须把「开在哪个窗口」告诉文案：点「在当前窗口打开」时说
         // 「已在新窗口打开」就是撒谎（2026-10-25 修）。
-        showConsumeToast(
-          restoreGroupSuccessMessage(tabsPayload.length, group.isLocked, inCurrentWindow),
-          group.isLocked ? undefined : { group },
-        );
+        //
+        // ── 2026-10-25「安静的成功」：**锁定组静默** ─────────────────────
+        // 锁定会话恢复后**保留在列表里** ⇒ 那张卡还在原地 ⇒ 界面自明 ⇒
+        // 没必要再说一遍（而且锁定路径从不被消费 ⇒ 挂撤销就是骗人）。
+        // ⇒ 这条成功播报只在**未锁定**时出现。
+        if (!group.isLocked) {
+          showConsumeToast(
+            restoreGroupSuccessMessage(tabsPayload.length, inCurrentWindow),
+            { group },
+          );
+        }
       }
     );
-  }, [dispatch, group, showConsumeToast, showDeleteError, showRestoreError, showRestoreSuccessMessage]);
+  }, [dispatch, group, showConsumeToast, showDeleteError, showRestoreError]);
 
   const handleOpenAllTabs = useCallback(() => openAllTabs(false), [openAllTabs]);
   const handleOpenAllTabsInCurrentWindow = useCallback(() => openAllTabs(true), [openAllTabs]);
@@ -625,10 +633,15 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(
             showRestoreError(toServiceWorkerErrorCopy(r?.error, '打开失败，标签仍保留在会话中'));
             return;
           }
-          // ── 2026-10-20 审计 A-2：成功必须出声 ─────────────────────────
-          // 锁定组不消费记录，但**行也还在** —— 屏幕上同样什么都不动。
-          // 「点了没反应」与「已打开」用户分不出来。
-          showRestoreSuccessMessage(openSingleTabSuccessMessage(true));
+          // ── 2026-10-25「安静的成功」：锁定分支**静默** ───────────────
+          // 锁定组从不被消费 ⇒ 那条记录**还在**（行也还在）⇒ 界面自明。
+          // 而锁定会话恢复后保留这件事，由卡片上那行**常驻说明**承担
+          // （lockDisclosureText）—— 随时可查，比一条会消失的 toast 可靠。
+          // ⇒ 成功路径一个字都不说。
+          //
+          // ⚠️ 成功门（上面那段 success 判定）与失败路径的 showRestoreError
+          //    **一个字都没动**：SW 拒开时仍然必须明说「打开失败」，否则
+          //    「点了没反应」与「已打开」用户分不出来。
         })
         .catch(error => {
         logError('打开标签失败:', error);
@@ -671,11 +684,28 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(
             // 点开标签 = 消费掉那条记录（不可逆，无回收站）⇒ 必须给退路。
             // 凭据里带 consumedIndex：撤销时标签要插回**原来的位置**，
             // 而不是追加到末尾（那是用户自己排的顺序，撤销不该偷偷改它）。
-            showConsumeToast(openSingleTabSuccessMessage(false), {
-              group,
-              consumedTabId: tab.id,
-              consumedIndex: group.tabs.findIndex(t => t.id === tab.id),
+            //
+            // ── 2026-10-25「安静的成功」：判据层裁决 + 只说事实 ──────────
+            // 说什么由判据层决定（不在这儿拍脑袋）。这里说的是**界面表达不了的
+            // 那件事**：那条记录被移除了（不可逆、无回收站）。
+            // ⚠️ hasEscape: true —— 退路（撤销按钮）就在这条提示上。
+            //    去掉退路的话，判据层会把它升级成 error（不可逆 + 无退路）。
+            // ⚠️ openSingleTabSuccessMessage 是**纯函数**，两次调用等价 ——
+            //    这里刻意不抽局部变量：守卫（consumeUndoWiring）钉的是
+            //    「showConsumeToast 传的是共享文案函数产出的那句」。
+            const fb = decideFeedback({
+              visibility: 'hidden',
+              hiddenFact: openSingleTabSuccessMessage(),
+              irreversible: true,
+              hasEscape: true,
             });
+            if (fb.level !== 'silent') {
+              showConsumeToast(openSingleTabSuccessMessage(), {
+                group,
+                consumedTabId: tab.id,
+                consumedIndex: group.tabs.findIndex(t => t.id === tab.id),
+              });
+            }
           })
           .catch(error => {
             logError('打开后从会话移除失败:', error);
@@ -683,7 +713,7 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(
           });
       }
     );
-  }, [dispatch, group, showConsumeToast, showRestoreError, showDeleteError, showRestoreSuccessMessage]);
+  }, [dispatch, group, showConsumeToast, showRestoreError, showDeleteError]);
 
   const handleMoveTab = useCallback((sourceGroupId: string, sourceIndex: number, targetGroupId: string, targetIndex: number) => {
     dispatch(moveTabAndSync({
@@ -709,12 +739,17 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(
         // （见 tabSlice.ts 的 moveTabAndSync）。
         const moved = payload?.value;
         if (moved?.removedGroupId) {
-          showRestoreSuccessMessage(
-            moveEmptiesSessionMessage({
-              sourceName: moved.sourceGroupName,
-              targetName: group.name,
-            })
-          );
+          // ── 2026-10-25「安静的成功」：判据层裁决 + 只说事实 ──────────
+          // 搬空的那张卡**已经消失** ⇒ 哪个会话没了、它的最后一条标签去哪了
+          // 这两件事界面**再也表达不了**（卡没了）⇒ 必须说出来（fact）。
+          const moveFact = moveEmptiesSessionMessage({
+            sourceName: moved.sourceGroupName,
+            targetName: group.name,
+          });
+          const fb = decideFeedback({ visibility: 'hidden', hiddenFact: moveFact });
+          if (fb.level !== 'silent') {
+            showRestoreSuccessMessage(moveFact);
+          }
         }
       })
       .catch(error => {
@@ -1067,6 +1102,9 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(
     if (days < 30) return `${Math.floor(days / 7)} 周前`;
     return date.toLocaleDateString('zh-CN', { month: 'short', day: 'numeric' });
   };
+
+  // 锁定说明（常驻行）。未锁定 ⇒ null ⇒ **不渲染**（未锁定卡片零密度成本）。
+  const lockNote = lockDisclosureText(group.isLocked);
 
   return (
     <div
@@ -1422,6 +1460,26 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(
           </details>
         </div>
       </div>
+
+      {/* ── 锁定说明：**常驻**在卡片上（2026-10-25「安静的成功」）──────────
+          锁定不是一次「完成」事件，而是**一条规则的披露**：它改了
+          「恢复之后这个会话还在不在」这条本产品唯一会被说反的规则。
+          而 toast 会消失 ⇒ 4 秒后那句话就没了 ⇒ 用户仍然要靠记忆。
+
+          ⇒ 这句话挂在卡片上，**常驻**：
+            · 锁定 ⇒ 多这一行，随时可查；
+            · 解锁 ⇒ 这一行**消失**（那行消失本身就是反馈）⇒ 完全静默。
+
+          为什么放在卡头**下方**、标签行**上方**：
+            · 贴着锁定那颗锁图标 ⇒ 「这行说的是这个会话」不需要猜；
+            · 在折叠容器**之外** ⇒ 卡片收起时这行仍然可见（它是会话的属性，
+              不是标签列表的属性）；
+            · 只在锁定时渲染 ⇒ **未锁定卡片零密度成本**（列表密度是产品级
+              诉求，见「标签列表密度是产品级诉求」那条定案）。
+          配色走主题层（.tab-group-lock-disclosure），不硬编码颜色。 */}
+      {lockNote && (
+        <p className="tab-group-lock-disclosure">{lockNote}</p>
+      )}
 
       {/* 窄屏「更多」菜单面板（2026-10-19 审计 P0-2）：portal 到 body ──────
        *

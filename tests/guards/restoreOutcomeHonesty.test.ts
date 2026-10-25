@@ -11,8 +11,16 @@
  * 用户刚锁定的会话，鼠标一悬停就被告知「会被移除」⇒ 反而不敢恢复它。
  * 这不是文案洁癖，是**锁定的说明书在劝退用户**。
  *
- * 同一件事，仓库里已经有一句**说对了**的话（restoreGroupSuccessMessage：
- * 「该会话已锁定，仍保留在列表中」）⇒ 同一个产品、同一个动作上给了两套互斥的说法。
+ * 同一件事，仓库里已经有一句**说对了**的话（锁定 ⇒「仍保留在列表中」）
+ * ⇒ 同一个产品、同一个动作上给了两套互斥的说法。
+ *
+ * ── 2026-10-25「安静的成功」：锁定那条的**载体换了** ──────────────────────
+ *
+ * 锁定会话恢复后保留在列表里 ⇒ 那张卡还在 ⇒ 界面自明 ⇒ 锁定路径整条静默
+ * ⇒「锁定版成功提示」随死分支一起删掉。
+ * ⇒ 锁定的后果改由卡片上那行**常驻说明**承担（`lockDisclosureText`）：
+ *   随时可查，而 toast 会消失。
+ * ⇒ 不变式不变：**锁定不能说「移除」**，只是这句话现在住在卡片上。
  *
  * ── 判据钉的是**语义**，不是字面量 ──────────────────────────────────────
  *
@@ -34,6 +42,7 @@ import {
   restoreOutcomePhrase,
   restoreOutcomeSentence,
 } from '../../src/components/tabs/restoreFeedbackCopy.ts';
+import { lockDisclosureText } from '../../src/components/tabs/lockFeedbackCopy.ts';
 
 const read = (rel: string) => readFileSync(new URL(`../../${rel}`, import.meta.url), 'utf8');
 
@@ -89,11 +98,7 @@ describe('恢复的后果措辞：按锁定态分流（WC-1）', () => {
 describe('按钮提示与成功提示同源（WC-1）', () => {
   it('WC-1：整组恢复成功提示必须包含共享的那半句', () => {
     assert.ok(
-      restoreGroupSuccessMessage(2, true).includes(restoreOutcomePhrase(true)),
-      '锁定成功提示必须用共享短语（否则按钮与提示会各说各话）'
-    );
-    assert.ok(
-      restoreGroupSuccessMessage(2, false).includes(restoreOutcomePhrase(false)),
+      restoreGroupSuccessMessage(2).includes(restoreOutcomePhrase(false)),
       '未锁定成功提示必须用共享短语（否则按钮与提示会各说各话）'
     );
   });
@@ -109,10 +114,28 @@ describe('按钮提示与成功提示同源（WC-1）', () => {
     );
   });
 
-  it('WC-1：成功提示本身也不能把锁定说反', () => {
-    const locked = restoreGroupSuccessMessage(3, true);
-    assert.match(locked, KEPT, '锁定成功提示必须说「保留」');
-    assert.doesNotMatch(locked, CONSUMED, '锁定成功提示不能说「移除」');
+  it('WC-1：锁定那条现在由**卡片常驻行**承担，同样不能说反', () => {
+    // 2026-10-25「安静的成功」：锁定会话恢复后**保留在列表里** ⇒ 那张卡还在
+    // ⇒ 界面自明 ⇒ 锁定路径整条静默 ⇒「锁定版成功提示」随死分支一起删掉。
+    // ⇒ 锁定的后果改由卡片上那行**常驻说明**承担（lockDisclosureText）：
+    //   随时可查，而 toast 会消失。
+    // 载体换了，但「同一个概念不许两种叫法 / 不许说反」这条不变式**不变**。
+    const disclosure = lockDisclosureText(true);
+    assert.ok(disclosure, '锁定卡片上必须有那行常驻说明（否则锁定的后果没人说得清）');
+    assert.match(disclosure, KEPT, '锁定 ⇒ 恢复后保留在列表，必须说出来');
+    assert.doesNotMatch(
+      disclosure,
+      CONSUMED,
+      '锁定会话恢复后**不被消费** ⇒ 绝不能说「移除」（那正是本缺陷）'
+    );
+  });
+
+  it('WC-1：未锁定 ⇒ 那行常驻说明不出现（它说的是锁定的后果）', () => {
+    assert.equal(
+      lockDisclosureText(false),
+      null,
+      '未锁定不渲染那行（那行消失就是「已解锁」的反馈）'
+    );
   });
 });
 

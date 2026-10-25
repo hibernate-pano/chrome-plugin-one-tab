@@ -23,7 +23,9 @@
  *   ① 标签已经打开（发生了什么）
  *   ② 会话记录已从列表移除（为什么卡片不见了）
  *
- * 锁定会话不会被消费，文案相应不同。
+ * 锁定会话不会被消费 ⇒ **锁定路径整条静默**（2026-10-25「安静的成功」：
+ * 锁定恢复后那张卡还在 ⇒ 界面自明 ⇒ 不必再说一遍）；锁定的后果改由
+ * 卡片上的**常驻行**承担（见 @/components/tabs/lockFeedbackCopy）。
  *
  * ── 后果的措辞为什么也归这里（2026-10-23 审计 WC-1）────────────────────────
  *
@@ -48,7 +50,7 @@
  * 后果短语的**唯一出处**。
  *
  * 两个概念各只有一种叫法：
- *   · 已锁定 → 「仍保留在列表中」（成功提示里也是这半句）
+ *   · 已锁定 → 「仍保留在列表中」（**按钮提示**里用的就是这半句）
  *   · 未锁定 → 「从列表移除」
  *
  * ⚠️ 改这里 = 改全产品对「恢复」的说法。成功提示与按钮提示都从这里派生，
@@ -72,6 +74,15 @@ export const restoreOutcomeSentence = (isLocked: boolean): string =>
 /**
  * 整组恢复成功的文案。
  *
+ * ── 为什么没有 `isLocked`（2026-10-25「安静的成功」）────────────────────────
+ *
+ * 锁定会话恢复后**保留在列表里** ⇒ 界面自明（那张卡还在）⇒ **不需要说**
+ * ⇒ 锁定路径整条**静默**（见 TabGroup.openAllTabs 的 `if (!group.isLocked)`）。
+ * ⇒ 「锁定版的那句话」成为**死分支** ⇒ 一并删掉。
+ *
+ * 锁定的后果改由**卡片常驻行**承担（见 @/components/tabs/lockFeedbackCopy 的
+ * `lockDisclosureText`）：随时可查，而 toast 会消失。
+ *
  * ── `inCurrentWindow`：说「在哪个窗口打开」（2026-10-25）────────────────────
  *
  * 恢复有**两条**路径，开在**不同的窗口**：
@@ -89,16 +100,11 @@ export const restoreOutcomeSentence = (isLocked: boolean): string =>
  */
 export const restoreGroupSuccessMessage = (
   tabCount: number,
-  isLocked: boolean,
   inCurrentWindow = false
 ): string => {
   const opened = inCurrentWindow
     ? `已在当前窗口打开 ${tabCount} 个标签页`
     : `已在新窗口打开 ${tabCount} 个标签页`;
-  if (isLocked) {
-    // 锁定会话恢复后保留 —— 用户可以反复用同一组。
-    return `${opened}。该会话已锁定，${restoreOutcomePhrase(true)}。`;
-  }
   return `${opened}。该会话已${restoreOutcomePhrase(false)}（未锁定会话恢复后即消费）；需要反复使用请先锁定它。`;
 };
 
@@ -108,13 +114,18 @@ export const restoreGroupSuccessMessage = (
  * 点开即消费（1.24.1 定案）：标签打开后，那条记录会从会话里移除。
  * 这是**不可撤销的删除**（无回收站），却是最高频的动作 ——
  * 不出声的话，用户看到「行消失了、页面开了」，无法区分「已打开」与「被删了」。
+ *
+ * ── 2026-10-25「安静的成功」：只说**消费语义**，不复述刚做过的动作 ─────────
+ *
+ * 原句「已打开该标签页，并从会话中移除该条记录。」的前半句是在**复述用户
+ * 刚点过的那一下**（界面自明 —— 浏览器标签页已经开出来了）⇒ 去掉。
+ * 留下来的是**界面表达不了的那件事**：那条记录被移除了（而且带一条撤销退路）。
+ *
+ * ⇒ 「已锁定」那一支（'已打开该标签页。该会话已锁定，记录仍保留在会话中。'）
+ *   随「锁定路径静默」一起成为**死分支** ⇒ 一并删掉。
  */
-export const openSingleTabSuccessMessage = (isLocked: boolean): string => {
-  if (isLocked) {
-    return '已打开该标签页。该会话已锁定，记录仍保留在会话中。';
-  }
-  return '已打开该标签页，并从会话中移除该条记录。';
-};
+export const openSingleTabSuccessMessage = (): string =>
+  '已从会话中移除该条记录。';
 
 /**
  * 批量恢复（搜索页）成功时的**真实账目**。

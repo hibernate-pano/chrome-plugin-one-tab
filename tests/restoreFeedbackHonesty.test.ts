@@ -15,6 +15,13 @@
 //   · 文案部分直接调用**已发布的**文案函数，断言它说了该说的；
 //   · 接线部分读源码，确认调用真的接上了 —— 只测文案函数的话，
 //     把调用删掉测试照样绿，那正是这个缺陷当初能活下来的原因。
+//
+// ── 2026-10-25「安静的成功」：断言**收窄** ──────────────────────────────────
+//
+// 锁定会话恢复后**保留在列表里** ⇒ 那张卡还在 ⇒ 界面自明 ⇒ 锁定路径**静默**
+// （不再要求它播报）。锁定版的两条成功文案随死分支一起删掉。
+// 但锁定分支仍然必须：① 判过成功门；② 失败路径出声。
+// 未锁定路径相反：必须播报，且那条提示上必须挂着撤销。
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -58,29 +65,17 @@ function extractLockedBranch(src: string): string | null {
 
 describe('恢复成功文案：说清两件事（打开了什么 / 记录去哪了）', () => {
   it('整组恢复（未锁定）必须说「已打开」与「已从列表移除」', () => {
-    const msg = restoreGroupSuccessMessage(5, false);
+    const msg = restoreGroupSuccessMessage(5);
     assert.match(msg, /已在新窗口打开 5 个标签页/, '必须说清打开了几个');
     assert.match(msg, /已从列表移除/, '必须解释卡片为什么不见了');
   });
 
-  it('整组恢复（锁定）必须说「仍保留在列表中」—— 锁定组不被消费', () => {
-    const msg = restoreGroupSuccessMessage(3, true);
-    assert.match(msg, /已在新窗口打开 3 个标签页/);
-    assert.match(msg, /仍保留在列表中/);
-    assert.doesNotMatch(msg, /已从列表移除/, '锁定组不被消费，不能说移除');
-  });
-
-  it('点开单标签（未锁定）必须说「已打开」与「从会话中移除」', () => {
-    const msg = openSingleTabSuccessMessage(false);
-    assert.match(msg, /已打开该标签页/);
+  it('点开单标签（未锁定）必须说清「记录被移除了」', () => {
+    // 2026-10-25「安静的成功」：成功文案不再复述用户刚点过的那一下
+    // （「已打开该标签页」—— 界面自明），只留下**界面表达不了的那件事**：
+    // 那条记录被移除了（不可逆、无回收站）。
+    const msg = openSingleTabSuccessMessage();
     assert.match(msg, /从会话中移除/);
-  });
-
-  it('点开单标签（锁定）必须说「仍保留在会话中」', () => {
-    const msg = openSingleTabSuccessMessage(true);
-    assert.match(msg, /已打开该标签页/);
-    assert.match(msg, /仍保留在会话中/);
-    assert.doesNotMatch(msg, /从会话中移除/);
   });
 
   it('批量恢复（搜索页）必须说「移除了几个、其余保留」', () => {
@@ -159,10 +154,8 @@ describe('恢复成功文案：说清两件事（打开了什么 / 记录去哪�
 
   it('文案不得出现内部实现词（op 名、SW、协议）', () => {
     const all = [
-      restoreGroupSuccessMessage(1, false),
-      restoreGroupSuccessMessage(1, true),
-      openSingleTabSuccessMessage(false),
-      openSingleTabSuccessMessage(true),
+      restoreGroupSuccessMessage(1),
+      openSingleTabSuccessMessage(),
       restoreAllSearchSuccessMessage({
         matched: 1,
         opened: 1,
@@ -207,19 +200,30 @@ const countSuccessToasts = (src: string, copyFn: string): number => {
 };
 
 describe('恢复成功反馈真的接到了两个界面', () => {
-  it('列表页（TabGroup）：整组恢复与点开单标签都要出声', () => {
+  // ── 2026-10-25「安静的成功」：断言**收窄** ──────────────────────────────
+  //
+  // 锁定会话恢复后**保留在列表里** ⇒ 那张卡还在 ⇒ 界面自明 ⇒ 锁定路径
+  // **静默**（不再要求它播报）。但它仍然必须：
+  //   ① 判过**成功门**（SW 拒开不许谎报成功）；
+  //   ② 失败路径**出声**（打不开必须明说，记录原样保留）。
+  //
+  // 未锁定路径相反：必须播报，且那条提示上必须挂着**撤销**。
+  // 细则（接线 / 退路 / 成功门）见 tests/guards/quietSuccess.test.ts。
+  it('列表页（TabGroup）：未锁定的整组恢复与点开单标签都要出声', () => {
     const src = read('src/components/tabs/TabGroup.tsx');
-    // 两个动作各一次成功反馈
+    // 两个动作各一次成功反馈（**未锁定**那一条）
     const groupRestore = countSuccessToasts(src, 'restoreGroupSuccessMessage');
     const singleOpen = countSuccessToasts(src, 'openSingleTabSuccessMessage');
-    assert.equal(groupRestore, 1, '列表页整组恢复必须有一次成功反馈');
+    assert.equal(groupRestore, 1, '列表页整组恢复必须有一次成功反馈（未锁定那条）');
     // countSuccessToasts 返回的是**数字**（两条路的计数之和）。
     // 早先这里写的是 `singleOpen.length >= 2` —— 数字上的 .length 是
     // undefined，断言永远为假 ⇒ 这条守卫从来没有真正生效过
     // （把两条成功播报全删掉它也不会红）。修的是守卫，不是实现。
-    assert.ok(
-      singleOpen >= 2,
-      '列表页点开单标签（锁定 / 未锁定两条路径）都必须有成功反馈'
+    // 2026-10-25：锁定那条已静默 ⇒ 这里是 **1**（未锁定那条）而不是 2。
+    assert.equal(
+      singleOpen,
+      1,
+      '列表页点开单标签（未锁定那条）必须有成功反馈（锁定那条已静默）'
     );
   });
 
@@ -257,28 +261,32 @@ describe('恢复成功反馈真的接到了两个界面', () => {
   // ───────────────────────────────────────────────────────────────────────
   it('搜索页：恢复整个会话必须有成功反馈', () => {
     const src = read('src/components/search/SearchResultList.tsx');
-    assert.ok(
-      countSuccessToasts(src, 'restoreGroupSuccessMessage') >= 1,
-      '搜索页整组恢复必须有一次成功反馈'
+    assert.equal(
+      countSuccessToasts(src, 'restoreGroupSuccessMessage'),
+      1,
+      '搜索页整组恢复必须有一次成功反馈（未锁定那条）'
     );
   });
 
-  it('搜索页：点开单标签（锁定 / 未锁定两条路径）都必须有成功反馈', () => {
+  it('搜索页：点开单标签（未锁定那条）必须有成功反馈', () => {
     const src = read('src/components/search/SearchResultList.tsx');
     const singleOpen = countSuccessToasts(src, 'openSingleTabSuccessMessage');
-    assert.ok(
-      singleOpen >= 2,
-      '搜索页点开单标签（锁定 / 未锁定两条路径）都必须有成功反馈'
+    assert.equal(
+      singleOpen,
+      1,
+      '搜索页点开单标签（未锁定那条）必须有成功反馈（锁定那条已静默）'
     );
   });
 
-  it('搜索页与列表页的锁定分支都必须有**成功门**（不成功不许报成功）', () => {
+  it('搜索页与列表页的锁定分支都必须**没有播报、但成功门与失败出口仍在**', () => {
     // 2026-10-22 审计 P1-6：锁定分支原先是 `.then(() => 报成功)`，
     // 而 SW 拒开是 `sendResponse({success:false})` ⇒ promise **resolve 而非
     // reject** ⇒ `.then` 照样跑 ⇒ 界面播「已打开」，实际一个标签都没开。
     //
-    // 判据不是「有没有写 success」，而是「报成功之前有没有判过 success」——
-    // 所以这里断言：锁定分支里出现成功播报**之前**必须先出现失败判定。
+    // 2026-10-25「安静的成功」：锁定分支**不再播报**（锁定组从不被消费 ⇒
+    // 记录还在 ⇒ 界面自明），但**成功门不许跟着播报一起消失** ——
+    // 打不开必须明说「已保留在会话中」，否则「点了没反应」与「已打开」
+    // 用户分不出来。
     for (const file of [
       'src/components/search/SearchResultList.tsx',
       'src/components/tabs/TabGroup.tsx',
@@ -286,13 +294,20 @@ describe('恢复成功反馈真的接到了两个界面', () => {
       const src = read(file);
       const branch = extractLockedBranch(src);
       assert.ok(branch, `${file}：应能找到 handleOpenTab 里的锁定分支`);
-      const successAt = branch.search(/showRestoreSuccessMessage|showConsumeToast/);
-      assert.ok(successAt >= 0, `${file}：锁定分支必须有成功播报`);
-      const gateAt = branch.search(/success\s*!==\s*true|success\s*===\s*false/);
-      assert.ok(
-        gateAt >= 0 && gateAt < successAt,
-        `${file}：锁定分支必须在报成功**之前**判过 success` +
-          `（否则 SW 拒开时界面会谎报「已打开」）`
+      assert.doesNotMatch(
+        branch,
+        /showRestoreSuccessMessage|showConsumeToast|showToast\(/,
+        `${file}：锁定分支必须静默（锁定组从不被消费 ⇒ 那条记录还在 ⇒ 界面自明）`
+      );
+      assert.match(
+        branch,
+        /success\s*!==\s*true|success\s*===\s*false/,
+        `${file}：锁定分支必须判过成功门 —— 不然 SW 拒开时界面会撒谎`
+      );
+      assert.match(
+        branch,
+        /showRestoreError\(/,
+        `${file}：锁定分支的失败路径必须出声（打不开必须明说）`
       );
     }
   });

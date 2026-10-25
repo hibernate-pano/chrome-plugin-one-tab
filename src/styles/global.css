@@ -870,6 +870,21 @@ html:not([data-theme]).dark {
     color: var(--color-warning, #f59e0b);
   }
 
+  /* 锁定说明（2026-10-25「安静的成功」）：锁定不是播报，是**规则披露**——
+     锁定改了「恢复之后这个会话还在不在」这条本产品唯一会被说反的规则
+     （未锁定 ⇒ 恢复即消费；已锁定 ⇒ 保留可反复用）。
+     ⇒ 这句话**常驻在卡片上**（而不是弹一条 4 秒的 toast）：随时可查、
+     不占屏幕中心、不会消失。
+
+     密度（产品级诉求，见「标签列表密度是产品级诉求」那条定案）：
+     只在**锁定**卡片上渲染 ⇒ 未锁定卡片零成本；
+     字号取 text-xs、行高压到 1rem、上下各 2px ⇒ 不撑高卡片。
+     配色走主题令牌（不硬编码颜色）。 */
+  .tab-group-lock-disclosure {
+    @apply text-xs leading-tight px-3 sm:px-4 py-0.5;
+    color: var(--color-text-secondary);
+  }
+
   /* 标签组时间显示 */
   .tab-group-time {
     font-size: 0.75rem;

@@ -48,7 +48,7 @@ describe('变异自证：恢复提示必须说清「开在哪个窗口」，这�
     assertMutationOutcome(outcome, true, '文案又写死成「新窗口」');
   });
 
-  it('变异二：接线处把第三个参数写死成 false ⇒ 守卫必须变红', () => {
+  it('变异二：接线处把第二个参数写死成 false ⇒ 守卫必须变红', () => {
     const [outcome] = runMutationCases([
       {
         name: '列表页把 inCurrentWindow 写死成 false',
@@ -58,13 +58,13 @@ describe('变异自证：恢复提示必须说清「开在哪个窗口」，这�
             path: TAB_GROUP,
             mutate: source => {
               const original =
-                'restoreGroupSuccessMessage(tabsPayload.length, group.isLocked, inCurrentWindow)';
+                'restoreGroupSuccessMessage(tabsPayload.length, inCurrentWindow)';
               if (!source.includes(original)) {
                 throw new Error('变异前提没成立：找不到那个调用');
               }
               return source.replace(
                 original,
-                'restoreGroupSuccessMessage(tabsPayload.length, group.isLocked, false)',
+                'restoreGroupSuccessMessage(tabsPayload.length, false)',
               );
             },
           },
@@ -74,7 +74,7 @@ describe('变异自证：恢复提示必须说清「开在哪个窗口」，这�
       },
     ]);
     assert.ok(outcome, '变异必须真的跑起来');
-    assertMutationOutcome(outcome, true, '接线处把第三个参数写死成 false');
+    assertMutationOutcome(outcome, true, '接线处把第二个参数写死成 false');
   });
 
   it('变异三：接线处换成等价的正确写法 ⇒ 守卫必须仍然绿', () => {
@@ -87,13 +87,13 @@ describe('变异自证：恢复提示必须说清「开在哪个窗口」，这�
             path: TAB_GROUP,
             mutate: source => {
               const original =
-                'restoreGroupSuccessMessage(tabsPayload.length, group.isLocked, inCurrentWindow)';
+                'restoreGroupSuccessMessage(tabsPayload.length, inCurrentWindow)';
               if (!source.includes(original)) {
                 throw new Error('变异前提没成立：找不到那个调用');
               }
               return source.replace(
                 original,
-                'restoreGroupSuccessMessage(tabsPayload.length, group.isLocked, Boolean(inCurrentWindow))',
+                'restoreGroupSuccessMessage(tabsPayload.length, Boolean(inCurrentWindow))',
               );
             },
           },

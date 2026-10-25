@@ -643,19 +643,26 @@ describe('P0-2 · 批量恢复不能把「打开」与「移除」混成一句',
       '组件里不许再写一遍锁定判断（判据层已经有一份）'
     );
     const args = callArguments(source, 'restoreAllSearchSuccessMessage');
-    assert.equal(args.length, 1, '成功提示必须由判据层产出');
-    const countsInit = variableInitializer(source, args[0][0]);
-    assert.ok(countsInit, '必须能找出喂给提示的那份账目');
-    assert.match(
-      countsInit!,
-      /batchRestorePlan/,
-      '提示里的条数必须来自判据层（batchRestorePlan）'
-    );
-    assert.match(
-      countsInit!,
-      /consumed/,
-      '提示里的「移除了几条」必须来自真实执行结果（consumed）'
-    );
+    assert.ok(args.length >= 1, '成功提示必须由判据层产出');
+    // ⚠️ 2026-10-25「安静的成功」：这份文案现在会被调用**不止一次**
+    // （判据层裁决要一次、真正播报那一次又要一次）⇒ **逐个查**每一次喂进去
+    // 的账目，而不是只看第一个。
+    // 只看第一个会漏掉「第二次喂了另一份账目」这种漂移 ⇒ 逐个查是**更强**的，
+    // 不是把守卫放宽。
+    for (const arg of args) {
+      const countsInit = variableInitializer(source, arg[0]);
+      assert.ok(countsInit, '必须能找出喂给提示的那份账目');
+      assert.match(
+        countsInit!,
+        /batchRestorePlan/,
+        '提示里的条数必须来自判据层（batchRestorePlan）'
+      );
+      assert.match(
+        countsInit!,
+        /consumed/,
+        '提示里的「移除了几条」必须来自真实执行结果（consumed）'
+      );
+    }
   });
 });
 

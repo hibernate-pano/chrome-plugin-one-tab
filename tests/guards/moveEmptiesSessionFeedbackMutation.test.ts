@@ -125,7 +125,14 @@ describe('变异自证：DS-43-11 的守卫必须看得见破口', () => {
             mutate: source =>
               replaceIn(
                 source,
-                '          showRestoreSuccessMessage(\n            moveEmptiesSessionMessage({\n              sourceName: moved.sourceGroupName,\n              targetName: group.name,\n            })\n          );',
+                '          const moveFact = moveEmptiesSessionMessage({\n' +
+                  '            sourceName: moved.sourceGroupName,\n' +
+                  '            targetName: group.name,\n' +
+                  '          });\n' +
+                  "          const fb = decideFeedback({ visibility: 'hidden', hiddenFact: moveFact });\n" +
+                  "          if (fb.level !== 'silent') {\n" +
+                  '            showRestoreSuccessMessage(moveFact);\n' +
+                  '          }',
                 '          void moved;'
               ),
           },

@@ -43,6 +43,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import ts from 'typescript';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 const read = (rel: string): string => readFileSync(resolve(ROOT, rel), 'utf8');
@@ -756,4 +757,542 @@ describe('19 处裁决：删除全部的条数对不上时必须说出来', () =
       '这条提示的类型必须是 info（不是 success）',
     );
   });
+});
+
+// ══════════════════════════════════════════════════════════════════════════
+// 四、Task 3：恢复类播报收口（锁定静默 / 锁定说明常驻 / 解锁静默）
+// ══════════════════════════════════════════════════════════════════════════
+//
+// ── 这一节在防什么 ────────────────────────────────────────────────────────
+//
+// 「成功是状态，不是事件」落到恢复这条链上，是四件事：
+//
+//   ① **锁定组恢复 ⇒ 静默**：锁定组从不被消费 ⇒ 恢复后那张卡还在原地
+//      ⇒ 界面自明 ⇒ 不必再说一遍「已打开 N 个标签页…仍保留在列表中」。
+//   ② **锁定说明 ⇒ 常驻**：锁定改的是「恢复之后这个会话还在不在」这条
+//      本产品**唯一**会被说反的规则 ⇒ 这句话必须**随时可查** ⇒ 它住在
+//      卡片上（`lockDisclosureText`），而不是一条会消失的 toast。
+//   ③ **解锁 ⇒ 静默**：那行消失本身就是反馈。
+//   ④ **撤销提示 ⇒ 中性**：带退路的提示仍然要有，但不再庆祝。
+//
+// ⚠️ **静默不等于「把失败也删掉」**：成功门（`success !== true` 的判定）
+//    与失败路径的出声**一个字都不许动** —— 静默的是「成功」，
+//    「打不开」仍然必须明说（否则「点了没反应」与「已打开」分不出来）。
+//
+// ⚠️ **不许只断言「没有提示」**：那是零检测力（把整条分支删掉也照样绿）。
+//    ⇒ 下面每一条静默断言都**同时**钉住它的**根据**：
+//      · 锁定组从不被消费（`consumeSession` 早退）⇒ 所以「卡片还在」；
+//      · 锁定分支不删行 ⇒ 所以「那条记录还在」；
+//      · 成功门仍在 + 失败路径出声 ⇒ 所以「静默的是成功，不是失败」。
+//
+// ── 定位一律用「唯一字符串 + 周边代码」，不钉行号 ──────────────────────────
+
+const TAB_GROUP = 'src/components/tabs/TabGroup.tsx';
+const SEARCH_LIST = 'src/components/search/SearchResultList.tsx';
+
+/** 解析一个 .tsx 源文件（按 TSX 解析，JSX 与泛型都不会误判）。 */
+const parseTsx = (rel: string): ts.SourceFile =>
+  ts.createSourceFile(rel, read(rel), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+
+/**
+ * 找出某个调用（可按**整段调用文本**里的标记再筛一层）。
+ *
+ * 用 AST 而不是正则：正则看不见「实参里套了一个模板串」这种情况，
+ * 而这里要判的恰恰是「那一次调用到底传了什么」。
+ */
+const findCall = (
+  source: ts.SourceFile,
+  callee: string,
+  marker?: string,
+): ts.CallExpression | null => {
+  let found: ts.CallExpression | null = null;
+  const visit = (node: ts.Node): void => {
+    if (
+      !found &&
+      ts.isCallExpression(node) &&
+      ts.isIdentifier(node.expression) &&
+      node.expression.text === callee
+    ) {
+      if (!marker || node.getText(source).includes(marker)) found = node;
+    }
+    node.forEachChild(visit);
+  };
+  visit(source);
+  return found;
+};
+
+/** 收集一棵子树里某个名字的所有调用。 */
+const callsIn = (node: ts.Node, callee: string): ts.CallExpression[] => {
+  const out: ts.CallExpression[] = [];
+  const visit = (current: ts.Node): void => {
+    if (
+      ts.isCallExpression(current) &&
+      ts.isIdentifier(current.expression) &&
+      current.expression.text === callee
+    ) {
+      out.push(current);
+    }
+    current.forEachChild(visit);
+  };
+  visit(node);
+  return out;
+};
+
+/** 一个节点**最近的那层 if 祖先**。 */
+const enclosingIf = (node: ts.Node): ts.IfStatement | null => {
+  let current: ts.Node | undefined = node.parent;
+  while (current) {
+    if (ts.isIfStatement(current)) return current;
+    current = current.parent;
+  }
+  return null;
+};
+
+/** 一个节点**所有** if 祖先的条件文本（由内到外）。 */
+const ifConditions = (node: ts.Node): string[] => {
+  const out: string[] = [];
+  let current: ts.Node | undefined = node.parent;
+  while (current) {
+    if (ts.isIfStatement(current)) {
+      out.push(current.expression.getText(current.getSourceFile()));
+    }
+    current = current.parent;
+  }
+  return out;
+};
+
+/** 一个节点所在的那个函数体（箭头函数 / 函数表达式 / 函数声明）。 */
+const enclosingFunction = (node: ts.Node): ts.Node | null => {
+  let current: ts.Node | undefined = node.parent;
+  while (current) {
+    if (
+      ts.isArrowFunction(current) ||
+      ts.isFunctionExpression(current) ||
+      ts.isFunctionDeclaration(current)
+    ) {
+      return current;
+    }
+    current = current.parent;
+  }
+  return null;
+};
+
+/** 某个变量的**初始化表达式节点**（找不到返回 null）。 */
+const initializerOf = (source: ts.SourceFile, name: string): ts.Expression | null => {
+  let found: ts.Expression | null = null;
+  const visit = (node: ts.Node): void => {
+    if (
+      ts.isVariableDeclaration(node) &&
+      ts.isIdentifier(node.name) &&
+      node.name.text === name &&
+      node.initializer
+    ) {
+      found = node.initializer;
+    }
+    node.forEachChild(visit);
+  };
+  visit(source);
+  return found;
+};
+
+/** 这个调用是不是被赋给了某个变量？那个变量叫什么。 */
+const assignedNameOf = (source: ts.SourceFile, call: ts.CallExpression): string | null => {
+  let found: string | null = null;
+  const visit = (node: ts.Node): void => {
+    if (
+      ts.isVariableDeclaration(node) &&
+      ts.isIdentifier(node.name) &&
+      node.initializer === call
+    ) {
+      found = node.name.text;
+    }
+    node.forEachChild(visit);
+  };
+  visit(source);
+  return found;
+};
+
+/** 某个名字有没有出现在 JSX 表达式里（= 它被渲染出来了）。 */
+const jsxUses = (source: ts.SourceFile, name: string): boolean => {
+  let found = false;
+  const visit = (node: ts.Node): void => {
+    if (
+      !found &&
+      ts.isJsxExpression(node) &&
+      node.expression &&
+      node.expression.getText(source).includes(name)
+    ) {
+      found = true;
+    }
+    node.forEachChild(visit);
+  };
+  visit(source);
+  return found;
+};
+
+/**
+ * 这个表达式是不是（直接或经一个局部变量）**那个事实**。
+ *
+ * 允许两种写法（都是等价的）：
+ *   · `hiddenFact: moveEmptiesSessionMessage({…})`（直接调用）
+ *   · `hiddenFact: moveFact`（先落到局部变量上）
+ *
+ * ⚠️ 不能只看「文本里出现了那个名字」—— 注释里也可能出现 ⇒ 假绿。
+ */
+const refersTo = (source: ts.SourceFile, expr: ts.Expression, callee: string): boolean => {
+  if (expr.getText(source).includes(callee)) return true;
+  if (ts.isIdentifier(expr)) {
+    const init = initializerOf(source, expr.text);
+    if (init) return init.getText(source).includes(callee);
+  }
+  return false;
+};
+
+/**
+ * 抽出 `handleOpenTab` 里 `if (group.isLocked) { … }` 这一支的源码。
+ *
+ * 用括号配平而不是正则截断：分支里有嵌套的回调（`.then(() => {…})`），
+ * 正则会在第一个 `}` 处就停下，截出来的不是完整的分支。
+ * （实现照抄 tests/restoreFeedbackHonesty.test.ts 的同名助手。）
+ */
+const extractLockedBranch = (src: string): string | null => {
+  const fnStart = src.indexOf('const handleOpenTab');
+  if (fnStart < 0) return null;
+  const guardAt = src.indexOf('if (group.isLocked)', fnStart);
+  if (guardAt < 0) return null;
+  const open = src.indexOf('{', guardAt);
+  if (open < 0) return null;
+  let depth = 0;
+  for (let i = open; i < src.length; i += 1) {
+    const ch = src[i];
+    if (ch === '{') depth += 1;
+    else if (ch === '}') {
+      depth -= 1;
+      if (depth === 0) return src.slice(open, i + 1);
+    }
+  }
+  return null;
+};
+
+/** 某个调用是不是「走错误通道」（第三个实参里 `type: 'error'`）。 */
+const isErrorTypeOption = (call: ts.CallExpression): boolean => {
+  const arg = call.arguments[2];
+  if (!arg || !ts.isObjectLiteralExpression(arg)) return false;
+  return arg.properties.some(
+    property =>
+      ts.isPropertyAssignment(property) &&
+      ts.isIdentifier(property.name) &&
+      property.name.text === 'type' &&
+      ts.isStringLiteral(property.initializer) &&
+      property.initializer.text === 'error',
+  );
+};
+
+describe('Task 3：锁定组恢复静默（但成功门与失败出口一个字都没动）', () => {
+  for (const file of [TAB_GROUP, SEARCH_LIST]) {
+    it(`${file}：点开单标签的锁定分支静默`, () => {
+      const src = read(file);
+      const branch = extractLockedBranch(src);
+      assert.ok(branch, `${file}：应能找到 handleOpenTab 里的锁定分支`);
+      assert.doesNotMatch(
+        branch,
+        /showToast\(|showRestoreSuccessMessage|showConsumeToast/,
+        `${file}：锁定分支必须静默 —— 锁定组从不被消费 ⇒ 那条记录还在 ⇒ 界面自明`,
+      );
+    });
+
+    it(`${file}：锁定分支的成功门与失败出口仍在（静默的是成功，不是失败）`, () => {
+      const src = read(file);
+      const branch = extractLockedBranch(src);
+      assert.ok(branch, `${file}：应能找到 handleOpenTab 里的锁定分支`);
+      assert.match(
+        branch,
+        /success\s*!==\s*true|success\s*===\s*false/,
+        `${file}：锁定分支必须判过成功门 —— SW 拒开时界面不许谎报「已打开」`,
+      );
+      assert.match(
+        branch,
+        /showRestoreError\(/,
+        `${file}：锁定分支的失败路径必须出声（打不开必须明说，记录原样保留）`,
+      );
+    });
+
+    it(`${file}：锁定分支不删行（那条记录还在 ⇒ 所以不必说）`, () => {
+      const src = read(file);
+      const branch = extractLockedBranch(src);
+      assert.ok(branch, `${file}：应能找到 handleOpenTab 里的锁定分支`);
+      assert.doesNotMatch(
+        branch,
+        /deleteTabAndSync/,
+        `${file}：锁定分支不许删记录（锁定 = 组内不发生删除）`,
+      );
+    });
+  }
+
+  it('锁定 ⇒ 卡片还在：consumeSession 对锁定组早退（不 dispatch 删除）', () => {
+    const src = read(TAB_GROUP);
+    const at = src.indexOf('const consumeSession = () => {');
+    assert.ok(at > 0, '应能找到 consumeSession');
+    const body = src.slice(at, src.indexOf('\n  };', at));
+    const lockAt = body.indexOf('if (group.isLocked)');
+    const deleteAt = body.indexOf('dispatch(deleteGroup(');
+    assert.ok(lockAt >= 0, '锁定早退必须还在（锁定组恢复后卡片还在）');
+    assert.ok(
+      deleteAt > lockAt,
+      '锁定早退必须排在删除之前 —— 这才是「卡片还在」的根据',
+    );
+    // 早退那一支里不许有 dispatch
+    const early = body.slice(lockAt, body.indexOf('}', lockAt));
+    assert.doesNotMatch(
+      early,
+      /dispatch\(/,
+      '锁定那一支必须直接返回（一条记录都不删）',
+    );
+  });
+
+  for (const file of [TAB_GROUP, SEARCH_LIST]) {
+    it(`${file}：整组恢复的成功播报被「未锁定」条件包着`, () => {
+      const source = parseTsx(file);
+      const call = findCall(source, 'showConsumeToast', 'restoreGroupSuccessMessage');
+      assert.ok(call, `${file}：整组恢复的成功播报必须还在（未锁定那条）`);
+      const guard = enclosingIf(call!);
+      assert.ok(
+        guard,
+        `${file}：那条播报必须在条件分支里 —— 锁定组必须静默`,
+      );
+      const cond = guard!.expression.getText(source).replace(/\s+/g, '');
+      assert.ok(
+        cond === '!group.isLocked' || cond === 'group.isLocked===false',
+        `${file}：那条播报必须被「未锁定」包着（实际条件：${cond}）`,
+      );
+    });
+
+    it(`${file}：「部分成功」那条仍在条件之外、照旧出声（锁定组也必须知道）`, () => {
+      const source = parseTsx(file);
+      const call = findCall(source, 'showConsumeToast', '在当前设备无法打开');
+      assert.ok(
+        call,
+        `${file}：「部分成功」那条提示必须还在 —— 「有 N 个打不开」界面表达不了`,
+      );
+      assert.ok(
+        isErrorTypeOption(call!),
+        `${file}：「部分成功」那条必须走错误通道（部分成功不是全成功）`,
+      );
+      for (const cond of ifConditions(call!)) {
+        assert.doesNotMatch(
+          cond,
+          /isLocked/,
+          `${file}：「部分成功」那条不许被锁定条件包住 —— 锁定组也必须知道有打不开的`,
+        );
+      }
+    });
+
+    it(`${file}：成功门仍在（判过 success 才可能走到那条成功播报）`, () => {
+      const source = parseTsx(file);
+      const call = findCall(source, 'showConsumeToast', 'restoreGroupSuccessMessage');
+      assert.ok(call, `${file}：整组恢复的成功播报必须还在`);
+      const fn = enclosingFunction(call!);
+      assert.ok(fn, `${file}：那条播报必须在一个回包处理函数里`);
+      const fnText = fn!.getText(source);
+      // 判据取「**播报之前**的那段源码」—— 不能拿整段找（注释里也可能出现
+      // success 这个词 ⇒ 那样判出来的是「某处出现过」，不是「先判后播」）。
+      const beforeToast = fnText.slice(0, call!.getStart(source) - fn!.getStart(source));
+      const gateAt = beforeToast.search(/success\s*!==\s*true|success\s*===\s*false/);
+      assert.ok(gateAt >= 0, `${file}：回包必须显式判过 success`);
+      // 失败路径必须出声（整组恢复这条路历史上走的是 showDeleteError，
+      // 单标签那条走 showRestoreError —— 两个都算「失败在说话」）。
+      assert.match(
+        fnText,
+        /show(?:Restore|Delete)Error\(/,
+        `${file}：失败路径必须出声（打不开必须明说，记录原样保留）`,
+      );
+    });
+  }
+
+  it('未锁定必须有退路：整组恢复与点开单标签都挂着撤销凭据', () => {
+    for (const file of [TAB_GROUP, SEARCH_LIST]) {
+      const source = parseTsx(file);
+      const groupCall = findCall(source, 'showConsumeToast', 'restoreGroupSuccessMessage');
+      assert.ok(groupCall, `${file}：整组恢复的成功播报必须还在`);
+      const groupSpec = groupCall!.arguments[1];
+      assert.ok(
+        groupSpec && ts.isObjectLiteralExpression(groupSpec),
+        `${file}：整组恢复那条必须挂上撤销凭据（不可逆的删除必须有退路）`,
+      );
+      const singleCall = findCall(source, 'showConsumeToast', 'openSingleTabSuccessMessage');
+      assert.ok(singleCall, `${file}：点开单标签那条播报必须还在`);
+      const singleSpec = singleCall!.arguments[1];
+      assert.ok(
+        singleSpec && ts.isObjectLiteralExpression(singleSpec),
+        `${file}：点开单标签那条必须挂上撤销凭据`,
+      );
+      const specText = singleSpec.getText(source);
+      assert.match(specText, /consumedTabId/, `${file}：凭据必须指明被消费的是哪一条`);
+      assert.match(
+        specText,
+        /consumedIndex/,
+        `${file}：撤销必须把标签插回原来的位置，不是追加到末尾`,
+      );
+    }
+  });
+});
+
+describe('Task 3：锁定说明常驻在卡片上 + 解锁静默', () => {
+  it('锁定说明的文案必须含三个要素（说清状态 / 后果 / 界面不会告诉你的那条）', async () => {
+    const { lockDisclosureText } = await import('@/components/tabs/lockFeedbackCopy');
+    const text = lockDisclosureText(true);
+    assert.ok(text, '锁定时必须有那行说明');
+    assert.match(text, /已锁定/, '① 必须说清状态');
+    assert.match(
+      text,
+      /恢复后.*保留.*列表/,
+      '② 必须说清「恢复后保留在列表」（锁定唯一改变的那条规则）',
+    );
+    assert.match(
+      text,
+      /不参与.*清理重复标签/,
+      '③ 必须说清不参与「清理重复标签」',
+    );
+    assert.match(
+      text,
+      /拖到别的会话/,
+      '③ 必须说清不可拖到别的会话（README:43 承诺过，界面不会告诉你）',
+    );
+    assert.equal(
+      lockDisclosureText(false),
+      null,
+      '未锁定不渲染那行（那行消失就是「已解锁」的反馈）',
+    );
+  });
+
+  it('那行说明必须真的渲染在卡片上（不是算了不用）', () => {
+    const source = parseTsx(TAB_GROUP);
+    const call = findCall(source, 'lockDisclosureText');
+    assert.ok(call, 'TabGroup 必须用 lockDisclosureText 驱动那行说明');
+    assert.equal(
+      call!.arguments[0]?.getText(source),
+      'group.isLocked',
+      '那行说明必须按「这个会话锁没锁」渲染',
+    );
+    const name = assignedNameOf(source, call!);
+    assert.ok(name, '那行说明的结果必须先落到一个变量上');
+    assert.ok(
+      jsxUses(source, name!),
+      '那行说明必须真的渲染出来（算了不用 = 没有那行）',
+    );
+  });
+
+  it('锁定 / 解锁的切换处只许播失败，不许播成功', () => {
+    const source = parseTsx(TAB_GROUP);
+    const handler = initializerOf(source, 'handleToggleLock');
+    assert.ok(handler, '应能找到 handleToggleLock');
+    const toasts = callsIn(handler!, 'showToast');
+    assert.ok(toasts.length > 0, '切换锁定的失败路径必须仍然出声（失败是事件）');
+    for (const call of toasts) {
+      const type = call.arguments[1];
+      assert.ok(
+        type && ts.isStringLiteral(type) && type.text === 'error',
+        '锁定/解锁的切换处只许播失败（成功那一句改由卡片常驻行承担）',
+      );
+    }
+  });
+
+  it('旧的「锁定/解锁」toast 文案已经没了（改由卡片常驻行承担）', () => {
+    assert.doesNotMatch(
+      read(TAB_GROUP),
+      /lockToggleMessage/,
+      '锁定提示不再是一条 toast（它常驻在卡片上）',
+    );
+    assert.doesNotMatch(
+      read('src/components/tabs/lockFeedbackCopy.ts'),
+      /lockToggleMessage/,
+      'lockToggleMessage 必须删掉（两个分支都不再需要它）',
+    );
+  });
+});
+
+describe('Task 3：新增的 fact 站点都必须经判据层裁决', () => {
+  const FACT_SITES_NEW: Array<{ file: string; copy: string; toast: string }> = [
+    {
+      file: TAB_GROUP,
+      copy: 'openSingleTabSuccessMessage',
+      toast: 'showConsumeToast',
+    },
+    {
+      file: TAB_GROUP,
+      copy: 'moveEmptiesSessionMessage',
+      toast: 'showRestoreSuccessMessage',
+    },
+    {
+      file: SEARCH_LIST,
+      copy: 'openSingleTabSuccessMessage',
+      toast: 'showConsumeToast',
+    },
+    {
+      file: SEARCH_LIST,
+      copy: 'restoreAllSearchSuccessMessage',
+      toast: 'showConsumeToast',
+    },
+  ];
+
+  for (const site of FACT_SITES_NEW) {
+    it(`${site.file}：${site.copy} 那条必须经 decideFeedback 裁决`, () => {
+      const source = parseTsx(site.file);
+      const copyCall = findCall(source, site.copy);
+      assert.ok(copyCall, `${site.file}：应能找到那一句事实的出处（${site.copy}）`);
+      const fn = enclosingFunction(copyCall!);
+      assert.ok(fn, `${site.file}：那一句事实必须在一个函数体里`);
+
+      // ① 判据层拿到的必须就是那一句事实本身。
+      const decideCalls = callsIn(fn!, 'decideFeedback');
+      assert.ok(
+        decideCalls.length > 0,
+        `${site.file}：那一次播报必须先经判据层裁决（不许凭感觉直接播）`,
+      );
+      const fbCall = decideCalls[0];
+      const fbObj = fbCall.arguments.find(arg => ts.isObjectLiteralExpression(arg));
+      assert.ok(fbObj, `${site.file}：判据层必须拿到那个事实本身（hiddenFact）`);
+      let hiddenFactExpr: ts.Expression | null = null;
+      for (const prop of (fbObj as ts.ObjectLiteralExpression).properties) {
+        if (
+          ts.isPropertyAssignment(prop) &&
+          ts.isIdentifier(prop.name) &&
+          prop.name.text === 'hiddenFact'
+        ) {
+          hiddenFactExpr = prop.initializer;
+        }
+      }
+      assert.ok(hiddenFactExpr, `${site.file}：判据层必须拿到那个事实本身（hiddenFact）`);
+      assert.ok(
+        refersTo(source, hiddenFactExpr!, site.copy),
+        `${site.file}：hiddenFact 必须是那一句事实（不是别的）`,
+      );
+
+      // ② 那一次播报必须被「判据结果不是静默」包着。
+      const toastCalls = callsIn(fn!, site.toast);
+      assert.ok(toastCalls.length > 0, `${site.file}：应能找到那一次播报`);
+      const toastCall = toastCalls[0];
+      assert.ok(
+        decideCalls[0].getStart(source) < toastCall.getStart(source),
+        `${site.file}：判据层必须在播报之前`,
+      );
+      // ③ 播出来的那一句必须就是那一句事实。
+      const toastArg = toastCall.arguments[0];
+      assert.ok(
+        toastArg && refersTo(source, toastArg, site.copy),
+        `${site.file}：那一次播报必须播的就是那一句事实`,
+      );
+      const guard = enclosingIf(toastCall);
+      assert.ok(
+        guard,
+        `${site.file}：那一次播报必须被判据结果包着（fact 为空 ⇒ silent ⇒ 不播）`,
+      );
+      const cond = guard!.expression.getText(source).replace(/\s+/g, '');
+      assert.match(
+        cond,
+        /\.level!=='silent'/,
+        `${site.file}：那一次播报必须被「判据结果不是静默」包着（实际条件：${cond}）`,
+      );
+    });
+  }
 });

@@ -42,6 +42,7 @@ import { useConsumeUndo } from '@/components/tabs/useConsumeUndo';
 import { lockedTabDeleteMessage } from '@/components/tabs/lockedDeleteCopy';
 import { removeTabEntryCopy } from '@/components/dnd/removeTabEntryCopy';
 import type { ConsumedTabRef, ConsumeUndoSpec } from '@/core/consumeUndo';
+import { decideFeedback } from '@/core/feedbackPolicy';
 import { searchEmptyHint } from '@/components/search/searchEmptyHint';
 import {
   buildResultWindow,
@@ -156,7 +157,7 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({
   const showFavicons = useAppSelector(state => state.settings.showFavicons);
   const showTabCount = useAppSelector(state => state.settings.showTabCount);
   const { showConfirm } = useToast();
-  const { showDeleteError, showRestoreError, showRestoreSuccessMessage } = useEnhancedToast();
+  const { showDeleteError, showRestoreError } = useEnhancedToast();
   // ── 2026-10-22 审计 P0-4：恢复即消费 ⇒ 给一条「撤销」的路 ─────────────
   // 撤销的语义与实现见 @/core/consumeUndo.ts 与 useConsumeUndo.ts。
   const { showConsumeToast } = useConsumeUndo();
@@ -580,10 +581,16 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({
         // 撤销凭据里的 group 是**消费前**的那份快照（闭包捕获的旧值）。
         // 搜索页这两条路径都**新开一扇窗**（OPEN_TABS 不带 inCurrentWindow）⇒
         // 显式传 false，别让文案自己猜。
-        showConsumeToast(
-          restoreGroupSuccessMessage(tabsPayload.length, group.isLocked, false),
-          group.isLocked ? undefined : { group },
-        );
+        //
+        // ── 2026-10-25「安静的成功」：**锁定组静默** ─────────────────────
+        // 锁定会话恢复后**保留在列表里** ⇒ 界面自明 ⇒ 没必要再说一遍
+        // （而且锁定路径从不被消费 ⇒ 挂撤销就是骗人）。
+        if (!group.isLocked) {
+          showConsumeToast(
+            restoreGroupSuccessMessage(tabsPayload.length, false),
+            { group },
+          );
+        }
       }
     );
   };
@@ -632,9 +639,13 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({
             showRestoreError(toServiceWorkerErrorCopy(r?.error, '打开失败，已保留在会话中'));
             return;
           }
-          // 锁定组不消费记录，但**行也还在** —— 屏幕上同样什么都不动，
-          // 「点了没反应」与「已打开」用户分不出来。
-          showRestoreSuccessMessage(openSingleTabSuccessMessage(true));
+          // ── 2026-10-25「安静的成功」：锁定分支**静默** ───────────────
+          // 锁定组从不被消费 ⇒ 那条记录**还在** ⇒ 界面自明 ⇒ 成功路径一个字
+          // 都不说。锁定会话恢复后保留这件事，由列表页卡片上的**常驻说明**
+          // 承担（lockDisclosureText）。
+          //
+          // ⚠️ 成功门（上面那段 success 判定）与失败路径的 showRestoreError
+          //    **一个字都没动**。
         }
       );
       return;
@@ -666,14 +677,27 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({
             // 最高频的动作。给一条退路。
             // 撤销凭据带**下标**：撤销时把这条标签插回原来的位置，而不是
             // 追加到末尾（顺序是用户自己排的，撤销不该偷偷改它）。
-            showConsumeToast(
-              openSingleTabSuccessMessage(false),
-              {
+            //
+            // ── 2026-10-25「安静的成功」：判据层裁决 + 只说事实 ──────────
+            // 说什么由判据层决定。这里说的是**界面表达不了的那件事**：
+            // 那条记录被移除了（不可逆、无回收站）。
+            // ⚠️ hasEscape: true —— 退路（撤销按钮）就在这条提示上。
+            // ⚠️ openSingleTabSuccessMessage 是**纯函数**，两次调用等价 ——
+            //    这里刻意不抽局部变量：守卫（consumeUndoWiring）钉的是
+            //    「showConsumeToast 传的是共享文案函数产出的那句」。
+            const fb = decideFeedback({
+              visibility: 'hidden',
+              hiddenFact: openSingleTabSuccessMessage(),
+              irreversible: true,
+              hasEscape: true,
+            });
+            if (fb.level !== 'silent') {
+              showConsumeToast(openSingleTabSuccessMessage(), {
                 group,
                 consumedTabId: tab.id,
                 consumedIndex: group.tabs.findIndex(t => t.id === tab.id),
-              },
-            );
+              });
+            }
           })
           .catch(error => {
             logError('打开后从会话移除失败:', error);
@@ -877,11 +901,26 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({
           };
           // 部分成功也是一次消费（能打开的那些已经被移出会话了）⇒
           // 这条提示上**同样**挂「撤销」，否则用户手里有一条没退路的消费。
-          showConsumeToast(
-            restoreAllSearchSuccessMessage(counts),
-            undoSpecs.length > 0 ? undoSpecs : undefined,
-            unopenable > 0 ? { type: 'error' } : undefined,
-          );
+          //
+          // ── 2026-10-25「安静的成功」：判据层裁决 + 只说事实 ──────────
+          // 这四笔账（打开了几个 / 移除了几个 / 留下几个 / 打不开几个）
+          // **界面永远表达不了**（搜索结果列表不会因为恢复而变短成那样）
+          // ⇒ 判据层判成 fact，说事实。
+          // ⚠️ 四笔账的数字与措辞**一个字都不许改**（它们就是事实本身）。
+          // ⚠️ unopenable > 0 那支仍然走**错误**通道 —— 「有的没成」是
+          //    失败事件（失败是事件），不许用成功的样子说。
+          // ⚠️ restoreAllSearchSuccessMessage 是**纯函数**，两次调用等价。
+          const fb = decideFeedback({
+            visibility: 'hidden',
+            hiddenFact: restoreAllSearchSuccessMessage(counts),
+          });
+          if (fb.level !== 'silent') {
+            showConsumeToast(
+              restoreAllSearchSuccessMessage(counts),
+              undoSpecs.length > 0 ? undoSpecs : undefined,
+              unopenable > 0 ? { type: 'error' } : undefined,
+            );
+          }
         })();
       }
     );
