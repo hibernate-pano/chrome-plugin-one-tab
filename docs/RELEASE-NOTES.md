@@ -8,7 +8,7 @@
 > 长期台账**（含根因、踩坑、修复顺序），不必翻译成英文、不必对齐商店审核口径。
 > 两边都会写「本版改了什么」，但只有本文件会记住「为什么」和「后来怎么验证的」。
 
-## v1.29.0（2026-10-26，**撤销提示整套下线** + **提示回到右上角** + **点图标一定打开标签管理器**，**未提审**）
+## v1.29.0（2026-10-26，**撤销提示整套下线** + **提示回到右上角** + **点图标一定打开标签管理器**，**已提审**，公开页仍是 1.28.7 ⇒ **未上架**）
 
 ### 产品定案（2026-10-26）
 
@@ -170,23 +170,69 @@ README/商店页里那句「可撤销」在**它自己那一版**上仍然成立
       —— **2026-10-20 已跑通 2 家**（404 与 405 两种形态都判 `listed:false`
       且**不返回任何条目**）。—— **坚果云这条形态仍未验**。
 
-### 提审前必须做的事（**人工步骤，仓库里做不了**）
+### 商店提审（2026-10-26）
 
-0. **重打包**（⚠️ **旧的 zip 必须先删**）：`rm -f out/extension.zip && node
+| 步骤 | 动作 | 自证信号 |
+|---|---|---|
+| ① 打包 | `rm -f out/extension.zip && zip-extension.mjs dist out/extension.zip` | sha256 `532cd21b…`，**39 条 / 344,895 字节**，zip 内 manifest = 1.29.0，顶层即 manifest；**连打两次 sha256 相同**（幂等） |
+| ② 上传 | `cws-release.mjs upload out/extension.zip` | 回包 `uploadState: SUCCESS` ⇒ 草稿 `crxVersion: 1.29.0`（**草稿版本对上**才继续） |
+| ③ 提审 | `cws-release.mjs publish 1.29.0` | 回包 `{"status":["OK"]}` |
+| ④ 自证 | 再发一次 publish | **400「You may not edit or publish an item that is in review」** ⇒ 确实在审核队列 |
+| ⑤ 复核 | `cws-release.mjs live` | 公开页仍是 **1.28.7**（Updated October 26, 2026）⇒ **已提审，未上架** |
+
+⚠️ **产物的 sha256 漂移过一次（tag 已按此改写）**：第一次打的包记的是 `6f8eb4b2…`；
+测试套件在 10:51 重建过 `dist` ⇒ 重打后**条目数与字节数不变、sha256 变了**
+（zip 条目里带 mtime ⇒ **zip 的 sha256 不可复现**，仓库里早有此论断）⇒
+**真正发上商店的那份是 `532cd21b…`** ⇒ 台账与 tag 一律以它为准。
+
+⚠️ **商店后台的文案与截图仍是 1.28.7 那一套，而且现在换不了**：
+CWS **没有**改文案的 API 通道（v1.1 的 `Item` 只有
+`kind/id/publicKey/uploadState/crxVersion`；v2 的 `publishers.items` 只有
+`fetchStatus/cancelSubmission/publish/setPublishedDeployPercentage`，
+**没有 description / screenshot 字段**）⇒ 只能人工粘。
+而商店**在 item 在审期间锁住 listing 编辑**（回包原话「You may not edit or
+publish an item that is in review」）⇒ **换文案必须等审核放行之后**。
+
+⇒ **后果（已知、预期、到点自愈）**：审核放行、1.29.0 上架那一刻，线上还是
+1.28.7 的文案（它承诺的「撤销」在 1.29.0 上**是假话**）⇒ 仓库自己的
+`tests/guards/storeListingLiveMatchesRepo.test.ts` **在线半会变红**
+（判据按「线上文案自己声称的版本」＝ 1.29.0 判 ⇒ 命中
+`claims-consume-undo-after-removal` 与 `missing-consume-irreversible`）⇒
+**贴上新文案即恢复绿**（别把它当成新缺陷去"修"代码）。
+
+**贴文案用的纯文本已备好**（人工一步，仓库里做不了）：
+`node scripts/store-listing-audit.mjs --print-text` 的输出 →
+`## Short Description` 下面那行（**78 字**，上限 132）粘进「简短说明」；
+`## Detailed Description` 下面的正文（**9,455 字**，上限 10,000）粘进「详细说明」。
+⚠️ **必须先去掉 markdown 强调标记**（商店描述框是纯文本，星号会**原样显示**）：
+去掉 `**` 后 **9,860 → 9,580 字，剩 0 个 `**`**。
+单星号那行 `*The extension's interface is currently in Simplified Chinese only.*`
+**照原样贴** —— 1.28.7 线上就是这么显示的（商店不吃 markdown，1.28.7 的线上页
+里那对单星号是**字面量**）⇒ 保持一致，不在这一版单独动它。
+截图：`store-assets/screenshot-1-main.png` 与 `screenshot-2-search.png`
+（2026-10-26 重拍，**已用眼睛核对过**：第 2 张页脚印着 `TapStack v1.29.0`）。
+
+### 提审后必须做的事（**人工步骤，仓库里做不了**）
+
+0. ✅ **重打包**（⚠️ **旧的 zip 必须先删**）：`rm -f out/extension.zip && node
    ~/.claude/skills/chrome-store-release/scripts/zip-extension.mjs dist out/extension.zip`。
    ⚠️ `zip -r` 对**已存在**的归档是**增量更新** ⇒ 旧构建留下的条目会原样留在包里
    ⇒ 本次实测：直接重打得到 **60 条 / 691 KB**（一堆带旧 hash 的重复文件），
-   **删掉旧包再打**才是 **39 条 / 344,895 字节 / sha256 `6f8eb4b2…`**。
+   **删掉旧包再打**才是 **39 条 / 344,895 字节**。
    ⇒ 技能脚本已改成「打包前先删旧包」（重打两次 sha256 相同 = 幂等）。
    （⇒ 1.28.7 / 1.29.0 台账里记的 **49 条** 那一版是**合并包**，功能不受影响
    ——商店只按 manifest 加载——但它不是「这次构建的干净产物」。）
-1. **重拍商店截图**（页脚版本号随 manifest 走 ⇒ 升版即过期）：`pnpm build &&
-   node scripts/make-store-screenshots.mjs`。
-2. **换商店文案**（旧文案承诺「撤销」⇒ 在 1.29.0 上是假话；旧文案还说
+   **本次实际发上去的那份**：sha256 `532cd21b…`（39 条 / 344,895 字节），
+   tag 与台账都已改成它。
+1. ✅ **重拍商店截图**（页脚版本号随 manifest 走 ⇒ 升版即过期）：`pnpm build &&
+   node scripts/make-store-screenshots.mjs`。**2026-10-26 已重拍**，
+   第 2 张页脚是 `TapStack v1.29.0`（**用眼睛看过**，不靠文档自证）。
+2. ⏳ **换商店文案 + 换截图**（旧文案承诺「撤销」⇒ 在 1.29.0 上是假话；旧文案还说
    「点扩展图标就把当前窗口的标签页存成一个会话」⇒ 少了「**一定会打开标签
-   管理器**」这一半）：用 `node scripts/store-listing-audit.mjs --print-text`
-   的输出（**去 markdown 标记**）粘进后台。
-3. **解封云端**（生产 Supabase 仍 402，见 CHROMEWEBSTORE.md 文件头）—— 与本次改动无关，
+   管理器**」这一半）：**审核放行后**做（现在商店锁着 listing 编辑）。
+   纯文本与字数见上面「商店提审」一节 ⇒ 贴完**顺手把线上文案重跑一次判据**
+   （`node scripts/store-listing-audit.mjs`）⇒ 期望「0 处问题」。
+3. ⏳ **解封云端**（生产 Supabase 仍 402，见 CHROMEWEBSTORE.md 文件头）—— 与本次改动无关，
    但不发版就永远解不了。
 
 ## v1.28.7（2026-10-25，**导入的旧会话不再冒充「刚保存的」** + **新会话默认名一律改成保存时刻**，**已提审**）
