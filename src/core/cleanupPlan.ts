@@ -238,6 +238,10 @@ export function planCleanup(
  * 自己需要的那几个字段，拿错了计划也不会抛错 —— 这是**调用方的接线约定**，
  * 类型上无法表达，写在这里当判据。
  *
+ * ⚠️ **生产代码一律走 `cleanupTierLabel(plan)`**，不要自己 `[plan.tier]` 挑键：
+ * 这一步留在这里只给纯函数单测当钉子。经由 `cleanupTierLabel`，调用方连
+ * 「用哪个键」都不需要知道 ⇒ 「挑错键」这件事从 API 上消失。
+ *
  * ⚠️ 叫法纪律：这几个字符串里**不许**出现「删除全部会话」—— 同一个动作全仓
  * 只有一个名字「删除所有会话」（`tests/guards/deleteAllActionNaming.test.ts`
  * 就是从菜单行现场读这个名字的）。
@@ -258,3 +262,12 @@ export const CLEANUP_TIER_LABELS: Record<CleanupTier, (plan: CleanupPlan) => str
       ? `删除所有会话（含 ${plan.lockedCount} 个锁定）`
       : `删除所有会话（${plan.groupCount}）`,
 };
+
+/**
+ * 按计划**自己的**档位取菜单行文案 —— 调用方没有挑错键的余地。
+ *
+ * 生产代码（菜单渲染）只用这一个入口：`plan.tier` 与标签表键的一致性由这里
+ * 保证，调用方拿不到「传一个数 / 挑一个键」的机会。
+ */
+export const cleanupTierLabel = (plan: CleanupPlan): string =>
+  CLEANUP_TIER_LABELS[plan.tier](plan);

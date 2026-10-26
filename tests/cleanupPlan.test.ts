@@ -1,6 +1,11 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { CLEANUP_TIER_LABELS, monthsBefore, planCleanup } from '@/core/cleanupPlan';
+import {
+  CLEANUP_TIER_LABELS,
+  cleanupTierLabel,
+  monthsBefore,
+  planCleanup,
+} from '@/core/cleanupPlan';
 
 const g = (over: Record<string, unknown>) => ({
   id: 'x', name: '会话', tabs: [], createdAt: '2026-01-01T00:00:00.000Z',
@@ -30,10 +35,16 @@ describe('monthsBefore：日历月钳制', () => {
       '2025-10-15',
     );
   });
-  it('31 日回溯到只有 30 天的月份也钳制（5 月 31 日 → 2 月 28 日）', () => {
+  it('31 日回溯到更短的月份——二月（5 月 31 日 → 2 月 28 日）', () => {
     assert.equal(
       localYmd(monthsBefore(new Date(2026, 4, 31, 12, 0, 0), 3)),
       '2026-02-28',
+    );
+  });
+  it('31 日回溯到只有 30 天的月份（5 月 31 日 → 4 月 30 日）', () => {
+    assert.equal(
+      localYmd(monthsBefore(new Date(2026, 4, 31, 12, 0, 0), 1)),
+      '2026-04-30',
     );
   });
 });
@@ -211,5 +222,13 @@ describe('菜单行文案', () => {
       CLEANUP_TIER_LABELS['all-keep-locked'](plan),
       '删除所有会话（保留 1 个锁定）',
     );
+  });
+  it('cleanupTierLabel：按计划自己的档位取文案（调用方不挑键）', () => {
+    const plan = planCleanup([
+      g({ id: 'a', createdAt: '2026-01-01T00:00:00.000Z' }),
+      g({ id: 'b', createdAt: '2026-02-01T00:00:00.000Z' }),
+    ], '3m', now);
+    assert.equal(plan.tier, '3m');
+    assert.equal(cleanupTierLabel(plan), '三个月前的会话（2）');
   });
 });
