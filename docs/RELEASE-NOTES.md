@@ -8,7 +8,7 @@
 > 长期台账**（含根因、踩坑、修复顺序），不必翻译成英文、不必对齐商店审核口径。
 > 两边都会写「本版改了什么」，但只有本文件会记住「为什么」和「后来怎么验证的」。
 
-## v1.29.0（2026-10-26，**撤销提示整套下线** + **提示回到右上角** + **点图标一定打开标签管理器**，**已提审**，公开页仍是 1.28.7 ⇒ **未上架**）
+## v1.29.0（2026-10-26，**撤销提示整套下线** + **提示回到右上角** + **点图标一定打开标签管理器**，**已上架**：公开页 `Version 1.29.0`）
 
 ### 产品定案（2026-10-26）
 
@@ -178,27 +178,33 @@ README/商店页里那句「可撤销」在**它自己那一版**上仍然成立
 | ② 上传 | `cws-release.mjs upload out/extension.zip` | 回包 `uploadState: SUCCESS` ⇒ 草稿 `crxVersion: 1.29.0`（**草稿版本对上**才继续） |
 | ③ 提审 | `cws-release.mjs publish 1.29.0` | 回包 `{"status":["OK"]}` |
 | ④ 自证 | 再发一次 publish | **400「You may not edit or publish an item that is in review」** ⇒ 确实在审核队列 |
-| ⑤ 复核 | `cws-release.mjs live` | 公开页仍是 **1.28.7**（Updated October 26, 2026）⇒ **已提审，未上架** |
+| ⑤ 复核 | `cws-release.mjs live`（提交当时） | 公开页仍是 **1.28.7** ⇒ **已提审，未上架** |
+| ⑥ 上架 | 2026-10-26 稍后再查公开页 | **`Version 1.29.0` / `Updated October 26, 2026`** ⇒ **已过审上架**（两路独立读数：`cws-release.mjs live` 与 `curl` + grep `>Version</div><div[^>]*>([^<]*)</div>`）⇒ 线上已发布 = **1.29.0** |
 
 ⚠️ **产物的 sha256 漂移过一次（tag 已按此改写）**：第一次打的包记的是 `6f8eb4b2…`；
 测试套件在 10:51 重建过 `dist` ⇒ 重打后**条目数与字节数不变、sha256 变了**
 （zip 条目里带 mtime ⇒ **zip 的 sha256 不可复现**，仓库里早有此论断）⇒
 **真正发上商店的那份是 `532cd21b…`** ⇒ 台账与 tag 一律以它为准。
 
-⚠️ **商店后台的文案与截图仍是 1.28.7 那一套，而且现在换不了**：
+⚠️ **商店后台的文案与截图仍是 1.28.7 那一套**（2026-10-26 抓公开页实证：线上描述
+仍是 **9,318 字**、仍在承诺**已经下线**的「撤销」⇒ **线上此刻在说假话**）：
 CWS **没有**改文案的 API 通道（v1.1 的 `Item` 只有
 `kind/id/publicKey/uploadState/crxVersion`；v2 的 `publishers.items` 只有
 `fetchStatus/cancelSubmission/publish/setPublishedDeployPercentage`，
 **没有 description / screenshot 字段**）⇒ 只能人工粘。
-而商店**在 item 在审期间锁住 listing 编辑**（回包原话「You may not edit or
-publish an item that is in review」）⇒ **换文案必须等审核放行之后**。
+商店**在 item 在审期间锁住 listing 编辑**（回包原话「You may not edit or
+publish an item that is in review」）⇒ **审核放行后才能换** —— 现在已放行 ⇒
+**这一步现在就能做**。
 
-⇒ **后果（已知、预期、到点自愈）**：审核放行、1.29.0 上架那一刻，线上还是
-1.28.7 的文案（它承诺的「撤销」在 1.29.0 上**是假话**）⇒ 仓库自己的
-`tests/guards/storeListingLiveMatchesRepo.test.ts` **在线半会变红**
-（判据按「线上文案自己声称的版本」＝ 1.29.0 判 ⇒ 命中
-`claims-consume-undo-after-removal` 与 `missing-consume-irreversible`）⇒
-**贴上新文案即恢复绿**（别把它当成新缺陷去"修"代码）。
+⇒ **后果（已经发生，记账在案）**：1.29.0 上架那一刻线上还是 1.28.7 的文案
+⇒ 仓库自己的 `tests/guards/storeListingLiveMatchesRepo.test.ts` **在线半会变红**
+（判据按「线上文案自己声称的版本」＝ 1.29.0 判 ⇒ 中英双语各命中一次
+`claims-consume-undo-after-removal` 与 `missing-consume-irreversible`，共 4 条 /
+2 个代码）⇒ 这笔账已记进 `tests/fixtures/store-listing-live-baseline.json`
+（棘轮机制：**线上只许比基线更干净**）⇒ 仓库保持绿，而欠账看得见。
+**贴上新文案后把基线文件删掉** ⇒ 守卫自动升级成「线上必须零违规」
+（基线里记着的问题不再成立时，守卫会自己喊「该删基线了」）。
+**别把它当成新缺陷去"修"代码。**
 
 **贴文案用的纯文本已备好**（人工一步，仓库里做不了）：
 `node scripts/store-listing-audit.mjs --print-text` 的输出 →
@@ -229,9 +235,10 @@ publish an item that is in review」）⇒ **换文案必须等审核放行之�
    第 2 张页脚是 `TapStack v1.29.0`（**用眼睛看过**，不靠文档自证）。
 2. ⏳ **换商店文案 + 换截图**（旧文案承诺「撤销」⇒ 在 1.29.0 上是假话；旧文案还说
    「点扩展图标就把当前窗口的标签页存成一个会话」⇒ 少了「**一定会打开标签
-   管理器**」这一半）：**审核放行后**做（现在商店锁着 listing 编辑）。
+   管理器**」这一半）：**审核已放行，现在就能做**（在审期间商店锁着 listing 编辑）。
    纯文本与字数见上面「商店提审」一节 ⇒ 贴完**顺手把线上文案重跑一次判据**
-   （`node scripts/store-listing-audit.mjs`）⇒ 期望「0 处问题」。
+   （`node scripts/store-listing-audit.mjs`）⇒ 期望「0 处问题」，
+   并**删掉 `tests/fixtures/store-listing-live-baseline.json`**（那笔账还上了）。
 3. ⏳ **解封云端**（生产 Supabase 仍 402，见 CHROMEWEBSTORE.md 文件头）—— 与本次改动无关，
    但不发版就永远解不了。
 

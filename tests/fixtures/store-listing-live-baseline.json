@@ -1,0 +1,11 @@
+{
+  "_comment": "线上商店文案的**已知欠账**（2026-10-26 抓公开页实证）。1.29.0 已过审上架，但商店后台的文案**没跟上**：还是 1.28.7 那一份（它承诺的「撤销」在 1.29.0 上已经下线 ⇒ 对外说假话）。判据只允许线上比这份基线更干净，不允许更脏。**修好之后请删掉本文件** —— 删掉后守卫自动升级成「线上必须零违规」。",
+  "capturedAt": "2026-10-26",
+  "liveVersion": "1.29.0",
+  "knownViolations": [
+    "claims-consume-undo-after-removal",
+    "missing-consume-irreversible"
+  ],
+  "howToFix": "在 Chrome Web Store 后台把 Short Description / Detailed Description 替换成仓库当前版（`node scripts/store-listing-audit.mjs --print-text` 的输出，**先去掉 markdown 强调标记 `**`**：商店描述框是纯文本，星号会原样显示）。商店文案**没有 API 通道**（v1.1 的 `Item` 只有 kind/id/publicKey/uploadState/crxVersion；v2 的 publishers.items 只有 fetchStatus/cancelSubmission/publish/setPublishedDeployPercentage）⇒ 只能人工粘贴。纯文本备好：/tmp/tapstack-store-listing-1.29.0.txt（简短说明 78 字 / 详细说明 9,455 字）。",
+  "note": "两处违规都来自**同一件事**：线上那份是 1.28.7 的文案（9,318 字），它说「恢复/点开之后会浮出一条带「撤销」按钮的提示」（claims-consume-undo-after-removal），而 1.29.0 已经把撤销机制整套下线（文案必须说这一步**不可恢复**、唯一退路是事先锁定 ⇒ missing-consume-irreversible）。中英双语各命中一次 ⇒ 判据报 4 条、代码只有 2 个。**这不是新缺陷，是「文案没跟上版本」** —— 粘上新文案即消失，那时本文件整个都该删掉。"
+}
