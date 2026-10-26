@@ -281,7 +281,14 @@ export function createMutationHandlers(deps: MutationDeps) {
         await scheduleUpload(DELETE_PRIORITY_MS);
         return {
           ok: true,
-          payload: { count: r.removedGroupIds.length, skippedLocked: r.skippedLocked.length },
+          // count / skippedLocked 供界面文案用；skippedLockedIds 只给 reducer
+          // 用 —— 那些组磁盘上还在，乐观移除必须在 fulfilled 里按原坐标放回去
+          //（否则就是「删了又回来」：列表里消失、下次刷新又出现）。
+          payload: {
+            count: r.removedGroupIds.length,
+            skippedLocked: r.skippedLocked.length,
+            skippedLockedIds: r.skippedLocked,
+          },
           broadcastWarn: delWarn ?? undefined,
         };
       }

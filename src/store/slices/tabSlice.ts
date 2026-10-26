@@ -219,13 +219,18 @@ export const deleteGroup = createAsyncThunk(
  *
  * 载荷是**确认框当时列出的那些 id**，不是档位/规则：名字与 id 在用户点头的
  * 那一刻一起定下来，执行时只允许删这一批（见 core/mutationProtocol 的
- * 'deleteGroups' 注释）。回执只有计数——`skippedLocked` 是执行时刻仍被锁定的
- * 条数（确认之后别的设备可能刚锁上），界面据此如实说明「已锁定的不会被清理」。
+ * 'deleteGroups' 注释）。回执带两个数字（界面文案用）与 `skippedLockedIds`
+ * （reducer 用）：执行时刻仍被锁定的会话磁盘上还在，fulfilled 必须把它们
+ * 按原坐标放回列表——确认之后别的设备可能刚锁上，那不是失败，也不是删除。
  */
 export const deleteGroups = createAsyncThunk(
   'tabs/deleteGroups',
   async (groupIds: string[]) => {
-    const res = await sendMutation<{ count: number; skippedLocked: number }>({
+    const res = await sendMutation<{
+      count: number;
+      skippedLocked: number;
+      skippedLockedIds: string[];
+    }>({
       op: 'deleteGroups',
       groupIds,
     });
@@ -824,25 +829,28 @@ export const tabSlice = createSlice({
       // loadGroups 回环；这里先把乐观结果落定，与单条删除的口径相同。
       .addCase(deleteGroups.pending, (state, action) => {
         const groupIds = action.meta.arg;
+        // 先把「在列表里的」全部定位到**删除前的坐标**再一起移除。不能边找边
+        // splice：前面的 splice 会让后面记录的下标偏小，rejected 插回时顺序就乱了。
+        const entries: Array<{ id: string; index: number; group: TabGroup }> = [];
+        const seen = new Set<string>();
+        for (const id of groupIds) {
+          if (seen.has(id)) continue;
+          seen.add(id);
+          const index = state.groups.findIndex(g => g.id === id);
+          if (index === -1) continue;
+          entries.push({ id, index, group: state.groups[index] });
+        }
         // 一个都不在列表里：无可删、不建备份，也不推进代际
         //（与 deleteGroup.pending 的早退同一条：避免幽灵备份/代际污染）。
-        const inList = groupIds.filter(id => state.groups.some(g => g.id === id));
-        if (inList.length === 0) return;
+        if (entries.length === 0) return;
         if (!state.deletedGroupBackups) state.deletedGroupBackups = {};
-        for (const groupId of inList) {
-          // 每次重新找下标：前面的 splice 会让后面的下标前移。
-          const index = state.groups.findIndex(g => g.id === groupId);
-          if (index === -1) continue;
-          // 备份整组 + 原下标：rejected 时按下标插回，避免还原后顺序跳变。
-          state.deletedGroupBackups[groupId] = {
-            group: state.groups[index],
-            index,
-          };
-          state.groups.splice(index, 1);
-          if (state.activeGroupId === groupId) {
-            state.activeGroupId = null;
-          }
+        const toRemove = new Set(entries.map(e => e.id));
+        for (const e of entries) {
+          // 备份整组 + 原坐标：rejected / 执行时锁定跳过时按它放回原位。
+          state.deletedGroupBackups[e.id] = { group: e.group, index: e.index };
+          if (state.activeGroupId === e.id) state.activeGroupId = null;
         }
+        state.groups = state.groups.filter(g => !toRemove.has(g.id));
         // 代际前进：此后到达的旧 loadGroups 回环不得把刚删的组带回来。
         state.mutationEpoch = (state.mutationEpoch ?? 0) + 1;
         // 此刻**不**作废单标签删除备份：pending 只是乐观意图，磁盘还没删。
@@ -852,23 +860,47 @@ export const tabSlice = createSlice({
         state.errorAction = null;
       })
       .addCase(deleteGroups.fulfilled, (state, action) => {
-        const whole = new Set(action.meta.arg);
-        // 磁盘已删：清掉回滚基线（乐观结果就是最终结果）。
-        if (state.deletedGroupBackups) {
-          for (const id of whole) delete state.deletedGroupBackups[id];
-        }
-        // 幂等——pending 时组已移除，这里再 filter 一遍可覆盖「pending 未跑」的
+        const requested = action.meta.arg;
+        const skippedIds = action.payload.value?.skippedLockedIds ?? [];
+        const skipped = new Set(skippedIds);
+        // 只有「真的删掉了」的 id 才算 committed：执行时被锁定跳过的那些组
+        // 磁盘上还在，不能从 Redux 里抹掉（否则就是「删了又回来」——
+        // 列表里消失、下次刷新又出现，用户会去重试、会怀疑数据）。
+        const committed = new Set(requested.filter(id => !skipped.has(id)));
+        // 幂等——pending 时已移除，这里再 filter 一遍可覆盖「pending 未跑」的
         // 直接 dispatch（测试）与并发删除的极端情形。
-        state.groups = state.groups.filter(g => !whole.has(g.id));
-        if (state.activeGroupId && whole.has(state.activeGroupId)) {
+        state.groups = state.groups.filter(g => !committed.has(g.id));
+        if (state.activeGroupId && committed.has(state.activeGroupId)) {
           state.activeGroupId = null;
         }
-        // 作废这些组在途的单标签删除备份。理由与 deleteGroup.fulfilled 完全相同：
-        // 磁盘上组已不存在，标签备份再无回滚对象；留着它们，一次失败的标签删除
-        // 会按整组快照把刚删掉的会话复活回来。
+        // 被跳过的组按 pending 记的**原坐标**放回。原坐标 → 当前坐标要减去
+        // 「原坐标在它之前、且已被真删的组」；升序插回，顺序才不会跳变。
+        const committedIndexes = requested
+          .filter(id => committed.has(id))
+          .map(id => state.deletedGroupBackups?.[id]?.index)
+          .filter((index): index is number => typeof index === 'number');
+        const restores = skippedIds
+          .map(id => state.deletedGroupBackups?.[id])
+          .filter((backup): backup is NonNullable<typeof backup> => !!backup)
+          .sort((a, b) => a.index - b.index);
+        for (const backup of restores) {
+          const id = backup.group.id;
+          // pending 没跑过（组还在列表里）：留着原位，不重复插入。
+          if (state.groups.some(g => g.id === id)) continue;
+          const ahead = committedIndexes.filter(index => index < backup.index).length;
+          const at = Math.max(0, Math.min(backup.index - ahead, state.groups.length));
+          state.groups.splice(at, 0, backup.group);
+        }
+        // 成功回执 = 磁盘已落定，这些 id 的回滚基线消费完毕。
+        if (state.deletedGroupBackups) {
+          for (const id of requested) delete state.deletedGroupBackups[id];
+        }
+        // 只作废**确认删除**那些组的单标签删除备份。被锁定跳过的组磁盘上还在，
+        // 它们的标签备份仍有回滚对象——留下了，一次失败的标签删除才能把标签
+        // 插回原位（与 deleteGroup.fulfilled 只在「确认删除」时作废同一条理由）。
         if (state.optimisticBackups) {
           for (const key of Object.keys(state.optimisticBackups)) {
-            if (whole.has(state.optimisticBackups[key]?.groupId)) {
+            if (committed.has(state.optimisticBackups[key]?.groupId)) {
               delete state.optimisticBackups[key];
             }
           }
