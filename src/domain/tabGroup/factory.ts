@@ -1,7 +1,7 @@
 import { nanoid } from '@reduxjs/toolkit';
 import { Tab, TabGroup } from '@/types/tab';
 import { sanitizeFaviconUrl } from '@/utils/faviconUtils';
-import { filterValidTabs, resolveStorableUrl } from './filters';
+import { collectableTabs, resolveStorableUrl } from './filters';
 import { buildTimestampSessionName } from './sessionName';
 
 export interface CreateTabGroupOptions {
@@ -18,7 +18,12 @@ export function createTabGroupFromChromeTabs(
   tabs: chrome.tabs.Tab[],
   options: CreateTabGroupOptions = {}
 ): TabGroup {
-  const validTabs = filterValidTabs(tabs, {
+  // ⚠️ 用 `collectableTabs`（而不是 `filterValidTabs`）：它多一道
+  //   「URL 解析得出来」的判据 —— 与图标点击那条路判断「有没有可收集的标签」
+  //   **用的是同一个函数** ⇒ 「图标说有、实际存不下」不可能发生。
+  //   落盘时那个 `url.length > 0` 的兜底因此也不再需要（`resolveStorableUrl`
+  //   对这批标签必然返回非空）。
+  const validTabs = collectableTabs(tabs, {
     includePinned: options.includePinned ?? false,
   });
   const now = options.now ?? new Date().toISOString();
@@ -41,6 +46,8 @@ export function createTabGroupFromChromeTabs(
     // 的假地址，比没有这条记录更糟（用户以为会话里有这个网页）。
     // 没有 url 的标签在 filters.isValidTab 里本就靠 title 存活，所以这里
     // 必须显式丢弃 —— 否则就是「保留了一条空地址」。
+    // （2026-10-26：这道丢弃已经上移到 `collectableTabs` 里 ⇒ 这里拿到的
+    //   标签**必然**解析得出 URL。）
     url: resolveStorableUrl(tab),
     title: tab.title || '未命名标签页',
     favicon: sanitizeFaviconUrl(tab.favIconUrl),
@@ -48,7 +55,7 @@ export function createTabGroupFromChromeTabs(
     lastAccessed: now,
     // 将 Chrome 标签页的固定状态持久化到应用数据中
     pinned: !!tab.pinned,
-  })).filter(tab => tab.url.length > 0);
+  }));
 
   return {
     id: nanoid(),

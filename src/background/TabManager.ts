@@ -1,6 +1,6 @@
 import { storage } from '@/utils/storage';
 import { UPLOAD_DEBOUNCE_MS } from '@/core/syncTiming';
-import { createTabGroupFromChromeTabs, filterValidTabs, isInternalUrl } from '@/domain/tabGroup';
+import { createTabGroupFromChromeTabs, collectableTabs, filterValidTabs, isInternalUrl } from '@/domain/tabGroup';
 import { cacheManager } from '@/utils/performance';
 import { trackProductEvent } from '@/utils/productEvents';
 import { syncEngine } from '@/services/syncEngine';
@@ -67,6 +67,29 @@ export class TabManager {
       return await chrome.tabs.query({ url: extensionUrl + '*' });
     }
     return await chrome.tabs.query({ url: extensionUrl + '*', windowId });
+  }
+
+  /**
+   * 这批标签里**有几个是能被收集的**（= 会被存进会话的那些）。
+   *
+   * ── 为什么要有它（2026-10-26 产品定案）─────────────────────────────────
+   *
+   * 点扩展图标的契约是「**无论有没有可收集的标签，都打开标签管理器**」：
+   * 有 ⇒ 先收集再打开；没有 ⇒ 直接打开（**不**报「没有可保存的标签页」——
+   * 那条错误是给「按了快捷键什么也没发生」准备的，而这一次用户**确实**得到
+   * 了东西：管理器）。
+   *
+   * ⇒ 调用方必须能**先判断**，而这个判断必须与**保存路径**同一套判据
+   *   ⇒ 这里直接用 domain 层的 `collectableTabs`（factory 落盘也用它）。
+   *
+   * @param tabs 要判断的那批标签（通常是被点的那一个窗口的全部标签）
+   * @returns 可收集的条数（0 = 这一窗没有能存成会话的标签）
+   */
+  async countCollectableTabs(tabs: chrome.tabs.Tab[]): Promise<number> {
+    // 与 saveAllTabs 读的是同一份设置（固定标签页收不收集由用户开关决定）。
+    const settings = await storage.getSettingsForLocalUse();
+    const includePinned = settings.collectPinnedTabs ?? false;
+    return collectableTabs(tabs, { includePinned }).length;
   }
 
   /**

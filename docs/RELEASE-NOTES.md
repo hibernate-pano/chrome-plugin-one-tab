@@ -8,15 +8,51 @@
 > 长期台账**（含根因、踩坑、修复顺序），不必翻译成英文、不必对齐商店审核口径。
 > 两边都会写「本版改了什么」，但只有本文件会记住「为什么」和「后来怎么验证的」。
 
-## v1.29.0（2026-10-26，**撤销提示整套下线** + **提示回到右上角**，**未提审**）
+## v1.29.0（2026-10-26，**撤销提示整套下线** + **提示回到右上角** + **点图标一定打开标签管理器**，**未提审**）
 
 ### 产品定案（2026-10-26）
 
-两条，都是产品负责人直接定的：
+三条，都是产品负责人直接定的：
 
 1. **提示条回到右上角**（此前从 v1.24.1 起杵在**正中间**，挡着用户正在看的东西）。
 2. **「恢复」之后那条带「撤销」按钮的提示，整个删掉** —— 理由：恢复时那些标签
    **已经开在浏览器里**了 ⇒ 结果界面自明 ⇒ 撤销提示是**纯噪音**。
+3. **点扩展图标「一定会打开标签管理器」** —— 有能收集的标签就先收集（存下并关掉），
+   没有就直接打开。原文：「当当前没有可收取的标签页时，点击图标会默认打开标签管理器
+   页面。换言之，无论何种情况，点击图标均会打开标签管理器页面。」
+
+### 点图标那条路：把「点了像没点」这个体验消灭掉
+
+**旧行为（1.27.0 ~ 1.28.7）**：点图标 = 保存当前窗口并关掉这些标签，随后打开管理器；
+**「一个都没存下」时则什么都不做** —— 只弹一条错误通知，屏幕上没有任何变化
+⇒ 用户点了图标，像是没点。
+
+⇒ 1.29.0 换掉的是**兜底**，不是那条交互约定本身：
+
+- **收集在前、管理器在后**的顺序**保留** —— 多 Chrome 实例并存时，动作必须发生在
+  点的那一边、结果当场可见（2026-10-24 恢复旧交互的核心理由依旧成立）；
+  ⇒ 它**不是**回到 2026-10-22 审计 P0-1 的「只打开管理器」。
+- **「有没有可收集的标签」先判断**：没有 ⇒ **根本不进保存** ⇒ 也就不会弹
+  「当前窗口里没有可保存的标签页」那条错误（那条错误是给「按了快捷键什么也没
+  发生」准备的；点图标这条路用户**确实**得到了东西 ⇒ 对着成功报错是错的）。
+- **判据与保存路径同源**：新增 domain 层 `collectableTabs`（= `filterValidTabs`
+  **加上**「URL 解析得出来」），`createTabGroupFromChromeTabs` 落盘与
+  `TabManager.countCollectableTabs` **都用它** ⇒ 「图标说有、实际存不下」不可能发生。
+- **失败也落到管理器上**：查不到标签 / 保存抛错 / 管理器打不开，三种失败都仍然
+  打开管理器；只是**说不同的话**（没存下时绝不说「已保存」）。
+
+| 层 | 改了什么 |
+|---|---|
+| **判据层** | `src/background/iconClickAction.ts` 重写：`IconClickDeps` 多一个 `countCollectableTabs`；`IconClickOutcome` 从 `saved / nothing-saved / saved-but-manager-failed / failed` 变成 `saved / nothing-to-collect / collect-failed`（+ 一条独立的 `managerOpened`）；domain 层新增 `collectableTabs`，factory 改用它 |
+| **接线层** | `TabManager.countCollectableTabs()`（读同一份 `collectPinnedTabs` 设置）；`service-worker.ts` 的 `onClicked` 注入这个能力 |
+| **对外文案** | manifest 悬停提示（`TapStack - 打开标签管理器（有能保存的标签就保存并关闭）`）、README 两处、商店页详细描述**中英双语各一处**、promo-site 一处 |
+| **预览文案** | 商店页版本历史那条（⑤） |
+
+**守卫**：`tests/guards/iconClickAlwaysOpensManager.test.ts`（**由 `iconClickSavesWindow.test.ts`
+改名** —— 旧名字描述的是被推翻的契约）+ 变异自证
+`tests/guards/iconClickAlwaysOpensManagerMutation.test.ts`（7 条：M1 退回
+`currentWindow`、M2 管理器不限定窗口、M3 谎报「无法保存」、M4 没收集到也照样进保存、
+M5 没收集到就不开管理器、M6 收集失败就不开管理器、M7 等价改写必须仍然绿）。
 
 ### 根因：撤销提示是给「不敢删」的用户准备的，但产品已经不需要它了
 
@@ -83,6 +119,31 @@ README/商店页里那句「可撤销」在**它自己那一版**上仍然成立
   「居中位置」的右边；连弹两条时**新的贴顶、旧的排它下面、互不重叠**。
   理由：class 写对了不等于**看起来**对（判据钉的是 `fixed right-4 top-4` 这个字面量，
   说明不了它真的落在角落、也没被裁掉）。
+- `tests/guards/iconClickAlwaysOpensManager.test.ts`（**新增**）：注入假的 chrome API
+  **真的调 `runIconClick`**，把每个分支都走一遍 —— 有能收集的（先收集再打开）/
+  没有能收集的（**不进保存**、直接打开、**不报错**）/ 判断本身抛错（照常收集）/
+  收集失败 / 查不到标签 / 管理器打不开（说「已保存」还是「没能打开」），
+  并断言查的是 `{windowId}` 而不是 `currentWindow`、管理器开在点的那一个窗口、
+  悬停提示与三处对外文案都说到「打开标签管理器」。
+  另有一条**同源**断言：factory 落盘的标签集合 === `collectableTabs`。
+- `tests/guards/iconClickAlwaysOpensManagerMutation.test.ts`（**新增**）：7 条变异
+  自证（见上）；其中 M4/M5/M6 三条是**旧行为**（没收集到也照样保存 / 没收集到就
+  不开管理器 / 收集失败就不开管理器）—— 它们全都能让守卫变红 ⇒ 守卫不是恒绿的。
+- `tests/tabFilters.test.ts`：新增 `collectableTabs` 的域测试（内部页 / 危险 schema /
+  固定标签开关 / 加载中的标签走 `pendingUrl` / 解析不出来的标签要丢掉）。
+- `scripts/lead-verify-icon-click-empty.mjs`（**新增真机探针**，实测通过）：真 Chrome
+  （Playwright 持久化上下文 + 真实扩展）里把唯一的标签 **pin 住**（默认设置下固定
+  标签页不收集 ⇒ 这一窗**没有可收集的标签**）⇒ 把点击投给**真实的**
+  `chrome.action.onClicked` ⇒ 实测：
+  ① **管理器开在了点的那一个窗口里**（原来这一趟是「什么都不做」）；
+  ② 那个 pin 住的标签**原样还在**（既没存也没关）；
+  ③ **一条通知都没弹**（`chrome.notifications.create` 被探针全程盯着 ——
+  「当前窗口里没有可保存的标签页」是**通知**而不是页面上的字，不盯着通道就看不到）；
+  ④ **没有保存徽标**（没收集就不该有「刚刚存了 N 个」）。
+  紧接着再加一个**能收集**的标签、再点一次 ⇒ 它被**存下并关掉**、徽标显示 `1`
+  ⇒ 证明新契约**没有**把「收集」这一半改掉。
+  理由：这一版改的是**兜底**，而「点了像没点」是**屏幕上的体验** ⇒ 单测说不了，
+  必须真机看。
 
 ### 继承下来的未完成项（一条都没做掉）
 
@@ -111,11 +172,20 @@ README/商店页里那句「可撤销」在**它自己那一版**上仍然成立
 
 ### 提审前必须做的事（**人工步骤，仓库里做不了**）
 
+0. **重打包**（⚠️ **旧的 zip 必须先删**）：`rm -f out/extension.zip && node
+   ~/.claude/skills/chrome-store-release/scripts/zip-extension.mjs dist out/extension.zip`。
+   ⚠️ `zip -r` 对**已存在**的归档是**增量更新** ⇒ 旧构建留下的条目会原样留在包里
+   ⇒ 本次实测：直接重打得到 **60 条 / 691 KB**（一堆带旧 hash 的重复文件），
+   **删掉旧包再打**才是 **39 条 / 344,895 字节 / sha256 `6f8eb4b2…`**。
+   ⇒ 技能脚本已改成「打包前先删旧包」（重打两次 sha256 相同 = 幂等）。
+   （⇒ 1.28.7 / 1.29.0 台账里记的 **49 条** 那一版是**合并包**，功能不受影响
+   ——商店只按 manifest 加载——但它不是「这次构建的干净产物」。）
 1. **重拍商店截图**（页脚版本号随 manifest 走 ⇒ 升版即过期）：`pnpm build &&
    node scripts/make-store-screenshots.mjs`。
-2. **换商店文案**（旧文案承诺「撤销」⇒ 在 1.29.0 上是假话）：用
-   `node scripts/store-listing-audit.mjs --print-text` 的输出（**去 markdown 标记**）
-   粘进后台。
+2. **换商店文案**（旧文案承诺「撤销」⇒ 在 1.29.0 上是假话；旧文案还说
+   「点扩展图标就把当前窗口的标签页存成一个会话」⇒ 少了「**一定会打开标签
+   管理器**」这一半）：用 `node scripts/store-listing-audit.mjs --print-text`
+   的输出（**去 markdown 标记**）粘进后台。
 3. **解封云端**（生产 Supabase 仍 402，见 CHROMEWEBSTORE.md 文件头）—— 与本次改动无关，
    但不发版就永远解不了。
 
@@ -314,7 +384,8 @@ OneTab 的社区标准就是 `URL | 标题` + 空行分组 —— **没有时间
     ⚠️ 判据钉的是**落盘后的数据**，不是「源码里出现了某个函数名」。
     为什么不必真机：命名这一步**没有任何浏览器行为**参与（纯函数 + 一次落盘）；
     真机才能证明的「点击 → 通知 → 关标签」那一段由
-    `saveAllTabsWindowScope` / `iconClickSavesWindow` 那些守卫负责。
+    `saveAllTabsWindowScope` / `iconClickAlwaysOpensManager` 那些守卫负责
+    （后者在 1.29.0 由 `iconClickSavesWindow` 改名而来）。
   · `tests/guards/oneTabRoundTripFidelity.test.ts` —— 旧的一条
     「导入与保存用**同一把尺子」**当场变红 ⇒ 那正是本次产品定案**故意**改掉
     的东西 ⇒ 守卫改成一条新的真相：**两条路径永远不是同一把尺子**
@@ -1872,12 +1943,15 @@ version 守卫换成旧版，三条都是「只改一处状态 ⇒ 结论必须�
   **真的调 `runIconClick`**，把每个分支都走一遍（存成了 / 一个都没存下 /
   管理器打不开 / 整条路径挂掉），并断言查的是 `{windowId}` 而不是 `currentWindow`、
   管理器开在同一个窗口、manifest 提示与对外文案不还说「只打开管理器」。
+  ⚠️ **该守卫在 1.29.0 改名为 `iconClickAlwaysOpensManager.test.ts`** ——
+  名字描述的是被 1.29.0 推翻的那条契约（「点图标 = 保存并关闭」）。
 - `tests/guards/saveAllTabsWindowScope.test.ts` —— 行为级：真调
   `tabManager.saveAllTabs([窗口 42 的标签])` ⇒ 断言占位新标签带 `windowId: 42`、
   被关的正是那批标签的 id。
 - 变异自证：`tests/guards/iconClickSavesWindowMutation.test.ts`（M1 退回
   `currentWindow` ⇒ 红；M2 管理器不限定窗口 ⇒ 红；M3 把「已保存」谎报成
-  「无法保存」⇒ 红；M4 等价改写 ⇒ 仍绿）、
+  「无法保存」⇒ 红；M4 等价改写 ⇒ 仍绿；**1.29.0 改名
+  `iconClickAlwaysOpensManagerMutation.test.ts` 并扩到 7 条**）、
   `tests/guards/saveAllTabsWindowScopeMutation.test.ts`（M1/M2 ⇒ 红；M3 ⇒ 仍绿）。
 - 旧守卫 `tests/guards/iconClickIsNonDestructive.test.ts` **已删**（它钉的正是被
   推翻的那条约定）⇒ 留着就是一条**恒绿的死守卫**。

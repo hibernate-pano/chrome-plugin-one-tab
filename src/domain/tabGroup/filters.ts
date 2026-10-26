@@ -116,3 +116,28 @@ export const filterValidTabs = (
 
   return filtered;
 };
+
+/**
+ * 这批标签里**真正能被收集**的是哪些（= 会被存进会话的那些）。
+ *
+ * ── 为什么需要这个函数（2026-10-26 产品定案）──────────────────────────────
+ *
+ * 点扩展图标的契约变成了「**无论有没有可收集的标签，都打开标签管理器**」：
+ * 有 ⇒ 先收集再打开；没有 ⇒ 直接打开。
+ * ⇒ 调用方必须能**先判断**「有没有可收集的标签」——
+ *   而这个判断必须与**保存路径**用的是**同一套**判据，
+ *   否则会出现「图标说有、实际一个都存不下」（用户看到管理器打开却什么都没存，
+ *   或者反过来：明明有标签，图标却说没有、直接跳过了收集）。
+ *
+ * ⇒ 判据 = `filterValidTabs`（内部页 / 危险 schema / 固定标签开关）
+ *   **加上**「URL 解析得出来」（`resolveStorableUrl` 非空）——
+ *   后者与 factory 里落盘用的 URL 是同一个判据：解析不出来的标签落盘就是
+ *   一条空地址（`about:blank` 那种假记录）。
+ *
+ * ⚠️ `createTabGroupFromChromeTabs` 用的就是它 ⇒ 两条路**不可能**漂移。
+ */
+export const collectableTabs = (
+  tabs: chrome.tabs.Tab[],
+  options: FilterTabsOptions = {}
+): chrome.tabs.Tab[] =>
+  filterValidTabs(tabs, options).filter(tab => resolveStorableUrl(tab).length > 0);

@@ -17,7 +17,8 @@
  *
  * 保存路径的**命名**没有任何浏览器行为参与（纯函数 + 一次落盘）；
  * 真机才能证明的是「点击 → 通知 → 关标签」那一段，那由
- * `saveAllTabsWindowScope` / `iconClickSavesWindow` 那些守卫负责。
+ * `saveAllTabsWindowScope` / `iconClickAlwaysOpensManager` 那些守卫负责
+ * （后者在 1.29.0 由 `iconClickSavesWindow` 改名而来）。
  * ⇒ 这里用 chrome mock + localStorage 桩，把 SW 的保存流程**真跑一遍**，
  * 断言**落盘的数据**符合规则 —— 确定、快、不 flaky。
  */
