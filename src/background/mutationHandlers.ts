@@ -23,6 +23,7 @@ import {
   applySaveGroup,
   applyRemoveTab,
   applyDeleteGroup,
+  applyDeleteGroups,
   applyDeleteAllGroups,
   applyImportGroups,
   applyRenameGroup,
@@ -265,6 +266,24 @@ export function createMutationHandlers(deps: MutationDeps) {
         const delWarn = await noteDeletedGroups(d, [r.removedGroupId]);
         await scheduleUpload(DELETE_PRIORITY_MS);
         return { ok: true, payload: cmd.groupId, broadcastWarn: delWarn ?? undefined };
+      }
+      case 'deleteGroups': {
+        const groups = await d.getGroups();
+        // 锁定在**执行时刻**再判一次：清单是用户确认时读的，另一台设备可能
+        // 刚把它锁上。「已锁定的不会被清理」是确认框上的承诺，必须在这里成立。
+        const r = applyDeleteGroups(groups, cmd.groupIds, now, stamp);
+        await persist(r.groups);
+        // 删除广播只走 pendingDeleteIds（与 deleteGroup 同一条路）。
+        const delWarn = await noteDeletedGroups(d, r.removedGroupIds);
+        // ⚠️ **不许** sendSyncCommand('upload', { overwriteCloud: true })：
+        // 这是部分删除，其余云端行仍然有效；覆盖上传会把它们当成「本机没有」
+        // 而删掉（见 overwrite-delete-set-must-match-write-set）。
+        await scheduleUpload(DELETE_PRIORITY_MS);
+        return {
+          ok: true,
+          payload: { count: r.removedGroupIds.length, skippedLocked: r.skippedLocked.length },
+          broadcastWarn: delWarn ?? undefined,
+        };
       }
       case 'deleteAllGroups': {
         const groups = await d.getGroups();

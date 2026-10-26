@@ -11,6 +11,18 @@ export type MutationOp =
   | { op: 'saveGroup'; group: TabGroup }
   | { op: 'removeTab'; groupId: string; tabId: string }          // 点开=移出、显式删除，同语义
   | { op: 'deleteGroup'; groupId: string }
+  /**
+   * 按 **id 清单**批量删除（「清理旧会话」的执行命令）。
+   *
+   * 载荷是具体 id，**不是规则**——确认框里列出的那些名字就是承诺。调用方
+   * （如清理菜单）在用户确认时把名字与 id 一起定下来，执行时只允许删这些 id；
+   * 若在这里传「三个月前」之类的规则，执行时刻与确认时刻之间数据一变，删掉的
+   * 就可能不是用户点头的那一批。
+   *
+   * ⚠️ 锁定在**执行时**再判一次（见 applyDeleteGroups）：清单是确认时读的，
+   * 另一台设备可能刚把它锁上；「已锁定的不会被清理」必须执行时仍然成立。
+   */
+  | { op: 'deleteGroups'; groupIds: string[] }
   | { op: 'deleteAllGroups' }
   | { op: 'importGroups'; groups: TabGroup[] }
   | { op: 'renameGroup'; groupId: string; name: string }

@@ -198,6 +198,49 @@ export function applyDeleteGroup(
   return { groups: groups.filter(g => g.id !== groupId), removedGroupId: groupId };
 }
 
+/**
+ * deleteGroups 语义：按 id 清单批量物理移除（「清理旧会话」执行层）。
+ *
+ * ── 为什么载荷是 id 清单而不是规则 ─────────────────────────────────────
+ * 确认框里列出的名字就是承诺。若改成「按年龄现算」，从用户点头到执行之间
+ * 数据可能又变了，删掉的就不再是他确认过的那一批。
+ *
+ * ── 为什么锁定必须在这里再判一次 ───────────────────────────────────────
+ * 清单是在**确认时**读的。确认与执行之间另一台设备可能把某个会话锁上
+ * （「这个我留着」），而清理菜单的文案承诺「已锁定的不会被清理」——
+ * 这条承诺得在执行时刻成立，不能只靠确认时刻的判据。
+ *
+ * 不在清单里的 id、以及磁盘上已经不存在的 id 一律跳过（幂等）；它们既不进
+ * `removedGroupIds`，也不进 `skippedLocked` —— 后者的语义只有
+ * 「本来要删、因为锁定而没删」，把不存在的 id 混进去是另一种谎。
+ */
+export function applyDeleteGroups(
+  groups: TabGroup[],
+  groupIds: string[],
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars -- 物理移除无实体可盖 stamp（签名与其它 apply* 一致）
+  _now: string,
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars -- 同上
+  _stamp: OpStamp
+): { groups: TabGroup[]; removedGroupIds: string[]; skippedLocked: string[] } {
+  const byId = new Map(groups.map(g => [g.id, g]));
+  const removed = new Set<string>();
+  const skippedLocked: string[] = [];
+  for (const id of groupIds) {
+    const target = byId.get(id);
+    if (!target) continue;
+    if (target.isLocked) {
+      if (!skippedLocked.includes(id)) skippedLocked.push(id);
+      continue;
+    }
+    removed.add(id);
+  }
+  return {
+    groups: groups.filter(g => !removed.has(g.id)),
+    removedGroupIds: [...removed],
+    skippedLocked,
+  };
+}
+
 /** deleteAllGroups 语义：全部物理移除。count = groups.length（与 thunk 口径一致）。 */
 export function applyDeleteAllGroups(
   groups: TabGroup[],
