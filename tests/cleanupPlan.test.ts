@@ -7,23 +7,33 @@ const g = (over: Record<string, unknown>) => ({
   updatedAt: '2026-01-01T00:00:00.000Z', isLocked: false, ...over,
 }) as any;
 
+/** 本地日历日期（不能用 toISOString —— `monthsBefore` 算的是本地日历）。 */
+const localYmd = (d: Date) =>
+  `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+
 describe('monthsBefore：日历月钳制', () => {
   it('3 月 31 日的一个月前是 2 月 28 日（不是 3 月 3 日）', () => {
     assert.equal(
-      monthsBefore(new Date('2026-03-31T12:00:00'), 1).toISOString().slice(0, 10),
+      localYmd(monthsBefore(new Date(2026, 2, 31, 12, 0, 0), 1)),
       '2026-02-28',
     );
   });
   it('闰年 3 月 31 日的一个月前是 2 月 29 日', () => {
     assert.equal(
-      monthsBefore(new Date('2024-03-31T12:00:00'), 1).toISOString().slice(0, 10),
+      localYmd(monthsBefore(new Date(2024, 2, 31, 12, 0, 0), 1)),
       '2024-02-29',
     );
   });
   it('跨年：1 月 15 日的三个月前是上一年的 10 月 15 日', () => {
     assert.equal(
-      monthsBefore(new Date('2026-01-15T12:00:00'), 3).toISOString().slice(0, 10),
+      localYmd(monthsBefore(new Date(2026, 0, 15, 12, 0, 0), 3)),
       '2025-10-15',
+    );
+  });
+  it('31 日回溯到只有 30 天的月份也钳制（5 月 31 日 → 2 月 28 日）', () => {
+    assert.equal(
+      localYmd(monthsBefore(new Date(2026, 4, 31, 12, 0, 0), 3)),
+      '2026-02-28',
     );
   });
 });
@@ -66,6 +76,19 @@ describe('planCleanup：时间档', () => {
     assert.equal(plan.tabCount, 3);
     assert.deepEqual(plan.names, ['B', 'A']);
   });
+  it('刚保存的锁定会话不算「被跳过」（它本来就不在候选集里）', () => {
+    const plan = planCleanup([
+      g({ id: 'recent-lock', createdAt: '2026-10-25T00:00:00.000Z', isLocked: true }),
+      g({ id: 'old-lock', createdAt: '2026-01-01T00:00:00.000Z', isLocked: true }),
+    ], '3m', now);
+    assert.equal(plan.lockedSkippedCount, 1);
+  });
+  it('时间读不出来的会话不删（fail-safe，绝不当成「很旧」）', () => {
+    const plan = planCleanup([
+      g({ id: 'bad', createdAt: 'not-a-date' }),
+    ], '1m', now);
+    assert.deepEqual(plan.ids, []);
+  });
 });
 
 describe('planCleanup：全部两档', () => {
@@ -83,6 +106,17 @@ describe('planCleanup：全部两档', () => {
   it('全部两档不看时间', () => {
     const fresh = [g({ id: 'today', createdAt: '2026-10-25T00:00:00.000Z' })];
     assert.deepEqual(planCleanup(fresh, 'all-keep-locked', now).ids, ['today']);
+  });
+  it('含锁定：lockedSkippedCount 恒 0（这一档不跳过锁定）', () => {
+    assert.equal(planCleanup(groups, 'all', now).lockedSkippedCount, 0);
+  });
+  it('两档全部都不算「保存时间未知」（这一档没有年龄筛选）', () => {
+    const withUnknown = [
+      g({ id: 'imp', importedAt: '2025-01-01T00:00:00.000Z' }),
+      g({ id: 'imp-lock', importedAt: '2025-01-01T00:00:00.000Z', isLocked: true }),
+    ];
+    assert.equal(planCleanup(withUnknown, 'all', now).unknownTimeCount, 0);
+    assert.equal(planCleanup(withUnknown, 'all-keep-locked', now).unknownTimeCount, 0);
   });
 });
 
@@ -112,5 +146,28 @@ describe('菜单行文案', () => {
     for (const tier of TIERS) {
       assert.ok(!CLEANUP_TIER_LABELS[tier](5, 2).includes('删除全部会话'));
     }
+  });
+
+  // ── 走 planCleanup 全路径：第二个参数必须来自同一份计划，不许只有纯函数钉子 ──
+  const now = new Date('2026-10-26T00:00:00.000Z');
+  it('含锁定：锁定数来自同一个计划（两条锁定 + 一条未锁定）', () => {
+    const plan = planCleanup([
+      g({ id: 'l1', isLocked: true }),
+      g({ id: 'l2', isLocked: true }),
+      g({ id: 'f' }),
+    ], 'all', now);
+    assert.equal(plan.lockedCount, 2);
+    assert.equal(
+      CLEANUP_TIER_LABELS.all(plan.groupCount, plan.lockedCount),
+      '删除所有会话（含 2 个锁定）',
+    );
+  });
+  it('含锁定：没有锁定时用计划里的总数（总数不许丢）', () => {
+    const plan = planCleanup([g({ id: 'f' })], 'all', now);
+    assert.equal(plan.lockedCount, 0);
+    assert.equal(
+      CLEANUP_TIER_LABELS.all(plan.groupCount, plan.lockedCount),
+      '删除所有会话（1）',
+    );
   });
 });

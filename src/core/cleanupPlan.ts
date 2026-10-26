@@ -135,9 +135,26 @@ export interface CleanupPlan {
   unknownTimeCount: number;
   /**
    * 因为锁定而**没有**进入本次清理的会话数。
-   * 时间档只数「本来够旧」的；`'all-keep-locked'` 数全部锁定；`'all'` 恒为 0。
+   *
+   * 时间档只数「**本来够旧**」的锁定会话；`'all-keep-locked'` 数全部锁定；
+   * `'all'` 恒为 0（它不跳过任何锁定）。
+   *
+   * ── 为什么时间档不能用「所有锁定条数」────────────────────────────────
+   * 一个**上周才保存**的锁定会话，对「三个月前」这一档说「它被跳过」是假话：
+   * 它本来就不在候选集里，删不删与锁定无关。确认框那句「另有 N 个已锁定的
+   * 会话不会被清理」只有在「它们本来会被清理」时才成立 —— 把新会话算进去，
+   * 就是在暗示「锁救下了它」，而真正救了它的是「它不够旧」。
    */
   lockedSkippedCount: number;
+  /**
+   * `ids` 里被锁定的条数。
+   *
+   * 只有 `'all'` 会 > 0（其余五档根本不收锁定件）。菜单行文案
+   * `'all'` 那一档的第二个参数就是**这个**数（不是 `lockedSkippedCount` ——
+   * `'all'` 的 `lockedSkippedCount` 恒为 0）；两个数出自同一份计划，
+   * 菜单说「含 N 个锁定」与真正会删的锁定条数不可能不一致。
+   */
+  lockedCount: number;
   /** 将删会话的名字，**最新在前**（调用方自行截断到前几条）。 */
   names: string[];
 }
@@ -194,6 +211,10 @@ export function planCleanup(
     tabCount: selected.reduce((sum, group) => sum + group.tabs.length, 0),
     unknownTimeCount,
     lockedSkippedCount,
+    // 与 ids 同源：只有 'all' 的 selected 里会出现锁定会话，其余档在上面的
+    // 分支里已经把它们跳过了。单独再数一遍，是为了让「菜单说的锁定数」与
+    // 「真正要删的锁定条数」出自**同一份结果**，而不是调用方另算一个。
+    lockedCount: selected.reduce((sum, group) => (group.isLocked ? sum + 1 : sum), 0),
     names,
   };
 }
@@ -210,11 +231,15 @@ export function planCleanup(
  * 各自拼，菜单与确认框迟早对不上**。
  *
  * 现在两个数都直接来自**同一个** `planCleanup` 结果：
- *   · `count`       = `plan.groupCount`（这一档要删的会话数）；
- *   · `lockedCount` = `plan.lockedSkippedCount`（锁定数，口径随档位，见
- *     `planCleanup` 的注释）。
- * 时间档只用 `count`（它们的锁定数不进菜单行）；`'all-keep-locked'` 只用
- * `lockedCount`（总数不混进文案 —— 那一行的承诺是「保留了几个锁定」）。
+ *   · `count` = `plan.groupCount`（这一档要删的会话数）；
+ *   · `lockedCount` 按档位取那个「说出来的数」：
+ *       - `'all'`：取 `plan.lockedCount`（`ids` 里的锁定条数）。**不是**
+ *         `plan.lockedSkippedCount` —— `'all'` 不跳过锁定，后者恒为 0；
+ *         拿错这一个，菜单就永远走「没有锁定」那一支，把锁定会话藏起来。
+ *       - `'all-keep-locked'`：取 `plan.lockedSkippedCount`（这一档要保留的
+ *         锁定数）；它的 `plan.lockedCount` 恒为 0（锁定不进 `ids`）。
+ *       - 四个时间档：第二个参数不用（传 0 即可），它们的锁定数不进菜单行。
+ * `'all-keep-locked'` 的总数刻意不进文案 —— 那一行的承诺是「保留了几个锁定」。
  *
  * ⚠️ 叫法纪律：这几个字符串里**不许**出现「删除全部会话」—— 同一个动作全仓
  * 只有一个名字「删除所有会话」（`tests/guards/deleteAllActionNaming.test.ts`
