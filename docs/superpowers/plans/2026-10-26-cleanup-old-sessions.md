@@ -192,8 +192,10 @@ git commit -m "feat(core): 清理旧会话的判据层（日历月钳制 + 六�
 - Produces:
   - `{ op: 'deleteGroups'; groupIds: string[] }`
   - `applyDeleteGroups(groups, groupIds, now, stamp): { groups: TabGroup[]; removedGroupIds: string[]; skippedLocked: string[] }`
-  - `deleteGroups(groupIds: string[])` → 回执 `{ count: number; skippedLocked: number }`
-    （thunk 名与 `deleteGroup` / `deleteAllGroups` 同族，不加 `Thunk` 后缀）
+  - `deleteGroups(groupIds: string[])` → 回执 `{ count: number; skippedLocked: number; skippedLockedIds: string[] }`
+    （thunk 名与 `deleteGroup` / `deleteAllGroups` 同族，不加 `Thunk` 后缀。
+    `skippedLockedIds` 不是给文案用的，是给 reducer 把「执行时已锁定」的组**插回列表**用的 ——
+    它们被 pending 乐观移除过，但磁盘上还在）
 
 - [ ] **Step 1: 写失败的测试**
 
@@ -258,9 +260,12 @@ Expected: FAIL（`applyDeleteGroups is not a function`）
   照 `deleteGroup` 那一组（`tabSlice.ts:724-800`）逐条搬语义：
   - `pending`：对每个 id 找下标，找到就写进 `state.deletedGroupBackups[id] = { group, index }`
     再 `splice` 掉；命中 `activeGroupId` 就置 null；`mutationEpoch += 1`。
-  - `fulfilled`：清掉这些 id 的 `deletedGroupBackups`；再 `filter` 一遍（幂等）；
-    并作废这些 id 在 `optimisticBackups` 里的单标签删除备份（否则一次失败的标签删除
-    会把刚删的整组复活，`tabSlice.ts:761-777` 有完整理由）。
+  - `fulfilled`：再 `filter` 一遍（幂等）；对 `payload.value.skippedLockedIds` 里每个 id，
+    若 `deletedGroupBackups[id]` 还在，就按它的 `index` 插回 `state.groups` 并删掉该备份
+    （越界钳到末尾）—— 这些组**磁盘上没删**，不插回就是「删了又回来」；
+    其余 id 的 `deletedGroupBackups` 清掉，并作废它们在 `optimisticBackups` 里的单标签删除备份
+    （否则一次失败的标签删除会把刚删的整组复活，`tabSlice.ts:761-777` 有完整理由）。
+    还原时**不动** `activeGroupId`（它是易失选择）。
   - `rejected`：走 `isTimeoutFailure` 判据——超时**保留**乐观结果、只报错不还原；
     明确失败才按备份的 `index` 插回。三处删除 reducer 必须同一判据，不许另写一套。
 
