@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { monthsBefore, planCleanup } from '@/core/cleanupPlan';
+import { CLEANUP_TIER_LABELS, monthsBefore, planCleanup } from '@/core/cleanupPlan';
 
 const g = (over: Record<string, unknown>) => ({
   id: 'x', name: '会话', tabs: [], createdAt: '2026-01-01T00:00:00.000Z',
@@ -83,5 +83,34 @@ describe('planCleanup：全部两档', () => {
   it('全部两档不看时间', () => {
     const fresh = [g({ id: 'today', createdAt: '2026-10-25T00:00:00.000Z' })];
     assert.deepEqual(planCleanup(fresh, 'all-keep-locked', now).ids, ['today']);
+  });
+});
+
+describe('菜单行文案', () => {
+  it('四个时间档只显示要删的条数', () => {
+    assert.equal(CLEANUP_TIER_LABELS['1m'](3, 0), '一个月前的会话（3）');
+    assert.equal(CLEANUP_TIER_LABELS['3m'](12, 0), '三个月前的会话（12）');
+    assert.equal(CLEANUP_TIER_LABELS['6m'](18, 0), '六个月前的会话（18）');
+    assert.equal(CLEANUP_TIER_LABELS['12m'](24, 0), '一年前的会话（24）');
+  });
+  it('保留锁定：只显示锁定数，总数不许混进文案', () => {
+    assert.equal(
+      CLEANUP_TIER_LABELS['all-keep-locked'](5, 2),
+      '删除所有会话（保留 2 个锁定）',
+    );
+  });
+  it('含锁定：有锁定时显示锁定数', () => {
+    assert.equal(CLEANUP_TIER_LABELS.all(5, 2), '删除所有会话（含 2 个锁定）');
+  });
+  it('含锁定：没有锁定时显示总数（总数不许丢）', () => {
+    assert.equal(CLEANUP_TIER_LABELS.all(5, 0), '删除所有会话（5）');
+  });
+  it('六个标签都不许出现第二叫法「删除全部会话」', () => {
+    const TIERS = [
+      '1m', '3m', '6m', '12m', 'all-keep-locked', 'all',
+    ] as const;
+    for (const tier of TIERS) {
+      assert.ok(!CLEANUP_TIER_LABELS[tier](5, 2).includes('删除全部会话'));
+    }
   });
 });
