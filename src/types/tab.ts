@@ -320,6 +320,14 @@ export interface TabState {
   // pending 移除、rejected 按此还原（与 deleteTabAndSync 的 optimisticBackups 同一思路，
   // 但备份粒度是整组）。fulfilled 后清除（磁盘已删，无需回滚基线）。
   deletedGroupBackups?: Record<string, { group: TabGroup; index: number }>;
+  // deleteGroups 的「删除前完整 id 顺序」快照，按 thunk requestId 索引。
+  //
+  // 【为什么不能靠备份里的数字下标定位】并发批次会交错：批次 1 移除 B、C 后
+  // 列表已变形，批次 2 再移除 A ⇒ 批次 1 回包时用旧下标算「前面删了几个」会
+  // 依赖回包顺序。改为按 pending 那一刻的**完整 id 顺序**插回：位置只由
+  // 「原顺序里谁排在它后面」决定，与其它批次删了谁、回包先后都无关。
+  // pending 写入，fulfilled / rejected 结束时删除（不泄漏）。
+  deleteGroupsOrder?: Record<string, string[]>;
   // 清理重复标签的收敛基线：pending 时抓取的「清理前活跃视图」快照。
   // fulfilled 用它 + SW 回传的权威计划重推（见 tabSliceHelpers 的 planOptimisticClean
   // 注释：叠加乐观结果无法纠正「本地误删」，只有从快照重推才无条件等于磁盘真值）；

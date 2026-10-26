@@ -111,6 +111,7 @@ export const initialTabState: TabState = {
   pendingLoadGuards: {},
   cleanDuplicatesSnapshot: null,
   deletedGroupBackups: {},
+  deleteGroupsOrder: {},
 };
 
 /** 当前在途（已乐观移除、尚未落定）的组级删除 id。见 stripInFlightDeletions 的说明。 */
@@ -822,13 +823,22 @@ export const tabSlice = createSlice({
       // ── 按 id 清单批量删除（「清理旧会话」）──────────────────────────────
       // 语义与 deleteGroup 那一组逐条一致；差别只有「一次多个 id」。
       //
-      // 【为什么三个 reducer 都按 meta.arg 而不是回执里的 id】
-      // SW 的回执只有计数（{ count, skippedLocked }），不带 id —— 与
-      // deleteGroup 一样，调用方本来就是这批 id 的唯一持有者。磁盘上的实际
-      // 结果（含执行时被锁定的跳过）比乐观清单更准确，但那要等下一次
-      // loadGroups 回环；这里先把乐观结果落定，与单条删除的口径相同。
+      // 【乐观移除 vs 执行结果】pending 先按清单把所有 id 从列表移除（用户点了
+      // 就立刻见效）。但**执行时刻**仍被锁定的组磁盘上还在（见
+      // applyDeleteGroups），SW 用 skippedLockedIds 告诉我们确切是哪些 ⇒
+      // fulfilled 只把「真删掉的」落定，其余按 pending 那一刻的完整 id 顺序
+      // 插回原位。不许等 loadGroups 回环兜底：那会让「删了又回来」在用户眼前
+      // 演一遍。
+      //
+      // 【为什么插回位置要存完整顺序、不能用备份里的数字下标】并发批次会交错：
+      // 批次 1 移除 B、C 后列表已变形，批次 2 再移除 A ⇒ 用旧下标推算「前面
+      // 删了几个」的结果取决于回包先后，同一串操作能得出两种列表。按原顺序找
+      // 「第一个排在我后面的现存组」则与其它批次删了谁、回包先后都无关。
       .addCase(deleteGroups.pending, (state, action) => {
         const groupIds = action.meta.arg;
+        // 原顺序必须是**移除之前**的完整列表：还原位置的唯一依据。
+        if (!state.deleteGroupsOrder) state.deleteGroupsOrder = {};
+        state.deleteGroupsOrder[action.meta.requestId] = state.groups.map(g => g.id);
         // 先把「在列表里的」全部定位到**删除前的坐标**再一起移除。不能边找边
         // splice：前面的 splice 会让后面记录的下标偏小，rejected 插回时顺序就乱了。
         const entries: Array<{ id: string; index: number; group: TabGroup }> = [];
@@ -846,7 +856,8 @@ export const tabSlice = createSlice({
         if (!state.deletedGroupBackups) state.deletedGroupBackups = {};
         const toRemove = new Set(entries.map(e => e.id));
         for (const e of entries) {
-          // 备份整组 + 原坐标：rejected / 执行时锁定跳过时按它放回原位。
+          // 备份整组 + 原坐标：rejected 按它插回（fulfilled 的锁定跳过插回
+          // 走 deleteGroupsOrder 的原顺序，不用这个数字下标）。
           state.deletedGroupBackups[e.id] = { group: e.group, index: e.index };
           if (state.activeGroupId === e.id) state.activeGroupId = null;
         }
@@ -873,28 +884,32 @@ export const tabSlice = createSlice({
         if (state.activeGroupId && committed.has(state.activeGroupId)) {
           state.activeGroupId = null;
         }
-        // 被跳过的组按 pending 记的**原坐标**放回。原坐标 → 当前坐标要减去
-        // 「原坐标在它之前、且已被真删的组」；升序插回，顺序才不会跳变。
-        const committedIndexes = requested
-          .filter(id => committed.has(id))
-          .map(id => state.deletedGroupBackups?.[id]?.index)
-          .filter((index): index is number => typeof index === 'number');
+        // 被跳过的组按 pending 记下的**完整 id 顺序**放回：插到「原顺序里排
+        // 在它后面、且此刻仍在列表里的第一个组」之前。这样与其它并发批次
+        // 删了谁、回包先后都无关（不能用备份的数字下标反推，见上方注释）。
+        const snap = state.deleteGroupsOrder?.[action.meta.requestId] ?? [];
         const restores = skippedIds
           .map(id => state.deletedGroupBackups?.[id])
           .filter((backup): backup is NonNullable<typeof backup> => !!backup)
-          .sort((a, b) => a.index - b.index);
+          .sort((a, b) => snap.indexOf(a.group.id) - snap.indexOf(b.group.id));
         for (const backup of restores) {
           const id = backup.group.id;
           // pending 没跑过（组还在列表里）：留着原位，不重复插入。
           if (state.groups.some(g => g.id === id)) continue;
-          const ahead = committedIndexes.filter(index => index < backup.index).length;
-          const at = Math.max(0, Math.min(backup.index - ahead, state.groups.length));
-          state.groups.splice(at, 0, backup.group);
+          const k = snap.indexOf(id);
+          // snap 里查不到的现存组（飞行途中新保存的）i === -1 自然被跳过；
+          // 它们本来就在最上面，不影响相对顺序。
+          const at = state.groups.findIndex(g => {
+            const i = snap.indexOf(g.id);
+            return i !== -1 && i > k;
+          });
+          state.groups.splice(at === -1 ? state.groups.length : at, 0, backup.group);
         }
-        // 成功回执 = 磁盘已落定，这些 id 的回滚基线消费完毕。
+        // 成功回执 = 磁盘已落定，这些 id 的回滚基线与本批顺序快照都消费完毕。
         if (state.deletedGroupBackups) {
           for (const id of requested) delete state.deletedGroupBackups[id];
         }
+        if (state.deleteGroupsOrder) delete state.deleteGroupsOrder[action.meta.requestId];
         // 只作废**确认删除**那些组的单标签删除备份。被锁定跳过的组磁盘上还在，
         // 它们的标签备份仍有回滚对象——留下了，一次失败的标签删除才能把标签
         // 插回原位（与 deleteGroup.fulfilled 只在「确认删除」时作废同一条理由）。
@@ -929,6 +944,7 @@ export const tabSlice = createSlice({
             state.groups.splice(at, 0, backup.group);
           }
         }
+        if (state.deleteGroupsOrder) delete state.deleteGroupsOrder[action.meta.requestId];
         // 超时时用统一文案覆盖原始串（与三处删除 reducer 同一套措辞）。
         state.error = isTimeout ? timeoutCopy('删除会话') : action.error.message || '删除会话失败';
         state.errorSource = 'action';

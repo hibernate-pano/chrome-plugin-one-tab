@@ -279,14 +279,21 @@ export function createMutationHandlers(deps: MutationDeps) {
         // 这是部分删除，其余云端行仍然有效；覆盖上传会把它们当成「本机没有」
         // 而删掉（见 overwrite-delete-set-must-match-write-set）。
         await scheduleUpload(DELETE_PRIORITY_MS);
+        // 名字区分：applyDeleteGroups 的 skippedLocked 是 id 数组，回执里的
+        // skippedLocked 是**数量**。局部变量带 Count，避免把数组当数字传。
+        const skippedLockedCount = r.skippedLocked.length;
         return {
           ok: true,
-          // count / skippedLocked 供界面文案用；skippedLockedIds 只给 reducer
-          // 用 —— 那些组磁盘上还在，乐观移除必须在 fulfilled 里按原坐标放回去
-          //（否则就是「删了又回来」：列表里消失、下次刷新又出现）。
+          // 回执契约：count / skippedLocked 供界面文案用；skippedLockedIds
+          // 只给 reducer 用 —— 那些组磁盘上还在，乐观移除必须在 fulfilled 里
+          // 按原顺序放回去（否则就是「删了又回来」）。
+          //
+          // ⚠️ 给消费方（Task 3 的文案）：磁盘上已不存在的 id **两个数都不计**
+          // ⇒ count + skippedLocked 可能小于请求数。不许按「请求总数 − 两数 =
+          // 未处理」倒算，那会把「本来就不在」说成「出了意外」。
           payload: {
             count: r.removedGroupIds.length,
-            skippedLocked: r.skippedLocked.length,
+            skippedLocked: skippedLockedCount,
             skippedLockedIds: r.skippedLocked,
           },
           broadcastWarn: delWarn ?? undefined,
