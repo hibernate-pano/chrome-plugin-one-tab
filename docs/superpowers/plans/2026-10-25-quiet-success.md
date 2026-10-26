@@ -83,7 +83,7 @@ pnpm type-check && pnpm type-check:tests && pnpm lint && pnpm lint:tests && pnpm
 | `src/components/auth/restoreFeedbackCopy.ts` | `LoginRestoreTone` 的 `'success'` → `'info'`。 |
 | `src/components/layout/Header.tsx` | `:210` 清理重复标签结果 → fact。 |
 | `src/components/layout/HeaderDropdown.tsx` | 8 处 success 逐条裁决（`:355` 删、`:570` 条件 fact、`:638` 条件 fact、`:812`/`:848`/`:904`/`:1377`/`:1502` fact）。 |
-| `src/components/sync/WebDavSettings.tsx` | 6 处 success 逐条裁决（`:807` fact、`:1082`/`:1184`/`:1265`/`:1342`/`:1400` 删）。 |
+| `src/components/sync/WebDavSettings.tsx` | 6 处 success 逐条裁决（`:807` **条件 fact**（三支里「已保存」那支静默）、`:1082`/`:1184`/`:1265`/`:1342`/`:1400` 删）。 |
 | `src/options/OptionsPage.tsx` | 3 处 success 逐条裁决（`:494`/`:712` 删、`:588` 删 + 备注搬进 hint）。 |
 | `src/components/tabs/TabGroup.tsx` | `:448` 锁定 toast → 卡片常驻行；`:567`/`:629` 锁定分支删播报（**保留成功门**）；`:672`/`:710` 中性化。 |
 | `src/components/search/SearchResultList.tsx` | `:583`/`:637` 锁定分支删播报（**保留成功门**）；`:669`/`:880` 中性化。 |
