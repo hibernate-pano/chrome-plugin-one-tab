@@ -29,13 +29,16 @@
 //    —— 注意判据是**语义**（「这是不是一个用户会拿去别处找的公共域名」），
 //    不是某个具体字符串。IPv4/IPv6/单标签主机名/带尾点/带 www 都得覆盖。
 //
-// ①' **口径变更（2026-10-22 审计 U-06）**：本机 / 内网主机**不再**让会话名
-//    退回时间戳 —— 它们现在产出**主机名**（`localhost:3000`、`192.168.1.5`、
-//    `[::1]:8080`），因为对自建服务而言主机名**就是**用户记忆工作现场的方式。
-//    ⇒ 本文件守的是**「不能是时间戳」+「不能冒充公共域名」+「各形态待遇一致」**，
-//    不再是「必须等于时间戳」。
+// ①' **口径变更（2026-10-25 产品定案）**：默认会话名**一律**是保存时刻
+//    ⇒ host **不再**出现在新会话的名字里（连「本机 / 内网」也不出现）。
+//    ⇒ 这份契约现在由两处消费：① **OneTab 文本导入**的会话名
+//    （`deriveDominantHost`）；② **标签行右侧显示的域名**
+//    （`getDisplayUrl`）。判据因此从「会话名」改从 `extractNamingHost` 读 ——
+//    归一口径一个字没松，只是**消费方**换了。
 //    ⇒ 但 `isLocalOrIpHost` 本身的分类语义**一个字没变** —— 它仍然是
 //    「这是不是一个公共域名」的判据，仍然不许被当成公网域名。
+//    ⚠️ 2026-10-25：**「取不到域名时退回时间戳」那条承诺已经作废** ——
+//    现在名字**永远**是时间戳，与能不能取到域名无关。
 //
 // ② **不变量**：归一化**不得改变域名本身** —— 去掉 `www.` 前缀之后，
 //    剩下的部分必须**原样**是那个域名（不能被 `replace` 误伤中间的 `www.`）。
@@ -56,7 +59,8 @@ import {
   isLocalOrIpHost,
   normalizeHostForDisplay,
 } from '@/core/hostName';
-import { deriveSessionNameFromChromeTabs } from '@/domain/tabGroup/sessionName';
+import { extractNamingHost } from '@/domain/tabGroup/sessionName';
+import { createTabGroupFromChromeTabs } from '@/domain/tabGroup/factory';
 import { getDisplayUrl } from '@/utils/sessionPresentation';
 import { applySearchFilters, type SearchResult } from '@/utils/search';
 import type { TabGroup } from '@/types/tab';
@@ -69,7 +73,15 @@ const stripComments = (src: string): string =>
   src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^[ \t]*\/\/.*$/gm, '');
 
 const now = new Date(2026, 4, 11, 8, 9).toISOString();
-const TIMESTAMP_NAME = '标签组 5月11日 08:09';
+/**
+ * 时间戳默认名的**当前格式**。
+ *
+ * ⚠️ 2026-10-25：格式从「标签组 5月11日 08:09」改成「2026-05-11 08:09」。
+ * ⇒ 这个常量必须**跟着实现改**，否则下面那些 `notEqual(TIMESTAMP_NAME)`
+ *   会变成**恒真**的假断言（名字再也不会等于旧格式）——
+ *   守卫看着绿，实际什么都测不到。
+ */
+const TIMESTAMP_NAME = '2026-05-11 08:09';
 const tab = (url: string) => ({ url, title: 'T', pinned: false } as chrome.tabs.Tab);
 
 /**
@@ -84,10 +96,12 @@ const tab = (url: string) => ({ url, title: 'T', pinned: false } as chrome.tabs.
  * 守卫永远绿。⇒ 这里逐条钉住「这个地址该被命名成什么」，
  * 改了行为就必须回来改这里 —— 改动因此是**显式**的。
  *
- * 【2026-10-22 U-06 口径变更】本机 / 内网主机不再退回时间戳，
- * 而是产出**主机名**（端口也带上，因为端口是区分「同一台机器上的不同
- * 服务」的唯一线索）。`::ffff:127.0.0.1` 被 URL 解析器归一化成
- * `::ffff:7f00:1` —— 那是**同一个地址的另一种写法**，期望值照此写。
+ * 【2026-10-25 口径再变一次】默认会话名**一律**是保存时刻 ⇒ host 不再
+ * 出现在新会话的名字里 ⇒ 这份契约由**导入路径**与**标签行显示**消费。
+ * 但**归一口径一个字没改**：本机 / 内网主机产出**主机名**（端口也带上，
+ * 因为端口是区分「同一台机器上的不同服务」的唯一线索）。
+ * `::ffff:127.0.0.1` 被 URL 解析器归一化成 `::ffff:7f00:1` ——
+ * 那是**同一个地址的另一种写法**，期望值照此写。
  */
 const LOCAL_FORMS: Array<[label: string, url: string, expected: string]> = [
   ['localhost', 'http://localhost:3000/app', 'localhost:3000'],
@@ -105,73 +119,71 @@ const LOCAL_FORMS: Array<[label: string, url: string, expected: string]> = [
 
 describe('L-17 ① 本机 / 内网 / IP 字面量不得被当成可记忆的**公共**域名', () => {
   for (const [label, url, expected] of LOCAL_FORMS) {
-    it(`${label}：会话名是主机名「${expected}」，不是时间戳`, () => {
+    it(`${label}：归一后的主机名是「${expected}」`, () => {
       /**
-       * 【U-06 的核心回归钉】
+       * 【2026-10-25 口径再变一次】默认会话名**一律**是保存时刻
+       * ⇒ host **不再**出现在新会话的名字里。
+       * ⇒ 这份契约现在由**导入路径**（OneTab 文本的会话名）与
+       * **标签行显示的域名**消费 ⇒ 判据改从 `extractNamingHost` 读。
        *
-       * 改前：本机 / 内网地址一律 `return null` ⇒ 落进时间戳兜底 ⇒
-       * 一屏 10 张内网会话卡全是「标签组 10月22日 09:12」「标签组 10月22日 09:47」
-       * —— 连站点身份都没有（favicon 也救不了：连域名都没有）。
-       *
-       * 破了 ⇒ 内网场景退回「一屏同名卡」的老样子。
+       * 破了 ⇒ 导入出来的会话名会漂（`localhost` 与 `localhost:3000` 撞名），
+       * 或标签行显示出来的域名不是用户记忆里的那个写法。
        */
-      const name = deriveSessionNameFromChromeTabs([tab(url)], now);
-      assert.notEqual(
-        name,
-        TIMESTAMP_NAME,
-        `${url} 的会话名退回了时间戳 —— 内网场景下所有会话卡长得一模一样`
-      );
       assert.equal(
-        name,
+        extractNamingHost(url),
         expected,
-        `${url} 的会话名不对 —— 本机 / 内网主机必须用自己的主机名当身份`
+        `${url} 的主机名归一不对 —— 用户照着它记忆/搜索/转述会落空`
       );
     });
   }
 
+  it('会话名里**不许**出现主机名（默认名一律是保存时刻）', () => {
+    // 这一族（导入路径 + 标签行显示）仍然是**唯一**会露出 host 的地方。
+    // ⇒ 默认会话名里一个 host 都不该有 —— 出现了就说明命名又去猜内容了。
+    const name = createTabGroupFromChromeTabs([tab('http://localhost:3000/app')], { now })
+      .name;
+    assert.equal(
+      name,
+      TIMESTAMP_NAME,
+      `会话名里出现了主机名（"${name}"）—— 默认名一律是保存时刻，不按内容命名`
+    );
+  });
+
   it('本机 / 内网地址**不得**被「洗」成一个看起来像公网域名的字符串', () => {
     /**
-     * 【为什么这条独立存在】命名会把这串地址显示给用户、让用户照着它记忆
-     * 与转述。⇒ 它必须**继续**被 `isLocalOrIpHost` 判成本机地址 ——
-     * 也就是说，命名不许把 `192.168.1.5` 变成 `192-168-1-5.example.com`
+     * 【为什么这条独立存在】host 会显示给用户、让用户照着它记忆与转述。
+     * ⇒ 它必须**继续**被 `isLocalOrIpHost` 判成本机地址 ——
+     * 也就是说，不许把 `192.168.1.5` 变成 `192-168-1-5.example.com`
      * 这种「公网域名形状」的串（那会让用户以为它在公网上、照着找会找不到）。
      */
     for (const [label, _url, expected] of LOCAL_FORMS) {
       assert.ok(
         isLocalOrIpHost(expected),
-        `${label}：会话名「${expected}」不再被判定为本机地址 —— ` +
-          '命名把本机地址洗成了公网域名形状，用户照着它去别处找会落空'
+        `${label}：主机名「${expected}」不再被判定为本机地址 —— ` +
+          '本机地址被洗成了公网域名形状，用户照着它去别处找会落空'
       );
     }
   });
 
-  it('IPv4 与 IPv6 的本机地址得到**同样的待遇**（不能一个出主机名、一个退时间戳）', () => {
+  it('IPv4 与 IPv6 的本机地址得到**同样的待遇**（不能一个带端口、一个不带）', () => {
     /**
      * 这是本缺陷的核心形态：同一句承诺，两种结果。
-     * 口径变更后「同样的待遇」= **都出主机名、都不退时间戳**
+     * 口径变更后「同样的待遇」= **都带端口、都保留自己的写法**
      * （值本身不同是对的：`127.0.0.1` 与 `[::1]` 本来就是两台机器）。
      */
-    const v4 = deriveSessionNameFromChromeTabs([tab('http://127.0.0.1:8080/x')], now);
-    const v6 = deriveSessionNameFromChromeTabs([tab('http://[::1]:8080/x')], now);
-    for (const [family, name] of [
-      ['IPv4', v4],
-      ['IPv6', v6],
-    ] as const) {
-      assert.notEqual(
-        name,
-        TIMESTAMP_NAME,
-        `${family} 本机地址退回了时间戳 —— 同一族里两种结果`
-      );
-    }
-    assert.ok(v4.includes('127.0.0.1'), `IPv4 本机地址没有带出自己的地址：${v4}`);
-    assert.ok(v6.includes('::1'), `IPv6 本机地址没有带出自己的地址：${v6}`);
+    const v4 = extractNamingHost('http://127.0.0.1:8080/x');
+    const v6 = extractNamingHost('http://[::1]:8080/x');
+    assert.ok(v4?.includes('127.0.0.1'), `IPv4 本机地址没有带出自己的地址：${v4}`);
+    assert.ok(v6?.includes('::1'), `IPv6 本机地址没有带出自己的地址：${v6}`);
+    assert.ok(v4?.endsWith(':8080'), `IPv4 本机地址的端口被吞了：${v4}`);
+    assert.ok(v6?.endsWith(':8080'), `IPv6 本机地址的端口被吞了：${v6}`);
   });
 
-  it('同一台机器上的不同端口必须得到**不同的**名字（否则会话互相撞名）', () => {
+  it('同一台机器上的不同端口必须得到**不同的**主机名（否则导入出来的会话互相撞名）', () => {
     // 破了 ⇒ `localhost:3000` 与 `localhost:8080` 都叫「localhost」，
     // 而它们是两个完全不同的本地项目 —— 用户存了一堆，回看时分不清。
-    const a = deriveSessionNameFromChromeTabs([tab('http://localhost:3000/app')], now);
-    const b = deriveSessionNameFromChromeTabs([tab('http://localhost:8080/api')], now);
+    const a = extractNamingHost('http://localhost:3000/app');
+    const b = extractNamingHost('http://localhost:8080/api');
     assert.notEqual(a, b, '不同端口的本地服务撞名了 —— 端口是区分它们的唯一线索');
   });
 

@@ -3,20 +3,45 @@ import { isLocalOrIpHost, normalizeHostForDisplay } from '@/core/hostName';
 const pad2 = (n: number) => String(n).padStart(2, '0');
 
 /**
- * 默认会话名：**最后一道**兜底 —— 短格式时间戳（如「标签组 9月12日 19:51」）。
- * 不带秒与年份——列表里已有相对时间（今天/昨天/N 天前），
- * 完整时间戳在窄宽度下会先被截掉尾部的有效信息。
+ * 默认会话名：**保存时刻的时间戳**（如「2026-10-25 14:30」）。
  *
- * 【什么时候才会走到这里】只有「连域名都没有、连一个有意义的标题都没有」
- * 时（全是 `about:blank` / `chrome://` 且标题也是空的）。
- * 2026-10-22 审计 U-06 之前，它是**第二**道兜底 —— 内网/localhost 场景
- * 全部落到这里 ⇒ 一屏 10 张卡全是「标签组 10月22日 09:12」，
- * 连站点身份都没有（favicon 也救不了：连域名都没有）。
+ * ── 为什么是时间戳（2026-10-25 产品定案）────────────────────────────────
+ *
+ * 旧口径是「取出现最多的域名 → 首个有意义的标题 → 时间戳」，也就是
+ * **插件替用户猜这个会话叫什么**。猜错的那一次不是「名字不好听」，
+ * 是**一个错的名字钉在卡片上**，用户还得手动去改 —— 而卡片标题只有一行，
+ * 改名的入口藏在菜单里。
+ *
+ * ⇒ 新口径：**默认给一个不会说谎的名字**（保存时刻），**让用户自己调整**。
+ *   ⚠️ 2026-10-25 产品负责人**推翻了**中途加的「全都来自同一个网站就用网站名」
+ *   这条例外 ⇒ 现在**没有例外**：**全部**默认时间戳。
+ *   理由：那条例外本身就是「猜」——「这批标签恰好都来自同一个网站」是
+ *   **内容**的事实，不是**这次保存**的事实；它会让人以为名字在说
+ *   「这批东西是关于 github 的」，而真实语义只是「这批东西来自 github」。
+ *   而**同一个网站**这个事实，用户在标签行右侧**本来就能看到**（那里显示域名）
+ *   ⇒ 名字不必再兼职承载站点身份。
+ *
+ * ── 格式为什么是 `2026-10-25 14:30` ──────────────────────────────────────
+ *
+ * ① **零填充、固定宽**：卡片标题行右侧还有数量徽章与时间，
+ *    定长（16 字）才不会把它们挤走（真的超长时由 CSS 的 `truncate` 兜底）。
+ * ② **字典序 == 时间序**：「10月25日」按字典序排在「9月20日」**后面**
+ *    （"1" < "9"）⇒ 用月日格式时，「按名称」排序会把 10 月排到 9 月前面。
+ *    零填充的 `2026-10-25 14:30` 没有这个问题 ⇒ **按名称排序顺带就是按时间排序**。
+ * ③ **带年份**：「10-25」分不清是去年还是今年。
+ * ④ **不写秒**：同一分钟里存两次就是两个同名会话，写秒只是更长的噪声。
+ *
+ * ⚠️ 用**本地时间**（与卡片上「今天/昨天/N 天前」那套相对时间同一时区口径）。
  */
 export const buildTimestampSessionName = (now: string) => {
   const date = new Date(now);
-  if (Number.isNaN(date.getTime())) return '标签组';
-  return `标签组 ${date.getMonth() + 1}月${date.getDate()}日 ${pad2(date.getHours())}:${pad2(date.getMinutes())}`;
+  if (Number.isNaN(date.getTime())) return '未命名会话';
+  const year = date.getFullYear();
+  const month = pad2(date.getMonth() + 1);
+  const day = pad2(date.getDate());
+  const hours = pad2(date.getHours());
+  const minutes = pad2(date.getMinutes());
+  return `${year}-${month}-${day} ${hours}:${minutes}`;
 };
 
 /**
@@ -31,7 +56,7 @@ export const buildTimestampSessionName = (now: string) => {
  * `192.168.1.5` 是**同一类**：它们是自建服务，端口往往才是区分不同服务的
  * 唯一线索（`wiki.local:8080` 与 `git.local:3000` 是两个东西）。
  *
- * ⇒ 这里补一份**后缀**清单，让内网/自建主机在命名时**带上端口**。
+ * ⇒ 这里补一份**后缀**清单，让内网/自建主机在**导入命名与显示**时**带上端口**。
  *
  * 【为什么不把它放进 `@/core/hostName`】那才是它该待的地方（host 语义的
  * 单一真相源）。但本轮的文件边界只允许改 `domain/tabGroup/` 下的文件，
@@ -68,7 +93,13 @@ const isIntranetHost = (host: string): boolean => {
 };
 
 /**
- * 从一个 URL 里提取**用于命名的主机名**（单一真相源）。
+ * 从一个 URL 里提取**主机名**（单一真相源）。
+ *
+ * ⚠️ 2026-10-25：默认会话名**一律**是保存时刻 ⇒ host **不再**出现在
+ * 新会话的名字里。本函数现在只服务两处：
+ * ① **OneTab 文本导入**的会话名（`deriveDominantHost`）；
+ * ② **标签行显示的域名**（`utils/sessionPresentation.ts`）。
+ * ⇒ 口径一个字没松，只是**消费方**换了。
  *
  * ── 口径（2026-10-22 审计 U-06）──────────────────────────────────────────
  *
@@ -126,29 +157,26 @@ export const extractNamingHost = (url: string | undefined): string | null => {
 /**
  * 从一组 URL 里派生**主导主机名**（出现次数最多的那个），取不到返回 null。
  *
- * ── 为什么要抽成独立函数（2026-10-20 审计 A-20）────────────────────────
+ * ── 谁在用它（2026-10-25 起只剩一处）─────────────────────────────────────
  *
- * 「按域名命名」这条规则现在有**两个**调用方：
- *  · 保存时给新会话命名（`deriveSessionNameFromChromeTabs`）
- *  · OneTab 导入时给会话命名（`deriveImportedGroupName`）
+ * ⚠️ 保存路径**不再**用它（新产品口径：默认名**一律**是保存时刻，
+ * 名字里**不出现**任何域名）。
+ * 现在**唯一**的调用方是 **OneTab 文本导入**的命名（`deriveImportedGroupName`）——
+ * 导入的组名会进**幂等指纹**（组名 + URL 集合）⇒ 必须是**确定性**的
+ * ⇒ 既不能用时间戳，也就不适合换成别的规则
+ * （跨站的组会从「主导域名」变成「导入的会话 N」⇒ 老文件重新导入时
+ * 指纹对不上 ⇒ 判重失效 ⇒ 产生整份副本）。
  *
- * 两处必须**同一把尺子** —— 否则同一条内容在「保存」与「导入」两条路上
- * 会得到不同的名字，用户看到的是「同一个工作现场叫两个名字」。
- * ⇒ 口径（哪些 host 算、怎么去 www、并列取谁）只写在这一个函数里。
+ * 【口径不变的部分】哪些 host 算、怎么去 www、并列取谁 —— 都还在这里，
+ * 导入路径继续用它。
  *
  * 【取不到时返回 null，而不是时间戳】
  * 调用方需要区分「取到了域名」与「没取到」：
- *  · 保存路径：没取到 ⇒ 回落标题 ⇒ 再回落时间戳
  *  · 导入路径：没取到 ⇒ 回落「导入的会话 N」
  *    （**不能**用时间戳 —— 导入的组名会进幂等指纹，
  *      而时间戳是**非确定性**的 ⇒ 同一份文件导两次会算出不同指纹
  *      ⇒ 判重失效 ⇒ 产生整份副本。这正是「导入的会话 N」用序号
  *      而不是时间戳的原因。）
- *
- * 【口径变更记录】2026-10-22 审计 U-06 之前，本机 / 内网 / IP 一律返回
- * null ⇒ 内网场景全部落进时间戳名。现在它们**也**产出主机名
- * （`localhost:3000` / `192.168.1.5` / `[::1]:8080`）——
- * 因为对自建服务来说，主机名**就是**用户记忆工作现场的方式。
  */
 export const deriveDominantHost = (urls: readonly (string | undefined)[]): string | null => {
   const counts = new Map<string, number>();
@@ -169,111 +197,4 @@ export const deriveDominantHost = (urls: readonly (string | undefined)[]): strin
     }
   }
   return bestHost || null;
-};
-
-/**
- * 浏览器给空白标签页的**默认标题** —— 这些标题**没有任何信息量**。
- *
- * 【为什么必须把它们排除】Chrome（中文）给新标签页的标题是「新标签页」，
- * 英文环境是「New Tab」，Firefox 的新标签页也是「New Tab」。
- * 若把它们当会话名，用户会得到一屏的「新标签页」——
- * 那和「标签组 10月22日 09:12」一样没用，只是换了个写法。
- *
- * 【为什么要大小写不敏感】英文环境下 `New Tab` / `New tab` / `NEW TAB`
- * 都可能出现（Chrome 的 UI 语言、操作系统语言、网页 `<title>` 都可能影响）。
- * ⇒ 统一小写后比较。
- */
-const DEFAULT_TAB_TITLES: ReadonlySet<string> = new Set([
-  '新标签页',
-  '新标签',
-  'new tab',
-  'new tab page',
-]);
-
-/**
- * 会话名的标题**长度上限**（含省略号）。
- *
- * 【为什么是 24】会话名要能塞进卡片标题行（`.tab-group-title`）。
- * 标题行右侧还有数量徽章与时间，24 个字符是「在 1280px 卡片里不换行、
- * 也不把徽章挤走」的上限。超出就裁剪 + 省略号。
- */
-export const MAX_SESSION_TITLE_LENGTH = 24;
-
-/**
- * 这个标题**有信息量**吗？
- *
- * 「有信息量」= 非空，且不是浏览器给空白页的默认标题。
- */
-export const isMeaningfulTabTitle = (title: string | undefined | null): boolean => {
-  if (!title) return false;
-  const trimmed = title.trim();
-  if (!trimmed) return false;
-  return !DEFAULT_TAB_TITLES.has(trimmed.toLowerCase());
-};
-
-/**
- * 把标题裁剪到会话名的长度上限（超出加省略号）。
- *
- * 【为什么裁剪而不是原样塞进去】卡片标题行的宽度有限，
- * 一个 60 字的页面标题会把数量徽章与时间挤到第二行，
- * 甚至把「保存时间」挤出卡片 —— 名字变长了，别的信息没了。
- */
-export const truncateSessionTitle = (
-  title: string,
-  maxLength: number = MAX_SESSION_TITLE_LENGTH
-): string => {
-  const trimmed = title.trim();
-  if (trimmed.length <= maxLength) return trimmed;
-  // 省略号本身占一个字符 ⇒ 内容截到 maxLength - 1
-  return `${trimmed.slice(0, Math.max(1, maxLength - 1))}…`;
-};
-
-/**
- * 从标签页派生会话名（2026-10-20 审计 A-16；2026-10-22 审计 U-06/U-19 改链）。
- *
- * ── 取值链 ───────────────────────────────────────────────────────────────
- *
- *   ① **主导主机名**（出现次数最多的那个域名）
- *      —— 「那是 github.com 上那个 PR」「那个 figma 文件」，
- *         用户心里「这个工作现场的主场」通常就是打开最多次的站点；
- *         并列时取**第一个**（结果稳定，不随标签顺序抖动）。
- *   ② **首个有意义的标签标题**（裁剪到 24 字）
- *      —— 兜底场景 ① 完全失效时（全是 `about:blank` / `chrome://`，
- *         或内网地址解析不出主机名）。
- * ③ **时间戳**（`标签组 M月D日 HH:MM`）—— 最后一道，连标题都没有时。
- *
- * ── 为什么②不能省（U-06 的真正根因）────────────────────────────────────
- *
- * U-06 现场：一屏 10 张卡全是「标签组 10月22日 09:12」「标签组 10月22日 09:47」。
- * 根因不是「没有 favicon」，而是**默认名里根本没有站点身份**：
- * `deriveDominantHost` 对 localhost / IP / 非 http 协议返回 null，
- * 于是内网、自建服务、本地开发场景**全部**落进时间戳兜底。
- * ⇒ ① 现在也覆盖内网主机；② 补上「连主机名都没有」的那一格。
- *
- * 不在名字里带标签数：卡片右侧已有数量徽章（`tab-group-count`），
- * 重复一遍是噪声。
- */
-export const deriveSessionNameFromChromeTabs = (
-  tabs: chrome.tabs.Tab[],
-  now: string
-) => {
-  const safeTabs = tabs ?? [];
-  // 空串不是 nullish：`tab.url ?? tab.pendingUrl` 在 url 为 '' 时会短路成
-  // ''（加载中的标签正是这种形状：url:'' + pendingUrl:'https://…'），
-  // 于是域名取不到、名字退回时间戳 —— 恰好在最需要可读名字的时候失效。
-  // 判据与 factory 的 resolveStorableUrl 同源：先正式 url，再 pendingUrl。
-  const urls = safeTabs.map(tab =>
-    tab.url && tab.url.length > 0 ? tab.url : tab.pendingUrl
-  );
-
-  // ① 主导主机名
-  const host = deriveDominantHost(urls);
-  if (host) return host;
-
-  // ② 首个有意义的标签标题（数组里靠前的那个）
-  const titled = safeTabs.find(tab => isMeaningfulTabTitle(tab.title));
-  if (titled?.title) return truncateSessionTitle(titled.title);
-
-  // ③ 时间戳（最后一道）
-  return buildTimestampSessionName(now);
 };

@@ -82,6 +82,15 @@ export interface SupabaseTabGroup {
   version?: number | null;
   /** D3：组级删除时刻（需云端 deleted_at 列，见迁移；缺失回退 updated_at） */
   deleted_at?: string | null;
+  /**
+   * 2026-10-25：**保存时间未知**的标记（来源格式不带时间戳的导入件）。
+   *
+   * 需云端 `imported_at` 列（见 `supabase/migrations/`）；**列不存在时整列省略**
+   * （照 `last_op_device` / `last_op_seq` 的既有降级模式）⇒ 探测不到列时
+   * 云端不承载这个标记（换设备下载回来那条会话会显示成普通会话），
+   * 这是**已知边界**，不是静默丢数据。
+   */
+  imported_at?: string | null;
 }
 
 export interface TabGroup {
@@ -94,6 +103,42 @@ export interface TabGroup {
   user_id?: string; // 关联用户ID
   device_id?: string; // 创建设备ID
   last_sync?: string; // 最后同步时间
+
+  /**
+   * 这个会话是**导入**进来的，且**来源格式不带保存时间** ⇒ 它的**保存时间未知**。
+   *
+   * ── 为什么需要这个字段（2026-10-25 修「旧会话冒充刚保存」）────────────────
+   *
+   * `createdAt` 的含义是「这个会话是什么时候**保存**的」。但 OneTab 格式
+   * **只有 `URL | 标题` 与空行分组**（社区标准如此）⇒ **它根本不带时间戳** ⇒
+   * 导入时只能写 `now` ⇒ 于是「保存时间未知」的会话被存成了「保存于导入那一刻」。
+   *
+   * 后果不是「排序不好看」，是**界面在说假话**：
+   *   · 卡片上写着「今天」，而这些标签页是两年前存的；
+   *   · 列表最上面塞满几年前的旧记录（默认排序 = `createdAt` 倒序）；
+   *   · 「保存时间 = 24 小时内」把它们全算进去 ⇒ 用户按「我最近保存的」找，
+   *     找出来的全是老东西。
+   *
+   * ── 为什么不能靠「把 `createdAt` 写成空/最旧」来表达「未知」─────────────
+   *
+   * 因为 `createdAt` 会**原样上云**：`upload.ts` 是 `group.createdAt || currentTime`
+   * ⇒ 空串会在上传时被盖成「现在」⇒ **谎话从云端绕回来**；
+   * 而且 Supabase 的 `created_at` 是 NOT NULL 的 timestamptz 列，空串会被
+   * PostgREST 拒掉（整批 upsert 失败）。
+   * ⇒ 「未知」这件事必须由**独立字段**承载，`createdAt` 保持「有效时间戳」这个
+   *   不变量（排序/筛选/上云都依赖它）。
+   *
+   * ── 这个字段的语义 ──────────────────────────────────────────────────────
+   *
+   * **有它 ⇒ 这个会话的保存时间未知**（显示成「导入 · …」、不参与「24 小时内」
+   * 这类按保存时间的筛选、在「最近保存」排序里排在已知保存时间的会话之后）。
+   * 值本身 = **它进到本机的时间**（对 OneTab 导入来说就是导入那一刻）。
+   *
+   * ⚠️ **不是**「这个会话是导入的」的通用标记：JSON 备份导入**保留**文件里的
+   * `createdAt`（那是**真的**保存时间，见 `normalizeTabsData`）⇒ 那种导入**不**
+   * 需要这个字段。只有「来源不带时间戳」的导入才打这个标记。
+   */
+  importedAt?: string;
 
   /**
    * 版本号，每次修改时递增，用于检测冲突。
@@ -389,7 +434,8 @@ export interface UserSettings {
  *
  * 逐条结论（删除 or 接入口）：
  *   · groupNameTemplate —— 删。默认值是英文 `'Group %d'`，而真实命名走
- *     `deriveSessionNameFromChromeTabs`（按内容/域名派生），这个模板从未参与。
+ *     `domain/tabGroup/sessionName.ts` 的 `buildTimestampSessionName`
+ *     （默认名 = 保存时刻），这个模板从未参与。
  *   · allowDuplicateTabs —— 删。它唯一的可能语义是「保存时去重」，而保存路径
  *     现在**不判重**（判重只发生在「清理重复」这个显式动作里）。接上入口就得
  *     改保存语义（把最贵的一个动作变成有损的），不在本轮范围。

@@ -1,37 +1,24 @@
-// 会话命名链的守卫（2026-10-22 审计 U-06 / U-15 / U-19）。
+// 会话命名规则的守卫（2026-10-25 产品定案：**全部**默认时间戳，无例外）。
 //
-// ── 这个文件防的具体事故 ────────────────────────────────────────────────
+// ── 规则（只有一档）──────────────────────────────────────────────────────
 //
-// 现场：一屏 10 张会话卡，全是「标签组 10月22日 09:12」「标签组 10月22日 09:47」。
+//   保存 ⇒ 名字 = **保存那一刻**（`2026-10-25 14:30`）。
 //
-// 根因**不是**「缺 favicon」，而是**默认名里根本没有站点身份**：
-//
-//   deriveSessionNameFromChromeTabs = deriveDominantHost(urls) ?? buildTimestampSessionName(now)
-//   deriveDominantHost → localhost / IP / 非法协议 ⇒ 直接返回 null
-//
-// ⇒ 内网、自建服务、本地开发（`localhost:3000`、`192.168.1.5`、`[::1]:8080`）
-//   **全部**落进时间戳兜底。favicon 救不了它 —— 连域名都没有。
-//
-// 而「取不到域名时退回时间戳」这条承诺，是 2026-10-20 第三轮审计 L-17
-// 在**公网域名**场景下立的（`tests/guards/hostNamePolicy.test.ts` 守着它）。
-// 这次不是推翻那条承诺，而是**把承诺的适用面说清楚**：
-// 「用户会拿来记忆工作现场的公共域名」只是其中一种，
-// 内网主机名同样是用户记忆工作现场的方式（甚至是更常用的方式 ——
-// 对自建服务而言，`localhost:3000` 就是那个项目的名字）。
+//   **没有例外**：不按域名、不按页面标题、不按「这批标签来自哪个网站」。
+//   中途加过一条「全都来自同一个网站 ⇒ 用网站名」的例外，2026-10-25 由
+//   产品负责人**推翻** —— 那条例外也是猜：它说的是**内容**的事实，
+//   却挂在**这次保存**的名字上。
 //
 // ── 这个文件守什么 ────────────────────────────────────────────────────────
 //
-// ① **内网/本地主机必须产出可读的主机名**（本轮的核心回归钉）。
-//    破了 ⇒ 回到「一屏 10 张卡长得一样」。
-// ② **取值链是「域名 → 有意义的标题 → 时间戳」**，且每一级的判据都明确。
-//    破了 ⇒ 要么退化成一堆时间戳，要么退化成一堆「新标签页」。
-// ③ **非 http(s) 协议不贡献主机名** —— `chrome://` / `file://` / `about:`
-//    根本没有主机，算进去只会得到 `settings`、`blank` 这种噪声。
+// ① **默认名一律是保存时刻**（无论这批标签长什么样）。
+// ② **接线**：factory 给出的名字就是判据算出来的那一个，且与 `createdAt`
+//    用**同一个** `now`（不许两个时钟打架）。
+// ③ **导入路径仍按主导域名命名**（OneTab 文本）—— 那个名字必须**确定性**
+//    （它进幂等指纹），所以它与保存路径**故意**不是同一把尺子。
 // ④ **`pickDominantTab` 的四条契约**（取哪个标签的 favicon / 主机名）。
-//    破了 ⇒ 若界面用它取卡头图标，图标与会话名会来自不同标签，自相矛盾。
-//    ⚠️ 2026-10-24：界面回到 v1.25.1 ⇒ **卡头不再渲染 favicon**，
-//    这个纯函数暂时**不被界面消费**（模块与它的契约都保留着，
-//    哪天要恢复卡头图标，直接接回去即可）。
+// ⑤ **主机名的归一口径**（内网带端口、IPv6 方括号、去 `www.`、
+//    非 http(s) 不算主机）—— 现在由**导入路径**与**标签行的域名显示**消费。
 //
 // 【每条断言都写清「破了会怎样」】——守卫的价值在于失败时能立刻
 // 说出后果，而不是只说「不相等」。
@@ -42,20 +29,17 @@ import assert from 'node:assert/strict';
 import {
   buildTimestampSessionName,
   deriveDominantHost,
-  deriveSessionNameFromChromeTabs,
   extractNamingHost,
-  isMeaningfulTabTitle,
-  MAX_SESSION_TITLE_LENGTH,
-  truncateSessionTitle,
 } from '@/domain/tabGroup/sessionName';
 import { pickDominantTab } from '@/domain/tabGroup/pickDominantTab';
+import { createTabGroupFromChromeTabs } from '@/domain/tabGroup/factory';
 import type { Tab } from '@/types/tab';
 
 // 用本地时区构造固定时间，断言与机器时区无关
 const now = new Date(2026, 4, 11, 8, 9).toISOString();
-const TIMESTAMP_NAME = '标签组 5月11日 08:09';
+const TIMESTAMP_NAME = '2026-05-11 08:09';
 
-const chromeTab = (url: string, title = '') =>
+const chromeTab = (url: string, title = '示例页面') =>
   ({ url, title, pinned: false } as chrome.tabs.Tab);
 
 const storeTab = (url: string, extra: Partial<Tab> = {}): Tab => ({
@@ -70,234 +54,159 @@ const storeTab = (url: string, extra: Partial<Tab> = {}): Tab => ({
 });
 
 // ─────────────────────────────────────────────────────────────────────────
-// ① 内网 / 本地主机必须产出可读的主机名（U-06 的核心回归钉）
+// ① 默认名一律是保存时刻（无论这批标签长什么样）
 // ─────────────────────────────────────────────────────────────────────────
 
-describe('U-06 ① 内网 / 本地主机必须产出可读的主机名', () => {
-  it('localhost 带端口 → localhost:3000（端口是区分不同本地服务的唯一线索）', () => {
-    assert.equal(
-      deriveSessionNameFromChromeTabs([chromeTab('http://localhost:3000/app')], now),
-      'localhost:3000',
-      '本地开发会话的名字退化成了时间戳 —— 一屏 10 张本地项目卡片长得一模一样'
-    );
-  });
+describe('① 默认名一律是保存时刻（没有例外）', () => {
+  /**
+   * 【为什么这一组是整个文件的核心】
+   *
+   * 「全部默认时间戳」= **没有例外**。任何「按内容命名」的分支都是
+   * 替用户猜 ⇒ 猜出来的名字会被当成事实钉在卡片上，而改名入口藏在菜单里。
+   *
+   * ⇒ 下面这**六种形态**必须给出**同一个**名字（同一个 `now` 下）。
+   * 少了任何一种覆盖，都是一个能溜回来的后门。
+   */
+  const SHAPES: Array<[label: string, tabs: chrome.tabs.Tab[]]> = [
+    ['同站（3 个 github）', [chromeTab('https://github.com/a'), chromeTab('https://github.com/b'), chromeTab('https://github.com/c')]],
+    ['跨站（github + figma）', [chromeTab('https://github.com/a'), chromeTab('https://figma.com/b')]],
+    ['只有一个标签', [chromeTab('https://github.com/a')]],
+    ['没有任何域名', [chromeTab('about:blank'), chromeTab('chrome://settings')]],
+    ['页面标题很像一个名字', [chromeTab('https://example.com/design', '设计稿评审 - 2026 迭代')]],
+    ['本机 / 内网地址', [chromeTab('http://localhost:3000/app'), chromeTab('http://192.168.1.5/admin')]],
+  ];
 
-  it('内网 IPv4 → 192.168.1.5', () => {
-    assert.equal(
-      deriveSessionNameFromChromeTabs([chromeTab('http://192.168.1.5/admin')], now),
-      '192.168.1.5',
-      '内网地址没有产出主机名 —— 自建服务的会话名里没有任何站点身份'
-    );
-  });
-
-  it('内网 IPv4 带端口 → 192.168.1.5:8080', () => {
-    assert.equal(
-      deriveSessionNameFromChromeTabs([chromeTab('http://192.168.1.5:8080/admin')], now),
-      '192.168.1.5:8080',
-      '内网地址的端口被丢掉了 —— 同一台机器上的两个服务会撞名'
-    );
-  });
-
-  it('IPv6 回环 → [::1]:8080（方括号必须留着，否则粘不回地址栏）', () => {
-    assert.equal(
-      deriveSessionNameFromChromeTabs([chromeTab('http://[::1]:8080/')], now),
-      '[::1]:8080',
-      'IPv6 本机地址没有产出主机名（或方括号/端口被吞了）'
-    );
-  });
-
-  it('内网后缀 .local → myhost.local:8080', () => {
-    assert.equal(
-      deriveSessionNameFromChromeTabs([chromeTab('http://myhost.local:8080/')], now),
-      'myhost.local:8080',
-      '内网后缀域名没有按「自建服务」口径命名'
-    );
-  });
-
-  it('单标签内网主机名 → wiki', () => {
-    assert.equal(
-      deriveSessionNameFromChromeTabs([chromeTab('http://wiki/docs')], now),
-      'wiki',
-      '内网主机名（无点）没有产出主机名 —— 用户恰恰是靠它记住工作现场的'
-    );
-  });
-
-  it('一屏内网会话不再全是时间戳（U-06 现场复现）', () => {
-    // 现场：10 张卡全是「标签组 10月22日 09:12」/「标签组 10月22日 09:47」。
-    const urls = [
-      'http://localhost:3000/app',
-      'http://localhost:8080/api',
-      'http://192.168.1.5/admin',
-      'http://192.168.1.5:9000/metrics',
-      'http://[::1]:8080/',
-      'http://myhost.local:3000/',
-      'http://wiki.internal/x',
-    ];
-    const names = urls.map(url => deriveSessionNameFromChromeTabs([chromeTab(url)], now));
-    for (const [index, name] of names.entries()) {
-      assert.notEqual(
-        name,
+  for (const [label, tabs] of SHAPES) {
+    it(`${label} ⇒ 名字是保存时刻`, () => {
+      const group = createTabGroupFromChromeTabs(tabs, { now });
+      assert.equal(
+        group.name,
         TIMESTAMP_NAME,
-        `${urls[index]} 仍然命名成时间戳 —— U-06 没修好`
+        `${label} 得到的名字不是保存时刻（实际 "${group.name}"）—— ` +
+          '默认名不按内容猜，网站名要靠用户自己改'
       );
-    }
-    // 且这些名字必须**互不相同**：一屏 10 张一样的卡依然是「分不清」
-    assert.equal(
-      new Set(names).size,
-      names.length,
-      '内网会话的名字撞了 —— 端口/主机名没有参与区分'
+    });
+  }
+
+  it('空标签列表 ⇒ 也是保存时刻（不许空名字）', () => {
+    const group = createTabGroupFromChromeTabs([], { now });
+    assert.equal(group.name, TIMESTAMP_NAME);
+  });
+
+  it('加载中的标签（url 为空、pendingUrl 有值）⇒ 也是保存时刻', () => {
+    // 这一条曾经是「取名」最容易失效的地方：url:'' + pendingUrl:'https://…'
+    // 的标签过去会被判成「没有域名」⇒ 名字退回时间戳。
+    // 现在名字**本来就是**时间戳 ⇒ 无论 url 还是 pendingUrl，结果都一样。
+    const loading = {
+      url: '',
+      pendingUrl: 'https://github.com/x',
+      title: 'PR',
+      pinned: false,
+    } as chrome.tabs.Tab;
+    const group = createTabGroupFromChromeTabs([loading], { now });
+    assert.equal(group.name, TIMESTAMP_NAME);
+  });
+
+  it('名字**与标签内容无关**：同样时刻、不同标签 ⇒ 同一个名字', () => {
+    // 这是「没有例外」这句话最干脆的写法：
+    // 名字只由 `now` 决定，与这批标签是什么**完全无关**。
+    const a = createTabGroupFromChromeTabs([chromeTab('https://github.com/a')], { now });
+    const b = createTabGroupFromChromeTabs(
+      [chromeTab('https://figma.com/b'), chromeTab('https://docs.google.com/c')],
+      { now }
     );
+    assert.equal(a.name, b.name);
   });
 });
 
 // ─────────────────────────────────────────────────────────────────────────
-// ② 取值链：域名 → 有意义的标题 → 时间戳
+// ② 接线：factory 给出的名字就是判据算出来的那一个
+//
+// ⚠️ 「判据算对了」≠「保存出来的会话用了它」—— 本仓栽过一次
+// （L-10：排序下拉能选、顺序不动；下拉与判据都齐了，列表还是写死的）。
+// ⇒ 这里**真的调用那条路径**：`createTabGroupFromChromeTabs` 是保存路径
+// 建会话的**唯一入口**（`background/TabManager.ts` 的两条保存路径都走它）。
+// ⚠️ 不钉「源码里出现了某个函数名」—— 那种断言在被绕开时仍然是绿的。
 // ─────────────────────────────────────────────────────────────────────────
 
-describe('U-06 ② 取值链：域名 → 有意义的标题 → 时间戳', () => {
-  it('公网域名当会话名（既有行为不许被改掉）', () => {
+describe('② 接线：保存路径建出来的会话必须按这条规则命名', () => {
+  it('factory 给出的名字必须就是判据函数算出来的那个（不许另走一套）', () => {
+    const tabs = [chromeTab('https://github.com/a'), chromeTab('https://figma.com/b')];
     assert.equal(
-      deriveSessionNameFromChromeTabs(
-        [chromeTab('https://github.com/a'), chromeTab('https://github.com/b')],
-        now
-      ),
-      'github.com',
-      '公网域名的会话名不对 —— 这是产品的主路径，不能被内网支持挤掉'
+      createTabGroupFromChromeTabs(tabs, { now }).name,
+      buildTimestampSessionName(now),
+      '保存路径用的命名规则与判据层不是同一套'
     );
   });
 
-  it('域名优先于标题（域名是上下文，标题是条目）', () => {
+  it('名字里的时间与会话自己的 `createdAt` 必须是**同一个**时刻', () => {
+    // 破了 ⇒ 卡片上写着「保存于 14:30」，名字却写着「15:02」——
+    // 两个时钟打架，用户对不上「这是什么时候存的」。
+    const group = createTabGroupFromChromeTabs([chromeTab('https://github.com/a')], { now });
     assert.equal(
-      deriveSessionNameFromChromeTabs(
-        [chromeTab('https://github.com/a', 'Pull Request #1234 · Fix the sync bug')],
-        now
-      ),
-      'github.com',
-      '标题抢走了域名 —— 同一域名下的多个标签会得到不同的名字，用户失去「上下文」'
+      buildTimestampSessionName(group.createdAt),
+      group.name,
+      '名字与 createdAt 不是同一个时刻 —— 名字说的时间与卡片上的「保存时间」对不上'
     );
   });
 
-  it('没有域名但有有意义的标题 → 标题当会话名', () => {
-    assert.equal(
-      deriveSessionNameFromChromeTabs(
-        [chromeTab('about:blank', '设计稿评审 - 2026 迭代')],
-        now
-      ),
-      '设计稿评审 - 2026 迭代',
-      '有意义的标题被丢掉了 —— 明明比「标签组 5月11日 08:09」有信息量'
+  it('显式传入的 `name` 仍然能覆盖（导入等路径要自己起名）', () => {
+    // `options.name` 是留给**不按默认规则**的调用方的口子
+    // （例如导入路径），它必须仍然有效。
+    const group = createTabGroupFromChromeTabs([chromeTab('https://github.com/a')], {
+      now,
+      name: '我自己起的名字',
+    });
+    assert.equal(group.name, '我自己起的名字');
+  });
+
+  it('没被保留的标签（未勾保存的固定标签）不会让名字变成别的东西', () => {
+    const pinned = { ...chromeTab('https://github.com/a'), pinned: true } as chrome.tabs.Tab;
+    const group = createTabGroupFromChromeTabs(
+      [pinned, chromeTab('https://figma.com/b')],
+      { now }
     );
-  });
-
-  it('标题被裁剪到 24 个字符（超出加省略号）', () => {
-    const long = '这是一个非常非常长的页面标题用来测试裁剪逻辑是否生效';
-    const name = deriveSessionNameFromChromeTabs([chromeTab('about:blank', long)], now);
-    assert.equal(name.length, MAX_SESSION_TITLE_LENGTH, '超长标题没有裁剪到上限');
-    assert.ok(name.endsWith('…'), '裁剪后必须带省略号，否则用户看不出被截断');
-    assert.ok(long.startsWith(name.slice(0, -1)), '裁剪必须保留开头（标题的前半段信息量最大）');
-  });
-
-  it('裁剪器本身：短标题原样返回，长标题截到上限并加省略号', () => {
-    // 破了 ⇒ 要么会话名被截得只剩半个词，要么超长标题把卡片徽章挤出屏幕
-    assert.equal(truncateSessionTitle('短标题'), '短标题');
-    assert.equal(truncateSessionTitle('  前后有空格  '), '前后有空格', '首尾空白必须去掉');
-    const long = 'x'.repeat(100);
-    const cut = truncateSessionTitle(long);
-    assert.equal(cut.length, MAX_SESSION_TITLE_LENGTH);
-    assert.ok(cut.endsWith('…'));
-    assert.equal(truncateSessionTitle('x'.repeat(MAX_SESSION_TITLE_LENGTH)).length, MAX_SESSION_TITLE_LENGTH);
-  });
-
-  it('浏览器默认标题不算「有意义」（New Tab / 新标签页 / 新标签 / New Tab Page）', () => {
-    // 破了 ⇒ 一屏的「新标签页」取代一屏的时间戳 —— 换了个写法，信息量一样是零
-    for (const title of ['New Tab', 'new tab', 'NEW TAB', '新标签页', '新标签', 'New Tab Page']) {
-      assert.equal(
-        isMeaningfulTabTitle(title),
-        false,
-        `「${title}」被当成了有意义的标题 —— 浏览器默认标题不含任何站点信息`
-      );
-    }
-    assert.equal(isMeaningfulTabTitle(''), false);
-    assert.equal(isMeaningfulTabTitle('   '), false);
-    assert.equal(isMeaningfulTabTitle(undefined), false);
-    assert.equal(isMeaningfulTabTitle('GitHub · 主页'), true);
-  });
-
-  it('标题是 New Tab → 落到时间戳兜底', () => {
-    assert.equal(
-      deriveSessionNameFromChromeTabs([chromeTab('about:blank', 'New Tab')], now),
-      TIMESTAMP_NAME,
-      '默认标题被当成了会话名 —— 用户看到一屏「新标签页」'
-    );
-  });
-
-  it('标题是空 → 落到时间戳兜底', () => {
-    assert.equal(
-      deriveSessionNameFromChromeTabs([chromeTab('about:blank', '')], now),
-      TIMESTAMP_NAME,
-      '空标题没有被时间戳兜住 —— 会话名变成空串，用户什么也看不到'
-    );
-  });
-
-  it('空标签列表 → 时间戳兜底', () => {
-    assert.equal(
-      deriveSessionNameFromChromeTabs([], now),
-      TIMESTAMP_NAME,
-      '空列表没有回落时间戳'
-    );
-  });
-
-  it('buildTimestampSessionName 仍是最后一道（格式不许变）', () => {
-    assert.equal(buildTimestampSessionName(now), TIMESTAMP_NAME);
-    assert.equal(buildTimestampSessionName('not-a-date'), '标签组');
+    assert.equal(group.name, TIMESTAMP_NAME);
   });
 });
 
 // ─────────────────────────────────────────────────────────────────────────
-// ③ 非 http(s) 协议：根本没有主机，不参与命名
+// ③ 导入路径：仍按主导域名命名（**故意**与保存路径不是同一把尺子）
+//
+// ⚠️ 导入的组名会进**幂等指纹**（组名 + URL 集合）⇒ 必须**确定性**
+// ⇒ 不能用时间戳（同一份文件导两次会算出不同指纹 ⇒ 判重失效
+// ⇒ 产生整份副本）。
 // ─────────────────────────────────────────────────────────────────────────
 
-describe('U-06 ③ 非 http(s) 协议不贡献主机名', () => {
-  it('chrome:// / file:// / about: 都不产出主机名', () => {
-    // 破了 ⇒ 会话名变成「settings」「blank」这种**比时间戳还糟**的噪声
-    for (const url of [
-      'chrome://settings',
-      'chrome-extension://abcdef/options.html',
-      'file:///Users/me/paper.pdf',
-      'about:blank',
-      'data:text/html,hello',
-      'devtools://devtools/bundled/inspector.html',
-    ]) {
-      assert.equal(
-        deriveDominantHost([url]),
-        null,
-        `${url} 产出了主机名 —— 这些协议根本没有主机，算进去只是噪声`
-      );
-    }
-  });
+describe('③ 导入路径的命名（OneTab 文本）仍然是主导域名', () => {
+  const importTabs = (urls: string[]): Tab[] =>
+    urls.map((url, i) => storeTab(url, { id: `t${i}` }));
 
-  it('非 http(s) 的标签不稀释公网域名（内部页不参与计数）', () => {
-    // 破了 ⇒ 2 个 github + 3 个内部页被判成「并列」，名字随标签顺序抖动
-    assert.equal(
-      deriveSessionNameFromChromeTabs(
-        [
-          chromeTab('chrome://settings'),
-          chromeTab('https://github.com/a'),
-          chromeTab('chrome://extensions'),
-          chromeTab('https://github.com/b'),
-          chromeTab('about:blank'),
-        ],
-        now
-      ),
-      'github.com',
-      '内部页稀释了域名统计 —— 结果不再稳定'
+  it('导入的会话按「出现最多的域名」命名', async () => {
+    // ⚠️ 动态 import：`oneTabFormatParser` 会拉进「披露」那条链
+    //（`oneTabFormatLimits`），它在模块加载时就会碰浏览器的通知 API
+    // ⇒ 静态 import 会让这个守卫在 Node 里直接崩。
+    const { deriveImportedGroupName } = await import('@/core/oneTabFormatParser');
+    const name = deriveImportedGroupName(
+      importTabs(['https://github.com/a', 'https://github.com/b', 'https://gitlab.com/c']),
+      0
     );
+    assert.equal(name, 'github.com');
   });
 
-  it('extractNamingHost 是这条判据的单源（pickDominantTab 也走它）', () => {
-    assert.equal(extractNamingHost('http://localhost:3000/x'), 'localhost:3000');
-    assert.equal(extractNamingHost('chrome://settings'), null);
-    assert.equal(extractNamingHost(undefined), null);
-    assert.equal(extractNamingHost('not-a-url'), null);
+  it('导入路径与保存路径**故意**不是同一把尺子（保存=保存时刻，导入=域名）', async () => {
+    // 这不是缺陷，是**必须**：保存路径的名字是「什么时候存的」，
+    // 导入路径的名字是「这批内容是什么」—— 后者必须可复现。
+    const { deriveImportedGroupName } = await import('@/core/oneTabFormatParser');
+    const urls = ['https://github.com/a', 'https://github.com/b'];
+    const imported = deriveImportedGroupName(importTabs(urls), 0);
+    const saved = createTabGroupFromChromeTabs(
+      urls.map(url => chromeTab(url)),
+      { now }
+    ).name;
+
+    assert.equal(imported, 'github.com');
+    assert.equal(saved, TIMESTAMP_NAME);
   });
 });
 
@@ -319,7 +228,7 @@ describe('U-15 ④ pickDominantTab 的四条契约', () => {
     assert.equal(
       pickDominantTab(tabs)?.id,
       'a',
-      '没有取「域名占多数」的那个标签 —— 卡片图标与会话名会来自不同的站点'
+      '没有取「域名占多数」的那个标签 —— 站点身份会来自一个跟图标不是同一个站的标签'
     );
   });
 
@@ -362,8 +271,11 @@ describe('U-15 ④ pickDominantTab 的四条契约', () => {
     assert.equal(pickDominantTab([]), null);
   });
 
-  it('与 deriveDominantHost 是同一把尺子（图标与名字必须来自同一个站点）', () => {
-    // 破了 ⇒ 会话名写 github.com、卡片图标却是 figma 的 —— 自相矛盾
+  it('与 deriveDominantHost 是同一把尺子（图标与显示出来的域名必须一致）', () => {
+    // 破了 ⇒ 图标是 A 站的、标签行写着 B 站 —— 自相矛盾。
+    // ⚠️ 2026-10-25：会话名**一律**是保存时刻 ⇒ 名字不再承载站点身份
+    // ⇒ 站点身份由**标签行右侧的域名**承担 ⇒ 这条一致性的适用面
+    // 从「图标 vs 名字」变成「图标 vs 标签行显示的域名」。
     const urls = [
       'https://github.com/a',
       'https://figma.com/b',
@@ -384,5 +296,57 @@ describe('U-15 ④ pickDominantTab 的四条契约', () => {
   it('签名必须是 (tabs: Tab[]) => Tab | null（别的 agent 按这个契约调用）', () => {
     assert.equal(typeof pickDominantTab, 'function');
     assert.equal(pickDominantTab.length, 1, '入参必须是**一个**数组');
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// ⑤ 主机名的归一口径（导入路径与标签行显示都在消费它）
+// ─────────────────────────────────────────────────────────────────────────
+
+describe('⑤ 主机名归一口径', () => {
+  it('内网 / 本机 / 自建服务：带端口（端口是区分不同服务的唯一线索）', () => {
+    assert.equal(extractNamingHost('http://localhost:3000/app'), 'localhost:3000');
+    assert.equal(extractNamingHost('http://192.168.1.5:8080/admin'), '192.168.1.5:8080');
+    assert.equal(extractNamingHost('http://myhost.local:8080/'), 'myhost.local:8080');
+  });
+
+  it('IPv6 回环：方括号必须留着，否则粘不回地址栏', () => {
+    assert.equal(extractNamingHost('http://[::1]:8080/'), '[::1]:8080');
+  });
+
+  it('公网域名：去 `www.`、不带端口', () => {
+    assert.equal(extractNamingHost('https://www.example.com/x'), 'example.com');
+    assert.equal(extractNamingHost('https://github.com/a'), 'github.com');
+  });
+
+  it('非 http(s) 协议：根本没有主机', () => {
+    // 破了 ⇒ 会得到 `settings`、`blank` 这种**比时间戳还糟**的噪声
+    for (const url of [
+      'chrome://settings',
+      'chrome-extension://abcdef/options.html',
+      'file:///Users/me/paper.pdf',
+      'about:blank',
+      'data:text/html,hello',
+      'devtools://devtools/bundled/inspector.html',
+    ]) {
+      assert.equal(
+        extractNamingHost(url),
+        null,
+        `${url} 产出了主机名 —— 这些协议根本没有主机，算进去只是噪声`
+      );
+    }
+  });
+
+  it('非法 URL ⇒ null（不许抛异常）', () => {
+    assert.equal(extractNamingHost(undefined), null);
+    assert.equal(extractNamingHost('not-a-url'), null);
+  });
+
+  it('非 http(s) 的标签不参与「主导域名」（内部页不算站点）', () => {
+    assert.equal(
+      deriveDominantHost(['chrome://settings', 'https://github.com/a']),
+      'github.com'
+    );
+    assert.equal(deriveDominantHost(['about:blank', 'chrome://settings']), null);
   });
 });

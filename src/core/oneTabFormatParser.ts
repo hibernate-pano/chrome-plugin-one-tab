@@ -248,12 +248,19 @@ export function parseOneTabFormat(text: string): TabGroup[] {
     });
     
     // 创建会话
+    //
+    // ⚠️ `importedAt`：**OneTab 格式不带时间戳** ⇒ 这个会话的**保存时间未知**。
+    // 写在这里（而不是让 `createdAt` 承担）是因为 `createdAt` 会被原样上云
+    // （`upload.ts` 里是 `group.createdAt || currentTime`）⇒ 用空值/最旧来表达
+    // 「未知」会在上传时被盖成「现在」，谎话从云端绕回来。
+    // 判据见 `types/tab.ts` 的 `importedAt` 说明与 `@/core/sessionSaveTime`。
     return {
       id: nanoid(),
       name: deriveImportedGroupName(tabs, index),
       tabs,
       createdAt: now,
       updatedAt: now,
+      importedAt: now,
       isLocked: false
     };
   });

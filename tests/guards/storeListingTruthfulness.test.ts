@@ -20,10 +20,14 @@
  *        `name: typeof g.name === 'string' && g.name.trim() ? g.name : '导入的会话'`）
  *        ⇒ **一个字都不改**；
  *      · OneTab 文本导入 ⇒ `deriveImportedGroupName`（`oneTabFormatParser.ts:33-36`）
- *        = **只有保存规则的第一档**（主导域名），取不到域名时回落到「导入的会话 N」——
- *        而保存路径有**三档**（域名 → 页面标题 → 时间戳，
- *        `src/domain/tabGroup/sessionName.ts:269/273/277`）。
- *    ⇒ 「同一套规则」**两档都不成立**：JSON 那档根本不命名，OneTab 那档只实现了 1/3。
+ *        = **按「出现最多的域名」命名**（主导域名），取不到域名时回落到
+ *        「导入的会话 N」—— 而保存路径**只有一档**（保存时刻，
+ *        `src/domain/tabGroup/factory.ts`）。
+ *        ⚠️ 导入这条规则**必须**与保存路径不同：导入的组名进**幂等指纹**
+ *        ⇒ 必须是确定性的（不能用时间戳）⇒ 也不能按内容猜
+ *        （跨站的组会改名 ⇒ 老文件重新导入时判不出重 ⇒ 多一整份副本）。
+ *    ⇒ 「同一套规则」**两档都不成立**：JSON 那档根本不命名，
+ *      OneTab 那档是**它自己的一套**（可复现的域名），与保存路径无关。
  *
  * ③ **「删除会同步到其他设备」**（删除确认框）
  *    —— 真相（**2026-10-24 DS-3 修完之后**）：云端墓碑**一律赢** ⇒ 删除
@@ -71,6 +75,7 @@ const OP_STAMP = read('src/core/opStamp.ts');
 const NORMALIZE = read('src/core/normalizeTabsData.ts');
 const ONETAB = read('src/core/oneTabFormatParser.ts');
 const SESSION_NAME = read('src/domain/tabGroup/sessionName.ts');
+const FACTORY = read('src/domain/tabGroup/factory.ts');
 
 /**
  * 扩展 id 的**真相源**：`scripts/store-listing-judge.mjs` 的 LIVE_LISTING_URL
@@ -174,15 +179,23 @@ function oneTabImportDropsLock(source: string): boolean {
   return /isLocked:\s*false/.test(source);
 }
 
-/** 保存路径的命名有**几档**回落？ */
-function saveNamingFallbackTiers(source: string): number {
-  // 判据数「主导域名 / 首个有意义标题 / 时间戳」这三档是否都在。
-  const tiers = [
-    /deriveDominantHost\(/.test(source),
-    /isMeaningfulTabTitle/.test(source),
-    /buildTimestampSessionName/.test(source),
-  ];
-  return tiers.filter(Boolean).length;
+/**
+ * 保存路径的默认名是不是**只有**「保存时刻」这一档？
+ *
+ * ⚠️ 2026-10-25 产品定案：默认名**一律**是保存时刻 ⇒ 只有一档。
+ * 旧的「主导域名 → 有意义的标题 → 时间戳」三档、以及中途加的
+ * 「全都同站 ⇒ 网站名」那一档，**全部**被推翻。
+ *
+ * 判据读的是**工厂里真正起名的那个表达式**（不是「源码里出现了某个
+ * 函数名」—— 那种断言在被绕开时仍然是绿的）。
+ */
+function savePathNamesOnlyByTimestamp(factorySource: string): boolean {
+  const line = factorySource.match(/const name = options\.name \?\? ([\s\S]*?);\n/);
+  if (!line) return false;
+  const expr = line[1];
+  // 按内容命名的任何痕迹（域名、标题）都不许出现在这个表达式里
+  const contentDerived = /deriveDominantHost|deriveSingleSiteHost|extractNamingHost|\.title\b/;
+  return expr.includes('buildTimestampSessionName') && !contentDerived.test(expr);
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -300,12 +313,16 @@ describe('真相源 ②：两条导入路径的命名规则确实不同', () => 
     );
   });
 
-  it('保存路径的命名确实有三档回落（OneTab 只实现了第一档）', () => {
-    assert.equal(
-      saveNamingFallbackTiers(SESSION_NAME),
-      3,
-      'src/domain/tabGroup/sessionName.ts 的命名回落档数变了 —— ' +
-        '文案说「OneTab 只实现了保存规则的第一档」，这个「一」要跟着变'
+  it('保存路径的默认名只有一档：保存时刻（没有任何按内容命名的分支）', () => {
+    assert.ok(
+      savePathNamesOnlyByTimestamp(FACTORY),
+      'src/domain/tabGroup/factory.ts 里给会话起名的表达式不再是「保存时刻」—— ' +
+        '默认名必须只有一档，且不得有任何按内容命名的分支'
+    );
+    assert.doesNotMatch(
+      SESSION_NAME,
+      /deriveSingleSiteHost/,
+      '「全都同站 ⇒ 用网站名」这条例外已经被推翻，判据不该还留在代码里'
     );
   });
 });

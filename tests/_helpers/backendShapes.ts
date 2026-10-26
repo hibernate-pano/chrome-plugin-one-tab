@@ -151,10 +151,30 @@ export const backendOnlyKeys = (
  *   · `version: 42` —— **哨兵值**：一个刻意不同的数字。`version` 是
  *     每台设备各自的本地计数器，跨设备本来就不可比 ⇒ 它不同**不代表**
  *     内容不同。这条正是本次缺陷的核心。
+ *   · `importedAt: undefined` —— 「保存时间未知」的标记（2026-10-25）。
+ *     Supabase 侧 `download.ts` 逐字段列举 ⇒ **键恒在**（没值时是 `undefined`）；
+ *     WebDAV 侧条件展开 ⇒ 只在有值时才写 ⇒ 它落进「只有一边有」的清单。
+ *     这里取 `undefined`：样本会话的保存时间是**已知的** ⇒「没有这个标记」。
+ *
+ * ⚠️ 为什么「保存时间未知」这个标记**不进内容指纹** ──────────────────────
+ *
+ * 指纹（`utils/syncPreview.ts` 的 `getComparableFingerprint`）覆盖的是
+ * 「会话内容 + 锁定态 + 最后修改时刻」这一族：
+ * `name` / `isLocked` / `updatedAt` / `tabs`。
+ * **卡片时间位那一族整体不在里面** —— `createdAt` 本来就不在
+ * （它是「这条会话是什么时候建的」，它变了不构成「这条会话的内容变了」）。
+ * ⇒ `importedAt`（只影响卡片时间位的写法）按**同一条规则**也不在指纹里。
+ *
+ * 为什么这条规则要紧（不是随手挑的）：Supabase 侧的 `imported_at` 列
+ * **可能还没建**（迁移没跑）⇒ 那时云端读回来恒为「没有这个标记」。
+ * 若把 `importedAt` 放进指纹，迁移前的每个导入件都会**永远**显示
+ * 「将更新」—— 而上传时那一列根本写不进去 ⇒ 预览承诺了一件不会发生的事。
+ * ⇒ 指纹只收「两条后端**都可靠有**、且值跨后端可比」的字段。
  */
 export const SUPABASE_ONLY_NEUTRAL_VALUES: Record<string, unknown> = {
   isDeleted: false,
   deletedAt: undefined,
   lastOp: undefined,
   version: 42,
+  importedAt: undefined,
 };

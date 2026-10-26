@@ -218,7 +218,11 @@ describe('OneTab 导入组名 ⑤ 用域名而不是序号', () => {
    * 但「组名丢失」不等于「组名只能是『导入的会话 N』」——
    * 攒到 20 个导入的会话，列表就是一列分不清的序号，
    * 而产品的核心承诺是「保存 → 之后找回」。
-   * ⇒ 用域名补上（与**保存路径**同一把尺子）。
+   * ⇒ 用域名补上。
+   *
+   * ⚠️ 2026-10-25 产品定案：保存路径的命名规则改了
+   * （默认名**一律**是保存时刻，不按内容命名）⇒ 两条路径**不是**
+   * 同一把尺子。下面那条断言已经把这件事说清楚。
    */
   it('导入的会话用主导域名命名', async () => {
     const { parseOneTabFormat } = await import('@/core/oneTabFormatParser');
@@ -254,32 +258,52 @@ describe('OneTab 导入组名 ⑤ 用域名而不是序号', () => {
     );
   });
 
-  it('导入路径与保存路径用**同一把尺子**（同一组 URL ⇒ 同一个名字）', async () => {
+  it('★ 保存路径与导入路径**故意**不是同一把尺子（保存=保存时刻，导入=主导域名）', async () => {
     const { deriveImportedGroupName } = await import('@/core/oneTabFormatParser');
-    const { deriveSessionNameFromChromeTabs } = await import('@/domain/tabGroup/sessionName');
+    const { buildTimestampSessionName } = await import('@/domain/tabGroup/sessionName');
+    const { createTabGroupFromChromeTabs } = await import('@/domain/tabGroup/factory');
 
-    const urls = ['https://github.com/a', 'https://github.com/b', 'https://gitlab.com/c'];
-    const importedName = deriveImportedGroupName(
+    const NOW_ISO = '2026-10-20T10:00:00.000Z';
+    const mk = (urls: string[]) =>
       urls.map((url, i) => ({
         id: `t${i}`,
         url,
         title: url,
         favicon: '',
-        createdAt: NOW,
-        lastAccessed: NOW,
+        createdAt: NOW_ISO,
+        lastAccessed: NOW_ISO,
         pinned: false,
-      })),
-      0
-    );
-    const savedName = deriveSessionNameFromChromeTabs(
-      urls.map(url => ({ url })) as any,
-      NOW
-    );
+      }));
 
+    // 同站：导入按主导域名（可复现），保存按保存时刻
+    const sameSite = ['https://github.com/a', 'https://github.com/b'];
+    const importedSame = deriveImportedGroupName(mk(sameSite), 0);
+    const savedSame = createTabGroupFromChromeTabs(
+      sameSite.map(url => ({ url })) as any,
+      { now: NOW_ISO }
+    ).name;
+
+    // 跨站：同样不一致
+    const crossSite = ['https://github.com/a', 'https://github.com/b', 'https://gitlab.com/c'];
+    const importedCross = deriveImportedGroupName(mk(crossSite), 0);
+    const savedCross = createTabGroupFromChromeTabs(
+      crossSite.map(url => ({ url })) as any,
+      { now: NOW_ISO }
+    ).name;
+
+    // 导入：**可复现**（组名进幂等指纹）⇒ 域名
+    assert.equal(importedSame, 'github.com', '导入路径不再按「取最多的域名」命名');
+    assert.equal(importedCross, 'github.com', '导入路径不再按「取最多的域名」命名');
+    // 保存：**不猜** ⇒ 一律保存时刻（同站也是）
     assert.equal(
-      importedName,
-      savedName,
-      '导入与保存给出了不同的名字 —— 同一个工作现场在两条路上叫两个名'
+      savedSame,
+      buildTimestampSessionName(NOW_ISO),
+      '同站会话的名字不是保存时刻 —— 保存路径又给「全都同站」开了后门'
+    );
+    assert.equal(
+      savedCross,
+      buildTimestampSessionName(NOW_ISO),
+      '跨站会话的名字不是保存时刻 —— 保存路径在猜内容'
     );
   });
 

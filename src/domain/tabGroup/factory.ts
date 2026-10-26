@@ -2,7 +2,7 @@ import { nanoid } from '@reduxjs/toolkit';
 import { Tab, TabGroup } from '@/types/tab';
 import { sanitizeFaviconUrl } from '@/utils/faviconUtils';
 import { filterValidTabs, resolveStorableUrl } from './filters';
-import { deriveSessionNameFromChromeTabs } from './sessionName';
+import { buildTimestampSessionName } from './sessionName';
 
 export interface CreateTabGroupOptions {
   name?: string;
@@ -22,7 +22,12 @@ export function createTabGroupFromChromeTabs(
     includePinned: options.includePinned ?? false,
   });
   const now = options.now ?? new Date().toISOString();
-  const name = options.name ?? deriveSessionNameFromChromeTabs(validTabs, now);
+  // ── 默认会话名 = **保存时刻**（2026-10-25 产品定案，无例外）──────────────
+  // 名字**不猜**：不按域名、不按页面标题，只给一个不会说谎的时间戳，
+  // 想叫什么由用户点一下标题自己改。
+  // ⚠️ 名字与 `createdAt`/`updatedAt` 用**同一个** `now` ⇒ 卡片上写的
+  // 「保存时间」与名字里的时间**必然一致**（不一致就是两个时钟打架）。
+  const name = options.name ?? buildTimestampSessionName(now);
 
   const formattedTabs: Tab[] = validTabs.map(tab => ({
     id: nanoid(),

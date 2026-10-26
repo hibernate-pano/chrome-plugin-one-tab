@@ -240,8 +240,15 @@ export const RestoreStep: React.FC = () => (
       </div>
       <div className="onboarding-feature-card">
         <div className="onboarding-feature-icon" aria-hidden="true">🕘</div>
-        <div className="onboarding-feature-title">域名命名</div>
-        <div className="onboarding-feature-desc">新会话默认按域名或主机名命名（如 github.com、localhost:3000），取不到时用标签标题，再取不到才用时间戳</div>
+        {/* ── 2026-10-25 产品定案：默认名从「替用户猜」改成「保存时刻」──────
+            旧文案说「默认按域名命名，取不到时用标签标题，再取不到才用时间戳」——
+            那条链每一级都在**猜**：猜域名会猜错（跨站时是「一半对」的名字），
+            猜标题会钉一个一次性的名字（同一工作现场第二次保存标题变了 ⇒
+            名字就变了 ⇒ 找回时对不上）。
+            ⇒ 现在默认就是保存时刻（不会说谎），**没有例外**。
+            站点身份没丢：每个标签的域名在标签行右侧本来就写着。 */}
+        <div className="onboarding-feature-title">自动命名</div>
+        <div className="onboarding-feature-desc">新会话默认用保存时间命名（如 2026-10-25 14:30），点一下标题就能改成你习惯的名字</div>
       </div>
     </div>
   </div>

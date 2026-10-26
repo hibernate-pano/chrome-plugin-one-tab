@@ -82,6 +82,10 @@ const SAVED_WITHIN_LABELS: Record<NonNullable<SearchFilters['savedWithin']>, str
   '7d': '7 天内',
   '30d': '30 天内',
   older: '30 天前',
+  // 「时间未知」：来源格式不带时间戳的导入件（OneTab）**没有保存时间**。
+  // 它不进上面任何一个桶（说它「24 小时内」是假的，说它「30 天前」也是假的），
+  // 但也**不能**被时间筛选静默藏起来 ⇒ 给它自己一个桶。
+  unknown: '时间未知',
 };
 
 /** 「固定标签页」的取值 → 人话。 */
@@ -389,6 +393,7 @@ export const SearchFilterPanel: React.FC<SearchFilterPanelProps> = ({
             <option value="7d">7 天内</option>
             <option value="30d">30 天内</option>
             <option value="older">30 天前</option>
+            <option value="unknown">时间未知</option>
           </select>
         </div>
 

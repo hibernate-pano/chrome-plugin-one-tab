@@ -47,6 +47,7 @@ import {
 import { lockDisclosureText } from '@/components/tabs/lockFeedbackCopy';
 import { moveEmptiesSessionMessage } from '@/components/tabs/moveFeedbackCopy';
 import { decideFeedback } from '@/core/feedbackPolicy';
+import { formatSessionTimeLabel } from '@/utils/sessionPresentation';
 
 interface TabGroupProps {
   group: TabGroupType;
@@ -1099,18 +1100,13 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(
    */
 
   // 格式化时间
-  const formatTime = (dateString: string) => {
-    const date = new Date(dateString);
-    const now = new Date();
-    const diff = now.getTime() - date.getTime();
-    const days = Math.floor(diff / (1000 * 60 * 60 * 24));
-
-    if (days === 0) return '今天';
-    if (days === 1) return '昨天';
-    if (days < 7) return `${days} 天前`;
-    if (days < 30) return `${Math.floor(days / 7)} 周前`;
-    return date.toLocaleDateString('zh-CN', { month: 'short', day: 'numeric' });
-  };
+  //
+  // ⚠️ 2026-10-25：这里的局部实现已被共享文案取代（`formatSessionTimeLabel`）。
+  // 原因有二：
+  //   ① **保存时间未知的会话**（来源不带时间戳的导入件）不能显示成「今天」——
+  //      那是谎话（旧实现拿 `createdAt`= 导入时刻去格式化）；
+  //   ② 时间戳非法时旧实现会显示字面的「Invalid Date」。
+  // ⇒ 判据与措辞都在 `@/utils/sessionPresentation` 里，列表页与搜索页共用一份。
 
   // 锁定说明（常驻行）。未锁定 ⇒ null ⇒ **不渲染**（未锁定卡片零密度成本）。
   const lockNote = lockDisclosureText(group.isLocked);
@@ -1278,7 +1274,7 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(
 
           {/* 时间 */}
           <span className="tab-group-time hidden sm:block flex-shrink-0">
-            {formatTime(group.createdAt)}
+            {formatSessionTimeLabel(group)}
           </span>
         </div>
 

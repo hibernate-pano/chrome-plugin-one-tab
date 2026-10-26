@@ -91,8 +91,52 @@ export async function supportsDeletedAt(): Promise<boolean> {
   }
 }
 
-let opStampSupportCache: boolean | null = null;
+let importedAtSupportCache: boolean | null = null;
 
+/**
+ * 2026-10-25：探测云端 tab_groups 表是否已有 `imported_at` 列（结果缓存）。
+ *
+ * 这一列承载「**保存时间未知**」的标记（来源格式不带时间戳的导入件，
+ * 见 `TabGroup.importedAt`）。缺列时调用方**整列省略** ⇒ 云端不承载这个标记
+ * ⇒ 换一台设备下载回来，那条会话会显示成一条普通的「保存于 …」会话
+ * （**已知边界**，不是静默丢数据：会话本身与它的标签都还在）。
+ *
+ * 口径与 supportsCloudTombstone / supportsOpStamp / supportsDeletedAt 完全一致：
+ * 确定性缺列（PGRST204）→ 缓存 false；网络抖动 → **不缓存**（下次重探）。
+ */
+export async function supportsImportedAt(): Promise<boolean> {
+  if (importedAtSupportCache !== null) return importedAtSupportCache;
+  if (!isSupabaseConfigured()) {
+    importedAtSupportCache = false;
+    return false;
+  }
+  try {
+    const probe = await supabase.from('tab_groups').select('imported_at').limit(1);
+    if (probe.error) {
+      if (probe.error.code === 'PGRST204' || /imported_at/i.test(probe.error.message)) {
+        logWarn(
+          '[imported-at] 云端 tab_groups 表缺少 imported_at 列，本次上传省略「保存时间未知」标记。\n' +
+            '  请执行：pnpm supabase:migrate（见 supabase/migrations/*imported_at*.sql）'
+        );
+        importedAtSupportCache = false;
+      } else {
+        logWarn(
+          '[imported-at] imported_at 列探测失败（非 PGRST204），本次按不支持处理，下次重探:',
+          probe.error.message
+        );
+        return false;
+      }
+    } else {
+      importedAtSupportCache = true;
+    }
+    return importedAtSupportCache;
+  } catch (err) {
+    logWarn('[imported-at] imported_at 列探测异常，本次按不支持处理，下次重探:', (err as Error).message);
+    return false;
+  }
+}
+
+let opStampSupportCache: boolean | null = null;
 /**
  * 仅供单元测试：清空列探测缓存。
  * 探测结果在进程内是单例缓存（同一 SW 生命周期只探一次），而测试要在同一个
@@ -103,6 +147,7 @@ export function __resetCloudColumnProbeCacheForTests(): void {
   tombstoneSupportCache = null;
   opStampSupportCache = null;
   deletedAtSupportCache = null;
+  importedAtSupportCache = null;
 }
 
 /**

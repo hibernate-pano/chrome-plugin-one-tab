@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, ReactNode, useEffect, useCallback } from 'react';
+import React, { createContext, useContext, useState, ReactNode, useEffect, useCallback, useMemo } from 'react';
 import Toast, { ToastType, ToastAction } from '../components/common/Toast';
 import ConfirmDialog, { ConfirmDialogProps } from '../components/common/ConfirmDialog';
 import AlertDialog, { AlertDialogProps } from '../components/common/AlertDialog';
@@ -9,6 +9,7 @@ import {
   resolveToastDuration,
 } from '@/components/common/toastPolicy';
 import { admitToast } from '@/components/common/toastQueuePolicy';
+import { computeToastStackOffsets } from '@/components/common/toastStack';
 
 interface ToastContextType {
   /**
@@ -65,6 +66,15 @@ let toastSeq = 0;
  */
 export const ToastProvider: React.FC<ToastProviderProps> = ({ children }) => {
   const [queue, setQueue] = useState<QueuedToast[]>([]);
+  /**
+   * 每条提示的**实测高度**（px），key 是提示的 id。
+   *
+   * 为什么要有：堆叠偏移必须按**真实高度**算 —— 提示的高度取决于文案长度，
+   * 写死的数字必然盖住长提示的下半截（2026-10-25：OneTab 导入的披露
+   * 有 5 行 ⇒ 结尾被下面那条压住 ⇒ 用户读不到「保存时间未知」那半句）。
+   * 算式见 toastStack.ts。
+   */
+  const [heights, setHeights] = useState<Record<number, number>>({});
 
   const [confirmDialog, setConfirmDialog] = useState<ConfirmDialogProps>({
     visible: false,
@@ -126,6 +136,47 @@ export const ToastProvider: React.FC<ToastProviderProps> = ({ children }) => {
     setQueue(prev => prev.filter(t => t.id !== id));
   }, []);
 
+  /**
+   * 提示报上来自己的**实测高度**（Toast 组件在挂载与重排时上报）。
+   *
+   * 幂等：同一个高度重复上报不产生新的 state（否则每次渲染都重排一次
+   * ⇒ 无限循环）。这是「高度回调 ⇒ setState ⇒ 重渲染 ⇒ 高度回调」链条上
+   * 必须断开的一环。
+   */
+  const handleHeightChange = useCallback((id: number, height: number) => {
+    setHeights(prev => (prev[id] === height ? prev : { ...prev, [id]: height }));
+  }, []);
+
+  // 队列里没有的提示，它的高度记录就是垃圾（id 单调递增，不会撞车，
+  // 但会一直攒着）⇒ 顺手清掉。
+  useEffect(() => {
+    setHeights(prev => {
+      const alive = new Set(queue.map(item => item.id));
+      const next: Record<number, number> = {};
+      let changed = false;
+      for (const [id, height] of Object.entries(prev)) {
+        const key = Number(id);
+        if (alive.has(key)) next[key] = height;
+        else changed = true;
+      }
+      return changed ? next : prev;
+    });
+  }, [queue]);
+
+  /**
+   * 每条提示离底边多远（px）。
+   *
+   * 队列顺序 = 从旧到新 ⇒ **最新的一条在最下面**（它是用户刚看到的那个）。
+   * 上面那条的偏移 = 下面那些的**实测高度之和** + 间距。
+   */
+  const stackOffsets = useMemo(
+    () =>
+      computeToastStackOffsets(
+        queue.map(item => ({ id: item.id, height: heights[item.id] })),
+      ),
+    [queue, heights]
+  );
+
   const showConfirm = (options: Omit<ConfirmDialogProps, 'visible'>) => {
     setConfirmDialog({
       ...options,
@@ -162,7 +213,7 @@ export const ToastProvider: React.FC<ToastProviderProps> = ({ children }) => {
   return (
     <ToastContext.Provider value={{ showToast, showConfirm, showAlert }}>
       {children}
-      {queue.map((item, index) => (
+      {queue.map(item => (
         <Toast
           key={item.id}
           visible={item.visible}
@@ -170,7 +221,8 @@ export const ToastProvider: React.FC<ToastProviderProps> = ({ children }) => {
           type={item.type}
           duration={item.duration}
           action={item.action}
-          stackIndex={queue.length - 1 - index}
+          stackOffset={stackOffsets.get(item.id) ?? 0}
+          onHeightChange={height => handleHeightChange(item.id, height)}
           onClose={() => dismissToast(item.id)}
         />
       ))}

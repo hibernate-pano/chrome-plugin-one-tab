@@ -920,27 +920,54 @@ describe('C-03 / C-13 / C-14 「保存会关闭标签」必须在每个入口上
   });
 });
 
-describe('C-04 引导页的会话命名必须与实现一致（域名优先，不是时间戳）', () => {
-  it('引导页不得再说「时间戳命名」是默认行为', () => {
+describe('C-04 引导页的会话命名必须与实现一致（默认保存时间，**没有例外**）', () => {
+  it('引导页必须说清「默认是保存时间」', () => {
+    const steps = stripComments(ONBOARDING);
+    assert.match(
+      steps,
+      /保存时间命名/,
+      '引导页必须说清默认名是**保存时刻** —— 实现的默认名就是时间戳'
+    );
+    assert.match(
+      steps,
+      /2026-10-25 14:30/,
+      '引导页应举例说明默认名长什么样（零填充的 `YYYY-MM-DD HH:mm`）'
+    );
+  });
+
+  it('引导页不得再说「全都来自同一个网站时才用网站名」（那条例外已被推翻）', () => {
+    // 2026-10-25 产品负责人推翻了「全都同站 ⇒ 网站名」这条例外
+    // ⇒ 引导页若还在教它，就是在教一条**已经作废**的规则。
     const steps = stripComments(ONBOARDING);
     assert.doesNotMatch(
       steps,
-      /时间戳命名/,
-      '引导页仍把「时间戳命名」当成默认 —— 实现是「取出现最多的域名，无域名才回落时间戳」'
+      /全都来自同一个网站|同一个网站时才用网站名/,
+      '引导页仍在教一条已经作废的例外 —— 默认名一律是保存时刻'
     );
-    assert.match(steps, /域名命名/);
-    assert.match(steps, /github\.com/, '引导页应举例说明按域名命名');
   });
 
-  it('（事实来源）会话名确实取自出现最多的域名', () => {
-    const sessionName = read('src/domain/tabGroup/sessionName.ts');
+  it('（事实来源）默认名确实**只有**保存时刻这一档', () => {
+    // 判据读的是**工厂里真正起名的那个表达式**（不是「源码里出现了某个
+    // 函数名」—— 那种断言在被绕开时仍然是绿的）。
+    const factory = read('src/domain/tabGroup/factory.ts');
+    const nameLine = factory.match(/const name = options\.name \?\? ([^;]+);/);
+    assert.ok(nameLine, 'factory 里给会话起名的那一行不见了 —— 文案必须重新核对');
     assert.match(
-      sessionName,
-      /export const deriveSessionNameFromChromeTabs/,
-      'deriveSessionNameFromChromeTabs 不见了 —— 引导页文案必须重新核对'
+      nameLine[1],
+      /buildTimestampSessionName/,
+      '默认名不是保存时刻 —— 文案与实现对不上'
     );
-    // 无域名时才回落时间戳
-    assert.match(sessionName, /buildTimestampSessionName\(now\)/);
+    assert.doesNotMatch(
+      nameLine[1],
+      /deriveDominantHost|deriveSingleSiteHost|extractNamingHost|\.title\b/,
+      '默认名的表达式里又出现了按内容命名的分支 —— 「没有例外」被破了'
+    );
+    // 那个「全都同站」的判据必须已经从判据层删干净
+    assert.doesNotMatch(
+      read('src/domain/tabGroup/sessionName.ts'),
+      /deriveSingleSiteHost/,
+      '「全都同站 ⇒ 用网站名」这条例外已经被推翻，判据不该还留在代码里'
+    );
   });
 });
 
@@ -1222,16 +1249,36 @@ describe('C-08 同步失败原因不得把机器串原样透出', () => {
 });
 
 describe('C-09 商店英文版必须有「智能命名」这条（与中文版同一功能）', () => {
-  it('英文版功能列表里必须有按域名命名这一条', () => {
+  it('英文版功能列表里必须有「按保存那一刻命名」这一条', () => {
     const en = STORE.split('\n').find(l => l.trimStart().startsWith('· Smart naming:'));
     assert.ok(en, '英文版功能列表缺少「智能命名」这一条 —— Chrome 商店要求同一功能两边都有');
-    assert.match(en, /domain/i, '必须点明是按域名命名');
-    assert.match(en, /github\.com/, '应举例说明');
+    assert.match(
+      en,
+      /moment you saved|saved them/i,
+      '必须点明默认名是「保存的那一刻」—— 实现的默认名就是时间戳'
+    );
+    assert.match(en, /2026-10-25 14:30/, '应举例说明默认名长什么样');
   });
 
-  it('（事实来源）会话名确实取自出现最多的域名', () => {
-    const sessionName = read('src/domain/tabGroup/sessionName.ts');
-    assert.match(sessionName, /export const deriveSessionNameFromChromeTabs/);
+  it('英文版不得再说「全都来自同一个网站时才用网站名」（那条例外已被推翻）', () => {
+    const en = STORE.split('\n').find(l => l.trimStart().startsWith('· Smart naming:'));
+    assert.ok(en, '英文版功能列表缺少「智能命名」这一条');
+    assert.doesNotMatch(
+      en,
+      /same site/i,
+      '英文版仍在教一条已经作废的例外 —— 默认名一律是保存时刻'
+    );
+  });
+
+  it('（事实来源）默认名确实**只有**保存时刻这一档', () => {
+    const factory = read('src/domain/tabGroup/factory.ts');
+    const nameLine = factory.match(/const name = options\.name \?\? ([^;]+);/);
+    assert.ok(nameLine, 'factory 里给会话起名的那一行不见了');
+    assert.match(nameLine[1], /buildTimestampSessionName/);
+    assert.doesNotMatch(
+      nameLine[1],
+      /deriveDominantHost|deriveSingleSiteHost|extractNamingHost|\.title\b/
+    );
   });
 });
 

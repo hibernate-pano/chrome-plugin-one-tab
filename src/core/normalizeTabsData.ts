@@ -233,18 +233,38 @@ export function normalizeImportedGroup(raw: unknown): TabGroup {
     .map(rawTab => normalizeImportedTab(rawTab, nowIso))
     .filter((t): t is Tab => t !== null);
   const createdAt = asIso(g.createdAt ?? g.created_at) ?? nowIso;
+  // 2026-10-25：「保存时间未知」的标记（`TabGroup.importedAt`）。
+  //
+  // `...groupFields` 会把文件里的**每一个未知字段**原样带进本地行 ⇒
+  // 这里显式覆盖成「**能解析成 ISO 才留，解析不出来就整个键去掉**」：
+  // 一个手改过的文件写 `importedAt: "昨天"` 也不该被当成「保存时间未知」。
+  //
+  // ⚠️ **归一化不是「制造」**：备份文件里没有这个键 ⇒ 归一化后也没有
+  // ⇒ 那条会话的保存时间**是**已知的（JSON 备份里 `createdAt` 是真的保存时间）。
+  // 用「键不存在」而不是 `importedAt: undefined` 表达「没有」——
+  // 后者会让 `deepStrictEqual` 判成两个不同的形状。
+  const importedAt = asIso(g.importedAt);
+  // 把文件里的原始 `importedAt` 键**摘掉**（下面按「能解析才留」的条件再放回去）
+  // ⇒ 解析不出来时那个键**整个不存在**（不是 `undefined`）。
+  //
+  // ⚠️ 这里用「拷贝后 delete」而不是「解构时把那个键改名为 `_raw…`」：
+  // 后者会留下一个**没用到的变量** ⇒ 本仓 `src/` 的 lint 规则
+  // （`no-unused-vars`）只对**参数**放行 `^_` 前缀，变量不放行 ⇒ 报错。
+  const groupFields = { ...g };
+  delete groupFields.importedAt;
   return {
-    ...(g as object),
+    ...groupFields,
     id: typeof g.id === 'string' ? g.id : '',
     name: typeof g.name === 'string' && g.name.trim() ? g.name : '导入的会话',
     tabs,
     createdAt,
     updatedAt: asIso(g.updatedAt ?? g.updated_at) ?? createdAt,
     isLocked: isLegacyTruthy(g.isLocked) || isLegacyTruthy(g.is_locked),
+    ...(importedAt ? { importedAt } : {}),
     // ── 2026-10-22 审计 DS-43-3：组级墓碑标记必须在这里归零 ──────────────
     //
     // 【为什么这是数据安全缺陷，而不是"顺手清一个字段"】
-    // `...(g as object)` 把文件里的**每一个未知字段**原样带进本地行。
+    // `...groupFields` 把文件里的**每一个未知字段**原样带进本地行。
     // 组级 `isDeleted` 恰好不在上面的覆盖名单里 ⇒ 备份文件里写了
     // `isDeleted: true` 就**原样保留**（v1.21 时代的备份、手改过的文件都能做到）。
     //

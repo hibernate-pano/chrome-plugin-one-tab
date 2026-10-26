@@ -62,8 +62,21 @@ interface ToastProps {
   duration?: number;
   onClose?: () => void;
   visible: boolean;
-  /** 在队列中的堆叠序号，用于错开底部位置，避免多条互相遮挡 */
-  stackIndex?: number;
+  /**
+   * 离底边多远（px）—— 由上层按**实测高度**算好（见 toastStack.ts）。
+   *
+   * ⚠️ 旧实现这里是「堆叠序号」，偏移量写死成 `序号 * 76` ⇒
+   * 一条**多行**的提示会被下面那条压住下半截 ⇒ 用户读不到结尾。
+   * ⇒ 现在传的是**像素偏移**，由 ToastContext 累加各条**实测高度**得出。
+   */
+  stackOffset?: number;
+  /**
+   * 把这条提示的**实测高度**报给上层（用来堆叠时不互相遮挡）。
+   *
+   * 为什么要实测：提示的高度**取决于文案长度**（一行还是五行），
+   * 写死的数字必然会在某条长提示上错 ⇒ 盖住用户必须看到的那半句。
+   */
+  onHeightChange?: (height: number) => void;
   /** 可选的「撤销/重做」动作按钮。给了就多一条退路。 */
   action?: ToastAction;
 }
@@ -94,7 +107,8 @@ export const Toast: React.FC<ToastProps> = ({
   duration = 3000,
   onClose,
   visible,
-  stackIndex = 0,
+  stackOffset = 0,
+  onHeightChange,
   action,
 }) => {
   const [isVisible, setIsVisible] = useState(visible);
@@ -143,6 +157,52 @@ export const Toast: React.FC<ToastProps> = ({
   useEffect(() => {
     onCloseRef.current = onClose;
   });
+
+  // onHeightChange 同样是「每次渲染都新的引用」⇒ 用 ref 取最新值，
+  // 免得高度回调一变就重开观察器。
+  const onHeightChangeRef = useRef(onHeightChange);
+  useEffect(() => {
+    onHeightChangeRef.current = onHeightChange;
+  });
+
+  /**
+   * 把**实测高度**报给上层 —— 堆叠时按真实高度错开，而不是按写死的数字。
+   *
+   * ── 为什么必须实测 ────────────────────────────────────────────────────
+   *
+   * 提示的高度**取决于文案长度**（一行还是五行）。旧实现把偏移写死成
+   * `序号 * 76`（= 一条单行提示的**估计**高度）⇒ 一条**多行**提示必然
+   * 被下面那条压住下半截 ⇒ **用户读不到结尾**。
+   *
+   * 撞到这件事的是 OneTab 导入的**必说披露**（5 行）⇒ 被盖掉的正好是
+   * 「这些会话的保存时间未知，列表里显示为「导入 · …」」那半句 ⇒
+   * 说了等于没说。根因不在文案，在**堆叠算法**。
+   *
+   * ⚠️ 这个缺陷**早于**本次修复就存在（旧披露也有 4 行，同样被盖）——
+   * 实证：把打包产物里的那句提示删短、重跑同一个探针 ⇒ 照样被盖。
+   *
+   * ── 测量口径 ──────────────────────────────────────────────────────────
+   *
+   * 用 `offsetHeight`（**不受 transform 影响**的布局高度）而不是
+   * `getBoundingClientRect().height` —— 退场动画 `animate-fadeOut` 带
+   * `translateY`，用它会被父级的 transform 干扰。
+   */
+  useEffect(() => {
+    if (!isVisible) return;
+    const card = cardRef.current;
+    if (!card) return;
+    const report = () => {
+      const height = card.offsetHeight;
+      if (height > 0) onHeightChangeRef.current?.(height);
+    };
+    // 先同步量一次（首帧就要拿到高度，否则第一帧按兜底值排 ⇒ 会跳一下）。
+    report();
+    if (typeof ResizeObserver === 'undefined') return;
+    // 窗口变窄 ⇒ 文案重排 ⇒ 高度变了 ⇒ 重新报（否则会重新开始被盖）。
+    const observer = new ResizeObserver(report);
+    observer.observe(card);
+    return () => observer.disconnect();
+  }, [isVisible]);
 
   // 时长由「有没有动作」决定（不是写死一个数）——
   // 带动作的提示要给用户一个能做决定的窗口，普通提示仍是 3 秒。
@@ -482,7 +542,7 @@ export const Toast: React.FC<ToastProps> = ({
       aria-live={isAssertive ? 'assertive' : 'polite'}
       aria-atomic="true"
       className={`pointer-events-none fixed bottom-4 left-1/2 z-[110] -translate-x-1/2 ${isVisible ? animation : ''}`}
-      style={{ marginBottom: stackIndex * 76 }}
+      style={{ marginBottom: stackOffset }}
     >
       <style>{PROGRESS_KEYFRAMES}</style>
 

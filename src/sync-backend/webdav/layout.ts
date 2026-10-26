@@ -5,9 +5,11 @@
  * ```
  * {用户配置的目录}/
  *   manifest.json                  ← 清单：版本、各分片指纹、加密元信息（**明文**）
- *   groups/<id前2位>/<id>.json     ← 每个会话一个文件（**内容加密**）
+ *   groups/<id前1位>/<id>.json     ← 每个会话一个文件（**内容加密**）
  *   settings.json                  ← 用户设置（加密）
  * ```
+ *
+ * ⚠️ **前缀位数 2026-10-26 从 2 位改成 1 位**（老库兼容见 `legacyShardPath`）。
  *
  * ── 为什么每个会话一个文件，而不是「全部塞进一个 JSON」─────────────────
  * 1. **增量**：改一个会话只 PUT 一个文件。单文件方案下改个名字也要重传整库
@@ -16,10 +18,29 @@
  *    分片后冲突面收敛到「同一个会话」——而这恰好与 TapStack 既有的
  *    **组级 LWW 整组覆盖**语义（opStampMerge.ts）完全对齐，不引入新语义。
  *
- * ── 为什么 groups/ 要按前两位分子目录 ────────────────────────────────────
- * 坚果云对单次 PROPFIND 有 750 条上限（官方文档），且明确警告「未实现按分页
- * 多次加载会出现文件同步不完整」。分子目录把单个目录的条目数摊薄，
- * 让「列目录」这条路在会话数增长时仍然是安全的。
+ * ── 为什么 groups/ 要按 id 的前缀分子目录（2026-10-26：位数 2 → 1）─────────
+ * 一次「列全目录」的请求数 = 1（列 groups/）+ N（逐个列前缀子目录），
+ * 而 N = **用到的前缀目录数**。
+ *
+ * 生产会话 id 是 `nanoid()`（21 位、**64 字符表** ⇒ 前 1 位 64 种取值、
+ * 前 2 位 4096 种取值）。
+ *
+ * 坚果云对单次 PROPFIND 有 750 条上限，
+ * 且明确警告「未实现按分页多次加载会出现文件同步不完整」。
+ * 另一条官方限制是**每 30 分钟不超过 600 次请求**（免费版 600、付费 1500）。
+ *
+ * ⇒ 旧布局（前 **2** 位）：1000 个会话约用到 887 个前缀目录
+ *   ⇒ 单次扫描约 **888** 次 ⇒ **一次扫描就超过 600** ⇒ 撞线。
+ *   撞线的后果不是「变慢」：坚果云返回 **503 BlockedTemporarily**，官方建议
+ *   「关闭同步后六小时再重新启用同步即可」⇒ **同步直接停摆 6 小时**。
+ * ⇒ 新布局（前 **1** 位）：N ≤ 64 ⇒ 单次扫描 ≤ **65** 次
+ *   ⇒ 限额问题消失（巡检间隔 30 分钟 ⇒ 30 分钟窗口内 65 次）。
+ * 同时每个前缀目录里的文件数 = 会话数 / 64，仍远低于单次 750 条上限
+ *   ⇒ **两个限制同时满足**。
+ *
+ * ⚠️ **老库的 2 位目录不会被自动删掉**（删目录 = 动用户云盘上的东西，
+ * 删错了就是内容丢失）⇒ 老库的扫描成本仍然是 2 位那套 ⇒ 对老库而言
+ * **巡检间隔**才是承重墙（见 adapter 的 INDEX_VERIFY_INTERVAL_MS）。
  *
  * ── 为什么 manifest 明文、内容加密 ──────────────────────────────────────
  * 探活（判断「远端有没有变」）必须能读出每个分片的 ETag / 修改时间，
@@ -67,6 +88,27 @@ export interface ShardFingerprint {
   isDeleted?: boolean;
   /** 操作印记（写入者），与 mergeOpStamped 的约定一致。 */
   lastOp?: { d: string; s: number };
+  /**
+   * 这个分片在远端的**落点**（2026-10-26 布局改 1 位前缀时新增）。
+   *
+   * `'legacy'` = 它落在**旧**布局（`groups/<id前2位>/<id>.json`）里；
+   * 缺省 = 新布局（`groups/<id前1位>/<id>.json`）。
+   *
+   * ── 为什么索引必须记这个 ────────────────────────────────────────────────
+   * 同一个会话**可能同时存在于两条路径**：老版本设备写旧路径、新版本设备写
+   * 新路径。此时「读哪一份」必须与「索引里的指纹来自哪一份」是**同一份** ——
+   * 否则合并会拿 A 的内容配 B 的印记来比大小，结果是「用旧内容盖掉新内容」
+   * 或反过来（都是静默的数据覆盖，且不可逆）。
+   *
+   * 缺省值 = 新布局：老索引（2026-10-26 之前写的）全在新布局下吗？**不是** ——
+   * 老索引里的分片都在旧布局。所以老索引被解析出来时**不能**缺省成新布局。
+   * ⇒ 解析时按「索引本身没写 loc」的旧索引一律按 **legacy** 处理？
+   * 不 —— 那会让新布局的库被判成旧布局。
+   * ⇒ 真正的判据在**读的时候**：先按 loc 读，读不到再回退另一条路径
+   *   （两条路径都读不到才算「不存在」）。见 adapter 的 readShard。
+   *   本字段只用于「两条路径都存在时选哪一份」的那一次裁决。
+   */
+  loc?: 'legacy';
 }
 
 export interface Manifest {
@@ -91,16 +133,69 @@ export interface Manifest {
 }
 
 /**
- * 会话 id → 分片路径。
+ * 会话 id → 分片所在的**前缀目录**（新布局：前 **1** 位）。
  *
- * 用 id 的**前两位**做一级子目录。id 是 UUID（含十六进制与连字符），
- * 必须先做字符白名单校验：这个值会被拼进 URL，
- * 而 `encodePathSegments` 只能拦住 `.` 与 `..`，拦不住其他奇怪字符。
+ * id 会���拼进 URL，所以必须先做字符白名单校验：`encodePathSegments` 只能拦住
+ * `.` 与 `..`，拦不住其他奇怪字符。
+ *
+ * ⚠️ 现有 id 来自 `nanoid()`（64 字符表 ⇒ 前 1 位 64 种取值、前 2 位 4096 种），
+ * **不是** UUID —— 见 `assertSafeId` 的说明。
+ */
+export function shardDir(id: string): string {
+  assertSafeId(id);
+  return `${GROUPS_DIR}/${id.slice(0, 1)}`;
+}
+
+/**
+ * 会话 id → 分片路径（**新**布局：`groups/<id前1位>/<id>.json`）。
+ *
+ * 为什么取 1 位而不是 2 位：见文件头「为什么 groups/ 要按 id 的前缀分子目录」。
+ * 简单说：一次「列全目录」的请求数 = 1 + 前缀目录数，前缀目录数 ≤ 用到的前缀数
+ * ⇒ 2 位 ⇒ 1000 个会话约 888 次请求 ⇒ **一次扫描就撞坚果云的 600 次上限**
+ * ⇒ 撞线后同步停摆 6 小时；1 位 ⇒ 最多 65 次。
  */
 export function shardPath(id: string): string {
   assertSafeId(id);
-  const prefix = id.slice(0, 2);
-  return `${GROUPS_DIR}/${prefix}/${id}.json`;
+  return `${shardDir(id)}/${id}.json`;
+}
+
+/**
+ * 会话 id → 分片路径（**旧**布局：`groups/<id前2位>/<id>.json`）。
+ *
+ * ── 这条路径为什么还在 ──────────────────────────────────────────────────
+ * 2026-10-13 ~ 2026-10-26 之间建的库，分片都在旧布局里。改布局不能让老库
+ * 的分片变成**隐形数据**（那���不可逆的丢失）。
+ *
+ * ⇒ 读：**新路径优先，404 时回退旧路径**（见 adapter 的 readShard）。
+ * ⇒ 写：**写回它原来所在的位置**（远端没有这一份时才用新路径）。
+ *   —— 「一律写新路径」会造出同一个会话的两份 ⇒ 之后每次列目录都要按操作
+ *   印记裁决 ⇒ 「以本机为准」这种显式覆盖会被**静默撤回**（见 adapter 的
+ *   putShardResolvingConflict）。
+ * ⇒ 同一个会话在两条路径都有 ⇒ 按操作印记裁决（见 adapter 的 scanRemoteShards），
+ *   索引用 `ShardFingerprint.loc` 记下**读哪一份** —— 否则会出现
+ *   「拿 A 的内容配 B 的印记」，那是静默的数据覆盖。
+ *
+ * ⚠️ 旧版本客户端读新布局会 404 并中止（fail-closed，出声）——
+ * 与 1.27.0「旧版本读不出来新格式」同一类，Chrome 会自动更新扩展。
+ */
+export function legacyShardDir(id: string): string {
+  assertSafeId(id);
+  return `${GROUPS_DIR}/${id.slice(0, 2)}`;
+}
+
+export function legacyShardPath(id: string): string {
+  assertSafeId(id);
+  return `${legacyShardDir(id)}/${id}.json`;
+}
+
+/**
+ * 这个 id 的旧布局路径是否与新布局**不同**。
+ *
+ * 1 位 id（例如测试里用的 `'a'`）两条路径相同 ⇒ 不能当成「两份」，
+ * 否则同一个文件会被数两次、也会被当成「冗余副本」删掉。
+ */
+export function legacyPathDiffers(id: string): boolean {
+  return legacyShardPath(id) !== shardPath(id);
 }
 
 /**
@@ -137,8 +232,17 @@ export function inspectShardFileName(name: string): ShardFileNameInfo {
  * 校验会话 id 可用于路径拼接。
  *
  * 白名单而不是黑名单：只允许 `[A-Za-z0-9_-]`。
- * 现有 id 是 `crypto.randomUUID()` 生成的 UUID（该字符集内），
- * 而导入路径（OneTab / JSON 备份）也复用同一生成器，因此不会误伤。
+ *
+ * ── 现有 id 是谁生成的（2026-10-26 更正）──────────────────────────────
+ * 之前这里写的是「`crypto.randomUUID()` 生成的 UUID」—— **那不是真的**：
+ * 生产会话 id 来自 `nanoid()`（`domain/tabGroup/factory.ts`、
+ * `core/oneTabFormatParser.ts`），字符表 `A-Za-z0-9_-`（64 个符号），
+ * 默认长度 21。UUID（`crypto.randomUUID()`）也在白名单里，但仓库里
+ * **没有任何地方**用它生成会话 id。
+ * ⇒ 白名单本身没写错（nanoid 的字符表 ⊆ 白名单 ⇒ 不会误伤），
+ *   但理由必须是真的 —— 否则下一个人会照着「UUID」去推理前缀取值数
+ *   （UUID 是十六进制 ⇒ 16 种；而 nanoid 是 64 种 ⇒ 差 4 倍）。
+ *
  * 拒绝而不是静默清洗：id 异常意味着上游数据有问题，静默改写会让
  * 「同一个会话在两台设备上算出不同文件名」——那是同步分裂，比报错糟得多。
  */
@@ -328,6 +432,10 @@ export function encodeGroup(group: TabGroup): Record<string, unknown> {
     createdAt: group.createdAt,
     updatedAt: group.updatedAt,
     isLocked: group.isLocked,
+    // 2026-10-25：**保存时间未知**的标记（来源格式不带时间戳的导入件）。
+    // 必须跟着上云 —— 否则换一台设备下载回来，它就变成了一条「保存于导入那一刻」
+    // 的普通会话 ⇒ 谎话在云端复活。
+    ...(group.importedAt === undefined ? {} : { importedAt: group.importedAt }),
     ...(group.lastOp === undefined ? {} : { lastOp: group.lastOp }),
     tabs: group.tabs.map(t => ({
       id: t.id,
@@ -406,6 +514,9 @@ export function decodeGroup(raw: unknown): TabGroup | null {
     createdAt: typeof o.createdAt === 'string' ? o.createdAt : new Date(0).toISOString(),
     updatedAt: typeof o.updatedAt === 'string' ? o.updatedAt : new Date(0).toISOString(),
     isLocked: o.isLocked === true,
+    // 2026-10-25：「保存时间未知」的标记（见 `TabGroup.importedAt`）。
+    // 老分片里没有这个键 ⇒ 不带（那条会话的保存时间**是**已知的）✔
+    ...(typeof o.importedAt === 'string' ? { importedAt: o.importedAt } : {}),
     // ⚠️ `displayOrder` 不再被解出来（2026-10-20 审计 A-10）：它从来没有读取方，
     // 留着它只会让 WebDAV 侧解出来的形状与 Supabase 侧不一致。老分片里若还留着
     // 这个键，它被**忽略**（多余字段无害）。
@@ -495,6 +606,10 @@ export function parseManifest(text: string): Manifest | null {
       updatedAt: typeof row.updatedAt === 'string' ? row.updatedAt : new Date(0).toISOString(),
       ...(row.isDeleted === true ? { isDeleted: true } : {}),
       ...(isStamp(row.lastOp) ? { lastOp: row.lastOp } : {}),
+      // 落点：只有明确的 'legacy' 才算旧布局。
+      // 缺省是**新布局** —— 但这不代表「一定在新路径上」：
+      // 读方必须在新路径读不到时回退旧路径（见 adapter 的 readShard）。
+      ...(row.loc === 'legacy' ? { loc: 'legacy' as const } : {}),
     });
   }
 

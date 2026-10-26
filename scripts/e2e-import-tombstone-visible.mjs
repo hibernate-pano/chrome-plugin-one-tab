@@ -431,15 +431,23 @@ try {
   );
 
   // 远端证据：分片真的落到 dufs 上了
+  // ⚠️ 分片目录的前缀位数：2026-10-26 起新库用 **1 位**（`groups/<id前1位>/`）；
+  // 2026-10-13 ~ 2026-10-26 之间的老库用 **2 位**（`groups/<id前2位>/`）。
+  // 适配器「写回该会话原来所在的位置」⇒ 新建的会话落在 1 位新路径，
+  // 老库里的会话落回 2 位老路径 ⇒ 两条路径都认。
   const poisonedId = poisoned?.id;
-  const shardRel = poisonedId
-    ? join(ROOT_PATH, 'groups', poisonedId.slice(0, 2), `${poisonedId}.json`)
-    : null;
-  const shardExists = shardRel ? existsSync(join(DAV_DIR, shardRel)) : false;
+  const shardCandidates = poisonedId
+    ? [
+        join(ROOT_PATH, 'groups', poisonedId.slice(0, 1), `${poisonedId}.json`),
+        join(ROOT_PATH, 'groups', poisonedId.slice(0, 2), `${poisonedId}.json`),
+      ]
+    : [];
+  const shardRel = shardCandidates.find(p => existsSync(join(DAV_DIR, p))) ?? null;
+  const shardExists = shardRel !== null;
   check(
     '③ 远端 dufs 里真的出现了这个会话的分片（这一轮确实上传了）',
     shardExists,
-    shardRel ? `期望路径 ${shardRel}` : '没有 id'
+    shardRel ? `期望路径 ${shardRel}` : `没有 id（候选：${shardCandidates.join(' / ')}）`
   );
   if (shardExists) {
     writeFileSync(join(ARTIFACTS, 'remote-shard-path.txt'), shardRel);

@@ -72,6 +72,8 @@ import {
   serializeManifest,
   shardHeaderFromPayload,
   shardPath,
+  legacyPathDiffers,
+  legacyShardPath,
   type Manifest,
   type ShardFingerprint,
   type ShardHeader,
@@ -87,6 +89,9 @@ import {
   resolveRemoteState,
   shouldConcedeToRemote,
 } from '@/core/remoteAdjudication';
+// 同一会话两份副本的裁决口径（2026-10-26 布局改 1 位前缀）。
+// 委托给 core/opStamp，避免口径漂移 —— 与 mergeOpStamped 同一套全序。
+import { compareStampsLoose } from '@/core/opStamp';
 import { logWarn } from '@/utils/log';
 
 /** 适配器配置。口令为 null/undefined 表示用户选了「不加密」（明文存云盘）。 */
@@ -191,8 +196,20 @@ type RemoteIndex =
 
 /** 远端 groups/ 目录的一次扫描结果。 */
 interface RemoteShardScan {
-  /** 符合本版本布局的分片（id + 相对 baseUrl 的路径）。 */
-  shards: Array<{ id: string; path: string }>;
+  /** 符合本版本布局的分片（id + 相对 baseUrl 的路径 + 落点）。 */
+  shards: Array<{ id: string; path: string; loc?: 'legacy' }>;
+  /**
+   * **同一个会话的两份副本里，输掉的那一份**（相对 baseUrl 的路径）。
+   *
+   * 2026-10-26 布局改 1 位前缀后，老版本设备写的旧路径与新版本设备写的新路径
+   * 可能同时存在。裁决规则 = **操作印记大者胜**（与 mergeOpStamped 同一口径）。
+   * 输的那份不是「错误」——它是**冗余**，会在上传后自检阶段被删掉
+   * （删之前确认胜者仍可读 ⇒ 删的只是重复，不是内容）。
+   *
+   * 为什么不能「两份都当有效分片」：同一个 id 出现两条 ⇒ 索引里该有两条指纹
+   * ⇒ 合并时会对同一个会话做两次裁决 ⇒ 哪一条赢取决于遍历顺序 ⇒ 不收敛。
+   */
+  redundant: string[];
   /**
    * **不符合**本版本布局的文件（相对 baseUrl 的路径）。
    *
@@ -236,8 +253,37 @@ const DIR_SCAN_CONCURRENCY = 8;
 
 /**
  * 「索引 ↔ 实际分片」全量自检的最小间隔（毫秒）。理由见 shouldVerifyIndex。
+ *
+ * ⚠️ **2026-10-26：这个数字是限额倒推出来的，不是拍脑袋调出来的。**
+ *
+ * 一次全量扫描的请求数 = 1（列 `groups/`）+ N（逐个列前缀子目录）次 PROPFIND，
+ * 而 N = **用到的前缀目录数**。
+ * 生产会话 id 是 `nanoid()`（64 字符表 ⇒ 前 1 位 64 种取值、前 2 位 4096 种）。
+ *
+ * 坚果云官方限制（help.jianguoyun.com/?p=2064）：
+ *   · **每 30 分钟不超过 600 次请求**（免费版 600、付费版 1500）；
+ *   · 单次请求返回的文件数上限 **750**（不分页会「文件同步不完整」）。
+ *
+ * ⇒ 前缀 2 位时：1000 个会话约用到 887 个前缀目录 ⇒ 单次扫描约 888 次
+ *   ⇒ **一次扫描就超过 600** ⇒ 撞线。
+ * ⇒ 前缀 1 位时：N ≤ 64 ⇒ 单次扫描 ≤ 65 次 ⇒ 限额问题消失。
+ *
+ * ⚠️ **老库（2 位目录）的扫描成本降不下来** —— 那些目录不会被自动删掉
+ *   （删目录 = 动用户云盘上的东西，删错了就是内容丢失）。
+ *   ⇒ 对老库而言，**间隔**才是承重墙：
+ *   升级后最坏的老库 = 256 个老的 2 位目录 + 64 个新建会话的 1 位目录
+ *   ⇒ 单次扫描 321 次 ⇒ 间隔 5 分钟时 30 分钟内要发 6 × 321 = 1926 次
+ *   （**远超 600**）⇒ 间隔 30 分钟时只要 321 次 ⇒ 仍在限额内。
+ *
+ * ⚠️ 剩下的边界（不掩饰）：一个**会话数上千**的老库（2 位前缀目录 > 590 个）
+ *   单次扫描仍可能撞线 ⇒ 本版不处理（处理它就意味着删用户的目录）。
+ *
+ * ⚠️ **撞线的后果不是「变慢」**：坚果云返回 **503 BlockedTemporarily**，
+ * 官方建议「关闭同步后六小时再重新启用同步即可」
+ * ⇒ **同步直接停摆 6 小时**（用户看到的是「云端不可用」）。
+ * ⇒ 所以这个间隔是「同步还能不能用」的承重墙，不是性能调优项。
  */
-const INDEX_VERIFY_INTERVAL_MS = 5 * 60_000;
+export const INDEX_VERIFY_INTERVAL_MS = 30 * 60_000;
 
 /**
  * 远端分片的**裁决依据**（2026-10-20 D-4）。
@@ -258,6 +304,15 @@ interface RemoteShardState {
   isDeleted?: boolean;
   /** 分片在，但内容读不出来（外壳坏了）⇒ 不可裁决。 */
   unreadable?: boolean;
+  /**
+   * 读到的是**哪个文件**（完整路径，2026-10-26 布局改动后新增）。
+   *
+   * 为什么必须有：条件写的凭据（ETag）只对**它所属的那个资源**有效。
+   * 老库的分片在旧路径上，而新代码只写新路径 ⇒ 拿旧路径的 ETag 去
+   * If-Match 新路径 ⇒ 必然 412（目标根本不存在）⇒ 每次上传都失败。
+   * ⇒ 读到的路径与写的路径不一致时，条件写必须换成「仅当不存在时创建」。
+   */
+  path?: string;
 }
 
 export class WebDavBackendAdapter implements SyncBackendPort {
@@ -293,10 +348,10 @@ export class WebDavBackendAdapter implements SyncBackendPort {
   private conditionalWrites: boolean | null = null;
 
   /**
-   * **已经建好**的远端目录（相对 baseUrl 的路径，例：`TapStack/groups/ab`）。
+   * **已经建好**的远端目录（相对 baseUrl 的路径，例：`TapStack/groups/a`）。
    *
    * ── 为什么需要它（2026-10-24 审计 PERF-01）────────────────────────────
-   * 写一个分片要逐级 MKCOL（root → groups → 前 2 位前缀目录），而生产会话 id
+   * 写一个分片要逐级 MKCOL（root → groups → 前缀目录），而生产会话 id
    * 是 `nanoid()`（21 位、64 字符表 ⇒ 前 2 位有 **4096** 种取值）⇒ 1000 个会话
    * 约产生 884～899 个不同前缀目录 ⇒ 每轮上传的 MKCOL 里约 **70%** 是
    * 「对早已存在的目录再发一次必然 405 的空请求」，而且**全程串行**。
@@ -304,6 +359,12 @@ export class WebDavBackendAdapter implements SyncBackendPort {
    * 实测（真实 WebDavClient 打真实服务器）：写一个会话要 **6.89～7.91 次串行
    * 往返**（下载同库只要 1.00 次）⇒ 1000 个会话一轮上传 ≈ 6900～7900 次往返 ⇒
    * 用户看到的是「推送失败：操作超时（30 秒）」，而后台其实还在继续传。
+   *
+   * ⚠️ **2026-10-26：前缀位数改成 1 位之后，这笔账已经小了两个数量级。**
+   * 64 字符表的前 1 位只有 64 种取值 ⇒ 1000 个会话最多产生 **64** 个前缀目录
+   * （原来约 890 个）⇒ MKCOL 的空请求从约 70% 降到约 6%。
+   * ⇒ 这个缓存**仍然保留**（它是对的，且老库仍是 2 位布局 ⇒ 老库照样受益），
+   *   但别再拿「6.89 次往返/会话」当现状 —— 那是 2 位布局时代的测量值。
    *
    * ── 为什么缓存是**安全**的 ──────────────────────────────────────────
    * `client.mkcol` 把 **405（目录已存在）当成成功** ⇒ 「建过」这件事幂等 ⇒
@@ -583,8 +644,8 @@ export class WebDavBackendAdapter implements SyncBackendPort {
    *
    * ── 哪些字段是可信的、哪些是不可信的 ──────────────────────────────────
    * 可信（来自分片**内容**，逐个读回并解密）：
-   *   · id —— 来自**文件名**（`groups/<id前2位>/<id>.json`），不依赖内容，
-   *     也不依赖能不能解密 ⇒ **加密库同样拿得到**；
+   *   · id —— 来自**文件名**（`groups/<id前1位>/<id>.json`，老库是前 2 位），
+   *     不依赖内容，也不依赖能不能解密 ⇒ **加密库同样拿得到**；
    *   · updatedAt / lastOp / isDeleted —— 来自解码后的会话内容，
    *     加密库需要口令才能拿到（拿不到就中止，见下）；
    *   · etag —— 来自这次 GET 的响应头（服务端不给就没有这一项）。
@@ -614,7 +675,8 @@ export class WebDavBackendAdapter implements SyncBackendPort {
           `云端 ${GROUPS_DIR}/ 目录里有 ${scan.unexpected.length} 个无法识别的文件` +
             `（例如 ${scan.unexpected.slice(0, 3).join('、')}），目录结构与本版本不符。` +
             '已中止本次同步以免把云端当成空库导致内容被覆盖。' +
-            '请检查云盘目录是否被手工整理过，或把分片放回 groups/<id前两位>/<id>.json。'
+            '请检查云盘目录是否被手工整理过，或把分片放回 groups/<id前1位>/<id>.json' +
+            '（2026-10-26 之前建的库用 groups/<id前2位>/<id>.json，两种布局都认）。'
         );
       }
       return null; // 远端确实一个分片都没有
@@ -695,6 +757,10 @@ export class WebDavBackendAdapter implements SyncBackendPort {
         updatedAt: group.updatedAt,
         ...(group.isDeleted ? { isDeleted: true } : {}),
         ...(group.lastOp ? { lastOp: group.lastOp } : {}),
+        // 落点必须记进重建出来的索引（2026-10-26）：这个分片落在旧布局里。
+        // 不记 ⇒ 读方会按新路径去读 ⇒ 读不到 ⇒ 回退才救回来 ⇒ 而裁决用的
+        // 又是另一份 ⇒ 「读到的」与「裁决的」不是同一份 ⇒ 静默覆盖。
+        ...(shard.loc === 'legacy' ? { loc: 'legacy' as const } : {}),
       });
     }
 
@@ -710,20 +776,26 @@ export class WebDavBackendAdapter implements SyncBackendPort {
   /**
    * 扫描远端 `groups/` 目录，列出符合本版本布局的分片。
    *
-   * 布局是 `groups/<id前2位>/<id>.json`（见 layout.ts）：
+   * 布局有两种（2026-10-26 起新库用前者，老库用后者）：
+   *   · `groups/<id前1位>/<id>.json`（新）
+   *   · `groups/<id前2位>/<id>.json`（旧，老库的分片在那儿，不能当隐形数据）
    *   · 先列 `groups/` → 拿到前缀子目录；
    *   · 再逐个列前缀子目录 → 拿到 `<id>.json` 文件名。
+   *
+   * 同一个 id 在两条路径上都有一份时，按**操作印记**裁决（见 pickCopyByStamp），
+   * 并把落点记进 `loc` —— 索引必须知道「读哪一份」，否则会出现
+   * 「拿 A 的内容配 B 的印记」的静默覆盖。
    *
    * 为什么逐个列而不是 Depth:infinity：见 client.ts 的 listDir 注释
    * （截断的 infinity 结果 = 静默少列 = 静默丢数据）。
    *
-   * 为什么必须校验「文件名推导出的路径 == shardPath(id)」：
-   * 索引里的 id 会被上层拿去 `shardPath(id)` 读文件。若文件被放到了别的目录，
+   * 为什么必须校验「文件名推导出的路径 == shardPath(id) / legacyShardPath(id)」：
+   * 索引里的 id 会被上层拿去读文件。若文件被放到了别的目录，
    * 索引里的 id 指向一个**读不到**的位置 —— 那等于把这个会话变成隐形数据。
    * 所以对不上就归入 unexpected（由调用方 fail-closed），而不是将就收下。
    */
   private async scanRemoteShards(): Promise<RemoteShardScan> {
-    const scan: RemoteShardScan = { shards: [], unexpected: [], listingFailed: false };
+    const scan: RemoteShardScan = { shards: [], redundant: [], unexpected: [], listingFailed: false };
 
     const root = await this.client.listDir(this.p(GROUPS_DIR));
     // ⚠️ 「列不出来」与「列出来是空的」必须分开：
@@ -740,6 +812,9 @@ export class WebDavBackendAdapter implements SyncBackendPort {
     for (const loose of rootEntries.filter(e => !e.isCollection)) {
       scan.unexpected.push(loose.path);
     }
+
+    // 同一个 id 可能在新旧两条路径上各有一份 ⇒ 先按 id 归拢，最后统一裁决。
+    const copies = new Map<string, { current?: string; legacy?: string }>();
 
     await mapWithConcurrency(prefixDirs, DIR_SCAN_CONCURRENCY, async dir => {
       const child = await this.client.listDir(dir.path);
@@ -761,16 +836,95 @@ export class WebDavBackendAdapter implements SyncBackendPort {
           scan.unexpected.push(c.path);
           continue;
         }
-        const expected = this.p(shardPath(info.id));
-        if (expected !== c.path) {
-          scan.unexpected.push(c.path);
+        // ── 两种布局都认（2026-10-26）─────────────────────────────────────
+        // 新布局：groups/<id前1位>/<id>.json
+        // 旧布局：groups/<id前2位>/<id>.json（老库的分片在那儿，不能当隐形数据）
+        const currentPath = this.p(shardPath(info.id));
+        const legacyPath = legacyPathDiffers(info.id) ? this.p(legacyShardPath(info.id)) : null;
+        if (c.path === currentPath) {
+          const slot = copies.get(info.id) ?? {};
+          slot.current = c.path;
+          copies.set(info.id, slot);
           continue;
         }
-        scan.shards.push({ id: info.id, path: c.path });
+        if (legacyPath !== null && c.path === legacyPath) {
+          const slot = copies.get(info.id) ?? {};
+          slot.legacy = c.path;
+          copies.set(info.id, slot);
+          continue;
+        }
+        // 路径对不上任何一种布局 ⇒ 目录被人动过（或被别的程序整理过）。
+        scan.unexpected.push(c.path);
       }
     });
 
+    // ── 同一个 id 的两份副本：按操作印记裁决 ──────────────────────────────
+    for (const [id, slot] of copies) {
+      if (slot.current && slot.legacy) {
+        const winner = await this.pickCopyByStamp(slot.current, slot.legacy);
+        scan.shards.push({ id, path: winner.path, ...(winner.loc === 'legacy' ? { loc: 'legacy' as const } : {}) });
+        scan.redundant.push(winner.loserPath);
+        continue;
+      }
+      if (slot.legacy) {
+        scan.shards.push({ id, path: slot.legacy, loc: 'legacy' });
+        continue;
+      }
+      if (slot.current) {
+        scan.shards.push({ id, path: slot.current });
+      }
+    }
+
+    // 两份副本并存 = 老设备与新设备都写过这个会话。
+    // **不自动删任何一份**（2026-10-26）：两台设备的 Lamport 序号互不可比，
+    // 「哪份更晚」只能靠印记判断，而删错那一份就是**不可逆的**内容丢失。
+    // 保留两份 + 索引记下读哪一份 ⇒ 正确性有保证，代价只是多占一个文件。
+    if (scan.redundant.length > 0) {
+      logWarn(
+        `[webdav] 云端有 ${scan.redundant.length} 个会话同时存在于新旧两种目录布局中` +
+          `（例：${scan.redundant.slice(0, 3).join('、')}）。已按操作印记选一份为准，` +
+          '两份都保留（不会自动删除，以免删错那一份造成内容丢失）。'
+      );
+    }
+
     return scan;
+  }
+
+  /**
+   * 同一个会话的两份副本（一份新布局、一份旧布局）里哪一份说了算。
+   *
+   * ── 判据：操作印记大者胜（与 mergeOpStamped 同一口径）──────────────────
+   * 为什么不能「新的那份永远赢」：老版本设备（2026-10-26 之前）写的**就是**旧
+   * 路径。若它比新版本设备**更晚**地改了那个会话，它的新内容就在旧路径上。
+   * 一律让新路径赢 ⇒ 那个改动被静默吞掉（用户在新设备上永远看不到它）。
+   *
+   * 为什么不能比「修改时间」：多台设备的墙上时钟不可信（这正是仓库里
+   * `opStamp` 存在的理由）。只有印记是全序的。
+   *
+   * 印记取自**明文头部**（不解密）；老分片没有头部 ⇒ 印记未知 ⇒ 按
+   * `compareStampsLoose` 的口径当成「最小」⇒ 有头部的那份赢。
+   * 两份都没有印记 ⇒ 平局 ⇒ **新布局赢**（确定性 tiebreak，保证多台设备
+   * 扫出来是同一个结果 ⇒ 收敛）。
+   */
+  private async pickCopyByStamp(
+    currentPath: string,
+    legacyPath: string
+  ): Promise<{ path: string; loc?: 'legacy'; loserPath: string }> {
+    const [curHdr, legHdr] = await Promise.all([
+      this.readShardHeaderOnly(currentPath),
+      this.readShardHeaderOnly(legacyPath),
+    ]);
+    const cmp = compareStampsLoose(curHdr?.lastOp, legHdr?.lastOp);
+    if (cmp >= 0) return { path: currentPath, loserPath: legacyPath };
+    return { path: legacyPath, loc: 'legacy', loserPath: currentPath };
+  }
+
+  /** 只读一个分片的明文头部（不解密）。读不到 ⇒ undefined。 */
+  private async readShardHeaderOnly(path: string): Promise<ShardHeader | undefined> {
+    const got = await this.client.get(path);
+    if (!got || 'notFound' in got) return undefined;
+    const env = parseEnvelope(got.body);
+    return env?.hdr;
   }
 
   /**
@@ -863,8 +1017,10 @@ export class WebDavBackendAdapter implements SyncBackendPort {
     if (scan.listingFailed) {
       const lost: string[] = [];
       for (const id of writtenIds) {
-        const f = await this.client.get(this.p(shardPath(id)));
-        if (!f || 'notFound' in f) lost.push(id);
+        // 两条落点都试：新布局写的新路径，老布局写的旧路径。
+        // 只查一条 ⇒ 老库上的分片会被误判成「写完就丢」。
+        const f = await this.getShardFile(id);
+        if (!f) lost.push(id);
       }
       if (lost.length > 0) {
         throw new Error(
@@ -1189,7 +1345,7 @@ export class WebDavBackendAdapter implements SyncBackendPort {
   private async writeShard(
     id: string,
     payload: Record<string, unknown>,
-    opts: { ifMatch?: string; ifNoneMatch?: string }
+    opts: { ifMatch?: string; ifNoneMatch?: string; path?: string }
   ): Promise<{ etag: string | null }> {
     const vault = this.vault;
     // ── 2026-10-20 D-4：把印记放进**明文头部**（与密文正文分离）──────────
@@ -1204,10 +1360,27 @@ export class WebDavBackendAdapter implements SyncBackendPort {
       ? makeEncryptedEnvelope(await vault.encrypt(payload), header)
       : makePlainEnvelope(payload, header);
 
-    const path = this.p(shardPath(id));
+    // ⚠️ **写到哪里**（2026-10-26）：**写回它原来所在的位置**。
+    //
+    // 远端已经有这个会话时，写它**当前所在的那条路径**（老库就在老路径上）；
+    // 远端没有（新会话）时才用新布局的路径。
+    //
+    // 为什么不是「一律写新路径」：那会在老库里造出**同一个会话的两份**
+    // （新的在 1 位目录、旧的留在 2 位目录）⇒ 之后每次列目录都要裁决一次
+    // ⇒ 而裁决只认**操作印记** ⇒ 「以本机为准」这种显式覆盖一旦本地那份
+    // 的号更小（本地副本本来就旧），**裁决会把老那份判成赢**
+    // ⇒ 用户的显式覆盖被**静默撤回**。
+    // ⇒ 写回原位 = 每个会话永远只有一份文件 ⇒ 没有裁决 ⇒ 没有静默撤回。
+    //
+    // 代价：老库因此**不会**自动迁到 1 位布局（它的 2 位目录也不会变空）。
+    // 这个代价是**可以接受的**：目录空了也得列一次（成本一样），
+    // 而「静默撤回用户刚点的覆盖」是数据级的伤害。
+    const path = opts.path ?? this.p(shardPath(id));
     // 目录按需建（见 ensureDir / knownDirs 的注释）：每个前缀目录最多建一次，
     // 不再每个会话重发 3 次 MKCOL。
-    const dirFull = this.p(`${GROUPS_DIR}/${id.slice(0, 2)}`);
+    // ⚠️ 目录名必须与**要写的路径**同源：两处各算一遍就会在某一次只改一处
+    // ⇒ PUT 落到一个算不出来的路径 ⇒ 分片对所有设备隐形。
+    const dirFull = path.slice(0, path.lastIndexOf('/'));
     await this.ensureDir(dirFull);
     const putArgs = {
       ...(opts.ifMatch ? { ifMatch: opts.ifMatch } : {}),
@@ -1248,14 +1421,73 @@ export class WebDavBackendAdapter implements SyncBackendPort {
     }
   }
 
-  /** 读一个分片并解码成会话。返回 null = 文件缺失或不可解析（计入统计，不静默丢）。 */
-  private async readShard(id: string): Promise<{ group: TabGroup | null; etag: string | null; header?: ShardHeader }> {
-    const got = await this.client.get(this.p(shardPath(id)));
-    // 'notFound' in got = 404/409，即这个分片在远端不存在（首次同步的常态）。
-    if (!got || 'notFound' in got) return { group: null, etag: null };
+  /**
+   * 读一个分片文件：**按索引记的落点优先，找不到再回退另一条路径**（2026-10-26）。
+   *
+   * ── 为什么必须回退 ────────────────────────────────────────────────────
+   * 布局从「前缀 2 位」改成「前缀 1 位」后，2026-10-13 ~ 2026-10-26 之间建的
+   * 库，分片全都落在旧路径上。若只读新路径 ⇒ 那些分片对所有设备**隐形**
+   * ⇒ 老用户的云端历史看起来像被清空了 ⇒ 不可逆（1.22.0 起无回收站）。
+   *
+   * ⇒ 回退是「老库继续能用」的保证，不是优化。
+   *
+   * ── 为什么按「索引的落点」优先，而不是固定「新路径优先」────────────────
+   * 同一个会话可能**两份都在**（老版本设备写旧路径、新版本设备写新路径）。
+   * 此时索引用 `loc` 记下「哪一份说了算」（按操作印记裁决，见 scanRemoteShards）。
+   * 若读的时候不认这个落点，就会出现「按 A 的内容、按 B 的印记裁决」——
+   * 那正是静默的数据覆盖（用旧内容盖掉新内容，或反过来）。
+   *
+   * ⚠️ 代价：一条路径读不到时会多试一次。方向上仍然划算 ——
+   * 老库零改造可用 & 裁决与读取永远同源。
+   */
+  /**
+   * 一个分片**可能**存在的落点，按优先级排列（2026-10-26）。
+   *
+   * 目录布局从 `groups/<id前2位>/` 改成了 `groups/<id前1位>/` ⇒
+   * 同一个 id 在老库里可能落在旧目录、在新库里落在新目录。
+   * `loc` 来自索引里记的落点：它决定**先试哪条**（裁决与读取必须同源）。
+   */
+  private shardPathCandidates(id: string, loc?: 'legacy'): string[] {
+    const current = this.p(shardPath(id));
+    const legacy = legacyPathDiffers(id) ? this.p(legacyShardPath(id)) : null;
+    if (loc === 'legacy' && legacy !== null) return [legacy, current];
+    return legacy !== null ? [current, legacy] : [current];
+  }
 
-    const env = parseEnvelope(got.body);
-    if (!env) return { group: null, etag: got.etag };
+  /**
+   * 这个落点是不是**旧布局**（`groups/<id前2位>/`）？
+   *
+   * 索引的 `loc` 字段就是靠它写的 —— 它必须与**文件实际在哪**同源，
+   * 否则读方会去读另一个地方（裁决与读取不同源 ⇒ 静默的数据覆盖）。
+   */
+  private isLegacyLayoutPath(id: string, path: string): boolean {
+    return legacyPathDiffers(id) && path === this.p(legacyShardPath(id));
+  }
+
+  private async getShardFile(
+    id: string,
+    loc?: 'legacy'
+  ): Promise<{ path: string; body: string; etag: string | null } | null> {
+    for (const path of this.shardPathCandidates(id, loc)) {
+      const got = await this.client.get(path);
+      if (got && !('notFound' in got)) {
+        return { path, body: got.body, etag: got.etag ?? null };
+      }
+    }
+    return null;
+  }
+
+  /** 读一个分片并解码成会话。返回 null = 文件缺失或不可解析（计入统计，不静默丢）。 */
+  private async readShard(
+    id: string,
+    loc?: 'legacy'
+  ): Promise<{ group: TabGroup | null; etag: string | null; header?: ShardHeader }> {
+    const file = await this.getShardFile(id, loc);
+    // 文件不存在（首次同步的常态）：两条路径都没有。
+    if (!file) return { group: null, etag: null };
+
+    const env = parseEnvelope(file.body);
+    if (!env) return { group: null, etag: file.etag };
 
     let payload: unknown;
     if (env.kind === 'encrypted') {
@@ -1268,7 +1500,7 @@ export class WebDavBackendAdapter implements SyncBackendPort {
     }
     return {
       group: decodeGroup(payload),
-      etag: got.etag,
+      etag: file.etag,
       ...(env.hdr ? { header: env.hdr } : {}),
     };
   }
@@ -1287,24 +1519,28 @@ export class WebDavBackendAdapter implements SyncBackendPort {
    * 取值顺序：明文头部（hdr）→ 老分片（没有 hdr）则解密正文取印记。
    * 头部存在时**不解密**：快，且不依赖口令。
    */
-  private async readRemoteShardState(id: string): Promise<RemoteShardState> {
-    const got = await this.client.get(this.p(shardPath(id)));
-    if (!got || 'notFound' in got) return { exists: false, etag: null };
+  private async readRemoteShardState(id: string, loc?: 'legacy'): Promise<RemoteShardState> {
+    // 按索引记的落点优先、找不到回退另一条路径（2026-10-26）——
+    // 与 readShard 同一口径。裁决的依据必须与下载读的是**同一份**内容，
+    // 否则会出现「拿旧路径的印记配新路径的内容」那种反向覆盖。
+    const file = await this.getShardFile(id, loc);
+    if (!file) return { exists: false, etag: null };
 
-    const env = parseEnvelope(got.body);
+    const env = parseEnvelope(file.body);
     if (!env) {
       // 分片在，但外壳坏了（被截断 / 被改）。它是**不可裁决**的：
       // 既不能证明它更新，也不能证明它更旧。按「内容读不到」处理，
       // 由调用方决定是保守认输还是修复覆盖。
-      return { exists: true, etag: got.etag, unreadable: true };
+      return { exists: true, etag: file.etag, unreadable: true, path: file.path };
     }
 
     if (env.hdr?.lastOp) {
       return {
         exists: true,
-        etag: got.etag,
+        etag: file.etag,
         lastOp: env.hdr.lastOp,
         isDeleted: env.hdr.isDeleted === true,
+        path: file.path,
       };
     }
 
@@ -1322,9 +1558,10 @@ export class WebDavBackendAdapter implements SyncBackendPort {
     const group = decodeGroup(payload);
     return {
       exists: true,
-      etag: got.etag,
+      etag: file.etag,
       ...(group?.lastOp ? { lastOp: group.lastOp } : {}),
       isDeleted: group?.isDeleted === true,
+      path: file.path,
     };
   }
 
@@ -1370,7 +1607,7 @@ export class WebDavBackendAdapter implements SyncBackendPort {
 
     for (const shard of index.manifest.shards) {
       try {
-        const { group } = await this.readShard(shard.id);
+        const { group } = await this.readShard(shard.id, shard.loc);
         if (!group) {
           unreadable.push(shard.id);
           continue;
@@ -1418,7 +1655,7 @@ export class WebDavBackendAdapter implements SyncBackendPort {
     for (const shard of index.manifest.shards) {
       if (!wanted.has(shard.id)) continue;
       try {
-        const { group } = await this.readShard(shard.id);
+        const { group } = await this.readShard(shard.id, shard.loc);
         if (!group) {
           unreadable.push(shard.id);
           continue;
@@ -1516,7 +1753,7 @@ export class WebDavBackendAdapter implements SyncBackendPort {
       //
       // 代价：每个待传会话多一次 GET。这笔钱必须花 ——
       // 少一次 GET 换来的「省流量」，赔的是一次静默的数据覆盖。
-      const remote = await this.readRemoteShardState(g.id);
+      const remote = await this.readRemoteShardState(g.id, existing?.loc);
       const remoteState = resolveRemoteState({
         content:
           remote.exists && !remote.unreadable
@@ -1569,6 +1806,10 @@ export class WebDavBackendAdapter implements SyncBackendPort {
         ...(result.etag ? { etag: result.etag } : {}),
         updatedAt: g.updatedAt || this.now(),
         ...(g.lastOp ? { lastOp: g.lastOp } : {}),
+        // 落点必须与**文件实际在哪**同源（2026-10-26）：写回老库的旧路径时
+        // 记 loc='legacy'，否则索引会说「在新路径」⇒ 读方去读新路径
+        // （404 ⇒ 回退才救回来）⇒ 而裁决用的是另一份 ⇒ 静默覆盖。
+        ...(this.isLegacyLayoutPath(g.id, result.path) ? { loc: 'legacy' as const } : {}),
       });
     }
 
@@ -1687,7 +1928,7 @@ export class WebDavBackendAdapter implements SyncBackendPort {
     group: TabGroup,
     remote: RemoteShardState,
     payload: Record<string, unknown>
-  ): Promise<{ skipped: false; etag: string | null } | { skipped: true }> {
+  ): Promise<{ skipped: false; etag: string | null; path: string } | { skipped: true }> {
     // 条件写能力是**显式状态**（探测一次、缓存住；见 conditionalWriteCapability）：
     //   · 支持 ⇒ If-Match / If-None-Match 是真乐观锁：服务端会真的拒绝过期写入，
     //     412 时我们重读分片重裁（这条路径才有意义）。
@@ -1696,18 +1937,30 @@ export class WebDavBackendAdapter implements SyncBackendPort {
     //     所以**不发**条件头 —— 发了只是让代码看起来像有锁，
     //     而「以为有锁」比「没有锁」更糟（见 probeConditionalWrites 的文档）。
     const conditional = await this.conditionalWriteCapability();
+    // 写到哪里：**写回它原来所在的位置**（老库就在老路径上；远端没有才用新路径）。
+    // ⇒ 条件写的凭据（ETag）天然属于**要写的那个资源** ⇒ If-Match 成立。
+    //
+    // ⚠️ 为什么不能「一律写新路径」：那会往**另一条路径**写 ⇒ 条件写的凭据
+    //   不属于那个资源 ⇒ 必然 412 ⇒ 落到冲突重试 ⇒ 而重试里会按印记「认输」
+    //   ⇒ 「以本机为准」这种**显式覆盖**（本地那份的号本来就更小）被
+    //   **静默丢弃**（用户点了覆盖，什么都没发生，也没报错）。
+    // ⇒ 写回原位 = 每个会话永远只有一份文件 ⇒ 一次 PUT 就成 ⇒ 没有认输。
+    // 详见 writeShard 的注释。
+    let writePath = remote.exists && remote.path ? remote.path : this.p(shardPath(group.id));
     let ifMatch = conditional ? remote.etag ?? undefined : undefined;
     // 首次写这个会话时用 If-None-Match:'*'（仅当不存在时创建）。
     // 不带条件会覆盖掉「另一台设备刚创建的同 id 分片」——那正是并发窗口。
     let ifNoneMatch = conditional ? (remote.exists ? undefined : '*') : undefined;
 
+
     for (let attempt = 0; attempt < CONFLICT_RETRY_LIMIT; attempt++) {
       try {
         const out = await this.writeShard(group.id, payload, {
+          path: writePath,
           ...(ifMatch ? { ifMatch } : {}),
           ...(ifNoneMatch ? { ifNoneMatch } : {}),
         });
-        return { skipped: false, etag: out.etag };
+        return { skipped: false, etag: out.etag, path: writePath };
       } catch (err) {
         const conflict = err instanceof WebDavError && err.isPreconditionFailed;
         if (!conflict) throw err;
@@ -1729,6 +1982,8 @@ export class WebDavBackendAdapter implements SyncBackendPort {
           return { skipped: true };
         }
         // 本地赢（或对端此刻又删了/读不到）：用刚拿到的 ETag 重试一次。
+        // ⚠️ 写回**它此刻所在的位置**（重读时它可能已经换了地方）。
+        writePath = latest.exists && latest.path ? latest.path : this.p(shardPath(group.id));
         ifMatch = conditional ? latest.etag ?? undefined : undefined;
         ifNoneMatch = conditional ? (latest.exists ? undefined : '*') : undefined;
       }
@@ -1790,9 +2045,23 @@ export class WebDavBackendAdapter implements SyncBackendPort {
       // 取 max(设备 seq + 1, 云端已知 stamp + 1)：压过另一台设备写过的更大 seq，
       // 否则墓碑反而更小，对端合并时删除输给旧副本而「复活」（2026-10-14 修 P1）。
       const tombstone = encodeTombstone(id, now, await this.nextDeleteStamp(existing?.lastOp));
+      // 写到哪里：**写回它原来所在的位置**（老库就在老路径上；远端没有才用新路径）。
+      // ⇒ 墓碑**覆盖**那一份文件（而不是另写一份）⇒ 那个会话永远只有一份
+      // ⇒ 不会有「两份副本按印记裁决」把墓碑判输的情况。
+      // ⇒ 条件写的凭据也天然属于**要写的那个资源**（拿索引里抄的 ETag 去
+      //   If-Match 另一条路径必然 412 ⇒ 每次删除广播都失败）。
+      const remote = await this.readRemoteShardState(id, existing?.loc);
+      const writePath = remote.exists && remote.path ? remote.path : this.p(shardPath(id));
+      // ⚠️ 条件写的凭据只能来自**刚刚读到的那个资源**：
+      // 索引里抄的 ETag 可能是**旧的**（分片被别的设备改过、或被手动删过）
+      // ⇒ 拿它 If-Match 一个**不存在**的资源 ⇒ 按 RFC 9110 必然 412
+      // ⇒ 删除广播直接失败 ⇒ **用户的删除意图丢掉**（而且不重试到成功）。
+      // ⇒ 远端确实没有这一份 ⇒ 正确的条件是「仅当不存在时创建」。
+      const etag = remote.exists ? remote.etag : undefined;
       const out = await this.writeShard(id, tombstone, {
-        ...(conditional && existing?.etag ? { ifMatch: existing.etag } : {}),
-        ...(conditional && !existing?.etag ? { ifNoneMatch: '*' } : {}),
+        path: writePath,
+        ...(conditional && etag ? { ifMatch: etag } : {}),
+        ...(conditional && !etag && !remote.exists ? { ifNoneMatch: '*' } : {}),
       });
 
       // ── D-5：写完必须读回确认，否则不算「广播成功」 ──────────────────────
@@ -1804,6 +2073,9 @@ export class WebDavBackendAdapter implements SyncBackendPort {
         updatedAt: now,
         isDeleted: true,
         ...(tombstone.lastOp ? { lastOp: tombstone.lastOp as { d: string; s: number } } : {}),
+        // 落点（2026-10-26）：墓碑覆盖的是**它原来所在的那份文件**
+        // ⇒ 老库的墓碑仍在旧路径 ⇒ 索引必须这么记。
+        ...(this.isLegacyLayoutPath(id, writePath) ? { loc: 'legacy' as const } : {}),
       };
       const idx = tombstoneEntries.findIndex(e => e.id === id);
       if (idx >= 0) tombstoneEntries[idx] = entry;
@@ -1867,19 +2139,21 @@ export class WebDavBackendAdapter implements SyncBackendPort {
 
     // 读不到内容 ⇒ 退到 ETag 比对（弱证据）。
     if (writtenEtag) {
-      try {
-        const stat = await this.client.stat(this.p(shardPath(id)));
-        if (stat.exists && stat.etag && stat.etag === writtenEtag) {
-          // ETag 一致：内容没被替换过。仍然不能证明「是墓碑」，
-          // 但至少不是「写失败却被当成成功」。
-          logWarn(
-            `[webdav] 墓碑 ${id} 读不回内容，只能用 ETag 核对（etag=${stat.etag}）。` +
-              '已按「写入未被替换」处理'
-          );
-          return;
+      for (const path of this.shardPathCandidates(id)) {
+        try {
+          const stat = await this.client.stat(path);
+          if (stat.exists && stat.etag && stat.etag === writtenEtag) {
+            // ETag 一致：内容没被替换过。仍然不能证明「是墓碑」，
+            // 但至少不是「写失败却被当成成功」。
+            logWarn(
+              `[webdav] 墓碑 ${id} 读不回内容，只能用 ETag 核对（etag=${stat.etag}）。` +
+                '已按「写入未被替换」处理'
+            );
+            return;
+          }
+        } catch {
+          /* 落到下面抛错 */
         }
-      } catch {
-        /* 落到下面抛错 */
       }
     }
 
@@ -2015,7 +2289,14 @@ export class WebDavBackendAdapter implements SyncBackendPort {
     for (const s of expired) {
       // 先删文件再改 manifest：反过来的话，中途失败会留下「manifest 里没有、
       // 文件还在」的孤儿。而孤儿只会占空间，不会影响正确性（manifest 是真相源）。
-      await this.client.delete(this.p(shardPath(s.id)));
+      //
+      // ⚠️ 两条落点都要删（2026-10-26）：目录布局改过，老库的分片可能躺在
+      // 旧目录里。只删新路径 ⇒ 旧目录那份变成**隐形分片**（索引里没有、
+      // 磁盘上有）⇒ 下一轮重建索引会把它当成「多出来的会话」复活。
+      // DELETE 404 视为成功，所以多删一次不花钱。
+      for (const path of this.shardPathCandidates(s.id, s.loc)) {
+        await this.client.delete(path);
+      }
     }
 
     const expiredIds = new Set(expired.map(s => s.id));

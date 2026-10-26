@@ -577,6 +577,13 @@ export const downloadSync = {
             typeof (groupAny as { deleted_at?: unknown }).deleted_at === 'string'
               ? String((groupAny as { deleted_at?: unknown }).deleted_at)
               : undefined,
+          // 2026-10-25：云端 imported_at 列存在时才有值 —— 它承载
+          // 「这个会话的保存时间未知」（来源格式不带时间戳的导入件）。
+          // 列不存在 / 无值 ⇒ undefined ⇒ 那条会话的保存时间**是**已知的。
+          importedAt:
+            typeof (groupAny as { imported_at?: unknown }).imported_at === 'string'
+              ? String((groupAny as { imported_at?: unknown }).imported_at)
+              : undefined,
           // 阶段二·§6.1：操作印记。NULL 视为最小值（迁移前 / 老客户端）。
           // 仅当两侧都有值时构造对象，否则留 undefined → mergeOpStamped 走 EMPTY_STAMP。
           lastOp:

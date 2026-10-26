@@ -58,6 +58,9 @@ export type Database = {
           deleted_at: Nullable<string>;
           /** 20260909_add_op_stamp_columns.sql:20 — text，可空 */
           last_op_device: Nullable<string>;
+          /** 20261025_add_imported_at_to_tab_groups.sql — timestamptz NULL
+           *  （「保存时间未知」的标记；列不存在时上传侧整列省略，见 upload.ts） */
+          imported_at: Nullable<string>;
           /** 20260909_add_op_stamp_columns.sql:21 — bigint，可空 */
           last_op_seq: Nullable<number>;
           /** 以下三列无迁移出处，类型取自 src/types/tab.ts:58-67 SupabaseTabGroup
@@ -80,6 +83,7 @@ export type Database = {
           deleted_at?: Nullable<string>;
           last_op_device?: Nullable<string>;
           last_op_seq?: Nullable<number>;
+          imported_at?: Nullable<string>;
           is_locked?: boolean;
           device_id?: string;
           last_sync?: string;
@@ -94,6 +98,7 @@ export type Database = {
           deleted_at?: Nullable<string>;
           last_op_device?: Nullable<string>;
           last_op_seq?: Nullable<number>;
+          imported_at?: Nullable<string>;
           is_locked?: boolean;
           device_id?: string;
           last_sync?: string;

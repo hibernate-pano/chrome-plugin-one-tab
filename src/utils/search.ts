@@ -1,5 +1,6 @@
 import { Tab, TabGroup } from '@/types/tab';
 import { hostMatchesDomainFilter } from '@/core/hostName';
+import { hasUnknownSaveTime } from '@/core/sessionSaveTime';
 
 export const SCORE_WEIGHTS = {
   TITLE_EXACT: 100,
@@ -47,7 +48,16 @@ export interface SearchFilters {
   domain?: string;
   groupName?: string;
   pinned?: 'all' | 'only' | 'exclude';
-  savedWithin?: '24h' | '7d' | '30d' | 'older';
+  /**
+   * 保存时间桶。
+   *
+   * ⚠️ `'unknown'` = **「时间未知」**（2026-10-25 新增）：来源格式不带时间戳的
+   * 导入件（OneTab）**没有保存时间**可填 ⇒ 它不属于「24 小时内 / 7 天内 /
+   * 30 天内 / 30 天前」里的任何一个 —— 说它「24 小时内」是假的，说它「30 天前」
+   * 同样是假的（我们**不知道**）。⇒ 它只在「时间未知」这个桶里出现，
+   * 这样它既不会混进「最近保存的」里，也**不会**被时间筛选静默藏起来。
+   */
+  savedWithin?: '24h' | '7d' | '30d' | 'older' | 'unknown';
 }
 
 const normalizeText = (value: string, caseSensitive: boolean) => {
@@ -76,6 +86,18 @@ const matchesSavedWithin = (group: TabGroup, savedWithin?: SearchFilters['savedW
     return true;
   }
 
+  // ⚠️ 保存时间**未知**的会话（来源格式不带时间戳的导入件）——
+  // 2026-10-25：它不属于任何时间桶。
+  //
+  // 【为什么不塞进「30 天前」】那是个断言（比 30 天早），而我们**不知道**它多久；
+  // 【为什么不塞进「24 小时内」】那更假（导入时刻就是「现在」）——
+  // 这正是本条判据要修的那个谎：导入的一批两年前的会话被算成「24 小时内」。
+  //
+  // ⇒ 只在「时间未知」这个桶里出现：**不混进「最近保存的」，也不被静默藏起来**。
+  if (hasUnknownSaveTime(group)) {
+    return savedWithin === 'unknown';
+  }
+
   const createdAt = new Date(group.createdAt).getTime();
 
   if (Number.isNaN(createdAt)) {
@@ -94,6 +116,11 @@ const matchesSavedWithin = (group: TabGroup, savedWithin?: SearchFilters['savedW
       return ageMs <= 30 * dayMs;
     case 'older':
       return ageMs > 30 * dayMs;
+    case 'unknown':
+      // 上面已经return了（保存时间未知的会话才会走到这里）——
+      // 留这一支是为了 switch 的**穷尽性**：漏掉一个取值 ⇒ TS 报错，
+      // 而不是运行时悄悄按「匹配」处理。
+      return false;
     default:
       return true;
   }

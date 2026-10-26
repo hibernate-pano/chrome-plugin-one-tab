@@ -14,7 +14,13 @@ import { readSessionSafely, toSessionReadError } from './sessionRead';
 import { logError, logInfo, logWarn } from '../log';
 // supportsOpStamp      → 上传路径（fail-open 正确：少带一列，退化但仍能上传）
 // supportsOpStampStrict → 删除广播（fail-open 错误：见 supportsOpStampStrict 注释）
-import { supportsCloudTombstone, supportsDeletedAt, supportsOpStamp, supportsOpStampStrict } from './probe';
+import {
+  supportsCloudTombstone,
+  supportsDeletedAt,
+  supportsImportedAt,
+  supportsOpStamp,
+  supportsOpStampStrict,
+} from './probe';
 import { chunkIds, UPSERT_ROW_BATCH_SIZE } from './idBatches';
 import {
   upsertWithMissingColumnFallback,
@@ -154,6 +160,83 @@ export function selectRowsForUpload(
     return opts.tombstoneColumn ? [...groups] : groups.filter(g => g.isDeleted !== true);
   }
   return groups.filter(g => g.isDeleted !== true);
+}
+
+/**
+ * 一条会话上云时写的那一行（**纯函数**）。
+ *
+ * ── 为什么把它从上传流程里抽出来 ──────────────────────────────────────────
+ *
+ * 2026-10-25（修复①）之前，这一行的构造是**内联**在上传流程的 `.map()` 里
+ * ⇒ 「上传时到底带不带 `imported_at`」这件事**没法直接测**：
+ * 只能靠读源码判断 ⇒ 而「源码里出现了某段代码」= 零检测力
+ * （守卫必须**真的调用那条路径**）。
+ *
+ * ⇒ 抽成纯函数：判据可以直接**调它**，
+ *   守的是「这一行**真的**带上了那个列」这个**行为**，
+ *   而不是「源码里写了那行代码」。
+ *
+ * ⚠️ 抽出来**不改行为**（逐字搬运）。
+ */
+export interface TabGroupRowOptions {
+  userId: string;
+  deviceId: string;
+  /** 本次上传的时刻（`last_sync` 与缺省时间戳都用它）。 */
+  currentTime: string;
+  /** 云端**有没有** `last_op_*` 列（没有就整块省略 ⇒ 否则整批 upsert 报 42703）。 */
+  opStampSupported: boolean;
+  /** 云端**有没有** `imported_at` 列（2026-10-25；同上）。 */
+  importedAtSupported: boolean;
+}
+
+export function buildTabGroupRow(
+  group: TabGroup,
+  opts: TabGroupRowOptions
+): SupabaseTabGroup {
+  // 确保必要字段都有值
+  const createdAt = group.createdAt || opts.currentTime;
+  const updatedAt = group.updatedAt || opts.currentTime;
+
+  // 上传侧止损：tabs 字段异常时置空数组，绝不把坏形状数据原样上行
+  const sourceTabs = Array.isArray(group.tabs) ? group.tabs : [];
+  if (!Array.isArray(group.tabs)) {
+    logWarn(`标签组 ${group.id} 的 tabs 字段不是数组，已按空数组上传（组ID: ${group.id}）`);
+  }
+
+  // 将标签转换为 TabData 格式（含 tab 级 op-stamp，§5.3 上云往返）
+  const tabsData: TabData[] = sourceTabs.map(tab => serializeTab(tab));
+
+  // 准备返回对象
+  const returnObj = {
+    id: group.id,
+    name: group.name || 'Unnamed Group',
+    created_at: createdAt,
+    updated_at: updatedAt,
+    is_locked: group.isLocked || false,
+    user_id: opts.userId,
+    device_id: opts.deviceId,
+    last_sync: opts.currentTime,
+    // 阶段二·§6.1：上传操作印记。NULL 表示「无从比较」，触发器只在双侧都有值时仲裁。
+    // 云端列不存在时整体省略（见 supportsOpStamp）。
+    ...(opts.opStampSupported
+      ? {
+          last_op_device: group.lastOp?.d ?? null,
+          last_op_seq: typeof group.lastOp?.s === 'number' ? group.lastOp.s : null,
+        }
+      : {}),
+    // 2026-10-25：「保存时间未知」的标记。
+    // 云端没有 imported_at 列时**整列省略**（照 opStamp 的降级模式）——
+    // 带上不存在的列会让整批 upsert 报 42703 ⇒ 那会把**所有**会话卡在本地。
+    // 降级后的代价是**已知边界**：换设备下载回来，那条会话会显示成普通会话。
+    ...(opts.importedAtSupported && group.importedAt
+      ? { imported_at: group.importedAt }
+      : {}),
+    // 保留兼容（§11 version 冻结）；新旧触发器共存期间仍写入。
+    version: typeof group.version === 'number' ? group.version : 1,
+    tabs_data: tabsData, // 临时存储，稍后会被加密
+  };
+
+  return returnObj as SupabaseTabGroup;
 }
 
 /**
@@ -896,6 +979,9 @@ export const uploadSync = {
     const opStampSupported = await supportsOpStamp();
     // 云端是否已有 is_deleted 列（覆盖模式能否把本地墓碑写上云的前提）
     const tombstoneSupported = await supportsCloudTombstone();
+    // 2026-10-25：云端是否已有 imported_at 列（「保存时间未知」的标记）。
+    // 没有就整列省略 —— 带上不存在的列会让整批 upsert 报 42703 失败。
+    const importedAtSupported = await supportsImportedAt();
 
     // 覆盖模式必须把本地墓碑一起上行：覆盖 = 先 DELETE 掉云端该用户的全部行，
     // 墓碑若不随 upsert 一起写，删除意图就随那次 DELETE 一起丢了
@@ -945,45 +1031,15 @@ export const uploadSync = {
       );
     }
 
-    const groupsWithUser = uploadRows.map(group => {
-      // 确保必要字段都有值
-      const createdAt = group.createdAt || currentTime;
-      const updatedAt = group.updatedAt || currentTime;
-
-      // 上传侧止损：tabs 字段异常时置空数组，绝不把坏形状数据原样上行
-      const sourceTabs = Array.isArray(group.tabs) ? group.tabs : [];
-      if (!Array.isArray(group.tabs)) {
-        logWarn(`标签组 ${group.id} 的 tabs 字段不是数组，已按空数组上传（组ID: ${group.id}）`);
-      }
-
-        // 将标签转换为 TabData 格式（含 tab 级 op-stamp，§5.3 上云往返）
-        const tabsData: TabData[] = sourceTabs.map(tab => serializeTab(tab));
-
-      // 准备返回对象
-      const returnObj = {
-        id: group.id,
-        name: group.name || 'Unnamed Group',
-        created_at: createdAt,
-        updated_at: updatedAt,
-        is_locked: group.isLocked || false,
-        user_id: userId,
-        device_id: deviceId,
-        last_sync: currentTime,
-        // 阶段二·§6.1：上传操作印记。NULL 表示「无从比较」，触发器只在双侧都有值时仲裁。
-        // 云端列不存在时整体省略（见 supportsOpStamp）。
-        ...(opStampSupported
-          ? {
-              last_op_device: group.lastOp?.d ?? null,
-              last_op_seq: typeof group.lastOp?.s === 'number' ? group.lastOp.s : null,
-            }
-          : {}),
-        // 保留兼容（§11 version 冻结）；新旧触发器共存期间仍写入。
-        version: typeof group.version === 'number' ? group.version : 1,
-        tabs_data: tabsData // 临时存储，稍后会被加密
-      };
-
-      return returnObj as SupabaseTabGroup;
-    });
+    const groupsWithUser = uploadRows.map(group =>
+      buildTabGroupRow(group, {
+        userId,
+        deviceId,
+        currentTime,
+        opStampSupported,
+        importedAtSupported,
+      })
+    );
 
     // 检查并去除重复的 ID
     const seenIds = new Set<string>();

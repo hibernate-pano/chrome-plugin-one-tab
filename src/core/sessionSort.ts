@@ -15,6 +15,10 @@
  * 这一条硬规则。**排序作用于会话列表**（不是标签搜索结果 —— 搜索结果的主序
  * 是相关度，那是搜索的承诺，不归排序管）。
  *
+ * ⚠️ 2026-10-25 追加一条：**保存时间未知的会话**（来源格式不带时间戳的导入件）
+ * 在「最近保存」这个键下排在已知保存时间的会话**之后** —— 判据见
+ * `@/core/sessionSaveTime`。
+ *
  * ── 四种键的语义 ──────────────────────────────────────────────────────────
  *
  * · `'saved'`   （最近保存）—— `createdAt` 倒序。**默认键**，与旧版写死的
@@ -35,6 +39,8 @@
  *   第二判据 ⇒ 顺序是「输入数组 + 键」的**确定函数**，不随实现细节抖动。
  * · **对非法时间戳稳健**：见 `toComparableTime`。
  */
+
+import { hasUnknownSaveTime } from './sessionSaveTime';
 
 /** 排序键：四种。（刻意不加第五种 —— 加了就要同时改下拉与设置模型。） */
 export type SessionSortKey = 'saved' | 'accessed' | 'name' | 'size';
@@ -89,6 +95,14 @@ export interface SortableSession {
   createdAt: string;
   /** 会话最后修改时间（ISO 字符串，可缺）。 */
   updatedAt?: string;
+  /**
+   * 导入时刻（ISO 字符串，可缺）。
+   *
+   * **有它 ⇒ 这个会话的保存时间未知**（来源格式不带时间戳，见
+   * `@/core/sessionSaveTime`）⇒ 「最近保存」这个键**不能**用它来排 ——
+   * 那是「什么时候进到本产品」，不是「什么时候保存的」。
+   */
+  importedAt?: string;
   /** 会话名。 */
   name: string;
   /** 会话里的标签（只有 `lastAccessed` 会被读）。 */
@@ -194,7 +208,28 @@ export function sortSessions<T extends SortableSession>(
   }
 
   // `'saved'`（默认键，也是未知键的兜底）：`createdAt` 倒序。
-  return sorted.sort((left, right) => compareByCreatedAtDesc(left, right));
+  //
+  // ⚠️ 但**保存时间未知的会话**（`importedAt` 有值 ⇒ 来源不带时间戳的导入件）
+  // 要排在**已知保存时间的会话之后**（2026-10-25）。
+  //
+  // 【为什么不能直接按 `createdAt` 排】对导入件来说 `createdAt` = 导入那一刻
+  // ⇒ 直接排 ⇒ 一批**几年前的**旧会话会整整齐齐占住列表最上面
+  // （默认键就是「最近保存」）⇒ 用户一打开看到的全是老东西。
+  //
+  // 【为什么它们之间仍然按 `createdAt` 倒序】同一批导入的所有会话
+  // `createdAt` 完全相同 ⇒ 该判据返回「相等」⇒ `Array.prototype.sort` 的
+  // **稳定性**（ES2019 起有保证）把它们按**输入顺序**排开
+  // ⇒ 输入顺序 = 源文件里的顺序 = **用户自己在 OneTab 里排的顺序**（保住了）。
+  // 分两次导入的两批 ⇒ 按导入时刻倒序（后导入的在前）—— 那是真的。
+  return sorted.sort((left, right) => {
+    const leftUnknown = hasUnknownSaveTime(left);
+    const rightUnknown = hasUnknownSaveTime(right);
+    // 先判等再相减：`-Infinity - (-Infinity)` 是 `NaN`，会把「相等」变成「不确定」。
+    if (leftUnknown !== rightUnknown) {
+      return leftUnknown ? 1 : -1;
+    }
+    return compareByCreatedAtDesc(left, right);
+  });
 }
 
 /**

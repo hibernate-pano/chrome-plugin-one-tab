@@ -20,12 +20,16 @@ import {
   decodeGroup,
   emptyManifest,
   encodeGroup,
+  legacyPathDiffers,
+  legacyShardDir,
+  legacyShardPath,
   makeEncryptedEnvelope,
   makePlainEnvelope,
   parseEnvelope,
   parseManifest,
   serializeEnvelope,
   serializeManifest,
+  shardDir,
   shardPath,
 } from '@/sync-backend/webdav/layout';
 import type { TabGroup } from '@/types/tab';
@@ -55,13 +59,37 @@ function makeGroup(over: Partial<TabGroup> = {}): TabGroup {
 }
 
 describe('分片路径', () => {
-  it('按 id 前两位分子目录（摊薄坚果云 750 条/目录上限）', () => {
-    assert.equal(shardPath('a1b2c3d4'), 'groups/a1/a1b2c3d4.json');
+  it('按 id 前一位分子目录（摊薄坚果云的「每 30 分钟 600 次请求」上限）', () => {
+    // ⚠️ 2026-10-26：位数从 2 位改成 1 位。
+    // 理由不是「1 位更整齐」，是**限额倒推**：
+    //   一次全量扫描的请求数 = 1（列 groups/）+ 前缀目录数；
+    //   2 位 ⇒ ≤ 257 次 ⇒ 巡检每 5 分钟一次 ⇒ 30 分钟内 6 次 = 1542 次
+    //        ⇒ 撞坚果云「每 30 分钟 600 次」⇒ 503 ⇒ 同步停摆 6 小时；
+    //   1 位 ⇒ ≤ 17 次 ⇒ 同样的巡检频率下有 35 次的余量。
+    assert.equal(shardPath('a1b2c3d4'), 'groups/a/a1b2c3d4.json');
+    assert.equal(shardPath('f0e9d8c7'), 'groups/f/f0e9d8c7.json');
+  });
+
+  it('旧布局（2 位前缀）仍然算得出路径 —— 老库不能变成隐形数据', () => {
+    // 2026-10-13 ~ 2026-10-26 之间建的库，分片都在 2 位前缀目录里。
+    // 改布局不能让那些会话对所有设备隐形 ⇒ 旧路径必须仍然可拼。
+    assert.equal(legacyShardPath('a1b2c3d4'), 'groups/a1/a1b2c3d4.json');
+    assert.equal(legacyShardDir('a1b2c3d4'), 'groups/a1');
+    assert.equal(shardDir('a1b2c3d4'), 'groups/a');
+  });
+
+  it('两条路径相同时不得当成「两份」（否则同一个文件被数两次）', () => {
+    // id 只有 1 位时，前 1 位 == 前 2 位 ⇒ 两条路径是同一个文件。
+    // 把它们当成两份 ⇒ 同一个分片被裁决一次、被当成冗余副本删一次。
+    assert.equal(legacyPathDiffers('a'), false);
+    assert.equal(legacyShardPath('a'), shardPath('a'));
+    assert.equal(legacyPathDiffers('a1'), true);
   });
 
   it('非法 id 一律拒绝（它会被拼进 URL）', () => {
     for (const bad of ['../x', 'a/b', '', '中文', 'a b', 'x'.repeat(129), 'a.b']) {
       assert.throws(() => shardPath(bad), /不合法/, `应拒绝：${JSON.stringify(bad)}`);
+      assert.throws(() => legacyShardPath(bad), /不合法/, `应拒绝：${JSON.stringify(bad)}`);
     }
   });
 
@@ -126,6 +154,25 @@ describe('manifest 解析：null 与「空库」必须分得开', () => {
   it('空 shards 数组是合法的（用户确实还没有会话）', () => {
     const m = emptyManifest(true, NOW);
     assert.equal(parseManifest(serializeManifest(m))?.shards.length, 0);
+  });
+
+  it('落点 loc 往返：老索引（没写 loc）解析成「新布局」，写明 legacy 的保持 legacy', () => {
+    // 「读哪一份」必须由索引说了算 —— 索引与内容不同源 ⇒ 静默的数据覆盖。
+    const m = {
+      v: MANIFEST_VERSION as 1,
+      generatedAt: NOW,
+      encrypted: false,
+      shards: [
+        { id: 'g1', updatedAt: NOW },
+        { id: 'g2', updatedAt: NOW, loc: 'legacy' as const },
+        { id: 'g3', updatedAt: NOW, loc: '新布局' as unknown as 'legacy' },
+      ],
+    };
+    const parsed = parseManifest(serializeManifest(m));
+    assert.equal(parsed?.shards.find(s => s.id === 'g1')?.loc, undefined);
+    assert.equal(parsed?.shards.find(s => s.id === 'g2')?.loc, 'legacy');
+    // 认不出来的 loc 值不许被当成 legacy（那会读错文件）
+    assert.equal(parsed?.shards.find(s => s.id === 'g3')?.loc, undefined);
   });
 
   it('输出稳定：内容相同则字符串逐字相同（用于「要不要 PUT」的廉价判据）', () => {

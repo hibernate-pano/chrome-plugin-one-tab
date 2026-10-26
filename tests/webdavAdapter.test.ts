@@ -503,6 +503,24 @@ describe('删除广播与 TTL', () => {
     assert.ok(dav.read(`TapStack/${shardPath('aa1')}`), '墓碑必须保留为文件');
   });
 
+  it('云端分片已被手动删掉（索引里还留着）⇒ 删除广播仍要成功', async () => {
+    // ── 为什么这条要单独钉 ────────────────────────────────────────────────
+    // 索引里的 ETag 是**旧的**（分片已经不在了）。拿它 If-Match 一个**不存在**
+    // 的资源 ⇒ 按 RFC 9110 必然 412 ⇒ 删除广播直接失败 ⇒ **用户的删除意图
+    // 丢掉**（而且不会重试到成功）。
+    // ⇒ 远端确实没有这一份时，正确的条件是「仅当不存在时创建」
+    //   （If-None-Match: '*'），不是拿旧 ETag 去 If-Match。
+    const dav = new FakeDav();
+    const { adapter } = makeAdapter(dav);
+    await adapter.uploadGroups([makeGroup('aa1')]);
+    // 模拟用户（或同步程序）把云端分片文件删掉了，索引还留着它
+    dav.files.delete(`TapStack/${shardPath('aa1')}`);
+
+    const res = await adapter.broadcastDeletes(['aa1']);
+    assert.deepEqual(res.broadcastIds, ['aa1'], '删除广播必须成功（否则删除意图被丢掉）');
+    assert.ok(dav.read(`TapStack/${shardPath('aa1')}`), '墓碑必须重新写上去');
+  });
+
   it('墓碑能被 downloadGroups 读出并带上 isDeleted（mergeOpStamped 靠它识别删除）', async () => {
     const dav = new FakeDav();
     const { adapter } = makeAdapter(dav);
@@ -942,10 +960,18 @@ describe('2026-10-14 坚果云形态：PUT 不返 ETag 时读回一个', () => {
 // ⇒ 这条守卫用 strictParents 的服务器：目录链少建一级，第一次写就 409。
 
 describe('PERF-01：写路径的 MKCOL 放大', () => {
-  /** N 个会话，前 2 位各不相同（N 个前缀桶，模拟 nanoid 的真实分布）。 */
+  /**
+   * N 个会话，前 **1** 位各不相同（N 个前缀桶，模拟 nanoid 的真实分布）。
+   *
+   * ⚠️ 前缀位数 2026-10-26 从 2 位改成 1 位（见 layout.ts）⇒ 前缀桶也按
+   * 1 位算。用 2 位算出来的桶数与实际目录数对不上 ⇒ 这条守卫的前提就成了
+   * 「看起来成立」，检测力被自己稀释掉。
+   */
+  const PREFIX_ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-';
+
   function makePrefixedGroups(n: number): ReturnType<typeof makeGroup>[] {
     return Array.from({ length: n }, (_, i) =>
-      makeGroup(`${String(i).padStart(2, '0')}${i}-${'x'.repeat(16)}`)
+      makeGroup(`${PREFIX_ALPHABET[i % PREFIX_ALPHABET.length]}${i}-${'x'.repeat(16)}`)
     );
   }
 
@@ -961,7 +987,7 @@ describe('PERF-01：写路径的 MKCOL 放大', () => {
     assert.equal(out.writtenIds.length, N, '前提：N 个会话都写上去了');
 
     const mkcols = dav.calls.filter(c => c.method === 'MKCOL');
-    const buckets = new Set(groups.map(g => g.id.slice(0, 2)));
+    const buckets = new Set(groups.map(g => g.id.slice(0, 1)));
     assert.equal(
       buckets.size,
       N,
@@ -1002,7 +1028,9 @@ describe('PERF-01：写路径的 MKCOL 放大', () => {
 
     assert.ok(dav.dirs.has('TapStack'), '库根必须被建出来');
     assert.ok(dav.dirs.has('TapStack/groups'), 'groups 目录必须被建出来');
-    assert.ok(dav.dirs.has('TapStack/groups/zz'), '前缀目录必须被建出来');
+    // 前缀目录按 id 的**前 1 位**建（2026-10-26 从 2 位改成 1 位：
+    // 一次全量扫描的请求数 = 1 + 前缀目录数，2 位 ⇒ 撞坚果云的限额）。
+    assert.ok(dav.dirs.has('TapStack/groups/z'), '前缀目录必须被建出来');
   });
 
   it('目录被人从服务器上删掉后，下一次写能自愈（缓存过期不会把本机锁死）', async () => {
@@ -1011,10 +1039,10 @@ describe('PERF-01：写路径的 MKCOL 放大', () => {
     const { adapter } = makeAdapter(dav);
 
     await adapter.uploadGroups([makeGroup('ab-1')]);
-    assert.ok(dav.dirs.has('TapStack/groups/ab'));
+    assert.ok(dav.dirs.has('TapStack/groups/a'));
 
     // 模拟「云盘上的目录被人删了」（缓存还在 ⇒ 适配器以为它还在）。
-    dav.dirs.delete('TapStack/groups/ab');
+    dav.dirs.delete('TapStack/groups/a');
 
     const out = await adapter.uploadGroups([
       // 同一个前缀 ⇒ 命中已缓存的目录 ⇒ 第一次 PUT 会 409。
@@ -1022,6 +1050,6 @@ describe('PERF-01：写路径的 MKCOL 放大', () => {
       makeGroup('ab-2', { lastOp: { d: 'dev-A', s: 20 } }),
     ]);
     assert.equal(out.writtenIds.length, 1, '目录被删后必须自愈，而不是从此传不上去');
-    assert.ok(dav.dirs.has('TapStack/groups/ab'), '前缀目录必须被重建');
+    assert.ok(dav.dirs.has('TapStack/groups/a'), '前缀目录必须被重建');
   });
 });
