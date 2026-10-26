@@ -1027,54 +1027,6 @@ class ChromeStorage {
     for (const id of confirmed) unsyncedDeleteIds.delete(id);
   }
 
-  /**
-   * **撤回**删除广播意图（2026-10-22 审计 P0-4：撤销「恢复即消费」）。
-   *
-   * ── 什么时候用 ────────────────────────────────────────────────────────
-   * 「恢复即消费」被撤销时：那条记录回到本机了，于是「我这儿已经没有这条
-   * 记录了，你那儿也删掉吧」这句话变成**假话**。不撤回的话，下一次上传
-   * 会把云端行标成墓碑 ⇒ 别的设备上这条会话消失 ⇒ 两台设备分叉，且无提示。
-   *
-   * ── 语义 ──────────────────────────────────────────────────────────────
-   * 撤回的是**意图**，不是「已经写上云的墓碑」。已经广播出去的墓碑撤不回来
-   * （云端行已经是墓碑了），那种情况靠**更新的印记**让「本地赢」把云端行
-   * 复位（见 core/consumeUndo.ts 的文件头）。
-   *
-   * ── fail-closed ───────────────────────────────────────────────────────
-   * 读失败 / 写失败一律抛错，**且抛错时内存兜底原样不动** —— 意图留在队列里
-   * 等下轮广播，比「撤回失败却当成撤回了」安全得多：前者是「删意图多留一轮」
-   * （代价：撤销没生效，用户看得见），后者是「删除意图凭空消失」
-   * （代价：别的设备上的会话复活，用户看不见）。
-   *
-   * 为什么必须在**写回成功之后**才动内存兜底：反过来（先删兜底再写 KV），
-   * 写失败就会把兜底里的意图弄丢 —— 而那正是「KV 写不进去」时唯一的存身处。
-   */
-  async retractPendingDeleteIds(ids: readonly string[]): Promise<void> {
-    const targets = new Set(
-      ids.filter((id): id is string => typeof id === 'string' && id.length > 0),
-    );
-    if (targets.size === 0) return;
-
-    await this.ensureVersion();
-
-    const raw = await kvGet<unknown>(STORAGE_KEYS.PENDING_DELETE_IDS);
-    const persisted = Array.isArray(raw)
-      ? raw.filter((x): x is string => typeof x === 'string')
-      : [];
-    const remaining = [...new Set(persisted.filter(id => !targets.has(id)))];
-
-    if (remaining.length !== persisted.length) {
-      if (remaining.length === 0) {
-        await kvRemove(STORAGE_KEYS.PENDING_DELETE_IDS);
-      } else {
-        await kvSet(STORAGE_KEYS.PENDING_DELETE_IDS, remaining);
-      }
-    }
-
-    // KV 落定后才动内存兜底（顺序反了会在写失败时凭空丢掉兜底里的意图）。
-    // 注意：只在上面的 KV 写**没有抛错**时才会走到这里。
-    for (const id of targets) unsyncedDeleteIds.delete(id);
-  }
 
   // 获取最后同步时间
   async getLastSyncTime(): Promise<string | null> {

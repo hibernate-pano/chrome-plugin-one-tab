@@ -31,17 +31,13 @@ import { logError } from '../../utils/log';
 import { toServiceWorkerErrorCopy } from '@/utils/serviceWorkerErrorCopy';
 import { mutationErrorMessage } from '@/components/tabs/mutationErrorCopy';
 import {
-  openSingleTabSuccessMessage,
   restoreAllSearchConfirmMessage,
   restoreAllSearchSuccessMessage,
-  restoreGroupSuccessMessage,
   restoreOutcomeSentence,
   type BatchRestoreCounts,
 } from '@/components/tabs/restoreFeedbackCopy';
-import { useConsumeUndo } from '@/components/tabs/useConsumeUndo';
 import { lockedTabDeleteMessage } from '@/components/tabs/lockedDeleteCopy';
 import { removeTabEntryCopy } from '@/components/dnd/removeTabEntryCopy';
-import type { ConsumedTabRef, ConsumeUndoSpec } from '@/core/consumeUndo';
 import { decideFeedback } from '@/core/feedbackPolicy';
 import { searchEmptyHint } from '@/components/search/searchEmptyHint';
 import {
@@ -157,10 +153,10 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({
   const showFavicons = useAppSelector(state => state.settings.showFavicons);
   const showTabCount = useAppSelector(state => state.settings.showTabCount);
   const { showConfirm } = useToast();
-  const { showDeleteError, showRestoreError } = useEnhancedToast();
-  // ── 2026-10-22 审计 P0-4：恢复即消费 ⇒ 给一条「撤销」的路 ─────────────
-  // 撤销的语义与实现见 @/core/consumeUndo.ts 与 useConsumeUndo.ts。
-  const { showConsumeToast } = useConsumeUndo();
+  const { showDeleteError, showRestoreError, showRestoreSuccessMessage } = useEnhancedToast();
+  // ── 2026-10-26：撤销机制下线 ──────────────────────────────────────────
+  // 「恢复即消费」不再有退路（无回收站、无撤销）：恢复时标签已经开在浏览器里，
+  // 结果界面自明 ⇒ 成功路径静默（列表页与搜索页同一口径）。
   const {
     effectiveFilters,
     activeFilterCount,
@@ -550,57 +546,26 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({
           const keptNote = group.isLocked
             ? '该会话已锁定，记录仍在列表中。'
             : '这几个地址不再保存在列表中。';
-          // ── 2026-10-23 审计 DS-43-10：部分成功**也是一次消费** ────────────
-          // consumeSession() 已经在上面跑过 ⇒ 未锁定时整条会话已被移除，
-          // 而那是不可逆的删除（无回收站）⇒ 用户手里必须有退路。
-          // 列表页（TabGroup.openAllTabs）同一分支早就挂了撤销；搜索页没有
-          // ⇒ 同一个产品两个界面两种保障。
-          // 锁定会话从不被消费 ⇒ 没东西可撤 ⇒ 不挂（挂了就是骗人）。
-          showConsumeToast(
+          // ── 2026-10-26：撤销机制下线，**失败事件仍然必须出声** ─────────
+          // 「有的打不开」是失败事件（失败是事件）⇒ 必须提示。
+          // 但它**不再挂任何动作**：撤销按钮与它的整套机制已被产品下线。
+          showRestoreError(
             `已恢复 ${tabsPayload.length - r.skippedUnopenable} 个标签页；另有 ` +
               `${r.skippedUnopenable} 个在当前设备无法打开（本地文件、临时链接或浏览器内部页面）。` +
               keptNote,
-            group.isLocked ? undefined : { group },
-            { type: 'error' },
           );
           return;
         }
-        // ── 2026-10-22 审计 P1-4：成功必须出声 ─────────────────────────────
-        // 修复前这里**什么都不说**：窗口开了、会话卡从列表消失、屏幕上零反馈。
-        // 「我的会话怎么没了？」是用户看到卡片凭空消失时的第一反应，
-        // 而它其实是成功。
+        // ── 2026-10-26「安静的成功」：成功路径**完全静默** ────────────────
+        // 产品负责人定案：恢复时标签已经开在浏览器里了，**界面自明**
+        // （窗口里多了那些标签、卡片从列表消失）⇒ 成功是状态，不是事件。
         //
-        // 对照：列表页（TabGroup）同一动作早就有播报，搜索页没有 ——
-        // 同一个产品动作，两个界面两种反馈。
-        // 文案复用 restoreFeedbackCopy.ts：列表页与搜索页共用一份措辞。
+        // ⚠️ 那条记录**从此不可恢复**（无回收站、无撤销）—— 这是产品决定，
+        //   不是漏写。后果仍然写在**恢复按钮的 tooltip / aria-label** 上
+        //   （restoreOutcomeSentence），点之前就看得见。
         //
-        // ── 2026-10-22 审计 P0-4：挂上「撤销」 ───────────────────────────
-        // 未锁定会话恢复后即被消费（记录从列表移除、无回收站）⇒ 这次成功
-        // 同时是一次**不可撤销的删除**。给它配一条退路，是产品该有的最低配置。
-        // 锁定会话从不被消费 ⇒ 没有东西可撤 ⇒ 不挂按钮（挂了就是骗人）。
-        // 撤销凭据里的 group 是**消费前**的那份快照（闭包捕获的旧值）。
-        // 搜索页这两条路径都**新开一扇窗**（OPEN_TABS 不带 inCurrentWindow）⇒
-        // 显式传 false，别让文案自己猜。
-        //
-        // ── 2026-10-25「安静的成功」：判据层裁决 + 只说事实 ─────────────────
-        // 「说不说」交给判据层（规格 §4.3：组件不许自己拍脑袋）：
-        //   · 锁定 ⇒ 卡片还在原处（界面自明）⇒ 空 fact ⇒ 判据层判 silent；
-        //   · 未锁定 ⇒ 那条记录已被消费、界面说不出来 ⇒ fact。
-        // 这句事实同时挂着撤销退路（{ group } 是消费前的那份快照）。
-        // ⚠️ 文案函数只调用**一次**（存进 fact）—— 判据层与播报共用同一份。
-        const restoreGroupSuccessMessageFact = group.isLocked
-          ? ''
-          : restoreGroupSuccessMessage(tabsPayload.length, false);
-        const fb = decideFeedback({
-          visibility: 'self-evident',
-          hiddenFact: restoreGroupSuccessMessageFact,
-        });
-        if (fb.level !== 'silent') {
-          showConsumeToast(
-            restoreGroupSuccessMessageFact,
-            { group },
-          );
-        }
+        // ⚠️ 判据层在这里不再被调用：它的作用是「说不说」，而这条路径的
+        //   口径是「界面自明 ⇒ 沉默」⇒ 判据层同样会判成 silent。
       }
     );
   };
@@ -677,37 +642,12 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({
           .then(payload => {
             const warn = deleteBroadcastWarn(payload);
             if (warn) showDeleteError(warn);
-            // ── 2026-10-22 审计 P1-4：点开即消费 = 一次不可撤销的删除 ──
-            // 这是本产品**最高频**的动作，却是零反馈的：标签行消失、
-            // 页面打开、屏幕上什么都不动。用户无法区分「已打开」与「被删了」。
-            // 成功门已过（SW 回包 success:true），所以这里可以放心报成功。
+            // ── 2026-10-26「安静的成功」：点开成功**完全静默** ──────────
+            // 产品负责人定案：标签已经开在浏览器里了，**界面自明**
+            // （浏览器里多了那个标签、这行从列表消失）⇒ 成功是状态，不是事件。
             //
-            // ── 2026-10-22 审计 P0-4：挂上「撤销」 ───────────────────────
-            // 点开即消费 = 一次不可撤销的删除（无回收站），而这是本产品
-            // 最高频的动作。给一条退路。
-            // 撤销凭据带**下标**：撤销时把这条标签插回原来的位置，而不是
-            // 追加到末尾（顺序是用户自己排的，撤销不该偷偷改它）。
-            //
-            // ── 2026-10-25「安静的成功」：判据层裁决 + 只说事实 ──────────
-            // 说什么由判据层决定。这里说的是**界面表达不了的那件事**：
-            // 那条记录被移除了（不可逆、无回收站）。
-            // ⚠️ hasEscape: true —— 退路（撤销按钮）就在这条提示上。
-            // ⚠️ openSingleTabSuccessMessage 是**纯函数**，两次调用等价 ——
-            //    这里刻意不抽局部变量：守卫（consumeUndoWiring）钉的是
-            //    「showConsumeToast 传的是共享文案函数产出的那句」。
-            const fb = decideFeedback({
-              visibility: 'hidden',
-              hiddenFact: openSingleTabSuccessMessage(),
-              irreversible: true,
-              hasEscape: true,
-            });
-            if (fb.level !== 'silent') {
-              showConsumeToast(openSingleTabSuccessMessage(), {
-                group,
-                consumedTabId: tab.id,
-                consumedIndex: group.tabs.findIndex(t => t.id === tab.id),
-              });
-            }
+            // ⚠️ 那条记录**从此不可恢复**（无回收站、无撤销）—— 产品决定，
+            //   不是漏写。与列表页（TabGroup）同一口径。
           })
           .catch(error => {
             logError('打开后从会话移除失败:', error);
@@ -817,57 +757,28 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({
     // 旧版用 updateGroup(filter) 走 diff 通道，存在 UI 状态陈旧时误伤的风险（根因 R3）。
     // 只在 OPEN_TABS 回 success:true 后执行（先开后删，失败时记录原样保留）。
     //
-    // ── 2026-10-22 审计 P0-4：消费是**批量**的，撤销也得能一次撤回来 ──────
-    // 这里**如实**回报「真正被消费掉的是哪些」，而不是「本来打算消费哪些」：
-    // 某条删除失败时那条标签还在列表里，撤销若按「打算消费的清单」还原，
-    // 就会去动一条根本没被消费的标签（把用户后来加进去的东西顶掉）。
-    //
-    // 为什么改成 await：撤销的还原清单要等消费**落地**才定得了，而排队中的
-    // 删除命令会把还原结果又删掉 —— 撤销必须排在消费之后（SW 的单写者队列
-    // 保证同一条命令链上的顺序）。
-    const consumeMatchedTabs = async (): Promise<Array<{ group: TabGroup; ref: ConsumedTabRef }>> => {
-      const consumed: Array<{ group: TabGroup; ref: ConsumedTabRef }> = [];
+    // ── 2026-10-26：撤销机制下线，这里只回报「真正被消费掉了几条」────────
+    // 它以前还负责产出撤销凭据（原下标 + 整组快照）；那套机制已下线，
+    // 只剩「消费了几条」这个数字要如实报给用户。
+    const consumeMatchedTabs = async (): Promise<number> => {
+      let consumedCount = 0;
       // ── 2026-10-23 审计 P0-2：消费哪几条由**同一份划分**决定 ────────────
       // 原先这里自己写了一遍「`if (group.isLocked) continue`」，而提示文案
       // 又隐含地判了一遍（说「命中的标签已从所属会话移除」）⇒ 两处各判一遍，
       // 锁定的那几条就真的没被移除、而提示说被移除了。
       // ⇒ 改为遍历判据层给出的 `consumable`（= 不会被消费的那些已被剔除）。
       for (const { tab, group } of batchRestorePlan.consumable) {
-        // 原下标必须在**消费前**取：消费之后这条标签已经不在列表里，
-        // 下标就找不回来了（撤销要靠它把标签插回原来的位置）。
-        const index = group.tabs.findIndex(t => t.id === tab.id);
         try {
           const res = await dispatch(deleteTabAndSync({ groupId: group.id, tabId: tab.id })).unwrap();
           const warn = deleteBroadcastWarn(res);
           if (warn) showDeleteError(warn);
-          if (index >= 0) consumed.push({ group, ref: { tabId: tab.id, index } });
+          consumedCount += 1;
         } catch (error) {
           logError('批量恢复后删除会话失败:', error);
           showDeleteError(mutationErrorMessage('批量恢复后清理原会话', error));
         }
       }
-      return consumed;
-    };
-
-    /**
-     * 把「消费了哪些」整理成撤销凭据：**按会话分组**。
-     *
-     * 同一个会话里可能命中好几条 —— 它们共用一份「消费前的整组快照」，
-     * 撤销时一次把这一会话里被消费掉的那几条原样插回（顺序也回到原样）。
-     */
-    const buildUndoSpecs = (
-      consumed: Array<{ group: TabGroup; ref: ConsumedTabRef }>,
-    ): ConsumeUndoSpec[] => {
-      const byGroup = new Map<string, { group: TabGroup; refs: ConsumedTabRef[] }>();
-      for (const { group, ref } of consumed) {
-        const entry = byGroup.get(group.id);
-        if (entry) entry.refs.push(ref);
-        else byGroup.set(group.id, { group, refs: [ref] });
-      }
-      return [...byGroup.values()].map(({ group, refs }) => ({
-        group,
-        consumedTabs: refs,
-      }));
+      return consumedCount;
     };
 
     chrome.runtime.sendMessage(
@@ -889,33 +800,31 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({
         }
         // 消费是逐条派发删除命令的**异步**过程，所以成功提示等它落地再出 ——
         // 「已恢复 N 个标签，命中的标签已从所属会话移除」这句话，只有在
-        // 那 N 条真的被移除之后才是真的（撤销的还原清单也才定得下来）。
+        // 那 N 条真的被移除之后才是真的。
         void (async () => {
-          const consumed = await consumeMatchedTabs();
-          const undoSpecs = buildUndoSpecs(consumed);
+          const consumedCount = await consumeMatchedTabs();
           // ── 2026-10-23 审计 P0-2：成功提示必须把两笔账分开说 ────────────
           //   · 打开了几个（含锁定会话里的）；
           //   · 从会话里移除了几个（**不含**锁定会话里的 —— 它们原封不动）。
           // 修复前那一句把两件事混成一句 ⇒ 用户以为锁定的那几条也被清掉了。
           // 数字全部来自**同一份划分**（batchRestorePlan）与**真实执行结果**
-          // （consumed）⇒ 不可能再出现「说移除了、其实没移除」。
+          // （consumedCount）⇒ 不可能再出现「说移除了、其实没移除」。
           const unopenable =
             typeof r.skippedUnopenable === 'number' ? r.skippedUnopenable : 0;
           const counts: BatchRestoreCounts = {
             matched: matchingTabs.length,
             opened: tabsPayload.length - unopenable,
-            removed: consumed.length,
+            removed: consumedCount,
             keptLocked: batchRestorePlan.keptLocked.length,
-            failedToRemove: batchRestorePlan.consumable.length - consumed.length,
+            failedToRemove: batchRestorePlan.consumable.length - consumedCount,
             unopenable,
           };
-          // 部分成功也是一次消费（能打开的那些已经被移出会话了）⇒
-          // 这条提示上**同样**挂「撤销」，否则用户手里有一条没退路的消费。
+          // ── 2026-10-26：撤销机制下线，但**这四笔账仍然必须说** ────────
+          // 批量恢复是一次动很多条的动作，四笔账（打开了几个 / 移除了几个 /
+          // 留下几个 / 打不开几个）**界面永远表达不了**
+          // （搜索结果列表不会因为恢复而变短成那样）⇒ 保留这条**中性事实提示**。
+          // 只是它**不再挂「撤销」**（撤销整套机制已下线）。
           //
-          // ── 2026-10-25「安静的成功」：判据层裁决 + 只说事实 ──────────
-          // 这四笔账（打开了几个 / 移除了几个 / 留下几个 / 打不开几个）
-          // **界面永远表达不了**（搜索结果列表不会因为恢复而变短成那样）
-          // ⇒ 判据层判成 fact，说事实。
           // ⚠️ 四笔账的数字与措辞**一个字都不许改**（它们就是事实本身）。
           // ⚠️ unopenable > 0 那支仍然走**错误**通道 —— 「有的没成」是
           //    失败事件（失败是事件），不许用成功的样子说。
@@ -925,11 +834,9 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({
             hiddenFact: restoreAllSearchSuccessMessage(counts),
           });
           if (fb.level !== 'silent') {
-            showConsumeToast(
-              restoreAllSearchSuccessMessage(counts),
-              undoSpecs.length > 0 ? undoSpecs : undefined,
-              unopenable > 0 ? { type: 'error' } : undefined,
-            );
+            const message = restoreAllSearchSuccessMessage(counts);
+            if (unopenable > 0) showRestoreError(message);
+            else showRestoreSuccessMessage(message);
           }
         })();
       }

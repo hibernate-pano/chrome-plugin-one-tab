@@ -43,8 +43,4 @@ export const mutationService = createMutationHandlers({
   // 无墓碑模型：物理删除的组登记 pendingDeleteIds，由 SyncEngine.upload
   // markCloudGroupsAsDeleted 标记云端行（删除广播）后 clear。
   noteGroupDeleted: ids => storage.addPendingDeleteIds(ids),
-  // 撤销「恢复即消费」：撤回那条删除广播意图（2026-10-22 审计 P0-4）。
-  // 失败必须抛 —— handler 在写回记录**之前**调它，抛错即中止撤销
-  // （顺序的理由见 mutationHandlers 的 restoreConsumed 分支注释）。
-  retractGroupDeleted: ids => storage.retractPendingDeleteIds(ids),
 });

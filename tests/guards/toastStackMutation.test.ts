@@ -4,7 +4,7 @@
  * 四条变异分别打四个不同的破口：
  *
  * · 变异一 —— 高度**一律**按兜底值算（= 旧算法的形状）⇒ 必须变红。
- * · 变异二 —— 累加方向反了（最新那条跑到最上面）⇒ 必须变红。
+ * · 变异二 —— 累加方向反了（最新那条被推到最下面）⇒ 必须变红。
  * · 变异三 —— 间距被抹掉（两条贴在一起）⇒ 必须变红。
  * · 变异四 —— 高度算成**等价的内联写法** ⇒ 必须**仍然绿**
  *   （守的是「按实测高度堆叠」这件事，不是逐字长相）。
@@ -40,17 +40,17 @@ describe('变异自证：「提示不许互相遮挡」这条守卫必须看得�
           },
         ],
         expectRed: true,
-        expectedFailure: '有一条提示被下面那条盖住了',
+        expectedFailure: '有一条提示被相邻那条盖住了',
       },
     ]);
     assert.ok(outcome, '变异必须真的跑起来');
     assertMutationOutcome(outcome, true, '高度一律按兜底值算');
   });
 
-  it('变异二：累加方向反了（最新那条跑到最上面）⇒ 守卫必须变红', () => {
+  it('变异二：累加方向反了（最新那条跑到最下面）⇒ 守卫必须变红', () => {
     const [outcome] = runMutationCases([
       {
-        name: '从最旧的那条开始累加（最新的那条被顶到最上面）',
+        name: '从最旧的那条开始累加（最新的那条被顶到最下面）',
         testFile: GUARD,
         targets: [
           {
@@ -65,7 +65,7 @@ describe('变异自证：「提示不许互相遮挡」这条守卫必须看得�
           },
         ],
         expectRed: true,
-        expectedFailure: '必须贴着底边',
+        expectedFailure: '必须贴着顶边',
       },
     ]);
     assert.ok(outcome, '变异必须真的跑起来');
@@ -90,7 +90,7 @@ describe('变异自证：「提示不许互相遮挡」这条守卫必须看得�
           },
         ],
         expectRed: true,
-        expectedFailure: '上面那条要高出「高度 + 间距」',
+        expectedFailure: '让开「较新那条的高度 + 间距」',
       },
     ]);
     assert.ok(outcome, '变异必须真的跑起来');

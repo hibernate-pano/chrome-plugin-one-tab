@@ -30,7 +30,6 @@ import {
   applyMoveTab,
   applyCleanDuplicates,
 } from '@/core/mutationOps';
-import { applyRestoreConsumed } from '@/core/consumeUndo';
 import { logError } from '../utils/log';
 import { perfTrace } from '@/utils/perfTrace';
 import { affectedGroupIdsOf } from '@/core/mutationAffectedGroups';
@@ -73,7 +72,6 @@ export interface MutationDeps {
    * 失败必须抛错（fail-closed）：撤不掉就不该把记录写回去 ——
    * 写回去却没撤意图 = 下一次上传把刚撤销的记录又删掉。
    */
-  retractGroupDeleted?: (groupIds: readonly string[]) => Promise<void> | void;
 }
 
 // 2026-10-09 架构 P2-4：数值改引用单一事实来源（core/syncTiming.ts），
@@ -176,14 +174,6 @@ export function createMutationHandlers(deps: MutationDeps) {
         ? {
             noteGroupDeleted: (ids: readonly string[]) =>
               perfTrace().measure(op, 'noteDeleted', () => deps.noteGroupDeleted!(ids)),
-          }
-        : {}),
-      // 可选依赖：缺失时保持缺失（下面用 `?.` 判定）。缺它意味着「撤销消费
-      // 撤不掉删除意图」—— 那时必须**拒绝撤销**（见 restoreConsumed 分支）。
-      ...(deps.retractGroupDeleted
-        ? {
-            retractGroupDeleted: (ids: readonly string[]) =>
-              perfTrace().measure(op, 'retractDeleted', () => deps.retractGroupDeleted!(ids)),
           }
         : {}),
     };
@@ -379,69 +369,6 @@ export function createMutationHandlers(deps: MutationDeps) {
           },
           broadcastWarn: delWarn ?? undefined,
         };
-      }
-      case 'restoreConsumed': {
-        // ── 2026-10-22 审计 P0-4：撤销「恢复即消费」─────────────────────
-        //
-        // 消费 = 本地物理移除 + 登记一条删除广播意图。撤销要同时回滚**两件**，
-        // 少回滚一件就是假的撤销：
-        //   · 只回滚本地 ⇒ 删除意图还在 ⇒ 下次上传把云端行标墓碑 ⇒ 别的设备上
-        //     这条会话消失（两台设备分叉，且用户看不见）。
-        //   · 只回滚意图 ⇒ 记录还是没回来 ⇒ 撤销等于没做。
-        //
-        // 【顺序：先撤意图，再写记录】—— 两个存储之间没有事务，失败时只能选
-        // 一个更不坏的结局：
-        //   · 撤意图失败 ⇒ 什么都不写 ⇒ 撤销没发生，用户看得见「撤销失败」，
-        //     会话仍是删掉的。代价：一次撤销没成功。
-        //   · 写记录失败（意图已撤）⇒ 会话本机没了，但删除意图撤了 ⇒ 云端行
-        //     仍活跃 ⇒ 别的设备上这条会话**还在**。代价：两台设备不一致，
-        //     但数据没丢。
-        // 反过来（先写记录后撤意图）最坏：记录回来了、意图没撤 ⇒ 下次上传
-        // 把它又删掉，用户看着它「回来又消失」——那才是真的骗人。
-        if (!d.retractGroupDeleted) {
-          return {
-            ok: false,
-            error: '当前环境不支持撤销（缺少撤回删除意图的能力），已保持原样',
-          };
-        }
-        try {
-          await d.retractGroupDeleted([cmd.group.id]);
-        } catch (e) {
-          logError('[mutationHandlers] 撤回删除广播意图失败，撤销消费中止:', cmd.group.id, e);
-          return {
-            ok: false,
-            error: '撤销失败：删除广播意图未能撤回，已保持原样（该会话仍处于已删除状态）',
-          };
-        }
-
-        const groups = await d.getGroups();
-        const r = applyRestoreConsumed(
-          groups,
-          {
-            group: cmd.group,
-            consumedTabId: cmd.consumedTabId,
-            consumedIndex: cmd.consumedIndex,
-            consumedTabs: cmd.consumedTabs,
-          },
-          now,
-          stamp,
-        );
-        if (!r.ok) {
-          // 意图已经撤了但记录没写回来 —— 诚实回报，别让界面显示成「撤销成功」。
-          return { ok: false, error: r.error };
-        }
-        if (!r.changed) {
-          // 已经撤销过（幂等）：不重复写盘，也不重复调度上传。
-          return { ok: true, payload: { groupId: r.group.id, restored: false, group: r.group } };
-        }
-        await persist(r.groups);
-        // 置位必须 await：撤销的**全部意义**就是让别的设备也别删这条 ——
-        // 意图撤了、记录回来了，但云端墓碑还在的话，别的设备仍会删它。
-        await scheduleUpload(DELETE_PRIORITY_MS, [r.group.id]);
-        // 回包带**落盘后的那一份**（带新印记），不是入参快照 ——
-        // 与 saveGroup 分支同口径（D-9）：调用方把它塞进自己的列表时，
-        // 拿到的必须与磁盘一致的那一份。
-        return { ok: true, payload: { groupId: r.group.id, restored: true, group: r.group } };
       }
       default:
         return {

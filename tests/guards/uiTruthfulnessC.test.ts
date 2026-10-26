@@ -468,9 +468,18 @@ describe('C4 批量恢复成功反馈：条数用 matchingTabs.length', () => {
     // 断言盯**不变量**（成功路径必须有一条成功播报，且必须带上条数），
     // 而不是盯某个已过时的调用写法 —— 后者会让「换了正确写法」变成红灯，
     // 那正是本仓文档守卫被审计批评的毛病（docsAlignment 硬编码旧基线）。
-    assert.match(
-      src,
-      /show(?:RestoreSuccessMessage|ConsumeToast)\(\s*restoreAllSearchSuccessMessage\(/,
+    // ⚠️ 2026-10-26：撤销机制下线 ⇒ showConsumeToast 那套已删，批量恢复的
+    //    播报改成一条**中性事实提示**（文案先落到 fact，再由判据结果决定要不要说）。
+    //    ⇒ 断言随之改成**形状无关**的写法：钉「四笔账被算出来」+「那笔账被播报出去」，
+    //    不钉「哪个函数、哪种调用写法」—— 否则一次正确的改写就会把守卫打红。
+    const body = src.slice(src.indexOf('const runRestoreAllSearchResults = () =>'));
+    const factAt = body.indexOf('restoreAllSearchSuccessMessage(');
+    assert.ok(
+      factAt !== -1,
+      '批量恢复必须仍然算那四笔账（打开了几个 / 移除了几个 / 留下几个 / 打不开几个）'
+    );
+    assert.ok(
+      /show(?:RestoreSuccessMessage|RestoreError)\(/.test(body.slice(factAt)),
       '缺成功 toast：命中标签分散在多个会话时用户看不出恢复了几个'
     );
   });

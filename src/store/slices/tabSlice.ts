@@ -76,7 +76,6 @@ import { sendMutation } from '@/shared/mutationProtocol';
 import { TIMEOUT_REASON_PREFIX } from '@/core/mutationProtocol';
 import { applyCleanPlanToActiveView, backupKeyOf, dropLoadGuard, GroupMetaSnapshot, isStaleLoad, planOptimisticClean, restoreGroupLock, restoreGroupName, snapshotGroupMeta, stripInFlightDeletions, stripTombstonedTabs, toActiveGroupsView, takeLoadGuard } from './tabSliceHelpers';
 import type { CleanDuplicatesPlan } from '@/core/mutationOps';
-import type { ConsumedTabRef } from '@/core/consumeUndo';
 import type { OpStamp } from '@/core/opStamp';
 import { trackProductEvent } from '@/utils/productEvents';
 import { logError, logInfo } from '../../utils/log';
@@ -222,45 +221,6 @@ export const deleteAllGroups = createAsyncThunk(
   }
 );
 
-/**
- * 撤销一次「消费」（2026-10-22 审计 P0-4）。
- *
- * 「恢复即消费」是不可逆的删除（无回收站），而它是本产品最高频的动作。
- * 撤销把它变回可逆：把记录写回本机 + 撤回那条删除广播意图 + 调度上传
- * （让别的设备也别删它）。语义见 core/consumeUndo.ts。
- *
- * 【为什么不做乐观更新】本仓其它写操作都做乐观更新（SW 冷启动时能到几百毫秒，
- * 体感是「点了没反应」）。这里**故意不做**：
- *   · 撤销动作发生在 toast 上，而那条 toast 的前身（恢复）刚跑过一次 SW 交互 ⇒
- *     SW 必然是活的 ⇒ 往返是毫秒级，不存在「冷启动延迟」这个痛点；
- *   · 乐观更新要自己算一遍「还原后的组」，那是**第二份还原实现** ——
- *     与 SW 侧那份一旦漂移，界面就会显示一份磁盘上没有的记录。
- * 落盘真值由 fulfilled 回填（payload 带 SW 落盘后的那一份），单一代码路径。
- */
-export const restoreConsumedAndSync = createAsyncThunk<
-  { groupId: string; restored: boolean; group: TabGroup },
-  {
-    group: TabGroup;
-    consumedTabId?: string;
-    consumedIndex?: number;
-    /** 一次消费掉多条标签时用（搜索页的批量恢复）。 */
-    consumedTabs?: ConsumedTabRef[];
-  }
->(
-  'tabs/restoreConsumedAndSync',
-  async (arg) => {
-    const res = await sendMutation<{ groupId: string; restored: boolean; group: TabGroup }>({
-      op: 'restoreConsumed',
-      group: arg.group,
-      consumedTabId: arg.consumedTabId,
-      consumedIndex: arg.consumedIndex,
-      consumedTabs: arg.consumedTabs,
-    });
-    if (!res.ok) throw new Error(res.error ?? '撤销失败');
-    if (!res.payload?.group) throw new Error('撤销失败：后台没有返回还原后的会话');
-    return res.payload;
-  }
-);
 
 // ── 2026-10-10 P1-2：原 export const importGroups = createAsyncThunk(...) 已删除。
 // 理由与口径见文件头「importGroups thunk 已删除」段：零调用方 + 第二条未归一化入口。
@@ -794,37 +754,6 @@ export const tabSlice = createSlice({
         state.error = isTimeout ? timeoutCopy('删除会话') : action.error.message || '删除会话失败';
         state.errorSource = 'action';
         state.errorAction = 'deleteSession';
-      })
-      // ── 撤销「恢复即消费」（2026-10-22 审计 P0-4）──────────────────────
-      //
-      // fulfilled 才动列表：没有乐观更新（理由见 restoreConsumedAndSync 的注释）。
-      // 回填的是 **SW 落盘后的那一份**（带新印记），不是调用方传进来的快照 ——
-      // 与 saveGroup 分支同口径（D-9）：Redux 里那份必须与磁盘一致。
-      .addCase(restoreConsumedAndSync.fulfilled, (state, action) => {
-        const restored = action.payload.group;
-        if (!restored) return;
-        const idx = state.groups.findIndex(g => g.id === restored.id);
-        if (idx === -1) {
-          // 整组被消费掉的情况：整组回到列表里，位置按 createdAt 倒序排。
-          state.groups.push(restored);
-          state.groups.sort(
-            (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
-          );
-        } else {
-          // 单条标签被消费的情况：组还在，换成 SW 落盘后的那一份（含插回的那条）。
-          state.groups[idx] = restored;
-        }
-        state.error = null;
-        state.errorSource = null;
-        state.errorAction = null;
-      })
-      .addCase(restoreConsumedAndSync.rejected, (state, action) => {
-        // 撤销失败 = 那条记录**仍然不在**（SW 侧是先撤意图、成功才写记录）。
-        // 界面必须说清这一点：用户点了「撤销」却什么都没发生，最怕的是
-        // 「撤销按钮按了没反应」这种沉默。
-        state.error = action.error.message || '撤销失败';
-        state.errorSource = 'action';
-        state.errorAction = 'undo';
       })
       .addCase(deleteTabAndSync.pending, (state, action) => {
         // 乐观更新：点击即从列表消失，不等 SW mutation + 云端回环（此前只在

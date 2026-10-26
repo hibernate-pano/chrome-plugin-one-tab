@@ -117,7 +117,6 @@ const JOURNAL_OP_TYPES: Record<MutationOp['op'], true> = {
   toggleGroupLock: true,
   moveTab: true,
   cleanDuplicates: true,
-  restoreConsumed: true,
 };
 
 /**

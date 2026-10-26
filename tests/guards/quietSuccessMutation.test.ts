@@ -59,7 +59,7 @@ const DELETE_ALL_MESSAGES = 'src/components/layout/deleteAllMessages.ts';
 const FEEDBACK_POLICY = 'src/core/feedbackPolicy.ts';
 const LOCK_COPY = 'src/components/tabs/lockFeedbackCopy.ts';
 const TOAST_POLICY = 'src/components/common/toastPolicy.ts';
-const RESTORE_COPY = 'src/components/tabs/restoreFeedbackCopy.ts';
+const MOVE_COPY = 'src/components/tabs/moveFeedbackCopy.ts';
 
 /** 把源码里的一段文字换掉；找不到就抛（变异没生效 = 前提变了，必须让人知道）。 */
 const replaceIn = (source: string, from: string, to: string): string => {
@@ -72,30 +72,31 @@ const replaceIn = (source: string, from: string, to: string): string => {
 };
 
 describe('变异自证：「安静的成功」的守卫必须看得见破口', () => {
-  it('① 撤掉未锁定整组恢复的撤销凭据 ⇒ 守卫必须变红（红在「撤销凭据」那句）', () => {
+  it('① 整组恢复的成功路径又出声了 ⇒ 守卫必须变红（红在「成功路径必须静默」）', () => {
     const [outcome] = runMutationCases([
       {
-        name: '未锁定整组恢复不带撤销凭据',
+        name: '成功路径里多了一条播报',
         testFile: GUARD,
         targets: [
           {
             path: TAB_GROUP,
-            // ⚠️ **只动凭据**（第二个实参），成功播报本身一个字不动。
-            //    删掉整块会让红的**第一条**变成「成功播报必须还在」——
-            //    「撤销凭据」那条断言就永远没被触发 ⇒ 这条变异证明不了它有检测力。
-            //
-            // 片段是 `TabGroup.tsx:578` 那一行（12 空格缩进；全文仅此一处）。
-            // 换成 `undefined` 之后：播报还在、文案还在，但退路没了。
-            mutate: source => replaceIn(source, '            { group },\n', '            undefined,\n'),
+            // ⚠️ 变异只加**一条播报**（模拟「撤销机制还在时」的样子）：
+            //    位置在 consumeSession() 之后、失败分支之前 ⇒ 属于**成功路径**。
+            //    守卫红在「整组恢复的成功路径必须静默」那条。
+            mutate: source =>
+              replaceIn(
+                source,
+                '        consumeSession();\n',
+                '        consumeSession();\n        showRestoreSuccessMessage(\'测试播报\');\n',
+              ),
           },
         ],
         expectRed: true,
-        expectedFailure:
-          'src/components/tabs/TabGroup.tsx：整组恢复那条必须挂上撤销凭据（不可逆的删除必须有退路）',
+        expectedFailure: '整组恢复的成功路径必须静默',
       },
     ]);
     assert.ok(outcome, '变异必须真的跑起来');
-    assertMutationOutcome(outcome, true, '把未锁定整组恢复的撤销凭据换成 undefined');
+    assertMutationOutcome(outcome, true, '给整组恢复的成功路径加回一条播报');
   });
 
   it('② 删掉锁定分支的成功门 ⇒ 守卫必须变红（红在「成功门仍在」）', () => {
@@ -297,32 +298,27 @@ describe('变异自证：「安静的成功」的守卫必须看得见破口', (
   //     · 调用点一字不动。
   //   ⇒ 所有守卫都必须仍然绿。谁要是把文案函数钉成「源码里必须有 `opened`」，
   //     这条就会红 —— 那正是我们要抓的「钉长相」。
-  it('⑧ 等价改写（restoreGroupSuccessMessage 的局部变量改名）⇒ 守卫必须**仍然绿**', () => {
+  it('⑧ 等价改写（文案函数的局部变量改名）⇒ 守卫必须**仍然绿**', () => {
     const [outcome] = runMutationCases([
       {
         name: '文案函数的局部变量改名',
         testFile: GUARD,
         targets: [
           {
-            path: RESTORE_COPY,
-            // ⚠️ 只改 `restoreGroupSuccessMessage` **函数内**那两行（声明 + 使用）。
-            //    不能对全文件做 `\bopened\b` 改名：同一个词还是
-            //    `restoreAllSearchSuccessMessage` 的**入参字段**
-            //    （`opened: number` 与 `counts.opened`）—— 一起改就不是
-            //    「等价改写」而是「改坏了」，那会红在别的断言上。
+            path: MOVE_COPY,
+            // ⚠️ 2026-10-26：原来的等价改写对象（restoreGroupSuccessMessage）
+            //    随「撤销机制下线 + 恢复成功静默」一起删了 ⇒ 换成**还活着**的
+            //    同类文案函数 moveEmptiesSessionMessage：只改它**函数内**的
+            //    局部变量名（subject → label），输出文案逐字不变。
             mutate: source =>
               replaceIn(
                 replaceIn(
                   source,
-                  '  const opened = inCurrentWindow\n' +
-                    '    ? `已在当前窗口打开 ${tabCount} 个标签页`\n' +
-                    '    : `已在新窗口打开 ${tabCount} 个标签页`;',
-                  '  const headline = inCurrentWindow\n' +
-                    '    ? `已在当前窗口打开 ${tabCount} 个标签页`\n' +
-                    '    : `已在新窗口打开 ${tabCount} 个标签页`;',
+                  "  const subject = source ? `「${source}」` : '原会话';",
+                  "  const label = source ? `「${source}」` : '原会话';",
                 ),
-                '  return `${opened}。该会话已${restoreOutcomePhrase(false)}（未锁定会话恢复后即消费）；需要反复使用请先锁定它。`;',
-                '  return `${headline}。该会话已${restoreOutcomePhrase(false)}（未锁定会话恢复后即消费）；需要反复使用请先锁定它。`;',
+                '  return `${subject}的最后一条标签${where}，该会话已从列表移除`;',
+                '  return `${label}的最后一条标签${where}，该会话已从列表移除`;',
               ),
           },
         ],
@@ -330,6 +326,6 @@ describe('变异自证：「安静的成功」的守卫必须看得见破口', (
       },
     ]);
     assert.ok(outcome, '变异必须真的跑起来');
-    assertMutationOutcome(outcome, false, '把 restoreGroupSuccessMessage 的局部变量 opened 改名');
+    assertMutationOutcome(outcome, false, '把文案函数的局部变量改名');
   });
 });

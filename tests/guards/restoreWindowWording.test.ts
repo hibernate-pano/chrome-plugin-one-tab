@@ -1,41 +1,37 @@
-/**
- * 「恢复」的提示必须说清**开在哪个窗口**（2026-10-25 真机发现）。
- *
- * ── 这个文件要防的回归类别 ────────────────────────────────────────────────
- *
- * 恢复有两条路径，开在**不同的窗口**：
- *   · 列表页「在当前窗口打开整个会话」→ 标签加到**当前**窗口；
- *   · 列表页/搜索页「在新窗口恢复」→ 另开一扇窗。
- *
- * 修复前 `restoreGroupSuccessMessage` 把「已在新窗口打开 N 个标签页」**写死**了
- * ⇒ 点「在当前窗口打开」也这么说。**界面在撒谎**：标签明明加在了眼前这个窗口，
- * 提示却说新窗口。
- *
- * 为什么现在才算个事：2026-10-25 产品负责人把「在当前窗口打开」定成**主操作**
- * （卡头第一位 + accent 墨色 + 窄屏常驻）⇒ 这条谎话落在了**最高频**的那条
- * 路径上（真机实测：点它 ⇒ toast 写「已在新窗口打开 3 个标签页」，
- * 而 3 个标签其实加在了当前窗口）。
- *
- * ── 判据钉的是**语义**，不是字面量 ──────────────────────────────────────
- *
- *   · 当前窗口那条 ⇒ 必须说「当前窗口」，且**不得**出现「新窗口」；
- *   · 新窗口那条   ⇒ 必须说「新窗口」，且**不得**出现「当前窗口」；
- *   · 两条**必须不同**（否则 = 压根没分流）；
- *   · **接线**（第 3 个参数）必须真的接上：
- *     列表页那条必须把 `inCurrentWindow` 传进去（不许写死），
- *     搜索页那条必须与它发的那条 OPEN_TABS 请求**一致**。
- *   · 底层真的按 `inCurrentWindow` 分流（SW 选 openTabsInCurrentWindow /
- *     openTabsInNewWindow）—— 否则「当前窗口」这句话本身也是假的。
- *
- * 等价的改写（`inCurrentWindow === true`、`Boolean(inCurrentWindow)`）不该变红
- * ⇒ 接线那一半判的是**这个参数有没有跟着那个变量走**，不是逐字相等。
- */
+// 恢复的「开在哪个窗口」必须**说一套、做一套**（2026-10-25 立，2026-10-26 改判据）。
+//
+// ── 这个文件在防什么 ──────────────────────────────────────────────────────
+//
+// 2026-10-25 审计：点「在当前窗口打开」，提示却写「已在新窗口打开」——
+// 标签明明加在**眼前**，提示却说到了别处。⇒ 修法当时是「让成功提示按
+// `inCurrentWindow` 分流」。
+//
+// ── 2026-10-26：判据的**对象**变了（不是结论变了）───────────────────────
+//
+// 撤销机制下线 ⇒ 恢复整组 / 点开单标签这两条**高频**路径**完全静默**
+// ⇒ 那条「已在新窗口打开 N 个标签页」的成功提示**整个消失**了
+// ⇒ 「开在哪个窗口」这件事现在**只由按钮自己说**
+//   （「在当前窗口打开整个会话」/「在新窗口恢复整个会话」），
+//   而**行为**由那条 `OPEN_TABS` 请求里的 `inCurrentWindow` 决定。
+//
+// ⇒ 缺陷的**形状**没变，只是换了个位置：**按钮上写的**与**实际做的**必须一致。
+//   按钮说「在当前窗口打开」而实现开了新窗 ⇒ 用户以为标签在眼前，
+//   结果跑去了另一个窗口（原封不动的那个缺陷）。
+//
+// ── 为什么这一半必须钉在**数据流**上 ──────────────────────────────────────
+//
+// 「界面上出现了『当前窗口』四个字」**不等于**它开在当前窗口 ——
+// 字符串在文件里、行为在另一个函数里。⇒ 断言分两半：
+//   ① **文字**（按钮的 tooltip / aria-label 说的是哪个窗口）；
+//   ② **数据流**（那颗按钮的 onClick → 处理函数 → `openAllTabs(??)` → 请求里的
+//      `inCurrentWindow`），必须**一路带着同一个布尔值**。
+//
+// 等价的改写（`inCurrentWindow === true`、`Boolean(inCurrentWindow)`）不该变红
+// ⇒ 接线那一半判的是**这个参数有没有跟着那个变量走**，不是逐字相等。
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import ts from 'typescript';
-
-import { restoreGroupSuccessMessage } from '../../src/components/tabs/restoreFeedbackCopy.ts';
 
 const read = (rel: string) => readFileSync(new URL(`../../${rel}`, import.meta.url), 'utf8');
 
@@ -44,25 +40,21 @@ const CURRENT_WINDOW = /当前窗口|这个窗口|本窗口/;
 /** 「新窗口」一族词。 */
 const NEW_WINDOW = /新窗口|另开一扇窗/;
 
-/** 找出某个源文件里所有 `restoreGroupSuccessMessage(...)` 的调用。 */
-function findCalls(rel: string): Array<{ args: string[]; line: number }> {
-  const file = rel;
-  const source = ts.createSourceFile(
-    file,
-    read(file),
-    ts.ScriptTarget.Latest,
-    true,
-    ts.ScriptKind.TSX,
-  );
-  const calls: Array<{ args: string[]; line: number }> = [];
+const parse = (rel: string): ts.SourceFile =>
+  ts.createSourceFile(rel, read(rel), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+
+/** 找出某个源文件里所有 `openAllTabs(...)` 调用的实参。 */
+function findOpenAllTabsArgs(rel: string): Array<{ arg: string; line: number }> {
+  const source = parse(rel);
+  const calls: Array<{ arg: string; line: number }> = [];
   const visit = (node: ts.Node) => {
     if (
       ts.isCallExpression(node) &&
       ts.isIdentifier(node.expression) &&
-      node.expression.text === 'restoreGroupSuccessMessage'
+      node.expression.text === 'openAllTabs'
     ) {
       calls.push({
-        args: node.arguments.map(a => a.getText(source)),
+        arg: node.arguments[0]?.getText(source) ?? '(无参)',
         line: source.getLineAndCharacterOfPosition(node.getStart(source)).line + 1,
       });
     }
@@ -73,24 +65,65 @@ function findCalls(rel: string): Array<{ args: string[]; line: number }> {
 }
 
 /**
- * 这个文件里**真的**往请求体里塞过 `inCurrentWindow` 吗？
+ * 找出「说了『当前窗口』/『新窗口』」的那个按钮，并回报它的 onClick。
  *
- * ⚠️ 必须走 AST，不能 grep 源码里的字样 —— 注释里提到这个词不等于代码发了它
- * （我自己写注释时就踩过：注释里写了「不带 inCurrentWindow」⇒ grep 命中
- * ⇒ 守卫判成了「搜索页会开在当前窗口」⇒ 假红）。
+ * 【为什么要从 tooltip 出发找按钮】按钮本身**没有文字**（它是图标按钮）⇒
+ * 「这颗按钮说的是哪个窗口」这件事只写在 tooltip / aria-label 上。
+ * ⇒ 从带那段文字的 JSX 元素出发，往里找 `button`，再读它的 onClick。
  */
+function findWindowButtons(rel: string): Array<{ label: string; onClick: string }> {
+  const source = parse(rel);
+  const out: Array<{ label: string; onClick: string }> = [];
+
+  const textOf = (node: ts.Node): string => node.getText(source);
+
+  const visit = (node: ts.Node) => {
+    if (ts.isJsxElement(node)) {
+      const opening = node.openingElement;
+      const attrs = opening.attributes.properties.filter(ts.isJsxAttribute);
+      // 文字可能写在 content（tooltip）或 aria-label 上，两处都认。
+      const attrText = attrs
+        .map(a => (a.initializer ? textOf(a.initializer) : ''))
+        .join(' ');
+      const isCurrent = CURRENT_WINDOW.test(attrText);
+      const isNew = NEW_WINDOW.test(attrText);
+      if (isCurrent || isNew) {
+        // 在这个 JSX 元素内部找 button 的 onClick。
+        let onClick = '';
+        const findButton = (n: ts.Node) => {
+          if (ts.isJsxElement(n) && n.openingElement.tagName.getText(source) === 'button') {
+            const handler = n.openingElement.attributes.properties
+              .filter(ts.isJsxAttribute)
+              .find(a => a.name.getText(source) === 'onClick');
+            if (handler?.initializer) onClick = textOf(handler.initializer);
+          }
+          n.forEachChild(findButton);
+        };
+        findButton(node);
+        out.push({
+          label: isCurrent ? 'current' : 'new',
+          onClick: onClick.replace(/^\{|\}$/g, ''),
+        });
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(source);
+  return out;
+}
+
+/** 这个文件里**真的**往请求体里塞过 `inCurrentWindow` 吗？ */
 function sendsInCurrentWindowFlag(rel: string): boolean {
-  const source = ts.createSourceFile(
-    rel,
-    read(rel),
-    ts.ScriptTarget.Latest,
-    true,
-    ts.ScriptKind.TSX,
-  );
+  const source = parse(rel);
   let found = false;
   const visit = (node: ts.Node) => {
+    // ⚠️ 请求体里写的是**简写**属性（`{ tabs, inCurrentWindow }`）⇒
+    //   它是 ShorthandPropertyAssignment，不是 PropertyAssignment。
+    //   只认后者 ⇒ 守卫会对着真实代码报「没带 inCurrentWindow」（假红）。
+    const isProperty =
+      ts.isPropertyAssignment(node) || ts.isShorthandPropertyAssignment(node);
     if (
-      ts.isPropertyAssignment(node) &&
+      isProperty &&
       (ts.isIdentifier(node.name) || ts.isStringLiteral(node.name)) &&
       node.name.text === 'inCurrentWindow'
     ) {
@@ -103,170 +136,88 @@ function sendsInCurrentWindowFlag(rel: string): boolean {
 }
 
 // ─────────────────────────────────────────────────────────────────────────
-// 1. 文案本身：说清开在哪个窗口
+// 1. 列表页：两颗按钮的文字与行为必须对上
 // ─────────────────────────────────────────────────────────────────────────
 
-describe('恢复提示：说清「开在哪个窗口」（2026-10-25）', () => {
-  it('当前窗口那条：必须说「当前窗口」，且不得说「新窗口」', () => {
-    const msg = restoreGroupSuccessMessage(3, true);
-    assert.match(msg, CURRENT_WINDOW, '开在当前窗口就必须这么说');
-    assert.doesNotMatch(
-      msg,
-      NEW_WINDOW,
-      '这条谎话正是本缺陷：明明加在当前窗口，却说「新窗口」'
+describe('列表页：「在当前窗口打开」与「在新窗口恢复」必须各说各的、各做各的', () => {
+  const SRC = 'src/components/tabs/TabGroup.tsx';
+
+  it('两颗按钮都在，且分别标成「当前窗口」与「新窗口」', () => {
+    const buttons = findWindowButtons(SRC);
+    const current = buttons.filter(b => b.label === 'current');
+    const fresh = buttons.filter(b => b.label === 'new');
+    assert.ok(current.length > 0, `列表页找不到说「当前窗口」的按钮（实得：${JSON.stringify(buttons)}）`);
+    assert.ok(fresh.length > 0, `列表页找不到说「新窗口」的按钮（实得：${JSON.stringify(buttons)}）`);
+  });
+
+  it('「在当前窗口打开」那颗必须真的走 inCurrentWindow=true', () => {
+    const buttons = findWindowButtons(SRC).filter(b => b.label === 'current');
+    for (const b of buttons) {
+      // 处理函数 → openAllTabs(??)
+      const handler = b.onClick;
+      assert.ok(
+        /handleOpenAllTabsInCurrentWindow/.test(handler),
+        `说「当前窗口」的按钮的 onClick 是 ${handler} —— 它不是「在当前窗口打开」那个处理函数`
+      );
+      const calls = findOpenAllTabsArgs(SRC).filter(
+        c => c.arg === 'true' || /inCurrentWindow/.test(c.arg)
+      );
+      assert.ok(
+        calls.length > 0,
+        '找不到 openAllTabs(true) 的调用 —— 「在当前窗口打开」这条路径没了'
+      );
+    }
+  });
+
+  it('「在新窗口恢复」那颗必须真的走 inCurrentWindow=false', () => {
+    const buttons = findWindowButtons(SRC).filter(b => b.label === 'new');
+    for (const b of buttons) {
+      const handler = b.onClick;
+      assert.ok(
+        /handleOpenAllTabs\b/.test(handler) && !/InCurrentWindow/.test(handler),
+        `说「新窗口」的按钮的 onClick 是 ${handler} —— 它接到了「当前窗口」那个处理函数`
+      );
+    }
+    const calls = findOpenAllTabsArgs(SRC);
+    assert.ok(
+      calls.some(c => c.arg === 'false'),
+      '找不到 openAllTabs(false) 的调用 —— 「在新窗口恢复」这条路径没了'
     );
   });
 
-  it('新窗口那条：必须说「新窗口」，且不得说「当前窗口」', () => {
-    const msg = restoreGroupSuccessMessage(3, false);
-    assert.match(msg, NEW_WINDOW);
-    assert.doesNotMatch(msg, CURRENT_WINDOW);
-  });
-
-  it('两条必须给出不同的话（否则 = 压根没分流）', () => {
-    const inPlace = restoreGroupSuccessMessage(3, true);
-    const newWindow = restoreGroupSuccessMessage(3, false);
-    assert.notEqual(
-      inPlace,
-      newWindow,
-      '两种恢复方式必须被说成两件事 —— 否则用户分不清自己点的是哪颗按钮'
-    );
-  });
-
-  it('锁定那条已经**没有文案**了：函数签名里不许再有 locked 岔路', () => {
-    // 2026-10-25「安静的成功」：锁定会话恢复后**保留在列表里** ⇒ 界面自明
-    // ⇒ 锁定路径不再出声 ⇒「锁定版成功提示」成为死分支 ⇒ 已删。
-    // ⇒ 这个文案函数只描述**未锁定**那条（它是被消费的那条）。
-    //
-    // ── 2026-10-25 修复轮 1：这条断言原来是**同义反复** ──────────────────
-    //
-    // 原写法是 `assert.doesNotMatch(restoreGroupSuccessMessage(2), /仍保留在列表中/)`。
-    // 函数已经没有 `isLocked` 参数、只有一条分支 ⇒ 那句话**结构上不可能出现**
-    // ⇒ 断言恒真、零检测力：就算有人把 `isLocked` 加回来、locked 分支改说
-    // 「锁定会话不会被移除」，它照样绿。
-    // ⇒ 现在钉**签名**：参数表里只许有 `tabCount` 与 `inCurrentWindow`，
-    //   不许出现任何 locked 形状的参数；函数体里也不许再按 locked 分流。
-    const file = ts.createSourceFile(
-      'restoreFeedbackCopy.ts',
-      read('src/components/tabs/restoreFeedbackCopy.ts'),
-      ts.ScriptTarget.Latest,
-      true,
-      ts.ScriptKind.TS,
-    );
-    let decl: ts.VariableDeclaration | null = null;
-    const visit = (node: ts.Node): void => {
-      if (
-        ts.isVariableDeclaration(node) &&
-        ts.isIdentifier(node.name) &&
-        node.name.text === 'restoreGroupSuccessMessage'
-      ) {
-        decl = node;
-      }
-      node.forEachChild(visit);
-    };
-    visit(file);
-    assert.ok(decl, '找不到 restoreGroupSuccessMessage 的声明');
-
-    const init = (decl as unknown as ts.VariableDeclaration).initializer;
-    assert.ok(init && ts.isArrowFunction(init), 'restoreGroupSuccessMessage 必须还是箭头函数');
-    const params = (init as ts.ArrowFunction).parameters;
-    const paramNames = params.map(p => p.name.getText(file));
-    assert.deepEqual(
-      paramNames,
-      ['tabCount', 'inCurrentWindow'],
-      '签名只许是 (tabCount, inCurrentWindow) —— 多一个 locked 形状的参数，' +
-        '就说明「锁定那条静默」这件事被悄悄改回去了',
-    );
-    // 参数类型里也不许出现 locked（防止 `isLocked: boolean` 换个名字复活）
-    const signatureText = params.map(p => p.getText(file)).join(', ');
-    assert.doesNotMatch(
-      signatureText,
-      /locked/i,
-      '参数里不许出现任何 locked 形状的东西（锁定那条的成功提示已随死分支删除）',
+  it('OPEN_TABS 请求必须把那个布尔值带上（不带 ⇒ SW 只会新开窗）', () => {
+    assert.ok(
+      sendsInCurrentWindowFlag(SRC),
+      '列表页的 OPEN_TABS 请求里没有 inCurrentWindow ⇒ 「在当前窗口打开」实际开了新窗'
     );
   });
 });
 
 // ─────────────────────────────────────────────────────────────────────────
-// 2. 接线：第二个参数必须真的接上
+// 2. 搜索页：写「新窗口」就不许带 inCurrentWindow
 // ─────────────────────────────────────────────────────────────────────────
 
-describe('恢复提示的接线：第二个参数必须跟着「开在哪个窗口」走', () => {
-  it('列表页那条必须把 inCurrentWindow 传进去（不许写死）', () => {
-    const calls = findCalls('src/components/tabs/TabGroup.tsx');
-    assert.ok(calls.length > 0, '列表页必须真的调用这个文案函数');
-    for (const call of calls) {
-      assert.ok(
-        call.args.length >= 2,
-        `列表页第 ${call.line} 行的调用少传了第二个参数 ⇒ 文案会自己猜「新窗口」` +
-          '（等价于把谎话写死）'
-      );
-      assert.match(
-        call.args[1],
-        /inCurrentWindow/,
-        `列表页第 ${call.line} 行传的是 ${call.args[1]} ⇒ 那个「当前窗口」的提示` +
-          '永远不会被说出来'
+describe('搜索页：写「新窗口」的那条请求不许带 inCurrentWindow', () => {
+  const SRC = 'src/components/search/SearchResultList.tsx';
+
+  it('搜索页的恢复按钮都写着「新窗口」', () => {
+    const buttons = findWindowButtons(SRC);
+    assert.ok(buttons.length > 0, '搜索页找不到任何说了窗口的恢复按钮');
+    for (const b of buttons) {
+      assert.equal(
+        b.label,
+        'new',
+        `搜索页有个按钮写着「${b.label === 'current' ? '当前窗口' : '新窗口'}」—— ` +
+          '搜索页的恢复一直是「新窗口」，写错就是界面在说谎'
       );
     }
   });
 
-  it('搜索页那条必须与它发的那条 OPEN_TABS 请求一致', () => {
-    const calls = findCalls('src/components/search/SearchResultList.tsx');
-    assert.ok(calls.length > 0, '搜索页必须真的调用这个文案函数');
-    const src = 'src/components/search/SearchResultList.tsx';
-    // 搜索页的请求不带 inCurrentWindow ⇒ SW 会新开一扇窗 ⇒ 文案必须说「新窗口」。
-    const sendsInCurrentWindow = sendsInCurrentWindowFlag(src);
-    for (const call of calls) {
-      assert.ok(
-        call.args.length >= 2,
-        `搜索页第 ${call.line} 行的调用少传了第二个参数`
-      );
-      if (sendsInCurrentWindow) {
-        assert.match(call.args[1], /inCurrentWindow/);
-      } else {
-        assert.match(
-          call.args[1],
-          /^false$/,
-          `搜索页第 ${call.line} 行传的是 ${call.args[1]}，而它发的请求不带 ` +
-            'inCurrentWindow ⇒ 标签会开在新窗口，文案却会说自己窗口'
-        );
-      }
-    }
-  });
-
-  it('全仓每个调用点都必须显式传第二个参数（不许吃默认值）', () => {
-    const files = [
-      'src/components/tabs/TabGroup.tsx',
-      'src/components/search/SearchResultList.tsx',
-    ];
-    for (const file of files) {
-      for (const call of findCalls(file)) {
-        assert.ok(
-          call.args.length >= 2,
-          `${file}:${call.line} 少传第二个参数 —— 默认值是「新窗口」，` +
-            '而列表页有一半路径开在当前窗口'
-        );
-      }
-    }
-  });
-});
-
-// ─────────────────────────────────────────────────────────────────────────
-// 3. 底层：SW 真的按 inCurrentWindow 分流（否则「当前窗口」本身就是假的）
-// ─────────────────────────────────────────────────────────────────────────
-
-describe('底层：SW 真的按 inCurrentWindow 分流', () => {
-  it('SW 必须按 data.inCurrentWindow 选「当前窗口 / 新窗口」两种开法', () => {
-    const src = read('src/service-worker.ts');
-    assert.match(
-      src,
-      /inCurrentWindow[\s\S]{0,200}openTabsInCurrentWindow/,
-      'SW 收到 inCurrentWindow 时必须开在当前窗口'
-    );
-    assert.match(
-      src,
-      /openTabsInNewWindow/,
-      'SW 也必须保留「新窗口」这条开法'
+  it('搜索页的请求不许带 inCurrentWindow（带了就会开在当前窗口）', () => {
+    assert.ok(
+      !sendsInCurrentWindowFlag(SRC),
+      '搜索页的 OPEN_TABS 请求带了 inCurrentWindow ⇒ 标签会加在当前窗口，' +
+        '而按钮上写的是「新窗口」'
     );
   });
 });

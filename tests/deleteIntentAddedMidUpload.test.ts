@@ -1,20 +1,25 @@
-// 上传途中被撤回的删除意图**不许**被写成墓碑（2026-10-22 审计 P0-4）—— 行为级回归。
+// 上传期间**新增**的删除意图，这一轮就必须广播出去 —— 行为级回归。
 //
 // ── 这个文件在防什么 ──────────────────────────────────────────────────────
 //
-// 「恢复即消费」被撤销时，那条删除广播意图会从队列里被摘掉
-// （storage.retractPendingDeleteIds）。撤销按钮弹的是「已撤销」——
-// 也就是说，**用户已经知道它撤回了**。
+// 一轮上传开始之后，用户又删掉了一个会话。那条删除意图**不能压到下一轮**：
+// 在下一轮之前，云端行还是**活跃行** ⇒ 别的设备上那条会话还在（而本机已经没了）
+// ⇒ 两台设备分叉，且用户在另一台设备上看到的还是「它还在」。
 //
-// 如果上传这一轮用的是**开始时**读到的那份队列清单，就会给一条**已经撤回**
-// 的意图写墓碑。而墓碑的印记是**写墓碑那一刻**才取的 ⇒ 必然比撤销写下的
-// 记录更新 ⇒ 跨设备合并时墓碑赢 ⇒ 别的设备上那条会话**还是消失了**，
-// 而用户看到的是「撤销成功了」。
+// ⇒ 写墓碑前必须**重读**队列（syncEngine 在 markCloudGroupsAsDeleted 之前那次
+// storage.getPendingDeleteIds()），而不是用本轮开头读到的那份清单。
 //
-// 这是最坏的一种骗人：界面说成功，跨设备的事实相反，且不可逆（无回收站）。
+// ── 2026-10-26：判据的方向变了 ───────────────────────────────────────────
 //
-// 判据钉的是**终点**（这一轮广播出去的删除 id 里没有它），不是「队列里还有
-// 没有它」—— 后者跟「上传刚读完队列」这个时序打架，钉不住真正的性质。
+// 这个文件原先守的是**相反**的方向：「上传途中被**撤回**的删除意图不许写成墓碑」。
+// 那条撤回路径是「恢复即消费」的**撤销按钮**提供的 —— 撤销机制已下线
+// ⇒ 生产里**不再存在**撤回路径（storage.retractPendingDeleteIds 一并删除）。
+//
+// ⇒ 改守**可达**的那条性质：队列在上传期间**变长**。
+//   （「重读队列」这个实现仍然必须留着 —— 它现在扛的就是这件事。）
+//
+// 判据钉的是**终点**（这一轮广播出去的删除 id 里**有**它），不是「队列里还有没有它」
+// —— 后者跟「上传刚读完队列」这个时序打架，钉不住真正的性质。
 import { describe, it, before, after, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { register } from 'node:module';
@@ -62,7 +67,7 @@ function makeBackend(opts?: { onUpload?: () => Promise<void> | void }) {
     },
     async uploadGroups(groups: Array<{ id: string }>) {
       calls.uploadGroups.push(groups.map(g => g.id));
-      // ← 这里就是「上传进行中」：用户此刻点了撤销。
+      // ← 这里就是「上传进行中」：用户此刻又删掉了一个会话。
       if (opts?.onUpload) await opts.onUpload();
       return { writtenIds: groups.map(g => g.id) };
     },
@@ -106,8 +111,10 @@ beforeEach(async () => {
   await storage.setPendingUpload(false);
   invalidateGroupsCache();
   // 队列排空：上一个用例留下的删除意图会连累下一个用例的前提。
+  // ⚠️ 这里用「按确认逐条消费」的清队口（clearPendingDeleteIds），不是已删除的
+  //    retractPendingDeleteIds（那是撤销按钮专用路径，生产里已不存在）。
   const left = await storage.getPendingDeleteIds();
-  if (left.length > 0) await storage.retractPendingDeleteIds(left);
+  if (left.length > 0) await storage.clearPendingDeleteIds(left);
   current = makeBackend();
   const { setActiveSyncBackend } = await import('@/sync-backend/index.ts');
   setActiveSyncBackend(current.backend as never);
@@ -121,15 +128,15 @@ async function seedLocalWithDeleteIntent(): Promise<void> {
   await storage.addPendingDeleteIds(['g1']);
 }
 
-describe('删除意图在上传途中被撤回 ⇒ 那一轮不许把它写成墓碑', () => {
-  it('撤回之后，这一轮广播出去的删除 id 里**不含**它', async () => {
+describe('删除意图在上传期间新增 ⇒ 那一轮就得把它广播出去', () => {
+  it('上传途中新增的那条意图，这一轮广播出去的删除 id 里**有**它', async () => {
     await seedLocalWithDeleteIntent();
 
     const { storage } = await import('@/utils/storage');
     current = makeBackend({
       onUpload: async () => {
-        // 用户在上传进行中点了「撤销」⇒ 意图被摘掉。
-        await storage.retractPendingDeleteIds(['g1']);
+        // 用户在上传进行中又删掉了一个会话 ⇒ 它的删除意图此刻才进队列。
+        await storage.addPendingDeleteIds(['g2']);
       },
     });
     const { setActiveSyncBackend } = await import('@/sync-backend/index.ts');
@@ -141,20 +148,20 @@ describe('删除意图在上传途中被撤回 ⇒ 那一轮不许把它写成�
     assert.equal(result.success, true, `前提：这一轮上传必须成功（实得：${result.error ?? '无'}）`);
     assert.ok(
       current.calls.uploadGroups.length > 0,
-      '前提：这一轮真的走了 upsert（否则「上传途中撤回」这个时间点根本不存在）'
+      '前提：这一轮真的走了 upsert（否则「上传途中新增」这个时间点根本不存在）'
     );
 
     const broadcasted = current.calls.broadcastDeletes.flat();
-    assert.equal(
-      broadcasted.includes('g1'),
-      false,
-      '已经被撤回的删除意图**不许**再被写成墓碑 —— ' +
-        '墓碑的印记取自写墓碑那一刻（必然比撤销的新）⇒ 别的设备上那条会话还是消失，' +
-        '而用户看到的是「撤销成功了」'
+    assert.ok(
+      broadcasted.includes('g2'),
+      '上传期间新增的删除意图**必须**在这一轮广播出去 —— ' +
+        '压到下一轮的话，云端行在这一轮还是活跃行 ⇒ 别的设备上那条会话还在，' +
+        '而本机已经删了 ⇒ 两台设备分叉，且用户在另一台设备上看到的还是「它还在」。' +
+        `（这一轮实际广播了：${JSON.stringify(broadcasted)}）`
     );
   });
 
-  it('正控：没撤回的那条意图**照旧**广播（否则上一条是假通过）', async () => {
+  it('正控：上传开始前就登记的那条意图**照旧**广播（否则上一条是假通过）', async () => {
     await seedLocalWithDeleteIntent();
 
     const { syncEngine } = await import('@/services/syncEngine');
@@ -164,8 +171,8 @@ describe('删除意图在上传途中被撤回 ⇒ 那一轮不许把它写成�
     const broadcasted = current.calls.broadcastDeletes.flat();
     assert.ok(
       broadcasted.includes('g1'),
-      '正控：没被撤回的删除意图必须真的广播到云端 —— ' +
-        '否则「撤回后不广播」这条断言是空转的（它对「根本没广播」同样为真）'
+      '正控：上传前就登记的删除意图必须真的广播到云端 —— ' +
+        '否则「上传途中新增的也广播」这条断言是空转的（它对「根本没广播」同样为真）'
     );
   });
 });

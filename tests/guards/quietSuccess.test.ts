@@ -1043,16 +1043,6 @@ const callsIn = (node: ts.Node, callee: string): ts.CallExpression[] => {
   return out;
 };
 
-/** 一个节点**最近的那层 if 祖先**。 */
-const enclosingIf = (node: ts.Node): ts.IfStatement | null => {
-  let current: ts.Node | undefined = node.parent;
-  while (current) {
-    if (ts.isIfStatement(current)) return current;
-    current = current.parent;
-  }
-  return null;
-};
-
 /** 一个节点**所有** if 祖先的条件文本（由内到外）。 */
 const ifConditions = (node: ts.Node): string[] => {
   const out: string[] = [];
@@ -1214,20 +1204,6 @@ const extractLockedBranchNode = (source: ts.SourceFile): ts.Statement | null => 
     if (cond === 'group.isLocked') return statement.thenStatement;
   }
   return null;
-};
-
-/** 某个调用是不是「走错误通道」（第三个实参里 `type: 'error'`）。 */
-const isErrorTypeOption = (call: ts.CallExpression): boolean => {
-  const arg = call.arguments[2];
-  if (!arg || !ts.isObjectLiteralExpression(arg)) return false;
-  return arg.properties.some(
-    property =>
-      ts.isPropertyAssignment(property) &&
-      ts.isIdentifier(property.name) &&
-      property.name.text === 'type' &&
-      ts.isStringLiteral(property.initializer) &&
-      property.initializer.text === 'error',
-  );
 };
 
 describe('Task 3：锁定组恢复静默（但成功门与失败出口一个字都没动）', () => {
@@ -1396,145 +1372,51 @@ describe('Task 3：锁定组恢复静默（但成功门与失败出口一个字�
   });
 
   for (const file of [TAB_GROUP, SEARCH_LIST]) {
-    it(`${file}：整组恢复的成功播报经判据层裁决（锁定 ⇒ 空 fact ⇒ 静默）`, async () => {
-      // ── 2026-10-25 终审修复：门从「组件手写 if」搬进判据层 ────────────────
+    it(`${file}：整组恢复的成功路径**完全静默**（撤销机制下线，不再有那条提示）`, () => {
+      // ── 2026-10-26 产品决定 ──────────────────────────────────────────────
+      // 「恢复即消费」的那条带「撤销」的提示被下线了：恢复时标签**已经开在
+      // 浏览器里** ⇒ 结果界面自明（窗口里多了那些标签、卡片从列表消失）
+      // ⇒ 成功路径**不许有任何播报**。
       //
-      // 原实现是 `if (!group.isLocked) showConsumeToast(...)` —— 组件自己
-      // 拍脑袋决定「说不说」，绕过了规格 §4.3 要求的那道判据层。
-      // 现在改成 `decideFeedback(...)` + `if (fb.level !== 'silent')`：
-      //   锁定 ⇒ 卡片还在（界面自明）⇒ 空 fact ⇒ 判据层判 silent；
-      //   未锁定 ⇒ 那条记录已被消费、界面说不出来 ⇒ fact。
-      //
-      // ⚠️ 这里**不用正则钉三元的形状**（本分支已被「正则看不见拼接和模板串」
-      //    坑过两次）：抽 AST 节点，用 `literalOf()` 读字面量内容、
-      //    用 `refersTo()` 认「来源是哪个文案函数」。
+      // 判据钉的是**性质**（成功路径零播报），不是「某句文案不见了」。
       const source = parseTsx(file);
-      const call = findCall(source, 'showConsumeToast', 'restoreGroupSuccessMessage');
-      assert.ok(call, `${file}：整组恢复的成功播报必须还在（未锁定那条）`);
 
-      // ① 「说不说」真的交给了判据层：同一个回包处理函数里有一次
-      //    `decideFeedback({ … hiddenFact: <fact> … })`，且结果落在变量上。
-      const fn = enclosingFunction(call!);
-      assert.ok(fn, `${file}：那条播报必须在一个回包处理函数里`);
-      const decisions = callsIn(fn!, 'decideFeedback');
-      assert.equal(
-        decisions.length,
-        1,
-        `${file}：整组恢复必须恰有一次判据层裁决（组件不许自己判「说不说」）`,
-      );
-      const decision = decisions[0]!;
-      const decisionInput = decision.arguments[0];
+      // ① 失败那一支仍然出声（「有 N 个打不开」是失败事件，必须说）。
+      const failCall = findCall(source, 'showRestoreError', '在当前设备无法打开');
       assert.ok(
-        decisionInput && ts.isObjectLiteralExpression(decisionInput),
-        `${file}：判据层必须收到一个对象（visibility / hiddenFact）`,
-      );
-      const propertyInitializer = (name: string): ts.Expression | null => {
-        const property = (decisionInput as ts.ObjectLiteralExpression).properties.find(
-          candidate =>
-            ts.isPropertyAssignment(candidate) &&
-            ts.isIdentifier(candidate.name) &&
-            candidate.name.text === name,
-        );
-        return property && ts.isPropertyAssignment(property) ? property.initializer : null;
-      };
-      const visibility = propertyInitializer('visibility');
-      assert.ok(visibility, `${file}：判据层必须显式说明结果可不可见`);
-      assert.equal(
-        literalOf(visibility!.getText(source)),
-        'self-evident',
-        `${file}：结果（卡片消失 / 窗口开了）界面自明 —— visibility 必须说对`,
-      );
-      const hiddenFact = propertyInitializer('hiddenFact');
-      assert.ok(hiddenFact, `${file}：判据层必须拿到那条界面说不出来的事实`);
-
-      // ② fact 的来源必须随锁定态分叉：**锁定 ⇒ 空**（判据层判 silent），
-      //    未锁定 ⇒ 就是那句恢复成功文案（非空 ⇒ 判据层判 fact）。
-      //    `hiddenFact` 直接写三元、或先落到变量上再传，两种写法都认。
-      const factInit = ts.isIdentifier(hiddenFact!)
-        ? initializerOf(source, hiddenFact!.text) ?? hiddenFact!
-        : hiddenFact!;
-      assert.ok(
-        ts.isConditionalExpression(factInit),
-        `${file}：fact 必须按「锁没锁」分叉（锁定那条卡片还在 ⇒ 空事实）`,
-      );
-      const conditional = factInit as ts.ConditionalExpression;
-      assert.equal(
-        conditional.condition.getText(source).replace(/\s+/g, ''),
-        'group.isLocked',
-        `${file}：分叉条件必须是 group.isLocked（不是别的开关）`,
-      );
-      // ⚠️ 这一条**不能**用 `literalOf(...) === ''` 单独判 —— literalOf 对
-      // **不含引号字面量**的表达式（例如一个变量名）也返回 '' ⇒ 把锁定臂写成
-      // `: lockedSay`（lockedSay = '已恢复，该会话仍保留在列表中'）会让这条断言假绿，
-      // 而锁定组会重新出声。实测：那种写法下 9 个相关守卫文件**全绿**。
-      // ⇒ 锁定臂必须是真的空字面量。变量中转、拼接、模板占位一律判红。
-      const whenTrue = conditional.whenTrue;
-      const isEmptyLiteral =
-        (ts.isStringLiteral(whenTrue) ||
-          ts.isNoSubstitutionTemplateLiteral(whenTrue)) &&
-        whenTrue.text === '';
-      const isVoidish =
-        (ts.isIdentifier(whenTrue) && whenTrue.text === 'undefined') ||
-        (ts.isVoidExpression(whenTrue) &&
-          ts.isNumericLiteral(whenTrue.expression) &&
-          whenTrue.expression.text === '0');
-      assert.ok(
-        isEmptyLiteral || isVoidish,
-        `${file}：锁定 ⇒ fact 必须为空 —— 只认真的空字面量（'' / "" / \`\` / undefined / void 0）；`
-          + '变量中转或拼接会让锁定组重新出声 ⇒ 一律判红',
-      );
-      const { restoreGroupSuccessMessage } = await import(
-        '@/components/tabs/restoreFeedbackCopy'
-      );
-      assert.notEqual(
-        restoreGroupSuccessMessage(1, false),
-        '',
-        '文案函数必须产出非空事实（空字符串会被判据层判成 silent）',
-      );
-      assert.ok(
-        refersTo(source, conditional.whenFalse, 'restoreGroupSuccessMessage'),
-        `${file}：未锁定 ⇒ fact 必须是那句恢复成功文案（非空 ⇒ 判据层判 fact）`,
+        failCall,
+        `${file}：「部分成功」那条必须还在 —— 「有 N 个打不开」界面表达不了`,
       );
 
-      // ③ 播报真的被**判据结果**包着 —— 不是「算了一下就扔掉」。
-      const assignedName = assignedNameOf(source, decision);
-      assert.ok(assignedName, `${file}：判据结果必须落在一个变量上（后续要拿它做门）`);
-      const guard = enclosingIf(call!);
-      assert.ok(guard, `${file}：那条播报必须在判据结果的条件分支里`);
-      assert.equal(
-        guard!.expression.getText(source).replace(/\s+/g, ''),
-        `${assignedName}.level!=='silent'`,
-        `${file}：播报只许在判据结果不是 silent 时发生（fact 为空 ⇒ 不弹）`,
-      );
-      assert.ok(
-        decision.getStart(source) < call!.getStart(source),
-        `${file}：必须先裁决、再播报（判据结果不可能来自后面）`,
+      // ② 成功路径零播报：同一个回包处理函数里，除了上面那条失败提示，
+      //    不许再有别的 toast 调用。
+      const fn = enclosingFunction(failCall!);
+      assert.ok(fn, `${file}：那条失败提示必须在一个回包处理函数里`);
+      const fnText = fn!.getText(source);
+      assert.doesNotMatch(
+        fnText,
+        /showRestoreSuccessMessage|showConsumeToast|showToast\(/,
+        `${file}：整组恢复的成功路径必须静默 —— 标签已经开在浏览器里、卡片从列表`
+          + '消失 ⇒ 界面自明 ⇒ 成功是状态，不是事件',
       );
 
-      // ④ 撤销凭据一个字都不许丢（不可逆消费的唯一退路）。
-      const spec = call!.arguments[1];
-      assert.ok(
-        spec && ts.isObjectLiteralExpression(spec),
-        `${file}：整组恢复那条必须挂上撤销凭据（不可逆的删除必须有退路）`,
-      );
+      // ③ 成功门仍在（静默的是成功，不是失败）。
       assert.match(
-        spec!.getText(source),
-        /\bgroup\b/,
-        `${file}：撤销凭据必须带消费前的整组快照（{ group }）`,
+        fnText,
+        /success\s*!==\s*true|success\s*===\s*false/,
+        `${file}：回包必须显式判过 success —— SW 拒开时界面不许谎报「已打开」`,
       );
     });
 
     it(`${file}：「部分成功」那条仍在条件之外、照旧出声（锁定组也必须知道）`, () => {
       const source = parseTsx(file);
-      const call = findCall(source, 'showConsumeToast', '在当前设备无法打开');
+      const call = findCall(source, 'showRestoreError', '在当前设备无法打开');
       assert.ok(
         call,
         `${file}：「部分成功」那条提示必须还在 —— 「有 N 个打不开」界面表达不了`,
       );
-      assert.ok(
-        isErrorTypeOption(call!),
-        `${file}：「部分成功」那条必须走错误通道（部分成功不是全成功）`,
-      );
+      // ⚠️ 2026-10-26：撤销机制下线 ⇒ 这条提示**不再挂任何动作**，
+      //    也不再走 showConsumeToast（那套已删）⇒ 走错误通道 showRestoreError。
       for (const cond of ifConditions(call!)) {
         assert.doesNotMatch(
           cond,
@@ -1544,12 +1426,12 @@ describe('Task 3：锁定组恢复静默（但成功门与失败出口一个字�
       }
     });
 
-    it(`${file}：成功门仍在（判过 success 才可能走到那条成功播报）`, () => {
+    it(`${file}：成功门仍在（判过 success 才可能走到成功路径）`, () => {
       const source = parseTsx(file);
-      const call = findCall(source, 'showConsumeToast', 'restoreGroupSuccessMessage');
-      assert.ok(call, `${file}：整组恢复的成功播报必须还在`);
+      const call = findCall(source, 'showRestoreError', '在当前设备无法打开');
+      assert.ok(call, `${file}：应能找到回包处理函数`);
       const fn = enclosingFunction(call!);
-      assert.ok(fn, `${file}：那条播报必须在一个回包处理函数里`);
+      assert.ok(fn, `${file}：那条提示必须在一个回包处理函数里`);
       const fnText = fn!.getText(source);
       // 判据取「**播报之前**的那段源码」—— 不能拿整段找（注释里也可能出现
       // success 这个词 ⇒ 那样判出来的是「某处出现过」，不是「先判后播」）。
@@ -1566,30 +1448,27 @@ describe('Task 3：锁定组恢复静默（但成功门与失败出口一个字�
     });
   }
 
-  it('未锁定必须有退路：整组恢复与点开单标签都挂着撤销凭据', () => {
+  it('撤销机制整套下线：仓里不再有「撤销」这个入口（凭据 / 命令 / 按钮文案）', () => {
+    // ── 2026-10-26 产品决定 ────────────────────────────────────────────────
+    // 「恢复即消费」不再有退路。这条守卫钉的是**性质**（整套机制不存在），
+    // 而不是「某个函数被删了」—— 换个名字把它藏回来，一样要红。
+    const forbidden = [
+      'showConsumeToast',
+      'useConsumeUndo',
+      'applyRestoreConsumed',
+      'restoreConsumed',
+      'consumedTabId',
+      'consumedIndex',
+    ];
     for (const file of [TAB_GROUP, SEARCH_LIST]) {
-      const source = parseTsx(file);
-      const groupCall = findCall(source, 'showConsumeToast', 'restoreGroupSuccessMessage');
-      assert.ok(groupCall, `${file}：整组恢复的成功播报必须还在`);
-      const groupSpec = groupCall!.arguments[1];
-      assert.ok(
-        groupSpec && ts.isObjectLiteralExpression(groupSpec),
-        `${file}：整组恢复那条必须挂上撤销凭据（不可逆的删除必须有退路）`,
-      );
-      const singleCall = findCall(source, 'showConsumeToast', 'openSingleTabSuccessMessage');
-      assert.ok(singleCall, `${file}：点开单标签那条播报必须还在`);
-      const singleSpec = singleCall!.arguments[1];
-      assert.ok(
-        singleSpec && ts.isObjectLiteralExpression(singleSpec),
-        `${file}：点开单标签那条必须挂上撤销凭据`,
-      );
-      const specText = singleSpec.getText(source);
-      assert.match(specText, /consumedTabId/, `${file}：凭据必须指明被消费的是哪一条`);
-      assert.match(
-        specText,
-        /consumedIndex/,
-        `${file}：撤销必须把标签插回原来的位置，不是追加到末尾`,
-      );
+      const src = code(file);
+      for (const token of forbidden) {
+        assert.doesNotMatch(
+          src,
+          new RegExp(token),
+          `${file}：撤销机制已下线，不该再出现「${token}」`,
+        );
+      }
     }
   });
 });
@@ -1672,12 +1551,10 @@ describe('Task 3：锁定说明常驻在卡片上 + 解锁静默', () => {
 });
 
 describe('Task 3：新增的 fact 站点都必须经判据层裁决', () => {
+  // ⚠️ 2026-10-26：「点开单标签」那两条 fact 站点被删了 —— 撤销机制下线后
+  //    那条路径**完全静默**（标签已经开在浏览器里、那行从列表消失 ⇒ 界面自明）。
+  //    仍在播报的 fact 站点只剩下面两个：「拖走最后一条」与「批量恢复的四笔账」。
   const FACT_SITES_NEW: Array<{ file: string; copy: string; toast: string }> = [
-    {
-      file: TAB_GROUP,
-      copy: 'openSingleTabSuccessMessage',
-      toast: 'showConsumeToast',
-    },
     {
       file: TAB_GROUP,
       copy: 'moveEmptiesSessionMessage',
@@ -1685,13 +1562,8 @@ describe('Task 3：新增的 fact 站点都必须经判据层裁决', () => {
     },
     {
       file: SEARCH_LIST,
-      copy: 'openSingleTabSuccessMessage',
-      toast: 'showConsumeToast',
-    },
-    {
-      file: SEARCH_LIST,
       copy: 'restoreAllSearchSuccessMessage',
-      toast: 'showConsumeToast',
+      toast: 'showRestoreSuccessMessage',
     },
   ];
 
@@ -1742,16 +1614,19 @@ describe('Task 3：新增的 fact 站点都必须经判据层裁决', () => {
         toastArg && refersTo(source, toastArg, site.copy),
         `${site.file}：那一次播报必须播的就是那一句事实`,
       );
-      const guard = enclosingIf(toastCall);
+      // ⚠️ 2026-10-26：这里从「**最近**的那层 if」改成「**所有** if 祖先里
+      //    必须有一层是判据结果」—— 搜索页那条批量恢复播报现在多了一层
+      //    「unopenable > 0 ? 错误通道 : 中性通道」的分叉，它**包在**判据结果
+      //    那一层**里面**。性质没变（fact 为空 ⇒ silent ⇒ 不播），
+      //    但「最近的那层」不再等于判据层 ⇒ 拿它判会假红。
+      const conditions = ifConditions(toastCall);
       assert.ok(
-        guard,
+        conditions.length > 0,
         `${site.file}：那一次播报必须被判据结果包着（fact 为空 ⇒ silent ⇒ 不播）`,
       );
-      const cond = guard!.expression.getText(source).replace(/\s+/g, '');
-      assert.match(
-        cond,
-        /\.level!=='silent'/,
-        `${site.file}：那一次播报必须被「判据结果不是静默」包着（实际条件：${cond}）`,
+      assert.ok(
+        conditions.some(cond => /\.level!=='silent'/.test(cond.replace(/\s+/g, ''))),
+        `${site.file}：那一次播报必须被「判据结果不是静默」包着（实际条件：${conditions.join(' / ')}）`,
       );
     });
   }
@@ -1798,21 +1673,6 @@ interface LedgerRow {
   /** 这一行钉在哪（每条都返回 void；失败时 assert 抛错）。 */
   readonly check: () => void;
 }
-
-/**
- * 取 `restoreFeedbackCopy.ts` 里某个导出函数的**函数体文本**（箭头函数块体）。
- *
- * ⚠️ 用 AST 取，不用正则：`restoreGroupSuccessMessage` 的函数体里有嵌套模板串
- * （`${opened}。该会话已${restoreOutcomePhrase(false)}…`）—— 正则会在第一个
- * `${` 或第一个 `;` 处停下，切出来的不是完整函数体。
- */
-const exportedFunctionBody = (rel: string, name: string): string => {
-  const source = parseTsx(rel);
-  const init = initializerOf(source, name);
-  assert.ok(init, `${rel}：找不到 ${name} 的声明`);
-  assert.ok(ts.isArrowFunction(init!), `${rel}：${name} 必须是箭头函数`);
-  return (init as ts.ArrowFunction).body.getText(source);
-};
 
 /** `src/` 下全部 .ts / .tsx（递归）。 */
 function allSourceFiles(): string[] {
@@ -2232,55 +2092,45 @@ describe('Task 4 登记表：19 处裁决，一处不多一处不少', () => {
     it(`#${row.index} [${row.ruling}] ${row.label}`, () => row.check());
   }
 
-  // ── brief 的两行样板：`openSingleTabSuccessMessage(` / `restoreGroupSuccessMessage(` ──
+  // ── 2026-10-26：撤销机制下线后，「恢复」这件事的告知落在哪 ──────────────
   //
-  // 这两处**不在规格 §5.1 的 19 处里**（它们是 §5.2「恢复类 11 处播报」的收口，
-  // 由 Task 3 改成「只剩未锁定」）⇒ 不占 19 行的编号，但 brief 要求它们也进登记表。
-  // ⇒ 单列成两行**附加行**，钉「只剩未锁定」这件事。
-  it('附加：openSingleTabSuccessMessage 只剩「未锁定」（锁定那句已删、TabGroup 锁定分支不含它）', () => {
-    // ① 文案函数里**不含**「仍保留在会话中」——锁定版那句随死分支一起删了。
-    //    用 `exportedFunctionBody` **抽取**函数体再判（正则钉不到「函数体的范围」）。
-    const singleBody = exportedFunctionBody(
-      'src/components/tabs/restoreFeedbackCopy.ts',
-      'openSingleTabSuccessMessage',
+  // 以前有两条成功文案函数（`openSingleTabSuccessMessage` /
+  // `restoreGroupSuccessMessage`）专门说「记录被移除了」。撤销下线后，
+  // 恢复整个会话与点开单个标签这两条路径**完全静默** ⇒ 那两个函数连同
+  // 它们的调用点一起消失。
+  //
+  // ⇒ 后果只由**一处**承担：恢复按钮的 tooltip / aria-label
+  //   （restoreOutcomeSentence）—— 它必须说「不可恢复」（说「可撤销」是假话）。
+  it('附加：恢复的后果只由按钮提示承担，且必须说「不可恢复」', async () => {
+    const { restoreOutcomeSentence } = await import('@/components/tabs/restoreFeedbackCopy');
+    assert.equal(
+      restoreOutcomeSentence(false),
+      '恢复后该会话会从列表移除，不可恢复',
+      '未锁定的后果必须说清「不可恢复」—— 撤销已下线，说「可撤销」就是在骗人',
     );
-    assert.doesNotMatch(
-      singleBody,
-      /仍保留在会话中/,
-      '点开单标签的文案里不该再有「仍保留在会话中」——锁定版那句已随死分支删除',
+    assert.equal(
+      restoreOutcomeSentence(true),
+      '恢复后该会话仍保留在列表中',
+      '锁定的后果仍然是「保留在列表中」',
     );
-    // ② TabGroup 的锁定分支里**不含**它（锁定分支必须整条静默）。
-    const lockedBranch = extractLockedBranch(code(TAB_GROUP));
-    assert.ok(lockedBranch, `${TAB_GROUP}：应能找到 handleOpenTab 里的锁定分支`);
-    assert.doesNotMatch(
-      lockedBranch!,
-      /openSingleTabSuccessMessage/,
-      `${TAB_GROUP}：锁定分支不许出现点开单标签的成功文案（锁定路径整条静默）`,
-    );
-  });
 
-  it('附加：restoreGroupSuccessMessage 只剩「未锁定」（且 inCurrentWindow 参数仍在）', () => {
-    const groupBody = exportedFunctionBody(
-      'src/components/tabs/restoreFeedbackCopy.ts',
-      'restoreGroupSuccessMessage',
-    );
+    // ① 那两个成功文案函数必须**已经不在**（它们的职责随静默一起消失）。
+    const copySource = code('src/components/tabs/restoreFeedbackCopy.ts');
     assert.doesNotMatch(
-      groupBody,
-      /仍保留在列表/,
-      '整组恢复的文案里不该再有「仍保留在列表」——锁定版那句已随死分支删除',
+      copySource,
+      /openSingleTabSuccessMessage|restoreGroupSuccessMessage/,
+      '恢复成功文案函数必须随静默一起消失 —— 留着就是没人用的死代码',
     );
-    // ⚠️ 参数名 `inCurrentWindow` **仍在**（brief 的样板要求）。
-    //    这条钉的是「开在哪个窗口必须由调用方告诉」这件事——参数没了，
-    //    文案就只能猜一个（历史上猜错过，见 restoreWindowWording）。
-    const source = parseTsx('src/components/tabs/restoreFeedbackCopy.ts');
-    const init = initializerOf(source, 'restoreGroupSuccessMessage');
-    assert.ok(init && ts.isArrowFunction(init), 'restoreGroupSuccessMessage 必须还是箭头函数');
-    const paramNames = (init as ts.ArrowFunction).parameters.map(p => p.name.getText(source));
-    assert.deepEqual(
-      paramNames,
-      ['tabCount', 'inCurrentWindow'],
-      '签名必须仍是 (tabCount, inCurrentWindow) —— 「开在哪个窗口」必须由调用方告诉，不许猜',
-    );
+
+    // ② 两个界面的恢复按钮都必须带上这句后果（点之前就看得见）。
+    for (const file of [TAB_GROUP, SEARCH_LIST]) {
+      const src = code(file);
+      assert.match(
+        src,
+        /restoreOutcomeSentence\(/,
+        `${file}：恢复按钮必须带上后果说明（点之前唯一的告知）`,
+      );
+    }
   });
 });
 

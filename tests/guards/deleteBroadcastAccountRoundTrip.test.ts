@@ -215,8 +215,12 @@ beforeEach(async () => {
   await storage.setLastUploadTime(new Date(Date.now() - 120_000).toISOString());
   await storage.setPendingUpload(false);
   invalidateGroupsCache();
+  // 队列排空：上一个用例留下的删除意图会连累下一个用例的前提。
+  // ⚠️ 用「按确认逐条消费」的清队口（clearPendingDeleteIds），不是已删除的
+  //    retractPendingDeleteIds —— 那条撤回路径是「恢复即消费」的撤销按钮专用的，
+  //    撤销机制下线后生产里已不存在（2026-10-26）。
   const left = await storage.getPendingDeleteIds();
-  if (left.length > 0) await storage.retractPendingDeleteIds(left);
+  if (left.length > 0) await storage.clearPendingDeleteIds(left);
 
   await installFakeBackend();
 });

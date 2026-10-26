@@ -4,7 +4,6 @@
  * sender 可注入，node:test 无 chrome 环境可测。
  */
 import type { TabGroup } from '../types/tab';
-import type { ConsumedTabRef } from './consumeUndo';
 import { getContextOrigin } from './contextOrigin';
 
 export type MutationOp =
@@ -16,28 +15,7 @@ export type MutationOp =
   | { op: 'renameGroup'; groupId: string; name: string }
   | { op: 'toggleGroupLock'; groupId: string }
   | { op: 'moveTab'; sourceGroupId: string; sourceIndex: number; targetGroupId: string; targetIndex: number; updateSourceInDrag?: boolean }
-  | { op: 'cleanDuplicates' }
-  /**
-   * 撤销一次「消费」（2026-10-22 审计 P0-4）。
-   *
-   * 载荷是**消费前的整组快照**（不是被消费的那一条）：消费掉最后一条标签时
-   * 整组会被物理移除，只带一条标签是还原不回来的。语义与判据见
-   * core/consumeUndo.ts。
-   */
-  | {
-      op: 'restoreConsumed';
-      /** 消费前的整组快照。 */
-      group: TabGroup;
-      /** 本次被消费掉的标签 id；整组被消费时省略。 */
-      consumedTabId?: string;
-      /** 被消费那条标签在组内的下标。 */
-      consumedIndex?: number;
-      /**
-       * 一次消费掉**多条**标签时用这个（搜索页的批量恢复）。
-       * 与 consumedTabId 二选一：给了它就以它为准。
-       */
-      consumedTabs?: ConsumedTabRef[];
-    };
+  | { op: 'cleanDuplicates' };
 
 export interface MutationResult<P = unknown> {
   ok: boolean;

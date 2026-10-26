@@ -244,6 +244,20 @@ describe('R-8③ 判据必须按版本锚定（同一段文字，两个版本，
       capabilitiesAt('1.26.0').consumeUndo && !capabilitiesAt('1.25.1').consumeUndo,
       '「撤销」应当从 1.26.0 起存在'
     );
+    // ── 2026-10-26：撤销机制下线 ⇒ 这条能力是**有起止**的 ────────────────
+    assert.ok(
+      !capabilitiesAt(CAPABILITY_SINCE.consumeUndoRemoved).consumeUndo,
+      `「撤销」应当从 ${CAPABILITY_SINCE.consumeUndoRemoved} 起**不存在**`
+    );
+    assert.ok(
+      capabilitiesAt('1.28.7').consumeUndo,
+      '「撤销」在 1.26.0 ~ 1.29.0 之间都应当存在（它是**有起止**的能力）'
+    );
+    assert.ok(
+      capabilitiesAt(CAPABILITY_SINCE.consumeUndoRemoved).consumeIrreversible &&
+        !capabilitiesAt('1.28.7').consumeIrreversible,
+      `「移除不可恢复」应当从 ${CAPABILITY_SINCE.consumeUndoRemoved} 起成立`
+    );
   });
 
   /**
@@ -308,6 +322,76 @@ describe('R-8③ 判据必须按版本锚定（同一段文字，两个版本，
       fileAt('v1.25.1', 'src/core/consumeUndo.ts'),
       null,
       '能力表说「撤销」从 1.26.0 起存在，但 1.25.1 里已经有了'
+    );
+
+    // ── 2026-10-26：撤销机制已下线 ⇒ 「下线的那个版本」必须是真的 ────────
+    // 判据表里写着「撤销从 X 版起不存在」⇒ 代码里**必须**真的没有那套机制。
+    // 这半不需要 git 历史（只看工作树）⇒ CI 浅克隆也照样跑。
+    assert.ok(
+      !existsSync(resolve(ROOT, 'src/core/consumeUndo.ts')),
+      `判据说「撤销」从 ${CAPABILITY_SINCE.consumeUndoRemoved} 起不存在，` +
+        '但工作树里 src/core/consumeUndo.ts 还在 —— 判据在替一个不存在的机制吹牛'
+    );
+    assert.ok(
+      compareVersions(MANIFEST.version, CAPABILITY_SINCE.consumeUndoRemoved) >= 0,
+      `判据说「撤销」从 ${CAPABILITY_SINCE.consumeUndoRemoved} 起下线，` +
+        `而当前版本是 ${MANIFEST.version} —— 判据在替一个还没发出去的机制吹牛` +
+        '（或者版本号忘了升）'
+    );
+    assert.ok(
+      compareVersions(CAPABILITY_SINCE.consumeUndoRemoved, CAPABILITY_SINCE.consumeUndo) > 0,
+      '「下线的版本」必须比「引入的版本」新'
+    );
+  });
+});
+
+// ══════════════════════════════════════════════════════════════════════════
+// R-8③′ 2026-10-26：撤销机制下线（1.29.0）⇒ 判据的**方向**在两个版本上相反
+// ══════════════════════════════════════════════════════════════════════════
+//
+// 「恢复/点开之后有撤销」是一条**有起止**的能力：1.26.0 引入、1.29.0 下线。
+// ⇒ 同一段文字在 1.28.7 上是**真的**，在 1.29.0 上是**假话** ——
+//   而真话（「这一步不可恢复」）在 1.29.0 上**必须**说。
+describe('R-8③′ 撤销下线后：同一段文字在两个版本上结论相反', () => {
+  /** 一段「如实说了不可恢复」的文案（中英各半）。 */
+  const IRREVERSIBLE_TEXT =
+    '未锁定的会话恢复后即从列表移除，这一步不可恢复 —— 没有回收站，也没有撤销按钮。' +
+    'An unlocked session is removed from the list once restored, and that removal ' +
+    'cannot be undone — there is no recycle bin and no Undo button.';
+
+  const codes = (version: string, description: string): string[] =>
+    judgeListing({ version, tagline: '', description }).map(v => v.code);
+
+  it('1.28.7 上宣传「撤销」不算假话；1.29.0 上宣传 = 说假话', () => {
+    assert.ok(
+      !codes('1.28.7', UNDO_CLAIMING_TEXT).includes('claims-consume-undo-after-removal'),
+      '1.28.7 上撤销确实存在 ⇒ 不该被判成「宣传了不存在的撤销」'
+    );
+    assert.ok(
+      codes('1.29.0', UNDO_CLAIMING_TEXT).includes('claims-consume-undo-after-removal'),
+      '1.29.0 上撤销已经下线 ⇒ 宣传它 = 说假话（判据在这一点上失效 ⇒ ' +
+        '用户按文案预期去找那条记录，而它已经没了）'
+    );
+  });
+
+  it('1.29.0 上必须说「这一步不可恢复」（漏说 = 判红）', () => {
+    assert.ok(
+      codes('1.29.0', UNDO_CLAIMING_TEXT).includes('missing-consume-irreversible'),
+      '1.29.0 上没说「不可恢复」没被判成漏说 —— 用户会以为那条记录只是看不见了'
+    );
+    assert.ok(
+      !codes('1.29.0', IRREVERSIBLE_TEXT).includes('missing-consume-irreversible'),
+      '判据说对了的新文案被判成漏说 —— 守卫太宽，就没人敢改文案了'
+    );
+  });
+
+  it('否认句不算「宣传撤销」（「没有撤销按钮」不许被判成承诺）', () => {
+    // 2026-10-26 实测：仓库那份文案里写的是「没有『撤销』按钮」——
+    // 若判据只认「有『撤销』按钮」，它会把这句**否认**当成**承诺** ⇒
+    // 判据把自己的正确文案判成说假话。
+    assert.ok(
+      !codes('1.29.0', IRREVERSIBLE_TEXT).includes('claims-consume-undo-after-removal'),
+      '「没有撤销按钮」这句否认被当成了承诺 —— 判据在这一点上没有区分能力'
     );
   });
 });

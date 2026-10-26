@@ -120,12 +120,16 @@ describe('变异自证：恢复后果这条守卫必须看得见破口', () => {
               if (start < 0) throw new Error('变异前提没成立：找不到 restoreOutcomeSentence');
               const end = source.indexOf(';', start);
               if (end < 0) throw new Error('变异前提没成立：找不到它的结尾');
+              // ⚠️ 拼接出来的句子必须与**当前实现逐字相同** ——
+              //   2026-10-26 撤销下线后，未锁定那半句是「，不可恢复」
+              //   （原文写的是「，可撤销」—— 那已经不是等价改写，而是**假话**：
+              //   守卫会正确地把它判红 ⇒ 「等价改写」这条用例就失去了意义）。
               return (
                 source.slice(0, start) +
                 'export const restoreOutcomeSentence = (isLocked: boolean): string =>\n' +
                 '  isLocked\n' +
                 "    ? '恢复后该会话' + restoreOutcomePhrase(true)\n" +
-                "    : '恢复后该会话会' + restoreOutcomePhrase(false) + '，可撤销';" +
+                "    : '恢复后该会话会' + restoreOutcomePhrase(false) + '，不可恢复';" +
                 source.slice(end + 1)
               );
             },

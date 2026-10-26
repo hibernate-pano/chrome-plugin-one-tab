@@ -3,12 +3,16 @@
  *
  * ── 缺陷本体（真实路径）───────────────────────────────────────────────────
  *
- * 用户删掉最后一个会话（成功）⇒ 列表空了、显示空态 ⇒ 他点「**撤销**」⇒
- * 撤销失败 ⇒ `state.error` 被写上、`errorSource === 'action'`、`groups.length === 0`
+ * 用户删掉最后一个会话（成功）⇒ 列表空了、显示空态 ⇒ 他又点了一次删除
+ * ⇒ 删除失败 ⇒ `state.error` 被写上、`errorSource === 'action'`、`groups.length === 0`
  * ⇒ **整页错误页接管**，标题是「会话列表暂时不可用」+ 一个「重新加载」按钮。
  *
- * ⇒ 真正发生的事（撤销失败）被整页盖掉；用户去点「重新加载」（重读列表），
- * 而他的撤销请求**再也不会被重试**，也没人告诉他「撤销没成功」。
+ * ⇒ 真正发生的事（删除失败）被整页盖掉；用户去点「重新加载」（重读列表），
+ * 而他的删除请求**再也不会被重试**，也没人告诉他「删除没成功」。
+ *
+ * ⚠️ 2026-10-26：这条审计的原始案例是「一次失败的**撤销**」—— 撤销机制已整套
+ *   下线 ⇒ 案例换成了**删除会话失败**（今天唯一会产出 `errorAction` 的操作）。
+ *   缺陷的**形状**没变，所以判据也不变。
  *
  * ── 这条守卫钉的是**不变量** ──────────────────────────────────────────────
  *
@@ -42,14 +46,14 @@ describe('SC-2 判据层：整页错误视图按来源分流', () => {
   it("'action' ⇒ 不给「重新加载」", () => {
     const view = toListErrorView({
       errorSource: 'action',
-      error: 'Timeout: undo',
-      errorAction: 'undo',
+      error: 'Timeout: deleteSession',
+      errorAction: 'deleteSession',
     });
     assert.equal(view.kind, 'action');
     assert.equal(
       view.reloadable,
       false,
-      '重读列表**不能**重试一次失败的删除 / 撤销 ⇒ 给那个按钮是把用户引到死路上'
+      '重读列表**不能**重试一次失败的操作 ⇒ 给那个按钮是把用户引到死路上'
     );
     assert.ok(
       typeof view.dismissLabel === 'string' && view.dismissLabel.trim().length > 0,
@@ -62,21 +66,21 @@ describe('SC-2 判据层：整页错误视图按来源分流', () => {
     const action = toListErrorView({
       errorSource: 'action',
       error: 'boom',
-      errorAction: 'undo',
+      errorAction: 'deleteSession',
     });
     assert.notEqual(
       action.title,
       load.title,
-      '一次失败的撤销被报成「会话列表暂时不可用」= 真正发生的事被盖掉'
+      '一次失败的操作被报成「会话列表暂时不可用」= 真正发生的事被盖掉'
     );
     assert.notEqual(action.description, load.description);
   });
 
   it('标题里出现的是**这次失败的那个操作**（不同操作 ⇒ 不同标题）', () => {
-    const undo = toListErrorView({
+    const del = toListErrorView({
       errorSource: 'action',
       error: 'boom',
-      errorAction: 'undo',
+      errorAction: 'deleteSession',
     });
     const rename = toListErrorView({
       errorSource: 'action',
@@ -84,11 +88,11 @@ describe('SC-2 判据层：整页错误视图按来源分流', () => {
       errorAction: 'renameSession',
     });
     assert.ok(
-      undo.title.includes(ACTION_ERROR_COPY.undo.operation),
-      `标题必须点名这次失败的操作（${ACTION_ERROR_COPY.undo.operation}），实际：${undo.title}`
+      del.title.includes(ACTION_ERROR_COPY.deleteSession.operation),
+      `标题必须点名这次失败的操作（${ACTION_ERROR_COPY.deleteSession.operation}），实际：${del.title}`
     );
     assert.notEqual(
-      undo.title,
+      del.title,
       rename.title,
       '不同操作失败 ⇒ 标题必须不同（说清是**哪个**操作没能完成）'
     );
@@ -125,9 +129,9 @@ describe('SC-2 渲染层：界面真的照来源分流了吗', () => {
     const rendered = await renderTabList({
       groups: [],
       initialLoadCompleted: true,
-      error: 'Timeout: undo',
+      error: 'Timeout: deleteSession',
       errorSource: 'action',
-      errorAction: 'undo',
+      errorAction: 'deleteSession',
     });
     assert.ok(
       !rendered.buttonTexts.some(text => text.includes(RELOAD_LABEL)),
@@ -139,9 +143,9 @@ describe('SC-2 渲染层：界面真的照来源分流了吗', () => {
     const rendered = await renderTabList({
       groups: [],
       initialLoadCompleted: true,
-      error: 'Timeout: undo',
+      error: 'Timeout: deleteSession',
       errorSource: 'action',
-      errorAction: 'undo',
+      errorAction: 'deleteSession',
     });
     assert.ok(
       rendered.buttonTexts.length > 0,

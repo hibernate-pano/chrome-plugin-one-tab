@@ -390,66 +390,6 @@ describe('变异自证 · DS-43-16（每行 ✕ 的提示必须说清后果）',
   });
 });
 
-describe('变异自证 · DS-43-10（部分成功那一条必须挂撤销凭据）', () => {
-  const UNDO_GUARD = 'tests/guards/consumeUndoWiring.test.ts';
-  const CREDENTIAL =
-    "            group.isLocked ? undefined : { group },\n            { type: 'error' },";
-
-  it('变异十三：撤销凭据被摘掉（旧行为：部分成功没有退路）⇒ 守卫必须变红', () => {
-    const [outcome] = runMutationCases([
-      {
-        name: '部分成功那条不再挂撤销凭据',
-        testFile: UNDO_GUARD,
-        targets: [
-          {
-            path: 'src/components/search/SearchResultList.tsx',
-            mutate: source => {
-              if (!source.includes(CREDENTIAL)) {
-                throw new Error('变异前提没成立：找不到那份凭据');
-              }
-              return source.replace(
-                CREDENTIAL,
-                "            undefined,\n            { type: 'error' },"
-              );
-            },
-          },
-        ],
-        expectRed: true,
-        expectedFailure: '不给退路就是让用户白丢记录',
-      },
-    ]);
-    assert.ok(outcome, '变异必须真的跑起来');
-    assertMutationOutcome(outcome, true, '把部分成功那条的撤销凭据摘掉');
-  });
-
-  it('变异十四：分叉被写死（锁定也给撤销 —— 骗人）⇒ 守卫必须变红', () => {
-    const [outcome] = runMutationCases([
-      {
-        name: '锁定态不再分叉，一律给撤销',
-        testFile: UNDO_GUARD,
-        targets: [
-          {
-            path: 'src/components/search/SearchResultList.tsx',
-            mutate: source => {
-              if (!source.includes(CREDENTIAL)) {
-                throw new Error('变异前提没成立：找不到那份凭据');
-              }
-              return source.replace(
-                CREDENTIAL,
-                "            { group },\n            { type: 'error' },"
-              );
-            },
-          },
-        ],
-        expectRed: true,
-        expectedFailure: '不给退路就是让用户白丢记录',
-      },
-    ]);
-    assert.ok(outcome, '变异必须真的跑起来');
-    assertMutationOutcome(outcome, true, '把锁定态的分叉写死');
-  });
-});
-
 describe('变异自证 · 等价改写必须**仍然绿**', () => {
   it('等价改写一：判据的算法换一种（行为一模一样）⇒ 守卫必须**仍然绿**', () => {
     const [outcome] = runMutationCases([
@@ -507,44 +447,6 @@ describe('变异自证 · 等价改写必须**仍然绿**', () => {
     ]);
     assert.ok(outcome, '变异必须真的跑起来');
     assertMutationOutcome(outcome, false, '把文案的局部变量改名');
-  });
-
-  it('等价改写五：撤销凭据先存进局部变量（行为一模一样）⇒ 守卫必须**仍然绿**', () => {
-    const [outcome] = runMutationCases([
-      {
-        name: '凭据先存进 undoSpec 再传出去',
-        testFile: 'tests/guards/consumeUndoWiring.test.ts',
-        targets: [
-          {
-            path: 'src/components/search/SearchResultList.tsx',
-            mutate: source => {
-              const credential =
-                "            group.isLocked ? undefined : { group },\n            { type: 'error' },";
-              if (!source.includes(credential)) {
-                throw new Error('变异前提没成立：找不到那份凭据');
-              }
-              const anchor = '          showConsumeToast(\n            `已恢复';
-              if (!source.includes(anchor)) {
-                throw new Error('变异前提没成立：找不到那一句播报');
-              }
-              return source
-                .replace(
-                  credential,
-                  "            undoSpec,\n            { type: 'error' },"
-                )
-                .replace(
-                  anchor,
-                  '          const undoSpec = group.isLocked ? undefined : { group };\n' +
-                    '          showConsumeToast(\n            `已恢复'
-                );
-            },
-          },
-        ],
-        expectRed: false,
-      },
-    ]);
-    assert.ok(outcome, '变异必须真的跑起来');
-    assertMutationOutcome(outcome, false, '把撤销凭据先存进局部变量再传出去');
   });
 
   it('等价改写二：标题的拼法换一种（行为一模一样）⇒ 守卫必须**仍然绿**', () => {

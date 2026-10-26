@@ -491,19 +491,7 @@ describe('接线：暂停/恢复/抢焦点真的接在 Toast 上', () => {
   });
 });
 
-describe('接线：撤销这条退路真的被要求接管焦点', () => {
-  it('useConsumeUndo 的撤销动作必须 autoFocus（否则键盘用户零次按键到不了）', () => {
-    const src = read('src/components/tabs/useConsumeUndo.ts');
-    const actionBlock = src.match(/notify\(message,\s*\{[\s\S]*?\n {6}\}\);/);
-    assert.ok(actionBlock, '应能找到撤销动作的定义');
-    assert.match(
-      actionBlock[0],
-      /autoFocus:\s*true/,
-      '撤销动作必须要求接管焦点 —— 实测 Tab 序列里「撤销」排在最后，' +
-        '键盘用户要按十几次 Tab，而提示 3 秒后就没了',
-    );
-  });
-
+describe('接线：动作按钮的焦点接管仍然受控', () => {
   it('动作按钮的 autoFocus 默认为 false（抢焦点是很重的手法）', () => {
     const src = read('src/components/common/Toast.tsx');
     assert.match(
@@ -532,13 +520,22 @@ describe('接线：时长口径只有一处（不写死第二个数）', () => {
     );
   });
 
-  it('仓里不再有第二个「带撤销的提示活多久」的出处', () => {
-    const copy = stripComments(read('src/components/tabs/consumeUndoCopy.ts'));
-    assert.doesNotMatch(
-      copy,
-      /=\s*\d{4,}\s*;?\s*$/m,
-      'consumeUndoCopy 里不再定义毫秒数 —— 时长只有一个出处（toastPolicy）',
-    );
+  it('仓里不再有第二个「带动作的提示活多久」的出处', () => {
+    // 时长只有一个出处：toastPolicy.resolveToastDuration。
+    // ⚠️ 2026-10-26：撤销机制下线后 consumeUndoCopy.ts 已删除 —— 这条守卫
+    // 改盯「仓里还有没有别的文件自己写一个毫秒数」。
+    const sources = [
+      'src/components/common/Toast.tsx',
+      'src/utils/toastHelper.ts',
+    ];
+    for (const file of sources) {
+      const src = stripComments(read(file));
+      assert.doesNotMatch(
+        src,
+        /=\s*\d{4,}\s*;?\s*$/m,
+        `${file} 里不再定义毫秒数 —— 时长只有一个出处（toastPolicy）`,
+      );
+    }
   });
 });
 

@@ -57,10 +57,23 @@ export const LIVE_LISTING_URL =
  *                  （`git log --diff-filter=A`），v1.23.0 还没有。
  * · consumeUndo —— `src/core/consumeUndo.ts` 首次出现在 v1.26.0；
  *                  v1.25.1 还没有（那时「恢复即消费」是**不可撤销**的）。
+ *
+ * ── 2026-10-26：撤销机制下线 ⇒ 能力表多了一列「它什么时候**结束**」──────
+ *
+ * 「恢复/点开之后有撤销」是一条**有起止**的能力：1.26.0 引入，**1.29.0 下线**
+ * （产品负责人定案：恢复时标签已经开在浏览器里 ⇒ 结果界面自明 ⇒ 撤销提示是
+ * 纯噪音；删掉它之后，「恢复即消费」就**不可恢复**了）。
+ *
+ * ⇒ 只写「从哪个版本起有」是不够的：那样 1.29.0 之后的文案会被判成
+ * 「漏说撤销」（**假红** —— 产品已经没有撤销了），而真话「这一步不可恢复」
+ * 反而没人要求说（**假绿**）。
+ * ⇒ 因此能力表要能表达**区间**：`consumeUndo` 是 [1.26.0, 1.29.0)。
  */
 export const CAPABILITY_SINCE = Object.freeze({
   webdav: '1.24.0',
   consumeUndo: '1.26.0',
+  /** 撤销机制**下线**的版本：从这一版起，「恢复/点开」的移除不可恢复。 */
+  consumeUndoRemoved: '1.29.0',
 });
 
 /** 比较两个版本号（点分数字）。b 比 a 新 ⇒ 正数。 */
@@ -77,9 +90,14 @@ export function compareVersions(a, b) {
 
 /** 某个版本上，产品**有没有**某项能力。 */
 export function capabilitiesAt(version) {
+  const undoStarted = compareVersions(version, CAPABILITY_SINCE.consumeUndo) >= 0;
+  const undoRemoved = compareVersions(version, CAPABILITY_SINCE.consumeUndoRemoved) >= 0;
   return {
     webdav: compareVersions(version, CAPABILITY_SINCE.webdav) >= 0,
-    consumeUndo: compareVersions(version, CAPABILITY_SINCE.consumeUndo) >= 0,
+    // 「恢复/点开之后有撤销」是**有起止**的能力：[1.26.0, 1.29.0)。
+    consumeUndo: undoStarted && !undoRemoved,
+    // 1.29.0 起「恢复/点开」把记录移出列表**不可恢复** ⇒ 文案必须如实说明。
+    consumeIrreversible: undoRemoved,
   };
 }
 
@@ -391,24 +409,51 @@ const REQUIRED = [
 ];
 
 /**
- * 「移除可撤销」这个**承诺**的措辞集合 —— **同一个集合在两个方向上用**：
- * 版本 ≥ 1.26.0 ⇒ **必须**出现；版本 < 1.26.0 ⇒ **不许**出现（那时还没有）。
+ * 「移除可撤销」这个**承诺**的措辞集合 —— **同一个集合在三个方向上用**：
+ *   · 版本 ∈ [1.26.0, 1.29.0) ⇒ **必须**出现（那时确实有）；
+ *   · 版本 < 1.26.0        ⇒ **不许**出现（那时还没有）；
+ *   · 版本 ≥ 1.29.0        ⇒ **不许**出现（**已下线** —— 说了就是在骗人）。
  *
  * 【为什么不能直接用「撤销」两个字】文案里也有**否认句**（「删除没有撤销」/
  * 「no undo for a deletion」）⇒ 直接认字会把否认当成承诺。下面的措辞都指向
  * 「**移除这件事有退路**」，不会误伤否认句。
+ *
+ * 【否认句长什么样，2026-10-26 实测出来的三种】
+ *   「没有「撤销」按钮」/「也没有「撤销」按钮」/「不可撤销」/「no Undo button」
+ * ⇒ 每条模式都带**否定前瞻**（`(?<![没无不][^。\n]{0,6})`）：前面有否定词就
+ *   不算「承诺」。少了这一步，1.29.0 的文案写着「没有『撤销』按钮」会被判成
+ *   「宣传了撤销」—— 判据把自己人判成说假话，就没人敢照着它写文案了。
  */
 const UNDO_OFFER = [
   /留了退路/,
-  /(?<!没)有退路/,
-  /有「?撤销」?按钮/,
-  /撤销按钮/,
-  /可(?:以)?撤销/,
+  /(?<![没无不][^。\n]{0,6})有退路/,
+  /(?<![没无不][^。\n]{0,6})有「?撤销」?按钮/,
+  /(?<![没无不][^。\n]{0,6})撤销按钮/,
+  /(?<!不)可(?:以)?撤销/,
   /come[s]? with a way back/i,
-  /an undo button/i,
+  /(?<!without )an undo button/i,
   /with an undo button/i,
   /offer.{0,24}undo/i,
   /short-lived undo/i,
+];
+
+/**
+ * 「移除**不可恢复**」这个事实的措辞集合 —— 1.29.0 起**必须**出现。
+ *
+ * 【为什么不能只认「不可恢复」四个字】那四个字在「删除没有退路」那句里也
+ * 出现过 ⇒ 判据会被**删除**那半句喂饱，而「恢复/点开的移除不可恢复」这件
+ * 事仍然没被说 ⇒ 判据零检测力。
+ * ⇒ 因此每条措辞都把「不可恢复」**绑在移除/恢复这件事上**
+ *   （中文认「移除…不可恢复」「恢复…不可恢复」；英文认
+ *   「removal/restored … cannot be undone」），删除那半句喂不饱它。
+ */
+const IRREVERSIBLE_DISCLOSURE = [
+  // 中文
+  /移除[^。；\n]{0,60}(?:不可恢复|不可撤销|无法恢复|没有退路)/,
+  /恢复[^。；\n]{0,60}(?:不可恢复|不可撤销|无法恢复)/,
+  // English
+  /remov\w*[^.\n]{0,80}(?:cannot be undone|can not be undone|no way back|not recoverable|irreversible)/i,
+  /restor\w*[^.\n]{0,80}(?:cannot be undone|can not be undone|no way back|not recoverable|irreversible)/i,
 ];
 
 /**
@@ -481,7 +526,36 @@ export function judgeListing({ version, tagline = '', description = '' }) {
     }
 
     const undoHit = UNDO_OFFER.find(p => p.test(surface.text));
-    if (caps.consumeUndo) {
+    if (caps.consumeIrreversible) {
+      // ── 2026-10-26：撤销机制下线（1.29.0 起）──────────────────────────
+      // ① 宣传「移除有退路」= 说假话：产品里**没有**撤销按钮了。
+      if (undoHit) {
+        violations.push({
+          code: 'claims-consume-undo-after-removal',
+          kind: 'lie',
+          where: surface.label,
+          why:
+            `「恢复/点开之后可撤销」这条能力**从 ${CAPABILITY_SINCE.consumeUndoRemoved} 起已经下线**；` +
+            `线上这份文案对应的是 **${version}**，那时「恢复即消费」是**不可恢复**的。` +
+            '宣传它 ⇒ 用户以为那条记录还能找回来，事实是**找不回来**（本产品无回收站）。',
+          evidence: undoHit.source,
+        });
+      }
+      // ② 反过来，「这一步不可恢复」**必须**说出来 ——
+      //    不说 ⇒ 用户以为「从列表移除」只是换个地方放着，迟早能翻出来。
+      if (!IRREVERSIBLE_DISCLOSURE.some(p => p.test(surface.text))) {
+        violations.push({
+          code: 'missing-consume-irreversible',
+          kind: 'omission',
+          where: surface.label,
+          why:
+            `从 **${CAPABILITY_SINCE.consumeUndoRemoved}** 起，「恢复/点开」把记录移出列表` +
+            '这件事**不可恢复**（没有回收站，也没有撤销按钮）。文案不说 ⇒ ' +
+            '用户以为那条记录还在、只是看不见了。',
+          evidence: '（这一段里找不到任何可接受的说法）',
+        });
+      }
+    } else if (caps.consumeUndo) {
       if (!undoHit) {
         violations.push({
           code: 'missing-consume-undo',

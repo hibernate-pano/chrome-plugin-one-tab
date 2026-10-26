@@ -46,7 +46,20 @@ import { encodeGroup, decodeGroup } from '../../src/sync-backend/webdav/layout.t
 import { oneTabImportNoticeText } from '../../src/core/oneTabFormatLimits.ts';
 import type { TabGroup } from '../../src/types/tab.ts';
 
-const NOW_ISO = '2026-10-25T08:00:00.000Z';
+/**
+ * 「现在」必须取**真实的当下**，不能写死某一天。
+ *
+ * ⚠️ 2026-10-26 炸过一次：这里原本写死 `'2026-10-25T08:00:00.000Z'`，
+ *   而那天的 24 小时之后（10-26 08:10）跑测试 ⇒ 「24h」这个桶按**真实时钟**
+ *   算 ⇒ 一条「刚保存的普通会话」被判成不匹配 ⇒ 守卫自己变红。
+ *   **定时炸弹式守卫**：它守的东西没错，错的是它把「现在」钉成了常量。
+ *   同一天里跑十遍都是绿的，隔一天就跑不过 —— 这种红与代码无关，
+ *   但会让人以为「导入件又冒充刚保存了」，等于给守卫制造假警报。
+ *
+ * ⇒ 取当下；需要「两年前」这类对照的地方用 `OLD_ISO`（它是**相对量**的另一端，
+ *   写死不碰真实时钟）。
+ */
+const NOW_ISO = new Date().toISOString();
 const OLD_ISO = '2024-01-02T03:04:05.000Z';
 
 const tab = (url: string) => ({ id: `t-${url}`, url, title: url, favicon: '', createdAt: NOW_ISO, lastAccessed: NOW_ISO, pinned: false });

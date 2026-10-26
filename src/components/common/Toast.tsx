@@ -63,10 +63,10 @@ interface ToastProps {
   onClose?: () => void;
   visible: boolean;
   /**
-   * 离底边多远（px）—— 由上层按**实测高度**算好（见 toastStack.ts）。
+   * 离**顶边**多远（px）—— 由上层按**实测高度**算好（见 toastStack.ts）。
    *
    * ⚠️ 旧实现这里是「堆叠序号」，偏移量写死成 `序号 * 76` ⇒
-   * 一条**多行**的提示会被下面那条压住下半截 ⇒ 用户读不到结尾。
+   * 一条**多行**的提示会被相邻那条压住 ⇒ 用户读不到结尾。
    * ⇒ 现在传的是**像素偏移**，由 ToastContext 累加各条**实测高度**得出。
    */
   stackOffset?: number;
@@ -541,8 +541,8 @@ export const Toast: React.FC<ToastProps> = ({
       role={isAssertive ? 'alert' : 'status'}
       aria-live={isAssertive ? 'assertive' : 'polite'}
       aria-atomic="true"
-      className={`pointer-events-none fixed bottom-4 left-1/2 z-[110] -translate-x-1/2 ${isVisible ? animation : ''}`}
-      style={{ marginBottom: stackOffset }}
+      className={`pointer-events-none fixed right-4 top-4 z-[110] ${isVisible ? animation : ''}`}
+      style={{ marginTop: stackOffset }}
     >
       <style>{PROGRESS_KEYFRAMES}</style>
 

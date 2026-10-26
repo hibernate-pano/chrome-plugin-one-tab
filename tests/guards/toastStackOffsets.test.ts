@@ -13,14 +13,17 @@
  *
  * ⚠️ 遮挡的机制要说准（否则守卫会钉错东西）──────────────────────────────
  *
- *   · 每条提示是 `fixed bottom-4` + `marginBottom: 偏移` ⇒ **偏移越大越靠上**，
- *     **最新的那条在最下面**（它刚弹出来，是用户先看到的那个）。
- *   · 提示之间**没有 z-index** ⇒ **DOM 里靠后的盖住靠前的** ⇒
- *     **下面那条（较新）**画在**上面那条（较旧）**之上。
- *   · 于是：下面那条只要**比 76px 高**，它的顶边就会伸进上面那条的底部
- *     ⇒ 上面那条的**结尾**被盖住（真机截图里被盖的正是「注意」那条的末两行）。
+ *   · 当时提示锚在**底边**：`fixed bottom-4` + `marginBottom: 偏移`
+ *     ⇒ 偏移越大越靠上，最新的那条在最下面。
+ *   · 提示之间**没有 z-index** ⇒ DOM 里靠后的盖住靠前的 ⇒ 较新的画在较旧的之上。
+ *   · 于是：较新的那条只要**比 76px 高**，它的顶边就会伸进较旧那条的底部
+ *     ⇒ 较旧那条的**结尾**被盖住（真机截图里被盖的正是「注意」那条的末两行）。
  *
- * ⇒ 正确的不变式是：**上面那条的底边 ≥ 下面那条的顶边**
+ * 2026-10-26 提示挪回**右上角**（`fixed right-4 top-4` + `marginTop`），
+ * 方向翻过来：最新的贴着顶边，更旧的往下排。**算式一字未改** —— 它算的是
+ * 「相邻两条要让开对方的高度 + 间距」，与锚在顶边还是底边无关。
+ *
+ * ⇒ 正确的不变式（与锚点无关）：**较旧那条的偏移 ≥ 较新那条的偏移 + 它的高度**
  *   （不是「偏移 ≥ 自己的高度」—— 那是另一个量纲，钉它会钉错）。
  *
  * ⚠️ 这个缺陷**早于**本次修复就存在（旧披露有 4 行，同样被盖）——
@@ -69,22 +72,22 @@ const heightOf = (entry: Entry): number =>
     : DEFAULT_TOAST_HEIGHT;
 
 /**
- * 不变式：**上面那条的底边 ≥ 下面那条的顶边** ⇒ 谁也盖不住谁。
+ * 不变式：**较旧那条的偏移 ≥ 较新那条的偏移 + 它的高度** ⇒ 谁也盖不住谁。
  *
- * 队列顺序 = 从旧到新 ⇒ queue[i] 在上、queue[i+1] 在下。
- * 提示 i 的底边 = 偏移(i)；提示 i+1 的顶边 = 偏移(i+1) + 高度(i+1)。
+ * 队列顺序 = 从旧到新 ⇒ queue[i] 较旧（靠下）、queue[i+1] 较新（靠上）。
+ * 提示 i 的顶边 = 偏移(i)；提示 i+1 的底边 = 偏移(i+1) + 高度(i+1)。
  */
 const noOverlapHolds = (queue: Entry[], offsets: Map<number, number>): boolean => {
   for (let i = 0; i < queue.length - 1; i += 1) {
-    const upperBottom = offsets.get(queue[i].id) ?? 0;
-    const lowerTop = (offsets.get(queue[i + 1].id) ?? 0) + heightOf(queue[i + 1]);
-    if (upperBottom < lowerTop) return false;
+    const olderTop = offsets.get(queue[i].id) ?? 0;
+    const newerBottom = (offsets.get(queue[i + 1].id) ?? 0) + heightOf(queue[i + 1]);
+    if (olderTop < newerBottom) return false;
   }
   return true;
 };
 
 describe('提示堆叠：谁也不许盖住谁', () => {
-  it('最新的一条在最下面（它是用户刚看到的那个）', () => {
+  it('最新的一条贴着顶边（它是用户刚看到的那个）', () => {
     const queue: Entry[] = [
       { id: 1, height: 60 },
       { id: 2, height: 200 },
@@ -92,14 +95,14 @@ describe('提示堆叠：谁也不许盖住谁', () => {
     ];
     const offsets = computeToastStackOffsets(queue);
 
-    assert.equal(offsets.get(3), 0, '最新那条（id=3）必须贴着底边');
+    assert.equal(offsets.get(3), 0, '最新那条（id=3）必须贴着顶边');
     assert.ok(
       (offsets.get(2) ?? 0) > 0 && (offsets.get(1) ?? 0) > (offsets.get(2) ?? 0),
-      '越旧的那条必须越高（id=1 最高，id=3 最低）'
+      '越旧的那条必须越靠下（id=1 最低，id=3 最高）'
     );
   });
 
-  it('不变式：上面那条的底边 ≥ 下面那条的顶边', () => {
+  it('不变式：较旧那条的偏移 ≥ 较新那条的偏移 + 它的高度', () => {
     // 队列顺序 = 从旧到新（与 ToastContext 里的数组一致）。
     const queue: Entry[] = [
       { id: 1, height: 200 }, // 一条 5 行的长披露
@@ -110,12 +113,12 @@ describe('提示堆叠：谁也不许盖住谁', () => {
 
     assert.ok(
       noOverlapHolds(queue, offsets),
-      '有一条提示被下面那条盖住了 ⇒ 用户读不到它的结尾'
+      '有一条提示被相邻那条盖住了 ⇒ 用户读不到它的结尾'
     );
   });
 
-  it('真机那个形状：5 行的披露上面再来一条两行的提示 ⇒ 结尾不许被盖', () => {
-    // 真机截图里的形状：上面是 5 行的「注意」，下面是 2 行的「完成」。
+  it('真机那个形状：5 行的披露与两行的提示相邻 ⇒ 谁也不许被盖', () => {
+    // 真机截图里出现过的形状：一条 5 行的「注意」+ 一条 2 行的提示。
     const queue: Entry[] = [
       { id: 1, height: 200 },
       { id: 2, height: 99 },
@@ -124,9 +127,9 @@ describe('提示堆叠：谁也不许盖住谁', () => {
 
     assert.ok(
       noOverlapHolds(queue, offsets),
-      '下面那条（99px）伸进了上面那条的底部 ⇒ 上面那条的结尾被盖'
+      '较新的那条（99px）压住了较旧那条的顶部 ⇒ 用户读不到它的开头'
     );
-    // 旧算法：上面那条只被顶高 76px ⇒ 下面那条（99px）会盖掉它 23px 的底部。
+    // 旧算法：两条只隔 76px ⇒ 99px 这条会盖掉相邻那条 23px。
     assert.ok(
       (offsets.get(1) ?? 0) > 76,
       `偏移 ${offsets.get(1)} 必须大于旧算法写死的 76 ⇒ 旧的遮挡真的被修掉了`
@@ -137,7 +140,7 @@ describe('提示堆叠：谁也不许盖住谁', () => {
     const queue: Entry[] = [{ id: 1 }, { id: 2 }];
     const offsets = computeToastStackOffsets(queue);
 
-    assert.equal(offsets.get(2), 0, '最新那条贴底');
+    assert.equal(offsets.get(2), 0, '最新那条贴顶边');
     assert.equal(
       offsets.get(1),
       DEFAULT_TOAST_HEIGHT + TOAST_STACK_GAP,
@@ -152,12 +155,12 @@ describe('提示堆叠：谁也不许盖住谁', () => {
     ];
     const offsets = computeToastStackOffsets(queue);
 
-    assert.equal(offsets.get(1), 50 + TOAST_STACK_GAP, '上面那条要高出「高度 + 间距」');
+    assert.equal(offsets.get(1), 50 + TOAST_STACK_GAP, '较旧那条要让开「较新那条的高度 + 间距」');
     assert.ok(TOAST_STACK_GAP > 0, '间距必须是正数 ⇒ 两条不贴在一起');
   });
 
   it('自证检测力：旧算法（写死 76）必须违反那条不变式', () => {
-    // 下面那条比 76px 高 ⇒ 旧算法必然让它伸进上面那条的底部。
+    // 较新的那条比 76px 高 ⇒ 旧算法必然让它压住较旧那条的顶部。
     const queue: Entry[] = [
       { id: 1, height: 64 },
       { id: 2, height: 200 },

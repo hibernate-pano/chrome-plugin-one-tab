@@ -26,7 +26,7 @@
  *
  *   · 锁定 ⇒ 后果里必须有「保留」一族词，且**不得**出现「移除」一族词；
  *   · 未锁定 ⇒ 后果里必须有「移除」一族词，且**不得**出现「保留」一族词，
- *     并且必须说清这一步**有退路**（撤销）；
+ *     并且必须说清这一步**不可恢复**（撤销机制已于 2026-10-26 下线）；
  *   · 两种输入必须给出**不同**的话（否则 = 压根没分流）；
  *   · 按钮提示与成功提示必须用**同一个短语**（同一个概念不许两种叫法）。
  *
@@ -38,7 +38,6 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 
 import {
-  restoreGroupSuccessMessage,
   restoreOutcomePhrase,
   restoreOutcomeSentence,
 } from '../../src/components/tabs/restoreFeedbackCopy.ts';
@@ -50,8 +49,13 @@ const read = (rel: string) => readFileSync(new URL(`../../${rel}`, import.meta.u
 const KEPT = /保留|留下|留在|还在|仍在/;
 /** 「会话被消费」一族词（未锁定 ⇒ 恢复后它离开列表）。 */
 const CONSUMED = /移除|删除|消失/;
-/** 「这一步有退路」一族词。 */
-const ESCAPE_ROUTE = /撤销|退路|还能恢复|可以恢复/;
+/**
+ * 「这一步不可恢复」一族词。
+ *
+ * ⚠️ 2026-10-26：原来的规则是「必须说有退路（撤销）」—— 撤销机制下线后，
+ *   那个方向**反过来了**：必须说「不可恢复」，且**不许**再承诺撤销。
+ */
+const IRREVERSIBLE = /不可恢复|不可撤销|无法恢复/;
 
 // ─────────────────────────────────────────────────────────────────────────
 // 1. 后果措辞本身：按锁定态分流
@@ -74,11 +78,21 @@ describe('恢复的后果措辞：按锁定态分流（WC-1）', () => {
     assert.doesNotMatch(sentence, KEPT, '未锁定会话会被移除，不能说「保留」');
   });
 
-  it('WC-1：未锁定那一步必须说清有退路（撤销）', () => {
+  it('WC-1：未锁定那一步必须说清「不可恢复」', () => {
+    // 2026-10-26：撤销机制下线 ⇒ 这条按钮提示是**点开之前**唯一的告知。
+    //   说不清楚 = 用户以为那条记录只是看不见了，迟早会去找。
     assert.match(
       restoreOutcomeSentence(false),
-      ESCAPE_ROUTE,
-      '移除是**不可逆的删除**，按钮提示必须说清它有退路'
+      IRREVERSIBLE,
+      '移除不可恢复（无回收站）—— 按钮提示必须说清这件事'
+    );
+  });
+
+  it('WC-1：未锁定那一步不许再承诺撤销（撤销已下线）', () => {
+    assert.doesNotMatch(
+      restoreOutcomeSentence(false),
+      /可撤销|可以撤销|撤销按钮|有退路/,
+      '撤销机制已于 2026-10-26 下线 —— 承诺它就是在骗人'
     );
   });
 
@@ -95,11 +109,20 @@ describe('恢复的后果措辞：按锁定态分流（WC-1）', () => {
 // 2. 按钮提示与成功提示必须用同一个短语（同一个概念不许两种叫法）
 // ─────────────────────────────────────────────────────────────────────────
 
-describe('按钮提示与成功提示同源（WC-1）', () => {
-  it('WC-1：整组恢复成功提示必须包含共享的那半句', () => {
+describe('按钮提示与后果短语同源（WC-1）', () => {
+  it('WC-1：未锁定那句必须由共享短语 + 「不可恢复」拼出来', () => {
+    // ⚠️ 2026-10-26：整组恢复的**成功提示**已随静默一起消失（那条带「撤销」
+    //   按钮的提示下线了）⇒ 现在「共享短语」唯一的消费者是**按钮提示**
+    //   （tooltip / aria-label）⇒ 它必须仍然是那句话的出处。
+    const sentence = restoreOutcomeSentence(false);
     assert.ok(
-      restoreGroupSuccessMessage(2).includes(restoreOutcomePhrase(false)),
-      '未锁定成功提示必须用共享短语（否则按钮与提示会各说各话）'
+      sentence.includes(restoreOutcomePhrase(false)),
+      '未锁定后果句必须用共享短语（否则两个界面会各说各话）'
+    );
+    assert.match(
+      sentence,
+      IRREVERSIBLE,
+      '未锁定后果句必须说「不可恢复」'
     );
   });
 

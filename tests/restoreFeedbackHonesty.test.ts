@@ -1,36 +1,30 @@
-// 「恢复必须有成功反馈」——2026-10-20 审计 A-1 / A-2 的行为级回归。
+// 「恢复」的用户可见后果必须诚实 —— 行为级回归。
 //
-// 两个真实缺陷（主审在真实 popup 上点出来的，非推测）：
+// ── 2026-10-26：这条守卫的**方向**变了 ───────────────────────────────────
 //
-//   A-1  列表页整组恢复**零反馈**：窗口开了、会话卡从列表消失、屏幕上什么都不动。
-//        「我的卡片怎么没了？」是用户看到卡片凭空消失时的第一反应，而它其实是成功。
-//        搜索页同一动作早就有 showRestoreSuccess —— 同一产品两个界面两种反馈，
-//        而列表页才是主界面。
+// 2026-10-20 审计 A-1 / A-2 要的是「恢复必须有成功反馈」（当时列表页零反馈）。
+// 2026-10-25「安静的成功」把范围收窄（锁定路径静默、其余只说事实）。
+// 2026-10-26 产品负责人定案：**撤销机制下线**，恢复时标签**已经开在浏览器里**
+// ⇒ 结果界面自明 ⇒ 恢复整个会话 / 点开单个标签这两条**高频**路径**完全静默**。
 //
-//   A-2  点开单个标签也是零反馈，而它是一次**不可撤销的删除**（无回收站）：
-//        标签行消失、页面打开，用户无法区分「已打开」与「被删了」。
-//        这是本产品最高频的动作。
+// ⇒ 现在这条守卫守的是三件事：
+//   ① **高频路径静默**（不许又冒出成功播报 —— 那正是用户嫌吵的东西）；
+//   ② **后果仍然诚实**：不可恢复这件事写在按钮的 tooltip / aria-label 上，
+//      批量恢复那四笔账仍然说出来（界面表达不了）；
+//   ③ **失败仍然出声**：静默的是成功，不是失败。
 //
 // 断言方式与本仓既有约定一致（见 destructiveActionHonesty.test.ts）：
 //   · 文案部分直接调用**已发布的**文案函数，断言它说了该说的；
 //   · 接线部分读源码，确认调用真的接上了 —— 只测文案函数的话，
 //     把调用删掉测试照样绿，那正是这个缺陷当初能活下来的原因。
-//
-// ── 2026-10-25「安静的成功」：断言**收窄** ──────────────────────────────────
-//
-// 锁定会话恢复后**保留在列表里** ⇒ 那张卡还在 ⇒ 界面自明 ⇒ 锁定路径**静默**
-// （不再要求它播报）。锁定版的两条成功文案随死分支一起删掉。
-// 但锁定分支仍然必须：① 判过成功门；② 失败路径出声。
-// 未锁定路径相反：必须播报，且那条提示上必须挂着撤销。
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import ts from 'typescript';
 
 import {
-  openSingleTabSuccessMessage,
   restoreAllSearchSuccessMessage,
-  restoreGroupSuccessMessage,
+  restoreOutcomeSentence,
 } from '../src/components/tabs/restoreFeedbackCopy.ts';
 
 const read = (rel: string) => readFileSync(new URL(`../${rel}`, import.meta.url), 'utf8');
@@ -65,24 +59,10 @@ function extractLockedBranch(src: string): string | null {
 }
 
 // ─────────────────────────────────────────────────────────────────────────
-// 1. 文案本身：必须说清「发生了什么」与「为什么卡片不见了」
+// 1. 文案本身：批量恢复那四笔账必须说清（界面表达不了的那部分）
 // ─────────────────────────────────────────────────────────────────────────
 
-describe('恢复成功文案：说清两件事（打开了什么 / 记录去哪了）', () => {
-  it('整组恢复（未锁定）必须说「已打开」与「已从列表移除」', () => {
-    const msg = restoreGroupSuccessMessage(5);
-    assert.match(msg, /已在新窗口打开 5 个标签页/, '必须说清打开了几个');
-    assert.match(msg, /已从列表移除/, '必须解释卡片为什么不见了');
-  });
-
-  it('点开单标签（未锁定）必须说清「记录被移除了」', () => {
-    // 2026-10-25「安静的成功」：成功文案不再复述用户刚点过的那一下
-    // （「已打开该标签页」—— 界面自明），只留下**界面表达不了的那件事**：
-    // 那条记录被移除了（不可逆、无回收站）。
-    const msg = openSingleTabSuccessMessage();
-    assert.match(msg, /从会话中移除/);
-  });
-
+describe('批量恢复文案：说清两件事（打开了什么 / 记录去哪了）', () => {
   it('批量恢复（搜索页）必须说「移除了几个、其余保留」', () => {
     const msg = restoreAllSearchSuccessMessage({
       matched: 8,
@@ -158,17 +138,13 @@ describe('恢复成功文案：说清两件事（打开了什么 / 记录去哪�
   });
 
   it('文案不得出现内部实现词（op 名、SW、协议）', () => {
-    const all = [
-      restoreGroupSuccessMessage(1),
-      openSingleTabSuccessMessage(),
-      restoreAllSearchSuccessMessage({
-        matched: 1,
-        opened: 1,
-        removed: 1,
-        keptLocked: 0,
-        failedToRemove: 0,
-      }),
-    ].join('\n');
+    const all = restoreAllSearchSuccessMessage({
+      matched: 1,
+      opened: 1,
+      removed: 1,
+      keptLocked: 0,
+      failedToRemove: 0,
+    });
     for (const forbidden of ['OPEN_TABS', 'OPEN_TAB', 'deleteGroup', 'SW', 'mutation']) {
       assert.doesNotMatch(all, new RegExp(forbidden), `文案不应出现「${forbidden}」`);
     }
@@ -176,32 +152,56 @@ describe('恢复成功文案：说清两件事（打开了什么 / 记录去哪�
 });
 
 // ─────────────────────────────────────────────────────────────────────────
-// 2. 接线：调用真的接上了吗
+// 2. 后果：不可恢复这件事必须说在**按钮提示**上（点之前唯一的告知）
+// ─────────────────────────────────────────────────────────────────────────
+
+describe('恢复的后果必须说在按钮提示上', () => {
+  it('未锁定：必须说「从列表移除，不可恢复」', () => {
+    // ⚠️ 2026-10-26：撤销机制下线 ⇒ 「可撤销」是假话 ⇒ 这里是唯一的告知。
+    assert.equal(
+      restoreOutcomeSentence(false),
+      '恢复后该会话会从列表移除，不可恢复',
+      '未锁定的后果必须说清「不可恢复」'
+    );
+  });
+
+  it('已锁定：必须说「仍保留在列表中」', () => {
+    assert.equal(
+      restoreOutcomeSentence(true),
+      '恢复后该会话仍保留在列表中',
+      '锁定的后果仍然是「保留在列表中」'
+    );
+  });
+
+  it('两个界面都必须在恢复按钮上带上这句后果', () => {
+    for (const file of [
+      'src/components/tabs/TabGroup.tsx',
+      'src/components/search/SearchResultList.tsx',
+    ]) {
+      const src = stripComments(read(file));
+      assert.match(
+        src,
+        /restoreOutcomeSentence\(/,
+        `${file}：恢复按钮必须带上后果说明（点之前唯一的告知）`
+      );
+    }
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// 3. 接线：高频路径静默、低频路径出声、失败永远出声
 // ─────────────────────────────────────────────────────────────────────────
 
 /**
- * 数一数「成功播报」的调用点。
+ * 数「成功播报」在源码里出现了几次（按**数据流**数，不钉字面量形状）。
  *
- * 2026-10-22 审计 P0-4：「恢复即消费」是不可逆的删除，所以成功播报现在
- * 多了一条路 —— 走共享 hook（`showConsumeToast`，它内部再走
- * `showRestoreSuccessMessage`，额外挂一个「撤销」按钮）。两条路都是
- * 「出声了」，所以这里数的是**两者之和**；只认某一条字面量的话，
- * 换个出口就会被误判成「没接上」。
- */
-/**
- * 数「成功播报」在源码里出现了几次。
+ * 文案先落到 fact（判据层与播报共用同一份）⇒ 第一个实参可能是那个变量，
+ * **不再紧贴**文案函数调用 ⇒ 原来的正则 `showRestoreSuccessMessage\(\s*文案函数\(`
+ * 会数成 0 ⇒ 报「没有成功反馈」—— 红在一个正确的改动上。
  *
- * ── 2026-10-25 终审修复：改按**数据流**数，不再钉字面量形状 ────────────────
- *
- * 文案现在先落到 fact（判据层与播报共用同一份）⇒ `showConsumeToast` 的第一个
- * 实参是那个变量，**不再紧贴** `restoreGroupSuccessMessage(`。原来的正则
- * `showConsumeToast\(\s*文案函数\(` 会数成 0 ⇒ 报「没有成功反馈」——
- * 红在一个正确的改动上（本仓的教训：先怀疑守卫钉错了值，不是回退实现）。
- *
- * ⇒ 判据要数的是**调用点**：
+ * ⇒ 判据数的是**调用点**：
  *   · 第一个实参直接是 `copyFn(...)`，或
  *   · 第一个实参是某个**由 `copyFn(...)` 初始化**的局部变量。
- *   注释 / 空白出现在哪里都不影响（AST 已经看不见注释）。
  */
 const countSuccessToasts = (src: string, copyFn: string): number => {
   const source = ts.createSourceFile(
@@ -233,8 +233,8 @@ const countSuccessToasts = (src: string, copyFn: string): number => {
     if (
       ts.isCallExpression(node) &&
       ts.isIdentifier(node.expression) &&
-      (node.expression.text === 'showConsumeToast' ||
-        node.expression.text === 'showRestoreSuccessMessage')
+      (node.expression.text === 'showRestoreSuccessMessage' ||
+        node.expression.text === 'showToast')
     ) {
       const firstArg = node.arguments[0];
       if (!firstArg) {
@@ -251,82 +251,36 @@ const countSuccessToasts = (src: string, copyFn: string): number => {
   return count;
 };
 
-describe('恢复成功反馈真的接到了两个界面', () => {
-  // ── 2026-10-25「安静的成功」：断言**收窄** ──────────────────────────────
-  //
-  // 锁定会话恢复后**保留在列表里** ⇒ 那张卡还在 ⇒ 界面自明 ⇒ 锁定路径
-  // **静默**（不再要求它播报）。但它仍然必须：
-  //   ① 判过**成功门**（SW 拒开不许谎报成功）；
-  //   ② 失败路径**出声**（打不开必须明说，记录原样保留）。
-  //
-  // 未锁定路径相反：必须播报，且那条提示上必须挂着**撤销**。
-  // 细则（接线 / 退路 / 成功门）见 tests/guards/quietSuccess.test.ts。
-  it('列表页（TabGroup）：未锁定的整组恢复与点开单标签都要出声', () => {
+describe('恢复的反馈：高频静默、低频出声、失败永远出声', () => {
+  it('列表页：整组恢复与点开单标签的成功路径都**不许播报**', () => {
     const src = read('src/components/tabs/TabGroup.tsx');
-    // 两个动作各一次成功反馈（**未锁定**那一条）
-    const groupRestore = countSuccessToasts(src, 'restoreGroupSuccessMessage');
-    const singleOpen = countSuccessToasts(src, 'openSingleTabSuccessMessage');
-    assert.equal(groupRestore, 1, '列表页整组恢复必须有一次成功反馈（未锁定那条）');
-    // countSuccessToasts 返回的是**数字**（两条路的计数之和）。
-    // 早先这里写的是 `singleOpen.length >= 2` —— 数字上的 .length 是
-    // undefined，断言永远为假 ⇒ 这条守卫从来没有真正生效过
-    // （把两条成功播报全删掉它也不会红）。修的是守卫，不是实现。
-    // 2026-10-25：锁定那条已静默 ⇒ 这里是 **1**（未锁定那条）而不是 2。
+    // 撤销机制下线后，「恢复整个会话」「点开单个标签」这两条高频路径静默 ——
+    // 标签已经开在浏览器里、卡片从列表消失 ⇒ 界面自明。
+    // 列表页剩下的那条成功播报是「拖走最后一条标签 ⇒ 会话消失」的事实（fact）。
+    const total = countSuccessToasts(src, 'moveEmptiesSessionMessage');
     assert.equal(
-      singleOpen,
+      total,
       1,
-      '列表页点开单标签（未锁定那条）必须有成功反馈（锁定那条已静默）'
-    );
-  });
-
-  it('列表页必须从共享模块取文案，不能自己拼字符串', () => {
-    const src = read('src/components/tabs/TabGroup.tsx');
-    assert.match(
-      src,
-      /import\s*\{[^}]*restoreGroupSuccessMessage[^}]*\}\s*from\s*'@\/components\/tabs\/restoreFeedbackCopy'/,
-      '列表页必须引用共享文案模块（两处各写一遍文案迟早漂移）'
-    );
-  });
-
-  it('搜索页（SearchResultList）也用同一份共享文案', () => {
-    const src = read('src/components/search/SearchResultList.tsx');
-    assert.match(
-      src,
-      /restoreAllSearchSuccessMessage/,
-      '搜索页必须引用共享文案模块'
+      '列表页只许剩下「拖走最后一条标签」那一条事实播报 —— 恢复与点开必须静默'
     );
     assert.doesNotMatch(
       src,
-      /showRestoreSuccess\(\s*matchingTabs\.length\s*\)/,
-      '旧的固定模板调用应已换成共享文案（否则两处措辞会漂移）'
+      /restoreGroupSuccessMessage|openSingleTabSuccessMessage/,
+      '列表页不许再引用那两条成功文案（它们随静默一起消失）'
     );
   });
 
-  // ───────────────────────────────────────────────────────────────────────
-  // 搜索页的三条路径（2026-10-22 审计 P1-4）
-  //
-  // 缺陷：搜索页「恢复整个会话」与「点开单标签」**零成功反馈** ——
-  // 窗口开了、会话卡从列表消失、屏幕上什么都不动；而列表页（主界面）早就有播报。
-  // 同一个产品动作，两个界面两种反馈。
-  // 守卫盲区：下面原来只查了列表页与搜索页的**批量**恢复，
-  // 单会话恢复与单标签点开两条路径**既没实现、也没被守**。
-  // ───────────────────────────────────────────────────────────────────────
-  it('搜索页：恢复整个会话必须有成功反馈', () => {
+  it('搜索页：整组恢复与点开单标签的成功路径都**不许播报**，但批量恢复仍出声', () => {
     const src = read('src/components/search/SearchResultList.tsx');
     assert.equal(
-      countSuccessToasts(src, 'restoreGroupSuccessMessage'),
+      countSuccessToasts(src, 'restoreAllSearchSuccessMessage'),
       1,
-      '搜索页整组恢复必须有一次成功反馈（未锁定那条）'
+      '搜索页只许剩下「批量恢复」那一条四笔账的事实播报'
     );
-  });
-
-  it('搜索页：点开单标签（未锁定那条）必须有成功反馈', () => {
-    const src = read('src/components/search/SearchResultList.tsx');
-    const singleOpen = countSuccessToasts(src, 'openSingleTabSuccessMessage');
-    assert.equal(
-      singleOpen,
-      1,
-      '搜索页点开单标签（未锁定那条）必须有成功反馈（锁定那条已静默）'
+    assert.doesNotMatch(
+      src,
+      /restoreGroupSuccessMessage|openSingleTabSuccessMessage/,
+      '搜索页不许再引用那两条成功文案（它们随静默一起消失）'
     );
   });
 
@@ -335,25 +289,22 @@ describe('恢复成功反馈真的接到了两个界面', () => {
     // 而 SW 拒开是 `sendResponse({success:false})` ⇒ promise **resolve 而非
     // reject** ⇒ `.then` 照样跑 ⇒ 界面播「已打开」，实际一个标签都没开。
     //
-    // 2026-10-25「安静的成功」：锁定分支**不再播报**（锁定组从不被消费 ⇒
-    // 记录还在 ⇒ 界面自明），但**成功门不许跟着播报一起消失** ——
-    // 打不开必须明说「已保留在会话中」，否则「点了没反应」与「已打开」
-    // 用户分不出来。
+    // 锁定分支**不播报**（锁定组从不被消费 ⇒ 记录还在 ⇒ 界面自明），但
+    // **成功门不许跟着播报一起消失** —— 打不开必须明说「已保留在会话中」，
+    // 否则「点了没反应」与「已打开」用户分不出来。
     for (const file of [
       'src/components/search/SearchResultList.tsx',
       'src/components/tabs/TabGroup.tsx',
     ]) {
       // 剥注释后再抽分支：注释里也会出现 `showRestoreError(` / `showToast(`
-      // （本任务就在锁定分支里写了一整段解释）⇒ 拿原始源码判
-      // `doesNotMatch(/showToast\(/)` 会被注释误伤成假红，
+      // ⇒ 拿原始源码判 `doesNotMatch(/showToast\(/)` 会被注释误伤成假红，
       // `match(/showRestoreError\(/)` 又能被注释满足成假绿。
-      // （2026-10-25 修复轮 1，与 tests/guards/quietSuccess.test.ts 同口径。）
       const src = stripComments(read(file));
       const branch = extractLockedBranch(src);
       assert.ok(branch, `${file}：应能找到 handleOpenTab 里的锁定分支`);
       assert.doesNotMatch(
         branch,
-        /showRestoreSuccessMessage|showConsumeToast|showToast\(/,
+        /showRestoreSuccessMessage|showToast\(/,
         `${file}：锁定分支必须静默（锁定组从不被消费 ⇒ 那条记录还在 ⇒ 界面自明）`
       );
       assert.match(
@@ -365,6 +316,26 @@ describe('恢复成功反馈真的接到了两个界面', () => {
         branch,
         /showRestoreError\(/,
         `${file}：锁定分支的失败路径必须出声（打不开必须明说）`
+      );
+    }
+  });
+
+  it('「部分成功」（有几个打不开）必须仍然出声', () => {
+    // 静默的是**成功**；「有的没成」是失败事件 —— 必须说，且必须说清是哪几个。
+    for (const file of [
+      'src/components/tabs/TabGroup.tsx',
+      'src/components/search/SearchResultList.tsx',
+    ]) {
+      const src = stripComments(read(file));
+      assert.match(
+        src,
+        /在当前设备无法打开/,
+        `${file}：「有的打不开」必须说出来（失败不许被静默）`
+      );
+      assert.match(
+        src,
+        /showRestoreError\(/,
+        `${file}：失败提示必须走错误通道`
       );
     }
   });

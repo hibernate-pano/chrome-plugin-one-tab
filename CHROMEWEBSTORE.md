@@ -1,14 +1,18 @@
 # Chrome Web Store Listing — TapStack
 
-> Last Updated: 2026-10-25
+> Last Updated: 2026-10-26
 >
-> **2026-10-25 最新状态（线上）**：`1.28.5` **已过审并上架** —— 公开页
-> `Version 1.28.5`（2026-10-25 抓公开页实证，grep
+> **2026-10-26 最新状态（线上）**：`1.28.7` **已过审并上架** —— 公开页
+> `Version 1.28.7`（2026-10-26 抓公开页实证，grep
 > `>Version</div><div[^>]*>([^<]*)</div>`）。
-> 线上已发布 = **`1.28.5`**。
-> ⚠️ 这条是**守卫抓到的**：台账当时还写着 1.28.4，公开页已经变成 1.28.5
+> 线上已发布 = **`1.28.7`**。
+> ⚠️ 这条是**守卫抓到的**：台账当时还写着 1.28.5，公开页已经变成 1.28.7
 > ⇒ 守卫 `tests/guards/storeListingLiveMatchesRepo.test.ts` 的 R-8⑤ 当场变红
 > ⇒ 台账才被改过来。**发布状态只能靠抓公开页确认，提交 ≠ 上架。**
+> ✅ **线上文案 = 仓库那份（零违规）**：2026-10-26 抓公开页跑判据
+> `judgeListing(1.28.7, 线上描述)` 返回 **0 处违规**（描述 9318 字）
+> ⇒ `tests/fixtures/store-listing-live-baseline.json`（手抄文案的欠账账本）
+> **已按它自己的说明删掉** ⇒ 守卫自动升级成「线上必须零违规」。
 > ⚠️ **云端仍是 402**（Supabase 出网配额封禁；2026-10-25 复测仍回
 > `exceed_egress_quota`，全部端点不可用）⇒ 新用户装上第一件事就是登录
 > ⇒ **登录直接失败**。解封是**项目所有者**在 dashboard 做的动作，
@@ -26,7 +30,8 @@
 > ④ `publish 1.28.7` 回包 `{"status":["OK"],"statusDetail":["OK."]}`
 > ⑤ 再发一次 publish 得到 **400「You may not edit or publish an item that is in review」**
 >    ⇒ 自证确实进了审核队列
-> ⑥ 公开页此刻仍是 `Version 1.28.5` ⇒ **尚未上架**（提交 ≠ 上架）
+> ⑥ 提交当时公开页仍是 `Version 1.28.5` ⇒ **尚未上架**（提交 ≠ 上架）；
+>    **2026-10-26 公开页实证已变成 `Version 1.28.7`** ⇒ 已过审上架
 >
 > ⚠️ **本次换文案时发现并修掉的一处真问题：商店描述框是纯文本，不渲染 markdown。**
 > 仓库里的详细描述带着 136 对 `**` 强调标记（`CHROMEWEBSTORE.md` 顶部注释写着
@@ -118,8 +123,12 @@
 >
 > ⚠️ **商店文案没有跟着版本走**：公开页上的描述仍是那一段手写进后台的旧文案
 > （它从未在本仓存在过，描述的甚至是另一个产品）。版本号变了、文案没变
-> ⇒ 判据 `missing-consume-undo`（1.26.0 起必须说明「恢复 / 点开之后有撤销」）
+> ⇒ 判据 `missing-consume-undo`（1.26.0 ~ 1.28.x 必须说明「恢复 / 点开之后有撤销」）
 > 在线上**不成立**，已如实记进 `tests/fixtures/store-listing-live-baseline.json`。
+> ⚠️ **1.29.0 起判据的方向反过来**（撤销机制已下线）：① **不许**再宣传「可撤销」
+> （`claims-consume-undo-after-removal`）；② **必须**说明「这一步不可恢复」
+> （`missing-consume-irreversible`）。⇒ 提审 1.29.0 时**必须**用仓库这份新文案，
+> 旧文案（带「撤销」）会被判成说假话。
 > 修法只有一条：把 `node scripts/store-listing-audit.mjs --print-text` 的输出
 > 粘进后台的 Short / Detailed Description（商店文案**没有 API 通道**）。
 > **2026-10-23 实测：线上那份文案共 20 处问题** —— 3 处「说了假话」
@@ -190,9 +199,9 @@ TapStack 把你当前浏览器窗口里的所有标签页保存为一个会话�
 · 右键菜单：在网页标签页上右键（或右键标签标题），可保存该标签页并关闭；右键扩展图标，可保存当前标签页或窗口里的其他标签页（同样会关闭），也可直接打开标签管理器
 · 智能命名：新会话默认用**保存那一刻**命名（如 `2026-10-25 14:30`）—— 名字不替你猜，想要好记的名字点一下标题就能改；这批标签来自哪个网站不会写进名字里（每个标签的域名在标签行右侧本来就写着）
 · 会话整理：每个会话可重命名、锁定防误删（锁定后不可重命名、不可逐个删除其中的标签、不可把标签拖到别的会话、不参与清理重复；仍可删除整个会话，只是会先提示「该会话已锁定」，而且这一步**一定**要确认）
-· 快速恢复：一键在新窗口打开整组标签，不打乱当前窗口；未锁定的会话恢复后即从列表移除（标签已在浏览器打开，无需手动清理）；**锁定的会话恢复后仍保留**，可以反复使用；点开单个标签直接继续工作，它会自动从会话中移除（锁定会话除外）；**这两种「移除」都留了退路** —— 屏幕上会浮出一条提示，上面有个「撤销」按钮，几秒钟内点一下，那条记录就回到原来的位置（锁定的会话从不被移除，也就没有「撤销」）
+· 快速恢复：一键在新窗口打开整组标签，不打乱当前窗口；未锁定的会话恢复后即从列表移除（标签已在浏览器打开，无需手动清理），**这一步不可恢复** —— 没有回收站，也没有「撤销」按钮；**锁定的会话恢复后仍保留**，可以反复使用 —— 想反复用的会话，请先锁定它；点开单个标签直接继续工作，它会自动从会话中移除（锁定会话除外），同样不可恢复
 · 会话搜索：按会话名、标签标题/网址查找，支持按域名过滤；也可以不输关键词，直接按域名、会话名称、保存时间筛选
-· 误删保护：删除**整个会话**前会二次确认（可在设置里关闭；**锁定的会话一定确认**，不受该开关影响；「删除所有会话」始终确认并显示数量，其中锁定会话的数量也会一并写明），删除后彻底清除、没有回收站；单条标签删除会立即生效、不弹确认——**但如果这一删会让整个会话消失，就会先确认**（因为后果等同删除整个会话）；**把最后一条标签拖到别的会话**，则是**直接生效、不多问一句**，而那个被搬空的会话会随之消失（这是核心规则：拖拽即剪切，不额外拦你）。**删除没有退路** —— 它是永久的，没有回收站也没有撤销；「快速恢复」里那种从列表移除则带「撤销」
+· 误删保护：删除**整个会话**前会二次确认（可在设置里关闭；**锁定的会话一定确认**，不受该开关影响；「删除所有会话」始终确认并显示数量，其中锁定会话的数量也会一并写明），删除后彻底清除、没有回收站；单条标签删除会立即生效、不弹确认——**但如果这一删会让整个会话消失，就会先确认**（因为后果等同删除整个会话）；**把最后一条标签拖到别的会话**，则是**直接生效、不多问一句**，而那个被搬空的会话会随之消失（这是核心规则：拖拽即剪切，不额外拦你）。**删除没有退路** —— 它是永久的，没有回收站也没有撤销；「快速恢复」里那种从列表移除**同样没有退路**（唯一的退路是事先锁定那个会话）
 · 一键清理：清除重复标签页和空会话
 · 导入导出：支持 OneTab 文本格式导入导出，以及 JSON 备份；导出的网址与标题**原样保留**（网址里带竖线、标题里带竖线或换行都不会被截断）。导入的会话**怎么命名分两种**：导回**本扩展导出的 JSON 备份**时，会话名**原样保留**（备份里叫什么就叫什么）；导入 **OneTab 文本**时，因为那个格式**本身不带会话名**（所以名字一定会丢），会话会按内容命名 —— 取这批标签里出现最多的域名（如 `github.com`；本机地址与内网 IP 也一样，如 `localhost:3000`、`192.168.1.5`），取不到域名时才回落到「导入的会话 1、2、3…」。**锁定状态分两种**：导入 **OneTab 文本**时，那个格式里**没有**这个信息 ⇒ 导入的会话**一律不带锁定状态**（想让它不被误删，导入后记得重新锁定）；而导回**本扩展导出的 JSON 备份**时，**锁定状态原样保留**
 · 登录同步：登录后会把云端的会话拉回本机，换设备、换浏览器也能找回你的工作现场；本机每次保存、重命名、删除也都会自动上传到云端。**定时自动拉取默认关闭**（可在设置里打开）—— 关掉它只是不再周期性去云端取新内容，你本机的改动仍然照常上传
@@ -215,9 +224,9 @@ Key features:
 · Right-click menu: right-click a page or a tab title to save that tab and close it; right-click the extension icon to save the current tab or all other tabs in the window (and close them), or to open the tab manager
 · Smart naming: new sessions are named after **the moment you saved them** (e.g. 2026-10-25 14:30) — the name never guesses on your behalf, and you can rename any time by clicking the title; which sites the tabs came from is not put into the name (each tab's domain is shown on the tab row anyway)
 · Session tools: rename, lock against accidental deletion (a locked session cannot be renamed, its tabs cannot be deleted one by one, its tabs cannot be dragged into another session, and it is left out of duplicate cleanup; you can still delete the whole session, but you will be told it is locked first — and that step **always** asks you to confirm)
-· Fast restore: reopen the whole session in a new window without disturbing the current one; an **unlocked** session is removed from the list once restored (its tabs are open in the browser), while a **locked** session stays in the list so you can reuse it; click a single tab to jump straight back into work — it is then removed from the session (locked sessions excepted); **both kinds of removal come with a way back** — a notice appears on screen with an Undo button, and within a few seconds you can put the record back exactly where it was (a locked session is never removed, so it never has one)
+· Fast restore: reopen the whole session in a new window without disturbing the current one; an **unlocked** session is removed from the list once restored (its tabs are open in the browser), and **that removal cannot be undone** — there is no recycle bin and no Undo button; a **locked** session stays in the list so you can reuse it — lock a session first if you want to restore it more than once; click a single tab to jump straight back into work — it is then removed from the session (locked sessions excepted), and that removal cannot be undone either
 · Search: find sessions by name, tab title or URL, filter by domain
-· Deletion protection: deleting a whole session asks you first (you can turn that off in settings, **except for locked sessions, which always ask**; "delete all sessions" always asks and shows the count, including how many of them are locked), and a deleted session is permanently removed — there is no recycle bin, and no undo for a deletion; deleting a single tab takes effect immediately without asking — **unless that deletion would take the whole session with it, in which case you are asked first** (the effect is the same as deleting the session); **dragging the last tab out of a session** happens **right away, with no extra question**, and the emptied session is removed with it (that is the core rule: dragging is a cut, so it is not blocked). **A deletion has no way back** — it is permanent, with no recycle bin and no undo; the removals described under Fast restore are a different thing, and those do offer a short-lived Undo
+· Deletion protection: deleting a whole session asks you first (you can turn that off in settings, **except for locked sessions, which always ask**; "delete all sessions" always asks and shows the count, including how many of them are locked), and a deleted session is permanently removed — there is no recycle bin, and no undo for a deletion; deleting a single tab takes effect immediately without asking — **unless that deletion would take the whole session with it, in which case you are asked first** (the effect is the same as deleting the session); **dragging the last tab out of a session** happens **right away, with no extra question**, and the emptied session is removed with it (that is the core rule: dragging is a cut, so it is not blocked). **A deletion has no way back** — it is permanent, with no recycle bin and no undo; the removals described under Fast restore cannot be undone either (the only way back is to lock the session beforehand)
 · One-click cleanup: remove duplicate tabs and empty sessions
 · Import/export: OneTab text format, plus JSON backup; exported URLs and titles are kept **exactly as they are** (a URL containing a vertical bar, or a title containing one or a line break, is never truncated). Imported sessions are **named in one of two ways**: when you import a **JSON backup this extension exported**, the session names are **kept exactly as they were** (whatever the backup calls them); when you import **OneTab text**, the name is taken from the content — because that format carries no session name of its own (so the name is lost either way), the session is named after the most frequent domain among its tabs (e.g. `github.com`; local addresses and intranet IPs likewise, e.g. `localhost:3000`, `192.168.1.5`), falling back to "Imported session 1, 2, 3…" only when there is no domain to use. **Locking works differently per format**: OneTab text carries no lock field, so **OneTab imports are never locked** (lock them again after importing if you want them protected against accidental deletion); but when you import a **JSON backup this extension exported**, the **lock state is kept exactly as it was**
 · Cloud sync: sign in and the sessions in your cloud are pulled back to this device, so you can pick up your work on any device or browser; every save, rename or delete you make locally is uploaded automatically too. **The scheduled auto-pull is off by default** (you can turn it on in settings) — turning it off only means TapStack stops periodically checking the cloud for new content; your local changes are still uploaded as usual
@@ -246,8 +255,8 @@ Productivity
 | Asset | Dimensions | Status | Filename |
 |-------|-----------|--------|----------|
 | Store Icon [REQUIRED] | 128×128 PNG | ✅ Ready | icons/icon128.png |
-| Screenshot 1 [REQUIRED] | 1280×800 | ✅ Ready | store-assets/screenshot-1-main.png（2026-10-25 重拍，1.28.7：界面 = v1.25.1 —— 会话卡**不带** favicon、卡头 5 个按钮、标签行右侧显示域名；筛选工具条上有「排序」下拉；卡头第一颗是 accent 的「在当前窗口打开」） |
-| Screenshot 2 [RECOMMENDED] | 1280×800 | ✅ Ready | store-assets/screenshot-2-search.png（2026-10-25 重拍，页脚显示 TapStack v1.28.7） |
+| Screenshot 1 [REQUIRED] | 1280×800 | ✅ Ready | store-assets/screenshot-1-main.png（2026-10-26 重拍，1.29.0：界面 = v1.25.1 —— 会话卡**不带** favicon、卡头 5 个按钮、标签行右侧显示域名；筛选工具条上有「排序」下拉；卡头第一颗是 accent 的「在当前窗口打开」） |
+| Screenshot 2 [RECOMMENDED] | 1280×800 | ✅ Ready | store-assets/screenshot-2-search.png（2026-10-26 重拍，页脚显示 TapStack v1.29.0） |
 | Small Promo Tile [RECOMMENDED] | 440×280 | ✅ Ready | store-assets/promo-tile-440x280.png（2026-10-20 新建；源文件 store-assets/promo-tile-440x280.svg，PNG 无 alpha 通道，符合 CWS 要求） |
 
 <!-- 宣传图与图标**必须讲同一个故事** —— 商店里两张图并排出现。
@@ -341,7 +350,7 @@ Productivity
 
 https://tapstack-two.vercel.app/privacy.html
 
-<!-- 隐私政策页面源码：src/legal/privacy.html（最后更新 2026-10-22）。
+<!-- 隐私政策页面源码：src/legal/privacy.html（最后更新 2026-10-26）。
      2026-10-02 与线上商店页核对：商店 Privacy 区展示的就是该 URL。
 
      ⚠️ 2026-10-20：实测发现线上那份**停在 2026-09-29**（本地早已更新到
@@ -518,7 +527,8 @@ https://github.com/hibernate-pano/chrome-plugin-one-tab
 
 | Version | Date | Changes | Status |
 |---------|------|---------|--------|
-| 1.28.7 | 2026-10-25 | **从别的工具导进来的旧会话，不再被说成「刚保存的」**：这类文件里本来就没有「什么时候保存的」这个信息，导入后以前一律显示成「今天」，还霸占着列表最上面。现在卡片上写「导入 · …」—— 只说我们真知道的那件事（什么时候进到这台机器）；按「保存时间」筛选时，它们单独落在「时间未知」里，不会混进「24 小时内」把你找的东西挤掉。顺带：两条提示同时冒出来时，上面那条不再被下面那条盖掉半截 —— 以前那句「保存时间未知」的说明读不到结尾。**新会话的名字默认改成「保存那一刻」**（如 `2026-10-25 14:30`）—— 以前插件会替你猜名字（按出现最多的域名、或拿页面标题当名字），猜错了你得自己去改；现在**一律**用保存时刻，想怎么叫点一下标题就改。 | **已提审**（2026-10-25 upload 回包 `uploadState: SUCCESS` → 草稿 `crxVersion: 1.28.7` → publish 回包 `status:["OK"]`；再发一次 publish 得到 400「in review」自证在审核队列；**公开页此刻仍是 1.28.5 ⇒ 尚未上架**。本次同时人工换掉商店文案与截图，见文件头。⚠️ 云端 402 未解 + Supabase 迁移未执行，均需项目所有者动手） |
+| 1.29.0 | 2026-10-26 | **提示不再杵在屏幕正中间，撤销提示整个删掉**。① 提示条回到**右上角** —— 以前杵在正中间，挡着你正在看的东西。② **恢复之后不再冒那条带「撤销」按钮的提示**：恢复时标签**已经开在浏览器里**了，结果界面自己会说明，那个「撤销」纯属噪音。③ 因此「恢复 / 点开」这一步**不可恢复**（本产品没有回收站）—— 这一点现在写在按钮的悬停提示上；想反复用的会话，**先锁定它**，锁定的会话恢复后仍留在列表里。④ 失败**仍然出声**：有几个标签打不开、删除没成功，照旧明说。 | **未提审**（⚠️ 商店**文案必须一起换**：旧文案承诺的「撤销」在 1.29.0 上已经是假话 —— 提审时用 `node scripts/store-listing-audit.mjs --print-text` 的输出） |
+| 1.28.7 | 2026-10-25 | **从别的工具导进来的旧会话，不再被说成「刚保存的」**：这类文件里本来就没有「什么时候保存的」这个信息，导入后以前一律显示成「今天」，还霸占着列表最上面。现在卡片上写「导入 · …」—— 只说我们真知道的那件事（什么时候进到这台机器）；按「保存时间」筛选时，它们单独落在「时间未知」里，不会混进「24 小时内」把你找的东西挤掉。顺带：两条提示同时冒出来时，上面那条不再被下面那条盖掉半截 —— 以前那句「保存时间未知」的说明读不到结尾。**新会话的名字默认改成「保存那一刻」**（如 `2026-10-25 14:30`）—— 以前插件会替你猜名字（按出现最多的域名、或拿页面标题当名字），猜错了你得自己去改；现在**一律**用保存时刻，想怎么叫点一下标题就改。 | **已上架**（2026-10-25 upload 回包 `uploadState: SUCCESS` → 草稿 `crxVersion: 1.28.7` → publish 回包 `status:["OK"]` → 再发一次 publish 得到 400「in review」自证在审核队列；**2026-10-26 公开页实证 `Version 1.28.7` ⇒ 线上已发布 = 1.28.7**，且线上描述跑判据零违规 ⇒ 手抄文案的欠账账本已删。本次同时人工换掉商店文案与截图，见文件头。⚠️ 云端 402 未解 + Supabase 迁移未执行，均需项目所有者动手） |
 | 1.28.5 | 2026-10-25 | **恢复后的提示不再张冠李戴**：点「在当前窗口打开」，提示就写「已在当前窗口打开 N 个标签页」；点「在新窗口恢复」，才写「已在新窗口打开」。以前不管点哪一颗，提示都写「新窗口」—— 标签明明加在眼前，提示却说到了别处。 | **已上架**（2026-10-25 upload 回包 `uploadState: SUCCESS` → 草稿 `crxVersion: 1.28.5` → publish 回包 `status:["OK"]`；再发一次 publish 得到 400「You may not edit or publish an item that is in review」自证在审核队列；2026-10-25 晚公开页实证 `Version 1.28.5` ⇒ 线上已发布 = 1.28.5。⚠️ 云端 402 仍需项目所有者解封，见文件头与「Known Issues」） |
 | 1.28.4 | 2026-10-25 | **两颗「打开」按钮不再长得一样**：卡头上「在当前窗口打开」和「在新窗口恢复」换了个位置，图标也分开了 —— 一个是留在框里的一支箭头，一个是箭头从框里伸出去。以前这两颗几乎一样，常常点错；现在常用的那颗排在最前面，也更醒目。 | **已上架**（2026-10-25 提交审核，商店回包 `status:["OK"]`；2026-10-25 晚公开页实证 `Version 1.28.4` ⇒ 线上已发布 = 1.28.4。⚠️ 云端 402 仍需项目所有者解封，见文件头与「Known Issues」） |
 | 1.28.3 | 2026-10-24 | **一屏能看到的标签更多了**：会话里的标签行从 58px 收到 37px，同一块地方能多看三分之一的标签；点一行里任意位置都能打开它，不用非得点中标题文字；会话标题那一行也从 53–61px 收到 41px，不再是一条厚重的横带。 | **已上架**（2026-10-24 提交审核，商店回包 `status:["OK"]`；2026-10-25 公开页实证 `Version 1.28.3 / Updated October 24, 2026` ⇒ 线上已发布 = 1.28.3。⚠️ 云端 402 仍需项目所有者解封，见文件头与「Known Issues」） |
@@ -531,7 +541,7 @@ https://github.com/hibernate-pano/chrome-plugin-one-tab
 | 1.25.1 | 2026-10-21 | **设置页的三个真实缺口 + 同步的数据安全收口 + 五处「文档说错、代码做的是另一回事」**。下面是用户能感知到的变化。 | **已上架**（2026-10-21 提交审核；2026-10-20 公开页显示 `Version 1.25.1 / Updated October 20, 2026` ⇒ 已过审并发布为线上当前版本） |
 | 1.25.0 | 2026-10-19 | **一次覆盖四个维度的深度体检收口：功能与数据安全、信息架构、视觉与主题、文案与承诺**。下面是用户能感知到的变化。 | **未提审（内容已并入 1.25.1 一并提交）** |
 
-**1.28.7 的详细清单**（对应上表那一行 —— 1.28.7 已提审、**尚未上架**，公开页仍是 1.28.5）：
+**1.28.7 的详细清单**（对应上表那一行 —— 1.28.7 **已上架**，2026-10-26 公开页 `Version 1.28.7`）：
 
 **① 从别的工具导进来的旧会话，不再被说成「刚保存的」** —— OneTab 这类文件里**本来就没有**「什么时候保存的」这个信息（社区标准就是「网址 + 标题」，没有时间戳）。以前导入后一律显示成「今天」，还霸占着「最近保存」排序的最上面 —— 你打开插件先看到的是一屏几年前的旧东西，按「24 小时内」找也全是它们。现在这些会话的时间位写「**导入 · …**」：它只说我们真知道的那件事（什么时候进到这台机器），不替一个我们根本不知道的时间编一个值。同一批导入的会话之间仍按你在原文件里排的顺序排列。
 

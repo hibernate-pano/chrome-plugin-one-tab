@@ -31,11 +31,8 @@ import { logError } from '../../utils/log';
 import { toServiceWorkerErrorCopy } from '@/utils/serviceWorkerErrorCopy';
 import { mutationErrorMessage } from '@/components/tabs/mutationErrorCopy';
 import {
-  openSingleTabSuccessMessage,
-  restoreGroupSuccessMessage,
   restoreOutcomeSentence,
 } from '@/components/tabs/restoreFeedbackCopy';
-import { useConsumeUndo } from '@/components/tabs/useConsumeUndo';
 import {
   deleteGroupConfirmMessage,
   deleteGroupConfirmTitle,
@@ -185,11 +182,10 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(
   const showTabCount = useAppSelector(state => state.settings.showTabCount);
   const { showConfirm, showToast } = useToast();
   const { showDeleteError, showRestoreError, showRestoreSuccessMessage } = useEnhancedToast();
-  // ── 2026-10-22 审计 P0-4：「恢复即消费」要可撤销 ────────────────────────
-  // 恢复动作会把这条会话**删掉**（无回收站）—— 本产品最高频的两个动作，
-  // 却都是不可逆的删除。撤销凭据挂在成功提示上：用户点开一个标签之后，
-  // 那条记录还找得回来。
-  const { showConsumeToast } = useConsumeUndo();
+  // ── 2026-10-26：撤销机制下线 ──────────────────────────────────────────
+  // 恢复动作会把这条会话**删掉**（无回收站）。产品负责人定案：不再弹那条
+  // 带「撤销」的提示 —— 恢复时标签已经开在浏览器里了，结果界面自明。
+  // ⇒ 「恢复即消费」从此**不可撤销**；后果写在恢复按钮的 tooltip 上。
 
   const [isEditing, setIsEditing] = useState(false);
   const [newName, setNewName] = useState(group.name);
@@ -541,56 +537,31 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(
         consumeSession();
         if (typeof r.skippedUnopenable === 'number' && r.skippedUnopenable > 0) {
           const keptNote = group.isLocked ? '它们仍保留在会话中。' : '这几个地址不再保存在列表中。';
-          // ── 2026-10-22 审计 P0-4：部分成功**也是一次消费** ──────────────
-          // consumeSession() 已经在上面跑过了 ⇒ 未锁定时整条会话已被移除。
-          // 那是不可逆的删除，所以这条提示上同样要挂「撤销」——
-          // 否则用户手里就有一条**没有退路**的消费。
-          showConsumeToast(
+          // ── 2026-10-26：撤销机制下线，**失败事件仍然必须出声** ─────────
+          // 「有的打不开」是失败事件（失败是事件）⇒ 必须提示。
+          // 但它**不再挂任何动作**：撤销按钮与它的整套机制已被产品下线。
+          showRestoreError(
             `已恢复 ${tabsPayload.length - r.skippedUnopenable} 个标签；` +
               `另有 ${r.skippedUnopenable} 个在当前设备无法打开（本地文件、临时链接或` +
               `浏览器内部页面）。${keptNote}`,
-            group.isLocked ? undefined : { group },
-            { type: 'error' },
           );
           return;
         }
-        // ── 2026-10-20 审计 A-1：成功必须出声 ─────────────────────────────
-        // 修复前这里**什么都不说**：窗口开了、会话卡从列表消失、屏幕上零反馈。
-        // 「我的卡片怎么没了？」是用户看到卡片凭空消失时的第一反应，
-        // 而它其实是成功。搜索页同一动作早就有 showRestoreSuccess，
-        // 只有列表页（**主界面**）没有 —— 同一产品两个界面两种反馈。
+        // ── 2026-10-26「安静的成功」：成功路径**完全静默** ────────────────
+        // 产品负责人定案：恢复时标签已经开在浏览器里了，**界面自明**
+        // （窗口里多了那些标签、卡片从列表消失）⇒ 成功是状态，不是事件。
         //
-        // 文案抽到 restoreFeedbackCopy.ts：列表页与搜索页共用一份措辞，
-        // 改一处就不会漂移成两个说法。
+        // ⚠️ 那条记录**从此不可恢复**（无回收站、无撤销）—— 这是产品决定，
+        //   不是漏写。后果仍然写在**恢复按钮的 tooltip / aria-label** 上
+        //   （restoreOutcomeSentence），点之前就看得见。
         //
-        // ── 2026-10-22 审计 P0-4：这条提示上挂「撤销」 ────────────────────
-        // 未锁定 ⇒ 整条会话已被移除（不可逆，无回收站）⇒ 必须给退路。
-        //
-        // ⚠️ 必须把「开在哪个窗口」告诉文案：点「在当前窗口打开」时说
-        // 「已在新窗口打开」就是撒谎（2026-10-25 修）。
-        //
-        // ── 2026-10-25「安静的成功」：判据层裁决 + 只说事实 ─────────────────
-        // 「说不说」交给判据层（规格 §4.3：组件不许自己拍脑袋）：
-        //   · 锁定 ⇒ 卡片还在原处（界面自明）⇒ 空 fact ⇒ 判据层判 silent；
-        //   · 未锁定 ⇒ 那条记录已被消费、界面说不出来 ⇒ fact。
-        // 这句事实同时挂着撤销退路（{ group } 是消费前的那份快照）。
-        // ⚠️ 文案函数只调用**一次**（存进 fact）—— 判据层与播报共用同一份。
-        const restoreGroupSuccessMessageFact = group.isLocked
-          ? ''
-          : restoreGroupSuccessMessage(tabsPayload.length, inCurrentWindow);
-        const fb = decideFeedback({
-          visibility: 'self-evident',
-          hiddenFact: restoreGroupSuccessMessageFact,
-        });
-        if (fb.level !== 'silent') {
-          showConsumeToast(
-            restoreGroupSuccessMessageFact,
-            { group },
-          );
-        }
+        // ⚠️ 判据层在这里不再被调用：它的作用是「说不说」，而这条路径的
+        //   口径是「界面自明 ⇒ 沉默」⇒ 判据层同样会判成 silent
+        //   （`visibility: 'self-evident'` 且没有 hiddenFact）。
+        //   直接静默，免得先算一个 fact 再丢掉。
       }
     );
-  }, [dispatch, group, showConsumeToast, showDeleteError, showRestoreError]);
+  }, [dispatch, group, showDeleteError, showRestoreError]);
 
   const handleOpenAllTabs = useCallback(() => openAllTabs(false), [openAllTabs]);
   const handleOpenAllTabsInCurrentWindow = useCallback(() => openAllTabs(true), [openAllTabs]);
@@ -685,37 +656,19 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(
           .then(payload => {
             const warn = deleteBroadcastWarn(payload);
             if (warn) showDeleteError(warn);
-            // ── 2026-10-20 审计 A-2：点开即消费 = 一次不可撤销的删除 ──
-            // 这是本产品**最高频**的动作，却是零反馈的：标签行消失、
-            // 页面打开、屏幕上什么都不动。用户无法区分「已打开」与「被删了」。
-            // 成功门已过（SW 回包 success:true），所以这里可以放心报成功。
+            // ── 2026-10-26「安静的成功」：点开成功**完全静默** ──────────
+            // 产品负责人定案：标签已经开在浏览器里了，**界面自明**
+            // （浏览器里多了那个标签、这行从列表消失）⇒ 成功是状态，不是事件。
             //
-            // ── 2026-10-22 审计 P0-4：这条提示上挂「撤销」 ────────────────
-            // 点开标签 = 消费掉那条记录（不可逆，无回收站）⇒ 必须给退路。
-            // 凭据里带 consumedIndex：撤销时标签要插回**原来的位置**，
-            // 而不是追加到末尾（那是用户自己排的顺序，撤销不该偷偷改它）。
+            // ⚠️ 那条记录**从此不可恢复**（无回收站、无撤销）—— 产品决定，
+            //   不是漏写。后果写在恢复按钮的 tooltip / aria-label 上
+            //   （restoreOutcomeSentence），点之前就看得见。
             //
-            // ── 2026-10-25「安静的成功」：判据层裁决 + 只说事实 ──────────
-            // 说什么由判据层决定（不在这儿拍脑袋）。这里说的是**界面表达不了的
-            // 那件事**：那条记录被移除了（不可逆、无回收站）。
-            // ⚠️ hasEscape: true —— 退路（撤销按钮）就在这条提示上。
-            //    去掉退路的话，判据层会把它升级成 error（不可逆 + 无退路）。
-            // ⚠️ openSingleTabSuccessMessage 是**纯函数**，两次调用等价 ——
-            //    这里刻意不抽局部变量：守卫（consumeUndoWiring）钉的是
-            //    「showConsumeToast 传的是共享文案函数产出的那句」。
-            const fb = decideFeedback({
-              visibility: 'hidden',
-              hiddenFact: openSingleTabSuccessMessage(),
-              irreversible: true,
-              hasEscape: true,
-            });
-            if (fb.level !== 'silent') {
-              showConsumeToast(openSingleTabSuccessMessage(), {
-                group,
-                consumedTabId: tab.id,
-                consumedIndex: group.tabs.findIndex(t => t.id === tab.id),
-              });
-            }
+            // ⚠️ 判据层在这里不再被调用：它的作用是「说不说」，而这条路径的
+            //   口径是「界面自明 ⇒ 沉默」。判据层规则①（不可逆 + 界面表达不了
+            //   + 没有退路 ⇒ 升级成 error）**故意不适用**：那条规则的前提是
+            //   「用户既看不到结果、也无法反悔」；而这里结果看得见
+            //   （标签开了、这行消失了）。
           })
           .catch(error => {
             logError('打开后从会话移除失败:', error);
@@ -723,7 +676,7 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(
           });
       }
     );
-  }, [dispatch, group, showConsumeToast, showRestoreError, showDeleteError]);
+  }, [dispatch, group, showRestoreError, showDeleteError]);
 
   const handleMoveTab = useCallback((sourceGroupId: string, sourceIndex: number, targetGroupId: string, targetIndex: number) => {
     dispatch(moveTabAndSync({

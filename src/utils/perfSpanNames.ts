@@ -38,7 +38,6 @@ export const PERF_SPAN_NAMES = [
   'updateGroupFields',
   'moveTab',
   'cleanDuplicates',
-  'restoreConsumed',
   // 队列任务名（非 mutation）
   'sync:upload',
   'sync:download',

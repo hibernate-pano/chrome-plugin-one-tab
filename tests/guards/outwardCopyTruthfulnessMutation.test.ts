@@ -55,27 +55,30 @@ describe('变异自证：官网那条「不得否定已有能力」的判据必�
     assertMutationOutcome(outcome, true, '让官网重新宣称锁定会藏起删除入口');
   });
 
-  it('变异二：官网又宣称「没有撤销」⇒ 守卫必须变红', () => {
+  // ⚠️ 2026-10-26：这条变异的方向**反过来了** ——
+  // 撤销机制下线 ⇒ 说「没有撤销」是**真话**（从前是假话），
+  // 说「可撤销」才是假话。⇒ 变异改成「让官网重新宣称移除有退路」。
+  it('变异二：官网又宣称「移除有退路」⇒ 守卫必须变红', () => {
     const [outcome] = runOutwardMutationCases([
       {
-        name: '官网写回「没有回收站，没有撤销。」',
+        name: '官网写回「恢复那一步另有 8 秒的「撤销」可退」',
         testFile: STORE_GUARD,
         targets: [
           {
             path: 'promo-site/index.html',
             mutate: source =>
               source.replace(
-                '没有回收站：删掉的会话找不回来，删除这一步也没有退路。',
-                '没有回收站，没有撤销。',
+                '恢复整个会话、或点开单条标签那一步同样没有退路',
+                '恢复整个会话、或点开单条标签那一步另有 8 秒的「撤销」可退',
               ),
           },
         ],
         expectRed: true,
-        expectedFailure: 'promo-site/index.html 仍然宣称「没有撤销」',
+        expectedFailure: 'promo-site/index.html 仍然宣称「移除有退路」',
       },
     ]);
     assert.ok(outcome, '变异必须真的跑起来');
-    assertMutationOutcome(outcome, true, '让官网重新宣称这个产品「没有撤销」');
+    assertMutationOutcome(outcome, true, '让官网重新宣称「移除有退路」');
   });
 
   it('变异三：商店链接没有扩展 id ⇒ 守卫必须变红', () => {
@@ -104,7 +107,7 @@ describe('变异自证：官网那条「不得否定已有能力」的判据必�
   it('等价改写：换个说法表达同一件事 ⇒ 守卫必须**仍然绿**', () => {
     const [outcome] = runOutwardMutationCases([
       {
-        name: '等价改写：锁定那一句 + 撤销那一句都换个说法',
+        name: '等价改写：锁定那一句 + 删除确认那一句都换个说法',
         testFile: STORE_GUARD,
         targets: [
           {
@@ -115,7 +118,7 @@ describe('变异自证：官网那条「不得否定已有能力」的判据必�
                   '但整张卡仍然可以删除（删前会多问一次）',
                   '但整张卡照样能删（删之前会多问一次）',
                 )
-                .replace('另有 8 秒的「撤销」可退', '另有 8 秒钟的「撤销」可以退'),
+                .replace('删除前会二次确认', '删之前会先确认一次'),
           },
         ],
         expectRed: false,
