@@ -364,6 +364,8 @@ Expected: FAIL
   `deleteAllGroups` 的既有路径，包括覆盖上传，一个字都别改）。
 - **删除父行原来那个「删除所有会话（N）」按钮**，但保留它在「含锁定」档里的
   `deleteAllMenuWarning` 小字（R2）。
+- ⚠️ 回执口径：`count + skippedLocked` **可能小于**请求的 id 数（磁盘上已不存在的 id 两个都不计）。
+  文案**不许**按「总数 − 两个数 = 未处理」倒算；`confirmedCount` 用确认框里那个数。
 
 - [ ] **Step 4: 修两条被本任务打红的既有守卫（**每个提交必须自证全绿**）**
 
