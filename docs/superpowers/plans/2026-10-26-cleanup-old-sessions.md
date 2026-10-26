@@ -346,14 +346,24 @@ Expected: FAIL
 
 - 危险区那块整体换成：父行「清理旧会话」+ 子菜单面板（沿用 `ref={submenuRef}` /
   `aria-expanded` / `scrollIntoView` 的既有模式）。
-- 菜单挂载时**一次** `storage.getGroupsForWrite()`，用 `planCleanup` 算出六档，
-  过滤掉 `groupCount === 0`，渲染成行。
+- **磁盘读的既有机器不要重造**：`HeaderDropdown.tsx` 已有 `diskCounts` 状态
+  （挂载时读一次 `storage.getGroupsForWrite()`，读失败退回 Redux 快照）+ `menuGroupCount` /
+  `menuLockedCount` 两个派生值。把它升级成 `diskGroups: TabGroup[] | null`，
+  六个档的 `CleanupPlan` 用 `useMemo` 从**同一份**数组算出来（`now` 取挂载那一刻的
+  `new Date()`，别在渲染里调 `new Date()` —— 每次渲染都变会让 useMemo 失效）。
+- 渲染规则：
+  - 四个时间档：`planCleanup(groups, tier, now).groupCount === 0` 就**不渲染这一行**；
+  - 「保留锁定」行：`lockedSkippedCount === 0` 时不渲染；
+  - 「含锁定」行：`lockedCount === 0` 时**不渲染**，此时「保留锁定」也不渲染 ⇒
+    只剩一行，文案走 `cleanupTierLabel(planCleanup(groups, 'all', now))`，
+    它在无锁定时正好是「删除所有会话（N）」；
+  - 行文案一律 `cleanupTierLabel(plan)`。
 - 每行点击 → 读一次磁盘（fail closed）→ 重算该档 → 0 条就 `showToast('没有可清理的会话', 'info')`
   并 return → 否则 `showConfirm`（文案见 Task 4）→ 确认后
   `dispatch(deleteGroups(plan.ids))`（「含锁定」档走
   `deleteAllGroups` 的既有路径，包括覆盖上传，一个字都别改）。
 - **删除父行原来那个「删除所有会话（N）」按钮**，但保留它在「含锁定」档里的
-  `deleteAllMenuWarning` 小字。
+  `deleteAllMenuWarning` 小字（R2）。
 
 - [ ] **Step 4: 修两条被本任务打红的既有守卫（**每个提交必须自证全绿**）**
 
