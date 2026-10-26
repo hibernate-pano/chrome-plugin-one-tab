@@ -1463,10 +1463,25 @@ describe('Task 3：锁定组恢复静默（但成功门与失败出口一个字�
         'group.isLocked',
         `${file}：分叉条件必须是 group.isLocked（不是别的开关）`,
       );
-      assert.equal(
-        literalOf(conditional.whenTrue.getText(source)),
-        '',
-        `${file}：锁定 ⇒ fact 必须为空 —— 空事实就是「静默」的正确表达（卡片还在，界面自明）`,
+      // ⚠️ 这一条**不能**用 `literalOf(...) === ''` 单独判 —— literalOf 对
+      // **不含引号字面量**的表达式（例如一个变量名）也返回 '' ⇒ 把锁定臂写成
+      // `: lockedSay`（lockedSay = '已恢复，该会话仍保留在列表中'）会让这条断言假绿，
+      // 而锁定组会重新出声。实测：那种写法下 9 个相关守卫文件**全绿**。
+      // ⇒ 锁定臂必须是真的空字面量。变量中转、拼接、模板占位一律判红。
+      const whenTrue = conditional.whenTrue;
+      const isEmptyLiteral =
+        (ts.isStringLiteral(whenTrue) ||
+          ts.isNoSubstitutionTemplateLiteral(whenTrue)) &&
+        whenTrue.text === '';
+      const isVoidish =
+        (ts.isIdentifier(whenTrue) && whenTrue.text === 'undefined') ||
+        (ts.isVoidExpression(whenTrue) &&
+          ts.isNumericLiteral(whenTrue.expression) &&
+          whenTrue.expression.text === '0');
+      assert.ok(
+        isEmptyLiteral || isVoidish,
+        `${file}：锁定 ⇒ fact 必须为空 —— 只认真的空字面量（'' / "" / \`\` / undefined / void 0）；`
+          + '变量中转或拼接会让锁定组重新出声 ⇒ 一律判红',
       );
       const { restoreGroupSuccessMessage } = await import(
         '@/components/tabs/restoreFeedbackCopy'
