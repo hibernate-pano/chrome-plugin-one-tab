@@ -222,45 +222,39 @@ export function planCleanup(
 /**
  * 六个档位的**菜单行文字**。
  *
- * ── 为什么是两个参数，而不是只给一个「要显示的数字」──────────────────────
+ * ── 为什么收整个计划，而不是收一两个数字 ──────────────────────────────────
  *
- * `'all'` 这一档要同时表达两件事：**一共删多少**、**其中多少是锁定的**。
- * 只传一个数时，函数无法区分它传进来的是锁定数还是总数 —— 没有锁定时
- * 「显示总数」与有锁定时「显示含 N 个锁定」就必然撞车。曾经试过让调用方
- * 在没有锁定时自己把总数拼进文案，那正是本模块要防的漂移：**数字由两处
- * 各自拼，菜单与确认框迟早对不上**。
+ * `'all'` 这一档要同时表达两件事：**一共删多少**、**其中多少是锁定的**；
+ * `'all-keep-locked'` 要表达**保留多少锁定**。如果让调用方自己挑字段
+ * （这一档传 `groupCount`、那一档传 `lockedSkippedCount`……），「每档挑哪个
+ * 数」本身就是一套**调用方要记住的规则** —— 挑错不会报错，只会让菜单说出
+ * 一个与执行不一致的数字。那正是本模块存在的理由：**一次判定，处处同源**。
  *
- * 现在两个数都直接来自**同一个** `planCleanup` 结果：
- *   · `count` = `plan.groupCount`（这一档要删的会话数）；
- *   · `lockedCount` 按档位取那个「说出来的数」：
- *       - `'all'`：取 `plan.lockedCount`（`ids` 里的锁定条数）。**不是**
- *         `plan.lockedSkippedCount` —— `'all'` 不跳过锁定，后者恒为 0；
- *         拿错这一个，菜单就永远走「没有锁定」那一支，把锁定会话藏起来。
- *       - `'all-keep-locked'`：取 `plan.lockedSkippedCount`（这一档要保留的
- *         锁定数）；它的 `plan.lockedCount` 恒为 0（锁定不进 `ids`）。
- *       - 四个时间档：第二个参数不用（传 0 即可），它们的锁定数不进菜单行。
- * `'all-keep-locked'` 的总数刻意不进文案 —— 那一行的承诺是「保留了几个锁定」。
+ * ⇒ 现在每个标签函数**直接吃 `CleanupPlan`**，数字全部从同一份结果里读，
+ *   调用方不再有任何「挑字段」的余地。
+ *
+ * ⚠️ 约定（刻意不在运行时校验）：`plan.tier` 必须与取用的键一致
+ * （`CLEANUP_TIER_LABELS[tier](plan)`，且 `plan.tier === tier`）。函数只读
+ * 自己需要的那几个字段，拿错了计划也不会抛错 —— 这是**调用方的接线约定**，
+ * 类型上无法表达，写在这里当判据。
  *
  * ⚠️ 叫法纪律：这几个字符串里**不许**出现「删除全部会话」—— 同一个动作全仓
  * 只有一个名字「删除所有会话」（`tests/guards/deleteAllActionNaming.test.ts`
  * 就是从菜单行现场读这个名字的）。
  */
-export const CLEANUP_TIER_LABELS: Record<
-  CleanupTier,
-  (count: number, lockedCount: number) => string
-> = {
-  // 时间档：count = 这一档将删除的会话数。
-  '1m': (count) => `一个月前的会话（${count}）`,
-  '3m': (count) => `三个月前的会话（${count}）`,
-  '6m': (count) => `六个月前的会话（${count}）`,
-  '12m': (count) => `一年前的会话（${count}）`,
-  // 保留锁定：lockedCount = 锁定（将被保留）的会话数；count 刻意不进文案。
-  'all-keep-locked': (_count, lockedCount) =>
-    `删除所有会话（保留 ${lockedCount} 个锁定）`,
-  // 含锁定：有锁定就说锁定数；没有锁定（lockedCount === 0）⇒ 说总数，
-  // 此时若只说「删除所有会话」，用户就看不到这一行会删多少 ⇒ 总数不许丢。
-  all: (count, lockedCount) =>
-    lockedCount > 0
-      ? `删除所有会话（含 ${lockedCount} 个锁定）`
-      : `删除所有会话（${count}）`,
+export const CLEANUP_TIER_LABELS: Record<CleanupTier, (plan: CleanupPlan) => string> = {
+  // 时间档：只显示这一档将删除的会话数。
+  '1m': (plan) => `一个月前的会话（${plan.groupCount}）`,
+  '3m': (plan) => `三个月前的会话（${plan.groupCount}）`,
+  '6m': (plan) => `六个月前的会话（${plan.groupCount}）`,
+  '12m': (plan) => `一年前的会话（${plan.groupCount}）`,
+  // 保留锁定：只说保留了几个锁定；总数刻意不进文案 —— 这一行的承诺是「保留」。
+  'all-keep-locked': (plan) =>
+    `删除所有会话（保留 ${plan.lockedSkippedCount} 个锁定）`,
+  // 含锁定：有锁定就说锁定数（用 lockedCount，不是恒为 0 的
+  // lockedSkippedCount）；没有锁定 ⇒ 说总数，否则用户看不到这一行会删多少。
+  all: (plan) =>
+    plan.lockedCount > 0
+      ? `删除所有会话（含 ${plan.lockedCount} 个锁定）`
+      : `删除所有会话（${plan.groupCount}）`,
 };

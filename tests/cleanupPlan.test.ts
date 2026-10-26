@@ -121,34 +121,65 @@ describe('planCleanup：全部两档', () => {
 });
 
 describe('菜单行文案', () => {
+  /** 纯函数钉子的计划形状（只填文案会读到的字段）。 */
+  const planFixture = (over: Record<string, unknown>) =>
+    ({
+      tier: '1m', ids: [], groupCount: 0, tabCount: 0,
+      unknownTimeCount: 0, lockedSkippedCount: 0, lockedCount: 0, names: [],
+      ...over,
+    }) as any;
+
   it('四个时间档只显示要删的条数', () => {
-    assert.equal(CLEANUP_TIER_LABELS['1m'](3, 0), '一个月前的会话（3）');
-    assert.equal(CLEANUP_TIER_LABELS['3m'](12, 0), '三个月前的会话（12）');
-    assert.equal(CLEANUP_TIER_LABELS['6m'](18, 0), '六个月前的会话（18）');
-    assert.equal(CLEANUP_TIER_LABELS['12m'](24, 0), '一年前的会话（24）');
+    assert.equal(
+      CLEANUP_TIER_LABELS['1m'](planFixture({ tier: '1m', groupCount: 3 })),
+      '一个月前的会话（3）',
+    );
+    assert.equal(
+      CLEANUP_TIER_LABELS['3m'](planFixture({ tier: '3m', groupCount: 12 })),
+      '三个月前的会话（12）',
+    );
+    assert.equal(
+      CLEANUP_TIER_LABELS['6m'](planFixture({ tier: '6m', groupCount: 18 })),
+      '六个月前的会话（18）',
+    );
+    assert.equal(
+      CLEANUP_TIER_LABELS['12m'](planFixture({ tier: '12m', groupCount: 24 })),
+      '一年前的会话（24）',
+    );
   });
   it('保留锁定：只显示锁定数，总数不许混进文案', () => {
     assert.equal(
-      CLEANUP_TIER_LABELS['all-keep-locked'](5, 2),
+      CLEANUP_TIER_LABELS['all-keep-locked'](
+        planFixture({ tier: 'all-keep-locked', groupCount: 5, lockedSkippedCount: 2 }),
+      ),
       '删除所有会话（保留 2 个锁定）',
     );
   });
   it('含锁定：有锁定时显示锁定数', () => {
-    assert.equal(CLEANUP_TIER_LABELS.all(5, 2), '删除所有会话（含 2 个锁定）');
+    assert.equal(
+      CLEANUP_TIER_LABELS.all(planFixture({ tier: 'all', groupCount: 5, lockedCount: 2 })),
+      '删除所有会话（含 2 个锁定）',
+    );
   });
   it('含锁定：没有锁定时显示总数（总数不许丢）', () => {
-    assert.equal(CLEANUP_TIER_LABELS.all(5, 0), '删除所有会话（5）');
+    assert.equal(
+      CLEANUP_TIER_LABELS.all(planFixture({ tier: 'all', groupCount: 5, lockedCount: 0 })),
+      '删除所有会话（5）',
+    );
   });
   it('六个标签都不许出现第二叫法「删除全部会话」', () => {
     const TIERS = [
       '1m', '3m', '6m', '12m', 'all-keep-locked', 'all',
     ] as const;
     for (const tier of TIERS) {
-      assert.ok(!CLEANUP_TIER_LABELS[tier](5, 2).includes('删除全部会话'));
+      const label = CLEANUP_TIER_LABELS[tier](
+        planFixture({ tier, groupCount: 5, lockedSkippedCount: 2, lockedCount: 2 }),
+      );
+      assert.ok(!label.includes('删除全部会话'));
     }
   });
 
-  // ── 走 planCleanup 全路径：第二个参数必须来自同一份计划，不许只有纯函数钉子 ──
+  // ── 走 planCleanup 全路径：文案的数字必须来自同一份计划，不许只有纯函数钉子 ──
   const now = new Date('2026-10-26T00:00:00.000Z');
   it('含锁定：锁定数来自同一个计划（两条锁定 + 一条未锁定）', () => {
     const plan = planCleanup([
@@ -158,7 +189,7 @@ describe('菜单行文案', () => {
     ], 'all', now);
     assert.equal(plan.lockedCount, 2);
     assert.equal(
-      CLEANUP_TIER_LABELS.all(plan.groupCount, plan.lockedCount),
+      CLEANUP_TIER_LABELS.all(plan),
       '删除所有会话（含 2 个锁定）',
     );
   });
@@ -166,8 +197,19 @@ describe('菜单行文案', () => {
     const plan = planCleanup([g({ id: 'f' })], 'all', now);
     assert.equal(plan.lockedCount, 0);
     assert.equal(
-      CLEANUP_TIER_LABELS.all(plan.groupCount, plan.lockedCount),
+      CLEANUP_TIER_LABELS.all(plan),
       '删除所有会话（1）',
+    );
+  });
+  it('保留锁定：保留数来自同一个计划（一条锁定 + 一条未锁定）', () => {
+    const plan = planCleanup([
+      g({ id: 'lock', isLocked: true }),
+      g({ id: 'free' }),
+    ], 'all-keep-locked', now);
+    assert.equal(plan.lockedSkippedCount, 1);
+    assert.equal(
+      CLEANUP_TIER_LABELS['all-keep-locked'](plan),
+      '删除所有会话（保留 1 个锁定）',
     );
   });
 });
