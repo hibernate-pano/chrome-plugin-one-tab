@@ -25,6 +25,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
+import ts from 'typescript';
 
 import {
   openSingleTabSuccessMessage,
@@ -188,19 +189,66 @@ describe('恢复成功文案：说清两件事（打开了什么 / 记录去哪�
  * 换个出口就会被误判成「没接上」。
  */
 /**
- * 数「成功播报」在源码里出现了几次（按 `showX(文案函数(` 的形状）。
+ * 数「成功播报」在源码里出现了几次。
  *
- * ⚠️ 2026-10-25：这里原先只允许**空白**出现在 `showConsumeToast(` 与文案函数
- * 之间 ⇒ 有人在参数里加一行注释（说明「为什么要传第三个参数」）就会让计数变成 0
- * ⇒ 守卫报「列表页整组恢复必须有一次成功反馈」——**红在一个正确的改动上**
- * （本仓的教训：改对实现却让测试变红时，先怀疑守卫钉错了值，不是回退实现）。
- * ⇒ 现在允许注释出现在中间：判据要数的是**调用点**，不是源码长相。
+ * ── 2026-10-25 终审修复：改按**数据流**数，不再钉字面量形状 ────────────────
+ *
+ * 文案现在先落到 fact（判据层与播报共用同一份）⇒ `showConsumeToast` 的第一个
+ * 实参是那个变量，**不再紧贴** `restoreGroupSuccessMessage(`。原来的正则
+ * `showConsumeToast\(\s*文案函数\(` 会数成 0 ⇒ 报「没有成功反馈」——
+ * 红在一个正确的改动上（本仓的教训：先怀疑守卫钉错了值，不是回退实现）。
+ *
+ * ⇒ 判据要数的是**调用点**：
+ *   · 第一个实参直接是 `copyFn(...)`，或
+ *   · 第一个实参是某个**由 `copyFn(...)` 初始化**的局部变量。
+ *   注释 / 空白出现在哪里都不影响（AST 已经看不见注释）。
  */
 const countSuccessToasts = (src: string, copyFn: string): number => {
-  const gap = '(?:\\s|//[^\\n]*\\n|\\/[\\s\\S]*?\\*\\/)*';
-  const direct = src.match(new RegExp(`showRestoreSuccessMessage\\(${gap}${copyFn}\\(`, 'g')) ?? [];
-  const viaHook = src.match(new RegExp(`showConsumeToast\\(${gap}${copyFn}\\(`, 'g')) ?? [];
-  return direct.length + viaHook.length;
+  const source = ts.createSourceFile(
+    'counted.tsx',
+    stripComments(src),
+    ts.ScriptTarget.Latest,
+    true,
+    ts.ScriptKind.TSX,
+  );
+
+  // 先收「由文案函数算出来的那些局部变量」。
+  const factNames = new Set<string>();
+  const collectFacts = (node: ts.Node): void => {
+    if (
+      ts.isCallExpression(node) &&
+      ts.isIdentifier(node.expression) &&
+      node.expression.text === copyFn
+    ) {
+      let current: ts.Node | undefined = node;
+      while (current && !ts.isVariableDeclaration(current)) current = current.parent;
+      if (current && ts.isIdentifier(current.name)) factNames.add(current.name.text);
+    }
+    node.forEachChild(collectFacts);
+  };
+  collectFacts(source);
+
+  let count = 0;
+  const visit = (node: ts.Node): void => {
+    if (
+      ts.isCallExpression(node) &&
+      ts.isIdentifier(node.expression) &&
+      (node.expression.text === 'showConsumeToast' ||
+        node.expression.text === 'showRestoreSuccessMessage')
+    ) {
+      const firstArg = node.arguments[0];
+      if (!firstArg) {
+        // 没有实参 = 不是「把某句文案播出来」，不计数。
+      } else if (firstArg.getText(source).includes(`${copyFn}(`)) {
+        count += 1;
+      } else if (ts.isIdentifier(firstArg) && factNames.has(firstArg.text)) {
+        count += 1;
+      }
+    }
+    node.forEachChild(visit);
+  };
+  visit(source);
+  return count;
 };
 
 describe('恢复成功反馈真的接到了两个界面', () => {

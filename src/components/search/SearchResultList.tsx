@@ -582,12 +582,22 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({
         // 搜索页这两条路径都**新开一扇窗**（OPEN_TABS 不带 inCurrentWindow）⇒
         // 显式传 false，别让文案自己猜。
         //
-        // ── 2026-10-25「安静的成功」：**锁定组静默** ─────────────────────
-        // 锁定会话恢复后**保留在列表里** ⇒ 界面自明 ⇒ 没必要再说一遍
-        // （而且锁定路径从不被消费 ⇒ 挂撤销就是骗人）。
-        if (!group.isLocked) {
+        // ── 2026-10-25「安静的成功」：判据层裁决 + 只说事实 ─────────────────
+        // 「说不说」交给判据层（规格 §4.3：组件不许自己拍脑袋）：
+        //   · 锁定 ⇒ 卡片还在原处（界面自明）⇒ 空 fact ⇒ 判据层判 silent；
+        //   · 未锁定 ⇒ 那条记录已被消费、界面说不出来 ⇒ fact。
+        // 这句事实同时挂着撤销退路（{ group } 是消费前的那份快照）。
+        // ⚠️ 文案函数只调用**一次**（存进 fact）—— 判据层与播报共用同一份。
+        const restoreGroupSuccessMessageFact = group.isLocked
+          ? ''
+          : restoreGroupSuccessMessage(tabsPayload.length, false);
+        const fb = decideFeedback({
+          visibility: 'self-evident',
+          hiddenFact: restoreGroupSuccessMessageFact,
+        });
+        if (fb.level !== 'silent') {
           showConsumeToast(
-            restoreGroupSuccessMessage(tabsPayload.length, false),
+            restoreGroupSuccessMessageFact,
             { group },
           );
         }

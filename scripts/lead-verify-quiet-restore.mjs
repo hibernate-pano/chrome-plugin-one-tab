@@ -525,6 +525,7 @@ async function main() {
           `实际顺序：${JSON.stringify(titles)}`);
         await page.screenshot({ path: join(OUT_DIR, '06-after-undo.png') });
       }
+      expectChecks(startB3, TOTAL.B3, '③');
     }
 
     // ══════════════════════════════════════════════════════════════════

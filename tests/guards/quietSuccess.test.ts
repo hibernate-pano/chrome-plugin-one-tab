@@ -1379,22 +1379,133 @@ describe('Task 3：锁定组恢复静默（但成功门与失败出口一个字�
         ancestor = ancestor.parent;
       }
     }
+
+    // ③ 删除还必须排在锁定早退**之后** —— 顺序本身就是判据。
+    //
+    // 只判「删除不在锁定那一支里」是不够的：把 `dispatch(deleteGroup(group.id))`
+    // 提到 `if (group.isLocked)` **之前**，锁定组照样会被消费（早退永远走不到），
+    // 而上面那几条断言全都还是绿的（它们只问「在不在 then 支里」）。
+    // ⇒ 用 AST 的位置（`getStart` / `getEnd`）钉顺序，不用文本 indexOf：
+    //   文本在注释 / 同形片段上会骗人。
+    for (const call of deleteCalls) {
+      assert.ok(
+        call.getStart(source) > lockIf!.getEnd(),
+        '删除必须在锁定早退之后 —— 提到前面就意味着锁定组会被消费',
+      );
+    }
   });
 
   for (const file of [TAB_GROUP, SEARCH_LIST]) {
-    it(`${file}：整组恢复的成功播报被「未锁定」条件包着`, () => {
+    it(`${file}：整组恢复的成功播报经判据层裁决（锁定 ⇒ 空 fact ⇒ 静默）`, async () => {
+      // ── 2026-10-25 终审修复：门从「组件手写 if」搬进判据层 ────────────────
+      //
+      // 原实现是 `if (!group.isLocked) showConsumeToast(...)` —— 组件自己
+      // 拍脑袋决定「说不说」，绕过了规格 §4.3 要求的那道判据层。
+      // 现在改成 `decideFeedback(...)` + `if (fb.level !== 'silent')`：
+      //   锁定 ⇒ 卡片还在（界面自明）⇒ 空 fact ⇒ 判据层判 silent；
+      //   未锁定 ⇒ 那条记录已被消费、界面说不出来 ⇒ fact。
+      //
+      // ⚠️ 这里**不用正则钉三元的形状**（本分支已被「正则看不见拼接和模板串」
+      //    坑过两次）：抽 AST 节点，用 `literalOf()` 读字面量内容、
+      //    用 `refersTo()` 认「来源是哪个文案函数」。
       const source = parseTsx(file);
       const call = findCall(source, 'showConsumeToast', 'restoreGroupSuccessMessage');
       assert.ok(call, `${file}：整组恢复的成功播报必须还在（未锁定那条）`);
-      const guard = enclosingIf(call!);
-      assert.ok(
-        guard,
-        `${file}：那条播报必须在条件分支里 —— 锁定组必须静默`,
+
+      // ① 「说不说」真的交给了判据层：同一个回包处理函数里有一次
+      //    `decideFeedback({ … hiddenFact: <fact> … })`，且结果落在变量上。
+      const fn = enclosingFunction(call!);
+      assert.ok(fn, `${file}：那条播报必须在一个回包处理函数里`);
+      const decisions = callsIn(fn!, 'decideFeedback');
+      assert.equal(
+        decisions.length,
+        1,
+        `${file}：整组恢复必须恰有一次判据层裁决（组件不许自己判「说不说」）`,
       );
-      const cond = guard!.expression.getText(source).replace(/\s+/g, '');
+      const decision = decisions[0]!;
+      const decisionInput = decision.arguments[0];
       assert.ok(
-        cond === '!group.isLocked' || cond === 'group.isLocked===false',
-        `${file}：那条播报必须被「未锁定」包着（实际条件：${cond}）`,
+        decisionInput && ts.isObjectLiteralExpression(decisionInput),
+        `${file}：判据层必须收到一个对象（visibility / hiddenFact）`,
+      );
+      const propertyInitializer = (name: string): ts.Expression | null => {
+        const property = (decisionInput as ts.ObjectLiteralExpression).properties.find(
+          candidate =>
+            ts.isPropertyAssignment(candidate) &&
+            ts.isIdentifier(candidate.name) &&
+            candidate.name.text === name,
+        );
+        return property && ts.isPropertyAssignment(property) ? property.initializer : null;
+      };
+      const visibility = propertyInitializer('visibility');
+      assert.ok(visibility, `${file}：判据层必须显式说明结果可不可见`);
+      assert.equal(
+        literalOf(visibility!.getText(source)),
+        'self-evident',
+        `${file}：结果（卡片消失 / 窗口开了）界面自明 —— visibility 必须说对`,
+      );
+      const hiddenFact = propertyInitializer('hiddenFact');
+      assert.ok(hiddenFact, `${file}：判据层必须拿到那条界面说不出来的事实`);
+
+      // ② fact 的来源必须随锁定态分叉：**锁定 ⇒ 空**（判据层判 silent），
+      //    未锁定 ⇒ 就是那句恢复成功文案（非空 ⇒ 判据层判 fact）。
+      //    `hiddenFact` 直接写三元、或先落到变量上再传，两种写法都认。
+      const factInit = ts.isIdentifier(hiddenFact!)
+        ? initializerOf(source, hiddenFact!.text) ?? hiddenFact!
+        : hiddenFact!;
+      assert.ok(
+        ts.isConditionalExpression(factInit),
+        `${file}：fact 必须按「锁没锁」分叉（锁定那条卡片还在 ⇒ 空事实）`,
+      );
+      const conditional = factInit as ts.ConditionalExpression;
+      assert.equal(
+        conditional.condition.getText(source).replace(/\s+/g, ''),
+        'group.isLocked',
+        `${file}：分叉条件必须是 group.isLocked（不是别的开关）`,
+      );
+      assert.equal(
+        literalOf(conditional.whenTrue.getText(source)),
+        '',
+        `${file}：锁定 ⇒ fact 必须为空 —— 空事实就是「静默」的正确表达（卡片还在，界面自明）`,
+      );
+      const { restoreGroupSuccessMessage } = await import(
+        '@/components/tabs/restoreFeedbackCopy'
+      );
+      assert.notEqual(
+        restoreGroupSuccessMessage(1, false),
+        '',
+        '文案函数必须产出非空事实（空字符串会被判据层判成 silent）',
+      );
+      assert.ok(
+        refersTo(source, conditional.whenFalse, 'restoreGroupSuccessMessage'),
+        `${file}：未锁定 ⇒ fact 必须是那句恢复成功文案（非空 ⇒ 判据层判 fact）`,
+      );
+
+      // ③ 播报真的被**判据结果**包着 —— 不是「算了一下就扔掉」。
+      const assignedName = assignedNameOf(source, decision);
+      assert.ok(assignedName, `${file}：判据结果必须落在一个变量上（后续要拿它做门）`);
+      const guard = enclosingIf(call!);
+      assert.ok(guard, `${file}：那条播报必须在判据结果的条件分支里`);
+      assert.equal(
+        guard!.expression.getText(source).replace(/\s+/g, ''),
+        `${assignedName}.level!=='silent'`,
+        `${file}：播报只许在判据结果不是 silent 时发生（fact 为空 ⇒ 不弹）`,
+      );
+      assert.ok(
+        decision.getStart(source) < call!.getStart(source),
+        `${file}：必须先裁决、再播报（判据结果不可能来自后面）`,
+      );
+
+      // ④ 撤销凭据一个字都不许丢（不可逆消费的唯一退路）。
+      const spec = call!.arguments[1];
+      assert.ok(
+        spec && ts.isObjectLiteralExpression(spec),
+        `${file}：整组恢复那条必须挂上撤销凭据（不可逆的删除必须有退路）`,
+      );
+      assert.match(
+        spec!.getText(source),
+        /\bgroup\b/,
+        `${file}：撤销凭据必须带消费前的整组快照（{ group }）`,
       );
     });
 

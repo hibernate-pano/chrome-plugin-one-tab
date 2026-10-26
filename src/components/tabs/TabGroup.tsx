@@ -568,13 +568,22 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(
         // ⚠️ 必须把「开在哪个窗口」告诉文案：点「在当前窗口打开」时说
         // 「已在新窗口打开」就是撒谎（2026-10-25 修）。
         //
-        // ── 2026-10-25「安静的成功」：**锁定组静默** ─────────────────────
-        // 锁定会话恢复后**保留在列表里** ⇒ 那张卡还在原地 ⇒ 界面自明 ⇒
-        // 没必要再说一遍（而且锁定路径从不被消费 ⇒ 挂撤销就是骗人）。
-        // ⇒ 这条成功播报只在**未锁定**时出现。
-        if (!group.isLocked) {
+        // ── 2026-10-25「安静的成功」：判据层裁决 + 只说事实 ─────────────────
+        // 「说不说」交给判据层（规格 §4.3：组件不许自己拍脑袋）：
+        //   · 锁定 ⇒ 卡片还在原处（界面自明）⇒ 空 fact ⇒ 判据层判 silent；
+        //   · 未锁定 ⇒ 那条记录已被消费、界面说不出来 ⇒ fact。
+        // 这句事实同时挂着撤销退路（{ group } 是消费前的那份快照）。
+        // ⚠️ 文案函数只调用**一次**（存进 fact）—— 判据层与播报共用同一份。
+        const restoreGroupSuccessMessageFact = group.isLocked
+          ? ''
+          : restoreGroupSuccessMessage(tabsPayload.length, inCurrentWindow);
+        const fb = decideFeedback({
+          visibility: 'self-evident',
+          hiddenFact: restoreGroupSuccessMessageFact,
+        });
+        if (fb.level !== 'silent') {
           showConsumeToast(
-            restoreGroupSuccessMessage(tabsPayload.length, inCurrentWindow),
+            restoreGroupSuccessMessageFact,
             { group },
           );
         }

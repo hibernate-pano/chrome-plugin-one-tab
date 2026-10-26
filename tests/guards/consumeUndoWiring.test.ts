@@ -74,16 +74,68 @@ describe('撤销接到了两个界面', () => {
     it(`${file}：整组恢复要挂上撤销凭据`, () => {
       const src = read(file);
       assert.match(src, /useConsumeUndo/, '必须用共享的 hook（两处各写一遍迟早漂）');
-      assert.match(
-        src,
-        /showConsumeToast\(\s*restoreGroupSuccessMessage\(/,
-        '整组恢复必须走带撤销的播报'
-      );
+
+      // ── 2026-10-25 终审修复：按**数据流**认「这条播报说的是整组恢复」──────
+      //
+      // 文案现在先落到 `fact` 上（判据层与播报共用同一份）⇒ `showConsumeToast`
+      // 的第一个实参是那个变量，不再紧贴 `restoreGroupSuccessMessage(`。
+      // ⇒ 钉数据流而不是字面量：某个局部变量的初始化里调用了文案函数，
+      //   而那次播报的第一个实参就是它（或直接就是文案函数本身）。
+      const parsed = parseSource(file, stripComments(src));
+      const fileNode = parsed.file;
+      // 本文件底部的 `callsIn` 收的是**所有**调用（不按名字筛）——
+      // 这里按 callee 再筛一层（与本文件既有用法一致）。
+      const callsTo = (callee: string): ts.CallExpression[] =>
+        callsIn(fileNode).filter(
+          call => ts.isIdentifier(call.expression) && call.expression.text === callee
+        );
+      const factNames = new Set<string>();
+      for (const call of callsTo('restoreGroupSuccessMessage')) {
+        let current: ts.Node | undefined = call;
+        while (current && !ts.isVariableDeclaration(current)) current = current.parent;
+        if (current && ts.isIdentifier(current.name)) factNames.add(current.name.text);
+      }
+      const wired = callsTo('showConsumeToast').filter(call => {
+        const firstArg = call.arguments[0];
+        if (!firstArg) return false;
+        const text = firstArg.getText(fileNode);
+        if (text.includes('restoreGroupSuccessMessage(')) return true;
+        return [...factNames].some(name => new RegExp(`\\b${name}\\b`).test(text));
+      });
+      assert.ok(wired.length > 0, '整组恢复必须走带撤销的播报');
+
       // 撤销凭据必须带**消费前的整组快照**。
+      const spec = wired[0]!.arguments[1];
+      assert.ok(
+        spec && ts.isObjectLiteralExpression(spec),
+        '整组恢复那条播报必须挂撤销凭据（不可逆的删除必须有退路）'
+      );
       assert.match(
-        src,
-        /group\.isLocked\s*\?\s*undefined\s*:\s*\{\s*group\s*\}/,
-        '未锁定才可撤销；锁定组从不被消费，给它挂撤销按钮就是骗人'
+        spec!.getText(fileNode),
+        /\bgroup\b/,
+        '撤销凭据必须带消费前的整组快照（{ group }）'
+      );
+
+      // 锁定组从不被消费 ⇒ 那条播报在锁定路径根本**不出现**（判据层看到空
+      // fact 判 silent）⇒ 撤销凭据不可能挂到一次没发生的消费上。
+      // ⚠️ 只认「由判据结果包着」这一种形状：手写 `if (!group.isLocked)` 会让
+      //    「说不说」重新散回组件里（规格 §4.3 禁止）—— 那正是本次修复搬走的门。
+      let ancestor: ts.Node | undefined = wired[0]!.parent;
+      let gatedByDecision = false;
+      while (ancestor && ancestor !== fileNode) {
+        if (
+          ts.isIfStatement(ancestor) &&
+          /\.level\s*!==\s*'silent'/.test(ancestor.expression.getText(fileNode))
+        ) {
+          gatedByDecision = true;
+          break;
+        }
+        ancestor = ancestor.parent;
+      }
+      assert.ok(
+        gatedByDecision,
+        '整组恢复的播报必须被判据结果包着 —— 锁定 ⇒ 空 fact ⇒ 不出现' +
+          '（挂撤销给没发生的消费就是骗人）'
       );
     });
 
