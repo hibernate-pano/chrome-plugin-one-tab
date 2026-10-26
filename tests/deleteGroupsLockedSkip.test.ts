@@ -209,7 +209,7 @@ describe('并发批次：锁定跳过的插回位置与回包先后无关', () =
     assert.deepEqual(idsOf(store), ['B', 'D'], 'A 随后落定，最终与另一种回包顺序逐字相同');
   });
 
-  it('两批都落定后，顺序快照不泄漏', async () => {
+  it('两批都落定后，基线不泄漏', async () => {
     const { store, mod } = await makeStore(seed());
     store.dispatch(mod.deleteGroups.pending('req-1', ['B', 'C']));
     store.dispatch(mod.deleteGroups.pending('req-2', ['A']));
@@ -219,7 +219,114 @@ describe('并发批次：锁定跳过的插回位置与回包先后无关', () =
     store.dispatch(
       fulfilledOf(mod, 'req-1', ['B', 'C'], { count: 1, skippedLocked: 1, skippedLockedIds: ['B'] })
     );
-    assert.deepEqual(store.getState().tabs.deleteGroupsOrder ?? {}, {}, '两批都结束时快照必须清空');
+    const tabs = store.getState().tabs;
+    assert.equal(tabs.deleteGroupsInFlight, 0, '在途计数必须归零');
+    // 用严格 undefined 判据：字段从没被写过时也必须是 undefined ——
+    // `?? {}` 这种空值容忍断言对「从未写入」和「正确清空」没有判别力。
+    assert.equal(tabs.deleteGroupsBaseOrder, undefined, '最后一个批次落定后基线必须丢掉');
+  });
+});
+
+// ── 基线：两批**都**要还原 ────────────────────────────────────────────────
+//
+// 上一版的「每批一份快照」在这里失效：后发起的批次看不到先发起批次已乐观
+// 移除的 id，它的快照只是真原序的子序列。反例（[A,B,C]，A、B 都被别处锁）：
+//   pending#1 删 [B] → snap1=[A,B,C]，列表 [A,C]
+//   pending#2 删 [A] → snap2=[A,C]（B 已不在）
+//   #1 fulfilled（B 跳过）→ 用 snap1 插回 B → [B,C]
+//   #2 fulfilled（A 跳过）→ snap2 里没有 B，当不了锚点 → 插 C 前 → [B,A,C]
+// 回包顺序反过来又对 ⇒ 结果仍取决于回包先后。改为一份稳定基线后两序同结果。
+describe('并发批次：两批都要还原时也只看基线总序', () => {
+  const three = () => [
+    mkGroup('A', [mkTab('ta')], { isLocked: true }),
+    mkGroup('B', [mkTab('tb')], { isLocked: true }),
+    mkGroup('C', [mkTab('tc')]),
+  ];
+  const four = () => [
+    mkGroup('A', [mkTab('ta')], { isLocked: true }),
+    mkGroup('X', [mkTab('tx')]),
+    mkGroup('B', [mkTab('tb')], { isLocked: true }),
+    mkGroup('C', [mkTab('tc')]),
+  ];
+  const fulfilledOf = (
+    mod: Awaited<ReturnType<typeof makeStore>>['mod'],
+    requestId: string,
+    groupIds: string[],
+    payload: { count: number; skippedLocked: number; skippedLockedIds: string[] }
+  ) => mod.deleteGroups.fulfilled({ value: payload }, requestId, groupIds);
+
+  it('[A,B,C] 两批都还原：后发起批先回包 ⇒ [A,B,C]', async () => {
+    const { store, mod } = await makeStore(three());
+    store.dispatch(mod.deleteGroups.pending('req-1', ['B']));
+    store.dispatch(mod.deleteGroups.pending('req-2', ['A']));
+    assert.deepEqual(idsOf(store), ['C'], '前置：两批都乐观移除');
+
+    store.dispatch(
+      fulfilledOf(mod, 'req-2', ['A'], { count: 0, skippedLocked: 1, skippedLockedIds: ['A'] })
+    );
+    store.dispatch(
+      fulfilledOf(mod, 'req-1', ['B'], { count: 0, skippedLocked: 1, skippedLockedIds: ['B'] })
+    );
+
+    assert.deepEqual(idsOf(store), ['A', 'B', 'C'], '先落定的 B 必须仍是后来的 A 的锚点');
+  });
+
+  it('[A,B,C] 两批都还原：先发起批先回包 ⇒ 同样 [A,B,C]', async () => {
+    const { store, mod } = await makeStore(three());
+    store.dispatch(mod.deleteGroups.pending('req-1', ['B']));
+    store.dispatch(mod.deleteGroups.pending('req-2', ['A']));
+
+    store.dispatch(
+      fulfilledOf(mod, 'req-1', ['B'], { count: 0, skippedLocked: 1, skippedLockedIds: ['B'] })
+    );
+    store.dispatch(
+      fulfilledOf(mod, 'req-2', ['A'], { count: 0, skippedLocked: 1, skippedLockedIds: ['A'] })
+    );
+
+    assert.deepEqual(idsOf(store), ['A', 'B', 'C'], '两种回包顺序必须逐字相同');
+  });
+
+  it('[A,X,B,C] 两批各跳过一个：后发起批先回包 ⇒ [A,X,B,C]', async () => {
+    const { store, mod } = await makeStore(four());
+    store.dispatch(mod.deleteGroups.pending('req-1', ['B']));
+    store.dispatch(mod.deleteGroups.pending('req-2', ['A']));
+    assert.deepEqual(idsOf(store), ['X', 'C'], '前置：X、C 从未被请求删除');
+
+    store.dispatch(
+      fulfilledOf(mod, 'req-2', ['A'], { count: 0, skippedLocked: 1, skippedLockedIds: ['A'] })
+    );
+    store.dispatch(
+      fulfilledOf(mod, 'req-1', ['B'], { count: 0, skippedLocked: 1, skippedLockedIds: ['B'] })
+    );
+
+    assert.deepEqual(idsOf(store), ['A', 'X', 'B', 'C']);
+  });
+
+  it('[A,X,B,C] 两批各跳过一个：先发起批先回包 ⇒ 同样 [A,X,B,C]', async () => {
+    const { store, mod } = await makeStore(four());
+    store.dispatch(mod.deleteGroups.pending('req-1', ['B']));
+    store.dispatch(mod.deleteGroups.pending('req-2', ['A']));
+
+    store.dispatch(
+      fulfilledOf(mod, 'req-1', ['B'], { count: 0, skippedLocked: 1, skippedLockedIds: ['B'] })
+    );
+    store.dispatch(
+      fulfilledOf(mod, 'req-2', ['A'], { count: 0, skippedLocked: 1, skippedLockedIds: ['A'] })
+    );
+
+    assert.deepEqual(idsOf(store), ['A', 'X', 'B', 'C'], '两种回包顺序必须逐字相同');
+  });
+
+  it('pending 之后基线恰好是 pending 前的完整 id 顺序', async () => {
+    const { store, mod } = await makeStore(four());
+    store.dispatch(mod.deleteGroups.pending('req-1', ['B']));
+
+    assert.deepEqual(
+      store.getState().tabs.deleteGroupsBaseOrder,
+      ['A', 'X', 'B', 'C'],
+      '基线必须是移除前的完整总序（不是子序列、不是移除后的列表）'
+    );
+    assert.equal(store.getState().tabs.deleteGroupsInFlight, 1);
   });
 });
 
@@ -246,7 +353,9 @@ describe('deleteGroups.rejected：超时保留乐观移除，明确失败才还�
     assert.ok(store.getState().tabs.error?.startsWith(TIMEOUT_REASON_PREFIX));
     assert.match(store.getState().tabs.error ?? '', /可能仍在继续/, '必须说清后台可能仍在继续');
     assert.deepEqual(store.getState().tabs.deletedGroupBackups ?? {}, {}, '备份已消费');
-    assert.deepEqual(store.getState().tabs.deleteGroupsOrder ?? {}, {}, '顺序快照已清空');
+    // 超时的批次不会再回来 ⇒ 它也要把在途计数归零，否则基线永远清不掉。
+    assert.equal(store.getState().tabs.deleteGroupsInFlight, 0);
+    assert.equal(store.getState().tabs.deleteGroupsBaseOrder, undefined);
   });
 
   it('明确失败 ⇒ 按备份插回原位（磁盘没变）', async () => {
@@ -262,6 +371,7 @@ describe('deleteGroups.rejected：超时保留乐观移除，明确失败才还�
     assert.deepEqual(idsOf(store), ['x', 'g1', 'y'], '明确失败磁盘没变，必须回到原位置');
     assert.equal(store.getState().tabs.error, '删除失败');
     assert.deepEqual(store.getState().tabs.deletedGroupBackups ?? {}, {}, '备份已消费');
-    assert.deepEqual(store.getState().tabs.deleteGroupsOrder ?? {}, {}, '顺序快照已清空');
+    assert.equal(store.getState().tabs.deleteGroupsInFlight, 0);
+    assert.equal(store.getState().tabs.deleteGroupsBaseOrder, undefined);
   });
 });
