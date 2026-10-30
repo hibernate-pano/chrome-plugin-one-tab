@@ -1,6 +1,24 @@
 # Chrome Web Store Listing — TapStack
 
-> Last Updated: 2026-10-26
+> Last Updated: 2026-10-30
+>
+> **2026-10-30 已提交审核**：`1.29.1`（顶栏新增**骰子**：从当前列表里随机打开一个标签，
+> 走与「点开一行」完全相同的路径）。过程（全部有回包自证）：
+> ① `pnpm build` → `node package-extension.js` 打 1.29.1 包
+>    （sha256 `46f83ffc…`，39 条目 / 347,364 字节，根目录即 manifest，包内 version = 1.29.1）
+> ② `upload` 回包 `uploadState: SUCCESS` → 草稿 `crxVersion: 1.29.1`
+> ③ `publish 1.29.1` 回包 `{"status":["OK"],"statusDetail":["OK."]}`
+> ④ 再发一次 publish 得到 **400「You may not edit or publish an item that is in review」**
+>    ⇒ 自证确实进了审核队列
+> ⑤ 提交后公开页仍是 `Version 1.29.0` ⇒ **已提交审核，未上架**（提交 ≠ 上架）
+>
+> ⚠️ **商店文案与截图仍是 1.28.7 那一套**（线上描述仍在承诺**已下线**的「撤销」），
+> 而这一版进入审核期间商店会**锁住 listing 编辑** ⇒ 这笔欠账要等审核放行后才能补。
+> 仓库这份文案已经跟上 1.29.1（含「随机打开」一条，中英双语）；审核放行后把它和
+> 2026-10-30 重拍的截图粘进后台，再跑 `node scripts/store-listing-audit.mjs` 确认 0 处问题，
+> 然后**删掉 `tests/fixtures/store-listing-live-baseline.json`**。
+> ⚠️ **云端仍是 402**（Supabase 出网配额封禁）⇒ 新用户第一件事就是登录 ⇒ 直接失败；
+> 解封只能项目所有者在 dashboard 做。
 >
 > **2026-10-26 已过审并上架**：`1.29.0`（撤销提示整套下线 + 提示回到右上角 +
 > **点扩展图标一定打开标签管理器**）**已提交审核并已上架**。过程（全部有回包自证）：
@@ -25,7 +43,7 @@
 > ⇒ 纯文本备好：`/tmp/tapstack-store-listing-1.29.0.txt`（简短说明 **78 字** /
 > 详细说明 **9,455 字**，**已去掉 markdown 标记** ⇒ 商店描述框是纯文本，
 > 星号会原样显示）；截图 1/2 用 `store-assets/screenshot-1-main.png` /
-> `screenshot-2-search.png`（2026-10-26 重拍，第 2 张页脚印着 `TapStack v1.29.0`）。
+> `screenshot-2-search.png`（2026-10-26 重拍，第 2 张页脚印着**当时**的版本号）。
 > ⇒ 贴完顺手跑 `node scripts/store-listing-audit.mjs`（期望「0 处问题」），
 > 并**把 `tests/fixtures/store-listing-live-baseline.json` 删掉**（那笔账还上了）
 > —— 删掉后守卫自动升级成「线上必须零违规」。
@@ -228,6 +246,7 @@ TapStack 把你当前浏览器窗口里的所有标签页保存为一个会话�
 · 会话搜索：按会话名、标签标题/网址查找，支持按域名过滤；也可以不输关键词，直接按域名、会话名称、保存时间筛选
 · 误删保护：删除**整个会话**前会二次确认（可在设置里关闭；**锁定的会话一定确认**，不受该开关影响；「删除所有会话」始终确认并显示数量，其中锁定会话的数量也会一并写明），删除后彻底清除、没有回收站；单条标签删除会立即生效、不弹确认——**但如果这一删会让整个会话消失，就会先确认**（因为后果等同删除整个会话）；**把最后一条标签拖到别的会话**，则是**直接生效、不多问一句**，而那个被搬空的会话会随之消失（这是核心规则：拖拽即剪切，不额外拦你）。**删除没有退路** —— 它是永久的，没有回收站也没有撤销；「快速恢复」里那种从列表移除**同样没有退路**（唯一的退路是事先锁定那个会话）
 · 一键清理：清除重复标签页和空会话
+· 随机打开：顶栏的**骰子**按钮从当前列表里抽一条打开 —— 搜索或筛选过就只在筛出来的那批里抽；抽中的标签照常开在当前窗口，并从会话里移除（与点开单个标签完全一样，同样不可恢复）。锁定会话里的标签与当前设备打不开的地址不参与抽取；抽不到会说一声，不会点了没反应
 · 导入导出：支持 OneTab 文本格式导入导出，以及 JSON 备份；导出的网址与标题**原样保留**（网址里带竖线、标题里带竖线或换行都不会被截断）。导入的会话**怎么命名分两种**：导回**本扩展导出的 JSON 备份**时，会话名**原样保留**（备份里叫什么就叫什么）；导入 **OneTab 文本**时，因为那个格式**本身不带会话名**（所以名字一定会丢），会话会按内容命名 —— 取这批标签里出现最多的域名（如 `github.com`；本机地址与内网 IP 也一样，如 `localhost:3000`、`192.168.1.5`），取不到域名时才回落到「导入的会话 1、2、3…」。**锁定状态分两种**：导入 **OneTab 文本**时，那个格式里**没有**这个信息 ⇒ 导入的会话**一律不带锁定状态**（想让它不被误删，导入后记得重新锁定）；而导回**本扩展导出的 JSON 备份**时，**锁定状态原样保留**
 · 登录同步：登录后会把云端的会话拉回本机，换设备、换浏览器也能找回你的工作现场；本机每次保存、重命名、删除也都会自动上传到云端。**定时自动拉取默认关闭**（可在设置里打开）—— 关掉它只是不再周期性去云端取新内容，你本机的改动仍然照常上传
 · **没有数量上限**：会话想存多少存多少 —— 没有「免费版只能存 N 个」这种限制，锁定的会话、同步过去的会话也都一样算数
@@ -253,6 +272,7 @@ Key features:
 · Search: find sessions by name, tab title or URL, filter by domain
 · Deletion protection: deleting a whole session asks you first (you can turn that off in settings, **except for locked sessions, which always ask**; "delete all sessions" always asks and shows the count, including how many of them are locked), and a deleted session is permanently removed — there is no recycle bin, and no undo for a deletion; deleting a single tab takes effect immediately without asking — **unless that deletion would take the whole session with it, in which case you are asked first** (the effect is the same as deleting the session); **dragging the last tab out of a session** happens **right away, with no extra question**, and the emptied session is removed with it (that is the core rule: dragging is a cut, so it is not blocked). **A deletion has no way back** — it is permanent, with no recycle bin and no undo; the removals described under Fast restore cannot be undone either (the only way back is to lock the session beforehand)
 · One-click cleanup: remove duplicate tabs and empty sessions
+· Random pick: the **dice** button in the header opens one tab drawn at random from the list you are looking at — if you searched or filtered, it draws only from those results. The chosen tab opens in the current window and is removed from the session, exactly like clicking a single tab (and, like it, that cannot be undone). Tabs in locked sessions and addresses this device cannot open are never drawn; if there is nothing to draw, you are told so instead of the button doing nothing
 · Import/export: OneTab text format, plus JSON backup; exported URLs and titles are kept **exactly as they are** (a URL containing a vertical bar, or a title containing one or a line break, is never truncated). Imported sessions are **named in one of two ways**: when you import a **JSON backup this extension exported**, the session names are **kept exactly as they were** (whatever the backup calls them); when you import **OneTab text**, the name is taken from the content — because that format carries no session name of its own (so the name is lost either way), the session is named after the most frequent domain among its tabs (e.g. `github.com`; local addresses and intranet IPs likewise, e.g. `localhost:3000`, `192.168.1.5`), falling back to "Imported session 1, 2, 3…" only when there is no domain to use. **Locking works differently per format**: OneTab text carries no lock field, so **OneTab imports are never locked** (lock them again after importing if you want them protected against accidental deletion); but when you import a **JSON backup this extension exported**, the **lock state is kept exactly as it was**
 · Cloud sync: sign in and the sessions in your cloud are pulled back to this device, so you can pick up your work on any device or browser; every save, rename or delete you make locally is uploaded automatically too. **The scheduled auto-pull is off by default** (you can turn it on in settings) — turning it off only means TapStack stops periodically checking the cloud for new content; your local changes are still uploaded as usual
 · **No caps on how many**: keep as many sessions as you like — there is no "the free version only stores N" limit, and locked or cloud-synced sessions count the same
@@ -280,8 +300,8 @@ Productivity
 | Asset | Dimensions | Status | Filename |
 |-------|-----------|--------|----------|
 | Store Icon [REQUIRED] | 128×128 PNG | ✅ Ready | icons/icon128.png |
-| Screenshot 1 [REQUIRED] | 1280×800 | ✅ Ready | store-assets/screenshot-1-main.png（2026-10-26 重拍，1.29.0：界面 = v1.25.1 —— 会话卡**不带** favicon、卡头 5 个按钮、标签行右侧显示域名；筛选工具条上有「排序」下拉；卡头第一颗是 accent 的「在当前窗口打开」） |
-| Screenshot 2 [RECOMMENDED] | 1280×800 | ✅ Ready | store-assets/screenshot-2-search.png（2026-10-26 重拍，页脚显示 TapStack v1.29.0） |
+| Screenshot 1 [REQUIRED] | 1280×800 | ✅ Ready | store-assets/screenshot-1-main.png（2026-10-30 重拍，1.29.1：界面 = v1.25.1 —— 会话卡**不带** favicon、卡头 5 个按钮、标签行右侧显示域名；筛选工具条上有「排序」下拉；卡头第一颗是 accent 的「在当前窗口打开」） |
+| Screenshot 2 [RECOMMENDED] | 1280×800 | ✅ Ready | store-assets/screenshot-2-search.png（2026-10-30 重拍，页脚显示 TapStack v1.29.1） |
 | Small Promo Tile [RECOMMENDED] | 440×280 | ✅ Ready | store-assets/promo-tile-440x280.png（2026-10-20 新建；源文件 store-assets/promo-tile-440x280.svg，PNG 无 alpha 通道，符合 CWS 要求） |
 
 <!-- 宣传图与图标**必须讲同一个故事** —— 商店里两张图并排出现。
@@ -552,6 +572,7 @@ https://github.com/hibernate-pano/chrome-plugin-one-tab
 
 | Version | Date | Changes | Status |
 |---------|------|---------|--------|
+| 1.29.1 | 2026-10-30 | **随机打开**：顶栏多了一颗**骰子**按钮 —— 从当前列表里抽一条标签页打开。搜索过、或按域名/时间筛过，就只在筛出来的那批里抽；抽中那条照常开在当前窗口，并从会话里移除（和点开单个标签完全一样，同样不可恢复）。锁定会话里的标签、当前设备打不开的地址不参与抽取；抽不到会说一声，不会点了没反应。 | **已提交审核，未上架**（2026-10-30 upload 回包 `uploadState: SUCCESS` → 草稿 `crxVersion: 1.29.1` → publish 回包 `{"status":["OK"]}` → 再发一次 publish 得到 400「in review」自证在审核队列；提交后公开页仍是 `Version 1.29.0` ⇒ 未上架）。⚠️ **商店文案与截图仍是 1.28.7 那一套**（线上仍在承诺已下线的「撤销」），且这一版在审期间 listing 锁定 ⇒ 审核放行后必须人工粘 1.29.1 文案 + 2026-10-30 重拍的截图，贴完删掉 `tests/fixtures/store-listing-live-baseline.json`。⚠️ 云端 402 仍需项目所有者解封。 |
 | 1.29.0 | 2026-10-26 | **提示不再杵在屏幕正中间，撤销提示整个删掉**。① 提示条回到**右上角** —— 以前杵在正中间，挡着你正在看的东西。② **恢复之后不再冒那条带「撤销」按钮的提示**：恢复时标签**已经开在浏览器里**了，结果界面自己会说明，那个「撤销」纯属噪音。③ 因此「恢复 / 点开」这一步**不可恢复**（本产品没有回收站）—— 这一点现在写在按钮的悬停提示上；想反复用的会话，**先锁定它**，锁定的会话恢复后仍留在列表里。④ 失败**仍然出声**：有几个标签打不开、删除没成功，照旧明说。⑤ **点扩展图标一定会打开标签管理器**：这一窗有能存的标签就先存下并关掉，没有就直接打开管理器 —— 以前「一个都没存下」就只弹一条错误、什么也不做，点完像没点。 | **已上架**（2026-10-26 upload 回包 `uploadState: SUCCESS` → 草稿 `crxVersion: 1.29.0` → publish 回包 `{"status":["OK"]}` → 再发一次 publish 得到 400「in review」自证在审核队列；**2026-10-26 稍后公开页实证 `Version 1.29.0` / `Updated October 26, 2026` ⇒ 线上已发布 = 1.29.0**）。⚠️ **商店文案与截图仍是 1.28.7 那一套**（线上描述 9,318 字、仍在承诺**已下线**的「撤销」⇒ 线上在说假话）⇒ **必须人工换掉**（文案没有 API 通道，纯文本见文件头）；这笔欠账已记进 `tests/fixtures/store-listing-live-baseline.json` ⇒ 贴完**把基线文件删掉**，守卫自动升级成「线上必须零违规」。⚠️ 云端 402 仍需项目所有者解封，见文件头） |
 | 1.28.7 | 2026-10-25 | **从别的工具导进来的旧会话，不再被说成「刚保存的」**：这类文件里本来就没有「什么时候保存的」这个信息，导入后以前一律显示成「今天」，还霸占着列表最上面。现在卡片上写「导入 · …」—— 只说我们真知道的那件事（什么时候进到这台机器）；按「保存时间」筛选时，它们单独落在「时间未知」里，不会混进「24 小时内」把你找的东西挤掉。顺带：两条提示同时冒出来时，上面那条不再被下面那条盖掉半截 —— 以前那句「保存时间未知」的说明读不到结尾。**新会话的名字默认改成「保存那一刻」**（如 `2026-10-25 14:30`）—— 以前插件会替你猜名字（按出现最多的域名、或拿页面标题当名字），猜错了你得自己去改；现在**一律**用保存时刻，想怎么叫点一下标题就改。 | **已上架**（2026-10-25 upload 回包 `uploadState: SUCCESS` → 草稿 `crxVersion: 1.28.7` → publish 回包 `status:["OK"]` → 再发一次 publish 得到 400「in review」自证在审核队列；**2026-10-26 公开页实证 `Version 1.28.7` ⇒ 线上已发布 = 1.28.7**，且线上描述跑判据零违规 ⇒ 手抄文案的欠账账本已删。本次同时人工换掉商店文案与截图，见文件头。⚠️ 云端 402 未解 + Supabase 迁移未执行，均需项目所有者动手） |
 | 1.28.5 | 2026-10-25 | **恢复后的提示不再张冠李戴**：点「在当前窗口打开」，提示就写「已在当前窗口打开 N 个标签页」；点「在新窗口恢复」，才写「已在新窗口打开」。以前不管点哪一颗，提示都写「新窗口」—— 标签明明加在眼前，提示却说到了别处。 | **已上架**（2026-10-25 upload 回包 `uploadState: SUCCESS` → 草稿 `crxVersion: 1.28.5` → publish 回包 `status:["OK"]`；再发一次 publish 得到 400「You may not edit or publish an item that is in review」自证在审核队列；2026-10-25 晚公开页实证 `Version 1.28.5` ⇒ 线上已发布 = 1.28.5。⚠️ 云端 402 仍需项目所有者解封，见文件头与「Known Issues」） |

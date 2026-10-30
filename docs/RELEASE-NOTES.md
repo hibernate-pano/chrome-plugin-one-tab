@@ -8,6 +8,63 @@
 > 长期台账**（含根因、踩坑、修复顺序），不必翻译成英文、不必对齐商店审核口径。
 > 两边都会写「本版改了什么」，但只有本文件会记住「为什么」和「后来怎么验证的」。
 
+## v1.29.1（2026-10-30，**顶栏新增骰子：随机打开一个标签**，**已提交审核，未上架**）
+
+### 产品需求
+
+2026-10-30 产品负责人：之前在 TapStack 里攒了很多标签，现在想**随机挑一个**打开来干。
+放在顶栏「布局切换 / 清理重复」这一组里，一颗骰子。
+
+### 行为
+
+- **抽签池 = 用户此刻看得见的那一批**。有搜索词就只抽命中的；按域名/时间筛选过就只在
+  筛出来的里抽。实现上**不另写判据**：调的就是列表页那两个原语
+  （`AdvancedSearch.search` / `buildBrowseResults` + `applySearchFilters`），
+  与 `SearchResultList` 的 `baseResults → searchResults` 是同一条管线
+  （见 `src/components/layout/randomPickPool.ts` 的文件头）。抽出一条列表外的记录，
+  等于骰子在背后动了用户没看见的东西。
+- **剔除两类候选**：① 本设备打不开的地址（`file:` / `blob:` / 内部页面）——
+  抽中只会弹一句「无法打开」，一次抽奖作废；② 锁定会话里的标签 ——
+  骰子的语义是「抽走」（打开 + 从会话移除，不可恢复），而锁定会话从不被消费
+  ⇒ 抽中它会出现「开了，但记录还在」，同一次点按两种后果。
+- **打开与消费走与「点开一行」完全相同的路径**：发 `OPEN_TAB`，**回包 `success:true` 才
+  从会话里移除**（SW 拒开是 resolve 不是 reject，不看回包就会「记录没了、页面也没开」）；
+  成功静默（标签已在浏览器里、这行从列表消失 ⇒ 界面自明），失败出声。
+- **池子在点击时才算**，不挂 `useMemo`：搜索是全仓最重的计算（真机实测 8000 标签
+  搜宽泛词 1250ms），挂 memo 等于让**每一次搜索**都多跑一遍全文检索，哪怕用户从没点过骰子。
+- 窄屏（<640px）顶栏藏起来，⋯ 菜单里给同名补偿入口 —— 与旁边两颗同一纪律。
+
+### 验证
+
+- 守卫 `tests/guards/randomPickDice.test.ts`（17 条）：池子跟随搜索/筛选、锁定与不可开地址剔除、
+  等概率且恒在池内、成功门顺序（`success:true` 在 `deleteTabAndSync` 之前）、失败与空池出声、
+  两个宽度都摸得到、抽签依据由 `MainApp` 下发同一份搜索词/筛选。
+- 真机探针 `scripts/_probe-random-pick{,-narrow}.mjs`：4 轮抽签均「开出的 URL = 被消费的那条」，
+  锁定会话与 `file://` 一次未被抽中；390px 下骰子隐藏、搜索框未塌陷（358px）、
+  ⋯ 菜单入口同样能开并消费。
+- 全量套件 4926 条中 3 条红（`concededPrecheckDegrade` / `syncUploadDownloadSafety` 的
+  Supabase 认输预检），已在干净的 HEAD worktree 上复现 ⇒ 既有问题，与本版无关。
+
+### 发版证据（2026-10-30）
+
+- 产物：`chrome-extension.zip` —— sha256 `46f83ffca785f05d252ab8f5463e0ca19808e91739dbac516e5ff571c9c93e08`，
+  347,364 字节 / 39 条目，根目录即 `manifest.json`，包内 `version = 1.29.1`。**这是真正上传的那一份。**
+- `upload` 回包 `uploadState: SUCCESS` → 草稿 `crxVersion: 1.29.1`
+- `publish 1.29.1` 回包 `{"status":["OK"],"statusDetail":["OK."]}`
+- 再发一次 publish 得到 **400「You may not edit or publish an item that is in review」** ⇒ 确实在审核队列
+- 提交后公开页仍是 `Version 1.29.0` ⇒ **已提交审核，未上架**（提交 ≠ 上架）
+- 凭据事故：发布前两条 refresh token（`mcp.json` 与 `.bak`）都返回 `invalid_grant`
+  ⇒ 2026-10-30 重新走了一次本机回环 OAuth（`access_type=offline`）换新 token，旧配置已备份为
+  `~/.config/mcp/mcp.json.bak-*`。
+
+### 未了
+
+- 商店文案与截图仍是 1.28.7 那一套（线上仍在承诺**已下线**的「撤销」）；这一版在审期间商店
+  **锁住 listing 编辑** ⇒ 审核放行后人工粘 1.29.1 文案（含「随机打开」）与 2026-10-30 重拍的截图，
+  贴完跑 `node scripts/store-listing-audit.mjs` 确认 0 处问题，并删掉
+  `tests/fixtures/store-listing-live-baseline.json`。
+- Supabase 生产仍是 402（出网配额封禁），解封只能项目所有者在 dashboard 做。
+
 ## v1.29.0（2026-10-26，**撤销提示整套下线** + **提示回到右上角** + **点图标一定打开标签管理器**，**已上架**：公开页 `Version 1.29.0`）
 
 ### 产品定案（2026-10-26）
