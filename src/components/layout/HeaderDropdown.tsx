@@ -125,6 +125,16 @@ interface HeaderDropdownProps {
    */
   isCleaningDuplicates?: boolean;
   /**
+   * 窄屏顶栏把「随机打开一个标签」的骰子收进了菜单（2026-10-30）。
+   *
+   * 与上面两颗同一纪律：顶栏那颗是 `hidden sm:block`（窄屏看不见），
+   * 所以这一行在窄屏是它**唯一**的入口。执行路径复用 Header 的同一个
+   * `handleRandomPick`（抽签池、成功门、消费语义一份），不复制实现。
+   */
+  onRequestRandomPick?: () => void;
+  /** 骰子**在途**的标志：同一个动作不能连点两遍（会开出多个浏览器标签）。 */
+  isRandomPickBusy?: boolean;
+  /**
    * 重放用户引导（2026-10-20 审计 B-2）。
    *
    * 为什么菜单里要有这一项：引导是**一次性**的，跳过就再也回不去了。
@@ -187,6 +197,8 @@ export const HeaderDropdown: React.FC<HeaderDropdownProps> = ({
   onToggleLayout,
   onRequestCleanDuplicates,
   isCleaningDuplicates,
+  onRequestRandomPick,
+  isRandomPickBusy,
   onReplayOnboarding,
   initialSubmenu,
   onInitialSubmenuConsumed,
@@ -1221,6 +1233,38 @@ const authNotice = useAppSelector(state => state.auth.notice ?? null);
               </svg>
             )}
             {isCleaningDuplicates ? '正在清理重复标签…' : '清理重复标签'}
+          </button>
+
+          {/* ── 2026-10-30：骰子（随机打开一个标签）────────────────────────
+              顶栏那颗是 `hidden sm:block` ⇒ 窄屏看不见，这一行是窄屏的
+              **唯一**入口。与上面两行同一纪律：不许在窄屏消失。
+              执行路径是 Header 的同一个 handleRandomPick（抽签池 / 成功门 /
+              消费语义一份实现），这里只是入口。 */}
+          <button role="menuitem"
+            onClick={() => {
+              onClose();
+              onRequestRandomPick?.();
+            }}
+            disabled={isRandomPickBusy}
+            aria-busy={isRandomPickBusy}
+            className={MENU_ROW + ' disabled:opacity-60 disabled:cursor-not-allowed'}
+          >
+            {isRandomPickBusy ? (
+              <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 mr-2 animate-spin" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+              </svg>
+            ) : (
+              <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 mr-2 theme-text-muted" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                <rect x="3.75" y="3.75" width="16.5" height="16.5" rx="3" strokeLinecap="round" strokeLinejoin="round" />
+                <circle cx="8.25" cy="8.25" r="1" fill="currentColor" stroke="none" />
+                <circle cx="15.75" cy="8.25" r="1" fill="currentColor" stroke="none" />
+                <circle cx="12" cy="12" r="1" fill="currentColor" stroke="none" />
+                <circle cx="8.25" cy="15.75" r="1" fill="currentColor" stroke="none" />
+                <circle cx="15.75" cy="15.75" r="1" fill="currentColor" stroke="none" />
+              </svg>
+            )}
+            随机打开一个标签
           </button>
         </div>
 

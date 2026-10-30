@@ -5,10 +5,15 @@ import {
   dispatchSaveSettings,
   updateSettings,
 } from '@/store/slices/settingsSlice';
-import { cleanDuplicateTabs, deleteBroadcastWarn } from '@/store/slices/tabSlice';
+import { cleanDuplicateTabs, deleteBroadcastWarn, deleteTabAndSync } from '@/store/slices/tabSlice';
 import { HeaderDropdown } from './HeaderDropdown';
+import { buildRandomPickPool, pickRandomCandidate } from './randomPickPool';
+import { mutationErrorMessage } from '@/components/tabs/mutationErrorCopy';
+import { toServiceWorkerErrorCopy } from '@/utils/serviceWorkerErrorCopy';
+import type { SearchFilters } from '@/utils/search';
 import { AuthTab } from '@/components/auth/AuthModal';
 import { useToast } from '@/contexts/ToastContext';
+import { useEnhancedToast } from '@/utils/toastHelper';
 import { TabCounter } from './TabCounter';
 import SyncButton from '@/components/sync/SyncButton';
 import { SimpleThemeToggle } from './SimpleThemeToggle';
@@ -29,6 +34,9 @@ import { planCleanDuplicates } from '@/core/mutationOps';
 import { decideFeedback } from '@/core/feedbackPolicy';
 import { storage } from '@/utils/storage';
 import { logError } from '../../utils/log';
+
+// 骰子抽签池的默认筛选（没传时用同一份常量，不每次渲染生成新对象）。
+const EMPTY_FILTERS: SearchFilters = {};
 
 interface HeaderProps {
   onSearch: (query: string) => void;
@@ -65,6 +73,17 @@ interface HeaderProps {
    * 所以顶栏能直接把它一起清掉。
    */
   onResetFilters?: () => void;
+  /**
+   * 骰子（随机打开一个标签）的抽签依据（2026-10-30）。
+   *
+   * 骰子按钮在顶栏，但「随机打开**下面**的其中一个」的承诺是所见即所得：
+   * 抽签池必须等于列表页此刻渲染的那一批（搜索词 + 生效筛选）。
+   * 搜索词与筛选状态住在 MainApp（`useSearchFilters` + deferred 搜索词），
+   * 所以由它下发，顶栏不另起一份。
+   */
+  searchQuery?: string;
+  effectiveFilters?: SearchFilters;
+  hasActiveFilters?: boolean;
 }
 
 // 图标组件
@@ -94,6 +113,9 @@ const CloseIcon = () => (
 //
 // ⚠️ 布局切换 / 清理重复**都不许从顶栏消失**——它们是 v1.25.1 顶栏的一部分。
 // 守卫见 tests/guards/headerActionBudget.test.ts（判据已改成 v1.25.1 的口径）。
+//
+// 2026-10-30 增补：产品负责人在这一组里加了第三颗 —— 骰子（随机打开一个标签）。
+// 顶栏因此由四颗变成五颗；上面两条不变式（**任何宽度都摸得到**）对骰子同样成立。
 
 // 单栏：一个整框（换掉旧的三横线——和菜单图标撞形）
 const LayoutSingleIcon = () => (
@@ -116,6 +138,19 @@ const CleanIcon = () => (
   </svg>
 );
 
+// 骰子：随机打开一条（2026-10-30）。点阵画法 —— 五点在框内，
+// 与农夫山泉式的「随机」直觉一致，也与顶栏其它图标同为描边风格。
+const DiceIcon = () => (
+  <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+    <rect x="3.75" y="3.75" width="16.5" height="16.5" rx="3" strokeLinecap="round" strokeLinejoin="round" />
+    <circle cx="8.25" cy="8.25" r="1" fill="currentColor" stroke="none" />
+    <circle cx="15.75" cy="8.25" r="1" fill="currentColor" stroke="none" />
+    <circle cx="12" cy="12" r="1" fill="currentColor" stroke="none" />
+    <circle cx="8.25" cy="15.75" r="1" fill="currentColor" stroke="none" />
+    <circle cx="15.75" cy="15.75" r="1" fill="currentColor" stroke="none" />
+  </svg>
+);
+
 const MenuIcon = () => (
   <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
     <path strokeLinecap="round" strokeLinejoin="round" d="M12 6.75a.75.75 0 110-1.5.75.75 0 010 1.5zM12 12.75a.75.75 0 110-1.5.75.75 0 010 1.5zM12 18.75a.75.75 0 110-1.5.75.75 0 010 1.5z" />
@@ -128,13 +163,25 @@ const SaveIcon = () => (
   </svg>
 );
 
-export const Header: React.FC<HeaderProps> = ({ onSearch, onReplayOnboarding, onOpenAuth, onResetFilters }) => {
+export const Header: React.FC<HeaderProps> = ({
+  onSearch,
+  onReplayOnboarding,
+  onOpenAuth,
+  onResetFilters,
+  searchQuery = '',
+  effectiveFilters = EMPTY_FILTERS,
+  hasActiveFilters = false,
+}) => {
   const dispatch = useAppDispatch();
   const { showConfirm, showAlert, showToast } = useToast();
+  const { showRestoreError, showDeleteError } = useEnhancedToast();
   const settings = useAppSelector(state => state.settings);
   const groups = useAppSelector(state => state.tabs.groups);
   // 清理重复标签的进行中标志：只用来禁点 + 转圈，不阻塞界面。
   const [isCleaningDuplicates, setIsCleaningDuplicates] = React.useState(false);
+  // 骰子的在途标志：同一时间只抽一次（连点会开出多个浏览器标签，
+  // 而 SW 的 OPEN_TAB 不做去重）。
+  const [isRandomPickBusy, setIsRandomPickBusy] = React.useState(false);
 
   const { searchValue, debouncedValue, handleSearchChange, clearSearch, isSearching } = useDebouncedSearch();
   const searchInputRef = React.useRef<HTMLInputElement>(null);
@@ -249,6 +296,69 @@ export const Header: React.FC<HeaderProps> = ({ onSearch, onReplayOnboarding, on
       },
       onCancel: () => { },
     });
+  };
+
+  // ── 2026-10-30：骰子 = 随机打开下面列表里的一条 ──────────────────────
+  //
+  // 抽签池与列表页走同一条管线（`AdvancedSearch` / `buildBrowseResults` +
+  // `applySearchFilters`，见 ./randomPickPool 的文件头）—— 抽到的恒是
+  // 用户此刻**看得见**的那一批里的，且池子已剔掉本设备打不开的地址
+  // 与锁定会话（抽中它们只会「点了没反应」或「开了但记录还在」）。
+  //
+  // ⚠️ 池子**在点击时才算**，不放在 useMemo 里。搜索是全仓最重的计算
+  //    （2026-10-23 真机实测：8000 标签搜宽泛词 1250ms），而本组件每敲一个
+  //    字符都会重渲染 —— 挂个 memo 等于让**每一次搜索**都多跑一遍全文检索，
+  //    哪怕用户一次都没点过骰子。点击时算一次，代价只落在真的用它的人身上。
+  //
+  // 打开与消费走与「点开一行」**完全相同**的路径：
+  //   · 发 OPEN_TAB（SW 侧用 isOpenableTabUrl 把门，见 openUrlGateConsistency）；
+  //   · **回包 success:true 才删**（与 TabGroup / SearchResultList 同一道成功门：
+  //     SW 拒开是 sendResponse({success:false}) ⇒ promise **resolve**，
+  //     不看回包就会「开了没看到页面，记录也没了」）；
+  //   · 成功**静默**（标签已经开在浏览器里，这行从列表消失 ⇒ 界面自明）。
+  const handleRandomPick = () => {
+    if (isRandomPickBusy) return;
+    const pool = buildRandomPickPool(groups, {
+      query: searchQuery,
+      filters: effectiveFilters,
+      hasActiveFilters,
+    });
+    const pick = pickRandomCandidate(pool);
+    if (!pick) {
+      // 空池必须出声：按了键没反应 = 「界面坏了」。
+      // 说清是**池子空了**而不是「随机失败」——后者会让用户一直点。
+      showToast(
+        searchQuery.trim() || hasActiveFilters
+          ? '当前搜索结果里没有可随机打开的标签页'
+          : '没有可随机打开的标签页',
+        'info',
+        3000
+      );
+      return;
+    }
+    setIsRandomPickBusy(true);
+    chrome.runtime.sendMessage(
+      { type: 'OPEN_TAB', data: { url: pick.tab.url, pinned: !!pick.tab.pinned } },
+      (res: unknown) => {
+        setIsRandomPickBusy(false);
+        const r = res as { success?: boolean; error?: string } | undefined;
+        if (!r || r.success !== true) {
+          // 与点开单独一行同口径：拒开不删，那条记录还在会话里。
+          showRestoreError(toServiceWorkerErrorCopy(r?.error, '打开失败，已保留在会话中'));
+          return;
+        }
+        dispatch(deleteTabAndSync({ groupId: pick.group.id, tabId: pick.tab.id }))
+          .unwrap()
+          .then(payload => {
+            const warn = deleteBroadcastWarn(payload);
+            if (warn) showDeleteError(warn);
+          })
+          .catch(error => {
+            logError('随机打开后从会话移除失败:', error);
+            showDeleteError(mutationErrorMessage('标签页已打开，但从会话移除', error));
+          });
+      }
+    );
   };
 
   // async：末尾要 await 保存结果并出声（React 对事件处理器返回 Promise 无要求）
@@ -565,6 +675,24 @@ export const Header: React.FC<HeaderProps> = ({ onSearch, onReplayOnboarding, on
             </div>
 
             <div className="hidden sm:block">
+              {/* ── 2026-10-30：骰子（随机打开一个标签）─────────────────────
+                  产品负责人要求放在「布局切换 / 清理重复」这一组里。
+                  窄屏由 ⋯ 菜单提供同名入口（见 HeaderDropdown.tsx 的
+                  `sm:hidden` 补偿区）—— 与旁边两颗同一纪律：任何宽度都摸得到。 */}
+              <Tooltip content="随机打开一个标签" position="bottom">
+                <button
+                  onClick={handleRandomPick}
+                  disabled={isRandomPickBusy}
+                  className="btn-icon flat-interaction"
+                  aria-label="随机打开一个标签页"
+                  aria-busy={isRandomPickBusy}
+                >
+                  {isRandomPickBusy ? <LoadingIcon /> : <DiceIcon />}
+                </button>
+              </Tooltip>
+            </div>
+
+            <div className="hidden sm:block">
               <Tooltip content="清理重复标签" position="bottom">
                 <button
                   onClick={handleCleanDuplicateTabs}
@@ -673,6 +801,10 @@ export const Header: React.FC<HeaderProps> = ({ onSearch, onReplayOnboarding, on
                   // 清理进行中：入口搬进菜单后，「禁点 + 进行中」跟着搬过去
                   // （审计 U-20 之后的接线；否则同一动作能跑两遍）。
                   isCleaningDuplicates={isCleaningDuplicates}
+                  onRequestRandomPick={() => {
+                    handleRandomPick();
+                  }}
+                  isRandomPickBusy={isRandomPickBusy}
                   onReplayOnboarding={onReplayOnboarding}
                   // ── 2026-10-22 审计 L-11：空态的「导入数据」把导入子菜单直接展开 ──
                   initialSubmenu={pendingImport ? 'import' : null}

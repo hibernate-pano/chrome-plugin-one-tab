@@ -99,6 +99,13 @@ export const MainApp: React.FC = () => {
               onReplayOnboarding={handleReplayOnboarding}
               onOpenAuth={handleOpenAuth}
               onResetFilters={filterControls.clearFilters}
+              // ── 2026-10-30：骰子的抽签池必须等于列表页此刻渲染的那一批 ──
+              // 搜索词与筛选状态都住在这一层（deferred 搜索词 + useSearchFilters），
+              // 顶栏拿到的与 TabList 拿到的是**同一份** —— 两处各持一份必然漂移，
+              // 骰子就会抽出列表外的记录（违背「随机打开下面其中一个」的承诺）。
+              searchQuery={deferredSearchQuery}
+              effectiveFilters={filterControls.effectiveFilters}
+              hasActiveFilters={filterControls.activeFilterCount > 0}
             />
             <main id="tapstack-main" className={`flex-1 w-full py-3 sm:py-4 ${getContainerWidthClass()}`} tabIndex={-1}>
               <Suspense fallback={<div className="p-4 text-center">加载标签列表...</div>}>
