@@ -67,7 +67,9 @@
   确认 0 处问题，并删掉 `tests/fixtures/store-listing-live-baseline.json`。
   ⚠️ **`0 处问题` 不等于「新功能被写进了文案」**：判据的能力表只有
   `webdav` / `consumeUndo` / `consumeUndoRemoved`，**不认识骰子**。
-- Supabase 生产仍是 402（出网配额封禁），解封只能项目所有者在 dashboard 做。
+- ~~Supabase 生产仍是 402~~ —— **2026-11-02 发版前探活已解除**：`/rest/v1/tab_groups`
+  与 `/auth/v1/health` 均返回 HTTP 200（此前出网配额封禁不再出现；匿名读为空属 RLS 预期）。
+  仍建议真机走一遍登录 / 同步再对外宣称「云端可用」。
 
 ### 继承下来的未完成项（一条都没做掉）
 
