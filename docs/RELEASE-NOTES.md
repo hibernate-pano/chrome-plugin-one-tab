@@ -8,7 +8,7 @@
 > 长期台账**（含根因、踩坑、修复顺序），不必翻译成英文、不必对齐商店审核口径。
 > 两边都会写「本版改了什么」，但只有本文件会记住「为什么」和「后来怎么验证的」。
 
-## v1.29.2（2026-11-02，**顶栏顺序调整 + 骰子池收口 + 新窗口恢复落在新窗口 + WebDAV 读回同源**，**待提审**）
+## v1.29.2（2026-11-02，**顶栏顺序调整 + 骰子池收口 + 新窗口恢复落在新窗口 + WebDAV 读回同源**，**已提交审核**：提交时公开页仍是 `Version 1.29.1`）
 
 ### 产品需求
 
@@ -52,7 +52,12 @@
 ### 发版证据（2026-11-02）
 
 - 产物：`chrome-extension.zip` —— sha256 `c77aba196b8f63fede58f7f7053881eda61841d4781f3e9c424c65cd5cca2cc5`，347,418 字节 / 39 条目，根目录即 `manifest.json`，包内 `version = 1.29.2`。**这是真正上传的那一份。**
-- `upload` / `publish` 回包：待执行。
+- `upload` 回包 `uploadState: SUCCESS` → 草稿 `crxVersion: 1.29.2`
+- `publish 1.29.2` 回包 `{"status":["OK"],"statusDetail":["OK."]}`
+- 再发一次 publish 得到 **400「You may not edit or publish an item that is in review」**
+  ⇒ 确实在审核队列（2026-11-02 实测）
+- 提交后公开页仍是 `Version 1.29.1` / `Updated October 29, 2026`
+  ⇒ 当前**已提交审核，未上架**（提交 ≠ 上架）
 
 ### 未了
 
