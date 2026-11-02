@@ -578,3 +578,55 @@ describe('同一个会话在新旧两条路径上各有一份 ⇒ 按操作印�
     assert.equal(entry?.loc, 'legacy', '索引必须记下「读旧路径那一份」');
   });
 });
+
+// ── 场景 4：读回校验必须与被写的资源同源（2026-11-02 修）────────────────
+//
+// 缺陷形态：写侧按索引的 `loc` 写回老路径，读回却只传 id（先读新路径）。
+// 当同一个会话在新旧两条路径各有一份时，读回核对的是**另一份文件**：
+//   · 上传：索引印记 vs 旧副本印记 对不上 ⇒ 误报「索引与内容不一致」⇒ 中止本轮；
+//   · 删除：旧副本不是墓碑 ⇒ 误报「删除广播没有落盘」⇒ 删除队列不消费、重播。
+// ⇒ 用户看到的是「同步总是失败 / 删掉的东西又回来」。
+// 断言落在**行为**上：这两种操作都必须成功，且新内容落在写路径那份文件里。
+
+describe('读回校验与被写的资源同源（两份副本并存时）', () => {
+  /** 造现场：both1 在旧路径（stamp 9）与新路径（stamp 4）各一份，索引记 legacy。 */
+  async function seedBothCopies(dav: FakeDav, adapter: WebDavBackendAdapter): Promise<void> {
+    seedShard(dav, makeGroup('both1', { name: '旧布局的更新', lastOp: { d: 'dev-B', s: 9 } }), 'legacy');
+    seedShard(dav, makeGroup('both1', { name: '新布局的旧版', lastOp: { d: 'dev-A', s: 4 } }), 'current');
+    // 上传另一个会话 ⇒ 索引落盘（重建时按印记裁决，both1 记 loc=legacy）
+    await adapter.uploadGroups([makeGroup('newsess1', { lastOp: { d: 'dev-A', s: 20 } })]);
+    assert.equal(dav.indexEntry('both1')?.loc, 'legacy', '前置条件：索引必须记 legacy');
+  }
+
+  it('上传后的索引自检读的是**写进去的那一份**（不被另一份旧副本骗成不一致）', async () => {
+    const dav = new FakeDav();
+    const { adapter } = makeAdapter(dav);
+    await seedBothCopies(dav, adapter);
+
+    // stamp 必须**大于水位**（上一次上传把水位推到了 20），否则 selectDirty
+    // 根本不会选中它，测试会在「什么都没写」上假绿。
+    // 修复前：读回先命中新路径的旧副本（stamp 4），与索引里的 30 不符
+    // ⇒ verifyIndexMatchesShardHeaders 抛「云端索引与实际内容不一致」。
+    await adapter.uploadGroups([
+      makeGroup('both1', { name: '改过的名字', lastOp: { d: 'dev-A', s: 30 } }),
+    ]);
+
+    const legacy = dav.read(`TapStack/${legacyShardPath('both1')}`);
+    assert.ok(legacy, '老路径那份必须被覆盖（写回原位）');
+    assert.match(legacy.body, /改过的名字/, '新内容必须落在老路径那份文件里');
+  });
+
+  it('墓碑读回读的是**写进去的那一份**（不被另一份旧副本骗成「没落盘」）', async () => {
+    const dav = new FakeDav();
+    const { adapter } = makeAdapter(dav);
+    await seedBothCopies(dav, adapter);
+
+    // 修复前：读回先命中新路径的活跃旧副本（不是墓碑）
+    // ⇒ verifyTombstoneReadback 抛「删除广播没有落盘」。
+    const res = await adapter.broadcastDeletes(['both1']);
+    assert.deepEqual(res.broadcastIds, ['both1'], '删除广播必须成功（读回核对的是刚写的墓碑）');
+
+    const legacy = dav.read(`TapStack/${legacyShardPath('both1')}`);
+    assert.ok(legacy, '墓碑必须覆盖老路径那份');
+  });
+});

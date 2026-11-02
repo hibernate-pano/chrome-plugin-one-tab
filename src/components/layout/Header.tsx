@@ -647,36 +647,22 @@ export const Header: React.FC<HeaderProps> = ({
 
           {/* 操作按钮组 */}
           <nav className="app-header-actions" aria-label="会话操作">
-            {/* ── 2026-10-24：这两颗按钮回到顶栏（v1.25.1 的排布）─────────────
-                1.26.0（审计 U-20）把它们收进 ⋯ 菜单，顶栏因此少了两颗按钮、
-                搜索框变宽。那是**长相**（按钮排布），不是功能 ⇒ 随 v1.25.1 一起退回去。
+            {/* ── 顶栏按钮顺序（2026-11-02 产品负责人定案）─────────────────
+                骰子 → 清理重复 → 布局切换 → 主题。
+                骰子排第一：它是「随机挑一个来干」的主动作，比布局开关常用得多。
 
-                两颗都是**重复入口**，不是独有能力：
-                  · 布局切换 —— 同一份 dispatch（handleToggleLayout），菜单里也有；
-                  · 清理重复 —— 同一个破坏性确认流程（handleCleanDuplicateTabs），菜单里也有。
-                ⇒ 退的只是「顶栏上少这两颗」这个长相，功能一条没少。
+                前三颗都是**重复入口**，不是独有能力：
+                  · 骰子 —— 同一份 handleRandomPick，菜单里也有；
+                  · 清理重复 —— 同一个破坏性确认流程（handleCleanDuplicateTabs）；
+                  · 布局切换 —— 同一份 dispatch（handleToggleLayout）。
+                ⇒ 顶栏少了哪一颗都不算少功能，菜单里永远有同一份。
 
                 窄屏（<640px）藏起来：390px 实测顶栏塞不下这么多按钮，
                 搜索框会被压成 0 宽（global.css 的 F-1 注释）。
-                窄屏时这两个入口由 ⋯ 菜单提供（见 HeaderDropdown.tsx 的 sm:hidden 补偿区）。 */}
-            <div className="hidden sm:block">
-              <Tooltip
-                content={settings.layoutMode === 'single' ? '切换双栏布局' : '切换单栏布局'}
-                position="bottom"
-              >
-                <button
-                  onClick={handleToggleLayout}
-                  className="btn-icon flat-interaction"
-                  aria-label={settings.layoutMode === 'single' ? '切换为双栏布局' : '切换为单栏布局'}
-                >
-                  {settings.layoutMode === 'single' ? <LayoutSingleIcon /> : <LayoutDoubleIcon />}
-                </button>
-              </Tooltip>
-            </div>
-
+                窄屏时这些入口由 ⋯ 菜单提供（见 HeaderDropdown.tsx 的 sm:hidden 补偿区）。 */}
             <div className="hidden sm:block">
               {/* ── 2026-10-30：骰子（随机打开一个标签）─────────────────────
-                  产品负责人要求放在「布局切换 / 清理重复」这一组里。
+                  2026-11-02 产品负责人把它挪到第一位。
                   窄屏由 ⋯ 菜单提供同名入口（见 HeaderDropdown.tsx 的
                   `sm:hidden` 补偿区）—— 与旁边两颗同一纪律：任何宽度都摸得到。 */}
               <Tooltip content="随机打开一个标签" position="bottom">
@@ -702,6 +688,21 @@ export const Header: React.FC<HeaderProps> = ({
                   aria-busy={isCleaningDuplicates}
                 >
                   {isCleaningDuplicates ? <LoadingIcon /> : <CleanIcon />}
+                </button>
+              </Tooltip>
+            </div>
+
+            <div className="hidden sm:block">
+              <Tooltip
+                content={settings.layoutMode === 'single' ? '切换双栏布局' : '切换单栏布局'}
+                position="bottom"
+              >
+                <button
+                  onClick={handleToggleLayout}
+                  className="btn-icon flat-interaction"
+                  aria-label={settings.layoutMode === 'single' ? '切换为双栏布局' : '切换为单栏布局'}
+                >
+                  {settings.layoutMode === 'single' ? <LayoutSingleIcon /> : <LayoutDoubleIcon />}
                 </button>
               </Tooltip>
             </div>

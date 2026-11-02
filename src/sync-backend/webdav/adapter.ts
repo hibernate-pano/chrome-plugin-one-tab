@@ -1125,7 +1125,10 @@ export class WebDavBackendAdapter implements SyncBackendPort {
         //   · 分片读得回来 ⇒ 索引确实不在（真丢 / 被并发换掉）⇒ 按分支处理。
         const unreadable: string[] = [];
         for (const e of writtenEntries) {
-          const shard = await this.readRemoteShardState(e.id);
+          // 2026-11-02：读回必须读**本轮写的那个文件**（索引记了落点）。
+          // 不传 loc 会先读新路径 —— 老库里若还留着一份同名副本，读到的是
+          // 另一份文件 ⇒ 判据看错了资源（见 readRemoteShardState 的注释）。
+          const shard = await this.readRemoteShardState(e.id, e.loc);
           if (!shard.exists || shard.unreadable) unreadable.push(e.id);
         }
         if (unreadable.length > 0 && unreadable.length === writtenEntries.length) {
@@ -1167,7 +1170,9 @@ export class WebDavBackendAdapter implements SyncBackendPort {
         mismatched.push(entry.id);
         continue;
       }
-      const shard = await this.readRemoteShardState(entry.id);
+      // 2026-11-02：与写侧同源 —— writtenEntries 记了落点，读回就读那一份。
+      // 少了它，老库里残留的另一份副本会被当成「刚写的分片」核对印记。
+      const shard = await this.readRemoteShardState(entry.id, entry.loc);
       if (!shard.exists || shard.unreadable) {
         mismatched.push(entry.id);
         continue;
@@ -1972,7 +1977,13 @@ export class WebDavBackendAdapter implements SyncBackendPort {
         }
 
         // 冲突：读回远端当前版本，**按分片自己的印记**裁决（不是索引）。
-        const latest = await this.readRemoteShardState(group.id);
+        // 2026-11-02：读的必须是**刚才 412 的那个资源**（writePath）。
+        // 不传 loc 会先读新路径 —— 若这个会话还留在老库里，拿另一份文件
+        // 裁决 412 重试 ⇒ 可能把刚写的声明判输（显式覆盖被静默丢弃）。
+        const latest = await this.readRemoteShardState(
+          group.id,
+          this.isLegacyLayoutPath(group.id, writePath) ? 'legacy' : undefined
+        );
         const latestState = resolveRemoteState({
           content: latest.exists && !latest.unreadable
             ? { lastOp: latest.lastOp, isDeleted: latest.isDeleted }
@@ -2065,7 +2076,7 @@ export class WebDavBackendAdapter implements SyncBackendPort {
       });
 
       // ── D-5：写完必须读回确认，否则不算「广播成功」 ──────────────────────
-      await this.verifyTombstoneReadback(id, tombstone.lastOp, out.etag);
+      await this.verifyTombstoneReadback(id, tombstone.lastOp, out.etag, existing?.loc);
 
       const entry: ShardFingerprint = {
         id,
@@ -2120,9 +2131,14 @@ export class WebDavBackendAdapter implements SyncBackendPort {
   private async verifyTombstoneReadback(
     id: string,
     expectedStamp: { d: string; s: number } | undefined,
-    writtenEtag: string | null
+    writtenEtag: string | null,
+    /** 墓碑写到了哪个落点（写侧从索引取；读回必须读同一份）。 */
+    loc?: 'legacy'
   ): Promise<void> {
-    const remote = await this.readRemoteShardState(id);
+    // 2026-11-02：必须读**刚写的那一份**。若该会话在老库/新库各有一份
+    // （布局迁移期的真实状态），不传 loc 会先读新路径 ⇒ 拿另一份文件的
+    // 内容判墓碑 ⇒ 误报「没有落盘」⇒ 删除队列不消费、下一轮重播。
+    const remote = await this.readRemoteShardState(id, loc);
     if (remote.exists && !remote.unreadable) {
       const verdict = compareTombstoneReadback(
         { id, ...(expectedStamp ? { lastOp: expectedStamp } : {}) },

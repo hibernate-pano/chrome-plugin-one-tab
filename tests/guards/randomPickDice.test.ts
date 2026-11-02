@@ -96,6 +96,52 @@ describe('骰子抽签池：范围跟着列表走', () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────
+// 1b. 池子不许超出列表的**渲染窗口**（2026-11-02 复核补洞）
+// ─────────────────────────────────────────────────────────────────────────
+//
+// 列表页命中超过 200 条时只渲染前 200 条（`buildResultWindow`，以会话为
+// 最小单位整组保留）。修复前抽签池用全部命中 ⇒ 骰子能抽到第 201 条之后的
+// 记录，那条记录屏幕上没有，却被消费掉了 ⇒ 用户只看到列表少了一行。
+
+describe('骰子抽签池：与列表页同一个渲染窗口', () => {
+  const many = (prefix: string, count: number): Tab[] =>
+    Array.from({ length: count }, (_, i) => tab(`${prefix}${i}`, `https://example.com/${prefix}/${i}`));
+
+  it('命中超过 200 条 ⇒ 只抽列表**渲染出来**的那一批（第 201 条之后不参与）', () => {
+    // 150 + 100 + 5：窗口 200 ⇒ 列表收下 s1、s2（used=250 后停）⇒ s3 不渲染。
+    // 「整组保留」意味着 s2 虽然把总数顶过 200，它的 100 条仍然**全部**在列表里。
+    const groups = [
+      group('s1', many('a', 150)),
+      group('s2', many('b', 100)),
+      group('s3', many('c', 5)),
+    ];
+    const pool = buildRandomPickPool(groups, { query: '', filters: {}, hasActiveFilters: false });
+    const ids = pool.map(c => c.tab.id);
+
+    assert.equal(pool.length, 250, '窗口内两个会话的标签必须全部可选（整组保留）');
+    assert.ok(ids.includes('a149'), '第一个会话的标签在窗口内');
+    assert.ok(ids.includes('b99'), '第二个会话整组收下（它把 used 顶过了 200）');
+    for (const c of ['c0', 'c1', 'c2', 'c3', 'c4']) {
+      assert.ok(!ids.includes(c), `第三个会话未被列表渲染 ⇒ 骰子不许抽到 ${c}`);
+    }
+  });
+
+  it('单个会话自己也超过 200 ⇒ 整组保留（列表就是这么渲染的）', () => {
+    // visibleSessionResults 的第一个会话无论多少条都整组收下；
+    // 骰子若按「前 200 条」硬切，就会抽到列表里根本不存在的记录。
+    const groups = [group('big', many('x', 250))];
+    const pool = buildRandomPickPool(groups, { query: '', filters: {}, hasActiveFilters: false });
+    assert.equal(pool.length, 250, '第一个会话必须整组可选');
+  });
+
+  it('小结果集不受影响（窗口没截断）', () => {
+    const groups = [group('s1', many('a', 2)), group('s2', many('b', 3))];
+    const pool = buildRandomPickPool(groups, { query: '', filters: {}, hasActiveFilters: false });
+    assert.equal(pool.length, 5);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────
 // 2. 池子里必须剔掉「抽中也不会有好结果」的标签
 // ─────────────────────────────────────────────────────────────────────────
 
@@ -241,5 +287,18 @@ describe('骰子入口：任何宽度都摸得到', () => {
       /effectiveFilters=\{filterControls\.effectiveFilters\}/,
       '顶栏要拿到列表页用的同一份生效筛选'
     );
+  });
+
+  it('抽签依据**真的喂进**抽签池（不是只挂在 props 上）', () => {
+    // 2026-11-02 复核补洞：上面那条只证明「MainApp → Header 的 props 传了」，
+    // 没证明「Header → buildRandomPickPool 把这三个值交给了池子」。
+    // 把调用点硬编码成 `{ query: '', filters: {}, hasActiveFilters: false }`，
+    // 前面 17 条全绿，而骰子会抽到用户没看见的记录 —— 正是本文件要防的第①类回归。
+    const start = HEADER.indexOf('const pool = buildRandomPickPool(');
+    assert.ok(start > -1, '应能找到 Header 里 buildRandomPickPool 的调用点');
+    const call = HEADER.slice(start, HEADER.indexOf('});', start));
+    assert.match(call, /query:\s*searchQuery\b/, '抽签池必须收到当前搜索词（不许喂空串）');
+    assert.match(call, /filters:\s*effectiveFilters\b/, '抽签池必须收到生效筛选（不许喂空对象）');
+    assert.match(call, /hasActiveFilters\b/, '抽签池必须知道有没有生效筛选');
   });
 });

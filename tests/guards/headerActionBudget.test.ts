@@ -113,4 +113,27 @@ describe('顶栏动作预算：低频入口在顶栏（v1.25.1 的排布），�
       );
     }
   });
+
+  it('⑤ 顶栏顺序：骰子 → 清理重复 → 布局切换 → 主题（2026-11-02 产品定案）', () => {
+    // 顺序本身就是需求（骰子是主动作，排第一）。这里钉的是**相对位置**，
+    // 不钉像素/间距 —— 那两件事由 headerGeometry 管。
+    const order: ReadonlyArray<readonly [string, string]> = [
+      ['骰子', 'onClick={handleRandomPick}'],
+      ['清理重复', 'onClick={handleCleanDuplicateTabs}'],
+      ['布局切换', 'onClick={handleToggleLayout}'],
+      ['主题', '<SimpleThemeToggle'],
+    ];
+    const positions = order.map(([name, anchor]) => {
+      const at = HEADER.indexOf(anchor);
+      assert.ok(at > -1, `顶栏必须能找到「${name}」`);
+      return { name, at };
+    });
+    for (let i = 1; i < positions.length; i++) {
+      assert.ok(
+        positions[i].at > positions[i - 1].at,
+        `顶栏顺序必须是 骰子 → 清理重复 → 布局切换 → 主题，` +
+          `但「${positions[i].name}」排在了「${positions[i - 1].name}」前面`
+      );
+    }
+  });
 });

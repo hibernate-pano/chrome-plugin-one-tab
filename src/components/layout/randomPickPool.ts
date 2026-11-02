@@ -12,6 +12,14 @@
  * 与 `SearchResultList` 的 `baseResults` → `searchResults` 是同一条管线
  * （见 SearchResultList.tsx 同名注释）。两处各写一遍判据必然漂移。
  *
+ * ── 2026-11-02：还必须套上**渲染窗口** ──────────────────────────────────
+ * 搜索命中超过 200 条时，列表页只渲染前 200 条（`buildResultWindow`，
+ * 以会话为最小单位整组保留）。修复前抽签池用的是**全部**命中 ⇒ 骰子能抽出
+ * 一条屏幕上根本没有的记录，然后把这条记录消费掉 —— 用户看到的是
+ * 「列表里少了一行，但我不知道是哪一行」。这正是本文件头一句在防的事。
+ * ⇒ 池子现在与 `SearchResultList.visibleSessionResults` 用同一个窗口、
+ *   同一个「整组保留」口径。
+ *
  * ── 为什么要剔掉一些标签 ────────────────────────────────────────────────
  * 1. **本设备打不开的地址**（file:/blob:/chrome: …）：抽中它只会弹一句
  *    「无法打开」，一次抽奖直接作废 —— 骰子的意义是「抽一个能干的」。
@@ -24,9 +32,10 @@
 
 import type { Tab, TabGroup } from '@/types/tab';
 import type { SearchFilters } from '@/utils/search';
-import { AdvancedSearch, applySearchFilters } from '@/utils/search';
+import { AdvancedSearch, applySearchFilters, buildSessionSearchResults } from '@/utils/search';
 import { isOpenableTabUrl } from '@/utils/inputValidation';
 import { buildBrowseResults } from '@/components/search/searchBrowseMode';
+import { buildResultWindow } from '@/components/search/searchWindowing';
 
 /** 一个可被抽中的候选：标签 + 它所属的会话（消费时要 groupId）。 */
 export interface RandomPickCandidate {
@@ -59,11 +68,28 @@ export const buildRandomPickPool = (
   // applySearchFilters 收到空条件不会删任何一条 ⇒ 两种情况同一条路。
   const filtered = applySearchFilters(baseResults, context.filters);
 
+  // ── 与列表页**同一个渲染窗口**（2026-11-02 修）────────────────────────
+  // 顺序也一致：先按会话归组（SearchResultList 的 sessionResults），再按
+  // **标签条数**算窗口，最后以会话为最小单位整组保留。
+  // 不这么做，骰子就能抽到第 201 条之后的记录 —— 用户屏幕上没有它。
+  const sessionResults = buildSessionSearchResults(filtered);
+  const totalMatches = sessionResults.reduce((sum, session) => sum + session.matches.length, 0);
+  const resultWindow = buildResultWindow(totalMatches);
+
   const pool: RandomPickCandidate[] = [];
-  for (const result of filtered) {
-    if (result.group.isLocked) continue;
-    if (!isOpenableTabUrl(result.tab.url)) continue;
-    pool.push({ tab: result.tab, group: result.group });
+  let displayed = 0;
+  for (const session of sessionResults) {
+    if (displayed >= resultWindow.visible) break;
+    // 与 SearchResultList.visibleSessionResults 逐字同口径：
+    // 已显示的条数够窗口就停；否则整组收下（组内不允许半进半出，
+    // 否则摘要行「匹配 n/m 个标签」会与实际显示不符）。
+    displayed += session.matches.length;
+
+    for (const result of session.matches) {
+      if (result.group.isLocked) continue;
+      if (!isOpenableTabUrl(result.tab.url)) continue;
+      pool.push({ tab: result.tab, group: result.group });
+    }
   }
   return pool;
 };
