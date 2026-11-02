@@ -8,7 +8,7 @@
 > 长期台账**（含根因、踩坑、修复顺序），不必翻译成英文、不必对齐商店审核口径。
 > 两边都会写「本版改了什么」，但只有本文件会记住「为什么」和「后来怎么验证的」。
 
-## v1.29.2（2026-11-02，**顶栏顺序调整 + 骰子池收口 + 新窗口恢复落在新窗口 + WebDAV 读回同源**，**已提交审核**：提交时公开页仍是 `Version 1.29.1`）
+## v1.29.2（2026-11-02，**顶栏顺序调整 + 骰子池收口 + 新窗口恢复落在新窗口 + WebDAV 读回同源**，**已上架**：公开页 `Version 1.29.2`）
 
 ### 产品需求
 
@@ -57,14 +57,21 @@
 - 再发一次 publish 得到 **400「You may not edit or publish an item that is in review」**
   ⇒ 确实在审核队列（2026-11-02 实测）
 - 提交后公开页仍是 `Version 1.29.1` / `Updated October 29, 2026`
-  ⇒ 当前**已提交审核，未上架**（提交 ≠ 上架）
+  ⇒ 提交当时**已提交审核，未上架**（提交 ≠ 上架）
+- **2026-11-02 稍后公开页实证 `Version 1.29.2` / `Updated November 1, 2026`**
+  （两路独立读数一致：`cws-release.mjs live` 与 `store-listing-audit.mjs` 抓到的公开页）
+  ⇒ **已过审上架**，线上已发布 = **`1.29.2`**
 
 ### 未了
 
 - 商店文案与截图仍是 1.28.7 那一套（线上仍在承诺**已下线**的「撤销」，
-  且没有「随机打开」）。**这一版提审会重新锁住 listing** ⇒ 审核放行后才能换。
-  人工粘仓库当前文案 + 重拍截图，贴完跑 `node scripts/store-listing-audit.mjs`
-  确认 0 处问题，并删掉 `tests/fixtures/store-listing-live-baseline.json`。
+  且没有「随机打开」）。**2026-11-02 稍后审核已放行、listing 编辑锁已解除
+  ⇒ 现在可以换**。2026-11-02 实测 `store-listing-audit.mjs` = **4 处违规**
+  （`claims-consume-undo-after-removal` ×2、`missing-consume-irreversible` ×2；
+  中英各命中一次 ⇒ 判据报 4 条、代码只有 2 个）。
+  人工粘 `store-listing-audit.mjs` 输出的「该粘到后台的内容」+ 重拍截图，贴完跑
+  `node scripts/store-listing-audit.mjs` 确认 0 处问题，并删掉
+  `tests/fixtures/store-listing-live-baseline.json`。
   ⚠️ **`0 处问题` 不等于「新功能被写进了文案」**：判据的能力表只有
   `webdav` / `consumeUndo` / `consumeUndoRemoved`，**不认识骰子**。
 - ~~Supabase 生产仍是 402~~ —— **2026-11-02 发版前探活已解除**：`/rest/v1/tab_groups`
