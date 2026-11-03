@@ -72,8 +72,12 @@ describe('下拉菜单的子菜单可达', () => {
     );
   });
 
-  it('导出 / 导入面板都在流内，不再绝对定位', () => {
-    for (const anchor of ["{openSubmenu === 'export' && (", "{openSubmenu === 'import' && ("]) {
+  it('导出 / 导入 / 清理面板都在流内，不再绝对定位', () => {
+    for (const anchor of [
+      "{openSubmenu === 'export' && (",
+      "{openSubmenu === 'import' && (",
+      "{openSubmenu === 'cleanup' && (",
+    ]) {
       const cls = panelClassAfter(SRC, anchor);
       assert.ok(
         !/\babsolute\b/.test(cls),
@@ -84,8 +88,12 @@ describe('下拉菜单的子菜单可达', () => {
 
   it('展开后必须把面板带进视野（否则仍可能是「点了没反应」）', () => {
     assert.ok(SRC.includes('scrollIntoView'), '展开时要 scrollIntoView，避免展开项落在滚动视口之外');
+    // 计数不再钉死数字：改成「每个父行一个面板」的语义断言 ——
+    // 以后再加子菜单时，改一处就够，不会因为数字忘了改而误报。
+    const parentRows = (SRC.match(/setOpenSubmenu\(current => current === '/g) ?? []).length;
+    assert.ok(parentRows >= 3, `至少要有三个父行（导出 / 导入 / 清理），实得 ${parentRows}`);
     const refs = SRC.split('ref={submenuRef}').length - 1;
-    assert.equal(refs, 2, `两个子菜单面板都要挂 ref，实得 ${refs}`);
+    assert.equal(refs, parentRows, `每个父行都要有对应的面板，实得 ${refs} / 父行 ${parentRows}`);
   });
 
   it('可达性 = 功能可达：导出 / 导入仍接在真实处理函数上', () => {
@@ -99,7 +107,8 @@ describe('下拉菜单的子菜单可达', () => {
       !SRC.includes('aria-haspopup="menu"'),
       '面板已是就地展开的 disclosure，aria-haspopup="menu" 是在声明一个不存在的弹出菜单'
     );
+    const parentRows = (SRC.match(/setOpenSubmenu\(current => current === '/g) ?? []).length;
     const expanded = SRC.split('aria-expanded={openSubmenu ===').length - 1;
-    assert.equal(expanded, 2, `两个父行都要有 aria-expanded，实得 ${expanded}`);
+    assert.equal(expanded, parentRows, `每个父行都要有 aria-expanded，实得 ${expanded} / 父行 ${parentRows}`);
   });
 });

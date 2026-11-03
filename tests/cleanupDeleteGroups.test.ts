@@ -16,8 +16,8 @@ describe('applyDeleteGroups', () => {
   });
   it('此刻已锁定的跳过并单列，不进 removedGroupIds', () => {
     const r = applyDeleteGroups([g('a'), g('b', { isLocked: true })], ['a', 'b'], 'now', stamp);
-    assert.deepEqual(r.removedGroupIds, ['a']);
-    assert.deepEqual(r.skippedLocked, ['b']);
+    assert.deepEqual(r.skippedLocked, ['b'], '执行时刻被锁定的必须单列出来（不许硬删）');
+    assert.deepEqual(r.removedGroupIds, ['a'], '被锁定的那个不得进 removedGroupIds');
     assert.deepEqual(r.groups.map(x => x.id), ['b']);
   });
   it('空列表原样返回', () => {

@@ -33,6 +33,8 @@ import { deleteReachesOtherDevices } from '@/components/sync/crossDeviceDeleteCo
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 const read = (rel: string) => readFileSync(resolve(ROOT, rel), 'utf8');
 const DROPDOWN = 'src/components/layout/HeaderDropdown.tsx';
+// 2026-11-03：菜单行的装配搬到了行模型（判据层）。
+const ROW_MODEL = 'src/components/layout/cleanupMenuModel.ts';
 
 describe('deleteReachesOtherDevices：判据是「有没有可用的同步后端」，不是「有没有账号」', () => {
   it('TapStack 云端已登录 → true', () => {
@@ -150,11 +152,15 @@ describe('两处入口都走同一个纯函数（同一份声明只有一个版�
   });
 
   it('菜单行用 deleteAllMenuWarning 装配副标题', () => {
+    // 2026-11-03：菜单行（小字）改由**行模型**装配（`cleanupMenuModel.ts`）。
+    // 判据不变：副标题必须由 deleteAllMenuWarning 产出，且带上锁定会话数
+    // 与真实后端 —— 自带存储（WebDAV）用户也要看到跨设备那句。
+    const model = read(ROW_MODEL);
     assert.ok(
-      /deleteAllMenuWarning\(\{[\s\S]{0,120}?lockedCount:\s*[A-Za-z_$][\w$]*,[\s\S]{0,120}?isAuthenticated,[\s\S]{0,120}?syncBackend: settings\.syncBackend,?[\s\S]{0,40}?\}\)/.test(
-        source
+      /deleteAllMenuWarning\(\{[\s\S]{0,200}?lockedCount:[\s\S]{0,120}?\.\.\.disclosure[\s\S]{0,80}?\}\)/.test(
+        model
       ),
-      '菜单行副标题必须由 deleteAllMenuWarning 产出，且必须带上锁定会话数'
+      '菜单行副标题必须由 deleteAllMenuWarning 产出，且必须带上锁定会话数与真实后端'
     );
   });
 

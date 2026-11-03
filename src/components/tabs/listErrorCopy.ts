@@ -183,7 +183,7 @@ export const ACTION_ERROR_COPY: Record<TabErrorAction, ActionErrorCopy> = {
         nextStep: '这个标签页可能已经被删掉了。重新打开扩展就能看到最终结果。',
     },
     deleteAll: {
-        operation: '删除全部会话',
+        operation: '删除所有会话',
         nextStep: '可能只删掉了一部分。重新打开扩展就能看到最终结果。',
     },
     renameSession: {

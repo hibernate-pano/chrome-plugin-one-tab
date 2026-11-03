@@ -62,6 +62,9 @@ const code = (rel: string) =>
 
 const TAB_GROUP = 'src/components/tabs/TabGroup.tsx';
 const DROPDOWN = 'src/components/layout/HeaderDropdown.tsx';
+// 2026-11-03：菜单行模型（「哪些行出现 + 行文字 + 小字」）在独立模块里。
+const ROW_MODEL = 'src/components/layout/cleanupMenuModel.ts';
+const CLEANUP_PLAN = 'src/core/cleanupPlan.ts';
 
 // ── AST 辅助：判断「某个 JSX 元素是否被 !group.isLocked 条件包住」 ─────────
 //
@@ -571,20 +574,27 @@ describe('「删除所有会话」的调用方必须把真实锁定数传进去'
   });
 
   it('菜单行调用带上了 lockedCount', () => {
+    // 2026-11-03：菜单行（小字）改由**行模型**装配（`cleanupMenuModel.ts`）——
+    // 「哪些行出现」是判据，不该埋在 JSX 里。判定口径不变：锁定数必须是
+    // **算出来的**（来自那份计划），不是写死的常量。
+    const model = code(ROW_MODEL);
     assert.match(
-      src,
+      model,
       /deleteAllMenuWarning\(\{[\s\S]{0,200}?lockedCount:\s*[A-Za-z_$][\w$]*/,
       '菜单行副标题必须带上真实锁定数'
     );
   });
 
   it('锁定数是从当前会话列表数出来的（不是写死的常量）', () => {
+    // 锁定数现在由**判据层**数出来（`planCleanup` 数的是那份会话数组），
+    // 界面只把计划里的数传下去 ⇒ 判据从判据层读。
+    const plan = code(CLEANUP_PLAN);
     assert.match(
-      src,
-      /lockedGroupCount\s*=\s*useMemo\([\s\S]{0,200}?groups\.reduce\(/,
-      '锁定会话数必须由当前 groups 推导'
+      plan,
+      /reduce\(\(sum, group\) => \(group\.isLocked \? sum \+ 1 : sum\), 0\)/,
+      '锁定会话数必须由当前会话列表推导'
     );
-    assert.match(src, /g\.isLocked \? acc \+ 1 : acc/, '只数 isLocked 为真的会话');
+    assert.match(plan, /group\.isLocked/, '只数 isLocked 为真的会话');
   });
 });
 

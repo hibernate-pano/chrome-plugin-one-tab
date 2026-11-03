@@ -21,6 +21,7 @@ describe('monthsBefore：日历月钳制', () => {
     assert.equal(
       localYmd(monthsBefore(new Date(2026, 2, 31, 12, 0, 0), 1)),
       '2026-02-28',
+      '日历月钳制：3 月 31 日退回 2 月 28 日，不能溢出成 3 月 3 日',
     );
   });
   it('闰年 3 月 31 日的一个月前是 2 月 29 日', () => {
@@ -76,8 +77,8 @@ describe('planCleanup：时间档', () => {
       g({ id: 'lock', createdAt: '2026-01-01T00:00:00.000Z', isLocked: true }),
       g({ id: 'free', createdAt: '2026-01-01T00:00:00.000Z' }),
     ], '3m', now);
-    assert.deepEqual(plan.ids, ['free']);
-    assert.equal(plan.lockedSkippedCount, 1);
+    assert.deepEqual(plan.ids, ['free'], '锁定的会话不得进入待删清单');
+    assert.equal(plan.lockedSkippedCount, 1, '被锁定跳过的必须计数');
   });
   it('tabCount 是标签页总数，names 按最新在前', () => {
     const plan = planCleanup([

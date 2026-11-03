@@ -2,7 +2,7 @@ import React, { useState, useRef, useEffect, useLayoutEffect, useCallback, useMe
 import { useAppSelector, useAppDispatch } from '@/store/hooks';
 import { signOut } from '@/store/slices/authSlice';
 import { MENU_LOGIN_LABEL } from '@/components/common/menuLabels';
-import { deleteAllGroups, deleteBroadcastWarn, loadGroups } from '@/store/slices/tabSlice';
+import { deleteAllGroups, deleteBroadcastWarn, deleteGroups, loadGroups } from '@/store/slices/tabSlice';
 import { dispatchReloadSettings } from '@/store/slices/settingsSlice';
 import { sendSyncCommand } from '@/shared/mutationProtocol';
 import { storage } from '@/utils/storage';
@@ -38,17 +38,31 @@ import {
 } from '@/utils/menuKeyboard';
 import { registerFocusReturn } from '@/utils/focusReturn';
 import {
+  CLEANUP_NOTHING_MESSAGE,
+  CLEANUP_READ_FAILED_MESSAGE,
+  cleanupConfirmMessage,
+  cleanupConfirmTitle,
+  cleanupCountsFromResult,
+  cleanupSuccessMessage,
   DELETE_ALL_NOTHING_MESSAGE,
   DELETE_ALL_READ_FAILED_MESSAGE,
   deleteAllCountMatches,
   deleteAllConfirmMessage,
   deleteAllConfirmTitle,
-  deleteAllMenuWarning,
   deleteAllShouldPushOverwrite,
   deleteAllSuccessMessage,
   deletedCountFromResult,
   planDeleteAll,
 } from './deleteAllMessages';
+// ── 2026-11-03：「清理旧会话」的判据层（纯函数，见 core/cleanupPlan.ts）────
+// 菜单行与确认框的数字**必须同源** ⇒ 两者都从 `planCleanup` 的同一份结果里读。
+import {
+  CLEANUP_TIERS,
+  planCleanup,
+  type CleanupPlan,
+  type CleanupTier,
+} from '@/core/cleanupPlan';
+import { cleanupMenuRows } from './cleanupMenuModel';
 import { importPartialMessage, importSuccessMessage } from './importResultCopy';
 import { countOneTabGroups } from '@/core/oneTabFormatParser';
 import { formatExportStamp } from '@/utils/exportStamp';
@@ -218,10 +232,6 @@ const authNotice = useAppSelector(state => state.auth.notice ?? null);
   // 全部删除，但确认框与菜单行必须**点名**「其中包含 N 个已锁定的会话」。
   // 理由写在 deleteAllMessages.ts 的文件头（跳过锁定的残渣无处可去，
   // 而全量物理移除本来就是 v1.22.0 起的明确产品决定）。
-  const lockedGroupCount = useMemo(
-    () => groups.reduce((acc, g) => (g.isLocked ? acc + 1 : acc), 0),
-    [groups]
-  );
   // ── 2026-10-23 DS-43-15：菜单行里的会话数也取**磁盘真值** ──────────────
   //
   // 确认框已经改成读磁盘（fail closed）。若菜单行还留着 Redux 快照，用户会
@@ -229,20 +239,39 @@ const authNotice = useAppSelector(state => state.auth.notice ?? null);
   //
   // 菜单每次打开都会挂载本组件 ⇒ 在这里读一次即可。读失败时**退回界面现值**
   // （菜单行是预告，不是承诺；真正的承诺在确认框，而那里读失败会**中止**）。
-  const [diskCounts, setDiskCounts] = useState<{ groupCount: number; lockedCount: number } | null>(
-    null
-  );
+  // ── 2026-11-03：「清理旧会话」需要**整份**磁盘真值，不只是两个计数 ────
+  //
+  // 六个档位各自的条数要由**同一份**磁盘读算出来（`planCleanup` 一次判定），
+  // 否则菜单行说「三个月前的会话（12）」、确认框却按另一份名单删 ⇒ 说假话。
+  //
+  // 读失败不退化成空数组：菜单行是**预告**，不是承诺 ⇒ 保留界面现值（Redux），
+  // 由 logWarn 留痕；真正的承诺在确认框，而那里读失败会**中止**。
+  const [diskGroups, setDiskGroups] = useState<TabGroup[] | null>(null);
   // 组件是否还活着：删除动作要 await 磁盘读，await 期间菜单可能已被关掉
   // （用户点了外面）⇒ 那时不该再弹确认框（对已卸载的组件开弹层）。
   const mountedRef = useRef(true);
   // 菜单行用的数字：有磁盘真值就用它，没有（读失败）才退回界面现值。
-  const menuGroupCount = diskCounts?.groupCount ?? groups.length;
-  const menuLockedCount = diskCounts?.lockedCount ?? lockedGroupCount;
+  const menuGroupCount = diskGroups?.length ?? groups.length;
+  // ── 2026-11-03：判定用的「现在」**只取一次** ────────────────────────────
+  // 每次渲染都 `new Date()` 的话，下面的 useMemo 依赖每次都变 ⇒ 缓存失效，
+  // 而同一帧里算出来的两份计划可能用不同的 now ⇒ 菜单与确认框的条数对不上。
+  const cleanupNow = useMemo(() => new Date(), []);
+  // 六档的计划：同一份来源 + 同一个 now ⇒ 一次判定，处处同源。
+  const cleanupPlans = useMemo(() => {
+    const source = diskGroups ?? groups;
+    const plans = {} as Record<CleanupTier, CleanupPlan>;
+    for (const tier of CLEANUP_TIERS) {
+      plans[tier] = planCleanup(source, tier, cleanupNow);
+    }
+    return plans;
+  }, [diskGroups, groups, cleanupNow]);
   const settings = useAppSelector(state => state.settings);
   // ── 2026-10-22 审计 L-11：初始展开的子菜单 ────────────────────────────
   // `initialSubmenu` 只在**挂载时**读一次（这个组件随菜单开关挂载/卸载，
   // 每次打开都是新实例 ⇒ 正好是「这次要不要自动展开导入」的语义）。
-  const [openSubmenu, setOpenSubmenu] = useState<'export' | 'import' | null>(initialSubmenu ?? null);
+  const [openSubmenu, setOpenSubmenu] = useState<'export' | 'import' | 'cleanup' | null>(
+    initialSubmenu ?? null
+  );
 
   // 挂载即消费：调用方要在这个子菜单展开状态下被读走一次，
   // 否则「下次打开菜单还会自动展开导入」。
@@ -446,14 +475,11 @@ const authNotice = useAppSelector(state => state.auth.notice ?? null);
     let alive = true;
     void (async () => {
       try {
-        const diskGroups = await storage.getGroupsForWrite();
+        const groups = await storage.getGroupsForWrite();
         if (!alive) return;
-        setDiskCounts({
-          groupCount: diskGroups.length,
-          lockedCount: diskGroups.reduce((acc, g) => (g.isLocked ? acc + 1 : acc), 0),
-        });
+        setDiskGroups(groups);
       } catch (error) {
-        logWarn('[HeaderDropdown] 读取真实会话数失败，菜单行用界面现值:', error);
+        logWarn('[HeaderDropdown] 读取真实会话失败，菜单行用界面现值:', error);
       }
     })();
     return () => {
@@ -779,6 +805,100 @@ const authNotice = useAppSelector(state => state.auth.notice ?? null);
       cancelText: '取消',
       onConfirm: runDeleteAll,
       onCancel: () => { }
+    });
+  };
+
+  /**
+   * 「清理旧会话」：按档位算计划 → 读磁盘真值 → 确认 → 执行。
+   *
+   * ── 三条纪律 ────────────────────────────────────────────────────────────
+   * ① **fail closed**：破坏性路径上的读失败一律**中止**，绝不退回 Redux 快照
+   *    继续删（与「删除所有会话」同一条纪律）。
+   * ② **名单在确认那一刻定死**：执行时只删确认框里列出的那些 id。若让 SW 按
+   *    年龄规则现算，用户看到 12 个名字、实际可能删掉 13 个（这期间同步进来
+   *    一条旧会话）⇒ 名字就是承诺。
+   * ③ **锁定在执行时刻再判一次**：另一台设备可能刚把某条锁上，而确认框承诺
+   *    「已锁定的不会被清理」—— 这句承诺得在执行时也成立（SW 侧跳过并回执）。
+   *
+   * ⚠️ 「含锁定」档**不走这里**：它复用既有的 `deleteAllGroups` 路径
+   * （含覆盖上传），一个字节都不改 —— 那一档的语义就是「全删」。
+   */
+  const handleCleanupTier = async (tier: CleanupTier) => {
+    setOpenSubmenu(null);
+
+    let diskGroups: TabGroup[];
+    try {
+      diskGroups = await storage.getGroupsForWrite();
+    } catch (error) {
+      logError('[HeaderDropdown] 清理前读取真实会话失败，已取消清理:', error);
+      showToast(CLEANUP_READ_FAILED_MESSAGE, 'error');
+      return;
+    }
+
+    // 确认前**重新**算一次计划（菜单上那个数是挂载时算的，期间数据可能变了）。
+    const plan = planCleanup(diskGroups, tier, new Date());
+    // 算出来是 0 条 ⇒ 不弹「清理 0 个会话」这种自相矛盾的框。
+    if (plan.ids.length === 0) {
+      showToast(CLEANUP_NOTHING_MESSAGE, 'info', 4000);
+      return;
+    }
+
+    // await 期间菜单可能已被关掉（用户点了外面）⇒ 那时不该再弹确认框。
+    if (!mountedRef.current) return;
+
+    const runCleanup = () => {
+      onClose();
+      dispatch(deleteGroups(plan.ids))
+        .unwrap()
+        .then(payload => {
+          // 回执：SW 按磁盘真值回传实际条数 + 因锁定跳过的条数。
+          // ⚠️ 不许按「请求总数 − 两个数 = 未处理」倒算（磁盘上已不存在的 id
+          // 两个数都不计）⇒ 文案只拿「实际删了多少」与「锁定跳过了多少」。
+          const { deletedCount, skippedLocked } = cleanupCountsFromResult(payload);
+          const message = cleanupSuccessMessage({
+            deletedCount,
+            confirmedCount: plan.groupCount,
+            skippedLocked,
+          });
+          // 「安静的成功」：数量一致 ⇒ 空串 ⇒ 不出声（列表自己说得清楚）。
+          if (message) showToast(message, 'info', 4000);
+          // 广播登记失败时本地已删干净，但云端行不会被标 is_deleted ⇒
+          // 其它设备下次合并会把它当 remote-only 全部复活。必须如实告知。
+          const warn = deleteBroadcastWarn(payload);
+          if (warn) {
+            showAlert({
+              title: '删除未完全同步',
+              message: warn,
+              type: 'warning',
+              onClose: () => {},
+            });
+          }
+        })
+        .catch(error => {
+          logError('[HeaderDropdown] 清理旧会话失败:', error);
+          showAlert({
+            title: '删除失败',
+            message: '清理旧会话失败',
+            type: 'error',
+            onClose: () => {},
+          });
+        });
+    };
+
+    // 与「删除所有会话」同一条焦点纪律：确认框关闭后焦点回到顶栏的菜单按钮。
+    registerFocusReturn(document.querySelector<HTMLElement>('[data-menu-trigger]'));
+
+    showConfirm({
+      title: cleanupConfirmTitle(plan),
+      message: cleanupConfirmMessage(plan, {
+        isAuthenticated,
+        syncBackend: settings.syncBackend,
+      }),
+      type: 'danger',
+      confirmText: '清理',
+      cancelText: '取消',
+      onConfirm: runCleanup,
+      onCancel: () => {},
     });
   };
 
@@ -1658,29 +1778,66 @@ const authNotice = useAppSelector(state => state.auth.notice ?? null);
           </button>
         )}
 
-        {/* 危险区：与菜单平面语言一致（rounded-lg + 留边），用色块与普通项区分防误触。
-            核弹级操作：强制确认不受「删除会话前确认」开关控制；无组时隐藏；描述带数量。 */}
+        {/* 危险区（2026-11-03：整体换成「清理旧会话」子菜单）───────────────
+            为什么不再是一个「删除所有会话（N）」按钮：会话列表只增不减，
+            200 个会话的人只有「一个个点」与「全清」两个出口，中间没有档。
+            现在按保存时间给出六档（一个月 / 三个月 / 六个月 / 一年 / 保留锁定 /
+            含锁定），每档的条数取**磁盘真值**（与确认框同源）。
+
+            父行只是展开器，不带副标题（256px 的菜单塞不下四段小字）；
+            四个时间档也不带小字，只有两档「全部」带 —— 那两档的后果最重，
+            必须当场说清（锁定会话会保留 / 会被删）。 */}
         {menuGroupCount > 0 && (
           <div className="px-2 pt-1.5 pb-0.5">
             <button
               role="menuitem"
-              onClick={() => { void handleDeleteAllGroups(); }}
+              onClick={() => setOpenSubmenu(current => current === 'cleanup' ? null : 'cleanup')}
+              aria-expanded={openSubmenu === 'cleanup'}
               className="flex w-full items-center gap-2 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2.5 text-left text-sm font-medium text-rose-700 transition-colors hover:bg-rose-100 dark:border-rose-900/40 dark:bg-rose-950/30 dark:text-rose-300 dark:hover:bg-rose-950/50"
+              type="button"
             >
               <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 shrink-0 text-rose-500 dark:text-rose-300" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a2 2 0 00-1-1h-4a2 2 0 00-1 1v3M4 7h16" />
               </svg>
-              <span className="flex-1">
-                <span className="block">删除所有会话（{menuGroupCount}）</span>
-                <span className="mt-0.5 block text-xs font-normal text-rose-600/80 dark:text-rose-300/80">
-                  {deleteAllMenuWarning({
-                    lockedCount: menuLockedCount,
-                    isAuthenticated,
-                    syncBackend: settings.syncBackend,
-                  })}
-                </span>
-              </span>
+              <span className="flex-1">清理旧会话</span>
+              {/* 方向指示要与实际展开方向一致（与「导出数据」同一枚箭头）。 */}
+              <svg xmlns="http://www.w3.org/2000/svg" className={`h-4 w-4 theme-text-muted transition-transform duration-150 ${openSubmenu === 'cleanup' ? 'rotate-90' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+              </svg>
             </button>
+            {/* 子菜单**就地展开**（与导出 / 导入同一模式）：菜单容器是横向裁剪盒，
+                绝对定位的面板会被裁到盒子之外 ⇒ 点「展开」屏幕毫无变化。 */}
+            {openSubmenu === 'cleanup' && (
+              <div ref={submenuRef} className="ts-panel mb-1 ml-3 rounded-lg border theme-border-default theme-bg-elevated shadow-lg">
+                {/* 行模型是纯函数（`cleanupMenuRows`）：哪些行出现、行文字、
+                    小字与执行路径都在那里判 ⇒ 这里只负责渲染。 */}
+                {cleanupMenuRows(cleanupPlans, {
+                  isAuthenticated,
+                  syncBackend: settings.syncBackend,
+                }).map(row => (
+                  <button
+                    key={row.tier}
+                    role="menuitem"
+                    onClick={() => {
+                      if (row.path === 'deleteAll') {
+                        // 「含锁定」那一档走**既有**的 deleteAllGroups 路径
+                        // （含覆盖上传），一个字节都不改 —— 它的语义就是「全删」。
+                        void handleDeleteAllGroups();
+                      } else {
+                        void handleCleanupTier(row.tier);
+                      }
+                    }}
+                    className={MENU_ROW}
+                    type="button"
+                  >
+                    <span className="block">{row.label}</span>
+                    {row.warning && (
+                      <span className="mt-0.5 block text-xs theme-text-muted">{row.warning}</span>
+                    )}
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
         )}
 

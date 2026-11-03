@@ -13,9 +13,13 @@
 //
 // ── 判据钉什么 ────────────────────────────────────────────────────────────
 //
-// **不钉字面量**：叫法从**界面**（菜单那一行）现场读出来 ——
+// **不钉字面量**：叫法从**界面**（菜单那一档的标签函数）现场读出来 ——
 // 界面是这套产品自己的基准，改界面的人自然会看到守卫变红。
 // 然后要求所有文档用**同一个**词，且**不许**出现另一个词。
+//
+// ⚠️ 2026-11-03：「删除所有会话」不再是菜单里一行 JSX 字面量（它是「清理旧会话」
+//    子菜单里「含锁定」那一档的文案）⇒ 取法改成从 `CLEANUP_TIER_LABELS['all']`
+//    现场读，**仍是现场读**，不是钉字面量。
 //
 // ⚠️ CHROMEWEBSTORE.md 的**正文（Store Listing 段）**已在本守卫覆盖内；
 //    只剩「Review Notes / Known Issues」段还有一处待改（同一批里由主控代改，
@@ -27,10 +31,11 @@ import { readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { CLEANUP_TIER_LABELS, type CleanupPlan } from '@/core/cleanupPlan';
+
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 const read = (rel: string): string => readFileSync(resolve(ROOT, rel), 'utf8');
 
-const DROPDOWN = read('src/components/layout/HeaderDropdown.tsx');
 const README = read('README.md');
 const PRIVACY = read('src/legal/privacy.html');
 const STEPS = read('src/components/onboarding/OnboardingSteps.tsx');
@@ -41,22 +46,34 @@ const stripComments = (src: string): string =>
   src.replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/(^|[^:])\/\/.*$/gm, '$1');
 
 /**
- * 界面上那个叫法（从菜单那一行现场读）。
+ * 界面上那个叫法（从**菜单渲染用的那个标签函数**现场读）。
  *
- * 菜单行长这样：`删除所有会话（{menuGroupCount}）` ⇒ 去掉计数括号就是叫法。
- * 这样改名的人（无论是改菜单还是改文档）都会撞到守卫。
+ * ── 为什么取法变了（2026-11-03）──────────────────────────────────────────
+ * 原来「删除所有会话（N）」是菜单里一行 JSX 字面量 ⇒ 正则现场读。
+ * 现在它是「清理旧会话」子菜单里「含锁定」那一档的**文案**，由
+ * `CLEANUP_TIER_LABELS['all'](plan)` 渲染 ⇒ 那行字面量已经不存在了。
  *
- * ⚠️ 计数那一段**故意不钉成 `groups.length`**（2026-10-23 DS-43-15）：
- * 菜单行的计数已改成取磁盘真值（表达式名会变），而这个守卫要守的是
- * **叫法**，不是计数怎么来的。钉死计数表达式 ⇒ 换一种正确的写法就误报。
+ * ⇒ 基准改成从**同一个函数**现场读（菜单渲染用的就是它）。
+ *   仍然是「现场读」而不是「钉字面量」：改界面文案的人会撞到守卫，
+ *   而「叫法从哪来」这件事只有一处出处。
  */
 function uiDeleteAllTerm(): string {
-  const m = DROPDOWN.match(/删除[^，。；「」（）]{0,8}会话（\{[^}]+\}）/);
-  assert.ok(
-    m,
-    '菜单里找不到「删除…会话（{…}）」那一行 —— 守卫的前提变了'
-  );
-  return m[0].replace(/（\{[^}]+\}）$/, '');
+  // 只填标签函数会读到的字段；计数取 5（去掉计数括号后就是叫法）。
+  const plan = {
+    tier: 'all',
+    ids: [],
+    groupCount: 5,
+    tabCount: 0,
+    unknownTimeCount: 0,
+    lockedSkippedCount: 0,
+    lockedCount: 0,
+    names: [],
+    entries: [],
+  } as unknown as CleanupPlan;
+  const label = CLEANUP_TIER_LABELS.all(plan);
+  const m = label.match(/^(.+?)（\d+）$/);
+  assert.ok(m, `菜单里读不出「删除…会话（N）」这个叫法 —— 守卫的前提变了：${label}`);
+  return m[1];
 }
 
 /** 另一个（历史遗留的）叫法。 */
@@ -70,6 +87,13 @@ const FILES: ReadonlyArray<{ rel: string; text: string; label: string }> = [
     rel: 'src/components/onboarding/OnboardingSteps.tsx',
     text: stripComments(STEPS),
     label: '新手引导',
+  },
+  // 2026-11-03：报错文案也写着这个动作的名字。它此前写的是「删除全部会话」——
+  // 同一个动作两个名字，而这是**用户真会读到**的一处（删除失败时的提示）。
+  {
+    rel: 'src/components/tabs/listErrorCopy.ts',
+    text: stripComments(read('src/components/tabs/listErrorCopy.ts')),
+    label: '列表报错文案',
   },
 ];
 

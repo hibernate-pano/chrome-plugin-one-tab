@@ -60,20 +60,24 @@ describe('变异自证：WC-8 叫法一致性守卫必须看得见破口', () =>
   it('变异三：界面自己改了叫法 ⇒ 守卫必须变红（基准是现场读出来的）', () => {
     const [outcome] = runMutationCases([
       {
-        name: '菜单那一行改了叫法',
+        name: '菜单那一档的标签函数改了叫法',
         testFile: GUARD,
         targets: [
           {
-            path: 'src/components/layout/HeaderDropdown.tsx',
+            // 2026-11-03：菜单那一行不再是 JSX 字面量 ⇒ 基准改从
+            // `CLEANUP_TIER_LABELS['all']` 现场读 ⇒ 变异也必须落在**同一个**函数上，
+            // 否则守的就不是「界面上叫什么」了。
+            path: 'src/core/cleanupPlan.ts',
             mutate: source => {
-              // ⚠️ 只改**叫法**，不碰计数表达式（2026-10-23 DS-43-15：
-              // 菜单行的计数已改成取磁盘真值，表达式名会变 —— 变异要守的是
-              // 「叫法变了守卫会不会红」，不是「某个表达式还在不在」）。
+              // ⚠️ 必须改**守卫真正读到的那一支**：守卫读的是
+              // `CLEANUP_TIER_LABELS['all'](plan)` 且 plan.lockedCount = 0
+              // ⇒ 读到的是「删除所有会话（N）」那一支（「含锁定」那一支
+              // 在无锁定时根本不出现）。改了没被读到的那支 ⇒ 守卫仍绿。
               const next = source.replace(
-                /删除所有会话（\{[^}]+\}）/,
-                '删除全部会话（{count}）'
+                '`删除所有会话（${plan.groupCount}）`',
+                '`删除全部会话（${plan.groupCount}）`'
               );
-              if (next === source) throw new Error('变异前提没成立：找不到菜单里那一行');
+              if (next === source) throw new Error('变异前提没成立：找不到「删除所有会话」那个标签');
               return next;
             },
           },

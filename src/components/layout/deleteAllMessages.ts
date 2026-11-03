@@ -24,6 +24,8 @@ import {
   deleteReachesOtherDevices,
   otherDevicesLabel,
 } from '@/components/sync/crossDeviceDeleteCopy';
+import type { CleanupPlan } from '@/core/cleanupPlan';
+import { formatRelativeTime } from '@/utils/sessionPresentation';
 
 export interface DeleteAllDisclosure {
   isAuthenticated: boolean;
@@ -224,6 +226,189 @@ export const deleteAllMenuWarning = (
 ): string =>
   '将清空本地全部会话，删除后无法恢复' +
   deleteAllLockedWarning(input) +
+  (deleteReachesOtherDevices(input)
+    ? `（${otherDevicesLabel(input)}同步删除${crossDeviceDeleteCaveat}）`
+    : '') +
+  '。';
+
+// ────────────────────────────────────────────────────────────────────────────
+// 「清理旧会话」的确认框与回执（2026-11-03 上线，判据层见 core/cleanupPlan.ts）
+// ────────────────────────────────────────────────────────────────────────────
+//
+// ── 为什么这三套文案**不共用一个模板** ─────────────────────────────────────
+//
+// 三档的语义本来就不同（设计稿 §7.5 R1）：
+//   · 时间档（「三个月前的会话」）—— 按年龄挑出来的一批；
+//   · 「删除所有会话（保留 N 个锁定）」—— 全清，但锁定的那批留下；
+//   · 「删除所有会话（含 N 个锁定）」—— 全清，锁定也清（**沿用既有 deleteAll* 文案**）。
+//
+// 硬套一个模板必然有两处说假话：时间档没有「另有锁定的会保留」，
+// 「保留锁定」档没有「按导入时间计算」，「含锁定」档则根本不是「清理」而是「全删」。
+//
+// ── 为什么数字全部来自 `CleanupPlan` ───────────────────────────────────────
+//
+// 菜单行说「三个月前的会话（12）」、确认框却只删 11 个 ⇒ 那是一句当场就能
+// 戳破的谎。判据层一次算完（`planCleanup`），这里**只负责把同一份数字读成话**。
+
+/** 确认框里的名字预览最多列几条（再多就变成一堵墙，用户反而认不出哪几个）。 */
+const CLEANUP_PREVIEW_LIMIT = 6;
+
+/**
+ * 确认框标题。
+ *
+ * 「保留锁定」档说的是「删除」而不是「清理」—— 那一档**不看年龄**，
+ * 它清的是「除锁定以外的全部」，叫「清理 12 个会话」会让人以为还有别的条件。
+ */
+export const cleanupConfirmTitle = (plan: CleanupPlan): string =>
+  plan.tier === 'all-keep-locked'
+    ? `删除 ${plan.groupCount} 个会话`
+    : `清理 ${plan.groupCount} 个会话`;
+
+/**
+ * 名字预览：「「GitHub 调研」8月3日、「季度报告」7月21日」…
+ *
+ * 超过 6 条就说「等 N 个」—— **不逐条列**：列 40 个名字的确认框没人读得下去，
+ * 而「等 40 个」+ 前 6 个既给了辨认线索，又说清了总数。
+ *
+ * ⚠️ 名字与日期都来自 `plan.entries`（判据层算好的同一份参考时间），
+ * 界面层**不自己**去取 `createdAt` / `importedAt`（两套时间口径 = 两套说法）。
+ */
+const cleanupNamePreview = (plan: CleanupPlan): string => {
+  if (plan.entries.length === 0) return '';
+  const shown = plan.entries
+    .slice(0, CLEANUP_PREVIEW_LIMIT)
+    .map(entry => `「${entry.name}」${formatRelativeTime(entry.referenceTime)}`);
+  if (plan.entries.length > CLEANUP_PREVIEW_LIMIT) {
+    return `${shown.join('、')} 等 ${plan.groupCount} 个`;
+  }
+  return shown.join('、');
+};
+
+/**
+ * 确认框正文（破坏性操作的最后一道说明）。
+ *
+ * 四段，顺序与设计稿 §4.2 一致：
+ *   ① 数量（会话数 + 标签页数）
+ *   ② 名字预览（最多 6 个 + 「等 N 个」）
+ *   ③ 锁定/未知时间的说明（按档位取舍）
+ *   ④ 跨设备 + 不可撤销
+ */
+export const cleanupConfirmMessage = (
+  plan: CleanupPlan,
+  disclosure: DeleteAllDisclosure
+): string => {
+  const lines: string[] = [];
+
+  lines.push(`将删除 ${plan.groupCount} 个会话，共 ${plan.tabCount} 个标签页。`);
+
+  const preview = cleanupNamePreview(plan);
+  if (preview) lines.push(preview);
+
+  if (plan.tier === 'all-keep-locked') {
+    // 这一档的锁定是**它的名字本身**（「保留 N 个锁定」）⇒ 说「会保留」，
+    // 不是「不会被清理」—— 后者听起来像「碰巧没被清到」。
+    if (plan.lockedSkippedCount > 0) {
+      lines.push(`另有 ${plan.lockedSkippedCount} 个已锁定的会话会保留。`);
+    }
+  } else {
+    // 时间档：锁定的那批本来够旧，却因为锁定留下来 ⇒ 必须点名。
+    if (plan.lockedSkippedCount > 0) {
+      lines.push(`另有 ${plan.lockedSkippedCount} 个已锁定的会话不会被清理。`);
+    }
+    // 未知时间的会话按**导入时间**算 ⇒ 说出来，否则用户以为那是保存时间。
+    if (plan.unknownTimeCount > 0) {
+      lines.push(
+        `其中 ${plan.unknownTimeCount} 个保存时间未知（OneTab 导入），按导入时间计算 —— 它们至少有那么旧。`
+      );
+    }
+  }
+
+  if (deleteReachesOtherDevices(disclosure)) {
+    // 与「删除所有会话」**同一句**（不另写一份）：同一件事、同一句话。
+    lines.push(`${otherDevicesLabel(disclosure)}将同步删除${crossDeviceDeleteCaveat}。`);
+  }
+  lines.push('删除后彻底清除：没有回收站，也没有撤销。');
+
+  return lines.join('\n');
+};
+
+/**
+ * 执行完成后的那句话。
+ *
+ * - `deletedCount` = SW 按磁盘真值回传的实际条数；
+ * - `confirmedCount` = 用户在确认框里看到的那个数；
+ * - `skippedLocked` = 执行时刻仍被锁定、因而**被跳过**的条数。
+ *
+ * ⚠️ **不许**按「请求总数 − count − skippedLocked = 未处理」倒算：
+ * 磁盘上已经不存在的 id 两个数都不计 ⇒ 那样算出来的「未处理」是编的。
+ *
+ * 四种情形：
+ *   ① 数量一致 ⇒ **空串**（「安静的成功」：列表里那些会话不见了，界面自明）；
+ *   ② 有锁定跳过 ⇒ 说清真实原因，**不许**说「其余已被移除」（对锁定情形是假话）；
+ *   ③ 少删（不是锁定）⇒ 沿用既有说法；
+ *   ④ 一个都没删 ⇒ 说清「它们在你确认之前就已被移除」。
+ */
+export const cleanupSuccessMessage = (input: {
+  deletedCount: number;
+  confirmedCount: number;
+  skippedLocked: number;
+}): string => {
+  const { deletedCount, confirmedCount, skippedLocked } = input;
+  if (skippedLocked > 0) {
+    return `已删除 ${deletedCount} 个会话（${skippedLocked} 个在你确认后被锁定，已跳过）`;
+  }
+  if (deletedCount === confirmedCount) return '';
+  if (deletedCount === 0) {
+    return confirmedCount > 0
+      ? '没有会话被删除（它们在你确认之前就已被移除）'
+      : DELETE_ALL_NOTHING_MESSAGE;
+  }
+  if (deletedCount < confirmedCount) {
+    return `已删除 ${deletedCount} 个会话（确认时是 ${confirmedCount} 个，其余已被移除）`;
+  }
+  return `已删除 ${deletedCount} 个会话（确认时是 ${confirmedCount} 个，期间有新的会话同步进来）`;
+};
+
+/**
+ * 从回执里取清理的实际条数与「因锁定跳过」的条数。
+ *
+ * 为什么要单独抽一个函数：回执的形状是 `unknown`（thunk 载荷），
+ * 而数字缺失时**不能猜** —— 猜出来的数字会被当成「删了 N 个」说出来。
+ */
+export const cleanupCountsFromResult = (payload: unknown): {
+  deletedCount: number;
+  skippedLocked: number;
+} => {
+  const empty = { deletedCount: 0, skippedLocked: 0 };
+  if (!payload || typeof payload !== 'object') return empty;
+  const value = (payload as { value?: unknown }).value;
+  if (!value || typeof value !== 'object') return empty;
+  const read = (raw: unknown): number =>
+    typeof raw === 'number' && Number.isFinite(raw) && raw >= 0 ? raw : 0;
+  return {
+    deletedCount: read((value as { count?: unknown }).count),
+    skippedLocked: read((value as { skippedLocked?: unknown }).skippedLocked),
+  };
+};
+
+/** 读不到磁盘真值时的中止提示（fail closed，与「删除所有会话」同一条纪律）。 */
+export const CLEANUP_READ_FAILED_MESSAGE =
+  '暂时读不到真实会话，已取消清理，请稍后重试';
+
+/** 这一档算出来是 0 条：不用弹确认框，直接说清（与「点了没反应」不同）。 */
+export const CLEANUP_NOTHING_MESSAGE = '没有可清理的会话';
+
+/**
+ * 「删除所有会话（保留 N 个锁定）」那一行的副标题。
+ *
+ * 与「含锁定」那行的副标题（`deleteAllMenuWarning`）**成对**：两行的后果相反，
+ * 必须各自说清 —— 一个说「锁定的也会被删」，一个说「锁定的会保留」。
+ */
+export const deleteAllKeepLockedMenuWarning = (
+  input: DeleteAllDisclosure & DeleteAllLockedDisclosure
+): string =>
+  '将清空本地未锁定的全部会话，删除后无法恢复' +
+  (input.lockedCount > 0 ? `（${input.lockedCount} 个已锁定的会保留）` : '') +
   (deleteReachesOtherDevices(input)
     ? `（${otherDevicesLabel(input)}同步删除${crossDeviceDeleteCaveat}）`
     : '') +

@@ -65,6 +65,21 @@ const TIER_MONTHS: Readonly<Record<TimeTier, number>> = {
   '12m': 12,
 };
 
+/**
+ * 六个档位（**顺序即菜单里的顺序**）。
+ *
+ * ⚠️ 这是档位清单的**唯一出处** —— 菜单渲染、判据入口、守卫都从这里取，
+ * 免得「清单抄两遍、抄岔了」。
+ */
+export const CLEANUP_TIERS: readonly CleanupTier[] = [
+  '1m',
+  '3m',
+  '6m',
+  '12m',
+  'all-keep-locked',
+  'all',
+];
+
 const isTimeTier = (tier: CleanupTier): tier is TimeTier =>
   tier === '1m' || tier === '3m' || tier === '6m' || tier === '12m';
 
@@ -157,6 +172,18 @@ export interface CleanupPlan {
   lockedCount: number;
   /** 将删会话的名字，**最新在前**（调用方自行截断到前几条）。 */
   names: string[];
+  /**
+   * 将删会话的**名字与参考时间**（最新在前）。
+   *
+   * ── 为什么名字要带着时间一起给 ──────────────────────────────────────────
+   * 确认框的名字预览要写成「GitHub 调研 8月3日」，而**参考时间只有判据层
+   * 知道**（它是按同一个参考时间算年龄、算排序的）⇒ 界面层若自己再取一次
+   * `createdAt` / `importedAt`，就多了一套「拿哪个时间戳」的判断 —— 那是
+   * 「按 A 时间选、按 B 时间排」的老毛病（见本文件「名字预览为什么在这里排序」）。
+   *
+   * ⇒ 这里一次给出 `{ name, referenceTime }`，界面层只负责**怎么显示**。
+   */
+  entries: Array<{ name: string; referenceTime: string }>;
 }
 
 /**
@@ -199,10 +226,9 @@ export function planCleanup(
     selected.push(...groups);
   }
 
-  const names = selected
-    .map((group) => ({ name: group.name, at: referenceSortTime(group) }))
-    .sort((left, right) => right.at - left.at)
-    .map((entry) => entry.name);
+  const entries = selected
+    .map((group) => ({ name: group.name, at: referenceSortTime(group), referenceTime: referenceTime(group) }))
+    .sort((left, right) => right.at - left.at);
 
   return {
     tier,
@@ -215,7 +241,8 @@ export function planCleanup(
     // 分支里已经把它们跳过了。单独再数一遍，是为了让「菜单说的锁定数」与
     // 「真正要删的锁定条数」出自**同一份结果**，而不是调用方另算一个。
     lockedCount: selected.reduce((sum, group) => (group.isLocked ? sum + 1 : sum), 0),
-    names,
+    names: entries.map((entry) => entry.name),
+    entries: entries.map(({ name, referenceTime: at }) => ({ name, referenceTime: at })),
   };
 }
 
