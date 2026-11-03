@@ -136,6 +136,40 @@ async function main() {
       }));
       console.log('  搜索态 DOM:', JSON.stringify(searchDom));
 
+      // 搜索态滚动：占位必须与真行**等高** —— 滚到底前后文档总高不许变。
+      // 这是「组内行窗口化」唯一可能出错的形态：占位矮了/高了，滚到那儿
+      // 内容会跳、滚动条会漂。delta ≈ 0 才算占位逐像素对得上。
+      const searchScroll = await page.evaluate(async () => {
+        const se = document.scrollingElement || document.documentElement;
+        se.scrollTop = 0;
+        await new Promise(r => requestAnimationFrame(r));
+        const before = se.scrollHeight;
+        const t = performance.now();
+        let frames = 0, maxGap = 0, last = t;
+        const step = () => {
+          const now = performance.now();
+          maxGap = Math.max(maxGap, now - last);
+          last = now;
+          se.scrollTop += 600;
+          frames++;
+          if (se.scrollTop < se.scrollHeight - 800 && frames < 150) requestAnimationFrame(step);
+        };
+        requestAnimationFrame(step);
+        await new Promise(r => setTimeout(r, 2000));
+        const after = se.scrollHeight;
+        const out = {
+          before,
+          after,
+          delta: after - before,
+          frames,
+          maxFrameGapMs: Math.round(maxGap),
+          docNodes: document.getElementsByTagName('*').length,
+        };
+        se.scrollTop = 0;
+        return out;
+      });
+      console.log('  搜索态滚动:', JSON.stringify(searchScroll));
+
       // 滚动流畅度
       await search.fill('');
       await page.waitForTimeout(600);
@@ -167,7 +201,7 @@ async function main() {
       });
       console.log('  滚动:', JSON.stringify(scroll));
 
-      results[`${gc}x${tpg}`] = { openMs, dom, searchMs, searchDom, scroll };
+      results[`${gc}x${tpg}`] = { openMs, dom, searchMs, searchDom, searchScroll, scroll };
       await page.screenshot({ path: join(OUT_DIR, `list-${gc}x${tpg}.png`) });
       await page.close();
     }

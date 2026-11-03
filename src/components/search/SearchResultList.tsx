@@ -44,6 +44,7 @@ import {
   buildResultWindow,
   resultTruncationMessage,
 } from '@/components/search/searchWindowing';
+import { SearchMatchRows } from '@/components/search/SearchMatchRows';
 import { SearchFilterSection } from '@/components/search/SearchFilterPanel';
 import {
   browseEmptyDescription,
@@ -239,31 +240,33 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({
   const batchRestorePlan = useMemo(() => planBatchRestore(matchingTabs), [matchingTabs]);
 
 
-  // ── 2026-10-20 审计 A-11：搜索结果也要有渲染上限 ───────────────────────
+  // ── 搜索结果的两道渲染边界（2026-11-03 复核）────────────────────────────
+  //
   // 修复前这里**全量渲染**所有匹配结果：400 会话 × 20 标签搜一个宽泛词
   // （如 "https"）⇒ 91311 个 DOM 节点、搜索响应 1250ms、滚动掉到 11fps。
   // 主列表早有虚拟化（lazyTabRows + useNearViewport），搜索这条路却没有 ——
   // 而搜索是本产品最高频的「找回」路径。
   //
-  // 当前**只有一道**防线（判据在 searchWindowing.ts，可测）：
-  //   1. **条数上限**：命中很多时只展示最靠前的部分。AdvancedSearch 已按
-  //      相关度排好序 ⇒ 截断是排序的兑现，不是信息损失。截断了必须说清
-  //      「还有 N 条未显示」，否则用户会以为只找到了这么多。
+  // 现在真的有两道，判据都在可测的纯函数 / 组件里：
+  //   1. **条数上限**（`buildResultWindow`）：命中很多时只保留最靠前的部分。
+  //      AdvancedSearch 已按相关度排好序 ⇒ 截断是排序的兑现，不是信息损失。
+  //      截断了必须说清「还有 N 条未显示」。它按整组保留 ⇒ 卡头数也被
+  //      上限压住（每组至少命中 1 条才会留下）。
+  //   2. **组内行窗口化**（`SearchMatchRows`）：上限不约束单个组有多少行
+  //      （一个会话命中 800 条时那 800 行会一次进 DOM）⇒ 组内命中行与主列表
+  //      共用同一套「接近视口才渲染真行、远端留等高占位」机制。
   //
-  // ── 2026-10-22 架构审计 D1 更正 ──────────────────────────────────────────
-  // 这段注释原先写着「两道防线」，第二条是「**分片渲染**：结果条数没超上限、
-  // 但会话分组多时，按片渲染」—— 而它**在生产代码里不存在**：
-  // `searchWindowing.ts` 的 `computeVisibleChunks` / `chunkResults` /
-  // `SEARCH_CHUNK_SIZE` 三个导出**零生产调用点**（只有单测在测它们）。
-  //
-  // 为什么这句谎话危险：只看这个文件的人会以为「搜索路径已经做了渲染上限」，
-  // 于是以为「200 条截断管住了渲染量」—— 但它只管住了**标签条数**，
-  // **没管住卡头数**（visibleSessionResults 按整组保留：400 组各命中 1 个标签时，
-  // 200 组全部渲染，每组一个卡头）。
-  //
-  // ⇒ 注释必须说真话。分片能力**还没接线**（接线需要给 useNearViewport 加
-  // 「当前第几片」的接口），接线前不许在这里声称它存在。
-  // 守卫见 tests/guards/noPhantomMechanisms.test.ts。
+  // ── 曾经计划的「分片渲染」已删除，不是还没接线 ─────────────────────────
+  // `searchWindowing.ts` 里曾有 `computeVisibleChunks` / `chunkResults` /
+  // `SEARCH_CHUNK_SIZE`，零生产调用点。2026-11-03 用
+  // `scripts/prod-stress.mjs` 重新实测（400 会话 × 20 标签）：
+  //   · 搜索响应 367ms（其中 300ms 是搜索框的**故意**防抖）
+  //   · 搜索态 DOM：加组内行窗口化**之前** 3,892 → **之后** 1,521
+  //   · 滚动最大帧间隔 15ms；搜索态滚到底前后文档总高不变（占位等高）
+  // ⇒ 条数上限已经把「全量渲染」挡住了；缺的那一段（单组行数）用**同一套**
+  //   已有机制补上就够了。再挂一套没有真实调用历史的分片窗口化，只会与
+  //   上面第 2 道互相冲突。代码与单测一并删除。
+  // 守卫见 tests/guards/searchRowsWindowing.test.ts（渲染产物级）。
   const resultWindow = useMemo(
     () => buildResultWindow(matchingTabs.length),
     [matchingTabs.length]
@@ -1263,7 +1266,16 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({
           <div
             key={session.group.id}
             className="theme-radius-card theme-border-default theme-bg-elevated border p-3"
-            style={{ contentVisibility: 'auto', containIntrinsicSize: '240px' }}
+            /* ── 2026-11-03：**删掉** content-visibility:auto + 固定值的
+               contain-intrinsic-size(240px) ──────────────────────────────────
+               它给屏幕外的卡一个**猜的**高度（240px），而卡的真实高度取决于
+               命中行数 ⇒ 卡滚进视口时高度从 240 变成真实值，下面的内容会跳。
+               实测（scripts/prod-stress.mjs 的「搜索态滚动」探针）：保留它时
+               滚到底前后文档总高差 -3,449px（50 会话）/ -6,407px（150 会话）。
+               ⇒ 高度必须由**精确**的机制决定：SearchMatchRows 的占位
+                 （行数 × 量出来的行距），它不参与猜测。
+               守卫：tests/guards/searchRowsWindowing.test.ts 钉住「卡上不许
+               再出现固定值的 contain-intrinsic-size」。 */
           >
             <div className="flex flex-col gap-2 sm:gap-3 sm:flex-row sm:items-start sm:justify-between">
               <div className="min-w-0">
@@ -1306,13 +1318,24 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({
               </Tooltip>
             </div>
 
-            <div className="mt-3 space-y-1 border-t border-gray-100 dark:border-gray-800 pt-3">
-              {session.matches.map(result => (
-                <React.Fragment key={`${result.group.id}-${result.tab.id}`}>
-                  {renderTabItem({ tab: result.tab, group: result.group })}
-                </React.Fragment>
-              ))}
-            </div>
+            {/* ── 2026-11-03：命中行接上与主列表**同一个**窗口化机制 ──────────
+                条数上限只约束「保留多少个会话组之前停」，不约束单组行数
+                （一个会话命中 800 条 ⇒ 800 行一次进 DOM）。这里按「本组是否
+                接近视口」决定真行 / 等高占位，判据见 SearchMatchRows.tsx。
+
+                ⚠️ 行之间**不加** space-y-*：行距只有 cardMetrics 一处来源，
+                多一层间距会让占位比真行矮/高，滚进视口时滚动条会跳。 */}
+            <SearchMatchRows
+              count={session.matches.length}
+              className="mt-3 border-t border-gray-100 dark:border-gray-800 pt-3"
+              renderMatches={() =>
+                session.matches.map(result => (
+                  <React.Fragment key={`${result.group.id}-${result.tab.id}`}>
+                    {renderTabItem({ tab: result.tab, group: result.group })}
+                  </React.Fragment>
+                ))
+              }
+            />
           </div>
           );
         })}

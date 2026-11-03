@@ -14,6 +14,8 @@
 //        `SearchResultList.tsx` 的注释写着「两道防线」、`searchWindowing.test.ts`
 //        有 8 个用例在测它们 ⇒ 读代码的人以为「搜索路径已做渲染上限」，
 //        而 200 条截断只管住**标签条数**、管不住**卡头数**。
+//        （2026-11-03 处理完毕：实测证明条数上限已够用，分片函数与单测
+//          **已删除**；组内行改用与主列表同一套窗口化机制。）
 //   D2  命中区判据 `hitTarget.ts` 的 `meetsHitTarget()`：生产代码一次都没调用过
 //        （唯一的**代码**引用在测试里），而它的文件头把 36px 论证得像生产规范
 //        ⇒ 新人以为「改一个常量就能改全站尺寸」，改了却零生产变化。
@@ -94,21 +96,6 @@ interface UnwiredCandidate {
 
 const CANDIDATES: UnwiredCandidate[] = [
   {
-    file: 'src/components/search/searchWindowing.ts',
-    symbol: 'computeVisibleChunks',
-    why: '搜索结果的「分片渲染」判据 —— 注释曾声称搜索路径有「两道防线」',
-  },
-  {
-    file: 'src/components/search/searchWindowing.ts',
-    symbol: 'chunkResults',
-    why: '同上：把结果列表切片的函数',
-  },
-  {
-    file: 'src/components/search/searchWindowing.ts',
-    symbol: 'SEARCH_CHUNK_SIZE',
-    why: '同上：分片大小常量',
-  },
-  {
     file: 'src/components/layout/hitTarget.ts',
     symbol: 'meetsHitTarget',
     why: '命中区判据 —— 文件头把 36px 论证得像生产在用的规范',
@@ -140,9 +127,13 @@ describe('（规则自测）判据本身不能是空转的', () => {
   });
 
   it('认得「没接线」的样子：一个只在测试里出现的符号必须被判为未接线', () => {
+    // ⚠️ 对照符号必须**仍然存在**：符号被删掉时 referencedInProduction 也返回
+    // false ⇒ 这条自测会退化成一个永远为真的空断言（零检测力）。
+    const hitTargetFile = 'src/components/layout/hitTarget.ts';
+    assert.ok(read(hitTargetFile).includes('meetsHitTarget'), '对照符号必须仍然存在于定义文件里');
     assert.ok(
-      !referencedInProduction('computeVisibleChunks', 'src/components/search/searchWindowing.ts'),
-      'computeVisibleChunks 确实没有生产调用点'
+      !referencedInProduction('meetsHitTarget', hitTargetFile),
+      'meetsHitTarget 确实没有生产调用点（它仍在候选清单里）'
     );
   });
 });

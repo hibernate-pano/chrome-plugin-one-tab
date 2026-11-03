@@ -14,16 +14,18 @@
 // （AdvancedSearch 已按相关度排好序 ⇒ 截断是排序的兑现，不是信息损失），
 // 并且**必须告诉用户还有多少条没显示** —— 不说的话，用户会以为
 // 「只找到这么多条」（与 2026-10-19 审计 F-5「重复导入被误报成备份坏了」同类）。
+//
+// ⚠️ 2026-11-03：截断管不住「单个会话组命中很多行」⇒ 组内行另由
+// `SearchMatchRows` 按视口窗口化（渲染产物级守卫见
+// tests/guards/searchRowsWindowing.test.ts）。曾经那组从未接线的分片函数
+// 已删除 —— 不要再把它当作「第二道防线」。
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 
 import {
-  SEARCH_CHUNK_SIZE,
   SEARCH_RESULT_DISPLAY_LIMIT,
   buildResultWindow,
-  chunkResults,
-  computeVisibleChunks,
   resultTruncationMessage,
 } from '../src/components/search/searchWindowing.ts';
 
@@ -90,43 +92,10 @@ describe('截断提示：不说等于骗用户', () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────
-// 3. 分片渲染
-// ─────────────────────────────────────────────────────────────────────────
-
-describe('分片渲染：只渲染视口附近的片', () => {
-  it('片数按总数与片大小算出', () => {
-    const chunks = chunkResults([1, 2, 3, 4, 5, 6, 7, 8, 9], 4);
-    assert.equal(chunks.length, 3);
-    assert.equal(chunks[0].items.length, 4);
-    assert.equal(chunks[2].items.length, 1);
-    assert.equal(chunks[1].startIndex, 4);
-  });
-
-  it('分片不丢数据（拼起来等于原数组）', () => {
-    const src = Array.from({ length: 37 }, (_, i) => i);
-    const flat = chunkResults(src, 8).flatMap(c => c.items);
-    assert.deepEqual(flat, src);
-  });
-
-  it('视口在中间时只渲染附近的片，不渲染全部', () => {
-    const visible = computeVisibleChunks(1000, 50, SEARCH_CHUNK_SIZE, 1);
-    assert.ok(visible.length < 10, `只应渲染少数几片，实际 ${visible.length}`);
-    assert.ok(visible.includes(50), '必须包含当前片');
-  });
-
-  it('首尾边界不越界', () => {
-    assert.deepEqual(computeVisibleChunks(10, 0, 4, 1), [0, 1]);
-    const last = computeVisibleChunks(10, 9, 4, 1);
-    assert.ok(last.every(i => i >= 0 && i < 3));
-  });
-
-  it('空结果不渲染任何片', () => {
-    assert.deepEqual(computeVisibleChunks(0, 0, 8, 1), []);
-  });
-});
-
-// ─────────────────────────────────────────────────────────────────────────
-// 4. 接线：搜索结果真的走了截断
+// 3. 接线：搜索结果真的走了截断
+//
+// （「组内命中行的窗口化」不在这里：它是渲染产物级的事实，
+//   见 tests/guards/searchRowsWindowing.test.ts。）
 // ─────────────────────────────────────────────────────────────────────────
 
 describe('搜索结果真的接上了截断', () => {
