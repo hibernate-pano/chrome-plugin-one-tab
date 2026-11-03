@@ -110,6 +110,7 @@ export const initialTabState: TabState = {
   pendingLoadGuards: {},
   cleanDuplicatesSnapshot: null,
   deletedGroupBackups: {},
+  deleteGroupsInFlight: 0,
 };
 
 /** 当前在途（已乐观移除、尚未落定）的组级删除 id。见 stripInFlightDeletions 的说明。 */
@@ -205,10 +206,57 @@ const isTimeoutFailure = (error: { message?: string } | undefined): boolean =>
 const timeoutCopy = (op: string): string =>
   `${TIMEOUT_REASON_PREFIX}：后台可能仍在继续${op}，请稍等几秒后重新加载查看结果`;
 
+/**
+ * 把「已从列表乐观移除、但磁盘上其实还在」的组插回**基线顺序**里的位置。
+ *
+ * fulfilled（执行时锁定跳过）与 rejected（明确失败）**共用**这一个函数：
+ * 同一份并发语义只修一半，下一个人照着另一半抄就会抄出错的版本。
+ *
+ * 基线是 deleteGroups 在途期间的**总序**（见 TabState.deleteGroupsBaseOrder），
+ * 不是某一批自己的快照 ⇒「插到原顺序里排在它后面、且此刻仍在列表里的第一个
+ * 组之前」唯一确定，与其它并发批次删了谁、谁先回包都无关。基线里查不到的
+ * 现存组（`i === -1`，飞行途中新保存的）自然跳过。
+ */
+function restoreGroupAtBaseOrder(state: TabState, group: TabGroup): void {
+  // pending 没跑过（组还在列表里）：留着原位，不重复插入。
+  if (state.groups.some(g => g.id === group.id)) return;
+  const base = state.deleteGroupsBaseOrder ?? [];
+  const k = base.indexOf(group.id);
+  const at = state.groups.findIndex(g => {
+    const i = base.indexOf(g.id);
+    return i !== -1 && i > k;
+  });
+  state.groups.splice(at === -1 ? state.groups.length : at, 0, group);
+}
+
 export const deleteGroup = createAsyncThunk(
   'tabs/deleteGroup',
   async (groupId: string) => {
     const res = await sendMutation<string>({ op: 'deleteGroup', groupId });
+    return unwrapDeleteResult(res, '删除失败');
+  }
+);
+
+/**
+ * 按 id 清单批量删除（「清理旧会话」的执行入口）。
+ *
+ * 载荷是**确认框当时列出的那些 id**，不是档位/规则：名字与 id 在用户点头的
+ * 那一刻一起定下来，执行时只允许删这一批（见 core/mutationProtocol 的
+ * 'deleteGroups' 注释）。回执带两个数字（界面文案用）与 `skippedLockedIds`
+ * （reducer 用）：执行时刻仍被锁定的会话磁盘上还在，fulfilled 必须把它们
+ * 按原坐标放回列表——确认之后别的设备可能刚锁上，那不是失败，也不是删除。
+ */
+export const deleteGroups = createAsyncThunk(
+  'tabs/deleteGroups',
+  async (groupIds: string[]) => {
+    const res = await sendMutation<{
+      count: number;
+      skippedLocked: number;
+      skippedLockedIds: string[];
+    }>({
+      op: 'deleteGroups',
+      groupIds,
+    });
     return unwrapDeleteResult(res, '删除失败');
   }
 );
@@ -753,6 +801,133 @@ export const tabSlice = createSlice({
         // 超时时用统一文案覆盖原始串：原始串没有「可能仍在继续」这层指引。
         state.error = isTimeout ? timeoutCopy('删除会话') : action.error.message || '删除会话失败';
         state.errorSource = 'action';
+        state.errorAction = 'deleteSession';
+      })
+      // ── 按 id 清单批量删除（「清理旧会话」）──────────────────────────────
+      // 语义与 deleteGroup 那一组逐条一致；差别只有「一次多个 id」。
+      //
+      // 【乐观移除 vs 执行结果】pending 先按清单把所有 id 从列表移除（用户点了
+      // 就立刻见效）。但**执行时刻**仍被锁定的组磁盘上还在（见
+      // applyDeleteGroups），SW 用 skippedLockedIds 告诉我们确切是哪些 ⇒
+      // fulfilled 只把「真删掉的」落定，其余按**基线顺序**插回原位。不许等
+      // loadGroups 回环兜底：那会让「删了又回来」在用户眼前演一遍。
+      //
+      // 【为什么是「在途期一份基线」而不是「每批一份快照」】后发起的批次看不到
+      // 先发起批次已乐观移除的 id，它的快照只是真原序的**子序列**：两批都要还原
+      // 时，先落定的组不在后一批快照里，当不了锚点 ⇒ 结果又取决于回包先后。
+      // 基线是第一次 pending 时的完整顺序、后续批次只补不删 ⇒ 它是总序，
+      // 「插到原顺序里排在我后面的第一个现存组之前」唯一确定，与回包顺序无关。
+      // 同样不能用备份里的数字下标反推：并发批次会让它依赖回包先后。
+      .addCase(deleteGroups.pending, (state, action) => {
+        const groupIds = action.meta.arg;
+        // 基线 = **第一次** pending 时移除前的完整顺序；后续批次只补新组，
+        // 绝不删除已有条目（否则真原序会被截成子序列，还原位置又变得依赖
+        // 回包先后 —— 见 TabState.deleteGroupsBaseOrder 的说明）。
+        state.deleteGroupsInFlight = (state.deleteGroupsInFlight ?? 0) + 1;
+        if (!state.deleteGroupsBaseOrder) {
+          state.deleteGroupsBaseOrder = state.groups.map(g => g.id);
+        } else {
+          const known = new Set(state.deleteGroupsBaseOrder);
+          for (const g of state.groups) {
+            if (known.has(g.id)) continue;
+            known.add(g.id);
+            state.deleteGroupsBaseOrder.push(g.id);
+          }
+        }
+        // 先定位「此刻在列表里的」再一起移除。下标只作为备份形状的一部分
+        //（与 deleteGroup 共用 deletedGroupBackups 类型）；deleteGroups 的
+        // 两条还原路径都走基线顺序，不读它。
+        const entries: Array<{ id: string; index: number; group: TabGroup }> = [];
+        const seen = new Set<string>();
+        for (const id of groupIds) {
+          if (seen.has(id)) continue;
+          seen.add(id);
+          const index = state.groups.findIndex(g => g.id === id);
+          if (index === -1) continue;
+          entries.push({ id, index, group: state.groups[index] });
+        }
+        // 一个都不在列表里：无可删、不建备份，也不推进代际
+        //（与 deleteGroup.pending 的早退同一条：避免幽灵备份/代际污染）。
+        if (entries.length === 0) return;
+        if (!state.deletedGroupBackups) state.deletedGroupBackups = {};
+        const toRemove = new Set(entries.map(e => e.id));
+        for (const e of entries) {
+          // 备份整组（index 为共享类型字段；deleteGroups 的还原走基线顺序）。
+          state.deletedGroupBackups[e.id] = { group: e.group, index: e.index };
+          if (state.activeGroupId === e.id) state.activeGroupId = null;
+        }
+        state.groups = state.groups.filter(g => !toRemove.has(g.id));
+        // 代际前进：此后到达的旧 loadGroups 回环不得把刚删的组带回来。
+        state.mutationEpoch = (state.mutationEpoch ?? 0) + 1;
+        // 此刻**不**作废单标签删除备份：pending 只是乐观意图，磁盘还没删。
+        // 与 deleteGroup.pending 同一条理由，作废时机是 fulfilled。
+        state.error = null;
+        state.errorSource = null;
+        state.errorAction = null;
+      })
+      .addCase(deleteGroups.fulfilled, (state, action) => {
+        const requested = action.meta.arg;
+        const skippedIds = action.payload.value?.skippedLockedIds ?? [];
+        const skipped = new Set(skippedIds);
+        // 只有「真的删掉了」的 id 才算 committed：执行时被锁定跳过的那些组
+        // 磁盘上还在，不能从 Redux 里抹掉（否则就是「删了又回来」——
+        // 列表里消失、下次刷新又出现，用户会去重试、会怀疑数据）。
+        const committed = new Set(requested.filter(id => !skipped.has(id)));
+        // 幂等——pending 时已移除，这里再 filter 一遍可覆盖「pending 未跑」的
+        // 直接 dispatch（测试）与并发删除的极端情形。
+        state.groups = state.groups.filter(g => !committed.has(g.id));
+        if (state.activeGroupId && committed.has(state.activeGroupId)) {
+          state.activeGroupId = null;
+        }
+        // 被跳过的组按**基线顺序**放回（与 rejected 共用同一个函数）。
+        for (const id of skippedIds) {
+          const backup = state.deletedGroupBackups?.[id];
+          if (backup) restoreGroupAtBaseOrder(state, backup.group);
+        }
+        // 成功回执 = 磁盘已落定，这些 id 的回滚基线消费完毕。
+        if (state.deletedGroupBackups) {
+          for (const id of requested) delete state.deletedGroupBackups[id];
+        }
+        state.deleteGroupsInFlight = Math.max(0, (state.deleteGroupsInFlight ?? 0) - 1);
+        if (state.deleteGroupsInFlight === 0) delete state.deleteGroupsBaseOrder;
+        // 只作废**确认删除**那些组的单标签删除备份。被锁定跳过的组磁盘上还在，
+        // 它们的标签备份仍有回滚对象——留下了，一次失败的标签删除才能把标签
+        // 插回原位（与 deleteGroup.fulfilled 只在「确认删除」时作废同一条理由）。
+        if (state.optimisticBackups) {
+          for (const key of Object.keys(state.optimisticBackups)) {
+            if (committed.has(state.optimisticBackups[key]?.groupId)) {
+              delete state.optimisticBackups[key];
+            }
+          }
+        }
+      })
+      .addCase(deleteGroups.rejected, (state, action) => {
+        const groupIds = action.meta.arg;
+        // 超时 ≠ 删除没发生（与 deleteGroup.rejected 同一判据）：
+        // SW 侧可能已删完，把会话插回列表就是显示一条可能已不存在的记录。
+        // 保留乐观移除，只如实报错。
+        const isTimeout = isTimeoutFailure(action.error);
+        const backups = groupIds
+          .map(id => {
+            const backup = state.deletedGroupBackups?.[id];
+            if (state.deletedGroupBackups) delete state.deletedGroupBackups[id];
+            return backup;
+          })
+          .filter((backup): backup is NonNullable<typeof backup> => !!backup);
+        if (!isTimeout) {
+          // 明确失败 ⇒ 按基线顺序插回（与 fulfilled 的锁定跳过共用同一个
+          // 定位函数：并发语义只有一套，不读备份里的数字下标）。
+          for (const backup of backups) restoreGroupAtBaseOrder(state, backup.group);
+        }
+        // 超时的批次不会再回来，这里也要计数归零；基线只在最后一个在途批次
+        // 落定时丢弃。
+        state.deleteGroupsInFlight = Math.max(0, (state.deleteGroupsInFlight ?? 0) - 1);
+        if (state.deleteGroupsInFlight === 0) delete state.deleteGroupsBaseOrder;
+        // 超时时用统一文案覆盖原始串（与三处删除 reducer 同一套措辞）。
+        state.error = isTimeout ? timeoutCopy('删除会话') : action.error.message || '删除会话失败';
+        state.errorSource = 'action';
+        // 「一次删多条会话」在用户眼里仍是删会话；TabErrorAction 不新增取值
+        // （该联合在 types/tab.ts，本任务不动它），沿用单条删除的归类。
         state.errorAction = 'deleteSession';
       })
       .addCase(deleteTabAndSync.pending, (state, action) => {

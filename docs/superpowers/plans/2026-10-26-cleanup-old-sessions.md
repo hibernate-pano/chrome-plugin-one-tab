@@ -41,9 +41,14 @@
 - Produces:
   - `type CleanupTier = '1m' | '3m' | '6m' | '12m' | 'all-keep-locked' | 'all'`
   - `monthsBefore(now: Date, months: number): Date`
-  - `interface CleanupPlan { tier: CleanupTier; ids: string[]; groupCount: number; tabCount: number; unknownTimeCount: number; lockedSkippedCount: number; names: string[] }`
+  - `interface CleanupPlan { tier; ids: string[]; groupCount: number; tabCount: number; unknownTimeCount: number; lockedSkippedCount: number; lockedCount: number; names: string[] }`
+    （`lockedCount` = `ids` 里被锁定的条数，**只有 `'all'` 会 > 0**；
+    `lockedSkippedCount` 口径：时间档只数「本来够旧」的锁定件——一个上周才存的锁定会话对这一档说「被跳过」是假话）
   - `planCleanup(groups: TabGroup[], tier: CleanupTier, now: Date): CleanupPlan`
-  - `CLEANUP_TIER_LABELS: Record<CleanupTier, (n: number) => string>`（菜单行文字）
+  - `CLEANUP_TIER_LABELS: Record<CleanupTier, (plan: CleanupPlan) => string>`（菜单行文字；
+    吃整份 plan —— 调用方**永远不挑字段**，每个数字都证得出来自同一次 `planCleanup`）
+  - `cleanupTierLabel(plan: CleanupPlan): string` —— 生产代码的唯一入口（按 `plan.tier` 取标签，
+    调用方没有挑错键的余地）
 
 - [ ] **Step 1: 写失败的测试**
 
@@ -177,6 +182,9 @@ git commit -m "feat(core): 清理旧会话的判据层（日历月钳制 + 六�
 - Modify: `src/core/mutationOps.ts`（新增 `applyDeleteGroups`）
 - Modify: `src/background/mutationHandlers.ts`（新增 case）
 - Modify: `src/store/slices/tabSlice.ts`（新增 thunk）
+- Modify: `src/utils/perfSpanNames.ts`（词表加 `'deleteGroups'`）
+- Modify: `src/utils/diagnostics.ts`（`JOURNAL_OP_TYPES` 加 `deleteGroups: true`）
+- Modify: `src/core/mutationAffectedGroups.ts`（新分支返回 `[]`）
 - Test: `tests/cleanupDeleteGroups.test.ts`
 
 **Interfaces:**
@@ -184,7 +192,10 @@ git commit -m "feat(core): 清理旧会话的判据层（日历月钳制 + 六�
 - Produces:
   - `{ op: 'deleteGroups'; groupIds: string[] }`
   - `applyDeleteGroups(groups, groupIds, now, stamp): { groups: TabGroup[]; removedGroupIds: string[]; skippedLocked: string[] }`
-  - `deleteGroupsThunk(groupIds: string[])` → 回执 `{ count: number; skippedLocked: number }`
+  - `deleteGroups(groupIds: string[])` → 回执 `{ count: number; skippedLocked: number; skippedLockedIds: string[] }`
+    （thunk 名与 `deleteGroup` / `deleteAllGroups` 同族，不加 `Thunk` 后缀。
+    `skippedLockedIds` 不是给文案用的，是给 reducer 把「执行时已锁定」的组**插回列表**用的 ——
+    它们被 pending 乐观移除过，但磁盘上还在）
 
 - [ ] **Step 1: 写失败的测试**
 
@@ -236,9 +247,27 @@ Expected: FAIL（`applyDeleteGroups is not a function`）
   `noteDeletedGroups(d, r.removedGroupIds)` → `scheduleUpload(DELETE_PRIORITY_MS)`
   → `return { ok: true, payload: { count: r.removedGroupIds.length, skippedLocked: r.skippedLocked.length }, broadcastWarn: delWarn ?? undefined }`。
   **不许**调 `sendSyncCommand('upload', { overwriteCloud: true })`（部分删除不能覆盖上传）。
-- `tabSlice.ts`：新增 `deleteGroupsThunk`，照 `deleteAllGroups` 的 shape
-  （乐观移除由 fulfilled reducer 承担，`rejected` 要有回滚——照抄 `deleteTabAndSync`
-  的 `deletedGroupBackups` 写法）。
+- **三处封闭词表必须同批改，否则 `pnpm type-check` 报错**（这是仓库刻意的编译期防线）：
+  - `src/utils/perfSpanNames.ts` 的 `PERF_SPAN_NAMES` 加 `'deleteGroups'`
+    （`perfTrace.ts` 的 `MissingSpanNames` 条件类型会列出缺失项）；
+  - `src/utils/diagnostics.ts` 的 `JOURNAL_OP_TYPES`（`Record<MutationOp['op'], true>`）加
+    `deleteGroups: true`；
+  - `src/core/mutationAffectedGroups.ts` 的 `affectedGroupIdsOf` 加
+    `case 'deleteGroups': return [...cmd.groupIds];` —— 照 `deleteGroup`（单个删除就返回
+    它自己的 id），**不是** `[]`。`deleteAllGroups` 返回 `[]` 只是因为它根本不带 id。
+- `tabSlice.ts`：新增 `deleteGroups` thunk（名字与 `deleteGroup` / `deleteAllGroups`
+  同一命名族），返回 `unwrapDeleteResult(res, '删除失败')`；**三个 reducer 缺一不可**，
+  照 `deleteGroup` 那一组（`tabSlice.ts:724-800`）逐条搬语义：
+  - `pending`：对每个 id 找下标，找到就写进 `state.deletedGroupBackups[id] = { group, index }`
+    再 `splice` 掉；命中 `activeGroupId` 就置 null；`mutationEpoch += 1`。
+  - `fulfilled`：再 `filter` 一遍（幂等）；对 `payload.value.skippedLockedIds` 里每个 id，
+    若 `deletedGroupBackups[id]` 还在，就按它的 `index` 插回 `state.groups` 并删掉该备份
+    （越界钳到末尾）—— 这些组**磁盘上没删**，不插回就是「删了又回来」；
+    其余 id 的 `deletedGroupBackups` 清掉，并作废它们在 `optimisticBackups` 里的单标签删除备份
+    （否则一次失败的标签删除会把刚删的整组复活，`tabSlice.ts:761-777` 有完整理由）。
+    还原时**不动** `activeGroupId`（它是易失选择）。
+  - `rejected`：走 `isTimeoutFailure` 判据——超时**保留**乐观结果、只报错不还原；
+    明确失败才按备份的 `index` 插回。三处删除 reducer 必须同一判据，不许另写一套。
 
 - [ ] **Step 4: 跑测试，确认通过**
 
@@ -262,10 +291,14 @@ git commit -m "feat(sync): 新增 deleteGroups 语义命令（按 id 批量删�
 
 **Files:**
 - Modify: `src/components/layout/HeaderDropdown.tsx`
+- Modify: `tests/guards/deleteAllActionNaming.test.ts`（**本任务会打红它，必须同批修**）
+- Modify: `tests/guards/dropdownSubmenuReachable.test.ts`（子菜单从 2 个变 3 个）
 - Test: `tests/guards/cleanupMenu.test.ts`
 
 **Interfaces:**
-- Consumes: `planCleanup` / `CLEANUP_TIER_LABELS`（Task 1）、`deleteGroupsThunk`（Task 2）
+- Consumes: `planCleanup` / `cleanupTierLabel`（Task 1）、`deleteGroups`（Task 2）。
+  菜单行文案**一律**用 `cleanupTierLabel(plan)`，不要自己写 `CLEANUP_TIER_LABELS[tier](plan)`——
+  前者没有挑错键的余地
 - Produces: 菜单行 `清理旧会话`；`openSubmenu` 的类型扩成 `'export' | 'import' | 'cleanup' | null`
 
 - [ ] **Step 1: 写失败的测试（钉结构与行为，不钉字面长相）**
@@ -313,23 +346,46 @@ Expected: FAIL
 
 - 危险区那块整体换成：父行「清理旧会话」+ 子菜单面板（沿用 `ref={submenuRef}` /
   `aria-expanded` / `scrollIntoView` 的既有模式）。
-- 菜单挂载时**一次** `storage.getGroupsForWrite()`，用 `planCleanup` 算出六档，
-  过滤掉 `groupCount === 0`，渲染成行。
+- **磁盘读的既有机器不要重造**：`HeaderDropdown.tsx` 已有 `diskCounts` 状态
+  （挂载时读一次 `storage.getGroupsForWrite()`，读失败退回 Redux 快照）+ `menuGroupCount` /
+  `menuLockedCount` 两个派生值。把它升级成 `diskGroups: TabGroup[] | null`，
+  六个档的 `CleanupPlan` 用 `useMemo` 从**同一份**数组算出来（`now` 取挂载那一刻的
+  `new Date()`，别在渲染里调 `new Date()` —— 每次渲染都变会让 useMemo 失效）。
+- 渲染规则：
+  - 四个时间档：`planCleanup(groups, tier, now).groupCount === 0` 就**不渲染这一行**；
+  - 「保留锁定」行：`lockedSkippedCount === 0` 时不渲染；
+  - 「含锁定」行：`lockedCount === 0` 时**不渲染**，此时「保留锁定」也不渲染 ⇒
+    只剩一行，文案走 `cleanupTierLabel(planCleanup(groups, 'all', now))`，
+    它在无锁定时正好是「删除所有会话（N）」；
+  - 行文案一律 `cleanupTierLabel(plan)`。
 - 每行点击 → 读一次磁盘（fail closed）→ 重算该档 → 0 条就 `showToast('没有可清理的会话', 'info')`
   并 return → 否则 `showConfirm`（文案见 Task 4）→ 确认后
-  `dispatch(deleteGroupsThunk(plan.ids))`（「含锁定」档走
+  `dispatch(deleteGroups(plan.ids))`（「含锁定」档走
   `deleteAllGroups` 的既有路径，包括覆盖上传，一个字都别改）。
 - **删除父行原来那个「删除所有会话（N）」按钮**，但保留它在「含锁定」档里的
-  `deleteAllMenuWarning` 小字。
+  `deleteAllMenuWarning` 小字（R2）。
+- ⚠️ 回执口径：`count + skippedLocked` **可能小于**请求的 id 数（磁盘上已不存在的 id 两个都不计）。
+  文案**不许**按「总数 − 两个数 = 未处理」倒算；`confirmedCount` 用确认框里那个数。
 
-- [ ] **Step 4: 跑测试，确认通过**
+- [ ] **Step 4: 修两条被本任务打红的既有守卫（**每个提交必须自证全绿**）**
 
-Run: 同 Step 2。Expected: PASS
+- `tests/guards/deleteAllActionNaming.test.ts` 的 `uiDeleteAllTerm()`：它从
+  `删除…会话（{…}）` 这个 JSX 字面量现场取叫法，菜单行改成由 `CLEANUP_TIER_LABELS`
+  渲染后这个前提就消失了。**不许**改成钉字面量 —— 改成从「含锁定」那一档的标签函数
+  现场读出叫法（`CLEANUP_TIER_LABELS['all'](...)` 的结果去掉计数括号），仍是「从界面现场读」。
+- `tests/guards/dropdownSubmenuReachable.test.ts`：`ref={submenuRef}` 与
+  `aria-expanded={openSubmenu ===` 的计数 2 → 3，并把裸数字换成「每个父行一个」的语义断言。
 
-- [ ] **Step 5: 提交**
+- [ ] **Step 5: 跑测试，确认通过**
+
+Run: 同 Step 2，外加
+`node --test --import ./tests/_register-loader.mjs --experimental-strip-types tests/guards/deleteAllActionNaming.test.ts tests/guards/dropdownSubmenuReachable.test.ts tests/guards/deleteAllDisclosure.test.ts tests/lockedDelete.test.ts`
+Expected: PASS
+
+- [ ] **Step 6: 提交**
 
 ```bash
-git add src/components/layout/HeaderDropdown.tsx tests/guards/cleanupMenu.test.ts
+git add src/components/layout/HeaderDropdown.tsx tests/guards/cleanupMenu.test.ts tests/guards/deleteAllActionNaming.test.ts tests/guards/dropdownSubmenuReachable.test.ts
 git commit -m "feat(ui): 菜单加「清理旧会话」子菜单（六档 + 条数）"
 ```
 
@@ -400,6 +456,17 @@ describe('确认框', () => {
     assert.match(cleanupConfirmMessage(plan(), { isAuthenticated: true, syncBackend: 'supabase' }),
       /同步删除/);
   });
+  // 「保留锁定」档与时间档的措辞**必须不同**（R1）：它的锁定不是「不会被清理」
+  // 这种偶然结果，而是这一档的名字本身。
+  it('保留锁定档：标题说「删除」，锁定说「会保留」', () => {
+    const keep = plan({ tier: 'all-keep-locked', lockedSkippedCount: 2 });
+    assert.equal(cleanupConfirmTitle(keep), '删除 2 个会话');
+    assert.match(cleanupConfirmMessage(keep, disc), /2 个已锁定的会话会保留/);
+  });
+  it('保留锁定档不说「保存时间未知」（这一档没有年龄筛选）', () => {
+    const keep = plan({ tier: 'all-keep-locked', unknownTimeCount: 3 });
+    assert.ok(!cleanupConfirmMessage(keep, disc).includes('保存时间未知'));
+  });
 });
 
 describe('回执', () => {
@@ -454,12 +521,16 @@ git commit -m "feat(ui): 清理旧会话的确认文案与回执（锁定跳过�
 ### Task 5: 连带修改（文案与守卫同批）
 
 **Files:**
-- Modify: `tests/guards/deleteAllActionNaming.test.ts`
+- Modify: `tests/guards/deleteAllActionNaming.test.ts`（把 `listErrorCopy` 纳入覆盖范围）
 - Modify: `src/components/onboarding/OnboardingSteps.tsx` 里的 `LOCK_DELETE_BOUNDARY`
 - Modify: `tests/guards/onboardingDeleteBoundaryHonesty.test.ts`
+- Modify: `src/components/tabs/listErrorCopy.ts`（`deleteAll.operation` 现在写的是「删除全部会话」——
+  这是**已经存在**的第二叫法，新功能一复用报错文案就会在菜单说「删除所有会话」、报错说「删除全部会话」）
 - Modify: `README.md:43`
 - Modify: `CHROMEWEBSTORE.md:192/195`
-- Modify: `tests/guards/dropdownSubmenuReachable.test.ts`
+
+> 本任务**不再**碰 `dropdownSubmenuReachable.test.ts`：那两条计数在 Task 3 里就得改，
+> 否则 Task 3 的提交是红的。每个提交必须自证全绿。
 
 - [ ] **Step 1: 先跑一遍，看哪几条真的红了**
 
@@ -467,16 +538,15 @@ Run:
 ```bash
 node --test --import ./tests/_register-loader.mjs --experimental-strip-types \
   tests/guards/deleteAllActionNaming.test.ts tests/guards/onboardingDeleteBoundaryHonesty.test.ts \
-  tests/guards/dropdownSubmenuReachable.test.ts tests/guards/deleteAllDisclosure.test.ts \
-  tests/lockedDelete.test.ts
+  tests/guards/deleteAllDisclosure.test.ts tests/lockedDelete.test.ts
 ```
-Expected: 至少 naming 与 submenu 两条红（子菜单从 2 个变 3 个）。
+Expected: `onboardingDeleteBoundaryHonesty` 红（这句现在还只说一条路径）。
 
-- [ ] **Step 2: 改 `deleteAllActionNaming.test.ts` 的取法**
+- [ ] **Step 2: 把 `listErrorCopy` 纳入 `deleteAllActionNaming.test.ts` 的覆盖**
 
-把「从菜单行正则读 `删除…会话（{N}）`」改成从**子菜单里那一行**读。
-**不许**改成钉字面量（守卫存在的意义就是叫法从界面现场读）。
-若叫法确实要变，必须同批改 README / 隐私政策 / 引导 / 商店页。
+`uiDeleteAllTerm()` 的取法 Task 3 已经改成从标签函数现场读，本步只加覆盖面：
+把 `src/components/tabs/listErrorCopy.ts` 的 `deleteAll.operation` 也纳入
+「所有出口必须与界面同名」的 `FILES` 清单。**不许**放宽成「只查 README」。
 
 - [ ] **Step 3: 改 `LOCK_DELETE_BOUNDARY` 与它的守卫**
 
@@ -484,17 +554,16 @@ Expected: 至少 naming 与 submenu 两条红（子菜单从 2 个变 3 个）�
 「『删除所有会话』里选『保留锁定』会留下它们，选『含锁定』会连它们一起删」
 ——具体措辞由实现者定，但守卫要继续断言**两件事都说到了**。
 
+- [ ] **Step 3.5: 收口 `listErrorCopy.ts` 的第二叫法**
+
+`deleteAll.operation` 改成「删除所有会话」。这不是本功能引入的，但本功能会让它第一次真正撞车。
+
 - [ ] **Step 4: 同步 README:43 与 CHROMEWEBSTORE:192/195**
 
 商店页那句「『删除所有会话』始终确认并显示数量，其中锁定会话的数量也会一并写明」
 现在只对「含锁定」档成立 ⇒ 必须改写。**中英两版都要改**（`docsAlignment` 会校验）。
 
-- [ ] **Step 5: `dropdownSubmenuReachable.test.ts` 的 2 → 3**
-
-`ref={submenuRef}` 与 `aria-expanded={openSubmenu ===` 的数量都从 2 改成 3。
-把断言里的数字换成「每个父行一个」的语义表述，别再钉裸数字。
-
-- [ ] **Step 6: 跑文案与守卫**
+- [ ] **Step 5: 跑文案与守卫**
 
 ```bash
 node --test --import ./tests/_register-loader.mjs --experimental-strip-types \
@@ -504,7 +573,7 @@ node --test --import ./tests/_register-loader.mjs --experimental-strip-types \
 ```
 Expected: 全绿
 
-- [ ] **Step 7: 提交**
+- [ ] **Step 6: 提交**
 
 ```bash
 git add -A

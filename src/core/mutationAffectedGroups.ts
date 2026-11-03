@@ -28,6 +28,10 @@ export function affectedGroupIdsOf(cmd: MutationOp): string[] {
       return [cmd.groupId];
     case 'deleteGroup':
       return [cmd.groupId];
+    // 载荷就是具体 id ⇒ 全部都是本次改动过的会话（照 deleteGroup，不是空集）。
+    // 与 deleteAllGroups 返回空是不同的原因：那条命令根本不带 id。
+    case 'deleteGroups':
+      return [...cmd.groupIds];
     case 'importGroups':
       return cmd.groups.map(g => g?.id).filter((id): id is string => typeof id === 'string');
     case 'renameGroup':

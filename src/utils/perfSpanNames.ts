@@ -31,6 +31,7 @@ export const PERF_SPAN_NAMES = [
   'saveGroup',
   'removeTab',
   'deleteGroup',
+  'deleteGroups',
   'deleteAllGroups',
   'importGroups',
   'renameGroup',

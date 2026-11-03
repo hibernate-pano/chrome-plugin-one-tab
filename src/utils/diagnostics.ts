@@ -111,6 +111,7 @@ const JOURNAL_OP_TYPES: Record<MutationOp['op'], true> = {
   saveGroup: true,
   removeTab: true,
   deleteGroup: true,
+  deleteGroups: true,
   deleteAllGroups: true,
   importGroups: true,
   renameGroup: true,
