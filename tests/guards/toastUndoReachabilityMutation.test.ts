@@ -218,10 +218,10 @@ describe('变异自证：撤销退路的守卫必须看得见破口', () => {
     assertMutationOutcome(outcome, true, '删掉 window 的 blur 监听');
   });
 
-  it('⑨ 把撤销窗口改回 3 秒 ⇒ 守卫必须变红', () => {
+  it('⑨ 把撤销窗口缩到普通提示那么长 ⇒ 守卫必须变红', () => {
     const [outcome] = runMutationCases([
       {
-        name: '撤销窗口缩回 3 秒',
+        name: '撤销窗口缩回普通提示时长',
         testFile: GUARD,
         targets: [
           {
@@ -230,16 +230,17 @@ describe('变异自证：撤销退路的守卫必须看得见破口', () => {
               replaceIn(
                 source,
                 'export const TOAST_ACTION_DURATION_MS = 8000;',
-                'export const TOAST_ACTION_DURATION_MS = 3000;'
+                'export const TOAST_ACTION_DURATION_MS = 2000;'
               ),
           },
         ],
         expectRed: true,
-        expectedFailure: '**撤销窗口不许被改回 3 秒**',
+        // 守卫的红来自「撤销窗口至少 8 秒」那条断言（钉的是性质，不是字面量）。
+        expectedFailure: '撤销窗口至少 8 秒',
       },
     ]);
     assert.ok(outcome, '变异必须真的跑起来');
-    assertMutationOutcome(outcome, true, '把撤销窗口缩回 3 秒');
+    assertMutationOutcome(outcome, true, '把撤销窗口缩回普通提示时长');
   });
 
   it('⑩ 焦点接管不看「页面看不看得见」（看不见也抢焦点）⇒ 守卫必须变红', () => {

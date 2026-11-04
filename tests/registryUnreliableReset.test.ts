@@ -170,6 +170,25 @@ beforeEach(async () => {
 afterEach(async () => {
   const { resetActiveSyncBackend } = await import('@/sync-backend');
   resetActiveSyncBackend();
+  // ── 2026-11-04：清掉 syncEngine 遗留的防抖计时器 ─────────────────────
+  // 上面那条「写方登记成功 ⇒ 标志复位」用例会调用
+  // `syncEngine.scheduleUpload(0, [...])` —— 它**真的**挂了一个 setTimeout，
+  // 而上传本身是 fire-and-forget（没人 await 它）。
+  //
+  // 于是那个计时器会在**下一个用例**的等待间隙里触发一次真实上传
+  // （enqueue('sync:upload')）⇒ 下一个用例的假后端收到**多出来的一批**
+  // （实测 uploads 里多出 ['real-1','missed-1']）⇒ 断言偶发红。
+  //
+  // 单独跑该文件 5 次里偶发红 1 次；这是**先于**本轮改动就存在的 flake
+  // （在改动前的 HEAD 上同样复现），但它让「全量测试偶发红」这件事
+  // 无法归因 ⇒ 顺手修掉（判据与手法见 .memory/flaky-test-may-be-a-real-defect.md）。
+  // 动态 import：这两个模块会在 import 时读 chrome.storage / IndexedDB ——
+  // 本文件的 chrome 桩是在文件顶部的全局赋值，必须等它就位后才加载
+  // （与本文件其它用例里的写法一致）。
+  const { syncEngine } = await import('@/services/syncEngine');
+  syncEngine.cancelPendingUpload();
+  const { resetQueue } = await import('@/background/mutationQueue');
+  resetQueue();
 });
 
 // ════════════════════════════════════════════════════════════════════

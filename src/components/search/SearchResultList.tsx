@@ -1021,7 +1021,7 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({
     <SearchFilterSection
       controls={filterControls}
       title={resultViewTitle(isBrowseMode ? 'browse' : 'search')}
-      // browse 形态下不显示标题：卡片头已经写着「符合条件的会话」，
+      // browse 形态下不显示标题：卡片头已经写着「筛选结果」，
       // 筛选区再写一遍「按条件筛选会话」是同一句话在同一屏里出现两次。
       // 判据与形态判定同源，见 searchBrowseMode.showFilterSectionTitle。
       showTitle={showFilterSectionTitle(isBrowseMode ? 'browse' : 'search')}
@@ -1210,6 +1210,7 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({
             <span
               className="tab-group-count flex-shrink-0"
               title={`${sessionResults.length} 个会话 · ${matchingTabs.length} 个标签页`}
+              aria-label={`${sessionResults.length} 个会话，${matchingTabs.length} 个标签页`}
             >
               {matchingTabs.length}
             </span>

@@ -58,7 +58,11 @@
     width: 90%;
     max-width: 520px;
     max-height: 85vh;
-    overflow-y: auto;
+    /* 滚动交给内部正文（.onboarding-step-body），底部操作区永远可见。
+       2026-11-04：原先整张卡滚动 ⇒ 400×600 实测「下一步」在 y=616、
+       卡片可视底边 y=555 ⇒ 主 CTA 完全在首屏之外，用户只能先滚一层
+       才知道怎么继续。现在正文可滚，指示器与按钮固定在卡片底部。 */
+    overflow: hidden;
     border-radius: 20px;
     padding: 2px;
     animation: onboardingCardIn var(--motion-slow) var(--ease-standard);
@@ -104,6 +108,21 @@
     border-radius: 18px;
     padding: 32px 28px 24px;
     position: relative;
+    /* 与 .onboarding-card 的 max-height 对齐（减去 2px×2 的渐变描边内边距）。
+       用 flex 把正文与底部操作区分开：只有正文滚动，CTA 不随内容滚走。 */
+    display: flex;
+    flex-direction: column;
+    max-height: calc(85vh - 4px);
+    min-height: 0;
+}
+
+/* 引导正文：短视口下在这里滚动，不把「下一步」推出卡片。 */
+.onboarding-step-body {
+    min-height: 0;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    /* 滚动条出现时不要横向挤动内容（Firefox / 新版 Chromium）。 */
+    scrollbar-gutter: stable;
 }
 
 .dark .onboarding-card-inner {
@@ -162,6 +181,7 @@
     align-items: center;
     gap: 8px;
     padding: 16px 0 8px;
+    flex-shrink: 0;
 }
 
 .onboarding-dot {
@@ -171,6 +191,18 @@
     background: #d1d5db;
     transition: all var(--motion-base) var(--ease-standard);
     cursor: pointer;
+    /* 视觉仍是 8px 的点，命中区扩到 24×24（WCAG 2.2 SC 2.5.8 AA）。
+       用伪元素扩命中区而不是放大按钮：放大按钮会改点与点之间的视觉间距，
+       而这一页的间距是 v1.25.1 定下的长相。相邻命中区在 8px 的间隙里
+       各让一半，点“两个点中间”仍会落到其中一个，不会点到空白。 */
+    position: relative;
+}
+
+.onboarding-dot::after {
+    content: '';
+    position: absolute;
+    inset: -8px;
+    border-radius: 50%;
 }
 
 .dark .onboarding-dot {
@@ -307,6 +339,7 @@ html body .onboarding-overlay:focus-visible {
     justify-content: space-between;
     gap: 12px;
     margin-top: 24px;
+    flex-shrink: 0;
 }
 
 /* 主按钮 —— 紫蓝渐变底 + 白字（2026-10-24 回到 v1.25.1 的长相）。
@@ -670,4 +703,84 @@ html body .onboarding-overlay:focus-visible {
 .dark .onboarding-version-badge {
     color: #a5b4fc;
     background: linear-gradient(135deg, #1e1b4b, #312e81);
+}
+
+/* ── 2026-11-04：短视口（≤700px 高）收紧纵向节奏 ─────────────────────
+ *
+ * 400×600 实测：第一步正文 481px，正文可视区只有 353px ⇒ 首屏最后一行
+ * 特性卡片被裁掉一半。滚动条虽然能把剩余内容带出来，但第一印象不该是
+ * 一张被拦腰截断的卡片。
+ *
+ * 只在高上限不够时压紧尺寸，宽屏（≥701px 高）仍是 v1.25.1 的节奏：
+ * 图标 72→56、标题 22→20、描述下边距 24→12、特性卡内边距 14→10、
+ * 步骤点与按钮区各收 6~8px。合计约 100px，600px 高的窗口里第一步
+ * 可以完整落在一屏内；更长的步骤仍在内部滚动（按钮始终可见）。
+ */
+@media (max-height: 700px) {
+  /* 短屏优先把纵向空间用满：85vh 在 600px 高的窗口里只剩 510px，
+     压紧节奏后第一步仍差几十像素（320px 宽时正文 427px vs 393px）。
+     92vh 多给 42px，同时上下仍各留 24px，卡片不会贴边。 */
+  .onboarding-card {
+    max-height: 92vh;
+  }
+
+  .onboarding-card-inner {
+    padding: 24px 22px 16px;
+    max-height: calc(92vh - 4px);
+  }
+
+  .onboarding-icon-wrapper {
+    width: 56px;
+    height: 56px;
+    border-radius: 16px;
+    margin-bottom: 12px;
+    font-size: 26px;
+  }
+
+  .onboarding-title {
+    font-size: 1.25rem;
+    margin-bottom: 6px;
+  }
+
+  .onboarding-description {
+    font-size: 0.8125rem;
+    line-height: 1.55;
+    margin-bottom: 10px;
+  }
+
+  .onboarding-version-badge {
+    margin-bottom: 12px;
+  }
+
+  .onboarding-feature-grid {
+    gap: 8px;
+    margin-top: 0;
+  }
+
+  .onboarding-feature-card {
+    padding: 8px 10px;
+  }
+
+  .onboarding-feature-icon {
+    font-size: 1.25rem;
+    margin-bottom: 4px;
+  }
+
+  .onboarding-feature-desc {
+    font-size: 0.625rem;
+    line-height: 1.45;
+  }
+
+  .onboarding-dots {
+    padding: 10px 0 4px;
+  }
+
+  .onboarding-actions {
+    margin-top: 14px;
+  }
+
+  .onboarding-btn-primary,
+  .onboarding-btn-secondary {
+    padding-block: 8px;
+  }
 }

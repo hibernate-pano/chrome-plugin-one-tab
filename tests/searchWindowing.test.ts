@@ -143,8 +143,10 @@ describe('搜索结果真的接上了截断', () => {
       /<span\s+className="tab-group-count flex-shrink-0"[\s\S]*?<\/span>/
     );
     assert.ok(badgeSpan, '必须能找到徽章 span');
-    // 去掉 title 属性后再看剩下的 —— 那才是徽章显示给用户的内容
-    const badgeText = badgeSpan[0].replace(/title=\{[^}]*\}/, '');
+    // 去掉**所有属性**后再看剩下的 —— 那才是徽章显示给用户的内容。
+    // （title / aria-label 里天然会有「会话数、标签数」两个数：前者是
+    // 悬停说明，后者是读屏名；它们不参与「屏幕上显示哪个数」的判定。）
+    const badgeText = badgeSpan[0].replace(/^<span[^>]*>/, '<span>');
     assert.match(
       badgeText,
       /\{matchingTabs\.length\}/,

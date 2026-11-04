@@ -411,7 +411,7 @@ interface SearchFilterSectionProps {
   /**
    * 是否显示左侧标题。
    *
-   * browse（筛选浏览）形态下为 false —— 卡片头已经写着「符合条件的会话」，
+   * browse（筛选浏览）形态下为 false —— 卡片头已经写着「筛选结果」，
    * 筛选区再写一遍「按条件筛选会话」就是同一句话在同一屏里出现两次，
    * 而且两行都长得像标题 ⇒ 视觉噪音。判据见 searchBrowseMode 的
    * `showFilterSectionTitle`（放在那里是为了与形态判定同源）。
@@ -535,7 +535,7 @@ export const SearchFilterSection: React.FC<SearchFilterSectionProps> = ({
               type="button"
               onClick={() => handleEditDimension(chip.dimension)}
               aria-label={`编辑筛选条件：${chip.label} ${chip.value}`}
-              className="inline-flex items-center gap-1 theme-radius-input-sm border theme-border-default theme-bg-elevated px-2 py-0.5 text-xs hover:theme-btn-hover"
+              className="inline-flex min-h-6 items-center gap-1 theme-radius-input-sm border theme-border-default theme-bg-elevated px-2 py-0.5 text-xs hover:theme-btn-hover"
             >
               <span className="theme-text-secondary">{chip.label}</span>
               <span className="theme-accent-text font-medium">{chip.value}</span>
@@ -550,7 +550,7 @@ export const SearchFilterSection: React.FC<SearchFilterSectionProps> = ({
           {activeFilterCount > 0 && (
             <button
               onClick={clearFilters}
-              className="text-xs theme-text-muted hover:theme-text-secondary flat-interaction"
+              className="inline-flex min-h-6 items-center text-xs theme-text-muted hover:theme-text-secondary flat-interaction"
             >
               清空筛选
             </button>

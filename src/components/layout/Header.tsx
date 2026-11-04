@@ -38,6 +38,15 @@ import { logError } from '../../utils/log';
 // 骰子抽签池的默认筛选（没传时用同一份常量，不每次渲染生成新对象）。
 const EMPTY_FILTERS: SearchFilters = {};
 
+/**
+ * 清理重复标签的「进行中」提示延迟（毫秒）。
+ *
+ * 2026-11-04：确认后立刻弹「正在清理…」会让快操作出现两条 toast
+ * （进度 + 结果叠在一起）。600ms 内完成 ⇒ 一条进度都不发；超过才补，
+ * 且结束时会被主动收掉/替换 ⇒ 用户最多看到一条。
+ */
+const CLEAN_PROGRESS_DELAY_MS = 600;
+
 interface HeaderProps {
   onSearch: (query: string) => void;
   /**
@@ -173,7 +182,7 @@ export const Header: React.FC<HeaderProps> = ({
   hasActiveFilters = false,
 }) => {
   const dispatch = useAppDispatch();
-  const { showConfirm, showAlert, showToast } = useToast();
+  const { showConfirm, showAlert, showToast, dismissToast } = useToast();
   const { showRestoreError, showDeleteError } = useEnhancedToast();
   const settings = useAppSelector(state => state.settings);
   const groups = useAppSelector(state => state.tabs.groups);
@@ -220,7 +229,7 @@ export const Header: React.FC<HeaderProps> = ({
     // 没东西可清时不该摆一道「确认清理」的破坏性弹窗：让用户点一次「确认清理」
     // 才告诉他其实什么都没删，与「点了没反应」同类。直接说清即可。
     if (plan.removedTabsCount === 0 && plan.removedGroupsCount === 0) {
-      showToast(cleanDuplicatesConfirmMessage(0, 0), 'info', 4000);
+      showToast(cleanDuplicatesConfirmMessage(0, 0), 'info');
       return;
     }
 
@@ -241,14 +250,43 @@ export const Header: React.FC<HeaderProps> = ({
       onConfirm: () => {
         void (async () => {
           setIsCleaningDuplicates(true);
-          // ── 2026-10-22 审计 U-20 之后的接线：进行中必须看得见 ──────────
-          // 入口搬进 ⋯ 菜单后，确认弹窗一关，界面上就**没有任何东西**
-          // 表示「清理正在跑」——大批量去重 + 上千条删除广播登记有可见耗时，
-          // 用户会以为点了没反应。结果提示要等它跑完才出现。
-          // 一条「正在清理…」把这段空窗填上。
-          showToast('正在清理重复标签和空会话…', 'info', 2000);
+          // ── 2026-11-04：进度提示**只在真的慢时**出现 ─────────────────
+          // 原先确认后立刻 showToast('正在清理…')，而清理通常 <300ms 就完成
+          // ⇒ 用户一次看到两条叠在一起：「正在清理」+「清理完成」
+          // （真机 1280×900 复现，顶栏右上一叠两条）。成功提示成了噪音。
+          //
+          // 现在的规则：
+          //   · 顶栏按钮 / 菜单行本身已有 spinner + aria-busy（进行中信号）；
+          //   · 600ms 内完成 ⇒ 一条进度提示都不发，只留最后那条结果；
+          //   · 超过 600ms ⇒ 补一条「正在清理…」；
+          //   · 结束时**先收掉**它，再显示结果（成功）或失败弹窗 —— 成功
+          //     路径不会叠成两条；失败路径也不会在弹窗后面留一条过期的
+          //     「正在清理…」。（队列的「info 不叠罗汉」仍是兜底。）
+          let progressTimer: number | null = null;
+          let progressToastId: number | null = null;
+          let progressFinished = false;
+          const clearProgress = () => {
+            progressFinished = true;
+            if (progressTimer !== null) {
+              window.clearTimeout(progressTimer);
+              progressTimer = null;
+            }
+            if (progressToastId !== null) {
+              dismissToast(progressToastId);
+              progressToastId = null;
+            }
+          };
+          progressTimer = window.setTimeout(() => {
+            if (progressFinished) return;
+            // duration 0 = 常驻：进度提示必须活到操作结束，由 clearProgress
+            // 主动收掉；否则慢操作跑到一半提示先自己消失，又变成「没反馈」。
+            progressToastId = showToast('正在清理重复标签和空会话…', 'info', 0);
+          }, CLEAN_PROGRESS_DELAY_MS);
           try {
             const result = await dispatch(cleanDuplicateTabs()).unwrap();
+            // 收掉「尚未触发」的计时器，以及可能已经出现的进度提示；
+            // 结果/失败随后显示时不会再和进度提示同屏。
+            clearProgress();
             // 清理是有成效的操作，但**结果不是界面能说出来的** ——
             // 列表只是变短了，「清了几个重复标签、几个空会话」界面永远表达不了；
             // 而且这是**破坏性**操作，确认框里写的是「预计」，实到多少要实说。
@@ -267,7 +305,7 @@ export const Header: React.FC<HeaderProps> = ({
               hiddenFact: cleanResult,
             });
             if (fb.level !== 'silent') {
-              showToast(cleanResult, 'info', 4000);
+              showToast(cleanResult, 'info');
             }
             // 清理会物理移除整组（空会话）。本地已删干净，但若云端删除广播
             // 登记失败，这些会话会在其它设备上复活——必须如实告知，不能让
@@ -282,6 +320,7 @@ export const Header: React.FC<HeaderProps> = ({
               });
             }
           } catch (error) {
+            clearProgress();
             logError('清理重复标签失败:', error);
             showAlert({
               title: '清理失败',
@@ -290,6 +329,7 @@ export const Header: React.FC<HeaderProps> = ({
               onClose: () => { },
             });
           } finally {
+            clearProgress();
             setIsCleaningDuplicates(false);
           }
         })();
@@ -331,8 +371,7 @@ export const Header: React.FC<HeaderProps> = ({
         searchQuery.trim() || hasActiveFilters
           ? '当前搜索结果里没有可随机打开的标签页'
           : '没有可随机打开的标签页',
-        'info',
-        3000
+        'info'
       );
       return;
     }

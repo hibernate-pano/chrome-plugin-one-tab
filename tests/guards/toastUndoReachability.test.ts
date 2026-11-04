@@ -4,7 +4,7 @@
 //
 // P0-4 给「恢复即消费」配了撤销按钮。做出来了，但**用户够不着**：
 //
-//   1. toast 3 秒后自动消失（普通提示的时长）；
+//   1. toast 2 秒后自动消失（普通提示的时长，2026-11-04 由 3 秒收紧）；
 //   2. hover **不**暂停计时 ⇒ 鼠标想去够它的时候，倒计时不等人；
 //   3. toast 挂在 body 末尾 ⇒ 它的按钮排在 Tab 序列的**最后**。
 //
@@ -19,7 +19,7 @@
 //   · 悬停/聚焦时倒计时**不推进**（假时钟推进 10 秒，剩余时间不变）；
 //   · 恢复时**从暂停处续走**（不是从头、也不是再给一整段）；
 //   · 暂停有上限（鼠标停着不动，提示最终仍会收起）；
-//   · 带动作的提示活得比普通提示久（但普通提示仍是 3 秒）；
+//   · 带动作的提示活得比普通提示久（普通提示是 2 秒）；
 //   · 焦点接管有条件（打字中 / 对话框开着 / 鼠标用户 ⇒ 不抢）。
 //
 // 接线层（Toast.tsx 把这些函数接到 DOM 事件上）用**结构断言**钉，
@@ -44,8 +44,8 @@
 //    ⇒ 「三个触发条件是或关系」变红。
 // ⑧ 把 Toast.tsx 里的 `window.addEventListener('blur', update)` 删掉
 //    ⇒ 「接线：真的在监听可见性/焦点」变红。
-// ⑨ 把 `TOAST_ACTION_DURATION_MS` 改成 3000
-//    ⇒ 「撤销窗口不许被改回 3 秒」变红。
+// ⑨ 把 `TOAST_ACTION_DURATION_MS` 改成普通提示的时长
+//    ⇒ 「撤销窗口不许被改回那么短」变红。
 
 import { describe, it, before } from 'node:test';
 import assert from 'node:assert/strict';
@@ -126,11 +126,11 @@ function createFakeClock(start = 1_000_000) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────
-// 一、时长策略：带动作 ⇒ 给一个能做决定的窗口；普通提示仍是 3 秒
+// 一、时长策略：带动作 ⇒ 给一个能做决定的窗口；普通提示是 2 秒
 // ─────────────────────────────────────────────────────────────────────────
 
 describe('时长由「有没有动作」决定', () => {
-  it('带动作的提示活得比普通提示久（3 秒不够读完「卡片不见了」）', async () => {
+  it('带动作的提示活得比普通提示久（两三秒不够读完「卡片不见了」）', async () => {
     const { resolveToastDuration, TOAST_DEFAULT_DURATION_MS } = await import(
       '@/components/common/toastPolicy'
     );
@@ -144,7 +144,7 @@ describe('时长由「有没有动作」决定', () => {
     // 下限：8–10 秒量级（Chrome 自己的「重新打开已关闭的标签」是这个数量级）。
     assert.ok(
       withAction >= 8000,
-      `带动作的提示至少要给 8 秒（实测 ${withAction}ms）—— 3 秒连读完提示都不够`,
+      `带动作的提示至少要给 8 秒（实测 ${withAction}ms）—— 两三秒连读完提示都不够`,
     );
     assert.ok(
       withAction <= 15000,
@@ -152,19 +152,19 @@ describe('时长由「有没有动作」决定', () => {
     );
   });
 
-  it('普通提示**不受影响**（仍是 3 秒 —— 把那些也拖长只是让屏幕更吵）', async () => {
+  it('普通提示**不受影响**（仍是默认的 2 秒 —— 把那些也拖长只是让屏幕更吵）', async () => {
     const { resolveToastDuration, TOAST_DEFAULT_DURATION_MS } = await import(
       '@/components/common/toastPolicy'
     );
     assert.equal(
       resolveToastDuration('info', TOAST_DEFAULT_DURATION_MS, false),
       TOAST_DEFAULT_DURATION_MS,
-      '不带动作的普通提示必须还是 3 秒',
+      '不带动作的普通提示必须还是默认时长',
     );
     assert.equal(
       resolveToastDuration('info', TOAST_DEFAULT_DURATION_MS, false),
       TOAST_DEFAULT_DURATION_MS,
-      '不带动作的普通提示必须还是 3 秒',
+      '不带动作的普通提示必须还是默认时长',
     );
   });
 
@@ -189,18 +189,18 @@ describe('时长由「有没有动作」决定', () => {
     assert.ok(d > 0, '带动作的错误提示不能常驻 —— 那会让「撤销窗口」变成无限期');
   });
 
-  it('**撤销窗口不许被改回 3 秒**（主审 2026-10-22 明确要求钉住这条）', async () => {
+  it('**撤销窗口不许被改回那么短**（主审 2026-10-22 明确要求钉住这条）', async () => {
     const {
       TOAST_ACTION_DURATION_MS,
       TOAST_DEFAULT_DURATION_MS,
       resolveToastDuration,
     } = await import('@/components/common/toastPolicy');
     // 钉的是**性质**（「这个窗口至少 8 秒」），不是某个具体数字 ——
-    // 将来有人想把它调到 10 秒或 12 秒是合理的，掉回 3 秒不是。
+    // 将来有人想把它调到 10 秒或 12 秒是合理的，掉回普通提示的时长不是。
     assert.ok(
       TOAST_ACTION_DURATION_MS >= 8000,
       `撤销窗口至少 8 秒（实测 ${TOAST_ACTION_DURATION_MS}ms）—— ` +
-        '3 秒连读完「卡片不见了」都不够，退路等于没有',
+        '两三秒连读完「卡片不见了」都不够，退路等于没有',
     );
     assert.ok(
       resolveToastDuration('info', TOAST_DEFAULT_DURATION_MS, true) >= 8000,
@@ -210,7 +210,7 @@ describe('时长由「有没有动作」决定', () => {
     assert.equal(
       resolveToastDuration('info', TOAST_DEFAULT_DURATION_MS, false),
       TOAST_DEFAULT_DURATION_MS,
-      '普通提示必须还是 3 秒',
+      '普通提示必须还是默认时长',
     );
   });
 });
@@ -258,7 +258,7 @@ describe('倒计时：悬停与聚焦时暂停（这是「够得着」的地基�
     clock.advance(5_000);
     cd.resume();
     const afterResume = cd.remainingMs();
-    // 从暂停处续 ⇒ 剩下约 7 秒（10 - 3），不是 10 秒（从头）也不是 3 秒。
+    // 从暂停处续 ⇒ 剩下约 7 秒（10 - 3），不是 10 秒（从头）也不是那 3 秒。
     assert.ok(
       afterResume > 6_500 && afterResume <= 7_000,
       `恢复后应剩约 7000ms（实测 ${afterResume}ms）—— 少了就是「从头开始」，多了就是「重新给一整段」`,

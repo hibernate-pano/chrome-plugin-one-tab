@@ -164,7 +164,7 @@ export const resultViewTitle = (mode: 'search' | 'browse'): string =>
  * 【为什么 browse 形态下不显示标题】真机截图（outputs/prod-filter-browse/
  * 03-browse-filtered.png）暴露了一处**视觉冗余**：
  *
- *   卡片头：「符合条件的会话」
+ *   卡片头：「筛选结果」
  *   筛选区：「按条件筛选会话」
  *
  * 两行都是标题级、说的是同一件事（这批会话是按条件筛出来的）⇒
@@ -184,7 +184,12 @@ export const showFilterSectionTitle = (mode: 'search' | 'browse'): boolean =>
 
 /** 结果卡标题。 */
 export const resultCardTitle = (mode: 'search' | 'browse'): string =>
-  mode === 'browse' ? '符合条件的会话' : '匹配会话';
+  // 徽章里显示的是**标签数**（matchingTabs.length），不是会话数。
+  // 原先标题写「匹配会话」⇒「匹配会话 3」被读成 3 个会话，而实际可能是
+  // 1 个会话里的 3 个标签。改成不承诺计数的「匹配结果 / 筛选结果」，
+  // 让徽章的数字只回答「有几条结果」；精确的「N 个会话 · M 个标签页」
+  // 仍在徽章的 title 与读屏 live region 里（见 SearchResultList）。
+  mode === 'browse' ? '筛选结果' : '匹配结果';
 
 /**
  * 批量操作的标题（「恢复/删除 搜索结果中的 N 个标签页？」）。

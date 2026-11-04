@@ -86,8 +86,14 @@ export interface SkippedRemoteGroupsNotice {
   durationMs: number;
 }
 
-/** 信息级提示的展示时长。 */
-const NOTICE_DURATION_MS = 6000;
+/**
+ * 信息级提示的展示时长。
+ *
+ * 2026-11-04：6 秒 → 4 秒。产品反馈「toast 时间太长」。这条提示讲的是
+ * 「云端有 N 个会话这轮读不出来」（用户必须知道云端与本地不一致），
+ * 4 秒足够读完两句短文，再长就变成常驻噪音。
+ */
+const NOTICE_DURATION_MS = 4000;
 
 /**
  * 把「引擎报上来的数字」变成一个可用的计数。

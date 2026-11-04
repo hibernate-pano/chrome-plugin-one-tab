@@ -6,7 +6,7 @@
 import { useToast } from '@/contexts/ToastContext';
 import { logError } from './log';
 import type { ToastAction } from '@/components/common/Toast';
-import { resolveToastDuration } from '@/components/common/toastPolicy';
+import { resolveToastDuration, TOAST_DEFAULT_DURATION_MS } from '@/components/common/toastPolicy';
 
 /**
  * 通知消息类型
@@ -62,7 +62,7 @@ export const getNotificationConfig = (
         title: '恢复成功',
         message: `已成功恢复 ${params?.count || 0} 个标签页`,
         type: 'info',
-        duration: 3000
+        duration: TOAST_DEFAULT_DURATION_MS
       };
     case 'restore-error':
       return {
@@ -86,7 +86,7 @@ export const getNotificationConfig = (
         title: '提示',
         message: '操作完成',
         type: 'info',
-        duration: 3000
+        duration: TOAST_DEFAULT_DURATION_MS
       };
   }
 };

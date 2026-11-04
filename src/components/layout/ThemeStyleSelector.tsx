@@ -462,7 +462,7 @@ export const ThemeStyleSelector: React.FC<ThemeStyleSelectorProps> = ({
                       )}>
                         {option.label}
                       </div>
-                      <div className="text-[10px] theme-text-muted truncate">
+                      <div className="text-[11px] theme-text-muted truncate">
                         {option.description}
                       </div>
                     </div>

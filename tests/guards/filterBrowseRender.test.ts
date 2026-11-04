@@ -106,22 +106,59 @@ const controlsWith = (over: Partial<FilterControlsStub>): FilterControlsStub => 
   ...over,
 });
 
+/**
+ * 一条能被 `domain: github.com` 筛中的真实结果。
+ *
+ * 只给「筛选浏览态」两条标题断言用：没有结果时卡片头不渲染，
+ * 原先的断言实际匹配的是空态文案（`browseEmptyTitle`），
+ * 测不到「卡片头与筛选区标题重复」这件事。种子一条结果后，
+ * 断言才落在结果卡本身。
+ */
+const browseGroup = {
+  id: 'g-filter-fixture',
+  name: 'GitHub 调研',
+  tabs: [
+    {
+      id: 't-filter-fixture',
+      url: 'https://github.com/example/repo',
+      title: 'GitHub 仓库',
+      favicon: '',
+      createdAt: '2026-01-01T00:00:00.000Z',
+      lastAccessed: '2026-01-01T00:00:00.000Z',
+      pinned: false,
+    },
+  ],
+  createdAt: '2026-01-01T00:00:00.000Z',
+  updatedAt: '2026-01-01T00:00:00.000Z',
+  isLocked: false,
+  version: 1,
+};
+
 /** 真的把结果视图渲染一遍，返回 HTML 字符串。 */
 const renderResults = async (
   searchQuery: string,
-  controls: FilterControlsStub
+  controls: FilterControlsStub,
+  groups: unknown[] = []
 ): Promise<string> => {
   const React = (await import('react')).default;
   const { renderToStaticMarkup } = await import('react-dom/server');
   const { Provider } = await import('react-redux');
   const { createStore } = await import('@/store');
+  // 静态 import 会在本文件顶部的 window / chrome 桩装好之前就加载 tabSlice
+  // （它会经 storage 触达这些全局）⇒ 与其它模块一样，等桩就位后再动态取。
+  const { setGroups } = await import('@/store/slices/tabSlice');
   const { SearchResultList } = await import('@/components/search/SearchResultList');
   const { ToastProvider } = await import('@/contexts/ToastContext');
+
+  const store = createStore();
+  if (groups.length > 0) {
+    store.dispatch(setGroups(groups as never));
+  }
 
   return renderToStaticMarkup(
     React.createElement(
       Provider,
-      { store: createStore() } as never,
+      { store } as never,
       React.createElement(
         ToastProvider,
         null,
@@ -224,48 +261,51 @@ describe('筛选浏览态：界面不得声称「搜索过、没搜到」', () =
 
 describe('筛选浏览态：同一句话不得在一屏里出现两次', () => {
   // 真机截图（outputs/prod-filter-browse/03-browse-filtered.png）暴露的瑕疵：
-  //   卡片头：「符合条件的会话」
+  //   卡片头：「筛选结果」
   //   筛选区：「按条件筛选会话」
-  // 两行都是标题级、说的是同一件事（这批会话是按条件筛出来的）⇒
+  // 两行都是标题级、说的是同一件事（这批结果按条件筛出来）⇒
   // 同一个信息在一屏里出现两次，且两行都长得像标题 ⇒ 视觉噪音。
   //
   // 【为什么这条要钉在渲染层】标题去留的**判据**是纯函数
   // （showFilterSectionTitle），但「界面有没有真的不显示它」是**接线**的事。
   // 本仓已经吃过这个亏（A-14 第一轮守卫的 M4 变异：文案函数一个字没动，
   // 而组件恒定走旧分支 ⇒ 34 条守卫全绿，界面却在说假话）。
-  // ⇒ 这里断言渲染出的 HTML。
+  // ⇒ 这里断言渲染出的 HTML，并且**种一条结果** —— 空态下结果卡不渲染，
+  //   断言会落到空态文案上，测不到卡片头。
 
-  it('筛选浏览态：不得同时出现「符合条件的会话」与「按条件筛选会话」', async () => {
+  it('筛选浏览态：不得同时出现「筛选结果」与「按条件筛选会话」', async () => {
     const html = await renderResults(
       '',
       controlsWith({
         filters: { domain: 'github.com' },
         effectiveFilters: { domain: 'github.com' },
         activeFilterCount: 1,
-      })
+      }),
+      [browseGroup]
     );
 
     assert.match(
       html,
-      /符合条件的会话/,
-      `（前置）卡片头必须仍然说「符合条件的会话」。\n实际渲染：\n${html.slice(0, 1200)}`
+      /class="tab-group-title[^"]*">\s*筛选结果\s*</,
+      `（前置）卡片头必须仍然说「筛选结果」。\n实际渲染：\n${html.slice(0, 1200)}`
     );
     assert.doesNotMatch(
       html,
       /按条件筛选会话/,
       `筛选浏览态下不得再显示「按条件筛选会话」—— 它与卡片头的` +
-        `「符合条件的会话」是同一句话，在同一屏里出现两次且都长得像标题。`
+        `「筛选结果」说的是同一件事，在同一屏里出现两次且都长得像标题。`
     );
   });
 
   it('搜索态：标题保留（那里它起分区作用，不许被一起删掉）', async () => {
     const html = await renderResults(
-      'react',
+      'GitHub',
       controlsWith({
         filters: { domain: 'github.com' },
         effectiveFilters: { domain: 'github.com' },
         activeFilterCount: 1,
-      })
+      }),
+      [browseGroup]
     );
 
     assert.match(

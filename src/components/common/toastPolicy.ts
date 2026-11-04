@@ -12,7 +12,7 @@
  *
  * 三个事实叠在一起，把退路变成了「只对已经知道它在哪、并且手速够快的人存在」：
  *
- *   1. toast 3 秒后自动消失（普通提示的时长）；
+ *   1. toast 2 秒后自动消失（普通提示的时长，2026-11-04 由 3 秒收紧）；
  *   2. hover **不会**暂停计时（原先 Toast.tsx 里没有 onMouseEnter/onMouseLeave，
  *      也没有 onFocus/onBlur）⇒ 鼠标想去够它的时候，倒计时不等人；
  *   3. toast 通过 createPortal 挂在 body 末尾 ⇒ 它的按钮在 Tab 序列的**最后**。
@@ -34,23 +34,32 @@
 
 // ── 参数 ────────────────────────────────────────────────────────────
 
-/** 普通提示的默认时长（毫秒）—— 与 ToastContext.showToast 的默认值一致。 */
-export const TOAST_DEFAULT_DURATION_MS = 3000;
+/**
+ * 普通提示的默认时长（毫秒）—— 与 ToastContext.showToast 的默认值一致。
+ *
+ * 2026-11-04：3 秒 → 2 秒。产品反馈「toast 时间太长」：一条中性事实
+ * （例如「清理完成：已清除 1 个重复标签页」）在界面上本来就看得见（列表变了），
+ * 2 秒足够读完并让它退场；3 秒会在右上角多挂一秒。
+ *
+ * ⚠️ 只动**普通提示**。带动作的「撤销」窗口仍是 8 秒（那是退路的边界，
+ * 不可压缩）；错误仍然常驻（失败不该一闪而过）。
+ */
+export const TOAST_DEFAULT_DURATION_MS = 2000;
 
 /**
  * 带**动作按钮**的提示至少活多久（毫秒）。
  *
- * 为什么是 8 秒：3 秒不够用户读完「卡片不见了」再决定退不退回 ——
+ * 为什么是 8 秒：两三秒不够用户读完「卡片不见了」再决定退不退回 ——
  * 而这条退路的全部价值恰恰在于「用户**没料到**会消费掉数据」。
  * Chrome 自己的「重新打开已关闭的标签」也是这个量级（8–10 秒）。
  *
  * ⚠️ 这条**只对带动作的提示**生效：普通提示（不需要用户做决定）
- * 仍是 3 秒 —— 把那些也拖长只是让屏幕更吵。
+ * 是 2 秒 —— 把那些也拖长只是让屏幕更吵。
  *
  * ⚠️ 2026-10-22：这个数**不许往回改**。它就是「撤销窗口」的长度，
  * 也是对外承诺过的口径（README / 商店文案里的「给了你一条退路」）。
  * 守卫 tests/guards/toastUndoReachability.test.ts 钉着「带动作 ⇒ ≥ 8 秒」，
- * 谁把它改回 3 秒，测试就红。
+ * 谁把它改回普通提示的时长，测试就红。
  */
 export const TOAST_ACTION_DURATION_MS = 8000;
 
@@ -84,7 +93,7 @@ export type ToastKind = 'error' | 'info' | 'warning';
  *
  *   · **有没有动作**决定要不要给「做决定」留时间：
  *     带动作 ⇒ 至少 TOAST_ACTION_DURATION_MS；不带 ⇒ 保持调用方给的时长
- *     （普通提示仍是 3 秒）。
+ *     （普通提示是 2 秒）。
  *   · **错误**且调用方没指定时长 ⇒ 常驻（错误不该一闪而过）。
  *     但**带动作的错误不常驻**：「部分成功」那种提示上挂着「撤销」，
  *     一条永远不消失的提示比一条 10 秒后消失的提示更糟（用户没法继续做事），
@@ -95,7 +104,7 @@ export type ToastKind = 'error' | 'info' | 'warning';
  *
  * 这个函数**可以对自己再跑一遍**：ToastContext 先算一次存进队列，Toast
  * 组件再算一次。两遍结果必须一样 —— 否则「算两次」就会让时长变一次
- * （第一次 3000 → 第二次 10000，于是 Toast 里的倒计时比队列里记的长 7 秒）。
+ * （第一次 2000 → 第二次 10000，于是 Toast 里的倒计时比队列里记的长 8 秒）。
  *
  * 幂等性来自「每一支都返回同一个数」：
  *   · 0（常驻）⇒ 再算还是 0；
@@ -107,7 +116,7 @@ export const resolveToastDuration = (
   durationMs: number | undefined,
   hasAction: boolean,
 ): number => {
-  // undefined = 调用方没指定 ⇒ 用默认时长（普通提示的 3 秒）。
+  // undefined = 调用方没指定 ⇒ 用默认时长（普通提示的 2 秒）。
   const requested = durationMs ?? TOAST_DEFAULT_DURATION_MS;
   // duration <= 0 = 调用方明确要求常驻（尊重它，不改写）。
   if (requested <= 0) return 0;
@@ -418,7 +427,7 @@ export const forceExpire = (state: CountdownState): CountdownState => ({
 
 /**
  * 时钟契约。生产用 `window`（见 Toast.tsx），测试注入假时钟 ——
- * 于是「暂停 3 秒后剩余时间不变」这类判据不用真等。
+ * 于是「暂停几秒后剩余时间不变」这类判据不用真等。
  */
 export interface ToastClock {
   now(): number;

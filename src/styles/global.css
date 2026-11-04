@@ -1787,6 +1787,10 @@ html:not([data-theme]).dark {
      * 36px = 本仓自订的 MIN_HIT_TARGET_PX（见 components/layout/hitTarget.ts）。
      */
     min-width: 36px;
+    /* 2026-11-04：只给 min-width 还不够 —— 名字隐藏后按钮内容只有 20px
+       高的 logo，实测命中区 36×20（宽够、高不够）。动作区其它按钮都是
+       36×36，补 min-height 让品牌盒也成为 36px 的方块。 */
+    min-height: 36px;
     /* 极窄时品牌名让位：品牌只是标识，操作区是功能。
        320px 实测两者会重叠（品牌 118px + 操作区 228px > 320px 可用宽）。 */
     overflow: hidden;
@@ -1844,6 +1848,30 @@ html:not([data-theme]).dark {
    */
   .app-header-brand {
     justify-content: center;
+  }
+}
+
+/* ── 2026-11-04：320px 顶栏不许横向溢出 ─────────────────────────────────
+ *
+ * 实测 320×600：操作区宽 277.3px + 品牌 36px + 8px 栅格间距 + 24px 内边距
+ * = 345px，而视口只有 320px ⇒ 文档 scrollWidth 333，⋯ 菜单按钮被推到
+ * 视口外（截图里只剩「保存并关闭」的半颗按钮）。菜单是窄屏唯一的功能
+ * 入口（布局 / 清理 / 骰子 / 设置 / 导入导出都在里面）⇒ 溢出即功能不可达。
+ *
+ * 只压缩「不承载信息」的间距：图标按钮仍是 36px 命中区，保存按钮仍保留
+ * 完整文案「保存并关闭」（关闭标签的披露不能省）。4 个 2px 间距 + 左右
+ * 各 4px 内边距 = 16px ⇒ 320px 下刚好放得下。
+ */
+@media (max-width: 360px) {
+  .app-header-actions {
+    gap: 0;
+  }
+
+  /* `.btn.btn`：主题文件里有 `html[data-theme="legacy"] .btn`（0,2,1）
+     这种更高特异度的 padding 覆盖，只写 `.app-header-actions .btn`（0,2,0）
+     压不过它 —— 实测内边距仍是 16px、溢出只少了 6px。 */
+  .app-header-actions .btn.btn {
+    padding-inline: 0.5rem;
   }
 }
 

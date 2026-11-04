@@ -63,7 +63,7 @@ export const ModalFrame: React.FC<ModalFrameProps> = ({
           // #191817 暖黑，弹层却是一块 rgba(15,23,42,.95) 的冷蓝黑 ——
           // 一个暖色产品里弹出一块冷蓝面板，主题看起来像半成品。
           // 现在全部走 theme-* 工具类（与 AuthModal 同一写法）。
-          className={`relative w-full ${maxWidthClassName} overflow-hidden ts-dialog theme-radius-panel border theme-border-default theme-bg-elevated theme-shadow-panel backdrop-blur focus:outline-none`}
+          className={`relative flex w-full ${maxWidthClassName} max-h-[calc(100dvh-2rem)] flex-col overflow-hidden ts-dialog theme-radius-panel border theme-border-default theme-bg-elevated theme-shadow-panel backdrop-blur focus:outline-none`}
         >
           <button
             type="button"
@@ -76,29 +76,47 @@ export const ModalFrame: React.FC<ModalFrameProps> = ({
             </svg>
           </button>
 
-        <div className="px-6 pb-6 pt-6 sm:px-7 sm:pb-7 sm:pt-7">
-          <div className="flex items-start gap-4 pr-10">
-            {icon && <div className="mt-0.5 shrink-0">{icon}</div>}
-            <div className="min-w-0">
-              <h3
-                id={titleId}
-                className="text-lg font-semibold tracking-tight theme-text-primary"
-              >
-                {title}
-              </h3>
-              {description && (
-                <p
-                  id={descriptionId}
-                  className="mt-2 whitespace-pre-line text-sm leading-6 theme-text-secondary"
+        {/* 2026-11-04：弹窗高度必须受视口约束，正文滚动、底部按钮固定。
+            修复前实测（320×600、8 个长会话名的清理确认框）：面板高 916px、
+            顶边 -1px，「取消 / 清理」在 y=848 —— 两个出口都在视口之外。
+            外层虽然有 overflow-y-auto，但用户必须先滚动整层才能摸到按钮，
+            而且标题已经滚出视口。现在面板 = flex 列，顶部正文 min-h-0
+            可滚，footer 永远留在面板底部。 */}
+        <div className="flex min-h-0 flex-1 flex-col px-6 pb-6 pt-6 sm:px-7 sm:pb-7 sm:pt-7">
+          {/* tabIndex：长文案时正文是唯一的滚动容器。焦点若只落在标题/
+              关闭按钮/底部按钮上，键盘用户没有任何办法滚动它（这些元素的
+              最近的滚动祖先都不再是内容区）⇒ 正文自己进 Tab 序，
+              PageDown / 方向键可直接阅读。短弹窗多一个焦点停靠点，
+              但它带着可见焦点环，不会让人迷失。 */}
+          <div
+            role="group"
+            tabIndex={0}
+            aria-label="弹窗内容"
+            className="min-h-0 flex-1 overflow-y-auto overscroll-contain"
+          >
+            <div className="flex items-start gap-4 pr-10">
+              {icon && <div className="mt-0.5 shrink-0">{icon}</div>}
+              <div className="min-w-0">
+                <h3
+                  id={titleId}
+                  className="text-lg font-semibold tracking-tight theme-text-primary"
                 >
-                  {description}
-                </p>
-              )}
+                  {title}
+                </h3>
+                {description && (
+                  <p
+                    id={descriptionId}
+                    className="mt-2 whitespace-pre-line text-sm leading-6 theme-text-secondary"
+                  >
+                    {description}
+                  </p>
+                )}
+              </div>
             </div>
-          </div>
 
-          {children && <div className="mt-5">{children}</div>}
-          {footer && <div className="mt-5 flex justify-end gap-3">{footer}</div>}
+            {children && <div className="mt-5">{children}</div>}
+          </div>
+          {footer && <div className="mt-5 flex shrink-0 justify-end gap-3">{footer}</div>}
         </div>
       </div>
       </div>

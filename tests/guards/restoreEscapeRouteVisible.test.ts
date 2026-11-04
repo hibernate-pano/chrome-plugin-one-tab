@@ -254,11 +254,12 @@ describe('整组恢复后：用户看得见结果（新窗口点亮 / 当前窗�
 describe('Toast 队列：承载退路的提示不被静默挤掉', () => {
   const entry = (
     value: string,
-    kind: { hasAction?: boolean; isError?: boolean } = {},
+    kind: { hasAction?: boolean; isError?: boolean; isWarning?: boolean } = {},
   ): ToastQueueEntry<string> => ({
     value,
     hasAction: kind.hasAction ?? false,
     isError: kind.isError ?? false,
+    isWarning: kind.isWarning ?? false,
   });
 
   it('带动作的提示（撤销退路）不可被挤掉', () => {
@@ -282,6 +283,14 @@ describe('Toast 队列：承载退路的提示不被静默挤掉', () => {
       isEvictable(entry('saved')),
       true,
       '普通成功提示自带倒计时，被下一条顶掉没有损失'
+    );
+  });
+
+  it('警告提示不可被挤掉（问题必须留痕）', () => {
+    assert.equal(
+      isEvictable(entry('warn', { isWarning: true })),
+      false,
+      '警告是「问题」——不能被一条成功提示静默顶掉'
     );
   });
 
@@ -324,10 +333,50 @@ describe('Toast 队列：承载退路的提示不被静默挤掉', () => {
     }
   });
 
-  it('没超限时队列原样保留（准入不改变正常路径的行为）', () => {
+  it('普通 info 不叠罗汉：新 info 只保留最新一条', () => {
+    // 2026-11-04 产品反馈：一次操作先后报「正在…」与「完成…」两条 toast 会
+    // 叠在屏幕上。普通 info 同时最多一条，新的替代旧的。
     const queue = [entry('a'), entry('b')];
     const result = admitToast(queue, entry('c'), TOAST_QUEUE_MAX);
-    assert.deepEqual(result, ['a', 'b', 'c'], '未超限时不该丢任何东西，也不该改顺序');
+    assert.deepEqual(result, ['c'], '普通 info 同时只留最新一条');
+  });
+
+  it('问题到达时，旧的成功 info 让位；错误 / 警告 / 退路保留', () => {
+    const queue = [entry('old-info'), entry('undo', { hasAction: true })];
+    const result = admitToast(queue, entry('boom', { isError: true }), TOAST_QUEUE_MAX);
+    assert.deepEqual(
+      result,
+      ['undo', 'boom'],
+      '问题到达时成功 info 让位 —— 屏幕上不同时摆成功与失败',
+    );
+  });
+
+  it('普通 info 到达时，错误 / 警告 / 退路原样保留（还有空位）', () => {
+    const queue = [
+      entry('warn', { isWarning: true }),
+      entry('boom', { isError: true }),
+      entry('old-info'),
+    ];
+    const result = admitToast(queue, entry('new-info'), TOAST_QUEUE_MAX);
+    assert.deepEqual(
+      result,
+      ['warn', 'boom', 'new-info'],
+      '问题与退路不许被普通 info 顶掉；旧 info 被新 info 替换',
+    );
+  });
+
+  it('问题/退路已占满队列时，普通 info 不再挤进来', () => {
+    const queue = [
+      entry('warn', { isWarning: true }),
+      entry('boom', { isError: true }),
+      entry('undo', { hasAction: true }),
+    ];
+    const result = admitToast(queue, entry('new-info'), TOAST_QUEUE_MAX);
+    assert.deepEqual(
+      result,
+      ['warn', 'boom', 'undo'],
+      '三条问题/退路已在屏幕上时，成功提示不该再堆进来（问题优先）',
+    );
   });
 });
 

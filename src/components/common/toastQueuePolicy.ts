@@ -34,23 +34,27 @@
  * 单纯调大上限只是把「挤掉退路」变成「挤掉退路」的概率变小 ——
  * 丢数据这件事不该靠概率来防。
  *
+ * 2026-11-04 追加：普通 info 另有**不叠罗汉**规则（见 admitToast）——
+ * 同时最多一条，新 info 顶掉旧 info。3 条上限现在实际只服务于问题
+ * （错误/警告）与退路，不是「可以同时看三条成功提示」。
+ *
  * ── 判据钉的是**性质**，不是字面量 ────────────────────────────────────
  *
  * 「队列最多几条」是**可以调的**（改文案、改视觉密度都可能动它）⇒
  * 守卫不该钉「长度 = 3」。真正的不变式是：
  *
  *   · **带动作的提示不会被静默丢弃**（退路不许因拥挤而消失）；
- *   · **错误提示不会被静默丢弃**（失败不许因拥挤而消失）。
+ *   · **错误 / 警告提示不会被静默丢弃**（问题不许因拥挤而消失）。
  *
  * 允许它们被**用户自己**关掉、允许它们各自到期 —— 「静默丢弃」是唯一
  * 被禁止的结局。
  *
  * ── 挤掉的顺序：先挤「最不重要的」────────────────────────────────────
  *
- * 当队列超限时，先挤掉**既没有动作、又不是错误**的那条（普通成功/提示），
+ * 当队列超限时，先挤掉**普通信息**（没有动作、不是错误/警告），
  * 因为它是**信息量最低、且自带倒计时**的那一类。
- * 如果全都不能挤（全是错误或都带动作）⇒ 队列**允许变长**
- * ⇒ 宁可屏幕上多堆几条，也不能丢掉一条「失败」或「退路」。
+ * 如果全都不能挤（全是错误/警告/带动作）⇒ 队列**允许变长**
+ * ⇒ 宁可屏幕上多堆几条，也不能丢掉一条「问题」或「退路」。
  */
 
 /** 队列里一条提示的**准入性质**（不关心它的具体文案）。 */
@@ -59,35 +63,58 @@ export interface ToastQueueItem {
   hasAction: boolean;
   /** 是不是错误提示。 */
   isError: boolean;
+  /**
+   * 是不是警告提示。
+   *
+   * 2026-11-04：警告与错误同属「问题」，**不许**被普通信息顶掉/挤掉。
+   * 缺省 false：旧调用点与既有单测只关心 hasAction/isError，不必全改。
+   */
+  isWarning?: boolean;
 }
 
 /**
  * 一条待入队的提示：**值** + 它的**准入性质**。
  *
  * 为什么把「值」和「性质」分开：队列里存的是完整的提示对象（消息、类型、
- * 时长、动作…），而准入策略只需要知道「有没有动作」「是不是错误」。
+ * 时长、动作…），而准入策略只需要知道「有没有动作」「是不是错误/警告」。
  * 把两个派生字段塞回队列项会污染那个对象的形状（它还被 Toast 组件消费）。
  */
-export interface ToastQueueEntry<T> {
+export interface ToastQueueEntry<T> extends ToastQueueItem {
   value: T;
-  hasAction: boolean;
-  isError: boolean;
 }
 
 /** 队列默认最多同时堆叠几条。 */
 export const TOAST_QUEUE_MAX = 3;
 
 /**
+ * 这是不是一条**普通信息**提示（既不是问题，也不承载退路）。
+ *
+ * 只有这一类允许「新顶旧」/被挤出队列。错误、警告、带动作的提示都不在此列。
+ */
+export const isPlainInfo = (item: ToastQueueItem): boolean =>
+  !item.hasAction && !item.isError && item.isWarning !== true;
+
+/**
  * 这条提示**能不能被自动挤掉**。
  *
- * false = 不可挤掉（带动作的退路 / 错误提示）。
+ * false = 不可挤掉（带动作的退路 / 错误 / 警告）。
  * true  = 可挤掉（普通信息类提示）。
  */
-export const isEvictable = (item: ToastQueueItem): boolean =>
-  !item.hasAction && !item.isError;
+export const isEvictable = (item: ToastQueueItem): boolean => isPlainInfo(item);
 
 /**
  * 往队列里加一条新提示后的**准入结果**。
+ *
+ * ── 2026-11-04：普通信息「不叠罗汉」────────────────────────────────────
+ *
+ * 产品反馈：同一件事先后报「正在清理…」与「清理完成…」两条 toast 会同时
+ * 堆在屏幕上（实测顶栏一处，清理重复标签一次弹两条）—— 成功提示变成噪音。
+ *
+ * 规则：
+ *   · **普通信息**（info、无动作）同时最多一条：新 info 到达时先把旧 info
+ *     从队列里移除，再用新的；用户永远只看到「最新的那条事实」。
+ *   · **错误 / 警告 / 带动作**的提示不参与这次替换 —— 问题必须留痕，
+ *     退路必须够得着。它们随后仍按下面的超限规则处理（普通 info 先被挤）。
  *
  * @param existing  加之前已经在队列里的提示（旧的在前）。
  * @param incoming  新加的那条。
@@ -99,7 +126,16 @@ export const admitToast = <T>(
   incoming: ToastQueueEntry<T>,
   max: number = TOAST_QUEUE_MAX,
 ): T[] => {
-  const next = [...existing, incoming];
+  // 普通 info 顶掉旧 info：把「同一类可替换信息」控制为一条。
+  // 注意：这里只移除 plain info；warning/error/带动作的项原样保留。
+  //
+  // 问题（warning/error）到达时同样清掉旧的 plain info：屏幕上不同时摆
+  // 「成功」与「失败」—— 问题优先，成功是状态（界面里看得见）。
+  const incomingIsProblem = incoming.isError || incoming.isWarning === true;
+  const base = isPlainInfo(incoming) || incomingIsProblem
+    ? existing.filter(entry => !isPlainInfo(entry))
+    : existing;
+  const next = [...base, incoming];
   if (next.length <= max) {
     return next.map(entry => entry.value);
   }
@@ -108,8 +144,8 @@ export const admitToast = <T>(
   // 为什么从最早的开始挤：队列是「先进先出」的语义 ——
   // 最新的那条刚出现，最不该被挤；最老的那条已经存在最久。
   //
-  // ⚠️ 若一条都挤不掉（全是错误 / 全带动作）⇒ **允许超限**。
-  //   宁可屏幕多堆几条，也不能静默丢掉一条「失败」或「退路」。
+  // ⚠️ 若一条都挤不掉（全是错误 / 警告 / 带动作）⇒ **允许超限**。
+  //   宁可屏幕多堆几条，也不能静默丢掉一条「失败」「问题」或「退路」。
   const result: T[] = [];
   let overflow = next.length - max;
   for (const entry of next) {

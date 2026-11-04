@@ -7,6 +7,7 @@ import { logError } from '@/utils/log';
 import {
   installInputModalityTracker,
   resolveToastDuration,
+  TOAST_DEFAULT_DURATION_MS,
 } from '@/components/common/toastPolicy';
 import { admitToast } from '@/components/common/toastQueuePolicy';
 import { computeToastStackOffsets } from '@/components/common/toastStack';
@@ -25,7 +26,16 @@ interface ToastContextType {
     type?: ToastType,
     duration?: number,
     action?: ToastAction,
-  ) => void;
+  ) => number;
+  /**
+   * 按 id 撤销一条提示（目前用于「延迟出现的进度提示」在结束时立刻收掉）。
+   *
+   * 为什么需要它：进度提示是 info，结果提示也是 info；队列策略会让后者
+   * 顶掉前者（不会叠罗汉）。但**失败**路径弹的是 AlertDialog（不是 toast），
+   * 没有「后一条 info」来顶掉进度提示 ⇒ 不主动收掉就会在弹窗后面留一条
+   * 过期的「正在清理…」。⇒ 给调用方一个显式的清理入口。
+   */
+  dismissToast: (id: number) => void;
   showConfirm: (options: Omit<ConfirmDialogProps, 'visible'>) => void;
   showAlert: (options: Omit<AlertDialogProps, 'visible'>) => void;
 }
@@ -94,7 +104,7 @@ export const ToastProvider: React.FC<ToastProviderProps> = ({ children }) => {
   const showToast = useCallback((
     message: string,
     type: ToastType = 'info',
-    duration: number = 3000,
+    duration: number = TOAST_DEFAULT_DURATION_MS,
     action?: ToastAction,
   ) => {
     const id = ++toastSeq;
@@ -123,13 +133,17 @@ export const ToastProvider: React.FC<ToastProviderProps> = ({ children }) => {
         value: item,
         hasAction: item.action !== undefined,
         isError: item.type === 'error',
+        isWarning: item.type === 'warning',
       })),
       {
         value: entry,
         hasAction: action !== undefined,
         isError: type === 'error',
+        isWarning: type === 'warning',
       },
     ));
+    // id 供调用方在需要时主动收掉（延迟进度提示的失败路径）。
+    return id;
   }, []);
 
   const dismissToast = useCallback((id: number) => {
@@ -211,7 +225,7 @@ export const ToastProvider: React.FC<ToastProviderProps> = ({ children }) => {
   useEffect(() => installInputModalityTracker(), []);
 
   return (
-    <ToastContext.Provider value={{ showToast, showConfirm, showAlert }}>
+    <ToastContext.Provider value={{ showToast, dismissToast, showConfirm, showAlert }}>
       {children}
       {queue.map(item => (
         <Toast

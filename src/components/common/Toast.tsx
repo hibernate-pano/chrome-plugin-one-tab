@@ -8,6 +8,7 @@ import {
   isTextEntryElement,
   resolveToastDuration,
   shouldPauseCountdown,
+  TOAST_DEFAULT_DURATION_MS,
   type ToastClock,
   type ToastKind,
 } from './toastPolicy';
@@ -104,7 +105,7 @@ const WINDOW_CLOCK: ToastClock = {
 export const Toast: React.FC<ToastProps> = ({
   message,
   type = 'info',
-  duration = 3000,
+  duration = TOAST_DEFAULT_DURATION_MS,
   onClose,
   visible,
   stackOffset = 0,
@@ -549,7 +550,13 @@ export const Toast: React.FC<ToastProps> = ({
       {isVisible && (
         <div
           ref={cardRef}
-          className={`pointer-events-auto relative min-w-0 max-w-[calc(100vw-2rem)] overflow-hidden theme-radius-card border shadow-[0_20px_60px_rgba(15,23,42,0.18)] backdrop-blur ${typeStyles.shell}`}
+          // ── 2026-11-04：卡片宽度**不随文案无限撑开** ────────────────────
+          // 原先只有 `max-w-[calc(100vw-2rem)]`（= 视口减 32px，1280 宽的
+          // 窗口里就是 1248px 的上限）⇒ 一句 24 字的中文就把卡片撑到 403px，
+          // 在右上角压住一大块界面（实测：文案 273px，卡片 403px）。
+          // 现在 `w-fit`（贴着内容走，短句不浪费横向空间）+ 22rem / 视口
+          // 两个上限（长句到上限就换行，窄屏也不会溢出）。
+          className={`pointer-events-auto relative min-w-0 w-fit max-w-[min(20rem,calc(100vw-2rem))] overflow-hidden theme-radius-card border shadow-[0_20px_60px_rgba(15,23,42,0.18)] backdrop-blur ${typeStyles.shell}`}
           // ── 悬停/聚焦 ⇒ 倒计时暂停 ──────────────────────────────────
           // 为什么：这条提示上可能挂着**不可逆操作的退路**（撤销）。
           // 「用户伸手去够那个按钮」要花时间，而提示在用户伸手的过程中
@@ -560,8 +567,11 @@ export const Toast: React.FC<ToastProps> = ({
           onFocus={onFocusIn}
           onBlur={onFocusOut}
         >
+          {/* 进度条**绝对定位**（不占流内宽度）。
+              否则它那条 `w-full` 会参与父盒的「收缩到内容」计算 ⇒
+              父盒永远算成满宽（`w-fit` 失效，卡片恒为 352px）。 */}
           <div
-            className={`h-1 w-full ${typeStyles.accent}`}
+            className={`absolute inset-x-0 top-0 h-1 ${typeStyles.accent}`}
             style={{
               transformOrigin: 'left',
               animation: effectiveDuration > 0 && isVisible
@@ -574,15 +584,21 @@ export const Toast: React.FC<ToastProps> = ({
               opacity: effectiveDuration > 0 ? 1 : 0,
             }}
           />
-          <div className="flex items-start gap-3 px-4 py-4">
-            <div className={`mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl ${typeStyles.iconWrap}`}>
+          <div className="flex items-start gap-2.5 px-3.5 py-3">
+            <div className={`mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-xl ${typeStyles.iconWrap}`}>
               {getIcon()}
             </div>
             <div className="min-w-0 flex-1">
-              <div className="text-xs font-semibold tracking-[0.18em] theme-text-muted">
-                {TYPE_LABEL[type]}
-              </div>
-              <p className="mt-1 text-sm font-medium leading-6 text-current">{message}</p>
+              {/* 2026-11-04：info 不再画「提示」这个类型标签。
+                  它不提供任何新信息（图标与消息已经说清是一条中性事实），
+                  却让成功类 toast 多占一行、更像“事件”。错误/警告保留
+                  「出错 / 注意」—— 那是用户需要一眼区分的严重度。 */}
+              {type !== 'info' && (
+                <div className="text-xs font-semibold tracking-[0.18em] theme-text-muted">
+                  {TYPE_LABEL[type]}
+                </div>
+              )}
+              <p className={`${type === 'info' ? '' : 'mt-1 '}text-sm font-medium leading-6 text-current`}>{message}</p>
               {action && (
                 <button
                   type="button"

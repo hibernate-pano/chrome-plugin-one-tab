@@ -178,6 +178,19 @@ interface HeaderDropdownProps {
 const MENU_ROW = "w-full text-left px-4 py-2 text-sm theme-text-primary flex items-center transition-colors duration-150 theme-menu-hover";
 
 /**
+ * 两行式菜单行（主文案 + 副说明）。
+ *
+ * 不能用 `MENU_ROW` 再叠 `flex-col`：`items-center` 与 `items-start` 同属
+ * 一个 CSS 属性，谁生效取决于样式表里的先后而不是 className 的先后 ——
+ * 写出来是「看起来能跑、换个打包顺序就变形」的隐患。
+ *
+ * 2026-11-04：清理子菜单的两行式行原先是横向 flex ⇒ 主文案被副说明挤成
+ * 一条竖排的窄柱（真机 400px 下「删除所有会话」几个字各占一行），用户读到
+ * 的是一列散字而不是一句话。改成块级堆叠，主文案先拿整行宽度。
+ */
+const MENU_ROW_STACKED = "block w-full text-left px-4 py-2.5 text-sm theme-text-primary transition-colors duration-150 theme-menu-hover";
+
+/**
  * 读一次**真实**的后端状态（2026-10-17 B8，从 slim 适配双模式）。
  *
  * 为什么每次打开菜单都强制重解析（`invalidateActiveSyncBackend` + `primeSyncBackend`）：
@@ -266,6 +279,21 @@ const authNotice = useAppSelector(state => state.auth.notice ?? null);
     return plans;
   }, [diskGroups, groups, cleanupNow]);
   const settings = useAppSelector(state => state.settings);
+  // 子菜单的行模型只算一次：哪些时间档有内容、两档「全部」的副说明都依赖
+  // 同一份 `cleanupPlans`。放到 JSX 的 map 里每行重算一遍既不必要，也让
+  // 「分隔线画在哪」需要每行扫描整张表。
+  const cleanupRows = useMemo(
+    () =>
+      cleanupMenuRows(cleanupPlans, {
+        isAuthenticated,
+        syncBackend: settings.syncBackend,
+      }),
+    [cleanupPlans, isAuthenticated, settings.syncBackend]
+  );
+  // 第一条「全部」档：在它上面画分隔线，把「按年龄清理」与「清空整库」分开。
+  const cleanupDangerStart = cleanupRows.findIndex(
+    row => row.tier === 'all-keep-locked' || row.tier === 'all'
+  );
   // ── 2026-10-22 审计 L-11：初始展开的子菜单 ────────────────────────────
   // `initialSubmenu` 只在**挂载时**读一次（这个组件随菜单开关挂载/卸载，
   // 每次打开都是新实例 ⇒ 正好是「这次要不要自动展开导入」的语义）。
@@ -297,7 +325,17 @@ const authNotice = useAppSelector(state => state.auth.notice ?? null);
   const jsonImportInputRef = useRef<HTMLInputElement | null>(null);
   const oneTabImportInputRef = useRef<HTMLInputElement | null>(null);
   useEffect(() => {
-    if (openSubmenu) submenuRef.current?.scrollIntoView({ block: 'nearest' });
+    if (!openSubmenu) return;
+    // 对齐**父级区块**而不是子菜单面板本身。
+    //
+    // 2026-11-04：原先滚动面板（block:'nearest'），菜单在 320/400 高处
+    // 展开「清理旧会话」时只滚到「刚好露出面板」，顶部会切出一条半行
+    // （深色 320×600 实测顶部「未登录」只剩上半截，像渲染坏了）。
+    // 父级区块 =「父行 + 面板」，把它对齐到滚动区顶部：顶部从一整行开始，
+    // 面板也仍在视口内（六档全开时父行 + 面板约 400px，菜单可视高 480+）。
+    const panel = submenuRef.current;
+    const section = panel?.parentElement;
+    (section ?? panel)?.scrollIntoView({ block: 'start' });
   }, [openSubmenu]);
   // ── 2026-10-09 P1-5：从云端刷新必须有「进行中 / 成功 / 失败」三态 ──
   // 原先无 isRefreshing、成功也不给任何反馈：点一下如果云端没有新数据，
@@ -619,7 +657,7 @@ const authNotice = useAppSelector(state => state.auth.notice ?? null);
           localCount > 0 ? `本机 ${localCount} 个会话仍保留，不会上传到其它账号。` : '';
         const fb = decideFeedback({ visibility: 'self-evident', hiddenFact: retainedFact });
         if (fb.level !== 'silent') {
-          showToast(`已退出登录。${retainedFact}`, 'info', 5000);
+          showToast(`已退出登录。${retainedFact}`, 'info');
         }
       } catch (error) {
         // ── 2026-10-09 P2-4：失败必须出声 ──────────────────────────────
@@ -664,7 +702,7 @@ const authNotice = useAppSelector(state => state.auth.notice ?? null);
     // 磁盘上已经没有会话 ⇒ 不弹「确认删除 0 个」这种自相矛盾的框。
     const plan = planDeleteAll(diskGroups);
     if (plan.nothingToDelete) {
-      showToast(DELETE_ALL_NOTHING_MESSAGE, 'info', 4000);
+      showToast(DELETE_ALL_NOTHING_MESSAGE, 'info');
       return;
     }
 
@@ -692,7 +730,7 @@ const authNotice = useAppSelector(state => state.auth.notice ?? null);
             hiddenFact: deleteAllCountMatches(counts) ? undefined : deleteAllSuccessMessage(counts),
           });
           if (fb.level !== 'silent') {
-            showToast(deleteAllSuccessMessage(counts), 'info', 4000);
+            showToast(deleteAllSuccessMessage(counts), 'info');
           }
           // 广播登记失败时本地已删干净，但云端行不会被标 is_deleted ⇒
           // 其它设备下次合并会把它当 remote-only 全部复活。必须如实告知。
@@ -847,7 +885,7 @@ const authNotice = useAppSelector(state => state.auth.notice ?? null);
     const plan = planCleanup(diskGroups, tier, new Date());
     // 算出来是 0 条 ⇒ 不弹「清理 0 个会话」这种自相矛盾的框。
     if (plan.ids.length === 0) {
-      showToast(CLEANUP_NOTHING_MESSAGE, 'info', 4000);
+      showToast(CLEANUP_NOTHING_MESSAGE, 'info');
       return;
     }
 
@@ -869,7 +907,7 @@ const authNotice = useAppSelector(state => state.auth.notice ?? null);
             skippedLocked,
           });
           // 「安静的成功」：数量一致 ⇒ 空串 ⇒ 不出声（列表自己说得清楚）。
-          if (message) showToast(message, 'info', 4000);
+          if (message) showToast(message, 'info');
           // 广播登记失败时本地已删干净，但云端行不会被标 is_deleted ⇒
           // 其它设备下次合并会把它当 remote-only 全部复活。必须如实告知。
           const warn = deleteBroadcastWarn(payload);
@@ -1187,18 +1225,6 @@ const authNotice = useAppSelector(state => state.auth.notice ?? null);
                 {syncStatusView.prefix} · {syncStatusView.label}
               </span>
             </p>
-            {authNotice && (
-              // ── 2026-10-23（第 50 轮）：「核不到」必须**让用户知道** ──────
-              // 判据层早就写好了这一档该怎么说（core/authStatus.ts 的
-              // `authStatusCopy`），修复前它**零调用** ⇒ 界面一句话都不说 ⇒
-              // 用户看到「照旧显示我登录着」，却不知道云端此刻是 402 / 断网。
-              //
-              // 出声的位置就在同步状态行**下面**（离控制最近的一屏），
-              // 而不是弹一个每次开弹窗都弹的 toast（那是噪声）。
-              <p className="min-w-0 text-xs theme-text-muted leading-5">
-                {authNotice}
-              </p>
-            )}
             {syncStatusView.needsLogin && (
               // ── 2026-10-20 键盘可达性：补 role="menuitem" ────────────────
               // 容器声明了 role="menu"，而这个按钮是菜单里**唯一**没有
@@ -1225,7 +1251,7 @@ const authNotice = useAppSelector(state => state.auth.notice ?? null);
               // 所以这里不套 min-w/min-h（那会把状态卡的抬头行撑成两行高）。
               // 实际取值：`text-sm`（14px，与菜单行同字号）行高 20px + `py-1.5`
               // (6px×2) = **32px 高** ≥ AA 的 24px；`px-2` 把文字两侧各撑 8px，
-              // 命中区从 36.4px 宽涨到 ~52px。`-mr-2` 抵掉右侧 padding，
+              // 命中区从 36.4px 宽涨到 ~52px；`-mr-2` 抵掉右侧 padding，
               // 让按钮右边缘仍与状态卡内容右边缘对齐（视觉不跑偏）。
               //
               // 下划线**保留** —— 它是「这是可以点的文字」的线索，
@@ -1255,6 +1281,24 @@ const authNotice = useAppSelector(state => state.auth.notice ?? null);
               </button>
             )}
           </div>
+          {authNotice && (
+            // ── 2026-10-23（第 50 轮）：「核不到」必须**让用户知道** ──────
+            // 判据层早就写好了这一档该怎么说（core/authStatus.ts 的
+            // `authStatusCopy`），修复前它**零调用** ⇒ 界面一句话都不说 ⇒
+            // 用户看到「照旧显示我登录着」，却不知道云端此刻是 402 / 断网。
+            //
+            // 出声的位置就在同步状态行**下面**（离控制最近的一屏），
+            // 而不是弹一个每次开弹窗都弹的 toast（那是噪声）。
+            //
+            // 2026-11-04：它原先和状态行、登录按钮挤在同一行 flex 里。
+            // 这句话有 60 多字（「TapStack 云端暂时不可用，现在无法验证你的
+            // 账号……」）—— 256px 的菜单减去状态行后所剩不足 90px，
+            // 会把它压成一列 5~6 个字宽的长条（与清理子菜单同一个病）。
+            // 现在它独占状态行下方一整行。
+            <p className="mt-1.5 text-xs leading-5 theme-text-muted">
+              {authNotice}
+            </p>
+          )}
           {/* 上次同步时间：真值来自 storage.getLastSyncTime()（由 syncEngine
               的成功路径写入），而不是 Redux 的 tabs.lastSyncTime ——
               后者全仓零写方，读它等于这一行永远不渲染（缺陷 2）。
@@ -1822,31 +1866,39 @@ const authNotice = useAppSelector(state => state.auth.notice ?? null);
               <div ref={submenuRef} className="ts-panel mb-1 ml-3 rounded-lg border theme-border-default theme-bg-elevated shadow-lg">
                 {/* 行模型是纯函数（`cleanupMenuRows`）：哪些行出现、行文字、
                     小字与执行路径都在那里判 ⇒ 这里只负责渲染。 */}
-                {cleanupMenuRows(cleanupPlans, {
-                  isAuthenticated,
-                  syncBackend: settings.syncBackend,
-                }).map(row => (
-                  <button
-                    key={row.tier}
-                    role="menuitem"
-                    onClick={() => {
-                      if (row.path === 'deleteAll') {
-                        // 「含锁定」那一档走**既有**的 deleteAllGroups 路径
-                        // （含覆盖上传），一个字节都不改 —— 它的语义就是「全删」。
-                        void handleDeleteAllGroups();
-                      } else {
-                        void handleCleanupTier(row.tier);
-                      }
-                    }}
-                    className={MENU_ROW}
-                    type="button"
-                  >
-                    <span className="block">{row.label}</span>
-                    {row.warning && (
-                      <span className="mt-0.5 block text-xs theme-text-muted">{row.warning}</span>
-                    )}
-                  </button>
-                ))}
+                {cleanupRows.map((row, index) => {
+                  const showDivider = index === cleanupDangerStart && index > 0;
+                  // 两档「全部」与时间档不是同一种后果：前者清空整库，
+                  // 后者按年龄删一批。用危险色把这条边界画出来（副说明
+                  // 仍是 muted，避免整行都在喊）。
+                  const isFullClear = row.tier === 'all' || row.tier === 'all-keep-locked';
+                  return (
+                    <button
+                      key={row.tier}
+                      role="menuitem"
+                      onClick={() => {
+                        if (row.path === 'deleteAll') {
+                          // 「含锁定」那一档走**既有**的 deleteAllGroups 路径
+                          // （含覆盖上传），一个字节都不改 —— 它的语义就是「全删」。
+                          void handleDeleteAllGroups();
+                        } else {
+                          void handleCleanupTier(row.tier);
+                        }
+                      }}
+                      className={`${MENU_ROW_STACKED}${isFullClear ? ' theme-text-danger' : ''}${showDivider ? ' border-t theme-border-default' : ''}`}
+                      type="button"
+                    >
+                      <span className="block">{row.label}</span>
+                      {row.warning && (
+                        // 副说明独占一整行：它是「后果」，必须可读；
+                        // 与主文案横向并排会被挤成竖排（见 MENU_ROW_STACKED 注释）。
+                        <span className="mt-0.5 block text-xs leading-[1.5] theme-text-muted">
+                          {row.warning}
+                        </span>
+                      )}
+                    </button>
+                  );
+                })}
               </div>
             )}
           </div>

@@ -2234,9 +2234,13 @@ describe('Task 4：失败不得被静默', () => {
   });
 
   it('error 且调用方没指定时长 ⇒ 常驻（不许被改回自动消失）', async () => {
-    const { resolveToastDuration } = await import('@/components/common/toastPolicy');
+    const { resolveToastDuration, TOAST_DEFAULT_DURATION_MS } = await import(
+      '@/components/common/toastPolicy'
+    );
+    // 「调用方没指定时长」在实现里表现为「请求值 === 默认值」⇒ 这里必须用
+    // 常量本身，而不是某个写死的毫秒数（默认时长改过两次了：3s → 2s）。
     assert.equal(
-      resolveToastDuration('error', 3000, false),
+      resolveToastDuration('error', TOAST_DEFAULT_DURATION_MS, false),
       0,
       '错误提示必须常驻（0 = 不自动消失）—— 一闪而过的失败等于没说过',
     );

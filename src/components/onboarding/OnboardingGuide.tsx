@@ -272,7 +272,7 @@ export const OnboardingGuide: React.FC<OnboardingGuideProps> = ({ onComplete }) 
                         {/* 步骤内容 */}
                         <div
                             key={animKey}
-                            className={direction === 'forward' ? 'onboarding-step-enter' : 'onboarding-step-enter-reverse'}
+                            className={`onboarding-step-body ${direction === 'forward' ? 'onboarding-step-enter' : 'onboarding-step-enter-reverse'}`}
                         >
                             {renderStep()}
                         </div>
