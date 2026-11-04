@@ -8,7 +8,7 @@
 > 长期台账**（含根因、踩坑、修复顺序），不必翻译成英文、不必对齐商店审核口径。
 > 两边都会写「本版改了什么」，但只有本文件会记住「为什么」和「后来怎么验证的」。
 
-## v1.30.1（2026-11-04，toast 精简 + 界面细节打磨，**待提审**）
+## v1.30.1（2026-11-04，toast 精简 + 界面细节打磨，**已提交审核**）
 
 > 本版是 1.30.0 之后的收口：不改数据模型、不改同步协议，只动界面反馈与几处
 > 窄屏 / 长文案布局。商店当前线上是 `1.30.0`。
@@ -57,9 +57,19 @@
 - 真机 e2e：`e2e-cleanup-menu` 23/23、`e2e-clean-dup-import-fix` 13/13、`e2e-core-loop` 11/11。
 - 真机实测 toast：长文案 320×74、短文案 258×60；默认提示约 2.35s 后消失（含 220ms 退场）。
 
-### 发版证据
+### 发版证据（2026-11-04）
 
-（提交商店后回填 upload / publish 回包与 zip sha256）
+- 产物：`chrome-extension.zip` —— sha256
+  `3176e10d4f665223dd4d9774e50ef2371d445e594b3e563a7bb285fcbebac1f1`，
+  350,423 字节 / 39 条目，根目录即 `manifest.json`，包内 `version = 1.30.1`。
+  **这是真正上传的那一份。**
+- `upload chrome-extension.zip` → 回包 `uploadState: SUCCESS`；随后 `status`
+  读到草稿 `crxVersion: 1.30.1`。
+- `publish 1.30.1` → 回包 `{"status":["OK"],"statusDetail":["OK."]}`。
+- 再发一次 `publish 1.30.1` → **HTTP 400「You may not edit or publish an item
+  that is in review.」** ⇒ 自证已进审核队列。
+- 提审当时公开页仍是 `Version 1.30.0`（审核通过前不会变）；审核通过后抓公开页
+  确认 `1.30.1`，并把本节状态改成「已上架」。
 
 ### 继承下来的未完成项（一条都没做掉）
 
