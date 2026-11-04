@@ -1,5 +1,5 @@
 /**
- * 变异自证：搜索结果「组内行窗口化」的守卫必须真的看得见破口（2026-11-03）。
+ * 变异自证：搜索结果「结果卡懒渲染」的守卫必须真的看得见破口（2026-11-03）。
  *
  * 沙箱的做法见 `tests/_helpers/mutationSandbox.ts`。
  *
@@ -19,7 +19,7 @@ const GUARD = 'tests/guards/searchRowsWindowing.test.ts';
 const ROWS_COMPONENT = 'src/components/search/SearchMatchRows.tsx';
 const RESULT_LIST = 'src/components/search/SearchResultList.tsx';
 
-describe('变异自证：搜索结果组内行窗口化', () => {
+describe('变异自证：搜索结果卡懒渲染', () => {
   it('M1：窗口化组件永远渲染真行 ⇒ 守卫必须变红', () => {
     const [outcome] = runMutationCases([
       {

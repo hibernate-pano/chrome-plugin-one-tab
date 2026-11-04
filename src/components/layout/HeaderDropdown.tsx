@@ -511,6 +511,10 @@ const authNotice = useAppSelector(state => state.auth.notice ?? null);
       // 也不用 aria-haspopup 选择器 —— 本面板是就地展开的 disclosure，字符串里出现
       // `aria-haspopup` 会被「面板不得宣称 popup menu」的既有守卫判成违规。
       if (target?.closest?.('[data-menu-trigger]')) return;
+      // 被点的节点已经不在文档里（React 在同一次 click 中把它卸载了）⇒
+      // 这不是「外部点击」，`contains` 必然为 false，关菜单会误伤一个正常动作。
+      // 2026-11-04：「清理旧会话」的子菜单行正是这种自卸载节点。
+      if (target && !target.isConnected) return;
       if (target && dropdownRef.current && !dropdownRef.current.contains(target)) {
         onClose();
       }
@@ -824,8 +828,12 @@ const authNotice = useAppSelector(state => state.auth.notice ?? null);
    * （含覆盖上传），一个字节都不改 —— 那一档的语义就是「全删」。
    */
   const handleCleanupTier = async (tier: CleanupTier) => {
-    setOpenSubmenu(null);
-
+    // ⚠️ 这里**不能**先 `setOpenSubmenu(null)`：被点的行就在这个子菜单里，
+    // 同步收起会把按钮从 DOM 卸载；同一个 click 继续冒泡到 document 的
+    // 「点外面关闭菜单」处理器时，target 已脱离文档、`contains(target)` 为 false
+    // ⇒ 整个下拉菜单被卸载 ⇒ await 回来时 mountedRef 已 false、确认框永远不弹
+    // （真机表现为「点了清理，菜单一关，什么都没发生」）。
+    // 收起子菜单放到拿到计划之后、showConfirm 之前 —— 那时 click 事件早已结束。
     let diskGroups: TabGroup[];
     try {
       diskGroups = await storage.getGroupsForWrite();
@@ -884,6 +892,9 @@ const authNotice = useAppSelector(state => state.auth.notice ?? null);
           });
         });
     };
+
+    // 计划已定、确认框即将出现 ⇒ 现在可以安全收起子菜单（见函数开头的说明）。
+    setOpenSubmenu(null);
 
     // 与「删除所有会话」同一条焦点纪律：确认框关闭后焦点回到顶栏的菜单按钮。
     registerFocusReturn(document.querySelector<HTMLElement>('[data-menu-trigger]'));

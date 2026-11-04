@@ -64,8 +64,12 @@ const USER_ID = 'user-under-test';
 const SESSION_KEY = 'sb-stub-auth-token';
 const LOCAL_DEVICE = 'devLocal';
 const REMOTE_DEVICE = 'devRemote';
-const NOW = '2026-09-29T08:00:00.000Z';
-const LATER = '2026-09-29T09:00:00.000Z';
+// ⚠️ 相对当前时间，不写死日期：云端墓碑超过 30 天会被
+// `purgeExpiredCloudTombstones` 物理清掉，而这两个文件考的是「墓碑保住 / 认输」。
+// 固定 2026-09-29 在 2026-10-29 之后就会过期 ⇒ 测试自己把墓碑删了 ⇒ 断言读取
+// 不存在的行（actual undefined），守卫静默失效。2026-11-04 实测修掉。
+const NOW = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
+const LATER = new Date(Date.now() - 60 * 60 * 1000).toISOString();
 
 // ── 本地存储桩（无 indexedDB 时 storageAdapter 回退到 localStorage）────────
 const lsData = new Map<string, string>();

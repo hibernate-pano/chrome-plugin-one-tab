@@ -137,7 +137,7 @@ async function main() {
       console.log('  搜索态 DOM:', JSON.stringify(searchDom));
 
       // 搜索态滚动：占位必须与真行**等高** —— 滚到底前后文档总高不许变。
-      // 这是「组内行窗口化」唯一可能出错的形态：占位矮了/高了，滚到那儿
+      // 这是「结果卡懒渲染」唯一可能出错的形态：占位矮了/高了，滚到那儿
       // 内容会跳、滚动条会漂。delta ≈ 0 才算占位逐像素对得上。
       const searchScroll = await page.evaluate(async () => {
         const se = document.scrollingElement || document.documentElement;

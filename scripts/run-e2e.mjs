@@ -43,6 +43,7 @@ const ORDER = [
   // （2026-10-06 首次加入，当天就靠它抓出 e2e 场景写错导致的假通过。）
   'e2e-clean-dup-import-fix.mjs',          // 清理重复标签不报错 + 导入往返不丢数据（纯本地）
   'e2e-core-loop.mjs',                     // 核心闭环：保存 → 列表可见 → 恢复真的开标签（纯本地，不登录）
+  'e2e-cleanup-menu.mjs',                  // 「清理旧会话」六档：确认框必须出现 + 只删该删的（纯本地）
   'e2e-deadhandle-supabase-timeout.mjs',   // IDB 死句柄自愈 + 请求级超时真会触发（需登录 + 缩短上界构建）
   'e2e-sync-test.mjs',                      // 基础：A 保存上传 → B 登录下载
   'e2e-batched-sync-roundtrip.mjs',         // 1.22.14：分批上传 + 分页下载的真实后端往返（130 会话）
