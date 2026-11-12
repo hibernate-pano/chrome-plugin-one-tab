@@ -44,12 +44,15 @@ interface StepConfig {
  *   tests/a11yLists.test.ts 会交叉校验。
  */
 const STEPS: StepConfig[] = [
-    { title: '欢迎使用 TapStack' },
+    // ⚠️ 2026-11-06：这些 title 是**步骤点按钮的可访问名**（"第 N 步: …"），
+    // 必须与每一步的可见标题**一致** —— 否则读屏用户听到的是一句与屏幕上
+    // 不同的说法（同一屏两套说法，比只说错一句更糟）。
+    { title: '把工作现场存下来，之后再打开' },
     // 2026-10-07 P1-3：aria-label 补上了「并关闭这些标签页」（保存会清空当前
     // 窗口，必须让用户在被清空前就知道）。锚点必须同步——a11yLists 有一条守卫
     // 断言「选择器能命中真实元素」，正是为了拦住「改文案后引导高亮静默消失」。
     {
-      title: '保存工作会话',
+      title: '保存会关掉这些标签页',
       // 2026-10-19 审计 I-3：保存按钮的 aria-label 改用共享常量
       // saveAndCloseDescription（可见文案也同步变成「保存并关闭标签」）。
       // 这里的锚点必须跟着变 —— a11yLists 有一条守卫断言「选择器能命中真实
@@ -65,9 +68,9 @@ const STEPS: StepConfig[] = [
     // ⚠️ aria-label 里用的是中文顿号「、」，不是 ASCII 逗号 ——
     //    Spotlight 的 splitSelectorChain 按顶层逗号拆候选链，ASCII 逗号
     //    会把一个候选劈成两个（引号内的逗号不受影响，但这里不必冒险）。
-    { title: '搜索工作会话', spotlightTarget: '[aria-label="搜索会话名、标签标题或 URL"]' },
+    { title: '按会话名、标题或 URL 找', spotlightTarget: '[aria-label="搜索会话名、标签标题或 URL"]' },
     {
-        title: '恢复整个会话',
+        title: '恢复之后，那条记录会从列表里消失',
         // 2026-10-22 审计 P0-1：这里原本只有恢复按钮一个候选，而**全新安装时
         // 一个会话都没有** ⇒ 那张卡片不存在 ⇒ 按钮不存在 ⇒ 聚光灯整个消失，
         // 界面上没有任何提示（只有 console 里一句 warn）。
@@ -81,8 +84,8 @@ const STEPS: StepConfig[] = [
         spotlightTarget:
             'button[aria-label^="在当前窗口打开整个会话"], button[aria-label^="在新窗口恢复整个会话"], button[aria-label^="在新窗口恢复所有匹配标签"], [aria-label="搜索会话名、标签标题或 URL"]',
     },
-    { title: '跨设备同步', spotlightTarget: '[aria-label="菜单"]' },
-    { title: '一切就绪' },
+    { title: '换台设备也能找回', spotlightTarget: '[aria-label="菜单"]' },
+    { title: '开始保存第一个会话' },
 ];
 
 const TOTAL_STEPS = STEPS.length;

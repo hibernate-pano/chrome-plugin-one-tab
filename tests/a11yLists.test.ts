@@ -392,6 +392,26 @@ describe('引导弹层：键盘与焦点', () => {
     const focusable = ONBOARDING_STEPS.split('<h2 tabIndex={-1} className="onboarding-title">').length - 1;
     assert.equal(focusable, 6, '每个步骤标题都要带 tabIndex={-1}');
   });
+
+  // ── 2026-11-06：步骤点的可访问名必须与可见标题**一致** ────────────────
+  //
+  // 步骤点按钮的 aria-label 是「第 N 步: {title}」⇒ 读屏用户**听到**的是
+  // STEPS 里的 title，而**看到**的是每一步的 <h2>。两句话不同时，
+  // 同一屏上就有两套说法 —— 比只说错一句更糟（用户会以为界面坏了）。
+  it('步骤点的可访问名与那一步的可见标题逐字一致', () => {
+    const titles = [...ONBOARDING_STEPS.matchAll(/<h2 tabIndex=\{-1\} className="onboarding-title">([^<]+)<\/h2>/g)]
+      .map(m => m[1].trim());
+    assert.equal(titles.length, 6, `只找到 ${titles.length} 个可见标题，扫描器可能坏了`);
+
+    const guide = read('../src/components/onboarding/OnboardingGuide.tsx');
+    const stepTitles = [...guide.matchAll(/title:\s*'([^']+)'/g)].map(m => m[1]);
+    assert.equal(stepTitles.length, 6, `STEPS 里只找到 ${stepTitles.length} 个 title`);
+    assert.deepEqual(
+      stepTitles,
+      titles,
+      '步骤点的可访问名与可见标题不一致 —— 读屏听到的与看到的不是同一句话',
+    );
+  });
 });
 
 // ── 【7 · P1】聚光灯选择器必须真的命中元素 ────────────────────────────────────

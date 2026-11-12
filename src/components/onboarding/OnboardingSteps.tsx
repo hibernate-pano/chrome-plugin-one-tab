@@ -9,6 +9,7 @@ import { EMPTY_STATE_ACTION_HINT } from '@/components/tabs/emptyStateActions';
 // 审计 WC-6：锁定**不阻止**删除整个会话，「删除所有会话」照样会删掉锁定会话。
 // 锁定卡片与删除卡片说的是同一件事 ⇒ 一个出处、两处引用（措辞抄 README/商店页）。
 import { LOCK_DELETE_BOUNDARY } from '@/components/onboarding/onboardingCopy';
+import { OnboardingGlyph, type GlyphName } from './OnboardingGlyph';
 
 /**
  * 引导各步内容。
@@ -17,44 +18,60 @@ import { LOCK_DELETE_BOUNDARY } from '@/components/onboarding/onboardingCopy';
  * 而是给 OnboardingGuide 在切步时提供聚焦目标——读屏会播报新标题，
  * 键盘用户的焦点也不会停留在上一步已经卸载的按钮上。
  *
- * ── 2026-10-23 审计 V-12：emoji 是**装饰**，不进朗读队列 ──────────────────
+ * ── 2026-11-06：emoji 全部换成线性图标，文案去掉「AI 味」───────────────
  *
- * 21 个 emoji 渲染点原先**没有一个**带 `aria-hidden` ⇒ `<span>🧭</span>`
- * 是一个有内容的文本节点 ⇒ 读屏会把它当文字念出来（「指南针」/「compass
- * emoji」），18 个 emoji 逐个念。它们旁边紧挨着说明文字，念出来只是噪音。
+ * 上一版每个特性卡片头上挂一个 emoji（💾 🔍 🚀 🪟 📌 🔒 🗂️ ⏱️ 🌐 ↕️ 🪄 📍 🕘 🔄 📤 🛟 ✅）。
+ * 两个问题：
+ *   ① **视觉**：emoji 是各家字体里风格各异的彩色小图（Apple / Noto / Segoe
+ *      三套画风），混在一条统一的产品界面里像贴纸；同一个「保存」在两处
+ *      分别是 💾 与 🪟，语义也没有系统性。
+ *   ② **语气**：🚀「让中断后的继续工作变得更快、更稳」、🪄、✅「核心闭环
+ *      已经齐了」这类说法是**营销腔**，不是这个产品的语言 —— 本仓别处
+ *      （README / 商店页 / 设置页）一律是「说清事实 + 说清后果」。
  *
- * 现在每个 emoji 容器都标 `aria-hidden="true"` —— 视觉保留，朗读队列清空。
- * （emoji 的视觉风格本身是审美问题，本轮不动；见审计报告 §3 的「撤回的判断」。）
+ * 现在：图标换成**同一套线性 glyph**（`OnboardingGlyph`，24px、1.5px 描边、
+ * 单色 accent），文案改成陈述句 —— 说这件功能**做什么**、**代价是什么**，
+ * 不形容它「多好」。
+ *
+ * ⚠️ 装饰性图标的可访问性判据没退：每个 glyph 容器仍然 `aria-hidden="true"`
+ *    （它们旁边的标题已经说了同一件事，读屏再念一遍是噪音）。
+ *    守卫见 tests/guards/audit20261023UiVisual.test.ts 的 V-12。
  */
 export const WelcomeStep: React.FC<{ version: string }> = ({ version }) => (
   <div className="onboarding-content">
     <div className="onboarding-icon-wrapper" aria-hidden="true">
-      <span>🧭</span>
+      <OnboardingGlyph name="stack" size={32} />
     </div>
-    <h2 tabIndex={-1} className="onboarding-title">欢迎使用 TapStack</h2>
+    <h2 tabIndex={-1} className="onboarding-title">把工作现场存下来，之后再打开</h2>
     <div className="flex justify-center">
       <span className="onboarding-version-badge">v{version}</span>
     </div>
     <p className="onboarding-description">
-      把当前窗口保存成可找回、可恢复的工作会话
+      当前窗口的标签页可以收成一个会话
       <br />
-      让中断后的继续工作变得更快、更稳
+      之后按名字、标题或网址找回来
     </p>
     <div className="onboarding-feature-grid">
       <div className="onboarding-feature-card">
-        <div className="onboarding-feature-icon" aria-hidden="true">💾</div>
+        <div className="onboarding-feature-icon" aria-hidden="true">
+          <OnboardingGlyph name="save" />
+        </div>
         <div className="onboarding-feature-title">保存</div>
-        <div className="onboarding-feature-desc">先把工作现场收起来</div>
+        <div className="onboarding-feature-desc">把这一窗收成一个会话</div>
       </div>
       <div className="onboarding-feature-card">
-        <div className="onboarding-feature-icon" aria-hidden="true">🔍</div>
+        <div className="onboarding-feature-icon" aria-hidden="true">
+          <OnboardingGlyph name="search" />
+        </div>
         <div className="onboarding-feature-title">搜索</div>
-        <div className="onboarding-feature-desc">按会话名或标签找回</div>
+        <div className="onboarding-feature-desc">按会话名或标签内容找</div>
       </div>
       <div className="onboarding-feature-card">
-        <div className="onboarding-feature-icon" aria-hidden="true">🚀</div>
+        <div className="onboarding-feature-icon" aria-hidden="true">
+          <OnboardingGlyph name="open" />
+        </div>
         <div className="onboarding-feature-title">恢复</div>
-        <div className="onboarding-feature-desc">默认在当前窗口里继续工作</div>
+        <div className="onboarding-feature-desc">默认在当前窗口里打开</div>
       </div>
     </div>
   </div>
@@ -63,9 +80,9 @@ export const WelcomeStep: React.FC<{ version: string }> = ({ version }) => (
 export const SaveTabsStep: React.FC = () => (
   <div className="onboarding-content">
     <div className="onboarding-icon-wrapper" aria-hidden="true">
-      <span>💾</span>
+      <OnboardingGlyph name="save" size={32} />
     </div>
-    <h2 tabIndex={-1} className="onboarding-title">先保存一个会话</h2>
+    <h2 tabIndex={-1} className="onboarding-title">保存会关掉这些标签页</h2>
     <p className="onboarding-description">
       {/* ── 2026-10-09 P1-2：文案不得让用户做一件当前做不到的事 ───────────
        * 引导遮罩 `.onboarding-overlay` 是 position:fixed; inset:0 覆盖整个视口，
@@ -76,9 +93,9 @@ export const SaveTabsStep: React.FC = () => (
        * 改文案而不是改交互：让聚光灯目标在引导期间可点击需要重新设计
        * 「读」与「试」的边界（当前聚光灯是阅读态），属产品决策。
        * 文案只承诺**此刻真能做的事**，是无争议的诚实性修复。 */}
-      关闭本引导后，点击顶部的“{saveAndCloseLabel}”按钮
+      关闭本引导后，点击顶部的「{saveAndCloseLabel}」
       <br />
-      当前窗口会被收成一个工作会话，<strong>这些标签随之关闭</strong>
+      当前窗口的标签页会收成一个会话，<strong>然后从窗口里消失</strong>
       {/* 2026-10-09 P1-1：定位保持「保存 = 剪切」（产品负责人已确认），
           但新用户第一次操作就该知道会发生什么 —— 「收成一个会话」没有明说
           标签会关掉，用户可能以为只是存了个副本。
@@ -105,12 +122,16 @@ export const SaveTabsStep: React.FC = () => (
     </p>
     <div className="onboarding-feature-grid">
       <div className="onboarding-feature-card">
-        <div className="onboarding-feature-icon" aria-hidden="true">🪟</div>
+        <div className="onboarding-feature-icon" aria-hidden="true">
+          <OnboardingGlyph name="window" />
+        </div>
         <div className="onboarding-feature-title">保存当前窗口</div>
-        <div className="onboarding-feature-desc">把此刻的工作上下文完整留住</div>
+        <div className="onboarding-feature-desc">这一窗的标签页一起收进同一个会话</div>
       </div>
       <div className="onboarding-feature-card">
-        <div className="onboarding-feature-icon" aria-hidden="true">📌</div>
+        <div className="onboarding-feature-icon" aria-hidden="true">
+          <OnboardingGlyph name="pin" />
+        </div>
         {/* ── 2026-10-23 审计 H-2 / H-11 ──────────────────────────────────
          * H-11：标题混用英文 `Pinned`，而产品其它地方一律叫「固定标签页」
          *        （设置页「保存时收集固定标签页」、筛选器「固定标签」、
@@ -126,7 +147,9 @@ export const SaveTabsStep: React.FC = () => (
         </div>
       </div>
       <div className="onboarding-feature-card">
-        <div className="onboarding-feature-icon" aria-hidden="true">🔒</div>
+        <div className="onboarding-feature-icon" aria-hidden="true">
+          <OnboardingGlyph name="lock" />
+        </div>
         <div className="onboarding-feature-title">锁定保护</div>
         {/* ── 2026-10-20 审计 A-3：承诺必须说清锁定的**边界** ─────────────
          * 「重要会话可锁定，避免误删」听起来像「锁了就删不掉」，
@@ -151,29 +174,35 @@ export const SaveTabsStep: React.FC = () => (
 export const SearchStep: React.FC = () => (
   <div className="onboarding-content">
     <div className="onboarding-icon-wrapper" aria-hidden="true">
-      <span>🔍</span>
+      <OnboardingGlyph name="search" size={32} />
     </div>
-    <h2 tabIndex={-1} className="onboarding-title">需要时快速找回</h2>
+    <h2 tabIndex={-1} className="onboarding-title">按会话名、标题或 URL 找</h2>
     <p className="onboarding-description">
-      搜索会话名、标签标题或 URL
+      三种都能搜：会话名、标签标题、URL
       <br />
-      结果会先按会话归组，再展开具体标签
+      结果先按会话归组，再展开命中的标签
     </p>
     <div className="onboarding-feature-grid">
       <div className="onboarding-feature-card">
-        <div className="onboarding-feature-icon" aria-hidden="true">🗂️</div>
+        <div className="onboarding-feature-icon" aria-hidden="true">
+          <OnboardingGlyph name="group" />
+        </div>
         <div className="onboarding-feature-title">先找会话</div>
         <div className="onboarding-feature-desc">同一批相关标签会一起出现</div>
       </div>
       <div className="onboarding-feature-card">
-        <div className="onboarding-feature-icon" aria-hidden="true">⏱️</div>
+        <div className="onboarding-feature-icon" aria-hidden="true">
+          <OnboardingGlyph name="clock" />
+        </div>
         <div className="onboarding-feature-title">按时间过滤</div>
-        <div className="onboarding-feature-desc">不输入关键词也能筛：只看较近的，或更久之前的</div>
+        <div className="onboarding-feature-desc">不输关键词也能筛：只看较近的，或更久之前的</div>
       </div>
       <div className="onboarding-feature-card">
-        <div className="onboarding-feature-icon" aria-hidden="true">🌐</div>
+        <div className="onboarding-feature-icon" aria-hidden="true">
+          <OnboardingGlyph name="globe" />
+        </div>
         <div className="onboarding-feature-title">按域名过滤</div>
-        <div className="onboarding-feature-desc">记得站点、不记得网址时，按域名直接找出来</div>
+        <div className="onboarding-feature-desc">记得站点、不记得网址时，按域名找出来</div>
       </div>
       {/* ── 2026-10-23 审计 H-13：教「会话排序」─────────────────────────────
           第 42 轮刚做了会话排序（`core/sessionSort.ts` 的四档：最近保存 /
@@ -183,7 +212,9 @@ export const SearchStep: React.FC = () => (
           排序的判据口径以 `SESSION_SORT_OPTIONS` 为准（守卫从那里现场读
           选项标签，不钉中文措辞）。 */}
       <div className="onboarding-feature-card">
-        <div className="onboarding-feature-icon" aria-hidden="true">↕️</div>
+        <div className="onboarding-feature-icon" aria-hidden="true">
+          <OnboardingGlyph name="sort" />
+        </div>
         <div className="onboarding-feature-title">排序</div>
         <div className="onboarding-feature-desc">
           会话多的时候，筛选区里可以按最近保存、最近活动、名称或会话大小（标签数）排序
@@ -196,9 +227,9 @@ export const SearchStep: React.FC = () => (
 export const RestoreStep: React.FC = () => (
   <div className="onboarding-content">
     <div className="onboarding-icon-wrapper" aria-hidden="true">
-      <span>🚀</span>
+      <OnboardingGlyph name="open" size={32} />
     </div>
-    <h2 tabIndex={-1} className="onboarding-title">恢复时继续，而不是重来</h2>
+    <h2 tabIndex={-1} className="onboarding-title">恢复之后，那条记录会从列表里消失</h2>
     <p className="onboarding-description">
       恢复整个会话时，默认用「在当前窗口打开整个会话」直接加到当前窗口
       <br />
@@ -221,14 +252,18 @@ export const RestoreStep: React.FC = () => (
     </p>
     <div className="onboarding-feature-grid">
       <div className="onboarding-feature-card">
-        <div className="onboarding-feature-icon" aria-hidden="true">🪄</div>
+        <div className="onboarding-feature-icon" aria-hidden="true">
+          <OnboardingGlyph name="window" />
+        </div>
         <div className="onboarding-feature-title">当前窗口恢复</div>
         <div className="onboarding-feature-desc">
           直接加到当前窗口接着做；也可以选「在新窗口恢复整个会话」另开一扇窗
         </div>
       </div>
       <div className="onboarding-feature-card">
-        <div className="onboarding-feature-icon" aria-hidden="true">📍</div>
+        <div className="onboarding-feature-icon" aria-hidden="true">
+          <OnboardingGlyph name="pin" />
+        </div>
         {/* ── 2026-10-23 审计 H-11：英文 `pinned` → 中文「固定标签页」 ─────
             产品其它地方一律叫「固定标签页」（设置页 / 筛选器 / 保存提示）。
             标题改中文后，原描述「固定标签页状态会跟着一起回来」与标题重复
@@ -239,7 +274,9 @@ export const RestoreStep: React.FC = () => (
         </div>
       </div>
       <div className="onboarding-feature-card">
-        <div className="onboarding-feature-icon" aria-hidden="true">🕘</div>
+        <div className="onboarding-feature-icon" aria-hidden="true">
+          <OnboardingGlyph name="clock" />
+        </div>
         {/* ── 2026-10-25 产品定案：默认名从「替用户猜」改成「保存时刻」──────
             旧文案说「默认按域名命名，取不到时用标签标题，再取不到才用时间戳」——
             那条链每一级都在**猜**：猜域名会猜错（跨站时是「一半对」的名字），
@@ -257,7 +294,7 @@ export const RestoreStep: React.FC = () => (
 export const SyncStep: React.FC = () => (
   <div className="onboarding-content">
     <div className="onboarding-icon-wrapper" aria-hidden="true">
-      <span>☁️</span>
+      <OnboardingGlyph name="cloud" size={32} />
     </div>
     <h2 tabIndex={-1} className="onboarding-title">换台设备也能找回</h2>
     <p className="onboarding-description">
@@ -313,7 +350,9 @@ export const SyncStep: React.FC = () => (
     </p>
     <div className="onboarding-feature-grid">
       <div className="onboarding-feature-card">
-        <div className="onboarding-feature-icon" aria-hidden="true">🔄</div>
+        <div className="onboarding-feature-icon" aria-hidden="true">
+          <OnboardingGlyph name="sync" />
+        </div>
         {/* 审计 P1-5：卡片标题叫「自动同步」，描述却只讲上传 ⇒ 用户以为
             「登录 = 开了自动同步」。
             ── 2026-10-23 审计 H-3：更要紧的是**标题本身** ——「自动同步」
@@ -326,7 +365,9 @@ export const SyncStep: React.FC = () => (
         </div>
       </div>
       <div className="onboarding-feature-card">
-        <div className="onboarding-feature-icon" aria-hidden="true">📤</div>
+        <div className="onboarding-feature-icon" aria-hidden="true">
+          <OnboardingGlyph name="import" />
+        </div>
         <div className="onboarding-feature-title">导入导出</div>
         {/* ── 2026-10-23 审计 H-14：OneTab 文本格式**本身不带会话名** ──────
             社区标准如此（`URL | 标题`，空行分组）⇒ 名字一定会丢。
@@ -341,7 +382,9 @@ export const SyncStep: React.FC = () => (
         </div>
       </div>
       <div className="onboarding-feature-card">
-        <div className="onboarding-feature-icon" aria-hidden="true">🛟</div>
+        <div className="onboarding-feature-icon" aria-hidden="true">
+          <OnboardingGlyph name="shield" />
+        </div>
         <div className="onboarding-feature-title">误删保护</div>
         {/* ── 2026-10-19 审计 I-5：承诺必须收窄到真实行为 ────────────────
          * 原文「删除整个会话会先确认；单条删除直接生效」让人以为**任何**删除
@@ -370,13 +413,15 @@ export const SyncStep: React.FC = () => (
 export const ReadyStep: React.FC = () => (
   <div className="onboarding-content text-center">
     <div className="onboarding-icon-wrapper" aria-hidden="true">
-      <span className="onboarding-confetti" aria-hidden="true">✅</span>
+      <OnboardingGlyph name="check" size={32} />
     </div>
-    <h2 tabIndex={-1} className="onboarding-title">核心闭环已经齐了</h2>
+    <h2 tabIndex={-1} className="onboarding-title">开始保存第一个会话</h2>
     <p className="onboarding-description">
-      现在开始保存、搜索、恢复你的工作会话
+      点顶部的「{saveAndCloseLabel}」收走这一窗
       <br />
-      需要跨设备时，再按需手动同步
+      需要跨设备时，再到菜单里开启同步
     </p>
   </div>
 );
+
+export type { GlyphName };
