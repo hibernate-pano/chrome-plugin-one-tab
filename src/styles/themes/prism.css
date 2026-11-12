@@ -31,6 +31,14 @@
     --color-bg-tertiary: rgba(237, 233, 254, 0.6);
     --color-bg-elevated: rgba(255, 255, 255, 0.92);
     --color-bg-overlay: rgba(245, 243, 255, 0.85);
+    /* ── 2026-11-12：行 / 菜单 hover 与按下态 ────────────────────────────
+       prism 原先**没有**这两个令牌 ⇒ 落回 global.css 的 :root 兜底值
+       （#f9fafb —— 一层**冷灰**）。落在一张淡紫的菜单上，那一行高亮是
+       **别的产品的灰**。这里换成 prism 自己的靛蓝淡染。 */
+    --color-row-hover: rgba(102, 126, 234, 0.1);
+    --color-menu-hover: rgba(102, 126, 234, 0.1);
+    /* 按下态：比 hover 再浓一档 */
+    --color-press: rgba(102, 126, 234, 0.18);
 
     /* 文字色 */
     --color-text-primary: #1e1b4b;
@@ -84,11 +92,18 @@
     --shadow-elevation-2: 0 4px 12px rgba(102, 126, 234, 0.1), 0 2px 6px rgba(118, 75, 162, 0.06);
     --shadow-elevation-3: 0 12px 28px rgba(102, 126, 234, 0.15), 0 6px 12px rgba(118, 75, 162, 0.08);
 
-    /* 圆角 - 圆润 */
-    --radius-sm: 0.375rem;
-    --radius-md: 0.5rem;
-    --radius-lg: 0.75rem;
-    --radius-xl: 1rem;
+    /* 圆角 - 几何（棱镜的多面感：比 creamy 收一档）
+       ── 2026-11-12：Tailwind 的 rounded-* 接到这组令牌上 ⇒ lg / xl 同时
+          决定 TSX 里小控件的圆角（rounded-lg 多落在 30px 高的按钮上）。
+          原来的 12px / 16px 在这种尺寸上偏圆 ⇒ 收到 10px / 14px；
+          容器（卡片 / 弹窗 / 菜单）跟着收 2px，肉眼几乎看不出，
+          但「卡片圆角 = 同名 Tailwind 圆角」这件事对齐了。 */
+    --radius-sm: 0.375rem;   /* 6px  */
+    --radius-md: 0.5rem;     /* 8px  */
+    --radius-lg: 0.625rem;   /* 10px */
+    --radius-xl: 0.875rem;   /* 14px */
+    --radius-2xl: 1.125rem;  /* 18px */
+    --radius-3xl: 1.5rem;    /* 24px */
     --radius-full: 9999px;
 
     /* 间距 */
@@ -158,6 +173,10 @@ html.dark [data-theme="prism"], html[data-theme="prism"].dark {
     --color-bg-tertiary: rgba(35, 25, 65, 0.8);
     --color-bg-elevated: rgba(30, 20, 55, 0.95);
     --color-bg-overlay: rgba(15, 10, 31, 0.9);
+    /* 深色下的行 / 菜单 hover 与按下态（靛蓝淡染，不用冷灰兜底） */
+    --color-row-hover: rgba(129, 140, 248, 0.14);
+    --color-menu-hover: rgba(129, 140, 248, 0.14);
+    --color-press: rgba(129, 140, 248, 0.22);
 
     /* 文字色 */
     --color-text-primary: #ede9fe;
@@ -373,6 +392,13 @@ html[data-theme="prism"] .tab-item {
 
 html[data-theme="prism"] .tab-item:hover {
     background: var(--prism-gradient-soft);
+}
+
+/* 按下态（2026-11-12）：hover 是渐变、active 原先读 --color-bg-tertiary
+   ⇒ 按下去反而**更淡**（等于把高亮擦掉了）。现在读 --color-press：
+   一层更浓的靛蓝，同特异性下靠源码顺序取胜。 */
+html[data-theme="prism"] .tab-item:active {
+    background: var(--color-press);
 }
 
 html[data-theme="prism"] .tab-item-title {

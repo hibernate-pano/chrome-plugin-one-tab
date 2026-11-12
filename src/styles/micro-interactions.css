@@ -54,12 +54,12 @@
 
   .btn-primary:hover {
     transform: translateY(-1px);
-    box-shadow: 0 4px 12px -2px rgba(37, 99, 235, 0.4);
+    box-shadow: 0 4px 12px -2px var(--color-accent-border, rgba(37, 99, 235, 0.4));
   }
 
   .btn-primary:active {
     transform: translateY(0);
-    box-shadow: 0 2px 4px -1px rgba(37, 99, 235, 0.3);
+    box-shadow: 0 2px 4px -1px var(--color-accent-border, rgba(37, 99, 235, 0.3));
   }
 
   /* 2026-10-20 审计 P2-6：删掉整段 `.btn-cta`。
@@ -93,7 +93,7 @@
        圆角，涟漪自动跟随按钮形状（伪元素的继承来源就是它的宿主元素）。 */
     border-radius: inherit;
     opacity: 0;
-    background: var(--color-bg-tertiary, rgba(37, 99, 235, 0.08));
+    background: var(--color-bg-tertiary, rgba(0, 0, 0, 0.04));
     transition: opacity var(--motion-fast) var(--ease-standard);
     z-index: -1;
   }
@@ -126,7 +126,7 @@
     border-radius: 0.75rem;
     opacity: 0;
     pointer-events: none;
-    box-shadow: 0 4px 12px -2px rgba(37, 99, 235, 0.15);
+    box-shadow: 0 4px 12px -2px var(--color-accent-wash, rgba(37, 99, 235, 0.15));
     transition: opacity var(--motion-fast) var(--ease-standard);
   }
 
@@ -156,7 +156,10 @@
     bottom: 0;
     width: 0.25rem;
     opacity: 0;
-    background: linear-gradient(180deg, #60A5FA 0%, #2563EB 100%);
+    /* 2026-11-12：原先写死 #60A5FA→#2563EB（legacy 品牌蓝）⇒ creamy 的暖橙、
+       prism 的紫、claude 的陶土棕在 hover 时都露出同一套蓝。改为读主题
+       强调色 ⇒ 交互反馈与所在主题同色。 */
+    background: linear-gradient(180deg, var(--color-accent-hover) 0%, var(--color-accent) 100%);
     transition: opacity var(--motion-fast) var(--ease-standard);
   }
 
@@ -165,11 +168,16 @@
   }
 
   .tab-item:hover {
-    background: var(--color-bg-tertiary, rgba(37, 99, 235, 0.04));
+    background: var(--color-bg-tertiary, rgba(0, 0, 0, 0.04));
   }
 
   .tab-item:active {
-    background: var(--color-bg-tertiary, rgba(37, 99, 235, 0.08));
+    /* 2026-11-12：原先与 :hover 读同一个令牌（--color-bg-tertiary）
+       ⇒ 按下去与悬停同色。改读 --color-press（比 hover 深一档）。
+       注意：6 套主题各自的 `html[data-theme=x] .tab-item:active` 特异性
+       更高，会盖过这里 —— 那是有意的：按下色的具体取值属于主题。
+       这一条只负责「没有主题时的兜底」与「主题都没写时也有反馈」。 */
+    background: var(--color-press, rgba(0, 0, 0, 0.08));
     transform: scale(0.995);
   }
 
@@ -183,14 +191,14 @@
 
   .search-input:hover {
     background: var(--color-bg-secondary, #FFFFFF);
-    box-shadow: 0 2px 8px -2px rgba(37, 99, 235, 0.08);
+    box-shadow: 0 2px 8px -2px var(--color-accent-wash, rgba(37, 99, 235, 0.08));
   }
 
   .search-input:focus {
     background: var(--color-bg-secondary, #FFFFFF);
     box-shadow:
-      0 0 0 3px rgba(37, 99, 235, 0.1),
-      0 2px 12px -2px rgba(37, 99, 235, 0.15);
+      0 0 0 3px var(--color-accent-soft, rgba(37, 99, 235, 0.1)),
+      0 2px 12px -2px var(--color-accent-wash, rgba(37, 99, 235, 0.15));
     transform: scale(1.01);
   }
 
@@ -235,14 +243,14 @@
     opacity: 0.6;
     transform: scale(1.03);
     box-shadow:
-      0 8px 24px -4px rgba(37, 99, 235, 0.2),
-      0 0 0 2px rgba(37, 99, 235, 0.5);
+      0 8px 24px -4px var(--color-accent-wash, rgba(37, 99, 235, 0.2)),
+      0 0 0 2px var(--color-accent-border, rgba(37, 99, 235, 0.5));
     cursor: grabbing !important;
   }
 
   .drag-over {
-    background: rgba(37, 99, 235, 0.08) !important;
-    box-shadow: inset 0 0 0 2px rgba(37, 99, 235, 0.4);
+    background: var(--color-accent-wash, rgba(37, 99, 235, 0.08)) !important;
+    box-shadow: inset 0 0 0 2px var(--color-accent-border, rgba(37, 99, 235, 0.4));
     transition: all var(--motion-fast) var(--ease-standard);
   }
 
@@ -372,7 +380,7 @@
 
   /* 发光效果 */
   .micro-glow {
-    box-shadow: 0 0 20px -5px rgba(37, 99, 235, 0.3);
+    box-shadow: 0 0 20px -5px var(--color-accent-border, rgba(37, 99, 235, 0.3));
   }
 
   /* 脉冲效果 */

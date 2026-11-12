@@ -187,9 +187,28 @@ async function main() {
         // ⇒ 改为：标签行取「行内靠右的一个点」（避开文字与删除按钮），
         //   卡片取「**卡片底部**同一列的像素」—— 那儿一定是卡片底，不含标签行。
         const y = Math.round(geom.item.y + geom.item.h / 2);
-        const itemX = Math.round(geom.item.x + geom.item.w - 30);
+        // ── 2026-11-12：采样点从「行右端 −30px」改到「行左边 +6px」──────
+        //
+        // 原来的右端点在本脚本的 400px 视口下正好压在**删除 ×** 上：
+        // 窄屏时 `.tab-item-actions` 是**常显**的（≥768px 才靠 hover 显隐），
+        // 而 x = item.x + item.w − 30 距行右端 30px，正好落在 × 的字形上
+        // ⇒ 采到抗锯齿的中灰（实测 #B5B9C0），于是 12 组被判成
+        // 「标签行与卡片底异色」——**不是配色坏了，是采样点落在字上**。
+        // 实测对照：同一行 x=24/26/28（左侧 px-3 内边距，favicon 之前）
+        // 恒为 #FFFFFF；x=344/348 在 y=252/256 命中 × 字形。
+        //
+        // 左侧 6px 处一定是一块纯底色：行的水平内边距是 12px（px-3），
+        // favicon 从 12px 之后才开始画。
+        const itemX = Math.round(geom.item.x + 6);
         const cardY = Math.round(geom.card.y + geom.card.h - 3);
-        const cardX = itemX;
+        // 2026-11-12：卡片底的采样点挪到**水平居中**。
+        // 原来与标签行取同一个 x（行左 +6px ≈ 卡左 +6px）—— 那个位置
+        // 距卡片**左下圆角**只有 6px，而圆角半径是 9–14px（各主题不同，
+        // 2026-11-12 起圆角跟主题走）⇒ 采样点落在**圆角切掉的那块**上，
+        // 读到的是页面底色而不是卡片底色。实测：apple 浅色 行 255 vs 卡 245
+        // （245 = apple 页面底 #f5f5f7），色差 10 —— 圆角越大越明显。
+        // 水平中心距两侧圆角都远，一定是卡片本体。
+        const cardX = Math.round(geom.card.x + geom.card.w / 2);
 
         const pItem = pixelAt(file, itemX, y);
         const pCard = pixelAt(file, cardX, cardY);

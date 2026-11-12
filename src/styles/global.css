@@ -127,12 +127,25 @@ html:not([data-theme]).dark {
     --radius-lg: 0.5rem;
     --radius-xl: 0.75rem;
     --radius-full: 9999px;
+    /* ── 2026-11-12：Tailwind 的 rounded-* 现在接到这组令牌上 ────────────
+       Tailwind 的 borderRadius 原先是**写死**的 4/6/8/12/16/24px，
+       于是同一个 `rounded-lg` 在 6 套主题里永远是 8px —— 主题的形状语言
+       只作用在 CSS 里手写的规则上，作用不到 TSX 里最常见的那些圆角。
+       现在 tailwind.config.js 的 borderRadius 全部改读这些变量，
+       并把 2xl / 3xl 两档也补进来（原先 Tailwind 有、令牌里没有）。
+       默认值 = Tailwind 原值 ⇒ legacy / 兜底态**像素级不变**。 */
+    --radius-2xl: 1rem;
+    --radius-3xl: 1.5rem;
 
     /* 行/菜单 hover 与开关色（legacy 默认值 = 现网观感；主题可覆盖）。
        拆两个 hover token：legacy 下标签行与菜单行的暗色 hover 本就不同
        （#374151 vs gray-700/50），合并会偷改现网观感。 */
     --color-row-hover: #f9fafb;
     --color-menu-hover: #f9fafb;
+    /* 按下态（2026-11-12）：hover 与 active 原先读**同一个**令牌
+       ⇒ 按下去与只是悬停完全同色，手感上「按下了」没有任何反馈。
+       这条兜底值 = legacy 的按下色（与 :hover 的 #f9fafb 差一档）。 */
+    --color-press: #e5e7eb;
     --color-toggle-on: #2563eb;
     /* 选中态文字色（2026-10-19 审计 V-2）：#2563eb 底 + 白字 = 5.17:1 */
     --color-toggle-on-fg: #ffffff;
@@ -238,6 +251,8 @@ html:not([data-theme]).dark {
   html.dark {
     --color-row-hover: #374151;
     --color-menu-hover: rgba(55, 65, 81, 0.5);
+    /* 深色下的按下态：比 #374151 再浅一档（深色里「更出头」= 更亮） */
+    --color-press: #4b5563;
     --color-toggle-on: #2563eb;
     /* 深色下 accent 实底不变（仍是 #2563eb），白字 5.17:1 依旧达标。 */
     --color-toggle-on-fg: #ffffff;
@@ -771,7 +786,10 @@ html:not([data-theme]).dark {
     background-color: var(--color-accent-subtle);
     color: var(--color-text-primary);
     padding: 0 2px;
-    border-radius: 2px;
+    /* 2026-11-12：原值 2px 是**死值** —— animations.css 的 `.search-highlight`
+       后加载（unlayered）且写着 4px，所以屏幕上一直是 4px。现在形状只在
+       这一处声明，取的就是生效值 4px（零视觉变化，少一处「谁说了算」）。 */
+    border-radius: 4px;
     font-weight: 500;
   }
 
@@ -889,6 +907,20 @@ html:not([data-theme]).dark {
   .tab-group-time {
     font-size: 0.75rem;
     color: var(--color-text-muted);
+  }
+
+  /* 站点摘要（2026-11-06）：卡头上那行「这批标签来自哪些站点」。
+     默认名是保存时刻 ⇒ 同一分钟保存两次会出现两张完全同名的卡片
+     （见 getSessionHostSummary 的文件头）。这一行是**内容的事实**，
+     不是名字的一部分 —— 所以它比标题低一档（11px、muted 色），
+     且宽度封顶（长域名不许把标题压没）。
+     `max-width` 用 ch 而不是 px：域名长度是**字符**概念，跟着字号缩放才合理。
+     ⚠️ 窄屏也要显示（375px 实测）—— 「区分两张同名卡片」正是这一行的
+     全部理由，隐藏它等于在最需要它的地方不提供它。 */
+  .tab-group-hosts {
+    font-size: 0.6875rem;
+    color: var(--color-text-muted);
+    max-width: 18ch;
   }
 
   /* 标签组标题悬停效果 */
@@ -1812,6 +1844,17 @@ html:not([data-theme]).dark {
 
   .app-header-brand .app-header-brand-meta {
     display: none;
+  }
+}
+
+/* 窄屏：会话卡头的站点摘要留给标题的空间更少 ⇒ 封得更紧
+   （域名本身可 truncate，不会撑破卡头）。
+   ⚠️ 必须排在「≤640px 的顶栏」那条媒体查询**之后**：守卫
+   tests/guards/audit20261023UiVisual.test.ts 的 V-5 按「该断点的**第一个**
+   块」定位顶栏规则 ⇒ 同断点的新块排在它前面就会让那条守卫读错范围。 */
+@media (max-width: 640px) {
+  .tab-group-hosts {
+    max-width: 9ch;
   }
 }
 

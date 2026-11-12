@@ -22,6 +22,8 @@
   --color-bg-overlay: rgba(255, 255, 255, 0.92);
   --color-row-hover: #f1f3f4;
   --color-menu-hover: #f1f3f4;
+  /* 按下态：比 hover 再深一档（Google 灰阶 #e8eaed） */
+  --color-press: #e8eaed;
 
   /* 文字 */
   --color-text-primary: #202124;
@@ -53,6 +55,16 @@
   --color-toggle-off: #dadce0;
 
   /* 二级界面：圆角 / 强调族 / 井底 / 按钮 / 弹层 / 焦点 */
+  /* ── 2026-11-12：chrome 主题原先**没有**自己的圆角刻度 ⇒ 全部落回
+     global 的 4/6/8/12/16/24。现在按 Material 3 的官方 shape scale 给
+     （extra-small 4 / small 8 / medium 12 / large 16 / extra-large 20），
+     刻度与它既有的 --radius-control(8) / --radius-btn(10) 对齐。 */
+  --radius-sm: 0.25rem;    /* 4px  */
+  --radius-md: 0.5rem;     /* 8px  */
+  --radius-lg: 0.75rem;    /* 12px */
+  --radius-xl: 1rem;       /* 16px */
+  --radius-2xl: 1.25rem;   /* 20px */
+  --radius-3xl: 1.75rem;   /* 28px */
   --radius-card: 0.5rem;
   --radius-panel: 1rem;
   --radius-control: 0.5rem;
@@ -110,6 +122,7 @@ html.dark [data-theme="chrome"], html[data-theme="chrome"].dark {
   --color-bg-overlay: rgba(32, 33, 36, 0.92);
   --color-row-hover: #35363a;
   --color-menu-hover: #35363a;
+  --color-press: #3c4043;
 
   --color-text-primary: #e8eaed;
   --color-text-secondary: #dadce0;
@@ -177,6 +190,9 @@ html[data-theme="chrome"] .tab-group-header {
 
 html[data-theme="chrome"] .tab-item { background: transparent; }
 html[data-theme="chrome"] .tab-item:hover { background: var(--color-row-hover); }
+
+/* 按下态（2026-11-12）：原先 hover 与 active 同色 ⇒ 按下去没有反馈。 */
+html[data-theme="chrome"] .tab-item:active { background: var(--color-press); }
 
 /* Omnibox 药丸搜索 */
 html[data-theme="chrome"] .search-input { border-radius: 9999px; }
