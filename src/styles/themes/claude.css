@@ -73,6 +73,7 @@
   --radius-xl: 1rem;       /* 16px */
   --radius-2xl: 1.25rem;   /* 20px */
   --radius-3xl: 1.75rem;   /* 28px */
+  --radius-full: 9999px;   /* 正圆（药丸 / 圆形头像）—— 显式声明，不靠 global 兜底 */
   --radius-card: 0.75rem;
   --radius-panel: 1rem;
   --radius-control: 0.75rem;
