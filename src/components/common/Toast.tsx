@@ -542,8 +542,20 @@ export const Toast: React.FC<ToastProps> = ({
       role={isAssertive ? 'alert' : 'status'}
       aria-live={isAssertive ? 'assertive' : 'polite'}
       aria-atomic="true"
-      className={`pointer-events-none fixed right-4 top-4 z-[110] ${isVisible ? animation : ''}`}
-      style={{ marginTop: stackOffset }}
+      // ── 2026-11-06：锚点必须落在**顶栏下方**，不能压在顶栏上 ────────────
+      // 缺陷形态（真机实测）：`right-4 top-4` 让提示正好盖住顶栏右侧的
+      // 「保存并关闭」与「⋯ 菜单」。1280px 宽下按钮中心 x=1060 落在提示盒
+      // （x=1024…1256）内 ⇒ `elementFromPoint` 命中提示，两个主操作**都点不到**。
+      // 1440/1024/768/375 同样重叠，只有 ≥1920 才错开。
+      // ⇒ 顶边锚点改成「顶栏实际高度 + 0.5rem」：顶栏是 sticky 的常驻元素，
+      //   它的高度在两行布局（≤1024px）下会变 ⇒ 由 Header 实测后写进
+      //   `--app-header-h`，这里跟着走。顶栏不在时（引导层/独立页）回落到
+      //   原来的 0.5rem，行为与从前一致。
+      className={`pointer-events-none fixed right-4 z-[110] ${isVisible ? animation : ''}`}
+      style={{
+        top: 'calc(var(--app-header-h, 0px) + 0.5rem)',
+        marginTop: stackOffset,
+      }}
     >
       <style>{PROGRESS_KEYFRAMES}</style>
 

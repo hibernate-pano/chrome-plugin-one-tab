@@ -269,9 +269,20 @@ test('Toast 的 live region 常驻挂载：不再有提前 return null 把区域
   assert.ok(!TOAST.includes('{isVisible && (\n        <div className="pointer-events-auto'));
   // 外壳保留在 DOM 里，靠 pointer-events-none 保证不可见时不可点
   // 2026-10-26：产品负责人要求挪回右上角（底部居中太碍眼）。
-  // ⚠️ 代价：出现时会压住顶栏右侧。2026-10-14 挪到底部正是为了避开顶栏，
-  // 这次是产品决策推翻了那次调整 —— 别再把它当回归改回去。
-  assert.ok(TOAST.includes('pointer-events-none fixed right-4 top-4'));
+  // ⚠️ 代价：出现时会压住顶栏右侧。
+  //
+  // ── 2026-11-06：压住顶栏右侧**不再可接受** ──────────────────────────
+  // 真机实测：`top-4` 让提示盖住「保存并关闭」与「⋯ 菜单」的**中心**
+  // （1280px 宽下按钮中心 x=1060 落在提示盒 1024…1256 内），
+  // `elementFromPoint` 命中提示 ⇒ 两个主操作都点不到。
+  // ⇒ 顶边改成「顶栏实测高度 + 0.5rem」（Header 把高度写进 --app-header-h）。
+  //   横向仍是右上角（right-4），只是永远落在顶栏**下方**。
+  assert.ok(TOAST.includes('pointer-events-none fixed right-4'));
+  assert.ok(
+    TOAST.includes("top: 'calc(var(--app-header-h, 0px) + 0.5rem)'"),
+    '提示的顶边必须落在顶栏下方 —— 写死 top-4 会盖住顶栏右侧的主操作按钮',
+  );
+  assert.ok(!TOAST.includes('fixed right-4 top-4'), 'top-4 会盖住顶栏按钮');
 });
 
 test('Toast 进度条改成 CSS 动画，不再用 setInterval 驱动 React state', () => {

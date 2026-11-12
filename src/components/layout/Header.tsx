@@ -1,4 +1,4 @@
-import React, { useState, useTransition, useRef, useLayoutEffect, useCallback } from 'react';
+import React, { useState, useTransition, useRef, useLayoutEffect, useCallback, useId } from 'react';
 import { useAppDispatch, useAppSelector } from '@/store/hooks';
 import {
   toggleLayoutMode,
@@ -23,7 +23,8 @@ import { Tooltip } from '@/components/common/Tooltip';
 import { TapStackLogo } from '@/components/common/TapStackIcon';
 import { LoadingSpinner } from '@/components/common/LoadingSpinner';
 import { cleanDuplicatesConfirmMessage, cleanDuplicatesResultMessage } from './cleanDuplicatesMessage';
-import { saveAndCloseDescription, saveAndCloseLabel, saveAndCloseShortLabel } from './saveActionCopy';
+import { saveAndCloseDescription, saveAndCloseLabel, saveAndCloseShortLabel, emptySaveNoTabsText } from './saveActionCopy';
+import { collectableTabs } from '@/domain/tabGroup/filters';
 import { isBrandContentClipped } from './brandLayout';
 import { onImportRequest } from './importRequest';
 import {
@@ -186,6 +187,9 @@ export const Header: React.FC<HeaderProps> = ({
   const { showRestoreError, showDeleteError } = useEnhancedToast();
   const settings = useAppSelector(state => state.settings);
   const groups = useAppSelector(state => state.tabs.groups);
+  // 保存按钮失败时的**完整说明**节点的 id（只给读屏，见按钮上的
+  // aria-describedby）。用 useId ⇒ 稳定且唯一（多个 Header 实例也不会撞）。
+  const saveFeedbackDetailId = useId();
   // 清理重复标签的进行中标志：只用来禁点 + 转圈，不阻塞界面。
   const [isCleaningDuplicates, setIsCleaningDuplicates] = React.useState(false);
   // 骰子的在途标志：同一时间只抽一次（连点会开出多个浏览器标签，
@@ -440,6 +444,29 @@ export const Header: React.FC<HeaderProps> = ({
     try {
       const tabs = await chrome.tabs.query({ currentWindow: true });
       const windowId = tabs[0]?.windowId;
+      // ── 2026-11-06：先判断「这一窗有没有可保存的标签」────────────────
+      // 缺陷形态（真机走查）：点扩展图标 ⇒ 管理器在同一窗打开 ⇒ 这一窗
+      // 只剩管理器页 ⇒ 用户点顶栏的「保存并关闭」⇒ 报错「没有可保存的标签页」。
+      // 而报错走的是 **toast**，而 toast 当时正好**盖住这颗按钮**
+      // （见 toastPolicy 与 Toast.tsx 的 2026-11-06 改动）⇒ 用户想再点一次
+      // 就点不到。
+      //
+      // ⇒ 与空态 CTA（TabList.handleSaveFromEmpty）**同一套判据**：
+      // `collectableTabs`（domain 层，与 SW 保存路径同一个函数）⇒ 不可能出现
+      // 「这里说能存、实际存不下」，也不会出现两条路径口径不一致。
+      if (collectableTabs(tabs, { includePinned: settings.collectPinnedTabs ?? false }).length === 0) {
+        // 这不是「操作失败」，是「这一窗没有可保存的东西」⇒ 不走 toast
+        // （错误 toast 是常驻的，且它就是当初挡住这颗按钮的东西）。
+        // 按钮就地变成那句话（它本来就有 inline 反馈位），用户看得见、
+        // 也读得到（按钮文案进朗读队列）。
+        setSaveFeedback({
+          kind: 'error',
+          text: emptySaveNoTabsText,
+          shortText: '没有可保存的标签页',
+          fullText: emptySaveNoTabsText,
+        });
+        return;
+      }
       const response = (await chrome.runtime.sendMessage({
         type: 'SAVE_ALL_TABS',
         data: { windowId },
@@ -576,6 +603,36 @@ export const Header: React.FC<HeaderProps> = ({
   // 用 useLayoutEffect：判定必须在绘制前完成，否则会闪一帧「TapSta」。
   const brandRef = useRef<HTMLButtonElement>(null);
   const [brandNameClipped, setBrandNameClipped] = useState(false);
+  const headerRef = useRef<HTMLElement>(null);
+
+  // ── 2026-11-06：把顶栏的**实测高度**写进 `--app-header-h` ──────────────
+  // 提示条（Toast）锚在右上角，而顶栏右侧就是「保存并关闭」与「⋯ 菜单」。
+  // 真机实测：`top-4` 会让提示**盖住这两颗按钮的中心**（1280px 宽下
+  // 按钮中心 x=1060 落在提示盒 1024…1256 内）⇒ 用户点不到主操作。
+  // ⇒ 提示的顶边改成「顶栏高度 + 0.5rem」，永远落在顶栏下方。
+  //
+  // 为什么必须实测而不是写死：顶栏在 ≤1024px 时换成**两行**布局
+  // （搜索框独占一行，见 global.css 的 F-1 修复），高度会变；字体缩放、
+  // 系统字号同样会改。写死的数字必然在某些宽度下错 ⇒ 要么压住顶栏
+  // （回到原缺陷），要么离得太远（提示飘在半空）。
+  useLayoutEffect(() => {
+    const el = headerRef.current;
+    if (!el) return;
+    const sync = () => {
+      const h = el.offsetHeight;
+      if (h > 0) {
+        document.documentElement.style.setProperty('--app-header-h', `${h}px`);
+      }
+    };
+    sync();
+    if (typeof ResizeObserver === 'undefined') return;
+    const observer = new ResizeObserver(sync);
+    observer.observe(el);
+    return () => {
+      observer.disconnect();
+      document.documentElement.style.removeProperty('--app-header-h');
+    };
+  }, []);
 
   useLayoutEffect(() => {
     const el = brandRef.current;
@@ -608,7 +665,7 @@ export const Header: React.FC<HeaderProps> = ({
   }, []);
 
   return (
-    <header className="header">
+    <header ref={headerRef} className="header">
       <div className={`w-full py-2.5 sm:py-3 px-3 sm:px-6 ${getContainerWidthClass()}`}>
         <div className="app-header-grid">
           {/* Logo 区域 */}
@@ -785,30 +842,68 @@ export const Header: React.FC<HeaderProps> = ({
                 className={`btn ${groups.length === 0 ? 'btn-secondary' : 'btn-primary'} flat-interaction whitespace-nowrap shrink-0 px-3 sm:px-4 disabled:opacity-60 disabled:cursor-not-allowed`}
                 aria-label={saveAndCloseDescription}
                 aria-busy={isSaving}
+                // ── 2026-11-06：失败原因要能被**读屏**听到 ────────────────────
+                // 按钮上只放短形式（"没有可保存的标签页"），而用户下一个问题
+                // （「那我该去哪存？」）的答案在完整句子里。
+                // `title` 只有鼠标用户看得到 ⇒ 读屏用户拿不到那半句。
+                // ⇒ 用一个 sr-only 的说明节点 + aria-describedby 把它送进去
+                // （读屏会补一句，不污染按钮的可访问名）。
+                aria-describedby={saveFeedback?.kind === 'error' ? saveFeedbackDetailId : undefined}
                 // 成功后的完整说明放在 title 上：窄屏按钮装不下长句，
                 // 但「另有 N 个固定标签未保存」这个事实必须可查（悬停即可见）。
-                title={saveFeedback?.kind === 'success' ? saveFeedback.fullText : undefined}
+                // ⚠️ 2026-11-06：**失败**的完整说明同样放上去 —— 按钮上只放
+                // 短形式（"没有可保存的标签页"），而用户下一个问题
+                //（「那我该去哪存？」）的答案在那半句里 ⇒ 必须可查。
+                title={
+                  saveFeedback?.kind === 'success'
+                    ? saveFeedback.fullText
+                    : saveFeedback?.kind === 'error'
+                      ? saveFeedback.fullText || saveFeedback.text
+                      : undefined
+                }
               >
                 {isSaving ? <LoadingSpinner size="sm" className="text-current" /> : <SaveIcon />}
+                {/* 按钮上的**可见文案**：两个断点各一段，CSS 保证同一时刻只显示一段
+                    （`hidden sm:inline` / `sm:hidden`）⇒ 视觉上只有一行。
+                    ⚠️ 2026-11-06：预检失败那句是完整句子（"这个窗口里没有可保存
+                    的网页……切换到有网页的那个窗口再保存，或先打开几个要收起来的网页。"），
+                    直接塞进按钮会把顶栏整行撑破（按钮是 nowrap 的）。
+                    ⇒ 按钮上放**短形式**，完整句子在 title 与 aria-describedby 里
+                    —— 与成功反馈的 long/short 同一套结构。 */}
                 <span className="hidden sm:inline whitespace-nowrap">
                   {isSaving
                     ? '保存中…'
                     : saveFeedback?.kind === 'error'
-                      ? saveFeedback.text
+                      ? saveFeedback.shortText || saveFeedback.text
                       : saveFeedback?.kind === 'success'
                         ? saveFeedback.text
                         : saveAndCloseLabel}
                 </span>
+                {/* 窄屏：按钮只放得下几个字 ⇒ 用**更短**的形式。
+                    ⚠️ 2026-11-06：错误的短形式不再写死「保存失败」——
+                    那是上一版的行为，而「保存失败」没有回答用户的下一个问题
+                    （**为什么**失败）。现在短形式直接说「没有可保存的标签页」，
+                    完整句子在 title / aria-describedby 里。
+                    短形式来自 feedback 本身（`shortText`），不是在这里
+                    另写一份 —— 否则两处必然漂移。
+                    ⚠️ 这一段带 aria-hidden：按钮的可访问名由 aria-label 给出，
+                    两段同时进朗读队列会让读屏用户听到两遍同一句话。 */}
                 <span className="sm:hidden" aria-hidden="true">
                   {isSaving
                     ? '保存中'
                     : saveFeedback?.kind === 'error'
-                      ? '保存失败'
+                      ? saveFeedback.shortText || '保存失败'
                       : saveFeedback?.kind === 'success'
                         ? saveFeedback.shortText
                         : saveAndCloseShortLabel}
                 </span>
               </button>
+              {/* 失败时的完整说明（只给读屏）。见上面 aria-describedby 的注释。 */}
+              {saveFeedback?.kind === 'error' && (
+                <span id={saveFeedbackDetailId} className="sr-only">
+                  {saveFeedback.fullText || saveFeedback.text}
+                </span>
+              )}
             </Tooltip>
 
             {/* 更多菜单。aria-expanded/haspopup 是菜单按钮的最低契约：

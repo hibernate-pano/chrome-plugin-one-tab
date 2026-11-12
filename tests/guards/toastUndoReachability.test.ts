@@ -456,6 +456,34 @@ describe('接线：暂停/恢复/抢焦点真的接在 Toast 上', () => {
     );
   });
 
+  // ── 2026-11-06：悬停暂停只对**带决定**的提示生效 ───────────────────────
+  //
+  // 真机撞出来的死锁：报错提示盖住主 CTA ⇒ 用户去点按钮 = 鼠标停在提示上
+  // ⇒ 倒计时冻结 ⇒ 提示永不退场 ⇒ 按钮永远点不到（实测 29 秒仍在挡）。
+  // 暂停的全部意义是「**等人做决定**」；一条没有决定的提示被鼠标钉在原地，
+  // 就从「保护退路」变成了「挡住主操作」。
+  it('没有决定可做的提示，鼠标停上去**不许**冻结倒计时（否则会挡住主操作）', async () => {
+    const { shouldPauseCountdown } = await import('@/components/common/toastPolicy');
+    const noDecision = { hovered: true, focused: false, pageSeen: true, hasDecision: false };
+    assert.equal(
+      shouldPauseCountdown(noDecision),
+      false,
+      '没有动作按钮的提示被鼠标钉住 = 它永远不退场；若它恰好盖住按钮，用户就永远点不到',
+    );
+    // 反向护栏：带决定的提示仍然必须被钉住（那是退路）。
+    assert.equal(
+      shouldPauseCountdown({ ...noDecision, hasDecision: true }),
+      true,
+      '带动作（撤销类）的提示必须仍然悬停暂停 —— 那是退路够不够得着的前提',
+    );
+    // 焦点那一支**不**受 hasDecision 限制：焦点意味着用户正在读它。
+    assert.equal(
+      shouldPauseCountdown({ hovered: false, focused: true, pageSeen: true, hasDecision: false }),
+      true,
+      '焦点在提示里 = 用户正在读它，与鼠标恰好扫过不同，必须暂停',
+    );
+  });
+
   it('进度条**跟着停**（进度条还在缩而实际没在计时 = 界面在说谎）', () => {
     assert.match(
       TOAST_CODE,
