@@ -547,13 +547,17 @@ export const Toast: React.FC<ToastProps> = ({
       // 「保存并关闭」与「⋯ 菜单」。1280px 宽下按钮中心 x=1060 落在提示盒
       // （x=1024…1256）内 ⇒ `elementFromPoint` 命中提示，两个主操作**都点不到**。
       // 1440/1024/768/375 同样重叠，只有 ≥1920 才错开。
-      // ⇒ 顶边锚点改成「顶栏实际高度 + 0.5rem」：顶栏是 sticky 的常驻元素，
+      // ⇒ 顶边锚点改成「顶栏实际高度 + 1rem」：顶栏是 sticky 的常驻元素，
       //   它的高度在两行布局（≤1024px）下会变 ⇒ 由 Header 实测后写进
-      //   `--app-header-h`，这里跟着走。顶栏不在时（引导层/独立页）回落到
-      //   原来的 0.5rem，行为与从前一致。
+      //   `--app-header-h`，这里跟着走。
+      //   偏移取 **1rem**（= Tailwind 的 top-4）：顶栏不在时（引导层/独立页）
+      //   `--app-header-h` 缺失 ⇒ 回落成 `0px + 1rem` ⇒ **与改动前的 top-4
+      //   像素级一致**，那一类场景的行为零变化。
+      //   ⚠️ 别写 0.5rem：那会让无顶栏场景比改动前高 8px —— 一个看不出来的
+      //   视觉位移，却让下面那句「与从前一致」变成假话。
       className={`pointer-events-none fixed right-4 z-[110] ${isVisible ? animation : ''}`}
       style={{
-        top: 'calc(var(--app-header-h, 0px) + 0.5rem)',
+        top: 'calc(var(--app-header-h, 0px) + 1rem)',
         marginTop: stackOffset,
       }}
     >

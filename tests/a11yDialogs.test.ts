@@ -275,11 +275,13 @@ test('Toast 的 live region 常驻挂载：不再有提前 return null 把区域
   // 真机实测：`top-4` 让提示盖住「保存并关闭」与「⋯ 菜单」的**中心**
   // （1280px 宽下按钮中心 x=1060 落在提示盒 1024…1256 内），
   // `elementFromPoint` 命中提示 ⇒ 两个主操作都点不到。
-  // ⇒ 顶边改成「顶栏实测高度 + 0.5rem」（Header 把高度写进 --app-header-h）。
+  // ⇒ 顶边改成「顶栏实测高度 + 1rem」（Header 把高度写进 --app-header-h）。
   //   横向仍是右上角（right-4），只是永远落在顶栏**下方**。
+  //   ⚠️ 偏移是 **1rem**（= 原 top-4）：顶栏不在时回落成 0px + 1rem ⇒
+  //   与改动前像素级一致。写 0.5rem 会让无顶栏场景悄悄高 8px。
   assert.ok(TOAST.includes('pointer-events-none fixed right-4'));
   assert.ok(
-    TOAST.includes("top: 'calc(var(--app-header-h, 0px) + 0.5rem)'"),
+    TOAST.includes("top: 'calc(var(--app-header-h, 0px) + 1rem)'"),
     '提示的顶边必须落在顶栏下方 —— 写死 top-4 会盖住顶栏右侧的主操作按钮',
   );
   assert.ok(!TOAST.includes('fixed right-4 top-4'), 'top-4 会盖住顶栏按钮');

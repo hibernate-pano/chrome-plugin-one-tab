@@ -82,7 +82,7 @@ describe('① 提示落在顶栏**下方**，不遮住主操作', () => {
     );
   });
 
-  it('顶栏把自己的实测高度写进 --app-header-h（并��卸载时清掉）', () => {
+  it('顶栏把自己的实测高度写进 --app-header-h（并在卸载时清掉）', () => {
     assert.match(
       HEADER,
       /setProperty\('--app-header-h'/,
@@ -100,6 +100,16 @@ describe('① 提示落在顶栏**下方**，不遮住主操作', () => {
       HEADER,
       /ResizeObserver/,
       '顶栏高度会随窗口宽度变化（≤1024px 换成两行布局）⇒ 必须用 ResizeObserver 重算',
+    );
+  });
+
+  it('顶栏不在时的回落值 = 1rem（与改动前的 top-4 像素级一致）', () => {
+    // 注释里写了「与改动前的 top-4 像素级一致」—— 那句话必须被机器检查，
+    // 否则一个 0.5rem 就能让它变成假话（无顶栏场景悄悄高 8px，看不出来）。
+    assert.match(
+      TOAST,
+      /var\(--app-header-h,\s*0px\)\s*\+\s*1rem/,
+      '回落值必须是 1rem（= Tailwind 的 top-4）：顶栏不在时行为才与改动前一致',
     );
   });
 
