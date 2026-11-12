@@ -112,11 +112,31 @@
   `audit20261023UiVisual` 的 V-12 判据整体换掉（原判据前提是「界面用 emoji」，
   前提变了判据必须跟着换，否则会变成「为了绿而把 emoji 加回去」的反向压力）。
 
-### 商店
+### 发版证据（2026-11-12）
 
-`uploadState` / `crxVersion` 的判据见 `scripts/cws-publish.mjs` 文件头：
-**HTTP 2xx 一律不等于成功**；`uploadState` 也不代表草稿里有没有包（上传成功后也是 `NOT_FOUND`）⇒
-只能靠草稿 `crxVersion` 对齐 + publish 回包 `status:["OK"]` + 「再发一次得 400 in review」自证。
+| 步骤 | 证据 |
+|---|---|
+| 版本号五处同步 | `package.json` / `manifest.json` / `.env.example`(`VITE_APP_VERSION`) / README「当前版本」/ 本台账 = `1.31.0`。`validate-extension` 回 `Validated extension metadata for version 1.31.0` |
+| 构建 | `dist/manifest.json` 的 `version = 1.31.0`（先 build 再打包，避免旧产物） |
+| 打包 | `out/extension.zip` —— **349,770 字节 / 39 条目**，根目录即 `manifest.json`，包内 version=1.31.0；`unzip -l` 复核无 `.map` / `.ts` / `.DS_Store` |
+| sha256 | `c20b1c64d573c6c20938e0736540b007f405a84ab010c90b89992fb9d1e873e6` |
+| 截图 | 重拍两张 1280×800；**第二张页脚实证 `TapStack v1.31.0`**（不是靠推断） |
+| 上传 | 回包 `uploadState: SUCCESS`；**回读草稿 `crxVersion: 1.31.0`** |
+| 提交审核 | 发布前自检（草稿 crxVersion 对齐）通过 → 回包 `{"status":["OK"],"statusDetail":["OK."]}` |
+| 自证在审 | 再发一次 publish → **HTTP 400「You may not edit or publish an item that is in review」** |
+| 线上 | 公开页仍是 `Version 1.30.1` / `Updated November 4, 2026` ⇒ 在审的是这一版，不是上一版 |
+
+⚠️ `uploadState` 在提交后仍是 `NOT_FOUND` —— 该字段**不表示草稿里有没有包**
+（上传成功后也是它，空草稿时也是它）⇒ 不能当闸门，判据只能是 `crxVersion` + `status` 数组。
+
+⚠️ **本版商店文案与截图仍只能人工上传**（CWS v1.1 无 listing 端点，v2 只有 `media.upload`）。
+台账里的截图已重拍并就绪，但**商店页面上挂的还是旧图**，需要人去后台换。
+
+### 回滚
+
+`git revert c36ab6e` 会把版本号与文档退回 1.30.1；tag `v1.31.0` 已推远端，
+删 tag 要 `git push origin :refs/tags/v1.31.0`。商店侧无需回滚动作：
+审核通过前线上一直是 1.30.1；若审核被拒，草稿仍是 1.31.0，改完重传即可。
 
 **已知的边界**（从 1.30.1 继承）
 
