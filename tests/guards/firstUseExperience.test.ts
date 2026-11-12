@@ -43,6 +43,8 @@ import { fileURLToPath } from 'node:url';
 
 import { shouldPauseCountdown } from '@/components/common/toastPolicy';
 import { collectableTabs } from '@/domain/tabGroup/filters';
+import { classifySavePrecheck } from '@/domain/tabGroup/savePrecheck';
+import { savePrecheckCopy } from '@/components/layout/saveActionCopy';
 import { getSessionHostSummary } from '@/utils/sessionPresentation';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
@@ -164,21 +166,43 @@ describe('② 悬停暂停只留给真正有退路的提示', () => {
 
 describe('③ 保存前预检：不给「点了才知道」的失败', () => {
   it('两条保存路径（顶栏 / 空态）都用了同一套判据', () => {
-    // 判据来源：domain 层的 collectableTabs —— 与 SW 保存路径**同一个函数**
+    // 判据来源：domain 层的 classifySavePrecheck —— 它内部调 collectableTabs，
+    // 而 collectableTabs 正是 SW 保存路径用的**同一个函数**
     // ⇒ 不可能出现「预检说能存、实际存不下」。
-    assert.match(HEADER_CODE, /collectableTabs\(/, '顶栏的保存按钮必须做预检');
-    assert.match(TAB_LIST_CODE, /collectableTabs\(/, '空态的主 CTA 必须做预检');
+    assert.match(HEADER_CODE, /classifySavePrecheck\(/, '顶栏的保存按钮必须做预检');
+    assert.match(TAB_LIST_CODE, /classifySavePrecheck\(/, '空态的主 CTA 必须做预检');
+  });
+
+  it('判据本身住在 domain 层（不许各写一遍）', () => {
+    // 判据的**源码**必须在 domain 层，且内部用 collectableTabs ——
+    // 这样预检与保存路径的「可保存」口径永远同源。
+    const precheck = read('src/domain/tabGroup/savePrecheck.ts');
+    assert.match(
+      precheck,
+      /collectableTabs\(/,
+      '预检判据必须建立在 collectableTabs 上 —— 否则它与保存路径会漂移',
+    );
+    assert.match(
+      HEADER_CODE,
+      /from '@\/domain\/tabGroup\/savePrecheck'/,
+      '顶栏必须引用 domain 层的判据，不许自己再实现一遍',
+    );
+    assert.match(
+      TAB_LIST_CODE,
+      /from '@\/domain\/tabGroup\/savePrecheck'/,
+      '空态必须引用 domain 层的判据',
+    );
   });
 
   it('判据必须带上「是否收集固定标签页」这个设置（否则口径与保存路径不同）', () => {
     assert.match(
       HEADER_CODE,
-      /collectableTabs\([^)]*includePinned/,
+      /classifySavePrecheck\([^)]*includePinned/,
       '预检必须与保存路径用同一份固定标签页设置 —— 否则钉住的页会被预检算成「可保存」',
     );
     assert.match(
       TAB_LIST_CODE,
-      /collectableTabs\([^)]*includePinned/,
+      /classifySavePrecheck\([^)]*includePinned/,
       '空态预检必须与保存路径用同一份固定标签页设置',
     );
   });
@@ -190,7 +214,7 @@ describe('③ 保存前预检：不给「点了才知道」的失败', () => {
       HEADER_CODE.indexOf('const handleSaveAllTabs'),
       HEADER_CODE.indexOf('const getContainerWidthClass'),
     );
-    const precheckAt = headerBlock.indexOf('collectableTabs(');
+    const precheckAt = headerBlock.indexOf('classifySavePrecheck(');
     assert.ok(precheckAt > 0, '顶栏的保存处理里找不到预检');
     // 预检分支到 return 之间不得有 showToast
     const precheckBranch = headerBlock.slice(precheckAt, headerBlock.indexOf('return;', precheckAt));
@@ -201,7 +225,7 @@ describe('③ 保存前预检：不给「点了才知道」的失败', () => {
     );
     assert.match(
       precheckBranch,
-      /emptySaveNoTabsText/,
+      /savePrecheckCopy/,
       '预检失败必须给出「为什么 + 下一步」的文案',
     );
   });
@@ -211,7 +235,7 @@ describe('③ 保存前预检：不给「点了才知道」的失败', () => {
       TAB_LIST_CODE.indexOf('const handleSaveFromEmpty'),
       TAB_LIST_CODE.indexOf('const [emptyRestoreBusy'),
     );
-    const precheckAt = listBlock.indexOf('collectableTabs(');
+    const precheckAt = listBlock.indexOf('classifySavePrecheck(');
     assert.ok(precheckAt > 0, '空态的保存处理里找不到预检');
     const precheckBranch = listBlock.slice(precheckAt, listBlock.indexOf('return;', precheckAt));
     assert.doesNotMatch(
@@ -219,7 +243,7 @@ describe('③ 保存前预检：不给「点了才知道」的失败', () => {
       /showToast\(/,
       '空态预检失败不得弹 toast',
     );
-    assert.match(precheckBranch, /emptySaveNoTabsText/, '空态预检失败必须给出可行动的文案');
+    assert.match(precheckBranch, /savePrecheckCopy/, '空态预检失败必须给出可行动的文案');
   });
 
   it('「这一窗没有可保存的标签」这条文案说清了**下一步**', () => {
@@ -235,8 +259,8 @@ describe('③ 保存前预检：不给「点了才知道」的失败', () => {
   });
 
   it('两条路径引用的是**同一个**文案常量（不允许各写一遍）', () => {
-    assert.match(HEADER_CODE, /emptySaveNoTabsText/, '顶栏必须引用共享常量');
-    assert.match(TAB_LIST_CODE, /emptySaveNoTabsText/, '空态必须引用共享常量');
+    assert.match(HEADER_CODE, /savePrecheckCopy/, '顶栏必须引用共享文案');
+    assert.match(TAB_LIST_CODE, /savePrecheckCopy/, '空态必须引用共享文案');
   });
 
   it('预检的判据与保存路径真的是同一套（domain 层，不是各写一遍）', () => {
@@ -281,7 +305,119 @@ describe('③ 保存前预检：不给「点了才知道」的失败', () => {
 });
 
 // ══════════════════════════════════════════════════════════════════════════
-// ④ 卡片上的站点摘要（同一分钟保存两次时能分辨）
+// ④ 预检必须说清**真正的原因**（2026-11-12）
+// ══════════════════════════════════════════════════════════════════════════
+//
+// 「存得下 0 条」有**两种**原因，用户要的答案完全不同：
+//   ① 这一窗真的没有可保存的网页（只剩管理器页 / 内部页 / 空窗）
+//      → 解法：换个窗口 / 先开几个网页
+//   ② 能存的**全是固定标签页**，而设置里「保存时收集固定标签页」是关的
+//      （**默认就是关**）→ 解法：去设置里打开那个开关
+//
+// 上一版一律给 ① ⇒ 用户照着开新标签 → 提示照旧 → 观感是「这功能坏了」，
+// 而真实原因只是**一个开关**。
+//
+// 这条守卫守三件事：判据的**行为**（纯函数）、文案**说清了原因与下一步**、
+// 以及两条保存路径都走这个分类（不许其中一条自己写判断）。
+describe('④ 预检必须区分「真的没有」与「被设置挡住了」', () => {
+  const chromeTab = (url: string, pinned = false) =>
+    ({ url, title: 'x', pinned } as unknown as chrome.tabs.Tab);
+
+  it('判据的行为：普通网页 → 可以存', () => {
+    assert.equal(
+      classifySavePrecheck([chromeTab('https://example.com/a')], { includePinned: false }),
+      'ok',
+    );
+  });
+
+  it('判据的行为：只剩管理器页 / 内部页 → 真的没有', () => {
+    assert.equal(
+      classifySavePrecheck(
+        [chromeTab('chrome-extension://abc/manager.html'), chromeTab('about:blank')],
+        { includePinned: false }
+      ),
+      'no-savable-tabs',
+      '这一窗确实一个可存的都没有 ⇒ 说「换个窗口 / 先开几个网页」',
+    );
+  });
+
+  it('判据的行为：能存的全是固定标签页 → 卡在设置，不在窗口', () => {
+    assert.equal(
+      classifySavePrecheck([chromeTab('https://example.com/a', true)], { includePinned: false }),
+      'only-pinned-tabs',
+      '这一窗**有**可保存的网页，只是被设置挡住了 ⇒ 必须说「去设置里打开开关」',
+    );
+  });
+
+  it('判据的行为：开了开关之后还是 0 ⇒ 就是真的没有（不许误报成设置问题）', () => {
+    assert.equal(
+      classifySavePrecheck([chromeTab('https://example.com/a', true)], { includePinned: true }),
+      'ok',
+      '开了「保存时收集固定标签页」后固定标签页本来就该算可保存',
+    );
+    assert.equal(
+      classifySavePrecheck([chromeTab('chrome://settings')], { includePinned: true }),
+      'no-savable-tabs',
+      '内部页在任何设置下都不可保存 ⇒ 不该报成设置问题',
+    );
+  });
+
+  it('两条文案必须是**两句不同的话**（否则分类等于白做）', () => {
+    const copy = read('src/components/layout/saveActionCopy.ts');
+    const pinned = copy.match(/pinnedOnlySaveText\s*=\s*\n?\s*'([^']+)'/);
+    const empty = copy.match(/emptySaveNoTabsText\s*=\s*\n?\s*'([^']+)'/);
+    assert.ok(pinned, '找不到 pinnedOnlySaveText 这个常量');
+    assert.ok(empty, '找不到 emptySaveNoTabsText 这个常量');
+    assert.notEqual(
+      pinned[1],
+      empty[1],
+      '两种原因给了同一句话 ⇒ 用户照着提示做，问题不会消失',
+    );
+    assert.match(
+      pinned[1],
+      /固定标签页/,
+      '固定标签页那条文案必须点明真因是固定标签页',
+    );
+    assert.match(
+      pinned[1],
+      /保存时收集固定标签页/,
+      '文案必须写**设置项的真名**（一字不差）—— 否则用户照着去找会找不到',
+    );
+    assert.match(
+      pinned[1],
+      /设置/,
+      '文案必须指出「去设置里」这个下一步',
+    );
+  });
+
+  it('设置项的真名与设置页里写的一字不差', () => {
+    // 文案里写了设置项的名字，就必须真的是那个名字 —— 否则用户在设置里
+    // 找不到对应的那一行（这条会随设置页改名一起变红）。
+    const optionsPage = read('src/options/OptionsPage.tsx');
+    assert.match(
+      optionsPage,
+      /保存时收集固定标签页/,
+      '设置页里没有「保存时收集固定标签页」这一项 —— 文案与设置页漂移了',
+    );
+  });
+
+  it('短形式（按钮上放得下的那几个字）也不能太长', () => {
+    const pinned = savePrecheckCopy('only-pinned-tabs');
+    const empty = savePrecheckCopy('no-savable-tabs');
+    assert.ok(
+      pinned.short.length <= 10,
+      `短形式「${pinned.short}」有 ${pinned.short.length} 个字 —— 按钮放不下`,
+    );
+    assert.ok(
+      empty.short.length <= 10,
+      `短形式「${empty.short}」有 ${empty.short.length} 个字 —— 按钮放不下`,
+    );
+    assert.notEqual(pinned.short, empty.short, '两种原因在按钮上也要能分辨');
+  });
+});
+
+// ══════════════════════════════════════════════════════════════════════════
+// ⑤ 卡片上的站点摘要（同一分钟保存两次时能分辨）
 // ══════════════════════════════════════════════════════════════════════════
 
 describe('④ 卡片上的站点摘要', () => {

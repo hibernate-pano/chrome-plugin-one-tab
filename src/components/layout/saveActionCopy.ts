@@ -18,6 +18,8 @@
  * 「说了什么」与「实际做了什么」不再可能漂移。
  */
 
+import type { SavePrecheckKind } from '@/domain/tabGroup/savePrecheck';
+
 /**
  * 保存按钮的可见文案。
  *
@@ -68,3 +70,48 @@ export const saveAndCloseDescription = '把当前窗口的标签页保存为一�
  */
 export const emptySaveNoTabsText =
   '这个窗口里没有可保存的网页（管理器页本身不算）。切换到有网页的那个窗口再保存，或先打开几个要收起来的网页。';
+
+/**
+ * 「这个窗口里能存的全是固定标签页」的说明（2026-11-12）。
+ *
+ * ── 为什么必须有这一条（不能复用上面那句）──────────────────────────────
+ *
+ * 上一版预检只有「存得下 0 条」一个判据，失败时一律给 `emptySaveNoTabsText`。
+ * 但「存得下 0 条」有**两种**原因，用户要的答案完全不同：
+ *
+ *   ① 这一窗真的没有可保存的网页（只剩管理器页 / 内部页 / 空窗）
+ *      → 解法是「换个窗口 / 先开几个网页」= `emptySaveNoTabsText`
+ *   ② 这一窗**有**可保存的网页，但它们**全是固定标签页**，而设置里
+ *      「保存时收集固定标签页」是关的（**默认就是关**）
+ *      → 解法是「去设置里把那个开关打开」= 这条文案
+ *
+ * 用错文案的代价是实打实的：照 ① 的提示去开新标签，开完提示照旧（还是 0 个），
+ * 用户的观感是「这功能坏了」—— 而真实原因是**一个开关**。
+ *
+ * ⚠️ 固定标签页在默认设置下**既不保存也不关闭**（它们留在原地），
+ *   所以这里说的是「它们没被收进去」，不是「它们丢了」。
+ *
+ * 设置项的真名是「保存时收集固定标签页」（见 `options/OptionsPage.tsx`）——
+ * 这里必须写**一字不差**的那个名字，否则用户按提示去找会找不到。
+ */
+export const pinnedOnlySaveText =
+  '这个窗口里能保存的网页都是固定标签页，默认设置下固定标签页不保存也不关闭。要保存它们，去设置里打开「保存时收集固定标签页」；或者切到有普通网页的窗口再保存。';
+
+/**
+ * 一条预检结论对应的文案（完整句 + 短形式）。
+ *
+ * 短形式是给**按钮**用的（按钮宽度有限，见 `Header.tsx` 的 `sm:inline` /
+ * `sm:hidden` 两段），完整句给 `title` / `aria-describedby` / 行内提示位。
+ * 两条文案在这里一次成形 ⇒ 顶栏与空态两处**不可能**各写一遍（那必然漂移）。
+ */
+export interface SavePrecheckCopy {
+  /** 完整句：说清「为什么」与「下一步」。 */
+  full: string;
+  /** 短形式：按钮上放得下的那几个字。 */
+  short: string;
+}
+
+export const savePrecheckCopy = (kind: SavePrecheckKind): SavePrecheckCopy =>
+  kind === 'only-pinned-tabs'
+    ? { full: pinnedOnlySaveText, short: '固定标签页未保存' }
+    : { full: emptySaveNoTabsText, short: '没有可保存的标签页' };

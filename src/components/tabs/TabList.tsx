@@ -10,8 +10,8 @@ import { resolveSearchViewMode } from '@/components/search/searchBrowseMode';
 import { sortSessions } from '@/core/sessionSort';
 import { EmptyState } from '@/components/common/EmptyState';
 import { getEmptyStateGreeting } from '@/components/common/emptyStateGreeting';
-import { emptySaveNoTabsText, saveAndCloseLabel } from '@/components/layout/saveActionCopy';
-import { collectableTabs } from '@/domain/tabGroup/filters';
+import { saveAndCloseLabel, savePrecheckCopy } from '@/components/layout/saveActionCopy';
+import { classifySavePrecheck } from '@/domain/tabGroup/savePrecheck';
 import { saveAllSuccessShortMessage } from '@/domain/tabGroup/saveFeedbackCopy';
 import { toListErrorCopy, toListErrorView } from './listErrorCopy';
 import { splitIntoTwoColumns } from './doubleColumnSplit';
@@ -162,10 +162,17 @@ export const TabList: React.FC<TabListProps> = ({ searchQuery, onOpenAuth, filte
       // 判据用 `collectableTabs`（与 SW 保存路径**同一个函数**）⇒
       // 不可能出现「这里说能存、实际存不下」。预检只做**一次同步计算**，
       // 不额外往返 SW；真正的保存仍然交给 SW（单写者）。
-      if (collectableTabs(tabs, { includePinned: collectPinnedTabs }).length === 0) {
+      //
+      // ⚠️ 2026-11-12：判据从「布尔」升级成**分类**（classifySavePrecheck）——
+      // 「存得下 0 条」有两种原因：这一窗真的没有可保存的网页，
+      // 或者能存的全是固定标签页而被设置挡住（默认设置下固定标签页不保存）。
+      // 后者要给「去设置里打开『保存时收集固定标签页』」这条解法，
+      // 否则用户照着「换个窗口」的提示折腾半天，功能看着像坏了。
+      const precheck = classifySavePrecheck(tabs, { includePinned: collectPinnedTabs });
+      if (precheck !== 'ok') {
         setEmptySaveFeedback({
           kind: 'error',
-          text: emptySaveNoTabsText,
+          text: savePrecheckCopy(precheck).full,
         });
         return;
       }

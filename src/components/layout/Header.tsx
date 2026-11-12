@@ -23,8 +23,8 @@ import { Tooltip } from '@/components/common/Tooltip';
 import { TapStackLogo } from '@/components/common/TapStackIcon';
 import { LoadingSpinner } from '@/components/common/LoadingSpinner';
 import { cleanDuplicatesConfirmMessage, cleanDuplicatesResultMessage } from './cleanDuplicatesMessage';
-import { saveAndCloseDescription, saveAndCloseLabel, saveAndCloseShortLabel, emptySaveNoTabsText } from './saveActionCopy';
-import { collectableTabs } from '@/domain/tabGroup/filters';
+import { saveAndCloseDescription, saveAndCloseLabel, saveAndCloseShortLabel, savePrecheckCopy } from './saveActionCopy';
+import { classifySavePrecheck } from '@/domain/tabGroup/savePrecheck';
 import { isBrandContentClipped } from './brandLayout';
 import { onImportRequest } from './importRequest';
 import {
@@ -454,16 +454,28 @@ export const Header: React.FC<HeaderProps> = ({
       // ⇒ 与空态 CTA（TabList.handleSaveFromEmpty）**同一套判据**：
       // `collectableTabs`（domain 层，与 SW 保存路径同一个函数）⇒ 不可能出现
       // 「这里说能存、实际存不下」，也不会出现两条路径口径不一致。
-      if (collectableTabs(tabs, { includePinned: settings.collectPinnedTabs ?? false }).length === 0) {
+      //
+      // ⚠️ 2026-11-12：判据从「布尔」升级成**分类**（classifySavePrecheck）。
+      // 「存得下 0 条」有两种原因，而用户要的答案完全不同：
+      //   · 这一窗真的没有可保存的网页 → 换个窗口 / 先开几个网页
+      //   · 能存的全是固定标签页，而设置里「保存时收集固定标签页」是关的（默认）
+      //     → 去设置里把那个开关打开
+      // 上一版一律给第一句 ⇒ 用户照着开新标签，提示照旧，观感是「功能坏了」。
+      // 行为口径没变（仍与 SW 同一套判据），变的是**解释**。
+      const precheck = classifySavePrecheck(tabs, {
+        includePinned: settings.collectPinnedTabs ?? false,
+      });
+      if (precheck !== 'ok') {
         // 这不是「操作失败」，是「这一窗没有可保存的东西」⇒ 不走 toast
         // （错误 toast 是常驻的，且它就是当初挡住这颗按钮的东西）。
         // 按钮就地变成那句话（它本来就有 inline 反馈位），用户看得见、
         // 也读得到（按钮文案进朗读队列）。
+        const copy = savePrecheckCopy(precheck);
         setSaveFeedback({
           kind: 'error',
-          text: emptySaveNoTabsText,
-          shortText: '没有可保存的标签页',
-          fullText: emptySaveNoTabsText,
+          text: copy.full,
+          shortText: copy.short,
+          fullText: copy.full,
         });
         return;
       }
