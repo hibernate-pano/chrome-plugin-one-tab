@@ -49,3 +49,4 @@ scripts/_*-tmp.mjs
 # （踩坑、根因、修复顺序），与 docs/ 同级，刻意保留。
 .memory/
 .workbuddy/
+.alma-snapshots
