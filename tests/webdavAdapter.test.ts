@@ -539,7 +539,10 @@ describe('删除广播与 TTL', () => {
     await adapter.uploadGroups([makeGroup('aa1'), makeGroup('bb2')]);
     await adapter.broadcastDeletes(['aa1', 'bb2']);
 
-    // 把 aa1 的墓碑时间改成 40 天前（now 注入是固定的，所以直接改盘上的 manifest）
+    // 把 aa1 的墓碑时间改成 40 天前（now 注入是固定的，所以直接改盘上的 manifest）。
+    // ↑ 这条能成立的前提：purgeExpiredDeletes 的 cutoff 也读注入的时钟。曾经它用
+    // 真实 Date.now()，而 NOW 固定在 2026-10-13 —— 30 天后的 2026-11-13，bb2 也
+    // 被判成过期，用例自己变红（不是实现坏了）。2026-11-13 已把 cutoff 改走 this.now()。
     const manifest = JSON.parse(dav.read(M)!.body);
     const old = new Date(Date.parse(NOW) - 40 * 864e5).toISOString();
     manifest.shards = manifest.shards.map((s: { id: string }) =>

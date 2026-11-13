@@ -2288,7 +2288,14 @@ export class WebDavBackendAdapter implements SyncBackendPort {
     // 但 `t < cutoff` 本来就排除未来时间 —— 守卫永不触发，是死代码，已删掉。
     // 不要在这里加宽松度（如 +7 天 grace）：那只是把阈值挪一下，风险形状不变，
     // 却让「过期墓碑被清理」这条现有测试的语义变模糊。
-    const cutoff = Date.now() - maxAgeDays * 24 * 60 * 60 * 1000;
+    //
+    // 2026-11-13：cutoff 必须走 this.now()（可注入时钟），不能直接 Date.now()。
+    // 墓碑的 updatedAt 是 this.now() 盖的（见 broadcastDeletes），如果清理用
+    // 另一只钟，两边的「现在」只在生产环境恰好相等。tests/webdavAdapter.test.ts
+    // 的 NOW 固定在 2026-10-13：过了 30 天后，未过期的那条也会被真实时钟判成
+    // 过期，用例莫名其妙变红 —— 这是本仓「守卫把现在写死就是定时炸弹」的又一例。
+    // 生产路径 this.now 的默认值就是真实 ISO 时间，行为不变。
+    const cutoff = Date.parse(this.now()) - maxAgeDays * 24 * 60 * 60 * 1000;
     const expired = index.manifest.shards.filter(
       s => s.isDeleted === true && Date.parse(s.updatedAt) > 0 && Date.parse(s.updatedAt) < cutoff
     );
