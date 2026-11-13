@@ -62,8 +62,23 @@ concurrency:
 jobs:
   verify:
     name: 单测 / 类型 / lint / 构建 / 依赖审计
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
+    # ── 2026-11-13 钉版本，不再用 ubuntu-latest ─────────────────────────
+    # latest 在 2026-11-02 前后从 24.04 漂到了 26.04（证据：run 43365301997 的
+    # Runner Image 日志 `Image: ubuntu-26.04`，Release ubuntu26/20261111.82）。
+    # 新镜像的 apt 源里没有 postgresql-16 / postgresql-client-16，下面的安装
+    # 步骤直接 `E: Unable to locate package` + exit 100，job 在第 2 分钟就死——
+    # 自 2026-11-02 起每次 push 全红（41394839037、41841997684、43365301997 …），
+    # 构建/单测/validate/依赖审计这四道门一次都没真正跑过。
+    # 门禁依赖「镜像里有什么」，所以跑哪个系统必须是显式选择，不能是「当前最新」；
+    # 否则下一次镜像升级仍会在某天早上让 CI 无声失效。
+    # 升级动作：把这里改成新版本 → workflow_dispatch 跑一次 → 确认四道门全绿再合入。
+    runs-on: ubuntu-24.04
+    # 2026-11-13：20 → 45。证据：修好 PG 安装后的第一次 run（43371114715）里，
+    # 「单测」一步单独就跑了 17 分 44 秒（05:18:07 → 05:35:48）——两个变异自证
+    # （分片目录布局、PERF-01）各约 5 分钟，是主要开销。单测之后还有 validate
+    # （类型 + lint + 构建 + 首屏体积门）与依赖审计；20 分钟会在最后一道门前
+    # 把 job 掐死，而且表现为「timeout」而不是具体哪道门坏了。
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
 
@@ -87,23 +102,45 @@ jobs:
       # 还要在下一步显式验证装上了。
       # 2026-10-02：原 supercharge/setup-postgres@v1 的仓库已从 GitHub 下架
       # （action 解析失败，CI 在 Set up job 就红 5s，单测一次都没跑过）。
-      # 改为在 ubuntu-24.04 runner 上显式 apt 安装 postgresql-16：来源是 runner
-      # 镜像自带 apt，不再依赖任何第三方 action 的存活。
-      - name: 安装 PostgreSQL 16 二进制
+      # 改为在 runner 自带 apt 里显式安装 postgresql-16：来源是镜像自带 apt，
+      # 不再依赖任何第三方 action 的存活。
+      #
+      # 2026-11-13：安装改成版本无关。ubuntu-latest 漂到 26.04 后，apt 源里不再有
+      # postgresql-16 / postgresql-client-16，上一版「写死 16」的安装直接
+      # `E: Unable to locate package` + exit 100 把 job 打死（2026-11-02 起全红，
+      # 见 job 定义处 runs-on 的注释）。现在先试 16（与本地开发机一致），镜像里
+      # 没有就退回不带版本号的元包（默认版本由 distro 决定，tests/_helpers/pgHarness.ts
+      # 只要求 initdb/pg_ctl/psql 存在且能起库，不钉 major 版本）。
+      # **两条都失败必须红**，并保留第一次失败的原始 apt 输出，不能降级成
+      # 「没装 PG、测试静默 skip」——那正是这个安装步骤存在的理由。
+      - name: 安装 PostgreSQL 二进制（先 16，缺失则退回 distro 默认版本）
         run: |
+          set -euo pipefail
           sudo apt-get update
-          sudo apt-get install -y postgresql-16 postgresql-client-16
+          if sudo apt-get install -y postgresql-16 postgresql-client-16; then
+            echo "已安装 postgresql-16 / postgresql-client-16"
+          else
+            echo "::warning::apt 源里没有 postgresql-16 / postgresql-client-16（runner 镜像升级后常见），退回 distro 默认版本 postgresql / postgresql-client"
+            sudo apt-get install -y postgresql postgresql-client
+            echo "已安装 distro 默认版本的 postgresql / postgresql-client"
+          fi
 
       - name: 校验 initdb/pg_ctl/psql 真的可用（缺了就必须红，不许静默跳过）
         shell: bash
         run: |
           set -euo pipefail
-          # setup-postgres 的安装目录随版本/镜像而变（本地实测、runner 镜像、pg_config 都可能），
+          # 安装目录随版本/镜像而变（本机 brew、runner 镜像的 /usr/lib/postgresql/<major>/bin），
           # 逐个探测后追加到 PATH；既补上后继步骤，也补上本步骤后面的探测。
+          # 2026-11-13：原来写死 /usr/lib/postgresql/16/bin。安装改成版本无关之后，
+          # 一旦退回 distro 默认版本（比如 18），这里就找不到目录，下面的「缺二进制」
+          # 闸门会红——但红的原因是探测清单过期，不是环境真缺 PG，排查时会绕远路。
+          # 改成按 major 版本 glob；nullglob 保证一个都没装上时数组里不会混进
+          # 字面量的 `*`（否则 `[ -d "$d" ]` 只是悄悄不匹配，看不出区别）。
+          shopt -s nullglob
           candidates=(
             "${RUNNER_TEMP:-/tmp}/postgresql/bin"
             /usr/local/opt/postgresql@16/bin
-            /usr/lib/postgresql/16/bin
+            /usr/lib/postgresql/*/bin
           )
           if command -v pg_config >/dev/null 2>&1; then
             candidates+=("$(pg_config --bindir)")
@@ -125,7 +162,7 @@ jobs:
           done
           if [ ${#missing[@]} -gt 0 ]; then
             echo "::error::缺少 PostgreSQL 二进制：${missing[*]} —— tests/opStampGuard.pg.test.ts 会整组静默 skip，门禁形同虚设"
-            echo "上一步 apt 安装的 postgresql-16 二进制没进 PATH：检查安装步骤输出与 runner 镜像变更。"
+            echo "上一步 apt 安装的 PostgreSQL 二进制没进 PATH（安装的是版本 16 还是 distro 默认版本，看安装步骤的输出）：检查 runner 镜像变更与上面的探测目录。"
             exit 1
           fi
           initdb --version && pg_ctl --version && psql --version
