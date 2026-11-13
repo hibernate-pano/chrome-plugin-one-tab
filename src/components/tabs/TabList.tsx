@@ -10,7 +10,8 @@ import { resolveSearchViewMode } from '@/components/search/searchBrowseMode';
 import { sortSessions } from '@/core/sessionSort';
 import { EmptyState } from '@/components/common/EmptyState';
 import { getEmptyStateGreeting } from '@/components/common/emptyStateGreeting';
-import { saveAndCloseLabel } from '@/components/layout/saveActionCopy';
+import { saveAndCloseLabel, savePrecheckCopy } from '@/components/layout/saveActionCopy';
+import { classifySavePrecheck } from '@/domain/tabGroup/savePrecheck';
 import { saveAllSuccessShortMessage } from '@/domain/tabGroup/saveFeedbackCopy';
 import { toListErrorCopy, toListErrorView } from './listErrorCopy';
 import { splitIntoTwoColumns } from './doubleColumnSplit';
@@ -152,6 +153,29 @@ export const TabList: React.FC<TabListProps> = ({ searchQuery, onOpenAuth, filte
     try {
       const tabs = await chrome.tabs.query({ currentWindow: true });
       const windowId = tabs[0]?.windowId;
+      // ── 2026-11-06：先判断「这一窗有没有可保存的标签」，不要等报错 ──────
+      // 缺陷形态（真机走查）：点扩展图标 ⇒ 管理器在这一窗打开 ⇒ 这一窗里
+      // 只剩管理器页本身 ⇒ 用户点「保存并关闭」⇒ 报错「没有可保存的标签页」。
+      // 空态主 CTA 是**新用户第一屏唯一的动作**，第一次点它就该成功，
+      // 而这里给出的答案是「你点错了」—— 而且是点完之后才知道。
+      //
+      // 判据用 `collectableTabs`（与 SW 保存路径**同一个函数**）⇒
+      // 不可能出现「这里说能存、实际存不下」。预检只做**一次同步计算**，
+      // 不额外往返 SW；真正的保存仍然交给 SW（单写者）。
+      //
+      // ⚠️ 2026-11-12：判据从「布尔」升级成**分类**（classifySavePrecheck）——
+      // 「存得下 0 条」有两种原因：这一窗真的没有可保存的网页，
+      // 或者能存的全是固定标签页而被设置挡住（默认设置下固定标签页不保存）。
+      // 后者要给「去设置里打开『保存时收集固定标签页』」这条解法，
+      // 否则用户照着「换个窗口」的提示折腾半天，功能看着像坏了。
+      const precheck = classifySavePrecheck(tabs, { includePinned: collectPinnedTabs });
+      if (precheck !== 'ok') {
+        setEmptySaveFeedback({
+          kind: 'error',
+          text: savePrecheckCopy(precheck).full,
+        });
+        return;
+      }
       const response = (await chrome.runtime.sendMessage({
         type: 'SAVE_ALL_TABS',
         data: { windowId },

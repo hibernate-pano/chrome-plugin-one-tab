@@ -1,21 +1,36 @@
-/* 拖曳相关样式 - 全新重构版 */
+/* 拖拽相关样式 */
 
 /*
- * 2026-10-23 审计 V-14：动效时长读命名阶梯（global.css 的 :root 定义
- * --motion-fast 120ms / --motion-base 180ms / --motion-slow 250ms /
- * --ease-standard）。自定义属性在文档级继承 ⇒ 本文件（由 MainApp.tsx
- * 单独 import）同样能读到。
+ * 2026-11-12（主题打磨）：本文件从 374 行收到 ~100 行。三处改动：
+ *
+ * ① **死代码删除** —— 下列类在 src/**\/*.{ts,tsx} 里**零引用**
+ *    （逐个按**词边界**核对过；`.group-header` / `.tabs-container` 的命中
+ *    全是 `tab-group-header` / `tab-group-tabs-container` 的子串，
+ *    而代码里用的是后者）：
+ *      .dnd-transition / .group-item / .tab-drag-overlay / .group-drag-overlay
+ *      / .drag-overlay / .group-overlay / .tab-overlay / .drop-target
+ *      / .drag-indicator(-top|-bottom) / .insert-indicator(-top|-bottom)
+ *      / .group-header / .tabs-container
+ *    它们各自写死了白底 / #e5e7eb 边框 / #3b82f6 拖拽环 ⇒ 哪天有人照着
+ *    这些类名写组件，就会直接落进一套「不属于任何主题」的配色。
+ *    （`.group-item` 里那段 content-visibility 也一并没了 —— PERF-03
+ *    早就把它从真实组件上摘掉了，见 DraggableTabGroup.tsx 的注释。）
+ *
+ * ② **重复规则合并** —— `.tab-item` / `.dark .tab-item` 原本**各写了两遍**
+ *    （文件前半段「标签页样式」与后半段「兼容旧样式」），后一段覆盖前一段，
+ *    而且两段的 hover 底色**不一样**（#f9fafb vs #f5f5f5）⇒
+ *    「哪条生效」只取决于文件里的先后顺序。现在合成一处。
+ *
+ * ③ **颜色接到令牌上** —— 剩下写死的色（#3b82f6 拖拽环 / #f0f7ff 拖拽底 /
+ *    #e5e7eb 深色行墨色）改成读主题令牌 ⇒ 拖拽反馈与所在主题同色，
+ *    而不是永远一套 legacy 蓝。
+ *
+ * ⚠️ 这个文件由 MainApp.tsx 单独 import ⇒ 在 global.css **之后**加载，
+ *    而且是**未分层**（unlayered）⇒ 它的规则盖过 @layer components。
+ *    ⇒ 这里写的东西**就是**最终生效的东西，改之前先想清楚。
  */
 
-/* 基本过渡效果 */
-.dnd-transition {
-  transition: transform var(--motion-base) var(--ease-standard),
-    opacity var(--motion-base) var(--ease-standard),
-    margin var(--motion-base) var(--ease-standard),
-    box-shadow var(--motion-base) var(--ease-standard);
-}
-
-/* 拖拽返回动画 - 当拖拽结束但未放置到有效目标时 */
+/* 拖拽返回动画 —— 拖拽结束但没放进有效目标时，让行弹回原位 */
 .tab-drag-return {
   animation: tab-return var(--motion-slow) var(--ease-standard);
 }
@@ -37,11 +52,12 @@
   }
 }
 
-/* 标签页样式 */
+/* 标签行（列表里的一行标签） */
 .tab-item {
   display: flex;
   align-items: center;
-  border-radius: 4px;
+  /* 形状跟主题走（legacy = 4px，其余主题可各自给形状语言） */
+  border-radius: var(--radius-sm);
   /* 2026-10-20：原先写死 white —— 这个文件在 global.css **之后**加载
      （MainApp.tsx 单独 import），而 6 套主题里有 3 套（legacy/creamy/prism）
      只覆盖了 .tab-item 的 border/padding/hover，**没覆盖底色**
@@ -60,174 +76,6 @@
      （37px 一行）⇒ 这三个声明全部撤掉。
      连带影响：那圈 transparent border 没了 ⇒ 拖拽环不能再靠
      `border-color` 画 ⇒ 改用 box-shadow（不改盒模型）。 */
-}
-
-.dark .tab-item {
-  /* 2026-10-20：原先写死 #1f2937（gray-800，冷蓝灰）—— 6 套主题都**没有**
-     覆盖深色态的 .tab-item 底色 ⇒ creamy 深色（页面底 #1c1917 暖黑）
-     与 prism 深色（#0f0a1f 深紫）下的每一条标签行都是**冷蓝灰**。
-     改成 transparent ⇒ 标签行透出卡片底，与浅色态同一套逻辑。 */
-  background-color: transparent;
-  color: #e5e7eb;
-}
-
-.tab-item:hover {
-  background-color: #f9fafb;
-}
-
-.dark .tab-item:hover {
-  background-color: #374151;
-}
-
-/* 标签页拖拽中状态 */
-.tab-item.dragging {
-  opacity: 0.5;
-  /* 2026-10-24：原来是 `border-color: #3b82f6` —— 那依赖行上存在一圈
-     transparent border（已随垂直节奏收敛撤掉）⇒ 改用 box-shadow 画 1px 环：
-     视觉上同样是「蓝框」，但**不改盒模型** ⇒ 拖起来行高不会跳一下。 */
-  box-shadow: 0 0 0 1px #3b82f6, 0 2px 6px rgba(59, 130, 246, 0.2);
-  z-index: 999;
-  background-color: #f0f7ff;
-}
-
-/* 标签组样式 */
-.group-item {
-  background-color: white;
-  border-radius: 8px;
-  border: 1px solid #e5e7eb;
-  overflow: hidden;
-  margin-bottom: 12px;
-
-  /* 渲染性能（modern-web-guidance: defer-rendering-heavy-content）：
-     组卡片数量大时，视口外的卡片跳过布局/绘制；contain-intrinsic-size 的
-     auto 记忆关键词在首次渲染后记住真实尺寸，防止视口外折叠为 0 高导致
-     滚动条跳动。列表为动态排序，无法静态区分首屏内外，由浏览器按可见
-     边界自行决定跳过哪些卡片（首屏内卡片照常渲染）。 */
-  content-visibility: auto;
-  contain-intrinsic-size: auto none auto 220px;
-}
-
-.dark .group-item {
-  background-color: #1f2937;
-  border-color: #374151;
-  color: #e5e7eb;
-}
-
-
-
-/* 标签组拖拽中状态 */
-.group-item.dragging {
-  opacity: 0.7;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
-  z-index: 999;
-}
-
-/* 拖拽覆盖层 - 标签页 */
-.tab-drag-overlay {
-  background-color: white;
-  border-radius: 4px;
-  border: 1px solid #3b82f6;
-  box-shadow: 0 4px 12px rgba(59, 130, 246, 0.2);
-  padding: 8px 12px;
-  display: flex;
-  align-items: center;
-  max-width: 300px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.dark .tab-drag-overlay {
-  background-color: #1f2937;
-  color: #e5e7eb;
-  border-color: #3b82f6;
-}
-
-/* 拖拽覆盖层 - 标签组 */
-.group-drag-overlay {
-  background-color: white;
-  border-radius: 8px;
-  border: 1px solid #e5e7eb;
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.1);
-  padding: 12px;
-  width: 100%;
-  max-width: 600px;
-}
-
-.dark .group-drag-overlay {
-  background-color: #1f2937;
-  border-color: #374151;
-  color: #e5e7eb;
-}
-
-/* 拖拽目标样式 - 当鼠标悬停在可放置区域时 */
-.drop-target {
-  background-color: #f0f7ff;
-  border-color: #bfdbfe;
-}
-
-.dark .drop-target {
-  background-color: #1e3a8a;
-  border-color: #3b82f6;
-}
-
-/* 拖拽指示器 - 显示当前拖拽位置 */
-.drag-indicator {
-  position: absolute;
-  left: 0;
-  right: 0;
-  height: 2px;
-  background-color: #3b82f6;
-  z-index: 1000;
-}
-
-.drag-indicator-top {
-  top: -1px;
-}
-
-.drag-indicator-bottom {
-  bottom: -1px;
-}
-
-/* 标签组内容区域 */
-.tabs-container {
-  transition: height var(--motion-base) var(--ease-standard);
-}
-
-/* 标签组头部 */
-.group-header {
-  display: flex;
-  align-items: center;
-  padding: 8px 12px;
-  background-color: #f9fafb;
-  border-bottom: 1px solid #e5e7eb;
-  cursor: move;
-}
-
-.dark .group-header {
-  background-color: #111827;
-  border-color: #374151;
-  color: #e5e7eb;
-}
-
-/* 兼容旧样式 */
-.tab-item {
-  display: flex;
-  align-items: center;
-  border-radius: 4px;
-  /* 2026-10-20：原先写死 white —— 这个文件在 global.css **之后**加载
-     （MainApp.tsx 单独 import），而 6 套主题里有 3 套（legacy/creamy/prism）
-     只覆盖了 .tab-item 的 border/padding/hover，**没覆盖底色**
-     ⇒ 底色落回这里 ⇒ creamy/prism 下每一条标签行都是**纯白**，
-     与主题的米色/淡紫底格格不入。
-     claude/apple/chrome 三个主题已经写了 `background: transparent`
-     （标签行与卡片底一体）⇒ 这里改成 transparent，与它们一致，
-     并让「主题决定底色」这件事只发生在一处。 */
-  background-color: transparent;
-  cursor: move;
-  position: relative;
-  /* 2026-10-24：padding / margin-bottom / border（见本文件上一处同名规则的
-     注释）—— 垂直节奏只在 global.css 的 `.tab-item` 一处给出。 */
   /* 2026-10-23 审计 V-14：这条 `transition` **覆盖**了 global.css 主题过渡名单里
      .tab-item 的那条（这个文件在 global.css **之后**加载 ⇒ 同一特异性的后者胜）。
      原先只列 transform / opacity ⇒ 背景色与文字色**不参与过渡**
@@ -244,132 +92,24 @@
     opacity var(--motion-fast) var(--ease-standard);
 }
 
+/* 深色态的行墨色：原先写死 #e5e7eb（gray-200，冷灰）—— 6 套主题的深色态
+   各有各的墨色（apple #f5f5f7 / creamy 暖白 / prism 淡紫），写死这一档
+   等于给所有深色主题塞同一个中性灰。改成跟主题走。 */
 .dark .tab-item {
-  /* 2026-10-20：原先写死 #1f2937（gray-800，冷蓝灰）—— 6 套主题都**没有**
-     覆盖深色态的 .tab-item 底色 ⇒ creamy 深色（页面底 #1c1917 暖黑）
-     与 prism 深色（#0f0a1f 深紫）下的每一条标签行都是**冷蓝灰**。
-     改成 transparent ⇒ 标签行透出卡片底，与浅色态同一套逻辑。 */
   background-color: transparent;
-  color: #e5e7eb;
+  color: var(--color-text-primary);
 }
 
-.tab-item:hover {
-  background-color: #f5f5f5;
-}
-
-.dark .tab-item:hover {
-  background-color: #374151;
-}
-
+/* 标签页拖拽中状态 */
 .tab-item.dragging {
   opacity: 0.5;
-  /* 2026-10-24：同本文件上一处同名规则 —— 拖拽环改用 box-shadow 画
-     （行上已无 transparent border 可染色，且 box-shadow 不改盒模型）。 */
-  box-shadow: 0 0 0 1px #3b82f6, 0 4px 8px rgba(59, 130, 246, 0.2);
+  /* 2026-10-24：原来是 `border-color: #3b82f6` —— 那依赖行上存在一圈
+     transparent border（已随垂直节奏收敛撤掉）⇒ 改用 box-shadow 画 1px 环：
+     视觉上同样是「强调色框」，但**不改盒模型** ⇒ 拖起来行高不会跳一下。
+     2026-11-12：环色与落点底色从写死的 legacy 蓝改读主题 accent 族。 */
+  box-shadow:
+    0 0 0 1px var(--color-accent, #3b82f6),
+    0 4px 8px var(--color-accent-wash, rgba(59, 130, 246, 0.2));
   z-index: 999;
-  background-color: #f0f7ff;
-}
-
-.dark .tab-item.dragging {
-  background-color: #1e40af;
-}
-
-.drag-overlay {
-  display: flex;
-  align-items: center;
-  padding: 8px 12px;
-  background-color: white;
-  border-radius: 4px;
-  border: 1px solid #ccc;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
-  max-width: 300px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.dark .drag-overlay {
-  background-color: #1f2937;
-  border-color: #374151;
-  color: #e5e7eb;
-}
-
-.group-item {
-  transition: transform var(--motion-fast) var(--ease-standard),
-    opacity var(--motion-fast) var(--ease-standard);
-}
-
-.group-item.dragging {
-  opacity: 0.5;
-  border-color: #ccc;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
-}
-
-.group-overlay {
-  padding: 12px;
-  background-color: white;
-  border-radius: 4px;
-  border: 1px solid #ccc;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
-}
-
-.dark .group-overlay {
-  background-color: #1f2937;
-  border-color: #374151;
-  color: #e5e7eb;
-}
-
-.tab-overlay {
-  background-color: #f0f7ff;
-  border-color: #3b82f6;
-  box-shadow: 0 4px 8px rgba(59, 130, 246, 0.2);
-}
-
-.dark .tab-overlay {
-  background-color: #1e40af;
-  border-color: #3b82f6;
-}
-
-.insert-indicator {
-  position: absolute;
-  left: 0;
-  right: 0;
-  height: 3px;
-  background-color: #3b82f6;
-  z-index: 1000;
-  animation: pulse 1.5s infinite;
-  border-radius: 1.5px;
-  box-shadow: 0 0 4px rgba(59, 130, 246, 0.5);
-}
-
-@keyframes pulse {
-  0% {
-    opacity: 0.7;
-    transform: scaleY(1);
-  }
-
-  50% {
-    opacity: 1;
-    transform: scaleY(1.3);
-  }
-
-  100% {
-    opacity: 0.7;
-    transform: scaleY(1);
-  }
-}
-
-.insert-indicator-top {
-  top: -2px;
-}
-
-.insert-indicator-bottom {
-  bottom: -2px;
-}
-
-.drop-target {
-  background-color: #f0f7ff;
-  border-color: #bfdbfe;
-  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.15);
-  transition: all var(--motion-base) var(--ease-standard);
+  background-color: var(--color-accent-subtle, #f0f7ff);
 }

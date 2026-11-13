@@ -464,6 +464,96 @@ describe('U-24：--color-card-head-bg 必须在兜底与 6 套主题里各自声
   });
 });
 
+// ═══════════════════════════════════════════════════════════════════════════
+// U-25：交互态（行/菜单 hover 与按下）必须由每个主题显式接管
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// 2026-11-12 修的两类缺陷（都属于「某个主题忘了声明 ⇒ 落回全局兜底」）：
+//
+// ① **按下与悬停同色**：`.tab-item:active` 与 `.tab-item:hover` 原先读
+//    **同一个**令牌（--color-bg-tertiary）⇒ 鼠标按下去与只是停在这一行上
+//    完全同色，按下的反馈只存在于代码里、不存在于屏幕上。creamy / prism
+//    更糟：它们的 hover 是渐变，而 active 读三级面 ⇒ 按下去**反而更淡**。
+//
+// ② **冷灰漏进暖主题**：legacy / creamy / prism 都没有声明
+//    --color-row-hover / --color-menu-hover ⇒ 顶栏菜单的悬停行落回
+//    :root 的 #f9fafb（一层冷灰）。落在暖米色（creamy）/ 淡紫（prism）
+//    的菜单上，那一行是**别的产品的灰**。
+//
+// 判据钉的是不变量，不钉具体色值：
+//   · 三个交互态令牌每个主题、明暗各声明一份（谁也别指望兜底）；
+//   · 每个主题的 `.tab-item:active` 都读 --color-press（一个令牌管 6 套主题）；
+//   · 同一主题里 :hover 与 :active 的底色**不得相同**（同色 = 没有按下反馈）。
+describe('U-25：交互态令牌（hover / 按下）必须每个主题自己声明', () => {
+  const INTERACTION_TOKENS = [
+    '--color-row-hover',
+    '--color-menu-hover',
+    '--color-press',
+  ] as const;
+
+  it('global.css 的 :root 与 html.dark 各有一个兜底值', () => {
+    for (const name of INTERACTION_TOKENS) {
+      assert.ok(token(GLOBAL_ROOT, name), `global.css 的 :root 缺 ${name}`);
+      assert.ok(token(GLOBAL_DARK, name), `global.css 的 html.dark 缺 ${name}`);
+    }
+  });
+
+  for (const theme of THEMES) {
+    for (const dark of [false, true]) {
+      it(`${theme}/${dark ? 'dark' : 'light'}：声明三个交互态令牌`, () => {
+        const css = read(`src/styles/themes/${theme}.css`);
+        const scope = themedBlock(css, theme, dark ? '.dark' : ' {');
+        assert.ok(scope, `${theme}.css 里找不到 ${dark ? '深色' : '浅色'}作用域块`);
+        for (const name of INTERACTION_TOKENS) {
+          assert.ok(
+            token(scope, name),
+            `${theme}/${dark ? 'dark' : 'light'} 没有声明 ${name} —— ` +
+              '不声明的主题会落回 global.css 的兜底值（#f9fafb，一层冷灰），' +
+              '于是暖米色 / 淡紫的主题里出现一行不属于它的灰'
+          );
+        }
+      });
+    }
+
+    it(`${theme}：.tab-item 的按下态读 --color-press，且不得与悬停同色`, () => {
+      const css = read(`src/styles/themes/${theme}.css`);
+      const ruleOf = (state: 'hover' | 'active') => {
+        const re = new RegExp(
+          `html\\[data-theme=["']${theme}["']\\]\\s+\\.tab-item:${state}\\s*\\{([^}]*)\\}`
+        );
+        return re.exec(css)?.[1] ?? null;
+      };
+      const hover = ruleOf('hover');
+      const active = ruleOf('active');
+      assert.ok(hover, `${theme}.css 里找不到 .tab-item:hover 规则`);
+      assert.ok(
+        active,
+        `${theme}.css 里找不到 .tab-item:active 规则 —— ` +
+          '按下态会落回 micro-interactions 的兜底，与主题的悬停色打架'
+      );
+      const bg = (body: string) =>
+        /background(?:-color)?\s*:\s*([^;]+);/.exec(body)?.[1]?.trim() ?? null;
+      const hoverBg = bg(hover!);
+      const activeBg = bg(active!);
+      assert.ok(hoverBg, `${theme} 的 .tab-item:hover 没有声明底色`);
+      assert.ok(activeBg, `${theme} 的 .tab-item:active 没有声明底色`);
+      assert.match(
+        activeBg!,
+        /var\(--color-press\)/,
+        `${theme} 的按下态底色是「${activeBg}」—— 必须读 --color-press：` +
+          '按下色的具体取值属于主题（这个令牌 6 套主题各给一次），' +
+          '写死值会让深色态与主题脱节'
+      );
+      assert.notEqual(
+        activeBg,
+        hoverBg,
+        `${theme} 的 :hover 与 :active 是同一个底色（${hoverBg}）—— ` +
+          '按下去与只是悬停完全一样，手感上「按下了」没有任何反馈'
+      );
+    });
+  }
+});
+
 describe('U-17：涟漪的圆角跟随按钮（正圆按钮里不该出现方涟漪）', () => {
   it('.btn-icon::after 用 border-radius: inherit', () => {
     const css = read('src/styles/micro-interactions.css');

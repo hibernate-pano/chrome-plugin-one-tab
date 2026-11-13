@@ -161,8 +161,8 @@ describe('变异自证：撤销退路的守卫必须看得见破口', () => {
             mutate: source =>
               replaceIn(
                 source,
-                'inputs.hovered || inputs.focused || (inputs.hasDecision && !inputs.pageSeen);',
-                'inputs.hovered || inputs.focused;'
+                '(inputs.hasDecision && inputs.hovered) ||\n  inputs.focused ||\n  (inputs.hasDecision && !inputs.pageSeen);',
+                '(inputs.hasDecision && inputs.hovered) ||\n  inputs.focused;'
               ),
           },
         ],
@@ -185,8 +185,8 @@ describe('变异自证：撤销退路的守卫必须看得见破口', () => {
             mutate: source =>
               replaceIn(
                 source,
-                'inputs.hovered || inputs.focused || (inputs.hasDecision && !inputs.pageSeen);',
-                'inputs.hovered && inputs.focused && inputs.hasDecision && !inputs.pageSeen;'
+                '(inputs.hasDecision && inputs.hovered) ||\n  inputs.focused ||\n  (inputs.hasDecision && !inputs.pageSeen);',
+                '(inputs.hasDecision && inputs.hovered) &&\n  inputs.focused &&\n  (inputs.hasDecision && !inputs.pageSeen);'
               ),
           },
         ],

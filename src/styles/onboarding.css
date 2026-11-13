@@ -219,7 +219,12 @@
     background: #5b5bd6;
 }
 
-/* 步骤头部图标区域 —— 浅蓝紫渐变底（2026-10-24 回到 v1.25.1） */
+/* 步骤头部图标区域 —— 浅蓝紫渐变底（2026-10-24 回到 v1.25.1）
+ *
+ * 2026-11-06：内容从 emoji 换成线性 glyph（见 OnboardingGlyph.tsx）。
+ * 于是这里不再靠 `font-size` 控制图标大小（那是给 emoji 文本用的），
+ * 改成靠 SVG 自己的 width/height；颜色交给 accent 令牌 ⇒ 六套主题自动跟随。
+ * 底色与描边不变 —— 那是「长相」，本轮的改动是**图标语言**，不是色板。 */
 .onboarding-icon-wrapper {
     width: 72px;
     height: 72px;
@@ -228,13 +233,14 @@
     align-items: center;
     justify-content: center;
     margin: 0 auto 20px;
-    font-size: 32px;
     background: linear-gradient(135deg, #eff6ff, #ede9fe);
     animation: iconFloat 3s ease-in-out infinite;
+    color: #5b5bd6;
 }
 
 .dark .onboarding-icon-wrapper {
     background: linear-gradient(135deg, #1e293b, #312e81);
+    color: #a5b4fc;
 }
 
 @keyframes iconFloat {
@@ -467,9 +473,16 @@ html body .onboarding-overlay:focus-visible {
     box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
 }
 
+/* 特性卡片图标 —— 2026-11-06：从 emoji 换成线性 glyph。
+   emoji 版本靠 `font-size` 定尺寸；SVG 自带尺寸，这里只负责**色**与**间距**。
+   色取 accent（`--color-accent`）：六套主题各自映射到自己的强调色，
+   于是这枚小图标与同一张卡上的标题、以及卡头的图标按钮是同一套语言。 */
 .onboarding-feature-icon {
-    font-size: 1.5rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
     margin-bottom: 6px;
+    color: var(--color-accent);
 }
 
 .onboarding-feature-title {
@@ -664,25 +677,10 @@ html body .onboarding-overlay:focus-visible {
     }
 }
 
-/* 引导完成页面特效 */
-.onboarding-confetti {
-    font-size: 2rem;
-    animation: confettiBounce var(--motion-slow) cubic-bezier(0.68, -0.55, 0.265, 1.55);
-}
-
-@keyframes confettiBounce {
-    0% {
-        transform: scale(0);
-    }
-
-    50% {
-        transform: scale(1.2);
-    }
-
-    100% {
-        transform: scale(1);
-    }
-}
+/* 2026-11-06：`.onboarding-confetti` 与它的 confettiBounce 动画已删除 ——
+   它只服务「✅ 核心闭环已经齐了」那一屏的 emoji 弹跳。那一屏现在是一个
+   对勾 glyph（同族的线性图标）+ 一句陈述句，没有弹跳特效。
+   留着这条规则就是**死样式**：没有任何组件再渲染那个类名。 */
 
 /* 版本标签 —— 2026-10-24 回到 v1.25.1 的长相。
    indigo-700 #4338ca 压自己的蓝紫渐变底（#eff6ff→#ede9fe）⇒ 6.66:1；
@@ -734,7 +732,14 @@ html body .onboarding-overlay:focus-visible {
     height: 56px;
     border-radius: 16px;
     margin-bottom: 12px;
-    font-size: 26px;
+  }
+
+  /* 2026-11-06：短屏的图标也要跟着缩 —— 换成 SVG 之后 `font-size` 不再
+     影响尺寸（emoji 时代的写法），必须显式缩 glyph 本身，否则 32px 的图标
+     塞进 56px 的底会显得过满。 */
+  .onboarding-icon-wrapper svg {
+    width: 24px;
+    height: 24px;
   }
 
   .onboarding-title {
@@ -762,8 +767,12 @@ html body .onboarding-overlay:focus-visible {
   }
 
   .onboarding-feature-icon {
-    font-size: 1.25rem;
     margin-bottom: 4px;
+  }
+
+  .onboarding-feature-icon svg {
+    width: 18px;
+    height: 18px;
   }
 
   .onboarding-feature-desc {

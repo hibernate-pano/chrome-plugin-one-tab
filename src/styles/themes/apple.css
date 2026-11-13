@@ -17,18 +17,28 @@
   /* 表面 */
   --color-bg-primary: #f5f5f7;
   --color-bg-secondary: #ffffff;
-  --color-bg-tertiary: #f5f5f7;
+  /* 2026-11-12：原先与 --color-bg-primary 同为 #f5f5f7 ⇒ 搜索框底、
+     favicon 占位、计数徽章、开关轨道等 30+ 处「三级面」在页面底上
+     **完全不可见**；其余五套主题的 tertiary 都比 primary 深一档
+     （chrome #f1f3f4 / claude #ece9df / legacy #f3f4f6），只有 apple 是离群值。
+     取 Apple 分隔线灰同族的 #ececf0：比页面底深一档，仍远浅于
+     --color-border-default(#d2d2d7)，不抢内容。 */
+  --color-bg-tertiary: #ececf0;
   --color-bg-elevated: #ffffff;
   --color-bg-overlay: rgba(246, 246, 248, 0.8);
   --color-row-hover: rgba(0, 0, 0, 0.04);
   --color-menu-hover: rgba(0, 0, 0, 0.04);
+  /* 按下态：比 hover 再深一档（Apple 的按压签名 = 底色变深，不是位移） */
+  --color-press: rgba(0, 0, 0, 0.08);
 
   /* 文字 */
   --color-text-primary: #1d1d1f;
   --color-text-secondary: #424245;
   --color-text-tertiary: #6e6e73;
-  /* 2026-10-20：原值在 tertiary 底上仅 3.4:1，低于 AA。抬到 #6e6e73。 */
-  --color-text-muted: #6e6e73;
+  /* 2026-10-20：原值在 tertiary 底上仅 3.4:1，低于 AA。抬到 #6e6e73。
+     2026-11-12：tertiary 由 #f5f5f7 改为 #ececf0 后，#6e6e73 在它上面
+     只剩 4.30:1（AA 要求 4.5）⇒ 压到 #68686e（4.70:1），仍是最浅的一档提示灰。 */
+  --color-text-muted: #68686e;
 
   /* 分割线 */
   --color-border-default: #d2d2d7;
@@ -43,8 +53,10 @@
   --color-accent-subtle: #e8f2fd;
 
   /* 语义色 */
-  /* 2026-10-20：警告/危险色在本仓只当文字色用 ⇒ 浅底要 ≥4.5:1。 */
-  --color-warning: #b25000;
+  /* 2026-10-20：警告/危险色在本仓只当文字色用 ⇒ 浅底要 ≥4.5:1。
+     2026-11-12：tertiary 变深后 #b25000 在它上面只剩 4.41:1 ⇒ 压到
+     #a84a00（4.89:1），色相不变。 */
+  --color-warning: #a84a00;
   --color-danger: #d70015;
   --color-success: #34c759;
 
@@ -53,6 +65,18 @@
   --color-toggle-off: rgba(120, 120, 128, 0.16);
 
   /* 二级界面：圆角 / 强调族 / 井底 / 按钮 / 弹层 / 焦点 */
+  /* ── 2026-11-12：apple 主题原先**没有**自己的圆角刻度 ⇒ 全部落回
+     global 的 4/6/8/12/16/24，Tailwind 的 rounded-* 也一直是那套写死值。
+     现在按 Apple 的「连续圆角」语言给：控件 14px（= --radius-control）、
+     输入 10px（= --radius-input）、按钮 10px（= --radius-btn）——
+     刻度与这几个既有令牌对齐，不另起一套。 */
+  --radius-sm: 0.375rem;   /* 6px  */
+  --radius-md: 0.625rem;   /* 10px */
+  --radius-lg: 0.875rem;   /* 14px */
+  --radius-xl: 1.125rem;   /* 18px */
+  --radius-2xl: 1.5rem;    /* 24px */
+  --radius-3xl: 2rem;      /* 32px */
+  --radius-full: 9999px;   /* 正圆（药丸 / 圆形头像）—— 显式声明，不靠 global 兜底 */
   --radius-card: 0.875rem;
   --radius-panel: 1.25rem;
   --radius-control: 0.875rem;
@@ -124,6 +148,7 @@ html.dark [data-theme="apple"], html[data-theme="apple"].dark {
   --color-bg-overlay: rgba(22, 22, 24, 0.8);
   --color-row-hover: rgba(255, 255, 255, 0.06);
   --color-menu-hover: rgba(255, 255, 255, 0.06);
+  --color-press: rgba(255, 255, 255, 0.11);
 
   --color-text-primary: #f5f5f7;
   --color-text-secondary: #d6d6db;
@@ -222,4 +247,79 @@ html[data-theme="apple"] .btn-icon { border-radius: var(--radius-btn-icon); }
 html[data-theme="apple"] .tab-group-card {
   transition: box-shadow 0.2s ease, transform 0.2s ease, border-color 0.2s ease;
 }
-html[data-theme="apple"] .tab-group-card:hover { transform: translateY(-1px); }
+html[data-theme="apple"] .tab-group-card:hover {
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-card-hover);
+}
+
+/* ── 交互态接管：全局微交互里的固定品牌蓝（2026-11-12）────────────────
+ *
+ * micro-interactions.css 里有一批**写死的旧品牌蓝**（#2563EB / #60A5FA /
+ * rgb(37 99 235)）。它们不读主题令牌 ⇒ 在 apple 主题下会与 Apple Action
+ * Blue (#0071e3) 并排出现两种蓝。更关键的是那套交互语言本身不是 Apple 的：
+ *
+ *   · 列表行 hover 画一条 4px 左侧渐变蓝条 —— Apple 的列表（Finder、
+ *     系统设置）是整行浅灰高亮，没有左侧色条；
+ *   · 卡片 hover 泛一层蓝色柔光 —— Apple 用中性投影表达"抬起"；
+ *   · 主按钮 hover 上移 1px + 蓝色投影、按下弹回 —— Apple 是颜色变亮，
+ *     按下整体 scale(0.98)，不位移；
+ *   · 搜索框聚焦放大 1.01 倍 —— Apple 不缩放输入框，只给焦点环。
+ *
+ * 下面这些规则只作用于 apple，其余五套主题维持原样。
+ * 全部未分层（unlayered）⇒ 稳压 @layer components 里的 micro-interactions。
+ */
+
+/* 列表行：去掉左侧蓝条，hover / 按下都只用整行底色表达 */
+html[data-theme="apple"] .tab-item::before { display: none; }
+html[data-theme="apple"] .tab-item:active {
+  /* 2026-11-12：改读 --color-press（与其余 5 套主题同一个令牌），
+     深色态自动跟着走 —— 原先这里写死 rgba(0,0,0,0.06)，
+     在 apple 深色（#141416）上压出一块**比页面还黑**的斑。 */
+  background: var(--color-press);
+  transform: none; /* micro-interactions 的 scale(0.995) 会让整行抖一下 */
+}
+
+/* 卡片：蓝色柔光换成中性投影（抬起感已在上面给了 translateY + 阴影） */
+html[data-theme="apple"] .tab-group-card::before { display: none; }
+
+/* 主按钮：hover 不位移、不泛蓝影；按下 scale(0.98) 是 Apple 的按压签名 */
+html[data-theme="apple"] .btn-primary:hover {
+  transform: none;
+  box-shadow: 0 4px 12px -2px rgba(0, 0, 0, 0.16);
+}
+html[data-theme="apple"] .btn-primary:active {
+  transform: scale(0.98);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12);
+}
+
+/* 分段控件：--color-toggle-on 同时被「真开关」和「radio 分段选中态」共用。
+ * 真开关在 Apple 下是系统绿（#34c759），正确；但分段控件（同步方式、
+ * 同步间隔、明暗模式）的选中块也用同一 token ⇒ 设置页出现三大块绿，
+ * 与 Apple 蓝并列。Apple 的分段选中是主色，这里只接管 role="radio"，
+ * 开关保持绿。 */
+html[data-theme="apple"] button[role="radio"].theme-toggle-on {
+  background-color: var(--color-accent);
+  color: var(--color-accent-fg);
+}
+
+/* 搜索框：胶囊形（与其余五套主题同形；Apple 的 search field 也是全圆角） */
+html[data-theme="apple"] .search-input { border-radius: var(--radius-full); }
+
+/* 搜索框：聚焦不放大，用与全站一致的蓝色焦点环 */
+html[data-theme="apple"] .search-input:hover { box-shadow: none; }
+html[data-theme="apple"] .search-input:focus {
+  transform: none;
+  box-shadow: var(--focus-ring);
+}
+
+/* 拖拽：落点与拖起态用 accent 系，不用另一套 #3B82F6 */
+html[data-theme="apple"] .dragging {
+  box-shadow:
+    0 8px 24px -4px rgba(0, 0, 0, 0.18),
+    0 0 0 2px var(--color-accent);
+}
+html[data-theme="apple"] .tab-item.dragging { background-color: var(--color-accent-subtle); }
+html[data-theme="apple"] .drag-over {
+  background: var(--color-accent-wash) !important;
+  box-shadow: inset 0 0 0 2px var(--color-accent-border);
+}

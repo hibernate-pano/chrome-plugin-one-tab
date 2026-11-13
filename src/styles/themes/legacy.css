@@ -21,6 +21,16 @@
   --color-bg-tertiary: #f3f4f6;      /* gray-100 */
   --color-bg-elevated: #ffffff;
   --color-bg-overlay: rgba(255, 255, 255, 0.95);
+  /* ── 2026-11-12：行 / 菜单 hover 与按下态 ────────────────────────────
+     legacy 主题原先**没有**这两个令牌 ⇒ 落回 global.css 的 :root 兜底值。
+     值与兜底**完全一致**（这里显式写出来只是让「主题拥有自己的形状与
+     交互色」这件事成立 ⇒ 以后改兜底时不会偷偷改到 legacy 的观感）。
+     真正的问题在 creamy / prism：它们的兜底值是**冷灰**（#f9fafb），
+     落在暖米色 / 淡紫的菜单上 ⇒ 一行不属于这个主题的灰。 */
+  --color-row-hover: #f9fafb;
+  --color-menu-hover: #f9fafb;
+  /* 按下态：比 hover 再深一档，让「按下去」看得见 */
+  --color-press: #e5e7eb;
 
   --color-text-primary: #111827;     /* gray-900 */
   --color-text-secondary: #374151;   /* gray-700 */
@@ -60,11 +70,20 @@
   --shadow-elevation-2: 0 4px 6px rgba(0, 0, 0, 0.1);
   --shadow-elevation-3: 0 10px 15px rgba(0, 0, 0, 0.1);
 
-  /* 圆角 - 原始较小圆角 */
+  /* 圆角 - 锐利（Material 系的直角语言）
+     ── 2026-11-12：Tailwind 的 rounded-* 现在接到这组令牌上 ⇒ 这组值
+        直接决定 93 处 TSX 圆角的长相，必须自成一套刻度。
+        --radius-xl 由 8px 改 12px：原值在 legacy 自己的 CSS 里**零引用**
+        （只有 creamy / prism 用它），却是个离群值 —— Tailwind 的
+        rounded-xl 原先是 0.75rem(12px)；不改的话 legacy 的 rounded-xl
+        会比改造前更方。改回 12px ⇒ legacy 的 rounded-* 与改造前
+        **像素级一致**（这是「legacy 观感 = 现网观感」这条底线的要求）。 */
   --radius-sm: 4px;
   --radius-md: 6px;
   --radius-lg: 8px;
-  --radius-xl: 8px;
+  --radius-xl: 12px;
+  --radius-2xl: 16px;
+  --radius-3xl: 24px;
   --radius-full: 9999px;
 
   /* 间距 */
@@ -138,6 +157,10 @@ html.dark [data-theme="legacy"], html[data-theme="legacy"].dark {
   --color-bg-tertiary: #374151;      /* gray-700 */
   --color-bg-elevated: #1f2937;
   --color-bg-overlay: rgba(31, 41, 55, 0.95);
+  /* 深色下的行 / 菜单 hover 与按下态（与 global.css 的 html.dark 兜底同值） */
+  --color-row-hover: #374151;
+  --color-menu-hover: rgba(55, 65, 81, 0.5);
+  --color-press: #4b5563;
 
   --color-text-primary: #f9fafb;     /* gray-50 */
   --color-text-secondary: #e5e7eb;   /* gray-200 */
@@ -330,6 +353,14 @@ html[data-theme="legacy"] .tab-item {
 
 html[data-theme="legacy"] .tab-item:hover {
   background: var(--color-bg-tertiary);
+}
+
+/* 按下态（2026-11-12）：原先 hover 与 active 读的是**同一个**令牌
+   （--color-bg-tertiary）⇒ 按下去与只是悬停**完全同色** ⇒ 手感上
+   「按下了」没有任何反馈。现在读 --color-press（比 hover 深一档）。
+   同特异性（0,3,1）下靠源码顺序取胜 ⇒ 这条必须排在 :hover 之后。 */
+html[data-theme="legacy"] .tab-item:active {
+  background: var(--color-press);
 }
 
 /* Legacy 主题下拉菜单样式 */

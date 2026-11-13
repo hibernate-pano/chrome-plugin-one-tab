@@ -744,29 +744,65 @@ describe('V-8：空态图标是纯装饰，不得与 <h3> 重复播报', () => {
   // ① 把 aria-hidden="true" 换回 `role="img" aria-label={title}` ⇒ 变红。
 });
 
-describe('V-12：引导页的 emoji 是装饰，不得进朗读队列', () => {
+describe('V-12：引导页的装饰图标不得进朗读队列', () => {
   const SRC = read('src/components/onboarding/OnboardingSteps.tsx');
 
-  it('每个 emoji 容器都标了 aria-hidden="true"', () => {
+  it('每个图标容器都标了 aria-hidden="true"', () => {
     const containers = [...SRC.matchAll(/<(div|span)[^>]*className="([^"]*(?:onboarding-icon-wrapper|onboarding-feature-icon|onboarding-confetti)[^"]*)"[^>]*>/g)];
-    assert.ok(containers.length >= 10, `只找到 ${containers.length} 个 emoji 容器，扫描器可能坏了`);
+    assert.ok(containers.length >= 10, `只找到 ${containers.length} 个图标容器，扫描器可能坏了`);
     for (const m of containers) {
       assert.match(
         m[0],
         /aria-hidden="true"/,
-        `emoji 容器「${m[0]}」缺 aria-hidden="true" —— 它是一个有内容的文本节点，读屏会把它当文字念出来`,
+        `图标容器「${m[0]}」缺 aria-hidden="true" —— 它是纯装饰，读屏不该念它`,
       );
     }
   });
 
-  it('引导页里没有裸露的 emoji 文本节点（每个 emoji 都在容器里）', () => {
-    // 扫描器本身的自证：改造码里至少还有 10 个 emoji。
+  // ── 2026-11-06：emoji 全部换成了线性 glyph ────────────────────────────
+  //
+  // 原判据是「引导页里至少还有 10 个 emoji，且每个都在容器里」。
+  // 那条判据守的是「emoji 别变成裸露的文本节点」—— 前提是**界面用 emoji**。
+  // 产品负责人 2026-11-06 判定 emoji 缺乏设计感、画风不可控 ⇒ 换成
+  // `OnboardingGlyph` 的线性 SVG。前提变了，判据必须跟着变，否则它会变成
+  // 「为了绿而把 emoji 加回去」的反向压力。
+  //
+  // 新的判据钉两件事（都是**行为**，不是「文件里有没有某段字面量」）：
+  //   ① 引导页**不许**再有 emoji —— 它们会随系统字体变成三套不同画风；
+  //   ② 每个特性卡片的图标位都真的渲染了 glyph（不是空 div）。
+  it('引导页里不再有 emoji（画风由系统字体决定，产品界面不该用）', () => {
     const emoji = SRC.match(/[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}]/gu) ?? [];
-    assert.ok(emoji.length >= 10, `只找到 ${emoji.length} 个 emoji，扫描器可能坏了`);
+    assert.equal(
+      emoji.length,
+      0,
+      `引导页里还有 ${emoji.length} 个 emoji（${emoji.join(' ')}）—— ` +
+        'emoji 的渲染画风由用户系统决定（Apple / Noto / Segoe 三套插画），' +
+        '同一屏里与线性图标族不成体系',
+    );
   });
 
-  // ── 实测变异 ────────────────────────────────────────────────────────
-  // ① 把某一处 `aria-hidden="true"` 删掉 ⇒ 变红。
+  it('每个特性卡片的图标位都渲染了线性 glyph（不是空 div）', () => {
+    // 卡片标题的数量必须与 glyph 的数量对得上 —— 少一个就是那个卡片的
+    // 图标位变成了一个空盒子（卡片看上去缺了一块）。
+    const titles = SRC.match(/onboarding-feature-title/g) ?? [];
+    const glyphs = SRC.match(/<OnboardingGlyph\b/g) ?? [];
+    assert.ok(titles.length >= 10, `只找到 ${titles.length} 个特性卡片标题，扫描器可能坏了`);
+    assert.ok(
+      glyphs.length >= titles.length,
+      `特性卡片有 ${titles.length} 个标题，但只有 ${glyphs.length} 个 glyph —— ` +
+        '有的卡片图标位是空的',
+    );
+  });
+
+  it('glyph 组件本身永远是装饰（aria-hidden + focusable=false）', () => {
+    // 可访问名由**旁边的标题**提供。glyph 若带 role/aria-label，读屏会
+    // 把「保存」「搜索」念两遍（图标一次、标题一次）—— 与 V-8 同一个道理。
+    const glyph = read('src/components/onboarding/OnboardingGlyph.tsx');
+    assert.match(glyph, /aria-hidden="true"/, 'glyph 必须标 aria-hidden');
+    assert.match(glyph, /focusable="false"/, 'glyph 不该进 Tab 序列');
+    assert.doesNotMatch(glyph, /aria-label=/, 'glyph 不该有自己的可访问名（标题已经说了）');
+    assert.doesNotMatch(glyph, /role="img"/, 'glyph 不是一张有名字的图片');
+  });
 });
 
 describe('V-15：提示条必须被读屏引用到（aria-describedby）', () => {

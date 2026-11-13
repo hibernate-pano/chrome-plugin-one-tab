@@ -25,8 +25,10 @@
 //
 // ── 为什么这个文件是「扫描式」而不是「钉一处」 ───────────────────────────
 //
-// ① `drag-drop.css` 里同名规则**有两套**（「标签页样式」与「兼容旧样式」），
+// ① drag-drop.css 里同名规则曾经**有两套**（「标签页样式」与「兼容旧样式」），
 //    后一套生效。⇒ 只钉其中一处 = 下一个人改回去守卫照样绿。
+//    （2026-11-12：这两段重复规则已合并成一段，守卫改成扫描式的
+//    「浅色一条 + 深色一条都在」，不再依赖条数。）
 // ② 守卫要防的是**这一类**缺陷，不是这一个文件的这四个值。
 //    ⇒ 扫**文件里每一条 `background-color` / `background` 声明**。
 //
@@ -179,7 +181,24 @@ describe('drag-drop.css：静止态的底色不得写死（必须跟主题走）
     const tabItemRules = rules.filter(
       r => classesOf(r.selector).includes('tab-item') && isRestingState(r.selector)
     );
-    assert.ok(tabItemRules.length >= 4, `只找到 ${tabItemRules.length} 条静止态 .tab-item 规则`);
+    // 2026-11-12：这里原先写的是 `length >= 4` —— 那是因为 drag-drop.css 里
+    // `.tab-item` / `.dark .tab-item` **各写了两遍**（「标签页样式」与
+    // 「兼容旧样式」两段，后一段覆盖前一段）。重复规则合并后只剩
+    // 浅色 + 深色两条 ⇒ 判据改成「**浅色一条、深色一条都在**」，
+    // 而不是数条数 —— 数条数只是当年那两段重复的副产品，
+    // 而「深色态那一条还在不在」才是这条断言真正要守的东西。
+    //
+    // ⚠️ 注意：真正的防线是**下面那个 for 循环**（扫**全部**静止态
+    // .tab-item 规则，逐条要求 transparent / 主题令牌）——
+    // 守卫是扫描式的 ⇒ 再有人加一段重复的 .tab-item 规则也会被扫到。
+    assert.ok(
+      tabItemRules.some(r => /^\.tab-item\b/.test(r.selector)),
+      `drag-drop.css 里找不到浅色态的 .tab-item 规则（找到 ${tabItemRules.length} 条静止态规则）`
+    );
+    assert.ok(
+      tabItemRules.some(r => /\.dark\s+\.tab-item\b/.test(r.selector)),
+      `drag-drop.css 里找不到深色态的 .dark .tab-item 规则（找到 ${tabItemRules.length} 条静止态规则）`
+    );
     for (const rule of tabItemRules) {
       const raw = rule.decls.get('background-color') ?? rule.decls.get('background');
       if (!raw) continue;

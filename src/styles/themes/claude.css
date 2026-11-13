@@ -22,6 +22,8 @@
   --color-bg-overlay: rgba(250, 249, 245, 0.88);
   --color-row-hover: rgba(217, 119, 87, 0.07);
   --color-menu-hover: rgba(217, 119, 87, 0.07);
+  /* 按下态：比 hover 再浓一档（陶土色淡染），让「按下去」看得见 */
+  --color-press: rgba(217, 119, 87, 0.14);
 
   /* 文字 */
   --color-text-primary: #141413;
@@ -59,6 +61,19 @@
   --color-toggle-off: #d9d5c9;
 
   /* 二级界面：圆角 / 强调族 / 井底 / 按钮 / 弹层 / 焦点 */
+  /* ── 2026-11-12：claude 主题原先**没有**自己的圆角刻度 ⇒ 全部落回
+     global 的 4/6/8/12/16/24。那是「离群值漏回」的典型：形状令牌是
+     主题的东西，缺了就等于没设计。
+     这套刻度按 claude 自己的形状语言给：控件 12px（= --radius-control）、
+     输入 8px（= --radius-input）、按钮 8px（= --radius-btn）——
+     刻度与这几个既有令牌对齐，不另起一套。 */
+  --radius-sm: 0.375rem;   /* 6px  */
+  --radius-md: 0.5rem;     /* 8px  */
+  --radius-lg: 0.75rem;    /* 12px */
+  --radius-xl: 1rem;       /* 16px */
+  --radius-2xl: 1.25rem;   /* 20px */
+  --radius-3xl: 1.75rem;   /* 28px */
+  --radius-full: 9999px;   /* 正圆（药丸 / 圆形头像）—— 显式声明，不靠 global 兜底 */
   --radius-card: 0.75rem;
   --radius-panel: 1rem;
   --radius-control: 0.75rem;
@@ -116,6 +131,7 @@ html.dark [data-theme="claude"], html[data-theme="claude"].dark {
   --color-bg-overlay: rgba(25, 24, 23, 0.88);
   --color-row-hover: rgba(224, 139, 109, 0.1);
   --color-menu-hover: rgba(224, 139, 109, 0.1);
+  --color-press: rgba(224, 139, 109, 0.18);
 
   --color-text-primary: #f0eee6;
   --color-text-secondary: #d9d5c9;
@@ -191,6 +207,9 @@ html[data-theme="claude"] .tab-group-header {
 
 html[data-theme="claude"] .tab-item { background: transparent; }
 html[data-theme="claude"] .tab-item:hover { background: var(--color-row-hover); }
+
+/* 按下态（2026-11-12）：原先 hover 与 active 同色 ⇒ 按下去没有反馈。 */
+html[data-theme="claude"] .tab-item:active { background: var(--color-press); }
 
 /* Anthropic 按钮：小圆角矩形，非药丸（圆角值来自形状令牌 U-14） */
 html[data-theme="claude"] .btn-primary { border-radius: var(--radius-btn); font-weight: 500; }

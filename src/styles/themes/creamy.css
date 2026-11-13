@@ -19,6 +19,14 @@
   --color-bg-tertiary: #fef9e7;
   --color-bg-elevated: #ffffff;
   --color-bg-overlay: rgba(254, 252, 243, 0.92);
+  /* ── 2026-11-12：行 / 菜单 hover 与按下态 ────────────────────────────
+     creamy 原先**没有**这两个令牌 ⇒ 落回 global.css 的 :root 兜底值
+     （#f9fafb —— 一层**冷灰**）。落在一张暖米色的菜单上，那一行
+     高亮是**别的产品的灰**。这里换成 creamy 自己的暖琥珀淡染。 */
+  --color-row-hover: rgba(217, 119, 6, 0.08);
+  --color-menu-hover: rgba(217, 119, 6, 0.08);
+  /* 按下态：比 hover 再浓一档 */
+  --color-press: rgba(217, 119, 6, 0.16);
 
   --color-text-primary: #44403c;
   --color-text-secondary: #57534e;
@@ -55,11 +63,19 @@
   --shadow-elevation-3: 0 16px 32px -8px rgb(217 119 6 / 0.15);
   --shadow-glow: 0 0 20px -4px rgb(217 119 6 / 0.3);
 
-  /* 圆角 - 柔和圆润 */
-  --radius-sm: 0.5rem;
-  --radius-md: 0.75rem;
-  --radius-lg: 1rem;
-  --radius-xl: 1.25rem;
+  /* 圆角 - 柔和圆润
+     ── 2026-11-12：Tailwind 的 rounded-* 接到这组令牌上 ⇒ lg / xl 不再是
+        「容器专属」的刻度 —— TSX 里 rounded-lg / rounded-xl 大量落在 30px
+        高的小按钮与 32px 的图标块上。原来的 16px / 20px 在这种尺寸上会
+        塌成药丸 ⇒ 收到 14px / 18px。容器（菜单 / 弹窗）跟着圆 2px，
+        肉眼几乎看不出；但小控件不再过度圆润，且「卡片圆角 = 同名
+        Tailwind 圆角」这件事对齐了。 */
+  --radius-sm: 0.5rem;    /* 8px  */
+  --radius-md: 0.625rem;  /* 10px */
+  --radius-lg: 0.875rem;  /* 14px */
+  --radius-xl: 1.125rem;  /* 18px */
+  --radius-2xl: 1.5rem;   /* 24px */
+  --radius-3xl: 2rem;     /* 32px */
   --radius-full: 9999px;
 
   /* 间距 */
@@ -127,6 +143,10 @@ html.dark [data-theme='creamy'], html[data-theme='creamy'].dark {
   --color-bg-tertiary: #3f3a36;
   --color-bg-elevated: #3f3a36;
   --color-bg-overlay: rgba(28, 25, 23, 0.92);
+  /* 深色下的行 / 菜单 hover 与按下态（暖琥珀淡染，不用冷灰兜底） */
+  --color-row-hover: rgba(251, 191, 36, 0.12);
+  --color-menu-hover: rgba(251, 191, 36, 0.12);
+  --color-press: rgba(251, 191, 36, 0.2);
 
   --color-text-primary: #fef3c7;
   --color-text-secondary: #fde68a;
@@ -320,6 +340,13 @@ html[data-theme='creamy'] .tab-item {
 
 html[data-theme='creamy'] .tab-item:hover {
   background: linear-gradient(135deg, var(--color-accent-subtle) 0%, var(--color-bg-tertiary) 100%);
+}
+
+/* 按下态（2026-11-12）：hover 是渐变、active 原先读 --color-bg-tertiary
+   ⇒ 按下去反而**更淡**（等于把高亮擦掉了）。现在读 --color-press：
+   一层更浓的暖琥珀，同特异性下靠源码顺序取胜。 */
+html[data-theme='creamy'] .tab-item:active {
+  background: var(--color-press);
 }
 
 /* 空状态 */

@@ -5,85 +5,32 @@
  * 阶梯定义在 global.css 的 :root（--motion-fast 120ms / --motion-base 180ms /
  * --motion-slow 250ms / --ease-standard）—— 自定义属性在文档级继承，
  * 所以本文件（由 MainApp.tsx 单独 import）也能读到。
- * 本文件原先混用 0.15s / 0.2s / 0.3s / 0.4s 四种时长。
+ *
+ * ── 2026-11-12（主题打磨）：本文件从 136 行收到 25 行 ──────────────────
+ *
+ * 删掉的全是**零引用**的选择器（逐个按词边界核对过 src/**\/*.{ts,tsx}）：
+ *   .tab-group-content / .expand-icon（折叠动画早已由 grid-template-rows
+ *   现做，见 global.css 的卡头折叠实现）
+ *   .tab-drag-animation / .drop-target-animation / .group-drag-animation
+ *   （拖拽态用的是 .dragging / .drag-over，见 micro-interactions.css 与
+ *   拖拽组件；这三个类名在组件里一个都没有）
+ *   .group-action-button / .tab-action-button（组件里用的是 btn-icon 家族）
+ *   .group-header（组件里是 tab-group-header —— 子串匹配，不是这个类）
+ *
+ * 其中 .drop-target-animation.active 还写死了 rgba(59,130,246,…)（legacy 蓝）
+ * —— 这套「放置目标高亮」永远不会出现，但留着就是一份「照抄就会变蓝」的样品。
+ *
+ * 留下的是唯一**还在生效**的东西：搜索结果高亮的首帧淡入。
  */
 
-/* 标签组折叠/展开动画 */
-.tab-group-content {
-  overflow: hidden;
-  transition: max-height var(--motion-slow) var(--ease-standard);
-}
-
-.tab-group-content.collapsed {
-  max-height: 0;
-}
-
-.tab-group-content.expanded {
-  max-height: 1000px; /* 足够大的值，确保内容能完全展开 */
-}
-
-/* 标签组折叠/展开图标动画 */
-.expand-icon {
-  transition: transform var(--motion-slow) var(--ease-standard);
-}
-
-.expand-icon.collapsed {
-  transform: rotate(-90deg);
-}
-
-.expand-icon.expanded {
-  transform: rotate(0deg);
-}
-
-/* 拖拽动画效果 */
-.tab-drag-animation {
-  transition: transform var(--motion-fast) var(--ease-standard),
-    opacity var(--motion-fast) var(--ease-standard),
-    box-shadow var(--motion-fast) var(--ease-standard);
-}
-
-.tab-drag-animation.dragging {
-  transform: scale(1.02);
-  opacity: 0.7;
-  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
-  z-index: 100;
-}
-
-/* 放置目标高亮动画 */
-.drop-target-animation {
-  transition: background-color var(--motion-base) var(--ease-standard),
-    border-color var(--motion-base) var(--ease-standard);
-}
-
-.drop-target-animation.active {
-  background-color: rgba(59, 130, 246, 0.1);
-  border-color: rgba(59, 130, 246, 0.5);
-}
-
-/* 深色模式下的放置目标高亮 */
-.dark .drop-target-animation.active {
-  background-color: rgba(59, 130, 246, 0.2);
-  border-color: rgba(59, 130, 246, 0.6);
-}
-
-/* 标签组拖拽动画 */
-.group-drag-animation {
-  transition: transform var(--motion-fast) var(--ease-standard),
-    opacity var(--motion-fast) var(--ease-standard),
-    box-shadow var(--motion-fast) var(--ease-standard);
-}
-
-.group-drag-animation.dragging {
-  transform: scale(1.01);
-  opacity: 0.8;
-  box-shadow: 0 6px 12px rgba(0, 0, 0, 0.1);
-  z-index: 100;
-}
-
-/* 搜索结果高亮 —— 底色与墨色由主题决定（global.css 的基础规则 + 各主题自己的覆盖），
-   这里只管「首帧一次淡入」。原先首帧把底色从写死的蓝 rgba(37,99,235,.32) 呼吸到 .18，
-   于是 legacy / creamy 的琥珀色高亮在首帧会先闪一下蓝。改为 theme 无关的透明度后，
-   六套主题同一套动画，这里也不再写死任何颜色。 */
+/* 搜索结果高亮 —— 底色、墨色与**形状**都由主题决定（global.css 的基础规则 +
+   各主题自己的覆盖），这里只管「首帧一次淡入」。原先首帧把底色从写死的蓝
+   rgba(37,99,235,.32) 呼吸到 .18，于是 legacy / creamy 的琥珀色高亮在首帧
+   会先闪一下蓝。改为 theme 无关的透明度后，六套主题同一套动画。
+   ⚠️ 2026-11-12：这里原先还有 `border-radius: 4px; padding: 0 2px;` ——
+   与 global.css 的 `.search-highlight` **各写了一遍**（2px vs 4px），
+   本文件后加载 ⇒ 4px 生效、global.css 的 2px 是死值。现在形状只留在
+   global.css 一处（取生效的 4px），本文件只声明 animation。 */
 @keyframes highlight-enter {
   from {
     opacity: 0.4;
@@ -94,42 +41,5 @@
 }
 
 .search-highlight {
-  border-radius: 4px;
-  padding: 0 2px;
   animation: highlight-enter var(--motion-slow) var(--ease-standard) 1;
-}
-
-/* 标签组操作按钮动画 */
-.group-action-button {
-  opacity: 0.5;
-  transition: opacity var(--motion-base) var(--ease-standard),
-    transform var(--motion-base) var(--ease-standard);
-}
-
-.group-action-button:hover {
-  opacity: 1;
-  transform: scale(1.1);
-}
-
-/* 标签页操作按钮动画 */
-.tab-action-button {
-  opacity: 0;
-  transition: opacity var(--motion-base) var(--ease-standard);
-}
-
-.tab-item:hover .tab-action-button {
-  opacity: 1;
-}
-
-/* 标签组头部悬停效果 */
-.group-header {
-  transition: background-color var(--motion-base) var(--ease-standard);
-}
-
-.group-header:hover {
-  background-color: rgba(0, 0, 0, 0.05);
-}
-
-.dark .group-header:hover {
-  background-color: rgba(255, 255, 255, 0.05);
 }

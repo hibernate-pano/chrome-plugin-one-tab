@@ -124,13 +124,30 @@ module.exports = {
         '3xl': ['1.5rem', { lineHeight: '2rem', letterSpacing: '-0.025em' }],
       },
 
+      /* ── 2026-11-12：圆角接到主题令牌 ──────────────────────────────────
+       *
+       * 原先这里是 Tailwind 的默认刻度（4 / 6 / 8 / 12 / 16 / 24px），
+       * **写死**在构建产物里 ⇒ 同一个 `rounded-lg` 在 6 套主题里永远是 8px：
+       * 主题的形状语言（--radius-*）只作用在 CSS 里手写的规则上，
+       * 作用不到 TSX 里那些最常见的圆角（rounded-lg 20 处 / rounded-xl 16 处 /
+       * rounded-2xl 13 处 …）⇒ 「切了主题，圆角没跟着变」。
+       *
+       * 现在全部改读 CSS 变量 ⇒ 圆角跟主题走。
+       * 默认值（global.css 的 :root）= Tailwind 原值 ⇒ legacy 与兜底态
+       * **像素级不变**；其余主题按各自形状语言给值。
+       *
+       * ⚠️ 注意 `rounded-full` 也接了令牌（--radius-full = 9999px）——
+       * 药丸/正圆本来就没有形状语言之分，接上只是为了让「圆角只有一个出处」
+       * 这件事成立。 */
       borderRadius: {
-        'sm': '0.25rem',
-        'md': '0.375rem',
-        'lg': '0.5rem',
-        'xl': '0.75rem',
-        '2xl': '1rem',
-        '3xl': '1.5rem',
+        DEFAULT: 'var(--radius-sm)',
+        'sm': 'var(--radius-sm)',
+        'md': 'var(--radius-md)',
+        'lg': 'var(--radius-lg)',
+        'xl': 'var(--radius-xl)',
+        '2xl': 'var(--radius-2xl)',
+        '3xl': 'var(--radius-3xl)',
+        'full': 'var(--radius-full)',
       },
 
       boxShadow: {

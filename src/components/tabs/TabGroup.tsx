@@ -44,7 +44,7 @@ import {
 import { lockDisclosureText } from '@/components/tabs/lockFeedbackCopy';
 import { moveEmptiesSessionMessage } from '@/components/tabs/moveFeedbackCopy';
 import { decideFeedback } from '@/core/feedbackPolicy';
-import { formatSessionTimeLabel } from '@/utils/sessionPresentation';
+import { formatSessionTimeLabel, getSessionHostSummary } from '@/utils/sessionPresentation';
 
 interface TabGroupProps {
   group: TabGroupType;
@@ -1064,6 +1064,9 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(
   // 锁定说明（常驻行）。未锁定 ⇒ null ⇒ **不渲染**（未锁定卡片零密度成本）。
   const lockNote = lockDisclosureText(group.isLocked);
 
+  // 站点摘要（卡头上的辨识信息，见渲染处注释）。按 tabs 算，标签不变就不重算。
+  const hostSummary = useMemo(() => getSessionHostSummary(group), [group.tabs]);
+
   return (
     <div
       ref={cardRef}
@@ -1174,6 +1177,23 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(
               {!group.isLocked && (
                 <span id={`tab-group-title-hint-${group.id}`} className="sr-only">
                   激活后可重命名此会话
+                </span>
+              )}
+              {/* ── 2026-11-06：站点摘要（补上时间戳名字缺的辨识度）──────────
+                  默认名一律是保存时刻 ⇒ 同一分钟保存两次会出现两张在名称、
+                  数量、时间上**完全相同**的卡片（真机实测 1.30.1 就是如此），
+                  用户只能展开逐行读标题才能分辨。
+                  ⇒ 名字规则不动（不猜、不说谎），另加这一行**内容的事实**：
+                  这批标签来自哪些站点。它不进名字、不进幂等指纹、不参与搜索。
+                  ⚠️ **窄屏也要显示**：375px 下卡片头只剩约 90px 余量，而
+                  「区分两张同名卡片」正是这一行的全部理由 ⇒ 隐藏它等于
+                  在最需要它的地方不提供它。宽度由 CSS 的 max-width + truncate
+                  兜住（挤不动标题 —— 标题在 min-w-0 的容器里，会先自己截断）。
+                  ⚠️ 非 http(s)（file:// / chrome://）不贡献域名 ⇒ 返回空串时
+                  **不渲染**，而不是渲染一行空白。 */}
+              {hostSummary && (
+                <span className="tab-group-hosts flex-shrink-0 truncate">
+                  {hostSummary}
                 </span>
               )}
             </div>
