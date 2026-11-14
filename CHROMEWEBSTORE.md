@@ -377,8 +377,8 @@ Productivity
 | Asset | Dimensions | Status | Filename |
 |-------|-----------|--------|----------|
 | Store Icon [REQUIRED] | 128×128 PNG | ✅ Ready | icons/icon128.png |
-| Screenshot 1 [REQUIRED] | 1280×800 | ✅ Ready | store-assets/screenshot-1-main.png（2026-11-12 重拍，1.31.0：会话卡头新增**站点摘要**小字（这批标签来自哪些站点）；标签行右侧显示域名；卡头第一颗是 accent 的「在当前窗口打开」） |
-| Screenshot 2 [RECOMMENDED] | 1280×800 | ✅ Ready | store-assets/screenshot-2-search.png（2026-11-12 重拍，页脚显示 TapStack v1.31.0） |
+| Screenshot 1 [REQUIRED] | 1280×800 | ✅ Ready | store-assets/screenshot-1-main.png（2026-11-14 重拍，1.31.1：会话卡头新增**站点摘要**小字（这批标签来自哪些站点）；标签行右侧显示域名；卡头第一颗是 accent 的「在当前窗口打开」） |
+| Screenshot 2 [RECOMMENDED] | 1280×800 | ✅ Ready | store-assets/screenshot-2-search.png（2026-11-14 重拍，页脚显示 TapStack v1.31.1） |
 | Small Promo Tile [RECOMMENDED] | 440×280 | ✅ Ready | store-assets/promo-tile-440x280.png（2026-10-20 新建；源文件 store-assets/promo-tile-440x280.svg，PNG 无 alpha 通道，符合 CWS 要求） |
 
 <!-- 宣传图与图标**必须讲同一个故事** —— 商店里两张图并排出现。
