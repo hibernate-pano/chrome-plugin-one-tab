@@ -6,6 +6,7 @@ import {
   type SessionSortKey,
 } from '@/core/sessionSort';
 import { secureStorage } from './secureStorage';
+import type { PendingConflictNotice, StampLedger } from '@/core/mergeConflictDetect';
 import { kvGet, kvSet, kvRemove } from '@/storage/storageAdapter';
 import { notifyGroupsChanged, subscribeGroupsChanged } from '@/storage-kv/groupsChangedBus';
 import { notifySettingsChanged } from '@/storage-kv/settingsChangedBus';
@@ -1267,6 +1268,74 @@ class ChromeStorage {
   async clearPendingUploadGroupIds(): Promise<void> {
     await this.ensureVersion();
     await kvRemove(STORAGE_KEYS.PENDING_UPLOAD_GROUP_IDS);
+  }
+
+  /**
+   * P0-1 冲突可见化：读待展示的冲突覆盖提示。
+   *
+   * 为什么落盘而不是 toast：后台合并跑在 SW 里，popup 那一刻多半没开，toast
+   * 即刻消失等于没提示。落盘等用户下次打开 popup 时读展示、**展示后即清**
+   * （消费式），跨 SW/popup 生命周期都可见。
+   *
+   * 【失败方向】读不到 / 形状不对 ⇒ null（没有提示），静默吞错——提示是
+   * 附加信息，它读不出来不应阻塞 popup 正常启动。
+   */
+  async getPendingConflictNotice(): Promise<PendingConflictNotice | null> {
+    try {
+      await this.ensureVersion();
+      const raw = await kvGet<unknown>(STORAGE_KEYS.PENDING_CONFLICT_NOTICE);
+      if (!raw || typeof raw !== 'object') return null;
+      const v = raw as Record<string, unknown>;
+      if (typeof v.at !== 'string' || typeof v.totalGroups !== 'number' ||
+          typeof v.totalLostTabs !== 'number' || !Array.isArray(v.groups)) {
+        return null;
+      }
+      return raw as PendingConflictNotice;
+    } catch {
+      return null;
+    }
+  }
+
+  /** 写待展示冲突提示（整体覆盖：新提示顶替旧提示，旧事实已过时）。失败即抛。 */
+  async setPendingConflictNotice(notice: PendingConflictNotice): Promise<void> {
+    await this.ensureVersion();
+    await kvSet(STORAGE_KEYS.PENDING_CONFLICT_NOTICE, notice);
+  }
+
+  /** 清除待展示冲突提示（popup 展示后调用）。 */
+  async clearPendingConflictNotice(): Promise<void> {
+    await this.ensureVersion();
+    await kvRemove(STORAGE_KEYS.PENDING_CONFLICT_NOTICE);
+  }
+
+  /**
+   * P0-1：读「上次同步双方一致」时的组印记账本（冲突判定的共同祖先）。
+   * 读不到 / 形状不对 ⇒ {}（等价于「没有基线」⇒ 本轮只建立基线不报冲突，
+   * fail-safe 方向：误报「数据丢失」比漏报更伤用户信任）。
+   */
+  async getSyncStampLedger(): Promise<StampLedger> {
+    try {
+      await this.ensureVersion();
+      const raw = await kvGet<unknown>(STORAGE_KEYS.SYNC_STAMP_LEDGER);
+      if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {};
+      const out: StampLedger = {};
+      for (const [id, stamp] of Object.entries(raw as Record<string, unknown>)) {
+        if (typeof id !== 'string' || id.length === 0) continue;
+        if (!stamp || typeof stamp !== 'object') continue;
+        const s = stamp as Record<string, unknown>;
+        if (typeof s.d !== 'string' || typeof s.s !== 'number') continue;
+        out[id] = { d: s.d, s: s.s };
+      }
+      return out;
+    } catch {
+      return {};
+    }
+  }
+
+  /** 写新基线（每轮 download 合并成功后整表重写）。失败即抛：基线写不进去比乱报严重。 */
+  async setSyncStampLedger(ledger: StampLedger): Promise<void> {
+    await this.ensureVersion();
+    await kvSet(STORAGE_KEYS.SYNC_STAMP_LEDGER, ledger);
   }
 
   /**

@@ -112,6 +112,15 @@ export const STORAGE_KEYS = {
   // 不参与任何业务判定，因此不属于「数据键」；但同样必须走键常量单源，
   // 否则改名时新旧两份 trace 会各自累积、诊断导出只看到其中一份。
   PERF_SPANS: 'perf_spans',
+  // P0-1（2026-11-14）冲突可见化：上次同步「双方一致」时的组印记账本
+  // （groupId → lastOp），冲突判定用它作**共同祖先**：只有两端印记都 ≠ 基线
+  // 印记，才能区分「云端只是比你新」与「两边同时改」。每轮 download 合并
+  // 成功后用合并产出整表重写（见 @/core/mergeConflictDetect buildStampLedger）。
+  SYNC_STAMP_LEDGER: 'sync_stamp_ledger',
+  // P0-1：待展示的冲突覆盖提示（@/core/mergeConflictDetect PendingConflictNotice）。
+  // 后台合并多发生在 SW（popup 通常没开），toast 立即消失，所以落盘等用户
+  // 下次打开 popup 时读展示、展示后即清。值有上限（groups 截 20 条）防膨胀。
+  PENDING_CONFLICT_NOTICE: 'pending_conflict_notice',
   // ── 2026-10-10 F2 增量上传 ──────────────────────────────────────────────
   // **为什么这个键不在本文件**（打破「STORAGE_KEYS 是所有落盘键的唯一事实来源」
   // 的惯例，并且这是一次经过论证的打破，不是遗忘）：

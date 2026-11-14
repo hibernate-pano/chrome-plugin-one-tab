@@ -1,38 +1,38 @@
 /**
- * 守卫：代码不许承诺「冲突检测」，而产品其实不检测（2026-10-23 审计 DS-43-18 残留）。
+ * 守卫：冲突提示必须建立在**共同祖先基线**上，且不许退回「假统计量」的老路
+ * （2026-10-23 审计 DS-43-18；2026-11-14 P0-1 冲突提示落地后改写）。
  *
- * ── 这个文件防的具体事故 ──────────────────────────────────────────────────
+ * ── 历史（为什么当初禁止，又为什么现在解禁）──────────────────────────────
  *
- * 合并是**整组 LWW**（`src/core/opStampMerge.ts`）：两台设备同时改同一个会话时，
- * 由操作印记（序号 + 设备编号）决胜，**赢的一方整组覆盖另一方**，败方新增的标签
- * 会丢，且**界面上没有任何提示**。这一点 README「整组覆盖」与商店页
- * 「Known Issues」都如实写着 —— 文档这一半早就是真的。
+ * 最初（DS-43-18）代码里有一个永不出现的 `syncStatus: 'conflict'` 和一个
+ * 恒为 0 的 `stats.conflicts` —— 那是对用户的**假承诺**：它说「本产品能表示 /
+ * 统计冲突」，而合并是整组 LWW（`src/core/opStampMerge.ts`），败方标签被丢却
+ * 一句提示都没有。恒为 0 的统计量比没有更坏：它让人以为冲突从没发生过。
  *
- * 但**代码那一半是假的**：类型里摆着一个永远不会出现的取值
- * `syncStatus: 'conflict'`，统计里有一个恒为 0 的字段 `stats.conflicts`。
+ * ⚠️ 当时明确**不做**真冲突提示的理由：那需要**共同祖先**（三方合并的基线）
+ * 才能区分「云端只是比你新」与「两边同时改、有一边被覆盖」——没有基线只能靠猜，
+ * 猜错就是误报，而误报会教用户不信任同步。
  *
- * 后果不是「多一个没用的字段」这么轻：
- *   · `syncStatus` 的联合类型是**对外的契约**——它说「本产品能表示冲突状态」；
- *   · `stats.conflicts` 是一个**统计量**——统计量的语义是「这里发生过几次」，
- *     恒为 0 的统计量说的是「一次都没发生过」，而它明明发生过（败方标签被丢）。
+ * 2026-11-14（P0-1）：基线**已经有了**——每轮 download 合并成功后把双方一致的
+ * 组印记写进 `sync_stamp_ledger`，下一轮拿它当共同祖先（判定见
+ * `src/core/mergeConflictDetect.ts` 的 `detectMergeConflicts`）。于是冲突提示
+ * 从「不可能做对」变成「可以做对」，链路是
+ * syncEngine（检测 + 清单）→ backgroundSync（落成待展示提示）→
+ * popup 的 `SyncConflictNotifier`（读取并展示后清除）。
  *
- * ⇒ 一个恒为 0 的统计量，比没有这个统计量**更坏**：它让人以为这件事不存在。
- * （本仓已有一处先例：`displayOrder` 死字段被删时，也是同样的理由 ——
- *  与其补一个读取方，不如承认它不兑现。）
+ * ── 现在这条守卫钉什么（防止从「做对了」退回去）────────────────────────────
  *
- * ── 判据钉什么 ────────────────────────────────────────────────────────────
- *
- * ① **代码不许再出现那个承诺**：`syncStatus` 的联合类型里不许有 `'conflict'`；
- *    `stats` 里不许有 `conflicts`。判据剥掉注释再查（注释里可以解释为什么删）。
- * ② **文档必须继续说真话**：README 与商店页必须仍然写着「整组覆盖 + 败方标签
- *    会丢 + 没有任何提示」。这一条是①的**替代品**——删掉代码里的假承诺之后，
- *    真相只能待在文档里；文档哪天把这句话删了，守卫就要红。
- * ③ **台账不许失忆**：审计台账里必须还留着 DS-43-18 这一条。
- *
- * ⚠️ 为什么不直接把「冲突提示」做出来：那需要**共同祖先**（三方合并的基线）
- *    才能区分「云端只是更新了」与「两边同时改了、有一边被覆盖」——
- *    没有基线，任何「检测冲突」的实现都只能靠猜，猜错就是**误报**，
- *    而误报的冲突提示会教用户不信任同步。这是协议级改动，不在一条守卫的范围里。
+ * ① `syncStatus` 联合类型里仍不许有 `'conflict'`：冲突是一次性**提示**，
+ *    不是要持久化到标签上的状态 —— 别又把「冲突」塞回类型契约。
+ * ② 不许退回**假统计量**：`conflicts` 只能是带明细的清单 `MergeConflict[]`，
+ *    绝不能再出现 `conflicts: number` 这种恒为 0 的数字。
+ * ③ **真实检测必须在**：syncEngine 必须调用 `detectMergeConflicts(` 并用到
+ *    `MergeConflict`——只留注释、把检测删掉，承诺就又变假。
+ * ④ 冲突必须**真的到达用户**：backgroundSync 必须把结果落成待展示提示
+ *    （`setPendingConflictNotice`），而不是只塞进返回值没人看。
+ * ⑤ **文档继续说真话**：README / 商店页必须仍写着「整组覆盖 + 败方标签会丢」
+ *    并写明「同步后会给出冲突提示」——文档与代码不许一边改另一边不动。
+ * ⑥ **台账不许失忆**：审计台账里必须还留着 DS-43-18。
  */
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
@@ -49,6 +49,7 @@ const stripComments = (src: string): string =>
 
 const TAB_TYPES = stripComments(read('src/types/tab.ts'));
 const SYNC_ENGINE = stripComments(read('src/services/syncEngine.ts'));
+const BACKGROUND_SYNC = stripComments(read('src/background/backgroundSync.ts'));
 const README = read('README.md');
 const STORE = read('CHROMEWEBSTORE.md');
 const LEDGER = read('docs/audit-2026-10-23-data-safety.md');
@@ -59,57 +60,71 @@ function syncStatusUnions(): string[][] {
   const re = /syncStatus\??\s*:\s*([^;]+);/g;
   let m: RegExpExecArray | null;
   while ((m = re.exec(TAB_TYPES)) !== null) {
-    out.push(
-      [...m[1].matchAll(/'([^']+)'/g)].map(x => x[1]),
-    );
+    out.push([...m[1].matchAll(/'([^']+)'/g)].map(x => x[1]));
   }
   return out;
 }
 
-describe('DS-43-18：代码不许承诺「冲突检测」这个产品并不具备的能力', () => {
-  it('syncStatus 的联合类型里不许有 conflict（它从不被赋值）', () => {
+describe('DS-43-18：冲突提示必须建在基线上，且不许退回假统计量', () => {
+  it('syncStatus 的联合类型里不许有 conflict（冲突是一次性提示，不是标签状态）', () => {
     const unions = syncStatusUnions();
     assert.ok(unions.length >= 2, `应当至少找到两处 syncStatus 声明，实际 ${unions.length} 处`);
     for (const members of unions) {
       assert.ok(
         !members.includes('conflict'),
-        `syncStatus 联合类型里又出现了 'conflict' ⇒ 代码又在承诺「会标记冲突」，` +
-          `而合并是整组 LWW（src/core/opStampMerge.ts），全仓没有任何一处会赋出它。`,
+        `syncStatus 联合类型里又出现了 'conflict' ⇒ 代码又在把「冲突」当标签状态承诺，` +
+          `而它是一次性提示（SyncConflictNotifier），不该落进持久化契约。`,
       );
     }
   });
 
-  it('stats 里不许有恒为 0 的 conflicts 统计量', () => {
+  it('不许退回恒为 0 的 conflicts: number 假统计量', () => {
     assert.ok(
-      !/\bconflicts\b/.test(SYNC_ENGINE),
-      'syncEngine 里又出现了 conflicts ⇒ 又有一个恒为 0 的统计量在对用户撒谎' +
-        '（真要统计冲突，得先有共同祖先的基线）。',
+      !/\bconflicts\s*:\s*number\b/.test(SYNC_ENGINE),
+      'syncEngine 里又出现了 conflicts: number ⇒ 又退回一个恒为 0 的假统计量；' +
+        '冲突上报必须是有明细的 MergeConflict[] 清单，不能是一个没有明细的数字。',
     );
   });
 
-  it('没有 stats.conflicts 的消费方（类型删了字段，调用方也不能还在读）', () => {
-    // 全仓（除 syncEngine 自身）不该再有人读 .conflicts。
-    const callers = ['src/background/backgroundSync.ts', 'src/service-worker.ts'].map(read);
-    for (const src of callers) {
-      assert.ok(
-        !/\.conflicts\b/.test(src),
-        '还有调用方在读 stats.conflicts ⇒ 删字段会把它变成 undefined（运行时静默）。',
-      );
-    }
+  it('真实冲突检测必须在（detectMergeConflicts + MergeConflict[]）', () => {
+    assert.match(
+      SYNC_ENGINE,
+      /detectMergeConflicts\(/,
+      'syncEngine 必须调用 detectMergeConflicts 做基于共同祖先基线的冲突检测 —— ' +
+        '把它删掉，冲突提示就又成了一句空承诺。',
+    );
+    assert.match(
+      SYNC_ENGINE,
+      /MergeConflict\[\]/,
+      'conflicts 必须声明成 MergeConflict[] 明细清单（只报真正丢数据的组），不能是数字。',
+    );
   });
 
-  it('README 必须仍然写着：整组覆盖 + 败方新增的标签会丢 + 没有任何提示', () => {
+  it('冲突必须真的到达用户（backgroundSync 落成待展示提示）', () => {
+    assert.match(
+      BACKGROUND_SYNC,
+      /setPendingConflictNotice\(/,
+      'backgroundSync 必须把冲突清单落成待展示提示（setPendingConflictNotice）—— ' +
+        '否则它只塞进返回值，用户在界面上永远看不到。',
+    );
+  });
+
+  it('README 必须仍然写着：整组覆盖 + 败方标签会丢 + 同步后会给出冲突提示', () => {
     assert.match(README, /整组覆盖/, 'README 必须说明合并是整组覆盖（印记决胜）');
     assert.match(README, /败方/, 'README 必须说明败方那一侧会输');
-    assert.match(README, /没有任何提示/, 'README 必须说明冲突没有任何提示（这是真话，不是缺陷掩饰）');
+    assert.match(
+      README,
+      /冲突提示/,
+      'README 必须说明现在会给出同步冲突提示（P0-1 起，这是真话，不能退回「没有任何提示」）。',
+    );
   });
 
-  it('商店页必须仍然写着：界面上看不到冲突提示', () => {
+  it('商店页必须仍然写着：整组覆盖 + 同步后会给出冲突提示', () => {
     assert.match(STORE, /整组覆盖/, '商店页必须说明合并是整组覆盖');
     assert.match(
       STORE,
-      /看不到冲突提示|没有冲突提示|不做冲突提示/,
-      '商店页必须说明本产品不提示冲突（写清楚比让人以为会提示更诚实）',
+      /冲突提示/,
+      '商店页必须说明现在会提示冲突（写清楚比让人以为会丢得不明不白更诚实）。',
     );
   });
 

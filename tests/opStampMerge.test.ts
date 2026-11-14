@@ -263,3 +263,54 @@ describe('客户端决胜 ↔ 服务端守卫 一致性（双侧都有印记、�
     }
   });
 });
+
+// ── 2026-11-14 P0-1：mergeOpStampedDetailed（冲突可见化依赖它拿到「谁赢了」）──
+describe('mergeOpStampedDetailed: 明细产出与 wrapper 一致性', () => {
+  it('wrapper 的返回值与 detailed.merged 逐字相等（退化改造不改行为）', async () => {
+    const { mergeOpStamped, mergeOpStampedDetailed } = await import('@/core/opStampMerge');
+    const local = [
+      mkG('g1', [mkT('t1', 'https://a')], { lastOp: STAMP_A }),
+      mkG('g2', [mkT('t2', 'https://b')], { lastOp: STAMP_A }),
+    ];
+    const cloud = [
+      mkG('g1', [mkT('t1', 'https://a'), mkT('t9', 'https://x')], { lastOp: STAMP_B, name: '云端改名' }),
+      mkG('g3', [mkT('t3', 'https://c')], { lastOp: STAMP_B }),
+    ];
+    assert.deepEqual(mergeOpStamped(local, cloud), mergeOpStampedDetailed(local, cloud).merged);
+  });
+
+  it('活跃 vs 活跃：云端 stamp 更新 ⇒ winnerByGroupId 记 cloud', async () => {
+    const { mergeOpStampedDetailed } = await import('@/core/opStampMerge');
+    const local = [mkG('g1', [mkT('t1', 'https://a')], { lastOp: STAMP_A })];
+    const cloud = [mkG('g1', [mkT('t1', 'https://a')], { lastOp: STAMP_B, name: '云端改名' })];
+    const { winnerByGroupId } = mergeOpStampedDetailed(local, cloud);
+    assert.equal(winnerByGroupId.get('g1'), 'cloud');
+  });
+
+  it('活跃 vs 活跃：本地 stamp 更新 ⇒ winnerByGroupId 记 local', async () => {
+    const { mergeOpStampedDetailed } = await import('@/core/opStampMerge');
+    const local = [mkG('g1', [mkT('t1', 'https://a')], { lastOp: { d: 'devA', s: 9 } })];
+    const cloud = [mkG('g1', [mkT('t1', 'https://a')], { lastOp: STAMP_B })];
+    const { winnerByGroupId } = mergeOpStampedDetailed(local, cloud);
+    assert.equal(winnerByGroupId.get('g1'), 'local');
+  });
+
+  it('仅一侧有 / 墓碑：不登记赢家（不存在「两边内容二选一」）', async () => {
+    const { mergeOpStampedDetailed } = await import('@/core/opStampMerge');
+    const localOnly = [mkG('g1', [mkT('t1', 'https://a')], { lastOp: STAMP_A })];
+    const cloudTomb = [mkG('g2', [], { lastOp: STAMP_B, isDeleted: true })];
+    const { winnerByGroupId } = mergeOpStampedDetailed(localOnly, cloudTomb);
+    assert.equal(winnerByGroupId.size, 0);
+  });
+
+  it('云端墓碑 + 本地活跃（本地更新）⇒ 墓碑一律赢（DS-3），本地副本移除，不登记为「覆盖赢家」', async () => {
+    const { mergeOpStampedDetailed } = await import('@/core/opStampMerge');
+    const local = [mkG('g1', [mkT('t1', 'https://a')], { lastOp: { d: 'devA', s: 9 } })];
+    const cloud = [mkG('g1', [], { lastOp: STAMP_B, isDeleted: true })];
+    const { merged, winnerByGroupId } = mergeOpStampedDetailed(local, cloud);
+    // DS-3（2026-10-24）：云端墓碑无条件赢，本地活跃副本被物理移除 ⇒ merged 为空。
+    assert.equal(merged.length, 0);
+    // 删除传播不是「两边内容二选一」，不登记赢家（否则会被当成覆盖误报冲突）。
+    assert.equal(winnerByGroupId.has('g1'), false);
+  });
+});

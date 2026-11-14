@@ -4,6 +4,7 @@ import { ThemeProvider } from '@/contexts/ThemeContext';
 import ErrorBoundary from '@/components/common/ErrorBoundary';
 import { AuthProvider } from './AuthProvider';
 import { MainApp } from './MainApp';
+import { SyncConflictNotifier } from '@/components/sync/SyncConflictNotifier';
 import { initStorage, getActiveBackend } from '@/storage/storageAdapter';
 import { logError, logInfo } from '../../utils/log';
 
@@ -31,6 +32,7 @@ export const AppContainer: React.FC = () => {
       <ToastProvider>
         <ThemeProvider>
           <AuthProvider>
+            <SyncConflictNotifier />
             <MainApp />
           </AuthProvider>
         </ThemeProvider>

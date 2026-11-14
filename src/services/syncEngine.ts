@@ -33,7 +33,12 @@ import {
 } from '@/core/syncDecision';
 // 合并语义已统一为 mergeOpStamped（OpStamp 全序决胜，组级 LWW 整组覆盖）。
 // 这是合并的唯一真相源；旧 LWW 实现已随 2026-10-05 瘦身删除。
-import { mergeOpStamped } from '@/core/opStampMerge';
+import { mergeOpStampedDetailed } from '@/core/opStampMerge';
+import {
+  detectMergeConflicts,
+  buildStampLedger,
+  type MergeConflict,
+} from '@/core/mergeConflictDetect';
 import { assembleCloudGroups, computeCloudDelta } from '@/core/cloudDelta';
 import type { CloudDelta } from '@/core/cloudDelta';
 // 「登记的待传集合」与「本轮上行的集合」的对账判据（2026-10-20 D-3）。
@@ -84,12 +89,25 @@ export interface MergeResult {
    * 要有真的冲突数，得先有**共同祖先**（三方合并的基线）才能区分
    * 「云端只是更新了」与「两边同时改了、有一边被覆盖」——那是协议级改动。
    * 在那之前，这里宁可**没有**这个数字，也不要一个恒为 0 的假数字。
+   *
+   * 【2026-11-14 P0-1 已补上共同祖先】：现在有了「上次双方一致」的组印记账本
+   * （SYNC_STAMP_LEDGER）作基线，**真并发覆盖**可判定。但上报形态仍是「事实清单」
+   * 而非一个数字 —— 见下方 `conflicts`（只列两端都改过、整组覆盖后确有内容
+   * 丢失的组）。这里仍不加 stats.conflicts:number：一个没有明细的数字 UI 用不上。
    */
   stats?: {
     localCount: number;
     cloudCount: number;
     mergedCount: number;
   };
+  /**
+   * P0-1：本轮合并中「两端自上次一致后都改过、且被整组覆盖」的会话清单。
+   *
+   * 这是**事实**不是推断：由共同祖先基线（上次一致的组印）判定，只报真正会
+   * 丢数据的组（败方有、赢方没有的标签 > 0，或组名不同）。云端只是比本机新
+   * （本机没改）**不会**出现在这里。为空/缺省 ⇒ 没有并发覆盖。
+   */
+  conflicts?: MergeConflict[];
   reason?: string;
   /**
    * 失败原因（用户可读）。与 `reason` 分开的原因：
@@ -1038,7 +1056,17 @@ export class SyncEngine {
       // 无墓碑模型（2026-09-29）：组级 LWW 整组覆盖（语义见 mergeOpStamped 头注释）。
       // 云端 is_deleted 行 = 删除广播：对端活跃副本 stamp 更旧则服从删除；
       // 本地离线修改更新则保留。合并不产生新实体、不铸 mergeStamp。
-      const mergedGroups = mergeOpStamped(localGroups, cloudGroups);
+      // P0-1：合并明细 + 并发覆盖判定。基线（上次一致的组印）必须在**读旧值**
+      // 这一步取，且此处的 winnerByGroupId 与实际合并走**同一套**决胜规则。
+      const agreedStamps = await storage.getSyncStampLedger();
+      const { merged: mergedGroups, winnerByGroupId } = mergeOpStampedDetailed(
+        localGroups,
+        cloudGroups
+      );
+      // 覆盖模式（forceRemote）是用户显式「以云端为准」，不算冲突，不提示。
+      const mergeConflicts: MergeConflict[] = opts?.forceRemote
+        ? []
+        : detectMergeConflicts(localGroups, cloudGroups, agreedStamps, winnerByGroupId);
       report(80, 'download');
       // 6. 验证
       const validation = validateMergeResult(localGroups, cloudGroups, mergedGroups);
@@ -1228,6 +1256,14 @@ export class SyncEngine {
       }
       // 8. 更新同步时间
       await storage.setLastSyncTime(new Date().toISOString());
+      // 8.5 P0-1：写下一轮基线 —— 必须在**写盘成功之后**记（上面的验证失败/
+      // 熔断/异常路径都在此之前 return，不更新基线），否则会把「没真正落地的
+      // 合并」当成双方一致，下一轮漏报。基线写失败不阻塞同步（下次兜底）。
+      try {
+        await storage.setSyncStampLedger(buildStampLedger(finalGroups));
+      } catch (e) {
+        logWarn('[SyncEngine] 写组印基线失败（冲突检测可能漏报一轮）:', e);
+      }
       // 9. 清除快照
       await storage.clearSyncSnapshot();
       // ponytail: 下载可能掩盖本地未上传变更（合并出“新增”项）。检查持久化
@@ -1272,6 +1308,8 @@ export class SyncEngine {
               },
             }
           : {}),
+        // P0-1：并发覆盖清单（仅非覆盖模式、且确有内容丢失时非空）。
+        ...(mergeConflicts.length > 0 ? { conflicts: mergeConflicts } : {}),
       };
     } catch (error) {
       logError('[SyncEngine] 下载合并失败:', error);

@@ -959,5 +959,32 @@ async function performBackgroundSync(): Promise<BackgroundSyncOutcome> {
     ? `（本地 ${result.stats.localCount} → 云端 ${result.stats.cloudCount}，合并 ${result.stats.mergedCount}）`
     : '';
   logInfo(`[BackgroundSync] 后台同步完成: ${result.groups.length} 个组${summary}`);
+  // P0-1 冲突可见化：本轮若有「两端同时改、一边被整组覆盖」的会话，落盘一条
+  // 待展示提示。后台合并跑在 SW，popup 此刻多半没开 ⇒ toast 会即刻消失，
+  // 所以落 chrome.storage 等用户下次打开 popup 时展示（展示后即清，见
+  // SyncConflictNotifier）。写提示失败**不阻塞**同步收尾（它只是附加信息）。
+  if (result.conflicts && result.conflicts.length > 0) {
+    const conflicts = result.conflicts;
+    const totalLostTabs = conflicts.reduce((n, c) => n + c.lostTabs, 0);
+    try {
+      await storage.setPendingConflictNotice({
+        at: new Date().toISOString(),
+        totalGroups: conflicts.length,
+        totalLostTabs,
+        // 上限 20 条：提示是给人看的摘要，超过部分只影响 KV 尺寸不影响事实。
+        groups: conflicts.slice(0, 20).map(c => ({
+          name: c.name,
+          lostTabs: c.lostTabs,
+          winner: c.winner,
+        })),
+      });
+      logWarn(
+        `[BackgroundSync] 检测到 ${conflicts.length} 个会话的并发改动被整组覆盖` +
+          `（共 ${totalLostTabs} 个标签被覆盖），已登记待展示提示`
+      );
+    } catch (e) {
+      logWarn('[BackgroundSync] 登记冲突提示失败（不影响同步结果）:', e);
+    }
+  }
   return { ok: true, kind: 'done', detail: `同步完成: ${result.groups.length} 个组${summary}` };
 }

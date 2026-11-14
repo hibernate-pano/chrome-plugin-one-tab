@@ -40,12 +40,32 @@ function pickByStamp(a: TabGroup, b: TabGroup): TabGroup {
   return compareStamps(sa, sb) >= 0 ? a : b;
 }
 
-export function mergeOpStamped(local: TabGroup[], cloud: TabGroup[]): TabGroup[] {
+/**
+ * 合并的**明细**产出（P0-1 冲突可见化用）。
+ *
+ * winnerByGroupId 只登记「活跃 vs 活跃、被整组覆盖」这一种分支——那正是
+ * 会产生「一边改动被静默覆盖」的分支。其它分支（仅一侧有 / 墓碑）本就不存在
+ * 「两边内容二选一」，不登记，避免把删除传播误当成覆盖。
+ */
+export interface MergeOutcome {
+  merged: TabGroup[];
+  /**
+   * 活跃 vs 活跃、发生整组覆盖时，赢家是谁：'local' = 本地版本被采用，
+   * 'cloud' = 云端版本被采用。仅含有竞争（两端都有且活跃）的组。
+   */
+  winnerByGroupId: Map<string, 'local' | 'cloud'>;
+}
+
+export function mergeOpStampedDetailed(
+  local: TabGroup[],
+  cloud: TabGroup[]
+): MergeOutcome {
   const byId = new Map<string, { local?: TabGroup; cloud?: TabGroup }>();
   for (const g of local) byId.set(g.id, { ...(byId.get(g.id) || {}), local: g });
   for (const g of cloud) byId.set(g.id, { ...(byId.get(g.id) || {}), cloud: g });
 
   const merged: TabGroup[] = [];
+  const winnerByGroupId = new Map<string, 'local' | 'cloud'>();
   for (const [, sides] of byId) {
     const { local: lg, cloud: cg } = sides;
     if (lg && !cg) { merged.push(lg); continue; }
@@ -86,7 +106,23 @@ export function mergeOpStamped(local: TabGroup[], cloud: TabGroup[]): TabGroup[]
       continue;
     }
     // 活跃 vs 活跃：整组覆盖，赢家通吃
-    merged.push(pickByStamp(lg!, cg!));
+    const picked = pickByStamp(lg!, cg!);
+    merged.push(picked);
+    // 用「返回的是哪一个引用」判定赢家，不复述 pickByStamp 的比较规则
+    // （两份规则一旦漂移，冲突提示的「谁覆盖了谁」就会和实际合并结果对不上）。
+    winnerByGroupId.set(lg!.id, picked === lg! ? 'local' : 'cloud');
   }
-  return merged;
+  return { merged, winnerByGroupId };
+}
+
+/**
+ * 组级 LWW 合并（对外保留的**原签名**）。
+ *
+ * 2026-11-14 P0-1：实现下沉到 mergeOpStampedDetailed（多产出 winnerByGroupId
+ * 供冲突检测复用同一套决胜规则）。本函数退化为**薄 wrapper**，签名与逐字行为
+ * 不变——仓库里 syncPreview / webdav firstSyncDecision 等几十处调用点全部原样可用，
+ * 既有测试零改动。
+ */
+export function mergeOpStamped(local: TabGroup[], cloud: TabGroup[]): TabGroup[] {
+  return mergeOpStampedDetailed(local, cloud).merged;
 }

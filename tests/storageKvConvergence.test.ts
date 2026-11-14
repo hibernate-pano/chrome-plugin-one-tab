@@ -168,6 +168,10 @@ describe('S2 键常量单源', () => {
     // 搬进来之后「会话还在 ⇒ 账本还在」是结构事实 ⇒ chrome.storage.local 被清
     // 不再能让本机残留的会话被新账号静默认领（跨账号泄露）。
     ACCOUNT_SCOPE: 'local_account_scope',
+    // 2026-11-14 P0-1：冲突可见化两键（判定基线 + 待展示提示），
+    // 均由 STORAGE_KEYS 全量派生，迁移扫描自动覆盖。
+    SYNC_STAMP_LEDGER: 'sync_stamp_ledger',
+    PENDING_CONFLICT_NOTICE: 'pending_conflict_notice',
   };
 
   it('STORAGE_KEYS 字面值与搬迁前逐字一致', async () => {
