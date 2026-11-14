@@ -22,6 +22,7 @@ import { DEFAULT_SETTINGS, validateSyncIntervalMinutes } from '../utils/storage'
 import { storage } from '../utils/storage';
 import { STORAGE_KEYS } from '../storage-kv/keys';
 import { kvGet } from '../storage-kv/storageAdapter';
+import { notifyConflictNoticeChanged } from '../storage-kv/conflictNoticeBus';
 import type { UserSettings, User } from '../types/tab';
 import { primeSyncBackend } from '@/sync-backend';
 import { isBackendUnavailableError } from '@/core/backendUnavailable';
@@ -982,6 +983,9 @@ async function performBackgroundSync(): Promise<BackgroundSyncOutcome> {
         `[BackgroundSync] 检测到 ${conflicts.length} 个会话的并发改动被整组覆盖` +
           `（共 ${totalLostTabs} 个标签被覆盖），已登记待展示提示`
       );
+      // popup 已开着时靠挂载读取要等下一次打开才看到 —— 落盘成功即广播
+      // （尽力而为：popup 没开时 sendMessage reject 被总线吞掉，无副作用）。
+      notifyConflictNoticeChanged();
     } catch (e) {
       logWarn('[BackgroundSync] 登记冲突提示失败（不影响同步结果）:', e);
     }
