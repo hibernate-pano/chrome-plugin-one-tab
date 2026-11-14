@@ -1,6 +1,8 @@
 import { store } from '@/store';
 import { UPLOAD_DEBOUNCE_MS } from '@/core/syncTiming';
 import { getCurrentUser, setFromCache } from '@/store/slices/authSlice';
+import { perfTrace } from '@/utils/perfTrace';
+import type { SpanStep } from '@/utils/perfSpanNames';
 
 /** MV3 SW 中由 chrome.alarms 驱动的延迟上传 alarm。 */
 export const SYNC_UPLOAD_ALARM = 'tapstack-scheduled-upload';
@@ -254,6 +256,32 @@ export function decideSuppressFullUpload(args: {
 }
 
 export type SyncProgressCallback = (progress: number, operation: SyncOperation) => void;
+
+/**
+ * 同步轮次的阶段计时（诊断观测，不参与任何业务判定）。
+ *
+ * ── 为什么需要（2026-11-14）─────────────────────────────────────────────
+ * 队列层已有 `sync:download.wait` / `.run`（见 mutationQueue）：能看出「排队等
+ * 多久」「整轮跑多久」，但 run 里混着网络与计算，占比未知 ⇒ 用户说「刷新有点
+ * 慢」时无法判断该改哪一段。这里把 run 切成 `SPAN_STEPS` 里的同步阶段
+ * （gate / precheck / probe / remote / merge / ledger）。
+ *
+ * ── 语义纪律 ─────────────────────────────────────────────────────────────
+ * · **边界之间**的耗时记在**下一段**：调用方在每段结束时 mark，两次 mark 之间
+ *   发生的所有事（含中间的守卫计算）都算进刚结束的那一段。因此它是「wall-clock
+ *   切片」，不是归因精算——想要更细就把边界挪近。
+ * · 早退路径（鉴权失败、探活命中、闸门拒绝）只留下**已经走完**的段，剩下的
+ *   时间体现在 run 与 Σsteps 的差值里，不会凭空造出一条不存在的段。
+ * · 记录失败绝不影响同步：recordSpan 内部吞错、只留内存缓冲（见 perfTrace）。
+ */
+function createSyncPhaseMarker(span: 'sync:download' | 'sync:upload') {
+  let last = Date.now();
+  return (step: SpanStep): void => {
+    const now = Date.now();
+    perfTrace().recordSpan(span, 'step', now - last, step);
+    last = now;
+  };
+}
 
 /** 与旧 settingsSlice.syncSettingsFromCloud 相同的合并/校验逻辑，供引擎内复用 */
 async function mergeCloudSettingsIntoLocal(): Promise<void> {
@@ -546,6 +574,9 @@ export class SyncEngine {
     syncSettings?: boolean;
     onProgress?: SyncProgressCallback;
   }): Promise<MergeResult> {
+    // 阶段计时（诊断观测）：每段结束 mark 一次，边界之间记在下一段。
+    // 见 createSyncPhaseMarker 的语义纪律——它不改任何判定，只记耗时。
+    const markPhase = createSyncPhaseMarker('sync:download');
     // ponytail: 冷 SW 的 store 未恢复登录态（SW 是独立执行上下文）——
     // 先尝试从持久化 session 恢复一次，否则 popup 发起的下载会一律
     // not_authenticated（upload 已有同等恢复，download 曾缺失）。
@@ -586,6 +617,8 @@ export class SyncEngine {
       restoreAuth: () => this.restoreAuth(),
       backendId: gateBackendId,
     });
+    // 鉴权段结束。失败路径也照记：慢在 /auth/v1/user 同样是事实。
+    markPhase('gate');
     if (!gate.allowed) {
       if (gate.kind === 'backend_unavailable') {
         return {
@@ -737,6 +770,9 @@ export class SyncEngine {
     this.isSyncing = true;
     this.cancelPendingUpload();
 
+    // 前置门禁段结束（forceRemote 的删除广播 + 下载前置判据 + 可能的「先上传」）。
+    markPhase('precheck');
+
     // 1. 快照（P1-4：新鲜读 + 直写，绕过 30s 缓存与 500ms 防抖——SW 可随时被杀）
     //    fail-closed：本地快照读失败时不得拿 snapshot=[] 继续。这是最后一条
     //    「读失败能变成写」的路径——继续跑会把 localGroups 当成空集合，
@@ -750,6 +786,9 @@ export class SyncEngine {
       logError('[SyncEngine] 本地快照读失败，中止本次下载（fail-closed，不写入）:', err);
       this.isSyncing = false;
       return { success: false, groups: [], reason: 'snapshot_failed' };
+    } finally {
+      // 成功与失败都记：读盘慢（或读卡住）本身就是诊断要看的事实。
+      markPhase('read');
     }
     try {
       report(10, 'download');
@@ -790,6 +829,9 @@ export class SyncEngine {
             logInfo(
               `[SyncEngine] 探活命中：云端无变更（${digest.length} 行指纹一致），跳过全量下载`
             );
+            // 探活命中是「没有后续段」的早退：先把探活段记下来，否则这一轮
+            // 只剩 run 总时长、「慢在哪」又变成猜的。
+            markPhase('probe');
             report(100, 'none');
             await storage.setLastSyncTime(new Date().toISOString());
             this.isSyncing = false;
@@ -820,6 +862,8 @@ export class SyncEngine {
           delta = null;
         }
       }
+      // 探活 + 差量计算段结束（探活是网络往返，差量是纯计算；失败也照记）。
+      markPhase('probe');
       // 2. 下载云端
       //
       // 【第 53 轮：只回源取「真正变了」的那几行】────────────────────────
@@ -876,6 +920,8 @@ export class SyncEngine {
         cloudGroups = full.groups;
         skippedRemote = full.skipped;
       }
+      // 后端往返（增量或全量下载）段结束。这是同步轮次里最可能的大头。
+      markPhase('remote');
       report(55, 'download');
       // 本轮被整组跳过的会话 id（云端行仍在、未写回、未登记墓碑）。
       const skippedIds = new Set(skippedRemote.map(s => s.id));
@@ -1059,6 +1105,8 @@ export class SyncEngine {
       // P0-1：合并明细 + 并发覆盖判定。基线（上次一致的组印）必须在**读旧值**
       // 这一步取，且此处的 winnerByGroupId 与实际合并走**同一套**决胜规则。
       const agreedStamps = await storage.getSyncStampLedger();
+      // 基线读（IndexedDB）单独成段：P0-1 新增的一次读盘，要能看出它是否变贵。
+      markPhase('ledger');
       const { merged: mergedGroups, winnerByGroupId } = mergeOpStampedDetailed(
         localGroups,
         cloudGroups
@@ -1067,6 +1115,10 @@ export class SyncEngine {
       const mergeConflicts: MergeConflict[] = opts?.forceRemote
         ? []
         : detectMergeConflicts(localGroups, cloudGroups, agreedStamps, winnerByGroupId);
+      // 合并 + 冲突判定（纯计算）段结束。实测百组量级 <1ms，单独记是为了
+      // 在诊断里证明「慢的不是这里」。紧随其后的合并验证同样在毫秒级，
+      // 计入下一段（写入前的守卫计算）。
+      markPhase('merge');
       report(80, 'download');
       // 6. 验证
       const validation = validateMergeResult(localGroups, cloudGroups, mergedGroups);
@@ -1230,6 +1282,8 @@ export class SyncEngine {
         }
       }
       await storage.setGroupsImmediate(finalGroups);
+      // 本地整表写入段结束（IndexedDB 写；与上面的删除意图登记同属一个窗口）。
+      markPhase('write');
       // 广播队列必须伴随 pending_upload 置位，否则入队了也没人执行：
       // backgroundSync 只在 hasPendingUpload() 为真时才上传，而下载路径
       // 从不置这个标志 → 云端行永远标记不到 → 对端复活。
@@ -1263,6 +1317,9 @@ export class SyncEngine {
         await storage.setSyncStampLedger(buildStampLedger(finalGroups));
       } catch (e) {
         logWarn('[SyncEngine] 写组印基线失败（冲突检测可能漏报一轮）:', e);
+      } finally {
+        // 基线写盘段（含失败）：P0-1 新增的每轮一次整表写，需要单独可观测。
+        markPhase('ledger');
       }
       // 9. 清除快照
       await storage.clearSyncSnapshot();
@@ -1366,6 +1423,8 @@ export class SyncEngine {
      */
     explicitFirstSync?: boolean;
   }): Promise<UploadResult> {
+    // 阶段计时（诊断观测）：与 downloadAndMerge 同一套语义，见 createSyncPhaseMarker。
+    const markPhase = createSyncPhaseMarker('sync:upload');
     // ponytail: SW 进程是独立执行上下文，store 是新实例——先恢复登录态
     // （与 downloadAndMerge 共用 ensureAuthenticated 守卫）。
     // backendId 必须显式传，理由同上；null（同上）也必须在这里判掉：
@@ -1391,6 +1450,8 @@ export class SyncEngine {
       restoreAuth: () => this.restoreAuth(),
       backendId: gateBackendId,
     });
+    // 鉴权段结束（失败路径也照记，理由同 downloadAndMerge）。
+    markPhase('gate');
     if (!gate.allowed) {
       if (gate.kind === 'backend_unavailable') {
         return {
@@ -1427,6 +1488,9 @@ export class SyncEngine {
       // 已随旧模型上过云，这里兜底再标记一次，标记成功后从本地物理清除
       // （新模型本地不留墓碑，见文件头）。
       const legacyTombstoneIds = allGroups.filter(g => g.isDeleted).map(g => g.id);
+      // 本地读取段结束（getGroups 是整表读；后面几个 registry 读也归到这一段
+      // 的下一段里——见 createSyncPhaseMarker「边界之间记在下一段」的纪律）。
+      markPhase('read');
 
       const overwriteCloud = opts?.overwriteCloud || false;
       let skippedOverwrite: UploadResult['skippedOverwrite'];
@@ -1550,6 +1614,8 @@ export class SyncEngine {
       // ⇒ 绝不覆盖」是既有保护，不能因为待决期把清单过滤空了就改判成「跳过覆盖」。
       // 清单为空时连适配器都不必调（省一次读 manifest + 解锁，也避免在空远端上写出
       // 一份「零会话」的 manifest）。
+      // 上传前的那几次 registry 读结束（gate 之后的本地 IO 全归这一段）。
+      markPhase('read');
       if (activeGroups.length > 0 && groupsForUpload.length > 0) {
         // 覆盖模式把残留墓碑一起交给 uploadTabGroups：覆盖会先删空云端，墓碑必须
         // 随同一次 upsert 写上云（selectRowsForUpload 决定实际写入哪些行），
@@ -1559,6 +1625,8 @@ export class SyncEngine {
           overwriteCloud,
           explicitFirstSync
         );
+        // 后端往返（upsert + 读回校验都在适配器内部）段结束。
+        markPhase('remote');
         // 「提交给后端裁决」的集合 = 本轮交给适配器的清单。
         // 后端可能**认输**（远端更新 → 本地不上行，等下次下载合并物理替换），
         // 认输是「已裁决」而不是「没传上去」—— 把它算成未同步会让 pending_upload
@@ -1698,11 +1766,14 @@ export class SyncEngine {
         // 整队清空会把没广播过的 B 连坐抹掉 → 云端行仍活跃 → 下次合并整组复活，
         // 且 v1.22.0 起无回收站、用户无法找回。详见 storage.clearPendingDeleteIds。
         await storage.clearPendingDeleteIds(broadcastDeleteIds);
+        // 墓碑广播是又一次后端往返（UPDATE + 读回 SELECT），单独成段。
+        markPhase('remote');
       } else if (cloudDeleteIds.length > 0) {
         logWarn('[SyncEngine] includeDeleted=false：删除意图本轮未广播，队列保留不清理');
       }
       if (legacyTombstoneIds.length > 0) {
         await storage.setGroupsImmediate(activeGroups);
+        markPhase('write');
         logInfo(`[SyncEngine] 已广播 ${legacyTombstoneIds.length} 个老版本残留墓碑并从本地清除`);
       }
       // 云端墓碑 TTL：删除广播行的使命是让所有在线设备服从删除；30 天后物理
@@ -1728,6 +1799,9 @@ export class SyncEngine {
           await uploadSettings(await storage.getSettingsForWrite());
         } catch (err) {
           logWarn('[SyncEngine] 上传设置失败（不阻塞主流程）:', err);
+        } finally {
+          // 设置上传也是一次后端往返（单独一行 user_settings upsert）。
+          markPhase('remote');
         }
       }
       report(95, 'upload');

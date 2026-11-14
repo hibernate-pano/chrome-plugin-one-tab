@@ -48,10 +48,25 @@ export const PERF_SPAN_NAMES = [
 ] as const;
 
 /**
- * run 段内部可计时的 IO 阶段。
+ * run 段内部可计时的阶段。
  *
- * 只列**真的被测**的阶段；纯计算段（apply）不在这里——它由聚合时相减推出
- * （见文件头）。把推导值也塞进这张表会让人误以为它被直接测过。
+ * 只列**真的被测**的阶段。mutation 命令的纯计算段仍不在这里——它由聚合时
+ * 相减推出（见文件头）。
+ *
+ * ── 2026-11-14：加入同步轮次的阶段名 ────────────────────────────────────
+ * 起因：「从云端刷新有点慢」无法归因——队列层已有 `sync:download.wait` /
+ * `.run`（wait=排队，run=整轮），但 run 里既有网络也有计算，占比未知。
+ * 这六个阶段**由 syncEngine 显式计时**（边界之间记在下一段，见
+ * `createSyncPhaseMarker`），因此它们是直接测量值，不是推导值：
+ *   · gate     鉴权/后端解析/前置门禁（含「先上传再下载」那一次上传）
+ *   · precheck 下载前置判据（last_upload_time / pending_upload 的本地读）
+ *   · probe    指纹探活 + 差量计算（探活是网络往返，差量是纯计算）
+ *   · remote   后端往返（下载 / upsert / 墓碑广播）
+ *   · merge    合并 + 冲突判定（纯计算；紧随其后的合并验证为毫秒级，计入下一段）
+ *   · ledger   P0-1 基线（sync_stamp_ledger）的读写
+ *
+ * ⚠️ 对这些 span，`applyTotalMs = run - Σsteps` 的含义变成「未被上述阶段
+ * 覆盖的残余时间」，不再是「纯计算段」——两者都如实反映事实，只是读法不同。
  */
 export const SPAN_STEPS = [
   'journal',
@@ -61,6 +76,13 @@ export const SPAN_STEPS = [
   // 撤回删除广播意图（撤销「恢复即消费」，2026-10-22 审计 P0-4）
   'retractDeleted',
   'scheduleUpload',
+  // 同步轮次（sync:download / sync:upload）的阶段，见上方说明
+  'gate',
+  'precheck',
+  'probe',
+  'remote',
+  'merge',
+  'ledger',
 ] as const;
 
 export type SpanStep = (typeof SPAN_STEPS)[number];
