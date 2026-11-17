@@ -171,8 +171,18 @@ async function main() {
       const r = await client.listDir('TapStack/groups');
       check('真实服务端列得出 groups/', r.listed === true, `listed=${r.listed}`);
       check(
-        '列出了 2 个前缀子目录（ab / cd）',
-        r.entries.length === 2,
+        '列出了 4 个前缀子目录（a / c 新布局 1 位 + ab / cd 旧布局 2 位）',
+        // ⚠️ 为什么是 4 个而不是 2 个（2026-11-17 修正）：
+        //   布局在 2026-10-26 改过 —— **新布局**按 id **前 1 位**分子目录
+        //   （`shardDir` = `groups/<id前1位>`），**旧布局**是前 2 位
+        //   （`legacyShardDir` = `groups/<id前2位>`）。
+        //   本探针的夹具**两套都建**（场景 1 显式建 ab/cd，场景 5 的分片走
+        //   `shardPath` ⇒ 建 a/c）⇒ `groups/` 里本来就有 4 个子目录。
+        //   原断言写「2 个（ab / cd）」是 2026-10-20 的事实，那时只有旧布局
+        //   ⇒ 布局迁移后夹具悄悄长出两个目录，断言没跟着更新 ⇒ **探针自己的
+        //   预期过期**，不是产品多列了。判据要钉「夹具里真实存在的那几个」。
+        r.entries.length === 4 &&
+          ['a', 'ab', 'c', 'cd'].every(n => r.entries.some(e => e.name === n)),
         `entries=${r.entries.map(e => e.name).join(',') || '(空)'}`
       );
       check(
