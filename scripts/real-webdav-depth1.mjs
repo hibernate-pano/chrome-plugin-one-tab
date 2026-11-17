@@ -40,10 +40,19 @@
  *     scripts/real-webdav-depth1.mjs
  *
  * ── 副作用与清理 ─────────────────────────────────────────────────────────
- * 会在**探针目录**（`TapStack-probe-<随机>`）里 MKCOL / PUT 几个小文件，
- * 跑完**逐个 DELETE**（先文件后目录）。探针目录与产品的 `TapStack/` 根目录
- * **完全分开** ⇒ 不碰用户自己的同步数据。清理在 `finally` 里做，
- * 中途失败也会清。清理结果会打印出来（清不掉 = 云端留了垃圾，需要人处理）。
+ * 会在**固定工作区** `TapStack-probe/` 下建一个随机的 `run-<随机>/` 目录，
+ * 在里面 MKCOL / PUT 几个小文件，跑完**逐个 DELETE**，最后删 run 目录本身，
+ * 并断言它真的没了（PROPFIND ⇒ 404，不是「列出来是空的」）。
+ *
+ * ⚠️ 为什么是「固定工作区 + 随机 run 目录」，而不是「每次随机一个根目录」
+ *    （2026-11-17 在坚果云上撞出来后改的）：
+ *   坚果云**禁止通过 WebDAV 删除/移动根目录下的文件夹** ——
+ *   DELETE / MOVE 一律 403 `OperationNotAllowed`（空目录也一样；
+ *   子目录与文件都能正常删）。原来的设计每跑一次就在云盘根上留一个
+ *   删不掉的 `TapStack-probe-<随机>/` ⇒ 跑三次就是三个垃圾目录。
+ *   改成固定工作区后，只有**一个**可复用目录留在根上；run 目录是它的子目录
+ *   ⇒ 每次都能删干净。工作区与产品的 `TapStack/` 根目录**完全分开**
+ *   ⇒ 不碰用户自己的同步数据。
  */
 import { randomUUID } from 'node:crypto';
 
@@ -62,7 +71,10 @@ if (!URL_ || !USER || !PASS) {
 
 const BASE = URL_.endsWith('/') ? URL_ : `${URL_}/`;
 const AUTH = 'Basic ' + Buffer.from(`${USER}:${PASS}`).toString('base64');
-const PROBE_ROOT = `TapStack-probe-${randomUUID().slice(0, 8)}`;
+/** 固定工作区（根级）：坚果云不允许删根级目录 ⇒ 只建一次、反复复用。 */
+const WORKSPACE = 'TapStack-probe';
+/** 本次运行的隔离目录（工作区的子目录 ⇒ 每次都能删干净）。 */
+const RUN_DIR = `${WORKSPACE}/run-${randomUUID().slice(0, 8)}`;
 
 let passCount = 0;
 let failCount = 0;
@@ -107,6 +119,31 @@ const hrefForm = (href) => {
   return '相对路径';
 };
 
+/**
+ * `<href>` ⇒ 相对 baseUrl 的路径（去掉前后斜杠）。
+ *
+ * ⚠️ 为什么不能直接去掉第一个 `/`（2026-11-17 在坚果云上踩到）：
+ *   坚果云的 href 是**带 base 路径的绝对路径**：`/dav/TapStack-probe/...`
+ *   （baseUrl 是 `https://dav.jianguoyun.com/dav/`）。直接去首斜杠得到
+ *   `dav/TapStack-probe/...` ⇒ 与产品侧的 `TapStack-probe/...` 永远不相等
+ *   ⇒ Depth:1 响应里的「被查目录自己」过滤不掉 ⇒ 两路对账**假红**。
+ *   这里按 baseUrl 的 pathname（如 `/dav/`）剥前缀；rclone 那种绝对 URL
+ *   先取 pathname 再剥。
+ */
+const relFromBase = (href) => {
+  let p = String(href ?? '').trim();
+  if (!p) return '';
+  try {
+    if (/^https?:\/\//i.test(p)) p = new URL(p).pathname;
+  } catch {
+    return '';
+  }
+  const basePath = new URL(BASE).pathname; // 以 / 结尾（BASE 已归一）
+  if (p.startsWith(basePath)) p = p.slice(basePath.length);
+  else p = p.replace(/^\//, '');
+  return p.replace(/\/+$/, '');
+};
+
 const mkcol = async (path) => {
   const res = await fetch(BASE + path, { method: 'MKCOL', headers: { Authorization: AUTH } });
   return res.status;
@@ -126,28 +163,29 @@ const del = async (path) => {
 
 console.log(`\n── 真实服务端 Depth:1 实测 ──`);
 console.log(`端点: ${BASE}`);
-console.log(`探针目录: ${PROBE_ROOT}/（与产品的 TapStack/ 根目录分开，不碰用户数据）`);
+console.log(`工作区: ${WORKSPACE}/（固定、复用——坚果云禁止删根级目录，所以不删它）`);
+console.log(`本次运行目录: ${RUN_DIR}/（子目录 ⇒ 跑完删干净）`);
 
 // ── 建夹具 ───────────────────────────────────────────────────────────────
-const created = [];
 const shardName = `${randomUUID()}.json`;
 try {
-  const mk = await mkcol(PROBE_ROOT);
-  if (mk === 201 || mk === 200 || mk === 405) {
-    // 405 = 已存在（本探针目录是随机的，撞上几乎不可能）⇒ 当作可继续。
-    created.push(PROBE_ROOT);
-  } else {
-    console.error(`❌ MKCOL ${PROBE_ROOT} ⇒ HTTP ${mk} —— 这家服务商可能不支持 MKCOL。`);
+  // 工作区：固定名字 ⇒ 已存在（405）是常态，不是错误。
+  const mkWs = await mkcol(WORKSPACE);
+  if (!(mkWs === 201 || mkWs === 200 || mkWs === 405)) {
+    console.error(`❌ MKCOL ${WORKSPACE} ⇒ HTTP ${mkWs} —— 这家服务商可能不支持 MKCOL。`);
     console.error('   （不支持 MKCOL 不等于不可用：产品写路径需要它，但读路径未必。）');
   }
-  for (const dir of [`${PROBE_ROOT}/groups`, `${PROBE_ROOT}/groups/ab`, `${PROBE_ROOT}/empty`]) {
+  const mk = await mkcol(RUN_DIR);
+  if (!(mk === 201 || mk === 200)) {
+    console.error(`⚠️ MKCOL ${RUN_DIR} ⇒ HTTP ${mk} —— 后面的场景可能因此失败。`);
+  }
+  for (const dir of [`${RUN_DIR}/groups`, `${RUN_DIR}/groups/ab`, `${RUN_DIR}/empty`]) {
     const st = await mkcol(dir);
-    if (st === 201 || st === 200 || st === 405) created.push(dir);
-    else console.error(`⚠️ MKCOL ${dir} ⇒ HTTP ${st}`);
+    if (!(st === 201 || st === 200 || st === 405)) console.error(`⚠️ MKCOL ${dir} ⇒ HTTP ${st}`);
   }
   // 分片文件 + 一个**不是**分片的文件（探针要能区分「文件」与「目录」）
-  const s1 = await put(`${PROBE_ROOT}/groups/ab/${shardName}`, JSON.stringify({ v: 1, plain: 'probe' }));
-  const s2 = await put(`${PROBE_ROOT}/groups/ab/notes.txt`, 'not a shard');
+  const s1 = await put(`${RUN_DIR}/groups/ab/${shardName}`, JSON.stringify({ v: 1, plain: 'probe' }));
+  const s2 = await put(`${RUN_DIR}/groups/ab/notes.txt`, 'not a shard');
   note('PUT 分片文件', `HTTP ${s1}`);
   note('PUT 普通文件', `HTTP ${s2}`);
 } catch (err) {
@@ -158,7 +196,7 @@ try {
 console.log('\n── 场景 A：裸 fetch 的 Depth:1 响应形状 ──');
 let rawGroups = null;
 try {
-  rawGroups = await rawPropfind(`${PROBE_ROOT}/groups`);
+  rawGroups = await rawPropfind(`${RUN_DIR}/groups`);
   note('Depth:1 PROPFIND 状态码', String(rawGroups.status));
   note('正文里有 <multistatus>', rawGroups.text.includes('multistatus') ? '有' : '没有');
   note('<response> 块数', String(rawGroups.blocks.length));
@@ -184,7 +222,7 @@ try {
   const { WebDavClient } = await import('../src/sync-backend/webdav/client.ts');
   const client = new WebDavClient({ baseUrl: BASE, username: USER, password: PASS });
 
-  const g = await client.listDir(`${PROBE_ROOT}/groups`);
+  const g = await client.listDir(`${RUN_DIR}/groups`);
   check('合法响应被放行（listed=true，不是「列不出来」）', g.listed === true, `listed=${g.listed}`);
   check(
     '列出的条目数与磁盘一致（groups/ 下有 1 个子目录）',
@@ -197,7 +235,7 @@ try {
     JSON.stringify(g.entries.map(e => `${e.name}:${e.isCollection}`)),
   );
 
-  const a = await client.listDir(`${PROBE_ROOT}/groups/ab`);
+  const a = await client.listDir(`${RUN_DIR}/groups/ab`);
   check('列得出前缀子目录（listed=true）', a.listed === true, `listed=${a.listed}`);
   check(
     '文件数与磁盘一致（1 个分片 + notes.txt）',
@@ -210,18 +248,17 @@ try {
     JSON.stringify(a.entries.map(e => `${e.name}:${e.isCollection}`)),
   );
 
-  const e = await client.listDir(`${PROBE_ROOT}/empty`);
+  const e = await client.listDir(`${RUN_DIR}/empty`);
   check('空目录：listed=true 且条目为空（空 ≠ 不知道）', e.listed === true && e.entries.length === 0, `listed=${e.listed} entries=${e.entries.length}`);
 
-  const n = await client.listDir(`${PROBE_ROOT}/nope`);
+  const n = await client.listDir(`${RUN_DIR}/nope`);
   check('不存在的目录：listed=false（列不出来）', n.listed === false, `listed=${n.listed}`);
 
   if (rawGroups) {
     // 裸 fetch 看到的**子目录**（Depth:1 的响应里含被查目录自己 ⇒ 先去掉它）
-    const rawNames = rawGroups.hrefs
-      .map(h => (h ?? '').replace(/^\//, '').replace(/\/$/, ''))
-      .filter(h => h && h !== `${PROBE_ROOT}/groups`);
-    note('裸 fetch 看到的子目录', JSON.stringify(rawNames));
+    const selfPath = `${RUN_DIR}/groups`;
+    const rawNames = rawGroups.hrefs.map(relFromBase).filter(p => p && p !== selfPath);
+    note('裸 fetch 看到的子目录（href 已剥 base 前缀）', JSON.stringify(rawNames));
     check(
       '两路一致：产品列出的条目数 = 裸 fetch 看到的子目录数',
       g.entries.length === rawNames.length,
@@ -233,26 +270,26 @@ try {
 }
 
 // ── 清理 ─────────────────────────────────────────────────────────────────
-console.log('\n── 清理探针目录 ──');
+console.log('\n── 清理本次运行目录 ──');
 try {
-  for (const f of [`${PROBE_ROOT}/groups/ab/${shardName}`, `${PROBE_ROOT}/groups/ab/notes.txt`]) {
+  for (const f of [`${RUN_DIR}/groups/ab/${shardName}`, `${RUN_DIR}/groups/ab/notes.txt`]) {
     const st = await del(f);
     note(`DELETE ${f.split('/').pop()}`, `HTTP ${st}`);
   }
-  for (const d of [`${PROBE_ROOT}/groups/ab`, `${PROBE_ROOT}/groups`, `${PROBE_ROOT}/empty`, PROBE_ROOT]) {
+  for (const d of [`${RUN_DIR}/groups/ab`, `${RUN_DIR}/groups`, `${RUN_DIR}/empty`, RUN_DIR]) {
     const st = await del(d);
     note(`DELETE ${d}`, `HTTP ${st}`);
   }
-  // 验干净：列一次探针根目录，不该再有它
-  const after = await rawPropfind(PROBE_ROOT);
-  check(
-    '探针目录已清空（列不出内容）',
-    after.blocks.length === 0 || after.blocks.length === 1,
-    `blocks=${after.blocks.length}`,
-  );
+  // ⚠️ 验干净必须问「它还在不在」，而不是「列出来是不是空的」：
+  //   不存在的目录和被删空的目录，在 Depth:1 下都可能只剩「自己」一个块
+  //   —— 用「块数 ≤ 1」当判据，等于**目录还留着也绿灯**。
+  //   （2026-11-17：这条判据曾在坚果云上假绿，而根目录其实 403 没删掉。）
+  const after = await rawPropfind(RUN_DIR);
+  check('运行目录已真的删掉（PROPFIND ⇒ 404）', after.status === 404, `HTTP ${after.status}`);
+  note('固定工作区（保留复用，不删）', `${WORKSPACE}/`);
 } catch (err) {
   console.error('⚠️ 清理异常：', String(err?.message ?? err));
-  console.error(`   请手动删掉云端目录：${PROBE_ROOT}/`);
+  console.error(`   请手动删掉云端目录：${RUN_DIR}/`);
 }
 
 console.log(`\n════════ 汇总 ════════`);
