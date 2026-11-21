@@ -62,6 +62,9 @@ import {
 // 界面拿不到它 ⇒ 又退回「请重试」（而重试对被封禁的服务端无用）。
 import { isBackendUnavailableError } from '@/core/backendUnavailable';
 import { backendUnavailableCopy } from '@/components/sync/backendUnavailableCopy';
+import { decideAutoDownload } from '@/core/syncPolicy';
+import { readEffectiveSyncPolicy } from '@/services/syncPolicyRuntime';
+import { storage } from '@/utils/storage';
 
 // Chrome 扩展的 Service Worker
 // 为了避免模块导入问题，早期版本内联了存储逻辑；现统一使用 utils/storage 以与前端页面共享同一数据源（IndexedDB）
@@ -1011,11 +1014,35 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         // 门禁先行、放行后走下面同一条入队路径 —— 不复制第二份 enqueue。
         if (data.op === 'download' && data.auto === true) {
           void readAutoSyncConfig().then(
-            cfg => {
+            async cfg => {
               if (!cfg.enabled) {
                 logInfo('[SW] 自动同步已关闭，跳过本次自动下载（用户可点「同步」手动获取）');
                 sendResponse({ ok: false, error: AUTO_SYNC_DISABLED_REASON });
                 return;
+              }
+              // ── 2026-11-21：最小间隔闸门 ────────────────────────────────────
+              // 自动下载原本**没有任何间隔** ⇒ 用户一天开 50 次弹窗 = 50 轮完整
+              // 周期（每轮 6 个请求 + 一次指纹下载）⇒ 频繁开弹窗的用户按分钟级
+              // 速度烧配额（配额是项目级共享的 ⇒ 别人替他付）。
+              //
+              // ⚠️ 只挡**自动**下载：用户手点的「同步」必须立刻执行。
+              try {
+                const policy = await readEffectiveSyncPolicy();
+                const lastSyncRaw = await storage.getLastSyncTime();
+                const lastSyncAt = lastSyncRaw ? Date.parse(lastSyncRaw) : null;
+                const gate = decideAutoDownload({
+                  policy,
+                  lastSyncAt: lastSyncAt != null && !Number.isNaN(lastSyncAt) ? lastSyncAt : null,
+                  now: Date.now(),
+                });
+                if (!gate.allowed) {
+                  logInfo(`[SW] 跳过本次自动下载（${gate.reason}）`);
+                  sendResponse({ ok: false, error: 'auto_sync_throttled' });
+                  return;
+                }
+              } catch (err) {
+                // 闸门读失败 ⇒ **放行**（不因省流量的闸门把同步弄坏）。
+                logWarn('[SW] 读不到自动下载节流判据，本轮放行:', err);
               }
               runSyncOp();
             },

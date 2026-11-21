@@ -49,16 +49,25 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const SRC = join(ROOT, 'src', 'legal', 'privacy.html');
 const OUT_DIR = join(ROOT, 'dist-legal-site');
 const OUT_FILE = join(OUT_DIR, 'privacy.html');
+// 远端同步策略（2026-11-21）：扩展从**这个站**取「多久轮询一次 / 要不要开预览」
+// 等出网配额旋钮。放在这里而不是 Supabase：项目被封禁时策略也得拿得到
+// （那正是最需要调策略的时刻）。字段口径见 src/core/syncPolicy.ts。
+const POLICY_SRC = join(ROOT, 'src', 'legal', 'sync-policy.json');
+const POLICY_OUT = join(OUT_DIR, 'sync-policy.json');
 
 function main() {
   if (!statSync(SRC, { throwIfNoEntry: false })) {
     throw new Error(`源文件不存在：${SRC}`);
+  }
+  if (!statSync(POLICY_SRC, { throwIfNoEntry: false })) {
+    throw new Error(`源文件不存在：${POLICY_SRC}`);
   }
 
   // 每次从零重建 —— 残留的旧文件会以「线上多了一页没人知道」的形式活下来。
   rmSync(OUT_DIR, { recursive: true, force: true });
   mkdirSync(OUT_DIR, { recursive: true });
   copyFileSync(SRC, OUT_FILE);
+  copyFileSync(POLICY_SRC, POLICY_OUT);
 
   // 自检：产物必须与源逐字一致。构建脚本自己出错时应当**构建失败**，
   // 而不是产出一份「看起来有内容、其实不是最新」的东西。
@@ -68,8 +77,29 @@ function main() {
     throw new Error('产物与源文件不一致 —— 构建中止（宁可不部署，也不要部署错的）');
   }
 
+  // 策略文件也自检：必须是**合法 JSON**，且字段名是客户端认得的那几个
+  // （多一个拼错的字段 = 客户端静默忽略 = 「改了配置却没生效」又变成查不出来的事故）。
+  const policyRaw = readFileSync(POLICY_SRC, 'utf8');
+  const policy = JSON.parse(policyRaw);
+  const KNOWN = new Set([
+    'revision',
+    'autoSyncEnabled',
+    'minIntervalMinutes',
+    'idleIntervalMinutes',
+    'idleRoundsBeforeSlowdown',
+    'minAutoDownloadIntervalMinutes',
+    'previewEnabled',
+    'fullDownloadFallbackCooldownMinutes',
+    'jitterSeconds',
+  ]);
+  const unknown = Object.keys(policy).filter((k) => !KNOWN.has(k));
+  if (unknown.length > 0) {
+    throw new Error(`sync-policy.json 有未知字段：${unknown.join(', ')}（客户端会静默忽略它们）`);
+  }
+
   const bytes = Buffer.byteLength(b, 'utf8');
   console.log(`[build-legal-site] ${OUT_FILE} （${bytes} 字节，与 src/legal/privacy.html 逐字一致）`);
+  console.log(`[build-legal-site] ${POLICY_OUT} （远端同步策略，revision=${policy.revision ?? 0}）`);
 }
 
 main();

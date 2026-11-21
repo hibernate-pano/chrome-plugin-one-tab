@@ -27,6 +27,16 @@ import type { UserSettings, User } from '../types/tab';
 import { primeSyncBackend } from '@/sync-backend';
 import { isBackendUnavailableError } from '@/core/backendUnavailable';
 import { backendUnavailableBackgroundNotice } from '@/components/sync/backendUnavailableCopy';
+import {
+  DEFAULT_SYNC_POLICY,
+  decidePollInterval,
+  type SyncPolicy,
+} from '@/core/syncPolicy';
+import {
+  getIdleRounds,
+  noteSyncRound,
+  readEffectiveSyncPolicy,
+} from '@/services/syncPolicyRuntime';
 
 /**
  * 后台定时同步（chrome.alarms 驱动，Service Worker 常驻时每 60s 触发）。
@@ -355,6 +365,52 @@ function rescheduleAlarm(delayMinutes: number, periodMinutes: number): void {
 }
 
 /**
+ * 读同步策略（读失败 ⇒ 默认策略）。
+ *
+ * ⚠️ 策略读不到**不能**当成「停同步」：那会把一次网络抖动变成静默停摆。
+ * 反过来也不能当成「无限速」：默认策略本身就是保守的（见 core/syncPolicy.ts）。
+ */
+const readPolicyOrDefault = async (): Promise<SyncPolicy> => {
+  try {
+    return await readEffectiveSyncPolicy();
+  } catch (err) {
+    logWarn('[BackgroundSync] 读不到同步策略，按默认策略走:', err);
+    return { ...DEFAULT_SYNC_POLICY };
+  }
+};
+
+/**
+ * 下一轮的周期与延迟：热档 / 空闲档 + 抖动。
+ *
+ * ⚠️ 抖动的方向：**只加在延迟上，周期不变**。理由：抖动是为了把「同一分钟
+ * 起 alarm 的一批设备」摊开（消灭尖峰），而周期是长期节奏（用户选的档位或
+ * 空闲档）—— 抖动周期会让节奏本身漂移。
+ */
+const computeNextSchedule = async (
+  userIntervalMinutes: number,
+): Promise<{
+  periodMinutes: number;
+  delayMinutes: number;
+  cold: boolean;
+  policy: SyncPolicy;
+}> => {
+  const policy = await readPolicyOrDefault();
+  const idleRounds = await getIdleRounds();
+  const decision = decidePollInterval({
+    userIntervalMinutes,
+    policy,
+    consecutiveIdleRounds: idleRounds,
+  });
+  const jitterMinutes = policy.jitterSeconds > 0 ? Math.random() * (policy.jitterSeconds / 60) : 0;
+  return {
+    periodMinutes: decision.periodMinutes,
+    delayMinutes: decision.periodMinutes + jitterMinutes,
+    cold: decision.cold,
+    policy,
+  };
+};
+
+/**
  * 注册后台同步 alarm。在 service-worker 启动时调用一次。
  *
  * ── 2026-10-11（1.23.0）：先读配置再决定建不建 alarm ───────────────────
@@ -400,26 +456,44 @@ export function setupBackgroundSync(): void {
       logInfo('[BackgroundSync] 自动同步已关闭，不注册后台 alarm（打开 popup 不会自动拉取，点「同步」手动获取）');
       return;
     }
+    // ── 2026-11-21：远程策略总闸（止血旋钮）────────────────────────────
+    // 策略由**开发者**控制（远端 JSON），不是用户设置。存在的理由：出网配额是
+    // **项目级共享**的 ⇒ 逼近上限时必须能「不发版就停下来」。
+    //
+    // ⚠️ 它只停**自动**轮询：手动同步（popup 的按钮）完全不受影响 ——
+    // 用户显式的动作不该被一道后台策略否掉。
+    const policy = await readPolicyOrDefault();
+    if (!policy.autoSyncEnabled) {
+      await chrome.alarms.clear(SYNC_ALARM).catch(() => undefined);
+      logInfo(
+        '[BackgroundSync] 远程策略已停用自动同步，不注册后台 alarm（手动同步仍可用）',
+      );
+      return;
+    }
+    const schedule = await computeNextSchedule(cfg.intervalMinutes);
     let state: BackoffState;
     try {
       state = await readBackoffState(backoffKv);
     } catch (err) {
       // 读不到退避状态不该阻止同步（退避只是省流量）→ 保持已排好的正常节奏。
       logWarn('[BackgroundSync] 读不到退避状态，保持正常周期:', err);
-      rescheduleAlarm(cfg.intervalMinutes, cfg.intervalMinutes);
+      rescheduleAlarm(schedule.delayMinutes, schedule.periodMinutes);
       return;
     }
     if (state.consecutiveFailures === 0) {
       // 未处于退避：清掉可能残留的键（跨过完整退避窗口且期间无失败 ⇒ 已恢复）。
       await recordSyncSuccess(backoffKv, Date.now()).catch(() => undefined);
-      rescheduleAlarm(cfg.intervalMinutes, cfg.intervalMinutes);
-      logInfo(`[BackgroundSync] 已注册后台同步 alarm（每 ${cfg.intervalMinutes} 分钟）`);
+      rescheduleAlarm(schedule.delayMinutes, schedule.periodMinutes);
+      logInfo(
+        `[BackgroundSync] 已注册后台同步 alarm（每 ${schedule.periodMinutes} 分钟` +
+          `${schedule.cold ? '，空闲档' : ''}）`,
+      );
       return;
     }
     const waitMs = state.nextAllowedAt - Date.now();
     if (waitMs > 0) {
       const delayMinutes = Math.max(1, Math.ceil(waitMs / 60_000));
-      rescheduleAlarm(delayMinutes, cfg.intervalMinutes);
+      rescheduleAlarm(delayMinutes, schedule.periodMinutes);
       logInfo(
         `[BackgroundSync] 已注册后台同步 alarm（退避中：连续失败 ${state.consecutiveFailures} 次，` +
           `${delayMinutes} 分钟后重试）`
@@ -427,8 +501,8 @@ export function setupBackgroundSync(): void {
     } else {
       // 退避窗口已过但计数还在（如 SW 曾被杀）→ 复位，让本轮正常跑并在成功后再清。
       await recordSyncSuccess(backoffKv, Date.now()).catch(() => undefined);
-      rescheduleAlarm(cfg.intervalMinutes, cfg.intervalMinutes);
-      logInfo(`[BackgroundSync] 退避窗口已过，退避复位（每 ${cfg.intervalMinutes} 分钟）`);
+      rescheduleAlarm(schedule.delayMinutes, schedule.periodMinutes);
+      logInfo(`[BackgroundSync] 退避窗口已过，退避复位（每 ${schedule.periodMinutes} 分钟）`);
     }
   })();
 }
@@ -501,6 +575,18 @@ async function handleAlarm(alarm: chrome.alarms.Alarm): Promise<void> {
       logInfo('[BackgroundSync] 自动同步已关闭，本轮跳过并清除 alarm');
       return;
     }
+    // ── 2026-11-21：远程策略总闸（每轮重读）────────────────────────────
+    // 每轮重读的理由与「每轮重读自动同步配置」同源：策略是**外部可变**的，
+    // 而 alarm 可能几天才触发一次 ⇒ 只在 SW 启动时读一次 = 策略改了几天才生效。
+    // 代价是每轮一次策略读（本地 KV 命中 ⇒ 零网络；缓存过期才拉一次远端）。
+    const policy = await readPolicyOrDefault();
+    if (!policy.autoSyncEnabled) {
+      await chrome.alarms.clear(SYNC_ALARM).catch(() => undefined);
+      logInfo('[BackgroundSync] 远程策略已停用自动同步，本轮跳过并清除 alarm（手动同步仍可用）');
+      return;
+    }
+    // 下一轮的周期：热档 / 空闲档 + 抖动（判据在 core/syncPolicy.ts）。
+    const schedule = await computeNextSchedule(cfg.intervalMinutes);
     const state = await readBackoffState(backoffKv);
     if (shouldSkipDueToBackoff(state, Date.now())) {
       const waitMs = state.nextAllowedAt - Date.now();
@@ -513,6 +599,18 @@ async function handleAlarm(alarm: chrome.alarms.Alarm): Promise<void> {
     }
     const outcome = await performBackgroundSync();
     if (outcome.ok) {
+      // ── 2026-11-21：空闲轮计数（热档 / 空闲档的判据）────────────────────
+      // 有变更（本地传了或云端变了）⇒ 归零（热档）；无变更 ⇒ +1（往空闲档走）。
+      // ⚠️ 只在 kind='done'（真的跑完一轮）时记：让路/未登录那几档**没有**任何
+      // 「云端变没变」的信息，拿它们去计空闲会把间隔算错。
+      if (outcome.kind === 'done') {
+        const idle = await noteSyncRound(outcome.hadChanges === true);
+        logInfo(
+          `[BackgroundSync] 空闲轮计数：${idle}（${
+            outcome.hadChanges === true ? '本轮有变更' : '本轮无变更'
+          }）`,
+        );
+      }
       const before = state.consecutiveFailures;
       await recordSyncSuccess(backoffKv, Date.now());
       if (outcome.locked) {
@@ -533,10 +631,10 @@ async function handleAlarm(alarm: chrome.alarms.Alarm): Promise<void> {
         // 注意：这里不会走到下面的 recordSyncFailure，更不会走到
         // isBackoffExhausted 的清 alarm 分支。
         await notifyLockedBackendOnce();
-        rescheduleAlarm(cfg.intervalMinutes, cfg.intervalMinutes);
+        rescheduleAlarm(schedule.delayMinutes, schedule.periodMinutes);
         logInfo(
           `[BackgroundSync] 未配置/未解锁云盘，本轮让路（不进退避、不清 alarm，` +
-            `保持 ${cfg.intervalMinutes} 分钟节奏）: ${outcome.detail}`
+            `保持 ${schedule.periodMinutes} 分钟节奏）: ${outcome.detail}`
         );
       } else if (before > 0) {
         // 真正跑通一轮（done）才有资格清掉「未配置已提醒」标志：
@@ -549,8 +647,8 @@ async function handleAlarm(alarm: chrome.alarms.Alarm): Promise<void> {
           // 「封禁 → 恢复 → 再封禁」要重新提醒一次，而不是被第一次永久静默。
           await backoffKv.remove(BACKEND_UNAVAILABLE_NOTICE_KEY).catch(() => undefined);
         }
-        logInfo(`[BackgroundSync] 同步成功，退避复位（此前连续失败 ${before} 次）→ 回到 ${cfg.intervalMinutes} 分钟节奏`);
-        rescheduleAlarm(cfg.intervalMinutes, cfg.intervalMinutes);
+        logInfo(`[BackgroundSync] 同步成功，退避复位（此前连续失败 ${before} 次）→ 回到 ${schedule.periodMinutes} 分钟节奏`);
+        rescheduleAlarm(schedule.delayMinutes, schedule.periodMinutes);
       } else {
         if (outcome.kind === 'done') {
           await backoffKv.remove(LOCKED_BACKEND_NOTICE_KEY).catch(() => undefined);
@@ -573,7 +671,7 @@ async function handleAlarm(alarm: chrome.alarms.Alarm): Promise<void> {
       // **alarm 保持存活**。
       if (outcome.backendUnavailable) {
         await notifyBackendUnavailableOnce();
-        rescheduleAlarm(BACKEND_UNAVAILABLE_RETRY_MINUTES, cfg.intervalMinutes);
+        rescheduleAlarm(BACKEND_UNAVAILABLE_RETRY_MINUTES, schedule.periodMinutes);
         logWarn(
           `[BackgroundSync] 云端项目不可用（${outcome.detail}）：本轮不计入退避阶梯，` +
             `下次重试间隔拉长到 ${BACKEND_UNAVAILABLE_RETRY_MINUTES} 分钟（重试无用，` +
@@ -594,7 +692,7 @@ async function handleAlarm(alarm: chrome.alarms.Alarm): Promise<void> {
           `[BackgroundSync] 同步失败（${outcome.detail}），第 ${next.consecutiveFailures} 次：` +
             `下次重试间隔 ${minutes} 分钟`
         );
-        rescheduleAlarm(minutes, cfg.intervalMinutes);
+        rescheduleAlarm(minutes, schedule.periodMinutes);
       }
     }
   } catch (err) {
@@ -715,6 +813,14 @@ export interface BackgroundSyncOutcome {
    * 而这里要的是「别再试了，等我们恢复」。
    */
   backendUnavailable?: boolean;
+  /**
+   * 本轮**是否发生过变更**（本地传了东西，或云端有变化）。
+   *
+   * 用途：空闲轮计数（热档 / 空闲档，见 core/syncPolicy.ts 的 decidePollInterval）。
+   * ⚠️ 只有 kind='done' 的轮次才有这个信息 —— 让路/未登录那几档压根没问过
+   * 云端，拿它们去计空闲会把间隔算错（于是「什么都没跑」被当成「云端很安静」）。
+   */
+  hadChanges?: boolean;
 }
 
 async function performBackgroundSync(): Promise<BackgroundSyncOutcome> {
@@ -841,6 +947,9 @@ async function performBackgroundSync(): Promise<BackgroundSyncOutcome> {
   // alarm 起来时会先上传。forcePending=true 跳过 isSyncing 短路。
   // 上传失败（网络断等）则中止本次下载：拉下来的只会是云端旧数据，
   // 会覆盖本地未推送的新状态（复活）。pending flag 已保留，下轮重试。
+  //
+  // ⚠️ hadLocalUpload：这一轮**真的改了云端** ⇒ 空闲轮计数必须归零。
+  let hadLocalUpload = false;
   try {
     const hasPending = await syncEngine.hasPendingUpload();
     if (hasPending) {
@@ -884,6 +993,8 @@ async function performBackgroundSync(): Promise<BackgroundSyncOutcome> {
         // 修复前这里 return true（当成功），于是「上传一直失败」会每 60s 无限重试。
         return { ok: false, kind: 'failed', detail: `上传未成功: ${upResult.error ?? 'unknown'}` };
       }
+      // 本轮真的写了云端 ⇒ 空闲轮计数归零（云端不是"安静"的）。
+      hadLocalUpload = true;
     }
   } catch (e) {
     // ── 2026-10-05：判据读不到时**中止本轮**，不再继续下载 ──────────────
@@ -943,9 +1054,19 @@ async function performBackgroundSync(): Promise<BackgroundSyncOutcome> {
       };
     }
     // already_syncing / recent_upload_guard / pending_upload_failed 属正常并发或保护性跳过，
-    // **不算故障**（上轮刚上传过、下轮就正常跑），不进退避。
+    // **不算故障**（上轮刚上传过、下轮就正常跑）。
     // up_to_date 走的是 success 分支（见 syncEngine 的探活短路）。
-    if (reason === 'already_syncing' || reason === 'recent_upload_guard' || reason === 'pending_upload_failed') {
+    //
+    // ⚠️ probe_backoff（2026-11-21）：指纹失败且处于**全量回退冷却期** ⇒
+    // 本轮刻意不下载。它**不是故障**：故障会去推进退避阶梯（1/2/5 分钟），
+    // 而这里要的是「下轮再问一次指纹」—— 退避阶梯恰好也是这个意思，
+    // 但 8 次后清 alarm 那条路会让自动同步静默停摆 ⇒ 所以它归「让路」。
+    if (
+      reason === 'already_syncing' ||
+      reason === 'recent_upload_guard' ||
+      reason === 'pending_upload_failed' ||
+      reason === 'probe_backoff'
+    ) {
       logInfo(`[BackgroundSync] 自动下载按保护性规则跳过: ${reason}（非故障，不进退避）`);
       return { ok: true, kind: 'yielded', detail: `下载按保护性规则跳过: ${reason}` };
     }
@@ -990,5 +1111,15 @@ async function performBackgroundSync(): Promise<BackgroundSyncOutcome> {
       logWarn('[BackgroundSync] 登记冲突提示失败（不影响同步结果）:', e);
     }
   }
-  return { ok: true, kind: 'done', detail: `同步完成: ${result.groups.length} 个组${summary}` };
+  return {
+    ok: true,
+    kind: 'done',
+    detail: `同步完成: ${result.groups.length} 个组${summary}`,
+    // 本轮有变更吗？= 本地传了东西 **或** 云端探活判「有变化」。
+    // ⚠️ `result.upToDate !== true` 而不是 `result.upToDate === false`：
+    // MergeResult 的 upToDate 是可选字段（合并完成的那条路根本没设它），
+    // 写成 `=== false` 会把「合并完成」误判成「无变更」⇒ 空闲计数永远归零
+    // ⇒ 空闲档永远进不去（那等于这个功能白做）。
+    hadChanges: hadLocalUpload || result.upToDate !== true,
+  };
 }

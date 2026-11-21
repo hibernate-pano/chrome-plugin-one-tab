@@ -121,6 +121,23 @@ export const STORAGE_KEYS = {
   // 后台合并多发生在 SW（popup 通常没开），toast 立即消失，所以落盘等用户
   // 下次打开 popup 时读展示、展示后即清。值有上限（groups 截 20 条）防膨胀。
   PENDING_CONFLICT_NOTICE: 'pending_conflict_notice',
+  // ── 2026-11-21 同步策略（出网配额止血）────────────────────────────────────
+  // 这三样都是**设备本地的事实**，不是用户数据，也不是云端状态：
+  //   · SYNC_POLICY_CACHE：远端策略的缓存（形状与默认值见 @/core/syncPolicy）。
+  //   · SYNC_IDLE_ROUNDS：连续多少轮探活判「云端无变更」⇒ 决定轮询走热档还是空闲档。
+  //   · LAST_FULL_DOWNLOAD_AT：上次**整库下载**的时刻 ⇒ 指纹失败时的全量回退冷却基准。
+  //
+  // ⚠️ 为什么它们进键表（而不是像水位那样"故意不进"）：
+  // 它们**不是**按账号寻址的推导量（水位是），也**不承载**任何用户内容
+  // ⇒ 换账号时带着走没有语义危害（最坏是"这台机器还在用旧策略"，无害）；
+  // 而放进键表的好处是：storage.clear()（清除本地数据）会把它们一起清掉
+  // ⇒ 清完数据的机器不会带着"我空闲 999 轮"这种状态复活。
+  SYNC_POLICY_CACHE: 'sync_policy_cache',
+  SYNC_IDLE_ROUNDS: 'sync_idle_rounds',
+  LAST_FULL_DOWNLOAD_AT: 'last_full_download_at',
+  // 上次「云端墓碑 TTL 清理」的时刻 ⇒ 清理是 30 天粒度的，不需要每次上传都做
+  // （每次都做 = 每次上传多一次会话读 + 一次 SELECT）。
+  LAST_PURGE_AT: 'last_purge_at',
   // ── 2026-10-10 F2 增量上传 ──────────────────────────────────────────────
   // **为什么这个键不在本文件**（打破「STORAGE_KEYS 是所有落盘键的唯一事实来源」
   // 的惯例，并且这是一次经过论证的打破，不是遗忘）：

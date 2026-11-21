@@ -245,10 +245,16 @@ describe('未配置/未解锁云盘 = 让路（不推进退避；不清 alarm）
       handles.createCalls.length > createsBefore,
       '让路后必须保持 alarm 活着（否则用户配置好也没有任何自动路径救回来）'
     );
-    assert.equal(
-      handles.createCalls.at(-1)?.opts.delayInMinutes,
-      10,
-      '让路必须按用户档位（10 分钟）重排，而不是 1 分钟的退避档'
+    // ⚠️ 2026-11-21：延迟带抖动（只加在延迟上，周期不变）⇒ 不能钉死字面量 10。
+    // 强契约一个字没动：「按用户档位（10 分钟）重排，而不是 1 分钟的退避档」
+    // —— 用**区间**钉：下界 10 排除了退避档，上界是抖动上限。
+    const { DEFAULT_SYNC_POLICY } = await import('@/core/syncPolicy');
+    const maxJitter = DEFAULT_SYNC_POLICY.jitterSeconds / 60;
+    const delay = handles.createCalls.at(-1)?.opts.delayInMinutes;
+    assert.ok(
+      typeof delay === 'number' && delay >= 10 && delay <= 10 + maxJitter,
+      `让路必须按用户档位（10 分钟，含 ≤ ${maxJitter} 分钟抖动）重排，` +
+        `而不是 1 分钟的退避档（实际 delay=${delay}）`
     );
     assert.equal(
       clearedSyncAlarms(),
@@ -287,10 +293,13 @@ describe('未配置/未解锁云盘 = 让路（不推进退避；不清 alarm）
       handles.createCalls.length > createsBefore,
       '按用户档位把 alarm 排下去（不是停摆）'
     );
-    assert.equal(
-      handles.createCalls.at(-1)?.opts.delayInMinutes,
-      10,
-      'delay = 用户档位 10 分钟'
+    // 同上：延迟带抖动 ⇒ 用区间钉（下界 10 排除退避档）。
+    const { DEFAULT_SYNC_POLICY } = await import('@/core/syncPolicy');
+    const maxJitter = DEFAULT_SYNC_POLICY.jitterSeconds / 60;
+    const delay = handles.createCalls.at(-1)?.opts.delayInMinutes;
+    assert.ok(
+      typeof delay === 'number' && delay >= 10 && delay <= 10 + maxJitter,
+      `delay = 用户档位 10 分钟（含 ≤ ${maxJitter} 分钟抖动），实际 delay=${delay}`
     );
   });
 });

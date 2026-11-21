@@ -173,7 +173,9 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
                 res.error !== 'already_syncing' &&
                 res.error !== 'recent_upload_guard' &&
                 res.error !== 'pending_upload_failed' &&
-                res.error !== 'auto_sync_disabled'
+                res.error !== 'auto_sync_disabled' &&
+                // 2026-11-21：自动下载被「最小间隔」节流（省流量）—— 稳态，不是故障。
+                res.error !== 'auto_sync_throttled'
               ) {
                 // ── 2026-10-11（1.23.0）：auto_sync_disabled 是稳态，不是故障 ──
                 // 用户关了自动同步，SW 侧门禁拦下本轮自动下载。白名单静默它

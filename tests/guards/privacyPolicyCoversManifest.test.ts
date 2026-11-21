@@ -343,13 +343,23 @@ describe('L-13c 在线判据的检测力本身必须被验证（离线，用真�
  * ⇒ 「仓库 → 线上」这段接缝上，需要有东西守着「部署产物是什么」。
  * 本段**真的跑一遍** scripts/build-legal-site.mjs，然后断言：
  *   ① 产物里的 privacy.html 与 src/legal/privacy.html **逐字一致**；
- *   ② 产物里**只有**这一个文件（多出来的文件 = 线上多了一页没人知道）。
+ *   ② 产物里的文件集合 == src/legal/ 里的文件集合（**一个不多、一个不少**）。
+ *
+ * 【为什么 ② 不是写死 ['privacy.html']】——2026-11-21 扩了远端同步策略文件
+ * （sync-policy.json，与隐私政策同站托管）⇒ 写死的清单会立刻变红。
+ * 但**不能**因此把断言删掉或改成「包含 privacy.html 即可」：那会让
+ * 「扩展构建产物（dist/）被一起发布上去」重新变成无人报警（正是 2026-10-21
+ * 线上 404 的形状）。
+ * ⇒ 改成「产物 == src/legal/ 的逐字拷贝」：**期望值从源目录推导**，
+ *   新增法务产物时守卫自动跟上，而任何**不在源目录里**的文件（dist/ 的
+ *   manifest.json、popup.html……）仍然会被判红。
  *
  * 【为什么能离线跑】不碰网络、不碰 Vercel —— 只跑本地构建脚本。
  * 于是「构建脚本写错了」在 CI 里就会变红，而不是等下一次部署才发现线上是错的。
  */
 describe('L-13d 部署产物必须与仓库逐字一致（离线：真的跑一遍构建脚本）', () => {
   const OUT_DIR = resolve(ROOT, 'dist-legal-site');
+  const SRC_DIR = resolve(ROOT, 'src', 'legal');
 
   it('跑一遍构建脚本，产物必须与 src/legal/privacy.html 逐字一致', () => {
     // 用子进程跑，而不是 import —— 脚本里有顶层副作用（重建产物目录），
@@ -373,20 +383,40 @@ describe('L-13d 部署产物必须与仓库逐字一致（离线：真的跑一�
     );
   });
 
-  it('部署产物里**只有** privacy.html（多出来的文件 = 线上多了一页没人知道）', () => {
+  it('部署产物 == src/legal/ 的逐字拷贝（一个不多、一个不少）', () => {
     // 先确保产物存在（上一条已经跑过脚本；这里再跑一次以免依赖测试顺序）
     spawnSync(process.execPath, [resolve(ROOT, 'scripts/build-legal-site.mjs')], {
       cwd: ROOT,
       encoding: 'utf8',
     });
     const files = readdirSync(OUT_DIR).sort();
+    // 期望值从**源目录**推导，而不是写死清单：新增法务产物时守卫自动跟上，
+    // 而任何不在源目录里的文件（扩展构建产物）仍然判红。
+    const expected = readdirSync(SRC_DIR).sort();
     assert.deepEqual(
       files,
-      ['privacy.html'],
-      `部署产物里应当只有 privacy.html，实际是：${files.join('、')} —— ` +
+      expected,
+      `部署产物应当是 src/legal/ 的逐字拷贝（${expected.join('、')}），` +
+        `实际是：${files.join('、')} —— ` +
         '多出来的文件会被一起发布到线上（审核员看得到），' +
-        '而扩展的构建产物（manifest.json / popup.html）绝不该出现在这里。'
+        '而扩展的构建产物（manifest.json / popup.html）绝不该出现在这里；' +
+        '少掉的文件则是线上会 404（商店登记的隐私政策 URL 就是打不开的链接）。'
     );
+  });
+
+  it('扩展构建产物绝不能出现在法务站点产物里（2026-10-21 线上 404 的形状）', () => {
+    spawnSync(process.execPath, [resolve(ROOT, 'scripts/build-legal-site.mjs')], {
+      cwd: ROOT,
+      encoding: 'utf8',
+    });
+    const files = readdirSync(OUT_DIR);
+    for (const leaked of ['manifest.json', 'popup.html', 'service-worker.js', 'options.html']) {
+      assert.ok(
+        !files.includes(leaked),
+        `产物里出现了扩展构建产物「${leaked}」—— 线上会把它当网站文件公开挂着` +
+          '（2026-10-21 就是这么发生的：自动部署服务的是 dist/，商店的隐私政策链接直接 404）。'
+      );
+    }
   });
 
   it('vercel.json 必须指向这个构建脚本（否则线上服务的是别的东西）', () => {

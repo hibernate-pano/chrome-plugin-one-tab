@@ -22,6 +22,13 @@
 // 「恒返回 10」的实现也能全绿 —— 那等于把四档功能整个废掉。
 import { describe, it, before, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
+import { DEFAULT_SYNC_POLICY } from '@/core/syncPolicy';
+
+/**
+ * 抖动的上限（分钟）—— 2026-11-21 起，alarm 的**首次延迟**允许带抖动。
+ * 抖动只加在延迟上，周期不变（见 src/core/syncPolicy.ts）。
+ */
+const MAX_JITTER_MINUTES = DEFAULT_SYNC_POLICY.jitterSeconds / 60;
 import { register } from 'node:module';
 import { pathToFileURL, fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
@@ -217,7 +224,18 @@ describe('B. 开启 + 四档：按用户档位建周期 alarm', () => {
       assert.equal(createCalls[0].name, SYNC_ALARM);
       assert.equal(createCalls[0].opts.periodInMinutes, minutes,
         `周期必须等于用户档位 ${minutes}（E 旧契约：不再是写死的 1）`);
-      assert.equal(createCalls[0].opts.delayInMinutes, minutes, '首次触发按同档位排');
+      // ── 2026-11-21：首次触发的**延迟**允许带抖动 ──────────────────────────
+      // 抖动的用途：所有设备的 alarm 都是自己起的 ⇒ 不抖的话同一分钟会有一批
+      // 设备同时打过来（尖峰）⇒ 抖动把「第一次触发」也摊开（装机/升级那一刻
+      // 尤其对齐）。
+      //
+      // ⚠️ 契约被改的是**延迟**，不是周期：周期仍必须逐字等于用户档位
+      // （上面那条断言才是这个守卫的主契约）。
+      const delay = createCalls[0].opts.delayInMinutes;
+      assert.ok(typeof delay === 'number' && delay >= minutes,
+        `首次触发不得早于档位 ${minutes}（实测 ${delay}）`);
+      assert.ok(typeof delay === 'number' && delay <= minutes + MAX_JITTER_MINUTES,
+        `首次触发的抖动不得超过 ${MAX_JITTER_MINUTES} 分钟（实测 ${delay}）`);
     });
   }
 

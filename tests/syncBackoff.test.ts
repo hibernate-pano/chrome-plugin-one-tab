@@ -219,7 +219,11 @@ describe('F3 · 让路不算失败（回归：不能把「有任务在途」推�
     const failureAt = body.indexOf('recordSyncFailure');
     assert.ok(successAt !== -1 && failureAt !== -1);
     assert.ok(successAt < failureAt, '成功分支（复位）必须排在失败分支之前');
-    assert.match(body, /if \(outcome\.ok\) \{\s*const before = state\.consecutiveFailures;\s*await recordSyncSuccess\(/,
+    // ⚠️ 2026-11-21：成功分支里插入了「空闲轮计数」块（热档/空闲档的判据），
+    // 于是「`if (outcome.ok) {` 紧接着 `const before = …`」这个**写法**不再成立。
+    // 钉的仍然是**语义**：成功分支里必须调 recordSyncSuccess（复位），
+    // 顺序断言（successAt < failureAt）一个字没动。
+    assert.match(body, /if \(outcome\.ok\) \{[\s\S]{0,800}?const before = state\.consecutiveFailures;[\s\S]{0,200}?await recordSyncSuccess\(/,
       '成功 → recordSyncSuccess（复位）');
     // ⚠️ 2026-10-22：这里原先用 `/\} else \{\s*const next = await recordSyncFailure\(/`
     // —— 它要求 recordSyncFailure 是 else 块的**第一句**。那是钉写法、不钉语义：
@@ -310,8 +314,17 @@ describe('F3 · 结构层：退避必须活过 SW 回收（不得依赖内存计
     assert.match(body, /alarms\.clear\(SYNC_ALARM\)/, '关态必须清掉可能残留的孤儿 alarm');
 
     // 3) 开态按档位注册（不得写死 1 分钟）
-    assert.match(body, /rescheduleAlarm\(cfg\.intervalMinutes, cfg\.intervalMinutes\)/,
-      '开态必须按用户档位注册（周期与首次 delay 同档位）');
+    //
+    // ⚠️ 2026-11-21：周期不再由「把 cfg.intervalMinutes 直接传给 rescheduleAlarm」表达 ——
+    // 中间多了一层 computeNextSchedule（热档/空闲档 + 抖动）。
+    // ⇒ 「**周期 = 用户档位**」这件事现在由 computeNextSchedule(cfg.intervalMinutes) 承担，
+    //   而它的**行为**契约由 tests/autoSyncDefaultOff.test.ts 钉住
+    //   （periodInMinutes === 用户档位那条强断言一个字没动）；
+    //   这里只钉结构：周期来自用户档位、不得写死常量。
+    assert.match(body, /computeNextSchedule\(cfg\.intervalMinutes\)/,
+      '开态必须按用户档位计算下一轮周期（周期取用户档位，延迟另加抖动）');
+    assert.match(body, /rescheduleAlarm\(schedule\.delayMinutes, schedule\.periodMinutes\)/,
+      '重排必须用算出来的周期与延迟（周期 = 用户档位或空闲档，不得写死常量）');
     assert.doesNotMatch(body, /rescheduleAlarm\(NORMAL_INTERVAL_MINUTES\)/,
       'setup 路径不得写死 1 分钟');
   });

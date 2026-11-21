@@ -55,6 +55,15 @@ import {
   decidePendingAfterRegistryConsume,
 } from '@/core/uploadCoverage';
 import { checkDeleteFailsafe, type FailsafeVerdict } from '@/core/deleteFailsafe';
+import { decideFullDownloadFallback } from '@/core/syncPolicy';
+import {
+  getLastFullDownloadAt,
+  getLastPurgeAt,
+  markFullDownloadDone,
+  markPurgeDone,
+  PURGE_THROTTLE_MS,
+  readEffectiveSyncPolicy,
+} from '@/services/syncPolicyRuntime';
 // 覆盖下载的删除计划（DS-2）：这次覆盖会物理清除本机哪些会话。
 // 纯函数、判据只有一份（闸门与熔断用的是同一个函数）。
 import { planOverwriteDeletion } from '@/core/overwriteGuard';
@@ -858,6 +867,29 @@ export class SyncEngine {
               `本地即可代表 ${delta.coveredByLocalIds.length} 行、墓碑 ${delta.tombstones.length} 行`
           );
         } catch (err) {
+          // ── 2026-11-21：全量回退的**冷却闸** ──────────────────────────────
+          // 指纹失败 ⇒ 回退整库下载。**一次**抖动多下一次整库可以接受；
+          // **持续**失败（schema 漂移 / count 交叉校验一直不过 / 列探测报错）
+          // 就是每轮整库 ⇒ 单设备出网量 ×8 ⇒ 这正是配额被打穿的形状之一。
+          //
+          // ⇒ 冷却期内**不再回退**：本轮放弃，等指纹自己好。
+          // 放弃的代价：远端变更晚一点到（下一轮探活成功就补上）——
+          // 与「配额被打穿 ⇒ 整个项目对所有用户不可用」相比，这是小代价。
+          const fallback = decideFullDownloadFallback({
+            policy: await readEffectiveSyncPolicy(),
+            lastFullDownloadAt: await getLastFullDownloadAt(),
+            now: Date.now(),
+            isFirstSync: snapshot.length === 0,
+            forceRemote: !!opts?.forceRemote,
+          });
+          if (!fallback.allowed) {
+            logWarn(
+              `[SyncEngine] 指纹探活失败，且处于全量回退冷却期 ⇒ 本轮放弃（不回退整库）: ` +
+                `${err instanceof Error ? err.message : String(err)}（${fallback.reason}）`,
+            );
+            this.isSyncing = false;
+            return { success: false, groups: [], reason: 'probe_backoff' };
+          }
           logWarn('[SyncEngine] 指纹探活失败，走全量下载:', err);
           delta = null;
         }
@@ -919,6 +951,8 @@ export class SyncEngine {
         const full = await downloadGroupsWithSkipped();
         cloudGroups = full.groups;
         skippedRemote = full.skipped;
+        // 记「刚刚整库拉过一次」⇒ 下次指纹失败时的全量回退进入冷却。
+        await markFullDownloadDone();
       }
       // 后端往返（增量或全量下载）段结束。这是同步轮次里最可能的大头。
       markPhase('remote');
@@ -1781,7 +1815,19 @@ export class SyncEngine {
       // 与旧模型「7 天回收站到期」的复活风险同类，且窗口更长。
       // 失败不阻断上传（下轮再试），TTL 只延迟。
       try {
-        await purgeExpiredCloudTombstones();
+        // ── 2026-11-21：墓碑 TTL 清理节流（每天最多一次）────────────────────
+        // 每次上传都跑「读会话 + SELECT 过期墓碑」⇒ 上传频繁时这是纯开销。
+        // 而 30 天的 TTL 本来就不需要分钟级精度 ⇒ 节流到 24 小时一次。
+        // ⚠️ 清理失败**不**记时刻（否则一次失败会让它 24 小时不再尝试）。
+        const lastPurgeAt = await getLastPurgeAt();
+        const purgeDue =
+          lastPurgeAt == null || Date.now() - lastPurgeAt >= PURGE_THROTTLE_MS;
+        if (purgeDue) {
+          await purgeExpiredCloudTombstones();
+          await markPurgeDone();
+        } else {
+          logInfo('[SyncEngine] 距上次云端墓碑 TTL 清理不到 24 小时，本轮跳过');
+        }
       } catch (err) {
         logWarn('[SyncEngine] 云端墓碑 TTL 清理失败（下轮上传重试）:', err);
       }

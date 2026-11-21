@@ -30,6 +30,8 @@ import { storage } from '@/utils/storage';
 import { downloadGroupsWithSkipped } from '@/services/downloadWithSkippedGroups';
 import { buildDownloadPreviewSummary, buildUploadPreviewSummary } from '@/utils/syncPreview';
 import type { SyncPreviewSummary } from '@/utils/syncPreview';
+import { decidePreview } from '@/core/syncPolicy';
+import { readEffectiveSyncPolicy } from '@/services/syncPolicyRuntime';
 
 /** 上传预览的数据。 */
 export interface UploadPreviewData {
@@ -59,6 +61,28 @@ const readRemoteWithSkips = async () => {
 };
 
 /**
+ * 预览闸门（2026-11-21）：远端策略可以**停掉预览**。
+ *
+ * ── 为什么预览是省流量的第一目标 ──────────────────────────────────────────
+ * 预览的本质是**整库下载**（把云端每个会话的加密载荷都拉回来算指纹）。
+ * 一次预览 = 一次全量出网（100 组约 100 KB、500 组约 500 KB），
+ * 而后台轮询一轮只要 12.7 KB ⇒ **开一次预览 ≈ 开 8～40 轮后台轮询**。
+ *
+ * ⇒ 当配额逼近上限时，「关掉预览」是最立竿见影的一刀（且不影响后台同步本身）。
+ *
+ * ⚠️ 方向：闸门只挡**预览**（读云端），不挡真正的同步（推拉数据）。
+ * 预览本来就是「破坏性操作前看一眼」的安全闸，停掉它意味着覆盖按钮不可用，
+ * 而合并模式仍可用（SyncButton 那侧已有对应处理：预览失败 ⇒ 覆盖不解锁）。
+ */
+const assertPreviewAllowed = async (): Promise<void> => {
+  const policy = await readEffectiveSyncPolicy();
+  const verdict = decidePreview(policy);
+  if (!verdict.allowed) {
+    throw new Error(verdict.reason);
+  }
+};
+
+/**
  * 上传预览的数据（读真值，不读 30s 缓存）。
  *
  * 为什么必须读真值：这里是**破坏性操作的确认闸门** —— 用户正是核对
@@ -68,6 +92,7 @@ export const loadUploadPreviewData = async (options?: {
   /** 自带存储（WebDAV）的覆盖是「全量上行 + 清单并集」⇒ 云端独有会话一个都不删。 */
   preserveRemoteOnly?: boolean;
 }): Promise<UploadPreviewData> => {
+  await assertPreviewAllowed();
   const [localGroups, remote] = await Promise.all([
     storage.getGroupsForWrite(),
     readRemoteWithSkips(),
@@ -92,6 +117,7 @@ export const loadUploadPreviewData = async (options?: {
  * 算成「保住」而不是「删除」，否则就是**预告与实际相反**（第 51 轮修的缺陷）。
  */
 export const loadDownloadPreviewData = async (): Promise<DownloadPreviewData> => {
+  await assertPreviewAllowed();
   const [localGroups, remote] = await Promise.all([
     storage.getGroupsForWrite(),
     readRemoteWithSkips(),

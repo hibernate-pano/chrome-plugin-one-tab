@@ -172,6 +172,17 @@ describe('S2 键常量单源', () => {
     // 均由 STORAGE_KEYS 全量派生，迁移扫描自动覆盖。
     SYNC_STAMP_LEDGER: 'sync_stamp_ledger',
     PENDING_CONFLICT_NOTICE: 'pending_conflict_notice',
+    // 2026-11-21 同步策略四键（远端策略 + 这台设备的事实）：
+    //   · SYNC_POLICY_CACHE —— 上一次取到的远端策略（读不到时沿用它，不许停同步）。
+    //   · SYNC_IDLE_ROUNDS —— 连续多少轮判「云端无变更」（热档/空闲档的判据）。
+    //   · LAST_FULL_DOWNLOAD_AT —— 上次整库下载的时刻（指纹失败时的全量回退冷却）。
+    //   · LAST_PURGE_AT —— 上次清理 30 天过期墓碑的时刻（清理节流到每天一次）。
+    // ⚠️ 这四样都是**这台设备的事实**（不是账号级数据）⇒ 放 KV 层：
+    //   换设备/换账号时它们自然重置，而 chrome.storage.local 是跨账号共享的。
+    SYNC_POLICY_CACHE: 'sync_policy_cache',
+    SYNC_IDLE_ROUNDS: 'sync_idle_rounds',
+    LAST_FULL_DOWNLOAD_AT: 'last_full_download_at',
+    LAST_PURGE_AT: 'last_purge_at',
   };
 
   it('STORAGE_KEYS 字面值与搬迁前逐字一致', async () => {

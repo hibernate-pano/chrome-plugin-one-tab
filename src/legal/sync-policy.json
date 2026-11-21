@@ -1,0 +1,11 @@
+{
+  "revision": 1,
+  "autoSyncEnabled": true,
+  "minIntervalMinutes": 5,
+  "idleIntervalMinutes": 30,
+  "idleRoundsBeforeSlowdown": 3,
+  "minAutoDownloadIntervalMinutes": 5,
+  "previewEnabled": true,
+  "fullDownloadFallbackCooldownMinutes": 60,
+  "jitterSeconds": 45
+}
