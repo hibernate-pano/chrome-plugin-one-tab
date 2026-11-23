@@ -10,6 +10,7 @@ import {
 } from './src/core/firstScreenPolicy';
 import { vendorChunkFor } from './src/core/chunkingPolicy';
 import { buildWorkerSafePreloadCode } from './src/core/workerSafePreload';
+import { checkSupabaseEnv } from './scripts/lib/supabaseBuildGate.mjs';
 
 // 创建临时 manifest，不包含 service worker
 const tempManifest = {
@@ -97,6 +98,28 @@ function detectScriptRel() {
 export default defineConfig(({ mode }) => {
   // 加载环境变量
   const env = loadEnv(mode, process.cwd());
+
+  // ── 构建期闸门（2026-11-23）：Supabase 配置缺失/形态不对 ⇒ **构建失败** ──
+  //
+  // 【事故背景】1.32.0 上架后所有用户登录报「Supabase 配置缺失」——
+  // `vercel link` 覆盖了 `.env.local`，而 vite 对**缺失的 env 静默放行**
+  // （`import.meta.env.VITE_SUPABASE_URL` → undefined），于是构建照样「成功」，
+  // 出了一个没有云端配置的扩展包，一路走到商店公开页。
+  //
+  // 【为什么必须在这里拦】这道闸是**最早**的拦截点：配置不对就直接构建失败，
+  // 不会产出任何残缺产物 ⇒ 「忘了配」永远走不到打包那一步。
+  // 打包那一步还有第二道闸（package-extension.js：产物里必须真的内联了
+  // Supabase 配置），两道都要 —— 只查配置形态，查不出「配置是桩值」。
+  const envGate = checkSupabaseEnv(env.VITE_SUPABASE_URL, env.VITE_SUPABASE_ANON_KEY);
+  if (!envGate.ok) {
+    throw new Error(
+      '构建中止：Supabase 配置缺失 / 形态不对 / 指向别的项目 —— ' +
+        envGate.problems.join('；') +
+        '\n' +
+        '提示：配置在 .env / .env.local（本仓已 gitignore）或进程环境变量里；' +
+        '别用 `vercel link` 之类会覆盖 .env.local 的命令（它只该写 VERCEL_OIDC_TOKEN）。'
+    );
+  }
 
   return {
     // 生产环境移除 console 与 debugger

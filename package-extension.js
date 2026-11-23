@@ -9,6 +9,7 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { execFileSync } from 'child_process';
+import { checkSupabaseConfigInArtifacts } from './scripts/lib/supabaseBuildGate.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -34,7 +35,7 @@ try {
   const requiredFiles = [
     'manifest.json',
     'icons/icon16.png',
-    'icons/icon48.png', 
+    'icons/icon48.png',
     'icons/icon128.png'
   ];
 
@@ -61,6 +62,40 @@ try {
   };
 
   checkForReservedFiles(DIST_DIR);
+
+  // 4.5 **产物闸门**：产物里必须真的内联了 Supabase 配置，否则**拒绝出包**。
+  //
+  // 【为什么这道闸不是多余的】构建期那道闸（vite.config.ts）查的是**配置形态**，
+  // 它拦不住「配置是桩值/占位符」——那依然是「有值」，构建照样成功。
+  // 而 2026-11-21 的线上事故正是这一类：配置**整段缺失**，
+  // vite 静默放行 ⇒ 产物里既没有项目地址也没有密钥 ⇒ 用户点登录就报
+  // 「Supabase 配置缺失」。
+  // ⇒ 这里直接看**产物本身**：必须能找到**本项目的**地址与完整形态的 key。
+  //   （地址钉死是为了防「连错项目」—— 那种症状是「登录成功但库里什么都没有」，
+  //    比直接报错更难查；地址是公开信息，钉死它不新增任何暴露面。）
+  const artifactTexts = [];
+  const collectArtifactTexts = (dir) => {
+    for (const entry of fs.readdirSync(dir)) {
+      const full = path.join(dir, entry);
+      if (fs.statSync(full).isDirectory()) {
+        collectArtifactTexts(full);
+      } else if (/\.(js|html|json)$/.test(entry)) {
+        artifactTexts.push(fs.readFileSync(full, 'utf8'));
+      }
+    }
+  };
+  collectArtifactTexts(DIST_DIR);
+  const artifactGate = checkSupabaseConfigInArtifacts(artifactTexts);
+  if (!artifactGate.ok) {
+    throw new Error(
+      '拒绝出包：构建产物里没有 Supabase 配置 —— ' +
+        artifactGate.problems.join('；') +
+        '\n' +
+        '（这个包装上去 = 线上用户点登录就报「Supabase 配置缺失」。' +
+        '先修构建期的 .env / .env.local，再重新 pnpm build。）'
+    );
+  }
+  console.log('✅ 产物里已内联 Supabase 配置（登录可用）');
 
   // 5. 创建zip文件
   console.log('🔄 正在创建zip文件...');
