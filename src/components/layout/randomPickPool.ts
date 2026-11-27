@@ -62,7 +62,12 @@ export interface RandomPickContext {
 }
 
 /**
- * 算出抽签池。顺序沿用列表页的管线（搜索相关度 / 会话更新时间倒序）。
+ * 算出抽签池。顺序沿用**当前视图**的列表顺序：
+ * · 搜索 / 筛选模式：相关度降序，同分按会话 `updatedAt` 倒序
+ *   （与 `SearchResultList` 的 `sessionResults` 一致）；
+ * · 主列表模式：`buildBrowseResults` 的插入序（会话数组序 → 组内标签序）。
+ * 顺序不影响抽取概率 —— `pickRandomCandidate` 对每个下标等概率，
+ * 换序只是候选在数组里的位置不同。
  */
 export const buildRandomPickPool = (
   groups: TabGroup[],

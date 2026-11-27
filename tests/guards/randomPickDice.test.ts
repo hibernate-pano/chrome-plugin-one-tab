@@ -35,13 +35,13 @@ const STAMP = '2026-01-01T00:00:00.000Z';
 const tab = (id: string, url: string, title = id): Tab =>
   ({ id, url, title, pinned: false, createdAt: STAMP, lastAccessed: STAMP } as unknown as Tab);
 
-const group = (id: string, tabs: Tab[], isLocked = false): TabGroup =>
+const group = (id: string, tabs: Tab[], isLocked = false, updatedAt = STAMP): TabGroup =>
   ({
     id,
     name: id,
     tabs,
     createdAt: STAMP,
-    updatedAt: STAMP,
+    updatedAt,
     isLocked,
     version: 1,
   } as unknown as TabGroup);
@@ -61,6 +61,19 @@ describe('骰子抽签池：范围跟着列表走', () => {
   it('没有搜索词、没有筛选 ⇒ 全部可打开的标签', () => {
     const pool = buildRandomPickPool(groups, {
       query: '',
+      filters: {},
+      hasActiveFilters: false,
+    });
+    assert.deepEqual(idsOf(pool), ['a', 'b', 'c']);
+  });
+
+  it('纯空白搜索词等同于没有搜索词 ⇒ 主列表全量口径（不截断、不走进搜索）', () => {
+    // 界面判据是 `query.trim()`（resolveSearchViewMode），池子必须同口径：
+    // 少了这层 trim，`'   '` 会被当成有效搜索词 ⇒ AdvancedSearch 内部 trim 后
+    // 直接返回空数组 ⇒ 池子空，而屏幕上仍是完整主列表。
+    // 这条用例就是 `buildRandomPickPool` 里 `context.query.trim()` 的守卫。
+    const pool = buildRandomPickPool(groups, {
+      query: '   ',
       filters: {},
       hasActiveFilters: false,
     });
@@ -115,16 +128,20 @@ describe('骰子抽签池：主列表模式不套渲染窗口', () => {
 
   it('250 个标签、无搜索无筛选 ⇒ 池包含全部 250 条（锁定 / 不可打开仍剔除）', () => {
     // 主列表渲染全部会话（没有 200 条窗口）⇒ 池子也必须是全部。
-    // 分组刻意切成 100 + 100 + 40 + 10：若误套 200 条窗口，前两组刚好用满
-    // 预算 ⇒ 后 50 条被整组丢掉，本用例立刻红。锁定会话放在第二组，
-    // 保证「剔掉锁定」这条断言在误套窗口时也走得到。
+    // 分组刻意切成 100 + 100 + 40 + 10，且各组 `updatedAt` **严格递减**：
+    // 误套窗口时 `buildSessionSearchResults` 的会话序由数据（updatedAt）决定，
+    // 而不是数组插入序 —— s1(100) → locked(1) → s2(100) 已把预算顶过 200，
+    // s3/s4 必然整组被丢掉 ⇒ 本用例红。锁定会话排第二，保证「剔掉锁定」
+    // 这条断言在误套窗口时也走得到。
+    const hoursAgo = (hours: number): string =>
+      new Date(Date.parse(STAMP) - hours * 60 * 60 * 1000).toISOString();
     const groups = [
-      group('s1', many('a', 100)),
-      group('locked', [tab('l0', 'https://example.com/locked/0')], true),
-      group('s2', many('b', 100)),
-      group('s3', many('c', 40)),
-      group('s4', many('d', 10)),
-      group('s5', [tab('f0', 'file:///tmp/paper.pdf')]),
+      group('s1', many('a', 100), false, hoursAgo(1)),
+      group('locked', [tab('l0', 'https://example.com/locked/0')], true, hoursAgo(2)),
+      group('s2', many('b', 100), false, hoursAgo(3)),
+      group('s3', many('c', 40), false, hoursAgo(4)),
+      group('s4', many('d', 10), false, hoursAgo(5)),
+      group('s5', [tab('f0', 'file:///tmp/paper.pdf')], false, hoursAgo(6)),
     ];
     const pool = buildRandomPickPool(groups, { query: '', filters: {}, hasActiveFilters: false });
     const ids = pool.map(c => c.tab.id);
