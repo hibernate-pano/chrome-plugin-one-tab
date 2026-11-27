@@ -8,6 +8,50 @@
 > 长期台账**（含根因、踩坑、修复顺序），不必翻译成英文、不必对齐商店审核口径。
 > 两边都会写「本版改了什么」，但只有本文件会记住「为什么」和「后来怎么验证的」。
 
+## 未发版（2026-11-27，未提审）
+
+**一句话**：v1.33「找回闭环」——忘记密码 / 重置密码（扩展内 6 位验证码）+「最近使用」排序档 + 批量恢复成功提示追加「想反复使用？恢复前先锁定」。
+
+### 为什么做
+
+- 忘记密码此前只能走邮件链接，而 `tapstack-two.vercel.app` 根路径 404、扩展 ID 随安装路径变，链接对开发版用户是死路；验证码全程在扩展内完成，不依赖 Redirect URL 白名单。
+- 排序档「最近活动」算的是 `lastActivityAt`（保存 / 改名 / 锁定 / 增删标签时才变），从来没算过「打开」；旁边再放一档「最近使用」会让用户分不清，所以把它改名「最近修改」，并新增真正的「最近使用」。
+- 批量恢复成功后那批标签已被消费、撤销已下线，用户想反复使用唯一的办法是「恢复前先锁定」——提示里此前没说。
+
+### 改了什么
+
+- 单元 A（`feat/v133-auth-reset` @ `491d2e0`）：`src/utils/supabase/auth.ts`（`resetPasswordForEmail` / `verifyOtp({type:'recovery'})` / `updateUser`）、`src/store/slices/authSlice.ts`（发送 / 校验两个 thunk、OTP 过期与「新旧密码相同」错误映射）、`src/components/auth/AuthModal.tsx`（重置视图 R1→R2→R3，替换页签栏而非第三个页签）、`src/components/auth/LoginForm.tsx`（密码框下「忘记密码？」，命中区 ≥36px）；新增 `tests/passwordReset.test.ts`（44 条）。
+- 单元 B（`feat/v133-sort-toast` @ `1cb37d4`）：`src/core/sessionSort.ts`（第五档 `recentUsed`、`accessed`→「最近修改」）、`src/types/tab.ts`、`src/storage-kv/lastUsedAtStore.ts` + `keys.ts`（本机 `last_used_at`）、`src/components/tabs/*`（时间位前缀、打开动作记账、恢复提示追加）、`src/components/search/*`（最近使用说明行、批量恢复记账）、`src/components/layout/Header.tsx`（骰子记账）、`src/components/onboarding/OnboardingSteps.tsx`（排序卡文案同步五档）；新增 6 个测试文件 61 条 + `sessionSort.test.ts` 47 条。
+- 集成分支 `feat/v1.33-find-loop`：两单元以合并提交并入（A 5 文件 +1557/−47；B 24 文件 +1904/−53）。
+
+### 不动什么
+
+- 不改数据模型、同步协议、删除 / 消费语义、Supabase 生产库（迁移 / RLS）。
+- `lastUsedAt` **只存本机**（独立 KV 键，按会话 id），不进入任何上传 / 合并载荷（反证测试钉住 `buildTabGroupRow` / `encodeGroup` 的序列化结果）。
+- 不改版本号（六处同步留到发版步骤）、`store-assets/`、`CHROMEWEBSTORE.md`。
+
+### 怎么验的
+
+- `pnpm validate` **EXIT 0**（validate-extension → type-check → type-check:tests → lint → lint:tests → build → check:bundle 全链）。
+- `pnpm test` **EXIT 0**：**5288 tests / 5288 pass / 0 fail / 0 skipped / 1265 suites**（集成分支全量）。
+- 两单元各自先自测：A 全量 5218 tests 0 fail；B 全量 5244 tests 0 fail。
+- 关键断言：OTP 错误映射与 thunk 顺序（verify→update）、R1→R2→R3 状态机与逐字文案、五种排序键与 `recentUsed` 兜底、「本机记录不进上传载荷」反证、`removed > 0` 才追加锁定提示。
+
+### 诚实边界
+
+- **真实邮件收码链路未验**：需先在 Supabase 控制台把「重置密码」邮件模板加上 `{{ .Token }}`（6 位验证码变量），否则 R2 收不到码；本版对 Supabase 的调用全部是 mock。
+- 未做浏览器真机走查：重置视图三个状态由单测覆盖，未在真实扩展里逐屏点过。
+- 「最近使用」不跨设备（设计如此，所有文案不承诺）；时间位在 <640px 不显示（既有规则，已知缺口，留 v1.34 单独处理）。
+- 最近使用无记录时卡片不渲染那一格（不写「未使用」，避免对旧会话说假话）。
+
+### 商店状态
+
+`未发版`（版本号未 bump、未打包、未上传；提审与商店文案由项目负责人决定）。
+
+### 版本号同步确认
+
+未 bump：`package.json` 仍 `1.32.1`；六处同步留到发版步骤。
+
 ## v1.32.1（2026-11-23，**已上架**）
 
 > 提审过程（2026-11-23，全部有回包自证）：
