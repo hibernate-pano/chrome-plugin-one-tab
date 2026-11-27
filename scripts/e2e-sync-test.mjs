@@ -8,9 +8,11 @@
  * 运行前需先构建 dist：pnpm build
  * 运行：node scripts/e2e-sync-test.mjs
  *
- * ── 凭据来源（2026-09-29 修）──
- * 收尾清理需要 VITE_SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY：**优先读 process.env，
- * 缺失才回退读 .env / .env.local**（共享 loadEnv）。变量名与 .env 里的一致，没有改。
+ * ── 凭据来源（2026-09-29 修，2026-11-23 再修）──
+ * 收尾清理需要 VITE_SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY。来源**与扩展构建
+ * 一致**（共享 loadEnv）：仓库外的构建配置（~/.config/tapstack/env，权威）
+ * > process.env > 仓库里的 .env。
+ * 2026-11-23：优先级与构建**逐层对齐**（此前 process.env 在最上面）。
  */
 
 import { chromium } from 'playwright';
@@ -63,7 +65,7 @@ async function waitForSessionCount(page, expected) {
   throw new Error(`等待会话数=${expected} 超时`);
 }
 
-/** 清理测试账号及其云端数据（admin 权限直连数据库）。凭据 process.env 优先。*/
+/** 清理测试账号及其云端数据（admin 权限直连数据库）。凭据来源同扩展构建。*/
 async function cleanupTestUser(email) {
   const env = loadEnv({ cwd: PROJECT_ROOT });
   const url = env.VITE_SUPABASE_URL;

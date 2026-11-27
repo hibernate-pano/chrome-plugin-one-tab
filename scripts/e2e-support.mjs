@@ -6,14 +6,22 @@
  * 参数与 node 内置 fs，可以在 node:test 里直测（tests/e2eScriptHelpers.test.ts）。
  *
  * 三件事集中在这里，避免 8 个脚本各抄一份、各错一次：
- *   1. 环境变量解析：process.env 优先，缺失才回退 .env（CI 注入的根因修复）
+ *   1. 环境变量解析：仓库外的构建配置（权威）→ process.env → 仓库里的 .env
+ *      （2026-11-23 起扩展的配置在仓库之外；这条路径与 vite.config.ts 的
+ *        读取路径**逐层对齐** —— 扩展构建与 e2e 必须看到同一个值）
  *   2. 测试账号提取：统一从脚本 stdout 里抓，交给 run-e2e 收尾统一清理
  *   3. 判据 gate：把「打了 PASS/FAIL 日志但退出码永远是 0」的假防线变成真门禁
  */
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { parseEnvText, resolveTapstackEnvPath } from './lib/tapstackEnv.mjs';
 
-/** 回退读取的环境文件，按顺序后者覆盖前者（.env.local 覆盖 .env，与 Vite 一致） */
+/**
+ * 回退读取的环境文件（仓库内，只在仓库外的构建配置与 `process.env` 都没给该键时才生效）。
+ *
+ * 顺序语义不变：仍是「后者覆盖前者」（`.env.local` 覆盖 `.env`，与 vite 一致）。
+ * 改的只是**层与层之间**的次序（见 `loadEnv`）：仓库外配置 > `process.env` > 仓库文件。
+ */
 export const ENV_FILES = ['.env', '.env.local'];
 
 /** 跑 e2e 必需的凭据（匿名 key，公开可读；缺失时不该报出 Supabase 的天书错误码） */
@@ -21,26 +29,6 @@ export const REQUIRED_ENV = ['VITE_SUPABASE_URL', 'VITE_SUPABASE_ANON_KEY'];
 
 /** 清理测试账号用的管理凭据。有它就真删，没有就打印待清理清单（见 run-e2e.mjs） */
 export const SERVICE_ROLE_ENV = 'SUPABASE_SERVICE_ROLE_KEY';
-
-/**
- * 解析 dotenv 文本。
- * 与原先散在 4 个脚本里的手写循环相比只做两处收紧：
- *   - 值两侧的成对引号剥掉（Vite 侧就是这么解析的，留着会让 URL 变成 "https://..."）
- *   - 键名校验放宽到 [A-Za-z_][A-Za-z0-9_]*，不再只认大写
- */
-export function parseDotEnv(text) {
-  const out = {};
-  for (const rawLine of String(text).split(/\r?\n/)) {
-    const line = rawLine.trim();
-    if (!line || line.startsWith('#')) continue;
-    const m = line.match(/^([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$/);
-    if (!m) continue;
-    const value = m[2].trim();
-    const quoted = value.match(/^(['"])(.*)\1$/);
-    out[m[1]] = quoted ? quoted[2] : value;
-  }
-  return out;
-}
 
 /** 读文件：不存在返回 null；存在但读不出来则抛出（读失败 ≠ 没配，不能静默降级） */
 function readFileOrNull(path) {
@@ -53,25 +41,70 @@ function readFileOrNull(path) {
 }
 
 /**
- * 取配置：**process.env 优先**，缺失的键才回退读 .env / .env.local。
+ * 取配置，优先级从高到低：
+ *   1. **仓库外的构建配置**（`TAPSTACK_ENV_FILE` → `~/.config/tapstack/env`）—— **权威**
+ *   2. `process.env`（CI 注入 / shell export）
+ *   3. 仓库里的 `.env` → `.env.local`（历史遗留副本，层内后者覆盖前者）
  *
- * 为什么是这个优先级：密钥来源写死在代码里时，CI 与其他环境无法注入，只能靠
- * 「仓库里恰好有一份 .env」。反过来（.env 覆盖环境变量）会让 CI 静默连错项目。
- * 文件不存在不算错误——CI 只注入环境变量是正常用法。
+ * 为什么是这个优先级（2026-11-23 修正）：
+ *   - **仓库外的构建配置是权威**：它是扩展构建（`vite.config.ts`）读的那一份 ⇒
+ *     e2e 必须读到**同一个值**，否则「e2e 验过的」和「要发出去的」不是同一个东西。
+ *   - 2026-11-23 起扩展的构建配置搬到**仓库之外**（`~/.config/tapstack/env`）——
+ *     仓库根的 `.env.local` 是 `vercel link` 的地盘（1.32.0 事故：它被覆盖 ⇒
+ *     构建照样成功 ⇒ 上架了没有云端配置的包）。⇒ 它排在仓库文件**上面**，
+ *     仓库里那份旧副本只是历史遗留。
+ *   - `process.env` 排在仓库文件**上面**、仓库外配置**下面**（此前它在最上面）：
+ *     构建路径里 `injectViteEnv` 把仓库外配置**写进** process.env ⇒ 构建实际
+ *     以仓库外配置为准；而 vite 的 `loadEnv` 是「文件先、process.env 后（覆盖）」
+ *     ⇒ 环境变量又赢得过仓库文件。两边各赢一层，合起来就是这个次序。
+ *     先前 e2e 把 process.env 放最上面 ⇒ 开发者 `export VITE_SUPABASE_URL=…`
+ *     之后，扩展连文件里的项目、e2e 连 export 的项目 ⇒ **e2e 验的不是要发的东西**。
+ *   - 文件不存在不算错误——CI 只注入环境变量是正常用法。
+ *
+ * ⚠️ 解析**复用** `parseEnvText`（构建侧同一个解析器），不再各写一套：
+ *   先前 e2e 用自己的 `parseDotEnv`，它不认 `export ` 前缀、且**静默丢弃**坏行 ⇒
+ *   同一个配置文件，构建认得出来、e2e 拿到 `undefined`，然后报「请把变量放到
+ *   ~/.config/tapstack/env」——用户明明已经放了。
+ *
+ * @param {{ cwd?: string, processEnv?: Record<string, string | undefined>, files?: string[], readFile?: (path: string) => string | null, configFile?: string }} [options]
  */
 export function loadEnv({
   cwd = process.cwd(),
   processEnv = process.env,
   files = ENV_FILES,
   readFile = readFileOrNull,
+  configFile,
 } = {}) {
   const out = {};
+  // ── 第 1 层：仓库外的构建配置 —— **权威** ──────────────────────────────────
+  // 它是扩展构建（vite.config.ts）读的那一份 ⇒ e2e 必须读到**同一个值**，
+  // 否则「e2e 验过的」和「要发出去的」不是同一个东西。
+  const configPath = configFile ?? resolveTapstackEnvPath({ env: processEnv }).path;
+  const configText = readFile(configPath);
+  if (configText != null) Object.assign(out, parseEnvText(configText).values);
+
+  // ── 第 2 层：process.env ──────────────────────────────────────────────────
+  // 排在仓库文件**上面**、仓库外配置**下面**：
+  //   · vite 的 `loadEnv` 是「文件先写、process.env 后写（覆盖）」⇒ 仓库文件
+  //     永远赢不了环境变量；
+  //   · 但构建路径里 `injectViteEnv` 会把仓库外的配置**写进** process.env ⇒
+  //     构建实际以仓库外配置为准。⇒ 这里照抄同一个次序。
+  for (const [k, v] of Object.entries(processEnv)) {
+    if (v !== undefined && !(k in out)) out[k] = v;
+  }
+
+  // ── 第 3 层：仓库里的 .env / .env.local（历史遗留副本）─────────────────────
+  // 只在上面两层没给该键时才生效；层内仍是「后者覆盖前者」（.env.local 压 .env）。
+  const repoTier = {};
   for (const f of files) {
     const text = readFile(join(cwd, f));
     if (text == null) continue; // 文件不存在：静默跳过，交给 requireEnv 统一报错
-    Object.assign(out, parseDotEnv(text));
+    Object.assign(repoTier, parseEnvText(text).values);
   }
-  return { ...out, ...processEnv };
+  for (const [k, v] of Object.entries(repoTier)) {
+    if (!(k in out)) out[k] = v;
+  }
+  return out;
 }
 
 /** 缺凭据时立刻报「缺哪个键、怎么给」，而不是让脚本跑到一半抛出 Supabase 错误码 */
@@ -80,8 +113,10 @@ export function requireEnv(env, names = REQUIRED_ENV) {
   if (missing.length) {
     throw new Error(
       `缺少环境变量: ${missing.join(', ')}。` +
-      `请用 process.env 注入（如 VITE_SUPABASE_URL=https://xxx.supabase.co），` +
-      `或在仓库根目录放 .env（变量名不变：${names.join(' / ')}）。`
+      `请在 ~/.config/tapstack/env（TAPSTACK_ENV_FILE 可指定别处）里放 ` +
+      `（变量名不变：${names.join(' / ')}）—— 那是权威来源，` +
+      `扩展构建与 e2e 读的是同一份。` +
+      `（应急也可用 process.env 注入，但它只在配置文件没有该键时才生效。）`
     );
   }
   return env;
