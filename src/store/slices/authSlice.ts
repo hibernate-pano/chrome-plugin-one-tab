@@ -202,13 +202,26 @@ const toBackendUnavailable = (error: unknown): BackendUnavailableError | null =>
   return new BackendUnavailableError(copy, readHttpStatus(error) ?? undefined);
 };
 
-const initialState: AuthState = {
+/**
+ * auth slice 的完整 state：在共用的 `AuthState` 之上多一格**只在页面内**
+ * 使用的重置流程记忆（不进登录缓存、不落盘）。
+ *
+ * 为什么多了这一格却不往 `AuthState` 里加：它是重置视图的临时流程状态，
+ * 不是「登录态」的一部分 —— 别的 realm / 冷启动都不该看到它。
+ */
+interface AuthSliceState extends AuthState {
+  /** 「本次恢复会话已验证」记忆（见 {@link VerifiedRecovery}）；null = 没有。 */
+  verifiedRecovery?: VerifiedRecovery | null;
+}
+
+const initialState: AuthSliceState = {
   user: null,
   isAuthenticated: false,
   isLoading: false,
   error: null,
   // ⚠️ 还没核过（不是「没登录」）。见 AuthCheckState 的注释。
   authStatusKind: 'unchecked',
+  verifiedRecovery: null,
 };
 
 /**
@@ -433,6 +446,37 @@ export interface ResetFailure {
   code: ResetFailureCode;
 }
 
+/**
+ * 「本次恢复会话已验证」的记忆（v1.33 PR #10 返工）。
+ *
+ * ── 为什么需要它 ────────────────────────────────────────────────────────
+ * `verifyOtp({ type: 'recovery' })` 成功即**消费**那串一次性 token。
+ * 若紧随的 `updateUser` 失败（最常见 `same_password`，或网络断），用户改完
+ * 密码再点「重置密码」时，界面会**再验一次**同一个码 ⇒ 服务端回
+ * `otp_expired` ⇒ 界面说「验证码不正确或已过期」，而码其实是对的。
+ *
+ * ⇒ 记住「邮箱 + 当时验证通过的那一串验证码」；下一次提交只要这一对完全
+ *   一致，就**跳过 verifyOtp**，直接用已建立并持久化的恢复会话调 `updateUser`。
+ *
+ * ── 记忆的失效（防误放）──────────────────────────────────────────────────
+ *   · 键不同（换了验证码 / 换了邮箱）⇒ 天然不命中，重新验证；
+ *   · 「改邮箱」/ 返回登录 / 关闭弹窗 ⇒ 组件 dispatch `forgetRecoveryVerification`；
+ *   · 整个流程成功 ⇒ `submitPasswordReset.fulfilled` 里清掉。
+ *
+ * 放进 store 而不是模块级变量：store 才是这个页面流程的隔离边界 ——
+ * 模块级变量会在同一进程的多个用例 / 多个 realm 之间串味。
+ */
+export interface VerifiedRecovery {
+  /** 记忆键（一）：验证码发往的邮箱。 */
+  email: string;
+  /** 记忆键（二）：当时验证通过的那一串验证码。 */
+  code: string;
+  /** verifyOtp 返回的账号 id（重试时 updateUser 不一定带 user，用来兜底）。 */
+  userId: string | null;
+  /** verifyOtp 返回的账号邮箱（同上）。 */
+  userEmail: string | null;
+}
+
 /** 表单级错误提示的**标题 + 正文**（逐字来自设计说明「四」的错误表）。 */
 export interface ResetFailureNotice {
   title: string;
@@ -554,11 +598,32 @@ export interface SubmitPasswordResetArgs {
 }
 
 /**
+ * 从 store 读「本次恢复会话已验证」记忆。
+ *
+ * `createAsyncThunk` 的 `getState()` 在未声明 state 泛型时是 `unknown` ⇒
+ * 这里只做一次**结构化**取值（只读这一格），拿不到就当没有记忆
+ * （fail-closed：宁可多验一次，也不跳过验证）。
+ */
+const selectVerifiedRecovery = (state: unknown): VerifiedRecovery | null => {
+  if (typeof state !== 'object' || state === null) return null;
+  const auth = (state as { auth?: { verifiedRecovery?: VerifiedRecovery | null } }).auth;
+  return auth?.verifiedRecovery ?? null;
+};
+
+/**
  * 提交重置：验证码 → 恢复会话 → 设新密码。
  *
  * ── 顺序为什么不能反 ─────────────────────────────────────────────────────
  * `updateUser({ password })` 需要**已登录**的会话；而恢复会话正是由
  * `verifyOtp({ type: 'recovery' })` 建立的 ⇒ 必须先校验验证码。
+ *
+ * ── 重试为什么不再验一次（v1.33 PR #10 返工）──────────────────────────────
+ * 验证码是**一次性**的：`verifyOtp` 成功那一刻 token 就被消费了。若紧随的
+ * `updateUser` 失败（`same_password` / 断网），用户改完密码再点「重置密码」
+ * 时若再验同一个码，服务端只会回 `otp_expired` ⇒ 界面误报
+ * 「验证码不正确或已过期」，而码其实是对的。
+ * ⇒ 本次恢复会话已验证过、且**邮箱与验证码字符串都没变**时，只调
+ *   `updateUser`（会话在 verifyOtp 通过时已建立并持久化）。
  *
  * ── 校验通过 = 已登录 ────────────────────────────────────────────────────
  * SDK 在校验通过时已建立并持久化会话 ⇒ 与登录成功同一档：写缓存、认账
@@ -569,15 +634,40 @@ export const submitPasswordReset = createAsyncThunk<
   User,
   SubmitPasswordResetArgs,
   { rejectValue: ResetFailure }
->('auth/submitPasswordReset', async ({ email, code, password }, { rejectWithValue }) => {
+>('auth/submitPasswordReset', async ({ email, code, password }, { dispatch, getState, rejectWithValue }) => {
   try {
     const supabaseAuth = await loadSupabaseAuth();
 
-    // ① 验证码 → 恢复会话（通过时 SDK 已建立并持久化会话）。
-    const verified = await supabaseAuth.verifyOtp(email, code);
-    if (verified.error) {
-      logError('校验重置验证码错误:', verified.error);
-      return rejectWithValue({ code: classifyVerifyResetFailure(verified.error) });
+    // ① 验证码 → 恢复会话（通过时 SDK 已建立并持久化会话）——只在**还没验过**
+    //    这一对 (邮箱, 验证码) 时做（理由见上面的函数注释）。
+    const remembered = selectVerifiedRecovery(getState());
+    const alreadyVerified =
+      remembered !== null && remembered.email === email && remembered.code === code;
+
+    let verifiedAccount: { id: string; email: string | null } | null =
+      alreadyVerified && remembered && remembered.userId
+        ? { id: remembered.userId, email: remembered.userEmail }
+        : null;
+
+    if (!alreadyVerified) {
+      const verified = await supabaseAuth.verifyOtp(email, code);
+      if (verified.error) {
+        logError('校验重置验证码错误:', verified.error);
+        return rejectWithValue({ code: classifyVerifyResetFailure(verified.error) });
+      }
+      const verifiedUser = verified.data?.user ?? null;
+      verifiedAccount = verifiedUser
+        ? { id: verifiedUser.id, email: verifiedUser.email ?? null }
+        : null;
+      // 验证通过 = 一次性 token 已消费 ⇒ 立刻记住这一对（重试时跳过 verifyOtp）。
+      dispatch(
+        rememberRecoveryVerification({
+          email,
+          code,
+          userId: verifiedUser?.id ?? null,
+          userEmail: verifiedUser?.email ?? null,
+        }),
+      );
     }
 
     // ② 用恢复会话设新密码。
@@ -587,7 +677,10 @@ export const submitPasswordReset = createAsyncThunk<
       return rejectWithValue({ code: classifyUpdateResetFailure(updated.error) });
     }
 
-    const account = updated.data?.user ?? verified.data?.user ?? null;
+    const updatedUser = updated.data?.user ?? null;
+    const account: { id: string; email: string | null } | null = updatedUser
+      ? { id: updatedUser.id, email: updatedUser.email ?? null }
+      : verifiedAccount;
     if (!account) {
       logError('重置密码失败：校验通过但拿不到账号信息');
       return rejectWithValue({ code: 'reset_failed' });
@@ -985,6 +1078,25 @@ const authSlice = createSlice({
       state.authStatusKind = action.payload.statusKind;
       state.notice = action.payload.notice ?? null;
     },
+
+    /**
+     * 记住「这一对 (邮箱, 验证码) 已经换到恢复会话」。
+     *
+     * 只由 `submitPasswordReset` 在 verifyOtp 成功那一刻 dispatch ——
+     * 别的路径不许写（否则等于凭空造出一份「已验证」）。
+     */
+    rememberRecoveryVerification: (state, action: PayloadAction<VerifiedRecovery>) => {
+      state.verifiedRecovery = action.payload;
+    },
+
+    /**
+     * 作废「已验证」记忆（「改邮箱」/ 返回登录 / 关闭弹窗时由组件 dispatch）。
+     *
+     * 语义：**离开重置视图 = 下一次进来重新走 verifyOtp**（防误放）。
+     */
+    forgetRecoveryVerification: (state) => {
+      state.verifiedRecovery = null;
+    },
   },
   extraReducers: (builder) => {
     builder
@@ -1078,6 +1190,8 @@ const authSlice = createSlice({
       })
       .addCase(submitPasswordReset.fulfilled, (state, action) => {
         state.isLoading = false;
+        // 流程闭环 ⇒ 「已验证」记忆的使命结束（下一次重置重新走 verifyOtp）。
+        state.verifiedRecovery = null;
         state.user = action.payload;
         state.isAuthenticated = !!action.payload;
         state.authStatusKind = action.payload ? 'authenticated' : 'not_authenticated';
@@ -1187,6 +1301,12 @@ const authSlice = createSlice({
   },
 });
 
-export const { clearError, setFromCache, setAuthCheckState } = authSlice.actions;
+export const {
+  clearError,
+  setFromCache,
+  setAuthCheckState,
+  rememberRecoveryVerification,
+  forgetRecoveryVerification,
+} = authSlice.actions;
 
 export default authSlice.reducer;
