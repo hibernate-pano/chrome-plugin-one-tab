@@ -96,18 +96,63 @@ describe('骰子抽签池：范围跟着列表走', () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────
-// 1b. 池子不许超出列表的**渲染窗口**（2026-11-02 复核补洞）
+// 1b. 池子必须与**当前视图**一样大（2026-11-02 补洞 / 2026-11-27 分模式）
 // ─────────────────────────────────────────────────────────────────────────
 //
-// 列表页命中超过 200 条时只渲染前 200 条（`buildResultWindow`，以会话为
-// 最小单位整组保留）。修复前抽签池用全部命中 ⇒ 骰子能抽到第 201 条之后的
-// 记录，那条记录屏幕上没有，却被消费掉了 ⇒ 用户只看到列表少了一行。
+// 渲染窗口只属于 `SearchResultList`：搜索命中超过 200 条时它只渲染前 200 条
+// （`buildResultWindow`，以会话为最小单位整组保留）。
+// 主列表不走那条路 —— `TabList` 直接 `filteredGroups.map(...)` 渲染全部会话。
+//
+// ⇒ 池子的口径必须跟着视图走：
+//   · 主列表（空搜索词 + 无筛选）⇒ 全部可打开标签，**不套**窗口；
+//   · 搜索 / 筛选浏览 ⇒ 与 SearchResultList 同一个窗口、同一套「整组保留」。
+// 两个方向都会制造「骰子动了列表之外的东西」：套错窗口时，被漏掉的标签
+// 明明在屏幕上（主列表），或者抽中的标签屏幕上没有（搜索结果）。
 
-describe('骰子抽签池：与列表页同一个渲染窗口', () => {
+describe('骰子抽签池：主列表模式不套渲染窗口', () => {
   const many = (prefix: string, count: number): Tab[] =>
     Array.from({ length: count }, (_, i) => tab(`${prefix}${i}`, `https://example.com/${prefix}/${i}`));
 
-  it('命中超过 200 条 ⇒ 只抽列表**渲染出来**的那一批（第 201 条之后不参与）', () => {
+  it('250 个标签、无搜索无筛选 ⇒ 池包含全部 250 条（锁定 / 不可打开仍剔除）', () => {
+    // 主列表渲染全部会话（没有 200 条窗口）⇒ 池子也必须是全部。
+    // 分组刻意切成 100 + 100 + 40 + 10：若误套 200 条窗口，前两组刚好用满
+    // 预算 ⇒ 后 50 条被整组丢掉，本用例立刻红。锁定会话放在第二组，
+    // 保证「剔掉锁定」这条断言在误套窗口时也走得到。
+    const groups = [
+      group('s1', many('a', 100)),
+      group('locked', [tab('l0', 'https://example.com/locked/0')], true),
+      group('s2', many('b', 100)),
+      group('s3', many('c', 40)),
+      group('s4', many('d', 10)),
+      group('s5', [tab('f0', 'file:///tmp/paper.pdf')]),
+    ];
+    const pool = buildRandomPickPool(groups, { query: '', filters: {}, hasActiveFilters: false });
+    const ids = pool.map(c => c.tab.id);
+
+    const expected = [
+      ...Array.from({ length: 100 }, (_, i) => `a${i}`),
+      ...Array.from({ length: 100 }, (_, i) => `b${i}`),
+      ...Array.from({ length: 40 }, (_, i) => `c${i}`),
+      ...Array.from({ length: 10 }, (_, i) => `d${i}`),
+    ];
+    assert.deepEqual([...ids].sort(), [...expected].sort(), '250 条全部在池里（且锁定 / 不可打开的没混进来）');
+    assert.equal(ids.length, 250, '恰好 250 条：不多（锁定 / 不可打开被剔除）不少（没套渲染窗口）');
+    assert.ok(!ids.includes('l0'), '锁定会话的标签不参与');
+    assert.ok(!ids.includes('f0'), '本设备打不开的地址不参与');
+  });
+
+  it('小结果集不受影响（主列表本来就不截断）', () => {
+    const groups = [group('s1', many('a', 2)), group('s2', many('b', 3))];
+    const pool = buildRandomPickPool(groups, { query: '', filters: {}, hasActiveFilters: false });
+    assert.equal(pool.length, 5);
+  });
+});
+
+describe('骰子抽签池：搜索 / 筛选模式仍与列表页同一个渲染窗口', () => {
+  const many = (prefix: string, count: number): Tab[] =>
+    Array.from({ length: count }, (_, i) => tab(`${prefix}${i}`, `https://example.com/${prefix}/${i}`));
+
+  it('搜索命中超过 200 条 ⇒ 只抽列表**渲染出来**的那一批（第 201 条之后不参与）', () => {
     // 150 + 100 + 5：窗口 200 ⇒ 列表收下 s1、s2（used=250 后停）⇒ s3 不渲染。
     // 「整组保留」意味着 s2 虽然把总数顶过 200，它的 100 条仍然**全部**在列表里。
     const groups = [
@@ -115,7 +160,11 @@ describe('骰子抽签池：与列表页同一个渲染窗口', () => {
       group('s2', many('b', 100)),
       group('s3', many('c', 5)),
     ];
-    const pool = buildRandomPickPool(groups, { query: '', filters: {}, hasActiveFilters: false });
+    const pool = buildRandomPickPool(groups, {
+      query: 'example',
+      filters: {},
+      hasActiveFilters: false,
+    });
     const ids = pool.map(c => c.tab.id);
 
     assert.equal(pool.length, 250, '窗口内两个会话的标签必须全部可选（整组保留）');
@@ -126,18 +175,37 @@ describe('骰子抽签池：与列表页同一个渲染窗口', () => {
     }
   });
 
-  it('单个会话自己也超过 200 ⇒ 整组保留（列表就是这么渲染的）', () => {
+  it('单个会话自己也超过 200 ⇒ 搜索模式下整组保留（列表就是这么渲染的）', () => {
     // visibleSessionResults 的第一个会话无论多少条都整组收下；
     // 骰子若按「前 200 条」硬切，就会抽到列表里根本不存在的记录。
     const groups = [group('big', many('x', 250))];
-    const pool = buildRandomPickPool(groups, { query: '', filters: {}, hasActiveFilters: false });
+    const pool = buildRandomPickPool(groups, {
+      query: 'example',
+      filters: {},
+      hasActiveFilters: false,
+    });
     assert.equal(pool.length, 250, '第一个会话必须整组可选');
   });
 
-  it('小结果集不受影响（窗口没截断）', () => {
-    const groups = [group('s1', many('a', 2)), group('s2', many('b', 3))];
-    const pool = buildRandomPickPool(groups, { query: '', filters: {}, hasActiveFilters: false });
-    assert.equal(pool.length, 5);
+  it('空搜索词 + 有生效筛选（browse）⇒ 同样套窗口', () => {
+    // 筛选浏览也由 SearchResultList 渲染 ⇒ 超过 200 条时它只显示前 200，
+    // 池子必须与它同口径，不能因为「没有搜索词」就退回主列表的全量口径。
+    const groups = [
+      group('s1', many('a', 150)),
+      group('s2', many('b', 100)),
+      group('s3', many('c', 5)),
+    ];
+    const pool = buildRandomPickPool(groups, {
+      query: '',
+      filters: { domain: 'example.com' },
+      hasActiveFilters: true,
+    });
+    const ids = pool.map(c => c.tab.id);
+
+    assert.equal(pool.length, 250, '筛选浏览的窗口内两个会话整组保留');
+    for (const c of ['c0', 'c1', 'c2', 'c3', 'c4']) {
+      assert.ok(!ids.includes(c), `第三个会话未被筛选结果列表渲染 ⇒ 骰子不许抽到 ${c}`);
+    }
   });
 });
 

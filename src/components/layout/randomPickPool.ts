@@ -12,13 +12,22 @@
  * 与 `SearchResultList` 的 `baseResults` → `searchResults` 是同一条管线
  * （见 SearchResultList.tsx 同名注释）。两处各写一遍判据必然漂移。
  *
- * ── 2026-11-02：还必须套上**渲染窗口** ──────────────────────────────────
- * 搜索命中超过 200 条时，列表页只渲染前 200 条（`buildResultWindow`，
- * 以会话为最小单位整组保留）。修复前抽签池用的是**全部**命中 ⇒ 骰子能抽出
- * 一条屏幕上根本没有的记录，然后把这条记录消费掉 —— 用户看到的是
- * 「列表里少了一行，但我不知道是哪一行」。这正是本文件头一句在防的事。
- * ⇒ 池子现在与 `SearchResultList.visibleSessionResults` 用同一个窗口、
- *   同一个「整组保留」口径。
+ * ── 2026-11-02：搜索/筛选模式要套上**渲染窗口** ────────────────────────
+ * 搜索命中超过 200 条时，`SearchResultList` 只渲染前 200 条
+ * （`buildResultWindow`，以会话为最小单位整组保留）。修复前抽签池用的是
+ * **全部**命中 ⇒ 骰子能抽出一条屏幕上根本没有的记录，然后把这条记录消费掉
+ * —— 用户看到的是「列表里少了一行，但我不知道是哪一行」。
+ * ⇒ 搜索/筛选模式下，池子与 `SearchResultList.visibleSessionResults` 用
+ *   同一个窗口、同一个「整组保留」口径。
+ *
+ * ── 2026-11-27：主列表模式**不套**窗口 ─────────────────────────────────
+ * 窗口只属于 `SearchResultList`。主列表（空搜索词 + 无生效筛选）由
+ * `TabList` 直接 `filteredGroups.map(...)` 渲染**全部**会话，没有任何截断。
+ * 此时若仍给池子套 200 条窗口，池子反而比屏幕小：第 201 条之后的标签明明
+ * 看得见，骰子却永远抽不到（且 `buildSessionSearchResults` 按 `updatedAt`
+ * 倒序 ⇒ 被截掉的恒是最久没动过的那些会话）。这与本文件头一句同样是矛盾的，
+ * 只是方向相反 —— 「所见即所得」要求池子与**当前视图**一样大，不是一律 200。
+ * ⇒ 判据是「当前是不是列表模式」：是 ⇒ 全部可打开标签；否 ⇒ 套渲染窗口。
  *
  * ── 为什么要剔掉一些标签 ────────────────────────────────────────────────
  * 1. **本设备打不开的地址**（file:/blob:/chrome: …）：抽中它只会弹一句
@@ -31,7 +40,7 @@
  */
 
 import type { Tab, TabGroup } from '@/types/tab';
-import type { SearchFilters } from '@/utils/search';
+import type { SearchFilters, SearchResult } from '@/utils/search';
 import { AdvancedSearch, applySearchFilters, buildSessionSearchResults } from '@/utils/search';
 import { isOpenableTabUrl } from '@/utils/inputValidation';
 import { buildBrowseResults } from '@/components/search/searchBrowseMode';
@@ -68,7 +77,26 @@ export const buildRandomPickPool = (
   // applySearchFilters 收到空条件不会删任何一条 ⇒ 两种情况同一条路。
   const filtered = applySearchFilters(baseResults, context.filters);
 
-  // ── 与列表页**同一个渲染窗口**（2026-11-02 修）────────────────────────
+  /** 只留「抽中一定有好结果」的标签，锁定 / 不可打开的剔除口径见文件头。 */
+  const toCandidate = (result: SearchResult): RandomPickCandidate | null => {
+    if (result.group.isLocked) return null;
+    if (!isOpenableTabUrl(result.tab.url)) return null;
+    return { tab: result.tab, group: result.group };
+  };
+
+  // ── 主列表模式：列表**不截断**，池子也不许截断（2026-11-27 修）────────
+  // TabList 在主列表下渲染全部会话（`filteredGroups.map`），没有 `buildResultWindow`。
+  // 这里继续套 200 条窗口，池子就会漏掉屏幕上明明看得见的标签（且被漏掉的
+  // 恒是最久没动过的会话 —— buildSessionSearchResults 按 updatedAt 倒序）。
+  // ⇒ 主列表模式直接用全部 `filtered`。
+  const isMainListMode = !query && !context.hasActiveFilters;
+  if (isMainListMode) {
+    return filtered
+      .map(toCandidate)
+      .filter((candidate): candidate is RandomPickCandidate => candidate !== null);
+  }
+
+  // ── 搜索/筛选模式：与列表页**同一个渲染窗口**（2026-11-02 修）──────────
   // 顺序也一致：先按会话归组（SearchResultList 的 sessionResults），再按
   // **标签条数**算窗口，最后以会话为最小单位整组保留。
   // 不这么做，骰子就能抽到第 201 条之后的记录 —— 用户屏幕上没有它。
@@ -86,9 +114,8 @@ export const buildRandomPickPool = (
     displayed += session.matches.length;
 
     for (const result of session.matches) {
-      if (result.group.isLocked) continue;
-      if (!isOpenableTabUrl(result.tab.url)) continue;
-      pool.push({ tab: result.tab, group: result.group });
+      const candidate = toCandidate(result);
+      if (candidate) pool.push(candidate);
     }
   }
   return pool;
