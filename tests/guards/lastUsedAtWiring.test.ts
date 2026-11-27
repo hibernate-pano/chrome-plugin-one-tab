@@ -14,7 +14,10 @@
  * 这里用 TypeScript AST 对每个调用点回答三个问题：
  *   ① 它在**哪个处理函数**里（按函数名定位一段代码）；
  *   ② 它是不是落在「打开失败」分支里（`success !== true` 的 then 块）；
- *   ③ 成功门（`success !== true`）是不是排在它前面。
+ *   ③ 成功门（`success !== true`）是不是排在它前面 —— 且必须与它在**同一个
+ *      回调层**内。别的分支（例如锁定分支）更早的门不能替它作保：把未锁定分支
+ *      的记账挪到它自己那道门之前，文件里仍有更早的门，按「全文第一道门」判
+ *      就会假绿。
  *
  * ── 覆盖的打开动作（产品口径 §2.5：从这条会话里打开过标签 = 使用）───────
  *
@@ -38,7 +41,7 @@ interface RecordSite {
   start: number;
   /** 是否落在 `success !== true` 的**失败分支**里。 */
   inFailureBranch: boolean;
-  /** 成功门是否排在它前面（同一处理函数内）。 */
+  /** 成功门是否排在它前面（**同一个回调层内**）。 */
   hasGateBefore: boolean;
   /** 是否落在 `if (group.isLocked) { ... }` 的锁定分支里。 */
   inLockedBranch: boolean;
@@ -48,6 +51,19 @@ interface FunctionAnalysis {
   /** 处理函数的源码文本（方便做「A 必须在 B 之前」这类断言）。 */
   regionText: string;
   sites: RecordSite[];
+}
+
+/** 函数节点（回调 / 处理函数）—— 成功门只在这层以内找，跨层不算。 */
+function isFunctionLikeNode(node: ts.Node): boolean {
+  return (
+    ts.isArrowFunction(node) ||
+    ts.isFunctionExpression(node) ||
+    ts.isFunctionDeclaration(node) ||
+    ts.isMethodDeclaration(node) ||
+    ts.isConstructorDeclaration(node) ||
+    ts.isGetAccessorDeclaration(node) ||
+    ts.isSetAccessorDeclaration(node)
+  );
 }
 
 /**
@@ -94,6 +110,50 @@ function analyzeRecordSites(sourceText: string, functionName: string): FunctionA
   const regionStart = fnNode.getStart(src);
   const sites: RecordSite[] = [];
 
+  /**
+   * 「成功门」= 形如 `if (... success !== true ...) { …; return/throw; }` 的
+   * **早退**语句。没有 return/throw 的 if 不构成门：它拦不住任何后续代码。
+   */
+  const isGateStatement = (stmt: ts.Node): boolean => {
+    if (!ts.isIfStatement(stmt)) return false;
+    if (!stmt.expression.getText(src).includes('success !== true')) return false;
+    const thenStmt = stmt.thenStatement;
+    return ts.isBlock(thenStmt)
+      ? thenStmt.statements.some(s => ts.isReturnStatement(s) || ts.isThrowStatement(s))
+      : ts.isReturnStatement(thenStmt) || ts.isThrowStatement(thenStmt);
+  };
+
+  /**
+   * 成功门是否在调用点**之前**，且与它处在**同一个回调层**。
+   *
+   * 只在「最近的函数边界以内」的祖先语句块里找前序兄弟语句。以前的实现是
+   * `regionText.indexOf('success !== true')` —— 文件里**任意更早**的门都算数：
+   * handleOpenTab 的锁定分支有一道门，未锁定分支的记账即使挪到自己那道门
+   * **之前**，也照样被锁定分支的门「作保」⇒ 守卫假绿。
+   */
+  const hasGateBefore = (node: ts.Node, ancestors: ts.Node[]): boolean => {
+    const recordStart = node.getStart(src);
+    for (let i = ancestors.length - 1; i >= 0; i--) {
+      const parent = ancestors[i];
+      const statements: ts.NodeArray<ts.Statement> | null =
+        ts.isBlock(parent) || ts.isSourceFile(parent)
+          ? parent.statements
+          : ts.isCaseClause(parent) || ts.isDefaultClause(parent)
+            ? parent.statements
+            : null;
+      if (statements) {
+        // 按位置判定「前序兄弟」：walk 走的是 getChildren（中间夹着 SyntaxList），
+        // 按节点身份在 statements 里 indexOf 永远找不到。
+        for (const stmt of statements) {
+          if (stmt.getEnd() <= recordStart && isGateStatement(stmt)) return true;
+        }
+      }
+      // 走到最近的函数边界就停：更外层的门属于另一条执行路径，不能作保。
+      if (isFunctionLikeNode(parent)) return false;
+    }
+    return false;
+  };
+
   const walk = (node: ts.Node, ancestors: ts.Node[]): void => {
     if (
       ts.isCallExpression(node) &&
@@ -116,11 +176,10 @@ function analyzeRecordSites(sourceText: string, functionName: string): FunctionA
       const inLockedBranch = ancestors.some(ancestor =>
         isInsideThenOf(ancestor, 'group.isLocked')
       );
-      const gateAt = regionText.indexOf('success !== true');
       sites.push({
         start,
         inFailureBranch,
-        hasGateBefore: gateAt !== -1 && gateAt < start,
+        hasGateBefore: hasGateBefore(node, ancestors),
         inLockedBranch,
       });
     }
@@ -156,8 +215,8 @@ function assertRecordSites(
     assert.equal(
       site.hasGateBefore,
       true,
-      `${file} 的 ${functionName}：recordSessionUsed 排在成功门（success !== true）之前 —— ` +
-        'SW 拒开时也会记账'
+      `${file} 的 ${functionName}：recordSessionUsed 排在**本回调内**的成功门（success !== true）之前 —— ` +
+        'SW 拒开时也会记账（别的分支更早的门不能替它作保）'
     );
   }
   return analysis;
@@ -266,7 +325,7 @@ describe('撤销 / 确认框不记「使用」', () => {
 // 自证检测力：把源码改坏，分析器必须看得见
 // ─────────────────────────────────────────────────────────────────────────
 
-describe('自证 · 分析器对三种破口都有检测力', () => {
+describe('自证 · 分析器对四种破口都有检测力', () => {
   it('破口一：删掉记录调用 ⇒ 数出 0 个', () => {
     const source = read(TAB_GROUP);
     const mutated = source.replace('void recordSessionUsed(group.id);\n        consumeSession();', 'consumeSession();');
@@ -306,6 +365,45 @@ describe('自证 · 分析器对三种破口都有检测力', () => {
       analysis.sites.some(site => site.inFailureBranch === true),
       true,
       '失败分支里的调用必须被标记（否则「不许在失败分支」这条断言是空的）'
+    );
+  });
+
+  it('破口四：挪到本分支成功门之前（同函数另一分支还有更早的门）⇒ hasGateBefore = false', () => {
+    const source = read(TAB_GROUP);
+    // handleOpenTab 的未锁定分支：门与记账点都是 8 空格缩进（锁定分支是 10 空格）。
+    const gate = `        // SW 无回包（无 URL 的 break 分支）同样不删：没证据证明打开了。
+        if (!r || r.success !== true) {
+          releaseOnFailure();
+          showRestoreError('打开失败，已保留在会话中');
+          return;
+        }`;
+    const recordBeforeConsume = `        void recordSessionUsed(group.id);
+        dispatch(deleteTabAndSync({ groupId: group.id, tabId: tab.id }))`;
+    assert.equal(
+      source.split(gate).length - 1,
+      1,
+      '变异前提没成立：找不到未锁定分支的成功门'
+    );
+    assert.equal(
+      source.split(recordBeforeConsume).length - 1,
+      1,
+      '变异前提没成立：找不到未锁定分支的记账点'
+    );
+
+    const mutated = source
+      .replace(
+        recordBeforeConsume,
+        '        dispatch(deleteTabAndSync({ groupId: group.id, tabId: tab.id }))'
+      )
+      .replace(gate, `        void recordSessionUsed(group.id);\n${gate}`);
+
+    const analysis = analyzeRecordSites(mutated, 'handleOpenTab');
+    const unlocked = analysis.sites.filter(site => !site.inLockedBranch);
+    assert.equal(unlocked.length, 1, '变异前提没成立：未锁定分支应恰好一个记账点');
+    assert.equal(
+      unlocked[0].hasGateBefore,
+      false,
+      '判据失效：记账挪到自己那道成功门之前后，锁定分支更早的门不得替它作保'
     );
   });
 });
