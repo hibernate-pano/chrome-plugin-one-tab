@@ -129,19 +129,29 @@ describe('闸门判据：产物内联', () => {
 /**
  * 接线（构建期）：真的用 vite 执行仓库里的 vite.config.ts。
  *
- * ⚠️ 两个坑：
- *  1. 子进程 cwd 必须是**临时目录**：vite.config.ts 里的 `loadEnv(mode, process.cwd())`
- *     会去 cwd 找 .env / .env.local ⇒ 在临时目录里跑 ⇒ 只会看到我们显式给的环境变量
- *     ⇒ 「缺配置」这个前提才是真的（而不是被仓库里那份能用的 .env.local 顶掉）。
+ * ⚠️ 三个坑：
+ *  1. 子进程 cwd 必须是**临时目录**：vite 会去 cwd 找 .env / .env.local ⇒
+ *     在临时目录里跑 ⇒ 只会看到我们显式给的东西 ⇒ 「缺配置」这个前提才是真的。
  *     而 runner 脚本本身必须放在**仓库内**（node_modules/.cache/ 下）——
  *     放在 /tmp 里的话 `import 'vite'` 解析不到仓库的 node_modules。
  *     ⇒ 先在仓库内落 runner，运行时再 chdir 到临时目录。
- *  2. 环境变量必须**显式给空字符串**，不能靠「不设置」：
+ *  2. 配置来源是**文件**（2026-11-23 起扩展的配置住在仓库之外）⇒ 用
+ *     `TAPSTACK_ENV_FILE` 指向临时文件。必须**显式给**：不设置的话会回落
+ *     到 `~/.config/tapstack/env` ⇒ 这条用例的结果就取决于**开发机**了
+ *     （别人的机器上没这个文件 ⇒ 恒红；本机有 ⇒ 恒绿）。
+ *  3. 环境变量必须**显式给空字符串**，不能靠「不设置」：
  *     vite 6 里 process.env 优先于 .env 文件，留空才等价于「没配」。
  */
 describe('接线（构建期）：配置缺失 ⇒ vite.config.ts 真的抛', () => {
   const runConfig = (env: Record<string, string>): { ok: boolean; message: string } => {
     const tmp = mkdtempSync(join(tmpdir(), 'tapstack-vite-cfg-'));
+    // 配置文件：写在临时目录里（每个用例独立，不碰开发机上的 ~/.config/tapstack/env）。
+    // 「缺配置」这一态 = 指向一个**确定不存在**的路径（一个键都不写 ⇒ 文件不创建）。
+    const envFile = join(tmp, 'tapstack.env');
+    const lines: string[] = [];
+    if (env.VITE_SUPABASE_URL !== undefined) lines.push(`VITE_SUPABASE_URL=${env.VITE_SUPABASE_URL}`);
+    if (env.VITE_SUPABASE_ANON_KEY !== undefined) lines.push(`VITE_SUPABASE_ANON_KEY=${env.VITE_SUPABASE_ANON_KEY}`);
+    if (lines.length > 0) writeFileSync(envFile, lines.join('\n') + '\n', 'utf8');
     // runner 放在仓库内（node_modules/.cache/，已被 gitignore），这样 import 'vite' 能解析。
     const runnerDir = join(ROOT, 'node_modules', '.cache', 'tapstack-tests');
     mkdirSync(runnerDir, { recursive: true });
@@ -170,6 +180,8 @@ describe('接线（构建期）：配置缺失 ⇒ vite.config.ts 真的抛', ()
         encoding: 'utf8',
         env: {
           ...process.env,
+          // 显式指定配置来源 ⇒ 结果与开发机上的文件无关。
+          TAPSTACK_ENV_FILE: envFile,
           // 清掉可能从父进程继承的 VITE_ 变量，保证「缺配置」是真的缺。
           VITE_SUPABASE_URL: env.VITE_SUPABASE_URL ?? '',
           VITE_SUPABASE_ANON_KEY: env.VITE_SUPABASE_ANON_KEY ?? '',
@@ -177,6 +189,7 @@ describe('接线（构建期）：配置缺失 ⇒ vite.config.ts 真的抛', ()
       });
     } finally {
       rmSync(runner, { force: true });
+      rmSync(tmp, { recursive: true, force: true });
     }
     return { ok: res.status === 0, message: `${res.stdout ?? ''}${res.stderr ?? ''}` };
   };
@@ -186,6 +199,12 @@ describe('接线（构建期）：配置缺失 ⇒ vite.config.ts 真的抛', ()
     assert.equal(r.ok, false, '缺配置时 vite.config.ts 必须抛错');
     assert.match(r.message, /CONFIG_THREW/);
     assert.match(r.message, /Supabase 配置缺失/);
+  });
+
+  it('配置文件里只有部分键 ⇒ 仍然失败（不能「有半个就当配好了」）', () => {
+    const r = runConfig({ VITE_SUPABASE_URL: 'https://reccclnaxadbuccsrwmg.supabase.co' });
+    assert.equal(r.ok, false, '缺 key 时必须失败');
+    assert.match(r.message, /VITE_SUPABASE_ANON_KEY/);
   });
 
   it('配置齐 ⇒ 配置加载成功（闸门不能把正常构建也拦了）', () => {

@@ -1,4 +1,4 @@
-import { defineConfig, loadEnv } from 'vite';
+import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import { crx } from '@crxjs/vite-plugin';
 import manifest from './manifest.json';
@@ -11,6 +11,11 @@ import {
 import { vendorChunkFor } from './src/core/chunkingPolicy';
 import { buildWorkerSafePreloadCode } from './src/core/workerSafePreload';
 import { checkSupabaseEnv } from './scripts/lib/supabaseBuildGate.mjs';
+import {
+  loadTapstackEnv,
+  injectViteEnv,
+  warnAboutStaleRepoEnv,
+} from './scripts/lib/tapstackEnv.mjs';
 
 // 创建临时 manifest，不包含 service worker
 const tempManifest = {
@@ -96,28 +101,65 @@ function detectScriptRel() {
 
 // https://vitejs.dev/config/
 export default defineConfig(({ mode }) => {
-  // 加载环境变量
-  const env = loadEnv(mode, process.cwd());
+  // ── 扩展构建配置的**唯一来源**（2026-11-23）────────────────────────────────
+  //
+  // 【为什么不再读仓库根的 `.env.local`】那个文件是 `vercel link` 的地盘 ——
+  // 1.32.0 上架后所有用户登录报「Supabase 配置缺失」，根因就是它被覆盖后
+  // vite 对**缺失的 env 静默放行** ⇒ 构建照样「成功」⇒ 出了一个没有云端配置的
+  // 扩展包，一路走到商店公开页。
+  // ⇒ 共享一个文件 = 共享一次事故。修法不是「加个检查」（那只是把症状从
+  //   「悄悄出坏包」变成「构建红」），而是**把两件事物理分开**：
+  //   配置现在住在**仓库之外**（默认 `~/.config/tapstack/env`），
+  //   或由 `TAPSTACK_ENV_FILE` 显式指定（CI 用它指向桩配置）。
+  //
+  // 【为什么是 fail-closed】缺配置时若悄悄退回默认（空值/桩值），构建会
+  // 成功出一个残废的包 —— 那正是 1.32.0 的形状。读不到 ⇒ 直接红，且报错要写清
+  // 「文件在哪、该放什么、为什么放仓库外」。
+  const tapstackEnv = loadTapstackEnv({ env: process.env });
+  if (!tapstackEnv.ok) {
+    throw new Error(
+      '构建中止：扩展的构建配置读不到（Supabase 配置缺失或不可读）—— ' +
+        tapstackEnv.problems.join('；') +
+        '\n' +
+        '这个文件放 VITE_SUPABASE_URL / VITE_SUPABASE_ANON_KEY，格式是 KEY=VALUE（每行一个）。\n' +
+        '它**故意在仓库之外**（默认 ~/.config/tapstack/env）：仓库根的 .env.local 是 ' +
+        '`vercel link` 的地盘（2026-11-21 的 1.32.0 事故就是它被覆盖 ⇒ 上架了没有云端配置的包）。\n' +
+        'CI 用 TAPSTACK_ENV_FILE 指向自己的桩配置。'
+    );
+  }
+
+  // 注入 process.env：vite 6 的 `loadEnv` 是「**process.env 覆盖文件**」
+  // ⇒ 注入进去的值是**权威值**，仓库里任何 .env.* 都盖不住它。
+  const { ignored: ignoredEnvKeys } = injectViteEnv(tapstackEnv.values);
+  if (ignoredEnvKeys.length > 0) {
+    console.warn(
+      `⚠️ 构建配置里有非 VITE_ 的键（不注入产物，vite 只会暴露 VITE_ 前缀）：${ignoredEnvKeys.join('、')}`
+    );
+  }
+  for (const warning of warnAboutStaleRepoEnv()) {
+    console.warn(`⚠️ ${warning}`);
+  }
+
+  // 其余环境变量（仓库里的 .env 等）仍会由 vite 自己加载进 import.meta.env ——
+  // 这里不再单独调 loadEnv：闸门只认上面那份（权威值），不依赖 vite 的合并优先级。
 
   // ── 构建期闸门（2026-11-23）：Supabase 配置缺失/形态不对 ⇒ **构建失败** ──
-  //
-  // 【事故背景】1.32.0 上架后所有用户登录报「Supabase 配置缺失」——
-  // `vercel link` 覆盖了 `.env.local`，而 vite 对**缺失的 env 静默放行**
-  // （`import.meta.env.VITE_SUPABASE_URL` → undefined），于是构建照样「成功」，
-  // 出了一个没有云端配置的扩展包，一路走到商店公开页。
   //
   // 【为什么必须在这里拦】这道闸是**最早**的拦截点：配置不对就直接构建失败，
   // 不会产出任何残缺产物 ⇒ 「忘了配」永远走不到打包那一步。
   // 打包那一步还有第二道闸（package-extension.js：产物里必须真的内联了
   // Supabase 配置），两道都要 —— 只查配置形态，查不出「配置是桩值」。
-  const envGate = checkSupabaseEnv(env.VITE_SUPABASE_URL, env.VITE_SUPABASE_ANON_KEY);
+  const envGate = checkSupabaseEnv(
+    tapstackEnv.values.VITE_SUPABASE_URL,
+    tapstackEnv.values.VITE_SUPABASE_ANON_KEY
+  );
   if (!envGate.ok) {
     throw new Error(
       '构建中止：Supabase 配置缺失 / 形态不对 / 指向别的项目 —— ' +
         envGate.problems.join('；') +
         '\n' +
-        '提示：配置在 .env / .env.local（本仓已 gitignore）或进程环境变量里；' +
-        '别用 `vercel link` 之类会覆盖 .env.local 的命令（它只该写 VERCEL_OIDC_TOKEN）。'
+        `配置来源：${tapstackEnv.source.display}（${tapstackEnv.source.path}）。\n` +
+        '改那个文件，不要改仓库根的 .env.local（它会被 `vercel link` 覆盖）。'
     );
   }
 

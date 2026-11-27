@@ -91,9 +91,15 @@ jobs:
     # CI 不发版，但构建必须能过闸门 ⇒ 下面这个步骤生成一份**桩配置**：
     #   · 项目地址 = **真实地址**（公开信息：它本来就内嵌在已上架产物里）；
     #   · anon key = **运行时生成的假 JWT**（形态合法、不可用）——
-    #     真实密钥只存在于 .env.local（已 gitignore），**绝不进仓库**。
-    # 桩值只能过**构建**这一关；真要发版，跑 `pnpm package` 时还有第二道
-    # 产物闸（产物里必须真的内联了本项目的地址与完整形态的 key）。
+    #     真实密钥只存在于 ~/.config/tapstack/env（**仓库之外**），**绝不进仓库**。
+    #
+    # 桩值**两道闸都会过**（产物闸只要求 key ≥ 100 字符，桩 JWT 是 179 字符
+    # ⇒ 形态合法）。⇒ 桩值只够让 CI 的构建跑通，**绝不能用来发版**；
+    # 真正的防线是「发版只能用 ~/.config/tapstack/env 里的真 key」。
+    #
+    # 桩配置写成**文件**并用 TAPSTACK_ENV_FILE 指过去，而不是塞进 $GITHUB_ENV ——
+    # 目的是让 CI 与本机走**同一条读取路径**（scripts/lib/tapstackEnv.mjs）：
+    # 两条路径（一边环境变量、一边文件）迟早会漂，漂了就是「本机好的、CI 红的」。
     #
     # ⚠️ 为什么 key 用「运行时生成」而不是写字面量：
     #   ① 字面量会进 git 历史 —— 哪怕是假的，也会让后来人分不清哪个是真密钥；
@@ -109,7 +115,8 @@ jobs:
           const jwt = [b64({alg:'HS256',typ:'JWT'}), b64({sub:'ci-stub',role:'anon',note:'ci-stub-only-not-a-real-key'}), b64('ci-stub-signature-only-not-a-real-key')].join('.');
           console.log('VITE_SUPABASE_URL=https://reccclnaxadbuccsrwmg.supabase.co');
           console.log('VITE_SUPABASE_ANON_KEY=' + jwt);
-          " >> "$GITHUB_ENV"
+          " > "$RUNNER_TEMP/tapstack.env"
+          echo "TAPSTACK_ENV_FILE=$RUNNER_TEMP/tapstack.env" >> "$GITHUB_ENV"
 
       # 不传 version：action 会自动读 package.json 的 packageManager（pnpm@10.24.0），
       # 升级 pnpm 时只改一处，CI 自动跟上，不会出现本地 10.x / CI 9.x 的行为差。

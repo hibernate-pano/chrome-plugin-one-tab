@@ -22,19 +22,35 @@ import {
   createGate,
   extractTestAccounts,
   loadEnv,
-  parseDotEnv,
   requireEnv,
 } from '../scripts/e2e-support.mjs';
+import { parseEnvText } from '../scripts/lib/tapstackEnv.mjs';
 
 // e2e-support.mjs 是 .mjs，没有 JSDoc 类型标注（补它属于 scripts/ 的工作包，
-// 不在本包范围内）。tsc 因此把 parseDotEnv 推成返回 `{}`、把 loadEnv 推成返回
-// 「调用方传进去的那个对象字面量类型」——于是访问 env.VITE_SUPABASE_URL 报 TS2339。
-// 那不是用例写错了，是模块缺声明。这里把两个函数的**真实契约**声明一次
-// （实现见 scripts/e2e-support.mjs:31-43 与 62-75：一律收发「键 → 字符串」的环境变量袋）。
+// 不在本包范围内）。tsc 因此把 loadEnv 推成返回「调用方传进去的那个对象字面量
+// 类型」——于是访问 env.VITE_SUPABASE_URL 报 TS2339。
+// 那不是用例写错了，是模块缺声明。这里把函数的**真实契约**声明一次
+// （实现见 scripts/e2e-support.mjs：一律收发「键 → 字符串」的环境变量袋）。
 // 断言只在这一处，且断的是具体类型而不是 any——下游全部保持类型检查。
 type EnvBag = Record<string, string | undefined>;
-const parseEnv = parseDotEnv as (text: string) => Record<string, string>;
-const readEnv = loadEnv as (opts?: { cwd?: string; processEnv?: EnvBag }) => EnvBag;
+const parseEnv = parseEnvText as (text: string) => {
+  values: Record<string, string>;
+  problems: string[];
+};
+const readEnv = loadEnv as (opts?: {
+  cwd?: string;
+  processEnv?: EnvBag;
+  configFile?: string;
+}) => EnvBag;
+
+/**
+ * 「仓库外的构建配置」这一层的**占位路径**（2026-11-23 起扩展的配置在
+ * `~/.config/tapstack/env`，见 scripts/lib/tapstackEnv.mjs）。
+ *
+ * 下面那些用例要的是「这一层不存在」⇒ 必须钉死，否则结果取决于**开发机**上
+ * 有没有那份文件（别人机器恒绿、本机恒红 —— 那样的用例等于没有）。
+ */
+const NO_CONFIG_FILE = join(tmpdir(), 'e2e-support-test-no-config.env');
 
 const mkProject = (files: Record<string, string>) => {
   const dir = mkdtempSync(join(tmpdir(), 'e2e-support-test-'));
@@ -42,10 +58,12 @@ const mkProject = (files: Record<string, string>) => {
   return dir;
 };
 
-// ── 凭据来源：process.env 优先，缺失才回退 .env ──────────────────────
+// ── 凭据来源：仓库外的构建配置（权威）→ process.env → 仓库里的 .env ────
 
-test('parseDotEnv 跳过注释与空行，值两侧成对引号被剥掉', () => {
-  const env = parseEnv(
+test('解析器跳过注释与空行，值两侧成对引号被剥掉', () => {
+  // 2026-11-23：e2e 不再自带一套解析器，改用构建侧同一个 parseEnvText
+  // （scripts/lib/tapstackEnv.mjs）⇒ 同一个配置文件，两条路径必须得到同一个结果。
+  const { values: env, problems } = parseEnv(
     [
       '# 注释行',
       '',
@@ -53,15 +71,27 @@ test('parseDotEnv 跳过注释与空行，值两侧成对引号被剥掉', () =>
       '  VITE_SUPABASE_ANON_KEY = "eyJhbGciOi.payload.sig"  ',
       "SOME_FLAG='on'",
       'WITH_EQUALS=postgres://u:p@h:5432/db?a=1&b=2',
-      '不是键值对',
     ].join('\n'),
   );
+  assert.deepEqual(problems, []);
   assert.equal(env.VITE_SUPABASE_URL, 'https://abc.supabase.co');
   assert.equal(env.VITE_SUPABASE_ANON_KEY, 'eyJhbGciOi.payload.sig');
   assert.equal(env.SOME_FLAG, 'on');
   // 值里的 = 不能被当成第二个分隔符（老写法用 indexOf('=') 恰好也对，但值得钉住）
   assert.equal(env.WITH_EQUALS, 'postgres://u:p@h:5432/db?a=1&b=2');
-  assert.ok(!('不是键值对' in env));
+});
+
+test('解析器认 export 前缀、且坏行被记成问题（不再静默丢弃）', () => {
+  // 这两条正是先前 e2e 与构建**给出不同答案**的根因：
+  // 构建认 export、且坏行 fail-closed；e2e 两样都不认 ⇒ 同一份文件，
+  // 构建成功、e2e 拿到 undefined，然后报「请把变量放到 ~/.config/tapstack/env」。
+  const withExport = parseEnv('export VITE_SUPABASE_URL=https://abc.supabase.co\n');
+  assert.equal(withExport.values.VITE_SUPABASE_URL, 'https://abc.supabase.co');
+  assert.deepEqual(withExport.problems, []);
+
+  const withBadLine = parseEnv('VITE_SUPABASE_URL=https://abc.supabase.co\n这一行坏了\n');
+  assert.equal(withBadLine.problems.length, 1, '坏行必须被报出来，不能静默丢弃');
+  assert.match(withBadLine.problems[0], /KEY=VALUE/);
 });
 
 test('loadEnv：process.env 覆盖 .env，.env 独有的键仍能拿到', () => {
@@ -71,6 +101,7 @@ test('loadEnv：process.env 覆盖 .env，.env 独有的键仍能拿到', () => 
   const env = readEnv({
     cwd,
     processEnv: { VITE_SUPABASE_URL: 'https://from-ci.supabase.co' },
+    configFile: NO_CONFIG_FILE,
   });
   // 修之前：只读 .env，CI 注入的 URL 完全无效
   assert.equal(env.VITE_SUPABASE_URL, 'https://from-ci.supabase.co');
@@ -82,15 +113,69 @@ test('loadEnv：.env.local 覆盖 .env，且两者都缺时只靠 process.env �
     '.env': 'VITE_SUPABASE_URL=https://base.supabase.co\nVITE_APP_VERSION=1.0.0\n',
     '.env.local': 'VITE_SUPABASE_URL=https://local.supabase.co\n',
   });
-  const fromFiles = readEnv({ cwd, processEnv: {} });
+  const fromFiles = readEnv({ cwd, processEnv: {}, configFile: NO_CONFIG_FILE });
   assert.equal(fromFiles.VITE_SUPABASE_URL, 'https://local.supabase.co');
   assert.equal(fromFiles.VITE_APP_VERSION, '1.0.0');
 
   const noFiles = readEnv({
     cwd: mkProject({}),
     processEnv: { VITE_SUPABASE_URL: 'https://ci.supabase.co', VITE_SUPABASE_ANON_KEY: 'anon' },
+    configFile: NO_CONFIG_FILE,
   });
   assert.equal(noFiles.VITE_SUPABASE_URL, 'https://ci.supabase.co');
+});
+
+test('loadEnv：仓库外的构建配置（2026-11-23 起扩展配置在那儿）压过仓库里的旧副本', () => {
+  // 仓库根的 .env.local 现在是 vercel link 的地盘 ⇒ 扩展的配置搬到仓库之外。
+  // ⇒ 那一层的优先级必须**高于**仓库里的 .env / .env.local，
+  //    否则 e2e 脚本会读到一份「早就失效的旧配置」却毫无察觉。
+  const cwd = mkProject({
+    '.env.local': 'VITE_SUPABASE_URL=https://stale-in-repo.supabase.co\n',
+  });
+  const configFile = join(mkProject({}), 'tapstack.env');
+  writeFileSync(configFile, 'VITE_SUPABASE_URL=https://authoritative.supabase.co\n');
+
+  const env = readEnv({ cwd, processEnv: {}, configFile });
+  assert.equal(env.VITE_SUPABASE_URL, 'https://authoritative.supabase.co');
+});
+
+test('loadEnv：仓库外的构建配置压过 process.env（与构建路径逐层对齐）', () => {
+  // 【这条是 2026-11-23 修的那个分叉】构建路径里 `injectViteEnv` 会把
+  // 仓库外的配置**写进** process.env ⇒ 构建实际以**文件**为准。
+  // e2e 若把 process.env 放最上面 ⇒ 开发者 `export VITE_SUPABASE_URL=…` 之后，
+  // 扩展连文件里的项目、e2e 连 export 的项目 ⇒ **e2e 验的不是要发的东西**。
+  // ⇒ 两边必须逐层对齐：仓库外配置 > process.env > 仓库文件。
+  const cwd = mkProject({
+    '.env': 'VITE_SUPABASE_URL=https://from-repo-file.supabase.co\n',
+  });
+  const configFile = join(mkProject({}), 'tapstack.env');
+  writeFileSync(configFile, 'VITE_SUPABASE_URL=https://authoritative.supabase.co\n');
+
+  const env = readEnv({
+    cwd,
+    processEnv: { VITE_SUPABASE_URL: 'https://from-shell.supabase.co' },
+    configFile,
+  });
+  assert.equal(
+    env.VITE_SUPABASE_URL,
+    'https://authoritative.supabase.co',
+    '文件是权威来源 ⇒ 必须压过 shell 注入的值（与构建一致）',
+  );
+});
+
+test('loadEnv：process.env 仍然压过仓库里的 .env（CI 注入不能被回归掉）', () => {
+  // 上一条把文件提到 process.env 之上时，**很容易顺手把这条也弄反**。
+  // vite 的 loadEnv 是「文件先写、process.env 后写（覆盖）」⇒ 环境变量
+  // 赢得过仓库文件。仓库外配置与仓库文件是**两层**，别混成一层。
+  const cwd = mkProject({
+    '.env': 'VITE_SUPABASE_URL=https://from-repo-file.supabase.co\n',
+  });
+  const env = readEnv({
+    cwd,
+    processEnv: { VITE_SUPABASE_URL: 'https://from-ci.supabase.co' },
+    configFile: NO_CONFIG_FILE,
+  });
+  assert.equal(env.VITE_SUPABASE_URL, 'https://from-ci.supabase.co');
 });
 
 test('requireEnv 在缺键时报出缺哪个、怎么给，而不是让脚本带着 undefined 跑', () => {
@@ -99,7 +184,9 @@ test('requireEnv 在缺键时报出缺哪个、怎么给，而不是让脚本带
     (err: unknown) => {
       assert.ok(err instanceof Error, `requireEnv 必须抛 Error，实得：${String(err)}`);
       assert.match(err.message, /VITE_SUPABASE_ANON_KEY/);
-      assert.match(err.message, /process\.env/);
+      // 报错要指向**权威来源**（仓库外的构建配置），而不是只提 process.env
+      // —— 权威来源只有一个，指错了等于让人去改一个不生效的地方。
+      assert.match(err.message, /~\/\.config\/tapstack\/env/);
       return true;
     },
   );
