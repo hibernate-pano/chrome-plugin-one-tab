@@ -74,17 +74,34 @@ const HAS_CJK = /[一-鿿]/;
  *
  * 用模式匹配而不是精确等值：Supabase 的文案随版本微调（大小写、标点、
  * 前缀），精确等值等于赌它永远不变——赌输了就把英文原文漏进界面。
+ *
+ * ⚠️ 下面几个正则**同时**用于「重置密码」的失败分类（见本文件后半段）：
+ * 分类与翻译必须认同一组模式，否则会出现「界面说验证码过期、流程却当成
+ * 未知失败」的漂移。
  */
+const RATE_LIMIT_ERROR_PATTERN =
+  /email rate limit exceeded|too many requests|rate limit|for security purposes/i;
+const NETWORK_ERROR_PATTERN = /failed to fetch|network\s*error|networkerror|load failed/i;
+/** 验证码错误 / 过期（GoTrue：`otp_expired` / `Token has expired or is invalid`）。 */
+const OTP_INVALID_ERROR_PATTERN =
+  /token has expired or is invalid|invalid (?:email or )?(?:otp|token)|invalid otp|otp[^.]*expired|expired[^.]*otp/i;
+/** 新密码与旧密码相同（GoTrue：`same_password`）。 */
+const SAME_PASSWORD_ERROR_PATTERN = /new password should be different/i;
+
 const AUTH_ERROR_PATTERNS: ReadonlyArray<readonly [RegExp, string]> = [
   [/invalid login credentials/i, '邮箱或密码不正确'],
   [/user already registered/i, '该邮箱已注册，请直接登录'],
   [/email not confirmed/i, '邮箱尚未完成验证，请先到邮箱点击验证链接后再登录'],
   [/password should be at least\s*(\d+)/i, '密码至少需要 $1 位'],
+  [SAME_PASSWORD_ERROR_PATTERN, '新密码不能与当前密码相同'],
+  // ⚠️ 必须排在 `/invalid email|.../` 之前：`Invalid email or token` 同时命中两者，
+  //    先撞上「邮箱地址格式不正确」就会把「验证码错了」说成「邮箱格式错了」。
+  [OTP_INVALID_ERROR_PATTERN, '验证码不正确或已过期'],
   [/unable to validate email address/i, '邮箱地址无法通过校验，请检查后重试'],
   [/invalid email|email address .* invalid/i, '邮箱地址格式不正确'],
-  [/email rate limit exceeded|too many requests|rate limit/i, '操作太频繁，请稍后再试'],
+  [RATE_LIMIT_ERROR_PATTERN, '操作太频繁，请稍后再试'],
   [/signups? not allowed|signup is disabled/i, '当前未开放注册，请直接登录已有账号'],
-  [/failed to fetch|network\s*error|networkerror|load failed/i, '网络连接失败，请检查网络后重试'],
+  [NETWORK_ERROR_PATTERN, '网络连接失败，请检查网络后重试'],
 ];
 
 /**
@@ -120,6 +137,15 @@ const supabaseErrorMessage = (error: unknown): string | undefined => {
     return typeof message === 'string' ? message : undefined;
   }
   return undefined;
+};
+
+/** 从 Supabase 的 error 对象里取出机器码（形状不稳定，取不到就返回空串）。 */
+const supabaseErrorCode = (error: unknown): string => {
+  if (typeof error === 'object' && error !== null && 'code' in error) {
+    const code = (error as { code: unknown }).code;
+    return typeof code === 'string' ? code : '';
+  }
+  return '';
 };
 
 /**
@@ -367,6 +393,219 @@ export const signIn = createAsyncThunk(
 
 
 
+
+/* ── 忘记密码 / 重置密码（v1.33，扩展内 OTP 闭环）─────────────────────────
+ *
+ * 两条 thunk：
+ *   · `sendPasswordResetCode` —— 发 6 位验证码（`resetPasswordForEmail`）；
+ *   · `submitPasswordReset`   —— 校验验证码（`verifyOtp` type=recovery）→
+ *     设新密码（`updateUser`）。
+ *
+ * ── 为什么失败用 `rejectWithValue` 带**机器码** ───────────────────────────
+ * 界面要按失败种类选**标题 + 正文**（「发送太频繁」/「验证码没能发出」/
+ * 「验证码不正确或已过期」/「新密码不能与当前密码相同」/「重置失败」）。
+ * 只往 `state.error` 塞一句中文会丢掉「这是哪一类」⇒ 标题只能靠文案匹配
+ * （文案一改就漂）。⇒ 机器码走 payload，文案由 `resetFailureNotice` 单源映射。
+ *
+ * ⚠️ 重置流程的失败**不写进 `state.error`**：登录表单会把 `state.error`
+ *    挂成「登录失败」的正文 ⇒ 重置的错误串到登录页上就是一句错话。
+ *    重置视图自己 catch `.unwrap()`，用本地表单级提示。
+ */
+
+export type ResetFailureCode =
+  /** 发送被限频（服务端发送间隔）。 */
+  | 'send_rate_limited'
+  /** 发送时网络失败。 */
+  | 'send_network'
+  /** 发送失败（其它）。 */
+  | 'send_failed'
+  /** 验证码错误 / 已过期。 */
+  | 'otp_invalid'
+  /** 新密码与当前密码相同（服务端判据）。 */
+  | 'password_same'
+  /** 提交时网络失败。 */
+  | 'reset_network'
+  /** 重置失败（其它）。 */
+  | 'reset_failed';
+
+/** 重置流程的失败回包（只带机器码；文案见 {@link resetFailureNotice}）。 */
+export interface ResetFailure {
+  code: ResetFailureCode;
+}
+
+/** 表单级错误提示的**标题 + 正文**（逐字来自设计说明「四」的错误表）。 */
+export interface ResetFailureNotice {
+  title: string;
+  message: string;
+}
+
+const RESET_FAILURE_NOTICES: Record<ResetFailureCode, ResetFailureNotice> = {
+  send_rate_limited: { title: '发送太频繁', message: '请稍后再试。' },
+  send_network: { title: '验证码没能发出', message: '网络连接失败，请检查网络后重试。' },
+  send_failed: { title: '验证码没能发出', message: '操作失败，请稍后重试。' },
+  otp_invalid: {
+    title: '验证码不正确或已过期',
+    message: '请检查邮件里的验证码，或点「重新发送验证码」换一个新的。',
+  },
+  password_same: { title: '新密码不能与当前密码相同', message: '请换一个没用过的密码。' },
+  reset_network: { title: '重置失败', message: '网络连接失败，请检查网络后重试。' },
+  reset_failed: { title: '重置失败', message: '操作失败，请稍后重试。' },
+};
+
+/** 机器码 → 表单级提示（单源；未知码按「重置失败 / 操作失败」兜底）。 */
+export const resetFailureNotice = (code: string | null | undefined): ResetFailureNotice => {
+  // 用 hasOwnProperty 而不是直接下标：`__proto__` / `constructor` 这类键
+  // 会命中原型链，返回一个没有 title/message 的对象 ⇒ 界面渲染出 undefined。
+  if (typeof code === 'string' && Object.prototype.hasOwnProperty.call(RESET_FAILURE_NOTICES, code)) {
+    return RESET_FAILURE_NOTICES[code as ResetFailureCode];
+  }
+  return RESET_FAILURE_NOTICES.reset_failed;
+};
+
+const isRateLimitAuthError = (error: unknown): boolean => {
+  const code = supabaseErrorCode(error).toLowerCase();
+  if (code.includes('rate_limit')) return true;
+  return RATE_LIMIT_ERROR_PATTERN.test(supabaseErrorMessage(error) ?? '');
+};
+
+const isNetworkAuthError = (error: unknown): boolean => {
+  if (NETWORK_ERROR_PATTERN.test(supabaseErrorMessage(error) ?? '')) return true;
+  // SDK 直接抛的 TypeError（`fetch` 失败）没有 message 形状保证，单独认一次。
+  return error instanceof TypeError && /fetch|network/i.test(error.message);
+};
+
+const isOtpInvalidAuthError = (error: unknown): boolean => {
+  const code = supabaseErrorCode(error).toLowerCase();
+  if (code === 'otp_expired' || code === 'token_expired' || code === 'invalid_token') {
+    return true;
+  }
+  return OTP_INVALID_ERROR_PATTERN.test(supabaseErrorMessage(error) ?? '');
+};
+
+const isSamePasswordAuthError = (error: unknown): boolean => {
+  if (supabaseErrorCode(error).toLowerCase() === 'same_password') return true;
+  return SAME_PASSWORD_ERROR_PATTERN.test(supabaseErrorMessage(error) ?? '');
+};
+
+const classifySendResetFailure = (error: unknown): ResetFailureCode => {
+  if (isRateLimitAuthError(error)) return 'send_rate_limited';
+  if (isNetworkAuthError(error)) return 'send_network';
+  return 'send_failed';
+};
+
+const classifyVerifyResetFailure = (error: unknown): ResetFailureCode => {
+  if (isOtpInvalidAuthError(error)) return 'otp_invalid';
+  if (isNetworkAuthError(error)) return 'reset_network';
+  return 'reset_failed';
+};
+
+const classifyUpdateResetFailure = (error: unknown): ResetFailureCode => {
+  if (isSamePasswordAuthError(error)) return 'password_same';
+  if (isNetworkAuthError(error)) return 'reset_network';
+  return 'reset_failed';
+};
+
+/**
+ * 整个「提交」链路的兜底分类（catch 用）。
+ *
+ * 那一支不知道是 ① 校验还是 ② 更新抛的 ⇒ 三类都要认（错码 / 新旧相同 / 网络），
+ * 否则 `verifyOtp` 直接抛的错码会被说成「重置失败」而不是「验证码不正确」。
+ */
+const classifySubmitResetFailure = (error: unknown): ResetFailureCode => {
+  if (isOtpInvalidAuthError(error)) return 'otp_invalid';
+  if (isSamePasswordAuthError(error)) return 'password_same';
+  if (isNetworkAuthError(error)) return 'reset_network';
+  return 'reset_failed';
+};
+
+export interface SendPasswordResetCodeArgs {
+  email: string;
+}
+
+/**
+ * 发送重置验证码。
+ *
+ * ⚠️ **不区分邮箱是否注册**：`resetPasswordForEmail` 对两种邮箱返回同一结果，
+ *    界面据此显示「如果 xxx 已注册…」——区分它们等于给撞库探测提供判据。
+ */
+export const sendPasswordResetCode = createAsyncThunk<
+  { email: string },
+  SendPasswordResetCodeArgs,
+  { rejectValue: ResetFailure }
+>('auth/sendPasswordResetCode', async ({ email }, { rejectWithValue }) => {
+  try {
+    const supabaseAuth = await loadSupabaseAuth();
+    const { error } = await supabaseAuth.resetPasswordForEmail(email);
+    if (error) {
+      logError('发送重置验证码错误:', error);
+      return rejectWithValue({ code: classifySendResetFailure(error) });
+    }
+    return { email };
+  } catch (err) {
+    logError('发送重置验证码异常:', err);
+    return rejectWithValue({ code: classifySendResetFailure(err) });
+  }
+});
+
+export interface SubmitPasswordResetArgs {
+  email: string;
+  code: string;
+  password: string;
+}
+
+/**
+ * 提交重置：验证码 → 恢复会话 → 设新密码。
+ *
+ * ── 顺序为什么不能反 ─────────────────────────────────────────────────────
+ * `updateUser({ password })` 需要**已登录**的会话；而恢复会话正是由
+ * `verifyOtp({ type: 'recovery' })` 建立的 ⇒ 必须先校验验证码。
+ *
+ * ── 校验通过 = 已登录 ────────────────────────────────────────────────────
+ * SDK 在校验通过时已建立并持久化会话 ⇒ 与登录成功同一档：写缓存、认账
+ * （`bindLocalSessionsToAccount`，DS-1）。云端会话的拉回由调用方走
+ * `restoreAfterLogin`（与登录成功**同一条**路径）。
+ */
+export const submitPasswordReset = createAsyncThunk<
+  User,
+  SubmitPasswordResetArgs,
+  { rejectValue: ResetFailure }
+>('auth/submitPasswordReset', async ({ email, code, password }, { rejectWithValue }) => {
+  try {
+    const supabaseAuth = await loadSupabaseAuth();
+
+    // ① 验证码 → 恢复会话（通过时 SDK 已建立并持久化会话）。
+    const verified = await supabaseAuth.verifyOtp(email, code);
+    if (verified.error) {
+      logError('校验重置验证码错误:', verified.error);
+      return rejectWithValue({ code: classifyVerifyResetFailure(verified.error) });
+    }
+
+    // ② 用恢复会话设新密码。
+    const updated = await supabaseAuth.updateUser(password);
+    if (updated.error) {
+      logError('更新密码错误:', updated.error);
+      return rejectWithValue({ code: classifyUpdateResetFailure(updated.error) });
+    }
+
+    const account = updated.data?.user ?? verified.data?.user ?? null;
+    if (!account) {
+      logError('重置密码失败：校验通过但拿不到账号信息');
+      return rejectWithValue({ code: 'reset_failed' });
+    }
+
+    // DS-1：与登录成功同一条认账路径（本机会话属于谁，是上传闸门的依据）。
+    await bindLocalSessionsToAccount(account.id);
+
+    return {
+      id: account.id,
+      email: account.email ?? email,
+      lastLogin: new Date().toISOString(),
+    } as User;
+  } catch (err) {
+    logError('重置密码异常:', err);
+    return rejectWithValue({ code: classifySubmitResetFailure(err) });
+  }
+});
 
 /**
  * 「已从本机登出」这句话（2026-10-23，第 52 轮）。
@@ -817,6 +1056,44 @@ const authSlice = createSlice({
         }
         // 原始英文只留在 thunk 里的 console 日志；进 UI 的一律是中文
         state.error = authErrorCopy(action.error.message, '登录失败，请稍后重试');
+      })
+
+      // 发送重置验证码（v1.33）
+      .addCase(sendPasswordResetCode.pending, (state) => {
+        state.isLoading = true;
+      })
+      .addCase(sendPasswordResetCode.fulfilled, (state) => {
+        state.isLoading = false;
+      })
+      .addCase(sendPasswordResetCode.rejected, (state) => {
+        // ⚠️ **不写 `state.error`**：重置视图自己按机器码显示表单级提示。
+        //    写进全局 error 的话，用户点「返回登录」时 LoginForm 会把它挂成
+        //    「登录失败」的正文 —— 一句错话（那不是登录失败）。
+        state.isLoading = false;
+      })
+
+      // 重置密码（v1.33）：验证码校验通过 = 已登录（与 signIn.fulfilled 同档）
+      .addCase(submitPasswordReset.pending, (state) => {
+        state.isLoading = true;
+      })
+      .addCase(submitPasswordReset.fulfilled, (state, action) => {
+        state.isLoading = false;
+        state.user = action.payload;
+        state.isAuthenticated = !!action.payload;
+        state.authStatusKind = action.payload ? 'authenticated' : 'not_authenticated';
+        state.backendUnavailable = false;
+        state.error = null;
+        // 登录成功 ⇒ 上一轮「已从本机登出」的提示作废（否则会挂在新会话上）。
+        state.notice = null;
+
+        if (action.payload) {
+          authCache.saveAuthState(action.payload, true);
+          logInfo('密码重置成功 - 已建立登录态');
+        }
+      })
+      .addCase(submitPasswordReset.rejected, (state) => {
+        // 同上：失败文案由重置视图按机器码显示，不串进登录表单。
+        state.isLoading = false;
       })
 
 

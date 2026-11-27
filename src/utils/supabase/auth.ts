@@ -21,9 +21,27 @@ export const auth = {
     return await supabase.auth.signInWithPassword({ email, password });
   },
 
+  // ── 忘记密码 / 重置密码（v1.33，扩展内 OTP 闭环）──────────────────────────
+  // 发送一条 6 位验证码到邮箱（邮件模板里的 {{ .Token }}）。
+  // ⚠️ 对「已注册 / 未注册」的邮箱返回同一个结果 —— 界面**不许**据此区分
+  //    该邮箱是否存在（避免撞库探测）。
+  async resetPasswordForEmail(email: string) {
+    checkSupabaseConfig();
+    return await supabase.auth.resetPasswordForEmail(email);
+  },
 
+  // 用邮件里的 6 位验证码换取恢复会话（type 必须是 'recovery'）。
+  // 校验通过时 SDK 会**建立并持久化会话** ⇒ 用户已登录。
+  async verifyOtp(email: string, token: string) {
+    checkSupabaseConfig();
+    return await supabase.auth.verifyOtp({ email, token, type: 'recovery' });
+  },
 
-
+  // 更新当前登录用户的密码（恢复会话建立之后调用）。
+  async updateUser(password: string) {
+    checkSupabaseConfig();
+    return await supabase.auth.updateUser({ password });
+  },
 
 
 
