@@ -14,7 +14,9 @@
  *   ③ 失效：改邮箱 / 关闭视图（组件 dispatch 的 forget 动作）⇒ 不沿用旧记忆；
  *   ④ 回归：一次成功路径 verifyOtp / updateUser 各 1 次；成功后记忆清掉；
  *   ⑤ 接线：AuthModal 在「改邮箱」/「返回登录」/ 关闭弹窗时真的 dispatch 了
- *      forget（不是「源码里出现了这个词」，而是**钉在对应的处理函数上**）。
+ *      forget（不是「源码里出现了这个词」，而是**钉在对应的处理函数上**）；
+ *   ⑥ 登出：`signOut.fulfilled` 后不残留「已验证」记忆（下一个账号/会话
+ *      的重置必须重新验码）。
  *
  * ⚠️ 全部用假的 Supabase 门面（不打真实服务端）；记忆住在 store 里
  *    ⇒ 每个用例一个新 store，天然隔离。
@@ -361,5 +363,60 @@ describe('接线：AuthModal 离开重置视图时清掉记忆', () => {
       /useEffect\(\s*\(\) => \(\) => \{\s*dispatch\(forgetRecoveryVerification\(\)\);?\s*\},\s*\[dispatch\],?\s*\);/,
       '卸载兜底必须 dispatch forget',
     );
+  });
+});
+
+/* ── ⑥ 登出：记忆随会话一起作废 ────────────────────────────────────────── */
+
+describe('登出：signOut 成功后「已验证」记忆不残留', () => {
+  it('signOut.fulfilled ⇒ selectVerifiedRecovery 读到 null（下一轮重置必须重新验码）', async () => {
+    // 一个门面同时提供两侧的方法：
+    //   · verifyOtp / updateUser —— 先用一次 same_password 失败把记忆写进 store；
+    //   · supabase.auth.signOut / _removeSession —— 登出 thunk 真正要走的两步。
+    // `readSessionSafely` 的闸门语义另有守卫（authOutageUserFacing）⇒ 这里只让它把回调跑完。
+    const verifyCodes: string[] = [];
+    let updateCalls = 0;
+    runtime.setSupabaseFacadeLoader(
+      async () =>
+        ({
+          auth: {
+            verifyOtp: async (_email: string, code: string) => {
+              verifyCodes.push(code);
+              return { data: { user: USER, session: { access_token: 't' } }, error: null };
+            },
+            updateUser: async () =>
+              ++updateCalls === 1 ? SAME_PASSWORD_ERROR : { data: { user: USER }, error: null },
+          },
+          supabase: {
+            auth: {
+              signOut: async () => ({ data: null, error: null }),
+              // 本机清理（纯本地）：登出 thunk 靠它保证「换账号」一定登得出去。
+              _removeSession: async () => {},
+            },
+          },
+          readSessionSafely: async (run: () => Promise<unknown>) => run(),
+        }) as never,
+    );
+
+    const store = makeStore();
+
+    // 前置：先造出一份「已验证」记忆 —— 没有它，下面的断言在修复前也恒真。
+    assert.equal(await rejectCode(submit(store)), 'password_same');
+    assert.notEqual(store.getState().auth.verifiedRecovery, null);
+
+    await store.dispatch(authSlice.signOut()).unwrap();
+
+    // selectVerifiedRecovery 是模块私有的，它读的就是这一格 ⇒ 钉在数据上。
+    assert.equal(
+      store.getState().auth.verifiedRecovery,
+      null,
+      '登出后不许留着「已验证」—— 它属于刚结束的那个恢复会话',
+    );
+
+    // 行为侧：同样的 (邮箱, 验证码) 在登出之后必须重新走 verifyOtp。
+    // （记忆若没清，submitPasswordReset 会命中旧记忆、跳过 verifyOtp ⇒ 这条红。）
+    const result = await submit(store, { password: RETRY_PASSWORD });
+    assert.equal(verifyCodes.length, 2, '登出后同一对 (邮箱, 验证码) 必须重新验码');
+    assert.equal(result.id, USER.id);
   });
 });

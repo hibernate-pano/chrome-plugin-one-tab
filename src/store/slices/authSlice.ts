@@ -1220,6 +1220,10 @@ const authSlice = createSlice({
         state.isLoading = false;
         state.user = null;
         state.isAuthenticated = false;
+        // 会话结束了 ⇒ 「这一对 (邮箱, 验证码) 已验证」的记忆也跟着作废：
+        // 它证明的是**刚结束的那个恢复会话**；留着的话，下一个账号的重置会
+        // 拿旧记忆跳过 verifyOtp（凭空的「已验证」）。
+        state.verifiedRecovery = null;
         // 退出登录是**用户显式做**的 ⇒ 这一档是「没登录」（核到了的）。
         state.authStatusKind = 'not_authenticated';
         // ⚠️ 文案要说准（2026-10-23，第 52 轮）：`scope: 'local'` 撤的是
