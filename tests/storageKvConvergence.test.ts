@@ -183,6 +183,10 @@ describe('S2 键常量单源', () => {
     SYNC_IDLE_ROUNDS: 'sync_idle_rounds',
     LAST_FULL_DOWNLOAD_AT: 'last_full_download_at',
     LAST_PURGE_AT: 'last_purge_at',
+    // 2026-11-27 v1.33：本机会话使用记录（会话 id → ISO 时间）。
+    // 只记在本机、**绝不进 TabGroup 快照**（见 storage-kv/lastUsedAtStore.ts）；
+    // 放 KV 层 ⇒ 换设备不带走、清 chrome.storage.local 也不影响它。
+    LAST_USED_AT: 'last_used_at',
   };
 
   it('STORAGE_KEYS 字面值与搬迁前逐字一致', async () => {

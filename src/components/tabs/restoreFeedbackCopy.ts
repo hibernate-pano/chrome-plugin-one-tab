@@ -192,5 +192,15 @@ export const restoreAllSearchSuccessMessage = (counts: BatchRestoreCounts): stri
     parts.push(`另有 ${counts.failedToRemove} 条未能从会话中移除`);
   }
 
-  return `${parts.join('；')}。`;
+  const message = `${parts.join('；')}。`;
+
+  // ── 2026-11-27 v1.33：批量恢复把记录消费掉了 ⇒ 说清「想再用就先锁定」──
+  //
+  // 只在这一轮**真的移除了**记录时追加：一条都没移除（全部锁定 / 全部失败）时，
+  // 会话还原样留在列表里，再说「想反复使用？恢复前先锁定」就是无的放矢 ——
+  // 它已经可以反复使用了。
+  //
+  // 纯文本、不换行、不加按钮：这是**同一句话的补充**，不是第二个动作。
+  // 单个会话恢复 / 打开单个标签仍然完全静默（见文件头），确认框也不带这句。
+  return counts.removed > 0 ? `${message}想反复使用？恢复前先锁定。` : message;
 };
