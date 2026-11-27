@@ -171,10 +171,12 @@ test('接线一旦被摘掉，这道守卫必须看得见（自证检测力）',
     '判据失效：接线被摘掉后仍应识别出「没有 sortSessions 调用」'
   );
 
-  // 破口二：接上了，但喂给 sortSessions 的不是从 store 读出来的那个变量
+  // 破口二：接上了，但喂给 sortSessions 的不是从 store 读出来的那个变量。
+  // 只替换第二个参数（排序键），第三个参数（本机使用记录表）原样留着 ——
+  // 接线守卫关心的是「排序键是不是同一个数据流」，不是参数个数。
   const mismatched = original.replace(
-    /sortSessions\((\w+),\s*\w+\)/,
-    (_m, first: string) => `sortSessions(${first}, DEFAULT_SESSION_SORT)`
+    /sortSessions\((\w+),\s*\w+/,
+    (_m, first: string) => `sortSessions(${first}, DEFAULT_SESSION_SORT`
   );
   assert.notEqual(mismatched, original, '本用例前提没成立：源码里找不到可替换的 sortSessions 调用');
   const afterMismatch = analyzeListWiring(mismatched);

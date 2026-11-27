@@ -49,6 +49,8 @@ import {
   type SessionSortKey,
   type SortControlPlacement,
 } from '@/core/sessionSort';
+import { useLastUsedAtMap } from '@/components/tabs/useLastUsedAt';
+import { SESSION_SORT_NOTE_TESTID, recentUsedSortNote } from './sortNoteCopy';
 
 /**
  * 筛选控件的 id 前缀：同一时刻只有一个筛选面板，固定前缀即可保证 label 唯一。
@@ -479,6 +481,20 @@ export const SearchFilterSection: React.FC<SearchFilterSectionProps> = ({
   // 排序控件摆在哪（工具条 / 面板）由「面板是否展开」决定；
   // 「摆不摆」由「这个视图排不排序」决定（见 showSortControl 的注释）。
   const sortPlacement = resolveSortControlPlacement(showFilters);
+  // ── 2026-11-27 v1.33：「最近使用」的说明行 ─────────────────────────────
+  // 这一档排序依赖一份**只在本机存在**的记录（打开过会话才写），
+  // 而记录本身在界面上不可见 ⇒ 选中它时必须说清「按什么排」与「不上云」。
+  // 其余档位没有需要额外解释的东西，说明行**不出现**（不占每一屏的一行）。
+  //
+  // 两份文案的分界是「本机有没有任何一条记录」：一条都没有时（v1.33 刚上线
+  // 必然如此），说「没有记录的排在最后」没有意义 —— 那时所有会话都没有记录。
+  const sessionSort = useAppSelector(state => state.settings.sessionSort);
+  const lastUsedAt = useLastUsedAtMap();
+  const hasLastUsedRecords = Object.keys(lastUsedAt).length > 0;
+  const sortNote =
+    showSortControl && sessionSort === 'recentUsed'
+      ? recentUsedSortNote(hasLastUsedRecords)
+      : null;
   const toolbarSortControl =
     showSortControl && sortPlacement === 'toolbar' ? (
       <SessionSortControl placement="toolbar" />
@@ -581,6 +597,17 @@ export const SearchFilterSection: React.FC<SearchFilterSectionProps> = ({
         </div>
       </div>
 
+      {/* 「最近使用」说明行：工具条摆法时紧跟在工具条下方，铺满一整行。
+          面板摆法时排序控件在面板里，说明行跟着面板走（见下面那段）。 */}
+      {sortNote && sortPlacement === 'toolbar' && (
+        <p
+          data-testid={SESSION_SORT_NOTE_TESTID}
+          className="mb-2 px-2 text-xs theme-text-secondary"
+        >
+          {sortNote}
+        </p>
+      )}
+
       {showFilters && (
         <SearchFilterPanel
           controls={controls}
@@ -589,6 +616,16 @@ export const SearchFilterSection: React.FC<SearchFilterSectionProps> = ({
           sortControl={panelSortControl}
           focusDimension={focusDimension}
         />
+      )}
+
+      {/* 面板摆法：排序是面板里的最后一格 ⇒ 说明行在面板正下方、铺满一整行。 */}
+      {sortNote && sortPlacement === 'panel' && (
+        <p
+          data-testid={SESSION_SORT_NOTE_TESTID}
+          className="mb-3 px-2 text-xs theme-text-secondary"
+        >
+          {sortNote}
+        </p>
       )}
     </>
   );

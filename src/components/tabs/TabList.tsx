@@ -8,6 +8,7 @@ import { SearchFilterSection } from '@/components/search/SearchFilterPanel';
 import type { SearchFilterControls } from '@/components/search/searchFilterState';
 import { resolveSearchViewMode } from '@/components/search/searchBrowseMode';
 import { sortSessions } from '@/core/sessionSort';
+import { useLastUsedAtMap } from './useLastUsedAt';
 import { EmptyState } from '@/components/common/EmptyState';
 import { getEmptyStateGreeting } from '@/components/common/emptyStateGreeting';
 import { saveAndCloseLabel, savePrecheckCopy } from '@/components/layout/saveActionCopy';
@@ -91,6 +92,11 @@ export const TabList: React.FC<TabListProps> = ({ searchQuery, onOpenAuth, filte
   const { layoutMode, syncBackend } = useAppSelector(state => state.settings);
   // 排序键（2026-10-22 审计 L-10）：筛选区里那个「排序方式」下拉写的就是它。
   const sessionSort = useAppSelector(state => state.settings.sessionSort);
+  // ── 2026-11-27 v1.33：「最近使用」的本机记录 ────────────────────────────
+  // 它是**独立的本地表**（会话 id → 上次从这里打开标签的时间），不属于
+  // TabGroup 快照 ⇒ 只作为 `sortSessions` 的第三个参数参与比较，
+  // 绝不写回会话对象（写回去就会跟着 tab_groups 落盘/上云）。
+  const lastUsedAtMap = useLastUsedAtMap();
   const { isAuthenticated } = useAppSelector(state => state.auth);
   // ── 2026-10-20 审计 A-14：筛选状态住在**列表层** ────────────────────────
   // 修复前筛选条件是 SearchResultList 的内部 useState，而该组件只在有搜索词时
@@ -482,7 +488,7 @@ export const TabList: React.FC<TabListProps> = ({ searchQuery, onOpenAuth, filte
    * 又按「标签数」重分了两栏 ⇒ 屏幕顺序与键盘 Tab 序都不等于排序序。
    * ⇒ 渲染层现在按**行主序**逐个铺（见下方双栏分支的注释）。
    */
-  const sortedGroups = sortSessions(groups, sessionSort);
+  const sortedGroups = sortSessions(groups, sessionSort, lastUsedAtMap);
 
   const filteredGroups = sortedGroups;
 

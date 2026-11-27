@@ -47,8 +47,15 @@ describe('变异自证：排序控件的「作用域」这条守卫必须看得�
           {
             path: 'src/components/tabs/TabList.tsx',
             // 「判据层算对了 ≠ 列表用了它」—— L-10 栽的就是这一脚。
+            //
+            // ⚠️ 2026-11-27 v1.33：调用多了第三个参数（本机使用记录表）⇒
+            //    变异正则必须允许它存在，否则「源码没变 ⇒ 变异没生效」会
+            //    把一次**正确**的接线改动误报成守卫失效。
             mutate: source =>
-              source.replace('sortSessions(groups, sessionSort)', "sortSessions(groups, 'saved')"),
+              source.replace(
+                /sortSessions\(groups,\s*sessionSort(?:,\s*[\w.]+)?\)/,
+                "sortSessions(groups, 'saved')"
+              ),
           },
         ],
         expectRed: true,

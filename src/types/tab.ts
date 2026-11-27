@@ -409,9 +409,13 @@ export interface UserSettings {
   /**
    * 会话列表的排序键（2026-10-22 审计 L-10）。
    *
-   * 【它是什么】`core/sessionSort.ts` 里的四种排序键之一：
-   * `'saved'`（最近保存，默认）/ `'accessed'`（最近活动）/ `'name'`（名称）/
-   * `'size'`（会话大小 = 标签数）。
+   * 【它是什么】`core/sessionSort.ts` 里的五种排序键之一：
+   * `'saved'`（最近保存，默认）/ `'recentUsed'`（最近使用）/ `'accessed'`
+   * （最近修改）/ `'name'`（名称）/ `'size'`（会话大小 = 标签数）。
+   *
+   * ⚠️ `'recentUsed'` 依赖**只存本机**的使用记录（`storage-kv/lastUsedAtStore`），
+   * 那份记录**不属于** `TabGroup` 快照、不上云、不参与合并；这个设置键本身
+   * 仍随设置一起跨设备漫游（口径见下一条）。
    *
    * 【为什么是界面偏好而不是「仅本机」】它描述的是「用户的会话列表怎么摆」，
    * 与 `layoutMode`（界面布局）、`themeMode`（主题明暗）同一性质 ⇒ 允许随设置

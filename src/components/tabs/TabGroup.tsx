@@ -44,7 +44,10 @@ import {
 import { lockDisclosureText } from '@/components/tabs/lockFeedbackCopy';
 import { moveEmptiesSessionMessage } from '@/components/tabs/moveFeedbackCopy';
 import { decideFeedback } from '@/core/feedbackPolicy';
-import { formatSessionTimeLabel, getSessionHostSummary } from '@/utils/sessionPresentation';
+import { getSessionHostSummary } from '@/utils/sessionPresentation';
+import { formatSessionTimeBadge } from './sessionTimeBadge';
+import { useLastUsedAtMap } from './useLastUsedAt';
+import { recordSessionUsed } from '@/storage-kv/lastUsedAtStore';
 
 interface TabGroupProps {
   group: TabGroupType;
@@ -180,6 +183,11 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(
   // 修复前这个设置只有默认值与上云映射，UI 从不读它 —— 标签数量永远显示。
   // 现在设置页有开关（OptionsPage「外观」小节），这里真的按它决定画不画徽章。
   const showTabCount = useAppSelector(state => state.settings.showTabCount);
+  // ── 2026-11-27 v1.33：时间位显示「当前排序依据的时间」 ──────────────────
+  // 排序键决定时间位的前缀（保存 / 使用 / 修改）；使用时间来自**本机**记录表
+  // （读取方式见 @/components/tabs/useLastUsedAt 的文件头）。
+  const sessionSort = useAppSelector(state => state.settings.sessionSort);
+  const lastUsedAtMap = useLastUsedAtMap();
   const { showConfirm, showToast } = useToast();
   const { showDeleteError, showRestoreError, showRestoreSuccessMessage } = useEnhancedToast();
   // ── 2026-10-26：撤销机制下线 ──────────────────────────────────────────
@@ -534,6 +542,11 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(
           );
           return;
         }
+        // ── 2026-11-27 v1.33：「使用」= 从这个会话里打开过标签 ──────────
+        // 写入点在**打开动作成功之后**（SW 回 success:true），而不是点击时：
+        // 被拒开的标签没有被打开，不该刷新使用时间。
+        // 锁定组也记 —— 锁定只阻止消费，不阻止打开。
+        void recordSessionUsed(group.id);
         consumeSession();
         if (typeof r.skippedUnopenable === 'number' && r.skippedUnopenable > 0) {
           const keptNote = group.isLocked ? '它们仍保留在会话中。' : '这几个地址不再保存在列表中。';
@@ -614,6 +627,9 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(
             showRestoreError(toServiceWorkerErrorCopy(r?.error, '打开失败，标签仍保留在会话中'));
             return;
           }
+          // ── 2026-11-27 v1.33：打开成功 ⇒ 记一次「使用」（锁定组也记）──
+          // 口径见 @/storage-kv/lastUsedAtStore 的文件头：只记本机、不上云。
+          void recordSessionUsed(group.id);
           // ── 2026-10-25「安静的成功」：锁定分支**静默** ───────────────
           // 锁定组从不被消费 ⇒ 那条记录**还在**（行也还在）⇒ 界面自明。
           // 而锁定会话恢复后保留这件事，由卡片上那行**常驻说明**承担
@@ -651,6 +667,10 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(
           showRestoreError('打开失败，已保留在会话中');
           return;
         }
+        // ── 2026-11-27 v1.33：打开成功 ⇒ 记一次「使用」────────────────
+        // 放在消费（deleteTabAndSync）**之前**：消费失败（这条记录没删掉）
+        // 不影响「打开过」这个事实 —— 使用记录说的是打开动作，不是消费动作。
+        void recordSessionUsed(group.id);
         dispatch(deleteTabAndSync({ groupId: group.id, tabId: tab.id }))
           .unwrap()
           .then(payload => {
@@ -1054,12 +1074,22 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(
 
   // 格式化时间
   //
-  // ⚠️ 2026-10-25：这里的局部实现已被共享文案取代（`formatSessionTimeLabel`）。
+  // ⚠️ 2026-10-25：这里的局部实现已被共享文案取代（`formatRelativeTime`）。
   // 原因有二：
   //   ① **保存时间未知的会话**（来源不带时间戳的导入件）不能显示成「今天」——
   //      那是谎话（旧实现拿 `createdAt`= 导入时刻去格式化）；
   //   ② 时间戳非法时旧实现会显示字面的「Invalid Date」。
   // ⇒ 判据与措辞都在 `@/utils/sessionPresentation` 里，列表页与搜索页共用一份。
+  //
+  // 2026-11-27 v1.33：时间位改为显示「当前排序依据的时间」并带前缀
+  // （保存 / 使用 / 修改），判据在 `./sessionTimeBadge`。
+
+  // 时间位：显示**当前排序依据的那个时间**（保存 / 使用 / 修改）。
+  // 最近使用 + 本机没有记录 ⇒ null ⇒ 这一格不渲染（见 sessionTimeBadge）。
+  //
+  // ⚠️ 槽位仍是 `hidden sm:block`（640px 以下不显示）—— 这是既有规则，
+  //    v1.33 不动它（窄屏的卡头空间另有安排，改宽度属于另一件事）。
+  const timeBadge = formatSessionTimeBadge(group, sessionSort, lastUsedAtMap[group.id]);
 
   // 锁定说明（常驻行）。未锁定 ⇒ null ⇒ **不渲染**（未锁定卡片零密度成本）。
   const lockNote = lockDisclosureText(group.isLocked);
@@ -1245,10 +1275,12 @@ export const TabGroup: React.FC<TabGroupProps> = React.memo(
             </span>
           )}
 
-          {/* 时间 */}
-          <span className="tab-group-time hidden sm:block flex-shrink-0">
-            {formatSessionTimeLabel(group)}
-          </span>
+          {/* 时间（显示当前排序依据的时间；最近使用无记录时不渲染这一格） */}
+          {timeBadge && (
+            <span className="tab-group-time hidden sm:block flex-shrink-0">
+              {timeBadge}
+            </span>
+          )}
         </div>
 
         {/* 操作按钮。

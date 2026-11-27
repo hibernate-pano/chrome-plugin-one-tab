@@ -6,10 +6,10 @@
 // **筛选**维度，排序这件事本身被写死了。
 //
 // 本文件守**判据层 + 默认层 + 持久化层 + Redux 层**四件事：
-//   ① 判据层：`sortSessions` 四种键**每一个比较器分支**的行为
-//      （含非法时间戳、同值兜底、稳定性、不改入参）；
+//   ① 判据层：`sortSessions` 五种键**每一个比较器分支**的行为
+//      （含非法时间戳、同值兜底、稳定性、不改入参、最近使用的本机记录表）；
 //   ② 默认层：默认键是 `'saved'`（= 旧版写死的顺序 ⇒ 存量用户升级后顺序不变），
-//      选项表与标签齐全，`isSessionSortKey` 只认这四种；
+//      选项表与标签齐全，`isSessionSortKey` 只认这五种；
 //   ③ 持久化层：排序键随设置落盘 / 读回，脏值 fail-safe 回落，存量用户回落到默认；
 //   ④ Redux 层：`setSessionSort` 这个 action 真的写进了 `state.sessionSort`。
 //
@@ -142,7 +142,7 @@ describe('判据层 · saved：与旧版写死的排序逐元素等价', () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────
-// 2. 判据层 · accessed（最近访问）
+// 2. 判据层 · accessed（最近修改）
 // ─────────────────────────────────────────────────────────────────────────
 
 describe('判据层 · accessed：按「会话最近一次动静」倒序', () => {
@@ -253,6 +253,107 @@ describe('判据层 · accessed：按「会话最近一次动静」倒序', () =
     assert.deepEqual(first, third, '同一份输入排序两次结果必须一致');
     assert.equal(second[0], 'by-tab', '最近动过的永远在前（与输入顺序无关）');
     assert.deepEqual([...second].sort(), [...first].sort(), '不能凭空丢会话');
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// 2.5 判据层 · recentUsed（最近使用，本机记录）
+// ─────────────────────────────────────────────────────────────────────────
+
+/**
+ * 「最近使用」的判据是**本机记录表**（会话 id → ISO 时间），不是会话上的字段。
+ *
+ * 产品口径（v1.33）：从这条会话里打开过标签 = 使用。记录只存本机、不上云。
+ * 排序规则：有记录的按时间倒序在前；**没有记录的排在最后**；同值按 createdAt 倒序。
+ */
+describe('判据层 · recentUsed：按本机使用记录倒序，没有记录的排最后', () => {
+  const FIXTURE: FixtureGroup[] = [
+    group('used-old', '上周用过', '2026-01-01T00:00:00.000Z'),
+    group('used-new', '今天用过', '2026-02-01T00:00:00.000Z'),
+    group('never', '从没用过', '2026-06-01T00:00:00.000Z'), // createdAt 最新，但没记录
+    group('used-mid', '昨天用过', '2026-03-01T00:00:00.000Z'),
+  ];
+
+  const LAST_USED = {
+    'used-new': '2026-06-10T12:00:00.000Z',
+    'used-mid': '2026-06-09T12:00:00.000Z',
+    'used-old': '2026-06-01T12:00:00.000Z',
+  } as const;
+
+  it('按使用时间倒序；没有记录的会话排在最后（不是按 createdAt 顶上去）', () => {
+    assert.deepEqual(ids(sortSessions(FIXTURE, 'recentUsed', LAST_USED)), [
+      'used-new',
+      'used-mid',
+      'used-old',
+      'never',
+    ]);
+  });
+
+  it('没有记录的会话之间按 createdAt 倒序兜底（确定性）', () => {
+    const fixture = [
+      group('never-old', '没记录且旧', '2026-01-01T00:00:00.000Z'),
+      group('never-new', '没记录且新', '2026-06-01T00:00:00.000Z'),
+      group('used', '有记录', '2026-02-01T00:00:00.000Z'),
+    ];
+    assert.deepEqual(ids(sortSessions(fixture, 'recentUsed', { used: '2026-03-01T00:00:00.000Z' })), [
+      'used',
+      'never-new',
+      'never-old',
+    ]);
+  });
+
+  it('使用时间相同时按 createdAt 倒序兜底', () => {
+    const fixture = [
+      group('older', '同刻用过', '2026-01-01T00:00:00.000Z'),
+      group('newer', '同刻用过', '2026-06-01T00:00:00.000Z'),
+      group('other', '另刻用过', '2026-03-01T00:00:00.000Z'),
+    ];
+    const map = {
+      older: '2026-07-01T00:00:00.000Z',
+      newer: '2026-07-01T00:00:00.000Z',
+      other: '2026-06-01T00:00:00.000Z',
+    };
+    assert.deepEqual(ids(sortSessions(fixture, 'recentUsed', map)), ['newer', 'older', 'other']);
+  });
+
+  it('记录里的时间非法 ⇒ 该会话按「没有记录」处理（排最后，不抖动）', () => {
+    const fixture = [
+      group('bad', '记录是乱码', '2026-06-01T00:00:00.000Z'),
+      group('good', '记录正常', '2026-01-01T00:00:00.000Z'),
+    ];
+    assert.deepEqual(
+      ids(sortSessions(fixture, 'recentUsed', { bad: '不是时间戳', good: '2026-05-01T00:00:00.000Z' })),
+      ['good', 'bad']
+    );
+  });
+
+  it('没有传记录表 ⇒ 全部按 createdAt 倒序（等价于「一条记录都没有」）', () => {
+    assert.deepEqual(
+      ids(sortSessions(FIXTURE, 'recentUsed')),
+      ids(sortSessions(FIXTURE, 'saved'))
+    );
+  });
+
+  it('会话对象上自带的 lastUsedAt 也认（优先级高于记录表）', () => {
+    const direct = { ...group('a', '自带记录', '2026-01-01T00:00:00.000Z'), lastUsedAt: '2026-08-01T00:00:00.000Z' };
+    const viaMap = group('b', '来自记录表', '2026-01-01T00:00:00.000Z');
+    assert.deepEqual(
+      ids(sortSessions([viaMap, direct], 'recentUsed', { a: '2026-01-01T00:00:00.000Z', b: '2026-07-01T00:00:00.000Z' })),
+      ['a', 'b'],
+      '会话对象上自带的时间（8 月）必须压过记录表里的旧值（1 月）'
+    );
+  });
+
+  it('排序不会把 lastUsedAt 写进会话对象（它只作为第三个参数参与比较）', () => {
+    const fixture = FIXTURE.map(item => ({ ...item }));
+    sortSessions(fixture, 'recentUsed', LAST_USED);
+    for (const item of fixture) {
+      assert.equal(
+        Object.prototype.hasOwnProperty.call(item, 'lastUsedAt'),
+        false,
+        '使用记录绝不能落到会话对象上（落上去就会跟着 tab_groups 上云）'
+      );
+    }
   });
 });
 
@@ -415,10 +516,11 @@ describe('默认层 · 默认排序键与选项表', () => {
     assert.equal(DEFAULT_SESSION_SORT, 'saved');
   });
 
-  it('选项表就是这四种，且默认项排在第一个', () => {
+  it('选项表就是这五种（顺序即下拉框顺序），且默认项排在第一个', () => {
     assert.deepEqual(
       SESSION_SORT_OPTIONS.map(option => option.value),
-      ['saved', 'accessed', 'name', 'size']
+      ['saved', 'recentUsed', 'accessed', 'name', 'size'],
+      '下拉框顺序：最近保存 / 最近使用 / 最近修改 / 名称 / 会话大小（标签数）'
     );
     assert.equal(SESSION_SORT_OPTIONS[0].value, DEFAULT_SESSION_SORT);
   });
@@ -429,16 +531,19 @@ describe('默认层 · 默认排序键与选项表', () => {
       assert.notEqual(option.label, option.value, `${option.value} 的标签不能就是 key 本身`);
     }
     assert.equal(sessionSortLabel('saved'), '最近保存');
-    // 「最近活动」而不是「最近访问」：口径是「最近一次被改动/被碰过」
-    // （改名也算，见 core/sessionSort.ts 的 lastActivityAt 注释）。
-    // 叫「访问」会让用户以为只有「打开过」才算 —— 与实际不符。
-    assert.equal(sessionSortLabel('accessed'), '最近活动');
+    // v1.33 定案：'accessed' 的标签从「最近活动」改成「最近修改」。
+    // 口径是「最近一次被改动」（改名也算，见 core/sessionSort.ts 的
+    // lastActivityAt 注释）；「修改」比「活动」更贴近它真正在看的东西。
+    assert.equal(sessionSortLabel('accessed'), '最近修改');
+    // 新增的第五种：'recentUsed' = 本机记录里「打开过这条会话」的时间。
+    // 与「最近修改」是**两件事**：修改看会话自身，使用只看本机的打开动作。
+    assert.equal(sessionSortLabel('recentUsed'), '最近使用');
     assert.equal(sessionSortLabel('name'), '名称');
     assert.equal(sessionSortLabel('size'), '会话大小（标签数）');
   });
 
-  it('isSessionSortKey 只认这四种', () => {
-    const legal: SessionSortKey[] = ['saved', 'accessed', 'name', 'size'];
+  it('isSessionSortKey 只认这五种', () => {
+    const legal: SessionSortKey[] = ['saved', 'recentUsed', 'accessed', 'name', 'size'];
     for (const key of legal) {
       assert.equal(isSessionSortKey(key), true, `${key} 必须是合法排序键`);
     }
@@ -515,6 +620,7 @@ describe('持久化层 · 排序键随设置落盘，存量用户回落到默认
 
   it('非法值 fail-safe 回落成默认键（不抛错）', () => {
     assert.equal(validateSessionSort('saved'), 'saved');
+    assert.equal(validateSessionSort('recentUsed'), 'recentUsed');
     assert.equal(validateSessionSort('accessed'), 'accessed');
     assert.equal(validateSessionSort('name'), 'name');
     assert.equal(validateSessionSort('size'), 'size');
@@ -574,7 +680,7 @@ describe('Redux 层 · setSessionSort', () => {
     assert.equal(next.sessionSort, 'name');
   });
 
-  it('四种键都能写进去', () => {
+  it('五种键都能写进去', () => {
     const reducer = settingsSlice.default;
     const initial = reducer(undefined, { type: '@@init' });
     for (const key of SESSION_SORT_OPTIONS.map(option => option.value)) {
