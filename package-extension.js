@@ -92,7 +92,8 @@ try {
         artifactGate.problems.join('；') +
         '\n' +
         '（这个包装上去 = 线上用户点登录就报「Supabase 配置缺失」。' +
-        '先修构建期的 .env / .env.local，再重新 pnpm build。）'
+        '先修构建期的配置（~/.config/tapstack/env，或 TAPSTACK_ENV_FILE 指向的文件），' +
+        '再重新 pnpm build。）'
     );
   }
   console.log('✅ 产物里已内联 Supabase 配置（登录可用）');

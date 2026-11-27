@@ -2,13 +2,17 @@
 // 真实证据路径：保存（不点手动上传） → 等 8s → 用 supabase-js 以同一账号登录
 //   → 查 public.tab_groups 应有新行（标题含 "AUTO-1-自动同步"）
 //
-// ── 凭据来源（2026-09-29 修）──
-// 本脚本需要这两个环境变量，**优先读 process.env，缺失时才回退读仓库根目录的
-// .env / .env.local**（scripts/e2e-support.mjs 的 loadEnv）：
+// ── 凭据来源（2026-09-29 修，2026-11-23 再修）──
+// 本脚本需要这两个环境变量。来源**与扩展构建完全一致**
+// （scripts/e2e-support.mjs 的 loadEnv）：
+//   仓库外的构建配置（~/.config/tapstack/env，权威）> process.env > 仓库里的 .env
 //   VITE_SUPABASE_URL       —— Supabase 项目地址
 //   VITE_SUPABASE_ANON_KEY  —— 匿名 key（公开可读，非 service_role）
-// 变量名与 .env 里的一致，没有改。原先硬 readFileSync('.env')，密钥来源被写死在
+// 变量名没有改。原先硬 readFileSync('.env')，密钥来源被写死在
 // 代码里，CI 与其他环境无法注入（只能在恰好有 .env 的机器上跑）。
+// 2026-11-23：优先级与构建**逐层对齐**（此前 process.env 在最上面）⇒
+// 开发者在 shell 里 export 之后，扩展连文件里的项目、本脚本连 export 的项目
+// ⇒ **e2e 验的不是要发的东西**。
 //
 // 运行：node scripts/e2e-auto-upload-test.mjs（需先 pnpm build）
 
@@ -27,7 +31,7 @@ const EMAIL = `e2e-auto-${randomUUID().slice(0, 6)}@test.tapstack.dev`;
 const PWD = 'SyncTest#2026!';
 console.log(accountMarker(EMAIL)); // 供 run-e2e 收尾统一清理
 
-// process.env 优先，缺失才回退 .env；两个都缺就直接报缺哪个键
+// 凭据来源与扩展构建一致（仓库外配置 > process.env > 仓库 .env）；缺了就报缺哪个键
 const env = requireEnv(loadEnv({ cwd: resolve(process.cwd()) }));
 const SUPA_URL = env.VITE_SUPABASE_URL;
 const SUPA_ANON = env.VITE_SUPABASE_ANON_KEY;

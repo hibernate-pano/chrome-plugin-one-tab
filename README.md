@@ -111,6 +111,25 @@ TapStack 是一个面向重度浏览器用户的工作会话收纳箱。它的�
 git clone https://github.com/hibernate-pano/chrome-plugin-one-tab.git
 cd chrome-plugin-one-tab
 pnpm install
+```
+
+构建需要 Supabase 配置（`VITE_SUPABASE_URL` / `VITE_SUPABASE_ANON_KEY`），
+它**不在仓库里**（仓库根的 `.env.local` 是 `vercel link` 的地盘，会被覆盖）：
+
+```bash
+mkdir -p ~/.config/tapstack
+cp .env.example ~/.config/tapstack/env   # 把 anon key 换成你自己的
+```
+
+也可以用 `TAPSTACK_ENV_FILE` 指向别的文件。配置不对时 `pnpm build` 会**直接失败**
+并告诉你缺什么 —— 不会产出「装上去才发现登录不了」的包。
+
+> **谁说了算**：上面那个文件是**权威来源** —— 扩展构建（`pnpm build`）与 e2e
+> 脚本读的是**同一份**。`process.env`（shell 里的 `export`）只在那个文件**没有**
+> 该键时才生效；仓库根的 `.env` / `.env.local` 只在上面两者都没有时才生效。
+> ⇒ 在 shell 里 `export VITE_SUPABASE_URL=…` **不会**改变扩展连哪个项目。
+
+```bash
 pnpm build
 ```
 

@@ -15,10 +15,12 @@
 //
 // 运行：node scripts/e2e-fresh-device-edit-wins.mjs（需先 pnpm build）
 //
-// ── 凭据来源（2026-09-29 修）──
+// ── 凭据来源（2026-09-29 修，2026-11-23 再修）──
 // 需要 VITE_SUPABASE_URL / VITE_SUPABASE_ANON_KEY（SUPABASE_SERVICE_ROLE_KEY 可选，
-// 供收尾清理）。**优先读 process.env，缺失才回退读 .env / .env.local**（共享
-// loadEnv）；变量名与 .env 里的一致，没有改。
+// 供收尾清理）。来源**与扩展构建一致**（共享 loadEnv）：
+// 仓库外的构建配置（~/.config/tapstack/env，权威）> process.env > 仓库里的 .env
+// 2026-11-23：优先级与构建**逐层对齐**（此前 process.env 在最上面）⇒
+// shell 里 export 的值不再让本脚本与扩展连到不同的项目。
 
 import { chromium } from 'playwright';
 import { mkdtempSync } from 'node:fs';
