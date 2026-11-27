@@ -5,6 +5,7 @@ import { RegisterForm } from './RegisterForm';
 import { InlineNotice } from '@/components/common/InlineNotice';
 import { useAppDispatch } from '@/store/hooks';
 import {
+  forgetRecoveryVerification,
   resetFailureNotice,
   sendPasswordResetCode,
   submitPasswordReset,
@@ -289,6 +290,15 @@ const PasswordResetView: React.FC<ResetViewProps> = ({ onClose }) => {
     void sendCode(state.sentEmail);
   };
 
+  /**
+   * 「改邮箱」：离开当前这条邮件对应的恢复流程 ⇒ 「已验证」记忆当场作废
+   * （回到 R2 时必须重新走 verifyOtp）。
+   */
+  const handleChangeEmail = () => {
+    dispatch(forgetRecoveryVerification());
+    rawDispatch({ type: 'changeEmail' });
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
@@ -364,7 +374,7 @@ const PasswordResetView: React.FC<ResetViewProps> = ({ onClose }) => {
               <span className="min-w-0 flex-1">{resetSentMessage(state.sentEmail)}</span>
               <button
                 type="button"
-                onClick={() => rawDispatch({ type: 'changeEmail' })}
+                onClick={handleChangeEmail}
                 className="inline-flex min-h-9 min-w-9 shrink-0 items-center justify-center rounded px-2 text-sm font-medium theme-accent-text hover:underline"
               >
                 {RESET_COPY.changeEmail}
@@ -538,6 +548,7 @@ interface AuthModalProps {
  * 同时也解耦了生命周期：菜单可以随点击关闭，弹窗独立存活。
  */
 export const AuthModal: React.FC<AuthModalProps> = ({ visible, initialTab = 'login', onClose }) => {
+  const dispatch = useAppDispatch();
   const panelRef = useRef<HTMLDivElement>(null);
   const [activeTab, setActiveTab] = useState<AuthTab>(initialTab);
   /**
@@ -548,6 +559,19 @@ export const AuthModal: React.FC<AuthModalProps> = ({ visible, initialTab = 'log
    */
   const [showReset, setShowReset] = useState(false);
 
+  /**
+   * 关闭弹窗 = 离开重置视图：「本次恢复会话已验证」记忆当场作废（防误放）。
+   *
+   * ⚠️ 弹窗里的显式关闭按钮都走它：两个 ✕、R3「开始使用」。
+   * Escape（useDialogA11y）与父组件直接改 `visible=false` 的路径由下面两个
+   * effect 兜住 —— 无论父组件是「留着挂载、翻转 visible」还是「直接卸载」，
+   * 离开重置视图这件事都会清掉记忆。
+   */
+  const closeModal = () => {
+    dispatch(forgetRecoveryVerification());
+    onClose();
+  };
+
   // 钩子必须在 `if (!visible) return null` 之前调用：visible 是渲染开关，
   // 焦点/键盘契约要跟着它开合（与 ModalFrame 同一约定）。
   useDialogA11y(panelRef, visible, onClose);
@@ -557,12 +581,26 @@ export const AuthModal: React.FC<AuthModalProps> = ({ visible, initialTab = 'log
     if (visible) {
       setActiveTab(initialTab);
       setShowReset(false);
+    } else {
+      // 已关闭（或从未打开）：重置视图不在 ⇒ 上一次「已验证」记忆作废。
+      dispatch(forgetRecoveryVerification());
     }
-  }, [visible, initialTab]);
+  }, [visible, initialTab, dispatch]);
+
+  // 兜底：父组件若用**卸载**来关弹窗（visible 不再翻转），卸载这一刻同样
+  // 要作废记忆 —— 否则下次打开重置视图会沿用上一次的「已验证」。
+  useEffect(
+    () => () => {
+      dispatch(forgetRecoveryVerification());
+    },
+    [dispatch],
+  );
 
   if (!visible) return null;
 
   const backToLogin = () => {
+    // 离开重置视图 ⇒ 上一次「已验证」记忆作废（再进来重新走 verifyOtp）。
+    dispatch(forgetRecoveryVerification());
     setShowReset(false);
     setActiveTab('login');
   };
@@ -596,7 +634,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ visible, initialTab = 'log
                 <button
                   type="button"
                   className="p-3 text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200"
-                  onClick={onClose}
+                  onClick={closeModal}
                   aria-label="关闭登录弹窗"
                 >
                   <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -637,7 +675,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ visible, initialTab = 'log
               <button
                 type="button"
                 className="p-3 text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200"
-                onClick={onClose}
+                onClick={closeModal}
                 aria-label="关闭登录弹窗"
               >
                 <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -648,7 +686,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ visible, initialTab = 'log
           )}
           <div className="p-6">
             {showReset ? (
-              <PasswordResetView onClose={onClose} />
+              <PasswordResetView onClose={closeModal} />
             ) : activeTab === 'login' ? (
               <LoginForm onSuccess={onClose} onForgotPassword={() => setShowReset(true)} />
             ) : (
