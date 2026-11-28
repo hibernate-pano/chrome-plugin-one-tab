@@ -8,7 +8,7 @@
 > 长期台账**（含根因、踩坑、修复顺序），不必翻译成英文、不必对齐商店审核口径。
 > 两边都会写「本版改了什么」，但只有本文件会记住「为什么」和「后来怎么验证的」。
 
-## 未发版（2026-11-27，未提审）
+## v1.33.0（2026-11-28，待提审）
 
 **一句话**：v1.33「找回闭环」——忘记密码 / 重置密码（扩展内 6 位验证码）+「最近使用」排序档 + 批量恢复成功提示追加「想反复使用？恢复前先锁定」。
 
@@ -24,44 +24,21 @@
 - 单元 B（`feat/v133-sort-toast` @ `1cb37d4`）：`src/core/sessionSort.ts`（第五档 `recentUsed`、`accessed`→「最近修改」）、`src/types/tab.ts`、`src/storage-kv/lastUsedAtStore.ts` + `keys.ts`（本机 `last_used_at`）、`src/components/tabs/*`（时间位前缀、打开动作记账、恢复提示追加）、`src/components/search/*`（最近使用说明行、批量恢复记账）、`src/components/layout/Header.tsx`（骰子记账）、`src/components/onboarding/OnboardingSteps.tsx`（排序卡文案同步五档）；新增 6 个测试文件 61 条 + `sessionSort.test.ts` 47 条。
 - 集成分支 `feat/v1.33-find-loop`：两单元以合并提交并入（A 5 文件 +1557/−47；B 24 文件 +1904/−53）。
 
-### 不动什么
+### 内部构建链路改动：扩展的构建配置搬出仓库 —— 切断共享，而不是多加一道检查
 
-- 不改数据模型、同步协议、删除 / 消费语义、Supabase 生产库（迁移 / RLS）。
-- `lastUsedAt` **只存本机**（独立 KV 键，按会话 id），不进入任何上传 / 合并载荷（反证测试钉住 `buildTabGroupRow` / `encodeGroup` 的序列化结果）。
-- 不改版本号（六处同步留到发版步骤）、`store-assets/`、`CHROMEWEBSTORE.md`。
-
-### 怎么验的
-
-- `pnpm validate` **EXIT 0**（validate-extension → type-check → type-check:tests → lint → lint:tests → build → check:bundle 全链）。
-- `pnpm test` **EXIT 0**：**5288 tests / 5288 pass / 0 fail / 0 skipped / 1265 suites**（集成分支全量）。
-- 两单元各自先自测：A 全量 5218 tests 0 fail；B 全量 5244 tests 0 fail。
-- 关键断言：OTP 错误映射与 thunk 顺序（verify→update）、R1→R2→R3 状态机与逐字文案、五种排序键与 `recentUsed` 兜底、「本机记录不进上传载荷」反证、`removed > 0` 才追加锁定提示。
-
-### 诚实边界
-
-- **真实邮件收码链路未验**：需先在 Supabase 控制台把「重置密码」邮件模板加上 `{{ .Token }}`（6 位验证码变量），否则 R2 收不到码；本版对 Supabase 的调用全部是 mock。
-- 未做浏览器真机走查：重置视图三个状态由单测覆盖，未在真实扩展里逐屏点过。
-- 「最近使用」不跨设备（设计如此，所有文案不承诺）；时间位在 <640px 不显示（既有规则，已知缺口，留 v1.34 单独处理）。
-- 最近使用无记录时卡片不渲染那一格（不写「未使用」，避免对旧会话说假话）。
-
-### 商店状态
-
-`未发版`（版本号未 bump、未打包、未上传；提审与商店文案由项目负责人决定）。
-
-### 版本号同步确认
-
-未 bump：`package.json` 仍 `1.32.1`；六处同步留到发版步骤。
-
-## 未发版（**不需要发版**）：扩展的构建配置搬出仓库 —— 切断共享，而不是多加一道检查
-
+> **内部构建链路改动，不占版本号、不影响用户可见行为。**
+> 归位说明：这一块原先是台账里**第二个「未发版」节**（**不需要发版**），本轮把它并进
+> v1.33.0 节内的一条 —— **不占版本号**（不单开一版）、**不影响用户可见行为**；
+> 它只改构建链路，扩展的功能 / 协议 / 界面 / 产物行为一字未动。
+>
 > 起因是 1.32.0 的线上事故（`vercel link` 覆盖 `.env.local` ⇒ 构建照样成功 ⇒
 > 上架了没有云端配置的包）。1.32.1 补了两道 fail-closed 闸门，但**根因没动**：
 > 扩展的构建配置与 vercel 的部署配置**共用一个文件**。
 >
 > 本次只改**构建链路**，扩展的功能/协议/界面/产物行为一字未动 ⇒ **不需要提审**。
-> 它的价值在下一次发版时自动生效（那时构建已经不再依赖那个会被覆盖的文件）。
+> 它的价值在 v1.33.0 这一版的构建里自动生效（那时构建已经不再依赖那个会被覆盖的文件）。
 
-### 一、为什么「加检查」不等于「修好」
+#### 一、为什么「加检查」不等于「修好」
 
 1.32.1 的两道闸门把症状从「悄悄上架一个坏包」变成了「构建直接红」——
 这是必要的（fail-closed），但它**没有回答**「配置为什么会在打包前消失」。
@@ -70,7 +47,7 @@
 共享 = 迟早被覆盖。
 ⇒ 修法是**把两件事物理分开**，不是再加一道检查。
 
-### 二、改了什么
+#### 二、改了什么
 
 - **新增 `scripts/lib/tapstackEnv.mjs`**：扩展构建配置的**唯一读取入口**。
   顺序只有两级：`TAPSTACK_ENV_FILE`（CI / 多台机器各指各的）→ `~/.config/tapstack/env`。
@@ -106,7 +83,7 @@
   只留一段说明（它现在归 vercel 管）。`.env.example` 改成模板 + 说明了新位置；
   README 的安装步骤补上这一步。
 
-### 三、判据（这次的验收标准**不是**「构建红」，恰恰相反）
+#### 三、判据（这次的验收标准**不是**「构建红」，恰恰相反）
 
 - **接线层真的跑那条路径**：用 vite 的 `loadConfigFromFile` 执行仓库里的
   `vite.config.ts`，在 cwd 里放一份「被 `vercel link` 覆盖过的 `.env.local`」
@@ -125,7 +102,7 @@
   ⑥ stale 警告又变回「任意 `VITE_` 键」⇒ 1 条红。
 - **真实构建**：产物里同时有项目地址与 **208 字符**的 key；打包闸门通过。
 
-### 四、没做的（留给下一次）
+#### 四、没做的（留给下一次）
 
 - `scripts/anon-rls-probe.mjs` / `supabase-smoke-test.mjs` / `supabase-migrate.mjs`
   仍读仓库根的 `.env` —— 但那三个要的是**服务密钥 / 数据库连接串**，
@@ -134,14 +111,64 @@
 - 扩展的 env 长期正解已落地（仓库外）；`.env.webdav.local`（真机探针用的
   WebDAV 凭据）仍在仓库目录里 —— 它不进产物，但同属「凭据放仓库目录」这类问题。
 
-### 五、顺手清掉的
+#### 五、顺手清掉的
 
 - `.env.restore`（1.32.1 恢复时留下的备份：掩码值 + 一个 `VERCEL_OIDC_TOKEN`）
   **已删除**。删除前确认过三件事：它从未进过 git（`git log --all -- .env.restore`
   为空）、已被 `.gitignore` 覆盖、仓库里没有任何脚本引用它。
   ⇒ 它的内容从来只在**本机磁盘**上，而那正是「凭据放仓库目录」这类问题的来源。
 
-## v1.32.1（2026-11-23，**已上架**）
+### 不动什么
+
+- 不改数据模型、同步协议、删除 / 消费语义、Supabase 生产库（迁移 / RLS）。
+- `lastUsedAt` **只存本机**（独立 KV 键，按会话 id），不进入任何上传 / 合并载荷（反证测试钉住 `buildTabGroupRow` / `encodeGroup` 的序列化结果）。
+- 功能改动本身不改版本号、不碰 `store-assets/`、不动商店文案正文；版本号六处同步在**发版步骤**完成（见「版本号同步确认」）。
+
+### 怎么验的
+
+- `pnpm validate` **EXIT 0**（validate-extension → type-check → type-check:tests → lint → lint:tests → build → check:bundle 全链）；回包 `Validated extension metadata for version 1.33.0`；首屏 **196.4KB / 预算 200KB**。
+- `pnpm test` 全量（发版步骤，2026-11-28）：**5336 tests / 5334 pass / 2 fail / 0 skipped / 1279 suites**。2 条 fail **全部**来自 `tests/guards/storeAssetsMatchCurrentVersion.test.ts`（截图未按 1.33.0 重拍，见「诚实边界」）；其余 5334 条全绿。
+- 定向：`tests/releaseNotes.test.ts` **7 pass / 0 fail**；`tests/docsAlignment.test.ts` **77 pass / 0 fail**。
+- 打包：`node package-extension.js` ⇒ `chrome-extension.zip` **361,521 字节**，包内 `manifest.version=1.33.0`，包内无 `.map` / `.ts` / `.DS_Store`。
+- 两单元各自先自测（集成分支）：A 全量 5218 tests 0 fail；B 全量 5244 tests 0 fail；集成后全量 5288 tests 0 fail。
+- 关键断言：OTP 错误映射与 thunk 顺序（verify→update）、R1→R2→R3 状态机与逐字文案、五种排序键与 `recentUsed` 兜底、「本机记录不进上传载荷」反证、`removed > 0` 才追加锁定提示。
+
+### 诚实边界
+
+- **真实邮件收码链路未验**：需先在 Supabase 控制台把「重置密码」邮件模板加上 `{{ .Token }}`（6 位验证码变量），否则 R2 收不到码；本版对 Supabase 的调用全部是 mock。
+- 未做浏览器真机走查：重置视图三个状态由单测覆盖，未在真实扩展里逐屏点过。
+- 「最近使用」不跨设备（设计如此，所有文案不承诺）；时间位在 <640px 不显示（既有规则，已知缺口，留 v1.34 单独处理）。
+- 最近使用无记录时卡片不渲染那一格（不写「未使用」，避免对旧会话说假话）。
+- **商店截图未按 1.33.0 重拍**：`store-assets/` 的成品截图本轮**没动**（页脚仍是 v1.32.1）⇒ 提审前必须重拍。`tests/guards/storeAssetsMatchCurrentVersion.test.ts` 会因此变红（它就是为这件事存在的），重拍并把资产表说明改成 1.33.0 后即绿。
+
+### 商店状态
+
+`待提审` —— 证据（C 级，本地实测输出）：`pnpm validate` EXIT 0，回包 `Validated extension metadata for version 1.33.0`（版本号六处同步的校验输出）。**尚未上传商店**（无 upload / publish 回包），线上仍是 1.32.1；提审与商店文案由项目负责人另行授权。
+
+### 版本号同步确认
+
+六处全部 `1.33.0`：`package.json` / `manifest.json` / `README.md`「当前版本」/ `.env.example` 的 `VITE_APP_VERSION` / `CHROMEWEBSTORE.md` 版本历史表首行 / 本节标题。校验：`pnpm validate` → `Validated extension metadata for version 1.33.0`（EXIT 0）；`tests/releaseNotes.test.ts`（最新一节版本号 == `package.json` 版本号）。
+
+> ⚠️ **版本号写的是 `1.33.0`，不是 `1.33`**：门禁的形状要求三段式 —— `scripts/validate-extension.mjs` 的文档版本正则、`tests/releaseNotes.test.ts` 的小节正则（`^## v(\d+\.\d+\.\d+)（`）、以及 `tests/guards/storeAssetsMatchCurrentVersion.test.ts` 的 `manifest.version` 形状断言（`^\d+\.\d+\.\d+$`）都要求三段。写 `1.33` 会让这三处直接变红。
+
+**已知的边界**（从 1.32.1 继承，内容与 1.32.0 继承的那份逐字相同）
+
+**① 列目录改成 fail-closed 是有代价的**：2026-10-22～10-23 那轮把「读不懂的
+207 响应」从「当成空目录」改成 **fail-closed**（`listed:false`）—— 因为
+「当成空目录」会让随后的覆盖上传把云端真正的会话删掉。代价是：若某家服务商
+回包形态特殊，用户会看到同步**中止**并报错，而不是「云端为空」。
+**宁可见到中止，也不要静默删数据。** 但这条取舍必须真机验完才算数：
+
+- [ ] **三家 WebDAV 各跑一次列目录实测**（坚果云 / dufs / 第三个服务商）。
+      每家都要记录：Depth:1 PROPFIND 的**状态码**、正文里**有没有
+      `<multistatus>`**、**有没有 `<response>` 块**、**每个块有没有
+      `<href>`**、`<href>` 是**绝对 URL / 绝对路径 / 相对路径**哪一种、
+      目录**真的有分片时**列出来的条目数是否与磁盘上的文件数一致。
+      —— 这一条是**真机**的，脚本与单测都替不了（`scripts/webdav-capability-matrix.mjs`
+      与 `scripts/e2e-webdav-local.mjs` 目前**只**测 Depth:0，不覆盖 Depth:1）。
+      —— 2026-11-17 进展：坚果云真机 14/14、dufs 19/19 已过；**只差第三个服务商**。
+
+## v1.32.1（2026-11-23，已发布（2026-11-23））
 
 > 提审过程（2026-11-23，全部有回包自证）：
 > `pnpm build` → `node package-extension.js`（`chrome-extension.zip` **356,977 字节**，
@@ -263,7 +290,7 @@
       与 `scripts/e2e-webdav-local.mjs` 目前**只**测 Depth:0，不覆盖 Depth:1）。
       —— 2026-11-17 进展：坚果云真机 14/14、dufs 19/19 已过；**只差第三个服务商**。
 
-## v1.32.0（2026-11-21，已提交审核）
+## v1.32.0（2026-11-21，已发布（2026-11-21，后被 1.32.1 取代））
 
 > 提审过程（2026-11-21，全部有回包自证）：
 > `pnpm package`（`chrome-extension.zip` **356,820 字节**，
@@ -375,7 +402,7 @@
       与 `scripts/e2e-webdav-local.mjs` 目前**只**测 Depth:0，不覆盖 Depth:1）。
       —— 2026-11-17 进展：坚果云真机 14/14、dufs 19/19 已过；**只差第三个服务商**。
 
-## v1.31.2（2026-11-17，待提审）
+## v1.31.2（2026-11-17，未上架（并入 1.32.0））
 
 > 本版**只动开发链路依赖**：不改运行时代码、不改数据模型、不改同步协议，
 > 用户可见行为与 `1.31.1` 完全一致。起因与处理：
