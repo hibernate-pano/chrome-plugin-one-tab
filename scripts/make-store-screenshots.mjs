@@ -74,7 +74,7 @@ function tab(groupId, url, title, ageHours) {
   };
 }
 
-function group(name, { locked = false, order, ageHours, tabs }) {
+function group(name, { locked = false, order, ageHours, updatedHours, tabs }) {
   const id = crypto.randomUUID();
   return {
     id,
@@ -82,7 +82,7 @@ function group(name, { locked = false, order, ageHours, tabs }) {
     isLocked: locked,
     tabs: tabs.map(([url, title, age]) => tab(id, url, title, age ?? ageHours)),
     createdAt: iso(now - ageHours * 3600e3),
-    updatedAt: iso(now - (ageHours - 0.5) * 3600e3),
+    updatedAt: iso(now - (updatedHours ?? ageHours - 0.5) * 3600e3),
     isDeleted: false,
     version: 1,
     displayOrder: order,
@@ -102,10 +102,11 @@ const demoV2 = order =>
     ],
   });
 
-const demoReact = (order, count = 3) =>
+const demoReact = (order, count = 3, ageHours = 6, updatedHours) =>
   group('React 19 升级 PR', {
     order,
-    ageHours: 6,
+    ageHours,
+    updatedHours,
     tabs: [
       ['https://github.com/facebook/react/releases', 'React Releases · facebook/react'],
       ['https://react.dev/reference/react/useActionState', 'useActionState – React'],
@@ -211,7 +212,17 @@ const SCENARIOS = [
   },
   {
     name: 'screenshot-3-search',
-    groups: [demoReact(1, 4), demoLearn(2), demoInterview(3), demoWeekly(4)],
+    // 标题说「三个月前那组」⇒ 被搜的这组必须是三个月前保存的（2026-11-28）。
+    // 只在这一张改年龄：其余四张沿用默认 6 小时，顺序与落点都不动。
+    // updatedHours 单独给：搜索结果同分时按会话 updatedAt 倒序收敛
+    // （src/utils/search.ts 的 buildSessionSearchResults）—— 三个月前保存、
+    // 最近还动过，这组才排第一位，引线才落在它自己的「恢复整个会话」按钮上。
+    groups: [
+      demoReact(1, 4, 90 * 24, 0.5),
+      demoLearn(2),
+      demoInterview(3),
+      demoWeekly(4),
+    ],
     settings: LIGHT_SETTINGS,
     search: 'React',
     title: '三个月前那组，3 秒找回来',
@@ -255,7 +266,9 @@ const SCENARIOS = [
     pills: [
       {
         text: '6 套主题 · 明暗各一',
-        left: 660,
+        // 620 而非 660：右缘 ≈779，离「排序」约 56px；引线从右缘往右上走到
+        // 月亮按钮 (800,206)，不斜穿自己的圆角（2026-11-28 UI/UX 验收点）。
+        left: 620,
         top: 240,
         anchor: 'theme-toggle',
       },
@@ -558,32 +571,66 @@ function composeHtml({ title, subtitle, imageDataUrl, pills }) {
   <div class="win"><img src="${imageDataUrl}"></div>
   ${pillNodes}
   <svg class="leaders" width="1280" height="800"></svg>
-  <script>
-    const svg = document.querySelector('svg.leaders');
-    for (const el of document.querySelectorAll('.pill')) {
-      const r = el.getBoundingClientRect();
-      const ax = +el.dataset.ax, ay = +el.dataset.ay;
-      // 从离锚点最近的一条边出发
-      const cx = r.left + r.width / 2, cy = r.top + r.height / 2;
-      const dx = ax - cx, dy = ay - cy;
-      let sx, sy;
-      if (Math.abs(dx) > Math.abs(dy)) { sx = dx > 0 ? r.right : r.left; sy = cy; }
-      else { sx = cx; sy = dy > 0 ? r.bottom : r.top; }
-      const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
-      line.setAttribute('x1', sx); line.setAttribute('y1', sy);
-      line.setAttribute('x2', ax); line.setAttribute('y2', ay);
-      line.setAttribute('stroke', '#0B1B33');
-      line.setAttribute('stroke-width', '1.6');
-      line.setAttribute('opacity', '.72');
-      svg.appendChild(line);
-      const dot = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
-      dot.setAttribute('cx', ax); dot.setAttribute('cy', ay); dot.setAttribute('r', '4.5');
-      dot.setAttribute('fill', '#fff'); dot.setAttribute('stroke', '#0B1B33');
-      dot.setAttribute('stroke-width', '2');
-      svg.appendChild(dot);
-    }
-  </script>
 </body></html>`;
+}
+
+/**
+ * 在合成页上画引线与端点圆点；由 `page.evaluate(drawLeaderLines)` 调用。
+ *
+ * 【为什么不写成 setContent 里的内联 <script>】
+ * 2026-11-28 UI/UX 终审发现 ②③④⑤ 四张只有气泡、没有引线和白点，① 正常。
+ * 根因：五张图复用同一个 page，`setContent()` 换内容时 Chromium 对**内联
+ * script 只在第一次执行** ⇒ 第 2–5 张静默少画了引线，而成品尺寸、页脚版本
+ * 都照常正确，任何既有判据都发现不了。⇒ 画线改为显式 evaluate 调用，
+ * 与 setContent 的执行细节解耦；并且每张图用新页面（见 composeAll）。
+ */
+function drawLeaderLines() {
+  const SVG_NS = 'http://www.w3.org/2000/svg';
+  const svg = document.querySelector('svg.leaders');
+  const drawn = [];
+  for (const el of document.querySelectorAll('.pill')) {
+    const r = el.getBoundingClientRect();
+    const ax = +el.dataset.ax;
+    const ay = +el.dataset.ay;
+    // 从离锚点最近的一条边出发
+    const cx = r.left + r.width / 2;
+    const cy = r.top + r.height / 2;
+    const dx = ax - cx;
+    const dy = ay - cy;
+    let sx, sy;
+    if (Math.abs(dx) > Math.abs(dy)) {
+      sx = dx > 0 ? r.right : r.left;
+      sy = cy;
+    } else {
+      sx = cx;
+      sy = dy > 0 ? r.bottom : r.top;
+    }
+    const line = document.createElementNS(SVG_NS, 'line');
+    line.setAttribute('x1', sx);
+    line.setAttribute('y1', sy);
+    line.setAttribute('x2', ax);
+    line.setAttribute('y2', ay);
+    line.setAttribute('stroke', '#0B1B33');
+    line.setAttribute('stroke-width', '1.6');
+    line.setAttribute('opacity', '.72');
+    svg.appendChild(line);
+    const dot = document.createElementNS(SVG_NS, 'circle');
+    dot.setAttribute('cx', ax);
+    dot.setAttribute('cy', ay);
+    dot.setAttribute('r', '4.5');
+    dot.setAttribute('fill', '#fff');
+    dot.setAttribute('stroke', '#0B1B33');
+    dot.setAttribute('stroke-width', '2');
+    svg.appendChild(dot);
+    // 回传实测落点（回执要贴；也用于人工核对 UI/UX 的验收点）
+    drawn.push({
+      text: el.textContent,
+      anchor: { x: ax, y: ay },
+      start: { x: sx, y: sy },
+      pill: { left: r.left, top: r.top, right: r.right, bottom: r.bottom },
+    });
+  }
+  return drawn;
 }
 
 /** 读 PNG IHDR 里的宽高（产物自证，不靠外部工具）。 */
@@ -595,32 +642,77 @@ function pngSize(buffer) {
 async function composeAll(entries) {
   // 合成用独立浏览器（1x 设备像素）：成品就是 1280×800，
   // 不做二次缩放；原图本身是 2x，嵌到 960px 窗口由浏览器高质量降采样。
+  //
+  // ⚠️ **每张图一个新页面**：复用同一 page 时，第二次 setContent 的内联
+  // script 不会执行（Chromium 只在文档首次加载时跑内联脚本）⇒ 只有第一张
+  // 画出引线。同时画线改由 evaluate 驱动，不依赖内联脚本。
   const browser = await chromium.launch({ headless: true });
   try {
-    const ctxPage = await browser.newPage({ viewport: CANVAS, deviceScaleFactor: 1 });
     for (const entry of entries) {
-      const imageDataUrl = `data:image/png;base64,${readFileSync(entry.rawPath).toString('base64')}`;
-      const html = composeHtml({
-        title: entry.title,
-        subtitle: entry.subtitle,
-        imageDataUrl,
-        pills: entry.pills.map(p => ({ ...p, anchor: entry.anchors[p.anchor] })),
-      });
-      await ctxPage.setContent(html, { waitUntil: 'load' });
-      await ctxPage.evaluate(() => document.fonts.ready);
-      // 等图片解码完再截（和原图那条 favicon 判据同一个道理）
-      await ctxPage.waitForFunction(() => {
-        const img = document.querySelector('.win img');
-        return !!img && img.complete && img.naturalWidth > 0;
-      });
-      await ctxPage.waitForTimeout(200);
-      const outPath = join(OUT_DIR, `${entry.name}.png`);
-      await ctxPage.screenshot({ path: outPath });
-      const { width, height } = pngSize(readFileSync(outPath));
-      if (width !== 1280 || height !== 800) {
-        throw new Error(`${entry.name}.png 成品是 ${width}×${height}，CWS 要求 1280×800`);
+      const page = await browser.newPage({ viewport: CANVAS, deviceScaleFactor: 1 });
+      try {
+        const imageDataUrl = `data:image/png;base64,${readFileSync(entry.rawPath).toString('base64')}`;
+        const html = composeHtml({
+          title: entry.title,
+          subtitle: entry.subtitle,
+          imageDataUrl,
+          pills: entry.pills.map(p => ({ ...p, anchor: entry.anchors[p.anchor] })),
+        });
+        await page.setContent(html, { waitUntil: 'load' });
+        await page.evaluate(() => document.fonts.ready);
+        // 等图片解码完再截（和原图那条 favicon 判据同一个道理）
+        await page.waitForFunction(() => {
+          const img = document.querySelector('.win img');
+          return !!img && img.complete && img.naturalWidth > 0;
+        });
+        const leaders = await page.evaluate(drawLeaderLines);
+
+        // ── 产物自证：白点数必须等于气泡数 ──────────────────────────────
+        // 这次的事故就是「引线静默没画出来」混进了最终套：成品照样 1280×800、
+        // 页脚照样 v1.33.0，只有肉眼能发现。⇒ 判据必须落在合成结果上，
+        // 不许只信「脚本跑完了」。
+        const dots = await page.evaluate(
+          () => document.querySelectorAll('svg.leaders circle').length
+        );
+        if (dots !== entry.pills.length) {
+          throw new Error(
+            `${entry.name}: 合成后引线端点圆点 ${dots} 个 ≠ 气泡 ${entry.pills.length} 个` +
+              ' —— 引线没画出来，这张图不许出'
+          );
+        }
+        // 白点还必须落在气泡**之外**：被气泡盖住的白点等于没画（图上看不见，
+        // 但 DOM 里数得到 —— 只数个数发现不了这一类）。
+        for (const l of leaders) {
+          const covered =
+            l.anchor.x > l.pill.left &&
+            l.anchor.x < l.pill.right &&
+            l.anchor.y > l.pill.top &&
+            l.anchor.y < l.pill.bottom;
+          if (covered) {
+            throw new Error(
+              `${entry.name}: 白点 (${l.anchor.x.toFixed(1)}, ${l.anchor.y.toFixed(1)})` +
+                ` 落在气泡「${l.text}」内部 —— 会被气泡盖住`
+            );
+          }
+        }
+
+        await page.waitForTimeout(200);
+        const outPath = join(OUT_DIR, `${entry.name}.png`);
+        await page.screenshot({ path: outPath });
+        const { width, height } = pngSize(readFileSync(outPath));
+        if (width !== 1280 || height !== 800) {
+          throw new Error(`${entry.name}.png 成品是 ${width}×${height}，CWS 要求 1280×800`);
+        }
+        console.log(`✅ ${entry.name}.png（1280×800，白点 ${dots}/${entry.pills.length}）`);
+        for (const l of leaders) {
+          console.log(
+            `   · 「${l.text}」白点 (${l.anchor.x.toFixed(1)}, ${l.anchor.y.toFixed(1)})` +
+              ` ← 引线起点 (${l.start.x.toFixed(1)}, ${l.start.y.toFixed(1)})`
+          );
+        }
+      } finally {
+        await page.close();
       }
-      console.log(`✅ ${entry.name}.png（1280×800）`);
     }
   } finally {
     await browser.close();
