@@ -127,7 +127,7 @@
 ### 怎么验的
 
 - `pnpm validate` **EXIT 0**（validate-extension → type-check → type-check:tests → lint → lint:tests → build → check:bundle 全链）；回包 `Validated extension metadata for version 1.33.0`；首屏 **196.4KB / 预算 200KB**。
-- `pnpm test` 全量（发版步骤，2026-11-28）：**5336 tests / 5334 pass / 2 fail / 0 skipped / 1279 suites**。2 条 fail **全部**来自 `tests/guards/storeAssetsMatchCurrentVersion.test.ts`（截图未按 1.33.0 重拍，见「诚实边界」）；其余 5334 条全绿。
+- `pnpm test` 全量（发版步骤，2026-11-28）：**5336 tests / 5336 pass / 0 fail / 0 skipped / 1279 suites**。首轮曾 5334 pass / 2 fail（2 条全部来自 `tests/guards/storeAssetsMatchCurrentVersion.test.ts`，截图未重拍）；当天按 1.33.0 重拍 5 张后复跑转全绿。
 - 定向：`tests/releaseNotes.test.ts` **7 pass / 0 fail**；`tests/docsAlignment.test.ts` **77 pass / 0 fail**。
 - 打包：`node package-extension.js` ⇒ `chrome-extension.zip` **361,521 字节**，包内 `manifest.version=1.33.0`，包内无 `.map` / `.ts` / `.DS_Store`。
 - 两单元各自先自测（集成分支）：A 全量 5218 tests 0 fail；B 全量 5244 tests 0 fail；集成后全量 5288 tests 0 fail。
@@ -139,7 +139,7 @@
 - 未做浏览器真机走查：重置视图三个状态由单测覆盖，未在真实扩展里逐屏点过。
 - 「最近使用」不跨设备（设计如此，所有文案不承诺）；时间位在 <640px 不显示（既有规则，已知缺口，留 v1.34 单独处理）。
 - 最近使用无记录时卡片不渲染那一格（不写「未使用」，避免对旧会话说假话）。
-- **商店截图未按 1.33.0 重拍**：`store-assets/` 的成品截图本轮**没动**（页脚仍是 v1.32.1）⇒ 提审前必须重拍。`tests/guards/storeAssetsMatchCurrentVersion.test.ts` 会因此变红（它就是为这件事存在的），重拍并把资产表说明改成 1.33.0 后即绿。
+- ~~**商店截图未按 1.33.0 重拍**~~ ⇒ **同日已解决**：`store-assets/` 的 5 张商店截图已于 2026-11-28 按 1.33.0 重拍（1280×800，页脚实拍 `TapStack v1.33.0`），`tests/guards/storeAssetsMatchCurrentVersion.test.ts` 5/5 绿、`storeScreenshotNotesMatchAssets` 4/4 绿。
 
 ### 商店状态
 
