@@ -267,7 +267,8 @@ const SCENARIOS = [
       {
         text: '6 套主题 · 明暗各一',
         // 620 而非 660：右缘 ≈779，离「排序」约 56px；引线从右缘往右上走到
-        // 月亮按钮 (800,206)，不斜穿自己的圆角（2026-11-28 UI/UX 验收点）。
+        // 月亮按钮的**右框线**（rect.right ≈ 813），骑边不盖月亮
+        // （2026-11-28 UI/UX 第 2 轮验收点）。
         left: 620,
         top: 240,
         anchor: 'theme-toggle',
@@ -381,7 +382,9 @@ async function anchorOf(page, kind) {
     case 'search-restore': {
       const r = await rectOf(page, '[data-testid^="search-restore-session-"]');
       if (!r) throw new Error('找不到搜索结果的「恢复整个会话」按钮');
-      return toCanvas(r.x + r.width / 2, r.y + r.height / 2);
+      // 圆点骑在**左框线**上、垂直居中（2026-11-28 第 2 轮返工）：
+      // 落按钮中心会压在「整」字上 —— 白点不许盖住它指的东西。
+      return toCanvas(r.x, r.y + r.height / 2);
     }
     case 'locked-restore': {
       const r = await page.evaluate(() => {
@@ -394,12 +397,18 @@ async function anchorOf(page, kind) {
         return { x: b.x, y: b.y, width: b.width, height: b.height };
       });
       if (!r) throw new Error('找不到锁定会话的「在当前窗口打开」按钮');
-      return toCanvas(r.x + r.width / 2, r.y + r.height / 2);
+      // 圆点骑在**左框线**上、垂直居中：落图标中心会把 ⊕ 整个盖掉
+      // （2026-11-28 第 2 轮返工）。glyph 在左内边距之后，完整可见。
+      return toCanvas(r.x, r.y + r.height / 2);
     }
     case 'theme-toggle': {
       const r = await rectOf(page, 'button[aria-label^="切换到"]');
       if (!r) throw new Error('找不到主题切换按钮');
-      return toCanvas(r.x + r.width / 2, r.y + r.height / 2);
+      // 圆点骑在**右框线**上、垂直居中（2026-11-28 第 2 轮返工）：落月亮中心只剩
+      // 一道弧。与 ③④ 骑左框线同一条规则 —— 圆心落在框线上。
+      // 实测按钮右缘 813.6（裁定写的「约 813」），月亮 glyph 右缘 806.5；
+      // 白点半径 4.5 + 描边 1 ⇒ 环左缘 808.1，完整让开月亮、只贴边不盖。
+      return toCanvas(r.x + r.width, r.y + r.height / 2);
     }
     default:
       throw new Error(`未知锚点：${kind}`);
