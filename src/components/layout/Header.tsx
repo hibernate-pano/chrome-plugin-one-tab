@@ -33,6 +33,8 @@ import {
 } from '@/domain/tabGroup/saveFeedbackCopy';
 import { planCleanDuplicates } from '@/core/mutationOps';
 import { decideFeedback } from '@/core/feedbackPolicy';
+// ── 2026-11-27 v1.33：骰子「随机打开一条」也是「从这条会话打开标签」──────
+import { recordSessionUsed } from '@/storage-kv/lastUsedAtStore';
 import { storage } from '@/utils/storage';
 import { logError } from '../../utils/log';
 
@@ -390,6 +392,10 @@ export const Header: React.FC<HeaderProps> = ({
           showRestoreError(toServiceWorkerErrorCopy(r?.error, '打开失败，已保留在会话中'));
           return;
         }
+        // ── 2026-11-27 v1.33：「使用」= 从这个会话里打开过标签 ──────────
+        // 骰子抽中的那一条也属于某个会话 ⇒ 打开成功就记一次（只记本机）。
+        // 与「点开一行」同口径：写入点在 success:true 之后、消费之前。
+        void recordSessionUsed(pick.group.id);
         dispatch(deleteTabAndSync({ groupId: pick.group.id, tabId: pick.tab.id }))
           .unwrap()
           .then(payload => {

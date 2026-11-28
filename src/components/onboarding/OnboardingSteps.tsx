@@ -205,8 +205,9 @@ export const SearchStep: React.FC = () => (
         <div className="onboarding-feature-desc">记得站点、不记得网址时，按域名找出来</div>
       </div>
       {/* ── 2026-10-23 审计 H-13：教「会话排序」─────────────────────────────
-          第 42 轮刚做了会话排序（`core/sessionSort.ts` 的四档：最近保存 /
-          最近活动 / 名称 / 会话大小（标签数）），控件在筛选区里。
+          第 42 轮做了会话排序，v1.33 拆成五档（`core/sessionSort.ts`：
+          最近保存 / 最近使用 / 最近修改 / 名称 / 会话大小（标签数）），
+          控件在筛选区里。
           引导是**新功能的唯一介绍位** —— 不教，用户一屏 20 个会话分不清
           哪个是刚存的，会以为「TapStack 就是按保存时间排死的」。
           排序的判据口径以 `SESSION_SORT_OPTIONS` 为准（守卫从那里现场读
@@ -217,7 +218,7 @@ export const SearchStep: React.FC = () => (
         </div>
         <div className="onboarding-feature-title">排序</div>
         <div className="onboarding-feature-desc">
-          会话多的时候，筛选区里可以按最近保存、最近活动、名称或会话大小（标签数）排序
+          会话多的时候，筛选区里可以按最近保存、最近使用、最近修改、名称或会话大小（标签数）排序
         </div>
       </div>
     </div>

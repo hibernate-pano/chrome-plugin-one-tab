@@ -82,6 +82,8 @@ import {
 } from '@/components/search/searchBulkDelete';
 // ── 2026-10-23 审计 P0-2：批量恢复的「打开了几个」与「移除了几个」必须分开说 ──
 import { planBatchRestore } from '@/components/search/searchBatchRestore';
+// ── 2026-11-27 v1.33：「使用」= 从这个会话里打开过标签（只记本机）──────────
+import { recordSessionUsed } from '@/storage-kv/lastUsedAtStore';
 // ── 2026-10-23 审计 WC-13 / P1-4：云端拉回这个动作的措辞与条数只有一个出处 ────
 import {
   CLOUD_PULL_BUSY_LABEL,
@@ -546,6 +548,9 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({
           );
           return;
         }
+        // ── 2026-11-27 v1.33：恢复成功 ⇒ 记一次「使用」（锁定组也记）────
+        // 与列表页 TabGroup.openAllTabs 同一口径：写入点在 success:true 之后。
+        void recordSessionUsed(group.id);
         consumeSession();
         if (typeof r.skippedUnopenable === 'number' && r.skippedUnopenable > 0) {
           const keptNote = group.isLocked
@@ -619,6 +624,8 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({
             showRestoreError(toServiceWorkerErrorCopy(r?.error, '打开失败，已保留在会话中'));
             return;
           }
+          // ── 2026-11-27 v1.33：打开成功 ⇒ 记一次「使用」（锁定组也记）──
+          void recordSessionUsed(group.id);
           // ── 2026-10-25「安静的成功」：锁定分支**静默** ───────────────
           // 锁定组从不被消费 ⇒ 那条记录**还在** ⇒ 界面自明 ⇒ 成功路径一个字
           // 都不说。锁定会话恢复后保留这件事，由列表页卡片上的**常驻说明**
@@ -642,6 +649,9 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({
           showRestoreError(toServiceWorkerErrorCopy(r?.error, '打开失败，已保留在会话中'));
           return;
         }
+        // ── 2026-11-27 v1.33：打开成功 ⇒ 记一次「使用」────────────────
+        // 在消费之前记：消费失败不影响「打开过」这个事实。
+        void recordSessionUsed(group.id);
         dispatch(deleteTabAndSync({ groupId: group.id, tabId: tab.id }))
           .unwrap()
           .then(payload => {
@@ -802,6 +812,18 @@ export const SearchResultList: React.FC<SearchResultListProps> = ({
             `${toServiceWorkerErrorCopy(r?.error, '恢复失败')}。所涉记录仍保留在列表中。`
           );
           return;
+        }
+        // ── 2026-11-27 v1.33：批量恢复也是「打开动作」 ────────────────────
+        // 命中的标签来自哪些会话，那些会话就算「被使用过」（只记本机）。
+        // 只记**至少有一个可打开标签**的会话：全是本设备打不开的地址的会话
+        // 实际上什么都没打开（SW 用的是同一个 isOpenableTabUrl 判据）。
+        const openedGroupIds = new Set(
+          matchingTabs
+            .filter(({ tab }) => isOpenableTabUrl(tab.url))
+            .map(({ group }) => group.id)
+        );
+        for (const groupId of openedGroupIds) {
+          void recordSessionUsed(groupId);
         }
         // 消费是逐条派发删除命令的**异步**过程，所以成功提示等它落地再出 ——
         // 「已恢复 N 个标签，命中的标签已从所属会话移除」这句话，只有在

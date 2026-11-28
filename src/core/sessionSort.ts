@@ -1,5 +1,5 @@
 /**
- * 会话列表的**排序判据**（纯函数，2026-10-22 审计 L-10）。
+ * 会话列表的**排序判据**（纯函数，2026-10-22 审计 L-10；2026-11-27 加第五档）。
  *
  * ── 为什么要有这个模块 ────────────────────────────────────────────────────
  *
@@ -11,7 +11,7 @@
  * 用户**没有任何入口**换排序 —— 筛选面板给的是「域名 / 会话名称 / 保存时间」
  * 三个**筛选**维度，排序这件事本身被写死了；而且判据埋在组件里，没法单测。
  *
- * 现在判据收敛到这里：四种排序键、一个默认键，以及「非法时间戳一律当作最旧」
+ * 现在判据收敛到这里：五种排序键、一个默认键，以及「非法时间戳一律当作最旧」
  * 这一条硬规则。**排序作用于会话列表**（不是标签搜索结果 —— 搜索结果的主序
  * 是相关度，那是搜索的承诺，不归排序管）。
  *
@@ -19,41 +19,53 @@
  * 在「最近保存」这个键下排在已知保存时间的会话**之后** —— 判据见
  * `@/core/sessionSaveTime`。
  *
- * ── 四种键的语义 ──────────────────────────────────────────────────────────
+ * ── 五种键的语义 ──────────────────────────────────────────────────────────
  *
- * · `'saved'`   （最近保存）—— `createdAt` 倒序。**默认键**，与旧版写死的
+ * · `'saved'`      （最近保存）—— `createdAt` 倒序。**默认键**，与旧版写死的
  *   表达式在有效时间戳上**逐元素等价** ⇒ 存量用户升级后看到的顺序一个都不变。
- * · `'accessed'`（最近活动）—— 会话「最近一次动静」的时间倒序。口径见
+ * · `'recentUsed'` （最近使用）—— **本机**记录的「最近一次从这个会话里打开过
+ *   标签」的时间倒序。数据源是独立的本地 KV 表（`@/storage-kv/lastUsedAtStore`），
+ *   由调用方以 `lastUsedAtById` 传进来；**这个时间只记在本机，不进会话快照、
+ *   不上云、不参与合并**。没有记录的会话排在**最后**（不是按 `createdAt` 顶到
+ *   前面）——「没记录」与「很久以前用过」在用户眼里是两件事。
+ * · `'accessed'`   （最近修改）—— 会话「最近一次动静」的时间倒序。口径见
  *   `lastActivityAt` 的注释（这一条踩过一个坑：字面上的「标签最后访问时间」
  *   在当前数据模型里**从来不被更新**，照字面实现会得到一个骗人的选项）。
- * · `'name'`    （名称）—— `name` 升序，用 `localeCompare(b, 'zh-CN')`
+ *   2026-11-27 从「最近活动」改名为「最近修改」：它算的是**改动**
+ *   （改名、加标签、消费标签都算），与「使用」（真的打开过）是两件事。
+ * · `'name'`       （名称）—— `name` 升序，用 `localeCompare(b, 'zh-CN')`
  *   （中文按拼音，不是按 Unicode 码点 —— 码点序会把「一」排在「啊」后面）。
- * · `'size'`    （会话大小）—— 标签数**倒序**（标签多的在前）。
+ * · `'size'`       （会话大小）—— 标签数**倒序**（标签多的在前）。
  *
  * ── 通用性质 ──────────────────────────────────────────────────────────────
  *
  * · **不改入参**：返回新数组（调用方传进来的往往是 Redux state 里的对象数组）。
+ *   也**不给入参补字段** —— `lastUsedAt` 只以第三个参数的形式参与比较，
+ *   绝不写回会话对象（写回去就会跟着 `tab_groups` 落盘/上云）。
  * · **稳定**：`Array.prototype.sort` 自 ES2019 起保证稳定 ⇒ 完全同值的会话
  *   保持传入时的相对顺序。
- * · **同值兜底**：除 `'saved'` 外的三种键，同值时一律用 `createdAt` 倒序做
- *   第二判据 ⇒ 顺序是「输入数组 + 键」的**确定函数**，不随实现细节抖动。
+ * · **同值兜底**：除 `'saved'` 外的四种键，同值时一律用 `createdAt` 倒序做
+ *   第二判据 ⇒ 顺序是「输入数组 + 键 + 本机使用记录」的**确定函数**，
+ *   不随实现细节抖动。
  * · **对非法时间戳稳健**：见 `toComparableTime`。
  */
 
 import { hasUnknownSaveTime } from './sessionSaveTime';
 
-/** 排序键：四种。（刻意不加第五种 —— 加了就要同时改下拉与设置模型。） */
-export type SessionSortKey = 'saved' | 'accessed' | 'name' | 'size';
+/** 排序键：五种。（刻意不再加第六种 —— 加了就要同时改下拉、设置模型与持久化校验。） */
+export type SessionSortKey = 'saved' | 'recentUsed' | 'accessed' | 'name' | 'size';
 
 /** 排序下拉的选项。label 是给用户看的中文文案。 */
 export const SESSION_SORT_OPTIONS: ReadonlyArray<{ value: SessionSortKey; label: string }> = [
   { value: 'saved', label: '最近保存' },
-  // 「最近活动」而不是「最近访问」：这个键的口径是「这个会话最近一次被
-  // 改动 / 被碰过」（见 lastActivityAt 的注释）——**改名也算**。
-  // 叫「访问」会让人以为只有「打开过」才算，与实际不符（本仓的纪律：
-  // 界面上的字必须与它实际在算的东西一致）。「活动」正好覆盖用户真正
-  // 想要的语义：��近我在动哪些会话。
-  { value: 'accessed', label: '最近活动' },
+  // 「最近使用」的数据源是**本机**的使用记录（打开过这个会话里的标签）——
+  // 它不是会话数据的一部分，换了设备就没有记录（只记本机）。
+  { value: 'recentUsed', label: '最近使用' },
+  // 「最近修改」而不是「最近活动」/「最近访问」：这个键的口径是「这个会话最近
+  // 一次被**改动**」（见 lastActivityAt 的注释）——**改名也算**。
+  // 叫「访问」会让人以为只有「打开过」才算；叫「活动」则与「最近使用」难以
+  // 区分（用户会以为两档是一回事）⇒ 2026-11-27 定名「最近修改」。
+  { value: 'accessed', label: '最近修改' },
   { value: 'name', label: '名称' },
   // 「会话大小」的口径是**标签数**。括号里写出来，是因为「大小」两个字
   // 单独看会被理解成「占多少空间 / 多少字节」——而这个选项排的是标签条数。
@@ -91,6 +103,8 @@ export function sessionSortLabel(key: SessionSortKey): string {
  * 也能被最小 fixture 喂（单测里不必造一整个 TabGroup）。
  */
 export interface SortableSession {
+  /** 会话 id（「最近使用」靠它从本机记录表里取值；其它键不读）。 */
+  id?: string;
   /** 会话创建时间（ISO 字符串）。 */
   createdAt: string;
   /** 会话最后修改时间（ISO 字符串，可缺）。 */
@@ -107,7 +121,19 @@ export interface SortableSession {
   name: string;
   /** 会话里的标签（只有 `lastAccessed` 会被读）。 */
   tabs?: Array<{ lastAccessed?: string }>;
+  /**
+   * 本机「最近一次从这个会话里打开过标签」的时间（ISO 字符串，可缺）。
+   *
+   * ⚠️ **不要把它写进 `TabGroup` 快照**：这个字段的语义是「这台设备上的
+   * 使用记录」，进快照就会跟着上传/合并到别的设备（见
+   * `@/storage-kv/lastUsedAtStore` 的文件头）。调用方通常**不**把它挂在
+   * 会话对象上，而是通过 `sortSessions` 的第三个参数传一张 `id → 时间` 的表。
+   */
+  lastUsedAt?: string;
 }
+
+/** 本机使用记录表（会话 id → 最近一次使用的 ISO 时间）。 */
+export type LastUsedAtMap = Readonly<Record<string, string>>;
 
 /**
  * 「最旧」的哨兵值。
@@ -145,8 +171,8 @@ function toComparableTime(value: string | undefined): number {
  * **「这个会话最近一次被改动 / 被碰过」的时间**。它会真的跟着用户动作动：
  * 打开会话里的一个标签、改名、加标签 ⇒ 组的 `updatedAt` 刷新 ⇒ 会话浮上来。
  *
- * 代价：改名也算「碰过」（严格的「访问」不含改名）。这是有意接受的取舍 ——
- * 一个**会动**的近似口径，胜过一个**永不改变**的字面口径。
+ * 代价：改名也算「碰过」（严格的「修改」不含改名？改名**就是**修改）。
+ * 2026-11-27 起选项名就叫「最近修改」—— 这个口径与名字现在是同一件事。
  */
 export function lastActivityAt(session: SortableSession): number {
   const groupUpdated = toComparableTime(session.updatedAt);
@@ -157,6 +183,27 @@ export function lastActivityAt(session: SortableSession): number {
   }
   if (groupUpdated >= latestTab) return groupUpdated;
   return latestTab;
+}
+
+/**
+ * 会话的「最近使用」时间（`recentUsed` 键的数据源）。
+ *
+ * 两个来源，优先级：会话对象上自带的 `lastUsedAt`（测试 / 特殊调用方直接喂）
+ * > 第三个参数传进来的本机记录表。
+ *
+ * ⚠️ 缺记录与记录非法都返回 `OLDEST` ⇒ 它们排在**所有有记录的会话之后**；
+ * 它们之间再由 `createdAt` 倒序兜底（确定性）。
+ */
+function lastUsedTimeOf(
+  session: SortableSession,
+  lastUsedAtById?: LastUsedAtMap
+): number {
+  const direct = session.lastUsedAt;
+  if (typeof direct === 'string' && direct.length > 0) return toComparableTime(direct);
+  if (lastUsedAtById && typeof session.id === 'string') {
+    return toComparableTime(lastUsedAtById[session.id]);
+  }
+  return OLDEST;
 }
 
 /** 第二判据：同值时按 `createdAt` 倒序（`saved` 键本身就是它，不重复用）。 */
@@ -171,15 +218,28 @@ function compareByCreatedAtDesc(left: SortableSession, right: SortableSession): 
 /**
  * 按指定排序键给会话排序（返回**新数组**，不改入参）。
  *
- * @param groups 会话数组（通常来自 Redux 的 `state.tabs.groups`）
- * @param key    排序键；未知键按 `'saved'` 处理（fail-safe，不抛错）
+ * @param groups          会话数组（通常来自 Redux 的 `state.tabs.groups`）
+ * @param key             排序键；未知键按 `'saved'` 处理（fail-safe，不抛错）
+ * @param lastUsedAtById  「最近使用」用的本机记录表（`id → ISO 时间`）。
+ *                        只对 `'recentUsed'` 有意义；缺省 = 没有任何使用记录。
  */
 export function sortSessions<T extends SortableSession>(
   groups: T[],
-  key: SessionSortKey
+  key: SessionSortKey,
+  lastUsedAtById?: LastUsedAtMap
 ): T[] {
   // 先复制再排：**不得就地修改入参**。
   const sorted = [...groups];
+
+  if (key === 'recentUsed') {
+    return sorted.sort((left, right) => {
+      const leftAt = lastUsedTimeOf(left, lastUsedAtById);
+      const rightAt = lastUsedTimeOf(right, lastUsedAtById);
+      // 先判等再相减：两边都没有记录时都是 -Infinity，相减会得到 NaN。
+      if (leftAt !== rightAt) return rightAt - leftAt;
+      return compareByCreatedAtDesc(left, right);
+    });
+  }
 
   if (key === 'accessed') {
     return sorted.sort((left, right) => {

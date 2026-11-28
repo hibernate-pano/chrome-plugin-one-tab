@@ -10,9 +10,15 @@ import { logError } from '../../utils/log';
 
 interface LoginFormProps {
   onSuccess?: () => void;
+  /**
+   * 打开「重置密码」视图（v1.33）。
+   *
+   * ⚠️ 只有登录表单有「忘记密码？」；注册表单与选项页按钮**不加**（设计说明「四」）。
+   */
+  onForgotPassword?: () => void;
 }
 
-export const LoginForm: React.FC<LoginFormProps> = ({ onSuccess }) => {
+export const LoginForm: React.FC<LoginFormProps> = ({ onSuccess, onForgotPassword }) => {
   const dispatch = useAppDispatch();
   const { isLoading, error } = useAppSelector(state => state.auth);
   const { showToast } = useToast();
@@ -140,6 +146,24 @@ export const LoginForm: React.FC<LoginFormProps> = ({ onSuccess }) => {
           />
           {validationErrors.password && (
             <p className="mt-2 text-sm text-rose-600 dark:text-rose-400">{validationErrors.password}</p>
+          )}
+          {/* 2026-11-27 v1.33：忘记密码入口 —— 密码输入框正下方、靠右。
+              文本按钮沿用 theme-accent-text；min-h-9/min-w-9 = 36px，
+              达到 MIN_HIT_TARGET_PX（见 components/layout/hitTarget.ts）。
+              ⚠️ 注册表单不加（那条路径不需要重置密码）。 */}
+          {onForgotPassword && (
+            <div className="mt-2 flex justify-end">
+              <button
+                type="button"
+                onClick={() => {
+                  dispatch(clearError());
+                  onForgotPassword();
+                }}
+                className="inline-flex min-h-9 min-w-9 items-center justify-center rounded px-2 text-sm font-medium theme-accent-text hover:underline"
+              >
+                忘记密码？
+              </button>
+            </div>
           )}
         </div>
         <button
