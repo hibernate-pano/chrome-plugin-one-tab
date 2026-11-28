@@ -406,8 +406,11 @@ Productivity
 | Asset | Dimensions | Status | Filename |
 |-------|-----------|--------|----------|
 | Store Icon [REQUIRED] | 128×128 PNG | ✅ Ready | icons/icon128.png |
-| Screenshot 1 [REQUIRED] | 1280×800 | ✅ Ready | store-assets/screenshot-1-main.png（2026-11-23 重拍，1.32.1：界面与 1.32.0 一致——本版只修登录故障，不改任何界面） |
-| Screenshot 2 [RECOMMENDED] | 1280×800 | ✅ Ready | store-assets/screenshot-2-search.png（2026-11-23 重拍，页脚显示 TapStack v1.32.1） |
+| Screenshot 1 [REQUIRED] | 1280×800 | ✅ Ready | store-assets/screenshot-1-main.png（2026-11-28 按 1.33.0 重拍：主界面） |
+| Screenshot 2 [RECOMMENDED] | 1280×800 | ✅ Ready | store-assets/screenshot-2-save-close.png（2026-11-28 按 1.33.0 重拍：保存并关闭后的回执） |
+| Screenshot 3 [RECOMMENDED] | 1280×800 | ✅ Ready | store-assets/screenshot-3-search.png（2026-11-28 按 1.33.0 重拍：搜索命中） |
+| Screenshot 4 [RECOMMENDED] | 1280×800 | ✅ Ready | store-assets/screenshot-4-restore-lock.png（2026-11-28 按 1.33.0 重拍：锁定会话的整组恢复） |
+| Screenshot 5 [RECOMMENDED] | 1280×800 | ✅ Ready | store-assets/screenshot-5-theme.png（2026-11-28 按 1.33.0 重拍：Claude 深色主题） |
 | Small Promo Tile [RECOMMENDED] | 440×280 | ✅ Ready | store-assets/promo-tile-440x280.png（2026-10-20 新建；源文件 store-assets/promo-tile-440x280.svg，PNG 无 alpha 通道，符合 CWS 要求） |
 
 <!-- 宣传图与图标**必须讲同一个故事** —— 商店里两张图并排出现。
@@ -423,13 +426,21 @@ Productivity
 
 ### Screenshot Notes
 
-这两张图分别展示什么：
+这五张图分别展示什么（都由 1.33.0 的真实构建实拍，每张页脚显示 TapStack v1.33.0）：
 
-- **screenshot-1-main.png** —— 主界面：单栏布局，已保存 5 个会话，前两个展开显示各
-  自的标签行；每个会话头上有标签数徽章，标签行右侧显示域名，标签行左侧是已加载的
-  网站图标。页脚显示当前版本号。
-- **screenshot-2-search.png** —— 搜索命中态：搜索框输入「React」，
-  命中的关键词高亮，结果按会话分组，每组显示「匹配 n/m 个标签」与保存时间。
+- **screenshot-1-main.png** —— 主界面：单栏布局，已保存 4 个会话（共 11 个标签页），
+  会话卡按保存时间排列；卡头有标签数徽章与恢复入口，标签行右侧显示域名、左侧是
+  已加载的网站图标。页脚显示当前版本号。
+- **screenshot-2-save-close.png** —— 保存并关闭：在这一窗打开 5 个网页，点顶栏
+  「保存并关闭」后的真实回执 —— 新会话卡出现在列表顶部，按钮就地显示「已保存 5」，
+  原来那些标签已经关闭。
+- **screenshot-3-search.png** —— 搜索命中态：搜索框输入「React」，命中的关键词高亮，
+  结果按会话分组，每组显示「匹配 n/m 个标签」与保存时间，右侧是「恢复整个会话」。
+- **screenshot-4-restore-lock.png** —— 恢复与锁定：滚到锁定会话那一屏。锁定卡片带
+  琥珀色锁标与常驻说明「已锁定 · 恢复后保留在列表」，卡头两颗恢复入口分别是
+  「在当前窗口打开」与「在新窗口打开」。
+- **screenshot-5-theme.png** —— 主题：同一份会话列表切到 Claude 深色主题；6 套主题
+  风格各有明暗两色，顶栏的月亮按钮可随时切回浅色。
 
 <!-- 这里的正文是**给审核员看的可见文字**，不是给自己看的笔记 ——
      曾经这一栏整个被 HTML 注释包着 ⇒ 商店页渲染出来是**空的**，
@@ -442,8 +453,10 @@ Productivity
      注：1.22.3 起不再有「拖拽排序/整理视图」，勿再为其截图。
      ⚠️ 1.22.13 起不再有「收藏星标」与「会话备注」，截图里出现这两样会被审核
         判为「宣传了不存在的功能」，必须重拍。
-     两张图由 scripts/make-store-screenshots.mjs 生成（演示数据注入 dist 扩展后实拍，
-     1280×800）。重新生成：pnpm build && node scripts/make-store-screenshots.mjs -->
+     五张图由 scripts/make-store-screenshots.mjs 生成：注入演示数据后对 dist 扩展
+     实拍 1280×800 的原始界面，再按已裁定的品牌化构图（蓝渐变 + 标题/副标 +
+     0.75 缩放整窗 + 标注气泡）合成 1280×800 成品。
+     重新生成：pnpm build && node scripts/make-store-screenshots.mjs -->
 
 ## Permissions Justification
 
